@@ -84,6 +84,8 @@ export default function OrgSettingsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // 保存されている値を読めていないときは送らない。空の入力欄のまま送ると、業種・従業員数・連絡先を null で上書きして消してしまう
+    if (!org) return;
     setErrorMessage(null);
     setSavedMessage(null);
 
@@ -179,87 +181,90 @@ export default function OrgSettingsPage() {
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label htmlFor="org-settings-name" className="block text-sm font-medium text-gray-700 mb-2">
-              組織名
-            </label>
-            <input
-              id="org-settings-name"
-              type="text"
-              value={formData.name}
-              onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-              required
-              maxLength={ORG_SETTINGS_NAME_MAX_LENGTH}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+      {/* 読み込みに失敗したときはフォームを出さない (空の入力欄から保存すると、保存されている値を消してしまう) */}
+      {org && (
+        <form onSubmit={handleSubmit} className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <label htmlFor="org-settings-name" className="block text-sm font-medium text-gray-700 mb-2">
+                組織名
+              </label>
+              <input
+                id="org-settings-name"
+                type="text"
+                value={formData.name}
+                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                required
+                maxLength={ORG_SETTINGS_NAME_MAX_LENGTH}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label htmlFor="org-settings-industry" className="block text-sm font-medium text-gray-700 mb-2">
+                業種
+              </label>
+              <input
+                id="org-settings-industry"
+                type="text"
+                value={formData.industry}
+                onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
+                maxLength={ORG_INDUSTRY_MAX_LENGTH}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="例: IT"
+              />
+            </div>
+            <div>
+              <label htmlFor="org-settings-employee-count" className="block text-sm font-medium text-gray-700 mb-2">
+                従業員数
+              </label>
+              <input
+                id="org-settings-employee-count"
+                type="number"
+                value={formData.employeeCount}
+                onChange={(e) => setFormData({ ...formData, employeeCount: e.target.value })}
+                min={ORG_EMPLOYEE_COUNT_MIN}
+                max={ORG_EMPLOYEE_COUNT_MAX}
+                step={1}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div>
+              <label htmlFor="org-settings-contact-name" className="block text-sm font-medium text-gray-700 mb-2">
+                担当者名
+              </label>
+              <input
+                id="org-settings-contact-name"
+                type="text"
+                value={formData.contactName}
+                onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
+                maxLength={ORG_CONTACT_NAME_MAX_LENGTH}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="md:col-span-2">
+              <label htmlFor="org-settings-contact-email" className="block text-sm font-medium text-gray-700 mb-2">
+                連絡先メール
+              </label>
+              <input
+                id="org-settings-contact-email"
+                type="email"
+                value={formData.contactEmail}
+                onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
+                maxLength={ORG_CONTACT_EMAIL_MAX_LENGTH}
+                className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
           </div>
-          <div>
-            <label htmlFor="org-settings-industry" className="block text-sm font-medium text-gray-700 mb-2">
-              業種
-            </label>
-            <input
-              id="org-settings-industry"
-              type="text"
-              value={formData.industry}
-              onChange={(e) => setFormData({ ...formData, industry: e.target.value })}
-              maxLength={ORG_INDUSTRY_MAX_LENGTH}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="例: IT"
-            />
-          </div>
-          <div>
-            <label htmlFor="org-settings-employee-count" className="block text-sm font-medium text-gray-700 mb-2">
-              従業員数
-            </label>
-            <input
-              id="org-settings-employee-count"
-              type="number"
-              value={formData.employeeCount}
-              onChange={(e) => setFormData({ ...formData, employeeCount: e.target.value })}
-              min={ORG_EMPLOYEE_COUNT_MIN}
-              max={ORG_EMPLOYEE_COUNT_MAX}
-              step={1}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div>
-            <label htmlFor="org-settings-contact-name" className="block text-sm font-medium text-gray-700 mb-2">
-              担当者名
-            </label>
-            <input
-              id="org-settings-contact-name"
-              type="text"
-              value={formData.contactName}
-              onChange={(e) => setFormData({ ...formData, contactName: e.target.value })}
-              maxLength={ORG_CONTACT_NAME_MAX_LENGTH}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <div className="md:col-span-2">
-            <label htmlFor="org-settings-contact-email" className="block text-sm font-medium text-gray-700 mb-2">
-              連絡先メール
-            </label>
-            <input
-              id="org-settings-contact-email"
-              type="email"
-              value={formData.contactEmail}
-              onChange={(e) => setFormData({ ...formData, contactEmail: e.target.value })}
-              maxLength={ORG_CONTACT_EMAIL_MAX_LENGTH}
-              className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-        </div>
 
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
-        >
-          {saving ? "保存中..." : "設定を保存"}
-        </button>
-      </form>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-6 py-3 bg-blue-600 text-white rounded-xl font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors"
+          >
+            {saving ? "保存中..." : "設定を保存"}
+          </button>
+        </form>
+      )}
     </div>
   );
 }

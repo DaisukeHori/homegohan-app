@@ -1,7 +1,7 @@
 /**
  * GET / PUT /api/org/settings (組織の設定) の、受け取る本文と返す列 (#1735)
  *
- * 組織の設定の画面 (Web / モバイル) が送るキーは @homegohan/shared の ORG_SETTINGS_FORM_KEYS。
+ * 組織の設定の画面 (Web: src/app/(org)/org/settings/page.tsx) が送るキーは @homegohan/shared の ORG_SETTINGS_FORM_KEYS。
  * ここのスキーマはその全部を受け取り、organizations の同じ名前の列に保存する。
  * 画面が送るキーとこのスキーマのキーの一致は tests/org-settings-keys.test.tsx が検査する
  * (以前はスキーマが name / plan しか知らず、画面が送った業種・従業員数・連絡先を捨てたまま 200 を返していた)。

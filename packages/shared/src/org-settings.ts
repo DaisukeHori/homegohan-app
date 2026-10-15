@@ -1,7 +1,7 @@
 /**
- * 組織の設定 (/org/settings) の、Web とモバイルで共通の決まり (#1735)
+ * 組織の設定 (/org/settings) の、画面と route で共通の決まり (#1735)
  *
- * 組織の設定の画面 (Web: src/app/(org)/org/settings/page.tsx、モバイル: apps/mobile/app/(org)/org/settings.tsx) が
+ * 組織の設定の画面 (Web: src/app/(org)/org/settings/page.tsx。モバイルの組織の画面は #1598 で消した) が
  * PUT /api/org/settings に送る本文は、このファイルの buildOrgSettingsUpdateBody だけで作る。
  * route の受け取るスキーマ (src/lib/org-settings-api.ts) は ORG_SETTINGS_FORM_KEYS の全部を受け取る。
  * 画面が送るキーと route が受け取るキーの一致は tests/org-settings-keys.test.tsx が検査する
@@ -77,7 +77,7 @@ export type OrgSettingsBodyResult =
   | { ok: false; message: string };
 
 export const ORG_SETTINGS_NAME_REQUIRED_MESSAGE = '組織名を入力してください';
-/** 3 桁ごとにカンマを入れる (モバイルの JS エンジンの Intl に頼らない) */
+/** 3 桁ごとにカンマを入れる (実行環境の Intl のロケールに頼らない) */
 function withThousandsSeparator(value: number): string {
   return String(value).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 }

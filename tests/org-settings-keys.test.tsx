@@ -13,7 +13,9 @@
  *  3. PUT で保存した値が organizations の列に書かれ、GET で返る。空欄は null で消える。送らなかったキーは変わらない。
  *  4. Web の画面 (src/app/(org)/org/settings/page.tsx) を描画し、入力 → 保存 → 読み込み直し で値が残る
  *     (画面の fetch を route の handler につなぐ)。route が失敗を返したときは「保存しました」を出さない。
- * モバイルの画面が送るキーは apps/mobile/__tests__/app/org/settings-screen.test.tsx が ORG_SETTINGS_FORM_KEYS と突き合わせる。
+ *  5. 保存されている値を読めなかったとき (GET の失敗・通信の失敗・data の無い応答) は、フォームを出さず、PUT を送らない
+ *     (空の入力欄のまま保存すると、業種・従業員数・連絡先を null で上書きして消してしまうため)。
+ * モバイルの組織の画面は #1598 で消したので、組織の設定を送る画面は Web だけ。
  *
  * DB のモックは tests/helpers/schema-checked-db.ts (存在しない列への読み書きは本物の PostgREST と同じエラーになる)。
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -441,5 +443,76 @@ describe('Web の組織の設定の画面', () => {
     expect(container.querySelector('[role="status"]')).toBeNull();
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(ORG_SETTINGS_EMPLOYEE_COUNT_MESSAGE);
     expect(orgRow(ORG_A)).toMatchObject({ employee_count: 30 });
+  });
+});
+
+describe('Web の組織の設定の画面: 保存されている値を読めなかったとき', () => {
+  const LOAD_FAILURE_MESSAGE = '組織の設定を読み込めませんでした';
+  /** GET だけを差し替え、PUT は route の handler につなぐ (送ってしまえば行が変わることを検査できるように) */
+  function failGetWith(get: () => Promise<Response>) {
+    fetchMock.mockImplementation((input: RequestInfo | URL, init?: RequestInit) =>
+      (init?.method ?? 'GET') === 'GET' ? get() : routeFetch(input, init),
+    );
+  }
+
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn> | null = null;
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    sentBodies.length = 0;
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.unstubAllGlobals();
+    consoleErrorSpy?.mockRestore();
+    consoleErrorSpy = null;
+  });
+
+  it.each([
+    [
+      'GET が 500',
+      () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 'INTERNAL_ERROR' } }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
+    ],
+    ['通信の失敗', () => Promise.reject(new TypeError('Failed to fetch'))],
+    [
+      'data の無い 200',
+      () => Promise.resolve(new Response(JSON.stringify({}), { status: 200, headers: { 'Content-Type': 'application/json' } })),
+    ],
+  ])('%s: フォームを出さず、理由を出し、PUT を送らない。organizations の行は変わらない', async (_label, get) => {
+    // 通信の失敗は画面が console.error に書く (テストの出力を汚さない)
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    failGetWith(get);
+    const before = { ...orgRow(ORG_A) };
+
+    await renderPage();
+
+    expect(container.querySelector('form')).toBeNull();
+    expect(container.querySelector('#org-settings-name')).toBeNull();
+    expect(container.querySelector('button[type="submit"]')).toBeNull();
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain(LOAD_FAILURE_MESSAGE);
+    expect(container.querySelector('[role="status"]')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([, init]) => (init?.method ?? 'GET') !== 'GET')).toEqual([]);
+    expect(sentBodies).toHaveLength(0);
+    expect(orgRow(ORG_A)).toEqual(before);
+  });
+
+  it('対照: GET が成功すれば同じ差し替えのままフォームを出し、保存で行が変わる (上の検査が空振りしていない)', async () => {
+    failGetWith(() => settings.GET());
+    await renderPage();
+
+    expect(container.querySelector('form')).not.toBeNull();
+    await type(FIELD_IDS.industry, '小売');
+    await submit();
+    expect(sentBodies).toHaveLength(1);
+    expect(orgRow(ORG_A)).toMatchObject({ industry: '小売', employee_count: 30, contact_email: 'old@example.com' });
   });
 });
