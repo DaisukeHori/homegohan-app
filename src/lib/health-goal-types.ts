@@ -48,8 +48,8 @@ export const GOAL_TYPE_DEFS: GoalTypeDef[] = [
 
 /**
  * Web の作成画面には出さないが、API が受け付ける種類。
- * 現行のモバイルアプリ (apps/mobile/app/health/goals.tsx) は歩数に step_count、睡眠時間に sleep_hours を送る。
- * 作成済みの目標が使えなくならないよう、モバイルが送る値はそのまま受け付ける。
+ * 以前のモバイルアプリの目標の画面 (apps/mobile/app/health/goals.tsx。#1598 で消した) は歩数に step_count、睡眠時間に sleep_hours を送った。
+ * その版が送る値と、作成済みの目標が使えなくならないよう、その値はそのまま受け付ける。
  */
 export const ADDITIONAL_GOAL_TYPE_DEFS: GoalTypeDef[] = [
   { ...STEPS_DEF, type: 'step_count', aliasOf: STEPS_DEF.type },

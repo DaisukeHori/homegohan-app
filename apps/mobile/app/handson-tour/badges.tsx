@@ -1,6 +1,6 @@
 // handson-tour/badges.tsx — Step 3 バッジ確認 (ハンズオン専用)
 // Canonical: docs/design/family/09-onboarding-handson-tour/05-step3-badges.md
-// 注意: apps/mobile/app/badges/index.tsx (通常バッジ画面、P3-B 改修) とは別ファイル
+// (通常のバッジの一覧のネイティブの画面 app/badges/index.tsx は、通常の操作で届かない画面として消した。#1598。一覧は Web の画面)
 
 import { useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useState } from 'react';

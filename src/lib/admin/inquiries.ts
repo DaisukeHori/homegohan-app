@@ -6,7 +6,7 @@
  *
  * 呼び出し元 (どれも { inquiries } / { inquiry } の camelCase を読む):
  *   - Web:      src/app/(support)/support/inquiries/page.tsx (一覧 GET / 詳細 GET / 更新 PUT)
- *   - モバイル: apps/mobile の admin / support の問い合わせ画面 (一覧 GET / 詳細 GET / 更新 PATCH)
+ *   (モバイルの support の問い合わせ画面 (一覧 GET / 詳細 GET / 更新 PATCH) も呼んでいたが、通常の操作で届かない画面として消した。#1598)
  * 既存クライアントの形に合わせるため、運営 API の標準形 ({ data, meta }) ではなくこの形で返す。
  *
  * 個人情報の扱い (#1200 と同じ方針):
@@ -99,7 +99,7 @@ export interface InquiryRow extends InquirySummaryRow {
   admin_notes: string | null;
 }
 
-/** 一覧が返す 1 件 (camelCase)。モバイルの一覧画面の InquiryRow と同じ項目 */
+/** 一覧が返す 1 件 (camelCase)。以前のモバイルの一覧画面の InquiryRow と同じ項目 (その画面は #1598 で消した) */
 export interface InquirySummaryDto {
   id: string;
   userId: string | null;

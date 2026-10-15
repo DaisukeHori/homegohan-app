@@ -1,6 +1,7 @@
 /**
- * 献立の生成のリクエストの行 (weekly_menu_requests.error_message) と買い物リストの作り直しのリクエストの行
- * (shopping_list_requests.result.error) を画面に出すときの文 (モバイル。#1478・#1576)
+ * 献立の生成のリクエストの行 (weekly_menu_requests.error_message) を画面に出すときの文 (モバイル。#1478・#1576)
+ * (買い物リストの作り直しのリクエストの行の文は、それを出す買い物リストのネイティブの画面を、通常の操作で届かない画面として
+ * 消したので、ここでは扱わない。#1598。Web は src/lib/shopping-list-request-error.ts)
  *
  * error_message は Edge Function (generate-menu-v4 / v5) と Next.js の API が書き、アプリは Supabase Realtime や
  * 直接の select (src/hooks/useV4MenuGeneration.ts) で受けて、そのまま表示する。
@@ -20,11 +21,10 @@ import {
   MENU_REQUEST_FAILED_MESSAGE,
   MENU_REQUEST_FIXED_MESSAGES,
   MENU_REQUEST_STALE_DISPLAY_MESSAGE,
-  SHOPPING_LIST_REQUEST_FAILED_MESSAGE,
   menuRequestKnownMessageForDisplay,
 } from "../../../../supabase/functions/_shared/stored-failure-messages";
 
-export { MENU_REQUEST_FAILED_MESSAGE, MENU_REQUEST_STALE_DISPLAY_MESSAGE, SHOPPING_LIST_REQUEST_FAILED_MESSAGE };
+export { MENU_REQUEST_FAILED_MESSAGE, MENU_REQUEST_STALE_DISPLAY_MESSAGE };
 
 /** こちらで書いた文か */
 export function isKnownMenuRequestErrorMessage(value: unknown): value is string {
@@ -46,19 +46,4 @@ export function menuRequestErrorMessageForDisplay(stored: unknown): string | nul
   if (stored === null || stored === undefined || stored === "") return null;
   if (stored === MENU_REQUEST_STALE_DISPLAY_MESSAGE) return stored;
   return isKnownMenuRequestErrorMessage(stored) ? menuRequestKnownMessageForDisplay(stored) : MENU_REQUEST_FAILED_MESSAGE;
-}
-
-/**
- * 買い物リストの作り直しのリクエストの行 (shopping_list_requests.result.error) を画面に出すときの文 (#1576)。
- * Web の src/lib/shopping-list-request-error.ts の shoppingListRequestErrorMessageForDisplay と同じ絞り方:
- * 空 (null・undefined・空文字) は null (画面は自分の既定の文を出す)、定型の失敗の文・同意の文・上限の文はそのまま、
- * それ以外 (#1478 より前に Edge Function が書いた例外の文面・文字列でない値) は定型の失敗の文
- */
-export function shoppingListRequestErrorMessageForDisplay(stored: unknown): string | null {
-  if (stored === null || stored === undefined || stored === "") return null;
-  const known =
-    stored === SHOPPING_LIST_REQUEST_FAILED_MESSAGE ||
-    aiConsentReasonOfStoredError(stored) !== null ||
-    isAiDailyLimitMessage(stored);
-  return known && typeof stored === "string" ? stored : SHOPPING_LIST_REQUEST_FAILED_MESSAGE;
 }

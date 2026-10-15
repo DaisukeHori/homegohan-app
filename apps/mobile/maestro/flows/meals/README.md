@@ -8,7 +8,7 @@ WebView の中の Web の画面を操作する検査は、Web の e2e (Playwrigh
 
 以前あったネイティブの食事の新規作成の画面 (`apps/mobile/app/meals/new.tsx`) は、タブから行けない画面だったので消しました (#1598)。
 食事の記録は WebView の中の Web の画面に一本化したので、この画面のための flow は足しません。
-食事の詳細 (`apps/mobile/app/meals/[id].tsx`) は、通知のタップ先 (`apps/mobile/src/lib/notificationRoute.ts` の `/meals/:id`) として残っています。
+食事の詳細 (`apps/mobile/app/meals/[id].tsx`) は、通知のタップ先として残していましたが、通知を送る仕組みが無く通常の操作で届かないので、あわせて消しました (#1598)。
 
 ## いまの flow
 

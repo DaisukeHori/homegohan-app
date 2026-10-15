@@ -107,7 +107,8 @@ export async function GET(request: Request) {
         requestId: pendingRequest.id,
         status: pendingRequest.status,
         mode: pendingRequest.mode,
-        // 究極モードの生成か (#1582)。モバイルの週間献立画面は、画面に入り直したときの進捗カードの種類をこれで決める
+        // 究極モードの生成か (#1582)。Web の週間献立画面は、画面に入り直したときの進捗カードの種類をこれで決める
+        // (モバイルの週間献立のネイティブの画面も同じだったが、#1598 で消した)
         ultimateMode: isUltimateModeWeeklyMenuRequest(pendingRequest.ultimate_mode),
         startDate: pendingRequest.start_date,
         createdAt: pendingRequest.created_at,
