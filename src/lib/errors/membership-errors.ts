@@ -34,6 +34,10 @@ export enum MembershipErrorCode {
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
   NOT_FAMILY_REPRESENTATIVE = 'NOT_FAMILY_REPRESENTATIVE',
   CANNOT_TRANSFER_TO_CHILD = 'CANNOT_TRANSFER_TO_CHILD',
+  // #1576: /api/family/members/[member_id]/remove が、RPC のエラー文にこのコードが含まれるときにだけ返す古い守り。
+  // remove_family_member は代表者を外そうとすると IS_FAMILY_REPRESENTATIVE を RAISE する (このコードを RAISE する SQL は無い)。
+  // 代表者の除名の 409 の本文の code は IS_FAMILY_REPRESENTATIVE になる
+  CANNOT_REMOVE_REPRESENTATIVE = 'CANNOT_REMOVE_REPRESENTATIVE',
   // #1232: 子供メンバー昇格の本人同意フロー
   PROMOTION_REQUEST_NOT_FOUND = 'PROMOTION_REQUEST_NOT_FOUND',
   PROMOTION_REQUEST_EXPIRED = 'PROMOTION_REQUEST_EXPIRED',
@@ -67,6 +71,9 @@ export enum MembershipErrorCode {
   // DB 側 (promotion RPC の deadlock_detected ハンドラ) と route 側 (pgCode='40P01')
   // の両経路からこのコードに正規化される。クライアントは同一操作をそのまま再試行してよい。
   CONFLICT_RETRY = 'CONFLICT_RETRY',
+  // #1576: 家族の API (/api/family/members/[member_id]/remove など) が本文の検証で返すコード
+  INVALID_REQUEST = 'INVALID_REQUEST',
+  VALIDATION_ERROR = 'VALIDATION_ERROR',
 }
 
 export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
@@ -96,6 +103,7 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: 409,
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: 403,
   [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: 409,
+  [MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]: 409,
   [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: 404,
   [MembershipErrorCode.PROMOTION_REQUEST_EXPIRED]: 410,
   [MembershipErrorCode.PROMOTION_REQUEST_ALREADY_USED]: 409,
@@ -119,6 +127,8 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.RPC_FAILED]: 500,
   [MembershipErrorCode.EMAIL_SEND_FAILED]: 500,
   [MembershipErrorCode.CONFLICT_RETRY]: 409,
+  [MembershipErrorCode.INVALID_REQUEST]: 400,
+  [MembershipErrorCode.VALIDATION_ERROR]: 400,
 };
 
 export function mapPgErrorToHttp(
@@ -183,6 +193,7 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: '代表者はこの操作をできません。先に代表者を譲ってください。',
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: '家族の代表者だけが操作できます。',
   [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: '子どものメンバーには代表者を譲れません。',
+  [MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]: '代表者は家族から外せません。先に代表者を譲ってください。',
   [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: '昇格の依頼が見つかりません。',
   [MembershipErrorCode.PROMOTION_REQUEST_EXPIRED]: '昇格の依頼の期限が切れています。',
   [MembershipErrorCode.PROMOTION_REQUEST_ALREADY_USED]: 'この昇格の依頼はすでに使われています。',
@@ -206,6 +217,8 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.RPC_FAILED]: '処理に失敗しました。時間をおいてもう一度お試しください。',
   [MembershipErrorCode.EMAIL_SEND_FAILED]: 'メールを送れませんでした。時間をおいてもう一度お試しください。',
   [MembershipErrorCode.CONFLICT_RETRY]: 'ほかの操作と重なりました。もう一度お試しください。',
+  [MembershipErrorCode.INVALID_REQUEST]: '送った内容を読み取れませんでした。画面を開き直して、もう一度お試しください。',
+  [MembershipErrorCode.VALIDATION_ERROR]: '入力の内容が正しくありません。確かめて、もう一度お試しください。',
 };
 
 /** 表に無い code (INVALID_BODY・INTERNAL_ERROR・UNKNOWN など) や、code が無いときの汎用の文 */

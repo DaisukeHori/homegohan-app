@@ -111,7 +111,7 @@ vi.mock('@/lib/planned-meals-snapshot', async (importOriginal) => {
 
 const { GET, maxDuration } = await import('@/app/api/ai/menu/weekly/status/route');
 const { AI_CONSENT_REQUIRED_MESSAGE, AI_CONSENT_CHECK_FAILED_MESSAGE } = await import('../../../../../supabase/functions/_shared/ai-consent');
-const { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } = await import('@/lib/weekly-menu-request-error');
+const { WEEKLY_MENU_REQUEST_FAILED_MESSAGE, WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE } = await import('@/lib/weekly-menu-request-error');
 
 const user = { id: 'user-1' };
 
@@ -195,7 +195,10 @@ describe('GET /api/ai/menu/weekly/status', () => {
 
     expect(res.status).toBe(200);
     expect(json.status).toBe('failed');
-    expect(json.errorMessage).toBe('stale_request_timeout');
+    // 行には英語の印を書くが、本文には日本語の文を返す (#1576)
+    expect(json.errorMessage).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(json.error_message).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(JSON.stringify(json)).not.toContain('stale_request_timeout');
     expect(json.updatedAt).toBe(new Date(NOW_MS).toISOString());
     expect(json.restore).toEqual({ restored: 1, skipped: 0, failed: 0 });
 
@@ -376,7 +379,6 @@ describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
   it.each([
     ['同意が無くて止めた文', AI_CONSENT_REQUIRED_MESSAGE],
     ['同意の状況を読めなくて止めた文', AI_CONSENT_CHECK_FAILED_MESSAGE],
-    ['進まなくなった行の文', 'stale_request_timeout'],
     ['中止の文', '中止しました'],
     ['固定の文', WEEKLY_MENU_REQUEST_FAILED_MESSAGE],
   ])('こちらで書いた文 (%s) は、画面が見分けられるようそのまま返す', async (_label, stored) => {
@@ -386,6 +388,16 @@ describe('GET /api/ai/menu/weekly/status: 失敗の文 (#1172)', () => {
 
     expect(json.errorMessage).toBe(stored);
     expect(json.error_message).toBe(stored);
+  });
+
+  // #1576: 進まなくなった行の英語の印は、利用者に英語のまま出さない
+  it('行の error_message が進まなくなった行の印なら、日本語の文にして返す (#1576)', async () => {
+    selectResultQueue.push({ data: failedRow('stale_request_timeout'), error: null });
+
+    const json = await (await GET(makeRequest('req-1'))).json();
+
+    expect(json.errorMessage).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(json.error_message).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
   });
 
   it('error_message が空 (null) なら null のまま返す (画面は自分の既定の文を出す)', async () => {

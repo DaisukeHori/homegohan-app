@@ -37,7 +37,12 @@
 #   SUPABASE_LOCAL_EXCLUDE           supabase start -x に渡すサービス
 #                                    (既定: studio,imgproxy,logflare,vector,edge-runtime)
 #   SUPABASE_LOCAL_REALTIME_VERSION  Realtime イメージの版を固定する (既定: IPv6 が無効な環境のみ v2.83.1)
-#   SUPABASE_LOCAL_RETRY_WAIT_UNIT   start を一過性のエラーでやり直すときの待ち時間の単位秒 (既定: 30。n 回目は n 倍)
+#   SUPABASE_LOCAL_RETRY_WAIT_UNIT   start を一過性のエラーでやり直すときの待ち時間の単位秒 (既定: START_RETRY_WAIT_UNIT_DEFAULT。
+#                                    イメージの取得の失敗は、どの取得元でも失敗した n 周目のあとに n 倍、Docker の準備待ちは n 回目のあとに n 倍)
+#   SUPABASE_IMAGE_REGISTRIES        start がイメージを取る取得元を試す順 (空白区切り。既定: public.ecr.aws ghcr.io。#1523)
+#   SUPABASE_IMAGE_PULL_ROUNDS       start が取得元を一巡する回数の上限 (既定: 3)
+#   SUPABASE_INTERNAL_IMAGE_REGISTRY CLI の取得元。指定すれば start もそれだけを使う (reset / verify はこれで取得元を替える。
+#                                    詳しくは scripts/lib/supabase-image-pull.sh と docs/operations/ci-supabase-image-pull.md)
 #   SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS   stop / stop-leftover が prune の衝突で失敗したときに CLI の stop を打つ回数の上限
 #                                        (最初の 1 回を含む。既定: STOP_RETRY_ATTEMPTS_DEFAULT。1 以上の整数)
 #   SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT  そのやり直しの待ち時間の単位秒 (既定: STOP_RETRY_WAIT_UNIT_DEFAULT。n 回目は n 倍。0 以上の整数)
@@ -55,6 +60,9 @@ CLI_VERSION="2.62.10"
 # 枠 (slot) ごとの project_id とポート。枠 0 (既定。CI はこれ) は project_id = homegohan-local・CLI の既定のポートのまま
 # shellcheck source=lib/local-ci-slot.sh
 . "$ROOT/scripts/lib/local-ci-slot.sh"
+# イメージの取得の一過性の失敗 (レート制限など) のやり直しと取得元の切り替え (#1523)
+# shellcheck source=lib/supabase-image-pull.sh
+. "$ROOT/scripts/lib/supabase-image-pull.sh"
 SLOT="${LOCAL_CI_SLOT:-0}"
 if ! local_ci_slot_valid "$SLOT"; then
   echo "[supabase-local] LOCAL_CI_SLOT は 0〜$LCS_SLOT_MAX の整数にしてください: $SLOT" >&2
@@ -252,6 +260,12 @@ prepare() {
   log "ベースライン ($version) + 新規 migration $count 本を適用対象にしました"
 }
 
+# start のやり直しの待ち時間の単位秒の既定 (SUPABASE_LOCAL_RETRY_WAIT_UNIT で上書き)。public.ecr.aws の認証なしの取得は
+# 1 秒あたり 1 回までなので、CI で複数のジョブが同時に取得して当たった上限が解けるまでの間をとる
+readonly START_RETRY_WAIT_UNIT_DEFAULT=30
+# start を同じ取得元で間をおいてやり直す失敗: Docker デーモンの再起動直後で、自動再起動中のコンテナがまだ準備できていない
+readonly START_NOT_READY_PATTERN='is not ready'
+
 cmd_start() {
   ensure_docker
   prepare
@@ -259,26 +273,16 @@ cmd_start() {
   if [ -n "$SUPABASE_LOCAL_EXCLUDE" ]; then
     args+=(-x "$SUPABASE_LOCAL_EXCLUDE")
   fi
-  # 次の一過性の失敗に限り、間隔を空けて最大 3 回まで起動をやり直す (それ以外のエラーは再実行しない)。
-  #   - イメージの取得に失敗する ("failed to pull docker image")。public.ecr.aws は未認証の pull が
-  #     1 秒あたり 1 回までのため、CI で複数のジョブが同時に取得するとレート制限 ("toomanyrequests")
-  #     や接続のタイムアウトになる
-  #   - Docker デーモンの再起動直後で、自動再起動中のコンテナがまだ準備できていない ("is not ready")
-  # CLI のエラーは stderr に出るため、stderr だけを画面に流しつつファイルにも残して判定する。
-  local err status attempt
-  err="$(mktemp)"
-  for attempt in 1 2 3; do
-    status=0
-    { cli start "${args[@]}" 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
-    if [ "$status" -eq 0 ]; then
-      break
-    fi
-    if [ "$attempt" -eq 3 ] || ! grep -qE 'failed to pull docker image|toomanyrequests|is not ready' "$err"; then
-      break
-    fi
-    log "一過性のエラーで supabase start が失敗したため、$((attempt * ${SUPABASE_LOCAL_RETRY_WAIT_UNIT:-30})) 秒待ってやり直します"
-    sleep $((attempt * ${SUPABASE_LOCAL_RETRY_WAIT_UNIT:-30}))
-  done
+  # 次の一過性の失敗に限り、間隔を空けて起動をやり直す (それ以外のエラーは再実行しない。scripts/lib/supabase-image-pull.sh)。
+  #   - イメージの取得に失敗する ("failed to pull docker image" / "toomanyrequests" など)。取得元を
+  #     public.ecr.aws → ghcr.io の順に替えてやり直し、どれでも失敗したら間を空けて次の周に入る。
+  #     public.ecr.aws は認証なしの取得に上限があり、GitHub のランナーでは日中くり返し当たる (#1523)。
+  #     最後まで取れなかったら「[image-pull-unavailable] ...」を出して SIP_EXIT_PULL_UNAVAILABLE で終わる (検査の赤と区別する)
+  #   - Docker デーモンの再起動直後で、自動再起動中のコンテナがまだ準備できていない ("is not ready")。同じ取得元でやり直す
+  local err status=0
+  sip_init "${SUPABASE_LOCAL_RETRY_WAIT_UNIT:-$START_RETRY_WAIT_UNIT_DEFAULT}" || exit 2
+  err="$(mktemp "${TMPDIR:-/tmp}/supabase-local-start.XXXXXX")"
+  sip_run "supabase start" - "$err" "$START_NOT_READY_PATTERN" cli start "${args[@]}" || status=$?
   rm -f "$err"
   return "$status"
 }

@@ -16,6 +16,7 @@ import {
 } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { invalidInputResponse, invalidJsonBodyResponse, invalidQueryResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -31,10 +32,7 @@ export async function GET(request: NextRequest) {
     });
 
     if (!queryResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_QUERY', message: queryResult.error.message } },
-        { status: 400 }
-      );
+      return invalidQueryResponse(queryResult.error.issues);
     }
 
     const { type, status, page, per_page } = queryResult.data;
@@ -76,14 +74,16 @@ export async function POST(request: NextRequest) {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
 
-    const body = await request.json();
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      // #1654: 本文が JSON として読めないときは 400 OP_INVALID_INPUT (外側の catch の 500 に落とさない)
+      return invalidJsonBodyResponse();
+    }
+    const body = bodyResult.body;
     const parseResult = PlanCreateSchema.safeParse(body);
 
     if (!parseResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_INPUT', message: parseResult.error.message, details: parseResult.error.issues } },
-        { status: 400 }
-      );
+      return invalidInputResponse(parseResult.error.issues);
     }
 
     const input = parseResult.data;

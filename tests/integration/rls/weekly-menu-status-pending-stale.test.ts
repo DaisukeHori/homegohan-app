@@ -27,7 +27,10 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 import ws from 'ws';
 
-import { WEEKLY_MENU_REQUEST_STALE_MESSAGE } from '../../../src/lib/weekly-menu-request-error';
+import {
+  WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+} from '../../../src/lib/weekly-menu-request-error';
 import { WEEKLY_MENU_REQUEST_STALE_MINUTES } from '../../../src/lib/weekly-menu-request-stale';
 
 // ---------------------------------------------------------------
@@ -218,7 +221,8 @@ describe('#1507 status・pending の止まりの判定 (実 DB)', () => {
 
     expect(status).toBe(200);
     expect(body.status).toBe('failed');
-    expect(body.errorMessage).toBe(WEEKLY_MENU_REQUEST_STALE_MESSAGE);
+    // 行には英語の印を書き、本文には日本語の文を返す (#1576)
+    expect(body.errorMessage).toBe(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE);
     const after = await readRequest(stuck);
     expect(after.status).toBe('failed');
     expect(after.error_message).toBe(WEEKLY_MENU_REQUEST_STALE_MESSAGE);

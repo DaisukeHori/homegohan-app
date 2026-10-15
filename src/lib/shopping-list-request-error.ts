@@ -5,7 +5,8 @@
  * 失敗の error には、同意の判定で止めたときの人向けの文のほかに、catch で捕まえた例外の文面がそのまま入る
  * (DB (PostgREST) の生のエラー文・外部の AI の応答の本文 'Fast LLM API error: 500 - ...' など)。
  * GET /api/shopping-list/regenerate/status は result を応答の本文に入れ、Web とアプリの画面は result.error を
- * そのまま表示するので、ここで絞る。元の文は Edge Function が構造化ログ (app_logs) に残している。
+ * 表示するので、ここで絞る。Realtime で行を受ける画面も、Web は shoppingListRequestErrorMessageForDisplay、
+ * アプリは apps/mobile/src/lib/menu-request-error.ts の shoppingListRequestErrorMessageForDisplay を通す (#1576)。元の文は Edge Function が構造化ログ (app_logs) に残している。
  *
  * そのまま返してよい result.error (画面が見分ける、こちらで書いた文) は次のものだけ。それ以外は固定の文にする。
  *   - AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE: 同意の判定で止めた (T15 / #1154)。
@@ -43,6 +44,17 @@ function isKnownShoppingListRequestErrorMessage(value: unknown): value is string
 export function shoppingListRequestErrorMessageForResponse(stored: unknown): string | null | undefined {
   if (stored === null || stored === undefined || stored === '') return stored;
   return isKnownShoppingListRequestErrorMessage(stored) ? stored : SHOPPING_LIST_REQUEST_FAILED_MESSAGE;
+}
+
+/**
+ * Realtime で受けた行の result.error・状態の確認の API の本文の result.error を画面に出すときの文 (#1576)。
+ * 絞り方は shoppingListRequestErrorMessageForResponse と同じで、空 (null・undefined・空文字) は null
+ * (画面は自分の既定の文を出す)、こちらで書いた文はそのまま、それ以外 (文字列でない値を含む) は固定の文。
+ * 週の献立の画面 (src/app/(main)/menus/weekly/page.tsx) の買い物リストの作り直しの受け口が通す
+ */
+export function shoppingListRequestErrorMessageForDisplay(stored: unknown): string | null {
+  const message = shoppingListRequestErrorMessageForResponse(stored);
+  return message ? message : null;
 }
 
 /**

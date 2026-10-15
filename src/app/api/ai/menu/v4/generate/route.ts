@@ -25,7 +25,7 @@ import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-ultimate';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
-import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
+import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 
 // Vercel Proプランでは最大300秒まで延長可能
@@ -33,7 +33,8 @@ export const maxDuration = 300;
 
 // ===== Validation Helpers =====
 
-const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+// 受け付ける食事の区分 (5 値)。値と並びの正本は @homegohan/shared の MEAL_ORDER (#1631。手書きしない)
+const VALID_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
 
 /** 1 日の主な食事の数 (朝・昼・夕)。slot の上限の計算に使う */
 const MAIN_MEALS_PER_DAY = 3;
@@ -73,7 +74,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     }
 
     // mealType validation
-    if (!mealType || typeof mealType !== 'string' || !VALID_MEAL_TYPES.includes(mealType as MealType)) {
+    if (!mealType || typeof mealType !== 'string' || !isMealType(mealType)) {
       return { valid: false, slots: [], error: `targetSlots[${i}].mealType must be one of: ${VALID_MEAL_TYPES.join(', ')}` };
     }
 
@@ -93,7 +94,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     
     validated.push({
       date,
-      mealType: mealType as MealType,
+      mealType,
       plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined,
     });
   }
