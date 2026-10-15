@@ -6,8 +6,14 @@
  * 同じ取り違えが他に入らないよう、ソース (app/ と src/) に書かれた行き先を全部拾って、画面のファイルと突き合わせる。
  *
  * 拾う書き方: router.push / replace / navigate / dismissTo (と useRouter() の戻り値の同名のメソッド) の第 1 引数、
+ * Linking.createURL の第 1 引数 (メールのリンクから戻る deep link の行き先)、
  * { pathname: ... }、href= / homeHref= (JSX) と、行き先の一覧の { href: ... } / { route: ... } の、'/' で始まる文字列
  * (テンプレート文字列の ${...} は 1 区間の任意の値として扱う)。行き先の中の (group) は、その group の中の画面であることも確かめる。
+ *
+ * 同じ URL に当たる画面のファイルが 2 つあると、expo-router はそのどちらか (index の画面) を先に当てる。#1598 では、
+ * マイページ・比較のタブ ((tabs)/profile・(tabs)/comparison。WebView) と同じパスのネイティブの画面 (profile/index・
+ * comparison/index) があり、設定の「プロフィール」や通知の '/profile' が、タブではなく届かないはずのネイティブの画面を開いていた。
+ * 同じ URL の画面が 1 つだけであることも確かめる。
  *
  * 例外の一覧は持たない (#1049 の整合ゲート)。以前は「画面が無いことが分かっている行き先」の一覧 (KNOWN_MISSING_TARGETS) があり、
  * 健康診断の一覧の行のタップ ('/health/checkups/${id}') がそこに載っていたため、詳細の画面が無いまま、この確認を通っていた。
@@ -25,7 +31,7 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 /** テンプレート文字列の ${...} を置き換える印 (動的な区間 [id] にだけ一致する) */
 const DYNAMIC_VALUE = '\u0000dynamic\u0000';
 
-type RouteFile = { groups: string[]; segments: string[] };
+type RouteFile = { file: string; groups: string[]; segments: string[] };
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -42,14 +48,17 @@ const isDynamic = (segment: string) => /^\[.+\]$/.test(segment);
 /** app/ の画面ファイルを、URL の区間 (group と index を除く) と、属する group に分ける。_layout と +html などは画面ではない */
 function collectRoutes(): RouteFile[] {
   return walk(APP_DIR)
-    .map((file) => path.relative(APP_DIR, file).replace(/\.tsx?$/, '').split(path.sep))
-    .filter((parts) => {
+    .map((file) => path.relative(APP_DIR, file))
+    .filter((relative) => {
+      const parts = relative.replace(/\.tsx?$/, '').split(path.sep);
       const name = parts[parts.length - 1];
       return !name.startsWith('_') && !name.startsWith('+');
     })
-    .map((parts) => {
+    .map((relative) => {
+      const parts = relative.replace(/\.tsx?$/, '').split(path.sep);
       const withoutIndex = parts[parts.length - 1] === 'index' ? parts.slice(0, -1) : parts;
       return {
+        file: relative,
         groups: withoutIndex.filter(isGroup),
         segments: withoutIndex.filter((segment) => !isGroup(segment)),
       };
@@ -76,7 +85,7 @@ function targetsInSource(source: string): string[] {
   // 'xxx' / "xxx" / `xxx` の、'/' で始まる文字列
   const literal = String.raw`(?:'(\/[^'\n]*)'|"(\/[^"\n]*)"|\x60(\/[^\x60\n]*)\x60)`;
   const patterns = [
-    new RegExp(String.raw`\b(?:push|replace|navigate|dismissTo)\(\s*${literal}`, 'g'),
+    new RegExp(String.raw`\b(?:push|replace|navigate|dismissTo|createURL)\(\s*${literal}`, 'g'),
     new RegExp(String.raw`\bpathname:\s*${literal}`, 'g'),
     new RegExp(String.raw`\b(?:href|homeHref)=\{?\s*${literal}`, 'g'),
     // 行き先の一覧 ({ href: '/x', label: ... } / { route: '/x', ... })
@@ -141,6 +150,47 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
     expect(routeExists(routes, '/health/checkups/new')).toBe(true);
   });
 
+  it('メールのリンクから戻る deep link の行き先 (Linking.createURL) も拾っている', () => {
+    const deepLinkTargets = targets.filter((t) => t.file === path.join('app', '(auth)', 'signup.tsx')).map((t) => t.target);
+    expect(deepLinkTargets).toContain('/auth/verify');
+    expect(targets.map((t) => t.target)).toContain('/auth/reset-password');
+  });
+
+  it('同じ URL に当たる画面のファイルは 1 つだけ (タブと同じパスのネイティブの画面を置かない。#1598)', () => {
+    const byUrl = new Map<string, string[]>();
+    for (const route of routes) {
+      const url = '/' + route.segments.map((segment) => (isDynamic(segment) ? ':' : segment)).join('/');
+      byUrl.set(url, [...(byUrl.get(url) ?? []), route.file]);
+    }
+    const duplicated = [...byUrl.entries()].filter(([, files]) => files.length > 1).map(([url, files]) => `${url}: ${files.join(' / ')}`);
+    expect(duplicated).toEqual([]);
+  });
+
+  it('タブのパス (/profile・/comparison) はタブの画面だけに当たる (消したネイティブの画面 profile/index・comparison/index が無い)', () => {
+    for (const tab of ['profile', 'comparison']) {
+      const matched = routes.filter((route) => route.segments.length === 1 && route.segments[0] === tab).map((route) => route.file);
+      expect(matched).toEqual([path.join('(tabs)', `${tab}.tsx`)]);
+    }
+  });
+
+  it('#1598 / #1610 で消した届かない画面のファイルは無い (main の取り込みで、main 側の変更と一緒に戻っていない)', () => {
+    // main の取り込みでは、こちらが消して main が書き換えた画面 (meals/new.tsx。#1631) が modify/delete で衝突した。
+    // 衝突を main の側で解くと、届かない画面がそのまま戻るので、消した画面のファイルが 1 つも無いことを確かめる。
+    const removedScreens = [
+      path.join('meals', 'new.tsx'),
+      path.join('family', 'index.tsx'),
+      path.join('profile', 'index.tsx'),
+      path.join('comparison', 'index.tsx'),
+      ...['company', 'contact', 'faq', 'guide', 'legal', 'news'].map((name) => path.join('(public)', `${name}.tsx`)),
+    ];
+    const restored = removedScreens.filter((file) => fs.existsSync(path.join(APP_DIR, file)));
+    expect(restored).toEqual([]);
+    // 確認が空振りしていない (同じディレクトリの残した画面は見えている)
+    expect(fs.existsSync(path.join(APP_DIR, 'meals', '[id].tsx'))).toBe(true);
+    expect(fs.existsSync(path.join(APP_DIR, 'profile', 'nutrition-targets.tsx'))).toBe(true);
+    expect(fs.existsSync(path.join(APP_DIR, '(public)', 'about.tsx'))).toBe(true);
+  });
+
   it('このテストは例外の一覧を持たない (画面の無い行き先を、一覧に載せて通さない)', () => {
     const source = fs.readFileSync(__filename, 'utf8');
     // 以前の例外の一覧の宣言 (const <名前>: Record<string, string> = { 行き先: 理由 })。説明のコメントにある名前には当たらない
@@ -156,6 +206,7 @@ describe('行き先の拾い方 (#1049)', () => {
     ['型の注釈を付けたテンプレート文字列', 'router.push(`/health/checkups/${checkup.id}` as Href)', `/health/checkups/${DYNAMIC_VALUE}`],
     ['replace', 'router.replace("/login")', '/login'],
     ['dismissTo', "router.dismissTo('/home')", '/home'],
+    ['Linking.createURL', 'Linking.createURL("/auth/verify")', '/auth/verify'],
     ['pathname', "router.push({ pathname: '/x/y', params: { id } })", '/x/y'],
     ['JSX の href', '<Link href="/about">', '/about'],
     ['JSX の href={...}', '<Redirect href={`/u/${id}`} />', `/u/${DYNAMIC_VALUE}`],

@@ -21,7 +21,7 @@
  *
  * push token の削除に失敗してもログアウトは止めない (unregisterExpoPushToken は例外を投げない)。
  *
- * 設定画面・マイページのように、セッションが生きているまま呼ぶ場合は userId だけでよい (削除は現在のセッションで認可される)。
+ * 設定画面のように、セッションが生きているまま呼ぶ場合は userId だけでよい (削除は現在のセッションで認可される)。
  * Web (WebView) からの sign-out / session-expired を処理する場合 (webViewAuthMessages.ts) は、Web 側のログアウトが
  * 全端末のセッションをサーバーで失効させ、処理の途中で getUser() が端末のセッションを消すことがある。
  * 呼び出し側が処理の最初に控えた userId と accessToken を渡す。accessToken があれば、削除はそのトークンで認可される。

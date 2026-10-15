@@ -317,7 +317,10 @@ export default function SettingsTab() {
               title="プロフィール"
               subtitle="名前、年齢、身長・体重など"
               testID="settings-profile-row"
-              onPress={() => router.push("/profile")}
+              // マイページのタブ (Web のマイページを WebView で開く。名前・身長・体重などはそこで編集する)。
+              // 以前の "/profile" は、同じパスのネイティブのプロフィール画面 (app/profile/index.tsx) に当たっていた。
+              // その画面は消した (#1598)。同じパスの画面がまた増えてもタブを開くよう、タブのルートを名指しする
+              onPress={() => router.push("/(tabs)/profile")}
             />
             <SettingRow
               icon="🩺"

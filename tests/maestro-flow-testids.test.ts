@@ -372,8 +372,10 @@ describe("#1552 maestro の flow の testID の抜き出し (検査の道具そ�
     expect(isFlowIdInSource("webview-meals", ids)).toBe(true);
     expect(isFlowIdInSource("webview-home", ids)).toBe(true);
     expect(isFlowIdInSource("profile-settings-button", ids)).toBe(true);
-    // apps/mobile/app/meals/new.tsx のテンプレート `meal-mode-${…}`
-    expect(isFlowIdInSource("meal-mode-meal", ids)).toBe(true);
+    // apps/mobile/app/onboarding/questions.tsx のテンプレート `onboarding-choice-option-${…}`
+    // (以前ここで見ていた apps/mobile/app/meals/new.tsx の `meal-mode-${…}` は、届かない画面として消した。#1598)
+    expect(isFlowIdInSource("onboarding-choice-option-male", ids)).toBe(true);
+    expect(isFlowIdInSource("meal-mode-meal", ids)).toBe(false);
     // apps/mobile/app/(tabs)/health.tsx のクイックアクション (const testID = a.href === … ? "health-graphs-button" : …;
     // 右辺が三項の式。#1552 の最初の集め方では読めず、ソースにあるのに許可リストに載っていた)
     expect(isFlowIdInSource("health-graphs-button", ids)).toBe(true);
