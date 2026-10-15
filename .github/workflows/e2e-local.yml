@@ -101,7 +101,9 @@ jobs:
       # tour/01〜07 は、ハンズオンツアー (初回の使い方ガイド) の判定 API と Step 0〜4・スキップ・やり直し (#846)。ユーザーは同じく test ごとに作る。
       # w5-3-menu-gen-adversarial と wave2-f2-queue-reliability は、週の献立の生成 (キュー・進捗・失敗の表示) の画面と API の嫌がらせ (#1622)。
       # 画面が読む生成の API (cleanup / pending / status など) はブラウザの通信を差し替える。API へ直接送る検査 (入力の検証・5xx にならないこと・
-      # 他人の要求を読めないこと) は本物のサーバーに送る。ユーザーは共通のテストユーザー (authedPage) を使う。
+      # 他人の要求を読めないこと) は本物のサーバーに送る。画面だけを見るテストは共通のテストユーザー (authedPage) を使い、
+      # 本物の生成の API へ送るテストと生成のモーダルから送るテストは、生成のレート制限 (1 分 5 回) と 1 日の AI の上限を
+      # 分け合わないよう、テストごとに作るユーザー (regularUser) を使う (#1672)。
       - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ + Turnstile)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
