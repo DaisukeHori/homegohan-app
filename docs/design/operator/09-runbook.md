@@ -375,9 +375,13 @@ Step 5: org_admin に手順案内
   → 削除をブロックする条件 (409。先に譲渡または解散してもらう):
      - 組織の owner         → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      - 家族グループの代表者  → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
+  → Stripe の後始末 (段階 billing。billing/01 §11): 顧客の開いたままの Checkout を閉じ、終端でない契約を即時解約し、Stripe の顧客を匿名化する
+     (顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない。まだ何も変えていないので再実行できる)
   → 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す (RPC prepare_account_deletion。メール配信ログ・問い合わせ・招待)
   → ライセンス席を解放 (RPC release_user_membership。失敗しても続ける)
   → Storage のファイルを削除 (meal_photos / fridge-images / health-checkups の <user_id>/ 以下など)
+  → Stripe の後始末をもう一度 (段階 billing_recheck。deleteUser の直前。段階 billing のあとに完了した Checkout の契約・作られた顧客を閉じる。
+     失敗したら削除しない。アカウントは残り、もう一度の退会で片付く)
   → auth.users を削除 (auth.admin.deleteUser)
      - 旧設計の「email を deleted+...@example.com に書き換える匿名化」はしない。行ごと削除する
      - public 側は FK の ON DELETE CASCADE / SET NULL で削除・匿名化される (本人だけの記録は削除、サポート・会計の記録は行を残して紐づけを外す)
@@ -389,8 +393,9 @@ Step 5: org_admin に手順案内
   - 監査ログ (admin_audit_logs) は FK の ON DELETE SET NULL で操作者 ID が外れて残る (法的要件)
   - org_health_access_logs など、ほかの法定保管データの扱いは未確認。棚卸しが必要 (作業計画 T11)
 
-まだ無いもの (追加予定):
-  - Stripe の顧客/サブスクリプションの後始末 (影響範囲の調査は cross/08-legal-compliance.md §19)
+Stripe の後始末は billing/01 §11 (開いた Checkout を閉じ・即時解約・顧客の匿名化)。退会のあとに Stripe に生まれた契約は、
+届いた Webhook の写像の入口 (syncSubscription) が即時解約し、監査 system.billing.orphan_subscription_cancelled (warn) を残す
+(最初の請求が済んでいれば運営が Stripe で返金する。billing/01 §18 の 17)
 ```
 
 ### 9.2 運営が関わる場合 (サポート経由の依頼)
@@ -722,9 +727,11 @@ sequenceDiagram
   alt owner または代表者
     API-->>App: 409 ACCOUNT_DELETE_BLOCKED_ORG_OWNER / _FAMILY_REPRESENTATIVE
   else 削除できる
+    API->>API: Stripe の後始末 (段階 billing。Checkout を閉じ・即時解約・顧客の匿名化。billing/01 §11)
     API->>DB: RPC prepare_account_deletion (生のメールアドレスを残す記録を伏せる・非公開レシピを消す)
     API->>DB: RPC release_user_membership (ライセンス席の解放)
     API->>DB: Storage のファイルを削除
+    API->>API: Stripe の後始末をもう一度 (段階 billing_recheck。deleteUser の直前)
     API->>DB: auth.admin.deleteUser (public 側は FK の CASCADE / SET NULL)
     API->>API: 削除完了メールを本人へ 1 通送る (#1152。送信に失敗しても 200)
     API-->>App: 200 { success: true }
@@ -733,7 +740,7 @@ sequenceDiagram
   Note over API,DB: 途中で失敗したら 500 INTERNAL_ERROR (アカウントは残り、再実行できる)
 
   Note over API,DB: 30 日の待機と月次バッチはない (2026-10-08 オーナー判断)
-  Note over API,DB: 削除前の確認メールは送らない (2026-10-09 オーナー判断)。Stripe の後始末は今後追加 (#1447)
+  Note over API,DB: 削除前の確認メールは送らない (2026-10-09 オーナー判断)。Stripe の後始末は billing/01 §11
 ```
 
 ## 14. エラーハンドリング

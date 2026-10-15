@@ -77,6 +77,19 @@ vi.mock('@/lib/db-logger', () => ({
   generateRequestId: vi.fn(() => 'req-test'),
 }));
 
+// 退会の段階 billing / billing_recheck (billing/01 §11)。既定の実装は createBillingRepository() で 2 つ目の service_role のクライアントを作り、
+// 偽のクエリに無い .maybeSingle() で段階 billing の 500 になるので、モジュールごと差し替える (route は billing を渡さない)
+const { mockCancelForAccountDeletion } = vi.hoisted(() => ({
+  mockCancelForAccountDeletion: vi.fn(async (_userId: string, _log: unknown, _phase: string) => ({
+    cancelled_subscriptions: 0,
+    expired_checkout_sessions: 0,
+    customer: 'none' as const,
+  })),
+}));
+vi.mock('@/lib/billing/account-deletion', () => ({
+  defaultAccountDeletionBilling: { cancelForAccountDeletion: mockCancelForAccountDeletion },
+}));
+
 import { POST } from '@/app/api/account/delete/route';
 import { MISSING_ENV_SERVER_LOG_PREFIX } from '@/lib/env-required';
 
@@ -219,6 +232,12 @@ describe('POST /api/account/delete — 設定がそろっているとき', () =>
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ success: true });
     expect(mockCreateAdminClient).toHaveBeenCalledTimes(1);
+    // 退会の段階 billing → billing_recheck の順に、本人の id で 2 回呼ばれる (billing/01 §11)
+    expect(mockCancelForAccountDeletion).toHaveBeenCalledTimes(2);
+    expect(mockCancelForAccountDeletion.mock.calls.map((call) => [call[0], call[2]])).toEqual([
+      [USER_ID, 'billing'],
+      [USER_ID, 'billing_recheck'],
+    ]);
     expect(mockCreateAdminClient.mock.calls[0][0]).toBe(URL_VALUE);
     expect(mockCreateAdminClient.mock.calls[0][1]).toBe(SERVICE_VALUE);
     expect(mockDeleteUser).toHaveBeenCalledWith(USER_ID);

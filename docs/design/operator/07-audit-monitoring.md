@@ -325,6 +325,11 @@ support.user.email_resend           - 確認メール再送
 
 ```
 system.payment.failed               - 支払失敗 (Stripe webhook)
+system.billing.subscription_created - 個人の契約の行ができた (写像 billing_apply_stripe_subscription。billing/01)
+system.billing.subscription_status_changed - 個人の契約の status が変わった (写像。past_due / grace になったときは severity=warn)
+system.stripe.event_failed          - Stripe の Webhook のイベントの処理に失敗した (severity=warn。target_type='stripe_event'・target_id は NULL)
+system.billing.account_deletion_stripe_cancelled - 退会で Stripe の Checkout を閉じ・契約を即時解約し・顧客を匿名化した (退会の段階 billing / billing_recheck)
+system.billing.orphan_subscription_cancelled - 退会した利用者の顧客に残った契約を即時解約した (severity=warn。target_type='stripe_subscription'・target_id は NULL)
 system.stripe.chargeback            - チャージバック発生 (severity=critical)
 system.stripe.reconcile_discrepancy - reconcile 不一致検出
 system.plan.auto_expire             - プラン自動期限切れ
@@ -384,6 +389,22 @@ export async function insertAuditLog(params: AuditLogParams): Promise<void> {
 **注意**:
 - `actor_id` は RLS の WITH CHECK で `auth.uid()` と一致することを強制するが、`service_role` を使う場合は RLS をバイパスするため、アプリ層で `actorId = await getCurrentUserId()` を必ず取得して渡すこと。
 - `actor_email_snapshot` / `actor_role_snapshot` は GDPR 削除により `actor_id` が NULL になった後も actor を特定するために使用する。これらはスナップショット列であり、後から変更されない。
+
+### 4.7 利用者の課金の操作 (billing/01)
+
+利用者本人の操作 (`actor_id` = `target_id` = 本人・`target_type = 'user'`)。書くのは `src/lib/billing/service.ts` だけ。
+名前の一覧は `src/lib/billing/core.ts` の `BILLING_AUDIT_ACTIONS` (4.5 の `system.payment.failed`・`system.billing.*`・`system.stripe.event_failed` も含めて 9 つ) が正。
+
+```
+user.billing.checkout_started       - Checkout Session を作った (POST /api/billing/checkout)
+user.billing.cancel_scheduled       - 有料プランの解約を予約した (期間末。POST /api/billing/subscription/cancel)
+user.billing.cancel_revoked         - 解約の予約を取り消した (POST /api/billing/subscription/resume)
+```
+
+課金の監査の `target_type` は `src/lib/billing/core.ts` の `BILLING_AUDIT_TARGET_TYPES` の 3 つ:
+`user` (target_id = 利用者の id)・`stripe_event` (利用者を解決できない Webhook の失敗。`system.stripe.event_failed`)・
+`stripe_subscription` (退会した利用者の顧客に残った契約の解約。`system.billing.orphan_subscription_cancelled`)。
+後の 2 つは `target_id` を NULL にし、Stripe の id (`evt_…` / `sub_…`。uuid ではない) は `details` に入れる。
 
 ## 5. 7 年保管とアーカイブ
 
