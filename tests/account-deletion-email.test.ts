@@ -179,7 +179,15 @@ beforeEach(() => {
 });
 
 function run() {
-  return deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger, now: () => DELETED_AT });
+  return deleteAccount({
+    userId: USER,
+    admin: makeAdmin(world),
+    requestId: REQUEST_ID,
+    logger: logs.logger,
+    now: () => DELETED_AT,
+    // billing/01 §11 の段階 billing / billing_recheck は偽物にする (既定の実装は service_role の client と Stripe の鍵を要る)
+    billing: { cancelForAccountDeletion: async () => ({ cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' }) },
+  });
 }
 
 function sentEnvelopes(): EmailEnvelope[] {
