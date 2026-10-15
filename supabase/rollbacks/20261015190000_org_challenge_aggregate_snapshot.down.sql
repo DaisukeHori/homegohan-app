@@ -1,4 +1,4 @@
--- rollback: 20261015120000_org_challenge_aggregate_snapshot.sql
+-- rollback: 20261015190000_org_challenge_aggregate_snapshot.sql
 -- ⚠️ 守りが弱くなる: 戻すと、管理者向けの集計 (get_org_challenge_aggregates) が、参加者の行をその場で数える形と最小人数 5 人に戻り、
 --    参加をやめる前後・メンバーを組織から外す前後の平均の差から、1 人の値を逆算できる状態に戻る。
 --    参加者に見せる順位表 (get_org_challenge_ranking) も参加者の行をその場で読む形に戻り、メンバーとして参加した管理者が、
@@ -14,7 +14,8 @@
 --   2. refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[]) と、表 organization_challenge_ranking_entries (順位表の控え)・
 --      organization_challenge_aggregates (集計の控え) を消す
 --   3. 参加の INSERT ポリシー「Users can join challenges」を、#1238 の定義 (supabase/baseline/prod_schema.sql と同じ) に戻す
---   参加者の行・チャレンジの行には触れない。
+--   参加者の行・チャレンジの行には触れない (migration の 7. が毎晩の更新として書いた参加者の値・順位と、終了日を過ぎたチャレンジの
+--   終了 (completed) は、毎晩の更新が書くものと同じなので戻さない)。
 --
 -- 先に関数を戻してから表を消す (update_org_challenge_progress が refresh_org_challenge_aggregates を呼ばず、
 -- get_org_challenge_ranking が順位表の控えを読まない形になってから消す)。

@@ -14,7 +14,9 @@
  *     #1600 から、毎晩の更新の時点の控え (organization_challenge_aggregates) から返す。控えは
  *     refresh_org_challenge_aggregates(p_now, p_recomputed_ids, p_count_only_ids) が書く。update_org_challenge_progress が毎晩、
  *     その夜に値を計算し直したチャレンジ (値まで書く) と、値を計算しない開催中のチャレンジ (開始前・対象外の種類。人数だけ書く) を渡して呼ぶ。
- *     どちらも開催中で集計に含める最後の日が進んだものだけ。ほかに控えの無い終了・中止のチャレンジを最初の 1 回だけ書く (下書きは作らない)。
+ *     どちらも開催中で集計に含める最後の日が進んだものだけ。ほかに控えの無い終了・中止のチャレンジを最初の 1 回だけ書く (下書きは作らない。
+ *     最後の日は、順位がついた参加者がいれば min(終了日, 前日)、いなければ開始日の前日 = 参加者の行の値が計算された日より先に進めない)。
+ *     控えを最初に作るのは、migration の 7. で毎晩の更新 update_org_challenge_progress(now()) を 1 回流すこと (値をその場で計算し直してから書く)。
  *     控えの参加者が 10 人に満たなければ参加者数は NULL、集計が済んだ参加者が 10 人に満たなければ平均は NULL。service_role だけが実行できる。
  *   - get_org_challenge_ranking(p_challenge_id, p_user_id, p_limit, p_with_names): 参加者に見せる順位表。
  *     #1600 から、同じときに書く順位表の控え (organization_challenge_ranking_entries) から並べる。
@@ -38,7 +40,10 @@
  *      参加者の行の値と順位 (本人に見える自分の順位) も動かない。
  *      開始日を先へ動かす・種類を変える (値を計算しない夜) と、控えは人数だけになり、古い値を控えに入れない。
  *      数え直しを単独で呼んでも (値を計算し直した集合を渡さなければ)、開催中のチャレンジの控えは動かない。
- *      開始前のチャレンジも控えを作る (人数だけ)。下書きは作らない。表は service_role だけ
+ *      開始前のチャレンジも控えを作る (人数だけ)。下書きは作らない。表は service_role だけ。
+ *      控えの最後の日は、参加者の行の値が計算された日より先に進めない: 控えを最初に作るのを JST 0:00〜03:10 にしても、終了日が前日の
+ *      チャレンジは最後の日が値と順位に入ってから終了になる。控えの無い終了・中止は、一度も計算していなければ開催中に戻すと計算し、
+ *      計算したことがあれば開催中に戻しても計算し直さない
  *   I. RLS: 参加者の行は本人だけが読める (管理者・参加していない人・他組織の人は読めない)。本人の行だけ消せる
  *   J. 参加者向けの順位表: 参加者本人にだけ返る (管理者・参加していない人・脱退した人・他組織の人には 0 行)・他人の ID を返さない・
  *      控え (夜の数え直しの時点の順位) から並べる・
@@ -1073,11 +1078,17 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
   /** 終了した次の日 (JST 03-10 12:00) */
   const AFTER_FINAL_NIGHT = '2020-03-10T03:00:00Z';
 
+  /** 期間 (START〜END) の 7 日 */
+  const PERIOD_DAYS = ['2020-03-02', '2020-03-03', '2020-03-04', '2020-03-05', '2020-03-06', '2020-03-07', '2020-03-08'];
+
   /** a1 だけ、期間の 7 日とも朝食を食べた。ほかの人は記録なし (0)。終了の夜の a1 = 100 */
   async function seedA1Breakfasts() {
-    for (const d of ['2020-03-02', '2020-03-03', '2020-03-04', '2020-03-05', '2020-03-06', '2020-03-07', '2020-03-08']) {
-      await seedDay(a1.id, d, [BREAKFAST]);
-    }
+    for (const d of PERIOD_DAYS) await seedDay(a1.id, d, [BREAKFAST]);
+  }
+
+  /** 順位表の控えを、順位 → user_id の順に並べる (同じ順位の行の並びを、読み出しの順に頼らずに比べるため) */
+  function sortedRanking(rows: Array<{ user_id: string; rank: number; current_value: number }>) {
+    return [...rows].sort((x, y) => x.rank - y.rank || x.user_id.localeCompare(y.user_id));
   }
 
   it('K-1: 参加をやめた (本人の JWT で DELETE) 直後は、人数も平均も前のまま。次の夜の数え直しで外れる', async () => {
@@ -1408,6 +1419,126 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
       await setMembership(a1.id, orgA);
     }
   });
+
+  it('K-13: 控えを最初に作る (migration の 7. = 毎晩の更新を 1 回流す) のを JST 0:00〜03:10 にしても、値をその場で計算し直してから書く。終了日が前日のチャレンジは、最後の日が値と順位と控えに入ってから終了になる。その日の 03:10 の更新は何も動かさない', async () => {
+    // 今日 = 03-09 (終了日 03-08 の翌日)。ending は前日に終わるチャレンジ、ongoing は続くチャレンジ
+    const ending = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+    const ongoing = await createChallenge({ type: 'breakfast_rate', start: START, end: '2020-03-20' });
+    for (const challenge of [ending, ongoing]) {
+      for (const u of members().slice(0, 10)) await join(challenge, u.id);
+    }
+    // a1: 03-02〜03-04 と最後の日 03-08 に朝食。a2: 最後の日 03-08 だけ朝食。ほかの 8 人は記録なし
+    for (const d of ['2020-03-02', '2020-03-03', '2020-03-04', '2020-03-08']) await seedDay(a1.id, d, [BREAKFAST]);
+    await seedDay(a2.id, '2020-03-08', [BREAKFAST]);
+
+    // 前の夜 (JST 03-08 03:10) の更新: 03-07 までの 6 日を計算した (a1 = 3/6 = 50、ほか 0)。
+    // この migration を流す前の形 (控えの表がまだ無い) にそろえるため、その夜に書いた控えを消す
+    await runProgress('2020-03-07T18:10:00Z');
+    const previousNight = await participants(ending);
+    expect(previousNight.get(a1.id)).toEqual({ value: 50, rank: 1 });
+    expect(previousNight.get(a2.id)).toEqual({ value: 0, rank: 2 });
+    for (const table of ['organization_challenge_aggregates', 'organization_challenge_ranking_entries']) {
+      const { error } = await srAdmin.from(table).delete().in('challenge_id', [ending, ongoing]);
+      expect(error).toBeNull();
+    }
+    expect(await snapshotRow(ending)).toBeNull();
+
+    // JST 03-09 01:00 (毎晩の 03:10 の更新の前): 控えを最初に作る (migration の 7. と同じ呼び出し)
+    await runProgress('2020-03-08T16:00:00Z');
+
+    // 終了日が前日のチャレンジ: 最後の日 03-08 までの 7 日を計算し直し (a1 = 4/7 = 57.1、a2 = 1/7 = 14.3)、控えに書いてから終了
+    const endingRows = await participants(ending);
+    expect(endingRows.get(a1.id)).toEqual({ value: 57.1, rank: 1 });
+    expect(endingRows.get(a2.id)).toEqual({ value: 14.3, rank: 2 });
+    expect(endingRows.get(a3.id)).toEqual({ value: 0, rank: 3 });
+    expect(await challengeStatus(ending)).toBe('completed');
+    const endingSnapshot = await snapshotRow(ending);
+    expect(endingSnapshot).toMatchObject({ participant_count: 10, ranked_count: 10, counted_through: END });
+    // 平均 = (57.1 + 14.3) / 10 = 7.1 (03-07 までの値のまま控えに入ると 50 / 10 = 5)
+    expect((await aggregates(orgA)).get(ending)).toMatchObject({ participant_count: 10, average_value: 7.1 });
+    const endingRanking = sortedRanking(await rankingSnapshot(ending));
+    expect(endingRanking.slice(0, 2).map((r) => [r.user_id, r.rank, r.current_value])).toEqual([
+      [a1.id, 1, 57.1],
+      [a2.id, 2, 14.3],
+    ]);
+
+    // 続くチャレンジ: 03-08 までを計算し直してから控えに書く
+    const ongoingRows = await participants(ongoing);
+    expect(ongoingRows.get(a2.id)).toEqual({ value: 14.3, rank: 2 });
+    const ongoingSnapshot = await snapshotRow(ongoing);
+    expect(ongoingSnapshot).toMatchObject({ participant_count: 10, ranked_count: 10, counted_through: '2020-03-08' });
+    const ongoingRanking = sortedRanking(await rankingSnapshot(ongoing));
+
+    // 同じ日の JST 03:10 の更新: 最後の日 (03-08) は進まないので、計算し直さず、控えも参加者の行も動かない
+    const night = await runProgress('2020-03-08T18:10:00Z');
+    expect(night.changed).toBe(0);
+    expect(await participants(ending)).toEqual(endingRows);
+    expect(await snapshotRow(ending)).toEqual(endingSnapshot);
+    expect(sortedRanking(await rankingSnapshot(ending))).toEqual(endingRanking);
+    expect(await participants(ongoing)).toEqual(ongoingRows);
+    expect(await snapshotRow(ongoing)).toEqual(ongoingSnapshot);
+    expect(sortedRanking(await rankingSnapshot(ongoing))).toEqual(ongoingRanking);
+  });
+
+  it.each(['completed', 'cancelled'])(
+    'K-14: 控えの無い %s のチャレンジは、最初の 1 回だけ参加者の行のまま書く。一度も計算していなければ最後の日は開始日の前日 (開催中に戻すと、次の夜に全員の値を計算する)。計算したことがあれば終了日 (開催中に戻しても計算し直さない)',
+    async (status) => {
+      // 一度も値を計算していない (順位がついた人がいない) チャレンジ: 夜の更新が一度も走らないうちに終了・中止したものと同じ。
+      // 参加者は a2〜a11 の 10 人。a2 だけ期間の 7 日とも朝食を食べた
+      const never = await createChallenge({ type: 'breakfast_rate', status, start: START, end: END });
+      for (const u of members().slice(1)) await join(never, u.id);
+      for (const d of PERIOD_DAYS) await seedDay(a2.id, d, [BREAKFAST]);
+      // 夜の更新が終了日までを計算したあとで終了・中止したチャレンジ (控えはまだ無い): 11 人に値と順位が入っている (平均 60)
+      const computed = await createChallenge({ type: 'breakfast_rate', status, start: START, end: END });
+      await seedEleven(computed);
+
+      // 終了日より後の夜の更新で、控えを最初に書く (値は計算し直さない)
+      await runProgress(AFTER_FINAL_NIGHT);
+      expect(await snapshotRow(never)).toMatchObject({
+        participant_count: 10,
+        ranked_count: 0,
+        average_value: null,
+        counted_through: '2020-03-01',
+      });
+      const computedRow = await snapshotRow(computed);
+      expect(computedRow).toMatchObject({ participant_count: 11, ranked_count: 11, counted_through: END });
+      expect(Number(computedRow!.average_value)).toBe(60);
+      const computedRanking = sortedRanking(await rankingSnapshot(computed));
+      expect(computedRanking).toHaveLength(11);
+      const computedRows = await participants(computed);
+
+      // a1 (110) を組織から外し、管理者が両方を開催中に戻す (管理者の JWT で、ポリシー "Org admins can manage challenges" の経路)
+      await setMembership(a1.id, null);
+      try {
+        for (const challenge of [never, computed]) {
+          const reopened = await asUser(admin.jwt!)
+            .from('organization_challenges')
+            .update({ status: 'active' })
+            .eq('id', challenge)
+            .select('id');
+          expect(reopened.error).toBeNull();
+          expect(reopened.data).toHaveLength(1);
+        }
+        await runProgress('2020-03-11T03:00:00Z');
+
+        // 一度も計算していなかった方: 終了日までの 7 日を計算してから控えに値まで書き (a2 = 100、ほか 0 → 平均 10)、また終了になる
+        const neverRows = await participants(never);
+        expect(neverRows.get(a2.id)).toEqual({ value: 100, rank: 1 });
+        expect(neverRows.get(a3.id)).toEqual({ value: 0, rank: 2 });
+        expect(await snapshotRow(never)).toMatchObject({ participant_count: 10, ranked_count: 10, counted_through: END });
+        expect((await aggregates(orgA)).get(never)).toMatchObject({ participant_count: 10, average_value: 10 });
+        expect(await challengeStatus(never)).toBe('completed');
+
+        // 計算したことがある方: 最後の日 (終了日) が進まないので、計算も控えの書き直しもしない (外した a1 の値を前後の差から出せない)
+        expect(await snapshotRow(computed)).toEqual(computedRow);
+        expect(sortedRanking(await rankingSnapshot(computed))).toEqual(computedRanking);
+        expect(await participants(computed)).toEqual(computedRows);
+        expect(await challengeStatus(computed)).toBe('completed');
+      } finally {
+        await setMembership(a1.id, orgA);
+      }
+    },
+  );
 
   it('K-9: 順位表も、やめた直後・組織から外れた直後には動かない。メンバーとして参加した管理者が見比べても、消えた 1 行が出ない。次の夜の更新で外れる', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });

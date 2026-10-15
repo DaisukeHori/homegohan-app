@@ -1,4 +1,4 @@
--- migration: 20261015120000_org_challenge_aggregate_snapshot.sql
+-- migration: 20261015190000_org_challenge_aggregate_snapshot.sql
 -- #1600: 組織チャレンジの集計 (管理者に見せる参加者数と平均) と順位表を強める。#1132 (20261014100100_org_challenge_progress.sql) の残り
 --
 -- 背景:
@@ -33,7 +33,10 @@
 --            (順位がついた人数は 0・平均は NULL・順位表は空。古い値を控えに入れない)
 --        どちらも、開催中で、控えが無いか、集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだものだけ書く
 --        (渡されても、最後の日が進んでいなければ書かない)。
---        ほかに、終了・中止 (completed / cancelled) で控えがまだ無いものは、最初の 1 回だけ参加者の行のまま書く。
+--        ほかに、終了・中止 (completed / cancelled) で控えがまだ無いものは、最初の 1 回だけ参加者の行のまま書く (値は計算し直さない)。
+--        このときの最後の日 (counted_through) は、参加者の行に順位がついた人がいれば (夜の更新が値を計算したことがある) min(終了日, 前日)、
+--        1 人もいなければ (一度も計算していない) min(開始日の前日, 前日) = 何も集計に含めていない、にする
+--        (夜の更新は終了日までの値を計算してから終了にするので、夜の更新で終了したチャレンジは終了日までの値が入っている)。
 --        どちらの集合にも入っていない開催中のチャレンジは書かない (単独で呼んでも、値を計算し直さずに最後の日だけ進めることはない)。
 --        下書きは控えを作らない。書いたチャレンジの数を返す。
 --   4. update_org_challenge_progress(p_now) が、今夜、値を計算し直すチャレンジと人数だけを控えに書くチャレンジを 1 か所で選び、
@@ -76,6 +79,14 @@
 --     種類を変えた場合を含む) は、人数だけを控えに書き、順位がついた人数 0・平均なし・順位表は空にする。
 --     参加者の行に残った古い値・順位を、人の出入りのあとの人数と組み合わせて控えに入れないため。
 --     開始日や種類を戻したあとの夜は、全員の値を計算し直してから控えに入る (前に値を書いた夜から 2 日以上進んだ値になる)。
+--   - 控えの最後の日 (counted_through) を、参加者の行の値が計算された日より先に進めない。先に進むと、次の夜の更新が
+--     「最後の日が進まない」と見なして計算を飛ばし、終了日が前日のチャレンジは、最後の日を値にも順位にも入れないまま終了になる。
+--       * 開催中のチャレンジの控えに値まで書くのは、update_org_challenge_progress がその場で値を計算し直したチャレンジだけ。
+--         控えを最初に作る 7. も、毎晩の更新を 1 回流して作る (参加者の行の値のまま、計算せずに控えに値を書く経路を作らない)
+--       * 控えの無い終了・中止のチャレンジは、値を計算したことがあれば min(終了日, 前日)、一度も計算していなければ開始日の前日を
+--         最後の日にする。値を計算したことがあり、控えを最初に書いた時点で終了日を過ぎていたチャレンジは、開催中に戻しても計算し直さない
+--         (上の「終了したチャレンジを開催中に戻す」と同じ)。
+--         一度も計算していないチャレンジは、開催中に戻すと、次の夜に全員の値を計算してから控えに書く (前に値を見せていないので、前後の差は出ない)
 --   - 参加者数も控えから返す。人数がその場で動くと、管理者があるメンバーを外した前後の人数の差から、その人が参加していたかが分かる。
 --   - 残る限界:
 --       * 値を計算し直す夜の前後で、ほかの人の値がほとんど動かない (その間の記録が少ない) ときは、前に値を書いた夜と次に値を書いた夜の
@@ -84,6 +95,10 @@
 --       * 順位表は、参加者 (メンバーとして参加した管理者を含む) に、上位 20 人と本人の値を名前なしで見せる表で、人数の下限も無い (#1132 の方針)。
 --         参加者が少なければ、参加者どうしで、ほかの人の値が見える。
 --       * アカウントを消した人の順位表の行は、その場で消える (消した人の記録を夜まで残さない)。
+--       * この migration より前に、夜の更新が値を計算したあとで、終了日より前に中止した (または管理者が終了にした) チャレンジは、
+--         計算した日を記録していないので、夜の更新で終了したチャレンジと同じく最後の日を min(終了日, 前日) にする。
+--         控えを最初に書いた時点で終了日を過ぎていれば、開催中に戻しても、中止したときの値のまま、また終了になる
+--         (中止から終了日までの記録は入らない)。
 --
 -- 権限:
 --   新しい関数は Supabase の既定権限で anon / authenticated / service_role に EXECUTE が自動付与されるため、
@@ -93,25 +108,35 @@
 --   (SECURITY DEFINER の持ち主 postgres として動くので、GRANT は要らない)。
 --
 -- 本番のデータへの影響:
---   - 表を 2 つ足し、refresh_org_challenge_aggregates(now(), 開催中のチャレンジ全部, 空) で控えを最初に作る
---     (開催中・終了・中止のチャレンジ。下書きは作らない)。
---     値は、いまの参加者の行から数えたもの (この migration を流す前に管理者・参加者に見えていた値と同じ)。
---     既存の表の行は 1 件も書き換えない。
+--   - 表を 2 つ足し、最後に (7.) 毎晩の更新 update_org_challenge_progress(now()) を 1 回流して、控えを最初に作る
+--     (開催中・終了・中止のチャレンジ。下書きは作らない)。控えの最初の作成も、毎晩の更新と同じ 1 つの経路を通す:
+--       * 開催中のチャレンジは、控えが無いので全部が対象になる。集計に含める最後の日 (min(終了日, 前日)) までの値と順位を
+--         その場で計算し直してから控えに書く (開始前・対象外の種類は人数だけ)。終了日を過ぎた開催中のチャレンジは、
+--         最後の日までを計算して控えに書いてから終了にする
+--       * 終了・中止のチャレンジは、参加者の行のまま最初の 1 回だけ書く (最後の日は 3. のとおり)
+--     書き換える既存の行は、毎晩の更新が書くのと同じもの (開催中のチャレンジの参加者の値と順位・終了日を過ぎたチャレンジの終了) だけ。
+--     控えを「いまの参加者の行の値のまま」作る形は採らない: 参加者の行の値は、前の 03:10 の更新が計算した日までのもので、
+--     JST 0:00〜03:10 に流すと前々日まで (#1132 の migration を流してから 03:10 の更新がまだ走っていなければ、一度も計算していない)。
+--     控えの最後の日だけが前日まで進むと、その日の 03:10 の更新は計算を飛ばし、終了日が前日のチャレンジは最後の日を数えないまま終了になる。
+--   - JST 0:00〜03:10 に流したときは、その日の 03:10 の更新がする計算 (前日まで) を、流したときに前倒しで行う。
+--     その日の 03:10 の更新は、最後の日が進まないので計算しない。前日の記録のうち、流したときより後に入れたものは、
+--     続くチャレンジでは次の夜の計算で入る。終了日が前日のチャレンジは、流したときまでの記録で最後の集計をして終了になる。
 --   - 最小人数が 10 人になるので、参加者が 5〜9 人のチャレンジは、管理者の画面で人数も平均も出なくなる (「10人未満」)。
 --   - 流したあとは、参加・参加のやめ・メンバーの脱退が、管理者に見える人数と平均・参加者に見える順位表に、
 --     次の夜の更新 (03:10 JST) まで反映されない。
---     この migration を JST 0:00〜03:10 に流したときは、その日の 03:10 の更新でも最後の日が進まないので、控えも、
---     参加者の進み具合と順位も、その日は計算し直さず、翌日の 03:10 の更新で 2 日分まとめて進む。
 --   - 新しい INSERT ポリシーは、既存の参加行には効かない (作るときだけ)。いまある「別の部署向け・下書き・終わったチャレンジ」の
 --     参加行は消さない。
---   - 表への書き込みを待たせるロックは、ポリシーの付け替え (ACCESS EXCLUSIVE。一瞬) だけ。10 秒でロック待ちを諦める。
+--   - 表への書き込みを待たせるロックは、ポリシーの付け替え (ACCESS EXCLUSIVE。一瞬) だけ。7. の更新は、参加者の行とチャレンジの行を
+--     1 行ずつ書き換える (行のロック。ほかの行への書き込みは待たせない)。毎晩の更新が同時に走っていれば、終わるのを待つ (同じ鍵で直列にする)。
+--     どれも 10 秒でロック待ちを諦める (migration は失敗し、何も変わらない)。
 --
 -- 冪等: CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE FUNCTION / DROP POLICY IF EXISTS → CREATE POLICY /
---       控えの最初の作成は refresh (同じ日にもう一度流しても、最後の日が進まないので書かない)。何度流しても同じ結果になる。
+--       控えの最初の作成は毎晩の更新 update_org_challenge_progress(now()) (同じ日にもう一度流しても、最後の日が進まないので、
+--       計算も控えの書き直しもしない)。何度流しても同じ結果になる。
 -- 適用順: API・画面のコードと同じ PR。20261014100100_org_challenge_progress.sql の後。
 -- 確認: tests/integration/rls/org-challenge-progress.test.ts / tests/integration/security/org-challenges-api.test.ts /
 --       tests/integration/rls/challenge-participants-org-scope.test.ts / tests/org-challenge-aggregate-snapshot-migration-contract.test.ts
--- ロールバック: supabase/rollbacks/20261015120000_org_challenge_aggregate_snapshot.down.sql
+-- ロールバック: supabase/rollbacks/20261015190000_org_challenge_aggregate_snapshot.down.sql
 --   (戻すと、集計と順位表がその場の数え方・最小人数 5 人に戻り、INSERT ポリシーも #1238 の形に戻る。差分の攻撃と直接の INSERT がまた通る)
 
 SET LOCAL lock_timeout = '10s';
@@ -142,7 +167,7 @@ COMMENT ON COLUMN public.organization_challenge_aggregates.ranked_count IS
 COMMENT ON COLUMN public.organization_challenge_aggregates.average_value IS
   '順位がついた参加者の current_value の平均 (丸める前)。順位がついた人がいなければ NULL';
 COMMENT ON COLUMN public.organization_challenge_aggregates.counted_through IS
-  '控えを書いたときの、集計に含める最後の日 (JST の暦日 = min(終了日, p_now の前日))。refresh_org_challenge_aggregates は、これより後の日まで集計に含められるようになったときだけ書き直す (値まで書くのは、update_org_challenge_progress がその夜に値を計算し直したチャレンジだけ)';
+  '控えを書いたときの、集計に含める最後の日 (JST の暦日)。参加者の行の値が計算された日より先に進めない: 開催中は min(終了日, p_now の前日) (update_org_challenge_progress がその夜に値を計算し直した日・人数だけと決めた日)。控えの無い終了・中止を最初に書くときは、順位がついた参加者がいれば min(終了日, p_now の前日)、いなければ (一度も計算していない) min(開始日の前日, p_now の前日)。refresh_org_challenge_aggregates は、開催中のチャレンジを、これより後の日まで集計に含められるようになったときだけ書き直す (値まで書くのは、update_org_challenge_progress がその夜に値を計算し直したチャレンジだけ)';
 COMMENT ON COLUMN public.organization_challenge_aggregates.updated_at IS
   '控えを書いた集計の時刻 (refresh_org_challenge_aggregates の p_now)';
 
@@ -169,7 +194,9 @@ COMMENT ON COLUMN public.organization_challenge_ranking_entries.joined_at IS
   '参加した時刻 (organization_challenge_participants.joined_at の写し)。同じ順位の人の並べ方に使う';
 
 -- ─────────────────────────────────────────────────────────
--- 3. 控えを数え直す (毎晩の更新から、値を計算し直した集合を渡して呼ぶ。試験・手動では集合を渡して呼ぶ)
+-- 3. 控えを数え直す (毎晩の更新 update_org_challenge_progress の中から、値を計算し直した集合を渡して呼ぶ)
+--    手で呼んで p_recomputed_ids を渡すと、値を計算していないのに控えの最後の日が進む (次の夜の計算が飛ぶ) ので、手では呼ばない。
+--    試験では、参加者の行に値を直接入れたうえで、その値を計算し直したものとして渡す。
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.refresh_org_challenge_aggregates(
   p_now            timestamptz DEFAULT now(),
@@ -202,7 +229,8 @@ BEGIN
   --     v_full:       p_recomputed_ids に入っているもの。人数・順位がついた人数・平均・順位表
   --     どちらにも入っていないものは書かない (値を計算し直していないのに最後の日だけ進めると、次の計算の機会を飛ばし、
   --     ほかの人の古い値のまま人の出入りだけが控えに入る)
-  --   終了・中止で、控えがまだ無いもの: 最初の 1 回だけ、参加者の行のまま (v_full。以後は開催中に戻されない限り書き直さない)
+  --   終了・中止で、控えがまだ無いもの: 最初の 1 回だけ、参加者の行のまま (v_full。以後は開催中に戻されない限り書き直さない。
+  --     最後の日は下の agg の counted_through のとおり、参加者の行の値が計算された日より先に進めない)
   --   下書きは控えを作らない
   WITH picked AS (
     SELECT c.id,
@@ -224,9 +252,23 @@ BEGIN
     FROM picked AS k;
 
   -- 集計 (人数と平均) の控え。人数だけのチャレンジは、順位がついた人数を 0・平均を NULL にする (参加者の行に残った古い値を入れない)
+  -- 最後の日 (counted_through) は、参加者の行の値が計算された日より先に進めない (先に進むと、次の夜の計算が飛ぶ):
+  --   開催中: min(終了日, 前日) (呼び出し元がその夜に値を計算し直した日・人数だけと決めた日)
+  --   控えの無い終了・中止: 順位がついた参加者がいれば (夜の更新が値を計算したことがある) min(終了日, 前日)
+  --     (夜の更新は、終了日までの値を計算してから終了にする)。1 人もいなければ (一度も計算していない) min(開始日の前日, 前日)
+  --     = 何も集計に含めていない (開催中に戻されたら、次の夜に全員の値を計算する)
   WITH agg AS (
     SELECT c.id                                                          AS challenge_id,
-           LEAST(c.end_date, v_last_day)                                 AS counted_through,
+           CASE
+             WHEN c.status = 'active' THEN LEAST(c.end_date, v_last_day)
+             WHEN EXISTS (
+               SELECT 1
+                 FROM public.organization_challenge_participants AS rp
+                WHERE rp.challenge_id = c.id
+                  AND rp.rank IS NOT NULL
+             ) THEN LEAST(c.end_date, v_last_day)
+             ELSE LEAST(c.start_date - 1, v_last_day)
+           END                                                           AS counted_through,
            (count(m.user_id))::integer                                   AS participants,
            CASE WHEN c.id = ANY (v_count_only) THEN 0
                 ELSE (count(m.user_id) FILTER (WHERE m.rank IS NOT NULL))::integer
@@ -245,7 +287,7 @@ BEGIN
          WHERE p.challenge_id = c.id
       ) AS m ON true
      WHERE c.id = ANY (v_full) OR c.id = ANY (v_count_only)
-     GROUP BY c.id, c.end_date
+     GROUP BY c.id, c.status, c.start_date, c.end_date
   ),
   written AS (
     INSERT INTO public.organization_challenge_aggregates AS s
@@ -553,7 +595,7 @@ GRANT EXECUTE ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, 
   TO service_role;
 
 COMMENT ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[]) IS
-  '#1600: 組織チャレンジの集計の控え (organization_challenge_aggregates: 今も組織のメンバーである参加者の人数・順位がついた人数・その平均・集計に含めた最後の日) と順位表の控え (organization_challenge_ranking_entries) を、参加者の行から数え直す。書くチャレンジは自分では選ばず、呼び出し元が渡した集合に従う: p_recomputed_ids (その夜に値と順位を計算し直したもの) は値まで、p_count_only_ids (値を計算しない開催中のもの = 開始前・対象外の種類) は人数だけ (順位がついた人数 0・平均 NULL・順位表は空)。どちらも開催中で、控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだものだけ書く。ほかに、控えがまだ無い終了・中止のチャレンジを最初の 1 回だけ書く (下書きは作らない)。集合を渡さずに単独で呼んでも、開催中のチャレンジは書かない。書いたチャレンジの数を返す。update_org_challenge_progress が毎晩呼ぶ。p_now は試験用。service_role のみ。';
+  '#1600: 組織チャレンジの集計の控え (organization_challenge_aggregates: 今も組織のメンバーである参加者の人数・順位がついた人数・その平均・集計に含めた最後の日) と順位表の控え (organization_challenge_ranking_entries) を、参加者の行から数え直す。書くチャレンジは自分では選ばず、呼び出し元が渡した集合に従う: p_recomputed_ids (その夜に値と順位を計算し直したもの) は値まで、p_count_only_ids (値を計算しない開催中のもの = 開始前・対象外の種類) は人数だけ (順位がついた人数 0・平均 NULL・順位表は空)。どちらも開催中で、控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだものだけ書く。ほかに、控えがまだ無い終了・中止のチャレンジを最初の 1 回だけ参加者の行のまま書く (最後の日は、順位がついた参加者がいれば min(終了日, 前日)、いなければ (一度も計算していない) 開始日の前日。参加者の行の値が計算された日より先に進めない)。下書きは作らない。集合を渡さずに単独で呼んでも、開催中のチャレンジは書かない。書いたチャレンジの数を返す。update_org_challenge_progress が毎晩呼ぶ (手では呼ばない。値を計算していないのに p_recomputed_ids を渡すと、控えの最後の日が進んで次の夜の計算が飛ぶ)。p_now は試験用。service_role のみ。';
 COMMENT ON FUNCTION public.update_org_challenge_progress(timestamptz) IS
   '#1132: 開催中の組織チャレンジ (breakfast_rate / veg_score / cooking_rate) の参加者ごとの current_value を食事の記録 (user_daily_meals / planned_meals。JST の暦日。前日まで) から計算し、チャレンジの中で rank() をつける。#1600: 計算し直すのは、控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだチャレンジだけ (進まない夜は参加者の行の値も順位も書かない)。そのあと集計と順位表の控え (organization_challenge_aggregates / organization_challenge_ranking_entries) を、計算し直した集合と人数だけ書く集合 (開始前・対象外の種類) を渡して refresh_org_challenge_aggregates で数え直す。終了日 (JST) を過ぎた開催中のチャレンジは completed にする。p_now は試験用。pg_cron が毎日 18:10 UTC (03:10 JST) に呼ぶ。service_role のみ。';
 COMMENT ON FUNCTION public.get_org_challenge_aggregates(uuid) IS
@@ -562,15 +604,16 @@ COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolea
   '#1132 / #1600: 参加者に見せる順位表。p_user_id が、いまそのチャレンジの参加者 (今も組織のメンバー) のときだけ、毎晩の更新の時点の順位表の控え (organization_challenge_ranking_entries) から、上位 p_limit 人 (NULL は既定の default_limit = 20 人。1〜max_limit = 100 人にそろえる) と本人の行を返す (参加していない人には 0 行)。参加をやめた人・組織から外れた人の行は、次の夜の更新まで残る。他人の user_id は返さない (is_me だけ)。nickname は p_with_names が true のときだけ入る。SECURITY INVOKER。service_role のみ。';
 
 -- ─────────────────────────────────────────────────────────
--- 7. 控えを最初に作る (流す前に管理者・参加者に見えていた値と同じ値。開催中・終了・中止のチャレンジ。下書きは作らない)
+-- 7. 控えを最初に作る (毎晩の更新を 1 回流す。開催中・終了・中止のチャレンジ。下書きは作らない)
 -- ─────────────────────────────────────────────────────────
--- 開催中のチャレンジは全部、いまの参加者の行の値のまま書く (p_recomputed_ids に渡す。値は前の夜の更新が計算したもの)。
--- 終了・中止は、控えの無いものとして最初の 1 回だけ書かれる
-SELECT public.refresh_org_challenge_aggregates(
-  now(),
-  ARRAY(SELECT c.id FROM public.organization_challenges AS c WHERE c.status = 'active'),
-  '{}'::uuid[]
-);
+-- 控えの最初の作成も、毎晩の更新と同じ 1 つの経路 (update_org_challenge_progress) を通す。開催中のチャレンジは控えが無いので
+-- 全部が対象になり、集計に含める最後の日までの値と順位をその場で計算し直してから控えに書く (控えの最後の日と、参加者の行の値が
+-- 計算された日が同じになる)。終了日を過ぎた開催中のチャレンジは、最後の日までを計算して控えに書いてから終了にする。
+-- 終了・中止は、控えの無いものとして最初の 1 回だけ書かれる。
+-- 参加者の行の値のまま (計算せずに) 控えに値を書く形にしない: 参加者の行の値は前の 03:10 の更新が計算した日までのもので、
+-- JST 0:00〜03:10 に流すと控えの最後の日より 1 日古く、その日の 03:10 の更新が計算を飛ばす (終了日が前日のチャレンジは、
+-- 最後の日を数えないまま終了になる)。上の「本番のデータへの影響」
+SELECT public.update_org_challenge_progress(now());
 
 -- ─────────────────────────────────────────────────────────
 -- 8. 参加の INSERT ポリシーに、API と同じ条件を足す

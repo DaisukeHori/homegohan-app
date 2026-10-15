@@ -14,10 +14,16 @@
  *      「控えの数え直し (その 2 つの集合を渡す)」・返す jsonb の aggregates を足しただけ。数え直しは、進み具合・順位の書き込みのあと・終了にする前
  *   3. refresh_org_challenge_aggregates は、書くチャレンジを自分では選ばない (種類・開始日を見ない)。渡された集合のうち、
  *      開催中で集計に含める最後の日が進んだものだけを書き、値まで書くのは「値を計算し直した」集合だけ (人数だけの集合は、順位がついた
- *      人数 0・平均 NULL・順位表は空)。ほかに控えの無い終了・中止のチャレンジを最初の 1 回だけ書く。下書きは作らない
+ *      人数 0・平均 NULL・順位表は空)。ほかに控えの無い終了・中止のチャレンジを最初の 1 回だけ書く。下書きは作らない。
+ *      控えの最後の日 (counted_through) は、参加者の行の値が計算された日より先に進めない (開催中は min(終了日, 前日)。控えの無い
+ *      終了・中止は、順位がついた参加者がいれば min(終了日, 前日)、いなければ開始日の前日)
  *   4. 権限: 4 本とも service_role だけ。控えの 2 つの表は RLS を有効にし、ポリシーを作らず、anon / authenticated の権限を外す
  *   5. 参加の INSERT ポリシーの最後の定義が、API (POST /api/org/challenges/[id]/join) と同じ条件を見る
  *   6. ロールバックは、20261014100100 の 3 本の定義と #1238 の INSERT ポリシー (本番 baseline) にそのまま戻し、控えと関数を消す
+ *   7. 控えを最初に作るのは、毎晩の更新 update_org_challenge_progress(now()) を 1 回流すことだけ (関数をすべて定義したあと)。
+ *      参加者の行の値のまま、計算せずに控えに値を書く呼び出し (refresh_org_challenge_aggregates に開催中のチャレンジを渡す) を置かない。
+ *      振る舞い (JST 0:00〜03:10 に作っても、終了日が前日のチャレンジの最後の日が値と順位に入ってから終了になる) は
+ *      tests/integration/rls/org-challenge-progress.test.ts の K-13 が確かめる
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,6 +36,12 @@ const ROLLBACKS_DIR = 'supabase/rollbacks';
 const STEM_SUFFIX = '_org_challenge_aggregate_snapshot';
 /** #1132 の migration (本 migration が作り直す 2 本の、1 つ前の定義。ロールバックの戻す先) */
 const PREVIOUS_STEM_SUFFIX = '_org_challenge_progress';
+/**
+ * 本 migration の番号を付け直したとき (origin/main を取り込んだとき) の、main の migration の最大。
+ * main に入った migration は CI が本番へ番号順に当てるので、本番に当たり済みの最後の migration より前の番号にすると、
+ * 順序の違反として拒まれるか、当たらずに飛ばされる。マージの直前に main がさらに進んでいれば、付け直してここも進める
+ */
+const MAIN_LATEST_AT_RENUMBER = '20261015180000_meal_image_jobs_pickup_cron.sql';
 /** 要件書 (docs/requirements/02-organization-management.md §6.4) の匿名化集計の最低人数 */
 const REQUIRED_MIN_PARTICIPANTS = 10;
 /** 本 migration が service_role だけに EXECUTE を渡す関数 (引数の型まで含めた完全形)。先頭は本 migration で新しく作るもの */
@@ -129,6 +141,13 @@ describe('1. 最後の定義が本 migration で、集計は控えから読む',
 
   it('本 migration は #1132 の migration より後の番号', () => {
     expect(MIGRATION_NAME > PREVIOUS_NAME).toBe(true);
+  });
+
+  it('本 migration は、番号を付け直したときの main の最大より後の番号。同じ番号 (先頭 14 桁) の migration はほかに無い', () => {
+    expect(migrationFiles).toContain(MAIN_LATEST_AT_RENUMBER);
+    expect(MIGRATION_NAME > MAIN_LATEST_AT_RENUMBER).toBe(true);
+    const stamp = MIGRATION_NAME.slice(0, MIGRATION_NAME.indexOf('_'));
+    expect(migrationFiles.filter((f) => f.startsWith(`${stamp}_`))).toEqual([MIGRATION_NAME]);
   });
 
   it('get_org_challenge_aggregates は控えの表から読み、参加者の行を直接数えない。最小人数は 10 人 (共有の定数と同じ)', () => {
@@ -231,7 +250,21 @@ describe('3. 控えを書き直すのは、渡された集合のうち、集計�
     expect(body).toMatch(/v_today\s+:= \(COALESCE\(p_now, now\(\)\) AT TIME ZONE 'Asia\/Tokyo'\)::date;/);
     expect(body).toMatch(/v_last_day := v_today - 1;/);
     expect(bodyOf(MIGRATION, 'update_org_challenge_progress')).toMatch(/v_last_day := v_today - 1;/);
-    expect(body).toMatch(/LEAST\(c\.end_date, v_last_day\)\s+AS counted_through/);
+    const agg = squash(body.match(/WITH agg AS \(([\s\S]*?)\),\s*written AS/)![1]);
+    expect(agg).toContain("CASE WHEN c.status = 'active' THEN LEAST(c.end_date, v_last_day)");
+  });
+
+  it('控えの最後の日は、参加者の行の値が計算された日より先に進めない: 控えの無い終了・中止は、順位がついた参加者がいれば min(終了日, 前日)、いなければ開始日の前日', () => {
+    const agg = squash(body.match(/WITH agg AS \(([\s\S]*?)\),\s*written AS/)![1]);
+    expect(agg).toContain(
+      "CASE WHEN c.status = 'active' THEN LEAST(c.end_date, v_last_day) " +
+        'WHEN EXISTS ( SELECT 1 FROM public.organization_challenge_participants AS rp WHERE rp.challenge_id = c.id AND rp.rank IS NOT NULL ) ' +
+        'THEN LEAST(c.end_date, v_last_day) ' +
+        'ELSE LEAST(c.start_date - 1, v_last_day) END AS counted_through',
+    );
+    // counted_through を決める式は 1 つだけ (ほかの場所で LEAST(c.end_date, v_last_day) をそのまま書かない)
+    expect([...agg.matchAll(/AS counted_through/g)]).toHaveLength(1);
+    expect(agg).toContain('GROUP BY c.id, c.status, c.start_date, c.end_date');
   });
 
   it('引数は p_now と、値を計算し直した集合・人数だけ書く集合 (既定は空 = 単独で呼んでも開催中のチャレンジは書かない)', () => {
@@ -255,7 +288,11 @@ describe('3. 控えを書き直すのは、渡された集合のうち、集計�
 
   it('書くチャレンジは自分では選ばない: 種類・開始日を見ず、開催中のものは渡された集合に入っているものだけ。両方に入っていたら人数だけ', () => {
     expect(body).not.toMatch(/challenge_type/);
-    expect(body).not.toMatch(/start_date/);
+    // 開始日は、控えの無い終了・中止の最後の日 (一度も計算していなければ開始日の前日) を決めるところにだけ出る (選ぶのには使わない)
+    expect(picked![1]).not.toMatch(/start_date/);
+    expect([...body.matchAll(/start_date/g)]).toHaveLength(2);
+    expect(body).toContain('ELSE LEAST(c.start_date - 1, v_last_day)');
+    expect(body).toMatch(/GROUP BY c\.id, c\.status, c\.start_date, c\.end_date/);
     const cte = squash(picked![1]);
     const countOnly = cte.indexOf("WHEN c.status = 'active' AND c.id = ANY (COALESCE(p_count_only_ids, '{}'::uuid[])) THEN 'count_only'");
     const full = cte.indexOf("WHEN c.status = 'active' AND c.id = ANY (COALESCE(p_recomputed_ids, '{}'::uuid[])) THEN 'full'");
@@ -303,11 +340,32 @@ describe('3. 控えを書き直すのは、渡された集合のうち、集計�
     expect(header).toContain('SECURITY DEFINER');
     expect(header).toContain("SET search_path = ''");
   });
+});
 
-  it('控えを最初に作る呼び出しは、開催中のチャレンジを全部「値を計算し直した」集合として渡す (流す前に見えていた値のまま)', () => {
-    expect(squash(MIGRATION)).toContain(
-      "SELECT public.refresh_org_challenge_aggregates( now(), ARRAY(SELECT c.id FROM public.organization_challenges AS c WHERE c.status = 'active'), '{}'::uuid[] );",
-    );
+describe('7. 控えを最初に作るのは、毎晩の更新を 1 回流すことだけ (参加者の行の値のまま、計算せずに控えに値を書かない)', () => {
+  /** 関数の定義と文字列 (COMMENT の説明文など) を除いた、migration の上から順の文 (表・権限・ポリシー・最初の作成) */
+  const TOP_LEVEL = MIGRATION.replace(/CREATE OR REPLACE FUNCTION public\.\w+\([\s\S]*?\$\$[\s\S]*?\$\$;/g, '').replace(
+    /'(?:[^']|'')*'/g,
+    "''",
+  );
+
+  it('関数の外で呼ぶのは update_org_challenge_progress(now()) の 1 回だけ。refresh_org_challenge_aggregates を関数の外で呼ばない', () => {
+    const calls = [...TOP_LEVEL.matchAll(/SELECT public\.(\w+)\(([^;]*)\);/g)].map((m) => `${m[1]}(${squash(m[2])})`);
+    expect(calls).toEqual(['update_org_challenge_progress(now())']);
+    // refresh_org_challenge_aggregates が関数の外に出るのは、権限 (REVOKE / GRANT) と COMMENT の文だけ
+    const mentions = TOP_LEVEL.split(';').filter((stmt) => stmt.includes('refresh_org_challenge_aggregates'));
+    expect(mentions.map((stmt) => squash(stmt).split(' ').slice(0, 2).join(' '))).toEqual(['REVOKE ALL', 'GRANT EXECUTE', 'COMMENT ON']);
+  });
+
+  it('最初の作成は、控えの表と 4 本の関数をすべて定義したあと (新しい update_org_challenge_progress で流す)', () => {
+    const call = MIGRATION.indexOf('SELECT public.update_org_challenge_progress(now());');
+    expect(call).toBeGreaterThan(-1);
+    for (const name of [...REPLACED_FUNCTIONS, 'refresh_org_challenge_aggregates']) {
+      expect(MIGRATION.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`), name).toBeLessThan(call);
+    }
+    for (const table of SNAPSHOT_TABLES) {
+      expect(MIGRATION.indexOf(`CREATE TABLE IF NOT EXISTS public.${table} (`), table).toBeLessThan(call);
+    }
   });
 });
 
