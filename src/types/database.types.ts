@@ -8581,6 +8581,7 @@ export type Database = {
         Returns: string
       }
       normalize_dish_name: { Args: { name: string }; Returns: string }
+      normalize_profile_name: { Args: { p_value: string }; Returns: string }
       operator_force_dissolve_family: {
         Args: { p_family_id: string; p_reason: string }
         Returns: {
