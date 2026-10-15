@@ -1,0 +1,1311 @@
+# 14. 未成年の年齢確認と保護者の同意 (#1173)
+
+| 項目 | 値 |
+|---|---|
+| Status | 設計ゲート審査中 (v1.0) |
+| Issue | #1173 (要件 03 §17.10。先例: #1174 の規約の同意 (`accept_legal_documents`)・#1232 の子供の昇格 (本人同意)・#1154 の AI 同意 (`external_data_consents.revoked_at`)) |
+| 分冊 | 1 冊・2 段 (段 A = DB + `packages/shared` / 段 B = Web + API + メール + モバイルの注記)。§0.2 |
+| 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a / 13b (#1442。未マージ) との契約は §0.5 |
+| 範囲の正本 | 仕様ファイル `scratch/homegohan/specs/spec-d-parental.md` と Issue #1173 の本文 |
+| 読み手 | 実装 (Sonnet 5.5) と敵対レビュー。実装は §6 だけを読んで手を止めずに書けることを完成条件にする |
+
+---
+
+## 0. 範囲・分冊判定・一次情報
+
+### 0.1 一言でいうと
+
+- **本人 (大人) の年齢**: 生年月日は、全員が通る**同意画面 (`/legal-consent`) で 1 回だけ**聞き、`accept_legal_documents` が `user_profiles.birth_date` に書く (特権列。本人は直接書けない)。「同意が済んでいるか」の判定 (`lib/legal-consent.ts` → 13a の `/api` の 403 も) に「生年月日がある」を**畳む**ので、Web・API・モバイルのゲートが 1 つの述語で揃う。18 歳未満が自分で登録しようとしたら、何も記録せずに断り (`LEGAL_MINOR_SELF_SIGNUP_REFUSED`)、画面は「保護者が家族に追加する」道を案内し、「登録をやめる」で既存の退会 (`POST /api/account/delete`) を呼んでアカウントごと消す。
+- **子供 (家族のメンバー) の保護者の同意**: 子供の追加 (`add_family_child`) で生年月日を必須にし、18 歳未満なら**同じトランザクションで** `parental_consents` に電子署名 (氏名の入力 + 親権者の確認) を記録する。「同意待ち」の状態を作らない (同意が無ければ子供の行も無い)。取り消し = 子供を家族から外す (トリガーが `revoked_at` を入れる)。昇格 (`request_child_promotion` / `accept_child_promotion`) は 18 歳未満に有効な同意を求め、承諾で子供の生年月日を本人のプロフィールへ写す。
+- **13 歳未満**: 同じ画面・同じ記録 (区別は `child_age_at_signing` と shared の述語 `isUnderCoppaAge`)。Push の送信側はこのリポジトリに無いので、述語だけ置き、送信側を作る冊が除外に使う (§6.18)。
+
+### 0.2 分冊判定 (相 1 で実施)
+
+| 目安 | 本書 | 判定 |
+|---|---|---|
+| 設計書 800 行超 | 超える (表・トレース・正典の SQL / TS を 1 冊に持つ) | トリガー |
+| 消費先レーン 3 以上 | DB (migration)・shared・Web (画面 5 + route 2)・メール・モバイル (注記 1 行) | トリガー |
+| 共有面 2 つ以上 | `packages/shared` の export・`lib/legal-consent.ts` + `lib/supabase/middleware.ts` (全リクエスト)・`family_members` の列と guard・`accept_legal_documents` の signature | トリガー |
+
+**判定: 1 冊・2 段。** 核と配線に分けない理由: 消費先の多さは「同じ 2 つの述語 (生年月日がある / 同意が有効) を読む側」が多いだけで、冊をまたぐ契約が述語と DB 関数の signature しか無い。モバイルのネイティブで触るのはサインアップ画面の注記 1 行だけ (家族の画面は WebView で Web の画面を開くので、子供の追加・同意は Web の画面がそのまま効く。§0.3)。13b のネイティブの同意画面に生年月日の欄を足すのは 13b 側の追随 (§0.5) で、本冊は API の契約だけを決める。段 A (DB + shared) を先に閉じ、段 B (Web + API + メール) は段 A の実コード (再生成した `database.types.ts`・shared の export) を見て書く。
+
+### 0.3 一次情報 (origin/main `5a48abc9`。行番号は 2026-10-15 時点)
+
+| 事実 | 場所 |
+|---|---|
+| `family_members` に `birth_date` 列は**無い**。子供の生年月日は `child_profile` (jsonb) の中 (`birth_date` キー、任意)。`birth_date` 列があるのは `legacy_family_members` | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:115-133, 5290`、`src/app/(main)/family/members/child/new/page.tsx:66` |
+| 子供の行は `role='child'` ⟺ `user_id IS NULL` かつ `child_profile IS NOT NULL` (CHECK `family_members_child_profile_consistency`) | 同 `:133` |
+| `family_members` に INSERT のポリシーは無い (SELECT と UPDATE だけ)。authenticated には INSERT の GRANT があるが RLS で止まるので、子供の行を作れるのは SECURITY DEFINER の `add_family_child` だけ | 同 `:10385, 10389`、`supabase/baseline/prod_table_acl.sql:172-175` |
+| `add_family_child(p_family_id, p_display_name, p_child_profile)` の現行 (家族の行をロック・上限・監査 `child_added`)。ACL = authenticated と service_role | `supabase/migrations/20261007160000_family_member_limit_row_lock.sql:131-175` |
+| `guard_family_members_privileged` が守る列 = role / family_id / user_id / status / removed_at (+ 本人以外の share_*) | `supabase/migrations/20261008090000_family_members_status_guard.sql` 末尾の関数 |
+| `user_profiles` に生年月日の列は無い (`age integer` は栄養計算用の自己申告の年齢)。同意の 3 列と特権列ガード 2 本 | `supabase/migrations/20261008200700_legal_documents_acceptance.sql:60-121` |
+| `accept_legal_documents(text, text, inet, text)` (SECURITY DEFINER・authenticated のみ・本人の行だけ・冪等) | 同 `:126-215` |
+| 同意ゲート: `resolveLegalConsent` は `hasAcceptedCurrentLegalDocuments(accepted)` で `none` を決める。初回の作成は `resolveFirstSignInDestination` が `enforce: true` で同じ判定 | `lib/legal-consent.ts:117-122, 170-179` |
+| middleware が読む列 `PROFILE_COLUMNS_WITH_LEGAL` と、列が無い DB (42703) のやり直し | `lib/supabase/middleware.ts:242-273` |
+| 同意画面 (サーバー側は `hasAcceptedCurrentLegalDocuments` で素通し) とフォーム (チェック 2 つ → `POST /api/legal/accept` → `window.location.assign(next)`、「同意しない」はログアウト) | `src/app/legal-consent/page.tsx:42-50`、`LegalConsentForm.tsx:53-92` |
+| `POST /api/legal/accept`: body の版が現行と違えば 409、IP / UA はヘッダーから、DB のエラーは `internalError` | `src/app/api/legal/accept/route.ts:42-130` |
+| `request_child_promotion` (認可 → 対象の状態 → 日次上限 → pending の失効 → INSERT → 監査)。`birth_date` も同意も見ない | `supabase/migrations/20261008100000_membership_daily_send_cap.sql:371-452` |
+| `accept_child_promotion` (ロック順 → 本人のメール → 状態 → UPDATE → プロフィールの upsert → 監査)。同意を見ない | `supabase/migrations/20261015170000_accept_copies_profile_name.sql:146-290` |
+| `membership_audit.action` の CHECK (26 値。`parental_consent_*` は無い) | `20251126124224:5476-5486` |
+| `terms_acceptances.document_type` の CHECK に `'parental_consent'` はあるが、どこも書いていない (本番 0 行) | 同 `:6553-6562`、§0.4 |
+| 退会時の外部キーの方針 (本人だけの記録は CASCADE、作成者を指す列は SET NULL) | `supabase/migrations/20261010000100_auth_users_fk_on_delete.sql` 冒頭 |
+| 退会の本体 (代表者なら 409・`prepare_account_deletion`・`auth.admin.deleteUser`)。画面側の共通処理 `deleteOwnAccount` / `signOutAfterAccountDeletion` | `src/lib/account-deletion.ts:10-18, 171-202`、`src/lib/account-self-service.ts:128-157` |
+| メール: `sendEmail(envelope)` (best-effort・失敗は結果で返す)、文面は `render*Email` が `template` を入れる。利用者が指定した宛先へ送る route は invite-throttle を通すか除外リストに理由を書く | `src/lib/emails/send.ts`、`src/__tests__/lib/emails/template-names.test.ts`、`tests/email-send-throttle-contract.test.ts:1-60` |
+| 家族の API のエラーの語彙 = `MembershipErrorCode` (接頭辞なし。RAISE の文字列と同じ) + `ErrorStatusMap` + `MEMBERSHIP_ERROR_MESSAGES` (3 つとも `Record<MembershipErrorCode, …>` で型が強制) | `src/lib/errors/membership-errors.ts` |
+| モバイル: 家族の画面はネイティブに無い (WebView で Web を開く)。ネイティブにあるのはサインアップ・ログイン・初期設定・設定など。サインアップ画面に規約の文は無い | `apps/mobile/app/` の一覧、`apps/mobile/app/(auth)/signup.tsx:236-290` |
+| サインアップ (Web) の同意のチェック (記録は残さない。登録後は `/auth/callback` が同意画面へ回す #1435) | `src/app/(auth)/signup/page.tsx:186-232`、`src/app/(auth)/auth/callback/route.ts:170-178` |
+| 公開の法務ページの作り (`"use client"`・`business-info`・`getSupportEmail`) | `src/app/legal/page.tsx:1-40` |
+| 要件: 生年月日は過去 120 年以内。子供の個人情報 (生年月日・体重) は親のみ | `docs/requirements/01-family-management.md:1720, 678` |
+| 要件: 13 歳未満 (COPPA) は電子署名同意、18 歳未満 (日本) は同意必須、子供は `auth.users` を持たない、13 歳未満に Push 不可 | `docs/requirements/03-operator-admin.md:2677-2694` |
+
+### 0.4 本番の実数 (2026-10-15・Supabase MCP の SELECT だけ。書き込みなし)
+
+`auth.users` 195 / `user_profiles` 65 (うち `age` あり 11) / `family_members` **0** (子供 0) / `terms_acceptances` 8 (`parental_consent` 0) / `family_promotion_requests` 0 / `family_members.birth_date` 列 無し / `parental_consents` 表 無し。
+→ 子供の行が無いので、`family_members` の CHECK (§6.4 の 2) は VALID で足せる。既存の 195 アカウントは、次に画面を開いたときに同意画面で生年月日だけを聞かれる (S3)。バックフィルはしない (推測で年齢を入れない)。
+
+### 0.5 13a / 13b (#1442。`origin/design/legal-consent-api-mobile` / `-mobile`。未マージ) との契約
+
+- 13a の `resolveLegalConsentStatus` / `/api` の deny は `hasAcceptedCurrentLegalDocuments` を使う設計。本冊のマージ後は **`isLegalConsentComplete` (§6.5.2) に置き換え、`gaps` に `'birth_date'` を含める** (13a §6.18 相当の追随。担当はオーケストレーター。§6.18 の最終行)。
+- 13b のネイティブの同意画面は、`GET /api/legal/status` の `gaps` に `'birth_date'` があれば生年月日の欄を出し、`POST /api/legal/accept` に `birth_date` を付ける。403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` を受けたら Web と同じ案内 (§6.9) を出す。本冊はこの API の形 (§6.8) だけを決め、画面は 13b の追随に委ねる。
+- どちらもマージ順に依存しない: 本冊が先なら 13a / 13b が本冊の実コードに合わせる。13a が先なら本冊の段 B が `legal-consent-api.ts` の判定を `isLegalConsentComplete` に差し替える (§6.15 の段 B の「13a がマージ済みのとき」)。
+
+---
+
+## 1. 目的・スコープ
+
+### 1.1 解決すること (Issue #1173)
+
+1. サインアップに生年月日・年齢の確認が無く、誰でも年齢の申告なしにアカウントを作れる → 同意画面で生年月日を 1 回聞き、18 歳未満の自己登録を断る。
+2. 要件が定める `parental_consents` が無い → 表を作る (RLS・保持・取り消しつき)。
+3. 13 歳未満 / 18 歳未満の保護者の同意の取得の流れが無い → 子供の追加に電子署名の同意を組み込む。
+4. 昇格 RPC が年齢・同意を見ない → `request_child_promotion` / `accept_child_promotion` に検査を足す。
+
+### 1.2 前提 (仕様ファイルの逐語)
+
+- 「前提: ローンチ前で利用者ゼロ (正しい形で作る)。オーナーの選択 (2026-10-15・選択式) で、ローンチに要るものとしてこの群を作ると決まっている。」
+- 「本番の DB に触らない。」(本冊は読み取りの SELECT だけを行った。§0.4)
+- 本番は `LEGAL_CONSENT_ENFORCE=on` (`cross/08` §7.2 の 2026-10-10 の行)。
+
+### 1.3 対象外
+
+- 同意文書の文面・版・施行日の確定 (弁護士の確認。§8)。本冊の文面は**仮**。
+- 18 歳到達バッチ (`family/01` §7 の索引だけ残っている未実装)・家族の分割 (`family/02` §4.10 未実装)・大人代理 (`01` §7.8 P1)。
+- Push の送信側 (このリポジトリに無い。述語だけ置く)。
+- `user_profiles.age` (栄養計算の自己申告) と `birth_date` の統合 (§8)。年齢の法的な判定は `birth_date` だけを見る。
+- `terms_acceptances` の本人による直接 INSERT (`terms_self_insert`) を閉じること (`08` §7.2 の残課題。本冊は `terms_acceptances` に書かない。§7)。
+- 家族の全メンバーが子供の `birth_date` を読める件 (`family_members_select_self_or_family`。要件 `01:678` は親のみ)。現行でも `child_profile.birth_date` は読める。本冊は列を増やすだけで露出を広げない。別 Issue (§8)。
+- 13a / 13b の中身 (§0.5 の契約だけ)。
+
+---
+
+## 2. 関連要件
+
+- `docs/requirements/03-operator-admin.md` §17.10 (子供アカウント保護)、`docs/requirements/01-family-management.md` §4.3 (子供メンバー登録)・§6.3 (子供の個人情報は親のみ)・`:1720` (生年月日は過去 120 年以内)、`docs/requirements/100-scenarios.md` B4。
+- `docs/design/cross/01-auth-session.md` §12〜§13.2、`docs/design/family/01-data-model.md` §4.13 (本冊が置き換える)、`docs/design/cross/08-legal-compliance.md` §7 (同意の記録・ゲート)、`docs/design/cross/04-api-conventions.md` §4 (エラーコード。`FAM_PARENTAL_CONSENT_REQUIRED` が表にあるが、家族の API の実コードは接頭辞なしの `MembershipErrorCode` を使う。§6.7・§6.18)。
+
+---
+
+## 3. 相 1 外形固定: 要件行列・ユーザーシナリオ・現行の画面
+
+### 3.1 要件行列
+
+| ID | 要件 | 出どころ | 検証 (§6.13 の it) |
+|---|---|---|---|
+| R-1 | 本人の生年月日を 1 回だけ聞き、サーバーが記録する。本人は直接書き換えられない | Issue 1、`08` §7.2 の特権列の形 | T-DB1〜T-DB3, T-A1〜T-A4 |
+| R-2 | 18 歳未満は自分では登録できない。断るときは何も記録しない。昇格の経路 (保護者の同意済みの子供) の未成年は通す | 要件 03 §17.10、`01` §4.3 | T-DB4〜T-DB6, T-A5, T-F3〜T-F5, E2E-1 |
+| R-3 | 「同意が済んでいるか」のゲートの述語に「生年月日がある」を含める (Web の画面・初回の作成・13a の `/api`) | 仕様「同意ゲート #1442 の 13a の deny の仕組みと組み合わせるか」 | T-SH5〜T-SH7, T-MW1〜T-MW3, T-CB1 |
+| R-4 | 子供の追加は生年月日を必須にし、列 `family_members.birth_date` に入れる (jsonb の中ではない)。過去 120 年以内・未来でない | 要件 03 §17.10 (`family_members.birth_date`)、`01:1720` | T-DB7〜T-DB9, T-CR1〜T-CR3, T-CN1 |
+| R-5 | 18 歳未満の子供は、親権者の確認 + 同意 + 氏名の入力 (電子署名) が無ければ追加できない。記録は子供の行と同じトランザクション | 要件 03 §17.10 (電子署名同意)、Issue 3 | T-DB10〜T-DB13, T-CR4〜T-CR6, T-CN2〜T-CN4, E2E-2 |
+| R-6 | 18 歳以上の「アカウント無しのメンバー」は同意なしで追加できる (現行の用途を狭めない) | `01` §4.3 (祖父母など) | T-DB14, T-CN5 |
+| R-7 | `parental_consents` は本人 (家族の大人) と運営だけが読め、クライアントは書けない。退会しても記録は残り (署名者の紐づけだけ外す)、子供の行と一緒に消える | 仕様「parental_consents の表 (RLS・保持期間)」、`20261010000100` の方針 | T-DB15〜T-DB19 |
+| R-8 | 取り消し = 子供を家族から外す。外れた瞬間に同意は `revoked_at` が入り、監査に残る。独立した「取り消し」の操作は作らない | 仕様「取り消し」 | T-DB20〜T-DB22, T-MD3 |
+| R-9 | 昇格の依頼・承諾は、子供が 18 歳未満なら有効な同意を求める。承諾で子供の生年月日を本人のプロフィールへ写す (上書き) | Issue 4 | T-DB23〜T-DB27 |
+| R-10 | 同意文書の版は shared の定数 1 つ。route は body の版が現行と一致するときだけ記録する (`/api/legal/accept` と同じ形) | `08` §7.2 の版の扱い | T-SH8, T-CR7 |
+| R-11 | 文言 (同意文書・サインアップの注記・同意画面の生年月日の案内) は `packages/shared` に 1 か所。公開ページ `/legal/parental-consent` が同じ定数を描く | 仕様「法的な文言の置き場所」 | T-SH9, T-LP1〜T-LP2 |
+| R-12 | 同意を記録したら、署名した本人のメールアドレスへ控えを送る (best-effort。失敗しても追加は成功) | 仕様「メールの文面」 | T-CR8〜T-CR9, T-EM1〜T-EM2 |
+| R-13 | 13 歳未満の区別は記録 (`child_age_at_signing`) と述語 (`isUnderCoppaAge`) に残す。Push の送信側はこの述語で除外する (将来) | 要件 03 §17.10 | T-SH3, §6.18 |
+| R-14 | `as any`・マジックナンバーを使わない。年齢の境・期間は名前付き定数 (shared) と SQL のコメント | 共通ガード | lint |
+
+### 3.2 ユーザーシナリオ (15 本)
+
+| ID | シナリオ | 検証 |
+|---|---|---|
+| S1 | 新規 (成人) がメールで登録 → 確認 → 同意画面で生年月日 + 2 つのチェック → 記録 → 初期設定へ | T-A1, T-F1, E2E-3 |
+| S2 | 新規 (成人) が Google で登録 → `/auth/callback` → 同意画面 (S1 と同じ) | T-CB1 |
+| S3 | 既存の利用者 (同意済み・生年月日なし) が `/home` を開く → 同意画面 (生年月日の欄だけ必須、チェックは既に同意済みの版のまま送る) → 記録 (証跡は増えない) → `/home` | T-MW1, T-F2, T-DB3 |
+| S4 | 15 歳が自分で登録 → 同意画面で生年月日 → 403 → 案内 → 「登録をやめる」→ 退会 → ログアウトの画面 | T-DB4, T-A5, T-F3, T-F5, E2E-1 |
+| S5 | S4 で「生年月日を直す」→ 成人の日付 → 通る (誤入力の救済。断った時点では何も記録されていない) | T-F4, T-DB4 |
+| S6 | 親が 8 歳の子供を追加 → 生年月日 → 同意の欄が出る → 全文を読む → 2 つのチェック + 氏名 → 追加 → 子供の行 + 同意の行 + 監査 2 行 + 控えメール | T-DB10, T-CR4, T-CR8, T-CN2, E2E-2 |
+| S7 | 親が 17 歳の子供を追加 → S6 と同じ (13 歳以上でも署名は同じ) | T-DB11 |
+| S8 | 親が 70 歳の祖母をアカウント無しで追加 → 同意の欄は出ない → 追加 (同意の行なし) | T-DB14, T-CN5 |
+| S9 | API を直接叩いて同意なしで 10 歳を追加 → 403 `PARENTAL_CONSENT_REQUIRED`。子供の行は作られない | T-DB12, T-CR5 |
+| S10 | 子供の追加画面を開いたまま同意文書の版が上がった → 409 `PARENTAL_CONSENT_VERSION_MISMATCH` → 読み込み直し | T-CR7 |
+| S11 | 16 歳の子供の昇格: 親が依頼 (同意あり) → 子供が同じメールで登録 → 同意画面で生年月日 (16 歳) → 依頼が pending なので通る → 承諾 → `user_profiles.birth_date` = メンバーの生年月日 | T-DB5, T-DB25, T-DB26 |
+| S12 | 16 歳の子供の昇格で、依頼の前に同意が無い (本冊より前に作られた行は無い = 0 件。将来の欠損に備える) → 依頼は 403 `PARENTAL_CONSENT_REQUIRED` | T-DB23 |
+| S13 | 子供を家族から外す → トリガーが同意を `revoked_at` にし、監査 `parental_consent_revoked` → 子供の画面の同意カードは「取り消し済み」 | T-DB20, T-DB21, T-MD3 |
+| S14 | 署名した親が退会 → `parent_user_id` が NULL になり、同意の行は残る (家族の他の大人が読める) | T-DB18 |
+| S15 | 同意文書の版を上げる → 既存の同意は失効しない。新しい子供の追加は新しい版で記録される (再同意を求めるかは §8) | T-SH8, T-DB13 |
+
+### 3.3 現行の画面と経路 (本冊が触る所)
+
+| 画面 / 経路 | 現行 | 本冊 |
+|---|---|---|
+| `/signup` (Web)・`(auth)/signup.tsx` (モバイル) | 規約のチェック (Web) / 何も無い (モバイル) | 注記 1 行 `SIGNUP_MINOR_NOTICE` を足す。欄は足さない (年齢の確認は同意画面に 1 か所) |
+| `/legal-consent` | チェック 2 つ | 生年月日の欄 (プロフィールに無いときだけ必須)・未成年の案内と退会 |
+| `/family/members/child/new` | 名前・生年月日 (任意・jsonb)・性別 | 生年月日を必須に (列へ)。18 歳未満なら同意の欄 (チェック 2 + 氏名) |
+| `/family/members/[id]` | 役割・共有・昇格・除名 | 子供なら生年月日 (年齢) と同意カード (署名者・日時・版・取り消しの案内) |
+| `/legal/parental-consent` | 無い | 新設 (公開。同意文書の全文と版・施行日) |
+| `POST /api/family/members/child` | 3 引数の RPC | 生年月日と同意を渡す。版の検査。控えメール |
+| `POST /api/legal/accept` | 版 2 つ | `birth_date` を受け、未成年の 403 を返す |
+| `lib/legal-consent.ts` / `middleware.ts` | 版の一致で判定 | `isLegalConsentComplete` (版 + 生年月日) で判定。select に `birth_date` |
+
+---
+
+## 4. 相 2 構想とトレース
+
+### 4.1 構造
+
+1. **年齢は「同意の記録」と同じ場所・同じ関数で 1 回。** 新規・既存・Web・モバイル・Google 登録のどの経路も、サインイン後に最初に止まるのは同意画面 (#1435 の初回の作成 + `ENFORCE=on`)。そこに生年月日の欄を足し、`accept_legal_documents(…, p_birth_date)` が `user_profiles.birth_date` (特権列・write-once) に書く。判定の述語は `isLegalConsentComplete(profile) = 版が一致 ∧ birth_date あり` の 1 つ。未成年の自己登録は関数が断り (何も書かない)、画面が「保護者が家族に追加 → 同意 → 本人のアカウントとつなぐ」道を案内し、退会 (既存) でアカウントを消す。昇格の経路の未成年 (自分のメール宛の pending の依頼があり、その子供に有効な同意がある) だけは通す (`legal_minor_has_guardian_path`)。
+2. **保護者の同意は子供の作成と同じトランザクション。** `add_family_child` に `p_birth_date`・`p_consent_version`・`p_signed_name`・`p_guardian_attested`・`p_ip`・`p_user_agent` を足し、18 歳未満なら `parental_consents` に 1 行入れてから返す。同意が無ければ子供の行も無い。CHECK `role <> 'child' OR birth_date IS NOT NULL` と「子供の行を作れるのはこの関数だけ」(§0.3) が不変条件を守る。
+3. **取り消し = 子供を家族から外す。** `family_members.status` が `active` から変わる AFTER UPDATE トリガーが、その子供の有効な同意に `revoked_at` を入れ、監査に残す。除名・解散・退会のどの経路でも同じ (関数を 1 本ずつ直さない)。
+4. **昇格は同意を前提に。** `request_child_promotion` / `accept_child_promotion` は、子供が 18 歳未満なら `parental_consent_active(member_id)` を求める。承諾で `user_profiles.birth_date` ← `family_members.birth_date` (親が入れた、同意の対象の値が正)。
+5. **文言は shared に 1 か所。** 同意文書 (版・施行日・本文)・画面の文・サインアップの注記を `packages/shared/src/parental-consent.ts` に置き、公開ページ・子供の追加画面・メールが同じ定数を使う。
+
+### 4.2 トレース (全シナリオを構造で手で走らせる)
+
+| ID | 経路 (構造の番号) | 終わりの状態 |
+|---|---|---|
+| S1 | signUp → verify → `/auth/callback` (`resolveFirstSignInDestination`: 行なし → gaps = 2 文書 + birth_date → `/legal-consent`) → 欄 3 つ → `POST /api/legal/accept {版 2, birth_date}` → (1) 行を既定値 + birth_date で作る → `terms_acceptances` 2 行 → `/onboarding/welcome` | `user_profiles`: 版 2 + `birth_date`。gaps = [] |
+| S2 | `signInWithOAuth` → `/auth/callback` → 以降 S1 | 同上 |
+| S3 | `GET /home` → middleware: 版は一致・`birth_date` NULL → gaps = ['birth_date'] → 307 `/legal-consent?next=/home` → 画面: `needsBirthDate` だけ必須 (チェックは出すが既定でオン・無効化しない) → accept (同じ版 + birth_date) → (1) `birth_date` だけ更新、版・`legal_accepted_at` は動かない、証跡は増えない → `/home` | `birth_date` あり。`terms_acceptances` は 8 行のまま |
+| S4 | S1 の accept で `age_years_jst(birth) = 15` ∧ `legal_minor_has_guardian_path(uid)` = false → RAISE `LEGAL_MINOR_SELF_SIGNUP_REFUSED` (行を作らない) → route 403 → 画面 `minor_refused` → 「登録をやめる」→ `deleteOwnAccount()` (`POST /api/account/delete {confirm:true}`: 代表者でない → `prepare_account_deletion` → `deleteUser`) → `signOutAfterAccountDeletion` → `withdrawn` の画面 | `auth.users` の行なし。`user_profiles` 行なし |
+| S5 | S4 の 403 のあと「生年月日を直す」→ 欄に戻る → 成人の日付で accept → S1 の終わり | S1 と同じ |
+| S6 | `/family/members/child/new`: 生年月日 → `requiresParentalConsent` = true → 同意の欄 → `POST /api/family/members/child {…, birth_date, consent:{version, signed_name, guardian_attested}}` → route: 版 = `PARENTAL_CONSENT_DOCUMENT.version` ✓ → RPC (2): 認可 → 生年月日 ✓ → 8 歳 ∧ 署名 ✓ → ロック・上限 → 子供の行 (birth_date 列、child_profile から birth_date を除く) → `parental_consents` 1 行 (age 8) → 監査 `parental_consent_recorded` + `child_added` → route: `parental_consents` を 1 件読む → 控えメール (best-effort) → 201 | 子供 active・同意 active。メール 1 通 |
+| S7 | S6 と同じ (age 17) | 同上 |
+| S8 | 生年月日 → 70 歳 → 同意の欄なし → POST (consent なし) → RPC: `v_age >= 18` → 同意の検査を飛ばす → 子供の行だけ → 201 `consent_recorded: false` | 子供 active・同意なし |
+| S9 | POST (consent なし・10 歳) → RPC: `v_age < 18` ∧ 署名なし → RAISE `PARENTAL_CONSENT_REQUIRED` (ロックの前。何も作らない) → 403 | 変化なし |
+| S10 | POST の `consent.version` ≠ 現行 → route 409 `PARENTAL_CONSENT_VERSION_MISMATCH { current }` (RPC を呼ばない) | 変化なし |
+| S11 | 親: `request_child_promotion` (4): 16 歳 ∧ `parental_consent_active` ✓ → pending → メール。子供: signUp (同じメール) → `/legal-consent` → accept (16 歳): `legal_minor_has_guardian_path`: pending ∧ 期限内 ∧ メール一致 ∧ 同意 active → true → 通る (`birth_date` = 入力値) → `/family/promotions/[token]` → `accept_child_promotion` (4): 16 歳 ∧ 同意 ✓ → UPDATE 子供の行 (user_id・role adult) → プロフィール upsert (`family_id`, `birth_date` = メンバーの値で上書き) → 監査 | 子供 = 本人の行 (adult)。`user_profiles.birth_date` = 親が入れた値。同意の行は残る (member は active のまま) |
+| S12 | `request_child_promotion`: 16 歳 ∧ 同意なし → RAISE `PARENTAL_CONSENT_REQUIRED` → 403 | 依頼なし |
+| S13 | `remove_family_member` → UPDATE status 'removed' → トリガー (3): 有効な同意 1 行に `revoked_at` + `revoked_reason='member_removed'` → 監査 `parental_consent_revoked` (actor = 外した人) | 同意 revoked。画面のカードは「取り消し済み (外した日時)」 |
+| S14 | 親の退会 → `auth.users` DELETE → FK `ON DELETE SET NULL` → `parent_user_id` NULL (行・署名の氏名・日時は残る) | 同意の行あり。家族の他の大人が読める |
+| S15 | `PARENTAL_CONSENT_DOCUMENT.version` を上げてデプロイ → 既存の行の `consent_version` は旧版のまま有効 (`parental_consent_active` は版を見ない) → 新しい追加は新版 | 旧版の同意は有効のまま (再同意は §8) |
+
+---
+
+## 5. 相 3 構造裁定 (1 回だけ)
+
+### 5.1 代替案の比較
+
+| 案 | 中身 | 退ける理由 / 採る理由 |
+|---|---|---|
+| **A (採用)** | 本人の年齢 = 同意画面 + `accept_legal_documents`。子供 = 追加と同時に同意。取り消し = 外す (トリガー) | 「同意待ち」「生年月日なし」の中間の状態を作らない。述語 1 つ (`isLegalConsentComplete`)・DB 関数の変更 2 本 (signature) + 2 本 (検査の追加)・表 1 つ。既存のゲート・退会・監査をそのまま使う |
+| B | サインアップ画面で生年月日を聞き、`/api/profile` (または `options.data`) で保存 | Google 登録・モバイル・既存の 195 人に別の経路が要る。クライアントが送る値をサーバーの入口で 1 か所に集められない (profile API は列を増やすたびに穴になる)。断ったあとに `auth.users` だけ残る問題も同じ |
+| C | 子供に「同意待ち」の状態を持たせ、同意は別 API (`POST /api/family/members/{id}/parental-consent`) とメールのリンク (期限・再送・失効) で取る | 状態 × 操作の表が倍になり (同意待ちの子供に何ができるかを全経路で決める)、同意の署名者 = 追加した本人 (ログイン済みの家族の大人) なのでメールのリンクが要らない。本番に子供の行は 0 で、中間の状態の占有者もいない。控えのメールだけ残す |
+| D | `parental_consents` を作らず `terms_acceptances (document_type='parental_consent')` に記録 | 子供は `auth.users` を持たないので `user_id` が子供を指せない。署名者・子供・年齢・取り消しを 1 行で表せない。要件も別表を指定 |
+
+### 5.2 F の問い「縁の発生源を消すより単純な構造は無いか」
+
+- 縁の発生源は「状態の間 (同意前 / 生年月日なし) に何ができるか」。A はその区間を**消す** (子供は同意と同時にしか存在しない。本人は同意画面から出られない = 既存のゲートの区間と同じ)。
+- 残る縁は 2 つだけ: (a) 昇格の経路の未成年が同意画面を通る (S11) — `legal_minor_has_guardian_path` の 1 述語で閉じる。(b) 本冊より前の子供の行 — 本番 0 行なので CHECK を VALID で足し、存在しないことを migration が保証する (行があれば適用が失敗して気づく)。
+- 更に単純にする案「生年月日を聞かない (自己申告の年齢 `age` を使う)」は、要件 (`birth_date` で年齢計算) と Issue (生年月日の入力) に反するので採らない。
+
+### 5.3 確定
+
+構造 A で確定。以後、構造への疑義は blocking ではなく「裁定への差し戻し事由」として別扱い (仕上げ (§6) で構造を蒸し返さない)。
+
+---
+
+## 6. 相 4 仕上げ
+
+### 6.1 ① 全パターン表 (主体 × 生年月日 × 年齢 × 補助条件 → 結果)
+
+今日 = JST の暦日。年齢 = 誕生日の当日に 1 つ増える (`age_years_jst` / `calculateAgeYears`。年齢計算ニ関スル法律の「前日に満了」より 1 日だけ未成年側に倒す = 同意を要する側に倒す。§6.6)。
+
+| # | 主体 / 経路 | 生年月日 | 年齢 | 補助条件 | 結果 |
+|---|---|---|---|---|---|
+| P1 | 本人 `accept_legal_documents` | 無し (body にも行にも) | — | — | `LEGAL_BIRTH_DATE_REQUIRED` (400)。何も書かない |
+| P2 | 同 | 形式外・未来・120 年超 | — | 行に無い | `LEGAL_BIRTH_DATE_INVALID` (400) |
+| P3 | 同 | あり | ≥ 18 | — | 記録 (行が無ければ作る)。200 |
+| P4 | 同 | あり | < 18 | `legal_minor_has_guardian_path` = false | `LEGAL_MINOR_SELF_SIGNUP_REFUSED` (403)。何も書かない |
+| P5 | 同 | あり | < 18 | 同 = true (pending の昇格依頼 + 有効な同意 / 既に昇格済みで同意あり) | 記録。200 |
+| P6 | 同 | 行に既にある (body の値は無視) | 任意 | — | 版だけ更新 (write-once)。200 |
+| P7 | middleware / 初回の作成 / 13a | 行に無い | — | 版は一致 | gaps = ['birth_date'] → redirect (画面) / 403 (API・13a) |
+| P8 | 同 | あり | — | 版も一致 | gaps = [] → none |
+| P9 | `add_family_child` | 無し | — | — | `CHILD_BIRTH_DATE_REQUIRED` (400) |
+| P10 | 同 | 未来・120 年超 | — | — | `CHILD_BIRTH_DATE_INVALID` (400) |
+| P11 | 同 | あり | ≥ 18 | consent の有無を問わない (無視) | 子供の行だけ。201 `consent_recorded: false` |
+| P12 | 同 | あり | < 18 (13〜17) | 版 ✓・署名 ✓・親権者 ✓ | 子供の行 + 同意の行 (`child_age_at_signing` 13〜17)。201 `consent_recorded: true` |
+| P13 | 同 | あり | < 13 | 同 | 同 (age 0〜12)。Push の除外は `isUnderCoppaAge` |
+| P14 | 同 | あり | < 18 | 版・署名・親権者のどれかが無い / 氏名が空白だけ / 100 文字超 | `PARENTAL_CONSENT_REQUIRED` (403)。何も作らない |
+| P15 | route `POST /api/family/members/child` | あり | < 18 | `consent.version` ≠ `PARENTAL_CONSENT_DOCUMENT.version` | 409 `PARENTAL_CONSENT_VERSION_MISMATCH { current }`。RPC を呼ばない |
+| P16 | `request_child_promotion` | メンバーに無し (CHECK 上あり得ない) | — | — | `CHILD_BIRTH_DATE_REQUIRED` |
+| P17 | 同 | あり | < 18 | `parental_consent_active` = false | `PARENTAL_CONSENT_REQUIRED` (403) |
+| P18 | 同 | あり | < 18 | = true | 従来どおり pending を作る |
+| P19 | 同 | あり | ≥ 18 | — | 従来どおり |
+| P20 | `accept_child_promotion` | 同 P16〜P19 の検査を承諾時にもう一度 | | | 通れば `user_profiles.birth_date` ← メンバーの値 (上書き) |
+| P21 | 子供の status が active → removed / left | — | — | 有効な同意あり | `revoked_at` + `revoked_reason` + 監査 |
+| P22 | 同 | — | — | 同意なし (≥ 18 の placeholder) | 何もしない |
+| P23 | 署名者の退会 | — | — | — | `parent_user_id` → NULL。行は残る |
+| P24 | 子供の行の DELETE / 家族の DELETE | — | — | — | 同意の行も消える (CASCADE) |
+| P25 | authenticated が `parental_consents` を INSERT / UPDATE / DELETE | — | — | — | 42501 (GRANT なし・ポリシーなし) |
+| P26 | authenticated が `family_members.birth_date` / `user_profiles.birth_date` を直接 UPDATE | — | — | — | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` (guard) |
+
+### 6.2 ② 状態比較表 (現行 vs 設計後)
+
+| 面 | 現行 | 設計後 |
+|---|---|---|
+| 本人の生年月日 | 無い (`age` は栄養用の自己申告) | `user_profiles.birth_date` (特権列・write-once。`accept_legal_documents` だけが書く。昇格の承諾は上書き) |
+| 同意ゲートの述語 | `hasAcceptedCurrentLegalDocuments` (版 2 つ) | `isLegalConsentComplete` = 版 2 つ + `birth_date`。`getLegalConsentGaps` が欠けを列挙 |
+| middleware の select | `…, terms_version_accepted, privacy_version_accepted` | `…, terms_version_accepted, privacy_version_accepted, birth_date` (42703 のやり直しはそのまま) |
+| 同意画面 | チェック 2 | + 生年月日 (無いときだけ必須)。未成年の案内・退会 |
+| 未成年の自己登録 | 誰でも作れる | 同意画面で断る (記録なし) → 退会の導線 |
+| 子供の生年月日 | `child_profile.birth_date` (任意) | 列 `family_members.birth_date` (必須。CHECK)。`child_profile` からは除く |
+| 子供の追加 RPC | `(uuid, text, jsonb)` | `(uuid, text, jsonb, date, text, text, boolean, inet, text)`。旧 signature は DROP |
+| 保護者の同意 | 無い | `parental_consents` (追加と同時・署名・版・年齢・端末・取り消し) |
+| 取り消し | — | 子供を外す → トリガーで `revoked_at` |
+| 昇格 | 年齢・同意を見ない | 18 歳未満は有効な同意が要る。承諾で生年月日を写す |
+| 監査 | `child_added` / `child_promoted` … | + `parental_consent_recorded` / `parental_consent_revoked` |
+| 文言 | — | `packages/shared/src/parental-consent.ts` + `/legal/parental-consent` |
+| メール | — | `family_parental_consent_recorded` (署名者本人宛の控え) |
+| モバイル (ネイティブ) | サインアップに注記なし | `SIGNUP_MINOR_NOTICE` 1 行。同意画面の欄は 13b の追随 |
+
+### 6.3 ③ 状態遷移表
+
+**(a) 本人 (`user_profiles` の行)**。状態 = (行, 版, birth_date)。
+
+| 状態 | 操作 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| 行なし | accept (成人) | 行あり・版一致・birth あり | 版の形式 ✓・日付 ✓・age ≥ 18 | 行を既定値で作る。証跡 2 行 |
+| 行なし | accept (未成年・guardian path なし) | 行なし | — | RAISE。何も書かない |
+| 行なし | accept (未成年・guardian path あり) | 行あり・版一致・birth あり | S11 | 同 成人 |
+| 行なし | 退会 | `auth.users` なし | 代表者でない | 既存の退会 |
+| 行あり・版一致・birth なし (既存の利用者) | 画面の GET | 同意画面へ 307 | `ENFORCE=on`・対象外のパスでない | — |
+| 同 | accept (同じ版 + birth) | 版一致・birth あり | 日付 ✓・age ≥ 18 (または guardian path) | `birth_date` だけ更新。証跡・日時は不変 |
+| 行あり・版が古い・birth あり | accept (新版。body の birth は無視) | 版一致・birth あり | 版 ✓ | 版と日時を更新。証跡 2 行 |
+| 行あり・版一致・birth あり | accept | 不変 | — | 冪等 (何も更新しない) |
+| 任意 | 本人が `birth_date` を直接 UPDATE / INSERT | 不変 | — | 42501 |
+| 任意 (子供として昇格) | `accept_child_promotion` | birth = メンバーの値 | §6.4 の 11 | 上書き |
+
+**(b) 子供のメンバー (`family_members` + `parental_consents`)**。状態 = (行, status, 同意)。
+
+| 状態 | 操作 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| 無し | `add_family_child` (< 18・署名 ✓) | active・同意 active | 認可・日付・署名・上限・家族 active | 行 2 + 監査 2 + メール (route) |
+| 無し | 同 (< 18・署名なし) | 無し | — | RAISE `PARENTAL_CONSENT_REQUIRED` |
+| 無し | 同 (≥ 18) | active・同意なし | 認可・日付・上限 | 行 1 + 監査 1 |
+| 無し | 同 (日付なし / 不正) | 無し | — | RAISE |
+| active・同意 active | `request_child_promotion` | 同 + pending の依頼 | 認可・上限 | 従来 |
+| active・同意なし (< 18) | 同 | 不変 | — | RAISE `PARENTAL_CONSENT_REQUIRED` |
+| active・同意なし (≥ 18) | 同 | 同 + pending | 従来 | 従来 |
+| active・同意 active | `accept_child_promotion` (本人) | active (adult・user_id あり)・同意 active (残る) | メール一致・期限・同意 ✓ | プロフィールへ birth を写す。監査 |
+| active・同意 active | 除名 / 解散 (status → removed) | removed・同意 revoked | — | トリガー: `revoked_at`・監査 |
+| active・同意なし | 同 | removed・同意なし | — | トリガーは何もしない |
+| removed・同意 revoked | 再び追加したい | 新しい行 (新しい同意) | — | 古い行・同意はそのまま残る |
+| 任意 | 家族の大人が `birth_date` を直接 UPDATE | 不変 | — | 42501 |
+| 任意 | 家族の DELETE / 行の DELETE | 無し | — | 同意も CASCADE |
+| 任意 | 署名者の退会 | 不変 (parent_user_id NULL) | — | FK SET NULL |
+
+表に無い遷移 (例: 同意だけを取り消して子供を残す・同意の行の UPDATE / DELETE をクライアントから行う) は作らない。
+
+### 6.4 データモデル (migration。番号はマージ直前に `origin/main` の `supabase/migrations` の最大より大きい値で確定)
+
+ファイル: `supabase/migrations/<番号はマージ時に確定>_parental_consent_and_birth_date.sql`、戻し: `supabase/rollbacks/<同じ番号>_parental_consent_and_birth_date.down.sql`。冒頭のコメントは `20261008200700` と同じ型 (背景・変更・設計上の判断・本番への影響・冪等・ロールバック・確かめるテスト) で書く。全文は下の 1〜11 を順に並べたもの。SQL の中の数値 (18 / 13 / 120 / 100 / 512 / 20) は、shared の定数 (§6.6) と同じ値で、各所にコメントで根拠を書く。
+
+**1. `user_profiles.birth_date` (write-once の特権列)**
+
+```sql
+ALTER TABLE public.user_profiles ADD COLUMN IF NOT EXISTS birth_date date;
+COMMENT ON COLUMN public.user_profiles.birth_date IS
+  '#1173: 本人の生年月日 (年齢の確認)。同意画面で 1 回だけ聞き、accept_legal_documents だけが書く (write-once。昇格の承諾 accept_child_promotion は子供の行の値で上書き)。本人は直接変更できない (guard_user_profiles_privileged)。NULL = 未入力 (同意ゲートが同意画面へ回す)。';
+```
+
+**2. `family_members.birth_date` (子供は必須)**
+
+```sql
+ALTER TABLE public.family_members ADD COLUMN IF NOT EXISTS birth_date date;
+-- 子供 (role = 'child') は生年月日が必須。VALID で足す: 本番は 2026-10-15 時点で family_members 0 行 (§0.4)。
+-- 子供の行が残っている環境では適用が失敗する (= 本冊より前の「同意の無い子供」を存在させない)。その行はテストデータなので先に消す。
+ALTER TABLE public.family_members DROP CONSTRAINT IF EXISTS family_members_child_birth_date_required;
+ALTER TABLE public.family_members ADD CONSTRAINT family_members_child_birth_date_required
+  CHECK (role <> 'child' OR birth_date IS NOT NULL);
+CREATE INDEX IF NOT EXISTS idx_family_members_child_birth_date
+  ON public.family_members (birth_date) WHERE role = 'child';
+COMMENT ON COLUMN public.family_members.birth_date IS
+  '#1173: 子供 (アカウント無しのメンバー) の生年月日。add_family_child だけが書く (家族の大人も直接変更できない: guard_family_members_privileged)。大人 (user_id あり) の行は NULL (本人の生年月日は user_profiles.birth_date)。';
+```
+
+**3. 年齢 (JST の暦日。誕生日の当日に 1 つ増える)**
+
+```sql
+CREATE OR REPLACE FUNCTION public.age_years_jst(p_birth_date date) RETURNS integer
+LANGUAGE sql STABLE SET search_path = '' AS $$
+  -- @homegohan/shared の calculateAgeYears(birth, todayInJst()) と同じ規則 (誕生日の当日に増える)。
+  SELECT date_part('year', age((now() AT TIME ZONE 'Asia/Tokyo')::date, p_birth_date))::integer
+$$;
+-- RPC の本文 (所有者 postgres) からだけ呼ぶ。クライアントには開けない
+REVOKE ALL ON FUNCTION public.age_years_jst(date) FROM PUBLIC, anon, authenticated, service_role;
+```
+
+**4. `parental_consents`**
+
+```sql
+CREATE TABLE IF NOT EXISTS public.parental_consents (
+  id                   uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  family_member_id     uuid        NOT NULL REFERENCES public.family_members(id) ON DELETE CASCADE,
+  family_id            uuid        NOT NULL REFERENCES public.family_groups(id)  ON DELETE CASCADE,  -- RLS を結合なしで書くための複製
+  parent_user_id       uuid        REFERENCES auth.users(id) ON DELETE SET NULL,  -- 署名者。退会で紐づけだけ外す (20261010000100 の方針 2)
+  signed_name          text        NOT NULL,   -- 電子署名 (保護者が入力した氏名。前後の空白を除いた値)
+  guardian_attested    boolean     NOT NULL,   -- 「親権者または法定保護者である」の確認
+  consent_version      varchar(20) NOT NULL,   -- 同意文書の版 (@homegohan/shared の PARENTAL_CONSENT_DOCUMENT.version)
+  child_birth_date     date        NOT NULL,   -- 署名時点の子供の生年月日の写し (子供の行が消えても判断の根拠が残る)
+  child_age_at_signing integer     NOT NULL,   -- 署名時点の年齢 (0〜17)。13 未満 = COPPA の区分
+  signed_at            timestamptz NOT NULL DEFAULT now(),
+  ip_address           inet,
+  user_agent           text,                   -- 512 文字で切る (accept_legal_documents と同じ)
+  revoked_at           timestamptz,            -- 取り消し (子供を家族から外した) 日時。NULL = 有効
+  revoked_reason       text,
+  CONSTRAINT parental_consents_signed_name_length CHECK (length(signed_name) BETWEEN 1 AND 100),  -- SIGNED_NAME_MAX_LENGTH
+  CONSTRAINT parental_consents_guardian_attested  CHECK (guardian_attested),
+  CONSTRAINT parental_consents_version_format     CHECK (consent_version ~ '^[0-9A-Za-z._-]{1,20}$'),  -- LEGAL_VERSION_PATTERN と同じ
+  CONSTRAINT parental_consents_child_age          CHECK (child_age_at_signing BETWEEN 0 AND 17),     -- ADULT_AGE_YEARS - 1
+  CONSTRAINT parental_consents_revoked_pair       CHECK ((revoked_at IS NULL) = (revoked_reason IS NULL)),
+  CONSTRAINT parental_consents_revoked_reason     CHECK (revoked_reason IS NULL OR revoked_reason IN ('member_removed', 'member_left'))
+);
+-- 有効な同意は子供 1 人につき 1 行
+CREATE UNIQUE INDEX IF NOT EXISTS uniq_parental_consents_active_member
+  ON public.parental_consents (family_member_id) WHERE revoked_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_parental_consents_family ON public.parental_consents (family_id);
+CREATE INDEX IF NOT EXISTS idx_parental_consents_parent ON public.parental_consents (parent_user_id) WHERE parent_user_id IS NOT NULL;
+
+ALTER TABLE public.parental_consents ENABLE ROW LEVEL SECURITY;
+-- 権限: 読めるのはその家族の active な大人 (と運営)。書けるのは SECURITY DEFINER の関数 (所有者 postgres) と service_role だけ。
+-- Supabase の default privileges を完全形で剥がしてから付け直す (20261007150300 と同じ理屈)。
+REVOKE ALL ON public.parental_consents FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.parental_consents TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.parental_consents TO service_role;
+DROP POLICY IF EXISTS parental_consents_select_family_adult_or_operator ON public.parental_consents;
+CREATE POLICY parental_consents_select_family_adult_or_operator ON public.parental_consents
+  FOR SELECT TO authenticated
+  USING (
+    public.is_active_family_adult(family_id)
+    OR EXISTS (SELECT 1 FROM public.user_profiles up
+                WHERE up.id = auth.uid() AND up.roles && ARRAY['admin', 'super_admin']::text[])
+  );
+-- INSERT / UPDATE / DELETE のポリシーは作らない (= authenticated は書けない。RLS の既定の拒否 + GRANT なし)
+COMMENT ON TABLE public.parental_consents IS
+  '#1173: 18 歳未満の子供メンバーへの保護者の電子署名同意。add_family_child が子供の行と同じトランザクションで 1 行入れる。取り消しは子供を家族から外すこと (トリガーが revoked_at を入れる)。クライアントは SELECT のみ (家族の大人・運営)。保持 = 子供の行と同じ (CASCADE)。';
+```
+
+**5. 同意の有効判定・昇格の経路の未成年**
+
+```sql
+CREATE OR REPLACE FUNCTION public.parental_consent_active(p_member_id uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT EXISTS (SELECT 1 FROM public.parental_consents pc
+                  WHERE pc.family_member_id = p_member_id AND pc.revoked_at IS NULL)
+$$;
+REVOKE ALL ON FUNCTION public.parental_consent_active(uuid) FROM PUBLIC, anon, authenticated, service_role;
+
+-- 18 歳未満が同意画面を通ってよい条件: (a) 既に自分の行 (昇格済み) に有効な同意がある、または
+-- (b) 自分のメールアドレス宛の pending (期限内) の昇格依頼があり、その子供に有効な同意がある (S11)。
+CREATE OR REPLACE FUNCTION public.legal_minor_has_guardian_path(p_user_id uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = '' AS $$
+  SELECT EXISTS (
+           SELECT 1 FROM public.family_members fm
+            WHERE fm.user_id = p_user_id AND fm.status = 'active' AND public.parental_consent_active(fm.id)
+         )
+      OR EXISTS (
+           SELECT 1
+             FROM public.family_promotion_requests r
+             JOIN public.family_members fm ON fm.id = r.member_id AND fm.status = 'active'
+             JOIN auth.users u ON u.id = p_user_id
+            WHERE r.status = 'pending' AND r.expires_at > now()
+              AND lower(r.email) = lower(u.email)
+              AND public.parental_consent_active(fm.id)
+         )
+$$;
+REVOKE ALL ON FUNCTION public.legal_minor_has_guardian_path(uuid) FROM PUBLIC, anon, authenticated, service_role;
+```
+
+**6. 取り消しのトリガー (子供の行が active でなくなったら同意を失効させる)**
+
+```sql
+CREATE OR REPLACE FUNCTION public.revoke_parental_consent_on_member_inactive() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_consent_id uuid;
+  v_reason text := CASE WHEN NEW.status = 'left' THEN 'member_left' ELSE 'member_removed' END;
+BEGIN
+  UPDATE public.parental_consents
+     SET revoked_at = now(), revoked_reason = v_reason
+   WHERE family_member_id = NEW.id AND revoked_at IS NULL
+   RETURNING id INTO v_consent_id;  -- 有効な同意は最大 1 行 (uniq_parental_consents_active_member)
+  IF v_consent_id IS NOT NULL THEN
+    INSERT INTO public.membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+    VALUES ('family', NEW.family_id, 'parental_consent_revoked', auth.uid(), NULL,
+            jsonb_build_object('member_id', NEW.id, 'consent_id', v_consent_id, 'reason', v_reason));
+  END IF;
+  RETURN NULL;
+END $$;
+DROP TRIGGER IF EXISTS trg_family_members_revoke_parental_consent ON public.family_members;
+CREATE TRIGGER trg_family_members_revoke_parental_consent
+  AFTER UPDATE OF status ON public.family_members
+  FOR EACH ROW
+  WHEN (OLD.status = 'active' AND NEW.status <> 'active' AND NEW.role = 'child')
+  EXECUTE FUNCTION public.revoke_parental_consent_on_member_inactive();
+```
+
+**7. `membership_audit.action` に 2 値を足す** (既存の 26 値はそのまま。`DROP CONSTRAINT IF EXISTS membership_audit_action_check` → `ADD CONSTRAINT membership_audit_action_check CHECK (action = ANY (ARRAY[<既存の 26 値>, 'parental_consent_recorded', 'parental_consent_revoked']))`。既存の 26 値は `20251126124224:5485` の配列を逐語で写す)。
+
+**8. 特権列ガード 3 本に `birth_date` を足す** (CREATE OR REPLACE。本文は現行の定義 + 1 行ずつ。ACL は変わらない)
+
+| 関数 | 現行の定義 | 足す行 (挿入位置) |
+|---|---|---|
+| `guard_user_profiles_privileged()` | `20261008200700:66-93` | `OR NEW.legal_accepted_at IS DISTINCT FROM OLD.legal_accepted_at` の直後に `OR NEW.birth_date IS DISTINCT FROM OLD.birth_date` |
+| `guard_user_profiles_privileged_on_insert()` | `20261008200700:98-121` | `OR NEW.legal_accepted_at IS NOT NULL` の直後に `OR NEW.birth_date IS NOT NULL` |
+| `guard_family_members_privileged()` | `20261008090000` 末尾 | `OR NEW.removed_at IS DISTINCT FROM OLD.removed_at` の直後に `OR NEW.birth_date IS DISTINCT FROM OLD.birth_date` (#1173 のコメントつき) |
+
+**9. `add_family_child` (旧 signature を DROP し、新 signature で作る)**
+
+```sql
+DROP FUNCTION IF EXISTS public.add_family_child(uuid, text, jsonb);
+CREATE OR REPLACE FUNCTION public.add_family_child(
+  p_family_id        uuid,
+  p_display_name     text,
+  p_child_profile    jsonb,
+  p_birth_date       date,
+  p_consent_version  text    DEFAULT NULL,
+  p_signed_name      text    DEFAULT NULL,
+  p_guardian_attested boolean DEFAULT false,
+  p_ip               inet    DEFAULT NULL,
+  p_user_agent       text    DEFAULT NULL
+) RETURNS family_members
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+DECLARE
+  v_caller_role family_role_enum; v_member family_members; v_count INT; v_limit INT; v_family_status TEXT;
+  v_today date := (now() AT TIME ZONE 'Asia/Tokyo')::date;
+  v_age INT; v_signed_name TEXT; v_consent_id uuid;
+BEGIN
+  SELECT role INTO v_caller_role FROM family_members
+    WHERE family_id = p_family_id AND user_id = auth.uid() AND status = 'active';
+  IF v_caller_role IS NULL OR v_caller_role NOT IN ('representative','adult') THEN
+    RAISE EXCEPTION 'NOT_FAMILY_ADULT' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- #1173 生年月日は必須。未来・120 年超 (要件 01: 過去 120 年以内) は不正。ロックを取る前に検査する (無駄に待たせない)
+  IF p_birth_date IS NULL THEN
+    RAISE EXCEPTION 'CHILD_BIRTH_DATE_REQUIRED' USING ERRCODE = 'P0001';
+  END IF;
+  IF p_birth_date > v_today OR p_birth_date < (v_today - INTERVAL '120 years')::date THEN
+    RAISE EXCEPTION 'CHILD_BIRTH_DATE_INVALID' USING ERRCODE = 'P0001';
+  END IF;
+  v_age := public.age_years_jst(p_birth_date);
+  v_signed_name := NULLIF(btrim(p_signed_name), '');
+  -- 18 歳未満 (要件 03 §17.10) は、版・署名 (氏名 1〜100 文字)・親権者の確認が揃わなければ子供の行も作らない
+  IF v_age < 18 AND (
+       p_consent_version IS NULL OR p_consent_version !~ '^[0-9A-Za-z._-]{1,20}$'
+       OR v_signed_name IS NULL OR length(v_signed_name) > 100
+       OR NOT COALESCE(p_guardian_attested, false)
+     ) THEN
+    RAISE EXCEPTION 'PARENTAL_CONSENT_REQUIRED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- (#1213 のまま) 家族の行をロックしてから人数を数える
+  SELECT member_limit, status INTO v_limit, v_family_status
+    FROM family_groups WHERE id = p_family_id FOR UPDATE;
+  IF NOT FOUND OR v_family_status <> 'active' THEN
+    RAISE EXCEPTION 'FAMILY_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+  SELECT COUNT(*) INTO v_count FROM family_members WHERE family_id = p_family_id AND status = 'active';
+  IF v_count >= v_limit THEN
+    RAISE EXCEPTION 'MEMBER_LIMIT_EXCEEDED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- 生年月日は列に入れる。jsonb に同じ値を持たせない (読む側が 2 か所を見ないため)
+  INSERT INTO family_members (family_id, user_id, role, display_name, child_profile, birth_date)
+  VALUES (p_family_id, NULL, 'child', p_display_name, COALESCE(p_child_profile, '{}'::jsonb) - 'birth_date', p_birth_date)
+  RETURNING * INTO v_member;
+
+  IF v_age < 18 THEN
+    INSERT INTO parental_consents (family_member_id, family_id, parent_user_id, signed_name, guardian_attested,
+                                   consent_version, child_birth_date, child_age_at_signing, ip_address, user_agent)
+    VALUES (v_member.id, p_family_id, auth.uid(), v_signed_name, true,
+            p_consent_version, p_birth_date, v_age, p_ip, left(p_user_agent, 512))
+    RETURNING id INTO v_consent_id;
+    INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+    VALUES ('family', p_family_id, 'parental_consent_recorded', auth.uid(), NULL,
+            jsonb_build_object('member_id', v_member.id, 'consent_id', v_consent_id,
+                               'consent_version', p_consent_version, 'child_age', v_age));
+  END IF;
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, metadata)
+  VALUES ('family', p_family_id, 'child_added', auth.uid(),
+          jsonb_build_object('member_id', v_member.id, 'display_name', p_display_name, 'consent_id', v_consent_id));
+
+  RETURN v_member;
+END $$;
+REVOKE ALL ON FUNCTION public.add_family_child(uuid, text, jsonb, date, text, text, boolean, inet, text)
+  FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.add_family_child(uuid, text, jsonb, date, text, text, boolean, inet, text)
+  TO authenticated, service_role;
+```
+
+**10. `accept_legal_documents` (旧 signature を DROP し、`p_birth_date` を足す)**
+
+```sql
+DROP FUNCTION IF EXISTS public.accept_legal_documents(text, text, inet, text);
+CREATE OR REPLACE FUNCTION public.accept_legal_documents(
+  p_terms_version   text,
+  p_privacy_version text,
+  p_ip              inet DEFAULT NULL,
+  p_user_agent      text DEFAULT NULL,
+  p_birth_date      date DEFAULT NULL
+) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_uid uuid := auth.uid();
+  v_now timestamptz := now();
+  v_today date := (now() AT TIME ZONE 'Asia/Tokyo')::date;
+  v_existing_birth date;
+  v_birth date;
+BEGIN
+  IF v_uid IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+  IF p_terms_version IS NULL OR p_terms_version !~ '^[0-9A-Za-z._-]{1,20}$'
+     OR p_privacy_version IS NULL OR p_privacy_version !~ '^[0-9A-Za-z._-]{1,20}$' THEN
+    RAISE EXCEPTION 'INVALID_LEGAL_VERSION' USING ERRCODE = '22023';
+  END IF;
+
+  -- #1173 生年月日 (write-once)。行に既にあれば p_birth_date は見ない。無ければ必須で、未成年の自己登録は断る (何も書かない)
+  SELECT birth_date INTO v_existing_birth FROM public.user_profiles WHERE id = v_uid;
+  v_birth := COALESCE(v_existing_birth, p_birth_date);
+  IF v_birth IS NULL THEN
+    RAISE EXCEPTION 'LEGAL_BIRTH_DATE_REQUIRED' USING ERRCODE = '22023';
+  END IF;
+  IF v_existing_birth IS NULL THEN
+    IF p_birth_date > v_today OR p_birth_date < (v_today - INTERVAL '120 years')::date THEN
+      RAISE EXCEPTION 'LEGAL_BIRTH_DATE_INVALID' USING ERRCODE = '22023';
+    END IF;
+    -- 18 歳未満 (要件 03 §17.10) は、保護者の同意済みの子供としてつなぐ経路 (S11) の人だけ通す
+    IF public.age_years_jst(p_birth_date) < 18 AND NOT public.legal_minor_has_guardian_path(v_uid) THEN
+      RAISE EXCEPTION 'LEGAL_MINOR_SELF_SIGNUP_REFUSED' USING ERRCODE = 'P0001';
+    END IF;
+  END IF;
+
+  INSERT INTO public.user_profiles AS p (
+    id, nickname, age_group, gender,
+    terms_version_accepted, privacy_version_accepted, legal_accepted_at, birth_date
+  ) VALUES (
+    v_uid, 'Guest', 'unspecified', 'unspecified',
+    p_terms_version, p_privacy_version, v_now, v_birth
+  )
+  ON CONFLICT (id) DO UPDATE
+     SET terms_version_accepted   = EXCLUDED.terms_version_accepted,
+         privacy_version_accepted = EXCLUDED.privacy_version_accepted,
+         -- 版が変わらないときは同意日時を動かさない (生年月日だけを足す S3 でも動かない)
+         legal_accepted_at        = CASE WHEN p.terms_version_accepted IS DISTINCT FROM EXCLUDED.terms_version_accepted
+                                          OR p.privacy_version_accepted IS DISTINCT FROM EXCLUDED.privacy_version_accepted
+                                          OR p.legal_accepted_at IS NULL
+                                         THEN EXCLUDED.legal_accepted_at ELSE p.legal_accepted_at END,
+         birth_date               = COALESCE(p.birth_date, EXCLUDED.birth_date)
+   WHERE p.terms_version_accepted   IS DISTINCT FROM EXCLUDED.terms_version_accepted
+      OR p.privacy_version_accepted IS DISTINCT FROM EXCLUDED.privacy_version_accepted
+      OR p.legal_accepted_at IS NULL
+      OR p.birth_date IS NULL;
+
+  INSERT INTO public.terms_acceptances (user_id, document_type, document_version, accepted_at, ip_address, user_agent)
+  SELECT v_uid, d.document_type, d.document_version, v_now, p_ip, left(p_user_agent, 512)
+    FROM (VALUES ('terms_of_service', p_terms_version), ('privacy_policy', p_privacy_version)) AS d (document_type, document_version)
+   WHERE NOT EXISTS (SELECT 1 FROM public.terms_acceptances AS t
+                      WHERE t.user_id = v_uid AND t.document_type = d.document_type AND t.document_version = d.document_version);
+
+  RETURN (SELECT jsonb_build_object(
+            'terms_version_accepted',   p.terms_version_accepted,
+            'privacy_version_accepted', p.privacy_version_accepted,
+            'legal_accepted_at',        p.legal_accepted_at,
+            'birth_date',               p.birth_date)
+            FROM public.user_profiles AS p WHERE p.id = v_uid);
+END $$;
+REVOKE ALL ON FUNCTION public.accept_legal_documents(text, text, inet, text, date) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.accept_legal_documents(text, text, inet, text, date) TO authenticated;
+```
+
+**11. 昇格 RPC 2 本 (CREATE OR REPLACE。signature・戻り値・属性は現行のまま。本文は現行の定義 + 下の差分だけ)**
+
+| 関数 | 土台 | 差分 (挿入位置は逐語) |
+|---|---|---|
+| `request_child_promotion(p_member_id uuid, p_email text)` | `20261008100000:371-452` | `IF v_member.status <> 'active' THEN RAISE EXCEPTION 'PROMOTION_MEMBER_UNAVAILABLE' …; END IF;` の**直後** (日次上限 `enforce_membership_daily_cap` の前) に: `-- #1173 18 歳未満は有効な保護者の同意が要る` / `IF v_member.birth_date IS NULL THEN RAISE EXCEPTION 'CHILD_BIRTH_DATE_REQUIRED' USING ERRCODE = 'P0001'; END IF;` / `IF public.age_years_jst(v_member.birth_date) < 18 AND NOT public.parental_consent_active(v_member.id) THEN RAISE EXCEPTION 'PARENTAL_CONSENT_REQUIRED' USING ERRCODE = 'P0001'; END IF;` |
+| `accept_child_promotion(p_token text, p_share_meals boolean, p_share_health boolean, p_share_menu boolean)` | `20261015170000:146-290` | (a) `IF v_member.user_id IS NOT NULL THEN RAISE EXCEPTION 'ALREADY_PROMOTED' …; END IF;` の**直後**に request と同じ 2 つの IF。(b) プロフィールの upsert を `INSERT INTO user_profiles (id, nickname, age_group, gender, family_id, birth_date) VALUES (auth.uid(), 'Guest', 'unspecified', 'unspecified', v_member.family_id, v_member.birth_date) ON CONFLICT (id) DO UPDATE SET family_id = EXCLUDED.family_id, birth_date = EXCLUDED.birth_date;` に (親が入れた、同意の対象の値で上書き。P20) |
+
+どちらも末尾に REVOKE / GRANT は流さない (CREATE OR REPLACE は ACL を変えない。`20261015170000` と同じ)。
+
+**12. 戻し (`.down.sql`)**: 1〜11 の逆順。トリガーと 3 関数 (`revoke_…`・`legal_minor_has_guardian_path`・`parental_consent_active`・`age_years_jst`) を DROP → `accept_child_promotion` を `20261015170000` の定義に、`request_child_promotion` を `20261008100000` の定義に戻す (本文を写す) → `accept_legal_documents(text, text, inet, text, date)` を DROP して `20261008200700` の定義 (4 引数) + REVOKE / GRANT に戻す → `add_family_child(uuid, …, text)` を DROP して `20261007160000` の定義 (3 引数) + REVOKE / GRANT に戻す → ガード 3 本を `20261008200700` / `20261008090000` の定義に戻す → `membership_audit_action_check` を元の 26 値に戻す (`parental_consent_*` の行が残っているときは `NOT VALID` で足す。監査の行は消さない) → `DROP TABLE IF EXISTS public.parental_consents` → `family_members` の CHECK・索引・列を DROP → `user_profiles.birth_date` を DROP。戻すと生年月日と同意の記録が消える。先に Web のデプロイを戻すこと。
+
+### 6.5 正典コード (TS)
+
+#### 6.5.1 `packages/shared/src/parental-consent.ts` (新設。定数・年齢・述語・文面。何も import しない)
+
+```ts
+/**
+ * 未成年の年齢確認と保護者の同意 (#1173) の定数・年齢の計算・文面。Web (Next) とモバイル (Expo) の両方が使う。
+ * 年齢の規則: 誕生日の当日に 1 つ増える (DB の public.age_years_jst と同じ)。
+ * 年齢計算ニ関スル法律 (誕生日の前日に満了) より 1 日だけ「まだ若い」側に倒れるので、同意を要する側 (安全側) に倒れる。
+ * 今日は JST の暦日 (todayInJst) で決める。
+ */
+
+/** 18 歳未満は保護者の同意が要る (要件 03 §17.10・日本)。自分では登録できない */
+export const ADULT_AGE_YEARS = 18;
+/** 13 歳未満は米国 COPPA の区分 (要件 03 §17.10)。Push 通知を送らない (送信側はこの述語で除外する) */
+export const COPPA_AGE_YEARS = 13;
+/** 生年月日は過去 120 年以内 (要件 01 行 1720) */
+export const BIRTH_DATE_MAX_AGE_YEARS = 120;
+/** 電子署名 (氏名) の最大文字数。parental_consents.signed_name の CHECK と同じ */
+export const SIGNED_NAME_MAX_LENGTH = 100;
+/** JST は UTC+9 (分)。todayInJst だけが使う */
+const JST_UTC_OFFSET_MINUTES = 540;
+const MS_PER_MINUTE = 60_000;
+/** 生年月日の形 (YYYY-MM-DD)。暦として正しいかは parseCalendarDate が見る */
+export const BIRTH_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+/** 同意文書の版の形。DB の parental_consents.consent_version の CHECK と、LEGAL_VERSION_PATTERN と同じ */
+export const PARENTAL_CONSENT_VERSION_PATTERN = /^[0-9A-Za-z._-]{1,20}$/;
+
+export interface ParentalConsentDocumentInfo {
+  /** 版。parental_consents.consent_version に入る。内容が変わる改定は版を上げる */
+  version: string;
+  /** 施行日 (日本時間) YYYY-MM-DD。画面に出すだけ */
+  effectiveDate: string;
+}
+/** ⚠ 版・施行日・文面は弁護士の確認を経て決める (§8)。いまの値は仮置き */
+export const PARENTAL_CONSENT_DOCUMENT: Readonly<ParentalConsentDocumentInfo> = {
+  version: 'v2026.1',
+  effectiveDate: '2026-11-01',
+};
+/** 同意文書の全文を公開するパス (未ログインで読める。同意ゲートの対象外 /legal 以下) */
+export const PARENTAL_CONSENT_DOCUMENT_PATH = '/legal/parental-consent';
+
+/** いまの日付 (JST の暦日) を YYYY-MM-DD で返す */
+export function todayInJst(now: Date = new Date()): string {
+  return new Date(now.getTime() + JST_UTC_OFFSET_MINUTES * MS_PER_MINUTE).toISOString().slice(0, 10);
+}
+
+export interface CalendarDate {
+  year: number;
+  month: number;
+  day: number;
+}
+
+/** YYYY-MM-DD を暦の日付として読む。形が違う・存在しない日 (2月30日など) は null */
+export function parseCalendarDate(value: unknown): CalendarDate | null {
+  if (typeof value !== 'string') return null;
+  const match = BIRTH_DATE_PATTERN.exec(value);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  if (probe.getUTCFullYear() !== year || probe.getUTCMonth() !== month - 1 || probe.getUTCDate() !== day) return null;
+  return { year, month, day };
+}
+
+/** 満年齢 (誕生日の当日に増える)。どちらかが日付として読めなければ null。未来の生年月日は負の値 */
+export function calculateAgeYears(birthDate: string, today: string): number | null {
+  const birth = parseCalendarDate(birthDate);
+  const now = parseCalendarDate(today);
+  if (!birth || !now) return null;
+  let age = now.year - birth.year;
+  if (now.month < birth.month || (now.month === birth.month && now.day < birth.day)) age -= 1;
+  return age;
+}
+
+export type BirthDateProblem = 'format' | 'future' | 'too_old';
+
+/** 生年月日として受け付けられるか。null なら受け付ける。DB の検査 (未来・120 年超) と同じ境 */
+export function validateBirthDate(birthDate: string, today: string): BirthDateProblem | null {
+  const age = calculateAgeYears(birthDate, today);
+  if (age === null) return 'format';
+  if (age < 0) return 'future';
+  if (age > BIRTH_DATE_MAX_AGE_YEARS) return 'too_old';
+  return null;
+}
+
+/** 18 歳未満 = 保護者の同意が要る (子供の追加) / 自分では登録できない (本人) */
+export function requiresParentalConsent(birthDate: string, today: string): boolean {
+  const age = calculateAgeYears(birthDate, today);
+  return age !== null && age >= 0 && age < ADULT_AGE_YEARS;
+}
+
+/** 13 歳未満 (COPPA)。Push の送信側はこの述語が true の利用者を除外する */
+export function isUnderCoppaAge(birthDate: string, today: string): boolean {
+  const age = calculateAgeYears(birthDate, today);
+  return age !== null && age >= 0 && age < COPPA_AGE_YEARS;
+}
+
+/** サインアップ画面 (Web / モバイル) の注記。「みなす」の文は書かない (#1174 の方針) */
+export const SIGNUP_MINOR_NOTICE =
+  '18歳未満の方はご自身では登録できません。保護者の方が家族に追加し、保護者の同意のうえで、ご本人のアカウントとつなぐことができます。';
+
+/** 同意画面 (/legal-consent・13b のネイティブ) の生年月日の欄と、未成年の案内の文 */
+export const LEGAL_CONSENT_BIRTH_DATE_COPY = {
+  label: '生年月日',
+  hint: '年齢の確認のために必要です。一度登録すると変更できません（誤りはお問い合わせからご連絡ください）。',
+  invalid: '生年月日を正しく入力してください（未来の日付、120年より前の日付は登録できません）。',
+  minorRefusedHeading: '18歳未満の方はご自身では登録できません',
+  minorRefusedBody:
+    '入力された生年月日では18歳未満のため、ご自身では登録できません。保護者の方がほめゴハンの家族にあなたを追加し、保護者の同意をしたあと、保護者から届く「アカウントをつなぐ」案内のメールから登録してください。生年月日を間違えた場合は「生年月日を直す」を押してください。',
+  fixButton: '生年月日を直す',
+  withdrawButton: '登録をやめる（アカウントを削除する）',
+  withdrawnHeading: '登録をやめました',
+  withdrawnBody: 'アカウントと、ここまでに入力した情報を削除しました。保護者の方の家族に追加されたあと、案内のメールから登録できます。',
+} as const;
+
+/** 子供の追加画面の同意の欄と、メンバーの画面の同意カードの文 */
+export const PARENTAL_CONSENT_COPY = {
+  heading: '保護者の同意',
+  intro: '18歳未満のお子さまを家族に追加するには、親権者または法定保護者の方の同意が必要です。',
+  notRequiredNote: '18歳以上の方には保護者の同意は不要です。ご本人がアプリを使う場合は、招待をご利用ください。',
+  readFullTextLabel: '保護者の同意書の全文を読む',
+  guardianAttestLabel: '私はこのお子さまの親権者または法定保護者です',
+  agreeLabel: '保護者の同意書の内容を確認し、同意します',
+  signedNameLabel: '署名（保護者の氏名をフルネームで入力）',
+  signedNamePlaceholder: '例: 山田 花子',
+  recordedHeading: '保護者の同意（記録済み）',
+  revokedHeading: '保護者の同意（取り消し済み）',
+  withdrawNote: '同意を取り消すには、このお子さまを家族から外してください。外すと、お子さまの記録の共有と新しい記録は止まります。',
+} as const;
+
+/** 同意文書の本文 (仮。弁護士の確認前)。公開ページ /legal/parental-consent と子供の追加画面の要約が使う */
+export const PARENTAL_CONSENT_DOCUMENT_COPY = {
+  title: '保護者の同意書',
+  paragraphs: [
+    'ほめゴハンは、18歳未満のお子さまの情報（お名前・生年月日・性別・食事の記録・アレルギーなどの健康に関する情報）を、保護者の方の同意に基づいて取り扱います。',
+    '同意する方は、お子さまの親権者または法定保護者であること、お子さまの情報を家族グループの大人のメンバーと共有すること、および AI による食事の解析・献立の提案にお子さまの記録が使われることに同意します（AI への送信は、保護者ご自身の「AI へのデータ提供の同意」が別途必要です）。',
+    '13歳未満のお子さまには、プッシュ通知などお子さま本人に向けた連絡を行いません。お子さま本人のアカウントは作成せず、保護者の方が代わりに記録します。',
+    '同意はいつでも取り消せます。取り消すには、家族のメンバー管理画面からお子さまを家族から外してください。外した時点で、お子さまの新しい記録と共有は止まります。保存済みの情報の削除は、お問い合わせからご依頼ください。',
+    '同意の記録（署名した方の氏名・日時・この文書の版）は、お子さまが家族にいる間、保護者への確認のために保存します。',
+  ],
+} as const;
+```
+
+#### 6.5.2 `packages/shared/src/legal-versions.ts` に足す (gaps の述語)
+
+実装ではこのファイルの末尾に足す (import は要らない。`index.ts` は `export * from './legal-versions'` と `export * from './parental-consent'` で両方を外へ出す)。下は検査用に `@homegohan/shared` から既存の名前を取っている。
+
+```ts
+import { getOutdatedLegalDocuments, type AcceptedLegalVersions, type LegalDocumentType } from '@homegohan/shared';
+
+/** 同意画面で埋めるもの: いま有効な版に同意していない文書、または生年月日の未入力 */
+export type LegalConsentGap = LegalDocumentType | 'birth_date';
+
+/** user_profiles の行のうち、ゲートが見る列。行が無い (新規登録したばかり) ときは null */
+export interface LegalConsentProfile extends AcceptedLegalVersions {
+  birth_date?: string | null;
+}
+
+/** 同意画面で埋めるものの一覧。空なら何も要らない (順は 文書 → 生年月日) */
+export function getLegalConsentGaps(profile: LegalConsentProfile | null | undefined): LegalConsentGap[] {
+  const gaps: LegalConsentGap[] = [...getOutdatedLegalDocuments(profile)];
+  if (!profile?.birth_date) gaps.push('birth_date');
+  return gaps;
+}
+
+/** 同意ゲートを通れるか = いま有効な版に両方同意していて、生年月日も入っている */
+export function isLegalConsentComplete(profile: LegalConsentProfile | null | undefined): boolean {
+  return getLegalConsentGaps(profile).length === 0;
+}
+```
+
+`hasAcceptedCurrentLegalDocuments` / `getOutdatedLegalDocuments` は残す (文書だけの判定として 13a の `outdated` と同意画面の「改定あり」の表示が使う)。ゲートの判定に使うのは `isLegalConsentComplete` だけ (§6.5.6 の 3〜5)。
+
+#### 6.5.3 Zod (`src/schemas/membership/family-member.ts` の `AddFamilyChildBodySchema` を置き換え。`POST /api/legal/accept` の body は route 内)
+
+```ts
+// tsc:skip  (新設の shared の名前を import するため、段 A のマージ後に型が通る)
+import { z } from 'zod';
+import { BIRTH_DATE_PATTERN, PARENTAL_CONSENT_VERSION_PATTERN, SIGNED_NAME_MAX_LENGTH } from '@homegohan/shared';
+
+/** 保護者の同意 (子供が 18 歳未満のとき必須。18 歳以上のときは無視する) */
+export const ParentalConsentInputSchema = z
+  .object({
+    version: z.string().regex(PARENTAL_CONSENT_VERSION_PATTERN),
+    signed_name: z.string().trim().min(1).max(SIGNED_NAME_MAX_LENGTH),
+    guardian_attested: z.literal(true),
+  })
+  .strict();
+
+export const AddFamilyChildBodySchema = z
+  .object({
+    family_id: z.string().uuid(),
+    display_name: z.string().min(1).max(60),
+    child_profile: z.record(z.string(), z.unknown()).default({}),
+    birth_date: z.string().regex(BIRTH_DATE_PATTERN),  // 暦として正しいか・未来・120 年超は route が validateBirthDate で見る
+    consent: ParentalConsentInputSchema.optional(),
+  })
+  .strict();
+export type ParentalConsentInput = z.infer<typeof ParentalConsentInputSchema>;
+export type AddFamilyChildBody = z.infer<typeof AddFamilyChildBodySchema>;
+
+/** POST /api/family/members/child の 201 の data */
+export const AddFamilyChildResponseDataSchema = z.object({
+  member: z.object({ id: z.string().uuid(), family_id: z.string().uuid(), role: z.literal('child'), display_name: z.string().nullable(), birth_date: z.string() }).passthrough(),
+  consent_recorded: z.boolean(),
+});
+
+/** POST /api/legal/accept の body (route 内の BodySchema を置き換える) */
+export const LegalAcceptBodySchema = z
+  .object({
+    terms_version: z.string().min(1).max(20),
+    privacy_version: z.string().min(1).max(20),
+    birth_date: z.string().regex(BIRTH_DATE_PATTERN).optional(),  // プロフィールに無いときだけ送る
+  })
+  .strict();
+```
+
+#### 6.5.4 `src/lib/errors/membership-errors.ts` に足す (3 つの Record すべてに行を足す。型が強制する)
+
+```ts
+// tsc:skip  (既存 enum への追記)
+// enum MembershipErrorCode に (family の並びの末尾):
+//   // #1173: 子供の生年月日と保護者の同意
+//   CHILD_BIRTH_DATE_REQUIRED = 'CHILD_BIRTH_DATE_REQUIRED',
+//   CHILD_BIRTH_DATE_INVALID = 'CHILD_BIRTH_DATE_INVALID',
+//   PARENTAL_CONSENT_REQUIRED = 'PARENTAL_CONSENT_REQUIRED',
+//   PARENTAL_CONSENT_VERSION_MISMATCH = 'PARENTAL_CONSENT_VERSION_MISMATCH',   // route だけが返す (RPC は RAISE しない)
+// ErrorStatusMap: 400 / 400 / 403 / 409
+// MEMBERSHIP_ERROR_MESSAGES:
+//   CHILD_BIRTH_DATE_REQUIRED: '生年月日を入力してください。'
+//   CHILD_BIRTH_DATE_INVALID: '生年月日を正しく入力してください（未来の日付、120年より前の日付は登録できません）。'
+//   PARENTAL_CONSENT_REQUIRED: '18歳未満のお子さまを追加するには、保護者の同意（確認・同意・署名）が必要です。'
+//   PARENTAL_CONSENT_VERSION_MISMATCH: '保護者の同意書が更新されました。画面を読み込み直して、内容をご確認ください。'
+```
+
+#### 6.5.5 `src/lib/emails/membership/family-parental-consent-recorded.ts` (新設。署名者本人宛の控え)
+
+```ts
+import type { EmailEnvelope } from '@/lib/emails/envelope';
+import { emailSignature } from '@/lib/emails/common';
+import { getEmailFrom, getSupportEmail } from '@/lib/site-config';
+
+export interface FamilyParentalConsentRecordedEmailVars {
+  email_address: string;        // 宛先 = 署名した本人 (ログイン中の利用者の auth.users.email)
+  family_name: string;          // 家族グループ名
+  child_display_name: string;   // 追加した子供の呼び名 (生年月日・年齢は載せない)
+  consent_version: string;      // PARENTAL_CONSENT_DOCUMENT.version
+  signed_at: string;            // ISO 文字列 (parental_consents.signed_at)
+  document_url: string;         // `${getSiteUrl()}${PARENTAL_CONSENT_DOCUMENT_PATH}` (route が作る)
+  members_url: string;          // buildFamilyMembersUrl() (route が作る)
+}
+
+/**
+ * 保護者の同意を記録したことの控え (COPPA の「保護者への直接の通知」に当たるもの)。
+ * subject: 「【ほめゴハン】保護者の同意を記録しました」
+ */
+export function renderFamilyParentalConsentRecordedEmail(vars: FamilyParentalConsentRecordedEmailVars): EmailEnvelope {
+  const signedDate = new Date(vars.signed_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' });
+  return {
+    template: 'family_parental_consent_recorded',
+    to: vars.email_address,
+    from: getEmailFrom(),
+    subject: '【ほめゴハン】保護者の同意を記録しました',
+    text: `${vars.email_address} 様
+
+家族グループ「${vars.family_name}」に「${vars.child_display_name}」さんを追加した際の、
+保護者の同意を記録しました。
+
+同意日時: ${signedDate}
+同意書の版: ${vars.consent_version}
+
+▼ 同意書の全文
+${vars.document_url}
+
+同意を取り消すには、家族のメンバー管理画面からお子さまを家族から外してください。
+▼ メンバー管理画面
+${vars.members_url}
+
+心当たりがない場合は、すぐに ${getSupportEmail()} までご連絡ください。
+
+${emailSignature()}
+`,
+  };
+}
+```
+
+#### 6.5.6 既存ファイルの差分 (段 B。逐語の指示)
+
+| # | ファイル | 差分 |
+|---|---|---|
+| 1 | `src/app/api/family/members/child/route.ts` | body を `AddFamilyChildBodySchema.safeParse` (失敗 → 400 `VALIDATION_ERROR`。`details` は `flatten().fieldErrors`)。`validateBirthDate(body.birth_date, todayInJst())` が null でなければ 400 `CHILD_BIRTH_DATE_INVALID` (RPC を呼ばない)。`requiresParentalConsent(...)` が true のとき: `consent` 無し → 403 `PARENTAL_CONSENT_REQUIRED`、`consent.version !== PARENTAL_CONSENT_DOCUMENT.version` → 409 `PARENTAL_CONSENT_VERSION_MISMATCH` + `{ current: { version, effective_date } }`。RPC は `supabase.rpc('add_family_child', { p_family_id, p_display_name, p_child_profile, p_birth_date, p_consent_version: consent?.version ?? null, p_signed_name: consent?.signed_name ?? null, p_guardian_attested: consent?.guardian_attested ?? false, p_ip: extractClientIp(request.headers), p_user_agent: <UA を 512 文字で切る> })`。エラーは `mapPgErrorToHttp(error.message, error.code)` (新コードは enum に入る)。成功後: `supabase.from('parental_consents').select('id, consent_version, signed_at').eq('family_member_id', member.id).is('revoked_at', null).maybeSingle()` で記録を読む (RLS: 追加した本人は家族の大人) → あれば `user.email` 宛に §6.5.5 を `sendEmail` (best-effort。`isEmailFailure` ならログだけ。promote route と同じ形) → 201 `{ data: { member, consent_recorded: Boolean(consent row) } }`。`rejectNullCharacterBody` は先頭のまま |
+| 2 | `src/app/api/legal/accept/route.ts` | `BodySchema` を §6.5.3 の `LegalAcceptBodySchema` に。`birth_date` があれば `validateBirthDate` → 400 `LEGAL_BIRTH_DATE_INVALID`。RPC に `p_birth_date: parsed.birth_date ?? null` を足す。RPC の error.message が `LEGAL_MINOR_SELF_SIGNUP_REFUSED` を含めば 403 `{ error: { code: 'LEGAL_MINOR_SELF_SIGNUP_REFUSED', message: LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading } }`、`LEGAL_BIRTH_DATE_REQUIRED` → 400 同名、`LEGAL_BIRTH_DATE_INVALID` → 400 同名。それ以外は従来どおり `internalError`。応答に `birth_date: accepted.birth_date ?? null` を足す。成功ログに生年月日は残さない |
+| 3 | `lib/legal-consent.ts` | `ResolveLegalConsentInput.accepted` の型を `LegalConsentProfile` に、`resolveLegalConsent` の最初の行を `if (isLegalConsentComplete(input.accepted)) return 'none';` に。`FirstSignInLegalConsentInput.profile` も `LegalConsentProfile & {…}` に (判定は `resolveLegalConsent` 経由なので自動で生年月日を見る)。冒頭のコメントに「生年月日の未入力も同意画面へ回す (#1173)」を足す |
+| 4 | `lib/supabase/middleware.ts` | `PROFILE_COLUMNS_WITH_LEGAL` を `` `${PROFILE_COLUMNS}, terms_version_accepted, privacy_version_accepted, birth_date` `` に。`MiddlewareProfile` に `birth_date?: string | null`。42703 のやり直しはそのまま (列が無い DB では同意ゲートだけ素通り) |
+| 5 | `src/app/legal-consent/page.tsx` | select に `birth_date` を足し、素通しの条件を `isLegalConsentComplete(profile)` に。`LegalConsentForm` に `needsBirthDate={!profile?.birth_date}` を渡す |
+| 6 | `src/app/legal-consent/LegalConsentForm.tsx` | props に `needsBirthDate: boolean`。true のとき、文書の一覧の上に生年月日の欄 (`<input type="date" name="birth_date" required aria-required="true" max={todayInJst()}>`、ラベルとヒントは `LEGAL_CONSENT_BIRTH_DATE_COPY`)。送れる条件 = 両方チェック ∧ (`!needsBirthDate` ∨ `validateBirthDate(value, todayInJst()) === null`)。欄の下に `invalid` の文を出す。`isReconsent` かつ `outdated` が空 (生年月日だけ) のときの導入文は「ご利用には生年月日の登録が必要です。内容をご確認のうえ、同意をお願いします。」。POST の body に `birth_date` を足す (needsBirthDate のときだけ)。403 で `code === 'LEGAL_MINOR_SELF_SIGNUP_REFUSED'` → `phase = 'minor_refused'` の画面 (見出し・本文・`fixButton` → `phase = 'idle'` に戻る・`withdrawButton` → `deleteOwnAccount()` → `ok` なら `signOutAfterAccountDeletion(createClient())` → `phase = 'withdrawn'` の画面 (`withdrawnHeading` / `withdrawnBody` + `/signup` へのリンク)。失敗は `ACCOUNT_DELETE_FAILED_MESSAGE` を出して `minor_refused` に戻る。409 `blocked` はここでは起きない (新規の人は代表者ではない) が、起きたら同じ文)。400 `LEGAL_BIRTH_DATE_INVALID` → 欄のエラー。既存の 401 / 409 / 汎用はそのまま |
+| 7 | `src/app/(auth)/signup/page.tsx` | 同意のチェックの枠の中、`agree-legal-hint` の下 (チェックの有無に関わらず常に) に `<p className="mt-2 pl-8 text-xs text-gray-500">{SIGNUP_MINOR_NOTICE}</p>` |
+| 8 | `apps/mobile/app/(auth)/signup.tsx` | Google 登録ボタンの直後 (ログインリンクの前) に `<Text style={{ fontSize: 12, color: colors.textMuted, marginTop: spacing.sm }}>{SIGNUP_MINOR_NOTICE}</Text>` (`SIGNUP_MINOR_NOTICE` は `@homegohan/shared`) |
+| 9 | `src/app/(main)/family/members/child/new/page.tsx` | 生年月日を**必須**に (`required`・`max={todayInJst()}`。ラベル「生年月日」)。`childProfile.birth_date` を入れるのをやめ、body の `birth_date` に入れる。値が変わるたびに `validateBirthDate` → 問題があれば欄の下に文。`requiresParentalConsent(birthDate, todayInJst())` が true なら「保護者の同意」の枠: `PARENTAL_CONSENT_COPY.heading` / `intro` / `PARENTAL_CONSENT_DOCUMENT_COPY.paragraphs` の要約 (先頭 2 段落) / `readFullTextLabel` のリンク (`PARENTAL_CONSENT_DOCUMENT_PATH`、同じタブ) / チェック `guardianAttestLabel` / チェック `agreeLabel` / 氏名 `signedNameLabel` (`maxLength={SIGNED_NAME_MAX_LENGTH}`)。false (18 歳以上) なら `notRequiredNote` の一文。送れる条件 = 名前 ∧ 生年月日が有効 ∧ (同意不要 ∨ (2 チェック ∧ 氏名の trim が 1 文字以上))。body: `{ family_id, display_name, child_profile: { gender? }, birth_date, consent?: { version: PARENTAL_CONSENT_DOCUMENT.version, signed_name, guardian_attested: true } }`。エラーは `membershipErrorMessageOfBody(json)` で出す (`MEMBER_LIMIT_EXCEEDED` の特別扱いは残してよい)。409 `PARENTAL_CONSENT_VERSION_MISMATCH` は「画面を読み込み直す」ボタンつき |
+| 10 | `src/app/(main)/family/members/[id]/page.tsx` | select に `birth_date` を足す。`role === 'child'` のとき「生年月日」(`YYYY年M月D日` と満年齢) の行と、同意カード: `supabase.from('parental_consents').select('id, signed_name, consent_version, signed_at, revoked_at, revoked_reason').eq('family_member_id', id).order('signed_at', { ascending: false }).limit(1).maybeSingle()` (RLS で家族の大人だけ読める。読めなければカードを出さない) → 行があり `revoked_at` null → `recordedHeading` + 署名者 (`signed_name`)・日時 (JST)・版・全文リンク・`withdrawNote`。`revoked_at` あり → `revokedHeading` + 取り消し日時。行が無く 18 歳未満 → 出ない (本冊の不変条件では起きない)。行が無く 18 歳以上 → `notRequiredNote` |
+| 11 | `src/app/legal/parental-consent/page.tsx` (新設) | `src/app/legal/page.tsx` と同じ作り (`"use client"` は不要。サーバーコンポーネントでよい)。見出し `PARENTAL_CONSENT_DOCUMENT_COPY.title`、「版: {version} ／ 施行日: {formatLegalEffectiveDate(effectiveDate)}」、`paragraphs` を `<p>` で、末尾に問い合わせ先 (`getSupportEmail()`) と `/privacy` へのリンク。`metadata.title = '保護者の同意書'`。未ログインで読める (`/legal` は同意ゲートの対象外) |
+| 12 | `src/lib/emails/membership/templates.ts` | 既存の再エクスポートの並びに §6.5.5 を足す (再エクスポートの一覧がある場合のみ。無ければ触らない) |
+| 13 | `packages/shared/src/index.ts` | `export * from './parental-consent';` を 1 行 |
+
+### 6.6 定数 (すべて名前付き・根拠つき。環境変数は足さない: 年齢の境は法令の値で運用で変えない)
+
+| 名前 | 値 | 場所 | 根拠 |
+|---|---|---|---|
+| `ADULT_AGE_YEARS` | 18 | shared | 要件 03 §17.10 (18 歳未満は同意必須)。SQL の `< 18` と同値 |
+| `COPPA_AGE_YEARS` | 13 | shared | 同 (13 歳未満は COPPA)。SQL は記録だけ (`child_age_at_signing`) |
+| `BIRTH_DATE_MAX_AGE_YEARS` | 120 | shared | 要件 01 行 1720。SQL の `INTERVAL '120 years'` と同値 |
+| `SIGNED_NAME_MAX_LENGTH` | 100 | shared | `parental_consents_signed_name_length` と同値 |
+| `JST_UTC_OFFSET_MINUTES` | 540 | shared (非公開) | JST = UTC+9 |
+| `PARENTAL_CONSENT_DOCUMENT` | `{ version: 'v2026.1', effectiveDate: '2026-11-01' }` (仮) | shared | 改定は版を上げる (§8) |
+| `PARENTAL_CONSENT_DOCUMENT_PATH` | `/legal/parental-consent` | shared | ゲートの対象外 (`/legal` prefix) |
+| `BIRTH_DATE_PATTERN` / `PARENTAL_CONSENT_VERSION_PATTERN` | 正規表現 | shared | DB の CHECK・`LEGAL_VERSION_PATTERN` と同じ |
+| 512 (UA の切り詰め) | 既存 `MAX_USER_AGENT_LENGTH` (accept route) と同値 | SQL / route | `accept_legal_documents` と同じ |
+
+### 6.7 エラー表
+
+| code | HTTP | 出す所 | 意味 | 画面の扱い |
+|---|---|---|---|---|
+| `LEGAL_BIRTH_DATE_REQUIRED` | 400 | `accept_legal_documents` → accept route | 生年月日が body にも行にも無い | 欄を必須に (通常は起きない) |
+| `LEGAL_BIRTH_DATE_INVALID` | 400 | route (`validateBirthDate`) と RPC | 形式外・未来・120 年超 | 欄のエラー `invalid` |
+| `LEGAL_MINOR_SELF_SIGNUP_REFUSED` | 403 | RPC → route | 18 歳未満の自己登録 (昇格の経路でない)。何も記録しない | `minor_refused` の画面 |
+| `CHILD_BIRTH_DATE_REQUIRED` | 400 | RPC (`add_family_child` / 昇格 2 本) | 子供の生年月日が無い | 欄を必須に |
+| `CHILD_BIRTH_DATE_INVALID` | 400 | route と RPC | 未来・120 年超 | 欄のエラー |
+| `PARENTAL_CONSENT_REQUIRED` | 403 | RPC (`add_family_child` / 昇格 2 本) と route | 18 歳未満に有効な同意 (または署名の入力) が無い | 同意の欄を促す / 昇格画面に「保護者の同意が記録されていません」 |
+| `PARENTAL_CONSENT_VERSION_MISMATCH` | 409 | route だけ | body の版が現行と違う | 読み込み直し |
+| `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | — | guard | `birth_date` の直接更新 | 既存 |
+| `VALIDATION_ERROR` (400) / `NOT_FAMILY_ADULT` (403) / `MEMBER_LIMIT_EXCEEDED` (409) / `FAMILY_NOT_FOUND` (404) | 既存 | 既存 | 変えない | 既存 |
+
+家族の API の code は `MembershipErrorCode` の既存の語彙 (接頭辞なし) に合わせる。`cross/04` §4.2 の `FAM_PARENTAL_CONSENT_REQUIRED` は実コードの `PARENTAL_CONSENT_REQUIRED` を指す行に直す (§6.18)。`LEGAL_` は accept route の既存の接頭辞。
+
+### 6.8 API 仕様
+
+**`POST /api/family/members/child`** (既存。認証必須・JSON)
+- 入力: `AddFamilyChildBodySchema` (§6.5.3)。`consent` は 18 歳未満のとき必須、18 歳以上のときは無視。
+- 出力 201: `{ data: { member: <family_members の行>, consent_recorded: boolean } }`。`member.child_profile` に `birth_date` は入らない (列 `member.birth_date`)。
+- 4xx: 400 `VALIDATION_ERROR` / `CHILD_BIRTH_DATE_INVALID`、401 `NOT_AUTHENTICATED`、403 `NOT_FAMILY_ADULT` / `PARENTAL_CONSENT_REQUIRED`、404 `FAMILY_NOT_FOUND`、409 `MEMBER_LIMIT_EXCEEDED` / `PARENTAL_CONSENT_VERSION_MISMATCH` (`{ error: { code, message }, current: { version, effective_date } }`)。
+- 副作用: 子供の行 (+ 同意の行 + 監査) と、署名者本人宛の控えメール (失敗しても 201)。
+
+**`POST /api/legal/accept`** (既存)
+- 入力: `LegalAcceptBodySchema`。`birth_date` はプロフィールに無いときだけ (行にあれば無視される)。
+- 出力 200: `{ accepted: true, terms_version_accepted, privacy_version_accepted, legal_accepted_at, birth_date }`。
+- 4xx: 既存 (400 `LEGAL_BAD_REQUEST`・409 `LEGAL_VERSION_MISMATCH`・415) + 400 `LEGAL_BIRTH_DATE_REQUIRED` / `LEGAL_BIRTH_DATE_INVALID`、403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED`。
+
+**13a の `GET /api/legal/status`** (未マージ): `required = enforced && !isLegalConsentComplete(profile)`、`gaps: LegalConsentGap[]` を足す (§0.5)。
+
+**変えない API**: `POST /api/family/members/[member_id]/promote` (RPC の新しい RAISE は `mapPgErrorToHttp` が enum で拾う)、`POST /api/family/promotions/[token]/accept` (同)、`POST /api/account/delete` (同意画面から呼ぶだけ)。
+
+### 6.9 画面 (Web とモバイル)
+
+| 画面 | 状態 | 出すもの |
+|---|---|---|
+| `/legal-consent` (Web。アプリの WebView でも同じ) | `needsBirthDate` | 生年月日の欄 (必須) + チェック 2 |
+| 同 | 改定の再同意・生年月日あり | 従来どおり (欄は出ない) |
+| 同 | `minor_refused` | 見出し・本文・「生年月日を直す」・「登録をやめる（アカウントを削除する）」 |
+| 同 | `withdrawn` | 「登録をやめました」+ 本文 + `/signup` へのリンク |
+| `/signup` (Web) / `(auth)/signup.tsx` (モバイル) | 常時 | `SIGNUP_MINOR_NOTICE` 1 行 |
+| `/family/members/child/new` | 生年月日 < 18 | 同意の枠 (要約・全文リンク・チェック 2・氏名) |
+| 同 | ≥ 18 | `notRequiredNote` |
+| `/family/members/[id]` (子供) | 同意 active / revoked / 不要 | 同意カード (§6.5.6 の 10) |
+| `/legal/parental-consent` | 公開 | 同意文書の全文・版・施行日 |
+| 13b のネイティブの同意画面 | `gaps` に `'birth_date'` | 生年月日の欄 + 403 の案内 (13b の追随) |
+| 運営の画面 | — | 作らない (RLS で運営は読める。画面は別 Issue) |
+
+### 6.10 メールの文面 (§6.5.5 の 1 通だけ。宛先は署名者本人)
+
+- 件名「【ほめゴハン】保護者の同意を記録しました」。本文: 家族名・子供の呼び名・同意日時 (JST)・版・全文の URL・取り消し方 (メンバー管理画面の URL)・心当たりが無いときの連絡先。生年月日・年齢・署名の氏名は載せない (メールは転送されうる)。
+- 送信は route の best-effort (`sendEmail`)。同意の記録は DB で完了しているので、失敗しても 201。失敗は `app_logs` に残る (`template: family_parental_consent_recorded`)。
+- 宛先は `user.email` (ログイン中の本人) で、利用者が指定できないので invite-throttle は通さない (`tests/email-send-throttle-contract.test.ts` の除外リストに理由を書く。§6.17)。
+- 昇格の依頼メール (`family_promote`) と、子供の本人の確認の流れは変えない。
+
+### 6.11 法的な文言の置き場所
+
+`packages/shared/src/parental-consent.ts` (§6.5.1) の `PARENTAL_CONSENT_DOCUMENT` (版・施行日)・`PARENTAL_CONSENT_DOCUMENT_COPY` (本文)・`PARENTAL_CONSENT_COPY` (画面の文)・`LEGAL_CONSENT_BIRTH_DATE_COPY`・`SIGNUP_MINOR_NOTICE` の 1 ファイル。公開ページ `/legal/parental-consent`・子供の追加画面・メンバーの画面・メールのリンク先がこれを使う。文面の確定 (弁護士の確認) は値を書き換えるだけで済む (§8)。`docs/legal/` に本文の写しは置かない (正は shared)。
+
+### 6.12 シーケンス
+
+```mermaid
+sequenceDiagram
+    actor Parent as 家族の大人
+    participant Web as child/new
+    participant API as POST /api/family/members/child
+    participant DB as add_family_child (DEFINER)
+    participant Mail as sendEmail
+    Parent->>Web: 名前・生年月日・(18歳未満) 確認2つ + 署名
+    Web->>API: { birth_date, consent: { version, signed_name, guardian_attested } }
+    API->>API: validateBirthDate / requiresParentalConsent / 版の一致 (409)
+    API->>DB: rpc(add_family_child, …, p_ip, p_user_agent)
+    DB->>DB: 認可 → 日付 → 署名 → ロック → 上限 → INSERT family_members → INSERT parental_consents → 監査 2 行
+    DB-->>API: family_members の行
+    API->>DB: select parental_consents (RLS: 家族の大人)
+    API->>Mail: 控え (best-effort)
+    API-->>Web: 201 { member, consent_recorded: true }
+```
+
+```mermaid
+sequenceDiagram
+    actor User as 新規の利用者
+    participant MW as middleware / auth callback
+    participant Page as /legal-consent
+    participant API as POST /api/legal/accept
+    participant DB as accept_legal_documents (DEFINER)
+    User->>MW: GET /home (gaps に birth_date)
+    MW-->>User: 307 /legal-consent?next=/home
+    User->>Page: 生年月日 + チェック 2
+    Page->>API: { terms_version, privacy_version, birth_date }
+    API->>DB: rpc(…, p_birth_date)
+    alt 18 歳以上 または 昇格の経路の未成年
+        DB-->>API: 行 (版 + birth_date)
+        API-->>Page: 200 → window.location.assign(next)
+    else 18 歳未満 (自己登録)
+        DB-->>API: RAISE LEGAL_MINOR_SELF_SIGNUP_REFUSED (何も書かない)
+        API-->>Page: 403
+        Page->>User: 案内 →「登録をやめる」→ POST /api/account/delete → signOut
+    end
+```
+
+### 6.13 テスト一覧 (it 名)。既存のテストの直しは §6.17
+
+**A. shared `packages/shared/src/parental-consent.test.ts` + `legal-versions.test.ts` に追記**
+
+| ID | it |
+|---|---|
+| T-SH1 | `calculateAgeYears: 誕生日の当日に 1 つ増える (前日は増えない)。閏日 (2/29) 生まれは平年は 3/1 に増える` |
+| T-SH2 | `validateBirthDate: 形式外 / 存在しない日 (2月30日) は format、明日は future、121 年前は too_old、120 年前の同日と今日は null` |
+| T-SH3 | `requiresParentalConsent / isUnderCoppaAge: 17 歳 364 日は両方 true と false、18 歳の当日は false / false、12 歳は true / true、未来の日付は両方 false` |
+| T-SH4 | `todayInJst: UTC の 15:00 を過ぎると日本の翌日になる (固定の Date で)` |
+| T-SH5 | `getLegalConsentGaps: 行なし → 2 文書 + birth_date、版が一致して birth_date なし → ['birth_date']、全部揃えば []` |
+| T-SH6 | `isLegalConsentComplete: gaps が空のときだけ true。hasAcceptedCurrentLegalDocuments が true でも birth_date が無ければ false` |
+| T-SH7 | `getOutdatedLegalDocuments は birth_date を見ない (既存の挙動のまま)` |
+| T-SH8 | `PARENTAL_CONSENT_DOCUMENT.version は PARENTAL_CONSENT_VERSION_PATTERN (DB の varchar(20) の CHECK) に合い、effectiveDate は YYYY-MM-DD` |
+| T-SH9 | `文面の定数 (SIGNUP_MINOR_NOTICE・LEGAL_CONSENT_BIRTH_DATE_COPY・PARENTAL_CONSENT_COPY・PARENTAL_CONSENT_DOCUMENT_COPY) は空でなく、「みなされ」を含まない` |
+
+**B. DB (結合。`tests/integration/security/parental-consent.test.ts` 新設 + 既存の `legal-documents-acceptance.test.ts` に追記)**
+
+| ID | it |
+|---|---|
+| T-DB1 | `accept_legal_documents: 行なし + 成人の生年月日 → 行が既定値 + birth_date で作られ、証跡 2 行` |
+| T-DB2 | `本人が user_profiles.birth_date を直接 UPDATE / INSERT すると 42501。service_role は書ける` |
+| T-DB3 | `同意済み・birth_date なしの人が同じ版 + 生年月日を送ると birth_date だけ入り、legal_accepted_at と証跡の数は変わらない (S3)` |
+| T-DB4 | `17 歳の生年月日で呼ぶと LEGAL_MINOR_SELF_SIGNUP_REFUSED。user_profiles も terms_acceptances も作られない (S4)` |
+| T-DB5 | `自分のメール宛の pending の昇格依頼 + その子供の有効な同意があれば 17 歳でも記録される (S11)。依頼が expired / revoked、同意が revoked なら拒否` |
+| T-DB6 | `生年月日が行にあれば p_birth_date は無視される (別の日付を送っても変わらない)。未来・121 年前は LEGAL_BIRTH_DATE_INVALID、両方無しは LEGAL_BIRTH_DATE_REQUIRED` |
+| T-DB7 | `add_family_child: p_birth_date なしは CHILD_BIRTH_DATE_REQUIRED、未来・121 年前は CHILD_BIRTH_DATE_INVALID。行は作られない` |
+| T-DB8 | `子供の行の birth_date は列に入り、child_profile に birth_date キーが残らない (送っても除かれる)` |
+| T-DB9 | `家族の大人が family_members.birth_date を直接 UPDATE すると 42501 (display_name の更新は通る)` |
+| T-DB10 | `8 歳 + 版 + 署名 + 親権者の確認 → 子供の行と parental_consents 1 行 (child_age_at_signing = 8、parent_user_id = 呼び出し者、user_agent は 512 文字で切れる) と監査 parental_consent_recorded / child_added (consent_id つき)` |
+| T-DB11 | `17 歳も同じ (child_age_at_signing = 17)` |
+| T-DB12 | `17 歳で 版なし / 署名が空白だけ / 101 文字 / guardian_attested false → PARENTAL_CONSENT_REQUIRED。行も同意も監査も作られない (S9)` |
+| T-DB13 | `版の文字列はそのまま記録され、関数は現行の版かどうかを見ない (任意の形式内の版で通る。版の一致は route の責務)` |
+| T-DB14 | `70 歳は同意なしで追加され、parental_consents は増えない (S8)。同意を送っても無視される` |
+| T-DB15 | `parental_consents: その家族の active な大人は読める、別の家族の大人・子供の行を持つ家族の外の人・anon は 0 行` |
+| T-DB16 | `authenticated の INSERT / UPDATE / DELETE は 42501 (GRANT なし)。service_role は読める` |
+| T-DB17 | `運営 (roles に admin) は他の家族の行も読める` |
+| T-DB18 | `署名者の auth.users を消すと parent_user_id が NULL になり行は残る (S14)` |
+| T-DB19 | `子供の行を service_role で DELETE すると同意も消える (CASCADE)` |
+| T-DB20 | `remove_family_member で子供を外すと revoked_at / revoked_reason='member_removed' が入り、監査 parental_consent_revoked (actor = 外した人) が 1 行 (S13)` |
+| T-DB21 | `同意の無い (≥ 18 の) 子供を外しても parental_consents と監査は増えない` |
+| T-DB22 | `有効な同意は子供 1 人に 1 行 (uniq_parental_consents_active_member)。取り消し済みの行がある状態で新しい子供の行には別の同意が作れる` |
+| T-DB23 | `request_child_promotion: 17 歳で同意なし (service_role で同意を revoked にした状態) は PARENTAL_CONSENT_REQUIRED、依頼は作られない (S12)` |
+| T-DB24 | `17 歳で同意ありは従来どおり pending。70 歳は同意なしで pending` |
+| T-DB25 | `accept_child_promotion: 承諾で user_profiles.birth_date がメンバーの birth_date で上書きされる (事前に別の日付が入っていても)` |
+| T-DB26 | `accept_child_promotion: 承諾の直前に同意が revoked になっていれば PARENTAL_CONSENT_REQUIRED` |
+| T-DB27 | `関数の ACL: add_family_child(uuid,text,jsonb,date,text,text,boolean,inet,text) と accept_legal_documents(text,text,inet,text,date) だけが存在し (旧 signature は無い)、anon / PUBLIC は実行不可。age_years_jst / parental_consent_active / legal_minor_has_guardian_path は anon / authenticated / service_role から実行不可。トリガー関数は SECURITY DEFINER` |
+
+**C. migration の契約 (DB なし) `tests/parental-consent-migration-contract.test.ts`**
+
+| ID | it |
+|---|---|
+| T-MIG1 | `本 migration が add_family_child / accept_legal_documents / request_child_promotion / accept_child_promotion / guard_* 3 本 / membership_audit_action_check を最後に定義し、ロールバックが対になる (ファイル名・冒頭のコメントの参照が実在)` |
+| T-MIG2 | `SQL の数値 (18 / 13 / 120 / 100 / 512 / 20) が shared の定数と一致する (ADULT_AGE_YEARS 等を import して文字列で突き合わせる)` |
+| T-MIG3 | `database.types.ts (src と packages/shared) に parental_consents と birth_date 列 (user_profiles / family_members) と新しい RPC の引数が入っている` |
+
+**D. route (unit) `src/__tests__/api/family/members/child.test.ts` (新設) / `src/__tests__/api/legal/accept.test.ts` (追記)**
+
+| ID | it |
+|---|---|
+| T-CR1 | `birth_date が無い・形式外 → 400 VALIDATION_ERROR、RPC を呼ばない` |
+| T-CR2 | `未来の日付 → 400 CHILD_BIRTH_DATE_INVALID、RPC を呼ばない` |
+| T-CR3 | `RPC には p_birth_date・p_ip (ヘッダー)・p_user_agent (512 文字) が渡る。child_profile に birth_date を入れていない` |
+| T-CR4 | `17 歳 + 有効な consent → RPC に version / signed_name / guardian_attested が渡り、201 { member, consent_recorded: true }` |
+| T-CR5 | `17 歳で consent なし → 403 PARENTAL_CONSENT_REQUIRED、RPC を呼ばない` |
+| T-CR6 | `RPC が PARENTAL_CONSENT_REQUIRED / CHILD_BIRTH_DATE_INVALID を RAISE したら 403 / 400 の同じ code` |
+| T-CR7 | `consent.version が現行と違う → 409 PARENTAL_CONSENT_VERSION_MISMATCH と current、RPC を呼ばない (S10)` |
+| T-CR8 | `同意を記録したら user.email 宛に family_parental_consent_recorded を 1 通送る (宛先・family_name・child_display_name・document_url・members_url)。70 歳 (consent_recorded false) には送らない` |
+| T-CR9 | `メールの失敗 (isEmailFailure) でも 201 で、ログに残す` |
+| T-A1 | `accept: birth_date を送ると RPC に p_birth_date が渡る。送らなければ null` |
+| T-A2 | `accept: 形式外 / 未来の birth_date は 400 LEGAL_BIRTH_DATE_INVALID、RPC を呼ばない` |
+| T-A3 | `accept: 応答に birth_date が入る` |
+| T-A4 | `accept: 版の 409 は従来どおり (birth_date があっても版が先)` |
+| T-A5 | `accept: RPC が LEGAL_MINOR_SELF_SIGNUP_REFUSED を返したら 403 { error: { code } } で、DB の生の文を本文に出さない。LEGAL_BIRTH_DATE_REQUIRED / INVALID は 400` |
+
+**E. middleware・callback・画面 (unit)**
+
+| ID | it |
+|---|---|
+| T-MW1 | `lib/supabase/__tests__/middleware-legal-consent.test.ts: 版が一致して birth_date が無い人は ENFORCE=on で /legal-consent?next=… へ 307 (S3)、birth_date があれば回さない` |
+| T-MW2 | `同: 画面の分岐の select は PROFILE_COLUMNS_WITH_LEGAL (birth_date を含む) の 1 回だけ` |
+| T-MW3 | `同: 42703 では列を除いた select でやり直し、同意ゲートだけ素通り (既存の it の確認)` |
+| T-CB1 | `tests/auth-callback-legal-consent.test.ts: 初期設定前で版が一致し birth_date が無い人も同意画面へ回す` |
+| T-F1 | `tests/legal-consent-page.test.tsx: needsBirthDate のとき生年月日の欄 (required) が出て、欄が有効 + 2 チェックで押せる。POST に birth_date が入る (S1)` |
+| T-F2 | `同: needsBirthDate が false のとき欄は出ず、POST に birth_date を入れない` |
+| T-F3 | `同: 403 LEGAL_MINOR_SELF_SIGNUP_REFUSED で案内 (見出し・2 つのボタン) が出る。フォームは出ない (S4)` |
+| T-F4 | `同: 「生年月日を直す」でフォームに戻り、入力を直して送り直せる (S5)` |
+| T-F5 | `同: 「登録をやめる」で deleteOwnAccount → signOutAfterAccountDeletion の順に呼び、「登録をやめました」が出る。削除が失敗したら案内に戻りエラー文` |
+| T-F6 | `同: ページ (サーバー側) は isLegalConsentComplete なら next へ、birth_date だけ無い人にはフォームを needsBirthDate=true で出す` |
+| T-CN1 | `tests/family-child-new-page.test.tsx (新設): 生年月日が必須で、未来の日付では押せない` |
+| T-CN2 | `同: 17 歳なら同意の枠 (チェック 2・氏名・全文リンク) が出て、揃うまで押せない。POST の body に birth_date と consent (version = PARENTAL_CONSENT_DOCUMENT.version) が入る (S6)` |
+| T-CN3 | `同: child_profile に birth_date を入れない` |
+| T-CN4 | `同: 409 PARENTAL_CONSENT_VERSION_MISMATCH で読み込み直しのボタン、403 PARENTAL_CONSENT_REQUIRED で表の文を出す` |
+| T-CN5 | `同: 70 歳なら同意の枠は出ず notRequiredNote が出て、consent を送らない (S8)` |
+| T-MD1 | `tests/family-member-detail-consent.test.tsx (新設): 子供で同意 active → 署名者・日時・版・withdrawNote` |
+| T-MD2 | `同: 18 歳以上の子供の行 → notRequiredNote` |
+| T-MD3 | `同: revoked → revokedHeading と取り消し日時 (S13)` |
+| T-LP1 | `tests/legal-parental-consent-page.test.tsx (新設): /legal/parental-consent は PARENTAL_CONSENT_DOCUMENT_COPY の全段落と版・施行日を出す` |
+| T-LP2 | `tests/legal-consent-gate.test.ts: /legal/parental-consent は同意ゲートの対象外 (isLegalConsentExemptPath)` |
+| T-EM1 | `src/__tests__/lib/emails/parental-consent-recorded.test.ts: 件名・template・本文に家族名・呼び名・版・2 つの URL が入り、生年月日と署名の氏名は入らない` |
+| T-EM2 | `tests/signup-minor-notice.test.tsx: Web のサインアップに SIGNUP_MINOR_NOTICE が出る。apps/mobile/__tests__/auth/signup.test.tsx に同じ it を足す` |
+
+**F. E2E (`tests/e2e/membership/14-parental-consent.spec.ts` 新設 + `legal-consent-gate.spec.ts` に追記)**
+
+| ID | test |
+|---|---|
+| E2E-1 | `[強制あり] 15 歳の生年月日で同意すると案内が出て、「登録をやめる」でログアウトの画面になり、再ログインできない (S4)` |
+| E2E-2 | `代表者が 8 歳の子供を追加 → 同意の枠を埋めて追加 → メンバー詳細に「保護者の同意（記録済み）」→ 外すと「取り消し済み」 (S6・S13)` |
+| E2E-3 | `[強制あり] 新規の人は同意画面で生年月日を入れて初期設定へ進む。既存の helper (acceptLegalConsentIfShown) が欄を埋める (S1)` |
+
+### 6.14 段分け
+
+| 段 | 内容 | 検証 |
+|---|---|---|
+| A (DB + shared) | §6.4 の migration と down、§6.5.1〜6.5.2、`index.ts`、`database.types.ts` 2 本の再生成 (ローカルスタック。`tests/database-types-migrations-contract.test.ts` 冒頭の手順)、テスト A〜C、§6.17 の段 A の追随 | `offload -- npx tsc --noEmit` / `npm run lint` / `npx vitest run` (全件) / 結合テスト (`vitest.integration.config.ts`。ローカルスタックは offload 先) |
+| B (Web + API + メール + モバイルの注記) | §6.5.3〜6.5.6、テスト D〜F、§6.17 の段 B の追随。13a がマージ済みのときは `packages/shared/src/legal-consent-api.ts` の判定を `isLegalConsentComplete` に差し替え、`gaps` を status に足す | 同上 + e2e (`scripts/local-ci.sh` の 3 サーバー) |
+
+段ごとに敵対レビュー 2 枚。段 B は段 A のマージ済みの実コード (型・export) を見て書く。
+
+### 6.15 触るファイルの母集合 (これ以外は触らない)
+
+| 段 | 種別 | ファイル |
+|---|---|---|
+| A | 新設 | `supabase/migrations/<番号>_parental_consent_and_birth_date.sql`, `supabase/rollbacks/<番号>_parental_consent_and_birth_date.down.sql`, `packages/shared/src/parental-consent.ts`, `packages/shared/src/parental-consent.test.ts`, `tests/integration/security/parental-consent.test.ts`, `tests/parental-consent-migration-contract.test.ts` |
+| A | 変更 | `packages/shared/src/legal-versions.ts`, `packages/shared/src/legal-versions.test.ts`, `packages/shared/src/index.ts`, `src/types/database.types.ts`, `packages/shared/src/database.types.ts`, `tests/integration/security/legal-documents-acceptance.test.ts`, `tests/accept-copies-profile-name-migration-contract.test.ts`, 段 A の §6.17 の各テスト |
+| B | 新設 | `src/lib/emails/membership/family-parental-consent-recorded.ts`, `src/app/legal/parental-consent/page.tsx`, `src/__tests__/api/family/members/child.test.ts`, `src/__tests__/lib/emails/parental-consent-recorded.test.ts`, `tests/family-child-new-page.test.tsx`, `tests/family-member-detail-consent.test.tsx`, `tests/legal-parental-consent-page.test.tsx`, `tests/signup-minor-notice.test.tsx`, `tests/e2e/membership/14-parental-consent.spec.ts` |
+| B | 変更 | `src/app/api/family/members/child/route.ts`, `src/app/api/legal/accept/route.ts`, `src/schemas/membership/family-member.ts`, `src/lib/errors/membership-errors.ts`, `lib/legal-consent.ts`, `lib/supabase/middleware.ts`, `src/app/legal-consent/page.tsx`, `src/app/legal-consent/LegalConsentForm.tsx`, `src/app/(auth)/signup/page.tsx`, `apps/mobile/app/(auth)/signup.tsx`, `src/app/(main)/family/members/child/new/page.tsx`, `src/app/(main)/family/members/[id]/page.tsx`, `src/lib/emails/membership/templates.ts` (再エクスポートがある場合), `src/__tests__/api/legal/accept.test.ts`, `apps/mobile/__tests__/auth/signup.test.tsx`, 段 B の §6.17 の各テスト |
+| 専権 (オーケストレーター) | 変更 | §6.18 の設計正典・案内 |
+
+### 6.16 新設一覧
+
+| 種別 | 名前 | 場所 |
+|---|---|---|
+| migration | `<番号>_parental_consent_and_birth_date.sql` (+ `.down.sql`) | `supabase/migrations` / `supabase/rollbacks` |
+| テーブル | `parental_consents` (列 14、CHECK 6、索引 3 (うち部分ユニーク 1)、ポリシー `parental_consents_select_family_adult_or_operator`) | DB |
+| 列 | `user_profiles.birth_date`, `family_members.birth_date` | DB |
+| 制約・索引 | `family_members_child_birth_date_required`, `idx_family_members_child_birth_date` | DB |
+| 関数 | `age_years_jst(date)`, `parental_consent_active(uuid)`, `legal_minor_has_guardian_path(uuid)`, `revoke_parental_consent_on_member_inactive()` (trigger) | DB |
+| signature の変更 | `add_family_child(uuid,text,jsonb,date,text,text,boolean,inet,text)`, `accept_legal_documents(text,text,inet,text,date)` (旧は DROP) | DB |
+| トリガー | `trg_family_members_revoke_parental_consent` | DB |
+| 監査 action | `parental_consent_recorded`, `parental_consent_revoked` | DB |
+| エラーコード | `CHILD_BIRTH_DATE_REQUIRED`, `CHILD_BIRTH_DATE_INVALID`, `PARENTAL_CONSENT_REQUIRED`, `PARENTAL_CONSENT_VERSION_MISMATCH` (MembershipErrorCode), `LEGAL_BIRTH_DATE_REQUIRED`, `LEGAL_BIRTH_DATE_INVALID`, `LEGAL_MINOR_SELF_SIGNUP_REFUSED` (legal) | §6.7 |
+| ファイル | `packages/shared/src/parental-consent.ts`, `src/lib/emails/membership/family-parental-consent-recorded.ts`, `src/app/legal/parental-consent/page.tsx` | shared / Web |
+| route / page | `GET /legal/parental-consent` (公開ページ) | Web |
+| 定数 | §6.6 の 8 つ + `SIGNUP_MINOR_NOTICE`, `LEGAL_CONSENT_BIRTH_DATE_COPY`, `PARENTAL_CONSENT_COPY`, `PARENTAL_CONSENT_DOCUMENT_COPY` | shared |
+| 関数 (TS) | `todayInJst`, `parseCalendarDate`, `calculateAgeYears`, `validateBirthDate`, `requiresParentalConsent`, `isUnderCoppaAge`, `getLegalConsentGaps`, `isLegalConsentComplete`, `renderFamilyParentalConsentRecordedEmail` | shared / Web |
+| 型 | `ParentalConsentDocumentInfo`, `CalendarDate`, `BirthDateProblem`, `LegalConsentGap`, `LegalConsentProfile`, `ParentalConsentInput`, `FamilyParentalConsentRecordedEmailVars` | 各所 |
+| Zod | `ParentalConsentInputSchema`, `AddFamilyChildBodySchema` (置き換え), `AddFamilyChildResponseDataSchema`, `LegalAcceptBodySchema` | `src/schemas/membership/family-member.ts`, accept route |
+| メールの template | `family_parental_consent_recorded` | Web |
+| 環境変数・Storage のパス | **無し** | — |
+
+### 6.17 既存の番兵 (契約テスト・走査テスト) の追随表
+
+grep の語 = 本設計が足す・変える・移すものの名前。反応する既存テスト = `tests/` `lib/supabase/__tests__/` `src/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を origin/main (`5a48abc9`) で grep した結果 (2026-10-15)。
+
+| grep の語 | 反応する既存の番兵 | 直し方 | 段 |
+|---|---|---|---|
+| `add_family_child(uuid,text,jsonb)` | `tests/integration/security/family-member-limit-race.test.ts:556-575` (signature の一覧と ACL の決定表) | 一覧を `add_family_child(uuid,text,jsonb,date,text,text,boolean,inet,text)` に。決定表 (secdef・search_path=public・owner・anon 不可・authenticated / service_role 可) はそのまま通る | A |
+| `rpc('add_family_child'` (3 引数の呼び出し。10 ファイル) | `tests/integration/security/{family-accept-display-name, family-child-promotion-consent, family-lock-order-race, family-member-limit-race, family-member-status-guard, family-promote-legacy-overload, invite-email-throttle, membership-daily-cap}.test.ts` | 各 helper の呼び出しに `p_birth_date: '1990-01-01'` (成人の placeholder。同意不要) を足す。18 歳未満の子供が要る it (昇格の同意の流れなど) は `p_birth_date: <17 歳>, p_consent_version: PARENTAL_CONSENT_DOCUMENT.version, p_signed_name: 'テスト 保護者', p_guardian_attested: true` を渡す (本冊の T-DB24 と同じ形) | A |
+| `public.add_family_child('…'::uuid, '…', '…'::jsonb)` (SQL 文字列) | `family-lock-order-race.test.ts:466`、`family-member-limit-race.test.ts:206` | 4 番目の引数 `'1990-01-01'::date` を足す | A |
+| `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent)` / `(text, text, inet, text)` | `tests/integration/security/legal-documents-acceptance.test.ts` (冒頭の説明・ACL の signature・7 の「権限は authenticated のみ」)、`src/__tests__/api/legal/accept.test.ts` (「引数は版 2 つ + IP / user_agent だけ」の it) | signature を 5 引数に。route の it は「+ p_birth_date (無ければ null)」に書き換え (T-A1) | A / B |
+| `accept_child_promotion` を最後に定義する migration | `tests/accept-copies-profile-name-migration-contract.test.ts` (1: 最後に定義する migration が `_accept_copies_profile_name`、2: 1 つ前との差分) | 1 を「`accept_family_invite` は `_accept_copies_profile_name`、`accept_child_promotion` は `_parental_consent_and_birth_date`」に分け、2 の `accept_child_promotion` の比較を「`_accept_copies_profile_name` の定義 + §6.4 の 11 の差分 (2 つの IF と upsert の birth_date)」に (または `FUNCTIONS` を `accept_family_invite` だけにし、`accept_child_promotion` の契約は本冊の T-MIG1 に移す。どちらかを選び理由を書く) | A |
+| `'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted'` (`PROFILE_COLUMNS_WITH_LEGAL` の文字列) | `lib/supabase/__tests__/middleware-legal-consent.test.ts:626-637` (「同意済みの版の 2 列を含む 1 回だけ」) | 「3 列 (birth_date を含む)」に (T-MW2) | B |
+| `terms_version_accepted:` の fixture (同意済み = 通す) | `lib/supabase/__tests__/middleware-legal-consent.test.ts` (5)、`middleware-legal-consent-matrix.test.ts` (3)、`middleware.test.ts` (1)、`tests/auth-callback-legal-consent.test.ts` (9)、`tests/legal-consent-gate.test.ts` (6)、`tests/legal-consent-page.test.tsx` (4) | 「同意済みで回さない」の fixture に `birth_date: '1990-01-01'` を足す (無いと redirect になる)。「未同意で回す」の fixture はそのまま。`middleware.test.ts` の 1 件は `/api` の分岐 (判定しない) なので確認のみ | B |
+| `acceptLegalConsentIfShown` | `tests/e2e/helpers/legal-consent.ts` | 生年月日の欄 (`getByLabel('生年月日')`) があれば `'1990-01-01'` を入れてからチェック (E2E-3) | B |
+| `signInAsNewUser(page, { profile: true, legal: {…} })` | `tests/e2e/legal-consent-gate.spec.ts`、`tests/e2e/fixtures/fresh-user.ts`、`tests/e2e/global-setup.ts` | `legal` の fixture に `birth_date` を足す (同意済みのユーザーが回されないように)。E2E-1 を追記 | B |
+| `LegalConsentForm.tsx` の文面 (`同意して続ける` 等) | `tests/legal-consent-page.test.tsx:153-181, 228-254`、`tests/e2e/legal-consent-gate.spec.ts:162-165, 412`、`tests/native-sign-out-order-source-scan.test.ts` | 確認のみ: 既存の文は変えない。「登録をやめる」の流れは `deleteOwnAccount` → `signOutAfterAccountDeletion` (既存の順の規則 `notifyNativeSignOut → signOut → broadcastSignOut` は `signOutAfterAccountDeletion` の中。source-scan が新しい `signOut` 呼び出しを拾わないよう、フォームから直接 `auth.signOut()` を書かない) | B |
+| `render\w+Email(` + `template: '…'` | `src/__tests__/lib/emails/template-names.test.ts` | 確認のみ: 新しい `family_parental_consent_recorded` は snake_case・一意。走査の `>= 15` はそのまま通る | B |
+| `@/lib/emails/send` を import する route | `tests/email-send-throttle-contract.test.ts` の `EXEMPT_EMAIL_SENDERS` | `'src/app/api/family/members/child/route.ts'` を足し、理由「宛先はログイン中の本人 (auth.users.email) に固定で利用者は指定できない。送るのは子供の追加 (家族の人数上限と NOT_FAMILY_ADULT の認可つき) で同意を記録した 1 回だけ」 | B |
+| `CREATE TABLE` / `CREATE FUNCTION` と `database.types.ts` | `tests/database-types-migrations-contract.test.ts` | 型を再生成 (両ファイル)。トリガー関数は規則で除外される。`age_years_jst` / `parental_consent_active` / `legal_minor_has_guardian_path` は RPC として型に出る (除外しない) | A |
+| SECURITY DEFINER の新関数 | `tests/integration/security/anon-definer-execute.test.ts` (A: anon が実行できる DEFINER は 2 本だけ) | 確認のみ: §6.4 の 5・6 は REVOKE 完全形。トリガー関数も anon 不可 | A |
+| `MembershipErrorCode` の enum | `tests/membership-errors.test.ts` (全値に文がある)、`src/__tests__/schemas/membership-types.test.ts` | enum に 4 値を足し、`ErrorStatusMap` / `MEMBERSHIP_ERROR_MESSAGES` に行を足す (型で強制)。schema のテストは `AddFamilyChildBodySchema` の形が変わるので期待を §6.5.3 に合わせる | B |
+| `guard_family_members_privileged` | `tests/integration/security/family-member-status-guard.test.ts` (「status 以外の列の更新は通る」) | 確認: その it が更新する列が `birth_date` でないこと (display_name 等)。`birth_date` の 42501 は T-DB9 で足す | A |
+| `guard_user_profiles_privileged` / `_on_insert` | `tests/integration/rls/user-profiles-insert-guard.test.ts`、`legal-documents-acceptance.test.ts` の 6 | 既存の it はそのまま通る (列を足すだけ)。`birth_date` の 42501 は T-DB2 で足す | A |
+| `listRouteFiles` / `BODY_READ_PATTERN` | `src/__tests__/api/null-character-routes.test.ts` | 確認のみ: `family/members/child/route.ts` と `legal/accept` は表に既にある。新しい route は無い (新設は画面 `/legal/parental-consent` だけ) | B |
+| `src/app/api` の走査 | `tests/api-raw-error-message-scan.test.ts`、`tests/api-internal-error-routes*.test.ts`、`tests/supabase-service-role-client-scan.test.ts`、`tests/env-source-scan.test.ts` | 確認のみ: 2 route は固定の文だけを返し、service role を使わず、`process.env` を直接読まない。新しい環境変数は無い | B |
+| `membership_audit_action_check` / `'child_added'` | `tests/integration/security/{family-lock-order-race, family-member-limit-race}.test.ts` (`auditCount(familyId, 'child_added')`) | 確認のみ: `child_added` は従来どおり 1 行 (同意の監査は別 action)。成人の placeholder なら `parental_consent_recorded` は増えない | A |
+| `/family/members/child/new` | `tests/e2e/membership/07-family-child-management.spec.ts` β-5 (ページの表示だけ) | 確認のみ。子供の追加の E2E は E2E-2 で足す | B |
+| `signup/page.tsx` の文面 | `tests/signup-legal-consent.test.tsx` (「みなされ」の文が無い)、`apps/mobile/__tests__/auth/signup.test.tsx` | 確認のみ (注記は「みなされ」を含まない。T-SH9 が固定)。モバイルは T-EM2 の it を足す | B |
+| 13a / 13b の `hasAcceptedCurrentLegalDocuments` (未マージの枝) | `origin/design/legal-consent-api-mobile` の `packages/shared/src/legal-consent-api.ts` と 13b の画面 | 本冊が先にマージされたら、13a / 13b の実装 PR で `isLegalConsentComplete` と `gaps` に差し替える (§0.5)。13a が先なら本冊の段 B が差し替える | 専権 / B |
+| `supabase/baseline/prod_function_acl.sql` (本番の ACL のスナップショット) | 番兵は無い (`refresh-request.txt` の手順) | 本番適用後にスナップショットを取り直す (新 signature 2 本と新関数 4 本が載る) | 専権 |
+
+### 6.18 他の文書への追随表 (担当 = オーケストレーター (専権 PATCH)。期日 = 本冊の実装 PR と同時)
+
+| 文書 | 直す所 | 直し方 |
+|---|---|---|
+| `docs/design/cross/01-auth-session.md` §12〜§13.2 (330-372 行目) | 子供アカウント保護の方針・シーケンス (`POST /api/family/members/consent`)・DDL の参照 | 「設計書 `cross/14-parental-consent.md` に移した」の 1 段落 + 要点 3 行 (生年月日は同意画面で、同意は子供の追加と同時、取り消しは外すこと) に置き換える。§13.2 は `14` §6.4 への参照に |
+| `docs/design/family/01-data-model.md` §4.2 (`birth_date` 列) と §4.13 (草案 DDL) | 草案の `parental_consents` (列 7・RLS が parent_user_id だけ) | §4.13 を `14` §6.4 の 4 への参照に。`idx_family_members_birthdate` (18 歳到達バッチ用) の行に「本冊の `idx_family_members_child_birth_date` が実体」を注記 |
+| `docs/design/family/02-api-spec.md` §5.2・§5.6・§5.7 | 子供の追加の body (`birth_date`)・昇格 | §5.2 に `birth_date` 必須と `consent` を、§5.7 に「18 歳未満は有効な保護者の同意が要る (`PARENTAL_CONSENT_REQUIRED`)」を足す。`FAM_CHILD_PROMOTE_AUTH_REQUIRED` 等の未実装の行は触らない |
+| `docs/design/family/08-rls-policies.md` | テーブル一覧 | 「§5.1 `parental_consents`」を足し、`14` §6.4 の 4 のポリシーを写す |
+| `docs/design/cross/08-legal-compliance.md` §7.2 | 「同意済みの版」の行・ゲートの行・既知の残課題 | ゲートの判定を「`isLegalConsentComplete` (版 + 生年月日。設計書 14)」に。同意画面の行に「生年月日 (無いときだけ)・未成年の案内」を。残課題の `parental_consent` の行を「保護者の同意は `parental_consents` (関数経由) に記録する (14)。`terms_acceptances` の `parental_consent` は使わない。`terms_self_insert` を閉じる条件は AI の同意だけが残る」に現在形化 |
+| `docs/design/cross/04-api-conventions.md` §4.2 | `FAM_PARENTAL_CONSENT_REQUIRED` (172 行目)、LEGAL 系 | 「家族の API の実コードは接頭辞なしの `PARENTAL_CONSENT_REQUIRED` (403)。`CHILD_BIRTH_DATE_REQUIRED` / `CHILD_BIRTH_DATE_INVALID` (400)・`PARENTAL_CONSENT_VERSION_MISMATCH` (409)」を注記。LEGAL 系 (13a が足す予定の節) に `LEGAL_BIRTH_DATE_REQUIRED` / `LEGAL_BIRTH_DATE_INVALID` (400)・`LEGAL_MINOR_SELF_SIGNUP_REFUSED` (403) を足す |
+| `docs/design/cross/CLAUDE.md` | ファイル一覧 | `14-parental-consent.md` の行 (`01` §12 の子供同意は 14 へ) を足す |
+| `docs/design/membership/01-data-model.md` `:1129` | `membership_audit.action` の CHECK の一覧 | `parental_consent_recorded` / `parental_consent_revoked` を足す |
+| `docs/requirements/03-operator-admin.md` §17.10 | 草案 DDL | 「設計は `docs/design/cross/14-parental-consent.md`。表の列はそちらが正」を注記 (要件の文は変えない) |
+| `CLAUDE.md` (リポジトリ) の同意ゲートの記述 | 「ゲートが掛かるのは…」の文 | 「同意ゲートは生年月日の未入力も同意画面へ回す (#1173・cross/14)」を足す |
+
+### 6.19 検証コマンド (実装レーン。M2 では打たない)
+
+```bash
+cd /Volumes/DevSSD/wt/<worktree>
+OFFLOAD=/Users/horidaisuke/claude-work/dev-infra/bin/offload
+$OFFLOAD --host auto -e TZ=UTC -- npx tsc --noEmit
+$OFFLOAD --host auto -e TZ=UTC -- npm run lint
+$OFFLOAD --host auto -e TZ=UTC -- npx vitest run --reporter=json      # 全件 (passed / failed の実数で判定)
+$OFFLOAD --host auto -e TZ=UTC -- npx vitest run --config vitest.integration.config.ts tests/integration/security/parental-consent.test.ts tests/integration/security/legal-documents-acceptance.test.ts tests/integration/security/family-member-limit-race.test.ts
+git diff origin/main...HEAD | grep -n 'as any'                        # 0 件
+```
+
+E2E (3 サーバー) は `scripts/local-ci.sh` が流す。結合テストのローカルスタック (`scripts/supabase-local.sh`) は offload 先で組み立てる (M2 の Docker は使わない)。
+
+---
+
+## 7. 既存実装との関連
+
+| 区分 | 対象 |
+|---|---|
+| 保持 (変えない) | `terms_acceptances` と RLS、`external_data_consents` (AI の同意)、`family_promotion_requests` と `reject_child_promotion` / `revoke_child_promotion`、`remove_family_member` / `leave_family` / `operator_force_dissolve_family` (トリガーが拾う)、`POST /api/account/delete` と `deleteAccount`、`invite-throttle`、`user_profiles.age` (栄養計算)、`child_profile` の `gender` ほか |
+| 変更 | §6.15 の「変更」の全行。`add_family_child` と `accept_legal_documents` は旧 signature を DROP (呼び出しは route だけ。`database.types.ts` の再生成で旧 signature の型は消える) |
+| 新規 | §6.16 |
+| 削除 | 無し (`child_profile.birth_date` を書く処理は無くなるが、既存の行は 0 件なので読み替えは要らない) |
+
+---
+
+## 8. 未解決事項 (openQuestions。オーナーの確認が要るもの)
+
+1. **同意文書の文面・版・施行日** (`PARENTAL_CONSENT_DOCUMENT` / `PARENTAL_CONSENT_DOCUMENT_COPY`) は仮。弁護士の確認後に値を書き換える。電子署名の方式 (氏名の入力 + 2 つのチェック + ログイン済みの本人) が COPPA の「verifiable parental consent」として十分かも同じ確認に含める。
+2. **保持期間**: 本冊は「子供の行と同じ寿命 (CASCADE)・取り消し後も行は残す」。家族の削除 (`DELETE FROM family_groups`) で同意の記録も消える。証跡として一定期間残す要否 (消えないように別表へ写すか) はオーナー判断。
+3. **同意文書の改定時の再同意**: 本冊は「既存の同意は失効しない」(S15)。内容が変わる改定で既存の子供にも再同意を求めるなら、`parental_consent_active` に版の一致を足す設計 (同意待ちの状態が復活する) が要るので、別冊。
+4. **18 歳以上の「アカウント無しのメンバー」**: 本冊は従来どおり許す (祖父母など。同意不要)。禁じる (招待に限る) なら `add_family_child` に `v_age >= 18 → CHILD_NOT_MINOR` を足すだけ。
+5. **自己登録を断った未成年のアカウントの自動削除**: 本冊は本人の「登録をやめる」に任せ、放置された `auth.users` の行 (プロフィール無し) は消さない。一定時間後に運営が消す運用にするかはオーナー判断。
+6. **家族の全メンバーが子供の `birth_date` を読める** (`family_members_select_self_or_family`)。要件 `01:678` は親のみ。現行でも `child_profile.birth_date` が読める状態なので本冊は広げないが、列を隠す (子供には見せない) のは別 Issue。
+7. **`user_profiles.age` との二重化**: 栄養計算は `age` のまま。`birth_date` から導出に寄せるかは別 Issue。
+8. **`cross/04` の `FAM_PARENTAL_CONSENT_REQUIRED`**: 実コードの語彙 (接頭辞なし) に合わせる注記を §6.18 で足す。接頭辞つきに統一するなら家族の API 全体の改名になるので別冊。
+9. **Push の送信側**: このリポジトリに無い。作るときは `isUnderCoppaAge(user_profiles.birth_date)` で除外する (昇格した 13 歳未満の本人だけが対象になり得る)。
+10. **13a / 13b との着地順** (§0.5)。どちらが先でも後の冊が合わせる。
+
+---
+
+## 改定履歴
+
+| 版 | 日付 | 内容 |
+|---|---|---|
+| v1.0 | 2026-10-15 | 初版 (A 型・4 相。相 1 外形固定 → 相 2 構想とトレース (S1〜S15) → 相 3 構造裁定 (A 採用) → 相 4 仕上げ) |
