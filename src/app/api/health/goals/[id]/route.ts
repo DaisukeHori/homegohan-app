@@ -4,6 +4,7 @@ import { internalError } from '@/lib/api/errors';
 import { INVALID_ID_PARAM_CODE, INVALID_ID_PARAM_MESSAGE, isUuid } from '@/lib/http-params';
 import { sanitizeHealthGoalUpdate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 目標の取得
 export async function GET(
@@ -42,6 +43,9 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   

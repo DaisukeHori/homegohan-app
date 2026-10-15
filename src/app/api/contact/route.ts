@@ -4,6 +4,7 @@ import { getEmailFrom } from '@/lib/site-config';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
@@ -70,6 +71,9 @@ async function sendAdminNotification(inquiry: {
 }
 
 export async function POST(request: NextRequest) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   // #1197 レートリミットは共通ヘルパー (src/lib/rate-limit.ts) の contact カテゴリ (クライアント IP 単位で
   // 10 回/分) に一本化した。以前はこのファイルに Upstash / in-memory の制限が独自実装されていた。
   // 失敗時の扱いは共通ヘルパーに揃える。

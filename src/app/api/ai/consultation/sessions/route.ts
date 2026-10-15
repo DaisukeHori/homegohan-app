@@ -3,6 +3,7 @@ import { jstDayOffset } from '@/lib/jst-day-ranges';
 import { NextResponse } from 'next/server';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /** 新しいセッションの文脈に入れる、最近の食事の日数 (JST の今日から何日前までか) */
 const RECENT_MEAL_DAYS = 7;
@@ -55,6 +56,9 @@ export async function GET(request: Request) {
 
 // 新規セッション作成
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

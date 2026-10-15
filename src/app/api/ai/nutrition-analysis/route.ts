@@ -10,6 +10,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, aiDailyLimitSkippedField, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { CALENDAR_DATE_REQUIREMENT, isCalendarDate, nutritionAnalysisRange } from '@/lib/jst-day-ranges';
 import { aiConsentSkippedField, checkUserAiConsent, requireAiConsent } from '@/lib/ai/consent-guard';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 栄養目標が未設定のときの既定値（g/日）。
 // 糖質は「炭水化物 − 食物繊維」で計算しているので、目標も同じ定義（炭水化物の目標 − 食物繊維の目標）で導く (#1146)。
@@ -348,6 +349,9 @@ JSON形式で出力してください：
  * AIが提案した献立変更を実行するAPI
  */
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {

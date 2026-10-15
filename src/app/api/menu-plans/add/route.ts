@@ -8,11 +8,15 @@ import { checkSandboxEligibility } from '@/lib/handson-tour/sandbox-eligibility'
 import type { Database, Json } from '@/types/database.types';
 import { internalError } from '@/lib/api/errors';
 import { WEEKLY_MENU_REQUEST_FAILED_MESSAGE } from '@/lib/weekly-menu-request-error';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 type WeeklyMenuRequestInsert = Database['public']['Tables']['weekly_menu_requests']['Insert'];
 type WeeklyMenuInsert = Database['public']['Tables']['weekly_menus']['Insert'];
 
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
 
   try {

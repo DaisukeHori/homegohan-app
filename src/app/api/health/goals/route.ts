@@ -4,6 +4,7 @@ import { internalError } from '@/lib/api/errors';
 import { sanitizeHealthGoalCreate } from '@/lib/health-payloads';
 import { calculateGoalProgressPercentage } from '@/lib/health-goal-progress';
 import { findGoalTypeDef, isWithinGoalRange } from '@/lib/health-goal-types';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 目標一覧の取得
 export async function GET(request: NextRequest) {
@@ -38,6 +39,9 @@ export async function GET(request: NextRequest) {
 
 // 目標の作成
 export async function POST(request: NextRequest) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   

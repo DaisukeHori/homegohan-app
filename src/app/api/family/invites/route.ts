@@ -16,6 +16,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 招待一覧取得
 export async function GET(_request: Request) {
@@ -59,6 +60,9 @@ export async function GET(_request: Request) {
 
 // 招待発行
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();

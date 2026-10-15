@@ -20,6 +20,7 @@ import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } 
 import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
 
@@ -112,6 +113,9 @@ function addDays(dateStr: string, days: number): string {
 export const maxDuration = 30;
 
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   let _userId: string | undefined;
 

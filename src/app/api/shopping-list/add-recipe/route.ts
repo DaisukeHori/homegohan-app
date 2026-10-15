@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { toShoppingListItem } from '@/lib/converter';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getOrCreateActiveShoppingList } from '@/lib/shopping-list/active-list';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 type IngredientInput = { name: string; amount: string | null };
 
@@ -31,6 +32,9 @@ function parseIngredients(raw: unknown[]): IngredientInput[] | null {
 }
 
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const logger = createLogger('POST /api/shopping-list/add-recipe', generateRequestId());
 
   const supabase = await createClient();

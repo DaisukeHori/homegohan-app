@@ -3,6 +3,7 @@ import { generateRequestId } from '@/lib/db-logger'
 import { NextResponse } from 'next/server'
 import { OnboardingAnswersSchema } from '@/schemas/onboarding'
 import { internalError } from '@/lib/api/errors'
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 
 // #1045 (F6-12): ニックネームは HTML エスケープせず raw のまま保存する。
 // 画面表示は必ず React の JSX テキストノード経由 (dangerouslySetInnerHTML は不使用) のため
@@ -15,6 +16,9 @@ function normalizeNickname(value: unknown): string {
 
 // オンボーディング進捗保存API (OB-API-01)
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request)
+  if (nullCharacterRejection) return nullCharacterRejection
   const requestId = generateRequestId()
   try {
     const supabase = await createClient()

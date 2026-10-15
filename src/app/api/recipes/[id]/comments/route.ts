@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // コメント一覧取得 (user_id は公開しない)
 export async function GET(request: Request, props: { params: Promise<{ id: string }> }) {
@@ -40,6 +41,9 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
 
 // コメント追加
 export async function POST(request: Request, props: { params: Promise<{ id: string }> }) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();

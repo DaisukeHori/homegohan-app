@@ -12,6 +12,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { z } from 'zod';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
 
@@ -75,6 +76,9 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const { profile } = await requireOrgAdmin();
 

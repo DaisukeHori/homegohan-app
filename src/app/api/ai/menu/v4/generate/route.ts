@@ -27,6 +27,7 @@ import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -127,6 +128,9 @@ function toOptionalInt(value: unknown): number | null {
 // ===== Main API Handler =====
 
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
 
   try {

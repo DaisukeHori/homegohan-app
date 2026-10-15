@@ -15,8 +15,12 @@ import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
+  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
