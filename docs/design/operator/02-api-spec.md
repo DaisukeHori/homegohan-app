@@ -1307,8 +1307,6 @@ deprecated → private にロールバック (緊急用)
 - `valid_from` / `valid_until` は JST の暦日 (YYYY-MM-DD の実在する日付。存在しない日付は 400 `OP_INVALID_INPUT`)。`valid_from <= valid_until` (同じ日は可)
 - DB には開始日の JST 0:00・期限の日の JST 23:59:59.999999 の時刻にして書く (#1483。`apply_coupon` の `now() > valid_until` は端を含むので、期限の日の終わりまで使える)。PATCH の `valid_until` も同じ
 - `code` が既にあるときは 409 `OP_COUPON_CODE_DUPLICATE`
-- 0 円や 1 円となるクーポン (100% OFF + monthly_price <= 1 円) は警告表示
-- `gross_margin_preview_jpy` を計算して返す
 
 **レスポンス**: 201 `{ "data": 作った coupons の行 }` (`status` は `active`)
 

@@ -33,6 +33,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cleanupFreshUser, createFreshUser, injectSession } from "./fixtures/fresh-user";
 import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { serveTurnstileOffline } from "./helpers/turnstile-offline";
 import { generateTestPassword } from "./helpers/credentials";
 import { LEGAL_DOCUMENTS } from "../../packages/shared/src/legal-versions";
 
@@ -201,6 +202,10 @@ test.describe("サインアップ画面の明示的な同意 (#1174)", () => {
   test.setTimeout(120_000);
 
   test("チェックするまで、Google 登録も「登録して始める」も押せない。みなし同意の文面は無い", async ({ page }) => {
+    // #1672: e2e のアプリは Turnstile のテスト用サイトキー付きでビルドするので、「登録して始める」はウィジェットがトークンを出すまで押せない。
+    // ここで確かめたいのは同意のチェックだけなので、ウィジェットは外のネットワーク (challenges.cloudflare.com) に繋がずに動かす
+    // (常設の e2e で、本物のウィジェットのトークンが 5 秒以内に出ずに、チェック後も押せないまま落ちることがあった)
+    await serveTurnstileOffline(page);
     await page.goto("/signup");
 
     const consent = page.locator("#agree-legal");
@@ -327,7 +332,14 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
 
     await page.waitForURL((url) => url.pathname === "/home", URL_CHANGE);
     // 同意した後は、もう同意画面へ回されない (ホームに留まる)
-    await page.reload();
+    // #1672: 読み込み直す前に、同意画面からホームへの遷移 (LegalConsentForm の window.location.assign) の読み込みが進む
+    // (DOMContentLoaded) のを待つ。waitForURL は URL_CHANGE (waitUntil: "commit") なので、新しい文書が確定した瞬間に返り、
+    // 以前はその直後 (遷移の途中) に reload を送っていた。常設の e2e で、この reload が「Not attached to an active page」で落ちた。
+    // この文言は Chromium の DevTools が、ページの接続先の文書 (RenderFrameHost) が active でないときに Page.reload を断る応答
+    // (content/browser/devtools/protocol/page_handler.cc の kErrorInactivePage) で、遷移による文書の入れ替えの途中に送ったときに出る。
+    // 新しい文書の読み込みが進んで DOMContentLoaded が来たあとなら、入れ替えは終わっている
+    await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
+    await page.reload({ waitUntil: "domcontentloaded" });
     expect(new URL(page.url()).pathname).toBe("/home");
 
     const rows = await readAcceptances(user.id);
@@ -370,6 +382,8 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     });
 
     // 同意は DB に残っているので、もう同意画面には回されない。何もしない (false)
+    // #1672: acceptLegalConsentIfShown は遷移の確定 (commit) で返る。次の遷移を送る前に、上の reload と同じく読み込みが進むのを待つ
+    await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
     await page.goto("/menus/weekly");
     expect(new URL(page.url()).pathname).toBe("/menus/weekly");
     expect(await acceptLegalConsentIfShown(page)).toBe(false);

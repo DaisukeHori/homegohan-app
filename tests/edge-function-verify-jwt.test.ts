@@ -389,9 +389,13 @@ const DB_CALLEES = dbCalleesOf(DB_HTTP_CALL_SITES);
 // デプロイのワークフロー
 // ---------------------------------------------------------------------------
 
-/** 名前を指定しない (全関数の) functions deploy の行 (許した形。引数は --project-ref だけ) */
+/**
+ * 名前を指定しない (全関数の) functions deploy の行 (許した形。引数は --use-api・--import-map supabase/functions/deno.json・--project-ref だけ)。
+ * --use-api と --import-map は #1686 (Docker を使わずサーバーでまとめる。理由はワークフローのコメントと tests/edge-function-deploy-use-api.test.ts)。
+ * どちらも関数ごとの verify_jwt の読み方 (GetFunctionConfig) を変えない
+ */
 const DEPLOY_ALL_LINE =
-  /^npx --yes supabase@\d+\.\d+\.\d+ functions deploy --project-ref (?:\$\{\{ env\.SUPABASE_PROJECT_ID \}\}|[a-z0-9]+)$/;
+  /^npx --yes supabase@\d+\.\d+\.\d+ functions deploy --use-api --import-map supabase\/functions\/deno\.json --project-ref (?:\$\{\{ env\.SUPABASE_PROJECT_ID \}\}|[a-z0-9]+)$/;
 
 /**
  * デプロイのワークフローが、config.toml の verify_jwt をそのまま関数ごとに反映しない理由 (無ければ空)。
@@ -407,7 +411,7 @@ function deployWorkflowProblems(yaml: string): string[] {
   // 関数名を指定すると、それ以外の関数の verify_jwt が反映されない
   if (deployLines.length !== 1) problems.push(`functions deploy の行が ${deployLines.length} 行ある (名前を指定しない 1 行だけにする)`);
   for (const line of deployLines.filter((deployLine) => !DEPLOY_ALL_LINE.test(deployLine))) {
-    problems.push(`名前を指定しない形 (引数は --project-ref だけ) でない functions deploy: ${line}`);
+    problems.push(`名前を指定しない形 (引数は --use-api・--import-map・--project-ref だけ) でない functions deploy: ${line}`);
   }
   if (/--no-verify-jwt/.test(yaml)) problems.push('--no-verify-jwt がある (全関数のゲートウェイの JWT 検証を外す)');
   // CLI は config.toml を viper で読み、SUPABASE_ + キーの . を _ にした環境変数 (SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT) で
@@ -715,7 +719,8 @@ describe('デプロイが config.toml の verify_jwt を反映する', () => {
     expect(deployWorkflowProblems(read(DEPLOY_WORKFLOW))).toEqual([]);
   });
 
-  const deployLine = 'npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}';
+  const deployLine =
+    'npx --yes supabase@2.62.10 functions deploy --use-api --import-map supabase/functions/deno.json --project-ref ${{ env.SUPABASE_PROJECT_ID }}';
   it.each([
     ['関数名を指定する', (yaml: string) => yaml.replace(deployLine, deployLine.replace('deploy', `deploy ${SEGMENT_STATS_FUNCTION}`))],
     ['--no-verify-jwt を付ける', (yaml: string) => yaml.replace(deployLine, `${deployLine} --no-verify-jwt`)],

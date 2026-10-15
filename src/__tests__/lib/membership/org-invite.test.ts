@@ -367,6 +367,40 @@ describe('createOrgInviteWithEmail: 既存の挙動', () => {
   });
 });
 
+describe('createOrgInviteWithEmail: 招待者名に仮置きの Guest を使わない (#1649)', () => {
+  async function sentTextFor(nickname: string | null): Promise<string> {
+    const result = await createOrgInviteWithEmail({
+      supabase: makeSupabase(),
+      inviter: { ...inviter, nickname },
+      organizationId,
+      email: 'taro@example.com',
+      role: 'member',
+    });
+    expect(result.ok).toBe(true);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    return (mockSendEmail.mock.calls[0][0] as { text: string }).text;
+  }
+
+  it.each(['Guest', ' Guest ', '   ', ''])(
+    'nickname が %j なら、招待者名は今の既定どおりメールアドレスの @ の前 (Guest を載せない)',
+    async (nickname) => {
+      const text = await sentTextFor(nickname);
+
+      expect(text).toContain('テスト株式会社 の owner 様から');
+      expect(text).not.toContain('Guest');
+    },
+  );
+
+  it.each([
+    ['guest', 'guest'],
+    [' 山田 ', '山田'],
+  ])('nickname が %j (本人が付けた名前) なら、その名前を招待者名にする', async (nickname, expected) => {
+    const text = await sentTextFor(nickname);
+
+    expect(text).toContain(`テスト株式会社 の ${expected} 様から`);
+  });
+});
+
 describe('orgInviteFailureResponse', () => {
   it('429: Retry-After ヘッダーと error.retryAfter を付ける', async () => {
     const res = orgInviteFailureResponse(

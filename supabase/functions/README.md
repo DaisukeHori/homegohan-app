@@ -67,11 +67,13 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ```bash
 # 全関数をデプロイ
-supabase functions deploy --project-ref flmeolcfutuwwbjmzyoz
+supabase functions deploy --use-api --import-map supabase/functions/deno.json --project-ref flmeolcfutuwwbjmzyoz
 
 # 特定の関数のみデプロイ
-supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
+supabase functions deploy <function-name> --use-api --import-map supabase/functions/deno.json --project-ref flmeolcfutuwwbjmzyoz
 ```
+
+リポジトリの根で打ちます。`--use-api` は関数のまとめ (バンドル) を Supabase のサーバーにさせ、手元の Docker を使いません (GitHub Actions も同じ形。#1686)。付けないと Docker の edge-runtime のイメージを `public.ecr.aws` から取ってまとめるため、ECR の上限 (`toomanyrequests`) で落ちることがあります。`--use-api` のときは、共通の `supabase/functions/deno.json` を `--import-map` で指定しないとサーバーに送られず、`zod` などの名前が解決できません。詳しくは `docs/operations/ci-supabase-image-pull.md` の「関数のデプロイ」。
 
 `--no-verify-jwt` は付けません。付けると、指定したすべての関数でゲートウェイの JWT 検証が外れます。関数ごとの設定は `supabase/config.toml` から読まれます（下の「ゲートウェイの JWT 検証（verify_jwt）」）。
 
