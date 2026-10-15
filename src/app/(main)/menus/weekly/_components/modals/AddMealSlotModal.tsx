@@ -4,8 +4,9 @@ import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, ChevronRight } from "lucide-react";
-import { MEAL_LABELS, MEAL_ORDER, formatDateJa, type MealType } from "@homegohan/shared";
+import { MEAL_EMOJIS, MEAL_LABELS, MEAL_ORDER, formatDateJa, type MealType } from "@homegohan/shared";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
+import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 
 const colors = {
   bg: '#F7F6F3',
@@ -14,11 +15,6 @@ const colors = {
   textLight: '#6B6B6B',
   textMuted: '#767676', // #1052 (コントラスト): #A0A0A0 (白地で約2.7:1) から WCAG AA相当の #767676 (約4.5:1) へ
   accent: '#E07A5F',
-  accentLight: '#FDF0ED',
-  warningLight: '#FEF9EE',
-  purpleLight: '#F5F3F8',
-  successLight: '#EDF5ED',
-  blueLight: '#EEF4FB',
   border: '#E8E8E8',
 };
 
@@ -80,7 +76,8 @@ export function AddMealSlotModal({
         {dayInfo && `${formatDateJa(dayInfo.dateStr)}（${dayInfo.dayOfWeek}）`}に追加する食事を選んでください
       </p>
       <div className="flex flex-col gap-2">
-        {/* 選択肢の値と並びは @homegohan/shared の MEAL_ORDER が正本 (#1446) */}
+        {/* 選択肢の値と並びは @homegohan/shared の MEAL_ORDER が正本 (#1446)。
+            区分ごとの下地の色は MEAL_TYPE_RECORD_THEME、絵文字は MEAL_EMOJIS から引く (#1665。比較の連鎖を持たない) */}
         {MEAL_ORDER.map(type => (
           <button
             key={type}
@@ -90,18 +87,10 @@ export function AddMealSlotModal({
           >
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full flex items-center justify-center" style={{
-                background: type === 'breakfast' ? colors.warningLight
-                  : type === 'lunch' ? colors.accentLight
-                  : type === 'dinner' ? colors.purpleLight
-                  : type === 'snack' ? colors.successLight
-                  : colors.blueLight
+                background: MEAL_TYPE_RECORD_THEME[type].bg
               }}>
                 <span style={{ fontSize: 18 }}>
-                  {type === 'breakfast' ? '🌅'
-                    : type === 'lunch' ? '☀️'
-                    : type === 'dinner' ? '🌙'
-                    : type === 'snack' ? '🍪'
-                    : '🌃'}
+                  {MEAL_EMOJIS[type]}
                 </span>
               </div>
               <span style={{ fontSize: 15, fontWeight: 500, color: colors.text }}>{MEAL_LABELS[type]}</span>
