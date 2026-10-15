@@ -435,7 +435,7 @@ describe('画面と同じ組み方: 握った setter と監視の印を持つポ
 // ---------------------------------------------------------------------------
 
 /** `const name = useCallback(` から、対応する `)` までのコード */
-function useCallbackSource(code: string, name: string): string {
+function callbackSourceOf(code: string, name: string): string {
   const marker = `const ${name} = useCallback(`;
   const start = code.indexOf(marker);
   if (start < 0) throw new Error(`見つからない: ${marker}`);
@@ -463,7 +463,7 @@ describe('page.tsx の配線: ポーリングの進捗 (#1663)', () => {
   const IMPROVE_CALL = 'setGenerationProgressWhileGenerating(convertV4ProgressToUIFormat(dbProgress, false));';
 
   it('setGenerationProgressWhileGenerating は GEN_PROGRESS_WHILE_GENERATING を送り、今の値を握らない (deps が空)', () => {
-    const body = useCallbackSource(pageCode, 'setGenerationProgressWhileGenerating');
+    const body = callbackSourceOf(pageCode, 'setGenerationProgressWhileGenerating');
     expect(body).toContain("dispatchAiGen({ type: 'GEN_PROGRESS_WHILE_GENERATING', payload: v });");
     expect(body).toMatch(/\}, \[\]\)$/);
     expect(body).not.toContain('aiGen.');
@@ -525,7 +525,7 @@ describe('page.tsx の配線: 状態の setter は関数形を受けず、握っ
   ];
 
   it.each(VALUE_ONLY_SETTERS)('%s は値だけ受け、deps が空 (今の値を握らない)', (name) => {
-    const body = useCallbackSource(pageCode, name);
+    const body = callbackSourceOf(pageCode, name);
     expect(body).not.toMatch(/typeof \w+ === 'function'/);
     // 引数の型に関数形 ((prev: …) => …) を持たない
     expect(body).not.toMatch(/\bprev\b/);
@@ -537,7 +537,7 @@ describe('page.tsx の配線: 状態の setter は関数形を受けず、握っ
     const names = [...pageCode.matchAll(/const (set\w+) = useCallback\(/g)].map((m) => m[1]);
     expect(names.length).toBeGreaterThan(VALUE_ONLY_SETTERS.length);
     for (const name of names) {
-      const body = useCallbackSource(pageCode, name);
+      const body = callbackSourceOf(pageCode, name);
       expect(body, name).not.toMatch(/typeof \w+ === 'function'/);
     }
   });
@@ -549,7 +549,7 @@ describe('page.tsx の配線: 状態の setter は関数形を受けず、握っ
   });
 
   it('前月・次月は shiftDisplayMonth (DISPLAY_MONTH_SHIFT) で、今の表示月から動かす', () => {
-    const body = useCallbackSource(pageCode, 'shiftDisplayMonth');
+    const body = callbackSourceOf(pageCode, 'shiftDisplayMonth');
     expect(body).toContain("dispatchWeekView({ type: 'DISPLAY_MONTH_SHIFT', payload: months });");
     expect(body).toMatch(/\}, \[\]\)$/);
     expect(pageCode).toContain('shiftDisplayMonth(PREVIOUS_MONTH);');
