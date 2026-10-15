@@ -18,7 +18,8 @@
  *   - コード発行は Bearer JWT 必須 (Cookie だけの認証は 401)。body が不正なら 400。凍結アカウントは 403
  *   - 発行したコードで /auth/native-bridge を開くと Cookie セッションができ (sb-* と is_native_app)、
  *     next へ 307。Location にもレスポンス本文にもトークンが無い。Cache-Control は no-store
- *   - 同じコードの 2 回目は /login へ。ただし同じ WebView が既に Cookie セッションを持っていれば next へ続く
+ *   - 同じコードの 2 回目は /login へ。同じ WebView が既に Cookie セッションを持っていても next へ続けず、その sb-* を消す
+ *     (残った Cookie が前の利用者のものかもしれないため。#1647)
  *   - Cookie だけで認証が通る (WebView 側に localStorage の注入が要らないことの証明)
  *   - Web の Cookie に入る refresh_token はネイティブの実際の値ではなく、それでは更新できない。Web が更新に失敗しても
  *     ネイティブの refresh_token は無傷 (Web とネイティブが同じ refresh_token を別々にローテーションして、
@@ -386,36 +387,40 @@ describe('#1036 GET /auth/native-bridge?code=...', () => {
     expect(replay.headers.get('cache-control')).toContain('no-store');
   });
 
-  it('S-7: 同じ WebView が既に Cookie セッションを持っていれば、使用済みコードの再読み込みは next へ続く', async () => {
+  it('S-7: 使用済みのコードは、同じ WebView が Cookie セッションを持っていても next へ続けず、その sb-* を消して /login へ (#1647)', async () => {
     const code = (await issueCode(userDone)).body.code!;
     const first = await bridge({ code, next: '/menus?mode=app' });
     const cookie = sessionCookieHeader(first);
     expect(cookie).not.toBe('');
 
-    // リロード / 二重読み込み: コードは使用済みだが、Cookie セッションはある
+    // コードは使用済みで、Cookie セッションはある。Cookie が誰のものかはルートには分からない
+    // (iOS で前の利用者がオフラインでログアウトしたあと、次の利用者のブリッジの引き換えが失敗した場合と同じ形)
     const reload = await bridge({ code, next: '/menus?mode=app' }, cookie);
     expect(reload.status).toBe(307);
-    const location = locationOf(reload);
-    expect(location.pathname).toBe('/menus');
-    expect(location.search).toBe('?mode=app');
-    // セッションを作り直してはいない (コードは使用済み) ので、セッション Cookie も is_native_app も付かない
+    expect(locationOf(reload).pathname).toBe('/login');
+    // セッションを作り直さず、残っていたセッションの Cookie を Path=/ で消す
     expect(sessionCookieHeader(reload)).toBe('');
+    const deletions = setCookies(reload).filter((c) => c.name.startsWith('sb-') && c.value === '');
+    expect(deletions.length).toBeGreaterThan(0);
+    for (const d of deletions) expect(d.raw.toLowerCase()).toContain('path=/');
     expect(setCookies(reload).some((c) => c.name === 'is_native_app')).toBe(false);
     expect(reload.headers.get('cache-control')).toContain('no-store');
+    // サーバ側のセッションは失効させない (signOut で巻き添えにしない)
+    const stillValid = await srAdmin.auth.getUser(userDone.accessToken);
+    expect(stillValid.data.user?.id).toBe(userDone.id);
   });
 
-  it('S-7b: オンボーディング未完了のユーザーの Cookie があっても、ブリッジは middleware に差し戻されずルートに届く (再読み込みは next へ)', async () => {
+  it('S-7b: オンボーディング未完了のユーザーの Cookie があっても、ブリッジは middleware に差し戻されずルートに届く (使用済みのコードは /login へ)', async () => {
     const code = (await issueCode(userA)).body.code!;
     const first = await bridge({ code });
     const cookie = sessionCookieHeader(first);
     expect(cookie).not.toBe('');
 
-    // 修正前は middleware が先に /onboarding/welcome へ飛ばしていた
+    // 修正前は middleware が先に /onboarding/welcome へ飛ばしていた。ルートに届けば、使用済みのコードとして /login へ
     const reload = await bridge({ code, next: '/menus?mode=app' }, cookie);
     expect(reload.status).toBe(307);
-    const location = locationOf(reload);
-    expect(location.pathname).toBe('/menus');
-    expect(location.search).toBe('?mode=app');
+    expect(locationOf(reload).pathname).toBe('/login');
+    expect(sessionCookieHeader(reload)).toBe('');
   });
 
   it('S-7c: オンボーディング未完了の別アカウントの Cookie が残っていても、新しいコードでアカウントが切り替わる', async () => {

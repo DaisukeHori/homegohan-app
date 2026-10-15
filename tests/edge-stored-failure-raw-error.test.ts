@@ -18,6 +18,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { AI_CONSENT_PROVIDERS, AI_CONSENT_TABLE, AI_CONSENT_VERSION } from '../supabase/functions/_shared/ai-consent';
 import {
   MENU_REQUEST_FAILED_MESSAGE,
+  MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE,
   SHOPPING_LIST_REQUEST_FAILED_MESSAGE,
 } from '../supabase/functions/_shared/stored-failure-messages';
 import { DEFAULT_UNIT_HEAVY_HOOK_TIMEOUT_MS } from './helpers/heavy-unit-test-timeout';
@@ -207,5 +208,21 @@ describe.each(WRITERS)('Edge Function $name: 処理の途中で DB の生のエ�
     // console.error は beforeEach の vi.spyOn で差し替えてあるので、vi.mocked で型を付けて呼び出しを読む (型の二重の言い換えをしない)
     const consoleErrors: unknown[] = vi.mocked(console.error).mock.calls.flat();
     expect([...e.loggedErrors, ...consoleErrors].some(containsRaw)).toBe(true);
+  });
+});
+
+// #1576: 入口の targetSlots の判定 (findInvalidTargetSlotDate) の英語の文を、行の error_message にそのまま書いていた
+// (画面は既知の文に無い文を汎用の文にするので、理由が伝わらなかった)。行には定型の日本語の文を書く
+describe.each(['generate-menu-v4', 'generate-menu-v5'])('Edge Function %s: 本文の targetSlots の日付が正しくないとき', (name) => {
+  it('400 で返し、行の error_message には判定の英語の文ではなく定型の文を書く', async () => {
+    const res = await handlers[name](
+      request(name, { requestId: REQUEST_ID, userId: USER, targetSlots: [{ date: '2026-02-30', mealType: 'dinner' }] }),
+    );
+    expect(res.status).toBe(400);
+
+    const failed = e.updates.filter((u) => u.table === 'weekly_menu_requests' && u.values.status === 'failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0].values.error_message).toBe(MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE);
+    expect(JSON.stringify(e.updates)).not.toContain('targetSlots[');
   });
 });

@@ -9,7 +9,7 @@ import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
@@ -38,7 +38,7 @@ const colors = {
 };
 
 type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
   cook: { icon: ChefHat, label: '自炊', color: colors.successText, bg: colors.successLight },
@@ -48,7 +48,8 @@ const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
 };
 
-const MEAL_CONFIG: Record<string, { icon: typeof Coffee; label: string; color: string; time: string }> = {
+// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める
+const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; time: string }> = {
   breakfast: { icon: Coffee, label: '朝食', color: '#FF9800', time: '7:00' },
   lunch: { icon: Sun, label: '昼食', color: '#4CAF50', time: '12:00' },
   dinner: { icon: Moon, label: '夕食', color: '#7C4DFF', time: '19:00' },

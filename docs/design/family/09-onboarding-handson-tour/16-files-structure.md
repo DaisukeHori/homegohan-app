@@ -21,10 +21,11 @@
 | `packages/handson-tour-shared/src/i18n.ts` | 200 |
 | `packages/handson-tour-shared/src/url-routes.ts` | 30 |
 | `packages/handson-tour-shared/src/constants.ts` | 60 |
+| `packages/handson-tour-shared/src/photo-save.ts` | 70 |
 | `packages/handson-tour-shared/__tests__/personalize.test.ts` | 80 |
 | `packages/handson-tour-shared/__tests__/i18n.test.ts` | 60 |
 
-合計: ~1065 行
+合計: ~1135 行
 
 ### 1.2 Web 実装
 
@@ -142,13 +143,13 @@
 
 | カテゴリ | 行数 |
 |---|---|
-| 共通 package | 1065 |
+| 共通 package | 1135 |
 | Web 実装 | 1530 |
 | Mobile 実装 | 1740 |
 | API | 440 |
 | DB | 85 |
 | テスト | 2410 |
-| **総新規** | **約 7270 行** |
+| **総新規** | **約 7340 行** |
 
 ---
 
@@ -196,7 +197,7 @@
 
 | カテゴリ | 行数 |
 |---|---|
-| 新規 | ~7270 |
+| 新規 | ~7340 |
 | 既存追加 | ~1460 |
 | 既存削除 | ~86 |
 | アセット | 480KB (バイナリ) |
@@ -240,7 +241,8 @@ homegohan/
 │       │   ├── personalize.ts
 │       │   ├── i18n.ts
 │       │   ├── url-routes.ts
-│       │   └── constants.ts
+│       │   ├── constants.ts
+│       │   └── photo-save.ts
 │       └── __tests__/
 │           ├── personalize.test.ts
 │           └── i18n.test.ts

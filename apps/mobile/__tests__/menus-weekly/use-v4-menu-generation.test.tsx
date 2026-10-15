@@ -57,6 +57,7 @@ import { aiDailyLimitMessage } from '../../../../supabase/functions/_shared/ai-d
 import {
   MENU_REQUEST_EXISTING_PROTECTED_MESSAGE,
   MENU_REQUEST_FAILED_MESSAGE,
+  MENU_REQUEST_STALE_DISPLAY_MESSAGE,
 } from '../../../../supabase/functions/_shared/stored-failure-messages';
 
 const params = {
@@ -233,9 +234,21 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
   it('それ以外の失敗は、従来どおり onError に保存された文を渡す', async () => {
     const onError = jest.fn();
     const onAiConsentRequired = jest.fn();
-    await failWith('stale_request_timeout', { onError, onAiConsentRequired });
+    await failWith(MENU_REQUEST_EXISTING_PROTECTED_MESSAGE, { onError, onAiConsentRequired });
 
-    expect(onError).toHaveBeenCalledWith('stale_request_timeout');
+    expect(onError).toHaveBeenCalledWith(MENU_REQUEST_EXISTING_PROTECTED_MESSAGE);
+    expect(onAiConsentRequired).not.toHaveBeenCalled();
+  });
+
+  // #1576: 進まなくなった行の印 'stale_request_timeout' は英語のまま利用者に出さない
+  it('進まなくなった行の印は、日本語の文にして onError と onProgress に渡す', async () => {
+    const onError = jest.fn();
+    const onAiConsentRequired = jest.fn();
+    const { onProgress } = await failWith('stale_request_timeout', { onError, onAiConsentRequired });
+
+    expect(onError).toHaveBeenCalledWith(MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(onProgress).toHaveBeenCalledWith(expect.objectContaining({ errorMessage: MENU_REQUEST_STALE_DISPLAY_MESSAGE }));
+    expect(JSON.stringify([onError.mock.calls, onProgress.mock.calls])).not.toContain('stale_request_timeout');
     expect(onAiConsentRequired).not.toHaveBeenCalled();
   });
 

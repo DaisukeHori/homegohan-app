@@ -13,6 +13,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 interface PageProps {
   searchParams: Promise<{ q?: string; status?: string; page?: string }>;
@@ -146,7 +147,7 @@ export default async function AdminUsersPage(props: PageProps) {
                 <tr key={user.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">
-                      {user.nickname ?? '(名前なし)'}
+                      {normalizeProfileName(user.nickname) ?? '(名前なし)'}
                     </div>
                     <div className="text-xs text-gray-400 font-mono">{user.id.slice(0, 8)}...</div>
                   </td>

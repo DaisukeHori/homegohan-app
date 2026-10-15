@@ -3,7 +3,7 @@
 // 注意: apps/mobile/app/badges/index.tsx (通常バッジ画面、P3-B 改修) とは別ファイル
 
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
@@ -24,7 +24,11 @@ import type { SubStepOfStep3 } from '@homegohan/handson-tour-shared';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { TourOverlay } from '../../src/handson-tour/TourOverlay';
+import { buildBadgesTourBubble } from '../../src/handson-tour/tour-bubbles';
 import { getApi } from '../../src/lib/api';
+import { getAnalyticsAppVersion } from '../../src/lib/app-version';
+import { useLeaveTour, useTourHardBack } from '../../src/handson-tour/useLeaveTour';
+import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
 
@@ -37,8 +41,12 @@ export default function HandsonTourBadges() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(false);
   const mountTimeRef = React.useRef(Date.now());
+  // ツアーを抜ける (skip API + handson_tour_skipped + /home。Step 1 と共通。#1642)。
+  // leftTourRef = 抜けた。抜けたあとに届いたバッジの応答や 3.1 のタイマーで、先のサブステップや Step 4 へ進めない
+  const { leftTourRef, leaveTour } = useLeaveTour(3, profile?.id);
 
   const advanceSubStep = (next: SubStepOfStep3) => {
+    if (leftTourRef.current) return;
     setSubStep(next);
   };
 
@@ -48,8 +56,8 @@ export default function HandsonTourBadges() {
     fireAnalytics('handson_tour_step_viewed', {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
-      platform: 'ios' as const,
-      app_version: '1.0.0',
+      platform: tourAnalyticsPlatform(),
+      app_version: getAnalyticsAppVersion(),
       step: 3,
     });
   }, [profile?.id]);
@@ -59,10 +67,13 @@ export default function HandsonTourBadges() {
     const fetchBadges = async () => {
       try {
         await getApi().get('/api/badges');
+        // 応答を待つ間に端末バックでツアーを抜けていたら、ここで終える (ホームへの遷移中に吹き出しを出さない)
+        if (leftTourRef.current) return;
         // first_bite と planner が獲得済みであることを期待
         setIsLoading(false);
         advanceSubStep('3.1');
       } catch {
+        if (leftTourRef.current) return;
         setError(true);
         setIsLoading(false);
       }
@@ -87,11 +98,17 @@ export default function HandsonTourBadges() {
     };
   }, [subStep]);
 
-  const handleSkip = () => {
-    router.replace('/home' as never);
-  };
+  // 端末バック (Android) でツアーを抜ける (設計書 01-trigger-flow §2.2: Step 1〜3 の端末バックは
+  // skipped{reason:'hard_back'} + skipped_at + /home)。以前は /home へ遷移するだけで、skip API も handson_tour_skipped も送っていなかった。
+  // 呼び元は 2 つ: TourOverlay の hardwareBackPress (overlay.onSkip。showSkip={false} なので画面のスキップボタンからは呼ばれない) と、
+  // 吹き出しを出していない読み込み中・エラーの画面の端末バック (下の useTourHardBack)
+  const handleHardBack = useCallback(() => leaveTour('hard_back'), [leaveTour]);
+
+  // 読み込み中・エラーの画面は TourOverlay (= hardwareBackPress) を出さないので、ここで受けないと端末バックが画面の戻る (Step 2) になってしまう
+  useTourHardBack(isLoading || error, handleHardBack);
 
   const handleNext = () => {
+    if (leftTourRef.current) return;
     switch (subStep) {
       case '3.2':
         advanceSubStep('3.3');
@@ -105,8 +122,8 @@ export default function HandsonTourBadges() {
           fireAnalytics('handson_tour_step_completed', {
             user_id: profile.id,
             timestamp: new Date().toISOString(),
-            platform: 'ios' as const,
-            app_version: '1.0.0',
+            platform: tourAnalyticsPlatform(),
+            app_version: getAnalyticsAppVersion(),
             step: 3,
             dwell_ms,
           });
@@ -115,49 +132,6 @@ export default function HandsonTourBadges() {
         break;
       default:
         break;
-    }
-  };
-
-  const getBubble = (): {
-    title?: string;
-    body: string;
-    position: 'top' | 'bottom' | 'left' | 'right' | 'auto';
-    testId?: string;
-  } => {
-    switch (subStep) {
-      case '3.0':
-        return {
-          body: i18n.step3.loading_text,
-          position: 'auto',
-        };
-      case '3.1':
-        return {
-          title: personalize(i18n.step3.intro_title, { nickname }),
-          body: i18n.step3.intro_title,
-          position: 'auto',
-          // E2E (Maestro) が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
-          testId: 'tour-step-3-intro',
-        };
-      case '3.2':
-        return {
-          title: i18n.step3.first_bite_title,
-          body: i18n.step3.first_bite_bubble,
-          position: 'bottom',
-        };
-      case '3.3':
-        return {
-          title: i18n.step3.planner_title,
-          body: i18n.step3.planner_bubble,
-          position: 'bottom',
-        };
-      case '3.4':
-        return {
-          title: i18n.step3.tutorial_complete_title,
-          body: i18n.step3.tutorial_complete_bubble,
-          position: 'bottom',
-        };
-      default:
-        return { body: '', position: 'auto' };
     }
   };
 
@@ -192,7 +166,7 @@ export default function HandsonTourBadges() {
             ? (STEP3_SUB_STEP_TO_TARGET[subStep] as string[])
             : undefined
         }
-        bubble={getBubble()}
+        bubble={buildBadgesTourBubble(subStep, { nickname })}
         progress={{ current: 4, total: 5 }}
         primaryAction={
           isManualStep
@@ -203,7 +177,7 @@ export default function HandsonTourBadges() {
             : undefined
         }
         showSkip={false}
-        onSkip={handleSkip}
+        onSkip={handleHardBack}
         accessibilityLabel={personalize(i18n.step3.a11y_title, { nickname })}
       />
     </View>
