@@ -54,7 +54,7 @@ vi.mock('@/lib/supabase/server', () => ({
 
 // ── next/headers の cookies() モック ─────────────────────────────────────────
 vi.mock('next/headers', () => ({
-  cookies: () => ({
+  cookies: async () => ({
     getAll: mocks.cookieGetAll,
     delete: mocks.cookieDelete,
   }),

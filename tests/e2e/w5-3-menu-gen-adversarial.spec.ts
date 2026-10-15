@@ -11,22 +11,16 @@
  */
 
 import { test, expect, type Page } from "./fixtures/auth";
+import { addDaysToDate } from "../../packages/shared/src/date-utils";
+import { jstThisMonday } from "./helpers/jst-week";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
+// 今週の月曜日は、ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)。前後の週は暦の計算 (addDaysToDate) でずらす
 
-function getThisMonday(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
-
-function addDays(dateStr: string, days: number): string {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+/** 1 週間の日数 */
+const DAYS_PER_WEEK = 7;
+/** C-10 の「約 10 年前」を週の数で表したもの (52 週 × 10 年。月曜日始まりの週のまま戻すため日数でなく週で数える) */
+const TEN_YEARS_IN_WEEKS = 520;
 
 const FAKE_REQUEST_ID = "00000000-dead-beef-cafe-000000000w53";
 const FAKE_REQUEST_ID_2 = "00000000-dead-beef-cafe-000000001w53";
@@ -202,7 +196,7 @@ test("[menu-gen][adversarial] A-2: 生成中に別タブで同週リクエスト
   context,
 }) => {
   // tab A でモックした生成中状態を作る
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
     await route.fulfill({
@@ -348,10 +342,10 @@ test("[menu-gen][adversarial] A-3: 異なる週を5連続リクエスト → 各
   });
 
   // 5 つの異なる週を直接 POST
-  const monday = getThisMonday();
+  const monday = jstThisMonday();
   const responses: number[] = [];
   for (let i = 0; i < 5; i++) {
-    const startDate = addDays(monday, i * 7);
+    const startDate = addDaysToDate(monday, i * 7);
     const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
       data: { startDate },
       headers: { "Content-Type": "application/json" },
@@ -381,7 +375,7 @@ test("[menu-gen][adversarial] A-3: 異なる週を5連続リクエスト → 各
 test("[menu-gen][adversarial] B-5: 生成中タブ閉じ再オープン → 進捗復元", async ({
   authedPage,
 }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
     await route.fulfill({
@@ -477,7 +471,7 @@ test("[menu-gen][adversarial] B-6: 生成中にサインアウト → stale 処�
         }),
       );
     },
-    [FAKE_REQUEST_ID, getThisMonday()],
+    [FAKE_REQUEST_ID, jstThisMonday()],
   );
 
   await authedPage.goto("/menus/weekly");
@@ -505,7 +499,7 @@ test("[menu-gen][adversarial] B-6: 生成中にサインアウト → stale 処�
 test("[menu-gen][adversarial] B-7: 生成中に /home ナビゲート → 戻ると進捗復元", async ({
   authedPage,
 }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
     await route.fulfill({
@@ -579,8 +573,8 @@ test("[menu-gen][adversarial] B-7: 生成中に /home ナビゲート → 戻る
 test("[menu-gen][adversarial] B-8: 生成中に週切り替え → 別週はhasPending=falseで返す", async ({
   authedPage,
 }) => {
-  const weekStr = getThisMonday();
-  const nextWeekStr = addDays(weekStr, 7);
+  const weekStr = jstThisMonday();
+  const nextWeekStr = addDaysToDate(weekStr, 7);
   let pendingCallDate = "";
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
@@ -698,9 +692,8 @@ test("[menu-gen][adversarial] C-10: 過去10年前の週をリクエスト → 5
   await authedPage.goto("/menus/weekly");
   await authedPage.waitForLoadState("domcontentloaded");
 
-  const tenYearsAgo = new Date();
-  tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-  const dateStr = tenYearsAgo.toISOString().slice(0, 10);
+  // 端末 (Node のプロセス) の日付ではなく、JST の今週の月曜日から週の単位で戻す (#1564・#1622。月曜日のまま約 10 年前の週になる)
+  const dateStr = addDaysToDate(jstThisMonday(), -TEN_YEARS_IN_WEEKS * DAYS_PER_WEEK);
 
   const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
     data: { startDate: dateStr },
@@ -724,7 +717,7 @@ test("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバ
   await authedPage.goto("/menus/weekly");
   await authedPage.waitForLoadState("domcontentloaded");
 
-  const monday = getThisMonday();
+  const monday = jstThisMonday();
 
   // 1日分のみ
   const res1 = await authedPage.request.post("/api/ai/menu/v4/generate", {
@@ -739,7 +732,7 @@ test("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバ
 
   // 100日分（7×3×100/7 ≒ 300スロット）
   const massiveSlots = Array.from({ length: 300 }, (_, i) => ({
-    date: addDays(monday, Math.floor(i / 3)),
+    date: addDaysToDate(monday, Math.floor(i / 3)),
     mealType: ["breakfast", "lunch", "dinner"][i % 3],
   }));
   const res2 = await authedPage.request.post("/api/ai/menu/v4/generate", {
@@ -767,7 +760,7 @@ test("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッ
   await authedPage.goto("/menus/weekly");
   await authedPage.waitForLoadState("domcontentloaded");
 
-  const monday = getThisMonday();
+  const monday = jstThisMonday();
   const cases: Array<{ name: string; note: string; expectedStatus?: number; expectedCode?: string }> = [
     { name: "10000文字", note: "あ".repeat(10000) },
     // #1622: NULL 文字は Postgres の text / jsonb に入らない (以前は insert が拒まれて 500)。route が DB に渡す前に 400 で断る
@@ -833,7 +826,7 @@ test("[menu-gen][adversarial] D-14: CRON_SECRETなしでcron → 401/503", async
 test("[menu-gen][adversarial] D-16: attempt_count >= 3 → UI が failed 状態を表示", async ({
   authedPage,
 }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
     await route.fulfill({
@@ -951,7 +944,7 @@ test("[menu-gen][adversarial] E-18: タイムアウト後の status 整合性 �
         JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
       );
     },
-    [FAKE_REQUEST_ID, getThisMonday()],
+    [FAKE_REQUEST_ID, jstThisMonday()],
   );
 
   await authedPage.goto("/menus/weekly");
@@ -1083,7 +1076,7 @@ test("[menu-gen][adversarial] F-22: tabA生成完了 → tabBでリアルタイ�
   authedPage,
   context,
 }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
   /** status の何回目 (0 始まり) から completed を返すか (最初の 2 回は processing) */
   const COMPLETED_FROM_CALL_INDEX = 2;
 
@@ -1303,7 +1296,7 @@ test("[menu-gen][adversarial] Edge: 1MBのnoteフィールド → クラッシ�
 
   const oneMBNote = "x".repeat(1024 * 1024);
   const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
-    data: { startDate: getThisMonday(), note: oneMBNote },
+    data: { startDate: jstThisMonday(), note: oneMBNote },
     headers: { "Content-Type": "application/json" },
   });
 

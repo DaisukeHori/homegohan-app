@@ -87,3 +87,43 @@ describe('週間献立の画面の監視の印 (#1622)', () => {
     expect(failed).toContain('cleanupPolling();');
   });
 });
+
+// #1629 (resumePendingGeneration / GEN_RESUME_PENDING) と合わせたときの確認。
+// 画面に入り直して生成中の行 (GET /api/ai/menu/weekly/pending) を見つけた経路 (fetchPlan・checkPendingRequests) は、
+// 生成中にする (resumePendingGeneration) だけでは監視が始まらない。どちらの経路も続けて subscribeToRequestStatus を呼び、
+// そこで前の監視を片付けて新しい印を立てる。resumePendingGeneration 自体は監視の印にもチャンネルにも触らない
+// (入り直しの最中に、動いている監視の印を下ろして、Realtime の失敗からのポーリングの始め直しを止めないように)。
+const resumeCode = sliceBetween(pageCode, 'const resumePendingGeneration = useCallback(', '}, []);');
+
+/** 入り直しの経路で resumePendingGeneration を呼ぶ行と、その直後の行 (どちらの経路も次の行で監視を始める) */
+function resumeCallSites(code: string): Array<{ resumeLine: string; nextLine: string }> {
+  const lines = code.split('\n').map((line) => line.trim()).filter((line) => line.length > 0);
+  const sites: Array<{ resumeLine: string; nextLine: string }> = [];
+  lines.forEach((line, index) => {
+    if (line.startsWith('resumePendingGeneration(')) {
+      sites.push({ resumeLine: line, nextLine: lines[index + 1] ?? '' });
+    }
+  });
+  return sites;
+}
+
+/** 入り直しの経路の数 (fetchPlan の pending と checkPendingRequests の pending) */
+const RESUME_PATH_COUNT = 2;
+
+describe('入り直しの経路 (#1629) でも監視の印が立つ (#1622)', () => {
+  it('resumePendingGeneration は監視の印にもチャンネルにも触らない (状態を生成中にするだけ)', () => {
+    expect(resumeCode).toContain('resumePendingGenerationAction(');
+    expect(resumeCode).not.toContain('requestWatchRef');
+    expect(resumeCode).not.toContain('cleanupRealtime');
+    expect(resumeCode).not.toContain('removeChannel');
+  });
+
+  it('入り直しの 2 つの経路は、どちらも resumePendingGeneration の次に subscribeToRequestStatus を呼ぶ (そこで印が立つ)', () => {
+    const sites = resumeCallSites(pageCode);
+    expect(sites).toHaveLength(RESUME_PATH_COUNT);
+    for (const site of sites) {
+      expect(site.resumeLine).toBe('resumePendingGeneration(pendingIsUltimateMode);');
+      expect(site.nextLine).toMatch(/^subscribeToRequestStatus\(\w+, requestId, pendingIsUltimateMode\);$/);
+    }
+  });
+});

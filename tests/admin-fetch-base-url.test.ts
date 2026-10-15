@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('next/headers', () => ({
   headers: async () => new Headers(),
-  cookies: () => ({ getAll: () => [] }),
+  cookies: async () => ({ getAll: () => [] }),
 }));
 
 const fetchMock = vi.fn(async (..._args: unknown[]) => new Response('{}'));

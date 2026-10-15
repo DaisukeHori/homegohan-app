@@ -4,10 +4,9 @@
 // 生成を受け付けたときに ultimateMode (究極モードで始めたか) を v4MenuGenerating へ保存する。
 // (以前は保存しておらず、画面は progress.totalSteps === 6 で見分けていた。行を作った時点の totalSteps は枠の数)
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 vi.mock('@/lib/supabase/client', () => ({
   createClient: () => {

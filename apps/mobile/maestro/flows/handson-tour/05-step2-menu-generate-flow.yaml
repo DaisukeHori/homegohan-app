@@ -33,19 +33,10 @@ tags: ["handson-tour", "P1"]
 - tapOn:
     id: "meal-save-button"
 
-- waitForAnimationToEnd:
-    timeout: 5000
-
-# Step 2 intro 吹き出し待機
-# TODO: tour-step-2-intro testID 未実装。別 PR で fix。テキストマッチで代替
+# Step 2 intro 吹き出し (保存が成功してから進む。STEP2_INTRO_AUTO_MS = 2.5 秒で次へ進むので、待たずにすぐ探す)
 - extendedWaitUntil:
-    anyOf:
-      - visible:
-          text: "献立"
-      - visible:
-          text: "メニュー"
-      - visible:
-          text: "生成"
+    visible:
+      id: "tour-step-2-intro"
     timeout: 15000
 
 - waitForAnimationToEnd:

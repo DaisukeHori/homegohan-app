@@ -13,14 +13,13 @@
  *       モックして UI の挙動のみを検証する。
  */
 import { test, expect } from "./fixtures/fresh-user";
+import { jstThisMonday } from "./helpers/jst-week";
 
 test("progress bar is restored from localStorage when request is still pending", async ({ tourPendingUser }) => {
   // 偽の requestId で localStorage に生成中フラグをセット
   const fakeRequestId = "00000000-0000-0000-0000-000000000001";
-  const weekStartDate = new Date();
-  weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay() + 1); // 今週月曜
-  // ローカル日付でフォーマット（page.tsx の formatLocalDate と一致させる）
-  const weekStr = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
+  // 今週月曜。ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)
+  const weekStr = jstThisMonday();
 
   // ステータス API が 'processing' を返すようにモック
   await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route) => {
@@ -83,10 +82,8 @@ test("progress bar is restored from localStorage when request is still pending",
 
 test("progress bar is NOT shown when server status is completed on restore", async ({ tourPendingUser }) => {
   const fakeRequestId = "00000000-0000-0000-0000-000000000002";
-  const weekStartDate = new Date();
-  weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay() + 1);
-  // ローカル日付でフォーマット（page.tsx の formatLocalDate と一致させる）
-  const weekStr = `${weekStartDate.getFullYear()}-${String(weekStartDate.getMonth() + 1).padStart(2, '0')}-${String(weekStartDate.getDate()).padStart(2, '0')}`;
+  // 今週月曜。ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)
+  const weekStr = jstThisMonday();
 
   // ステータス API が 'completed' を返すようにモック
   await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route) => {

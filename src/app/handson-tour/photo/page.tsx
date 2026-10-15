@@ -11,6 +11,9 @@ import {
   STEP1_SUB_STEP_TO_TARGET,
   personalize,
   fireAnalytics,
+  TOUR_PHOTO_SAVE_URL,
+  buildTourPhotoSaveBody,
+  isSandboxNotEligibleBody,
   type SubStepOfStep1,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
@@ -20,11 +23,6 @@ import {
   type PhotoTourProfile,
 } from '@/lib/handson-tour/tour-profile';
 import { reportTourProfileFailures } from '@/lib/handson-tour/tour-profile-report';
-import {
-  TOUR_PHOTO_SAVE_URL,
-  buildTourPhotoSaveBody,
-  isSandboxNotEligibleBody,
-} from '@/lib/handson-tour/photo-save';
 
 /** 保存の失敗の記録 (handson_tour_step_error の error_code / error_message / http_status) */
 type SaveFailure = {
