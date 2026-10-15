@@ -263,7 +263,7 @@ describe('#1173 database.types.ts (T-MIG3)', () => {
     }
     expect(argsOf('accept_legal_documents')).toContain('p_birth_date?: string');
     for (const fn of ['age_years_jst', 'parental_consent_active', 'legal_minor_has_guardian_path', 'caller_is_minor_jst']) {
-      expect(types, fn).toContain(`      ${fn}: {\n        Args:`);
+      expect(types, fn).toMatch(new RegExp(`\\n {6}${fn}: \\{\\s*Args:`));
     }
     // トリガー関数は型に出ない
     expect(types).not.toContain('revoke_parental_consent_on_member_inactive');

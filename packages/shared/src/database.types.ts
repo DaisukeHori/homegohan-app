@@ -2519,6 +2519,7 @@ export type Database = {
       family_members: {
         Row: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -2536,6 +2537,7 @@ export type Database = {
         }
         Insert: {
           avatar_color?: string
+          birth_date?: string | null
           child_profile?: Json | null
           display_name?: string | null
           family_id: string
@@ -2553,6 +2555,7 @@ export type Database = {
         }
         Update: {
           avatar_color?: string
+          birth_date?: string | null
           child_profile?: Json | null
           display_name?: string | null
           family_id?: string
@@ -5002,6 +5005,72 @@ export type Database = {
         }
         Relationships: []
       }
+      parental_consents: {
+        Row: {
+          child_age_at_signing: number
+          child_birth_date: string
+          consent_version: string
+          family_id: string
+          family_member_id: string | null
+          guardian_attested: boolean
+          id: string
+          ip_address: unknown
+          parent_user_id: string | null
+          revoked_at: string | null
+          revoked_reason: string | null
+          signed_at: string
+          signed_name: string
+          user_agent: string | null
+        }
+        Insert: {
+          child_age_at_signing: number
+          child_birth_date: string
+          consent_version: string
+          family_id: string
+          family_member_id?: string | null
+          guardian_attested: boolean
+          id?: string
+          ip_address?: unknown
+          parent_user_id?: string | null
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          signed_at?: string
+          signed_name: string
+          user_agent?: string | null
+        }
+        Update: {
+          child_age_at_signing?: number
+          child_birth_date?: string
+          consent_version?: string
+          family_id?: string
+          family_member_id?: string | null
+          guardian_attested?: boolean
+          id?: string
+          ip_address?: unknown
+          parent_user_id?: string | null
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          signed_at?: string
+          signed_name?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parental_consents_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "family_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "parental_consents_family_member_id_fkey"
+            columns: ["family_member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       password_history: {
         Row: {
           changed_at: string
@@ -6802,6 +6871,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -6940,6 +7010,7 @@ export type Database = {
           banned_at?: string | null
           banned_reason?: string | null
           basal_body_temp?: number | null
+          birth_date?: string | null
           body_fat_percentage?: number | null
           bowel_movement?: string | null
           business_trip_frequency?: string | null
@@ -7078,6 +7149,7 @@ export type Database = {
           banned_at?: string | null
           banned_reason?: string | null
           basal_body_temp?: number | null
+          birth_date?: string | null
           body_fat_percentage?: number | null
           bowel_movement?: string | null
           business_trip_frequency?: string | null
@@ -7506,6 +7578,7 @@ export type Database = {
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -7537,6 +7610,7 @@ export type Database = {
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -7581,6 +7655,7 @@ export type Database = {
       }
       accept_legal_documents: {
         Args: {
+          p_birth_date?: string
           p_ip?: unknown
           p_privacy_version: string
           p_terms_version: string
@@ -7598,6 +7673,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -7764,12 +7840,19 @@ export type Database = {
       }
       add_family_child: {
         Args: {
+          p_birth_date: string
           p_child_profile: Json
+          p_consent_version?: string
           p_display_name: string
           p_family_id: string
+          p_guardian_attested?: boolean
+          p_ip?: unknown
+          p_signed_name?: string
+          p_user_agent?: string
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -7810,6 +7893,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      age_years_jst: { Args: { p_birth_date: string }; Returns: number }
       app_log_client_error_counts: {
         Args: { p_limit?: number; p_window_minutes?: number }
         Returns: {
@@ -7902,6 +7986,7 @@ export type Database = {
         Args: { p_at: string }
         Returns: Json[]
       }
+      caller_is_minor_jst: { Args: never; Returns: boolean }
       can_view_user_meals: {
         Args: { p_target_user_id: string }
         Returns: boolean
@@ -8262,6 +8347,7 @@ export type Database = {
         Args: never
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -8294,6 +8380,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -8431,6 +8518,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      legal_minor_has_guardian_path: { Args: never; Returns: boolean }
       list_families_with_inactive_representative: {
         Args: never
         Returns: {
@@ -8577,6 +8665,10 @@ export type Database = {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean
       }
+      parental_consent_active: {
+        Args: { p_member_id: string }
+        Returns: boolean
+      }
       paste_meal_to_family: {
         Args: { p_source_meal_id: string; p_target_user_ids: string[] }
         Returns: string
@@ -8610,6 +8702,7 @@ export type Database = {
         Args: { p_email: string; p_member_id: string }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -8741,6 +8834,7 @@ export type Database = {
         Args: { p_family_id: string; p_member_id: string }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -8773,6 +8867,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -9233,6 +9328,7 @@ export type Database = {
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
