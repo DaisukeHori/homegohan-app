@@ -23,7 +23,8 @@ const STATIC_USER_SCOPED_KEYS: readonly string[] = [
   // アプリの永続化キー (persistence.ts の PERSISTENCE_KEYS。#1599)。どれも Web の利用者別の localStorage のキー
   // (packages/shared の USER_SCOPED_LOCAL_STORAGE_KEYS) と同じ中身で、ログイン中の利用者の値を持つ。
   //   - v4_range_days: V4 の献立生成の期間の設定 (src/components/menu/V4GenerateModal.tsx が書く)
-  //   - singleMealGenerating: 1 食の作り直しの生成中の状態。前の利用者の食事の ID が入る (src/components/menu/RegenerateMealModal.tsx が書く)
+  //   - singleMealGenerating: 1 食の作り直しの生成中の状態。前の利用者の食事の ID が入る (書いていた src/components/menu/RegenerateMealModal.tsx は
+  //     #1598 で消した。旧ビルドが書いた値が残っているので消す)
   //   - weeklyMenuGenerating・shoppingListRegenerating: 生成中の状態 (いまのアプリは書かないが、同じ一覧のキーなので消す)
   ...Object.values(PERSISTENCE_KEYS).map(({ key }) => key),
 ];
