@@ -2,6 +2,8 @@
  * #1190・#1189・#1198 ログイン履歴・セッション・パスワード履歴の migration (supabase/migrations/<番号>_auth_history_sessions.sql) と
  * 戻し口 (supabase/rollbacks/<番号>_auth_history_sessions.down.sql) の文面の検査 (DB 無し)。
  * 設計の正典 docs/design/cross/16-auth-history-sessions.md §11・§20.3。実 DB での確認は tests/integration/security/auth-history-sessions.test.ts。
+ * あわせて、この migration に追随するもの (型の生成物 §11.8・docs/design/operator/08-cron-batches.md の pg_cron の本数の宣言 §22 N-32) が
+ * migration と合っていることも見る (main の取り込みで型が衝突したときの解き方の誤り・古い main に合わせた本数の追随を赤にする)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -326,7 +328,7 @@ describe('cross/16 migration: 列・RPC・権限', () => {
     expect(others, '同じ名前のジョブを登録しているほかの migration').toEqual([]);
   });
 
-  it('08-cron-batches の pg_cron の本数の宣言 (§3.0・§3.1 の注記) は、08 がこのジョブを挙げていれば全 migration の実数、まだ挙げていなければ (設計書の追随の前) このジョブを除いた実数と同じ (§22 N-32「PR の時点の origin/main の実数 + 1」。古い main に合わせた本数で追随すると赤)', () => {
+  it('08-cron-batches の pg_cron の本数の宣言 (§3.0・§3.1 の注記) は、08 がこのジョブを挙げていれば全 migration の実数、まだ挙げていなければ (設計書の追随の前) このジョブを除いた実数と同じ (§22 N-32・§23 の 08 の行「PR の時点の origin/main の実数 + 1」。古い main に合わせた本数で追随すると赤)', () => {
     const jobName = 'cleanup-auth-sessions-and-login-history';
     const { names, unresolved } = collectMigrationCronJobs(path.join(ROOT, MIGRATIONS_DIR));
     expect(unresolved, 'ジョブの名前を解けない cron.schedule の呼び出し').toEqual([]);
