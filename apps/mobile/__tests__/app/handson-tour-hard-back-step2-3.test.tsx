@@ -345,27 +345,33 @@ describe('#1642: Step 2 (献立) の端末バックは hard_back でツアーを
 });
 
 describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアーを抜ける (設計書 01-trigger-flow §2.2)', () => {
-  /** バッジの取得 (GET /api/badges) と skip を分けて応答する。バッジの応答は resolveBadges で返す */
-  function holdBadges(): { resolveBadges: (response: FakeResponse) => void } {
-    let resolveBadges: (response: FakeResponse) => void = () => undefined;
+  /**
+   * バッジの取得 (GET /api/badges) と skip を分けて応答する。バッジの応答は resolveBadges で返す
+   * (クライアントは認証のヘッダーを作ってから fetch を呼ぶので、fetch が呼ばれるのを待ってから返す)
+   */
+  function holdBadges(): { resolveBadges: (response: FakeResponse) => Promise<void> } {
+    let pendingBadges: ((response: FakeResponse) => void) | null = null;
     fetchMock.mockImplementation((url: string) =>
       String(url).includes('/api/handson-tour/skip')
         ? Promise.resolve(SKIP_OK)
         : new Promise<FakeResponse>((resolve) => {
-            resolveBadges = resolve;
+            pendingBadges = resolve;
           }),
     );
     return {
-      resolveBadges: (response) => resolveBadges(response),
+      resolveBadges: async (response) => {
+        await waitFor(() => expect(pendingBadges).not.toBeNull());
+        await act(async () => {
+          pendingBadges?.(response);
+        });
+      },
     };
   }
 
   it('吹き出しの画面での端末バックは、skip API と handson_tour_skipped を step 3・reason hard_back で送り、ホームへ', async () => {
     const { resolveBadges } = holdBadges();
     const screen = render(<HandsonTourBadges />);
-    await act(async () => {
-      resolveBadges(BADGES_OK);
-    });
+    await resolveBadges(BADGES_OK);
     expect(await screen.findByTestId('tour-step-3')).toBeTruthy();
     // 吹き出しを出したら、受け手はオーバーレイの 1 つだけ (読み込み中の受け手は外れる)
     expect(hardwareBackListeners).toHaveLength(1);
@@ -398,9 +404,7 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     expect(handled).toBe(true);
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
 
-    await act(async () => {
-      resolveBadges(BADGES_OK);
-    });
+    await resolveBadges(BADGES_OK);
 
     expect(screen.queryByTestId('tour-step-3')).toBeNull();
     expect(screen.getByTestId('tour-step-3-loading')).toBeTruthy();
@@ -415,9 +419,7 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
   it('バッジの取得に失敗した画面の端末バックも、hard_back で skip してホームへ', async () => {
     const { resolveBadges } = holdBadges();
     const screen = render(<HandsonTourBadges />);
-    await act(async () => {
-      resolveBadges(BADGES_FAILED);
-    });
+    await resolveBadges(BADGES_FAILED);
     expect(await screen.findByText(i18n.step3.error_title)).toBeTruthy();
     expect(hardwareBackListeners).toHaveLength(1);
 
@@ -436,9 +438,7 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     jest.useFakeTimers();
     const { resolveBadges } = holdBadges();
     const screen = render(<HandsonTourBadges />);
-    await act(async () => {
-      resolveBadges(BADGES_OK);
-    });
+    await resolveBadges(BADGES_OK);
     expect(screen.getByTestId('tour-step-3')).toBeTruthy();
     act(() => {
       jest.advanceTimersByTime(HANDSON_TOUR_CONSTANTS.STEP3_INTRO_AUTO_MS);
@@ -463,9 +463,7 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     jest.useFakeTimers();
     const { resolveBadges } = holdBadges();
     const screen = render(<HandsonTourBadges />);
-    await act(async () => {
-      resolveBadges(BADGES_OK);
-    });
+    await resolveBadges(BADGES_OK);
     expect(screen.getByTestId('tour-step-3')).toBeTruthy();
     act(() => {
       jest.advanceTimersByTime(HANDSON_TOUR_CONSTANTS.STEP3_INTRO_AUTO_MS);
@@ -489,9 +487,7 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
       pressHardwareBack();
     });
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
-    await act(async () => {
-      resolveBadges(BADGES_OK);
-    });
+    await resolveBadges(BADGES_OK);
 
     expect(analyticsCalls('handson_tour_step_viewed')).toEqual([
       expect.objectContaining({ step: 3, platform: 'android' }),
