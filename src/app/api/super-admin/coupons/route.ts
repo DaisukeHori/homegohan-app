@@ -17,6 +17,7 @@ import {
 import { internalError } from '@/lib/api/errors';
 import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -81,10 +82,8 @@ export async function POST(request: NextRequest) {
     const parseResult = CouponCreateSchema.safeParse(body);
 
     if (!parseResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_INPUT', message: parseResult.error.message, details: parseResult.error.issues } },
-        { status: 400 }
-      );
+      // #1534: error.message は最初の issue の文 (PATCH と同じ形)。issues を JSON にした文字列は返さない
+      return couponInvalidInputResponse(parseResult.error.issues);
     }
 
     const input = parseResult.data;

@@ -13,7 +13,7 @@
 //   - 画面に入り直したとき: 生成中の行の確認 (GET /api/ai/menu/weekly/pending) の ultimateMode
 //     (サーバーが行の generated_data.ultimateMode を isUltimateModeWeeklyMenuRequest で判定した結果)
 //   - 究極モードの無い生成 (1 食の生成・再生成・献立の改善・旧来の週の生成): false
-import type { GenerationProgress } from './reducers/aiGenerationReducer';
+import type { AiGenerationAction, GenerationProgress } from './reducers/aiGenerationReducer';
 
 /** 生成のリクエストの行 (weekly_menu_requests) の progress。V4 形式 (currentStep / totalSteps) か、UI 形式 (phase / percentage) */
 export interface V4GenerationProgress {
@@ -243,4 +243,15 @@ export const pendingRestoreProgress = (ultimateMode: boolean): GenerationProgres
   message: '',
   percentage: 0,
   isUltimateMode: ultimateMode,
+});
+
+/**
+ * 画面に入り直して生成中の行を見つけたときに aiGenerationReducer へ送る action (#1629)。
+ * 生成中にし、進捗がまだ無いときだけ空の進捗 (pendingRestoreProgress) を置く。
+ * すでに生成中で進捗があるときは上書きしない (reducer の GEN_RESUME_PENDING が今の状態で見分ける)。
+ * 週間献立の画面の入り直しの 2 か所 (fetchPlan・checkPendingRequests) はどちらもこれを送る。
+ */
+export const resumePendingGenerationAction = (ultimateMode: boolean): AiGenerationAction => ({
+  type: 'GEN_RESUME_PENDING',
+  payload: pendingRestoreProgress(ultimateMode),
 });

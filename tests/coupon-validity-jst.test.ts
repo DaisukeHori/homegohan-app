@@ -19,6 +19,11 @@ import {
   couponValidUntilTimestamp,
   isCouponExpiredAt,
 } from '@/lib/super-admin/coupon-validity';
+import {
+  COUPON_INVALID_INPUT_FALLBACK_MESSAGE,
+  couponInvalidInputBody,
+} from '@/lib/super-admin/coupon-errors';
+import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE } from '@/lib/super-admin/coupons-schemas';
 import { inEachTimeZone, TEST_TIME_ZONES } from './helpers/time-zones';
 import { microsOf } from './helpers/timestamptz';
 
@@ -383,5 +388,93 @@ describe('PATCH /api/super-admin/coupons/[id] (#1510 有効期限と保存済み
       expect(r.before, r.tz).toBe(400);
       expect(r.same, r.tz).toBe(200);
     }
+  });
+});
+
+/**
+ * #1534: 400 OP_INVALID_INPUT の本文の形を POST と PATCH で揃える。
+ * 以前は POST (と PATCH の形の誤り) の `error.message` が Zod の issues を JSON にした文字列で、
+ * PATCH の「期限の日が保存済みの開始日より前」(#1510) だけが定数の文そのものだった。
+ * 作成・編集の画面は `error.message` をそのまま出すので、どれも「最初の issue の文」にし、`details` に issues を全件入れる。
+ */
+describe('400 OP_INVALID_INPUT の本文の形 (#1534 POST と PATCH で同じ)', () => {
+  type InvalidBody = { error: { code: string; message: string; details: { path: (string | number)[]; message: string }[] } };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireRole.mockResolvedValue(actor);
+  });
+
+  async function post(override: Record<string, unknown>) {
+    const fake = fakeSupabase();
+    mockCreateClient.mockResolvedValue(fake.client);
+    const res = await POST(jsonRequest('http://localhost/api/super-admin/coupons', 'POST', { ...createBody, ...override }));
+    return { status: res.status, body: (await res.json()) as InvalidBody, fake };
+  }
+
+  async function patch(body: Record<string, unknown>) {
+    const fake = fakeSupabase();
+    mockCreateClient.mockResolvedValue(fake.client);
+    const res = await PATCH(jsonRequest('http://localhost/api/super-admin/coupons/coupon-1', 'PATCH', body), {
+      params: { id: 'coupon-1' },
+    });
+    return { status: res.status, body: (await res.json()) as InvalidBody, fake };
+  }
+
+  /** トップレベルの message は issues を JSON にした文字列ではなく、最初の issue の文そのもの */
+  function expectFirstIssueMessage(body: InvalidBody) {
+    expect(body.error.code).toBe('OP_INVALID_INPUT');
+    expect(body.error.details.length).toBeGreaterThan(0);
+    expect(body.error.message).toBe(body.error.details[0].message);
+    expect(body.error.message.trimStart().startsWith('[')).toBe(false);
+  }
+
+  it('期限の日が開始日より前: POST (refine) と PATCH (保存済みの開始日と比べる) で code・message・details[].path・details[].message が同じ', async () => {
+    const created = await post({ valid_from: '2026-10-10', valid_until: '2026-10-09' });
+    const patched = await patch({ valid_until: '2026-10-09' });
+
+    expect(created.status).toBe(400);
+    expect(patched.status).toBe(400);
+    for (const r of [created, patched]) {
+      expect(r.body.error.code).toBe('OP_INVALID_INPUT');
+      expect(r.body.error.message).toBe(COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE);
+      expect(r.body.error.details).toHaveLength(1);
+      expect(r.body.error.details[0]).toMatchObject({
+        path: ['valid_until'],
+        message: COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE,
+      });
+    }
+    expect(created.body.error.message).toBe(patched.body.error.message);
+    expect(created.fake.couponInserts).toHaveLength(0);
+    expect(patched.fake.couponUpdates).toHaveLength(0);
+  });
+
+  it.each([
+    ['パーセント割引が 100% を超える', { discount_type: 'percentage', discount_value: 150 }, 'パーセント割引は 100% 以下にしてください'],
+    ['割引の値が 0', { discount_value: 0 }, '0より大きい値を指定してください'],
+    ['コードに小文字', { code: 'lower' }, '英大文字・数字・アンダースコア・ハイフンのみ'],
+  ] as const)('POST の形の誤り (%s) は message が最初の issue の文', async (_label, override, expected) => {
+    const { status, body, fake } = await post(override);
+    expect(status).toBe(400);
+    expectFirstIssueMessage(body);
+    expect(body.error.message).toBe(expected);
+    expect(fake.couponInserts).toHaveLength(0);
+  });
+
+  it.each([
+    ['有効期限が存在しない日付', { valid_until: '2026-02-30' }],
+    ['status が範囲外', { status: 'deleted' }],
+    ['max_uses が 0', { max_uses: 0 }],
+  ] as const)('PATCH の形の誤り (%s) も message が最初の issue の文 (POST と同じ形)', async (_label, body) => {
+    const r = await patch(body);
+    expect(r.status).toBe(400);
+    expectFirstIssueMessage(r.body);
+    expect(r.fake.couponUpdates).toHaveLength(0);
+  });
+
+  it('issues が空のときは固定の文 (couponInvalidInputBody)', () => {
+    expect(couponInvalidInputBody([])).toEqual({
+      error: { code: 'OP_INVALID_INPUT', message: COUPON_INVALID_INPUT_FALLBACK_MESSAGE, details: [] },
+    });
   });
 });

@@ -11,20 +11,10 @@
  *       UI の挙動のみを検証する。
  */
 import { test, expect } from "./fixtures/fresh-user";
+// 今週の月曜日は、ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)
+import { jstThisMonday } from "./helpers/jst-week";
 
 const FAKE_REQUEST_ID = "00000000-0000-0000-0000-000000000099";
-
-function getThisMonday(): string {
-  const d = new Date();
-  const day = d.getDay(); // 0=Sun
-  const diff = day === 0 ? -6 : 1 - day; // Monday
-  d.setDate(d.getDate() + diff);
-  // ローカル日付でフォーマット（page.tsx の formatLocalDate と一致させる）
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const dayStr = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${dayStr}`;
-}
 
 /**
  * テスト共通: pending/weekly API をモックする
@@ -34,7 +24,7 @@ async function mockPendingApi(
   status: "queued" | "processing" | "failed" | "none",
   errorMessage?: string,
 ) {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await tourPendingUser.route(`**/api/ai/menu/weekly/pending*`, async (route: any) => {
     if (status === "none") {
@@ -83,7 +73,7 @@ async function mockPendingApi(
 // Test 1: queued → 進捗バーが表示される
 // =========================================================
 test("queued status shows progress bar on page load", async ({ tourPendingUser }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await mockPendingApi(tourPendingUser, "queued");
 
@@ -123,7 +113,7 @@ test("queued status shows progress bar on page load", async ({ tourPendingUser }
 // Test 2: processing 中にタブ切替 → 戻る → 進捗バー復元
 // =========================================================
 test("progress bar is restored after tab switch when status is processing", async ({ tourPendingUser }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await mockPendingApi(tourPendingUser, "processing");
 
@@ -164,7 +154,7 @@ test("progress bar is restored after tab switch when status is processing", asyn
 // Test 3: status='failed' → エラーモーダル + リトライボタン
 // =========================================================
 test("failed status shows error modal with retry button", async ({ tourPendingUser }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await mockPendingApi(tourPendingUser, "failed", "テスト用エラーメッセージ");
 
@@ -211,7 +201,7 @@ test("failed status shows error modal with retry button", async ({ tourPendingUs
 // Test 4: status='completed' → 進捗バーなし、localStorage クリア
 // =========================================================
 test("completed status does not show progress bar and clears localStorage", async ({ tourPendingUser }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await tourPendingUser.route(`**/api/ai/menu/weekly/pending*`, async (route: any) => {
     await route.fulfill({

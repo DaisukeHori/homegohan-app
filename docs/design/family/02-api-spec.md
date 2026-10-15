@@ -539,6 +539,42 @@ UC-ORG-17 シナリオ。
 
 ---
 
+### 5.8 `GET /api/family/members/names` — 家族の画面に出すメンバーの名前 (#1584)
+
+招待を承諾して入ったメンバーは `family_members.display_name` が NULL のままになる。承諾のときにプロフィールの名前を写すと、後でプロフィールの名前を変えても家族の画面が追随しないので写さず、画面に出す名前をこの API がその都度決めて返す。家族の画面 (ダッシュボード・メンバー一覧・メンバー詳細・代表者の引き継ぎ) は、この応答を自分の一覧に当てる (`src/lib/membership/family-member-names.ts` の `fetchFamilyMemberNames` / `applyFamilyMemberNames`)。
+
+**認証**: 必須 (未認証は 401 `NOT_AUTHENTICATED`)
+
+**対象**: 本人の `user_profiles.family_id` の家族のうち、`status = 'active'` のメンバー。メンバーの行はログイン中の利用者のクライアントで読む (RLS `family_members_select_self_or_family` = 自分が active なメンバーである家族の行だけ)。`family_id` が無ければ `members: []`。
+
+**表示名の決め方** (メンバーごとに、上から最初に決まったもの):
+
+| 順 | 値 | 備考 |
+|---|---|---|
+| 1 | `family_members.display_name` | 前後の空白を除く。空・空白だけは「無い」 |
+| 2 | 本人のプロフィールの今の名前 (`user_profiles.nickname`) | アカウントを持つメンバーだけ。他の家族の `user_profiles` は RLS で読めないので、1 が無いメンバーの `user_id` の分だけ service_role で `nickname` 列を引く。仮置きの `'Guest'` (前後の空白を除いて厳密一致。`src/lib/profile-name.ts`) と空・空白だけは「無い」 |
+| 3 | `null` | 画面は従来どおり「名前未設定」と出す |
+
+プロフィールの名前を引けなかった (service_role の問い合わせの失敗) ときも 200 で返し、その人の名前は `null` にする (名前の補完は表示の改善なので、画面の読み込みを止めない)。
+
+**レスポンス 200** (`FamilyMemberNamesDataSchema`。返すのは member id と名前だけ):
+```json
+{
+  "data": {
+    "members": [
+      { "id": "uuid", "name": "田中美咲" },
+      { "id": "uuid", "name": null }
+    ]
+  }
+}
+```
+
+**エラー**: 401 `NOT_AUTHENTICATED` / 500 `RPC_FAILED` (本人のプロフィール・メンバーの行の取得に失敗)
+
+**他の家族の名前を返さないこと**: service_role で引くのは「RLS で読めた行の `user_id`」だけなので、`family_id` が他の家族を指していても (メンバーでなければ) 行は 0 件になり、名前は返らない。除名済みのメンバーも元の家族の名前を受け取らない。実 RLS の結合テスト `tests/integration/rls/family-member-names-scope.test.ts` で確かめる。
+
+---
+
 ## 6. 招待
 
 ### 6.1 `POST /api/family/invites` — 招待送信
@@ -1734,7 +1770,7 @@ cross/04-api-conventions §error-format に準拠:
 
 ### 15.6.1 Zod schema の配置(2026-05-08 確定)
 
-Next.js 14 App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: PR #810 で発生したビルドエラー)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
+Next.js App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: Next.js 14 のときに PR #810 で発生したビルドエラー。いまの Web の Next.js 15 でも同じ制約)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
 
 集約配置(canonical):
 
