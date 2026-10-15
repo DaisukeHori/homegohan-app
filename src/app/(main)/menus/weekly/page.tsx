@@ -1330,7 +1330,15 @@ export default function WeeklyMenuPage() {
         }
         // Realtime側で解決済みかどうかを共有するフラグ（setInterval closure内からも更新できるようrefを使う）
         const v4ResolvedRef = { current: false };
+        // この生成の監視の印 (#1657)。次の生成の開始・中止 (handleCancelGeneration)・アンマウントで active が false になる。
+        // 前の生成のポーリングの、fetch を待っていた tick が、戻ってからこの生成の表示 (進捗・完了・失敗) を書き換えたり、
+        // この生成のポーリング (v4PollingIntervalRef) を止めたりしないように、前の生成の印をここで下ろす
+        const v4Watch = { active: true };
+        if (v4PollWatchRef.current) v4PollWatchRef.current.active = false;
+        v4PollWatchRef.current = v4Watch;
         v4PollingIntervalRef.current = setInterval(async () => {
+          // 印が下りた監視の tick は何もしない (v4PollingIntervalRef はもう次の生成のものなので触らない)
+          if (!v4Watch.active) return;
           if (v4ResolvedRef.current) {
             clearInterval(v4PollingIntervalRef.current!);
             v4PollingIntervalRef.current = null;
@@ -1341,6 +1349,8 @@ export default function WeeklyMenuPage() {
             if (!statusRes.ok) return;
             const { status, progress: dbProgress } = await statusRes.json();
             if (v4ResolvedRef.current) return; // Realtimeが先に完了を処理した
+            // fetch を待つ間に、次の生成の開始・中止・アンマウントで印が下りていたら、届いた応答では何も置かない (#1657)
+            if (!v4Watch.active) return;
             if (status === 'completed') {
               v4ResolvedRef.current = true;
               clearInterval(v4PollingIntervalRef.current!);
@@ -1351,7 +1361,9 @@ export default function WeeklyMenuPage() {
               refreshMealPlan();
               setSuccessMessage({ title: '献立が完成しました！', message: 'AIが献立を作成しました。', refreshOnDismiss: true });
               localStorage.removeItem('v4MenuGenerating');
-            } else if (status === 'failed') {
+            } else if (status === 'failed' || status === 'not_found') {
+              // not_found = 本人の行が無い (消えた)。以前は completed とも failed とも扱わず、5 秒ごとの確認を続けていた。
+              // 失敗と同じく止めて、既定の失敗の文を出す (#1657)
               v4ResolvedRef.current = true;
               clearInterval(v4PollingIntervalRef.current!);
               v4PollingIntervalRef.current = null;
@@ -1372,6 +1384,8 @@ export default function WeeklyMenuPage() {
         }, 5000);
 
         v4Generation.subscribeToProgress(v4RequestId, (progress) => {
+          // 次の生成の開始・中止・アンマウントで印が下りたあとに届いた進捗では、表示を書き換えない (#1657)
+          if (!v4Watch.active) return;
           // Realtimeが端末ステータスを受信したらポーリングを停止する
           if (progress.status === 'completed' || progress.status === 'failed') {
             v4ResolvedRef.current = true;
@@ -1427,6 +1441,24 @@ export default function WeeklyMenuPage() {
         clearInterval(v4PollingIntervalRef.current);
         v4PollingIntervalRef.current = null;
       }
+      // fetch を待っているポーリングの tick が、戻ってから何も置かないように、V4 の生成・再生成・献立の改善の監視の印も下ろす (#1657)
+      if (v4PollWatchRef.current) {
+        v4PollWatchRef.current.active = false;
+        v4PollWatchRef.current = null;
+      }
+      if (regenerateWatchRef.current) {
+        regenerateWatchRef.current.active = false;
+        regenerateWatchRef.current = null;
+      }
+      if (improveWatchRef.current) {
+        improveWatchRef.current.active = false;
+        improveWatchRef.current = null;
+      }
+      // 再生成の Realtime は週の生成と別のチャンネルで持つ (#1657)
+      if (regenerateChannelRef.current) {
+        supabaseRef.current.removeChannel(regenerateChannelRef.current);
+        regenerateChannelRef.current = null;
+      }
       // #1033 F1b-06: 再生成/献立改善のフォールバックポーリング・タイムアウトも解放
       if (regeneratePollingIntervalRef.current) {
         clearInterval(regeneratePollingIntervalRef.current);
@@ -1458,8 +1490,8 @@ export default function WeeklyMenuPage() {
   
   // 生成中状態をDBから復元し、ポーリングを再開
   useEffect(() => {
-    // 既にポーリング中なら何もしない
-    if (realtimeChannelRef.current) return;
+    // 既にポーリング中なら何もしない (再生成の監視は別のチャンネルで持つので、そちらも見る。#1657)
+    if (realtimeChannelRef.current || regenerateChannelRef.current) return;
     // 既に生成中状態なら何もしない（重複防止）
     if (isGenerating || generatingMeal) return;
     // 既にチェック中なら何もしない（重複API呼び出し防止）
@@ -2048,13 +2080,22 @@ export default function WeeklyMenuPage() {
   // #1033 F1b-06: 単品再生成のRealtimeが切断した場合のフォールバックポーリング/タイムアウト用の参照
   const regeneratePollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const regenerateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // 単品再生成の Realtime のチャンネル (#1657)。週の生成の監視 (realtimeChannelRef・requestWatchRef) とは別に持つ。
+  // 以前は realtimeChannelRef を共用し、再生成の開始・終わりの cleanupRealtime が、動いている週の生成の監視の印まで下ろしていた
+  const regenerateChannelRef = useRef<RealtimeChannel | null>(null);
+  // 単品再生成の監視 1 回分の印 (#1657)。次の再生成の監視の開始・アンマウントで active が false になる
+  const regenerateWatchRef = useRef<{ active: boolean } | null>(null);
 
   // #1033 F1b-06: 献立改善(onImprove)のRealtimeが切断した場合のフォールバックポーリング/タイムアウト用の参照
   const improvePollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const improveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // 献立改善の監視 1 回分の印 (#1657)。次の改善の開始・中止 (handleCancelGeneration)・アンマウントで active が false になる
+  const improveWatchRef = useRef<{ active: boolean } | null>(null);
 
   // V4生成のRealtimeが切断した場合のフォールバックポーリング用の参照
   const v4PollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // V4 の生成の監視 1 回分の印 (#1657)。次の生成の開始・中止 (handleCancelGeneration)・アンマウントで active が false になる
+  const v4PollWatchRef = useRef<{ active: boolean } | null>(null);
 
   // UX2-11: ユーザーが「中止する」を押した後に届く遅延イベント（失敗コールバック等）で
   // 生の error_message がそのまま alert 表示されないようにするガード
@@ -2103,6 +2144,15 @@ export default function WeeklyMenuPage() {
       clearInterval(v4PollingIntervalRef.current);
       v4PollingIntervalRef.current = null;
     }
+    // fetch を待っているポーリングの tick が、中止のあとに進捗・完了・失敗を置かないように、印も下ろす (#1657)
+    if (v4PollWatchRef.current) {
+      v4PollWatchRef.current.active = false;
+      v4PollWatchRef.current = null;
+    }
+    if (improveWatchRef.current) {
+      improveWatchRef.current.active = false;
+      improveWatchRef.current = null;
+    }
     if (improvePollingIntervalRef.current) {
       clearInterval(improvePollingIntervalRef.current);
       improvePollingIntervalRef.current = null;
@@ -2142,13 +2192,20 @@ export default function WeeklyMenuPage() {
   // ポーリングで進捗を取得
   // ultimateMode: 監視する生成が究極モードか (#1597)。進捗の段 (究極 / 通常) をこれで決める (totalSteps では見分けない)。
   // 呼び出し元の subscribeToRequestStatus が受け取った値をそのまま渡す
-  const startPolling = useCallback((targetDate: string, requestId: string, ultimateMode: boolean) => {
+  // watch: 呼び出し元の subscribeToRequestStatus が立てた、この監視の印 (#1622・requestWatchRef)。
+  // 完了・失敗・中止 (cleanupRealtime) や次の監視の開始で active が false になる。
+  // tick は await (fetch・json) のたびに印を確かめ、下りていれば何も置かない (#1657。以前は印を見ず、
+  // Realtime の完了や次の監視の開始のときに fetch を待っていた tick が、戻ってから進捗を置いたり、古い週の献立を置いたりしえた)
+  const startPolling = useCallback((targetDate: string, requestId: string, ultimateMode: boolean, watch: { active: boolean }) => {
     console.log('⏱️ Starting fallback polling for requestId:', requestId);
     cleanupPolling();
     
     const poll = async () => {
+      if (!watch.active) return;
       try {
         const res = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        // fetch を待つ間に監視が終わっていたら、届いた応答では何も置かない (進捗・献立・失敗の表示・ログインへの移動。#1657)
+        if (!watch.active) return;
         // #142: 401 はセッション切れ → ポーリング停止して /login にリダイレクト
         if (res.status === 401) {
           console.warn('[poll] Session expired (401). Stopping polling and redirecting to /login.');
@@ -2164,6 +2221,7 @@ export default function WeeklyMenuPage() {
         }
         if (!res.ok) return;
         const data = await res.json();
+        if (!watch.active) return;
         
         if (data.progress) {
           const uiProgress = convertV4ProgressToUIFormat(data.progress, ultimateMode);
@@ -2174,8 +2232,11 @@ export default function WeeklyMenuPage() {
           console.log('✅ Polling: Generation completed');
           const endDate = addDaysStr(targetDate, 6);
           const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+          // 献立を読む間に監視が終わっていたら (Realtime が同じ完了を先に処理した・次の監視が始まった)、何も置かない (#1657)
+          if (!watch.active) return;
           if (planRes.ok) {
             const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+            if (!watch.active) return;
             if (dailyMeals && dailyMeals.length > 0) {
               const newPlan = { days: dailyMeals };
               const newShoppingList = shoppingListData?.items || [];
@@ -2193,7 +2254,10 @@ export default function WeeklyMenuPage() {
           localStorage.removeItem('singleMealGenerating');
           cleanupPolling();
           cleanupRealtime();
-        } else if (data.status === 'failed') {
+        } else if (data.status === 'failed' || data.status === 'not_found') {
+          // not_found = 本人の行が無い (消えた・他の利用者の requestId)。以前は completed とも failed とも扱わず、
+          // 3 秒ごとの確認を続けていた (#780 から)。失敗と同じく止めて、生成中の表示を片づけ、既定の失敗の文を出す (#1657。
+          // not_found の応答に error_message は無いので、失敗の文は既定の文になる)
           console.log('❌ Polling: Generation failed');
           setIsGenerating(false);
           setGeneratingMeal(null);
@@ -2234,7 +2298,7 @@ export default function WeeklyMenuPage() {
     console.log('📡 Subscribing to Realtime for requestId:', requestId);
 
     // 常にポーリングも開始（Realtimeの信頼性が低いため）
-    startPolling(targetDate, requestId, ultimateMode);
+    startPolling(targetDate, requestId, ultimateMode, watch);
 
     let realtimeConnected = false;
     
@@ -2249,6 +2313,8 @@ export default function WeeklyMenuPage() {
           filter: `id=eq.${requestId}`,
         },
         async (payload) => {
+          // この監視が終わったあと (完了・失敗・中止・次の監視の開始) に届いた更新では何も置かない (#1657)
+          if (!watch.active) return;
           try {
             console.log('📡 Realtime update received:', payload.new);
             const newData = payload.new as {
@@ -2281,8 +2347,11 @@ export default function WeeklyMenuPage() {
               try {
                 const endDate = addDaysStr(targetDate, 6);
                 const planRes = await fetch(`/api/meal-plans?startDate=${targetDate}&endDate=${endDate}`);
+                // 献立を読む間に、ポーリングが同じ完了を先に処理した (印を下ろした)・次の監視が始まったときは、何も置かない (#1657)
+                if (!watch.active) return;
                 if (planRes.ok) {
                   const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+                  if (!watch.active) return;
                   if (dailyMeals && dailyMeals.length > 0) {
                     const newPlan = { days: dailyMeals };
                     const newShoppingList = shoppingListData?.items || [];
@@ -2296,13 +2365,16 @@ export default function WeeklyMenuPage() {
               } catch (fetchErr) {
                 console.error('❌ Failed to fetch meal plan:', fetchErr);
               }
+              if (!watch.active) return;
               setIsGenerating(false);
               setGeneratingMeal(null);
               setGenerationProgress(null);
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
-              // Realtime で終わりを受け取ったら、並行しているポーリングも止める (#1622。ポーリングが同じ完了をもう一度処理しないように)
+              // Realtime で終わりを受け取ったら、並行しているポーリングも止める (#1622)。
+              // 献立を読む (await) 間は、ポーリングも同じ完了を処理しうる。先に終えた側が印を下ろし (cleanupRealtime)、
+              // あとの側は await のあとで印を見て何も置かない (#1657。ここの await のあとの確かめと、startPolling の tick の確かめ)
               cleanupPolling();
             } else if (newStatus === 'failed') {
               console.log('❌ Generation failed');
@@ -2336,7 +2408,7 @@ export default function WeeklyMenuPage() {
           // (この監視が終わったあと (完了・失敗・中止で removeChannel したときの CLOSED) はやり直さない。#1622)
           if (!realtimeConnected && watch.active) {
             console.warn('📡 Realtime failed, falling back to polling');
-            startPolling(targetDate, requestId, ultimateMode);
+            startPolling(targetDate, requestId, ultimateMode, watch);
           }
         }
       });
@@ -2348,7 +2420,7 @@ export default function WeeklyMenuPage() {
     setTimeout(() => {
       if (!realtimeConnected && !pollingIntervalRef.current && watch.active) {
         console.warn('📡 Realtime not connected after 5s, starting polling');
-        startPolling(targetDate, requestId, ultimateMode);
+        startPolling(targetDate, requestId, ultimateMode, watch);
       }
     }, 5000);
   }, [cleanupRealtime, cleanupPolling, startPolling, updateCalendarMealDatesFromDailyMeals]);
@@ -2932,8 +3004,15 @@ export default function WeeklyMenuPage() {
   // 買い物リスト再生成の進捗購読（Realtime + ポーリング）
   const shoppingListChannelRef = useRef<any>(null);
   const shoppingListPollingRef = useRef<NodeJS.Timeout | null>(null);
+  // 買い物リストの再生成の監視 1 回分の印 (#1657)。cleanupShoppingListSubscription (終わり・次の監視の開始・アンマウント) で active が false になる
+  const shoppingListWatchRef = useRef<{ active: boolean } | null>(null);
   
   const cleanupShoppingListSubscription = useCallback(() => {
+    // fetch を待っているポーリングの tick・Realtime の処理が、戻ってから何も置かないように、印を下ろす (#1657)
+    if (shoppingListWatchRef.current) {
+      shoppingListWatchRef.current.active = false;
+      shoppingListWatchRef.current = null;
+    }
     if (shoppingListChannelRef.current) {
       shoppingListChannelRef.current.unsubscribe();
       shoppingListChannelRef.current = null;
@@ -2946,6 +3025,9 @@ export default function WeeklyMenuPage() {
 
   const subscribeToShoppingListRequest = useCallback((requestId: string) => {
     cleanupShoppingListSubscription();
+    // この監視の印 (#1657)。前の監視の、fetch を待っていた tick が、戻ってからこの監視を片づけたり表示を書き換えたりしないように
+    const shoppingListWatch = { active: true };
+    shoppingListWatchRef.current = shoppingListWatch;
     
     console.log('📡 Subscribing to shopping list request:', requestId);
     
@@ -2967,6 +3049,7 @@ export default function WeeklyMenuPage() {
     
     // ポーリングも並行開始（Realtimeのバックアップ）
     const poll = async () => {
+      if (!shoppingListWatch.active) return;
       // タイムアウトチェック
       if (Date.now() - startTime > TIMEOUT_MS) {
         console.log('⏰ Shopping list regeneration timed out');
@@ -2984,6 +3067,8 @@ export default function WeeklyMenuPage() {
         const res = await fetch(`/api/shopping-list/regenerate/status?requestId=${requestId}`);
         if (!res.ok) return;
         const data = await res.json();
+        // fetch を待つ間に監視が終わっていたら (Realtime が終わりを先に処理した・次の監視が始まった)、何も置かない (#1657)
+        if (!shoppingListWatch.active) return;
         
         if (data.progress) {
           setShoppingListProgress(data.progress);
@@ -2992,8 +3077,10 @@ export default function WeeklyMenuPage() {
         if (data.status === 'completed') {
           console.log('✅ Shopping list regeneration completed (polling)');
           const listRes = await fetch(`/api/shopping-list`);
+          if (!shoppingListWatch.active) return;
           if (listRes.ok) {
             const { shoppingList: sl } = await listRes.json();
+            if (!shoppingListWatch.active) return;
             if (sl?.items) {
               setShoppingList(sl.items);
               setActiveShoppingList(sl);
@@ -3048,6 +3135,8 @@ export default function WeeklyMenuPage() {
           filter: `id=eq.${requestId}`,
         },
         async (payload) => {
+          // 監視が終わったあとに届いた更新では何も置かない (#1657)
+          if (!shoppingListWatch.active) return;
           console.log('📡 Shopping list progress update:', payload.new);
           const newData = payload.new as { 
             status: string; 
@@ -3067,8 +3156,11 @@ export default function WeeklyMenuPage() {
             }
             try {
               const listRes = await fetch(`/api/shopping-list`);
+              // 一覧を読む間に、ポーリングが同じ終わりを先に処理した (印を下ろした)・次の監視が始まったときは、何も置かない (#1657)
+              if (!shoppingListWatch.active) return;
               if (listRes.ok) {
                 const { shoppingList: sl } = await listRes.json();
+                if (!shoppingListWatch.active) return;
                 if (sl?.items) {
                   setShoppingList(sl.items);
                   setActiveShoppingList(sl);
@@ -3077,6 +3169,7 @@ export default function WeeklyMenuPage() {
             } catch (fetchErr) {
               console.error('❌ Failed to fetch shopping list:', fetchErr);
             }
+            if (!shoppingListWatch.active) return;
             const servingsDisplay = newData.result?.stats?.totalServings
               ? `・合計 ${newData.result.stats.totalServings}食分`
               : '';
@@ -3752,12 +3845,26 @@ export default function WeeklyMenuPage() {
     }
   };
   
+  // 再生成の Realtime のチャンネルを外す (#1657)。週の生成の監視 (realtimeChannelRef・requestWatchRef) には触らない
+  const cleanupRegenerateRealtime = useCallback(() => {
+    if (regenerateChannelRef.current) {
+      supabaseRef.current.removeChannel(regenerateChannelRef.current);
+      regenerateChannelRef.current = null;
+    }
+  }, []);
+
   // 再生成のRealtime監視
   // #1033 F1b-06: 週間生成側 subscribeToRequestStatus と同様に、Realtime切断時のフォールバックとして
   // 3秒ポーリング + 5分の上限タイムアウトを併用する（Realtime単独だとスピナーが取り残される）
   const subscribeToRegenerateStatus = useCallback((requestId: string, weekStartDate: string) => {
     // 既存のサブスクリプション/ポーリング/タイムアウトをクリーンアップ
-    cleanupRealtime();
+    // (再生成のチャンネルだけを外す。週の生成の監視 (cleanupRealtime) には触らない。#1657)
+    cleanupRegenerateRealtime();
+    // 前の再生成の監視の印を下ろし、この監視の印を立てる (#1657)。前の監視のポーリングの、fetch を待っていた tick が、
+    // 戻ってからこの監視のポーリング・タイムアウトを止めたり、前の週の献立を置いたりしないように
+    if (regenerateWatchRef.current) regenerateWatchRef.current.active = false;
+    const regenerateWatch = { active: true };
+    regenerateWatchRef.current = regenerateWatch;
     if (regeneratePollingIntervalRef.current) {
       clearInterval(regeneratePollingIntervalRef.current);
       regeneratePollingIntervalRef.current = null;
@@ -3773,9 +3880,11 @@ export default function WeeklyMenuPage() {
     const resolvedRef = { current: false };
 
     const finishRegenerate = async (status: 'completed' | 'failed', errorMessage?: string) => {
+      // 次の再生成の監視が始まったあと (印が下りたあと) は、この監視の終わりを処理しない (#1657)
+      if (!regenerateWatch.active) return;
       if (resolvedRef.current) return;
       resolvedRef.current = true;
-      cleanupRealtime();
+      cleanupRegenerateRealtime();
       if (regeneratePollingIntervalRef.current) {
         clearInterval(regeneratePollingIntervalRef.current);
         regeneratePollingIntervalRef.current = null;
@@ -3791,8 +3900,11 @@ export default function WeeklyMenuPage() {
         try {
           const weekEndDate = addDaysStr(weekStartDate, 6);
           const planRes = await fetch(`/api/meal-plans?startDate=${weekStartDate}&endDate=${weekEndDate}`);
+          // 献立を読む間に次の再生成の監視が始まっていたら、この監視の結果 (前の週の献立・再生成中の表示の片づけ) は置かない (#1657)
+          if (!regenerateWatch.active) return;
           if (planRes.ok) {
             const { dailyMeals, shoppingList: shoppingListData } = await planRes.json();
+            if (!regenerateWatch.active) return;
             if (dailyMeals && dailyMeals.length > 0) {
               const newPlan = { days: dailyMeals };
               const newShoppingList = shoppingListData?.items || [];
@@ -3806,6 +3918,7 @@ export default function WeeklyMenuPage() {
         } catch (e) {
           console.error('❌ Failed to fetch meal plan after regenerate:', e);
         }
+        if (!regenerateWatch.active) return;
         setIsRegenerating(false);
         setRegeneratingMealId(null);
       } else {
@@ -3830,13 +3943,16 @@ export default function WeeklyMenuPage() {
     // 常にポーリングも開始（Realtimeの信頼性が低いため。既存の /status エンドポイントは
     // weekly_menu_requests を requestId で汎用的に参照するため regenerate リクエストにも使える）
     const pollRegenerate = async () => {
+      if (!regenerateWatch.active) return;
       if (resolvedRef.current) return;
       try {
         const res = await fetch(`/api/ai/menu/weekly/status?requestId=${requestId}`);
+        // fetch を待つ間に次の再生成の監視が始まっていたら、届いた応答では何もしない (#1657)
+        if (!regenerateWatch.active) return;
         if (res.status === 401) {
           console.warn('[regenerate poll] Session expired (401). Stopping.');
           resolvedRef.current = true;
-          cleanupRealtime();
+          cleanupRegenerateRealtime();
           if (regeneratePollingIntervalRef.current) {
             clearInterval(regeneratePollingIntervalRef.current);
             regeneratePollingIntervalRef.current = null;
@@ -3852,7 +3968,13 @@ export default function WeeklyMenuPage() {
         }
         if (!res.ok) return;
         const data = await res.json();
+        if (!regenerateWatch.active) return;
         if (resolvedRef.current) return;
+        // not_found = 本人の行が無い (消えた)。以前は 5 分のタイムアウトまで確認を続けていた。失敗として止め、既定の失敗の文を出す (#1657)
+        if (data.status === 'not_found') {
+          await finishRegenerate('failed');
+          return;
+        }
         if (data.status === 'completed') {
           await finishRegenerate('completed');
         } else if (data.status === 'failed') {
@@ -3900,8 +4022,8 @@ export default function WeeklyMenuPage() {
         console.log('📡 Realtime regenerate subscription status:', status);
       });
 
-    realtimeChannelRef.current = channel;
-  }, [cleanupRealtime, updateCalendarMealDatesFromDailyMeals]);
+    regenerateChannelRef.current = channel;
+  }, [cleanupRegenerateRealtime, updateCalendarMealDatesFromDailyMeals]);
 
   // Edit meal (legacy - keep for simple edits)
   const openEditMeal = (meal: PlannedMeal) => {
@@ -4486,8 +4608,15 @@ export default function WeeklyMenuPage() {
         }
 
         const improveResolvedRef = { current: false };
+        // この改善の監視の印 (#1657)。次の改善の開始・中止 (handleCancelGeneration)・アンマウントで active が false になる。
+        // 前の改善のポーリングの、fetch を待っていた tick (や Realtime) が、戻ってからこの改善のポーリング・タイムアウトを止めたり、
+        // 表示 (進捗・完了・失敗) を書き換えたりしないように、前の改善の印をここで下ろす
+        if (improveWatchRef.current) improveWatchRef.current.active = false;
+        const improveWatch = { active: true };
+        improveWatchRef.current = improveWatch;
 
         const finishImprove = async (status: 'completed' | 'failed', errorMessage?: string) => {
+          if (!improveWatch.active) return;
           if (improveResolvedRef.current) return;
           improveResolvedRef.current = true;
           if (improvePollingIntervalRef.current) {
@@ -4521,8 +4650,11 @@ export default function WeeklyMenuPage() {
           if (startStr && endStr) {
             try {
               const refreshRes = await fetch(`/api/meal-plans/weekly?startDate=${startStr}&endDate=${endStr}`);
+              // 献立を読む間に次の改善の開始・中止で印が下りていたら、この改善の週の献立は置かない (#1657)
+              if (!improveWatch.active) return;
               if (refreshRes.ok) {
                 const { dailyMeals, shoppingList: shoppingListData } = await refreshRes.json();
+                if (!improveWatch.active) return;
                 if (dailyMeals && dailyMeals.length > 0) {
                   const newPlan = { days: dailyMeals };
                   const newShoppingList = shoppingListData?.items || [];
@@ -4541,6 +4673,8 @@ export default function WeeklyMenuPage() {
         v4Generation.subscribeToProgress(
           improveRequestId,
           async (progress: any) => {
+            // 次の改善の開始・中止・アンマウントで印が下りたあとに届いた進捗では、表示を書き換えない (#1657)
+            if (!improveWatch.active) return;
             // 献立の改善は究極モードで始めない (v4 の生成に ultimateMode を送らない。#1597)
             const uiProgress = convertV4ProgressToUIFormat(progress, false);
             setGenerationProgress(uiProgress);
@@ -4553,12 +4687,20 @@ export default function WeeklyMenuPage() {
 
         // 常にポーリングも開始（Realtimeの信頼性が低いため）
         const pollImprove = async () => {
+          if (!improveWatch.active) return;
           if (improveResolvedRef.current) return;
           try {
             const statusRes = await fetch(`/api/ai/menu/weekly/status?requestId=${improveRequestId}`);
             if (!statusRes.ok) return;
             const { status, errorMessage, error_message: errorMessageSnake, progress: dbProgress } = await statusRes.json();
             if (improveResolvedRef.current) return;
+            // fetch を待つ間に次の改善の開始・中止・アンマウントで印が下りていたら、届いた応答では何も置かない (#1657)
+            if (!improveWatch.active) return;
+            // not_found = 本人の行が無い (消えた)。以前は 5 分のタイムアウトまで確認を続けていた。失敗として止め、既定の失敗の文を出す (#1657)
+            if (status === 'not_found') {
+              await finishImprove('failed');
+              return;
+            }
             if (status === 'completed') {
               await finishImprove('completed');
             } else if (status === 'failed') {
