@@ -52,7 +52,7 @@ type RouteHandler = (request: NextRequest, context: { params: Promise<RouteParam
 type Entry = {
   /** src/app/api からの route のファイル */
   file: string;
-  method: 'POST' | 'PUT' | 'PATCH';
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   load: () => Promise<RouteHandler>;
 };
 
