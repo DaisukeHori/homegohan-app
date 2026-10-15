@@ -17,6 +17,9 @@
  *      他人のファイル (自分の行の URL で指されていても) と、持ち主がパスから分からない旧ファイルは消えない
  *   E. 組織のオーナー・家族の代表者は 409 で止まり、何も消えない・伏せられない
  *   F. もう一度退会を実行しても成功する (やり直せる)
+ *   G. (#1562) 削除の実行記録 (gdpr_deletion_requests) が 1 行残る: 利用者の id の HMAC (subject_hash)・実行者 self・理由 user_request・
+ *      request_id・始めた日時と済んだ日時。user_id・executed_by は空で、id そのものもメールアドレスも行に入らない。
+ *      やり直しても記録は増えない。409 で止まった利用者の記録はできない
  *
  * 修正前 (migration を流す前) に流すと、staff / subject の削除が外部キー違反で失敗し、prepare_account_deletion も無いため
  * A〜D が失敗する。
@@ -396,6 +399,8 @@ async function cleanup(): Promise<void> {
     `delete from public.coupons where id = ${q(rows.coupon)}`,
     `delete from public.referral_rewards where id in (${list([rows.rewardAsReferrer, rows.rewardAsReferred])})`,
     `delete from public.gdpr_deletion_requests where id = ${q(rows.gdpr)}`,
+    // #1562 の削除の実行記録 (利用者の id の HMAC で探す)
+    ...(S ? [`delete from public.gdpr_deletion_requests where subject_hash = public.pii_hmac_hex('account_deletion_subject', ${q(S.id)})`] : []),
     `delete from public.email_delivery_logs where id in (${list([rows.logOfS, rows.logOfSByAddress, rows.logOfB])})`,
     `delete from public.inquiries where id in (${list([rows.inquiryOfS, rows.inquiryOfSByAddress, rows.inquiryOfB])})`,
     `delete from public.csat_feedbacks where id = ${q(rows.csat)}`,
@@ -611,6 +616,30 @@ describe('#1175 退会: 外部キーのある全ての表に行がある状態�
     expect(await count('membership_audit', `scope_id = ${q(rows.fg)} and actor_id is null and target_user_id is null`)).toBe(1);
   });
 
+  it('#1562 G: 削除の実行記録が 1 行残る。個人を特定できる値 (id・メールアドレス) を持たない', async () => {
+    const records = await pgQuery<Record<string, unknown>>(
+      `select * from public.gdpr_deletion_requests where subject_hash = public.pii_hmac_hex('account_deletion_subject', ${q(S.id)})`,
+    );
+    expect(records).toHaveLength(1);
+    const record = records[0];
+    expect(record).toMatchObject({
+      user_id: null,
+      executed_by: null,
+      executor_type: 'self',
+      reason: 'user_request',
+      request_id: requestId,
+      cancelled_at: null,
+    });
+    expect(record.subject_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(record.requested_at).not.toBeNull();
+    expect(record.executed_at).not.toBeNull();
+    expect(new Date(String(record.executed_at)).getTime()).toBeGreaterThanOrEqual(new Date(String(record.requested_at)).getTime());
+    const serialized = JSON.stringify(record).toLowerCase();
+    expect(serialized).not.toContain(S.id.toLowerCase());
+    expect(serialized).not.toContain(S.email.toLowerCase());
+    // 削除した利用者の行を指す外部キーが無いので、記録は退会の CASCADE / SET NULL の対象にならない (auth-users-fk-on-delete.test.ts の D2)
+  });
+
   it('レシピ: 本人の非公開レシピは消え、公開レシピは user_id だけが外れて残る。他人のレシピは変わらない', async () => {
     expect(await count('recipes', `id = ${q(rows.recipeOfS)}`)).toBe(0);
     expect(await count('recipes', `id = ${q(rows.recipePublicOfS)} and user_id is null and is_public`)).toBe(1);
@@ -710,6 +739,13 @@ describe('#1175 退会: 外部キーのある全ての表に行がある状態�
   it('もう一度退会を実行しても成功する (やり直せる)', async () => {
     const again = await deleteAccount({ userId: S.id, admin: srAdmin, requestId: `req_t11_again_${RUN}` });
     expect(again).toEqual({ ok: true });
+    // #1562: やり直しても削除の実行記録は増えない (最初の退会の記録のまま)
+    const records = await pgQuery<{ request_id: string; executed_at: string | null }>(
+      `select request_id, executed_at from public.gdpr_deletion_requests where subject_hash = public.pii_hmac_hex('account_deletion_subject', ${q(S.id)})`,
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0].request_id).toBe(requestId);
+    expect(records[0].executed_at).not.toBeNull();
     expect(report.ok).toBe(true);
   }, 60_000);
 });
@@ -763,6 +799,10 @@ describe('#1175 退会: 組織のオーナー・家族の代表者は 409 で止
     expect(await count('email_delivery_logs', `id = ${q(ownedIds.log)} and email = ${q(owner.email)} and user_id = ${q(owner.id)}`)).toBe(1);
     expect(await count('inquiries', `id = ${q(ownedIds.inquiry)} and email = ${q(owner.email)}`)).toBe(1);
     expect(await exists('fridge-images', keepPath())).toBe(true);
+    // #1562: 削除していないので、削除の実行記録も作らない
+    expect(
+      await count('gdpr_deletion_requests', `subject_hash = public.pii_hmac_hex('account_deletion_subject', ${q(owner.id)})`),
+    ).toBe(0);
   });
 
   it('家族の代表者: 409 ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', async () => {
