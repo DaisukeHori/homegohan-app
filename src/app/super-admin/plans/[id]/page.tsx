@@ -104,6 +104,7 @@ export default function PlanDetailPage() {
         body: JSON.stringify({
           display_name: displayName,
           description: description || null,
+          banner_url: null,
           display_order: displayOrder,
         }),
       });
