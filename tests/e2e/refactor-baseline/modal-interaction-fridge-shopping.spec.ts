@@ -27,6 +27,7 @@
  * 合計: 13 ケース
  */
 import { test, expect } from "../fixtures/fresh-user";
+import { addDaysToDate, todayLocal } from "../../../packages/shared/src/date-utils";
 import { gotoWeekly, openFridgeModal, openShoppingModal } from "./_helpers";
 
 // ─────────────────────────────────────────────
@@ -118,22 +119,25 @@ test.describe("FridgeModal", () => {
     const uniqueName = `期限切れテスト_${Date.now()}`;
     await nameInput.fill(uniqueName);
 
-    // 昨日の日付をセット
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split('T')[0];
+    // 昨日の日付をセット (冷蔵庫のモーダルは JST の今日から期限までの日数で色とラベルを決めるので、JST の暦日で作る #1564)
+    const dateStr = addDaysToDate(todayLocal(), -1);
     const dateInput = page.locator('input[type="date"]');
     await dateInput.fill(dateStr);
 
     const addBtn = page.getByRole("button", { name: /追加する/ });
-    await addBtn.waitFor({ state: "enabled", timeout: 5_000 });
+    // locator.waitFor は "enabled" を待てない (attached / detached / visible / hidden だけで、渡すと必ず例外になる)。
+    // 押せるようになるのは expect の toBeEnabled で待つ
+    await expect(addBtn).toBeEnabled({ timeout: 5_000 });
     await addBtn.click();
 
     // FridgeModal に戻って追加した食材が表示される
-    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
+    // 期限が近い食材は「早めに使い切り」の案内にも名前が出るので、getByText だと 2 つに当たる (strict mode の違反)。
+    // 冷蔵庫の一覧の行 (data-testid="fridge-item") に絞る
+    const fridgeItem = page.getByTestId("fridge-item").filter({ hasText: uniqueName });
+    await expect(fridgeItem).toBeVisible({ timeout: 10_000 });
 
     // 追加した食材の行を取得して、danger系の背景色が設定されているか確認
-    const itemText = page.getByText(uniqueName).first();
+    const itemText = fridgeItem.getByText(uniqueName);
     const rowContainer = itemText.locator("xpath=ancestor::div[contains(@class,'rounded')]").first();
 
     // 背景色: dangerLight (#FDECEC) または danger 系のスタイルが設定されていること
@@ -204,22 +208,25 @@ test.describe("FridgeModal", () => {
     const uniqueName = `警告テスト_${Date.now()}`;
     await nameInput.fill(uniqueName);
 
-    // 3日後の日付をセット
-    const threeDaysLater = new Date();
-    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
-    const dateStr = threeDaysLater.toISOString().split('T')[0];
+    // 3日後の日付をセット (JST の暦日。UTC の今日から作ると JST の 0:00〜8:59 は 2 日後になる #1564)
+    const dateStr = addDaysToDate(todayLocal(), 3);
     const dateInput = page.locator('input[type="date"]');
     await dateInput.fill(dateStr);
 
     const addBtn = page.getByRole("button", { name: /追加する/ });
-    await addBtn.waitFor({ state: "enabled", timeout: 5_000 });
+    // locator.waitFor は "enabled" を待てない (attached / detached / visible / hidden だけで、渡すと必ず例外になる)。
+    // 押せるようになるのは expect の toBeEnabled で待つ
+    await expect(addBtn).toBeEnabled({ timeout: 5_000 });
     await addBtn.click();
 
     // FridgeModal に戻って追加した食材が表示される
-    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
+    // 期限が近い食材は「早めに使い切り」の案内にも名前が出るので、getByText だと 2 つに当たる (strict mode の違反)。
+    // 冷蔵庫の一覧の行 (data-testid="fridge-item") に絞る
+    const fridgeItem = page.getByTestId("fridge-item").filter({ hasText: uniqueName });
+    await expect(fridgeItem).toBeVisible({ timeout: 10_000 });
 
     // 追加した食材の行を取得
-    const itemText = page.getByText(uniqueName).first();
+    const itemText = fridgeItem.getByText(uniqueName);
     const rowContainer = itemText.locator("xpath=ancestor::div[contains(@class,'rounded')]").first();
 
     // 背景色: warningLight (#FEF9EE) = rgb(254, 249, 238) 系が設定されていること

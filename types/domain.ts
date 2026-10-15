@@ -7,7 +7,9 @@ import type { CatalogProductSummary } from "@/types/catalog";
 
 // --- Enum Types ---
 
-export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// 食事の区分 (5 値) は @homegohan/shared の MealType が正本。ここでは手書きせず、それを公開し直す (#1631)
+import type { MealType } from '@homegohan/shared';
+export type { MealType };
 
 export type AgeGroup =
   | 'under_18'

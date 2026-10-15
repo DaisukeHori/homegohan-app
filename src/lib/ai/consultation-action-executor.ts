@@ -7,6 +7,7 @@
 // 直接関数呼び出しする（self-fetch を撤廃）。
 
 import type { TargetSlot } from '@/types/domain';
+import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 import { addDaysToDate } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
 import {
@@ -60,9 +61,11 @@ const WEEK_MENU_DAYS = 7;
 // 'midnight_snack' を入れると 500 になる」だったが、その CHECK は本番に存在しなかった (#1205)。
 // #1103 (項目 9) で夜食を正式な食事区分とし、DB の検査とこの許可リストを 5 値にそろえた。
 // システムプロンプト (api/ai/consultation/sessions/[sessionId]/messages/route.ts) の mealType もこの配列から作る。
-// 値を足す・減らすときは DB のトリガーと PLANNED_MEAL_TYPES (src/lib/planned-meal-validation.ts) も合わせる
-// (tests/consultation-meal-type-actions.test.ts が PLANNED_MEAL_TYPES と同じであることを確かめる)。
-export const AI_ALLOWED_MEAL_TYPES = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'] as const;
+// 値と並びの正本は @homegohan/shared の MEAL_ORDER。ここでは手書きせず、それをそのまま使う (#1631)。
+// PLANNED_MEAL_TYPES (src/lib/planned-meal-validation.ts) も同じ MEAL_ORDER から作る。値を足す・減らすときは
+// MEAL_ORDER と DB のトリガーを合わせる (tests/consultation-meal-type-actions.test.ts が PLANNED_MEAL_TYPES・MEAL_ORDER と
+// 同じであることを確かめる)。
+export const AI_ALLOWED_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
 
 // ==================== mass assignment 対策: サニタイザ ====================
 // AIが生成した action_params は信頼できない入力（プロンプトインジェクションの
@@ -583,7 +586,8 @@ export async function runConsultationAction(
       // #1048 F2-23 / #1103: 許可リスト (AI_ALLOWED_MEAL_TYPES。夜食 midnight_snack を含む 5 値) にない
       // mealType を拒否する。プロンプトには同じリストから作った値だけを提示しているが、
       // AI 出力は信頼できないため実行時にも二重で防御する。
-      if (!AI_ALLOWED_MEAL_TYPES.includes(mealType)) {
+      // 判定は MEAL_ORDER (= AI_ALLOWED_MEAL_TYPES) の型ガード isMealType で行う (#1631)
+      if (typeof mealType !== 'string' || !isMealType(mealType)) {
         result = { error: `mealType は ${AI_ALLOWED_MEAL_TYPES.join('/')} のいずれかである必要があります` };
         break;
       }

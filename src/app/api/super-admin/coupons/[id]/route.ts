@@ -16,6 +16,7 @@ import { internalError } from '@/lib/api/errors';
 import { couponValidityDay, couponValidUntilTimestamp } from '@/lib/super-admin/coupon-validity';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
+import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -57,7 +58,12 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
 
-    const body = await request.json();
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      // #1654: 本文が JSON として読めないときは 400 OP_INVALID_INPUT (外側の catch の 500 に落とさない)
+      return invalidJsonBodyResponse();
+    }
+    const body = bodyResult.body;
     const parseResult = CouponUpdateSchema.safeParse(body);
 
     if (!parseResult.success) {
