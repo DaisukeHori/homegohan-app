@@ -3,7 +3,7 @@
 > 版: v1.1 (2026-10-15 設計ゲート R1 の修正) / Issue: #1176 (`[セキュリティ] super_admin/admin/産業医ロールに必須と設計されたMFA/2FAが実装ゼロ`)
 > 位置づけ: `cross/01-auth-session.md` §5 (2FA / MFA) の方針を、実装できる粒度に展開した正典。§5 と本書が食い違うときは本書が正 (§24 の追随表で §5 を本書へのポインタに改める)。
 > ローンチまでに作る (オーナーの選択 2026-10-15・選択式)。
-> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。
+> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。
 
 ---
 
@@ -38,6 +38,7 @@
 - 運営系セッションのアイドル / 絶対タイムアウト (cross/01 §4.1)。AAL はセッションの属性であり、寿命は変えない。
 - 身分証の画像の保管 (§7 の判断: 本人確認は運営が画面外で行い、確認した事実と方法だけを監査ログに残す。画像は預からない)。
 - `support` / `sales` / `content_moderator` の任意の MFA (§27 Q-3)。本書の対象ロールだけが登録できる。
+- 運営の一覧画面への 2FA の状態の表示。`operator/03-ui-spec.md` §31 (`/super-admin/admins`) の表の「2FA 状態」の列は、origin/main の画面・`/api/super-admin/admins` のどちらにも実装が無く、本書も値を供給しない (状態は本人の `/settings/security/mfa` で扱う §15)。列を実装するなら別の Issue で、一覧の API が対象ごとに factor を読む形を設計する (§24・§27 Q-10)。
 - **DB を直接呼ぶ経路の AAL** (§27 Q-9)。本書の入口は Next.js のサーバー (`src/app` の route と画面) とモバイルの運営の画面だけ。Supabase の PostgREST / RPC を、運営が自分の JWT (anon キー + aal1 のアクセストークン) で直接呼ぶ経路は、本書のゲートを通らない。該当するのは、`user_profiles.roles` で運営ロールを判定する RLS のポリシー 58 本 (`supabase/baseline/prod_schema.sql` の `CREATE POLICY` のうち、`roles` の条件に `super_admin` / `admin` / `finance` / `org_industrial_doctor` を含むもの。例: 10387 行 `feature_flags_super_admin_all`・10674 行 `organizations_delete_super_admin`・10125 行 `audit_logs_select_super_admin`) と、`authenticated` に EXECUTE を与えた SECURITY DEFINER の関数 7 本 (`operator_force_dissolve_family`・`operator_force_dissolve_org`・`operator_force_owner_transfer`・`operator_force_representative_transfer`・`admin_set_user_roles`・`list_families_with_inactive_representative`・`list_orgs_with_inactive_owner`。本体は `user_profiles.roles` の `super_admin` だけを見る)。**この経路では、パスワードだけの運営が、登録済みの TOTP を持っていても運営の権限を使える** (§10 の最後の行)。範囲外にする理由: 仕様ファイルが AAL2 の入口を「サーバーの全ての運営 API と画面」としていること、58 本のポリシーは運営の枝だけに条件を足す書き換え (各ポリシーの最新の式を写して `ALTER POLICY`) が要り、本書の段 A〜D とは別の migration の設計とレビューの単位になること。直し方の形は Q-9 に書く。
 
 ---
@@ -78,17 +79,18 @@
 
 | 入口 | 件数 | 内訳 |
 |---|---|---|
-| `requireRole([...])` の呼び出し (src/。テスト除く) | 113 | `['super_admin']` 55 / `['admin','super_admin']` 16 / `['support','admin','super_admin']` 11 / `['admin','super_admin','finance']` 9 / `['admin','super_admin','content_moderator']` 8 / `['sales','admin','super_admin']` 6 / `['admin','super_admin','support']` 4 / `['admin']` 3 / `['support','admin']` 1 |
+| `requireRole([...])` の呼び出し (src/。テスト除く) | 104 | `['super_admin']` 55 / `['admin','super_admin']` 12 / `['support','admin','super_admin']` 11 / `['admin','super_admin','finance']` 8 / `['admin','super_admin','content_moderator']` 8 / `['sales','admin','super_admin']` 6 / `['admin','super_admin','support']` 4。テストの `src/lib/auth/__tests__/helpers.test.ts` の 9 件 (`['admin','super_admin']` 4・`['admin','super_admin','finance']` 1・`['admin']` 3・`['support','admin']` 1) は数えない |
 | `requireRole(<定数>)` の呼び出し (roles が配列リテラルでない) | 4 (3 ファイル) | `src/app/api/admin/inquiries/route.ts:45`・`src/app/api/admin/inquiries/[id]/route.ts:45,108` (`INQUIRY_ADMIN_ROLES` = `src/lib/admin/inquiries.ts:30` の `['admin','super_admin','support']`)・`src/app/api/admin/finance/exports/route.ts:99` (`NPS_EXPORT_ROLES` = 同ファイル:31 の `['admin','super_admin']`)。3 ファイルとも `API_ROOTS` (§20) の中 |
 | lib の認可ヘルパー経由 (route は `requireRole` を直接呼ばない) | 1 関数・2 route ファイル (10 handler) | `respondNotSupported` (`src/lib/admin/not-supported.ts:36` で `requireRole(options.roles)`) を、`src/app/api/super-admin/exports/route.ts`・`src/app/api/super-admin/exports/[id]/route.ts` の GET / POST / PUT / PATCH / DELETE が同一ファイルの arrow 関数 `respond` 経由で呼ぶ (`roles: ['super_admin']`)。⚠️ `src/app/api/admin/moderation/queue/route.ts`・`moderation/[type]/[id]/route.ts` は同じファイルから `notSupportedResponse` (認可を持たない 501 の組み立て) だけを import し、認可は自分で `requireRole([...])` を呼ぶ (上の 1 行目に数える) |
 | `requireSuperAdmin()` の呼び出し | 9 | すべて `src/app/api/operator/membership/**/route.ts` |
 | `requireOrgRole()` の呼び出し | 0 | 定義だけ残っている (産業医の専用入口は現状存在しない) |
+| 産業医 (`org_industrial_doctor`) を要求する入口 | 0 | Next.js: `requireRole` の roles (配列リテラル・定数) に `org_industrial_doctor` を含む呼び出し 0 件・`requireOrgRole` 0 件・運営の layout / page も 0 件。DB: `supabase/baseline/prod_schema.sql` と `supabase/migrations/` の RLS のポリシー・関数の本体に `org_industrial_doctor` の文字列 0 件 (§0.3 の 58 本・7 本にも入っていない)。`src/` に出てくるのはロールの型 (`src/lib/auth/types.ts:15`)・ロールの一覧 (`src/lib/admin/users-schemas.ts:94`)・ハンズオンツアーの出し分けの `ADMIN_ROLES` 3 か所 (運営の認可ではない) だけ。よって R-1 で対象に入れても、今の時点で AAL2 が掛かる産業医の入口は Next.js にも DB にも無い (空集合)。対象に入れておくのは、将来 `requireRole(['org_industrial_doctor', ...])` で入口を作ったとき (§7.2 ③) に、その入口が既定でゲートを持つため。DB に産業医の条件を持つポリシーを足すときは Q-9 の側で扱う |
 | 運営の layout (Server Component) | 3 | `src/app/admin/layout.tsx` (admin / super_admin / content_moderator)・`src/app/super-admin/layout.tsx` (super_admin)・`src/app/(operator)/operator/membership/layout.tsx` (super_admin) |
 | layout の外で `requireRole` を直接呼ぶ page | 11 | `admin/page.tsx`・`admin/announcements`・`admin/moderation`・`admin/moderation/[type]/[id]`・`admin/organizations`・`admin/users`・`admin/users/[id]`・`admin/users/[id]/freeze`・`super-admin/coupons`・`super-admin/feature-packages`・`super-admin/plans` |
 | client component だけで役割を見る Web の運営の区画 | 1 layout・3 page | `src/app/(support)/layout.tsx` (`"use client"`。`supabase.auth.getUser` と `user_profiles.roles` に `admin` / `super_admin` / `support` があるかを見るだけで、`requireRole` を通らない)。配下は `src/app/(support)/support/page.tsx` (`GET /api/support/stats`)・`support/inquiries/page.tsx` (`/api/admin/inquiries`・`/api/admin/inquiries/{id}`)・`support/users/page.tsx` (`GET /api/admin/users`・`/api/support/users/{id}`・`/notes`) の client component。本書は `src/app/(support)/support/layout.tsx` (Server Component) を新設して守る (§13.4) |
 | 運営向けの route.ts | 26 + 27 + 9 + 3 + 2 | `src/app/api/admin/**` 26・`src/app/api/super-admin/**` 27・`src/app/api/operator/**` 9・`src/app/api/support/**` 3・運営ロールを要求するそれ以外 2 (`src/app/api/announcements/route.ts` の管理系 handler・`src/app/api/comparison/trigger/route.ts`) |
 | 運営ロールの文字列を持つが運営の認可ではない route.ts | 2 | `src/app/(auth)/auth/callback/route.ts:143` (ログイン後の行き先を `/admin` にするかの振り分け)・`src/app/api/handson-tour/complete/route.ts:5` (`ADMIN_ROLES` でツアーの出し分け。`requireUser` で止める一般の route)。§20 の自動の取り込みの除外 (`AUTO_INCLUDE_EXCLUSIONS`) に理由つきで載せる |
-| モバイルの運営画面 ((super-admin)) | 5 | `apps/mobile/app/(super-admin)/super-admin/{index, admins, settings, feature-flags, database}.tsx`。`hasRole('super_admin')` で入り、Bearer で `/api/super-admin/{admins, settings, flags, flags/{key}, db-stats}` と `PUT /api/admin/users/{id}/role` を呼ぶ |
+| モバイルの運営画面 ((super-admin)) | 5 | `apps/mobile/app/(super-admin)/super-admin/{index, admins, settings, feature-flags, database}.tsx`。`hasRole('super_admin')` で入る。このうち `index.tsx` はメニューだけで API を呼ばない (§20 の ⑨ にも当たらない。区画の `_layout` のゲートで守る)。残りの 4 画面が Bearer で `/api/super-admin/{admins, settings, flags, flags/{key}, db-stats}` と `PUT /api/admin/users/{id}/role` を呼ぶ |
 | モバイルの運営画面 ((support)) | 5 | `apps/mobile/app/(support)/support/{index, inquiries, inquiries/[id], users, users/[id]}.tsx`。`_layout.tsx` が `hasRole('support') \|\| hasRole('admin') \|\| hasRole('super_admin')` で入れ、Bearer で `GET /api/support/stats`・`/api/admin/inquiries`・`/api/admin/inquiries/{id}`・`GET /api/admin/users`・`/api/support/users/{id}`・`/notes` を呼ぶ (admin と super_admin は必須ロール) |
 | モバイルの一般の画面にある運営の操作 | 1 | `apps/mobile/app/comparison/index.tsx:49,76` の「再計算」ボタン (`hasRole('super_admin')` のときだけ出し、`POST /api/comparison/trigger` を呼ぶ) |
 
@@ -223,9 +225,9 @@
 
 | 論点 | 案 | 採否 | 理由 |
 |---|---|---|---|
-| **ゲートの置き場** | (a) `requireRole` の末尾に 1 か所 | **採用** | 113 + 4 (定数の roles) + 9 + ヘルパー経由 2 ファイルの入口を書き換えずに全部が対象になる (§3.2)。走査は「入口の関数を呼んでいるか」の 1 条件で済む。`requireRole` を通らない画面 (Web の (support) 区画・モバイル) は、画面の側で同じ判定に回す (§13.4・§16) |
+| **ゲートの置き場** | (a) `requireRole` の末尾に 1 か所 | **採用** | 104 + 4 (定数の roles) + 9 + ヘルパー経由 2 ファイルの入口を書き換えずに全部が対象になる (§3.2)。走査は「入口の関数を呼んでいるか」の 1 条件で済む。`requireRole` を通らない画面 (Web の (support) 区画・モバイル) は、画面の側で同じ判定に回す (§13.4・§16) |
 | | (b) middleware のパス前方一致 (`/api/admin`, `/admin` …) | 不採用 | `/api/announcements` (管理系 handler)・`/api/comparison/trigger` のように前方一致の外にある入口が実在する (§3.2)。middleware は障害時 fail-open (#348) の思想で、fail-closed の MFA と相容れない |
-| | (c) 各 route に `requireAal2()` を足す | 不採用 | 126 か所 (113 + 4 + 9) + ヘルパー経由の 10 handler の編集と「足し忘れ」の走査が要る。(a) の走査より条件が増える |
+| | (c) 各 route に `requireAal2()` を足す | 不採用 | 117 か所 (104 + 4 + 9) + ヘルパー経由の 10 handler の編集と「足し忘れ」の走査が要る。(a) の走査より条件が増える |
 | **バックアップコードの意味** | (a) TOTP を消して登録し直させる (回復) | **採用** | AAL の真が JWT の claim 1 つのまま。ゲートが「Supabase の aal2 か、アプリの代替証明か」の 2 系統を見ずに済む (2 系統は、どちらか一方を見ない入口 = 縁の発生源) |
 | | (b) アプリの表に「代替で AAL2 相当」を記録して通す | 不採用 | 上の 2 系統。有効期限・端末・セッションの対応づけが要り、walkthrough できない |
 | | (c) Supabase の第 2 の factor にする | 不可 | Supabase にバックアップコードの factor 種別は無い (totp / phone / webauthn) |
@@ -324,12 +326,14 @@
 | (U*, S0) | ログイン (パスワード / Google / ブリッジ) | 既存のログインの条件 | (U*, S1) | `user_sessions_metadata` 等は既存どおり。AAL は aal1 |
 | (U1, S1) | 運営の入口 | 猶予中でない | 変化なし | `enrollment_required` → 403 / setup へ |
 | (U1, S1) | 運営の入口 | 猶予中 | 変化なし | `pass_grace` → 通る + バナー |
+| (U1, S1) | 時刻が `enforceFrom` に達する (操作ではなく時刻だけで起きる) | — | 変化なし (U も S も時刻では変わらない。セッションを切らない) | 次の入口の判定から `pass_grace` → `enrollment_required` (P-6 → P-5)。バナーを出していた画面も、次の画面の遷移で setup へ回り、API は 403 になる。モバイルはもともと猶予を見ない (§16) ので変わらない |
 | (U1, S1) | enroll | 対象ロール | (U1, S1) + unverified factor | unverified の既存 factor を先に全部消す |
 | (U1, S1) | verify (unverified factor に正しい 6 桁) | factor が本人のもの・rate limit 内 | **(U2, S2)** | Supabase が他のセッションを終了。バックアップコード 10 個を発行 (旧行は全削除)。監査 `admin.mfa.enroll` |
 | (U1, S1) | verify (誤った 6 桁) | — | 変化なし | 400 `AUTH_2FA_INVALID`。回数は rate limit が数える |
 | (U2, S1) | 運営の入口 | — | 変化なし | `challenge_required` → 403 / verify へ |
 | (U2, S1) | verify (正しい 6 桁) | rate limit 内 | (U2, S2) | 監査は残さない (通常のログインの一部。Supabase の auth 監査に残る) |
-| (U2, S1) | verify (誤った 6 桁) | rate limit 内 | 変化なし | 400 `AUTH_2FA_INVALID`。回数は rate limit が数える |
+| (U2, S2) | verify (verified な factor に正しい 6 桁) | factor が本人のもの・rate limit 内 | (U2, S2) (変化なし) | 200 `{ ok: true, aal: 'aal2' }`。factor が verified なので `wasUnverified` は偽 → バックアップコードを発行しない・返さない・監査を残さない (§14.3・§21.2「verified の verify はコードを返さない」)。Supabase の側の扱いは (U2, S1) の verify と同じ (§3.1) |
+| (U2, S1/S2) | verify (誤った 6 桁) | rate limit 内 | 変化なし | 400 `AUTH_2FA_INVALID`。回数は rate limit が数える |
 | (U1/U2, S1) | verify (rate limit を超えた 6 回目 / 1 時間の 21 回目) | — | 変化なし | 429 `RATE_LIMITED` + `Retry-After` (Supabase を呼ばない) |
 | (U1/U2, S1) | verify (本人のものでない `factor_id`) | rate limit 内 | 変化なし | 404 `AUTH_2FA_NOT_ENROLLED` |
 | (U2, S1/S2) | recover (正しいバックアップコード) | 残っているコード・rate limit 内 | **(U1, S0)** | 1 行を消費 → 全 factor 削除 (Supabase が全セッション終了) → 残りのコード全削除 → 監査 `admin.mfa.recover` (warn)。recover は `assurance:'session'` なので S1 / S2 で同じ |
@@ -341,7 +345,7 @@
 | (U1, S1) | backup-codes 再発行 / factor 削除 | 猶予中 | 変化なし | `pass_grace` で認可は通り、再発行は 409 `AUTH_2FA_NOT_ENROLLED`・factor 削除は本人の factor でない id なら 404 `AUTH_2FA_NOT_ENROLLED` |
 | (U2, S2) | backup-codes 再発行 | — | (U2, S2) | 全削除 → 10 行。監査 `admin.mfa.backup_codes_regenerate` |
 | (U2, S2) | factor 削除 (unenroll) | factor が本人のもの | **(U1, S1)** | コード全削除 → `refreshSession` で aal1 の token → 監査 `admin.mfa.unenroll` (warn) |
-| (U2, S2) | enroll | — | 変化なし | 409 `AUTH_2FA_ALREADY_ENROLLED` (先に unenroll) |
+| (U2, S1/S2) | enroll | — | 変化なし | 409 `AUTH_2FA_ALREADY_ENROLLED` (先に unenroll)。enroll は `{ assurance: 'session' }` なので aal1 でも route に届き、verified な factor の有無だけで 409 を決める (AAL によらない §14.2) |
 | (U1, S2) | (この状態に入る経路) | — | — | P-3。verified な factor が無いのに aal2 のセッション = unenroll の route が `refreshSession` で aal1 に戻すまでの間と、unenroll した時点で別の端末に残っていた aal2 の token (その寿命まで) だけ。アプリはこの状態を作りにいかない |
 | (U1, S2) | 運営の入口 | — | 変化なし | `pass` (P-3。`decideOperatorAssurance` は aal2 なら factor を見ない) |
 | (U1, S2) | status | 対象ロール | 変化なし | 200 `enrolled:false`・`aal:'aal2'` |
@@ -351,9 +355,16 @@
 | (U1, S2) | factor 削除 | — | 変化なし | 本人の factor でない id → 404 `AUTH_2FA_NOT_ENROLLED` |
 | (U1, S2) | token の refresh | — | (U1, S1) または (U1, S2) | Supabase が返す token の `aal` に従う。アプリは追加の処理をしない (どちらになっても入口の判定は P-3 / P-5〜P-7 の行で決まる) |
 | (U1, S2) | ログアウト | — | (U1, S0) | — |
-| (U2, S*) | super_admin の reset (他人) | 実行者 super_admin・AAL2・自分でない | **(U1, S0)** | 監査 `super_admin.mfa.reset` (critical) を先に → 全 factor 削除 (全セッション終了) → コード全削除 |
+| (U2, S*) | super_admin の reset (他人) | 実行者の `requireRole(['super_admin'])` が通る (実行者が `pass` = aal2、または未登録で猶予中の `pass_grace`)・自分でない・対象の `user_profiles` がある・監査の記録に成功 | **(U1, S0)** | 監査 `super_admin.mfa.reset` (critical) を先に → 全 factor 削除 (全セッション終了) → コード全削除 |
 | (U1, S*) | super_admin の reset (他人) | 同上 | (U1, S0 または S* のまま) | factor が 0 でも 200 (削除数 0)。コードも 0 |
+| (U*, S*) | super_admin の reset | 実行者が super_admin でない (ロールの交差で落ちる) | 変化なし | 403 `FORBIDDEN` (例外は `ForbiddenError` の `PERM_DENIED`。本文に `err.code` を出さない §14.8.2)。監査も削除もしない |
+| (U*, S*) | super_admin の reset | 実行者が super_admin・実行者のセッションが aal1 で、実行者が verified な factor を持つ / 未登録で猶予中でない | 変化なし | 403 `FORBIDDEN` (例外は `MfaRequiredError` の `AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED`。本文に `err.code` を出さない §14.8.2)。監査も削除もしない |
+| (U*, S*) | super_admin の reset (自分の id) | 実行者の `requireRole(['super_admin'])` が通る・`id === actor.id` | 変化なし | 403 `OP_SELF_MODIFY` (S-12・§6.2)。本文の検証より前に断る。監査も削除もしない |
+| (U*, S*) | super_admin の reset (他人) | 本文の形が違う (`identity_confirmed: false` を含む) / 対象の `user_profiles` が無い | 変化なし | 400 `OP_INVALID_INPUT` / 404 `NOT_FOUND`。監査も削除もしない |
+| (U*, S*) | super_admin の reset (他人) | 監査 `super_admin.mfa.reset` の記録に失敗 (`ok` が false) | 変化なし | 500 `INTERNAL_ERROR`。factor もコードも消さない (§14.7) |
 | (U0, S*) | ロールの付与 (必須ロール) | super_admin | (U1, S*) | 次の入口で上の U1 の行 |
+| (U0, S1/S2) | 自己サービス API (status / enroll / verify / recover / backup-codes 再発行 / factor 削除) | — | 変化なし | 403 `PERM_DENIED` (対象ロールでない。P-1・§14.8.1。claims も factor も読まない) |
+| (U0, S1/S2) | 運営の入口 | — | 変化なし | `not_required` (claims を読まない) → ロールの交差の結果のまま (support など必須でない運営ロールは今までどおり通る・運営ロールが無ければ既存の 403 / `/login`。P-1・§3.3) |
 | (U1/U2, S*) | ロールの剥奪 (必須ロールが無くなる) | super_admin | (U0, S*) | factor とコードは残る (Q-4)。自己サービスの API は 403 |
 | (U*, S2) | ログアウト | — | (U*, S0) | — |
 | (U0/U2, S2) | token の refresh | — | (同じ U, S2) | aal2 は持続する ((U1, S2) の refresh は上の行) |
@@ -1416,7 +1427,7 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | ⑨ (段 D) | `apps/mobile/app/**` と `apps/mobile/src/**` (テスト除く) の `.ts` / `.tsx` で、`MOBILE_OPERATOR_API_PREFIXES` のどれかで始まる文字列リテラル (テンプレート文字列の先頭の固定部分を含む) を持つファイルは、`MOBILE_GATED_AREAS` の中にあるか、同じファイルで `resolveOperatorMfaGate(` を呼ぶか、`MOBILE_SCAN_EXCLUSIONS` に載っている | モバイルの一般の画面に運営の操作を足してゲートを付け忘れた |
 | ⑩ (段 D) | `MOBILE_GATED_AREAS` の各 `_layout.tsx` が `OperatorMfaGate` を import して JSX で描く (`<OperatorMfaGate`)。`apps/mobile/src/lib/mfa-gate.ts` の `MOBILE_MFA_REQUIRED_ROLES` の要素が `MFA_REQUIRED_ROLES` と同じ集合 (この検査は §21.6 の roles-sync テストが持つ。ここでは `_layout` だけ) | 区画のゲートを外した |
 
-2026-10-15 の origin/main での当てはまり (実装者の確認用): (a) に当たる API_ROOTS の外の route.ts は `src/app/(auth)/auth/callback/route.ts`・`src/app/api/announcements/route.ts`・`src/app/api/comparison/trigger/route.ts`・`src/app/api/handson-tour/complete/route.ts` の 4 本 (除外 2 本 + `EXTRA_OPERATOR_ROUTES` 2 本)。⑨ に当たるファイルは `apps/mobile/app/(super-admin)/super-admin/{admins, database, feature-flags, settings}.tsx`・`apps/mobile/app/(support)/support/{index, inquiries, inquiries/[id], users, users/[id]}.tsx`・`apps/mobile/app/comparison/index.tsx`・`apps/mobile/src/lib/api.ts` (除外)。`apps/mobile/src/lib/super-admin-flags.ts` はコメントの中だけなので当たらない。
+2026-10-15 の origin/main での当てはまり (実装者の確認用): (a) に当たる API_ROOTS の外の route.ts は `src/app/(auth)/auth/callback/route.ts`・`src/app/api/announcements/route.ts`・`src/app/api/comparison/trigger/route.ts`・`src/app/api/handson-tour/complete/route.ts` の 4 本 (除外 2 本 + `EXTRA_OPERATOR_ROUTES` 2 本)。⑨ に当たるファイルは `apps/mobile/app/(super-admin)/super-admin/{admins, database, feature-flags, settings}.tsx`・`apps/mobile/app/(support)/support/{index, inquiries, inquiries/[id], users, users/[id]}.tsx`・`apps/mobile/app/comparison/index.tsx`・`apps/mobile/src/lib/api.ts` (除外)。`apps/mobile/src/lib/super-admin-flags.ts` はコメントの中だけなので当たらない。`apps/mobile/app/(super-admin)/super-admin/index.tsx` は API を呼ばない (メニューだけ) ので ⑨ に当たらず、区画の `_layout` (⑩) だけで守る。産業医 (`org_industrial_doctor`) を roles に含む入口は Next.js にも DB にも 0 件 (§3.2) なので、①〜⑤ の母集合に産業医の入口は今は無い。将来 `requireRole(['org_industrial_doctor', ...])` で入口を足せば、置き場が `API_ROOTS` の中なら ① に、外なら (a) の自動の取り込みで ① に入る (`requireOrgRole` で作れば ③ が赤)。
 
 限界 (見張りであって証明ではない): `GATED_HELPER_FUNCTIONS` に載っていない別ファイルの関数へ委ねた中で `requireRole` を呼ぶ書き方は①で「呼んでいない」と出る (その場合は route 側で呼ぶように直すか、ヘルパーを `GATED_HELPER_FUNCTIONS` に足して ⑤ の検査に入れる)。`requireUser()` で止めている一般の route は母集合に入らない。モバイルでパスを文字列の連結 (`'/api/' + 'admin/...'`) で組む書き方は ⑨ に当たらない。**DB (PostgREST / RPC) を直接呼ぶ経路は、この走査の対象ではない** (§0.3・Q-9)。
 
@@ -1665,14 +1676,19 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 
 | 文書 | 箇所 | 直し方 | 期日 |
 |---|---|---|---|
+| `docs/design/cross/01-auth-session.md` | §3.2 ログインのシーケンス (61〜63 行目の `alt MFA required` → `AUTH_2FA_REQUIRED` → `POST /api/auth/mfa/verify`) | login はこの分岐を持たない (本書は login を変えず、運営の入口で `/settings/security/mfa/verify?next=` へ回す §18.2)。alt を消し、「運営の入口で AAL2 を求める (cross/12 §18.2)」の Note に置き換える | 段 B と同じ PR |
 | `docs/design/cross/01-auth-session.md` | §5.1〜5.3 | 本文を「→ `cross/12-operator-mfa.md` が正典」のポインタにし、§5.3 の `AUTH_2FA_REQUIRED` のシーケンス (login が `mfa_required` を返す形) を消す (本書は login を変えず、運営の入口で回す)。§16 の E2E 行・§17 の表は本書の値に合わせる | 段 B と同じ PR |
 | `docs/design/cross/04-api-conventions.md` | §4.2 AUTH 系 | `AUTH_2FA_REQUIRED` 403 (理由: 401 だと未ログインと解釈され往復)・`AUTH_2FA_INVALID` 400・`AUTH_2FA_ENROLLMENT_REQUIRED` 403・`AUTH_2FA_NOT_ENROLLED` 404/409・`AUTH_2FA_ALREADY_ENROLLED` 409 を `[NEW]` で追記 | 段 A と同じ PR |
 | `docs/design/cross/CLAUDE.md` | ファイル一覧 | `12-operator-mfa.md` の行 (担当範囲: 運営ロールの MFA / AAL2 の入口。要件 03 §17.2) を足す。`01` の担当範囲の「2FA」を「2FA (方針。詳細は 12)」にする | 設計のマージと同じ PR (オーケストレーターが行う) |
 | `docs/design/operator/07-audit-monitoring.md` | §4.1 / §4.2 | §17 の 5 つの action_type を足す (details と severity・fail-closed の注記) | 段 A (4 つ)・段 C (reset) |
 | `docs/design/operator/02-api-spec.md` | §3.1 認証 | 「必須ロールは AAL2 (cross/12)」の 1 行と、`POST /api/super-admin/admins/{id}/mfa/reset` の節 | 段 B / 段 C |
 | `docs/design/operator/03-ui-spec.md` | §6 ユーザー詳細 | 「二段階認証を解除」ボタン (super_admin・対象が必須ロールのとき) | 段 C |
+| `docs/design/operator/03-ui-spec.md` | §31 `/super-admin/admins` の表の「2FA 状態」列 (631 行目付近) | 本書は値を供給しない (§0.3)。列に「(未実装。cross/12 §0.3 の範囲外・§27 Q-10)」と注記する | 段 B |
+| `docs/design/operator/01-data-model.md` | §3.1 マイグレーション適用順序 (§11.0 再掲)・表の節 | 一覧の末尾に `operator_mfa_backup_codes` (cross/12 §11.1。`auth.users` への FK だけで、他の運営の表に依存しない) を足し、表の節に「→ cross/12 §11.1 が正典」のポインタの節を足す。番号は migration と同じくマージ時に確定した値を書く (docs/design/CLAUDE.md の「マイグレーション順序」の採番の衝突の注意に従う) | 段 A |
 | `docs/operations/auth-protection.md` | §3.1 の MFA の行 (「このアプリは MFA を使っていない」)・新 §11 | 行を「運営ロールは TOTP を使う (cross/12)」に改め、§11「運営の MFA の運用」を足す: ダッシュボードで TOTP が有効なこと (Authentication → Multi-Factor)・`OPERATOR_MFA_ENFORCE_FROM` の決め方・super_admin が 2 人とも使えなくなったときの最後の手段 (Supabase のダッシュボードの Users → MFA factors の削除) ・対称鍵 (HS256) のプロジェクトでは `getClaims` が Auth へ 1 回問い合わせること・モバイルは猶予を見ず、未登録の必須ロールに Web での登録を求めること (§16)・DB (PostgREST / RPC) を直接呼ぶ経路は AAL を見ないこと (Q-9 の答えが出るまでの既知の限界) | 段 B |
 | `CONTRIBUTING.md` | §「Vitest — インテグレーションテスト」 | ローカル Supabase で TOTP が有効であること (`supabase/config.toml` の `[auth.mfa.totp]`)・`tests/helpers/totp.ts` で 6 桁を作ること | 段 B |
+| `docs/design/mobile/CLAUDE.md` | 85 行目 (依存先 `cross/01-auth-session.md` の用途「セッション同期 / 2FA / 子供同意」) | 用途の「2FA」を「2FA (方針。運営の MFA は cross/12。モバイルの運営の区画のゲートは cross/12 §16)」にする | 段 D |
+| `docs/design/org/CLAUDE.md` | 103 行目 (依存先 `cross/01-auth-session.md` の用途「`requireOrgRole` / SSO / 2FA」) | 用途の「2FA」を「2FA (方針。運営ロールの MFA は cross/12。`org_admin` への強制は範囲外)」にする | 段 B |
 | `docs/requirements/100-scenarios.md` | A11 | 「⚠️ UI 未定義」→ 「✅ cross/12 §15」 | 段 A |
 | `docs/requirements/03-operator-admin.md` | §19.5 エラーコード体系統一 (2959 行目の `AUTH_*` の例示に `AUTH_2FA_REQUIRED`) | **変えない**。接頭辞ごとの名前の例示だけで HTTP の番号も意味も持たないので、本書 (§19.1 で 403) と食い違わない。HTTP の番号を改めるのは cross/04 の行だけ | — |
 | `src/lib/env.ts` / `.env.example` | 一覧 | §12.2 | 段 A (コード。追随表に書くのは N-2 と同じ) |
@@ -1740,3 +1756,4 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | Q-7 | cross/04 の `AUTH_2FA_REQUIRED` 401 → 403・`AUTH_2FA_INVALID` 401 → 400 の変更 (予約だけで未使用) を認めるか | 認めるとして設計 (§7.1 の理由) |
 | Q-8 | WebView からの Web の運営画面 (モバイルの `(super-admin)` 以外に運営へ入る経路) が無いことの確認 | #1122 で廃止済みとして設計。残っていれば page-guard が verify へ回すので壊れはしない |
 | **Q-9** | **DB を直接呼ぶ経路 (PostgREST / RPC) にも AAL2 を求めるか** (§0.3・S-24)。いまは、パスワードだけの運営が anon キーと自分の aal1 の token で、`operator_force_dissolve_family` などの RPC 7 本と、運営ロールの条件を持つ RLS のポリシー 58 本 (例: `feature_flags` の更新・`organizations` の削除・`admin_audit_logs` の読み取り) を直接使える。Issue #1176 の本文の脅威 (パスワードだけの super_admin が org / family の強制の譲渡・解散を行える) は、Next.js の API の経路では本書で閉じるが、この経路では残る | **本書の範囲外** (仕様ファイルの「サーバーの全ての運営 API と画面」に従う)。求めるなら別の設計書で: ① 判定の関数 `public.operator_mfa_satisfied()` (SECURITY DEFINER・`SET search_path = ''`・STABLE。真 = 呼び出し元が必須ロールを持たない、または `auth.jwt() ->> 'aal' = 'aal2'`、または `auth.mfa_factors` に verified な TOTP が無い。最後の条件は、未登録の運営は本人がその場で登録して aal2 になれるので、Web のゲートの `enrollment_required` と同じ強さで、猶予中の運営を DB で止めないため) を 1 つ作る ② 7 本の関数は最新の定義 (2 本は `supabase/migrations/20261008090100_family_lock_order.sql`) を写し、ロールの判定の直後に `IF NOT public.operator_mfa_satisfied() THEN RAISE EXCEPTION ... USING ERRCODE = '42501'` を足す ③ 58 本のポリシーは、運営ロールの `EXISTS (... user_profiles.roles ...)` の枝だけに `AND (SELECT public.operator_mfa_satisfied())` を足す (`ALTER POLICY`。本人の行の枝には足さない。足すと、登録済みの運営が一般の利用者として使うときに自分のデータを読めなくなる) ④ `pg_policies` と `pg_proc` を読む結合テストで、運営ロールの条件を持つ全ポリシー・全関数がこの関数を呼ぶことを確かめる。Web の API は、必須ロールでない人か、aal2 か、`pass_grace` (未登録) でしか DB に来ないので、この変更で Web の API の挙動は変わらない |
+| Q-10 | `operator/03-ui-spec.md` §31 (`/super-admin/admins`) の表の「2FA 状態」の列を実装するか (§0.3)。今は画面にも API にも無い | 本書では実装しない (登録・challenge・回復・解除の範囲に閉じる)。実装するなら別の Issue で、一覧の API が対象ごとに factor を読む形 (呼び出しの数・失敗時の表示) を設計する |
