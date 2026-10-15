@@ -16,6 +16,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 招待一覧取得
@@ -182,7 +183,8 @@ export async function POST(request: Request) {
 
   const invite = inviteData as { token: string; expires_at: string; id: string };
   const invite_url = buildFamilyInviteUrl(invite.token);
-  const inviterName = inviterProfile.nickname || user.email || '招待者';
+  // 招待者の名前が無い (空・空白だけ・仮置きの 'Guest') ときは、今の既定どおりメールアドレス → '招待者' (#1649)
+  const inviterName = normalizeProfileName(inviterProfile.nickname) || user.email || '招待者';
   const scopeName = familyGroup?.name ?? '家族グループ';
 
   // 既存ユーザー判定: get_invite_details で is_existing_user を確認

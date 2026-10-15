@@ -359,12 +359,11 @@ describe("process-meal-image-jobs: 環境変数をリクエストの中で確か
     expect(loggedLines()).toEqual([`${MISSING_ENV_SERVER_LOG_PREFIX} SUPABASE_URL`]);
   });
 
-  it("Google AI のキーが無いと、認証の後に 503 (固定の文と code) を返す。認証に通らなければ従来どおり 401", async () => {
+  // 認証に通らないときの 401 / 503 (service role key でない Bearer は CRON_SECRET と照らし合わせる。#1561) は、
+  // このファイルでは requireServiceRole を差し替えて通しているので、本物の認証で動かす
+  // tests/process-meal-image-jobs-worker-edges.test.ts で確かめる
+  it("Google AI のキーが無いと、認証の後に 503 (固定の文と code) を返す", async () => {
     h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY };
-
-    const unauthorized = await handler(post(URL_, { auth: "Bearer wrong-key" }));
-    expect(unauthorized.status).toBe(401);
-    expect(await unauthorized.json()).toEqual({ error: "Unauthorized" });
 
     const res = await handler(post(URL_, { auth: `Bearer ${SERVICE_ROLE_KEY}` }));
     const text = await res.text();

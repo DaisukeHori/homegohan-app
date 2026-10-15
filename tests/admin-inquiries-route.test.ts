@@ -509,6 +509,33 @@ describe('GET /api/admin/inquiries (一覧)', () => {
     expect(profileCalls[0].filters).toEqual([['id', 'in', [CUSTOMER_ID]]]);
   });
 
+  // #1649: 仮置きの 'Guest'・空白だけは名前とみなさない (userName は null、画面はメールアドレスを出す)
+  function setCustomerNickname(nickname: string) {
+    const row = world.tables.user_profiles.find((p) => p.id === CUSTOMER_ID);
+    if (!row) throw new Error('問い合わせ者の user_profiles の行がありません');
+    row.nickname = nickname;
+  }
+
+  it.each(['Guest', ' Guest ', '   '])('問い合わせ者の nickname が %j なら、一覧・詳細とも userName は null (#1649)', async (nickname) => {
+    setCustomerNickname(nickname);
+
+    const list = await json(await listGET(listRequest()));
+    expect(list.inquiries.find((i: Json) => i.id === I2).userName).toBeNull();
+
+    const detail = await json(await detailGET(detailRequest(I2), ctx(I2)));
+    expect(detail.inquiry.userName).toBeNull();
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    [' たろう ', 'たろう'],
+  ])('問い合わせ者の nickname が %j (本人が付けた名前) なら、userName はその名前 (#1649)', async (nickname, expected) => {
+    setCustomerNickname(nickname);
+
+    const list = await json(await listGET(listRequest()));
+    expect(list.inquiries.find((i: Json) => i.id === I2).userName).toBe(expected);
+  });
+
   it('service_role は user_profiles にしか使わない (inquiries / admin_audit_logs は本人のセッション)', async () => {
     await listGET(listRequest());
     await detailGET(detailRequest(I2), ctx(I2));
