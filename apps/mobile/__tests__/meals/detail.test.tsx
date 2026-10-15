@@ -295,4 +295,37 @@ describe('MealDetailPage', () => {
       });
     });
   });
+
+  // #1631: 区分の表 (MEAL_CONFIG) のキーは MealType。DB の行の meal_type (string) は isMealType で絞ってから引き、
+  // 5 値以外は今までどおり元の値をそのまま表示名に出す
+  describe('食事の区分の表示名 (#1631)', () => {
+    const renderWithMealType = (mealType: string) => {
+      mockGet.mockImplementation((path: string) => {
+        if (path === '/api/meals/meal-001') return Promise.resolve({ ...MOCK_MEAL, meal_type: mealType });
+        if (path.includes('/like')) return Promise.resolve({ liked: false });
+        return Promise.resolve(null);
+      });
+      return render(<MealDetailPage />);
+    };
+
+    it.each([
+      ['breakfast', '朝食'],
+      ['lunch', '昼食'],
+      ['dinner', '夕食'],
+      ['snack', 'おやつ'],
+      ['midnight_snack', '夜食'],
+    ])('%s は %s と出る', async (mealType, label) => {
+      const { getAllByText } = renderWithMealType(mealType);
+      await waitFor(() => {
+        expect(getAllByText(label).length).toBeGreaterThan(0);
+      });
+    });
+
+    it('5 値以外の meal_type は、元の値をそのまま出す (画面が落ちない)', async () => {
+      const { getAllByText } = renderWithMealType('brunch');
+      await waitFor(() => {
+        expect(getAllByText('brunch').length).toBeGreaterThan(0);
+      });
+    });
+  });
 });

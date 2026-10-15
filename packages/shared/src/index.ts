@@ -5,6 +5,7 @@ export * from './meal-types';
 export * from './mode-config';
 export * from './progress-phases';
 export * from './date-utils';
+export * from './pantry-expiry';
 export * from './menu-generation-range';
 export * from './nutrition-planner';
 export * from './design-tokens';
@@ -20,6 +21,7 @@ export * from './health-blood-test-reference';
 export * from './org-challenges';
 export * from './weekly-menu-ultimate-mode';
 export * from './profile-name';
+export * from './handson-tour-nickname';
 export type {
   Json,
   Database,

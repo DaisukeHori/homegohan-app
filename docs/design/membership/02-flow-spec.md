@@ -281,7 +281,7 @@ org owner 譲渡と同パターン。`propose_family_representative_transfer` / 
 [adult] /family/members/{id} → [家族から外す]
 POST /api/family/members/{user_id}/remove
 server → rpc('remove_family_member', { p_family_id, p_user_id })
-       → 整合性: target が representative なら CANNOT_REMOVE_REPRESENTATIVE
+       → 整合性: target が representative なら IS_FAMILY_REPRESENTATIVE (409)
        → family_members.status = 'removed', removed_at = NOW()
        → user_profiles.family_id = NULL
        → meals 等は保持 (削除しない)
