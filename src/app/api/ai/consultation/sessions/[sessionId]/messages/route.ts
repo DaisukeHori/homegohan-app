@@ -8,7 +8,8 @@ import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError } from '@/li
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
-import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+import { classifyPantryExpiry } from '@homegohan/shared';
 import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
 import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
@@ -28,8 +29,6 @@ const UPCOMING_MEALS_DAYS = 7;
 const RECENT_MEALS_DAYS = 14;
 /** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
 const DAYS_PER_WEEK = 7;
-/** AI 相談のシステムプロンプトで冷蔵庫の食材に「期限間近」の印を付ける範囲 (今日から何日後の期限までか)。#1594 の前と同じ 3 日 */
-const PANTRY_EXPIRING_SOON_DAYS = 3;
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -478,14 +477,14 @@ ${shoppingList.map((item: any) => {
 
   // 冷蔵庫/パントリーを整形（IDを含める）
   // 「期限間近」の印は、期限 (YYYY-MM-DD・日本の暦日) が今日 (日本の暦日) から PANTRY_EXPIRING_SOON_DAYS 日後まで (過ぎたものも含む) の食材に付ける (#1594)。
+  // 判定は全画面共通の classifyPantryExpiry (#1602)。期限切れ (expired) と期限間近 (expiringSoon) の両方に印を付ける (以前と同じ範囲)。
   // 以前は期限を new Date(...) (その日の UTC の 0 時 = 日本の 9 時) にして「今から 3 日後の時刻」と比べていたので、境目が日本の 9 時にずれていた。
-  // 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ。日付になっていない値には印を付けない
-  const pantryExpiringSoonUntil = addDaysToDate(today, PANTRY_EXPIRING_SOON_DAYS);
+  // 日付になっていない値には印を付けない
   const pantryInfo = pantryItems.length > 0 ? `
 【🧊 冷蔵庫/パントリー（${pantryItems.length}品）】※変更・削除時はitemIdを使用
 ${pantryItems.map((item: any) => {
   const expiry = item.expiration_date ? `期限:${item.expiration_date}` : '';
-  const isExpiringSoon = isCalendarDate(item.expiration_date) && item.expiration_date <= pantryExpiringSoonUntil;
+  const isExpiringSoon = classifyPantryExpiry(item.expiration_date, today) !== 'normal';
   const warning = isExpiringSoon ? '⚠️期限間近!' : '';
   return `- ${item.name} ${item.amount || ''} [${item.category || 'その他'}] ${expiry} ${warning}
   itemId: "${item.id}"`;

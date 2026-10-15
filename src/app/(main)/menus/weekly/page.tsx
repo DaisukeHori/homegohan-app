@@ -31,7 +31,7 @@ import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -4687,9 +4687,10 @@ export default function WeeklyMenuPage() {
     }
   };
   
+  // 期限切れと期限間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の日数 #1602) の食材
   const expiringItems = fridgeItems.filter(i => {
     const days = getDaysUntil(i.expirationDate);
-    return days !== null && days <= 3;
+    return days !== null && days <= PANTRY_EXPIRING_SOON_DAYS;
   }).sort((a, b) => (getDaysUntil(a.expirationDate) || 0) - (getDaysUntil(b.expirationDate) || 0));
 
   const countEmptySlots = () => {
