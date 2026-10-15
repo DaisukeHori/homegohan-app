@@ -22,6 +22,8 @@
  *   J. (#1487 の整合ゲート 3 回目・カバーの持ち主) 料理が 3 品の AI の献立に利用者がカバーを付ける保存: カバーは利用者の画像になり、
  *      ジョブは今の決まりのまま積む。画像の処理が料理の画像を書いても、完了を切り替えても、カバーは利用者の画像のまま。
  *      新しく作る入口 (POST) で送られた写真の料理は、画像を消さず AI の画像の料理にしない
+ *   K. (#1553) 料理が 2 品以上の献立の PATCH に image_url / imageUrl の null: 利用者・写真のカバーを外し、AI の料理の画像
+ *      (あれば) に戻す。料理が 1 品の献立は今までどおり変えない
  *
  * 献立の行の作り物は、入口が select で名指しした列だけを返す (入口が読まない列 (catalog_product_id など) を読んだことにしない)
  */
@@ -924,5 +926,84 @@ describe.each(HTTP_ENTRIES)('#1532 x-request-id を request_id (uuid の列) に
     await entry.run();
 
     expect(h.state.queueInserts[0].request_id).toBeNull();
+  });
+});
+
+/** 利用者がカバーを外す保存 (#1553。PATCH /api/meals/[id] の image_url: null・PATCH /api/meal-plans/meals/[id] の imageUrl: null) */
+const CLEAR_COVER_ENTRIES: Array<{ name: string; clear: () => Promise<Outcome> }> = [
+  {
+    name: 'PATCH /api/meals/[id]',
+    clear: async () => {
+      const res = await mealsPatch(json(`http://localhost/api/meals/${MEAL_ID}`, 'PATCH', { image_url: null }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    },
+  },
+  {
+    name: 'PATCH /api/meal-plans/meals/[id]',
+    clear: async () => {
+      const res = await mealPlansPatch(json(`http://localhost/api/meal-plans/meals/${MEAL_ID}`, 'PATCH', { imageUrl: null }), { params: { id: MEAL_ID } });
+      return { status: res.status, ...((await res.json()) as Outcome) };
+    },
+  },
+];
+
+describe.each(CLEAR_COVER_ENTRIES)('#1553 K. 料理が 2 品以上の献立で、null を送るとカバーを外す: $name', (entry) => {
+  it('料理の画像ができあがった献立: 利用者のカバーを外し、先頭の AI の料理の画像に戻す (ジョブを積まず、数えない)', async () => {
+    const pending = (await reconcileDishImages({ previousDishes: [], nextDishes: THREE_AI_DISHES, triggerSource: 'test' })).dishes;
+    h.state.queueInserts = [0, 1, 2].map((dish_index) => ({ dish_index }));
+    const ready = runImageWorker(pending, USER_COVER);
+    h.state.queueInserts = [];
+    expect(ready.cover).toBe(USER_COVER);
+    h.state.existingDishes = ready.dishes;
+    h.state.existingImageUrl = USER_COVER;
+
+    const out = await entry.clear();
+
+    expect(out.status).toBe(200);
+    expect(savedRow().image_url).toBe(aiImageUrl(0));
+    expect((savedRow().dishes as MealImageDish[]).map((dish) => dish.image_url)).toEqual([0, 1, 2].map(aiImageUrl));
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
+  });
+
+  it('料理の画像がまだ無い献立: カバーを空にし、画像の処理ができた AI の料理の画像を付ける', async () => {
+    h.state.existingDishes = (await reconcileDishImages({ previousDishes: [], nextDishes: THREE_AI_DISHES, triggerSource: 'test' })).dishes;
+    h.state.existingImageUrl = USER_COVER;
+
+    const out = await entry.clear();
+
+    expect(out.status).toBe(200);
+    expect(savedRow().image_url).toBeNull();
+    const worked = runImageWorker(savedRow().dishes as MealImageDish[], savedRow().image_url as string | null);
+    expect(worked.cover).toBe(aiImageUrl(0));
+  });
+
+  it('写真の複数の料理の献立 (カバーは写真): カバーを空にし、写真の料理は変えない', async () => {
+    h.state.existingDishes = buildPhotoDishList([{ name: '親子丼', role: 'main' }, { name: '味噌汁', role: 'soup' }], PHOTO_URL);
+    h.state.existingImageUrl = PHOTO_URL;
+
+    const out = await entry.clear();
+
+    expect(out.status).toBe(200);
+    expect(savedRow().image_url).toBeNull();
+    expect((savedRow().dishes as MealImageDish[]).map((dish) => [dish.image_source, dish.image_status, dish.image_url])).toEqual([
+      ['meal_photo', 'stale', null],
+      ['meal_photo', 'stale', null],
+    ]);
+    expect(h.state.queueInserts).toEqual([]);
+  });
+
+  it('料理が 1 品の献立 (手で付けた画像): 今までどおり、料理とカバーを変えない', async () => {
+    h.state.existingDishes = [
+      { name: 'カレー', role: 'main', image_url: USER_COVER, image_source: 'manual_override', image_status: 'ready', image_subject_hash: null },
+    ];
+    h.state.existingImageUrl = USER_COVER;
+
+    const out = await entry.clear();
+
+    expect(out.status).toBe(200);
+    expect(savedRow().image_url).toBe(USER_COVER);
+    expect((savedRow().dishes as MealImageDish[])[0]).toMatchObject({ image_url: USER_COVER, image_source: 'manual_override', image_status: 'ready' });
+    expect(h.state.queueInserts).toEqual([]);
   });
 });

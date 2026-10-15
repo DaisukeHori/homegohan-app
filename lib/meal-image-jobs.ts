@@ -36,7 +36,17 @@ interface BuildDishImagePayloadParams {
    * 送られた料理の image_source が meal_photo / catalog / manual_override なら、画像と状態を保持する (reconcileDishImages の同名の引数)
    */
   preserveSubmittedDishImages?: boolean | null;
+  /**
+   * 利用者がカバーを外した (更新の入口 PATCH の image_url / imageUrl に null が来た) か (#1553)。
+   * 料理が 2 品以上の献立では、いまのカバー (写真・利用者が付けた画像) を外し、料理の画像 (AI の画像があれば) から選び直す
+   * (候補が無ければ空。あとでできた AI の料理の画像が付く)。
+   * 料理が 1 品の献立では何も変えない (今までどおり。カバーは料理の画像 (手で付けた画像なら manual_override) と同じ)
+   */
+  clearCover?: boolean | null;
 }
+
+/** 献立のカバーを、料理とは別に付け外しする献立の料理の数の下限 (2 品以上。1 品なら料理の画像がそのままカバー) */
+const MULTI_DISH_MEAL_MIN_DISHES = 2;
 
 interface DishImagePayload {
   dishes: MealImageDish[];
@@ -77,12 +87,15 @@ export async function buildDishImagePayload(
   params: BuildDishImagePayloadParams,
 ): Promise<DishImagePayload> {
   const nextDishes = ensureNextDishes(params);
+  // 料理が 2 品以上の献立で利用者がカバーを外した (#1553): いまのカバーを無いものとして、料理の画像から選び直す。
+  // 外したカバーで「写真の献立」(isMealCoverHeldByImagelessPreservedDish) とみなしてジョブを止めることもしない
+  const coverCleared = params.clearCover === true && nextDishes.length >= MULTI_DISH_MEAL_MIN_DISHES;
   const { dishes, jobs, mealCoverImageUrl } = await reconcileDishImages({
     previousDishes: params.previousDishes,
     nextDishes,
     triggerSource: params.triggerSource,
     model: params.imageModel ?? DEFAULT_MEAL_IMAGE_MODEL,
-    fallbackMealImageUrl: params.existingCover ?? params.fallbackMealImageUrl,
+    fallbackMealImageUrl: coverCleared ? null : params.existingCover ?? params.fallbackMealImageUrl,
     previousMealIsCatalog: params.previousMealIsCatalog ?? false,
     preserveSubmittedDishImages: params.preserveSubmittedDishImages ?? false,
   });
