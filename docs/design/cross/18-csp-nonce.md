@@ -5,7 +5,7 @@
 | v1.0 | 2026-10-16 | 新設 (Issue #1169 の設計ゲート・A 型 4 相) |
 
 要件の正本は Issue #1169 の本文 (コメント 0 件)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
-ファイル名 (cross/16) は設計ゲートの指定による (cross/ の既存は 01〜09・12・13a・15)。
+ファイル名は cross/18 (cross/ の既存は 01〜09・12・13a・14・15。16 は同じ時期の別の設計 (ログイン履歴・セッション #1190)、17 はバックアップの設計が使う)。
 
 前提 (本書が従う条件): ローンチ前で利用者ゼロ (正しい形で作る)。本番の DB に触らない。
 
@@ -376,7 +376,7 @@ export function generateCspNonce(): string {
 /**
  * 方針の文字列。ディレクティブの順と許可先は next.config.mjs にあった CSP を引き継ぎ、script-src だけを変えた:
  *   'unsafe-inline' を外し、'nonce-<nonce>' と 'report-sample' (止めたインラインの先頭 40 文字を報告に含める) を足す。
- * style-src は据え置き (docs/design/cross/16-csp-nonce.md §6.3)。report-uri は違反の報告の受け口。
+ * style-src は据え置き (docs/design/cross/18-csp-nonce.md §6.3)。report-uri は違反の報告の受け口。
  */
 export function buildContentSecurityPolicy(input: CspBuildInput): string {
   if (!CSP_NONCE_PATTERN.test(input.nonce)) {
@@ -440,7 +440,7 @@ import { CSP_NONCE_HEADER } from '@/lib/security/csp';
  * このリクエストの CSP の nonce (middleware が x-csp-nonce に載せた値)。middleware の外 (matcher の除外パス・ビルド時) は null。
  * アプリのインラインスクリプトは 0 本なので今は呼ぶ画面が無い。どうしてもインラインの script や next/script が要るときは、
  * これを `nonce` 属性に渡し、tests/csp-no-inline-script.test.ts の ALLOWED_INLINE_SCRIPTS に理由と件数を書く
- * (規則は docs/design/cross/16-csp-nonce.md §9.11)。
+ * (規則は docs/design/cross/18-csp-nonce.md §9.11)。
  * headers() は await の直下で呼ぶ (tests/next15-async-request-api-scan.test.ts の規則 1)
  */
 export async function getCspNonce(): Promise<string | null> {
@@ -820,7 +820,7 @@ export const config = {
 // tsc:skip (Server Component。JSX を含むので型検査は実装の tsc で行う)
 // 足す (import の後):
 // #1169: CSP の nonce は毎リクエスト違うので、全ページを動的に描画する (静的化した HTML には nonce が入らず、Next の
-// インラインスクリプトが止まる)。ルートの layout に書くと配下の全ルートが動的になる (docs/design/cross/16-csp-nonce.md §5)
+// インラインスクリプトが止まる)。ルートの layout に書くと配下の全ルートが動的になる (docs/design/cross/18-csp-nonce.md §5)
 export const dynamic = 'force-dynamic';
 
 // 消す: <head> とその中の <script dangerouslySetInnerHTML={{ __html: `… localStorage.removeItem('darkMode') …` }} /> (§6.1 I-1)。
@@ -881,7 +881,7 @@ export const SCRIPT_JSX_TAG_NAMES: readonly string[] = ['script', 'Script'];
  * この目印は本物の差し込みの位置にだけ立つ。NONCE_FROM_SUBSTITUTION_PATTERN はこの目印を探す
  */
 export const TEMPLATE_SUBSTITUTION_MARK = '${}';
-/** 全ページ動的の宣言を見るファイルと値 (docs/design/cross/16-csp-nonce.md §5.2) */
+/** 全ページ動的の宣言を見るファイルと値 (docs/design/cross/18-csp-nonce.md §5.2) */
 export const ROOT_LAYOUT_FILE = 'src/app/layout.tsx';
 export const FORCE_DYNAMIC = 'force-dynamic';
 /** 文字に script を埋めているとみなす語 (小文字にして比べる) */
@@ -920,7 +920,7 @@ export interface AllowedInlineScript {
   reason: string;
 }
 
-/** いまは空 (アプリのインラインスクリプトは 0 本: docs/design/cross/16-csp-nonce.md §6.1) */
+/** いまは空 (アプリのインラインスクリプトは 0 本: docs/design/cross/18-csp-nonce.md §6.1) */
 export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [];
 
 /** 種類ごとの nonce の規則 (失敗の文に出す) */
@@ -935,7 +935,7 @@ export const NONCE_RULES: Record<InlineScriptKind, string> = {
 export const INLINE_SCRIPT_GUIDANCE =
   '本番の CSP は script-src に unsafe-inline を持たないので、nonce の無いインラインのスクリプトは止まります。' +
   'まず JS のモジュール (import) に移せないか考え、どうしても要るなら getCspNonce() (src/lib/security/csp-nonce.ts) の値を nonce に渡し、' +
-  '理由と件数を ALLOWED_INLINE_SCRIPTS に足してください (docs/design/cross/16-csp-nonce.md §9.11)。';
+  '理由と件数を ALLOWED_INLINE_SCRIPTS に足してください (docs/design/cross/18-csp-nonce.md §9.11)。';
 
 /** 照合で返す問題 1 件 */
 export interface InlineScriptProblem {
@@ -1429,7 +1429,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 文書 | 直すこと | 期日 |
 |---|---|---|
-| `docs/design/cross/CLAUDE.md` ファイル一覧 | `16-csp-nonce.md` の行 (担当範囲: 本番の CSP の nonce 方式・違反の報告の受け口。要件参照: #1169) を足し、「10〜12 は欠番」の文を実在 (12・15 あり) に合わせる | マージと同日 |
+| `docs/design/cross/CLAUDE.md` ファイル一覧 | `18-csp-nonce.md` の行 (担当範囲: 本番の CSP の nonce 方式・違反の報告の受け口。要件参照: #1169) を足し、「10〜12 は欠番」の文を実在 (12・15 あり) に合わせる | マージと同日 (本冊の設計 PR で済み) |
 | `docs/design/cross/13a-legal-consent-api-server.md` §6.4 | `/api/csp-report` (exact・`telemetry`・理由は §9.10 の note) の行を `/api/log` の次に足し、対象の route の本数を +1 | 段 1 のマージと同日 |
 | `docs/design/cross/04-api-conventions.md` §4.2 | `CSP_REPORT_INVALID` (400)・`CSP_REPORT_TOO_LARGE` (413)・`CSP_REPORT_UNSUPPORTED_MEDIA_TYPE` (415) を `[NEW]` で足す (LEGAL 系と同じ節の作り) | 段 1 のマージと同日 |
 | `docs/design/mobile/01-architecture.md` §7 | 「Web の CSP (`next.config.mjs` の `frame-src`)」「Jest が `next.config.mjs` と突き合わせる」を `src/lib/security/csp.ts` に | 段 2 のマージと同日 |
