@@ -1,7 +1,7 @@
 # mobile/ サーバーからの Push 通知の送信 — 送信待ち (push_outbox)・worker・receipt (#1136)
 
-版: v1.2 (2026-10-16 A 型設計ゲート R2 の修正)
-改定履歴: v1.0 2026-10-16 新設 / v1.1 2026-10-16 発火元の書き手を全数で列挙し、積む行を「2 日以上の AI の生成」に絞った (§3.2.1)。鍵が無い環境でも掃除 (24 時間で expired) を回す (R-12) / v1.2 2026-10-16 形の違う token・別の Expo プロジェクトの token が同じ要求のほかの行を巻き込まない (R-24)。失敗の通知の本文は理由を約束しない (§3.2)。番兵の追随 (§13.1) を実際の挙動に合わせた
+版: v1.3 (2026-10-16 A 型設計ゲート 周 3 の網羅性の反映)
+改定履歴: v1.0 2026-10-16 新設 / v1.1 2026-10-16 発火元の書き手を全数で列挙し、積む行を「2 日以上の AI の生成」に絞った (§3.2.1)。鍵が無い環境でも掃除 (24 時間で expired) を回す (R-12) / v1.2 2026-10-16 形の違う token・別の Expo プロジェクトの token が同じ要求のほかの行を巻き込まない (R-24)。失敗の通知の本文は理由を約束しない (§3.2)。番兵の追随 (§13.1) を実際の挙動に合わせた / v1.3 2026-10-16 エラー表 (§9) に時間切れと receipt の error (DeviceNotRegistered / ほか) の行を足し、receipt の `InvalidCredentials` を dead と書いていた箇所 (§1.2・§13.2・§14) を記録に直した。§1.2 のアプリのファイルの所在を `apps/mobile/src/…` に直した
 
 ## 0. 位置づけと分冊判定
 
@@ -34,8 +34,8 @@
 - **バッジ** (`03` §3.5 のサーバー側の計算) は付けない (ペイロードに `badge` を入れない)。未読の数え方の元 (`family_meal_requests` / `user_notifications`) が実装に無い。
 - `user_push_tokens` の列の追加 (`03` §3.2 の `organization_id` / `device_model` / `os_version` / `app_version`) はしない (本書の送信に要らない)。
 - `03` §4 の表 `pending_push_notifications` は**作らない** (Quiet Hours の延期は `push_outbox.next_attempt_at` で表す。§6.3)。Edge Function `supabase/functions/notify-push` も作らない。
-- Android の FCM の資格情報 (EAS の FCM V1 サービスアカウント) の登録はオーナー作業で、本書の外 (§14)。未登録の間は Android の端末への送信が Expo の `InvalidCredentials` で dead になり、iOS には届く。
-- モバイルアプリのコードは変えない (通知の受け取りと行き先の解決は `src/components/NotificationRouter.tsx` と `src/lib/notificationRoute.ts` (#1049 F7-11) がすでにある)。
+- Android の FCM の資格情報 (EAS の FCM V1 サービスアカウント) の登録はオーナー作業で、本書の外 (§14)。未登録の間は Android の端末へは届かず (Expo の `InvalidCredentials`。receipt で返れば行は sent のまま `receipt_status = 'error'` の記録と warn、ticket で返れば dead)、iOS には届く。
+- モバイルアプリのコードは変えない (通知の受け取りと行き先の解決は `apps/mobile/src/components/NotificationRouter.tsx` と `apps/mobile/src/lib/notificationRoute.ts` (#1049 F7-11) がすでにある)。
 - 届けられなかった Push を運用メールで知らせる仕組み (`app-log-alerts` の 4 つ目の種類) は作らない (§14)。
 - メールの送信待ち (`email_outbox`) の表・RPC・worker には触れない (別の設計。実装の前後は問わない)。
 
@@ -1451,10 +1451,13 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | Expo HTTP 4xx (429 以外。400 `PUSH_TOO_MANY_EXPERIENCE_IDS`・401 `UNAUTHORIZED` を含む) を 2 件以上の塊で受けた | 分けて送り直す | 同じ回に 1 件ずつの要求で送り直し (warn 1 行)、各行は自分の 1 件の要求の結果だけで決まる (R-24・S-24) |
 | Expo HTTP 4xx (429 以外) を 1 件の要求で受けた | 非 retryable | dead (`errors[0].code`。無ければ `expo_http_error`) |
 | 応答の形の誤り・ticket の数が合わない | 非 retryable | dead (`invalid_response`)。分けて送り直さない (Expo が受け付けたあとかもしれず、送り直すと 2 通届く) |
+| 送信の途中で時間切れ (回の開始から `PUSH_OUTBOX_RUN_BUDGET_MS` = 40 秒を超えて次の要求 (塊、または 1 件ずつの送り直しの 1 件) に進もうとした) | 次の回 | その要求と残りの行は Expo に渡さず queued (リース) のまま (attempts・`last_error_*` は変えない)。`stopped_early: 'budget'`。`PUSH_OUTBOX_LEASE_SECONDS` = 120 秒のリースが切れたあとの回が取り直す。この回の receipt の確認と掃除はする (§6.3 `sendBatch`・§7.1 の 1 つ目の表の「呼ばない (時間切れ…)」の行) |
 | ticket error (`DeviceNotRegistered` / `MessageTooBig` / ほか) | 非 retryable | dead (error の名前)。`DeviceNotRegistered` は端末の行を消す |
 | 送る条件を満たさない (§7.1 の 1 つ目の表で Expo を呼ばずに dead になる 8 行。`expired` は掃除 `cleanup_push_outbox` も付ける) | 非 retryable | dead (`profile_missing` / `expired` / `invalid_token` / `account_frozen` / `consent_outdated` / `notifications_disabled` / `unknown_kind` / `invalid_payload`) |
 | 端末の行の token の長さが 1..256 を外れる | 登録しない | `enqueue_push_notification` がその端末の行を飛ばす (同じ利用者のほかの端末には積む。R-24) |
 | receipt が取れない (通信・429・5xx・形の誤り) | 次の回 | `record_push_receipt(NULL)` でリースを外すだけ。24 時間を超えたら `missing` |
+| receipt が `DeviceNotRegistered` の error | 記録 + 端末の行を消す | `record_push_receipt('error', 'DeviceNotRegistered')` (`receipt_status = 'error'`) と warn → 端末の行を消す → CASCADE で送信待ちの行も消える (S-10) |
+| receipt がほかの error (`MessageTooBig` / `MessageRateExceeded` / `MismatchSenderId` / `InvalidCredentials` / details の無い error は `expo_ticket_error`) | 記録だけ (再試行しない) | `record_push_receipt('error', <error の名前>)`。行は sent のまま (`receipt_status = 'error'`・`receipt_error` に名前。dead にしない) と warn (`receipt_error` / `user_id` / token の末尾 4 文字)。端末の行は消さない。sent の 7 日の掃除で消える (`MessageRateExceeded` の再試行は §14) |
 | RPC の失敗・claim の行の形の誤り | 500 | `internalError` (本文は汎用。詳細は app_logs) |
 | `CRON_SECRET` 不一致 / 未設定 | 401 / 503 | `requireCronAuth` |
 | メンテナンス中 | 200 | `{ status: 'maintenance' }` (何もしない。掃除もしない) |
@@ -1534,7 +1537,7 @@ worker の単体テストの行の token は `ExponentPushToken[…]` の形に�
 | 文書 | 直すこと | 段 |
 |---|---|---|
 | `docs/design/mobile/CLAUDE.md` | ファイル一覧に `06-push-send.md` の行 (担当: push_outbox / worker / receipt / 種類の一覧。要件 01 §15.3-4)。「このドメインから他ドメインへの提供」の行 (94 行。提供内容 `Expo Push Token`・利用先 `cross/03-design-system.md (notify-push Edge Function)`) の利用先を `mobile/06-push-send.md` (`push_outbox` の worker) に (`cross/03-design-system.md` には Push の記述が無いので、cross/03 は直さない) | C |
-| `docs/design/mobile/03-push-notification.md` | §1 対象外に「サーバーからの送信 → `06-push-send.md`」。§3.3 のペイロード型を §6.3 の `PushMessage` への参照に。§3.5 の「サーバー側バッジ計算」を「付けない (06 §1.2)」に。§3.7 の Edge Function のコードと `pending_push_notifications` を「06 §6.3 (`next_attempt_at` で延期。表は作らない)」に。§3.9 を「06 §4 (Edge Function は作らない。登録は RPC `enqueue_push_notification`)」に。§4 の `pending_push_notifications` の DDL と §8 新規の `supabase/functions/notify-push/index.ts`・`create_pending_push_notifications.sql` を「作らない (06)」に。§6 の `DeviceNotRegistered` の行を「06 §6.3 (ticket と receipt の両方)」に、`Android FCM 未設定` の行 (510 行) を「06 の worker で `InvalidCredentials` の dead になり、iOS には届く」に。§3.4 の注 (204 行「家族の通知を送る実装 (`notify-push`) を作るときに決める」) を「06 §3.2 の後回しの行」に。§5.1 のシーケンス図 (461・468 行の参加者 `notify-push (Edge Fn)` と `functions.invoke`) を「`enqueue_push_notification` → `push_outbox` → worker」に。§9 の pg_cron の行を解消済みに、FCM の行 (569 行「`notify-push` 実装前に必要」) を「06 の worker の本番投入の前に必要」に | C |
+| `docs/design/mobile/03-push-notification.md` | §1 対象外に「サーバーからの送信 → `06-push-send.md`」。§3.3 のペイロード型を §6.3 の `PushMessage` への参照に。§3.5 の「サーバー側バッジ計算」を「付けない (06 §1.2)」に。§3.7 の Edge Function のコードと `pending_push_notifications` を「06 §6.3 (`next_attempt_at` で延期。表は作らない)」に。§3.9 を「06 §4 (Edge Function は作らない。登録は RPC `enqueue_push_notification`)」に。§4 の `pending_push_notifications` の DDL と §8 新規の `supabase/functions/notify-push/index.ts`・`create_pending_push_notifications.sql` を「作らない (06)」に。§6 の `DeviceNotRegistered` の行を「06 §6.3 (ticket と receipt の両方)」に、`Android FCM 未設定` の行 (510 行) を「06 の worker で `InvalidCredentials` になり (receipt の error の記録、ticket なら dead)、iOS には届く」に。§3.4 の注 (204 行「家族の通知を送る実装 (`notify-push`) を作るときに決める」) を「06 §3.2 の後回しの行」に。§5.1 のシーケンス図 (461・468 行の参加者 `notify-push (Edge Fn)` と `functions.invoke`) を「`enqueue_push_notification` → `push_outbox` → worker」に。§9 の pg_cron の行を解消済みに、FCM の行 (569 行「`notify-push` 実装前に必要」) を「06 の worker の本番投入の前に必要」に | C |
 | `docs/requirements/01-family-management.md` §15.7 (2021 行) | 「Android: 未確認 → `notify-push` Edge Function 実装前に確認必要」の `notify-push` を `mobile/06-push-send.md` の worker に。要件文書なので、直すかどうかはオーケストレーターが決める (設計書の追随 PR に含めるか別にするか) | C |
 | `docs/design/00-architecture.md` (252 行付近) | `notify-push/ # 新規 (Expo Push 一斉送信)` を「作らない。送信は Next の worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md`)」に | C |
 | `docs/design/operator/06-ai-llm.md` §8 の表 | `notify-push` の行を「作らない (mobile/06)」に | C |
@@ -1548,7 +1551,7 @@ worker の単体テストの行の token は `ExponentPushToken[…]` の形に�
 ## 14. 未解決事項
 
 - Expo の Enhanced push security を ON にし、`EXPO_ACCESS_TOKEN` を Vercel に入れる作業 (オーナー)。ON にするまでは、token を知る第三者も送れる (いまと同じ)。
-- Android の FCM V1 の資格情報を EAS に登録する作業 (オーナー。`03` §9・`mobile/01` §13 の既存の未解決)。未登録の間は Android の端末だけ `InvalidCredentials` で dead になる。
+- Android の FCM V1 の資格情報を EAS に登録する作業 (オーナー。`03` §9・`mobile/01` §13 の既存の未解決)。未登録の間は Android の端末だけ `InvalidCredentials` で届かない (receipt の error として記録と warn。ticket で返れば dead)。
 - 届けられなかった Push を運用メールで知らせるか (本書は知らせない。`app-log-alerts` に 4 つ目の種類を足すなら、メールの送信待ちの `email_dead_letter` と同じ形)。
 - 後回しの種類 (§3.2) の着手順と、家族・組織の通知の行き先 (WebView で Web の画面を開く形) の決め方。
 - 種類ごとの受け取り設定 (`03` §3.6) を足すときの `decideEligibility` の判定と、アプリの設定画面。
