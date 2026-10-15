@@ -1240,7 +1240,7 @@ worker (1 行ごと。`attempts` は失敗前の値、`max` = maxAttempts。「d
 
 | 項目 | 内容 |
 |---|---|
-| 種類 | `AppLogAlertScope` を `'server' | 'client' | 'email_dead_letter'` にする。エラー急増の 2 種類だけを指す型 `AppLogErrorSpikeScope = 'server' | 'client'` を新設し、急増の文面 (`src/lib/emails/ops/app-log-error-spike.ts`) はこちらを使う (§8.2)。判定の順は server → client → email_dead_letter (後ろの失敗は前の通知を止めない) |
+| 種類 | `AppLogAlertScope` を `'server' \| 'client' \| 'email_dead_letter'` にする。エラー急増の 2 種類だけを指す型 `AppLogErrorSpikeScope = 'server' \| 'client'` を新設し、急増の文面 (`src/lib/emails/ops/app-log-error-spike.ts`) はこちらを使う (§8.2)。判定の順は server → client → email_dead_letter (後ろの失敗は前の通知を止めない) |
 | 数え方 | RPC `email_outbox_dead_counts(窓 15 分, 上位 10)` (§5.2 (5))。suppressed・recipient_deleted・`ops_` の template は数えない |
 | しきい値 | `EMAIL_DEAD_LETTER_ALERT_THRESHOLD = 0` (= 1 件から。`exceedsErrorThreshold(total, 0)`)。環境変数で変えない (届かなかったメールは件数に関わらず知るべきもの) |
 | キー / クールダウン | `ops_alert_state.alert_key = 'email_dead_letter'`。クールダウンは `OPS_ALERT_COOLDOWN_MINUTES` (既定 60 分。3 種類で同じ値・抑止は別々) |
