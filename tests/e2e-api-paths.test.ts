@@ -30,6 +30,10 @@ const API_ROOT = path.join(ROOT, "src/app/api");
  * family/01・operator/01・operator/02 と、その道具の helpers/persona-api.ts は、主要ペルソナの happy path (#856)。
  * local-ci.sh / e2e-local.yml で実際に流れるが、存在しないパスを叩くと 404 の偽の結果になるので、ここでも見る。
  * tour/helpers.ts は、ハンズオンツアーの E2E (tests/e2e/tour) が呼ぶ・待つ API の道具 (#846。同じく local-ci.sh / e2e-local.yml で流れる)。
+ * w5-3-menu-gen-adversarial は、週の献立の生成の API へ直接送る検査を含む (#1622 で local-ci.sh / e2e-local.yml の常設に入れた)。
+ * 存在しないパスを叩くと 404 になり、「5xx でない」を見る検査が偽で通るので、ここでも見る。
+ * 同じく常設に入れた wave2-f2-queue-reliability は、API を画面の通信の差し替え (page.route のパターン) でしか書かず、
+ * ここで取り出す "/api/..." の文字列を持たないので対象にしない。
  */
 const SPEC_FILES: ReadonlyArray<{ file: string; minRefs: number }> = [
   { file: "tests/e2e/w5-12-admin-adversarial.spec.ts", minRefs: 21 },
@@ -38,6 +42,7 @@ const SPEC_FILES: ReadonlyArray<{ file: string; minRefs: number }> = [
   { file: "tests/e2e/operator/02-super-admin-flow.spec.ts", minRefs: 12 },
   { file: "tests/e2e/helpers/persona-api.ts", minRefs: 1 },
   { file: "tests/e2e/tour/helpers.ts", minRefs: 3 },
+  { file: "tests/e2e/w5-3-menu-gen-adversarial.spec.ts", minRefs: 15 },
 ];
 
 /**
