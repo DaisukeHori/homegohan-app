@@ -39,7 +39,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from "./helpers/local-ci-slot-test-timeout";
-import { SLOT_LIB, slotMaxOf, slotValueTable, slotValuesOf } from "./helpers/local-ci-slot-values";
+import { SLOT_LIB, SUPABASE_IMAGE_PULL_LIB, slotMaxOf, slotValueTable, slotValuesOf } from "./helpers/local-ci-slot-values";
 
 const ROOT = process.cwd();
 
@@ -300,7 +300,7 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
     fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
     fs.copyFileSync(path.join(ROOT, rel), path.join(tmp, rel));
   };
-  for (const rel of [SUPABASE_LOCAL, SLOT_LIB, "supabase/config.toml", "supabase/baseline/manifest.json"]) copy(rel);
+  for (const rel of [SUPABASE_LOCAL, SLOT_LIB, SUPABASE_IMAGE_PULL_LIB, "supabase/config.toml", "supabase/baseline/manifest.json"]) copy(rel);
   fs.mkdirSync(path.join(tmp, "supabase/migrations"), { recursive: true });
   execFileSync("git", ["init", "--quiet"], { cwd: tmp });
 
@@ -1854,7 +1854,7 @@ describe("scripts/supabase-local.sh: stop の prune の衝突のやり直し (#1
   // CLI と docker・sleep の代わりを置いた一時的な git リポジトリで、stop / stop-leftover を打つ (Docker も本物の CLI も使わない)
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "supabase-local-stop-"));
   afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  for (const rel of [SUPABASE_LOCAL, SLOT_LIB, "supabase/config.toml", "supabase/baseline/manifest.json"]) {
+  for (const rel of [SUPABASE_LOCAL, SLOT_LIB, SUPABASE_IMAGE_PULL_LIB, "supabase/config.toml", "supabase/baseline/manifest.json"]) {
     fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
     fs.copyFileSync(path.join(ROOT, rel), path.join(tmp, rel));
   }
