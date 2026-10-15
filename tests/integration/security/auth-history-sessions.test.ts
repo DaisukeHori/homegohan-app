@@ -119,6 +119,12 @@ async function createUser(label: string, options: { password?: string | null; pr
   });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
+  if (password === null) {
+    // GoTrue (v2.183.0) の admin.createUser は、password を渡さなくても乱数のパスワードの bcrypt を encrypted_password に入れる
+    // (トリガーが password_history に 1 行を書く)。Google / Apple だけの利用者 (encrypted_password が空) の形にそろえる
+    await pgQuery(`UPDATE auth.users SET encrypted_password = '' WHERE id = '${data.user.id}'`);
+    await pgQuery(`DELETE FROM public.password_history WHERE user_id = '${data.user.id}'`);
+  }
   if (options.profile) {
     const { error: profileError } = await srAdmin
       .from('user_profiles')
