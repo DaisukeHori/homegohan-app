@@ -1,4 +1,4 @@
--- migration: 20261015180000_rpc_profile_name_placeholder.sql
+-- migration: 20261015190000_rpc_profile_name_placeholder.sql
 -- Issue #1678 (#1649 の残り): SQL の RPC が、プロフィールの名前の仮置き 'Guest' を名前として返さないようにする
 --
 -- 背景:
@@ -39,7 +39,7 @@
 -- 既存データへの影響: なし (関数を足し、関数の本文を置き換えるだけ)。
 --   本番の family_members は 2026-10-15 時点で 0 行 (display_name が 'Guest' の行も 0 件) のため、既存の行は書き換えない。
 -- 冪等: CREATE OR REPLACE FUNCTION と REVOKE / GRANT のため、2 回続けて適用してもエラーにならない。
--- 戻し方: supabase/rollbacks/20261015180000_rpc_profile_name_placeholder.down.sql
+-- 戻し方: supabase/rollbacks/20261015190000_rpc_profile_name_placeholder.down.sql
 --   (3 つの RPC を 20251126124224_create_meal_planner_tables.sql の定義に戻してから、normalize_profile_name を消す)
 -- 確かめるテスト:
 --   tests/integration/security/rpc-profile-name-placeholder.test.ts (実 DB: 3 つの RPC・normalize_profile_name と normalizeProfileName の突き合わせ)

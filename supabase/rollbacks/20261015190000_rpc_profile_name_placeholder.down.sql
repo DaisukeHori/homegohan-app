@@ -1,4 +1,4 @@
--- rollback: 20261015180000_rpc_profile_name_placeholder.sql
+-- rollback: 20261015190000_rpc_profile_name_placeholder.sql
 -- get_invite_details・get_promotion_details・create_family_group を 20251126124224_create_meal_planner_tables.sql の定義
 -- (nickname をそのまま名前として返す・写す形) に戻し、そのあとで public.normalize_profile_name(text) を消す (#1678)。
 -- 戻しても、すでに作った family_members の display_name はそのまま残る (データは戻さない)。
