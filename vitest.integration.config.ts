@@ -18,6 +18,7 @@ import { defineConfig } from 'vitest/config';
 import { loadEnv } from 'vite';
 import path from 'node:path';
 import fs from 'node:fs';
+import { TASK_TITLE_VALUE_NO_TRUNCATE } from './vitest.config';
 
 // tsconfig.json の paths (`@/*` → `./src/*` と `./*`) と同じ解決をする。vitest.config.ts と同じ作り。
 // `@` を src だけに向けると、ルート直下の lib/ (lib/supabase/server.ts など) を import するアプリのモジュールを、
@@ -75,6 +76,8 @@ export default defineConfig(({ mode }) => {
     plugins: [atAliasPlugin()],
     test: {
       include: ['tests/integration/**/*.test.ts'],
+      // test.each の題名に差し込む値を切り詰めない。vitest.config.ts の TASK_TITLE_VALUE_NO_TRUNCATE と同じ理由 (#1621)
+      taskTitleValueFormatTruncate: TASK_TITLE_VALUE_NO_TRUNCATE,
       exclude: [
         '**/node_modules/**',
         '**/dist/**',
