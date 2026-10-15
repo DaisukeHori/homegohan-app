@@ -113,16 +113,22 @@ test("A-1: 週間献立ボタンを 2 回連打してもリクエストは 1 件
  * A-2: /api/ai/menu/weekly/request に認証なしで POST すると 401 が返ること。
  *       rate limit も認証後にのみ意味を持つため、認証チェックが先行していることを確認。
  */
-test("A-2: 未認証 POST /api/ai/menu/weekly/request → 401", async ({ page }) => {
-  // cookie なしで直接 fetch
-  const res = await page.request.post(
-    "/api/ai/menu/weekly/request",
-    {
-      data: { startDate: jstThisMonday() },
-      headers: { "Content-Type": "application/json" },
-    },
-  );
-  expect(res.status()).toBe(401);
+test.describe("A-2 (未ログイン)", () => {
+  // playwright.config.ts の共有ログイン状態 (storageState) を引き継がない。引き継ぐとログイン済みで送られ、
+  // 401 ではなく 200 が返る (本当に週の献立の生成を頼んでしまう)
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("A-2: 未認証 POST /api/ai/menu/weekly/request → 401", async ({ page }) => {
+    // cookie なしで直接 fetch
+    const res = await page.request.post(
+      "/api/ai/menu/weekly/request",
+      {
+        data: { startDate: jstThisMonday() },
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(res.status()).toBe(401);
+  });
 });
 
 /**

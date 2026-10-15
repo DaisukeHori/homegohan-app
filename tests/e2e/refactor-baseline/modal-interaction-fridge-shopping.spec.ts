@@ -131,10 +131,13 @@ test.describe("FridgeModal", () => {
     await addBtn.click();
 
     // FridgeModal に戻って追加した食材が表示される
-    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
+    // 期限が近い食材は「早めに使い切り」の案内にも名前が出るので、getByText だと 2 つに当たる (strict mode の違反)。
+    // 冷蔵庫の一覧の行 (data-testid="fridge-item") に絞る
+    const fridgeItem = page.getByTestId("fridge-item").filter({ hasText: uniqueName });
+    await expect(fridgeItem).toBeVisible({ timeout: 10_000 });
 
     // 追加した食材の行を取得して、danger系の背景色が設定されているか確認
-    const itemText = page.getByText(uniqueName).first();
+    const itemText = fridgeItem.getByText(uniqueName);
     const rowContainer = itemText.locator("xpath=ancestor::div[contains(@class,'rounded')]").first();
 
     // 背景色: dangerLight (#FDECEC) または danger 系のスタイルが設定されていること
@@ -217,10 +220,13 @@ test.describe("FridgeModal", () => {
     await addBtn.click();
 
     // FridgeModal に戻って追加した食材が表示される
-    await expect(page.getByText(uniqueName)).toBeVisible({ timeout: 10_000 });
+    // 期限が近い食材は「早めに使い切り」の案内にも名前が出るので、getByText だと 2 つに当たる (strict mode の違反)。
+    // 冷蔵庫の一覧の行 (data-testid="fridge-item") に絞る
+    const fridgeItem = page.getByTestId("fridge-item").filter({ hasText: uniqueName });
+    await expect(fridgeItem).toBeVisible({ timeout: 10_000 });
 
     // 追加した食材の行を取得
-    const itemText = page.getByText(uniqueName).first();
+    const itemText = fridgeItem.getByText(uniqueName);
     const rowContainer = itemText.locator("xpath=ancestor::div[contains(@class,'rounded')]").first();
 
     // 背景色: warningLight (#FEF9EE) = rgb(254, 249, 238) 系が設定されていること
