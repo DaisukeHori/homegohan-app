@@ -23,7 +23,7 @@
  *      ジョブは今の決まりのまま積む。画像の処理が料理の画像を書いても、完了を切り替えても、カバーは利用者の画像のまま。
  *      新しく作る入口 (POST) で送られた写真の料理は、画像を消さず AI の画像の料理にしない
  *   K. (#1553) 料理が 2 品以上の献立の PATCH に image_url / imageUrl の null: 利用者・写真のカバーを外し、AI の料理の画像
- *      (あれば) に戻す。料理が 1 品の献立は今までどおり変えない
+ *      (あれば) に戻す。料理が 1 品の献立 (手で付けた画像・AI の画像と別の利用者のカバー) は今までどおり変えない
  *
  * 献立の行の作り物は、入口が select で名指しした列だけを返す (入口が読まない列 (catalog_product_id など) を読んだことにしない)
  */
@@ -1005,5 +1005,24 @@ describe.each(CLEAR_COVER_ENTRIES)('#1553 K. 料理が 2 品以上の献立で�
     expect(savedRow().image_url).toBe(USER_COVER);
     expect((savedRow().dishes as MealImageDish[])[0]).toMatchObject({ image_url: USER_COVER, image_source: 'manual_override', image_status: 'ready' });
     expect(h.state.queueInserts).toEqual([]);
+  });
+
+  it('料理が 1 品の AI の献立 (料理の画像ができあがり、カバーは別の利用者の画像): 今までどおりカバーを残し、AI の料理の画像に戻さない', async () => {
+    // 2 品で利用者がカバーを付けたあと 1 品に減らした献立など。料理が 1 品なら null でもカバーを外さない (2 品以上だけ)
+    const pending = (await reconcileDishImages({ previousDishes: [], nextDishes: [THREE_AI_DISHES[0]], triggerSource: 'test' })).dishes;
+    h.state.queueInserts = [{ dish_index: 0 }];
+    const ready = runImageWorker(pending, USER_COVER);
+    h.state.queueInserts = [];
+    expect(ready.cover).toBe(USER_COVER);
+    h.state.existingDishes = ready.dishes;
+    h.state.existingImageUrl = USER_COVER;
+
+    const out = await entry.clear();
+
+    expect(out.status).toBe(200);
+    expect(savedRow().image_url).toBe(USER_COVER);
+    expect((savedRow().dishes as MealImageDish[])[0]).toMatchObject({ image_url: aiImageUrl(0), image_source: 'generated_ai', image_status: 'ready' });
+    expect(h.state.queueInserts).toEqual([]);
+    expect(h.consumeAiUsage).not.toHaveBeenCalled();
   });
 });

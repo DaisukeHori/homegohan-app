@@ -193,12 +193,28 @@ describe("save-meal: AI の作り直しの料理の画像とカバー (#1553・#
     expect(row.image_url).toBeNull();
   });
 
-  it("写真の料理 (複数) の枠を、料理の数だけ減らして (残った料理は同じ) 作り直すと、写真のカバーを外す (残った料理の写真の状態はそのまま) (#1553)", async () => {
+  it("写真の料理 (複数) の枠を、料理の数だけ減らして (残った料理は同じ) 作り直すと、写真のカバーを外し、残った写真の料理も AI の画像の生成に回す (#1553)", async () => {
     const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }, { name: "味噌汁", role: "soup" }], PHOTO_URL);
     const row = await regenerate(previous, [{ name: "親子丼", role: "main", ingredients: [], instructions: [] } as never]);
 
-    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [] }));
-    expect(row.dishes[0]).toMatchObject({ name: "親子丼", image_url: null, image_source: "meal_photo", image_status: "stale" });
+    // カバーが空・ジョブが 0 で、画像の無い写真の印の料理だけが残る献立にしない
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0, dishName: "親子丼" })] }));
+    expect(row.dishes[0]).toMatchObject({ name: "親子丼", image_url: null, image_source: "generated_ai", image_status: "pending" });
+    expect(row.dishes[0].image_subject_hash).toBeTruthy();
+    expect(row.image_url).toBeNull();
+  });
+
+  it("写真の料理 (複数) の枠を、一部の料理だけ変えて作り直すと、同じまま残った写真の料理も AI の画像の生成に回す (#1553)", async () => {
+    const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }, { name: "味噌汁", role: "soup" }], PHOTO_URL);
+    const row = await regenerate(previous, [{ name: "親子丼", role: "main", ingredients: [], instructions: [] } as never, aiDish("けんちん汁", "soup")]);
+
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
+      jobs: [expect.objectContaining({ dishIndex: 0 }), expect.objectContaining({ dishIndex: 1 })],
+    }));
+    expect(row.dishes.map((dish) => [dish.image_source, dish.image_status, dish.image_url])).toEqual([
+      ["generated_ai", "pending", null],
+      ["generated_ai", "stale", null],
+    ]);
     expect(row.image_url).toBeNull();
   });
 

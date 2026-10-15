@@ -54,7 +54,10 @@ export interface ReconcileDishImagesParams<TDish extends MealImageDish> {
    * 真で、前回の献立が商品の献立でない (previousMealIsCatalog が偽) とき:
    *   - 中身が変わった料理 (前回の料理と subject_hash が違う) は、前回の写真・手で付けた画像を写さず、AI の画像のジョブを積む
    *   - 料理が変わった (前回と料理の数が違うか、中身が変わった料理がある) なら、利用者のカバー (写真・利用者が付けた画像など、
-   *     AI の料理の画像でないカバー) を外し、新しい料理の画像からカバーを選び直す (候補が無ければ空。できた AI の画像が付く)
+   *     AI の料理の画像でないカバー) を外し、新しい料理の画像からカバーを選び直す (候補が無ければ空。できた AI の画像が付く)。
+   *     あわせて、料理ごとの画像を持たずカバーに頼っていた写真・商品・手の画像の料理 (写真の複数の料理の、中身が同じまま残った料理など)
+   *     も、AI の画像の料理 (generated_ai・'pending'・subject_hash 付き) にしてジョブを積む
+   *     (カバーが空・ジョブが 0 で、画像の無い写真の印の料理だけが残る献立を作らない)
    * 料理が同じまま (前回と同じ数・同じ中身) の保存し直しでは、今までどおり何も外さない。
    * 商品の献立は、作り直しても商品の料理・商品の画像のまま (商品とのつながりは、この保存では外さないため)
    */
@@ -557,7 +560,15 @@ export function isMealCoverHeldByImagelessPreservedDish(
   mealCoverImageUrl: string | null | undefined,
 ): boolean {
   if (!mealCoverImageUrl) return false;
-  return dishes.some((dish) => isCoverReadySource(dish.image_source ?? null) && !dish.image_url);
+  return dishes.some(isImagelessCoverReadyDish);
+}
+
+/**
+ * 料理ごとの画像を持たず、献立のカバーに頼る写真・商品・手の画像の料理か (写真の複数の料理 (buildPhotoDishList) など)。
+ * isMealCoverHeldByImagelessPreservedDish と、AI の作り直しで料理が変わったときに AI の画像へ回す料理 (#1553) の判定
+ */
+function isImagelessCoverReadyDish(dish: MealImageDish): boolean {
+  return isCoverReadySource(dish.image_source ?? null) && !dish.image_url;
 }
 
 function normalizeWhitespace(value: string): string {
@@ -755,8 +766,19 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
 
   const dishes: TDish[] = [];
   let jobs: MealImageJobSeed[] = [];
+  const buildDishJobSeed = (dish: MealImageDish, index: number, subjectHash: string, prompt: string): MealImageJobSeed => ({
+    dishIndex: index,
+    dishName: String(dish.name ?? '').trim() || `dish-${index + 1}`,
+    subjectHash,
+    prompt,
+    model,
+    triggerSource: params.triggerSource,
+    referenceImageUrls: [],
+  });
   /** AI の画像のジョブを積もうとした料理 (献立のカバーを守るために積むのをやめるとき、料理の状態を戻すのに使う) */
   const jobDishes: Array<{ index: number; sameSubject: boolean; previousDish: TDish | undefined }> = [];
+  /** 料理ごとの subject_hash とプロンプト (AI の作り直しで、カバーに頼っていた料理を AI の画像へ回すときに使う。#1553) */
+  const dishSubjects: Array<{ subjectHash: string; prompt: string }> = [];
 
   for (let index = 0; index < nextDishes.length; index += 1) {
     const nextDish = nextDishes[index];
@@ -772,6 +794,7 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
       : null;
     const sameSubject = previousSubjectHash === subjectHash;
     if (!sameSubject) mealDishesChanged = true;
+    dishSubjects.push({ subjectHash, prompt });
     // AI の作り直しで中身が変わった料理は、前回の写真・手で付けた画像を写さない (#1553。新しい料理の AI の画像を作る)
     const releasePreviousDishImage = releaseUserImagesOnChange && !!previousDish && !sameSubject;
 
@@ -837,15 +860,41 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     dishes.push(reconciledDish);
     jobDishes.push({ index, sameSubject, previousDish });
 
-    jobs.push({
-      dishIndex: index,
-      dishName: String(nextDish.name ?? '').trim() || `dish-${index + 1}`,
-      subjectHash,
-      prompt,
-      model,
-      triggerSource: params.triggerSource,
-      referenceImageUrls: [],
-    });
+    jobs.push(buildDishJobSeed(nextDish, index, subjectHash, prompt));
+  }
+
+  // AI の作り直しで料理が変わったら、利用者のカバー (AI の料理の画像でないカバー) を外す (#1553)。
+  // 外したカバーは無いものとして、ジョブを積むか (下の判定) とカバーの選び直し (deriveMealCoverImage) を決める
+  const releaseOnRegeneration = releaseUserImagesOnChange && mealDishesChanged;
+  const currentCoverImageUrl = params.fallbackMealImageUrl ?? null;
+  const releaseUserCover = releaseOnRegeneration &&
+    !isMealCoverAutoReplaceable(currentCoverImageUrl, [dishes, previousDishes]);
+  const mealCoverForOwnership = releaseUserCover ? null : currentCoverImageUrl;
+
+  // AI の作り直しで料理が変わったら、料理ごとの画像を持たずカバーに頼っていた写真・商品・手の画像の料理
+  // (写真の複数の料理の、中身が同じまま残った料理など) も AI の画像の料理にしてジョブを積む (#1553)。
+  // 写真のカバーは上で外すので、残すと画像がどこにも無いまま「再生成待ち」の写真の印の料理になり、あとから画像を作る経路も無い
+  // (needsImageRetry は写真の料理を積み直さない)。外すカバーが空・AI の画像のときも、その料理に画像が無いのは同じなので回す。
+  // 回したあとはカバーに頼る料理が残らないので、下の「ジョブを積まない」判定には当たらない
+  if (releaseOnRegeneration) {
+    for (let index = 0; index < dishes.length; index += 1) {
+      if (!isImagelessCoverReadyDish(dishes[index])) continue;
+      const { subjectHash, prompt } = dishSubjects[index];
+      const released: TDish = {
+        ...dishes[index],
+        image_subject_hash: subjectHash,
+        image_url: null,
+        image_source: 'generated_ai',
+        // ここに来るのは前回と同じ料理 (中身が変わった料理は、上で前回の写真・手の画像を写さず積んでいる) なので、
+        // 前回の画像の無い料理の画像を作る 'pending' (更新待ちの 'stale' ではない。同じ料理の積み直しと同じ決まり)
+        image_status: 'pending',
+        image_generated_at: null,
+        image_error: null,
+      };
+      dishes[index] = released;
+      jobs.push(buildDishJobSeed(released, index, subjectHash, prompt));
+    }
+    jobs.sort((a, b) => a.dishIndex - b.dishIndex);
   }
 
   // 献立のカバーが、料理ごとの画像を持たない写真・商品の料理のもの (写真の複数の料理・画像の項目の無い商品の料理) なら、
@@ -854,13 +903,6 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
   // 積むのをやめた料理は、前回と同じ料理なら前回の状態をそのまま写す ('pending' にすると、処理するジョブが無いので「生成中」のまま残る)。
   // それ以外 (足した料理・中身を変えた料理) は画像の無い状態 (状態なし。画面は「生成中」「再生成待ち」を出さない) にし、
   // subject_hash も付けない (AI の画像の料理とみなさず、次に変えずに保存し直しても積み直さない)
-  // AI の作り直しで料理が変わったら、利用者のカバー (AI の料理の画像でないカバー) を外す (#1553)。
-  // 外したカバーは無いものとして、ジョブを積むか (下の判定) とカバーの選び直し (deriveMealCoverImage) を決める
-  const currentCoverImageUrl = params.fallbackMealImageUrl ?? null;
-  const releaseUserCover = releaseUserImagesOnChange && mealDishesChanged &&
-    !isMealCoverAutoReplaceable(currentCoverImageUrl, [dishes, previousDishes]);
-  const mealCoverForOwnership = releaseUserCover ? null : currentCoverImageUrl;
-
   if (jobs.length > 0 && isMealCoverHeldByImagelessPreservedDish(dishes, mealCoverForOwnership)) {
     for (const { index, sameSubject, previousDish } of jobDishes) {
       const kept: TDish = { ...dishes[index] };
