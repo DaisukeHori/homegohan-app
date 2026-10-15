@@ -57,6 +57,8 @@ type Entry = {
 };
 
 const ENTRIES: Entry[] = [
+  { file: 'account/data-requests/[id]/verify/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/[id]/verify/route')).POST },
+  { file: 'account/data-requests/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/route')).POST },
   { file: 'account/delete/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/delete/route')).POST },
   { file: 'admin/catalog/import/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/catalog/import/route')).POST },
   { file: 'admin/finance/exports/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/finance/exports/route')).POST },
@@ -98,6 +100,8 @@ const ENTRIES: Entry[] = [
   { file: 'ai/nutrition/feedback/route.ts', method: 'POST', load: async () => (await import('@/app/api/ai/nutrition/feedback/route')).POST },
   { file: 'ai/nutrition/route.ts', method: 'POST', load: async () => (await import('@/app/api/ai/nutrition/route')).POST },
   { file: 'announcements/route.ts', method: 'POST', load: async () => (await import('@/app/api/announcements/route')).POST },
+  { file: 'billing/checkout/route.ts', method: 'POST', load: async () => (await import('@/app/api/billing/checkout/route')).POST },
+  { file: 'billing/checkout/sync/route.ts', method: 'POST', load: async () => (await import('@/app/api/billing/checkout/sync/route')).POST },
   { file: 'comparison/trigger/route.ts', method: 'POST', load: async () => (await import('@/app/api/comparison/trigger/route')).POST },
   { file: 'contact/route.ts', method: 'POST', load: async () => (await import('@/app/api/contact/route')).POST },
   { file: 'csp-report/route.ts', method: 'POST', load: async () => (await import('@/app/api/csp-report/route')).POST },
@@ -204,6 +208,8 @@ const EXCLUDED: Readonly<Record<string, string>> = {
     'Content-Type と本文の長さの上限を、本文を JSON として読むより前に確かめる作り。本文の文字列 (terms_version・privacy_version) は今の版と一致しなければ 409 で、DB には今の版の定数だけが届く',
   'POST upload/route.ts':
     '本文は multipart/form-data で JSON ではない (rejectNullCharacterBody は JSON として読めない本文を確かめない)。ファイルは Storage に置き、DB の text / jsonb には書かない',
+  'POST webhooks/stripe/route.ts':
+    '本文は Stripe が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (billing/01 §9.6)',
   'POST webhooks/resend/route.ts':
     '本文は Resend が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (route の冒頭のコメント)',
 };

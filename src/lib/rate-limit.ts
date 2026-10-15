@@ -59,6 +59,7 @@ export type RateLimitCategory =
   | 'auth-mfa-verify'
   | 'auth-mfa-recover'
   | 'dsr'
+  | 'billing'
   | 'csp-report';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
@@ -129,6 +130,9 @@ const HOUR_SEC = 60 * MINUTE_SEC;
 // - auth-mfa-recover: バックアップコードによる回復 (#1176。POST /api/auth/mfa/recover、key = user.id)。
 //   50 bit のコード。1 時間 10 回で総当たりは不可能。本人は 10 個のうち 1 個を打てればよい
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
+  // 課金の操作 (Checkout の作成・Portal・解約の予約と取り消し・戻り画面の同期)。利用者ごと。
+  // Stripe の API を 1〜2 回呼ぶ操作なので、連打で Stripe 側のレート制限や顧客の重複を起こさない値
+  billing: [{ name: 'billing', max: 10, windowSec: MINUTE_SEC }],
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
   image: [
