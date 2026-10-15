@@ -428,8 +428,19 @@ describe('#1686 デプロイの段は、イメージの取得の失敗とデプ�
     expect(r.stdout).toContain('Deployed Functions on project');
     expect(r.stdout).not.toContain('::error');
     expect(r.summary).toBe('');
-    expect(r.args.slice(1)).toEqual(['functions', 'deploy', '--use-api', '--import-map', IMPORT_MAP, '--project-ref', FAKE_PROJECT_REF]);
-    expect(r.args[0]).toBe('--yes');
+    const version = deploySteps.find((step) => step.name === CLI_VERSION_STEP)?.run?.match(/\bsupabase@(\d+\.\d+\.\d+)\b/)?.[1];
+    expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(r.args).toEqual([
+      '--yes',
+      `supabase@${version}`,
+      'functions',
+      'deploy',
+      '--use-api',
+      '--import-map',
+      IMPORT_MAP,
+      '--project-ref',
+      FAKE_PROJECT_REF,
+    ]);
   });
 
   it.each([
