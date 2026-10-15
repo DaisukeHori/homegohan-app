@@ -794,7 +794,10 @@ $$);
    - 認証済みセッションが必須 (未認証は 401、confirm がなければ 400)
    - 凍結中の利用者も呼べる (#1445)。middleware は凍結中の利用者の /api を 403 AUTH_ACCOUNT_FROZEN で止めるが、
      退会 (POST /api/account/delete) と書き出し (GET /api/account/export) だけは止めない
-     (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS。完全一致。一覧は lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)
+     (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS。完全一致。一覧は lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)。
+     ほかに凍結中でも止めないのは、通知のトークンの claim (POST /api/push-tokens/claim。#1636) だけ。利用者の操作ではなく
+     端末の後片付け (同じ端末の前の利用者の行を外す) のため。退会・書き出しの一覧には入れず、src/lib/push-tokens.ts の
+     isPushTokenClaimApiPath で別に判定する (全 route で広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts)
 3. 削除をブロックする条件 (409):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)

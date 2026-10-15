@@ -45,6 +45,62 @@ Expo Push Notifications を使用したプッシュ通知の設計を定義す�
    起動時の自動登録 (`ensurePushTokenRegistered`) は、起動・ログインした利用者が変わるたびに 1〜5 を通す (「登録済み」の印で省かない。
    ほかの利用者の claim で行が消えていても、次のログインで登録し直すため)
 
+#### 所有の証明 — 端末の秘密の値 (#1636)
+
+トークンの値を知っているだけの他人が、自分の行としてその値を登録 (RLS で自分の行は書ける) して claim すると、持ち主の行を消せた。
+そこで、claim が外す行を「同じ端末の前の利用者の行」に絞る。取り決めの正本は `packages/shared/src/push-token-claim.ts`。
+
+- **端末の秘密の値 (install secret)**: 端末 (アプリのインストール) ごとに 1 つ。32 バイトの乱数の base64url (43 文字)。
+  サーバーが作って claim の応答で 1 度だけ返し、端末が保管庫 (`expo-secure-store`。`AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY`) に置く
+  (`apps/mobile/src/lib/pushInstallSecret.ts`)。サーバーは値を持たず、SHA-256 (16 進の小文字 64 文字) を `user_push_tokens.install_secret_hash` に持つ
+  (migration `20261016163600_user_push_tokens_install_secret.sql`。CHECK で形を固定)。
+  利用者ごとではない (同じ端末でログインした利用者はみな同じ値)。ログアウト・退会の掃除では消さない。
+  アプリに安全な乱数の部品 (`expo-crypto` など) が無いので、ネイティブの部品を足さずに済むよう、サーバー (`node:crypto`) で作る
+- **claim の本文と動き** (`src/app/api/push-tokens/claim/route.ts`)
+
+  | 本文 | アプリがこう送るとき | 本人の行のハッシュ | 外す行 (同じトークンの、ほかの利用者の行のうち) | 応答 |
+  |---|---|---|---|---|
+  | `{ expo_push_token, install_secret }` | 保管庫に値がある | 送った値のハッシュを書く | ハッシュが同じ行 (= 同じ端末の前の利用者) と、ハッシュの無い行 | `{ released }` |
+  | `{ expo_push_token, issue_install_secret: true }` | 保管庫に値が無い (初回・保管庫の値が壊れた) | 作った値のハッシュを書く | ハッシュの無い行 | `{ released, install_secret }` (アプリが保管庫に置く) |
+  | `{ expo_push_token }` | 古い版のアプリ (#1636 より前)・保管庫を読めなかった | 触れない | ハッシュの無い行 | `{ released }` |
+
+  両方を同時に送る・形の違う値は 400。ハッシュの無い行 (古い版のアプリの行) は、移行のあいだ今までどおり外す
+  (新しい版のアプリは起動のたびに claim して自分の行にハッシュを書くので、新しい版の利用者の行は守られる。古い版の利用者の行は守られない)。
+  応答は `Cache-Control: private, no-store`
+- 保管庫を読めないときは、値を作り直さない (作り直すと、この端末の前の利用者の行を外せなくなる)。次の起動でやり直す
+- 本人の行のハッシュは RLS で本人が書き換えられるが、守っているのはハッシュではなく秘密の値 (端末の保管庫にだけある)。
+  サーバーは本文の値からハッシュを計算し直して比べるので、自分の行に好きなハッシュを書いても、ほかの利用者の行は外せない
+- 他人の端末の値では外せない代わりに、他人が同じトークンで登録した行 (別のハッシュ) は、持ち主の claim でも外れない
+  (他人の通知が持ち主の端末に届くことはありうる。持ち主の情報は漏れない。#1599 より前と同じ)
+- 比べた案: Expo の push receipt や通知で送ったノンスを端末に返させる案は、通知の到達 (iOS の無音の通知の間引きなど) に頼り、
+  往復と待ちが要る。端末で作った鍵の署名は、アプリに暗号の部品を足す必要がある。サーバーが作る秘密の値が部品も往復も最も少ない
+
+#### セッションの無いときの後片付け — release (#1636)
+
+ログアウト (`signOut.ts`) を通らずにセッションが終わったとき (自動更新で refresh_token が失効と答えた `SIGNED_OUT`・起動時にサーバーが失効と明言したとき) は、
+セッションが無いので RLS では行を消せない。`POST /api/push-tokens/release` (`{ expo_push_token, install_secret, user_id }`。認証なし) で消す
+(`src/app/api/push-tokens/release/route.ts`)。サーバーは利用者 ID・トークン・秘密の値のハッシュの 3 つが合う行だけを消す
+(本文の利用者の行だけなので、サインアウトのあとにすぐ別の利用者がログインして登録した行は巻き込まない。ハッシュの無い行は所有を確かめられないので消さない)。
+アプリ側の流れは `05-auth-session.md` §3 と `apps/mobile/src/lib/pushTokenRelease.ts`。
+
+- 消せなかったとき (圏外・メンテナンス中の 503・サーバーのエラー) は、宛先 (利用者 ID とトークンの値) を AsyncStorage の `push_token_release_pending_v1`
+  (利用者別のキーではない。上限 10 件) に控え、次の起動 (未ログインと決まったとき) と次の `SIGNED_OUT` でやり直す。400 は控えから捨てる
+- サインアウトした利用者が分からないとき (アプリが閉じている間に refresh_token が失効し、次の起動で supabase-js の初期化がセッションを消したときなど) は、
+  端末に残っている値 (`push_token_value_v1:<利用者>`) を全部宛先にする (端末は未ログインなので、どれもサインアウトした利用者のもの)。
+  起動時に未ログインと決まったときは、掃除が値を消す前に控える (`05-auth-session.md` §3)
+- 同じトークンの claim が秘密の値つきで成功したら、そのトークンの控えを捨てる (同じ端末の前の利用者の行はそれで外れる)
+- 登録 (upsert) は、動いている release が終わってから行う (未ログインの起動で始めた release が、すぐにログインした同じ利用者の登録し直した行を消さないように)
+- 端末に秘密の値が無いとき (古い版のアプリで登録した端末) は、release では消せないので控えを捨てる (次にこの端末でログインした利用者の claim が外す)
+
+#### middleware の例外 (#1636)
+
+claim は利用者の操作ではなく端末の後片付けなので、メンテナンス中 (503)・凍結中 (403) でも middleware が止めない
+(`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。完全一致の 1 本だけ。`src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath` と
+`lib/supabase/middleware.ts` の凍結の判定が使う)。route は今までどおり本人の認証を求める。
+release は例外にしない (メンテナンス中は 503 で止まり、アプリが次の起動でやり直す。凍結は未ログインの要求には効かない)。
+例外が claim から広がらないことは `lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts` が `src/app/api` の全 route を
+middleware に通して確かめる。
+
 #### DB スキーマ変更 (`user_push_tokens`)
 
 現在の `user_push_tokens` テーブルに `organization_id` 列を追加する。
@@ -438,6 +494,9 @@ sequenceDiagram
 | `getExpoPushTokenAsync` が null を返す | エラーを silent に処理、設定画面で手動再試行を促す |
 | `user_push_tokens` への upsert 失敗 | エラーログ、次回起動時に再試行 |
 | `POST /api/push-tokens/claim` の失敗 (#1599) | エラーログ (段 `claim_token`)、次回起動時に再試行 (起動のたびに登録と claim を通す) |
+| claim で発行された端末の秘密の値を保管庫に置けない (#1636) | 登録は成功扱い。次の claim でまた作ってもらう (本人の行のハッシュは書き換わる) |
+| 端末の保管庫を読めない (#1636) | claim は秘密の値なしで送る (ハッシュの無い古い行だけが外れる)。値は作り直さない。次回起動時に再試行 |
+| `POST /api/push-tokens/release` の失敗 (#1636) | 宛先を控え (`push_token_release_pending_v1`)、次の起動 (未ログイン)・次の `SIGNED_OUT` で再試行。400 は捨てる |
 | Expo Push API がトークン無効を返す (`DeviceNotRegistered`) | `user_push_tokens` から該当トークンを削除 |
 | Push 権限が拒否済み | OS 設定画面へ誘導 (`Linking.openSettings()`) |
 | Quiet Hours 中の緊急通知 | `URGENT_CATEGORIES` はスキップせず即送信 |
