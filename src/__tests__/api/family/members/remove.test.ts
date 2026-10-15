@@ -44,6 +44,12 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 import { POST } from '@/app/api/family/members/[member_id]/remove/route';
+import {
+  MEMBERSHIP_ERROR_FALLBACK_MESSAGE,
+  MEMBERSHIP_ERROR_MESSAGES,
+  MembershipErrorCode,
+  membershipErrorMessageOfBody,
+} from '@/lib/errors/membership-errors';
 
 const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
 const REP_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'; // 代表者 (花子): 除名を実行する
@@ -398,5 +404,23 @@ describe('POST /api/family/members/[member_id]/remove: 除名の通知メール 
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(fake.events).toEqual([]);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  // #1576: 画面 (家族の一覧・メンバーの詳細) は本文の code から理由の文を引く。この route が返す 4xx の code は、
+  // どれも MembershipErrorCode の値で、汎用の文に落ちない
+  it('4xx の本文の code は、どれも MembershipErrorCode の値で、画面が理由の文を引ける (#1576)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'CANNOT_REMOVE_REPRESENTATIVE', code: 'P0001' } });
+    const cases: Array<[Response, number, MembershipErrorCode]> = [
+      [await call(ADULT_ROW_ID, '{not json'), 400, MembershipErrorCode.INVALID_REQUEST],
+      [await call(ADULT_ROW_ID, {}), 400, MembershipErrorCode.VALIDATION_ERROR],
+      [await call(), 409, MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE],
+    ];
+    for (const [res, status, code] of cases) {
+      const json = await res.json();
+      expect(res.status).toBe(status);
+      expect(json.error.code).toBe(code);
+      expect(membershipErrorMessageOfBody(json)).toBe(MEMBERSHIP_ERROR_MESSAGES[code]);
+      expect(membershipErrorMessageOfBody(json)).not.toBe(MEMBERSHIP_ERROR_FALLBACK_MESSAGE);
+    }
   });
 });

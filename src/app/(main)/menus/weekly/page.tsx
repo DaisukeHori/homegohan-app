@@ -61,6 +61,8 @@ import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
+import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
+import { shoppingListRequestErrorMessageForDisplay } from "@/lib/shopping-list-request-error";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
 import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
@@ -1215,7 +1217,7 @@ export default function WeeklyMenuPage() {
           // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
           dispatchAiGen({
             type: 'GEN_FAIL',
-            payload: { error: currentStatus.errorMessage || '生成に失敗しました', requestId },
+            payload: { error: weeklyMenuRequestErrorMessageForDisplay(currentStatus.errorMessage) || '生成に失敗しました', requestId },
           });
           return;
         }
@@ -1251,7 +1253,7 @@ export default function WeeklyMenuPage() {
             // (GEN_FAIL が isGenerating/generationProgress のクリアも兼ねる)
             dispatchAiGen({
               type: 'GEN_FAIL',
-              payload: { error: progress.errorMessage || '生成に失敗しました', requestId },
+              payload: { error: weeklyMenuRequestErrorMessageForDisplay(progress.errorMessage) || '生成に失敗しました', requestId },
             });
             return;
           }
@@ -1562,7 +1564,7 @@ export default function WeeklyMenuPage() {
                     localStorage.removeItem('weeklyMenuGenerating');
                     dispatchAiGen({
                       type: 'GEN_FAIL',
-                      payload: { error: error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+                      payload: { error: weeklyMenuRequestErrorMessageForDisplay(error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
                     });
                   } else {
                     // completed の場合はlocalStorageをクリア
@@ -2177,7 +2179,7 @@ export default function WeeklyMenuPage() {
           cleanupRealtime();
           dispatchAiGen({
             type: 'GEN_FAIL',
-            payload: { error: data.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+            payload: { error: weeklyMenuRequestErrorMessageForDisplay(data.error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
           });
         }
       } catch (e) {
@@ -2279,9 +2281,11 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
+              // 行の error_message は、こちらで書いた定型の文だけをそのまま出し、それ以外は汎用の文に寄せる
+              // (useV4MenuGeneration と同じ絞り込み。進まなくなった行の英語の印は日本語の文にする。#1478・#1576)
               dispatchAiGen({
                 type: 'GEN_FAIL',
-                payload: { error: newData.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+                payload: { error: weeklyMenuRequestErrorMessageForDisplay(newData.error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
               });
             }
             // status === 'queued' / 'pending' / 'processing' の場合は継続して監視
@@ -2978,7 +2982,7 @@ export default function WeeklyMenuPage() {
         } else if (data.status === 'failed') {
           console.log('❌ Shopping list regeneration failed (polling)');
           if (closeShoppingListIfAiConsentRequired(data.result?.error)) return;
-          const errorMsg = data.result?.error || '再生成に失敗しました';
+          const errorMsg = shoppingListRequestErrorMessageForDisplay(data.result?.error) || '再生成に失敗しました';
           setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
           // 5秒後に自動で閉じる
           setTimeout(() => {
@@ -3059,7 +3063,8 @@ export default function WeeklyMenuPage() {
           } else if (newData.status === 'failed') {
             console.log('❌ Shopping list regeneration failed (realtime)');
             if (closeShoppingListIfAiConsentRequired(newData.result?.error)) return;
-            const errorMsg = newData.result?.error || '再生成に失敗しました';
+            // 行の result.error は、こちらで書いた文 (定型の失敗の文・同意・上限) だけをそのまま出す (#1576)
+            const errorMsg = shoppingListRequestErrorMessageForDisplay(newData.result?.error) || '再生成に失敗しました';
             setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
             // 5秒後に自動で閉じる
             setTimeout(() => {
@@ -3816,7 +3821,7 @@ export default function WeeklyMenuPage() {
         if (data.status === 'completed') {
           await finishRegenerate('completed');
         } else if (data.status === 'failed') {
-          await finishRegenerate('failed', data.errorMessage || data.error_message);
+          await finishRegenerate('failed', weeklyMenuRequestErrorMessageForDisplay(data.errorMessage || data.error_message) ?? undefined);
         }
       } catch (e) {
         console.error('Regenerate polling error:', e);
@@ -3851,7 +3856,8 @@ export default function WeeklyMenuPage() {
           if (newStatus === 'completed') {
             await finishRegenerate('completed');
           } else if (newStatus === 'failed') {
-            await finishRegenerate('failed', newData.error_message || undefined);
+            // 行の error_message は、こちらで書いた定型の文だけをそのまま出す (useV4MenuGeneration と同じ絞り込み。#1576)
+            await finishRegenerate('failed', weeklyMenuRequestErrorMessageForDisplay(newData.error_message) ?? undefined);
           }
         }
       )
@@ -4505,7 +4511,7 @@ export default function WeeklyMenuPage() {
             setGenerationProgress(uiProgress);
 
             if (progress.status === 'completed' || progress.status === 'failed') {
-              await finishImprove(progress.status, progress.errorMessage);
+              await finishImprove(progress.status, weeklyMenuRequestErrorMessageForDisplay(progress.errorMessage) ?? undefined);
             }
           }
         );
@@ -4521,7 +4527,7 @@ export default function WeeklyMenuPage() {
             if (status === 'completed') {
               await finishImprove('completed');
             } else if (status === 'failed') {
-              await finishImprove('failed', errorMessage || errorMessageSnake);
+              await finishImprove('failed', weeklyMenuRequestErrorMessageForDisplay(errorMessage || errorMessageSnake) ?? undefined);
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
               setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, false));

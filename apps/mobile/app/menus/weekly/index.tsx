@@ -75,6 +75,7 @@ import {
 } from "../../../src/lib/ai-consent";
 import { isAiDailyLimitError } from "../../../src/lib/ai-daily-limit";
 import { errorOfFailedResponse, stoppedByServerMessageOr } from "../../../src/lib/failed-response";
+import { menuRequestErrorMessageForDisplay } from "../../../src/lib/menu-request-error";
 
 type PlannedMealRow = {
   id: string;
@@ -1090,7 +1091,9 @@ export default function WeeklyMenuPage() {
             setPendingIsUltimate(false);
             // サーバーが同意の判定で止めた (未同意。T15 / #1154) なら案内を出し、失敗の表示は出さない
             if (handleStoredAiConsentFailure(newRecord.error_message, promptAiConsentAfterClosingModals)) return;
-            setError(newRecord.error_message ?? "週間献立の生成に失敗しました。");
+            // 行の error_message は、こちらで書いた定型の文だけをそのまま出し、それ以外は汎用の文に寄せる
+            // (useV4MenuGeneration と同じ絞り込み。進まなくなった行の英語の印は日本語の文にする。#1478・#1576)
+            setError(menuRequestErrorMessageForDisplay(newRecord.error_message) ?? "週間献立の生成に失敗しました。");
           }
         }
       )
@@ -1131,7 +1134,7 @@ export default function WeeklyMenuPage() {
           setPendingIsUltimate(false);
           // サーバーが同意の判定で止めた (未同意。T15 / #1154) なら案内を出し、失敗の表示は出さない
           if (handleStoredAiConsentFailure(res.errorMessage, promptAiConsentAfterClosingModals)) return;
-          setError(res.errorMessage ?? "週間献立の生成に失敗しました。");
+          setError(menuRequestErrorMessageForDisplay(res.errorMessage) ?? "週間献立の生成に失敗しました。");
         }
       } catch {
         // Ignore transient polling errors

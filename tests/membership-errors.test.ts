@@ -227,9 +227,48 @@ describe("membershipErrorMessage / membershipErrorMessageOfBody (#1478)", () => 
   });
 });
 
+// #1576: 家族の除名の API (/api/family/members/[member_id]/remove) が返す code は、すべて MembershipErrorCode の値
+describe("家族の除名の API が返す code が表にある (#1576)", () => {
+  it.each([
+    ["CANNOT_REMOVE_REPRESENTATIVE", 409],
+    ["INVALID_REQUEST", 400],
+    ["VALIDATION_ERROR", 400],
+  ])("%s は MembershipErrorCode の値で、状態コード %i・code そのものでない日本語の文を持つ", (code, status) => {
+    expect(Object.values(MembershipErrorCode)).toContain(code);
+    const body = { error: { code, message: "メンバーの除名に失敗しました" } };
+    expect(membershipErrorMessageOfBody(body)).not.toBe(MEMBERSHIP_ERROR_FALLBACK_MESSAGE);
+    expect(membershipErrorMessageOfBody(body)).toBe(MEMBERSHIP_ERROR_MESSAGES[code as MembershipErrorCode]);
+    expect(mapPgErrorToHttp(`ERROR: ${code}`)).toEqual({ code, status });
+  });
+
+  it("代表者を外せない文は、代表者を譲る案内を含み、IS_FAMILY_REPRESENTATIVE に化けない", () => {
+    expect(mapPgErrorToHttp("ERROR: CANNOT_REMOVE_REPRESENTATIVE").code).toBe(
+      MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE,
+    );
+    expect(MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]).toContain("代表者を譲って");
+  });
+
+  it("route のソースは code を文字列のリテラルで書かず、MembershipErrorCode の値を使う", () => {
+    const source = fs.readFileSync(
+      path.join(__dirname, "..", "src/app/api/family/members/[member_id]/remove/route.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/code:\s*'[A-Z_]+'/);
+    expect(source).toContain("MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE");
+    expect(source).toContain("MembershipErrorCode.INVALID_REQUEST");
+    expect(source).toContain("MembershipErrorCode.VALIDATION_ERROR");
+  });
+});
+
 // #1478: 組織・家族の脱退・除名の画面は、本文の message をそのまま出さず、code から文を引く (書き戻しの見張り)
-describe("組織・家族の脱退・除名の画面が code から文を引く (#1478)", () => {
-  const PAGES = ["src/app/(org)/org/members/page.tsx", "src/app/(main)/settings/membership/page.tsx"];
+// #1576: 家族の画面 (家族の一覧の除名・脱退・メンバーの詳細の除名) も同じ
+describe("組織・家族の脱退・除名の画面が code から文を引く (#1478・#1576)", () => {
+  const PAGES = [
+    "src/app/(org)/org/members/page.tsx",
+    "src/app/(main)/settings/membership/page.tsx",
+    "src/app/(main)/family/members/page.tsx",
+    "src/app/(main)/family/members/[id]/page.tsx",
+  ];
 
   it.each(PAGES)("%s は本文の error.message を読まず、membershipErrorMessageOfBody を使う", (rel) => {
     const source = fs.readFileSync(path.join(__dirname, "..", rel), "utf8");

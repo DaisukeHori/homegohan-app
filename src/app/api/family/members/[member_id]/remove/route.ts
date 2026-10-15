@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import {
   notifyMemberRemoved,
   readFamilyMemberToNotify,
@@ -32,7 +32,7 @@ export async function POST(
     body = await request.json();
   } catch {
     return NextResponse.json(
-      { error: { code: 'INVALID_REQUEST', message: 'リクエストボディが不正です' } },
+      { error: { code: MembershipErrorCode.INVALID_REQUEST, message: 'リクエストボディが不正です' } },
       { status: 400 },
     );
   }
@@ -41,7 +41,7 @@ export async function POST(
 
   if (!parsed.family_id) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'family_id は必須です' } },
+      { error: { code: MembershipErrorCode.VALIDATION_ERROR, message: 'family_id は必須です' } },
       { status: 400 },
     );
   }
@@ -62,10 +62,16 @@ export async function POST(
   });
 
   if (error) {
-    if (error.message?.includes('CANNOT_REMOVE_REPRESENTATIVE')) {
+    // 返す code はどれも MembershipErrorCode の値 (画面は membershipErrorMessageOfBody で code から理由の文を引く。#1576)
+    if (error.message?.includes(MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE)) {
       return NextResponse.json(
-        { error: { code: 'CANNOT_REMOVE_REPRESENTATIVE', message: '代表者は除名できません。先に代表者を譲渡してください。' } },
-        { status: 409 },
+        {
+          error: {
+            code: MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE,
+            message: '代表者は除名できません。先に代表者を譲渡してください。',
+          },
+        },
+        { status: ErrorStatusMap[MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE] },
       );
     }
     const { code, status } = mapPgErrorToHttp(error.message ?? '');
