@@ -47,6 +47,10 @@ const POSTGREST_DEFAULT_MAX_ROWS = 1000;
 const BULK_MEALS_PER_DAY = 35;
 /** 1 回の insert で送る planned_meals の行の数 (リクエストの大きさを抑える) */
 const INSERT_CHUNK_ROWS = 500;
+/** 家族 F の人数の上限 (family_groups.member_limit の CHECK の最大。昇格の it で子供 2 人が大人になっても当たらない) */
+const FAMILY_F_MEMBER_LIMIT = 20;
+/** 家族 G の人数の上限 (family_groups.member_limit の列の既定と同じ) */
+const FAMILY_G_MEMBER_LIMIT = 4;
 /** 関数の結果の要素 (1 食) の鍵の数 (設計書 §11.1・§13) */
 const RPC_ELEMENT_KEY_COUNT = 12;
 
@@ -230,8 +234,9 @@ beforeAll(async () => {
   const { data: groups, error: groupError } = await srAdmin
     .from('family_groups')
     .insert([
-      { name: `rls-family-menu F ${TS}`, representative_id: rep.id, member_limit: 20 },
-      { name: `rls-family-menu G ${TS}`, representative_id: otherRep.id },
+      { name: `rls-family-menu F ${TS}`, representative_id: rep.id, member_limit: FAMILY_F_MEMBER_LIMIT },
+      // 複数の行を 1 回で insert すると、どれかの行にしか無い列は他の行で NULL になるので、G にも member_limit を書く (列の既定と同じ 4)
+      { name: `rls-family-menu G ${TS}`, representative_id: otherRep.id, member_limit: FAMILY_G_MEMBER_LIMIT },
     ])
     .select('id, name');
   if (groupError || !groups) throw new Error(`family_groups: ${groupError?.message}`);
