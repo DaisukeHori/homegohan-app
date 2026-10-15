@@ -4,10 +4,9 @@ import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
 import { internalError } from '@/lib/api/errors';
 import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
-import {
-  WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT,
-  isUltimateModeWeeklyMenuRequest,
-} from '@/lib/ai/weekly-menu-request-ultimate';
+import { WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT } from '@/lib/ai/weekly-menu-request-ultimate';
+// 究極モードの判定は Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
+import { isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK

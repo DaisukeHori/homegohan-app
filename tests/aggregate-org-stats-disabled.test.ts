@@ -16,6 +16,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveHeavyUnitTimeouts } from "./helpers/heavy-unit-test-timeout";
 
 const CRON_SECRET = "test-cron-secret";
 const SERVICE_ROLE_KEY = "test-service-role-key";
@@ -54,6 +55,14 @@ vi.mock("../supabase/functions/_shared/db-logger.ts", () => ({
   generateRequestId: () => "req_test",
 }));
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeAll) の時間切れ (#1605)。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。このファイルのテストは読み込んだ
+ * ハンドラを呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ * (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeAll(async () => {
   vi.stubGlobal("Deno", {
     env: { get: (key: string) => h.env[key] },
@@ -62,7 +71,7 @@ beforeAll(async () => {
     },
   });
   await import("../supabase/functions/aggregate-org-stats/index.ts");
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();

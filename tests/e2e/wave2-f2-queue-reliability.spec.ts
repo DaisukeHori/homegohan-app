@@ -81,9 +81,21 @@ test("#116 cleanup route includes queued status in stuck detection", async ({ au
 
 // =========================================================
 // #119: Ultimate Mode (6ステップ) の progress が正しく計算される
+// #1609: pending のモックに ultimateMode: true を足し、究極モードの段 (4〜6 工程) が実際に出ることを確かめる。
+//   以前のモックは mode: 'v5' だけで、#1597 のあとは通常の段 (3 工程) として描かれ、step 4 の進捗は割合 0 で
+//   出ていなかった (見えなければ skip だったので赤にならなかった)。
+//   あわせて、最初の進捗 (status) が届くまでの間も究極の段で描かれること (#1609 の 2) を、status の応答を止めて確かめる。
 // =========================================================
 test("#119 Ultimate Mode step 4-6 progress percentage is shown correctly", async ({ authedPage }) => {
-  let progressDisplayed = false;
+  /** 究極モードの段にだけある工程の名前 (packages/shared の ULTIMATE_PROGRESS_PHASES。通常の段 PROGRESS_PHASES には無い) */
+  const ULTIMATE_ONLY_LABEL = "栄養バランスを詳細分析";
+  /** 通常の段にだけある工程の名前 (PROGRESS_PHASES の no_issues。ULTIMATE_PROGRESS_PHASES には無い) */
+  const NORMAL_ONLY_LABEL = "問題なし";
+  /**
+   * 下の step 4 の進捗の割合。究極モードの step 4 は 50% + (2/7) × 12% を丸めて 53%
+   * (src/app/(main)/menus/weekly/_state/v4ProgressUi.ts)。通常の段には step 4 が無く、割合は出ない
+   */
+  const ULTIMATE_STEP4_PERCENT = "53%";
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route: any) => {
     await route.fulfill({
@@ -93,7 +105,9 @@ test("#119 Ultimate Mode step 4-6 progress percentage is shown correctly", async
     });
   });
 
+  // サーバー (pending/route.ts) は、表示中の週 (date) と start_date が違う行を返さない。モックも date の週の行を返す
   await authedPage.route("**/api/ai/menu/weekly/pending*", async (route: any) => {
+    const date = new URL(route.request().url()).searchParams.get("date");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -102,13 +116,19 @@ test("#119 Ultimate Mode step 4-6 progress percentage is shown correctly", async
         requestId: FAKE_REQUEST_ID,
         status: "processing",
         mode: "v5",
-        startDate: getThisMonday(),
+        ultimateMode: true,
+        startDate: date,
       }),
     });
   });
 
-  // Step 4 のデータを返す (Ultimate Mode 6 ステップ)
+  // Step 4 のデータを返す (Ultimate Mode 6 ステップ)。最初の進捗が届く前の表示を見るため、テストが離すまで応答を止める
+  let releaseStatus: () => void = () => {};
+  const statusGate = new Promise<void>((resolve) => {
+    releaseStatus = resolve;
+  });
   await authedPage.route("**/api/ai/menu/weekly/status*", async (route: any) => {
+    await statusGate;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -125,36 +145,25 @@ test("#119 Ultimate Mode step 4-6 progress percentage is shown correctly", async
     });
   });
 
-  await authedPage.addInitScript(
-    ([reqId, weekKey]: [string, string]) => {
-      localStorage.setItem(
-        "weeklyMenuGenerating",
-        JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
-      );
-    },
-    [FAKE_REQUEST_ID, getThisMonday()],
-  );
-
   await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
-  await authedPage.waitForTimeout(3000);
 
-  // 進捗バーが表示されているか確認（percentage > 0 であること）
-  const progressBar = authedPage
-    .locator("[data-testid='generation-progress']")
-    .or(authedPage.locator("text=/生成中/"))
-    .or(authedPage.locator("text=/分析中/"))
-    .or(authedPage.locator("text=/栄養/"));
+  const card = authedPage.getByTestId("generation-progress");
+  await expect(card).toBeVisible({ timeout: 15_000 });
+  // 工程の一覧を開く
+  await card.click();
 
-  progressDisplayed = await progressBar.first().isVisible({ timeout: 8_000 }).catch(() => false);
+  // 最初の進捗が届く前: 究極モードの段 (pending の ultimateMode だけを持つ空の進捗)。割合はまだ出ない
+  await expect(card.getByText(ULTIMATE_ONLY_LABEL)).toBeVisible();
+  await expect(card.getByText(NORMAL_ONLY_LABEL)).toHaveCount(0);
+  await expect(card).toContainText("AIが献立を生成中...");
+  await expect(card).not.toContainText("%");
 
-  if (!progressDisplayed) {
-    // 進捗 UI の構造が変わっている可能性があるのでスキップ
-    test.skip();
-    return;
-  }
-
-  expect(progressDisplayed).toBe(true);
+  // step 4 の進捗が届いたあと: 究極モードの step 4 の割合と、枠の数の見出し
+  releaseStatus();
+  await expect(card).toContainText(ULTIMATE_STEP4_PERCENT, { timeout: 15_000 });
+  await expect(card).toContainText("献立を生成中...（2/7食、3日分）");
+  await expect(card.getByText(ULTIMATE_ONLY_LABEL)).toBeVisible();
+  await expect(card.getByText(NORMAL_ONLY_LABEL)).toHaveCount(0);
 });
 
 // =========================================================

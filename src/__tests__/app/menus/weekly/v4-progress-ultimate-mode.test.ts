@@ -21,7 +21,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES } from '@homegohan/shared';
 import { convertV4ProgressToUIFormat } from '@/app/(main)/menus/weekly/_state/v4ProgressUi';
-import { isUltimateModeWeeklyMenuRequest } from '@/lib/ai/weekly-menu-request-ultimate';
+import { isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
 
 const WEEKLY_DIR = path.resolve(__dirname, '../../../../app/(main)/menus/weekly');
 const pageSource = fs.readFileSync(path.join(WEEKLY_DIR, 'page.tsx'), 'utf-8');
@@ -149,9 +149,12 @@ describe('page.tsx: どの道でも生成の印を渡す (#1597 配線)', () => 
   it('入り直し (pending から) は、pending の ultimateMode で決める (週間献立の 2 か所)', () => {
     const destructures = pageSource.match(/ultimateMode: pendingUltimateMode\b/g) ?? [];
     expect(destructures).toHaveLength(2);
-    const subscribes = pageSource.match(
-      /subscribeToRequestStatus\([^;]*isUltimateModeWeeklyMenuRequest\(pendingUltimateMode\)\)/g,
+    // #1609: 判定の結果を変数に受けて、空の進捗 (pendingRestoreProgress) と監視の両方に同じ値を渡す
+    const judged = pageSource.match(
+      /const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest\(pendingUltimateMode\);/g,
     ) ?? [];
+    expect(judged).toHaveLength(2);
+    const subscribes = pageSource.match(/subscribeToRequestStatus\([^;]*, pendingIsUltimateMode\);/g) ?? [];
     expect(subscribes).toHaveLength(2);
   });
 
