@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { KeyboardAvoidingView, Modal, Platform, Pressable, SafeAreaView, Text, View } from "react-native";
 
 import { MEAL_LABELS, MEAL_ORDER, type MealType } from "@homegohan/shared";
+import { MEAL_TYPE_COLORS, MEAL_TYPE_IONICONS } from "../../lib/meal-type-visuals";
 import { colors, radius, spacing } from "../../theme";
 
 interface Props {
@@ -13,24 +14,8 @@ interface Props {
 
 // 選択肢は共有の MEAL_ORDER (5 値: 朝食 / 昼食 / 夕食 / おやつ / 夜食) から導く。
 // 以前は 4 値を手書きしていて夜食 (midnight_snack) を選べなかった (#1446)。
-// アイコン・色は Record<MealType, …> なので、MealType に値が増えると型で漏れが止まる。
+// アイコン・色はモバイルの区分の見た目の表 (Record<MealType, …>) から引く (#1665)。MealType に値が増えると型で漏れが止まる。
 const TYPES: readonly MealType[] = MEAL_ORDER;
-
-const MEAL_ICONS: Record<MealType, keyof typeof Ionicons.glyphMap> = {
-  breakfast: "sunny",
-  lunch: "partly-sunny",
-  dinner: "moon",
-  snack: "cafe",
-  midnight_snack: "cloudy-night",
-};
-
-const MEAL_COLORS: Record<MealType, string> = {
-  breakfast: "#FF9800",
-  lunch: "#4CAF50",
-  dinner: "#7C4DFF",
-  snack: "#E91E63",
-  midnight_snack: "#3F51B5",
-};
 
 export function AddMealSlotModal({ visible, onClose, onSelect, dayId: _dayId }: Props) {
   return (
@@ -89,12 +74,12 @@ export function AddMealSlotModal({ visible, onClose, onSelect, dayId: _dayId }: 
                     width: 40,
                     height: 40,
                     borderRadius: radius.md,
-                    backgroundColor: MEAL_COLORS[t],
+                    backgroundColor: MEAL_TYPE_COLORS[t],
                     alignItems: "center",
                     justifyContent: "center",
                   }}
                 >
-                  <Ionicons name={MEAL_ICONS[t]} size={20} color="#fff" />
+                  <Ionicons name={MEAL_TYPE_IONICONS[t]} size={20} color="#fff" />
                 </View>
                 <Text style={{ fontSize: 16, fontWeight: "600", color: colors.text }}>
                   {MEAL_LABELS[t]}

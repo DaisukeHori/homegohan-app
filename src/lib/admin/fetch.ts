@@ -4,6 +4,7 @@
  */
 
 import { headers, cookies } from 'next/headers';
+import { extractProxyClientIp, signForwardedClientIp } from '@/lib/admin/client-ip';
 
 /**
  * PORT が無いときの、このサーバーのポート。Next.js (next dev / next start) が -p も PORT も無いときに待ち受ける既定のポート
@@ -52,6 +53,10 @@ export async function adminFetch(
   // #1200: 閲覧の監査ログ (admin_audit_logs.user_agent) に、サーバーの fetch ではなく
   // 管理者のブラウザの User-Agent が残るように転送する。
   const userAgent = requestHeaders.get('user-agent') ?? undefined;
+  // #1571: 監査ログ (admin_audit_logs.ip_address) に管理者の IP が残るよう、元のリクエストの利用者の IP を署名して転送する。
+  // Vercel は内部 API へのこの問い合わせの x-forwarded-for / x-real-ip を、問い合わせたサーバーの IP に付け直す
+  // (上の x-forwarded-for の転送は Vercel の外 (next start など) でしか効かない)。署名の仕組みは src/lib/admin/client-ip.ts。
+  const signedClientIp = signForwardedClientIp(extractProxyClientIp(requestHeaders));
 
   const fetchHeaders: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -60,6 +65,8 @@ export async function adminFetch(
     ...(userAgent ? { 'user-agent': userAgent } : {}),
     ...(host ? { host } : {}),
     ...options.extraHeaders,
+    // 呼び出し側の extraHeaders で上書きさせない (利用者の IP は元のリクエストからだけ取る)
+    ...(signedClientIp ?? {}),
   };
 
   return fetch(url, {

@@ -5,7 +5,9 @@ import { motion, AnimatePresence } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, ChevronDown, ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
-import { formatLocalDate, formatDateJa } from "@homegohan/shared";
+import { MEAL_LABELS, formatLocalDate, formatDateJa } from "@homegohan/shared";
+// 区分の短い名前 (人数の表の 朝 / 昼 / 夜) は Web の区分の見た目の表から引く (#1665)
+import { SERVINGS_MEAL_SHORT_LABELS } from "@/lib/meal-type-visuals";
 import { useShoppingStore, useServingsConfigStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
@@ -153,7 +155,7 @@ export function ShoppingRangeModal({
                     <div className="pl-4 pt-2 space-y-1">
                       {(['breakfast', 'lunch', 'dinner'] as const).map((mealType) => {
                         const isSelected = shoppingRange.todayMeals.includes(mealType);
-                        const label = mealType === 'breakfast' ? '朝食' : mealType === 'lunch' ? '昼食' : '夕食';
+                        const label = MEAL_LABELS[mealType];
                         return (
                           <button
                             key={mealType}
@@ -371,7 +373,7 @@ export function ShoppingRangeModal({
                           （視覚サイズ維持）にとどめ、隣接セルへ侵食しない。 */}
                       <button
                         onClick={() => updateValue(value - 1)}
-                        aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人減らす`}
+                        aria-label={`${labels[day]}曜${SERVINGS_MEAL_SHORT_LABELS[meal]}の人数を1人減らす`}
                         className="w-6 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >
@@ -388,7 +390,7 @@ export function ShoppingRangeModal({
                       </span>
                       <button
                         onClick={() => updateValue(value + 1)}
-                        aria-label={`${labels[day]}曜${meal === 'breakfast' ? '朝' : meal === 'lunch' ? '昼' : '夜'}の人数を1人増やす`}
+                        aria-label={`${labels[day]}曜${SERVINGS_MEAL_SHORT_LABELS[meal]}の人数を1人増やす`}
                         className="w-6 min-h-[44px] -my-1 flex items-center justify-center text-lg font-bold"
                         style={{ color: value === 0 ? colors.textMuted : colors.success }}
                       >

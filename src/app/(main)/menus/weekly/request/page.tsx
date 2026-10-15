@@ -2,7 +2,7 @@
 
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
-import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -202,7 +202,7 @@ export default function MenuRequestWizard() {
                   className="w-full aspect-video rounded-xl border-2 border-dashed border-gray-200 flex flex-col items-center justify-center bg-gray-50 hover:bg-gray-100 cursor-pointer transition-colors relative overflow-hidden"
                 >
                   {formData.imageUrl ? (
-                    <Image src={formData.imageUrl} alt="Fridge" fill className="object-cover opacity-80" />
+                    <SignedPhotoImage src={formData.imageUrl} alt="Fridge" fill className="object-cover opacity-80" />
                   ) : (
                     <>
                       <span className="text-4xl mb-2">📸</span>

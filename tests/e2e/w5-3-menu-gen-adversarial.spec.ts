@@ -8,9 +8,21 @@
  *   PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:e2e -- w5-3-menu-gen-adversarial
  *
  * prefix: [menu-gen][adversarial]
+ *
+ * テストユーザー (#1672):
+ *   - 画面の挙動を見るテストは、生成の API をブラウザの通信の差し替え (page.route) で返すので、共通のテストユーザー (authedPage) を使う。
+ *   - 本物の生成の API (POST /api/ai/menu/weekly/request・/api/ai/menu/v4/generate) へ直接送るテスト (A-3・C-9〜C-12・Edge) と、
+ *     生成のモーダルを開いて送る A-1・E-19 は、テストごとに作るユーザー (fresh-user の regularUser) を使う (apiUserTest)。
+ *     本物の API は、利用者ごとに 1 分 5 回のレート制限 (src/lib/rate-limit.ts の generation) と 1 日の AI の上限
+ *     (free は 10 回。429 AI_DAILY_LIMIT) で数え、その週の献立を消して生成の要求の行を作る。
+ *     共通のテストユーザーは worker の番号で 4 人を回して使うので、同じユーザーの送信が並びによって 1 分に 5 回を超えて 429 になりえた。
+ *     429 を Retry-After どおりに待つ案は採らない: 1 日の上限の 429 は次の JST 0 時まで待たせるので待っても通らず、
+ *     共通のユーザーの献立を消すことも残るため。
  */
 
 import { test, expect, type Page } from "./fixtures/auth";
+import { test as apiUserTest } from "./fixtures/fresh-user";
+import type { APIResponse } from "@playwright/test";
 import { addDaysToDate } from "../../packages/shared/src/date-utils";
 import { jstThisMonday } from "./helpers/jst-week";
 
@@ -43,19 +55,77 @@ async function stubIdle(page: Page) {
   });
 }
 
-/** モックした週次リクエスト API (POST /api/ai/menu/weekly/request) */
-async function stubWeeklyRequest(page: Page, requestId: string) {
-  await page.route("**/api/ai/menu/weekly/request", async (route) => {
+/** 生成のモーダル (V4GenerateModal) の「1日献立変更」で作る枠の数 (朝・昼・夜)。モックの応答の totalSlots に使う */
+const SINGLE_DAY_SLOT_COUNT = 3;
+
+/**
+ * 画面の生成の入り口 (POST /api/ai/menu/v4/generate。useV4MenuGeneration) をモックする (#1672)。
+ * 送られた回数を返す。応答の requestId は、呼ばれた順に requestIds から取る (足りなければ最後のもの)
+ */
+async function stubV4Generate(page: Page, requestIds: readonly string[]): Promise<{ posts: () => number }> {
+  let posts = 0;
+  await page.route("**/api/ai/menu/v4/generate", async (route) => {
     if (route.request().method() !== "POST") {
       await route.continue();
       return;
     }
+    const requestId = requestIds[Math.min(posts, requestIds.length - 1)];
+    posts++;
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({ status: "processing", message: "Generation started", requestId }),
+      body: JSON.stringify({
+        status: "processing",
+        message: "Generation started",
+        requestId,
+        totalSlots: SINGLE_DAY_SLOT_COUNT,
+      }),
     });
   });
+  return { posts: () => posts };
+}
+
+/** 献立の画面とモーダルの表示を待つ上限 (本番ビルドでも、初回の表示は献立の読み込みを含めて数秒かかる) */
+const MODAL_OPEN_TIMEOUT_MS = 30_000;
+
+/**
+ * 今の生成の入り口を開く: 献立の画面の「AI献立アシスタント」(空欄があれば「空欄N件 → AIに埋めてもらう」) のボタン →
+ * 生成のモーダル (V4GenerateModal) → 「1日献立変更」を選ぶ (#1672)。
+ * テストごとに作るユーザーは献立が無いので、上書きの確認は出ない (bug-27-ultimate-mode-locked.spec.ts と同じ)。
+ * 「献立を生成」のボタン (押すと文言が「献立を作成中...」に変わるので testid で指す) を返す
+ */
+async function openSingleDayGenerateModal(page: Page) {
+  const banner = page.getByTestId("ai-assistant-banner-button");
+  await expect(banner).toBeVisible({ timeout: MODAL_OPEN_TIMEOUT_MS });
+  await banner.click();
+  return chooseSingleDayInGenerateModal(page);
+}
+
+/** 開いている生成のモーダルで「1日献立変更」を選び、「献立を生成」のボタンを返す */
+async function chooseSingleDayInGenerateModal(page: Page) {
+  const modal = page.getByTestId("v4-generate-modal-normal");
+  await expect(modal).toBeVisible({ timeout: MODAL_OPEN_TIMEOUT_MS });
+  await modal.getByRole("button", { name: /1日献立変更/ }).click();
+  const submit = modal.getByTestId("v4-generate-submit-button");
+  await expect(submit).toHaveText("献立を生成");
+  await expect(submit).toBeEnabled();
+  return submit;
+}
+
+/** レート制限・1 日の AI の上限で断られたときのステータス */
+const HTTP_TOO_MANY_REQUESTS = 429;
+
+/**
+ * 本物の生成の API への送信が、レート制限・1 日の AI の上限 (429) で止まらず、入力の扱いまで届いたこと (#1672)。
+ * 429 は 5xx でないので「5xx にならない」の確認は通ってしまうが、それでは入力の検証もクラッシュの有無も確かめていない。
+ * 送るテストはテストごとのユーザー (apiUserTest) を使い、1 分 5 回の枠を超えない回数しか送らないので、429 は来ない前提。
+ * 来たら前提が崩れているので失敗にする (期待を緩めて通さない)
+ */
+function expectNotRateLimited(res: APIResponse, label: string) {
+  expect(
+    res.status(),
+    `[テストの前提] ${label} が 429 (レート制限・1 日の AI の上限) で断られ、入力の扱いまで届いていない`,
+  ).not.toBe(HTTP_TOO_MANY_REQUESTS);
 }
 
 /** status のモックが返す本文 (completed / failed を返すと、その要求は終わったものとして pending から消える) */
@@ -131,20 +201,38 @@ async function stubPendingConsistentWithStatus(
 
 // ─── A. 連打・重複 ──────────────────────────────────────────────────────────
 
+/** A-1 の連打の回数 */
+const RAPID_CLICK_COUNT = 50;
 /**
- * A-1: 「献立生成」ボタンを 50 連打 → debounce/guard が機能して
- *      API リクエストが最大 1 件しか発行されないことを確認。
- *
- * 期待: POST /api/ai/menu/weekly/request が 0〜1 件のみ
+ * A-1 の 1 回の押下がボタンを見つけるまで待つ上限。1 回目の押下で生成が始まるとモーダルが閉じてボタンが無くなるので、
+ * 残りの押下は見つからずに終わる (それで正しい)。そのとき全体が長く待たないよう短くする
  */
-test("[menu-gen][adversarial] A-1: 生成ボタン50連打 → リクエストは最大1件", async ({
-  authedPage,
-}) => {
-  await stubIdle(authedPage);
-  await stubWeeklyRequest(authedPage, FAKE_REQUEST_ID);
+const RAPID_CLICK_TIMEOUT_MS = 2_000;
+/** 1 件目の送信のあと、追加の送信が出ないことを見る待ちの長さ (以前の A-1 と同じ 2 秒) */
+const RAPID_CLICK_SETTLE_MS = 2_000;
+/** 生成が始まって、生成中のカード (ProgressTodoCard) が出るまでの待ちの上限 */
+const GENERATION_START_TIMEOUT_MS = 10_000;
 
-  // status: processing を返すことで UI がループしないようにする
-  await authedPage.route("**/api/ai/menu/weekly/status*", async (route) => {
+/**
+ * A-1: 生成のモーダルの「献立を生成」を 50 連打 → 連打の防止 (V4GenerateModal の isSubmitting とボタンの disabled) が効き、
+ *      生成の要求 (POST /api/ai/menu/v4/generate) はちょうど 1 件だけ送られる。
+ *
+ * #1672: 以前は今の画面に無い文言 (/今週の献立を生成|献立を生成|AI献立|生成する/) のボタンを探し、見つからずに毎回 skip していた。
+ * 今の生成の入り口 (「AI献立アシスタント」のボタン → モーダル → 「1日献立変更」→「献立を生成」) で押す。
+ * 1 件も送られなかった (押下が効かなかった) ときも失敗にする (以前の「最大 1 件」は 0 件でも通っていた)。
+ *
+ * 押下は dispatchEvent("click") で送る。押すたびにボタンが要素として見つかっている必要があるが、座標をクリックしないので、
+ * モーダルが閉じたあとの押下が下の画面の別の要素に当たることはない。disabled のボタンへの click も、
+ * ブラウザの既定の動き (disabled なら押せない) に頼らず、React の onClick の扱いと handleGenerate の確認まで届く (より厳しい)
+ */
+apiUserTest("[menu-gen][adversarial] A-1: 生成ボタン50連打 → リクエストは1件だけ", async ({
+  regularUser,
+}) => {
+  const page = regularUser;
+  await stubIdle(page);
+  const generate = await stubV4Generate(page, [FAKE_REQUEST_ID]);
+  // 生成が始まったあと、画面は status を読みに来る。生成中を返し続ける (完了・失敗で画面が変わらないように)
+  await page.route("**/api/ai/menu/weekly/status*", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -152,37 +240,24 @@ test("[menu-gen][adversarial] A-1: 生成ボタン50連打 → リクエスト�
     });
   });
 
-  const postCount = { value: 0 };
-  authedPage.on("request", (req) => {
-    if (req.method() === "POST" && req.url().includes("/api/ai/menu/weekly/request")) {
-      postCount.value++;
-    }
-  });
+  await page.goto("/menus/weekly");
+  const submit = await openSingleDayGenerateModal(page);
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
+  // 50 連打 (同時に投げる)
+  await Promise.all(
+    Array.from({ length: RAPID_CLICK_COUNT }, () =>
+      submit.dispatchEvent("click", undefined, { timeout: RAPID_CLICK_TIMEOUT_MS }).catch(() => undefined),
+    ),
+  );
 
-  // 献立生成ボタンを探す（複数のセレクタを試みる）
-  const genBtn = authedPage
-    .locator("button")
-    .filter({ hasText: /今週の献立を生成|献立を生成|AI献立|生成する/ })
-    .first();
-
-  const isVisible = await genBtn.isVisible({ timeout: 8_000 }).catch(() => false);
-  if (!isVisible) {
-    test.skip(true, "Generate button not visible – UI layout may differ");
-    return;
-  }
-
-  // 50 連打（Promise.all で同時発火）
-  const clicks = Array.from({ length: 50 }, () => genBtn.click({ force: true }).catch(() => {}));
-  await Promise.all(clicks);
-  await authedPage.waitForTimeout(2_000);
-
+  await expect.poll(generate.posts, { message: "[BUG] 押しても生成の要求が送られなかった" }).toBeGreaterThanOrEqual(1);
+  // 生成が始まり、生成中のカードが出る (押下が実際に生成を始めた)
+  await expect(page.getByTestId("generation-progress")).toBeVisible({ timeout: GENERATION_START_TIMEOUT_MS });
+  await page.waitForTimeout(RAPID_CLICK_SETTLE_MS);
   expect(
-    postCount.value,
-    `[BUG] 50連打でリクエストが ${postCount.value} 件送信された（期待: 最大1件）`,
-  ).toBeLessThanOrEqual(1);
+    generate.posts(),
+    `[BUG] ${RAPID_CLICK_COUNT}連打で生成の要求が ${generate.posts()} 件送られた（期待: 1件）`,
+  ).toBe(1);
 });
 
 /**
@@ -292,77 +367,41 @@ test("[menu-gen][adversarial] A-2: 生成中に別タブで同週リクエスト
   await tabB.close();
 });
 
+/** A-3 で続けて送る週の数。生成のレート制限 (1 分 5 回) の上限ちょうど。テストごとのユーザーなので、ほかのテストの送信と枠を分け合わない */
+const A3_WEEK_COUNT = 5;
+/** 生成を受け付けたときのステータス (src/app/api/ai/menu/weekly/request/route.ts は 200 で { status: "processing", requestId } を返す) */
+const HTTP_OK = 200;
+
 /**
- * A-3: 異なる7日間範囲を5連続でリクエスト (queue 詰まり)
+ * A-3: 異なる週を 5 回続けて生成の要求 (POST /api/ai/menu/weekly/request) → 5 件とも受け付けられ、それぞれ別の requestId が返る
  *
- * 期待: 各リクエストが requestId を持って返ること
- *       (実際の DB への挿入は行わないがモックで検証)
+ * page.request (API へ直接送る通信) は page.route の差し替えを通らないので、本物のサーバーに届く (#1672)。
+ * 以前はモックが効く前提の書き方で、本物のサーバーの 400 / 401 / 500 も許していたが、429 は許しておらず、
+ * 共通のテストユーザーの生成が 1 分に 5 回を超えると赤になった。テストごとのユーザー (apiUserTest) で送り、
+ * 1 分 5 回の枠の中 (5 回) なので、5 件とも受け付けられることまで確かめる (429 は前提が崩れたとして失敗)
  */
-test("[menu-gen][adversarial] A-3: 異なる週を5連続リクエスト → 各 requestId 返却", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] A-3: 異なる週を5連続リクエスト → 各 requestId 返却", async ({
+  regularUser,
 }) => {
-  const requestIds: string[] = [];
-  let callCount = 0;
-
-  await authedPage.route("**/api/ai/menu/weekly/request", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue();
-      return;
-    }
-    callCount++;
-    const id = `fake-id-${callCount.toString().padStart(4, "0")}`;
-    requestIds.push(id);
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ status: "processing", message: "Generation started", requestId: id }),
-    });
-  });
-
-  await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/pending*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ hasPending: false }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/status*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ status: "processing", progress: null }),
-    });
-  });
-
-  // 5 つの異なる週を直接 POST
   const monday = jstThisMonday();
-  const responses: number[] = [];
-  for (let i = 0; i < 5; i++) {
-    const startDate = addDaysToDate(monday, i * 7);
-    const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
+  const results: Array<{ startDate: string; status: number; requestId: unknown }> = [];
+  for (let i = 0; i < A3_WEEK_COUNT; i++) {
+    const startDate = addDaysToDate(monday, i * DAYS_PER_WEEK);
+    const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
       data: { startDate },
       headers: { "Content-Type": "application/json" },
     });
-    responses.push(res.status());
+    expectNotRateLimited(res, `${startDate} の週の生成の要求`);
+    const body = (await res.json().catch(() => null)) as { requestId?: unknown } | null;
+    results.push({ startDate, status: res.status(), requestId: body?.requestId });
   }
 
-  // 認証済みユーザーとして呼んでいるので 200 が期待されるが、
-  // モックが使えない場合は 401/400/500 も許容（実際の API を叩く場合）
-  // 少なくとも 5 件すべてがレスポンスを返したことを確認
-  expect(responses).toHaveLength(5);
-  for (const status of responses) {
-    expect(
-      [200, 201, 400, 401, 500],
-      `予期しない HTTP ステータス: ${status}`,
-    ).toContain(status);
+  for (const r of results) {
+    expect(r.status, `[BUG] ${r.startDate} の週の生成の要求が受け付けられなかった: ${JSON.stringify(results)}`).toBe(HTTP_OK);
+    expect(typeof r.requestId, `[BUG] ${r.startDate} の週の応答に requestId が無い: ${JSON.stringify(results)}`).toBe("string");
   }
+  const ids = results.map((r) => r.requestId);
+  expect(new Set(ids).size, `[BUG] 週ごとに別の requestId が返っていない: ${JSON.stringify(ids)}`).toBe(A3_WEEK_COUNT);
 });
 
 // ─── B. 中断・再開 ──────────────────────────────────────────────────────────
@@ -660,21 +699,20 @@ test("[menu-gen][adversarial] B-8: 生成中に週切り替え → 別週はhasP
  *
  * 期待: 400 または 401（サーバーがクラッシュしない）
  */
-test("[menu-gen][adversarial] C-9: 極端な日付 1900-01-01 でリクエスト → 400/401", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] C-9: 極端な日付 1900-01-01 でリクエスト → 400/401", async ({
+  regularUser,
 }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("domcontentloaded");
-
-  const res1 = await authedPage.request.post("/api/ai/menu/weekly/request", {
+  const res1 = await regularUser.request.post("/api/ai/menu/weekly/request", {
     data: { startDate: "1900-01-01" },
     headers: { "Content-Type": "application/json" },
   });
-  const res2 = await authedPage.request.post("/api/ai/menu/weekly/request", {
+  const res2 = await regularUser.request.post("/api/ai/menu/weekly/request", {
     data: { startDate: "9999-12-31" },
     headers: { "Content-Type": "application/json" },
   });
 
+  expectNotRateLimited(res1, "1900-01-01 の生成の要求");
+  expectNotRateLimited(res2, "9999-12-31 の生成の要求");
   // サーバーがクラッシュ（5xx）していないことを確認
   // 400（バリデーションエラー）、401（未認証）、200（受け付けた場合）は OK
   expect(res1.status(), `1900-01-01 で 5xx が返った: ${res1.status()}`).not.toBeGreaterThanOrEqual(500);
@@ -686,20 +724,18 @@ test("[menu-gen][adversarial] C-9: 極端な日付 1900-01-01 でリクエスト
  *
  * 期待: 400（拒否）または 200（受け付けて処理）— 5xx ではない
  */
-test("[menu-gen][adversarial] C-10: 過去10年前の週をリクエスト → 5xxなし", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] C-10: 過去10年前の週をリクエスト → 5xxなし", async ({
+  regularUser,
 }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("domcontentloaded");
-
   // 端末 (Node のプロセス) の日付ではなく、JST の今週の月曜日から週の単位で戻す (#1564・#1622。月曜日のまま約 10 年前の週になる)
   const dateStr = addDaysToDate(jstThisMonday(), -TEN_YEARS_IN_WEEKS * DAYS_PER_WEEK);
 
-  const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
+  const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
     data: { startDate: dateStr },
     headers: { "Content-Type": "application/json" },
   });
 
+  expectNotRateLimited(res, `${dateStr} の生成の要求`);
   expect(
     res.status(),
     `過去10年前の日付で 5xx が返った: ${res.status()}`,
@@ -711,16 +747,13 @@ test("[menu-gen][adversarial] C-10: 過去10年前の週をリクエスト → 5
  *
  * 期待: server がクラッシュしない（400 or 200 で処理）
  */
-test("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバークラッシュなし", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバークラッシュなし", async ({
+  regularUser,
 }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("domcontentloaded");
-
   const monday = jstThisMonday();
 
   // 1日分のみ
-  const res1 = await authedPage.request.post("/api/ai/menu/v4/generate", {
+  const res1 = await regularUser.request.post("/api/ai/menu/v4/generate", {
     data: {
       targetSlots: [{ date: monday, mealType: "dinner" }],
       constraints: {},
@@ -735,7 +768,7 @@ test("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバ
     date: addDaysToDate(monday, Math.floor(i / 3)),
     mealType: ["breakfast", "lunch", "dinner"][i % 3],
   }));
-  const res2 = await authedPage.request.post("/api/ai/menu/v4/generate", {
+  const res2 = await regularUser.request.post("/api/ai/menu/v4/generate", {
     data: {
       targetSlots: massiveSlots,
       constraints: {},
@@ -745,6 +778,8 @@ test("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバ
     headers: { "Content-Type": "application/json" },
   });
 
+  expectNotRateLimited(res1, "1 枠の生成の要求");
+  expectNotRateLimited(res2, "300 枠の生成の要求");
   expect(res1.status(), `1スロットで 5xx: ${res1.status()}`).not.toBeGreaterThanOrEqual(500);
   expect(res2.status(), `300スロットで 5xx: ${res2.status()}`).not.toBeGreaterThanOrEqual(500);
 });
@@ -753,13 +788,13 @@ test("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → サーバ
  * C-12: メモ欄に 10000 文字 / NULL byte / control chars
  *
  * 期待: サーバーがクラッシュしない（400 or 200）
+ *
+ * 6 件のうち NULL byte はレート制限の前に 400 で断られるので、レート制限に数えるのは 5 件 (1 分 5 回の枠の中)。
+ * 件を足すときは、1 分 5 回を超えないよう別のテストに分ける (#1672)
  */
-test("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッシュなし", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッシュなし", async ({
+  regularUser,
 }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("domcontentloaded");
-
   const monday = jstThisMonday();
   const cases: Array<{ name: string; note: string; expectedStatus?: number; expectedCode?: string }> = [
     { name: "10000文字", note: "あ".repeat(10000) },
@@ -772,10 +807,11 @@ test("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッ
   ];
 
   for (const c of cases) {
-    const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
+    const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
       data: { startDate: monday, note: c.note },
       headers: { "Content-Type": "application/json" },
     });
+    expectNotRateLimited(res, `${c.name} の生成の要求`);
     expect(
       res.status(),
       `[BUG] ${c.name} で 5xx クラッシュ: ${res.status()}`,
@@ -968,95 +1004,79 @@ test("[menu-gen][adversarial] E-18: タイムアウト後の status 整合性 �
   await expect(authedPage.getByTestId("generation-progress")).toBeHidden();
 });
 
+/** 状態の確認の API のパス (画面は ?requestId=... を付けて読む) */
+const STATUS_API_PATH = "/api/ai/menu/weekly/status";
 /**
- * E-19: 生成失敗後の retry button → 新規 requestId が発行されること
- *
- * 期待: retry したとき同じ requestId が再利用されるのではなく新規 POST が発行される
+ * やり直しで始めた生成の status を、画面が読みに来るまでの待ちの上限。
+ * 生成のモーダルから始めた生成は、Realtime と並んで 5 秒ごとに status を読む (page.tsx の handleV4Generate)。2 回分 + 余裕
  */
-test("[menu-gen][adversarial] E-19: 生成失敗後のリトライ → 新規requestId", async ({
-  authedPage,
+const RETRIED_STATUS_READ_TIMEOUT_MS = 15_000;
+
+/**
+ * E-19: 生成の失敗の表示の「もう一度試す」→ 生成のモーダルから送り直す → 新しい生成の要求が 1 件送られ、画面は新しい requestId を監視する
+ *
+ * #1672: 以前は今の画面に無い文言のボタンを探し、見つからずに毎回 skip していた。また失敗の状態を作れておらず
+ * (pending が hasPending: false だった)、失敗の表示そのものが出ていなかった。
+ * 今の流れ: 生成中だった要求 (FAKE_REQUEST_ID) が failed になる → 失敗の表示 (generation-failed-modal) の「もう一度試す」
+ * (generation-retry-button) → 生成のモーダル → 「1日献立変更」→「献立を生成」→ POST /api/ai/menu/v4/generate (FAKE_REQUEST_ID_2 を返す)。
+ */
+apiUserTest("[menu-gen][adversarial] E-19: 生成失敗後のリトライ → 新規requestId", async ({
+  regularUser,
 }) => {
-  let newRequestId = "";
-  let postCallCount = 0;
-
-  await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
-    });
+  const page = regularUser;
+  // 失敗した要求: pending は status が failed を返すまで生成中を返し、そのあとは返さない (サーバーと同じ)
+  await stubPendingConsistentWithStatus(page, {
+    requestId: FAKE_REQUEST_ID,
+    statusBodyAt: () => ({
+      status: "failed",
+      errorMessage: "generation failed",
+      updatedAt: new Date().toISOString(),
+    }),
   });
-  await authedPage.route("**/api/ai/menu/weekly/pending*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ hasPending: false }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/status*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        status: "failed",
-        errorMessage: "generation failed",
-        updatedAt: new Date().toISOString(),
-      }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/request", async (route) => {
-    if (route.request().method() !== "POST") {
-      await route.continue();
-      return;
-    }
-    postCallCount++;
-    newRequestId = `retry-request-${postCallCount}`;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ status: "processing", requestId: newRequestId }),
-    });
-  });
+  // やり直しで始めた要求の status は生成中を返す (あとから登録した route が先に当たる)
+  let retriedStatusReads = 0;
+  await page.route(
+    (url) => url.pathname === STATUS_API_PATH && url.searchParams.get("requestId") === FAKE_REQUEST_ID_2,
+    async (route) => {
+      retriedStatusReads++;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ status: "processing", progress: null }),
+      });
+    },
+  );
+  const generate = await stubV4Generate(page, [FAKE_REQUEST_ID_2]);
 
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
-  await authedPage.waitForTimeout(2_000);
+  // 生成中だった要求の印 (画面を開くと、この要求の状態を読み直して失敗を表示する)
+  const generatingMarker: [string, string] = [FAKE_REQUEST_ID, jstThisMonday()];
+  await page.addInitScript(([reqId, weekKey]: [string, string]) => {
+    localStorage.setItem(
+      "weeklyMenuGenerating",
+      JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
+    );
+  }, generatingMarker);
 
-  // retry/再生成ボタンを探す
-  const retryBtn = authedPage
-    .locator("button")
-    .filter({ hasText: /再試行|もう一度|リトライ|再生成/ })
-    .first();
+  await page.goto("/menus/weekly");
 
-  const hasRetryBtn = await retryBtn.isVisible({ timeout: 5_000 }).catch(() => false);
-  if (!hasRetryBtn) {
-    // 通常の生成ボタンでリトライ相当
-    const genBtn = authedPage
-      .locator("button")
-      .filter({ hasText: /今週の献立を生成|献立を生成|AI献立/ })
-      .first();
-    const hasGenBtn = await genBtn.isVisible({ timeout: 3_000 }).catch(() => false);
-    if (!hasGenBtn) {
-      test.skip(true, "Retry/Generate button not visible – UI may be in different state");
-      return;
-    }
-    await genBtn.click();
-  } else {
-    await retryBtn.click();
-  }
+  const failedModal = page.getByTestId("generation-failed-modal");
+  await expect(failedModal, "[BUG] 生成の失敗が表示されなかった").toBeVisible({ timeout: PROGRESS_CARD_TIMEOUT_MS });
+  await page.getByTestId("generation-retry-button").click();
+  await expect(failedModal).toBeHidden();
 
-  await authedPage.waitForTimeout(2_000);
+  const submit = await chooseSingleDayInGenerateModal(page);
+  await submit.click();
 
-  // 新規 POST が発行されたことを確認
-  expect(postCallCount, "[BUG] retry 時に新規 POST が発行されなかった").toBeGreaterThanOrEqual(1);
-  expect(
-    newRequestId,
-    "[BUG] retry 時に requestId が生成されなかった",
-  ).not.toBe("");
-  expect(
-    newRequestId,
-    "[BUG] retry 時に古い requestId が再利用された",
-  ).not.toBe(FAKE_REQUEST_ID);
+  await expect.poll(generate.posts, { message: "[BUG] リトライで新しい生成の要求が送られなかった" }).toBe(1);
+  await expect(page.getByTestId("generation-progress")).toBeVisible({ timeout: GENERATION_START_TIMEOUT_MS });
+  // 画面は、古い requestId ではなく、新しく返った requestId の状態を読みに来る
+  await expect
+    .poll(() => retriedStatusReads, {
+      message: "[BUG] リトライで返った新しい requestId の状態を読みに来ない",
+      timeout: RETRIED_STATUS_READ_TIMEOUT_MS,
+    })
+    .toBeGreaterThanOrEqual(1);
+  expect(generate.posts(), "[BUG] リトライ 1 回で生成の要求が複数送られた").toBe(1);
 });
 
 // ─── F. multi-tab realtime ───────────────────────────────────────────────
@@ -1266,17 +1286,15 @@ test("[menu-gen][adversarial] Security: 他ユーザーのrequestIdでstatus確�
  *
  * 期待: 400 or 415（サーバーがクラッシュしない）
  */
-test("[menu-gen][adversarial] Edge: 非JSONボディ送付 → クラッシュなし", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] Edge: 非JSONボディ送付 → クラッシュなし", async ({
+  regularUser,
 }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("domcontentloaded");
-
-  const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
+  const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
     data: "this is not json at all <script>alert(1)</script>",
     headers: { "Content-Type": "text/plain" },
   });
 
+  expectNotRateLimited(res, "JSON 以外の本文の生成の要求");
   expect(
     res.status(),
     `[BUG] 非JSON ボディで 5xx クラッシュ: ${res.status()}`,
@@ -1288,18 +1306,16 @@ test("[menu-gen][adversarial] Edge: 非JSONボディ送付 → クラッシュ�
  *
  * 期待: 400 or 413（ペイロード制限）または処理される — 5xx ではない
  */
-test("[menu-gen][adversarial] Edge: 1MBのnoteフィールド → クラッシュなし", async ({
-  authedPage,
+apiUserTest("[menu-gen][adversarial] Edge: 1MBのnoteフィールド → クラッシュなし", async ({
+  regularUser,
 }) => {
-  await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("domcontentloaded");
-
   const oneMBNote = "x".repeat(1024 * 1024);
-  const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
+  const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
     data: { startDate: jstThisMonday(), note: oneMBNote },
     headers: { "Content-Type": "application/json" },
   });
 
+  expectNotRateLimited(res, "1MB の note の生成の要求");
   expect(
     res.status(),
     `[BUG] 1MB note で 5xx クラッシュ: ${res.status()}`,

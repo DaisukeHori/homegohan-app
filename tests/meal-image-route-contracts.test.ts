@@ -58,7 +58,7 @@ import { PATCH as mealsPatch } from '../src/app/api/meals/[id]/route';
 const REQUEST_ID_1 = '6b1f2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 const REQUEST_ID_2 = '7c2a3b4d-5e6f-4b7c-9d8e-0f1a2b3c4d5e';
 /** enqueueMealImageJobs の作り物の結果 (dishPayloadStub の 1 品を積めた。処理を起こす件数は 1。#1532) */
-const ENQUEUED_ONE = { inserted: 1, duplicates: 0, failed: 0 };
+const ENQUEUED_ONE = { inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 0 };
 
 const dishPayloadStub = () => ({
   dishes: [{ name: 'reconciled' }],

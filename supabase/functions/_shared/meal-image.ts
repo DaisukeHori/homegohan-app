@@ -176,10 +176,25 @@ export interface MealImageJobWriteError {
   message?: string | null;
 }
 
+/**
+ * 冪等キーの一意な索引に当たる (待ち・処理中の) ジョブの状態。meal_image_jobs_idempotency_pending_idx の WHERE と同じ 2 つ (#1561)
+ */
+export const MEAL_IMAGE_JOB_ACTIVE_STATUSES = ['pending', 'processing'] as const;
+export type MealImageJobActiveStatus = (typeof MEAL_IMAGE_JOB_ACTIVE_STATUSES)[number];
+
 /** 行ごとの結果 */
 export type MealImageJobInsertOutcome =
   | { kind: 'inserted'; dishIndex: number; subjectHash: string }
-  | { kind: 'duplicate'; dishIndex: number; subjectHash: string }
+  | {
+      kind: 'duplicate';
+      dishIndex: number;
+      subjectHash: string;
+      /**
+       * 重なった同じ料理のジョブの状態 (#1561)。読めなかった (読み方を渡していない・読み取りのエラー・読む前に終わった) ときは null。
+       * null は待ちとみなして処理を起こす (起こしても待ちのジョブが無ければ空振りになるだけで、取りこぼすより安全)
+       */
+      activeStatus: MealImageJobActiveStatus | null;
+    }
   | { kind: 'failed'; dishIndex: number; subjectHash: string; code: string | null; message: string };
 
 /** enqueueMealImageJobs の結果 (#1487)。行ごとに数える */
@@ -188,18 +203,34 @@ export interface EnqueueMealImageJobsResult {
   inserted: number;
   /** 同じ料理の待ち・処理中のジョブがすでにあって積まなかった行 (冪等キーの重複) */
   duplicates: number;
+  /**
+   * duplicates のうち、重なった同じ料理のジョブが処理中 (processing) だったもの (#1561)。
+   * 画像の処理は待ち (pending) のジョブだけを拾うので、これらのために処理を起こしても空振りになる。
+   * 処理中のまま止まったジョブは、pg_cron のジョブ requeue-stale-meal-image-jobs が取り戻す
+   */
+  duplicatesProcessing: number;
   /** 書き込みに失敗した行 (権限・接続・値の不正など) */
   failed: number;
 }
 
+/** 1 行も積んでいないときの結果 */
+export const EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT: Readonly<EnqueueMealImageJobsResult> = Object.freeze({
+  inserted: 0,
+  duplicates: 0,
+  duplicatesProcessing: 0,
+  failed: 0,
+});
+
 /**
- * 積んだ結果から、処理を起こす件数 (#1532)。積めた行と、同じ料理の待ち・処理中のジョブ (重複) の数。
- * 0 (1 行も積めず、待ちのジョブも無い = 書き込みの失敗だけ・積む行が無い) なら処理を起こさない (空振りの呼び出しを出さない)。
- * 重複も数えるのは、前の呼び出しが失敗して待ちのまま残ったジョブを、保存し直したときに処理させるため
- * (待ちのジョブを定期的に拾う仕組みが無いので。Edge の saveMealToDb・積み直しの道具と同じ決まり)
+ * 積んだ結果から、処理を起こす件数 (#1532)。積めた行と、同じ料理の待ちのジョブ (重複のうち処理中でないもの) の数。
+ * 0 (1 行も積めず、待ちのジョブも無い = 書き込みの失敗だけ・積む行が無い・重複がどれも処理中) なら処理を起こさない
+ * (空振りの呼び出しを出さない)。
+ * 待ちの重複を数えるのは、前の呼び出しが失敗して待ちのまま残ったジョブを、保存し直したときにすぐ処理させるため
+ * (Edge の saveMealToDb・積み直しの道具と同じ決まり。待ちのジョブは pg_cron のジョブ process-pending-meal-image-jobs も 5 分ごとに拾う)。
+ * 処理中の重複は数えない (画像の処理は待ちのジョブだけを拾うので、起こしても空振りになる。#1561)
  */
 export function countMealImageJobsToProcess(result: EnqueueMealImageJobsResult): number {
-  return result.inserted + result.duplicates;
+  return result.inserted + result.duplicates - result.duplicatesProcessing;
 }
 
 /**
@@ -235,6 +266,33 @@ export async function buildMealImageJobRecords(params: {
 }
 
 /**
+ * 重なった (23505) 同じ料理の待ち・処理中のジョブの状態を読む関数 (#1561)。
+ * 冪等キーが同じで、状態が MEAL_IMAGE_JOB_ACTIVE_STATUSES の行を 1 行読む (部分索引があるので多くても 1 行)
+ */
+export type MealImageJobActiveStatusReader = (
+  record: MealImageJobRecord,
+) => PromiseLike<{ data: { status?: unknown } | null; error: MealImageJobWriteError | null }>;
+
+function asActiveStatus(value: unknown): MealImageJobActiveStatus | null {
+  return MEAL_IMAGE_JOB_ACTIVE_STATUSES.find((status) => status === value) ?? null;
+}
+
+/** 重なった同じ料理のジョブの状態。読めなければ null (例外は投げない) */
+async function readDuplicateActiveStatus(
+  record: MealImageJobRecord,
+  readActiveStatus: MealImageJobActiveStatusReader | undefined,
+): Promise<MealImageJobActiveStatus | null> {
+  if (!readActiveStatus) return null;
+  try {
+    const { data, error } = await readActiveStatus(record);
+    if (error) return null;
+    return asActiveStatus(data?.status);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 行ごとに insert し、積めた・重複・失敗を返す。例外は投げない (insertJob の例外も失敗として返す)。
  *
  * 1 回の upsert (onConflict: 'idempotency_key', ignoreDuplicates) にしない理由 (#1487 / #1505):
@@ -242,33 +300,42 @@ export async function buildMealImageJobRecords(params: {
  * ON CONFLICT (idempotency_key) は索引を推論できず、42P10 で必ず失敗する (行が 1 つも積まれない)。
  * 部分索引のままにするのは、失敗・取り消し・完了したジョブと同じ料理を、あとで積み直せるようにするため。
  * そのため行ごとに insert し、一意制約の違反 (23505) は「同じ料理のジョブが待ち・処理中」として重複に数える。
+ *
+ * 重複のときは readActiveStatus で、重なったジョブが待ちか処理中かを読む (#1561。処理中なら処理を起こしても空振りになるので、
+ * countMealImageJobsToProcess が数えない)。readActiveStatus を渡さない・読めないときの状態は null (待ちとみなす)
  */
 export async function insertMealImageJobRecords(
   records: ReadonlyArray<MealImageJobRecord>,
   insertJob: (record: MealImageJobRecord) => PromiseLike<{ error: MealImageJobWriteError | null }>,
+  readActiveStatus?: MealImageJobActiveStatusReader,
 ): Promise<MealImageJobInsertOutcome[]> {
   return Promise.all(
     records.map(async (record): Promise<MealImageJobInsertOutcome> => {
       const base = { dishIndex: record.dish_index, subjectHash: record.subject_hash };
+      let insertError: MealImageJobWriteError | null;
       try {
-        const { error } = await insertJob(record);
-        if (!error) return { kind: 'inserted', ...base };
-        if (error.code === MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE) return { kind: 'duplicate', ...base };
-        return { kind: 'failed', ...base, code: error.code ?? null, message: error.message ?? 'unknown error' };
+        ({ error: insertError } = await insertJob(record));
       } catch (error) {
         return { kind: 'failed', ...base, code: null, message: error instanceof Error ? error.message : String(error) };
       }
+      if (!insertError) return { kind: 'inserted', ...base };
+      if (insertError.code === MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE) {
+        return { kind: 'duplicate', ...base, activeStatus: await readDuplicateActiveStatus(record, readActiveStatus) };
+      }
+      return { kind: 'failed', ...base, code: insertError.code ?? null, message: insertError.message ?? 'unknown error' };
     }),
   );
 }
 
 /** 行ごとの結果を数える */
 export function summarizeMealImageJobOutcomes(outcomes: ReadonlyArray<MealImageJobInsertOutcome>): EnqueueMealImageJobsResult {
-  const result: EnqueueMealImageJobsResult = { inserted: 0, duplicates: 0, failed: 0 };
+  const result: EnqueueMealImageJobsResult = { ...EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT };
   for (const outcome of outcomes) {
     if (outcome.kind === 'inserted') result.inserted += 1;
-    else if (outcome.kind === 'duplicate') result.duplicates += 1;
-    else result.failed += 1;
+    else if (outcome.kind === 'duplicate') {
+      result.duplicates += 1;
+      if (outcome.activeStatus === 'processing') result.duplicatesProcessing += 1;
+    } else result.failed += 1;
   }
   return result;
 }

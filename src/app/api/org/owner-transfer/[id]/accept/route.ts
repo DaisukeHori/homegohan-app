@@ -7,6 +7,7 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderOrgTransferCompletedEmail } from '@/lib/emails/membership/org-transfer-completed';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 // #1236: RPC の生メッセージ (エラーコード文字列) を画面に出さず、利用者向けの文言にする
 const TRANSFER_ACCEPT_MESSAGES: Record<string, string> = {
@@ -77,7 +78,9 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
       }
       const nicknames = new Map<string, string>();
       for (const row of profiles.data ?? []) {
-        if (typeof row.nickname === 'string' && row.nickname) nicknames.set(row.id, row.nickname);
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は入れない。既定の呼称・メールアドレスの宛名になる (#1649)
+        const name = normalizeProfileName(row.nickname);
+        if (name) nicknames.set(row.id, name);
       }
 
       // 組織名は RPC の戻り値 (更新後の organizations の行) から入れる

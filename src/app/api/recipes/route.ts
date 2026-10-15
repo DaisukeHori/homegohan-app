@@ -3,6 +3,7 @@ import { generateRequestId } from '@/lib/db-logger';
 import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { recipeAuthorName } from '@/lib/recipes/author-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // レシピ一覧取得
@@ -76,7 +77,7 @@ export async function GET(request: Request) {
   const recipes = (data || []).map((item: any) => ({
     id: item.id,
     userId: item.user_id,
-    authorName: item.user_profiles?.nickname || '匿名',
+    authorName: recipeAuthorName(item.user_profiles?.nickname),
     name: item.name,
     description: item.description,
     caloriesKcal: item.calories_kcal,

@@ -33,6 +33,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cleanupFreshUser, createFreshUser, injectSession } from "./fixtures/fresh-user";
 import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { serveTurnstileOffline } from "./helpers/turnstile-offline";
 import { generateTestPassword } from "./helpers/credentials";
 import { LEGAL_DOCUMENTS } from "../../packages/shared/src/legal-versions";
 
@@ -201,6 +202,10 @@ test.describe("サインアップ画面の明示的な同意 (#1174)", () => {
   test.setTimeout(120_000);
 
   test("チェックするまで、Google 登録も「登録して始める」も押せない。みなし同意の文面は無い", async ({ page }) => {
+    // #1672: e2e のアプリは Turnstile のテスト用サイトキー付きでビルドするので、「登録して始める」はウィジェットがトークンを出すまで押せない。
+    // ここで確かめたいのは同意のチェックだけなので、ウィジェットは外のネットワーク (challenges.cloudflare.com) に繋がずに動かす
+    // (常設の e2e で、本物のウィジェットのトークンが 5 秒以内に出ずに、チェック後も押せないまま落ちることがあった)
+    await serveTurnstileOffline(page);
     await page.goto("/signup");
 
     const consent = page.locator("#agree-legal");
@@ -327,7 +332,14 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
 
     await page.waitForURL((url) => url.pathname === "/home", URL_CHANGE);
     // 同意した後は、もう同意画面へ回されない (ホームに留まる)
-    await page.reload();
+    // #1672: 読み込み直す前に、同意画面からホームへの遷移 (LegalConsentForm の window.location.assign) の読み込みが進む
+    // (DOMContentLoaded) のを待つ。waitForURL は URL_CHANGE (waitUntil: "commit") なので、新しい文書が確定した瞬間に返り、
+    // 以前はその直後 (遷移の途中) に reload を送っていた。常設の e2e で、この reload が「Not attached to an active page」で落ちた。
+    // この文言は Chromium の DevTools が、ページの接続先の文書 (RenderFrameHost) が active でないときに Page.reload を断る応答
+    // (content/browser/devtools/protocol/page_handler.cc の kErrorInactivePage) で、遷移による文書の入れ替えの途中に送ったときに出る。
+    // 新しい文書の読み込みが進んで DOMContentLoaded が来たあとなら、入れ替えは終わっている
+    await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
+    await page.reload({ waitUntil: "domcontentloaded" });
     expect(new URL(page.url()).pathname).toBe("/home");
 
     const rows = await readAcceptances(user.id);
@@ -370,6 +382,8 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     });
 
     // 同意は DB に残っているので、もう同意画面には回されない。何もしない (false)
+    // #1672: acceptLegalConsentIfShown は遷移の確定 (commit) で返る。次の遷移を送る前に、上の reload と同じく読み込みが進むのを待つ
+    await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
     await page.goto("/menus/weekly");
     expect(new URL(page.url()).pathname).toBe("/menus/weekly");
     expect(await acceptLegalConsentIfShown(page)).toBe(false);
@@ -436,7 +450,8 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     await expect(consentHeading(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
     expect(new URL(page.url()).pathname).toBe("/legal-consent");
 
-    // /api/* はゲートの対象外: 307 で同意画面へ回さない (この API は POST だけなので、GET は 405)
+    // /api/* は画面の判定の対象外: 307 で同意画面へ回さない。/api/legal/accept は API の同意ゲート (#1442) の許可リストなので
+    // middleware を通り、route まで届く (この API は POST だけなので、GET は 405)
     const res = await page.request.get("/api/legal/accept", { maxRedirects: 0 });
     expect(res.status()).toBe(405);
   });
@@ -564,5 +579,98 @@ test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONS
     await page.goto("/home");
     await page.waitForURL((url) => url.pathname.startsWith("/onboarding"), URL_CHANGE);
     expect(new URL(page.url()).pathname).not.toBe("/legal-consent");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// API の同意ゲート (#1442 / 設計書 docs/design/cross/13a-legal-consent-api-server.md §6.14 F)
+// middleware の /api の分岐が、未同意の人の API を 403 { error, code: "LEGAL_CONSENT_REQUIRED" } で止める (許可リストを除く)。
+// page.request は page のセッション Cookie を使う
+// ─────────────────────────────────────────────────────────────────────────────
+const LEGAL_CONSENT_REQUIRED_CODE = "LEGAL_CONSENT_REQUIRED";
+
+async function codeOf(res: { json: () => Promise<unknown> }): Promise<unknown> {
+  const body = await res.json().catch(() => null);
+  return body && typeof body === "object" ? (body as { code?: unknown }).code : undefined;
+}
+
+async function readLegalStatus(page: Page) {
+  const res = await page.request.get("/api/legal/status", { maxRedirects: 0 });
+  expect(res.status()).toBe(200);
+  return (await res.json()) as { enforced: boolean; accepted: boolean; required: boolean };
+}
+
+test.describe("API の同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#1442)", () => {
+  test.skip(!ENFORCED, "LEGAL_CONSENT_ENFORCE=on のときだけ実行する");
+  test.setTimeout(180_000);
+
+  test("[強制あり] API: 未同意の人の GET /api/profile は 403 で code が LEGAL_CONSENT_REQUIRED", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    const res = await page.request.get("/api/profile", { maxRedirects: 0 });
+    expect(res.status()).toBe(403);
+    expect(await codeOf(res)).toBe(LEGAL_CONSENT_REQUIRED_CODE);
+  });
+
+  test("[強制あり] API: GET /api/legal/status は未同意でも 200 で required が true", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    const status = await readLegalStatus(page);
+    expect(status).toMatchObject({ enforced: true, accepted: false, required: true });
+  });
+
+  test("[強制あり] API: 同意 (POST /api/legal/accept) のあとは GET /api/profile が 200、status の required が false", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    const accept = await page.request.post("/api/legal/accept", {
+      data: { terms_version: CURRENT_TERMS, privacy_version: CURRENT_PRIVACY },
+      headers: { "Content-Type": "application/json" },
+      maxRedirects: 0,
+    });
+    expect(accept.status()).toBe(200);
+
+    const profile = await page.request.get("/api/profile", { maxRedirects: 0 });
+    expect(profile.status()).toBe(200);
+    expect(await readLegalStatus(page)).toMatchObject({ enforced: true, accepted: true, required: false });
+  });
+
+  test("[強制あり] API: 未同意でも GET /api/account/export は 403 LEGAL_CONSENT_REQUIRED にならない", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    const res = await page.request.get("/api/account/export", { maxRedirects: 0 });
+    const code = await codeOf(res);
+    expect(code).not.toBe(LEGAL_CONSENT_REQUIRED_CODE);
+    expect(res.status()).not.toBe(403);
+  });
+
+  test("[強制あり] API: 古い版に同意済みの人 (改定のあと) は GET /api/profile が 403 LEGAL_CONSENT_REQUIRED。/home を開くと同意画面 (「改定あり」) へ回り、再同意すると GET /api/profile が 200 (S5・S14)", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true, legal: { terms: "v0-old", privacy: CURRENT_PRIVACY } });
+
+    const before = await page.request.get("/api/profile", { maxRedirects: 0 });
+    expect(before.status()).toBe(403);
+    expect(await codeOf(before)).toBe(LEGAL_CONSENT_REQUIRED_CODE);
+
+    await page.goto("/home");
+    await expect(page).toHaveURL(/\/legal-consent\?next=%2Fhome$/, { timeout: NAVIGATION_TIMEOUT });
+    await expect(page.getByTestId("legal-doc-terms_of_service")).toContainText("改定あり");
+
+    await acceptOnConsentPage(page);
+    await page.waitForURL((url) => url.pathname === "/home", URL_CHANGE);
+
+    const after = await page.request.get("/api/profile", { maxRedirects: 0 });
+    expect(after.status()).toBe(200);
+  });
+});
+
+test.describe("API の同意ゲート: 強制なし (既定 / お知らせあり) (#1442)", () => {
+  test.skip(ENFORCED, "LEGAL_CONSENT_ENFORCE=on でないときだけ実行する");
+  test.setTimeout(180_000);
+
+  test("[既定 / お知らせあり] API: 未同意でも GET /api/profile は 200、status の required は false", async ({ page }) => {
+    await signInAsNewUser(page, { profile: true });
+
+    const profile = await page.request.get("/api/profile", { maxRedirects: 0 });
+    expect(profile.status()).toBe(200);
+    expect(await readLegalStatus(page)).toMatchObject({ enforced: false, accepted: false, required: false });
   });
 });

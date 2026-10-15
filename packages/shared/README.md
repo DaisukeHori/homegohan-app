@@ -37,14 +37,15 @@ type NewMeal = TablesInsert<"planned_meals">;
 | `date-utils.ts` | `formatLocalDate`, `todayLocal`, `parseLocalDate`, `addDays` |
 | `nutrition-planner.ts` | `deriveMacroTargets`, `estimateGoalProjection` |
 | `dish-roles.ts` | `DishRole`, `DishConfig`, `getDishConfig` |
-| `meal-types.ts` | `MealType`, `MEAL_LABELS`, `MEAL_ORDER`, `isMealType` (食事の区分の正本。Web・モバイルは 5 値を手で書かずここから導く。#1446) |
+| `meal-types.ts` | `MealType`, `MEAL_LABELS`, `MEAL_EMOJIS`, `MEAL_ORDER`, `isMealType` (食事の区分の正本。Web・モバイルは 5 値を手で書かずここから導く。#1446。区分ごとの絵文字も Web・モバイル共通の見た目としてここに置く。#1665) |
 | `mode-config.ts` | `ModeKey`, `ModeConfig`, `MODE_CONFIG` |
 | `nutrition-constants.ts` | `NUTRIENT_DEFINITIONS`, `getNutrientDefinition`, `calculateDriPercentage` |
 | `theme-labels.ts` | `THEME_LABELS_REQUEST`, `AI_CONDITIONS` |
 | `progress-phases.ts` | `PROGRESS_PHASES`, `ULTIMATE_PROGRESS_PHASES`, `SHOPPING_LIST_PHASES` |
 | `design-tokens.ts` | `STATUS_COLOR_TOKENS`, `StatusColorTokenKey` (状態色。塗り用の `success` / `warning` / `error` / `danger` と各 `*Light`、文字用の `successText` / `warningText` / `dangerText`。文字用は WCAG AA 4.5:1 以上。Web の home・health・pantry とモバイルの `colors.ts` が import する。#590) |
 | `health-blood-test-reference.ts` | `ALL_METRIC_DEFS`, `BLOOD_METRIC_DEFS`, `BODY_METRIC_DEFS`, `getRangeForSex`, `formatRangeText`, `evaluateStatus`, `getStatusLabel`, `getMetricLabel`, `getMetricUnit`, `BiologicalSex`, `MetricKey`, `MetricStatus` (健診・血液検査の値の基準値 (性別依存) と判定。Web の健診の詳細・血液検査の画面と、モバイルの健診の詳細の画面が使う。Web の `src/lib/health-blood-test-reference.ts` はここを読み直すだけ。#1055 / #1049) |
-| `profile-name.ts` | `PROFILE_NAME_PLACEHOLDER`, `normalizeName`, `normalizeProfileName` (プロフィールの名前の仮置き `'Guest'` (前後の空白を除いて厳密一致) と空・空白だけを「名前が無い」とする判定。Web の `src/lib/profile-name.ts` はここを読み直すだけ。モバイルのプロフィール・再開・ハンズオンツアー・一覧の画面と `GET /api/onboarding/status` が使う。#1611 / #1635) |
+| `profile-name.ts` | `PROFILE_NAME_PLACEHOLDER`, `normalizeName`, `normalizeProfileName` (プロフィールの名前の仮置き `'Guest'` (前後の空白を除いて厳密一致) と空・空白だけを「名前が無い」とする判定。Web の `src/lib/profile-name.ts` はここを読み直すだけ。モバイルのプロフィール・再開・ハンズオンツアー・一覧の画面と `GET /api/onboarding/status`、名前を返す・宛名に使う API (レシピの作者名・問い合わせ者名・家族や組織のメールの宛名など) が使う。Edge Functions は packages/shared を読めないので `supabase/functions/_shared/profile-name.ts` に同じ規則の写しがあり、一致は `tests/edge-profile-name-sync.test.ts` が確かめる。#1611 / #1635 / #1649) |
+| `handson-tour-nickname.ts` | `HANDSON_TOUR_NICKNAME_FALLBACK`, `HANDSON_TOUR_NICKNAME_MAX_LENGTH`, `handsonTourNickname` (ハンズオンツアーの呼びかけ ({nickname} さん) に出す名前。`normalizeProfileName` で名前が無い (仮置きの `'Guest'`・空・空白だけ) ときは `'あなた'`、30 文字を超えたら切って「…」。Web の 5 画面とモバイルの 5 画面が使う。#1635 / #1649) |
 | `database.types.ts` | `Database`, `Tables`, `TablesInsert`, `TablesUpdate`, `Enums`, `CompositeTypes`, `DatabaseConstants` |
 
 ## Supabase 型の再生成

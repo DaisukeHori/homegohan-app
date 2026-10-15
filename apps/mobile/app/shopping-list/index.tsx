@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
+import { MEAL_LABELS, formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -480,8 +480,8 @@ export default function ShoppingListPage() {
     }
   };
 
-  const mealLabel = (meal: MealType) =>
-    meal === 'breakfast' ? '朝食' : meal === 'lunch' ? '昼食' : '夕食';
+  // 区分の表示名は MEAL_LABELS から引く (#1665。比較の連鎖を持たない)
+  const mealLabel = (meal: MealType) => MEAL_LABELS[meal];
 
   return (
     <View testID="shopping-list-screen" style={{ flex: 1, backgroundColor: colors.bg }}>

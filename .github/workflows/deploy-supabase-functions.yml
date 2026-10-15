@@ -129,9 +129,58 @@ jobs:
       # 名前を指定しない deploy は supabase/config.toml の [functions.<name>] verify_jwt を関数ごとに読む
       # (CLI 2.62.10 の internal/functions/deploy の GetFunctionConfig)。JWT 検証を外すフラグは全関数に効くので付けない (#1406)。
       # tests/edge-function-verify-jwt.test.ts がこのファイルをコメントも含めて読むので、そのフラグの名前はここにも書かない
+      #
+      # 関数のまとめ (バンドル) は Supabase のサーバーにさせ (--use-api)、ランナーの Docker を使わない (#1686)。
+      # --use-api を付けない形は、Docker の edge-runtime のイメージ (public.ecr.aws/supabase/edge-runtime) を認証なしで取って
+      # 手元でまとめるため、ECR の上限 (toomanyrequests: Data limit exceeded) に当たるとデプロイごと落ちた (2026-10-15。
+      # #1523 の取得元の切り替えは supabase start と db diff の経路にしか効かない)。CLI 2.62.10 は --use-api のとき Docker での
+      # まとめを切る (cmd/functions.go。internal/functions/deploy/deploy.go の Run は Docker の bundler を付けない)。
+      # --use-api のとき CLI が関数ごとに送るのは、入口のファイル・そこから相対パスの import でたどれるファイル・import map だけ
+      # (pkg/function/deploy.go の writeForm)。共通の supabase/functions/deno.json は関数のディレクトリの外にあり、--import-map で
+      # 指定しないと送られず、deno.json の名前 (zod など) が解決できない。そこで全関数に --import-map で渡す
+      # (Docker でまとめていたときは、Deno が上のディレクトリの deno.json を見つけていた)。送るファイルの漏れ (CLI のたどり方で
+      # 拾えない import の書き方) は tests/edge-function-deploy-use-api.test.ts が、CLI と同じたどり方で確かめる (PR の npm test)。
+      #
+      # 失敗したら、Docker のイメージの取得の失敗と、デプロイそのものの失敗を分けて出す。取得の失敗は --use-api では起きない
+      # はずで、起きたら CLI が Docker でのまとめに戻ったということ。#1523 と同じ印 ([image-pull-unavailable]・終了コード 75) で出す。
+      # どちらも、その時点の最新の main の run の失敗したジョブを流し直せる (関数ごとの上書きなので、2 回打っても同じ結果)。
+      # 扱いは docs/operations/ci-supabase-image-pull.md。この run は tests/edge-function-deploy-use-api.test.ts が偽の npx で動かして確かめる
       - name: Deploy all functions
+        shell: bash
         run: |
-          npx --yes supabase@2.62.10 functions deploy --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+          . scripts/lib/supabase-image-pull.sh
+          # Docker のイメージの取得の失敗の印 (CLI は取得の失敗を「failed to pull docker image」で包む。toomanyrequests は ECR の上限)。
+          # 接続の時間切れ (context deadline exceeded など) は、デプロイの API の時間切れでも出るので、取得の失敗に数えない
+          image_pull_error='failed to pull docker image|toomanyrequests'
+          deploy_log="$(mktemp)"
+          deploy_functions() {
+            npx --yes supabase@2.62.10 functions deploy --use-api --import-map supabase/functions/deno.json --project-ref ${{ env.SUPABASE_PROJECT_ID }}
+          }
+          # stderr を画面に流しつつファイルにも残して判定する (CLI のエラーは stderr に出る)。stdout はそのまま画面へ
+          status=0
+          { deploy_functions 2>&1 1>&3 | tee "$deploy_log" >&2; } 3>&1 || status=$?
+          if [ "$status" -eq 0 ]; then
+            exit 0
+          fi
+          if grep -qE "$image_pull_error" "$deploy_log"; then
+            title="Deploy all functions: イメージを取得できない (関数のデプロイの赤ではない)"
+            msg="$SIP_UNAVAILABLE_TAG Deploy all functions: Docker のイメージを取得できませんでした (終了コード $status)。--use-api ではイメージを取らないはずなので、CLI が Docker でのまとめに戻っていないかを確かめてください。関数のコードの赤ではありません。最新の main の run の失敗したジョブを流し直してください。扱いは $SIP_RUNBOOK"
+            exit_code="$SIP_EXIT_PULL_UNAVAILABLE"
+          else
+            title="Deploy all functions: 関数のデプロイが失敗した"
+            msg="Deploy all functions: 関数のデプロイが失敗しました (終了コード $status)。Docker のイメージの取得の失敗ではありません。ログの CLI のエラーを確かめてください。一過性 (API の時間切れ・5xx) なら、最新の main の run の失敗したジョブを流し直してください。扱いは $SIP_RUNBOOK"
+            exit_code="$status"
+          fi
+          echo "$msg" >&2
+          echo "::error title=$title::$msg"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            {
+              echo "## $title"
+              echo ""
+              echo "$msg"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          exit "$exit_code"
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
 

@@ -674,6 +674,8 @@ function HandsonTourPhotoPage() {
 }
 ```
 
+モバイルの Step 1 (`apps/mobile/app/handson-tour/photo.tsx`) は、子に `<MealNewScreen />` ではなく、同じファイルの sandbox の画面 (`MealSandboxEmbed`) を置く (モバイルの `app/meals/new.tsx` は 2026-10-15 に削除。#1598)。
+
 ---
 
 ## 6. 既存画面への `mode='sandbox'` 追加
@@ -681,7 +683,8 @@ function HandsonTourPhotoPage() {
 ### 6.1 `<MealNewScreen>` 拡張
 
 ```ts
-// apps/mobile/app/meals/new.tsx + src/app/(main)/meals/new/page.tsx
+// src/app/(main)/meals/new/page.tsx (モバイルの apps/mobile/app/meals/new.tsx は 2026-10-15 に削除。#1598。
+// スキャンのタブは WebView で、モバイルのツアーの Step 1 は app/handson-tour/photo.tsx が受け持つ)
 
 interface MealNewScreenSandboxProps {
   mode: 'sandbox';
@@ -855,6 +858,8 @@ apps/mobile/src/handson-tour/
 ├── useReducedMotion.ts     (mobile版、AccessibilityInfo)
 └── index.ts
 ```
+
+上の木の `apps/mobile/src/handson-tour/` は、設計時に置いたコンポーネントと hook だけ。いまのファイルの一覧 (`Confetti.tsx` と、あとから足したファイルを含む) は 16-files-structure.md の §1.3 の表と §5 の木 (`tests/handson-tour-files-structure-doc.test.ts` が実ファイルと突き合わせる)。
 
 ---
 
