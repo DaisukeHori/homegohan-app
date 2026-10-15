@@ -5,7 +5,7 @@
  * (mobile/01-architecture.md §12.4・family/03-ui-spec.md など) は「削除した」と書いたが、ハンズオンツアーの設計書 (family/09) は
  * apps/mobile/app/meals/new.tsx を、まだ sandbox 対応の実装先として挙げていた (07-components.md・12-phases.md・13-integration.md・
  * 16-files-structure.md)。設計書を写して実装すると、消した画面を作り直してしまう。ここで落とす。
- *   1. REMOVED_MOBILE_SCREENS のファイルは無い (画面を戻すなら、この一覧と設計書を一緒に直す)
+ *   1. REMOVED_MOBILE_SCREENS (一覧は tests/helpers/mobile-removed-1598.ts) のファイルは無い (画面を戻すなら、この一覧と設計書を一緒に直す)
  *   2. docs/design/ の .md のうち、そのファイルを名指しする行 (`apps/mobile/app/<パス>` か `app/<パス>`) は、
  *      同じ行で消したことを書く (REMOVAL_NOTE)
  *   3. 走査が空振りしていない (#1673 が直した mobile/01-architecture.md §12.4 の行を見つける)
@@ -16,76 +16,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import { REMOVED_MOBILE_SCREENS } from './helpers/mobile-removed-1598';
+
 const ROOT = path.resolve(__dirname, '..');
 /** 走査する設計書の根 (リポジトリの根からの相対) */
 const DESIGN_DIR = 'docs/design';
 /** モバイルの画面のディレクトリ (Expo Router の app/) */
 const MOBILE_APP_DIR = 'apps/mobile/app';
 
-/** #1673 (#1598 / #1610) と #1598 の続きで消したネイティブの画面 (MOBILE_APP_DIR からの相対) */
-const REMOVED_MOBILE_SCREENS = [
-  'meals/new.tsx',
-  'family/index.tsx',
-  'profile/index.tsx',
-  'comparison/index.tsx',
-  '(public)/company.tsx',
-  '(public)/contact.tsx',
-  '(public)/faq.tsx',
-  '(public)/guide.tsx',
-  '(public)/legal.tsx',
-  '(public)/news.tsx',
-  // #1598 の続き (通常の操作で届かない残りのネイティブの画面。_layout も含む)
-  '(tabs)/favorites.tsx',
-  '(tabs)/health.tsx',
-  'ai/[sessionId].tsx',
-  'ai/important.tsx',
-  'ai/index.tsx',
-  'badges/index.tsx',
-  'health/challenges.tsx',
-  'health/checkups/[id].tsx',
-  'health/checkups/index.tsx',
-  'health/checkups/new.tsx',
-  'health/goals.tsx',
-  'health/graphs.tsx',
-  'health/insights.tsx',
-  'health/record/[date].tsx',
-  'health/record/index.tsx',
-  'health/record/quick.tsx',
-  'health/settings.tsx',
-  'health/streaks.tsx',
-  'meals/[id].tsx',
-  'meals/[id]/edit.tsx',
-  'menus/weekly/index.tsx',
-  'menus/weekly/request/index.tsx',
-  'pantry/index.tsx',
-  'shopping-list/index.tsx',
-  'recipes/[id].tsx',
-  'recipes/[id]/edit.tsx',
-  'recipes/collections/[collectionId].tsx',
-  'recipes/collections/index.tsx',
-  'recipes/collections/select.tsx',
-  'recipes/index.tsx',
-  'recipes/new.tsx',
-  '(org)/_layout.tsx',
-  '(org)/org/challenges.tsx',
-  '(org)/org/dashboard.tsx',
-  '(org)/org/departments.tsx',
-  '(org)/org/invites.tsx',
-  '(org)/org/members.tsx',
-  '(org)/org/settings.tsx',
-  '(support)/_layout.tsx',
-  '(support)/support/index.tsx',
-  '(support)/support/inquiries.tsx',
-  '(support)/support/inquiries/[id].tsx',
-  '(support)/support/users.tsx',
-  '(support)/support/users/[id].tsx',
-  '(super-admin)/_layout.tsx',
-  '(super-admin)/super-admin/admins.tsx',
-  '(super-admin)/super-admin/database.tsx',
-  '(super-admin)/super-admin/feature-flags.tsx',
-  '(super-admin)/super-admin/index.tsx',
-  '(super-admin)/super-admin/settings.tsx',
-] as const;
 
 /** 消したことを書いた行の目印 (「2026-10-15 に削除」「…として消した」) */
 const REMOVAL_NOTE = /削除|消した/;

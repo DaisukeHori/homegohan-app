@@ -19,11 +19,14 @@
  * 網羅はしない (「Web アプリ」のようにアプリの語が Web を指す文は、消した名前を書かない限り落ちない)。文は「。」と改行で
  * 切るので、Web について書いた括弧の中に「。」を置くと、その後ろが Web の語の無い文になってアプリの記述として読まれる
  * (Web の記述の括弧の中では「。」を使わない)。
- * 設計書 (docs/design/) は tests/design-doc-removed-mobile-screens.test.ts が受け持つ。
+ * 設計書 (docs/design/) は tests/design-doc-removed-mobile-screens.test.ts が、それ以外のソース・テスト・文書の
+ * 「apps/mobile/<ファイル>」の名指し (引用符で囲まない書き方も) は tests/mobile-removed-files-references.test.ts が受け持つ。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+
+import { MOBILE_NAMES_REMOVED_IN_1598 } from './helpers/mobile-removed-1598';
 
 const ROOT = path.resolve(__dirname, '..');
 /** 見張る文書 (リポジトリの根からの相対) */
@@ -38,72 +41,6 @@ const MOBILE_FILE_MENTION = /`(apps\/mobile\/[^`\s]+\.(?:tsx?|jsx?|json|ya?ml|md
 /** 「`apps/mobile/<ファイル>.ts(x)` の `名前` / `名前`」の書き方 */
 const MOBILE_EXPORT_MENTION = /`(apps\/mobile\/[^`\s]+\.tsx?)` の ((?:`[A-Za-z_$][\w$]*`)(?: \/ `[A-Za-z_$][\w$]*`)*)/g;
 
-/**
- * #1598 でアプリ (apps/mobile) から消し、Web や共有の側 (src/・packages/・supabase/functions/_shared/・types/) に
- * 同じ名前が残るもの。名前で grep すると Web の側が見つかるので、アプリの記述に残っていても気づけない
- */
-const MOBILE_NAMES_REMOVED_IN_1598 = [
-  'AddFridgeModal',
-  'AddMealModal',
-  'AddMealSlotModal',
-  'AddShoppingModal',
-  'BadgesPage',
-  'ConfirmDeleteModal',
-  'DishIconKey',
-  'FEEDBACK_ERROR_MESSAGE',
-  'FEEDBACK_MAX_POLLS',
-  'FEEDBACK_POLL_INTERVAL_MS',
-  'FEEDBACK_TIMEOUT_MESSAGE',
-  'FeedbackRealtimeClient',
-  'fetchSignedPhotoUrls',
-  'getSignedPhotoUrlResolver',
-  'HealthChallengesPage',
-  'HealthGoalsPage',
-  'HealthGraphsPage',
-  'HealthInsightsPage',
-  'HealthSettingsPage',
-  'ICON_MAP_LUCIDE',
-  'ImproveMealModal',
-  'isAiConsentRequiredResponse',
-  'isOrgAdmin',
-  'ManualEditModal',
-  'MealDetailPage',
-  'NutritionDetailModal',
-  'NutritionFeedbackContent',
-  'NutritionFeedbackRequest',
-  'NutritionFeedbackWatchHandlers',
-  'NutritionTotals',
-  'ORG_ADMIN_ROLES',
-  'OrgAdminRole',
-  'OrgChallengesPage',
-  'OrgDashboardPage',
-  'OrgDepartmentsPage',
-  'OrgInvitesPage',
-  'OrgLayout',
-  'OrgSettingsPage',
-  'PantryItem',
-  'PantryPage',
-  'PhotoEditModal',
-  'ProgressTodoCard',
-  'QuantityVariant',
-  'RecipeModal',
-  'RegenerateMealModal',
-  'ServingsConfig',
-  'ServingsModal',
-  'shoppingListRequestErrorMessageForDisplay',
-  'SignedPhotoImage',
-  'SignedPhotoImageProps',
-  'StatsModal',
-  'SuperAdminLayout',
-  'SupportInquiriesPage',
-  'SupportLayout',
-  'SupportUsersPage',
-  'useNutritionFeedbackWatch',
-  'useSignedPhotoUrl',
-  'watchNutritionFeedback',
-  'WatchNutritionFeedbackOptions',
-  'WeeklyMenuPage',
-] as const;
 
 /** #1598 で消した操作の呼び名 (アプリの記述に、いまある操作として書かない) */
 const REMOVED_MOBILE_OPERATION_WORDS = ['1 食の作り直し'] as const;
