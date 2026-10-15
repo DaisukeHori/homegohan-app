@@ -5,7 +5,9 @@
 // 「どのサブステップでも placeholder ({...}) が埋まらずに利用者に出ない」ことをテストで確かめられるようにする。
 //   - 2.6 の本文は {cooking_experience_text} (と {exclude_list}) を埋める。以前は埋めずに出していた (#1660)
 //   - 3.1 の本文は intro_hint ("タップで進む")。以前は {nickname} を埋めていない intro_title をそのまま本文に出していた
-//     (タイトルの intro_title は埋めている。設計書 05 §3.3 の図は「{nickname} さん / もう 2 つ獲得しています! / タップで進む」)
+//     (タイトルの intro_title は埋めている。設計書 05 §3.3 の図は「{nickname} さん / もう 1 つ獲得しています! / タップで進む」)
+//   - 3.1 の「n つ」と 3.2 (first_bite) の文言は共有の i18n のキーをそのまま使う。ツアーが Step 3 までに付けるのは planner だけで
+//     (STEP3_BADGES_EARNED_IN_TOUR)、お試しの記録は first_bite に数えない (#1314)。3.2 は獲得の有無を言わない文言 (#1626)
 
 import {
   HANDSON_TOUR_I18N_JA,

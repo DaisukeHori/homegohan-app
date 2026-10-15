@@ -12,8 +12,10 @@
 > そのため、以降の「Step 1 の保存で `first_bite` が付く」「Step 3 で `first_bite` が獲得済みになっている」という記述は実際と異なる
 > (`first_bite` は実際の食事の記録で付く。ツアー中に付くのは `planner` と、卒業時の `tutorial_complete`)。
 > Step 3 は `first_bite` / `planner` / `tutorial_complete` のカードを Spotlight で指すだけなので、未獲得でも成り立つ
-> (`GET /api/badges` は、この 3 つを未獲得でも必ず返す)。Step 3 の文言 (「もう 2 つ獲得しています」など) は web と app で共有しており、
-> 見直しには app のリリースが要るため未対応。
+> (`GET /api/badges` は、この 3 つを未獲得でも必ず返す)。
+> Step 3 の文言は、ツアーが Step 3 までに実際に付ける数 (`planner` の 1 つ) に合わせて「もう 1 つ獲得しています」とし、
+> `first_bite` の吹き出しは、獲得済み (やり直しのツアー) でも未獲得でも食い違わないよう「食事を記録するともらえるバッジです」(もらい方の説明) とした (#1626)。
+> この数は `packages/handson-tour-shared` の `STEP3_BADGES_EARNED_IN_TOUR` と合わせ、テストで突き合わせている。
 
 ## ナビゲーション (並列開発単位)
 
