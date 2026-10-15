@@ -210,7 +210,7 @@ describe('運営の MFA の入口 (#1176 cross/12 §21.4)', () => {
     expect((await apiCall('GET', '/api/admin/users', aal2.access_token)).status).toBe(200);
   });
 
-  it('M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションの token は 401', async () => {
+  it('M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションは refresh できない (token は 401 でなく、運営の API は 403)', async () => {
     const before = await signIn(admin);
     const recovered = await cookieCall('POST', '/api/auth/mfa/recover', before.session, { code: enrolled.backupCodes[0] });
     expect(recovered.status, JSON.stringify(recovered.body)).toBe(200);
@@ -218,8 +218,12 @@ describe('運営の MFA の入口 (#1176 cross/12 §21.4)', () => {
     const { data: listed } = await srAdmin.auth.admin.mfa.listFactors({ userId: admin.id });
     expect(listed?.factors ?? []).toHaveLength(0);
 
-    // 旧セッション (回復の前の aal1 のセッション) は Supabase に終えられている
-    expect((await apiCall('GET', '/api/auth/mfa/status', before.session.access_token)).status).toBe(401);
+    // 旧セッション (回復の前の aal1 のセッション) は Supabase に終えられている: refresh できない。
+    // access_token そのもの (JWT) は寿命まで署名が有効で、ローカルの GoTrue の getUser はセッションの削除を見ずに通すことがある
+    // (2026-10-16 の実測で 200)。aal1 のままなので、運営の API は今までどおり 403 (未登録になったので enrollment_required)
+    const { error: refreshError } = await before.client.auth.refreshSession({ refresh_token: before.session.refresh_token });
+    expect(refreshError).not.toBeNull();
+    expect((await apiCall('GET', '/api/admin/users', before.session.access_token)).status).toBe(403);
 
     // 登録し直すと、使ったコードはもう使えない (新しい 10 個に入れ替わる)
     const again = await signIn(admin);
