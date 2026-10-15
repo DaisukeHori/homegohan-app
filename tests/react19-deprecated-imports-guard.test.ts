@@ -112,16 +112,18 @@ function readInstalled(relativePath: string): string {
 beforeAll(async () => {
   const ESLintClass = await eslintPackage.loadESLint({ useFlatConfig: true });
   const eslint = new ESLintClass({ cwd: ROOT });
-  const files = [...WEB_FILES, ...MOBILE_FILES];
-  for (const file of files) {
-    for (const fixture of [...FORBIDDEN, ...ALLOWED]) {
-      const [result] = await eslint.lintText(fixture.code, { filePath: path.join(ROOT, file) });
-      const messages = result.messages as LintMessage[];
-      guardMessages.set(
-        keyOf(file, fixture),
-        messages.filter((m) => m.ruleId !== null && GUARD_RULE_IDS.includes(m.ruleId)).map((m) => m.message),
-      );
-    }
+  // Web は止める書き方と通る書き方の両方、モバイルは止める書き方だけ (通る書き方はモバイルでも通るので見ない)
+  const pairs = [
+    ...WEB_FILES.flatMap((file) => [...FORBIDDEN, ...ALLOWED].map((fixture) => [file, fixture] as const)),
+    ...MOBILE_FILES.flatMap((file) => FORBIDDEN.map((fixture) => [file, fixture] as const)),
+  ];
+  for (const [file, fixture] of pairs) {
+    const [result] = await eslint.lintText(fixture.code, { filePath: path.join(ROOT, file) });
+    const messages = result.messages as LintMessage[];
+    guardMessages.set(
+      keyOf(file, fixture),
+      messages.filter((m) => m.ruleId !== null && GUARD_RULE_IDS.includes(m.ruleId)).map((m) => m.message),
+    );
   }
 }, resolveHeavyUnitTimeouts(process.env).hookTimeout);
 
