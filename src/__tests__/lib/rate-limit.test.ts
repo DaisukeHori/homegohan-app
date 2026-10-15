@@ -510,3 +510,45 @@ describe('billing カテゴリ (billing/01 §8.7。課金の操作。利用者�
     expect(await rateLimit.checkRateLimit('billing-user-2', 'billing')).toMatchObject({ success: true, remaining: 9 });
   });
 });
+
+describe('dsr カテゴリ (#1178。個人情報の請求の作成・確認メールの再送、in-memory フォールバック): 利用者ごとに 5 回/10 分 + 直近 24 時間で 20 回', () => {
+  const PER_WINDOW = 5;
+  const PER_DAY = 20;
+  const WINDOW_SEC = 10 * 60;
+
+  it('10 分あたり: 同じ key では 5 回まで通り、6 回目は windowSec=600 で止まる', async () => {
+    const results = [];
+    for (let i = 0; i < PER_WINDOW + 1; i++) {
+      results.push(await rateLimit.checkRateLimit('user-dsr-1', 'dsr'));
+    }
+
+    expect(results.slice(0, PER_WINDOW).every((r) => r.success && r.limit === PER_WINDOW && r.windowSec === WINDOW_SEC)).toBe(
+      true,
+    );
+    expect(results[PER_WINDOW - 1].remaining).toBe(0);
+    expect(results[PER_WINDOW]).toMatchObject({ success: false, limit: PER_WINDOW, remaining: 0, windowSec: WINDOW_SEC });
+  });
+
+  it('日次: 10 分の枠を戻しながら 20 回まで通り、21 回目は windowSec=86400 で止まる', async () => {
+    const startedAt = Date.now();
+    let passed = 0;
+    let blocked: Awaited<ReturnType<typeof rateLimit.checkRateLimit>> | null = null;
+    for (let i = 0; i < PER_DAY + 1; i++) {
+      const result = await rateLimit.checkRateLimit('user-dsr-2', 'dsr');
+      if (result.success) passed += 1;
+      else blocked ??= result;
+      // 10 分の枠 (5 回) を使い切る前に 10 分進めて、日次の判定だけを確かめる
+      if ((i + 1) % PER_WINDOW === 0) vi.advanceTimersByTime(WINDOW_SEC * 1_000 + 1_000);
+    }
+
+    expect(passed).toBe(PER_DAY);
+    expect(blocked).toMatchObject({ success: false, limit: PER_DAY, remaining: 0, windowSec: DAY_SEC, reset: startedAt + DAY_MS });
+  });
+
+  it('ほかのカテゴリ (export) とは別に数える', async () => {
+    for (let i = 0; i < PER_WINDOW; i++) await rateLimit.checkRateLimit('user-dsr-3', 'dsr');
+    expect((await rateLimit.checkRateLimit('user-dsr-3', 'dsr')).success).toBe(false);
+
+    expect(await rateLimit.checkRateLimit('user-dsr-3', 'export')).toMatchObject({ success: true, remaining: 4 });
+  });
+});

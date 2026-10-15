@@ -25,7 +25,12 @@
  * window.ReactNativeWebView が無い (普通のブラウザ) ときは、何もしない。
  */
 
-export type NativeAuthMessage = { type: 'sign-out' } | { type: 'session-expired' }
+/**
+ * ネイティブへのメッセージ。
+ * mfa-verify-required (#1176。docs/design/cross/12-operator-mfa.md §16.4): WebView の中の MFA の確認画面が、ネイティブの確認画面を開くよう頼む。
+ * 受けるのはアプリの段 D (旧バージョンのアプリは知らない type を捨てるので、先に Web だけ出しても壊れない)
+ */
+export type NativeAuthMessage = { type: 'sign-out' } | { type: 'session-expired' } | { type: 'mfa-verify-required' }
 
 /**
  * Web 側のセッション (Cookie) に入れる refresh_token の代わりの値 (#1038 F7-05)。
@@ -137,6 +142,20 @@ export function notifyNativeSessionExpired(now: number = Date.now()): boolean {
   if (now - lastSessionExpiredAt < SESSION_EXPIRED_MIN_INTERVAL_MS) return false
   lastSessionExpiredAt = now
   return post(bridge, { type: 'session-expired' })
+}
+
+/**
+ * WebView の中の MFA の確認画面 (/settings/security/mfa/verify) が、ネイティブの確認画面 (cross/12 §16.4) を開くよう頼む。
+ * 送ったら true。普通のブラウザ (window.ReactNativeWebView が無い) では何もせず false。回数は絞らない (利用者が押したときと描画の後の 1 回だけ)
+ */
+export function requestNativeMfaVerify(): boolean {
+  const bridge = getBridge()
+  return bridge ? post(bridge, { type: 'mfa-verify-required' }) : false
+}
+
+/** Cookie のセッションが、native-bridge が張った借り物 (refresh_token が使えない値) か。サーバーの route が使う (cross/12 §14.3・§14.4) */
+export function isNativeBridgedSession(session: { refresh_token?: string | null } | null | undefined): boolean {
+  return session?.refresh_token === NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER
 }
 
 /** テスト用: モジュールの状態を初期化する */

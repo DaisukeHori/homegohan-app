@@ -19,6 +19,10 @@ import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new'
 import { renderOrgTransferCompletedEmail } from '@/lib/emails/membership/org-transfer-completed';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
+import { renderDsrVerificationEmail } from '@/lib/emails/dsr/verification';
+import { renderDsrReceivedEmail } from '@/lib/emails/dsr/received';
+import { renderDsrOperatorNoticeEmail } from '@/lib/emails/dsr/operator-notice';
+import { renderDsrResolvedEmail } from '@/lib/emails/dsr/resolved';
 import { DEFAULT_EMAIL_FROM, DEFAULT_SITE_URL, DEFAULT_SUPPORT_EMAIL } from '@/lib/site-config';
 
 // #1194 メールの文面 (membership/*, support/*) は、送信元・問い合わせ先・サイトの URL を直接書かず、
@@ -194,6 +198,58 @@ const TEMPLATES: TemplateCase[] = [
       }),
     mentionsSupport: false,
   },
+  // #1178 個人情報の請求のメール。リンクは呼び出し側が getSiteUrl() から作って渡す
+  {
+    file: 'dsr/verification',
+    name: 'dsr-verification',
+    render: () =>
+      renderDsrVerificationEmail({
+        to_email: 'taro@example.com',
+        request_type: 'disclosure',
+        request_id: 'a1b2c3d4-0000-4000-8000-000000000001',
+        verify_url: 'https://app.example.test/settings/data-requests/verify?id=a&token=b',
+      }),
+    mentionsSupport: true,
+  },
+  {
+    file: 'dsr/received',
+    name: 'dsr-received',
+    render: () =>
+      renderDsrReceivedEmail({
+        to_email: 'taro@example.com',
+        request_type: 'correction',
+        request_id: 'a1b2c3d4-0000-4000-8000-000000000001',
+        due_at: '2026-11-14T15:30:00.000Z',
+        settings_url: 'https://app.example.test/settings/data-requests',
+      }),
+    mentionsSupport: false,
+  },
+  {
+    file: 'dsr/operator-notice',
+    name: 'dsr-operator-notice',
+    render: () =>
+      renderDsrOperatorNoticeEmail({
+        to_email: 'ops@example.com',
+        request_type: 'suspension',
+        request_id: 'a1b2c3d4-0000-4000-8000-000000000001',
+        due_at: '2026-11-14T15:30:00.000Z',
+        admin_url: 'https://app.example.test/admin/data-requests/a1b2c3d4-0000-4000-8000-000000000001',
+      }),
+    mentionsSupport: false,
+  },
+  {
+    file: 'dsr/resolved',
+    name: 'dsr-resolved',
+    render: () =>
+      renderDsrResolvedEmail({
+        to_email: 'taro@example.com',
+        request_type: 'erasure',
+        request_id: 'a1b2c3d4-0000-4000-8000-000000000001',
+        status: 'fulfilled',
+        settings_url: 'https://app.example.test/settings/data-requests',
+      }),
+    mentionsSupport: true,
+  },
 ];
 
 const EMAILS_DIR = path.resolve(__dirname, '../../../lib/emails');
@@ -263,6 +319,11 @@ describe('メールの文面: ソースにドメイン・送信元・問い合�
         .readdirSync(path.join(EMAILS_DIR, 'support'))
         .filter((f) => f.endsWith('.ts'))
         .map((f) => `support/${f.replace(/\.ts$/, '')}`),
+      // #1178 format.ts は文面の部品 (日時の表示) で、メールの文面ではない
+      ...fs
+        .readdirSync(path.join(EMAILS_DIR, 'dsr'))
+        .filter((f) => f.endsWith('.ts') && f !== 'format.ts')
+        .map((f) => `dsr/${f.replace(/\.ts$/, '')}`),
     ].sort();
     const covered = [...new Set(TEMPLATES.map((t) => t.file))].sort();
 
