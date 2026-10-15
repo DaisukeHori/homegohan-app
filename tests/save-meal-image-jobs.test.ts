@@ -99,7 +99,7 @@ describe("saveMealToDb: 料理画像のジョブを積んだあとに処理を�
   });
 
   it("積めた行があれば、その献立の待ちのジョブの処理を起こす", async () => {
-    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 0, failed: 0 });
+    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
     const result = await save();
 
     expect(result.outcome).toBe("inserted");
@@ -114,15 +114,27 @@ describe("saveMealToDb: 料理画像のジョブを積んだあとに処理を�
     });
   });
 
-  it("重複だけ (同じ料理のジョブが待ち・処理中) でも、待ちのジョブを処理させるために起こす", async () => {
-    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 1, failed: 0 });
+  it("重複だけ (同じ料理のジョブが待ち) でも、待ちのジョブを処理させるために起こす", async () => {
+    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 1, duplicatesProcessing: 0, failed: 0 });
     await save();
 
     expect(h.trigger).toHaveBeenCalledTimes(1);
   });
 
+  it("#1561 重複がどれも処理中なら起こさない (画像の処理は待ちのジョブだけを拾うので空振りになる)。待ちの重複と積めた行だけを limit に数える", async () => {
+    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 2, duplicatesProcessing: 2, failed: 0 });
+    await save();
+    expect(h.trigger).not.toHaveBeenCalled();
+
+    h.jobs = [JOB, { ...JOB, dishIndex: 1, subjectHash: "hash-1" }, { ...JOB, dishIndex: 2, subjectHash: "hash-2" }];
+    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 2, duplicatesProcessing: 1, failed: 0 });
+    await save();
+    expect(h.trigger).toHaveBeenCalledTimes(1);
+    expect(h.trigger).toHaveBeenCalledWith(expect.objectContaining({ plannedMealId: "planned-meal-1", limit: 2 }));
+  });
+
   it("書き込みの失敗だけで待ちのジョブが無ければ、起こさない (料理は enqueueMealImageJobs が failed にする)", async () => {
-    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, failed: 1 });
+    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 1 });
     const result = await save();
 
     expect(result.outcome).toBe("inserted");
@@ -131,7 +143,7 @@ describe("saveMealToDb: 料理画像のジョブを積んだあとに処理を�
 
   it("#1532 limit は積めた行と重複の数 (書き込みに失敗した行は数えない)。3 品のうち 1 品が失敗なら 2", async () => {
     h.jobs = [JOB, { ...JOB, dishIndex: 1, subjectHash: "hash-1" }, { ...JOB, dishIndex: 2, subjectHash: "hash-2" }];
-    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 1, failed: 1 });
+    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 1, duplicatesProcessing: 0, failed: 1 });
     await save();
 
     expect(h.trigger).toHaveBeenCalledTimes(1);
@@ -140,7 +152,7 @@ describe("saveMealToDb: 料理画像のジョブを積んだあとに処理を�
 
   it("積むジョブが無ければ、起こさない", async () => {
     h.jobs = [];
-    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, failed: 0 });
+    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
     await save();
 
     expect(h.trigger).not.toHaveBeenCalled();

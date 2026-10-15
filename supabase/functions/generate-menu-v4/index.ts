@@ -97,14 +97,6 @@ import {
 } from "./reference-menu-utils.ts";
 import { selectRecentMenusForVariety } from "./context-utils.ts";
 import {
-  reconcileDishImages,
-  DEFAULT_MEAL_IMAGE_MODEL,
-} from "../_shared/meal-image.ts";
-import {
-  enqueueMealImageJobs,
-  triggerMealImageJobProcessing,
-} from "../_shared/meal-image-jobs.ts";
-import {
   saveMealToDb,
   ensureDailyMealIdsForDates,
   runSupabaseQuery,

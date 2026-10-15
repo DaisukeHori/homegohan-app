@@ -4,7 +4,9 @@ import { refundAiUsage, type AiUsageResult } from '@/lib/plan/entitlements';
 import { createLogger } from '@/lib/db-logger';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
+  EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT,
   ENQUEUE_FAILED_MEAL_COLUMNS,
+  MEAL_IMAGE_JOB_ACTIVE_STATUSES,
   buildMealImageJobRecords,
   insertMealImageJobRecords,
   markEnqueueFailedDishesInMeal,
@@ -166,13 +168,16 @@ const ENQUEUE_LOG_NAME = 'lib/meal-image-jobs';
  * 書き込みに失敗した料理は、保存済みの献立の上で 'failed' + 'enqueue_failed' にする (#1505。'pending' のまま「生成中」に残さない)。
  * 重複 (同じ料理のジョブが待ち・処理中) の料理は 'pending' のまま (そのジョブが画像を作る)。
  *
+ * 重複のときは、重なった同じ料理のジョブが待ちか処理中かを読み、処理中なら duplicatesProcessing にも数える
+ * (#1561。countMealImageJobsToProcess が数えず、空振りの処理を起こさない)。
+ *
  * 1 行も積めなかったときは、params.usage (この操作で数えた料理画像の 1 回) を数え戻す
  * (AI へは何も送らないので。上限の数え戻しの決まりは src/lib/plan/entitlements.ts の【数え戻し】)。
  */
 export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<EnqueueMealImageJobsResult> {
   if (!params.jobSeeds.length) {
     await refundUnusedMealImageUsage(params);
-    return { inserted: 0, duplicates: 0, failed: 0 };
+    return { ...EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT };
   }
 
   const records = await buildMealImageJobRecords({
@@ -182,8 +187,17 @@ export async function enqueueMealImageJobs(params: EnqueueJobsParams): Promise<E
     triggerSource: params.triggerSource,
     requestId: params.requestId ?? null,
   });
-  const outcomes = await insertMealImageJobRecords(records, (record) =>
-    params.supabase.from('meal_image_jobs').insert(record),
+  const outcomes = await insertMealImageJobRecords(
+    records,
+    (record) => params.supabase.from('meal_image_jobs').insert(record),
+    // 重なった同じ料理のジョブが待ちか処理中か (処理中なら処理を起こさない。#1561)
+    (record) =>
+      params.supabase
+        .from('meal_image_jobs')
+        .select('status')
+        .eq('idempotency_key', record.idempotency_key)
+        .in('status', [...MEAL_IMAGE_JOB_ACTIVE_STATUSES])
+        .maybeSingle(),
   );
 
   const logger = createLogger(ENQUEUE_LOG_NAME);

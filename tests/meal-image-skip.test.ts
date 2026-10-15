@@ -194,7 +194,7 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     const queue = makeQueueDb(() => null);
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0), seed(1)], usage: AI_USAGE_ALLOWED });
 
-    expect(result).toEqual({ inserted: 2, duplicates: 0, failed: 0 });
+    expect(result).toEqual({ inserted: 2, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
     expect(queue.upsert).not.toHaveBeenCalled();
     expect(queue.inserted.map((row) => row.dish_index)).toEqual([0, 1]);
     expect(queue.inserted[0]).toMatchObject({
@@ -210,7 +210,7 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     const queue = makeQueueDb(() => PERMISSION_DENIED, [storedPendingDish(0)]);
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0)], usage: AI_USAGE_ALLOWED });
 
-    expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 1 });
+    expect(result).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 1 });
     expect(queue.mealUpdates).toHaveLength(1);
     expect(queue.mealUpdates[0].id).toBe('meal-1');
     expect(queue.mealUpdates[0].dishes[0]).toMatchObject({ image_status: 'failed', image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR, image_url: null });
@@ -222,7 +222,7 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     const queue = makeQueueDb(() => 'throw');
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0)], usage: AI_USAGE_ALLOWED });
 
-    expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 1 });
+    expect(result).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 1 });
     expect(m.refundAiUsage).toHaveBeenCalledWith('user-1', 'meal_image_auto', AI_USAGE_ALLOWED);
   });
 
@@ -230,7 +230,7 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     const queue = makeQueueDb(() => UNIQUE_VIOLATION);
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0), seed(1)], usage: AI_USAGE_ALLOWED });
 
-    expect(result).toEqual({ inserted: 0, duplicates: 2, failed: 0 });
+    expect(result).toEqual({ inserted: 0, duplicates: 2, duplicatesProcessing: 0, failed: 0 });
     expect(m.refundAiUsage).toHaveBeenCalledTimes(1);
     // 重複の料理は待ちのまま (待ち・処理中のジョブが画像を作る)。献立は書かない
     expect(queue.mealUpdates).toEqual([]);
@@ -240,7 +240,7 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     const queue = makeQueueDb((_row, index) => (index === 1 ? PERMISSION_DENIED : null), [storedPendingDish(0), storedPendingDish(1)]);
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0), seed(1)], usage: AI_USAGE_ALLOWED });
 
-    expect(result).toEqual({ inserted: 1, duplicates: 0, failed: 1 });
+    expect(result).toEqual({ inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 1 });
     expect(m.refundAiUsage).not.toHaveBeenCalled();
     expect(queue.mealUpdates[0].dishes.map((dish) => [dish.image_status, dish.image_error ?? null])).toEqual([
       ['pending', null],
@@ -252,7 +252,7 @@ describe('enqueueMealImageJobs: 行ごとに積み、積めなかったら数え
     const queue = makeQueueDb((_row, index) => (index === 0 ? UNIQUE_VIOLATION : null));
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobSeeds: [seed(0), seed(1)], usage: AI_USAGE_ALLOWED });
 
-    expect(result).toEqual({ inserted: 1, duplicates: 1, failed: 0 });
+    expect(result).toEqual({ inserted: 1, duplicates: 1, duplicatesProcessing: 0, failed: 0 });
     expect(m.refundAiUsage).not.toHaveBeenCalled();
   });
 

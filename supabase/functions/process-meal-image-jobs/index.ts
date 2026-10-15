@@ -20,6 +20,7 @@ import { checkAiConsent, type AiConsentDecision } from "../_shared/ai-consent-gu
 import { aiConsentDeniedPayload } from "../_shared/ai-consent.ts";
 import { logMissingEnv, MISSING_ENV_HTTP_STATUS, missingEnvResponseBody } from "../_shared/missing-env.ts";
 import { createLogger } from "../_shared/db-logger.ts";
+import { requireServiceRole } from "../_shared/auth.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const STORAGE_BUCKET = "fridge-images";
@@ -27,6 +28,14 @@ const FUNCTION_NAME = "process-meal-image-jobs";
 
 /** 料理の印を付けられなかったとき・画像を消せなかったときの記録 (app_logs。#1553) */
 const logger = createLogger(FUNCTION_NAME);
+
+/**
+ * ジョブを取るときにつける貸し出しの長さ (ミリ秒)。この間に終わらなかったジョブ (関数の実行が打ち切られたなど) は、
+ * pg_cron のジョブ requeue-stale-meal-image-jobs (public.requeue_stale_meal_image_jobs) が、期限からさらに 5 分過ぎたら取り戻す (#1561)。
+ * 長さを変えるときは、migration 20261015120000_meal_image_jobs_pickup_cron.sql の c_stale_grace の説明も確かめる
+ * (tests/meal-image-jobs-pickup-cron-contract.test.ts が、貸し出し + 猶予が Edge Function の実行時間の上限より長いことを突き合わせる)
+ */
+const JOB_LEASE_MS = 2 * 60_000;
 
 /** ジョブの終わりの状態 (finalizeJob が書く status) */
 type FinalJobStatus = "completed" | "failed" | "cancelled";
@@ -117,7 +126,11 @@ Deno.serve(async (req) => {
   const SUPABASE_SERVICE_KEY = serviceConfig.serviceKey;
   const isInternalCaller = bearerToken === SUPABASE_SERVICE_KEY || apiKey === SUPABASE_SERVICE_KEY;
   if (!isInternalCaller) {
-    return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: JSON_HEADERS });
+    // pg_cron のジョブ process-pending-meal-image-jobs (public.invoke_process_meal_image_jobs) は、Vault の app_cron_secret
+    // (JWT でない) を Bearer に付けて呼ぶ (#1561)。Edge Function secrets の CRON_SECRET と照らし合わせる。
+    // CRON_SECRET が未設定なら 503 (Service not configured)、合わなければ 401 (requireServiceRole)
+    const authError = await requireServiceRole(req);
+    if (authError) return authError;
   }
 
   const googleAiKey = readGoogleAiKey();
@@ -197,7 +210,7 @@ async function processJob(
 ): Promise<ProcessResponse> {
   const now = new Date().toISOString();
   const lockToken = crypto.randomUUID();
-  const leasedUntil = new Date(Date.now() + 2 * 60_000).toISOString();
+  const leasedUntil = new Date(Date.now() + JOB_LEASE_MS).toISOString();
 
   const { data: locked, error: lockError } = await supabase
     .from("meal_image_jobs")
