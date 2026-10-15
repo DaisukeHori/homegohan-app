@@ -1675,12 +1675,14 @@ CREATE TABLE infra_alerts (
 - `PATCH /api/super-admin/feature-packages/{id}`
 - `DELETE /api/super-admin/feature-packages/{id}`
 
-### 8.16 クーポン管理
-- `GET /api/admin/coupons` — クーポン一覧
-- `POST /api/admin/coupons` — クーポン作成
-- `PATCH /api/admin/coupons/{id}` — 編集
-- `POST /api/admin/coupons/{id}/pause` — 一時停止
-- `GET /api/admin/coupons/{id}/redemptions` — 利用統計
+### 8.16 クーポン管理 (super_admin)
+- `GET /api/super-admin/coupons` — クーポン一覧
+- `POST /api/super-admin/coupons` — クーポン作成
+- `GET /api/super-admin/coupons/{id}` — クーポン詳細
+- `PATCH /api/super-admin/coupons/{id}` — 編集 (一時停止は `status` を `paused` にする。専用の API は無い)
+- `DELETE /api/super-admin/coupons/{id}` — 削除 (利用実績があるときは不可)
+- `POST /api/super-admin/coupons/{id}/apply` — 契約へのクーポンの適用
+- `GET /api/super-admin/coupons/{id}/redemptions` — 適用履歴
 
 ### 8.17 収益管理
 - `GET /api/admin/finance/revenue/snapshot` — 最新スナップショット
