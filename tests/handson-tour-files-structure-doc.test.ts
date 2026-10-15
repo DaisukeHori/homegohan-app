@@ -6,6 +6,8 @@
  *   1. apps/mobile/src/handson-tour/ の直下のファイルは、すべて §1.3 の表に `apps/mobile/src/handson-tour/<名前>` として載っている
  *   2. 同じファイルは、すべて §5 の木の apps/mobile/ → src/ → handson-tour/ の下に載っている
  *   3. 逆に、§1.3 の表と §5 の木が apps/mobile/src/handson-tour/ の下に名指しするファイルは、すべて実在する
+ *   4. §5 の木が apps/mobile/app/ の下に名指しする画面のファイル (.ts / .tsx) は、すべて実在する
+ *      (#1673 (#1598) でネイティブの app/meals/new.tsx を消したあとも、木に `meals/new.tsx ← MODIFIED` が残っていた)
  * 行数 (表の右の列) は見積もりと書き足した時点の実数なので突き合わせない。
  */
 import fs from 'node:fs';
@@ -31,6 +33,10 @@ const TABLE_PATH = /^\|\s*`([^`]+)`/;
 const TREE_LINE = /^((?:│ {3}| {4})*)[├└]── (\S+)/;
 /** 木の字下げ 1 段の幅 (`│   ` / 空白 4 つ) */
 const TREE_INDENT_WIDTH = 4;
+/** §5 の木で、名指しした画面のファイルを実在と突き合わせるディレクトリ (リポジトリの根からの相対) */
+const MOBILE_APP_DIR = 'apps/mobile/app';
+/** 木の行のうち、ファイル (ディレクトリでない) の名前 */
+const SOURCE_FILE = /\.tsx?$/;
 
 const read = (relative: string): string => fs.readFileSync(path.join(ROOT, relative), 'utf8');
 
@@ -85,7 +91,7 @@ const actualFiles = fs
   .map((entry) => entry.name)
   .sort();
 
-describe('#1659 16-files-structure.md は apps/mobile/src/handson-tour/ のいまのファイルをすべて載せる', () => {
+describe('#1659 16-files-structure.md は apps/mobile/src/handson-tour/ のいまのファイルをすべて載せ、木に実在しない画面を載せない', () => {
   it('apps/mobile/src/handson-tour/ にファイルがある', () => {
     expect(actualFiles.length).toBeGreaterThan(0);
   });
@@ -104,5 +110,14 @@ describe('#1659 16-files-structure.md は apps/mobile/src/handson-tour/ のい�
     expect(paths).toContain(`${TOUR_DIR}/menu-tour-profile.ts`);
     // Web 側の src/components/handson-tour/ と取り違えない
     expect(paths).toContain('src/components/handson-tour/TourOverlay.tsx');
+  });
+
+  it('§5 の木が apps/mobile/app/ の下に名指しする画面のファイルは、すべて実在する (#1598 で消した app/meals/new.tsx を木に残さない)', () => {
+    const named = treePaths(read(DESIGN_DOC)).filter(
+      (p) => p.startsWith(`${MOBILE_APP_DIR}/`) && SOURCE_FILE.test(p),
+    );
+    // 走査が空振りしていない (ツアーの Step 1 の画面を木から拾えている)
+    expect(named).toContain(`${MOBILE_APP_DIR}/handson-tour/photo.tsx`);
+    expect(named.filter((p) => !fs.existsSync(path.join(ROOT, p)))).toEqual([]);
   });
 });
