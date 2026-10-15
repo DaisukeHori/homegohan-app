@@ -229,3 +229,18 @@ export const convertV4ProgressToUIFormat = (
     isUltimateMode: ultimateMode,
   };
 };
+
+/**
+ * 画面に入り直して生成中の行を見つけたとき (生成中の行の確認 GET /api/ai/menu/weekly/pending の応答)、
+ * 最初の進捗 (ポーリング・Realtime の応答) が届くまでの間に置く空の進捗 (#1609)。
+ * 段 (究極 / 通常) を決める印 (ultimateMode) だけを持ち、どの工程もまだ始まっていない (phase は空・message は空・割合は 0)。
+ * message が空なので、カード (ProgressTodoCard) は既定の文 (AIが献立を生成中...) を出す。
+ * これを置かないと、進捗が null の間 (最初の応答までの数百 ms) は isUltimateMode が読めず、
+ * 究極モードの生成でもカードが一瞬だけ通常の段 (PROGRESS_PHASES) で描かれていた。
+ */
+export const pendingRestoreProgress = (ultimateMode: boolean): GenerationProgress => ({
+  phase: '',
+  message: '',
+  percentage: 0,
+  isUltimateMode: ultimateMode,
+});

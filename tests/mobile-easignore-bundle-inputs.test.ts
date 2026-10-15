@@ -31,7 +31,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from './helpers/local-ci-slot-test-timeout';
+
+// 1 件のテストの時間切れを、このファイルだけ延ばす (1 件ごとに git を 2 回起こすので、負荷の高い機械で vitest の既定の 5 秒を超えて
+// 落ちたことがある。根拠と環境変数での上書きは tests/helpers/local-ci-slot-test-timeout.ts。#1605)。テストを定義する前に置く
+const SLOT_TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
+vi.setConfig({ testTimeout: SLOT_TEST_TIMEOUT_MS });
 
 const ROOT = path.resolve(__dirname, '..');
 const MOBILE_DIR = path.join(ROOT, 'apps/mobile');
@@ -362,5 +368,11 @@ describe('apps/mobile のバンドルが読むファイルが .easignore で除�
         'supabase/functions/generate-menu-v5/index.ts',
       ]);
     });
+  });
+});
+
+describe('このファイルの時間切れ (#1605)', () => {
+  it('どのテストも、このファイルの時間切れ (SLOT_TEST_TIMEOUT_MS) で切れる (全体の既定の 5 秒のまま残っていない)', ({ task }) => {
+    expect(testsWithUnexpectedTimeout(task.file, [SLOT_TEST_TIMEOUT_MS])).toEqual([]);
   });
 });

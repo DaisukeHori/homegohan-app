@@ -1121,11 +1121,14 @@ test("[menu-gen][adversarial] F-22: tabA生成完了 → tabBでリアルタイ�
  * F-23: 進捗 % が逆行しない (#119 Ultimate Mode 6 step)
  *
  * 期待: step 4 → step 5 → step 6 の順で progress % が増加のみ
+ *
+ * #1609: pending のモックに ultimateMode: true を足し、究極モードの段 (4〜6 工程) が実際に出ることを確かめる。
+ * 以前のモックは mode: 'v5' だけで、#1597 のあとは通常の段 (3 工程) として描かれ、step 4〜6 の割合は 0 で出ていなかった
+ * (% がサンプリングできなければ pass だったので赤にならなかった)。
  */
 test("[menu-gen][adversarial] F-23: Ultimate Mode 6ステップの進捗%が逆行しない", async ({
   authedPage,
 }) => {
-  const weekStr = getThisMonday();
   let statusCallCount = 0;
 
   // step 4 → 5 → 6 を順にシミュレート
@@ -1134,6 +1137,17 @@ test("[menu-gen][adversarial] F-23: Ultimate Mode 6ステップの進捗%が逆�
     { currentStep: 5, totalSteps: 6, message: "献立を改善中...", completedSlots: 5, totalSlots: 7 },
     { currentStep: 6, totalSteps: 6, message: "最終保存中...", completedSlots: 7, totalSlots: 7 },
   ];
+  /**
+   * 上の各 step の究極モードの割合 (src/app/(main)/menus/weekly/_state/v4ProgressUi.ts。message に n/m が無いときの値):
+   * step 4 = 55%・step 5 = 70%・step 6 (完了の文でない) = 90%。通常の段には step 4〜6 が無く、割合は出ない
+   */
+  const ULTIMATE_PERCENTAGES = [55, 70, 90];
+  const FINAL_PERCENTAGE = ULTIMATE_PERCENTAGES[ULTIMATE_PERCENTAGES.length - 1];
+  /** 究極モードの段にだけある工程の名前 (packages/shared の ULTIMATE_PROGRESS_PHASES) */
+  const ULTIMATE_ONLY_LABEL = "栄養バランスを詳細分析";
+  /** 割合を読む間隔と、最後の step の割合が出るまで待つ上限 (ポーリングは 3 秒ごと。3 つの step で 2 回分 + 余裕) */
+  const SAMPLE_INTERVAL_MS = 500;
+  const SAMPLE_TIMEOUT_MS = 30_000;
 
   await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
     await route.fulfill({
@@ -1142,7 +1156,9 @@ test("[menu-gen][adversarial] F-23: Ultimate Mode 6ステップの進捗%が逆�
       body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
     });
   });
+  // サーバー (pending/route.ts) は、表示中の週 (date) と start_date が違う行を返さない。モックも date の週の行を返す
   await authedPage.route("**/api/ai/menu/weekly/pending*", async (route) => {
+    const date = new URL(route.request().url()).searchParams.get("date");
     await route.fulfill({
       status: 200,
       contentType: "application/json",
@@ -1151,7 +1167,8 @@ test("[menu-gen][adversarial] F-23: Ultimate Mode 6ステップの進捗%が逆�
         requestId: FAKE_REQUEST_ID,
         status: "processing",
         mode: "v5",
-        startDate: weekStr,
+        ultimateMode: true,
+        startDate: date,
       }),
     });
   });
@@ -1168,48 +1185,43 @@ test("[menu-gen][adversarial] F-23: Ultimate Mode 6ステップの進捗%が逆�
     });
   });
 
-  await authedPage.addInitScript(
-    ([reqId, weekKey]: [string, string]) => {
-      localStorage.setItem(
-        "weeklyMenuGenerating",
-        JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
-      );
-    },
-    [FAKE_REQUEST_ID, weekStr],
-  );
-
-  const displayedPercentages: number[] = [];
-
   await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
 
-  // 進捗 % 表示を 10秒間サンプリング
-  for (let i = 0; i < 10; i++) {
-    await authedPage.waitForTimeout(1_000);
-    // progress bar や % テキストを探す
-    const percentText = await authedPage
-      .locator("text=/%/")
-      .first()
-      .textContent({ timeout: 500 })
-      .catch(() => null);
-    if (percentText) {
-      const match = percentText.match(/(\d+)%/);
-      if (match) {
-        displayedPercentages.push(parseInt(match[1]));
-      }
+  const card = authedPage.getByTestId("generation-progress");
+  await expect(card).toBeVisible({ timeout: 15_000 });
+
+  // 進捗 % を、最後の step の割合が出るまで読み続ける
+  const displayedPercentages: number[] = [];
+  const deadline = Date.now() + SAMPLE_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const text = (await card.textContent()) ?? "";
+    const match = text.match(/(\d+)%/);
+    if (match) {
+      displayedPercentages.push(parseInt(match[1], 10));
+      if (displayedPercentages[displayedPercentages.length - 1] === FINAL_PERCENTAGE) break;
     }
+    await authedPage.waitForTimeout(SAMPLE_INTERVAL_MS);
   }
 
-  // サンプリングできた場合は単調増加を検証
-  if (displayedPercentages.length >= 2) {
-    for (let i = 1; i < displayedPercentages.length; i++) {
-      expect(
-        displayedPercentages[i],
-        `[BUG] 進捗%が逆行した: ${displayedPercentages[i - 1]}% → ${displayedPercentages[i]}%`,
-      ).toBeGreaterThanOrEqual(displayedPercentages[i - 1]);
-    }
+  // 究極モードの段の割合が出て、最後の step まで進んだ
+  expect(displayedPercentages, "[BUG] 究極モードの step 6 の割合まで進まなかった").toContain(FINAL_PERCENTAGE);
+  // 出た割合は、どれも究極モードの step 4〜6 の値 (通常の段なら割合は出ない)
+  for (const percentage of displayedPercentages) {
+    expect(ULTIMATE_PERCENTAGES, `[BUG] 究極モードの step 4〜6 でない割合が出た: ${percentage}%`).toContain(percentage);
   }
-  // サンプリングできなくてもテスト自体は pass（進捗バーなしの UI 構成の可能性）
+  // 途中の step の割合も読めた (最後の 1 回だけでは逆行を確かめられない)
+  expect(new Set(displayedPercentages).size).toBeGreaterThanOrEqual(2);
+  // 単調増加
+  for (let i = 1; i < displayedPercentages.length; i++) {
+    expect(
+      displayedPercentages[i],
+      `[BUG] 進捗%が逆行した: ${displayedPercentages[i - 1]}% → ${displayedPercentages[i]}%`,
+    ).toBeGreaterThanOrEqual(displayedPercentages[i - 1]);
+  }
+
+  // 工程の一覧も究極モードの段
+  await card.click();
+  await expect(card.getByText(ULTIMATE_ONLY_LABEL)).toBeVisible();
 });
 
 // ─── Security / CRON boundary ───────────────────────────────────────────

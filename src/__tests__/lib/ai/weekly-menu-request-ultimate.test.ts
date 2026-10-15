@@ -9,9 +9,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   WEEKLY_MENU_REQUEST_ULTIMATE_MODE_SELECT,
-  isUltimateModeWeeklyMenuRequest,
   weeklyMenuRequestUltimateModeData,
 } from '@/lib/ai/weekly-menu-request-ultimate';
+// 判定は Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609。突合は weekly-menu-ultimate-mode-parity.test.ts)
+import { isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
 
 const ROOT = join(__dirname, '..', '..', '..', '..');
 const read = (rel: string) => readFileSync(join(ROOT, rel), 'utf8');

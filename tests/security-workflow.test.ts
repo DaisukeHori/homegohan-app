@@ -21,6 +21,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import yaml from 'js-yaml';
 import { describe, expect, it } from 'vitest';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// 1 件のテストの中で子プロセス (bash・git・node など) を起こすので、負荷の高い機械で vitest の既定の時間切れ (テスト 5 秒) を超えうる (#1605 の同じ型)。
+// このファイルだけ延ばす (根拠と環境変数での上書きは tests/helpers/heavy-unit-test-timeout.ts。#1488・#1605)。テストとフックを定義する前に置く
+applyHeavyUnitTestTimeout();
 
 const ROOT = process.cwd();
 const WORKFLOW_DIR = path.join(ROOT, '.github', 'workflows');

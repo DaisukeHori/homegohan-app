@@ -15,6 +15,7 @@
  * 当たると updated_at を進める (本物の trg_planned_meals_updated_at と同じく、どの書き手が書いても変わる)。
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
 
 import { reconcileDishImages, type MealImageDish } from '../supabase/functions/_shared/meal-image';
 import {
@@ -203,6 +204,14 @@ vi.mock('../supabase/functions/_shared/db-logger.ts', () => {
 
 let handler: (req: Request) => Promise<Response> | Response;
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeAll) の時間切れ (#1605)。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。このファイルのテストは読み込んだ
+ * ハンドラを呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ * (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeAll(async () => {
   vi.stubGlobal('Deno', {
     env: { get: (key: string) => h.env[key] },
@@ -213,7 +222,7 @@ beforeAll(async () => {
   h.env = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY, GOOGLE_AI_STUDIO_API_KEY: 'test-google-key' };
   await import('../supabase/functions/process-meal-image-jobs/index.ts');
   handler = h.handlers[h.handlers.length - 1];
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();

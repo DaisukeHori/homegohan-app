@@ -53,7 +53,7 @@
 #                                  (tests/integration/helpers/auth-transient-retry.ts。既定のままなら CI と同じ)
 #   MOBILE_JEST_TEST_TIMEOUT_MS / MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS
 #                                  mobile の Jest のテストの時間切れと RNTL の待ちの既定の上書き (apps/mobile/jest.timeouts.js。既定のままなら CI と同じ)
-#   UNIT_SLOT_TEST_TIMEOUT_MS      unit の段の tests/local-ci-slot*.test.ts (bash を何度も起動する) の 1 件のテストの時間切れの上書き
+#   UNIT_SLOT_TEST_TIMEOUT_MS      unit の段の tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts (bash・git を起動する) の 1 件のテストの時間切れの上書き
 #                                  (tests/helpers/local-ci-slot-test-timeout.ts。既定のままなら CI と同じ)
 #   UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS
 #                                  unit の段の、負荷の高い機械で既定の時間切れを超えたことがあるファイル (一覧は
@@ -172,7 +172,7 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 # INTEGRATION_AUTH_RETRY_ATTEMPTS / INTEGRATION_AUTH_RETRY_BASE_DELAY_MS は、結合テストが認証のゲートウェイの一時的な失敗
 # (502 / 503 / 504・接続の失敗) をやり直す回数と最初の間隔の上書き (tests/integration/helpers/auth-transient-retry.ts)。
 # MOBILE_JEST_TEST_TIMEOUT_MS / MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS は mobile の Jest の時間切れの上書き (apps/mobile/jest.timeouts.js)。
-# UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
+# UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
 # UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)。
 # UNIT_TEST_FILE_BUDGET_MS は unit の段のあとで一覧にする 1 ファイルの時間の予算の上書き (scripts/test-speed-ratchet.mjs)
 readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
@@ -1297,11 +1297,11 @@ stage_e2e() {
 
   # 規約の同意ゲート (#1174) の「強制あり」: 同じビルドを LEGAL_CONSENT_ENFORCE=on で 2 つ目のポートに起動する (yml と同じ)。
   # yml では前の手順が赤だとこの先は回らないが、ここでは手がかりを多く残すため、前の結果によらず回す。
-  # -p と同じ値を PORT にも入れる (#1584。運営画面のサーバー側 fetch (src/lib/admin/fetch.ts) は、NEXTAUTH_URL も VERCEL_URL も
+  # -p と同じ値を PORT にも入れる (#1584。yml と同じく、起動するコマンドの前に置く (#1611)。運営画面のサーバー側 fetch (src/lib/admin/fetch.ts) は、NEXTAUTH_URL も VERCEL_URL も
   # 無いと http://localhost:$PORT の自分自身に問い合わせる。PORT が無いと 3000 = 別のサーバーに繋がる)
   log="$ART/e2e-next-start-enforced.log"
   t0=$(now)
-  ( ci_env && cd "$WT" && export PORT="$ENFORCED_APP_PORT" && exec nohup env LEGAL_CONSENT_ENFORCE=on npx next start -p "$ENFORCED_APP_PORT" ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && exec nohup env PORT="$ENFORCED_APP_PORT" LEGAL_CONSENT_ENFORCE=on npx next start -p "$ENFORCED_APP_PORT" ) >"$log" 2>&1 &
   ENFORCED_SERVER_PID=$!
   if wait_enforced_app "$log"; then
     record e2e:start-enforced GREEN - - - - - "$(($(now) - t0))" "-"
@@ -1326,7 +1326,7 @@ stage_e2e() {
   # 規約の同意ゲート (#1174) の「お知らせあり」: 同じビルドを LEGAL_CONSENT_NOTICE=on で 3 つ目のポートに起動する (yml と同じ)
   log="$ART/e2e-next-start-notice.log"
   t0=$(now)
-  ( ci_env && cd "$WT" && export PORT="$NOTICE_APP_PORT" && exec nohup env LEGAL_CONSENT_NOTICE=on npx next start -p "$NOTICE_APP_PORT" ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && exec nohup env PORT="$NOTICE_APP_PORT" LEGAL_CONSENT_NOTICE=on npx next start -p "$NOTICE_APP_PORT" ) >"$log" 2>&1 &
   NOTICE_SERVER_PID=$!
   if wait_notice_app "$log"; then
     record e2e:start-notice GREEN - - - - - "$(($(now) - t0))" "-"

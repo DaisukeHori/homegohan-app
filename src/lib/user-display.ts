@@ -1,23 +1,8 @@
-const PLACEHOLDER_NAMES = new Set([
-  '',
-  'guest',
-  'ゲスト',
-  'guest user',
-  'ゲストユーザー',
-]);
-
-function normalizeName(value: string | null | undefined): string | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  return trimmed;
-}
-
-function isPlaceholderName(value: string | null | undefined): boolean {
-  const normalized = normalizeName(value);
-  if (!normalized) return true;
-  return PLACEHOLDER_NAMES.has(normalized.toLowerCase());
-}
+// ホームの呼びかけに出す名前を決める。
+// プロフィールの名前が「名前が無い」かどうかは src/lib/profile-name.ts の判定 1 つを使う (#1611。家族の画面と同じ)。
+// 以前はここだけ 'guest' (大小無視)・'ゲスト'・'guest user'・'ゲストユーザー' も仮置き扱いにしていたが、アプリと RPC が
+// 入れる仮置きは 'Guest' だけで、それ以外は本人が付けた名前なので、そのまま出す。
+import { normalizeProfileName } from '@/lib/profile-name';
 
 function extractEmailName(email: string | null | undefined): string | null {
   if (!email?.includes('@')) return null;
@@ -30,8 +15,8 @@ export function resolveDisplayName(input: {
   email?: string | null;
   userMetadata?: Record<string, unknown> | null;
 }): string | null {
-  const nickname = normalizeName(input.nickname);
-  if (nickname && !isPlaceholderName(nickname)) {
+  const nickname = normalizeProfileName(input.nickname);
+  if (nickname) {
     return nickname;
   }
 
@@ -43,9 +28,8 @@ export function resolveDisplayName(input: {
   ];
 
   for (const candidate of metadataNameCandidates) {
-    if (typeof candidate !== 'string') continue;
-    const normalized = normalizeName(candidate);
-    if (normalized && !isPlaceholderName(normalized)) {
+    const normalized = normalizeProfileName(candidate);
+    if (normalized) {
       return normalized;
     }
   }
