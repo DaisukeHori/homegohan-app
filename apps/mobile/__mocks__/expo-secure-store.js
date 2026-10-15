@@ -11,6 +11,17 @@
  * - テストの間で状態を持ち越さないよう、__reset() で空にできる
  */
 const store = new Map();
+/**
+ * 次の呼び出しから失敗させる操作 (メソッド名 → 投げる Error)。__failWith で置き、__reset で消す。
+ * jest.spyOn(SecureStore, ...) は、テストの側の import の写しにしか効かないことがある (babel の import の写し) ので、
+ * 保管庫を読めない端末 (iOS で一度もロックを解除していない起動など) を真似るテストはこちらを使う
+ */
+const failures = new Map();
+
+function failIfRequested(method) {
+  const error = failures.get(method);
+  if (error) throw error;
+}
 
 function ensureValidKey(key) {
   if (typeof key !== 'string' || !/^[\w.-]+$/.test(key)) {
@@ -33,10 +44,12 @@ module.exports = {
     return true;
   },
   async getItemAsync(key) {
+    failIfRequested('getItemAsync');
     ensureValidKey(key);
     return store.has(key) ? store.get(key) : null;
   },
   async setItemAsync(key, value) {
+    failIfRequested('setItemAsync');
     ensureValidKey(key);
     if (typeof value !== 'string') {
       throw new Error('Invalid value provided to SecureStore. Values must be strings.');
@@ -44,6 +57,7 @@ module.exports = {
     store.set(key, value);
   },
   async deleteItemAsync(key) {
+    failIfRequested('deleteItemAsync');
     ensureValidKey(key);
     store.delete(key);
   },
@@ -52,5 +66,10 @@ module.exports = {
   __store: store,
   __reset() {
     store.clear();
+    failures.clear();
+  },
+  /** method を、__reset まで error で失敗させる */
+  __failWith(method, error) {
+    failures.set(method, error);
   },
 };

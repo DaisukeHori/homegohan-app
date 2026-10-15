@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen, isFrozenAllowedApiPath } from '@/lib/auth/frozen'
+import { isPushTokenClaimApiPath } from '@/lib/push-tokens'
 import {
   isMaintenanceExemptPath,
   isMaintenanceFlagOn,
@@ -199,7 +200,9 @@ export async function updateSession(request: NextRequest) {
     // #1442: 同意ゲートも、ここで読んだ同じプロフィールの行で判定する (クエリは増やさない)。
     //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED)。
     //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・問い合わせ・ログ・
-    //   状態の窓口・利用者のセッションを持たない経路) だけ。役割による例外は無い。
+    //   状態の窓口・端末の後片付け (通知のトークンの claim。#1636)・利用者のセッションを持たない経路) だけ。役割による例外は無い。
+    //   凍結・メンテナンスの判定で通したパスは、すべてこの一覧にもある (無いと凍結中・メンテナンス中に同意できず必ず 403 になる。
+    //   lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で見張る)。
     //   プロフィールを読めなかったとき (profileError) と同意の列が無い DB (legalColumnsAvailable = false) は、凍結と同じく素通り (#348 の fail-open)。
     //   画面の分岐と同じ fetchMiddlewareProfile を使い、列が無い DB では列を除いた select でやり直す。
     let apiUserId: string | undefined
@@ -226,7 +229,13 @@ export async function updateSession(request: NextRequest) {
 
           // #1445: 退会と個人データの書き出し (FROZEN_ALLOWED_API_PATHS) だけは、凍結中でも止めない。
           // 凍結の画面 (/frozen/account) から本人が退会・書き出しをできるようにするため。ほかの /api は今までどおり 403
-          if (apiFrozen && !isFrozenAllowedApiPath(request.nextUrl.pathname)) {
+          // #1636: 通知のトークンの claim (isPushTokenClaimApiPath) も止めない。利用者の操作ではなく端末の後片付け
+          // (同じ端末の前の利用者の行を外す) で、止めると前の利用者宛ての通知がこの端末に届き続けるため
+          if (
+            apiFrozen &&
+            !isFrozenAllowedApiPath(request.nextUrl.pathname) &&
+            !isPushTokenClaimApiPath(request.nextUrl.pathname)
+          ) {
             return NextResponse.json(
               { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
               { status: 403, headers: { 'Cache-Control': 'private, no-store' } },

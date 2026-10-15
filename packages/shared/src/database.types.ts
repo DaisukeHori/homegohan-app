@@ -7184,6 +7184,7 @@ export type Database = {
           device_name: string | null
           expo_push_token: string
           id: string
+          install_secret_hash: string | null
           platform: string | null
           updated_at: string | null
           user_id: string
@@ -7193,6 +7194,7 @@ export type Database = {
           device_name?: string | null
           expo_push_token: string
           id?: string
+          install_secret_hash?: string | null
           platform?: string | null
           updated_at?: string | null
           user_id: string
@@ -7202,6 +7204,7 @@ export type Database = {
           device_name?: string | null
           expo_push_token?: string
           id?: string
+          install_secret_hash?: string | null
           platform?: string | null
           updated_at?: string | null
           user_id?: string
