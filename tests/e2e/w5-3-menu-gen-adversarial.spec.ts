@@ -1048,15 +1048,14 @@ apiUserTest("[menu-gen][adversarial] E-19: 生成失敗後のリトライ → �
   );
   const generate = await stubV4Generate(page, [FAKE_REQUEST_ID_2]);
 
-  await page.addInitScript(
-    ([reqId, weekKey]: [string, string]) => {
-      localStorage.setItem(
-        "weeklyMenuGenerating",
-        JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
-      );
-    },
-    [FAKE_REQUEST_ID, jstThisMonday()],
-  );
+  // 生成中だった要求の印 (画面を開くと、この要求の状態を読み直して失敗を表示する)
+  const generatingMarker: [string, string] = [FAKE_REQUEST_ID, jstThisMonday()];
+  await page.addInitScript(([reqId, weekKey]: [string, string]) => {
+    localStorage.setItem(
+      "weeklyMenuGenerating",
+      JSON.stringify({ weekStartDate: weekKey, timestamp: Date.now(), requestId: reqId }),
+    );
+  }, generatingMarker);
 
   await page.goto("/menus/weekly");
 
