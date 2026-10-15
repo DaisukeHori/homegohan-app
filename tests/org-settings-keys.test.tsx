@@ -22,7 +22,12 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  ORG_CONTACT_EMAIL_MAX_LENGTH,
+  ORG_CONTACT_NAME_MAX_LENGTH,
   ORG_EMPLOYEE_COUNT_MAX,
+  ORG_EMPLOYEE_COUNT_MIN,
+  ORG_INDUSTRY_MAX_LENGTH,
+  ORG_SETTINGS_NAME_MAX_LENGTH,
   ORG_SETTINGS_EMPLOYEE_COUNT_MESSAGE,
   ORG_SETTINGS_FORM_KEYS,
   buildOrgSettingsUpdateBody,
@@ -170,8 +175,46 @@ describe('画面が送るキーと route のスキーマが受けるキー', () 
     });
   });
 
+  it('従業員数は下限・上限ちょうどなら送る。理由の文は範囲を 3 桁区切りで出す', () => {
+    for (const value of [ORG_EMPLOYEE_COUNT_MIN, ORG_EMPLOYEE_COUNT_MAX]) {
+      const built = buildOrgSettingsUpdateBody({ ...FILLED_FORM, employeeCount: String(value) });
+      expect(built).toMatchObject({ ok: true, body: { employee_count: value } });
+    }
+    expect(ORG_SETTINGS_EMPLOYEE_COUNT_MESSAGE).toBe('従業員数は 1 から 1,000,000 までの整数で入力してください');
+  });
+
   it('組織名が空白だけなら本文を作らない', () => {
     expect(buildOrgSettingsUpdateBody({ ...FILLED_FORM, name: '   ' }).ok).toBe(false);
+  });
+
+  it.each([
+    ['組織名', 'name', ORG_SETTINGS_NAME_MAX_LENGTH],
+    ['業種', 'industry', ORG_INDUSTRY_MAX_LENGTH],
+    ['担当者名', 'contact_name', ORG_CONTACT_NAME_MAX_LENGTH],
+  ])('%s は上限の文字数まで受け、1 文字超えると拒む', (_label, key, max) => {
+    expect(OrgSettingsUpdateSchema.safeParse({ [key]: 'あ'.repeat(max) }).success).toBe(true);
+    expect(OrgSettingsUpdateSchema.safeParse({ [key]: 'あ'.repeat(max + 1) }).success).toBe(false);
+  });
+
+  it('連絡先メールは上限の文字数まで受け、1 文字超えると拒む', () => {
+    const domain = '@example.com';
+    const local = (n: number) => 'a'.repeat(n - domain.length);
+    expect(OrgSettingsUpdateSchema.safeParse({ contact_email: local(ORG_CONTACT_EMAIL_MAX_LENGTH) + domain }).success).toBe(true);
+    expect(OrgSettingsUpdateSchema.safeParse({ contact_email: local(ORG_CONTACT_EMAIL_MAX_LENGTH + 1) + domain }).success).toBe(false);
+  });
+
+  it('従業員数は route でも下限・上限ちょうどを受け、外を拒む', () => {
+    expect(OrgSettingsUpdateSchema.safeParse({ employee_count: ORG_EMPLOYEE_COUNT_MIN }).success).toBe(true);
+    expect(OrgSettingsUpdateSchema.safeParse({ employee_count: ORG_EMPLOYEE_COUNT_MAX }).success).toBe(true);
+    expect(OrgSettingsUpdateSchema.safeParse({ employee_count: ORG_EMPLOYEE_COUNT_MIN - 1 }).success).toBe(false);
+    expect(OrgSettingsUpdateSchema.safeParse({ employee_count: ORG_EMPLOYEE_COUNT_MAX + 1 }).success).toBe(false);
+  });
+
+  it('plan は従来どおり受け取り、行に入れる (画面は送らない)', () => {
+    const parsed = OrgSettingsUpdateSchema.safeParse({ plan: 'premium' });
+    if (!parsed.success) throw new Error(JSON.stringify(parsed.error.issues));
+    expect(toOrgSettingsUpdateRow(parsed.data)).toEqual({ plan: 'premium' });
+    expect(OrgSettingsUpdateSchema.safeParse({ plan: 'free' }).success).toBe(false);
   });
 
   it('GET の data から入力欄の初期値を作る (null は空欄)', () => {
@@ -367,6 +410,8 @@ describe('Web の組織の設定の画面', () => {
     expect(container.querySelector('[role="status"]')?.textContent).toBe('設定を保存しました');
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(orgRow(ORG_A)).toMatchObject(SAVED);
+    // 保存の直後も、route が返した保存後の値 (前後の空白を除いた組織名) を出す
+    expect(fieldValues()).toEqual({ ...FILLED_FORM, name: SAVED.name });
 
     // 読み込み直す
     act(() => root.unmount());
