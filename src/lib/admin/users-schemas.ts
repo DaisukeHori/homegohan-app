@@ -30,6 +30,48 @@ export const UsersSearchSchema = z.object({
 
 export type UsersSearchParams = z.infer<typeof UsersSearchSchema>;
 
+// ─── ユーザー一覧の応答 (GET /api/admin/users) ────────────────────────────────────
+//
+// #1717: 一覧の応答の 1 行。鍵は snake_case (route が user_profiles の列から組み立てる形のまま)。
+// route (src/app/api/admin/users/route.ts) はこの型で応答を組み立て、読む画面 (/admin/users・/support/users) も
+// この型で読む。以前はサポートの一覧 (/support/users) だけが、応答に無い包み (users) と camelCase の鍵
+// (lastLoginAt・isBanned など) で読んでいて、最終ログインや凍結の印が一覧に出なかった。
+
+export const UserListItemSchema = z.object({
+  id: z.string(),
+  // admin / super_admin にだけ返す (#1145)。support と、メールを持たないユーザー (電話・匿名) は null
+  email: z.string().nullable(),
+  nickname: z.string().nullable(),
+  // plan_key_cached が空のユーザーは 'free'
+  plan_key: z.string(),
+  roles: z.array(z.string()),
+  // 凍結中か (一時 BAN は unban_at を過ぎたら自動で解除扱い。#1030)
+  is_banned: z.boolean(),
+  frozen_at: z.string().nullable(),
+  frozen_reason: z.string().nullable(),
+  frozen_by: z.string().nullable(),
+  unban_at: z.string().nullable(),
+  last_login_at: z.string().nullable(),
+  // user_profiles.created_at
+  registered_at: z.string().nullable(),
+  // 集計は別のクエリが要るため、今は常に 0
+  meal_count: z.number().int(),
+  organization_id: z.string().nullable(),
+});
+
+export type UserListItem = z.infer<typeof UserListItemSchema>;
+
+export const UsersListResponseSchema = z.object({
+  data: z.array(UserListItemSchema),
+  meta: z.object({
+    total: z.number().int(),
+    page: z.number().int(),
+    per_page: z.number().int(),
+  }),
+});
+
+export type UsersListResponse = z.infer<typeof UsersListResponseSchema>;
+
 // ─── ユーザー詳細 ──────────────────────────────────────────────────────────────
 
 export const UserDetailResponseSchema = z.object({

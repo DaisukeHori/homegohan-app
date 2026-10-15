@@ -14,31 +14,10 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
+import type { UserListItem, UsersListResponse } from '@/lib/admin/users-schemas';
 
 interface PageProps {
   searchParams: Promise<{ q?: string; status?: string; page?: string }>;
-}
-
-interface UserItem {
-  id: string;
-  /** メールアドレス (admin / super_admin にだけ API が返す。それ以外と、メールを持たないユーザーは null) */
-  email: string | null;
-  nickname: string | null;
-  plan_key: string;
-  roles: string[];
-  is_banned: boolean;
-  frozen_at: string | null;
-  last_login_at: string | null;
-  registered_at: string | null;
-}
-
-interface UsersApiResponse {
-  data: UserItem[];
-  meta: {
-    total: number;
-    page: number;
-    per_page: number;
-  };
 }
 
 export default async function AdminUsersPage(props: PageProps) {
@@ -68,13 +47,14 @@ export default async function AdminUsersPage(props: PageProps) {
   params.set('page', String(page));
   params.set('per_page', String(perPage));
 
-  let users: UserItem[] = [];
+  // 応答の形は route と同じ型 (src/lib/admin/users-schemas.ts の UsersListResponse) で読む (#1717)
+  let users: UserListItem[] = [];
   let total = 0;
 
   try {
     const res = await adminFetch(`/api/admin/users?${params.toString()}`);
     if (res.ok) {
-      const json = (await res.json()) as UsersApiResponse;
+      const json = (await res.json()) as UsersListResponse;
       users = json.data ?? [];
       total = json.meta?.total ?? 0;
     } else {
