@@ -29,12 +29,6 @@ function atAliasPlugin() {
   };
 }
 
-// test.each / test.for の題名に差し込む値を切り詰めない (0 = 切り詰めない)。
-// vitest 5 から既定が 40 文字になり、「止める経路: analyze-meal-photo (食事の写真 → Edge Func…」のように
-// 行を見分ける部分が「…」で消える題名が出た (#1621。vitest 4 までは切り詰めていなかった)。
-// 失敗したときに題名からどの行かを読めるように、vitest 4 と同じく値をそのまま出す。
-export const TASK_TITLE_VALUE_NO_TRUNCATE = 0;
-
 export default defineConfig({
   plugins: [atAliasPlugin()],
   resolve: {
@@ -78,6 +72,5 @@ export default defineConfig({
       "apps/mobile/**",
     ],
     environment: "jsdom",
-    taskTitleValueFormatTruncate: TASK_TITLE_VALUE_NO_TRUNCATE,
   },
 });
