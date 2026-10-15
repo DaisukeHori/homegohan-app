@@ -150,6 +150,7 @@ LOCAL_CI_SLOT=1 bash scripts/local-ci.sh          # 枠 1 だけを使う (空�
 | `LOCAL_CI_LEGACY_LOCK` | 枠 0 を使う前に、無いことを確かめるパス (外側のロック。既定は空) |
 | `LOCAL_CI_SLOT_MEMORY_MIB` | 1 枠の Docker のメモリの目安 (MiB。既定 1536)。空きが少なければ警告 |
 | `SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS` / `SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT` | ローカル Supabase の停止 (`scripts/supabase-local.sh stop` / `stop-leftover`) が、別の枠の prune と重なって失敗したときに打つ回数の上限 (最初の 1 回を含む。既定 5) と、待ち時間の単位秒 (既定 5。n 回目の失敗のあとは n 倍待つ)。`local-ci.sh` もそのまま渡す (#1616)。値が不正 (回数が 1 以上の整数でない・単位秒が 0 以上の整数でない) だと、停止だけでなく `scripts/supabase-local.sh` のどのサブコマンド (`start` / `reset` / `status` / `env` / `migrations` / `verify` も) も、何もせずに終了コード 2 で止まる (値の確かめをサブコマンドを選ぶ前に行うため) |
+| `SUPABASE_IMAGE_REGISTRIES` / `SUPABASE_IMAGE_PULL_ROUNDS` / `SUPABASE_INTERNAL_IMAGE_REGISTRY` | ローカル Supabase の起動 (`scripts/supabase-local.sh start`) でイメージの取得 (レート制限など) に失敗したときに試す取得元の順 (既定 `public.ecr.aws ghcr.io`)・取得元を一巡する回数の上限 (既定 3)・固定する取得元 (指定すれば切り替えない)。`local-ci.sh` もそのまま渡す。CI での扱いは `docs/operations/ci-supabase-image-pull.md` (#1523) |
 | `LOCAL_CI_PLAYWRIGHT_WITH_DEPS=1` | `playwright install` に `--with-deps` を付ける (Linux で OS の依存も入れる。root 権限が要る) |
 | `LOCAL_CI_TOOLS` | gitleaks の配布物の置き場 (既定 `${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci`) |
 | `INTEGRATION_TEST_TIMEOUT_MS` / `INTEGRATION_HOOK_TIMEOUT_MS` | 結合テストの 1 件のテスト / フックの時間切れ (ミリ秒。既定はどちらも 120000。`vitest.integration.config.ts`)。`local-ci.sh` もそのまま結合テストに渡す。個別に時間切れを書いたテストはそちらが優先 |

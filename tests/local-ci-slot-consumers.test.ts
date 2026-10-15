@@ -27,7 +27,7 @@ import path from "node:path";
 import ts from "typescript";
 import { afterAll, describe, expect, it, vi } from "vitest";
 import { resolveUnitSlotTestTimeout, testsWithUnexpectedTimeout } from "./helpers/local-ci-slot-test-timeout";
-import { SLOT_LIB, slotMaxOf, slotValuesOf, slotWorkDirTable } from "./helpers/local-ci-slot-values";
+import { SLOT_LIB, SUPABASE_IMAGE_PULL_LIB, slotMaxOf, slotValuesOf, slotWorkDirTable } from "./helpers/local-ci-slot-values";
 
 const ROOT = process.cwd();
 
@@ -440,7 +440,7 @@ describe("scripts/baseline/drift_report.sh は LOCAL_CI_SLOT の枠の DB に繋
   // 止める (最初の psql の接続先が分かれば足りる)。supabase CLI も何もしない代わりに置き換える
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "local-ci-drift-"));
   afterAll(() => fs.rmSync(tmp, { recursive: true, force: true }));
-  for (const rel of [DRIFT_REPORT, SUPABASE_LOCAL, SLOT_LIB, "supabase/config.toml", "supabase/baseline/manifest.json", "supabase/.temp/postgres-version"]) {
+  for (const rel of [DRIFT_REPORT, SUPABASE_LOCAL, SLOT_LIB, SUPABASE_IMAGE_PULL_LIB, "supabase/config.toml", "supabase/baseline/manifest.json", "supabase/.temp/postgres-version"]) {
     fs.mkdirSync(path.dirname(path.join(tmp, rel)), { recursive: true });
     fs.copyFileSync(path.join(ROOT, rel), path.join(tmp, rel));
   }
