@@ -1,4 +1,4 @@
--- rollback: 20261015120000_user_push_tokens_install_secret.sql
+-- rollback: 20261015150000_user_push_tokens_install_secret.sql
 -- ⚠️ 守りが弱くなる: 戻すと、通知のトークンの値を知っているだけの他人が、claim で持ち主の行を消せる状態 (#1636 の前) に戻る。
 --    明示的な承認を得た場合に限って使う。
 --

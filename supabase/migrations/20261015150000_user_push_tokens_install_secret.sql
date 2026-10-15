@@ -1,4 +1,4 @@
--- migration: 20261015120000_user_push_tokens_install_secret.sql
+-- migration: 20261015150000_user_push_tokens_install_secret.sql
 -- 通知のトークンの claim に、端末の秘密の値による所有の証明を足す (#1636)
 --
 -- 背景:
@@ -25,7 +25,7 @@
 --   自分の行に好きなハッシュを書いても、ほかの利用者の行は消せない。
 --
 -- 何度流しても同じ結果になる (IF NOT EXISTS・DROP CONSTRAINT IF EXISTS)。既存の行のデータは変えない。
--- 戻し方: supabase/rollbacks/20261015120000_user_push_tokens_install_secret.down.sql
+-- 戻し方: supabase/rollbacks/20261015150000_user_push_tokens_install_secret.down.sql
 --   (先にアプリの API (claim / release) を戻すこと。列が無いと claim の update と release の絞り込みが失敗する)
 -- 確かめるテスト:
 --   tests/integration/security/push-token-claim-ownership.test.ts (実 DB と next dev: 他人の値で claim できない・
