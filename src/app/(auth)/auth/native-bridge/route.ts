@@ -167,7 +167,8 @@ async function establishSession(
  * 以前は残った前の利用者の Cookie で getUser() が通り、前の利用者のまま next へ進んでいた。
  * Cookie を消すのは、/login のあとに前の利用者のまま Web のページへ進まないため (signOut は使わない。サーバ側のセッションまで
  * 失効させないため)。同じ code の再読み込み (WebView の読み込み直しは、リダイレクトの先の next を読み直すので、ふつうは起きない) も
- * /login になる。
+ * /login になる。WebView の中のログイン画面は session-expired をネイティブに送り (src/app/(auth)/login/page.tsx)、ネイティブが
+ * いまの利用者の新しい code で開き直す (apps/mobile/src/lib/webViewAuthMessages.ts。回数制限つき) ので、いまの利用者はそこで戻る。
  */
 function rejectInvalidCode(cookieStore: Awaited<ReturnType<typeof cookies>>, requestUrl: string) {
   clearSupabaseAuthCookies(cookieStore)
