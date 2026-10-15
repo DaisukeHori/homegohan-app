@@ -29,6 +29,9 @@ import { SLOT_LIB, SUPABASE_IMAGE_PULL_LIB } from "./helpers/local-ci-slot-value
 const TEST_TIMEOUT_MS = resolveUnitSlotTestTimeout(process.env);
 vi.setConfig({ testTimeout: TEST_TIMEOUT_MS, hookTimeout: TEST_TIMEOUT_MS });
 
+/** 文字列を RegExp の中でそのまま一致させるため、正規表現の記号をすべてエスケープする */
+const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 const ROOT = process.cwd();
 const FALLBACK = "scripts/supabase-image-fallback.sh";
 const SUPABASE_LOCAL = "scripts/supabase-local.sh";
@@ -176,7 +179,7 @@ describe("scripts/supabase-image-fallback.sh (CI の db diff の入口)", () => 
   it("GitHub Actions では、取れなかったことを ::error の注記と Step Summary にも出す (検査の赤と区別する)", () => {
     const r = fallback({ fails: Number.MAX_SAFE_INTEGER, env: { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: "", SUPABASE_IMAGE_PULL_WAIT_UNIT: "0" } });
     expect(r.status).toBe(EXIT_PULL_UNAVAILABLE);
-    expect(r.err).toMatch(new RegExp(`^::error title=${STEP.replace(/[()]/g, "\\$&")}: イメージを取得できない \\(検査の赤ではない\\)::\\[image-pull-unavailable\\] `, "m"));
+    expect(r.err).toMatch(new RegExp(`^::error title=${escapeRegExp(STEP)}: イメージを取得できない \\(検査の赤ではない\\)::\\[image-pull-unavailable\\] `, "m"));
     expect(r.summary).toContain(`## ${STEP}: Supabase の Docker イメージを取得できませんでした (検査の赤ではない)`);
     expect(r.summary).toContain(PULL_LIMIT_ERROR);
   });
