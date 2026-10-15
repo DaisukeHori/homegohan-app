@@ -797,7 +797,10 @@ $$);
      (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS。完全一致。一覧は lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)。
      ほかに凍結中でも止めないのは、通知のトークンの claim (POST /api/push-tokens/claim。#1636) だけ。利用者の操作ではなく
      端末の後片付け (同じ端末の前の利用者の行を外す) のため。退会・書き出しの一覧には入れず、src/lib/push-tokens.ts の
-     isPushTokenClaimApiPath で別に判定する (全 route で広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts)
+     isPushTokenClaimApiPath で別に判定する (全 route で広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts)。
+     規約の同意ゲート (13a) も、退会・書き出し・claim を止めない (packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS に exact の行がある。
+     凍結中は同意の画面に進めないため。凍結の判定で通るパスがすべて同意の許可リストにあることは
+     lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で確かめる)
 3. 削除をブロックする条件 (409):
    - 組織の owner → ACCOUNT_DELETE_BLOCKED_ORG_OWNER
      (先に owner を譲渡するか、組織を解散する)

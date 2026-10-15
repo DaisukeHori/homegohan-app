@@ -101,6 +101,13 @@ release は例外にしない (メンテナンス中は 503 で止まり、ア�
 例外が claim から広がらないことは `lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts` が `src/app/api` の全 route を
 middleware に通して確かめる。
 
+規約の同意ゲート (`LEGAL_CONSENT_ENFORCE=on`。設計書 `docs/design/cross/13a-legal-consent-api-server.md` §6.4) でも claim は止めない。
+同じ理由 (利用者のデータの読み書きではなく端末の後片付け) で、凍結中・メンテナンス中は同意の画面に進めないため、同意で止めると上の例外が意味を失う。
+`packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS` に claim の exact の行 (理由の種類 `device_cleanup`) を持つ。
+release は載せない (セッション無しで route が端末の秘密の値で認可するので、同意の判定に来ない)。
+ENFORCE=on × 未同意 (凍結あり・なし・メンテナンス中) で claim が通ることは同じテストのファイルが、凍結・メンテナンスの判定で通るパスが
+すべて同意の許可リストにあることは `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` が全 route で確かめる。
+
 #### DB スキーマ変更 (`user_push_tokens`)
 
 現在の `user_push_tokens` テーブルに `organization_id` 列を追加する。
