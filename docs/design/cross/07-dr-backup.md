@@ -323,6 +323,7 @@ SLA 違反が発生した場合は自動返金処理 (§6.2) を手動でトリ�
   1. 全アクセスキーの rotate
      - Supabase: Dashboard > Settings > API > Rotate
      - Stripe: Dashboard > Developers > API keys
+     - Stripe の Webhook の署名の秘密: Dashboard の Webhook の宛先で作り直し、Vercel の `STRIPE_WEBHOOK_SECRET` を入れ替える (billing/01-billing-core.md §17.2)
      - xAI / Anthropic / Google AI: 各コンソールで rotate
      - Vercel: Dashboard > Settings > Environment Variables
   2. Supabase 接続を全て切断

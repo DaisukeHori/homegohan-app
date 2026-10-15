@@ -27,14 +27,14 @@
  * modal の画面のあとに push した画面を modal の下 (push の積み重ね) に入れるので、その画面から同意画面へ移ると、
  * 同意画面が modal の画面の下に隠れる。以前の食事の新規作成 (meals/new) がこの形だったが、通常の操作で届かない
  * ネイティブの画面として消した (#1598)。modal で開く画面が無いことは tests/ai-consent-mobile-modal-nesting.test.ts が検査する。
- * 画面を開くと自動で AI に送る処理 (栄養士のコメントなど) は handleAiConsentRequiredError を使わず、
- * isAiConsentRequiredError で見分けて、案内の一文 (AI_CONSENT_AUTOMATIC_LOCKED_NOTE) だけを出す (勝手に案内を出さない)。
+ * 画面を開くと自動で AI に送る処理 (以前の週の献立の栄養士のコメント) は、通常の操作で届かないネイティブの画面と一緒に消した
+ * (#1598)。いまのアプリには無い。作るときは handleAiConsentRequiredError を使わず、isAiConsentRequiredError で見分けて、
+ * 共用の定義の一文 (supabase/functions/_shared/ai-consent.ts の AI_CONSENT_AUTOMATIC_LOCKED_NOTE) だけを出す (勝手に案内を出さない)。
  */
 import { Alert } from "react-native";
 import { router } from "expo-router";
 
 import {
-  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
   AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
   AI_CONSENT_REQUIRED_MESSAGE,
   AI_CONSENT_REQUIRED_STATUS,
@@ -51,14 +51,12 @@ import {
 
 /**
  * 文面は Web と共用の定義をそのまま使う (2 か所に持たない)。
- *   - AI_CONSENT_AUTOMATIC_LOCKED_NOTE: 画面を開くと自動で作る AI のコメントを、同意が無くて作らなかったときに出す一文
  *   - AI_CONSENT_SKIPPED_NOTE / AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE: 保存と AI の分析を一緒にする画面で、AI の分析を省いたときの一文
  *   - AI_CONSENT_SETTINGS_ENTRY_TITLE: 設定タブの項目の名前 (案内の一文が「設定の「…」から」と指す先)
  *   - aiSkippedReasonOf: 応答の aiSkipped を、出し分けの理由 (consent_required / check_failed) に直す
  *   - aiSummarySkippedNote: AI 相談を閉じた応答の aiSkipped から、要約を省いた旨の一文を選ぶ
  */
 export {
-  AI_CONSENT_AUTOMATIC_LOCKED_NOTE,
   AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
   AI_DAILY_LIMIT_AUTOMATIC_NOTE,
   AI_DAILY_LIMIT_SKIPPED_NOTE,
@@ -93,16 +91,6 @@ export function isAiConsentRequiredError(error: unknown): boolean {
   if (!match || Number(match[1]) !== AI_CONSENT_REQUIRED_STATUS) return false;
   try {
     return isAiConsentRequiredBody(JSON.parse(match[2]));
-  } catch {
-    return false;
-  }
-}
-
-/** fetch を直接使う画面 (ストリーミングなど) のための判定。本文は clone して読むので、呼び出し側はあとで本文を読める */
-export async function isAiConsentRequiredResponse(res: Response): Promise<boolean> {
-  if (res.status !== AI_CONSENT_REQUIRED_STATUS) return false;
-  try {
-    return isAiConsentRequiredBody(await res.clone().json());
   } catch {
     return false;
   }

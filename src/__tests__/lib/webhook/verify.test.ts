@@ -7,7 +7,10 @@ import crypto from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Resend } from 'resend';
 import {
+  parseStripeSignatureHeader,
   verifyResendWebhook,
+  verifyStripeSignature,
+  verifyStripeWebhook,
   verifySvixSignature,
   WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS,
   WebhookSecretMissingError,
@@ -149,6 +152,114 @@ describe('verifyResendWebhook', () => {
     const ts = String(nowMs / MS_PER_SECOND);
     expect(verifyResendWebhook(PAYLOAD, { id: ID, timestamp: ts, signature: `v1,${sign(PAYLOAD, ID, ts)}` }, nowMs)).toEqual({
       ok: true,
+    });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Stripe (billing/01 §8.3): ヘッダー Stripe-Signature: t=<UNIX 秒>,v1=<hex>[,v1=…]。署名の入力は "<t>.<本文>"、鍵は秘密の文字列そのまま
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STRIPE_SECRET = 'whsec_stripe_unit_test_secret_value';
+const STRIPE_PAYLOAD = JSON.stringify({ id: 'evt_unit_1', object: 'event', type: 'customer.subscription.updated' });
+
+/** Stripe と同じ作り方の v1 の署名 (hex)。鍵は秘密の文字列そのもの (Svix と違い base64 に戻さない) */
+function stripeSign(payload: string, timestamp: string, secret = STRIPE_SECRET): string {
+  return crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest('hex');
+}
+
+describe('verifyStripeSignature (billing/01 §8.3)', () => {
+  const nowMs = Date.UTC(2026, 9, 16, 0, 0, 0);
+  const ts = String(nowMs / MS_PER_SECOND);
+
+  it('verifyStripeSignature accepts a valid t/v1 signature over "t.payload" with the raw secret', () => {
+    const header = `t=${ts},v1=${stripeSign(STRIPE_PAYLOAD, ts)}`;
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, header, STRIPE_SECRET, nowMs)).toEqual({ ok: true });
+    // 秘密を base64 に戻した鍵 (Svix の形) で作った署名は合わない (鍵は文字列そのまま)
+    const svixStyleKey = Buffer.from(STRIPE_SECRET.replace(/^whsec_/, ''), 'base64');
+    const svixStyle = crypto.createHmac('sha256', svixStyleKey).update(`${ts}.${STRIPE_PAYLOAD}`).digest('hex');
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${ts},v1=${svixStyle}`, STRIPE_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
+    });
+    // 知らない要素 (v0) は無視し、要素の順序に依らない
+    expect(
+      verifyStripeSignature(STRIPE_PAYLOAD, `v0=deadbeef,v1=${stripeSign(STRIPE_PAYLOAD, ts)},t=${ts}`, STRIPE_SECRET, nowMs),
+    ).toEqual({ ok: true });
+    expect(parseStripeSignatureHeader(`t=${ts},v1=aa,v0=bb,v1=cc`)).toEqual({ timestamp: ts, signatures: ['aa', 'cc'] });
+  });
+
+  it('verifyStripeSignature accepts when one of several v1 signatures matches (secret rotation)', () => {
+    const header = `t=${ts},v1=${stripeSign(STRIPE_PAYLOAD, ts, 'whsec_old_secret')},v1=${stripeSign(STRIPE_PAYLOAD, ts)}`;
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, header, STRIPE_SECRET, nowMs)).toEqual({ ok: true });
+    const onlyOld = `t=${ts},v1=${stripeSign(STRIPE_PAYLOAD, ts, 'whsec_old_secret')}`;
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, onlyOld, STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'signature_mismatch' });
+  });
+
+  it('verifyStripeSignature rejects missing header, non-numeric t, out-of-tolerance t, mismatched v1, empty secret', () => {
+    const good = stripeSign(STRIPE_PAYLOAD, ts);
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, null, STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, '', STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `v1=${good}`, STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${ts}`, STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'missing_headers' });
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=12a,v1=${good}`, STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'invalid_timestamp' });
+
+    const edgePast = String(nowMs / MS_PER_SECOND - WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS);
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${edgePast},v1=${stripeSign(STRIPE_PAYLOAD, edgePast)}`, STRIPE_SECRET, nowMs)).toEqual({
+      ok: true,
+    });
+    const tooOld = String(nowMs / MS_PER_SECOND - WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS - 1);
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${tooOld},v1=${stripeSign(STRIPE_PAYLOAD, tooOld)}`, STRIPE_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'timestamp_out_of_tolerance',
+    });
+    const tooNew = String(nowMs / MS_PER_SECOND + WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS + 1);
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${tooNew},v1=${stripeSign(STRIPE_PAYLOAD, tooNew)}`, STRIPE_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'timestamp_out_of_tolerance',
+    });
+
+    // 本文が 1 文字でも違えば合わない。長さの違う署名・hex でない署名は例外にせず合わないとする
+    expect(verifyStripeSignature(`${STRIPE_PAYLOAD} `, `t=${ts},v1=${good}`, STRIPE_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
+    });
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${ts},v1=abcd`, STRIPE_SECRET, nowMs)).toEqual({ ok: false, reason: 'signature_mismatch' });
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${ts},v1=zz-not-hex`, STRIPE_SECRET, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
+    });
+
+    // 空の秘密: 空の鍵で作った署名も受け付けない
+    const emptyKeySig = crypto.createHmac('sha256', '').update(`${ts}.${STRIPE_PAYLOAD}`).digest('hex');
+    expect(verifyStripeSignature(STRIPE_PAYLOAD, `t=${ts},v1=${emptyKeySig}`, '', nowMs)).toEqual({ ok: false, reason: 'signature_mismatch' });
+  });
+});
+
+describe('verifyStripeWebhook (billing/01 §8.3)', () => {
+  it('verifyStripeWebhook throws WebhookSecretMissingError when STRIPE_WEBHOOK_SECRET is unset or blank', () => {
+    const nowMs = Date.UTC(2026, 9, 16, 0, 0, 0);
+    const ts = String(nowMs / MS_PER_SECOND);
+    const header = `t=${ts},v1=${stripeSign(STRIPE_PAYLOAD, ts)}`;
+    for (const value of ['', '   ']) {
+      vi.stubEnv('STRIPE_WEBHOOK_SECRET', value);
+      expect(() => verifyStripeWebhook(STRIPE_PAYLOAD, header, nowMs)).toThrow(WebhookSecretMissingError);
+      try {
+        verifyStripeWebhook(STRIPE_PAYLOAD, header, nowMs);
+      } catch (error) {
+        expect((error as Error).message).not.toContain('STRIPE_WEBHOOK_SECRET');
+      }
+    }
+    vi.unstubAllEnvs();
+    delete process.env.STRIPE_WEBHOOK_SECRET;
+    expect(() => verifyStripeWebhook(STRIPE_PAYLOAD, header, nowMs)).toThrow(WebhookSecretMissingError);
+
+    // 秘密があれば、その文字列 (前後の空白を除く) で確かめる
+    vi.stubEnv('STRIPE_WEBHOOK_SECRET', `  ${STRIPE_SECRET}  `);
+    expect(verifyStripeWebhook(STRIPE_PAYLOAD, header, nowMs)).toEqual({ ok: true });
+    expect(verifyStripeWebhook(STRIPE_PAYLOAD, `t=${ts},v1=${stripeSign(STRIPE_PAYLOAD, ts, 'whsec_other')}`, nowMs)).toEqual({
+      ok: false,
+      reason: 'signature_mismatch',
     });
   });
 });

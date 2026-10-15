@@ -327,7 +327,11 @@ export function forecastMRR(snapshots: RevenueSnapshot[], horizonMonths: number)
 
 ```mermaid
 stateDiagram-v2
-  [*] --> trialing : 試用開始 (Stripe SetupIntent)
+  [*] --> trialing : 試用開始 (Checkout の trial_period_days。billing/01)
+  [*] --> active : 購入 (Checkout。試用なし)
+  [*] --> incomplete : 購入 (Checkout) の初回の請求の支払い待ち・認証 (3D セキュア) 待ち
+  incomplete --> active : 支払い完了
+  incomplete --> expired : 支払われずに期限切れ (Stripe の incomplete_expired)
   trialing --> active : 試用終了 → 自動課金 (Stripe webhook: invoice.paid)
   trialing --> expired : 試用終了 → カード未登録 or 解約
   active --> past_due : 支払失敗 (Stripe webhook: invoice.payment_failed)
@@ -337,36 +341,31 @@ stateDiagram-v2
   grace --> cancelled : 合計 30 日経過 (アクセス停止、データ 90 日保持)
   active --> paused : 組織ライセンス受領 (重複請求防止)
   paused --> active : 組織ライセンス失効
-  active --> cancelled : ユーザー解約
+  active --> cancelled : ユーザー解約 (解約予約の期間末)
+  note right of active
+    解約予約 (cancel_at_period_end) は status を変えない。
+    期間末に Stripe が解約し、届く deleted を写像が cancelled に写す。
+    期間末までは予約を取り消せる (billing/01 §9.5)
+  end note
   cancelled --> active : 30 日 cooling period 内に復帰
 ```
 
 ### 5.2 試用期間 (trial_days) フロー (§5.15.6.5)
 
-**試用開始**:
-1. ユーザーが「X 日間無料で試す」ボタン
-2. Stripe Setup Intent 作成 (カード登録必須、課金なし)
-3. `personal_subscriptions` に INSERT:
-   ```sql
-   INSERT INTO personal_subscriptions (
-     user_id, plan_key, status, trial_started_at,
-     trial_ends_at, trial_source, stripe_customer_id
-   ) VALUES (
-     $1, $2, 'trialing', NOW(),
-     NOW() + (trial_days || ' days')::INTERVAL, 'direct', $3
-   );
-   ```
-4. 同一プランの過去 trial 履歴チェック (再試用禁止):
-   ```sql
-   SELECT COUNT(*) FROM personal_subscriptions
-   WHERE user_id = $1 AND plan_key = $2 AND trial_started_at IS NOT NULL;
-   -- > 0 なら OP_TRIAL_ALREADY_USED
-   ```
+> **billing/01 との対応**: 試用は Stripe Checkout の `trial_period_days` で作る (`docs/design/billing/01-billing-core.md` §5.2・§9.1)。
+> 旧設計の Setup Intent でのカード登録・アプリからの INSERT・試用終了の日次ジョブは使わない。
 
-**試用終了処理** (Vercel Cron: 日次 09:00 JST):
-1. `trial_ends_at <= NOW()` で `status='trialing'` を抽出
-2. `stripe_customer_id` がある → Stripe 自動課金開始 (`subscription.create`) → webhook で `status='active'`
-3. カード未登録 → `status='expired'` に更新
+**試用開始**:
+1. ユーザーがプランを選んで申し込む (`POST /api/billing/checkout`)
+2. API が Checkout Session を作る。プランの `trial_days` が 1 以上で、同じプランの試用がまだなら `subscription_data[trial_period_days]` を付ける
+   (`payment_method_collection=always` なので、試用でもカードの登録が要る)
+3. `personal_subscriptions` の行は写像が作る (Checkout の完了の Webhook と、戻り画面の同期 `POST /api/billing/checkout/sync`)。
+   アプリが直接 INSERT しない
+4. 同一プランの過去 trial 履歴チェック (再試用なし): 同じ利用者・同じ `plan_key` で `trial_started_at IS NOT NULL` の行があれば、
+   試用なし (0 日) で買える (`src/lib/billing/repository.ts` の `hasUsedTrial`)。エラーにはしない
+
+**試用終了処理**: アプリのジョブは無い。Stripe が試用の終わりに請求し、届く Webhook (`customer.subscription.updated`・`invoice.paid` /
+`invoice.payment_failed`) で写像が `active` / `past_due` を写す。
 
 **試用中の AI quota**:
 - `personal_subscriptions.status = 'trialing'` の場合は試用専用 quota を返す (§5.5.3 参照)
@@ -379,11 +378,12 @@ stateDiagram-v2
 ```
 invoice.payment_failed webhook 受信
   → personal_subscriptions.status = 'past_due'
-  → グレースペリオド: 7 日間
+  → 7 日間は past_due のまま
     → 毎日リマインダーメール送信
     → 機能は継続 (UX 配慮)
-  → 7 日後も未払い:
-    → status = 'cancelled'
+  → 7 日後も未払い: status = 'grace' (機能制限開始)
+  → 合計 30 日後も未払い:
+    → status = 'cancelled' (05 §9 と同じ)
     → 機能停止
     → 解約理由アンケート送信
 ```
@@ -436,7 +436,7 @@ sequenceDiagram
 
 | エラー | コード | 対処 |
 |-------|--------|------|
-| 試用再申請 | `OP_TRIAL_ALREADY_USED` | 「同じプランの試用は 1 回のみです」 |
+| 試用再申請 | `OP_TRIAL_ALREADY_USED` | 使わない (同じプランの 2 回目は試用なしで購入できる。billing/01) |
 | クーポン期限切れ | `OP_COUPON_EXPIRED` | 「このクーポンは有効期限が切れています」 |
 | 重複クーポン | `OP_COUPON_ALREADY_ACTIVE` | 「現在有効なクーポンがあります。置き換えますか？」確認モーダル |
 | deprecated プラン | `OP_PLAN_DEPRECATED` | 「このプランは廃止されました。新プランをご利用ください」 |

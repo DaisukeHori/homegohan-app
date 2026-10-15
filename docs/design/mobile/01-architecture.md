@@ -271,8 +271,6 @@ apps/mobile/
 │   │   ├── meals.tsx                # WebViewScreen path="/meals/new" (NATIVE_APP_TABS の rootPath)
 │   │   ├── comparison.tsx           # WebViewScreen path="/comparison"
 │   │   ├── profile.tsx              # WebViewScreen path="/profile" (設定への歯車つき)
-│   │   ├── health.tsx               # ネイティブの健康の画面 (WebView ではない。タブバーには出さない: href: null)
-│   │   ├── favorites.tsx            # ネイティブ (タブバーには出さない: href: null)
 │   │   └── settings.tsx             # ネイティブ設定画面 (OS API 使用。タブバーには出さない: href: null)
 │   ├── family/
 │   │   └── invite-accept.tsx        # 新規: homegohan://invite/family/{token}
@@ -288,7 +286,7 @@ apps/mobile/
 │   │   ├── api.ts                   # 既存
 │   │   ├── deeplink.ts              # 既存 + parseInviteLink() 追加 (02-deep-link.md)
 │   │   ├── pushNotifications.ts     # 既存 + setBadgeCountAsync 追加 (03-push-notification.md)
-│   │   ├── storage.ts               # 既存 + uploadMealPhoto() 追加 (04-storage-camera.md)
+│   │   ├── storage.ts               # 既存 + uploadMealPhoto() 追加 (04-storage-camera.md。以前の storage.ts は 2026-10-16 に削除した。#1598)
 │   │   └── nativeBridge.ts          # 新規: Web ↔ Native 通信ハブ
 │   ├── providers/
 │   │   ├── AuthProvider.tsx         # 既存
@@ -298,6 +296,9 @@ apps/mobile/
 ├── app.json                         # scheme: "homegohan" 設定済み
 └── eas.json                         # preview/production プロファイル定義済み
 ```
+
+以前の木にあった `(tabs)` の健康の画面 (`health.tsx`)・お気に入り (`favorites.tsx`) は、通常の操作で届かないネイティブの画面として 2026-10-16 に削除した。#1598
+同じとき、タブ・設定の歯車の先から届かない残りのネイティブの画面 (AI 相談・健康の記録と健診・食事の詳細・週の献立・冷蔵庫・買い物リスト・レシピ・バッジ・`(org)`・`(support)`・`(super-admin)`) も削除した。
 
 ## 7. ビルド設定
 
@@ -521,7 +522,7 @@ apps/mobile/
 | 既存ファイル | 修正内容 |
 |---|---|
 | `apps/mobile/src/components/menu/V4GenerateModal.tsx` (642 行) | `mode='sandbox'` prop 対応 + sandbox 用 props 受信(§99 §1.2 Q9) |
-| `apps/mobile/app/badges/index.tsx` (109 行) | `tutorialMode` prop + `badge-card-{code}` 動的 testID + ハイライト演出追加(§99 §1.2 Q10) |
+| ~~`apps/mobile/app/badges/index.tsx`~~ | (2026-10-16 に削除した。#1598。バッジの一覧は Web の画面で、ツアーの Step 3 は `app/handson-tour/badges.tsx` が受け持つ) |
 | `apps/mobile/app/(tabs)/settings.tsx` 等の settings 画面 | 「使い方ガイドをもう一度見る」行追加(family/03 §11.6) |
 | ~~`apps/mobile/app/meals/new.tsx`~~ | (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) |
 | `apps/mobile/src/lib/posthog.ts`(新規) | `posthog-react-native` 初期化(operator/07 §15.1) |

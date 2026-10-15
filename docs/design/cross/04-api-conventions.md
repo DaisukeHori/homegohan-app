@@ -81,6 +81,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `FAM_` | 家族管理ドメイン固有 | 400, 422 |
 | `ORG_` | 組織管理ドメイン固有 | 400, 422 |
 | `OP_` | 運営管理ドメイン固有 | 400, 422 |
+| `BILL_` | 課金の自己サービス (購入・解約の予約・Billing Portal。`docs/design/billing/01-billing-core.md` §13.1) | 400, 403, 404, 409, 422 |
 | `SYS_` | システム内部エラー | 500 |
 
 ### 4.2 エラーコード一覧表
@@ -156,6 +157,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 |--------|------|------|
 | `EXT_STRIPE_WEBHOOK_FAILED` | Stripe Webhook 処理失敗 | 502 |
 | `EXT_STRIPE_CHARGE_FAILED` | Stripe 課金失敗 | 502 |
+| `EXT_STRIPE_API_FAILED` | **[NEW]** Stripe の API の呼び出しに失敗した (課金の自己サービスの API。`docs/design/billing/01-billing-core.md` §13.1) | 502 |
+| `EXT_STRIPE_NOT_CONFIGURED` | **[NEW]** Stripe の秘密鍵 (`STRIPE_SECRET_KEY`) が未設定で、Stripe を呼ぶ課金の API を受け付けない (`docs/design/billing/01-billing-core.md` §13.1) | 503 |
 | `EXT_LLM_TIMEOUT` | LLM API タイムアウト | 504 |
 | `EXT_LLM_CONTENT_POLICY` | LLM コンテンツポリシー拒否 | 422 |
 | `EXT_RESEND_FAILED` | Resend メール送信失敗 | 502 |
@@ -186,6 +189,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `LEGAL_VERSION_MISMATCH` | 同意を送った版が、いま有効な版と違う (`POST /api/legal/accept`。本文に `current` を添える) | 409 |
 | `LEGAL_BAD_REQUEST` | 同意の記録の入力が不正 (`POST /api/legal/accept`) | 400 |
 | `LEGAL_UNSUPPORTED_MEDIA_TYPE` | 同意の記録の Content-Type が JSON でない (`POST /api/legal/accept`) | 415 |
+| `CSP_REPORT_INVALID` | **[NEW]** CSP の違反の報告の本文の形が不正 (`POST /api/csp-report`。cross/18 §9.10) | 400 |
+| `CSP_REPORT_TOO_LARGE` | **[NEW]** CSP の違反の報告の本文が大きすぎる (`POST /api/csp-report`。cross/18 §9.10) | 413 |
+| `CSP_REPORT_UNSUPPORTED_MEDIA_TYPE` | **[NEW]** CSP の違反の報告の Content-Type が `application/csp-report` / `application/json` でない (`POST /api/csp-report`。cross/18 §9.10) | 415 |
 
 #### ORG 系
 
@@ -210,6 +216,19 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_FEATURE_FLAG_NOT_FOUND` | 機能フラグが見つからない | 404 |
 | `OP_TICKET_NOT_FOUND` | チケットが見つからない | 404 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | サブスクリプションが既にアクティブ | 409 |
+
+#### BILL 系
+
+課金の自己サービス (`/api/billing/*`。`docs/design/billing/01-billing-core.md` §9・§13.1)。本文の文は `src/lib/billing/core.ts` の `BILLING_ERROR_MESSAGES`。
+
+| コード | 説明 | HTTP |
+|--------|------|------|
+| `BILL_INVALID_INPUT` | **[NEW]** 入力が不正 (Zod。`details` に全件) | 400 |
+| `BILL_CHECKOUT_SESSION_MISMATCH` | **[NEW]** 戻り画面の同期 (`POST /api/billing/checkout/sync`) で、Checkout Session が本人のものでない | 403 |
+| `BILL_CUSTOMER_NOT_FOUND` | **[NEW]** Stripe の顧客がまだ無い (一度も購入していない。`POST /api/billing/portal`) | 404 |
+| `BILL_NO_LIVE_SUBSCRIPTION` | **[NEW]** 解約の予約・取り消しの対象になる、有効で Stripe の契約がある行が無い (`POST /api/billing/subscription/cancel` / `resume`) | 409 |
+| `BILL_CANCEL_NOT_SCHEDULED` | **[NEW]** 解約が予約されていないのに取り消そうとした (`POST /api/billing/subscription/resume`) | 409 |
+| `BILL_PLAN_NOT_PURCHASABLE` | **[NEW]** 買えないプラン (無い・公開でない・個人 / 家族でない・free・その期間の Price が無い・金額 0。`POST /api/billing/checkout`・`GET /api/billing/checkout/preview`) | 422 |
 
 ---
 
@@ -447,19 +466,20 @@ docs/api/
 > 「id.timestamp.生の本文」、時刻の許容幅は前後 5 分) で署名し、`src/app/api/webhooks/resend/route.ts` は署名が合わなければ 401、
 > 秘密が未設定なら 503 を返す (下の見本の「本文だけの hex の HMAC」「400 / 500」とは違う。Resend については実装が正)。
 > `RESEND_WEBHOOK_SECRET` は `src/lib/env.ts` の一覧 (`SERVER_ENV_VARS`) と `.env.example` にある。
-> 未実装なのは Stripe の側だけ: `requireWebhookSecret`・`verifyStripeWebhook` は無く、`STRIPE_WEBHOOK_SECRET` は `.env.example` に行があるが
-> `src/lib/env.ts` の一覧に無い (一覧に無い名前は `getOptionalEnv(name)` の引数の型 `OptionalEnvName` に入らないので、下の見本の Stripe の部分は
-> そのままでは型が通らない)。Stripe の受け口を作るときに、一覧に任意の変数として足し (`whenMissing` も書く)、src/lib/env.ts の冒頭の
-> 「新しい環境変数を足すとき」の手順に従う。
+> Stripe の受け口 (`src/app/api/webhooks/stripe/route.ts`) も実装済み。正本は `docs/design/billing/01-billing-core.md` §8.3 (署名) と §9.6 (受け口)。
+> 署名はヘッダー `Stripe-Signature` の `t=<UNIX 秒>,v1=<hex>` の形で、HMAC-SHA256 の入力は「t.受け取った本文そのまま」、鍵は署名の秘密
+> (`whsec_…`) の文字列のまま (Svix と違い base64 に戻さない)。時刻の許容幅は Resend と同じ前後 5 分。`src/lib/webhook/verify.ts` の
+> `parseStripeSignatureHeader`・`verifyStripeSignature`・`verifyStripeWebhook` が受け持ち、Stripe の SDK は使わない。route は秘密
+> (`STRIPE_WEBHOOK_SECRET`。`src/lib/env.ts` の一覧にある) が無ければ 503、署名が合わなければ 401 を返す。下の見本の Stripe の部分は使わない。
 
 ```typescript
-// src/lib/webhook/verify.ts (Stripe の部分は未実装。Resend の実装は上の注を参照)
+// src/lib/webhook/verify.ts の見本 (Resend と Stripe の実装は上の注を参照。実装が正)
 import { getOptionalEnv } from '@/lib/env';
 
 /**
  * 署名の秘密が無いときに投げる。署名の誤り (呼び出し元は 400) と見分けるため、別の型にする。
- * 呼び出し元の route は、これを 500 (設定の不足はシステム側の誤り。§4.1 の SYS_) にし、署名の誤りの 400 と分ける
- * (例: operator/05-stripe-integration.md §4.1)。
+ * 呼び出し元の route は、これを 503 にし、署名の誤りの 401 と分ける
+ * (Resend と Stripe の受け口。上の注・billing/01-billing-core.md §9.6)。
  */
 export class WebhookSecretMissingError extends Error {
   constructor() {
@@ -471,7 +491,7 @@ export class WebhookSecretMissingError extends Error {
 /**
  * Webhook の署名の秘密を取り出す。`process.env.<変数名>!` とは書かない (#1182・#1434)。
  * 秘密は src/lib/env.ts の一覧に任意の変数として足し、getOptionalEnv で読む
- * (STRIPE_WEBHOOK_SECRET は、まだ一覧に無い。RESEND_WEBHOOK_SECRET は一覧にある。上の注を参照)。
+ * (STRIPE_WEBHOOK_SECRET・RESEND_WEBHOOK_SECRET とも一覧にある。上の注を参照)。
  * 無ければ署名を確かめられないので、受け付けずに失敗させる (fail-closed)。
  * message に変数名を入れない (500 の本文に出うるため。変数名は getOptionalEnv が警告のログに残す)。
  */
@@ -481,16 +501,8 @@ function requireWebhookSecret(name: 'STRIPE_WEBHOOK_SECRET' | 'RESEND_WEBHOOK_SE
   return secret;
 }
 
-export async function verifyStripeWebhook(
-  body: string,
-  signature: string,
-): Promise<Stripe.Event> {
-  return stripe.webhooks.constructEventAsync(
-    body,
-    signature,
-    requireWebhookSecret('STRIPE_WEBHOOK_SECRET'),
-  );
-}
+// Stripe: verifyStripeWebhook(payload, header) は SDK を使わず t=/v1= の HMAC を自前で確かめる (billing/01-billing-core.md §8.3)。
+// 見本は置かない (実装 src/lib/webhook/verify.ts が正)
 
 export function verifyResendWebhook(
   body: string,
@@ -511,12 +523,19 @@ export function verifyResendWebhook(
 
 Webhook は重複配信されることがある。`event_id` をべき等キーとして使用する。
 
+Stripe は `stripe_webhook_events` (主キー = Stripe の `event.id`) に対して、DB 関数 `billing_claim_stripe_event` で処理の権利を取ってから処理する
+(`docs/design/billing/01-billing-core.md` §9.6)。
+
 ```sql
--- Stripe webhook 処理済みチェック
-SELECT id FROM processed_stripe_events WHERE stripe_event_id = $1;
--- 0行 = 未処理 → 処理実行 + INSERT
--- 1行 = 処理済み → 即 200 OK 返却
+-- Stripe webhook の処理の権利を取る (service_role だけが EXECUTE できる)
+SELECT public.billing_claim_stripe_event($1 /* event.id */, $2 /* event.type */, $3 /* 最小化した写し */);
+-- 'claimed'     = この呼び出しが処理する → 処理のあと billing_finish_stripe_event で completed / failed を記録
+-- 'completed'   = 処理済み → 200 OK 返却
+-- 'in_progress' = ほかが処理中 (15 分以内) → 409 (Stripe が後で再送する)
 ```
+
+2xx を返すのは、イベントが処理済み (`completed`) になったときだけ (この呼び出しで処理を終えた・すでに処理済み。鍵とモードの違うイベントを DB に書かずに無視するときも 200)。
+ほかが処理中なら 409、処理に失敗したら 500 を返して Stripe に再送させる (`failed` と、15 分を過ぎた `processing` の行は再送で権利を取り直せる)。
 
 ---
 
@@ -603,5 +622,5 @@ export async function GET() {
 |------|------|------|
 | 公開 SDK 提供時の API Key 認証方式 | Phase 3 | 検討不要 (Phase 1) |
 | `openapi-diff` CI 統合の具体的設定 | TODO | CI 整備フェーズ |
-| Webhook べき等性テーブル (`processed_stripe_events`) の DDL | TODO | operator/05-stripe-integration.md で定義 |
+| Webhook べき等性テーブル (`processed_stripe_events`) の DDL | 済み | `stripe_webhook_events` と `billing_claim_stripe_event` で入った (billing/01-billing-core.md §6.3・§6.4・§9.6) |
 | レスポンス圧縮 (gzip / Brotli) の Next.js 設定確認 | TODO | Phase 1 リリース前 |

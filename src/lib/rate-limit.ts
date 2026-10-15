@@ -10,6 +10,7 @@ import { createLogger } from '@/lib/db-logger';
  * #1164 ファイルアップロード (POST /api/upload) のユーザー単位の回数制限にも使う
  * #1154 外国の AI 事業者への提供の同意を記録する API (POST /api/ai/consent) の連打防止にも使う
  * #1493 ブラウザ・端末からのログを受け取る API (POST /api/log) のユーザー単位の回数制限にも使う
+ * #1169 ブラウザが CSP の違反を報告する API (POST /api/csp-report) の IP 単位の制限にも使う
  *
  * 元は src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化したもの。
  * `key` + カテゴリ単位でレート制限を判定する。
@@ -57,7 +58,9 @@ export type RateLimitCategory =
   | 'client-log'
   | 'auth-mfa-verify'
   | 'auth-mfa-recover'
-  | 'dsr';
+  | 'dsr'
+  | 'billing'
+  | 'csp-report';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -94,6 +97,9 @@ const HOUR_SEC = 60 * MINUTE_SEC;
 // - contact: お問い合わせフォーム (src/app/api/contact/route.ts)。10 回/分。
 //   route が独自に持っていた制限と同じ値。Upstash 未設定のときは in-memory フォールバック、
 //   Upstash が例外を投げたときは fail-closed (例外を伝播) で、ほかのカテゴリと扱いは同じ
+// - csp-report: ブラウザが CSP の違反を報告する API (#1169。POST /api/csp-report。ログイン前でも届くので key はクライアント IP)。
+//   壊れたデプロイでは 1 画面につき止まったスクリプトの数 (数件) の報告が出る。30 回/分は 1 人の操作を十分に上回り、
+//   偽の報告の連打で app_logs (保持 30 日) を膨らませない。直近 24 時間の 300 回は 1 人の実際の使い方を十分に上回る値
 //
 // 【その他】
 // - export: 個人データエクスポート（#1131。AI は使わないが全テーブルを走査する重い読み取り）。
@@ -124,6 +130,9 @@ const HOUR_SEC = 60 * MINUTE_SEC;
 // - auth-mfa-recover: バックアップコードによる回復 (#1176。POST /api/auth/mfa/recover、key = user.id)。
 //   50 bit のコード。1 時間 10 回で総当たりは不可能。本人は 10 個のうち 1 個を打てればよい
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
+  // 課金の操作 (Checkout の作成・Portal・解約の予約と取り消し・戻り画面の同期)。利用者ごと。
+  // Stripe の API を 1〜2 回呼ぶ操作なので、連打で Stripe 側のレート制限や顧客の重複を起こさない値
+  billing: [{ name: 'billing', max: 10, windowSec: MINUTE_SEC }],
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
   image: [
@@ -178,6 +187,10 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   'auth-mfa-recover': [
     { name: 'auth-mfa-recover', max: 3, windowSec: MINUTE_SEC },
     { name: 'auth-mfa-recover-hourly', max: 10, windowSec: HOUR_SEC },
+  ],
+  'csp-report': [
+    { name: 'csp-report', max: 30, windowSec: MINUTE_SEC },
+    { name: 'csp-report-daily', max: 300, windowSec: DAY_SEC },
   ],
 };
 

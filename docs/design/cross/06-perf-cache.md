@@ -81,8 +81,7 @@
 | LP / 公開ページ | Vercel ISR | 1 時間 | パス | `revalidatePath()` 手動呼び出し |
 | `subscription_plans` マスター | Vercel Edge Cache | 5 分 | `global:subscription_plans` | super_admin 操作時に `revalidateTag()` |
 | ダッシュボード KPI | Upstash Redis | 5 分 | `dashboard:org:{orgId}` | 関連 INSERT/UPDATE 後に DEL |
-| `getUserActivePlan()` 結果 | Upstash Redis | 30 秒 | `plan:user:{userId}` | プラン変更 webhook 受信時に DEL |
-| Stripe customer 情報 | Upstash Redis | 1 時間 | `stripe:customer:{userId}` | Stripe webhook 受信時に DEL |
+| `getUserActivePlan()` 結果 | Upstash Redis | 30 秒 | `plan:user:{userId}` | プラン変更 webhook 受信時に DEL (billing/01 の Webhook はキャッシュを消さない。プランのキャッシュは実装に無い: 権利判定の入口 `getEffectivePlan` は毎回 `get_effective_plan` を呼ぶ。`src/lib/plan/entitlements.ts:370-372`) |
 | AI 生成献立 | Supabase Storage | 永久 | content hash | - |
 | 食事写真 | Vercel Edge CDN (via Supabase Storage) | 7 日 | ファイルパス | - |
 
@@ -134,7 +133,7 @@ export const CACHE_TTL = {
   SUBSCRIPTION_PLANS: 5 * 60,     // 5 分
   DASHBOARD_KPI: 5 * 60,          // 5 分
   USER_ACTIVE_PLAN: 30,           // 30 秒
-  STRIPE_CUSTOMER: 60 * 60,       // 1 時間
+  // Stripe の顧客の情報はキャッシュしない (利用者と顧客の対応は DB の billing_customers。billing/01 §6.3)
 } as const;
 ```
 
@@ -202,7 +201,9 @@ export async function invalidateUserPlanCache(userId: string): Promise<void> {
 | `POST /api/v1/auth/login` | 10/min/IP | - | - |
 | `POST /api/v1/auth/password-reset` | 3/h/IP | - | - |
 | `GET /api/v1/family/invites/{token}` | 60/min/IP | - | - |
-| `POST /api/v1/webhooks/stripe` | - (署名検証のみ) | - | - |
+| `POST /api/webhooks/stripe` | - (署名検証のみ。billing/01 §9.6) | - | - |
+| `POST /api/billing/*` (`checkout`・`checkout/sync`・`portal`・`subscription/cancel`・`subscription/resume`) | - | 10/min/user (`src/lib/rate-limit.ts` のカテゴリ `billing`。billing/01 §8.7・§9) | - |
+| `POST /api/csp-report` | 30/min/IP・300/日/IP (`src/lib/rate-limit.ts` のカテゴリ `csp-report`。cross/18 §9.5) | - | - |
 | `POST /api/v1/webhooks/resend` | - (署名検証のみ) | - | - |
 | AI Edge Functions (knowledge-gpt 等) | - | プラン依存 (03 §5.5.3) | 制限なし |
 | デフォルト (その他全 API) | 30/min/IP | 120/min | 1200/min |
@@ -559,4 +560,4 @@ sequenceDiagram
 | Edge Function のコールドスタート対策 (Deno) | TODO | Edge Function 実装時 |
 | OpenTelemetry trace 導入 (Phase 2) | TODO | Phase 2 |
 | k6 テストの staging 自動実行 CI 組み込み | TODO | Phase 1 リリース後 |
-| `getUserActivePlan` の 30 秒 TTL でプラン変更の即時反映が遅れる問題 | 既知 | Stripe webhook で即時 invalidate する実装で解決 |
+| `getUserActivePlan` の 30 秒 TTL でプラン変更の即時反映が遅れる問題 | 既知 | Stripe webhook で即時 invalidate する実装で解決 (billing/01 の Webhook はキャッシュを消さない。プランのキャッシュは実装に無い: 権利判定の入口 `getEffectivePlan` は毎回 `get_effective_plan` を呼ぶ。`src/lib/plan/entitlements.ts:370-372`) |

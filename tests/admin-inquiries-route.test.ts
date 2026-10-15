@@ -460,7 +460,7 @@ describe('GET /api/admin/inquiries (一覧)', () => {
     expect(body.limit).toBe(50);
   });
 
-  it('概要を camelCase で返し、問い合わせ本文と管理者メモは含めない (モバイルの一覧画面と同じ項目)', async () => {
+  it('概要を camelCase で返し、問い合わせ本文と管理者メモは含めない (以前のモバイルの一覧画面と同じ項目。その画面は #1598 で消した)', async () => {
     const body = await json(await listGET(listRequest()));
     expect(body.inquiries[0]).toEqual({
       id: I1,
