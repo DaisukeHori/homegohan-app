@@ -45,6 +45,8 @@ regexes = [
 #                                      Cron の認証値のダミー (#1157)
 #   0123456789abcdef (の繰り返し)      個人情報の請求の本人確認トークンの形のダミー
 #                                      (src/__tests__/lib/data-subject-requests/core.test.ts。64 桁の小文字 16 進を通す確認 #1702)
+#   GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ   RFC 6238 Appendix B の公開のテスト用の秘密 ("12345678901234567890" の base32)。
+#                                      テストの道具の TOTP のテスト (tests/totp-helper.test.ts) が使う (#1707)
 [[allowlists]]
 description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
 targetRules = ["generic-api-key"]
@@ -60,4 +62,5 @@ regexes = [
   '''^v1\.MR5OBK2qk3lA9wxkmjm0YRkd0tg9FdcYT5CqvW9_pw9nE0j$''',
   '''^3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d$''',
   '''^dummy-cron-secret-0123456789abcdef$''',
+  '''^GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ$''',
 ]

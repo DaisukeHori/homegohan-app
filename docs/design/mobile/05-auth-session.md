@@ -180,6 +180,10 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 
 ログイン状態の持ち主は**ネイティブ**。WebView の Web 側は、ネイティブが張った借り物の Cookie セッションで動く。
 
+> 3 つ目のメッセージ `{ type: 'mfa-verify-required' }` (Web → ネイティブ。運営ロールの二段階認証の 6 桁の確認をネイティブの確認画面に頼む。
+> `docs/design/cross/12-operator-mfa.md` §16.4) は、Web の送る側 (`src/lib/native-auth-bridge.ts` の `requestNativeMfaVerify`) が段 A で入り、
+> ネイティブが受けるのは段 D (それまでのアプリは知らない type として捨てる)。受け取り・確認画面・読み込み直しの詳細は段 D でこの節に足す。
+
 ### 6.1 refresh_token の持ち主はネイティブだけ (F7-05)
 
 ネイティブの refresh_token をそのまま Web の Cookie にも入れると、Web (middleware / ブラウザの supabase-js) とネイティブが同じ refresh_token を別々にローテーションする。
