@@ -19,8 +19,13 @@ import { describe, expect, it } from 'vitest';
 
 const read = (rel: string) => fs.readFileSync(path.join(__dirname, '..', rel), 'utf8');
 
-/** 行・応答の本文の失敗の文に既定の文を添える式 (失敗の文をそのまま画面に出す書き方) */
-const FALLBACK_OF_STORED_ERROR = /(?:error_message|errorMessage|errorMessageSnake|result\?\.error)\s*(?:\|\||\?\?)/;
+/**
+ * 行・応答の本文の失敗の文に既定の文を添える式 (失敗の文をそのまま画面に出す書き方)。
+ * 行・本文のプロパティ (`x.error_message`・`x.errorMessage`・`x.result?.error`) と、分割代入で受けた `error_message`・
+ * `errorMessageSnake` を見る。絞り込みを通したあとの値を受ける関数の引数 (`finishRegenerate` の `errorMessage` など) は見ない
+ */
+const FALLBACK_OF_STORED_ERROR =
+  /(?:\.(?:error_message|errorMessage)|\berror_message|\berrorMessageSnake|\.result\?\.error)\s*(?:\|\||\?\?)/;
 /** 読む側の絞り込みの関数 (Web: weeklyMenuRequestErrorMessageForDisplay / shoppingListRequestErrorMessageForDisplay、
  * アプリ: menuRequestErrorMessageForDisplay / shoppingListRequestErrorMessageForDisplay) */
 const DISPLAY_FILTER = /(?:weeklyMenuRequest|menuRequest|shoppingListRequest)ErrorMessageForDisplay\(/;
