@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
-
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
+import type { MealType } from '@homegohan/shared';
 
 // 食事タイプのカテゴリ（順序変更の制約用）
 const MEAL_CATEGORIES: Record<MealType, number> = {

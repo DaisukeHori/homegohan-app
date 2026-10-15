@@ -27,7 +27,7 @@
     "mobile:ios": "npm --workspace apps/mobile run ios",
     "mobile:android": "npm --workspace apps/mobile run android",
     "test:e2e:reset-data": "bash apps/mobile/maestro/scripts/reset-test-users.sh",
-    "types:supabase": "npx supabase gen types typescript --linked > src/types/database.types.ts"
+    "types:supabase": "npx supabase@2.62.10 gen types typescript --local --schema public --workdir .supabase-local"
   },
   "engines": {
     "node": "22.x"

@@ -11,7 +11,9 @@ import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
-import { formatCalendarDate, parseLocalDate, todayCalendarDate, todayLocal } from "@homegohan/shared";
+import { formatCalendarDate, parseLocalDate, todayCalendarDate, todayLocal, type MealType } from "@homegohan/shared";
+// 食事の区分のボタンの並び: 基本の 3 食 (BASE_MEAL_TYPES) と、正本 MEAL_ORDER から作ったおやつ・夜食 (EXTRA_MEAL_TYPES) (#1631)
+import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "../../../../lib/slot-builder";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
 import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
@@ -44,7 +46,7 @@ type Step = "mode-select" | "capture" | "analyzing" | "result" | "select-date"
           | "fridge-result" | "health-result" | "weight-result" | "classify-failed"
           | "manual";
 type PhotoMode = "auto" | "meal" | "fridge" | "health_checkup" | "weight_scale";
-type MealType = "breakfast" | "lunch" | "dinner" | "snack" | "midnight_snack";
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 type DishDetail = { name: string; role: string; cal?: number; calories_kcal?: number; protein?: number; carbs?: number; fat?: number; ingredient?: string };
 
 interface FridgeIngredient {
@@ -913,7 +915,7 @@ export default function MealNewPage() {
 
           {/* Meal type */}
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            {(["breakfast", "lunch", "dinner"] as MealType[]).map((type) => {
+            {BASE_MEAL_TYPES.map((type) => {
               const config = MEAL_CONFIG[type];
               const isSel = type === selectedMealType;
               return (
@@ -928,7 +930,7 @@ export default function MealNewPage() {
             })}
           </View>
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            {(["snack", "midnight_snack"] as MealType[]).map((type) => {
+            {EXTRA_MEAL_TYPES.map((type) => {
               const config = MEAL_CONFIG[type];
               const isSel = type === selectedMealType;
               return (
@@ -1306,7 +1308,7 @@ export default function MealNewPage() {
           {/* Meal type selection */}
           <Text style={{ fontSize: 13, fontWeight: "500", color: colors.text }}>食事タイプ</Text>
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            {(["breakfast", "lunch", "dinner"] as MealType[]).map((type) => {
+            {BASE_MEAL_TYPES.map((type) => {
               const config = MEAL_CONFIG[type];
               const isSelected = type === selectedMealType;
               return (
@@ -1321,7 +1323,7 @@ export default function MealNewPage() {
             })}
           </View>
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
-            {(["snack", "midnight_snack"] as MealType[]).map((type) => {
+            {EXTRA_MEAL_TYPES.map((type) => {
               const config = MEAL_CONFIG[type];
               const isSelected = type === selectedMealType;
               return (

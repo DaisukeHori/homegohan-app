@@ -2029,14 +2029,16 @@ CREATE TABLE infra_alerts (
 - 機能フラグ評価ロジック
 
 ### 12.2 E2E (Playwright)
-- `op/01-user-search.spec.ts`
-- `op/02-user-ban.spec.ts`
-- `op/03-moderation-resolve.spec.ts`
-- `op/04-feature-flag-toggle.spec.ts`
-- `op/05-llm-usage-dashboard.spec.ts`
-- `op/06-support-ticket-thread.spec.ts`
-- `op/07-mrr-dashboard.spec.ts`
-- `op/08-notification-campaign.spec.ts`
+下の `op/` の 8 本はどれもリポジトリに無い (未作成)。運営画面の E2E として実在するのは
+`tests/e2e/operator/01-admin-flow.spec.ts` と `tests/e2e/operator/02-super-admin-flow.spec.ts`。
+- `op/01-user-search.spec.ts` (未作成)
+- `op/02-user-ban.spec.ts` (未作成)
+- `op/03-moderation-resolve.spec.ts` (未作成)
+- `op/04-feature-flag-toggle.spec.ts` (未作成)
+- `op/05-llm-usage-dashboard.spec.ts` (未作成)
+- `op/06-support-ticket-thread.spec.ts` (未作成)
+- `op/07-mrr-dashboard.spec.ts` (未作成)
+- `op/08-notification-campaign.spec.ts` (未作成)
 
 ### 12.3 セキュリティ
 - 権限境界テスト (各ロール × 各操作)
@@ -2428,8 +2430,9 @@ CREATE TABLE gdpr_deletion_requests (
 **移行**:
 1. **Supabase 自動生成型を導入**:
    ```bash
-   # 新規 npm script
-   "db:types": "supabase gen types typescript --project-id flmeolcfutuwwbjmzyoz --schema public > types/supabase.ts"
+   # 新規 npm script (この名前の script は無い。型の生成は package.json の types:supabase で、本番に接続せず
+   # ローカルの Supabase から作る。手順の正本は docs/design/operator/09-runbook.md の「5. 型の再生成」)
+   "db:types": "supabase gen types typescript --local --schema public > types/supabase.ts"
    ```
 2. **手書き `types/database.ts` を `types/database-extended.ts` にリネーム**、Supabase 生成型を継承
 3. **CI で自動再生成 + 差分検知**:

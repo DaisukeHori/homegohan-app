@@ -9,7 +9,7 @@ import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
@@ -38,7 +38,7 @@ const colors = {
 };
 
 type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
   cook: { icon: ChefHat, label: '自炊', color: colors.successText, bg: colors.successLight },
