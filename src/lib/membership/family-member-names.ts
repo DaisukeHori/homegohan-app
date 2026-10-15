@@ -1,7 +1,7 @@
 // src/lib/membership/family-member-names.ts
 // 家族の画面に出すメンバーの名前を決める (#1584)。
 //
-// 招待を承諾して入ったメンバーは family_members.display_name が NULL のままなので、以前は家族の画面に「名前未設定」と出ていた。
+// 以前は、招待を承諾して入ったメンバーの family_members.display_name が NULL のままで、家族の画面に「名前未設定」と出ていた。
 // 承諾のときは、本人のプロフィールの名前を display_name に写す (supabase/migrations/20261015120000_accept_copies_profile_name.sql。
 // 仮置きの 'Guest'・空白だけは写さない)。それより前に承諾した人や、承諾のときに名前が無かった人は NULL のままなので、
 // 画面に出す名前は次の順で決める (写した名前は 1 に入るので、後でプロフィールの名前を変えても家族の画面は写した名前のまま):
