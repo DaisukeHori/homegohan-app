@@ -272,7 +272,8 @@
 ## 13. `/admin/finance/invoices` — 請求書管理
 
 > **現状 (2026-10, #1125)**: 請求書一覧・収益推移 (`/admin/finance/revenue`)・Stripe 整合チェック (`/admin/finance/reconciliation`) は、
-> 課金が未開始で元データが無いため、「課金は未開始のため準備中」の案内だけを表示する。
+> 請求書・収益推移・整合チェックの元データ (集計バッチ・reconcile) は配線の冊で作るため、それまで「課金は未開始のため準備中」の案内だけを表示する
+> (Stripe の Webhook の受け口と契約の写しは billing/01 で入った。案内 `src/components/operator/finance/BillingNotStartedNotice.tsx` を外すのは配線の冊)。
 
 **操作バー**: 「全組織分一括生成」ボタン (確認モーダル付き)
 
@@ -560,8 +561,7 @@ Step 3: スケジュール
 - テストモード: 黄色バナー「⚠ Stripe テストモード」
 - 本番モード: 緑バナー「✓ Stripe 本番モード」
 
-**設定フォーム**:
-- Publishable Key (masked)
+**設定フォーム** (Publishable Key は持たない: Checkout と Billing Portal はサーバーが作った Stripe のページの URL へ移るだけで、公開鍵を使わない。billing/01):
 - Secret Key (masked、変更時は再入力)
 - Webhook Signing Secret (masked)
 - Webhook Endpoint: `https://homegohan.app/api/webhooks/stripe` (read-only)

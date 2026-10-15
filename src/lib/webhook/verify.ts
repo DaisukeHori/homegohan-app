@@ -2,7 +2,7 @@
  * Webhook の署名の確認。サーバー専用。#1184
  *
  * 規約の正本は docs/design/cross/04-api-conventions.md §10 (全 Webhook で署名の確認を必須にする)。
- * いまあるのは Resend の分だけ (Stripe の Webhook は未実装)。
+ * いまあるのは Resend (Svix の形) と Stripe (t/v1 の形。billing/01 §8.3)。
  *
  * Resend は Svix の形で署名を付ける (https://resend.com/docs/webhooks/verify-webhooks-requests):
  *   - ヘッダー: svix-id (メッセージ ID) / svix-timestamp (送った時刻。UNIX 秒) / svix-signature ("v1,<base64>" を空白区切りで 1 つ以上)
@@ -114,4 +114,71 @@ export function verifyResendWebhook(payload: string, headers: SvixHeaders, nowMs
   // 未設定と、鍵が空になる値 ("whsec_" だけなど) は、どちらも設定の不足として扱う (署名の誤りの 401 ではなく 503)
   if (!secret || decodeSvixSecret(secret.trim()).length === 0) throw new WebhookSecretMissingError();
   return verifySvixSignature(payload, headers, secret.trim(), nowMs);
+}
+
+/** Stripe-Signature の要素 (t=…, v1=…)。Stripe の仕様 */
+const STRIPE_SIGNATURE_TIMESTAMP_KEY = 't';
+const STRIPE_SIGNATURE_SCHEME = 'v1';
+
+export interface StripeSignatureHeader {
+  timestamp: string | null;
+  /** v1 の署名 (hex)。秘密の入れ替えの間は 2 つ以上並ぶ */
+  signatures: string[];
+}
+
+/** "t=123,v1=abc,v1=def,v0=…" を分解する。知らない要素は無視する */
+export function parseStripeSignatureHeader(header: string | null): StripeSignatureHeader {
+  const parsed: StripeSignatureHeader = { timestamp: null, signatures: [] };
+  if (!header) return parsed;
+  for (const part of header.split(',')) {
+    const eq = part.indexOf('=');
+    if (eq < 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (key === STRIPE_SIGNATURE_TIMESTAMP_KEY) parsed.timestamp = value;
+    else if (key === STRIPE_SIGNATURE_SCHEME && value.length > 0) parsed.signatures.push(value);
+  }
+  return parsed;
+}
+
+/**
+ * Stripe の Webhook の署名を確かめる (秘密は引数で渡す。純粋な関数)。
+ * @param payload 受け取った本文そのまま (JSON として読み直したものではない)
+ * @param header  Stripe-Signature ヘッダーの値 (無ければ null)
+ * @param secret  署名の秘密 (whsec_…。文字列のまま鍵にする)
+ * @param nowMs   いまの時刻 (テストで差し替える)
+ */
+export function verifyStripeSignature(
+  payload: string,
+  header: string | null,
+  secret: string,
+  nowMs: number = Date.now(),
+): WebhookVerification {
+  const { timestamp, signatures } = parseStripeSignatureHeader(header);
+  if (!timestamp || signatures.length === 0) return { ok: false, reason: 'missing_headers' };
+  if (!/^\d+$/.test(timestamp)) return { ok: false, reason: 'invalid_timestamp' };
+  const sentAtSeconds = Number(timestamp);
+  const nowSeconds = Math.floor(nowMs / MS_PER_SECOND);
+  if (Math.abs(nowSeconds - sentAtSeconds) > WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS) {
+    return { ok: false, reason: 'timestamp_out_of_tolerance' };
+  }
+  // 空の秘密では誰でも同じ署名を作れる。合わないものとして扱う
+  if (secret.length === 0) return { ok: false, reason: 'signature_mismatch' };
+  const expected = crypto.createHmac('sha256', secret).update(`${timestamp}.${payload}`).digest();
+  for (const given of signatures) {
+    const bytes = Buffer.from(given, 'hex');
+    // timingSafeEqual は長さが違うと例外を投げるので、先に長さをそろえて比べる
+    if (bytes.length === expected.length && crypto.timingSafeEqual(bytes, expected)) return { ok: true };
+  }
+  return { ok: false, reason: 'signature_mismatch' };
+}
+
+/**
+ * Stripe の Webhook の署名を、環境変数 STRIPE_WEBHOOK_SECRET の秘密で確かめる。
+ * 秘密が無ければ確かめられないので、受け付けずに WebhookSecretMissingError を投げる (fail-closed。route は 503)。
+ */
+export function verifyStripeWebhook(payload: string, header: string | null, nowMs: number = Date.now()): WebhookVerification {
+  const secret = getOptionalEnv('STRIPE_WEBHOOK_SECRET');
+  if (!secret || secret.trim().length === 0) throw new WebhookSecretMissingError();
+  return verifyStripeSignature(payload, header, secret.trim(), nowMs);
 }

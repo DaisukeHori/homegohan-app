@@ -240,6 +240,16 @@ async function seedUser(user: TestUser, tag: 'A' | 'B') {
     message: 'message',
     admin_notes: mark('ADMIN-NOTE'),
   });
+  // #1178 個人情報の請求。本人確認の hash と運営の内部メモは書き出しに出さない (列の GRANT の外。columns: DSR_OWN_COLUMNS)。
+  // status は既定の pending_verification (CHECK を満たす)。service_role にも DELETE が無いので afterAll では消さず、
+  // ユーザーの削除で user_id = NULL になって残る (退会と同じ)
+  await insert('data_subject_requests', {
+    user_id: uid,
+    request_type: 'disclosure',
+    details: mark('DSR'),
+    verification_token_hash: mark('DSR-HASH'),
+    admin_notes: mark('DSR-ADMIN-NOTE'),
+  });
 
   const ticket = await insert('support_tickets', {
     user_id: uid,
@@ -509,6 +519,7 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       support_ticket_messages: 2, // 本人 + サポートの返信。内部メモは含まない
       user_badges: 1,
       user_badge_period_awards: 1,
+      data_subject_requests: 1,
     });
   });
 
@@ -535,11 +546,13 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       `GDPR-NOTE-A-${RUN}`,
       `WORKER-A-${RUN}`,
       `RESULT-JSON-A-${RUN}`,
+      `DSR-HASH-A-${RUN}`,
+      `DSR-ADMIN-NOTE-A-${RUN}`,
     ]) {
       expect(text, hidden).not.toContain(hidden);
     }
     // 本人のデータは入っている
-    for (const shown of [`SIGNED-A-${RUN}`, `NICK-A-${RUN}`, `MEMO-A-${RUN}`, `DISH-1-A-${RUN}`, `COMMENT-A-${RUN}`, `PROMPT-A-${RUN}`, `SUPPORT-REPLY-A-${RUN}`, `CHAT-A-${RUN}`]) {
+    for (const shown of [`SIGNED-A-${RUN}`, `NICK-A-${RUN}`, `MEMO-A-${RUN}`, `DISH-1-A-${RUN}`, `COMMENT-A-${RUN}`, `PROMPT-A-${RUN}`, `SUPPORT-REPLY-A-${RUN}`, `CHAT-A-${RUN}`, `DSR-A-${RUN}`]) {
       expect(text, shown).toContain(shown);
     }
   });

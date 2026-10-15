@@ -6,10 +6,13 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER,
   SESSION_EXPIRED_MIN_INTERVAL_MS,
   isInNativeWebView,
+  isNativeBridgedSession,
   notifyNativeSessionExpired,
   notifyNativeSignOut,
+  requestNativeMfaVerify,
   resetNativeAuthBridgeForTests,
 } from '@/lib/native-auth-bridge'
 
@@ -135,5 +138,43 @@ describe('notifyNativeSessionExpired', () => {
     )
 
     expect(() => notifyNativeSessionExpired(1_000_000)).not.toThrow()
+  })
+})
+
+// #1176 運営ロールの MFA: WebView の中の確認画面がネイティブの確認画面を頼む・借り物のセッションの判定 (docs/design/cross/12-operator-mfa.md §16.4.1・§21.7)
+describe('requestNativeMfaVerify', () => {
+  it('requestNativeMfaVerify: { type: "mfa-verify-required" } を JSON 文字列でネイティブに送り true / 普通のブラウザでは何も送らず false / postMessage が例外を投げても例外にしない', () => {
+    expect(requestNativeMfaVerify()).toBe(false)
+
+    const postMessage = installBridge()
+    expect(requestNativeMfaVerify()).toBe(true)
+    expect(postMessage).toHaveBeenCalledTimes(1)
+    const sent = postMessage.mock.calls[0][0]
+    expect(typeof sent).toBe('string')
+    expect(JSON.parse(sent)).toEqual({ type: 'mfa-verify-required' })
+
+    // 回数は絞らない (利用者が押したときと描画の後の 1 回だけなので)
+    expect(requestNativeMfaVerify()).toBe(true)
+    expect(postMessage).toHaveBeenCalledTimes(2)
+
+    installBridge(
+      vi.fn(() => {
+        throw new Error('bridge closed')
+      }),
+    )
+    expect(() => requestNativeMfaVerify()).not.toThrow()
+    expect(requestNativeMfaVerify()).toBe(false)
+  })
+})
+
+describe('isNativeBridgedSession', () => {
+  it('isNativeBridgedSession: refresh_token が NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER のときだけ true (実際の値・null・undefined・session が null は false)', () => {
+    expect(isNativeBridgedSession({ refresh_token: NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER })).toBe(true)
+    expect(isNativeBridgedSession({ refresh_token: 'real-refresh-token' })).toBe(false)
+    expect(isNativeBridgedSession({ refresh_token: null })).toBe(false)
+    expect(isNativeBridgedSession({ refresh_token: undefined })).toBe(false)
+    expect(isNativeBridgedSession({})).toBe(false)
+    expect(isNativeBridgedSession(null)).toBe(false)
+    expect(isNativeBridgedSession(undefined)).toBe(false)
   })
 })

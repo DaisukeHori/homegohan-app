@@ -14,6 +14,7 @@
  * - 親テーブル経由の子テーブル (planned_meals など) は、親の user_id で絞る。
  */
 
+import { DSR_OWN_COLUMNS } from './data-subject-requests/core';
 import { weeklyMenuRequestErrorMessageForResponse } from './weekly-menu-request-error';
 
 export type ExportRow = Record<string, unknown>;
@@ -270,6 +271,9 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     eq: { is_internal: false },
     transform: redactSupportMessageSender,
   },
+  // #1178 個人情報の請求。本人の JWT の client (RLS) は列の GRANT の 15 列しか読めないので、columns で最初から絞る
+  // (* で読むと 42501。本人確認の hash と運営の内部メモ admin_notes は取得しない)。運営ロールのユーザーは RLS で全員分が読めるので user_id で絞る
+  { table: 'data_subject_requests', scope: self('user_id'), columns: DSR_OWN_COLUMNS, orderBy: ['created_at', 'id'] },
 ];
 
 /**
@@ -280,6 +284,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
 export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   // 認証情報・セキュリティ
   password_history: 'パスワードのハッシュ (認証情報)',
+  operator_mfa_backup_codes: '二段階認証のバックアップコードのハッシュ (認証情報)',
   user_push_tokens: '端末のプッシュ通知トークン (認証情報に準ずる)',
   user_sessions_metadata: 'ログインセッションの識別子・端末情報 (セキュリティ情報)',
   native_bridge_codes: 'モバイル WebView 認証ブリッジのワンタイムコード (アクセス / リフレッシュトークンを含む。有効 60 秒・使うと消える)',

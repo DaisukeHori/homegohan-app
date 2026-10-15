@@ -56,6 +56,7 @@
 28. failed_invite_lookups
 29. user_sessions_metadata
 30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meals.is_sandbox + user_daily_meals.is_sandbox + badges seed + RPC 2 本
+31. operator_mfa_backup_codes (§3.27)  ← cross/12 §11.1。auth.users への FK だけで、他の運営の表に依存しない (migration 20261016230000)
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター
@@ -1343,6 +1344,11 @@ Step 1 「目標 kcal の X%」表示は新規 helper を追加せず、既存 `
 3. UI デプロイ(Web/Mobile のハンズオン画面群)
 
 ロールバック時は逆順。
+
+### 3.27 `operator_mfa_backup_codes` — 運営ロールの二段階認証のバックアップコード
+
+→ `docs/design/cross/12-operator-mfa.md` §11.1 が正典 (列・制約・権限・ロールバック)。SHA-256 だけを持つ service_role 専用の表 (RLS 有効・ポリシー無し)。
+migration は `supabase/migrations/20261016230000_operator_mfa_backup_codes.sql`。
 
 ## 4. ER 図
 

@@ -57,6 +57,8 @@ type Entry = {
 };
 
 const ENTRIES: Entry[] = [
+  { file: 'account/data-requests/[id]/verify/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/[id]/verify/route')).POST },
+  { file: 'account/data-requests/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/route')).POST },
   { file: 'account/delete/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/delete/route')).POST },
   { file: 'admin/catalog/import/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/catalog/import/route')).POST },
   { file: 'admin/finance/exports/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/finance/exports/route')).POST },
@@ -98,6 +100,8 @@ const ENTRIES: Entry[] = [
   { file: 'ai/nutrition/feedback/route.ts', method: 'POST', load: async () => (await import('@/app/api/ai/nutrition/feedback/route')).POST },
   { file: 'ai/nutrition/route.ts', method: 'POST', load: async () => (await import('@/app/api/ai/nutrition/route')).POST },
   { file: 'announcements/route.ts', method: 'POST', load: async () => (await import('@/app/api/announcements/route')).POST },
+  { file: 'billing/checkout/route.ts', method: 'POST', load: async () => (await import('@/app/api/billing/checkout/route')).POST },
+  { file: 'billing/checkout/sync/route.ts', method: 'POST', load: async () => (await import('@/app/api/billing/checkout/sync/route')).POST },
   { file: 'comparison/trigger/route.ts', method: 'POST', load: async () => (await import('@/app/api/comparison/trigger/route')).POST },
   { file: 'contact/route.ts', method: 'POST', load: async () => (await import('@/app/api/contact/route')).POST },
   { file: 'family/groups/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/groups/route')).POST },
@@ -193,12 +197,18 @@ const EXCLUDED: Readonly<Record<string, string>> = {
     '理由 (reason) の NULL 文字は RefundRequestSchema (src/lib/admin/finance-schemas.ts) の refine で 400 VALIDATION_ERROR にしている (tests/admin-finance-refunds-route.test.ts がこの code を確かめる)。ほかの文字列は uuid・決済 ID の形式・英字 3 文字の検査を通ったものだけが DB に届く',
   'POST auth/login/route.ts':
     '別のサイトからの要求の拒否と IP ごとの回数制限 (docs/design/cross/01-auth-session.md §3.2) を、本文を読むより前に行う作り。email は z.email() の形式の検査を通ったものだけが DB (rpc) に届き、password と captchaToken は Auth API と Turnstile にだけ渡す',
+  'POST auth/mfa/verify/route.ts':
+    'factor_id は z.uuid()、code は 6 桁の数字 (TOTP_CODE_PATTERN) の検査を通ったものだけが Supabase に届く。NULL 文字を含む値は 400 VALIDATION_ERROR で、DB に書かない',
+  'POST auth/mfa/recover/route.ts':
+    'code は normalizeBackupCode で英数字以外 (NULL 文字を含む) を取り除き、DB には user_id と SHA-256 の hex だけが届く。監査の details も数だけ',
   'POST auth/native-bridge/code/route.ts':
     'Bearer の確認と本文の長さの上限 (MAX_BODY_CHARS) を、本文を JSON として読むより前に行う作り。refresh_token を渡す rpc (issue_native_bridge_code) の失敗は 503 で返す (500 にならない)',
   'POST legal/accept/route.ts':
     'Content-Type と本文の長さの上限を、本文を JSON として読むより前に確かめる作り。本文の文字列 (terms_version・privacy_version) は今の版と一致しなければ 409 で、DB には今の版の定数だけが届く',
   'POST upload/route.ts':
     '本文は multipart/form-data で JSON ではない (rejectNullCharacterBody は JSON として読めない本文を確かめない)。ファイルは Storage に置き、DB の text / jsonb には書かない',
+  'POST webhooks/stripe/route.ts':
+    '本文は Stripe が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (billing/01 §9.6)',
   'POST webhooks/resend/route.ts':
     '本文は Resend が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (route の冒頭のコメント)',
 };
