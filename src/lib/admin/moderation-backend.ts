@@ -22,8 +22,9 @@
  * `getSupabaseAdmin()` (service-role) を渡すこと。
  *
  * #1101: 違反コンテンツの「削除」は、行を消さずに `hidden_at` を入れて「隠す」
- * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、保管期間のあとに
- * 完全削除する (削除ジョブは別の作業)。注意: service-role で `meals` / `recipes` を読むコードは
+ * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、隠してから 90 日 (保管期間) を
+ * 過ぎたら、pg_cron のジョブ `purge-hidden-content` (#1538) が行と、ほかで使っていない画像を完全に消す。
+ * 注意: service-role で `meals` / `recipes` を読むコードは
  * RLS を通らないので、他のユーザーに見せる一覧を作るなら `hidden_at IS NULL` で絞ること。
  */
 
@@ -283,7 +284,8 @@ function isSameMealContent(a: MealContent, b: MealContent): boolean {
  * 通報されたコンテンツ (meals / recipes の行) を「隠す」(#1101)。行は消さない。
  *
  * `hidden_at` を入れると、RLS により本人以外 (家族・他のログインユーザー・未ログイン) には
- * 見えなくなる (本人には見える)。完全な削除は保管期間のあとに別のジョブで行う。
+ * 見えなくなる (本人には見える)。隠してから 90 日 (保管期間) を過ぎたら、pg_cron のジョブ
+ * `purge-hidden-content` (#1538) が行と、ほかで使っていない画像を完全に消す。
  * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー guard_hidden_content_columns)
  * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
  *
