@@ -1,11 +1,13 @@
 /**
  * useV4MenuGeneration のテスト (#1138)
  *
- * 「献立を改善」は専用 API を作らず、既存の POST /api/ai/menu/v4/generate をこのフックから呼ぶ。
- * 1. 改善が実際にサーバーへ送るリクエスト本文 (Web の handleImprove と同じ形)
+ * このフックは POST /api/ai/menu/v4/generate を呼ぶ (使うのは AI の「1日献立変更」のモーダル AIDayMenuModal)。
+ * (「献立を改善」の改善モーダルもこのフックで呼んでいたが、それを持つ週の献立のネイティブの画面は、通常の操作で届かない画面として
+ * 消した。#1598)
+ * 1. サーバーへ送るリクエスト本文
  * 2. 失敗時の振る舞い
  *    - 既定: onError (画面全体のエラー表示) に通知する
- *    - silent: onError に通知せず、例外だけを返す (改善モーダルが自分でエラーを表示するため)
+ *    - silent: onError に通知せず、例外だけを返す (呼び出し側が自分でエラーを表示するため)
  *    - どちらも失敗後に isGenerating が true のまま残らない
  * 3. 「同意が必要です」(403 AI_CONSENT_REQUIRED。T15 / #1154) で止められたら、onError を呼ばず onAiConsentRequired を呼ぶ
  *    (渡されていなければ、フックが同意画面への案内を出す)。例外にはせず null を返す
@@ -52,7 +54,6 @@ import {
   AI_CONSENT_REQUIRED_CODE,
   AI_CONSENT_REQUIRED_MESSAGE,
 } from '../../../../supabase/functions/_shared/ai-consent';
-import { submitImprove } from '../../src/lib/improve-meal';
 import { aiDailyLimitMessage } from '../../../../supabase/functions/_shared/ai-daily-limit';
 import {
   MENU_REQUEST_EXISTING_PROTECTED_MESSAGE,
@@ -305,82 +306,6 @@ describe('useV4MenuGeneration.subscribeToProgress — 受け付けたあとの�
     const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
     expect(code).not.toMatch(/\bas\s+any\b/);
     expect(code).toMatch(/payload\.new as WeeklyMenuRequestRealtimeRow\b/);
-  });
-});
-
-describe('献立を改善 → v4 生成 API まで通した結果', () => {
-  it('Web の handleImprove と同じ本文 (targetSlots + resolveExistingMeals: true + note + constraints: {}) を送る', async () => {
-    mockPost.mockResolvedValue({ requestId: 'req-3', totalSlots: 2 });
-    const onGenerationStart = jest.fn();
-    const { result } = renderHook(() => useV4MenuGeneration({ onGenerationStart }));
-
-    await act(async () => {
-      await submitImprove({
-        request: {
-          date: '2026-10-08',
-          mealTypes: ['dinner', 'lunch'],
-          nextDay: true,
-          advice: '野菜が不足しています',
-        },
-        today: '2026-10-08',
-        isBusy: false,
-        generate: result.current.generate,
-      });
-    });
-
-    expect(mockPost).toHaveBeenCalledTimes(1);
-    expect(mockPost).toHaveBeenCalledWith('/api/ai/menu/v4/generate', {
-      targetSlots: [
-        { date: '2026-10-09', mealType: 'lunch' },
-        { date: '2026-10-09', mealType: 'dinner' },
-      ],
-      resolveExistingMeals: true,
-      constraints: {},
-      note: '2026-10-08の栄養分析に基づくAI栄養士の提案を参考に改善してください：\n野菜が不足しています',
-      ultimateMode: false,
-    });
-    // 進捗カード (weekly 画面の pendingRequestId) が始まる
-    expect(onGenerationStart).toHaveBeenCalledWith('req-3');
-  });
-
-  it('改善の失敗は画面全体のエラー表示 (onError) を出さず、呼び出し元 (モーダル) に例外で返る', async () => {
-    mockPost.mockRejectedValue(new Error('HTTP 429 Too Many Requests'));
-    const onError = jest.fn();
-    const { result } = renderHook(() => useV4MenuGeneration({ onError }));
-
-    await act(async () => {
-      await expect(
-        submitImprove({
-          request: { date: '2026-10-08', mealTypes: ['dinner'], nextDay: false },
-          today: '2026-10-08',
-          isBusy: false,
-          generate: result.current.generate,
-        }),
-      ).rejects.toThrow('HTTP 429');
-    });
-
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it('同意が必要で止められたら、改善は例外にならずに終わり (モーダルが「改善に失敗しました」を出さない)、案内は 1 回だけ', async () => {
-    mockPost.mockRejectedValue(new Error(CONSENT_ERROR_MESSAGE));
-    const onError = jest.fn();
-    const onAiConsentRequired = jest.fn();
-    const { result } = renderHook(() => useV4MenuGeneration({ onError, onAiConsentRequired }));
-
-    await act(async () => {
-      await expect(
-        submitImprove({
-          request: { date: '2026-10-08', mealTypes: ['dinner'], nextDay: false },
-          today: '2026-10-08',
-          isBusy: false,
-          generate: result.current.generate,
-        }),
-      ).resolves.toBeUndefined();
-    });
-
-    expect(onAiConsentRequired).toHaveBeenCalledTimes(1);
-    expect(onError).not.toHaveBeenCalled();
   });
 });
 

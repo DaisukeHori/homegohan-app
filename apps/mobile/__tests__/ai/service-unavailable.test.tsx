@@ -1,15 +1,14 @@
 /**
  * service-unavailable.test.tsx
- * AI 相談の画面が、緊急停止中 (503 AI_CHAT_DISABLED)・メンテナンス中 (503 MAINTENANCE_MODE) に、
+ * AI アドバイザーのシート (AIAdvisorSheet) が、緊急停止中 (503 AI_CHAT_DISABLED)・メンテナンス中 (503 MAINTENANCE_MODE) に、
  * 生の文字列「HTTP 503 …: {"error":…}」ではなく固定の文を出す (#1457)
  *
  * getApi() は本物を使い、その下の @homegohan/core の createHttpClient だけを差し替える
  * (本物の createHttpClient と同じ `HTTP 503 Service Unavailable: <本文>` の Error を投げさせる)。
- * 生の fetch で送る AI 相談の送信 (相談の画面・AI アドバイザーのシート) は、global.fetch を差し替える。
+ * 生の fetch で送る AI 相談の送信は、global.fetch を差し替える。
  *
- * 1. 相談の一覧 (app/ai/index.tsx): 読み込み・新しい相談の作成が 503 なら、固定の文を出す
- * 2. 相談の画面 (app/ai/[sessionId].tsx): 送信が 503 なら、固定の文を出し、送らなかったメッセージを消して入力を戻す
- * 3. AI アドバイザーのシート: 送信・相談を閉じる操作が 503 なら、固定の文の Alert を出す
+ * AI アドバイザーのシート: 送信・相談を閉じる操作が 503 なら、固定の文の Alert を出す
+ * (相談の一覧・相談の画面 (app/ai/) は、通常の操作で届かないネイティブの画面として消した。#1598)
  */
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react-native';
 import { Alert } from 'react-native';
@@ -43,9 +42,7 @@ jest.mock('../../src/lib/supabase', () => ({
 }));
 
 jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ sessionId: 'session-1' }),
   router: { back: jest.fn(), push: jest.fn(), replace: jest.fn() },
-  Link: ({ children }: { children?: React.ReactNode }) => children,
 }));
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -66,11 +63,7 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 import React from 'react';
-import { Pressable } from 'react-native';
-import AiSessionsPage from '../../app/ai/index';
-import AiSessionPage from '../../app/ai/[sessionId]';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
-import { AI_CONSENT_CHECK_FAILED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
@@ -104,96 +97,6 @@ beforeEach(() => {
 afterAll(() => {
   if (ORIGINAL_BASE_URL === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
   else process.env.EXPO_PUBLIC_API_BASE_URL = ORIGINAL_BASE_URL;
-});
-
-describe('相談の一覧 (app/ai/index.tsx)', () => {
-  it.each(CASES)('%s: 読み込みが 503 なら、固定の文を出す (生の文字列を出さない)', async (_label, body, expected) => {
-    mockClient.get.mockRejectedValue(clientError503(body));
-    render(<AiSessionsPage />);
-
-    await waitFor(() => expect(screen.getByTestId('ai-sessions-error-text')).toBeTruthy());
-    const text = screen.getByTestId('ai-sessions-error-text').props.children;
-    expect(text).toBe(expected);
-    expect(String(text)).not.toContain('HTTP');
-    expect(String(text)).not.toContain(SERVER_TEXT);
-  });
-
-  it.each(CASES)('%s: 新しい相談の作成が 503 なら、固定の文を出す', async (_label, body, expected) => {
-    mockClient.get.mockResolvedValue({ sessions: [] });
-    mockClient.post.mockRejectedValue(clientError503(body));
-    render(<AiSessionsPage />);
-    await waitFor(() => expect(screen.getByTestId('ai-sessions-empty')).toBeTruthy());
-
-    await act(async () => {
-      fireEvent.press(screen.getByTestId('ai-new-session-button'));
-    });
-
-    await waitFor(() => expect(screen.getByTestId('ai-sessions-error-text').props.children).toBe(expected));
-  });
-});
-
-describe('相談の画面 (app/ai/[sessionId].tsx)', () => {
-  async function typeAndSend(text: string) {
-    fireEvent.changeText(screen.getByPlaceholderText('相談内容を入力...'), text);
-    const pressables = screen.UNSAFE_getAllByType(Pressable);
-    await act(async () => {
-      fireEvent.press(pressables[pressables.length - 1]);
-    });
-  }
-
-  it.each(CASES)('%s: 送信 (生の fetch) が 503 なら、固定の文を出し、メッセージを消して入力を戻す', async (_label, body, expected) => {
-    mockClient.get.mockResolvedValue({ messages: [] });
-    fetchMock.mockResolvedValueOnce(new Response(body, { status: 503 }));
-    render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
-
-    await typeAndSend('今日の夕飯は?');
-
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
-    expect(String(screen.getByTestId('ai-chat-error-text').props.children)).not.toContain('HTTP');
-    // 送らなかったメッセージは消え、入力が戻る
-    expect(screen.queryByText('今日の夕飯は?')).toBeNull();
-    expect(screen.getByPlaceholderText('相談内容を入力...').props.value).toBe('今日の夕飯は?');
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://localhost:3000/api/ai/consultation/sessions/session-1/messages?stream=true',
-      expect.objectContaining({ method: 'POST' }),
-    );
-  });
-
-  it.each(CASES)('%s: メッセージの読み込み (getApi) が 503 なら、固定の文を出す', async (_label, body, expected) => {
-    mockClient.get.mockRejectedValue(clientError503(body));
-    render(<AiSessionPage />);
-
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
-  });
-
-  it('#1486: 同意の状況を読めなかった 503 (AI_CONSENT_CHECK_FAILED) も、本文の文字列ではなく固定の文を出す', async () => {
-    mockClient.get.mockResolvedValue({ messages: [] });
-    const consentCheckFailedBody = JSON.stringify({ error: SERVER_TEXT, code: 'AI_CONSENT_CHECK_FAILED' });
-    fetchMock.mockResolvedValueOnce(new Response(consentCheckFailedBody, { status: 503 }));
-    render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
-
-    await typeAndSend('こんにちは');
-
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(AI_CONSENT_CHECK_FAILED_MESSAGE));
-    expect(String(screen.getByTestId('ai-chat-error-text').props.children)).not.toContain('HTTP');
-  });
-
-  it('503 でも緊急停止・メンテナンス中・同意の状況を読めないのどれでもない本文は、これまでどおりの表示 (固定の文に置き換えない)', async () => {
-    mockClient.get.mockResolvedValue({ messages: [] });
-    const otherBody = JSON.stringify({ error: '別の理由で止めました', code: 'SOMETHING_ELSE' });
-    fetchMock.mockResolvedValueOnce(new Response(otherBody, { status: 503 }));
-    render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText('相談内容を入力...')).toBeTruthy());
-
-    await typeAndSend('こんにちは');
-
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text')).toBeTruthy());
-    const text = screen.getByTestId('ai-chat-error-text').props.children;
-    expect(text).not.toBe(AI_CHAT_DISABLED_MESSAGE);
-    expect(text).not.toBe(MAINTENANCE_MESSAGE);
-  });
 });
 
 describe('AI アドバイザーのシート (AIAdvisorSheet)', () => {

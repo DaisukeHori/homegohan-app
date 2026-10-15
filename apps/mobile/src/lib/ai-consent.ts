@@ -98,16 +98,6 @@ export function isAiConsentRequiredError(error: unknown): boolean {
   }
 }
 
-/** fetch を直接使う画面 (ストリーミングなど) のための判定。本文は clone して読むので、呼び出し側はあとで本文を読める */
-export async function isAiConsentRequiredResponse(res: Response): Promise<boolean> {
-  if (res.status !== AI_CONSENT_REQUIRED_STATUS) return false;
-  try {
-    return isAiConsentRequiredBody(await res.clone().json());
-  } catch {
-    return false;
-  }
-}
-
 /** 「同意が必要です」の案内の出し方 */
 export interface PromptAiConsentOptions {
   /**

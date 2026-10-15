@@ -45,10 +45,7 @@ import {
   shoppingListRequestErrorMessageForDisplay,
   shoppingListRequestErrorMessageForResponse,
 } from '../src/lib/shopping-list-request-error';
-import {
-  menuRequestErrorMessageForDisplay,
-  shoppingListRequestErrorMessageForDisplay as mobileShoppingListRequestErrorMessageForDisplay,
-} from '../apps/mobile/src/lib/menu-request-error';
+import { menuRequestErrorMessageForDisplay } from '../apps/mobile/src/lib/menu-request-error';
 
 /** 例外の文面・DB の生のエラー文の例 (画面に出してはいけないもの) */
 const RAW_MESSAGES = [
@@ -292,27 +289,25 @@ describe('targetSlots の日付が正しくなかったときの文 (#1576)', ()
 });
 
 // #1576: 買い物リストの作り直しの行 (result.error) を Realtime で受ける画面の絞り込み
-describe('買い物リストの作り直しの行を画面に出すときの絞り込み (Web とアプリが同じ答え。#1576)', () => {
+// (アプリの買い物リストのネイティブの画面は、通常の操作で届かない画面として消した (#1598)。アプリは WebView で Web の画面を出すので、
+// 絞り込みは Web の関数だけを確かめる)
+describe('買い物リストの作り直しの行を画面に出すときの絞り込み (#1576)', () => {
   const KNOWN_SHOPPING = [SHOPPING_LIST_REQUEST_FAILED_MESSAGE, AI_CONSENT_REQUIRED_MESSAGE, AI_CONSENT_CHECK_FAILED_MESSAGE, aiDailyLimitMessage(10)];
 
   it.each(KNOWN_SHOPPING)('こちらで書いた文 %s はそのまま出す', (stored) => {
     expect(shoppingListRequestErrorMessageForDisplay(stored)).toBe(stored);
-    expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBe(stored);
   });
 
   it.each(RAW_MESSAGES)('こちらで書いた文でない %s は定型の失敗の文に寄せる', (stored) => {
     expect(shoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
-    expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
   });
 
   it('空 (null・undefined・空文字) は null (画面は自分の既定の文を出す)。文字列でない値は定型の失敗の文', () => {
     for (const stored of [null, undefined, '']) {
       expect(shoppingListRequestErrorMessageForDisplay(stored)).toBeNull();
-      expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBeNull();
     }
     for (const stored of [42, { message: 'raw' }]) {
       expect(shoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
-      expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
     }
   });
 });
