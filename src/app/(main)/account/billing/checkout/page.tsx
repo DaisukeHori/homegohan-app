@@ -9,7 +9,7 @@
  * アプリの WebView (isNativeApp) では「この操作はアプリでは行えません」とだけ描き、API を呼ばない (§10.4)。
  */
 
-import { Suspense, useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { CheckoutConfirmation } from "@/components/billing/checkout-confirmation";
@@ -47,6 +47,9 @@ async function errorTextOf(res: Response): Promise<string> {
 
 function CheckoutContent() {
   const router = useRouter();
+  // 読み込みの effect は router の参照が変わっても流し直さない (ログインへ移るときだけ使う)
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const searchParams = useSearchParams();
   const isNativeApp = useNativeAppMode();
   const planKey = searchParams.get("plan_key") ?? "";
@@ -66,7 +69,7 @@ function CheckoutContent() {
         const res = await fetch(`${PREVIEW_API_PATH}?${query.toString()}`, { method: "GET" });
         if (cancelled) return;
         if (res.status === HTTP_UNAUTHORIZED) {
-          router.push(LOGIN_PATH);
+          routerRef.current.push(LOGIN_PATH);
           return;
         }
         if (!res.ok) {
@@ -84,7 +87,7 @@ function CheckoutContent() {
     return () => {
       cancelled = true;
     };
-  }, [isNativeApp, planKey, interval, router]);
+  }, [isNativeApp, planKey, interval]);
 
   const handleConfirm = async () => {
     if (!preview || submitting) return;

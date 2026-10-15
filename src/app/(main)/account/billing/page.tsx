@@ -12,7 +12,7 @@
  * - ボタンの POST が 2xx 以外なら BILLING_ERROR_MESSAGES の固定の文を出す (鍵が無いときの 503 は「お支払いの受付は準備中です」)
  */
 
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
@@ -90,6 +90,9 @@ function planLabel(planKey: string): string {
 
 function AccountBillingContent() {
   const router = useRouter();
+  // 読み込みの effect は router の参照が変わっても流し直さない (ログインへ移るときだけ使う)
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const searchParams = useSearchParams();
   const isNativeApp = useNativeAppMode();
   const checkoutResult = searchParams.get(CHECKOUT_RESULT_QUERY);
@@ -107,13 +110,13 @@ function AccountBillingContent() {
   const fetchSummary = useCallback(async (): Promise<BillingSummary | null> => {
     const res = await fetch(SUBSCRIPTION_API_PATH, { method: "GET" });
     if (res.status === HTTP_UNAUTHORIZED) {
-      router.push(LOGIN_PATH);
+      routerRef.current.push(LOGIN_PATH);
       return null;
     }
     if (!res.ok) return null;
     const body = (await res.json()) as { data: BillingSummary };
     return body.data;
-  }, [router]);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -129,7 +132,7 @@ function AccountBillingContent() {
             body: JSON.stringify({ session_id: sessionId }),
           });
           if (res.status === HTTP_UNAUTHORIZED) {
-            router.push(LOGIN_PATH);
+            routerRef.current.push(LOGIN_PATH);
             return;
           }
           let current: BillingSummary | null = res.ok ? ((await res.json()) as { data: BillingSummary }).data : null;
@@ -162,7 +165,7 @@ function AccountBillingContent() {
     return () => {
       cancelled = true;
     };
-  }, [checkoutResult, sessionId, fetchSummary, router]);
+  }, [checkoutResult, sessionId, fetchSummary]);
 
   /** POST のボタン (解約・取り消し)。200 の要約で置き換える */
   const postForSummary = async (path: string) => {

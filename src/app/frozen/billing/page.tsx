@@ -10,7 +10,7 @@
  * アプリの WebView では状態の文だけを出す (ボタンは描かない。§10.4)。
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { isInNativeWebView } from "@/lib/native-auth-bridge";
 import { BILLING_CANCEL_API_PATH, BILLING_PORTAL_API_PATH, BILLING_SUBSCRIPTION_API_PATH } from "@/lib/auth/frozen";
@@ -55,6 +55,9 @@ type Notice = { tone: "info" | "error"; text: string } | null;
 
 export default function FrozenBillingPage() {
   const router = useRouter();
+  // 読み込みの effect は router の参照が変わっても流し直さない (ログインへ移るときだけ使う)
+  const routerRef = useRef(router);
+  routerRef.current = router;
   const [isNativeApp, setIsNativeApp] = useState(false);
   const [summary, setSummary] = useState<BillingSummary | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -70,7 +73,7 @@ export default function FrozenBillingPage() {
         const res = await fetch(BILLING_SUBSCRIPTION_API_PATH, { method: "GET" });
         if (cancelled) return;
         if (res.status === HTTP_UNAUTHORIZED) {
-          router.push(LOGIN_PATH);
+          routerRef.current.push(LOGIN_PATH);
           return;
         }
         if (!res.ok) {
@@ -87,7 +90,7 @@ export default function FrozenBillingPage() {
     return () => {
       cancelled = true;
     };
-  }, [router]);
+  }, []);
 
   const handleCancel = async () => {
     if (!summary || busy) return;
