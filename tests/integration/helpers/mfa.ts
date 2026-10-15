@@ -25,6 +25,8 @@ const HTTP_TOO_MANY_REQUESTS = 429;
 /** 6 桁の不一致で GoTrue が返す HTTP ステータス */
 const HTTP_BAD_REQUEST = 400;
 const HTTP_UNPROCESSABLE_ENTITY = 422;
+/** これ以上はサーバーの失敗 (GoTrue の 5xx)。一時的なものとして 6 桁の不一致と同じく 1 回だけやり直す */
+const HTTP_SERVER_ERROR_MIN = 500;
 /** auth-js の error.code: 6 桁の不一致 */
 const MFA_VERIFICATION_FAILED_CODE = 'mfa_verification_failed';
 /** auth-js の error.code: 回数制限 */
@@ -43,11 +45,12 @@ function isRateLimited(error: AuthLikeError): boolean {
   return error.status === HTTP_TOO_MANY_REQUESTS || error.code === OVER_REQUEST_RATE_LIMIT_CODE;
 }
 
-function isCodeMismatch(error: AuthLikeError): boolean {
+function isRetryable(error: AuthLikeError): boolean {
   return (
     error.code === MFA_VERIFICATION_FAILED_CODE ||
     error.status === HTTP_BAD_REQUEST ||
-    error.status === HTTP_UNPROCESSABLE_ENTITY
+    error.status === HTTP_UNPROCESSABLE_ENTITY ||
+    (error.status !== undefined && error.status >= HTTP_SERVER_ERROR_MIN)
   );
 }
 
@@ -57,7 +60,8 @@ function isCodeMismatch(error: AuthLikeError): boolean {
  *   → mfa.challengeAndVerify({ factorId, code }) → data.access_token
  * verify は同じ利用者の他のセッションを終える (§26.3) ので、1 利用者につき 1 つのセッションだけを昇格させる。
  * challengeAndVerify の error が status 429 (または code 'over_request_rate_limit') なら、やり直さずに
- * `${MFA_PROMOTION_RATE_LIMITED_MESSAGE} (段: verify)` の Error を投げる。6 桁の不一致 (mfa_verification_failed / 400 / 422) だけを TOTP_RETRY_ONCE 回やり直す。
+ * `${MFA_PROMOTION_RATE_LIMITED_MESSAGE} (段: verify)` の Error を投げる。6 桁の不一致 (mfa_verification_failed / 400 / 422) と、
+ * GoTrue の 5xx (2026-10-16 の結合のスイートで、並べて昇格させた 1 回に一時的な 500 が出た) だけを TOTP_RETRY_ONCE 回やり直す。
  */
 export async function promoteToAal2(userClient: SupabaseClient): Promise<string> {
   const { data: enrolled, error: enrollError } = await userClient.auth.mfa.enroll({
@@ -78,11 +82,11 @@ export async function promoteToAal2(userClient: SupabaseClient): Promise<string>
     if (verifyError && isRateLimited(verifyError)) {
       throw new Error(`${MFA_PROMOTION_RATE_LIMITED_MESSAGE} (段: verify)`);
     }
-    if (!verifyError || !isCodeMismatch(verifyError)) {
+    if (!verifyError || !isRetryable(verifyError)) {
       throw new Error(`TOTP の昇格に失敗しました (段: verify。status ${verifyError?.status ?? 'none'})`);
     }
   }
-  throw new Error(`TOTP の昇格に失敗しました (段: verify。6 桁の不一致が ${TOTP_RETRY_ONCE + 1} 回続きました)`);
+  throw new Error(`TOTP の昇格に失敗しました (段: verify。6 桁の不一致かサーバーの失敗が ${TOTP_RETRY_ONCE + 1} 回続きました)`);
 }
 
 /**
