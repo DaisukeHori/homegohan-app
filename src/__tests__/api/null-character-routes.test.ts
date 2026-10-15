@@ -57,6 +57,8 @@ type Entry = {
 };
 
 const ENTRIES: Entry[] = [
+  { file: 'account/data-requests/[id]/verify/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/[id]/verify/route')).POST },
+  { file: 'account/data-requests/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/route')).POST },
   { file: 'account/delete/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/delete/route')).POST },
   { file: 'admin/catalog/import/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/catalog/import/route')).POST },
   { file: 'admin/finance/exports/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/finance/exports/route')).POST },
