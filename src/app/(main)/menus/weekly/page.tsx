@@ -14,6 +14,7 @@ import {
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
+  type GenerationProgress,
   type LegacyDishDetail,
 } from './_state';
 import dynamic from "next/dynamic";
@@ -27,9 +28,10 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest, PANTRY_EXPIRING_SOON_DAYS } from "@homegohan/shared";
 // isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
@@ -61,6 +63,8 @@ import { useAiConsent } from "@/hooks/useAiConsent";
 import { AiConsentRequiredError, aiFetch, handleStoredAiConsentFailure, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { aiDailyLimitMessageOfResponse } from "@/lib/ai/daily-limit-client";
 import { AI_CONSENT_COPY } from "@/lib/ai/consent-config";
+import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
+import { shoppingListRequestErrorMessageForDisplay } from "@/lib/shopping-list-request-error";
 import { AiMealModal } from "./_components/modals/AiMealModal";
 import { RegenerateMealModal } from "./_components/modals/RegenerateMealModal";
 import { ImageGenerateModal } from "./_components/modals/ImageGenerateModal";
@@ -186,10 +190,8 @@ const getDishConfig = (role?: string): { label: string; color: string; bg: strin
 
 // MEAL_LABELS は @homegohan/shared からインポート (MealType の型付き Record)
 
-// AIが自動生成する基本の3食
-const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
-// 追加可能な食事タイプ
-const EXTRA_MEAL_TYPES: MealType[] = ['snack', 'midnight_snack'];
+// AIが自動生成する基本の3食 (BASE_MEAL_TYPES) と追加可能な食事タイプ (EXTRA_MEAL_TYPES) は lib/slot-builder から。
+// EXTRA_MEAL_TYPES は食事の区分の正本 MEAL_ORDER から基本の 3 食を除いて作る (#1631。ここで手書きしない)
 
 // 栄養素の値をフォーマット（浮動小数点誤差を修正）
 const formatNutrition = (value: number | null | undefined, decimals = 1): string => {
@@ -651,16 +653,20 @@ export default function WeeklyMenuPage() {
   const setGeneratingMeal = useCallback((m: { dayIndex: number; mealType: MealType } | null) => dispatchAiGen({ type: 'GENERATING_MEAL_SET', payload: m }), []);
 
   const generationProgress = aiGen.generationProgress;
-  // F1b-03: functional update を正しく現在値から解決してから dispatch する。
-  // null 解決時は GEN_SUCCESS ではなく GEN_PROGRESS_CLEAR（isGenerating/generatingMeal を巻き込まない）。
-  const setGenerationProgress = useCallback((v: typeof aiGen.generationProgress | ((prev: typeof aiGen.generationProgress) => typeof aiGen.generationProgress)) => {
-    const next = typeof v === 'function' ? v(aiGen.generationProgress) : v;
-    if (next === null) {
+  // F1b-03: null は GEN_SUCCESS ではなく GEN_PROGRESS_CLEAR（isGenerating/generatingMeal を巻き込まない）。
+  // #1644: 関数形 (prev) => … は受け取らない。関数形は、この setter を握った描画の時点の aiGen.generationProgress で
+  // 解決されるため、ポーリングの closure (古い setter を握る) からは今の進捗を古い値 (null) で上書きしていた。
+  // 「今が null のときだけ置く」は setGenerationProgressIfEmpty (GEN_PROGRESS_IF_EMPTY・reducer が今の状態で判定) を使う。
+  const setGenerationProgress = useCallback((v: GenerationProgress | null) => {
+    if (v === null) {
       dispatchAiGen({ type: 'GEN_PROGRESS_CLEAR' });
     } else {
-      dispatchAiGen({ type: 'GEN_PROGRESS', payload: next });
+      dispatchAiGen({ type: 'GEN_PROGRESS', payload: v });
     }
-  }, [aiGen.generationProgress]);
+  }, []);
+  const setGenerationProgressIfEmpty = useCallback((v: GenerationProgress) => {
+    dispatchAiGen({ type: 'GEN_PROGRESS_IF_EMPTY', payload: v });
+  }, []);
 
   // T15 (#1154): 生成の失敗の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗をクリアし、失敗パネルには出さない
   // (失敗を出す経路 = onError・復元・Realtime・ポーリングはどれも GEN_FAIL でここに入るので、ここ 1 か所で見分ける)
@@ -1226,7 +1232,7 @@ export default function WeeklyMenuPage() {
           // UX2-02: alert() ではなく既存のリトライ付き失敗パネル(generationFailedError)に集約する
           dispatchAiGen({
             type: 'GEN_FAIL',
-            payload: { error: currentStatus.errorMessage || '生成に失敗しました', requestId },
+            payload: { error: weeklyMenuRequestErrorMessageForDisplay(currentStatus.errorMessage) || '生成に失敗しました', requestId },
           });
           return;
         }
@@ -1262,7 +1268,7 @@ export default function WeeklyMenuPage() {
             // (GEN_FAIL が isGenerating/generationProgress のクリアも兼ねる)
             dispatchAiGen({
               type: 'GEN_FAIL',
-              payload: { error: progress.errorMessage || '生成に失敗しました', requestId },
+              payload: { error: weeklyMenuRequestErrorMessageForDisplay(progress.errorMessage) || '生成に失敗しました', requestId },
             });
             return;
           }
@@ -1370,7 +1376,7 @@ export default function WeeklyMenuPage() {
               });
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
+              setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
             }
           } catch {
             // ポーリングエラーは無視して継続
@@ -1615,7 +1621,7 @@ export default function WeeklyMenuPage() {
                     localStorage.removeItem('weeklyMenuGenerating');
                     dispatchAiGen({
                       type: 'GEN_FAIL',
-                      payload: { error: error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+                      payload: { error: weeklyMenuRequestErrorMessageForDisplay(error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
                     });
                   } else {
                     // completed の場合はlocalStorageをクリア
@@ -2262,7 +2268,7 @@ export default function WeeklyMenuPage() {
           cleanupRealtime();
           dispatchAiGen({
             type: 'GEN_FAIL',
-            payload: { error: data.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+            payload: { error: weeklyMenuRequestErrorMessageForDisplay(data.error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
           });
         }
       } catch (e) {
@@ -2380,9 +2386,11 @@ export default function WeeklyMenuPage() {
               cleanupRealtime();
               // Realtime で失敗を受け取ったら、並行しているポーリングも止める (#1622。失敗の表示を二重に出さないように)
               cleanupPolling();
+              // 行の error_message は、こちらで書いた定型の文だけをそのまま出し、それ以外は汎用の文に寄せる
+              // (useV4MenuGeneration と同じ絞り込み。進まなくなった行の英語の印は日本語の文にする。#1478・#1576)
               dispatchAiGen({
                 type: 'GEN_FAIL',
-                payload: { error: newData.error_message || '献立の生成に失敗しました。もう一度お試しください。', requestId },
+                payload: { error: weeklyMenuRequestErrorMessageForDisplay(newData.error_message) || '献立の生成に失敗しました。もう一度お試しください。', requestId },
               });
             }
             // status === 'queued' / 'pending' / 'processing' の場合は継続して監視
@@ -3096,7 +3104,7 @@ export default function WeeklyMenuPage() {
         } else if (data.status === 'failed') {
           console.log('❌ Shopping list regeneration failed (polling)');
           if (closeShoppingListIfAiConsentRequired(data.result?.error)) return;
-          const errorMsg = data.result?.error || '再生成に失敗しました';
+          const errorMsg = shoppingListRequestErrorMessageForDisplay(data.result?.error) || '再生成に失敗しました';
           setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
           // 5秒後に自動で閉じる
           setTimeout(() => {
@@ -3183,7 +3191,8 @@ export default function WeeklyMenuPage() {
           } else if (newData.status === 'failed') {
             console.log('❌ Shopping list regeneration failed (realtime)');
             if (closeShoppingListIfAiConsentRequired(newData.result?.error)) return;
-            const errorMsg = newData.result?.error || '再生成に失敗しました';
+            // 行の result.error は、こちらで書いた文 (定型の失敗の文・同意・上限) だけをそのまま出す (#1576)
+            const errorMsg = shoppingListRequestErrorMessageForDisplay(newData.result?.error) || '再生成に失敗しました';
             setShoppingListProgress({ phase: 'failed', message: errorMsg, percentage: 0 });
             // 5秒後に自動で閉じる
             setTimeout(() => {
@@ -3969,7 +3978,7 @@ export default function WeeklyMenuPage() {
         if (data.status === 'completed') {
           await finishRegenerate('completed');
         } else if (data.status === 'failed') {
-          await finishRegenerate('failed', data.errorMessage || data.error_message);
+          await finishRegenerate('failed', weeklyMenuRequestErrorMessageForDisplay(data.errorMessage || data.error_message) ?? undefined);
         }
       } catch (e) {
         console.error('Regenerate polling error:', e);
@@ -4004,7 +4013,8 @@ export default function WeeklyMenuPage() {
           if (newStatus === 'completed') {
             await finishRegenerate('completed');
           } else if (newStatus === 'failed') {
-            await finishRegenerate('failed', newData.error_message || undefined);
+            // 行の error_message は、こちらで書いた定型の文だけをそのまま出す (useV4MenuGeneration と同じ絞り込み。#1576)
+            await finishRegenerate('failed', weeklyMenuRequestErrorMessageForDisplay(newData.error_message) ?? undefined);
           }
         }
       )
@@ -4670,7 +4680,7 @@ export default function WeeklyMenuPage() {
             setGenerationProgress(uiProgress);
 
             if (progress.status === 'completed' || progress.status === 'failed') {
-              await finishImprove(progress.status, progress.errorMessage);
+              await finishImprove(progress.status, weeklyMenuRequestErrorMessageForDisplay(progress.errorMessage) ?? undefined);
             }
           }
         );
@@ -4694,10 +4704,10 @@ export default function WeeklyMenuPage() {
             if (status === 'completed') {
               await finishImprove('completed');
             } else if (status === 'failed') {
-              await finishImprove('failed', errorMessage || errorMessageSnake);
+              await finishImprove('failed', weeklyMenuRequestErrorMessageForDisplay(errorMessage || errorMessageSnake) ?? undefined);
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, false));
+              setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, false));
             }
           } catch (e) {
             console.error('Improve polling error:', e);
@@ -4825,9 +4835,10 @@ export default function WeeklyMenuPage() {
     }
   };
   
+  // 期限切れと期限間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の日数 #1602) の食材
   const expiringItems = fridgeItems.filter(i => {
     const days = getDaysUntil(i.expirationDate);
-    return days !== null && days <= 3;
+    return days !== null && days <= PANTRY_EXPIRING_SOON_DAYS;
   }).sort((a, b) => (getDaysUntil(a.expirationDate) || 0) - (getDaysUntil(b.expirationDate) || 0));
 
   const countEmptySlots = () => {

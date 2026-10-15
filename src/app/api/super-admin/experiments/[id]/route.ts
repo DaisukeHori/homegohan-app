@@ -12,6 +12,7 @@ import { UpdateExperimentSchema } from '@/lib/super-admin/experiments-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { readJsonBody, SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } from '@/lib/super-admin/validation-errors';
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -51,7 +52,15 @@ export async function PATCH(request: NextRequest, props: Params) {
   try {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
-    const body = await request.json();
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      // #1654: 本文が JSON として読めないときは 400 (外側の catch の 500 に落とさない)。コードはこの route の他の 400 と同じ VALIDATION_ERROR
+      return NextResponse.json(
+        { error: { code: 'VALIDATION_ERROR', message: SUPER_ADMIN_INVALID_JSON_BODY_MESSAGE } },
+        { status: 400 },
+      );
+    }
+    const body = bodyResult.body;
 
     const parsed = UpdateExperimentSchema.safeParse(body);
     if (!parsed.success) {

@@ -8,9 +8,11 @@ import { INTERNAL_ERROR_CODE, INTERNAL_ERROR_MESSAGE, internalError } from '@/li
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { aiChatDisabledResponse } from '@/lib/ai/ai-chat-gate';
-import { addDaysToDate, isCalendarDate, todayLocal } from '@/lib/date-utils';
+import { addDaysToDate, todayLocal } from '@/lib/date-utils';
+import { classifyPantryExpiry } from '@homegohan/shared';
 import { mondayWeekRange } from '@/lib/jst-day-ranges';
 import { AI_ALLOWED_MEAL_TYPES, runConsultationAction } from '@/lib/ai/consultation-action-executor';
+import { isMealType, MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 import { CANONICAL_GOAL_TYPES, describeGoalRangesForPrompt } from '@/lib/health-goal-types';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -28,8 +30,6 @@ const UPCOMING_MEALS_DAYS = 7;
 const RECENT_MEALS_DAYS = 14;
 /** 1 週間の日数 (来週の月曜日 = 今週の月曜日の 1 週間後) */
 const DAYS_PER_WEEK = 7;
-/** AI 相談のシステムプロンプトで冷蔵庫の食材に「期限間近」の印を付ける範囲 (今日から何日後の期限までか)。#1594 の前と同じ 3 日 */
-const PANTRY_EXPIRING_SOON_DAYS = 3;
 
 // #1047 F2-21: アクション自動実行を self-fetch
 // (`${NEXT_PUBLIC_APP_URL}/api/ai/consultation/actions/.../execute`) 経由で行うと、
@@ -358,13 +358,9 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
 ` : '【プロフィール未設定】';
 
   // 今日の献立を整形（アクション実行用にmealIdを含める）
-  const mealTypeLabels: Record<string, string> = {
-    breakfast: '朝食',
-    lunch: '昼食', 
-    dinner: '夕食',
-    snack: 'おやつ',
-    midnight_snack: '夜食',
-  };
+  // 食事の区分の表示名は @homegohan/shared の MEAL_LABELS が正本 (#1631。手書きの表を持たない)。
+  // DB の行の meal_type は string で来るので isMealType で絞り、5 値以外は元の値をそのまま出す。
+  const mealTypeLabelOf = (mealType: string): string => (isMealType(mealType) ? MEAL_LABELS[mealType] : mealType);
 
   // 現在時刻を取得（今日の献立表示用）
   const nowForMeals = new Date();
@@ -391,7 +387,7 @@ async function buildSystemPrompt(supabase: any, userId: string): Promise<string>
   const todayMealsInfo = todayMeals && todayMeals.length > 0 ? `
 【⚠️⚠️⚠️ 今日（${today}）の献立 - 「昼」「朝」「夜」はここから選ぶ ⚠️⚠️⚠️】
 ${todayMeals.map((m: any) => {
-  const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
+  const mealTypeJa = mealTypeLabelOf(m.meal_type);
   const status = m.is_completed ? '✅完了' : '⬜未完了';
   const mode = m.mode === 'cook' ? '🍳自炊' : m.mode === 'out' ? '🍽️外食' : m.mode === 'buy' ? '🛒中食' : '';
   const nextIndicator = getNextMealIndicator(m.meal_type);
@@ -401,26 +397,23 @@ ${todayMeals.map((m: any) => {
 ` : `【📅 今日（${today}）の献立なし - 新規作成が必要】`;
 
   // 今後1週間の献立を整形（日付順、朝→昼→夕の順）
-  const mealTypeOrder: Record<string, number> = {
-    breakfast: 1,
-    lunch: 2,
-    dinner: 3,
-    snack: 4,
-    midnight_snack: 5,
-  };
-  
+  // 区分の並びは @homegohan/shared の MEAL_ORDER が正本 (#1631。手書きの表を持たない)。
+  // 5 値以外の meal_type は、5 値のどれよりも後ろ (MEAL_ORDER の長さの位置) に回す。
+  const mealTypeRankOf = (mealType: string): number =>
+    isMealType(mealType) ? MEAL_ORDER.indexOf(mealType) : MEAL_ORDER.length;
+
   const sortedUpcomingMeals = [...(upcomingMeals || [])].sort((a, b) => {
     const dateA = a.user_daily_meals?.day_date || '';
     const dateB = b.user_daily_meals?.day_date || '';
     if (dateA !== dateB) return dateA.localeCompare(dateB);
-    return (mealTypeOrder[a.meal_type] || 99) - (mealTypeOrder[b.meal_type] || 99);
+    return mealTypeRankOf(a.meal_type) - mealTypeRankOf(b.meal_type);
   });
   
   const upcomingMealsInfo = sortedUpcomingMeals.length > 0 ? `
 【📆 今後1週間の献立】
 ${sortedUpcomingMeals.map((m: any) => {
   const date = m.user_daily_meals?.day_date || '不明';
-  const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
+  const mealTypeJa = mealTypeLabelOf(m.meal_type);
   // mealIdは内部用途のみ（ユーザーには見せない）
   return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} [内部ID: ${m.id}]`;
 }).join('\n')}
@@ -431,7 +424,7 @@ ${sortedUpcomingMeals.map((m: any) => {
 【最近の食事履歴（過去14日）】
 ${recentMeals.map((m: any) => {
   const date = m.user_daily_meals?.day_date || '不明';
-  const mealTypeJa = mealTypeLabels[m.meal_type] || m.meal_type;
+  const mealTypeJa = mealTypeLabelOf(m.meal_type);
   const status = m.is_completed ? '✓完了' : '未完了';
   const mode = m.mode === 'cook' ? '自炊' : m.mode === 'out' ? '外食' : m.mode === 'buy' ? '中食' : m.mode === 'skip' ? 'スキップ' : '';
   return `- ${date} ${mealTypeJa}: ${m.dish_name || '未設定'} (${m.calories_kcal || 0}kcal, P:${m.protein_g || 0}g) [${mode}] ${status}`;
@@ -485,14 +478,14 @@ ${shoppingList.map((item: any) => {
 
   // 冷蔵庫/パントリーを整形（IDを含める）
   // 「期限間近」の印は、期限 (YYYY-MM-DD・日本の暦日) が今日 (日本の暦日) から PANTRY_EXPIRING_SOON_DAYS 日後まで (過ぎたものも含む) の食材に付ける (#1594)。
+  // 判定は全画面共通の classifyPantryExpiry (#1602)。期限切れ (expired) と期限間近 (expiringSoon) の両方に印を付ける (以前と同じ範囲)。
   // 以前は期限を new Date(...) (その日の UTC の 0 時 = 日本の 9 時) にして「今から 3 日後の時刻」と比べていたので、境目が日本の 9 時にずれていた。
-  // 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ。日付になっていない値には印を付けない
-  const pantryExpiringSoonUntil = addDaysToDate(today, PANTRY_EXPIRING_SOON_DAYS);
+  // 日付になっていない値には印を付けない
   const pantryInfo = pantryItems.length > 0 ? `
 【🧊 冷蔵庫/パントリー（${pantryItems.length}品）】※変更・削除時はitemIdを使用
 ${pantryItems.map((item: any) => {
   const expiry = item.expiration_date ? `期限:${item.expiration_date}` : '';
-  const isExpiringSoon = isCalendarDate(item.expiration_date) && item.expiration_date <= pantryExpiringSoonUntil;
+  const isExpiringSoon = classifyPantryExpiry(item.expiration_date, today) !== 'normal';
   const warning = isExpiringSoon ? '⚠️期限間近!' : '';
   return `- ${item.name} ${item.amount || ''} [${item.category || 'その他'}] ${expiry} ${warning}
   itemId: "${item.id}"`;
@@ -684,7 +677,7 @@ ${importantMessagesInfo}
   }
   ※ このアクションはAIが正確な栄養計算を行い、一汁三菜の献立を生成します
   ※ recipeId/recipeExternalIdを指定すると、レシピDBの正確な栄養データを使用します
-  ※ mealType の意味: ${AI_ALLOWED_MEAL_TYPES.map((type) => `${type}=${mealTypeLabels[type]}`).join(' / ')}（夜食・おやつもこのアクションで生成できます）
+  ※ mealType の意味: ${AI_ALLOWED_MEAL_TYPES.map((type) => `${type}=${MEAL_LABELS[type]}`).join(' / ')}（夜食・おやつもこのアクションで生成できます）
 
 - generate_day_menu: 1日分の献立を一括作成 (params: { date: "YYYY-MM-DD", ultimateMode?: true })
 - generate_week_menu: 1週間分の献立を一括作成 (params: { startDate: "YYYY-MM-DD", ultimateMode?: true })

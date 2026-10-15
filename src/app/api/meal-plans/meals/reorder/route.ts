@@ -1,9 +1,9 @@
 import { createClient } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
+import type { MealType } from '@homegohan/shared';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
 
 // 食事タイプのカテゴリ（順序変更の制約用）
 const MEAL_CATEGORIES: Record<MealType, number> = {
@@ -13,9 +13,6 @@ const MEAL_CATEGORIES: Record<MealType, number> = {
   snack: 0,  // おやつは特別（どこにでも移動可能）
   midnight_snack: 4,
 };
-
-// 基本の食事タイプの順序（おやつ以外）
-const BASE_MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'midnight_snack'];
 
 export async function POST(request: Request) {
   // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)

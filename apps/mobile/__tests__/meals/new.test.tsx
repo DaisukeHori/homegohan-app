@@ -4,7 +4,7 @@
  * - モード選択
  */
 import React from 'react';
-import { render, fireEvent, waitFor, act } from '@testing-library/react-native';
+import { render, fireEvent, waitFor, act, within } from '@testing-library/react-native';
 
 // ─── モック ─────────────────────────────────────────────
 jest.mock('expo-router', () => ({
@@ -237,6 +237,38 @@ describe('MealNewPage', () => {
       await waitFor(() => {
         expect(getByText('手動で食事名・栄養を入力')).toBeTruthy();
       });
+    });
+  });
+
+  // #1631: 手動入力の食事の区分のボタンの並び。2 段目 (おやつ・夜食) は手書きをやめ、正本 MEAL_ORDER から基本の 3 食を
+  // 除いて作る形に書き換えたので、その結果 (段ごとの値と並び) を固定する。期待値はここで手で書く
+  describe('食事の区分のボタンの並び (#1631)', () => {
+    /** 段の中の区分のボタンの testID の接頭辞 */
+    const MEAL_TYPE_BUTTON_ID_PREFIX = 'meal-type-select-';
+
+    /** 段の中のボタンが表す区分を、描かれた順に返す */
+    function mealTypesInRow(row: Parameters<typeof within>[0]): string[] {
+      return within(row)
+        .getAllByTestId(new RegExp(`^${MEAL_TYPE_BUTTON_ID_PREFIX}`))
+        .map((button) => String(button.props.testID).slice(MEAL_TYPE_BUTTON_ID_PREFIX.length));
+    }
+
+    it('1 段目は 朝食 → 昼食 → 夕食、2 段目は おやつ → 夜食', async () => {
+      const { getByText, getByTestId } = render(<MealNewPage />);
+
+      act(() => {
+        fireEvent.press(getByText('手動で食事名・栄養を入力'));
+      });
+
+      await waitFor(() => {
+        expect(getByTestId('meal-type-row-base')).toBeTruthy();
+      });
+
+      expect(mealTypesInRow(getByTestId('meal-type-row-base'))).toEqual(['breakfast', 'lunch', 'dinner']);
+      expect(mealTypesInRow(getByTestId('meal-type-row-extra'))).toEqual(['snack', 'midnight_snack']);
+      // 2 段目のボタンは区分の表示名で出る
+      expect(within(getByTestId('meal-type-row-extra')).getByText('おやつ')).toBeTruthy();
+      expect(within(getByTestId('meal-type-row-extra')).getByText('夜食')).toBeTruthy();
     });
   });
 

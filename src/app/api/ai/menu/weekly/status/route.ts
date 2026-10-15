@@ -6,7 +6,7 @@ import { internalError } from '@/lib/api/errors';
 import { isWeeklyMenuRequestStale, markWeeklyMenuRequestStaleIfUnchanged } from '@/lib/weekly-menu-request-stale';
 import {
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
-  WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
   weeklyMenuRequestErrorMessageForResponse,
 } from '@/lib/weekly-menu-request-error';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
@@ -81,9 +81,12 @@ export async function GET(request: Request) {
           );
         }
 
+        // 行には英語の印 (WEEKLY_MENU_REQUEST_STALE_MESSAGE) を書いたが、本文には日本語の文を返す
+        // (行を読み直した次のポーリングも weeklyMenuRequestErrorMessageForResponse で同じ文になる。#1576)
         return NextResponse.json({
           status: 'failed',
-          errorMessage: WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+          errorMessage: WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
+          error_message: WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
           updatedAt: failedAt,
           ...(restoreResult ? { restore: restoreResult } : {}),
         });
@@ -94,7 +97,7 @@ export async function GET(request: Request) {
 
     // error_message には、この変更より前に書かれた行や Edge Function が自分で書いた行の、生のエラー文
     // (DB・例外・Edge Function の応答の本文) が入っていることがある。こちらで書いた文 (同意・stale・中止) だけを
-    // そのまま返し、それ以外は固定の文にする (#1172)
+    // そのまま返し (stale の英語の印は日本語の文にする。#1576)、それ以外は固定の文にする (#1172)
     const errorMessage = weeklyMenuRequestErrorMessageForResponse(request.error_message);
     return NextResponse.json({
       status: request.status,

@@ -209,7 +209,7 @@ const handleSave = async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
       // POST /api/meal-plans/add-from-photo が読む本文の形 (mealType / dishes / totalCalories / imageUrl)。
-      // 夕食として記録する (src/lib/handson-tour/photo-save.ts の buildTourPhotoSaveBody)。
+      // 夕食として記録する (packages/handson-tour-shared/src/photo-save.ts の buildTourPhotoSaveBody)。
       // 食べた時刻 (eaten_at) はサーバーが保存した今で入れる。お試しの記録は meals の 1 行なので日付 (dayDate) は送らない
       body: JSON.stringify({
         sandbox: true,

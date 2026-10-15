@@ -1,15 +1,15 @@
 appId: com.homegohan.app
-name: "Handson Tour - 12: Step 1 でデバイス戻るボタン → 確認モーダル → キャンセル / 確定"
+name: "Handson Tour - 12: Step 1 で端末の戻るボタン (Android) → 確認なしでツアーを抜けてホームへ"
 tags: ["handson-tour", "P2"]
 ---
-# シナリオ: Step 1 でデバイス戻るボタン → 確認モーダル → キャンセル / 確定の両分岐
+# シナリオ: Step 1 で端末の戻るボタン (Back) を押す → 確認のモーダルは出さずに、ツアーを抜けてホームへ
 # 確認ポイント:
-#   - Step 1 中に Android 戻るボタン (Back) を押すと確認モーダルが出る
-#   - 「キャンセル」→ Step 1 に戻る
-#   - 再度 Back → 「確定」→ home-screen に遷移 (handson_tour_skipped_at セット)
-# 備考: iOS では Back gesture (edge swipe) で同様の動作を想定
-#        Android 実機では pressKey: Back で戻るボタンを押せる
-#        iOS では Maestro の pressKey: Back は機能しない場合あり (iOS back gesture 非対応)
+#   - Step 1 中に Android の戻るボタンを押すと、確認なしで skip (reason hard_back) を送ってホーム (webview-home) へ抜ける
+#     (設計書 01-trigger-flow §2.2: Step 1〜3 の端末バックは handson_tour_skipped{reason:'hard_back'} + skipped_at + /home。
+#      実装は apps/mobile/app/handson-tour/photo.tsx の handleHardBack → apps/mobile/src/handson-tour/useLeaveTour.ts)
+#   - 前の画面 (Step 0 の Welcome) には戻らない
+#   - アプリを再起動してもツアーは出ない (handson_tour_skipped_at が付いている)
+# 備考: iOS には端末の戻るボタンが無い (Maestro の pressKey: Back が効かない)。戻るボタンの操作と確認は Android だけで流す
 
 - runFlow:
     file: "../_shared/login-as-new-user.yaml"
@@ -26,91 +26,33 @@ tags: ["handson-tour", "P2"]
       id: "meal-camera-button"
     timeout: 10000
 
-# ===== 分岐A: 戻るボタン → キャンセル → Step 1 に戻る =====
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      # 端末の戻るボタン。確認のモーダルは出さずにホームへ抜ける
+      - pressKey: Back
 
-# デバイスの戻るボタンを押す
-# iOS: back gesture (edge swipe) / Android: Back key
-- pressKey: Back
-  # iOS では Back key が効かない場合があるため optional
-- tapOn:
-    text: "戻る"
-    optional: true
+      - extendedWaitUntil:
+          visible:
+            id: "webview-home"
+          timeout: 15000
 
-# 確認モーダルが表示される
-- extendedWaitUntil:
-    anyOf:
-      - visible:
-          text: "中断しますか"
-      - visible:
-          text: "あとで"
-      - visible:
-          text: "キャンセル"
-    timeout: 5000
+      - assertNotVisible:
+          id: "tour-step-1"
+      - assertNotVisible:
+          id: "meal-camera-button"
+      - assertNotVisible:
+          id: "tour-step-0"
 
-# 「キャンセル」をタップして Step 1 に戻る
-- tapOn:
-    text: "キャンセル"
-    optional: true
-- tapOn:
-    text: "続ける"
-    optional: true
+      # アプリ再起動後もツアーは表示されない (handson_tour_skipped_at セット)
+      - killApp
+      - launchApp
 
-# Step 1 に戻っていることを確認
-- extendedWaitUntil:
-    visible:
-      id: "meal-camera-button"
-    timeout: 10000
+      - extendedWaitUntil:
+          visible:
+            id: "webview-home"
+          timeout: 15000
 
-- assertVisible:
-    id: "meal-camera-button"
-
-# ===== 分岐B: 戻るボタン → 確定 → home へ =====
-
-# 再度戻るボタン
-- pressKey: Back
-- tapOn:
-    text: "戻る"
-    optional: true
-
-# 確認モーダルが再表示される
-- extendedWaitUntil:
-    anyOf:
-      - visible:
-          text: "中断しますか"
-      - visible:
-          text: "あとで"
-    timeout: 5000
-
-# 「確定」または「あとで」をタップ
-- tapOn:
-    text: "確定"
-    optional: true
-- tapOn:
-    text: "あとで"
-    optional: true
-- tapOn:
-    text: "スキップ"
-    optional: true
-
-# home-screen に遷移
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 15000
-
-- assertNotVisible:
-    id: "tour-step-0"
-- assertNotVisible:
-    id: "meal-camera-button"
-
-# アプリ再起動後も tour は表示されない (handson_tour_skipped_at セット)
-- killApp
-- launchApp
-
-- extendedWaitUntil:
-    visible:
-      id: "home-screen"
-    timeout: 15000
-
-- assertNotVisible:
-    id: "tour-step-0"
+      - assertNotVisible:
+          id: "tour-step-0"

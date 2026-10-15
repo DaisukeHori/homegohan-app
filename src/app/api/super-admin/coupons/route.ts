@@ -19,6 +19,7 @@ import { couponValidFromTimestamp, couponValidUntilTimestamp } from '@/lib/super
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse, couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 export async function GET(request: NextRequest) {
   try {
@@ -80,7 +81,12 @@ export async function POST(request: NextRequest) {
     const user = await requireRole(['super_admin']);
     const supabase = await createClient();
 
-    const body = await request.json();
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      // #1654: 本文が JSON として読めないときは 400 OP_INVALID_INPUT (外側の catch の 500 に落とさない)
+      return invalidJsonBodyResponse();
+    }
+    const body = bodyResult.body;
     const parseResult = CouponCreateSchema.safeParse(body);
 
     if (!parseResult.success) {

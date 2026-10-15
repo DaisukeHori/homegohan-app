@@ -22,7 +22,7 @@
  *     小数を四捨五入する (モバイルの編集画面は合計 kcal を小数で送り得る)。範囲内の値は丸めても範囲内のまま。
  */
 
-import type { MealType } from '@homegohan/shared';
+import { isMealType, MEAL_ORDER, type MealType } from '@homegohan/shared';
 
 // ==================== meal_type ====================
 
@@ -30,20 +30,16 @@ import type { MealType } from '@homegohan/shared';
  * planned_meals.meal_type に入れてよい値。packages/shared の MealType (5 値) と、DB の
  * トリガー trg_planned_meals_validate_values (validate_planned_meal_values) と同じ。
  * 夜食 (midnight_snack) を含む (UI・献立生成が使う)。
- * MealType と食い違わないことは src/__tests__/lib/planned-meal-validation.test.ts で確認する。
+ * 値と並びの正本は @homegohan/shared の MEAL_ORDER で、ここでは手書きしない (#1631)。
+ * MEAL_ORDER と同じ集合であることは src/__tests__/lib/planned-meal-validation.test.ts で、DB のトリガーが
+ * この 5 値を通すことは tests/integration/rls/meals-meal-type-trigger.test.ts で確認する。
  */
-export const PLANNED_MEAL_TYPES = [
-  'breakfast',
-  'lunch',
-  'dinner',
-  'snack',
-  'midnight_snack',
-] as const satisfies readonly MealType[];
+export const PLANNED_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
 
-export type PlannedMealType = (typeof PLANNED_MEAL_TYPES)[number];
+export type PlannedMealType = MealType;
 
 export function isPlannedMealType(value: unknown): value is PlannedMealType {
-  return typeof value === 'string' && (PLANNED_MEAL_TYPES as readonly string[]).includes(value);
+  return typeof value === 'string' && isMealType(value);
 }
 
 // ==================== 栄養素 4 列 ====================

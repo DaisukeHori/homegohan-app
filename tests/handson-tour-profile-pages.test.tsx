@@ -399,3 +399,41 @@ describe('Step1 写真ツアー: プロフィールと目標カロリーの取�
     expect(bubbleBody()).toBe('はなこ さんの目標 2000 kcal/日 の約 39%');
   });
 });
+
+describe('#1649 名前が無い (仮置きの Guest) ときの呼びかけ (Web もモバイルと同じ規則)', () => {
+  it.each(['Guest', ' Guest ', '   '])(
+    "Step2: 名前が仮置き・空白だけ ('%s') なら「Guest さん」と呼ばず「あなた さん」にし、取得失敗とは扱わない",
+    async (nickname) => {
+      useDb({ profile: { nickname } });
+      await mountPage(HandsonTourMenuPage);
+      await advanceMenuToResult();
+
+      expect(bubbleTitle()).toBe('あなた さんに合わせた献立');
+      expect(tourErrorEvents()).toEqual([]);
+    },
+  );
+
+  it.each(['Guest', ' Guest '])("Step1: 名前が仮置きの '%s' なら「あなた さん」にする", async (nickname) => {
+    useDb({ profile: { nickname }, nutritionTarget: { daily_calories: 1560 } });
+    await mountPage(HandsonTourPhotoPage);
+    await advancePhotoToResult();
+
+    expect(bubbleBody()).toBe('あなた さんの目標 1560 kcal/日 の約 50%');
+  });
+
+  it("'guest' (小文字) は本人が付けた名前としてそのまま呼ぶ", async () => {
+    useDb({ profile: { nickname: 'guest' } });
+    await mountPage(HandsonTourMenuPage);
+    await advanceMenuToResult();
+
+    expect(bubbleTitle()).toBe('guest さんに合わせた献立');
+  });
+
+  it('実名は前後の空白を除き、30 文字を超えたら 30 文字で切って「…」を付ける', async () => {
+    useDb({ profile: { nickname: `  ${'あ'.repeat(30)}い  ` } });
+    await mountPage(HandsonTourMenuPage);
+    await advanceMenuToResult();
+
+    expect(bubbleTitle()).toBe(`${'あ'.repeat(30)}… さんに合わせた献立`);
+  });
+});
