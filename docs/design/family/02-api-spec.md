@@ -541,7 +541,7 @@ UC-ORG-17 シナリオ。
 
 ### 5.8 `GET /api/family/members/names` — 家族の画面に出すメンバーの名前 (#1584)
 
-招待を承諾して入ったメンバーは `family_members.display_name` が NULL のままになる。承諾のときにプロフィールの名前を写すと、後でプロフィールの名前を変えても家族の画面が追随しないので写さず、画面に出す名前をこの API がその都度決めて返す。家族の画面 (ダッシュボード・メンバー一覧・メンバー詳細・代表者の引き継ぎ) は、この応答を自分の一覧に当てる (`src/lib/membership/family-member-names.ts` の `fetchFamilyMemberNames` / `applyFamilyMemberNames`)。
+招待を承諾して入ったメンバーの `family_members.display_name` には、`supabase/migrations/20261015170000_accept_copies_profile_name.sql` から、承諾のときに本人のプロフィールの名前 (`user_profiles.nickname`) を写す (`accept_family_invite`。子供の昇格の承諾 `accept_child_promotion` は display_name が空 (NULL・空白だけ) のときだけ)。判定は `@homegohan/shared` の `normalizeProfileName` (`packages/shared/src/profile-name.ts`) と同じで、前後の空白を除いた名前を写し、空・空白だけ・仮置きの `'Guest'` は写さない (NULL のまま。プロフィールの行がまだ無い人も同じ)。写した名前は下の表の順の 1 に入るので、後でプロフィールの名前を変えても、家族の画面は写した名前のまま出す。この migration より前に承諾した人と、承諾のときに名前が無かった人は display_name が NULL のままなので、画面に出す名前をこの API がその都度決めて返す (既存の行を埋める SQL の案は `docs/operations/family-member-display-name-backfill.md`。本番のデータを書き換えるので未実施)。家族の画面 (ダッシュボード・メンバー一覧・メンバー詳細・代表者の引き継ぎ) は、この応答を自分の一覧に当てる (`src/lib/membership/family-member-names.ts` の `fetchFamilyMemberNames` / `applyFamilyMemberNames`)。
 
 **認証**: 必須 (未認証は 401 `NOT_AUTHENTICATED`)
 

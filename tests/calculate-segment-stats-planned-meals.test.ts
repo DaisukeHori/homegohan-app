@@ -118,6 +118,8 @@ const TOTAL_MEALS_METRIC = { id: "m-total", code: "total_meals", name: "総食�
 const COUNT_MEALS_RPC = "count_meals_per_user";
 /** 確定の回をやり終えた期間の表 (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql。#1500) */
 const FINALIZED_TABLE = "segment_stats_finalized_periods";
+/** バッジを取った期間の表 (supabase/migrations/20261015130000_user_badge_period_awards.sql。#1528) */
+const PERIOD_AWARDS_TABLE = "user_badge_period_awards";
 
 interface PlannedRow {
   meal_type: string;
@@ -171,6 +173,8 @@ interface Db {
     user_segment_rankings: Row[];
     user_badges: Row[];
     segment_stats_finalized_periods: Row[];
+    /** バッジを取った期間 (#1528)。主キー (user_id, badge_id, period_type, period_start) と ignoreDuplicates のとおり、重なる行は足さない */
+    user_badge_period_awards: Row[];
   };
   /** 失敗させたいクエリなら error を返す */
   fail?: (query: RecordedQuery) => QueryOutcome["error"] | undefined;
@@ -182,7 +186,14 @@ function newDb(overrides: Partial<Db> = {}): Db {
     profiles: [1, 2, 3, 4, 5].map((n) => ({ id: uid(n), age_group: "30s", gender: "female", perf_modes: null })),
     prevMetrics: [],
     badges: [],
-    saved: { user_metrics: [], segment_stats: [], user_segment_rankings: [], user_badges: [], segment_stats_finalized_periods: [] },
+    saved: {
+      user_metrics: [],
+      segment_stats: [],
+      user_segment_rankings: [],
+      user_badges: [],
+      segment_stats_finalized_periods: [],
+      user_badge_period_awards: [],
+    },
     ...overrides,
   };
 }
@@ -316,6 +327,21 @@ function install(db: Db) {
         db.saved.user_badges.push(...upsertedRows(query));
         return { data: null };
 
+      case PERIOD_AWARDS_TABLE: {
+        // ignoreDuplicates: 同じ (user_id, badge_id, period_type, period_start) の行がすでにあれば何もしない
+        for (const row of upsertedRows(query)) {
+          const exists = db.saved.user_badge_period_awards.some(
+            (r) =>
+              r.user_id === row.user_id &&
+              r.badge_id === row.badge_id &&
+              r.period_type === row.period_type &&
+              r.period_start === row.period_start,
+          );
+          if (!exists) db.saved.user_badge_period_awards.push(row);
+        }
+        return { data: null };
+      }
+
       default:
         throw new Error(`想定していないテーブル: ${query.table}`);
     }
@@ -349,7 +375,7 @@ function metricRow(db: Db, userNo: number, metricId: string): Row {
   return row;
 }
 
-const WRITE_TABLES = ["user_metrics", "segment_stats", "user_segment_rankings", "user_badges", FINALIZED_TABLE];
+const WRITE_TABLES = ["user_metrics", "segment_stats", "user_segment_rankings", "user_badges", PERIOD_AWARDS_TABLE, FINALIZED_TABLE];
 
 /** 何かを書き込むクエリ (upsert) が 1 つも発行されていないこと */
 function expectNoWrites(queries: RecordedQuery[]) {
@@ -1766,5 +1792,134 @@ describe("calculate-segment-stats: 確定の回は、やり終えた期間では
     expect(tables.lastIndexOf("user_badges")).toBeLessThan(tables.lastIndexOf(FINALIZED_TABLE));
     const upsert = queriesOf(queries, FINALIZED_TABLE).find((q) => firstMethodOf(q) === "upsert")!;
     expect(argsOf(upsert, "upsert")[0][1]).toEqual({ onConflict: "period_type,period_start", ignoreDuplicates: true });
+  });
+});
+
+// ── バッジを取った期間を 1 期間 1 行で残す (#1528) ─────────────────────────────────────────
+//
+// user_badges は 1 バッジ 1 行 (主キー (user_id, badge_id)・ignoreDuplicates) なので、同じバッジを 2 回目以降の期間で取っても
+// 記録が残らない。獲得済みのバッジの一覧 (GET /api/badges) で「どの期間に取ったか」「何回取ったか」を出すため、
+// 確定の回は同じ判定の結果を、期間つきで user_badge_period_awards にも書く。
+describe("calculate-segment-stats: バッジを取った期間を user_badge_period_awards に残す (#1528)", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // JST 月曜 2026-10-12 0:05 / 0:20 (直前の週は 10/5〜10/11)・JST 月曜 2026-10-19 0:05 (直前の週は 10/12〜10/18)・期間の途中
+  const FINALIZE_AT = "2026-10-11T15:05:00.000Z";
+  const RETRY_AT = "2026-10-11T15:20:00.000Z";
+  const NEXT_WEEK_FINALIZE_AT = "2026-10-18T15:05:00.000Z";
+  const MID_PERIOD_AT = "2026-10-12T00:05:00.000Z";
+
+  const onlyU1Recorded = () => newDb({ planned: [pm(1, "breakfast", true, 5)], badges: ALL_BADGES });
+
+  async function callAt(at: string, body: Record<string, unknown> = FINALIZED) {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(at));
+    return call(body);
+  }
+
+  const periodKeys = (db: Db) =>
+    db.saved.user_badge_period_awards.map((r) => `${userNo(r.user_id)}:${r.badge_id}:${r.period_type}:${r.period_start}`).sort();
+
+  it("確定の回は、user_badges と同じ判定の結果を、期間 (種類・開始日)・判定の文・付けた時刻つきで 1 期間 1 行ずつ書く", async () => {
+    const db = onlyU1Recorded();
+    const { queries } = install(db);
+
+    const { res } = await callAt(FINALIZE_AT);
+
+    expect(res.status).toBe(200);
+    expect(db.saved.user_badges.length).toBeGreaterThan(0);
+    expect(db.saved.user_badge_period_awards).toHaveLength(db.saved.user_badges.length);
+    for (const award of db.saved.user_badges) {
+      const period = db.saved.user_badge_period_awards.find((r) => r.user_id === award.user_id && r.badge_id === award.badge_id);
+      expect(period).toEqual({
+        user_id: award.user_id,
+        badge_id: award.badge_id,
+        period_type: "weekly",
+        period_start: "2026-10-05",
+        context_json: award.context_json,
+        message: award.message,
+        awarded_at: award.obtained_at,
+      });
+    }
+    // 主キーで重ねない (確定の回の再試行・同じ期間のやり直しで 2 行にしない)
+    const upserts = queriesOf(queries, PERIOD_AWARDS_TABLE);
+    expect(upserts.length).toBeGreaterThan(0);
+    for (const upsert of upserts) {
+      expect(argsOf(upsert, "upsert")[0][1]).toEqual({ onConflict: "user_id,badge_id,period_type,period_start", ignoreDuplicates: true });
+    }
+    // 書く順: user_badges → 期間 → 確定の記録 (期間の保存に失敗したら、確定の記録を書かず再試行に任せる)
+    const tables = queries.map((q) => q.table);
+    expect(tables.lastIndexOf("user_badges")).toBeLessThan(tables.indexOf(PERIOD_AWARDS_TABLE));
+    expect(tables.lastIndexOf(PERIOD_AWARDS_TABLE)).toBeLessThan(tables.lastIndexOf(FINALIZED_TABLE));
+  });
+
+  it("次の週も同じバッジを取ったら、期間の行は 2 行になる (user_badges は 1 バッジ 1 行のまま、期間はどちらも残る)", async () => {
+    const db = onlyU1Recorded();
+    install(db);
+    const first = await callAt(FINALIZE_AT);
+    expect(first.res.status).toBe(200);
+
+    install(db);
+    const second = await callAt(NEXT_WEEK_FINALIZE_AT);
+    expect(second.res.status).toBe(200);
+    expect(second.json).toMatchObject({ badgesJudged: true, periodStart: "2026-10-12", periodEnd: "2026-10-18" });
+
+    const rank1 = db.saved.user_badge_period_awards.filter((r) => r.badge_id === "b-rank1");
+    expect(rank1.map((r) => [userNo(r.user_id), r.period_type, r.period_start]).sort()).toEqual([
+      [1, "weekly", "2026-10-05"],
+      [1, "weekly", "2026-10-12"],
+    ]);
+    // 2 週目の行の付けた時刻は、2 週目の確定の回の時刻
+    expect(rank1.find((r) => r.period_start === "2026-10-12")?.awarded_at).toBe(NEXT_WEEK_FINALIZE_AT);
+  });
+
+  it("期間の保存に失敗したら 500 で返し、確定の記録を書かない。再試行で期間の行が書かれ、2 行にはならない", async () => {
+    const db = onlyU1Recorded();
+    let failPeriodSave = true;
+    db.fail = (q) =>
+      failPeriodSave && q.table === PERIOD_AWARDS_TABLE ? { message: 'relation "public.user_badge_period_awards" does not exist', code: "42P01" } : undefined;
+    install(db);
+
+    const first = await callAt(FINALIZE_AT);
+    expect(first.res.status).toBe(500);
+    expect(first.json.error).toContain(`${PERIOD_AWARDS_TABLE} の保存`);
+    expect(db.saved.segment_stats_finalized_periods).toEqual([]);
+    expect(db.saved.user_badge_period_awards).toEqual([]);
+    expect(h.errors).toHaveLength(1);
+
+    failPeriodSave = false;
+    install(db);
+    const retry = await callAt(RETRY_AT);
+    expect(retry.res.status).toBe(200);
+    expect(db.saved.segment_stats_finalized_periods).toHaveLength(1);
+    const keys = periodKeys(db);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys.every((k) => k.endsWith(":weekly:2026-10-05"))).toBe(true);
+  });
+
+  it.each(["daily", "weekly", "monthly"])("%s: 今の期間を集計する回 (毎時の回) は、期間の表に書かない", async (periodType) => {
+    const db = onlyU1Recorded();
+    const { queries } = install(db);
+
+    const { res } = await callAt(MID_PERIOD_AT, { periodType });
+
+    expect(res.status).toBe(200);
+    expect(queriesOf(queries, PERIOD_AWARDS_TABLE)).toEqual([]);
+    expect(db.saved.user_badge_period_awards).toEqual([]);
+  });
+
+  it("条件を満たした人がいなければ、期間の表にも書かない", async () => {
+    // 全員が何も記録していない (全員 0 の指標にはバッジを付けない #1306)
+    const db = newDb({ planned: [], badges: ALL_BADGES });
+    const { queries } = install(db);
+
+    const { res } = await callAt(FINALIZE_AT);
+
+    expect(res.status).toBe(200);
+    expect(db.saved.user_badges).toEqual([]);
+    expect(queriesOf(queries, PERIOD_AWARDS_TABLE)).toEqual([]);
   });
 });
