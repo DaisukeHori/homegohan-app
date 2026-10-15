@@ -6,10 +6,13 @@
  * - #1446: 献立画面 (Web・モバイル) と食事を追加するモーダル
  * - #1631: 献立生成の API (v4・v5) の受け付ける区分、AI 相談の許可リスト、planned_meals の許可リスト、食事の画面・モーダル・
  *   並べ替えの API の手書きの MealType、types/domain の MealType、食事の記録の画面の「おやつ・夜食」の手書き、
- *   AI 相談のシステムプロンプトの区分の表示名と並びの手書きの表 (MEAL_LABELS / MEAL_ORDER から引く)
+ *   AI 相談のシステムプロンプトの区分の表示名と並びの手書きの表 (MEAL_LABELS / MEAL_ORDER から引く)、
+ *   写真の判別 (classify-photo) の解析プロンプトの区分の表示名と、モバイルの週間献立のカードの短い名前の、5 値との比較の連鎖
  *
  * 5 値をキーに持つ表 ({ breakfast: …, …, midnight_snack: … }) は、型を Record<string, …> にすると MealType に値が増えても
  * tsc が漏れを止めない (表に無い値は undefined になる)。製品のソースでは Record<MealType, …> にする (除外表は Edge Functions だけ)。
+ * 5 値すべてと 1 つずつ比べる連鎖 (mealType === 'breakfast' ? … : … mealType === 'midnight_snack' ? … : 既定の値 や
+ * case 'breakfast': … の並び) も、MealType に値が増えると tsc が止めずに既定の値へ落ちるので、配列・union と同じ 5 値の手書きとして扱う。
  *
  * 型 (tsc) は「手書きの 5 値が正本と同じ値か」までは見ないので、ソースを読んで手書きとキャストが戻っていないことを固定する。
  * コメントの中の語で誤って赤にしないよう、コメントを除いてから検査する。
@@ -44,6 +47,7 @@ const TARGET_FILES = [
   'src/lib/ai/consultation-action-executor.ts',
   'src/lib/planned-meal-validation.ts',
   'types/domain.ts',
+  'src/app/api/ai/classify-photo/route.ts',
 ];
 
 /**
@@ -63,7 +67,10 @@ const CAST_CHECK_EXCLUDED: Record<string, string> = {
  * 5 値の表をそもそも持たないファイル (表示名は MEAL_LABELS、並びは MEAL_ORDER から引く)。
  * Record<MealType, …> の表であっても、ここでは手書きの表が戻ったら赤にする。
  */
-const NO_FIVE_KEY_TABLE_FILES = ['src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts'];
+const NO_FIVE_KEY_TABLE_FILES = [
+  'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts',
+  'src/app/api/ai/classify-photo/route.ts',
+];
 
 /** Edge Functions を除外表に入れる理由 */
 const DENO_CANNOT_IMPORT_SHARED =
@@ -80,6 +87,7 @@ const HANDWRITTEN_ALLOWED: Record<string, string> = {
   'supabase/functions/generate-menu-v4/step-utils.ts': DENO_CANNOT_IMPORT_SHARED,
   'supabase/functions/generate-menu-v5/index.ts': DENO_CANNOT_IMPORT_SHARED,
   'supabase/functions/generate-menu-v5/template-catalog.ts': `${DENO_CANNOT_IMPORT_SHARED}。6 つ目の値 any (どの区分にも使えるひな形) を持つ別の型`,
+  'supabase/functions/_shared/nutrition-pipeline.ts': `${DENO_CANNOT_IMPORT_SHARED}。区分の表示名を 5 値との比較の連鎖で持つ`,
 };
 
 /**
@@ -125,6 +133,9 @@ const LOCAL_MEAL_TYPE_ALIAS = /\btype\s+MealType\s*=/;
 const CAST_TO_ANY = ['as', 'any'].join(' ');
 /** 型を外す any へのキャスト */
 const AS_ANY = new RegExp(`\\b${CAST_TO_ANY.replace(' ', '\\s+')}\\b`);
+
+/** 比較の演算子 (=== / !== / == / !=) */
+const EQUALITY_OPERATOR = String.raw`(?:===|!==|==|!=)`;
 
 /** 入れ子の無い [ ... ] (配列のリテラル・z.enum の引数) */
 const ARRAY_LITERAL = /\[[^[\]]*\]/g;
@@ -211,13 +222,26 @@ function containsAllFiveQuoted(fragment: string): boolean {
   return MEAL_ORDER.every((mealType) => new RegExp(`['"]${mealType}['"]`).test(fragment));
 }
 
-/** 5 値を手書きした配列か union があるか (並びは問わない) */
+/** その値を引用符つきで比べる形 (x === 'v' / 'v' === x / case 'v':) があるか */
+function comparesWith(strippedSource: string, mealType: string): boolean {
+  const quoted = String.raw`['"]${mealType}['"]`;
+  return new RegExp(
+    String.raw`${EQUALITY_OPERATOR}\s*${quoted}|${quoted}\s*${EQUALITY_OPERATOR}|\bcase\s+${quoted}\s*:`,
+  ).test(strippedSource);
+}
+
+/** 5 値すべてと 1 つずつ比べる形 (三項演算子・if・switch の連鎖) があるか */
+function hasFiveWayComparison(strippedSource: string): boolean {
+  return MEAL_ORDER.every((mealType) => comparesWith(strippedSource, mealType));
+}
+
+/** 5 値を手書きした配列・union・比較の連鎖があるか (並びは問わない) */
 function hasHandwrittenFiveValues(strippedSource: string): boolean {
   const fragments = [
     ...(strippedSource.match(ARRAY_LITERAL) ?? []),
     ...(strippedSource.match(STRING_LITERAL_UNION) ?? []),
   ];
-  return fragments.some(containsAllFiveQuoted);
+  return fragments.some(containsAllFiveQuoted) || hasFiveWayComparison(strippedSource);
 }
 
 /** 製品のソースのファイルを ROOT からの相対パスで集める */
@@ -240,7 +264,7 @@ function collectProductSourceFiles(): string[] {
 }
 
 describe('#1446 / #1631 食事の区分は正本から導き、any へのキャストで型を外さない', () => {
-  it.each(TARGET_FILES)('%s に 5 値の手書きの配列・union が無い', (file) => {
+  it.each(TARGET_FILES)('%s に 5 値の手書きの配列・union・比較の連鎖が無い', (file) => {
     const source = readStripped(file);
     expect(source).not.toMatch(HANDWRITTEN_FIVE_VALUES);
     expect(hasHandwrittenFiveValues(source)).toBe(false);
@@ -339,5 +363,49 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
     // 5 値のうち一部だけの並び (基本の 3 食など) と、正本から導いた形は拾わない
     expect(hasHandwrittenFiveValues("const BASE: MealType[] = ['breakfast', 'lunch', 'dinner'];")).toBe(false);
     expect(hasHandwrittenFiveValues('const V: readonly MealType[] = MEAL_ORDER;')).toBe(false);
+  });
+
+  it('比較の連鎖の検査は、戻ってきた 5 値との比較を実際に拾う (検査が空振りしていない)', () => {
+    // #1631 の R2 で見つかった写真の判別の解析プロンプトの表示名 (三項演算子の連鎖)
+    const ternary = `const mealTypeLabel = mealType === 'breakfast' ? '朝食'
+      : mealType === 'lunch' ? '昼食'
+      : mealType === 'dinner' ? '夕食'
+      : mealType === 'snack' ? 'おやつ'
+      : mealType === 'midnight_snack' ? '夜食'
+      : '食事';`;
+    expect(hasFiveWayComparison(stripComments(ternary))).toBe(true);
+    expect(hasHandwrittenFiveValues(stripComments(ternary))).toBe(true);
+    // モバイルの週間献立のカードの短い名前 (二重引用符の連鎖)
+    const mobileShort = `const short =
+      mealType === "breakfast" ? "朝" :
+      mealType === "lunch" ? "昼" :
+      mealType === "dinner" ? "夕" :
+      mealType === "snack" ? "おやつ" :
+      mealType === "midnight_snack" ? "夜食" : base;`;
+    expect(hasHandwrittenFiveValues(stripComments(mobileShort))).toBe(true);
+    // 左右を入れ替えた比較・!==・switch の case も拾う
+    expect(
+      hasFiveWayComparison(
+        "if ('breakfast' === t) a(); if (t !== 'lunch') b(); if (t == \"dinner\") c(); if (t != 'snack') d(); if ('midnight_snack' === t) e();",
+      ),
+    ).toBe(true);
+    const switchCases = `switch (t) {
+      case 'breakfast': return 1;
+      case 'lunch': return 2;
+      case 'dinner': return 3;
+      case 'snack': return 4;
+      case "midnight_snack": return 5;
+    }`;
+    expect(hasFiveWayComparison(stripComments(switchCases))).toBe(true);
+    // 5 値のうち一部だけとの比較 (基本の 3 食など)・コメントの中の連鎖・正本から引く形は拾わない
+    const partial = "if (t === 'breakfast') a(); if (t === 'lunch') b(); if (t === 'dinner') c(); if (t === 'snack') d();";
+    expect(hasFiveWayComparison(partial)).toBe(false);
+    expect(hasFiveWayComparison(stripComments(`// ${ternary.replace(/\n/g, ' ')}`))).toBe(false);
+    expect(
+      hasHandwrittenFiveValues("const label = mealType !== undefined && isMealType(mealType) ? MEAL_LABELS[mealType] : '食事';"),
+    ).toBe(false);
+    // 値を返すだけの分岐 (時刻から区分を選ぶ return 'breakfast' など) は比較ではないので拾わない
+    const returnsOnly = "if (h < 10) return 'breakfast'; if (h < 14) return 'lunch'; if (h < 17) return 'snack'; if (h < 21) return 'dinner'; return 'midnight_snack';";
+    expect(hasFiveWayComparison(returnsOnly)).toBe(false);
   });
 });
