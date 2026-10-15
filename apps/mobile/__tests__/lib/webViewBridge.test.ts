@@ -17,6 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vm from 'vm';
 import { Linking } from 'react-native';
+import { NATIVE_APP_TABS } from '@homegohan/shared';
 
 // バージョンヘッダ検証のため expo-constants を固定値にする
 jest.mock('expo-constants', () => ({
@@ -449,8 +450,8 @@ describe('sanitizeWebPath()', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 describe('sanitizeInitialPath()', () => {
   const FALLBACK = '/menus/weekly';
-  // WebViewScreen の TAB_ROUTES と同じ (各タブの prefix)
-  const PREFIXES = ['/menus', '/meals', '/comparison', '/profile', '/home'];
+  // WebViewScreen と同じく、@homegohan/shared のタブの表の prefix (#1612 F7-22)
+  const PREFIXES = NATIVE_APP_TABS.map((tab) => tab.pathPrefix);
   const sanitize = (raw: unknown) => sanitizeInitialPath(raw, FALLBACK, PREFIXES);
 
   it.each([

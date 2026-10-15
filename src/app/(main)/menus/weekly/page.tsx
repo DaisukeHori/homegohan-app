@@ -13,7 +13,7 @@ import {
   useShoppingStore,
   useFormDraftStore,
   convertV4ProgressToUIFormat,
-  pendingRestoreProgress,
+  resumePendingGenerationAction,
   type LegacyDishDetail,
 } from './_state';
 import dynamic from "next/dynamic";
@@ -636,6 +636,17 @@ export default function WeeklyMenuPage() {
       // UX2-12: 生成終了時は対象スロット情報もクリアする
       setGenTargetSlotKeysState(null);
     }
+  }, []);
+  // #1629: 画面に入り直して生成中の行 (GET /api/ai/menu/weekly/pending) を見つけたときの復元 (fetchPlan・checkPendingRequests)。
+  // setIsGenerating(true) (GEN_START) は進捗を null に戻すので使わない。生成中にし、進捗がまだ無いときだけ
+  // 空の進捗 (段の印だけ) を置く。すでに生成中で進捗があるとき (生成中のリロードで restoreGeneration が先に DB の進捗を置いた・
+  // キャッシュが切れたあとに同じ週へ戻った) は残す (以前は最初のポーリングが返るまでの 1 往復だけ見出しが既定の文に戻っていた)。
+  // 見分けは reducer の中で今の状態に対して行う (fetchPlan は前の描画の setGenerationProgress を握っているので、
+  // prev => prev ?? ... の形でもそこでは古い値を見て上書きしてしまう)
+  const resumePendingGeneration = useCallback((ultimateMode: boolean) => {
+    // UX2-11: 生成中にするときは setIsGenerating(true) と同じく「中止済み」ガードをリセットする
+    generationCancelledRef.current = false;
+    dispatchAiGen(resumePendingGenerationAction(ultimateMode));
   }, []);
 
   const generatingMeal = aiGen.generatingMeal;
@@ -1489,12 +1500,12 @@ export default function WeeklyMenuPage() {
               // 違うときは hasPending: false を返す (他の週の生成中は復元しない)。ここに来るのは start_date が targetDate と同じ行か、
               // start_date の無い行だけなので、表示中の週 (targetDate) で監視する
               // (#1609。以前は start_date が違えば週を切り替える分岐があったが、サーバーがその行を返さないので通らなかった)
-              setIsGenerating(true);
               // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)。
               // 真偽値の true のときだけ究極モード (印の無い古い行・値の無い応答は通常の生成)
               const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
-              // 最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)
-              setGenerationProgress(pendingRestoreProgress(pendingIsUltimateMode));
+              // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
+              // すでに進捗があるときは上書きしない (#1629)
+              resumePendingGeneration(pendingIsUltimateMode);
               subscribeToRequestStatus(targetDate, requestId, pendingIsUltimateMode);
               return; // 週間生成中なら他はスキップ
             } else {
@@ -1962,11 +1973,11 @@ export default function WeeklyMenuPage() {
           const { hasPending, requestId, ultimateMode: pendingUltimateMode } = await pendingRes.json();
           if (hasPending && requestId) {
             // 生成中状態を復元してポーリング開始
-            setIsGenerating(true);
             // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)
             const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
-            // 最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)
-            setGenerationProgress(pendingRestoreProgress(pendingIsUltimateMode));
+            // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
+            // すでに進捗があるとき (生成中のリロード・キャッシュが切れたあとに同じ週へ戻ったとき) は上書きしない (#1629)
+            resumePendingGeneration(pendingIsUltimateMode);
             subscribeToRequestStatus(targetDateStr, requestId, pendingIsUltimateMode);
           }
         }

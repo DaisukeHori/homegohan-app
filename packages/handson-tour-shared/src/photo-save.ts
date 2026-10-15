@@ -1,4 +1,5 @@
-// ハンズオンツアー Step 1 (写真から食事を記録) の保存で送る本文と、応答の読み方 (#1604)。
+// ハンズオンツアー Step 1 (写真から食事を記録) の保存で送る本文と、応答の読み方 (#1604 / モバイルは #1625)。
+// Web (src/app/handson-tour/photo/page.tsx) とモバイル (apps/mobile/app/handson-tour/photo.tsx) が同じ関数を使う。
 //
 // 設計書 docs/design/family/09-onboarding-handson-tour/03-step1-photo.md §3.7 の保存の決め:
 //   - いつの食事か: 保存した「今」(eaten_at)。route がサーバーの今で入れる (src/lib/handson-tour/sandbox-photo-meal.ts)
@@ -6,19 +7,21 @@
 //   - 料理: サンプルの固定値 (MOCK_PHOTO_RESPONSE の料理名・カロリー)。写真はサンプルなので保存しない (photo_url: null)
 //   - お試しの記録として送る (sandbox: true。URL の ?source=handson_tour と組)
 // 以前は MOCK_PHOTO_RESPONSE をそのまま送っていて mealType が無く、POST /api/meal-plans/add-from-photo の
-// mealType の検証で 400 になっていた (#846 の E2E で発見)。
+// mealType の検証で 400 になっていた (Web は #846 の E2E で発見・#1604 で修正。モバイルは #1625 で修正)。
 // お試しの記録は meals (is_sandbox = true) の 1 行に入り、日付 (dayDate) は使わないので送らない
 // (今日の user_daily_meals を作ると、同じ日の本物の記録と一意キー UNIQUE(user_id, day_date) を取り合うため)。
+//
+// 食事の種類が route の検証 (src/lib/planned-meal-validation.ts の 5 値) を通ること、
+// sandbox_not_eligible が route の応答 (src/lib/handson-tour/sandbox-eligibility.ts) の code と同じことは、
+// tests/handson-tour-photo-save.test.ts が本物の route に通して確かめる (このパッケージは Web の型を読めないため)。
 
-import { MOCK_PHOTO_RESPONSE } from '@homegohan/handson-tour-shared';
-import type { SandboxEligibilityError } from '@/lib/handson-tour/sandbox-eligibility';
-import type { PlannedMealType } from '@/lib/planned-meal-validation';
+import { MOCK_PHOTO_RESPONSE } from './mocks';
 
 /** ツアーの保存先。?source=handson_tour はツアーからの保存の目印 */
 export const TOUR_PHOTO_SAVE_URL = '/api/meal-plans/add-from-photo?source=handson_tour';
 
 /** お試しの記録の食事の種類 (設計書 03-step1 §3.7 の meal_type: 'dinner') */
-export const TOUR_PHOTO_MEAL_TYPE = 'dinner' as const satisfies PlannedMealType;
+export const TOUR_PHOTO_MEAL_TYPE = 'dinner' as const;
 
 /** サンプルの料理の役割 (定食 1 品を主菜として記録する。route の既定は 'side') */
 const TOUR_PHOTO_DISH_ROLE = 'main';
@@ -27,7 +30,7 @@ const TOUR_PHOTO_DISH_ROLE = 'main';
  * お試しの保存を受け付けない利用者への応答の code (src/lib/handson-tour/sandbox-eligibility.ts)。
  * ツアーを完了・スキップ済みで設定からやり直している利用者 (設計書 17-security §2.1 で 409 already_finished) など。
  */
-const SANDBOX_NOT_ELIGIBLE_CODE = 'sandbox_not_eligible' as const satisfies SandboxEligibilityError['code'];
+export const SANDBOX_NOT_ELIGIBLE_CODE = 'sandbox_not_eligible' as const;
 
 export type TourPhotoSaveBody = {
   sandbox: true;

@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect } from 'react';
+import { findNativeAppTab } from '@homegohan/shared';
 import { useNativeAppMode } from '@/hooks/useNativeAppMode';
 
-const TAB_PATHS = ['/menus', '/meals/new', '/comparison', '/profile', '/home'];
-
+// どのパスがどのタブのものかは @homegohan/shared の NATIVE_APP_TABS だけが決める
+// (ネイティブの WebViewScreen も同じ表を見る)。以前はここに別の一覧を持っていて ('/meals/new' など)、
+// ネイティブの一覧 ('/meals') と食い違い、送った tab-navigate が読み捨てられていた (#1612 / #1049 F7-22)。
+// 返す値はタブの pathPrefix で、tab-navigate の path にそのまま入れる (ネイティブは pathPrefix の完全一致でタブを引く)
 function findTabFor(pathname: string): string | null {
-  return TAB_PATHS.find(p => pathname === p || pathname.startsWith(p + '/')) ?? null;
+  return findNativeAppTab(pathname)?.pathPrefix ?? null;
 }
 
 export function NativeAppTabRouter() {

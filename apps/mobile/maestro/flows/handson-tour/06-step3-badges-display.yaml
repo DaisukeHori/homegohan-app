@@ -7,7 +7,8 @@ tags: ["handson-tour", "P1"]
 #   - tour-step-3-loading が表示される
 #   - バッジ読み込み後に各バッジが表示される
 #   - tour-step-4-saving または tour-step-4-graduate に遷移する
-# TODO: tour-step-3-intro / badge-card-* testID は mobile 未実装。別 PR で fix
+#   - Step 3 の intro 吹き出し (tour-step-3-intro) が出る
+# TODO: badge-card-* testID はモバイルのツアーの Step 3 では未実装 (バッジ一覧はプレースホルダー)。別 PR で fix
 # TODO: 14 種バッジ全て確認するには badge-card-{code} の testID 実装が必要
 
 - runFlow:
@@ -67,11 +68,12 @@ tags: ["handson-tour", "P1"]
 - assertVisible:
     id: "tour-step-3-loading"
 
-# バッジ読み込み完了を待つ
-- waitForAnimationToEnd:
-    timeout: 5000
+# バッジの読み込みが終わると intro 吹き出しが出る (STEP3_INTRO_AUTO_MS = 2 秒で次へ進むので、待たずにすぐ探す)
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-3-intro"
+    timeout: 15000
 
-# tour-step-3-intro 吹き出し (TODO: testID 未実装、別 PR で fix)
 # バッジカード確認 (TODO: badge-card-* testID 未実装。テキストマッチで代替)
 - assertVisible:
     text: "first_bite"

@@ -35,6 +35,7 @@ export type AiGenerationAction =
   | { type: 'GEN_START'; payload?: { meal?: { dayIndex: number; mealType: MealType } } }
   | { type: 'GEN_PROGRESS'; payload: GenerationProgress }
   | { type: 'GEN_PROGRESS_CLEAR' }
+  | { type: 'GEN_RESUME_PENDING'; payload: GenerationProgress }
   | { type: 'GEN_SUCCESS' }
   | { type: 'GEN_FAIL'; payload: { error: string | null; requestId: string | null } }
   | { type: 'GEN_FAILED_CLEAR' }
@@ -102,6 +103,21 @@ export function aiGenerationReducer(
     // (呼び出し元は生成中の進捗更新の一環として progress のみ null にしたい場合がある)
     case 'GEN_PROGRESS_CLEAR':
       return { ...state, generationProgress: null };
+
+    // #1629: 画面に入り直して生成中の行 (GET /api/ai/menu/weekly/pending) を見つけたときの復元。
+    // 生成中にし、進捗はまだ無い (null) ときだけ payload (pendingRestoreProgress の空の進捗) を置く。
+    // すでに生成中で進捗があるとき (生成中のリロードで restoreGeneration が DB の進捗を先に置いた・
+    // キャッシュが切れたあとに同じ週へ戻った) は、その進捗 (phase・message・totalSlots) を残す。
+    // GEN_START と違って進捗を null に戻さない。判定は reducer の中で今の状態に対して行う
+    // (呼び出し側の非同期の処理 (fetchPlan など) は前の描画の値を握っているので、そちらで見分けると古い値で上書きする)。
+    // 生成中でないときは GEN_START と同じく前回の進捗を残さない (別の生成の進捗を引き継がない)。
+    case 'GEN_RESUME_PENDING':
+      return {
+        ...state,
+        isGenerating: true,
+        generationProgress:
+          state.isGenerating && state.generationProgress !== null ? state.generationProgress : action.payload,
+      };
 
     case 'GEN_SUCCESS':
       return {
