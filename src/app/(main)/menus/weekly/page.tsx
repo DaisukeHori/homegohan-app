@@ -540,6 +540,9 @@ export default function WeeklyMenuPage() {
   const setIsDayNutritionExpanded = useCallback((v: boolean) => {
     dispatchWeekView({ type: 'DAY_NUTRITION_SET', payload: v });
   }, []);
+  const toggleDayNutritionExpanded = useCallback(() => {
+    dispatchWeekView({ type: 'DAY_NUTRITION_TOGGLE' });
+  }, []);
 
   const isTodayExpanded = weekView.isTodayExpanded;
   const setIsTodayExpanded = useCallback((_v: boolean | ((prev: boolean) => boolean)) => dispatchWeekView({ type: 'TODAY_TOGGLE' }), []);
@@ -5915,7 +5918,7 @@ export default function WeeklyMenuPage() {
             background: isDayNutritionExpanded ? colors.card : 'transparent',
             border: isDayNutritionExpanded ? `1px solid ${colors.border}` : '1px solid transparent',
           }}
-          onClick={() => setIsDayNutritionExpanded(!isDayNutritionExpanded)}
+          onClick={toggleDayNutritionExpanded}
         >
           <div className="flex justify-between items-center">
           <div className="flex items-center gap-1.5">

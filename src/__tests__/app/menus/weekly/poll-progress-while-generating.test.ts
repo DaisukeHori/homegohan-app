@@ -558,6 +558,14 @@ describe('page.tsx の配線: 状態の setter は関数形を受けず、握っ
     expect(pageCode).toMatch(/const NEXT_MONTH = 1;/);
   });
 
+  it('栄養パネルの開閉のボタンは DAY_NUTRITION_TOGGLE (reducer が今の値を反転) を送り、描画の値を反転して置かない', () => {
+    const body = callbackSourceOf(pageCode, 'toggleDayNutritionExpanded');
+    expect(body).toContain("dispatchWeekView({ type: 'DAY_NUTRITION_TOGGLE' });");
+    expect(body).toMatch(/\}, \[\]\)$/);
+    expect(pageCode).toContain('onClick={toggleDayNutritionExpanded}');
+    expect(pageCode).not.toContain('setIsDayNutritionExpanded(!isDayNutritionExpanded)');
+  });
+
   it('祝日は取ってきた分だけを渡し、reducer (HOLIDAYS_SET) が今の祝日に足す', () => {
     expect(pageCode).toContain('setHolidays(data);');
     expect(pageCode).toContain('setHolidays(prevYearData);');
