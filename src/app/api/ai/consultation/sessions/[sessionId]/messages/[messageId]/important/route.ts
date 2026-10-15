@@ -5,8 +5,9 @@ import { internalError } from '@/lib/api/errors';
 // 重要マークのトグル
 export async function POST(
   request: Request,
-  { params }: { params: { sessionId: string; messageId: string } }
+  props: { params: Promise<{ sessionId: string; messageId: string }> }
 ) {
+  const params = await props.params;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -61,10 +62,9 @@ export async function POST(
 }
 
 // 重要メッセージ一覧取得（セッション横断）
-export async function GET(
-  request: Request,
-  { params }: { params: { sessionId: string; messageId: string } }
-) {
+// パスの値 (params) は使わないので受け取らない。Next 15 の params は Promise で、以前の同期の型のままだと next build の
+// 型検査で落ちる (#1444)
+export async function GET() {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

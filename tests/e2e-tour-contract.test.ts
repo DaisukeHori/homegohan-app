@@ -41,15 +41,11 @@ const SRC_DIR = path.join(ROOT, "src");
 const EXPECTED_SPEC_COUNT = 7;
 
 /**
- * 製品の既知の不具合で動かせず、理由付きの test.fixme にしているテストの数 (ファイルごと)。
- * 03-step1-photo: ツアーの Step 1 の保存 (POST /api/meal-plans/add-from-photo) が、本文に dayDate / mealType が無く 400 になる (#846 で発見)。
- * 05-step3-badges: Step 3 の画面が /api/badges の earned / obtainedAt ではなく obtained_at を見ていて、「獲得済」が付かない (#846 で発見)。
- *                  Step 3 の吹き出しが既定の画面の大きさ (1280x720) で画面の外に出て、[次へ] が押せない (#846 で発見)。
+ * 製品の既知の不具合で動かせず、理由付きの test.fixme にしているテストの数 (ファイルごと)。いまは 0 件。
+ * #846 で見つけた 3 件 (03-step1-photo の保存が 400・05-step3-badges の「獲得済」が出ない・既定の画面の高さで Step 3 の [次へ] が押せない) は
+ * #1604 で直して fixme を外した。新しく fixme を足すときは、ここにファイル名と数を足し、理由を書く。
  */
-const KNOWN_FIXMES: Readonly<Record<string, number>> = {
-  "03-step1-photo.spec.ts": 1,
-  "05-step3-badges.spec.ts": 2,
-};
+const KNOWN_FIXMES: Readonly<Record<string, number>> = {};
 
 /** コメントを除く (説明文に skip や isVisible と書いても検査に引っかからないように。URL の // では切らない) */
 function stripComments(source: string): string {

@@ -14,7 +14,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
 
 interface PageProps {
-  params: { id: string };
+  params: Promise<{ id: string }>;
 }
 
 interface FreezeProfile {
@@ -29,7 +29,8 @@ interface UserDetailApiResponse {
   data: FreezeProfile;
 }
 
-export default async function AdminUserFreezePage({ params }: PageProps) {
+export default async function AdminUserFreezePage(props: PageProps) {
+  const params = await props.params;
   let actor;
   try {
     actor = await requireRole(['admin', 'super_admin']);

@@ -4,10 +4,9 @@
 // 自分から参加を申し込む機能も無く、参加は招待メールのリンクからだけである。
 // ボタンをやめ、その案内を表示するようにしたことを、実際にレンダリングして確かめる。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 const pushMock = vi.hoisted(() => vi.fn());
 

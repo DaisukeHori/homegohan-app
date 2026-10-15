@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveHeavyUnitTimeouts } from "./helpers/heavy-unit-test-timeout";
 import { AI_USAGE_ALLOWED, AI_USAGE_DENIED } from "./helpers/ai-usage-mock";
 
 // #1227: analyze-fridge Edge Function は imageUrl の型も形式も確かめずに外部の Vision API へ渡していた。
@@ -36,6 +37,14 @@ vi.mock("../supabase/functions/_shared/fast-llm.ts", () => ({
 type Handler = (req: Request) => Promise<Response>;
 let handler: Handler;
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeAll) の時間切れ (#1605)。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある (tests/ai-consent-enforcement-edge.test.ts。#1488)。このファイルのテストは読み込んだ
+ * ハンドラを呼ぶだけなので一覧 (HEAVY_UNIT_TEST_FILES) には入れず、読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う
+ * (tests/ai-chat-flag-edge.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeAll(async () => {
   vi.stubGlobal("Deno", {
     serve: (fn: Handler) => {
@@ -44,7 +53,7 @@ beforeAll(async () => {
     env: { get: () => undefined },
   });
   await import("../supabase/functions/analyze-fridge/index.ts");
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterAll(() => {
   vi.unstubAllGlobals();

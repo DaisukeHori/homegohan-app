@@ -13,9 +13,9 @@ import {
   useShoppingStore,
   useFormDraftStore,
   convertV4ProgressToUIFormat,
+  resumePendingGenerationAction,
   type LegacyDishDetail,
 } from './_state';
-import { isUltimateModeWeeklyMenuRequest } from "@/lib/ai/weekly-menu-request-ultimate";
 import dynamic from "next/dynamic";
 import { motion, AnimatePresence } from "framer-motion";
 import Image from "next/image";
@@ -29,7 +29,8 @@ import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
-import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa } from "@homegohan/shared";
+import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
+// isUltimateModeWeeklyMenuRequest (究極モードの生成かの判定) は、Web とモバイルで同じ基準にするため @homegohan/shared に置く (#1609)
 import { MOCK_MENU_RESPONSE, HANDSON_TOUR_CONSTANTS } from "@homegohan/handson-tour-shared";
 import remarkGfm from "remark-gfm";
 // #fix/e2e-profile-reminder-banner-chunk: chunk 404 防止のため静的 import に変更
@@ -633,6 +634,17 @@ export default function WeeklyMenuPage() {
       // UX2-12: 生成終了時は対象スロット情報もクリアする
       setGenTargetSlotKeysState(null);
     }
+  }, []);
+  // #1629: 画面に入り直して生成中の行 (GET /api/ai/menu/weekly/pending) を見つけたときの復元 (fetchPlan・checkPendingRequests)。
+  // setIsGenerating(true) (GEN_START) は進捗を null に戻すので使わない。生成中にし、進捗がまだ無いときだけ
+  // 空の進捗 (段の印だけ) を置く。すでに生成中で進捗があるとき (生成中のリロードで restoreGeneration が先に DB の進捗を置いた・
+  // キャッシュが切れたあとに同じ週へ戻った) は残す (以前は最初のポーリングが返るまでの 1 往復だけ見出しが既定の文に戻っていた)。
+  // 見分けは reducer の中で今の状態に対して行う (fetchPlan は前の描画の setGenerationProgress を握っているので、
+  // prev => prev ?? ... の形でもそこでは古い値を見て上書きしてしまう)
+  const resumePendingGeneration = useCallback((ultimateMode: boolean) => {
+    // UX2-11: 生成中にするときは setIsGenerating(true) と同じく「中止済み」ガードをリセットする
+    generationCancelledRef.current = false;
+    dispatchAiGen(resumePendingGenerationAction(ultimateMode));
   }, []);
 
   const generatingMeal = aiGen.generatingMeal;
@@ -1481,17 +1493,18 @@ export default function WeeklyMenuPage() {
             const { hasPending, requestId, status, startDate: pendingStartDate, ultimateMode: pendingUltimateMode } = data;
             if (hasPending && requestId) {
               console.log('📦 週間献立の生成中リクエストを復元:', requestId, status, 'startDate:', pendingStartDate);
-              
-              // もし生成中のリクエストの週が現在表示中の週と異なる場合、その週に遷移
-              if (pendingStartDate && pendingStartDate !== targetDate) {
-                console.log('🔄 週を切り替え:', targetDate, '->', pendingStartDate);
-                setWeekStart(new Date(pendingStartDate));
-              }
-              
-              setIsGenerating(true);
+
+              // 週は切り替えない。生成中の行の確認 (pending/route.ts) は、行の start_date が date (表示中の週の初日 = targetDate) と
+              // 違うときは hasPending: false を返す (他の週の生成中は復元しない)。ここに来るのは start_date が targetDate と同じ行か、
+              // start_date の無い行だけなので、表示中の週 (targetDate) で監視する
+              // (#1609。以前は start_date が違えば週を切り替える分岐があったが、サーバーがその行を返さないので通らなかった)
               // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)。
               // 真偽値の true のときだけ究極モード (印の無い古い行・値の無い応答は通常の生成)
-              subscribeToRequestStatus(pendingStartDate || targetDate, requestId, isUltimateModeWeeklyMenuRequest(pendingUltimateMode));
+              const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
+              // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
+              // すでに進捗があるときは上書きしない (#1629)
+              resumePendingGeneration(pendingIsUltimateMode);
+              subscribeToRequestStatus(targetDate, requestId, pendingIsUltimateMode);
               return; // 週間生成中なら他はスキップ
             } else {
               console.log('🔍 No pending weekly request found');
@@ -1958,9 +1971,12 @@ export default function WeeklyMenuPage() {
           const { hasPending, requestId, ultimateMode: pendingUltimateMode } = await pendingRes.json();
           if (hasPending && requestId) {
             // 生成中状態を復元してポーリング開始
-            setIsGenerating(true);
             // 究極モードの生成かは、pending の ultimateMode (行の generated_data.ultimateMode の判定) で決める (#1597)
-            subscribeToRequestStatus(targetDateStr, requestId, isUltimateModeWeeklyMenuRequest(pendingUltimateMode));
+            const pendingIsUltimateMode = isUltimateModeWeeklyMenuRequest(pendingUltimateMode);
+            // 生成中にし、最初の進捗が届くまでの間も段 (究極 / 通常) を合わせる (#1609。進捗が null だとカードが一瞬通常の段になる)。
+            // すでに進捗があるとき (生成中のリロード・キャッシュが切れたあとに同じ週へ戻ったとき) は上書きしない (#1629)
+            resumePendingGeneration(pendingIsUltimateMode);
+            subscribeToRequestStatus(targetDateStr, requestId, pendingIsUltimateMode);
           }
         }
 
@@ -5672,6 +5688,7 @@ export default function WeeklyMenuPage() {
           colors={colors}
           phases={generationProgress?.isUltimateMode ? ULTIMATE_PROGRESS_PHASES : PROGRESS_PHASES}
           onCancel={() => setShowConfirmCancelGeneration(true)}
+          testId="generation-progress"
         />
       ) : (
         <button

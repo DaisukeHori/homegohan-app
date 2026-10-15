@@ -13,12 +13,18 @@ const compat = new FlatCompat({
   recommendedConfig: js.configs.recommended,
 });
 
-// src/ で React 19 / Next 15 前提の API を使わせないルール (#1199) に共通の説明。
-// 禁止の理由は「動かないから」だけではない。Next 14 の App Router が同梱する React (canary) には
-// use / useOptimistic / useFormStatus が実在するが、useActionState は無く、Next 14 の params は Promise ではない
-// (#1275: use(params) が本番で 500 になった)。Next 15 / React 19 前提の書き方を持ち込まないために使わない。
-const REACT19_ONLY_API_MESSAGE =
-  "React 19 / Next 15 前提の API です。この Web アプリは Next 14 + React 18 なので、Next 15 前提の書き方を持ち込まないよう src/ では使いません (#1275: use(params) が本番で 500 になりました)。";
+/** #1621 React 19 で非推奨の import の説明 (no-restricted-imports の文言に続けて出る) */
+const REACT_DOM_TEST_UTILS_MESSAGE =
+  "React 19 で非推奨です。act は react から import してください (import { act } from 'react')。";
+const REACT_TEST_RENDERER_MESSAGE =
+  "React 19 で非推奨です。react-dom/client の createRoot と react の act で描画してください。";
+const REACT19_DEPRECATED_DYNAMIC_MESSAGE =
+  "react-dom/test-utils と react-test-renderer は React 19 で非推奨です (act は react から、描画は react-dom/client の createRoot で)。";
+/**
+ * 動的 import / require で止めるモジュール名 (esquery の正規表現。react-test-renderer の下のパスも含む)。
+ * esquery の正規表現は「/」を中に書けない (エスケープしても区切りと読む) ので、「/」は \x2F で書く
+ */
+const REACT19_DEPRECATED_MODULE_SELECTOR = "/^(?:react-dom\\x2Ftest-utils|react-test-renderer(?:\\x2F.*)?)$/";
 
 const config = [
   ...compat.extends("next/core-web-vitals"),
@@ -49,61 +55,44 @@ const config = [
     },
   },
   {
-    // Web アプリ (src/) は Next 14 + React 18。React 19 / Next 15 前提の API を使わせない (#1199)。
-    //
-    // 型検査はこれらを止めない。Next 14 の型 (next/types/index.d.ts) が react/experimental と
-    // react-dom/experimental (canary の型) を読み込むため、@types/react が 18 系でも
-    // use / useOptimistic / useActionState / useFormStatus は `npm run typecheck` を通る (実測)。
-    // 止めているのはこの ESLint ルールだけなので、冗長に見えても外さないこと
-    // (#1275: use(params) が型検査を素通りして本番で 500 になった)。この前提は
-    // tests/eslint-react19-guard.test.ts が固定している。
-    //
-    // 対象は src/** だけ。apps/mobile (Expo 53 + React 19) と、ルート直下の components/ ・ lib/ は対象外。
-    // 注意: importNames を指定すると `import * as React from 'react'` も検出される。
-    // src/ では名前付き import (import { useState } from 'react') を使う。
-    // `import React from 'react'` のあとの React.use(...) などは、下の no-restricted-properties で止める。
-    files: ["src/**/*.{ts,tsx}"],
+    // #1621: Web (React 19) で非推奨になった import を戻さない (tests/react19-deprecated-imports-guard.test.ts が検査する)。
+    //   - react-dom/test-utils: React 19 で act 以外が消え、残った act も非推奨 (呼ぶたびに警告が出る)。act は react から import する
+    //   - react-test-renderer (と react-test-renderer/shallow など): React 19 で非推奨。描画は react-dom/client の createRoot と react の act で書く
+    // モバイル (apps/mobile) は対象外: react-native の版に合わせた別のツールチェーン (jest + react-test-renderer) を持つ (#1591)。
+    // 名前付きの import・再公開に加えて、動的 import (import('…')) と require('…') も止める。
+    ignores: ["apps/mobile/**"],
     rules: {
       "no-restricted-imports": [
         "error",
         {
           paths: [
-            {
-              name: "react",
-              importNames: ["use", "useActionState", "useOptimistic"],
-              message: `${REACT19_ONLY_API_MESSAGE}名前空間 import (import * as React) も検出されるため、名前付き import にしてください。詳細は CLAUDE.md を参照 (#1199)。`,
-            },
-            {
-              name: "react-dom",
-              importNames: ["useFormStatus"],
-              message: `${REACT19_ONLY_API_MESSAGE}名前空間 import (import * as ReactDOM) も検出されるため、名前付き import にしてください。詳細は CLAUDE.md を参照 (#1199)。`,
-            },
+            { name: "react-dom/test-utils", message: REACT_DOM_TEST_UTILS_MESSAGE },
+            { name: "react-test-renderer", message: REACT_TEST_RENDERER_MESSAGE },
           ],
+          patterns: [{ group: ["react-test-renderer/*"], message: REACT_TEST_RENDERER_MESSAGE }],
         },
       ],
-      "no-restricted-properties": [
+      "no-restricted-syntax": [
         "error",
         {
-          object: "React",
-          property: "use",
-          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
+          selector: `ImportExpression > Literal.source[value=${REACT19_DEPRECATED_MODULE_SELECTOR}]`,
+          message: REACT19_DEPRECATED_DYNAMIC_MESSAGE,
         },
         {
-          object: "React",
-          property: "useActionState",
-          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
-        },
-        {
-          object: "React",
-          property: "useOptimistic",
-          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
-        },
-        {
-          object: "ReactDOM",
-          property: "useFormStatus",
-          message: `${REACT19_ONLY_API_MESSAGE}詳細は CLAUDE.md を参照 (#1199)。`,
+          selector: `CallExpression[callee.type='Identifier'][callee.name='require'] > Literal.arguments[value=${REACT19_DEPRECATED_MODULE_SELECTOR}]`,
+          message: REACT19_DEPRECATED_DYNAMIC_MESSAGE,
         },
       ],
+    },
+  },
+  {
+    // Playwright の fixture (test.extend) は、準備ができたら `await use(値)` を呼ぶ決まり。この `use` は React の
+    // フックではない。eslint-config-next 15 に入っている eslint-plugin-react-hooks 5 は、React 19 の `use` を
+    // フックとして数えるので、fixture の関数 (名前が use で始まらない) で rules-of-hooks を誤検出する (#1444)。
+    // e2e には React のコンポーネントもフックも無いので、このルールだけを外す。
+    files: ["tests/e2e/**/*.{ts,tsx}"],
+    rules: {
+      "react-hooks/rules-of-hooks": "off",
     },
   },
 ];

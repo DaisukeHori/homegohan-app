@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { TourOverlay } from '@/components/handson-tour/TourOverlay';
+import { useReducedMotion } from '@/components/handson-tour/useReducedMotion';
 import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
@@ -13,6 +14,7 @@ import {
   type SubStepOfStep3,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+import { scrollTourTargetIntoView } from '@/lib/handson-tour/scroll-target';
 
 type BadgeItem = {
   code: string;
@@ -20,8 +22,17 @@ type BadgeItem = {
   description: string;
   // /api/badges は badges の行をそのまま返す。実列は icon (icon_url という列は無い。#1306)
   icon: string | null;
-  obtained_at: string | null;
+  // 獲得済みか。/api/badges は獲得を earned (boolean) と obtainedAt (キャメルケース) で返す。
+  // 以前は応答に無い obtained_at を読んでいて、獲得済みのバッジにも「獲得済」が付かなかった (#1604。#846 の E2E で発見)
+  earned: boolean;
+  obtainedAt: string | null;
 };
+
+/**
+ * ツアー中、一覧の下に足す余白。Spotlight の対象のカードを画面の中央へスクロールできるようにする (設計書 05-step3 §7.2)。
+ * 最後の行のカードも中央まで上げられるよう、画面の高さの半分を足す。吹き出しはカードの下に出るので、その分の場所も要る
+ */
+const TOUR_SCROLL_SPACER = '50vh';
 
 function safeNickname(raw: string | null | undefined): string {
   if (!raw) return 'あなた';
@@ -83,6 +94,7 @@ export default function HandsonTourBadgesPage() {
   const [nickname, setNickname] = useState('あなた');
   const [userId, setUserId] = useState<string | null>(null);
   const mountTimeRef = useRef(Date.now());
+  const prefersReducedMotion = useReducedMotion();
 
   useEffect(() => {
     const supabase = createClient();
@@ -191,6 +203,13 @@ export default function HandsonTourBadgesPage() {
   const targetTestId = typeof rawTarget === 'string' ? rawTarget : null;
   const targetTestIds = Array.isArray(rawTarget) ? rawTarget : undefined;
 
+  // 設計書 05-step3 §7.2: Spotlight の対象のカードを画面の中へ自動でスクロールする。
+  // オーバーレイが全面にかぶさって利用者はスクロールできないので、これが無いと画面の下のカードの吹き出し ([次へ]) に届かない
+  useEffect(() => {
+    if (isLoading || !targetTestId) return;
+    scrollTourTargetIntoView(targetTestId, prefersReducedMotion);
+  }, [isLoading, targetTestId, prefersReducedMotion]);
+
   return (
     <div className="fixed inset-0 z-40 bg-white overflow-y-auto">
       {isLoading && subStep === '3.0' && (
@@ -201,7 +220,10 @@ export default function HandsonTourBadgesPage() {
       )}
 
       {!isLoading && (
-        <div className="p-6 max-w-md mx-auto">
+        <div
+          className="p-6 max-w-md mx-auto"
+          style={subStep !== '3.0' ? { paddingBottom: TOUR_SCROLL_SPACER } : undefined}
+        >
           <h1 className="text-xl font-bold text-gray-900 mb-6 text-center">
             {personalize(i18n.intro_title, { nickname })}
           </h1>
@@ -212,7 +234,7 @@ export default function HandsonTourBadgesPage() {
                 key={badge.code}
                 data-testid={`badge-card-${badge.code}`}
                 className={`flex flex-col items-center p-3 rounded-xl border-2 transition-all ${
-                  badge.obtained_at
+                  badge.earned
                     ? 'border-blue-300 bg-blue-50'
                     : badge.code === 'tutorial_complete'
                     ? 'border-gray-200 bg-gray-50 opacity-50'
@@ -225,7 +247,7 @@ export default function HandsonTourBadgesPage() {
                 <span className="text-xs text-center font-medium text-gray-700 leading-tight">
                   {badge.name}
                 </span>
-                {badge.obtained_at && (
+                {badge.earned && (
                   <span className="text-xs text-blue-600 mt-1">獲得済</span>
                 )}
               </div>

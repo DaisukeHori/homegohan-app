@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { getAiQueueWriter } from "@/lib/ai/ai-queue-writer";
 import { checkSandboxEligibility } from "@/lib/handson-tour/sandbox-eligibility";
+import { saveSandboxPhotoMeal } from "@/lib/handson-tour/sandbox-photo-meal";
 import { buildCatalogSelectionUpdate } from "../../../../lib/catalog-products";
 import { buildPhotoDishList } from "../../../../lib/meal-image";
 import { cancelPendingMealImageJobs } from "../../../../lib/meal-image-jobs";
@@ -53,7 +54,29 @@ export async function POST(request: Request) {
     if (!validation.ok) {
       return NextResponse.json(plannedMealValidationErrorBody(validation), { status: 400 });
     }
-    
+
+    // #1604: ハンズオンツアーのお試しの記録は meals (is_sandbox = true) の 1 行に入れ、user_daily_meals には書かない
+    // (設計書 09-onboarding-handson-tour 13-integration §2.7)。今日のお試しの日を作ると、同じ日の本物の記録が
+    // そこにぶら下がって集計から外れ、別の日にやり直すと uniq_user_sandbox_daily_meal で保存が必ず失敗していた。
+    // 詳しくは src/lib/handson-tour/sandbox-photo-meal.ts。
+    if (isSandbox) {
+      const dishNames: string[] = Array.isArray(dishes)
+        ? dishes
+            .map((d: unknown) => (typeof d === 'object' && d !== null ? (d as { name?: unknown }).name : null))
+            .filter((name: unknown): name is string => typeof name === 'string' && name.length > 0)
+        : [];
+      const saved = await saveSandboxPhotoMeal(supabase, user.id, {
+        mealType,
+        dishNames,
+        imageUrl: typeof imageUrl === 'string' ? imageUrl : null,
+      });
+      if (!saved.ok) {
+        console.error(`Failed to save sandbox meal (${saved.stage}):`, saved.error);
+        return NextResponse.json({ error: 'Failed to save sandbox meal' }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, sandbox: true, mealId: saved.mealId });
+    }
+
     // 1. user_daily_meals を取得または作成
     let dailyMealId: string;
     
@@ -73,7 +96,8 @@ export async function POST(request: Request) {
           user_id: user.id,
           day_date: dayDate,
           is_cheat_day: false,
-          is_sandbox: isSandbox,
+          // お試しの記録 (sandbox) は上で meals に入れて返している。ここに来るのは本物の記録だけ (#1604)
+          is_sandbox: false,
         })
         .select('id')
         .single();

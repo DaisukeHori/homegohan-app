@@ -114,7 +114,7 @@ afterEach(() => {
 
 const call = (familyId: string = FAMILY_ID) =>
   GET(new NextRequest(`http://localhost/api/operator/membership/family/${familyId}/candidates`), {
-    params: { id: familyId },
+    params: Promise.resolve({ id: familyId }),
   });
 
 describe('GET /api/operator/membership/family/[id]/candidates: メールアドレスの表示 (#1204)', () => {

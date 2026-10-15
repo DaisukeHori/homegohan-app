@@ -7,10 +7,9 @@
 //   grid-cols-4 の狭いセルで隣の食事列(朝/昼/夜)の±ボタンと水平方向に重なり、
 //   375px幅の実機で誤操作（別食事の人数が増減）を招くバグがあったため撤回した。
 
-import React from 'react';
+import React, { act } from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 
 import { ShoppingRangeModal } from '../ShoppingRangeModal';
 import { useShoppingStore, useServingsConfigStore } from '../../../_state';

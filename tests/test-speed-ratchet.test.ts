@@ -35,8 +35,12 @@ import { HEAVY_UNIT_TEST_FILES } from './helpers/heavy-unit-test-timeout';
 const ROOT = path.resolve(__dirname, '..');
 const read = (rel: string) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-/** #1501 で時間切れを延ばした、tests/helpers/local-ci-slot-test-timeout.ts を使う 2 本 */
-const SLOT_TIMEOUT_FILES = ['tests/local-ci-slot.test.ts', 'tests/local-ci-slot-consumers.test.ts'];
+/** tests/helpers/local-ci-slot-test-timeout.ts を使う 3 本 (#1501 の 2 本と #1605 の 1 本) */
+const SLOT_TIMEOUT_FILES = [
+  'tests/local-ci-slot.test.ts',
+  'tests/local-ci-slot-consumers.test.ts',
+  'tests/mobile-easignore-bundle-inputs.test.ts',
+];
 
 const timingFile = (file: string, collectDuration: number, duration: number, state = 'passed') => ({
   file,
@@ -172,9 +176,9 @@ describe('一覧 (予算を超えたファイル・時間切れを延ばした�
     expect(hasExtendedTimeout('vi.setConfig({ restoreMocks: true });')).toBe(false);
   });
 
-  it('時間切れを延ばしたファイル (heavy-unit-test-timeout.ts の一覧 16 本 + local-ci-slot 系 2 本 = 18 本。#1501 で 20 本・#1498 で 2 本を一覧から外した) は、どれも延ばしたファイルとして拾う', () => {
+  it('時間切れを延ばしたファイル (heavy-unit-test-timeout.ts の一覧 31 本 + local-ci-slot-test-timeout.ts の 3 本 = 34 本。#1501 で 20 本・#1498 で 2 本を一覧から外し、#1605 で一覧に 15 本・local-ci-slot-test-timeout.ts に 1 本足した) は、どれも延ばしたファイルとして拾う', () => {
     const extended = [...HEAVY_UNIT_TEST_FILES, ...SLOT_TIMEOUT_FILES];
-    expect(extended).toHaveLength(18);
+    expect(extended).toHaveLength(34);
     for (const file of extended) expect(hasExtendedTimeout(read(file)), file).toBe(true);
   });
 });

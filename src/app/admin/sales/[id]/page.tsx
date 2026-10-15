@@ -5,7 +5,7 @@
  * operator/03-ui-spec.md §17 準拠
  * 権限: sales, admin, super_admin
  */
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, use } from 'react';
 import { todayLocal } from '@/lib/date-utils';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -67,9 +67,10 @@ const ACTIVITY_ICONS: Record<ActivityType, string> = {
 
 const ALL_STAGES: Stage[] = ['approach', 'meeting', 'proposal', 'negotiation', 'won', 'lost'];
 
-type PageProps = { params: { id: string } };
+type PageProps = { params: Promise<{ id: string }> };
 
-export default function LeadDetailPage({ params }: PageProps) {
+export default function LeadDetailPage(props: PageProps) {
+  const params = use(props.params);
   const router = useRouter();
   const [lead, setLead] = useState<Lead | null>(null);
   const [isLoading, setIsLoading] = useState(true);

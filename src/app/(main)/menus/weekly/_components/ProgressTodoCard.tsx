@@ -13,6 +13,8 @@ interface ProgressTodoCardProps {
   defaultMessage?: string;
   /** UX2-11: 生成を中止するハンドラ。渡された場合のみ「中止する」ボタンを表示する */
   onCancel?: () => void;
+  /** カードの外枠の data-testid (e2e が週間献立の生成の進捗カードを見分けるため。#1609) */
+  testId?: string;
 }
 
 export const ProgressTodoCard = ({
@@ -21,6 +23,7 @@ export const ProgressTodoCard = ({
   phases = PROGRESS_PHASES,
   defaultMessage = 'AIが献立を生成中...',
   onCancel,
+  testId,
 }: ProgressTodoCardProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -63,6 +66,7 @@ export const ProgressTodoCard = ({
 
   return (
     <div
+      data-testid={testId}
       className="mx-3 mt-2 rounded-xl overflow-hidden cursor-pointer transition-all duration-300"
       style={{ background: isError
         ? 'linear-gradient(135deg, #ef4444 0%, #dc2626 100%)'

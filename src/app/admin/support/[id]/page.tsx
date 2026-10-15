@@ -6,7 +6,7 @@
  * 権限: support, admin, super_admin
  * 内部メモ (is_internal=true): 薄黄色背景で視覚的区別
  */
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, use } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { describeReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
@@ -57,9 +57,10 @@ const PRIORITY_COLORS: Record<string, string> = {
   urgent: 'bg-red-100 text-red-800',
 };
 
-type PageProps = { params: { id: string } };
+type PageProps = { params: Promise<{ id: string }> };
 
-export default function TicketDetailPage({ params }: PageProps) {
+export default function TicketDetailPage(props: PageProps) {
+  const params = use(props.params);
   const router = useRouter();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 

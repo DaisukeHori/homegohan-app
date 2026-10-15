@@ -19,7 +19,7 @@ import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
-type Params = { params: { id: string } };
+type Params = { params: Promise<{ id: string }> };
 
 async function handleRoleChange(request: Request, params: Params) {
   let actor;
@@ -41,7 +41,7 @@ async function handleRoleChange(request: Request, params: Params) {
     throw err;
   }
 
-  const { id } = params.params;
+  const { id } = await params.params;
 
   let body: unknown;
   try {

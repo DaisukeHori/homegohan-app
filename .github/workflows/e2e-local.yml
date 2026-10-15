@@ -73,7 +73,7 @@ jobs:
       - name: Build and start the app
         env:
           # next/font/google がビルド時に Google Fonts へ取りに行かないようにする (#1330)。
-          # GitHub Actions からだと拡張子の無いフォント URL が返ることがあり、Next.js 14 の読み込み処理が
+          # GitHub Actions からだと拡張子の無いフォント URL が返ることがあり、Next.js (14 / 15) の読み込み処理が
           # TypeError で落ちてビルドが失敗していた。e2e はフォントの見た目に依存しないので、モックで代替フォント表示にする。
           # 詳細は tests/e2e/fixtures/google-fonts-mock.cjs。本番 (Vercel) のビルドには関係しない。
           NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/tests/e2e/fixtures/google-fonts-mock.cjs
@@ -130,11 +130,13 @@ jobs:
       # 同じビルドを on でもう 1 つ別のポート (3001) に起動して確かめる (環境変数はサーバーの起動時に読まれる)。
       # 上のサーバー (3000。どちらのフラグも無し) では、既定の挙動 (お知らせも出さず、誰も止めない)・サインアップ画面・版の表示を確かめた。
       # 上のサーバーを強制ありで起動しないのは、共通のテストユーザー (同意の記録が無い) が同意画面へ回され、01 / 04 / 05 が動かなくなるため。
+      # -p と同じ値を PORT にも入れる (#1611。local-ci.sh と同じ。運営画面のサーバー側 fetch (src/lib/admin/fetch.ts) は、
+      # NEXTAUTH_URL も VERCEL_URL も無いと http://localhost:$PORT の自分自身に問い合わせる。PORT が無いと 3000 = 別のサーバーに繋がる)
       - name: Start a second app instance with LEGAL_CONSENT_ENFORCE=on (port 3001)
         env:
           LEGAL_CONSENT_ENFORCE: "on"
         run: |
-          nohup npx next start -p 3001 > /tmp/next-start-enforced.log 2>&1 &
+          PORT=3001 nohup npx next start -p 3001 > /tmp/next-start-enforced.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -s -o /dev/null http://localhost:3001/login; then break; fi
             sleep 2
@@ -156,7 +158,7 @@ jobs:
         env:
           LEGAL_CONSENT_NOTICE: "on"
         run: |
-          nohup npx next start -p 3002 > /tmp/next-start-notice.log 2>&1 &
+          PORT=3002 nohup npx next start -p 3002 > /tmp/next-start-notice.log 2>&1 &
           for i in $(seq 1 60); do
             if curl -s -o /dev/null http://localhost:3002/login; then break; fi
             sleep 2

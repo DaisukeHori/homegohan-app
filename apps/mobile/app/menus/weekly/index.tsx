@@ -38,7 +38,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, isMealType, type MealType, formatCalendarDate, todayCalendarDate, todayLocal } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, isMealType, type MealType, formatCalendarDate, todayCalendarDate, todayLocal, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
@@ -619,9 +619,10 @@ type WeeklyPendingResponse = {
  * サーバーの判定 (ultimateMode) が true のときだけ究極モード。mode (v4 / v5) では見分けない
  * (以前は mode が v4 / v5 なら究極モードとしていたので、通常の生成まで「究極モードで献立を生成中...」のカードになった)。
  * 生成を始めたときの道 (requestedUltimateRef) とは別。
+ * 判定は Web の週間献立の画面と同じ基準にするため、@homegohan/shared の isUltimateModeWeeklyMenuRequest に任せる (#1609)。
  */
 function isUltimatePendingRequest(res: Pick<WeeklyPendingResponse, "ultimateMode">): boolean {
-  return res.ultimateMode === true;
+  return isUltimateModeWeeklyMenuRequest(res.ultimateMode);
 }
 
 export default function WeeklyMenuPage() {

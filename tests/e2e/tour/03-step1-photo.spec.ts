@@ -21,6 +21,7 @@ import {
   completeStep1,
   describeBody,
   expect,
+  insertRow,
   selectRows,
   test,
 } from "./helpers";
@@ -28,6 +29,12 @@ import {
 test.use({ storageState: EMPTY_STORAGE_STATE });
 
 const HTTP_OK = 200;
+
+/** 保存の前後の時刻と、サーバーが入れた食べた時刻を比べるときの許容 (同じ機械の時計。ミリ秒の丸めの分だけ見る) */
+const CLOCK_SKEW_TOLERANCE_MS = 1_000;
+
+/** 前の日にお試しの記録をした時刻 (中断して別の日にやり直す場合の模擬) */
+const PREVIOUS_DAY_EATEN_AT = "2020-01-01T12:00:00.000Z";
 
 /** intro (1.1) が自動でカメラの段階 (1.2) へ進むのを待つ上限 (intro は 2.5 秒) */
 const INTRO_TO_CAMERA_TIMEOUT_MS = 10_000;
@@ -61,31 +68,58 @@ test.describe("Tour - Step 1: 写真追加", () => {
     await expect(page.getByTestId("tour-step-2-intro")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
   });
 
-  // 製品の既知の不具合で通らない (#846 の E2E で見つけた。直したら .fixme を外す)
-  test.fixme(
-    "Step 1: 保存の API (POST /api/meal-plans/add-from-photo) が成功し、お試しの記録 (is_sandbox = true) が DB に入る",
-    {
-      annotation: {
-        type: "fixme",
-        description:
-          "ツアーが送る本文 (MOCK_PHOTO_RESPONSE + sandbox / source) に dayDate と mealType が無く、API が 400 (mealType の検証) を返す。" +
-          "画面は失敗を無視して Step 2 へ進むので、利用者には見えない。" +
-          "お試しの記録を何として残すか (日付・食事の区分・カレンダーに出すか) は製品判断が要る。",
-      },
-    },
-    async ({ page, tourUser }) => {
-      await page.goto("/handson-tour/photo");
+  // #1604: 以前はツアーが送る本文に mealType が無く、API が 400 (mealType の検証) を返していた (#846 の E2E で発見)。
+  // 設計書 03-step1 §3.7 の決めどおり、保存した今の夕食として、お試しの記録が meals に 1 行 (is_sandbox = true) 入る。
+  // 本物の記録の日 (user_daily_meals) は作らない (同じ日の本物の記録がお試しの日にぶら下がらないように)
+  test("Step 1: 保存の API (POST /api/meal-plans/add-from-photo) が成功し、夕食のお試しの記録 (meals.is_sandbox = true) が 1 行入る", async ({
+    page,
+    tourUser,
+  }) => {
+    await page.goto("/handson-tour/photo");
 
-      const saved = await completeStep1(page);
+    const before = Date.now();
+    const saved = await completeStep1(page);
+    const after = Date.now();
 
-      expect(saved.status, describeBody(saved.body)).toBe(HTTP_OK);
-      const sandboxDays = await selectRows(
-        "user_daily_meals",
-        `user_id=eq.${tourUser.id}&is_sandbox=eq.true&select=id`,
-      );
-      expect(sandboxDays).toHaveLength(1);
-    },
-  );
+    expect(saved.status, describeBody(saved.body)).toBe(HTTP_OK);
+    const sandboxMeals = await selectRows<{ meal_type: string; memo: string | null; eaten_at: string }>(
+      "meals",
+      `user_id=eq.${tourUser.id}&is_sandbox=eq.true&select=meal_type,memo,eaten_at`,
+    );
+    expect(sandboxMeals).toHaveLength(1);
+    expect(sandboxMeals[0]).toMatchObject({ meal_type: "dinner", memo: "鶏の唐揚げ定食" });
+    // 食べた時刻はサーバーの保存した今 (ブラウザとサーバーは同じ機械の時計)
+    const eatenAt = Date.parse(sandboxMeals[0].eaten_at);
+    expect(eatenAt).toBeGreaterThanOrEqual(before - CLOCK_SKEW_TOLERANCE_MS);
+    expect(eatenAt).toBeLessThanOrEqual(after + CLOCK_SKEW_TOLERANCE_MS);
+
+    const days = await selectRows("user_daily_meals", `user_id=eq.${tourUser.id}&select=id`);
+    expect(days).toEqual([]);
+  });
+
+  // 中断した利用者は Step 0 から再開する (設計書 01-trigger-flow §7.3 / §7.4)。前の日のお試しの記録が残っていても保存は成功し、
+  // 行は増えない。以前は uniq_user_sandbox_daily_meal の一意違反で 500 になり、エラー画面から先へ進めなかった (#1604)
+  test("Step 1: 前の日のお試しの記録が残っていても、やり直しの保存は成功し、お試しの記録は 1 行のまま", async ({ page, tourUser }) => {
+    await insertRow("meals", {
+      user_id: tourUser.id,
+      eaten_at: PREVIOUS_DAY_EATEN_AT,
+      meal_type: "lunch",
+      is_sandbox: true,
+    });
+    await page.goto("/handson-tour/photo");
+
+    const saved = await completeStep1(page);
+
+    expect(saved.status, describeBody(saved.body)).toBe(HTTP_OK);
+    const sandboxMeals = await selectRows<{ meal_type: string; eaten_at: string }>(
+      "meals",
+      `user_id=eq.${tourUser.id}&is_sandbox=eq.true&select=meal_type,eaten_at`,
+    );
+    expect(sandboxMeals).toHaveLength(1);
+    expect(sandboxMeals[0].meal_type).toBe("dinner");
+    expect(Date.parse(sandboxMeals[0].eaten_at)).toBeGreaterThan(Date.parse(PREVIOUS_DAY_EATEN_AT));
+    await expect(page.getByTestId("tour-step-2-intro")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
+  });
 
   test("Step 1: meal-result-dish-name が表示される (サンドボックス固定値)", async ({ page, tourUser }) => {
     await page.goto("/handson-tour/photo");

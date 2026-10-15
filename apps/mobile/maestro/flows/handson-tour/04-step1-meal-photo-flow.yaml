@@ -2,15 +2,15 @@ appId: com.homegohan.app
 name: "Handson Tour - 04: Step 1 写真追加 → first_bite バッジ獲得 → Step 2"
 tags: ["handson-tour", "P1"]
 ---
-# シナリオ: Step 1 カメラボタン → 撮影モック → 結果表示 → 保存 → first_bite バッジ獲得 → Step 2
+# シナリオ: Step 1 intro → カメラボタン → 撮影モック → 結果表示 → 保存 → Step 2
 # 確認ポイント:
 #   - meal-camera-button が Spotlight 表示される
 #   - 撮影は sandbox モックなので自動進行 (カメラ不要)
 #   - meal-result-dish-name / meal-result-calories が表示される
-#   - meal-save-button タップ後 API 呼び出し
-#   - first_bite バッジ獲得通知 (toast または overlay)
-#   - Step 2 に遷移する
-# TODO: tour-step-1-intro / meal-analyzing-view testID 未実装。別 PR で fix
+#   - meal-save-button タップで保存の API (POST /api/meal-plans/add-from-photo) を呼び、成功してから Step 2 へ (#1625)
+#     (お試しの記録では first_bite バッジは付かない。設計書 03-step1 §3.9 / #1314)
+#   - Step 2 に遷移する (tour-step-2-intro)
+# TODO: meal-analyzing-view testID はモバイル未実装 (Web のみ)。別 PR で fix
 
 - runFlow:
     file: "../_shared/login-as-new-user.yaml"
@@ -22,12 +22,11 @@ tags: ["handson-tour", "P1"]
 - tapOn:
     id: "tour-step-0-start"
 
-# Step 1: intro 吹き出し (TODO: tour-step-1-intro testID 未実装、テキストで代替)
-- waitForAnimationToEnd:
-    timeout: 4000
-- assertVisible:
-    text: "カメラ"
-    optional: true
+# Step 1: intro 吹き出し (STEP1_INTRO_AUTO_MS = 2.5 秒で次へ進むので、待たずにすぐ探す)
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-1-intro"
+    timeout: 10000
 
 # meal-camera-button が Spotlight 表示される
 - extendedWaitUntil:
@@ -64,25 +63,8 @@ tags: ["handson-tour", "P1"]
 - tapOn:
     id: "meal-save-button"
 
-# API 呼び出し待機 (~500ms + バッジ付与)
-- waitForAnimationToEnd:
-    timeout: 5000
-
-# first_bite バッジ取得 toast/overlay 確認
-# TODO: badge-card-first_bite testID は mobile 未実装。テキストマッチで代替
-- assertVisible:
-    text: "first_bite"
-    optional: true
-- assertVisible:
-    text: "バッジ"
-    optional: true
-
-# Step 2 intro が表示される
-# TODO: tour-step-2-intro testID 未実装。別 PR で fix。暫定テキストマッチで代替
+# 保存が成功すると (失敗ならエラー画面 tour-step-1-error が出て Step 2 へは進まない。#1625) Step 2 の intro 吹き出しが出る (STEP2_INTRO_AUTO_MS = 2.5 秒で次へ進むので、待たずにすぐ探す)
 - extendedWaitUntil:
-    anyOf:
-      - visible:
-          text: "献立"
-      - visible:
-          text: "メニュー"
+    visible:
+      id: "tour-step-2-intro"
     timeout: 10000

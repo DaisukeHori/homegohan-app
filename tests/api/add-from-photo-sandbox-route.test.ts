@@ -51,8 +51,13 @@ import { POST } from '../../src/app/api/meal-plans/add-from-photo/route';
 
 // ── ヘルパー ─────────────────────────────────────────────────────────────────
 
-/** add-from-photo が user_daily_meals / planned_meals に対して行う操作の結果 */
+/**
+ * add-from-photo が触る表の結果。
+ * お試しの記録 (sandbox) は meals (is_sandbox = true) の 1 行に入り (#1604)、通常の保存は user_daily_meals / planned_meals に入る
+ */
 const photoTables: FakeSandboxDbOptions['tables'] = {
+  // お試しの行はまだ無い (select は null)。insert は新しい行の id を返す
+  meals: ({ op }) => (op === 'insert' ? { data: { id: 'sandbox-meal-1' }, error: null } : { data: null, error: null }),
   user_daily_meals: ({ op }) =>
     op === 'insert'
       ? { data: { id: 'daily-1' }, error: null }
@@ -116,15 +121,15 @@ describe('#1109: POST /api/meal-plans/add-from-photo の sandbox 適格性チェ
     expect(db.client.rpc).not.toHaveBeenCalled();
   });
 
-  it('適格ユーザーは 200 で保存でき、user_daily_meals は is_sandbox=true で作られる', async () => {
+  it('適格ユーザーは 200 で保存でき、お試しの記録は meals に is_sandbox=true で入る (user_daily_meals には書かない。#1604)', async () => {
     const db = setup();
 
     const { status, json } = await postSandbox();
 
     expect(status).toBe(200);
-    expect(json).toMatchObject({ success: true, dailyMealId: 'daily-1', mealId: 'meal-1' });
-    const dailyInsert = db.state.writes.find((w) => w.table === 'user_daily_meals' && w.op === 'insert');
-    expect(dailyInsert?.payload).toMatchObject({ user_id: USER_ID, day_date: '2026-07-10', is_sandbox: true });
+    expect(json).toEqual({ success: true, sandbox: true, mealId: 'sandbox-meal-1' });
+    expect(db.state.writes.map((w) => `${w.table}:${w.op}`)).toEqual(['meals:insert']);
+    expect(db.state.writes[0].payload).toMatchObject({ user_id: USER_ID, meal_type: 'dinner', is_sandbox: true });
   });
 
   it('user_profiles は主キー id で引く (user_id 列は存在しない) (#1109)', async () => {
@@ -229,5 +234,6 @@ describe('#1109: POST /api/meal-plans/add-from-photo の sandbox 適格性チェ
     expect(db.state.rpcCalls).toEqual([]);
     const dailyInsert = db.state.writes.find((w) => w.table === 'user_daily_meals' && w.op === 'insert');
     expect(dailyInsert?.payload).toMatchObject({ is_sandbox: false });
+    expect(db.state.writes.some((w) => w.table === 'meals')).toBe(false);
   });
 });

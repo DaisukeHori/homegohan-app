@@ -103,7 +103,7 @@ afterEach(() => {
 
 const call = (orgId: string = ORG_ID) =>
   GET(new NextRequest(`http://localhost/api/operator/membership/org/${orgId}/candidates`), {
-    params: { id: orgId },
+    params: Promise.resolve({ id: orgId }),
   });
 
 describe('GET /api/operator/membership/org/[id]/candidates: メールアドレスの表示 (#1204)', () => {
