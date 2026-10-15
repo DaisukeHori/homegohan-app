@@ -404,3 +404,43 @@ describe('POST /api/ai/menu/weekly/request — 必須の環境変数 (#1182)', (
     },
   );
 });
+
+// #1622: 本文の文字列に NULL 文字 (U+0000) があると、prompt (text) / constraints (jsonb) の insert を DB が拒んで 500 になっていた
+// (tests/e2e/w5-3-menu-gen-adversarial.spec.ts の C-12)。そのうえ insert の前に既存の献立を消していたので、消したまま戻らなかった。
+// どの項目にあっても、認証・献立の削除・行の作成の前に 400 で断る
+describe('POST /api/ai/menu/weekly/request — NULL 文字を含む本文 (#1622)', () => {
+  const NUL = '\u0000';
+
+  it.each([
+    ['note', { startDate, note: `test${NUL}injection` }],
+    ['cheatDay', { startDate, cheatDay: `土曜${NUL}` }],
+    ['familySize (文字列)', { startDate, familySize: `3${NUL}` }],
+    ['detectedIngredients の要素', { startDate, detectedIngredients: ['にんじん', `たまねぎ${NUL}`] }],
+    ['constraints の入れ子の値', { startDate, constraints: { themes: ['和食', `洋食${NUL}`] } }],
+    ['constraints のキー', { startDate, constraints: { [`key${NUL}`]: true } }],
+    ['preferences の入れ子の値', { startDate, preferences: { cookingTime: { weekday: `30${NUL}` } } }],
+    ['startDate', { startDate: `${startDate}${NUL}` }],
+  ])('%s に NULL 文字があれば、DB に触れる前に 400 で断る', async (_name, body) => {
+    const res = await POST(makeRequest(body));
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: '使用できない文字 (NULL 文字) が含まれています',
+      code: 'INVALID_CHARACTER',
+    });
+    // 認証より前で止める (既存の献立を消さない・行を作らない・Edge Function を呼ばない)
+    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(mockPlannedMealsDeleteEq).not.toHaveBeenCalled();
+    expect(mockWeeklyInsertCall).not.toHaveBeenCalled();
+    expect(mockCallGenerateMenuV4WithRetry).not.toHaveBeenCalled();
+  });
+
+  it('NULL 以外の制御文字 (Postgres の text に入る) は断らず、そのまま生成を始める', async () => {
+    const note = 'test\u0001\u0002\u0003\u001B[31m red\u001B[0m';
+    const res = await POST(makeRequest({ startDate, note }));
+
+    expect(res.status).toBe(200);
+    expect(mockWeeklyInsertCall).toHaveBeenCalledTimes(1);
+    expect(mockWeeklyInsertCall.mock.calls[0][0].prompt).toBe(note);
+  });
+});
