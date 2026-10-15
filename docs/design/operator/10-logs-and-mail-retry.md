@@ -1,7 +1,7 @@
 # operator/ 運用ログの閲覧・アラートとメール送信の送信待ち (outbox)・再試行・デッドレター (#1157 / #1193)
 
-版: v1.0 (2026-10-15 叩き台)
-改定履歴: v1.0 2026-10-15 新設 (A 型設計ゲート・叩き台)
+版: v1.1 (2026-10-15 審査 R1 の修正)
+改定履歴: v1.0 2026-10-15 新設 (A 型設計ゲート・叩き台) / v1.1 2026-10-15 R1 の指摘の修正 (409 の再試行・dead になった退会の完了メールの伏せ字・アラートの種類の型・cron の数・既存テストの追随)
 
 ## 0. 位置づけと分冊判定
 
@@ -51,7 +51,7 @@
 - 現行 (origin/main 2026-10-15。file:line はリサーチの事実):
   - `sendEmail`: `src/lib/emails/send.ts:187`。結果の型は `src/lib/emails/send-result.ts` (`SendEmailSent` / `SendEmailSkipped` / `SendEmailFailed`、`isEmailFailure`、`emailFailureReasons`)。再試行の定数 `MAX_RETRIES = 3`・`RETRY_BASE_DELAY_MS = 500` (send.ts:53-55)。停止リストの引き当て `lookupEmailSuppression` (`src/lib/emails/suppression.ts`)。
   - 呼び出し元 17 か所 (`git grep 'sendEmail('`): family/invites・family/members/[member_id]/promote・family/representative-transfer (propose・accept)・org/owner-transfer (propose・accept)・operator/membership の dissolve / transfer (family・org)・`src/lib/membership/exit-notification.ts`・`src/lib/membership/org-invite.ts`・`src/lib/account-deletion-notification.ts`・`src/lib/admin/send-ticket-reply-email.ts`・`src/app/api/cron/app-log-alerts/route.ts`。どれも `await` し、`isEmailFailure` か `emailFailureReasons` で失敗だけを記録する (本体の操作は成功のまま)。`void sendEmail` / `waitUntil(sendEmail…)` は 0 件。
-  - 急増通知: `src/app/api/cron/app-log-alerts/route.ts` (`checkScope('server' | 'client', …)`)・`src/lib/ops-alerts/app-log-error-spike.ts` (定数・判定)・`src/lib/emails/ops/app-log-error-spike.ts` (文面)・migration `20261010123500_ops_alert_state.sql` (`ops_alert_state`・`claim_ops_alert`・`release_ops_alert`・`app_log_error_counts`) と `20261011080000_app_log_error_counts_split_client.sql`。
+  - 急増通知: `src/app/api/cron/app-log-alerts/route.ts` (`checkScope('server' | 'client', …)`)・`src/lib/ops-alerts/app-log-error-spike.ts` (定数・判定。`AppLogAlertScope = 'server' | 'client'`、`APP_LOG_ALERT_COUNT_RPC` / `APP_LOG_ALERT_KEYS` は 2 キーの `Record<AppLogAlertScope, …>` で、`tests/app-log-error-counts-split-contract.test.ts` A-1 / A-2 が `toEqual` で 2 キーを確かめる)・`src/lib/emails/ops/app-log-error-spike.ts` (文面。`SCOPE_WORDING: Record<AppLogAlertScope, …>` が 2 キー)・migration `20261010123500_ops_alert_state.sql` (`ops_alert_state`・`claim_ops_alert`・`release_ops_alert`・`app_log_error_counts`) と `20261011080000_app_log_error_counts_split_client.sql`。
   - ログ閲覧: `src/app/api/super-admin/logs/route.ts`・`src/lib/super-admin/app-logs.ts` (カーソル `encodeAppLogCursor` / `decodeAppLogCursor` / `olderThanCursorFilter`、`parseAppLogsQuery`)・`src/app/super-admin/logs/page.tsx`。監査ログの記録は無い (`recordAdminAudit` の呼び出し 0 件)。
   - 監査ログのヘルパー: `src/lib/admin/audit.ts` (`recordAdminAudit`・`buildListViewDetails`)。一覧の記録の規則は `07-audit-monitoring.md` §4.1.1。
   - 退会時の伏せ字: `prepare_account_deletion` (`supabase/migrations/20261010000100_auth_users_fk_on_delete.sql:363-477`) が `email_delivery_logs.email` などを `redacted@redacted.invalid` にする。
@@ -74,7 +74,7 @@
 | R-07 | 停止リスト (`email_blacklist`) に載った宛先へは送らない (登録時・送信時の両方) | #1184 | §6.2 §6.3 |
 | R-08 | `RESEND_API_KEY` が無い環境 (開発・CI・未設定の本番) では行を作らず、現行どおり skipped を返す | send.ts の現行・テスト多数 | §6.3 |
 | R-09 | 宛先のメールアドレス・件名・本文は `app_logs`・監査ログ・運用メール・API の応答に出さない (表の中だけ) | send.ts の方針・cross/08 §16.2 | §6.2 §6.3 §9.2 |
-| R-10 | 退会した本人の記録に生のアドレスを残さない (`email_outbox` も `prepare_account_deletion` で伏せる。退会の完了メールは送信後に伏せる) | cross/08-legal-compliance.md §16.2 手順 4・6 | §5.3 |
+| R-10 | 退会した本人の記録に生のアドレスを残さない (`email_outbox` も `prepare_account_deletion` で伏せる。退会の完了メール (`redact_after_send`) は sent になったときも dead になったときも宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない) | cross/08-legal-compliance.md §16.2 手順 4・6 | §5.2 (2)(3) §5.3 §6.3 |
 | R-11 | 表は service_role だけが読み書きできる (RLS + GRANT の完全形) | ops_alert_state の権限の考え方 | §5.1 §5.2 |
 | R-12 | 送信済み・dead の行は期限で消える (sent 7 日・dead 30 日)。queued が古くなりすぎたら dead にする (7 日) | app_logs の 30 日と同じ考え方・招待の期限 7 日 | §5.2 (6) §6.2 |
 | R-13 | 届けられなかったメールがあれば、運用メールに知らせる (既存の急増通知と同じ宛先・同じ抑止) | 仕様「アラート…既存の急増通知との関係」 | §8 |
@@ -99,7 +99,7 @@
 | S-05 | ローカル開発・CI (`RESEND_API_KEY` 無し) で招待を送る | 行を作らず skipped (`not_configured`) を返す。現行のテストの挙動は変わらない |
 | S-06 | worker が 20 通のうち 5 通目の送信中に止められた (デプロイの切り替え) | 5 通目はリース (120 秒) が切れたあとの回で取り直される。同じ Idempotency-Key で送るので、1 回目が実は届いていても 2 通にならない |
 | S-07 | Vercel Cron が同じ分の worker を 2 回呼んだ | `FOR UPDATE SKIP LOCKED` で同じ行を 2 本が取らない。各行は 1 本だけが送る |
-| S-08 | 利用者が退会する | 完了メールは queued → sent のあと、宛先・件名・本文が伏せられる (`redact_after_send`)。退会の直前に、その人宛の queued の行 (古い招待など) は dead (`recipient_deleted`) になり、宛先は伏せられる。worker がその行を送っている途中 (リース中) に退会した場合は、送信が済んでも行は dead (`recipient_deleted`)・伏せ字のまま残る (記録を伏せることを優先する。通知の対象にしない) |
+| S-08 | 利用者が退会する | 完了メールは queued → sent のあと、宛先・件名・本文が伏せられる (`redact_after_send`)。退会の直前に、その人宛の queued の行 (古い招待など) は dead (`recipient_deleted`) になり、宛先は伏せられる。worker がその行を送っている途中 (リース中) に退会した場合は、送信が済んでも行は dead (`recipient_deleted`)・伏せ字のまま残る (記録を伏せることを優先する。通知の対象にしない)。完了メールが届けられずに dead になった場合も、その時点で宛先・件名・本文が伏せられ、再送はできない (画面は「宛先を伏せた行は再送できません」) |
 | S-09 | Resend の鍵が 10 日間ずっと無効だった (再試行を使い切る前に鍵の期限で 401 が続く) | 6 回で dead。`RESEND_API_KEY` を直して再送できる。再送しても作成から 7 日を超えた queued は `expired` で dead (招待のリンクも期限切れ) |
 | S-10 | 運用メールの宛先 `OPS_ALERT_EMAIL` が停止リストに載った状態で、エラーが急増する | `sendEmail` は suppressed を返すが、cron は権利を返さない (60 分の抑止が効く)。15 分ごとの繰り返しにならない。画面に dead (`suppressed`・template `ops_app_log_error_spike`) が残る |
 | S-11 | super_admin が画面で dead の 1 行を「再送」する | 行は queued (attempts 0・requeue_count +1) になり、次の worker が送る。`admin_audit_logs` に `super_admin.email_outbox.requeue` が 1 行 |
@@ -149,11 +149,11 @@ flowchart LR
 | S-03 | worker: Resend 403 `validation_error` (statusCode 403 → retryable false) → `fail_email_outbox(retryable=false)` → dead (attempts 1・dead_at)。app-log-alerts (≤ 15 分後): `email_outbox_dead_counts(15)` → 1 件 ≥ 1 → `claim_ops_alert('email_dead_letter', 60)` → `sendEmail(運用メール)` → queued → worker が送る (ドメイン未検証なら、この運用メールも dead になるが、template が `ops_` で始まるので数えない)。super_admin: ドメイン検証後に画面で再送 → `requeue_email_outbox` → queued (attempts 0) → sent | 一致 |
 | S-04 | `sendEmail`: 停止リスト suppressed → INSERT (status dead, last_error_code 'suppressed', attempts 0, dead_at now) → 現行と同じ `suppressed` の失敗を返す。`email_outbox_dead_counts` は `last_error_code = 'suppressed'` を除くので通知しない | 一致 |
 | S-05 | `sendEmail`: 鍵なし → INSERT せず skipped (`not_configured`) | 一致 (現行の挙動) |
-| S-06 | claim で `lease_expires_at = now + 120 秒`・`worker_id`。5 通目の途中で停止 → 行は queued のまま lease 内。次の分の worker は lease が切れるまで取らない → 2 分後の回で取り直し → 同じ `idempotency_key` で Resend へ → Resend は 24 時間同じキーを覚え、1 回目が届いていれば同じ結果を返す | 一致 |
+| S-06 | claim で `lease_expires_at = now + 120 秒`・`worker_id`。5 通目の途中で停止 → 行は queued のまま lease 内。次の分の worker は lease が切れるまで取らない → 2 分後の回で取り直し → 同じ `idempotency_key` で Resend へ → Resend は 24 時間同じキーを覚え、1 回目が届いていれば同じ結果を返す。1 回目の要求がまだ Resend の中で処理中なら 409 `concurrent_idempotent_requests` が返る → `isRetryableResendError` が true (現行の send.ts と同じ) → `fail_email_outbox(retryable=true)` → queued・次の回で同じキーを送り直し、1 回目の結果を受け取って sent (dead にしない) | 一致 |
 | S-07 | 2 本の claim が同時: `FOR UPDATE SKIP LOCKED` で行の集合が重ならない。complete / fail は `worker_id` の一致を条件にするので、もう片方の更新は 0 行 | 一致 |
-| S-08 | 退会: `prepare_account_deletion` が `email_outbox` の本人の行 (user_id または宛先一致) を伏せ、queued は dead (`recipient_deleted`) にする → deleteUser → `notifyAccountDeleted` → `sendEmail(…, { redactAfterSend: true })` → queued (redact_after_send true) → worker が sent にするとき `complete_email_outbox` が宛先・件名・本文を伏せる。競合: worker が本人宛の行を claim して Resend を呼んでいる間に `prepare_account_deletion` が走ると、行は dead (`recipient_deleted`)・`worker_id NULL`・伏せ字になる → Resend が受け付けても `complete_email_outbox` は `worker_id` と `status = 'queued'` のガードで 0 行 (false) → worker は sent に数えず warn (失敗なら `fail_email_outbox` が 'ignored') → 行は dead (`recipient_deleted`) のまま。`email_outbox_dead_counts` は `recipient_deleted` を数えないので通知しない | 一致 |
+| S-08 | 退会: `prepare_account_deletion` が `email_outbox` の本人の行 (user_id または宛先一致) を伏せ、queued は dead (`recipient_deleted`) にする → deleteUser → `notifyAccountDeleted` → `sendEmail(…, { redactAfterSend: true })` → queued (redact_after_send true) → worker が sent にするとき `complete_email_outbox` が宛先・件名・本文を伏せる。届けられずに dead になるとき (非 retryable・回数切れ・expired・worker 側の suppressed) は `fail_email_outbox` が同じく伏せる → `requeue_email_outbox` は 'redacted' (再送できない)。登録時に停止リストに当たったときは `sendEmail` が行を作らない (suppressed を返すだけ)。競合: worker が本人宛の行を claim して Resend を呼んでいる間に `prepare_account_deletion` が走ると、行は dead (`recipient_deleted`)・`worker_id NULL`・伏せ字になる → Resend が受け付けても `complete_email_outbox` は `worker_id` と `status = 'queued'` のガードで 0 行 (false) → worker は sent に数えず warn (失敗なら `fail_email_outbox` が 'ignored') → 行は dead (`recipient_deleted`) のまま。`email_outbox_dead_counts` は `recipient_deleted` を数えないので通知しない | 一致 |
 | S-09 | 401 (`invalid_api_key`) は statusCode 401 → retryable false → 1 回で dead。鍵を直して再送 → queued → worker: `created_at` が 7 日より前なら `fail(expired, retryable=false)` → dead (`expired`) | 一致 (S-09 の後半は「再送できる」期待に対し、7 日を超えた行は expired。運営は招待を出し直す。画面にその旨を出す §9.2) |
-| S-10 | app-log-alerts: 権利を取る → `sendEmail` → suppressed の失敗 → `releaseClaim` を**呼ばない** (§8.3 の規則: 返すのは skipped と outbox_failed のときだけ) → `send_failed` を返し warn。次の回は deduped | 一致 |
+| S-10 | app-log-alerts: 権利を取る → `sendEmail` → suppressed の失敗 → `releaseClaim` を**呼ばない** (§8.3 の規則: 返さないのは suppressed と invalid_envelope のときだけ。それ以外の ok:false は現行どおり返す) → `send_failed` を返し warn。次の回は deduped | 一致 |
 | S-11 | POST requeue: `requireRole(['super_admin'])` → `isUuid` → service role で行を 1 件読む (template・status・user_id) → 無ければ 404 → `requeue_email_outbox(id)` → 'requeued' → `recordAdminAudit({ actionType: 'super_admin.email_outbox.requeue', … })` (user-scoped client) → 200 | 一致 |
 | S-12 | GET logs?q=timeout: `parseAppLogsQuery` が q を検証 → `.or(buildMessageSearchFilter(q))` → 行あり → `recordAdminAudit({ actionType: 'super_admin.app_logs.list', details: buildListViewDetails({ q, level, … }, page.length, null) })` → 200。admin: `requireRole` が 403 → 記録なし | 一致 |
 | S-13 | 1 時間で 40 行が dead。app-log-alerts は 15 分ごとに 4 回動く: 1 回目 claim OK → 1 通。2〜4 回目は claim NULL → deduped。文面は template ごとの件数 (上位 10) + 合計 + リンク | 一致 |
@@ -173,7 +173,7 @@ Vercel Cron を選び pg_cron → `net.http_post` を選ばない理由: Resend 
 
 ## 5. データモデル (migration。正典)
 
-ファイル: `supabase/migrations/<番号はマージ時に確定>_email_outbox.sql` と対の `supabase/rollbacks/<同じ番号>_email_outbox.down.sql`。番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-15 時点 `20261015170000`) より大きい値にする。適用後に `database.types.ts` を 2 か所 (`src/types/` と `packages/shared/src/`) で作り直す (`tests/database-types-migrations-contract.test.ts` の手順)。
+ファイル: `supabase/migrations/<番号はマージ時に確定>_email_outbox.sql` と対の `supabase/rollbacks/<同じ番号>_email_outbox.down.sql`。番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-15 時点 `20261015180000_meal_image_jobs_pickup_cron.sql`) より大きい値にする。適用後に `database.types.ts` を 2 か所 (`src/types/` と `packages/shared/src/`) で作り直す (`tests/database-types-migrations-contract.test.ts` の手順)。
 
 ### 5.1 表 `email_outbox`
 
@@ -204,7 +204,7 @@ CREATE TABLE IF NOT EXISTS public.email_outbox (
   user_id            UUID        REFERENCES auth.users (id) ON DELETE SET NULL,
   -- Resend の Idempotency-Key。再試行・再送でも同じ値 (1 回目が届いていても 2 通にならない)
   idempotency_key    TEXT        NOT NULL CHECK (char_length(idempotency_key) BETWEEN 1 AND 256),
-  -- true なら、送れたときに宛先・件名・本文を伏せる (退会の完了メール。cross/08 §16.2 手順 6)
+  -- true なら、送れたとき (sent) と届けられなかったとき (dead) に宛先・件名・本文を伏せる (退会の完了メール。cross/08 §16.2 手順 6)
   redact_after_send  BOOLEAN     NOT NULL DEFAULT false,
   attempts           INTEGER     NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   requeue_count      INTEGER     NOT NULL DEFAULT 0 CHECK (requeue_count >= 0),
@@ -317,7 +317,8 @@ BEGIN
 END $$;
 
 -- (3) 送れなかった。再試行するか dead にするかを DB で決める。戻り値は新しい status ('queued' / 'dead')、
---     行が無い・worker が違う・queued でないときは 'ignored'
+--     行が無い・worker が違う・queued でないときは 'ignored'。
+--     dead にする行が redact_after_send (退会の完了メール) なら、宛先・件名・本文を伏せる (R-10。再送は 'redacted' で断られる)
 CREATE OR REPLACE FUNCTION public.fail_email_outbox(
   p_id                  UUID,
   p_worker_id           TEXT,
@@ -330,6 +331,8 @@ CREATE OR REPLACE FUNCTION public.fail_email_outbox(
 ) RETURNS TEXT
 LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$
 DECLARE
+  c_masked_email CONSTANT pg_catalog.text := 'redacted@redacted.invalid';
+  c_masked_text  CONSTANT pg_catalog.text := '[redacted]';
   v_status TEXT;
 BEGIN
   IF p_max_attempts IS NULL OR p_max_attempts < 1 OR p_max_attempts > 20 THEN
@@ -338,6 +341,10 @@ BEGIN
   IF p_retry_after_seconds IS NULL OR p_retry_after_seconds < 1 OR p_retry_after_seconds > 604800 THEN
     RAISE EXCEPTION 'fail_email_outbox: invalid retry_after' USING ERRCODE = '22023';
   END IF;
+  -- NULL だと status (dead) と伏せ字の判定 (伏せない) が食い違うので受け付けない
+  IF p_retryable IS NULL THEN
+    RAISE EXCEPTION 'fail_email_outbox: invalid retryable' USING ERRCODE = '22023';
+  END IF;
   UPDATE public.email_outbox AS o
      SET attempts = o.attempts + 1,
          status   = CASE WHEN p_retryable AND o.attempts + 1 < p_max_attempts THEN 'queued' ELSE 'dead' END,
@@ -345,6 +352,15 @@ BEGIN
          next_attempt_at = CASE WHEN p_retryable AND o.attempts + 1 < p_max_attempts
                                 THEN pg_catalog.now() + pg_catalog.make_interval(secs => p_retry_after_seconds)
                                 ELSE o.next_attempt_at END,
+         -- 下の 4 列: dead にする (再試行しない) ときだけ、redact_after_send の行を伏せる。SET の右辺の o.* は更新前の値
+         to_email  = CASE WHEN o.redact_after_send AND NOT (p_retryable AND o.attempts + 1 < p_max_attempts)
+                          THEN c_masked_email ELSE o.to_email END,
+         subject   = CASE WHEN o.redact_after_send AND NOT (p_retryable AND o.attempts + 1 < p_max_attempts)
+                          THEN c_masked_text ELSE o.subject END,
+         text_body = CASE WHEN o.redact_after_send AND NOT (p_retryable AND o.attempts + 1 < p_max_attempts)
+                          THEN c_masked_text ELSE o.text_body END,
+         html_body = CASE WHEN o.redact_after_send AND NOT (p_retryable AND o.attempts + 1 < p_max_attempts)
+                          THEN NULL ELSE o.html_body END,
          last_error_code    = pg_catalog.left(p_error_code, 100),
          last_error_message = pg_catalog.left(p_error_message, 500),
          last_status_code   = p_status_code,
@@ -468,7 +484,7 @@ GRANT EXECUTE ON FUNCTION public.cleanup_email_outbox() TO service_role;
 
 リース中 (worker が送っている途中) の queued も同じく dead にし、`worker_id` / `lease_expires_at` を消す。その worker のあとの `complete_email_outbox` / `fail_email_outbox` は `worker_id` と `status = 'queued'` のガードで 0 行になり、送信が実際に済んでいても行は dead (`recipient_deleted`)・伏せ字のまま残る (§7.3。退会した人の記録を伏せることを、送信済みの記録より優先する)。
 
-退会の完了メール (`src/lib/account-deletion-notification.ts`) はこの関数の**あと**に `sendEmail(…, { redactAfterSend: true })` で登録するので、ここでは触れない。送れたときに `complete_email_outbox` が伏せる (§5.2 (2))。
+退会の完了メール (`src/lib/account-deletion-notification.ts`) はこの関数の**あと**に `sendEmail(…, { redactAfterSend: true })` で登録するので、ここでは触れない。送れたときは `complete_email_outbox` が (§5.2 (2))、届けられずに dead になるときは `fail_email_outbox` が (§5.2 (3)) 伏せる。登録の時点で宛先が停止リストに載っていたら、`sendEmail` は行を作らない (§6.3)。
 
 ### 5.4 pg_cron の登録 (同じ migration の末尾)
 
@@ -498,7 +514,7 @@ GRANT EXECUTE ON FUNCTION public.cleanup_email_outbox() TO service_role;
 
 ### 6.2 `src/lib/emails/outbox.ts` (新設・純粋な処理。型検査の対象)
 
-`maskEmailAddress` / `redactEmailAddresses` と、再試行の対象の判定 (`QUOTA_ERROR_CODES` / `RETRYABLE_ERROR_CODES` / `isRetryableResendError`) は `send.ts` からここへ**逐語で移す** (send.ts は `maskEmailAddress` を `./outbox` から再エクスポートし、既存の import 先 `@/lib/emails/send` を保つ。循環 import を作らないため、このファイルは `send.ts` を import しない)。
+`maskEmailAddress` / `redactEmailAddresses` と、再試行の対象の判定 (`QUOTA_ERROR_CODES` / `RETRYABLE_ERROR_CODES` / `isRetryableResendError`) は `send.ts` からここへ**判定の中身を変えずに移す** (下の正典のコードが移したあとの形。数値の 429 / 500 は名前付きの定数にし、409 `concurrent_idempotent_requests` の分岐も残す。現行の `src/__tests__/lib/emails/send.test.ts` の再試行の判定の it はそのまま outbox.test.ts へ移って緑のまま) (send.ts は `maskEmailAddress` を `./outbox` から再エクスポートし、既存の import 先 `@/lib/emails/send` を保つ。循環 import を作らないため、このファイルは `send.ts` を import しない)。
 
 ```ts
 /**
@@ -635,11 +651,18 @@ const RETRYABLE_ERROR_CODES: ReadonlySet<string> = new Set([
 interface ResendErrorLike { name?: string; message?: string; statusCode?: number | null }
 const HTTP_TOO_MANY_REQUESTS = 429;
 const HTTP_SERVER_ERROR_MIN = 500;
+/** 409 のうち、同じ Idempotency-Key の要求が Resend の中でまだ処理中のもの。待てば直る (リース切れの取り直しで起きうる) */
+const CONCURRENT_IDEMPOTENT_REQUESTS = 'concurrent_idempotent_requests';
+/** 再試行すれば直る見込みのある失敗か (429 / 5xx / 409 の処理中 / 通信エラー)。400 / 401 / 403 / 422 などは false */
 export function isRetryableResendError(error: ResendErrorLike): boolean {
   const code = error.name ?? '';
   if (QUOTA_ERROR_CODES.has(code)) return false;
   const status = error.statusCode;
-  if (typeof status === 'number') return status === HTTP_TOO_MANY_REQUESTS || status >= HTTP_SERVER_ERROR_MIN;
+  // 数値が返っているときはステータスで判断する。409 のうち、同じキーの要求が処理中のものだけは待てば直る (send.ts の現行と同じ)
+  if (typeof status === 'number') {
+    return status === HTTP_TOO_MANY_REQUESTS || status >= HTTP_SERVER_ERROR_MIN || code === CONCURRENT_IDEMPOTENT_REQUESTS;
+  }
+  // statusCode が null (または無い) のときは名前で判断する
   return RETRYABLE_ERROR_CODES.has(code);
 }
 export function createResendTransport(apiKey: string): EmailTransport {
@@ -917,7 +940,7 @@ export async function GET(req: Request) {
 | ファイル | 変更 |
 |---|---|
 | `src/lib/admin/send-ticket-reply-email.ts` | `email_delivery_logs` への INSERT (114 行付近) を**消す** (送信の記録は `email_outbox`)。`sendEmail(envelope, { userId: ticket.user_id })` と `userId` を渡す。`TICKET_REPLY_EMAIL_TEMPLATE` は文面の `template` の名前として残す。結果の `sent` は「受け付けた」の意味 (JSDoc を直す) |
-| `src/lib/account-deletion-notification.ts` | `sendEmail(renderAccountDeletedEmail(…), { redactAfterSend: true })`。`userId` は渡さない (削除後。現行の理由のまま)。冒頭コメントの「email_delivery_logs には書かない」を「email_outbox には送れたあと伏せた形でだけ残る」に直す |
+| `src/lib/account-deletion-notification.ts` | `sendEmail(renderAccountDeletedEmail(…), { redactAfterSend: true })`。`userId` は渡さない (削除後。現行の理由のまま)。冒頭コメントの「email_delivery_logs には書かない」を「email_outbox には、送れたあと・届けられなかったあとは伏せた形でだけ残る (宛先が停止リストに載っていれば行を作らない)」に直す |
 | `src/app/api/cron/app-log-alerts/route.ts` | §8 (3 つ目の種類の追加と、権利を返す条件の変更)。`email_id: result.id` のログのキーは `outbox_id` に |
 
 `src/lib/membership/exit-notification.ts` は `recipientId` を知っているので `{ userId: recipientId }` を渡してよいが、必須ではない (本書は「変えない」側に数える。実装者が渡すなら段 B で、テストも一緒に)。
@@ -1102,7 +1125,7 @@ export const EMAIL_OUTBOX_LIST_STATUSES = ['queued', 'sent', 'dead'] as const;
 export type EmailOutboxListStatus = (typeof EMAIL_OUTBOX_LIST_STATUSES)[number];
 export const EMAIL_OUTBOX_DEFAULT_LIMIT = 50;
 export const EMAIL_OUTBOX_MAX_LIMIT = 200;
-/** prepare_account_deletion / complete_email_outbox が入れる伏せ字 (SQL の c_masked_email と同じ値) */
+/** prepare_account_deletion / complete_email_outbox / fail_email_outbox が入れる伏せ字 (SQL の c_masked_email と同じ値。tests/email-outbox-migration-contract.test.ts が突き合わせる) */
 export const EMAIL_OUTBOX_REDACTED_EMAIL = 'redacted@redacted.invalid';
 /** API が返す last_error_message の上限 (DB は 500 文字。画面の 1 行に収める) */
 export const EMAIL_OUTBOX_ERROR_MESSAGE_MAX_CHARS = 200;
