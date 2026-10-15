@@ -762,8 +762,12 @@ async function insertKeyedMeals(): Promise<{
   };
 }
 
-/** 'YYYY-MM-DD' に日数を足す (UTC の暦日で計算する。実行環境のタイムゾーンに依らない) */
+/**
+ * 固定の暦日 'YYYY-MM-DD' に日数を足す (暦の足し算だけ。今日は使わず、実行環境のタイムゾーンに依らないよう UTC の部品で組み立てる)
+ */
 function addDays(date: string, days: number): string {
   const [y, m, d] = date.split('-').map(Number);
-  return new Date(Date.UTC(y, m - 1, d + days)).toISOString().slice(0, 10);
+  const shifted = new Date(Date.UTC(y, m - 1, d + days));
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
