@@ -48,6 +48,7 @@ export type WeekViewAction =
   | { type: 'WEEK_START_DAY_LOADED'; payload: { weekStartDay: WeekStartDay; weekStart: Date } }
   | { type: 'HOLIDAYS_SET'; payload: Record<string, string> }
   | { type: 'DISPLAY_MONTH_SET'; payload: Date }
+  | { type: 'DISPLAY_MONTH_SHIFT'; payload: number }
   | { type: 'CALENDAR_TOGGLE' }
   | { type: 'CALENDAR_MEAL_DATES_SET'; payload: Set<string> }
   | { type: 'CALENDAR_MEAL_DATES_MERGE'; payload: Set<string> }
@@ -135,6 +136,15 @@ export function weekViewReducer(
 
     case 'DISPLAY_MONTH_SET':
       return { ...state, displayMonth: action.payload };
+
+    // #1663: 今の表示月から payload か月動かした月の 1 日にする (前月 = -1・次月 = 1)。
+    // 呼び出し側 (月カレンダーの前月・次月のボタン) が握った描画の時点の表示月ではなく、今の状態から解決する
+    // (以前は setDisplayMonth(prev => …) の関数形で、prev をその setter を握った描画の時点の値で解決していた。#1644 と同じ型の芽)
+    case 'DISPLAY_MONTH_SHIFT':
+      return {
+        ...state,
+        displayMonth: new Date(state.displayMonth.getFullYear(), state.displayMonth.getMonth() + action.payload, 1),
+      };
 
     case 'CALENDAR_TOGGLE':
       return { ...state, isCalendarExpanded: !state.isCalendarExpanded };
