@@ -329,7 +329,7 @@
 | live / processing | worker の取り置き (取り直し。関数が途中で死んだ行) | live / processing | `alert_claimed_at < now - 10 分` (ほかは上の行と同じ) | `alert_claimed_at = now` |
 | live / processing | 判定 → 送信 (必要なら) → `finishLoginAlert` | live / done | — | `device_family` / `is_new_*` / `alert_sent_at` (送れたとき) |
 | live / processing | 例外 → RPC `release_login_alert` (§11.4) | live / pending (`alert_attempts + 1`) または done (`alert_attempts + 1 >= 3`) | `alert_status = 'processing'` の行だけ (ほかは変えない) | `alert_claimed_at = NULL`・ログ |
-| ended / pending | worker の取り置き (同じ RPC) | ended / processing | live / pending の行と同じ (`revoked_at` を見ない)。この状態に来るのは、作成から 15 秒以内に終わったログイン (S-5・S-29・§8 の行 24)、パスワードの変更・再設定・MFA で GoTrue が消した他の端末の `pending` の行 (§8 の行 12・13・16)、取り置きの前に失効・放置の終了・照合で終わった行 | `alert_claimed_at = now` |
+| ended / pending | worker の取り置き (同じ RPC) | ended / processing | live / pending の行と同じ (`revoked_at` を見ない)。この状態に来るのは、作成から 15 秒以内に終わったログイン (S-29・§8 の行 24)、パスワードの変更・再設定・MFA で GoTrue が消した他の端末の `pending` の行 (§8 の行 12・13・16)、取り置きの前に失効・放置の終了・照合で終わった行 | `alert_claimed_at = now` |
 | ended / processing | worker の取り置き (取り直し) | ended / processing | live / processing の取り直しの行と同じ | `alert_claimed_at = now` |
 | ended / processing | 判定 → 送信 (必要なら) → `finishLoginAlert` | ended / done | — (判定・メールの文は live の行と同じ。終わったログインにも知らせる §7.1) | live / processing の完了の行と同じ |
 | ended / processing | 例外 → RPC `release_login_alert` | ended / pending (`alert_attempts + 1`) または ended / done (`alert_attempts + 1 >= 3`) | live / processing の戻しの行と同じ | 同じ |
