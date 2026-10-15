@@ -693,7 +693,7 @@ Web は Next.js App Router(`src/app/(main)/handson-tour/`)、Mobile は Expo Rou
 |---|---|---|---|
 | `V4GenerateModal` | Web (`src/components/ai-assistant/V4GenerateModal.tsx` 556 行) + Mobile (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行) | `mode='sandbox'` prop 追加 (両方独立実装、§99 §1.2 Q9 確定) | family/09 §04, §13 |
 | `BadgesPage` | Web (`src/app/(main)/badges/page.tsx` 294 行) + Mobile (`apps/mobile/app/badges/index.tsx` 109 行) | `tutorialMode` prop 追加 + `badge-card-{code}` 動的 testID。Mobile は機能差(フィルタ/ハイライト/アニメ簡素)があるため Mobile 側にハイライト演出も追加 (§99 §1.2 Q10 確定) | family/09 §05 |
-| meals/new ルート | Web + Mobile | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 表示、保存時に `body.sandbox=true` で family/02 §15.5.1 を呼ぶ | family/09 §03 |
+| meals/new ルート | Web (Mobile のネイティブの `app/meals/new.tsx` は 2026-10-15 に削除。#1598。Mobile のツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 表示、保存時に `body.sandbox=true` で family/02 §15.5.1 を呼ぶ | family/09 §03 |
 | menus/weekly | Web + Mobile | 同上、family/02 §15.5.2 連携 | family/09 §04 |
 
 既存画面 `data-testid="badge-card"` を `badge-card-{code}` に動的化する互換戦略は §99 Q25(open)で議論中、Phase 1 着手は block しない。

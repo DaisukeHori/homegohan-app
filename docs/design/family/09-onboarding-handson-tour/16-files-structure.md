@@ -70,9 +70,15 @@
 | `apps/mobile/src/handson-tour/useTourOverlayLogic.ts` | 130 |
 | `apps/mobile/src/handson-tour/useReducedMotion.ts` | 30 |
 | `apps/mobile/src/handson-tour/index.ts` | 20 |
+| `apps/mobile/src/handson-tour/useLeaveTour.ts` (Step 1〜3 を途中で抜ける。#1642) | 82 |
+| `apps/mobile/src/handson-tour/tour-platform.ts` (analytics の platform を端末から取る。#1642) | 32 |
+| `apps/mobile/src/handson-tour/safe-nickname.ts` (呼びかけの名前。#1635) | 13 |
+| `apps/mobile/src/handson-tour/photo-save-failure.ts` (Step 1 の保存の失敗の読み方。#1625) | 64 |
+| `apps/mobile/src/handson-tour/menu-tour-profile.ts` (Step 2 の 2.6 の吹き出しに差し込むプロフィールの取得。#1660) | 74 |
+| `apps/mobile/src/handson-tour/tour-bubbles.ts` (Step 2 / Step 3 の吹き出しの文の組み立て。#1660) | 115 |
 | `apps/mobile/src/contexts/TourContext.tsx` | 80 |
 
-合計: ~1740 行
+合計: ~1740 行 (設計時の見積もり。あとから足した 6 ファイル (`useLeaveTour.ts`・`tour-platform.ts`・`safe-nickname.ts`・`photo-save-failure.ts`・`menu-tour-profile.ts`・`tour-bubbles.ts`。行数は #1659 で書き足した時点の実数) は、この合計と §1.8・§3・§4 の数に入れていない。`apps/mobile/src/handson-tour/` にファイルを足したら、この表と §5 (ディレクトリ全体図) の木の両方に書き足す (`tests/handson-tour-files-structure-doc.test.ts` が確かめる))
 
 ### 1.4 API 実装
 
@@ -157,8 +163,8 @@
 
 | ファイル | 変更内容 | +行 / -行 |
 |---|---|---|
-| `apps/mobile/app/meals/new.tsx` | sandbox prop 対応 (`MealNewScreenSandbox` 分岐実装) | +120 / -5 |
-| `src/app/(main)/meals/new/page.tsx` | 同上 | +120 / -5 |
+| ~~`apps/mobile/app/meals/new.tsx`~~ | (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) | ~~+120 / -5~~ |
+| `src/app/(main)/meals/new/page.tsx` | sandbox prop 対応 (`MealNewScreenSandbox` 分岐実装) | +120 / -5 |
 | `src/components/ai-assistant/V4GenerateModal.tsx` | sandbox prop + initialFlags + testID 追加 | +150 / -5 |
 | Mobile 版 V4GenerateModal (要確認) | 同上 | +150 / -5 |
 | `src/app/(main)/badges/page.tsx` | tutorial-mode + highlight + 動的 testID | +60 / -10 |
@@ -189,7 +195,7 @@
 | `tests/e2e/badges/*.spec.ts` | 同上 | +15 / -10 |
 | `src/__tests__/onboarding/complete.test.ts` | next_route snapshot 更新 | +10 / -5 |
 
-合計既存変更: +約 1460 行 / -約 86 行
+合計既存変更: +約 1460 行 / -約 86 行 (設計時の見積もり。2026-10-15 に削除した `apps/mobile/app/meals/new.tsx` の行の見積もりを含む)
 
 ---
 
@@ -215,7 +221,7 @@
 | P2-A | Web UI コア | Web 実装の §1.2 全部 | +1530 |
 | P2-B | Mobile UI コア | Mobile 実装の §1.3 全部 | +1740 |
 | P3-A | Web 既存画面 sandbox | meals/new + V4Modal + badges + onboarding 等 | +600 |
-| P3-B | Mobile 既存画面 sandbox | 同上 (mobile) | +600 |
+| P3-B | Mobile 既存画面 sandbox | V4Modal + badges + onboarding 等 (mobile。Step 1 の sandbox の画面は `app/handson-tour/photo.tsx` が持つ。`app/meals/new.tsx` は 2026-10-15 に削除。#1598) | +600 |
 | P4 | a11y + Analytics | 既存ファイルへの a11y 属性追加 + analytics fire | +400 |
 | P5 | E2E テスト | テストセクション | +2400 |
 | **合計 8 PR** | | | **+8855 行** |
@@ -291,14 +297,13 @@ homegohan/
 │   │   ├── handson-tour/             ← NEW
 │   │   │   ├── _layout.tsx
 │   │   │   ├── index.tsx                  (Step 0)
-│   │   │   ├── photo.tsx
+│   │   │   ├── photo.tsx                  (Step 1。sandbox の画面もここに持つ)
 │   │   │   ├── menu.tsx
 │   │   │   ├── badges.tsx
 │   │   │   └── graduate.tsx
 │   │   ├── (tabs)/
 │   │   │   ├── home.tsx                   ← MODIFIED
 │   │   │   └── settings.tsx               ← MODIFIED
-│   │   ├── meals/new.tsx                  ← MODIFIED
 │   │   └── onboarding/index.tsx           ← MODIFIED
 │   ├── src/
 │   │   ├── handson-tour/                  ← NEW
@@ -309,6 +314,12 @@ homegohan/
 │   │   │   ├── Confetti.tsx
 │   │   │   ├── useTourOverlayLogic.ts
 │   │   │   ├── useReducedMotion.ts
+│   │   │   ├── useLeaveTour.ts
+│   │   │   ├── tour-platform.ts
+│   │   │   ├── safe-nickname.ts
+│   │   │   ├── photo-save-failure.ts
+│   │   │   ├── menu-tour-profile.ts
+│   │   │   ├── tour-bubbles.ts
 │   │   │   └── index.ts
 │   │   └── contexts/
 │   │       └── TourContext.tsx            ← NEW

@@ -1033,12 +1033,18 @@ CREATE POLICY meals_delete_owner ON meals
 ```
 
 ### 4.1 ペースト RPC
+正は `supabase/migrations/` のうち `paste_meal_to_family` を最後に定義する migration (今は `20261015110000_paste_meal_reject_missing_source.sql`)。下の SQL はその関数の定義と権限をそのまま写したもの。`tests/paste-meal-design-doc-canon.test.ts` が、コメントを除いて migration と一致することと、ここに書いた migration の名前が最後に定義する migration であることを確かめる (関数を作り直す migration を足したら、ここも写し直す)。
+- 持ち主の確認は `IF NOT FOUND OR v_source.user_id IS DISTINCT FROM auth.uid()`。元の行が無いとき (`v_source` の列がすべて NULL) も、他人の行と同じ `NOT_MEAL_OWNER` で断る (#1634。持ち主でない人に、その id の行が在るかどうかを教えない)。`v_source.user_id <> auth.uid()` の形は、元の行が無いと NULL になって確認をすり抜け、家族の側に 1 行も写らないのに監査の行が書かれ、新しい `paste_group_id` が返っていた
+- 確認の順は 持ち主 (`NOT_MEAL_OWNER`) → 隠した食事 (`MEAL_HIDDEN`) → お試しの記録 (`MEAL_SANDBOX`) → 自分の家族への所属 (`NOT_IN_FAMILY`) → 貼り付けの先 (`TARGET_NOT_IN_FAMILY`)。貼り付けの先の確認より前の 4 つは、家族の側に行を作る前・元の行の `paste_group_id` を書く前・監査の行を書く前にある。貼り付けの先の確認はループの中 (元の行の `paste_group_id` と、前の人の分の行を書いたあと) にあるが、例外で関数の呼び出し全体が取り消されるので、どれで断っても書いたものは残らない
+- API (`POST /api/meals/paste`) での返し方は `02-flow-spec.md` §12
+
 ```sql
-CREATE OR REPLACE FUNCTION public.paste_meal_to_family(
-  p_source_meal_id UUID,
-  p_target_user_ids UUID[]
-) RETURNS UUID  -- paste_group_id
-LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$
+CREATE OR REPLACE FUNCTION public.paste_meal_to_family(p_source_meal_id uuid, p_target_user_ids uuid[])
+RETURNS uuid
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
 DECLARE
   v_source meals;
   v_paste_group_id UUID;
@@ -1050,17 +1056,18 @@ BEGIN
   END IF;
 
   SELECT * INTO v_source FROM meals WHERE id = p_source_meal_id;
-  IF v_source.user_id <> auth.uid() THEN
+  -- #1634: 元の行が無いとき (NOT FOUND) も断る。v_source の列が NULL だと「NULL <> auth.uid()」は真にならず、確認をすり抜けていた。
+  -- 元の行が無いときと他人の行のときは同じ NOT_MEAL_OWNER (持ち主でない人に、その id の行が在るかどうかを教えない)
+  IF NOT FOUND OR v_source.user_id IS DISTINCT FROM auth.uid() THEN
     RAISE EXCEPTION 'NOT_MEAL_OWNER' USING ERRCODE = 'P0001';
   END IF;
 
-  -- #1101: 運営が隠した食事 (hidden_at IS NOT NULL) は貼り付けの元にできない (migration 20261009000500)
+  -- #1101: 運営が隠した食事は、貼り付けの元にできない (写した新しい行は隠れていないので、隠した内容を家族に見せ直せてしまう)
   IF v_source.hidden_at IS NOT NULL THEN
     RAISE EXCEPTION 'MEAL_HIDDEN' USING ERRCODE = 'P0001';
   END IF;
 
-  -- #1627: ハンズオンのお試しの記録 (is_sandbox = true) は貼り付けの元にできない (migration 20261015100000)。
-  -- 写した行は is_sandbox を写さない (= false) ので、家族の側で本物の記録になってしまうため
+  -- #1627: ハンズオンのお試しの記録は、貼り付けの元にできない (写した新しい行は is_sandbox = false になり、家族の側で本物の記録になってしまう)
   IF v_source.is_sandbox THEN
     RAISE EXCEPTION 'MEAL_SANDBOX' USING ERRCODE = 'P0001';
   END IF;
@@ -1078,7 +1085,7 @@ BEGIN
   END IF;
 
   FOREACH v_target IN ARRAY p_target_user_ids LOOP
-    -- target が同 family のメンバか検証
+    -- target が同 family の active なメンバか検証
     IF NOT EXISTS (
       SELECT 1 FROM family_members
       WHERE family_id = v_caller_family_id AND user_id = v_target AND status = 'active'
@@ -1086,16 +1093,29 @@ BEGIN
       RAISE EXCEPTION 'TARGET_NOT_IN_FAMILY' USING ERRCODE = 'P0001';
     END IF;
 
-    INSERT INTO meals (user_id, paste_group_id, /* ...全カラム... */)
-    SELECT v_target, v_paste_group_id, /* 同じ値 */
+    INSERT INTO meals (
+      user_id, paste_group_id, eaten_at, meal_type, photo_url, memo
+    )
+    SELECT
+      v_target, v_paste_group_id, eaten_at, meal_type, photo_url, memo
     FROM meals WHERE id = p_source_meal_id;
   END LOOP;
+
+  -- 監査ログ (paste_executed)。断ったとき (上の RAISE) は、ここまで来ないので何も書かない
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, metadata)
+  VALUES ('family', v_caller_family_id, 'paste_executed', auth.uid(),
+          jsonb_build_object('source_meal_id', p_source_meal_id,
+                             'paste_group_id', v_paste_group_id,
+                             'target_count', array_length(p_target_user_ids, 1)));
 
   RETURN v_paste_group_id;
 END $$;
 
-REVOKE EXECUTE ON FUNCTION public.paste_meal_to_family FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.paste_meal_to_family TO authenticated;
+ALTER FUNCTION public.paste_meal_to_family(uuid, uuid[]) OWNER TO postgres;
+
+REVOKE ALL ON FUNCTION public.paste_meal_to_family(uuid, uuid[]) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.paste_meal_to_family(uuid, uuid[]) TO authenticated;
+GRANT EXECUTE ON FUNCTION public.paste_meal_to_family(uuid, uuid[]) TO service_role;
 ```
 
 ### 4.2 ペースト Zod
