@@ -960,7 +960,10 @@ acquire_slot() {
 }
 
 # slot_containers / slot_volumes: この枠の project_id のラベル (Supabase CLI が付ける) のコンテナ ID / ボリュームの名前を
-# 空白区切りで出す。docker が失敗したら終了コードを非 0 にする
+# 空白区切りで出す。docker が失敗したら終了コードを非 0 にする。
+#   -a: 止まっただけのコンテナも数える (prune の衝突で残るのは止まったコンテナ。-a が無いと「何も残っていない」に見える)
+#   -q: 名前 (ID) だけを出す (見出しや列が混ざると、それを ID と取り違える)
+#   --no-trunc: 省いていない ID を出す (控えた ID とあとで取った ID を突き合わせ、docker rm に渡すので、取り違えの無い完全な ID にする)
 slot_containers() {
   local out
   out="$(docker ps -aq --no-trunc --filter "label=com.supabase.cli.project=$SLOT_PROJECT_ID" 2>/dev/null)" || return 1
@@ -1020,7 +1023,8 @@ own_stack_only() {
 
 # clear_own_stack: この枠 (1 以上) に残ったもののうち、この実行が控えたものだけを消し、何も残っていないことを確かめる。
 # 消すのは「いまこの枠の project_id のラベルが付いていて、かつ控えたもの」だけ (ほかの枠・ほかの project・控えていないものには触らない)。
-# コンテナを先に消す (ボリュームはコンテナが使っている間は消せない)。何も残っていなければ真。
+# コンテナを先に消す (ボリュームはコンテナが使っている間は消せない)。docker rm は -f で打つ (stop が止める前に失敗して
+# 動いたまま残ったコンテナも消す)。何も残っていなければ真。
 # 残っていれば OWN_STACK_NOTE に理由を書いて偽
 clear_own_stack() {
   local c v x mine_c="" mine_v="" foreign=""

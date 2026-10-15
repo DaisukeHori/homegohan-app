@@ -349,7 +349,9 @@ ensure_work_matches_slot() {
 # CLI のエラーは stderr に出るため、stderr だけを画面に流しつつファイルにも残して判定する (stdout はそのまま)
 stop_with_retry() {
   local err status attempt=1
-  err="$(mktemp)"
+  # 置き場は TMPDIR (無ければ /tmp) に明示する (macOS の mktemp は引数が無いと TMPDIR を見ないので、Linux と同じ場所にそろえる)。
+  # 終わったら消す (テストは TMPDIR を差し替えて、残っていないことを確かめる)
+  err="$(mktemp "${TMPDIR:-/tmp}/supabase-local-stop.XXXXXX")"
   while :; do
     status=0
     { cli stop --no-backup 2>&1 1>&3 | tee "$err" >&2; } 3>&1 || status=$?
