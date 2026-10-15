@@ -137,7 +137,7 @@
 | S-26 | 攻撃者 (利用者は 120 日使っていない。最後のセッションは 30 日で終わり、その 90 日後に行は消えた) | ログイン | prior は空。アカウントは 90 日より前に作られている → `history_expired` (新しい端末として扱う) でメール |
 | S-27 | モバイルの利用者 | アプリの「パスワードを忘れた？」→ メールのリンク (implicit: GoTrue の `GET /verify` がセッションを作り、フラグメントで返す → 再設定の画面 `reset-password.tsx:48` の `setSession`) → 再設定の画面で新しいパスワード | `POST /api/auth/password/reset` (Bearer だけ) → `amr` に 60 分以内の `otp` → 照合 → GoTrue の `PUT /user` を Bearer の JWT で → 200 → 既存の `signOutWithCleanup` |
 | S-28 | Google / Apple だけでログインしている利用者 (パスワード無し) | 「パスワードを忘れた」→ 再設定メールのリンク → 新しいパスワード | 200 (最初のパスワードを作る。いまの `updateUser` と同じ)。`auth_password_check` は再設定 (`p_current_password` = NULL) ではパスワードが無くても `no_password` を返さず、履歴 (空) とだけ比べて `ok` (§11.5)。トリガーが `password_history` に 1 行を残す |
-| S-29 | 攻撃者 (パスワードを盗んだ) | ログインして、作成から 15 秒以内にログアウトする | 行は `revoked_at` が入った ended / `pending` のまま。worker は終わった行も取り置いて判定し (`revoked_at` を見ない §10)、端末の種類が本人の履歴に無ければメール |
+| S-29 | 攻撃者 (パスワードを盗んだ) | ログインして、作成から 15 秒以内にログアウトする | 行は `revoked_at` が入った ended / `pending` のまま。worker は終わった行も取り置いて判定し (`revoked_at` を見ない §10)、端末の種類が本人の履歴に無いか不明な端末ならメール (§10.1) |
 | S-30 | 新規の利用者 (`user_profiles` の行がまだ無い) | 同意・初期設定の前に「パスワードを忘れた」から再設定する / アプリで初めてログインする | 再設定は 200 (`requireSessionUser` は行を要さない §12.4)。アプリの `PATCH /api/auth/sessions/current` も 200 で、最初のセッションの行に端末名が入る。どちらも `requireUser` の 401 にならない |
 | S-31 | 攻撃者 (パスワードを盗んだ) | ログイン直後、判定の前に `PATCH /api/auth/sessions/current` で `device_name` に「あなたの iPhone 15 Pro」や URL を書く | 日本語・`:`・`/` などの使えない文字を含むので 400 `VALIDATION_ERROR` (使える文字は英数字・空白・`()._,+-` §12.5)。英数字だけの名前 (例 `iPhone 15 Pro`) は書けるが、メールの「端末」は UA から決まる言葉 (`deviceLabelOf`) だけで端末名は載らない (§13.4)。一覧では UA の言葉を見出しにし、端末名は「端末名: …」として添えるだけ (§15) |
 | S-32 | 利用者 (Web・前にもログインしたことがある) | `/api/auth/login` でログインしたが、route の文脈の記録 (`recordWebLoginContext`) が DB の一時的な失敗で書けなかった | ログインは成功する (§13.5)。行は `context_source='auth'`・UA `node` (端末の種類 `other/server` = 不明な端末) のまま。worker は不明な端末を新しい端末として判定し、本人に「端末: 不明な端末」のメールが 1 通 (送る側に倒す §10.1 の行 5) |
@@ -210,7 +210,7 @@
 | S-26 | 同上。`listPriorLogins` は 0 件 (終わった行は 90 日で消えた) → `accountOf` の `createdAt` は 90 日より前 | `decideLoginAlert`: prior 空・アカウントの年齢 > 90 日 → `history_expired` (`isNewDevice` = true。端末の種類が分からなくても同じ §10.1 の行 3) → `send` | メール 1 通 (§10.1 の行 2) |
 | S-27 | メールのリンクを開いたブラウザ → GoTrue の `GET /verify` (implicit の枝) が `auth.sessions` に INSERT (トリガー: UA / IP はリンクを開いたブラウザのもの・`amr` `otp`。§8 の行 27) → `homegohan://auth/reset-password#access_token=…` → `reset-password.tsx` の `useEffect` が `setSession` (`:48`。GoTrue が作った行を端末に保管するだけで INSERT しない。SIGNED_IN → `registerDeviceName` が端末名を書く) → 再設定の画面の `onSubmit` → `getApi().post('/api/auth/password/reset')` (Bearer) → `requireSessionUser` (中の `readSessionAuth` が Bearer の JWT を読む。`amr` `otp`) → `hasRecentRecoveryMethod` = true → RPC → `'ok'` → `updatePasswordWithAccessToken(Bearer の JWT, new, null)` → 200 | 画面は既存の `signOutWithCleanup` | 変更される |
 | S-28 | 再設定のリンク → `POST /api/auth/password/reset` → `requireSessionUser` → `hasRecentRecoveryMethod` = true → RPC `auth_password_check(uid, NULL, new, 3)`: `encrypted_password` が空だが `p_current_password` が NULL なので `no_password` を返さず、履歴 (0 行) と比べて `'ok'` → `updatePasswordWithAccessToken` → GoTrue が `encrypted_password` を書く → `on_auth_user_password_changed` が 1 行 | 200 → ページの全端末のログアウト (既存) | 最初のパスワードができる |
-| S-29 | GoTrue INSERT (`pending`) → 15 秒以内に `signOut` → DELETE トリガー (`revoked_at`・`signed_out`。`alert_status` は `pending` のまま) → 次の回の `claim_login_alerts` (`revoked_at` を見ない) が取る → `decideLoginAlert` → 新しい端末の種類なら `send` → `finishLoginAlert` | ended / `pending` → ended / `processing` → ended / `done` (§10 の ended の行) | メール 1 通 |
+| S-29 | GoTrue INSERT (`pending`) → 15 秒以内に `signOut` → DELETE トリガー (`revoked_at`・`signed_out`。`alert_status` は `pending` のまま) → 次の回の `claim_login_alerts` (`revoked_at` を見ない) が取る → `decideLoginAlert` → 新しい端末の種類 (不明な端末を含む) なら `send` → `finishLoginAlert` | ended / `pending` → ended / `processing` → ended / `done` (§10 の ended の行) | メール 1 通 |
 | S-30 | 再設定: `requireSessionUser` → `getUser` は本人・`user_profiles` は 0 行 (`maybeSingle` の `data` が null) → roles = [] で通す → 以下 S-14 と同じ (`generations` = 3)。アプリ: SIGNED_IN → `registerDeviceName` → `PATCH sessions/current` → `requireSessionUser` (同じく行無しで通す) → `setCurrentDeviceName` | `requireUser` を通らないので `AUTH_PROFILE_NOT_FOUND` (401) にならない | 200 |
 | S-31 | `PATCH sessions/current` → `DeviceNameBodySchema` の `DEVICE_NAME_PATTERN` に合わない → 400。英数字だけなら 200 で書ける → worker の `send` には `deviceLabelOf(family)` だけを渡す (`LoginAlertRow` は `device_name` を持たない §13.3) | メールの「端末」は UA の言葉 | 一覧では見出し = UA の言葉、端末名は添え書き |
 | S-32 | `/api/auth/login` → `signIn` (GoTrue INSERT → トリガー: UA `node`・`context_source='auth'`) → `recordWebLoginContext` が `false` (または例外を §13.5 の try が握る) → `warn` → 200 (`signed-in`) | worker: `deviceFamilyOf('node')` = `other/server` → prior が 1 件以上 → 不明な端末は既知にしない → `new_device` → `send` (端末: 不明な端末・国の行は無し) | メール 1 通。ログインは成功のまま |
@@ -1558,7 +1558,7 @@ export async function updatePasswordWithAccessToken(
   currentPassword: string | null,
   fetchImpl: FetchLike = fetch,
 ): Promise<UpdatePasswordOutcome> {
-  const body = currentPassword === null ? { password: newPassword } : { password: newPassword, current_password: currentPassword };
+  const requestBody = currentPassword === null ? { password: newPassword } : { password: newPassword, current_password: currentPassword };
   const response = await fetchImpl(`${getSupabaseUrl()}${GOTRUE_USER_PATH}`, {
     method: 'PUT',
     headers: {
@@ -1567,7 +1567,7 @@ export async function updatePasswordWithAccessToken(
       'Content-Type': 'application/json',
       [GOTRUE_API_VERSION_HEADER]: GOTRUE_API_VERSION,
     },
-    body: JSON.stringify(body),
+    body: JSON.stringify(requestBody),
     cache: 'no-store',
   });
   if (response.ok) return { error: null };
