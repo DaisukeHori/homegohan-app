@@ -2,6 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
 import { isAccountFrozen, isFrozenAllowedApiPath } from '@/lib/auth/frozen'
+import { isPushTokenClaimApiPath } from '@/lib/push-tokens'
 import {
   isMaintenanceExemptPath,
   isMaintenanceFlagOn,
@@ -217,7 +218,13 @@ export async function updateSession(request: NextRequest) {
 
           // #1445: 退会と個人データの書き出し (FROZEN_ALLOWED_API_PATHS) だけは、凍結中でも止めない。
           // 凍結の画面 (/frozen/account) から本人が退会・書き出しをできるようにするため。ほかの /api は今までどおり 403
-          if (apiFrozen && !isFrozenAllowedApiPath(request.nextUrl.pathname)) {
+          // #1636: 通知のトークンの claim (isPushTokenClaimApiPath) も止めない。利用者の操作ではなく端末の後片付け
+          // (同じ端末の前の利用者の行を外す) で、止めると前の利用者宛ての通知がこの端末に届き続けるため
+          if (
+            apiFrozen &&
+            !isFrozenAllowedApiPath(request.nextUrl.pathname) &&
+            !isPushTokenClaimApiPath(request.nextUrl.pathname)
+          ) {
             return NextResponse.json(
               { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
               { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
