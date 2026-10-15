@@ -521,7 +521,7 @@ apps/mobile/
 | `apps/mobile/src/components/menu/V4GenerateModal.tsx` (642 行) | `mode='sandbox'` prop 対応 + sandbox 用 props 受信(§99 §1.2 Q9) |
 | `apps/mobile/app/badges/index.tsx` (109 行) | `tutorialMode` prop + `badge-card-{code}` 動的 testID + ハイライト演出追加(§99 §1.2 Q10) |
 | `apps/mobile/app/(tabs)/settings.tsx` 等の settings 画面 | 「使い方ガイドをもう一度見る」行追加(family/03 §11.6) |
-| `apps/mobile/app/meals/new.tsx`(新規 or 既存改修) | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 連動 |
+| ~~`apps/mobile/app/meals/new.tsx`~~ | (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) |
 | `apps/mobile/src/lib/posthog.ts`(新規) | `posthog-react-native` 初期化(operator/07 §15.1) |
 
 ### 12.5 共通 package との連携

@@ -553,7 +553,7 @@ describe('unregisterExpoPushToken — #1038 F7-10', () => {
     expect(setHeader).toHaveBeenCalledWith('Authorization', 'Bearer saved-access-token');
   });
 
-  it('アクセストークンを渡さなければ、ヘッダーは足さない (いまのセッションで認可される。設定画面・マイページのログアウト)', async () => {
+  it('アクセストークンを渡さなければ、ヘッダーは足さない (いまのセッションで認可される。設定画面のログアウト)', async () => {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, 'ExponentPushToken[this-device]');
     const { setHeader } = setupDelete();
 
