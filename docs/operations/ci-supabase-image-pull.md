@@ -8,6 +8,7 @@ CI のいくつかのジョブは、Supabase CLI でローカルの Supabase を
 |---|---|
 | `scripts/supabase-local.sh start` (security-regression・e2e-local・`scripts/local-ci.sh`) | イメージの取得に失敗したら、取得元を `public.ecr.aws` → `ghcr.io` の順に替えてやり直す。どちらでも失敗したら、間を空けて (30 秒 × 周) 次の周に入る (既定 3 周) |
 | `scripts/supabase-image-fallback.sh` (Deploy Supabase Migrations の「Verify db diff (post-apply)」・Daily Consistency Check の db diff) | 同じ。周のあとの待ちは 60 秒 × 周 |
+| Deploy Supabase Functions の「Deploy all functions」(#1686) | イメージを取らない。`supabase functions deploy --use-api --import-map supabase/functions/deno.json` で、関数のまとめ (バンドル) を Supabase のサーバーにさせ、ランナーの Docker を使わない (下の「関数のデプロイ」) |
 
 - 取得元の切り替えには、Supabase CLI の環境変数 `SUPABASE_INTERNAL_IMAGE_REGISTRY` を使います (CLI 2.62.10 の `internal/utils/docker.go` の `GetRegistry`。`docker.io` 以外を指定すると `<取得元>/supabase/<イメージ名>:<版>` を取ります)。Supabase は同じイメージを `ghcr.io/supabase/` にも置いています (2026-10-15 に、CLI 2.62.10 と `supabase/.temp` の版で使うイメージがすべて `ghcr.io` にあることを確かめました)。
 - CLI 自身も、1 回の取得の中で 2 回やり直します (4 秒・8 秒待つ)。
@@ -32,6 +33,7 @@ CI のいくつかのジョブは、Supabase CLI でローカルの Supabase を
 | Deploy Supabase Migrations (PR) | 「Verify db diff (post-apply)」で赤。Step Summary に「db diff を確かめられませんでした (Docker イメージの取得の失敗。検査の赤ではない)」 | 失敗したジョブだけを流し直す。migration を含む PR のマージは、この確かめが緑になってから |
 | Deploy Supabase Migrations (main への push) | 同じ。赤のまま (下を参照) | 前の「Apply migrations」「Verify migration list」が success なら、本番への適用は終わっている。時間をおいて、**その時点の最新の main の run** の失敗したジョブを流し直し、db diff が緑になることを確かめる |
 | Daily Consistency Check (db-drift) | Issue に「本番のスキーマとの比較 (db diff) を、Docker イメージを取得できずに確かめられませんでした」と書く | 時間をおいて、この workflow を手で実行し直す (workflow_dispatch) |
+| Deploy Supabase Functions (main への push) | `--use-api` ではイメージを取らないので、ふつうは起きない。起きたら「Deploy all functions」で赤になり、`[image-pull-unavailable] Deploy all functions: ...` と終了コード 75 で出す (CLI が Docker でのまとめに戻ったということ)。後ろの削除・確認の手順は動かない | ワークフローの CLI の版と `--use-api` を確かめる。直したら、その時点の最新の main の run の失敗したジョブを流し直す (下の「関数のデプロイ」) |
 
 ### main の「Verify db diff (post-apply)」を赤のままにする理由
 
@@ -54,10 +56,36 @@ CI のいくつかのジョブは、Supabase CLI でローカルの Supabase を
 - `scripts/supabase-local.sh` の `reset` と `verify` は取得元を切り替えません。ローカルで ECR の上限に当たったときは、`SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io bash scripts/supabase-local.sh reset` のように指定して打ってください。
 - 取得元を替えると、同じイメージが別の名前 (`ghcr.io/supabase/...`) でもう 1 つ取得されます。ローカルの機械では、既定の順 (`public.ecr.aws` が先) のままにしておけば、取得済みのイメージをそのまま使います。
 
+## 関数のデプロイ (#1686)
+
+`supabase functions deploy` は、`--use-api` を付けないと、Docker の edge-runtime のイメージ (`public.ecr.aws/supabase/edge-runtime`) を取ってランナーの上で関数をまとめます。2026-10-15 に、このイメージの取得が ECR の上限で落ち、`calculate-segment-stats` の新しい版がデプロイされませんでした。上の取得元の切り替え (#1523) は `supabase start` と db diff の経路にしか効いていませんでした。
+
+いまの「Deploy all functions」は次の形です。
+
+```bash
+npx --yes supabase@2.62.10 functions deploy --use-api --import-map supabase/functions/deno.json --project-ref <ref>
+```
+
+- `--use-api`: 関数のまとめを Supabase のサーバーにさせます。CLI 2.62.10 では、このフラグのとき Docker を使いません (`cmd/functions.go`・`internal/functions/deploy/deploy.go` の `Run`)。イメージの取得が無くなるので、ECR の上限に当たりません。
+- `--import-map supabase/functions/deno.json`: `--use-api` のとき CLI が関数ごとに送るのは、入口のファイル・そこから相対パスの import でたどれるファイル・import map だけです (`pkg/function/deploy.go` の `writeForm`)。共通の `supabase/functions/deno.json` は関数のディレクトリの外にあるので、指定しないと送られず、`zod` などの deno.json の名前が解決できません。Docker でまとめていたときは、Deno が上のディレクトリの `deno.json` を見つけていました。
+- 関数ごとの `verify_jwt` (`supabase/config.toml`) の読み方は変わりません (`GetFunctionConfig` は同じ)。
+- CLI のたどり方は正規表現で import の行を探すだけなので、書き方によっては相対パスの import を拾えず、そのファイルが送られません (例: `import type {` で改行する複数行の import)。`tests/edge-function-deploy-use-api.test.ts` が、CLI と同じたどり方で送るファイルを数え、TypeScript の構文解析で拾った import と突き合わせます (PR の `npm test` で赤になる)。
+
+失敗したときの出し方:
+
+| 失敗 | ログ・注記 | 終了コード | すること |
+|---|---|---|---|
+| Docker のイメージの取得の失敗 (`failed to pull docker image`・`toomanyrequests`) | `[image-pull-unavailable] Deploy all functions: ...`、注記の題「Deploy all functions: イメージを取得できない (関数のデプロイの赤ではない)」、Step Summary | 75 | `--use-api` では起きないはず。CLI の版やフラグが変わっていないかを確かめ、直してから流し直す |
+| デプロイそのものの失敗 (API の 4xx / 5xx・時間切れ・まとめの失敗など) | 注記の題「Deploy all functions: 関数のデプロイが失敗した」、Step Summary。CLI のエラーはその上のログ | CLI の終了コード | ログの CLI のエラーを確かめる。一過性 (API の時間切れ・5xx) なら流し直す。まとめの失敗 (import が解決できないなど) は関数のコードを直す |
+
+- 流し直すのは、**その時点の最新の main の run** の失敗したジョブ (Re-run failed jobs) か、main を指定した手での実行 (workflow_dispatch) です。デプロイは関数ごとの上書きなので、2 回打っても同じ結果になります。古い run を流し直すと、古い版の関数で本番を上書きします。
+- デプロイが赤なら、後ろの「Delete functions not in the repository」「Verify deployment」は動きません (本番の関数は消しません)。
+- 本番への確かめは、デプロイの後の「Verify deployment」(`supabase functions list`) と、本番の関数の版 (ダッシュボードの Functions) で行います。PR の CI ではデプロイしません。
+
 ## まだ備えていないところ
 
-次のものも同じ取得元からイメージを取りますが、この備えは入れていません (手で動かす workflow か、本番に書き込む段のため)。上限に当たったときは、時間をおいて流し直してください。
+次のものも同じ取得元 (`public.ecr.aws`) からイメージを取りますが、この備えは入れていません (手で動かす workflow・本番に書き込む段・手元の道具のため)。上限に当たったときは、時間をおいて流し直すか、`SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io` を付けて打ってください (`docker run` で名前を直書きしたものには効きません)。
 
 - `supabase db dump` (Prod Schema Snapshot・Migration Drift Inspect・Migration Repair)、Prod Schema Snapshot の `docker run public.ecr.aws/supabase/postgres`
 - Migration Drift Inspect の `supabase db diff` (失敗しても `|| true` で続け、結果を artifact に残すだけ)
-- Deploy Supabase Edge Functions の `supabase functions deploy` (既定で Docker の edge-runtime イメージで関数をまとめる)
+- 手元の道具: `bash scripts/supabase-local.sh verify` と `scripts/baseline/drift_report.sh` の `docker run public.ecr.aws/supabase/postgres` (スタックを `ghcr.io` から起動していると、`public.ecr.aws` の名前のイメージを別に取りに行く)、`npm run types:supabase` (`supabase gen types --local` は postgres-meta のイメージを取る)

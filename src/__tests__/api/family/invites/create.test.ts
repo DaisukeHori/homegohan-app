@@ -366,6 +366,41 @@ describe('POST /api/family/invites: 招待者のプロフィールの読み取�
   });
 });
 
+describe('POST /api/family/invites: 招待者名に仮置きの Guest を使わない (#1649)', () => {
+  function profileWithNickname(nickname: string) {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'user_profiles') return chain({ data: { family_id: familyId, nickname }, error: null });
+      if (table === 'family_groups') return chain({ data: { name: '山田家' }, error: null });
+      throw new Error(`unexpected table: ${table}`);
+    });
+  }
+
+  it.each(['Guest', ' Guest ', '   '])('nickname が %j なら、招待者名はログイン中のメールアドレス (Guest を載せない)', async (nickname) => {
+    profileWithNickname(nickname);
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    const envelope = mockSendEmail.mock.calls[0][0] as { subject: string; text: string };
+    expect(envelope.text).toContain(`${user.email} 様からほめゴハンの家族グループ「山田家」`);
+    expect(`${envelope.subject}\n${envelope.text}`).not.toContain('Guest');
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    ['花子', '花子'],
+  ])('nickname が %j (本人が付けた名前) なら、そのまま招待者名にする', async (nickname, expected) => {
+    profileWithNickname(nickname);
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    const envelope = mockSendEmail.mock.calls[0][0] as { text: string };
+    expect(envelope.text).toContain(`${expected} 様からほめゴハンの家族グループ「山田家」`);
+  });
+});
+
 // enforce_membership_daily_cap が RAISE する RATE_LIMITED を、PostgREST が RPC のエラーとして返した形
 const dbRateLimitedError = (overrides: Record<string, unknown> = {}) => ({
   data: null,

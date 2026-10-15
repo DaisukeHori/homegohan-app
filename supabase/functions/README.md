@@ -67,11 +67,13 @@ main へ push → GitHub Actions → Supabase Functions デプロイ
 
 ```bash
 # 全関数をデプロイ
-supabase functions deploy --project-ref flmeolcfutuwwbjmzyoz
+supabase functions deploy --use-api --import-map supabase/functions/deno.json --project-ref flmeolcfutuwwbjmzyoz
 
 # 特定の関数のみデプロイ
-supabase functions deploy <function-name> --project-ref flmeolcfutuwwbjmzyoz
+supabase functions deploy <function-name> --use-api --import-map supabase/functions/deno.json --project-ref flmeolcfutuwwbjmzyoz
 ```
+
+リポジトリの根で打ちます。`--use-api` は関数のまとめ (バンドル) を Supabase のサーバーにさせ、手元の Docker を使いません (GitHub Actions も同じ形。#1686)。付けないと Docker の edge-runtime のイメージを `public.ecr.aws` から取ってまとめるため、ECR の上限 (`toomanyrequests`) で落ちることがあります。`--use-api` のときは、共通の `supabase/functions/deno.json` を `--import-map` で指定しないとサーバーに送られず、`zod` などの名前が解決できません。詳しくは `docs/operations/ci-supabase-image-pull.md` の「関数のデプロイ」。
 
 `--no-verify-jwt` は付けません。付けると、指定したすべての関数でゲートウェイの JWT 検証が外れます。関数ごとの設定は `supabase/config.toml` から読まれます（下の「ゲートウェイの JWT 検証（verify_jwt）」）。
 
@@ -83,13 +85,15 @@ Supabase のゲートウェイは、既定で `Authorization: Bearer` が JWT �
 
 `config.toml` には、空行・行全体のコメント・`[functions.<name>]` の見出し・その下の `verify_jwt = true` / `verify_jwt = false` の行だけを書きます（ほかの行が 1 行でもあるとテストが赤になります。ほかの表が要るようになったら、その行が `verify_jwt` に触れないことを確かめてから、テストの許す形を広げてください）。`verify_jwt` を環境変数（`SUPABASE_FUNCTIONS_<NAME>_VERIFY_JWT`）で上書きすることもしません（CLI はこれも読むので、デプロイのワークフローに書くとテストが赤にします）。
 
-`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。DB からの呼び出し先は、SQL を読んで推し量らず、テストの `DB_HTTP_CALL_SITES` に SQL のファイルごとに宣言してあります（いまは `public.invoke_catalog_import` と `public.invoke_calculate_segment_stats` を定義するファイル）。テストは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の生の文字列で、HTTP の呼び出しらしい箇所（`net.http_post(` などの呼び出しと、URL の `/functions/v1/`。コメントや文字列の中も数えます）をファイルごとに数え、宣言の数と合わなければ赤にします。DB から Edge Function を呼ぶ migration を足すと、どう書いても（Vault の `project_url` に `/functions/v1/<name>` を足す形でも）赤になるので、呼び先と数を `DB_HTTP_CALL_SITES` に宣言し、呼び先の関数を `verify_jwt = false`（先頭で `requireServiceRole`）にしてください。宣言した呼び先がそのファイルに書かれていないときや、宣言したファイルに `'app_cron_secret'` と `'Bearer '` が無いときも赤になります（呼び出しでない箇所が当たったときは、宣言で数を合わせず、書き方を変えてください）。
+`verify_jwt = false` にしてよいのは、先頭で自前の認証（`requireServiceRole` / `requireAuth` / `auth.getUser`）をする関数だけです。`tests/edge-function-verify-jwt.test.ts` が、`config.toml` の一覧と関数の先頭の認証、DB からの HTTP の呼び出し先（pg_net の `net.http_post` など）を突き合わせます。DB からの呼び出し先は、SQL を読んで推し量らず、テストの `DB_HTTP_CALL_SITES` に SQL のファイルごとに宣言してあります（いまは `public.invoke_catalog_import`・`public.invoke_calculate_segment_stats`・`public.invoke_calculate_segment_stats_finalize_retry`・`public.invoke_process_meal_image_jobs`・`public.invoke_purge_hidden_content` を定義するファイル）。テストは、DB に入る SQL（`supabase/migrations` と、本番のスキーマの写し `supabase/baseline`）の生の文字列で、HTTP の呼び出しらしい箇所（`net.http_post(` などの呼び出しと、URL の `/functions/v1/`。コメントや文字列の中も数えます）をファイルごとに数え、宣言の数と合わなければ赤にします。DB から Edge Function を呼ぶ migration を足すと、どう書いても（Vault の `project_url` に `/functions/v1/<name>` を足す形でも）赤になるので、呼び先と数を `DB_HTTP_CALL_SITES` に宣言し、呼び先の関数を `verify_jwt = false`（先頭で `requireServiceRole`）にしてください。宣言した呼び先がそのファイルに書かれていないときや、宣言したファイルに `'app_cron_secret'` と `'Bearer '` が無いときも赤になります（呼び出しでない箇所が当たったときは、宣言で数を合わせず、書き方を変えてください）。
 
 pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘密）で呼ばれる関数:
 
 | 関数 | 呼び出し元 | 送る Bearer | 関数の中の認証 | `verify_jwt` |
 |---|---|---|---|---|
 | `calculate-segment-stats` | pg_cron のジョブ `calculate-segment-stats`（`public.invoke_calculate_segment_stats()`）/ `POST /api/comparison/trigger` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole` | `false` |
+| `purge-hidden-content` | pg_cron のジョブ `purge-hidden-content`（`public.invoke_purge_hidden_content()`） | Vault の `app_cron_secret`（JWT でない） | `requireServiceRole` | `false` |
+| `process-meal-image-jobs` | pg_cron のジョブ `process-pending-meal-image-jobs`（`public.invoke_process_meal_image_jobs()`。待ちのジョブを 5 分ごとに拾う。#1561）/ 料理画像のジョブを積んだ入口（`lib/meal-image-jobs.ts`・`_shared/meal-image-jobs.ts` の `triggerMealImageJobProcessing`。献立の生成・料理の保存・積み直しの道具） | Vault の `app_cron_secret`（JWT でない）/ service role key | service role key の完全一致（`Authorization: Bearer` か `apikey`）、または `requireServiceRole` | `false` |
 | `import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog` | pg_cron（`public.invoke_catalog_import()`）/ `POST /api/admin/catalog/import` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole`（`_shared/catalog/import-runner.ts`） | `false` |
 | `import-convenience-catalog` | リポジトリ内に無い（上と同じ取り込み処理） | — | `requireServiceRole`（同上） | `false` |
 | `aggregate-org-stats` | リポジトリ内に無い（停止中 #1325。本番に古い pg_cron のジョブが残っていれば `app_cron_secret`） | （`app_cron_secret`） | `requireServiceRole`（そのあと 410） | `false` |
@@ -97,7 +101,6 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `stripe-price-sync` | `POST /api/super-admin/plans/[id]/price-change` | service role key（`CRON_SECRET` でも可） | service role key の完全一致、または `requireServiceRole` | `false` |
 | `knowledge-gpt` | 相談 AI の API（`/api/ai/consultation/sessions/[sessionId]/messages`） | service role key / 利用者の JWT | service role key の完全一致、または `auth.getUser` | `false`（以前から） |
 | `generate-menu-v5` / `generate-menu-v4` | 献立生成の API・`/api/cron/process-menu-queue`・関数自身の続きの呼び出し | service role key / 利用者の JWT | 関数の中で service role key の完全一致、または `auth.getUser` | 既定（`true`）。JWT しか受け付けないので変えない |
-| `process-meal-image-jobs` | `_shared/meal-image-jobs.ts`（献立生成の関数から） | service role key | service role key の完全一致 | 既定（`true`）。同上 |
 | `regenerate-shopping-list-v2` | `POST /api/shopping-list/regenerate` | service role key / 利用者の JWT | service role key の完全一致、または `requireAuth` | 既定（`true`）。同上 |
 
 既定（`true`）のままの関数は、service role key（JWT）か利用者の JWT しか受け付けないため、ゲートウェイの検証を通ります。`CRON_SECRET` のような JWT でない秘密を受け付ける関数（`requireServiceRole` か `checkCronSecret` を呼ぶ関数、`CRON_SECRET` を読む関数。`index.ts` から相対パスで import するモジュールの中で呼ぶものも含みます）を足したら、`config.toml` にも `verify_jwt = false` を足してください（足し忘れはテストが赤にします）。
@@ -116,6 +119,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `create-derived-recipe` | 派生レシピ作成 |
 | `aggregate-org-stats` | 組織統計集約。**停止中**（オーナー判断 #1325）。認証（`requireServiceRole`）のあと、何もせず HTTP 410（`DISABLED`）を返すだけで、集計処理は削除済み。デプロイ先から関数を消さないよう、ディレクトリは残している。呼び出し元（画面のボタン・API ルート）も無い。本番に呼び出す `pg_cron` のジョブが残っていれば、migration `20261008130000_stop_aggregate_org_stats_cron.sql` が登録解除する |
 | `calculate-segment-stats` | セグメント統計計算 (比較ランキング)。pg_cron のジョブ `calculate-segment-stats` が 1 時間ごと (毎時 5 分) に daily / weekly / monthly を呼ぶ。期間が切り替わった直後の回 (JST 0 時台) は、本文 `previousPeriod: true` で直前の期間も集計し直す。比較のバッジを判定するのは、この直前の期間の回だけ (毎時の今の期間の回と手動はランキングの更新だけ。#1491)。指標 `total_meals` の件数は DB の関数 `count_meals_per_user` で数える。ハンズオンのお試しの記録 (`is_sandbox` が true。#1500) と同じく、運営が隠した食事 (`meals.hidden_at` が入った行) も、`meals` から数える指標 (記録率の日数と `total_meals`) に入れない (#1445)。間隔の変え方は `ENV_SETUP.md` の「比較ランキングの集計の間隔」。手動は `POST /api/comparison/trigger` (super_admin だけ)。#1406 |
+| `purge-hidden-content` | 運営が隠した食事・レシピ (`hidden_at` が入った行) のうち、隠してから 90 日を過ぎた行と、その画像のファイルを完全に消す (#1538)。pg_cron のジョブ `purge-hidden-content` が毎日 03:25 JST に呼ぶ。画像は、行の持ち主のフォルダにあり、ほかの行が使っていないものだけを Storage API で消す。本体は `_shared/hidden-content-purge.ts`。本文は読まず、期限は実行した時刻から決める |
 | `backfill-ingredient-embeddings` | 材料埋め込みバックフィル |
 | `regenerate-embeddings` | 埋め込み再生成 |
 | `regenerate-shopping-list-v2` | 買い物リスト再生成 v2 |
@@ -276,7 +280,7 @@ CORS はブラウザだけが強制する仕組みです。Next.js の API ル�
 
 - 利用者の JWT で認証する関数は、`_shared/cors.ts` の `getCorsHeaders(req)` を使います。リクエストの `Origin` が許可リストに完全一致したときだけ `Access-Control-Allow-Origin` を返し、どの応答にも `Vary: Origin` を付けます。`*`（全オリジン許可）は使いません。
 - 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは `https://homegohan.app` と `https://homegohan-app.vercel.app` です。設定すると既定値は置き換わります。
-- バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
+- バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`process-meal-image-jobs`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
 - ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。

@@ -30,7 +30,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { z } from 'zod';
-import { fetchModerationList } from '@/lib/admin/moderation-backend';
+import { fetchModerationList, withSignedModerationContentUrls } from '@/lib/admin/moderation-backend';
 
 export const dynamic = 'force-dynamic';
 
@@ -72,8 +72,8 @@ export async function GET(request: Request) {
 
   try {
     const [mealFlags, recipeFlags] = await Promise.all([
-      fetchModerationList(supabaseAdmin, 'food', status, 50),
-      fetchModerationList(supabaseAdmin, 'recipe', status, 50),
+      fetchModerationList(supabaseAdmin, 'food', status, 50).then((items) => withSignedModerationContentUrls(supabaseAdmin, items)),
+      fetchModerationList(supabaseAdmin, 'recipe', status, 50).then((items) => withSignedModerationContentUrls(supabaseAdmin, items)),
     ]);
 
     // ai_content はバックエンドテーブル未実装 (準備中)。既存レスポンス形式との互換のため

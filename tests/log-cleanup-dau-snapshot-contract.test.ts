@@ -19,12 +19,14 @@
  *   8. 設計書 docs/design/operator/08-cron-batches.md に、2 つのジョブと migration の version が書かれていて、付け直す前の version (20261008200000) が設計書・SQL・DB のテストに残っていない
  *   9. 設計書の「いま」の記述 (§3.0・§3.1・§3.2・§5 の状態の注記) が、木の実物と合っている:
  *      Vercel Cron は vercel.json の crons と、pg_cron のジョブは supabase/migrations の cron.schedule と、名前も数も一致する。
+ *      pg_cron のジョブは、DECLARE の定数の変数で登録したもの (#1561) も名前で数える (tests/helpers/migration-cron-jobs.ts)。
  *      #1125 の課金系の扱いは、migration と同じ「この段では足さない」の言い回しで書き、恒久の判断 (「作らない」) として書かない
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
+import { collectMigrationCronJobs } from './helpers/migration-cron-jobs';
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION = '20261010150000';
@@ -289,16 +291,15 @@ function vercelCronNames(): string[] {
 }
 
 /**
- * supabase/migrations の SQL が cron.schedule で登録している pg_cron のジョブの名前 (行コメントを除いて探す)。
- * あとの migration がジョブを外したまま登録し直さない (ジョブをやめる) ときは、ここで外した名前を除く処理を足す
+ * supabase/migrations の SQL が pg_cron に登録しているジョブの名前 (tests/helpers/migration-cron-jobs.ts の見張り)。
+ * 文字列の直書きのほか、DECLARE の定数の変数で登録したジョブ (#1561 の migration の書き方) も名前で数える。
+ * 名前を解けない呼び出し (式・連結・名前の無いジョブなど。見張りの限界は helpers の冒頭のコメント) が 1 つでもあれば、
+ * 数えが信用できないので、空振りせずにここで赤にする
  */
 function migrationCronJobNames(): string[] {
-  const names = new Set<string>();
-  for (const file of fs.readdirSync(MIGRATIONS_DIR).filter((name) => name.endsWith('.sql'))) {
-    const sql = stripLineComments(fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8'));
-    for (const match of sql.matchAll(/cron\.schedule\(\s*'([^']+)'/g)) names.add(match[1]);
-  }
-  return [...names].sort();
+  const { names, unresolved } = collectMigrationCronJobs(MIGRATIONS_DIR);
+  expect(unresolved, 'ジョブの名前を解けない cron.schedule の呼び出し').toEqual([]);
+  return names;
 }
 
 /** 節ごとに、書かれていない名前を「節: 名前」で返す (失敗時に本文全体を出さないため) */
@@ -337,8 +338,14 @@ describe('#1125 設計書の「いま」の記述が、木の実物と合って�
 
   it('pg_cron: §3.0 と §3.1 の注記が migration の登録しているジョブをすべて挙げ、数が実数と同じ', () => {
     const names = migrationCronJobNames();
+    // 直書きのジョブ (#1125) と、DECLARE の定数の変数で登録したジョブ (#1561) の両方を数えていること
     expect(names, 'migration の cron.schedule の検査が空振りしていないこと').toEqual(
-      expect.arrayContaining(['cleanup-old-app-logs', 'snapshot-daily-active-users']),
+      expect.arrayContaining([
+        'cleanup-old-app-logs',
+        'snapshot-daily-active-users',
+        'requeue-stale-meal-image-jobs',
+        'process-pending-meal-image-jobs',
+      ]),
     );
     const sections = { '§3.0': section30(), '§3.1 の注記': section31Note() };
     expect(missingNames(sections, names), '状態の記述に挙がっていない pg_cron のジョブ').toEqual([]);

@@ -3,7 +3,7 @@
 import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
-import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { BookOpen, X, Flame, ShoppingCart, Heart } from "lucide-react";
@@ -194,7 +194,7 @@ export function RecipeModal({
           <div className="mb-4">
             {selectedRecipeData?.imageUrl ? (
               <div className="relative h-48 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
-                <Image
+                <SignedPhotoImage
                   src={selectedRecipeData.imageUrl}
                   alt={selectedRecipe ?? 'Dish image'}
                   fill

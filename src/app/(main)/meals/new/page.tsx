@@ -9,7 +9,9 @@ import { logToServer } from "@/lib/db-logger";
 import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
-import { formatLocalDate, type MealType } from "@homegohan/shared";
+import { MEAL_LABELS, formatLocalDate, type MealType } from "@homegohan/shared";
+// 区分ごとのアイコン・色・下地の色は Web の区分の見た目の表から引く (#1665)
+import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 // 食事の区分のボタンの並び: 基本の 3 食 (BASE_MEAL_TYPES) と、正本 MEAL_ORDER から作ったおやつ・夜食 (EXTRA_MEAL_TYPES) (#1631)
 import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import type { CatalogDishMatch, CatalogProductSummary } from "@/types/catalog";
@@ -17,7 +19,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import {
   Camera, Image as ImageIcon, X, ChevronLeft, ChevronRight,
-  Sparkles, Check, Calendar, Clock, Sun, Coffee, Moon,
+  Sparkles, Check, Calendar, Clock,
   Utensils, Plus, Minus, Refrigerator, FileHeart, Wand2,
   AlertCircle, Save, RefreshCw, Scale
 } from 'lucide-react';
@@ -198,13 +200,8 @@ interface ImagePayloadConfig {
   maxBytes: number;
 }
 
-const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; bg: string }> = {
-  breakfast: { icon: Coffee, label: '朝食', color: colors.warning, bg: colors.warningLight },
-  lunch: { icon: Sun, label: '昼食', color: colors.accent, bg: colors.accentLight },
-  dinner: { icon: Moon, label: '夕食', color: colors.purple, bg: colors.purpleLight },
-  snack: { icon: Utensils, label: 'おやつ', color: colors.success, bg: colors.successLight },
-  midnight_snack: { icon: Moon, label: '夜食', color: colors.blue, bg: colors.blueLight },
-};
+/** 食事の区分のボタンの見た目 (アイコン・色・下地は MEAL_TYPE_RECORD_THEME、表示名は MEAL_LABELS。#1665) */
+const mealTypeButtonConfig = (type: MealType) => ({ ...MEAL_TYPE_RECORD_THEME[type], label: MEAL_LABELS[type] });
 
 const IMAGE_PAYLOAD_CONFIG: Record<PhotoMode | 'classify', ImagePayloadConfig> = {
   classify: { maxWidth: 1280, maxHeight: 1280, quality: 0.72, maxBytes: 450 * 1024 },
@@ -1698,7 +1695,7 @@ export default function MealCaptureModal() {
             {/* 基本の3食 */}
             <div className="flex gap-2 mb-2">
               {BASE_MEAL_TYPES.map((type) => {
-                const config = MEAL_CONFIG[type];
+                const config = mealTypeButtonConfig(type);
                 const isSelected = type === selectedMealType;
                 const Icon = config.icon;
                 return (
@@ -1720,7 +1717,7 @@ export default function MealCaptureModal() {
             {/* おやつ・夜食 */}
             <div className="flex gap-2 mb-6">
               {EXTRA_MEAL_TYPES.map((type) => {
-                const config = MEAL_CONFIG[type];
+                const config = mealTypeButtonConfig(type);
                 const isSelected = type === selectedMealType;
                 const Icon = config.icon;
                 return (
@@ -1744,7 +1741,7 @@ export default function MealCaptureModal() {
             <div className="p-4 rounded-xl mb-4" style={{ background: colors.card }}>
               <p style={{ fontSize: 12, color: colors.textMuted, marginBottom: 8 }}>保存先</p>
               <p style={{ fontSize: 16, fontWeight: 600, color: colors.text, margin: 0 }}>
-                {new Date(selectedDate).getMonth() + 1}月{new Date(selectedDate).getDate()}日（{weekDates.find(d => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_CONFIG[selectedMealType].label}
+                {new Date(selectedDate).getMonth() + 1}月{new Date(selectedDate).getDate()}日（{weekDates.find(d => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_LABELS[selectedMealType]}
               </p>
             </div>
             

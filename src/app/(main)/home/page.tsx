@@ -2,17 +2,18 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
 import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
-import { STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
+import { MEAL_LABELS, STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
+import { MEAL_TYPE_HOME_THEME } from "@/lib/meal-type-visuals";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
-  Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
+  Check, Flame, Calendar, Sparkles,
   ChevronRight, TrendingUp, TrendingDown, ShoppingCart, Trophy, AlertTriangle,
   Camera, Clock, Target, Award, Refrigerator, X, Scale, Heart, Activity
 } from 'lucide-react';
@@ -48,14 +49,7 @@ const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
 };
 
-// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める
-const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; time: string }> = {
-  breakfast: { icon: Coffee, label: '朝食', color: '#FF9800', time: '7:00' },
-  lunch: { icon: Sun, label: '昼食', color: '#4CAF50', time: '12:00' },
-  dinner: { icon: Moon, label: '夕食', color: '#7C4DFF', time: '19:00' },
-  snack: { icon: Coffee, label: 'おやつ', color: '#E91E63', time: '15:00' },
-  midnight_snack: { icon: Moon, label: '夜食', color: '#3F51B5', time: '22:00' },
-};
+// 区分ごとのアイコンと色は Web の区分の見た目の表 (MEAL_TYPE_HOME_THEME)、表示名は MEAL_LABELS から引く (#1665。手書きの表を持たない)
 
 // 現在の時間帯を取得
 const getCurrentMealType = (): MealType => {
@@ -765,7 +759,7 @@ export default function HomePage() {
                 <div className="space-y-3">
                   {(['breakfast', 'lunch', 'dinner'] as MealType[]).map((mealType) => {
                     const meals = todayPlan.meals.filter(m => m.mealType === mealType);
-                    const mealConfig = MEAL_CONFIG[mealType];
+                    const mealConfig = { ...MEAL_TYPE_HOME_THEME[mealType], label: MEAL_LABELS[mealType] };
                     const MealIcon = mealConfig.icon;
                     const isCurrentMeal = mealType === currentMealTypeState;
                     
@@ -838,7 +832,7 @@ export default function HomePage() {
                             {/* 画像 */}
                             <div className="w-14 h-14 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
                               {meal.imageUrl ? (
-                                <Image src={meal.imageUrl} width={56} height={56} alt={meal.dishName} className="w-full h-full object-cover" />
+                                <SignedPhotoImage src={meal.imageUrl} width={56} height={56} alt={meal.dishName} className="w-full h-full object-cover" />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center">
                                   <MealIcon size={20} color={colors.textMuted} />
@@ -1114,10 +1108,10 @@ export default function HomePage() {
             {bestMealThisWeek && bestMealThisWeek.imageUrl && (
               <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
                 <div className="relative h-32">
-                  <Image 
-                    src={bestMealThisWeek.imageUrl} 
-                    fill 
-                    alt={bestMealThisWeek.dishName} 
+                  <SignedPhotoImage
+                    src={bestMealThisWeek.imageUrl}
+                    fill
+                    alt={bestMealThisWeek.dishName}
                     className="object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />

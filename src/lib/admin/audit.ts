@@ -29,11 +29,21 @@
  *    (検索条件と件数だけ。返した行の ID や値は入れない)。0 件のときは記録しない。
  *  - admin / super-admin の route は admin_audit_logs へ直接 INSERT せず、x-forwarded-for も直接読まない
  *    (tests/admin-view-audit-1326.test.ts が検査する)。
+ *  - ip_address は利用者の IP (src/lib/admin/client-ip.ts の extractClientIp)。request を必ず渡すこと (#1571。
+ *    渡さないと ip_address / user_agent が null になる。tests/admin-mutation-audit-coverage-1571.test.ts が検査する)。
+ *    サーバーコンポーネントから adminFetch で呼んだときも、adminFetch が署名して転送した利用者の IP が入る
+ *    (Vercel は内部の呼び出しの x-forwarded-for をサーバーの IP に付け直すため)。
+ *  - 定期処理 (pg_cron) が DB の中で書く行 (例: handson_tour_sandbox_cleanup) は、操作した利用者がいないので
+ *    ip_address は NULL のまま (#1571)。
  */
 
-import { isIP } from 'net';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger } from '@/lib/db-logger';
+import { extractClientIp } from '@/lib/admin/client-ip';
+
+// 利用者の IP の取り出しは src/lib/admin/client-ip.ts (#1571)。ここからも読めるように再び公開する
+// (auth/login・legal/accept が '@/lib/admin/audit' から読む)
+export { extractClientIp };
 
 export type AdminAuditSeverity = 'info' | 'warn' | 'critical';
 
@@ -64,26 +74,6 @@ const DEFAULT_ROUTE_NAME = 'admin-audit';
 
 /** User-Agent は長さに上限を設けて保存する (巨大なヘッダで行が膨らまないように) */
 const USER_AGENT_MAX_LENGTH = 512;
-
-/**
- * リクエストヘッダからクライアントの IP アドレスを 1 つ取り出す。
- *
- * ip_address 列は inet 型。x-forwarded-for は "client, proxy1, proxy2" のように
- * 複数 IP が入ることがあり、そのまま渡すと INSERT が失敗して監査行ごと失われる。
- * そのため先頭の 1 つだけを取り、IP として正しいときだけ返す。
- * 正しくなければ x-real-ip を試し、それも正しくなければ null (監査行は ip_address=null で残す)。
- * IPv6 のゾーン ID (fe80::1%eth0) は inet が受け付けないので除外する。
- * 値はプロキシ (Vercel など) が付けたものを信頼する前提の最善努力で、認可の判断には使わない。
- */
-export function extractClientIp(headers: Pick<Headers, 'get'> | null | undefined): string | null {
-  if (!headers) return null;
-  const candidates = [headers.get('x-forwarded-for')?.split(',')[0], headers.get('x-real-ip')];
-  for (const candidate of candidates) {
-    const ip = candidate?.trim();
-    if (ip && !ip.includes('%') && isIP(ip) !== 0) return ip;
-  }
-  return null;
-}
 
 /**
  * 一覧・検索の閲覧ログ (#1326) で、検索条件の 1 つの値として残す文字列の長さの上限。

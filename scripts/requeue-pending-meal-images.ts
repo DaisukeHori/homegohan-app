@@ -18,7 +18,8 @@
  *   --max-meals=N     積み直す献立の数 (既定 50。上限 500)
  *   --since=YYYY-MM-DD この日以降の献立だけ
  *   --user-id=<uuid>  この利用者の献立だけ
- *   --no-trigger      積むだけで process-meal-image-jobs を起こさない (ジョブは待ちのまま残る)
+ *   --no-trigger      積むだけで process-meal-image-jobs を起こさない (ジョブは待ちのまま残り、pg_cron のジョブ
+ *                     process-pending-meal-image-jobs が 5 分ごとに 5 件ずつ拾う。#1561。Vault と Edge の秘密がそろっているとき)
  * 環境変数:
  *   SUPABASE_URL (または NEXT_PUBLIC_SUPABASE_URL) / SUPABASE_SERVICE_ROLE_KEY   必須
  *   SERVICE_ROLE_JWT          process-meal-image-jobs を起こす鍵 (無ければ SUPABASE_SERVICE_ROLE_KEY。Edge Function と同じ優先順位)

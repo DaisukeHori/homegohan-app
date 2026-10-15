@@ -35,6 +35,8 @@
  * #1657 で足したもの: src/__tests__/api/null-character-routes.test.ts は、同じ型 (テストの中で、本文を読む
  *   121 の handler の route を丸ごと読み込む)。tests/heavy-unit-test-timeout.test.ts の「同じ型のファイル」の検査が見つけた。
  *
+ * #1686 で足したもの: tests/edge-function-deploy-use-api.test.ts は、同じ型 (テストの中で、関数のデプロイの段の run を bash で動かす)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -83,6 +85,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/consultation-pantry-expiry-jst.test.ts",
   "tests/design-system-1058.test.ts",
   "tests/edge-function-dep-pinning.test.ts",
+  "tests/edge-function-deploy-use-api.test.ts",
   "tests/fast-llm-missing-env.test.ts",
   "tests/image-route-contracts.test.ts",
   "tests/local-ci-workflow-sync.test.ts",

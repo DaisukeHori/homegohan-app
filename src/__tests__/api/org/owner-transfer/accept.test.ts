@@ -360,6 +360,45 @@ describe('POST /api/org/owner-transfer/[id]/accept: 完了メール (#1110)', ()
   });
 });
 
+describe('POST /api/org/owner-transfer/[id]/accept: 名前に仮置きの Guest を使わない (#1649)', () => {
+  function setNickname(userId: string, nickname: string) {
+    const row = adminDb.tables.user_profiles.find((r) => r.id === userId);
+    if (!row) throw new Error(`user_profiles に ${userId} がありません`);
+    row.nickname = nickname;
+  }
+
+  it.each(['Guest', ' Guest ', '   '])(
+    '両者の nickname が %j なら、宛名はメールアドレス・本文の名前は既定の「旧オーナー」「新オーナー」',
+    async (nickname) => {
+      setNickname(OLD_OWNER_ID, nickname);
+      setNickname(NEW_OWNER_ID, nickname);
+
+      const res = await call();
+
+      expect(res.status).toBe(200);
+      const [toOld] = sentTo(OLD_EMAIL);
+      const [toNew] = sentTo(NEW_EMAIL);
+      expect(toOld.text.startsWith(`${OLD_EMAIL} 様`)).toBe(true);
+      expect(toOld.text).toContain('オーナー権限を 新オーナー 様に譲渡しました');
+      expect(toNew.text.startsWith(`${NEW_EMAIL} 様`)).toBe(true);
+      expect(toNew.text).toContain('旧オーナー: 旧オーナー 様');
+      for (const envelope of sentEmails()) expect(envelope.text).not.toContain('Guest');
+    },
+  );
+
+  it.each([
+    ['guest', 'guest'],
+    [' 社長 ', '社長'],
+  ])('旧オーナーの nickname が %j (本人が付けた名前) なら、宛名と本文にその名前を使う', async (nickname, expected) => {
+    setNickname(OLD_OWNER_ID, nickname);
+
+    await call();
+
+    expect(sentTo(OLD_EMAIL)[0].text.startsWith(`${expected} 様`)).toBe(true);
+    expect(sentTo(NEW_EMAIL)[0].text).toContain(`旧オーナー: ${expected} 様`);
+  });
+});
+
 describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
   it.each([
     ['TRANSFER_PROPOSAL_NOT_FOUND', 404, '譲渡提案が見つかりません。'],

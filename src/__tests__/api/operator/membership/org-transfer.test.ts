@@ -594,3 +594,33 @@ describe('POST /api/operator/membership/org/[id]/transfer: service-role のク�
     expect(mocks.createServiceRoleClient).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/operator/membership/org/[id]/transfer: 宛名に仮置きの Guest を使わない (#1649)', () => {
+  function setNickname(nickname: string) {
+    const row = fake.tables.user_profiles.find((r) => r.id === MEMBER_ID);
+    if (!row) throw new Error('宛先の user_profiles の行がありません');
+    row.nickname = nickname;
+  }
+
+  it.each(['Guest', ' Guest ', '   ', ''])('nickname が %j なら、宛名はメールアドレス (Guest を載せない)', async (nickname) => {
+    setNickname(nickname);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    const [envelope] = sentTo(MEMBER_EMAIL);
+    expect(envelope.text.startsWith(`${MEMBER_EMAIL} 様`)).toBe(true);
+    expect(envelope.text).not.toContain('Guest');
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    [' 社員 ', '社員'],
+  ])('nickname が %j (本人が付けた名前) なら、その名前を宛名にする', async (nickname, expected) => {
+    setNickname(nickname);
+
+    await call();
+
+    expect(sentTo(MEMBER_EMAIL)[0].text.startsWith(`${expected} 様`)).toBe(true);
+  });
+});

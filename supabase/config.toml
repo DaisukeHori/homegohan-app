@@ -28,6 +28,11 @@ verify_jwt = false
 [functions.calculate-segment-stats]
 verify_jwt = false
 
+# pg_cron のジョブ process-pending-meal-image-jobs (public.invoke_process_meal_image_jobs。#1561) と、
+# 料理画像のジョブを積んだ入口 (service role key。lib/meal-image-jobs.ts・_shared/meal-image-jobs.ts の triggerMealImageJobProcessing)
+[functions.process-meal-image-jobs]
+verify_jwt = false
+
 # pg_cron のカタログ取り込み (public.invoke_catalog_import) と、POST /api/admin/catalog/import
 [functions.import-seven-eleven-catalog]
 verify_jwt = false
@@ -59,4 +64,8 @@ verify_jwt = false
 
 # POST /api/super-admin/plans/[id]/price-change (service role key)。requireServiceRole なので CRON_SECRET でも呼べる
 [functions.stripe-price-sync]
+verify_jwt = false
+
+# pg_cron のジョブ purge-hidden-content (public.invoke_purge_hidden_content)。運営が隠したコンテンツの完全削除 (#1538)
+[functions.purge-hidden-content]
 verify_jwt = false
