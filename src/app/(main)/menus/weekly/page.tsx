@@ -932,7 +932,8 @@ export default function WeeklyMenuPage() {
       }
     };
     fetchHolidays();
-  }, [displayMonth]);
+    // setHolidays は値だけ受け、今の値を握らない (deps が空の useCallback) ので、deps に入れても再実行は起きない (#1663)
+  }, [displayMonth, setHolidays]);
 
   // Sync displayMonth when weekStart changes
   useEffect(() => {
