@@ -10,10 +10,14 @@
  *   - tests/meal-type-visuals-1665.test.ts: 「モバイルの表は (消したモバイルのテスト) が固定する」
  *   - maestro の pantry-flow.yaml など: 消した冷蔵庫・買い物リスト・健康・週の献立・AI 相談の画面へ入る flow。
  *     home-navigation.yaml は、消した「お気に入り」のタブをタップしていた
+ *   - apps/mobile/maestro/testdata/README.md: フィクスチャ画像の表が、消した flow を `flows/` を付けない短い書き方
+ *     (`health/26-ocr-auto-fill.yaml`) で「用途フロー」として挙げていた
  * tests/docs-mobile-removed-references.test.ts は CLAUDE.md と README の「`…`」で囲んだ書き方だけを見るので、
  * 引用符で囲まないコードのコメントは見ていなかった。ここでは git で管理するテキストのファイルを全部見る。
  *   1. 消したファイル (tests/helpers/mobile-removed-1598.ts の画面・部品・関数・テスト・maestro の flow) を名指しする行
- *      (`apps/mobile/<パス>`。画面は `app/<パス>` も) は、同じ行で消したことを書く (REMOVAL_NOTE)
+ *      (`apps/mobile/<パス>`。画面は `app/<パス>` も。部品・関数・テストは、apps/mobile の中のファイルでは `src/<パス>`・
+ *      `__tests__/<パス>` も。maestro の flow は `maestro/` を省いた書き方と、消したディレクトリの flow の `flows/` を省いた書き方も)
+ *      は、同じ行で消したことを書く (REMOVAL_NOTE)
  *   2. 「apps/mobile/<ファイル>.ts(x) の 名前」(名前は ` で囲んでも囲まなくてもよい。「/」「・」「、」で並べた名前も) と書いた名前のうち、
  *      #1598 でアプリから消した名前 (MOBILE_NAMES_REMOVED_IN_1598) は、そのファイルが export していなければ、同じ行で消したことを書く
  *   3. 消した画面だけを前提にしていた maestro の flow とそのディレクトリは無い。タブを順にたどる flow (home-navigation.yaml) が
@@ -24,9 +28,11 @@
  *   - docs/design/: tests/design-doc-removed-mobile-screens.test.ts が受け持つ
  *   - docs/requirements/: 要件の記録。これから作るファイル (新規) も名指しするので、実在とは突き合わせない
  *   - .cursor/: 作業の計画の記録
- *   - 見張りのテスト 3 本 (EXCLUDED_FILES): 捕まえることを確かめるために、元の文をそのまま持つ
+ *   - 見張りのテスト 3 本と、消したものの一覧 (EXCLUDED_FILES): 捕まえることを確かめるために元の文を持つ・一覧そのもの
  * この検査の限界: パスも「ファイル の 名前」も書かずに、消した画面を言葉だけで「いまある」と書いた文
- * (「モバイルの管理画面が使う」など) は捕まえない。
+ * (「モバイルの管理画面が使う」など) は捕まえない。apps/mobile の外のファイルの `src/<パス>` は Web のパスと区別できないので、
+ * 部品・関数・テストは `apps/mobile/<パス>` の書き方だけを見る。apps/mobile の中でも、リポジトリの根に同じパスがある
+ * (Web に同じパスのファイルがある) `src/<パス>` は、Web を指すことがあるので数えない。
  */
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -56,11 +62,12 @@ const REMOVAL_NOTE = /削除|消し[たまて、]/;
 
 /** 見ないディレクトリ (理由はファイルの先頭のコメント) */
 const EXCLUDED_DIRS = ['supabase/migrations/', 'docs/design/', 'docs/requirements/', '.cursor/'] as const;
-/** 見ないファイル: 元の文をそのまま持つ見張りのテスト */
+/** 見ないファイル: 元の文をそのまま持つ見張りのテストと、消したものの一覧 (flow は名前だけでも名指しとして数えるので、一覧に当たる) */
 const EXCLUDED_FILES = [
   'tests/mobile-removed-files-references.test.ts',
   'tests/docs-mobile-removed-references.test.ts',
   'tests/design-doc-removed-mobile-screens.test.ts',
+  'tests/helpers/mobile-removed-1598.ts',
 ] as const;
 /** 見るテキストのファイルの拡張子 */
 const TEXT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.md', '.yaml', '.yml', '.sh', '.json'] as const;
@@ -73,18 +80,66 @@ const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/
 /** ファイルの名前のすぐ後ろに続かないこと (storage.ts が storage.tsx の頭に当たらないように) */
 const END_OF_PATH = '(?![\\w-])';
 
+/** 名指しの前に付かない文字 (英数字・`/`・`-`・`_`。付くものは別のディレクトリの下のパス。Web の `src/app/...` など) */
+const NOT_PATH_BEFORE = '(?:^|[^\\w/-])';
+/** maestro の flow を置く、maestro の下のディレクトリ */
+const FLOWS_SUBDIR = 'flows/';
+/** ディレクトリの下の flow のファイル (サブディレクトリの下も) */
+const FLOW_FILE = '[\\w.-]+(?:/[\\w.-]+)*\\.ya?ml';
+/** maestro の flow の名指しの頭 (`apps/mobile/maestro/` か `maestro/`。省いた書き方も拾う) */
+const OPTIONAL_MAESTRO_PREFIX = `(?:(?:${escapeRegExp(MOBILE_DIR)}/)?maestro/)?`;
+/** 中の flow をすべて消した、flows/ の下のディレクトリ (`flows/` を省いた `health/26-….yaml` の書き方も拾う) */
+const REMOVED_FLOWS_SUBDIRS = REMOVED_MAESTRO_FLOW_DIRS.filter((dir) => dir.startsWith(FLOWS_SUBDIR)).map((dir) =>
+  dir.slice(FLOWS_SUBDIR.length),
+);
 /**
- * 消したファイルを名指しする書き方。どこを名指ししたかを 1 番目の組で返す。
- *   - 画面: `apps/mobile/app/<パス>` か `app/<パス>` (前に英数字・`/`・`-`・`_` が付く Web の `src/app/...` は数えない)
- *   - 部品・関数・テスト: `apps/mobile/<パス>`
- *   - maestro の flow: `apps/mobile/maestro/<パス>`
+ * 中の flow をすべて消した、maestro の直下のディレクトリ。flows/ の下に同じ名前のディレクトリ (flows/menus-weekly) が残るので、
+ * `maestro/` を付けた書き方だけを拾う
  */
-const REMOVED_FILE_MENTION = new RegExp(
-  [
-    `(?:^|[^\\w/-])(?:${escapeRegExp(MOBILE_DIR)}/)?(app/(?:${REMOVED_MOBILE_SCREENS.map(escapeRegExp).join('|')}))${END_OF_PATH}`,
-    `${escapeRegExp(MOBILE_DIR)}/((?:${REMOVED_MOBILE_SOURCE_FILES.map(escapeRegExp).join('|')}))${END_OF_PATH}`,
-    `${escapeRegExp(MAESTRO_DIR)}/((?:${REMOVED_MAESTRO_FLOWS.map(escapeRegExp).join('|')}))${END_OF_PATH}`,
-  ].join('|'),
+const REMOVED_ROOT_FLOW_DIRS = REMOVED_MAESTRO_FLOW_DIRS.filter((dir) => !dir.startsWith(FLOWS_SUBDIR));
+
+const alternation = (items: readonly string[]): string => items.map(escapeRegExp).join('|');
+
+/**
+ * 消したファイルを名指しする書き方と、見つけた名指しをリポジトリの根からのパス (画面は `app/<パス>`) に直す方法。
+ * どの書き方も、組 (括弧) を 1 つだけ持つ
+ */
+const REMOVED_FILE_MENTION_KINDS: readonly { pattern: string; target: (hit: string) => string }[] = [
+  // 画面: `apps/mobile/app/<パス>` か `app/<パス>`
+  {
+    pattern: `${NOT_PATH_BEFORE}(?:${escapeRegExp(MOBILE_DIR)}/)?(app/(?:${alternation(REMOVED_MOBILE_SCREENS)}))${END_OF_PATH}`,
+    target: (hit) => hit,
+  },
+  // 部品・関数・テスト: `apps/mobile/<パス>`
+  {
+    pattern: `${escapeRegExp(MOBILE_DIR)}/(${alternation(REMOVED_MOBILE_SOURCE_FILES)})${END_OF_PATH}`,
+    target: (hit) => `${MOBILE_DIR}/${hit}`,
+  },
+  // maestro の直下の flow: `apps/mobile/maestro/<パス>`・`maestro/<パス>`・`<パス>`
+  {
+    pattern: `${NOT_PATH_BEFORE}${OPTIONAL_MAESTRO_PREFIX}(${alternation(REMOVED_MAESTRO_FLOWS)})${END_OF_PATH}`,
+    target: (hit) => `${MAESTRO_DIR}/${hit}`,
+  },
+  // maestro の直下の、消したディレクトリの flow: `apps/mobile/maestro/<ディレクトリ>/<flow>`・`maestro/<ディレクトリ>/<flow>`
+  {
+    pattern: `${NOT_PATH_BEFORE}(?:${escapeRegExp(MOBILE_DIR)}/)?maestro/((?:${alternation(REMOVED_ROOT_FLOW_DIRS)})/${FLOW_FILE})${END_OF_PATH}`,
+    target: (hit) => `${MAESTRO_DIR}/${hit}`,
+  },
+  // flows/ の下の、消したディレクトリの flow: `apps/mobile/maestro/flows/<ディレクトリ>/<flow>` から `<ディレクトリ>/<flow>` まで
+  {
+    pattern: `${NOT_PATH_BEFORE}${OPTIONAL_MAESTRO_PREFIX}(?:${escapeRegExp(FLOWS_SUBDIR)})?((?:${alternation(REMOVED_FLOWS_SUBDIRS)})/${FLOW_FILE})${END_OF_PATH}`,
+    target: (hit) => `${MAESTRO_DIR}/${FLOWS_SUBDIR}${hit}`,
+  },
+];
+
+const REMOVED_FILE_MENTION = new RegExp(REMOVED_FILE_MENTION_KINDS.map((kind) => kind.pattern).join('|'), 'g');
+
+/**
+ * apps/mobile の中のファイルが、アプリの部品・関数・テストを `apps/mobile/` を付けずに書いた名指し (`src/<パス>`・`__tests__/<パス>`)。
+ * リポジトリの根に同じパスがあるもの (Web の同じパスのファイル) は、Web を指すことがあるので数えない
+ */
+const REMOVED_SOURCE_SHORT_MENTION = new RegExp(
+  `${NOT_PATH_BEFORE}(${alternation(REMOVED_MOBILE_SOURCE_FILES)})${END_OF_PATH}`,
   'g',
 );
 
@@ -100,13 +155,29 @@ const REMOVED_NAMES: ReadonlySet<string> = new Set(MOBILE_NAMES_REMOVED_IN_1598)
 
 type Mention = { file: string; line: number; target: string; noted: boolean; text: string };
 
-/** 名指しを探す前の、安い絞り込み (どの書き方も `app/` を含む。`apps/mobile/` も `app` の後ろに `s/` が付くだけなので含む) */
-const MENTION_HINT = 'app';
+/**
+ * 名指しを探す前の、安い絞り込み。画面と部品は `app` を含む (`apps/mobile/` も `app` の後ろに `s/` が付くだけ)。
+ * flow は `.yaml` か `.yml` を含む
+ */
+const MENTION_HINTS = ['app', '.yaml', '.yml'] as const;
+/** apps/mobile の中の短い書き方の、安い絞り込み (どれも `src/` か `__tests__/` を含む) */
+const SHORT_MENTION_HINTS = ['src/', '__tests__/'] as const;
 
-/** 1 行の中で、消したファイルを名指ししているところ */
-function removedFilesInLine(text: string): string[] {
-  if (!text.includes(MENTION_HINT)) return [];
-  return [...text.matchAll(REMOVED_FILE_MENTION)].map((match) => match[1] ?? `${MOBILE_DIR}/${match[2] ?? `maestro/${match[3]}`}`);
+/** 1 行の中で、消したファイルを名指ししているところ。file を渡すと、apps/mobile の中のファイルの短い書き方も見る */
+function removedFilesInLine(text: string, file?: string): string[] {
+  const found: string[] = [];
+  if (MENTION_HINTS.some((hint) => text.includes(hint))) {
+    for (const match of text.matchAll(REMOVED_FILE_MENTION)) {
+      const index = REMOVED_FILE_MENTION_KINDS.findIndex((_, kind) => match[kind + 1] !== undefined);
+      found.push(REMOVED_FILE_MENTION_KINDS[index].target(match[index + 1]));
+    }
+  }
+  if (file?.startsWith(`${MOBILE_DIR}/`) && SHORT_MENTION_HINTS.some((hint) => text.includes(hint))) {
+    for (const match of text.matchAll(REMOVED_SOURCE_SHORT_MENTION)) {
+      if (!fs.existsSync(path.join(ROOT, match[1]))) found.push(`${MOBILE_DIR}/${match[1]}`);
+    }
+  }
+  return found;
 }
 
 /** ファイルが、その名前を export しているか */
@@ -182,7 +253,7 @@ function scanRepo(): Scan {
     let count = 0;
     lines.forEach((text, index) => {
       const noted = REMOVAL_NOTE.test(text);
-      for (const target of removedFilesInLine(text)) removedFiles.push({ file, line: index + 1, target, noted, text });
+      for (const target of removedFilesInLine(text, file)) removedFiles.push({ file, line: index + 1, target, noted, text });
       for (const target of removedNamesAttributedInLine(text, readSource)) removedNames.push({ file, line: index + 1, target, noted, text });
       count += exportMentionCount(text);
     });
@@ -204,7 +275,18 @@ const FORMER_TEXTS = {
   healthBloodTest: ' * モバイルの健診の詳細画面 (apps/mobile/app/health/checkups/[id].tsx) も同じ基準値・判定を使うよう、',
   shortScreen: ' * 以前は router.push("/profile") で、同じパスのネイティブのプロフィール画面 (app/profile/index.tsx) が、',
   maestroFlow: '# 手順は apps/mobile/maestro/pantry-flow.yaml を見る',
+  testdataCheckupSheet:
+    '| `checkup-sheet.jpg` | `health/26-ocr-auto-fill.yaml` | 健康診断結果票。血圧・HbA1c・体重・BMI が記載されているもの。文字が鮮明であること。推奨解像度: 1240x1754px (A4相当) 以上。 |',
+  testdataAiAttachPhoto:
+    '| `ai-attach-photo.jpg` | `ai/25-image-attach-respond.yaml` | AIチャットに添付する食事写真。料理が明確に写っていること。推奨解像度: 1080x1080px 以上。 |',
+  userStorageShort:
+    '  //   - singleMealGenerating: 1 食の作り直しの生成中の状態。前の利用者の食事の ID が入る (src/components/menu/RegenerateMealModal.tsx が書く)',
 } as const;
+
+/** 短い書き方の src/ を、アプリのファイルとして読むファイル (apps/mobile の中) */
+const MOBILE_SOURCE_FILE = `${MOBILE_DIR}/src/lib/user-storage.ts`;
+/** 消したことを書いた、短い書き方の flow の名指しがある文書 (走査が空振りしていないことの確かめ用) */
+const TESTDATA_README = `${MAESTRO_DIR}/testdata/README.md`;
 
 const scan = scanRepo();
 
@@ -220,12 +302,43 @@ describe('#1598 ソース・テスト・文書は、消したモバイルのフ�
       expect(removedFilesInLine(FORMER_TEXTS.maestroFlow)).toEqual(['apps/mobile/maestro/pantry-flow.yaml']);
     });
 
+    it('消したファイルの名指し: flow の短い書き方 (flows/・maestro/ を省いたもの) と、apps/mobile の中の src/ の書き方を捕まえる', () => {
+      expect(removedFilesInLine(FORMER_TEXTS.testdataCheckupSheet)).toEqual([
+        'apps/mobile/maestro/flows/health/26-ocr-auto-fill.yaml',
+      ]);
+      expect(removedFilesInLine(FORMER_TEXTS.testdataAiAttachPhoto)).toEqual([
+        'apps/mobile/maestro/flows/ai/25-image-attach-respond.yaml',
+      ]);
+      expect(removedFilesInLine('maestro test flows/pantry/01-add.yaml')).toEqual(['apps/mobile/maestro/flows/pantry/01-add.yaml']);
+      expect(removedFilesInLine('手順は `pantry-flow.yaml` を見る')).toEqual(['apps/mobile/maestro/pantry-flow.yaml']);
+      expect(removedFilesInLine('maestro test maestro/menus-weekly/05-other.yaml')).toEqual([
+        'apps/mobile/maestro/menus-weekly/05-other.yaml',
+      ]);
+      expect(removedFilesInLine(FORMER_TEXTS.userStorageShort, MOBILE_SOURCE_FILE)).toEqual([
+        'apps/mobile/src/components/menu/RegenerateMealModal.tsx',
+      ]);
+    });
+
     it('消したファイルの名指し: Web の src/app/・いまあるファイル・名前の頭が同じ別のファイルは捕まえない', () => {
       expect(removedFilesInLine('| `src/app/(main)/health/checkups/[id]/page.tsx` |')).toEqual([]);
       expect(removedFilesInLine('// src/app/meals/new.tsx')).toEqual([]);
       expect(removedFilesInLine('apps/mobile/src/lib/menu-request-error.ts の menuRequestErrorMessageForDisplay')).toEqual([]);
       expect(removedFilesInLine('apps/mobile/src/lib/storage.tsx')).toEqual([]);
       expect(removedFilesInLine('apps/mobile/maestro/smoke.yaml')).toEqual([]);
+    });
+
+    it('消したファイルの名指し: 残した flow・別のディレクトリの下のパス・apps/mobile の外や Web の src/ は捕まえない', () => {
+      // flows/ の下の menus-weekly は残した (消したのは maestro の直下の menus-weekly)
+      expect(removedFilesInLine('apps/mobile/maestro/flows/menus-weekly/03-tab-direct-navigation.yaml')).toEqual([]);
+      // maestro/ を付けない直下のディレクトリの書き方は、flows/menus-weekly と区別できないので数えない
+      expect(removedFilesInLine('`menus-weekly/03-tab-direct-navigation.yaml`')).toEqual([]);
+      expect(removedFilesInLine('apps/mobile/maestro/flows/home/01-all-sections-display.yaml')).toEqual([]);
+      expect(removedFilesInLine('.github/workflows/health/check.yaml')).toEqual([]);
+      // apps/mobile の外のファイルの src/ は Web のパス
+      expect(removedFilesInLine(FORMER_TEXTS.userStorageShort)).toEqual([]);
+      expect(removedFilesInLine(FORMER_TEXTS.userStorageShort, 'src/lib/user-storage.ts')).toEqual([]);
+      // apps/mobile の中でも、リポジトリの根に同じパスがある src/ は Web を指すことがある
+      expect(removedFilesInLine('// Web の src/lib/meal-type-visuals.ts と同じ表', MOBILE_SOURCE_FILE)).toEqual([]);
     });
 
     it('「apps/mobile のファイル の 名前」: アプリから消した名前を、引用符で囲まない書き方でも捕まえる', () => {
@@ -296,8 +409,23 @@ describe('#1598 ソース・テスト・文書は、消したモバイルのフ�
           'tests/meal-type-visuals-1665.test.ts',
           'CLAUDE.md',
           `${MAESTRO_DIR}/home-navigation.yaml`,
+          TESTDATA_README,
+          MOBILE_SOURCE_FILE,
         ]),
       );
+    });
+
+    it('消したことを書いた、短い書き方の名指しの行を見つける (testdata/README.md の flow・user-storage.ts の src/)', () => {
+      const testdata = scan.removedFiles.filter(
+        (mention) => mention.file === TESTDATA_README && mention.target === 'apps/mobile/maestro/flows/health/26-ocr-auto-fill.yaml',
+      );
+      const userStorage = scan.removedFiles.filter(
+        (mention) =>
+          mention.file === MOBILE_SOURCE_FILE && mention.target === 'apps/mobile/src/components/menu/RegenerateMealModal.tsx',
+      );
+      expect(testdata.length).toBeGreaterThan(0);
+      expect(userStorage.length).toBeGreaterThan(0);
+      expect([...testdata, ...userStorage].every((mention) => mention.noted)).toBe(true);
     });
 
     it('消したことを書いた名指しの行を見つける (packages/shared/src/meal-types.ts の、消したモバイルの表の行)', () => {
