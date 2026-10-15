@@ -7,10 +7,8 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
@@ -43,15 +41,8 @@ interface UsersApiResponse {
 
 export default async function AdminUsersPage(props: PageProps) {
   const searchParams = await props.searchParams;
-  let actor;
-  try {
-    actor = await requireRole(['admin', 'super_admin', 'support']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  const actor = await requireRoleForPage(['admin', 'super_admin', 'support'], { next: '/admin/users' });
 
   // メールアドレスを見られるのは admin / super_admin だけ (support には列を出さず、メール検索も効かない)
   const canSeeEmail = canViewUserEmail(actor.roles);
