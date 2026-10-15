@@ -51,7 +51,11 @@ jest.mock('react-native', () => ({
 }));
 
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { waitFor } from '@testing-library/react-native';
 import * as Notifications from 'expo-notifications';
+import * as SecureStore from 'expo-secure-store';
+import { PUSH_INSTALL_SECRET_STORE_KEY } from '../../src/lib/pushInstallSecret';
+import { PUSH_TOKEN_RELEASE_PENDING_KEY, releasePushTokenAfterSignedOut } from '../../src/lib/pushTokenRelease';
 import { supabase } from '../../src/lib/supabase';
 import {
   PUSH_ISSUE_LOG_TIMEOUT_MS,
@@ -94,6 +98,8 @@ beforeEach(async () => {
   jest.clearAllMocks();
   warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
   await AsyncStorage.clear();
+  // 端末の秘密の値 (#1636) は、テストごとに無い状態から始める (__mocks__/expo-secure-store.js のメモリ上の表)
+  (SecureStore as unknown as { __reset: () => void }).__reset();
 
   // project ID の出どころを毎回まっさらにする
   delete process.env.EXPO_PUBLIC_EAS_PROJECT_ID;
@@ -431,7 +437,10 @@ describe('registerAndSaveExpoPushToken — 同じトークンのほかの利用�
 
     expect(result).toBe('ExponentPushToken[test-token]');
     expect(order).toEqual(['upsert', `post:${PUSH_TOKEN_CLAIM_API_PATH}`, 'stored:ExponentPushToken[test-token]']);
-    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: 'ExponentPushToken[test-token]' }]]);
+    // 端末の秘密の値がまだ無いので、サーバーに作ってもらう (#1636)
+    expect(claimCalls()).toEqual([
+      [PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: 'ExponentPushToken[test-token]', issue_install_secret: true }],
+    ]);
   });
 
   it('権限が無くトークンを取らなかったとき・登録 (upsert) が失敗したときは、claim を呼ばない', async () => {
@@ -498,6 +507,153 @@ describe('registerAndSaveExpoPushToken — 同じトークンのほかの利用�
     const logs = serverLogCalls().filter((call) => call.path === '/api/log');
     expect(logs[0].body.metadata).toEqual(expect.objectContaining({ stage: 'claim_token', error_name: 'TypeError' }));
     expect(logs[0].body.metadata).not.toHaveProperty('http_status');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1636: claim に端末の秘密の値を付ける (同じ端末の前の利用者の行だけを外す)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** サーバーが発行する端末の秘密の値 (ダミー。43 文字の base64url) */
+const ISSUED_SECRET = 'issued-device-secret-aaaaaaaaaaaaaaaaaaaaaa'; // gitleaks:allow
+const TEST_TOKEN = 'ExponentPushToken[test-token]';
+
+describe('registerAndSaveExpoPushToken — 端末の秘密の値で claim する (#1636)', () => {
+  it('端末に秘密の値が無ければサーバーに作ってもらい (issue_install_secret)、返った値を保管庫に置く。次の登録からはその値を送る', async () => {
+    mockPost.mockResolvedValue({ released: 0, install_secret: ISSUED_SECRET });
+
+    await registerAndSaveExpoPushToken();
+
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TEST_TOKEN, issue_install_secret: true }]]);
+    expect(await SecureStore.getItemAsync(PUSH_INSTALL_SECRET_STORE_KEY)).toBe(ISSUED_SECRET);
+
+    mockPost.mockClear();
+    mockPost.mockResolvedValue({ released: 0 });
+    await registerAndSaveExpoPushToken();
+
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TEST_TOKEN, install_secret: ISSUED_SECRET }]]);
+    expect(await SecureStore.getItemAsync(PUSH_INSTALL_SECRET_STORE_KEY)).toBe(ISSUED_SECRET);
+  });
+
+  it('秘密の値は利用者ごとではない: 同じ端末で別の利用者がログインしても、同じ値を送る', async () => {
+    await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, ISSUED_SECRET);
+    mockPost.mockResolvedValue({ released: 1 });
+
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-a' } } });
+    await registerAndSaveExpoPushToken();
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'user-b' } } });
+    await registerAndSaveExpoPushToken();
+
+    expect(claimCalls().map(([, body]) => body)).toEqual([
+      { expo_push_token: TEST_TOKEN, install_secret: ISSUED_SECRET },
+      { expo_push_token: TEST_TOKEN, install_secret: ISSUED_SECRET },
+    ]);
+  });
+
+  it('保管庫を読めないときは、秘密の値を送らず作り直しも頼まない (この端末の前の利用者の行を外せなくならないように)', async () => {
+    const getSpy = jest.spyOn(SecureStore, 'getItemAsync').mockRejectedValue(new Error('User interaction is not allowed'));
+    const setSpy = jest.spyOn(SecureStore, 'setItemAsync');
+    mockPost.mockResolvedValue({ released: 0, install_secret: ISSUED_SECRET });
+    try {
+      await registerAndSaveExpoPushToken();
+    } finally {
+      getSpy.mockRestore();
+    }
+
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TEST_TOKEN }]]);
+    expect(setSpy).not.toHaveBeenCalled();
+    setSpy.mockRestore();
+  });
+
+  it('応答の値が形に合わないとき・値が無いときは保管庫に置かない (次の claim でまた作ってもらう)', async () => {
+    mockPost.mockResolvedValue({ released: 0, install_secret: 'too-short' });
+    await registerAndSaveExpoPushToken();
+    expect(await SecureStore.getItemAsync(PUSH_INSTALL_SECRET_STORE_KEY)).toBeNull();
+
+    mockPost.mockResolvedValue(null);
+    await registerAndSaveExpoPushToken();
+    expect(await SecureStore.getItemAsync(PUSH_INSTALL_SECRET_STORE_KEY)).toBeNull();
+    expect(claimCalls().map(([, body]) => body)).toEqual([
+      { expo_push_token: TEST_TOKEN, issue_install_secret: true },
+      { expo_push_token: TEST_TOKEN, issue_install_secret: true },
+    ]);
+  });
+
+  it('保管庫に置けなくても登録は成功扱い (値は次の claim で作り直す)', async () => {
+    const setSpy = jest.spyOn(SecureStore, 'setItemAsync').mockRejectedValue(new Error('keystore broken'));
+    mockPost.mockResolvedValue({ released: 0, install_secret: ISSUED_SECRET });
+    try {
+      await expect(registerAndSaveExpoPushToken()).resolves.toBe(TEST_TOKEN);
+    } finally {
+      setSpy.mockRestore();
+    }
+  });
+
+  it('秘密の値つきの claim が成功したら、同じトークンの release の控えを捨てる (ほかのトークンの控えは残す)', async () => {
+    await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, ISSUED_SECRET);
+    await AsyncStorage.setItem(
+      PUSH_TOKEN_RELEASE_PENDING_KEY,
+      JSON.stringify([
+        { userId: 'user-a', token: TEST_TOKEN },
+        { userId: 'user-a', token: 'ExponentPushToken[old-token]' },
+      ]),
+    );
+    mockPost.mockResolvedValue({ released: 1 });
+
+    await registerAndSaveExpoPushToken();
+
+    expect(JSON.parse((await AsyncStorage.getItem(PUSH_TOKEN_RELEASE_PENDING_KEY)) as string)).toEqual([
+      { userId: 'user-a', token: 'ExponentPushToken[old-token]' },
+    ]);
+  });
+
+  it('claim が失敗したら、release の控えは捨てない (次の起動でやり直す)', async () => {
+    await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, ISSUED_SECRET);
+    const pending = JSON.stringify([{ userId: 'user-a', token: TEST_TOKEN }]);
+    await AsyncStorage.setItem(PUSH_TOKEN_RELEASE_PENDING_KEY, pending);
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === PUSH_TOKEN_CLAIM_API_PATH) throw new Error('HTTP 500 Internal Server Error: {}');
+      return { success: true };
+    });
+
+    await expect(registerAndSaveExpoPushToken()).rejects.toThrow('HTTP 500');
+
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_RELEASE_PENDING_KEY)).toBe(pending);
+  });
+
+  it('動いている release (セッションの無いときの後片付け) が終わってから、本人の行を登録する', async () => {
+    await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, ISSUED_SECRET);
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-123`, TEST_TOKEN);
+    const order: string[] = [];
+    let finishRelease: () => void = () => {};
+    mockPost.mockImplementation(async (path: string) => {
+      if (path === '/api/push-tokens/release') {
+        order.push('release:start');
+        await new Promise<void>((resolve) => {
+          finishRelease = resolve;
+        });
+        order.push('release:end');
+        return { released: 1 };
+      }
+      return { released: 0 };
+    });
+    const mockUpsert = jest.fn(async () => {
+      order.push('upsert');
+      return { error: null };
+    });
+    mockFrom.mockReturnValue({ upsert: mockUpsert });
+
+    const released = releasePushTokenAfterSignedOut('user-123');
+    const registered = registerAndSaveExpoPushToken();
+    // release の通信が始まるまで待つ。そのあとも、release が終わるまで登録は始まらない
+    await waitFor(() => expect(order).toContain('release:start'));
+    for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(order).toEqual(['release:start']);
+
+    finishRelease();
+    await released;
+    await registered;
+    expect(order).toEqual(['release:start', 'release:end', 'upsert']);
   });
 });
 
@@ -763,7 +919,7 @@ describe('ensurePushTokenRegistered — #1038 F7-09 / #1599', () => {
     await ensurePushTokenRegistered();
 
     expect(mockGetExpoPushTokenAsync).toHaveBeenCalledTimes(1);
-    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TOKEN }]]);
+    expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TOKEN, issue_install_secret: true }]]);
   });
 
   it('共有の端末: 掃除を通らずにセッションが終わった利用者 A の行を、B の claim が消したあと、A が再びログインすると A の行が戻る', async () => {

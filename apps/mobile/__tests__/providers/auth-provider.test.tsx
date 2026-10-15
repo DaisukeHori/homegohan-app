@@ -42,6 +42,17 @@ jest.mock('../../src/lib/userScopedLocalData', () => ({
   clearUserScopedLocalDataAfterSignedOut: (...args: unknown[]) => mockClearAfterSignedOut(...args),
 }));
 
+// セッションの無いときの user_push_tokens の行の後片付け (#1636)。中身は push-token-release.test.ts と
+// auth-provider-sign-out-cleanup.test.tsx (本物) で確かめる。ここでは呼ばれることと順番を見る
+const mockReleaseAfterSignedOut = jest.fn();
+const mockFlushPendingReleases = jest.fn();
+const mockRecordRelease = jest.fn();
+jest.mock('../../src/lib/pushTokenRelease', () => ({
+  releasePushTokenAfterSignedOut: (...args: unknown[]) => mockReleaseAfterSignedOut(...args),
+  flushPendingPushTokenReleases: (...args: unknown[]) => mockFlushPendingReleases(...args),
+  recordPushTokenRelease: (...args: unknown[]) => mockRecordRelease(...args),
+}));
+
 import { AuthProvider, useAuth } from '../../src/providers/AuthProvider';
 
 /**
@@ -99,6 +110,9 @@ beforeEach(() => {
   mockSignOut.mockResolvedValue({ error: null });
   mockClearUserScopedLocalData.mockResolvedValue(undefined);
   mockClearAfterSignedOut.mockResolvedValue(undefined);
+  mockReleaseAfterSignedOut.mockResolvedValue(undefined);
+  mockFlushPendingReleases.mockResolvedValue(undefined);
+  mockRecordRelease.mockResolvedValue(undefined);
   mockGetStoredSession.mockResolvedValue(null);
   mockOnAuthStateChange.mockImplementation((listener: AuthListener) => {
     authListener = listener;
@@ -647,5 +661,129 @@ describe('AuthProvider — 起動時のセッション復元', () => {
 
     await waitFor(() => expect(text(api, 'loading')).toBe('false'));
     expect(text(api, 'session')).toBe('none');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1636: signOut.ts を通らずにセッションが終わったときの、user_push_tokens の行の後片付け (セッション無しの release)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('AuthProvider — user_push_tokens の行の後片付け (#1636)', () => {
+  function makeSignedIn(id = 'user-1') {
+    const session = makeSession(id);
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: session.user }, error: null });
+  }
+
+  it('SIGNED_OUT: 掃除 (push token の値を残す版) のあとに、同じ利用者で release を呼ぶ', async () => {
+    const calls: string[] = [];
+    mockClearAfterSignedOut.mockImplementation(async (userId: unknown) => {
+      calls.push(`clear:${String(userId)}`);
+    });
+    mockReleaseAfterSignedOut.mockImplementation(async (userId: unknown) => {
+      calls.push(`release:${String(userId)}`);
+    });
+    makeSignedIn('user-1');
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'session')).toBe('access-1'));
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    expect(text(api, 'session')).toBe('none');
+    await waitFor(() => expect(calls).toEqual(['clear:user-1', 'release:user-1']));
+  });
+
+  it('SIGNED_OUT: 掃除が例外を投げても release は呼ぶ。release が例外を投げても外へ出さない', async () => {
+    mockClearAfterSignedOut.mockRejectedValue(new Error('cleanup failed'));
+    mockReleaseAfterSignedOut.mockRejectedValue(new Error('release failed'));
+    makeSignedIn('user-1');
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'session')).toBe('access-1'));
+
+    expect(() => act(() => authListener('SIGNED_OUT', null))).not.toThrow();
+
+    await waitFor(() => expect(mockReleaseAfterSignedOut).toHaveBeenCalledWith('user-1'));
+    expect(text(api, 'session')).toBe('none');
+  });
+
+  it('画面は release を待たずに未ログインになる', async () => {
+    mockReleaseAfterSignedOut.mockImplementation(() => new Promise<void>(() => {}));
+    makeSignedIn('user-1');
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'session')).toBe('access-1'));
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    expect(text(api, 'session')).toBe('none');
+    expect(text(api, 'loading')).toBe('false');
+  });
+
+  it('起動時に未ログインと決まったとき: 前に消せなかった release をやり直す (完了を待たずに未ログインの画面を出す)', async () => {
+    mockFlushPendingReleases.mockImplementation(() => new Promise<void>(() => {}));
+
+    const api = renderProvider();
+
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    expect(text(api, 'session')).toBe('none');
+    expect(mockFlushPendingReleases).toHaveBeenCalledTimes(1);
+    expect(mockRecordRelease).not.toHaveBeenCalled();
+  });
+
+  it('起動時にサーバーが失効と明言したとき: 掃除で値が消える前に宛先を控え、そのあと掃除 → サインアウト', async () => {
+    const calls: string[] = [];
+    mockRecordRelease.mockImplementation(async (userId: unknown) => {
+      calls.push(`record:${String(userId)}`);
+    });
+    mockClearUserScopedLocalData.mockImplementation(async () => {
+      calls.push('clearUserScopedLocalData');
+    });
+    mockSignOut.mockImplementation(async () => {
+      calls.push('signOut');
+      return { error: null };
+    });
+    const session = makeSession('user-revoked');
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({
+      data: { user: null },
+      error: authError('AuthApiError', 403, 'Session not found', 'session_not_found'),
+    });
+
+    const api = renderProvider();
+
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    expect(calls).toEqual(['record:user-revoked', 'clearUserScopedLocalData', 'signOut']);
+  });
+
+  it('起動時にサーバーが失効と明言したとき: 控えが例外を投げても、掃除とサインアウトは続ける', async () => {
+    mockRecordRelease.mockRejectedValue(new Error('record failed'));
+    const session = makeSession('user-revoked');
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({
+      data: { user: null },
+      error: authError('AuthApiError', 403, 'Session not found', 'session_not_found'),
+    });
+
+    const api = renderProvider();
+
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    expect(text(api, 'session')).toBe('none');
+    expect(mockClearUserScopedLocalData).toHaveBeenCalledWith('user-revoked');
+    expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
+  });
+
+  it('ログイン済みで起動したとき・通信の失敗で保存済みのセッションを使うときは、release も控えもやり直しもしない', async () => {
+    makeSignedIn('user-1');
+    const signedIn = renderProvider();
+    await waitFor(() => expect(text(signedIn, 'session')).toBe('access-1'));
+    signedIn.unmount();
+
+    const session = makeSession('user-2', 'access-2');
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: retryableFetchError() });
+    const offline = renderProvider();
+    await waitFor(() => expect(text(offline, 'session')).toBe('access-2'));
+
+    expect(mockReleaseAfterSignedOut).not.toHaveBeenCalled();
+    expect(mockFlushPendingReleases).not.toHaveBeenCalled();
+    expect(mockRecordRelease).not.toHaveBeenCalled();
   });
 });
