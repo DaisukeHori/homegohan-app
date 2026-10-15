@@ -1,9 +1,9 @@
 /**
- * org-challenges (組織チャレンジの、Web とモバイルで共通の決まり。#1132) のユニットテスト
+ * org-challenges (組織チャレンジの、サーバーと Web で共通の決まり。#1132) のユニットテスト
  *
  * 確かめること:
  *   - 最小人数 ORG_CHALLENGE_MIN_PARTICIPANTS が、DB の関数 get_org_challenge_aggregates の最小人数
- *     (`SELECT n AS min_participants`) と同じ値 (Web とモバイルの画面が、同じ値を既定にする)
+ *     (`SELECT n AS min_participants`) と同じ値 (Web の画面が、同じ値を既定にする。モバイルの管理画面は #1598 で消した)
  *   - formatParticipantCount: 人数が無い (API が null で返す) ときは「最小人数 + 人未満」、API が最小人数を返したらそれを使う
  */
 import fs from 'node:fs';
@@ -29,7 +29,7 @@ describe('ORG_CHALLENGE_MIN_PARTICIPANTS', () => {
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(Number(m![1]));
   });
 
-  it('パッケージの入口 (@homegohan/shared) から読める (モバイルの管理画面が使う)', () => {
+  it('パッケージの入口 (@homegohan/shared) から読める (Web の src/lib/org-challenges.ts がここから読み直す)', () => {
     expect(shared.ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(ORG_CHALLENGE_MIN_PARTICIPANTS);
     expect(shared.formatParticipantCount).toBe(formatParticipantCount);
   });

@@ -8,7 +8,7 @@
  *   - progress.totalSteps は見分けに使わない。行を作ったときの totalSteps は枠の数 (targetSlots.length。2 日分の 3 食なら 6)
  *     や AI 相談の固定値 (1 / 3 / 21) で、通常の生成でも 6 になることがあるため
  * 生成中の行の確認 (GET /api/ai/menu/weekly/pending) は、この判定の結果を ultimateMode として返す
- * (モバイルの週間献立画面は、画面に入り直したときの進捗カードの種類をこれで決める)。
+ * (Web の週間献立画面は、画面に入り直したときの進捗カードの種類をこれで決める。モバイルの週間献立のネイティブの画面は #1598 で消した)。
  *
  * 判定そのもの (isUltimateModeWeeklyMenuRequest。真偽値の true のときだけ究極モード) は、Web とモバイルで同じ基準にするため
  * @homegohan/shared (packages/shared/src/weekly-menu-ultimate-mode.ts) に置く (#1609)。ここには書く側の値と読む列の指定だけを置く。

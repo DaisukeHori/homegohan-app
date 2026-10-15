@@ -2,7 +2,7 @@
  * Web とモバイルの「究極モードの生成か」の判定の突合 (#1609)
  *
  * 以前は、Web (src/lib/ai/weekly-menu-request-ultimate.ts の isUltimateModeWeeklyMenuRequest) とモバイル
- * (apps/mobile/app/menus/weekly/index.tsx の isUltimatePendingRequest) に別々の判定があった (どちらも `=== true`)。
+ * (apps/mobile/app/menus/weekly/index.tsx の isUltimatePendingRequest。この画面は #1598 で消した) に別々の判定があった (どちらも `=== true`)。
  * 片方だけを変えると、同じ生成中の行で Web とモバイルの進捗カードの段 (究極 / 通常) が食い違う。
  * #1609 で判定を @homegohan/shared の 1 つの関数に寄せ、両方の利用者をそこへ移した。
  * モバイルの週間献立のネイティブの画面は、その後 #1598 で消した (献立のタブは WebView で Web の画面を出す)。このテストは

@@ -4,8 +4,8 @@
  *
  * 食事写真・冷蔵庫写真 (meal_photos / fridge-images) は、段 2 でバケットを非公開にする。DB に保存された公開 URL を
  * そのまま <Image src> / <img src> / <Image source={{ uri }}> に渡すと、非公開にした時点で表示できなくなる (今は誰でも見られる)。
- * 画面は SignedPhotoImage (Web: src/components/photo/SignedPhotoImage.tsx。モバイルの apps/mobile/src/components/photo/SignedPhotoImage.tsx は、
- * 使っていた食事の詳細・週の献立のネイティブの画面と一緒に消した。#1598。アプリの写真は WebView の Web の画面が出す)
+ * 画面は SignedPhotoImage (Web: src/components/photo/SignedPhotoImage.tsx。モバイルの apps/mobile/src/components/photo/SignedPhotoImage.tsx は #1598 で消した。
+ * 使っていた食事の詳細・週の献立のネイティブの画面と一緒に消した。アプリの写真は WebView の Web の画面が出す)
  * を使い、サーバーが本人の写真だと確かめて署名した URL を表示する。
  *
  * 見るもの: 本番の .tsx (src・apps/mobile/app・apps/mobile/src) の JSX の Image / img 要素の src / source 属性に、

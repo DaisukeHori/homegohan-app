@@ -1,7 +1,7 @@
 // packages/shared/src/profile-name.ts
 // プロフィールの名前 (user_profiles.nickname) が「名前が無い」かどうかの判定 (#1611・#1635)。
 //
-// Web (src/lib/profile-name.ts はここを読み直すだけ)・モバイル (apps/mobile のプロフィール画面ほか)・
+// Web (src/lib/profile-name.ts はここを読み直すだけ)・モバイル (apps/mobile の再開の画面とハンズオンツアー)・
 // GET /api/onboarding/status が、この 1 つの判定を使う。以前はモバイルが仮置きの 'Guest' をそのまま名前として出し、
 // onboarding/status は前後の空白を除かずに `!== 'Guest'` で比べていた (#1635)。
 //

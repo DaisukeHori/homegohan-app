@@ -2,8 +2,8 @@
  * GET /api/admin/inquiries - 問い合わせ一覧 (#1121)
  *
  * /api/contact が inquiries に保存した問い合わせを、サポート担当者が一覧する。
- * 呼び出し元: Web の /support/inquiries、モバイルの admin / support の問い合わせ画面。
- * どちらも { inquiries: [...] } (camelCase) を読む。
+ * 呼び出し元: Web の /support/inquiries。{ inquiries: [...] } (camelCase) を読む。
+ * (モバイルの support の問い合わせ画面も呼んでいたが、通常の操作で届かない画面として消した。#1598)
  *
  * 一覧は「概要」(件名・連絡先・状態・日時) だけを返す。問い合わせ本文と管理者メモは
  * 詳細 (GET /api/admin/inquiries/[id]) でだけ返し、そこで閲覧を監査ログに記録する (#1200 と同じ方針)。

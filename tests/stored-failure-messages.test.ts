@@ -1,8 +1,9 @@
 /**
  * 生成のリクエストの行に書く失敗の文と、画面に出すときの絞り込み (#1478。#1172 の続き)
  *
- * weekly_menu_requests.error_message / shopping_list_requests.result.error は、Web とアプリの画面が
- * Realtime・直接の select・状態の確認の API で受けて、そのまま表示する。
+ * weekly_menu_requests.error_message / shopping_list_requests.result.error は、Web の画面が
+ * Realtime・直接の select・状態の確認の API で受けて、そのまま表示する (アプリは weekly_menu_requests.error_message だけを
+ * 生成のフックで受ける。買い物リストのネイティブの画面は #1598 で消した)。
  *   1. 保存の結果のまとめ (summarizeSaveResults) は、枠ごとの理由 (例外の文面を含む) を errorMessage に入れず、定型の文だけを返す
  *      (枠ごとの理由は issueDetails でログ用に返す)
  *   2. 上限 (1 日・究極モード #1142) で止めたときの文の見分け (isAiDailyLimitMessage)。

@@ -79,8 +79,8 @@ const TARGET_FILES = [
   'src/app/(main)/menus/weekly/page.tsx',
   'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
   // #1631
-  // (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx も対象だったが、スキャンのタブが WebView になって
-  //  通常の操作で届かない画面だったので、画面ごと消した。#1598。食事の記録は Web の src/app/(main)/meals/new/page.tsx が受け持つ)
+  // (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx も対象だったが、画面ごと消した。#1598。スキャンのタブが
+  //  WebView になって通常の操作で届かない画面だった。食事の記録は Web の src/app/(main)/meals/new/page.tsx が受け持つ)
   'lib/slot-builder.ts',
   'src/app/(main)/home/page.tsx',
   'src/app/(main)/meals/new/page.tsx',

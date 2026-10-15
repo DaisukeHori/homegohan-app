@@ -9,7 +9,7 @@
  *
  * 画面ごとに今の色が違うので、値を揃えずに表を分けている (#1665 では画面の見た目を変えない):
  * - MEAL_TYPE_RECORD_THEME: 食事を記録する画面 (食事の追加・食事の詳細) と、献立の『食事を追加』モーダル。落ち着いた色。
- * - MEAL_TYPE_HOME_THEME: ホームの今日の食事。鮮やかな色 (モバイルの区分の色と同じ値)。
+ * - MEAL_TYPE_HOME_THEME: ホームの今日の食事。鮮やかな色 (以前のモバイルの区分の色と同じ値。モバイルの表は #1598 で消した)。
  * 色の値はそれぞれの画面の colors にあった値と同じ (warning / success の系統は STATUS_COLOR_TOKENS と同じ値なのでそこから引く)。
  */
 import { Coffee, Moon, Sun, Utensils, type LucideIcon } from 'lucide-react';
@@ -42,7 +42,7 @@ export const MEAL_TYPE_RECORD_THEME: Record<MealType, MealTypeIconThemeWithBg> =
   midnight_snack: { icon: Moon, color: RECORD_PALETTE.blue, bg: RECORD_PALETTE.blueLight },
 };
 
-/** ホームの今日の食事の区分の見た目 (鮮やかな色。モバイルの区分の色 MEAL_TYPE_COLORS と同じ値) */
+/** ホームの今日の食事の区分の見た目 (鮮やかな色。以前のモバイルの区分の色 MEAL_TYPE_COLORS と同じ値。その表は #1598 で消した) */
 export const MEAL_TYPE_HOME_THEME: Record<MealType, MealTypeIconTheme> = {
   breakfast: { icon: Coffee, color: '#FF9800' },
   lunch: { icon: Sun, color: '#4CAF50' },
@@ -56,7 +56,7 @@ export type ServingsMealType = Extract<MealType, 'breakfast' | 'lunch' | 'dinner
 
 /**
  * 人数の設定の表 (献立の人数の設定・買い物の範囲の人数の表) の、区分の短い名前。
- * Web の人数の表は夕食を「夜」と書く (モバイルの献立のカードの短い名前は「夕」で、値が違う)。
+ * Web の人数の表は夕食を「夜」と書く (以前のモバイルの献立のカードの短い名前は「夕」で、値が違った。そのカードは #1598 で消した)。
  */
 export const SERVINGS_MEAL_SHORT_LABELS: Record<ServingsMealType, string> = {
   breakfast: '朝',

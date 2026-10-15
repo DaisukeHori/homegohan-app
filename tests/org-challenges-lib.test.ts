@@ -126,7 +126,7 @@ describe('最小人数 (DB の関数と同じ値)', () => {
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(5);
   });
 
-  it('Web の定数・整形は @homegohan/shared の同じもの (モバイルの管理画面と値が分かれない)', () => {
+  it('Web の定数・整形は @homegohan/shared の同じもの (共通のパッケージと値が分かれない)', () => {
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(shared.ORG_CHALLENGE_MIN_PARTICIPANTS);
     expect(formatParticipantCount).toBe(shared.formatParticipantCount);
   });

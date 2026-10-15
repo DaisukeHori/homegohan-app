@@ -5,8 +5,8 @@
  * それ以外は汎用の文にする絞り込みを入れた。しかし次の画面は、行の error_message / result.error をそのまま出していた。
  *   - Web: 週の献立の画面 (src/app/(main)/menus/weekly/page.tsx) の weekly_menu_requests の Realtime 2 か所と
  *     shopping_list_requests の Realtime 1 か所 (と、状態の確認の API の本文を受ける箇所)
- *   - アプリ: 週の献立の画面 (apps/mobile/app/menus/weekly/index.tsx)・買い物リストの画面 (apps/mobile/app/shopping-list/index.tsx)。
- *     この 2 つは、通常の操作で届かないネイティブの画面として消した (#1598。献立のタブは WebView で Web の画面を出す)。
+ *   - アプリ: 週の献立の画面 (apps/mobile/app/menus/weekly/index.tsx)・買い物リストの画面 (apps/mobile/app/shopping-list/index.tsx)。この 2 つは消した。
+ *     通常の操作で届かないネイティブの画面だった (#1598。献立のタブは WebView で Web の画面を出す)。
  *     アプリで行を受けるのは、生成のフック (apps/mobile/src/hooks/useV4MenuGeneration.ts) だけになった
  * 書く側は定型の文を書くが、#1478 より前に書かれた行には生の文が残っており、進まなくなった行の印 'stale_request_timeout' は
  * 英語のまま出ていた。
