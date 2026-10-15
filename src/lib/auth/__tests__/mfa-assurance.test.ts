@@ -5,9 +5,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ headerGet: vi.fn(), headers: vi.fn() }));
+const mocks = vi.hoisted(() => ({ headerGet: vi.fn() }));
 
-vi.mock('next/headers', () => ({ headers: mocks.headers }));
+// next/headers の headers() は Promise を返す (Next 15。tests/next15-async-request-api-scan.test.ts の #1621)
+vi.mock('next/headers', () => ({ headers: async () => ({ get: mocks.headerGet }) }));
 
 import { AuthError } from '@/lib/auth/errors';
 import { SessionClaimsSchema, bearerJwtOf, readSessionAssurance } from '@/lib/auth/mfa/assurance';
@@ -36,8 +37,6 @@ function supabaseWith(options: {
 
 beforeEach(() => {
   mocks.headerGet.mockReset();
-  mocks.headers.mockReset();
-  mocks.headers.mockResolvedValue({ get: mocks.headerGet });
 });
 
 describe('bearerJwtOf', () => {
@@ -61,7 +60,7 @@ describe('readSessionAssurance', () => {
     });
     await expect(readSessionAssurance(client, { id: USER_ID })).resolves.toEqual({ aal: 'aal2', sessionId: 'session-1' });
     expect(getClaims).toHaveBeenCalledWith(COOKIE_TOKEN);
-    expect(mocks.headers).not.toHaveBeenCalled();
+    expect(mocks.headerGet).not.toHaveBeenCalled();
   });
 
   it('readSessionAssurance: セッションが無ければ Authorization ヘッダの Bearer JWT を getClaims に渡す (next/headers をモック)', async () => {
