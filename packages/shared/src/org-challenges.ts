@@ -1,9 +1,9 @@
 /**
  * 組織チャレンジの、Web とモバイルで共通の決まり (#1132)
  *
- * 管理者に参加者数・平均を見せるのに必要な最小人数は、サーバー・Web・モバイルの 3 か所で同じ値を使うため、
- * 置き場はこのファイルの 1 つにする (Web は src/lib/org-challenges.ts から、モバイルは管理画面
- * apps/mobile/app/(org)/org/challenges.tsx から読む)。
+ * 管理者に参加者数・平均を見せるのに必要な最小人数は、サーバーと Web で同じ値を使うため、
+ * 置き場はこのファイルの 1 つにする (Web は src/lib/org-challenges.ts から読む。モバイルの管理画面
+ * apps/mobile/app/(org)/org/challenges.tsx は、通常の操作で届かない画面として消した。#1598)。
  */
 
 /**

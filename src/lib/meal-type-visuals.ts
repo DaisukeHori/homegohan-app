@@ -4,7 +4,7 @@
  * 区分 (MealType の 5 値) ごとの色・背景色・アイコンの部品を、Web ではここ 1 か所に置く。
  * 各画面は区分との比較の連鎖 (三項・if・switch) や手書きの表を持たず、ここから引く。
  * - 表示名は @homegohan/shared の MEAL_LABELS、絵文字は MEAL_EMOJIS (Web とモバイルで同じ値) から引く。
- * - モバイルの見た目の表は apps/mobile/src/lib/meal-type-visuals.ts。
+ * - モバイルの見た目の表 (apps/mobile/src/lib/meal-type-visuals.ts) は、使っていたネイティブの画面と一緒に消した (#1598)。
  * - 表は Record<MealType, …> なので、MealType に値が増えると tsc が漏れを止める。
  *
  * 画面ごとに今の色が違うので、値を揃えずに表を分けている (#1665 では画面の見た目を変えない):
