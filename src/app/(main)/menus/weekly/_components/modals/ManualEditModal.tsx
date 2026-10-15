@@ -3,7 +3,7 @@
 import React, { useId, useRef } from "react";
 import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
-import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { X, Check, Trash2, Plus, Pencil, Camera, Image as ImageIcon } from "lucide-react";
 import type { MealMode, PlannedMeal, DishDetail } from "@/types/domain";
 import type { CatalogProductSummary } from "@/types/catalog";
@@ -307,7 +307,7 @@ export function ManualEditModal({
           <div className="mb-4">
             <label style={{ fontSize: 12, color: colors.textMuted, display: 'block', marginBottom: 8 }}>現在の画像</label>
             <div className="relative h-40 rounded-2xl overflow-hidden" style={{ border: `1px solid ${colors.border}` }}>
-              <Image
+              <SignedPhotoImage
                 src={manualEditMeal.imageUrl}
                 alt={manualEditMeal.dishName || 'Meal image'}
                 fill

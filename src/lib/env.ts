@@ -300,6 +300,14 @@ export const SERVER_ENV_VARS = {
     // Web で値を読むのは consumeAiUsage の 1 か所だけ
     readOnlyBy: 'src/lib/plan/entitlements.ts',
   },
+  PHOTO_SIGNED_URL_TTL_SECONDS: {
+    required: false,
+    description:
+      '食事写真・冷蔵庫写真 (meal_photos / fridge-images) を表示する署名付き URL の有効期限 (秒。60 以上 86400 以下の整数) (#1365)',
+    whenMissing: '有効期限は 3600 秒 (1 時間。PHOTO_SIGNED_URL_DEFAULT_TTL_SECONDS)。範囲の外・整数でない値も 3600 秒',
+    // 読み方 (範囲の中の整数でなければ既定値) を 1 か所に置く
+    readOnlyBy: 'src/lib/photo-storage-signing.ts',
+  },
   MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS: {
     required: false,
     description:
