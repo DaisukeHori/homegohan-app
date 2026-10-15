@@ -113,7 +113,7 @@ export async function GET(request: Request) {
 // 存在しない（migration 追加は本 Issue のスコープ外のため報告のみ）。既存の 'failed' + 判別可能な
 // error_message で「ユーザーによる中止」を表現する。既に completed/failed の場合は上書きしない。
 export async function POST(request: Request) {
-  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
   const nullCharacterRejection = await rejectNullCharacterBody(request);
   if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
