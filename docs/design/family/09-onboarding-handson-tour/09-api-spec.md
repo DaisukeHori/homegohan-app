@@ -541,7 +541,7 @@ if (body.sandbox === true) {
   }
 }
 
-// 通常の INSERT 処理 + first_bite バッジ付与 (既存)
+// 通常の INSERT 処理。sandbox=true のときはバッジを付けない (お試しの記録はバッジに数えない。#1314)
 ```
 
 ### 5.2 `POST /api/menu-plans/add`
