@@ -8524,6 +8524,7 @@ export type Database = {
       defer_push_outbox: {
         Args: { p_id: string; p_until: string; p_worker_id: string }
         Returns: boolean
+      }
       email_outbox_dead_counts: {
         Args: { p_limit?: number }
         Returns: {
@@ -8546,6 +8547,18 @@ export type Database = {
         Returns: number
       }
       fail_email_outbox: {
+        Args: {
+          p_error_code: string
+          p_error_message: string
+          p_id: string
+          p_max_attempts: number
+          p_retry_after_seconds: number
+          p_retryable: boolean
+          p_status_code: number
+          p_worker_id: string
+        }
+        Returns: string
+      }
       fail_push_outbox: {
         Args: {
           p_error_code: string
