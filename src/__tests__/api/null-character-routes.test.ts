@@ -61,6 +61,7 @@ const ENTRIES: Entry[] = [
   { file: 'account/data-requests/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/data-requests/route')).POST },
   { file: 'account/delete/route.ts', method: 'POST', load: async () => (await import('@/app/api/account/delete/route')).POST },
   { file: 'admin/catalog/import/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/catalog/import/route')).POST },
+  { file: 'admin/data-requests/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/admin/data-requests/[id]/route')).PATCH },
   { file: 'admin/finance/exports/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/finance/exports/route')).POST },
   { file: 'admin/inquiries/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/admin/inquiries/[id]/route')).PATCH },
   { file: 'admin/inquiries/[id]/route.ts', method: 'PUT', load: async () => (await import('@/app/api/admin/inquiries/[id]/route')).PUT },

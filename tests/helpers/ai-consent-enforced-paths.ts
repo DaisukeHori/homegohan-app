@@ -294,6 +294,20 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: '個人情報の請求の取り下げ。AI へは送らない (env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: '本人の請求を取り下げにするだけ (メールも送らない)' } },
   },
+  // #1178 / #1702 段 C 個人情報の請求 (DSR) の運営向けの API。本人向けと同じく、メール (notifications.ts) が運営への知らせの宛先を
+  // getOptionalEnv で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
+  // 送る先は DB (data_subject_requests・admin_audit_logs) とメール (Resend) だけ。利用者のデータを AI へ送らない
+  'src/app/api/admin/data-requests/route.ts': {
+    consent: '運営の個人情報の請求の一覧。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { GET: { noAi: '請求の一覧を DB から読み、閲覧を監査ログに残すだけ' } },
+  },
+  'src/app/api/admin/data-requests/[id]/route.ts': {
+    consent: '運営の個人情報の請求の詳細と対応。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: {
+      GET: { noAi: '請求を 1 件 DB から読み、閲覧を監査ログに残すだけ' },
+      PATCH: { noAi: '請求の状態・応答・内部メモを書き換え、完了のメールを送り、監査ログに残すだけ' },
+    },
+  },
 };
 
 /**
