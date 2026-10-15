@@ -2,7 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, Modal, Pressable, ScrollView, Text, TextInput, View } from "react-native";
-import { formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
+import { MEAL_LABELS, formatCalendarDate, todayCalendarDate } from "@homegohan/shared";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -18,6 +18,7 @@ import { getActiveShoppingListId } from "../../src/lib/mealPlan";
 import { supabase } from "../../src/lib/supabase";
 import { colors, radius, spacing } from "../../src/theme";
 import { handleAiConsentRequiredError, handleStoredAiConsentFailure } from "../../src/lib/ai-consent";
+import { shoppingListRequestErrorMessageForDisplay } from "../../src/lib/menu-request-error";
 
 type QuantityVariant = {
   display: string;
@@ -405,7 +406,7 @@ export default function ShoppingListPage() {
             if (statusRes.status === 'completed') {
               await handleCompleted(statusRes.result);
             } else if (statusRes.status === 'failed') {
-              handleFailed(statusRes.result?.error || '再生成に失敗しました');
+              handleFailed(shoppingListRequestErrorMessageForDisplay(statusRes.result?.error) || '再生成に失敗しました');
             }
           } catch (e: any) {
             cleanupRegenSubscription();
@@ -433,7 +434,8 @@ export default function ShoppingListPage() {
               if (newData.status === 'completed') {
                 await handleCompleted(newData.result);
               } else if (newData.status === 'failed') {
-                handleFailed(newData.result?.error || '再生成に失敗しました');
+                // 行の result.error は、こちらで書いた文 (定型の失敗の文・同意・上限) だけをそのまま出す (#1576)
+                handleFailed(shoppingListRequestErrorMessageForDisplay(newData.result?.error) || '再生成に失敗しました');
               }
             }
           )
@@ -478,8 +480,8 @@ export default function ShoppingListPage() {
     }
   };
 
-  const mealLabel = (meal: MealType) =>
-    meal === 'breakfast' ? '朝食' : meal === 'lunch' ? '昼食' : '夕食';
+  // 区分の表示名は MEAL_LABELS から引く (#1665。比較の連鎖を持たない)
+  const mealLabel = (meal: MealType) => MEAL_LABELS[meal];
 
   return (
     <View testID="shopping-list-screen" style={{ flex: 1, backgroundColor: colors.bg }}>

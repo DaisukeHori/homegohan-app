@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 
 import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui";
-import { getApi, getApiBaseUrl } from "../../../src/lib/api";
+import { getApi } from "../../../src/lib/api";
+import { orgInvitePageUrl } from "../../../src/lib/siteConfig";
 import { colors, spacing } from "../../../src/theme";
 
 type Invite = {
@@ -30,14 +31,6 @@ export default function OrgInvitesPage() {
   const [email, setEmail] = useState("");
   const [role, setRole] = useState("member");
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const baseUrl = useMemo(() => {
-    try {
-      return getApiBaseUrl();
-    } catch {
-      return "";
-    }
-  }, []);
 
   async function load() {
     setIsLoading(true);
@@ -145,7 +138,8 @@ export default function OrgInvitesPage() {
         ) : (
           <View style={{ gap: spacing.md }}>
             {items.map((inv) => {
-              const inviteUrl = baseUrl ? `${baseUrl}/invite/${inv.token}` : `(token) ${inv.token}`;
+              // 招待を受ける人が開く Web のページの URL (API の基点ではなく Web のオリジン。#1647)
+              const inviteUrl = orgInvitePageUrl(inv.token);
               const status = getInviteStatus(inv);
               return (
                 <Card key={inv.id}>

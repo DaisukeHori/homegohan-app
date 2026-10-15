@@ -10,6 +10,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
 import { buildFamilyPromotionUrl } from '@/lib/membership/urls';
+import { normalizeProfileName } from '@/lib/profile-name';
 import {
   checkInviteEmailLimits,
   inviteThrottleFailureFromRpcError,
@@ -19,6 +20,7 @@ import {
   FamilyMemberIdParamsSchema,
   RequestChildPromotionBodySchema,
 } from '@/schemas/membership/family-promote-action';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 function invalidMemberIdResponse() {
   return NextResponse.json(
@@ -44,6 +46,9 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ member_id: string }> },
 ) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const { member_id } = await params;
   const supabase = await createClient();
   const logger = createLogger('POST /api/family/members/[member_id]/promote', generateRequestId());
@@ -124,7 +129,9 @@ export async function POST(
       email_address: req.email,
       family_name: req.family_name ?? '家族グループ',
       member_display_name: req.member_display_name ?? '子供メンバー',
-      requester_name: req.requester_name ?? user.email ?? '家族の代表者',
+      // RPC は COALESCE(nickname, email) で依頼者の名前を返すので、名前が無い人 (仮置きの 'Guest'・空白だけ) は 'Guest' が届く。
+      // 名前とみなさず、依頼者 (呼び出した本人) のメールアドレス → 既定の呼称にする (#1649)
+      requester_name: normalizeProfileName(req.requester_name) ?? user.email ?? '家族の代表者',
       // リンクの基点は src/lib/membership/urls.ts に 1 つだけある (#1194)
       accept_url: buildFamilyPromotionUrl(req.token),
       expires_at: req.expires_at,

@@ -857,6 +857,8 @@ apps/mobile/src/handson-tour/   (Mobile)
 └── index.ts
 ```
 
+上の木の `apps/mobile/src/handson-tour/` は、設計時に置いたコンポーネントと hook だけ。いまのファイルの一覧 (`Confetti.tsx` と、あとから足したファイルを含む) は family/09-onboarding-handson-tour/16-files-structure.md の §1.3 の表と §5 の木 (`tests/handson-tour-files-structure-doc.test.ts` が実ファイルと突き合わせる)。
+
 ## 22. 未解決事項
 
 | 項目 | 状態 | 期限 |

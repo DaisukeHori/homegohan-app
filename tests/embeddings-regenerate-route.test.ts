@@ -22,6 +22,13 @@ vi.mock('@/lib/db-logger', () => ({
   createLogger: () => ({ withUser: mockWithUser, error: mockLogError }),
 }));
 
+// #1571: 成功したときは監査ログ (super_admin.embeddings.regenerate) を本人の権限の client で書く。
+// ここでは記録の中身は見ない (tests/admin-mutation-audit-1571.test.ts が見る)。書き込みを受け付けるだけの client にする
+const mockAuditInsert = vi.fn(async (_row: unknown) => ({ error: null }));
+vi.mock('@/lib/supabase/server', () => ({
+  createClient: async () => ({ from: () => ({ insert: mockAuditInsert }) }),
+}));
+
 const { POST } = await import('@/app/api/super-admin/embeddings/regenerate/route');
 
 /** Edge Function が包んで返す PostgREST の生のエラー文の目印。本文に出てはいけない */

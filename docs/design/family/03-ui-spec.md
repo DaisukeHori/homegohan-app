@@ -33,7 +33,7 @@ Web (Next.js App Router) と Mobile (Expo WebView) の両対応。
 Mobile 専用:
 | 画面 ID | パス (Mobile) | 説明 |
 |---------|-------------|------|
-| FAM-M01 | `app/family/index.tsx` | FAM-003 の Mobile 版 |
+| ~~FAM-M01~~ | ~~`app/family/index.tsx`~~ | (2026-10-15 に削除。通常の操作で届かず、新しい家族のデータモデルにも追随していなかった。#1598 / #1610。アプリの家族の画面は WebView の Web の画面を使う) |
 | FAM-M02 | `app/family/invite-accept.tsx` | ディープリンク受諾画面 |
 | FAM-M03 | `app/family/shopping-list.tsx` | Realtime 同期買い物リスト |
 
@@ -652,7 +652,7 @@ CI で全家族画面の a11y スキャン。
 
 ## 10. 既存実装との関連
 
-- 既存 `apps/mobile/app/family/` は部分実装済 → clean-build で再構築
+- 既存 `apps/mobile/app/family/index.tsx` は 2026-10-15 に削除した (#1598 / #1610)。招待受諾 (FAM-M02) と買い物リスト (FAM-M03) は未実装
 - `WebViewScreen.tsx` は保持 (ブリッジ共通)
 - `apps/mobile/src/lib/pushNotifications.ts` に `setBadgeCountAsync` 追加が必要 (`mobile/03-push-notification.md` と連携)
 
@@ -693,7 +693,7 @@ Web は Next.js App Router(`src/app/(main)/handson-tour/`)、Mobile は Expo Rou
 |---|---|---|---|
 | `V4GenerateModal` | Web (`src/components/ai-assistant/V4GenerateModal.tsx` 556 行) + Mobile (`apps/mobile/src/components/menu/V4GenerateModal.tsx` 642 行) | `mode='sandbox'` prop 追加 (両方独立実装、§99 §1.2 Q9 確定) | family/09 §04, §13 |
 | `BadgesPage` | Web (`src/app/(main)/badges/page.tsx` 294 行) + Mobile (`apps/mobile/app/badges/index.tsx` 109 行) | `tutorialMode` prop 追加 + `badge-card-{code}` 動的 testID。Mobile は機能差(フィルタ/ハイライト/アニメ簡素)があるため Mobile 側にハイライト演出も追加 (§99 §1.2 Q10 確定) | family/09 §05 |
-| meals/new ルート | Web + Mobile | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 表示、保存時に `body.sandbox=true` で family/02 §15.5.1 を呼ぶ | family/09 §03 |
+| meals/new ルート | Web (Mobile のネイティブの `app/meals/new.tsx` は 2026-10-15 に削除。#1598。Mobile のツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 表示、保存時に `body.sandbox=true` で family/02 §15.5.1 を呼ぶ | family/09 §03 |
 | menus/weekly | Web + Mobile | 同上、family/02 §15.5.2 連携 | family/09 §04 |
 
 既存画面 `data-testid="badge-card"` を `badge-card-{code}` に動的化する互換戦略は §99 Q25(open)で議論中、Phase 1 着手は block しない。

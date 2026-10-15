@@ -127,64 +127,18 @@ type PushPayload = {
 
 #### クライアント側実装
 
-```typescript
-// src/lib/pushNotifications.ts に追加
-
-/**
- * アプリアイコンのバッジ数を更新する
- * @param count 新しいバッジ数 (0 でバッジ消去)
- */
-export async function setNotificationBadge(count: number): Promise<void> {
-  await Notifications.setBadgeCountAsync(count);
-}
-
-/**
- * バッジ数をデクリメントする (既読処理)
- * @param decrementBy デクリメント量 (デフォルト 1)
- */
-export async function decrementBadge(decrementBy = 1): Promise<void> {
-  const current = await Notifications.getBadgeCountAsync();
-  const next = Math.max(0, current - decrementBy);
-  await Notifications.setBadgeCountAsync(next);
-}
-
-// 通知ハンドラーの設定 (アプリ起動時に一度だけ呼び出す)
-export function setupNotificationHandler(): void {
-  Notifications.setNotificationHandler({
-    handleNotification: async (notification) => {
-      // ペイロードの badge フィールドでバッジを更新
-      const badge = notification.request.content.badge;
-      if (typeof badge === 'number') {
-        await setNotificationBadge(badge);
-      }
-
-      return {
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-      };
-    },
-  });
-}
-```
+アプリはバッジを手で数え直さない (`setBadgeCountAsync` を呼ばない)。バッジの値はサーバー (`notify-push`) がペイロードの `badge` に入れ、
+後ろで受けたときは OS が、前面で受けたときは下の `NotificationRouter` の `shouldSetBadge: true` で、その値を付ける。
 
 > **実装 (#1049 F7-11)**: フォアグラウンドの表示 (`setNotificationHandler`) と通知のタップ (`addNotificationResponseReceivedListener` /
 > `getLastNotificationResponseAsync`) は、`src/components/NotificationRouter.tsx` にまとめ、`app/_layout.tsx` が Provider の内側に置く
 > (置かれている間だけ有効で、外されたら `setNotificationHandler(null)` とリスナーの `remove()` で解除する)。
 > 表示は `shouldShowBanner` / `shouldShowList` / `shouldPlaySound` / `shouldSetBadge` (expo-notifications 0.31 では `shouldShowAlert` は非推奨)。
 > タップの行き先は `data.path` (アプリ内のパス) か `data.deep_link` (`homegohan://…`) から `src/lib/notificationRoute.ts` が決め、
-> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (§3.3 の例の `family/meal-requests`) は、一番近い上位の画面 (`/family`) を開く。
-> 下のコード例 (`setupNotificationHandler()`・`setNotificationBadge()` によるバッジの手動更新) は当初の案で、実装はしていない。
-
-`setupNotificationHandler()` は `app/_layout.tsx` の `RootLayout` 内で呼び出す:
-
-```typescript
-// app/_layout.tsx に追加
-import { setupNotificationHandler } from '../src/lib/pushNotifications';
-
-// RootLayout の先頭で呼び出し (コンポーネント外)
-setupNotificationHandler();
-```
+> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (例: `health/streaks/abc`) は、一番近い上位の画面 (`/health/streaks`) を開く。
+> アプリには家族の画面が無い (ネイティブの家族の画面 `app/family/index.tsx` は、通常の操作で届かない画面として消した。#1598 / #1610)。
+> §3.3 の例の `homegohan://family/meal-requests` のような家族の通知は、行き先が決まらず、アプリが開くだけになる。
+> 家族の通知の行き先 (WebView で Web の家族の画面を開くなど) は、家族の通知を送る実装 (`notify-push`) を作るときに決める。
 
 #### サーバー側バッジ計算
 
@@ -341,7 +295,7 @@ if (isInQuietHours(userTimezone) && !URGENT_CATEGORIES.includes(categoryIdentifi
 
 | 機能 | iOS | Android |
 |------|-----|---------|
-| バッジ | `setBadgeCountAsync` で自動更新 | Android 8+ は `setNotificationChannelAsync` のバッジ設定が必要 |
+| バッジ | ペイロードの `badge` を OS が付ける (前面では `NotificationRouter` の `shouldSetBadge: true`。アプリは `setBadgeCountAsync` を呼ばない) | Android 8+ は `setNotificationChannelAsync` のバッジ設定が必要 |
 | 通知音 | `sound: 'default'` | チャンネルの `sound` 設定を継承 |
 | 通知チャンネル | 不要 (iOS は自動) | `setNotificationChannelAsync` で `"default"` チャンネル必須 |
 | 通知権限 | 初回起動時に `requestPermissionsAsync` | Android 13+ (`POST_NOTIFICATIONS`) は手動リクエスト必要 |
@@ -455,8 +409,8 @@ sequenceDiagram
   Edge->>Expo: POST /--/api/v2/push/send [{ to: token, badge: 3, ... }]
   Expo->>APNs: APN 送信
   APNs->>Husband: Push 通知表示 (バッジ 3)
-  Husband->>Husband: setNotificationHandler → setBadgeCountAsync(3)
-  Husband->>Husband: 通知タップ → /family 画面へ (/family/meal-requests の画面は無いので、notificationRoute が一番近い上位の画面を開く)
+  Husband->>Husband: (前面のとき) NotificationRouter の setNotificationHandler (shouldSetBadge: true) でバッジ 3 を付ける
+  Husband->>Husband: 通知タップ → アプリが開く (家族の画面はアプリに無いので、notificationRoute は行き先を決めない。§3.5 の「実装 (#1049 F7-11)」の注)
 ```
 
 ### 5.2 通知種別 on/off 設定フロー
@@ -495,8 +449,6 @@ sequenceDiagram
 
 | テスト | ファイル | 内容 |
 |--------|---------|------|
-| `setNotificationBadge` | `__tests__/lib/pushNotifications.test.ts` | モックで `setBadgeCountAsync` が呼ばれることを確認 |
-| `decrementBadge` | 同上 | 現在値取得 → デクリメント → 0 以下にならないことを確認 |
 | フォアグラウンドの表示と通知のタップ (#1049 F7-11) | `__tests__/components/NotificationRouter.test.tsx` | `setNotificationHandler` の表示の設定と、外したときの解除。タップ (起動中・終了からの起動) で `resolveNotificationHref` の行き先へ遷移する |
 | 通知の行き先 (#1049 F7-11) | `__tests__/lib/notification-route.test.ts` | `data.path` / `data.deep_link` の許す形・上位の画面への置き換え・`NOTIFICATION_ROUTES` の画面が `app/` に実在すること |
 | Quiet Hours ロジック | `__tests__/lib/quietHours.test.ts` | 22:00-07:00 でスキップされることを確認 |
@@ -533,9 +485,6 @@ appId: com.homegohan.app
 
 - `src/lib/pushNotifications.ts`:
   - `organization_id` 取得 + `user_push_tokens` への保存を追加
-  - `setNotificationBadge()` 関数を追加
-  - `decrementBadge()` 関数を追加
-  - `setupNotificationHandler()` 関数を追加
 - `app/_layout.tsx`: 通知の受け取り口 `src/components/NotificationRouter.tsx` を Provider の内側に置く (実装済み。#1049 F7-11。`setupNotificationHandler()` は作っていない)
 - `app/(tabs)/settings.tsx`: 「通知」の単一 Switch を「通知設定 →」リンクに変更 (未実装。`app/settings/notifications.tsx` がまだ無く、単一 Switch のまま)
 

@@ -19,7 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { MEAL_ORDER } from '@homegohan/shared';
+import { MEAL_LABELS, MEAL_ORDER } from '@homegohan/shared';
 
 // 献立生成の呼び出しに関係しない重い依存は差し替える (import 時の副作用を避ける)
 // 機能フラグ (#1148): AI 相談の緊急停止スイッチ (ai_chat_enabled) は ON のまま、献立のエンジンは v4 にする
@@ -229,8 +229,15 @@ describe('システムプロンプトの mealType は executor の許可リス�
     expect(routeSource).not.toMatch(/breakfast\|lunch\|dinner\|snack(?!\|midnight_snack)/);
   });
 
-  it('各 mealType が何の食事かを AI に伝える (夜食 = midnight_snack)。献立一覧の表示に使う mealTypeLabels から作る', () => {
-    expect(routeSource).toMatch(/AI_ALLOWED_MEAL_TYPES\.map\(.*mealTypeLabels\[/);
-    expect(routeSource).toMatch(/midnight_snack: '夜食'/);
+  it('各 mealType が何の食事かを AI に伝える (夜食 = midnight_snack)。表示名は @homegohan/shared の MEAL_LABELS から作る (#1631)', () => {
+    expect(routeSource).toMatch(/AI_ALLOWED_MEAL_TYPES\.map\(.*MEAL_LABELS\[type\]/);
+    expect(routeSource).toMatch(/import \{[^}]*\bMEAL_LABELS\b[^}]*\} from '@homegohan\/shared'/);
+    expect(MEAL_LABELS.midnight_snack).toBe('夜食');
+  });
+
+  it('許可リストのどの値にも表示名がある (プロンプトに「<値>=undefined」が入らない。#1631)', () => {
+    for (const mealType of AI_ALLOWED_MEAL_TYPES) {
+      expect(MEAL_LABELS[mealType], mealType).toMatch(/\S/);
+    }
   });
 });

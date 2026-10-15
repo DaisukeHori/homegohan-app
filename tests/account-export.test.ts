@@ -27,6 +27,7 @@ import {
 import {
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
   WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
   WEEKLY_MENU_REQUEST_STALE_MESSAGE,
 } from '@/lib/weekly-menu-request-error';
 import { AI_CONSENT_CHECK_FAILED_MESSAGE, AI_CONSENT_REQUIRED_MESSAGE } from '../supabase/functions/_shared/ai-consent';
@@ -42,9 +43,10 @@ const spec = (table: string): ExportTableSpec => {
   return found;
 };
 
-/** 親テーブル経由で絞る表の関係 (レジストリから作る) + user_badges の badges 埋め込み */
+/** 親テーブル経由で絞る表の関係 (レジストリから作る) + user_badges / user_badge_period_awards の badges 埋め込み */
 const RELATIONS: NonNullable<FakePostgrestOptions['relations']> = {
   user_badges: { badges: 'badge_id' },
+  user_badge_period_awards: { badges: 'badge_id' },
 };
 for (const t of ACCOUNT_EXPORT_TABLES) {
   if (t.scope.kind === 'parent') RELATIONS[t.table] = { [t.scope.parent]: t.scope.fk };
@@ -163,6 +165,10 @@ function buildFixture(): Record<string, FakeRow[]> {
     user_badges: [
       { user_id: A, badge_id: 'bd-1', obtained_at: 't' },
       { user_id: B, badge_id: 'bd-1', obtained_at: 't' },
+    ],
+    user_badge_period_awards: [
+      { user_id: A, badge_id: 'bd-1', period_type: 'weekly', period_start: '2026-10-05', message: 'A-award', awarded_at: 't' },
+      { user_id: B, badge_id: 'bd-1', period_type: 'weekly', period_start: '2026-10-05', message: 'B-secret-award', awarded_at: 't' },
     ],
     organization_challenge_participants: [
       { id: 'ocp-a', user_id: A, challenge_id: 'ch-1' },
@@ -369,7 +375,7 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
 
   // #1172: 献立生成のリクエストの失敗の文には、Edge Function が捕まえた例外の文面 (DB の生のエラー文・Edge Function の
   // 応答の本文) が入っていることがある。状態の確認の API と同じく、こちらで書いた文だけをそのまま出し、それ以外は固定の文にする
-  it('献立生成のリクエストの失敗の文: 生のエラー文は出さず固定の文にし、こちらで書いた文 (同意・stale・中止) はそのまま出す', async () => {
+  it('献立生成のリクエストの失敗の文: 生のエラー文は出さず固定の文にし、こちらで書いた文 (同意・中止) はそのまま、stale の印は日本語の文で出す', async () => {
     const RAW_DB = 'duplicate key value violates unique constraint "planned_meals_daily_meal_id_meal_type_key"';
     const RAW_EDGE = 'V5 returned 500: {"error":"relation \\"planned_meals\\" does not exist"}';
     const failedRow = (id: string, errorMessage: string | null) => ({
@@ -397,12 +403,14 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
       'w-2': WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
       'w-3': AI_CONSENT_REQUIRED_MESSAGE,
       'w-4': AI_CONSENT_CHECK_FAILED_MESSAGE,
-      'w-5': WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+      // 進まなくなった行の英語の印は、日本語の文にして出す (#1576)
+      'w-5': WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
       'w-6': WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
       'w-7': null,
     });
     expect(text).not.toContain('planned_meals_daily_meal_id_meal_type_key');
     expect(text).not.toContain('V5 returned 500');
+    expect(text).not.toContain('stale_request_timeout');
     // 失敗の文のほかの列はそのまま出す
     expect(json.data.weekly_menu_requests[0]).toMatchObject({ id: 'w-1', status: 'failed', prompt: 'w-1-prompt' });
   });
@@ -505,6 +513,22 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
       },
     ]);
     expect(text).not.toContain('CONDITION-JSON');
+  });
+
+  it('user_badge_period_awards (バッジを取った期間。#1528) は本人の行だけを、バッジの名前・説明を添えて出す', async () => {
+    const { json, text } = await drain(buildFixture(), A);
+    expect(json.data.user_badge_period_awards).toEqual([
+      {
+        user_id: A,
+        badge_id: 'bd-1',
+        period_type: 'weekly',
+        period_start: '2026-10-05',
+        message: 'A-award',
+        awarded_at: 't',
+        badge: { code: 'first_record', name: '初めての記録', description: 'desc' },
+      },
+    ]);
+    expect(text).not.toContain('B-secret-award');
   });
 });
 

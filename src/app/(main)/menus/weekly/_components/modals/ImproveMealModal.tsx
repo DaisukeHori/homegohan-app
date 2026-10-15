@@ -3,6 +3,8 @@
 import React, { useId } from "react";
 import { RefreshCw, X, Sparkles, Check } from "lucide-react";
 import type { PlannedMeal, DishDetail } from "@/types/domain";
+import { MEAL_EMOJIS, MEAL_LABELS, type MealType } from "@homegohan/shared";
+import { BASE_MEAL_TYPES } from "@/lib/slot-builder";
 import { todayLocal, formatDateJa } from "@/lib/date-utils";
 import { BottomSheet } from "@/components/common/BottomSheet";
 
@@ -17,7 +19,7 @@ const colors = {
   border: '#E8E8E8',
 };
 
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 interface MealPlanDay {
   id: string;
@@ -159,11 +161,12 @@ export function ImproveMealModal({
                         );
                       }
 
-                      const mealOptions: { type: MealType; label: string; icon: string }[] = [
-                        { type: 'breakfast', label: '朝食', icon: '🌅' },
-                        { type: 'lunch', label: '昼食', icon: '☀️' },
-                        { type: 'dinner', label: '夕食', icon: '🌙' },
-                      ];
+                      // 改善する食事は基本の 3 食 (BASE_MEAL_TYPES)。表示名は MEAL_LABELS、絵文字は MEAL_EMOJIS から引く (#1665)
+                      const mealOptions: { type: MealType; label: string; icon: string }[] = BASE_MEAL_TYPES.map((type) => ({
+                        type,
+                        label: MEAL_LABELS[type],
+                        icon: MEAL_EMOJIS[type],
+                      }));
 
                       return (
                         <div className="space-y-2">

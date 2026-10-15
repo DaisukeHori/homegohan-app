@@ -17,6 +17,8 @@ import {
   type SubStepOfStep1,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+// 呼びかけに出す名前は Web・モバイル共通の規則 (仮置きの 'Guest'・空は 'あなた'、30 文字超は切る。設計書 02-step0-welcome.md §7.2・#1649)
+import { handsonTourNickname } from '@homegohan/shared';
 import {
   EMPTY_PHOTO_TOUR_PROFILE,
   fetchPhotoTourProfile,
@@ -31,17 +33,9 @@ type SaveFailure = {
   http_status?: number;
 };
 
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
-
 function buildBubble(subStep: SubStepOfStep1, profile: PhotoTourProfile) {
   const i18n = HANDSON_TOUR_I18N_JA.tour.step1;
-  const nickname = safeNickname(profile.nickname);
+  const nickname = handsonTourNickname(profile.nickname);
 
   switch (subStep) {
     case '1.1':

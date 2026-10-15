@@ -271,15 +271,19 @@ ASCII では 3 個のドットを示しているが、実装上は **5 個** が
 ### 6.4 nickname 取得
 
 ```ts
+// web・mobile 共通: 呼びかけの名前は §7.2 の handsonTourNickname で決める
+// (仮置きの 'Guest'・空・空白だけ・null は 'あなた'。30 文字を超えたら切って「…」)
+import { handsonTourNickname } from '@homegohan/shared';
+
 // web
 import { useUser } from '@/hooks/useUser';
 const { profile } = useUser();
-const nickname = profile?.nickname?.trim() || 'あなた';
+const nickname = handsonTourNickname(profile?.nickname);
 
-// mobile
+// mobile (apps/mobile/src/handson-tour/safe-nickname.ts の safeNickname は同じ関数を読み直したもの)
 import { useProfile } from '@/hooks/useProfile';
 const profile = useProfile();
-const nickname = profile?.nickname?.trim() || 'あなた';
+const nickname = handsonTourNickname(profile?.nickname);
 ```
 
 ---
@@ -297,16 +301,21 @@ const nickname = profile?.nickname?.trim() || 'あなた';
 ### 7.2 nickname 表示時の防御
 
 ```ts
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
+// packages/shared/src/handson-tour-nickname.ts (@homegohan/shared)
+import { normalizeProfileName } from './profile-name';
+
+export const HANDSON_TOUR_NICKNAME_FALLBACK = 'あなた';
+export const HANDSON_TOUR_NICKNAME_MAX_LENGTH = 30;
+
+export function handsonTourNickname(raw: string | null | undefined): string {
+  const name = normalizeProfileName(raw);
+  if (!name) return HANDSON_TOUR_NICKNAME_FALLBACK;
+  if (name.length > HANDSON_TOUR_NICKNAME_MAX_LENGTH) return `${name.slice(0, HANDSON_TOUR_NICKNAME_MAX_LENGTH)}…`;
+  return name;
 }
 ```
 
-モバイルは 5 つの画面 (`apps/mobile/app/handson-tour/{index,photo,menu,badges,graduate}.tsx`) が `apps/mobile/src/handson-tour/safe-nickname.ts` の `safeNickname` を共通で使い、前後の空白を除いたあと仮置きの `'Guest'` も「名前が無い」として `'あなた'` にする (`@homegohan/shared` の `normalizeProfileName`。モバイルのプロフィール画面・Web の `src/lib/profile-name.ts` と同じ判定。#1635)。最大の文字数 30 は `HANDSON_TOUR_NICKNAME_MAX_LENGTH`。Web (`src/app/handson-tour/**/page.tsx`) は上のコードのまま。
+Web の 5 つの画面 (`src/app/handson-tour/{page,photo,menu,badges,graduate}/page.tsx`。`page` は `src/app/handson-tour/page.tsx`) とモバイルの 5 つの画面 (`apps/mobile/app/handson-tour/{index,photo,menu,badges,graduate}.tsx`) は、どちらも上の `@homegohan/shared` の `handsonTourNickname` を使う (モバイルは `apps/mobile/src/handson-tour/safe-nickname.ts` が同じものを `safeNickname` の名前で読み直す)。前後の空白を除いたあと仮置きの `'Guest'`・空・空白だけは「名前が無い」として `'あなた'` (`HANDSON_TOUR_NICKNAME_FALLBACK`) にする (`normalizeProfileName`。Web・モバイルのプロフィール画面・`GET /api/onboarding/status` と同じ判定。#1635・#1649)。最大の文字数 30 は `HANDSON_TOUR_NICKNAME_MAX_LENGTH`。
 
 ---
 

@@ -13,7 +13,10 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force-transfer';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -25,6 +28,9 @@ const BodySchema = z.object({
 });
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(req);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
@@ -84,6 +90,20 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
+    // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
+    // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: operatorId,
+      actionType: 'super_admin.organization.transfer_admin',
+      targetId: orgId,
+      targetType: 'organization',
+      details: { reason, to_user_id, from_user_id: preOrg?.owner_id ?? null },
+      severity: 'warn',
+      request: req,
+      routeName: ROUTE_NAME,
+    });
+
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
     // ログには宛先のメールアドレスを残さない。
     const log = logger.withUser(operatorId);
@@ -112,7 +132,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       const userIds = (members ?? []).map((m) => m.id);
       const nicknameMap: Record<string, string> = {};
       for (const m of members ?? []) {
-        nicknameMap[m.id] = m.nickname ?? '';
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は入れない。メールはアドレスを宛名にする (#1649)
+        const name = normalizeProfileName(m.nickname);
+        if (name) nicknameMap[m.id] = name;
       }
 
       // 旧 owner・組織名は RPC 実行前に控えた値を使う (RPC の戻り値の owner_id は新 owner)。

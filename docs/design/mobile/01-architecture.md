@@ -175,12 +175,21 @@ refresh_token をローテーションしてしまわないようにするため
 
 #### ログアウト時フロー
 
+順の正は `apps/mobile/src/lib/signOut.ts` (設定画面のログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
+未ログインになるほかの経路 (起動時・`SIGNED_OUT`) との関係は `apps/mobile/src/providers/AuthProvider.tsx` の先頭の表と 05-auth-session.md §3。
+
 ```
-1. settings.tsx の handleLogout 呼び出し
-2. clearUserScopedAsyncStorage(userId) でユーザースコープ AsyncStorage 全削除
-3. supabase.auth.signOut() → ネイティブ SecureStore のトークン削除
-4. WebView の Cookie セッションは、次回ロード時の bridge (setSession) で上書きされる
-5. router.replace('/') → index.tsx がログイン画面へリダイレクト
+1. この端末の push token の行を user_push_tokens から消す (退会のあとは無し。ON DELETE CASCADE で消える)
+2. clearUserScopedLocalData(userId) (apps/mobile/src/lib/userScopedLocalData.ts。サインアウトの前に)
+   - 利用者別の AsyncStorage のキーを消す
+   - 次に開く WebView に、利用者別の localStorage の掃除を頼む
+   - 端末の Cookie の置き場を空にする (Networking.clearCookies。完了を待つ。上限 WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS)
+3. supabase.auth.signOut() → ネイティブ SecureStore のトークン削除 (失敗したら端末だけで消し、画面の状態も消す)
+4. WebView の Cookie セッションは 2 段で消える (#1612 F7-16。05-auth-session.md §6.4)
+   ① 2 の Networking.clearCookies (Android は WebView の CookieManager、iOS は NSHTTPCookieStorage)
+   ② iOS の WKWebView が自分で持つ置き場は、次に bridge 無しで開く WebView の注入の JS が sb- の Cookie を期限切れにする
+      (bridge で開くときは、bridge が同じ名前の Cookie を上書きする)
+5. 画面は未ログインになり、index.tsx がログイン画面へリダイレクトする
 ```
 
 #### セッションリフレッシュ
@@ -255,13 +264,16 @@ apps/mobile/
 │   ├── _layout.tsx                  # 既存 + Linking.addEventListener 追加 (02-deep-link.md)
 │   ├── index.tsx                    # ルートリダイレクト
 │   ├── (auth)/                      # ネイティブ認証画面
-│   ├── (tabs)/                      # ネイティブタブバー
+│   ├── (tabs)/                      # ネイティブタブバー (WebView のタブの表の正は @homegohan/shared の NATIVE_APP_TABS)
 │   │   ├── _layout.tsx
 │   │   ├── home.tsx                 # WebViewScreen path="/home"
-│   │   ├── menus.tsx                # WebViewScreen path="/menus"
-│   │   ├── meals.tsx                # WebViewScreen path="/meals"
-│   │   ├── health.tsx               # WebViewScreen path="/health"
-│   │   └── settings.tsx             # ネイティブ設定画面 (OS API 使用)
+│   │   ├── menus.tsx                # WebViewScreen path="/menus/weekly" (NATIVE_APP_TABS の rootPath)
+│   │   ├── meals.tsx                # WebViewScreen path="/meals/new" (NATIVE_APP_TABS の rootPath)
+│   │   ├── comparison.tsx           # WebViewScreen path="/comparison"
+│   │   ├── profile.tsx              # WebViewScreen path="/profile" (設定への歯車つき)
+│   │   ├── health.tsx               # ネイティブの健康の画面 (WebView ではない。タブバーには出さない: href: null)
+│   │   ├── favorites.tsx            # ネイティブ (タブバーには出さない: href: null)
+│   │   └── settings.tsx             # ネイティブ設定画面 (OS API 使用。タブバーには出さない: href: null)
 │   ├── family/
 │   │   └── invite-accept.tsx        # 新規: homegohan://invite/family/{token}
 │   └── org/
@@ -404,13 +416,15 @@ useEffect(() => {
 
 | シナリオ | 対処 |
 |---------|------|
-| WebView 読み込み失敗 | `renderLoading` スピナー + タイムアウト後リトライボタン |
+| WebView の読み込み中 | `renderLoading` のスピナー |
+| WebView の読み込み失敗 (オフライン・DNS・接続・TLS・時間切れ) | `renderError` で `WebViewErrorView` (「画面を読み込めませんでした」の案内 + 「再読み込み」)。「再読み込み」は `WebViewScreen` を作り直し、bridge の code の取得からやり直す (#1612 F7-15) |
+| サーバーが 5xx (503 を除く) を返した | `onHttpError` で覚え (`useWebViewHttpFailure.ts`)、エラーの番号つきの `WebViewErrorView` を WebView の上に重ねる。503 (メンテナンス中の画面など) と 4xx は Web のページをそのまま見せる (#1612 F7-15) |
 | セッション取得失敗 | `uri = WEB_BASE_URL + path?mode=app` (未ログイン状態で表示) |
 | bridge code 発行失敗 (ネットワーク・タイムアウト 8 秒・非 2xx) | 同上。トークンを含まない直接 URL を表示し、旧方式のトークン付き URL にはフォールバックしない |
 | access_token の残りが Web 側の下限 (150 秒) 未満で、`refreshSession` にも失敗 | code 発行を呼ばず (Web 側が必ず 401 にするため)、同上の直接 URL を表示 |
 | 他オリジンへの遷移 (レシピ等の外部リンク) | WebView では開かず OS の既定ブラウザで開く。WebView は元のページのまま |
 | バージョンチェック API エラー | スキップして起動継続 (オフライン対応) |
-| native-bridge リダイレクトエラー | Web 側で 500 → WebView がエラーページ → ネイティブで再ロード |
+| native-bridge の code の引き換えの失敗 (形式不正・期限切れ・使用済み・DB 障害)・`setSession` の失敗 | 500 にせず `/login` へ 307。code の引き換えに失敗したときは、WebView に残った Cookie セッションでは進まず、`sb-` の Cookie を消してから (#1647)。WebView の中のログイン画面は `session-expired` を送り、ネイティブが新しい code で開き直す (回数制限つき。05-auth-session.md §6.2) |
 
 ## 10. テスト方針
 
@@ -500,6 +514,8 @@ apps/mobile/
 
 詳細行数目安は family/09 §16-files-structure.md §1.3 参照(合計 ~1740 行)。
 
+上の木は設計時の一覧。あとから `src/handson-tour/` に足したファイル (`useLeaveTour.ts`・`tour-platform.ts`・`safe-nickname.ts`・`photo-save-failure.ts`・`menu-tour-profile.ts`・`tour-bubbles.ts`) を含むいまの一覧は 16-files-structure.md の §1.3 の表と §5 の木 (`tests/handson-tour-files-structure-doc.test.ts` が実ファイルと突き合わせる)。
+
 ### 12.4 既存ファイル修正
 
 | 既存ファイル | 修正内容 |
@@ -507,7 +523,7 @@ apps/mobile/
 | `apps/mobile/src/components/menu/V4GenerateModal.tsx` (642 行) | `mode='sandbox'` prop 対応 + sandbox 用 props 受信(§99 §1.2 Q9) |
 | `apps/mobile/app/badges/index.tsx` (109 行) | `tutorialMode` prop + `badge-card-{code}` 動的 testID + ハイライト演出追加(§99 §1.2 Q10) |
 | `apps/mobile/app/(tabs)/settings.tsx` 等の settings 画面 | 「使い方ガイドをもう一度見る」行追加(family/03 §11.6) |
-| `apps/mobile/app/meals/new.tsx`(新規 or 既存改修) | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 連動 |
+| ~~`apps/mobile/app/meals/new.tsx`~~ | (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) |
 | `apps/mobile/src/lib/posthog.ts`(新規) | `posthog-react-native` 初期化(operator/07 §15.1) |
 
 ### 12.5 共通 package との連携

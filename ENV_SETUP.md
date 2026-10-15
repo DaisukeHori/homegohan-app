@@ -86,8 +86,8 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
 | Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue` と `/api/cron/app-log-alerts`（どちらも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
-| Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`regenerate-embeddings`、`stripe-price-sync`（最後の 2 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
-| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
+| Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
+| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
 つまり、**値を合わせないと動かないのは「Edge Function secrets の `CRON_SECRET`」と「Vault の `app_cron_secret`」の 2 つだけ**です。Vercel の `CRON_SECRET` は独立しています。
 
@@ -220,6 +220,7 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
   - どれも 1 回の応答が 1000 行を超えると、1000 行ずつ取り直します。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
 - 比較のバッジ（順位・上位 X%・平均超え・改善）は、この直前の期間を集計し直す回（確定の回）だけが判定します（#1491）。毎時の今の期間の回は、指標・統計・ランキングを更新するだけです（期間の途中の暫定の値で、取り消されないバッジを付けないため）。手動の集計（`POST /api/comparison/trigger`）も今の期間を集計するので、バッジは付きません。
+  - 確定の回は、付けたバッジを `user_badges`（1 バッジ 1 行。最初に取ったときの行だけが残る）に書き、取った期間を表 `user_badge_period_awards`（1 期間 1 行。2 回目以降の期間も残る。migration `20261015130000_user_badge_period_awards.sql`。#1528）にも書きます。獲得済みのバッジの一覧（Web・アプリのバッジの画面）は、この表から「どの期間に取ったか（最新の期間）」と「何回取ったか」を出します（同じ migration の関数 `get_my_badge_period_award_summaries` が DB の中でバッジごとにまとめます。表の行のまま読むと 1 回の応答の 1000 行で打ち切られるためです）。この migration を流す前に新しい Edge Function をデプロイすると、確定の回が「表が無い」で 500 になります（migration が先）。
 - 確定の回は、失敗したとき（pg_net の待ち時間切れ・Edge Function の 500 など）のために、ジョブ `calculate-segment-stats-finalize-retry` が **JST 0:20 と 0:35**（UTC 15:20 と 15:35）に同じ本文で 2 回まで呼び直します（migration `20261011120000_segment_stats_finalize_retry.sql`。#1500）。間隔の 15 分は、応答を待つ上限（400 秒）より長くしてあり、前の試みと重なりません。再試行が送るのは確定の回の本文だけです（今の期間の本文は送りません）。
   - Edge Function は、確定の回をバッジの判定まで終えたら、その期間（種類と開始日）を表 `segment_stats_finalized_periods` に記録します。記録がある期間への確定の回は、何も読まず何も書かずに `{"success":true,"alreadyFinalized":true, ...}` を返します。0:05 の回が成功していれば、0:20 と 0:35 の回は何もしません（期間が終わったあとに足された記録で、確定した値やバッジを変えません。同じバッジが 2 つ付くこともありません）。
   - 3 回とも失敗しても、知らせる仕組みはありません（運用メールのエラー急増の通知は、15 分で error が 20 件を超えたときだけ送るので、この 3 件だけでは届きません）。JST 0:40 以降に、下の「比較ランキングの集計が動いているかの確かめ方」の 4 と 6 で確かめてください。
@@ -236,7 +237,7 @@ SELECT cron.alter_job(
 ```
 
 - **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。含めないと、期間の最終の値が入らないうえ、比較のバッジが一度も判定されません。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
-- 間隔を変えたら、モバイルの比較画面の案内（`apps/mobile/app/comparison/index.tsx` の `RANKING_UPDATE_INTERVAL_HOURS`）も同じ時間に直し、次の migration でジョブのスケジュールも揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration と画面を突き合わせます）。
+- 間隔を変えるときは、次の migration でジョブのスケジュールを揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration の間隔・期間の種類と、Web の比較画面の選択肢・手動の API を突き合わせます）。アプリの比較のタブは WebView で Web の比較画面を出します（以前あったネイティブの比較画面 `apps/mobile/app/comparison/index.tsx` の更新の間隔の案内は、タブと同じパスの届かない画面として消しました。#1598）。
 - 今の設定は `SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'calculate-segment-stats';` で確かめられます。
 
 ### 比較ランキングの集計が動いているかの確かめ方
@@ -291,6 +292,16 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
    SELECT period_type, period_start, period_end, finalized_at
    FROM public.segment_stats_finalized_periods
    ORDER BY finalized_at DESC
+   LIMIT 6;
+   ```
+
+   確定の回で付いたバッジの期間（#1528）は、次で数えられます（条件を満たした人がいなければ 0 行です）。
+
+   ```sql
+   SELECT period_type, period_start, count(*) AS awards
+   FROM public.user_badge_period_awards
+   GROUP BY period_type, period_start
+   ORDER BY period_start DESC
    LIMIT 6;
    ```
 
@@ -453,10 +464,10 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 
 - 確かめるもの: 利用者ごとに記録された「同意済みの版」（`user_profiles.terms_version_accepted` / `privacy_version_accepted`）が、`packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS`（いま有効な版）と同じか。同意の証跡（いつ・どの版に・どの IP と端末から）は `terms_acceptances` に残ります。
 - 未設定、または `on` 以外（既定）: 既存の利用者は止めません（ただし、初めてサインインした新規の人（初期設定を始めておらず、いまの版に未同意）は、このフラグに関わらず `/auth/callback` が同意画面へ回します。#1435）。同意が済んでいない人の画面の上にお知らせを出すかどうかは、次の `LEGAL_CONSENT_NOTICE` で決まります（既定は出しません）。
-- `on`: 同意が済むまで、画面を開くと同意画面（`/legal-consent`）へ回します。同意すると元の画面に戻ります。次は回しません: API、利用規約（`/terms`）、プライバシーポリシー（`/privacy`）、特定商取引法の表記（`/legal`）、問い合わせ（`/contact`）、凍結の案内（`/frozen`）、認証の途中の画面（`/auth/*`。アプリの認証ブリッジを含む）、ハンズオンツアー（`/handson-tour`）。
+- `on`: 同意が済むまで、画面を開くと同意画面（`/legal-consent`）へ回します。同意すると元の画面に戻ります。`/api/*` は 403（`{ error, code: 'LEGAL_CONSENT_REQUIRED' }`）で止めます（同意そのもの・認証・退会と書き出し・問い合わせ・ログなどの許可リストを除く。一覧は `packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS`。#1442）。画面で次は回しません: 利用規約（`/terms`）、プライバシーポリシー（`/privacy`）、特定商取引法の表記（`/legal`）、問い合わせ（`/contact`）、凍結の案内（`/frozen`）、認証の途中の画面（`/auth/*`。アプリの認証ブリッジを含む）、ハンズオンツアー（`/handson-tour`）。
 - 同意しない人は、同意画面の「同意しない」でログアウトでき、データの削除は問い合わせフォームから依頼する案内が出ます。
 - 強制を始める前に決めること（オーナー）: ①版番号と施行日と同意文言（弁護士の確認。いまの値は仮置き）②強制を始める日。③始める前に、お知らせだけの期間（`LEGAL_CONSENT_NOTICE=on`）を置くかどうか。
-- 本番は 2026-10-10 に `on` にしました（オーナー判断。版と施行日は仮置きのまま、お知らせだけの期間は置いていません）。ゲートが掛かるのは Web の画面だけで、モバイルのネイティブの画面と `/api/*` は通りません（#1442）。
+- 本番は 2026-10-10 に `on` にしました（オーナー判断。版と施行日は仮置きのまま、お知らせだけの期間は置いていません）。`/api/*` は middleware の `/api` の分岐で止めます（403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`。#1442・設計書 `docs/design/cross/13a-legal-consent-api-server.md`）。モバイルのネイティブの画面はゲートを通りません（#1442）。
 - 改定のたびにやること: `LEGAL_DOCUMENTS` の `version` と `effectiveDate` を書き換えて出す。版が変わると、同意済みの人も含めて、全員に再同意を求めます（版を変えずに文面だけ直すと、再同意は求めません）。
 - 戻し方: 環境変数を消す（または `off` にする）と、再デプロイ後に既存の利用者を同意画面へ回さなくなります。初めてサインインした新規の人は、`/auth/callback` が引き続き同意画面へ回します（#1435）。記録済みの同意は残ります。
 

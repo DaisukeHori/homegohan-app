@@ -54,3 +54,12 @@ export function getTermsUrl(): string {
 export function getPrivacyUrl(): string {
   return webPageUrl('/privacy');
 }
+
+/**
+ * 組織の招待のページ (Web の /invite/<token>。未ログインでも開ける) の URL (#1647)。
+ * 招待を受ける人がブラウザで開くので、API の基点 (EXPO_PUBLIC_API_BASE_URL) ではなく、Web のページと同じオリジンで組む
+ * (Web の招待の一覧 (src/app/(org)/org/invites/page.tsx) が組む URL と同じ形)。トークンはパスの 1 区切りとして符号化する
+ */
+export function orgInvitePageUrl(token: string): string {
+  return webPageUrl(`/invite/${encodeURIComponent(token)}`);
+}
