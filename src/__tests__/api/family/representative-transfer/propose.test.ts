@@ -386,6 +386,39 @@ describe('POST /api/family/representative-transfer/propose: 提案メールの�
   });
 });
 
+describe('POST /api/family/representative-transfer/propose: 提案者の名前に仮置きの Guest を使わない (#1649)', () => {
+  function proposerNickname(nickname: string) {
+    mockFrom.mockImplementation((table: string) => {
+      if (table === 'user_profiles') return chain(table, { data: { nickname }, error: null });
+      if (table === 'family_groups') return chain(table, { data: { name: '山田家' }, error: null });
+      throw new Error(`unexpected table: ${table}`);
+    });
+  }
+
+  it.each(['Guest', ' Guest ', '   '])('提案者の nickname が %j なら、差出人の名前は既定の「代表者」', async (nickname) => {
+    proposerNickname(nickname);
+
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    const envelope = mockSendEmail.mock.calls[0][0] as { text: string };
+    expect(envelope.text).toContain('代表者 代表者 様から');
+    expect(envelope.text).not.toContain('Guest');
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    [' 花子 ', '花子'],
+  ])('提案者の nickname が %j (本人が付けた名前) なら、その名前を差出人にする', async (nickname, expected) => {
+    proposerNickname(nickname);
+
+    await POST(postRequest(validBody));
+
+    const envelope = mockSendEmail.mock.calls[0][0] as { text: string };
+    expect(envelope.text).toContain(`代表者 ${expected} 様から`);
+  });
+});
+
 describe('POST /api/family/representative-transfer/propose: 承諾リンクの基点 (#1194)', () => {
   // リンクの基点は src/lib/membership/urls.ts (= サイトの URL。NEXT_PUBLIC_APP_URL) に 1 つだけある。
   // 手元の環境変数に左右されないよう、2 つとも明示する。

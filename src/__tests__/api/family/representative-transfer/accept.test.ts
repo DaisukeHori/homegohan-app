@@ -346,6 +346,36 @@ describe('POST /api/family/representative-transfer/[id]/accept: 完了メール 
   });
 });
 
+describe('POST /api/family/representative-transfer/[id]/accept: 新代表者の名前に仮置きの Guest を使わない (#1649)', () => {
+  function setNewRepNickname(nickname: string) {
+    const row = fake.tables.user_profiles.find((r) => r.id === NEW_REP_ID);
+    if (!row) throw new Error('新代表者の行がありません');
+    row.nickname = nickname;
+  }
+
+  it.each(['Guest', ' Guest ', '   '])('新代表者の nickname が %j なら、完了メールの名前は既定の「新代表者」', async (nickname) => {
+    setNewRepNickname(nickname);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(sentTo(OLD_EMAIL)[0].text).toContain('「山田家」の代表者を 新代表者 様に譲渡しました');
+    expect(sentTo(NEW_EMAIL)[0].text).toContain('「山田家」の代表者が 新代表者 様に変更されました');
+    for (const envelope of sentEmails()) expect(envelope.text).not.toContain('Guest');
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    [' 太郎 ', '太郎'],
+  ])('新代表者の nickname が %j (本人が付けた名前) なら、その名前を使う', async (nickname, expected) => {
+    setNewRepNickname(nickname);
+
+    await call();
+
+    expect(sentTo(OLD_EMAIL)[0].text).toContain(`「山田家」の代表者を ${expected} 様に譲渡しました`);
+  });
+});
+
 describe('POST /api/family/representative-transfer/[id]/accept: RPC のエラー', () => {
   it.each([
     ['TRANSFER_PROPOSAL_NOT_FOUND', 404, '譲渡提案が見つかりません'],

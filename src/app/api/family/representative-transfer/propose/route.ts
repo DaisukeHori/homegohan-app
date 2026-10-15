@@ -9,6 +9,7 @@ import { buildFamilyTransferAcceptUrl } from '@/lib/membership/urls';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
+import { normalizeProfileName } from '@/lib/profile-name';
 import {
   checkTransferProposeLimit,
   inviteThrottleFailureFromRpcError,
@@ -106,7 +107,8 @@ export async function POST(request: Request) {
       const envelope = renderFamilyTransferProposedEmail({
         to_email: toEmail,
         // 提案者のメールアドレスは受け取る側に見せない (ニックネームだけを載せる)
-        from_name: fromUserProfile?.nickname || '代表者',
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') ときは既定の呼称 (#1649)
+        from_name: normalizeProfileName(fromUserProfile?.nickname) ?? '代表者',
         family_name: familyGroup?.name ?? '家族グループ',
         accept_url: acceptUrl,
         reason: parsed.reason,
