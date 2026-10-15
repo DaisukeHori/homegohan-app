@@ -6512,6 +6512,44 @@ export type Database = {
         }
         Relationships: []
       }
+      user_badge_period_awards: {
+        Row: {
+          awarded_at: string
+          badge_id: string
+          context_json: Json | null
+          message: string | null
+          period_start: string
+          period_type: string
+          user_id: string
+        }
+        Insert: {
+          awarded_at?: string
+          badge_id: string
+          context_json?: Json | null
+          message?: string | null
+          period_start: string
+          period_type: string
+          user_id: string
+        }
+        Update: {
+          awarded_at?: string
+          badge_id?: string
+          context_json?: Json | null
+          message?: string | null
+          period_start?: string
+          period_type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_badge_period_awards_badge_id_fkey"
+            columns: ["badge_id"]
+            isOneToOne: false
+            referencedRelation: "badges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_badges: {
         Row: {
           badge_id: string

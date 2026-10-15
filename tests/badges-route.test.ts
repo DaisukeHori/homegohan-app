@@ -15,6 +15,9 @@
  *     `.eq('user_id', ...)` は PostgREST が 42703 で拒否し、count が常に null (= 0 扱い) だった。
  *     → user_daily_meals!inner 経由で本人の行に絞る。
  *
+ * #1528: 比較ランキングのバッジを取った期間 (user_badge_period_awards) を、獲得済みのバッジに periodAwards
+ * (最新の期間と、取った回数) として添える。期間の表を読めなくても一覧は返す (期間を添えないだけ)。
+ *
  * #1314: 次の 2 点を検証する。
  *   - ハンズオンツアーのお試しの記録 (user_daily_meals.is_sandbox = true) は、完了した食事数・自炊数・連続日数に数えない
  *   - 付与処理の無いバッジ (src/lib/badges/awardable.ts に無いコード) は、未獲得なら一覧に出さない。
@@ -63,7 +66,8 @@ const user = { id: 'user-1' };
 
 type Badge = { id: string; code: string; name: string; description: string };
 type QueryError = { message: string; code?: string };
-type QueryName = 'badges' | 'user_badges' | 'mealCount' | 'cookCount' | 'completedDays';
+type QueryName = 'badges' | 'user_badges' | 'mealCount' | 'cookCount' | 'completedDays' | 'periodAwards';
+type PeriodAwardRow = { badge_id: string; period_type: string; period_start: string; message: string | null; awarded_at: string };
 
 interface SetupOptions {
   allBadges: Badge[];
@@ -81,6 +85,8 @@ interface SetupOptions {
     cookCount: number;
     completedDays: Array<{ day_date: string }>;
   };
+  /** 比較ランキングのバッジを取った期間 (user_badge_period_awards の本人の行。#1528)。省略時は空 */
+  periodAwards?: PeriodAwardRow[];
   /** クエリごとのエラー注入 (省略時は成功) */
   queryErrors?: Partial<Record<QueryName, QueryError>>;
   /**
@@ -114,12 +120,14 @@ function consecutiveDays(daysCount: number): Array<{ day_date: string }> {
 function setupSupabaseMocks(opts: SetupOptions) {
   let fromCalls = 0;
   // 各クエリが解決した時点で、セッション client の from() が何回呼ばれていたか。
-  // 5 クエリが並列なら、どれが解決した時点でも 5 回呼ばれ済みになる (直列なら 1,2,3,4,5 になる)。
+  // 6 クエリが並列なら、どれが解決した時点でも 6 回呼ばれ済みになる (直列なら 1,2,3,4,5,6 になる)。
   const fromCallsWhenSettled: number[] = [];
   const plannedMealsQueries: Array<{ columns: unknown; options: unknown; eq: Array<[string, unknown]> }> = [];
   // 連続日数の計算に使う user_daily_meals の取得 (#1314: is_sandbox の絞り込みを確かめるため、絞り込みを記録する)
   const dailyMealsQueries: Array<{ columns: unknown; eq: Array<[string, unknown]> }> = [];
   const sessionUserBadgesWrite = vi.fn(); // セッション client での user_badges への書き込み (insert / upsert など)
+  // user_badge_period_awards の取得 (#1528: 本人の行に絞っていること・読む列を確かめるため記録する)
+  const periodAwardsQueries: Array<{ columns: unknown; eq: Array<[string, unknown]> }> = [];
   const upsertMock = vi.fn();
   const upsertSelectMock = vi.fn();
 
@@ -213,6 +221,29 @@ function setupSupabaseMocks(opts: SetupOptions) {
       };
     }
 
+    if (table === 'user_badge_period_awards') {
+      return {
+        select: (columns: unknown) => {
+          const entry = { columns, eq: [] as Array<[string, unknown]> };
+          periodAwardsQueries.push(entry);
+          return makeQuery(({ eq }) => {
+            // 実 DB と同じく、user_id で絞っていれば本人の行だけ。絞っていなければ、他人の行も返る (RLS でも本人の行だけだが、
+            // ルートが絞りを付けていることを確かめるため、ここでは他人の行を混ぜる)
+            const ownOnly = eq.some(([column, value]) => column === 'user_id' && value === user.id);
+            const othersRow: PeriodAwardRow = {
+              badge_id: 'b-other-user',
+              period_type: 'weekly',
+              period_start: '2026-09-28',
+              message: 'OTHER-USER',
+              awarded_at: '2026-10-04T15:05:00Z',
+            };
+            const rows = opts.periodAwards ?? [];
+            return { data: ownOnly ? rows : [...rows, othersRow], error: err('periodAwards') };
+          }, entry.eq);
+        },
+      };
+    }
+
     throw new Error(`Unexpected table: ${table}`);
   });
 
@@ -246,6 +277,7 @@ function setupSupabaseMocks(opts: SetupOptions) {
     fromCallsWhenSettled,
     plannedMealsQueries,
     dailyMealsQueries,
+    periodAwardsQueries,
   };
 }
 
@@ -357,7 +389,7 @@ describe('GET /api/badges', () => {
 });
 
 describe('GET /api/badges (#1215 性能: 並列化と一括保存)', () => {
-  it('互いに独立な 5 クエリを並列に発行する (1 本ずつ直列 await しない)', async () => {
+  it('互いに独立な 6 クエリを並列に発行する (1 本ずつ直列 await しない。#1528 で期間の表を足して 6 本)', async () => {
     mockGetUser.mockResolvedValue({ data: { user }, error: null });
 
     const { fromCallsWhenSettled } = setupSupabaseMocks({
@@ -371,9 +403,9 @@ describe('GET /api/badges (#1215 性能: 並列化と一括保存)', () => {
     const res = await GET(new Request('http://localhost/api/badges'));
     expect(res.status).toBe(200);
 
-    // 5 クエリ全てが解決した時点で、最初の 1 本が解決するより前に 5 本とも発行済みでなければならない
-    expect(fromCallsWhenSettled).toHaveLength(5);
-    expect(Math.min(...fromCallsWhenSettled)).toBe(5);
+    // 6 クエリ全てが解決した時点で、最初の 1 本が解決するより前に 6 本とも発行済みでなければならない
+    expect(fromCallsWhenSettled).toHaveLength(6);
+    expect(Math.min(...fromCallsWhenSettled)).toBe(6);
   });
 
   it('新規獲得バッジが複数あっても user_badges への保存は 1 回の upsert にまとめる', async () => {
@@ -826,5 +858,144 @@ describe('GET /api/badges (#1314 home_chef / master_chef / century の判定は�
     expect(res.status).toBe(200);
     expect(json.badges).toEqual([]);
     expect(json.newEarnedCount).toBe(0);
+  });
+});
+
+describe('GET /api/badges (#1528 確定したバッジを、取った期間とともに一覧に出す)', () => {
+  const SEGMENT_TOP_10: Badge = { id: 'b-segment-top-10', code: 'segment_top_10', name: '上位10%', description: '上位10%に入った' };
+
+  it('期間の記録がある獲得済みのバッジに、最新の期間 (日付の文) と判定の文・回数 1 を添える', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { periodAwardsQueries } = setupSupabaseMocks({
+      allBadges: [SEGMENT_RANK_1],
+      userBadges: [{ badge_id: SEGMENT_RANK_1.id, obtained_at: '2026-10-05T15:05:00Z' }],
+      completedMealCount: 0,
+      cookCount: 0,
+      completedDays: [],
+      periodAwards: [
+        {
+          badge_id: SEGMENT_RANK_1.id,
+          period_type: 'weekly',
+          period_start: '2026-09-28',
+          message: '🏆 全体の朝食率で1位！',
+          awarded_at: '2026-10-04T15:05:00Z',
+        },
+      ],
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.badges).toEqual([
+      expect.objectContaining({
+        code: 'segment_rank_1',
+        earned: true,
+        obtainedAt: '2026-10-05T15:05:00Z',
+        periodAwards: {
+          count: 1,
+          latest: {
+            periodType: 'weekly',
+            periodStart: '2026-09-28',
+            label: '2026年9月28日〜10月4日の週',
+            message: '🏆 全体の朝食率で1位！',
+          },
+        },
+      }),
+    ]);
+    // 本人の行だけを、まとめるのに要る列だけで読む (RLS に頼らず user_id でも絞る)
+    expect(periodAwardsQueries).toHaveLength(1);
+    expect(periodAwardsQueries[0].eq).toEqual([['user_id', user.id]]);
+    expect(periodAwardsQueries[0].columns).toBe('badge_id, period_type, period_start, message, awarded_at');
+    expect(JSON.stringify(json)).not.toContain('OTHER-USER');
+  });
+
+  it('同じバッジを複数の期間で取ったら、取った期間の数と、最新の期間を返す', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    setupSupabaseMocks({
+      allBadges: [SEGMENT_RANK_1, SEGMENT_TOP_10],
+      userBadges: [
+        { badge_id: SEGMENT_RANK_1.id, obtained_at: '2026-09-01T15:05:00Z' },
+        { badge_id: SEGMENT_TOP_10.id, obtained_at: '2026-10-01T15:05:00Z' },
+      ],
+      completedMealCount: 0,
+      cookCount: 0,
+      completedDays: [],
+      periodAwards: [
+        { badge_id: SEGMENT_RANK_1.id, period_type: 'daily', period_start: '2026-09-01', message: '9/1', awarded_at: '2026-09-01T15:05:00Z' },
+        { badge_id: SEGMENT_RANK_1.id, period_type: 'monthly', period_start: '2026-09-01', message: '9 月', awarded_at: '2026-09-30T15:05:00Z' },
+        { badge_id: SEGMENT_RANK_1.id, period_type: 'weekly', period_start: '2026-09-21', message: '9/21 の週', awarded_at: '2026-09-27T15:05:00Z' },
+        { badge_id: SEGMENT_TOP_10.id, period_type: 'daily', period_start: '2026-10-01', message: null, awarded_at: '2026-10-01T15:05:00Z' },
+      ],
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    const rank1 = json.badges.find((b: { code: string }) => b.code === 'segment_rank_1');
+    expect(rank1.periodAwards).toEqual({
+      count: 3,
+      latest: { periodType: 'monthly', periodStart: '2026-09-01', label: '2026年9月', message: '9 月' },
+    });
+    // 取得日時 (obtainedAt) は初めて取った日のまま (user_badges の値)
+    expect(rank1.obtainedAt).toBe('2026-09-01T15:05:00Z');
+    const top10 = json.badges.find((b: { code: string }) => b.code === 'segment_top_10');
+    expect(top10.periodAwards).toEqual({
+      count: 1,
+      latest: { periodType: 'daily', periodStart: '2026-10-01', label: '2026年10月1日', message: null },
+    });
+  });
+
+  it('期間の記録が無いバッジ・未獲得のバッジは periodAwards: null', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    setupSupabaseMocks({
+      allBadges: [FIRST_BITE, SEGMENT_RANK_1, SEGMENT_TOP_10],
+      userBadges: [{ badge_id: FIRST_BITE.id, obtained_at: '2026-01-01T00:00:00.000Z' }],
+      completedMealCount: 1,
+      cookCount: 0,
+      completedDays: [],
+      // 未獲得 (user_badges に無い) のバッジの期間の行は、獲得済みとして見せない
+      periodAwards: [
+        { badge_id: SEGMENT_TOP_10.id, period_type: 'weekly', period_start: '2026-09-28', message: null, awarded_at: '2026-10-04T15:05:00Z' },
+      ],
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    for (const code of ['first_bite', 'segment_rank_1', 'segment_top_10']) {
+      const badge = json.badges.find((b: { code: string }) => b.code === code);
+      expect(badge, code).toBeDefined();
+      expect(badge.periodAwards, code).toBeNull();
+    }
+    expect(json.badges.find((b: { code: string }) => b.code === 'segment_top_10').earned).toBe(false);
+  });
+
+  it('期間の表を読めなくても 500 にせず、期間を添えずに一覧を返し、エラーを記録する (獲得の判定には使わないため)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { upsertMock } = setupSupabaseMocks({
+      allBadges: [FIRST_BITE, SEGMENT_RANK_1],
+      userBadges: [{ badge_id: SEGMENT_RANK_1.id, obtained_at: '2026-10-05T15:05:00Z' }],
+      completedMealCount: 1,
+      cookCount: 0,
+      completedDays: [],
+      periodAwards: [
+        { badge_id: SEGMENT_RANK_1.id, period_type: 'weekly', period_start: '2026-09-28', message: null, awarded_at: '2026-10-04T15:05:00Z' },
+      ],
+      queryErrors: { periodAwards: { message: 'relation "public.user_badge_period_awards" does not exist', code: '42P01' } },
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    const rank1 = json.badges.find((b: { code: string }) => b.code === 'segment_rank_1');
+    expect(rank1).toMatchObject({ earned: true, periodAwards: null });
+    // ほかの判定・保存は今までどおり (first_bite は新規獲得)
+    expect(json.newEarnedBadgeCodes).toEqual(['first_bite']);
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError.mock.calls[0][1]).toMatchObject({ code: '42P01' });
   });
 });

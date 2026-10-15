@@ -313,6 +313,12 @@ async function fetchBulkData(periodStart: string, periodEnd: string, metricCodes
   //     日別の数え方 (下の mealDaySetByUser) も JST の暦日。
   //     日付の文字列をそのまま渡すと DB のタイムゾーン (UTC) の 0 時になり、JST と 9 時間ずれる
   const mealsRange = jstDayRangeToTimestamps(periodStart, periodEnd);
+  // health_streaks の meal_record / breakfast (指標 record_streak / breakfast_streak の元) について (#1528 で確かめた):
+  //   いま、この 2 種類の行を書く処理はどこにも無い。health_streaks に書くのは src/lib/health-streaks.ts だけで、
+  //   書く種類は daily_record (健康の記録 health_records の連続日数) だけ。食事の記録からは書かれないので、
+  //   ハンズオンのお試しの記録 (is_sandbox = true) が連続日数に入る経路も無い (行が無いので、2 つの指標は全員 0)。
+  //   meal_record / breakfast を書く処理を足すときは、お試しの記録 (meals.is_sandbox / user_daily_meals.is_sandbox) を数えないこと
+  //   (下の meals・planned_meals の読み込みと同じ扱い。#1500)。
   const [mealStreakRows, breakfastStreakRows, mealRows, plannedRows, totalMeals] =
     await Promise.all([
       fetchAllRows<{ user_id: string; current_streak: number | null }>('health_streaks (meal_record) の取得', () =>
@@ -766,6 +772,7 @@ async function calculateUserRankings(
 //
 // user_badges は (user_id, badge_id) が主キーで、upsert は ignoreDuplicates (すでに持っていれば何もしない)。
 // つまり、一度付いたバッジは後から条件を満たし直しても記録が置き換わらず、誤って付けると消えない。
+// 取った期間は、別の表 user_badge_period_awards に 1 期間 1 行で残す (#1528。2 回目以降の期間も残る。こちらも消さない)。
 // そのため判定は「付けすぎない」側に寄せる (下の isComparableGroup / judgeBadge)。
 // また、判定するのは確定した期間 (previousPeriod: true で直前の期間を集計し直した回) の値だけ。
 // 進行中の期間の暫定の値では呼ばない (メイン処理の 7。#1491)。
@@ -846,6 +853,15 @@ function judgeBadge(badge: any, ranking: any, judgement: BadgeJudgement): string
   }
 }
 
+/** user_badges に書く 1 行 (同じ判定の結果を、期間つきで user_badge_period_awards にも書く。#1528) */
+interface BadgeAward {
+  user_id: string;
+  badge_id: string;
+  context_json: Record<string, unknown>;
+  message: string;
+  obtained_at: string;
+}
+
 async function awardSegmentBadges(
   periodType: string,
   periodStart: string,
@@ -895,7 +911,7 @@ async function awardSegmentBadges(
   // 各ランキングに対してバッジ条件をチェックする。
   // (user_id, badge_id) ごとに、最初に条件を満たした 1 件だけを残す。user_badges の主キーと ignoreDuplicates により、
   // 1 件ずつ upsert しても 2 件目以降は捨てられるだけなので、結果は同じ。まとめて送って往復を減らす
-  const awards = new Map<string, Record<string, unknown>>();
+  const awards = new Map<string, BadgeAward>();
   const obtainedAt = new Date().toISOString();
 
   for (const ranking of rankings) {
@@ -948,5 +964,28 @@ async function awardSegmentBadges(
       });
     throwIfError('user_badges の保存', error);
   }
-  console.log(`Badge candidates: ${awards.size} (already owned badges are kept as is)`);
+
+  // 取った期間も 1 期間 1 行で残す (#1528)。user_badges は 1 バッジ 1 行で、2 回目以降の期間は上の upsert で捨てられるため、
+  // 獲得済みのバッジの一覧 (GET /api/badges) が「最新の期間」と「取った回数」を出すのに、この表を読む。
+  // すでに持っているバッジも、この期間で条件を満たしたなら書く。同じ期間をやり直しても (確定の回の再試行) 2 行にはならない
+  // (主キー (user_id, badge_id, period_type, period_start) と ignoreDuplicates)。
+  const periodAwards = [...awards.values()].map((award) => ({
+    user_id: award.user_id,
+    badge_id: award.badge_id,
+    period_type: periodType,
+    period_start: periodStart,
+    context_json: award.context_json,
+    message: award.message,
+    awarded_at: obtainedAt,
+  }));
+  for (const chunk of chunkArray(periodAwards, UPSERT_CHUNK)) {
+    const { error } = await supabaseAdmin
+      .from('user_badge_period_awards')
+      .upsert(chunk, {
+        onConflict: 'user_id,badge_id,period_type,period_start',
+        ignoreDuplicates: true,
+      });
+    throwIfError('user_badge_period_awards の保存', error);
+  }
+  console.log(`Badge candidates: ${awards.size} (already owned badges are kept as is; the period of each award is recorded)`);
 }

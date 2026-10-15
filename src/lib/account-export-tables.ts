@@ -221,6 +221,13 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     columns: '*,badge:badges(code,name,description)',
     orderBy: ['user_id', 'badge_id'],
   },
+  {
+    // 比較ランキングのバッジを取った期間 (1 期間 1 行。#1528)。user_badges と同じくバッジの名前・説明を添える
+    table: 'user_badge_period_awards',
+    scope: self('user_id'),
+    columns: '*,badge:badges(code,name,description)',
+    orderBy: ['user_id', 'badge_id', 'period_type', 'period_start'],
+  },
   // 参加行の SELECT は #1132 から本人の行だけ (以前は同じ組織の全員が読めた)。RLS に頼らず、必ず user_id でも絞る
   { table: 'organization_challenge_participants', scope: self('user_id') },
 

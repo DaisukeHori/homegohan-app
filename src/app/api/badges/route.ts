@@ -2,6 +2,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { consecutiveDayStreak } from '@/lib/jst-day-ranges';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isAwardableBadgeCode } from '@/lib/badges/awardable';
+import { summarizeBadgePeriodAwards, type BadgePeriodAwards } from '@homegohan/shared';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
@@ -30,7 +31,8 @@ export async function GET(request: Request) {
     // 数えると、ダミーの献立を「完了」にしただけで first_bite などが付いてしまう。
     // (#1604 から Web のツアーの Step 1 は meals のお試しの行に保存し、user_daily_meals には作らない。
     //  is_sandbox = true の日が別の経路で作られても数えないよう、絞り込みは残す)
-    const [badgesRes, userBadgesRes, mealCountRes, cookCountRes, completedDaysRes] = await Promise.all([
+    //   user_badge_period_awards: 比較ランキングのバッジを取った期間 (1 期間 1 行。#1528)
+    const [badgesRes, userBadgesRes, mealCountRes, cookCountRes, completedDaysRes, periodAwardsRes] = await Promise.all([
       supabase.from('badges').select('*'),
       supabase
         .from('user_badges')
@@ -63,6 +65,11 @@ export async function GET(request: Request) {
         .eq('planned_meals.is_completed', true)
         .order('day_date', { ascending: false })
         .limit(30),
+      // 比較ランキングのバッジ (確定の回が付けるもの) を取った期間 (#1528)
+      supabase
+        .from('user_badge_period_awards')
+        .select('badge_id, period_type, period_start, message, awarded_at')
+        .eq('user_id', user.id),
     ]);
 
     // 1 本でも失敗したまま続行すると、獲得済みバッジや統計が欠けた状態で「未獲得」「0 回」として
@@ -79,6 +86,15 @@ export async function GET(request: Request) {
         failed_queries: failedQueries.map((q) => q.query),
       });
       return NextResponse.json({ error: 'Failed to load badges' }, { status: 500 });
+    }
+
+    // 取った期間は、獲得済みのバッジに添える飾りで、獲得・未獲得の判定には使わない。読めなかったときは 500 にせず、
+    // 期間を添えずに一覧を返す (表を足す migration より先に Web がデプロイされた場合も、一覧は今までどおり出る)。原因はログに残す
+    let periodAwardsByBadgeId = new Map<string, BadgePeriodAwards>();
+    if (periodAwardsRes.error) {
+      logger.withUser(user.id).error('user_badge_period_awards query failed (badges are returned without periods)', periodAwardsRes.error);
+    } else {
+      periodAwardsByBadgeId = summarizeBadgePeriodAwards(periodAwardsRes.data ?? []);
     }
 
     const allBadges = badgesRes.data ?? [];
@@ -184,12 +200,18 @@ export async function GET(request: Request) {
     // #1314: 付与処理の無いバッジ (health_streak_* など。src/lib/badges/awardable.ts に無いコード) は、
     // 獲得のしようが無いので、未獲得のうちは一覧に出さない。獲得済みのバッジは、リストに無くても必ず返す。
     // マスター (badges テーブル) の行は変えず、返すときに絞るだけにしている。
+    // #1528: periodAwards = 比較ランキングのバッジを取った期間 (最新の期間と、取った回数)。獲得済みで期間の記録があるバッジだけに付け、
+    // それ以外は null (期間の無いバッジ・未獲得のバッジ)。
     const badges = allBadges
-      .map(badge => ({
-        ...badge,
-        earned: earnedBadgeIds.has(badge.id),
-        obtainedAt: obtainedAtByBadgeId.get(badge.id) ?? null,
-      }))
+      .map(badge => {
+        const earned = earnedBadgeIds.has(badge.id);
+        return {
+          ...badge,
+          earned,
+          obtainedAt: obtainedAtByBadgeId.get(badge.id) ?? null,
+          periodAwards: earned ? (periodAwardsByBadgeId.get(badge.id) ?? null) : null,
+        };
+      })
       .filter(badge => badge.earned || isAwardableBadgeCode(badge.code));
 
     // #1055 (wave-3b): 新規獲得バッジの匿名性を解消するため、

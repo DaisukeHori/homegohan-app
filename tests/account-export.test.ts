@@ -42,9 +42,10 @@ const spec = (table: string): ExportTableSpec => {
   return found;
 };
 
-/** 親テーブル経由で絞る表の関係 (レジストリから作る) + user_badges の badges 埋め込み */
+/** 親テーブル経由で絞る表の関係 (レジストリから作る) + user_badges / user_badge_period_awards の badges 埋め込み */
 const RELATIONS: NonNullable<FakePostgrestOptions['relations']> = {
   user_badges: { badges: 'badge_id' },
+  user_badge_period_awards: { badges: 'badge_id' },
 };
 for (const t of ACCOUNT_EXPORT_TABLES) {
   if (t.scope.kind === 'parent') RELATIONS[t.table] = { [t.scope.parent]: t.scope.fk };
@@ -163,6 +164,10 @@ function buildFixture(): Record<string, FakeRow[]> {
     user_badges: [
       { user_id: A, badge_id: 'bd-1', obtained_at: 't' },
       { user_id: B, badge_id: 'bd-1', obtained_at: 't' },
+    ],
+    user_badge_period_awards: [
+      { user_id: A, badge_id: 'bd-1', period_type: 'weekly', period_start: '2026-10-05', message: 'A-award', awarded_at: 't' },
+      { user_id: B, badge_id: 'bd-1', period_type: 'weekly', period_start: '2026-10-05', message: 'B-secret-award', awarded_at: 't' },
     ],
     organization_challenge_participants: [
       { id: 'ocp-a', user_id: A, challenge_id: 'ch-1' },
@@ -505,6 +510,22 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
       },
     ]);
     expect(text).not.toContain('CONDITION-JSON');
+  });
+
+  it('user_badge_period_awards (バッジを取った期間。#1528) は本人の行だけを、バッジの名前・説明を添えて出す', async () => {
+    const { json, text } = await drain(buildFixture(), A);
+    expect(json.data.user_badge_period_awards).toEqual([
+      {
+        user_id: A,
+        badge_id: 'bd-1',
+        period_type: 'weekly',
+        period_start: '2026-10-05',
+        message: 'A-award',
+        awarded_at: 't',
+        badge: { code: 'first_record', name: '初めての記録', description: 'desc' },
+      },
+    ]);
+    expect(text).not.toContain('B-secret-award');
   });
 });
 
