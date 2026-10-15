@@ -220,6 +220,7 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
   - どれも 1 回の応答が 1000 行を超えると、1000 行ずつ取り直します。
 - 日・週・月が切り替わった直後の回（JST 0:05）は、切り替わった種類について直前の期間も 1 回だけ集計し直します（最大 3 つ増えます）。期間の最後の 1 時間（例: 23:05〜23:59）の記録を、その期間の最終の値に入れるためです。
 - 比較のバッジ（順位・上位 X%・平均超え・改善）は、この直前の期間を集計し直す回（確定の回）だけが判定します（#1491）。毎時の今の期間の回は、指標・統計・ランキングを更新するだけです（期間の途中の暫定の値で、取り消されないバッジを付けないため）。手動の集計（`POST /api/comparison/trigger`）も今の期間を集計するので、バッジは付きません。
+  - 確定の回は、付けたバッジを `user_badges`（1 バッジ 1 行。最初に取ったときの行だけが残る）に書き、取った期間を表 `user_badge_period_awards`（1 期間 1 行。2 回目以降の期間も残る。migration `20261015120000_user_badge_period_awards.sql`。#1528）にも書きます。獲得済みのバッジの一覧（Web・アプリのバッジの画面）は、この表から「どの期間に取ったか（最新の期間）」と「何回取ったか」を出します。この migration を流す前に新しい Edge Function をデプロイすると、確定の回が「表が無い」で 500 になります（migration が先）。
 - 確定の回は、失敗したとき（pg_net の待ち時間切れ・Edge Function の 500 など）のために、ジョブ `calculate-segment-stats-finalize-retry` が **JST 0:20 と 0:35**（UTC 15:20 と 15:35）に同じ本文で 2 回まで呼び直します（migration `20261011120000_segment_stats_finalize_retry.sql`。#1500）。間隔の 15 分は、応答を待つ上限（400 秒）より長くしてあり、前の試みと重なりません。再試行が送るのは確定の回の本文だけです（今の期間の本文は送りません）。
   - Edge Function は、確定の回をバッジの判定まで終えたら、その期間（種類と開始日）を表 `segment_stats_finalized_periods` に記録します。記録がある期間への確定の回は、何も読まず何も書かずに `{"success":true,"alreadyFinalized":true, ...}` を返します。0:05 の回が成功していれば、0:20 と 0:35 の回は何もしません（期間が終わったあとに足された記録で、確定した値やバッジを変えません。同じバッジが 2 つ付くこともありません）。
   - 3 回とも失敗しても、知らせる仕組みはありません（運用メールのエラー急増の通知は、15 分で error が 20 件を超えたときだけ送るので、この 3 件だけでは届きません）。JST 0:40 以降に、下の「比較ランキングの集計が動いているかの確かめ方」の 4 と 6 で確かめてください。
@@ -291,6 +292,16 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
    SELECT period_type, period_start, period_end, finalized_at
    FROM public.segment_stats_finalized_periods
    ORDER BY finalized_at DESC
+   LIMIT 6;
+   ```
+
+   確定の回で付いたバッジの期間（#1528）は、次で数えられます（条件を満たした人がいなければ 0 行です）。
+
+   ```sql
+   SELECT period_type, period_start, count(*) AS awards
+   FROM public.user_badge_period_awards
+   GROUP BY period_type, period_start
+   ORDER BY period_start DESC
    LIMIT 6;
    ```
 
