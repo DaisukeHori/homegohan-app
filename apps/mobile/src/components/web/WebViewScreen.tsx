@@ -158,7 +158,7 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
 
   // 他のタブへ移ったら、残っている initialPath を消す (#1612 / #1049 F7-15。理由は useResetInitialPathOnBlur.ts)
   useResetInitialPathOnBlur(Boolean(params.initialPath));
-  // サーバーが 5xx を返したことを覚えて、案内と「再読み込み」を出す (#1612 / #1049 F7-15)
+  // サーバーが 5xx (503 を除く) を返したことを覚えて、案内と「再読み込み」を出す (#1612 / #1049 F7-15)
   const httpFailure = useWebViewHttpFailure();
 
   // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)。
@@ -384,7 +384,8 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
           // #1612 / #1049 F7-15: 読み込みに失敗したとき (オフライン・DNS・接続・時間切れなど) と、サーバーが 5xx を返したときに、
           // 日本語の案内と「再読み込み」を出す (以前は何も無く、ライブラリの英語の文かサーバーのエラーページがそのまま出ていた)。
           // 読み込みの失敗の画面は WebView の renderError が出す (react-native-webview は、次の読み込みが終わるまでこの画面を WebView の上に出し続ける)。
-          // 5xx はページの読み込み自体は成功扱いなので、onHttpError で覚えて下で WebView の上に重ねる
+          // 5xx はページの読み込み自体は成功扱いなので、onHttpError で覚えて下で WebView の上に重ねる。
+          // 503 は重ねない (メンテナンス中の画面を Web が 503 で返す。useWebViewHttpFailure.ts の shouldCoverHttpStatus)
           onError={httpFailure.onLoadError}
           onHttpError={httpFailure.onHttpError}
           onLoadEnd={httpFailure.onLoadEnd}

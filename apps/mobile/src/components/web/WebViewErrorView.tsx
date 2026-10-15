@@ -13,7 +13,7 @@ import { colors } from '../../theme/colors';
 export type WebViewFailure =
   /** 端末側の読み込みの失敗 (オフライン・DNS・接続・TLS・時間切れなど)。WebView の onError / renderError */
   | { kind: 'network' }
-  /** サーバーが 5xx を返した。WebView の onHttpError */
+  /** サーバーが 5xx (503 を除く) を返した。WebView の onHttpError。503 は Web のページ (メンテナンス中の画面など) をそのまま見せる (useWebViewHttpFailure.ts の shouldCoverHttpStatus) */
   | { kind: 'server'; statusCode: number };
 
 export const WEB_VIEW_ERROR_TITLE = '画面を読み込めませんでした';

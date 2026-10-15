@@ -2,6 +2,7 @@
  * WebViewScreen の #1612 (#1049 の残り) のテスト
  *
  *   F7-15: 読み込みの失敗 (onError / renderError) とサーバーの 5xx (onHttpError) で、日本語の案内と「再読み込み」を出す。
+ *          503 は重ねない (Web はメンテナンス中の画面を 503 で返すので、そのまま見せる)。
  *          再読み込みは WebView の reload() ではなく、認証ブリッジ (code の発行) からやり直す。
  *          タブ同士の移動で離れたタブの initialPath を消す
  *   F7-16: ネイティブのログアウトのあと、認証ブリッジ無しで開くときだけ、前の利用者の認証の Cookie を消す JS を注入する
@@ -13,7 +14,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { NATIVE_APP_TABS, USER_SCOPED_LOCAL_STORAGE_KEYS } from '@homegohan/shared';
+import { NATIVE_APP_TABS, SERVICE_UNAVAILABLE_STATUS, USER_SCOPED_LOCAL_STORAGE_KEYS } from '@homegohan/shared';
 
 const WEB_BASE_URL = 'https://homegohan-app.vercel.app';
 process.env.EXPO_PUBLIC_WEB_URL = WEB_BASE_URL;
@@ -99,6 +100,7 @@ jest.mock('../../src/theme/colors', () => ({
 
 import { WebViewScreen } from '../../src/components/web/WebViewScreen';
 import { WEB_VIEW_ERROR_TITLE, WEB_VIEW_RETRY_LABEL } from '../../src/components/web/WebViewErrorView';
+import { SERVER_ERROR_STATUS_MIN, shouldCoverHttpStatus } from '../../src/components/web/useWebViewHttpFailure';
 import {
   requestWebViewUserScopedStorageClear,
   resetWebViewUserStorageCleanupForTests,
@@ -204,16 +206,48 @@ describe('サーバーの 5xx の案内 (onHttpError)', () => {
       mockWebViewProps.onLoadEnd({ nativeEvent });
     });
 
-  it('5xx を受けたら、WebView の上に案内と「再読み込み」を重ね、ステータスを文に出す', async () => {
+  it.each([500, 502, 504])('%s (503 以外の 5xx) を受けたら、WebView の上に案内と「再読み込み」を重ね、ステータスを文に出す', async (statusCode) => {
     const screen = await renderScreen();
     expect(screen.queryByTestId('webview-error')).toBeNull();
 
-    await httpError(503);
+    await httpError(statusCode);
 
     expect(screen.getByText(WEB_VIEW_ERROR_TITLE)).toBeTruthy();
-    expect(screen.getByTestId('webview-error-message').props.children).toContain('503');
+    expect(screen.getByTestId('webview-error-message').props.children).toContain(`エラー ${statusCode}`);
     // ヘッダーや WebView を消さずに重ねる
     expect(screen.getByTestId('webview-home')).toBeTruthy();
+  });
+
+  it('503 (メンテナンス中の画面など) では案内を重ねず、Web が返したページをそのまま見せる', async () => {
+    const screen = await renderScreen();
+
+    // onHttpError の直後も、その読み込みの onLoadEnd の後も、案内は出ない
+    await httpError(SERVICE_UNAVAILABLE_STATUS);
+    expect(screen.queryByTestId('webview-error')).toBeNull();
+    await loadEnd();
+    expect(screen.queryByTestId('webview-error')).toBeNull();
+    expect(screen.getByTestId('webview-home')).toBeTruthy();
+  });
+
+  it('500 の案内が出ている間に、タブの再タップなどで読み直した先が 503 (メンテナンス中) なら、案内を消してそのページを見せる', async () => {
+    const screen = await renderScreen();
+
+    await httpError(500);
+    await loadEnd();
+    expect(screen.getByTestId('webview-error')).toBeTruthy();
+
+    await httpError(SERVICE_UNAVAILABLE_STATUS);
+    await loadEnd();
+    expect(screen.queryByTestId('webview-error')).toBeNull();
+  });
+
+  it('案内を重ねるかの判定 (shouldCoverHttpStatus): 503 以外の 5xx だけ', () => {
+    expect(shouldCoverHttpStatus(SERVER_ERROR_STATUS_MIN)).toBe(true);
+    expect(shouldCoverHttpStatus(502)).toBe(true);
+    expect(shouldCoverHttpStatus(504)).toBe(true);
+    expect(shouldCoverHttpStatus(SERVICE_UNAVAILABLE_STATUS)).toBe(false);
+    expect(shouldCoverHttpStatus(SERVER_ERROR_STATUS_MIN - 1)).toBe(false);
+    expect(shouldCoverHttpStatus(404)).toBe(false);
   });
 
   it.each([400, 401, 403, 404, 499])('%s (4xx) では案内を出さない (Web のページが案内を出す)', async (statusCode) => {
