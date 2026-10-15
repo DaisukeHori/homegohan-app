@@ -6,8 +6,9 @@
 maestro はネイティブの部分 (タブ・WebView の表示・バックグラウンドからの復帰) だけを確かめます。
 WebView の中の Web の画面を操作する検査は、Web の e2e (Playwright。`tests/e2e/`) の役目です (#1552)。
 
-ネイティブの食事の画面 (`apps/mobile/app/meals/new.tsx` など) は、いまはタブから行けません。
-残すか消すか、行き方を足すかは #1552 の「届かない画面の扱い」で決めます。決まったら、ここに flow を足します。
+以前あったネイティブの食事の新規作成の画面 (`apps/mobile/app/meals/new.tsx`) は、タブから行けない画面だったので消しました (#1598)。
+食事の記録は WebView の中の Web の画面に一本化したので、この画面のための flow は足しません。
+食事の詳細 (`apps/mobile/app/meals/[id].tsx`) は、通知のタップ先 (`apps/mobile/src/lib/notificationRoute.ts` の `/meals/:id`) として残っています。
 
 ## いまの flow
 

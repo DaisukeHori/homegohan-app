@@ -20,6 +20,7 @@ import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } 
 import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 受け付ける食事の区分 (5 値)。値と並びの正本は @homegohan/shared の MEAL_ORDER (#1631。手書きしない)
 const VALID_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
@@ -113,6 +114,9 @@ function addDays(dateStr: string, days: number): string {
 export const maxDuration = 30;
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   let _userId: string | undefined;
 
