@@ -56,7 +56,8 @@ const TARGET_FILES = [
   'src/app/(main)/menus/weekly/page.tsx',
   'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
   // #1631
-  'apps/mobile/app/meals/new.tsx',
+  // (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx も対象だったが、スキャンのタブが WebView になって
+  //  通常の操作で届かない画面だったので、画面ごと消した。#1598。食事の記録は Web の src/app/(main)/meals/new/page.tsx が受け持つ)
   'lib/slot-builder.ts',
   'src/app/(main)/home/page.tsx',
   'src/app/(main)/meals/new/page.tsx',
@@ -79,8 +80,7 @@ const TARGET_FILES = [
  * 食事の区分の手書きの検査 (5 値・MealType の型・おやつと夜食の並び) は外さない。
  */
 const CAST_CHECK_EXCLUDED: Record<string, string> = {
-  'apps/mobile/app/meals/new.tsx':
-    '#1631 より前からある画像の選択 (mediaTypes) と Text / Pressable の ref の any キャスト。食事の区分とは関係しない',
+  // (apps/mobile/app/meals/new.tsx の行は、画面ごと消したので除いた。#1598)
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts':
     '#1631 より前からある LLM の呼び出しの引数 (chat.completions.create に渡す本文) の any キャスト。食事の区分とは関係しない',
   'apps/mobile/app/meals/[id].tsx':
