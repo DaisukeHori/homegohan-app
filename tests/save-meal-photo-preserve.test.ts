@@ -1,14 +1,16 @@
 /**
- * #1487 の整合ゲート: AI が献立の枠を作り直す保存 (Edge の save-meal。plannedMealId を指定した更新) でも、
- * 前回の写真の料理 (buildPhotoDishList の出力。subject_hash を持たない) の画像を AI の画像で置き換えない。
- * 商品の献立の古い商品の料理 (画像の項目なし) も同じ (整合ゲート R1。献立の行の catalog_product_id / source_type を読む)。
+ * AI が献立の枠を作り直す保存 (Edge の save-meal。plannedMealId を指定した更新) の料理の画像とカバー。
+ * #1553: 料理が変わったら、前回の写真の料理 (buildPhotoDishList の出力) の写真・利用者のカバーを外し、新しい料理の AI の画像を作る。
+ * 料理が同じまま (同じ数・同じ中身) なら外さない。
+ * 商品の献立の古い商品の料理 (画像の項目なし) は、作り直しても商品の料理・商品の画像のまま
+ * (#1487 の整合ゲート R1。献立の行の catalog_product_id / source_type を読む)。
  *
  * 料理の画像の組み立て (reconcileDishImages) は本物を使い、栄養計算・ジョブの積み方・DB だけを作り物にする
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { saveMealToDb } from "../supabase/functions/_shared/save-meal.ts";
-import { buildPhotoDishList, type MealImageDish } from "../supabase/functions/_shared/meal-image.ts";
+import { buildDishImageSubjectHash, buildPhotoDishList, type MealImageDish } from "../supabase/functions/_shared/meal-image.ts";
 import { emptyNutrition } from "../supabase/functions/_shared/nutrition-calculator.ts";
 
 const { analyzeMock, enqueueMock, triggerMock } = vi.hoisted(() => ({
@@ -125,7 +127,7 @@ async function regenerate(existingDishes: MealImageDish[], dishes: ReturnType<ty
   return updates[0] as { dishes: MealImageDish[]; image_url: string | null };
 }
 
-describe("save-meal: 前回の写真の料理を AI の画像で置き換えない (#1487 の整合ゲート)", () => {
+describe("save-meal: AI の作り直しの料理の画像とカバー (#1553・#1487 の整合ゲート)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     analyzeMock.mockResolvedValue({
@@ -136,25 +138,37 @@ describe("save-meal: 前回の写真の料理を AI の画像で置き換えな�
     });
   });
 
-  it("写真の料理 (1 つ) の枠を作り直しても、写真を残してジョブを積まない", async () => {
+  it("写真の料理 (1 つ) の枠を違う料理に作り直すと、写真を料理に写さず AI の画像のジョブを積み、写真のカバーを外す (#1553)", async () => {
     const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }], PHOTO_URL);
     const row = await regenerate(previous, [aiDish("鮭の塩焼き")]);
 
-    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [] }));
-    expect(triggerMock).not.toHaveBeenCalled();
-    expect(row.dishes[0]).toMatchObject({ name: "鮭の塩焼き", image_url: PHOTO_URL, image_source: "meal_photo", image_status: "ready", image_subject_hash: null });
-    expect(row.image_url).toBe(PHOTO_URL);
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0 })] }));
+    expect(row.dishes[0]).toMatchObject({ name: "鮭の塩焼き", image_url: null, image_source: "generated_ai", image_status: "stale" });
+    expect(row.dishes[0].image_subject_hash).toBeTruthy();
+    expect(row.image_url).toBeNull();
   });
 
-  it("写真の料理 (複数) の枠を作り直しても、写真の料理の状態を写し、ジョブを積まない", async () => {
+  it("写真の料理 (複数) の枠を違う料理に作り直すと、どの料理にも AI の画像のジョブを積み、写真のカバーを外す (#1553)", async () => {
     const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }, { name: "味噌汁", role: "soup" }], PHOTO_URL);
     const row = await regenerate(previous, [aiDish("鮭の塩焼き"), aiDish("けんちん汁", "soup")]);
 
-    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [] }));
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
+      jobs: [expect.objectContaining({ dishIndex: 0 }), expect.objectContaining({ dishIndex: 1 })],
+    }));
     expect(row.dishes.map((dish) => [dish.image_source, dish.image_status, dish.image_url])).toEqual([
-      ["meal_photo", "stale", null],
-      ["meal_photo", "stale", null],
+      ["generated_ai", "stale", null],
+      ["generated_ai", "stale", null],
     ]);
+    expect(row.image_url).toBeNull();
+  });
+
+  it("写真の料理の枠を同じ料理 (同じ数・同じ中身) で作り直したときは、写真もカバーも外さず、ジョブを積まない (#1553)", async () => {
+    const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }], PHOTO_URL);
+    const row = await regenerate(previous, [{ name: "親子丼", role: "main", ingredients: [], instructions: [] } as never]);
+
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [] }));
+    expect(triggerMock).not.toHaveBeenCalled();
+    expect(row.dishes[0]).toMatchObject({ name: "親子丼", image_url: PHOTO_URL, image_source: "meal_photo", image_status: "ready", image_subject_hash: null });
     expect(row.image_url).toBe(PHOTO_URL);
   });
 
@@ -168,13 +182,52 @@ describe("save-meal: 前回の写真の料理を AI の画像で置き換えな�
     expect(row.image_url).toBe(PRODUCT_URL);
   });
 
-  it("写真の料理 (複数) の枠を料理を増やして作り直しても、増えた料理に積まず (状態なし)、カバーは写真のまま (整合ゲート R1)", async () => {
+  it("写真の料理 (複数) の枠を料理を増やして作り直すと、増えた料理にも AI の画像のジョブを積み、写真のカバーを外す (#1553)", async () => {
     const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }, { name: "味噌汁", role: "soup" }], PHOTO_URL);
     const row = await regenerate(previous, [aiDish("鮭の塩焼き"), aiDish("けんちん汁", "soup"), aiDish("お浸し", "side")]);
 
-    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [] }));
-    expect(row.dishes[2]).toMatchObject({ name: "お浸し", image_url: null, image_source: null, image_status: null, image_subject_hash: null });
-    expect(row.image_url).toBe(PHOTO_URL);
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
+      jobs: [0, 1, 2].map((dishIndex) => expect.objectContaining({ dishIndex })),
+    }));
+    expect(row.dishes[2]).toMatchObject({ name: "お浸し", image_url: null, image_source: "generated_ai", image_status: "pending" });
+    expect(row.image_url).toBeNull();
+  });
+
+  it("写真の料理 (複数) の枠を、料理の数だけ減らして (残った料理は同じ) 作り直すと、写真のカバーを外し、残った写真の料理も AI の画像の生成に回す (#1553)", async () => {
+    const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }, { name: "味噌汁", role: "soup" }], PHOTO_URL);
+    const row = await regenerate(previous, [{ name: "親子丼", role: "main", ingredients: [], instructions: [] } as never]);
+
+    // カバーが空・ジョブが 0 で、画像の無い写真の印の料理だけが残る献立にしない
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0, dishName: "親子丼" })] }));
+    expect(row.dishes[0]).toMatchObject({ name: "親子丼", image_url: null, image_source: "generated_ai", image_status: "pending" });
+    expect(row.dishes[0].image_subject_hash).toBeTruthy();
+    expect(row.image_url).toBeNull();
+  });
+
+  it("写真の料理 (複数) の枠を、一部の料理だけ変えて作り直すと、同じまま残った写真の料理も AI の画像の生成に回す (#1553)", async () => {
+    const previous = buildPhotoDishList([{ name: "親子丼", role: "main" }, { name: "味噌汁", role: "soup" }], PHOTO_URL);
+    const row = await regenerate(previous, [{ name: "親子丼", role: "main", ingredients: [], instructions: [] } as never, aiDish("けんちん汁", "soup")]);
+
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({
+      jobs: [expect.objectContaining({ dishIndex: 0 }), expect.objectContaining({ dishIndex: 1 })],
+    }));
+    expect(row.dishes.map((dish) => [dish.image_source, dish.image_status, dish.image_url])).toEqual([
+      ["generated_ai", "pending", null],
+      ["generated_ai", "stale", null],
+    ]);
+    expect(row.image_url).toBeNull();
+  });
+
+  it("手で付けた画像の料理 (1 品の PATCH の imageUrl) の枠を違う料理に作り直すと、手の画像とカバーを外して AI の画像のジョブを積む (#1553)", async () => {
+    const manualUrl = "https://example.com/storage/generated/user-1/manual.png";
+    const previous: MealImageDish[] = [
+      { name: "カレー", role: "main", image_url: manualUrl, image_source: "manual_override", image_status: "ready", image_subject_hash: null },
+    ];
+    const row = await regenerate(previous, [aiDish("鮭の塩焼き")], { image_url: manualUrl });
+
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0 })] }));
+    expect(row.dishes[0]).toMatchObject({ image_url: null, image_source: "generated_ai", image_status: "stale" });
+    expect(row.image_url).toBeNull();
   });
 
   it("前提との対比: 商品の献立でない手入力の料理 (画像の項目なし) の枠を作り直すと、今までどおり AI の画像のジョブを積む", async () => {
@@ -185,7 +238,7 @@ describe("save-meal: 前回の写真の料理を AI の画像で置き換えな�
     expect(row.dishes[0]).toMatchObject({ image_source: "generated_ai", image_status: "stale", image_url: null });
   });
 
-  it("カバーの持ち主: 利用者が付けたカバー (どの AI の料理の画像とも一致しない) は、AI の料理の枠を作り直しても残す", async () => {
+  it("カバーの持ち主: 利用者が付けたカバー (どの AI の料理の画像とも一致しない) は、AI の料理の枠を違う料理に作り直すと外す (#1553)", async () => {
     const userCover = "https://example.com/storage/generated/user-1/user-made.png";
     const previous: MealImageDish[] = [
       { name: "カレー", role: "main", image_url: "https://example.com/ai-0.png", image_source: "generated_ai", image_status: "ready", image_subject_hash: "h0" },
@@ -194,6 +247,20 @@ describe("save-meal: 前回の写真の料理を AI の画像で置き換えな�
     const row = await regenerate(previous, [aiDish("鮭の塩焼き"), aiDish("お浸し", "side")], { image_url: userCover });
 
     expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [expect.objectContaining({ dishIndex: 0 }), expect.objectContaining({ dishIndex: 1 })] }));
+    expect(row.image_url).toBeNull();
+  });
+
+  it("カバーの持ち主: 利用者が付けたカバーは、AI の料理の枠を同じ料理 (同じ数・同じ中身) で作り直したときは残す (#1553)", async () => {
+    const userCover = "https://example.com/storage/generated/user-1/user-made.png";
+    const sameDish = { name: "鮭の塩焼き", role: "main", ingredients: [], displayOrder: 0 };
+    const subjectHash = await buildDishImageSubjectHash(sameDish, 0);
+    const previous: MealImageDish[] = [
+      { ...sameDish, image_url: "https://example.com/ai-0.png", image_source: "generated_ai", image_status: "ready", image_subject_hash: subjectHash },
+    ];
+    const row = await regenerate(previous, [{ name: "鮭の塩焼き", role: "main", ingredients: [], instructions: [] } as never], { image_url: userCover });
+
+    expect(enqueueMock).toHaveBeenCalledWith(expect.objectContaining({ jobs: [] }));
+    expect(row.dishes[0]).toMatchObject({ image_url: "https://example.com/ai-0.png", image_source: "generated_ai", image_status: "ready" });
     expect(row.image_url).toBe(userCover);
   });
 
