@@ -27,6 +27,8 @@ export enum MembershipErrorCode {
   MEMBER_LIMIT_EXCEEDED = 'MEMBER_LIMIT_EXCEEDED',
   // #1101: 運営が隠した食事は、家族への貼り付け (paste_meal_to_family) の元にできない
   MEAL_HIDDEN = 'MEAL_HIDDEN',
+  // #1627: ハンズオンのお試しの記録 (meals.is_sandbox = true) は、家族への貼り付け (paste_meal_to_family) の元にできない
+  MEAL_SANDBOX = 'MEAL_SANDBOX',
   // #1062: 未登録だった family 系 RAISE EXCEPTION コード
   MEMBER_NOT_FOUND = 'MEMBER_NOT_FOUND',
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
@@ -89,6 +91,7 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.NOT_FAMILY_ADULT]: 403,
   [MembershipErrorCode.MEMBER_LIMIT_EXCEEDED]: 409,
   [MembershipErrorCode.MEAL_HIDDEN]: 403,
+  [MembershipErrorCode.MEAL_SANDBOX]: 403,
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 404,
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: 409,
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: 403,
@@ -175,6 +178,7 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.NOT_FAMILY_ADULT]: '家族の大人のメンバーだけが操作できます。',
   [MembershipErrorCode.MEMBER_LIMIT_EXCEEDED]: '家族の人数の上限に達しています。',
   [MembershipErrorCode.MEAL_HIDDEN]: 'この食事は表示が止められているため、使えません。',
+  [MembershipErrorCode.MEAL_SANDBOX]: 'この食事はお試しの記録のため、家族に共有できません。',
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 'メンバーが見つかりません。',
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: '代表者はこの操作をできません。先に代表者を譲ってください。',
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: '家族の代表者だけが操作できます。',
