@@ -127,12 +127,10 @@ describe('段 A の 4 関数', () => {
       verify: '/api/auth/mfa/verify',
       recover: '/api/auth/mfa/recover',
     });
-    const calls = fetchMock.mock.calls.map(([path, init]: [string, RequestInit]) => ({
-      path,
-      method: init.method,
-      headers: init.headers,
-      body: init.body,
-    }));
+    const calls = fetchMock.mock.calls.map((call) => {
+      const [path, init] = call as [string, RequestInit];
+      return { path, method: init.method, headers: init.headers, body: init.body };
+    });
     expect(calls).toEqual([
       { path: '/api/auth/mfa/status', method: 'GET', headers: undefined, body: undefined },
       { path: '/api/auth/mfa/enroll', method: 'POST', headers: undefined, body: undefined },
