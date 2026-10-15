@@ -359,10 +359,15 @@ describe('ケース6: オープンリダイレクト (next) の対策', () => {
     expectStaysOnOrigin(res);
   });
 
-  it.each(evilNexts)('コードが無効でも (Cookie セッションあり) next=%s は外へ出ない', async (_label, evil) => {
+  it.each(evilNexts)('コードが無効なら (Cookie セッションがあっても) next=%s に関わらず /login へ。外へ出ない (#1647)', async (_label, evil) => {
     mocks.getUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
     const res = await GET(makeRequest({ code: VALID_CODE, next: evil }));
-    expectStaysOnOrigin(res);
+    expect(res.status).toBe(307);
+    const location = res.headers.get('location')!;
+    const resolved = new URL(location, BASE);
+    expect(resolved.origin).toBe(BASE);
+    expect(location).not.toContain('evil.com');
+    expect(resolved.pathname).toBe('/login');
   });
 
   it('正当な相対パス・同一オリジンの絶対 URL はそのまま通る (クエリ・ハッシュも保持)', async () => {
