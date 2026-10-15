@@ -5,7 +5,7 @@ import { motion } from "framer-motion";
 import FocusTrap from "focus-trap-react";
 import { X, Sparkles } from "lucide-react";
 import type { MealMode } from "@/types/domain";
-import { MEAL_LABELS } from "@homegohan/shared";
+import { MEAL_LABELS, type MealType } from "@homegohan/shared";
 import { useFormDraftStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
 
@@ -23,7 +23,7 @@ const colors = {
   danger: '#D64545',
 };
 
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 interface ModeConfig {
   icon: React.ElementType;

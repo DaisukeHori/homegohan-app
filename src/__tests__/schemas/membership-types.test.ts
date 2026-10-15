@@ -2,7 +2,7 @@
 // (設計書 01-data-model.md §6)
 //
 // このファイルは migration (20260511000100-000130) を local Supabase に apply し、
-// npm run types:supabase を実行した後に database.types.ts が更新されることで
+// 型を再生成 (docs/design/operator/09-runbook.md の「5. 型の再生成」) して database.types.ts が更新されることで
 // 完全に pass する型整合性テストです。
 //
 // 現在の database.types.ts は membership migration 適用前のため、

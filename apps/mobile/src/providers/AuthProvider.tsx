@@ -33,10 +33,10 @@ const AuthContext = createContext<AuthState | null>(null);
  * | 上の行の signOut が、通信の失敗 (オフラインなど) で { error } を返した | signOut.ts (signOut の前の掃除だけ) | 上の行と同じ | supabase-js は保管庫のセッションを消さず、SIGNED_OUT も届かないので、SIGNED_OUT の行の掃除は走らない。設定・マイページのログアウトと退会のあと (signOutOnDevice・signOutAfterAccountDeletion) は、保管庫のセッションを端末だけで消し (clearStoredSessionLocally)、clearSession で画面の状態を消す (lastKnownUserIdRef は残る。下の clearSession の注)。サーバーのセッションは、設定・マイページのログアウト (signOutOnDevice) では、サーバーへのログアウトが届かなければ失効しないまま残る。退会のあと (signOutAfterAccountDeletion) は、サーバーでの削除が済んでから呼ぶ (settings/account.tsx) ので、サーバーのセッションは auth.users の削除 (auth.admin.deleteUser) と一緒に既に消えている。パスワード再設定のあとと Web からの sign-out (signOutWithCleanup) は端末だけで消す処理を持たず、保管庫のセッションと画面の状態が残る (ログイン中のまま。パスワード再設定のあとは、ログイン画面へ移っても (auth)/_layout.tsx がセッションを見てホームへ戻す)。push token の行を消しに行く経路 (signOutOnDevice・signOutWithCleanup) は、その削除が通信の失敗で済まなければ user_push_tokens の行が残り、控えた値は掃除で消える。退会のあとは行を消しに行かず、行は auth.users の削除と一緒に消えている (ON DELETE CASCADE) |
  * | Web からの session-expired で、getUser() が失効を見つけた (webViewAuthMessages.ts) | 先に SIGNED_OUT の行、続いて signOut.ts | SIGNED_OUT の行は直前に分かっていたセッションの利用者、signOut.ts は getUser() の前に控えた利用者 (同じ利用者) | getUser() が端末のセッションを消して SIGNED_OUT が届く → SIGNED_OUT の行の掃除 (push token の値は残す。次の削除と前後してよい) → push token の行の削除 (残した値を読む) → 掃除 (値もここで消える) → signOut |
  * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走る |
- * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除が済んでから未ログインの画面を出す |
+ * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除が済んでから未ログインの画面を出す。ただし端末の Cookie の置き場の掃除は始めるだけで待たない (下の注) |
  * | 起動時、getSession() が通信の失敗で null を返し、保存済みのセッションも無い | restoreSession | 同上 | 同上 |
  * | 起動時、getSession() が例外を投げた | restoreSession | 同上 | 同上 |
- * | SIGNED_OUT (supabase-js の自動更新で refresh_token が失効と答えた・getUser() が失効を見つけて端末のセッションを消した・上の行の signOut) | onAuthStateChange (clearUserScopedLocalDataAfterSignedOut) | 直前に分かっていたセッションの利用者 (無ければ null) | supabase-js が既に消している。画面はすぐ未ログインにし、掃除はそのあと (下の注)。この端末の push token の値だけは残す (下の注) |
+ * | SIGNED_OUT (supabase-js の自動更新で refresh_token が失効と答えた・getUser() が失効を見つけて端末のセッションを消した・上の行の signOut) | onAuthStateChange (clearUserScopedLocalDataAfterSignedOut) | 直前に分かっていたセッションの利用者 (無ければ null) | supabase-js が既に消している。画面はすぐ未ログインにし、掃除はそのあと (下の注)。この端末の push token の値だけは残す (下の注)。端末の Cookie の置き場の掃除は待たない (下の注) |
  *
  * SIGNED_OUT の掃除が push token の値 (push_token_value_v1:<利用者>) を残す理由: SIGNED_OUT は、signOut.ts がその値を読んで
  * user_push_tokens の行を消すより前に届くことがある (上の session-expired の行。ほかに、ログアウトの途中で自動更新が失効を答えたとき)。
@@ -52,6 +52,14 @@ const AuthContext = createContext<AuthState | null>(null);
  * SIGNED_OUT の掃除は画面を未ログインにしたあとに走る。次の利用者がログイン (人の操作で数秒) するより、掃除 (端末の中の読み書きで
  * 数ミリ秒) のほうが先に終わる。万一ログインのほうが先でも、消えるのは次の利用者の設定の値で、前の利用者の値が残ることはない。
  * 画面を掃除の完了まで待たせないのは、失効したセッションで画面を出し続けないため。
+ *
+ * 端末の Cookie の置き場の掃除 (Networking.clearCookies。userScopedLocalData.ts の WebViewNativeCookieClearWait) を待つのは、
+ * このあとにサインアウトする経路 (signOut.ts・起動時の失効の明言) だけ (#1647)。起動時に未ログインと決まったときと SIGNED_OUT は、
+ * サインアウトが済んでいて待っても順は変わらないので、始めるだけで待たない。待つと、ネイティブから知らせが来ない端末では、
+ * 未ログインで起動するたびに (一度もログインしていない端末も) 読み込み中の表示が上限 (WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS) まで延びる。
+ * 未ログインの間に作られる Cookie で、消えると困るものは無い (webViewUserStorageCleanup.ts の「Cookie」)。掃除はふつう数十ミリ秒で
+ * 終わり、次の利用者のログインとブリッジ (人の操作で数秒) より先に済む。万一ブリッジのほうが先でも、消えるのは次の利用者の
+ * Cookie で、前の利用者の Cookie が残ることはない。
  */
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
@@ -75,13 +83,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     /**
      * 起動時に未ログインと決まったときの後始末。通常のログアウトと同じ掃除を通してから、未ログインにする。
      * 掃除する利用者は、直前に分かっていたセッションの利用者。起動時なのでふつうは分からず (supabase-js がセッションを既に消している)、
-     * そのときは ID なしで掃除できる範囲 (利用者別のキーを接頭辞で全員分) を消す
+     * そのときは ID なしで掃除できる範囲 (利用者別のキーを接頭辞で全員分) を消す。
+     * 端末の Cookie の置き場の掃除は始めるだけで待たない (上の表の注。#1647)
      */
     async function settleSignedOutAtStartup() {
       const userId = lastKnownUserIdRef.current;
       lastKnownUserIdRef.current = null;
       try {
-        await clearUserScopedLocalData(userId);
+        await clearUserScopedLocalData(userId, { webViewNativeCookies: "background" });
       } catch {
         // 掃除は例外を投げないが、万一投げても、未ログインにする
       }

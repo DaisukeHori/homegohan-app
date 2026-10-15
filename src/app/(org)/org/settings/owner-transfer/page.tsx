@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { normalizeProfileName } from "@/lib/profile-name";
 
 interface CandidateMember {
   id: string;
@@ -149,10 +150,10 @@ export default function OwnerTransferPage() {
                     className="text-blue-600"
                   />
                   <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-100 to-blue-50 flex items-center justify-center font-bold text-blue-500 text-xs flex-shrink-0">
-                    {(candidate.nickname ?? 'U')[0].toUpperCase()}
+                    {(normalizeProfileName(candidate.nickname) ?? 'U')[0].toUpperCase()}
                   </div>
                   <div className="flex-1">
-                    <p className="font-medium text-gray-900">{candidate.nickname ?? '(名前なし)'}</p>
+                    <p className="font-medium text-gray-900">{normalizeProfileName(candidate.nickname) ?? '(名前なし)'}</p>
                     <p className="text-xs text-gray-500">
                       {roleLabel(candidate.org_role)}
                       {candidate.joined_org_at && (

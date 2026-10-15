@@ -582,12 +582,14 @@ const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 // 表示順: breakfast / lunch / dinner / snack / midnight_snack
 const MEAL_ORDER = MEAL_ORDER_SHARED;
 
-const MEAL_CONFIG: Record<string, { Icon: React.ComponentType<any>; label: string; color: string }> = {
-  breakfast: { Icon: Sun, label: "朝食", color: "#FF9800" },
-  lunch: { Icon: SunMedium, label: "昼食", color: "#4CAF50" },
-  snack: { Icon: Coffee, label: "おやつ", color: "#E91E63" },
-  dinner: { Icon: Moon, label: "夕食", color: "#7C4DFF" },
-  midnight_snack: { Icon: CloudMoon, label: "夜食", color: "#3F51B5" },
+// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める。DB の行の meal_type (string) は isMealType で絞ってから引く。
+// shortLabel は献立のカードの番号付きの名前 (getMealLabel) の短い名前 (#1631。区分ごとの比較の連鎖を持たず、ここから引く)
+const MEAL_CONFIG: Record<MealType, { Icon: React.ComponentType<any>; label: string; shortLabel: string; color: string }> = {
+  breakfast: { Icon: Sun, label: "朝食", shortLabel: "朝", color: "#FF9800" },
+  lunch: { Icon: SunMedium, label: "昼食", shortLabel: "昼", color: "#4CAF50" },
+  snack: { Icon: Coffee, label: "おやつ", shortLabel: "おやつ", color: "#E91E63" },
+  dinner: { Icon: Moon, label: "夕食", shortLabel: "夕", color: "#7C4DFF" },
+  midnight_snack: { Icon: CloudMoon, label: "夜食", shortLabel: "夜食", color: "#3F51B5" },
 };
 
 // MODE_CONFIG — @homegohan/shared の抽象キーを App 用の実色値に変換
@@ -1273,16 +1275,12 @@ export default function WeeklyMenuPage() {
     return grouped;
   }, [sortedMeals]);
 
-  // 番号付きラベル: 1件目は「朝」「昼」「夕」、2件目以降は「朝食2」「朝3」...
+  // 番号付きラベル: 1件目は「朝」「昼」「夕」、2件目は「朝食2」、3件目以降は「朝3」...
+  // 名前は MEAL_CONFIG の label / shortLabel から引く (#1631)。5 値以外の meal_type は、元の値をそのまま名前にする
   const getMealLabel = (mealType: string, indexInGroup: number): string => {
-    const cfg = MEAL_CONFIG[mealType];
-    const base = cfg?.label ?? mealType;
-    const short =
-      mealType === "breakfast" ? "朝" :
-      mealType === "lunch" ? "昼" :
-      mealType === "dinner" ? "夕" :
-      mealType === "snack" ? "おやつ" :
-      mealType === "midnight_snack" ? "夜食" : base;
+    const cfg = isMealType(mealType) ? MEAL_CONFIG[mealType] : null;
+    const base = cfg ? cfg.label : mealType;
+    const short = cfg ? cfg.shortLabel : base;
     if (indexInGroup === 0) return short;
     if (indexInGroup === 1) return `${base}${indexInGroup + 1}`;
     return `${short}${indexInGroup + 1}`;
@@ -1830,7 +1828,7 @@ export default function WeeklyMenuPage() {
                       mealType={mealType}
                       dayId={selectedDay.id}
                       dayDate={selectedDay.day_date}
-                      mealLabel={MEAL_CONFIG[mealType]?.label ?? mealType}
+                      mealLabel={MEAL_CONFIG[mealType].label}
                       onPress={() => {
                         // plan 未作成 (id が null) でも AddMealModal を開く — API 側で user_daily_meals を自動作成
                         setAddMealModalDayId(selectedDay.id ?? null);
@@ -1844,7 +1842,9 @@ export default function WeeklyMenuPage() {
                 return null;
               })}
               {sortedMeals.map((m) => {
-                const mealCfg = MEAL_CONFIG[m.meal_type] ?? { Icon: CircleEllipsis, label: m.meal_type, color: colors.textMuted };
+                const mealCfg = isMealType(m.meal_type)
+                  ? MEAL_CONFIG[m.meal_type]
+                  : { Icon: CircleEllipsis, label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
                 const isGenerating = m.is_generating;
                 const isExpanded = expandedMealId === m.id;

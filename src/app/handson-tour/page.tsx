@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
+// 呼びかけに出す名前は Web・モバイル共通の規則 (仮置きの 'Guest'・空は 'あなた'、30 文字超は切る。設計書 02-step0-welcome.md §7.2・#1649)
+import { HANDSON_TOUR_NICKNAME_FALLBACK, handsonTourNickname } from '@homegohan/shared';
 import { TourProgress } from '@/components/handson-tour/TourProgress';
 import { useReducedMotion } from '@/components/handson-tour/useReducedMotion';
 import { useTour } from '@/contexts/TourContext';
@@ -15,20 +17,12 @@ import {
   fireAnalytics,
 } from '@homegohan/handson-tour-shared';
 
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
-
 export default function HandsonTourWelcomePage() {
   const router = useRouter();
   const prefersReducedMotion = useReducedMotion();
   const mountTime = useRef(Date.now());
 
-  const [nickname, setNickname] = useState('あなた');
+  const [nickname, setNickname] = useState(HANDSON_TOUR_NICKNAME_FALLBACK);
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
 
@@ -55,7 +49,7 @@ export default function HandsonTourWelcomePage() {
         .single()
         .then(({ data }) => {
           if (data?.nickname) {
-            setNickname(safeNickname(data.nickname));
+            setNickname(handsonTourNickname(data.nickname));
           }
         });
     });

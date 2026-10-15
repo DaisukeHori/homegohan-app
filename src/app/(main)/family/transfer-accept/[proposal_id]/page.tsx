@@ -5,6 +5,7 @@
 import { useState, useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/client';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 interface TransferProposal {
   id: string;
@@ -64,7 +65,7 @@ export default function FamilyTransferAcceptPage() {
         .select('nickname')
         .eq('id', proposalData.from_user_id)
         .single();
-      setFromName(fromProfile?.nickname ?? '代表者');
+      setFromName(normalizeProfileName(fromProfile?.nickname) ?? '代表者');
 
       // 家族グループ名
       if (proposalData.scope === 'family') {
