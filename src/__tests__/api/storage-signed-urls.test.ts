@@ -1,11 +1,13 @@
 /**
  * #1365 段 1: 写真の署名付き URL を返す API (POST /api/storage/signed-urls) のテスト
  *   - 未ログインは 401 (署名しない)
+ *   - 本文に NULL 文字があれば、認証より前に 400 INVALID_CHARACTER (#1657。未ログインでも 400 が先)
  *   - 本文の形が違う・件数が多すぎるのは 400
  *   - 本人は認証で確かめた user.id (本文の値は使わない) で、本人の写真にだけ署名する
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { MAX_PHOTO_URLS_PER_SIGN_REQUEST } from '@homegohan/shared';
+import { NULL_CHARACTER_ERROR_CODE, NULL_CHARACTER_ERROR_MESSAGE } from '@/lib/api/null-character';
 
 const mocks = vi.hoisted(() => ({
   getUser: vi.fn(),
@@ -71,6 +73,15 @@ describe('POST /api/storage/signed-urls', () => {
     mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
     const res = await POST(request({ urls: [`${BASE}/fridge-images/${USER}/a.jpg`] }));
     expect(res.status).toBe(401);
+    expect(mocks.signCalls).toEqual([]);
+  });
+
+  it('本文に NULL 文字があれば、未ログインでも認証より前に 400 INVALID_CHARACTER で断り、署名しない (#1657)', async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+    const res = await POST(request({ urls: [`${BASE}/fridge-images/${USER}/a\u0000.jpg`] }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE });
+    expect(mocks.getUser).not.toHaveBeenCalled();
     expect(mocks.signCalls).toEqual([]);
   });
 
