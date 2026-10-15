@@ -53,3 +53,27 @@ export const USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES: readonly string[] = [
  * src/hooks/useAiConsent.tsx) を、同じタブで次にログインする別の利用者へ引き継がないために、持ち主が聞いて捨てる。
  */
 export const USER_SCOPED_STORAGE_CLEARED_EVENT = 'homegohan:user-scoped-storage-cleared';
+
+/**
+ * Supabase の認証の Cookie の名前の接頭辞 (@supabase/ssr の既定の名前 `sb-<プロジェクトの ref>-auth-token`。
+ * 大きいときは `.0` `.1` … に分けて置かれ、PKCE の `-code-verifier` も同じ接頭辞で始まる)。
+ */
+export const SUPABASE_AUTH_COOKIE_NAME_PREFIX = 'sb-';
+
+/**
+ * ネイティブのログアウト・退会のあと、モバイルアプリの WebView で消す Cookie の名前の接頭辞 (#1612 / #1049 F7-16)。
+ *
+ * WebView は Web のセッションを Cookie (native-bridge が張る。#1036) で持つ。ネイティブのログアウトは Web の画面のログアウト
+ * (supabase.auth.signOut が Cookie を消す) を通らないので、前の利用者のセッションの Cookie が WebView に残る。
+ * 消す側は apps/mobile/src/lib/webViewUserStorageCleanup.ts の 2 つ (どちらもこの一覧と同じ経路の上にある):
+ *   - ログアウトの時点で、端末の Cookie の置き場 (Android の WebView の CookieManager・iOS の NSHTTPCookieStorage) を空にする
+ *   - 次に WebView を認証ブリッジ無しで開いたとき、Web のページが読み込まれる前に注入する掃除の JS が、この接頭辞の Cookie を消す
+ *     (iOS の WKWebView が自分で持つ Cookie の置き場は、ネイティブの側から空にできないため)
+ * Web の画面のログアウトは supabase.auth.signOut が自分の Cookie を消すので、この一覧を読まない。
+ *
+ * アプリ内表示の印の is_native_app (native-bridge と middleware が付ける) は、この一覧に入れない。
+ * 利用者のものではなく「この WebView はアプリの中」という端末の印で、WebViewScreen は毎回 ?mode=app 付きで開くので、
+ * 消しても次の読み込みで付け直される。消すと、付け直されるまでの読み込み (引っ張って更新など) で SSR が Web 版の
+ * 下のナビを出してしまう。ログアウトの時点の端末の置き場の空にする処理 (上の 1 つ目) では、ほかの Cookie と一緒に消える。
+ */
+export const USER_SCOPED_COOKIE_NAME_PREFIXES: readonly string[] = [SUPABASE_AUTH_COOKIE_NAME_PREFIX];

@@ -31,10 +31,34 @@
  * 消すキーの一覧は packages/shared/src/user-scoped-storage.ts (USER_SCOPED_LOCAL_STORAGE_KEYS と、
  * 後ろに ID が付くキーの接頭辞 USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES) を正にする。
  * Web の clearUserScopedLocalStorage() と同じ一覧で、ここには写さない。一覧にキーを足せば、注入する JS も自動で追随する。
+ *
+ * ## Cookie (#1612 / #1049 F7-16)
+ * WebView の Web のセッションは Cookie (native-bridge が張る Supabase の認証の Cookie。#1036) にある。ネイティブのログアウトは
+ * Web の画面のログアウト (supabase.auth.signOut が Cookie を消す) を通らないので、前の利用者の Cookie が WebView に残り、
+ * ログアウトをオフラインで行った (サーバーのセッションが失効していない) ときは、次に認証ブリッジ無しで開いた WebView が
+ * 前の利用者としてログインしたまま Web のページを出し得た。掃除は同じ経路 (userScopedLocalData.ts → ここ) の上で 2 段で行う。
+ *   1. ログアウトの時点 (clearWebViewNativeCookies)。React Native の Networking.clearCookies で、端末の Cookie の置き場を空にする。
+ *      - Android: WebView の CookieManager そのもの (RN の ForwardingCookieHandler は android.webkit.CookieManager に転送する)。
+ *        HttpOnly も含めてすべて消える。開いていないタブの WebView にも効く。
+ *      - iOS: NSHTTPCookieStorage。WebViewScreen は sharedCookiesEnabled なので、react-native-webview (13.13.5) は
+ *        WebView を作るたびにここから Cookie を書き戻し (syncCookiesToWebView)、WebView の Cookie が変わるたびにここへ写す
+ *        (cookiesDidChangeInCookieStore。足すだけで、消したことは写さない)。ここを空にしないと、WebView の中で消しても
+ *        次の WebView に前の利用者の Cookie が戻る。
+ *   2. 次に WebView を開いたとき (buildClearUserScopedWebStorageScript の clearAuthCookies)。iOS の WKWebView は自分の
+ *      Cookie の置き場 (既定の WKWebsiteDataStore。端末に残る) を持ち、1 ではそこを空にできないので、localStorage の掃除と
+ *      同じ注入の JS で、USER_SCOPED_COOKIE_NAME_PREFIXES の接頭辞の Cookie を消す (JS から見える Cookie だけ。
+ *      Supabase の認証の Cookie は Web のクライアントが読むので HttpOnly ではない)。
+ *      認証ブリッジで開くときは消さない: 注入の JS は、ブリッジのリダイレクトの先のページで、ブリッジがいま張った
+ *      新しい利用者の Cookie を見るため。ブリッジは同じ名前の Cookie を上書きするので、前の利用者の Cookie は残らない。
+ * 限界: iOS で、1 のあと最初の WebView を認証ブリッジ無しで開いたときの最初の要求は、WKWebView の置き場に残った前の利用者の
+ * Cookie を送る (注入の JS は応答を受けたあとに動く)。サーバーのセッションがログアウトで失効していれば、Web の middleware の
+ * セッションの確認が失敗して Cookie を消すので、前の利用者として表示されるのは、オフラインでログアウトしたときだけ。
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Networking } from "react-native";
 import {
+  USER_SCOPED_COOKIE_NAME_PREFIXES,
   USER_SCOPED_LOCAL_STORAGE_KEYS,
   USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES,
   USER_SCOPED_STORAGE_CLEARED_EVENT,
@@ -45,6 +69,50 @@ export const WEB_VIEW_STORAGE_CLEAR_REQUEST_KEY = "webview_user_scoped_storage_c
 
 /** WebView の localStorage: 済んだ掃除の ID。全タブの WebView で共有されるので、同じ掃除を二度しない */
 export const WEB_VIEW_STORAGE_CLEARED_MARKER_KEY = "homegohan:native-sign-out-cleared";
+
+/**
+ * 端末の Cookie の置き場を空にする (Networking.clearCookies) のを待つ上限 (ミリ秒)。
+ * ネイティブは消し終わると必ず知らせるが、知らせが来ないときにログアウトを止めないための上限。
+ * 端末の上の処理 (ディスクの書き込みを含む) で、通信はしないので、ふつうは数十ミリ秒で終わる。待ちすぎてログアウトの
+ * 画面の移動が遅れないよう、利用者が「押したのに止まった」と感じにくい長さにしている。
+ */
+export const WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS = 3000;
+
+/** clearWebViewNativeCookies の結果 */
+export type WebViewNativeCookieClearResult =
+  /** 消した (iOS は消す Cookie が 1 つ以上あった) */
+  | "cleared"
+  /** 消す Cookie が無かった (iOS) / 消せなかった (Android の removeAllCookies が false) */
+  | "nothing"
+  /** Networking.clearCookies が無い・例外を投げた・上限の時間までに知らせが来なかった */
+  | "failed";
+
+/**
+ * ログアウトの時点で、WebView の Cookie の置き場を端末の側から空にする (#1612 / #1049 F7-16。上の「Cookie」の 1)。
+ * 例外は投げない (消せなくてもログアウトは続ける)。サインアウトの前でも後でもよいが、ほかの掃除と同じ所 (clearUserScopedLocalData) で呼ぶ。
+ */
+export function clearWebViewNativeCookies(): Promise<WebViewNativeCookieClearResult> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const finish = (result: WebViewNativeCookieClearResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== null) clearTimeout(timer);
+      resolve(result);
+    };
+    try {
+      if (typeof Networking?.clearCookies !== "function") {
+        finish("failed");
+        return;
+      }
+      timer = setTimeout(() => finish("failed"), WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS);
+      Networking.clearCookies((result) => finish(result === true ? "cleared" : "nothing"));
+    } catch {
+      finish("failed");
+    }
+  });
+}
 
 /**
  * このプロセスで頼んだ掃除の ID。AsyncStorage への書き込みが失敗しても、このプロセスの間に開く WebView では消せるよう、
@@ -89,14 +157,27 @@ export async function readPendingWebViewUserScopedStorageClear(): Promise<string
   }
 }
 
+export type ClearUserScopedWebStorageScriptOptions = {
+  /**
+   * USER_SCOPED_COOKIE_NAME_PREFIXES の接頭辞の Cookie も消すか (#1612 / #1049 F7-16。上の「Cookie」の 2)。
+   * 認証ブリッジで開くときは false にする (ブリッジがいま張った新しい利用者の Cookie を消さないため)。既定は false
+   */
+  clearAuthCookies?: boolean;
+};
+
 /**
- * WebView の injectedJavaScriptBeforeContentLoaded に入れる、利用者別の localStorage を消す JS。
+ * WebView の injectedJavaScriptBeforeContentLoaded に入れる、利用者別の localStorage (と、頼まれたときは認証の Cookie) を消す JS。
  * 済んだ掃除の ID (WEB_VIEW_STORAGE_CLEARED_MARKER_KEY) が requestId と違うときだけ、
  * USER_SCOPED_LOCAL_STORAGE_KEYS と、USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES の接頭辞で始まるキー (#1599) を消し、
+ * clearAuthCookies なら USER_SCOPED_COOKIE_NAME_PREFIXES の接頭辞の Cookie を消し、
  * Web の clearUserScopedLocalStorage() と同じイベントを出してから ID を書く。
- * 途中で失敗したら ID を書かないので、次の読み込みでもう一度消す。
+ * localStorage の掃除の途中で失敗したら ID を書かないので、次の読み込みでもう一度消す。
+ * Cookie を消すのに失敗しても localStorage の掃除と ID の書き込みは続ける (Cookie はログアウトの時点で端末の側からも消している)。
  */
-export function buildClearUserScopedWebStorageScript(requestId: string): string {
+export function buildClearUserScopedWebStorageScript(
+  requestId: string,
+  options: ClearUserScopedWebStorageScriptOptions = {},
+): string {
   return `
 (function() {
   try {
@@ -104,6 +185,25 @@ export function buildClearUserScopedWebStorageScript(requestId: string): string 
     var MARKER_KEY = ${JSON.stringify(WEB_VIEW_STORAGE_CLEARED_MARKER_KEY)};
     var REQUEST_ID = ${JSON.stringify(requestId)};
     if (storage.getItem(MARKER_KEY) === REQUEST_ID) return;
+    if (${JSON.stringify(options.clearAuthCookies === true)}) {
+      try {
+        var COOKIE_PREFIXES = ${JSON.stringify(USER_SCOPED_COOKIE_NAME_PREFIXES)};
+        var pairs = document.cookie ? document.cookie.split(';') : [];
+        for (var c = 0; c < pairs.length; c++) {
+          var name = pairs[c].split('=')[0].replace(/^\\s+|\\s+$/g, '');
+          if (!name) continue;
+          for (var p = 0; p < COOKIE_PREFIXES.length; p++) {
+            if (name.indexOf(COOKIE_PREFIXES[p]) === 0) {
+              // Web は Path=/ で張るので、同じ Path を付けて期限切れにする (省略すると今のページの Path になり消えない)
+              document.cookie = name + '=; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Path=/';
+              break;
+            }
+          }
+        }
+      } catch (cookieError) {
+        // Cookie を消せなくても localStorage の掃除は続ける
+      }
+    }
     var KEYS = ${JSON.stringify(USER_SCOPED_LOCAL_STORAGE_KEYS)};
     for (var i = 0; i < KEYS.length; i++) storage.removeItem(KEYS[i]);
     var PREFIXES = ${JSON.stringify(USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES)};
