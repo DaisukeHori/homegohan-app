@@ -306,6 +306,8 @@ function safeNickname(raw: string | null | undefined): string {
 }
 ```
 
+モバイルは 5 つの画面 (`apps/mobile/app/handson-tour/{index,photo,menu,badges,graduate}.tsx`) が `apps/mobile/src/handson-tour/safe-nickname.ts` の `safeNickname` を共通で使い、前後の空白を除いたあと仮置きの `'Guest'` も「名前が無い」として `'あなた'` にする (`@homegohan/shared` の `normalizeProfileName`。モバイルのプロフィール画面・Web の `src/lib/profile-name.ts` と同じ判定。#1635)。最大の文字数 30 は `HANDSON_TOUR_NICKNAME_MAX_LENGTH`。Web (`src/app/handson-tour/**/page.tsx`) は上のコードのまま。
+
 ---
 
 ## 8. アクセシビリティ詳細
