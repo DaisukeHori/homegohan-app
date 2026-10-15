@@ -93,7 +93,7 @@ const BANNED_LITERALS = new Set<string>([
 
 /**
  * 状態色ではないが、たまたま禁じる値と同じ hex を直書きしている箇所。理由を書いて足す (増やさないこと)。
- * 食事の種類の色 (朝食・昼食) は状態色ではなく、モバイルも同じ値 (apps/mobile/src/lib/meal-type-visuals.ts の MEAL_TYPE_COLORS) を使っている。
+ * 食事の種類の色 (朝食・昼食) は状態色ではない (以前はモバイルの表 apps/mobile/src/lib/meal-type-visuals.ts の MEAL_TYPE_COLORS も同じ値だったが、その表は #1598 で消した)。
  * #1665 で、home の今日の食事の区分の色は Web の区分の見た目の表 (MEAL_TYPE_HOME_THEME) へ移した。
  */
 const ALLOWED_LITERALS: { file: string; literal: string; line: RegExp; reason: string }[] = [
@@ -101,13 +101,13 @@ const ALLOWED_LITERALS: { file: string; literal: string; line: RegExp; reason: s
     file: MEAL_TYPE_VISUALS,
     literal: '#FF9800',
     line: /^\s*breakfast:/,
-    reason: 'home の朝食の色 (食事の種類の色。状態色ではない)。モバイルの朝食も #FF9800',
+    reason: 'home の朝食の色 (食事の種類の色。状態色ではない)。以前のモバイルの朝食も #FF9800 だった (モバイルの表は #1598 で消した)',
   },
   {
     file: MEAL_TYPE_VISUALS,
     literal: '#4CAF50',
     line: /^\s*lunch:/,
-    reason: 'home の昼食の色 (食事の種類の色。状態色ではない)。モバイルの昼食も #4CAF50',
+    reason: 'home の昼食の色 (食事の種類の色。状態色ではない)。以前のモバイルの昼食も #4CAF50 だった (モバイルの表は #1598 で消した)',
   },
 ];
 

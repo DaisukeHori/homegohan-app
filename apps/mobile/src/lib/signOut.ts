@@ -17,9 +17,15 @@
  *        SIGNED_OUT の掃除は push token の値 (1 で読む) を残すので、1 は控えた値で行を消せる (AuthProvider.tsx の先頭の表)
  *   3. サインアウト (保管庫のセッションを消す)
  *
+ * 1 の削除が失敗した・0 件だったときは、2 の掃除が値 (push_token_value_v1:<利用者>) を消す前に、その行を release の宛先として控える
+ * (#1706。pushTokenRelease.ts の recordPushTokenRelease。通信はしない)。セッションが既に失効している経路 (退会の API が 401 を返したときの
+ * ログアウトなど) では、RLS の削除が 0 件・失敗になりうる。控えないと、あとに届く SIGNED_OUT の release (releasePushTokenAfterSignedOut) は
+ * 2 で消えた値を読めず、行が残る。控えた宛先は、その SIGNED_OUT の release か、起動時に未ログインと決まったときのやり直し
+ * (flushPendingPushTokenReleases) が、端末の秘密の値で消す。削除できたとき・何もしなかったとき (skipped) は控えない。
+ *
  * アカウント削除では使わない。auth.users の削除で user_push_tokens が ON DELETE CASCADE で消える。
  *
- * push token の削除に失敗してもログアウトは止めない (unregisterExpoPushToken は例外を投げない)。
+ * push token の削除に失敗してもログアウトは止めない (unregisterExpoPushToken は例外を投げない。万一投げても、失敗として扱って続ける)。
  *
  * 設定画面のように、セッションが生きているまま呼ぶ場合は userId だけでよい (削除は現在のセッションで認可される)。
  * Web (WebView) からの sign-out / session-expired を処理する場合 (webViewAuthMessages.ts) は、Web 側のログアウトが
@@ -27,7 +33,8 @@
  * 呼び出し側が処理の最初に控えた userId と accessToken を渡す。accessToken があれば、削除はそのトークンで認可される。
  */
 
-import { unregisterExpoPushToken } from "./pushNotifications";
+import { type UnregisterPushTokenResult, unregisterExpoPushToken } from "./pushNotifications";
+import { recordPushTokenRelease } from "./pushTokenRelease";
 import { secureSessionStorage } from "./secureSessionStorage";
 import { SUPABASE_AUTH_STORAGE_KEY, supabase } from "./supabase";
 import { clearUserScopedLocalData } from "./userScopedLocalData";
@@ -41,6 +48,41 @@ export type SignOutOptions = {
 export type ForgetSessionOptions = {
   clearSession: () => void;
 };
+
+/**
+ * push token の削除の結果のうち、行が残っているかもしれないもの (#1706)。
+ *   - failed: エラー・タイムアウト・途中の例外。行が消えたかどうか分からない
+ *   - no_rows: 削除は通ったが 0 件。RLS に弾かれた (セッションが失効している) か、行が既に無い
+ * deleted (消した) と skipped (利用者や値が分からず何もしなかった。控える値も無い) は含めない
+ */
+const UNREGISTER_RESULTS_NEEDING_RELEASE: ReadonlySet<UnregisterPushTokenResult> = new Set<UnregisterPushTokenResult>([
+  "failed",
+  "no_rows",
+]);
+
+/**
+ * この端末の push token の行を消す。消せなかった (失敗・0 件) ときは、掃除が値を消す前に release の宛先として控える (#1706。先頭の説明)。
+ * 行が既に無かった (release や CASCADE が先に消した) ときも控えるが、release は合う行が無ければ 0 件で 200 を返し、控えから外れるだけ (害は無い)。
+ * 例外は投げない (ログアウトを止めない)
+ */
+async function unregisterPushTokenOrRecordRelease(
+  userId: string | null | undefined,
+  accessToken: string | null | undefined,
+): Promise<void> {
+  let result: UnregisterPushTokenResult;
+  try {
+    result = await unregisterExpoPushToken(userId, { accessToken });
+  } catch {
+    // unregisterExpoPushToken は例外を投げないが、万一投げたら、行が消えたかどうか分からないので失敗として扱う
+    result = "failed";
+  }
+  if (!UNREGISTER_RESULTS_NEEDING_RELEASE.has(result)) return;
+  try {
+    await recordPushTokenRelease(userId);
+  } catch {
+    // 控えは例外を投げないが、万一投げても、ログアウトは続ける
+  }
+}
 
 /**
  * サインアウトし、失敗したら端末だけでセッションを忘れる。例外は投げない。
@@ -71,6 +113,7 @@ async function signOutOrForgetLocally({ clearSession }: ForgetSessionOptions): P
 
 /**
  * ログアウトの共通処理 (push token の削除 → 端末データの削除 → サインアウト)。
+ * 削除が失敗・0 件なら、端末データの削除の前に release の宛先を控える (#1706。先頭の説明)。
  * サインアウトの { error } はそのまま返し、失敗時の端末側の後始末はしない。
  * 利用者が設定画面で押す通常のログアウトは signOutOnDevice を使う (失敗しても端末のセッションを消す)。
  */
@@ -78,7 +121,7 @@ export async function signOutWithCleanup(
   userId: string | null | undefined,
   options: SignOutOptions = {},
 ): Promise<{ error: unknown | null }> {
-  await unregisterExpoPushToken(userId, { accessToken: options.accessToken });
+  await unregisterPushTokenOrRecordRelease(userId, options.accessToken);
   await clearUserScopedLocalData(userId);
 
   const result = await supabase.auth.signOut();
@@ -90,7 +133,9 @@ export async function signOutWithCleanup(
  * アカウントの画面 (settings/account.tsx) も、退会の API が 401 (ログインが切れている) を返したときに使う
  * (アカウントは消えていないので、退会のあとの signOutAfterAccountDeletion ではない。#1562)。
  *
- * signOutWithCleanup と同じ順 (push token の削除 → 端末データの削除 → サインアウト) で後片付けし、
+ * signOutWithCleanup と同じ順 (push token の削除 → 端末データの削除 → サインアウト) で後片付けし
+ * (削除が失敗・0 件なら、端末データの削除の前に release の宛先を控える。#1706。退会の API が 401 を返したときは、
+ * セッションが失効していて削除が 0 件・失敗になりうる)、
  * サインアウトが失敗したら (オフラインなど)、退会のあとと同じく端末だけでセッションを忘れる (signOutOrForgetLocally)。
  * 失敗のまま "/" へ移ると、入口がホームへ戻し、「ログアウトしたのに戻された」ように見えるため。
  *
@@ -100,11 +145,7 @@ export async function signOutOnDevice(
   userId: string | null | undefined,
   options: ForgetSessionOptions & SignOutOptions,
 ): Promise<{ error: unknown | null }> {
-  try {
-    await unregisterExpoPushToken(userId, { accessToken: options.accessToken });
-  } catch {
-    // push token の削除に失敗しても、ログアウトは続ける
-  }
+  await unregisterPushTokenOrRecordRelease(userId, options.accessToken);
   await clearUserScopedLocalData(userId);
   return signOutOrForgetLocally(options);
 }
