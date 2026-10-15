@@ -276,6 +276,7 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
 export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   // 認証情報・セキュリティ
   password_history: 'パスワードのハッシュ (認証情報)',
+  operator_mfa_backup_codes: '二段階認証のバックアップコードのハッシュ (認証情報)',
   user_push_tokens: '端末のプッシュ通知トークン (認証情報に準ずる)',
   user_sessions_metadata: 'ログインセッションの識別子・端末情報 (セキュリティ情報)',
   native_bridge_codes: 'モバイル WebView 認証ブリッジのワンタイムコード (アクセス / リフレッシュトークンを含む。有効 60 秒・使うと消える)',

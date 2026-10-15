@@ -54,7 +54,9 @@ export type RateLimitCategory =
   | 'upload'
   | 'ai-consent'
   | 'auth-login'
-  | 'client-log';
+  | 'client-log'
+  | 'auth-mfa-verify'
+  | 'auth-mfa-recover';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -67,6 +69,8 @@ const MINUTE_SEC = 60;
 // 「日次」は暦日（0時リセット）ではなく、直近24時間のローリングウィンドウで判定する
 // （sliding window / in-memory どちらの実装も「初回リクエスト時刻 + 24h」を基準にするため）。
 const DAY_SEC = 24 * 60 * 60;
+// 「時間あたり」も直近 60 分のローリングウィンドウ
+const HOUR_SEC = 60 * MINUTE_SEC;
 
 // カテゴリ別ルール。先頭から順に判定し、どれか 1 つでも超過していれば失敗として打ち切る。
 //
@@ -113,6 +117,11 @@ const DAY_SEC = 24 * 60 * 60;
 //   error-report.ts のエラー境界・push-issue-log.ts のプッシュ通知の登録失敗) は 1 回の出来事につき 1 行。
 //   直近 24 時間の 1000 回は、写真 200 枚分にあたり、1 日の実際の使い方を十分に上回る。
 //   超えた分は 429 で断る (送り手はどれも失敗を握りつぶすので、画面やサインアウトは止まらない)。
+// - auth-mfa-verify: 運営ロールの二段階認証の 6 桁の確認 (#1176。POST /api/auth/mfa/verify、key = 認証で確定した user.id)。
+//   設計 docs/design/cross/12-operator-mfa.md §12.5。6 桁 = 100 万通り。1 時間 20 回なら 30 秒の窓でも当たる確率は無視できる。
+//   本人が打ち間違えても 1 分 5 回あれば足りる
+// - auth-mfa-recover: バックアップコードによる回復 (#1176。POST /api/auth/mfa/recover、key = user.id)。
+//   50 bit のコード。1 時間 10 回で総当たりは不可能。本人は 10 個のうち 1 個を打てればよい
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
@@ -155,6 +164,14 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   'client-log': [
     { name: 'client-log', max: 30, windowSec: MINUTE_SEC },
     { name: 'client-log-daily', max: 1000, windowSec: DAY_SEC },
+  ],
+  'auth-mfa-verify': [
+    { name: 'auth-mfa-verify', max: 5, windowSec: MINUTE_SEC },
+    { name: 'auth-mfa-verify-hourly', max: 20, windowSec: HOUR_SEC },
+  ],
+  'auth-mfa-recover': [
+    { name: 'auth-mfa-recover', max: 3, windowSec: MINUTE_SEC },
+    { name: 'auth-mfa-recover-hourly', max: 10, windowSec: HOUR_SEC },
   ],
 };
 
