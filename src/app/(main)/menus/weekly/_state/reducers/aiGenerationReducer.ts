@@ -35,6 +35,7 @@ export type AiGenerationAction =
   | { type: 'GEN_START'; payload?: { meal?: { dayIndex: number; mealType: MealType } } }
   | { type: 'GEN_PROGRESS'; payload: GenerationProgress }
   | { type: 'GEN_PROGRESS_CLEAR' }
+  | { type: 'GEN_PROGRESS_IF_EMPTY'; payload: GenerationProgress }
   | { type: 'GEN_RESUME_PENDING'; payload: GenerationProgress }
   | { type: 'GEN_SUCCESS' }
   | { type: 'GEN_FAIL'; payload: { error: string | null; requestId: string | null } }
@@ -103,6 +104,16 @@ export function aiGenerationReducer(
     // (呼び出し元は生成中の進捗更新の一環として progress のみ null にしたい場合がある)
     case 'GEN_PROGRESS_CLEAR':
       return { ...state, generationProgress: null };
+
+    // #1644: 「今の進捗が null のときだけ置く」。ポーリング (restoreGeneration・献立の改善) が、Realtime が届いていない間も
+    // DB の進捗で表示を保つための action。判定は reducer の中で今の状態に対して行う
+    // (以前は setGenerationProgress((prev) => prev ?? ...) の関数形で、prev がその setter を握った描画の時点の値 (null) で
+    // 解決され、今の進捗を DB の値で置き直していた)。
+    // 今が null のときは GEN_PROGRESS と同じ (前の進捗が無いので Math.max のクランプも同じ形で通す)。
+    // 今に進捗があるときは何も変えない (同じ state をそのまま返す)。
+    case 'GEN_PROGRESS_IF_EMPTY':
+      if (state.generationProgress !== null) return state;
+      return aiGenerationReducer(state, { type: 'GEN_PROGRESS', payload: action.payload });
 
     // #1629: 画面に入り直して生成中の行 (GET /api/ai/menu/weekly/pending) を見つけたときの復元。
     // 生成中にし、進捗はまだ無い (null) ときだけ payload (pendingRestoreProgress の空の進捗) を置く。

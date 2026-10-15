@@ -1,13 +1,14 @@
 appId: com.homegohan.app
-name: "Handson Tour - 08: Step 1 途中で「あとで」タップ → /home へ遷移"
+name: "Handson Tour - 08: Step 1・Step 2 の途中には【あとで】(tour-skip-button) を出さない"
 tags: ["handson-tour", "P1"]
 ---
-# シナリオ: Step 1 の途中で「あとで」タップ → /home へ遷移、handson_tour_skipped_at セット確認
+# シナリオ: Step 1 と Step 2 の途中では、吹き出しのオーバーレイに【あとで】(tour-skip-button) を出さないことを確かめる
 # 確認ポイント:
-#   - Step 1 中に tour-skip-button が表示される
-#   - タップ後 home-screen に遷移する
-#   - アプリ再起動後もツアーは表示されない (handson_tour_skipped_at がセット)
-# TODO: tour-skip-button testID が Step 1 中に表示されるかどうか実装確認が必要
+#   - Step 1 (写真) の途中に tour-skip-button が出ない (apps/mobile/app/handson-tour/photo.tsx は showSkip: false)
+#   - Step 2 (献立) の途中に tour-skip-button が出ない (apps/mobile/app/handson-tour/menu.tsx は showSkip={false})
+# 備考:
+#   - Step 1〜3 の途中でツアーを抜けるのは、端末の戻るボタン (Android) だけ。確かめるのは 12-back-button-during-tour.yaml
+#   - 【あとで】でツアーを抜けるのは Step 0 (03-step0-skip-button.yaml) と、Step 1 の保存の失敗のエラー画面 (tour-step-1-error-skip)
 
 - runFlow:
     file: "../_shared/login-as-new-user.yaml"
@@ -18,56 +19,39 @@ tags: ["handson-tour", "P1"]
 - tapOn:
     id: "tour-step-0-start"
 
-# Step 1 に遷移: intro または camera-button が表示されるまで待機
+# Step 1: 吹き出しが出ていて、【あとで】は出ていない
 - extendedWaitUntil:
     visible:
       id: "meal-camera-button"
     timeout: 10000
 
-# Step 1 途中で「あとで」タップ
-# TODO: tour-skip-button が Step 1 中に表示されるか確認。実装次第で testID 変更の可能性あり
 - assertVisible:
+    id: "tour-step-1"
+- assertNotVisible:
     id: "tour-skip-button"
-    optional: true
-- assertVisible:
-    text: "あとで"
-    optional: true
 
-- tapOn:
-    id: "tour-skip-button"
-    optional: true
-- tapOn:
-    text: "あとで"
-    optional: true
-
-# 確認ダイアログが出る場合は「スキップ」または「確認」を選択
-- tapOn:
-    text: "スキップ"
-    optional: true
-- tapOn:
-    text: "確認"
-    optional: true
-
-# home-screen に遷移することを確認
+# Step 1 を終える (保存が成功してから Step 2 へ進む)
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
+      id: "meal-save-button"
+    timeout: 15000
+
+- tapOn:
+    id: "meal-save-button"
+
+# Step 2: 吹き出しが出ていて、【あとで】は出ていない
+- extendedWaitUntil:
+    visible:
+      id: "tour-step-2-intro"
     timeout: 15000
 
 - assertNotVisible:
-    id: "tour-step-0"
-- assertNotVisible:
-    id: "meal-camera-button"
-
-# アプリ再起動後もツアーは表示されない
-# handson_tour_skipped_at がセットされているため
-- killApp
-- launchApp
+    id: "tour-skip-button"
 
 - extendedWaitUntil:
     visible:
-      id: "home-screen"
-    timeout: 15000
+      id: "tour-next-button"
+    timeout: 10000
 
 - assertNotVisible:
-    id: "tour-step-0"
+    id: "tour-skip-button"

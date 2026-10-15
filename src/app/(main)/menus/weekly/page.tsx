@@ -14,6 +14,7 @@ import {
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
+  type GenerationProgress,
   type LegacyDishDetail,
 } from './_state';
 import dynamic from "next/dynamic";
@@ -653,16 +654,20 @@ export default function WeeklyMenuPage() {
   const setGeneratingMeal = useCallback((m: { dayIndex: number; mealType: MealType } | null) => dispatchAiGen({ type: 'GENERATING_MEAL_SET', payload: m }), []);
 
   const generationProgress = aiGen.generationProgress;
-  // F1b-03: functional update を正しく現在値から解決してから dispatch する。
-  // null 解決時は GEN_SUCCESS ではなく GEN_PROGRESS_CLEAR（isGenerating/generatingMeal を巻き込まない）。
-  const setGenerationProgress = useCallback((v: typeof aiGen.generationProgress | ((prev: typeof aiGen.generationProgress) => typeof aiGen.generationProgress)) => {
-    const next = typeof v === 'function' ? v(aiGen.generationProgress) : v;
-    if (next === null) {
+  // F1b-03: null は GEN_SUCCESS ではなく GEN_PROGRESS_CLEAR（isGenerating/generatingMeal を巻き込まない）。
+  // #1644: 関数形 (prev) => … は受け取らない。関数形は、この setter を握った描画の時点の aiGen.generationProgress で
+  // 解決されるため、ポーリングの closure (古い setter を握る) からは今の進捗を古い値 (null) で上書きしていた。
+  // 「今が null のときだけ置く」は setGenerationProgressIfEmpty (GEN_PROGRESS_IF_EMPTY・reducer が今の状態で判定) を使う。
+  const setGenerationProgress = useCallback((v: GenerationProgress | null) => {
+    if (v === null) {
       dispatchAiGen({ type: 'GEN_PROGRESS_CLEAR' });
     } else {
-      dispatchAiGen({ type: 'GEN_PROGRESS', payload: next });
+      dispatchAiGen({ type: 'GEN_PROGRESS', payload: v });
     }
-  }, [aiGen.generationProgress]);
+  }, []);
+  const setGenerationProgressIfEmpty = useCallback((v: GenerationProgress) => {
+    dispatchAiGen({ type: 'GEN_PROGRESS_IF_EMPTY', payload: v });
+  }, []);
 
   // T15 (#1154): 生成の失敗の文が「同意が無くてサーバーが止めた」ものなら、同意画面を出して失敗をクリアし、失敗パネルには出さない
   // (失敗を出す経路 = onError・復元・Realtime・ポーリングはどれも GEN_FAIL でここに入るので、ここ 1 か所で見分ける)
@@ -1360,7 +1365,7 @@ export default function WeeklyMenuPage() {
               });
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
+              setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));
             }
           } catch {
             // ポーリングエラーは無視して継続
@@ -1389,6 +1394,11 @@ export default function WeeklyMenuPage() {
 
   // Supabase Realtime チャンネルを保持（クリーンアップ用）
   const realtimeChannelRef = useRef<RealtimeChannel | null>(null);
+  // subscribeToRequestStatus の監視 1 回分の印 (#1622)。完了・失敗・中止で cleanupRealtime が active を false にする。
+  // Realtime の接続の失敗 (TIMED_OUT / CLOSED / CHANNEL_ERROR) と 5 秒後の確認からのポーリングの開始は、印が active のときだけ行う。
+  // 以前は、終わった生成でも (removeChannel が出す CLOSED や、残っていた 5 秒のタイマーから) ポーリングをやり直し、
+  // 終わった要求の状態をもう一度読んで、失敗の表示を出し直したり、別の週に切り替えたあとに古い週の献立を読み直したりしていた
+  const requestWatchRef = useRef<{ active: boolean } | null>(null);
   const supabaseRef = useRef(createClient());
   
   // 生成中状態のチェックが進行中かどうかを追跡（重複API呼び出し防止）
@@ -1399,6 +1409,11 @@ export default function WeeklyMenuPage() {
   
   // Realtime サブスクリプションをクリーンアップする関数
   const cleanupRealtime = useCallback(() => {
+    // removeChannel が同期で CLOSED を通知しても、ポーリングをやり直さないよう、チャンネルを外す前に印を下ろす (#1622)
+    if (requestWatchRef.current) {
+      requestWatchRef.current.active = false;
+      requestWatchRef.current = null;
+    }
     if (realtimeChannelRef.current) {
       supabaseRef.current.removeChannel(realtimeChannelRef.current);
       realtimeChannelRef.current = null;
@@ -2212,12 +2227,16 @@ export default function WeeklyMenuPage() {
     // 既存のサブスクリプションをクリーンアップ
     cleanupRealtime();
     cleanupPolling();
-    
+
+    // この監視の印 (#1622)。完了・失敗・中止 (どれも cleanupRealtime を呼ぶ) か、次の監視の開始で active が false になる
+    const watch = { active: true };
+    requestWatchRef.current = watch;
+
     console.log('📡 Subscribing to Realtime for requestId:', requestId);
-    
+
     // 常にポーリングも開始（Realtimeの信頼性が低いため）
     startPolling(targetDate, requestId, ultimateMode);
-    
+
     let realtimeConnected = false;
     
     const channel = supabaseRef.current
@@ -2284,6 +2303,8 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
+              // Realtime で終わりを受け取ったら、並行しているポーリングも止める (#1622。ポーリングが同じ完了をもう一度処理しないように)
+              cleanupPolling();
             } else if (newStatus === 'failed') {
               console.log('❌ Generation failed');
               setIsGenerating(false);
@@ -2292,6 +2313,8 @@ export default function WeeklyMenuPage() {
               localStorage.removeItem('weeklyMenuGenerating');
               localStorage.removeItem('singleMealGenerating');
               cleanupRealtime();
+              // Realtime で失敗を受け取ったら、並行しているポーリングも止める (#1622。失敗の表示を二重に出さないように)
+              cleanupPolling();
               // 行の error_message は、こちらで書いた定型の文だけをそのまま出し、それ以外は汎用の文に寄せる
               // (useV4MenuGeneration と同じ絞り込み。進まなくなった行の英語の印は日本語の文にする。#1478・#1576)
               dispatchAiGen({
@@ -2311,7 +2334,8 @@ export default function WeeklyMenuPage() {
           realtimeConnected = true;
         } else if (status === 'TIMED_OUT' || status === 'CLOSED' || status === 'CHANNEL_ERROR') {
           // Realtimeが失敗したらポーリングにフォールバック
-          if (!realtimeConnected) {
+          // (この監視が終わったあと (完了・失敗・中止で removeChannel したときの CLOSED) はやり直さない。#1622)
+          if (!realtimeConnected && watch.active) {
             console.warn('📡 Realtime failed, falling back to polling');
             startPolling(targetDate, requestId, ultimateMode);
           }
@@ -2321,8 +2345,9 @@ export default function WeeklyMenuPage() {
     realtimeChannelRef.current = channel;
     
     // 5秒後にRealtimeが接続できていなければポーリング開始
+    // (この監視が 5 秒のうちに終わっていたらやり直さない。#1622)
     setTimeout(() => {
-      if (!realtimeConnected && !pollingIntervalRef.current) {
+      if (!realtimeConnected && !pollingIntervalRef.current && watch.active) {
         console.warn('📡 Realtime not connected after 5s, starting polling');
         startPolling(targetDate, requestId, ultimateMode);
       }
@@ -4541,7 +4566,7 @@ export default function WeeklyMenuPage() {
               await finishImprove('failed', weeklyMenuRequestErrorMessageForDisplay(errorMessage || errorMessageSnake) ?? undefined);
             } else if (dbProgress) {
               // Realtimeが届いていない間も進捗表示を維持（nullの場合のみ上書き）
-              setGenerationProgress((prev) => prev ?? convertV4ProgressToUIFormat(dbProgress, false));
+              setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, false));
             }
           } catch (e) {
             console.error('Improve polling error:', e);

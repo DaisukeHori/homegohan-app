@@ -5,7 +5,7 @@
 // ラップして V4GenerateModal の上に重ねる必要がある (TourSandboxWrapper は非使用)。
 
 import { useRouter } from 'expo-router';
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Modal, View } from 'react-native';
 
 import {
@@ -21,17 +21,12 @@ import type { SubStepOfStep2 } from '@homegohan/handson-tour-shared';
 
 import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 import { TourOverlay } from '../../src/handson-tour/TourOverlay';
+import { useLeaveTour } from '../../src/handson-tour/useLeaveTour';
+import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 import { useProfile } from '../../src/providers/ProfileProvider';
+import { safeNickname } from '../../src/handson-tour/safe-nickname';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourMenu() {
   const router = useRouter();
@@ -40,8 +35,12 @@ export default function HandsonTourMenu() {
 
   const [subStep, setSubStep] = useState<SubStepOfStep2>('2.1');
   const mountTimeRef = React.useRef(Date.now());
+  // ツアーを抜ける (skip API + handson_tour_skipped + /home。Step 1 と共通。#1642)。
+  // leftTourRef = 抜けた。抜けたあとに残っているタイマー (2.5 の読み込み・2.8 → 2.9) や応答で、先のサブステップや Step 3 へ進めない
+  const { leftTourRef, leaveTour } = useLeaveTour(2, profile?.id);
 
   const advanceSubStep = (next: SubStepOfStep2) => {
+    if (leftTourRef.current) return;
     setSubStep(next);
   };
 
@@ -51,7 +50,7 @@ export default function HandsonTourMenu() {
     fireAnalytics('handson_tour_step_viewed', {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
-      platform: 'ios' as const,
+      platform: tourAnalyticsPlatform(),
       app_version: '1.0.0',
       step: 2,
       sub_step: '2.1',
@@ -75,8 +74,8 @@ export default function HandsonTourMenu() {
         );
         break;
       case '2.9':
-        // Step 3 へ遷移
-        router.push(HANDSON_TOUR_ROUTES.step3 as never);
+        // Step 3 へ遷移 (ツアーを抜けたあとは進めない)
+        if (!leftTourRef.current) router.push(HANDSON_TOUR_ROUTES.step3 as never);
         break;
       default:
         break;
@@ -87,17 +86,20 @@ export default function HandsonTourMenu() {
     };
   }, [subStep]);
 
-  const handleSkip = () => {
-    router.replace('/home' as never);
-  };
+  // 端末バック (Android) でツアーを抜ける (設計書 01-trigger-flow §2.2: Step 1〜3 の端末バックは
+  // skipped{reason:'hard_back'} + skipped_at + /home)。以前は /home へ遷移するだけで、skip API も handson_tour_skipped も送っていなかった。
+  // 呼び元は 2 つ: 吹き出しを包む <Modal> の onRequestClose (Android でモーダルを出している間の端末バックはこちらに来る) と、
+  // TourOverlay の hardwareBackPress (overlay.onSkip)。showSkip={false} なので画面のスキップボタンからは呼ばれない
+  const handleHardBack = useCallback(() => leaveTour('hard_back'), [leaveTour]);
 
   const handleSandboxComplete = () => {
+    if (leftTourRef.current) return;
     if (profile?.id) {
       const dwell_ms = Date.now() - mountTimeRef.current;
       fireAnalytics('handson_tour_step_completed', {
         user_id: profile.id,
         timestamp: new Date().toISOString(),
-        platform: 'ios' as const,
+        platform: tourAnalyticsPlatform(),
         app_version: '1.0.0',
         step: 2,
         dwell_ms,
@@ -224,7 +226,7 @@ export default function HandsonTourMenu() {
         transparent
         animationType="none"
         statusBarTranslucent
-        onRequestClose={handleSkip}
+        onRequestClose={handleHardBack}
       >
         <TourOverlay
           targetTestId={targetTestId}
@@ -233,7 +235,7 @@ export default function HandsonTourMenu() {
           progress={{ current: 3, total: 5 }}
           primaryAction={getPrimaryAction()}
           showSkip={false}
-          onSkip={handleSkip}
+          onSkip={handleHardBack}
           accessibilityLabel={i18n.step2.a11y_title}
         />
       </Modal>
