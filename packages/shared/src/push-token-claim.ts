@@ -12,7 +12,10 @@
  *   - release (セッションが無いときの後片付け) は、この値で認可する (利用者 ID・トークン・ハッシュが合う行だけを消す)
  */
 
-/** claim の API (POST。ログイン中の本人だけ)。メンテナンス中・凍結中でも middleware が止めない (src/lib/push-tokens.ts) */
+/**
+ * claim の API (POST。ログイン中の本人だけ)。メンテナンス中・凍結中でも middleware が止めない (src/lib/push-tokens.ts)。
+ * 規約の同意ゲートでも止めない (legal-consent-api.ts の LEGAL_CONSENT_EXEMPT_API_PATHS に exact の行がある)
+ */
 export const PUSH_TOKEN_CLAIM_API_PATH = '/api/push-tokens/claim';
 
 /** release の API (POST。セッション無しで、端末の秘密の値で認可する)。メンテナンス中は止まる (次の起動でやり直す) */

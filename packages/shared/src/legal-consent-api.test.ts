@@ -49,6 +49,7 @@ const EXEMPT_SAMPLES = [
   '/api/auth/native-bridge/code',
   '/api/account/delete',
   '/api/account/export',
+  '/api/push-tokens/claim',
   '/api/contact',
   '/api/log',
   '/api/feature-flags',
@@ -75,6 +76,11 @@ const NOT_EXEMPT_SAMPLES = [
   '/api/admin/users',
   '/api/onboarding/status',
   '/api/export/meals',
+  // 通知のトークン: 完全一致の claim だけを通す。release (セッション無しで route が自分で認可する) と似た名前は止める
+  '/api/push-tokens/release',
+  '/api/push-tokens/claimx',
+  '/api/push-tokens/claim/x',
+  '/api/push-tokens',
 ];
 
 describe('isLegalConsentRequiredBody (T-SH1)', () => {

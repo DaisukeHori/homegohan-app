@@ -20,7 +20,8 @@ export { PUSH_TOKEN_CLAIM_API_PATH };
  * claim は利用者の操作ではなく、端末の後片付け (同じ端末の前の利用者の行を外す) なので、止めると前の利用者宛ての通知が
  * 次の起動までこの端末に届き続ける。止めないのは middleware の判定だけで、route は今までどおり本人の認証を求める。
  * release (セッション無しの後片付け) は含めない (メンテナンス中は 503 で止まり、アプリが次の起動でやり直す)。
- * 一覧が広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts が src/app/api の全 route で確かめる
+ * 一覧が広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts が src/app/api の全 route で確かめる。
+ * 規約の同意ゲート (#1689) でも止めない (同じ理由。packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS に claim の exact の行がある)
  */
 export function isPushTokenClaimApiPath(pathname: string): boolean {
   return pathname === PUSH_TOKEN_CLAIM_API_PATH;

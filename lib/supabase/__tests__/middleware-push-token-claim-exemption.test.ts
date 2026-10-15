@@ -7,6 +7,10 @@
  *   - メンテナンス中 (一般ユーザー): 通るのは、もともと止めない API (死活監視・認証・cron・フラグの取得) と claim だけ
  *   - 凍結中: 通るのは、退会・書き出し (#1445) と claim だけ
  *   - release (セッション無しの後片付け) や似たパス (末尾の / ・前方一致) は止まったまま
+ *   - 規約の同意ゲート (#1689。LEGAL_CONSENT_ENFORCE=on) でも claim は止めない (同意の許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS に
+ *     claim の行がある)。凍結中・メンテナンス中は同意の画面に進めないので、止めると上の例外が意味を失う
+ *
+ * 規約の同意ゲートの環境の値に左右されないように、既定は LEGAL_CONSENT_ENFORCE を未設定にする (vi.stubEnv。#1435 の流儀)。
  */
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
@@ -31,12 +35,36 @@ vi.mock('@/lib/feature-flags', () => ({
 
 import { updateSession } from '../middleware';
 import { PUSH_TOKEN_CLAIM_API_PATH, isPushTokenClaimApiPath } from '@/lib/push-tokens';
-import { PUSH_TOKEN_RELEASE_API_PATH } from '@homegohan/shared';
+import { LEGAL_CONSENT_REQUIRED_CODE, PUSH_TOKEN_RELEASE_API_PATH } from '@homegohan/shared';
 import { stubSupabasePublicEnv } from './supabase-public-env';
 
 const API_ROOT = join(process.cwd(), 'src/app/api');
 const HTTP_SERVICE_UNAVAILABLE = 503;
 const HTTP_FORBIDDEN = 403;
+const HTTP_OK = 200;
+const FROZEN_AT = '2026-07-01T00:00:00.000Z';
+
+/** 規約の同意の列まで持つプロフィール (未同意 = どちらも NULL)。同意ゲートを効かせる検査で使う */
+function unconsentedProfile(overrides: { frozen_at?: string | null } = {}) {
+  return {
+    data: {
+      roles: ['user'],
+      frozen_at: null,
+      unban_at: null,
+      terms_version_accepted: null,
+      privacy_version_accepted: null,
+      ...overrides,
+    },
+    error: null,
+  };
+}
+
+function postRequest(path: string): NextRequest {
+  return new NextRequest(new URL(`http://localhost${path}`), {
+    method: 'POST',
+    headers: { authorization: 'Bearer header.payload.signature' },
+  });
+}
 
 /** src/app/api の route.ts から、URL のパスを作る (動的な区切り [x]・[...x]・[[...x]] は仮の値、(グループ) は外す) */
 function apiRoutePaths(): string[] {
@@ -78,7 +106,10 @@ async function passes(path: string, expectedBlockStatus: number): Promise<boolea
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllEnvs();
   stubSupabasePublicEnv();
+  // 規約の同意ゲートは既定で未設定 (= 止めない)。開発者のシェルや CI の値に左右されないように vi.stubEnv で作る
+  vi.stubEnv('LEGAL_CONSENT_ENFORCE', undefined);
   mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
   mockMaybeSingle.mockResolvedValue({ data: { roles: ['user'], frozen_at: null, unban_at: null }, error: null });
@@ -164,5 +195,65 @@ describe('claim の例外は 1 本だけ (#1636)', () => {
     // 未ログインの claim も middleware は通す (route が 401 で断る)
     const claim = await updateSession(new NextRequest(new URL(`http://localhost${PUSH_TOKEN_CLAIM_API_PATH}`), { method: 'POST' }));
     expect(claim.status).toBe(200);
+  });
+});
+
+describe('規約の同意ゲート (#1689) でも claim は止めない (#1636)', () => {
+  beforeEach(() => {
+    vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'on');
+  });
+
+  it.each([
+    ['凍結なし・メンテナンスなし', null, false],
+    ['凍結中', FROZEN_AT, false],
+    ['メンテナンス中', null, true],
+    ['凍結中かつメンテナンス中', FROZEN_AT, true],
+  ] as const)('ENFORCE=on × 未同意 × %s: claim は通る', async (_name, frozenAt, maintenance) => {
+    mockIsFeatureEnabled.mockResolvedValue(maintenance);
+    mockMaybeSingle.mockResolvedValue(unconsentedProfile({ frozen_at: frozenAt }));
+
+    const claim = await updateSession(postRequest(PUSH_TOKEN_CLAIM_API_PATH));
+
+    expect(claim.status).toBe(HTTP_OK);
+  });
+
+  it('ENFORCE=on × 未同意 (凍結なし): release と似たパスは同意の 403 で止まる (許可リストは claim の完全一致だけ)', async () => {
+    mockMaybeSingle.mockResolvedValue(unconsentedProfile());
+
+    for (const path of [PUSH_TOKEN_RELEASE_API_PATH, '/api/push-tokens/claimx', '/api/push-tokens/claim/x', '/api/pantry']) {
+      const res = await updateSession(postRequest(path));
+      expect(res.status, path).toBe(HTTP_FORBIDDEN);
+      expect(((await res.json()) as { code?: string }).code, path).toBe(LEGAL_CONSENT_REQUIRED_CODE);
+    }
+  });
+
+  it('ENFORCE=on × 未同意 × 凍結中: 全 route のうち、通るのは退会・書き出しと claim だけ (同意の 403 は出ない)', async () => {
+    mockMaybeSingle.mockResolvedValue(unconsentedProfile({ frozen_at: FROZEN_AT }));
+
+    const passed: string[] = [];
+    for (const path of apiRoutePaths()) {
+      const res = await updateSession(postRequest(path));
+      if (res.status === HTTP_OK) {
+        passed.push(path);
+        continue;
+      }
+      expect(res.status, path).toBe(HTTP_FORBIDDEN);
+      // 凍結の 403 (AUTH_ACCOUNT_FROZEN) で、同意の 403 ではない
+      expect(((await res.json()) as { error?: { code?: string } }).error?.code, path).toBe('AUTH_ACCOUNT_FROZEN');
+    }
+
+    expect(passed).toEqual(['/api/account/delete', '/api/account/export', PUSH_TOKEN_CLAIM_API_PATH].sort());
+  });
+
+  it('ENFORCE=on × 未同意 × メンテナンス中: 全 route のうち、新しく通るのは claim だけ (ほかは 503 のまま。同意の 403 は出ない)', async () => {
+    mockIsFeatureEnabled.mockResolvedValue(true);
+    mockMaybeSingle.mockResolvedValue(unconsentedProfile());
+
+    const passed: string[] = [];
+    for (const path of apiRoutePaths()) {
+      if (await passes(path, HTTP_SERVICE_UNAVAILABLE)) passed.push(path);
+    }
+
+    expect(passed.filter((path) => !isPreexistingMaintenanceExemptApi(path))).toEqual([PUSH_TOKEN_CLAIM_API_PATH]);
   });
 });
