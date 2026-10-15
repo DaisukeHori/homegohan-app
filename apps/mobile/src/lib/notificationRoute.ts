@@ -1,7 +1,7 @@
 /**
  * プッシュ通知をタップしたときに開く画面を、通知の data から決める (#1049 F7-11)。
  *
- * 行き先は data.path (アプリ内のパス。例: '/pantry') か、data.deep_link (homegohan:// の URL。例: 'homegohan://health/streaks')
+ * 行き先は data.path (アプリ内のパス。例: '/menus') か、data.deep_link (homegohan:// の URL。例: 'homegohan://health/blood-tests')
  * に入る (通知の data の形は docs/design/mobile/03-push-notification.md §3.3)。
  * どちらも homegohan:// の後ろがアプリ内のパス (expo-router の画面) になる。app.json の scheme が "homegohan" で、
  * expo-router は URL のパスをそのまま app/ の画面に当てるため (docs/design/mobile/02-deep-link.md §3.1 はこのスキームで
@@ -13,9 +13,11 @@
  *   - パスの各区間は英数字・'_'・'-' だけ (MAX_PATH_SEGMENTS 区間まで)。'..'・'%' (エンコード)・'\' を含むものは無視
  *   - クエリは任意だが、使える文字を絞る。ハッシュ (#) を含むものは無視
  *   - 行き先は NOTIFICATION_ROUTES に載せた画面だけ。設定・アカウント・管理・初期設定・ログインの画面は開かない
- *   - 家族の画面 ('/family') はアプリに無い (通常の操作で届かないネイティブの画面として消した。#1598 / #1610)。
- *     家族の通知 (§3.3 の例の 'homegohan://family/meal-requests') は行き先が決まらず、アプリが開くだけになる
- *   - 画面が無い下位のパス ('/health/streaks/abc' など) は、載せた中で一番近い上位の画面 ('/health/streaks') を開く
+ *   - 通常の操作で届かないネイティブの画面は消した (#1598 / #1610)。家族 ('/family')・食材 ('/pantry')・買い物リスト・レシピ・
+ *     AI 相談 ('/ai')・健康の記録 ('/health' と '/health/streaks' など)・バッジ・お気に入り・週の献立 ('/menus/weekly') の画面は
+ *     アプリに無い。その行き先の通知 (§3.3 の例の 'homegohan://family/meal-requests' など) は行き先が決まらず、アプリが開くだけになる
+ *     (献立・食事・マイページの中身は、タブの WebView が Web の画面で出す)
+ *   - 画面が無い下位のパス ('/health/blood-tests/abc' など) は、載せた中で一番近い上位の画面 ('/health/blood-tests') を開く
  *     (「Unmatched Route」の画面を出さないため)。上位に落ちたときは、下位のためのクエリは引き継がない
  */
 
@@ -23,7 +25,7 @@ const DEEP_LINK_SCHEME = "homegohan://";
 
 /**
  * 通知から開いてよい画面。apps/mobile/app/ に実在する画面だけを載せる (__tests__/lib/notification-route.test.ts が
- * app/ のファイルと突き合わせる)。':name' は任意の 1 区間 (動的な区間 [name] の画面)。
+ * app/ のファイルと突き合わせる)。':name' は任意の 1 区間 (動的な区間 [name] の画面。いまは載せていない)。
  * 新しい通知の行き先を増やすときは、画面を作ってからここに足す。
  */
 export const NOTIFICATION_ROUTES: readonly string[] = [
@@ -32,38 +34,13 @@ export const NOTIFICATION_ROUTES: readonly string[] = [
   "/menus",
   "/meals",
   "/comparison",
-  "/favorites",
-  "/health",
   "/profile",
-  // AI 相談
-  "/ai",
-  "/ai/important",
-  "/ai/:sessionId",
-  // 献立・食事・食材・買い物・レシピ
-  "/menus/weekly",
-  "/menus/weekly/request",
-  "/meals/:id",
-  "/pantry",
-  "/shopping-list",
-  "/recipes",
-  "/recipes/collections",
-  "/recipes/collections/:collectionId",
-  "/recipes/:id",
-  // 健康・バッジ
+  // 健康 (血液検査。設定から開く画面)
   "/health/blood-tests",
-  "/health/challenges",
-  "/health/checkups",
-  "/health/goals",
-  "/health/graphs",
-  "/health/insights",
-  "/health/record",
-  "/health/record/:date",
-  "/health/streaks",
-  "/badges",
 ];
 
-/** パスの区間の数の上限 (NOTIFICATION_ROUTES の最も深い画面が 3 区間。余裕を 1 つ見る) */
-const MAX_PATH_SEGMENTS = 4;
+/** パスの区間の数の上限 (NOTIFICATION_ROUTES の最も深い画面が 2 区間。余裕を 1 つ見る) */
+const MAX_PATH_SEGMENTS = 3;
 /** 受け付ける行き先の文字数の上限 (これより長いものは不正な通知として無視する) */
 const MAX_TARGET_LENGTH = 512;
 

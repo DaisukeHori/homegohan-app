@@ -102,7 +102,7 @@ describe('clearUserScopedAsyncStorage — アプリの永続化キー (#1599)', 
   const PREVIOUS_USER_VALUES: Array<[string, string]> = [
     // src/components/menu/V4GenerateModal.tsx が書く (キーの文字列そのもので確かめる)
     ['v4_range_days', JSON.stringify({ startDays: 0, endDays: 6 })],
-    // src/components/menu/RegenerateMealModal.tsx が setItemWithTTL で書く
+    // 以前の版の献立の画面 (#1598 で消した src/components/menu/RegenerateMealModal.tsx など) が書いた値。端末に残っていることがある
     ['singleMealGenerating', JSON.stringify({ data: { mealId: 'meal-of-previous-user' }, expiresAt: 1 })],
     ['weeklyMenuGenerating', JSON.stringify({ data: {}, expiresAt: 1 })],
     ['shoppingListRegenerating', JSON.stringify({ data: {}, expiresAt: 1 })],

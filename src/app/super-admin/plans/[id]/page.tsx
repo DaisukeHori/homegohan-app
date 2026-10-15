@@ -61,7 +61,6 @@ export default function PlanDetailPage() {
   // 編集フィールド
   const [displayName, setDisplayName] = useState('');
   const [description, setDescription] = useState('');
-  const [bannerUrl, setBannerUrl] = useState('');
   const [displayOrder, setDisplayOrder] = useState(0);
   const [activeTab, setActiveTab] = useState<'basic' | 'price' | 'history'>('basic');
 
@@ -77,7 +76,6 @@ export default function PlanDetailPage() {
       setPlan(data.data!);
       setDisplayName(data.data!.display_name);
       setDescription(data.data!.description ?? '');
-      setBannerUrl('');
       setDisplayOrder(data.data!.display_order);
     } catch {
       setError('ネットワークエラー');
@@ -98,10 +96,14 @@ export default function PlanDetailPage() {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
+        // #1728: 送るのは、この画面に入力欄がある項目 (表示名・説明・表示順) だけにする。
+        // 以前は入力欄の無い banner_url を、いつも空文字で始まる状態から `null` にして送っていたため、
+        // 保存のたびに subscription_plans.banner_url が null で上書きされていた。
+        // PATCH の route は送られなかった項目を更新しない (`!== undefined` のときだけ updateData に入れる) ので、
+        // 送らなければ banner_url はそのまま残る。
         body: JSON.stringify({
           display_name: displayName,
           description: description || null,
-          banner_url: bannerUrl || null,
           display_order: displayOrder,
         }),
       });

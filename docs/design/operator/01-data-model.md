@@ -57,6 +57,7 @@
 29. user_sessions_metadata
 30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meals.is_sandbox + user_daily_meals.is_sandbox + badges seed + RPC 2 本
 31. operator_mfa_backup_codes (§3.27)  ← cross/12 §11.1。auth.users への FK だけで、他の運営の表に依存しない (migration 20261016230000)
+32. email_outbox (正本は 10-logs-and-mail-retry.md §5)
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター
@@ -942,6 +943,8 @@ CREATE POLICY "stripe_webhook_no_access_rls" ON stripe_webhook_events
 ```
 
 ### 3.19 `email_delivery_logs` / `email_blacklist`
+
+新しい書き込みは email_outbox。email_delivery_logs は残すが書かない (#1193)
 
 ```sql
 CREATE TABLE email_delivery_logs (

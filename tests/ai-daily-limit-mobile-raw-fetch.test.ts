@@ -25,8 +25,7 @@
  *     同じファイルが似た URL を別の関数で呼ぶと、取り違えを見逃しうる
  *   - 「429 を返すか」は route.ts の中で aiDailyLimitResponse を呼ぶかで見る。route が別の名前の関数で 429 を返すと見逃す
  *   - errorOfFailedResponse を呼んでいることは見るが、その Error を画面がどう出すかは見ない
- *     (画面の挙動は jest の apps/mobile/__tests__/ai/chat-daily-limit・ai/advisor-sheet-daily-limit・
- *     menus-weekly/regenerate-meal-daily-limit が確かめる)
+ *     (画面の挙動は jest の apps/mobile/__tests__/ai/advisor-sheet-daily-limit が確かめる)
  *   - fetch を包んだ自前の関数 (fetch を引数で受け取るなど) を通す呼び出しは数えない
  */
 import fs from 'node:fs';
@@ -60,11 +59,8 @@ const RAW_FETCHES: Record<
     silentFallback?: string;
   }
 > = {
-  'app/ai/[sessionId].tsx::send': {
-    route: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts',
-    returnsDailyLimit: true,
-    reason: 'AI 相談の送信 (ストリーミング)。上限に達すると 429',
-  },
+  // (全画面の AI 相談・週の献立・買い物リストのネイティブの画面と、週の献立の画面のモーダル (作り直し・買い物リスト) の生の fetch は、
+  // 画面ごと消した。#1598)
   'src/components/ai/AIAdvisorSheet.tsx::sendMessage': {
     route: 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts',
     returnsDailyLimit: true,
@@ -75,26 +71,6 @@ const RAW_FETCHES: Record<
     returnsDailyLimit: false,
     reason: '相談を閉じる。上限に達していれば要約を省いて 200 (aiSkipped: AI_DAILY_LIMIT) を返すので、429 にはならない',
   },
-  'src/components/menu/RegenerateMealModal.tsx::submit': {
-    route: 'src/app/api/ai/menu/meal/regenerate/route.ts',
-    returnsDailyLimit: true,
-    reason: '1 食の作り直し。上限に達すると 429',
-  },
-  'app/menus/weekly/index.tsx::fetchJapaneseHolidays': {
-    route: null,
-    returnsDailyLimit: false,
-    reason: '祝日の一覧 (外部の公開データ)。アプリの API ではない',
-  },
-  'app/menus/weekly/index.tsx::toggleMealCompletion': {
-    route: 'src/app/api/meal-plans/meals/[id]/route.ts',
-    returnsDailyLimit: false,
-    reason: '食事の完了の切り替え (PATCH)。画像の生成で上限に達しても 200 (aiSkipped) で、429 にはならない',
-  },
-  'app/menus/weekly/index.tsx::deleteMeal': {
-    route: 'src/app/api/meal-plans/meals/[id]/route.ts',
-    returnsDailyLimit: false,
-    reason: '食事の削除 (DELETE)。AI を使わない',
-  },
   'app/(tabs)/settings.tsx::handleExportJson': {
     route: 'src/app/api/account/export/route.ts',
     returnsDailyLimit: false,
@@ -104,16 +80,6 @@ const RAW_FETCHES: Record<
     route: 'src/app/api/export/meals/route.ts',
     returnsDailyLimit: false,
     reason: '食事の CSV の書き出し。AI を使わない',
-  },
-  'app/shopping-list/index.tsx::onPress': {
-    route: 'src/app/api/shopping-list/route.ts',
-    returnsDailyLimit: false,
-    reason: '買い物リストの全削除 (DELETE。確認の Alert の「全削除」ボタンの onPress)。AI を使わない',
-  },
-  'src/components/menu/ShoppingListModal.tsx::onPress': {
-    route: 'src/app/api/shopping-list/route.ts',
-    returnsDailyLimit: false,
-    reason: '買い物リストの全削除 (DELETE。確認の Alert の「全削除」ボタンの onPress)。AI を使わない',
   },
   'src/lib/webViewBridge.ts::requestBridgeCode': {
     route: 'src/app/api/auth/native-bridge/code/route.ts',
@@ -296,15 +262,12 @@ describe('アプリの生の fetch と 429 AI_DAILY_LIMIT (#1149)', () => {
       .filter(([, entry]) => entry.silentFallback !== undefined)
       .map(([key]) => key);
     expect(silentKeys).toEqual(['src/lib/webViewBridge.ts::requestBridgeCode']);
-    // 分類が空回りしていない (アプリの API を呼ぶ生の fetch が実際にある。#1486 で直した 6 か所を含む)
+    // 分類が空回りしていない (アプリの API を呼ぶ生の fetch が実際にある。#1486 で直した 6 か所のうち、残した設定の画面の 2 か所を含む。
+    // ほかの 4 か所 (週の献立・買い物リストの画面) は、通常の操作で届かない画面として消した。#1598)
     expect(appApiKeys).toEqual(
       expect.arrayContaining([
-        'app/menus/weekly/index.tsx::deleteMeal',
-        'app/menus/weekly/index.tsx::toggleMealCompletion',
         'app/(tabs)/settings.tsx::handleExportJson',
         'app/(tabs)/settings.tsx::handleExportCsv',
-        'app/shopping-list/index.tsx::onPress',
-        'src/components/menu/ShoppingListModal.tsx::onPress',
       ]),
     );
 

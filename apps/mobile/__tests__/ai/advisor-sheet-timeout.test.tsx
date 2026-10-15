@@ -124,9 +124,10 @@ async function sendAndTimeOut() {
 }
 
 describe('AIAdvisorSheet — 送信の待ちの上限 (#1049 F7-18)', () => {
-  it('上限は名前付きの定数 (サーバーの AI の打ち切り 25 秒 + 余裕 1 秒)。2 つの相談画面とも直書きの数値を使わない', () => {
+  it('上限は名前付きの定数 (サーバーの AI の打ち切り 25 秒 + 余裕 1 秒)。相談画面は直書きの数値を使わない', () => {
     expect(AI_CHAT_STREAM_TIMEOUT_MS).toBe(26_000);
-    for (const file of ['src/components/ai/AIAdvisorSheet.tsx', 'app/ai/[sessionId].tsx']) {
+    // (全画面の AI 相談 app/ai/[sessionId].tsx は、通常の操作で届かないネイティブの画面として消した。#1598)
+    for (const file of ['src/components/ai/AIAdvisorSheet.tsx']) {
       const source = fs.readFileSync(path.join(__dirname, '../..', file), 'utf8');
       expect(source).not.toMatch(/\b26_?000\b/);
       expect(source).toContain('AI_CHAT_STREAM_TIMEOUT_MS');

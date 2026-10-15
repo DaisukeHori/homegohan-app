@@ -6,8 +6,9 @@
  * 判定なし) を持っており、かつ性別非依存 (実質女性寄り) の固定値だった。
  * (#1055 UX3-24)
  *
- * モバイルの健診の詳細画面 (apps/mobile/app/health/checkups/[id].tsx) も同じ基準値・判定を使うよう、
- * Web の src/lib から共有パッケージへ移した (#1049)。Web の src/lib/health-blood-test-reference.ts はここを読み直すだけ。
+ * 以前はモバイルの健診の詳細画面も同じ基準値・判定を使うよう、Web の src/lib から共有パッケージへ移した (#1049)。
+ * (その画面 apps/mobile/app/health/checkups/[id].tsx は、その後、通常の操作で届かない画面として消した。#1598)
+ * Web の src/lib/health-blood-test-reference.ts はここを読み直すだけ。
  *
  * NOTE: ここでの数値は一般的な人間ドック学会の基準範囲を参考にした目安であり、
  * 医学的診断を目的としたものではない。個人差・持病により正常範囲は異なる。

@@ -1249,8 +1249,8 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 | nonce を画面へ渡す経路 | 無し | `x-csp-nonce` + `getCspNonce()` (呼ぶ画面は無し) |
 | ページの描画 | 公開ページ・一部の運営ページは静的化しうる | 全ページ動的 (ルート layout の `force-dynamic`) |
 | ブラウザのルーターのキャッシュ | 静的 300 秒 / 動的 30 秒 | 全ページ 30 秒 |
-| 回数制限のカテゴリ | 16 (末尾は `dsr`) | 17 (末尾に `csp-report`) |
-| 同意の許可リスト (`/api`) | 13 行 | 14 行 (`/api/csp-report` telemetry) |
+| 回数制限のカテゴリ | 19 (`RateLimitCategory` の末尾は `billing`。2026-10-16 の origin/main) | 20 (末尾に `csp-report`) |
+| 同意の許可リスト (`/api`) | 16 行 (2026-10-16 の origin/main。課金の 3 行を含む) | 17 行 (`/api/csp-report` telemetry) |
 | 環境変数の一覧 | – | `CSP_REPORT_ONLY` (任意・`readOnlyBy: src/lib/security/csp.ts`) |
 | `src/app/api` の route | N 本 | N + 1 本 |
 | PR の e2e の門 (`e2e-local.yml` の 1 本目の `npx playwright test`・`local-ci.sh` の `PW_ARGS`) | 19 本 (末尾は `tests/e2e/wave2-f2-queue-reliability.spec.ts`) | 20 本 (2 か所とも末尾に `tests/e2e/csp-nonce.spec.ts`) |
@@ -1415,7 +1415,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx` | `next.config.mjs の frame-src` | `:558` のコメントが「Web の CSP (next.config.mjs の frame-src)」と書く | コメントの `next.config.mjs` を `src/lib/security/csp.ts` に (コメントだけ。検査は変えない) | 2 |
 | `tests/ai-consent-enforcement.test.ts` | `src/middleware.ts` | middleware が AI へ送るコードに届かない | 変更なし (csp.ts は AI に触れない) | 2 |
 | `src/__tests__/api/log.test.ts`・`tests/api-security-cluster.test.ts` | `/api/log`・`'client-log'` | 既存の受け口 | 変更なし | – |
-| `src/__tests__/config/next-config-build-info.test.ts`・`src/__tests__/config/next-config-build-lint.test.ts`・`src/__tests__/config/next-config-client-router-cache.test.ts` | `next.config.mjs` | 3 本とも `next.config.mjs` を動的 import し、`env` (`NEXT_PUBLIC_APP_VERSION` / `NEXT_PUBLIC_BUILD_DATE`)・`eslint.ignoreDuringBuilds`・`experimental.staleTimes` を読む。`headers()` と CSP は読まない | 変更なし (§9.9 で消すのは `isDev`・`supabaseLocalOrigins`・`supabaseImgSrc`・`supabaseConnectSrc` と `headers()` の CSP の項だけで、`env`・`eslint`・`experimental.staleTimes` は残る。import は通り、値は変わらない) | 2 |
+| `src/__tests__/config/next-config-build-info.test.ts`・`src/__tests__/config/next-config-build-lint.test.ts`・`src/__tests__/config/next-config-client-router-cache.test.ts` | `next.config.mjs` | 3 本とも `next.config.mjs` を動的 import し、`env` (`NEXT_PUBLIC_APP_VERSION` / `NEXT_PUBLIC_BUILD_DATE`)・`eslint` の項目が無いこと (Next 16 で無くなった。#1621)・`experimental.staleTimes` を読む。`headers()` と CSP は読まない | 変更なし (§9.9 で消すのは `isDev`・`supabaseLocalOrigins`・`supabaseImgSrc`・`supabaseConnectSrc` と `headers()` の CSP の項だけで、`env`・`experimental.staleTimes`・`images` は残り、`eslint` の項目は無いまま。import は通り、値は変わらない) | 2 |
 | `tests/e2e/b11-performance.spec.ts` (`:664` の「7. next.config.mjs — 設定確認」) | `next.config.mjs` | 見出しとコメントに `next.config.mjs` の語があるが、ファイルは読まず `/home` の応答の `content-encoding` を見る。CSP は読まない | 変更なし (圧縮の設定は §9.9 で触らない) | – |
 | `tests/local-ci-workflow-sync.test.ts` | `PW_ARGS`・`npx playwright test`・`e2e-local.yml` | yml の run の語の並びと `local-ci.sh` の同じ段のコマンド (配列は展開) が一致 | 変更なし。`PW_ARGS` と yml の 1 本目の引数の両方の末尾に同じ 1 語を足す (片方だけだと赤) | 2 |
 | `tests/e2e-menu-queue-suite.test.ts`・`tests/e2e-tour-contract.test.ts` | `PW_ARGS`・`e2e-local.yml` | 自分の spec が yml と `PW_ARGS` にあること (`toContain`) | 変更なし (末尾に足すだけで既存の語を動かさない) | 2 |

@@ -53,7 +53,7 @@ export function fingerprintOf(text: string): string {
 
 /**
  * 境界が捕まえた例外を記録する。
- * @param boundary どの境界か (例: 'root' / 'tabs' / 'org')
+ * @param boundary どの境界か (例: 'root' / 'tabs' / 'onboarding')
  */
 export function reportBoundaryError(boundary: string, error: unknown): void {
   const err = (typeof error === "object" && error !== null ? error : null) as {

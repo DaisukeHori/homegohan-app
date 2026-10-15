@@ -10,7 +10,7 @@
 export const AI_CHAT_STREAM_TIMEOUT_MS = 26_000;
 
 /*
- * ── 送信が時間切れになったあとの扱い (#1049 F7-18。AIAdvisorSheet と全画面の AI 相談 app/ai/[sessionId].tsx で共通) ──
+ * ── 送信が時間切れになったあとの扱い (#1049 F7-18。AIAdvisorSheet が使う。全画面の AI 相談のネイティブの画面は #1598 で消した) ──
  *
  * 時間切れで打ち切ったのは画面の待ちだけで、サーバーは送った文を先に保存し、返答の作成と保存を続けていることがある
  * (src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts は、AI に問い合わせる前に送った文を保存する)。
