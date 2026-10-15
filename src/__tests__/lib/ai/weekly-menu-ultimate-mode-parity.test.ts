@@ -2,17 +2,17 @@
  * Web とモバイルの「究極モードの生成か」の判定の突合 (#1609)
  *
  * 以前は、Web (src/lib/ai/weekly-menu-request-ultimate.ts の isUltimateModeWeeklyMenuRequest) とモバイル
- * (apps/mobile/app/menus/weekly/index.tsx の isUltimatePendingRequest) に別々の判定があった (どちらも `=== true`)。
+ * (apps/mobile/app/menus/weekly/index.tsx の isUltimatePendingRequest。この画面は #1598 で消した) に別々の判定があった (どちらも `=== true`)。
  * 片方だけを変えると、同じ生成中の行で Web とモバイルの進捗カードの段 (究極 / 通常) が食い違う。
- * #1609 で判定を @homegohan/shared の 1 つの関数に寄せ、両方の利用者をそこへ移した。このテストは
+ * #1609 で判定を @homegohan/shared の 1 つの関数に寄せ、両方の利用者をそこへ移した。
+ * モバイルの週間献立のネイティブの画面は、その後 #1598 で消した (献立のタブは WebView で Web の画面を出す)。このテストは
  *   1. 共有の判定の基準 (真偽値の true のときだけ究極モード)
- *   2. Web の利用者 (生成中の行の確認の route・週間献立の画面) とモバイルの週間献立の画面が、どれも共有の判定を使い、
- *      自前の判定を持たないこと (ソースの検査)
- * を検査する。モバイルの画面の振る舞い (応答の ultimateMode で進捗カードの種類が変わる) は
- * apps/mobile/__tests__/menus-weekly/ultimate-progress-card.test.tsx が検査する。
+ *   2. Web の利用者 (生成中の行の確認の route・週間献立の画面) が共有の判定を使い、自前の判定を持たないこと (ソースの検査)
+ *   3. モバイルのソースに、自前の判定が戻っていないこと
+ * を検査する。
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
 import * as webLib from '@/lib/ai/weekly-menu-request-ultimate';
@@ -63,26 +63,28 @@ describe('Web: 共有の判定を使い、自前の判定を持たない', () =>
   });
 });
 
-describe('モバイル: 共有の判定を使い、自前の判定を持たない', () => {
-  const mobileFile = 'apps/mobile/app/menus/weekly/index.tsx';
-  const mobileSource = read(mobileFile);
-  const mobileCode = stripComments(mobileSource);
+describe('モバイル: 自前の判定を持たない', () => {
+  // モバイルの週間献立の画面 (apps/mobile/app/menus/weekly/index.tsx) は、通常の操作で届かないネイティブの画面として消した (#1598)。
+  // 献立のタブは WebView で Web の週間献立の画面を出すので、進捗カードの段は Web の判定で決まる。
+  // モバイルのソースに、応答・行の ultimateMode を自前で比べるところが戻っていないことを見る
+  const MOBILE_DIRS = ['apps/mobile/app', 'apps/mobile/src'];
+  const walk = (rel: string): string[] =>
+    readdirSync(join(ROOT, rel), { withFileTypes: true }).flatMap((entry) => {
+      const child = `${rel}/${entry.name}`;
+      if (entry.isDirectory()) return walk(child);
+      return /\.tsx?$/.test(entry.name) ? [child] : [];
+    });
+  const mobileFiles = MOBILE_DIRS.flatMap(walk);
 
-  it('週間献立の画面は判定を @homegohan/shared から読む', () => {
-    expect(mobileSource).toMatch(SHARED_IMPORT);
+  it('走査が空振りしていない (残した画面・フックを読んでいる)', () => {
+    expect(mobileFiles).toContain('apps/mobile/app/(tabs)/menus.tsx');
+    expect(mobileFiles).toContain('apps/mobile/src/hooks/useV4MenuGeneration.ts');
   });
 
-  it('入り直しの判定 (isUltimatePendingRequest) は、応答の ultimateMode を共有の判定にかけるだけ', () => {
-    const fn = mobileCode.match(/function isUltimatePendingRequest\([^)]*\): boolean \{([\s\S]*?)\n\}/);
-    expect(fn).not.toBeNull();
-    expect(fn![1].trim()).toBe('return isUltimateModeWeeklyMenuRequest(res.ultimateMode);');
-  });
-
-  it('応答の ultimateMode を自前で比べるところが無い', () => {
-    expect(mobileCode).not.toMatch(/\.ultimateMode\s*===?\s*true/);
-  });
-
-  it('生成中の行の判定は、入り直しの判定 (isUltimatePendingRequest) を通して進捗カードの種類に渡す', () => {
-    expect(mobileCode).toContain('setPendingIsUltimate(isUltimatePendingRequest(res));');
+  it('応答・行の ultimateMode / ultimate_mode を自前で比べるところが無い', () => {
+    const offenders = mobileFiles.filter((file) =>
+      /\.(?:ultimateMode|ultimate_mode)\s*===?\s*true/.test(stripComments(read(file))),
+    );
+    expect(offenders).toEqual([]);
   });
 });

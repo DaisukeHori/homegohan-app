@@ -4,7 +4,8 @@
  * 本文: { urls: string[] } (保存された写真の URL。MAX_PHOTO_URLS_PER_SIGN_REQUEST 件まで)
  * 応答: { signedUrls: { [送った URL]: 署名付き URL | null }, expiresInSeconds }
  *
- * Web とモバイルの画面は、保存された写真の URL (公開 URL) をそのまま表示せず、ここで署名した URL を表示する
+ * Web の画面は、保存された写真の URL (公開 URL) をそのまま表示せず、ここで署名した URL を表示する
+ * (写真を出すモバイルのネイティブの画面は #1598 で消した。アプリの写真は WebView の Web の画面が出す)
  * (packages/shared/src/signed-photo-url.ts の createSignedPhotoUrlResolver がまとめて問い合わせる)。
  * 本人の写真 (src/lib/photo-storage-signing.ts の決まり) にだけ署名し、他人の写真・2 つのバケット以外の URL は null。
  * 本人は認証 (Web は Cookie、モバイルは Authorization ヘッダー) で確かめ、本文の値は使わない。

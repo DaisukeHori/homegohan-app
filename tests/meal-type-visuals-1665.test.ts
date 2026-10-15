@@ -5,7 +5,7 @@
  * packages/shared (MEAL_LABELS・MEAL_EMOJIS) と src/lib/meal-type-visuals.ts の表へ移した。
  * 画面の見た目は変えないので、表の値は移す前の各画面の値と同じであることを確かめる。
  * 期待する値は、移す前の画面のソースにあった値を手で書く (表から求めない)。
- * モバイルの表は apps/mobile/__tests__/lib/meal-type-visuals.test.ts が固定する。
+ * (モバイルの表と、それを固定していた apps/mobile/__tests__/lib/meal-type-visuals.test.ts は、使っていたネイティブの画面と一緒に消した。#1598)
  * 表の外に見た目の対応が増えないことは tests/meal-types-no-handwritten-1446.test.ts の #1665 の番兵が見張る。
  */
 import { Coffee, Moon, Sun, Utensils } from 'lucide-react';

@@ -8,7 +8,8 @@
  * DB の中でバッジごとにまとめた行 (取った期間の数と最新の期間の 1 行) を読み、toBadgePeriodAwardsByBadgeId で一覧に添える形にして返す。
  * (表の行のまま読むと、行が PostgREST の max_rows (既定 1,000) を超えたとき黙って打ち切られ、回数が小さく・最新が古く出るため、
  *  まとめは DB で行う)
- * Web (src/app/(main)/badges/page.tsx) とモバイル (apps/mobile/app/badges/index.tsx) の一覧が formatBadgePeriodAwards で文にする。
+ * Web (src/app/(main)/badges/page.tsx) の一覧が formatBadgePeriodAwards で文にする
+ * (モバイルのバッジの一覧のネイティブの画面 apps/mobile/app/badges/index.tsx は、通常の操作で届かない画面として消した。#1598)。
  *
  * 同じバッジを複数の期間で取ったときは、最新の期間を 1 つだけ出し、取った回数 (期間の数) を添える
  * (例:「2026年9月（通算 3 回）」)。一覧のカードは狭いので、全部の期間は並べない。

@@ -19,7 +19,7 @@
 //   - GET  /api/admin/finance/nps の集計 (両端を含む DB の関数に渡す終了日)  → jstDayEndInclusiveTimestamp
 //   - 家族・組織の招待メールの期限の日付 (expires_at)                → jstDayOfTimestamp
 //   - GET  /api/admin/finance/dashboard (今月・先月)              → jstMonthBoundaries
-//   - モバイルの健康グラフ (app/health/graphs.tsx)                   → healthGraphFetchStartDate / healthGraphDateSlots
+//   (モバイルの健康グラフ app/health/graphs.tsx と、その日付の関数 src/lib/health-graph-dates.ts は、通常の操作で届かない画面として消した。#1598)
 //   - 献立生成の旬の食材・行事 (lib/seasonal-ingredients.ts / lib/seasonal-events.ts)
 //   - 献立生成モーダルのスロット (lib/slot-builder.ts の日付の範囲)
 //
@@ -48,7 +48,6 @@ import {
   nutritionAnalysisRange,
   sundayWeekRange,
 } from '../src/lib/jst-day-ranges';
-import { healthGraphDateSlots, healthGraphFetchStartDate } from '../apps/mobile/src/lib/health-graph-dates';
 import {
   getSeasonalIngredients,
   getSeasonalIngredientsForDate,
@@ -169,20 +168,6 @@ const BOUNDARY_TESTS: ReadonlyArray<{ name: string; checks: (b: Boundary) => Bou
       { label: 'Z の表記', run: () => jstDayOfTimestamp(b.at), expected: b.today },
       // DB (PostgREST) が返す +00:00 の表記でも同じ
       { label: '+00:00 の表記', run: () => jstDayOfTimestamp(b.at.replace('.000Z', '+00:00')), expected: b.today },
-    ],
-  },
-  {
-    name: '健康グラフ (モバイル): 取得の開始日 = 30 日前、横軸 = JST の今日を最後の日とする 7 日',
-    checks: (b) => [
-      { label: 'healthGraphFetchStartDate(30)', run: (now) => healthGraphFetchStartDate(30, now), expected: b.d30 },
-      {
-        label: 'healthGraphDateSlots(7)',
-        run: (now) => {
-          const slots = healthGraphDateSlots(7, now);
-          return { length: slots.length, first: slots[0], last: slots[slots.length - 1] };
-        },
-        expected: { length: 7, first: b.d6, last: b.today },
-      },
     ],
   },
   {

@@ -14,8 +14,8 @@ export const MEAL_LABELS: Record<MealType, string> = {
 
 /**
  * 食事の区分ごとの絵文字 (#1665)。Web とモバイルで同じ値を使う見た目はここに置く (表示名は MEAL_LABELS)。
- * 色・アイコンの部品のようにプラットフォームで持ち方が違う見た目は、Web は src/lib/meal-type-visuals.ts、
- * モバイルは apps/mobile/src/lib/meal-type-visuals.ts に 1 か所ずつ置く。
+ * 色・アイコンの部品のようにプラットフォームで持ち方が違う見た目は、Web は src/lib/meal-type-visuals.ts に置く
+ * (モバイルの表 apps/mobile/src/lib/meal-type-visuals.ts は、使っていたネイティブの画面と一緒に消した。#1598)。
  * Record<MealType, …> なので、MealType に値が増えると tsc が漏れを止める。
  */
 export const MEAL_EMOJIS: Record<MealType, string> = {

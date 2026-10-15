@@ -66,6 +66,7 @@ const EXEMPT_SAMPLES = [
   '/api/push-tokens/claim',
   '/api/contact',
   '/api/log',
+  '/api/csp-report',
   '/api/feature-flags',
   '/api/health',
   '/api/cron/process-menu-queue',
@@ -76,6 +77,7 @@ const EXEMPT_SAMPLES = [
 /** 許可リストに似ているだけのパス・許可リストの外 */
 const NOT_EXEMPT_SAMPLES = [
   '/api/logx',
+  '/api/csp-reportx',
   '/api/authx',
   '/api/cronx',
   '/api/webhooksx',

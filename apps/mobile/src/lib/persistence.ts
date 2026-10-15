@@ -1,52 +1,9 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-
-interface StoredItem<T> {
-  data: T;
-  expiresAt: number;
-}
-
-/**
- * TTL 付きで AsyncStorage にデータを保存する。
- *
- * @param key   ストレージキー
- * @param data  保存するデータ
- * @param ttlMs 有効期限（ミリ秒）。Infinity を渡すと永続保存。
- */
-export async function setItemWithTTL<T>(key: string, data: T, ttlMs: number): Promise<void> {
-  const item: StoredItem<T> = { data, expiresAt: Date.now() + ttlMs };
-  await AsyncStorage.setItem(key, JSON.stringify(item));
-}
-
-/**
- * TTL 付きで AsyncStorage からデータを取得する。
- * TTL が切れている場合は自動削除して null を返す。
- *
- * @param key ストレージキー
- * @returns   データ、または null（未存在・TTL 切れ）
- */
-export async function getItemWithTTL<T>(key: string): Promise<T | null> {
-  const raw = await AsyncStorage.getItem(key);
-  if (!raw) return null;
-  const item: StoredItem<T> = JSON.parse(raw);
-  if (Date.now() > item.expiresAt) {
-    await AsyncStorage.removeItem(key);
-    return null;
-  }
-  return item.data;
-}
-
-/**
- * AsyncStorage からアイテムを削除する。
- *
- * @param key ストレージキー
- */
-export async function clearItem(key: string): Promise<void> {
-  await AsyncStorage.removeItem(key);
-}
-
 /**
  * App の永続化キー定義。
  * WEB の localStorage キーと対応している。
+ * 書いていた画面 (週の献立・単品の作り直し・買い物リストの作り直しのネイティブの画面) は、通常の操作で届かない画面として消した (#1598)。
+ * 以前の版が端末に書いた値が残っていることがあるので、ログアウトで消すキー (src/lib/user-storage.ts) として一覧を残す。
+ * v4_range_days は src/components/menu/V4GenerateModal.tsx が今も書く。
  *
  * - weeklyMenuGenerating: 週間献立 AI 生成中フラグ（2 分 TTL）
  * - singleMealGenerating: 単品 AI 生成中フラグ（2 分 TTL）

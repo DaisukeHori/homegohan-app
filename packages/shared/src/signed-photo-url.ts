@@ -1,6 +1,7 @@
 /**
  * 食事写真・冷蔵庫写真の表示を、署名付き URL (有効期限つき) に切り替えるための共通部品 (#1365 段 1)。
- * Web (src/lib/signed-photo-url-client.ts) とモバイル (apps/mobile/src/lib/signed-photo-url.ts) の両方が使う。
+ * Web (src/lib/signed-photo-url-client.ts) が使う (モバイルの apps/mobile/src/lib/signed-photo-url.ts は #1598 で消した。
+ * 使っていたネイティブの画面と一緒に消した。アプリの写真は WebView の Web の画面が出す)。
  *
  * 2 つのバケット (meal_photos / fridge-images) はまだ公開 (public) のまま。DB には公開 URL の文字列が
  * 保存されている (書き換えない。段 2 で扱う)。画面は、保存された URL をそのまま表示せず、

@@ -100,10 +100,6 @@ jest.mock('../../src/components/ui', () => {
       React.createElement(TouchableOpacity, { onPress, testID: 'button' }, React.createElement(Text, null, children)),
     EmptyState: ({ message }: any) => React.createElement(Text, null, message),
     LoadingState: () => React.createElement(View, { testID: 'loading' }),
-    StatCard: ({ label, value, unit }: any) =>
-      React.createElement(View, null,
-        React.createElement(Text, null, `${label}: ${value}${unit}`)
-      ),
   };
 });
 
