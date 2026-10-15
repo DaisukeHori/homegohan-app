@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { PUSH_TOKEN_CLAIM_ERROR_CODES, isExpoPushToken } from '@/lib/push-tokens';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { generatePushInstallSecret, hashPushInstallSecret } from '@/lib/push-token-install-secret';
 import { isPushInstallSecret, type PushTokenClaimResponseBody } from '@homegohan/shared';
 
@@ -76,6 +77,9 @@ function parseClaimBody(body: unknown): { token: string; mode: SecretMode } | { 
  * メンテナンス中・凍結中でも middleware は止めない (src/lib/push-tokens.ts の isPushTokenClaimApiPath)。
  */
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const {
     data: { user },

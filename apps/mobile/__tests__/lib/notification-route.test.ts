@@ -4,8 +4,8 @@
  * 行き先は通知の data.path (アプリ内のパス) か data.deep_link (homegohan:// の URL。
  * docs/design/mobile/03-push-notification.md §3.3) から決める。第三者も通知を送れるので、許す形を狭く決めている。
  *   1. homegohan:// の URL と '/' で始まるパスを、アプリ内のパスにする (path を優先)
- *   2. 画面が無い下位のパスは、一番近い上位の画面にする (設計書の例 'homegohan://family/meal-requests' → '/family')
- *   3. 不正な形・ほかのスキーム・開かない画面 (設定・管理・ログインなど) は null (遷移しない)
+ *   2. 画面が無い下位のパスは、一番近い上位の画面にする ('/health/streaks/abc' → '/health/streaks')
+ *   3. 不正な形・ほかのスキーム・開かない画面 (設定・管理・ログインなど)・消した家族の画面 ('/family'。#1598 / #1610) は null (遷移しない)
  *   4. NOTIFICATION_ROUTES の画面は、すべて apps/mobile/app/ に実在する
  */
 
@@ -16,8 +16,8 @@ import { NOTIFICATION_ROUTES, resolveNotificationHref } from '../../src/lib/noti
 
 describe('resolveNotificationHref (#1049 F7-11)', () => {
   it.each([
-    [{ deep_link: 'homegohan://family' }, '/family'],
-    [{ deep_link: 'homegohan://family/' }, '/family'],
+    [{ deep_link: 'homegohan://pantry' }, '/pantry'],
+    [{ deep_link: 'homegohan://pantry/' }, '/pantry'],
     [{ path: '/menus/weekly' }, '/menus/weekly'],
     [{ path: '/ai/session-123' }, '/ai/session-123'],
     [{ path: '/health/record/2026-10-14' }, '/health/record/2026-10-14'],
@@ -28,11 +28,11 @@ describe('resolveNotificationHref (#1049 F7-11)', () => {
   });
 
   it('path と deep_link の両方があれば path を使う', () => {
-    expect(resolveNotificationHref({ path: '/pantry', deep_link: 'homegohan://family' })).toBe('/pantry');
+    expect(resolveNotificationHref({ path: '/pantry', deep_link: 'homegohan://badges' })).toBe('/pantry');
   });
 
   it('画面が無い下位のパスは、一番近い上位の画面にする (下位のためのクエリは引き継がない)', () => {
-    expect(resolveNotificationHref({ deep_link: 'homegohan://family/meal-requests' })).toBe('/family');
+    expect(resolveNotificationHref({ deep_link: 'homegohan://recipes/collections/abc/x' })).toBe('/recipes/collections/abc');
     expect(resolveNotificationHref({ path: '/health/streaks/abc?x=1' })).toBe('/health/streaks');
   });
 
@@ -67,6 +67,9 @@ describe('resolveNotificationHref (#1049 F7-11)', () => {
     ['/onboarding'],
     ['/handson-tour'],
     ['/unknown'],
+    // 家族の画面は、通常の操作で届かないネイティブの画面として消した (#1598 / #1610)。下位のパスも上位に落ちない
+    ['/family'],
+    ['/family/meal-requests'],
   ])('通知から開かない画面・無い画面 %s は null', (target) => {
     expect(resolveNotificationHref({ path: target })).toBeNull();
     expect(resolveNotificationHref({ deep_link: `homegohan:/${target}` })).toBeNull();

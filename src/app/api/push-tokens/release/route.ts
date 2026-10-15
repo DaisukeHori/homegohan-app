@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { PUSH_TOKEN_CLAIM_ERROR_CODES, isExpoPushToken } from '@/lib/push-tokens';
 import { hashPushInstallSecret } from '@/lib/push-token-install-secret';
 import { isPushInstallSecret, type PushTokenReleaseResponseBody } from '@homegohan/shared';
@@ -34,6 +35,9 @@ function badRequest(message: string) {
  * 応答: 200 { released: 消した行の数 }。何度呼んでも同じ結果になる (やり直してよい)。合う行が無くても 200 (0 件)。
  */
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があれば、DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   let body: unknown;
   try {
     body = await request.json();

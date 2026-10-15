@@ -75,6 +75,9 @@
 #   SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS / SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT
 #                                  ローカル Supabase の停止が、同じ dockerd の別の枠の prune と重なって失敗したときに打ち直す回数の上限と
 #                                  待ち時間の単位秒 (scripts/supabase-local.sh の stop_with_retry。#1616)
+#   SUPABASE_IMAGE_REGISTRIES / SUPABASE_IMAGE_PULL_ROUNDS / SUPABASE_INTERNAL_IMAGE_REGISTRY
+#                                  ローカル Supabase の起動でイメージの取得に失敗したときに試す取得元の順・周回の上限・固定する取得元
+#                                  (scripts/lib/supabase-image-pull.sh。#1523。docs/operations/ci-supabase-image-pull.md)
 #   LOCAL_CI_PLAYWRIGHT_WITH_DEPS  1 にすると playwright install に --with-deps を付ける (Linux で OS の依存も入れる。root 権限が要る)
 #   LOCAL_CI_TOOLS                 gitleaks の配布物 (tar.gz) を置いておく場所 (既定: ${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci)。
 #                                  毎回 SHA-256 を確かめ、合わなければ取り直す
@@ -165,7 +168,7 @@ INTEG1_ARGS=(--config vitest.integration.config.ts --passWithNoTests tests/integ
 # security-regression.yml の 2 本目 (運営コンソール。--passWithNoTests は付けない)
 INTEG2_ARGS=(--config vitest.integration.config.ts tests/integration/operator/admin- tests/integration/operator/auth-boundary tests/integration/operator/super-admin-)
 # e2e-local.yml の Playwright
-PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/auth-turnstile.spec.ts tests/e2e/ai-consent-first-use.spec.ts tests/e2e/legal-consent-gate.spec.ts tests/e2e/family/01-invite-accept-share.spec.ts tests/e2e/operator/01-admin-flow.spec.ts tests/e2e/operator/02-super-admin-flow.spec.ts tests/e2e/tour/01-eligibility.spec.ts tests/e2e/tour/02-step0-welcome.spec.ts tests/e2e/tour/03-step1-photo.spec.ts tests/e2e/tour/04-step2-menu.spec.ts tests/e2e/tour/05-step3-badges.spec.ts tests/e2e/tour/06-step4-graduate.spec.ts tests/e2e/tour/07-skip-and-replay.spec.ts)
+PW_ARGS=(--trace off tests/e2e/01-login.spec.ts tests/e2e/04-menu-page.spec.ts tests/e2e/05-shopping-list.spec.ts tests/e2e/public-policy-pages.spec.ts tests/e2e/auth-turnstile.spec.ts tests/e2e/ai-consent-first-use.spec.ts tests/e2e/legal-consent-gate.spec.ts tests/e2e/family/01-invite-accept-share.spec.ts tests/e2e/operator/01-admin-flow.spec.ts tests/e2e/operator/02-super-admin-flow.spec.ts tests/e2e/tour/01-eligibility.spec.ts tests/e2e/tour/02-step0-welcome.spec.ts tests/e2e/tour/03-step1-photo.spec.ts tests/e2e/tour/04-step2-menu.spec.ts tests/e2e/tour/05-step3-badges.spec.ts tests/e2e/tour/06-step4-graduate.spec.ts tests/e2e/tour/07-skip-and-replay.spec.ts tests/e2e/w5-3-menu-gen-adversarial.spec.ts tests/e2e/wave2-f2-queue-reliability.spec.ts)
 # e2e-local.yml の Playwright (2 つ目・3 つ目のサーバーに対して。規約の同意ゲートだけ)
 PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 
@@ -178,7 +181,7 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 # UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
 # UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)。
 # UNIT_TEST_FILE_BUDGET_MS は unit の段のあとで一覧にする 1 ファイルの時間の予算の上書き (scripts/test-speed-ratchet.mjs)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT SUPABASE_IMAGE_REGISTRIES SUPABASE_IMAGE_PULL_ROUNDS SUPABASE_INTERNAL_IMAGE_REGISTRY INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)

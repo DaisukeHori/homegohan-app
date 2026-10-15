@@ -86,24 +86,23 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          # db diff はシャドウ DB のために Docker イメージ (public.ecr.aws) を取得する。
-          # 取得がレート制限やタイムアウトで一時的に失敗したときだけ、間隔を空けて最大 3 回まで実行し直す
-          # (deploy-supabase-migrations.yml と同じ)。migration が流せないなどの本物の失敗はやり直さない。
-          PULL_ERROR_RE='toomanyrequests|failed to pull docker image|Client\.Timeout exceeded|context deadline exceeded|TLS handshake timeout'
-          for attempt in 1 2 3; do
-            set +e
-            npx --yes supabase@2.62.10 db diff --linked --schema public > /tmp/db_diff.sql 2> /tmp/db_diff.log
-            status=$?
-            set -e
-            if [ "$status" -eq 0 ] || ! grep -qE "$PULL_ERROR_RE" /tmp/db_diff.log || [ "$attempt" -eq 3 ]; then
-              break
-            fi
-            echo "::warning::db diff: Docker イメージの取得に失敗しました。$((attempt * 60)) 秒後に再試行します (${attempt}/3)"
-            tail -n 5 /tmp/db_diff.log
-            sleep $((attempt * 60))
-          done
+          # db diff はシャドウ DB のために Docker イメージを取得する。取得の失敗 (レート制限・時間切れ) のときだけ、
+          # scripts/supabase-image-fallback.sh が取得元を public.ecr.aws → ghcr.io の順に替えてやり直し、どれでも失敗したら
+          # 間を空けて次の周に入る (deploy-supabase-migrations.yml と同じ。#1523)。migration が流せないなどの本物の失敗はやり直さない。
+          # 最後まで取れなかったときは、/tmp/db_diff.image_unavailable を置いて、Issue に「確かめられなかった」と書かせる
+          # (「migration が流せない」と書かない)
+          . scripts/lib/supabase-image-pull.sh
+          set +e
+          bash scripts/supabase-image-fallback.sh --step "Diff production schema against migrations" \
+            --stdout /tmp/db_diff.sql --stderr /tmp/db_diff.log \
+            -- npx --yes supabase@2.62.10 db diff --linked --schema public
+          status=$?
+          set -e
           echo "$status" > /tmp/db_diff.status
-          if [ "$status" -ne 0 ]; then
+          if [ "$status" -eq "$SIP_EXIT_PULL_UNAVAILABLE" ]; then
+            # 注記と Step Summary は supabase-image-fallback.sh が出している
+            : > /tmp/db_diff.image_unavailable
+          elif [ "$status" -ne 0 ]; then
             echo "::error::supabase db diff が失敗しました (終了コード $status)"
             tail -n 60 /tmp/db_diff.log
           elif [ -s /tmp/db_diff.sql ]; then
@@ -133,10 +132,14 @@ jobs:
           if [ "$LEDGER_OUTCOME" != "success" ]; then rm -f /tmp/migration_list.txt; fi
           status=""
           if [ -f /tmp/db_diff.status ]; then status=$(cat /tmp/db_diff.status); fi
+          # db diff が Docker イメージを取得できずに終わったときは、その旨を Issue に書かせる (#1523)
+          image_args=()
+          if [ -f /tmp/db_diff.image_unavailable ]; then image_args=(--db-diff-image-unavailable); fi
           node scripts/consistency-check.mjs db \
             --migration-list /tmp/migration_list.txt \
             --db-diff /tmp/db_diff.sql \
-            --db-diff-status "$status"
+            --db-diff-status "$status" \
+            "${image_args[@]}"
         env:
           LEDGER_OUTCOME: ${{ steps.ledger.outcome }}
           GH_TOKEN: ${{ github.token }}
