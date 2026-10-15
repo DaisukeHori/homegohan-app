@@ -153,6 +153,8 @@ Supabase の Auth API はブラウザの通信を差し替えるので、Supabas
   `helpers/turnstile-offline.ts` で `challenges.cloudflare.com` への通信を手元の応答に差し替え、テスト用サイトキーが出すのと同じ
   ダミーのトークン (`XXXX.DUMMY.TOKEN.XXXX`) が Supabase への要求に入ることを確かめる。URL は本物と同じなので、CSP の判定はそのまま受ける。
   本物の `api.js` がこのアプリの CSP の下でトークンを出すことは、ログイン・パスワード再設定・`api.js` を読み込めないときのテストが確かめる。
+  ほかの spec でも、確かめたいことが Turnstile でないのに、ウィジェットのトークンが出るまで押せないボタンを押すときは、同じ道具で外のネットワークに繋がない
+  (`legal-consent-gate.spec.ts` のサインアップ画面の同意のチェック)。
 - **ログイン・新規登録・パスワード再設定の画面では `networkidle` を待たない**。ウィジェットが Cloudflare と通信し続けるので成り立たず、
   テストの時間切れまで待ち続ける。フォームを使うときは `helpers/login-form.ts` の `waitForLoginFormReady` (入力欄・ウィジェットのトークン・
   押せる送信ボタンを待つ)、画面を開くだけなら `waitForLoadState("load")` を使う。`src/__tests__/config/e2e-auth-page-wait.test.ts` が検査する。

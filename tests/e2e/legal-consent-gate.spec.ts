@@ -33,6 +33,7 @@ import { test, expect, type Page } from "@playwright/test";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { cleanupFreshUser, createFreshUser, injectSession } from "./fixtures/fresh-user";
 import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
+import { serveTurnstileOffline } from "./helpers/turnstile-offline";
 import { generateTestPassword } from "./helpers/credentials";
 import { LEGAL_DOCUMENTS } from "../../packages/shared/src/legal-versions";
 
@@ -201,6 +202,10 @@ test.describe("サインアップ画面の明示的な同意 (#1174)", () => {
   test.setTimeout(120_000);
 
   test("チェックするまで、Google 登録も「登録して始める」も押せない。みなし同意の文面は無い", async ({ page }) => {
+    // #1672: e2e のアプリは Turnstile のテスト用サイトキー付きでビルドするので、「登録して始める」はウィジェットがトークンを出すまで押せない。
+    // ここで確かめたいのは同意のチェックだけなので、ウィジェットは外のネットワーク (challenges.cloudflare.com) に繋がずに動かす
+    // (常設の e2e で、本物のウィジェットのトークンが 5 秒以内に出ずに、チェック後も押せないまま落ちることがあった)
+    await serveTurnstileOffline(page);
     await page.goto("/signup");
 
     const consent = page.locator("#agree-legal");
