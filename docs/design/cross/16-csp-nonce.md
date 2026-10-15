@@ -39,7 +39,7 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 | R-7 | 違反の報告の受け口を持ち、`app_logs` に残す。report-only と強制の切り替えと条件を決める | 決めること 4 | §7, §11 |
 | R-8 | 開発 (`next dev`) で `'unsafe-eval'` が要る間は dev だけに付ける。e2e (本番ビルド) は nonce 方式のまま通る | 決めること 5・`next.config.mjs` の現行の分岐 | §8 |
 | R-9 | モバイルの WebView で開く Web の画面 (注入 JS・Turnstile の iframe) に影響が無い | 決めること 5 | §8.3 |
-| R-10 | 機械検査: 本番の方針の `script-src` に `'unsafe-inline'` が無いこと・インラインの `<script>` を足したら赤になる走査・CSP が二重に付かないこと | 決めること 6 | §21 |
+| R-10 | 機械検査: 本番の方針の `script-src` に `'unsafe-inline'` が無いこと・インラインの `<script>` を足したら赤になる走査・CSP が二重に付かないこと。応答を見る e2e は PR の門で実際に流れること | 決めること 6・門の一覧の前例 (`tests/e2e-menu-queue-suite.test.ts`・#1622) | §16, §21 |
 | R-11 | 新しい環境変数は `src/lib/env.ts` の一覧・`.env.example`・`ENV_SETUP.md` にそろえ、値を読むのは 1 ファイル | `tests/env-source-scan.test.ts` の規則 | §9.6, §18 |
 | R-12 | 本文を読む新しい route は入口で NULL 文字を 400 で断り、回数制限は `src/lib/rate-limit.ts` のカテゴリで持つ。5xx の本文に生のエラー文を入れない | `src/__tests__/api/null-character-routes.test.ts`・`tests/rate-limit-single-implementation.test.ts`・`tests/api-raw-error-message-scan.test.ts` | §9.4, §9.5, §11 |
 | R-13 | モバイルの `WEB_VIEW_EMBED_ORIGINS` と Web の `frame-src` の突き合わせ (Jest) を壊さない | `apps/mobile/__tests__/lib/webViewBridge.test.ts` | §18 |
@@ -58,7 +58,7 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 | S-7 | 攻撃者が XSS で `<script>…</script>` を差し込む (例: AI の応答を HTML にする経路の穴の再発)。nonce を持たないので実行されず、ブラウザが `POST /api/csp-report` に違反を報告し、`app_logs` に warn が 1 行残る |
 | S-8 | 攻撃者が nonce を推測・再利用しようとする。nonce は 128 ビットの乱数で毎リクエスト違い、応答は共有キャッシュに乗らない (全ページ動的 = `no-store`) ので、前の応答の nonce は次の応答では無効 |
 | S-9 | 開発者が `next dev` で画面を開く。`'unsafe-eval'` が dev だけに付き、HMR が動く。インラインスクリプトは dev でも nonce つき |
-| S-10 | CI の e2e (`next build && next start`) が走る。`auth-turnstile.spec.ts` の `securitypolicyviolation` の収集は 0 件のまま。新しい `csp-nonce.spec.ts` が nonce と報告の受け口を確かめる |
+| S-10 | CI の e2e (`next build && next start`) が走る。`auth-turnstile.spec.ts` の `securitypolicyviolation` の収集は 0 件のまま。新しい `csp-nonce.spec.ts` は PR の e2e の門 (`.github/workflows/e2e-local.yml` の 1 本目の `npx playwright test` と、それを写した `scripts/local-ci.sh` の `PW_ARGS`) の末尾に載っていて、nonce と報告の受け口を確かめる |
 | S-11 | モバイル App の WebView が `/home?mode=app` を開く。ネイティブが注入する JS (タブの横取り・利用者別の localStorage の掃除) は CSP の対象外なので今までどおり動く。Turnstile の iframe は `frame-src` で読める |
 | S-12 | 運営が Vercel で `CSP_REPORT_ONLY=on` にして再デプロイする。ヘッダー名が `Content-Security-Policy-Report-Only` に変わり、違反は止まらず報告だけ届く。条件を満たしたら外して強制に戻す |
 | S-13 | 利用者のブラウザ拡張がスクリプトを差し込み、CSP が止める。報告の `blocked_uri` は他オリジン (`chrome-extension` など) で、運営は自分のコード由来 (`inline` / 自オリジン) と区別して読む |
@@ -92,7 +92,7 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 ## 1. 目的・スコープ
 
 - 目的: 本番の `script-src` から `'unsafe-inline'` を外し、Next が生成するインラインスクリプトだけを毎リクエストの nonce で許可する。差し込まれたスクリプトは実行されず、違反は `app_logs` で見える。
-- 範囲 (本書で作るもの): CSP を組み立てる純関数 1 ファイル・nonce を画面へ渡すヘルパー 1 ファイル・middleware の配線・ルートの layout の動的化とインラインスクリプトの削除・`next.config.mjs` からの CSP の撤去・違反の報告の受け口 (route 1 本 + 純関数 1 ファイル)・回数制限のカテゴリ 1 つ・同意の許可リストの行 1 つ・環境変数 1 つ・テスト (単体・走査・e2e) と既存の番兵の追随。
+- 範囲 (本書で作るもの): CSP を組み立てる純関数 1 ファイル・nonce を画面へ渡すヘルパー 1 ファイル・middleware の配線・ルートの layout の動的化とインラインスクリプトの削除・`next.config.mjs` からの CSP の撤去・違反の報告の受け口 (route 1 本 + 純関数 1 ファイル)・回数制限のカテゴリ 1 つ・同意の許可リストの行 1 つ・環境変数 1 つ・テスト (単体・走査・e2e)・新しい e2e を PR の e2e の門 (`.github/workflows/e2e-local.yml` の 1 本目の `npx playwright test` と、それを写した `scripts/local-ci.sh` の `PW_ARGS`) に載せる 1 語ずつ・既存の番兵の追随。
 - 範囲外: `style-src` の nonce 化 (§6.3 で据え置きの理由。§22 Q-2)・`base-uri` / `form-action` / `upgrade-insecure-requests` の追加 (§22 Q-1)・`report-to` / `Reporting-Endpoints` (§22 Q-3)・モバイル App 自身のコード変更 (Jest の突き合わせの参照先だけ直す)・CSP の報告を運用メール (エラー急増) に数えること (§22 Q-6)。
 
 ## 2. 関連要件
@@ -158,7 +158,7 @@ POST /api/csp-report ──────▶ updateSession (同意の許可リス�
 | S-7 | 差し込まれた `<script>` に nonce が無い → ブラウザが止める → `report-uri` へ POST (`application/csp-report`・同一オリジン・Cookie つき) → middleware: `/api/csp-report` は同意の許可リスト (telemetry) にあり、凍結・メンテナンスは既存どおり → route: NULL 文字なし → IP の回数制限 OK → Content-Type OK → 8 KiB 以下 → JSON → Zod OK → `toCspViolationLogEntry` (URL のクエリ・#・トークンらしい区間を落とす) → `createLogger('csp-report').warn` → 204 | 一致 (`app_logs` に `level=warn, source=api-route, function_name=csp-report`) |
 | S-8 | `generateCspNonce` は `crypto.getRandomValues` の 16 バイト → base64 → 毎回違う (`tests`: 100 回で重複なし)。動的ページの応答は Next が `Cache-Control: private, no-cache, no-store, …` を付け、保護ページは `updateSession` が `private, no-store` を付ける → CDN に乗らない → 同じ nonce の HTML が他の人に配られない | 一致 |
 | S-9 | `isDev = process.env.NODE_ENV === 'development'` → `script-src` に `'unsafe-eval'` が足される → HMR の `eval` が動く。nonce の経路は本番と同じ (Next は dev でも request header から読む) | 一致 |
-| S-10 | CI は `next build && next start` (dev ではない) → `'unsafe-eval'` 無し・nonce あり → `auth-turnstile.spec.ts` は `securitypolicyviolation` を集め Cloudflare 向けが 0 件 → `csp-nonce.spec.ts` は `/` と `/login` で違反 0 件・インライン script の `nonce` が全部ある・nonce が要求ごとに違う・受け口の 204 / 400 / 413 / 415 | 一致 |
+| S-10 | CI は `next build && next start` (dev ではない) → `'unsafe-eval'` 無し・nonce あり → 門の 2 か所 (`e2e-local.yml` の引数・`local-ci.sh` の `PW_ARGS`) の末尾に `tests/e2e/csp-nonce.spec.ts` があるので流れる (抜けたら `tests/e2e-csp-nonce-suite.test.ts`、並びがずれたら `tests/local-ci-workflow-sync.test.ts` が赤) → `auth-turnstile.spec.ts` は `securitypolicyviolation` を集め Cloudflare 向けが 0 件 → `csp-nonce.spec.ts` は `/` と `/login` で違反 0 件・インライン script の `nonce` が全部ある・nonce が要求ごとに違う・受け口の 204 / 400 / 413 / 415 | 一致 |
 | S-11 | WebView は同じ URL を同じ CSP で読む。`injectedJavaScriptBeforeContentLoaded` / `injectedJavaScript` は WebView (iOS `WKUserScript` / Android `evaluateJavascript`) が注入する側のスクリプトで、文書の `script-src` の対象ではない。注入 JS は `eval` / `new Function` を使わない (`apps/mobile/src/lib/webViewBridge.ts`・`webViewUserStorageCleanup.ts` の grep で 0 件。本番の方針は今も `'unsafe-eval'` 無し)。Turnstile の iframe は `frame-src` と `WEB_VIEW_EMBED_ORIGINS` で今までどおり | 一致 (iOS / Android の実機で §15 の整合項目として確かめる) |
 | S-12 | `isCspReportOnly()` が `on` → ヘッダー名が `Content-Security-Policy-Report-Only` (request header も同じ名前。Next は `content-security-policy-report-only` からも nonce を読む) → 違反は止まらず報告だけ届く → §7.3 の条件で外す | 一致 |
 | S-13 | 拡張のスクリプトは nonce が無い → 止まる → 報告の `blocked_uri` が `chrome-extension` / 他オリジン → `scrubCspReportUri` は http(s) 以外はスキームだけ残す (`chrome-extension:`) → 運営は `inline` / 自オリジンの行だけを自分のコード由来として見る | 一致 |
@@ -272,7 +272,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 
 - 使う場面: ローンチ後に、ある画面でスクリプトが止まる報告が集まったとき。`on` にして再デプロイ (Vercel の環境変数は再デプロイ後に効く) → 原因の修正を出す → 外して再デプロイ。
 - 強制へ戻す条件: 直近 7 日の `csp-report` の行のうち、`blocked_uri` が `inline` / `eval` / 自オリジンのものが 0 件。他オリジンの報告は数えない。
-- `on` のままにしない: `tests/e2e/csp-nonce.spec.ts` は `Content-Security-Policy` (強制) を期待するので、CI の起動では `on` にしない。
+- `on` のままにしない: `tests/e2e/csp-nonce.spec.ts` は `Content-Security-Policy` (強制) を期待するので、CI の起動では `on` にしない (`scripts/local-ci.sh` の `ENV_ALLOWLIST` と `.github/workflows/e2e-local.yml` の `env` に `CSP_REPORT_ONLY` を足さない。未設定 = 強制で起動する)。
 
 ## 8. 開発・テスト・WebView (R-8, R-9)
 
@@ -284,7 +284,8 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 
 - `tests/e2e/auth-turnstile.spec.ts` (変更なし): 本物の `api.js` と iframe が nonce 方式の CSP で動くことを確かめる (Cloudflare 向けの `securitypolicyviolation` 0 件)。`helpers/turnstile-offline.ts` の差し替えも URL は本物なのでホストの判定を受ける。
 - `tests/e2e/adversarial-deep.spec.ts` F-1 / F-2・`tests/e2e/bug-140-145-security-auth.spec.ts` (変更なし): `/` の応答に `content-security-policy` と `frame-ancestors 'none'` があることは middleware の付与で満たす。
-- `tests/e2e/csp-nonce.spec.ts` (新設。§15): nonce・違反 0 件・受け口。
+- `tests/e2e/csp-nonce.spec.ts` (新設。§15): nonce・違反 0 件・受け口。e2e の実行対象は一覧で明示されているので、PR の e2e の門 (`.github/workflows/e2e-local.yml` の 1 本目の `npx playwright test` と、それを写した `scripts/local-ci.sh` の `PW_ARGS`) の両方の末尾に同じ 1 語 `tests/e2e/csp-nonce.spec.ts` を足す (片方だけだと `tests/local-ci-workflow-sync.test.ts` が赤、どちらにも足さないと門で一度も流れない)。流れるのは 1 つ目のサーバー (3000。`LEGAL_CONSENT_*` も `CSP_REPORT_ONLY` も無し) だけで、3001 / 3002 の同意ゲートの実行には足さない。一覧から抜けないことは `tests/e2e-csp-nonce-suite.test.ts` (新設) が見張る。
+- 門の既存の規約に合わせる: `/login` を開いたあとは `waitForLoadState('load')` で待ち `networkidle` を待たない (`src/__tests__/config/e2e-auth-page-wait.test.ts` が `tests/e2e` の全ファイルを走査する)。確かめたいことが Turnstile ではないので、`/login` の `goto` の前に `serveTurnstileOffline(page)` (`tests/e2e/helpers/turnstile-offline.ts`) を呼び外のネットワークに繋がない (`tests/e2e/README.md` の Turnstile の規約。URL は本物なので `script-src` / `frame-src` の判定はそのまま受ける)。方針の語と受け口のパスは `../../src/lib/security/csp` から `cspDirectivesOf`・`CSP_HEADER`・`CSP_REPORT_PATH` を import して使う (`csp.ts` は何も import しないので Next の依存を連れてこない。`/api/` の文字列リテラルは spec に書かない)。
 
 ### 8.3 モバイルの WebView
 
@@ -920,6 +921,7 @@ export const dynamic = 'force-dynamic';
 | 同意の許可リスト (`/api`) | 13 行 | 14 行 (`/api/csp-report` telemetry) |
 | 環境変数の一覧 | – | `CSP_REPORT_ONLY` (任意・`readOnlyBy: src/lib/security/csp.ts`) |
 | `src/app/api` の route | N 本 | N + 1 本 |
+| PR の e2e の門 (`e2e-local.yml` の 1 本目の `npx playwright test`・`local-ci.sh` の `PW_ARGS`) | 19 本 (末尾は `tests/e2e/wave2-f2-queue-reliability.spec.ts`) | 20 本 (2 か所とも末尾に `tests/e2e/csp-nonce.spec.ts`) |
 | モバイルの Jest の突き合わせ先 | `next.config.mjs` の `"frame-src …"` | `src/lib/security/csp.ts` の同じ形の 1 行 (二重引用符に続く `frame-src` はファイルの中でこの 1 か所だけ。コメントにも書かない) |
 | 既存テストの固定点 (`'unsafe-inline'` を期待) | `next-config-headers.test.ts:49`・`turnstile-config.test.ts:48` | 期待を反転 (無いこと) |
 | Lighthouse (LP) | 静的 | 動的 (整合ゲートで実測) |
@@ -1011,7 +1013,8 @@ sequenceDiagram
 | `src/__tests__/api/null-character-routes.test.ts` (改) | 表に `{ file: 'csp-report/route.ts', method: 'POST', load: async () => (await import('@/app/api/csp-report/route')).POST }` を足す |
 | `src/__tests__/lib/env.test.ts` (改) | `readOnlyBy` の一覧に `['CSP_REPORT_ONLY', 'src/lib/security/csp.ts']` (`CRON_SECRET_PREVIOUS` の次) と it 名の列挙に `CSP_REPORT_ONLY` |
 | `apps/mobile/__tests__/lib/webViewBridge.test.ts` (改。Jest) | `NEXT_CONFIG_PATH` を `WEB_CSP_SOURCE_PATH = path.resolve(__dirname, '../../../../src/lib/security/csp.ts')` に。describe 名・エラー文・コメント (`:10`・`:772`・`:834`・`:843`) の `next.config.mjs` を `src/lib/security/csp.ts` に。正規表現 `/"frame-src\s+([^"]+)"/` は同じ (最初の一致を使う。`csp.ts` で当たるのは方針の行の 1 か所だけで、`csp.test.ts` が見張る) |
-| `tests/e2e/csp-nonce.spec.ts` (新。Playwright) | `/ の応答の Content-Security-Policy は 1 つだけ (headersArray) で、script-src は 'nonce-…' を持ち 'unsafe-inline' を持たない` / `2 回の要求で nonce が違う` / `/ と /login を開くと securitypolicyviolation が 0 件で、src の無い <script> はすべて nonce を持つ (script.nonce)` / `/login でメールアドレスを入力すると値が残る (ハイドレーションが動く)` / `script-src と frame-src に https://challenges.cloudflare.com がある` / `POST /api/csp-report: application/csp-report は 204、text/plain は 415、JSON でない本文は 400、9 KiB の本文は 413` |
+| `tests/e2e/csp-nonce.spec.ts` (新。Playwright) | `/ の応答の Content-Security-Policy は 1 つだけ (headersArray) で、script-src は 'nonce-…' を持ち 'unsafe-inline' を持たない` / `2 回の要求で nonce が違う` / `/ と /login を開くと securitypolicyviolation が 0 件で、src の無い <script> はすべて nonce を持つ (script.nonce)` / `/login でメールアドレスを入力すると値が残る (ハイドレーションが動く)` / `script-src と frame-src に https://challenges.cloudflare.com がある` / `POST /api/csp-report: application/csp-report は 204、text/plain は 415、JSON でない本文は 400、9 KiB の本文は 413`。書き方の決まりは §8.2 (門の 2 か所に載せる・`/login` は `load` で待つ・`serveTurnstileOffline`・`csp.ts` から import) |
+| `tests/e2e-csp-nonce-suite.test.ts` (新。`// @vitest-environment node`。`tests/e2e-menu-queue-suite.test.ts` と同じ作り: `mainPlaywrightStep` / `pwArgs` を同じ正規表現で持つ) | `tests/e2e/csp-nonce.spec.ts: spec が実在する (名前を変えたのに一覧だけ残ることを防ぐ)` / `tests/e2e/csp-nonce.spec.ts: e2e-local.yml の Playwright の実行に入っている` / `tests/e2e/csp-nonce.spec.ts: scripts/local-ci.sh の PW_ARGS に入っている` |
 
 整合ゲート (デプロイ後) で人が確かめる項目: `next build` の表に `○` が無い (`/_not-found` も `ƒ`)・本番の全画面 (利用者・運営) を開いて開発者ツールの CSP 違反 0 件・`/super-admin/logs` に `csp-report` の行が 0 件 (自分のコード由来)・LP の Lighthouse・iOS / Android の WebView で `/login` と `/home`・存在しないパスと `error.tsx` の表示に CSP が付くか (§22 Q-4 / Q-8 の実測)。
 
@@ -1020,7 +1023,7 @@ sequenceDiagram
 | 段 | 中身 | 触るファイル |
 |---|---|---|
 | 1. 受け口 | `csp-report.ts`・route・回数制限のカテゴリ・同意の許可リストの行・テスト 3 本・番兵 2 本の追随。方針はまだ変えない (報告は届かない) | `src/lib/security/csp-report.ts`、`src/app/api/csp-report/route.ts`、`src/lib/rate-limit.ts`、`packages/shared/src/legal-consent-api.ts`、`src/__tests__/lib/security/csp-report.test.ts`、`src/__tests__/api/csp-report-route.test.ts`、`src/__tests__/lib/rate-limit-csp-report.test.ts`、`lib/supabase/__tests__/middleware-legal-consent-api.test.ts`、`src/__tests__/api/null-character-routes.test.ts` |
-| 2. 方針 | `csp.ts`・`csp-nonce.ts`・middleware・ルート layout・`next.config.mjs`・環境変数・走査・e2e・番兵の追随・コメントの参照先 | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/middleware.ts`、`src/app/layout.tsx`、`next.config.mjs`、`src/lib/env.ts`、`.env.example`、`ENV_SETUP.md`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts`、`src/__tests__/config/next-config-headers.test.ts`、`src/__tests__/config/turnstile-config.test.ts`、`tests/speed-insights-1179.test.tsx`、`tests/inner-html-contract.test.ts`、`src/__tests__/lib/env.test.ts`、`apps/mobile/__tests__/lib/webViewBridge.test.ts`、コメントだけ: `src/lib/auth/turnstile.ts`・`apps/mobile/src/lib/webViewBridge.ts`・`apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx` (`:558`)・`tests/e2e/README.md`・`tests/e2e/adversarial-deep.spec.ts` (F-1 の古い説明)・`tests/e2e/auth-turnstile.spec.ts` (`:5`・`:145` の文言)・`tests/e2e/helpers/turnstile-offline.ts` (`:13`)・`tests/posthog-not-adopted-contract.test.ts` (`:11`) |
+| 2. 方針 | `csp.ts`・`csp-nonce.ts`・middleware・ルート layout・`next.config.mjs`・環境変数・走査・e2e と門への登録・番兵の追随・コメントの参照先 | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/middleware.ts`、`src/app/layout.tsx`、`next.config.mjs`、`src/lib/env.ts`、`.env.example`、`ENV_SETUP.md`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts`、`scripts/local-ci.sh` (`PW_ARGS` の末尾に `tests/e2e/csp-nonce.spec.ts` の 1 語)、`.github/workflows/e2e-local.yml` (1 本目の `npx playwright test` の引数の末尾に `tests/e2e/csp-nonce.spec.ts` の 1 行)、`tests/e2e-csp-nonce-suite.test.ts`、`tests/e2e/README.md` (`:112`・`:129`。§18)、`src/__tests__/config/next-config-headers.test.ts`、`src/__tests__/config/turnstile-config.test.ts`、`tests/speed-insights-1179.test.tsx`、`tests/inner-html-contract.test.ts`、`src/__tests__/lib/env.test.ts`、`apps/mobile/__tests__/lib/webViewBridge.test.ts`、コメントだけ: `src/lib/auth/turnstile.ts`・`apps/mobile/src/lib/webViewBridge.ts`・`apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx` (`:558`)・`tests/e2e/adversarial-deep.spec.ts` (F-1 の古い説明)・`tests/e2e/auth-turnstile.spec.ts` (`:5`・`:145` の文言)・`tests/e2e/helpers/turnstile-offline.ts` (`:13`)・`tests/posthog-not-adopted-contract.test.ts` (`:11`) |
 
 段 1 を先にするのは、方針が `report-uri /api/csp-report` を指した時点で受け口が実在するようにするため (404 への報告を出さない)。
 
@@ -1028,7 +1031,7 @@ sequenceDiagram
 
 | 種類 | 名前 |
 |---|---|
-| ファイル | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/lib/security/csp-report.ts`、`src/app/api/csp-report/route.ts`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-report.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`src/__tests__/api/csp-report-route.test.ts`、`src/__tests__/lib/rate-limit-csp-report.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts` |
+| ファイル | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/lib/security/csp-report.ts`、`src/app/api/csp-report/route.ts`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-report.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`src/__tests__/api/csp-report-route.test.ts`、`src/__tests__/lib/rate-limit-csp-report.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts`、`tests/e2e-csp-nonce-suite.test.ts` |
 | 関数 | `buildContentSecurityPolicy`、`generateCspNonce`、`cspDirectivesOf`、`isCspReportOnly`、`cspHeaderName`、`supabaseLocalOrigins`、`getCspNonce`、`isCspReportContentType`、`cspReportByteLength`、`scrubCspReportUri`、`maskTokenLikeSegments`、`toCspViolationLogEntry`、(middleware 内) `attachCspToRequest`、`supabaseUrlOrUndefined`、(route 内) `clientIpOf`、`badRequest` |
 | 定数 | `CSP_HEADER`、`CSP_REPORT_ONLY_HEADER`、`CSP_NONCE_HEADER`、`CSP_REPORT_PATH`、`CSP_NONCE_BYTES`、`CSP_NONCE_PATTERN`、`CSP_TURNSTILE_ORIGIN`、`CSP_REPORT_CONTENT_TYPES`、`CSP_REPORT_MAX_BYTES`、`CSP_REPORT_URI_MAX_CHARS`、`CSP_REPORT_DIRECTIVE_MAX_CHARS`、`CSP_REPORT_SCRIPT_SAMPLE_MAX_CHARS`、`CSP_REPORT_USER_AGENT_MAX_CHARS`、`CSP_REPORT_TOKEN_SEGMENT_MIN_CHARS`、`CSP_REPORT_REDACTED_SEGMENT`、`CSP_REPORT_LOG_FUNCTION_NAME`、`CSP_REPORT_ERROR_CODES` |
 | 型 / Zod | `CspBuildInput`、`SupabaseLocalOrigins`、`CspReportSchema`、`CspReportBodySchema`、`CspReport`、`CspReportBody`、`CspViolationLogMetadata`、`CspViolationLogEntry`、`CspViolationLogContext` |
@@ -1076,6 +1079,12 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `src/__tests__/api/log.test.ts`・`tests/api-security-cluster.test.ts` | `/api/log`・`'client-log'` | 既存の受け口 | 変更なし | – |
 | `src/__tests__/config/next-config-build-info.test.ts`・`src/__tests__/config/next-config-build-lint.test.ts`・`src/__tests__/config/next-config-client-router-cache.test.ts` | `next.config.mjs` | 3 本とも `next.config.mjs` を動的 import し、`env` (`NEXT_PUBLIC_APP_VERSION` / `NEXT_PUBLIC_BUILD_DATE`)・`eslint.ignoreDuringBuilds`・`experimental.staleTimes` を読む。`headers()` と CSP は読まない | 変更なし (§9.9 で消すのは `isDev`・`supabaseLocalOrigins`・`supabaseImgSrc`・`supabaseConnectSrc` と `headers()` の CSP の項だけで、`env`・`eslint`・`experimental.staleTimes` は残る。import は通り、値は変わらない) | 2 |
 | `tests/e2e/b11-performance.spec.ts` (`:664` の「7. next.config.mjs — 設定確認」) | `next.config.mjs` | 見出しとコメントに `next.config.mjs` の語があるが、ファイルは読まず `/home` の応答の `content-encoding` を見る。CSP は読まない | 変更なし (圧縮の設定は §9.9 で触らない) | – |
+| `tests/local-ci-workflow-sync.test.ts` | `PW_ARGS`・`npx playwright test`・`e2e-local.yml` | yml の run の語の並びと `local-ci.sh` の同じ段のコマンド (配列は展開) が一致 | 変更なし。`PW_ARGS` と yml の 1 本目の引数の両方の末尾に同じ 1 語を足す (片方だけだと赤) | 2 |
+| `tests/e2e-menu-queue-suite.test.ts`・`tests/e2e-tour-contract.test.ts` | `PW_ARGS`・`e2e-local.yml` | 自分の spec が yml と `PW_ARGS` にあること (`toContain`) | 変更なし (末尾に足すだけで既存の語を動かさない) | 2 |
+| `src/__tests__/config/e2e-auth-page-wait.test.ts` | `goto(…/login`・`networkidle` | `tests/e2e` の全 `.ts` で、ログイン系の画面を開いたあと `networkidle` を待たない | 変更なし。新 spec は `/login` のあと `waitForLoadState('load')` (§8.2) | 2 |
+| `tests/e2e-api-paths.test.ts` | `"/api/` の文字列リテラル・`SPEC_FILES` | 一覧の spec が叩く `/api/...` が実在の route | 変更なし。新 spec は `CSP_REPORT_PATH` を import し `/api/` のリテラルを持たないので `SPEC_FILES` に足さない (足すと抽出 0 件で `minRefs` を満たさない) | – |
+| `src/__tests__/config/turnstile-config.test.ts` (yml の部分)・`tests/local-ci-next-port.test.ts`・`tests/local-ci-slot.test.ts`・`tests/supabase-image-pull.test.ts` | `e2e-local.yml` | yml のサイトキー・`next start` のポート・`on.pull_request.paths` | 変更なし (サーバーの起動・ポート・env・`paths` は変えない。`paths` に `src/**`・`tests/e2e/**`・`next.config.mjs` が既にあり、本設計の PR で e2e-local が動く) | 2 |
+| `tests/e2e/README.md` (文書。テストではない) | `e2e-local.yml`・`next.config.mjs` | `:112` が e2e-local.yml で流す spec を列挙・`:129` が「本物の CSP (`next.config.mjs`)」 | `:112` の列挙に「CSP の nonce 方式と違反の報告の受け口の `csp-nonce.spec.ts` (#1169)」を足す。`:129` の `next.config.mjs` を `src/lib/security/csp.ts` (middleware が毎リクエスト付ける) に | 2 |
 | `tests/test-speed-ratchet.test.ts` (記録のみ) | – | 1 ファイル 5 秒の予算 | 新しいテストは route の import を最小にし、走査は `QUICK_FILTER` (語を含むファイルだけ構文木にする) で速くする | 1, 2 |
 
 ## 19. 他の文書への追随表 (本設計では編集しない。マージと同日の docs PR で足す)
@@ -1089,7 +1098,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `docs/design/operator/07-audit-monitoring.md` §7.3 | 「CSP (`next.config.mjs`) の `script-src` / `connect-src`」を `src/lib/security/csp.ts` に | 段 2 のマージと同日 |
 | `docs/design/operator/10-logs-and-mail-retry.md` §9 (app_logs のビューア) | 絞り込みの例に `function_name = csp-report` (CSP の違反) を 1 行 | 任意 |
 | `docs/design/00-architecture.md` のファイル木 | `middleware.ts # セッション同期 (既存)` に「+ CSP の nonce (#1169)」 | 任意 |
-| `tests/e2e/README.md`・`ENV_SETUP.md`・`.env.example` | 実装の PR で直す (設計正典ではない。§9.6・§18) | 段 2 |
+| `tests/e2e/README.md`・`ENV_SETUP.md`・`.env.example` | 実装の PR で直す (設計正典ではない。§9.6・§16・§18) | 段 2 |
 
 ## 20. 既存実装との関連
 
@@ -1109,6 +1118,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 本番の応答に CSP ヘッダーが 1 つだけで nonce を持つ | `tests/e2e/csp-nonce.spec.ts` (`headersArray`) | 2 つ以上・nonce 無し・`'unsafe-inline'` あり |
 | インラインスクリプトを足したら赤 | `tests/csp-no-inline-script.test.ts` | `src` / `lib` / `components` (テストを除く) の構文木に (a) JSX の `<script>` / `<Script>` 要素、(b) `next/script` の import / export / 動的 import / require、(c) `<script` (大小を区別しない) を含む文字列・テンプレートのどれかがあり、`ALLOWED_INLINE_SCRIPTS` (理由 + `nonce` 属性の必須) に無い。構文木で見るのでコメントには反応しない。限界: `createElement('script')` + `textContent` でインラインを作る書き方は捕まらない (HTML の差し込みは `tests/inner-html-contract.test.ts` が見る)。走査は `QUICK_FILTER = /<script\|next\/script/i` を含むファイルだけ構文木にする。対象外: `apps/` と `packages/` (モバイル App の `apps/mobile/src/lib/turnstile.ts` の HTML 文字列は WebView に渡す文書で、HTTP の応答ではないので Web の CSP が掛からない: §6.1 I-8) |
 | 全ページ動的 | 同上 | `import('@/app/layout')` の `dynamic` が `'force-dynamic'` でない |
+| 応答を見る e2e が PR の門で流れる | `tests/e2e-csp-nonce-suite.test.ts` (新)・`tests/local-ci-workflow-sync.test.ts` (既存) | `tests/e2e/csp-nonce.spec.ts` が無い・yml の 1 本目の引数か `PW_ARGS` から抜ける・2 か所の並びが違う |
 | middleware の全経路に CSP | `tests/middleware-csp.test.ts` | updateSession のどの戻り値でも応答に CSP が無い・request header の nonce と不一致 |
 | `frame-src` と `WEB_VIEW_EMBED_ORIGINS` の一致 | `apps/mobile/__tests__/lib/webViewBridge.test.ts` (既存) | `csp.ts` の `frame-src` の行に他オリジンを足してモバイルに足さない |
 | モバイルの Jest が読む `frame-src` の文字列は `csp.ts` に 1 か所だけ | `src/__tests__/lib/security/csp.test.ts` | `csp.ts` のソースで `/"frame-src\s+/g` の一致が 1 でない (コメントの例示を含む) か、その 1 か所の捕捉が `'self' https://challenges.cloudflare.com` でない |
