@@ -3,6 +3,7 @@
  *
  * lib/supabase/middleware.ts は、凍結中の利用者の /api 呼び出しを 403 AUTH_ACCOUNT_FROZEN で止める (#1030)。
  * 退会 (POST /api/account/delete) と書き出し (GET /api/account/export) だけは止めない。
+ * billing/01 §9.8: 有料プランの解約の予約と、その前提の 2 つ (契約の要約・Billing Portal) も止めない。
  * 止めない一覧 (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS) をここで固定し、
  *   - 一覧のパスは、凍結中でも通る (Cookie と Bearer のどちらでも)
  *   - それ以外の /api は、似たパス (前方一致・末尾の / ・別の /api/account/*) も含めて 403 のまま
@@ -34,6 +35,9 @@ import { updateSession } from '../middleware';
 import {
   ACCOUNT_DELETE_API_PATH,
   ACCOUNT_EXPORT_API_PATH,
+  BILLING_CANCEL_API_PATH,
+  BILLING_PORTAL_API_PATH,
+  BILLING_SUBSCRIPTION_API_PATH,
   FROZEN_ALLOWED_API_PATHS,
   isFrozenAllowedApiPath,
 } from '@/lib/auth/frozen';
@@ -61,10 +65,19 @@ afterAll(() => {
 });
 
 describe('FROZEN_ALLOWED_API_PATHS (#1445): 凍結中でも止めない API の一覧', () => {
-  it('退会と書き出しの 2 つだけ (足すときは、本人がサービスから離れるための操作かを確かめてから、このテストも直す)', () => {
-    expect([...FROZEN_ALLOWED_API_PATHS]).toEqual(['/api/account/delete', '/api/account/export']);
+  it('退会・書き出しと、有料プランの解約の 3 本 (契約の要約・解約の予約・Billing Portal) の 5 つだけ (足すときは、本人がサービスから離れるための操作かを確かめてから、このテストも直す)', () => {
+    expect([...FROZEN_ALLOWED_API_PATHS]).toEqual([
+      '/api/account/delete',
+      '/api/account/export',
+      '/api/billing/subscription',
+      '/api/billing/subscription/cancel',
+      '/api/billing/portal',
+    ]);
     expect(ACCOUNT_DELETE_API_PATH).toBe('/api/account/delete');
     expect(ACCOUNT_EXPORT_API_PATH).toBe('/api/account/export');
+    expect(BILLING_SUBSCRIPTION_API_PATH).toBe('/api/billing/subscription');
+    expect(BILLING_CANCEL_API_PATH).toBe('/api/billing/subscription/cancel');
+    expect(BILLING_PORTAL_API_PATH).toBe('/api/billing/portal');
   });
 
   it('一覧のパスには、実際の route がある (route を移したのに一覧だけ古いまま、を防ぐ)', () => {
@@ -77,6 +90,9 @@ describe('FROZEN_ALLOWED_API_PATHS (#1445): 凍結中でも止めない API の�
   it('完全一致だけを通す (前方一致・末尾の /・大文字・クエリ付きの文字列は通さない)', () => {
     expect(isFrozenAllowedApiPath('/api/account/delete')).toBe(true);
     expect(isFrozenAllowedApiPath('/api/account/export')).toBe(true);
+    expect(isFrozenAllowedApiPath('/api/billing/subscription')).toBe(true);
+    expect(isFrozenAllowedApiPath('/api/billing/subscription/cancel')).toBe(true);
+    expect(isFrozenAllowedApiPath('/api/billing/portal')).toBe(true);
     for (const path of [
       '/api/account',
       '/api/account/',
@@ -88,6 +104,14 @@ describe('FROZEN_ALLOWED_API_PATHS (#1445): 凍結中でも止めない API の�
       '/api/account/delete?x=1',
       '/api/export/meals',
       '/api/pantry',
+      '/api/billing',
+      '/api/billing/subscription/',
+      '/api/billing/subscription/resume',
+      '/api/billing/subscription/cancel/',
+      '/api/billing/checkout',
+      '/api/billing/checkout/sync',
+      '/api/billing/checkout/preview',
+      '/api/billing/portal/',
     ]) {
       expect(isFrozenAllowedApiPath(path), path).toBe(false);
     }
@@ -98,6 +122,9 @@ describe('updateSession (#1445): 凍結中の利用者の /api', () => {
   it.each([
     ['POST', '/api/account/delete'],
     ['GET', '/api/account/export'],
+    ['GET', '/api/billing/subscription'],
+    ['POST', '/api/billing/subscription/cancel'],
+    ['POST', '/api/billing/portal'],
   ])('%s %s は凍結中でも 403 にせず、route へ通す (Cookie のセッション)', async (method, path) => {
     const res = await updateSession(request(path, { method }));
 
@@ -110,6 +137,9 @@ describe('updateSession (#1445): 凍結中の利用者の /api', () => {
   it.each([
     ['POST', '/api/account/delete'],
     ['GET', '/api/account/export'],
+    ['GET', '/api/billing/subscription'],
+    ['POST', '/api/billing/subscription/cancel'],
+    ['POST', '/api/billing/portal'],
   ])('%s %s はモバイルアプリの Bearer のセッションでも、凍結中に通す', async (method, path) => {
     const res = await updateSession(request(path, { method, headers: { authorization: 'Bearer aaa.bbb.ccc' } }));
 
@@ -126,6 +156,10 @@ describe('updateSession (#1445): 凍結中の利用者の /api', () => {
     '/api/account/deletex',
     '/api/account/export/extra',
     '/api/notification-preferences',
+    '/api/billing/subscription/resume',
+    '/api/billing/checkout',
+    '/api/billing/checkout/sync',
+    '/api/billing/checkout/preview',
     // #1178 個人情報の請求 (DSR) の本人向けの API は、凍結中は受け付けない (設計 cross/15 S-13・§21。FROZEN_ALLOWED_API_PATHS に足さない)
     '/api/account/data-requests',
     '/api/account/data-requests/00000000-0000-4000-8000-000000000000/withdraw',

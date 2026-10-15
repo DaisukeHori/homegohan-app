@@ -995,8 +995,8 @@ deprecated (新規申込・自動更新ともに不可、移行強制)
 `subscription_plans.trial_days > 0` のプランは試用期間が利用可能。試用は **個人プランのみ** (組織プランは契約交渉前提のため trial_days = 0 を強制)。
 
 **試用開始**:
-1. ユーザーが「7 日間無料で試す」ボタンを押下 (Stripe Setup Intent でカード登録は必須、課金は試用期間後)
-2. `personal_subscriptions` に `trial_ends_at = NOW() + INTERVAL 'trial_days days'`、`status = 'trialing'` でレコード作成
+1. ユーザーがプランを選んで申し込む。Stripe Checkout の `trial_period_days` で試用つきの契約を作る (カード登録は必須、課金は試用期間後。docs/design/billing/01-billing-core.md §9.1)
+2. `personal_subscriptions` の `status = 'trialing'` の行は写像が作る (Checkout の完了の Webhook と戻り画面の同期。アプリが直接 INSERT しない)
 3. 試用期間中は対象プランの全機能が解放される
 
 **試用期間中**:
@@ -1862,7 +1862,7 @@ CREATE TABLE infra_alerts (
 
 #### 9.4.10.3 Stripe ダッシュボード設定 (super_admin のみ) ⭐
 `/super-admin/integrations/stripe` (新規):
-- Stripe Publishable Key / Secret Key 設定 (env 経由、UI では masked 表示)
+- Stripe Secret Key 設定 (env 経由、UI では masked 表示。Publishable Key は使わない: Checkout と Billing Portal はサーバーが作った Stripe のページの URL へ移るだけ)
 - Webhook Endpoint URL の確認 (`/api/webhooks/stripe`)
 - Webhook Signing Secret 設定
 - **テスト/本番環境切替** 表示 (現在のモードを画面上部に常時表示、誤操作防止)
@@ -1991,7 +1991,7 @@ CREATE TABLE infra_alerts (
   - 消失機能差分 + 影響メンバー一覧
   - 7 日前の事前通知 (Push + Email) ジョブ
 - プラン deprecate フロー (90/30/7 日前通知バッチ、`auto_renew = FALSE` 強制更新)
-- `trial_days` 試用期間フロー (Stripe Setup Intent、リマインダー、自動課金開始)
+- `trial_days` 試用期間フロー (Stripe Checkout の `trial_period_days`、リマインダー、自動課金開始。docs/design/billing/01-billing-core.md)
 - 02-organization-management `org_license_pools` との連携 (プラン参照、FK)
 - 01-family-management の `family_groups.plan_key` との整合性
 

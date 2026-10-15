@@ -491,6 +491,26 @@ describe('client-log カテゴリ (#1493。POST /api/log、in-memory フォー�
   });
 });
 
+describe('billing カテゴリ (billing/01 §8.7。課金の操作。利用者ごと)', () => {
+  it('billing カテゴリ: 同じ key で 10 回まで通り 11 回目は止まる (1 分の枠)', async () => {
+    const key = 'billing-user-1';
+    const results = [];
+    for (let i = 0; i < 11; i++) {
+      results.push(await rateLimit.checkRateLimit(key, 'billing'));
+    }
+
+    expect(results.slice(0, 10).map((r) => r.success)).toEqual(new Array(10).fill(true));
+    expect(results.every((r) => r.limit === 10 && r.windowSec === 60)).toBe(true);
+    expect(results[10]).toMatchObject({ success: false, limit: 10, remaining: 0, windowSec: 60 });
+
+    // 1 分たつと枠が戻る
+    vi.advanceTimersByTime(MINUTE_MS + 1);
+    expect((await rateLimit.checkRateLimit(key, 'billing')).success).toBe(true);
+    // 別の利用者は別の枠
+    expect(await rateLimit.checkRateLimit('billing-user-2', 'billing')).toMatchObject({ success: true, remaining: 9 });
+  });
+});
+
 describe('dsr カテゴリ (#1178。個人情報の請求の作成・確認メールの再送、in-memory フォールバック): 利用者ごとに 5 回/10 分 + 直近 24 時間で 20 回', () => {
   const PER_WINDOW = 5;
   const PER_DAY = 20;
