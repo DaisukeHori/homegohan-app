@@ -51,7 +51,7 @@ Web 側 (食事記録画面)
 ### 3.3 `uploadMealPhoto()` 関数設計
 
 ```typescript
-// src/lib/storage.ts に追加
+// src/lib/storage.ts に追加 (以前のアプリの storage.ts は、使っていた画面と一緒に 2026-10-16 に削除した。#1598)
 
 export type UploadMealPhotoOptions = {
   localUri: string;
@@ -90,7 +90,7 @@ export async function uploadMealPhoto(options: UploadMealPhotoOptions): Promise<
   // 3. 本文を ArrayBuffer にする (#1049 F7-17)
   //    fetch(uri).blob() の Blob を supabase-js に渡すと、React Native では中身が送られず 0 バイトのファイルになることがある
   //    (supabase-js は Blob を FormData に載せて送るため)。expo-file-system で base64 として読み、ArrayBuffer にして渡す
-  //    (uploadFridgePhoto と同じ。base64 の変換は src/lib/base64.ts の base64ToArrayBuffer)
+  //    (uploadFridgePhoto と同じ。base64 の変換は src/lib/base64.ts の base64ToArrayBuffer。uploadFridgePhoto と base64.ts は 2026-10-16 に削除した。#1598)
   const base64 = await FileSystem.readAsStringAsync(processed.uri, { encoding: FileSystem.EncodingType.Base64 });
   const body = base64ToArrayBuffer(base64);
 
@@ -118,7 +118,7 @@ export async function uploadMealPhoto(options: UploadMealPhotoOptions): Promise<
   const { data: { publicUrl } } = supabase.storage.from('meal-photos').getPublicUrl(data.path);
 
   // publicUrl は「どのファイルか」を表す識別子として DB に保存するだけで、画面には直接出さない (#1365)。
-  // 表示は SignedPhotoImage (apps/mobile/src/components/photo/SignedPhotoImage.tsx) を通し、
+  // 表示は SignedPhotoImage (apps/mobile/src/components/photo/SignedPhotoImage.tsx。2026-10-16 に削除した。#1598) を通し、
   // POST /api/storage/signed-urls が本人の写真だけに署名した URL (有効期限つき) を使う。
   return { publicUrl, storagePath: data.path };
 }
@@ -464,7 +464,7 @@ describe('uploadMealPhoto()', () => {
 
 ### 保持
 
-- `src/lib/storage.ts` の `uploadFridgePhoto()` (冷蔵庫写真。#1049 F7-17 で本文を ArrayBuffer で渡す形に直した)
+- `src/lib/storage.ts` の `uploadFridgePhoto()` (冷蔵庫写真。#1049 F7-17 で本文を ArrayBuffer で渡す形に直した。冷蔵庫のネイティブの画面と一緒に 2026-10-16 に削除した。#1598)
 - `app.json` の `expo-image-picker` plugin 設定
 - カメラ・写真ライブラリ権限文言 (既存設定済み)
 
