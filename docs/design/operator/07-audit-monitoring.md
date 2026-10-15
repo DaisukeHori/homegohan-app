@@ -125,27 +125,43 @@ COMMENT ON POLICY "audit_logs_insert_admins" ON admin_audit_logs IS
 
 ### 4.1 admin 系操作
 
+実コードが `action_type` に書く名前 (#1571 で実コードに合わせた)。対象の API と実装の場所を右に書く。
+`super_admin.*` の名前のものも、運営の画面から行う変更なので、ここにまとめる (4.2 の一覧の名前と食い違うものは 4.2 に注記した)。
+`(記録なし)` の行は、設計で予定していたが API が無い (操作そのものが未実装) ため、記録する箇所も無いもの。
+
 ```
-admin.user.ban                      - ユーザー BAN
-admin.user.unban                    - BAN 解除
-admin.user.role_change              - ロール変更
-admin.user.note_add                 - 管理ノート追加
-admin.organization.create           - 組織作成
-admin.organization.suspend          - 組織停止
-admin.organization.restore          - 組織復旧
-admin.organization.delete           - 組織削除
-admin.organization.plan_change      - 組織プラン変更 (手動)
-admin.coupon.create                 - クーポン作成
-admin.coupon.pause                  - クーポン一時停止
-admin.coupon.activate               - クーポン有効化
-admin.coupon.retroactive_apply      - 遡及適用 (super_admin 承認)
-admin.refund.issue                  - 返金指示 (Stripe Dashboard 誘導)
-admin.export.request                - データエクスポート要求
-admin.notification.campaign_send    - 通知キャンペーン送信
-admin.moderation.resolve            - モデレーション解決
-admin.announcement.create           - お知らせ作成
-admin.announcement.delete           - お知らせ削除
-admin.support.ticket_assign         - チケット担当者変更
+admin.user.ban                      - ユーザー BAN (POST /api/admin/users/{id}/freeze)
+admin.user.unban                    - BAN 解除 (DELETE /api/admin/users/{id}/freeze)
+admin.user.role_change              - ロール変更 (PATCH / PUT /api/admin/users/{id}/role)
+admin.user.note_add                 - 管理ノート追加 (PATCH /api/admin/users/{id}・POST /api/support/users/{id}/notes)
+admin.organization.create           - 組織作成 (POST /api/admin/organizations)
+admin.organization.suspend          - 組織停止 (記録なし)
+admin.organization.restore          - 組織復旧 (記録なし)
+admin.organization.delete           - 組織削除 (記録なし)
+admin.organization.plan_change      - 組織プラン変更 (手動) (記録なし)
+create_coupon                       - クーポン作成 (POST /api/super-admin/coupons。旧名 admin.coupon.create)
+update_coupon                       - クーポンの編集・一時停止・有効化 (PATCH /api/super-admin/coupons/{id}。一時停止・有効化は status の変更で、
+                                      専用の action は無い。旧名 admin.coupon.pause / admin.coupon.activate)
+delete_coupon                       - クーポン削除 (DELETE /api/super-admin/coupons/{id})
+apply_coupon                        - 契約へのクーポンの適用 (遡及適用、super_admin 承認) (POST /api/super-admin/coupons/{id}/apply。旧名 admin.coupon.retroactive_apply)
+admin.refund.issue                  - 返金指示 (Stripe Dashboard 誘導) (POST /api/admin/finance/refunds)
+admin.finance.export                - 財務データの CSV 書き出し (POST /api/admin/finance/exports。旧名 admin.export.request)
+admin.catalog.import                - 商品カタログの取り込み (POST /api/admin/catalog/import)
+admin.notification.campaign_send    - 通知キャンペーン送信 (記録なし)
+admin.moderation.<action>           - モデレーションの判定 (POST / PUT /api/admin/moderation/{type}/{id})。<action> は
+                                      approve / delete_only / delete_and_warn / delete_and_temp_ban / delete_and_perm_ban / escalate
+                                      (src/lib/admin/moderation-schemas.ts の ModerationActions。旧名 admin.moderation.resolve)
+admin.announcement.create           - お知らせ作成 (POST /api/announcements は記録していない。#1571 の範囲の外)
+admin.announcement.delete           - お知らせ削除 (記録なし)
+admin.support.ticket.create         - チケット作成 (POST /api/admin/support/tickets)
+admin.support.ticket.update         - チケットの状態・優先度などの更新 (PATCH /api/admin/support/tickets/{id})
+admin.support.ticket.assign         - チケット担当者変更 (POST /api/admin/support/tickets/{id}/assign。旧名 admin.support.ticket_assign)
+admin.support.ticket.message_add    - チケットへのメッセージ (返信・内部メモ) の追加 (POST /api/admin/support/tickets/{id}/messages) (#1571)
+                                      (対象は 4.1.1 のチケットの閲覧と同じくチケットを作ったユーザー。details: ticket_id / message_id / is_internal。本文は入れない)
+admin.sales.lead.create             - 営業リード作成 (POST /api/admin/sales/leads)
+admin.sales.lead.update             - 営業リード更新 (PATCH /api/admin/sales/leads/{id})
+admin.sales.lead.activity_add       - 営業リードへの活動の記録 (POST /api/admin/sales/leads/{id}/activities) (#1571)
+                                      (対象はリード (target_type = 'sales_lead')。details: activity_id / activity_type。活動の本文 details は入れない)
 admin.inquiry.update                - 問い合わせのステータス・管理者メモ更新 (PATCH / PUT /api/admin/inquiries/{id})。更新後の本文を返すので、変更が無い更新も記録する
                                       (details: inquiry_id / status_from / status_to / admin_notes_changed / changed。メモの中身は入れない。対象は 4.1.1 と同じ)
 ```
@@ -188,6 +204,11 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 変更系の記録 (#1326): `src/app/api/admin/**` と `src/app/api/super-admin/**` は `admin_audit_logs` へ直接 INSERT せず、
 すべて `recordAdminAudit()` を通す (`x-forwarded-for` を直接読まない)。`tests/admin-view-audit-1326.test.ts` が検査する。
 
+変更系を記録する範囲 (#1571): 運営の操作で状態を変えるもの (POST / PUT / PATCH / DELETE) は、すべて記録する。
+`src/app/api/{admin,super-admin,support,operator}` の変更系の handler と、記録の有無 (記録しないものは理由) の表を
+`tests/admin-mutation-audit-coverage-1571.test.ts` が持ち、実コードと突き合わせる (handler が増えたら表に足す)。
+同じテストが、`recordAdminAudit()` の呼び出しがすべて `request` を渡していることも見る。
+
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
   こうすると、開示請求のときに `target_id = 本人` で全ての閲覧をまとめて引ける。チケット ID は `details.ticket_id` に入れる。
@@ -195,7 +216,15 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
   ゲストの問い合わせ (`user_id` なし。会員が退会して外れたものを含む) には本人の id が無いので、`target_type = 'inquiry'` で問い合わせ自体の id を対象にする。
 - `details` には **閲覧した項目名だけ** を入れる (`viewed_fields`)。ニックネーム・メール・本文などの値は入れない。
 - `severity` は `info`。情報を実際に返したときだけ記録する (404 / 401 / 403 / 0 件のときは記録しない)。
-- `ip_address` は `x-forwarded-for` の先頭 1 IP を検証して入れる (inet 列のため、複数 IP や不正値をそのまま渡すと INSERT が失敗する)。`user_agent` も保存する。
+- `ip_address` は **利用者の IP**。`x-forwarded-for` の先頭 1 IP (無ければ `x-real-ip`) を検証して入れる (inet 列のため、複数 IP や不正値をそのまま渡すと INSERT が失敗する)。`user_agent` も保存する。
+  取り出しは `src/lib/admin/client-ip.ts` の `extractClientIp()`。`recordAdminAudit()` には必ず `request` を渡す (渡さないと `ip_address` / `user_agent` が null になる)。
+- サーバーコンポーネントから `adminFetch()` (`src/lib/admin/fetch.ts`) で内部 API を呼ぶとき (#1571): Vercel は内部 API への問い合わせの
+  `x-forwarded-for` / `x-real-ip` を、問い合わせたサーバー (Vercel の関数) の IP に付け直す (転送した値は捨てられる)。そのため `adminFetch()` は、
+  元のリクエストの利用者の IP を専用のヘッダー (`x-homegohan-admin-client-ip`) に入れ、時刻と、service_role キーから導いた鍵の HMAC で署名して送る。
+  内部 API の側は、署名が正しく新しい (前後 5 分以内) ときだけその IP を使い、それ以外は `x-forwarded-for` の先頭に戻る
+  (ブラウザから同じヘッダーを付けても、鍵を知らないので署名を作れず、偽装できない)。service_role キーが無い環境では署名しない。
+- 定期処理 (pg_cron) が DB の中で書く行 (例: `cleanup_handson_tour_sandbox_rows` の `handson_tour_sandbox_cleanup`) は、
+  操作した利用者がいないので `ip_address` は NULL のまま (#1571。付けるべき IP が無い。NULL は記録漏れではなく、利用者のいない操作を表す)。
 - 閲覧の記録は **fail-open**: 記録に失敗しても閲覧は止めず、失敗は db-logger (`app_logs`) に error で残す。
   「記録できないなら実行しない」べき操作 (返金など) は、`recordAdminAudit()` の戻り値 `ok` を見て呼び出し側で止める。
 
@@ -217,6 +246,22 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 - 2 名承認 (`finance.refund.approve`) と、Stripe の `charge.refunded` Webhook との突き合わせは Stripe 連携 (#1125) 側で後続。
 
 ### 4.2 super_admin 系操作
+
+実コードの名前が下の一覧と違うもの (#1571 の時点。名前は変えていない):
+- プランの作成・更新・削除は `create_plan` / `update_plan` / `delete_plan` (POST /api/super-admin/plans・PATCH / DELETE /api/super-admin/plans/{id})。
+  公開・非公開・廃止・廃止の取り消しは `update_plan` の中の変更として記録する。価格変更は `change_price` (POST /api/super-admin/plans/{id}/price-change)。
+- A/B テスト (/api/super-admin/experiments) の作成・更新・削除は `super_admin.plan.create` / `super_admin.plan.update` を使っている。
+- 機能パッケージは `create_feature_package` / `update_feature_package` / `delete_feature_package`。
+- 機能フラグの作成・更新・削除は、すべて `super_admin.feature_flag.toggle`。
+- LLM クォータの変更は `super_admin.llm_quota.update` (`src/lib/super-admin/ai-daily-limits.ts` の LLM_QUOTA_AUDIT_ACTION)。
+
+#1571 で記録を足したもの:
+- `super_admin.setting.change` (下の一覧のとおり): PUT /api/super-admin/settings。details: key / value / description_changed。severity は warn。
+- `super_admin.embeddings.regenerate`: POST /api/super-admin/embeddings/regenerate が成功したとき。details: table / only_missing / offset / processed / has_more。
+- 運営の家族・組織の緊急操作 (/api/operator/membership/*。RPC が書く membership_audit とは別に記録する):
+  `super_admin.organization.dissolve` (severity=critical) / `super_admin.organization.transfer_admin` (warn。下の一覧の名前) /
+  `super_admin.family.dissolve` (critical) / `super_admin.family.transfer_representative` (warn)。
+  details: reason (譲渡は to_user_id / from_user_id も)。
 
 ```
 super_admin.plan.create             - プラン作成

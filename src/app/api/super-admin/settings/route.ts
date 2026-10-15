@@ -10,6 +10,9 @@
  *
  * 列の名前は DB のまま (snake_case) で返す: key / value / description / updated_at (#1486。モバイルの画面もこの名前で読む)。
  * PUT の description は省略可。送られたら保存する (文字列は前後の空白を除き、空なら null。null は説明を消す)。
+ *
+ * #1571: PUT で保存できたら super_admin.setting.change を監査ログに 1 行残す (対象の key・保存した value・説明を変えたか)。
+ * 記録に失敗しても保存は成功のまま (失敗は db-logger に残る)。409 / 400 / 保存の失敗のときは記録しない。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
@@ -23,6 +26,7 @@ import {
   retiredSettingNoteOf,
 } from '@/lib/super-admin/retired-settings';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 function handleError(method: 'GET' | 'PUT', err: unknown) {
   if (err instanceof AuthError) {
@@ -107,6 +111,18 @@ export async function PUT(request: NextRequest) {
     if (error) {
       return internalError('PUT /api/super-admin/settings', error, { userId: actor.id }, { shape: 'nested' });
     }
+
+    // 監査ログ (#1571)。system_settings の key は uuid ではないので target_id は使わず、details.key に入れる
+    await recordAdminAudit({
+      supabase,
+      actorId: actor.id,
+      actionType: 'super_admin.setting.change',
+      targetType: 'system_setting',
+      details: { key: key.trim(), value, description_changed: description !== undefined },
+      severity: 'warn',
+      request,
+      routeName: 'api/super-admin/settings PUT',
+    });
 
     return NextResponse.json({ success: true, key: key.trim() });
   } catch (err) {
