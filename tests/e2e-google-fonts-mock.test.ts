@@ -10,6 +10,9 @@
  * next build の中では、(1) next/font/google のローダーが CSS を作り、(2) postcss-next-font が
  * その CSS を検査・変換する。どちらか片方だけ通っても、ビルドは通らない (2 で
  * "Font loaders must return one or more @font-face's" になった実例がある)。そのため両方を通す。
+ *
+ * ここで通すのは webpack のビルドのローダー (Next 16 でも next build は --webpack。#1621)。Turbopack ではこのモックが効かない
+ * (tests/next16-bundler-contract.test.ts の冒頭)。
  */
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -88,7 +91,7 @@ describe('Google Fonts のモック (e2e-local のビルド用)', () => {
       expect(result.css).toContain(`font-family: '${family}'`);
       expect(result.css).toContain('url(/_next/static/media/mock.ttf)');
       expect(result.css).not.toContain('fonts.gstatic.com');
-      expect(result.css).not.toContain('noto-sans-v27-latin-regular.ttf');
+      expect(result.css).not.toContain('Geist-Regular.ttf');
       expect(result.variable).toBe(options.variable);
       expect(result.adjustFontFallback).toBeTruthy();
 
@@ -104,7 +107,7 @@ describe('Google Fonts のモック (e2e-local のビルド用)', () => {
           style: result.style,
         }),
       ]).process(result.css, { from: undefined });
-      // Next 15 の postcss-next-font は font-family の名前を書き換えない (名前を他と重ならなくするのは、そのあとの
+      // Next 15 / 16 の postcss-next-font は font-family の名前を書き換えない (名前を他と重ならなくするのは、そのあとの
       // CSS Modules の処理)。Next 14 は、ここで '__Noto_Sans_JP_<hash>' に書き換えていた (#1444)
       const fallbackFamily = `'${family}', '${family} Fallback'`;
       expect(processed.css).toContain(`font-family: ${fallbackFamily}`);

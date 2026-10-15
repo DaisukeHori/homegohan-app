@@ -5,7 +5,7 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
 ## 1. 技術スタック
 
 ### Frontend (Web)
-- **Framework**: Next.js 15 (App Router)
+- **Framework**: Next.js 16 (App Router。#1621 で 15 から上げた。バンドラーは webpack (`next build --webpack`))
 - **Runtime**: Node.js 22.x / Edge Runtime (一部 Edge Function)
 - **UI**: React 19 + Tailwind CSS v4 + Lucide Icons
 - **State**: Server Components + Server Actions、クライアント state は最小限
