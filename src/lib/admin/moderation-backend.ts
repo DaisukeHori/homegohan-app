@@ -22,13 +22,15 @@
  * `getSupabaseAdmin()` (service-role) を渡すこと。
  *
  * #1101: 違反コンテンツの「削除」は、行を消さずに `hidden_at` を入れて「隠す」
- * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、保管期間のあとに
- * 完全削除する (削除ジョブは別の作業)。注意: service-role で `meals` / `recipes` を読むコードは
+ * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、隠してから 90 日 (保管期間) を
+ * 過ぎたら、pg_cron のジョブ `purge-hidden-content` (#1538) が行と、ほかで使っていない画像を完全に消す。
+ * 注意: service-role で `meals` / `recipes` を読むコードは
  * RLS を通らないので、他のユーザーに見せる一覧を作るなら `hidden_at IS NULL` で絞ること。
  */
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ModerationType } from './moderation-schemas';
+import { parsePhotoObjectUrl, signPhotoUrlsForAuthorizedViewer, type PhotoSigningAdmin } from '../photo-storage-signing';
 
 /** 現時点で実バックエンドテーブルが存在するモデレーション対象タイプ */
 export type ModerationBackedType = 'food' | 'recipe';
@@ -102,6 +104,29 @@ function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
     resolved_at: (row.reviewed_at as string | null) ?? null,
     created_at: (row.created_at as string | null) ?? null,
   };
+}
+
+/**
+ * 通報されたコンテンツの写真 (content_url) を、運営の画面で見られる署名付き URL に替える (#1365 段 1)。
+ * 食事写真・冷蔵庫写真のバケットはこれから非公開にするので、保存された公開 URL をそのまま返さない。
+ * 写真の持ち主は通報された利用者 (運営本人ではない) なので、持ち主の確認はせず、呼び出し側の requireRole
+ * (admin / super_admin / content_moderator) を通ったことを条件に署名する。呼び出し側は requireRole の後にだけ呼ぶこと。
+ * 2 つのバケットの URL でないもの (外部の画像など) はそのまま。署名できなかった写真は null (表示しない)。
+ */
+export async function withSignedModerationContentUrls<T extends Pick<NormalizedModerationItem, 'content_url'>>(
+  admin: PhotoSigningAdmin,
+  items: readonly T[],
+): Promise<T[]> {
+  const photoUrls = items
+    .map((item) => item.content_url)
+    .filter((url): url is string => typeof url === 'string' && parsePhotoObjectUrl(url) !== null);
+  if (photoUrls.length === 0) return [...items];
+  const signedUrls = await signPhotoUrlsForAuthorizedViewer(admin, photoUrls);
+  return items.map((item) =>
+    typeof item.content_url === 'string' && Object.prototype.hasOwnProperty.call(signedUrls, item.content_url)
+      ? { ...item, content_url: signedUrls[item.content_url] }
+      : item,
+  );
 }
 
 function backingTable(type: ModerationBackedType): 'moderation_flags' | 'recipe_flags' {
@@ -283,7 +308,8 @@ function isSameMealContent(a: MealContent, b: MealContent): boolean {
  * 通報されたコンテンツ (meals / recipes の行) を「隠す」(#1101)。行は消さない。
  *
  * `hidden_at` を入れると、RLS により本人以外 (家族・他のログインユーザー・未ログイン) には
- * 見えなくなる (本人には見える)。完全な削除は保管期間のあとに別のジョブで行う。
+ * 見えなくなる (本人には見える)。隠してから 90 日 (保管期間) を過ぎたら、pg_cron のジョブ
+ * `purge-hidden-content` (#1538) が行と、ほかで使っていない画像を完全に消す。
  * `hidden_*` を書き換えられるのは service-role だけ (DB のトリガー guard_hidden_content_columns)
  * なので、`supabase` には、認可 (requireRole) を通したあとの `getSupabaseAdmin()` を渡すこと。
  *

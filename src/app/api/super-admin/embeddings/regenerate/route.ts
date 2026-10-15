@@ -16,6 +16,11 @@
  *    #1172: 502 の本文は固定の文 + HTTP ステータスだけ。Edge Function が返した error の文は構造化ログにだけ残す。
  *  - 成功時は Edge Function の実際の処理結果 (processed / hasMore 等) を
  *    そのまま返す。
+ *
+ * #1571: 再生成は運営の操作で DB (embedding 列) を書き換えるので、Edge Function が成功を返したときに
+ * super_admin.embeddings.regenerate を監査ログに 1 行残す (対象のテーブル・条件・処理件数)。
+ * 記録に失敗しても応答は変えない (失敗は db-logger に残る)。400 / 503 / 502 のときは記録しない
+ * (502 は Edge Function が失敗を返したとき。途中まで書いたかは Edge Function の応答から分からない。構造化ログに残る)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
@@ -23,6 +28,9 @@ import { getSupabaseServiceConfig, isMissingEnvError } from '@/lib/env-required'
 import { internalError } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { createClient } from '@/lib/supabase/server';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 /** 構造化ログ (app_logs) の function_name */
 const ROUTE_NAME = 'POST /api/super-admin/embeddings/regenerate';
@@ -45,8 +53,13 @@ interface EdgeFunctionResult {
 }
 
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const actor = await requireRole(['super_admin']);
+    // 監査ログ (#1571) は本人の権限の client で書く。Edge Function を呼ぶ前に作る (作れずに失敗するなら、DB を書き換える前に止まる)
+    const supabase = await createClient();
 
     let body: unknown;
     try {
@@ -141,6 +154,22 @@ export async function POST(request: NextRequest) {
         { status: 502 },
       );
     }
+
+    await recordAdminAudit({
+      supabase,
+      actorId: actor.id,
+      actionType: 'super_admin.embeddings.regenerate',
+      targetType: 'embedding_table',
+      details: {
+        table,
+        only_missing: Boolean(onlyMissing),
+        offset: edgeData.offset ?? 0,
+        processed: edgeData.processed ?? 0,
+        has_more: edgeData.hasMore ?? false,
+      },
+      request,
+      routeName: ROUTE_NAME,
+    });
 
     return NextResponse.json({
       ok: true,

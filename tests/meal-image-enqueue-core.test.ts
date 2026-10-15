@@ -11,9 +11,12 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT,
   MEAL_IMAGE_ENQUEUE_FAILED_ERROR,
+  MEAL_IMAGE_JOB_ACTIVE_STATUSES,
   MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE,
   buildMealImageJobRecords,
+  countMealImageJobsToProcess,
   insertMealImageJobRecords,
   isMealImageSkippedError,
   markDishImagesEnqueueFailed,
@@ -68,11 +71,82 @@ describe("insertMealImageJobRecords / summarizeMealImageJobOutcomes", () => {
     expect(insertJob).toHaveBeenCalledTimes(4);
     expect(outcomes).toEqual([
       { kind: "inserted", dishIndex: 0, subjectHash: "hash-0" },
-      { kind: "duplicate", dishIndex: 1, subjectHash: "hash-1" },
+      // 読み方 (readActiveStatus) を渡していないので、重なったジョブの状態は分からない (null = 待ちとみなす)
+      { kind: "duplicate", dishIndex: 1, subjectHash: "hash-1", activeStatus: null },
       { kind: "failed", dishIndex: 2, subjectHash: "hash-2", code: "42501", message: "permission denied" },
       { kind: "failed", dishIndex: 3, subjectHash: "hash-3", code: null, message: "network down" },
     ]);
-    expect(summarizeMealImageJobOutcomes(outcomes)).toEqual({ inserted: 1, duplicates: 1, failed: 2 });
+    expect(summarizeMealImageJobOutcomes(outcomes)).toEqual({ inserted: 1, duplicates: 1, duplicatesProcessing: 0, failed: 2 });
+  });
+
+  // #1561: 処理中の重複のために処理を起こすと、画像の処理は待ちのジョブだけを拾うので空振りになる
+  describe("重複のときは、重なった同じ料理のジョブが待ちか処理中かを読む (#1561)", () => {
+    const dupOnly = vi.fn(async () => ({ error: { code: MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE, message: "dup" } }));
+
+    async function recordsOf(count: number) {
+      return buildMealImageJobRecords({
+        plannedMealId: "m",
+        userId: "u",
+        seeds: Array.from({ length: count }, (_, dishIndex) => ({ ...SEED, dishIndex, subjectHash: `hash-${dishIndex}` })),
+      });
+    }
+
+    it("処理中は processing・待ちは pending として数え、処理を起こす件数には処理中を数えない", async () => {
+      const records = await recordsOf(3);
+      const statusByIndex = ["processing", "pending", "processing"];
+      const readActiveStatus = vi.fn(async (record: { dish_index: number; idempotency_key: string }) => ({
+        data: { status: statusByIndex[record.dish_index] },
+        error: null,
+      }));
+
+      const outcomes = await insertMealImageJobRecords(records, dupOnly, readActiveStatus);
+
+      expect(outcomes.map((o) => (o.kind === "duplicate" ? o.activeStatus : o.kind))).toEqual(["processing", "pending", "processing"]);
+      // 読むのは重なった行の冪等キーで
+      expect(readActiveStatus.mock.calls.map(([record]) => record.idempotency_key)).toEqual(records.map((r) => r.idempotency_key));
+      const result = summarizeMealImageJobOutcomes(outcomes);
+      expect(result).toEqual({ inserted: 0, duplicates: 3, duplicatesProcessing: 2, failed: 0 });
+      expect(countMealImageJobsToProcess(result)).toBe(1);
+    });
+
+    it("重複がどれも処理中なら、処理を起こさない (0)。積めた行があればその数だけ", async () => {
+      expect(countMealImageJobsToProcess({ inserted: 0, duplicates: 2, duplicatesProcessing: 2, failed: 0 })).toBe(0);
+      expect(countMealImageJobsToProcess({ inserted: 2, duplicates: 1, duplicatesProcessing: 1, failed: 1 })).toBe(2);
+      expect(countMealImageJobsToProcess({ inserted: 0, duplicates: 2, duplicatesProcessing: 0, failed: 0 })).toBe(2);
+    });
+
+    it.each([
+      ["読み取りのエラー", async () => ({ data: null, error: { code: "57014", message: "timeout" } })],
+      ["読み取りの例外", async () => {
+        throw new Error("network down");
+      }],
+      ["重なったジョブが読む前に終わった (行が無い)", async () => ({ data: null, error: null })],
+      ["想定しない状態", async () => ({ data: { status: "completed" }, error: null })],
+    ])("%s は、状態が分からない (null = 待ちとみなして処理を起こす)。例外は投げない", async (_label, readActiveStatus) => {
+      const records = await recordsOf(1);
+
+      const outcomes = await insertMealImageJobRecords(records, dupOnly, readActiveStatus);
+
+      expect(outcomes).toEqual([{ kind: "duplicate", dishIndex: 0, subjectHash: "hash-0", activeStatus: null }]);
+      expect(countMealImageJobsToProcess(summarizeMealImageJobOutcomes(outcomes))).toBe(1);
+    });
+
+    it("積めた行・失敗した行では読まない", async () => {
+      const records = await recordsOf(2);
+      const readActiveStatus = vi.fn(async () => ({ data: { status: "pending" }, error: null }));
+      const insertJob = vi.fn(async (record: { dish_index: number }) =>
+        record.dish_index === 0 ? { error: null } : { error: { code: "42501", message: "permission denied" } },
+      );
+
+      await insertMealImageJobRecords(records, insertJob, readActiveStatus);
+
+      expect(readActiveStatus).not.toHaveBeenCalled();
+    });
+
+    it("待ち・処理中の 2 つは、冪等キーの部分索引 (meal_image_jobs_idempotency_pending_idx) の WHERE と同じ", () => {
+      expect([...MEAL_IMAGE_JOB_ACTIVE_STATUSES]).toEqual(["pending", "processing"]);
+      expect(EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
+    });
   });
 });
 

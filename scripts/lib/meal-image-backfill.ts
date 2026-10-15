@@ -27,6 +27,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   DEFAULT_MEAL_IMAGE_MODEL,
+  EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT,
   asCatalogMealDish,
   buildDishImagePrompt,
   countMealImageJobsToProcess,
@@ -189,7 +190,10 @@ export interface MealImageBackfillOptions {
   since?: string | null;
   /** この利用者の献立だけ (試しに 1 人分で確かめるとき) */
   userId?: string | null;
-  /** 積んだあとに process-meal-image-jobs を起こす (apply のとき)。起こさなければジョブは待ちのまま残る */
+  /**
+   * 積んだあとに process-meal-image-jobs を起こす (apply のとき)。起こさなければジョブは待ちのまま残り、
+   * pg_cron のジョブ process-pending-meal-image-jobs が 5 分ごとに 5 件ずつ拾う (#1561。秘密がそろっているとき)
+   */
   trigger: boolean;
   /** 処理を起こしたあとの待ち (ミリ秒) */
   intervalMs: number;
@@ -295,7 +299,7 @@ export async function runMealImageBackfill(admin: SupabaseClient, options: MealI
     candidateDishes: candidates.reduce((sum, candidate) => sum + candidate.seeds.length, 0),
     skipped,
     processedMeals: 0,
-    enqueue: { inserted: 0, duplicates: 0, failed: 0 },
+    enqueue: { ...EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT },
     triggeredMeals: 0,
   };
   if (!options.apply) return report;
@@ -312,9 +316,10 @@ export async function runMealImageBackfill(admin: SupabaseClient, options: MealI
     report.processedMeals += 1;
     report.enqueue.inserted += result.inserted;
     report.enqueue.duplicates += result.duplicates;
+    report.enqueue.duplicatesProcessing += result.duplicatesProcessing;
     report.enqueue.failed += result.failed;
 
-    // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行は数えない。#1532)
+    // limit は積めた行と待ちのジョブの数 (書き込みに失敗した行・処理中の重複は数えない。#1532 / #1561)
     const jobsToProcess = countMealImageJobsToProcess(result);
     if (options.trigger && jobsToProcess > 0) {
       await triggerMealImageJobProcessing({

@@ -4,6 +4,9 @@
  *
  * operator/02-api-spec.md §14 準拠
  * 権限: sales, admin, super_admin
+ *
+ * #1571: 活動の記録は運営の操作で状態 (営業リードの活動履歴) を変えるので、
+ * 追加できたときに admin.sales.lead.activity_add を監査ログに 1 行残す (対象はリード。details は活動の種類と ID だけ)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -11,6 +14,8 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createActivitySchema } from '@/lib/admin/sales-schemas';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -53,6 +58,9 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 }
 
 export async function POST(request: NextRequest, props: RouteContext) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
     const currentUser = await requireRole(['sales', 'admin', 'super_admin']);
@@ -103,6 +111,18 @@ export async function POST(request: NextRequest, props: RouteContext) {
       .from('sales_leads')
       .update({ updated_at: new Date().toISOString() })
       .eq('id', params.id);
+
+    // 監査ログ (#1571)。活動の本文 (details) は営業メモで連絡先などを含みうるので入れない。記録に失敗しても追加は成功のまま (失敗は db-logger に残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.sales.lead.activity_add',
+      targetId: params.id,
+      targetType: 'sales_lead',
+      details: { activity_id: activity.id, activity_type },
+      request,
+      routeName: 'api/admin/sales/leads/[id]/activities POST',
+    });
 
     return NextResponse.json({ data: activity }, { status: 201 });
   } catch (err) {

@@ -1,3 +1,5 @@
+import { normalizeProfileName } from "./profile-name.ts";
+
 type AnyRecord = Record<string, any>;
 
 function isPlainObject(value: unknown): value is AnyRecord {
@@ -310,7 +312,8 @@ export function buildUserContextForPrompt(input: {
       medications,
     },
     profile: {
-      nickname: p?.nickname ?? null,
+      // 仮置きの 'Guest'・空白だけは「名前が無い」として null (AI に名前として渡さない。#1649)
+      nickname: normalizeProfileName(p?.nickname),
       age: p?.age ?? null,
       gender: p?.gender ?? null,
       height_cm: p?.height ?? null,

@@ -218,7 +218,9 @@ server → rpc('create_family_group', { p_name, p_plan_key })
 POST /api/family/invites/{token}/accept
        body: { share_meals: true, share_health: false, share_menu: true }
 server → rpc('accept_family_invite', { p_token, p_share_meals, p_share_health, p_share_menu })
-       → user_profiles.family_id = X (プロフィール行が無ければ既定値で作る。#1273), family_members INSERT (role='adult', share_*)
+       → user_profiles.family_id = X (プロフィール行が無ければ既定値で作る。#1273), family_members INSERT (role='adult', share_*,
+         display_name = 本人の user_profiles.nickname を normalizeProfileName と同じ判定で写したもの。前後の空白を除く。
+         空・空白だけ・仮置きの 'Guest'・プロフィール行が無い人は NULL。#1584・20261015170000)
        → 監査ログ
 ```
 
@@ -260,6 +262,8 @@ POST /api/family/promotions/{token}/accept  body: { share_meals, share_health, s
 server → rpc('accept_child_promotion', ...)
        → 本人の auth.uid() のメールが宛先と一致するときだけ
          family_members.user_id = 本人, role = 'adult', child_profile = NULL, share_* = 本人の選択
+         display_name は空 (NULL・空白だけ) のときだけ本人のプロフィールの名前を写す (判定は §7 と同じ。
+         子供のときの呼び名が入っていれば上書きしない。#1584・20261015170000)
        → user_profiles.family_id 設定 (プロフィール行が無ければ既定値で作る)
        → 監査ログ (child_promoted)
 POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
@@ -281,7 +285,7 @@ org owner 譲渡と同パターン。`propose_family_representative_transfer` / 
 [adult] /family/members/{id} → [家族から外す]
 POST /api/family/members/{user_id}/remove
 server → rpc('remove_family_member', { p_family_id, p_user_id })
-       → 整合性: target が representative なら CANNOT_REMOVE_REPRESENTATIVE
+       → 整合性: target が representative なら IS_FAMILY_REPRESENTATIVE (409)
        → family_members.status = 'removed', removed_at = NOW()
        → user_profiles.family_id = NULL
        → meals 等は保持 (削除しない)
@@ -307,10 +311,14 @@ server → rpc('leave_family')
 POST /api/meals/paste
        body: { source_meal_id, target_user_ids: [father_id, childB_id] }
 
-server → 認可: source_meal.user_id == auth.uid()
+server → 認可: source_meal.user_id == auth.uid()。他人の行は 403 INSUFFICIENT_PERMISSION (DB の NOT_MEAL_OWNER)
+       → 元の行が無いときも 403 INSUFFICIENT_PERMISSION (DB の NOT_MEAL_OWNER。#1634。他人の行と同じ返し方にし、その id の行が在るかどうかを教えない)
        → 運営が隠した食事 (hidden_at IS NOT NULL) は 403 MEAL_HIDDEN (#1101。持ち主の確認のあと)
        → ハンズオンのお試しの記録 (is_sandbox = true) は 403 MEAL_SANDBOX (#1627。隠した食事の確認のあと)
-       → 整合性: 全 target が同 family の active member
+       → 自分が家族にいない (user_profiles.family_id が NULL) ときは 403 NOT_IN_FAMILY (#1634。お試しの記録の確認のあと)
+       → 整合性: 全 target が同 family の active member。貼り付け先が家族にいないときは 400 USER_NOT_IN_FAMILY (DB の TARGET_NOT_IN_FAMILY。#1634)
+       → (ここまでの確認は、どれも paste_meal_to_family の中で行う。断ったときは、家族の側の行・元の行の paste_group_id・監査の行のどれも残らない。
+          DB の例外の語は src/app/api/meals/paste/route.ts が語の完全一致で引く。TARGET_NOT_IN_FAMILY を NOT_IN_FAMILY と取り違えない)
        → SUPABASE.rpc('paste_meal_to_family', { p_source_meal_id, p_target_user_ids })
        → 各 target に新 meal レコード INSERT (paste_group_id 共通)
        → source meal にも paste_group_id を後付け

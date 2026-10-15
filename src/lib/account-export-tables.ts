@@ -70,8 +70,8 @@ function redactSupportMessageSender(row: ExportRow, ctx: { userId: string }): Ex
 /**
  * 献立生成のリクエストの失敗の文 (error_message) には、Edge Function が捕まえた例外の文面
  * (DB の生のエラー文・Edge Function の応答の本文) がそのまま入っていることがある。
- * 状態の確認の API (GET /api/ai/menu/weekly/status) と同じく、こちらで書いた文 (同意・stale・中止・固定の文) だけを
- * そのまま出し、それ以外は固定の文にする (#1172)
+ * 状態の確認の API (GET /api/ai/menu/weekly/status) と同じく、こちらで書いた文 (同意・中止・固定の文) だけを
+ * そのまま出し (stale の英語の印は日本語の文にする。#1576)、それ以外は固定の文にする (#1172)
  */
 function redactWeeklyMenuRequestErrorMessage(row: ExportRow): ExportRow {
   if (!('error_message' in row)) return row;
@@ -220,6 +220,13 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     // バッジの名前・説明も添える (badges は誰でも読める共通マスタ。条件式 condition_json は出さない)
     columns: '*,badge:badges(code,name,description)',
     orderBy: ['user_id', 'badge_id'],
+  },
+  {
+    // 比較ランキングのバッジを取った期間 (1 期間 1 行。#1528)。user_badges と同じくバッジの名前・説明を添える
+    table: 'user_badge_period_awards',
+    scope: self('user_id'),
+    columns: '*,badge:badges(code,name,description)',
+    orderBy: ['user_id', 'badge_id', 'period_type', 'period_start'],
   },
   // 参加行の SELECT は #1132 から本人の行だけ (以前は同じ組織の全員が読めた)。RLS に頼らず、必ず user_id でも絞る
   { table: 'organization_challenge_participants', scope: self('user_id') },

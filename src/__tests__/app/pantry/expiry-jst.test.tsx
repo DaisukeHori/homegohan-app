@@ -5,7 +5,7 @@
  *   - 期限が今日の食材は、日本の 9:00 に「期限間近」から外れた
  *   - 3 日後が期限の食材は、日本の 9:00 まで「期限間近」にならなかった
  * 時計 (Date だけ) を日本の 0:30 と 9:30 に固定し、どちらの時刻でも同じ表示になることを確かめる (テストは TZ=UTC で流れる)。
- * この画面には「期限切れ」の表示は無い (期限が過ぎた食材は「期限間近」にもしない。以前と同じ)。
+ * #1602: 期限が過ぎた食材には「期限切れ」のバッジを出す (モバイルの食品庫と同じ判定と文言)。期限切れの食材は「期限間近」にはしない。
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する (frozen-account-page.test.tsx と同じ)。
  */
@@ -35,14 +35,14 @@ const CLOCKS = [
 ] as const
 
 /**
- * 食材と、「期限間近」を出すか。期限の日付は、日本の今日 (2026-10-14) から手で数えた固定値 (実装の関数で求めない)。
- * 「期限間近」の範囲は今日から 3 日後の期限まで (両端を含む)
+ * 食材と、「期限切れ」「期限間近」を出すか。期限の日付は、日本の今日 (2026-10-14) から手で数えた固定値 (実装の関数で求めない)。
+ * 「期限切れ」は今日より前の期限、「期限間近」の範囲は今日から 3 日後の期限まで (両端を含む)
  */
-const CASES: ReadonlyArray<{ id: string; name: string; expirationDate: string; expiringSoon: boolean }> = [
-  { id: 'yesterday', name: '昨日が期限の牛乳', expirationDate: '2026-10-13', expiringSoon: false },
-  { id: 'today', name: '今日が期限の豆腐', expirationDate: '2026-10-14', expiringSoon: true },
-  { id: 'threshold', name: '3日後が期限の卵', expirationDate: '2026-10-17', expiringSoon: true },
-  { id: 'after-threshold', name: '4日後が期限のチーズ', expirationDate: '2026-10-18', expiringSoon: false },
+const CASES: ReadonlyArray<{ id: string; name: string; expirationDate: string; expired: boolean; expiringSoon: boolean }> = [
+  { id: 'yesterday', name: '昨日が期限の牛乳', expirationDate: '2026-10-13', expired: true, expiringSoon: false },
+  { id: 'today', name: '今日が期限の豆腐', expirationDate: '2026-10-14', expired: false, expiringSoon: true },
+  { id: 'threshold', name: '3日後が期限の卵', expirationDate: '2026-10-17', expired: false, expiringSoon: true },
+  { id: 'after-threshold', name: '4日後が期限のチーズ', expirationDate: '2026-10-18', expired: false, expiringSoon: false },
 ]
 
 let container: HTMLDivElement
@@ -90,8 +90,8 @@ function cardOf(name: string): HTMLElement {
   return card!
 }
 
-describe.each(CLOCKS)('食材管理 (/pantry) — 「期限間近」は日本の暦日で判定する (#1594): $label', ({ at }) => {
-  it('昨日 = なし / 今日・3 日後 = 期限間近 / 4 日後 = なし', async () => {
+describe.each(CLOCKS)('食材管理 (/pantry) — 「期限切れ」「期限間近」は日本の暦日で判定する (#1594・#1602): $label', ({ at }) => {
+  it('昨日 = 期限切れ / 今日・3 日後 = 期限間近 / 4 日後 = なし', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date(at))
     expect(new Date().toISOString()).toBe(at)
@@ -104,10 +104,24 @@ describe.each(CLOCKS)('食材管理 (/pantry) — 「期限間近」は日本の
       await Promise.resolve()
     })
 
-    const actual = CASES.map((c) => ({
-      id: c.id,
-      expiringSoon: cardOf(c.name).querySelector('[data-testid="expiry-soon-badge"]') !== null,
-    }))
-    expect(actual).toEqual(CASES.map((c) => ({ id: c.id, expiringSoon: c.expiringSoon })))
+    const actual = CASES.map((c) => {
+      const card = cardOf(c.name)
+      const expiredBadge = card.querySelector('[data-testid="expiry-expired-badge"]')
+      return {
+        id: c.id,
+        expired: expiredBadge !== null,
+        expiredLabel: expiredBadge?.textContent?.trim() ?? null,
+        expiringSoon: card.querySelector('[data-testid="expiry-soon-badge"]') !== null,
+      }
+    })
+    expect(actual).toEqual(
+      CASES.map((c) => ({
+        id: c.id,
+        expired: c.expired,
+        // 文言はモバイルの食品庫と同じ「期限切れ」
+        expiredLabel: c.expired ? '期限切れ' : null,
+        expiringSoon: c.expiringSoon,
+      })),
+    )
   })
 })

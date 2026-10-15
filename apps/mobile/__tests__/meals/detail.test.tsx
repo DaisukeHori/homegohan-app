@@ -133,6 +133,27 @@ describe('MealDetailPage', () => {
     });
   });
 
+  describe('写真は署名付き URL で表示する (#1365)', () => {
+    const PUBLIC_URL = 'https://proj.supabase.co/storage/v1/object/public/fridge-images/user-1/meals/a.jpg';
+    const SIGNED_URL = 'https://proj.supabase.co/storage/v1/object/sign/fridge-images/user-1/meals/a.jpg?token=t';
+
+    it('保存された公開 URL ではなく、サーバーが署名した URL を表示する', async () => {
+      mockGet.mockImplementation((path: string) => {
+        if (path === '/api/meals/meal-001') return Promise.resolve({ ...MOCK_MEAL, image_url: PUBLIC_URL });
+        return Promise.resolve(null);
+      });
+      mockPost.mockImplementation((path: string) =>
+        path === '/api/storage/signed-urls'
+          ? Promise.resolve({ signedUrls: { [PUBLIC_URL]: SIGNED_URL }, expiresInSeconds: 3600 })
+          : Promise.resolve(null),
+      );
+      const { findByTestId } = render(<MealDetailPage />);
+      const image = await findByTestId('meal-detail-hero-image');
+      expect(image.props.source).toEqual({ uri: SIGNED_URL });
+      expect(mockPost).toHaveBeenCalledWith('/api/storage/signed-urls', { urls: [PUBLIC_URL] });
+    });
+  });
+
   describe('27栄養素の折りたたみ表示', () => {
     it('初期状態では詳細栄養素が非表示', async () => {
       const { queryByText, getByText } = render(<MealDetailPage />);
@@ -292,6 +313,39 @@ describe('MealDetailPage', () => {
           '/api/meals/meal-001',
           expect.objectContaining({ is_completed: true })
         );
+      });
+    });
+  });
+
+  // #1631: 区分の表のキーは MealType (#1665 で表は src/lib/meal-type-visuals.ts と MEAL_LABELS へ移した)。DB の行の meal_type (string) は isMealType で絞ってから引き、
+  // 5 値以外は今までどおり元の値をそのまま表示名に出す
+  describe('食事の区分の表示名 (#1631)', () => {
+    const renderWithMealType = (mealType: string) => {
+      mockGet.mockImplementation((path: string) => {
+        if (path === '/api/meals/meal-001') return Promise.resolve({ ...MOCK_MEAL, meal_type: mealType });
+        if (path.includes('/like')) return Promise.resolve({ liked: false });
+        return Promise.resolve(null);
+      });
+      return render(<MealDetailPage />);
+    };
+
+    it.each([
+      ['breakfast', '朝食'],
+      ['lunch', '昼食'],
+      ['dinner', '夕食'],
+      ['snack', 'おやつ'],
+      ['midnight_snack', '夜食'],
+    ])('%s は %s と出る', async (mealType, label) => {
+      const { getAllByText } = renderWithMealType(mealType);
+      await waitFor(() => {
+        expect(getAllByText(label).length).toBeGreaterThan(0);
+      });
+    });
+
+    it('5 値以外の meal_type は、元の値をそのまま出す (画面が落ちない)', async () => {
+      const { getAllByText } = renderWithMealType('brunch');
+      await waitFor(() => {
+        expect(getAllByText('brunch').length).toBeGreaterThan(0);
       });
     });
   });

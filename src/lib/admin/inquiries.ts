@@ -18,6 +18,7 @@ import { z } from 'zod';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import type { RoleName } from '@/lib/auth/types';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 権限
@@ -216,6 +217,7 @@ const NICKNAME_LOOKUP_CHUNK = 100;
 
 /**
  * 問い合わせ者の user_id → ニックネーム。画面は userName が無ければメールアドレスを表示する。
+ * 名前が無い人 (空・空白だけ・仮置きの 'Guest'。normalizeProfileName) は入れない (#1649)。
  *
  * user_profiles の RLS は本人の行だけを読める。サポート担当者が他人のニックネームを引くには
  * service_role が要るため、**requireRole を通ったあとにだけ**呼ぶこと (認可前に使うと権限昇格になる)。
@@ -238,7 +240,9 @@ export async function fetchNicknames(
         .in('id', ids.slice(i, i + NICKNAME_LOOKUP_CHUNK));
       if (error) throw error;
       for (const row of (data ?? []) as Array<{ id: string; nickname: string | null }>) {
-        if (row.nickname) names.set(row.id, row.nickname);
+        // 仮置きの 'Guest'・空白だけは名前とみなさない (入れずにおき、画面はメールアドレスを出す。#1649)
+        const name = normalizeProfileName(row.nickname);
+        if (name) names.set(row.id, name);
       }
     }
   } catch (err) {

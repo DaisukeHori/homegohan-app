@@ -159,6 +159,22 @@ describe('buildDbProblems', () => {
     expect(kinds(0, '   \n\n')).toEqual([]);
   });
 
+  it('db diff がイメージを取得できずに終わったときは「確かめられなかった」にし、「migration を流せなかった」とは書かない (#1523)', () => {
+    const problemsOf = (diffStatus: number | null, diffImageUnavailable: boolean) =>
+      buildDbProblems({ migrationListText: LIST_IN_SYNC, diffStatus, diffText: '', diffImageUnavailable }).problems;
+    const unavailable = problemsOf(75, true);
+    expect(unavailable.map((p) => p.kind)).toEqual(['diff-image-unavailable']);
+    expect(unavailable[0].title).toContain('Docker イメージを取得できずに');
+    expect(unavailable[0].detail).toContain('終了コード 75');
+    expect(unavailable[0].detail).toContain('docs/operations/ci-supabase-image-pull.md');
+    expect(unavailable[0].detail).not.toContain('#1116');
+    // 目印が無ければ今までどおり「失敗」。差分なしで終わった (0) なら、目印があっても問題にしない
+    expect(problemsOf(75, false).map((p) => p.kind)).toEqual(['diff-failed']);
+    expect(problemsOf(0, true)).toEqual([]);
+    // 実行できなかった (null) は目印より先に判定する
+    expect(problemsOf(null, true).map((p) => p.kind)).toEqual(['diff-not-run']);
+  });
+
   it('差分の SQL そのものは Issue に載せない (行数だけ)', () => {
     const secretish = 'create policy "only_this_line_should_not_appear" on public.t using (true);';
     const { problems, drift } = buildDbProblems({ migrationListText: LIST_IN_SYNC, diffStatus: 0, diffText: `${secretish}\nselect 1;` });
@@ -450,6 +466,18 @@ describe('CLI: db', () => {
     expect(payload.body).toContain('本番のスキーマとの比較 (db diff) を実行できませんでした');
   });
 
+  it('--db-diff-image-unavailable なら、Issue に「イメージを取得できずに確かめられなかった」と書く (#1523)', () => {
+    const r = runCli(
+      ['db', '--migration-list', '/tmp/list.txt', '--db-diff', '/tmp/diff.sql', '--db-diff-status', '75', '--db-diff-image-unavailable'],
+      { [ISSUES]: '', [`POST repos/${REPO}/issues`]: '{"number":6}' },
+      { '/tmp/list.txt': LIST_IN_SYNC, '/tmp/diff.sql': '' },
+    );
+    expect(r.code).toBe(1);
+    const payload = JSON.parse(r.calls.find((c) => c.args.includes('POST'))?.input ?? '{}');
+    expect(payload.body).toContain('Docker イメージを取得できずに確かめられませんでした');
+    expect(payload.body).not.toContain('本番のスキーマとの比較 (db diff) が失敗しました');
+  });
+
   it('--dry-run では Issue に触らず、本文を出力する', () => {
     const r = runCli([...dbArgs, '--dry-run'], { [ISSUES]: '' }, { '/tmp/list.txt': LIST_DRIFTED, '/tmp/diff.sql': '' });
     expect(r.code).toBe(1);
@@ -549,6 +577,12 @@ describe('parseArgs / createGitHub', () => {
       migrationList: 'a',
       dbDiff: 'b',
       dbDiffStatus: '0',
+      dbDiffImageUnavailable: false,
+    });
+    // db diff が Docker イメージを取得できずに終わった目印 (#1523。daily-consistency-check.yml が付ける)
+    expect(parseArgs(['db', '--db-diff-status', '75', '--db-diff-image-unavailable'])).toMatchObject({
+      dbDiffStatus: '75',
+      dbDiffImageUnavailable: true,
     });
   });
 
@@ -589,7 +623,7 @@ describe('parseArgs / createGitHub', () => {
 
 const WORKFLOW_PATH = path.join(process.cwd(), '.github', 'workflows', 'daily-consistency-check.yml');
 const workflowText = readFileSync(WORKFLOW_PATH, 'utf8');
-type Step = { name?: string; run?: string; if?: string; env?: Record<string, string>; uses?: string };
+type Step = { name?: string; id?: string; run?: string; if?: string; env?: Record<string, string>; uses?: string };
 type Job = { if?: string; steps: Step[] };
 const workflow = yaml.load(workflowText) as {
   on: Record<string, unknown>;
@@ -621,6 +655,17 @@ describe('daily-consistency-check.yml', () => {
     for (const forbidden of [/db\s+push/, /migration\s+repair/, /db\s+reset/, /--include-all/, /\bpsql\b/, /db\s+execute/]) {
       expect(script).not.toMatch(forbidden);
     }
+  });
+
+  it('db diff は取得元を替えてやり直すスクリプトを通し、イメージを取得できなかったときは Issue にその旨を書かせる (#1523)', () => {
+    const diff = workflow.jobs['db-drift'].steps.find((s) => s.id === 'diff');
+    expect(diff?.run).toContain('bash scripts/supabase-image-fallback.sh');
+    expect(diff?.run).toMatch(/--\s+npx --yes supabase@[0-9.]+ db diff --linked --schema public/);
+    expect(diff?.run).toContain('"$SIP_EXIT_PULL_UNAVAILABLE"');
+    expect(diff?.run).toContain(': > /tmp/db_diff.image_unavailable');
+    const report = workflow.jobs['db-drift'].steps.find((s) => s.name === 'Report (Issue)');
+    expect(report?.run).toContain('if [ -f /tmp/db_diff.image_unavailable ]; then image_args=(--db-diff-image-unavailable); fi');
+    expect(report?.run).toContain('"${image_args[@]}"');
   });
 
   it('Issue の報告は前の手順が失敗しても必ず動く', () => {

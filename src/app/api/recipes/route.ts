@@ -3,6 +3,8 @@ import { generateRequestId } from '@/lib/db-logger';
 import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { recipeAuthorName } from '@/lib/recipes/author-name';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // レシピ一覧取得
 export async function GET(request: Request) {
@@ -75,7 +77,7 @@ export async function GET(request: Request) {
   const recipes = (data || []).map((item: any) => ({
     id: item.id,
     userId: item.user_id,
-    authorName: item.user_profiles?.nickname || '匿名',
+    authorName: recipeAuthorName(item.user_profiles?.nickname),
     name: item.name,
     description: item.description,
     caloriesKcal: item.calories_kcal,
@@ -112,6 +114,9 @@ export async function GET(request: Request) {
 
 // レシピ作成
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const requestId = generateRequestId();
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();

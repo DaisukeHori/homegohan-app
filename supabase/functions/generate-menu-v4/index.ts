@@ -19,7 +19,10 @@ import { createClient } from "@supabase/supabase-js";
 import { aiDailyLimitEdgeResponse, consumeEdgeAiUsage } from "../_shared/ai-usage.ts";
 import { aiDailyLimitMessageOfDenied } from "../_shared/ai-daily-limit.ts";
 import { isUltimateModeRequested } from "../_shared/ai-usage-core.ts";
-import { MENU_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
+import {
+  MENU_REQUEST_FAILED_MESSAGE,
+  MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE,
+} from "../_shared/stored-failure-messages.ts";
 import { createLogger } from "../_shared/db-logger.ts";
 import {
   buildSearchQueryBase,
@@ -96,14 +99,6 @@ import {
   shouldSkipReferenceMenuSearch,
 } from "./reference-menu-utils.ts";
 import { selectRecentMenusForVariety } from "./context-utils.ts";
-import {
-  reconcileDishImages,
-  DEFAULT_MEAL_IMAGE_MODEL,
-} from "../_shared/meal-image.ts";
-import {
-  enqueueMealImageJobs,
-  triggerMealImageJobProcessing,
-} from "../_shared/meal-image-jobs.ts";
 import {
   saveMealToDb,
   ensureDailyMealIdsForDates,
@@ -2831,14 +2826,17 @@ Deno.serve(async (req: Request) => {
     // 本文の targetSlots の日付は、YYYY-MM-DD の実在する日付 (isCalendarDate の範囲 0101-01-02〜9998-12-30 の中) だけを受け付ける (#1433)。
     // 工程 1 は DB の target_slots が空のとき本文の targetSlots を使い、その日付を addDays (前後 7 日の文脈の期間) に渡すので、
     // 2026-02-30 や 2026/10/10 が来ると受け付けたあとの裏の処理が RangeError で落ちる。呼び出し元を確かめたあと・AI へ送る前に 400 にする。
-    // リクエストの行は (まだ動いていれば) 失敗にしておく (生成中のまま残さない)
+    // リクエストの行は (まだ動いていれば) 失敗にしておく (生成中のまま残さない)。
+    // 行の error_message は画面に出るので、判定の英語の文 (どの要素が正しくないか) は書かず定型の文を書く。
+    // 英語の文は console と、呼び出し元への 400 の本文にだけ出す (#1576)
     const invalidSlotDate = findInvalidTargetSlotDate(body.targetSlots);
     if (invalidSlotDate) {
+      console.warn("Invalid targetSlots in request body:", invalidSlotDate);
       const { error: persistError } = await supabase
         .from("weekly_menu_requests")
         .update({
           status: "failed",
-          error_message: invalidSlotDate,
+          error_message: MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE,
           updated_at: new Date().toISOString(),
         })
         .eq("id", requestId!)

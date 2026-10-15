@@ -49,6 +49,19 @@ export interface ReconcileDishImagesParams<TDish extends MealImageDish> {
    * 真なら、前回の商品の料理が画像の項目を持たない古い形でも、商品の料理として扱う (asCatalogMealDish)
    */
   previousMealIsCatalog?: boolean | null;
+  /**
+   * AI が献立の枠を作り直す保存か (Edge の save-meal の saveMealToDb だけが true を渡す。#1553)。
+   * 真で、前回の献立が商品の献立でない (previousMealIsCatalog が偽) とき:
+   *   - 中身が変わった料理 (前回の料理と subject_hash が違う) は、前回の写真・手で付けた画像を写さず、AI の画像のジョブを積む
+   *   - 料理が変わった (前回と料理の数が違うか、中身が変わった料理がある) なら、利用者のカバー (写真・利用者が付けた画像など、
+   *     AI の料理の画像でないカバー) を外し、新しい料理の画像からカバーを選び直す (候補が無ければ空。できた AI の画像が付く)。
+   *     あわせて、料理ごとの画像を持たずカバーに頼っていた写真・商品・手の画像の料理 (写真の複数の料理の、中身が同じまま残った料理など)
+   *     も、AI の画像の料理 (generated_ai・'pending'・subject_hash 付き) にしてジョブを積む
+   *     (カバーが空・ジョブが 0 で、画像の無い写真の印の料理だけが残る献立を作らない)
+   * 料理が同じまま (前回と同じ数・同じ中身) の保存し直しでは、今までどおり何も外さない。
+   * 商品の献立は、作り直しても商品の料理・商品の画像のまま (商品とのつながりは、この保存では外さないため)
+   */
+  regeneration?: boolean | null;
 }
 
 export interface ReconcileDishImagesResult<TDish extends MealImageDish> {
@@ -163,10 +176,25 @@ export interface MealImageJobWriteError {
   message?: string | null;
 }
 
+/**
+ * 冪等キーの一意な索引に当たる (待ち・処理中の) ジョブの状態。meal_image_jobs_idempotency_pending_idx の WHERE と同じ 2 つ (#1561)
+ */
+export const MEAL_IMAGE_JOB_ACTIVE_STATUSES = ['pending', 'processing'] as const;
+export type MealImageJobActiveStatus = (typeof MEAL_IMAGE_JOB_ACTIVE_STATUSES)[number];
+
 /** 行ごとの結果 */
 export type MealImageJobInsertOutcome =
   | { kind: 'inserted'; dishIndex: number; subjectHash: string }
-  | { kind: 'duplicate'; dishIndex: number; subjectHash: string }
+  | {
+      kind: 'duplicate';
+      dishIndex: number;
+      subjectHash: string;
+      /**
+       * 重なった同じ料理のジョブの状態 (#1561)。読めなかった (読み方を渡していない・読み取りのエラー・読む前に終わった) ときは null。
+       * null は待ちとみなして処理を起こす (起こしても待ちのジョブが無ければ空振りになるだけで、取りこぼすより安全)
+       */
+      activeStatus: MealImageJobActiveStatus | null;
+    }
   | { kind: 'failed'; dishIndex: number; subjectHash: string; code: string | null; message: string };
 
 /** enqueueMealImageJobs の結果 (#1487)。行ごとに数える */
@@ -175,18 +203,34 @@ export interface EnqueueMealImageJobsResult {
   inserted: number;
   /** 同じ料理の待ち・処理中のジョブがすでにあって積まなかった行 (冪等キーの重複) */
   duplicates: number;
+  /**
+   * duplicates のうち、重なった同じ料理のジョブが処理中 (processing) だったもの (#1561)。
+   * 画像の処理は待ち (pending) のジョブだけを拾うので、これらのために処理を起こしても空振りになる。
+   * 処理中のまま止まったジョブは、pg_cron のジョブ requeue-stale-meal-image-jobs が取り戻す
+   */
+  duplicatesProcessing: number;
   /** 書き込みに失敗した行 (権限・接続・値の不正など) */
   failed: number;
 }
 
+/** 1 行も積んでいないときの結果 */
+export const EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT: Readonly<EnqueueMealImageJobsResult> = Object.freeze({
+  inserted: 0,
+  duplicates: 0,
+  duplicatesProcessing: 0,
+  failed: 0,
+});
+
 /**
- * 積んだ結果から、処理を起こす件数 (#1532)。積めた行と、同じ料理の待ち・処理中のジョブ (重複) の数。
- * 0 (1 行も積めず、待ちのジョブも無い = 書き込みの失敗だけ・積む行が無い) なら処理を起こさない (空振りの呼び出しを出さない)。
- * 重複も数えるのは、前の呼び出しが失敗して待ちのまま残ったジョブを、保存し直したときに処理させるため
- * (待ちのジョブを定期的に拾う仕組みが無いので。Edge の saveMealToDb・積み直しの道具と同じ決まり)
+ * 積んだ結果から、処理を起こす件数 (#1532)。積めた行と、同じ料理の待ちのジョブ (重複のうち処理中でないもの) の数。
+ * 0 (1 行も積めず、待ちのジョブも無い = 書き込みの失敗だけ・積む行が無い・重複がどれも処理中) なら処理を起こさない
+ * (空振りの呼び出しを出さない)。
+ * 待ちの重複を数えるのは、前の呼び出しが失敗して待ちのまま残ったジョブを、保存し直したときにすぐ処理させるため
+ * (Edge の saveMealToDb・積み直しの道具と同じ決まり。待ちのジョブは pg_cron のジョブ process-pending-meal-image-jobs も 5 分ごとに拾う)。
+ * 処理中の重複は数えない (画像の処理は待ちのジョブだけを拾うので、起こしても空振りになる。#1561)
  */
 export function countMealImageJobsToProcess(result: EnqueueMealImageJobsResult): number {
-  return result.inserted + result.duplicates;
+  return result.inserted + result.duplicates - result.duplicatesProcessing;
 }
 
 /**
@@ -222,6 +266,33 @@ export async function buildMealImageJobRecords(params: {
 }
 
 /**
+ * 重なった (23505) 同じ料理の待ち・処理中のジョブの状態を読む関数 (#1561)。
+ * 冪等キーが同じで、状態が MEAL_IMAGE_JOB_ACTIVE_STATUSES の行を 1 行読む (部分索引があるので多くても 1 行)
+ */
+export type MealImageJobActiveStatusReader = (
+  record: MealImageJobRecord,
+) => PromiseLike<{ data: { status?: unknown } | null; error: MealImageJobWriteError | null }>;
+
+function asActiveStatus(value: unknown): MealImageJobActiveStatus | null {
+  return MEAL_IMAGE_JOB_ACTIVE_STATUSES.find((status) => status === value) ?? null;
+}
+
+/** 重なった同じ料理のジョブの状態。読めなければ null (例外は投げない) */
+async function readDuplicateActiveStatus(
+  record: MealImageJobRecord,
+  readActiveStatus: MealImageJobActiveStatusReader | undefined,
+): Promise<MealImageJobActiveStatus | null> {
+  if (!readActiveStatus) return null;
+  try {
+    const { data, error } = await readActiveStatus(record);
+    if (error) return null;
+    return asActiveStatus(data?.status);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 行ごとに insert し、積めた・重複・失敗を返す。例外は投げない (insertJob の例外も失敗として返す)。
  *
  * 1 回の upsert (onConflict: 'idempotency_key', ignoreDuplicates) にしない理由 (#1487 / #1505):
@@ -229,33 +300,42 @@ export async function buildMealImageJobRecords(params: {
  * ON CONFLICT (idempotency_key) は索引を推論できず、42P10 で必ず失敗する (行が 1 つも積まれない)。
  * 部分索引のままにするのは、失敗・取り消し・完了したジョブと同じ料理を、あとで積み直せるようにするため。
  * そのため行ごとに insert し、一意制約の違反 (23505) は「同じ料理のジョブが待ち・処理中」として重複に数える。
+ *
+ * 重複のときは readActiveStatus で、重なったジョブが待ちか処理中かを読む (#1561。処理中なら処理を起こしても空振りになるので、
+ * countMealImageJobsToProcess が数えない)。readActiveStatus を渡さない・読めないときの状態は null (待ちとみなす)
  */
 export async function insertMealImageJobRecords(
   records: ReadonlyArray<MealImageJobRecord>,
   insertJob: (record: MealImageJobRecord) => PromiseLike<{ error: MealImageJobWriteError | null }>,
+  readActiveStatus?: MealImageJobActiveStatusReader,
 ): Promise<MealImageJobInsertOutcome[]> {
   return Promise.all(
     records.map(async (record): Promise<MealImageJobInsertOutcome> => {
       const base = { dishIndex: record.dish_index, subjectHash: record.subject_hash };
+      let insertError: MealImageJobWriteError | null;
       try {
-        const { error } = await insertJob(record);
-        if (!error) return { kind: 'inserted', ...base };
-        if (error.code === MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE) return { kind: 'duplicate', ...base };
-        return { kind: 'failed', ...base, code: error.code ?? null, message: error.message ?? 'unknown error' };
+        ({ error: insertError } = await insertJob(record));
       } catch (error) {
         return { kind: 'failed', ...base, code: null, message: error instanceof Error ? error.message : String(error) };
       }
+      if (!insertError) return { kind: 'inserted', ...base };
+      if (insertError.code === MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE) {
+        return { kind: 'duplicate', ...base, activeStatus: await readDuplicateActiveStatus(record, readActiveStatus) };
+      }
+      return { kind: 'failed', ...base, code: insertError.code ?? null, message: insertError.message ?? 'unknown error' };
     }),
   );
 }
 
 /** 行ごとの結果を数える */
 export function summarizeMealImageJobOutcomes(outcomes: ReadonlyArray<MealImageJobInsertOutcome>): EnqueueMealImageJobsResult {
-  const result: EnqueueMealImageJobsResult = { inserted: 0, duplicates: 0, failed: 0 };
+  const result: EnqueueMealImageJobsResult = { ...EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT };
   for (const outcome of outcomes) {
     if (outcome.kind === 'inserted') result.inserted += 1;
-    else if (outcome.kind === 'duplicate') result.duplicates += 1;
-    else result.failed += 1;
+    else if (outcome.kind === 'duplicate') {
+      result.duplicates += 1;
+      if (outcome.activeStatus === 'processing') result.duplicatesProcessing += 1;
+    } else result.failed += 1;
   }
   return result;
 }
@@ -486,12 +566,14 @@ export function isAiImagePipelineDish(dish: MealImageDish): boolean {
 }
 
 /**
- * 商品の献立の planned_meals.source_type (lib/catalog-products.ts の buildCatalogMealFields・端末の保存 (apps/mobile/app/meals/new.tsx) が書く)
+ * 商品の献立の planned_meals.source_type (lib/catalog-products.ts の buildCatalogMealFields が書く。
+ * 以前は端末の保存 (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx) も書いていた。画面は届かない画面として消したが (#1598)、
+ * その画面が書いた行は残るので、下の「端末の保存」の形も読み続ける)
  */
 export const CATALOG_PRODUCT_MEAL_SOURCE_TYPE = 'catalog_product';
 
 /**
- * 商品の献立で、商品の料理がある位置。商品を選ぶ保存 (buildCatalogMealFields・端末の保存) は、料理を商品の料理 1 つだけにする
+ * 商品の献立で、商品の料理がある位置。商品を選ぶ保存 (buildCatalogMealFields・以前の端末の保存) は、料理を商品の料理 1 つだけにする
  */
 const CATALOG_MEAL_PRODUCT_DISH_INDEX = 0;
 
@@ -547,7 +629,15 @@ export function isMealCoverHeldByImagelessPreservedDish(
   mealCoverImageUrl: string | null | undefined,
 ): boolean {
   if (!mealCoverImageUrl) return false;
-  return dishes.some((dish) => isCoverReadySource(dish.image_source ?? null) && !dish.image_url);
+  return dishes.some(isImagelessCoverReadyDish);
+}
+
+/**
+ * 料理ごとの画像を持たず、献立のカバーに頼る写真・商品・手の画像の料理か (写真の複数の料理 (buildPhotoDishList) など)。
+ * isMealCoverHeldByImagelessPreservedDish と、AI の作り直しで料理が変わったときに AI の画像へ回す料理 (#1553) の判定
+ */
+function isImagelessCoverReadyDish(dish: MealImageDish): boolean {
+  return isCoverReadySource(dish.image_source ?? null) && !dish.image_url;
 }
 
 function normalizeWhitespace(value: string): string {
@@ -635,6 +725,9 @@ function hasGeneratedAiDishImage(dish: MealImageDish, imageUrl: string): boolean
  * 写真・商品・利用者が作った画像・手で付けた画像のカバー (どの AI の料理の画像とも一致しない、空でないカバー) は、
  * 画像の処理 (process-meal-image-jobs)・保存し直し (reconcileDishImages)・AI の作り直し (save-meal) のどこからも置き換えない。
  * カバーを決める全員は、deriveMealCoverImage を通してこの決まりに従う。
+ * 例外はカバーを外す 2 つだけ (#1553): AI の作り直し (save-meal) で料理が変わったとき (商品の献立を除く。reconcileDishImages の
+ * regeneration) と、料理が 2 品以上の献立の PATCH に image_url: null が来たとき (buildDishImagePayload の clearCover)。
+ * 外したあとのカバーも deriveMealCoverImage で料理の画像から選び直す
  *
  * dishLists: いまのカバーの出どころになりうる料理の一覧 (保存する前の料理と、これから保存する料理)。
  * 料理が書き換わる保存し直しでは、前回の料理の AI の画像だったカバーも AI のものとして扱う
@@ -735,11 +828,26 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
   const model = params.model?.trim() || DEFAULT_MEAL_IMAGE_MODEL;
 
   const previousMealIsCatalog = params.previousMealIsCatalog === true;
+  // AI の作り直しで料理が変わったときに、利用者の画像 (料理の写真・手で付けた画像・献立のカバー) を外すか (#1553)
+  const releaseUserImagesOnChange = params.regeneration === true && !previousMealIsCatalog;
+  /** 前回と比べて料理が変わったか (料理の数が違う・中身が変わった料理がある)。#1553 の作り直しのカバーの扱いに使う */
+  let mealDishesChanged = previousDishes.length !== nextDishes.length;
 
   const dishes: TDish[] = [];
   let jobs: MealImageJobSeed[] = [];
+  const buildDishJobSeed = (dish: MealImageDish, index: number, subjectHash: string, prompt: string): MealImageJobSeed => ({
+    dishIndex: index,
+    dishName: String(dish.name ?? '').trim() || `dish-${index + 1}`,
+    subjectHash,
+    prompt,
+    model,
+    triggerSource: params.triggerSource,
+    referenceImageUrls: [],
+  });
   /** AI の画像のジョブを積もうとした料理 (献立のカバーを守るために積むのをやめるとき、料理の状態を戻すのに使う) */
   const jobDishes: Array<{ index: number; sameSubject: boolean; previousDish: TDish | undefined }> = [];
+  /** 料理ごとの subject_hash とプロンプト (AI の作り直しで、カバーに頼っていた料理を AI の画像へ回すときに使う。#1553) */
+  const dishSubjects: Array<{ subjectHash: string; prompt: string }> = [];
 
   for (let index = 0; index < nextDishes.length; index += 1) {
     const nextDish = nextDishes[index];
@@ -754,6 +862,10 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
       ? previousDish.image_subject_hash ?? await buildDishImageSubjectHash(previousDish, index)
       : null;
     const sameSubject = previousSubjectHash === subjectHash;
+    if (!sameSubject) mealDishesChanged = true;
+    dishSubjects.push({ subjectHash, prompt });
+    // AI の作り直しで中身が変わった料理は、前回の写真・手で付けた画像を写さない (#1553。新しい料理の AI の画像を作る)
+    const releasePreviousDishImage = releaseUserImagesOnChange && !!previousDish && !sameSubject;
 
     const reconciledDish: TDish = {
       ...nextDish,
@@ -768,7 +880,7 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     // 付けなければ同じ料理の待ちのジョブが残っていても、この画像を上書きしない)。
     // 新しく作る入口 (POST) で送られた写真・商品・手の画像の料理も、前回の料理と同じく保持する (preserveSubmittedDishImages)
     const preservedSource: MealImageDish | null = previousDish
-      ? (isPreservedDishImage(previousDish) ? previousDish : null)
+      ? (!releasePreviousDishImage && isPreservedDishImage(previousDish) ? previousDish : null)
       : (params.preserveSubmittedDishImages === true && isSubmittedPreservedDishImage(nextDish) ? nextDish : null);
     if (preservedSource) {
       const manualOverrideChanged = preservedSource === previousDish &&
@@ -817,15 +929,41 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     dishes.push(reconciledDish);
     jobDishes.push({ index, sameSubject, previousDish });
 
-    jobs.push({
-      dishIndex: index,
-      dishName: String(nextDish.name ?? '').trim() || `dish-${index + 1}`,
-      subjectHash,
-      prompt,
-      model,
-      triggerSource: params.triggerSource,
-      referenceImageUrls: [],
-    });
+    jobs.push(buildDishJobSeed(nextDish, index, subjectHash, prompt));
+  }
+
+  // AI の作り直しで料理が変わったら、利用者のカバー (AI の料理の画像でないカバー) を外す (#1553)。
+  // 外したカバーは無いものとして、ジョブを積むか (下の判定) とカバーの選び直し (deriveMealCoverImage) を決める
+  const releaseOnRegeneration = releaseUserImagesOnChange && mealDishesChanged;
+  const currentCoverImageUrl = params.fallbackMealImageUrl ?? null;
+  const releaseUserCover = releaseOnRegeneration &&
+    !isMealCoverAutoReplaceable(currentCoverImageUrl, [dishes, previousDishes]);
+  const mealCoverForOwnership = releaseUserCover ? null : currentCoverImageUrl;
+
+  // AI の作り直しで料理が変わったら、料理ごとの画像を持たずカバーに頼っていた写真・商品・手の画像の料理
+  // (写真の複数の料理の、中身が同じまま残った料理など) も AI の画像の料理にしてジョブを積む (#1553)。
+  // 写真のカバーは上で外すので、残すと画像がどこにも無いまま「再生成待ち」の写真の印の料理になり、あとから画像を作る経路も無い
+  // (needsImageRetry は写真の料理を積み直さない)。外すカバーが空・AI の画像のときも、その料理に画像が無いのは同じなので回す。
+  // 回したあとはカバーに頼る料理が残らないので、下の「ジョブを積まない」判定には当たらない
+  if (releaseOnRegeneration) {
+    for (let index = 0; index < dishes.length; index += 1) {
+      if (!isImagelessCoverReadyDish(dishes[index])) continue;
+      const { subjectHash, prompt } = dishSubjects[index];
+      const released: TDish = {
+        ...dishes[index],
+        image_subject_hash: subjectHash,
+        image_url: null,
+        image_source: 'generated_ai',
+        // ここに来るのは前回と同じ料理 (中身が変わった料理は、上で前回の写真・手の画像を写さず積んでいる) なので、
+        // 前回の画像の無い料理の画像を作る 'pending' (更新待ちの 'stale' ではない。同じ料理の積み直しと同じ決まり)
+        image_status: 'pending',
+        image_generated_at: null,
+        image_error: null,
+      };
+      dishes[index] = released;
+      jobs.push(buildDishJobSeed(released, index, subjectHash, prompt));
+    }
+    jobs.sort((a, b) => a.dishIndex - b.dishIndex);
   }
 
   // 献立のカバーが、料理ごとの画像を持たない写真・商品の料理のもの (写真の複数の料理・画像の項目の無い商品の料理) なら、
@@ -834,7 +972,7 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
   // 積むのをやめた料理は、前回と同じ料理なら前回の状態をそのまま写す ('pending' にすると、処理するジョブが無いので「生成中」のまま残る)。
   // それ以外 (足した料理・中身を変えた料理) は画像の無い状態 (状態なし。画面は「生成中」「再生成待ち」を出さない) にし、
   // subject_hash も付けない (AI の画像の料理とみなさず、次に変えずに保存し直しても積み直さない)
-  if (jobs.length > 0 && isMealCoverHeldByImagelessPreservedDish(dishes, params.fallbackMealImageUrl)) {
+  if (jobs.length > 0 && isMealCoverHeldByImagelessPreservedDish(dishes, mealCoverForOwnership)) {
     for (const { index, sameSubject, previousDish } of jobDishes) {
       const kept: TDish = { ...dishes[index] };
       if (sameSubject && previousDish) {
@@ -862,9 +1000,10 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     jobs,
     // カバーの持ち主の決まり (isMealCoverAutoReplaceable): いまのカバーが写真・商品・利用者の画像なら、そのまま返す。
     // 前回の AI の料理の画像だったカバーは、料理の画像から選び直す
+    // (AI の作り直しで料理が変わったときは、利用者のカバーを外したうえで選び直す。#1553)
     mealCoverImageUrl: deriveMealCoverImage({
       dishes,
-      currentCoverImageUrl: params.fallbackMealImageUrl,
+      currentCoverImageUrl: mealCoverForOwnership,
       previousDishes,
     }),
   };

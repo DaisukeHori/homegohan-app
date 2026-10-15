@@ -9,13 +9,18 @@ import { buildFamilyTransferAcceptUrl } from '@/lib/membership/urls';
 import { sendEmail } from '@/lib/emails/send';
 import { isEmailFailure } from '@/lib/emails/send-result';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
+import { normalizeProfileName } from '@/lib/profile-name';
 import {
   checkTransferProposeLimit,
   inviteThrottleFailureFromRpcError,
   inviteThrottleResponse,
 } from '@/lib/membership/invite-throttle';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const logger = createLogger('POST /api/family/representative-transfer/propose', generateRequestId());
   const supabase = await createClient();
 
@@ -102,7 +107,8 @@ export async function POST(request: Request) {
       const envelope = renderFamilyTransferProposedEmail({
         to_email: toEmail,
         // 提案者のメールアドレスは受け取る側に見せない (ニックネームだけを載せる)
-        from_name: fromUserProfile?.nickname || '代表者',
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') ときは既定の呼称 (#1649)
+        from_name: normalizeProfileName(fromUserProfile?.nickname) ?? '代表者',
         family_name: familyGroup?.name ?? '家族グループ',
         accept_url: acceptUrl,
         reason: parsed.reason,

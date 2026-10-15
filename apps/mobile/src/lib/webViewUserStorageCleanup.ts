@@ -50,6 +50,7 @@
  *      Supabase の認証の Cookie は Web のクライアントが読むので HttpOnly ではない)。
  *      認証ブリッジで開くときは消さない: 注入の JS は、ブリッジのリダイレクトの先のページで、ブリッジがいま張った
  *      新しい利用者の Cookie を見るため。ブリッジは同じ名前の Cookie を上書きするので、前の利用者の Cookie は残らない。
+ * 1 は端末の Cookie をすべて消し、未ログインの起動と SIGNED_OUT でも走るが、未ログインの間に作られて消えると困る Cookie は無い (#1647: Web が張るのは sb-・is_native_app (?mode=app の読み込みで middleware が張り直す)・ログイン中だけの aiChatBubblePosition / handson_tour_force。未ログインで使う WebView は Turnstile のウィジェットだけ)。
  * 限界: iOS で、1 のあと最初の WebView を認証ブリッジ無しで開いたときの最初の要求は、WKWebView の置き場に残った前の利用者の
  * Cookie を送る (注入の JS は応答を受けたあとに動く)。サーバーのセッションがログアウトで失効していれば、Web の middleware の
  * セッションの確認が失敗して Cookie を消すので、前の利用者として表示されるのは、オフラインでログアウトしたときだけ。
@@ -73,8 +74,12 @@ export const WEB_VIEW_STORAGE_CLEARED_MARKER_KEY = "homegohan:native-sign-out-cl
 /**
  * 端末の Cookie の置き場を空にする (Networking.clearCookies) のを待つ上限 (ミリ秒)。
  * ネイティブは消し終わると必ず知らせるが、知らせが来ないときにログアウトを止めないための上限。
- * 端末の上の処理 (ディスクの書き込みを含む) で、通信はしないので、ふつうは数十ミリ秒で終わる。待ちすぎてログアウトの
- * 画面の移動が遅れないよう、利用者が「押したのに止まった」と感じにくい長さにしている。
+ * 端末の上の処理 (ディスクの書き込みを含む) で、通信はしないので、ふつうは数十ミリ秒で終わる。
+ * 完了を待つのは、このあとにサインアウトする経路 (ログアウト・退会の signOut.ts と、起動時にサーバーが失効と明言したとき) だけ
+ * (userScopedLocalData.ts の WebViewNativeCookieClearWait。#1647)。待ちすぎてログアウトの画面の移動が遅れないよう、
+ * 利用者が「押したのに止まった」と感じにくい長さにしている。
+ * 起動時に未ログインと決まったときと SIGNED_OUT は完了を待たないので、この上限は画面の表示を遅らせない
+ * (知らせが来ないときに、待っていた Promise を片付けるためだけに効く)。
  */
 export const WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS = 3000;
 

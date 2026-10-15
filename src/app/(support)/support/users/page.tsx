@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
+import { normalizeProfileName } from "@/lib/profile-name";
 
 interface UserBasic {
   id: string;
@@ -171,7 +172,7 @@ function SupportUsersContent() {
                   <div className="flex items-center justify-between">
                     <div>
                       <div className="flex items-center gap-2">
-                        <p className="font-medium text-gray-800">{user.nickname}</p>
+                        <p className="font-medium text-gray-800">{normalizeProfileName(user.nickname) ?? "(名前なし)"}</p>
                         {user.isBanned && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
                             BAN
@@ -216,7 +217,7 @@ function SupportUsersContent() {
                 <>
                   <div className="flex justify-between items-start">
                     <div>
-                      <h2 className="text-lg font-bold text-gray-800">{userDetail.user.nickname}</h2>
+                      <h2 className="text-lg font-bold text-gray-800">{normalizeProfileName(userDetail.user.nickname) ?? "(名前なし)"}</h2>
                       <p className="text-sm text-gray-500">{userDetail.user.id.substring(0, 8)}...</p>
                     </div>
                     <button

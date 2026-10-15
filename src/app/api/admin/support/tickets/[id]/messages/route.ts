@@ -9,6 +9,10 @@
  * 顧客がチケットを閲覧できる画面は無く、このメールが唯一の通知経路。
  * メールが送れなくてもメッセージは保存済みなので 201 を返し、送信結果は応答の `email` に載せる。
  * 内部メモはメールにしない。
+ *
+ * #1571: メッセージの追加は運営の操作でチケットの状態を変えるので、保存できたら admin.support.ticket.message_add を
+ * 監査ログに 1 行残す。対象はチケットを作ったユーザー (07-audit-monitoring.md §4.1.1 のチケットの閲覧と同じ)。
+ * ユーザーが分からないチケットはチケット自体を対象にする。本文は入れない (ticket_id・message_id・is_internal だけ)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
@@ -20,6 +24,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { sendTicketReplyEmail } from '@/lib/admin/send-ticket-reply-email';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -104,6 +109,9 @@ export async function GET(request: NextRequest, props: RouteContext) {
 }
 
 export async function POST(request: NextRequest, props: RouteContext) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const logger = createLogger('POST /api/admin/support/tickets/[id]/messages', generateRequestId());
 
@@ -165,6 +173,18 @@ export async function POST(request: NextRequest, props: RouteContext) {
     if (msgError || !message) {
       return internalError('POST /api/admin/support/tickets/[id]/messages', msgError, { userId: currentUser.id }, { shape: 'nested' });
     }
+
+    // 監査ログ (#1571)。記録に失敗しても投稿は成功のまま (失敗は db-logger に残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: currentUser.id,
+      actionType: 'admin.support.ticket.message_add',
+      targetId: ticket.user_id ?? params.id,
+      targetType: ticket.user_id ? 'user' : 'support_ticket',
+      details: { ticket_id: params.id, message_id: message.id, is_internal },
+      request,
+      routeName: 'api/admin/support/tickets/[id]/messages POST',
+    });
 
     // 内部メモ (is_internal=true) は顧客に見せないため、メールにしない (email は応答に含めない)
     let email: ReplyEmailOutcome | undefined;
