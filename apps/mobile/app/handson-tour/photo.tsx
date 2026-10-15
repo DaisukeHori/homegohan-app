@@ -8,6 +8,7 @@ import {
   Image,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   View,
 } from 'react-native';
@@ -21,6 +22,8 @@ import {
   STEP1_SUB_STEP_TO_TARGET,
   personalize,
   fireAnalytics,
+  TOUR_PHOTO_SAVE_URL,
+  buildTourPhotoSaveBody,
 } from '@homegohan/handson-tour-shared';
 import type { SubStepOfStep1 } from '@homegohan/handson-tour-shared';
 
@@ -29,22 +32,28 @@ import { getApi } from '../../src/lib/api';
 import { colors, radius, spacing } from '../../src/theme';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { TourSandboxWrapper } from '../../src/handson-tour/TourSandboxWrapper';
+import {
+  tourPhotoSaveErrorOutcomeOf,
+  type TourPhotoSaveFailure,
+} from '../../src/handson-tour/photo-save-failure';
 import { registerTourTarget, unregisterTourTarget } from '../../src/handson-tour/useTourOverlayLogic';
 
 const SANDBOX_SAMPLE_IMAGE = require('../../assets/handson-tour/sample-meal.webp');
 
 // ─── Sandbox content component ────────────────────────────────
 // Accepts mode / onSandboxComplete injected by TourSandboxWrapper.cloneElement
+// 保存そのもの (POST /api/meal-plans/add-from-photo) は親 (HandsonTourPhoto の handleSave) がする。
+// 吹き出しの【保存】とこの画面の保存ボタンのどちらからでも、同じ保存を通る (#1625。Web と同じ形)
 interface MealSandboxEmbedProps {
   mode?: 'sandbox';
   onSandboxComplete?: (result: unknown) => void;
   prefilled?: typeof MOCK_PHOTO_RESPONSE;
-  apiOptions?: { source: 'handson_tour'; sandbox: true };
+  /** 保存中 (親の state)。ボタンを押せなくしてスピナーを出す */
+  isSaving?: boolean;
 }
 
-function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, apiOptions = { source: 'handson_tour', sandbox: true } }: MealSandboxEmbedProps) {
+function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, isSaving = false }: MealSandboxEmbedProps) {
   const insets = useSafeAreaInsets();
-  const [isSaving, setIsSaving] = useState(false);
 
   // Spotlight target refs
   const cameraButtonRef = useRef<View>(null);
@@ -72,22 +81,8 @@ function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, 
     };
   }, []);
 
-  const handleSave = async () => {
-    setIsSaving(true);
-    try {
-      const api = getApi();
-      await api.post('/api/meal-plans/add-from-photo', {
-        ...prefilled,
-        sandbox: apiOptions.sandbox,
-        source: apiOptions.source,
-      });
-      onSandboxComplete?.(prefilled);
-    } catch {
-      // sandbox errors are non-fatal — complete anyway
-      onSandboxComplete?.(prefilled);
-    } finally {
-      setIsSaving(false);
-    }
+  const handleSave = () => {
+    onSandboxComplete?.(prefilled);
   };
 
   return (
@@ -158,8 +153,11 @@ function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, 
         {/* Save button — Spotlight target for sub-step 1.6 */}
         <View ref={saveButtonRef} testID="meal-save-button">
           <Pressable
+            testID="meal-save-button-press"
             onPress={handleSave}
             disabled={isSaving}
+            accessibilityRole="button"
+            accessibilityState={{ disabled: isSaving, busy: isSaving }}
             style={({ pressed }) => ({
               paddingVertical: spacing.lg,
               borderRadius: 12,
@@ -172,7 +170,7 @@ function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, 
             })}
           >
             {isSaving ? (
-              <ActivityIndicator size="small" color="#fff" />
+              <ActivityIndicator testID="tour-step-1-saving" size="small" color="#fff" />
             ) : null}
             <Text style={{ fontSize: 16, fontWeight: '700', color: '#fff' }}>
               {isSaving ? '保存中...' : 'この食事を記録する'}
@@ -202,6 +200,11 @@ export default function HandsonTourPhoto() {
   const percent = Math.round((MOCK_PHOTO_RESPONSE.calories / targetKcal) * 100);
 
   const [subStep, setSubStep] = useState<SubStepOfStep1>('1.1');
+  const [isSaving, setIsSaving] = useState(false);
+  // 保存の失敗 (設計書 03-step1 §3.10 のエラー画面)。連続の失敗回数で【あとで】を強調する
+  const [saveError, setSaveError] = useState(false);
+  const [saveErrorCount, setSaveErrorCount] = useState(0);
+  const savingRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
 
   // mount 時に step_viewed (step=1) を発火
@@ -259,23 +262,83 @@ export default function HandsonTourPhoto() {
     };
   }, [subStep]);
 
-  const handleSandboxComplete = async () => {
+  // 保存 (サブステップ 1.6 → 1.7 → 1.8)。設計書 03-step1 §3.7〜§3.10 (Web の src/app/handson-tour/photo/page.tsx と同じ形。#1625):
+  // 保存の API を呼び、成功したら Step 2 へ。失敗したら進まずにエラー画面 (tour-step-1-error) を出し、
+  // 【もう一度】で 1.7 から再実行、【あとで】でホームへ。
+  // 以前は、本文が MOCK_PHOTO_RESPONSE そのままで mealType が無く 400 になり、その失敗も握りつぶして進んでいた。
+  // 吹き出しの【保存】は保存の API を呼ばずに 1 秒後に Step 2 へ進むだけだった。
+  // ただし「この利用者はお試しの保存の対象ではない」(sandbox_not_eligible) は、通信や保存の失敗ではなく、何度送っても変わらない答えなので、
+  // エラー画面を出さずに Step 2 へ進める (設定からのやり直し = 設計書 01-trigger-flow §1.2 / §4.2 は Step 4 まで通して見せる)。
+  const handleSave = async () => {
+    // 二重送信を防ぐ (吹き出しの【保存】と、下の画面の保存ボタンの両方から呼ばれうる)
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaveError(false);
+    advanceSubStep('1.7');
+    setIsSaving(true);
+
+    let failure: TourPhotoSaveFailure | null = null;
+    try {
+      await getApi().post(TOUR_PHOTO_SAVE_URL, buildTourPhotoSaveBody());
+    } catch (error) {
+      const outcome = tourPhotoSaveErrorOutcomeOf(error);
+      if (outcome.kind === 'failed') failure = outcome.failure;
+    } finally {
+      savingRef.current = false;
+      setIsSaving(false);
+    }
+
+    if (failure) {
+      // 失敗は必ず記録する。そのうえでエラー画面を出す (設計書 03-step1 §3.10)
+      if (profile?.id) {
+        fireAnalytics('handson_tour_step_error', {
+          user_id: profile.id,
+          timestamp: new Date().toISOString(),
+          platform: 'ios' as const,
+          app_version: '1.0.0',
+          step: 1,
+          sub_step: '1.6',
+          ...failure,
+        });
+      }
+      setSaveErrorCount((count) => count + 1);
+      setSaveError(true);
+      return;
+    }
+
+    // 完了の計測は保存が成功してから (設計書 03-step1 §9: handson_tour_step_completed は 1.6 保存成功)。
+    // 保存の対象でない利用者 (sandbox_not_eligible) も Step 1 を終えて先へ進むので記録する
     if (profile?.id) {
-      const dwell_ms = Date.now() - mountTimeRef.current;
       fireAnalytics('handson_tour_step_completed', {
         user_id: profile.id,
         timestamp: new Date().toISOString(),
         platform: 'ios' as const,
         app_version: '1.0.0',
         step: 1,
-        dwell_ms,
+        dwell_ms: Date.now() - mountTimeRef.current,
       });
     }
     // Step 2 へ遷移
     router.push(HANDSON_TOUR_ROUTES.step2 as never);
   };
 
+  // エラー画面の【あとで】(設計書 03-step1 §3.10: /home へ遷移 + skip API。§9: handson_tour_skipped)
   const handleSkip = async () => {
+    if (profile?.id) {
+      fireAnalytics('handson_tour_skipped', {
+        user_id: profile.id,
+        timestamp: new Date().toISOString(),
+        platform: 'ios' as const,
+        app_version: '1.0.0',
+        step: 1,
+        reason: 'user_action',
+      });
+    }
+    try {
+      await getApi().post('/api/handson-tour/skip', { step: 1, reason: 'user_action' });
+    } catch {
+      // 通信に失敗してもホームへ進める (Step 0 の【あとで】と同じ)
+    }
     router.replace('/home' as never);
   };
 
@@ -335,21 +398,62 @@ export default function HandsonTourPhoto() {
     }
   };
 
-  const isAutoStep = ['1.1', '1.2', '1.3', '1.4', '1.7'].includes(subStep);
+  const primaryAction = (() => {
+    if (subStep === '1.5') {
+      return {
+        label: i18n.step1.next_button,
+        onPress: () => advanceSubStep('1.6'),
+      };
+    }
+    if (subStep === '1.6') {
+      return {
+        label: i18n.step1.save_button,
+        onPress: handleSave,
+        disabled: isSaving,
+        showSpinner: isSaving,
+      };
+    }
+    // 1.1〜1.4 は自動で進む。1.7 は保存中 (ボタンを出さない)
+    return undefined;
+  })();
 
-  const primaryAction = !isAutoStep
-    ? {
-        label: subStep === '1.6' ? i18n.step1.save_button : i18n.step1.next_button,
-        onPress: () => {
-          if (subStep === '1.5') advanceSubStep('1.6');
-          else if (subStep === '1.6') {
-            advanceSubStep('1.7');
-            // 保存 API は sandbox モードで既存コンポーネントが呼ぶ
-            setTimeout(() => handleSandboxComplete(), 1000);
-          }
-        },
-      }
-    : undefined;
+  if (saveError) {
+    // 設計書 03-step1 §3.10: フルスクリーンのエラー画面 (Step 0 と同じパターン)。吹き出しのオーバーレイは出さない
+    const emphasizeSkip = saveErrorCount >= HANDSON_TOUR_CONSTANTS.ERROR_CONSECUTIVE_THRESHOLD;
+    return (
+      <View
+        style={errorStyles.backdrop}
+        testID="tour-step-1-error"
+        accessibilityRole="alert"
+        accessibilityLiveRegion="polite"
+      >
+        <View style={errorStyles.modal}>
+          <Text style={errorStyles.title} accessibilityRole="header">
+            {`⚠ ${i18n.step1.error_title}`}
+          </Text>
+          <Text style={errorStyles.subtitle}>{i18n.step1.error_subtitle}</Text>
+          <Pressable
+            testID="tour-step-1-error-retry"
+            onPress={handleSave}
+            accessibilityRole="button"
+            style={errorStyles.retryButton}
+          >
+            <Text style={errorStyles.retryButtonText}>{i18n.step1.error_retry_button}</Text>
+          </Pressable>
+          <Pressable
+            testID="tour-step-1-error-skip"
+            onPress={handleSkip}
+            accessibilityRole="button"
+            style={errorStyles.skipButton}
+          >
+            <Text style={[errorStyles.skipButtonText, emphasizeSkip && errorStyles.skipButtonTextEmphasized]}>
+              {i18n.step1.error_skip_button}
+            </Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
     <View style={{ flex: 1 }} testID="tour-step-1">
@@ -368,12 +472,74 @@ export default function HandsonTourPhoto() {
           mode: 'sandbox',
           initialStep: 'result',
           prefilled: MOCK_PHOTO_RESPONSE,
-          apiOptions: { source: 'handson_tour', sandbox: true },
+          isSaving,
         }}
-        onSandboxComplete={handleSandboxComplete}
+        onSandboxComplete={handleSave}
       >
         <MealSandboxEmbed />
       </TourSandboxWrapper>
     </View>
   );
 }
+
+// エラー画面 (設計書 03-step1 §3.10)。見た目は Step 0 (app/handson-tour/index.tsx) のモーダルに合わせる
+const errorStyles = StyleSheet.create({
+  backdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  modal: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
+    paddingHorizontal: 24,
+    paddingVertical: 32,
+    alignItems: 'center',
+    gap: 16,
+  },
+  title: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+    textAlign: 'center',
+  },
+  subtitle: {
+    fontSize: 14,
+    color: '#4B5563',
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  retryButton: {
+    backgroundColor: '#2563EB',
+    borderRadius: 12,
+    paddingVertical: 14,
+    width: '100%',
+    minHeight: 48,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  retryButtonText: {
+    color: '#FFFFFF',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  skipButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  skipButtonText: {
+    color: '#6B7280',
+    fontSize: 14,
+  },
+  skipButtonTextEmphasized: {
+    color: '#111827',
+    fontWeight: '700',
+  },
+});
