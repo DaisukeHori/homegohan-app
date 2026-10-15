@@ -4,16 +4,16 @@ import { useEffect, useState, useCallback, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { normalizeProfileName } from "@/lib/profile-name";
+import { UsersListResponseSchema, type UserListItem } from "@/lib/admin/users-schemas";
 
-interface UserBasic {
-  id: string;
-  nickname: string;
-  role: string;
-  ageGroup: string;
-  gender: string;
-  isBanned: boolean;
-  lastLoginAt: string | null;
-  createdAt: string;
+// 一覧に出す件数 (GET /api/admin/users の per_page。API の既定と同じ 50 件)
+const USERS_PER_PAGE = 50;
+
+const USERS_LOAD_ERROR = "ユーザー一覧を取得できませんでした。しばらくしてから、もう一度お試しください。";
+
+/** 日時 (ISO 8601) を一覧の日付の表示にする。値が無ければ "-" */
+function formatDate(value: string | null): string {
+  return value ? new Date(value).toLocaleDateString("ja-JP") : "-";
 }
 
 interface UserDetail {
@@ -22,7 +22,7 @@ interface UserDetail {
     nickname: string;
     ageGroup: string;
     gender: string;
-    role: string;
+    roles: string[] | null;
     organizationId: string | null;
     isBanned: boolean;
     bannedAt: string | null;
@@ -45,8 +45,10 @@ function SupportUsersContent() {
   const searchParams = useSearchParams();
   const initialUserId = searchParams.get("id");
   
-  const [users, setUsers] = useState<UserBasic[]>([]);
+  // 一覧は GET /api/admin/users の応答の形 (UserListItem。鍵は snake_case) のまま持つ (#1717)
+  const [users, setUsers] = useState<UserListItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedUserId, setSelectedUserId] = useState<string | null>(initialUserId);
   const [userDetail, setUserDetail] = useState<UserDetail | null>(null);
@@ -58,15 +60,30 @@ function SupportUsersContent() {
     try {
       const params = new URLSearchParams();
       if (searchQuery) params.set("q", searchQuery);
-      params.set("limit", "50");
+      params.set("per_page", String(USERS_PER_PAGE));
 
       const res = await fetch(`/api/admin/users?${params}`);
-      if (res.ok) {
-        const data = await res.json();
-        setUsers(data.users);
+      if (!res.ok) {
+        // 取得できなかったことを「ユーザーが見つかりません」と見せない
+        setUsers([]);
+        setLoadError(USERS_LOAD_ERROR);
+        return;
       }
+      // 応答は { data: UserListItem[], meta } (route と同じスキーマで確かめる)。
+      // 以前は data.users と camelCase の鍵で読んでいて、一覧が出なかった (#1717)
+      const parsed = UsersListResponseSchema.safeParse(await res.json());
+      if (!parsed.success) {
+        console.error("Unexpected /api/admin/users response:", parsed.error.flatten());
+        setUsers([]);
+        setLoadError(USERS_LOAD_ERROR);
+        return;
+      }
+      setUsers(parsed.data.data);
+      setLoadError(null);
     } catch (error) {
       console.error("Failed to fetch users:", error);
+      setUsers([]);
+      setLoadError(USERS_LOAD_ERROR);
     } finally {
       setLoading(false);
     }
@@ -173,25 +190,30 @@ function SupportUsersContent() {
                     <div>
                       <div className="flex items-center gap-2">
                         <p className="font-medium text-gray-800">{normalizeProfileName(user.nickname) ?? "(名前なし)"}</p>
-                        {user.isBanned && (
+                        {user.is_banned && (
                           <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
                             BAN
                           </span>
                         )}
                       </div>
+                      {/* 年代・性別は一覧の応答に無い (詳細のパネルに出す)。一覧には登録日を出す */}
                       <p className="text-sm text-gray-500 mt-0.5">
-                        {user.ageGroup} / {user.gender === "male" ? "男性" : user.gender === "female" ? "女性" : "その他"}
+                        登録日: {formatDate(user.registered_at)}
                       </p>
                     </div>
                     <div className="text-right">
                       <p className="text-xs text-gray-400">
-                        最終ログイン: {user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleDateString('ja-JP') : "-"}
+                        最終ログイン: {formatDate(user.last_login_at)}
                       </p>
                     </div>
                   </div>
                 </motion.div>
               ))}
-              {users.length === 0 && (
+              {loadError ? (
+                <div role="alert" className="p-8 text-center text-red-600">
+                  {loadError}
+                </div>
+              ) : users.length === 0 && (
                 <div className="p-8 text-center text-gray-400">
                   ユーザーが見つかりません
                 </div>
