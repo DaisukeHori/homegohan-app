@@ -42,7 +42,7 @@ import { createLogger } from '@/lib/db-logger';
 import { extractClientIp } from '@/lib/admin/client-ip';
 
 // 利用者の IP の取り出しは src/lib/admin/client-ip.ts (#1571)。ここからも読めるように再び公開する
-// (auth/login・legal/accept・ai/consent などが '@/lib/admin/audit' から読む)
+// (auth/login・legal/accept が '@/lib/admin/audit' から読む)
 export { extractClientIp };
 
 export type AdminAuditSeverity = 'info' | 'warn' | 'critical';
