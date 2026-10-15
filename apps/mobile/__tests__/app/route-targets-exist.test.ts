@@ -28,6 +28,80 @@ const APP_DIR = path.join(MOBILE_ROOT, 'app');
 const SOURCE_DIRS = [APP_DIR, path.join(MOBILE_ROOT, 'src')];
 const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
 
+/**
+ * 拾った画面のファイルの数の下限 (拾い方が壊れて 0 件で通らないように)。#1598 で届かない画面を消したあとの画面は 30
+ * (タブ 6・(auth) 5・(public) 4・初期設定 5・ハンズオンツアー 5・設定から開く 4・入口 1)
+ */
+const MIN_ROUTE_FILES = 25;
+/** 拾った行き先の数の下限 (同じ理由)。#1598 のあとで 59 */
+const MIN_TARGETS = 50;
+
+/**
+ * #1598 / #1610 で消した、通常の操作で届かないネイティブの画面 (APP_DIR からの相対。_layout も含む)。
+ * #1673 で消した 10 画面と、その残り (#1598 の続き) の画面
+ */
+const REMOVED_SCREENS: readonly string[] = [
+  // #1673
+  'meals/new.tsx',
+  'family/index.tsx',
+  'profile/index.tsx',
+  'comparison/index.tsx',
+  ...['company', 'contact', 'faq', 'guide', 'legal', 'news'].map((name) => `(public)/${name}.tsx`),
+  // #1598 の続き
+  '(tabs)/favorites.tsx',
+  '(tabs)/health.tsx',
+  'ai/[sessionId].tsx',
+  'ai/important.tsx',
+  'ai/index.tsx',
+  'badges/index.tsx',
+  'health/challenges.tsx',
+  'health/checkups/[id].tsx',
+  'health/checkups/index.tsx',
+  'health/checkups/new.tsx',
+  'health/goals.tsx',
+  'health/graphs.tsx',
+  'health/insights.tsx',
+  'health/record/[date].tsx',
+  'health/record/index.tsx',
+  'health/record/quick.tsx',
+  'health/settings.tsx',
+  'health/streaks.tsx',
+  'meals/[id].tsx',
+  'meals/[id]/edit.tsx',
+  'menus/weekly/index.tsx',
+  'menus/weekly/request/index.tsx',
+  'pantry/index.tsx',
+  'shopping-list/index.tsx',
+  'recipes/[id].tsx',
+  'recipes/[id]/edit.tsx',
+  'recipes/collections/[collectionId].tsx',
+  'recipes/collections/index.tsx',
+  'recipes/collections/select.tsx',
+  'recipes/index.tsx',
+  'recipes/new.tsx',
+  '(org)/_layout.tsx',
+  '(org)/org/challenges.tsx',
+  '(org)/org/dashboard.tsx',
+  '(org)/org/departments.tsx',
+  '(org)/org/invites.tsx',
+  '(org)/org/members.tsx',
+  '(org)/org/settings.tsx',
+  '(support)/_layout.tsx',
+  '(support)/support/index.tsx',
+  '(support)/support/inquiries.tsx',
+  '(support)/support/inquiries/[id].tsx',
+  '(support)/support/users.tsx',
+  '(support)/support/users/[id].tsx',
+  '(super-admin)/_layout.tsx',
+  '(super-admin)/super-admin/admins.tsx',
+  '(super-admin)/super-admin/database.tsx',
+  '(super-admin)/super-admin/feature-flags.tsx',
+  '(super-admin)/super-admin/index.tsx',
+  '(super-admin)/super-admin/settings.tsx',
+  // billing/01 §10.4 (#1701 段 C): アプリから Web の購入のページへ誘導しないため消した
+  '(public)/pricing.tsx',
+];
+
 /** テンプレート文字列の ${...} を置き換える印 (動的な区間 [id] にだけ一致する) */
 const DYNAMIC_VALUE = '\u0000dynamic\u0000';
 
@@ -120,8 +194,8 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
   const targets = collectTargets();
 
   it('行き先を拾えている (拾い方が壊れて 0 件で通らないように)', () => {
-    expect(routes.length).toBeGreaterThan(50);
-    expect(targets.length).toBeGreaterThan(50);
+    expect(routes.length).toBeGreaterThan(MIN_ROUTE_FILES);
+    expect(targets.length).toBeGreaterThan(MIN_TARGETS);
     expect(targets.map((t) => t.target)).toContain('/login');
   });
 
@@ -139,15 +213,6 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
     expect(routeExists(routes, '/login')).toBe(true);
     expect(routeExists(routes, '/(auth)/login')).toBe(true);
     expect(routeExists(routes, '/(auth)/sign-in')).toBe(false);
-  });
-
-  it('健康診断の一覧の行のタップは、実在する詳細の画面 (app/health/checkups/[id].tsx) を開く (#1049)', () => {
-    const listTargets = targets.filter((t) => t.file === path.join('app', 'health', 'checkups', 'index.tsx')).map((t) => t.target);
-    expect(listTargets).toContain(`/health/checkups/${DYNAMIC_VALUE}`);
-    expect(fs.existsSync(path.join(APP_DIR, 'health', 'checkups', '[id].tsx'))).toBe(true);
-    expect(routeExists(routes, `/health/checkups/${DYNAMIC_VALUE}`)).toBe(true);
-    // 登録の画面 (new.tsx) も残っている (expo-router は静的な区間 'new' を動的な区間 [id] より先に当てる)
-    expect(routeExists(routes, '/health/checkups/new')).toBe(true);
   });
 
   it('メールのリンクから戻る deep link の行き先 (Linking.createURL) も拾っている', () => {
@@ -176,21 +241,30 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
   it('#1598 / #1610 で消した届かない画面のファイルは無い (main の取り込みで、main 側の変更と一緒に戻っていない)', () => {
     // main の取り込みでは、こちらが消して main が書き換えた画面 (meals/new.tsx。#1631) が modify/delete で衝突した。
     // 衝突を main の側で解くと、届かない画面がそのまま戻るので、消した画面のファイルが 1 つも無いことを確かめる。
-    const removedScreens = [
-      path.join('meals', 'new.tsx'),
-      path.join('family', 'index.tsx'),
-      path.join('profile', 'index.tsx'),
-      path.join('comparison', 'index.tsx'),
-      ...['company', 'contact', 'faq', 'guide', 'legal', 'news'].map((name) => path.join('(public)', `${name}.tsx`)),
-      // billing/01 §10.4: アプリから Web の購入のページへ誘導しないため消した
-      path.join('(public)', 'pricing.tsx'),
-    ];
-    const restored = removedScreens.filter((file) => fs.existsSync(path.join(APP_DIR, file)));
+    const restored = REMOVED_SCREENS.filter((file) => fs.existsSync(path.join(APP_DIR, file)));
     expect(restored).toEqual([]);
-    // 確認が空振りしていない (同じディレクトリの残した画面は見えている)
-    expect(fs.existsSync(path.join(APP_DIR, 'meals', '[id].tsx'))).toBe(true);
-    expect(fs.existsSync(path.join(APP_DIR, 'profile', 'nutrition-targets.tsx'))).toBe(true);
-    expect(fs.existsSync(path.join(APP_DIR, '(public)', 'about.tsx'))).toBe(true);
+    // 確認が空振りしていない (同じディレクトリ・同じ区画の残した画面は見えている)
+    for (const kept of [
+      path.join('health', 'blood-tests.tsx'),
+      path.join('profile', 'nutrition-targets.tsx'),
+      path.join('settings', 'account.tsx'),
+      path.join('(public)', 'about.tsx'),
+      path.join('(tabs)', 'meals.tsx'),
+      path.join('(tabs)', 'menus.tsx'),
+      path.join('(tabs)', 'settings.tsx'),
+    ]) {
+      expect(fs.existsSync(path.join(APP_DIR, kept))).toBe(true);
+    }
+    // 一覧の書き方 (区切りが '/') で、残した画面を指せば見える (一覧の書き方で存在の確かめが空振りしない)
+    expect(fs.existsSync(path.join(APP_DIR, 'health/blood-tests.tsx'))).toBe(true);
+  });
+
+  it('消した画面の区画 (運営の画面のグループ・AI 相談・食材・買い物リスト・レシピ・バッジ・週の献立・食事の詳細) のディレクトリは残っていない (#1598)', () => {
+    const removedDirs = ['(org)', '(support)', '(super-admin)', 'ai', 'badges', 'pantry', 'shopping-list', 'recipes', 'menus', 'meals', 'family', 'comparison'];
+    expect(removedDirs.filter((dir) => fs.existsSync(path.join(APP_DIR, dir)))).toEqual([]);
+    // 空振りしていない: 残したディレクトリは見える
+    expect(fs.existsSync(path.join(APP_DIR, 'health'))).toBe(true);
+    expect(fs.existsSync(path.join(APP_DIR, '(tabs)'))).toBe(true);
   });
 
   it('このテストは例外の一覧を持たない (画面の無い行き先を、一覧に載せて通さない)', () => {

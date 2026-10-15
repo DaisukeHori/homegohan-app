@@ -4,9 +4,10 @@
  * result は Edge Function (regenerate-shopping-list-v2) が書く。成功は { stats }、失敗は { error }。
  * 失敗の error には、同意の判定で止めたときの人向けの文のほかに、catch で捕まえた例外の文面がそのまま入る
  * (DB (PostgREST) の生のエラー文・外部の AI の応答の本文 'Fast LLM API error: 500 - ...' など)。
- * GET /api/shopping-list/regenerate/status は result を応答の本文に入れ、Web とアプリの画面は result.error を
- * 表示するので、ここで絞る。Realtime で行を受ける画面も、Web は shoppingListRequestErrorMessageForDisplay、
- * アプリは apps/mobile/src/lib/menu-request-error.ts の shoppingListRequestErrorMessageForDisplay を通す (#1576)。元の文は Edge Function が構造化ログ (app_logs) に残している。
+ * GET /api/shopping-list/regenerate/status は result を応答の本文に入れ、Web の画面は result.error を
+ * 表示するので、ここで絞る。Realtime で行を受ける Web の画面も shoppingListRequestErrorMessageForDisplay を通す (#1576)。
+ * (アプリの買い物リストのネイティブの画面と、その画面が通していたアプリの同じ名前の関数は、通常の操作で届かない画面として消した。#1598)
+ * 元の文は Edge Function が構造化ログ (app_logs) に残している。
  *
  * そのまま返してよい result.error (画面が見分ける、こちらで書いた文) は次のものだけ。それ以外は固定の文にする。
  *   - AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE: 同意の判定で止めた (T15 / #1154)。

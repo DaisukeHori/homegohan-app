@@ -27,8 +27,8 @@ SplashScreen.preventAutoHideAsync();
 
 // 画面の描画中に起きた例外を受ける、ルートの境界 (#1207)。
 // expo-router は、この export がある layout の中で起きた描画の例外を受けて、画面の代わりにこれを出す。
-// 無いとアプリ全体がクラッシュする (白い画面)。グループ専用の境界を持たない画面 (献立・食事・レシピ・健康・AI など、
-// app 直下の画面) の例外は、ここで受ける。
+// 無いとアプリ全体がクラッシュする (白い画面)。グループ専用の境界を持たない画面 (設定から開く血液検査・
+// 栄養目標・アカウント・AI の同意など、app 直下の画面) の例外は、ここで受ける。
 // ルートの境界は Provider ごと置き換えて描画されるため、Provider に頼らない最小の画面にしている。
 // 移動先のナビゲーションも残っていないので、「再試行」だけを出す。
 export function ErrorBoundary(props: ErrorBoundaryProps) {
@@ -101,9 +101,6 @@ export default function RootLayout() {
             <Stack.Screen name="(public)" />
             <Stack.Screen name="(auth)" />
             <Stack.Screen name="(tabs)" />
-            <Stack.Screen name="(org)" />
-            <Stack.Screen name="(support)" />
-            <Stack.Screen name="(super-admin)" />
           </Stack>
         </ProfileProvider>
       </AuthProvider>
