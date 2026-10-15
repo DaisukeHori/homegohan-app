@@ -458,12 +458,14 @@ describe('#1175 H. メールアドレスを持つ列の棚卸し', () => {
     'organization_invites.email': '伏せる (pending は revoked にする)',
     'family_invites.email': '伏せる (pending は revoked にする)',
     'family_promotion_requests.email': '伏せる (pending は revoked にする)',
+    'email_outbox.to_email': '伏せる (送信待ち。queued は dead にする。退会の完了メールは送れたあと・届けられなかったあとに伏せる)',
     // 伏せない (理由つき)
     'email_blacklist.email': '伏せない。苦情・バウンスのあったアドレスへ二度と送らないための記録で、消すと再び送ってしまう',
     'admin_audit_logs.actor_email_snapshot':
       '伏せない。運営者が何をしたかを監査のために残す記録 (運営者が退会しても、誰の操作かを追えるようにする)',
     'organizations.contact_email': '利用者個人ではなく組織の連絡先 (オーナーは譲渡か解散をしないと退会できない)',
     'sales_leads.contact_email': '営業先の企業の連絡先で、アプリの利用者のものではない',
+    'email_outbox.from_email': '伏せない。送信元はアプリのアドレス (EMAIL_FROM・運用メールも同じ) で、利用者のものではない',
     'auth_login_failures.email_hash':
       '伏せない。生のメールアドレスではなく SHA-256 のハッシュで、行が持つのはログインの連続失敗の回数とロックの期限だけ (#1165)。' +
       'アカウントの無いメールアドレスも同じように数える表で、アカウントとは結び付けていない',
