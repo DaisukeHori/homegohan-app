@@ -3,7 +3,7 @@
 > 版: v1.2 (2026-10-15 設計ゲート R2 の修正) / Issue: #1176 (`[セキュリティ] super_admin/admin/産業医ロールに必須と設計されたMFA/2FAが実装ゼロ`)
 > 位置づけ: `cross/01-auth-session.md` §5 (2FA / MFA) の方針を、実装できる粒度に展開した正典。§5 と本書が食い違うときは本書が正 (§24 の追随表で §5 を本書へのポインタに改める)。
 > ローンチまでに作る (オーナーの選択 2026-10-15・選択式)。
-> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。 v1.2 2026-10-15 R2 の指摘を反映: 毎回の challenge の verify でも Supabase が同じ利用者の他の aal1 のセッションを終えることを §3.1・§10・§14.3・§16・§26.3 に明記し、シナリオ S-25・結合テスト M-9・Q-11 を足す・単体テストのモックに `getSession` と `getClaims` の両方を返す `aal2AuthMock` を定める (§22.4.2・N-13・N-14)・自前でサインインする結合テスト 5 本を `signInForIntegration` に寄せる (§22.4.1・N-16)・`resolveMfaEnforceFrom` が存在しない日時 (2026-02-30 など) と範囲外の時差を拒否する (§12.1)。
+> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。 v1.2 2026-10-15 R2 の指摘を反映: 毎回の challenge の verify でも Supabase が同じ利用者の他の aal1 のセッションを終えることを §3.1・§10・§14.3・§16・§26.3 に明記し、シナリオ S-25・結合テスト M-9・Q-11 を足す・単体テストのモックに `getSession` と `getClaims` の両方を返す `aal2AuthMock` を定める (§22.4.2・N-13・N-14)・自前でサインインする結合テスト 5 本を `signInForIntegration` に寄せる (§22.4.1・N-16)・`resolveMfaEnforceFrom` が存在しない日時 (2026-02-30 など) と範囲外の時差を拒否する (§12.1)。 網羅性 (周 3) の反映: 前提の実測を origin/main `62eadfa4` に取り直す。#1673 (ネイティブの画面を消して WebView に一本化) で `apps/mobile/app/comparison/index.tsx` とそのテストが消え、「再計算」を呼ぶ画面が Web にもモバイルにも無くなったので、モバイルの入口を (super-admin)・(support) の 2 区画に絞り、S-23 を「API を直接呼ぶ」に改める (§3.2・§16・§20・§21.6・§22.3・§23 N-26・§25)・§22.2 に client.ts の関数・Zod スキーマ・interface・走査の関数を足す・§23 N-14 の `src/__tests__/api/org/**` を 7 本中の 5 本として除外の 2 本と理由を書く・S-13 / S-15 / S-18 / S-19 のテストを足す (§21)・運営の page を import する既存の単体テストの追随を §23 N-27 に足す。
 
 ---
 
@@ -14,7 +14,7 @@
 | 目安 | 本件 | 判定 |
 |---|---|---|
 | 設計書 800 行超 | 超える (ゲートの全列挙・表 3 点・追随表を 1 冊に持つため) | 当たる |
-| 消費先レーン 3 以上 | Web の運営画面 (layout / page と (support) 区画)・Web の運営 API・自己サービスの API と画面・モバイルの運営画面 ((super-admin)・(support)・比較の再計算) = 4 | 当たる |
+| 消費先レーン 3 以上 | Web の運営画面 (layout / page と (support) 区画)・Web の運営 API・自己サービスの API と画面・モバイルの運営画面 ((super-admin)・(support)) = 4 | 当たる |
 | 共有面に 2 つ以上触る | `src/lib/auth/helpers.ts` (全運営 API の認可の入口)・`src/lib/rate-limit.ts` (カテゴリ)・`src/lib/env.ts` / `.env.example` (環境変数の一覧)・`admin_audit_logs` (書くだけ。列は変えない) | 当たる |
 
 **判定: 設計書は 1 冊、実装は 4 段 (A〜D) に分け、段ごとに別の実装 WF (別ブランチ・別ゲート・別 PR) で積む。**
@@ -27,7 +27,7 @@
 | **A 自己サービス (AAL1 で使えるもの)** | バックアップコードの表 (migration)・`src/lib/auth/mfa/*` の核 (policy / backup-codes / factors / schemas / audit)・`src/lib/auth/mfa/assurance.ts` の読み取り部分 (`SessionClaimsSchema` / `bearerJwtOf` / `readSessionAssurance`。`assertOperatorAssurance` は段 B)・`/api/auth/mfa/{status, enroll, verify, recover}` の 4 route (`requireRole(MFA_REQUIRED_ROLES)` を **引数 1 つ** で呼ぶ。段 A の `requireRole` は今のまま)・`/settings/security/mfa/*` の 4 画面 (状態の画面は表示だけ。再発行と解除のボタンは段 B)・設定画面の入口・rate-limit のカテゴリ・環境変数の登録・アカウントの書き出しの分類 (§23 N-24) | なし | 運営は **任意で** TOTP を登録・確認・回復できる。まだ何も強制しない (ゲートが無い)。再発行と解除はまだ無い (AAL2 を確かめる仕組みが段 B で入るため) |
 | **B 入口のゲート** | `MfaRequiredError`・`UserProfile.assurance?`・`requireRole(allowedRoles, options)` の AAL2 判定・`assertOperatorAssurance`・`requireSuperAdmin` の委譲・`page-guard.ts` と運営の layout / page 14 ファイルの置き換え・Web の (support) 区画の server layout の新設 (§13.4)・猶予のバナー・段 A の 4 route に `{ assurance: 'session' }` を足す・AAL2 が要る自己サービスの 2 route (`DELETE /factors/{id}`・`POST /backup-codes`) と状態の画面のボタン・機械検査 (走査テスト ①〜⑧)・テストの道具 (結合・e2e の TOTP 昇格と、単体テストの Supabase のモック §22.4) | A | 必須ロールの運営は、登録済みなら challenge・未登録なら登録を **強制** される (猶予の環境変数で開始日時を後ろへずらせる) |
 | **C 運営の別の人による解除** | `POST /api/super-admin/admins/{id}/mfa/reset`・`/admin/users/{id}` の解除セクション | B | super_admin (AAL2) が他の運営の TOTP とバックアップコードを消せる (本人は再ログイン → 再登録) |
-| **D モバイル** | `apps/mobile/app/(super-admin)/_layout.tsx` と `apps/mobile/app/(support)/_layout.tsx` の AAL 判定・TOTP 入力・比較の画面の再計算 (`apps/mobile/app/comparison/index.tsx`)・走査 ⑨⑩ | B | モバイルの運営の区画と再計算が、必須ロールで AAL1 のセッションには TOTP を求める。登録は Web だけ |
+| **D モバイル** | `apps/mobile/app/(super-admin)/_layout.tsx` と `apps/mobile/app/(support)/_layout.tsx` の AAL 判定・TOTP 入力・走査 ⑨⑩ | B | モバイルの運営の区画が、必須ロールで AAL1 のセッションには TOTP を求める。登録は Web だけ |
 
 ⚠️ **A → B の順を崩さない**。B を先に出すと、登録の導線が無いまま強制が始まり、運営が全員入れなくなる。C と D は B の後にマージする (どちらも B の `requireRole` の AAL2 判定と `MfaRequiredError` を前提にする。C と D どうしは並行に作れる)。
 各段は単独で型検査とテストが通る: 段 A のコードは段 B の識別子 (`RequireRoleOptions`・`assertOperatorAssurance`・`MfaRequiredError`・`requireRoleForPage`) を参照しない。段 A の route テストに「aal1 → 403」の検査は無い (§21.2 の段の列)。
@@ -48,7 +48,7 @@
 運営の権限 (super_admin / admin / finance / org_industrial_doctor) を持つアカウントは、パスワード (または Google ログイン) に加えて **認証アプリ (TOTP)** を持っていなければ運営の画面・API を使えないようにする。判定の軸は **Supabase Auth のセッションの AAL (Authenticator Assurance Level)**: `aal2` のセッションだけを運営の入口で通す。
 
 - 入口 = `requireRole()` (`src/lib/auth/helpers.ts`) と、それに委ねる `requireSuperAdmin()` (`src/lib/auth/operator-permissions.ts`)。Next.js のサーバーの運営の全 API (`src/app/**/route.ts`) はこの 2 つ (と、`requireRole` を呼ぶ lib の認可ヘルパー `respondNotSupported`) を通っている (§3.2 の実測) ので、**判定を入口の中に 1 か所差し込む** ことで、API の入口を 1 つも取りこぼさない。
-- 画面: Web の運営の区画は、Server Component の layout / page が `requireRoleForPage` (§13.4) を呼び、2FA が未完了なら MFA の画面へ回す。client component だけで役割を見ていた Web の (support) 区画には server layout を 1 つ足す (§13.4)。モバイルの運営の区画 ((super-admin)・(support)) と比較の画面の再計算は、端末の側で AAL を見て TOTP を求める (§16)。
+- 画面: Web の運営の区画は、Server Component の layout / page が `requireRoleForPage` (§13.4) を呼び、2FA が未完了なら MFA の画面へ回す。client component だけで役割を見ていた Web の (support) 区画には server layout を 1 つ足す (§13.4)。モバイルの運営の区画 ((super-admin)・(support)) は、端末の側で AAL を見て TOTP を求める (§16)。
 - 入口を取りこぼしていないことは、ソース走査の contract テスト (§20) が毎回確かめる (Web の route・Web の画面・モバイルの画面)。
 - DB (PostgREST / RPC) を直接呼ぶ経路は範囲外 (§0.3・Q-9)。
 
@@ -64,6 +64,8 @@
 | `docs/requirements/100-scenarios.md` | A11 / A12 | 2FA の有効化 UI が未定義 (本書 §15 で定義)・バックアップコードの利用 |
 
 ## 3. 前提の事実 (origin/main 2026-10-15 の実コード・実データ)
+
+実測の基準は origin/main `62eadfa4` (2026-10-15。網羅性 周 3 で取り直し)。それより前の `e62b5d5f` との差のうち本書に効くのは #1673 で `apps/mobile/app/comparison/index.tsx` (再計算のボタン) が消えたことだけで、§3.2 の他の数 (`requireRole([...])` 104・route 26 / 27 / 9 / 3・`requireSuperAdmin()` 9・layout 3 / page 11) は変わらない。
 
 ### 3.1 実装の現状
 
@@ -92,7 +94,7 @@
 | 運営ロールの文字列を持つが運営の認可ではない route.ts | 2 | `src/app/(auth)/auth/callback/route.ts:143` (ログイン後の行き先を `/admin` にするかの振り分け)・`src/app/api/handson-tour/complete/route.ts:5` (`ADMIN_ROLES` でツアーの出し分け。`supabase.auth.getUser()` で止める一般の route。`requireRole` を通らない)。§20 の自動の取り込みの除外 (`AUTO_INCLUDE_EXCLUSIONS`) に理由つきで載せる |
 | モバイルの運営画面 ((super-admin)) | 5 | `apps/mobile/app/(super-admin)/super-admin/{index, admins, settings, feature-flags, database}.tsx`。`hasRole('super_admin')` で入る。このうち `index.tsx` はメニューだけで API を呼ばない (§20 の ⑨ にも当たらない。区画の `_layout` のゲートで守る)。残りの 4 画面が Bearer で `/api/super-admin/{admins, settings, flags, flags/{key}, db-stats}` と `PUT /api/admin/users/{id}/role` を呼ぶ |
 | モバイルの運営画面 ((support)) | 5 | `apps/mobile/app/(support)/support/{index, inquiries, inquiries/[id], users, users/[id]}.tsx`。`_layout.tsx` が `hasRole('support') \|\| hasRole('admin') \|\| hasRole('super_admin')` で入れ、Bearer で `GET /api/support/stats`・`/api/admin/inquiries`・`/api/admin/inquiries/{id}`・`GET /api/admin/users`・`/api/support/users/{id}`・`/notes` を呼ぶ (admin と super_admin は必須ロール) |
-| モバイルの一般の画面にある運営の操作 | 1 | `apps/mobile/app/comparison/index.tsx:49,76` の「再計算」ボタン (`hasRole('super_admin')` のときだけ出し、`POST /api/comparison/trigger` を呼ぶ) |
+| モバイルの一般の画面にある運営の操作 | 0 | #1673 で `apps/mobile/app/comparison/index.tsx` (super_admin にだけ「再計算」を出し `POST /api/comparison/trigger` を呼んでいた) が消え、比較のタブは `apps/mobile/app/(tabs)/comparison.tsx` の WebView (`/comparison`) だけになった。Web の `/comparison` (`src/app/(main)/comparison/page.tsx`) も `/api/comparison/trigger` を呼ばない。よって `/api/comparison/trigger` を呼ぶ画面は Web にもモバイルにも無い (route は `EXTRA_OPERATOR_ROUTES` (§20) として `requireRole` のゲートで守る)。モバイルに残る文字列は `apps/mobile/src/lib/api.ts:41` (応答を待つ時間を延ばすパスの一覧) だけ (§20 の `MOBILE_SCAN_EXCLUSIONS`) |
 
 ### 3.3 認可の順序 (現状。本書はこの末尾に AAL を足す)
 
@@ -118,7 +120,7 @@
 | R-5 | バックアップコード: 10 個・SHA-256 で保存・使い切り (1 回使うと無効)・再発行できる | cross/01 §5.2 / 要件 §17.2 | §11 / §12.3 / §14.6 |
 | R-6 | 端末の紛失時: 本人はバックアップコードで回復できる。それも無ければ別の super_admin が解除できる (監査ログ + 本人確認) | cross/01 §5.2 / 仕様ファイル | §14.5 / §14.7 |
 | R-7 | セッションの AAL の扱いを決める (持続・端末ごと・ログアウト) | 仕様ファイル | §9 / §10 / §26.3 |
-| R-8 | モバイル: 運営の画面がある (§3.2) ので対象。モバイルの (super-admin)・(support) の区画と比較の画面の再計算は、必須ロールの利用者が AAL1 なら止め、TOTP を求める。登録は Web だけ | 仕様ファイル | §16 |
+| R-8 | モバイル: 運営の画面がある (§3.2) ので対象。モバイルの (super-admin)・(support) の区画は、必須ロールの利用者が AAL1 なら止め、TOTP を求める。登録は Web だけ | 仕様ファイル | §16 |
 | R-9 | 監査: 登録・再発行・回復・解除・他人による解除を `admin_audit_logs` に残す | docs/design/CLAUDE.md §6 / operator/07 | §17 |
 | R-10 | 既存の運営アカウントの移行: 猶予の開始日時を環境変数で決められる。未設定なら即時に強制 | 仕様ファイル「登録の猶予」 | §12.2 / §26.2 |
 | R-11 | migration の番号は決めない (`<番号はマージ時に確定>_<名前>.sql`)。対の `.down.sql` も作る | 仕様ファイル | §11 |
@@ -154,7 +156,7 @@
 | S-20 | 登録を途中でやめた admin (unverified の factor が残る) | 次に setup を開く | enroll が unverified な TOTP factor を先に全部消してから新しく作る (factor が溜まらない) |
 | S-21 | 登録済みの admin (AAL1) | Web で `/support/users` を開く | `/settings/security/mfa/verify?next=%2Fsupport` へ回され、6 桁で `/support` に着く。support だけのロールの人は今までどおり開ける |
 | S-22 | 登録済みの admin (AAL1) | モバイルで (support) の区画を開く | 6 桁の入力画面 → 正しければ区画が開く。未登録なら「Web で登録してください」。support だけのロールの人は今までどおり開ける |
-| S-23 | 登録済みの super_admin (AAL1) | モバイルの比較の画面で「再計算」を押す | 6 桁の入力 (モーダル) → 正しければ再計算を実行。未登録なら「Web で登録してください」の案内 |
+| S-23 | 登録済みの super_admin (AAL1) | `POST /api/comparison/trigger` (比較の集計の再計算) を直接呼ぶ (呼ぶ画面は Web にもモバイルにも無い §3.2) | 403 (route 既存の `FORBIDDEN`。§19.3)。6 桁で aal2 にしたセッションなら再計算が走る |
 | S-24 | パスワードだけを知る攻撃者 (TOTP を登録済みの super_admin のアカウント) | anon キーとログインで得た aal1 の token で、PostgREST / RPC を直接呼ぶ | **本書の範囲外** (§0.3・Q-9)。Next.js の API と画面は 403 / MFA の画面になるが、DB を直接呼ぶ経路は通る |
 | S-25 | 登録済みの admin (スマホのアプリに aal1 でログイン中) | Web で `/admin` を開き、verify 画面で 6 桁を入れる (逆に、モバイルの運営の区画で 6 桁を入れる) | Web は aal2 になり `/admin` に着く。同時に Supabase がアプリのセッション (と同じセッションの WebView) を終えるので、アプリは次の要求か refresh の時点で再ログインになる。逆向きなら Web のブラウザの aal1 のセッションが終わる (§26.3・Q-11) |
 
@@ -180,7 +182,7 @@
                      ┌──────────▼──────────┐   pass / pass_grace / challenge_required / enrollment_required
                      │ operator_mfa_backup │
                      │ _codes (SHA-256)    │   super_admin の解除 (段 C): /api/super-admin/admins/{id}/mfa/reset
-                     └─────────────────────┘   モバイル (段 D): (super-admin)・(support) の _layout と比較の再計算が getAuthenticatorAssuranceLevel
+                     └─────────────────────┘   モバイル (段 D): (super-admin)・(support) の _layout が getAuthenticatorAssuranceLevel
 ```
 
 - **AAL の真は Supabase の JWT の `aal` claim だけ**。アプリは自分で「認証済み」の状態を持たない (バックアップコードも「AAL2 を与える」のではなく「TOTP を消して登録し直させる」。§7)。
@@ -188,7 +190,7 @@
 - **入口は 1 か所**: `requireRole` の末尾。`requireSuperAdmin` は `requireRole(['super_admin'])` に委ねる (自前の判定を捨てる)。
 - **画面は `requireRoleForPage`** (page-guard) に置き換え、`MfaRequiredError` を MFA の画面へのリダイレクトに変える (今の `redirect('/login')` のままだと、ログイン済みの運営がログイン画面と `/admin` の間を往復する)。client component だけの Web の (support) 区画には、`requireRoleForPage` を呼ぶ server layout (`src/app/(support)/support/layout.tsx`) を 1 つ足す。
 - **自己サービスの API のうち AAL1 で使うもの (status / enroll / verify / recover) は `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })`** で AAL の判定だけを外す (ロールは見る。段 A では引数 1 つで呼び、段 B で第 2 引数を足す)。この opt-out は走査テストの許可リストに載せたファイルだけに許す。
-- **モバイル** は、運営の区画の `_layout.tsx` と比較の画面の再計算が、端末の Supabase client の `mfa.getAuthenticatorAssuranceLevel()` で AAL を見て、必須ロールで AAL1 なら TOTP を求める (`OperatorMfaGate` / `resolveOperatorMfaGate`)。API 側のゲートは Web と同じ `requireRole` (Bearer の claim を読む)。
+- **モバイル** は、運営の区画の `_layout.tsx` が、端末の Supabase client の `mfa.getAuthenticatorAssuranceLevel()` で AAL を見て、必須ロールで AAL1 なら TOTP を求める (`OperatorMfaGate` / `resolveOperatorMfaGate`)。API 側のゲートは Web と同じ `requireRole` (Bearer の claim を読む)。
 
 ### 6.2 トレース (構造で手で走らせた結果)
 
@@ -216,7 +218,7 @@
 | S-20 | `POST /api/auth/mfa/enroll` | `listUnverifiedTotpFactorIds(user)` の各 id を `mfa.unenroll` → `mfa.enroll({factorType:'totp', issuer, friendlyName})` | 新しい factor 1 つ |
 | S-21 | `/support/users` → `(support)/layout.tsx` (client。変えない) の内側の `(support)/support/layout.tsx` (server) | `requireRoleForPage(SUPPORT_AREA_ROLES, { next: '/support', forbiddenPath: '/home' })` → `requireRole` → roles=[admin] → required → aal1 → verified あり → `challenge_required` → `redirect('/settings/security/mfa/verify?next=%2Fsupport')`。support だけなら `not_required` → 通る | verify → `/support` |
 | S-22 | モバイル `(support)/_layout.tsx` | 既存のロールの判定 → `<OperatorMfaGate>` → roles=[admin] → `requiresOperatorMfa` = true → aal1・nextLevel=aal2 → `verify` → `MfaVerifyGate` → aal2 (他のセッションは S-10 と同じく終わる) → `allow`。roles=[support] → `requiresOperatorMfa` = false → Supabase を呼ばず `allow` | 区画が開く |
-| S-23 | モバイル `comparison/index.tsx` の「再計算」 | `onPress` → `resolveOperatorMfaGate(roles)` → `verify` → `setVerifyOpen(true)` → `<Modal><MfaVerifyGate onVerified>` → aal2 (他のセッションは S-10 と同じく終わる) → モーダルを閉じて `trigger()` → `POST /api/comparison/trigger` (Bearer aal2) → `requireRole(['super_admin'])` → `pass` | 再計算が走る |
+| S-23 | `POST /api/comparison/trigger` (Cookie か Bearer。aal1) | `rejectNullCharacterBody` → `requireRole(['super_admin'])` → required → aal1 → verified あり → `challenge_required` → `MfaRequiredError` (ForbiddenError の派生) → route の既存の `catch (ForbiddenError)` → 403 `{ error: { code: 'FORBIDDEN' } }`。aal2 のセッションなら `pass` → 集計の Edge Function を呼ぶ | 403 / aal2 なら再計算 |
 | S-24 | `POST {SUPABASE_URL}/rest/v1/rpc/operator_force_dissolve_family` (aal1 の JWT) | 関数の本体は `user_profiles.roles` の `super_admin` だけを見る (`supabase/baseline/prod_schema.sql:2206-2216`。最新は `supabase/migrations/20261008090100_family_lock_order.sql:188`)。本書はこの経路を変えない | 通る (範囲外。Q-9) |
 | S-25 | Web `/admin` → verify 画面 (アプリのセッション A = aal1 が別にある) | `requireRoleForPage` → `challenge_required` → `/settings/security/mfa/verify` → `POST /api/auth/mfa/verify` → `challengeAndVerify` → Web のセッション B が aal2。Supabase が A を終える (§3.1) → アプリの次の `getSession()` の refresh か、A の token を Bearer にした `requireRole` / `requireUser` の `getUser()` で失敗 → アプリの既存のログアウトの処理。逆向き (モバイルの `MfaVerifyGate` で verify) は Web の Cookie のセッションが同じく終わり、次の画面の遷移で `/login?next=` | §10「別のセッション」の行。アプリも画面も追加の処理をしない (Q-11) |
 
@@ -260,7 +262,7 @@
 
 軸: 必須ロールの有無 × セッションの AAL × verified な TOTP factor × 猶予 × 入口の種類。`decideOperatorAssurance` の出力と、入口ごとの応答。
 
-| # | 必須ロール | AAL | verified TOTP | 猶予 (`now < enforceFrom`) | decision | page (page-guard) | 既存の運営 API (Cookie / Bearer) | 自己サービス API (`assurance:'session'`) | モバイルの運営の区画・再計算 (§16) |
+| # | 必須ロール | AAL | verified TOTP | 猶予 (`now < enforceFrom`) | decision | page (page-guard) | 既存の運営 API (Cookie / Bearer) | 自己サービス API (`assurance:'session'`) | モバイルの運営の区画 (§16) |
 |---|---|---|---|---|---|---|---|---|---|
 | P-1 | 無し | — (読まない) | — | — | `not_required` | 通る | 通る | 403 `PERM_DENIED` | `allow` (Supabase を呼ばない) |
 | P-2 | 有り | aal2 | 有り | — | `pass` | 通る | 通る | 通る | `allow` |
@@ -287,7 +289,7 @@
 | `/api/super-admin/admins/{id}/mfa/reset` | 対象の profile・factors | `admin_audit_logs` (先)・Supabase (admin deleteFactor ×n)・`operator_mfa_backup_codes` (全削除) |
 | 画面 `/settings/security/mfa*` | status API | 上の API 経由だけ (DB に直接触れない) |
 | Web の (support) 区画 (`src/app/(support)/support/layout.tsx`) | `requireRoleForPage` 経由 (上の 1 行目と同じ) | — |
-| モバイル `(super-admin)/_layout`・`(support)/_layout`・`comparison/index.tsx` の再計算 | `useProfile().roles`・`getAuthenticatorAssuranceLevel`・`listFactors` | Supabase (challengeAndVerify) |
+| モバイル `(super-admin)/_layout`・`(support)/_layout` | `useProfile().roles`・`getAuthenticatorAssuranceLevel`・`listFactors` | Supabase (challengeAndVerify) |
 | アカウントの書き出し (`src/lib/account-export-tables.ts`) | `operator_mfa_backup_codes` は出さない (`ACCOUNT_EXPORT_EXCLUDED`。§23 N-24) | 無し |
 | CSV / 書き出し (運営) | 無し | 無し |
 | PostgREST / RPC を本人の JWT で直接 | **範囲外** (§0.3・Q-9)。本書は読みも書きも変えない | — |
@@ -307,7 +309,7 @@
 | 紛失時 | 無し | 本人: バックアップコードで TOTP を消して登録し直す。他人: super_admin の解除 API |
 | 監査 | 無し | 5 種の action_type (§17) |
 | Web の (support) 区画 | client component がロールだけ見る (admin が AAL1 で開くと、移行後は API の 403 だらけになる) | server layout の `requireRoleForPage` が、必須ロールで AAL1 なら MFA の画面へ回す。support だけの人は今までどおり。ロールの無い人は `/home` (今の client の判定と同じ行き先) |
-| モバイルの運営の区画 ((super-admin)・(support)) と比較の再計算 | roles だけ | roles + 必須ロールなら AAL2 (TOTP 入力)。未登録は Web へ案内。support だけの人は今までどおり |
+| モバイルの運営の区画 ((super-admin)・(support)) | roles だけ | roles + 必須ロールなら AAL2 (TOTP 入力)。未登録は Web へ案内。support だけの人は今までどおり |
 | DB を直接呼ぶ経路 (PostgREST / RPC) | roles だけ | **変えない** (範囲外。Q-9) |
 | 同じ運営の他の端末・ブラウザのセッション | 互いに影響しない | 必須ロールの運営がどこかで 6 桁を verify するたびに、他の aal1 のセッションが Supabase に終えられる (§26.3・S-25・Q-11) |
 | 移行 | — | `OPERATOR_MFA_ENFORCE_FROM` 以前は未登録でも通る (バナー)。未設定なら即時 |
@@ -323,7 +325,7 @@
 - U0 = 必須ロールを持たない / U1 = 必須ロール・verified TOTP 無し / U2 = 必須ロール・verified TOTP 有り (バックアップコード 10 以下が残る)
 - S1 = aal1 / S2 = aal2 / S0 = セッション無し
 - 表は段 A〜D をすべてマージした後の状態。段 A だけのときは「運営の入口」の行が無く (どの状態でも今までどおり通る)、backup-codes 再発行・factor 削除・reset の route がまだ無い (§0.2)。
-- 「運営の入口」= Web の運営 API・`requireRoleForPage` を呼ぶ画面 ((support) 区画を含む)。モバイルの運営の区画と再計算は、下の「モバイル」の行。
+- 「運営の入口」= Web の運営 API・`requireRoleForPage` を呼ぶ画面 ((support) 区画を含む)。モバイルの運営の区画は、下の「モバイル」の行。
 
 | 状態 | 操作 | ガード | 遷移先 | 副作用 |
 |---|---|---|---|---|
@@ -377,10 +379,10 @@
 | (U0, S1) | Web の `/support/*` を開く (support だけ) | — | 変化なし | `not_required` → 通る (今までどおり) |
 | (U2, S1) | Web の `/support/*` を開く | — | 変化なし | `challenge_required` → `/settings/security/mfa/verify?next=%2Fsupport` |
 | (U1, S1) | Web の `/support/*` を開く | 猶予中でない / 猶予中 | 変化なし | `enrollment_required` → setup へ / `pass_grace` → 通る + バナー |
-| (U0, S1) | モバイルの運営の区画を開く・再計算を押す | ロールの判定は既存のまま | 変化なし | `allow` (Supabase を呼ばない) |
-| (U2, S1) | モバイルの運営の区画を開く・再計算を押す | — | 変化なし | `verify` → TOTP の入力 (正しければ (U2, S2) へ。区画が開く・再計算を実行)。正しい 6 桁の verify で、Supabase が同じ利用者の他のセッション (Web のブラウザの aal1 を含む) を終了する (§3.1・§26.3・S-25) |
-| (U1, S1) | モバイルの運営の区画を開く・再計算を押す | 猶予の有無によらない | 変化なし | `enroll_on_web` → 「Web で登録」の案内 (区画を開かない・再計算を呼ばない) |
-| (U1/U2, S2) | モバイルの運営の区画を開く・再計算を押す | — | 変化なし | `allow` |
+| (U0, S1) | モバイルの運営の区画を開く | ロールの判定は既存のまま | 変化なし | `allow` (Supabase を呼ばない) |
+| (U2, S1) | モバイルの運営の区画を開く | — | 変化なし | `verify` → TOTP の入力 (正しければ (U2, S2) へ。区画が開く)。正しい 6 桁の verify で、Supabase が同じ利用者の他のセッション (Web のブラウザの aal1 を含む) を終了する (§3.1・§26.3・S-25) |
+| (U1, S1) | モバイルの運営の区画を開く | 猶予の有無によらない | 変化なし | `enroll_on_web` → 「Web で登録」の案内 (区画を開かない) |
+| (U1/U2, S2) | モバイルの運営の区画を開く | — | 変化なし | `allow` |
 | (U*, S1) | PostgREST / RPC を本人の JWT で直接呼ぶ | — | — | **範囲外 (§0.3・Q-9)**。本書は変えない (ロールの条件だけで通る) |
 
 表に無い遷移を作るコードは blocking。
@@ -1180,7 +1182,7 @@ export type MfaResetBody = z.infer<typeof MfaResetBodySchema>;
 
 ## 16. モバイル (段 D)
 
-対象 = 運営の API を呼ぶモバイルの画面の全部 (§3.2): `apps/mobile/app/(super-admin)/**` (5 画面)・`apps/mobile/app/(support)/**` (5 画面)・`apps/mobile/app/comparison/index.tsx` の「再計算」。登録・バックアップコード・回復・解除は Web だけ。それ以外の画面は変えない。
+対象 = 運営の API を呼ぶモバイルの画面の全部 (§3.2): `apps/mobile/app/(super-admin)/**` (5 画面)・`apps/mobile/app/(support)/**` (5 画面)。一般の画面にある運営の操作は 0 件 (#1673 で比較の画面の「再計算」が消えた §3.2)。登録・バックアップコード・回復・解除は Web だけ。それ以外の画面は変えない。
 
 方針:
 - AAL は端末の Supabase client の `auth.mfa.getAuthenticatorAssuranceLevel()` で読む (`currentLevel` = いまのセッション・`nextLevel` = verified な factor があれば `aal2`)。サーバーの判定 (Bearer の claim を読む `requireRole`) と同じ値を見る。
@@ -1206,7 +1208,7 @@ export interface MobileOperatorGateInput {
   readonly nextLevel: MobileAal | null;
 }
 
-/** 未登録のときの案内 (区画の画面と、再計算のアラートで同じ文) */
+/** 未登録のときの案内 (OperatorMfaGate と MfaVerifyGate が区画の画面に出す文) */
 export const MOBILE_MFA_ENROLL_ON_WEB_MESSAGE =
   '二段階認証の登録は Web の「設定 → セキュリティ (二段階認証)」から行ってください。登録すると、この画面も使えるようになります。';
 
@@ -1245,7 +1247,7 @@ export function decideMobileOperatorGate(input: MobileOperatorGateInput): Mobile
 import { supabase } from './supabase';
 import { decideMobileOperatorGate, requiresOperatorMfa, toMobileAal, type MobileOperatorGate } from './mfa-gate';
 
-/** AAL を読めなかった (通信の失敗など)。呼び出し側は区画を開かず・再計算を呼ばず、再試行を出す */
+/** AAL を読めなかった (通信の失敗など)。呼び出し側 (OperatorMfaGate) は区画を開かず、再試行を出す */
 export class OperatorMfaGateError extends Error {
   constructor() {
     super('二段階認証の状態を確認できませんでした。');
@@ -1271,11 +1273,10 @@ export async function resolveOperatorMfaGate(roles: ReadonlyArray<string>): Prom
 
 | ファイル | 変更 | 中身 |
 |---|---|---|
-| `apps/mobile/src/components/MfaVerifyGate.tsx` | 新規 | props `{ onVerified: () => void \| Promise<void>; onCancel?: () => void }`。表示時に `supabase.auth.mfa.listFactors()` の `data.totp` (verified な TOTP だけが入る) の先頭を使う (無ければ `MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`)。6 桁 (`MOBILE_TOTP_CODE_PATTERN` に合うまで送信ボタンを無効) → `supabase.auth.mfa.challengeAndVerify({ factorId, code })` → 成功で `onVerified()`。送信中は二重に送らない。失敗の文言: `error.code === 'mfa_verification_failed'` または status 400 / 422 → 「確認コードが正しくありません。認証アプリの最新のコードを入力してください。」・status 429 → 「試行回数が多すぎます。しばらくしてから再度お試しください。」・それ以外 → 「通信に失敗しました。再度お試しください。」。testID: `mfa-verify-code-input`・`mfa-verify-submit`・`mfa-verify-error`・`mfa-verify-cancel` (`onCancel` があるときだけ) |
+| `apps/mobile/src/components/MfaVerifyGate.tsx` | 新規 | props `{ onVerified: () => void \| Promise<void> }` (使うのは `OperatorMfaGate` だけ。取り消しのボタンは持たない: 区画を出るのは既存の戻る操作)。表示時に `supabase.auth.mfa.listFactors()` の `data.totp` (verified な TOTP だけが入る) の先頭を使う (無ければ `MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`)。6 桁 (`MOBILE_TOTP_CODE_PATTERN` に合うまで送信ボタンを無効) → `supabase.auth.mfa.challengeAndVerify({ factorId, code })` → 成功で `onVerified()`。送信中は二重に送らない。失敗の文言: `error.code === 'mfa_verification_failed'` または status 400 / 422 → 「確認コードが正しくありません。認証アプリの最新のコードを入力してください。」・status 429 → 「試行回数が多すぎます。しばらくしてから再度お試しください。」・それ以外 → 「通信に失敗しました。再度お試しください。」。testID: `mfa-verify-code-input`・`mfa-verify-submit`・`mfa-verify-error` |
 | `apps/mobile/src/components/OperatorMfaGate.tsx` | 新規 | props `{ children: ReactNode }`。`useProfile().roles` で `resolveOperatorMfaGate` を呼び、状態 `'loading' \| 'allow' \| 'verify' \| 'enroll_on_web' \| 'error'` で描き分ける: loading → `ActivityIndicator` (testID `operator-mfa-gate-loading`)・allow → `children`・verify → `<MfaVerifyGate onVerified={再判定}>`・enroll_on_web → `MOBILE_MFA_ENROLL_ON_WEB_MESSAGE` (testID `operator-mfa-gate-enroll-on-web`)・error (`OperatorMfaGateError`) → 「二段階認証の状態を確認できませんでした。」+ [再試行] (testID `operator-mfa-gate-error`・`operator-mfa-gate-retry`)。`roles` が変わったら判定し直す |
 | `apps/mobile/app/(super-admin)/_layout.tsx` | 変更 | 既存のロールの判定 (`hasRole('super_admin')`) の後の `return <Stack screenOptions={{ headerShown: true }} />;` を `return (<OperatorMfaGate><Stack screenOptions={{ headerShown: true }} /></OperatorMfaGate>);` にする。`ErrorBoundary` の export は変えない |
 | `apps/mobile/app/(support)/_layout.tsx` | 変更 | 同上 (ロールの判定 `hasRole('support') \|\| hasRole('admin') \|\| hasRole('super_admin')` は変えない。support だけの人は `OperatorMfaGate` が Supabase を呼ばずに通す) |
-| `apps/mobile/app/comparison/index.tsx` | 変更 | `useProfile()` から `roles` も受け取る。「再計算」の `onPress` を `onRecalculatePress` に替える: `resolveOperatorMfaGate(roles)` → `allow` なら既存の `trigger()`・`verify` なら `setVerifyOpen(true)` (React Native の `Modal` に `<MfaVerifyGate onVerified={async () => { setVerifyOpen(false); await trigger(); }} onCancel={() => setVerifyOpen(false)} />`)・`enroll_on_web` なら `Alert.alert('二段階認証', MOBILE_MFA_ENROLL_ON_WEB_MESSAGE)`・`OperatorMfaGateError` なら `Alert.alert('実行失敗', err.message)`。ボタンを出す条件 (`hasRole('super_admin')`) と `trigger()` の中身は変えない |
 
 - `apps/mobile/src/lib/api.ts` は毎回 `getSession()` の token を使う (§3.1) ので、verify の後の Bearer は aal2。
 - 端末で 6 桁を verify すると、Supabase が同じ利用者の他のセッション (Web のブラウザの aal1 を含む) を終える。逆に Web で verify すると、端末のセッション (とネイティブのブリッジで同じセッションを使う WebView) が終わる (§3.1・§26.3・S-25)。モバイルのコードはこれに対して何もしない (終わったセッションは既存のログアウトの処理になる)。受け入れるかは Q-11。
@@ -1449,7 +1450,7 @@ const MOBILE_GATED_AREAS = ['apps/mobile/app/(super-admin)', 'apps/mobile/app/(s
 /** 運営の API の文字列を持つが、画面ではないファイル (理由つき。⑧ と同じ検査) */
 const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
   'apps/mobile/src/lib/api.ts':
-    '通信の共通部品。/api/comparison/trigger は応答を待つ時間を延ばすパスの一覧に載っているだけで、呼ぶのは comparison/index.tsx',
+    '通信の共通部品。/api/comparison/trigger は応答を待つ時間を延ばすパスの一覧に載っているだけで、呼ぶ画面は無い (#1673 で比較の再計算の画面が消えた)',
 };
 ```
 
@@ -1466,7 +1467,7 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | ⑨ (段 D) | `apps/mobile/app/**` と `apps/mobile/src/**` (テスト除く) の `.ts` / `.tsx` で、`MOBILE_OPERATOR_API_PREFIXES` のどれかで始まる文字列リテラル (テンプレート文字列の先頭の固定部分を含む) を持つファイルは、`MOBILE_GATED_AREAS` の中にあるか、同じファイルで `resolveOperatorMfaGate(` を呼ぶか、`MOBILE_SCAN_EXCLUSIONS` に載っている | モバイルの一般の画面に運営の操作を足してゲートを付け忘れた |
 | ⑩ (段 D) | `MOBILE_GATED_AREAS` の各 `_layout.tsx` が `OperatorMfaGate` を import して JSX で描く (`<OperatorMfaGate`)。`apps/mobile/src/lib/mfa-gate.ts` の `MOBILE_MFA_REQUIRED_ROLES` の要素が `MFA_REQUIRED_ROLES` と同じ集合 (この検査は §21.6 の roles-sync テストが持つ。ここでは `_layout` だけ) | 区画のゲートを外した |
 
-2026-10-15 の origin/main での当てはまり (実装者の確認用): (a) に当たる API_ROOTS の外の route.ts は `src/app/(auth)/auth/callback/route.ts`・`src/app/api/announcements/route.ts`・`src/app/api/comparison/trigger/route.ts`・`src/app/api/handson-tour/complete/route.ts` の 4 本 (除外 2 本 + `EXTRA_OPERATOR_ROUTES` 2 本)。⑨ に当たるファイルは `apps/mobile/app/(super-admin)/super-admin/{admins, database, feature-flags, settings}.tsx`・`apps/mobile/app/(support)/support/{index, inquiries, inquiries/[id], users, users/[id]}.tsx`・`apps/mobile/app/comparison/index.tsx`・`apps/mobile/src/lib/api.ts` (除外)。`apps/mobile/src/lib/super-admin-flags.ts` はコメントの中だけなので当たらない。`apps/mobile/app/(super-admin)/super-admin/index.tsx` は API を呼ばない (メニューだけ) ので ⑨ に当たらず、区画の `_layout` (⑩) だけで守る。産業医 (`org_industrial_doctor`) を roles に含む入口は Next.js にも DB にも 0 件 (§3.2) なので、①〜⑤ の母集合に産業医の入口は今は無い。将来 `requireRole(['org_industrial_doctor', ...])` で入口を足せば、置き場が `API_ROOTS` の中なら ① に、外なら (a) の自動の取り込みで ① に入る (`requireOrgRole` で作れば ③ が赤)。
+2026-10-15 の origin/main での当てはまり (実装者の確認用): (a) に当たる API_ROOTS の外の route.ts は `src/app/(auth)/auth/callback/route.ts`・`src/app/api/announcements/route.ts`・`src/app/api/comparison/trigger/route.ts`・`src/app/api/handson-tour/complete/route.ts` の 4 本 (除外 2 本 + `EXTRA_OPERATOR_ROUTES` 2 本)。⑨ に当たるファイルは `apps/mobile/app/(super-admin)/super-admin/{admins, database, feature-flags, settings}.tsx`・`apps/mobile/app/(support)/support/{index, inquiries, inquiries/[id], users, users/[id]}.tsx`・`apps/mobile/src/lib/api.ts` (除外)。一般の画面で当たるファイルは 0 件 (`MOBILE_OPERATOR_API_PREFIXES` の `/api/comparison/trigger` は、将来この API を呼ぶ画面を足したときに捕まえるために残す)。`apps/mobile/src/lib/super-admin-flags.ts` はコメントの中だけなので当たらない。`apps/mobile/app/(super-admin)/super-admin/index.tsx` は API を呼ばない (メニューだけ) ので ⑨ に当たらず、区画の `_layout` (⑩) だけで守る。産業医 (`org_industrial_doctor`) を roles に含む入口は Next.js にも DB にも 0 件 (§3.2) なので、①〜⑤ の母集合に産業医の入口は今は無い。将来 `requireRole(['org_industrial_doctor', ...])` で入口を足せば、置き場が `API_ROOTS` の中なら ① に、外なら (a) の自動の取り込みで ① に入る (`requireOrgRole` で作れば ③ が赤)。
 
 限界 (見張りであって証明ではない): `GATED_HELPER_FUNCTIONS` に載っていない別ファイルの関数へ委ねた中で `requireRole` を呼ぶ書き方は①で「呼んでいない」と出る (その場合は route 側で呼ぶように直すか、ヘルパーを `GATED_HELPER_FUNCTIONS` に足して ⑤ の検査に入れる)。`requireUser()` で止めている一般の route は母集合に入らない。モバイルでパスを文字列の連結 (`'/api/' + 'admin/...'`) で組む書き方は ⑨ に当たらない。**DB (PostgREST / RPC) を直接呼ぶ経路は、この走査の対象ではない** (§0.3・Q-9)。
 
@@ -1509,6 +1510,7 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `readSessionAssurance: セッションが無ければ Authorization ヘッダの Bearer JWT を getClaims に渡す (next/headers をモック)`
 - `readSessionAssurance: token 無し / getClaims の error / sub の不一致は AuthError(AUTH_UNAUTHENTICATED)`
 - `readSessionAssurance: aal が無い claim は aal1 として読む`
+- `readSessionAssurance: claims に amr (method が oauth / password のどちら) があっても読むのは aal と session_id だけ。Google ログインの aal1 は aal1 (S-18: 判定はログインの方式を入力に持たない)`
 - (B) `assertOperatorAssurance: 必須ロールでなければ getClaims を呼ばない`
 - (B) `assertOperatorAssurance: challenge_required は MfaRequiredError(AUTH_2FA_REQUIRED)、enrollment_required は AUTH_2FA_ENROLLMENT_REQUIRED (どちらも instanceof ForbiddenError)`
 - (B) `assertOperatorAssurance: pass / pass_grace は要約 (required / aal / enrolled / decision / enforce_from) を返す`
@@ -1516,6 +1518,7 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 `mfa-gate.test.ts` (B。helpers.ts の本物を使い、Supabase を差し替え)
 - `requireRole: admin + aal1 + verified は AUTH_2FA_REQUIRED を投げる`
 - `requireRole: admin + aal1 + factor 無し + 猶予なし は AUTH_2FA_ENROLLMENT_REQUIRED`
+- `requireRole([admin, super_admin, finance]): roles [admin, finance] と [finance] だけ、どちらも aal1 + verified は AUTH_2FA_REQUIRED (S-13)`
 - `requireRole: admin + aal2 は UserProfile.assurance.decision = pass`
 - `requireRole: support だけなら getClaims を呼ばず assurance.decision = not_required`
 - `requireRole: { assurance: 'session' } は AAL を見ない (assurance は undefined)`
@@ -1537,6 +1540,7 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 `tests/api/auth-mfa-routes.test.ts` (A。段 A の 4 route。段 A の `requireRole` はゲートを持たないので、AAL の 403 の検査は入れない)
 - `GET /status: 対象ロールでない → 403 PERM_DENIED / 未認証 → 401 / 登録済み aal1 → enrolled:true aal:'aal1' / 猶予中 → grace:true`
 - `POST /enroll: verified あり → 409 / unverified を先に unenroll してから enroll / 応答に secret と qr_code_svg`
+- `POST /verify: 未認証 (セッション切れ) → 401 AUTH_UNAUTHENTICATED で、mfa.challengeAndVerify も checkRateLimit も呼ばない (S-19)`
 - `POST /verify: 本文の形 → 400 VALIDATION_ERROR / 他人の factor_id → 404 / 不一致 → 400 AUTH_2FA_INVALID / 6 回目 → 429 + Retry-After / unverified の verify はコード 10 個を返し監査 admin.mfa.enroll / verified の verify はコードを返さない`
 - `POST /recover: 形の違うコードは DB に触れず 400 / 無いコード → 400 / verified な factor が無い → 409 / 消費できたら全 factor を admin で消し、残りの行を消し、監査 warn、next を返す / 4 回目 → 429`
 - `POST は別オリジンを 403 FORBIDDEN_ORIGIN`
@@ -1557,7 +1561,7 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `operator-mfa-backup-codes-migration-contract.test.ts` (A): migration と down の文面 — `CREATE TABLE IF NOT EXISTS public.operator_mfa_backup_codes`・UNIQUE (user_id, code_hash)・hex 64 の CHECK・部分 index・`ENABLE ROW LEVEL SECURITY`・ポリシーが 1 つも無い・REVOKE / GRANT の行・down が DROP TABLE / DROP INDEX だけ・冒頭のコメントの参照先が実在する
 - `totp-helper.test.ts` (A): `tests/helpers/totp.ts` と `tests/e2e/helpers/totp.mjs` が RFC 6238 Appendix B (SHA-1・秘密 "12345678901234567890"・T=59 → 6 桁 "287082"・T=1111111109 → "081804") で同じ値を出す。base32 の復号
 - `e2e-test-session.test.ts` (変更・B): `promoteTestSessionToAal2` が呼ぶのは `POST /auth/v1/factors`・`POST /auth/v1/factors/{id}/challenge`・`POST /auth/v1/factors/{id}/verify` の 3 つだけで、ほかのファイルが直接呼ばない
-- `operator-mfa-mobile-roles-sync.test.ts` (D): `apps/mobile/src/lib/mfa-gate.ts` の `MOBILE_MFA_REQUIRED_ROLES` と `src/lib/auth/mfa/policy.ts` の `MFA_REQUIRED_ROLES` が同じ集合 (`tests/mobile-meal-dish-images-parity.test.ts` と同じく相対パスで両方を import する)。`MOBILE_TOTP_CODE_PATTERN` と `TOTP_CODE_PATTERN` の `source` が同じ
+- `operator-mfa-mobile-roles-sync.test.ts` (D): `apps/mobile/src/lib/mfa-gate.ts` の `MOBILE_MFA_REQUIRED_ROLES` と `src/lib/auth/mfa/policy.ts` の `MFA_REQUIRED_ROLES` が同じ集合 (`tests/account-deletion-blocked-message.test.ts` と同じく `../apps/mobile/src/lib/...` の相対パスで両方を import する)。`MOBILE_TOTP_CODE_PATTERN` と `TOTP_CODE_PATTERN` の `source` が同じ
 
 ### 21.4 結合 (`tests/integration/security/operator-mfa.test.ts`。B。ローカル Supabase + Next)
 
@@ -1570,6 +1574,9 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `M-7: support だけのユーザーは aal1 のまま /api/support/stats が 200`
 - `M-8: OPERATOR_MFA_ENFORCE_FROM を未来にすると、未登録 admin は 200 + status.grace:true (Next を環境変数つきで起動した枠)`
 - `M-9: 登録済み admin の 2 つの aal1 のセッション (A と B。別々の anon client でログイン) のうち B で challenge の verify (登録ではない) に成功すると、A の refresh token での refreshSession が失敗する (§26.3 の前提を固定する。Supabase の挙動が変わったらここが赤になる)`
+- `M-10: admin と finance を両方持つ利用者・finance だけの利用者 (どちらも登録済み・aal1) は GET /api/admin/finance/invoices が 403、同じ利用者が verify で aal2 にすると 200 (S-13)`
+- `M-11: support だけの利用者 (aal1) は GET /api/admin/users が 200 → super_admin (aal2) が PUT /api/admin/users/{id}/role で roles を [support, admin] にする → 同じ aal1 の token の次の GET /api/admin/users は 403 (猶予なし)、GET /api/auth/mfa/status は 200 enrolled:false (登録へ回る。S-15。猶予ありの枝は M-8 と同じ枠で 200 + grace:true)`
+- `M-12: 登録済み super_admin (aal1) の POST /api/comparison/trigger は 403 { error: { code: 'FORBIDDEN' } } で、集計の Edge Function を呼ばない (S-23)`
 
 ### 21.5 e2e (`tests/e2e/operator/03-mfa.spec.ts`。B)
 
@@ -1577,6 +1584,8 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `T-MFA-2: 登録済み admin の新しいセッションは verify へ回され、6 桁で /admin に着く`
 - `T-MFA-3: バックアップコードで回復すると /login へ戻り、再ログイン後に setup へ回される`
 - `T-MFA-4: 登録済み admin の新しいセッションで /support を開くと verify へ回され、6 桁で /support に着く。support だけのユーザーは verify を経ずに /support が開く`
+- `T-MFA-5: verify 画面を開いたまま Cookie を消して (context.clearCookies) 6 桁を送ると、/login に着き、next が /settings/security/mfa/verify を指す (S-19)`
+- S-18 (Google ログイン) を e2e・結合で通す道具は無い (既存の e2e・結合に OAuth でログインするものは 0 件)。S-18 は、判定がログインの方式を入力に持たないこと (§21.1 の `readSessionAssurance` の amr の it と `decideOperatorAssurance` の入力 5 つ §6.1) と、`/auth/callback` を変えないこと (既存の `tests/auth-callback-legal-consent.test.ts`。§23 N-14) で守る
 - 既存の運営 spec (`operator/01`・`02`・`admin/*`・`w5-12`・`membership/11`) は fixture が AAL2 にするので変えない
 
 ### 21.6 モバイル (`apps/mobile/__tests__/operator-mfa/`。D)
@@ -1585,7 +1594,6 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `operator-mfa.test.ts` (`../../src/lib/supabase` を差し替え): `resolveOperatorMfaGate: 必須ロールでなければ getAuthenticatorAssuranceLevel を呼ばずに allow / error か data が null なら OperatorMfaGateError / 値を decideMobileOperatorGate に渡す`
 - `MfaVerifyGate.test.tsx`: `listFactors の totp の先頭に challengeAndVerify を呼び、成功で onVerified / 不一致・429・それ以外で文言 / 6 桁になるまで送信できない / 送信中は二重に送らない / totp が空なら Web で登録の案内`
 - `OperatorMfaGate.test.tsx` (`../../src/lib/operator-mfa` を差し替え): `allow なら children / verify なら MfaVerifyGate を出し onVerified の後に判定し直して children / enroll_on_web なら案内を出し children を描かない / OperatorMfaGateError なら再試行のボタンで判定し直す`
-- `apps/mobile/__tests__/comparison/comparison.test.tsx` (変更): 既存の it は `../../src/lib/operator-mfa` を差し替えて `allow` を返す (§23 N-26)。足す it: `再計算: verify なら確認のモーダルを出し、onVerified の後に POST /api/comparison/trigger を呼ぶ / enroll_on_web なら案内のアラートを出し POST を呼ばない / OperatorMfaGateError なら失敗のアラートを出し POST を呼ばない`
 
 ## 22. 触るファイルの母集合・新設一覧・段
 
@@ -1618,11 +1626,13 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 
 | 種類 | 名前 |
 |---|---|
-| 定数 | `MFA_REQUIRED_ROLES`・`OPERATOR_MFA_ENFORCE_FROM_ENV_NAME`・`BACKUP_CODE_COUNT`・`BACKUP_CODE_LENGTH`・`BACKUP_CODE_ALPHABET`・`BACKUP_CODE_INPUT_MAX_LENGTH`・`TOTP_CODE_PATTERN`・`MFA_TOTP_ISSUER`・`MFA_TOTP_FRIENDLY_NAME`・`MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MFA_PAGE_PATHS`・`PAGE_FORBIDDEN_DEFAULT_PATH`・`MFA_API_PATHS`・`MFA_AUDIT_ACTIONS`・`HOUR_SEC` (rate-limit.ts)・`SUPPORT_AREA_ROLES`・`SUPPORT_AREA_NEXT`・`SUPPORT_AREA_FORBIDDEN_PATH` (`src/app/(support)/support/layout.tsx` の中)・`MOBILE_MFA_REQUIRED_ROLES`・`MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`・`MOBILE_TOTP_CODE_PATTERN` (モバイル)・`ENFORCE_FROM_PATTERN`・`MONTH_INDEX_OFFSET` (`src/lib/auth/mfa/policy.ts` の中。export しない) |
+| 定数 | `MFA_REQUIRED_ROLES`・`OPERATOR_MFA_ENFORCE_FROM_ENV_NAME`・`BACKUP_CODE_COUNT`・`BACKUP_CODE_LENGTH`・`BACKUP_CODE_ALPHABET`・`BACKUP_CODE_INPUT_MAX_LENGTH`・`TOTP_CODE_PATTERN`・`MFA_TOTP_ISSUER`・`MFA_TOTP_FRIENDLY_NAME`・`MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MFA_PAGE_PATHS`・`PAGE_FORBIDDEN_DEFAULT_PATH`・`MFA_API_PATHS`・`MFA_AUDIT_ACTIONS`・`HOUR_SEC` (rate-limit.ts)・`SUPPORT_AREA_ROLES`・`SUPPORT_AREA_NEXT`・`SUPPORT_AREA_FORBIDDEN_PATH` (`src/app/(support)/support/layout.tsx` の中)・`MOBILE_MFA_REQUIRED_ROLES`・`MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`・`MOBILE_TOTP_CODE_PATTERN` (モバイル)・`ENFORCE_FROM_PATTERN`・`MONTH_INDEX_OFFSET` (`src/lib/auth/mfa/policy.ts` の中。export しない)・`BACKUP_CODE_DISPLAY_GROUP`・`ALPHABET_MASK` (`src/lib/auth/mfa/backup-codes.ts` の中。export しない) |
 | 定数 (テストの道具) | `TOTP_STEP_SECONDS`・`TOTP_DIGITS` (`tests/helpers/totp.ts`)・`TOTP_RETRY_ONCE` (`tests/integration/helpers/mfa.ts`)・`TEST_AAL2_ACCESS_TOKEN`・`TEST_AAL2_SESSION_ID` (`tests/helpers/mfa-claims.ts`) |
-| 型 | `MfaRequiredRole`・`AuthenticatorAssuranceLevel`・`MfaEnforceFromSetting`・`OperatorAssuranceDecision`・`DecideOperatorAssuranceInput`・`OperatorAssuranceResult`・`OperatorAssuranceSummary`・`SessionAssurance`・`VerifiedTotpFactor`・`RequireRoleOptions`・`RequireRoleForPageOptions`・`MfaRequiredCode`・`MfaStatusResponse`・`MfaVerifyBody`・`MfaRecoverBody`・`MfaResetBody`・`MobileAal`・`MobileOperatorGate`・`MobileOperatorGateInput`・`TestSessionClaims`・`TestUserIdSource`・`Aal2AuthMock` (テストの道具) |
+| Zod スキーマ | `SessionClaimsSchema` (`src/lib/auth/mfa/assurance.ts`。段 A)・`MfaStatusResponseSchema`・`MfaVerifyBodySchema`・`MfaRecoverBodySchema` (`src/lib/auth/mfa/schemas.ts`。段 A)・`MfaResetBodySchema` (段 C で `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS` と一緒に `src/lib/auth/mfa/schemas.ts` に足す §22.3) |
+| 型 | `MfaRequiredRole`・`AuthenticatorAssuranceLevel`・`MfaEnforceFromSetting`・`OperatorAssuranceDecision`・`DecideOperatorAssuranceInput`・`OperatorAssuranceResult`・`OperatorAssuranceSummary`・`SessionAssurance`・`VerifiedTotpFactor`・`RequireRoleOptions`・`RequireRoleForPageOptions`・`MfaRequiredCode`・`MfaStatusResponse`・`MfaVerifyBody`・`MfaRecoverBody`・`MfaResetBody`・`MobileAal`・`MobileOperatorGate`・`MobileOperatorGateInput`・`TestSessionClaims`・`TestUserIdSource`・`Aal2AuthMock` (テストの道具)・interface `AssertOperatorAssuranceInput` (`src/lib/auth/mfa/assurance.ts`。段 B)・interface `BackupCodeStoreClient` (`src/lib/auth/mfa/backup-codes.ts`。段 A) |
 | クラス | `MfaRequiredError`・`OperatorMfaGateError` (モバイル) |
-| 関数 | `resolveMfaEnforceFrom`・`isExistingWallClock` (policy.ts の中。export しない)・`readMfaEnforceFromEnv`・`isMfaRequiredRoleSet`・`decideOperatorAssurance`・`generateBackupCode(s)`・`normalizeBackupCode`・`isWellFormedBackupCode`・`hashBackupCode`・`formatBackupCode`・`issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes`・`findVerifiedTotpFactor`・`listUnverifiedTotpFactorIds`・`ownsFactor`・`bearerJwtOf`・`readSessionAssurance`・`assertOperatorAssurance`・`mfaRedirectPathFor`・`requireRoleForPage`・`recordMfaAudit`・`requiresOperatorMfa`・`toMobileAal`・`decideMobileOperatorGate`・`resolveOperatorMfaGate` (モバイル)・`promoteTestSessionToAal2` (e2e)・`promoteToAal2`・`signInForIntegration` (結合)・`generateTotp`・`decodeBase32`・`aal2Claims`・`aal2AuthMock` (テスト) |
+| 関数 | `resolveMfaEnforceFrom`・`isExistingWallClock` (policy.ts の中。export しない)・`readMfaEnforceFromEnv`・`isMfaRequiredRoleSet`・`decideOperatorAssurance`・`generateBackupCode(s)`・`normalizeBackupCode`・`isWellFormedBackupCode`・`hashBackupCode`・`formatBackupCode`・`issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes`・`findVerifiedTotpFactor`・`listUnverifiedTotpFactorIds`・`ownsFactor`・`isTotp` (`src/lib/auth/mfa/factors.ts` の中。export しない)・`bearerJwtOf`・`readSessionAssurance`・`assertOperatorAssurance`・`mfaRedirectPathFor`・`requireRoleForPage`・`recordMfaAudit`・`requiresOperatorMfa`・`toMobileAal`・`decideMobileOperatorGate`・`resolveOperatorMfaGate` (モバイル)・`promoteTestSessionToAal2` (e2e)・`promoteToAal2`・`signInForIntegration` (結合)・`generateTotp`・`decodeBase32`・`aal2Claims`・`aal2AuthMock` (テスト)・`collectRequireRoleArgumentIdentifiers` (`tests/operator-mfa-entry-points-scan.test.ts` の中の走査の関数。§20 の `ROLE_CONSTANT_NAMES` を集める) |
+| 関数 (Web の画面の通信。`src/lib/auth/mfa/client.ts`) | `getMfaStatus`・`startMfaEnrollment`・`verifyMfaCode`・`recoverWithBackupCode` (段 A)・`regenerateBackupCodes`・`unenrollMfaFactor` (段 B)・`mfaErrorMessage` (段 A。§15 の文言の表) |
 | React の部品 | `TotpCodeForm`・`BackupCodesPanel`・`MfaGraceBanner`・`OperatorMfaResetSection` (Web)・`MfaVerifyGate`・`OperatorMfaGate` (モバイル)・`SupportAreaGuardLayout` (`src/app/(support)/support/layout.tsx` の既定の export) |
 | route | `GET /api/auth/mfa/status`・`POST /api/auth/mfa/enroll`・`POST /api/auth/mfa/verify`・`DELETE /api/auth/mfa/factors/{id}`・`POST /api/auth/mfa/recover`・`POST /api/auth/mfa/backup-codes`・`POST /api/super-admin/admins/{id}/mfa/reset` |
 | 画面 | `/settings/security/mfa`・`/setup`・`/verify`・`/recover` |
@@ -1653,17 +1663,17 @@ const MOBILE_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | B | `src/lib/auth/mfa/client.ts`・`src/app/(main)/settings/security/mfa/page.tsx` (段 A で新設) | 再発行と解除の関数・ボタン (§15) |
 | — | `src/lib/admin/not-supported.ts` (`respondNotSupported`) | **変えない**。既定 (aal2) の `requireRole` を呼ぶのでゲートが付き、`MfaRequiredError` は catch の `ForbiddenError` 枝で 403 `FORBIDDEN` + `err.message` になる (§19.3)。§20 の `GATED_HELPER_FUNCTIONS` に登録して ①⑤ で見張る |
 | — | `src/app/(support)/layout.tsx` (client) | **変えない** (§13.4.1。内側に server layout を足す) |
-| B | 運営の layout 3 + page 11 (§3.2 の一覧) | `requireRole` + try/catch → `requireRoleForPage(roles, { next })`。layout 3 つに `MfaGraceBanner` |
+| B | 運営の layout 3 + page 11 (§3.2 の一覧) | `requireRole` + try/catch → `requireRoleForPage(roles, { next })` (import は `@/lib/auth/page-guard` から。barrel の `@/lib/auth` からは取らない §23 N-27)。layout 3 つに `MfaGraceBanner` |
 | B | `tests/integration/helpers/users.ts` | `createTestUserWithRoles` のサインインを `signInForIntegration` (§22.4.1) に置き換える (必須ロールなら aal2 の JWT。`TestUserPool` も一緒に直る) |
 | B | `tests/integration/security/admin-inquiries-api.test.ts`・`support-routes.test.ts`・`admin-pii-view-audit.test.ts`・`finance-refund-audit.test.ts`・`tests/integration/rls/support-tickets-staff-insert.test.ts` | 自前の `createUser` / `createRlsTestUser` のサインインを `signInForIntegration({ email, password, roles })` に置き換える (§23 N-16 ②。失敗時の後片付けは保つ) |
 | B | `tests/e2e/helpers/test-session.mjs`・`tests/e2e/fixtures/fresh-user.ts`・`tests/e2e/helpers/seed-roles.ts` | `promoteTestSessionToAal2(session)` (REST で factors → challenge → verify。anon key + access_token) を `adminUser` / `superAdminUser` の `injectSession` の後に通す。`grantRoles` で必須ロールを付けた共有ユーザーも同じ |
 | B | `tests/e2e-test-session.test.ts` | 新しい 3 つの REST を補助関数にだけ許す |
 | B | `src/lib/auth/__tests__/helpers.test.ts` (§23 N-13) と、`createClient` を差し替えて `requireRole` を本物で通す単体テスト (§23 N-14 の候補 22 本) | Supabase のモックの `auth` に `...aal2AuthMock(<user.id>)` (§22.4.2。`getSession` と `getClaims` の両方) を足す。`user.factors` は足さない |
 | C | `src/app/admin/users/[id]/page.tsx` | 解除セクション |
+| C | `src/lib/auth/mfa/schemas.ts` (段 A で新設) | `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MfaResetBodySchema`・`MfaResetBody` を足す (§14.7) |
 | D | `apps/mobile/app/(super-admin)/_layout.tsx`・`apps/mobile/app/(support)/_layout.tsx` | `OperatorMfaGate` で `Stack` を包む (§16.3) |
-| D | `apps/mobile/app/comparison/index.tsx` | 再計算の前に `resolveOperatorMfaGate` (§16.3) |
 | D | `tests/operator-mfa-entry-points-scan.test.ts` (段 B で新設) | ⑨⑩ と `MOBILE_*` の定数を足す (§20) |
-| D | `apps/mobile/__tests__/comparison/comparison.test.tsx`・`apps/mobile/__tests__/app/error-boundaries.test.tsx` | `../../src/lib/operator-mfa` の差し替え (§23 N-25・N-26) |
+| D | `apps/mobile/__tests__/app/error-boundaries.test.tsx` | `../../src/lib/operator-mfa` の差し替え (§23 N-25) |
 
 ### 22.4 テストの道具の契約 (段 B)
 
@@ -1778,12 +1788,12 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-6 | `tests/next15-async-request-api-scan.test.ts` | `createClient()`・`headers()`・`params` | await 無し / `params` が Promise でないと赤 | `await createClient()`・`(await headers()).get('authorization')`・`factors/[id]` と `admins/[id]` は `params: Promise<{ id: string }>` | A/B/C |
 | N-7 | `tests/role-check-source-scan.test.ts` | `requireRole(`・`roles?.` | route で roles を手書き判定すると赤。`usingRequireRole > 40` の番兵 | 新 route は `requireRole(MFA_REQUIRED_ROLES, …)` を呼ぶ (配列リテラルでないので ROLE_GATED_ROUTES には入れない) | A |
 | N-8 | `tests/admin-view-audit-1326.test.ts` | `admin_audit_logs`・`x-forwarded-for` | `src/app/api/super-admin/**` で直接 INSERT / 直読みすると赤 | reset route は `recordMfaAudit` (→ `recordAdminAudit`) 経由 | C |
-| N-9 | `tests/mobile-super-admin-api-contract.test.ts` | `api.get(`・`api.patch(` (apps/mobile の (super-admin)) | 画面が呼ぶ API が無いと赤 | モバイルは新しい API を呼ばない (Supabase を直接)。`_layout.tsx` の変更は画面の API 呼び出しを変えない。この番兵は (super-admin) だけを見る (`SCREEN_ROOT`)。(support) の画面と比較の画面の API の呼び出しも本書では変えない。変更なし。走らせて確認 | D |
+| N-9 | `tests/mobile-super-admin-api-contract.test.ts` | `api.get(`・`api.patch(` (apps/mobile の (super-admin)) | 画面が呼ぶ API が無いと赤 | モバイルは新しい API を呼ばない (Supabase を直接)。`_layout.tsx` の変更は画面の API 呼び出しを変えない。この番兵は (super-admin) だけを見る (`SCREEN_ROOT`)。(support) の画面の API の呼び出しも本書では変えない。変更なし。走らせて確認 | D |
 | N-10 | `tests/e2e-api-paths.test.ts` | `/api/auth/mfa/`・`/api/super-admin/admins/` | e2e spec が存在しないパスを叩くと赤 | `tests/e2e/operator/03-mfa.spec.ts` を `SPEC_FILES` に足す (minRefs を実数で) | B |
 | N-11 | `tests/e2e-test-session.test.ts` | `/auth/v1/factors`・`generate_link`・`/auth/v1/verify` | 補助関数以外が Auth の REST を直接呼ぶと赤 | `promoteTestSessionToAal2` を `test-session.mjs` に置き、テストの許可一覧に 3 つの REST を足す | B |
 | N-12 | `tests/auth/no-login-lockout.test.ts` | `AUTH_ACCOUNT_LOCKED`・`423`・文書の「N 分ロック」等 | 本書・運用文書に「ロック」を前提にした文を書くと赤 | 本書は「ログアウト」「止める」で書く。`/api/auth/mfa/*` は 423 を返さない | A/B |
 | N-13 | `src/lib/auth/__tests__/helpers.test.ts` | `requireRole`・`mockGetUser` | モックの client の `auth` は `getUser` だけ (origin/main の 23〜28 行目)。段 B の `requireRole` は必須ロールのとき `readSessionAssurance` が `auth.getSession()` → `auth.getClaims(token)` の順に呼ぶので、admin / super_admin のケースで `supabase.auth.getSession is not a function` の TypeError | `supabaseClient.auth` に `...aal2AuthMock(fakeUser.id)` (§22.4.2。`getSession` と `getClaims` の両方) を足す。`requireRole` の既存の it は aal2 で通る。`user.factors` は足さない | B |
-| N-14 | `createClient` を差し替えて `requireRole` を本物で通す単体テスト (候補 22 本。N-13 の 1 本と合わせて 23 本: `tests/super-admin-flags-route.test.ts`・`super-admin-logs-route.test.ts`・`support-routes.test.ts`・`announcements-route.test.ts`・`admin-inquiries-route.test.ts`・`admin-console-entry.test.tsx`・`auth-callback-legal-consent.test.ts`・`ai-chat-flag-edge.test.ts`・`org-admin-routes.test.ts`・`org-challenge-member-routes.test.ts`・`org-member-auth.test.ts`・`handson-tour-unit/getStatus.test.ts`・`api/add-from-photo-sandbox-route.test.ts`・`api/menu-plans-add-sandbox-route.test.ts`・`src/__tests__/api/feature-flags.test.ts`・`src/__tests__/lib/feature-flags.test.ts`・`src/__tests__/api/org/**` 5 本・`src/lib/auth/__tests__/require-org-admin.test.ts`。出し方: `vi.mock('@/lib/supabase/server'` を持ち、運営ロールの文字列を持ち、`@/lib/auth` / `@/lib/auth/helpers` / `@/lib/auth/operator-permissions` を差し替えていない。2026-10-15 の実測で、どれも `getSession` も `getClaims` も持たない) | `vi.mock('@/lib/supabase/server'` かつ `'admin'` / `'super_admin'` のロール | N-13 と同じ (`getSession` → `getClaims` の順に呼ぶので、片方だけでは赤。admin ロールが `requireRole` に届くケースだけ) | 各モックの `auth` に `...aal2AuthMock(<getUser のモックが返す user.id>)` (§22.4.2) を足す。getUser の戻りがテストごとに変わるモック (`tests/admin-console-entry.test.tsx` の `session.current` など) は `aal2AuthMock(() => <いまの id>)` で渡す。factory の中で client を作るモックは `createClient` の本体で呼ぶ (§22.4.2 の置き場の規則)。実際に赤になるものだけ直す (org 系・handson は admin ロールを `requireRole` に通さないものが多い) | B |
+| N-14 | `createClient` を差し替えて `requireRole` を本物で通す単体テスト (候補 22 本。N-13 の 1 本と合わせて 23 本: `tests/super-admin-flags-route.test.ts`・`super-admin-logs-route.test.ts`・`support-routes.test.ts`・`announcements-route.test.ts`・`admin-inquiries-route.test.ts`・`admin-console-entry.test.tsx`・`auth-callback-legal-consent.test.ts`・`ai-chat-flag-edge.test.ts`・`org-admin-routes.test.ts`・`org-challenge-member-routes.test.ts`・`org-member-auth.test.ts`・`handson-tour-unit/getStatus.test.ts`・`api/add-from-photo-sandbox-route.test.ts`・`api/menu-plans-add-sandbox-route.test.ts`・`src/__tests__/api/feature-flags.test.ts`・`src/__tests__/lib/feature-flags.test.ts`・`src/__tests__/api/org/{invites/create, members/create, members/remove, owner-transfer/propose, stats/refresh}.test.ts` 5 本 (`src/__tests__/api/org/**` は 7 本あり、`leave.test.ts`・`owner-transfer/accept.test.ts` の 2 本は `'admin'` / `'super_admin'` の文字列を持たない (組織の一般のメンバーの操作だけを試す) ので下の出し方に当たらない)・`src/lib/auth/__tests__/require-org-admin.test.ts`。出し方: `vi.mock('@/lib/supabase/server'` を持ち、運営ロールの文字列を持ち、`@/lib/auth` / `@/lib/auth/helpers` / `@/lib/auth/operator-permissions` を差し替えていない。2026-10-15 の実測で、どれも `getSession` も `getClaims` も持たない) | `vi.mock('@/lib/supabase/server'` かつ `'admin'` / `'super_admin'` のロール | N-13 と同じ (`getSession` → `getClaims` の順に呼ぶので、片方だけでは赤。admin ロールが `requireRole` に届くケースだけ) | 各モックの `auth` に `...aal2AuthMock(<getUser のモックが返す user.id>)` (§22.4.2) を足す。getUser の戻りがテストごとに変わるモック (`tests/admin-console-entry.test.tsx` の `session.current` など) は `aal2AuthMock(() => <いまの id>)` で渡す。factory の中で client を作るモックは `createClient` の本体で呼ぶ (§22.4.2 の置き場の規則)。実際に赤になるものだけ直す (org 系・handson は admin ロールを `requireRole` に通さないものが多い) | B |
 | N-15 | `src/__tests__/api/operator/membership/*.test.ts` (6 本)・`tests/audit-log-date-range-routes.test.ts` | `requireSuperAdmin` | モックしているので反応しない。委譲後も `{ userId }` の形は同じ | 変更なし (走らせて確認) | B |
 | N-16 | 結合テストで運営ロールの JWT を作って運営の API (`/api/admin/**`・`/api/super-admin/**`・`/api/operator/**`・`/api/support/**`・`/api/announcements`・`/api/comparison/trigger`) を呼ぶもの。母集合は 2 つに割れる: ① `createTestUserWithRoles` (`tests/integration/helpers/users.ts`) 経由 — 直接呼ぶ 23 本 (`tests/integration/operator/**` 17 本・`tests/integration/security/{admin-finance-nps-route, admin-users-email, feature-flags-runtime, plan-deprecate-subscribers, super-admin-columns, super-admin-logs}.test.ts` 6 本) と `TestUserPool` (`tests/integration/helpers/admin-test-utils.ts`) 経由の 5 本 (`tests/integration/operator/{admin-finance-detail, admin-moderation-detail, admin-sales-lead-detail, admin-support-ticket-detail, super-admin-input-validation}.test.ts`) ② **自前で `signInWithPassword` する 5 本**: `tests/integration/security/admin-inquiries-api.test.ts` (113〜127 行目の `createUser`)・`tests/integration/security/support-routes.test.ts` (60〜81 行目の `createUser`)・`tests/integration/security/admin-pii-view-audit.test.ts` (54〜75 行目の `createUser`)・`tests/integration/security/finance-refund-audit.test.ts` (80〜96 行目の `createUser`)・`tests/integration/rls/support-tickets-staff-insert.test.ts` (76〜120 行目の `createRlsTestUser`。`POST /api/admin/support/tickets` を admin で呼ぶ)。出し方: `tests/integration` の `*.test.ts` (helpers を除く) で、上の運営の API のパスの文字列を持つもの (2026-10-15 の origin/main で 39 本。残りの 6 本はパスを説明のコメントに持つだけか、RPC / PostgREST だけを呼ぶ) を、JWT の作り方で分ける | `createTestUserWithRoles`・`TestUserPool`・`signInWithPassword` | 運営の JWT が aal1 のままで、段 B のマージ後に 403 になる | ① `users.ts` の `createTestUserWithRoles` のサインインを `signInForIntegration` (§22.4.1) に置き換える (`TestUserPool` はこれを呼ぶので一緒に直る) ② 5 本の自前の関数のサインインも `signInForIntegration({ email, password, roles })` に置き換える (失敗時の既存の後片付けは保つ)。**変えないもの**: 自前でサインインしても運営の API を呼ばず RPC / PostgREST だけを使う `tests/integration/rls/csat-nps-summary-rpc.test.ts`・`tests/integration/security/log-cleanup-and-dau-snapshot.test.ts` など (DB を直接呼ぶ経路は範囲外 §0.3・Q-9)・`tests/integration/helpers/supabase.ts` の `createTestUser` (§22.4.1)。段 B の PR で結合のスイートを全部流して、403 が残らないことを確かめる | B |
 | N-17 | e2e の運営 spec (`operator/01`・`02`・`admin/*`・`w5-12`・`membership/11`) | `adminUser`・`superAdminUser`・`grantRoles` | 注入したセッションが aal1 | fixture で `promoteTestSessionToAal2`。同じ利用者の 2 つ目のセッションを aal2 に上げると 1 つ目が終わる (§26.3) ので、昇格は 1 利用者 = 1 セッションで行う (`adminUser` / `superAdminUser` は `createFreshUser` で毎回新しい利用者。`grantRoles` で必須ロールを付けた利用者を 2 つの worker で共有しない) | B |
@@ -1795,7 +1805,8 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-23 | `src/__tests__/app/route-uniqueness.test.ts` | `page.tsx`・`route.ts` の URL | ルートグループを外した URL の重複を見る。`/settings/security/mfa{,/setup,/verify,/recover}`・`/api/auth/mfa/*`・`/api/super-admin/admins/{id}/mfa/reset` は origin/main (2026-10-15) のどのファイルとも重ならない (実測: `src/app` に `settings/security` / `api/auth/mfa` / `super-admin/admins/[` の既存ファイル無し)。反応しない | **変更なし** (走らせて確認) | A/B/C |
 | N-24 | `tests/account-export-tables.test.ts` (`分類されていない表が無い`) | `operator_mfa_backup_codes`・`user_id` | migration まで読み込んだ表の模型 (`tests/helpers/schema-snapshot.ts` の `loadSchemaModel`) で、`user_id` (`DATA_SUBJECT_COLUMNS`) を持つ public の表は `ACCOUNT_EXPORT_TABLES` か `ACCOUNT_EXPORT_EXCLUDED` に分類が要る。新しい表は分類されていないので段 A の migration で赤 | `src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED` の「認証情報・セキュリティ」の並び (`password_history` の近く) に `operator_mfa_backup_codes: '二段階認証のバックアップコードのハッシュ (認証情報)'` を足す (本人にも出さない。ハッシュを出す意味が無く、出すと総当たりの手がかりになる) | A |
 | N-25 | `apps/mobile/__tests__/app/error-boundaries.test.tsx` | `(super-admin)/_layout.tsx`・`(support)/_layout.tsx` | 全ての `_layout.tsx` を import して `ErrorBoundary` を確かめる。段 D で 2 つの `_layout` が `OperatorMfaGate` → `operator-mfa.ts` → `../lib/supabase` (読み込み時に client を作る) を import するようになる | テストの冒頭の `jest.mock` の並びに `jest.mock('../../src/lib/operator-mfa', () => ({ resolveOperatorMfaGate: jest.fn().mockResolvedValue('allow'), OperatorMfaGateError: class extends Error {} }))` を足す (`ErrorBoundary` の検査は変えない) | D |
-| N-26 | `apps/mobile/__tests__/comparison/comparison.test.tsx` | `comparison-recalculate-button`・`/api/comparison/trigger` | 「再計算」を押す既存の it が、押した後に `resolveOperatorMfaGate` (Supabase) を通るようになる | 同じ `jest.mock('../../src/lib/operator-mfa', …)` を足し、既存の it では `allow` を返す。(`useProfile` のモックは既に `roles: mockRoles` を返すので変えない)。§21.6 の 3 つの it を足す | D |
+| N-26 | (欠番) | — | v1.2 までの `apps/mobile/__tests__/comparison/comparison.test.tsx` は #1673 で画面ごと消えた (§3.2)。番号は振り直さない | — | — |
+| N-27 | 運営の layout / page を import して描く既存の単体テスト: `tests/admin-console-entry.test.tsx` (`admin/page`・`admin/layout`・`admin/announcements/page`・`admin/organizations/page`)・`tests/admin-preparing-pages.test.tsx` (`admin/moderation/page`・`admin/moderation/[type]/[id]/page`)。出し方: `@/app/admin/**`・`@/app/super-admin/**`・`@/app/(operator)/**` の `page` / `layout` を import するテストのうち、§3.2 の layout 3 + page 11 を import するもの (2026-10-15 の origin/main で 2 本。ほかの `super-admin-*-page` などは `requireRole` を呼ばない page だけを import する) | `requireRoleForPage`・`@/lib/auth/helpers` | page が `requireRole` の代わりに `requireRoleForPage` (`@/lib/auth/page-guard`) を呼ぶようになる | **変更なし (走らせて確認)**。理由: ① `page-guard.ts` は `@/lib/auth/helpers` から値として `requireRole` だけを import する (§13.4) ので、`vi.mock('@/lib/auth/helpers', () => ({ requireRole }))` の部分モック (admin-preparing-pages) でもそのまま差し替わる。page の import は `@/lib/auth/page-guard` からにする (§22.3。barrel の `@/lib/auth` から取ると、部分モックに無い名前の読み出しで赤になる) ② 未認証・ロール不足の検査は `rejects.toThrow('NEXT_REDIRECT:/login')` で、`toThrow` の文字列は部分一致なので `/login?next=%2Fadmin` でも通る ③ admin-console-entry は `requireRole` を本物で通すので、admin のケースのモックに `aal2AuthMock(() => <いまの id>)` が要る (N-14 の 1 本として直す) | B |
 
 ---
 
@@ -1839,7 +1850,6 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | `src/app/(support)/layout.tsx` (client) | 保持 | 変えない。内側に server layout `src/app/(support)/support/layout.tsx` を足す (§13.4.1) |
 | `src/lib/account-export-tables.ts` | 変更 | `ACCOUNT_EXPORT_EXCLUDED` に 1 行 (§23 N-24) |
 | `apps/mobile/app/(super-admin)/_layout.tsx`・`apps/mobile/app/(support)/_layout.tsx` | 変更 | `OperatorMfaGate` で包む (§16.3) |
-| `apps/mobile/app/comparison/index.tsx` | 変更 | 再計算の前に `resolveOperatorMfaGate` (§16.3) |
 | RLS のポリシー 58 本・SECURITY DEFINER の関数 7 本 (§0.3) | 保持 | 変えない (範囲外。Q-9) |
 | `docs/operations/auth-protection.md` の「MFA を使っていない」 | 変更 | §24 |
 
@@ -1859,7 +1869,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 2. `OPERATOR_MFA_ENFORCE_FROM` を決める (例: 1 週間後。未設定 = 段 B のデプロイで即時)。
 3. 段 B をデプロイ。猶予中の未登録の運営は、運営の画面の上にバナーが出る。登録済みの運営はこの瞬間から challenge。
 4. 期日を過ぎたら、未登録の運営は setup へ回される。期日の前に全員が登録できたら、環境変数を消す。
-5. 段 C・D (どちらも段 B の後)。**段 D は段 B の直後に出す**: 段 B から段 D までの間は、モバイルの (super-admin)・(support) の区画と再計算を必須ロールが AAL1 で使うと API が 403 になる (画面は既存のエラー表示。データは守られる)。モバイルの運営は、その間は Web を使う。
+5. 段 C・D (どちらも段 B の後)。**段 D は段 B の直後に出す**: 段 B から段 D までの間は、モバイルの (super-admin)・(support) の区画を必須ロールが AAL1 で使うと API が 403 になる (画面は既存のエラー表示。データは守られる)。モバイルの運営は、その間は Web を使う。
 
 ### 26.3 セッションの AAL の扱い (R-7 の答え)
 
@@ -1867,7 +1877,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 - aal2 は token の refresh をまたいで持続し、ログアウト・セッションの失効・factor の削除・**同じ利用者の別のセッションでの verify** で終わる。アプリは「最後に確認した時刻」で再確認を求めない (step-up は範囲外)。
 - factor を verify すると、**登録のときも、毎回の challenge (ログインごとの 6 桁) のときも**、Supabase が同じ利用者の **他のセッションを終了する** (§3.1)。**他の端末・ブラウザの aal1 のセッションは、6 桁を入れるたびに毎回ログアウトされる** (aal2 の他のセッションが残るかは Supabase に依り、本書は依存しない)。運営が受ける結果:
   - スマホのアプリにふつう (aal1) でログインしている運営が、Web の `/admin` などで 6 桁を入れると、アプリのネイティブのセッションが終わる (ネイティブのブリッジで同じセッションを使う WebView も一緒に終わる)。アプリは次の要求か refresh の時点で再ログインになる (S-25)。
-  - モバイルの運営の区画・再計算で 6 桁を入れると、同じ人の Web のブラウザの aal1 のセッションが終わる。
+  - モバイルの運営の区画で 6 桁を入れると、同じ人の Web のブラウザの aal1 のセッションが終わる。
   - アプリの側で防ぐ手段は無い (Supabase の verify の挙動。§7.1 で factor を Supabase に持つと裁定したことの帰結)。受け入れるかは Q-11。運用の注意として `docs/operations/auth-protection.md` の新 §11 に載せる (§24)。
 - 回復・解除 (他人による) では **全セッションを終了する**。画面はこれを前提に `/login` へ戻す。
 - モバイルも同じ (Bearer の token の claim)。
