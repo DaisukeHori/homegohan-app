@@ -480,7 +480,8 @@ describe('cross/16 型の生成物 (§11.8。main の取り込みで型が衝突
     for (const column of addedColumns) {
       const tsType = SQL_TO_TS_TYPE[column.sqlType];
       expect(tsType, `${column.name} の SQL の型 ${column.sqlType} の対応`).toBeDefined();
-      const expected = column.notNull ? tsType : `${tsType} | null`;
+      // NULL を許す列は「| null」を付ける。ただし unknown (inet) は null を含むので、supabase gen types は「| null」を付けない (既存の ip_address も同じ)
+      const expected = column.notNull || tsType === 'unknown' ? tsType : `${tsType} | null`;
       expect(row, `${file}: user_sessions_metadata.Row.${column.name}`).toMatch(
         new RegExp(`^\\s*${column.name}: ${expected.replace(/[|]/g, '\\|')}$`, 'm'),
       );
