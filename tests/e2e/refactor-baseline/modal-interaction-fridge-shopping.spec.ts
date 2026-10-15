@@ -125,7 +125,9 @@ test.describe("FridgeModal", () => {
     await dateInput.fill(dateStr);
 
     const addBtn = page.getByRole("button", { name: /追加する/ });
-    await addBtn.waitFor({ state: "enabled", timeout: 5_000 });
+    // locator.waitFor は "enabled" を待てない (attached / detached / visible / hidden だけで、渡すと必ず例外になる)。
+    // 押せるようになるのは expect の toBeEnabled で待つ
+    await expect(addBtn).toBeEnabled({ timeout: 5_000 });
     await addBtn.click();
 
     // FridgeModal に戻って追加した食材が表示される
@@ -209,7 +211,9 @@ test.describe("FridgeModal", () => {
     await dateInput.fill(dateStr);
 
     const addBtn = page.getByRole("button", { name: /追加する/ });
-    await addBtn.waitFor({ state: "enabled", timeout: 5_000 });
+    // locator.waitFor は "enabled" を待てない (attached / detached / visible / hidden だけで、渡すと必ず例外になる)。
+    // 押せるようになるのは expect の toBeEnabled で待つ
+    await expect(addBtn).toBeEnabled({ timeout: 5_000 });
     await addBtn.click();
 
     // FridgeModal に戻って追加した食材が表示される
