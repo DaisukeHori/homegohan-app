@@ -4,6 +4,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { readJsonBody } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /**
  * 認可エラー (401 / 403) はそのまま返し、それ以外は 500 の汎用メッセージにする。
@@ -53,6 +54,9 @@ export async function GET(request: Request) {
 
 // お知らせ作成 (admin / super_admin のみ。共通の requireRole()、#1161)
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   try {
     // 1. 権限チェック
     const actor = await requireRole(['admin', 'super_admin']);

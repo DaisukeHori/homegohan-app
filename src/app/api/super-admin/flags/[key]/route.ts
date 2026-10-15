@@ -11,10 +11,14 @@ import { invalidateFeatureFlag } from '@/lib/feature-flags';
 import { UpdateFeatureFlagSchema } from '@/lib/super-admin/flags-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 type Params = { params: Promise<{ key: string }> };
 
 export async function PATCH(request: NextRequest, props: Params) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);

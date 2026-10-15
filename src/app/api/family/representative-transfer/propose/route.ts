@@ -14,8 +14,12 @@ import {
   inviteThrottleFailureFromRpcError,
   inviteThrottleResponse,
 } from '@/lib/membership/invite-throttle';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const logger = createLogger('POST /api/family/representative-transfer/propose', generateRequestId());
   const supabase = await createClient();
 

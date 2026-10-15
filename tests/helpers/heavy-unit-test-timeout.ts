@@ -32,8 +32,8 @@
  *     (1 件ごとに git を 2 回起こす) は 30 秒では足りないので、bash・git を何度も起動する tests/local-ci-slot*.test.ts と同じ
  *     60 秒 (tests/helpers/local-ci-slot-test-timeout.ts) を使う。
  *
- * #1657 で足したもの: src/__tests__/api/null-character-routes.test.ts は、同じ型 (テストの中で、利用者が自由に書ける欄を持つ
- *   38 の handler の route を丸ごと読み込む)。tests/heavy-unit-test-timeout.test.ts の「同じ型のファイル」の検査が見つけた。
+ * #1657 で足したもの: src/__tests__/api/null-character-routes.test.ts は、同じ型 (テストの中で、本文を読む
+ *   121 の handler の route を丸ごと読み込む)。tests/heavy-unit-test-timeout.test.ts の「同じ型のファイル」の検査が見つけた。
  *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる

@@ -12,6 +12,7 @@ import {
   isOrgChallengeStatus,
   isOrgChallengeType,
 } from '@/lib/org-challenges';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 権限: 所属組織の org_role が owner / admin (#1235)。判定は共通の requireOrgAdmin() (#1161)
 //
@@ -118,6 +119,9 @@ export async function GET(request: Request) {
 
 // チャレンジ作成
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const { user, profile } = await requireOrgAdmin();
     const supabase = await createClient();
@@ -217,6 +221,9 @@ export async function POST(request: Request) {
 
 // チャレンジ更新
 export async function PUT(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const { profile } = await requireOrgAdmin();
     const supabase = await createClient();

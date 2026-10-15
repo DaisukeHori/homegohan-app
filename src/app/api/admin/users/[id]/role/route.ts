@@ -16,6 +16,7 @@ import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { RoleChangeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
 
@@ -140,9 +141,15 @@ async function handleRoleChange(request: Request, params: Params) {
 }
 
 export async function PATCH(request: Request, ctx: Params) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   return handleRoleChange(request, ctx);
 }
 
 export async function PUT(request: Request, ctx: Params) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   return handleRoleChange(request, ctx);
 }

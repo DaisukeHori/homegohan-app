@@ -10,6 +10,7 @@ import {
   orgInviteFailureResponse,
 } from '@/lib/membership/org-invite';
 import { CreateOrgInviteRequestBodySchema } from '@/schemas/membership/organization-invite';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 権限: 所属組織の org_role が owner / admin。判定は共通の requireOrgAdmin() (#1161)
 
@@ -75,6 +76,9 @@ export async function GET(request: Request) {
 
 // 招待作成 (RPC create_org_invite + Resend 送信)
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   let admin: OrgAdminContext;
   try {
     admin = await requireOrgAdmin();

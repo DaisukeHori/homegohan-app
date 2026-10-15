@@ -13,12 +13,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { sanitizeLogEntry } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // #1044 (F6-20): level は enum に限定、message は上限文字数を設ける
 const ALLOWED_LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 const MAX_MESSAGE_LENGTH = 2000;
 
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   try {
     const { level, message, metadata } = await request.json();
 

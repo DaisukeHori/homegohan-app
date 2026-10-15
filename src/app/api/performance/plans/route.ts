@@ -3,6 +3,7 @@ import { jstToday } from '@/lib/jst-day-ranges'
 import { NextRequest, NextResponse } from 'next/server'
 import { toPerformancePlan, fromPerformancePlan } from '@/lib/converter'
 import { internalError } from '@/lib/api/errors'
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 
 /**
  * GET /api/performance/plans
@@ -56,6 +57,9 @@ export async function GET(request: NextRequest) {
  * 既存のactive計画はsupersededに更新
  */
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request)
+  if (nullCharacterRejection) return nullCharacterRejection
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -138,6 +142,9 @@ export async function POST(request: NextRequest) {
  * 計画を更新（アーカイブなど）
  */
 export async function PATCH(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request)
+  if (nullCharacterRejection) return nullCharacterRejection
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()

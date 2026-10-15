@@ -2,8 +2,10 @@
  * API route の入口で、リクエストの本文 (JSON) の NULL 文字 (U+0000) を 400 で断る (#1657)
  *
  * Postgres の text は U+0000 を保存できず、jsonb も \u0000 を受け付けない (src/lib/api/null-character.ts)。
- * 利用者が自由に書ける欄 (メモ・名前・自由記述・AI への入力) をそのまま insert / update / upsert / rpc に渡す route は、
+ * 本文の文字列 (メモ・名前・自由記述・AI への入力など) をそのまま insert / update / upsert / rpc に渡す route は、
  * 本文に NULL 文字があると DB が拒んで 500 になっていた (#1622 で POST /api/ai/menu/weekly/request だけ直した)。
+ * 本文 (JSON / テキスト) を読む API route の handler は、だれが呼ぶ route でもこれを最初に呼ぶ。呼ばない handler と
+ * その理由は src/__tests__/api/null-character-routes.test.ts の EXCLUDED に載せる (載っていない handler が本文を読むと、そのテストが赤になる)。
  *
  * 使い方 (route の handler の最初で、認証・DB に触れる前に):
  *   const nullCharacterRejection = await rejectNullCharacterBody(request);

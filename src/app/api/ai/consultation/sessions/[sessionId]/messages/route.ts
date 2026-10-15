@@ -980,7 +980,7 @@ AIが最適な一汁三菜の献立を生成しますね。
 
 // メッセージ送信（AI応答を含む）
 export async function POST(request: Request, props: { params: Promise<{ sessionId: string }> }) {
-  // 本文の文字列 (自由に書ける欄) に NULL 文字があれば、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
   const nullCharacterRejection = await rejectNullCharacterBody(request);
   if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;

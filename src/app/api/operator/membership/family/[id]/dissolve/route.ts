@@ -14,6 +14,7 @@ import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
 import { z } from 'zod';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +25,9 @@ const BodySchema = z.object({
 });
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(req);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {

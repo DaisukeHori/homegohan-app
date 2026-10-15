@@ -15,6 +15,7 @@ import {
 } from '@/lib/planned-meal-validation';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /**
  * 献立の栄養情報を更新
@@ -23,6 +24,9 @@ import { internalError } from '@/lib/api/errors';
  * 写真解析やAI推定結果をplanned_mealsに保存
  */
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
 
   try {

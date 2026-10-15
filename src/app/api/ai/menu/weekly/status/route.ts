@@ -9,6 +9,7 @@ import {
   WEEKLY_MENU_REQUEST_STALE_MESSAGE,
   weeklyMenuRequestErrorMessageForResponse,
 } from '@/lib/weekly-menu-request-error';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -112,6 +113,9 @@ export async function GET(request: Request) {
 // 存在しない（migration 追加は本 Issue のスコープ外のため報告のみ）。既存の 'failed' + 判別可能な
 // error_message で「ユーザーによる中止」を表現する。既に completed/failed の場合は上書きしない。
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

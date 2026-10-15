@@ -59,6 +59,7 @@ import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { PriceChangeSchema } from '@/lib/super-admin/plans-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -80,6 +81,9 @@ type IntervalSync = {
 const NO_SYNC: IntervalSync = { newPriceId: null, oldPriceDeactivated: false, oldPriceDeactivationSkippedReason: null };
 
 export async function POST(request: NextRequest, props: RouteContext) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);

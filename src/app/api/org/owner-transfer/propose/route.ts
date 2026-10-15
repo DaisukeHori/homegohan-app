@@ -15,6 +15,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /** メールに書く有効期限 (提案から何日後か)。以前と同じ 7 日 */
 const OWNER_TRANSFER_EMAIL_EXPIRY_DAYS = 7;
@@ -28,6 +29,9 @@ const BodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) {

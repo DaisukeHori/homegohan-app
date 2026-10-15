@@ -10,6 +10,7 @@ import {
   getAiConsentStatus,
   grantAiConsent,
 } from '@/lib/ai/consent';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /**
  * T15 (#1154) 外国の AI 事業者への提供の同意: 状況の確認と、同意の記録
@@ -56,6 +57,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const {
     data: { user },

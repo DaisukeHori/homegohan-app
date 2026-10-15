@@ -6,6 +6,7 @@ import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
 import { addDaysToDate, isCalendarDate } from '@/lib/date-utils';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 const ROUTE_NAME = 'POST /api/shopping-list/regenerate';
 
@@ -22,6 +23,9 @@ const MAX_RANGE_DAYS = 14;
  * - クライアントはSupabase Realtimeで進捗を購読
  */
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) が拒んで 500 になる。認証・DB に触れる前に 400 で断る (#1657)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
