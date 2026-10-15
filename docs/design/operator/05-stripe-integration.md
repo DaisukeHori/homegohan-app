@@ -6,6 +6,10 @@ Stripe との決済連携の全詳細を定義する。Webhook 受信・冪等�
 
 **設計原則**: DB が source of truth、Stripe が課金実行。不一致は日次 reconciliation で検出し、人間が判断して修正する。
 
+> **billing/01 との対応**: 個人の有料プランの契約 (Stripe-backed な `personal_subscriptions` の行) の正本は Stripe の Subscription で、
+> DB はその写し。写す入口は DB 関数 `billing_apply_stripe_subscription` だけ (`docs/design/billing/01-billing-core.md` §4.1)。
+> Webhook の受け口 (§4)・Customer の対応表 (§6.1)・reconcile (§8) は billing/01 が正。
+
 ## 2. 関連要件
 
 - 要件 03 §15.12 Stripe 手数料設計
@@ -39,167 +43,40 @@ stripe_price_id    VARCHAR(255),  -- price_xxx (現在有効な Price ID)
 
 ## 4. Webhook 受信フロー
 
+> **正本は `docs/design/billing/01-billing-core.md`** (受け口 §9.6・写像の規則 §4.1・受け取るイベント §8.1 の `STRIPE_EVENT_ACTIONS`)。
+> 以前ここに書いていた見本 (Stripe の SDK の `constructEvent`・INSERT の衝突 (23505) での早期 return・イベントごとの直接の UPDATE・
+> `as any` を使う処理) と、失敗イベントの扱いは廃止した。下は実装 (`src/app/api/webhooks/stripe/route.ts`) の要約。
+
 ### 4.1 冪等性保証
 
-```typescript
-// src/app/api/webhooks/stripe/route.ts
-import { verifyStripeWebhook, WebhookSecretMissingError } from '@/lib/webhook/verify';
+受け口 `POST /api/webhooks/stripe` の順 (billing/01 §9.6):
 
-export async function POST(request: Request) {
-  // 1. Stripe-Signature 検証
-  const signature = request.headers.get('Stripe-Signature')!;
-  const body = await request.text();
-  let event: Stripe.Event;
-  try {
-    // 署名の秘密は cross/04-api-conventions.md §10.1 の verifyStripeWebhook が getOptionalEnv で取り出す
-    // (`process.env.<変数名>!` とは書かない。無ければ受け付けない fail-closed。#1182・#1434)
-    event = await verifyStripeWebhook(body, signature);
-  } catch (err: unknown) {
-    if (err instanceof WebhookSecretMissingError) {
-      // 設定漏れ (署名の秘密が無い) は、送り手の誤りではなくこちらの設定の誤り。署名の誤り (400) と分けて 500 にする
-      // (cross/04 §4.1: システム内部エラーの SYS_ は 500。502 / 503 の EXT_ は外部サービスの誤りに使う)。
-      // Stripe は 2xx 以外を再送するので、秘密を設定し直せば届き直す。本文に変数名を入れない (変数名はログにだけ残る)
-      return new Response('Webhook is not configured', { status: 500 });
-    }
-    return new Response('Invalid signature', { status: 400 });
-  }
-
-  // 2. 冪等性チェック: INSERT ... ON CONFLICT DO NOTHING
-  const { error: insertError } = await supabase
-    .from('stripe_webhook_events')
-    .insert({
-      id: event.id,  // PRIMARY KEY
-      event_type: event.type,
-      payload: event,
-      processing_status: 'processing',
-    });
-
-  // ON CONFLICT (id) → 既に処理済み → 200 early return
-  if (insertError?.code === '23505') {
-    return new Response('Already processed', { status: 200 });
-  }
-
-  // 3. イベント処理
-  try {
-    await processStripeEvent(event);
-    await supabase.from('stripe_webhook_events').update({
-      processing_status: 'completed',
-      processed_at: new Date(),
-    }).eq('id', event.id);
-  } catch (err: unknown) {
-    await supabase.from('stripe_webhook_events').update({
-      processing_status: 'failed',
-      error_message: String(err),
-    }).eq('id', event.id);
-    return new Response('Processing failed', { status: 500 });
-  }
-
-  return new Response('OK', { status: 200 });
-}
-```
+1. 本文の大きさの上限 (`STRIPE_WEBHOOK_MAX_BODY_BYTES`) を超えたら 413。
+2. 署名の確認: `src/lib/webhook/verify.ts` の `verifyStripeWebhook` (SDK を使わない。`t=` / `v1=` の形。billing/01 §8.3)。
+   署名の秘密 (`STRIPE_WEBHOOK_SECRET`) が無ければ 503、署名が合わなければ 401。
+3. 外形の確認 (`StripeEventEnvelopeSchema`)。読めなければ 400。
+4. 処理の権利を取る: DB 関数 `billing_claim_stripe_event` (`stripe_webhook_events` の主キー = `event.id`)。
+   `completed` (処理済み) なら 200、`in_progress` (ほかが処理中で 15 分以内) なら 409 (Stripe が後で再送する)。
+   DB に残す `payload` は `minimizeStripeEventPayload` の最小化した写し (氏名・メールアドレス・住所を持たない)。
+5. `claimed` なら処理する: イベントの中身では写さず、契約を Stripe から取り直して写像 (`billing_apply_stripe_subscription`) に渡す。
+   済んだら `billing_finish_stripe_event` で `completed`。失敗したら `failed` (`error_message` は固定のコード) と監査
+   `system.stripe.event_failed` を記録して 500 (Stripe が再送する。`failed` と、15 分を過ぎた `processing` は再送で権利を取り直せる)。
 
 ### 4.2 受信イベント一覧と処理内容
 
+受け取るのは `src/lib/billing/core.ts` の `STRIPE_EVENT_ACTIONS` の 12 種だけ (Stripe の Dashboard にもこの一覧だけを登録する。billing/01 §17)。
+どれも「契約を取り直して写像に渡す合図」で、写像はイベントの種類を見ない (billing/01 §4.1)。
+
 | Stripe イベント | 処理内容 |
 |---------------|---------|
-| `customer.subscription.created` | `personal_subscriptions` に INSERT (status='trialing' or 'active') |
-| `customer.subscription.updated` | `personal_subscriptions` を UPSERT (status/price_id 更新) |
-| `customer.subscription.deleted` | `personal_subscriptions.status = 'cancelled'` |
-| `invoice.paid` | `status='active'`, `current_period_start/end` 更新 |
-| `invoice.payment_failed` | `status='past_due'`, グレースペリオド開始 |
-| `invoice.upcoming` | 更新前リマインダーメール送信 |
-| `customer.subscription.trial_will_end` | 試用終了 3 日前メール・Push 送信 |
-| `charge.dispute.created` | ユーザー soft-suspend + 監査ログ (severity='critical') |
-| `payment_intent.payment_failed` | 支払失敗通知 |
-| `customer.updated` | Stripe Customer の email 変更を DB に反映 |
+| `checkout.session.completed` | Session の契約を取り直して写す (`sync_checkout_session`) |
+| `customer.subscription.created` / `updated` / `deleted` / `paused` / `resumed` / `trial_will_end` / `pending_update_applied` / `pending_update_expired` | 契約を取り直して写す (`sync_subscription`) |
+| `invoice.paid` / `invoice.payment_action_required` | 請求の契約を取り直して写す (`sync_invoice_subscription`) |
+| `invoice.payment_failed` | 請求の契約を取り直して写し、監査 `system.payment.failed` を書く (`audit_payment_failed_and_sync`) |
 
-#### `invoice.paid` 処理詳細
-
-```typescript
-async function handleInvoicePaid(invoice: Stripe.Invoice) {
-  const subscriptionId = invoice.subscription as string;
-
-  await supabase.from('personal_subscriptions').update({
-    status: 'active',
-    current_period_start: new Date(invoice.period_start * 1000),
-    current_period_end: new Date(invoice.period_end * 1000),
-    stripe_price_id: (invoice.lines.data[0] as any).price?.id,
-  }).eq('stripe_subscription_id', subscriptionId);
-}
-```
-
-#### `invoice.payment_failed` + グレースペリオド (§18.7)
-
-```typescript
-async function handlePaymentFailed(invoice: Stripe.Invoice) {
-  const subscriptionId = invoice.subscription as string;
-
-  // 対象 subscription を取得 (user_id 等を使うため)
-  const { data: subscription } = await supabase
-    .from('personal_subscriptions')
-    .select('id, user_id')
-    .eq('stripe_subscription_id', subscriptionId)
-    .single();
-  if (!subscription) return;
-
-  // status を past_due に変更 + past_due_since 記録 (cron で 7 日後に grace へ遷移)
-  await supabase.from('personal_subscriptions').update({
-    status: 'past_due',
-    past_due_since: new Date(),
-  }).eq('id', subscription.id);
-
-  // グレースペリオド遷移 (3 段階):
-  // - past_due (Stripe Smart Retries で支払回復チャンス)
-  // - 7 日経過 → grace (cron grace_period_check で遷移、AI 解析等の機能制限開始)
-  // - 合計 30 日経過 → cancelled (cron で遷移、アクセス停止 + データ 90 日保持)
-
-  // リマインダーメール送信
-  await sendPaymentFailedEmail(subscription.user_id);
-
-  // 監査ログ
-  await insertAuditLog({
-    actor_id: SYSTEM_USER_ID,
-    action_type: 'system.payment.failed',
-    target_id: subscription.user_id,
-    severity: 'warn',
-    details: { invoice_id: invoice.id, amount_due: invoice.amount_due },
-  });
-}
-```
-
-#### `charge.dispute.created` — チャージバック対応 (§18.8)
-
-```typescript
-async function handleDisputeCreated(dispute: Stripe.Dispute) {
-  const chargeId = dispute.charge as string;
-  const charge = await stripe.charges.retrieve(chargeId);
-  const subscriptionId = (charge.metadata as any).subscription_id;
-
-  // 1. ユーザーを soft-suspend (機能停止、BAN ではない)
-  const sub = await getSubscriptionByStripeId(subscriptionId);
-  await supabase.from('personal_subscriptions').update({
-    status: 'past_due',
-    notes: `チャージバック発生 (dispute_id: ${dispute.id})`,
-  }).eq('id', sub.id);
-
-  // 2. admin 通知 (Slack #fraud-alert)
-  await notifySlack({
-    channel: '#fraud-alert',
-    message: `チャージバック発生: user_id=${sub.user_id}, amount=${dispute.amount}, dispute_id=${dispute.id}`,
-  });
-
-  // 3. 監査ログ (severity=critical)
-  await insertAuditLog({
-    actor_id: SYSTEM_USER_ID,
-    action_type: 'system.stripe.chargeback',
-    target_id: sub.user_id,
-    severity: 'critical',
-    details: { dispute_id: dispute.id, amount: dispute.amount },
-  });
-
-  // 4. admin が手動で BAN 判断 (自動 BAN はしない)
-}
-```
+この一覧に無いイベント (`invoice.upcoming`・`charge.dispute.created`・`payment_intent.payment_failed`・`customer.updated` など) は、
+受け口が処理の権利だけを取って何も写さず、200 (`action: 'ignored'`) を返す。リマインダーのメール (支払失敗・試用終了) は Stripe の顧客向けメールに任せ、アプリは送らない
+(billing/01 §5.3)。チャージバック (§10) などのイベントは配線の冊が、billing/01 §12 の「イベントの追加」の型で足す。
 
 ## 5. 価格変更 → Stripe Price 同期
 
@@ -326,7 +203,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 | Stripe オブジェクト | DB テーブル / 列 |
 |-------------------|----------------|
-| `Customer (cus_xxx)` | `personal_subscriptions.stripe_customer_id` |
+| `Customer (cus_xxx)` | `billing_customers` (利用者と顧客の対応表。1 利用者 = 1 顧客。退会で `user_id` が NULL になり `anonymized_at` が入った行が残る。billing/01 §6.3) / `personal_subscriptions.stripe_customer_id` (契約の写し) |
 | `Subscription (sub_xxx)` | `personal_subscriptions.stripe_subscription_id` |
 | `Price (price_xxx)` | `personal_subscriptions.stripe_price_id` / `subscription_plans.stripe_price_id` |
 | `Invoice` | `email_delivery_logs` (請求書メール) / 管理 UI での deep link |
@@ -376,6 +253,10 @@ Stripe Invoice の `number` フィールドにセット (Stripe Invoice Settings
 ### 8.1 `/api/cron/stripe-reconcile` (Vercel Cron: 日次 12:00 JST)
 
 **目的**: Stripe 側と DB の課金状態を照合し、Webhook 取りこぼし等の不整合を検出。
+
+> **billing/01 との対応**: reconcile は配線の冊で作る (`stripe_integrity_check`)。Stripe の契約を列挙して 1 件ずつ写像の入口
+> (`syncSubscription(…, 'wiring:reconcile')`) を呼び、不一致は写して直す (billing/01 §12)。時刻・認証・通知は配線の冊が決める。
+> 下の見本 (不一致を数えて通知するだけ) は旧設計。
 
 ```typescript
 // src/app/api/cron/stripe-reconcile/route.ts
@@ -452,7 +333,8 @@ export async function POST(request: Request) {
 }
 ```
 
-**自動修復は禁止**: 不整合の原因が不明なため、人間が確認後に `super_admin` が手動修正。
+**不一致は写像を呼んで直す** (Stripe が正本。billing/01 §12): 写像は正本 (Stripe) からの写しなので、写すこと自体が修復になる。
+DB を直接 UPDATE して直さない (`plan_key_cached`・家族のプランの同期と監査を通らない。billing/01 §4.1)。
 
 ### 8.2 pg_cron による補完チェック (Supabase 内)
 
@@ -479,6 +361,10 @@ SELECT cron.schedule(
 ### 8.3 Stripe webhook 処理スタック検出
 
 `processing_status = 'processing'` のまま 15 分以上経過したレコードを日次で検出し、ステータスをリセットする。
+
+> **billing/01 との対応**: 再処理のためには、このリセットは要らない。受け口は処理済み (`completed`) でないイベントに 2xx を返さないので
+> Stripe が最長 3 日まで再送し、`failed` と 15 分を過ぎた `processing` の行は再送で `billing_claim_stripe_event` が権利を取り直す
+> (billing/01 §9.6・§12)。残るのは 3 日の再送が尽きたイベントの整合 (reconcile が写像で直す) と、Finance 画面の一覧 (配線の冊)。
 
 ```sql
 -- cron 登録は operator/08-cron-batches.md §4.1 で集約
@@ -523,6 +409,10 @@ $$ LANGUAGE plpgsql;
 ## 9. グレースペリオド詳細 (§18.7)
 
 **フロー** (3 段階遷移、cross/08-legal-compliance.md §9 + operator/08-cron-batches.md §5.7 と整合):
+
+> **billing/01 との対応**: Day 0 の `past_due` は、受け口が契約を取り直して写像が写す (アプリが直接 UPDATE しない)。
+> 支払失敗のメールは Stripe の顧客向けメールに任せ、アプリは送らない (billing/01 §5.3)。`past_due → grace` と `grace → cancelled` は
+> 配線の冊のジョブ (billing/01 §12)。`grace → cancelled` は DB を直接 `cancelled` にせず、Stripe の契約を解約して届く `deleted` を写像が写す。
 
 ```
 Day 0: invoice.payment_failed webhook 受信
@@ -573,6 +463,8 @@ Day 30: 完全解約 (Stage 2)
 
 ## 11. シーケンス — Stripe Webhook 受信
 
+> 旧設計のシーケンス。実装の順は §4.1 (正本は billing/01 §9.6)。
+
 ```mermaid
 sequenceDiagram
   participant Stripe
@@ -605,15 +497,21 @@ sequenceDiagram
 
 | シナリオ | 対処 |
 |---------|------|
-| Webhook 署名検証失敗 | 400 を返す (Stripe が再送する) |
-| DB 更新失敗 | `processing_status='failed'` + `error_message` 記録、Stripe が 5 分後に再送 |
+| Webhook 署名検証失敗 | 401 を返す (Stripe が再送する。billing/01 §9.6) |
+| Webhook の署名の秘密 / Stripe の鍵が未設定 | 503 を返す (Stripe が再送する。設定後に届き直す) |
+| 同じイベントをほかが処理中 (15 分以内) | 409 を返す (Stripe が後で再送する) |
+| DB 更新失敗 | `processing_status='failed'` + `error_message` (固定のコード) を記録して 500、Stripe が間隔を広げながら最長 3 日まで再送 |
 | Stripe API タイムアウト | Edge Function の 30 秒タイムアウト内でリトライ (3 回、500ms 指数バックオフ) |
 | Price 作成後に DB 失敗 | 新 Price を `active=false` に更新 (rollback 代替) |
-| reconcile で大量不一致 (>100 件) | Slack #incident に escalate + 自動修復しない |
+| reconcile で大量不一致 (>100 件) | 写像で直す (billing/01 §12)。通知の扱いは配線の冊 |
 
 ## 13. テスト方針
 
 主要テストケース:
+
+> Webhook の受け口と写像のテスト (下の 3・4・7) は billing/01 §14 (`tests/webhooks-stripe-route.test.ts`・`tests/billing-service.test.ts`・
+> `tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts`) が受け持つ。
+> 5 (チャージバック) は配線の冊。
 
 1. `it('generateInvoiceNumber returns unique sequential invoice number')`
 2. `it('mapStripeStatus maps all Stripe statuses correctly')`
@@ -813,10 +711,10 @@ describe('Stripe Webhook Events Integration', () => {
 ## 14. 既存実装との関連
 
 - `supabase/functions/stripe-price-sync/` は新規 Edge Function
-- `/api/webhooks/stripe` は commit `32d13e1` で削除済み → 完全新規
+- `/api/webhooks/stripe` は billing/01 で新設した (`src/app/api/webhooks/stripe/route.ts`)
 
 ## 15. 未解決事項
 
 - Stripe Invoice の PDF を DB に保存するか、Stripe のストレージから毎回取得するか → コスト試算後に決定 (現在は Stripe のみ保存、管理 UI から deep link で参照する方針)
 - `org_enterprise` のカスタム価格 (月額 NULL) の Stripe 連携 → Stripe Quote / 手動 Invoice を使う予定、Phase 2 で実装
-- Stripe の API バージョンピン留め: `2024-12-18.acacia` に固定 (変更時は `super_admin/integrations/stripe` UI で通知)
+- Stripe の API バージョンピン留め: `src/lib/billing/core.ts` の `STRIPE_API_VERSION` (いまは `2024-12-18.acacia`) が正 (billing/01)。変えるときは Zod の形も見直す
