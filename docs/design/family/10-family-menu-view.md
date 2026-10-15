@@ -35,7 +35,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 - アカウントの無い子供のメンバー (`family_members.user_id IS NULL`) の献立。保存先が無い (`user_daily_meals.user_id` は NOT NULL) ので出ない (§8 P-6・Q-2)。
 - 他のメンバーの献立の画像を家族の行に出すこと。関数と API は画像の URL (`planned_meals.image_url`) を返さない (関数の結果の要素にも応答にも `image_url` の鍵が無い。§11.1・§13)。署名の API (`POST /api/storage/signed-urls`) は本人の写真にだけ署名する (`src/lib/photo-storage-signing.ts`・#1365) ので、他のメンバーの写真 (食事写真・冷蔵庫写真のバケットの URL。AI の画像生成の画像も `fridge-images` の `generated/…`) は返しても表示できず、本書はその決まりを広げない。行を開いたときは料理の名前の箇条書きだけ (§16.2・Q-8)。料理ごとの中身 (`planned_meals.dishes` の料理ごとの栄養・材料・作り方・画像の URL と生成の情報) も返さず、料理の名前だけを返す (R-6)。
 - 共有の同意 (`share_menu`) の設定画面と API (`PATCH /api/family/members/me/share`・`update_my_share_settings`)。今のまま使う。
-- `apps/mobile/app/menus/weekly/index.tsx` (ネイティブの週間献立の画面。2,435 行)。献立タブは Web の `/menus/weekly` を WebView で開く (`apps/mobile/app/(tabs)/menus.tsx`・`NATIVE_APP_TABS`) ので本書の対象は Web の画面だけ。ネイティブの画面に残る家族の欠陥は #1610 (Q-5)。
+- `apps/mobile/app/menus/weekly/index.tsx` (ネイティブの週間献立の画面。2,435 行) は 2026-10-16 に削除した。#1598。献立タブは Web の `/menus/weekly` を WebView で開く (`apps/mobile/app/(tabs)/menus.tsx`・`NATIVE_APP_TABS`) ので本書の対象は Web の画面だけ。ネイティブの画面に残っていた家族の欠陥 (#1610) は画面と一緒に消えた (Q-5)。
 - リアルタイムの反映 (相手が献立を変えた瞬間に更新する) と、時間がたったら自動で取り直す仕組み (timer・画面が前面に戻ったときの取り直し)。取り直しの契機は §10 のとおり (切り替えの適用・[もう一度]・cache の無い週への移動・画面の開き直し)。自分の献立の `weekDataCache` (page.tsx :1961-2011) も時間では取り直さず、週の移動のときに TTL で cache を使うかを決めるだけなので、それと同じにする。
 
 ---
@@ -1079,7 +1079,7 @@ export function FamilyMenuDayNotes(props: FamilyMenuDayNotesProps): JSX.Element 
 - 献立タブは Web の `/menus/weekly` (`NATIVE_APP_TABS` の menus)。段 B のデプロイで同時に変わる。アプリの配布は要らない。
 - `fetch('/api/family/menu')` は同じオリジンの Cookie のセッションで通る (既存の `/api/meal-plans` / `/api/family/members/names` と同じ)。
 - `familyViewState_<familyId>` は `USER_SCOPED_LOCAL_STORAGE_KEY_PREFIXES` に登録済みで、ネイティブのログアウト・退会のあとの WebView でも消える (#1599)。本書で足す localStorage のキーは無い (cache はメモリの `useRef`)。
-- ネイティブの週間献立の画面 (`apps/mobile/app/menus/weekly/index.tsx`) は `/api/meal-plans` を自分の分だけ読む。本書では触らない (§0.3)。
+- ネイティブの週間献立の画面 (`apps/mobile/app/menus/weekly/index.tsx`) は `/api/meal-plans` を自分の分だけ読んでいた。2026-10-16 に削除した。#1598。本書では触らない (§0.3)。
 
 ## 17. シーケンス
 
@@ -1419,7 +1419,7 @@ grep の語 = 本書が足す・変える名前。反応する番兵と直し方
 | 同上 | `tests/local-ci-workflow-sync.test.ts` (`.github/workflows/e2e-local.yml` の `npx playwright test` の語の並びと、`scripts/local-ci.sh` の `stage_e2e` の `PW_ARGS` を展開した並びが同じか) | `e2e-local.yml` の Playwright の引数と `PW_ARGS` の**両方**に、`tests/e2e/family/01-invite-accept-share.spec.ts` の直後の同じ位置で足す (片方だけだと赤。§19.7) | B |
 | 同上 | `tests/e2e-tour-contract.test.ts`・`tests/e2e-menu-queue-suite.test.ts` (それぞれ tour と週の献立の生成の spec が yml と `PW_ARGS` に入っているか) | 自分の spec の一覧だけを見るので、family/02 を足しても反応しない (yml と `PW_ARGS` の並びの一致は上の `local-ci-workflow-sync` が見る) | B |
 | `tests/integration/rls/family-menu-visibility.test.ts` | `tests/integration-ci-coverage.test.ts` (結合テストが CI の対象に入っている) | `tests/integration/**` の glob で拾われる。反応しないことを実行で確かめる | A |
-| `docs/design/family/10-family-menu-view.md` | `tests/design-doc-removed-mobile-screens.test.ts` (消したモバイルの画面を現役として名指ししない) | 本書は #1673 で消した画面を名指ししない (触れる `apps/mobile/app/menus/weekly/index.tsx` と `(tabs)/menus.tsx` は現役) | — |
+| `docs/design/family/10-family-menu-view.md` | `tests/design-doc-removed-mobile-screens.test.ts` (消したモバイルの画面を現役として名指ししない) | 本書が名指しする消した画面 (`apps/mobile/app/menus/weekly/index.tsx`。2026-10-16 に削除した。#1598) は、名指しする行ごとに同じ行で削除したことを書く。`(tabs)/menus.tsx` は現役 | — |
 | `page.tsx` | `src/__tests__/app/menus/weekly/static-guard.test.ts`・`date-query-tz-safety`・`add-days-str-tz-safety` | `useState` を足さない・`addDaysStr` と `?date=` の塊を変えない | B |
 | `FamilyViewSwitcher` / `familyViewState_` | `src/__tests__/lib/user-scoped-storage-keys.test.ts`・`apps/mobile/__tests__/lib/web-view-user-storage-cleanup.test.ts` | localStorage のキーを足さない。反応しない | B |
 | `FamilyMemberNamesData` / `fetchFamilyMemberNames` | `src/__tests__/lib/membership/family-member-names.test.ts`・`tests/accept-copies-profile-name-migration-contract.test.ts` (説明の文の走査) | 関数の意味を変えない。`family-member-names.ts` に足すのは定数 1 つ。「承諾のとき…写さない」と書かない | B |
@@ -1447,7 +1447,7 @@ grep の語 = 本書が足す・変える名前。反応する番兵と直し方
 | Q-2 | 子供 (アカウント無し) の献立を親が代理で持つ仕組み (`user_daily_meals` に代理の列) を作るか | 作らない (§0.3)。注記で案内 |
 | Q-3 | 相手のアカウントが凍結中 (`frozen_at`) でも献立を見せてよいか。見る側が凍結中・同意未済・メンテナンス中のときをどう扱うか | 相手の凍結: 見せる (P-8・S-21・T-15)。見る側: middleware が `/api/*` を route より前に止める既存の決まり (凍結 403・メンテナンス 503・同意 403。`/api/meal-plans`・名前の API も同じ) に乗り、`/api/family/menu` を例外の一覧に足さない (V-6〜V-8・S-26・S-33・S-34)。凍結中に通すのは「本人がサービスから離れるための操作」だけ (`src/lib/auth/frozen.ts` の説明) で、家族の献立はそれに当たらない。route と関数には判定を書かない (二重に書かない)。Supabase の REST を直接呼ぶ経路は middleware を通らず、関数は凍結を判定しないので止まらない (自分の献立の RLS も凍結を見ないのと同じ。既存の決まりで、本書は変えない) |
 | Q-4 | 相手が献立を変えたときの反映 (リアルタイム・時間がたったら自動で取り直す) | どちらも要らない (T-9・§0.3。自分の献立の `weekDataCache` と同じ)。取り直しの契機は切り替えの適用・[もう一度]・cache の無いか TTL を超えた週への移動・画面の開き直し。要望があれば、画面が前面に戻ったとき (`visibilitychange`) に TTL を超えていたら取り直す形で足す |
-| Q-5 | ネイティブの週間献立の画面 (`apps/mobile/app/menus/weekly/index.tsx`) を残すか消すか | 本書は触らない。#1610 と一緒に判断 |
+| Q-5 | ネイティブの週間献立の画面 (`apps/mobile/app/menus/weekly/index.tsx`) を残すか消すか | #1598 で消した (解決。2026-10-16 に削除した)。本書は触らない |
 | Q-6 | 家族の 4 画面の `'名前未設定'` のリテラル 5 箇所を `FAMILY_MEMBER_NAME_FALLBACK` に寄せるか | 本書では変えない (範囲外)。別の小さな PR |
 | Q-7 | 家族の献立の列に `memo` を足すか (本人のメモを家族に見せるか) | 見せない (R-6)。要望があれば `share_menu` と別の同意で |
 | Q-8 | 他のメンバーの献立の画像 (`planned_meals.image_url`。食事写真・冷蔵庫写真のバケットの URL で、AI の画像生成の画像を含む) を家族の行に出すか。出すなら署名の決まり (`src/lib/photo-storage-signing.ts`。本人の写真だけ) に「`share_menu` がオンの同じ家族のメンバーの献立の画像」を足す変更になる | 出さない (§0.3・R-6・§16.2)。関数の結果の要素にも応答にも `image_url` の鍵が無いので、他のメンバーの画像の URL は、どのバケットの URL でも、バケットの外の URL でも、見る人のブラウザに届かない (利用者が関数を直接呼んでも同じ。§11.1)。料理ごとの画像 (`dishes` の中の `image_url`) も `dishes` を返さないので届かない。本番の `image_url` は空か NULL か食事写真・冷蔵庫写真のバケットの URL だけで、他人には署名されないので、返しても表示できる画像は無い (§3.1)。出すことにするなら、署名の決まりを変えるとき (#1365 の段 2) に、新しい migration で `family_menu_planned_meals` の r に列を足し、`FamilyMenuRpcRowSchema`・`FamilyMenuMealSchema`・C-6 の鍵の数と、画面の行を直す |
