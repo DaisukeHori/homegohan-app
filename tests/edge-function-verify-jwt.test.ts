@@ -284,6 +284,8 @@ const CATALOG_IMPORT_FUNCTIONS = [
 const SEGMENT_STATS_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261009100000_schedule_calculate_segment_stats.sql');
 /** 確定の回の再試行 public.invoke_calculate_segment_stats_finalize_retry と、そのジョブを足した migration (#1500) */
 const SEGMENT_STATS_FINALIZE_RETRY_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261011120000_segment_stats_finalize_retry.sql');
+/** 運営が隠したコンテンツの完全削除 public.invoke_purge_hidden_content と、そのジョブを足した migration (#1538) */
+const PURGE_HIDDEN_CONTENT_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261016100000_purge_hidden_content.sql');
 
 const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, DbHttpCallSite>([
   // public.invoke_catalog_import: '.../functions/v1/' || p_function_name を v_url に入れ、net.http_post で呼ぶ
@@ -294,6 +296,8 @@ const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, 
   [SEGMENT_STATS_MIGRATION, { count: 2, callees: [SEGMENT_STATS_FUNCTION] }],
   // public.invoke_calculate_segment_stats_finalize_retry: 上と同じ定数 c_url を net.http_post で呼ぶ (確定の回の再試行。#1500)
   [SEGMENT_STATS_FINALIZE_RETRY_MIGRATION, { count: 2, callees: [SEGMENT_STATS_FUNCTION] }],
+  // public.invoke_purge_hidden_content: 定数 c_url の '.../functions/v1/purge-hidden-content' を net.http_post で呼ぶ (#1538)
+  [PURGE_HIDDEN_CONTENT_MIGRATION, { count: 2, callees: ['purge-hidden-content'] }],
 ]);
 
 /**
