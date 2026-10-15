@@ -9,6 +9,7 @@
  *   - 失敗は 500 と固定の文 (例外の文は返さず、ログにだけ残す #1444)
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { resolveHeavyUnitTimeouts } from './helpers/heavy-unit-test-timeout';
 
 type Handler = (req: Request) => Promise<Response>;
 
@@ -30,6 +31,12 @@ const SECRET = 'cron-secret-for-test';
 let handler: Handler | null = null;
 let env: Record<string, string | undefined> = {};
 
+/**
+ * Edge Function の本体を動的に読み込むフック (beforeEach) の時間切れ (#1605)。負荷の高い機械で、Edge Function の動的 import が
+ * フックの既定の 10 秒を超えたことがある。読み込みのフックにだけ同じ値 (環境変数で上書き可) を使う (tests/edge-function-cors.test.ts と同じ形)
+ */
+const EDGE_IMPORT_HOOK_TIMEOUT_MS = resolveHeavyUnitTimeouts(process.env).hookTimeout;
+
 beforeEach(async () => {
   env = { CRON_SECRET: SECRET };
   mocks.purge.mockReset();
@@ -41,7 +48,7 @@ beforeEach(async () => {
     },
   });
   if (!handler) await import('../supabase/functions/purge-hidden-content/index.ts');
-});
+}, EDGE_IMPORT_HOOK_TIMEOUT_MS);
 
 afterEach(() => {
   vi.unstubAllGlobals();
