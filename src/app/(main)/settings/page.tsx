@@ -11,6 +11,7 @@ import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
+import { DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from "@/lib/data-subject-requests/core";
 import { getSupportEmail } from "@/lib/site-config";
 import {
   ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE,
@@ -464,13 +465,30 @@ export default function SettingsPage() {
                type="button"
                onClick={() => router.push(AI_CONSENT_SETTINGS_PATH)}
                data-testid="settings-ai-consent-link"
-               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+               className="w-full flex items-center justify-between p-4 border-b border-gray-50 hover:bg-gray-50 transition-colors"
              >
                <div className="flex items-center gap-3">
                  <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center text-indigo-500" aria-hidden="true">🤖</div>
                  <div className="text-left">
                    <span className="font-bold text-gray-700">{AI_CONSENT_SETTINGS_ENTRY_TITLE}</span>
                    <p className="text-xs text-gray-400">日本国外の AI 事業者への提供の確認・撤回</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
+             {/* 個人情報の開示・訂正・利用停止・消去の請求 (#1178 / #1702。設計 docs/design/cross/15-data-subject-requests.md §9.1) */}
+             <button
+               type="button"
+               onClick={() => router.push(DSR_SETTINGS_PATH)}
+               data-testid="settings-data-requests-link"
+               className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-500" aria-hidden="true">📨</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">{DSR_SETTINGS_ENTRY_TITLE}</span>
+                   <p className="text-xs text-gray-400">個人情報の開示・訂正・利用停止・消去を請求する</p>
                  </div>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
