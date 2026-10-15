@@ -275,6 +275,13 @@ export const SERVER_ENV_VARS = {
     whenMissing: 'お知らせを出さない (既定)',
     readOnlyBy: 'lib/legal-consent.ts',
   },
+  DSR_RESPONSE_DUE_DAYS: {
+    required: false,
+    description: '個人情報の請求の応答期限 (日。1〜365 の 10 進の整数)',
+    whenMissing: '既定の 30 日。整数でない値・範囲外も 30 日',
+    // #1178 読み方 (1〜365 の整数でなければ既定の 30 日) を 1 か所に置く
+    readOnlyBy: 'src/lib/data-subject-requests/config.ts',
+  },
   FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT: {
     required: false,
     description:

@@ -56,7 +56,8 @@ export type RateLimitCategory =
   | 'auth-login'
   | 'client-log'
   | 'auth-mfa-verify'
-  | 'auth-mfa-recover';
+  | 'auth-mfa-recover'
+  | 'dsr';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -164,6 +165,11 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   'client-log': [
     { name: 'client-log', max: 30, windowSec: MINUTE_SEC },
     { name: 'client-log-daily', max: 1000, windowSec: DAY_SEC },
+  ],
+  // #1178 個人情報の請求 (作成・確認メールの再送。key = user.id)。1 日に 4 種 × 再送を含めても 20 で足りる (設計 cross/15 §17)
+  dsr: [
+    { name: 'dsr', max: 5, windowSec: 10 * MINUTE_SEC },
+    { name: 'dsr-daily', max: 20, windowSec: DAY_SEC },
   ],
   'auth-mfa-verify': [
     { name: 'auth-mfa-verify', max: 5, windowSec: MINUTE_SEC },

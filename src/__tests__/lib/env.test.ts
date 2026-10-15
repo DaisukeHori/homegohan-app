@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・DSR_RESPONSE_DUE_DAYS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -427,6 +427,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['AUTH_LOGIN_FAILURE_RESET_MINUTES', 'src/app/api/auth/login/route.ts'],
       ['CRON_SECRET', 'src/lib/cron-auth.ts'],
       ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
+      // #1178 個人情報の請求の応答期限 (日)。1〜365 の整数でなければ既定の 30 日にする読み方を 1 か所に置く
+      ['DSR_RESPONSE_DUE_DAYS', 'src/lib/data-subject-requests/config.ts'],
       // #1148 機能フラグの対象ユーザー数を 1 人ずつ数える上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', 'src/lib/super-admin/flag-active-users.ts'],
       // #1496 機能フラグの行をメモリに覚える時間。middleware (Edge Runtime) も読むので、何も import しないファイル 1 か所で読む
@@ -463,6 +465,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('CRON_SECRET');
       // @ts-expect-error CRON_SECRET_PREVIOUS も同じ
       getOptionalEnv('CRON_SECRET_PREVIOUS');
+      // @ts-expect-error DSR_RESPONSE_DUE_DAYS の値を読むのは src/lib/data-subject-requests/config.ts だけ
+      getOptionalEnv('DSR_RESPONSE_DUE_DAYS');
       // @ts-expect-error LEGAL_CONSENT_ENFORCE の値を読むのは lib/legal-consent.ts だけ (読み方を 1 つにしておく)
       getOptionalEnv('LEGAL_CONSENT_ENFORCE');
       // @ts-expect-error LEGAL_CONSENT_NOTICE も同じ
