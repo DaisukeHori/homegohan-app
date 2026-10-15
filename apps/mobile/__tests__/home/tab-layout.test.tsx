@@ -3,14 +3,14 @@
  * タブナビゲーション (_layout.tsx) のユニットテスト
  *
  * テスト対象:
- *  - タブの本数 (6本)
+ *  - タブの本数 (表に出す 5 本 + 設定)
  *  - 各タブのアイコン・タイトル
  *    - home → icon: "home"
  *    - menus → icon: "book-outline"
  *    - meals → icon: "scan" (スキャン / 中央ボタン)
- *    - favorites → icon: "heart"
  *    - comparison → icon: "bar-chart"
  *    - profile → icon: "person"
+ *  - お気に入り・健康の画面 ((tabs)/favorites・(tabs)/health) は、通常の操作で届かないネイティブの画面として消した (#1598)
  */
 
 import React from 'react';
@@ -202,19 +202,12 @@ describe('TabsLayout: タブ構成', () => {
     return getScreenConfigs();
   }
 
-  it('Tabs.Screen が 8 本宣言されている (6 visible + health + settings)', () => {
+  it('Tabs.Screen が 6 本宣言されている (5 visible + settings)。消したお気に入り・健康の画面は無い (#1598)', () => {
     const configs = renderAndGetConfigs();
-    // home, menus, meals, favorites, comparison, profile, health, settings
     const names = configs.map((c) => c.name);
-    expect(names).toContain('home');
-    expect(names).toContain('menus');
-    expect(names).toContain('meals');
-    expect(names).toContain('favorites');
-    expect(names).toContain('comparison');
-    expect(names).toContain('profile');
-    expect(names).toContain('health');
-    expect(names).toContain('settings');
-    expect(configs.length).toBe(8);
+    expect(names).toEqual(['home', 'menus', 'meals', 'comparison', 'profile', 'settings']);
+    expect(names).not.toContain('favorites');
+    expect(names).not.toContain('health');
   });
 
   it('home タブのタイトルが「ホーム」', () => {
@@ -233,12 +226,6 @@ describe('TabsLayout: タブ構成', () => {
     const configs = renderAndGetConfigs();
     const meals = configs.find((c) => c.name === 'meals');
     expect(meals?.options?.title).toBe('スキャン');
-  });
-
-  it('favorites タブは href: null (タブバー非表示)', () => {
-    const configs = renderAndGetConfigs();
-    const fav = configs.find((c) => c.name === 'favorites');
-    expect(fav?.options?.href).toBeNull();
   });
 
   it('comparison タブのタイトルが「比較」', () => {
@@ -268,12 +255,6 @@ describe('TabsLayout: タブ構成', () => {
     expect(getByText('home')).toBeTruthy();
   });
 
-  it('favorites タブのアイコンは未定義 (href:null のためタブバーに表示されない)', () => {
-    const configs = renderAndGetConfigs();
-    const fav = configs.find((c) => c.name === 'favorites');
-    expect(fav?.options?.tabBarIcon).toBeUndefined();
-  });
-
   it('comparison タブのアイコンが "bar-chart"', () => {
     const configs = renderAndGetConfigs();
     const cmp = configs.find((c) => c.name === 'comparison');
@@ -286,12 +267,6 @@ describe('TabsLayout: タブ構成', () => {
     const prof = configs.find((c) => c.name === 'profile');
     const { getByText } = render(prof?.options?.tabBarIcon({ color: '#000', size: 24 }));
     expect(getByText('person')).toBeTruthy();
-  });
-
-  it('health タブは href: null (タブバー非表示)', () => {
-    const configs = renderAndGetConfigs();
-    const health = configs.find((c) => c.name === 'health');
-    expect(health?.options?.href).toBeNull();
   });
 
   it('settings タブは href: null (タブバー非表示)', () => {

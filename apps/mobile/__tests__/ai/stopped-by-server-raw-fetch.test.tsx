@@ -1,16 +1,15 @@
 /**
  * stopped-by-server-raw-fetch.test.tsx
- * 生の fetch で AI 相談に送る 2 画面が、上限 (429 AI_DAILY_LIMIT。#1149) と緊急停止・メンテナンス中
- * (503 AI_CHAT_DISABLED / MAINTENANCE_MODE。#1457) の両方を、同じ 1 つの読み取り口 (src/lib/failed-response.ts の
- * errorOfFailedResponse) で固定の文にする — 2 つの変更を合わせたときの回帰テスト
+ * 生の fetch で AI 相談に送る AI アドバイザーのシート (AIAdvisorSheet) が、上限 (429 AI_DAILY_LIMIT。#1149) と
+ * 緊急停止・メンテナンス中 (503 AI_CHAT_DISABLED / MAINTENANCE_MODE。#1457) の両方を、同じ 1 つの読み取り口
+ * (src/lib/failed-response.ts の errorOfFailedResponse) で固定の文にする — 2 つの変更を合わせたときの回帰テスト
  *
  * 2 つの変更は、同じ `if (!res.ok)` の分岐と catch の分岐をそれぞれ書き換えていた。片方の判定だけが残ると、
  * もう片方の応答で生の文字列 (`HTTP 429: {...}` / `HTTP 503: {...}`) が出る。ここでは 1 つのテストで 3 つの応答を順に流し、
- * どれも固定の文になること、送らなかったメッセージを消して入力を戻すこと、同意の 403 の見分けが壊れていないことを確かめる。
- *
- * 1. 相談の画面 (app/ai/[sessionId].tsx): 画面の中の一行で固定の文を出す (Alert は出さない)
- * 2. AI アドバイザーのシート (AIAdvisorSheet): Alert で固定の文を出す
- *    (見出しは、緊急停止・メンテナンス中は「ご利用いただけません」、上限は「エラー」)
+ * どれも固定の文になること、送らなかったメッセージを消して入力を戻すことを確かめる。
+ * シートは Alert で固定の文を出す (見出しは、緊急停止・メンテナンス中は「ご利用いただけません」、上限は「エラー」)。
+ * 同意の 403 の見分けは advisor-sheet-consent.test.tsx が受け持つ。
+ * (同じ送信を持っていた相談の画面 app/ai/[sessionId].tsx は、通常の操作で届かないネイティブの画面として消した。#1598)
  *
  * getApi() は本物を使い、その下の @homegohan/core の createHttpClient だけを差し替える。送信は global.fetch を差し替える。
  */
@@ -46,9 +45,7 @@ jest.mock('../../src/lib/supabase', () => ({
 }));
 
 jest.mock('expo-router', () => ({
-  useLocalSearchParams: () => ({ sessionId: 'session-1' }),
   router: { back: jest.fn(), push: jest.fn(), replace: jest.fn() },
-  Link: ({ children }: { children?: React.ReactNode }) => children,
 }));
 
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
@@ -69,12 +66,9 @@ jest.mock('react-native-safe-area-context', () => ({
 }));
 
 import React from 'react';
-import { Pressable } from 'react-native';
-import AiSessionPage from '../../app/ai/[sessionId]';
 import { AIAdvisorSheet } from '../../src/components/ai/AIAdvisorSheet';
 import { aiDailyLimitMessage } from '../../src/lib/ai-daily-limit';
 import { resetAiConsentPromptForTests } from '../../src/lib/ai-consent';
-import { AI_CONSENT_REQUIRED_CODE, AI_CONSENT_REQUIRED_MESSAGE } from '../../../../supabase/functions/_shared/ai-consent';
 
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code (と limit) から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
@@ -83,9 +77,8 @@ const LIMIT = 7;
 
 const HTTP_TOO_MANY_REQUESTS = 429;
 const HTTP_SERVICE_UNAVAILABLE = 503;
-const HTTP_FORBIDDEN = 403;
 
-/** [見出しのラベル, 状態, 本文, 画面に出る固定の文, シートの Alert の見出し] */
+/** [見出しのラベル, 状態, 本文, シートの Alert に出る固定の文, シートの Alert の見出し] */
 const CASES = [
   [
     '上限 (429 AI_DAILY_LIMIT)',
@@ -110,8 +103,6 @@ const CASES = [
   ],
 ] as const;
 
-const CONSENT_BODY = JSON.stringify({ error: AI_CONSENT_REQUIRED_MESSAGE, code: AI_CONSENT_REQUIRED_CODE });
-
 const alertSpy = Alert.alert as jest.Mock;
 const fetchMock = jest.fn();
 const ORIGINAL_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL;
@@ -129,43 +120,6 @@ beforeEach(() => {
 afterAll(() => {
   if (ORIGINAL_BASE_URL === undefined) delete process.env.EXPO_PUBLIC_API_BASE_URL;
   else process.env.EXPO_PUBLIC_API_BASE_URL = ORIGINAL_BASE_URL;
-});
-
-describe('相談の画面 (app/ai/[sessionId].tsx) の送信 (生の fetch)', () => {
-  const PLACEHOLDER = '相談内容を入力...';
-
-  async function renderAndSend(text: string) {
-    mockClient.get.mockResolvedValue({ messages: [] });
-    render(<AiSessionPage />);
-    await waitFor(() => expect(screen.getByPlaceholderText(PLACEHOLDER)).toBeTruthy());
-    fireEvent.changeText(screen.getByPlaceholderText(PLACEHOLDER), text);
-    const pressables = screen.UNSAFE_getAllByType(Pressable);
-    await act(async () => {
-      fireEvent.press(pressables[pressables.length - 1]);
-    });
-  }
-
-  it.each(CASES)('%s: 固定の文を画面に出し、メッセージを消して入力を戻す (生の文字列・Alert は出さない)', async (_label, status, body, expected) => {
-    fetchMock.mockResolvedValueOnce(new Response(body, { status }));
-    await renderAndSend('今日の夕飯は?');
-
-    await waitFor(() => expect(screen.getByTestId('ai-chat-error-text').props.children).toBe(expected));
-    const shown = String(screen.getByTestId('ai-chat-error-text').props.children);
-    expect(shown).not.toContain('HTTP');
-    expect(shown).not.toContain(SERVER_TEXT);
-    expect(screen.queryByText('今日の夕飯は?')).toBeNull();
-    expect(screen.getByPlaceholderText(PLACEHOLDER).props.value).toBe('今日の夕飯は?');
-    expect(alertSpy).not.toHaveBeenCalled();
-  });
-
-  it('同意の 403 は、これまでどおり同意の案内を出す (上限・停止の判定に吸い込まれない)', async () => {
-    fetchMock.mockResolvedValueOnce(new Response(CONSENT_BODY, { status: HTTP_FORBIDDEN }));
-    await renderAndSend('こんにちは');
-
-    await waitFor(() => expect(alertSpy).toHaveBeenCalledWith('同意が必要です', AI_CONSENT_REQUIRED_MESSAGE, expect.any(Array)));
-    expect(screen.queryByTestId('ai-chat-error-text')).toBeNull();
-    expect(screen.getByPlaceholderText(PLACEHOLDER).props.value).toBe('こんにちは');
-  });
 });
 
 describe('AI アドバイザーのシート (AIAdvisorSheet) の送信 (生の fetch)', () => {
