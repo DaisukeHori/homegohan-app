@@ -182,6 +182,8 @@ describe('アプリ内の画面遷移の行き先が実在する (#1049 F7-14)',
       path.join('profile', 'index.tsx'),
       path.join('comparison', 'index.tsx'),
       ...['company', 'contact', 'faq', 'guide', 'legal', 'news'].map((name) => path.join('(public)', `${name}.tsx`)),
+      // billing/01 §10.4: アプリから Web の購入のページへ誘導しないため消した
+      path.join('(public)', 'pricing.tsx'),
     ];
     const restored = removedScreens.filter((file) => fs.existsSync(path.join(APP_DIR, file)));
     expect(restored).toEqual([]);
