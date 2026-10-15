@@ -9,6 +9,7 @@
  *   - 現在生成中のセッションがない場合は静的な UI 不変量のみ確認 (smoke-only)。
  */
 import { test, expect } from "./fixtures/fresh-user";
+import { jstThisMonday } from "./helpers/jst-week";
 
 test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async ({ tourPendingUser }) => {
   // meal-plans API への呼び出しを記録する
@@ -34,9 +35,8 @@ test("success modal OK triggers a meal-plans refetch (refreshOnDismiss)", async 
   // カスタムイベントで React state を更新するか、または localStorage 経由で
   // completed リクエストの復元フローを使う
   const fakeRequestId = "00000000-0000-0000-0000-000000000003";
-  const weekStartDate = new Date();
-  weekStartDate.setDate(weekStartDate.getDate() - weekStartDate.getDay() + 1);
-  const weekStr = weekStartDate.toISOString().slice(0, 10);
+  // 今週の月曜日は、ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)
+  const weekStr = jstThisMonday();
 
   // ステータス API: completed を返す
   await tourPendingUser.route(`**/api/ai/menu/weekly/status*`, async (route) => {
