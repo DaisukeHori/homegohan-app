@@ -5,7 +5,10 @@
  *
  * 確認すること:
  *   - 組織のオーナー / 家族の代表者は、従来と同じ 409 の形で止まり、何も呼ばない
- *   - 順序: 確認 → prepare_account_deletion → release_user_membership → Storage → auth.admin.deleteUser
+ *   - 順序: 確認 → prepare_account_deletion → release_user_membership → Storage → 削除の実行記録を始める
+ *     (begin_account_deletion_record) → auth.admin.deleteUser → 記録に済んだ印 (complete_account_deletion_record) (#1562)
+ *   - 削除の実行記録: 本人の退会は executor 'self' / 理由 'user_request'、運営の削除は 'operator' と運営者の id。
+ *     記録を始められなければ削除しない。済んだ印の失敗は退会の結果を変えない (アカウントはもう消えている)
  *   - 失敗の扱い: prepare / Storage / deleteUser の失敗はそこで止めて ACCOUNT_DELETE_FAILED (deleteUser より前なら deleteUser を呼ばない)。
  *     ライセンス解放 (release_user_membership) の失敗だけは続ける
  *   - 失敗の結果に、DB・Storage の生のエラー文を入れない。request_id と段階を持つ (HTTP の応答は route が #1172 の internalError で返す)
@@ -25,6 +28,8 @@ import {
 
 const USER = '11111111-1111-4111-8111-111111111111';
 const REQUEST_ID = 'req_test_1';
+const RECORD_ID = '22222222-2222-4222-8222-222222222222';
+const OPERATOR = '33333333-3333-4333-8333-333333333333';
 const SECRET_DB_MESSAGE = 'duplicate key value violates unique constraint "secret_constraint" (user@example.com)';
 
 /** 成功・409 の結果を HTTP の応答にする (失敗の結果は accountDeletionHttp に渡せない。route が internalError で返す) */
@@ -38,6 +43,8 @@ interface World {
   /** from(table) が返す行 / エラー */
   tables: Record<string, { data?: unknown[] | null; error?: { message: string } | null }>;
   rpc: Record<string, { data?: unknown; error?: { message: string; code?: string } | null; throws?: boolean }>;
+  /** rpc に渡された引数 (名前ごとの最後の呼び出し) */
+  rpcArgs: Record<string, unknown>;
   /** storage.list / remove の挙動 */
   storage: { listError?: { message: string } | null; entries?: Array<{ name: string; id: string | null }>; removeError?: { message: string } | null };
   deleteUser: { error?: { message: string; status?: number; code?: string } | null };
@@ -47,7 +54,13 @@ function makeWorld(overrides: Partial<World> = {}): World {
   return {
     calls: [],
     tables: { organizations: { data: [] }, family_groups: { data: [] } },
-    rpc: { prepare_account_deletion: { data: { email_delivery_logs: 1 } }, release_user_membership: { data: null } },
+    rpc: {
+      prepare_account_deletion: { data: { email_delivery_logs: 1 } },
+      release_user_membership: { data: null },
+      begin_account_deletion_record: { data: RECORD_ID },
+      complete_account_deletion_record: { data: null },
+    },
+    rpcArgs: {},
     storage: {},
     deleteUser: {},
     ...overrides,
@@ -87,8 +100,9 @@ function makeAdmin(world: World): AccountDeletionAdmin {
 
   return {
     from: (table: string) => builder(table),
-    rpc: async (name: string) => {
+    rpc: async (name: string, args?: unknown) => {
       world.calls.push(`rpc:${name}`);
+      world.rpcArgs[name] = args;
       const entry = world.rpc[name] ?? { data: null };
       if (entry.throws) throw new Error('network down');
       return { data: entry.data ?? null, error: entry.error ?? null };
@@ -188,7 +202,7 @@ describe('deleteAccount: 409 (従来と同じ形)', () => {
 });
 
 describe('deleteAccount: 成功', () => {
-  it('確認 → prepare → ライセンス解放 → Storage → deleteUser の順に呼ぶ', async () => {
+  it('確認 → prepare → ライセンス解放 → Storage → 記録を始める → deleteUser → 記録に済んだ印 の順に呼ぶ', async () => {
     world.storage.entries = [{ name: 'a.png', id: 'obj-1' }];
     const result = await run();
 
@@ -196,7 +210,12 @@ describe('deleteAccount: 成功', () => {
     const order = world.calls.filter((call) => !call.startsWith('storage.list'));
     expect(order.slice(0, 4)).toEqual(['from:organizations', 'from:family_groups', 'rpc:prepare_account_deletion', 'rpc:release_user_membership']);
     expect(world.calls.indexOf('storage.remove:fridge-images')).toBeGreaterThan(world.calls.indexOf('rpc:release_user_membership'));
-    expect(world.calls[world.calls.length - 1]).toBe('auth.deleteUser');
+    expect(world.calls.slice(-3)).toEqual([
+      'rpc:begin_account_deletion_record',
+      'auth.deleteUser',
+      'rpc:complete_account_deletion_record',
+    ]);
+    expect(world.calls.indexOf('rpc:begin_account_deletion_record')).toBeGreaterThan(world.calls.indexOf('storage.remove:fridge-images'));
     // 3 バケットとも掃除する
     for (const bucket of ['meal_photos', 'fridge-images', 'health-checkups']) {
       expect(world.calls).toContain(`storage.list:${bucket}`);
@@ -215,6 +234,83 @@ describe('deleteAccount: 成功', () => {
     expect(serialized).not.toContain(USER);
     expect(serialized).toContain('"email_delivery_logs":1');
     expect(serialized).toContain('removed_total');
+  });
+});
+
+describe('deleteAccount: 削除の実行記録 (#1562)', () => {
+  it('本人の退会: executor は self、理由は user_request、運営者は無し、request_id を渡す。済んだ印は始めた記録の id で入れる', async () => {
+    expect(await run()).toEqual({ ok: true });
+    expect(world.rpcArgs.begin_account_deletion_record).toEqual({
+      p_user_id: USER,
+      p_executor_type: 'self',
+      p_reason: 'user_request',
+      p_request_id: REQUEST_ID,
+      p_operator_id: null,
+    });
+    expect(world.rpcArgs.complete_account_deletion_record).toEqual({ p_record_id: RECORD_ID });
+  });
+
+  it('運営の削除: executor は operator、理由は operator_action、運営者の id を渡す', async () => {
+    expect(await run({ executor: { type: 'operator', operatorId: OPERATOR } })).toEqual({ ok: true });
+    expect(world.rpcArgs.begin_account_deletion_record).toEqual({
+      p_user_id: USER,
+      p_executor_type: 'operator',
+      p_reason: 'operator_action',
+      p_request_id: REQUEST_ID,
+      p_operator_id: OPERATOR,
+    });
+  });
+
+  it('記録を始められなければ削除しない (step: record)。生のエラー文は結果に入れない', async () => {
+    world.rpc.begin_account_deletion_record = { error: { message: SECRET_DB_MESSAGE, code: 'P0001' } };
+    const result = await run();
+    expect(result).toEqual(accountDeletionFailure(REQUEST_ID, 'record'));
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(world.calls).not.toContain('rpc:complete_account_deletion_record');
+    expect(JSON.stringify(result)).not.toContain('secret_constraint');
+    const failure = logs.entries.find((entry) => entry.level === 'error');
+    expect(failure?.metadata).toMatchObject({ step: 'record', request_id: REQUEST_ID, error_code: 'P0001' });
+  });
+
+  it('記録の id が返らなければ削除しない (step: record)', async () => {
+    world.rpc.begin_account_deletion_record = { data: null };
+    expect(await run()).toEqual(accountDeletionFailure(REQUEST_ID, 'record'));
+    expect(world.calls).not.toContain('auth.deleteUser');
+  });
+
+  it('済んだ印の失敗 (エラーでも例外でも) は退会の結果を変えない。ログには記録の id を残し、user_id は付けない', async () => {
+    world.rpc.complete_account_deletion_record = { error: { message: 'boom', code: '40001' } };
+    expect(await run()).toEqual({ ok: true });
+    const failure = logs.entries.find((entry) => entry.level === 'error');
+    expect(failure?.message).toMatch(/complete_account_deletion_record failed/);
+    expect(failure?.viaUser).toBe(false);
+    expect(failure?.metadata).toMatchObject({ step: 'record', request_id: REQUEST_ID, deletion_record_id: RECORD_ID, error_code: '40001' });
+    expect(JSON.stringify(failure?.metadata)).not.toContain(USER);
+
+    world = makeWorld();
+    logs = makeLogger();
+    world.rpc.complete_account_deletion_record = { throws: true };
+    expect(await run()).toEqual({ ok: true });
+    expect(logs.entries.some((entry) => entry.level === 'error' && /complete_account_deletion_record failed/.test(entry.message))).toBe(true);
+  });
+
+  it('すでに消えていたユーザー (404) でも、記録に済んだ印を入れる (やり直しで記録を閉じる)', async () => {
+    world.deleteUser.error = { message: 'User not found', status: 404, code: 'user_not_found' };
+    expect(await run()).toEqual({ ok: true });
+    expect(world.rpcArgs.complete_account_deletion_record).toEqual({ p_record_id: RECORD_ID });
+  });
+
+  it('deleteUser が失敗したら済んだ印を入れない (記録は executed_at が空のまま。やり直しで使い直す)', async () => {
+    world.deleteUser.error = { message: SECRET_DB_MESSAGE, status: 500, code: 'unexpected_failure' };
+    expect(await run()).toMatchObject({ ok: false, step: 'delete_user' });
+    expect(world.calls).toContain('rpc:begin_account_deletion_record');
+    expect(world.calls).not.toContain('rpc:complete_account_deletion_record');
+  });
+
+  it('成功のログに記録の id を載せる (user_id は載せない)', async () => {
+    await run();
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({ deletion_record_id: RECORD_ID });
   });
 });
 

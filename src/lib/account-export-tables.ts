@@ -249,7 +249,6 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes'],
   },
   { table: 'coupon_redemptions', scope: self('user_id'), omit: ['approved_by'] },
-  { table: 'gdpr_deletion_requests', scope: self('user_id'), omit: ['executed_by', 'notes'] },
   {
     table: 'announcement_reads',
     scope: self('user_id'),
@@ -290,6 +289,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   admin_user_notes: '運営スタッフが書いた内部メモ',
   moderation_flags: '運営によるモデレーションの内部記録',
   membership_audit: '所属変更の監査ログ (操作した人・相手の ID を含む)',
+  gdpr_deletion_requests:
+    '削除の実行記録 (#1562。退会した利用者の id の HMAC・日時・理由・実行者。利用者の id を持たず、本人が読める RLS ポリシーも無い。service_role だけが読み書きする)',
   experiment_assignments: 'A/B テストの内部割り当て',
   app_logs: 'アプリの動作ログ (内部のエラー記録)',
   ai_content_logs: 'AI 生成の内部ログ (費用・モデレーション用の列を含む)',

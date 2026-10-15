@@ -5,6 +5,7 @@
  *   - maintenance_mode = ON:
  *       一般ユーザー・未ログインの API は 503 MAINTENANCE_MODE (Retry-After 付き)、ページは 503 の HTML。
  *       運営 (admin) は通る。死活監視 (/api/health)・フラグの取得 (/api/feature-flags)・/login・/terms は止まらない。
+ *       通知のトークンの claim (/api/push-tokens/claim。#1636) は一般ユーザーでも止まらない (release は止まる)。
  *   - ai_chat_enabled = OFF:
  *       AI 相談の「新しい相談の開始」(POST /api/ai/consultation/sessions) は 503 AI_CHAT_DISABLED とやさしい文面。
  *       過去の相談の閲覧 (GET) は止まらない。
@@ -130,6 +131,7 @@ const createSession = (jwt: string) => apiCall<ErrorBody & { session?: { id: str
  */
 const WARM_UP_ROUTES = [
   ['GET', '/api/feature-flags'],
+  ['POST', '/api/push-tokens/claim'],
   ['GET', '/api/super-admin/flags'],
   ['GET', '/api/pantry'],
   ['POST', '/api/ai/consultation/sessions'],
@@ -284,6 +286,20 @@ describe('メンテナンスモードと AI 相談の緊急停止 (実サーバ�
       // ── 止めないもの ──
       const health = await apiCallNoAuth('GET', '/api/health');
       expect(health.status).toBe(200);
+
+      // #1636: 通知のトークンの claim (端末の後片付け) だけは、一般ユーザーでも止めない。route まで届く
+      // (このユーザーはトークンを登録していないので、route の 404 PUSH_TOKEN_NOT_REGISTERED が返る = 503 ではない)
+      const claim = await apiCall<ErrorBody>('POST', '/api/push-tokens/claim', normalUser.jwt, {
+        expo_push_token: `ExponentPushToken[it-flagrt-${TS}]`,
+      });
+      expect(claim.status).toBe(404);
+      expect(codeOf(claim.body)).toBe('PUSH_TOKEN_NOT_REGISTERED');
+      // release (セッション無しの後片付け) と、ほかの /api/push-tokens/* は止める (例外は claim の 1 本だけ)
+      const release = await apiCallNoAuth<ErrorBody>('POST', '/api/push-tokens/release', {});
+      expect(release.status).toBe(503);
+      expect(codeOf(release.body)).toBe('MAINTENANCE_MODE');
+      const nearClaim = await apiCall<ErrorBody>('POST', '/api/push-tokens/claimx', normalUser.jwt, {});
+      expect(nearClaim.status).toBe(503);
 
       const clientFlags = await apiCallNoAuth<FlagsBody>('GET', '/api/feature-flags');
       expect(clientFlags.status).toBe(200);

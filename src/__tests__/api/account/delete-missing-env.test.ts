@@ -15,7 +15,7 @@
  *   4. 成功すれば 200 { success: true } (切り替えで成功の経路を壊していない)
  *
  * 退会の本体は src/lib/account-deletion.ts の deleteAccount (#1175)。route は入口の確認と結果の変換だけを行う。
- * deleteAccount は prepare_account_deletion (rpc) → release_user_membership (rpc) → Storage の掃除 → deleteUser の順に進み、
+ * deleteAccount は prepare_account_deletion (rpc) → release_user_membership (rpc) → Storage の掃除 → 削除の実行記録 (rpc) → deleteUser の順に進み、
  * 失敗したら元のエラーを自分の構造化ログ (step 付き) に残して ACCOUNT_DELETE_FAILED を返す。route はそれを internalError で 500 にする。
  * そのため削除が失敗したときの構造化ログは 2 件 (lib の元のエラー + route の 500) になる。
  */
@@ -82,6 +82,7 @@ import { MISSING_ENV_SERVER_LOG_PREFIX } from '@/lib/env-required';
 
 const USER_ID = '00000000-0000-4000-8000-0000000000aa';
 const USER_EMAIL = 'leaving-user@example.com';
+const DELETION_RECORD_ID = '00000000-0000-4000-8000-0000000000bb';
 const URL_VALUE = 'https://account-delete-test.supabase.co';
 const SERVICE_VALUE = 'service-role-value-must-not-leak';
 const REQUIRED_NAMES = ['NEXT_PUBLIC_SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY'] as const;
@@ -121,7 +122,10 @@ beforeEach(() => {
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', SERVICE_VALUE);
   mockGetUser.mockResolvedValue({ data: { user: { id: USER_ID } }, error: null });
   mockAdminFrom.mockImplementation(() => emptyQuery());
-  mockRpc.mockResolvedValue({ error: null });
+  // 削除の実行記録 (#1562) を始める RPC だけは、記録の id を返す
+  mockRpc.mockImplementation(async (name: string) =>
+    name === 'begin_account_deletion_record' ? { data: DELETION_RECORD_ID, error: null } : { data: null, error: null },
+  );
   mockDeleteUser.mockResolvedValue({ error: null });
   mockGetUserById.mockResolvedValue({ data: { user: { id: USER_ID, email: USER_EMAIL } }, error: null });
   mockSendEmail.mockResolvedValue({ ok: true, id: 'email-1', attempts: 1, skipped: false, error: null });
@@ -221,6 +225,15 @@ describe('POST /api/account/delete — 設定がそろっているとき', () =>
     // deleteAccount の流れを通っている: メールアドレスを伏せる準備 → 席の解放 → Storage の掃除 → deleteUser
     expect(mockRpc).toHaveBeenCalledWith('prepare_account_deletion', { p_user_id: USER_ID });
     expect(mockRpc).toHaveBeenCalledWith('release_user_membership', { p_user_id: USER_ID });
+    // 削除の実行記録 (#1562): 本人の退会として始め、削除の後に済んだ印を入れる
+    expect(mockRpc).toHaveBeenCalledWith('begin_account_deletion_record', {
+      p_user_id: USER_ID,
+      p_executor_type: 'self',
+      p_reason: 'user_request',
+      p_request_id: 'req-test',
+      p_operator_id: null,
+    });
+    expect(mockRpc).toHaveBeenCalledWith('complete_account_deletion_record', { p_record_id: DELETION_RECORD_ID });
     expect(mockStorageList).toHaveBeenCalled();
     expect(mockLoggerError).not.toHaveBeenCalled();
     // Storage の URL の読み出しも含めて、どの段階も警告なしで通る

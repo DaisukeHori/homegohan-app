@@ -6,7 +6,7 @@
 | Issue | #1442 (親: #1174 の同意ゲート。先例: #1154 の AI 同意の 403・#1030 / #1445 の凍結の API ゲート) |
 | 分冊 | 本冊 = 核 (段 A: サーバー + `packages/shared`)。配線 (段 B: モバイル) は `13b-legal-consent-mobile.md`。13b は本冊がマージされた後に、本冊の実コードを正として実装する |
 | 正典の関係 | 本冊と 13b は `08-legal-compliance.md` §7.2 (同意ゲート) の**配線を /api とモバイルへ広げる**冊。§7.2 の「対象外に `/api/*`」の記述は本冊のマージで、「モバイルのネイティブの画面は対象外」の記述は 13b のマージで現在形に直す (各冊の §6.19) |
-| 範囲の正本 | 仕様ファイル `scratch/homegohan/specs/spec-d-consent.md` と Issue #1442 の本文 |
+| 範囲の正本 | Issue #1442 の本文とコメント (オーナーの選択 2026-10-15「運営の API も止める」は #1442 のコメントに記録) |
 | 読み手 | 実装 (Sonnet 5.5) と敵対レビュー。実装は §6 だけを読んで手を止めずに書けることを完成条件にする |
 | 節番号 | 分冊前の 13 と同じ番号を使う。本冊に無い節 (§3.3・§5.2・§6.6.8〜§6.6.13 など) は 13b にある。両冊にある節番号は、それぞれの冊に関わる行だけを持つ。両方に関わる行は本冊に置く |
 
@@ -99,7 +99,7 @@
 |---|---|---|---|
 | R-1 | ログイン済みの利用者のデータを読み書きする `/api` は、未同意 (未同意・旧版に同意) なら 403 の専用コードで断る | 仕様 1 | T-SH4, T-M1〜T-M4 |
 | R-2 | 403 の形は #1154 の AI 同意に合わせる: 平たい `{ error: <固定の文>, code }`、キーはその 2 つだけ、内部の語を出さない | 仕様 1 | T-M9, T-S1 |
-| R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-SH3, T-M2, T-M3, T-M14 |
+| R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-SH3, T-M2, T-M3, T-M14, T-M18 |
 | R-4 | 判定の置き場所は漏れが出ない形 (route ごとに呼び忘れない) | 仕様 1 | T-M1 (全 route の表) |
 | R-5 | 漏れを見張るテスト (全 route の表と実コードの照合) を含め、見張りの限界を明記する | 仕様 1 | §6.13 |
 | R-8 | 改定 (版が上がった) の再同意は、既存の版の判定 (`hasAcceptedCurrentLegalDocuments`) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-M17, E2E-A6, T-P3 |
@@ -107,7 +107,7 @@
 | R-10 | 既存のテスト・e2e への影響を洗い、結合テストで 403 の専用コードを確かめる | 仕様 5 | §6.14, §6.18 |
 | R-11 | Zod のスキーマ (403 の本文)・ヘルパーの関数のシグネチャ・エラー表・状態遷移表を書く | 仕様 成果物 | §6.1〜§6.8 |
 | R-13 | `as any`・マジックナンバーを使わない。意味のある数値は名前付き定数 | 共通ガード | lint |
-| R-14 | 凍結 (403 AUTH_ACCOUNT_FROZEN) とメンテナンス (503) の判定の順は変えない。同意はその後 | `middleware.ts:183-241` の既存の順 | T-M10, T-M11 |
+| R-14 | 凍結 (403 AUTH_ACCOUNT_FROZEN) とメンテナンス (503) の判定の順は変えない。同意はその後 | `middleware.ts:183-241` の既存の順 | T-M10, T-M11, T-M19, T-M20 |
 
 R-6・R-7・R-12 (モバイルだけ) は 13b §3.1。R-8〜R-11・R-13 はサーバーとモバイルの両方に関わるので本冊に置く。検証の列の T-ML*・T-P*・T-G*・T-SC*・T-RL1・T-API1・T-FR1・T-PT1 は 13b §6.14 の it。
 
@@ -232,7 +232,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | 同意の状況を知る API | 無し (画面の HTML か、`GET /api/profile` の列) | `GET /api/legal/status` |
 | `lib/legal-consent.ts` の `EXEMPT_PREFIXES` の `/api` | 画面の判定で対象外 (コメント「各 route が自分で認可する」) | 変えない (画面の判定の対象外のまま。コメントだけ本書のゲートを指すように直す) |
 | 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う)。Web の画面に出る文は変わらない (「同意しない」のボタンは `declineAndSignOutButton` = 現行と同じ「同意しない（ログアウトする）」。押している間の文はリテラルのまま) |
-| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` 2 本 | 変えない。同意の許可リストはこれを含む (テストで固定) |
+| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` 2 本 | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う) |
 
 モバイルの行 (起動・改定の再同意・403 の扱い) は 13b §6.2。
 
@@ -279,6 +279,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/auth` | prefix | `auth_flow` | ログイン (`auth/login`)・Cookie の同期 (`auth/session-sync`)・ネイティブ認証ブリッジのコード (`auth/native-bridge/code`)。認証の途中。bridge を止めると WebView で Web の同意画面も開けない。Web の `/auth/*` の対象外と同じ |
 | `/api/account/delete` | exact | `leave_service` | 退会。同意を取り下げる権利。凍結中も通す 2 本と同じ (`frozen.ts:49-52`) |
 | `/api/account/export` | exact | `leave_service` | 個人データの書き出し。同上 |
+| `/api/push-tokens/claim` | exact | `device_cleanup` | 通知のトークンの claim (#1636)。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。凍結中・メンテナンス中も middleware が通す (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`) のと同じ理由。凍結中・メンテナンス中は同意できないので、ここで止めると前の利用者の行が外れず、前の利用者宛ての通知がこの端末に届き続ける。release (`/api/push-tokens/release`) は載せない (セッション無しで route が端末の秘密の値で認可するので、同意の判定に来ない) |
 | `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (データの削除の依頼もここから)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route |
 | `/api/log` | exact | `telemetry` | 画面・端末の失敗の報告の受け口 (`error-report.ts` → `POST /api/log`)。利用者のデータの利用ではなく運用のログ。未同意の人の失敗も残す |
 | `/api/feature-flags` | exact | `client_status` | 画面が前もって状態を知る窓口 (メンテナンス中も通す `isMaintenanceExemptPath` と同じ扱い)。未ログインでも答える |
@@ -294,7 +295,6 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/admin/*` `/api/super-admin/*` `/api/support/*` `/api/operator/*` (運営) | 規約はスタッフにも適用される (Web の画面のゲートが管理者も回す。`middleware-legal-consent.test.ts:529`)。役割の例外を作らないほうが一覧が短く漏れない。運営は 1 回同意すれば済む |
 | `/api/onboarding/*` | 初期設定は同意の後 (R-6)。Web の画面のゲートも初期設定の差し戻しより先に同意を見る |
 | `/api/handson-tour/*` と、ツアーが使うサンドボックスの API | Web は `/handson-tour` の画面を対象外にするが、ツアーが呼ぶほかの API (献立の追加など) は止まるので、ツアーの API だけ通しても流れは守れない。ツアーに入る前に同意している (モバイルは画面の代わりに同意画面を描き、同意後に同じ画面へ戻る) |
-| `/api/push-tokens/claim` | 端末の通知トークンの登録。同意前の起動で 403 になるので、`PushTokenRegistrar` の effect に同意の状態を足し、同意が済んだら登録し直す (13b §6.6.10) |
 | `/api/performance/sports` `/api/catalog/products` (公開・準公開のデータ) | 未ログインなら判定に来ない。ログイン済みの未同意の人は同意が先。個別の例外を作らない |
 | `/api/family/invites/[id]/reject` `/api/org/invites/[id]/reject` (認証任意) | 未ログインなら判定に来ない。ログイン済みなら Web の `/invite/*` の画面のゲートが先に同意を取る |
 | `/api/family/invites/[id]/accept` `/api/org/invites/[id]/accept` (招待を受ける) | ログイン済みの本人の操作 (route が `getUser` で確かめ、未ログインは 401。`family/invites/[id]/accept/route.ts:20`・`org/invites/[id]/accept/route.ts:17`)。受けると家族・組織とのデータの共有が始まるので、利用者のデータの利用そのもの。呼ぶ画面は Web の `/invite/[token]` (`src/app/invite/[token]/page.tsx:69` と、そこが描く `FamilyInviteAcceptModal.tsx:42`) で、`/invite` は画面の判定の対象外に無い (`lib/legal-consent.ts:78-91`) ので、ログイン済みの未同意の人は画面のゲートで先に同意画面へ回る |
@@ -338,6 +338,7 @@ import {
   type AcceptedLegalVersions,
   type LegalDocumentType,
 } from '@homegohan/shared/legal-versions';
+import { PUSH_TOKEN_CLAIM_API_PATH } from '@homegohan/shared/push-token-claim';
 
 /** 本人の同意の状況を返す API (本書で新設) */
 export const LEGAL_CONSENT_STATUS_API_PATH = '/api/legal/status';
@@ -387,6 +388,7 @@ export type LegalConsentExemptApiReason =
   | 'contact'
   | 'telemetry'
   | 'client_status'
+  | 'device_cleanup'
   | 'no_user_session'
   | 'test_only';
 
@@ -401,8 +403,10 @@ export interface LegalConsentExemptApiEntry {
 
 /**
  * 未同意でも止めない /api の一覧 (#1442)。ここに無い /api はすべて、LEGAL_CONSENT_ENFORCE=on のとき未同意なら 403。
- * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・連絡の窓口・運用のログ・状態の窓口・利用者のセッションを持たない経路」だけ
+ * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・連絡の窓口・運用のログ・状態の窓口・端末の後片付け・利用者のセッションを持たない経路」だけ
  * (利用者のデータを読み書きする API を足さない)。一覧は tests が固定する (lib/supabase/__tests__/middleware-legal-consent-api.test.ts)。
+ * 凍結中・メンテナンス中に middleware が通す /api は、すべてこの一覧にも入れる (凍結中・メンテナンス中は同意の画面に進めないので、
+ * 同意ゲートで止めると、その例外が意味を失う)。これも同じテストが全 route で確かめる。
  */
 export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry[] = [
   { path: LEGAL_CONSENT_ACCEPT_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の記録そのもの。止めると同意できない' },
@@ -410,6 +414,12 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
   { path: '/api/auth', match: 'prefix', reason: 'auth_flow', note: 'ログイン・Cookie の同期・ネイティブ認証ブリッジのコード。認証の途中' },
   { path: '/api/account/delete', match: 'exact', reason: 'leave_service', note: '退会。同意を取り下げる権利 (凍結中も通す 2 本と同じ)' },
   { path: '/api/account/export', match: 'exact', reason: 'leave_service', note: '個人データの書き出し。同上' },
+  {
+    path: PUSH_TOKEN_CLAIM_API_PATH,
+    match: 'exact',
+    reason: 'device_cleanup',
+    note: '通知のトークンの claim。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。止めると前の利用者宛ての通知がこの端末に届き続ける (凍結中・メンテナンス中も通すのと同じ理由)',
+  },
   { path: '/api/contact', match: 'exact', reason: 'contact', note: '同意しない人の連絡の窓口 (データの削除の依頼もここから)' },
   { path: '/api/log', match: 'exact', reason: 'telemetry', note: '画面・端末の失敗の報告の受け口。運用のログ' },
   { path: '/api/feature-flags', match: 'exact', reason: 'client_status', note: '画面が前もって状態を知る窓口 (メンテナンス中も通す)' },
@@ -931,7 +941,7 @@ sequenceDiagram
 1. `src/app/api/**/route.ts` を全部列挙し (`tests/helpers/ai-reach.ts` の `listRouteFiles` を `src/app/api` に絞って使う)、動的な区間 (`[id]` など) を固定の値に置き換えた path を作り、**未同意 × ENFORCE=on で `updateSession` を 1 本ずつ通す**。期待 = 許可リストに当たる route だけ 403 でない、それ以外は全部 403 `LEGAL_CONSENT_REQUIRED`。route を足せば自動で表に入る (載せ忘れは無い)。本数は書き込まない (2026-10-15 の origin/main で 202 本 = §0.3)。列挙が 0 本なら (走査の道が変わった) 失敗にする (空の it.each で緑にしない)。
 2. 許可リストの各行は、実在する route (route.ts のディレクトリ) に当たる (prefix の行は 1 本以上)。消えた route が一覧に残らない。
 3. 許可リストの中身 (path・match・reason) をそのまま固定する (スナップショット)。足すときは、このテストと §6.4 の表を一緒に直す。
-4. 許可リストは `FROZEN_ALLOWED_API_PATHS` の 2 本を含む。
+4. 許可リストは、凍結・メンテナンスの判定で通る `/api` をすべて含む: 判定の関数での包含 (`FROZEN_ALLOWED_API_PATHS` + `isPushTokenClaimApiPath` は exact の行で。`isMaintenanceExemptPath` が通す route も全部) と、全 route を未同意 × ENFORCE=on × 凍結中 / メンテナンス中 (運営ではない) で `updateSession` に通して同意の 403 が 1 本も出ないこと (T-M14・T-M18〜T-M20)。
 5. `src/middleware.ts` の matcher が `/api` で外すのは `api/health$` だけ (`tests/health-middleware-exemption.test.ts` と同じ読み方)。
 
 **限界** (見張りが見ないもの。明記する):
@@ -982,14 +992,18 @@ sequenceDiagram
 | T-M7 | `列が無い DB (42703) では列を除いた select でやり直し、同意ゲートだけ素通り (凍結・メンテナンスは効く)` |
 | T-M8 | `未ログイン (user null) と getUser の失敗は判定に来ない (route の 401 に委ねる)` |
 | T-M9 | `403 の本文は { error, code } の 2 キーだけで LegalConsentRequiredBodySchema を通り、Cache-Control は private, no-store。トークン更新で溜まったセッション Cookie を引き継ぐ` |
-| T-M10 | `凍結が先: 凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (同意の 403 ではない)。凍結中でも通す 2 本は未同意でも通る` |
+| T-M10 | `凍結が先: 凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (同意の 403 ではない)。凍結中でも通す 2 本と claim は未同意でも通る` |
 | T-M11 | `メンテナンス中が先: 運営以外の未同意は 503 MAINTENANCE_MODE。運営はメンテナンスを通った後に同意の判定を受ける` |
 | T-M12 | `Bearer (JWT 形式) のモバイルのセッションでも同じ判定。非 JWT の Bearer (CRON_SECRET) は判定に来ない` |
 | T-M13 | `GET / HEAD / POST / PUT / PATCH / DELETE のどのメソッドでも 403 (API は画面と違って POST も止める)` |
-| T-M14 | `許可リストは FROZEN_ALLOWED_API_PATHS の 2 本を含む` |
+| T-M14 | `許可リストは、凍結の判定で通るパス (FROZEN_ALLOWED_API_PATHS + 通知のトークンの claim) をすべて exact の行で含む` |
 | T-M15 | `src/middleware.ts の matcher が /api で外すのは api/health$ だけ` |
 | T-M16 | `/api の分岐の select は PROFILE_COLUMNS_WITH_LEGAL の 1 回だけ (クエリを増やさない)` |
 | T-M17 | `改定の後 (旧版に同意) × ENFORCE=on: 同じ人の /api/meals は 403 LEGAL_CONSENT_REQUIRED (本文の error は LEGAL_CONSENT_REQUIRED_MESSAGE)、画面の GET /home は /legal-consent?next=%2Fhome へ 307、画面の POST /home は回さない (S5・S14 の Web の流れ)` |
+| T-M18 | `許可リストは、メンテナンス中に通す /api (isMaintenanceExemptPath) をすべて含む (全 route)` |
+| T-M19 | `全 route を 未同意 × ENFORCE=on × 凍結中 で通すと、同意の 403 は 1 本も出ない (凍結の 403 か、通すかのどちらか)。claim と退会・書き出しは通る` |
+| T-M20 | `全 route を 未同意 × ENFORCE=on × メンテナンス中 (一般の利用者) で通すと、同意の 403 は 1 本も出ない (503 か、通すかのどちらか)。claim は通る` |
+| T-M21 | `通知のトークンの claim は 未同意 × ENFORCE=on でも止めない (端末の後片付け #1636)。release と似た名前は止める` |
 
 **D. status route `tests/api/legal-status-route.test.ts`** (モックは `tests/api/onboarding-status-route.test.ts` と同型)
 
@@ -1080,7 +1094,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `apiRequest('/api/pantry')` | `lib/supabase/__tests__/middleware-maintenance.test.ts` の API の行 | 確認のみ (同上。メンテナンスの判定は同意より先) | A |
 | `PROFILE_COLUMNS_WITH_LEGAL` の文字列 | `lib/supabase/__tests__/middleware-legal-consent.test.ts:626-637` (`列があるときの select は、同意済みの版の 2 列を含む 1 回だけ`) | 確認のみ (画面の分岐は変えない) | A |
 | `'/api/legal/accept'` `'/api/account/export'` (画面の判定の対象外) | `tests/legal-consent-gate.test.ts:58-59` (`EXEMPT_PATHS`) | 確認のみ (`isLegalConsentExemptPath` は変えない。`/api` は画面の判定では対象外のまま) | A |
-| `FROZEN_ALLOWED_API_PATHS` | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | 確認のみ (一覧は変えない)。新しい T-M14 が同意の許可リストとの包含を足す | A |
+| `FROZEN_ALLOWED_API_PATHS` | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | 確認のみ (一覧は変えない)。新しい T-M14 が同意の許可リストとの包含を足す (通知のトークンの claim (#1636) も含めて。T-M18〜T-M20 がメンテナンスの例外と全 route の挙動で同じ包含を確かめる) | A |
 | `api/health$` (matcher) | `tests/health-middleware-exemption.test.ts` | 確認のみ。T-M15 が同じ読み方で再確認 | A |
 | `src/app/api/legal/status/route.ts` (新 route の走査) | `tests/api-raw-error-message-scan.test.ts` (本文に生のエラー文を入れない)、`tests/ai-consent-enforcement.test.ts` (AI に届く route の棚卸し)、`tests/supabase-service-role-client-scan.test.ts`、`tests/env-source-scan.test.ts` | 確認のみ: route は `internalError` と固定の文だけを返す / import は accept route と同じ構成 (`@/lib/supabase/server`・`@/lib/api/errors`・`@/lib/legal-consent`・`@homegohan/shared`・zod の schema) で AI の印に届かない / service role を使わない / `process.env` を直接読まない | A |
 | `LEGAL_CONSENT_ENFORCE` (読む場所) | `tests/env-source-scan.test.ts` (読むのは `lib/legal-consent.ts` だけ)、`tests/legal-consent-env-stub-style.test.ts` (テストは `vi.stubEnv`) | 確認のみ: status route と middleware は `isLegalConsentEnforced()` を呼ぶだけ。新しいテストは `vi.stubEnv` | A |

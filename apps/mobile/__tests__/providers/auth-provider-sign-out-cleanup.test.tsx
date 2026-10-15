@@ -34,7 +34,17 @@ jest.mock('../../src/lib/supabase', () => ({
   getStoredSession: (...args: unknown[]) => mockGetStoredSession(...args),
 }));
 
+// release の API (POST /api/push-tokens/release。#1636) の送り先。ほかの経路は getApi() を呼ばない
+const mockPost = jest.fn();
+jest.mock('../../src/lib/api', () => ({
+  getApi: () => ({ post: (...args: unknown[]) => mockPost(...args) }),
+}));
+
+import * as SecureStore from 'expo-secure-store';
+import { PUSH_TOKEN_RELEASE_API_PATH } from '@homegohan/shared';
 import { PERSISTENCE_KEYS } from '../../src/lib/persistence';
+import { PUSH_INSTALL_SECRET_STORE_KEY } from '../../src/lib/pushInstallSecret';
+import { PUSH_TOKEN_RELEASE_PENDING_KEY } from '../../src/lib/pushTokenRelease';
 import {
   readPendingWebViewUserScopedStorageClear,
   resetWebViewUserStorageCleanupForTests,
@@ -158,6 +168,8 @@ beforeEach(async () => {
     authListener = listener;
     return { data: { subscription: { unsubscribe: jest.fn() } } };
   });
+  (SecureStore as unknown as { __reset: () => void }).__reset();
+  mockPost.mockResolvedValue({ released: 1 });
 });
 
 describe('AuthProvider — 未ログインになるどの経路でも、端末の利用者別のデータが消える (#1615)', () => {
@@ -393,5 +405,218 @@ describe('AuthProvider — 端末の Cookie の置き場の掃除 (Networking.cl
     await waitFor(() => expect(text(api, 'loading')).toBe('false'));
     expect(mockSignOut).toHaveBeenCalledWith({ scope: 'local' });
     expect(text(api, 'session')).toBe('none');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// #1636: signOut.ts を通らない SIGNED_OUT でも、user_push_tokens の行を消す (セッション無しの release)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** この端末の秘密の値 (ダミー。43 文字の base64url) */
+const DEVICE_SECRET = 'shared-device-secret-aaaaaaaaaaaaaaaaaaaaaa'; // gitleaks:allow
+
+/** release の API への呼び出し */
+function releaseCalls(): unknown[][] {
+  return mockPost.mock.calls.filter(([path]) => path === PUSH_TOKEN_RELEASE_API_PATH);
+}
+
+async function pendingReleases(): Promise<unknown> {
+  const raw = await AsyncStorage.getItem(PUSH_TOKEN_RELEASE_PENDING_KEY);
+  return raw === null ? null : JSON.parse(raw);
+}
+
+async function renderSignedIn() {
+  const session = makeSession();
+  mockGetSession.mockResolvedValue({ data: { session }, error: null });
+  mockGetUser.mockResolvedValue({ data: { user: session.user }, error: null });
+  const api = renderProvider();
+  await waitFor(() => expect(text(api, 'session')).toBe('access-1'));
+  return api;
+}
+
+describe('AuthProvider — SIGNED_OUT でも user_push_tokens の行を消す (#1636)', () => {
+  beforeEach(async () => {
+    await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, DEVICE_SECRET);
+  });
+
+  it('SIGNED_OUT で行が消える: 残した値と端末の秘密の値で、サインアウトした利用者の行の release を呼ぶ', async () => {
+    const api = await renderSignedIn();
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    expect(text(api, 'session')).toBe('none');
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    expect(releaseCalls()[0]).toEqual([
+      PUSH_TOKEN_RELEASE_API_PATH,
+      { expo_push_token: 'ExponentPushToken[previous]', install_secret: DEVICE_SECRET, user_id: PREVIOUS_USER_ID },
+      expect.objectContaining({ retry: false }),
+    ]);
+    // 消せたので、控えは残らない
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
+  });
+
+  it('消せなかったときは控え、次の起動 (未ログインと決まったとき) で消し直す', async () => {
+    mockPost.mockRejectedValueOnce(new Error('Network request failed'));
+    const first = await renderSignedIn();
+
+    act(() => authListener('SIGNED_OUT', null));
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    await waitFor(async () =>
+      expect(await pendingReleases()).toEqual([{ userId: PREVIOUS_USER_ID, token: 'ExponentPushToken[previous]' }]),
+    );
+    first.unmount();
+
+    // 次の起動: 保存済みのセッションが無い (未ログイン)。起動時の掃除 (ID なし) で値が消えても、控えから消し直す
+    mockGetSession.mockResolvedValue({ data: { session: null }, error: null });
+    const second = renderProvider();
+    await waitFor(() => expect(text(second, 'loading')).toBe('false'));
+
+    await waitFor(() => expect(releaseCalls()).toHaveLength(2));
+    expect(releaseCalls()[1][1]).toEqual({
+      expo_push_token: 'ExponentPushToken[previous]',
+      install_secret: DEVICE_SECRET,
+      user_id: PREVIOUS_USER_ID,
+    });
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull();
+  });
+
+  it('起動時にサーバーが失効と明言したときも、掃除で値が消える前に宛先を控え、そのあとの SIGNED_OUT で行を消す', async () => {
+    const session = makeSession();
+    mockGetSession.mockResolvedValue({ data: { session }, error: null });
+    mockGetUser.mockResolvedValue({
+      data: { user: null },
+      error: authError('AuthApiError', 403, 'Session not found', 'session_not_found'),
+    });
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    // 掃除は値を消したが、宛先は控えてある (まだ通信していない)
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull();
+    expect(await pendingReleases()).toEqual([{ userId: PREVIOUS_USER_ID, token: 'ExponentPushToken[previous]' }]);
+    expect(releaseCalls()).toHaveLength(0);
+
+    // signOut({ scope: 'local' }) のあとに supabase-js が届ける SIGNED_OUT
+    act(() => authListener('SIGNED_OUT', null));
+
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    expect(releaseCalls()[0][1]).toEqual({
+      expo_push_token: 'ExponentPushToken[previous]',
+      install_secret: DEVICE_SECRET,
+      user_id: PREVIOUS_USER_ID,
+    });
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
+  });
+
+  it('端末の秘密の値が無い (古い版のアプリで登録した端末) ときは通信せず、控えも残さない', async () => {
+    await SecureStore.deleteItemAsync(PUSH_INSTALL_SECRET_STORE_KEY);
+    await renderSignedIn();
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    await waitFor(async () => expect(await readPendingWebViewUserScopedStorageClear()).toEqual(expect.any(String)));
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
+    expect(releaseCalls()).toHaveLength(0);
+  });
+
+  it('前提: ログイン済みで起動したときは release を呼ばない', async () => {
+    await renderSignedIn();
+    expect(releaseCalls()).toHaveLength(0);
+  });
+
+  // アプリが閉じている間に refresh_token が失効すると、次の起動で supabase-js の初期化がセッションを消し、起動時に未ログインと決まる。
+  // サインアウトした利用者は分からない (lastKnownUserIdRef は null)。ID なしの掃除が値を消す前に、残っている値を全部宛先にする
+  it.each([
+    ['getSession() が null', () => mockGetSession.mockResolvedValue({ data: { session: null }, error: null })],
+    [
+      'refresh_token の失効で getSession() が null とエラーを返した',
+      () =>
+        mockGetSession.mockResolvedValue({
+          data: { session: null },
+          error: authError('AuthApiError', 400, 'Invalid Refresh Token', 'refresh_token_not_found'),
+        }),
+    ],
+    [
+      '通信の失敗で getSession() が null を返し、保存済みのセッションも無い',
+      () =>
+        mockGetSession.mockResolvedValue({
+          data: { session: null },
+          error: authError('AuthRetryableFetchError', 0, 'Network request failed'),
+        }),
+    ],
+    ['getSession() が例外を投げた', () => mockGetSession.mockRejectedValue(new Error('storage exploded'))],
+  ])('起動時に未ログインと決まったとき (%s): 端末に残っている値で、前の利用者の行の release を呼ぶ', async (_label, arrange) => {
+    arrange();
+
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    expect(releaseCalls()[0]).toEqual([
+      PUSH_TOKEN_RELEASE_API_PATH,
+      { expo_push_token: 'ExponentPushToken[previous]', install_secret: DEVICE_SECRET, user_id: PREVIOUS_USER_ID },
+      expect.objectContaining({ retry: false }),
+    ]);
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
+    // 値は掃除で消えている
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull();
+  });
+
+  it('起動時に未ログインと決まったとき: 消せなければ控え、次の起動で消し直す', async () => {
+    mockPost.mockRejectedValueOnce(new Error('Network request failed'));
+    const first = renderProvider();
+    await waitFor(() => expect(text(first, 'loading')).toBe('false'));
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    await waitFor(async () =>
+      expect(await pendingReleases()).toEqual([{ userId: PREVIOUS_USER_ID, token: 'ExponentPushToken[previous]' }]),
+    );
+    expect(await AsyncStorage.getItem(PUSH_TOKEN_VALUE_KEY)).toBeNull();
+    first.unmount();
+
+    const second = renderProvider();
+    await waitFor(() => expect(text(second, 'loading')).toBe('false'));
+
+    await waitFor(() => expect(releaseCalls()).toHaveLength(2));
+    expect(releaseCalls()[1][1]).toEqual({
+      expo_push_token: 'ExponentPushToken[previous]',
+      install_secret: DEVICE_SECRET,
+      user_id: PREVIOUS_USER_ID,
+    });
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
+  });
+
+  it('起動時に未ログインと決まったとき: 保管庫を読めない (実はログイン中かもしれない) ときは通信せず、控えを残す', async () => {
+    (SecureStore as unknown as { __failWith: (method: string, error: Error) => void }).__failWith(
+      'getItemAsync',
+      new Error('User interaction is not allowed'),
+    );
+
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    await waitFor(async () =>
+      expect(await pendingReleases()).toEqual([{ userId: PREVIOUS_USER_ID, token: 'ExponentPushToken[previous]' }]),
+    );
+    // やり直し (flush) が保管庫を読みに行って諦めるまで進める
+    await act(async () => {
+      await new Promise((resolve) => setImmediate(resolve));
+    });
+    expect(releaseCalls()).toHaveLength(0);
+    expect(await pendingReleases()).toEqual([{ userId: PREVIOUS_USER_ID, token: 'ExponentPushToken[previous]' }]);
+  });
+
+  it('起動の直後 (復元の前) に supabase-js の初期化が SIGNED_OUT を届けても (利用者が分からない)、残っている値で release を呼ぶ', async () => {
+    // 復元が終わらない (lastKnownUserIdRef は null のまま)
+    mockGetSession.mockImplementation(() => new Promise(() => {}));
+    renderProvider();
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    await waitFor(() => expect(releaseCalls()).toHaveLength(1));
+    expect(releaseCalls()[0][1]).toEqual({
+      expo_push_token: 'ExponentPushToken[previous]',
+      install_secret: DEVICE_SECRET,
+      user_id: PREVIOUS_USER_ID,
+    });
+    await waitFor(async () => expect(await pendingReleases()).toBeNull());
   });
 });

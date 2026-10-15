@@ -541,7 +541,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       expect(rows[0]).toHaveProperty('hidden_reason');
       expect(rows[0]).not.toHaveProperty('hidden_by');
     }
-    expect(data.gdpr_deletion_requests[0]).not.toHaveProperty('executed_by');
+    // #1562: gdpr_deletion_requests は削除の実行記録 (service_role だけが読む内部の記録) なので、出力しない
+    expect(data).not.toHaveProperty('gdpr_deletion_requests');
     expect(data.weekly_menu_requests[0]).not.toHaveProperty('result_json');
     expect(data.weekly_menu_requests[0]).not.toHaveProperty('worker_id');
 
