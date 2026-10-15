@@ -241,7 +241,9 @@ export async function purgeExpiredHiddenContent(
         .order("id", { ascending: true })
         .limit(batchSize);
       if (error) throw new Error(`${spec.table} read failed: ${error.message}`);
-      const rows: ContentRow[] = (Array.isArray(data) ? data : []).filter(isRecord).map((row) => ({
+      // 列の名前を組み立てた select なので、行は形の分からない値として受け取り、列ごとに型を確かめて取り出す
+      const rawRows: unknown[] = Array.isArray(data) ? data : [];
+      const rows: ContentRow[] = rawRows.filter(isRecord).map((row) => ({
         id: String(row.id),
         user_id: typeof row.user_id === "string" ? row.user_id : null,
         url: row[spec.imageColumn],

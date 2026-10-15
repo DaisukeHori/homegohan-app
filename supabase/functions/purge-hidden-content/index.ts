@@ -25,7 +25,7 @@ const supabaseAdmin = createClient(
 /** 失敗したときの本文。例外の文 (DB・Storage の内部の文) は返さず、ログにだけ残す (#1444) */
 const PURGE_FAILED_MESSAGE = "purge failed";
 
-Deno.serve(async (req) => {
+Deno.serve(async (req: Request) => {
   // バッチ専用: CRON_SECRET 認証 (本文を読む前・DB に触る前)
   const authErr = await requireServiceRole(req);
   if (authErr) return authErr;
