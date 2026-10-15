@@ -7,9 +7,12 @@
  *     (以前は result_bubble_no_exclude をそのまま出し、利用者に「{cooking_experience_text} の手順」と見えていた)
  *   - 3.1 の本文は intro_hint。以前は {nickname} を埋めていない intro_title をそのまま本文に出していた
  *   - Step 2 / Step 3 のどのサブステップ・どのプロフィールでも、吹き出しのタイトルと本文に { } が残らない
+ *   - 3.1 の「n つ」はツアーが Step 3 までに付けるバッジの数 (STEP3_BADGES_EARNED_IN_TOUR = planner の 1 つ)、
+ *     3.2 (first_bite) は獲得の有無を言わない共有の文言 (#1626。お試しの記録は first_bite に数えない #1314)
  */
 import {
   HANDSON_TOUR_I18N_JA,
+  STEP3_BADGES_EARNED_IN_TOUR,
   SUB_STEPS_OF_STEP_2,
   SUB_STEPS_OF_STEP_3,
 } from '@homegohan/handson-tour-shared';
@@ -64,9 +67,22 @@ describe('buildMenuTourBubble (Step 2)', () => {
 describe('buildBadgesTourBubble (Step 3)', () => {
   it('3.1: タイトルは名前を埋めた intro_title、本文は intro_hint (設計書 05 §3.3)', () => {
     const bubble = buildBadgesTourBubble('3.1', { nickname: NICKNAME });
-    expect(bubble.title).toBe('花子 さん、もう 2 つ獲得しています!');
+    expect(bubble.title).toBe('花子 さん、もう 1 つ獲得しています!');
     expect(bubble.body).toBe(i18n.step3.intro_hint);
     expect(bubble.testId).toBe('tour-step-3-intro');
+  });
+
+  it('3.1: タイトルの「n つ」は、ツアーが Step 3 までに実際に付けるバッジの数と合う (#1626)', () => {
+    const bubble = buildBadgesTourBubble('3.1', { nickname: NICKNAME });
+    expect(bubble.title).toContain(`もう ${STEP3_BADGES_EARNED_IN_TOUR.length} つ獲得しています`);
+  });
+
+  it('3.2: first_bite の吹き出しは共有の文言で、獲得の有無を言わない (#1626)', () => {
+    const bubble = buildBadgesTourBubble('3.2', { nickname: NICKNAME });
+    expect(bubble.title).toBe(i18n.step3.first_bite_title);
+    expect(bubble.body).toBe(i18n.step3.first_bite_bubble);
+    expect(bubble.body).toBe('食事を記録するともらえるバッジです');
+    expect(bubble.body).not.toMatch(/しました|もらえます/);
   });
 
   it.each([...SUB_STEPS_OF_STEP_3])('%s: タイトルと本文に { } が残らない', (subStep) => {

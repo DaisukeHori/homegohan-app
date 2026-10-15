@@ -6,7 +6,7 @@
 
 ## 1. 役割
 
-Step 3 は **「あなたはもう 2 つバッジを持っている」気づきと、報酬システムの存在認知** を提供する。Step 1/2 で実際に獲得済みの `first_bite` / `planner` バッジを表示し、Step 4 で得られる `tutorial_complete` を予告 (半透明)。
+Step 3 は **「あなたはもう 1 つバッジを持っている」気づきと、報酬システムの存在認知** を提供する。Step 2 で実際に獲得済みの `planner` バッジと、実際の食事の記録で付く `first_bite` (Step 1 のお試しの記録では付かない。#1314) を表示し、Step 4 で得られる `tutorial_complete` を予告 (半透明)。
 
 ---
 
@@ -33,11 +33,11 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 
 ### 2.2 既存バッジ 13 種 + 新規 1 種
 
-§03 §3.10 で `first_bite` 付与、§04 §3.10 で `planner` 付与。Step 3 表示時には:
+§04 §3.10 で `planner` 付与。Step 1 のお試しの記録は `first_bite` を付けない (#1314)。Step 3 表示時には:
 
 | code | 名前 | 状態 (新規ユーザーのハッピーパス) |
 |---|---|---|
-| `first_bite` | はじめての一歩 | 獲得済 ✅ |
+| `first_bite` | はじめての一歩 | 未獲得 (実際の食事の記録で獲得) |
 | `streak_3` | 3 日連続 | 未獲得 |
 | `streak_7` | 1 週間連続 | 未獲得 |
 | `streak_30` | 30 日連続 | 未獲得 |
@@ -63,7 +63,7 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 | sub | 表示 | testID 起点 | 自動進行 | 手動進行 |
 |---|---|---|---|---|
 | 3.0 | バッジ取得中 spinner | `tour-step-3-loading` | API 完了 | なし |
-| 3.1 | intro 吹き出し ("もう 2 つ獲得しています!") | `tour-step-3-intro` | 2.0s | タップ可 |
+| 3.1 | intro 吹き出し ("もう 1 つ獲得しています!") | `tour-step-3-intro` | 2.0s | タップ可 |
 | 3.2 | first_bite カード Spotlight | `badge-card-first_bite` | なし | 【次へ】 |
 | 3.3 | planner カード Spotlight | `badge-card-planner` | なし | 【次へ】 |
 | 3.4 | tutorial_complete カード (半透明) Spotlight | `badge-card-tutorial_complete` | なし | 【次へ】 → Step 4 |
@@ -82,7 +82,7 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 ```
 
 レスポンス受信後:
-- `first_bite` と `planner` の `earned` が true であることを確認
+- `planner` の `earned` が true であることを確認 (`first_bite` は Step 1 のお試しの記録では付かないので、未獲得のまま表示する。#1314)
 - `tutorial_complete` の `earned` が false であることを確認
 - 確認 OK なら 3.1 へ
 - 確認 NG (= 想定外、Step 1/2 で実 API 失敗があった etc) → エラー画面 (§3.6)
@@ -94,7 +94,7 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 ```
 ┌────────────────────────────────────┐
 │   🎖️ {nickname} さん                  │
-│      もう 2 つ獲得しています!          │
+│      もう 1 つ獲得しています!          │
 │   タップで進む                          │
 └────────────────────────────────────┘
 ```
@@ -108,8 +108,11 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 
 | key | 文言 |
 |---|---|
-| `intro_title` | "{nickname} さん、もう 2 つ獲得しています!" |
+| `intro_title` | "{nickname} さん、もう 1 つ獲得しています!" |
 | `intro_hint` | "タップで進む" |
+
+「1 つ」は、ツアーが Step 3 までに実際に付けるバッジ (`planner`) の数。`packages/handson-tour-shared` の `STEP3_BADGES_EARNED_IN_TOUR` と合わせる (#1626)。
+固定の文言なので、やり直しのツアー (force=1) で `planner` のほかにも獲得済みのバッジがある人には、「獲得済」のカードの数と合わない。
 
 ### 3.4 サブステップ 3.2: first_bite カード Spotlight
 
@@ -122,7 +125,7 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 - 吹き出し位置: target の下 (画面上部にカードあれば bottom)
 - 吹き出し内容:
   - title: "はじめての一歩"
-  - body: "写真から記録を 1 度しました"
+  - body: "食事を記録するともらえるバッジです" (ツアーを通しただけなら未獲得、本物の食事の記録がある人のやり直しのツアーでは獲得済みなので、獲得の有無を言わず、もらい方を説明する)
   - 【次へ】ボタン
 - 進捗ドット: ● ● ● ● ○ (Step 3 中、4 段目 active)
 
@@ -131,7 +134,7 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 | key | 文言 |
 |---|---|
 | `first_bite_title` | "はじめての一歩" |
-| `first_bite_bubble` | "写真から記録を 1 度しました" |
+| `first_bite_bubble` | "食事を記録するともらえるバッジです" |
 | `next_button` | "次へ" |
 
 ### 3.5 サブステップ 3.3: planner カード Spotlight
@@ -178,7 +181,7 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 
 ### 3.7 エラー画面 (3.0 失敗時 / 想定外状態)
 
-`GET /api/badges` 失敗、または first_bite/planner 未獲得が判明した場合:
+`GET /api/badges` 失敗、または planner 未獲得が判明した場合:
 
 ```
 ┌────────────────────────────────────┐
@@ -195,8 +198,9 @@ Step 3 は **「あなたはもう 2 つバッジを持っている」気づき�
 
 | 状態 | 原因 | 対処 |
 |---|---|---|
-| `first_bite` 未獲得 | Step 1 で API 失敗かつ skip しなかった (= state inconsistent) | UI ではエラー表示せず Step 4 へ進む (skip して影響を最小化) |
-| `planner` 未獲得 | 同上 (Step 2) | 同上 |
+| `first_bite` 未獲得 | 正常 (Step 1 のお試しの記録では付かない。#1314) | 通常表示 (「獲得済」を付けない) |
+| `first_bite` 既獲得 | やり直しのツアー (force=1) で、本物の食事の記録がある | 通常表示 (「獲得済」を付ける)。3.2 の吹き出しは獲得の有無を言わない文言なので変えない |
+| `planner` 未獲得 | Step 2 で API 失敗かつ skip しなかった (= state inconsistent) | UI ではエラー表示せず Step 4 へ進む (skip して影響を最小化) |
 | `tutorial_complete` 既獲得 | force=1 再表示 + 過去完了済 | 通常表示 (= 半透明ではなく 普通表示)、吹き出しは "もう一度受け取れます" 等に変更 |
 
 ---
@@ -346,10 +350,10 @@ useEffect(() => {
     try {
       const res = await fetch('/api/badges').then(r => r.json());
       // sanity check
-      const firstBite = res.badges.find(b => b.code === 'first_bite');
+      // first_bite はお試しの記録では付かない (#1314) ので確かめない
       const planner = res.badges.find(b => b.code === 'planner');
       const tutorial = res.badges.find(b => b.code === 'tutorial_complete');
-      if (!firstBite?.earned || !planner?.earned) {
+      if (!planner?.earned) {
         // 想定外、ただしエラー画面は出さず Step 4 へ進む (silent skip)
         fireAnalytics('handson_tour_step_error', { step: 3, error_code: 'badges_not_obtained_silently' });
       }
@@ -394,7 +398,7 @@ const targetTestId = useMemo(() => {
 ### 11.1 Unit
 - `<BadgesPage tutorialMode>` の挙動: アニメーションモーダル抑制
 - 自動スクロール (Spotlight 対象が画面外なら scroll)
-- silent skip (first_bite / planner 未獲得でも Step 4 へ進む)
+- silent skip (planner 未獲得でも Step 4 へ進む)
 - `tutorial_complete` 既獲得時の表示変化 (force=1 シナリオ)
 
 ### 11.2 E2E (Maestro)
@@ -418,7 +422,8 @@ appId: com.homegohan.app
 ```
 
 ### 11.3 Integration
-- `GET /api/badges` で first_bite / planner が `earned: true` (`obtainedAt` NOT NULL) で返ってくる
+- `GET /api/badges` で planner が `earned: true` (`obtainedAt` NOT NULL) で返ってくる
+- `first_bite` は、お試しの記録だけなら `earned: false` (`obtainedAt = null`) で返ってくる (#1314)
 - `tutorial_complete` が `earned: false` (`obtainedAt = null`) で返ってくる
 - tutorial-mode=1 のとき badge 獲得モーダルが起動しない
 

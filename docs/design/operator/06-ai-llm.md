@@ -230,18 +230,30 @@ export async function logStreamingUsage(
   `image_source` が未設定か `generated_ai` (画像の項目の無い古い商品の料理と、それを以前の保存し直しが書き換えた形) でも、商品の料理
   (`image_source: 'catalog'`・状態なし) として扱う (更新の入口 3 つ (PATCH 2 本・AI 相談の update_meal) と save-meal は、保存する前の献立の行でこれを決めて渡す)。
   献立のカバーがあり、料理ごとの画像を持たない写真・商品・手の画像の料理 (写真の複数の料理など) があるときは、ほかの料理にもジョブを積まない
-  (写真・商品の献立の料理には AI の画像を作らない)。
+  (写真・商品の献立の料理には AI の画像を作らない。AI の作り直しで料理が変わったときを除く (#1553。下のカバーを外す (a)))。
   積むのをやめた料理は、前回と同じ料理なら前回の状態を写し、足した・変えた料理は画像なし (状態なし・subject_hash なし) にする
   新しく作る入口 (`POST /api/meals`・`POST /api/meal-plans/meals`) で送られた料理の `image_source` が `meal_photo` / `catalog` /
   `manual_override` なら、前回の料理と同じく画像と状態を保持し、ジョブを積まない (`preserveSubmittedDishImages`)。
   カバーの持ち主: 献立のカバー (`planned_meals.image_url`) を料理の画像から自動で付け替えてよいのは、いまのカバーが空か、
   献立の AI の料理 (`image_source: 'generated_ai'`) の `image_url` と一致するときだけ (`isMealCoverAutoReplaceable`)。
   写真・商品・利用者が作った画像・手で付けた画像のカバー (どの AI の料理の画像とも一致しない、空でないカバー) は、画像の処理
-  (`process-meal-image-jobs`)・保存し直し (`reconcileDishImages`)・AI の作り直し (`save-meal`) のどこからも置き換えない。
+  (`process-meal-image-jobs`)・保存し直し (`reconcileDishImages`) のどこからも置き換えない。
   全員が `deriveMealCoverImage` を通して決める。前の料理の AI の画像だったカバーは料理の画像から選び直し、候補が無ければ空にする。
   料理が 2 品以上の献立に利用者がカバーを付けた (`PATCH` の `imageUrl`) ときは、カバーにだけ付け、ジョブは今の決まりのまま積む
   (1 品なら今までどおり料理を `manual_override` にし、ジョブを積まない)。画像の処理はカバーが変わるときだけ `image_url` を書き、
-  読んだときのカバーのままの行にだけ書く
+  読んだときのカバーのままの行にだけ書く。
+  カバーを外すのは次の 2 つだけ (#1553)。外したあとのカバーも `deriveMealCoverImage` で料理の画像から選び直し、候補が無ければ空にする:
+  (a) AI の作り直し (`save-meal` の `saveMealToDb`。`reconcileDishImages` の `regeneration`) で料理が変わったとき
+  (前回と料理の数が違うか、subject_hash が違う料理がある)。中身が変わった料理は前回の写真・手で付けた画像を写さず、AI の画像のジョブを積み、
+  利用者のカバー (写真・利用者の画像) を外す。料理ごとの画像を持たずカバーに頼っていた写真・商品・手の画像の料理 (写真の複数の料理の、
+  中身が同じまま残った料理など) も、AI の画像の料理 (`generated_ai`・`'pending'`・subject_hash 付き) にしてジョブを積む
+  (カバーが空・ジョブが 0 で、画像の無い写真の料理だけが残る献立を作らない。空のカバーには、あとでできた AI の料理の画像が付く)。
+  自分の画像を持つ同じ料理 (1 品の写真など) は画像を残し、カバーの候補になる。
+  料理が同じまま (同じ数・同じ中身) なら外さない。商品の献立 (`isCatalogProductMeal`) は外さない
+  (作り直しても商品とのつながりは外さないので、商品の料理・商品の画像のまま)。
+  (b) 料理が 2 品以上の献立の `PATCH` に `image_url` / `imageUrl` の `null` が来たとき (`buildDishImagePayload` の `clearCover`)。
+  料理の画像 (AI の画像があれば) に戻し、候補が無ければ空にする (写真・手の画像の料理は AI の画像に回さない。写真の複数の料理の献立は、
+  カバーが空になり料理は写真の料理のまま。待ちの AI の料理があれば、あとでできた画像がカバーに付く)。料理が 1 品の献立は今までどおり何も変えない
   料理 (`dishes`) も、読んだときの `updated_at` を条件にして書き、0 行なら読み直して自分の料理の画像だけを当て直す (#1527。上限
   `MEAL_DISH_WRITE_MAX_ATTEMPTS` 回で諦めて失敗にする)。積めなかった料理の印・失敗の印も同じ書き方 (`writePlannedMealDishesWithOptimisticLock`) で書く (#1532・#1553)
   ジョブは行ごとの insert で積む (冪等キーの一意な索引は待ち・処理中だけの部分索引なので、`ON CONFLICT (idempotency_key)` の upsert は使えない)。
