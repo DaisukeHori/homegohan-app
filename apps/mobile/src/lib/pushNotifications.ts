@@ -4,7 +4,14 @@ import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 
+import {
+  PUSH_TOKEN_CLAIM_API_PATH as SHARED_PUSH_TOKEN_CLAIM_API_PATH,
+  type PushTokenClaimRequestBody,
+  type PushTokenClaimResponseBody,
+} from "@homegohan/shared";
+
 import { getApi } from "./api";
+import { httpStatusOfApiError } from "./api-error";
 import {
   type PushIssueEvent,
   type PushIssueServerFields,
@@ -17,6 +24,12 @@ import {
   unregisterNoRowsServerFields,
   unregisterUnfinishedServerFields,
 } from "./push-issue-log";
+import { readPushInstallSecret, savePushInstallSecret } from "./pushInstallSecret";
+import {
+  PUSH_TOKEN_VALUE_KEY_PREFIX,
+  forgetPendingPushTokenReleases,
+  waitForPushTokenReleases,
+} from "./pushTokenRelease";
 import { supabase } from "./supabase";
 
 /**
@@ -24,8 +37,9 @@ import { supabase } from "./supabase";
  * ログアウト時に「この端末の行だけ」を user_push_tokens から消すために使う (#1038 F7-10)。
  * 実際のキーは `${接頭辞}:${userId}`。ログアウトで clearUserScopedAsyncStorage() が消す
  * (src/lib/user-storage.ts の USER_ID_KEY_PREFIXES に載せている)。
+ * 定義は pushTokenRelease.ts (AuthProvider から読むモジュールに、通知の部品を持ち込まないため。#1636)
  */
-export const PUSH_TOKEN_VALUE_KEY_PREFIX = "push_token_value_v1";
+export { PUSH_TOKEN_VALUE_KEY_PREFIX };
 
 /** プレースホルダーを無効値として扱う (eas init 前の app.json などに入っていた値) */
 const PLACEHOLDER = "PLEASE_SET_VIA_EAS_INIT";
@@ -164,19 +178,25 @@ function sendPushIssueToServer(
 
 /**
  * 登録の直後に呼ぶ、同じトークンのほかの利用者の行を外す API (#1599。src/app/api/push-tokens/claim/route.ts)。
- * 同じトークンは、最後に登録した 1 人にだけ紐づく。
+ * 同じトークンは、最後に登録した 1 人にだけ紐づく。外すのは同じ端末の前の利用者の行だけ (端末の秘密の値で確かめる。#1636)。
+ * 値の置き場は packages/shared/src/push-token-claim.ts
  */
-export const PUSH_TOKEN_CLAIM_API_PATH = "/api/push-tokens/claim";
+export const PUSH_TOKEN_CLAIM_API_PATH = SHARED_PUSH_TOKEN_CLAIM_API_PATH;
 
-/** API のエラー応答 (`HTTP <status> <statusText>: <本文>`。@homegohan/core の createHttpClient) の状態の数字 */
-const API_ERROR_STATUS_PATTERN = /^HTTP (\d{3})\b/;
-
-/** API のエラーから HTTP の状態の数字を取り出す (取り出せなければ undefined。通信の失敗など) */
-function httpStatusOfApiError(error: unknown): number | undefined {
-  const message = (error as { message?: unknown } | null | undefined)?.message;
-  if (typeof message !== "string") return undefined;
-  const match = API_ERROR_STATUS_PATTERN.exec(message);
-  return match ? Number(match[1]) : undefined;
+/**
+ * claim の本文を決める (#1636。packages/shared/src/push-token-claim.ts の PushTokenClaimRequestBody)。
+ *   - 端末の秘密の値がある: それを送る (同じ端末の前の利用者の行と、ハッシュの無い古い行が外れる)
+ *   - 無い: サーバーに作ってもらう (issue_install_secret。応答の値を保管庫に置く)
+ *   - 保管庫を読めない: どちらも送らない (ハッシュの無い古い行だけが外れる。値を作り直すと、この端末の前の利用者の行を
+ *     外せなくなるので、作り直さない。次の起動でやり直す)
+ */
+function claimBodyOf(
+  token: string,
+  secret: Awaited<ReturnType<typeof readPushInstallSecret>>,
+): PushTokenClaimRequestBody {
+  if (secret.status === "found") return { expo_push_token: token, install_secret: secret.secret };
+  if (secret.status === "missing") return { expo_push_token: token, issue_install_secret: true };
+  return { expo_push_token: token };
 }
 
 /** 登録失敗を端末のコンソールとサーバーログに出す (トークンやユーザー ID は載せない。サーバーログにはエラーの本文も載せない) */
@@ -267,6 +287,10 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
     throw error;
   }
 
+  // セッションの無いときの後片付け (pushTokenRelease.ts) がまだ動いていれば、終わってから登録する。
+  // 未ログインの起動で始めた release が、すぐにログインした同じ利用者の登録し直した行を消さないようにするため (#1636)
+  await waitForPushTokenReleases();
+
   // DB保存（RLSで本人のみ）
   const { error, status } = await supabase.from("user_push_tokens").upsert(
     {
@@ -292,12 +316,24 @@ export async function registerAndSaveExpoPushToken(options: RegisterPushTokenOpt
   // 同じトークンが別の利用者の行にも残っていれば、サーバーで外す (#1599)。
   // 共有の端末で、前の利用者のログアウトの削除がオフラインなどで失敗すると、前の利用者の行が残り、
   // この利用者がログインしたあとも前の利用者宛ての通知がこの端末に届き得る。RLS で本人の行しか触れないので、サーバーの API で外す。
+  // 外すのは同じ端末の前の利用者の行だけ。端末の秘密の値 (端末ごとに 1 つ。pushInstallSecret.ts) で同じ端末かを確かめる (#1636)。
   // 失敗したら登録の失敗として投げる (起動時の自動登録 ensurePushTokenRegistered は、起動・ログインのたびに登録と claim をやり直すので、次の起動でやり直す)
+  const secret = await readPushInstallSecret();
+  let claimed: PushTokenClaimResponseBody | null;
   try {
-    await getApi().post(PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: token });
+    claimed = await getApi().post<PushTokenClaimResponseBody | null>(PUSH_TOKEN_CLAIM_API_PATH, claimBodyOf(token, secret));
   } catch (error) {
     reportPushRegistrationFailure("claim_token", error, resolved, httpStatusOfApiError(error));
     throw error;
+  }
+
+  // サーバーが作った端末の秘密の値を、保管庫に置く (置けなければ、次の claim でまた作ってもらう)
+  if (secret.status === "missing" && typeof claimed?.install_secret === "string") {
+    await savePushInstallSecret(claimed.install_secret);
+  }
+  // 秘密の値つきの claim で、同じ端末の前の利用者の行は外れた。同じトークンの release の控えは要らない (pushTokenRelease.ts)
+  if (secret.status !== "unreadable") {
+    await forgetPendingPushTokenReleases(token);
   }
 
   return token;

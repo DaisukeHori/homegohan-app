@@ -66,3 +66,18 @@ export function getApiErrorMessage(error: unknown, fallback: string): string {
   }
   return raw;
 }
+
+/** API のエラー応答 (`HTTP <status> <statusText>: <本文>`。@homegohan/core の createHttpClient) の状態の数字 */
+const API_ERROR_STATUS_PATTERN = /^HTTP (\d{3})\b/;
+
+/**
+ * API のエラーから HTTP の状態の数字を取り出す (取り出せなければ undefined)。
+ * 通信の失敗 (HttpNetworkError) と、getApi() が固定の文の例外に置き換えた 503 (ServiceUnavailableError) と 429
+ * (AiDailyLimitError) は、message が `HTTP ...` で始まらないので undefined になる
+ */
+export function httpStatusOfApiError(error: unknown): number | undefined {
+  const message = (error as { message?: unknown } | null | undefined)?.message;
+  if (typeof message !== "string") return undefined;
+  const match = API_ERROR_STATUS_PATTERN.exec(message);
+  return match ? Number(match[1]) : undefined;
+}

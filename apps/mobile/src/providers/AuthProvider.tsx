@@ -2,6 +2,11 @@ import { type Session, type User } from "@supabase/supabase-js";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { classifyAuthError } from "../lib/authErrors";
+import {
+  flushPendingPushTokenReleases,
+  recordPushTokenRelease,
+  releasePushTokenAfterSignedOut,
+} from "../lib/pushTokenRelease";
 import { getStoredSession, supabase } from "../lib/supabase";
 import { clearUserScopedLocalData, clearUserScopedLocalDataAfterSignedOut } from "../lib/userScopedLocalData";
 
@@ -32,11 +37,11 @@ const AuthContext = createContext<AuthState | null>(null);
  * | 設定・マイページのログアウト、退会のあと、パスワード再設定のあと (reset-password.tsx の signOutWithCleanup)、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 (パスワード再設定のあとは updateUser() が返した利用者、Web からのときは、処理の最初に控えた利用者) | push token の行の削除 (退会のあとは無し) → 掃除 → signOut。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走る |
  * | 上の行の signOut が、通信の失敗 (オフラインなど) で { error } を返した | signOut.ts (signOut の前の掃除だけ) | 上の行と同じ | supabase-js は保管庫のセッションを消さず、SIGNED_OUT も届かないので、SIGNED_OUT の行の掃除は走らない。設定・マイページのログアウトと退会のあと (signOutOnDevice・signOutAfterAccountDeletion) は、保管庫のセッションを端末だけで消し (clearStoredSessionLocally)、clearSession で画面の状態を消す (lastKnownUserIdRef は残る。下の clearSession の注)。サーバーのセッションは、設定・マイページのログアウト (signOutOnDevice) では、サーバーへのログアウトが届かなければ失効しないまま残る。退会のあと (signOutAfterAccountDeletion) は、サーバーでの削除が済んでから呼ぶ (settings/account.tsx) ので、サーバーのセッションは auth.users の削除 (auth.admin.deleteUser) と一緒に既に消えている。パスワード再設定のあとと Web からの sign-out (signOutWithCleanup) は端末だけで消す処理を持たず、保管庫のセッションと画面の状態が残る (ログイン中のまま。パスワード再設定のあとは、ログイン画面へ移っても (auth)/_layout.tsx がセッションを見てホームへ戻す)。push token の行を消しに行く経路 (signOutOnDevice・signOutWithCleanup) は、その削除が通信の失敗で済まなければ user_push_tokens の行が残り、控えた値は掃除で消える。退会のあとは行を消しに行かず、行は auth.users の削除と一緒に消えている (ON DELETE CASCADE) |
  * | Web からの session-expired で、getUser() が失効を見つけた (webViewAuthMessages.ts) | 先に SIGNED_OUT の行、続いて signOut.ts | SIGNED_OUT の行は直前に分かっていたセッションの利用者、signOut.ts は getUser() の前に控えた利用者 (同じ利用者) | getUser() が端末のセッションを消して SIGNED_OUT が届く → SIGNED_OUT の行の掃除 (push token の値は残す。次の削除と前後してよい) → push token の行の削除 (残した値を読む) → 掃除 (値もここで消える) → signOut |
- * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走る |
- * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除が済んでから未ログインの画面を出す。ただし端末の Cookie の置き場の掃除は始めるだけで待たない (下の注) |
+ * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | push token の行の release の宛先を控える (#1636。通信はしない) → 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除と release (控えた宛先) が走る |
+ * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除が済んでから未ログインの画面を出す。ただし端末の Cookie の置き場の掃除は始めるだけで待たない (下の注)。前に消せなかった push token の行の release のやり直しも始めるだけで待たない (#1636) |
  * | 起動時、getSession() が通信の失敗で null を返し、保存済みのセッションも無い | restoreSession | 同上 | 同上 |
  * | 起動時、getSession() が例外を投げた | restoreSession | 同上 | 同上 |
- * | SIGNED_OUT (supabase-js の自動更新で refresh_token が失効と答えた・getUser() が失効を見つけて端末のセッションを消した・上の行の signOut) | onAuthStateChange (clearUserScopedLocalDataAfterSignedOut) | 直前に分かっていたセッションの利用者 (無ければ null) | supabase-js が既に消している。画面はすぐ未ログインにし、掃除はそのあと (下の注)。この端末の push token の値だけは残す (下の注)。端末の Cookie の置き場の掃除は待たない (下の注) |
+ * | SIGNED_OUT (supabase-js の自動更新で refresh_token が失効と答えた・getUser() が失効を見つけて端末のセッションを消した・上の行の signOut) | onAuthStateChange (clearUserScopedLocalDataAfterSignedOut) | 直前に分かっていたセッションの利用者 (無ければ null) | supabase-js が既に消している。画面はすぐ未ログインにし、掃除はそのあと (下の注)。この端末の push token の値だけは残す (下の注)。端末の Cookie の置き場の掃除は待たない (下の注)。掃除のあと、残した値で user_push_tokens の行をセッション無しで消す (pushTokenRelease.ts の releasePushTokenAfterSignedOut。#1636。下の注) |
  *
  * SIGNED_OUT の掃除が push token の値 (push_token_value_v1:<利用者>) を残す理由: SIGNED_OUT は、signOut.ts がその値を読んで
  * user_push_tokens の行を消すより前に届くことがある (上の session-expired の行。ほかに、ログアウトの途中で自動更新が失効を答えたとき)。
@@ -44,6 +49,13 @@ const AuthContext = createContext<AuthState | null>(null);
  * 値はこの端末のトークンでどの利用者でも同じ値になり、利用者の ID 付きのキーなので次の利用者は読まない。signOut.ts を通らない
  * SIGNED_OUT (自動更新の失効) では値が残るが、その利用者が次にログインしたときの登録で書き直され、起動時に未ログインと決まったときの
  * 掃除 (ID なし) で消える。
+ *
+ * SIGNED_OUT の行の消し方 (#1636): signOut.ts を通らない SIGNED_OUT (自動更新の失効など) では、セッションが無いので RLS では
+ * user_push_tokens の行を消せない。そこで、SIGNED_OUT の掃除のあとに、残した値と端末の秘密の値 (pushInstallSecret.ts) で、
+ * セッション無しの release の API を呼ぶ (pushTokenRelease.ts の releasePushTokenAfterSignedOut)。消せなかったら宛先を控え、
+ * 起動時に未ログインと決まったとき (flushPendingPushTokenReleases) と次の SIGNED_OUT でやり直す。どちらも画面は待たない。
+ * signOut.ts を通った SIGNED_OUT では、signOut.ts が行と値を先に消しているので、ここでは何もしない (控えのやり直しだけ)。
+ * Web の session-expired では、signOut.ts の削除と release が同じ行を消しに行くことがある (どちらかが 0 件になるだけで害は無い)。
  *
  * 二重に掃除しても害は無い:
  *   - AsyncStorage: 同じキーを消し直すだけ (消えているキーの削除はエラーにならない)
@@ -89,6 +101,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async function settleSignedOutAtStartup() {
       const userId = lastKnownUserIdRef.current;
       lastKnownUserIdRef.current = null;
+      // 前に消せなかった push token の行の release をやり直す (#1636。上の表の注)。控えは利用者別のキーではないので、
+      // 下の掃除とは前後してよい。通信を伴うので待たない (例外も拒否も投げない)
+      void flushPendingPushTokenReleases();
       try {
         await clearUserScopedLocalData(userId, { webViewNativeCookies: "background" });
       } catch {
@@ -158,7 +173,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // サーバーが既に失効と答えているので、全端末のセッションを巻き込まず端末側だけ消す (scope: local)。
         // その前に、通常のログアウトと同じ掃除 (AsyncStorage の利用者別のキー・WebView の利用者別の localStorage) を通す
         // (#1599。CLAUDE.md: サインアウトの前に消す。消さないと、この端末で次にログインする別の利用者に前の利用者の値が残る)。
-        // 掃除は例外を投げないが、万一投げても、失効したセッションを使い続けない (下の catch で保存済みに戻さない) よう、ここで受ける
+        // 掃除は例外を投げないが、万一投げても、失効したセッションを使い続けない (下の catch で保存済みに戻さない) よう、ここで受ける。
+        // この経路は signOut.ts を通らず、掃除が push token の値を消すので、その前に user_push_tokens の行の release の宛先を控える
+        // (#1636。通信はしない。このあとに届く SIGNED_OUT の release が消す。上の表の注)
+        try {
+          await recordPushTokenRelease(cachedSession.user?.id ?? null);
+        } catch {
+          // 控えは例外を投げないが、万一投げても、サインアウトは続ける
+        }
         try {
           await clearUserScopedLocalData(cachedSession.user?.id ?? null);
         } catch {
@@ -201,7 +223,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (event === "SIGNED_OUT") {
         // supabase-js がセッションを消した (ログアウト・refresh_token の失効・getUser() が失効を見つけたなど)。
         // 通常のログアウトと同じ掃除を通す (#1615)。画面はすぐ未ログインにし、掃除はそのあと (上の表の注)。
-        // push token の値は残す (このあとに signOut.ts が読んで user_push_tokens の行を消すことがある。上の表の注)
+        // push token の値は残す (このあとに signOut.ts が読んで user_push_tokens の行を消すことがある。上の表の注)。
+        // 掃除のあと、残した値で user_push_tokens の行をセッション無しで消す (#1636。上の表の注)
         const userId = lastKnownUserIdRef.current;
         lastKnownUserIdRef.current = null;
         setSession(null);
@@ -210,6 +233,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           .then(() => clearUserScopedLocalDataAfterSignedOut(userId))
           .catch(() => {
             // 掃除は例外を投げないが、万一投げても、サインアウトは済んでいる
+          })
+          .then(() => releasePushTokenAfterSignedOut(userId))
+          .catch(() => {
+            // release は例外を投げないが、万一投げても、サインアウトは済んでいる
           });
         return;
       }
