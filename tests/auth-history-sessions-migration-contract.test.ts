@@ -13,12 +13,25 @@ import {
   LOGIN_HISTORY_RETENTION_DAYS,
   SESSION_IDLE_EXPIRE_DAYS,
 } from '@/lib/auth/sessions/constants';
-import { scanCronJobNames } from './helpers/migration-cron-jobs';
+import { collectMigrationCronJobs, scanCronJobNames } from './helpers/migration-cron-jobs';
 
 const ROOT = path.resolve(__dirname, '..');
 const NAME = 'auth_history_sessions';
 const MIGRATIONS_DIR = 'supabase/migrations';
 const ROLLBACKS_DIR = 'supabase/rollbacks';
+/** pg_cron のジョブの「いま」の記述を持つ設計書 (§22 N-32・§23) */
+const CRON_DOC_PATH = 'docs/design/operator/08-cron-batches.md';
+/** DB の型の生成物 (§11.8)。packages/shared は src/types の写し */
+const TYPE_FILES = ['src/types/database.types.ts', 'packages/shared/src/database.types.ts'] as const;
+
+/** 設計書の、見出し startMarker から endMarker の手前まで */
+function docSection(doc: string, startMarker: string, endMarker: string): string {
+  const start = doc.indexOf(startMarker);
+  expect(start, `設計書に「${startMarker}」が無い`).toBeGreaterThanOrEqual(0);
+  const end = doc.indexOf(endMarker, start);
+  expect(end, `設計書の「${startMarker}」より後に「${endMarker}」が無い`).toBeGreaterThan(start);
+  return doc.slice(start, end);
+}
 
 function migrationFile(): string {
   const files = fs.readdirSync(path.join(ROOT, MIGRATIONS_DIR)).filter((f) => new RegExp(`^\\d{14}_${NAME}\\.sql$`).test(f));
@@ -312,6 +325,31 @@ describe('cross/16 migration: 列・RPC・権限', () => {
       );
     expect(others, '同じ名前のジョブを登録しているほかの migration').toEqual([]);
   });
+
+  it('08-cron-batches の pg_cron の本数の宣言 (§3.0・§3.1 の注記) は、08 がこのジョブを挙げていれば全 migration の実数、まだ挙げていなければ (設計書の追随の前) このジョブを除いた実数と同じ (§22 N-32「PR の時点の origin/main の実数 + 1」。古い main に合わせた本数で追随すると赤)', () => {
+    const jobName = 'cleanup-auth-sessions-and-login-history';
+    const { names, unresolved } = collectMigrationCronJobs(path.join(ROOT, MIGRATIONS_DIR));
+    expect(unresolved, 'ジョブの名前を解けない cron.schedule の呼び出し').toEqual([]);
+    expect(names, 'migration の cron.schedule の数えにこのジョブが入っていること').toContain(jobName);
+    const doc = fs.readFileSync(path.join(ROOT, CRON_DOC_PATH), 'utf8');
+    // tests/log-cleanup-dau-snapshot-contract.test.ts と同じ節の切り方と、同じ本数の宣言の読み方
+    const section30 = docSection(doc, '### 3.0 実装状況', '#### 3.0.1');
+    const section31Note = docSection(doc, '### 3.1 pg_cron ジョブ', '### 3.2 Vercel Cron ジョブ')
+      .split('\n')
+      .filter((line) => line.startsWith('> '))
+      .join('\n');
+    const declared30 = /migration が pg_cron に登録しているジョブは (\d+) つ/.exec(section30);
+    const declared31 = /migration が pg_cron に登録しているのは[^\n]*?の (\d+) つ/.exec(section31Note);
+    expect(declared30, '08 の §3.0 に pg_cron のジョブの数の記述が無い').not.toBeNull();
+    expect(declared31, '08 の §3.1 の注記に pg_cron のジョブの数の記述が無い').not.toBeNull();
+    const listed30 = section30.includes(`\`${jobName}\``);
+    const listed31 = section31Note.includes(`\`${jobName}\``);
+    expect(listed31, '08 の §3.0 と §3.1 の注記の片方だけがこのジョブを挙げている (追随が半分)').toBe(listed30);
+    // 挙げていれば全数、まだ挙げていなければこのジョブを除いた数 (追随で +1 すれば全数になる)
+    const expected = listed30 ? names.length : names.length - 1;
+    expect(Number(declared30?.[1]), '08 の §3.0 の pg_cron のジョブの数').toBe(expected);
+    expect(Number(declared31?.[1]), '08 の §3.1 の注記の pg_cron のジョブの数').toBe(expected);
+  });
 });
 
 describe('cross/16 の戻し口 (.down.sql §11.7)', () => {
@@ -381,5 +419,91 @@ describe('cross/16 の戻し口 (.down.sql §11.7)', () => {
     expect(rawMigration.split('\n', 1)[0]).toBe(`-- migration: ${MIGRATION_FILE}`);
     expect(rawRollback.split('\n', 1)[0]).toBe(`-- rollback: ${MIGRATION_FILE}`);
     expect(rawMigration).toContain(`supabase/rollbacks/${ROLLBACK_FILE}`);
+  });
+});
+
+/** migration の列の SQL の型 → supabase gen types の TS の型 (§11.1 の 12 列が使う型だけ) */
+const SQL_TO_TS_TYPE: Readonly<Record<string, string>> = {
+  inet: 'unknown',
+  'character(2)': 'string',
+  text: 'string',
+  boolean: 'boolean',
+  timestamptz: 'string',
+  integer: 'number',
+};
+
+/** §11.8: 型に出る関数 (トリガー関数 5 本は RETURNS trigger なので出ない) */
+const TYPED_FUNCTIONS = [
+  'auth_session_revoke',
+  'auth_password_check',
+  'claim_login_alerts',
+  'release_login_alert',
+  'expire_idle_auth_sessions',
+  'reconcile_user_sessions_metadata',
+  'cleanup_ended_user_sessions_metadata',
+] as const;
+
+/** text の opener (末尾が「{」) から、対応する「}」までの中身 */
+function braceBlock(text: string, opener: string, label: string): string {
+  const start = text.indexOf(opener);
+  expect(start, `${label}: 「${opener.trim()}」が無い`).toBeGreaterThanOrEqual(0);
+  let depth = 0;
+  for (let i = start + opener.length - 1; i < text.length; i += 1) {
+    if (text[i] === '{') depth += 1;
+    if (text[i] === '}') depth -= 1;
+    if (depth === 0) return text.slice(start + opener.length, i);
+  }
+  throw new Error(`${label}: 「${opener.trim()}」の閉じかっこが無い`);
+}
+
+describe('cross/16 型の生成物 (§11.8。main の取り込みで型が衝突しても、片方に合わせて落とさない)', () => {
+  /** migration の ALTER TABLE public.user_sessions_metadata の ADD COLUMN (名前・SQL の型・NOT NULL) */
+  function addedColumnsOf(): { name: string; sqlType: string; notNull: boolean }[] {
+    const statement = /ALTER TABLE public\.user_sessions_metadata (ADD COLUMN [^;]*);/.exec(migration);
+    expect(statement, 'user_sessions_metadata の ADD COLUMN の文').not.toBeNull();
+    return (statement?.[1] ?? '').split(/,\s*(?=ADD COLUMN )/).map((clause) => {
+      const m = /^ADD COLUMN IF NOT EXISTS (\w+) (character\(\d+\)|\w+)(.*)$/.exec(clause.trim());
+      expect(m, `ADD COLUMN の形: ${clause}`).not.toBeNull();
+      return { name: m?.[1] ?? '', sqlType: m?.[2] ?? '', notNull: /\bNOT NULL\b/.test(m?.[3] ?? '') };
+    });
+  }
+
+  it.each(TYPE_FILES)('%s の user_sessions_metadata の Row に、migration が足した 12 列が migration の型と NULL の可否で入っている', (file) => {
+    const addedColumns = addedColumnsOf();
+    expect(addedColumns).toHaveLength(12);
+    const types = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const tables = braceBlock(types, '\n    Tables: {', `${file} の Tables`);
+    const table = braceBlock(tables, '\n      user_sessions_metadata: {', `${file} の user_sessions_metadata`);
+    const row = braceBlock(table, '\n        Row: {', `${file} の user_sessions_metadata.Row`);
+    for (const column of addedColumns) {
+      const tsType = SQL_TO_TS_TYPE[column.sqlType];
+      expect(tsType, `${column.name} の SQL の型 ${column.sqlType} の対応`).toBeDefined();
+      const expected = column.notNull ? tsType : `${tsType} | null`;
+      expect(row, `${file}: user_sessions_metadata.Row.${column.name}`).toMatch(
+        new RegExp(`^\\s*${column.name}: ${expected.replace(/[|]/g, '\\|')}$`, 'm'),
+      );
+    }
+  });
+
+  it.each(TYPE_FILES)('%s の Functions に §11.8 の関数 7 本が、migration の引数の名前で入っている', (file) => {
+    const types = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    const functionsSection = braceBlock(types, '\n    Functions: {', `${file} の Functions`);
+    for (const name of TYPED_FUNCTIONS) {
+      const signature = new RegExp(`CREATE OR REPLACE FUNCTION public\\.${name}\\(([^)]*)\\)`).exec(migration);
+      expect(signature, `migration の ${name} の CREATE OR REPLACE FUNCTION`).not.toBeNull();
+      const argNames = (signature?.[1] ?? '')
+        .split(',')
+        .map((arg) => arg.trim().split(' ')[0])
+        .filter((arg) => arg !== '')
+        .sort();
+      const entry = braceBlock(functionsSection, `\n      ${name}: {`, `${file} の Functions.${name}`);
+      const argsMatch = /Args: (never|\{([^}]*)\})/.exec(entry);
+      expect(argsMatch, `${file}: Functions.${name}.Args`).not.toBeNull();
+      const typedArgs =
+        argsMatch?.[1] === 'never'
+          ? []
+          : [...(argsMatch?.[2] ?? '').matchAll(/(\w+)\??:/g)].map((m) => m[1]).sort();
+      expect(typedArgs, `${file}: Functions.${name} の引数の名前`).toEqual(argNames);
+    }
   });
 });
