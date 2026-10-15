@@ -77,7 +77,7 @@
 
 - 規約の文面・版・施行日 (弁護士の確認。`08` §7.2)。
 - 同意の記録の仕組み (`accept_legal_documents`・`terms_acceptances`) は変えない。DB の変更 (migration・RLS) は無い。
-- アプリが Supabase (PostgREST) を直接読む経路 (`apps/mobile/src/hooks/useHomeData.ts`・`src/lib/recipeCollections.ts`・`src/lib/pushNotifications.ts`・`app/onboarding/questions.tsx` の `supabase.from(...)`) は、Next の middleware を通らないので本書のゲートの外 (§6.13 の限界・§8)。
+- アプリが Supabase (PostgREST) を直接読む経路 (`apps/mobile/src/hooks/useHomeData.ts`・`apps/mobile/src/lib/recipeCollections.ts`・`apps/mobile/src/lib/pushNotifications.ts`・`apps/mobile/app/onboarding/questions.tsx` の `supabase.from(...)`) は、Next の middleware を通らないので本書のゲートの外 (§6.13 の限界・§8)。
 - モバイルだけに関わる対象外 (`LEGAL_CONSENT_NOTICE` をネイティブに出さないこと・ネイティブのサインアップ画面の同意のチェック) は 13b §1.3。
 
 ---
