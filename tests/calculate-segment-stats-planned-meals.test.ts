@@ -118,7 +118,7 @@ const TOTAL_MEALS_METRIC = { id: "m-total", code: "total_meals", name: "総食�
 const COUNT_MEALS_RPC = "count_meals_per_user";
 /** 確定の回をやり終えた期間の表 (supabase/migrations/20261011120000_segment_stats_finalize_retry.sql。#1500) */
 const FINALIZED_TABLE = "segment_stats_finalized_periods";
-/** バッジを取った期間の表 (supabase/migrations/20261015120000_user_badge_period_awards.sql。#1528) */
+/** バッジを取った期間の表 (supabase/migrations/20261015130000_user_badge_period_awards.sql。#1528) */
 const PERIOD_AWARDS_TABLE = "user_badge_period_awards";
 
 interface PlannedRow {

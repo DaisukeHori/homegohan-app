@@ -34,7 +34,7 @@ export async function GET(request: Request) {
     //   get_my_badge_period_award_summaries: 比較ランキングのバッジを取った期間 (表 user_badge_period_awards。1 期間 1 行。#1528) を、
     //     DB の中でバッジごとに「取った期間の数」と「最新の期間」にまとめたもの。表の行のまま読むと、行が PostgREST の max_rows
     //     (Supabase の既定 1,000) を超えたとき黙って打ち切られ、回数が小さく・最新が古く出る (この表は期間ごとに増え続ける)。
-    //     関数は本人 (auth.uid()) の行だけをまとめ、返すのはバッジの数の行だけ (migration 20261015120000_user_badge_period_awards.sql)
+    //     関数は本人 (auth.uid()) の行だけをまとめ、返すのはバッジの数の行だけ (migration 20261015130000_user_badge_period_awards.sql)
     const [badgesRes, userBadgesRes, mealCountRes, cookCountRes, completedDaysRes, periodAwardsRes] = await Promise.all([
       supabase.from('badges').select('*'),
       supabase

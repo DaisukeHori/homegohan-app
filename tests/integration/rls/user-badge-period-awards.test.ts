@@ -1,6 +1,6 @@
 /**
  * #1528 比較ランキングのバッジを取った期間の表 public.user_badge_period_awards の回帰テスト (実 DB)
- *   (supabase/migrations/20261015120000_user_badge_period_awards.sql)
+ *   (supabase/migrations/20261015130000_user_badge_period_awards.sql)
  *
  * 背景: user_badges は (user_id, badge_id) が主キーで、同じバッジを 2 回目以降の期間で取っても記録が残らない。
  * 獲得済みのバッジの一覧 (GET /api/badges) で「どの期間に取ったか」「何回取ったか」を出すため、
@@ -67,7 +67,7 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
 }
 
 const TABLE = 'user_badge_period_awards';
-const MIGRATION = path.resolve(__dirname, '../../../supabase/migrations/20261015120000_user_badge_period_awards.sql');
+const MIGRATION = path.resolve(__dirname, '../../../supabase/migrations/20261015130000_user_badge_period_awards.sql');
 
 /** migration の写しの文 (INSERT INTO public.user_badge_period_awards ... ;) をそのまま取り出す */
 function backfillStatement(): string {

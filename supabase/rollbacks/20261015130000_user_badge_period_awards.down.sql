@@ -1,4 +1,4 @@
--- rollback: 20261015120000_user_badge_period_awards.sql
+-- rollback: 20261015130000_user_badge_period_awards.sql
 -- 関数 public.get_my_badge_period_award_summaries と、表 public.user_badge_period_awards (比較ランキングのバッジを取った期間。#1528) を消す。
 --
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。

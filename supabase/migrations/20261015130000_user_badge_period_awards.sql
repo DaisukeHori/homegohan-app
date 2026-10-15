@@ -1,4 +1,4 @@
--- migration: 20261015120000_user_badge_period_awards.sql
+-- migration: 20261015130000_user_badge_period_awards.sql
 -- 比較ランキングのバッジを、どの期間に取ったかを 1 期間 1 行で残す表 (#1528)
 --
 -- 背景:
@@ -46,7 +46,7 @@
 --   tests/user-badge-period-awards-migration-contract.test.ts (ファイルどうしの突き合わせ。DB 無し)
 --   tests/integration/rls/user-badge-period-awards.test.ts (実 DB: 本人の行だけ読める・利用者は書けない・写し・
 --     関数のまとめ方 (1,000 行を超えても回数と最新が正しい)・関数の権限)
--- ロールバック: supabase/rollbacks/20261015120000_user_badge_period_awards.down.sql
+-- ロールバック: supabase/rollbacks/20261015130000_user_badge_period_awards.down.sql
 
 CREATE TABLE IF NOT EXISTS public.user_badge_period_awards (
   user_id      UUID        NOT NULL REFERENCES auth.users (id) ON DELETE CASCADE,

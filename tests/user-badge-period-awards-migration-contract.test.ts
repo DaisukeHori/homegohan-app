@@ -1,5 +1,5 @@
 /**
- * #1528 バッジを取った期間の表 (supabase/migrations/20261015120000_user_badge_period_awards.sql) の、ファイルどうしの突き合わせ (DB 無し)
+ * #1528 バッジを取った期間の表 (supabase/migrations/20261015130000_user_badge_period_awards.sql) の、ファイルどうしの突き合わせ (DB 無し)
  *
  * 確かめること:
  *   - 表の主キーが (user_id, badge_id, period_type, period_start) で、Edge Function calculate-segment-stats の upsert の onConflict と同じ
@@ -169,7 +169,7 @@ describe('#1528 user_badge_period_awards の migration', () => {
 
   it('ロールバックは関数と表を消す (関数が先。SQL の関数の本文は表への依存として記録されず、表を先に消すと壊れた関数が残る)', () => {
     const rollback = stripSqlComments(
-      fs.readFileSync(path.join(ROOT, 'supabase/rollbacks/20261015120000_user_badge_period_awards.down.sql'), 'utf8'),
+      fs.readFileSync(path.join(ROOT, 'supabase/rollbacks/20261015130000_user_badge_period_awards.down.sql'), 'utf8'),
     );
     expect(rollback.trim().split(/\n+/)).toEqual([
       'DROP FUNCTION IF EXISTS public.get_my_badge_period_award_summaries();',

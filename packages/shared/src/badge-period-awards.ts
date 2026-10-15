@@ -3,7 +3,7 @@
  *
  * 比較ランキングのバッジ (1 位・上位 n%・平均超え・改善) は、Edge Function calculate-segment-stats の確定の回
  * (期間が切り替わった直後の回) だけが付け、取った期間を表 user_badge_period_awards に 1 期間 1 行で残す
- * (migration 20261015120000_user_badge_period_awards.sql)。
+ * (migration 20261015130000_user_badge_period_awards.sql)。
  * GET /api/badges (src/app/api/badges/route.ts) が、同じ migration の関数 get_my_badge_period_award_summaries で
  * DB の中でバッジごとにまとめた行 (取った期間の数と最新の期間の 1 行) を読み、toBadgePeriodAwardsByBadgeId で一覧に添える形にして返す。
  * (表の行のまま読むと、行が PostgREST の max_rows (既定 1,000) を超えたとき黙って打ち切られ、回数が小さく・最新が古く出るため、
