@@ -104,7 +104,7 @@
 
 `auth.getUser()` (未認証 → 401) → `user_profiles` (無い → 401 `AUTH_PROFILE_NOT_FOUND`) → 凍結 (→ 403 `AUTH_ACCOUNT_FROZEN`) → ロールの交差 (→ 403 `PERM_DENIED`) → **[本書] AAL の判定 (→ 403 `AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED`)**。
 
-/api の要求は、route の前に middleware (`lib/supabase/middleware.ts` の /api の分岐。本書は変えない) が、利用者とプロフィールを読めたときだけ 凍結 (403 `AUTH_ACCOUNT_FROZEN`) → メンテナンス (503。運営ロールは通す) → 規約の同意 (`LEGAL_CONSENT_ENFORCE=on` で未同意なら 403 `LEGAL_CONSENT_REQUIRED`。本文は平たい `{ error, code }`。#1689) を判定する。同意の判定は `packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS` のパスを止めず、その `/api/auth` (prefix・`auth_flow`) に本書の自己サービスの 6 route (`/api/auth/mfa/*`) が入る (未同意でも登録・確認・回復・再発行・解除を止めない。画面の側は、未同意の運営を `/settings/security/mfa/*` より先に `/legal-consent` へ回す既存の画面のゲートが受け持つ)。reset (`/api/super-admin/admins/{id}/mfa/reset`) は既存の運営 API と同じく許可リストに無いので、未同意の super_admin は route と AAL の判定に来る前に 403 `LEGAL_CONSENT_REQUIRED` になる (本書は足さない・変えない)。
+/api の要求は、route の前に middleware (`lib/supabase/middleware.ts` の /api の分岐。本書は変えない) が、利用者とプロフィールを読めたときだけ 凍結 (403 `AUTH_ACCOUNT_FROZEN`) → メンテナンス (503。運営ロールは通す) → 規約の同意 (同意の列がある DB で `LEGAL_CONSENT_ENFORCE=on` のとき、未同意なら 403 `LEGAL_CONSENT_REQUIRED`。本文は平たい `{ error, code }`。#1689) を判定する (読めないときは素通りの fail-open。#348)。同意の判定は `packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS` のパスを止めず、その `/api/auth` (prefix・`auth_flow`) に本書の自己サービスの 6 route (`/api/auth/mfa/*`) が入る (未同意でも登録・確認・回復・再発行・解除を止めない。画面の側は、未同意の運営を `/settings/security/mfa/*` より先に `/legal-consent` へ回す既存の画面のゲートが受け持つ)。reset (`/api/super-admin/admins/{id}/mfa/reset`) は既存の運営 API と同じく許可リストに無いので、未同意の super_admin は route と AAL の判定に来る前に 403 `LEGAL_CONSENT_REQUIRED` になる (本書は足さない・変えない)。
 
 ### 3.4 テストの道具 (運営のセッションの作り方)
 
@@ -346,8 +346,9 @@
 | 運営の page の失敗時 | `redirect('/login')` (ロール不足も未認証も。super-admin と (operator) の layout は `/login?redirect=<パス>`) | `requireRoleForPage`: 未認証 → `/login?next=`・2FA 未完了 → MFA の画面・それ以外の 403 → 今の行き先のまま (`forbiddenPath`。ファイルごとの値は §13.4.2) |
 | TOTP の登録 | 無し | `/settings/security/mfa/setup` (QR + 手入力の secret + 6 桁の確認) |
 | ログイン時の challenge | 無し | `/settings/security/mfa/verify?next=` (運営の画面に入るときに回される) |
-| バックアップコード | 無し | 10 個・`operator_mfa_backup_codes` に SHA-256・1 回で無効・AAL2 で再発行 |
+| バックアップコード | 無し | 10 個・`operator_mfa_backup_codes` に SHA-256・1 回で無効・AAL2 で再発行。登録の直後に表示できなかったとき (発行の失敗・応答が届かない) は、setup の画面の案内から状態の画面の再発行へ (§15.2) |
 | 紛失時 | 無し | 本人: バックアップコードで TOTP を消して登録し直す。他人: super_admin の解除 API |
+| /api の規約の同意ゲート (middleware。#1689) | 運営 API は未同意なら route の前に 403 `LEGAL_CONSENT_REQUIRED`。`/api/auth` (prefix) は止めない | 変えない。自己サービスの `/api/auth/mfa/*` は `/api/auth` の prefix に入って止まらず、reset は既存の運営 API と同じく止まる (§3.3) |
 | 監査 | 無し | 5 種の action_type (§17)。書くのは `recordMfaAudit` (§17.1) だけ。reset は削除の前に fail-closed で書く。ほかの 4 種は、監査の起点 (取り消せない操作) が成功した後は、続く手順が失敗しても必ず 1 行書いてから応答する (`failed_step` §17.2) |
 | ログイン後・`/`・`/home` の行き先 (`src/app/(auth)/auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect` = `lib/onboarding-routing.ts:78-80`) | roles に admin / super_admin があれば `/admin` (AAL を見ない) | 変えない (ロールだけで `/admin` へ振り分ける)。`/admin` に着いた後、`admin/layout.tsx` の `requireRoleForPage` が必須ロールの aal1 を MFA の画面へ回す (振り分けの側で AAL を見ないので、行き先が 2 段になる。U2 の aal1 は `/admin` → `/settings/security/mfa/verify?next=%2Fadmin`) |
 | Web の (support) 区画 | client component がロールだけ見る (admin が AAL1 で開くと、移行後は API の 403 だらけになる) | server layout の `requireRoleForPage` が、必須ロールで AAL1 なら MFA の画面へ回す。support だけの人は今までどおり。ロールの無い人は `/home` (今の client の判定と同じ行き先) |
@@ -492,7 +493,8 @@
 --
 -- 1 行 = 1 個のコード。値そのものは持たず、SHA-256 (hex 64 文字。前像は "<user_id>:<正規化したコード>") だけを持つ。
 -- 使ったコードは used_at を書く (行は残す)。再発行・回復・解除ではその利用者の行を全部消す
--- (コードが存在するのは verified な TOTP factor があるときだけ、という不変条件を保つ)。
+-- (コードを使えるのは verified な TOTP factor があるときだけ。削除に失敗して残った行は、回復が verified な factor を
+-- 先に確かめるので使われず、次の発行が先に消す。docs/design/cross/12-operator-mfa.md §10・§17.2)。
 -- 読み書きは service_role だけ (RLS 有効・ポリシー無し。anon / authenticated は何もできない)。
 -- 何度流しても同じ結果になる (IF NOT EXISTS)。既存の表・列・関数には触れない。
 -- 戻し方: supabase/rollbacks/<番号はマージ時に確定>_operator_mfa_backup_codes.down.sql
@@ -1318,7 +1320,10 @@ export const MfaVerifyBodySchema = z.object({
 });
 export type MfaVerifyBody = z.infer<typeof MfaVerifyBodySchema>;
 
-/** POST /api/auth/mfa/verify の 200 (段 A)。backup_codes は登録 (unverified の factor の verify) のときだけ・formatBackupCode 済み (XXXXX-XXXXX) */
+/**
+ * POST /api/auth/mfa/verify の 200 (段 A)。backup_codes は登録 (unverified の factor の verify) で、コードの発行に成功したときだけ・
+ * formatBackupCode 済み (XXXXX-XXXXX)。発行に失敗した登録は backup_codes の無い 200 (cross/12 §14.3・§17.2)
+ */
 export const MfaVerifyResponseSchema = z.object({
   ok: z.literal(true),
   aal: z.literal('aal2'),
@@ -1532,7 +1537,7 @@ export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
 | パス | 役割 | 主な要素 |
 |---|---|---|
 | `/settings/security/mfa` | 状態と管理 | 段 A: `GET status` → 登録済み: factor の登録日・残りのバックアップコード数 / 未登録: [登録する] → `setup?next=%2Fsettings%2Fsecurity%2Fmfa`。403 `PERM_DENIED` は「この画面は運営ロールの人だけ」。段 B で足す: 登録済みのとき [バックアップコードを再発行]・[認証アプリを解除] (どちらも AAL2 が無いと 403 → verify へ `next=/settings/security/mfa` で回す) |
-| `/settings/security/mfa/setup?next=` | 登録 | ① `POST enroll` → QR (`<img src="data:image/svg+xml;utf-8,...">`) と手入力用の secret (password 型の欄 + 表示切替) ② `TotpCodeForm` (6 桁。`inputMode="numeric"` `autoComplete="one-time-code"`) → `POST verify` ③ `BackupCodesPanel` (10 個を 1 回表示・コピー・テキストで保存・「保存した」チェックで [続ける] が有効) → `next` へ `router.push` + `router.refresh()`。409 `AUTH_2FA_ALREADY_ENROLLED` は状態画面へ |
+| `/settings/security/mfa/setup?next=` | 登録 | ① `POST enroll` → QR (`<img src="data:image/svg+xml;utf-8,...">`) と手入力用の secret (password 型の欄 + 表示切替) ② `TotpCodeForm` (6 桁。`inputMode="numeric"` `autoComplete="one-time-code"`) → `POST verify` ③ `BackupCodesPanel` (10 個を 1 回表示・コピー・テキストで保存・「保存した」チェックで [続ける] が有効) → `next` へ `router.push` + `router.refresh()`。verify の成功にコードが無ければ (発行の失敗・応答が届かず打ち直した) ③ の代わりに「表示できなかった」案内 (`MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE`・[二段階認証の設定へ]・[続ける] §15.2)。409 `AUTH_2FA_ALREADY_ENROLLED` は状態画面へ |
 | `/settings/security/mfa/verify?next=` | challenge | `GET status` で factor id を得て `TotpCodeForm` → `POST verify` → `next`。リンク「認証アプリが使えない (バックアップコード)」→ recover。401 は `/login?next=` |
 | `/settings/security/mfa/recover` | 回復 | 説明 (TOTP と残りのコードが全部消え、全端末でログアウトされ、再ログイン後に登録し直す) → コード 1 個 (`XXXXX-XXXXX`) → `POST recover` → 応答の `next` へ `window.location.assign` (セッションは終了している) |
 | `/settings` (既存・変更) | 入口 | 「セキュリティ (二段階認証)」の行。ブラウザで `GET status` が 200 のときだけ出す (403 は出さない。アプリの WebView の中では status を呼ばず行も出さない §15.2) |
@@ -2331,7 +2336,7 @@ sequenceDiagram
 
 ### 19.2 既存のまま使う code
 
-`AUTH_UNAUTHENTICATED` 401・`AUTH_PROFILE_NOT_FOUND` 401・`AUTH_ACCOUNT_FROZEN` 403・`PERM_DENIED` 403・`VALIDATION_ERROR` 400・`RATE_LIMITED` 429・`FORBIDDEN_ORIGIN` 403・`INTERNAL_ERROR` 500・`OP_PERMISSION_DENIED` 403・`OP_SELF_MODIFY` 403・`OP_INVALID_INPUT` 400・`NOT_FOUND` 404・`UNAUTHORIZED` 401・`FORBIDDEN` 403 (最後の 2 つは nested の形の運営 API の既存の code。reset §14.8.2 と `respondNotSupported` §19.3 が返す)。
+`AUTH_UNAUTHENTICATED` 401・`AUTH_PROFILE_NOT_FOUND` 401・`AUTH_ACCOUNT_FROZEN` 403・`PERM_DENIED` 403・`VALIDATION_ERROR` 400・`RATE_LIMITED` 429・`FORBIDDEN_ORIGIN` 403・`INTERNAL_ERROR` 500・`OP_PERMISSION_DENIED` 403・`OP_SELF_MODIFY` 403・`OP_INVALID_INPUT` 400・`NOT_FOUND` 404・`UNAUTHORIZED` 401・`FORBIDDEN` 403 (この 2 つは nested の形の運営 API の既存の code。reset §14.8.2 と `respondNotSupported` §19.3 が返す)。ほかに、本書の route ではなく middleware の /api の同意ゲート (#1689) が route の前に返す `LEGAL_CONSENT_REQUIRED` 403 (平たい `{ error, code }`) が reset に届きうる (§3.3・§14.8.2。自己サービスの 6 route は許可リストの中で届かない)。
 
 ### 19.3 既存の運営 route の 403 (変えない)
 
@@ -3143,6 +3148,8 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | `src/lib/auth/operator-permissions.ts` `requireSuperAdmin` | 変更 | `requireRole` に委譲 (凍結判定が付く = 強化) |
 | `src/lib/auth/helpers.ts` `requireOrgRole` / `requireUser` / `requireOrgAdmin` / `requireOrgMember` | 保持 | 変えない。`requireOrgRole` の新規呼び出しは走査が禁止 |
 | `lib/supabase/middleware.ts` / `src/middleware.ts` | 保持 | 変えない (§7) |
+| `packages/shared/src/legal-consent-api.ts` (`LEGAL_CONSENT_EXEMPT_API_PATHS`。#1689) | 保持 | 変えない。既存の `/api/auth` (prefix) の行が自己サービスの 6 route を覆い、reset は覆わない (§3.3・§23 N-39・§27 Q-13) |
+| `tests/admin-mutation-audit-coverage-1571.test.ts` の `EXPECTED` (#1571) | 変更 (段 C) | reset の 1 行 (§23 N-38) |
 | `src/app/api/auth/login/route.ts`・`src/app/(auth)/login/page.tsx`・`/auth/callback` | 保持 | 変えない。MFA は運営の入口で回す |
 | 運営の layout 3 / page 11 | 変更 | `requireRoleForPage` |
 | `src/lib/admin/audit.ts` | 保持 | `recordMfaAudit` が包む |
