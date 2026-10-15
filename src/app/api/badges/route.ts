@@ -2,7 +2,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { consecutiveDayStreak } from '@/lib/jst-day-ranges';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isAwardableBadgeCode } from '@/lib/badges/awardable';
-import { summarizeBadgePeriodAwards, type BadgePeriodAwards } from '@homegohan/shared';
+import { toBadgePeriodAwardsByBadgeId, type BadgePeriodAwards } from '@homegohan/shared';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
 
@@ -16,8 +16,8 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // 1〜3. 互いに独立な 5 クエリを並列に取得する (#1215)。
-    // どれも user.id だけに依存し、結果同士に依存関係は無い。直列 await だと DB 往復 5 回分が
+    // 1〜3. 互いに独立な 6 クエリを並列に取得する (#1215。#1528 で 6 本目を足した)。
+    // どれも user.id だけに依存し、結果同士に依存関係は無い。直列 await だと DB 往復 6 回分が
     // そのままレスポンス時間に乗るため Promise.all でまとめる。
     //   badges: マスターデータ / user_badges: 獲得済みバッジ
     //   planned_meals: 完了した食事の数・自炊の数（日付ベースモデル）
@@ -31,7 +31,10 @@ export async function GET(request: Request) {
     // 数えると、ダミーの献立を「完了」にしただけで first_bite などが付いてしまう。
     // (#1604 から Web のツアーの Step 1 は meals のお試しの行に保存し、user_daily_meals には作らない。
     //  is_sandbox = true の日が別の経路で作られても数えないよう、絞り込みは残す)
-    //   user_badge_period_awards: 比較ランキングのバッジを取った期間 (1 期間 1 行。#1528)
+    //   get_my_badge_period_award_summaries: 比較ランキングのバッジを取った期間 (表 user_badge_period_awards。1 期間 1 行。#1528) を、
+    //     DB の中でバッジごとに「取った期間の数」と「最新の期間」にまとめたもの。表の行のまま読むと、行が PostgREST の max_rows
+    //     (Supabase の既定 1,000) を超えたとき黙って打ち切られ、回数が小さく・最新が古く出る (この表は期間ごとに増え続ける)。
+    //     関数は本人 (auth.uid()) の行だけをまとめ、返すのはバッジの数の行だけ (migration 20261015120000_user_badge_period_awards.sql)
     const [badgesRes, userBadgesRes, mealCountRes, cookCountRes, completedDaysRes, periodAwardsRes] = await Promise.all([
       supabase.from('badges').select('*'),
       supabase
@@ -65,11 +68,8 @@ export async function GET(request: Request) {
         .eq('planned_meals.is_completed', true)
         .order('day_date', { ascending: false })
         .limit(30),
-      // 比較ランキングのバッジ (確定の回が付けるもの) を取った期間 (#1528)
-      supabase
-        .from('user_badge_period_awards')
-        .select('badge_id, period_type, period_start, message, awarded_at')
-        .eq('user_id', user.id),
+      // 比較ランキングのバッジ (確定の回が付けるもの) を取った期間の、バッジごとのまとめ (#1528)
+      supabase.rpc('get_my_badge_period_award_summaries'),
     ]);
 
     // 1 本でも失敗したまま続行すると、獲得済みバッジや統計が欠けた状態で「未獲得」「0 回」として
@@ -89,12 +89,12 @@ export async function GET(request: Request) {
     }
 
     // 取った期間は、獲得済みのバッジに添える飾りで、獲得・未獲得の判定には使わない。読めなかったときは 500 にせず、
-    // 期間を添えずに一覧を返す (表を足す migration より先に Web がデプロイされた場合も、一覧は今までどおり出る)。原因はログに残す
+    // 期間を添えずに一覧を返す (表と関数を足す migration より先に Web がデプロイされた場合も、一覧は今までどおり出る)。原因はログに残す
     let periodAwardsByBadgeId = new Map<string, BadgePeriodAwards>();
     if (periodAwardsRes.error) {
-      logger.withUser(user.id).error('user_badge_period_awards query failed (badges are returned without periods)', periodAwardsRes.error);
+      logger.withUser(user.id).error('get_my_badge_period_award_summaries failed (badges are returned without periods)', periodAwardsRes.error);
     } else {
-      periodAwardsByBadgeId = summarizeBadgePeriodAwards(periodAwardsRes.data ?? []);
+      periodAwardsByBadgeId = toBadgePeriodAwardsByBadgeId(periodAwardsRes.data ?? []);
     }
 
     const allBadges = badgesRes.data ?? [];

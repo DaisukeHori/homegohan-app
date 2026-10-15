@@ -966,7 +966,8 @@ async function awardSegmentBadges(
   }
 
   // 取った期間も 1 期間 1 行で残す (#1528)。user_badges は 1 バッジ 1 行で、2 回目以降の期間は上の upsert で捨てられるため、
-  // 獲得済みのバッジの一覧 (GET /api/badges) が「最新の期間」と「取った回数」を出すのに、この表を読む。
+  // 獲得済みのバッジの一覧 (GET /api/badges) が「最新の期間」と「取った回数」を出すのに、この表を
+  // (関数 get_my_badge_period_award_summaries でバッジごとにまとめて) 読む。
   // すでに持っているバッジも、この期間で条件を満たしたなら書く。同じ期間をやり直しても (確定の回の再試行) 2 行にはならない
   // (主キー (user_id, badge_id, period_type, period_start) と ignoreDuplicates)。
   const periodAwards = [...awards.values()].map((award) => ({

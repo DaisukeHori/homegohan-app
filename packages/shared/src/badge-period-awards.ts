@@ -4,12 +4,16 @@
  * 比較ランキングのバッジ (1 位・上位 n%・平均超え・改善) は、Edge Function calculate-segment-stats の確定の回
  * (期間が切り替わった直後の回) だけが付け、取った期間を表 user_badge_period_awards に 1 期間 1 行で残す
  * (migration 20261015120000_user_badge_period_awards.sql)。
- * GET /api/badges (src/app/api/badges/route.ts) が summarizeBadgePeriodAwards でバッジごとにまとめて返し、
+ * GET /api/badges (src/app/api/badges/route.ts) が、同じ migration の関数 get_my_badge_period_award_summaries で
+ * DB の中でバッジごとにまとめた行 (取った期間の数と最新の期間の 1 行) を読み、toBadgePeriodAwardsByBadgeId で一覧に添える形にして返す。
+ * (表の行のまま読むと、行が PostgREST の max_rows (既定 1,000) を超えたとき黙って打ち切られ、回数が小さく・最新が古く出るため、
+ *  まとめは DB で行う)
  * Web (src/app/(main)/badges/page.tsx) とモバイル (apps/mobile/app/badges/index.tsx) の一覧が formatBadgePeriodAwards で文にする。
  *
  * 同じバッジを複数の期間で取ったときは、最新の期間を 1 つだけ出し、取った回数 (期間の数) を添える
  * (例:「2026年9月（通算 3 回）」)。一覧のカードは狭いので、全部の期間は並べない。
- * 「最新」は付けた時刻 (awarded_at) の新しい方。同じ時刻なら期間の開始日の新しい方。
+ * 「最新」は付けた時刻 (awarded_at) の新しい方。同じ時刻なら期間の開始日の新しい方、それも同じなら期間の種類の文字の順で後ろの方
+ * (関数の ORDER BY が決める)。
  *
  * 期間の文は、日付で書く (「先週」「先月」のような今日から数えた言い方はしない)。一覧はいつ開くか分からず、
  * 「先週」は開いた日によって指す週が変わってしまうため。
@@ -26,15 +30,20 @@ export function isBadgeAwardPeriodType(value: unknown): value is BadgeAwardPerio
 /** 週の期間の、開始日 (月曜日) から終了日 (日曜日) までの日数。月曜始まりの 7 日間 (calculateJstPeriod の weekly) */
 const WEEK_LAST_DAY_OFFSET = 6;
 
-/** user_badge_period_awards の 1 行のうち、まとめるのに使う列 */
-export interface BadgePeriodAwardRow {
+/**
+ * 関数 get_my_badge_period_award_summaries が返す 1 行 (バッジ 1 つぶん)。
+ * 生成した型 (database.types.ts) は latest_message を string と書くが、表の message は NULL になりうるので null も受ける
+ */
+export interface BadgePeriodAwardSummaryRow {
   badge_id: string;
-  period_type: string;
-  /** 期間の開始日 (YYYY-MM-DD。JST の暦日) */
-  period_start: string;
-  message: string | null;
-  /** その期間のバッジを付けた時刻 (ISO 8601) */
-  awarded_at: string;
+  /** 取った期間の数 (表の主キーで、同じ期間は 1 行) */
+  award_count: number;
+  /** 最新の期間の種類 */
+  latest_period_type: string;
+  /** 最新の期間の開始日 (YYYY-MM-DD。JST の暦日) */
+  latest_period_start: string;
+  /** 最新の期間の判定の文 */
+  latest_message: string | null;
 }
 
 /** 最新に取った期間 */
@@ -106,48 +115,23 @@ export function formatBadgeAwardPeriodLabel(periodType: string, periodStart: str
   }
 }
 
-/** 付けた時刻を比べられる数にする。読めない値は最も古い扱い */
-function awardedAtMs(value: string): number {
-  const ms = Date.parse(value);
-  return Number.isNaN(ms) ? Number.NEGATIVE_INFINITY : ms;
-}
-
-/** a の方が新しければ正、古ければ負 (付けた時刻 → 期間の開始日の順に比べる) */
-function compareNewer(a: BadgePeriodAwardRow, b: BadgePeriodAwardRow): number {
-  const byTime = awardedAtMs(a.awarded_at) - awardedAtMs(b.awarded_at);
-  if (byTime !== 0) return byTime;
-  return a.period_start < b.period_start ? -1 : a.period_start > b.period_start ? 1 : 0;
-}
-
 /**
- * user_badge_period_awards の行を、バッジ (badge_id) ごとに「取った回数」と「最新の期間」にまとめる。
- * 期間の種類・開始日が読めない行は数えない (画面に出せない期間を回数にだけ足すと、文と数が合わなくなるため)。
- * 同じ (種類, 開始日) の行が重なっていても 1 回に数える (表の主キーで重ならないが、念のため)。
+ * 関数 get_my_badge_period_award_summaries の行を、badge_id ごとの「取った回数」と「最新の期間」にする。
+ * 最新の期間の種類・開始日が読めない行、回数が 1 以上の整数でない行は出さない (画面に出せない期間・意味の無い回数を添えないため。
+ * 表の CHECK 制約と DATE 型・主キーがあるので、ふつうは起きない)。
  */
-export function summarizeBadgePeriodAwards(rows: readonly BadgePeriodAwardRow[]): Map<string, BadgePeriodAwards> {
-  const byBadge = new Map<string, { periods: Set<string>; latestRow: BadgePeriodAwardRow; latest: BadgeLatestAwardPeriod }>();
-  for (const row of rows) {
-    const periodType = row.period_type;
-    if (!isBadgeAwardPeriodType(periodType)) continue;
-    const label = formatBadgeAwardPeriodLabel(periodType, row.period_start);
-    if (label === null) continue;
-    const latest: BadgeLatestAwardPeriod = { periodType, periodStart: row.period_start, label, message: row.message };
-    const periodKey = `${periodType}:${row.period_start}`;
-    const current = byBadge.get(row.badge_id);
-    if (!current) {
-      byBadge.set(row.badge_id, { periods: new Set([periodKey]), latestRow: row, latest });
-      continue;
-    }
-    current.periods.add(periodKey);
-    if (compareNewer(row, current.latestRow) > 0) {
-      current.latestRow = row;
-      current.latest = latest;
-    }
-  }
-
+export function toBadgePeriodAwardsByBadgeId(rows: readonly BadgePeriodAwardSummaryRow[]): Map<string, BadgePeriodAwards> {
   const summaries = new Map<string, BadgePeriodAwards>();
-  for (const [badgeId, { periods, latest }] of byBadge) {
-    summaries.set(badgeId, { count: periods.size, latest });
+  for (const row of rows) {
+    const periodType = row.latest_period_type;
+    if (!isBadgeAwardPeriodType(periodType)) continue;
+    const label = formatBadgeAwardPeriodLabel(periodType, row.latest_period_start);
+    if (label === null) continue;
+    if (!Number.isInteger(row.award_count) || row.award_count < 1) continue;
+    summaries.set(row.badge_id, {
+      count: row.award_count,
+      latest: { periodType, periodStart: row.latest_period_start, label, message: row.latest_message },
+    });
   }
   return summaries;
 }

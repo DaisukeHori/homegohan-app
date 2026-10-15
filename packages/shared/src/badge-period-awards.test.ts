@@ -3,8 +3,10 @@
  *
  * 確かめること:
  *   - formatBadgeAwardPeriodLabel: 日・週 (月曜〜日曜。月・年をまたぐ形)・月の文。分からない種類・形の違う日付・存在しない日付は null
- *   - summarizeBadgePeriodAwards: バッジごとに、取った期間の数と最新の期間 (付けた時刻 → 開始日の順で新しい方) にまとめる。
- *     読めない行は数えない・同じ期間は 1 回に数える
+ *   - toBadgePeriodAwardsByBadgeId: DB の関数 get_my_badge_period_award_summaries がバッジごとにまとめた行 (回数と最新の期間) を、
+ *     一覧に添える形 (回数・最新の期間の文) にする。回数は DB の数をそのまま使う (1,000 を超えても丸めない)。
+ *     最新の期間が読めない行・回数が 1 以上の整数でない行は出さない
+ *     (まとめ方 (回数・最新の決め方) そのものは DB の関数。実 DB の tests/integration/rls/user-badge-period-awards.test.ts で確かめる)
  *   - formatBadgePeriodAwards: 1 回なら期間だけ、2 回以上なら「（通算 n 回）」を添える
  *   - 期間の種類の一覧が、migration の CHECK 制約・確定の回の種類 (Edge Function の JST_CALENDAR_PERIOD_TYPES) と同じ
  */
@@ -15,19 +17,19 @@ import {
   BADGE_AWARD_PERIOD_TYPES,
   formatBadgeAwardPeriodLabel,
   formatBadgePeriodAwards,
-  summarizeBadgePeriodAwards,
-  type BadgePeriodAwardRow,
+  toBadgePeriodAwardsByBadgeId,
+  type BadgePeriodAwardSummaryRow,
 } from './badge-period-awards';
 import * as shared from './index';
 
 const ROOT = path.resolve(__dirname, '../../..');
 
-const row = (overrides: Partial<BadgePeriodAwardRow> = {}): BadgePeriodAwardRow => ({
+const row = (overrides: Partial<BadgePeriodAwardSummaryRow> = {}): BadgePeriodAwardSummaryRow => ({
   badge_id: 'b-1',
-  period_type: 'weekly',
-  period_start: '2026-10-05',
-  message: null,
-  awarded_at: '2026-10-11T15:05:00Z',
+  award_count: 1,
+  latest_period_type: 'weekly',
+  latest_period_start: '2026-10-05',
+  latest_message: null,
   ...overrides,
 });
 
@@ -59,9 +61,9 @@ describe('formatBadgeAwardPeriodLabel', () => {
   });
 });
 
-describe('summarizeBadgePeriodAwards', () => {
-  it('1 期間だけなら回数 1 で、その期間と判定の文を返す', () => {
-    const summary = summarizeBadgePeriodAwards([row({ message: '🏆 全体の朝食率で1位！' })]);
+describe('toBadgePeriodAwardsByBadgeId', () => {
+  it('回数 1 なら、その期間と判定の文を返す', () => {
+    const summary = toBadgePeriodAwardsByBadgeId([row({ latest_message: '🏆 全体の朝食率で1位！' })]);
     expect(summary.get('b-1')).toEqual({
       count: 1,
       latest: {
@@ -73,81 +75,41 @@ describe('summarizeBadgePeriodAwards', () => {
     });
   });
 
-  it('複数の期間は回数を数え、最新 (付けた時刻の新しい方) の期間を返す。行の並びに左右されない', () => {
-    const rows = [
-      row({ period_type: 'weekly', period_start: '2026-09-28', awarded_at: '2026-10-04T15:05:00Z', message: '9 月末の週' }),
-      row({ period_type: 'monthly', period_start: '2026-09-01', awarded_at: '2026-09-30T15:05:10Z', message: '9 月' }),
-      row({ period_type: 'weekly', period_start: '2026-10-05', awarded_at: '2026-10-11T15:05:00Z', message: '10 月の週' }),
-      row({ period_type: 'daily', period_start: '2026-10-01', awarded_at: '2026-10-01T15:05:00Z', message: '10/1' }),
-    ];
-    for (const order of [rows, [...rows].reverse(), [rows[2], rows[0], rows[3], rows[1]]]) {
-      const summary = summarizeBadgePeriodAwards(order).get('b-1');
-      expect(summary?.count).toBe(4);
-      expect(summary?.latest).toEqual({
-        periodType: 'weekly',
-        periodStart: '2026-10-05',
-        label: '2026年10月5日〜11日の週',
-        message: '10 月の週',
-      });
-    }
-  });
-
-  it('付けた時刻が同じなら、期間の開始日の新しい方を最新にする', () => {
-    const at = '2026-10-11T15:05:00Z';
-    const summary = summarizeBadgePeriodAwards([
-      row({ period_type: 'weekly', period_start: '2026-10-05', awarded_at: at }),
-      row({ period_type: 'daily', period_start: '2026-10-11', awarded_at: at }),
+  it('回数は DB の数をそのまま使う (PostgREST の 1 回の上限 1,000 を超えた数も丸めない)', () => {
+    const summary = toBadgePeriodAwardsByBadgeId([
+      row({ award_count: 1500, latest_period_type: 'daily', latest_period_start: '2030-02-07' }),
     ]).get('b-1');
-    expect(summary?.latest.periodType).toBe('daily');
-    expect(summary?.latest.periodStart).toBe('2026-10-11');
+    expect(summary).toEqual({
+      count: 1500,
+      latest: { periodType: 'daily', periodStart: '2030-02-07', label: '2030年2月7日', message: null },
+    });
   });
 
-  it('付けた時刻が読めない行は、最も古い扱い (最新にしない) だが回数には数える', () => {
-    const summary = summarizeBadgePeriodAwards([
-      row({ period_start: '2026-10-12', awarded_at: 'not-a-date' }),
-      row({ period_start: '2026-10-05', awarded_at: '2026-10-11T15:05:00Z' }),
-    ]).get('b-1');
-    expect(summary?.count).toBe(2);
-    expect(summary?.latest.periodStart).toBe('2026-10-05');
-  });
-
-  it('バッジごとに分けてまとめる', () => {
-    const summary = summarizeBadgePeriodAwards([
-      row({ badge_id: 'b-1', period_start: '2026-10-05' }),
-      row({ badge_id: 'b-2', period_type: 'monthly', period_start: '2026-09-01' }),
-      row({ badge_id: 'b-1', period_start: '2026-09-28', awarded_at: '2026-10-04T15:05:00Z' }),
+  it('バッジごとに分ける', () => {
+    const summary = toBadgePeriodAwardsByBadgeId([
+      row({ badge_id: 'b-1', award_count: 2 }),
+      row({ badge_id: 'b-2', latest_period_type: 'monthly', latest_period_start: '2026-09-01' }),
     ]);
     expect([...summary.keys()].sort()).toEqual(['b-1', 'b-2']);
     expect(summary.get('b-1')?.count).toBe(2);
     expect(summary.get('b-2')).toMatchObject({ count: 1, latest: { label: '2026年9月' } });
   });
 
-  it('期間の種類・開始日が読めない行は数えない (文と回数が食い違わないように)。全部読めなければバッジごと出さない', () => {
-    const summary = summarizeBadgePeriodAwards([
-      row({ badge_id: 'b-1', period_type: 'all_time', period_start: '2024-01-01' }),
-      row({ badge_id: 'b-1', period_start: '2026-02-30' }),
-      row({ badge_id: 'b-1', period_start: '2026-10-05' }),
-      row({ badge_id: 'b-x', period_type: 'yearly', period_start: '2026-01-01' }),
-    ]);
-    expect(summary.get('b-1')?.count).toBe(1);
+  it.each([
+    ['種類が分からない', { latest_period_type: 'all_time', latest_period_start: '2024-01-01' }],
+    ['存在しない日付', { latest_period_start: '2026-02-30' }],
+    ['形の違う日付', { latest_period_start: '2026/10/05' }],
+    ['回数が 0', { award_count: 0 }],
+    ['回数が負', { award_count: -1 }],
+    ['回数が整数でない', { award_count: 1.5 }],
+  ])('最新の期間が読めない・回数が意味を持たない行は出さない (%s)', (_label, overrides) => {
+    const summary = toBadgePeriodAwardsByBadgeId([row({ badge_id: 'b-x', ...overrides }), row({ badge_id: 'b-ok' })]);
     expect(summary.has('b-x')).toBe(false);
-  });
-
-  it('同じ (種類, 開始日) の行が重なっていても 1 回に数える', () => {
-    const summary = summarizeBadgePeriodAwards([row(), row({ awarded_at: '2026-10-12T00:00:00Z' })]);
-    expect(summary.get('b-1')?.count).toBe(1);
-  });
-
-  it('同じ開始日でも種類が違えば別の期間 (2026-10-01 の日と、10 月の月)', () => {
-    const summary = summarizeBadgePeriodAwards([
-      row({ period_type: 'daily', period_start: '2026-10-01' }),
-      row({ period_type: 'monthly', period_start: '2026-10-01' }),
-    ]);
-    expect(summary.get('b-1')?.count).toBe(2);
+    expect(summary.has('b-ok')).toBe(true);
   });
 
   it('行が無ければ空', () => {
-    expect(summarizeBadgePeriodAwards([]).size).toBe(0);
+    expect(toBadgePeriodAwardsByBadgeId([]).size).toBe(0);
   });
 });
 
@@ -185,6 +147,6 @@ describe('期間の種類の一覧', () => {
 
   it('index から読める (Web・モバイルは @homegohan/shared から使う)', () => {
     expect(shared.formatBadgePeriodAwards).toBe(formatBadgePeriodAwards);
-    expect(shared.summarizeBadgePeriodAwards).toBe(summarizeBadgePeriodAwards);
+    expect(shared.toBadgePeriodAwardsByBadgeId).toBe(toBadgePeriodAwardsByBadgeId);
   });
 });

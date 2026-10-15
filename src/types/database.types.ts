@@ -8072,6 +8072,17 @@ export type Database = {
       }
       get_effective_plan: { Args: { p_user_id: string }; Returns: string }
       get_invite_details: { Args: { p_token: string }; Returns: Json }
+      get_my_badge_period_award_summaries: {
+        Args: never
+        Returns: {
+          award_count: number
+          badge_id: string
+          latest_awarded_at: string
+          latest_message: string
+          latest_period_start: string
+          latest_period_type: string
+        }[]
+      }
       get_nps_summary: {
         Args: { p_from?: string; p_plan_key?: string; p_to?: string }
         Returns: {

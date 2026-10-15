@@ -14,6 +14,10 @@
  *     別の期間なら同じバッジでも別の行になる
  *   - 期間の種類は daily / weekly / monthly だけ (CHECK 制約。23514)
  *   - migration の写し (INSERT ... SELECT) は、user_badges の context_json に期間が入った行だけを写し、何度流しても増えない
+ *   - 関数 get_my_badge_period_award_summaries (GET /api/badges が呼ぶ) は、本人の行だけを、バッジごとに「取った期間の数」と
+ *     「最新の期間」(付けた時刻 → 開始日 → 種類の新しい順) の 1 行にまとめる。期間の行が PostgREST の 1 回の上限 (既定 1000 行) を
+ *     超える人でも、回数を打ち切らず、最新も正しい (表を行のまま読むと、黙って 1000 行で打ち切られる)。
+ *     anon・service role からは呼べない (42501)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/user-badge-period-awards.test.ts
@@ -95,6 +99,8 @@ async function createTestUser(label: string): Promise<TestUser> {
 
 let owner: TestUser;
 let other: TestUser;
+/** 関数のまとめ方を確かめる専用の利用者 (ほかの describe の行と混ざらないように分ける) */
+let heavy: TestUser;
 const badgeIds: Record<string, string> = {};
 const BADGE_CODES = ['segment_rank_1', 'segment_top_10', 'improved_10'] as const;
 
@@ -103,6 +109,7 @@ const UPSERT_OPTIONS = { onConflict: 'user_id,badge_id,period_type,period_start'
 beforeAll(async () => {
   owner = await createTestUser('owner');
   other = await createTestUser('other');
+  heavy = await createTestUser('heavy');
   const { data, error } = await srAdmin.from('badges').select('id, code').in('code', [...BADGE_CODES]);
   if (error) throw new Error(`badges マスタの取得に失敗: ${error.message}`);
   for (const code of BADGE_CODES) {
@@ -113,14 +120,14 @@ beforeAll(async () => {
 }, 60_000);
 
 afterAll(async () => {
-  const userIds = [owner, other].filter(Boolean).map((u) => u.userId);
+  const userIds = [owner, other, heavy].filter(Boolean).map((u) => u.userId);
   if (userIds.length > 0) {
     await srAdmin.from(TABLE).delete().in('user_id', userIds);
     await srAdmin.from('user_badges').delete().in('user_id', userIds);
     const { data: left } = await srAdmin.from(TABLE).select('user_id').in('user_id', userIds);
     expect(left ?? []).toEqual([]);
   }
-  for (const u of [owner, other]) {
+  for (const u of [owner, other, heavy]) {
     if (u?.userId) await srAdmin.auth.admin.deleteUser(u.userId);
   }
 }, 30_000);
@@ -257,5 +264,118 @@ describe('#1528 migration の写し: user_badges の context_json に期間が�
       context_json: { period_type: 'monthly', period_start: '2026-08-01', rank: 1 },
     });
     expect(Date.parse(String(data?.[0].awarded_at))).toBe(Date.parse('2026-09-01T00:05:00Z'));
+  });
+});
+
+/** PostgREST が 1 回の応答で返す行数の上限 (Supabase の既定 max_rows。supabase/config.toml では変えていない) */
+const POSTGREST_MAX_ROWS = 1000;
+/** 上限を超える、1 つのバッジの日の期間の数 */
+const HEAVY_DAILY_PERIODS = POSTGREST_MAX_ROWS + 5;
+const HEAVY_FIRST_DAY_UTC = Date.UTC(2023, 0, 1);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** HEAVY_FIRST_DAY_UTC から i 日目の YYYY-MM-DD */
+function dayString(i: number): string {
+  return new Date(HEAVY_FIRST_DAY_UTC + i * DAY_MS).toISOString().slice(0, 10);
+}
+
+interface SummaryRow {
+  badge_id: string;
+  award_count: number;
+  latest_period_type: string;
+  latest_period_start: string;
+  latest_message: string | null;
+  latest_awarded_at: string;
+}
+
+describe('#1528 関数 get_my_badge_period_award_summaries: 本人の行を、バッジごとに回数と最新の期間にまとめる', () => {
+  beforeAll(async () => {
+    // segment_top_10: 日の期間を上限 (1000) を超えて 1005 個 + 週の期間 1 個 (付けた時刻は最も古い)。最新は最後の日
+    const daily = Array.from({ length: HEAVY_DAILY_PERIODS }, (_, i) => ({
+      user_id: heavy.userId,
+      badge_id: badgeIds.segment_top_10,
+      period_type: 'daily',
+      period_start: dayString(i),
+      message: `day ${i}`,
+      awarded_at: new Date(HEAVY_FIRST_DAY_UTC + (i + 1) * DAY_MS).toISOString(),
+    }));
+    const weekly = {
+      user_id: heavy.userId,
+      badge_id: badgeIds.segment_top_10,
+      period_type: 'weekly',
+      period_start: '2022-12-26',
+      message: 'week',
+      awarded_at: '2023-01-01T00:00:00Z',
+    };
+    // improved_10: 付けた時刻が同じ 2 行 → 期間の開始日の新しい方 (日の 2026-10-11) が最新
+    // segment_rank_1: 付けた時刻も開始日も同じ 2 行 → 種類の文字の順で後ろの方 (monthly) が最新
+    const sameTime = '2026-10-11T15:05:00Z';
+    const ties = [
+      { badge_id: badgeIds.improved_10, period_type: 'weekly', period_start: '2026-10-05', message: 'week', awarded_at: sameTime },
+      { badge_id: badgeIds.improved_10, period_type: 'daily', period_start: '2026-10-11', message: 'day', awarded_at: sameTime },
+      { badge_id: badgeIds.segment_rank_1, period_type: 'daily', period_start: '2026-10-01', message: 'day', awarded_at: sameTime },
+      { badge_id: badgeIds.segment_rank_1, period_type: 'monthly', period_start: '2026-10-01', message: 'month', awarded_at: sameTime },
+    ].map((row) => ({ user_id: heavy.userId, ...row }));
+
+    const { error } = await srAdmin.from(TABLE).insert([...daily, weekly, ...ties]);
+    if (error) throw new Error(`heavy の期間の行の投入に失敗: ${error.message}`);
+  }, 60_000);
+
+  it('P-6: 期間の行が PostgREST の上限を超えても、回数を打ち切らず、最新の期間も正しい', async () => {
+    const asHeavy = client(anonKey, heavy.jwt);
+
+    // 前提の番兵: 表を行のまま読むと、上限で黙って打ち切られる (この打ち切りが、関数でまとめる理由)
+    const raw = await asHeavy.from(TABLE).select('badge_id, period_type, period_start');
+    expect(raw.error).toBeNull();
+    expect((raw.data ?? []).length).toBeLessThan(HEAVY_DAILY_PERIODS);
+
+    const { data, error } = await asHeavy.rpc('get_my_badge_period_award_summaries');
+    expect(error).toBeNull();
+    const rows = (data ?? []) as SummaryRow[];
+    const byBadge = new Map(rows.map((row) => [row.badge_id, row]));
+    expect(rows).toHaveLength(3);
+
+    const lastDay = HEAVY_DAILY_PERIODS - 1;
+    expect(byBadge.get(badgeIds.segment_top_10)).toMatchObject({
+      award_count: HEAVY_DAILY_PERIODS + 1,
+      latest_period_type: 'daily',
+      latest_period_start: dayString(lastDay),
+      latest_message: `day ${lastDay}`,
+    });
+    expect(Date.parse(String(byBadge.get(badgeIds.segment_top_10)?.latest_awarded_at))).toBe(
+      HEAVY_FIRST_DAY_UTC + (lastDay + 1) * DAY_MS,
+    );
+    expect(byBadge.get(badgeIds.improved_10)).toMatchObject({
+      award_count: 2,
+      latest_period_type: 'daily',
+      latest_period_start: '2026-10-11',
+      latest_message: 'day',
+    });
+    expect(byBadge.get(badgeIds.segment_rank_1)).toMatchObject({
+      award_count: 2,
+      latest_period_type: 'monthly',
+      latest_period_start: '2026-10-01',
+      latest_message: 'month',
+    });
+  });
+
+  it('P-7: 別のログインユーザーが呼ぶと、その人の行だけのまとめ (heavy の行は混ざらない)', async () => {
+    const { data, error } = await client(anonKey, other.jwt).rpc('get_my_badge_period_award_summaries');
+    expect(error).toBeNull();
+    const rows = (data ?? []) as SummaryRow[];
+
+    const own = await srAdmin.from(TABLE).select('badge_id').eq('user_id', other.userId);
+    expect(own.error).toBeNull();
+    const expectedCounts = new Map<string, number>();
+    for (const row of own.data ?? []) expectedCounts.set(row.badge_id, (expectedCounts.get(row.badge_id) ?? 0) + 1);
+    expect(new Map(rows.map((row) => [row.badge_id, row.award_count]))).toEqual(expectedCounts);
+    for (const row of rows) expect(row.award_count).toBeLessThan(HEAVY_DAILY_PERIODS);
+  });
+
+  it('P-8: anon・service role からは呼べない (EXECUTE は authenticated だけ。42501)', async () => {
+    const fromAnon = await anon().rpc('get_my_badge_period_award_summaries');
+    expect(fromAnon.error?.code).toBe('42501');
+    const fromServiceRole = await srAdmin.rpc('get_my_badge_period_award_summaries');
+    expect(fromServiceRole.error?.code).toBe('42501');
   });
 });
