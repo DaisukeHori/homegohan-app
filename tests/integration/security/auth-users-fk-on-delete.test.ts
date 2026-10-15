@@ -113,7 +113,7 @@ const RESTRICT_ALLOWLIST: Readonly<Record<string, string>> = {
 
 /**
  * #1175 で張り直した 32 本の、決めた動作。
- * ただし gdpr_deletion_requests.user_id の外部キーは #1562 (20261015120000) で外した (削除の実行記録は利用者の行を指さない)。
+ * ただし gdpr_deletion_requests.user_id の外部キーは #1562 (20261015190000) で外した (削除の実行記録は利用者の行を指さない)。
  * そのためここには 31 本を挙げ、外したことは下の D2 で確かめる
  */
 const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {

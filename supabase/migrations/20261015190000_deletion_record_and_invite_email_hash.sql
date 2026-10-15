@@ -1,4 +1,4 @@
--- migration: 20261015120000_deletion_record_and_invite_email_hash.sql
+-- migration: 20261015190000_deletion_record_and_invite_email_hash.sql
 -- #1562 (#1447 の整合ゲートの残り): 退会の「削除の実行記録」と、招待の監査に残る招待先のアドレスのハッシュ化
 --
 -- 背景:
@@ -48,7 +48,7 @@
 --   HMAC は pgcrypto (extensions スキーマ) の extensions.hmac を完全修飾で呼ぶ (search_path に頼らない)。
 -- 冪等: ADD COLUMN IF NOT EXISTS / DROP CONSTRAINT IF EXISTS / DROP POLICY IF EXISTS / CREATE OR REPLACE / 鍵は無いときだけ作る。
 --   membership_audit の置き換えは 'email' を持つ行だけが対象なので、2 回目は 0 行。
--- 戻し方: supabase/rollbacks/20261015120000_deletion_record_and_invite_email_hash.down.sql
+-- 戻し方: supabase/rollbacks/20261015190000_deletion_record_and_invite_email_hash.down.sql
 --   (ハッシュにしたアドレスは戻らない。戻すと、上限の「同じ宛先へ 3」は既存の行を数えなくなる)
 -- 確かめるテスト:
 --   tests/integration/security/deletion-record-and-invite-email-hash.test.ts (実 DB)

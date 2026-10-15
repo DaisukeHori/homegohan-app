@@ -1,4 +1,4 @@
--- rollback: 20261015120000_deletion_record_and_invite_email_hash.sql
+-- rollback: 20261015190000_deletion_record_and_invite_email_hash.sql
 -- #1562 の削除の実行記録と、招待の監査の招待先アドレスのハッシュ化を戻す。
 --
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
