@@ -13,6 +13,7 @@ import {
   LOGIN_HISTORY_RETENTION_DAYS,
   SESSION_IDLE_EXPIRE_DAYS,
 } from '@/lib/auth/sessions/constants';
+import { scanCronJobNames } from './helpers/migration-cron-jobs';
 
 const ROOT = path.resolve(__dirname, '..');
 const NAME = 'auth_history_sessions';
@@ -296,6 +297,20 @@ describe('cross/16 migration: 列・RPC・権限', () => {
     // 同じ名前・同じ処理のジョブは先に外す
     expect(migration).toContain("WHERE jobname = 'cleanup-auth-sessions-and-login-history' OR command ~* '[[:<:]]expire_idle_auth_sessions[[:>:]]'");
     expect(migration.match(/cron\.schedule\(/g)).toHaveLength(1);
+  });
+
+  it('pg_cron のジョブは、08-cron-batches の「いま」の記述を数える見張りが名前で解け (未解決 0 件)、ほかの migration に同じ名前のジョブが無い (§22 N-32: 08 の §3.0・§3.1 の注記の数が origin/main の実数 + 1 になる)', () => {
+    const jobName = 'cleanup-auth-sessions-and-login-history';
+    // 08 の §3.0・§3.1 の注記と突き合わせる見張り (tests/log-cleanup-dau-snapshot-contract.test.ts) と同じ数え方で、この migration の 1 本を数える
+    expect(scanCronJobNames(rawMigration, MIGRATION_FILE)).toEqual({ names: [jobName], unresolved: [] });
+    const migrationsDir = path.join(ROOT, MIGRATIONS_DIR);
+    const others = fs
+      .readdirSync(migrationsDir)
+      .filter((file) => file.endsWith('.sql') && file !== MIGRATION_FILE)
+      .filter((file) =>
+        scanCronJobNames(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), file).names.includes(jobName),
+      );
+    expect(others, '同じ名前のジョブを登録しているほかの migration').toEqual([]);
   });
 });
 
