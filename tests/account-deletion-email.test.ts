@@ -71,6 +71,8 @@ interface World {
   getUserById: { email?: string | null; error?: { message: string; status?: number; code?: string } | null; throws?: boolean };
   prepareError: { message: string } | null;
   storageListError: { message: string } | null;
+  /** 削除の実行記録 (#1562) を始める RPC の失敗 */
+  recordError: { message: string } | null;
   deleteUserError: { message: string; status?: number; code?: string } | null;
 }
 
@@ -82,6 +84,7 @@ function makeWorld(overrides: Partial<World> = {}): World {
     getUserById: { email: EMAIL },
     prepareError: null,
     storageListError: null,
+    recordError: null,
     deleteUserError: null,
     ...overrides,
   };
@@ -103,6 +106,10 @@ function makeAdmin(world: World): AccountDeletionAdmin {
     rpc: async (name: string) => {
       world.calls.push(`rpc:${name}`);
       if (name === 'prepare_account_deletion' && world.prepareError) return { data: null, error: world.prepareError };
+      if (name === 'begin_account_deletion_record') {
+        // 削除の実行記録 (#1562)。記録の id を返す
+        return world.recordError ? { data: null, error: world.recordError } : { data: 'deletion-record-1', error: null };
+      }
       return { data: null, error: null };
     },
     storage: {
@@ -231,6 +238,7 @@ describe('退会の完了メール: 送らない場合', () => {
   it.each([
     ['prepare', (w: World) => { w.prepareError = { message: 'db down' }; }],
     ['storage', (w: World) => { w.storageListError = { message: 'storage down' }; }],
+    ['record', (w: World) => { w.recordError = { message: 'db down' }; }],
     ['delete_user', (w: World) => { w.deleteUserError = { message: 'auth down', status: 500, code: 'unexpected_failure' }; }],
   ] as const)('途中の失敗 (%s で 500) では送らない', async (step, breakWorld) => {
     breakWorld(world);

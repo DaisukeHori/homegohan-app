@@ -10,7 +10,7 @@
  *
  * 同意済みかどうかの判定そのもの (hasAcceptedCurrentLegalDocuments) は legal-versions.ts にあり、ここはそれを呼ぶだけ。
  *
- * ⚠ 下の import は './legal-versions' からの相対 import にしている (packages/shared の中から自分のパッケージ名で
+ * ⚠ 下の import は './legal-versions'・'./push-token-claim' からの相対 import にしている (packages/shared の中から自分のパッケージ名で
  *   import しない。Metro / Jest は exports の "." しか解決しない)。
  */
 import {
@@ -21,6 +21,7 @@ import {
   type AcceptedLegalVersions,
   type LegalDocumentType,
 } from './legal-versions';
+import { PUSH_TOKEN_CLAIM_API_PATH } from './push-token-claim';
 
 /** 本人の同意の状況を返す API (#1442 で新設) */
 export const LEGAL_CONSENT_STATUS_API_PATH = '/api/legal/status';
@@ -70,6 +71,7 @@ export type LegalConsentExemptApiReason =
   | 'contact'
   | 'telemetry'
   | 'client_status'
+  | 'device_cleanup'
   | 'no_user_session'
   | 'test_only';
 
@@ -84,8 +86,10 @@ export interface LegalConsentExemptApiEntry {
 
 /**
  * 未同意でも止めない /api の一覧 (#1442)。ここに無い /api はすべて、LEGAL_CONSENT_ENFORCE=on のとき未同意なら 403。
- * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・連絡の窓口・運用のログ・状態の窓口・利用者のセッションを持たない経路」だけ
+ * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・連絡の窓口・運用のログ・状態の窓口・端末の後片付け・利用者のセッションを持たない経路」だけ
  * (利用者のデータを読み書きする API を足さない)。一覧は tests が固定する (lib/supabase/__tests__/middleware-legal-consent-api.test.ts)。
+ * 凍結中・メンテナンス中に middleware が通す /api は、すべてこの一覧にも入れる (凍結中・メンテナンス中は同意の画面に進めないので、
+ * 同意ゲートで止めると、その例外が意味を失う)。これも同じテストが全 route で確かめる。
  */
 export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry[] = [
   { path: LEGAL_CONSENT_ACCEPT_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の記録そのもの。止めると同意できない' },
@@ -93,6 +97,12 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
   { path: '/api/auth', match: 'prefix', reason: 'auth_flow', note: 'ログイン・Cookie の同期・ネイティブ認証ブリッジのコード。認証の途中' },
   { path: '/api/account/delete', match: 'exact', reason: 'leave_service', note: '退会。同意を取り下げる権利 (凍結中も通す 2 本と同じ)' },
   { path: '/api/account/export', match: 'exact', reason: 'leave_service', note: '個人データの書き出し。同上' },
+  {
+    path: PUSH_TOKEN_CLAIM_API_PATH,
+    match: 'exact',
+    reason: 'device_cleanup',
+    note: '通知のトークンの claim。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。止めると前の利用者宛ての通知がこの端末に届き続ける (凍結中・メンテナンス中も通すのと同じ理由)',
+  },
   { path: '/api/contact', match: 'exact', reason: 'contact', note: '同意しない人の連絡の窓口 (データの削除の依頼もここから)' },
   { path: '/api/log', match: 'exact', reason: 'telemetry', note: '画面・端末の失敗の報告の受け口。運用のログ' },
   { path: '/api/feature-flags', match: 'exact', reason: 'client_status', note: '画面が前もって状態を知る窓口 (メンテナンス中も通す)' },

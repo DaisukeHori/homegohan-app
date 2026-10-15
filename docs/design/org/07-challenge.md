@@ -419,7 +419,7 @@ sequenceDiagram
 |------|------|
 | 種類 | `breakfast_rate` / `veg_score` / `cooking_rate` の 3 つだけ。`steps` / `weight_loss` / `custom` は作成も開始も参加もできない (API は 400 / 409 `CHALLENGE_TYPE_DISABLED`) |
 | 列 | `organization_challenges` (`start_date` / `end_date` は date、`status` は draft / active / completed / cancelled)、`organization_challenge_participants` (`current_value` / `rank` / `joined_at`)。列は増やしていない |
-| 参加 | 任意 (`auto_join` は無い)。`POST /api/org/challenges/[id]/join` は本人の権限で INSERT し、#1238 のポリシー (本人・自分の組織・進捗 0・順位なし) が DB 側でも確かめる。`DELETE` は本人の行だけ消す。部署を限定したチャレンジは、その部署のメンバーだけ |
+| 参加 | 任意 (`auto_join` は無い)。`POST /api/org/challenges/[id]/join` は本人の権限で INSERT し、INSERT ポリシー「Users can join challenges」(#1238 の本人・自分の組織・進捗 0・順位なしに、#1600 で開催中・使える 3 種類・終了日 (JST) を過ぎていない・部署の限定を足した。migration `20261016170000_org_challenge_min10_join_policy.sql`) が DB 側でも API と同じ条件を確かめる (利用者の JWT で PostgREST に直接 INSERT しても、別の部署向け・下書き・終わったチャレンジには参加行を作れない)。`DELETE` は本人の行だけ消す。部署を限定したチャレンジは、その部署のメンバーだけ |
 | 計算 | `update_org_challenge_progress(p_now)` (SECURITY DEFINER・service_role のみ)。pg_cron のジョブ `update-org-challenge-progress` が毎日 18:10 UTC (03:10 JST) に呼ぶ。毎回、期間全体を計算し直す |
 | 期間 | JST の暦日。開始日から `min(終了日, 前日)` まで (今日は含めない)。参加した日より前の記録も、期間内なら数える |
 | 食事として数える記録 | `planned_meals.is_completed = true` で `mode` が `skip` でないもの。ハンズオンのお試しの記録 (`user_daily_meals.is_sandbox`) は数えない (比較ランキングの集計 calculate-segment-stats の planned_meals の読み込みと同じ。#1500)。運営が隠した食事 (`hidden_at`。#1101 / #1445) は `meals` / `recipes` の列で、この集計が読む `planned_meals` / `user_daily_meals` には無い。集計は `meals` を読まない (読むなら `is_sandbox = false` かつ `hidden_at IS NULL` で絞る) |
@@ -429,8 +429,8 @@ sequenceDiagram
 | 順位 | `rank()`。丸めた値で決め、同じ値は同じ順位 (1, 1, 3, ...)。今も組織のメンバーである参加者だけ |
 | 終了 | 終了日 (JST) を過ぎた `active` のチャレンジは、計算のあとで `completed` にする |
 | 参加者に見せるもの | `GET /api/org/challenges/[id]`: 自分の記録・順位と、順位表 (上位 20 人と本人の行。**参加者本人にだけ**)。他人の ID は返さない。表示名は環境変数 `ORG_CHALLENGE_SHOW_NAMES` が有効なときだけ (未設定は「あなた」「参加者」) |
-| 管理者に見せるもの | `GET /api/org/challenges`: 参加者数と平均だけ。**参加者が 5 人に満たない間は参加者数を、集計が済んだ参加者が 5 人に満たない間は平均を返さない** (DB の関数 `get_org_challenge_aggregates` が決める。メンバー向けの API も同じ関数) |
+| 管理者に見せるもの | `GET /api/org/challenges`: 参加者数と平均だけ。**参加者が 10 人に満たない間は参加者数を、集計が済んだ参加者が 10 人に満たない間は平均を返さない** (DB の関数 `get_org_challenge_aggregates` が決める。メンバー向けの API も同じ関数。#1600 で 5 → 10 人。要件書 §6.4 の匿名化集計の最低人数。migration `20261016170000_org_challenge_min10_join_policy.sql`)。既知の限界: 集計の差分の攻撃 (参加をやめる・メンバーを外す前後の平均の差から 1 人の値を逆算する) は残る。#1688 で設計する |
 | RLS | `organization_challenge_participants` の SELECT は本人の行だけ (以前は同じ組織の全員)。DELETE は本人の行だけ。UPDATE のポリシーは無い (進み具合を書くのは DB の関数だけ) |
 | 画面 | メンバー: `/challenges` (一覧)・`/challenges/[id]` (詳細・参加・やめる・順位表)。ホーム画面に入り口 (アプリの WebView からも開ける)。管理者: `/org/challenges` (集計) |
 
-未決: 参加者どうしに表示名を見せてよいか (社内の方針の確認待ち。決まるまで出さない)。
+参加者どうしの表示名: 見せない (#1600。環境変数 `ORG_CHALLENGE_SHOW_NAMES` は本番に入れない)。

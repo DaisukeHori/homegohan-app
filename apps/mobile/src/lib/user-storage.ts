@@ -35,6 +35,13 @@ const STATIC_USER_SCOPED_KEYS: readonly string[] = [
  */
 const PUSH_TOKEN_VALUE_KEY_PREFIX = "push_token_value_v1";
 
+/*
+ * ログアウトの掃除で消さない、端末のもの (利用者のデータではない。#1636):
+ *   - push_token_release_pending_v1 (pushTokenRelease.ts): セッション無しで消せなかった user_push_tokens の行の宛先の控え。
+ *     次の利用者がログインしても、前の利用者の行を消し終えるまで残す (消すと前の利用者宛ての通知がこの端末に届き続ける)
+ *   - 端末の秘密の値 (pushInstallSecret.ts。AsyncStorage ではなく保管庫): 同じ端末の利用者がみな使う
+ */
+
 /**
  * ユーザー ID をサフィックスに持つキーのプレフィックス一覧。
  * 実際のキーは `${prefix}:${userId}` の形式で保存される。

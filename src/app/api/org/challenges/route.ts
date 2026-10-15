@@ -18,7 +18,7 @@ import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 //
 // #1132: 管理者に見せるのは集計 (参加者数と平均) だけ。参加者個人の進み具合・順位は返さない (#1132 の方針)。
 //   - 集計は DB の関数 get_org_challenge_aggregates で数える。参加者の行は本人にしか読めない (RLS) ため、認可のあとに service_role で呼ぶ
-//   - 最小人数 (DB の関数が決める。5 人) に満たない間は、値を返さない。少人数だと、誰が参加しているか・誰の値かを推測されやすいため
+//   - 最小人数 (DB の関数が決める。10 人。#1600) に満たない間は、値を返さない。少人数だと、誰が参加しているか・誰の値かを推測されやすいため
 //       参加者が最小人数に満たない: participantCount = null
 //       集計が済んだ参加者が最小人数に満たない: aggregate.averageValue = null (aggregate.visible = false)
 //   - 作成できるのは、食事の記録から計算できる種類 (breakfast_rate / veg_score / cooking_rate) だけ。

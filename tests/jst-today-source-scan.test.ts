@@ -682,6 +682,14 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     count: 1,
     reason: '最近の AI セッション数の 30 日前の今の時刻 (今からの相対時刻)。暦日ではない',
   },
+  {
+    file: 'supabase/functions/_shared/hidden-content-purge.ts',
+    rule: 'G',
+    count: 2,
+    reason:
+      '運営が隠したコンテンツの完全削除 (#1538) の期限 (hidden_at)。実行した時刻のちょうど 90 日前 (今からの相対時刻) で、' +
+      '読むときと消すときの 2 回とも同じ期限で絞る。保管期間は隠した時刻から数えるので、暦日ではない',
+  },
 ];
 
 const sources = listProductionSources();

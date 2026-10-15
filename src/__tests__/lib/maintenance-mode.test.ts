@@ -77,6 +77,8 @@ describe('isMaintenanceExemptPath', () => {
     '/api/auth/native-bridge/code',
     '/api/cron/process-menu-queue',
     '/api/feature-flags',
+    // #1636: 通知のトークンの claim (端末の後片付け)。この 1 本だけ
+    '/api/push-tokens/claim',
   ])('%s はメンテナンス中でも通す', (path) => {
     expect(isMaintenanceExemptPath(path)).toBe(true);
   });
@@ -113,6 +115,14 @@ describe('isMaintenanceExemptPath', () => {
     '/api/legal/accept',
     '/api/signup',
     '/api/super-admin/flags',
+    // #1636: claim の 1 本だけを通す。似たパス・release・下のパスは止める
+    '/api/push-tokens',
+    '/api/push-tokens/',
+    '/api/push-tokens/claim/',
+    '/api/push-tokens/claimx',
+    '/api/push-tokens/claim/extra',
+    '/api/push-tokens/release',
+    '/API/push-tokens/claim',
   ])('%s は止める', (path) => {
     expect(isMaintenanceExemptPath(path)).toBe(false);
   });
