@@ -1,17 +1,5 @@
-import path from "path";
-import { fileURLToPath } from "url";
-
-import js from "@eslint/js";
-import { FlatCompat } from "@eslint/eslintrc";
+import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const compat = new FlatCompat({
-  baseDirectory: __dirname,
-  recommendedConfig: js.configs.recommended,
-});
 
 /** #1621 React 19 で非推奨の import の説明 (no-restricted-imports の文言に続けて出る) */
 const REACT_DOM_TEST_UTILS_MESSAGE =
@@ -27,7 +15,9 @@ const REACT19_DEPRECATED_DYNAMIC_MESSAGE =
 const REACT19_DEPRECATED_MODULE_SELECTOR = "/^(?:react-dom\\x2Ftest-utils|react-test-renderer(?:\\x2F.*)?)$/";
 
 const config = [
-  ...compat.extends("next/core-web-vitals"),
+  // #1621 Next 16: eslint-config-next 16 は flat config を直接出す (ESLint 9 が要る)。Next 15 までの FlatCompat 経由の
+  // 読み込み (compat.extends("next/core-web-vitals")) は使わない。
+  ...nextCoreWebVitals,
   {
     // next/core-web-vitals は @typescript-eslint プラグインを登録しないため、
     // `// eslint-disable-next-line @typescript-eslint/no-xxx` 等のインライン
