@@ -2,21 +2,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { buildOrgSettingsUpdateBody, orgSettingsFormValuesOf, type OrgSettingsData } from "@homegohan/shared";
 
 import { Card, Button, SectionHeader, StatusBadge, LoadingState, EmptyState } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
 import { colors, spacing } from "../../../src/theme";
 
-type Org = {
-  id: string;
-  name: string;
-  plan: string | null;
-  industry: string | null;
-  employeeCount: number | null;
-  contactEmail: string | null;
-  contactName: string | null;
-};
+// GET / PUT /api/org/settings は { data: 組織の設定 } を返す (snake_case)。送る本文は @homegohan/shared の
+// buildOrgSettingsUpdateBody だけで作る (route が受け取るキーとの一致は tests/org-settings-keys.test.tsx が検査する。
+// #1735: 以前は route が知らない camelCase のキーを送り、捨てられても「保存しました」と出していた)
+type Org = OrgSettingsData;
 
 export default function OrgSettingsPage() {
   const router = useRouter();
@@ -36,13 +32,14 @@ export default function OrgSettingsPage() {
     setError(null);
     try {
       const api = getApi();
-      const res = await api.get<{ organization: Org }>("/api/org/settings");
-      setOrg(res.organization);
-      setName(res.organization.name ?? "");
-      setIndustry(res.organization.industry ?? "");
-      setEmployeeCount(res.organization.employeeCount ? String(res.organization.employeeCount) : "");
-      setContactEmail(res.organization.contactEmail ?? "");
-      setContactName(res.organization.contactName ?? "");
+      const res = await api.get<{ data: Org }>("/api/org/settings");
+      const values = orgSettingsFormValuesOf(res.data);
+      setOrg(res.data);
+      setName(values.name);
+      setIndustry(values.industry);
+      setEmployeeCount(values.employeeCount);
+      setContactEmail(values.contactEmail);
+      setContactName(values.contactName);
     } catch (e: any) {
       setError(e?.message ?? "取得に失敗しました。");
     } finally {
@@ -56,16 +53,15 @@ export default function OrgSettingsPage() {
 
   async function save() {
     if (!org || isSubmitting) return;
+    const built = buildOrgSettingsUpdateBody({ name, industry, employeeCount, contactEmail, contactName });
+    if (!built.ok) {
+      Alert.alert("保存失敗", built.message);
+      return;
+    }
     setIsSubmitting(true);
     try {
       const api = getApi();
-      await api.put("/api/org/settings", {
-        name: name.trim() || org.name,
-        industry: industry.trim() || null,
-        employeeCount: employeeCount.trim() ? Number(employeeCount.trim()) : null,
-        contactEmail: contactEmail.trim() || null,
-        contactName: contactName.trim() || null,
-      });
+      await api.put("/api/org/settings", built.body);
       Alert.alert("保存しました", "組織設定を更新しました。");
       await load();
     } catch (e: any) {
