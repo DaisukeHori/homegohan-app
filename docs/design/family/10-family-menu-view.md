@@ -1,9 +1,9 @@
 # 週間献立の「家族の表示」— 家族の共有の献立を見る (#1584 の 1)
 
-> 版: v1.1 (2026-10-16 設計ゲート R1 の修正) / Issue: #1584 (`家族の表示の切り替えが献立を変えない・…`) の 1
+> 版: v1.2 (2026-10-16 設計ゲート R2 の修正) / Issue: #1584 (`家族の表示の切り替えが献立を変えない・…`) の 1
 > 位置づけ: 週間献立の画面 (`src/app/(main)/menus/weekly/page.tsx`) の家族の表示の切り替え (`useFamilyView` / `FamilyViewSwitcher`) に「選んだ家族の献立を見る中身」を足す設計の正典。範囲の正本は Issue #1584 の本文とコメント (2026-10-15 のオーナーの選択「(1) 週間献立の家族の表示は、設計して作ります (家族の共有の献立を見る中身。設計ゲートから)」)。残りの 2 (承諾時に名前を写す) は PR #1607 で完了。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` の active は 0 件・2026-10-16 実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-16 初版。v1.1 2026-10-16 R1 の指摘を反映 (生成型と `FamilyMenuRpcRow` の代入は片方向・e2e の spec は `e2e-local.yml` にも足す・週を移る間は前の週の応答を使わない・時間で取り直す契機は作らない・切り替えの適用で家族の一覧も読み直す・相手の退会 (アカウントの削除) を表に足す)。
+> 改定履歴: v1.0 2026-10-16 初版。v1.1 2026-10-16 R1 の指摘を反映 (生成型と `FamilyMenuRpcRow` の代入は片方向・e2e の spec は `e2e-local.yml` にも足す・週を移る間は前の週の応答を使わない・時間で取り直す契機は作らない・切り替えの適用で家族の一覧も読み直す・相手の退会 (アカウントの削除) を表に足す)。v1.2 2026-10-16 R2 の指摘を反映 (行を開いたときの画像は `SignedPhotoImage` で描き、食事写真・冷蔵庫写真のバケットの URL は描かない (`familyMenuImageUrl`)・既存の走査テスト `tests/signed-photo-display-scan.test.ts` の追随を足す)。
 
 ---
 
@@ -33,6 +33,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 - 家族で 1 つの献立を AI で生成する「共有献立」(`family/05-shared-menu-engine.md`・`family/01-data-model.md` §4.4 の `family_shared_menus`・`family/08-rls-policies.md` §7)。origin/main にその表も API も無く (git grep 0 件)、本書は作らない (§7.1 の代替案 A)。
 - 他のメンバーの献立の編集・自分の献立への写し (ペースト)。本書は読むだけ (§7)。
 - アカウントの無い子供のメンバー (`family_members.user_id IS NULL`) の献立。保存先が無い (`user_daily_meals.user_id` は NOT NULL) ので出ない (§8 P-6・Q-2)。
+- 他のメンバーの写真 (食事写真・冷蔵庫写真のバケット `meal_photos` / `fridge-images` の URL。AI の画像生成の画像も `fridge-images` の `generated/…`) を家族の行に出すこと。署名の API (`POST /api/storage/signed-urls`) は本人の写真にだけ署名する (`src/lib/photo-storage-signing.ts`・#1365) ので、本書はその決まりを広げず、家族の行ではそれらの画像を描かない (§16.2・Q-8)。
 - 共有の同意 (`share_menu`) の設定画面と API (`PATCH /api/family/members/me/share`・`update_my_share_settings`)。今のまま使う。
 - `apps/mobile/app/menus/weekly/index.tsx` (ネイティブの週間献立の画面。2,435 行)。献立タブは Web の `/menus/weekly` を WebView で開く (`apps/mobile/app/(tabs)/menus.tsx`・`NATIVE_APP_TABS`) ので本書の対象は Web の画面だけ。ネイティブの画面に残る家族の欠陥は #1610 (Q-5)。
 - リアルタイムの反映 (相手が献立を変えた瞬間に更新する) と、時間がたったら自動で取り直す仕組み (timer・画面が前面に戻ったときの取り直し)。取り直しの契機は §10 のとおり (切り替えの適用・[もう一度]・cache の無い週への移動・画面の開き直し)。自分の献立の `weekDataCache` (page.tsx :1961-2011) も時間では取り直さず、週の移動のときに TTL で cache を使うかを決めるだけなので、それと同じにする。
@@ -85,6 +86,9 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | モバイルアプリの献立タブは Web の `/menus/weekly` を WebView で開く。利用者別の localStorage (接頭辞 `familyViewState_`) はログアウトで Web・WebView とも消す (#1599) | `apps/mobile/app/(tabs)/menus.tsx`・`packages/shared/src/native-app-tabs.ts`・`packages/shared/src/user-scoped-storage.ts:36-48` |
 | `user_daily_meals` / `planned_meals` を利用者のクライアントで読むファイルは src・lib に **29 本** ある (`from('planned_meals')` / `from('user_daily_meals')` の grep)。多くは `user_id` の絞りを RLS に頼る | §7.2 の根拠 |
 | 索引: `idx_user_daily_meals_user_date (user_id, day_date)`・`idx_planned_meals_daily_meal (daily_meal_id)`・`idx_family_members_family`・`idx_family_members_user` | migration :8338・:8170・:7854・:7862 |
+| 保存された写真の URL の表示: 画面は `SignedPhotoImage` (`src/components/photo/SignedPhotoImage.tsx`。中で `useSignedPhotoUrl`) を使う。食事写真・冷蔵庫写真のバケットの URL (`isPhotoStorageUrl` が真) は `POST /api/storage/signed-urls` に問い合わせ、サーバーは本人の写真 (パスに本人の user_id・または `generated/<本人の献立の id>/…`) にだけ署名し、他人の写真は null (= 表示しない・`notOwned` の数を warn のログに残す)。バケットの外の URL はそのまま `next/image` で表示する | `src/hooks/useSignedPhotoUrl.ts:20-47`・`src/app/api/storage/signed-urls/route.ts:64-80`・`src/lib/photo-storage-signing.ts:8-15`・`supabase/functions/process-meal-image-jobs/index.ts:26` (`STORAGE_BUCKET = "fridge-images"`) |
+| 走査テスト `tests/signed-photo-display-scan.test.ts` は、`src`・`apps/mobile/app`・`apps/mobile/src` の本番の .tsx (`__tests__` を除く) の JSX の `Image` / `img` の `src` / `source` の式の文字列が `/(image_?url\|photo_?url\|content_?url)/i` に当たると赤にする (例外は `ALLOWED` の 4 ファイル。例外に足すのは実際に該当する書き方があるファイルだけ) | `tests/signed-photo-display-scan.test.ts:24-39`・`:91-99` |
+| 本番の `planned_meals.image_url` は 747 行のうち空か NULL が 735、食事写真・冷蔵庫写真のバケットの URL が 12、それ以外の URL が 0 (2026-10-16 実測) | 本番の読み取り |
 | e2e `tests/e2e/family/01-invite-accept-share.spec.ts` は、承諾した人の週間献立に切り替え (「家族全員」「2人」・代表者の名前) が出るところまでを確かめる | :152-163 |
 | e2e の spec の一覧は 2 か所にある: `.github/workflows/e2e-local.yml` の `npx playwright test` の引数 (family/01 は :124) と `scripts/local-ci.sh` の `PW_ARGS` (:171)。`tests/local-ci-workflow-sync.test.ts` が 2 つを同じ語の並びで照合する (片方にだけ足すと赤) | `e2e-local.yml:116-135`・`local-ci.sh:171`・`tests/e2e-tour-contract.test.ts:19-20` |
 | 家族の一覧 (`loadFamilyData`) は画面を開いたとき 1 回だけ読む (`useEffect(…, [])`)。family_id が無ければ何もせずに終わる | `page.tsx:1115-1141` |
@@ -104,7 +108,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | R-3 | 自分の献立は切り替えに関わらず常に出て、今までどおり編集できる。家族の献立は読み取り専用 (編集・削除・並べ替え・完了のボタンを出さない) | Option E (membership/00 §1.2)・§7 | §16.2 |
 | R-4 | 家族でない人・退出・除名・退会 (アカウントの削除) したメンバー・解散した家族の献立は、API を直接呼んでも返らない。未認証は 401、anon は関数を実行できない | family/CLAUDE.md「RLS 厳格」・#1103 | §8・§11.2・§19.3 |
 | R-5 | 既存の RLS を広げない。他の 29 の読み取り経路の結果を変えない | §3.1・§7.2 | §11 |
-| R-6 | 家族の献立で返す列は画面に要るものだけ (メモ・生成のメタデータ・栄養の詳細は返さない)。砂場 (`is_sandbox`) の献立は返さない | プライバシー・family/09 | §11.1・§13 |
+| R-6 | 家族の献立で返す列は画面に要るものだけ (メモ・生成のメタデータ・栄養の詳細は返さない)。砂場 (`is_sandbox`) の献立は返さない。他のメンバーの写真 (食事写真・冷蔵庫写真のバケットの URL) は家族の行に描かない (署名の決まり #1365 を広げない) | プライバシー・family/09・`src/lib/photo-storage-signing.ts` | §11.1・§13・§14 (`familyMenuImageUrl`)・§16.2 |
 | R-7 | 空のとき (相手に献立が無い / 共有していない / アカウントが無い / 家族に居ない) と権限が無いときの表示を決める | 仕様の「決めること」 | §8・§16.2 |
 | R-8 | 切り替えの部品の名前は家族の 4 画面と同じ経路 (`GET /api/family/members/names`) で出す。無ければ「名前未設定」 | Issue コメント・family/02 §5.8 | §16.3 |
 | R-9 | モバイルアプリ (WebView) でも同じに動く。利用者別の localStorage はログアウトで消える (既存) | mobile/01 §3.2・#1599 | §16.4 |
@@ -114,7 +118,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | R-13 | マジックナンバーは名前つきの定数に、`as any` は書かない | 共通ガード | §12・§13 |
 | R-14 | 既存の番兵 (走査テスト・契約テスト) に追随する | 共通ガード | §21 |
 
-## 5. ユーザーシナリオ (19 本)
+## 5. ユーザーシナリオ (20 本)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -137,6 +141,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | S-17 | 3 人家族で「カスタム」で 2 人だけ選ぶ | 選んだ 2 人の行だけ出る。選ばなかった人は注記にも出ない |
 | S-18 | 夫が献立を作り直す | 妻の画面は次の取り直し (切り替えの適用・[もう一度]・cache の無いか TTL を超えた週への移動・画面の開き直し) で変わる。リアルタイムではなく、同じ週を開いたままなら時間がたっても取り直さない |
 | S-19 | 夫 (代表者でない) が退会する (アカウントの削除) | 夫の `family_members` の行と献立は CASCADE で消える。妻の次の取得から API は夫を返さず、切り替えの適用か画面の開き直しで切り替えからも消える (読み直すまでは S-6 と同じく注記「共有していません」)。localStorage に残った夫の id は無視する。代表者は削除できない (先に譲渡か解散) |
+| S-20 | 夫の献立に AI の画像生成の画像 (`fridge-images` の `generated/<夫の献立の id>/…`) があり、妻が家族の行を押して開く | 料理の名前は出るが画像は出ない (夫の写真は妻には署名されないので描かない)。署名の API は呼ばない。バケットの外の URL (例: `images.unsplash.com`) なら画像が出る |
 
 ## 6. 構想 (相 2) — 構造と、全シナリオのトレース
 
@@ -182,6 +187,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | S-17 | `preset: 'custom'` → others = `visible_member_ids` ∩ 既知 − 自分。注記も others だけが対象 |
 | S-18 | 取り直しの契機 (§10: 適用・[もう一度]・cache の無いか TTL を超えた週への移動・開き直し) 以外では変わらない。hook の effect は deps (`enabled`・`key`・`tick`) が変わったときにだけ走り、timer を持たない。設計どおり |
 | S-19 | 夫のアカウントを消す → `family_members_user_id_fkey1` (CASCADE) で夫の行が消え、`user_daily_meals` → `planned_meals` も CASCADE で消える → visible_members に居ない (行が無い) → 応答に居ない。一覧を読み直すまでは夫は others に居るので `notSharing`。読み直すと一覧に居ない → others から外れる |
+| S-20 | 妻が夫の行を押す → 行の state が開く (T-18) → `familyMenuDishNames(meal.dishes)` を箇条書き → `familyMenuImageUrl(meal.image_url)`: `isPhotoStorageUrl` が真 (`fridge-images`) なので null → 画像の要素を描かない (`SignedPhotoImage` も描かないので署名の API を呼ばない)。バケットの外の URL なら `SignedPhotoImage` に渡し、`useSignedPhotoUrl` がそのまま返して `next/image` が表示する |
 
 ## 7. 構造裁定 (相 3・1 回だけ)
 
@@ -243,6 +249,14 @@ V の側:
 | `self` | 空 (API を呼ばない) |
 | `self_partner` / `self_children` / `children_only` / `custom` | `visible_member_ids` ∩ active な全員の id − 自分 (未知の id は捨てる) |
 
+行を開いたときの画像 (`meal.image_url`。応答の値は DB の値のまま。§16.2):
+
+| `image_url` | `familyMenuImageUrl` | 画面 | 署名の API |
+|---|---|---|---|
+| NULL / `''` | null | 画像を描かない (料理の名前だけ) | 呼ばない |
+| 食事写真・冷蔵庫写真のバケットの URL (`isPhotoStorageUrl` が真。T 本人の写真・AI の画像生成の画像) | null | 画像を描かない (料理の名前だけ)。T の写真は V には署名されない (#1365) ので、描いても出ない | 呼ばない |
+| それ以外の URL (バケットの外) | その URL | `SignedPhotoImage` (そのまま `next/image` で表示。許可するホストは `next.config.mjs` の `images.remotePatterns` のまま) | 呼ばない (`useSignedPhotoUrl` がそのまま返す) |
+
 ## 9. ② 状態比較表 (現行 vs 設計後)
 
 | 面 | 現行 | 設計後 |
@@ -255,6 +269,7 @@ V の側:
 | `user_daily_meals` / `planned_meals` の RLS | own の ALL 1 本ずつ | 変えない |
 | `share_menu` の消費先 | 無い (設定できるだけ) | `family_menu_visible_members()` が読む |
 | 砂場の献立 | 本人の画面には出る | 家族には出ない |
+| 他のメンバーの写真 (食事写真・冷蔵庫写真のバケットの URL) | 見る経路が無い | 家族の行に描かない (`familyMenuImageUrl` が null)。バケットの外の URL だけ `SignedPhotoImage` で描く |
 | 空のとき | (該当なし) | 注記 3 種 + エラー 1 種 + 読み込み中 1 行 (§16.2)。注記は hook の `status` だけで出し分ける |
 | モバイル (WebView) | 同じ画面 (切り替えは効かない) | 同じ画面 (効く) |
 | e2e | 切り替えに 2 人出るまで | + 相手の献立の行が出る・共有オフで消える (§19.5) |
@@ -283,6 +298,7 @@ V の側:
 | T-15 | V∈F, T∈F, share=on | T のアカウントが凍結される | 変化なし (P-8) | — | 出たまま |
 | T-16 | V∈F, T∈F (T は代表者でない) | T が退会する (アカウントの削除) | T の `family_members` の行と献立が消える (CASCADE)。T∉members (次の取得から)・T∉F (一覧を読み直したとき) | T が代表者なら削除が 409 で止まる (`account-deletion.ts:256-269`) | 次の取得で行が消え、読み直すまでは注記「共有していません」。読み直すと切り替えからも消える (T-5 と同じ) |
 | T-17 | `loading` (週を移った直後・前の週の応答あり) | 応答を待つ | `ready` / `error` | hook は今の key の応答だけを `data` に返す (前の週の応答は返さない) | 待つ間は読み込み中の 1 行だけ。家族の行も「この日は献立が無い」「共有していない」の注記も出さない |
+| T-18 | 家族の行が閉じている (部品の中の state) | 行を押す / もう一度押す | 開く / 閉じる | — | 開くと料理の名前の箇条書きと、`familyMenuImageUrl(meal.image_url)` が null でなければ `SignedPhotoImage` の画像 (§8 の画像の表)。閉じると両方を消す。DB・API・cache は変えない |
 
 ## 11. データモデル (migration)
 
@@ -435,7 +451,7 @@ DROP FUNCTION IF EXISTS public.family_menu_visible_members();
 
 ```ts
 import { z } from 'zod';
-import { MEAL_ORDER, type MealType } from '@homegohan/shared';
+import { MEAL_ORDER, isPhotoStorageUrl, type MealType } from '@homegohan/shared';
 import type { FamilyViewState } from '@/hooks/useFamilyView';
 
 // ---- schemas (src/schemas/membership/family-menu.ts) ----
@@ -698,6 +714,19 @@ export function familyMenuDishNames(dishes: unknown): string[] {
   return names;
 }
 
+/**
+ * 家族の行を開いたときに描く画像の URL。描かないなら null。
+ *   - NULL・空: null
+ *   - 食事写真・冷蔵庫写真のバケットの URL (isPhotoStorageUrl が真。AI の画像生成の画像も fridge-images の generated/…): null。
+ *     署名の API (POST /api/storage/signed-urls) は本人の写真にだけ署名する (src/lib/photo-storage-signing.ts・#1365) ので、
+ *     他のメンバーの写真は表示できない。問い合わせても断られるだけなので、SignedPhotoImage を描かず問い合わせもしない
+ *   - それ以外 (バケットの外の URL): そのまま (SignedPhotoImage がそのまま表示する)
+ */
+export function familyMenuImageUrl(imageUrl: string | null): string | null {
+  if (imageUrl === null || imageUrl.length === 0) return null;
+  return isPhotoStorageUrl(imageUrl) ? null : imageUrl;
+}
+
 /** 行の見出し: 料理が 2 品以上なら「{dish_name} (全 n 品)」、そうでなければ dish_name */
 export function familyMenuMealLabel(meal: Pick<FamilyMenuMeal, 'dish_name' | 'dishes' | 'is_simple'>): string {
   const count = meal.is_simple ? 0 : familyMenuDishNames(meal.dishes).length;
@@ -940,7 +969,8 @@ export function FamilyMenuDayNotes(props: FamilyMenuDayNotesProps): JSX.Element 
 |---|---|
 | 1 行 = 1 食 | 左にアバター (`avatar_color` の丸に名前の 1 文字。`FamilyViewSwitcher` と同じ色の決め方)、名前 (`display_name` ?? `FAMILY_MEMBER_NAME_FALLBACK`)、`familyMenuMealLabel(meal)`、右に `calories_kcal` (あれば「n kcal」) と `cooking_time_minutes` (あれば「n 分」)、`is_completed` なら「済」の印 |
 | 順 | `shownIds` の順 (切り替えの順) → `display_order` |
-| 押す | 行を開閉する (開くと `familyMenuDishNames(meal.dishes)` を箇条書き・`image_url` があれば画像)。編集・削除・並べ替え・完了のボタンは**出さない** (R-3)。開閉は部品の中の state |
+| 押す | 行を開閉する (開くと `familyMenuDishNames(meal.dishes)` を箇条書き・下の「画像」の行のとおり画像)。編集・削除・並べ替え・完了のボタンは**出さない** (R-3)。開閉は部品の中の state (T-18) |
+| 画像 | `const shownImageUrl = familyMenuImageUrl(meal.image_url);` が null でないときだけ `<SignedPhotoImage src={shownImageUrl} alt={meal.dish_name} fill sizes="(max-width: 1024px) 100vw, 50vw" className="object-cover" />` を `relative h-40 rounded-2xl overflow-hidden` の枠に入れて描く (`import { SignedPhotoImage } from '@/components/photo/SignedPhotoImage'`。`RecipeModal.tsx` / `ManualEditModal.tsx` と同じ書き方)。`fallback` は渡さない (既定 = 何も出さない)。null なら画像の枠ごと描かない。⛔ `<img>` / `next/image` の `Image` に `meal.image_url` を直接渡さない (`tests/signed-photo-display-scan.test.ts` が赤になる)・その走査の `ALLOWED` に足さない (§21) |
 | data-testid | 行の根に `family-menu-row`、属性 `data-member-id` / `data-meal-id` (e2e が数える) |
 | a11y | 行は `button` (`aria-expanded`)。名前と料理名をテキストで持つ |
 | 既存の部品との関係 | `CollapsedMealCard` / `ExpandedMealCard` は page.tsx の中の関数で、編集の handler を閉じ込めているので使わない。見た目は同じ色 (`_components/colors.ts`) を使う |
@@ -1036,6 +1066,7 @@ sequenceDiagram
 | `groupFamilyMenuRows: NULL の mode / is_simple / display_order / is_completed を既定値にする。未知の meal_type の行と visible_members に居ない行は捨てる` | 守り |
 | `familyMenuDishNames: 配列・オブジェクト・name の無い要素・配列でない値` | 守り |
 | `familyMenuMealLabel: 2 品以上なら「(全 n 品)」、is_simple なら dish_name だけ` | §16.2 |
+| `familyMenuImageUrl: NULL と空は null、meal_photos / fridge-images の公開 URL・署名付き URL・generated/ の URL は null、バケットの外の URL (images.unsplash.com・別のバケット) はそのまま` | §8 の画像の表・S-20 |
 | `fetchFamilyMenu: 200 の正しい本文は ok、401 は unauthorized、400 は invalid、500 と形の違う本文と例外は failed (例外を投げない)` | S-14 |
 | `fetchFamilyMenu: 同じオリジンの相対パス (FAMILY_MENU_API_PATH で始まり、startDate / endDate のクエリを持つ URL) を cache: 'no-store' で呼ぶ` | S-16 (WebView は同じオリジンの Cookie のセッションで通る)・S-18 |
 | `FAMILY_MENU_NOTE_TEXT: 5 つの鍵 (notSharing / noAccount / noMealsToday / loadFailed / loading) を持ち、{name} を持つのは notSharing / noAccount / noMealsToday だけ` | §12・§16.2 |
@@ -1073,7 +1104,7 @@ sequenceDiagram
 
 | ファイル | it |
 |---|---|
-| `src/__tests__/components/membership/family-menu-rows.test.tsx` | `見てよいメンバーの、その区分の食事を切り替えの順に描く` / `行に編集・削除・並べ替え・完了のボタンが無い` / `押すと料理の名前が開き、もう一度押すと閉じる` / `名前が無いメンバーは「名前未設定」` / `display_name が NULL のメンバーに applyFamilyMemberNames でプロフィールの名前「太郎」を当てた一覧を渡すと、行に「太郎」` / `1 行も無ければ何も描かない` |
+| `src/__tests__/components/membership/family-menu-rows.test.tsx` | `見てよいメンバーの、その区分の食事を切り替えの順に描く` / `行に編集・削除・並べ替え・完了のボタンが無い` / `押すと料理の名前が開き、もう一度押すと閉じる` / `開いた行は、バケットの外の image_url なら SignedPhotoImage の画像を描き、fridge-images の generated/ の URL・空・NULL なら画像を描かず fetch (署名の API) を呼ばない` / `名前が無いメンバーは「名前未設定」` / `display_name が NULL のメンバーに applyFamilyMemberNames でプロフィールの名前「太郎」を当てた一覧を渡すと、行に「太郎」` / `1 行も無ければ何も描かない` |
 | 同上 (`FamilyMenuDayNotes`) | `共有していない・子供・この日は献立が無い の注記を名前つきで出す` / `applyFamilyMemberNames で「太郎」を当てたメンバーの注記は「太郎 は献立を共有していません」` / `error のときは読み込めなかった注記と [もう一度] だけを出し、押すと onReload が呼ばれる` / `loading で menu が null なら「家族の献立を読み込んでいます」の 1 行だけ` / `loading で前の応答 (menu) があり、その日に献立の無い shown のメンバーと notSharing のメンバーが居ても、出すのは「家族の献立を読み込んでいます」の 1 行だけ (「この日はありません」「共有していません」を出さない)` / `ready で menu が null (週を移った直後の 1 回の描画) なら「家族の献立を読み込んでいます」の 1 行だけ` / `idle では何も描かない` |
 | `src/__tests__/components/membership/family-view-switcher.test.tsx` | `display_name が無ければ「名前未設定」` / `display_name が NULL のメンバーに applyFamilyMemberNames でプロフィールの名前「太郎」を当てた一覧を渡すと、チップとシートに「太郎」` / `share_menu が false のメンバーに「(献立は非公開)」` / `share_menu が true の members で描いたあと、同じメンバーが false の members (適用で読み直した一覧) で描き直すと、シートに「(献立は非公開)」が出る` / `プリセットの計算は変わらない (self_partner は自分 + 子供でない 1 人)` |
 | `src/__tests__/hooks/useFamilyMenu.test.ts` | `enabled が false なら取らない (idle)` / `同じ範囲は 5 分以内なら取り直さない` / `reload は cache を捨てて取り直し、取り直しの間は同じ範囲の直前の data を返す` / `同じ範囲の取り直しの失敗は error と reason を持ち、その範囲の直前の data を残す` / `範囲が変わると取り直し、新しい範囲の応答が届くまでは data が null (前の範囲の応答を返さない)` / `範囲を戻すと、TTL 内ならその範囲の cache の data を返し取り直さない` / `同じ範囲・同じ enabled のまま時間を TTL の先へ進めても取り直さない (timer を持たない)` / `localStorage と sessionStorage に書かない (cache はメモリだけ。ログアウトの掃除の対象を増やさない)` |
@@ -1153,6 +1184,7 @@ describe('C-4: 生成型 (database.types.ts) の Returns の要素は、その�
 | `packages/shared/src/native-app-tabs.test.ts` | `/menus/weekly` は menus のタブ (:37) | S-16 (献立タブが Web の同じ画面を開く) |
 | `src/__tests__/lib/user-scoped-storage-keys.test.ts` | `familyViewState_<familyId>` をログアウトで消す (:45) | S-16 (Web) |
 | `apps/mobile/__tests__/lib/web-view-user-storage-cleanup.test.ts` | WebView の掃除が `familyViewState_<familyId>` を消す (:149) | S-16 (WebView) |
+| `tests/signed-photo-display-scan.test.ts` | `Image / img の src / source に保存された写真の URL を直接渡していない` (:91)・`例外の一覧は、いまも実際に該当する書き方があるファイルだけ` (:96) | S-20 (`FamilyMenuRows.tsx` も走査の対象。`ALLOWED` に足さない) |
 
 ### 19.8 シナリオとテストの対応
 
@@ -1178,6 +1210,7 @@ describe('C-4: 生成型 (database.types.ts) の Returns の要素は、その�
 | S-17 | §19.1 `visibleOtherMemberIdsOf: custom は…`・`partitionFamilyMenuMembers: …選ばなかった人はどれにも入らない` |
 | S-18 | §19.4 hook `同じ範囲は 5 分以内なら取り直さない`・`reload は cache を捨てて取り直し…`・`同じ範囲・同じ enabled のまま時間を TTL の先へ進めても取り直さない` |
 | S-19 | §19.3 `代表者でないメンバーのアカウントを消す…` / §19.1 `partitionFamilyMenuMembers…` (読み直す前は notSharing) / §19.4 wiring `onChange が … loadFamilyData を呼ぶ` |
+| S-20 | §19.1 `familyMenuImageUrl: …` / §19.4 rows `開いた行は、バケットの外の image_url なら…` / 既存の `signed-photo-display-scan.test.ts` |
 
 ## 20. 新設一覧
 
@@ -1189,7 +1222,7 @@ describe('C-4: 生成型 (database.types.ts) の Returns の要素は、その�
 | 関数 (SQL) | `public.family_menu_visible_members()`・`public.family_menu_planned_meals(date, date)` | migration | A |
 | エラー (SQL) | `FAMILY_MENU_RANGE_INVALID` (P0001) | 関数 | A |
 | ファイル | `src/schemas/membership/family-menu.ts` | Zod 7 つ (`FamilyMenuCalendarDateSchema`・`FamilyMenuMealTypeSchema`・`FamilyMenuMealSchema`・`FamilyMenuDaySchema`・`FamilyMenuMemberSchema`・`FamilyMenuDataSchema`・`FamilyMenuResponseSchema`)・型 4 つ (§13) | A |
-| ファイル | `src/lib/membership/family-menu.ts` | 定数 3 つ・interface 4 つ・関数 10 本 (§14) | A |
+| ファイル | `src/lib/membership/family-menu.ts` | 定数 3 つ・interface 4 つ・関数 11 本 (§14) | A |
 | ファイル | `src/app/api/family/menu/route.ts` | `GET` | A |
 | 定数 | `FAMILY_MEMBER_NAME_FALLBACK` | `src/lib/membership/family-member-names.ts` に追加 | B |
 | ファイル | `src/hooks/useFamilyMenu.ts` | `useFamilyMenu`・`FAMILY_MENU_CACHE_TTL_MS`・型 3 つ | B |
@@ -1231,6 +1264,7 @@ grep の語 = 本書が足す・変える名前。反応する番兵と直し方
 | `page.tsx` | `src/__tests__/app/menus/weekly/static-guard.test.ts`・`date-query-tz-safety`・`add-days-str-tz-safety` | `useState` を足さない・`addDaysStr` と `?date=` の塊を変えない | B |
 | `FamilyViewSwitcher` / `familyViewState_` | `src/__tests__/lib/user-scoped-storage-keys.test.ts`・`apps/mobile/__tests__/lib/web-view-user-storage-cleanup.test.ts` | localStorage のキーを足さない。反応しない | B |
 | `FamilyMemberNamesData` / `fetchFamilyMemberNames` | `src/__tests__/lib/membership/family-member-names.test.ts`・`tests/accept-copies-profile-name-migration-contract.test.ts` (説明の文の走査) | 関数の意味を変えない。`family-member-names.ts` に足すのは定数 1 つ。「承諾のとき…写さない」と書かない | B |
+| `image_url` (JSX) / `src/components/membership/FamilyMenuRows.tsx` | `tests/signed-photo-display-scan.test.ts` (`src` 配下の本番の .tsx の `Image` / `img` の `src` / `source` に `image_url` などの名前を書くと赤・`ALLOWED` は実際に該当するファイルだけ) | 画像は `SignedPhotoImage` だけで描き、`familyMenuImageUrl` が null なら描かない (§16.2)。`<img>` / `Image` に `meal.image_url` を渡さない・`ALLOWED` に足さない。反応しないことを段 B の全件で確かめる | B |
 | `FamilyMemberSchema` | `src/__tests__/schemas/membership-types.test.ts` (Zod と DB の型の整合) | `FamilyMember` の Zod は変えない | — |
 | `family_menu_planned_meals` の `Returns` | `src/__tests__/lib/membership/family-menu-rpc-types.test.ts` (C-4。新設) と route の `groupFamilyMenuRows(members ?? [], rows ?? [], …)` (どちらも tsc の対象) | 生成型 → `FamilyMenuRpcRow` の片方向の代入が通る形で `FamilyMenuRpcRow` を書く (§11.3)。`tests/` に型だけの検査を置かない (`tsconfig.json` の `exclude` に `tests`) | A |
 
@@ -1256,3 +1290,4 @@ grep の語 = 本書が足す・変える名前。反応する番兵と直し方
 | Q-5 | ネイティブの週間献立の画面 (`apps/mobile/app/menus/weekly/index.tsx`) を残すか消すか | 本書は触らない。#1610 と一緒に判断 |
 | Q-6 | 家族の 4 画面の `'名前未設定'` のリテラル 5 箇所を `FAMILY_MEMBER_NAME_FALLBACK` に寄せるか | 本書では変えない (範囲外)。別の小さな PR |
 | Q-7 | 家族の献立の列に `memo` を足すか (本人のメモを家族に見せるか) | 見せない (R-6)。要望があれば `share_menu` と別の同意で |
+| Q-8 | 他のメンバーの写真 (食事写真・冷蔵庫写真のバケット。AI の画像生成の画像を含む) を家族の行に出すか。出すなら署名の決まり (`src/lib/photo-storage-signing.ts`。本人の写真だけ) に「`share_menu` がオンの同じ家族のメンバーの献立の画像」を足す変更になる | 出さない (§0.3・R-6・§16.2)。本番の `image_url` の値は今すべてバケットの URL なので、家族の行に画像は事実上出ない (§3.1)。API の応答の `image_url` は DB の値のまま返す (バケットが公開のあいだは、`share_menu` をオンにしたメンバーの献立の画像の URL を同じ家族の人が受け取る。段 2 で非公開にすると URL だけでは開けない)。応答で null にするかは #1365 の段 2 と一緒に判断 |
