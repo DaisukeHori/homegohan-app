@@ -72,8 +72,9 @@ describe('#1649 プロフィール・管理・運営・組織・サポートの�
     const source = stripComments(read(file));
     expect(source).toMatch(/import\s*\{\s*normalizeProfileName\s*\}\s*from\s*["']@\/lib\/profile-name["']/);
     expect(source).toMatch(/normalizeProfileName\(/);
-    // 保存値を既定の文言で補うだけで画面に出す形 (仮置きの 'Guest' がそのまま出る)
-    expect(source).not.toMatch(/\.nickname\s*(\?\?|\|\|)/);
+    // 保存値を既定の文言で補うだけで画面に出す形 (仮置きの 'Guest' がそのまま出る)。
+    // プロフィールの編集の入力欄 (editForm) は保存値をそのまま出すので除く (下のテストで変えていないことを確かめる)
+    expect(source).not.toMatch(/(?<!editForm)\.nickname\s*(\?\?|\|\|)/);
     // JSX にそのまま差し込む形
     expect(source).not.toMatch(/\{\s*[\w?.]*\.nickname\s*\}/);
     // 頭文字をそのまま取る形
