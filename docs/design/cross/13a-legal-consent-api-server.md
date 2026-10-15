@@ -1,12 +1,14 @@
-# 13. 規約の同意ゲートを /api とモバイルのネイティブの画面にも掛ける (#1442)
+# 13a. 規約の同意ゲートを /api にも掛ける — 核 (サーバー + shared) (#1442)
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート審査中 (v1.0) |
+| Status | 設計ゲート審査中 (v1.1) |
 | Issue | #1442 (親: #1174 の同意ゲート。先例: #1154 の AI 同意の 403・#1030 / #1445 の凍結の API ゲート) |
-| 正典の関係 | 本書は `08-legal-compliance.md` §7.2 (同意ゲート) の**配線を /api とモバイルへ広げる**冊。§7.2 の「対象外に `/api/*`」「モバイルのネイティブの画面は対象外」の記述は、本書のマージで現在形に直す (§6.19) |
+| 分冊 | 本冊 = 核 (段 A: サーバー + `packages/shared`)。配線 (段 B: モバイル) は `13b-legal-consent-mobile.md`。13b は本冊がマージされた後に、本冊の実コードを正として実装する |
+| 正典の関係 | 本冊と 13b は `08-legal-compliance.md` §7.2 (同意ゲート) の**配線を /api とモバイルへ広げる**冊。§7.2 の「対象外に `/api/*`」の記述は本冊のマージで、「モバイルのネイティブの画面は対象外」の記述は 13b のマージで現在形に直す (各冊の §6.19) |
 | 範囲の正本 | 仕様ファイル `scratch/homegohan/specs/spec-d-consent.md` と Issue #1442 の本文 |
 | 読み手 | 実装 (Sonnet 5.5) と敵対レビュー。実装は §6 だけを読んで手を止めずに書けることを完成条件にする |
+| 節番号 | 分冊前の 13 と同じ番号を使う。本冊に無い節 (§3.3・§5.2・§6.6.8〜§6.6.13 など) は 13b にある。両冊にある節番号は、それぞれの冊に関わる行だけを持つ。両方に関わる行は本冊に置く |
 
 ---
 
@@ -16,7 +18,7 @@
 
 - サーバー: `lib/supabase/middleware.ts` の `/api/*` の分岐 (いま凍結とメンテナンスを見ている所) に、同じプロフィールの行で**同意の判定を足す**。未同意 (かつ `LEGAL_CONSENT_ENFORCE=on`) なら **403 `{ error, code: 'LEGAL_CONSENT_REQUIRED' }`** (#1154 の AI 同意と同じ平たい形)。止めないのは**許可リスト** (§6.4) だけ。判定とリストは `packages/shared` の純関数 1 ファイルに置く。
 - 新設 API: **`GET /api/legal/status`** (本人の同意の状況 + 強制中か)。モバイルが起動時と再同意の判定に使う。
-- モバイル: ルートの `Stack` の **`screenLayout`** に 1 枚のゲートを置き、サインイン中で「同意が要る」状態なら、**どの画面の代わりにもネイティブの同意画面**を描く (初期設定より先)。API の 403 を受けたら同じ状態に落とす (改定の再同意)。同意画面はネイティブ (WebView を使わない)。
+- モバイル (13b の範囲): ルートの `Stack` の **`screenLayout`** に 1 枚のゲートを置き、サインイン中で「同意が要る」状態なら、**どの画面の代わりにもネイティブの同意画面**を描く (初期設定より先)。API の 403 を受けたら同じ状態に落とす (改定の再同意)。同意画面はネイティブ (WebView を使わない)。
 
 ### 0.2 分冊判定 (相 1 で実施)
 
@@ -26,7 +28,12 @@
 | 消費先レーン 3 以上 | Web (middleware・route)・shared・モバイルの 3 レーン | トリガー |
 | 共有面 2 つ以上 | `packages/shared` (index の export) と `lib/supabase/middleware.ts` (全リクエストが通る) の 2 つ | トリガー |
 
-**判定: 1 冊・2 段 (核 → 配線) にする。分冊しない。** 理由: 核 (shared の純関数 1 ファイル + middleware の 10 行 + status route) と配線 (モバイル) の間の契約は「1 本の API (`/api/legal/status`) と 1 つのエラーコード (`LEGAL_CONSENT_REQUIRED`) と shared の定数」だけで、表 3 点を 2 冊に割ると同じ表を 2 回書くことになる。段 A (サーバー + shared) を先に実装・レビューし、段 B (モバイル) は段 A の実コード (shared の export) を参照して書く (§6.15)。実装 WF は同じ worktree で段ごとにレビューを挟む。
+**判定: 2 冊 (核 → 配線) に分ける。** 相 1 では「1 冊・2 段 (核 → 配線)」と判定したが、叩き台が 1,669 行になり、叩き台の大きさの関門 (1,500 行) を超えたので、設計書自身の段の境目 (段 A = サーバー + shared / 段 B = モバイル) で 2 冊に分けた (中身の判断・決定・コードは分冊前と同じ)。
+
+- 本冊 (13a) = 核: middleware の `/api` の分岐・判定と許可リスト・403 の本文・`GET /api/legal/status`・`packages/shared` の純関数と文面・Zod の正本・見張りのテスト。
+- 13b = 配線: モバイルの `LegalConsentGate` / `LegalConsentProvider` / `LegalConsentScreen`・起動と初期設定の順・403 での再同意。
+- 2 冊の間の契約は「1 本の API (`/api/legal/status`) と 1 つのエラーコード (`LEGAL_CONSENT_REQUIRED`) と shared の定数・関数」だけ。13b は本冊の実装がマージされた後に、マージ済みの実コード (shared の export) を参照して実装する (§6.15)。
+- 要件行列・シナリオ・トレース・状態表は、両方に関わる行を本冊に置き、13b から参照する。
 
 ### 0.3 一次情報 (origin/main。行番号は 2026-10-15 時点)
 
@@ -41,14 +48,10 @@
 | 同意の記録 API (版が違えば 409。Bearer と Cookie の両方で使う) | `src/app/api/legal/accept/route.ts:42-130` |
 | 同意画面 (Web) と、同意後は `window.location.assign(next)` | `src/app/legal-consent/page.tsx`、`src/app/legal-consent/LegalConsentForm.tsx:53-92` |
 | いま有効な版・判定 | `packages/shared/src/legal-versions.ts:39-94` |
-| モバイルの入口: session あり & 初期設定未完了 → `/onboarding`、完了 → `/(tabs)/home`。同意の確認は無い | `apps/mobile/app/index.tsx:21-22`、`apps/mobile/app/onboarding/index.tsx:17-25`、`apps/mobile/app/(tabs)/_layout.tsx:35-41` |
-| ルートの Stack は index・(public)・(auth)・(tabs)・(org)・(support)・(super-admin) を並べ、app 直下の画面 (health/* ・ai/* など) は自動で登録される | `apps/mobile/app/_layout.tsx:99-107` |
-| API クライアントのエラーの置き換え (429・503) | `apps/mobile/src/lib/api.ts:72-78`、`apps/mobile/src/lib/failed-response.ts:52-55` |
-| AI 同意の 403 をアプリが見分ける形 (`HTTP 403 …: {json}`) | `apps/mobile/src/lib/ai-consent.ts:79-99` |
-| 利用規約・プライバシーポリシーの画面 (アプリ) は PublicPage (本文は Web 版へのリンク) | `apps/mobile/app/(public)/terms.tsx`、`apps/mobile/src/components/PublicPage.tsx` |
-| expo-router 5.1.11 / @react-navigation/core 7.17.2 / native-stack 7.14.12 | `package-lock.json` |
 | ミドルウェアの matcher が `/api` で外すのは `api/health$` だけ | `src/middleware.ts:44`、`tests/health-middleware-exemption.test.ts` |
 | `/api` の route.ts は 202 本 | `src/app/api/**/route.ts` (一覧は本書 §6.4 の許可リスト以外が対象) |
+
+モバイルの一次情報 (入口・ルートの Stack・API クライアント・公開ページ・expo-router の版) は 13b §0.3。
 
 ---
 
@@ -62,6 +65,8 @@
 2. 新規の人は、ネイティブの初期設定 (健康情報の入力) を同意より先に済ませられる。
 3. `/api/*` は直接呼べば同意なしで動く。
 
+1〜2 は 13b、3 は本冊が解決する。
+
 ### 1.2 前提 (仕様ファイルの逐語)
 
 - 今の同意ゲートは、middleware で Web の画面の取得 (GET/HEAD) にだけ掛かる。
@@ -72,9 +77,8 @@
 
 - 規約の文面・版・施行日 (弁護士の確認。`08` §7.2)。
 - 同意の記録の仕組み (`accept_legal_documents`・`terms_acceptances`) は変えない。DB の変更 (migration・RLS) は無い。
-- `LEGAL_CONSENT_NOTICE` (お知らせ) は Web の `(main)` の画面だけのまま。ネイティブにはお知らせを出さない (WebView のタブでは Web のお知らせが見える)。
-- アプリ (Expo) のネイティブのサインアップ画面に同意のチェックを足すこと (`08` §7.2 の残課題のまま。本書のゲートで、登録直後の起動時に同意画面へ回るので、使う前には必ず同意する)。
 - アプリが Supabase (PostgREST) を直接読む経路 (`apps/mobile/src/hooks/useHomeData.ts`・`src/lib/recipeCollections.ts`・`src/lib/pushNotifications.ts`・`app/onboarding/questions.tsx` の `supabase.from(...)`) は、Next の middleware を通らないので本書のゲートの外 (§6.13 の限界・§8)。
+- モバイルだけに関わる対象外 (`LEGAL_CONSENT_NOTICE` をネイティブに出さないこと・ネイティブのサインアップ画面の同意のチェック) は 13b §1.3。
 
 ---
 
@@ -82,8 +86,8 @@
 
 - `docs/design/cross/08-legal-compliance.md` §7.2 (再同意フロー)。
 - `docs/design/cross/04-api-conventions.md` §4 (エラーコード体系。`LEGAL_` の接頭辞は `src/app/api/legal/accept/route.ts` が既に使う)・§5.2 (本文の形: 平たい `{ error, code }`)。
-- `docs/design/mobile/01-architecture.md` §3 (ネイティブ画面の一覧・WebView ハイブリッド)。
 - `docs/design/cross/01-auth-session.md` §14 (認可ヘルパー)。
+- モバイル側の関連要件 (`docs/design/mobile/01-architecture.md` §3) は 13b §2。
 
 ---
 
@@ -98,24 +102,21 @@
 | R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-M2, T-M3, T-SH4 |
 | R-4 | 判定の置き場所は漏れが出ない形 (route ごとに呼び忘れない) | 仕様 1 | T-M1 (全 route の表) |
 | R-5 | 漏れを見張るテスト (全 route の表と実コードの照合) を含め、見張りの限界を明記する | 仕様 1 | §6.13 |
-| R-6 | モバイルは、ログイン後、初期設定より先に同意の状態を確かめ、未同意なら同意画面へ回す | 仕様 2 | T-G1〜T-G5 |
-| R-7 | 今の main のネイティブの画面を実コードで列挙して表にする | 仕様 2 | §3.3 |
 | R-8 | 改定 (版が上がった) の再同意は、既存の版の判定 (`hasAcceptedCurrentLegalDocuments`) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-P3 |
 | R-9 | `ENFORCE` が off のとき・同意の状態を読めないとき (DB 障害) の挙動を理由つきで決める | 仕様 4 | §6.11, T-M5〜T-M8 |
 | R-10 | 既存のテスト・e2e への影響を洗い、結合テストで 403 の専用コードを確かめる | 仕様 5 | §6.14, §6.18 |
 | R-11 | Zod のスキーマ (403 の本文)・ヘルパーの関数のシグネチャ・エラー表・状態遷移表を書く | 仕様 成果物 | §6.1〜§6.8 |
-| R-12 | モバイルのネイティブの同意画面は、Web の同意画面と同じ要件 (必須チェック 2 つ・全文へのリンク・同意しない = ログアウト + 削除の依頼先の案内) | `08` §7.2 同意画面の行 | T-SC1〜T-SC6 |
 | R-13 | `as any`・マジックナンバーを使わない。意味のある数値は名前付き定数 | 共通ガード | lint |
 | R-14 | 凍結 (403 AUTH_ACCOUNT_FROZEN) とメンテナンス (503) の判定の順は変えない。同意はその後 | `middleware.ts:183-241` の既存の順 | T-M10, T-M11 |
 
-### 3.2 ユーザーシナリオ (18 本)
+R-6・R-7・R-12 (モバイルだけ) は 13b §3.1。R-8〜R-11・R-13 はサーバーとモバイルの両方に関わるので本冊に置く。検証の列の T-ML*・T-P*・T-G*・T-SC*・T-RL1・T-API1・T-FR1・T-PT1 は 13b §6.14 の it。
+
+### 3.2 ユーザーシナリオ (18 本のうち、サーバーに関わる 11 本)
+
+モバイルだけで結果が決まる S1〜S4・S12・S13・S18 は 13b §3.2。サーバーとモバイルの両方に関わる S5・S8・S9・S15 は本冊に置く。
 
 | ID | シナリオ |
 |---|---|
-| S1 | 新規登録 (アプリのネイティブのサインアップ) → ログイン → 初期設定の前に同意画面 → 同意 → 初期設定へ |
-| S2 | 既存の利用者 (同意済み) がアプリを起動 → 今までどおりホーム (余計な画面は出ない) |
-| S3 | 既存の利用者 (未同意・ENFORCE=on) がアプリを起動 → 同意画面 → 同意 → 元の入口 (ホーム) |
-| S4 | アプリの同意画面で「同意しない」→ 確認 → ログアウト → ウェルカム画面 (削除の依頼先 = お問い合わせのメール) |
 | S5 | 規約の改定 (版を上げてデプロイ)。アプリを開いたままの利用者が次に API を呼ぶ → 403 → 同意画面 → 再同意 → さっきの画面に戻る |
 | S6 | 未同意の利用者が curl + Bearer で `GET /api/meals` を叩く → 403 `LEGAL_CONSENT_REQUIRED` |
 | S7 | 未同意の利用者が退会 (`POST /api/account/delete`) / 書き出し (`GET /api/account/export`) → 通る (同意を取り下げる権利) |
@@ -123,40 +124,12 @@
 | S9 | DB 障害で `user_profiles` を読めない → API は素通り (route 側の認可へ)。アプリは status を取れず `unknown` → 止めない。DB が戻れば次の API 呼び出しの 403 で同意画面へ |
 | S10 | 凍結中かつ未同意 → 403 `AUTH_ACCOUNT_FROZEN` (凍結が先。同意の 403 は出ない) |
 | S11 | メンテナンス中かつ未同意 (運営ではない) → 503 `MAINTENANCE_MODE` (メンテナンスが先) |
-| S12 | 未同意のセッションが残る端末で、パスワード再設定のリンクを開く → `/auth/reset-password` はゲートの対象外 → 再設定できる → ホームへ移ろうとして同意画面 |
-| S13 | 同意画面 (アプリ) を開いたまま改定 → 同意を送ると 409 → 状況を取り直し、新しい版で画面を描き直す。「更新されました」の案内 |
 | S14 | Web の画面 (SPA) を開いたまま改定 → 画面の中の API 呼び出しが 403 → 画面は本文の固定の文を出す → 次の画面の取得 (GET) で middleware が同意画面へ回す (既存のゲート) |
 | S15 | 同意の列がまだ無い DB (migration の反映前) → 42703 でやり直し、同意ゲートだけ素通り (API も画面も同じ) |
 | S16 | cron (`CRON_SECRET`) / Resend の webhook → 利用者のセッションが無い → 同意の判定に掛からない (許可リストにも載せ、理由を固定する) |
 | S17 | 運営 (admin) が未同意で `/api/admin/users` を呼ぶ → 403 (規約はスタッフにも適用される。Web の画面のゲートと同じ) → 同意後に通る |
-| S18 | 機内モードでアプリを起動 (保存済みのセッション) → status を取れず `unknown` → ネイティブの画面は開く (通信できない案内は今までどおり) → 通信が戻った最初の API 呼び出しが 403 なら同意画面 |
 
-### 3.3 今の main に残るネイティブの画面 (実コードで列挙。R-7)
-
-`apps/mobile/app/` の画面ファイル全部 (2026-10-15 の origin/main。`_layout.tsx` と `+` で始まるものは除く)。WebView = `WebViewScreen` を使う (Web の同意ゲートが WebView の中で効く)。公開 = `PublicPage` (本文は Web 版へのリンク)。**ゲート = 本書のモバイルのゲート (§6.5) の対象か。**
-
-| 区画 | 画面ファイル | パス | 種別 | ゲート | 根拠 |
-|---|---|---|---|---|---|
-| 入口 | `index.tsx` | `/` | ネイティブ (ウェルカム / 振り分け) | 対象 (session があるときだけ描かれ、振り分けの前に同意画面を出す) | `index.tsx:21-22` |
-| (auth) | `(auth)/login.tsx`, `(auth)/signup.tsx` | `/login`, `/signup` | ネイティブ | 対象外 (未ログインの画面。session があれば `(auth)/_layout.tsx:29` がホームへ回す) | `(auth)/_layout.tsx` |
-| (auth) | `(auth)/auth/forgot-password.tsx`, `reset-password.tsx`, `verify.tsx` | `/auth/forgot-password`, `/auth/reset-password`, `/auth/verify` | ネイティブ | 対象外 (認証の途中。Web の `/auth/*` と同じ理由) | `(auth)/_layout.tsx:25-27` |
-| (public) | `(public)/about.tsx`, `pricing.tsx`, `privacy.tsx`, `terms.tsx` | `/about`, `/pricing`, `/privacy`, `/terms` | 公開 (PublicPage) | 対象外 (同意の根拠になる文面と公開の案内。Web の `/terms` `/privacy` と同じ理由) | `PublicPage.tsx` |
-| (tabs) | `(tabs)/home.tsx`, `menus.tsx`, `meals.tsx`, `comparison.tsx`, `profile.tsx` | `/home`, `/menus`, `/meals`, `/comparison`, `/profile` | WebView | 対象 (ネイティブのゲートが先に止める。通っても WebView の中で Web のゲートが効く) | `WebViewScreen` を使う 5 本 |
-| (tabs) | `(tabs)/favorites.tsx`, `health.tsx`, `settings.tsx` | `/favorites`, `/health`, `/settings` | ネイティブ | 対象 | `(tabs)/_layout.tsx:93-115` (タブバーに出さない) |
-| onboarding | `onboarding/index.tsx`, `welcome.tsx`, `questions.tsx`, `resume.tsx`, `complete/index.tsx` | `/onboarding`, `/onboarding/welcome`, `/onboarding/questions`, `/onboarding/resume`, `/onboarding/complete` | ネイティブ (初期設定) | 対象 (R-6: 初期設定より先に同意) | `onboarding/_layout.tsx` |
-| health | `health/blood-tests.tsx`, `challenges.tsx`, `checkups/index.tsx`, `checkups/new.tsx`, `checkups/[id].tsx`, `goals.tsx`, `graphs.tsx`, `insights.tsx`, `record/index.tsx`, `record/quick.tsx`, `record/[date].tsx`, `settings.tsx`, `streaks.tsx` | `/health/...` | ネイティブ | 対象 | app 直下 (group の layout は無い) |
-| ai | `ai/index.tsx`, `ai/[sessionId].tsx`, `ai/important.tsx` | `/ai`, `/ai/[sessionId]`, `/ai/important` | ネイティブ (AI 相談) | 対象 | 同上 |
-| meals | `meals/[id].tsx`, `meals/[id]/edit.tsx` | `/meals/[id]`, `/meals/[id]/edit` | ネイティブ | 対象 | 同上 |
-| recipes | `recipes/index.tsx`, `new.tsx`, `[id].tsx`, `[id]/edit.tsx`, `collections/index.tsx`, `collections/select.tsx`, `collections/[collectionId].tsx` | `/recipes/...` | ネイティブ | 対象 | 同上 |
-| menus | `menus/weekly/index.tsx`, `menus/weekly/request/index.tsx` | `/menus/weekly`, `/menus/weekly/request` | ネイティブ | 対象 | 同上 |
-| その他 | `pantry/index.tsx`, `shopping-list/index.tsx`, `badges/index.tsx`, `profile/nutrition-targets.tsx`, `settings/account.tsx` | `/pantry`, `/shopping-list`, `/badges`, `/profile/nutrition-targets`, `/settings/account` | ネイティブ | 対象 | 同上 |
-| settings | `settings/ai-consent.tsx` | `/settings/ai-consent` | WebView (Web の `/settings/ai-consent`) | 対象 | `settings/ai-consent.tsx` |
-| handson-tour | `handson-tour/index.tsx`, `photo.tsx`, `menu.tsx`, `badges.tsx`, `graduate.tsx` | `/handson-tour/...` | ネイティブ (ツアー) | 対象 (Web は `/handson-tour` を対象外にするが、ネイティブのゲートは画面の代わりに同意画面を描き、同意後に同じ画面へ戻るので、流れが切れる問題が無い) | `handson-tour/_layout.tsx` |
-| (org) | `(org)/org/challenges.tsx`, `dashboard.tsx`, `departments.tsx`, `invites.tsx`, `members.tsx`, `settings.tsx` | `/org/...` | ネイティブ (組織管理) | 対象 | `(org)/_layout.tsx` |
-| (support) | `(support)/support/index.tsx`, `inquiries.tsx`, `inquiries/[id].tsx`, `users.tsx`, `users/[id].tsx` | `/support/...` | ネイティブ (サポート) | 対象 | `(support)/_layout.tsx` |
-| (super-admin) | `(super-admin)/super-admin/index.tsx`, `admins.tsx`, `database.tsx`, `feature-flags.tsx`, `settings.tsx` | `/super-admin/...` | ネイティブ (運営) | 対象 | `(super-admin)/_layout.tsx` |
-
-対象外のパスの一覧 (`MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`。§6.7) は、この表の「対象外」の行 = `(auth)` と `(public)` の画面と一致する。一致はテスト T-ML3 が `apps/mobile/app/(auth)` と `(public)` のファイル名から確かめる。
+ネイティブの画面の一覧 (§3.3。R-7) は 13b §3.3。
 
 ---
 
@@ -174,14 +147,9 @@
   lib/supabase/middleware.ts (/api の分岐)   ← 凍結 → メンテナンス → 同意 の順で判定。deny なら 403 を返す
   src/app/api/legal/status/route.ts          ← GET。本人の行を読んで resolveLegalConsentStatus を返す
   src/lib/legal-consent-api.ts               ← Zod (403 の本文・status の応答)。route とテストが使う
-
-モバイル (段 B)
-  apps/mobile/src/lib/legal-consent.ts        ← 403 の見分け・LegalConsentRequiredError・「要同意」の通知・対象外のパス
-  apps/mobile/src/providers/LegalConsentProvider.tsx ← GET /api/legal/status を user ごとに取り、state を持つ
-  apps/mobile/src/components/legal/LegalConsentGate.tsx   ← ルートの Stack の screenLayout。要同意なら画面の代わりに同意画面
-  apps/mobile/src/components/legal/LegalConsentScreen.tsx ← ネイティブの同意画面 (チェック 2 つ・全文へのリンク・同意しない)
-  apps/mobile/src/lib/api.ts / failed-response.ts         ← 403 LEGAL_CONSENT_REQUIRED → 通知 + 固定の文の例外
 ```
+
+モバイル (段 B) の構造は 13b §4.1。
 
 判定の規則 (サーバー・モバイル共通):
 
@@ -194,10 +162,6 @@
 
 | ID | 走らせた結果 |
 |---|---|
-| S1 | サインアップ → `AuthProvider` が session を持つ → `LegalConsentProvider` が `GET /api/legal/status` (許可リスト → 200) → 行が無いので `accepted: false`、本番は `enforced: true` → `required: true` → state `required` → ルートの Stack の `screenLayout` = `LegalConsentGate` が `index` の代わりに `LegalConsentScreen` を描く (`index.tsx:21` の `/onboarding` への Redirect は描かれない = 初期設定より先) → チェック 2 つ → `POST /api/legal/accept` (許可リスト → 200。`accept_legal_documents` が既定の行を作る) → `refresh()` → `required: false` → state `clear` → Gate が `index` を描く → `profile.onboardingCompletedAt` 無し → `/onboarding` → welcome (`POST /api/onboarding/complete` は同意済みなので通る) |
-| S2 | 起動 → status 200 `required: false` → `clear` → `index` → `/(tabs)/home`。同意画面は出ない。status の 1 回の往復は ProfileProvider の読み取りと並行なので、起動が目に見えて遅くならない |
-| S3 | 起動 → `required: true` → `index` の代わりに同意画面 → 同意 → `clear` → `index` → `/(tabs)/home` |
-| S4 | 同意画面の「同意しない」→ Alert (ご利用いただけない旨・削除の依頼先はお問い合わせのメール) →「ログアウト」→ `signOutOnDevice(user.id, { clearSession, accessToken })` → session null → Gate は session 無しなので children = `index` → ウェルカム画面。provider は user null で state を `clear` に戻す |
 | S5 | 版を上げてデプロイ → アプリの次の `getApi().get('/api/health/records')` → middleware: `hasAcceptedCurrentLegalDocuments` が false → 403 `LEGAL_CONSENT_REQUIRED` → `withFriendlyErrors` が `legalConsentRequiredErrorOf(e)` で見分け、`notifyLegalConsentRequired()` → provider が state を `required` にして `refresh()` → Gate が**いま表示中の画面の代わりに**同意画面 (Stack はそのまま) → 再同意 → `clear` → さっきの画面がそのまま描かれる (Stack の状態を捨てていないので「戻る」も残る)。画面側の catch は `LegalConsentRequiredError` (message = 固定の文) を受けるが、`Alert` を出す画面でも出るのは固定の文だけ |
 | S6 | curl `Authorization: Bearer <JWT>` → middleware は JWT 形式の Bearer を転送 (`middleware.ts:129-130`) → `getUser` → 本人 → `fetchMiddlewareProfile` → 未同意 → `resolveLegalConsentApiDecision` deny → 403 `{ error, code }` + `Cache-Control: private, no-store`。route には届かない |
 | S7 | `/api/account/delete` `/api/account/export` は許可リスト (`leave_service`) → allow → route へ (凍結中も同じ 2 本が通る) |
@@ -205,13 +169,12 @@
 | S9 | `fetchMiddlewareProfile` が `profileError` → 同意の判定を含むブロックを飛ばす (凍結と同じ #348 の fail-open) → route へ (route 自身の `getUser`/DB 失敗は route の 500)。status route は 500 (`internalError`) → モバイルは `unknown` → children を描く。DB が戻った後の API 呼び出しが 403 → S5 の経路で同意画面 |
 | S10 | 既存の凍結判定が先に `return` (403 AUTH_ACCOUNT_FROZEN)。同意の判定には来ない |
 | S11 | 既存のメンテナンス判定 (`maintenanceApiResponse`) が先に `return`。同意の判定には来ない。運営ロールはメンテナンスを通った後に同意の判定を受ける |
-| S12 | pathname `/auth/reset-password` は `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` の `/auth` (前方一致) → Gate は children を描く → 再設定の画面がそのまま使える (`(auth)/_layout.tsx:27` の allowWithSession と同じ画面) → 終わってホームへ `router.replace` → `/home` は対象 → 同意画面 |
-| S13 | 同意画面が持つ版は status の `current` (端末のバンドルの定数ではない) → 開いたまま改定 → `POST /api/legal/accept` が 409 → `httpStatusOfError(e) === 409` → `refresh()` → `current` が新しい版 → 画面は新しい版と施行日で描き直し、`LEGAL_CONSENT_COPY.versionMismatch` を出す → チェックし直して同意 |
 | S14 | Web の画面の `fetch('/api/...')` が 403 (平たい形。`error` は固定の文) → 画面は `data.error` をそのまま出す (`internalError` と同じ理由で文字列) → 次の画面の取得 (GET) で既存の画面のゲートが `/legal-consent?next=...` へ回す。Web の画面に新しい処理は足さない (§8 候補) |
 | S15 | `fetchMiddlewareProfile` が 42703 → 列を除いてやり直し → `legalColumnsAvailable: false` → 同意の判定を飛ばす (凍結・メンテナンスは効く)。status route は select が失敗 → 500 → モバイル `unknown` |
 | S16 | `Bearer <CRON_SECRET>` は JWT 形式ではないので転送されず `getUser` は user null (`middleware.ts:122-130`) → 判定に来ない。許可リストに `/api/cron` (prefix) と `/api/webhooks` (prefix) を `no_user_session` の理由で載せ、テストが固定する |
 | S17 | 運営でも `resolveLegalConsentApiDecision` に役割の分岐は無い → 403 → 運営は同意画面で同意 (Web の画面のゲートも管理者を回す。`middleware-legal-consent.test.ts:529`) → 以後通る |
-| S18 | 起動 → status の fetch が通信失敗 → `unknown` → children → 画面の API 呼び出しも失敗 (今までどおり「通信できません」) → 通信が戻る → 最初の API 呼び出しが 403 → S5 |
+
+S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 
 ---
 
@@ -225,14 +188,7 @@
 | B | route ごとに `requireLegalConsent()` を呼ぶ (#1154 の AI 同意と同じ opt-in) | 202 本の route を触り、呼び忘れが漏れになる。AI 同意は「AI に送る route だけ」なので opt-in が合ったが、本件は「ほぼ全部」なので既定 deny が合う。却下 |
 | C | DB (RLS ポリシー / 関数) で同意を見る | アプリの PostgREST 直読みまで止められる唯一の形だが、全ポリシーと service_role の経路に波及し、本書の範囲 (`/api` とネイティブの画面) を超える。却下 (§8 に残す) |
 
-### 5.2 モバイル側の代替案
-
-| 案 | 中身 | 判定 |
-|---|---|---|
-| A' (採用) | ルートの `Stack` の `screenLayout` に 1 枚のゲート。要同意なら画面の代わりに同意画面 (部品) を描く。同意画面は route ではない | 1 か所で全画面 (group の無い app 直下の画面も) を覆う。Stack を外さないので遷移の状態・deep link・通知からの遷移が残り、同意後は同じ画面に戻る。`usePathname()` が使えるので対象外 (認証の途中・公開ページ) を Web と同じ基準で決められる |
-| B' | `index.tsx`・`(tabs)/_layout`・`onboarding/_layout` などの各 layout で `<Redirect href="/legal-consent" />` | app 直下の画面 (health/* など 40 本) には layout が無く、通知や deep link で直接開けるので漏れる。置き場が増えるほど漏れる。却下 |
-| C' | 同意画面を WebView の `/legal-consent` で開く (AI 同意の `/settings/ai-consent` と同じ) | 同意が済んだことをネイティブに知らせる新しい postMessage と、`next` の扱い、bridge の失敗の経路が増える。同意画面は「チェック 2 つ + 全文へのリンク + 2 つのボタン」で、文面は shared に置けば 2 か所に持たない。却下 |
-| D' | expo-router 5 の `Stack.Protected` | 保護する画面を全部列挙する必要があり (app 直下の画面は自動登録)、B' と同じ漏れ方をする。却下 |
+モバイル側の代替案は 13b §5.2。
 
 ### 5.3 F の問い「縁の発生源を消すより単純な構造は無いか」
 
@@ -250,13 +206,10 @@
 |---|---|---|---|---|
 | 未ログイン | Web 画面 GET | `/login` へ (既存) | 同左 | なし |
 | 未ログイン | `/api` (対象・許可リストとも) | 判定に来ない (user 無し) → route の 401 など | 同左 | なし |
-| 未ログイン | モバイルの画面 | Gate は children (ウェルカム) | 同左 | なし |
 | 未同意 (行なし / NULL / 旧版) | Web 画面 GET | `/legal-consent?next=` (既存) | 通す (NOTICE=on ならお知らせ) | なし |
 | 未同意 | Web 画面 POST | 通す (既存。307 で回さない) | 通す | なし |
 | 未同意 | `/api` 対象 | **403 LEGAL_CONSENT_REQUIRED** | 通す | **新** |
 | 未同意 | `/api` 許可リスト | 通す | 通す | 新 (一覧の固定) |
-| 未同意 | モバイル ネイティブの画面 (対象) | **同意画面 (画面の代わり)** | 通す (`required: false`) | **新** |
-| 未同意 | モバイル 対象外の画面 (`/login` `/signup` `/auth/*` `/terms` `/privacy` `/about` `/pricing`) | 通す | 通す | 新 (一覧の固定) |
 | 未同意 | 初期設定 (Web `/onboarding/*`) | 同意が先 (既存) | 差し戻しだけ | なし |
 | 未同意 | 初期設定 (モバイル `/onboarding/*` + `POST /api/onboarding/*`) | **同意画面が先。API も 403** | 通す | **新** |
 | 同意済み | すべて | 通す | 通す | なし |
@@ -267,6 +220,8 @@
 | メンテナンス + 未同意 (運営以外) | `/api` 対象 | 503 MAINTENANCE_MODE | 同左 | なし (順) |
 | 運営 (admin) 未同意 | `/api/admin/*` `/api/super-admin/*` | 403 LEGAL_CONSENT_REQUIRED | 通す | 新 (役割の例外は作らない) |
 
+モバイルだけの行 (未ログインのモバイルの画面・未同意のネイティブの画面 (対象)・対象外の画面) は 13b §6.1。
+
 ### 6.2 ② 状態比較表 (現行 vs 設計後)
 
 | 面 | 現行 | 設計後 |
@@ -276,11 +231,10 @@
 | 未同意の `/api` 呼び出し | 通る | 403 `{ error, code: 'LEGAL_CONSENT_REQUIRED' }` (許可リスト以外) |
 | 同意の状況を知る API | 無し (画面の HTML か、`GET /api/profile` の列) | `GET /api/legal/status` |
 | `lib/legal-consent.ts` の `EXEMPT_PREFIXES` の `/api` | 画面の判定で対象外 (コメント「各 route が自分で認可する」) | 変えない (画面の判定の対象外のまま。コメントだけ本書のゲートを指すように直す) |
-| モバイルの起動 | session → 初期設定 or ホーム | session → **status を取り、要同意なら同意画面** → 初期設定 or ホーム |
-| モバイルの改定の再同意 | WebView のタブを開いたときだけ Web のゲート | API の 403 で同意画面 (どの画面からでも) |
-| モバイルの 403 の扱い | AI 同意の 403 だけ見分ける | `LEGAL_CONSENT_REQUIRED` も見分け、固定の文の例外にする |
 | 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う) |
 | 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` 2 本 | 変えない。同意の許可リストはこれを含む (テストで固定) |
+
+モバイルの行 (起動・改定の再同意・403 の扱い) は 13b §6.2。
 
 ### 6.3 ③ 状態遷移表 (状態 × 操作 → 遷移先・ガード・副作用)
 
@@ -288,15 +242,11 @@
 
 | 状態 | 操作 | 遷移先 | ガード | 副作用 (サーバー / モバイル) |
 |---|---|---|---|---|
-| anon | ログイン (アプリ) | none / old / ok のどれか (行の中身で決まる) | — | モバイル: `LegalConsentProvider` が status を取る |
 | none / old | `/api` 対象を呼ぶ | 同じ | `enforce` かつ 許可リスト外 | 403 を返す。モバイルは state を `required` にし status を取り直す |
 | none / old | `/api` 許可リストを呼ぶ | 同じ | — | route へ |
 | none / old | `GET /api/legal/status` | 同じ | — | `required: enforced` |
 | none / old | `POST /api/legal/accept` (いまの版) | **ok** | 版が一致 | `accept_legal_documents` (行が無ければ作る)。モバイル: `refresh()` → `clear` → 画面に戻る |
 | none / old | `POST /api/legal/accept` (古い版の値) | 同じ | 版が不一致 | 409。モバイル: `refresh()` → 新しい版で描き直し |
-| none / old | 同意しない (アプリ) | anon | — | `signOutOnDevice`。Web は signOut + 案内 (既存) |
-| none / old | 画面を開く (モバイル・対象) | 同じ | `required` | 同意画面 (画面の代わり) |
-| none / old | 画面を開く (モバイル・対象外) | 同じ | — | 通す |
 | ok | 版が上がる (デプロイ) | **old** | — | 何も起きない。次の API 呼び出しで 403 (モバイル) / 次の画面の取得で同意画面 (Web) |
 | ok | `/api` を呼ぶ | 同じ | — | 通す |
 | none / old / ok | 凍結される | 同じ (同意の状態は変わらない) | — | `/api` は 403 AUTH_ACCOUNT_FROZEN が先 |
@@ -304,6 +254,8 @@
 | unreadable | `/api` 対象を呼ぶ | 同じ | — | 素通り (route の判断へ) |
 | unreadable | status | 同じ | — | 500 → モバイル `unknown` (止めない) |
 | unreadable | DB が戻る | none / old / ok | — | 次の判定から効く |
+
+モバイルだけの行 (アプリのログイン・同意しない・モバイルの画面を開く) は 13b §6.3。
 
 ### 6.4 `/api` の許可リスト (止めない API。理由つき。R-3)
 
@@ -331,7 +283,7 @@
 | `/api/admin/*` `/api/super-admin/*` `/api/support/*` `/api/operator/*` (運営) | 規約はスタッフにも適用される (Web の画面のゲートが管理者も回す。`middleware-legal-consent.test.ts:529`)。役割の例外を作らないほうが一覧が短く漏れない。運営は 1 回同意すれば済む |
 | `/api/onboarding/*` | 初期設定は同意の後 (R-6)。Web の画面のゲートも初期設定の差し戻しより先に同意を見る |
 | `/api/handson-tour/*` と、ツアーが使うサンドボックスの API | Web は `/handson-tour` の画面を対象外にするが、ツアーが呼ぶほかの API (献立の追加など) は止まるので、ツアーの API だけ通しても流れは守れない。ツアーに入る前に同意している (モバイルは画面の代わりに同意画面を描き、同意後に同じ画面へ戻る) |
-| `/api/push-tokens/claim` | 端末の通知トークンの登録。同意前の起動で 403 になるので、`PushTokenRegistrar` の effect に同意の状態を足し、同意が済んだら登録し直す (§6.6.10) |
+| `/api/push-tokens/claim` | 端末の通知トークンの登録。同意前の起動で 403 になるので、`PushTokenRegistrar` の effect に同意の状態を足し、同意が済んだら登録し直す (13b §6.6.10) |
 | `/api/performance/sports` `/api/catalog/products` (公開・準公開のデータ) | 未ログインなら判定に来ない。ログイン済みの未同意の人は同意が先。個別の例外を作らない |
 | `/api/family/invites/[id]/reject` `/api/org/invites/[id]/reject` (認証任意) | 未ログインなら判定に来ない。ログイン済みなら Web の `/invite/*` の画面のゲートが先に同意を取る |
 
@@ -339,7 +291,7 @@
 
 **サーバー** (`lib/supabase/middleware.ts` の `if (isApiRoute)` ブロック): `getSession` → `getUser` → `fetchMiddlewareProfile` (1 クエリ) → ①凍結 (`isAccountFrozen` && !`isFrozenAllowedApiPath`) → 403 → ②メンテナンス → 503 → **③同意** (`legalColumnsAvailable` && `!profileError` && `resolveLegalConsentApiDecision(...) === 'deny'`) → 403 → `supabaseResponse`。③は `try` の外 (①と同じく、プロフィールを読めたときだけ) に置く。
 
-**モバイル** (`apps/mobile/app/_layout.tsx`): `AuthProvider` → `LegalConsentProvider` → `ProfileProvider` → `PushTokenRegistrar` → `NotificationRouter` → `<Stack screenLayout={renderLegalConsentScreenLayout}>`。`LegalConsentGate` は `session` 無し / 対象外のパス / state `clear` `unknown` なら children、`loading` なら `LoadingState`、`required` なら `LegalConsentScreen`。
+**モバイル** の置き場所と順序は 13b §6.5。
 
 ### 6.6 正典コード
 
@@ -429,7 +381,7 @@ export interface LegalConsentExemptApiEntry {
   /** exact = 完全一致 / prefix = そのものか `${path}/` 以下 (似た名前を通さない) */
   readonly match: 'exact' | 'prefix';
   readonly reason: LegalConsentExemptApiReason;
-  /** 人が読む理由 (設計書 13 §6.4 と同じ文) */
+  /** 人が読む理由 (設計書 13a §6.4 と同じ文) */
   readonly note: string;
 }
 
@@ -849,463 +801,7 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 //   →  LEGAL_CONSENT_COPY.declineUnavailable (その後の「ログアウトしました。」は Web だけの文なのでリテラルのまま)
 ```
 
-#### 6.6.8 `apps/mobile/src/lib/legal-consent.ts` (新設。段 B)
-
-```ts
-// tsc:skip — 本書で新設する @homegohan/shared の export を import する RN のモジュール。実装では apps/mobile の tsc の対象
-/**
- * 利用規約・プライバシーポリシーの同意 (#1442): アプリ側の共通の部品。
- *
- *   - サーバーに「同意が必要です」(403 LEGAL_CONSENT_REQUIRED。lib/supabase/middleware.ts の /api の分岐) で止められたことを見分け、
- *     固定の文の例外 (LegalConsentRequiredError) に置き換える。getApi() (src/lib/api.ts の withFriendlyErrors) と
- *     生の fetch (src/lib/failed-response.ts の errorOfFailedResponse) の両方がここを通る
- *   - 止められたことを LegalConsentProvider に知らせる (notify / subscribe)。Provider は state を required にして、
- *     ルートのゲート (LegalConsentGate) が画面の代わりに同意画面を描く
- *   - ゲートの対象外のパス (認証の途中・公開ページ。Web の isLegalConsentExemptPath と同じ基準)
- *
- * AI 同意 (src/lib/ai-consent.ts) と違い、各画面に呼び出しを足さない。止められたら画面の代わりに同意画面が出るので、
- * 画面は自分のエラー表示をそのままにしてよい (出るのは固定の文だけ)。
- */
-import {
-  LEGAL_CONSENT_REQUIRED_MESSAGE,
-  LEGAL_CONSENT_REQUIRED_STATUS,
-  isLegalConsentRequiredBody,
-} from "@homegohan/shared";
-
-// "HTTP 403 Forbidden: {...}" / HTTP/2 で statusText が空の "HTTP 403 : {...}" / 生の fetch の "HTTP 403: {...}" (api-error.ts と同じ形)
-const HTTP_ERROR_PATTERN = /^HTTP (\d{3})[^:]*:\s*([\s\S]+)$/;
-
-/** API クライアントの Error の message から HTTP の状態を読む (読めなければ null)。同意画面が 409 を見分けるのにも使う */
-export function httpStatusOfError(error: unknown): number | null {
-  const message = (error as { message?: unknown } | null | undefined)?.message;
-  if (typeof message !== "string") return null;
-  const match = HTTP_ERROR_PATTERN.exec(message);
-  return match ? Number(match[1]) : null;
-}
-
-/** サーバーに「同意が必要です」で止められたことを表す例外。message は画面にそのまま出せる固定の文 */
-export class LegalConsentRequiredError extends Error {
-  constructor() {
-    super(LEGAL_CONSENT_REQUIRED_MESSAGE);
-    this.name = "LegalConsentRequiredError";
-  }
-}
-
-export function isLegalConsentRequiredError(error: unknown): error is LegalConsentRequiredError {
-  return error instanceof LegalConsentRequiredError;
-}
-
-type Listener = () => void;
-const listeners = new Set<Listener>();
-
-/** 「同意が必要です」で止められたことを Provider に知らせる。購読者が居なければ何もしない */
-export function notifyLegalConsentRequired(): void {
-  for (const listener of listeners) listener();
-}
-
-/** Provider が購読する。戻り値で解除する */
-export function subscribeLegalConsentRequired(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => {
-    listeners.delete(listener);
-  };
-}
-
-/** テスト用: 購読を全部外す */
-export function resetLegalConsentListenersForTests(): void {
-  listeners.clear();
-}
-
-/**
- * API クライアントが投げた Error が 403 LEGAL_CONSENT_REQUIRED なら、Provider に知らせて LegalConsentRequiredError を返す。
- * それ以外 (ほかの 403・JSON でない本文・通信の失敗) は null。例外は投げない
- */
-export function legalConsentRequiredErrorOf(error: unknown): LegalConsentRequiredError | null {
-  if (isLegalConsentRequiredError(error)) return error;
-  if (httpStatusOfError(error) !== LEGAL_CONSENT_REQUIRED_STATUS) return null;
-  const message = (error as { message: string }).message;
-  const match = HTTP_ERROR_PATTERN.exec(message);
-  if (!match) return null;
-  try {
-    if (!isLegalConsentRequiredBody(JSON.parse(match[2]))) return null;
-  } catch {
-    return null;
-  }
-  notifyLegalConsentRequired();
-  return new LegalConsentRequiredError();
-}
-
-/**
- * ゲートの対象外のパス (apps/mobile/app の (auth) と (public) の画面)。そのものか `${path}/` 以下。
- * Web の isLegalConsentExemptPath (認証の途中 /auth/*・規約 /terms・/privacy) と同じ基準。
- * 一覧が画面のファイルと一致することは __tests__/lib/legal-consent.test.ts が確かめる
- */
-export const MOBILE_LEGAL_CONSENT_EXEMPT_PATHS: readonly string[] = [
-  "/login",
-  "/signup",
-  "/auth",
-  "/terms",
-  "/privacy",
-  "/about",
-  "/pricing",
-];
-
-export function isMobileLegalConsentExemptPath(pathname: string): boolean {
-  return MOBILE_LEGAL_CONSENT_EXEMPT_PATHS.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
-```
-
-#### 6.6.9 `apps/mobile/src/providers/LegalConsentProvider.tsx` (新設。段 B)
-
-```ts
-// tsc:skip — JSX と新設の export を含む RN のモジュール。実装では apps/mobile の tsc の対象
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { LEGAL_CONSENT_STATUS_API_PATH, isLegalConsentStatus, type LegalConsentStatus } from "@homegohan/shared";
-
-import { getApi } from "../lib/api";
-import { subscribeLegalConsentRequired } from "../lib/legal-consent";
-import { useAuth } from "./AuthProvider";
-
-/**
- * 同意の状態 (#1442)。
- *   loading  サインイン中で、status をまだ取れていない (ゲートは画面を描かず読み込み中を出す)
- *   clear    同意画面を出す必要が無い (同意済み、または強制していない)
- *   required 同意画面を出す (未同意・旧版で、強制中)
- *   unknown  status を取れなかった (通信の失敗・サーバーの 500)。止めない。次の API 呼び出しの 403 で required になる
- */
-export type LegalConsentState = "loading" | "clear" | "required" | "unknown";
-
-type LegalConsentContextValue = {
-  state: LegalConsentState;
-  /** 直近に取れた status (required のときの同意画面が版・施行日を読む) */
-  status: LegalConsentStatus | null;
-  /** status を取り直す。失敗しても例外を投げない (前の状態を保つ。loading のときだけ unknown にする) */
-  refresh: () => Promise<void>;
-};
-
-const LegalConsentContext = createContext<LegalConsentContextValue | null>(null);
-
-export function LegalConsentProvider({ children }: { children: React.ReactNode }) {
-  const { user } = useAuth();
-  const [state, setState] = useState<LegalConsentState>("loading");
-  const [status, setStatus] = useState<LegalConsentStatus | null>(null);
-  const requestSeq = useRef(0);
-
-  const refresh = useCallback(async () => {
-    if (!user) {
-      setStatus(null);
-      setState("clear");
-      return;
-    }
-    const seq = ++requestSeq.current;
-    try {
-      const body = await getApi().get<unknown>(LEGAL_CONSENT_STATUS_API_PATH);
-      if (seq !== requestSeq.current) return; // 古い応答は捨てる (利用者が切り替わった後など)
-      if (!isLegalConsentStatus(body)) {
-        setState((current) => (current === "loading" ? "unknown" : current));
-        return;
-      }
-      setStatus(body);
-      setState(body.required ? "required" : "clear");
-    } catch {
-      if (seq !== requestSeq.current) return;
-      // 通信の失敗・500: 止めない。required のまま (403 の知らせの後の取り直しが失敗したとき) なら required を保つ
-      setState((current) => (current === "loading" ? "unknown" : current));
-    }
-  }, [user?.id]);
-
-  // 利用者が変わるたびに取り直す (ログイン・ログアウト・アカウントの切り替え)
-  useEffect(() => {
-    if (user) setState("loading");
-    void refresh();
-  }, [refresh, user?.id]);
-
-  // API が 403 LEGAL_CONSENT_REQUIRED を返したら、すぐ required にして (ゲートが同意画面を描く)、版の情報を取り直す
-  useEffect(() => {
-    return subscribeLegalConsentRequired(() => {
-      setState("required");
-      void refresh();
-    });
-  }, [refresh]);
-
-  const value = useMemo<LegalConsentContextValue>(() => ({ state, status, refresh }), [state, status, refresh]);
-  return <LegalConsentContext.Provider value={value}>{children}</LegalConsentContext.Provider>;
-}
-
-export function useLegalConsent(): LegalConsentContextValue {
-  const ctx = useContext(LegalConsentContext);
-  if (!ctx) throw new Error("useLegalConsent must be used within <LegalConsentProvider>");
-  return ctx;
-}
-```
-
-#### 6.6.10 `apps/mobile/app/_layout.tsx` の差分 (段 B)
-
-```ts
-// tsc:skip — 既存ファイルへの差分 (JSX)
-// import に足す
-import type { ComponentProps } from "react";
-import { LegalConsentGate } from "../src/components/legal/LegalConsentGate";
-import { LegalConsentProvider, useLegalConsent } from "../src/providers/LegalConsentProvider";
-
-// #1442: ルートの Stack の全画面を同意のゲートで包む。関数の同一性を保つため module のスコープに置く
-// (描画のたびに新しい関数を渡すと、画面が作り直されることがある)
-const renderLegalConsentScreenLayout: NonNullable<ComponentProps<typeof Stack>["screenLayout"]> = ({ children }) => (
-  <LegalConsentGate>{children}</LegalConsentGate>
-);
-
-// PushTokenRegistrar: 同意が済んでから登録する (同意前の起動では POST /api/push-tokens/claim が 403 で登録できないため、
-// 同意が済んだ (state が required → clear) ときにもう一度通す。#1442)
-function PushTokenRegistrar() {
-  const { user } = useAuth();
-  const { state: legalConsentState } = useLegalConsent();
-
-  useEffect(() => {
-    if (!user) return;
-    if (legalConsentState === "loading" || legalConsentState === "required") return;
-    (async () => {
-      try {
-        await ensurePushTokenRegistered();
-      } catch {
-        // silent — (既存のコメントのまま)
-      }
-    })();
-  }, [user?.id, legalConsentState]);
-
-  return null;
-}
-
-// RootLayout の return: Provider の順と Stack の screenLayout
-//   <AuthProvider>
-//     <LegalConsentProvider>
-//       <ProfileProvider>
-//         <PushTokenRegistrar />
-//         <NotificationRouter />
-//         <Stack screenOptions={{ headerShown: false }} screenLayout={renderLegalConsentScreenLayout}>
-//           (Stack.Screen の並びは現状のまま)
-//         </Stack>
-//       </ProfileProvider>
-//     </LegalConsentProvider>
-//   </AuthProvider>
-```
-
-`screenLayout` は React Navigation 7 の navigator の prop (`@react-navigation/core` 7.17.2・`native-stack` 7.14.12 を lockfile で確認)。expo-router の `Stack` は props をそのまま navigator に渡す。段 B の tsc が通らなければ §8 の Q-1 の代替へ。
-
-#### 6.6.11 `apps/mobile/src/components/legal/LegalConsentGate.tsx` (新設。段 B)
-
-```ts
-// tsc:skip — JSX を含む RN のモジュール
-import { usePathname } from "expo-router";
-import React from "react";
-
-import { isMobileLegalConsentExemptPath } from "../../lib/legal-consent";
-import { useAuth } from "../../providers/AuthProvider";
-import { useLegalConsent } from "../../providers/LegalConsentProvider";
-import { colors } from "../../theme";
-import { LoadingState } from "../ui";
-import { LegalConsentScreen } from "./LegalConsentScreen";
-
-/**
- * ルートの Stack の screenLayout (#1442)。全画面の描画をここで受け、サインイン中で同意が要るときは、
- * その画面の代わりに同意画面を描く (Stack も遷移の状態も残るので、同意が済めば同じ画面がそのまま描かれる)。
- *   - session 無し (未ログイン)                 → 画面をそのまま
- *   - 対象外のパス (認証の途中・公開ページ)       → 画面をそのまま
- *   - loading (status をまだ取れていない)        → 読み込み中 (画面を一瞬出してから同意画面に変わるのを避ける)
- *   - required                                  → 同意画面
- *   - clear / unknown                           → 画面をそのまま (unknown は止めない。次の API の 403 で required になる)
- */
-export function LegalConsentGate({ children }: { children: React.ReactNode }) {
-  const { session } = useAuth();
-  const { state } = useLegalConsent();
-  const pathname = usePathname();
-
-  if (!session) return <>{children}</>;
-  if (isMobileLegalConsentExemptPath(pathname)) return <>{children}</>;
-  if (state === "loading") return <LoadingState testID="legal-consent-loading" style={{ backgroundColor: colors.bg }} />;
-  if (state === "required") return <LegalConsentScreen />;
-  return <>{children}</>;
-}
-```
-
-#### 6.6.12 `apps/mobile/src/components/legal/LegalConsentScreen.tsx` (新設。段 B。ネイティブの同意画面)
-
-```ts
-// tsc:skip — JSX を含む RN のモジュール
-import * as Linking from "expo-linking";
-import React, { useState } from "react";
-import { Alert, Pressable, ScrollView, Switch, Text, View } from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
-import {
-  LEGAL_CONSENT_ACCEPT_API_PATH,
-  LEGAL_CONSENT_COPY,
-  LEGAL_DOCUMENT_LABELS,
-  LEGAL_DOCUMENT_TYPES,
-  formatLegalEffectiveDate,
-  legalConsentAgreeLabel,
-  legalConsentReadFullTextLabel,
-  legalConsentVersionLine,
-  type LegalDocumentType,
-} from "@homegohan/shared";
-
-import { getApi } from "../../lib/api";
-import { getApiErrorMessage } from "../../lib/api-error";
-import { httpStatusOfError } from "../../lib/legal-consent";
-import { signOutOnDevice } from "../../lib/signOut";
-import { getPrivacyUrl, getSupportMailtoUrl, getTermsUrl } from "../../lib/siteConfig";
-import { useAuth } from "../../providers/AuthProvider";
-import { useLegalConsent } from "../../providers/LegalConsentProvider";
-import { colors, radius, spacing } from "../../theme";
-import { Button } from "../ui";
-
-/** 同意を送ったら版が変わっていた (POST /api/legal/accept の 409) */
-const VERSION_MISMATCH_STATUS = 409;
-
-/** 文書ごとの全文の URL (Web 版を OS のブラウザで開く。PublicPage の「Web版を開く」と同じ取り方) */
-const DOCUMENT_URL: Record<LegalDocumentType, () => string> = {
-  terms_of_service: getTermsUrl,
-  privacy_policy: getPrivacyUrl,
-};
-
-/**
- * 利用規約・プライバシーポリシーへの同意画面 (アプリ。#1442)。LegalConsentGate が required のときに画面の代わりに描く。
- * 要件は Web の同意画面 (08 §7.2) と同じ: 必須のチェック 2 つ (両方入れるまで「同意して続ける」は押せない)・全文へのリンク・
- * 「同意しない」= ログアウトして、削除の依頼先 (お問い合わせ) を案内する。
- * 版と施行日は status (サーバーのいまの値) から出し、同意の記録にもその版を送る (端末のバンドルの定数は使わない。改定の直後に古い版を記録しない)。
- */
-export function LegalConsentScreen() {
-  const insets = useSafeAreaInsets();
-  const { user, session, clearSession } = useAuth();
-  const { status, refresh } = useLegalConsent();
-  const [agreed, setAgreed] = useState<Record<LegalDocumentType, boolean>>({ terms_of_service: false, privacy_policy: false });
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const allAgreed = LEGAL_DOCUMENT_TYPES.every((type) => agreed[type]);
-  const isReconsent = Boolean(status?.accepted_versions.terms_version || status?.accepted_versions.privacy_version);
-
-  const handleAccept = async () => {
-    if (!allAgreed || busy || !status) return;
-    setBusy(true);
-    setError(null);
-    try {
-      await getApi().post(LEGAL_CONSENT_ACCEPT_API_PATH, {
-        terms_version: status.current.terms_of_service.version,
-        privacy_version: status.current.privacy_policy.version,
-      });
-      await refresh(); // clear になればゲートが元の画面を描く
-    } catch (e) {
-      if (httpStatusOfError(e) === VERSION_MISMATCH_STATUS) {
-        // 画面を開いたまま改定された。いまの版を取り直して描き直す (チェックは外す)
-        setAgreed({ terms_of_service: false, privacy_policy: false });
-        setError(LEGAL_CONSENT_COPY.versionMismatch);
-        await refresh();
-      } else {
-        setError(getApiErrorMessage(e, LEGAL_CONSENT_COPY.acceptFailed));
-      }
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const handleDecline = () => {
-    Alert.alert(LEGAL_CONSENT_COPY.declineButton, `${LEGAL_CONSENT_COPY.declineUnavailable}\n保存されているデータの削除は、お問い合わせ (${getSupportMailtoUrl()}) からご依頼ください。`, [
-      { text: "キャンセル", style: "cancel" },
-      {
-        text: "ログアウト",
-        style: "destructive",
-        onPress: () => {
-          void signOutOnDevice(user?.id, { clearSession, accessToken: session?.access_token ?? null });
-        },
-      },
-    ]);
-  };
-
-  if (!status) {
-    // required の知らせの直後で status をまだ取り直せていない (通信の失敗など)。取り直しを促すだけの最小の画面
-    return (
-      <View testID="legal-consent-screen" style={{ flex: 1, backgroundColor: colors.bg, paddingTop: insets.top + spacing.xl, padding: spacing.xl, gap: spacing.lg }}>
-        <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{LEGAL_CONSENT_COPY.heading}</Text>
-        <Button title="再読み込み" onPress={() => void refresh()} />
-      </View>
-    );
-  }
-
-  return (
-    <ScrollView
-      testID="legal-consent-screen"
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      contentContainerStyle={{ paddingTop: insets.top + spacing.xl, padding: spacing.xl, gap: spacing.lg }}
-    >
-      <Text style={{ fontSize: 22, fontWeight: "800", color: colors.text }}>{LEGAL_CONSENT_COPY.heading}</Text>
-      <Text style={{ fontSize: 14, color: colors.textLight, lineHeight: 22 }}>
-        {isReconsent ? LEGAL_CONSENT_COPY.introReconsent : LEGAL_CONSENT_COPY.introFirst}
-      </Text>
-
-      {LEGAL_DOCUMENT_TYPES.map((type) => {
-        const label = LEGAL_DOCUMENT_LABELS[type];
-        const current = status.current[type];
-        const revised = isReconsent && status.outdated.includes(type);
-        return (
-          <View key={type} testID={`legal-doc-${type}`} style={{ borderWidth: 1, borderColor: colors.border, borderRadius: radius.lg, padding: spacing.lg, gap: spacing.sm }}>
-            <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>
-              <Text style={{ fontSize: 16, fontWeight: "700", color: colors.text }}>{label}</Text>
-              {revised ? <Text style={{ fontSize: 12, fontWeight: "700", color: colors.accent }}>{LEGAL_CONSENT_COPY.revisedBadge}</Text> : null}
-            </View>
-            <Text style={{ fontSize: 12, color: colors.textMuted }}>
-              {legalConsentVersionLine(current.version, formatLegalEffectiveDate(current.effective_date))}
-            </Text>
-            <Pressable testID={`legal-doc-${type}-link`} onPress={() => void Linking.openURL(DOCUMENT_URL[type]())}>
-              <Text style={{ fontSize: 14, fontWeight: "700", color: colors.accent, textDecorationLine: "underline" }}>
-                {legalConsentReadFullTextLabel(label)}
-              </Text>
-            </Pressable>
-            <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.md }}>
-              <Switch
-                testID={`legal-doc-${type}-agree`}
-                accessibilityLabel={legalConsentAgreeLabel(label)}
-                value={agreed[type]}
-                disabled={busy}
-                onValueChange={(value) => setAgreed((prev) => ({ ...prev, [type]: value }))}
-              />
-              <Text style={{ flex: 1, fontSize: 14, color: colors.text }}>{legalConsentAgreeLabel(label)}</Text>
-            </View>
-          </View>
-        );
-      })}
-
-      {error ? <Text testID="legal-consent-error" style={{ color: colors.danger, fontSize: 14 }}>{error}</Text> : null}
-
-      <Button testID="legal-consent-accept" title={LEGAL_CONSENT_COPY.acceptButton} onPress={() => void handleAccept()} disabled={!allAgreed || busy} />
-      <Pressable testID="legal-consent-decline" onPress={handleDecline} disabled={busy} style={{ alignItems: "center", padding: spacing.md }}>
-        <Text style={{ fontSize: 14, color: colors.textMuted, textDecorationLine: "underline" }}>{LEGAL_CONSENT_COPY.declineButton}</Text>
-      </Pressable>
-    </ScrollView>
-  );
-}
-```
-
-`Button` (`src/components/ui/Button.tsx`) の props が `title / onPress / disabled / testID` と違うときは、その部品の実際の props に合わせる (部品は変えない)。`Switch` はチェックボックスの代わり (RN 標準にチェックボックスが無い)。
-
-#### 6.6.13 `apps/mobile/src/lib/api.ts` と `failed-response.ts` の差分 (段 B)
-
-```ts
-// tsc:skip — 既存ファイルへの差分
-// --- src/lib/api.ts ---
-import { legalConsentRequiredErrorOf } from "./legal-consent";
-// withFriendlyErrors の catch (76 行目) を次にする。順は 429 → 503 → 403 (同意) → そのまま
-//   throw aiDailyLimitErrorOf(error) ?? serviceUnavailableErrorOf(error) ?? legalConsentRequiredErrorOf(error) ?? error;
-// 先頭のコメント (62-70 行目) に「403 LEGAL_CONSENT_REQUIRED (規約への同意が必要。#1442): LegalConsentRequiredError (src/lib/legal-consent.ts)。
-// 置き換えるときに LegalConsentProvider へ知らせ、ゲートが同意画面を描く」を足す
-
-// --- src/lib/failed-response.ts ---
-import { isLegalConsentRequiredError, legalConsentRequiredErrorOf, type LegalConsentRequiredError } from "./legal-consent";
-// StoppedByServerError の union に LegalConsentRequiredError を足す
-//   export type StoppedByServerError = AiDailyLimitError | ServiceUnavailableError | LegalConsentRequiredError;
-//   isStoppedByServerError: || isLegalConsentRequiredError(error)
-// stoppedByServerAlertTitleOf: 同意は "同意が必要です" (定数 LEGAL_CONSENT_ALERT_TITLE) を返す分岐を足す
-// errorOfFailedResponse (52-55 行目):
-//   return aiDailyLimitErrorOf(raw) ?? serviceUnavailableErrorOf(raw) ?? legalConsentRequiredErrorOf(raw) ?? raw;
-```
+正典コードのうち 6.6.8〜6.6.13 (モバイル) は 13b §6.6。
 
 ### 6.7 定数 (新設。すべて名前付き・根拠つき)
 
@@ -1320,9 +816,8 @@ import { isLegalConsentRequiredError, legalConsentRequiredErrorOf, type LegalCon
 | `LEGAL_CONSENT_COPY` ほか 3 関数 | 6.6.2 | shared | 文面を 2 か所に持たない |
 | `EFFECTIVE_DATE_PATTERN` | `/^\d{4}-\d{2}-\d{2}$/` | `src/lib/legal-consent-api.ts` | `legal-versions.ts` の effectiveDate の形式 |
 | `LEGAL_COLUMNS` | `'terms_version_accepted, privacy_version_accepted'` | status route | middleware の `PROFILE_COLUMNS_WITH_LEGAL` の末尾 2 列と同じ |
-| `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` | 7 本 (6.6.8) | mobile | `(auth)` `(public)` の画面。テストがファイル名と突き合わせる |
-| `VERSION_MISMATCH_STATUS` | `409` | mobile 同意画面 | accept route の 409 |
-| `LEGAL_CONSENT_ALERT_TITLE` | `'同意が必要です'` | mobile failed-response | Alert の見出し (AI 同意の案内と同じ語) |
+
+モバイルの定数 (`MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`・`VERSION_MISMATCH_STATUS`・`LEGAL_CONSENT_ALERT_TITLE`) は 13b §6.7。
 
 運用で変えうる値は無い (しきい値・時間・回数を足していない)。環境変数も足さない (`LEGAL_CONSENT_ENFORCE` を読むのは今までどおり `lib/legal-consent.ts` だけ)。
 
@@ -1336,7 +831,8 @@ import { isLegalConsentRequiredError, legalConsentRequiredErrorOf, type LegalCon
 | 未ログイン | `GET /api/legal/status` | 401 | `{ error: '認証が必要です', code: 'AUTH_UNAUTHENTICATED' }` | 平たい | `no-store` |
 | プロフィールを読めない | `GET /api/legal/status` | 500 | `{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }` (`internalError`) | 平たい | — |
 | 版が不一致 | `POST /api/legal/accept` | 409 | 既存 (`LEGAL_VERSION_MISMATCH` + `current`) | 入れ子 (既存) | `no-store` |
-| 同意の判定 (モバイル) | `getApi()` / 生の fetch | — | `LegalConsentRequiredError` (message = `LEGAL_CONSENT_REQUIRED_MESSAGE`) | 例外 | — |
+
+モバイルの行 (同意の判定を例外に置き換える) は 13b §6.8。
 
 判定不能 (DB 障害) に 503 を返さない理由は §6.11。
 
@@ -1380,25 +876,7 @@ sequenceDiagram
     end
 ```
 
-```mermaid
-sequenceDiagram
-    participant A as アプリ (LegalConsentProvider / Gate)
-    participant S as GET /api/legal/status
-    participant P as POST /api/legal/accept
-    A->>S: 起動 (session あり)
-    S-->>A: { required: true, current }
-    A->>A: state=required → 画面の代わりに同意画面
-    A->>P: { terms_version, privacy_version } (current の版)
-    alt 200
-        P-->>A: accepted
-        A->>S: refresh
-        S-->>A: { required: false }
-        A->>A: state=clear → 元の画面を描く
-    else 409 (改定)
-        P-->>A: LEGAL_VERSION_MISMATCH
-        A->>S: refresh (新しい current で描き直し)
-    end
-```
+アプリの起動と同意のシーケンスは 13b §6.10。
 
 ### 6.11 `ENFORCE` が off のとき・同意の状態を読めないとき (R-9)
 
@@ -1408,15 +886,15 @@ sequenceDiagram
 | `#1435` の初回の作成 (ENFORCE に関わらず新規の人を同意画面へ) | API・モバイルには**写さない** | それは `/auth/callback` の 1 回の案内で、強制ではない (回された人が別のパスへ行けば止まらない)。本番は on なので実害が無い。モバイルで off のときに新規の人が同意画面を見ないことは §8 Q-3 |
 | middleware でプロフィールを読めない (`profileError`) | **開く** (素通り。route の判断へ) | (a) 同じブロックの凍結が #348 の理由で fail-open であり、凍結より弱い同意だけを閉じるのは筋が通らない。(b) AI 同意が fail-closed なのは「送ったデータは取り戻せない」からで、同意ゲートは DB の中の操作を止めるだけ (DB が落ちていれば route 側も失敗する)。(c) 一時的な DB の不調で全 API を止めない |
 | 同意の列が無い DB (42703) | 開く (同意だけ素通り) | 画面の分岐と同じ (`middleware.ts:43-47` の理由) |
-| モバイルで status を取れない (通信の失敗・500) | **止めない** (`unknown`) | オフラインでは API も使えない。オンラインに戻れば最初の 403 で同意画面に回る (S18)。止めると、サーバーの不調のたびに全員が同意画面に閉じ込められる |
-| モバイルが 403 を受けた後の取り直しに失敗 | `required` を保つ | 403 は一次情報 (サーバーが未同意と言った)。版の情報が無い間は「再読み込み」だけの画面 (6.6.12) |
+
+モバイルの 2 行 (status を取れない・403 の後の取り直しに失敗) は 13b §6.11。
 
 ### 6.12 改定 (版が上がる) の扱い (R-8)
 
 - 判定は `hasAcceptedCurrentLegalDocuments` の 1 つ (旧版 = 未同意)。API もモバイルも、Web の画面と同じ関数で決まる。
 - Web: 既存どおり、次の画面の取得で `/legal-consent` へ。画面の中の API は 403 (本文の固定の文が出る)。
-- モバイル: 次の API の 403 で `required` → 画面の代わりに同意画面 → 再同意 → 同じ画面に戻る (S5)。同意画面は status の `current` を表示・送信するので、端末のバンドルが古くても新しい版に同意する (S13 の 409 は、画面を開いている間に改定されたときだけ)。
 - 版を変えない文面の直しは、今までどおり再同意を求めない (`legal-versions.ts:11`)。
+- モバイル: 13b §6.12。
 
 ### 6.13 漏れの見張り (R-4・R-5) と、その限界
 
@@ -1469,7 +947,7 @@ sequenceDiagram
 |---|---|
 | T-M1 | `src/app/api の全 route (N 本) を 未同意 × ENFORCE=on で通すと、許可リストの route だけが 403 にならず、それ以外は 403 LEGAL_CONSENT_REQUIRED` (it.each) |
 | T-M2 | `許可リストの各行は実在する route に当たる (prefix の行は 1 本以上)` |
-| T-M3 | `許可リストの中身 (path / match / reason) は設計書 13 §6.4 のとおり (スナップショット)` |
+| T-M3 | `許可リストの中身 (path / match / reason) は設計書 13a §6.4 のとおり (スナップショット)` |
 | T-M4 | `旧版に同意 / 片方だけ同意 / 行なし も 403。現行の版に両方同意していれば 200` |
 | T-M5 | `ENFORCE が off / 未設定 / on 以外の値 なら、未同意でも 200 (許可リスト外でも)` |
 | T-M6 | `user_profiles の読み取りが失敗したら、未同意相当でも素通り (凍結と同じ fail-open)` |
@@ -1517,43 +995,15 @@ sequenceDiagram
 
 `local-ci.sh` と `e2e-local.yml` は既に 3 つのサーバー (既定 / ENFORCE=on / NOTICE=on) でこの spec を流すので、設定の変更は無い。
 
-**G. モバイル (段 B) jest `apps/mobile/__tests__/...`**
+**G. モバイル (段 B) jest** は 13b §6.14。
 
-| ID | ファイル | it |
-|---|---|---|
-| T-ML1 | `lib/legal-consent.test.ts` | `legalConsentRequiredErrorOf: getApi() のエラー ("HTTP 403 Forbidden: {…}") と生の fetch ("HTTP 403: {…}") の両方を見分け、Provider に知らせる` |
-| T-ML2 | 同 | `ほかの 403・503・通信エラー・JSON でない本文は見分けず、知らせない` |
-| T-ML3 | 同 | `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS は apps/mobile/app の (auth) と (public) の画面のパスと一致し、似た名前 (/loginx /authx) は対象外にしない` |
-| T-ML4 | 同 | `httpStatusOfError: 3 つの形の message から状態を読み、読めなければ null` |
-| T-P1 | `providers/legal-consent-provider.test.tsx` | `user が居れば GET /api/legal/status を取り、required に応じて required / clear になる` |
-| T-P2 | 同 | `status の取得に失敗 (通信・500・形の違い) したら unknown (止めない)` |
-| T-P3 | 同 | `notifyLegalConsentRequired を受けたら即 required にし、status を取り直す。取り直しに失敗しても required を保つ` |
-| T-P4 | 同 | `user が null なら clear、user が替わったら取り直し、古い応答は捨てる` |
-| T-G1 | `components/legal-consent-gate.test.tsx` | `session が無ければ画面をそのまま描く` |
-| T-G2 | 同 | `required なら画面の代わりに同意画面を描く (対象のパス /home /onboarding/welcome /health/graphs /org/dashboard /handson-tour)` |
-| T-G3 | 同 | `対象外のパス (/login /signup /auth/reset-password /terms /privacy /about /pricing) は required でも画面をそのまま` |
-| T-G4 | 同 | `loading は読み込み中を描き、画面も同意画面も描かない` |
-| T-G5 | 同 | `clear と unknown は画面をそのまま` |
-| T-SC1 | `components/legal-consent-screen.test.tsx` | `2 つのスイッチは最初オフで、両方オンにするまで「同意して続ける」は押せない` |
-| T-SC2 | 同 | `同意は status の current の版を POST /api/legal/accept に送り、成功したら refresh を呼ぶ` |
-| T-SC3 | 同 | `409 なら「更新されました」を出し、スイッチを外して refresh を呼ぶ` |
-| T-SC4 | 同 | `「同意しない」は確認の Alert を出し、ログアウトを選ぶと signOutOnDevice を呼ぶ (キャンセルは呼ばない)` |
-| T-SC5 | 同 | `全文のリンクは getTermsUrl / getPrivacyUrl を OS のブラウザで開く` |
-| T-SC6 | 同 | `再同意 (accepted_versions がある) は改定の導入文と「改定あり」を出し、初回は出さない。版と施行日は status の値` |
-| T-RL1 | `app/root-layout-config.test.tsx` (追記) | `Stack に screenLayout が渡され、LegalConsentProvider が AuthProvider の中・ProfileProvider の外にある` |
-| T-API1 | `lib/api-client.test.ts` (追記) | `withFriendlyErrors: 403 LEGAL_CONSENT_REQUIRED は LegalConsentRequiredError に置き換わり、Provider に知らせる` |
-| T-FR1 | `lib/failed-response.test.ts` (追記) | `errorOfFailedResponse: 403 LEGAL_CONSENT_REQUIRED は LegalConsentRequiredError。isStoppedByServerError が true で見出しは「同意が必要です」` |
-| T-PT1 | `app/root-layout-config.test.tsx` (追記) | `PushTokenRegistrar は同意の状態が loading / required の間は登録せず、clear になったら登録する` |
-
-### 6.15 段分け (同じ WF・同じ worktree。段ごとに 2 枚レビュー)
+### 6.15 段分け (本冊 = 段 A。段 B は 13b)
 
 | 段 | 内容 | 触るファイル | 検証 |
 |---|---|---|---|
 | A (核: サーバー + shared) | 6.6.1〜6.6.7、テスト A〜F、§6.19 の実装 PR 側の追随 (`.env.example`・`ENV_SETUP.md`・コメント) | §6.16 の「段 A」 | `offload -- npx tsc --noEmit` / `npm run lint` / `npx vitest run` (全件) / e2e は local-ci の 3 サーバー |
-| B (配線: モバイル) | 6.6.8〜6.6.13、テスト G | §6.16 の「段 B」 | `offload -- npx tsc --noEmit -p apps/mobile` / `cd apps/mobile && npx jest` / ルートの全件 |
-| 横断 | 段 A と B の契約 (shared の export・status の形・403 の形) を通しで読む | — | 全件 |
 
-段 B は段 A の実コード (merge 済みか同じ枝の HEAD) の `@homegohan/shared` の export を参照して書く。
+段 B (モバイル) は 13b。本冊の実装がマージされた後に、マージ済みの実コードの `@homegohan/shared` の export を参照して実装する。段 A と B の契約 (shared の export・status の形・403 の形) を通しで読む横断の確認は 13b の実装のときに行う (13b §6.15)。
 
 ### 6.16 触るファイルの母集合 (これ以外は触らない)
 
@@ -1561,9 +1011,9 @@ sequenceDiagram
 |---|---|---|
 | A | 新設 | `packages/shared/src/legal-consent-api.ts`, `packages/shared/src/legal-consent-copy.ts`, `packages/shared/src/legal-consent-api.test.ts`, `src/lib/legal-consent-api.ts`, `src/app/api/legal/status/route.ts`, `tests/legal-consent-api-schema.test.ts`, `tests/api/legal-status-route.test.ts`, `tests/legal-consent-copy.test.ts`, `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` |
 | A | 変更 | `packages/shared/src/index.ts` (export 2 行), `lib/supabase/middleware.ts` (`/api` の分岐), `src/app/legal-consent/LegalConsentForm.tsx` (文面を shared から), `lib/legal-consent.ts` (コメント), `src/app/api/legal/accept/route.ts` (コメント), `lib/supabase/__tests__/middleware-legal-consent.test.ts` (§6.18), `tests/e2e/legal-consent-gate.spec.ts` (E2E-A1〜A5), `.env.example` (§6.19), `ENV_SETUP.md` (§6.19) |
-| B | 新設 | `apps/mobile/src/lib/legal-consent.ts`, `apps/mobile/src/providers/LegalConsentProvider.tsx`, `apps/mobile/src/components/legal/LegalConsentGate.tsx`, `apps/mobile/src/components/legal/LegalConsentScreen.tsx`, `apps/mobile/__tests__/lib/legal-consent.test.ts`, `apps/mobile/__tests__/providers/legal-consent-provider.test.tsx`, `apps/mobile/__tests__/components/legal-consent-gate.test.tsx`, `apps/mobile/__tests__/components/legal-consent-screen.test.tsx` |
-| B | 変更 | `apps/mobile/app/_layout.tsx`, `apps/mobile/src/lib/api.ts`, `apps/mobile/src/lib/failed-response.ts`, `apps/mobile/__tests__/app/root-layout-config.test.tsx`, `apps/mobile/__tests__/lib/api-client.test.ts`, `apps/mobile/__tests__/lib/failed-response.test.ts` |
-| 専権 (オーケストレーター) | 変更 | `docs/design/cross/08-legal-compliance.md`, `docs/design/cross/04-api-conventions.md`, `docs/design/cross/CLAUDE.md`, `docs/design/mobile/01-architecture.md`, `CLAUDE.md` (§6.19) |
+| 専権 (オーケストレーター) | 変更 | `docs/design/cross/08-legal-compliance.md`, `docs/design/cross/04-api-conventions.md`, `docs/design/cross/CLAUDE.md`, `CLAUDE.md` (§6.19) |
+
+段 B の触るファイルは 13b §6.16。
 
 ### 6.17 新設一覧
 
@@ -1573,16 +1023,15 @@ sequenceDiagram
 | ファイル | `packages/shared/src/legal-consent-copy.ts` | shared |
 | ファイル | `src/lib/legal-consent-api.ts` | Web |
 | ファイル | `src/app/api/legal/status/route.ts` | Web |
-| ファイル | `apps/mobile/src/lib/legal-consent.ts`, `apps/mobile/src/providers/LegalConsentProvider.tsx`, `apps/mobile/src/components/legal/LegalConsentGate.tsx`, `apps/mobile/src/components/legal/LegalConsentScreen.tsx` | mobile |
 | route | `GET /api/legal/status` | Web |
 | エラーコード | `LEGAL_CONSENT_REQUIRED` (403) | 共通 |
-| 定数 | `LEGAL_CONSENT_STATUS_API_PATH`, `LEGAL_CONSENT_ACCEPT_API_PATH`, `LEGAL_CONSENT_REQUIRED_CODE`, `LEGAL_CONSENT_REQUIRED_STATUS`, `LEGAL_CONSENT_REQUIRED_MESSAGE`, `LEGAL_CONSENT_EXEMPT_API_PATHS`, `LEGAL_CONSENT_COPY`, `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`, `EFFECTIVE_DATE_PATTERN`, `LEGAL_COLUMNS`, `VERSION_MISMATCH_STATUS`, `LEGAL_CONSENT_ALERT_TITLE` | §6.7 |
+| 定数 | `LEGAL_CONSENT_STATUS_API_PATH`, `LEGAL_CONSENT_ACCEPT_API_PATH`, `LEGAL_CONSENT_REQUIRED_CODE`, `LEGAL_CONSENT_REQUIRED_STATUS`, `LEGAL_CONSENT_REQUIRED_MESSAGE`, `LEGAL_CONSENT_EXEMPT_API_PATHS`, `LEGAL_CONSENT_COPY`, `EFFECTIVE_DATE_PATTERN`, `LEGAL_COLUMNS` | §6.7 |
 | 関数 | `legalConsentRequiredBody`, `isLegalConsentRequiredBody`, `isLegalConsentExemptApiPath`, `resolveLegalConsentApiDecision`, `resolveLegalConsentStatus`, `isLegalConsentStatus`, `legalConsentAgreeLabel`, `legalConsentReadFullTextLabel`, `legalConsentVersionLine` | shared |
-| 関数 (mobile) | `httpStatusOfError`, `legalConsentRequiredErrorOf`, `isLegalConsentRequiredError`, `notifyLegalConsentRequired`, `subscribeLegalConsentRequired`, `resetLegalConsentListenersForTests`, `isMobileLegalConsentExemptPath`, `useLegalConsent` | mobile |
-| 型 | `LegalConsentRequiredBody`, `LegalConsentExemptApiReason`, `LegalConsentExemptApiEntry`, `LegalConsentApiDecision`, `ResolveLegalConsentApiInput`, `LegalConsentCurrentDocument`, `LegalConsentAcceptedVersions`, `LegalConsentStatus`, `ResolveLegalConsentStatusInput`, `LegalConsentRequiredBodyShape`, `LegalConsentStatusShape`, `LegalConsentState`, `LegalConsentRequiredError` (class) | 各所 |
-| 部品 | `LegalConsentProvider`, `LegalConsentGate`, `LegalConsentScreen`, `renderLegalConsentScreenLayout` | mobile |
+| 型 | `LegalConsentRequiredBody`, `LegalConsentExemptApiReason`, `LegalConsentExemptApiEntry`, `LegalConsentApiDecision`, `ResolveLegalConsentApiInput`, `LegalConsentCurrentDocument`, `LegalConsentAcceptedVersions`, `LegalConsentStatus`, `ResolveLegalConsentStatusInput`, `LegalConsentRequiredBodyShape`, `LegalConsentStatusShape` | 各所 |
 | Zod | `LegalConsentRequiredBodySchema`, `LegalConsentStatusSchema` | `src/lib/legal-consent-api.ts` |
 | テーブル・列・RLS・Storage・migration・環境変数 | **無し** | — |
+
+モバイルの新設 (ファイル・関数・型・部品) は 13b §6.17。
 
 ### 6.18 既存の番兵 (契約テスト・走査テスト) の追随表
 
@@ -1601,24 +1050,21 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `LEGAL_CONSENT_ENFORCE` (読む場所) | `tests/env-source-scan.test.ts` (読むのは `lib/legal-consent.ts` だけ)、`tests/legal-consent-env-stub-style.test.ts` (テストは `vi.stubEnv`) | 確認のみ: status route と middleware は `isLegalConsentEnforced()` を呼ぶだけ。新しいテストは `vi.stubEnv` | A |
 | `LegalConsentForm.tsx` の文面 (`利用規約・プライバシーポリシーへの同意` `改定されました` `改定あり` `同意して続ける` `同意しない`) | `tests/legal-consent-page.test.tsx:153-181, 228-254`、`tests/e2e/legal-consent-gate.spec.ts:162-165`、`tests/e2e/helpers/legal-consent.ts`、`tests/native-sign-out-order-source-scan.test.ts` (signOut の順) | 確認のみ (値は同じ。sign-out の順も触らない)。T-C2 が同じ文であることを固定 | A |
 | `export * from` (shared の index) | `packages/shared/src/*.test.ts` に index の export を固定するものは無い | — | A |
-| `apps/mobile/app/_layout.tsx` (`Stack` の props・Provider の並び) | `apps/mobile/__tests__/app/root-layout-config.test.tsx:17-40` (expo-router の `Stack` と Provider のモック) | **直す**: `LegalConsentProvider` のモック (`({ children }) => children`、`useLegalConsent: () => ({ state: 'clear', status: null, refresh })`) を足し、`Stack` のモックで `screenLayout` を受け取ったことを確かめる (T-RL1)。`PushTokenRegistrar` の変更で `useLegalConsent` を使うので、モックが無いと落ちる | B |
-| `withFriendlyErrors` | `apps/mobile/__tests__/lib/api-client.test.ts` | **足す** (T-API1)。既存の期待は変えない | B |
-| `errorOfFailedResponse` / `isStoppedByServerError` / `stoppedByServerAlertTitleOf` | `apps/mobile/__tests__/lib/failed-response.test.ts`、`tests/ai-daily-limit-mobile-raw-fetch.test.ts` (生の fetch が `errorOfFailedResponse` を通る) | **足す** (T-FR1)。走査テストは確認のみ (通す場所は変えない) | B |
-| `router.push(` `href=` の行き先 | `apps/mobile/__tests__/app/route-targets-exist.test.ts` | 確認のみ: 同意画面は route ではなく、`router.push` も `href` も足さない (全文は `Linking.openURL`) | B |
-| `<Modal` / `presentation` | `tests/ai-consent-mobile-modal-nesting.test.ts` | 確認のみ: 同意画面は `Modal` を使わず、modal の画面も足さない | B |
 | `supabase.from(` (アプリの直読み) | 無し (番兵は無い) | §6.13 の限界として明記 | — |
-| `apps/mobile/maestro/flows/_shared/login-as-new-user.yaml` ほか新規ユーザーの flow | maestro (CI では流れない) | §8 Q-4 (サーバーが ENFORCE=on なら同意画面のステップが要る) | B |
 
-### 6.19 他の文書への追随表 (設計正典・リポジトリの案内。担当 = オーケストレーター (専権 PATCH)。期日 = 実装 PR と同時)
+段 B の行は 13b §6.18。
+
+### 6.19 他の文書への追随表 (サーバー側。設計正典・リポジトリの案内。担当 = オーケストレーター (専権 PATCH)。期日 = 本冊の実装 PR と同時)
+
+モバイル側の追随 (13b の実装 PR と同時) は 13b §6.19。
 
 | 文書 | 直す所 | 直し方 |
 |---|---|---|
-| `docs/design/cross/08-legal-compliance.md` §7.2 | ゲートの行 (391 行目)、対象外のパスの段落 (396 行目)、2026-10-10 の行 (401 行目)、残課題 (406-408 行目) | ゲートの行に「`/api/*` は middleware の `/api` の分岐で判定 (許可リストは `packages/shared/src/legal-consent-api.ts`。403 `LEGAL_CONSENT_REQUIRED`。設計書 13)」を足す。「`/api/*` は対象外」を「画面の判定では対象外。API は 13 のゲート」に。401 行目の「モバイルのネイティブの画面と `/api/*` は対象外 (#1442)」を「13 で /api とモバイルにも掛けた」に現在形化。残課題の「ネイティブのサインアップ画面には同意のチェックが無い」はそのまま (本書の対象外) で、「起動時のゲート (13) で使う前に同意する」を添える |
+| `docs/design/cross/08-legal-compliance.md` §7.2 | ゲートの行 (391 行目)、対象外のパスの段落 (396 行目)、2026-10-10 の行 (401 行目) | ゲートの行に「`/api/*` は middleware の `/api` の分岐で判定 (許可リストは `packages/shared/src/legal-consent-api.ts`。403 `LEGAL_CONSENT_REQUIRED`。設計書 13a)」を足す。「`/api/*` は対象外」を「画面の判定では対象外。API は 13a のゲート」に。401 行目の「モバイルのネイティブの画面と `/api/*` は対象外 (#1442)」の `/api/*` の部分を「13a で /api にも掛けた」に現在形化 (モバイルの部分は 13b §6.19) |
 | `docs/design/cross/04-api-conventions.md` §4.2 | エラーコード一覧 | 「#### LEGAL 系」を足し `LEGAL_CONSENT_REQUIRED` (403・規約への同意が必要)、既存で未記載の `LEGAL_VERSION_MISMATCH` (409)・`LEGAL_BAD_REQUEST` (400)・`LEGAL_UNSUPPORTED_MEDIA_TYPE` (415) も載せる。§5.2 の平たい形の例に 403 の行を足す |
-| `docs/design/cross/CLAUDE.md` | ファイル一覧 | `13-legal-consent-api-mobile.md` の行を足す (10〜12 は欠番であることを注記) |
-| `docs/design/mobile/01-architecture.md` §3 | ネイティブ画面の表 | `LegalConsentScreen` (route ではなく、ルートの Stack の `screenLayout` のゲートが描く部品) と `LegalConsentProvider` の行を足す |
-| `CLAUDE.md` (リポジトリ) 138 行目 | 「ゲートが掛かるのは Web の画面の取得だけで、モバイルのネイティブの画面と `/api/*` は通らない (#1442)」 | 「`/api/*` は middleware の `/api` の分岐 (403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`)、モバイルはルートの Stack のゲート (`GET /api/legal/status`) で止める (#1442・設計書 cross/13)」に |
-| `.env.example` 170 行目 (実装 PR 側) | 「on: 同意が済むまで、画面 (API・規約・…を除く) を開くと同意画面へ回す」 | 「画面を開くと同意画面へ回し、`/api/*` (同意そのもの・認証・退会と書き出し・問い合わせ・ログなどの許可リストを除く) は 403 で止める。アプリも起動時に同意画面を出す」に |
+| `docs/design/cross/CLAUDE.md` | ファイル一覧 | `13a-legal-consent-api-server.md` の行を足す (10〜12 は欠番であることを注記) |
+| `CLAUDE.md` (リポジトリ) 138 行目 | 「ゲートが掛かるのは Web の画面の取得だけで、モバイルのネイティブの画面と `/api/*` は通らない (#1442)」 | `/api/*` の部分を「`/api/*` は middleware の `/api` の分岐 (403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`) で止める (#1442・設計書 cross/13a)」に (モバイルの部分は 13b §6.19) |
+| `.env.example` 170 行目 (実装 PR 側) | 「on: 同意が済むまで、画面 (API・規約・…を除く) を開くと同意画面へ回す」 | 「画面を開くと同意画面へ回し、`/api/*` (同意そのもの・認証・退会と書き出し・問い合わせ・ログなどの許可リストを除く) は 403 で止める」に (アプリの 1 文は 13b §6.19) |
 | `ENV_SETUP.md` 450-461 行目 (実装 PR 側) | `LEGAL_CONSENT_ENFORCE` の説明 | 同上 |
 
 ### 6.20 検証コマンド (実装レーン。M2 では打たない)
@@ -1627,10 +1073,8 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 cd /Volumes/DevSSD/wt/<worktree>
 OFFLOAD=/Users/horidaisuke/claude-work/dev-infra/bin/offload
 $OFFLOAD --host auto -e TZ=UTC -- npx tsc --noEmit
-$OFFLOAD --host auto -e TZ=UTC -- npx tsc --noEmit -p apps/mobile          # 段 B
 $OFFLOAD --host auto -e TZ=UTC -- npm run lint
 $OFFLOAD --host auto -e TZ=UTC -- npx vitest run --reporter=json             # 全件 (passed / failed の実数で判定)
-$OFFLOAD --host auto -e TZ=UTC -- sh -c 'cd apps/mobile && npx jest'        # 段 B
 git diff origin/main...HEAD | grep -n 'as any'                               # 0 件
 ```
 
@@ -1643,7 +1087,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。
 | 区分 | 対象 |
 |---|---|
 | 保持 (変えない) | `accept_legal_documents`・`terms_acceptances`・`user_profiles` の列と特権列ガード、`POST /api/legal/accept` の契約、画面のゲート (`middleware.ts:325-393`) と `lib/legal-consent.ts` の判定、`/auth/callback` の初回の案内 (#1435)、`FROZEN_ALLOWED_API_PATHS`、メンテナンスの判定、AI 同意の部品 |
-| 変更 | `lib/supabase/middleware.ts` の `/api` の分岐 (select の共通化 + 同意の判定)、`LegalConsentForm.tsx` (文面の出どころ)、`apps/mobile/app/_layout.tsx` (Provider と screenLayout)、`api.ts` / `failed-response.ts` (403 の置き換え) |
+| 変更 | `lib/supabase/middleware.ts` の `/api` の分岐 (select の共通化 + 同意の判定)、`LegalConsentForm.tsx` (文面の出どころ) |
 | 新規 | §6.17 |
 | 削除 | 無し |
 
@@ -1653,12 +1097,12 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。
 
 | ID | 事項 | 本書の仮定 |
 |---|---|---|
-| Q-1 | expo-router 5.1.11 の `Stack` が `screenLayout` を navigator に透過すること (React Navigation 7 の prop) は lockfile の版から読んだもので、型検査で未確認 (M2 に node_modules が無い)。段 B の `tsc -p apps/mobile` が通らなければ、代替 = `Stack.Screen` ごとの `layout` ではなく、`app/_layout.tsx` の `Stack` を `<Slot>` + 自前のゲートに置き換える案を段 B の最初に試し、設計の改定として戻す | 透過する |
 | Q-2 | アプリが Supabase を直接読む 4 か所 (§1.3) は本書のゲートの外。塞ぐなら DB 側 (RLS / 関数) の判定で、別の設計 (§5.1 の C) | 本書では塞がない (Issue の範囲は `/api` とネイティブの画面) |
 | Q-3 | `LEGAL_CONSENT_ENFORCE` が off のとき、アプリのネイティブのサインアップで作った新規の人は同意画面を見ない (Web は `/auth/callback` が 1 回だけ回す #1435)。本番は on なので実害は無い | off のときは写さない (§6.11) |
-| Q-4 | maestro の新規ユーザーの flow (`login-as-new-user.yaml` など) は、サーバーが ENFORCE=on なら同意画面のステップ (`legal-consent-accept` を押す) が要る。maestro は CI で流れないので、本書は flow の追随を段 B の候補に置く | 段 B で `_shared/accept-legal-consent-if-shown.yaml` を足す (任意) |
 | Q-5 | Web の画面 (SPA) の中の API 呼び出しが 403 を受けたときに、画面側で同意画面へ送る共通の処理 (fetch の wrapper) は足していない (次の画面の取得で既存のゲートが回す) | 足さない (候補) |
 | Q-6 | 未同意で止めたことをログ (`app_logs`) に残すか。AI 同意は「利用者の選択なので残さない」 | 残さない (AI 同意と同じ) |
+
+Q-1・Q-4 (モバイル) は 13b §8。
 
 ---
 
@@ -1666,4 +1110,5 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。
 
 | 版 | 日付 | 内容 |
 |---|---|---|
-| v1.0 | 2026-10-15 | 初版 (設計ゲート審査中) |
+| v1.0 | 2026-10-15 | 初版 (設計ゲート審査中。分冊前の `13-legal-consent-api-mobile.md`) |
+| v1.1 | 2026-10-15 | 13 を 13a (核: サーバー + shared) と 13b (配線: モバイル) に分冊。中身の判断・決定・コードは変えていない (変えたのは、冊名の参照の付け替えと、他の文書への追随 (§6.19) の文を 13a / 13b の実装 PR ごとに割り振り直したことだけ) |
