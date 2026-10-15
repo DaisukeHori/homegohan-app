@@ -188,6 +188,13 @@ export const SERVER_ENV_VARS = {
     description: 'Stripe の秘密鍵',
     whenMissing: 'Stripe との照合・価格の同期が動かない',
   },
+  STRIPE_WEBHOOK_SECRET: {
+    required: false,
+    description:
+      'Stripe の Webhook の署名の秘密 (whsec_ で始まる値。Stripe の Dashboard で Webhook のエンドポイントを登録すると出る)。' +
+      'POST /api/webhooks/stripe が、届いたイベントの署名をこれで確かめる (billing/01 §8.3)',
+    whenMissing: 'Stripe の Webhook を受け付けない (503)。購入・更新・解約が personal_subscriptions に写らない',
+  },
   GOOGLE_AI_STUDIO_API_KEY: {
     required: false,
     description: 'Google AI (Gemini) の API キー。別名の GOOGLE_GEN_AI_API_KEY と、どちらか一方でよい',

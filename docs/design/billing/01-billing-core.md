@@ -3238,7 +3238,7 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
 `src/lib/account-deletion.ts` の `deleteAccount` に段階を 2 つ足す。どちらも同じ `cancelForAccountDeletion` を呼ぶ (`phase` だけが違う):
 
 - **`billing`**: `check_blockers` の直後・`prepare` の前。Stripe の失敗で止まったとき、まだ何も変えていないのでやり直せる。
-- **`billing_recheck`**: `storage` のあと・`delete_user` の直前。段階 `billing` から `deleteUser` までの間 (`storage` は最長 45 秒。`src/lib/account-deletion-storage.ts` の既定) も本人のセッションは有効なので、その間に完了した Checkout (退会の画面とは別のタブで買った、など) の契約と、その間に作られた顧客を、`deleteUser` の前にもう一度閉じる。`deleteUser` のあとは行が CASCADE で消え、写像は「退会済み」になるので、ここで閉じないと Stripe の契約が残る。失敗したら `delete_user` に進まない (アカウントは残り、もう一度の退会で片付く。`delete_user` の失敗と同じ扱い)。
+- **`billing_recheck`**: `storage` のあと・`delete_user` の直前 (#1562 の削除の実行記録の段階 `record` (`begin_account_deletion_record`) がある main では `storage` → `record` → `billing_recheck` → `delete_user` の順。`record` は同じ利用者の記録を使い直すので、`billing_recheck` の失敗のあとのやり直しで記録は増えない)。段階 `billing` から `deleteUser` までの間 (`storage` は最長 45 秒。`src/lib/account-deletion-storage.ts` の既定) も本人のセッションは有効なので、その間に完了した Checkout (退会の画面とは別のタブで買った、など) の契約と、その間に作られた顧客を、`deleteUser` の前にもう一度閉じる。`deleteUser` のあとは行が CASCADE で消え、写像は「退会済み」になるので、ここで閉じないと Stripe の契約が残る。失敗したら `delete_user` に進まない (アカウントは残り、もう一度の退会で片付く。`delete_user` の失敗と同じ扱い)。
 
 `cancelForAccountDeletion` の中身は 3 つ: (1) 顧客の開いたままの Checkout Session を閉じる (`expire`。閉じた Session は完了できない。先に閉じるのは、契約を列挙したあとで完了されて取りこぼすのを防ぐため)・(2) 顧客の全契約と DB の行の和のうち終端でないものを即時解約する・(3) 顧客を匿名化する (まだなら)。`deleteUser` のあとに届く Webhook (`billing_recheck` の列挙のあと `deleteUser` までの一瞬に完了した契約) は、写像が `user_deleted` (`customer_closed` = true) を返し、`syncSubscription` が終端でない契約を即時解約する (§8.6・§7.3)。
 
@@ -3752,6 +3752,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 - `src/app/pricing/page.tsx`・`tests/public-claims-guard.test.ts`
 - `src/app/(main)/settings/page.tsx` (行を 1 つ足す。テスト 79)
 - `src/lib/auth/frozen.ts` (定数 3 つ・`FROZEN_ALLOWED_API_PATHS` の 3 行・JSDoc の段落。§9.8)・`lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` (§16.1 の行)・`lib/supabase/middleware.ts` (コメント 2 か所だけ: `:193` と `:218-219` の「退会と個人データの書き出し (の API) だけ」を「凍結中も呼べる API (`FROZEN_ALLOWED_API_PATHS`。退会・書き出しと、有料プランの解約の 3 本。billing/01 §9.8)」に。コードは変えない) (段 B)
+- 同意のゲート (#1442。`cross/13a` §6.4) の許可リスト `packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS` に 3 行 (§9.8 の 3 本・`leave_service`) と、それを固定する `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` のスナップショット・`packages/shared/src/legal-consent-api.test.ts` の例・`lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts` (#1636。凍結中に通る route の一覧) (段 B。§16.3 の `cross/13a` の行の「後の方が相手の行を取り込む」)
 - `src/app/frozen/page.tsx` (リンク 1 つ・定数 `FROZEN_BILLING_PATH`・説明の文 1 つ・冒頭の JSDoc 1 行。§10.5)・`src/__tests__/app/frozen-account-page.test.tsx` (テスト 118 と、冒頭のコメント `:10` の「凍結中でも止めない 2 つの API (FROZEN_ALLOWED_API_PATHS) 以外を呼ばない」を「凍結中でも止めない API (FROZEN_ALLOWED_API_PATHS) のうち退会と書き出しの 2 つ以外を呼ばない」に)・`src/app/frozen/account/page.tsx` (冒頭の JSDoc `:8` の「凍結中でも止めない 2 つ (…) だけ」を「凍結中でも止めない API (…) のうち退会と書き出しの 2 つだけ」にするコメントだけ。画面は変えない) (段 C)
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成)
 - `tests/integration/security/auth-users-fk-on-delete.test.ts` (期待の本数)
