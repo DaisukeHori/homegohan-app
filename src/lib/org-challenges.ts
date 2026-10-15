@@ -94,7 +94,7 @@ export function isOrgChallengeStatus(value: unknown): value is (typeof ORG_CHALL
 
 /**
  * 参加者数・平均を画面に出すのに必要な最小人数 (ORG_CHALLENGE_MIN_PARTICIPANTS) と、参加者数の表示 (formatParticipantCount)。
- * サーバーの説明文の既定と同じ値を使うため、置き場は packages/shared/src/org-challenges.ts の 1 つにし、ここからは読み直して出す
+ * サーバーと Web で同じ値を使うため、置き場は packages/shared/src/org-challenges.ts の 1 つにし、ここからは読み直して出す
  * (モバイルの管理画面も使っていたが、通常の操作で届かない画面として消した。#1598)。
  */
 export { ORG_CHALLENGE_MIN_PARTICIPANTS, formatParticipantCount } from '@homegohan/shared';
