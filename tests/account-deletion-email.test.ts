@@ -32,6 +32,14 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: mocks.getSupabaseAdmin,
 }));
 
+// 退会の段階 billing / billing_recheck (billing/01 §11)。route 経由の it は deleteAccount に billing を渡せないので、既定の実装を
+// モジュールごと差し替える (既定の実装は service_role の client と Stripe の鍵を要る)。直接呼ぶ it は run() で偽物を渡す
+vi.mock('@/lib/billing/account-deletion', () => ({
+  defaultAccountDeletionBilling: {
+    cancelForAccountDeletion: async () => ({ cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' }),
+  },
+}));
+
 vi.mock('@/lib/db-logger', () => {
   const make = (name: string, userId?: string) => ({
     debug: vi.fn(),

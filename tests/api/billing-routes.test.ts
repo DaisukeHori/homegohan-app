@@ -234,7 +234,10 @@ describe('課金の route 共通', () => {
     expect(bad.status).toBe(400);
     // 2 本のソースは stripe-gateway を import しない
     for (const file of ['src/app/api/billing/subscription/route.ts', 'src/app/api/billing/checkout/preview/route.ts']) {
-      expect(fs.readFileSync(path.join(process.cwd(), file), 'utf8'), file).not.toContain('stripe-gateway');
+      const specifiers = [...fs.readFileSync(path.join(process.cwd(), file), 'utf8').matchAll(/^import\s[^;]*?from\s+'([^']+)'/gm)].map((m) => m[1]);
+      expect(specifiers.length, file).toBeGreaterThan(0);
+      expect(specifiers, file).not.toContain('@/lib/billing/stripe-gateway');
+      expect(specifiers, file).not.toContain('@/lib/env');
     }
   });
 
