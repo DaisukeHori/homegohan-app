@@ -15,6 +15,7 @@ import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force-transfer';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -87,6 +88,20 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
+
+    // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
+    // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: operatorId,
+      actionType: 'super_admin.family.transfer_representative',
+      targetId: familyId,
+      targetType: 'family_group',
+      details: { reason, to_user_id, from_user_id: preFg?.representative_id ?? null },
+      severity: 'warn',
+      request: req,
+      routeName: ROUTE_NAME,
+    });
 
     // 通知メール (best-effort)。譲渡はすでに完了しているので、失敗しても 200 を返し、ログに残す。
     // ログには宛先のメールアドレスを残さない。
