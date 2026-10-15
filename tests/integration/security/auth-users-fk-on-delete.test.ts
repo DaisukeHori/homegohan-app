@@ -11,8 +11,9 @@
  *   A. auth.users を指す外部キーに NO ACTION が 1 本も無い (許可リストは空。足すときは理由を書く)
  *   B. RESTRICT は「組織のオーナー」と「家族の代表者」の 2 本だけ (退会 API が先に 409 で止める仕様)
  *   C. SET NULL の外部キーの列はすべて NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
- *   D. 張り直した 32 本のうち #1562 で外した gdpr_deletion_requests.user_id を除く 31 本 (と billing/01 で足した billing_customers.user_id・
- *      cross/15 で足した data_subject_requests.user_id・cross/12 で足した operator_mfa_backup_codes.user_id の 3 本の計 34 本) が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
+ *   D. auth.users を指す外部キー (RESTRICT / NO ACTION の許可リストのものを除く) の「表.列」の集合が、決めた動作の一覧 (EXPECTED_ACTIONS) の
+ *      キーの集合と過不足なく一致する (#1714: 一覧に足し忘れた外部キーがあれば赤になる。一覧の本数を定数で数える検査はこれで置き換えた)。
+ *      一覧のどの外部キーも、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
  *   D2. gdpr_deletion_requests.user_id には auth.users を指す外部キーが無い (#1562 で外した)
  *   E. 退会で消える表 (auth.users と、prepare_account_deletion が直接 DELETE する表から、CASCADE でたどれる表) を指す
  *      NO ACTION / RESTRICT の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)。
@@ -114,9 +115,10 @@ const RESTRICT_ALLOWLIST: Readonly<Record<string, string>> = {
 };
 
 /**
- * #1175 で張り直した 32 本と、billing/01・cross/15・cross/12 で足した 1 本ずつの、決めた動作。
- * ただし gdpr_deletion_requests.user_id の外部キーは #1562 (20261016190000) で外した (削除の実行記録は利用者の行を指さない)。
- * そのためここには #1175 の 31 本と billing_customers.user_id・data_subject_requests.user_id・operator_mfa_backup_codes.user_id の 3 本 (計 34 本) を挙げ、外したことは下の D2 で確かめる
+ * auth.users を指す外部キー (RESTRICT / NO ACTION の許可リストのものを除く) の、退会 (auth.users の行の削除) のときの決めた動作。
+ * DB にある外部キーと過不足なく一致することを D0 (#1714) が確かめる。auth.users を指す外部キーを足したら、退会のときに
+ * 本人と一緒に消すか (CASCADE)、行を残して紐づけだけ外すか (SET NULL) を決めて、ここに足すこと (足さないと D0 が赤になる)。
+ * gdpr_deletion_requests.user_id の外部キーは #1562 (20261016190000) で外した (削除の実行記録は利用者の行を指さない)。外したことは下の D2 で確かめる
  */
 const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   // 本人だけの記録は本人と一緒に消す
@@ -159,18 +161,93 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'data_subject_requests.user_id': 'SET NULL',
   // cross/12 §11.1: 運営の二段階認証のバックアップコードは本人の認証の材料なので、本人と一緒に消す
   'operator_mfa_backup_codes.user_id': 'CASCADE',
-};
 
-/** #1175 で張り直した本数 (migration 20261010000100) */
-const REBUILT_BY_1175 = 32;
-/** そのうち #1562 (20261016190000) で外した本数 (gdpr_deletion_requests.user_id。D2 で確かめる) */
-const DROPPED_BY_1562 = 1;
-/** billing/01 (20261016210000) で足した本数 (billing_customers.user_id) */
-const ADDED_BY_BILLING_CORE = 1;
-/** cross/15 (20261016220000) で足した本数 (data_subject_requests.user_id) */
-const ADDED_BY_DATA_SUBJECT_REQUESTS = 1;
-/** cross/12 (20261016230000) で足した本数 (operator_mfa_backup_codes.user_id) */
-const ADDED_BY_OPERATOR_MFA = 1;
+  // ここから下は #1175 で張り直していない外部キー (初めから ON DELETE が付いていたもの。#1714 で一覧に加えた)
+  // 初期スキーマ (20251126124224) の CASCADE: 本人の記録は本人と一緒に消す
+  'admin_user_notes.user_id': 'CASCADE',
+  'ai_consultation_sessions.user_id': 'CASCADE',
+  'announcement_reads.user_id': 'CASCADE',
+  'blood_test_longitudinal_reviews.user_id': 'CASCADE',
+  'blood_test_results.user_id': 'CASCADE',
+  'buddies.user_id_1': 'CASCADE',
+  'buddies.user_id_2': 'CASCADE',
+  'buddy_actions.from_user_id': 'CASCADE',
+  'buddy_actions.to_user_id': 'CASCADE',
+  'cookie_consents.user_id': 'CASCADE',
+  'daily_activity_logs.user_id': 'CASCADE',
+  'external_data_consents.user_id': 'CASCADE',
+  'family_members.user_id': 'CASCADE',
+  'family_promotion_requests.requested_by': 'CASCADE',
+  'health_challenges.user_id': 'CASCADE',
+  'health_checkup_longitudinal_reviews.user_id': 'CASCADE',
+  'health_checkups.user_id': 'CASCADE',
+  'health_goals.user_id': 'CASCADE',
+  'health_insights.user_id': 'CASCADE',
+  'health_records.user_id': 'CASCADE',
+  'health_streaks.user_id': 'CASCADE',
+  'legacy_family_groups.owner_id': 'CASCADE',
+  'meals.user_id': 'CASCADE',
+  'notification_preferences.user_id': 'CASCADE',
+  'nutrition_feedback_cache.user_id': 'CASCADE',
+  'nutrition_targets.user_id': 'CASCADE',
+  'organization_challenge_participants.user_id': 'CASCADE',
+  'ownership_transfer_proposals.from_user_id': 'CASCADE',
+  'ownership_transfer_proposals.to_user_id': 'CASCADE',
+  'pantry_items.user_id': 'CASCADE',
+  'password_history.user_id': 'CASCADE',
+  'performance_plans.user_id': 'CASCADE',
+  'personal_subscriptions.user_id': 'CASCADE',
+  'recipe_collections.user_id': 'CASCADE',
+  'recipe_comments.user_id': 'CASCADE',
+  'recipe_likes.user_id': 'CASCADE',
+  'recipe_requests.user_id': 'CASCADE',
+  'shopping_list_requests.user_id': 'CASCADE',
+  'shopping_lists.user_id': 'CASCADE',
+  'terms_acceptances.user_id': 'CASCADE',
+  'user_badges.user_id': 'CASCADE',
+  'user_daily_meals.user_id': 'CASCADE',
+  'user_metrics.user_id': 'CASCADE',
+  'user_performance_checkins.user_id': 'CASCADE',
+  'user_profiles.id': 'CASCADE',
+  'user_push_tokens.user_id': 'CASCADE',
+  'user_segment_rankings.user_id': 'CASCADE',
+  'user_sessions_metadata.user_id': 'CASCADE',
+  'weekly_menu_requests.user_id': 'CASCADE',
+  'weekly_menus.user_id': 'CASCADE',
+  // 初期スキーマ (20251126124224) の SET NULL: 記録を残して紐づけだけ外す
+  'admin_audit_logs.actor_id': 'SET NULL',
+  'admin_audit_logs.impersonated_by': 'SET NULL',
+  'app_logs.user_id': 'SET NULL',
+  'derived_recipes.created_by_user_id': 'SET NULL',
+  'family_invites.accepted_by': 'SET NULL',
+  'family_invites.invited_by': 'SET NULL',
+  'family_invites.revoked_by': 'SET NULL',
+  'family_promotion_requests.resolved_by': 'SET NULL',
+  'feature_flags.created_by': 'SET NULL',
+  'inquiries.user_id': 'SET NULL',
+  'legacy_family_members.user_id': 'SET NULL',
+  'meal_nutrition_debug_logs.user_id': 'SET NULL',
+  'membership_audit.actor_id': 'SET NULL',
+  'membership_audit.target_user_id': 'SET NULL',
+  'moderation_flags.user_id': 'SET NULL',
+  'organization_invites.accepted_by': 'SET NULL',
+  'organization_invites.invited_by': 'SET NULL',
+  'organization_invites.revoked_by': 'SET NULL',
+  'recipes.user_id': 'SET NULL',
+  // 20261007150300 (native_bridge_codes): アプリへの受け渡しのコードは本人と一緒に消す
+  'native_bridge_codes.user_id': 'CASCADE',
+  // 20261009000500 (#1101 隠す): 隠した運営者の紐づけだけ外す
+  'meals.hidden_by': 'SET NULL',
+  'recipes.hidden_by': 'SET NULL',
+  // 20261010140000 (AI の利用の数え): 本人の利用回数は本人と一緒に消す
+  'ai_usage_counters.user_id': 'CASCADE',
+  // 20261011020000 (AI の 1 日の上限): 上限を変えた運営者の紐づけだけ外す
+  'ai_daily_limits.updated_by': 'SET NULL',
+  // 20261011030000 (AI の回数の付与の受け取り): 本人の受け取りの記録は本人と一緒に消す
+  'ai_usage_grant_claims.user_id': 'CASCADE',
+  // 20261015130000 (期間のバッジ): 本人のバッジは本人と一緒に消す
+  'user_badge_period_awards.user_id': 'CASCADE',
+};
 
 let fks: AuthUsersFk[];
 
@@ -218,11 +295,32 @@ describe('#1562 D2. 削除の実行記録 (gdpr_deletion_requests) は削除し�
   });
 });
 
-describe('#1175 D. 張り直した外部キーの動作', () => {
-  it('決めた動作の一覧は #1175 の 32 本 − #1562 で外した 1 本 + billing/01 の 1 本 + cross/15 の 1 本 + cross/12 の 1 本 (計 34 本) で、外した列を含まない', () => {
-    expect(Object.keys(EXPECTED_ACTIONS)).toHaveLength(
-      REBUILT_BY_1175 - DROPPED_BY_1562 + ADDED_BY_BILLING_CORE + ADDED_BY_DATA_SUBJECT_REQUESTS + ADDED_BY_OPERATOR_MFA,
-    );
+describe('#1175 D. 外部キーの動作', () => {
+  /**
+   * #1714 D0: DB のカタログと一覧を両方向で突き合わせる。
+   * 片方向 (一覧のキーが DB にあること) だけだと、動作を決めずに足した外部キーが一覧に載らないまま緑になる
+   * (#1702・#1707 で data_subject_requests.user_id と operator_mfa_backup_codes.user_id が漏れた)。
+   * 以前の「一覧の本数が定数の式と合う」検査は、本数が合っても中身が違えば通るので、この検査に置き換えて外した。
+   */
+  it('D0: auth.users を指す外部キー (RESTRICT / NO ACTION の許可リストを除く) の「表.列」の集合が、決めた動作の一覧のキーの集合と一致する', () => {
+    const decidedElsewhere = new Set([...Object.keys(RESTRICT_ALLOWLIST), ...Object.keys(NO_ACTION_ALLOWLIST)]);
+    const inCatalog = [...new Set(fks.map(keyOf))].filter((key) => !decidedElsewhere.has(key)).sort();
+    const listed = Object.keys(EXPECTED_ACTIONS).sort();
+    const notListed = fks
+      .filter((fk) => !decidedElsewhere.has(keyOf(fk)) && !listed.includes(keyOf(fk)))
+      .map((fk) => `${keyOf(fk)} (${fk.constraint}: ${ACTION_NAME[fk.action]})`);
+    const notInCatalog = listed.filter((key) => !inCatalog.includes(key));
+    expect(
+      { notListed, notInCatalog },
+      [
+        'notListed: DB にあるのに EXPECTED_ACTIONS に無い外部キー。退会のときの動作 (CASCADE / SET NULL) を決めて EXPECTED_ACTIONS に足す。',
+        'notInCatalog: EXPECTED_ACTIONS にあるのに DB に無い (または RESTRICT / NO ACTION の許可リストにある) キー。外したなら一覧からも消す。',
+      ].join('\n'),
+    ).toEqual({ notListed: [], notInCatalog: [] });
+    expect(listed).toEqual(inCatalog);
+  });
+
+  it('決めた動作の一覧は #1562 で外した gdpr_deletion_requests.user_id を含まない。billing/01・cross/15・cross/12 で足した列の動作は決めたとおり', () => {
     expect(Object.keys(EXPECTED_ACTIONS)).not.toContain('gdpr_deletion_requests.user_id');
     expect(EXPECTED_ACTIONS['billing_customers.user_id']).toBe('SET NULL');
     expect(EXPECTED_ACTIONS['data_subject_requests.user_id']).toBe('SET NULL');
