@@ -175,7 +175,7 @@ refresh_token をローテーションしてしまわないようにするため
 
 #### ログアウト時フロー
 
-順の正は `apps/mobile/src/lib/signOut.ts` (設定・マイページのログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
+順の正は `apps/mobile/src/lib/signOut.ts` (設定画面のログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
 未ログインになるほかの経路 (起動時・`SIGNED_OUT`) との関係は `apps/mobile/src/providers/AuthProvider.tsx` の先頭の表と 05-auth-session.md §3。
 
 ```
@@ -514,6 +514,8 @@ apps/mobile/
 
 詳細行数目安は family/09 §16-files-structure.md §1.3 参照(合計 ~1740 行)。
 
+上の木は設計時の一覧。あとから `src/handson-tour/` に足したファイル (`useLeaveTour.ts`・`tour-platform.ts`・`safe-nickname.ts`・`photo-save-failure.ts`・`menu-tour-profile.ts`・`tour-bubbles.ts`) を含むいまの一覧は 16-files-structure.md の §1.3 の表と §5 の木 (`tests/handson-tour-files-structure-doc.test.ts` が実ファイルと突き合わせる)。
+
 ### 12.4 既存ファイル修正
 
 | 既存ファイル | 修正内容 |
@@ -521,7 +523,7 @@ apps/mobile/
 | `apps/mobile/src/components/menu/V4GenerateModal.tsx` (642 行) | `mode='sandbox'` prop 対応 + sandbox 用 props 受信(§99 §1.2 Q9) |
 | `apps/mobile/app/badges/index.tsx` (109 行) | `tutorialMode` prop + `badge-card-{code}` 動的 testID + ハイライト演出追加(§99 §1.2 Q10) |
 | `apps/mobile/app/(tabs)/settings.tsx` 等の settings 画面 | 「使い方ガイドをもう一度見る」行追加(family/03 §11.6) |
-| `apps/mobile/app/meals/new.tsx`(新規 or 既存改修) | `?source=handson_tour&sandbox=true` クエリ受信時に Tour overlay 連動 |
+| ~~`apps/mobile/app/meals/new.tsx`~~ | (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) |
 | `apps/mobile/src/lib/posthog.ts`(新規) | `posthog-react-native` 初期化(operator/07 §15.1) |
 
 ### 12.5 共通 package との連携

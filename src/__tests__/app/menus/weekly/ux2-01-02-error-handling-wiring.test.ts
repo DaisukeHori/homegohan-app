@@ -83,9 +83,12 @@ describe('page.tsx: UX2-02 AI週間献立生成失敗の alert() 廃止', () => 
   });
 
   it('ポーリングフォールバック経路（handleV4Generate 内）の failed 分岐が GEN_FAIL を dispatch すること', () => {
-    const idx = pageSource.indexOf("} else if (status === 'failed') {");
+    // #1657: not_found (本人の行が無い) も失敗と同じ分岐で止める
+    const idx = pageSource.indexOf("} else if (status === 'failed' || status === 'not_found') {");
     expect(idx, "ポーリングの status === 'failed' 分岐が見つかりません").toBeGreaterThan(-1);
-    const block = pageSource.slice(idx, idx + 600);
+    const end = pageSource.indexOf('} else if (dbProgress) {', idx);
+    expect(end, '失敗の分岐の次の分岐 (dbProgress) が見つかりません').toBeGreaterThan(idx);
+    const block = pageSource.slice(idx, end);
     expect(block).toMatch(/dispatchAiGen\(\{\s*type: 'GEN_FAIL',/);
     expect(block).toMatch(/requestId: v4RequestId/);
     expect(block).not.toMatch(/^\s*alert\(/m);

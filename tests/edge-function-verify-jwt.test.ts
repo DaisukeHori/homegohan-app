@@ -284,6 +284,10 @@ const CATALOG_IMPORT_FUNCTIONS = [
 const SEGMENT_STATS_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261009100000_schedule_calculate_segment_stats.sql');
 /** 確定の回の再試行 public.invoke_calculate_segment_stats_finalize_retry と、そのジョブを足した migration (#1500) */
 const SEGMENT_STATS_FINALIZE_RETRY_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261011120000_segment_stats_finalize_retry.sql');
+/** 料理画像の待ちのジョブを拾う public.invoke_process_meal_image_jobs と、そのジョブを足した migration (#1561) */
+const MEAL_IMAGE_PICKUP_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261015180000_meal_image_jobs_pickup_cron.sql');
+/** 料理画像の処理の Edge Function (#1561 で pg_cron から Vault の app_cron_secret で呼ぶようになった) */
+const MEAL_IMAGE_WORKER_FUNCTION = 'process-meal-image-jobs';
 
 const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, DbHttpCallSite>([
   // public.invoke_catalog_import: '.../functions/v1/' || p_function_name を v_url に入れ、net.http_post で呼ぶ
@@ -294,6 +298,8 @@ const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, 
   [SEGMENT_STATS_MIGRATION, { count: 2, callees: [SEGMENT_STATS_FUNCTION] }],
   // public.invoke_calculate_segment_stats_finalize_retry: 上と同じ定数 c_url を net.http_post で呼ぶ (確定の回の再試行。#1500)
   [SEGMENT_STATS_FINALIZE_RETRY_MIGRATION, { count: 2, callees: [SEGMENT_STATS_FUNCTION] }],
+  // public.invoke_process_meal_image_jobs: 定数 c_url の '.../functions/v1/process-meal-image-jobs' を net.http_post で呼ぶ (#1561)
+  [MEAL_IMAGE_PICKUP_MIGRATION, { count: 2, callees: [MEAL_IMAGE_WORKER_FUNCTION] }],
 ]);
 
 /**
@@ -514,8 +520,8 @@ describe('検査の道具が空振りしない', () => {
     });
   });
 
-  it(`DB から呼ばれる関数の宣言に、${SEGMENT_STATS_FUNCTION} とカタログ取り込みの 5 本がある`, () => {
-    expect(DB_CALLEES).toEqual([...CATALOG_IMPORT_FUNCTIONS, SEGMENT_STATS_FUNCTION].sort());
+  it(`DB から呼ばれる関数の宣言に、${SEGMENT_STATS_FUNCTION}・${MEAL_IMAGE_WORKER_FUNCTION} とカタログ取り込みの 5 本がある`, () => {
+    expect(DB_CALLEES).toEqual([...CATALOG_IMPORT_FUNCTIONS, SEGMENT_STATS_FUNCTION, MEAL_IMAGE_WORKER_FUNCTION].sort());
   });
 
   // DB からの HTTP の呼び出しは、SQL を読まず、宣言と、生の文字列で数えた数の突き合わせで囲う (#1406 R4 のレビューの指摘。
@@ -609,6 +615,8 @@ describe('検査の道具が空振りしない', () => {
   it('requireServiceRole で認証する関数を見つけられている (要求を渡すだけの index.ts も、渡し先の関数を見る)', () => {
     expect(SERVICE_ROLE_FUNCTIONS).toContain(SEGMENT_STATS_FUNCTION);
     expect(SERVICE_ROLE_FUNCTIONS).toContain('import-seven-eleven-catalog');
+    // service role key の完全一致のあとに requireServiceRole を呼ぶ関数も拾う (#1561)
+    expect(SERVICE_ROLE_FUNCTIONS).toContain(MEAL_IMAGE_WORKER_FUNCTION);
   });
 
   it('CRON_SECRET を受け付ける関数は、Deno.serve( より前に定義した handler の中の呼び出しも拾う (#1406 R2 の同型の掃除)', () => {

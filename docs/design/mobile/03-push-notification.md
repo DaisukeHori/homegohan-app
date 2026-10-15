@@ -135,7 +135,10 @@ type PushPayload = {
 > (置かれている間だけ有効で、外されたら `setNotificationHandler(null)` とリスナーの `remove()` で解除する)。
 > 表示は `shouldShowBanner` / `shouldShowList` / `shouldPlaySound` / `shouldSetBadge` (expo-notifications 0.31 では `shouldShowAlert` は非推奨)。
 > タップの行き先は `data.path` (アプリ内のパス) か `data.deep_link` (`homegohan://…`) から `src/lib/notificationRoute.ts` が決め、
-> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (§3.3 の例の `family/meal-requests`) は、一番近い上位の画面 (`/family`) を開く。
+> 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (例: `health/streaks/abc`) は、一番近い上位の画面 (`/health/streaks`) を開く。
+> アプリには家族の画面が無い (ネイティブの家族の画面 `app/family/index.tsx` は、通常の操作で届かない画面として消した。#1598 / #1610)。
+> §3.3 の例の `homegohan://family/meal-requests` のような家族の通知は、行き先が決まらず、アプリが開くだけになる。
+> 家族の通知の行き先 (WebView で Web の家族の画面を開くなど) は、家族の通知を送る実装 (`notify-push`) を作るときに決める。
 
 #### サーバー側バッジ計算
 
@@ -407,7 +410,7 @@ sequenceDiagram
   Expo->>APNs: APN 送信
   APNs->>Husband: Push 通知表示 (バッジ 3)
   Husband->>Husband: (前面のとき) NotificationRouter の setNotificationHandler (shouldSetBadge: true) でバッジ 3 を付ける
-  Husband->>Husband: 通知タップ → /family 画面へ (/family/meal-requests の画面は無いので、notificationRoute が一番近い上位の画面を開く)
+  Husband->>Husband: 通知タップ → アプリが開く (家族の画面はアプリに無いので、notificationRoute は行き先を決めない。§3.5 の「実装 (#1049 F7-11)」の注)
 ```
 
 ### 5.2 通知種別 on/off 設定フロー

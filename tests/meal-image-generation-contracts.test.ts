@@ -101,7 +101,7 @@ describe("Edge の料理画像のジョブの積み方 (#1505)", () => {
       jobs: [seed(0, { referenceImageUrls: ["https://example.com/ref.png"] }), seed(1)],
     });
 
-    expect(result).toEqual({ inserted: 2, duplicates: 0, failed: 0 });
+    expect(result).toEqual({ inserted: 2, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
     expect(queue.upsert).not.toHaveBeenCalled();
     expect(queue.db.from).toHaveBeenCalledWith("meal_image_jobs");
     expect(queue.inserted.map((row) => row.dish_index)).toEqual([0, 1]);
@@ -127,7 +127,7 @@ describe("Edge の料理画像のジョブの積み方 (#1505)", () => {
     const queue = makeEdgeDb({ outcomeOf: (_row, index) => (index === 0 ? UNIQUE_VIOLATION : null), dishes: [pendingDish(0), pendingDish(1)] });
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobs: [seed(0), seed(1)] });
 
-    expect(result).toEqual({ inserted: 1, duplicates: 1, failed: 0 });
+    expect(result).toEqual({ inserted: 1, duplicates: 1, duplicatesProcessing: 0, failed: 0 });
     expect(queue.mealUpdates).toEqual([]);
   });
 
@@ -138,7 +138,7 @@ describe("Edge の料理画像のジョブの積み方 (#1505)", () => {
     });
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobs: [seed(0), seed(1)] });
 
-    expect(result).toEqual({ inserted: 1, duplicates: 0, failed: 1 });
+    expect(result).toEqual({ inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 1 });
     expect(queue.mealUpdates).toHaveLength(1);
     expect(queue.mealUpdates[0].id).toBe("meal-1");
     expect(queue.mealUpdates[0].dishes[0]).toMatchObject({ image_status: "pending", image_error: null });
@@ -149,7 +149,7 @@ describe("Edge の料理画像のジョブの積み方 (#1505)", () => {
     const queue = makeEdgeDb({ outcomeOf: () => "throw", dishes: [pendingDish(0)] });
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobs: [seed(0)] });
 
-    expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 1 });
+    expect(result).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 1 });
     expect(queue.mealUpdates[0].dishes[0]).toMatchObject({ image_status: "failed", image_error: MEAL_IMAGE_ENQUEUE_FAILED_ERROR });
   });
 
@@ -160,7 +160,7 @@ describe("Edge の料理画像のジョブの積み方 (#1505)", () => {
     });
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobs: [seed(0), seed(1)] });
 
-    expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 2 });
+    expect(result).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 2 });
     expect(queue.mealUpdates).toEqual([]);
   });
 
@@ -168,7 +168,7 @@ describe("Edge の料理画像のジョブの積み方 (#1505)", () => {
     const queue = makeEdgeDb({ outcomeOf: () => null });
     const result = await enqueueMealImageJobs({ ...base, supabase: queue.db, jobs: [] });
 
-    expect(result).toEqual({ inserted: 0, duplicates: 0, failed: 0 });
+    expect(result).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 0 });
     expect(queue.db.from).not.toHaveBeenCalled();
   });
 });

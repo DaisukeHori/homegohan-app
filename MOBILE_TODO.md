@@ -218,7 +218,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 ### フェーズ 2 — 日常導線 (実装済み)
 - [x] ホーム `app/(tabs)/home.tsx` (694 行)
 - [x] 週間献立 `app/menus/weekly/index.tsx` (631 行) + `app/menus/weekly/request/index.tsx`
-- [x] 食事記録 `app/meals/new.tsx` (1,045 行) + `app/meals/[id].tsx` + `app/meals/[id]/edit.tsx`
+- [x] 食事記録 `app/meals/[id].tsx` + `app/meals/[id]/edit.tsx`（新規作成の `app/meals/new.tsx` は、スキャンのタブが WebView になって届かなくなったので 2026-10-15 に削除。#1598）
 - [x] AI相談 `app/ai/index.tsx` + `app/ai/[sessionId].tsx` + `app/ai/important.tsx`
 
 ### フェーズ 3 — 健康・買い物・冷蔵庫 (実装済み)
@@ -230,7 +230,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 
 ### フェーズ 5 — 完全移植 (実装済み)
 - [x] レシピ機能 `app/recipes/` 配下: index / new / [id] / [id]/edit / collections / collections/[id] / collections/select
-- [x] 比較 `app/comparison/`、バッジ `app/badges/`、家族 `app/family/`、プロフィール `app/profile/` + `app/profile/nutrition-targets.tsx`
+- [x] バッジ `app/badges/`、栄養目標 `app/profile/nutrition-targets.tsx`（比較 `app/comparison/`・プロフィール `app/profile/index.tsx` はタブ (WebView) と同じパスで重なっていた、家族 `app/family/` は通常の操作で届かなかったので、2026-10-15 に削除。#1598 / #1610）
 - [x] 管理系 `(admin)`: 実装したが、2026-10-08 に削除した（運営作業は Web に一本化するオーナー判断。呼び先の API がサーバーに無い画面もあった。#1122）
 - [x] 組織 `(org)`: dashboard / members / invites / departments / challenges / settings
 - [x] スーパー管理 `(super-admin)`: index / admins / database / feature-flags / settings

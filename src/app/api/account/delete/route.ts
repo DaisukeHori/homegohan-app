@@ -3,6 +3,7 @@ import { generateRequestId } from '@/lib/db-logger';
 import { internalError } from '@/lib/api/errors';
 import { accountDeletionHttp, deleteAccount, isAccountDeletionFailure } from '@/lib/account-deletion';
 import { NextResponse } from 'next/server';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // Storage のファイル削除に時間がかかることがある (src/lib/account-deletion-storage.ts の上限 45 秒より長くしておく)
 export const maxDuration = 60;
@@ -17,6 +18,9 @@ const ROUTE_NAME = 'POST /api/account/delete';
  * 500 は #1172 の規則どおり internalError (汎用メッセージだけ。原因・段階・request_id は本文に出さず、ログに残す) で返す。
  */
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

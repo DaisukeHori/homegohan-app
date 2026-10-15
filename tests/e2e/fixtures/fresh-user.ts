@@ -206,6 +206,11 @@ export async function upsertUserProfile(
     gender?: string;
     roles?: string[];
     organization_id?: string | null;
+    /**
+     * 組織の中の役割 (org_role_enum)。organization_id と対で入れる
+     * (CHECK user_profiles_org_consistency: 両方 NULL か両方あり。片方だけだと UPSERT が 400 で失敗する)
+     */
+    org_role?: "owner" | "admin" | "member" | null;
     onboarding_completed_at?: string | null;
   },
 ): Promise<void> {
@@ -222,6 +227,7 @@ export async function upsertUserProfile(
     ...(fields.organization_id !== undefined
       ? { organization_id: fields.organization_id }
       : {}),
+    ...(fields.org_role !== undefined ? { org_role: fields.org_role } : {}),
   };
 
   const resp = await fetch(`${supabaseUrl}/rest/v1/user_profiles`, {
@@ -671,13 +677,14 @@ export const test = base.extend<FreshUserFixtures>({
    *
    * 1. admin.createUser (email_confirm: true) で即時ユーザー作成
    * 2. organizations テーブルに fresh org を INSERT (service_role REST API)
-   * 3. user_profiles に roles=['org_admin'] / organization_id / onboarding 完了 を UPSERT
+   * 3. user_profiles に roles=['org_admin'] / organization_id / org_role='owner' / onboarding 完了 を UPSERT
    * 4. session inject
    * 5. afterAll: admin.deleteUser (cascade) + organizations DELETE
    *
-   * org_admin ロール判定: src/app/api/org/invites/route.ts が
-   * user_profiles.roles に 'org_admin' が含まれるか AND
-   * user_profiles.organization_id が非 null かで確認する。
+   * 組織の管理者の判定 (requireOrgAdmin → isOrgAdmin。src/lib/auth/org-admin.ts) は、
+   * user_profiles.organization_id が非 null かつ org_role が 'owner' / 'admin' かで確認する (roles は見ない)。
+   * #1584: 以前は org_role を入れておらず、requireOrgAdmin が 403 になるうえ、
+   * organization_id だけを入れる UPSERT は CHECK user_profiles_org_consistency に反して失敗していた。
    *
    * family/01-invite-accept-share.spec.ts の org 招待 API テストに適切。
    */
@@ -697,11 +704,12 @@ export const test = base.extend<FreshUserFixtures>({
         `${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       );
 
-      // user_profiles: roles=['org_admin'] + organization_id + onboarding 完了 で UPSERT
+      // user_profiles: roles=['org_admin'] + organization_id + org_role (作った組織の持ち主) + onboarding 完了 で UPSERT
       await upsertUserProfile(user.id, {
         nickname: "E2E Operator User",
         roles: ["org_admin"],
         organization_id: orgId,
+        org_role: "owner",
       });
 
       // session inject

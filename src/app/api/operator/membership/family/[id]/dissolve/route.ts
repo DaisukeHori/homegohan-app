@@ -13,7 +13,9 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
 
@@ -24,6 +26,9 @@ const BodySchema = z.object({
 });
 
 export async function POST(req: NextRequest, props: { params: Promise<{ id: string }> }) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(req);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
@@ -92,7 +97,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         .in('id', userIds);
       const nicknameMap: Record<string, string> = {};
       for (const p of profiles ?? []) {
-        nicknameMap[p.id] = p.nickname ?? '';
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は入れない。メールはアドレスを宛名にする (#1649)
+        const name = normalizeProfileName(p.nickname);
+        if (name) nicknameMap[p.id] = name;
       }
 
       const familyName = preFg?.name ?? '';

@@ -163,11 +163,12 @@ describe('page.tsx: どの道でも生成の印を渡す (#1597 配線)', () => 
       'const subscribeToRequestStatus = useCallback((targetDate: string, requestId: string, ultimateMode: boolean) =>',
     );
     expect(pageSource).toContain(
-      'const startPolling = useCallback((targetDate: string, requestId: string, ultimateMode: boolean) =>',
+      // #1657: startPolling は呼び出し元の監視の印 (watch) も受け取る
+      'const startPolling = useCallback((targetDate: string, requestId: string, ultimateMode: boolean, watch: { active: boolean }) =>',
     );
     expect(pageSource).toContain('convertV4ProgressToUIFormat(data.progress, ultimateMode)');
     expect(pageSource).toContain('convertV4ProgressToUIFormat(newData.progress, ultimateMode)');
-    const pollingCalls = pageSource.match(/startPolling\(targetDate, requestId, ultimateMode\)/g) ?? [];
+    const pollingCalls = pageSource.match(/startPolling\(targetDate, requestId, ultimateMode, watch\)/g) ?? [];
     expect(pollingCalls).toHaveLength(3);
   });
 

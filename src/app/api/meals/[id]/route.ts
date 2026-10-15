@@ -19,6 +19,7 @@ import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /**
  * 特定の食事を取得（planned_mealsベース）
@@ -65,6 +66,9 @@ export async function GET(request: Request, props: { params: Promise<{ id: strin
  * 食事を更新（planned_mealsベース）
  */
 export async function PATCH(request: Request, props: { params: Promise<{ id: string }> }) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
     const supabase = await createClient();
@@ -178,6 +182,8 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         dishName: updateData.dish_name ?? undefined,
         triggerSource,
         imageUrlOverride: manualImageUrl,
+        // 利用者がカバーを外した (image_url: null)。料理が 2 品以上なら、カバーを外して料理の画像 (AI の画像があれば) に戻す (#1553)
+        clearCover: body.image_url === null,
         imageModel,
         existingCover: existing.image_url ?? null,
         fallbackMealImageUrl: existing.image_url ?? null,

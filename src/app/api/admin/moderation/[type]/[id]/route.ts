@@ -76,6 +76,7 @@ import {
 import {
   AI_CONTENT_NOT_SUPPORTED_MESSAGE,
   fetchModerationSingle,
+  withSignedModerationContentUrls,
   hideModeratedContent,
   isModerationBacked,
   resolveModerationItem,
@@ -83,6 +84,7 @@ import {
 import { notSupportedResponse } from '@/lib/admin/not-supported';
 import { applyUserBan, BAN_INTERNAL_ERROR_MESSAGE } from '@/lib/admin/user-ban';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
 
@@ -177,7 +179,9 @@ export async function GET(request: Request, props: Params) {
       routeName: 'api/admin/moderation/[type]/[id] GET',
     });
 
-    return NextResponse.json({ data: item });
+    // 写真は保存された公開 URL のまま返さず、署名付き URL にする (#1365)
+    const [signedItem] = await withSignedModerationContentUrls(supabaseAdmin, [item]);
+    return NextResponse.json({ data: signedItem });
   } catch (err) {
     console.error('[api/admin/moderation/[type]/[id]] GET error:', err instanceof Error ? err.message : err);
     return internalErrorResponse();
@@ -185,11 +189,17 @@ export async function GET(request: Request, props: Params) {
 }
 
 export async function POST(request: Request, props: Params) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   return handleResolve(request, params);
 }
 
 export async function PUT(request: Request, props: Params) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   return handleResolve(request, params);
 }
