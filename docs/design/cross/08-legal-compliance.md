@@ -261,9 +261,10 @@ CREATE POLICY "ext_consent_no_delete"
 >   同意画面を出さずに案内の一文だけを出す。アプリ (apps/mobile) は、止められたら同意画面 (`/settings/ai-consent` を WebView で開く) へ案内する。
 >   アプリの同意画面は画面の遷移で開くので、案内の「同意画面を開く」を押した時点で開いているモーダル (シート) が残ると、
 >   同意画面がその下に隠れる。モーダルの上に開いた部品は自分で案内を出さず、開いた側が自分のモーダルも閉じてから案内を出す。
->   画面そのものを modal で開くもの (ルートの Stack で `presentation: "modal"` の食事の新規作成 `meals/new`) は、iOS では
->   そこから移った同意画面がその画面の下に入るので、案内の「同意画面を開く」を押したときに自分を閉じてから移る
->   (規則は `apps/mobile/src/lib/ai-consent.ts` の先頭。入れ子と modal で開く画面は `tests/ai-consent-mobile-modal-nesting.test.ts` が検査する)。
+>   画面そのものを modal (ルートの Stack で `presentation: "modal"` など) で開く画面は置かない。iOS では、そこから移った同意画面が
+>   その画面の下に入るため。以前の食事の新規作成 (`meals/new`) がこの形だったが、通常の操作で届かないネイティブの画面として
+>   2026-10-15 に消した (#1598。規則は `apps/mobile/src/lib/ai-consent.ts` の先頭。入れ子と、modal で開く画面が無いことは
+>   `tests/ai-consent-mobile-modal-nesting.test.ts` が検査する)。
 > - 同意画面の文面は、弁護士の確認が済むまで**仮**。画面は `src/components/consent/AiDataConsentModal.tsx`、
 >   確認と撤回のページは `/settings/ai-consent`。Web の設定 (`/settings` の「データとプライバシー」) とアプリの設定タブに
 >   「AI へのデータ提供の同意」の項目を置き、そこから開く (案内の一文が「設定の「AI へのデータ提供の同意」から」と指す先)。

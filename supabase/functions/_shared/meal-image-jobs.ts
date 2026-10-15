@@ -1,6 +1,8 @@
 import {
   buildMealImageJobRecords,
+  EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT,
   ENQUEUE_FAILED_MEAL_COLUMNS,
+  MEAL_IMAGE_JOB_ACTIVE_STATUSES,
   insertMealImageJobRecords,
   markEnqueueFailedDishesInMeal,
   summarizeMealImageJobOutcomes,
@@ -27,11 +29,12 @@ export interface EnqueueMealImageJobsParams {
  *
  * 書き込みに失敗した料理は、保存済みの献立の上で 'failed' + 'enqueue_failed' にする ('pending' のまま「生成中」に残さない)。
  * 重複 (同じ料理のジョブが待ち・処理中) の料理は 'pending' のまま (そのジョブが画像を作る)。
- * 呼び出し側は、積めた・重複の行があるときに triggerMealImageJobProcessing で処理を起こす
+ * 重複のときは、重なったジョブが待ちか処理中かを読み、処理中なら duplicatesProcessing にも数える (#1561)。
+ * 呼び出し側は、countMealImageJobsToProcess (積めた行と待ちの重複) が 1 以上のときに triggerMealImageJobProcessing で処理を起こす
  */
 export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): Promise<EnqueueMealImageJobsResult> {
   if (!params.jobs.length) {
-    return { inserted: 0, duplicates: 0, failed: 0 };
+    return { ...EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT };
   }
 
   const records = await buildMealImageJobRecords({
@@ -43,6 +46,14 @@ export async function enqueueMealImageJobs(params: EnqueueMealImageJobsParams): 
   const outcomes = await insertMealImageJobRecords(
     records,
     (record) => params.supabase.from("meal_image_jobs").insert(record),
+    // 重なった同じ料理のジョブが待ちか処理中か (処理中なら処理を起こさない。#1561)
+    (record) =>
+      params.supabase
+        .from("meal_image_jobs")
+        .select("status")
+        .eq("idempotency_key", record.idempotency_key)
+        .in("status", [...MEAL_IMAGE_JOB_ACTIVE_STATUSES])
+        .maybeSingle(),
   );
 
   const failures: Array<{ dishIndex: number; subjectHash: string }> = [];

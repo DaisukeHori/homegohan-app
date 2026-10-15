@@ -7,10 +7,15 @@
 //   → GEN_PROGRESS_IF_EMPTY: 「今の進捗が null のときだけ置く」を reducer の action にし、今の状態で判定させる。
 //     setGenerationProgress は関数形を受け取らない形にした (古い値で解決する経路そのものを無くす)。
 //
-// 1. reducer の挙動 (今が null なら置く・進捗があれば残す・Math.max のクランプは GEN_PROGRESS と同じ)
-// 2. 既存の action (GEN_RESUME_PENDING・GEN_PROGRESS・GEN_PROGRESS_CLEAR・GEN_SUCCESS・GEN_FAIL) の挙動は変わらない
-// 3. 画面と同じ組み方 (useReducer + 前の描画で握った setter) で、古い setter から呼んでも今の進捗を上書きしない
-// 4. page.tsx の配線 (2 か所のポーリングが setGenerationProgressIfEmpty を呼ぶ・関数形の setter が残っていない)
+// #1663 (#1644 の整合ゲートで見つかった挙動の変化): GEN_PROGRESS_IF_EMPTY をポーリングに使うと、生成の開始で初期の進捗
+//   (3% / 5%) を置いたあとは一度も DB の進捗を置かず、Realtime が不通の間は完了まで初期の進捗のまま止まって見えた。
+//   ポーリングは GEN_PROGRESS_WHILE_GENERATING (生成中のときだけ GEN_PROGRESS で置く) に替え、「今が null のときだけ置く」が
+//   要る経路が無くなったので GEN_PROGRESS_IF_EMPTY と setGenerationProgressIfEmpty は外した
+//   (ポーリングの進捗の検査は poll-progress-while-generating.test.ts)。このファイルには、#1644 の残り (関数形を受けない setter) を残す。
+//
+// 1. 既存の action (GEN_RESUME_PENDING・GEN_PROGRESS・GEN_PROGRESS_CLEAR・GEN_SUCCESS・GEN_FAIL) の挙動は変わらない
+// 2. 画面と同じ組み方 (useReducer + 前の描画で握った setter) で、以前の関数形の setter が今の進捗を古い値で上書きしていたこと
+// 3. page.tsx の配線 (関数形の setter が残っていない・「今が null のときだけ置く」の経路が残っていない)
 
 import React, { act, useCallback, useReducer } from 'react';
 import fs from 'node:fs';
@@ -22,7 +27,6 @@ import { convertV4ProgressToUIFormat, pendingRestoreProgress } from '@/app/(main
 import {
   aiGenerationReducer,
   initialAiGenerationState,
-  type AiGenerationAction,
   type AiGenerationState,
   type GenerationProgress,
 } from '@/app/(main)/menus/weekly/_state/reducers/aiGenerationReducer';
@@ -71,60 +75,11 @@ function generatingWith(progress: GenerationProgress | null): AiGenerationState 
   };
 }
 
-describe('aiGenerationReducer GEN_PROGRESS_IF_EMPTY: 今の進捗が null のときだけ置く (#1644)', () => {
-  it('前提: 今の進捗と DB の進捗は、文・段・割合が違う', () => {
+describe('前提: 今の進捗と DB の進捗', () => {
+  it('文・段・割合が違う', () => {
     expect(liveProgress.message).not.toBe(dbProgress.message);
     expect(liveProgress.completedSlots).not.toBe(dbProgress.completedSlots);
     expect(liveProgress.percentage).toBeGreaterThan(dbProgress.percentage);
-  });
-
-  it('今が null なら payload を置く (GEN_PROGRESS を null から送ったときと同じ結果)', () => {
-    const before = generatingWith(null);
-    const after = aiGenerationReducer(before, { type: 'GEN_PROGRESS_IF_EMPTY', payload: dbProgress });
-    expect(after.generationProgress).toEqual(dbProgress);
-    expect(after).toEqual(aiGenerationReducer(before, { type: 'GEN_PROGRESS', payload: dbProgress }));
-  });
-
-  it('今が null で生成中でもないときも置く (以前の関数形 prev ?? x と同じ意図)', () => {
-    const after = aiGenerationReducer(initialAiGenerationState, { type: 'GEN_PROGRESS_IF_EMPTY', payload: dbProgress });
-    expect(after.generationProgress).toEqual(dbProgress);
-    expect(after.isGenerating).toBe(false);
-  });
-
-  it('今に進捗があれば何も変えない (同じ state をそのまま返す・文も段も割合も残る)', () => {
-    const before = generatingWith(liveProgress);
-    const after = aiGenerationReducer(before, { type: 'GEN_PROGRESS_IF_EMPTY', payload: dbProgress });
-    expect(after).toBe(before);
-    expect(after.generationProgress?.message).toBe(LIVE_MESSAGE);
-    expect(after.generationProgress?.completedSlots).toBe(LIVE_COMPLETED_SLOTS);
-    expect(after.generationProgress?.percentage).toBe(liveProgress.percentage);
-  });
-
-  it('今の進捗の割合が payload より低くても置き直さない (「残す」は割合の大小によらない)', () => {
-    const low: GenerationProgress = { ...liveProgress, percentage: dbProgress.percentage - 1 };
-    const before = generatingWith(low);
-    const after = aiGenerationReducer(before, { type: 'GEN_PROGRESS_IF_EMPTY', payload: dbProgress });
-    expect(after.generationProgress).toBe(low);
-  });
-
-  it('置いたあとの GEN_PROGRESS は Math.max のクランプを今までどおり受ける (割合は戻らない)', () => {
-    const placed = aiGenerationReducer(generatingWith(null), { type: 'GEN_PROGRESS_IF_EMPTY', payload: liveProgress });
-    const older = aiGenerationReducer(placed, { type: 'GEN_PROGRESS', payload: dbProgress });
-    expect(older.generationProgress?.percentage).toBe(liveProgress.percentage);
-    expect(older.generationProgress?.message).toBe(DB_MESSAGE);
-  });
-
-  it('isGenerating・generatingMeal・失敗の文には触れない', () => {
-    const before: AiGenerationState = {
-      ...generatingWith(null),
-      generationFailedError: 'err',
-      generationFailedRequestId: 'req-1',
-    };
-    const after = aiGenerationReducer(before, { type: 'GEN_PROGRESS_IF_EMPTY', payload: dbProgress });
-    expect(after.isGenerating).toBe(true);
-    expect(after.generatingMeal).toEqual({ dayIndex: 3, mealType: 'dinner' });
-    expect(after.generationFailedError).toBe('err');
-    expect(after.generationFailedRequestId).toBe('req-1');
   });
 });
 
@@ -172,7 +127,7 @@ describe('既存の action の挙動は変わらない (#1644 の範囲の外)',
   });
 });
 
-describe('画面と同じ組み方: 古い描画の setter から呼んでも、今の進捗を上書きしない (#1644)', () => {
+describe('画面と同じ組み方: 以前の関数形の setter は、古い描画の値で今の進捗を上書きしていた (#1644)', () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -194,7 +149,6 @@ describe('画面と同じ組み方: 古い描画の setter から呼んでも、
   interface Captured {
     state: AiGenerationState;
     setProgress: (v: GenerationProgress | null) => void;
-    setProgressIfEmpty: (v: GenerationProgress) => void;
     /** 以前の page.tsx の setGenerationProgress と同じ形 (関数形を握った描画の値で解決する) — 直した理由を示すためだけに使う */
     legacySetProgress: (v: GenerationProgress | null | ((prev: GenerationProgress | null) => GenerationProgress | null)) => void;
   }
@@ -208,9 +162,6 @@ describe('画面と同じ組み方: 古い描画の setter から呼んでも、
         if (v === null) dispatch({ type: 'GEN_PROGRESS_CLEAR' });
         else dispatch({ type: 'GEN_PROGRESS', payload: v });
       }, []);
-      const setProgressIfEmpty = useCallback((v: GenerationProgress) => {
-        dispatch({ type: 'GEN_PROGRESS_IF_EMPTY', payload: v } satisfies AiGenerationAction);
-      }, []);
       const legacySetProgress = useCallback(
         (v: GenerationProgress | null | ((prev: GenerationProgress | null) => GenerationProgress | null)) => {
           const next = typeof v === 'function' ? v(state.generationProgress) : v;
@@ -219,7 +170,7 @@ describe('画面と同じ組み方: 古い描画の setter から呼んでも、
         },
         [state.generationProgress],
       );
-      renders.push({ state, setProgress, setProgressIfEmpty, legacySetProgress });
+      renders.push({ state, setProgress, legacySetProgress });
       return null;
     }
     act(() => {
@@ -228,47 +179,17 @@ describe('画面と同じ組み方: 古い描画の setter から呼んでも、
     return { latest: () => renders[renders.length - 1], first: renders[0] };
   }
 
-  it('ポーリングが握った (進捗が null だった描画の) setter から呼んでも、Realtime の今の進捗が残る', () => {
+  it('今の setter (GEN_PROGRESS) は握った描画によらず今の状態に対して置く (古い描画の setter と今の setter が同じ)', () => {
     const { latest, first } = mount();
-    // ポーリングの closure はマウント時の描画の setter を握ったまま、5 秒ごとに DB の進捗を読む
-    const pollingSetIfEmpty = first.setProgressIfEmpty;
-    expect(first.state.generationProgress).toBeNull();
-
-    // その間に Realtime が今の進捗を置く
-    act(() => {
-      latest().setProgress(liveProgress);
-    });
-    expect(latest().state.generationProgress).toEqual(liveProgress);
-
-    // ポーリングが DB の (古い) 進捗で「null のときだけ置く」を呼ぶ
-    act(() => {
-      pollingSetIfEmpty(dbProgress);
-    });
-    expect(latest().state.generationProgress).toEqual(liveProgress);
-    expect(latest().state.generationProgress?.message).toBe(LIVE_MESSAGE);
-    expect(latest().state.generationProgress?.completedSlots).toBe(LIVE_COMPLETED_SLOTS);
-  });
-
-  it('今がまだ null なら、古い setter からでも DB の進捗が置かれる (Realtime が届く前の表示)', () => {
-    const { latest, first } = mount();
-    act(() => {
-      first.setProgressIfEmpty(dbProgress);
-    });
-    expect(latest().state.generationProgress).toEqual(dbProgress);
-  });
-
-  it('進捗を消した (GEN_PROGRESS_CLEAR) あとは、古い setter から置き直せる', () => {
-    const { latest, first } = mount();
+    expect(first.setProgress).toBe(latest().setProgress);
     act(() => {
       latest().setProgress(liveProgress);
     });
     act(() => {
-      latest().setProgress(null);
+      first.setProgress(dbProgress);
     });
-    act(() => {
-      first.setProgressIfEmpty(dbProgress);
-    });
-    expect(latest().state.generationProgress).toEqual(dbProgress);
+    // 割合は Math.max で戻らない (文・段は届いた値)
+    expect(latest().state.generationProgress).toEqual({ ...dbProgress, percentage: liveProgress.percentage });
   });
 
   it('(以前の形) 関数形 prev ?? x を古い setter で呼ぶと、今の進捗の文と段を DB の値で上書きしていた — 直した理由', () => {
@@ -311,19 +232,9 @@ describe('page.tsx の配線 (#1644)', () => {
     expect(body).toContain("dispatchAiGen({ type: 'GEN_PROGRESS', payload: v });");
   });
 
-  it('setGenerationProgressIfEmpty は GEN_PROGRESS_IF_EMPTY を送る (deps が空)', () => {
-    const body = callbackBody('setGenerationProgressIfEmpty');
-    expect(body).toContain("dispatchAiGen({ type: 'GEN_PROGRESS_IF_EMPTY', payload: v });");
-    expect(body).toMatch(/\}, \[\]\);$/);
-  });
-
-  it('ポーリングの 2 か所 (restoreGeneration・献立の改善) は setGenerationProgressIfEmpty で DB の進捗を置く', () => {
-    expect(codeOnly).toContain(
-      'setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, requestedUltimateMode));',
-    );
-    expect(codeOnly).toContain('setGenerationProgressIfEmpty(convertV4ProgressToUIFormat(dbProgress, false));');
-    const calls = codeOnly.match(/setGenerationProgressIfEmpty\(convertV4ProgressToUIFormat\(/g) ?? [];
-    expect(calls).toHaveLength(2);
+  it('「今が null のときだけ置く」の経路 (setGenerationProgressIfEmpty・GEN_PROGRESS_IF_EMPTY) は残っていない (#1663)', () => {
+    expect(codeOnly).not.toContain('setGenerationProgressIfEmpty');
+    expect(codeOnly).not.toContain('GEN_PROGRESS_IF_EMPTY');
   });
 
   it('setGenerationProgress を関数形で呼ぶ箇所が残っていない', () => {

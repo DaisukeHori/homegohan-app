@@ -5,6 +5,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 /**
  * 500 の本文は汎用メッセージだけにする (#1172: Supabase / Postgres の生のエラー文を返さない)。
@@ -124,7 +125,10 @@ export async function GET(_request: Request) {
           error_code: profilesError.code,
         });
       }
-      (profiles || []).forEach((p: any) => nicknameById.set(p.id, p.nickname));
+      // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は null で持ち、下で既定の文言にする (#1649)
+      (profiles || []).forEach((p: { id: string; nickname: string | null }) =>
+        nicknameById.set(p.id, normalizeProfileName(p.nickname)),
+      );
     }
 
     return NextResponse.json({
