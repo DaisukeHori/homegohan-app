@@ -245,8 +245,10 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   {
     table: 'personal_subscriptions',
     scope: self('user_id'),
-    // Stripe の顧客 / 契約 / 価格 ID と運営の備考は外部サービスの識別子・内部メモ
-    omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes'],
+    // Stripe の顧客 / 契約 / 価格 ID と運営の備考は外部サービスの識別子・内部メモ。
+    // stripe_status (Stripe の素の状態) と stripe_synced_at (Stripe から取り直した時刻) は Stripe との同期の内部の記録 (billing/01 §7.1)。
+    // cancel_at_period_end・billing_interval は本人の契約の内容なので出力する
+    omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at'],
   },
   { table: 'coupon_redemptions', scope: self('user_id'), omit: ['approved_by'] },
   {
@@ -303,6 +305,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   meal_nutrition_debug_logs: '栄養計算のデバッグログ',
   meal_image_jobs: '画像生成ジョブのキュー (処理状態・リース情報などの内部データ)',
   shopping_list_requests: '買い物リスト生成ジョブの処理状態 (結果は shopping_lists に出力済み)',
+  billing_customers:
+    'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
 
   // 再生成できる・システムが算出した派生データ
   nutrition_feedback_cache: 'AI フィードバックのキャッシュ (再生成できる)',
