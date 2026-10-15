@@ -14,7 +14,7 @@
 | `src/app/(main)/home/page.tsx` (web) | mount 時 `getHandsonTourStatus()` 確認 | 2A |
 | `apps/mobile/app/(tabs)/home.tsx` (mobile) | 同上 | 2B |
 | `src/app/(main)/meals/new/page.tsx` (web) | `mode='sandbox'` プロップ追加 | 3A |
-| `apps/mobile/app/meals/new.tsx` (mobile) | 同上 | 3B |
+| ~~`apps/mobile/app/meals/new.tsx` (mobile)~~ | (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) | - |
 | `src/components/ai-assistant/V4GenerateModal.tsx` (web) | `mode='sandbox'` プロップ追加 | 3A |
 | Mobile 版 V4GenerateModal (未確認) | 同上 | 3B |
 | `src/app/(main)/badges/page.tsx` (web) | `?tutorial-mode=1&highlight=...` 対応 + `badge-card-{code}` 動的 testID | 3A |
@@ -209,15 +209,7 @@ function MealNewScreenSandbox(props: MealNewSandboxProps) {
 
 #### Mobile
 
-```tsx
-// apps/mobile/app/meals/new.tsx
-import type { MealNewSandboxProps } from '@homegohan/handson-tour-shared';
-
-export default function MealNewScreen(props?: MealNewScreenProps) {
-  if (props?.mode === 'sandbox') return <MealNewScreenSandbox {...props} />;
-  return <MealNewScreenNormal {...props} />;
-}
-```
+モバイルの食事の新規作成の画面 (`apps/mobile/app/meals/new.tsx`) は 2026-10-15 に削除した (#1598。スキャンのタブは WebView で、Web の `/meals/new` を出す)。モバイルでは `<MealNewScreen>` に `mode='sandbox'` を足さない。ツアーの Step 1 は `apps/mobile/app/handson-tour/photo.tsx` が受け持ち、sandbox の画面 (`MealSandboxEmbed`。サンプルの写真・結果・保存のボタン) をその中に持つ。保存は Web と同じ `POST /api/meal-plans/add-from-photo?source=handson_tour` (`@homegohan/handson-tour-shared` の `TOUR_PHOTO_SAVE_URL` と `buildTourPhotoSaveBody`)。
 
 ---
 
