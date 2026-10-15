@@ -35,7 +35,6 @@ export type MissingTestIdAllowance = {
 const R = MISSING_TESTID_REASONS;
 
 export const MAESTRO_MISSING_TESTID_ALLOWLIST: readonly MissingTestIdAllowance[] = [
-  { flow: "ai-chat-flow.yaml", id: "send-button", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "flows/01-login.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/_shared/complete-onboarding-maintain.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/_shared/login-for-onboarding.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
@@ -123,10 +122,6 @@ export const MAESTRO_MISSING_TESTID_ALLOWLIST: readonly MissingTestIdAllowance[]
   { flow: "flows/onboarding/22-state-completed-welcome-redirect.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/screenshots/01-all-screens-baseline.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/screenshots/01-all-screens-baseline.yaml", id: "menus-screen", reason: R.MENUS_WEBVIEW },
-  { flow: "meal-create.yaml", id: "add-meal-button", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
-  { flow: "meal-create.yaml", id: "manual-dish-name-input", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
-  { flow: "menus-weekly/10-v4-modal.yaml", id: "weekly-ai-assistant-btn", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "onboarding-flow.yaml", id: "nickname-input", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "onboarding-flow.yaml", id: "next-button", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
-  { flow: "shopping-flow.yaml", id: "toggle-.*", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
 ];
