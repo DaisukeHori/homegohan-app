@@ -18,6 +18,9 @@
  *     /signup (新規登録) は止める
  *   - 死活監視 /api/health、cron (/api/cron/*)、認証 API (/api/auth/*)、画面が前もって状態を知るための窓口 /api/feature-flags
  *     (いま呼んでいる画面は無い。画面は、この 503 の応答の code で止められたことを知る。#1457)
+ *   - 通知のトークンの claim (POST /api/push-tokens/claim。#1636)。利用者の操作ではなく端末の後片付け (同じ端末の前の利用者の
+ *     行を外す) で、止めると前の利用者宛ての通知がこの端末に届き続けるため。claim の 1 本だけ (src/lib/push-tokens.ts の
+ *     isPushTokenClaimApiPath。release など、ほかの /api/push-tokens/* は止める)
  *   - /_next/* (Next の静的ファイル)。ミドルウェアの matcher が外しているが、念のためここでも通す
  *
  * 静的ファイル (画像・manifest・robots・サービスワーカーなど) は、ミドルウェアの matcher (src/middleware.ts) が外していて、
@@ -36,6 +39,7 @@
 import { NextResponse } from 'next/server';
 import { isFeatureEnabled } from '@/lib/feature-flags';
 import { isPolicyPath } from '@/lib/onboarding-routing';
+import { isPushTokenClaimApiPath } from '@/lib/push-tokens';
 import { MAINTENANCE_API_CODE, MAINTENANCE_MESSAGE, SERVICE_UNAVAILABLE_STATUS } from '@homegohan/shared';
 
 export const MAINTENANCE_FLAG_KEY = 'maintenance_mode';
@@ -85,7 +89,8 @@ export function isMaintenanceExemptPath(pathname: string): boolean {
       pathname === '/api/health' ||
       isSameOrUnder(pathname, '/api/auth') ||
       isSameOrUnder(pathname, '/api/cron') ||
-      pathname === '/api/feature-flags'
+      pathname === '/api/feature-flags' ||
+      isPushTokenClaimApiPath(pathname)
     );
   }
 

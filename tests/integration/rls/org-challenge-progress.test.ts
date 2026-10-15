@@ -9,7 +9,8 @@
  *     参加者ごとの current_value を、JST の暦日・前日までの記録から計算し、チャレンジの中で rank() をつける。
  *     終了日 (JST) を過ぎた開催中のチャレンジを completed にする。service_role だけが実行できる。
  *   - get_org_challenge_aggregates(p_organization_id): 管理者に見せる集計。参加者数と平均だけ。
- *     参加者が 5 人に満たなければ参加者数は NULL、集計が済んだ参加者が 5 人に満たなければ平均は NULL。service_role だけが実行できる。
+ *     参加者が 10 人 (#1600 で 5 → 10 人。supabase/migrations/*_org_challenge_min10_join_policy.sql) に満たなければ参加者数は NULL、
+ *     集計が済んだ参加者が 10 人に満たなければ平均は NULL。service_role だけが実行できる。
  *   - get_org_challenge_ranking(p_challenge_id, p_user_id, p_limit, p_with_names): 参加者に見せる順位表。
  *     参加していない人には 0 行。他人の user_id は返さない。表示名は p_with_names が true のときだけ。service_role だけが実行できる。
  *   - 参加者の行は本人だけが読める (SELECT)。本人の行だけ消せる (DELETE = 参加をやめる)。
@@ -23,7 +24,7 @@
  *   E. チャレンジの状態: 終了日を過ぎたものだけ completed になる。対象外の種類・状態・開始前のチャレンジの参加者は更新しない
  *   F. 繰り返し実行しても同じ結果 (変わらない行は書き換えない) / 終了日より後の記録は数えない
  *   G. 権限: anon / authenticated は関数を呼べない (42501)。service_role は呼べる
- *   H. 管理者向けの集計: 最小人数 (5) 未満では人数も平均も返さない (境界は 4 人と 5 人)・今も組織のメンバーである参加者だけ・
+ *   H. 管理者向けの集計: 最小人数 (10) 未満では人数も平均も返さない (境界は 9 人と 10 人)・今も組織のメンバーである参加者だけ・
  *      他組織のチャレンジは返さない・個人の値の列が無い
  *   I. RLS: 参加者の行は本人だけが読める (管理者・参加していない人・他組織の人は読めない)。本人の行だけ消せる
  *   J. 参加者向けの順位表: 参加者本人にだけ返る (管理者・参加していない人・脱退した人・他組織の人には 0 行)・他人の ID を返さない・
@@ -96,7 +97,8 @@ const createdChallengeIds: string[] = [];
 let orgA = '';
 let orgB = '';
 
-// 組織 A のメンバー。a1〜a7 が参加者、admin は組織 A の管理者 (参加しない)
+// 組織 A のメンバー。a1〜a7 が参加者、admin は組織 A の管理者 (参加しない)。
+// a8〜a11 は、管理者向けの集計の最小人数 (10 人。#1600) を超える人数をそろえるためのメンバー (H でだけ参加する)
 let a1: TestUser;
 let a2: TestUser;
 let a3: TestUser;
@@ -104,6 +106,10 @@ let a4: TestUser;
 let a5: TestUser;
 let a6: TestUser;
 let a7: TestUser;
+let a8: TestUser;
+let a9: TestUser;
+let a10: TestUser;
+let a11: TestUser;
 let admin: TestUser;
 let outsider: TestUser; // 組織 A のメンバーだが参加しない
 let former: TestUser; // 以前は組織 A のメンバー。いまはどの組織にも所属しない (参加行だけが残っている)
@@ -257,7 +263,7 @@ beforeAll(async () => {
   orgA = orgs.find((o) => o.name.startsWith('#1132 Org A'))!.id;
   orgB = orgs.find((o) => o.name.startsWith('#1132 Org B'))!.id;
 
-  [a1, a2, a3, a4, a5, a6, a7, outsider, former, b1] = await Promise.all([
+  [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, outsider, former, b1] = await Promise.all([
     createUser('a1', { signIn: true }),
     createUser('a2'),
     createUser('a3'),
@@ -265,13 +271,17 @@ beforeAll(async () => {
     createUser('a5'),
     createUser('a6'),
     createUser('a7'),
+    createUser('a8'),
+    createUser('a9'),
+    createUser('a10'),
+    createUser('a11'),
     createUser('outsider', { signIn: true }),
     createUser('former'),
     createUser('b1', { signIn: true }),
   ]);
   admin = await createUser('admin', { signIn: true });
 
-  for (const u of [a1, a2, a3, a4, a5, a6, a7, outsider]) await setMembership(u.id, orgA);
+  for (const u of [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11, outsider]) await setMembership(u.id, orgA);
   await setMembership(admin.id, orgA, 'admin');
   await setMembership(b1.id, orgB);
   // former は、どの組織にも所属しない (参加行だけが残る状況を作る)
@@ -769,13 +779,19 @@ describe('#1132 G. 実行権限: service_role だけ', () => {
 // ================================================================
 // H. 管理者向けの集計
 // ================================================================
-describe('#1132 H. get_org_challenge_aggregates: 人数と平均だけ。5 人未満では人数も平均も返さない', () => {
+describe('#1132 / #1600 H. get_org_challenge_aggregates: 人数と平均だけ。10 人未満では人数も平均も返さない', () => {
+  /** 集計の最小人数 (#1600 で 5 → 10 人。要件書 §6.4 の匿名化集計の最低人数) */
+  const MIN = 10;
+
   interface AggregateRow {
     challenge_id: string;
     participant_count: number | null;
     min_participants: number;
     average_value: number | null;
   }
+
+  /** 組織 A の参加者の候補 (11 人)。先頭から n 人を参加させる */
+  const members = () => [a1, a2, a3, a4, a5, a6, a7, a8, a9, a10, a11];
 
   async function aggregates(orgId: string): Promise<Map<string, AggregateRow>> {
     const { data, error } = await srAdmin.rpc('get_org_challenge_aggregates', { p_organization_id: orgId });
@@ -789,78 +805,87 @@ describe('#1132 H. get_org_challenge_aggregates: 人数と平均だけ。5 人�
     );
   }
 
-  it('参加者が 4 人なら人数も平均も NULL、5 人になると人数と平均が出る (境界は 4 人と 5 人)', async () => {
+  it('参加者が 9 人なら人数も平均も NULL、10 人になると人数と平均が出る (境界は 9 人と 10 人)', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
-    const values: Array<[TestUser, number]> = [
-      [a1, 100],
-      [a2, 50],
-      [a3, 50],
-      [a4, 25],
-    ];
-    for (const [u, v] of values) await join(challenge, u.id, { current_value: v, rank: 1 });
+    // 9 人。値は 10, 20, ..., 90
+    for (const [i, u] of members().slice(0, MIN - 1).entries()) {
+      await join(challenge, u.id, { current_value: (i + 1) * 10, rank: 1 });
+    }
 
     let row = (await aggregates(orgA)).get(challenge)!;
     expect(row).toEqual({
       challenge_id: challenge,
-      participant_count: null, // 4 人 (最小人数 5 に満たない): 人数も出さない
-      min_participants: 5,
-      average_value: null,
+      participant_count: null, // 9 人 (最小人数 10 に満たない): 人数も出さない
+      min_participants: MIN,
+      average_value: null, // 9 人とも集計済みでも、平均は出さない
     });
 
-    await join(challenge, a5.id, { current_value: 0, rank: 5 });
+    // 10 人目 (値 100)
+    await join(challenge, members()[MIN - 1].id, { current_value: 100, rank: 1 });
     row = (await aggregates(orgA)).get(challenge)!;
-    expect(row.participant_count).toBe(5);
-    expect(row.min_participants).toBe(5);
-    expect(row.average_value).toBe(45); // (100 + 50 + 50 + 25 + 0) / 5
+    expect(row.participant_count).toBe(10);
+    expect(row.min_participants).toBe(MIN);
+    expect(row.average_value).toBe(55); // (10 + 20 + ... + 100) / 10
   });
 
-  it('参加者が 5 人でも、集計が済んだ (順位がついた) 人が 5 人に満たなければ、人数は出るが平均は NULL', async () => {
+  it('5 人 (#1600 の前の最小人数) では、もう人数も平均も出さない', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
-    for (const u of [a1, a2, a3, a4]) await join(challenge, u.id, { current_value: 80, rank: 1 });
-    await join(challenge, a5.id); // 参加したばかりで、まだ集計されていない (rank が NULL)
+    for (const u of members().slice(0, 5)) await join(challenge, u.id, { current_value: 40, rank: 1 });
+
+    expect((await aggregates(orgA)).get(challenge)).toMatchObject({ participant_count: null, average_value: null });
+  });
+
+  it('参加者が 10 人でも、集計が済んだ (順位がついた) 人が 9 人なら、人数は出るが平均は NULL', async () => {
+    const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+    for (const u of members().slice(0, MIN - 1)) await join(challenge, u.id, { current_value: 80, rank: 1 });
+    const late = members()[MIN - 1];
+    await join(challenge, late.id); // 参加したばかりで、まだ集計されていない (rank が NULL)
 
     let row = (await aggregates(orgA)).get(challenge)!;
-    expect(row.participant_count).toBe(5);
-    expect(row.average_value, '4 人分の平均から個人が分かってしまう').toBeNull();
+    expect(row.participant_count).toBe(10);
+    expect(row.average_value, '9 人分の平均は出さない').toBeNull();
 
-    // 集計が済んだ人が 5 人になると、平均が出る。参加したばかりの 6 人目は、人数にだけ入る
+    // 集計が済んだ人が 10 人になると、平均が出る。参加したばかりの 11 人目は、人数にだけ入る
     await srAdmin
       .from('organization_challenge_participants')
-      .update({ current_value: 30, rank: 5 })
+      .update({ current_value: 30, rank: 10 })
       .eq('challenge_id', challenge)
-      .eq('user_id', a5.id);
-    await join(challenge, a6.id);
+      .eq('user_id', late.id);
+    await join(challenge, members()[MIN].id);
     row = (await aggregates(orgA)).get(challenge)!;
-    expect(row.participant_count).toBe(6);
-    expect(row.average_value).toBe(70); // (80 * 4 + 30) / 5。a6 (未集計) は平均に入らない
+    expect(row.participant_count).toBe(11);
+    expect(row.average_value).toBe(75); // (80 * 9 + 30) / 10。11 人目 (未集計) は平均に入らない
   });
 
   it('平均は小数第 1 位に丸める', async () => {
     const challenge = await createChallenge({ type: 'veg_score', start: START, end: END });
-    const values: Array<[TestUser, number]> = [
-      [a1, 4.5],
-      [a2, 3.7],
-      [a3, 3],
-      [a4, 3],
-      [a5, 0],
-    ];
-    for (const [u, v] of values) await join(challenge, u.id, { current_value: v, rank: 1 });
+    // 4.5 + 3.7 + 3 * 7 + 0 = 29.2。29.2 / 10 = 2.92 → 2.9
+    const values = [4.5, 3.7, 3, 3, 3, 3, 3, 3, 3, 0];
+    for (const [i, u] of members().slice(0, values.length).entries()) {
+      await join(challenge, u.id, { current_value: values[i], rank: 1 });
+    }
 
-    expect((await aggregates(orgA)).get(challenge)!.average_value).toBe(2.8); // 14.2 / 5 = 2.84
+    expect((await aggregates(orgA)).get(challenge)!.average_value).toBe(2.9);
   });
 
   it('脱退した人・別の組織の人の参加行は数えない。参加者のいないチャレンジは人数 NULL。他組織のチャレンジは返らない', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+    const short = await createChallenge({ type: 'veg_score', start: START, end: END });
     const empty = await createChallenge({ type: 'cooking_rate', start: START, end: END });
     const other = await createChallenge({ org: orgB, type: 'breakfast_rate', start: START, end: END });
-    // 今の組織のメンバーは 5 人 (a1〜a5)。脱退した人 (former) と別の組織の人 (b1) の行が混ざっていても、人数は 5 のまま
-    for (const u of [a1, a2, a3, a4, a5]) await join(challenge, u.id, { current_value: 10, rank: 1 });
+    // 今の組織のメンバーは 10 人。脱退した人 (former) と別の組織の人 (b1) の行が混ざっていても、人数は 10 のまま
+    for (const u of members().slice(0, MIN)) await join(challenge, u.id, { current_value: 10, rank: 1 });
     await join(challenge, former.id, { current_value: 99, rank: 1 });
     await join(challenge, b1.id, { current_value: 99, rank: 1 });
+    // 今の組織のメンバーは 9 人。脱退した人・別の組織の人を足すと 11 行になるが、最小人数に届いたとは数えない
+    for (const u of members().slice(0, MIN - 1)) await join(short, u.id, { current_value: 10, rank: 1 });
+    await join(short, former.id, { current_value: 10, rank: 1 });
+    await join(short, b1.id, { current_value: 10, rank: 1 });
     await join(other, b1.id, { current_value: 20, rank: 1 });
 
     const mapA = await aggregates(orgA);
-    expect(mapA.get(challenge)).toMatchObject({ participant_count: 5, average_value: 10 });
+    expect(mapA.get(challenge)).toMatchObject({ participant_count: 10, average_value: 10 });
+    expect(mapA.get(short)).toMatchObject({ participant_count: null, average_value: null });
     expect(mapA.get(empty)).toMatchObject({ participant_count: null, average_value: null });
     expect(mapA.has(other), '他組織のチャレンジは返らない').toBe(false);
 
@@ -871,14 +896,15 @@ describe('#1132 H. get_org_challenge_aggregates: 人数と平均だけ。5 人�
 
   it('返す列は、集計の 4 列だけ (参加者の ID・順位・個人の値の列を含まない)', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
-    for (const u of [a1, a2, a3, a4, a5]) await join(challenge, u.id, { current_value: 10, rank: 1 });
+    for (const u of members().slice(0, MIN)) await join(challenge, u.id, { current_value: 10, rank: 1 });
 
     const { data, error } = await srAdmin.rpc('get_org_challenge_aggregates', { p_organization_id: orgA });
     expect(error).toBeNull();
     const row = (data as Record<string, unknown>[]).find((r) => r.challenge_id === challenge)!;
+    expect(row.participant_count).toBe(10);
     expect(Object.keys(row).sort()).toEqual(['average_value', 'challenge_id', 'min_participants', 'participant_count'].sort());
     // 値の中にも、参加者の ID は現れない
-    for (const u of [a1, a2, a3, a4, a5]) expect(JSON.stringify(data)).not.toContain(u.id);
+    for (const u of members().slice(0, MIN)) expect(JSON.stringify(data)).not.toContain(u.id);
   });
 });
 
