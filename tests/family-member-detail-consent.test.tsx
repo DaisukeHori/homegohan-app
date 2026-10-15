@@ -32,9 +32,11 @@ const state = vi.hoisted(() => ({
   consentFilters: [] as Array<[string, unknown]>,
 }));
 
+// 本物の useRouter は同じ参照を返す (毎回作ると useEffect の依存が変わって読み込みが 2 回走る)
+const router = vi.hoisted(() => ({ push: () => undefined, replace: () => undefined, back: () => undefined }));
 vi.mock('next/navigation', () => ({
   useParams: () => ({ id: ids.CHILD }),
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  useRouter: () => router,
 }));
 
 vi.mock('@/lib/membership/family-member-names', () => ({
