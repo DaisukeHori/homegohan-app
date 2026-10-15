@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // data_share_enabled (旧「トレーナーと共有」) について (#1144):
 //   Web とアプリの設定画面からは、この項目を外した。トレーナーなどに共有する機能は無く、この値を読んで何かをするコードも無い。
@@ -51,6 +52,9 @@ export async function GET(_request: NextRequest) {
 
 // 設定 toggle の部分更新
 export async function PATCH(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
 

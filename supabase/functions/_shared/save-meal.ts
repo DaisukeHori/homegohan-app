@@ -621,13 +621,18 @@ export async function saveMealToDb(
     model: DEFAULT_MEAL_IMAGE_MODEL,
     // 商品の献立の古い商品の料理 (画像の項目なし) を、作り直しても AI の画像で置き換えない (#1487 の整合ゲート。写真・商品の料理と同じ扱い)
     previousMealIsCatalog: isCatalogProductMeal(existingMeal),
+    // AI の作り直し: 料理が変わったら、前回の写真・手で付けた画像と利用者のカバーを外し、新しい料理の AI の画像を作る (#1553)。
+    // カバーに頼っていた画像の無い写真の料理 (写真の複数の料理の、同じまま残った料理) も AI の画像に回す。
+    // 料理が同じまま (前回と同じ数・同じ中身) なら外さない。商品の献立は外さない (reconcileDishImages の regeneration)
+    regeneration: true,
   });
   const mergedDishes = dishDetails.map((detail, idx) => ({
     ...detail,
     ...reconcileResult.dishes[idx],
   }));
   // 献立のカバーは、reconcileDishImages がカバーの持ち主の決まり (isMealCoverAutoReplaceable) で決めたもの (#1487 の整合ゲート)。
-  // 写真・商品・利用者の画像のカバーは作り直してもそのまま。前の料理の AI の画像だったカバーは、新しい料理の画像から選び直す
+  // 作り直しで料理が変わったら、写真・利用者の画像のカバーは外す (#1553。商品の献立の商品の画像はそのまま)。
+  // 前の料理の AI の画像だったカバーと外したカバーは、新しい料理の画像から選び直す
   // (候補が無ければ空。前の料理の AI の画像に戻すと、どの料理の画像とも一致しなくなり、新しい AI の画像で付け替えられなくなる)
   const mealCoverImageUrl = reconcileResult.mealCoverImageUrl;
 

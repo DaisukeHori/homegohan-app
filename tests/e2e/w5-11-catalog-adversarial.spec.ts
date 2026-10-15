@@ -20,6 +20,7 @@
  */
 
 import { test, expect, type Page } from "./fixtures/auth";
+import { jstThisMonday } from "./helpers/jst-week";
 
 // ─── 定数 ────────────────────────────────────────────────────────────────────
 
@@ -574,11 +575,12 @@ test("[catalog][adversarial] E-24: catalog_product_id 付き食事保存 API →
     return;
   }
 
-  // 今日の日付を取得して daily_meal_id を探す
-  const today = new Date().toISOString().slice(0, 10);
+  // 今週の月曜日 (JST の週) を week_start に渡して daily_meal_id を探す。
+  // 以前は new Date().toISOString() の UTC の今日を渡していて、週の始まりでも JST の暦日でもなかった (#1564)
+  const weekStart = jstThisMonday();
   const dailyMealsResult = await apiFetch(
     authedPage,
-    `/api/daily-meals?week_start=${today}`,
+    `/api/daily-meals?week_start=${weekStart}`,
   );
 
   // planned_meals への保存テスト (API レベル)

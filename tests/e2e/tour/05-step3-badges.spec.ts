@@ -9,6 +9,8 @@
  *
  * Step 3 は /api/badges (本物の API) が返すバッジの一覧を出す。前の Step で付いているはずのバッジは、
  * service_role で user_badges に直接入れて「Step 1/2 を終えたあと」の状態を作る (beforeEach)。
+ * 実際のツアーで Step 3 までに付くのは Step 2 の planner だけ (STEP3_BADGES_EARNED_IN_TOUR)。Step 1 のお試しの記録は
+ * first_bite に数えない (#1314) ので、first_bite は入れない (#1626。以前は first_bite も入れていて、ツアーを通した状態と違っていた)。
  * Spotlight 対象の上にはオーバーレイがかぶさっていて直接は押せないため、吹き出しの tour-next-button で進める (helpers の completeStep3)。
  *
  * 注意: API モック禁止 (読み込み中の画面を確かめるテストだけ、応答を遅らせる。中身は本物のまま)。実 Supabase に接続する。
@@ -16,6 +18,8 @@
  * (Step 2 → Step 3 の遷移は 04-step2-menu が確かめる)。
  */
 
+// 他の e2e (legal-consent-gate など) と同じく、共有パッケージのファイルを相対パスで直接読む
+import { STEP3_BADGES_EARNED_IN_TOUR } from "../../../packages/handson-tour-shared/src/constants";
 import {
   AUTO_ADVANCE_TIMEOUT_MS,
   EMPTY_STORAGE_STATE,
@@ -36,9 +40,10 @@ const EARNED_LABEL = "獲得済";
 
 test.describe("Tour - Step 3: バッジ確認", () => {
   test.beforeEach(async ({ tourUser }) => {
-    // Step 1 / Step 2 を終えたあとの状態: first_bite と planner は獲得済み、tutorial_complete は Step 4 でもらう
-    await awardBadge(tourUser.id, "first_bite");
-    await awardBadge(tourUser.id, "planner");
+    // Step 1 / Step 2 を終えたあとの状態: planner だけ獲得済み (first_bite はお試しの記録では付かない)。tutorial_complete は Step 4 でもらう
+    for (const code of STEP3_BADGES_EARNED_IN_TOUR) {
+      await awardBadge(tourUser.id, code);
+    }
   });
 
   test("Step 3 intro 吹き出しが表示される (tour-step-3-intro)", async ({ page }) => {
@@ -46,6 +51,19 @@ test.describe("Tour - Step 3: バッジ確認", () => {
 
     await expect(page.getByTestId("tour-step-3-intro")).toBeVisible({ timeout: AUTO_ADVANCE_TIMEOUT_MS });
     await expect(page.getByTestId("tour-step-3-intro").getByTestId("tour-bubble-body")).not.toBeEmpty();
+  });
+
+  // #1626: 以前は「もう 2 つ獲得しています」と出ていたが、「獲得済」が付くのは planner の 1 つだけだった
+  test("Step 3 intro の「もう n つ獲得しています」の n が、「獲得済」が付いたカードの数と同じ", async ({ page }) => {
+    await page.goto("/handson-tour/badges");
+
+    const introBody = page.getByTestId("tour-step-3-intro").getByTestId("tour-bubble-body");
+    await expect(introBody).toContainText(`もう ${STEP3_BADGES_EARNED_IN_TOUR.length} つ獲得しています`, {
+      timeout: AUTO_ADVANCE_TIMEOUT_MS,
+    });
+    await expect(page.locator('[data-testid^="badge-card-"]').filter({ hasText: EARNED_LABEL })).toHaveCount(
+      STEP3_BADGES_EARNED_IN_TOUR.length,
+    );
   });
 
   test("Step 3: tour-step-3-loading が表示される", async ({ page }) => {
@@ -69,13 +87,14 @@ test.describe("Tour - Step 3: バッジ確認", () => {
   });
 
   // #1604: 以前は画面が /api/badges に無い obtained_at を見ていて「獲得済」が付かなかった (#846 の E2E で発見)。画面は earned を見る
-  test("Step 3: 前の Step で獲得したバッジ (first_bite / planner) に「獲得済」が付き、tutorial_complete には付かない", async ({ page }) => {
+  // #1626: Step 1 のお試しの記録は first_bite に数えないので、first_bite には「獲得済」が付かない
+  test("Step 3: 前の Step で獲得したバッジ (planner) に「獲得済」が付き、first_bite と tutorial_complete には付かない", async ({ page }) => {
     await page.goto("/handson-tour/badges");
 
-    await expect(page.getByTestId("badge-card-first_bite")).toContainText(EARNED_LABEL, {
+    await expect(page.getByTestId("badge-card-planner")).toContainText(EARNED_LABEL, {
       timeout: AUTO_ADVANCE_TIMEOUT_MS,
     });
-    await expect(page.getByTestId("badge-card-planner")).toContainText(EARNED_LABEL);
+    await expect(page.getByTestId("badge-card-first_bite")).not.toContainText(EARNED_LABEL);
     await expect(page.getByTestId("badge-card-tutorial_complete")).not.toContainText(EARNED_LABEL);
   });
 
