@@ -327,12 +327,12 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
 
     await page.waitForURL((url) => url.pathname === "/home", URL_CHANGE);
     // 同意した後は、もう同意画面へ回されない (ホームに留まる)
-    // #1672: 読み込み直す前に、同意画面からホームへの遷移 (LegalConsentForm の window.location.assign) が終わる
-    // (DOMContentLoaded) のを待つ。waitForURL は URL_CHANGE (waitUntil: "commit") なので、遷移が確定した直後に返る。
-    // Chromium はこの遷移で、表示中の文書を別の RenderFrameHost に入れ替えることがある (戻る・進むのキャッシュのため)。
-    // 確定の直後は、DevTools (Playwright) がつながっている側が、入れ替えで外れた古い RenderFrameHost のままのことがあり、
-    // そこへ Page.reload を送ると Chromium が「Not attached to an active page」(content/browser/devtools/protocol/page_handler.cc の
-    // kErrorInactivePage。接続先の RenderFrameHost が active でない) で断る。遷移が終わるまで待てば、接続先は新しい文書に移っている
+    // #1672: 読み込み直す前に、同意画面からホームへの遷移 (LegalConsentForm の window.location.assign) の読み込みが進む
+    // (DOMContentLoaded) のを待つ。waitForURL は URL_CHANGE (waitUntil: "commit") なので、新しい文書が確定した瞬間に返り、
+    // 以前はその直後 (遷移の途中) に reload を送っていた。常設の e2e で、この reload が「Not attached to an active page」で落ちた。
+    // この文言は Chromium の DevTools が、ページの接続先の文書 (RenderFrameHost) が active でないときに Page.reload を断る応答
+    // (content/browser/devtools/protocol/page_handler.cc の kErrorInactivePage) で、遷移による文書の入れ替えの途中に送ったときに出る。
+    // 新しい文書の読み込みが進んで DOMContentLoaded が来たあとなら、入れ替えは終わっている
     await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
     await page.reload({ waitUntil: "domcontentloaded" });
     expect(new URL(page.url()).pathname).toBe("/home");
@@ -377,6 +377,8 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     });
 
     // 同意は DB に残っているので、もう同意画面には回されない。何もしない (false)
+    // #1672: acceptLegalConsentIfShown は遷移の確定 (commit) で返る。次の遷移を送る前に、上の reload と同じく読み込みが進むのを待つ
+    await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
     await page.goto("/menus/weekly");
     expect(new URL(page.url()).pathname).toBe("/menus/weekly");
     expect(await acceptLegalConsentIfShown(page)).toBe(false);
