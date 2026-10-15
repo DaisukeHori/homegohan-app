@@ -1,9 +1,9 @@
 # 週間献立の「家族の表示」— 家族の共有の献立を見る (#1584 の 1)
 
-> 版: v1.8 (2026-10-16 R5 の指摘の反映) / Issue: #1584 (`家族の表示の切り替えが献立を変えない・…`) の 1
+> 版: v1.9 (2026-10-16 網羅性の漏れ (周 6) の反映) / Issue: #1584 (`家族の表示の切り替えが献立を変えない・…`) の 1
 > 位置づけ: 週間献立の画面 (`src/app/(main)/menus/weekly/page.tsx`) の家族の表示の切り替え (`useFamilyView` / `FamilyViewSwitcher`) に「選んだ家族の献立を見る中身」を足す設計の正典。範囲の正本は Issue #1584 の本文とコメント (2026-10-15 のオーナーの選択「(1) 週間献立の家族の表示は、設計して作ります (家族の共有の献立を見る中身。設計ゲートから)」)。残りの 2 (承諾時に名前を写す) は PR #1607 で完了。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` の active は 0 件・2026-10-16 実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-16 初版。v1.1 2026-10-16 R1 の指摘を反映 (生成型と `FamilyMenuRpcRow` の代入は片方向・e2e の spec は `e2e-local.yml` にも足す・週を移る間は前の週の応答を使わない・時間で取り直す契機は作らない・切り替えの適用で家族の一覧も読み直す・相手の退会 (アカウントの削除) を表に足す)。v1.2 2026-10-16 R2 の指摘を反映 (行を開いたときの画像は `SignedPhotoImage` で描き、食事写真・冷蔵庫写真のバケットの URL は描かない (`familyMenuImageUrl`)・既存の走査テスト `tests/signed-photo-display-scan.test.ts` の追随を足す)。v1.3 2026-10-16 網羅性の漏れを反映 (シナリオ S-21〜S-25 = 凍結・自分が active でない・この日は献立が無い・子供の昇格・自分が家族から外れる を足し、トレースとテストの対応を足す・遷移表に「切り替えの適用で others が空になる」と「取得中に key が変わり前の応答が後から届く」の行を足す・昇格は家族の一覧を読み直すまで子供の注記のまま・e2e の道具の定義の場所 (`patchShareSettings` は `membership-paste.ts`・`cleanupFamily` は呼ばない) を正す・migration の最大の番号と番兵 `jst-leftovers-1463-routes` を足す)。v1.4 2026-10-16 R3 の指摘を反映 (e2e の spec02 が持つ `/api/...` の文字列を spec の先頭の定数 4 つに決め、`SPEC_FILES` の `minRefs` を 4 にする・準備を fixture `freshFamilyWithMembers` にして招待と承諾をしない・共有の設定の変更は spec の中で `apiRequest` で呼ぶ / 関数が他のメンバーの食事写真・冷蔵庫写真のバケットの画像の URL を NULL で返し、`groupFamilyMenuRows` も `familyMenuImageUrl` で null にする (画面は応答の `image_url` が null でなければ描く)・同じ型の取り残しとして、料理ごとの栄養・材料・作り方・画像の生成の情報を持つ `dishes` を返さず料理の名前 `dish_names` だけを返し、画面が使わない `mode` も返さない)。v1.5 2026-10-16 網羅性の漏れ (周 4) を反映 (利用者の写真のバケットは 3 つ (`STORAGE_OBJECT_BUCKETS` に健診の画像 `health-checkups` がある) なので、関数の CASE と `familyMenuImageUrl` は 3 つとも落とす (`FAMILY_MENU_HIDDEN_IMAGE_BUCKETS`)・見る人が凍結中の行 (V-6・S-26・T-24) を足す・招待の承諾で大人が加わる (T-21・S-27)・家族を作る (T-22・S-28)・代表者の譲渡 (T-23・S-29。T-16 のガードの対象が新しい代表者へ移る) の遷移とシナリオとテストを足す・関数が `role`・`representative_id`・`frozen_at` を読まないことを契約テスト C-8 で見る)。v1.6 2026-10-16 R4 の指摘を反映 (§13・§14 の正典の TS ブロックの `STORAGE_OBJECT_BUCKETS` の import を、置き場所に依らず解決する `@/supabase/functions/_shared/storage-object-url` にする (相対パスはブロックを別の場所で型検査すると解決しない)・切り替えの適用と [もう一度] の `reload` は今の週だけでなく全ての週の cache を捨てる (`cache.current.clear()`。適用のあとに TTL 内の別の週へ移ると、共有をオフにした人の行が出たままシートは「(献立は非公開)」になる食い違いを消す。T-25))。v1.7 2026-10-16 網羅性の漏れ (周 5) を反映 (見る人が招待の承諾で家族に加わる (T-26・S-30。e2e family/01 T14-F3 の経路) と、見る人が家族を移る (`family_id` が A→B。T-27・S-31。hook の key に familyId が無くても別の家族の cache が出ない理由と、`useFamilyView` が移った先のキーが無いと前の `viewState` を持ち越すこと) を足す・`src/schemas/membership/index.ts` (barrel) に `family-menu` の再 export を足す)。v1.8 2026-10-16 R5 の指摘を反映 (`family_menu_planned_meals` を `RETURNS TABLE` (1 行 1 食) から `RETURNS jsonb` (献立の配列 1 つ) に替える。集合を返す RPC の結果は PostgREST の `max_rows` (Supabase の既定 1,000 行) で黙って打ち切られ、API が受け付ける 31 日の範囲で家族の献立が欠け、画面が「この日はありません」と誤って注記していた (例: 7 人 × 31 日 × 1 日 5 食 = 1,085 食)。#1498 の `llm_usage_summary` と同じ形にし、route は Zod の `FamilyMenuRpcRowsSchema` で読む・契約テスト C-6 が `RETURNS jsonb` を見る・実 DB の it で 1,085 食が全部返ることを見る・シナリオ S-32 を足す・§12 の範囲の上限の根拠と §11.1 の規模の見積もりを直す)。
+> 改定履歴: v1.0 2026-10-16 初版。v1.1 2026-10-16 R1 の指摘を反映 (生成型と `FamilyMenuRpcRow` の代入は片方向・e2e の spec は `e2e-local.yml` にも足す・週を移る間は前の週の応答を使わない・時間で取り直す契機は作らない・切り替えの適用で家族の一覧も読み直す・相手の退会 (アカウントの削除) を表に足す)。v1.2 2026-10-16 R2 の指摘を反映 (行を開いたときの画像は `SignedPhotoImage` で描き、食事写真・冷蔵庫写真のバケットの URL は描かない (`familyMenuImageUrl`)・既存の走査テスト `tests/signed-photo-display-scan.test.ts` の追随を足す)。v1.3 2026-10-16 網羅性の漏れを反映 (シナリオ S-21〜S-25 = 凍結・自分が active でない・この日は献立が無い・子供の昇格・自分が家族から外れる を足し、トレースとテストの対応を足す・遷移表に「切り替えの適用で others が空になる」と「取得中に key が変わり前の応答が後から届く」の行を足す・昇格は家族の一覧を読み直すまで子供の注記のまま・e2e の道具の定義の場所 (`patchShareSettings` は `membership-paste.ts`・`cleanupFamily` は呼ばない) を正す・migration の最大の番号と番兵 `jst-leftovers-1463-routes` を足す)。v1.4 2026-10-16 R3 の指摘を反映 (e2e の spec02 が持つ `/api/...` の文字列を spec の先頭の定数 4 つに決め、`SPEC_FILES` の `minRefs` を 4 にする・準備を fixture `freshFamilyWithMembers` にして招待と承諾をしない・共有の設定の変更は spec の中で `apiRequest` で呼ぶ / 関数が他のメンバーの食事写真・冷蔵庫写真のバケットの画像の URL を NULL で返し、`groupFamilyMenuRows` も `familyMenuImageUrl` で null にする (画面は応答の `image_url` が null でなければ描く)・同じ型の取り残しとして、料理ごとの栄養・材料・作り方・画像の生成の情報を持つ `dishes` を返さず料理の名前 `dish_names` だけを返し、画面が使わない `mode` も返さない)。v1.5 2026-10-16 網羅性の漏れ (周 4) を反映 (利用者の写真のバケットは 3 つ (`STORAGE_OBJECT_BUCKETS` に健診の画像 `health-checkups` がある) なので、関数の CASE と `familyMenuImageUrl` は 3 つとも落とす (`FAMILY_MENU_HIDDEN_IMAGE_BUCKETS`)・見る人が凍結中の行 (V-6・S-26・T-24) を足す・招待の承諾で大人が加わる (T-21・S-27)・家族を作る (T-22・S-28)・代表者の譲渡 (T-23・S-29。T-16 のガードの対象が新しい代表者へ移る) の遷移とシナリオとテストを足す・関数が `role`・`representative_id`・`frozen_at` を読まないことを契約テスト C-8 で見る)。v1.6 2026-10-16 R4 の指摘を反映 (§13・§14 の正典の TS ブロックの `STORAGE_OBJECT_BUCKETS` の import を、置き場所に依らず解決する `@/supabase/functions/_shared/storage-object-url` にする (相対パスはブロックを別の場所で型検査すると解決しない)・切り替えの適用と [もう一度] の `reload` は今の週だけでなく全ての週の cache を捨てる (`cache.current.clear()`。適用のあとに TTL 内の別の週へ移ると、共有をオフにした人の行が出たままシートは「(献立は非公開)」になる食い違いを消す。T-25))。v1.7 2026-10-16 網羅性の漏れ (周 5) を反映 (見る人が招待の承諾で家族に加わる (T-26・S-30。e2e family/01 T14-F3 の経路) と、見る人が家族を移る (`family_id` が A→B。T-27・S-31。hook の key に familyId が無くても別の家族の cache が出ない理由と、`useFamilyView` が移った先のキーが無いと前の `viewState` を持ち越すこと) を足す・`src/schemas/membership/index.ts` (barrel) に `family-menu` の再 export を足す)。v1.8 2026-10-16 R5 の指摘を反映 (`family_menu_planned_meals` を `RETURNS TABLE` (1 行 1 食) から `RETURNS jsonb` (献立の配列 1 つ) に替える。集合を返す RPC の結果は PostgREST の `max_rows` (Supabase の既定 1,000 行) で黙って打ち切られ、API が受け付ける 31 日の範囲で家族の献立が欠け、画面が「この日はありません」と誤って注記していた (例: 7 人 × 31 日 × 1 日 5 食 = 1,085 食)。#1498 の `llm_usage_summary` と同じ形にし、route は Zod の `FamilyMenuRpcRowsSchema` で読む・契約テスト C-6 が `RETURNS jsonb` を見る・実 DB の it で 1,085 食が全部返ることを見る・シナリオ S-32 を足す・§12 の範囲の上限の根拠と §11.1 の規模の見積もりを直す)。v1.9 2026-10-16 網羅性の漏れ (周 6) を反映 (見る人の凍結の扱いの事実誤りを正す: `/api/*` は route より前に `lib/supabase/middleware.ts` が 凍結 (403 `AUTH_ACCOUNT_FROZEN`) → メンテナンス (503 `MAINTENANCE_MODE`) → 規約の同意 (403 `LEGAL_CONSENT_REQUIRED`) の順で止めるので、凍結中の見る人は 200 ではなく 403 (V-6・S-26・T-24・Q-3)。同意未済 (V-7・S-33・T-28) とメンテナンス中 (V-8・S-34・T-29) の行を足す・§15.2 と §18 に 3 つの応答を足し、画面は `fetchFamilyMenu` の `failed` → `loadFailed` で扱う (§14.2)・route の単体ではなく middleware を通した it (`lib/supabase/__tests__/middleware-family-menu.test.ts`) で 403 / 503 を固定する・§21 に `middleware-legal-consent-api.test.ts` と `middleware-frozen-allowed-api.test.ts` の行を足す)。
 
 ---
 
@@ -65,7 +65,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | `docs/design/cross/02-rls-patterns.md` §3.3 | service_role バイパスのガイドライン (本書は route で service_role を使わない) |
 | `docs/requirements/01-family-management.md` §5.4 の権限表 (:479-480) | 「共有献立閲覧」は代表・大人・メンバーが ✅、子供は ❌ (本書: 子供はアカウントが無いので見る側にも見られる側にもならない) |
 
-## 3. 前提の事実 (origin/main `5ff68e67`・R1 で `309dae0f`、周 3 で `cd4d4f17`、R3 で `3b070f2b`、周 4 と R4 で `ada271ea`、R5 で `8fdd06c8` に対して再確認・本番 DB は 2026-10-16 に読み取りで実測)
+## 3. 前提の事実 (origin/main `5ff68e67`・R1 で `309dae0f`、周 3 で `cd4d4f17`、R3 で `3b070f2b`、周 4 と R4 で `ada271ea`、R5 と周 6 で `8fdd06c8` に対して再確認・本番 DB は 2026-10-16 に読み取りで実測)
 
 ### 3.1 実装の現状
 
@@ -101,7 +101,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | `src/schemas/membership/index.ts` は同じフォルダの 16 ファイルすべてを `export *` で再 export する barrel (冒頭の説明「全 membership スキーマの re-export」)。`FamilyViewSwitcher.tsx` は `FamilyMember` の型をここから読む。`FamilyMenu` で始まる名前は `src/schemas` に 0 件 (git grep) | `src/schemas/membership/index.ts:1-20`・`FamilyViewSwitcher.tsx:9` |
 | 代表者の譲渡: `propose_family_representative_transfer` → 宛先の大人が `accept_family_representative_transfer(p_proposal_id)` で承諾すると、旧代表者の `role` を `adult`・新代表者を `representative` にし、`family_groups.representative_id` を新代表者にする (運営の `operator_force_representative_transfer` も同じ書き換え)。`status`・`share_menu`・`user_id` は変えない | migration `20261008090100` :224-267・:269-339 |
 | 退会のガード (`findBlocker`) は `family_groups.representative_id = 本人` の行があれば 409 `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE` を返す。譲渡で `representative_id` が替わると、ガードの対象も新代表者に替わる | `src/lib/account-deletion.ts:237-273`・`:260` |
-| 凍結 (`user_profiles.frozen_at`) を止めるのは `requireUser` (`assertNotFrozen`) を使う route だけ。`src/middleware.ts` は凍結を見ない。`GET /api/meal-plans` と `GET /api/family/members/names` は `getUser` だけなので、凍結中の利用者も自分の献立と家族の名前を読める | `src/lib/auth/helpers.ts:68-83`・`src/app/api/family/members/names/route.ts:31` |
+| `/api/*` の凍結・メンテナンス・規約の同意は、route より前に `lib/supabase/middleware.ts` の `updateSession` の `/api` の分岐が判定する (`src/middleware.ts` が呼ぶ。matcher が `/api` で外すのは `api/health$` だけ)。順は (1) 凍結: `isAccountFrozen` (`frozen_at` があり、`unban_at` が NULL か未来) なら 403 `{ error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } }`。止めないのは `FROZEN_ALLOWED_API_PATHS` (退会と書き出しの 2 本) と通知のトークンの claim だけ (2) メンテナンス: `feature_flags` の `maintenance_mode` が ON なら、運営 (admin / super_admin) 以外を `isMaintenanceExemptPath` の外で 503 `{ error, code: 'MAINTENANCE_MODE', retryAfter }` (3) 同意: `LEGAL_CONSENT_ENFORCE=on` で今の版に未同意なら、`LEGAL_CONSENT_EXEMPT_API_PATHS` の外を 403 `{ error, code: 'LEGAL_CONSENT_REQUIRED' }` (`family` の語は一覧に 0 件)。プロフィールを読めないときは止めない (#348 の fail-open)。`GET /api/meal-plans` と `GET /api/family/members/names` も (route が `requireUser` を使わなくても) 同じに止まる。画面 (GET) は 凍結 → `/frozen`・メンテナンス → メンテナンスの画面・同意 → `/legal-consent?next=…` へ回る。DB の RLS と関数は凍結を見ない (Supabase の REST を直接呼ぶ経路は middleware を通らない) | `lib/supabase/middleware.ts:97-277` (凍結 :225-243・メンテナンス :250-256・同意 :258-274)・`:358`・`:391`・`:416`・`src/lib/auth/frozen.ts:25-31`・`:49-59`・`src/lib/maintenance-mode.ts:57`・`:77`・`:160`・`packages/shared/src/legal-consent-api.ts:94-147`・`src/middleware.ts` の `config.matcher` |
 | PostgREST の `max_rows` (Supabase の既定 1,000 行) は、表の読み取りと行の集合を返す RPC の結果を、エラーにせず黙って打ち切る。`supabase/config.toml` に上書きは無い。前例 #1498: `llm_usage_summary` は行の集合でなく 1 つの JSONB を返し (「行の集合を返さないので、PostgREST の max_rows で打ち切られない」)、route は Zod (`LlmUsageSummaryRpcSchema.safeParse`) で読み、形が違えば 500 にしてログに残す。生成型の `Returns` は `Json`。契約テストは `RETURNS JSONB` で `RETURNS (TABLE\|SETOF)` でないことを、実 DB のテストは定数 `POSTGREST_DEFAULT_MAX_ROWS = 1000` を超える行を全部数えることを見る | `src/lib/super-admin/llm-usage-anomaly.ts:17`・`src/lib/account-export.ts:35`・`src/app/api/badges/route.ts:35`・migration `20261011110000_llm_usage_summary.sql` :15-16・`src/app/api/super-admin/llm/usage/route.ts:97-104`・`src/types/database.types.ts:8553`・`tests/llm-usage-summary-contract.test.ts:72-79`・`tests/integration/security/llm-usage-summary.test.ts:50`・`:206-210` |
 | 1 日の食事の数に DB の上限は無い: `planned_meals` の制約は主キーと外部キーだけで、`(daily_meal_id, meal_type)` の一意の制約は無い (区分ごとに何食でも持てる)。`user_daily_meals` は `(user_id, day_date)` で一意 (1 人 1 日 1 行)。家族の active の人数は `member_limit` (CHECK `> 0 AND <= 20`) までで、加入の関数 (`accept_family_invite`・`add_family_child` など) が active の数で止める。プランの `max_members` は family_basic が 4・family_pro が 8 | migration `20251126124224` :7396・:9248・:7551・:337・:298-301・:887-891・:14167-14168 |
 
@@ -122,7 +122,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | R-4 | 家族でない人・退出・除名・退会 (アカウントの削除) したメンバー・解散した家族の献立は、API を直接呼んでも返らない。未認証は 401、anon は関数を実行できない | family/CLAUDE.md「RLS 厳格」・#1103 | §8・§11.2・§19.3 |
 | R-5 | 既存の RLS を広げない。他の 29 の読み取り経路の結果を変えない | §3.1・§7.2 | §11 |
 | R-6 | 家族の献立で返す列は画面に要るものだけ (メモ・生成のメタデータ・栄養の詳細は返さない。料理は名前だけで、`dishes` の中の料理ごとの栄養・材料・作り方・画像の URL と生成の情報は返さない)。砂場 (`is_sandbox`) の献立は返さない。他のメンバーの写真 (利用者の写真のバケット 3 つ = 食事写真・冷蔵庫写真・健診の画像 の URL) は関数も API も null で返し、家族の行に描かない (署名の決まり #1365 を広げない) | プライバシー・family/09・`src/lib/photo-storage-signing.ts`・`supabase/functions/_shared/storage-object-url.ts` | §11.1・§13・§14 (`familyMenuImageUrl`)・§16.2 |
-| R-7 | 空のとき (相手に献立が無い / 共有していない / アカウントが無い / 家族に居ない) と権限が無いときの表示を決める | 仕様の「決めること」 | §5 (S-3・S-5・S-8・S-22・S-23)・§8・§16.2 |
+| R-7 | 空のとき (相手に献立が無い / 共有していない / アカウントが無い / 家族に居ない) と権限が無いとき (見る人の凍結・同意未済・メンテナンス中を含む) の表示を決める | 仕様の「決めること」 | §5 (S-3・S-5・S-8・S-22・S-23・S-26・S-33・S-34)・§8・§16.2 |
 | R-8 | 切り替えの部品の名前は家族の 4 画面と同じ経路 (`GET /api/family/members/names`) で出す。無ければ「名前未設定」 | Issue コメント・family/02 §5.8 | §16.3 |
 | R-9 | モバイルアプリ (WebView) でも同じに動く。利用者別の localStorage はログアウトで消える (既存) | mobile/01 §3.2・#1599 | §16.4 |
 | R-10 | 週を移ると、その週の家族の献立を取る (届くまで前の週の応答を使わない)。取り直しの契機と cache を決める | page.tsx の weekDataCache | §10・§14.3 |
@@ -131,7 +131,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | R-13 | マジックナンバーは名前つきの定数に、`as any` は書かない | 共通ガード | §12・§13 |
 | R-14 | 既存の番兵 (走査テスト・契約テスト) に追随する | 共通ガード | §21 |
 
-## 5. ユーザーシナリオ (32 本)
+## 5. ユーザーシナリオ (34 本)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -160,13 +160,15 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | S-23 | 夫は月〜水だけ献立を作っていて、妻が既定の「家族全員」で木曜を見る | 木曜の各食事の下に夫の行は無く、日の末尾に「夫 の献立はこの日はありません」の注記。水曜を見ると夫の行が出て、この注記は出ない (P-2) |
 | S-24 | 家族の子供 (アカウント無し) が昇格の承諾 (`accept_child_promotion`) で本人のアカウントを持つ。承諾で「週間献立を家族に見せる」をオフ (`p_share_menu = false`) にした場合と、既定のオンの場合 | 妻が切り替えを適用し直すか画面を開き直す (家族の一覧を読み直す) と、オンなら長男の行が出る (P-2)・オフなら注記「長男 は献立を共有していません」とシートの「(献立は非公開)」(P-3)。読み直すまでは子供のときの注記「長男 (子供) の献立は、アカウントを持つまで出ません」のまま (T-8) |
 | S-25 | 妻が家族を退出する (`leave_family`) か、代表者に除名される (S-8 の解散と同じく妻の `family_id` が NULL になる) | 妻が週間献立を開き直すと切り替えが出ず、家族の行も注記も無い。開いたまま切り替えを適用すると、家族の一覧の読み直しで切り替えが消える。読み直すまでの間に週を移って取得すると、API は `family_id: null, members: []` なので、選んでいた人は注記「… は献立を共有していません」になる (T-6) |
-| S-26 | 妻のアカウントが運営に凍結される (`user_profiles.frozen_at`)。妻は週間献立を開いたまま (またはログインし直して) 見る | 凍結していないときと同じ (V-6)。`GET /api/family/menu` は 200 で夫の献立を返し、夫の行が出る。自分の献立の `GET /api/meal-plans` と名前の API も凍結を見ないので、それと揃える (Q-3・T-24) |
+| S-26 | 妻のアカウントが運営に凍結される (`user_profiles.frozen_at`。`unban_at` は NULL か未来)。妻は週間献立を開いたまま、cache の無い週へ移る / [もう一度] を押す / 画面を開き直す | 家族の献立の取得は middleware が 403 `AUTH_ACCOUNT_FROZEN` で止める (route に届かない) → 家族の行の場所に「家族の献立を読み込めませんでした」と [もう一度] (押しても 403 のまま)。自分の献立の `GET /api/meal-plans` と名前の API も同じ 403 (既存)。開き直すと `/frozen` へ差し戻され、週間献立は出ない。凍結が解ける (運営の解除・`unban_at` の経過) と、次の取得から夫の行が出る (V-6・T-24・Q-3) |
 | S-27 | 妻と夫の家族に、3 人目の大人 (祖母) が招待の承諾 (`accept_family_invite`) で加わる。承諾で「週間献立を家族に見せる」をオフ (`p_share_menu = false`) にした場合と、既定のオンの場合。妻は「家族全員」 | 妻が切り替えを適用し直すか画面を開き直す (家族の一覧を読み直す) と、切り替えに祖母が出て、オンなら祖母の行 (P-2)・オフなら注記「祖母 は献立を共有していません」とシートの「(献立は非公開)」(P-3)。読み直すまでは祖母は一覧に居ないので、行も注記も出ない (応答に居ても描かない)。「カスタム」で選んでいた妻には、祖母を選び直すまで出ない (T-21) |
 | S-28 | 家族に居ない妻が家族を作る (`create_family_group`)。まだ誰も招待していない | 妻が週間献立を開き直すと、一覧は自分だけ → 切り替えは自分だけで出る (`familyMembers.length > 0` の既存の条件) が、others が空 → 家族の献立の API を呼ばず、家族の行も注記も無い (`idle`)。API を直接呼ぶと 200 で `family_id` は作った家族・`members: []` (T-22) |
 | S-29 | 代表者の妻が夫へ代表者を譲渡し (`propose_family_representative_transfer` → 夫が `accept_family_representative_transfer`)、そのあと妻が退会する | 譲渡の前後で、妻と夫が互いに見える献立は変わらない (関数は `role` も `representative_id` も読まない)。切り替えのシートの「(代表)」は、家族の一覧を読み直したときに夫へ移る。譲渡のあと妻は代表者でないので退会でき、夫の画面では S-19 と同じになる。夫は代表者になったので、夫の退会は 409 で止まる (T-23・T-16) |
 | S-30 | 夫だけの家族 (夫が作った・夫の `share_menu` はオン) に、家族に居ない妻が招待の画面で承諾 (`accept_family_invite`) して加わる。承諾で妻の「週間献立を家族に見せる」はオンでもオフでもよい。承諾のあと妻が週間献立を開く | 切り替えが出て (既定の「家族全員」・2 人)、夫の行が出る (P-2。夫にその日の献立が無ければ注記「夫 の献立はこの日はありません」)。妻の `share_menu` は妻が見るものを変えない (夫の画面に妻が出るかだけを決める。S-27 の対称)。承諾の前から週間献立を開いたままだった画面は、家族に居ない間の表示 (切り替えが無い) のままで、開き直すと同じになる (T-26) |
 | S-31 | 妻が家族 A (夫が居る) を退出し、家族 B (祖母が居る・祖母の `share_menu` はオン) の招待を承諾する。週間献立は家族 A に居たときから開いたまま | 週を移るだけなら、一覧は家族 A のまま (切り替えに夫)・応答は家族 B の祖母だけなので、夫は注記「夫 は献立を共有していません」・祖母は出ない。TTL 内の cache がある週へ移ると、家族 A に居たときに取った応答をそのまま描く (取り直さない。T-13)。切り替えを適用すると、全ての cache を捨てて取り直し、一覧も家族 B に読み直す → 「家族全員」なら祖母の行。「カスタム」などで家族 A の人を選んでいたら、選んだ id は家族 B に居ないので家族の行も注記も出ず、選び直すまでそのまま。開き直すと S-30 と同じ (T-27) |
 | S-32 | family_pro (`max_members` 8) の家族で、妻以外の 7 人が全員 `share_menu` オンで、毎日 5 食 (基本の 3 食 + おやつ 2) を記録している。妻が `GET /api/family/menu` を 31 日の範囲 (§15.1 が受け付ける上限) で直接呼ぶ (7 × 31 × 5 = 1,085 食) | 200 で 1,085 食が全部返る。PostgREST の `max_rows` (既定 1,000 行) で後ろのメンバー・日の献立が欠けない (欠けると、画面はその日を「… の献立はこの日はありません」と誤って注記する)。画面が取る 7 日の範囲も同じ経路で、欠けは無い |
+| S-33 | 規約の新しい版が施行され (`LEGAL_CONSENT_ENFORCE=on`)、妻はまだ同意していない。妻は週間献立を開いたまま、cache の無い週へ移る / 画面を開き直す | 家族の献立の取得は middleware が 403 `LEGAL_CONSENT_REQUIRED` で止める → 「家族の献立を読み込めませんでした」と [もう一度] (自分の献立の取得も同じ 403)。開き直すと同意の画面 (`/legal-consent?next=…`) へ回り、同意して戻ると夫の行が出る。`LEGAL_CONSENT_ENFORCE` が on でなければ止めない (V-7・T-28) |
+| S-34 | 運営がメンテナンスを始める (`maintenance_mode` が ON)。妻 (運営でない) は週間献立を開いたまま、cache の無い週へ移る / 画面を開き直す | 家族の献立の取得は middleware が 503 `MAINTENANCE_MODE` で止める → 「家族の献立を読み込めませんでした」と [もう一度]。開き直すとメンテナンスの画面。メンテナンスが終わると、次の取得 ([もう一度] など) から夫の行が戻る。運営 (admin / super_admin) は止まらない (V-8・T-29) |
 
 ## 6. 構想 (相 2) — 構造と、全シナリオのトレース
 
@@ -178,6 +180,7 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
   viewState (useFamilyView。既存) ──→ visibleOtherMemberIdsOf(viewState, members, 自分) ──→ 自分以外の id 集合 (others)
   others が空 → 何も取らない / 空でない → useFamilyMenu({ startDate, endDate }) ──→ GET /api/family/menu
                                                                                      │
+  [middleware] (既存・route より前) 凍結 → 403 AUTH_ACCOUNT_FROZEN / メンテナンス → 503 MAINTENANCE_MODE / 同意未済 → 403 LEGAL_CONSENT_REQUIRED (§15.2)
   [route]  getUser → user_profiles.family_id (RLS) → rpc family_menu_visible_members() → rpc family_menu_planned_meals(start, end) (jsonb の配列 1 つ)
            → FamilyMenuRpcRowsSchema.safeParse → groupFamilyMenuRows → { data: FamilyMenuData }            │
                                                                         └→ [DB] 判定は family_menu_visible_members() の 1 本:
@@ -219,13 +222,15 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | S-23 | 応答の members に夫が居て、夫の `days` は月〜水だけ → 木曜は `familyMenuMealsOf` が [] → 行を描かない。`FamilyMenuDayNotes` (`ready`・`menu !== null`) が `partition.shown` の夫について `!familyMenuHasMealsOn(夫, 木曜)` を見て `noMealsToday` の注記を描く。水曜は `familyMenuHasMealsOn` が真なので注記なし |
 | S-24 | 承諾で長男の行の `user_id` が本人になり、`share_menu` は `p_share_menu` の値。読み直す前の `familyMembers` は長男の `user_id` が null のまま → `partitionFamilyMenuMembers` は `user_id === null` を先に見るので、応答に居ても `noAccount` (子供の注記)。切り替えの適用 (T-2) で `loadFamilyData()` が読み直すと `user_id` があり、オンなら応答に居て `shown`、オフなら visible_members に居ないので `notSharing`・シートの印は `share_menu === false` |
 | S-25 | 妻の `family_id` が NULL → API は関数を呼ばず `{ family_id: null, members: [] }`。画面を開き直すと `loadFamilyData()` が `family_id` 無しを見て `setFamilyId(null)`・`setFamilyMembers([])` → others が空 → `idle`・切り替えが出ない。開いたままの取得では others は前の一覧のままで応答に誰も居ないので、選んでいた人は `notSharing` |
-| S-26 | route は `getUser` だけで、`user_profiles` から読むのは `family_id` だけ (`frozen_at` を読まない)。関数も `frozen_at` を読まない → 妻が凍結中でも S-1 と同じ |
+| S-26 | middleware の `/api` の分岐が `fetchMiddlewareProfile` で妻の `frozen_at`・`unban_at` を読み、`isAccountFrozen` が真 → `/api/family/menu` は `isFrozenAllowedApiPath`・`isPushTokenClaimApiPath` のどちらにも当たらない → 403 `AUTH_ACCOUNT_FROZEN` (route と関数は呼ばれない) → `fetchFamilyMenu` は `!res.ok` で `{ ok: false, reason: 'failed' }` → hook `error` → `FamilyMenuDayNotes` が `loadFailed` と [もう一度]。同じ週の取り直しなら直前の行は残る (S-14 と同じ)。開き直し (画面の GET) は middleware の画面の分岐が `/frozen` へ回す |
 | S-27 | 承諾で祖母の行が `status = 'active'`・`share_menu = p_share_menu` で入る → 関数はオンなら祖母を返す。読み直す前の `familyMembers` に祖母は居ない → `visibleOtherMemberIdsOf` の others に入らない → `partitionFamilyMenuMembers` は otherIds だけを回すので、応答に居ても行も注記も無い。適用 (T-2) で `loadFamilyData()` が読み直すと、`all` なら others に入り、オンなら `shown`・オフなら `notSharing` (シートの印は `share_menu === false`)。`custom` などは `visible_member_ids` に祖母の id が無いので入らない |
 | S-28 | `create_family_group` で妻の行が `representative`・`active` で入り、`family_id` が入る。開き直すと一覧 = [妻] → `visibleOtherMemberIdsOf` は自分を除くので [] → `enabled: false` → `idle`。API: `family_id` あり → `family_menu_visible_members()` は自分を除くので 0 行 → `{ family_id, members: [] }` |
 | S-29 | 譲渡は `family_members.role` と `family_groups.representative_id` だけを書き換える → 関数は両方を読まない (C-8) → visible_members も献立も変わらない。シートの「(代表)」は `member.role === 'representative'` (RLS で読んだ行) なので、`loadFamilyData()` の読み直しで夫に移る。退会のガード (`findBlocker`) は `representative_id` を見るので、妻の削除は通り (S-19 の流れ)、夫の削除は 409 |
 | S-30 | 承諾で妻の行が `adult`・`active` で入り `family_id` = F (承諾の前は妻に active の行が無いので、関数は 0 行・画面は `familyId` が null で切り替えが出ない)。承諾のあと `/family/dashboard` から `/menus/weekly` を開く → 画面を新しく描くので hook の cache は空 → `loadFamilyData()` が F の active (夫・妻) を読み名前を当てる → `useFamilyView(F)` は `familyViewState_<F>` が無いので既定の `all` → others = {夫} → `enabled: true` → API: `family_menu_visible_members()` は相手 (tm) の `share_menu` だけを見るので、妻の `share_menu` に関わらず夫を返す → 夫の行。承諾の前から開いていた画面は `familyMembers` が空で切り替えが出ず、適用の入口が無い → `idle` のまま、開き直しで上と同じ |
 | S-31 | 退出で妻の家族 A の行は `left`、承諾で家族 B の行が `active` (一意索引で active は 1 つ)。関数の vm は妻の active の行 = 家族 B だけ → 祖母を返す。開いたままの画面: `familyId` = A・一覧 = 家族 A (夫・妻) → others = {夫} → 取得の応答に夫は居ない → `notSharing`。祖母は others に居ないので `partitionFamilyMenuMembers` が回さない。cache の当たる週は hook が取り直さず、家族 A の応答を描く (T-13)。適用 (T-2) → `reload` が全ての cache を捨てて取り直す (応答は家族 B) → `loadFamilyData()` が `familyId` = B・一覧 = 家族 B (祖母・妻) → `useFamilyView(B)` は B のキーが無ければ適用した `viewState` を持ち越す (§3.1)。`all` → others = {祖母} → `shown`。それ以外は `visible_member_ids` が家族 A の id で、`visibleOtherMemberIdsOf` が家族 B の一覧に無い id を捨てる → others が空 → `enabled: false` → 取得中の応答は cleanup で捨てて `idle`。`setView` は適用の時点の `familyId` (A) のキーに書いたので、家族 B のキーは次にシートで適用したときに作られる。hook の key に familyId が無くても、`familyId` が変わるのは `loadFamilyData()` だけで、それは開いたとき (cache は空) か適用 (`reload` が cache を空にする) なので、画面の `familyId` が B に替わったあとの描画に家族 A の応答が cache から出ることは無い (替わる前、つまり読み直す前は上のとおり出る) |
 | S-32 | route: 31 日は `isFamilyMenuRangeAllowed` を通る → visible_members = 7 行 → `family_menu_planned_meals` は 1,085 食を `jsonb_agg` で配列 1 つにまとめて返す (PostgREST の応答は 1 つの値で、`max_rows` の打ち切りの対象 (行の集合) にならない) → `FamilyMenuRpcRowsSchema.safeParse` が 1,085 要素を読む → `groupFamilyMenuRows` が 7 人 × 31 日 × 5 食に分ける → 応答の members の各人の `days` は 31 日で、各日 5 食。画面の 7 日の範囲 (245 食) も同じ経路 |
+| S-33 | middleware: 凍結でない → メンテナンスでない → `resolveLegalConsentApiDecision` が (enforce・`/api/family/menu` は許可リストの外・今の版に未同意) で `deny` → 403 `LEGAL_CONSENT_REQUIRED` → 以下 S-26 と同じ (`failed` → `loadFailed`)。開き直し (GET) は `/legal-consent?next=…` へ。同意すると判定が `allow` になり、次の取得から S-1 と同じ |
+| S-34 | middleware: 凍結でない → `/api/family/menu` は `isMaintenanceExemptPath` の外・妻は `isOperatorRoles` が偽・`isMaintenanceFlagOn` が真 → 503 `MAINTENANCE_MODE` (`maintenanceApiResponse`) → 以下 S-26 と同じ。開き直しは `maintenancePageResponse`。フラグが OFF に戻ると次の取得から S-1 と同じ |
 
 ## 7. 構造裁定 (相 3・1 回だけ)
 
@@ -269,16 +274,18 @@ migration の本番適用は段 A のマージ後にオーケストレーター�
 | P-8 | 大人 (アカウントが凍結 `frozen_at`) | TRUE | active | active | 入る | 出る (凍結はログインを止める措置で、共有の同意を取り消すものではない。Q-3・S-21) |
 | P-9 | 大人 (代表者でない) が退会した (アカウントを削除) | — (行ごと消える) | — (行ごと消える) | active | 入らない (`family_members` の行も献立も CASCADE で消える。§3.1) | 一覧を読み直すと出ない (切り替えにも出ない)。読み直すまでは P-3 と同じ注記。代表者は削除できない (409。先に譲渡すると代表者でない大人になって本行が当たる (T-23 → T-16)。解散すると P-5) |
 
-V の側:
+V の側 (V-6〜V-8 は route より前に middleware が止める。どれかに当たったら route も関数も呼ばれない。重なったら 凍結 → メンテナンス → 同意 の順で最初のもの):
 
 | # | V | API | 画面 |
 |---|---|---|---|
 | V-1 | 未認証 | 401 `NOT_AUTHENTICATED` | (画面に来ない) |
 | V-2 | 家族に居ない (`family_id` NULL。退出・除名・解散の後を含む) | 200 `{ family_id: null, members: [] }` | 切り替えが出ない (既存。S-8・S-25)。家族を作ると T-22、招待を承諾すると T-26 で V-4 へ (別の家族へ移るのは退出 → 承諾。T-27) |
 | V-3 | `family_id` はあるが active でない (不整合。除名済みで `family_id` が残った・行が無い) | 200 `{ family_id, members: [] }` (`family_menu_visible_members` は 0 行・献立は空の配列) | 切り替えは RLS で読めた行 (自分の行だけ・active でない) → 0 件 → 出ない。画面は API を呼ばない (`idle`。S-22) |
-| V-4 | active なメンバー (凍結していない) | 200 | 本表の P-1〜P-9 |
+| V-4 | active なメンバー (凍結していない・メンテナンス中なら運営・`LEGAL_CONSENT_ENFORCE=on` なら今の版に同意済み) | 200 | 本表の P-1〜P-9 |
 | V-5 | anon が RPC を直接呼ぶ | 42501 (EXECUTE なし) | — |
-| V-6 | active なメンバーで、アカウントが凍結中 (`user_profiles.frozen_at`) | 200 (V-4 と同じ。route は `getUser` だけで `frozen_at` を読まず、関数も読まない) | V-4 と同じ (自分の献立の `GET /api/meal-plans` も凍結を見ないので揃える。Q-3・S-26) |
+| V-6 | アカウントが凍結中 (`isAccountFrozen` = `frozen_at` があり `unban_at` が NULL か未来。家族の所属に依らない) | 403 `AUTH_ACCOUNT_FROZEN` (middleware が route より前に返す。`/api/family/menu` を `FROZEN_ALLOWED_API_PATHS` に足さない。§3.1) | 開いたままなら家族の注記は `loadFailed` + [もう一度] (§16.2)。自分の献立の `GET /api/meal-plans` も同じ 403 (既存)。開き直すと `/frozen` へ回り週間献立は出ない (S-26・T-24・Q-3) |
+| V-7 | `LEGAL_CONSENT_ENFORCE=on` で、今の版の規約・プライバシーに未同意 (凍結でなく、メンテナンスで止まらない人) | 403 `LEGAL_CONSENT_REQUIRED` (middleware。`/api/family/menu` を `LEGAL_CONSENT_EXEMPT_API_PATHS` に足さない) | V-6 と同じ扱い。開き直すと `/legal-consent?next=…` へ回る (S-33・T-28) |
+| V-8 | メンテナンス中 (`maintenance_mode` が ON) で、運営 (admin / super_admin) でない (未認証も含む) | 503 `MAINTENANCE_MODE` (middleware。`/api/family/menu` を `isMaintenanceExemptPath` に足さない。未認証も V-1 の 401 より先にここで止まる) | V-6 と同じ扱い。開き直すとメンテナンスの画面 (S-34・T-29) |
 
 切り替えの軸 (`viewState`) と others:
 
@@ -313,6 +320,7 @@ V の側:
 | 砂場の献立 | 本人の画面には出る | 家族には出ない |
 | 他のメンバーの写真 (利用者の写真のバケット 3 つ = 食事写真・冷蔵庫写真・健診の画像 の URL) | 見る経路が無い | 関数と API が null で返し (§11.1 の CASE・`groupFamilyMenuRows` の `familyMenuImageUrl`)、家族の行に描かない。バケットの外の URL だけ `SignedPhotoImage` で描く |
 | 他のメンバーの料理の中身 (`dishes` の料理ごとの栄養・材料・作り方・画像の URL と生成の情報) | 見る経路が無い | 返さない。料理の名前の並び (`dish_names`) だけを返す |
+| 見る人の凍結・同意未済・メンテナンス中 | (家族の献立の経路が無い。自分の献立の `/api/meal-plans` は middleware で 403 / 503) | middleware が `/api/family/menu` も同じに止める (403 / 403 / 503。route と関数に判定を足さない) → 家族の注記は「読み込めませんでした」+ [もう一度] (V-6〜V-8) |
 | 空のとき | (該当なし) | 注記 3 種 + エラー 1 種 + 読み込み中 1 行 (§16.2)。注記は hook の `status` だけで出し分ける |
 | モバイル (WebView) | 同じ画面 (切り替えは効かない) | 同じ画面 (効く) |
 | e2e | 切り替えに 2 人出るまで | + 相手の献立の行が出る・共有オフで消える (§19.5) |
@@ -320,7 +328,7 @@ V の側:
 
 ## 10. ③ 状態遷移表
 
-状態 = (V の所属, T の所属, T.share_menu, 画面の others に T が居るか, cache)。操作ごとの遷移先・ガード・副作用。
+状態 = (V の所属, T の所属, T.share_menu, 画面の others に T が居るか, cache。T-24・T-28・T-29 は V の凍結・同意・メンテナンスの状態)。操作ごとの遷移先・ガード・副作用。
 
 | # | 状態 | 操作 | 遷移先 | ガード | 副作用 (画面) |
 |---|---|---|---|---|---|
@@ -347,10 +355,12 @@ V の側:
 | T-21 | V∈F, N∉F (N はアカウントのある大人) | N が招待の承諾で加わる (`accept_family_invite` の `p_share_menu`。既定 TRUE) | N∈F (`status = 'active'`・share は引数の値)。API は次の取得から (share がオンなら) N を返す | 画面の `familyMembers` に N が入るのは家族の一覧を読み直したとき (切り替えの適用 T-2・画面の開き直し)。`partitionFamilyMenuMembers` は otherIds だけを回す | 読み直すまでは N は others に居ないので、応答に居ても行も注記も無い。読み直すと `all` なら P-2 / P-3、`custom` などは `visible_member_ids` に N の id が無いので選び直すまで出ない (S-27) |
 | T-22 | V∉F (`family_id` NULL) | V が家族を作る (`create_family_group`) | V∈F (自分だけ。代表者・`share_menu` は既定の TRUE)。API は `{ family_id, members: [] }` (関数は自分を返さない) | 画面の `familyId`・`familyMembers` が入るのは画面の開き直し (家族の作成は別の画面で行うので、週間献立の画面は開き直しで読む) | 切り替えは自分だけで出る (既存の条件 `familyMembers.length > 0`)。others が空なので `idle` (家族の行も注記も無い)。以後、招待の承諾で人が加わると T-21 (S-28) |
 | T-23 | V∈F, T∈F (どちらかが代表者 R・もう一方が大人 A) | R が A へ代表者を譲渡する (`propose_family_representative_transfer` → A が `accept_family_representative_transfer`。運営の `operator_force_representative_transfer` も同じ) | R の `role` は `adult`・A は `representative`・`family_groups.representative_id` は A。`status`・`share_menu`・`user_id` は変わらない → visible_members も献立も変わらない | 関数は `role`・`representative_id` を読まない (C-8)。T-16 のガードの対象は A に替わる (R は代表者でなくなり、退会すると T-16。A の退会は 409) | 家族の行と注記は変わらない。シートの「(代表)」は家族の一覧を読み直したとき (T-2・開き直し) に A へ移る (S-29) |
-| T-24 | V∈F, T∈F, share=on | V のアカウントが凍結される (`frozen_at`) | 変化なし (V-6) | route は `getUser` だけ・関数は `frozen_at` を読まない | 出たまま (自分の献立の `GET /api/meal-plans` も凍結を見ないのと揃える。S-26) |
+| T-24 | V∈F, T∈F, share=on | V のアカウントが凍結される (`frozen_at`。`unban_at` は NULL か未来) / 凍結が解ける (運営の解除・`unban_at` の経過) | 凍結: 次の取得 (T-1 / T-2 / T-12) から 403 `AUTH_ACCOUNT_FROZEN` → `error` (`reason: 'failed'`)。解ける: 次の取得から T-1 | middleware の `/api` の分岐 (`isAccountFrozen`。`/api/family/menu` は `FROZEN_ALLOWED_API_PATHS` に無い)。route と関数は凍結を読まない (呼ばれない) | 凍結: 「家族の献立を読み込めませんでした」+ [もう一度] (押しても 403)。同じ週の取り直しなら直前の行は残り、TTL 内の cache の週 (T-13) は取らないので前の行が出たまま。開き直すと `/frozen` (V-6・S-26)。解ける: 次の取得で行が戻る |
 | T-25 | V∈F, T∈F, T.share が on → off 済み, 表示中の週 W1 と、適用の前に取った別の週 W2 の cache が両方 TTL 内 | W1 で切り替えを適用 (T-2) → W2 へ移る | W2 を取り直す (`loading` → `ready`)。T∉members | 適用の `reload` が `cache.current.clear()` で W2 の cache も捨てている (T-13 の cache 当たりにならない) | W2 でも T の行は出ず注記「T は献立を共有していません」。読み直した一覧の `share_menu = false` (シートの「(献立は非公開)」) と食い違わない。W2 の応答が届くまでは読み込み中の 1 行だけ (T-17) (S-3) |
 | T-26 | V∉F (`family_id` NULL・active の行なし), T∈F (アカウントあり) | V が招待の承諾で加わる (`accept_family_invite`。招待の画面 `/invite/[token]` で承諾し `/family/dashboard` へ移る。V の `p_share_menu` は既定 TRUE) | V∈F (`adult`・`active`)。API は次の取得から、T の `share_menu` がオンなら T を返す (V の `share_menu` は V が見るものに関わらない) | 週間献立の画面の `familyId`・`familyMembers` が入るのは画面の開き直し (承諾は別の画面)。V∉F の間は切り替えが出ない (`familyMembers.length > 0`) ので、開いたままの画面に適用 (T-2) の入口は無い | 開き直すと `useFamilyView(F)` が `familyViewState_<F>` を読む (無ければ既定の `all`) → others = F の active − V → P-2 / P-3 / P-6。開いたままの画面は `idle` (家族の行も注記も無い) のまま。e2e family/01 T14-F3 はこの経路 (承諾 → `/menus/weekly` を開く → 切り替えに 2 人) を通る (S-30) |
 | T-27 | V∈A (画面は A の一覧のまま開いている), A と B は別の active な家族 | V が A を退出 (T-6) し、B の招待を承諾する (T-26。active の行は一意なので、退出が先) | サーバーでは V∈B・V∉A。画面の `familyId`・`familyMembers` は A のまま (読み直すまで)。hook の key は日付だけ | 画面が B に替わるのは `loadFamilyData()` の読み直し (適用 T-2・開き直し) だけで、どちらも cache が空になった後 (`reload` の `clear()` / 新しい描画) | 読み直す前: 取得の応答は B のメンバー → A の others は `notSharing`・B のメンバーは others に居ないので描かない (T-21 と同じ)。TTL 内の cache がある週は A のときの応答を描く (T-13)。適用すると取り直して一覧も B → `useFamilyView(B)` は B のキーが無ければ適用した `viewState` を持ち越し、`all` なら B の others を描く・それ以外は A の `visible_member_ids` が B の一覧に無いので others が空 → `idle` (選び直すまで)。A のキー `familyViewState_<A>` は残り、ログアウトで消える (#1599)。開き直すと T-26 と同じ (S-31) |
+| T-28 | V∈F, T∈F, share=on | 規約・プライバシーの新しい版が施行され V が未同意になる (`LEGAL_CONSENT_ENFORCE=on` のとき) / V が同意する | 未同意: 次の取得から 403 `LEGAL_CONSENT_REQUIRED` → `error` (`failed`)。同意: 次の取得から T-1 | middleware の `resolveLegalConsentApiDecision` (`/api/family/menu` は `LEGAL_CONSENT_EXEMPT_API_PATHS` に無い)。ENFORCE が on でなければ止めない (遷移しない) | T-24 の凍結と同じ表示。開き直すと `/legal-consent?next=…` (V-7・S-33) |
+| T-29 | V∈F, T∈F, share=on | メンテナンスに入る (`maintenance_mode` が ON) / 終わる | 入る: V が運営でなければ次の取得から 503 `MAINTENANCE_MODE` → `error` (`failed`)。終わる: 次の取得から T-1 | middleware (`isMaintenanceExemptPath` の外・`isOperatorRoles` が偽・`isMaintenanceFlagOn`)。運営は止めない (遷移しない) | T-24 の凍結と同じ表示。開き直すとメンテナンスの画面 (V-8・S-34) |
 
 ## 11. データモデル (migration)
 
@@ -488,7 +498,7 @@ GRANT EXECUTE ON FUNCTION public.family_menu_planned_meals(date, date)
 - `STABLE` なので PostgREST の `rpc` は GET でも POST でも呼べる。route は POST (supabase-js の既定) で呼ぶ。
 - 関数は `authenticated` が実行できる (route は利用者のクライアントで呼ぶ) ので、利用者が `/rest/v1/rpc/family_menu_planned_meals` を直接呼べる。返す中身を絞るのは関数の側 (要素の鍵・`image_url` の CASE・`dish_names`) で、直接呼んでもこの絞りは同じに掛かる。route の `groupFamilyMenuRows` は形をまとめ、`familyMenuImageUrl` でもう一度落とすだけ (関数の正規表現が拾わない `%` の書き方だけは、route を通したときにだけ null になる)。
 - `image_url` の CASE の正規表現は `isPhotoStorageUrl` / `parseStorageObjectUrl` の path の形 (§3.1) と同じで、バケットの並び `(meal_photos|fridge-images|health-checkups)` は `FAMILY_MENU_HIDDEN_IMAGE_BUCKETS` (`PHOTO_STORAGE_BUCKETS` と `STORAGE_OBJECT_BUCKETS` の和。§14) を `|` でつないだもの (契約テスト C-7 が突き合わせる)。署名の対象 (`PHOTO_STORAGE_BUCKETS`) だけでなく、非公開の健診の画像 (`health-checkups`) も落とす (他のメンバーの写真の URL を配らない決まりはバケットの公開・非公開に依らない)。正規表現は文字列のどこに現れても当てる (path に限らない・長さの上限を見ない) ので、TS の判定より広く落とす (落とす向きにだけ広い)。バケットの名前を `%` で書いた URL は正規表現が拾わないが、route の `familyMenuImageUrl` (`%` を戻して比べる) が null にする (§8 の画像の表)。
-- 2 つの関数は `family_members.role`・`family_groups.representative_id`・`user_profiles.frozen_at` を読まない。代表者の譲渡 (T-23) と凍結 (T-15・T-24) は、見える相手も献立も変えない (契約テスト C-8 が本文を見る)。
+- 2 つの関数は `family_members.role`・`family_groups.representative_id`・`user_profiles.frozen_at` を読まない。代表者の譲渡 (T-23) と相手の凍結 (T-15) は、見える相手も献立も変えない (契約テスト C-8 が本文を見る)。見る人の凍結 (T-24) を止めるのは Next の middleware で、関数は凍結を判定しない (Supabase の REST を直接呼ぶ経路は middleware を通らず、既存の `user_daily_meals` などの RLS と同じく凍結では止まらない。Q-3)。
 - `dish_names` は `ARRAY(…)` なので NULL にならない (料理が無い・`dishes` が NULL の行は空の配列。`to_jsonb` で JSON の空の配列 `[]` になる)。`to_jsonb(r)` は `date` を `"YYYY-MM-DD"`・`uuid` を文字列・`integer` を数・NULL を `null` にする。範囲に献立が 1 食も無ければ `jsonb_agg` は NULL なので、`COALESCE` で空の配列 `[]` を返す (関数は NULL を返さない)。キーつきのオブジェクトの順は `jsonb_each` の順 (jsonb の鍵の並び) で、本番には無い古い形なので順の違いは問わない (§3.1)。
 
 ### 11.2 `supabase/rollbacks/<番号はマージ時に確定>_family_menu_view_functions.down.sql`
@@ -856,7 +866,10 @@ export type FamilyMenuFetchResult =
 
 /**
  * 家族の献立を受け取る (ブラウザから呼ぶ)。例外を投げない (取得の失敗は自分の献立の表示を止めない。S-14)。
- * 401 → 'unauthorized'、400 → 'invalid'、それ以外の失敗・形の違う応答 → 'failed'
+ * 401 → 'unauthorized'、400 → 'invalid'、それ以外の失敗・形の違う応答 → 'failed'。
+ * middleware (lib/supabase/middleware.ts) が route より前に返す 403 (凍結 AUTH_ACCOUNT_FROZEN・規約の同意 LEGAL_CONSENT_REQUIRED) と
+ * 503 (MAINTENANCE_MODE) も 'failed' (本文の code で分けない。画面の扱いは同じ loadFailed で、開き直すと middleware が
+ * /frozen・/legal-consent・メンテナンスの画面へ回す。§15.2・§18)
  */
 export async function fetchFamilyMenu(
   startDate: string,
@@ -868,7 +881,7 @@ export async function fetchFamilyMenu(
     const res = await fetchImpl(`${FAMILY_MENU_API_PATH}?${query.toString()}`, { cache: 'no-store' });
     if (res.status === 401) return { ok: false, reason: 'unauthorized' };
     if (res.status === 400) return { ok: false, reason: 'invalid' };
-    if (!res.ok) return { ok: false, reason: 'failed' };
+    if (!res.ok) return { ok: false, reason: 'failed' }; // 403 (凍結・同意) / 503 (メンテナンス) / 500 もここ
     const body: unknown = await res.json();
     const parsed = FamilyMenuResponseSchema.safeParse(body);
     if (!parsed.success) return { ok: false, reason: 'failed' };
@@ -961,7 +974,7 @@ export function useFamilyMenu({ startDate, endDate, enabled }: UseFamilyMenuArgs
 
 ### 15.1 `GET /api/family/menu` — 家族のメンバーの献立 (#1584 の 1・段 A)
 
-- ファイル: `src/app/api/family/menu/route.ts`。認証: `createClient()` の `auth.getUser()` (未認証は 401)。`/api/meal-plans` と `GET /api/family/members/names` と同じで、`requireUser` は使わない (凍結の扱いは Q-3)。
+- ファイル: `src/app/api/family/menu/route.ts`。認証: `createClient()` の `auth.getUser()` (未認証は 401)。`/api/meal-plans` と `GET /api/family/members/names` と同じで、`requireUser` は使わない。凍結・メンテナンス・規約の同意は route より前に middleware が判定して止める (§3.1・§15.2・V-6〜V-8) ので、route には書かない (二重に書かない)。`/api/family/menu` を middleware の例外の一覧 (`FROZEN_ALLOWED_API_PATHS`・`isMaintenanceExemptPath`・`LEGAL_CONSENT_EXEMPT_API_PATHS`) に足さない。
 - クエリ: `startDate` / `endDate` (YYYY-MM-DD。両方必須。`/api/meal-plans` と同じ名前にして、画面が同じ `targetDate` / `endDate` を渡せるようにする)。`isCalendarDate` (#1482) で実在する日付だけを受け、`isFamilyMenuRangeAllowed` で `start ≤ end` と含む日数 ≤ `FAMILY_MENU_RANGE_MAX_DAYS` を見る。違えば 400 `INVALID_REQUEST` (固定の文。DB に触れる前に返す)。
 - 手順: (1) 本人の `user_profiles.family_id` を RLS で読む (失敗は 500 `RPC_FAILED`)。NULL なら 200 `{ family_id: null, start_date, end_date, members: [] }` で終わる (関数を呼ばない)。(2) `supabase.rpc('family_menu_visible_members')` → (3) `supabase.rpc('family_menu_planned_meals', { p_start_date, p_end_date })` (献立の jsonb の配列 1 つ。行の集合でないので PostgREST の `max_rows` で打ち切られない。§11.1) → (4) `FamilyMenuRpcRowsSchema.safeParse` で読む (合わなければ 500 `RPC_FAILED`・Zod の message をログに残す。黙って空にすると、全員が「この日はありません」になるため。#1498 の route と同じ) → (5) `groupFamilyMenuRows(members, 読んだ配列, { family_id, start_date, end_date })` を `{ data }` で返す。件数で打ち切らない (`.range()` / `.limit()` を呼ばない)。RPC の失敗は 500 `RPC_FAILED` (本文は固定の文。元のエラーは構造化ログ `createLogger('GET /api/family/menu')` にだけ残す。`tests/api-raw-error-message-scan.test.ts`)。
 - 本文を読まない (GET) ので `rejectNullCharacterBody` は要らず、`src/__tests__/api/null-character-routes.test.ts` の表にも載せない。
@@ -1033,12 +1046,17 @@ export async function GET(request: Request) {
 
 ### 15.2 エラーの対応
 
-| 状況 | HTTP | 本文 (`cross/04` §5.2 (b) の形) |
+| 状況 | HTTP | 本文 (`cross/04` §5.2 (b) の形。middleware が返す 3 行はそれぞれ既存の形) |
 |---|---|---|
+| 見る人が凍結中 (V-6。middleware が route より前に返す) | 403 | `{ error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } }` (`Cache-Control: private, no-store`) |
+| メンテナンス中で運営でない (V-8。middleware) | 503 | `{ error: <MAINTENANCE_MESSAGE>, code: 'MAINTENANCE_MODE', retryAfter }` (`Retry-After` 付き。`maintenanceApiResponse`) |
+| `LEGAL_CONSENT_ENFORCE=on` で今の版に未同意 (V-7。middleware) | 403 | `{ error: <LEGAL_CONSENT_REQUIRED_MESSAGE>, code: 'LEGAL_CONSENT_REQUIRED' }` (`legalConsentRequiredBody`) |
 | 未認証 | 401 | `{ error: { code: 'NOT_AUTHENTICATED', message: '認証が必要です' } }` |
 | 日付が無い・形が違う・実在しない・`end < start`・含む日数 > 31 | 400 | `{ error: { code: 'INVALID_REQUEST', message: <固定の文> } }` |
 | 家族に居ない | 200 | `{ data: { family_id: null, …, members: [] } }` |
 | プロフィール・RPC の失敗 (関数が無い・`FAMILY_MENU_RANGE_INVALID`・`NOT_AUTHENTICATED` が DB から返る・接続)・献立の返り値が `FamilyMenuRpcRowsSchema` に合わない (配列でない・鍵が欠ける・型が違う) | 500 | `{ error: { code: 'RPC_FAILED', message: '家族の献立の取得に失敗しました' } }` (元のエラーは構造化ログだけ) |
+
+上の 3 行は route に届く前に返るので、route の単体テスト (§19.2) では出ない。middleware を通した it (§19.2 の後半) が固定する。画面はどれも `fetchFamilyMenu` の `failed` → `loadFailed` + [もう一度] (§14.2・§18)。
 
 `FAMILY_MENU_RANGE_INVALID` は route が先に 400 で止めるので、正規の画面からは DB に届かない (届いたら 500。改変したクライアントが route を迂回して RPC を直接呼ぶときの守り)。
 
@@ -1109,7 +1127,7 @@ export function FamilyMenuDayNotes(props: FamilyMenuDayNotesProps): JSX.Element 
 | 共有していない | `status === 'ready'` かつ `menu !== null` で、`partition.notSharing` の各 id | `{name} は献立を共有していません` (`notSharing`) |
 | アカウントが無い | `status === 'ready'` かつ `menu !== null` で、`partition.noAccount` の各 id | `{name} (子供) の献立は、アカウントを持つまで出ません` (`noAccount`) |
 | この日は献立が無い | `status === 'ready'` かつ `menu !== null` で、`partition.shown` のうち `!familyMenuHasMealsOn(member, dayDate)` の各 id | `{name} の献立はこの日はありません` (`noMealsToday`) |
-| 読み込めなかった | `status === 'error'` | `家族の献立を読み込めませんでした` (`loadFailed`) + [もう一度] (`onReload`) |
+| 読み込めなかった | `status === 'error'` (500・ネットワーク・形の違う応答と、middleware の 403 (凍結・同意) / 503 (メンテナンス)。§15.2) | `家族の献立を読み込めませんでした` (`loadFailed`) + [もう一度] (`onReload`) |
 | 読み込み中 | `status === 'loading'`、または `status === 'ready'` で `menu === null` | 薄い 1 行 `家族の献立を読み込んでいます` (`loading`) |
 
 注記は `status` だけで出し分ける (状態ごとに出すものは 1 種):
@@ -1154,6 +1172,7 @@ sequenceDiagram
     P->>P: 家族の行・注記なし (idle)
   else
     P->>M: ?startDate&endDate (週)
+    Note over M: route より前に middleware が 凍結 403 / メンテナンス 503 / 同意 403 を返すことがある (§15.2。そのとき下の DB は読まない)
     M->>DB: user_profiles.family_id (RLS)
     M->>DB: rpc family_menu_visible_members()
     M->>DB: rpc family_menu_planned_meals(start, end)
@@ -1174,9 +1193,12 @@ sequenceDiagram
 | API | `NOT_AUTHENTICATED` | 401 | 既存の `MembershipErrorCode` |
 | API | `INVALID_REQUEST` | 400 日付・範囲 | 既存の `MembershipErrorCode` |
 | API | `RPC_FAILED` | 500 (プロフィール・RPC の失敗と、献立の返り値の形の違い) | 既存の `MembershipErrorCode` |
-| 画面 | `reason: 'unauthorized' / 'invalid' / 'failed'` | `fetchFamilyMenu` の結果 | どれも `FAMILY_MENU_NOTE_TEXT.loadFailed` + [もう一度] (unauthorized は画面全体の既存の扱いに委ね、家族の注記としては同じ文) |
+| API (middleware) | `AUTH_ACCOUNT_FROZEN` | 403 見る人が凍結中 (V-6) | 既存 (`lib/supabase/middleware.ts`)。route に届かない |
+| API (middleware) | `MAINTENANCE_MODE` | 503 メンテナンス中で運営でない (V-8) | 既存 (`packages/shared/src/service-unavailable.ts`)。route に届かない |
+| API (middleware) | `LEGAL_CONSENT_REQUIRED` | 403 今の版に未同意 (V-7) | 既存 (`packages/shared/src/legal-consent-api.ts`)。route に届かない |
+| 画面 | `reason: 'unauthorized' / 'invalid' / 'failed'` | `fetchFamilyMenu` の結果 (401 → unauthorized・400 → invalid・middleware の 403 (凍結・同意) と 503 (メンテナンス)・500・形の違い・例外 → failed) | どれも `FAMILY_MENU_NOTE_TEXT.loadFailed` + [もう一度] (unauthorized・凍結・同意・メンテナンスは画面全体の既存の扱い (開き直しで middleware が `/login`・`/frozen`・`/legal-consent`・メンテナンスの画面へ回す) に委ね、家族の注記としては同じ文) |
 
-新しいエラーコードは足さない (`cross/04` §4.2 の一覧に追記は不要)。
+新しいエラーコードは足さない (`cross/04` §4.2 の一覧に追記は不要。middleware の 3 つは既存)。
 
 ## 19. テスト (it 名)
 
@@ -1200,7 +1222,7 @@ sequenceDiagram
 | `familyMenuImageUrl: NULL と空は null、meal_photos / fridge-images の公開 URL・署名付き URL・generated/ の URL・health-checkups の URL (object/authenticated・object/sign)・バケットの名前を % で書いた URL・2,048 文字を超えるバケットの URL・URL として読めない文字列は null、バケットの外の URL (images.unsplash.com・3 つ以外のバケット) はそのまま` | §8 の画像の表・S-20 |
 | `FAMILY_MENU_HIDDEN_IMAGE_BUCKETS: PHOTO_STORAGE_BUCKETS と STORAGE_OBJECT_BUCKETS の全部を、重なりなく持つ (今は meal_photos / fridge-images / health-checkups の 3 つ)` | §12・§8 の画像の表 |
 | `FamilyMenuRpcRowsSchema: 13 の鍵の要素の配列を読み、is_simple / calories_kcal / cooking_time_minutes / display_order / is_completed / image_url の null を通し、知らない鍵 (memo など) は捨てる。配列でない値・null・鍵の欠けた要素・型の違う要素 (dish_names が null・day_date が日付の形でない) は通らない` | §13・§15.2・S-12 |
-| `fetchFamilyMenu: 200 の正しい本文は ok、401 は unauthorized、400 は invalid、500 と形の違う本文と例外は failed (例外を投げない)` | S-14 |
+| `fetchFamilyMenu: 200 の正しい本文は ok、401 は unauthorized、400 は invalid、403 (AUTH_ACCOUNT_FROZEN と LEGAL_CONSENT_REQUIRED の本文)・503 (MAINTENANCE_MODE の本文)・500 と形の違う本文と例外は failed (例外を投げない)` | S-14・S-26・S-33・S-34 (403 / 503 の本文は §15.2 の middleware の形) |
 | `fetchFamilyMenu: 同じオリジンの相対パス (FAMILY_MENU_API_PATH で始まり、startDate / endDate のクエリを持つ URL) を cache: 'no-store' で呼ぶ` | S-16 (WebView は同じオリジンの Cookie のセッションで通る)・S-18 |
 | `barrel: @/schemas/membership から読んだ FamilyMenuDataSchema と FamilyMenuResponseSchema は @/schemas/membership/family-menu のものと同じ (index.ts の再 export)` | §13 (barrel の 1 行) |
 | `FAMILY_MENU_NOTE_TEXT: 5 つの鍵 (notSharing / noAccount / noMealsToday / loadFailed / loading) を持ち、{name} を持つのは notSharing / noAccount / noMealsToday だけ` | §12・§16.2 |
@@ -1219,8 +1241,18 @@ sequenceDiagram
 | `family_id はあるが見てよいメンバーが 0 人 (自分が active でない) なら、200 で family_id はその家族・members: []` | V-3・S-22 (偽の family_menu_visible_members が 0 行、family_menu_planned_meals が空の配列 `[]` を返す) |
 | `RPC の失敗は 500 RPC_FAILED の固定の文で、元のエラーは本文に出さずログに残す` | §15.2 |
 | `プロフィールの取得の失敗は 500 RPC_FAILED` | §15.2 |
-| `見る人が凍結中 (プロフィールの frozen_at が入っている) でも 200 で献立を返す。user_profiles から select するのは family_id だけ` | V-6・S-26・T-24 (requireUser を使わない) |
+| `route は凍結・同意・メンテナンスを判定しない: user_profiles から select するのは family_id だけ` | §15.1 (判定は middleware だけに置く。止める挙動は下の middleware の it が見る。route の単体は middleware を通らないので、ここで 403 / 503 を見ない) |
 | `rpc は family_menu_visible_members と family_menu_planned_meals を、startDate / endDate を p_start_date / p_end_date にしてこの順で呼ぶ` | 契約 |
+
+middleware を通した it — `lib/supabase/__tests__/middleware-family-menu.test.ts` (段 A・新設)。`updateSession` (`lib/supabase/middleware.ts`) に `GET /api/family/menu?startDate=2026-10-12&endDate=2026-10-18` の `NextRequest` を通す。モックは `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` と同型 (`@supabase/ssr` の `createServerClient` の偽物 (:65)・`@/lib/feature-flags` の `isFeatureEnabled` の偽物 (:70-71。メンテナンスの ON / OFF)・プロフィールの行は `consentProfile` (:98) と同じ形で `frozen_at` / `unban_at` / `roles` / 同意の版を上書き・`stubSupabasePublicEnv`・`vi.stubEnv('LEGAL_CONSENT_ENFORCE', …)`)。「止めない」は `res.status === 200` かつ `res.headers.get('x-middleware-next') === '1'` (`middleware-frozen-allowed-api.test.ts` と同じ見方)。各 it は見る軸の 1 つだけを変え、ほかは止まらない値 (凍結なし・メンテナンス OFF・今の版に同意済み・`LEGAL_CONSENT_ENFORCE=on`) にする:
+
+| it | 見るもの |
+|---|---|
+| `凍結中 (frozen_at があり unban_at が NULL・未来) の見る人の GET /api/family/menu は 403 AUTH_ACCOUNT_FROZEN の本文と Cache-Control: private, no-store。unban_at が過去なら止めない` | V-6・T-24・S-26 |
+| `メンテナンス中は、運営でない見る人を 503 MAINTENANCE_MODE で止め、admin / super_admin は止めない` | V-8・T-29・S-34 |
+| `LEGAL_CONSENT_ENFORCE=on で今の版に未同意の見る人は 403 LEGAL_CONSENT_REQUIRED。同意済み・ENFORCE が on でないときは止めない` | V-7・T-28・S-33 |
+| `凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (凍結が先)。メンテナンス中かつ未同意の運営でない人は 503 (メンテナンスが先)` | §8 の V の判定の順 |
+| `/api/family/menu は isFrozenAllowedApiPath・isPushTokenClaimApiPath・isMaintenanceExemptPath・isLegalConsentExemptApiPath のどれにも当たらない` | V-6〜V-8 (例外の一覧に足していない) |
 
 ### 19.3 実 DB — `tests/integration/rls/family-menu-visibility.test.ts` (段 A。利用者 13 人 (`family-member-names-scope.test.ts` の 7 人 + 退会の it 専用の、代表者でない大人 1 人 + 昇格の it 専用の 2 人 + 家族 H の it 専用の 3 人 (家族を作る 1 人と、招待を承諾する 2 人))・家族 2 つ (+ 家族 H の it が作る 1 つ)。`family-member-names-scope.test.ts` の準備を写す (除名済みで `family_id` が残った `removed` と、行が無いのに `family_id` だけが家族 G を指す `intruder` を含む)。家族 F には昇格の it のために子供の行を 2 つ足す (P-6 の子供の行とは別)。退会の it は他の it の結果を変えないよう、その専用の 1 人だけを消す。凍結の it は `adult` の `frozen_at` を service role で入れ、`finally` で NULL に戻す。`image_url` と `dish_names` の it は、`adult` の範囲内の 1 日 (他の it と別の日) に service role で `user_daily_meals` (`is_sandbox = FALSE`) の 1 行とその子の `planned_meals` を足す: `image_url` に `<SUPABASE_URL>/storage/v1/object/public/fridge-images/generated/<id>/a.png`・`…/object/sign/meal_photos/<adult の id>/b.jpg?token=x`・`…/render/image/public/meal_photos/<adult の id>/c.jpg?width=1`・`…/object/authenticated/health-checkups/<adult の id>/d.jpg`・`''`・`https://images.unsplash.com/photo-1` の 6 行、`dishes` に料理ごとの栄養・材料・作り方・`image_url` を持つ配列 (name の無い要素・`name` が数・空の name を混ぜる)・キーつきのオブジェクト・NULL の 3 行。足した行はその it の `finally` で消す)。`family_menu_planned_meals` の結果は jsonb の配列 1 つなので、本節の it の「行」はその配列の要素、「0 行」は `family_menu_visible_members` が 0 行・`family_menu_planned_meals` が空の配列 `[]` を返すことをいう
 
@@ -1240,7 +1272,7 @@ sequenceDiagram
 | `dish_names は dishes の配列 (順を保つ) と、キーつきのオブジェクトの値から、文字列で空でない name だけを返す。name の無い要素・文字列でない name・空の name は捨て、dishes が NULL なら空の配列` | S-12・R-6 (料理ごとの栄養・材料・作り方・画像の URL を持つ dishes を入れて、結果に名前しか無いことも見る) |
 | `image_url が利用者の写真のバケット 3 つの URL (meal_photos / fridge-images の object/public・object/sign・render/image/public と、health-checkups の object/authenticated) の行は NULL、空も NULL、バケットの外の URL はそのまま返る` | S-20・R-6・§8 の画像の表 |
 | `凍結 (user_profiles.frozen_at) された share_menu = TRUE の大人の献立も返る` | P-8・T-15・S-21 |
-| `見る人が凍結中 (frozen_at) でも、2 つの関数は凍結していないときと同じ行を返す` | V-6・T-24・S-26 (`adult` の `frozen_at` を service role で入れて `adult` が呼び、凍結の前に呼んだ結果と比べる。`finally` で NULL に戻す) |
+| `見る人が凍結中 (frozen_at) でも、2 つの関数は凍結していないときと同じ行を返す` | §11.1 (関数は凍結を判定しない。止めるのは middleware だけで、Supabase の REST を直接呼ぶ経路は既存の RLS と同じく凍結で止まらない。Q-3) (`adult` の `frozen_at` を service role で入れて `adult` が呼び、凍結の前に呼んだ結果と比べる。`finally` で NULL に戻す) |
 | `除名済みで family_id が元の家族を指したままの人 (removed) と、行が無いのに family_id だけが家族を指す人 (intruder) が呼ぶと、2 つの関数とも 0 行` | V-3・S-22・T-6 (見る側が active でない) |
 | `子供の行を昇格の承諾 (accept_child_promotion) で本人のアカウントに付け替えると、p_share_menu = false の人は visible_members にも献立にも出ず、既定 (TRUE) の人は出る` | T-8・S-24 (手順は `family-accept-display-name.test.ts:148-152`。2 人の子供の行を 1 人ずつ昇格させる) |
 | `家族 H: 作った直後は 2 つの関数とも 0 行。招待の承諾で 2 人が加わると、p_share_menu = false の人は出ず、既定 (TRUE) の人は出る。承諾した人から見ると、承諾の前は 0 行で、承諾の直後から家族を作った人 (share_menu TRUE) が出る (自分の p_share_menu に関わらない)。代表者を既定の人へ譲渡 (propose → accept) しても、3 人それぞれから見た 2 つの関数の結果は変わらず、family_groups.representative_id は譲渡先になる` | T-22・T-21・T-23・T-26・S-28・S-27・S-29・S-30 (手順は `family-accept-display-name.test.ts` :83 (`create_family_group`)・:97-101 (`create_family_invite` → `accept_family_invite`) と `family-lock-order-race.test.ts` :220 (`propose_family_representative_transfer`)・:354 (`accept_family_representative_transfer`)。家族 H と 3 人は `finally` で消す) |
@@ -1298,7 +1330,7 @@ spec02-03 で名前の API の応答を待つ理由: 適用 (`onChange`) は `se
 | `C-5: 1 行目の見出し・戻し方の参照・戻し口のファイル名と見出しが一致し、戻し口は DROP FUNCTION IF EXISTS を 2 本持つ` | `migration-file-version-integrity` と同じ規則 |
 | `C-6: family_menu_planned_meals は RETURNS jsonb (RETURNS TABLE / SETOF でない) で、配列の要素の鍵 (to_jsonb(r) の r の列) が FamilyMenuRpcRowSchema の鍵とも FamilyMenuMealSchema の鍵 + member_id / user_id / day_date とも一致する (memo / generation_metadata / mode / dishes を返していない)` | R-6・R-11・S-32 (`tests/llm-usage-summary-contract.test.ts` :72-79 と同じく、行の集合に戻すと max_rows で打ち切られるので赤にする。r の列は、r の SELECT の各式の `AS` の名前と、`AS` の無い `<別名>.<列>` の列の名前) |
 | `C-7: 関数の image_url の CASE の正規表現が、FAMILY_MENU_HIDDEN_IMAGE_BUCKETS を "\|" でつないだバケットの並び ("(meal_photos\|fridge-images\|health-checkups)/") を持ち、dish_names は dishes から ->> 'name' で名前だけを取り出す` | R-6・S-20 (`FAMILY_MENU_HIDDEN_IMAGE_BUCKETS` は `src/lib/membership/family-menu.ts` から import して並びを作る。`PHOTO_STORAGE_BUCKETS` か `STORAGE_OBJECT_BUCKETS` にバケットを足すと赤になり、関数を新しい migration で直すまで通らない) |
-| `C-8: 2 つの関数の本文は role・representative_id・frozen_at を読まない (代表者の譲渡と凍結で見える相手が変わらない)` | T-23・T-24・T-15・S-21・S-26・S-29 (コメントを除いた関数の本文に 3 つの語が無い) |
+| `C-8: 2 つの関数の本文は role・representative_id・frozen_at を読まない (代表者の譲渡と凍結で見える相手が変わらない)` | T-23・T-15・S-21・S-29 (コメントを除いた関数の本文に 3 つの語が無い。見る人の凍結 (T-24) は middleware が止め、関数は判定しない。§11.1) |
 
 C-4 は**型検査が掛かる場所**に置く: ルートの `tsconfig.json` は `tests` を `exclude` しており (`tsc --noEmit` は `tests/**` を見ない)、vitest も型を検査しないので、`tests/` に型だけの検査を書くと何も守らない。よって C-4 は `src/__tests__/lib/membership/family-menu-rpc-types.test.ts` (`src/**` は tsc の対象) に置き、route と同じ経路をたどる: 生成型の `family_menu_visible_members` の行を `FamilyMenuVisibleMemberRow` に代入し (代入できなければ tsc が赤)、生成型の `family_menu_planned_meals` の `Returns` (`Json`) の値を `FamilyMenuRpcRowsSchema.safeParse` で読んで `groupFamilyMenuRows` に渡す (読めない・まとめ方が違えば vitest が赤)。route の `groupFamilyMenuRows(members ?? [], parsedRows.data, …)` も同じ経路で、tsc が見る。
 
@@ -1404,17 +1436,19 @@ describe('C-4: 生成型 (database.types.ts) の Returns は、route と同じ�
 | S-23 | §19.1 `familyMenuHasMealsOn: …` / §19.2 `献立の無いメンバーも members に入る (days: [])` / §19.4 notes `shown のメンバーがその日に献立を持たなければ…` |
 | S-24 | §19.3 `子供の行を昇格の承諾 (accept_child_promotion) で…` / §19.1 `partitionFamilyMenuMembers: 一覧の user_id が null のままのメンバーは…` / §19.4 wiring `onChange が … loadFamilyData を呼ぶ` |
 | S-25 | §19.2 `家族に居なければ…` / §19.1 `partitionFamilyMenuMembers: 応答の members が空 (family_id: null) なら…` / §19.4 wiring `loadFamilyData は useCallback で、family_id が無いとき setFamilyId(null) と setFamilyMembers([]) を呼ぶ`・`onChange が … loadFamilyData を呼ぶ` / §19.3 `除名済みで family_id が元の家族を指したままの人…` (見る側が外れたあとの関数は 0 行) |
-| S-26 | §19.2 `見る人が凍結中 (プロフィールの frozen_at が入っている) でも 200…` / §19.3 `見る人が凍結中 (frozen_at) でも、2 つの関数は…` / §19.6 C-8 |
+| S-26 | §19.2 middleware `凍結中 (frozen_at があり unban_at が NULL・未来) の見る人の GET /api/family/menu は 403…`・`/api/family/menu は isFrozenAllowedApiPath・…のどれにも当たらない` / §19.1 `fetchFamilyMenu: … 403 … は failed` / §19.4 notes `error のときは読み込めなかった注記と [もう一度] だけ…` / 既存の `middleware-legal-consent-api.test.ts` (全 route × 凍結中 :274)・`middleware-frozen-allowed-api.test.ts` (一覧の固定 :64) |
 | S-27 | §19.3 `家族 H: …招待の承諾で 2 人が加わると…` / §19.1 `partitionFamilyMenuMembers: …otherIds に居ない人 (選ばなかった人) はどれにも入らない` (読み直す前の新しいメンバー) / §19.4 switcher `share_menu が false のメンバーに「(献立は非公開)」` / §19.4 wiring `onChange が … loadFamilyData を呼ぶ` |
 | S-28 | §19.3 `家族 H: 作った直後は 2 つの関数とも 0 行…` / §19.1 `visibleOtherMemberIdsOf: all は active の全員から自分を除く` (自分だけの一覧なら空) / §19.4 hook `enabled が false なら…` |
 | S-29 | §19.3 `家族 H: …代表者を既定の人へ譲渡 (propose → accept) しても…` / §19.6 C-8 / 既存の `tests/account-delete-route.test.ts` (:139-146。代表者の削除は 409)・`tests/account-deletion-email.test.ts` (:233) |
 | S-30 | §19.3 `家族 H: …承諾した人から見ると、承諾の前は 0 行で、承諾の直後から家族を作った人…` / §19.1 `visibleOtherMemberIdsOf: all は active の全員から自分を除く` / 既存の e2e family/01 `T14-F3` (承諾 → 週間献立 → 切り替えに 2 人) / §19.5 spec02-01 (家族の大人の画面に代表者の行) |
 | S-31 | §19.1 `visibleOtherMemberIdsOf: custom は … 別の家族の id … は捨てる`・`partitionFamilyMenuMembers: 応答に居る → shown、アカウントがあって居ない → notSharing … otherIds に居ない人 … はどれにも入らない` (読み直す前) / §19.4 hook `reload は全ての範囲の cache を捨てる…`・`範囲を戻すと、TTL 内なら…` (読み直す前の cache) / §19.4 wiring `onChange が setView と familyMenu.reload と loadFamilyData を呼ぶ` / §19.3 `除名済みで family_id が元の家族を指したままの人…` (active でない元の家族の行は見ない) と `家族 H: …承諾した人から見ると…` (関数は呼んだ人の active の行の家族だけを見る) |
 | S-32 | §19.3 `1 つの範囲の献立が PostgREST の max_rows の既定 (1,000) を超えても…` / §19.6 C-6 (`RETURNS jsonb`) / §19.1 `FamilyMenuRpcRowsSchema: …`・`isFamilyMenuRangeAllowed: 31 日は通り…` / §19.2 `family_menu_planned_meals の返り値が FamilyMenuRpcRowsSchema に合わない…` / §19.6 C-4 |
+| S-33 | §19.2 middleware `LEGAL_CONSENT_ENFORCE=on で今の版に未同意の見る人は 403 LEGAL_CONSENT_REQUIRED…`・`凍結中かつ未同意は…` / §19.1 `fetchFamilyMenu: … 403 … は failed` / §19.4 notes `error のときは…` / 既存の `middleware-legal-consent-api.test.ts` (全 route × 未同意 × ENFORCE=on :196) |
+| S-34 | §19.2 middleware `メンテナンス中は、運営でない見る人を 503 MAINTENANCE_MODE で止め…` / §19.1 `fetchFamilyMenu: … 503 … は failed` / §19.4 notes `error のときは…` / 既存の `middleware-legal-consent-api.test.ts` (全 route × メンテナンス中 :289) |
 
 ## 20. 新設一覧
 
-新設のテストは 10 ファイル (段 A が 5・段 B が 5。どれも origin/main に無い)。「テスト」の行の「名前」の列は path、「場所」の列は中身の節。
+新設のテストは 11 ファイル (段 A が 6・段 B が 5。どれも origin/main に無い)。「テスト」の行の「名前」の列は path、「場所」の列は中身の節。
 
 | 種別 | 名前 | 場所 | 段 |
 |---|---|---|---|
@@ -1430,6 +1464,7 @@ describe('C-4: 生成型 (database.types.ts) の Returns は、route と同じ�
 | route (URL) | `GET /api/family/menu` | — | A |
 | テスト | `src/__tests__/lib/membership/family-menu.test.ts` | §19.1 単体 (純関数・定数・`fetchFamilyMenu`) | A |
 | テスト | `src/__tests__/api/family/menu.test.ts` | §19.2 route (`GET /api/family/menu`) | A |
+| テスト | `lib/supabase/__tests__/middleware-family-menu.test.ts` | §19.2 の後半 middleware (`GET /api/family/menu` の凍結 403・メンテナンス 503・同意 403) | A |
 | テスト | `tests/integration/rls/family-menu-visibility.test.ts` | §19.3 実 DB (関数 2 本の見える・見えない) | A |
 | テスト | `tests/family-menu-view-migration-contract.test.ts` | §19.6 契約 C-1〜C-3・C-5〜C-8 (DB を使わない) | A |
 | テスト | `src/__tests__/lib/membership/family-menu-rpc-types.test.ts` | §19.6 契約 C-4 (生成型 → 正典の型の片方向。tsc の対象に置く) | A |
@@ -1452,6 +1487,8 @@ grep の語 = 本書が足す・変える名前。反応する番兵と直し方
 | `src/app/api/family/menu/route.ts` | `tests/api-raw-error-message-scan.test.ts` (本文に生のエラー文を入れない) | 500 は固定の文・ログにだけ残す (§15.1) | A |
 | 同上 | `tests/role-check-source-scan.test.ts` (手書きのロール判定) | ロールを読まない (`getUser` だけ)。反応しない | A |
 | 同上 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` (`@/lib/supabase/server`) だけ。service_role を使わない。反応しない | A |
+| 同上 | `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` (`src/app/api` の全 route を `listRouteFiles` で列挙し (:165-167)、未同意 × `LEGAL_CONSENT_ENFORCE=on` で許可リストの外は 403 `LEGAL_CONSENT_REQUIRED` (:196)・凍結中は同意の 403 が出ない (:274)・メンテナンス中も出ない (:289) を 1 本ずつ見る。許可リストの中身はスナップショット (:223)) | 新しい route は自動で表に入る。`/api/family/menu` を `LEGAL_CONSENT_EXEMPT_API_PATHS` に足さない (利用者のデータを読む API なので同意の対象・スナップショットも変えない)。段 A の全件で緑を確かめる | A |
+| 同上 | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` (凍結中でも止めない一覧 `FROZEN_ALLOWED_API_PATHS` を退会と書き出しの 2 本に固定する :64-68・一覧の外は 403 :119-139) | `FROZEN_ALLOWED_API_PATHS` に足さない (凍結中は 403 のまま。V-6)。反応しない。一覧の外の 403 は新設の `middleware-family-menu.test.ts` が `/api/family/menu` で見る (§19.2) | A |
 | 同上 | `src/__tests__/api/null-character-routes.test.ts` (本文を読む handler の洗い漏れ) | GET で本文を読まない。表にも EXCLUDED にも載せない | A |
 | 同上 | `tests/jst-today-source-scan.test.ts` (規則 G〜J) | timestamptz の列を絞らない・Date を作らない (`calendarDaySpan` は `Date.UTC` の差だけ)。反応しない | A |
 | `startDate` / `endDate` | `tests/date-entry-leftovers-1482-routes.test.ts` (日付の入口の検査) | 本 route の検査は §19.2 に置く (既存の表は `/api/meal-plans` などを列挙するだけで自動では拾わない)。足す場合は同型の it を 1 本 | A |
@@ -1490,7 +1527,7 @@ grep の語 = 本書が足す・変える名前。反応する番兵と直し方
 |---|---|---|
 | Q-1 | 自分の献立を切り替えで隠せなくてよいか (当初設計 membership/03 §5.2 #4 は隠す) | 隠さない (R-3・§7.2)。オーナーの異議があれば「自分の行を畳む」で応える |
 | Q-2 | 子供 (アカウント無し) の献立を親が代理で持つ仕組み (`user_daily_meals` に代理の列) を作るか | 作らない (§0.3)。注記で案内 |
-| Q-3 | 相手のアカウントが凍結中 (`frozen_at`) でも献立を見せてよいか。見る側が凍結中の 401/403 は `requireUser` を使う route と同じにするか | 相手の凍結: 見せる (P-8・S-21・T-15)。見る側の凍結: 止めない (V-6・S-26・T-24)。route は `/api/meal-plans` と `/api/family/members/names` と同じ `getUser` だけ (自分の献立も名前も凍結中に読めるので、家族の献立だけを止めると画面の一部だけが欠ける)。凍結を止めることにするなら、3 つの route を一緒に `requireUser` に替える (本書の範囲外) |
+| Q-3 | 相手のアカウントが凍結中 (`frozen_at`) でも献立を見せてよいか。見る側が凍結中・同意未済・メンテナンス中のときをどう扱うか | 相手の凍結: 見せる (P-8・S-21・T-15)。見る側: middleware が `/api/*` を route より前に止める既存の決まり (凍結 403・メンテナンス 503・同意 403。`/api/meal-plans`・名前の API も同じ) に乗り、`/api/family/menu` を例外の一覧に足さない (V-6〜V-8・S-26・S-33・S-34)。凍結中に通すのは「本人がサービスから離れるための操作」だけ (`src/lib/auth/frozen.ts` の説明) で、家族の献立はそれに当たらない。route と関数には判定を書かない (二重に書かない)。Supabase の REST を直接呼ぶ経路は middleware を通らず、関数は凍結を判定しないので止まらない (自分の献立の RLS も凍結を見ないのと同じ。既存の決まりで、本書は変えない) |
 | Q-4 | 相手が献立を変えたときの反映 (リアルタイム・時間がたったら自動で取り直す) | どちらも要らない (T-9・§0.3。自分の献立の `weekDataCache` と同じ)。取り直しの契機は切り替えの適用・[もう一度]・cache の無いか TTL を超えた週への移動・画面の開き直し。要望があれば、画面が前面に戻ったとき (`visibilitychange`) に TTL を超えていたら取り直す形で足す |
 | Q-5 | ネイティブの週間献立の画面 (`apps/mobile/app/menus/weekly/index.tsx`) を残すか消すか | 本書は触らない。#1610 と一緒に判断 |
 | Q-6 | 家族の 4 画面の `'名前未設定'` のリテラル 5 箇所を `FAMILY_MEMBER_NAME_FALLBACK` に寄せるか | 本書では変えない (範囲外)。別の小さな PR |
