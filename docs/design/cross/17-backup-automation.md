@@ -93,7 +93,7 @@ Issue 本文との食い違い (本書を正とする): #1129 の「vercel.json 
 | 台帳 (`ledger.txt`) | 取得の時点の本番の migration 台帳 (`supabase_migrations.schema_migrations`) の version。1 行に 1 つ、昇順 |
 | カタログ (`catalog/`) | 取得の時点の本番のカタログ (既存の `scripts/baseline/snapshot_catalog.sql` の出力の CSV 7 つ)。復元した DB を `verify_baseline.py` で比べる基準 |
 | 受け手 (recipient) | age の公開鍵 (`age1…`)。秘密ではない。秘密鍵 (identity) は復元する人だけが持つ |
-| 鮮度 | 最新の `backup.daily.completed` の `created_at` からの経過時間。`BACKUP_STALE_AFTER_HOURS` を超えたら「古い」 |
+| 鮮度 | 最新の `backup.daily.completed` (取得の行 = actor_id NULL・target_type `database_backup` のものだけ。§7.3) の `created_at` からの経過時間。`BACKUP_STALE_AFTER_HOURS` を超えたら「古い」 |
 
 ### 0.6 章構成テンプレート (docs/design/CLAUDE.md) との対応
 
@@ -1636,7 +1636,7 @@ if __name__ == "__main__":
 - 認可 `requireRole(['super_admin'])`。`admin_audit_logs` は本人のセッションの client で読む (RLS の `audit_logs_select_super_admin` で super_admin が読める。`admin_audit_logs` の読み取りに service_role は使わない)。select の列は文字列リテラル `'id, created_at, action_type, target_type, actor_id, severity, details'` (= `BACKUP_AUDIT_SELECT`。§18 の select-columns-exist の行)。
 - 行を信じる条件 (R-6・§10): `admin_audit_logs` の INSERT のポリシー 2 本は action_type を見ないので、運営のロールの人は自分の JWT でどの action_type の行も直接書ける (§3.1)。action_type だけで読むと、取得が止まっていても偽の `backup.daily.completed` が 1 行あれば「新しい」になり、偽の `dr.test.*` が訓練の記録に並ぶ。そこで次の印で絞る (S-23):
   - 取得の行: `target_type = BACKUP_AUDIT_TARGET_TYPE` (`database_backup`) かつ `actor_id IS NULL` (`record_backup_audit` が書く形。`audit_logs_insert_admins` で書いた行は actor_id = 本人なので外れる)。
-  - 訓練の行: `target_type = DR_TEST_AUDIT_TARGET_TYPE` (`dr_test`) かつ `actor_id` が今の super_admin の 1 人 (§7.2 の POST は `requireRole(['super_admin'])` の後に本人の id で書く。ほかの運営のロールの人が本人の id で書いた行は外れる)。今の super_admin の id は、`requireRole` の後に `getSupabaseAdmin().from('user_profiles').select('id').contains('roles', [DR_TEST_RECORDER_ROLE])` で読む。`user_profiles` の SELECT のポリシーは本人の行だけ (`"Users can view own profile"`。origin/main の `supabase/baseline/prod_schema.sql` の 10060 行。ほかの migration に `user_profiles` のポリシーは無い) なので、本人の client ではほかの super_admin が見えない。service_role を使うのはこの 1 本だけで、読む列は `id` だけ。役を外れた人と、退会して actor_id が NULL になった人 (`admin_audit_logs_actor_id_fkey` は `ON DELETE SET NULL`) の記録は画面に出ない (監査行は残る。§21)。
+  - 訓練の行: `target_type = DR_TEST_AUDIT_TARGET_TYPE` (`dr_test`) かつ `actor_id` が今の super_admin の 1 人 (§7.2 の POST は `requireRole(['super_admin'])` の後に本人の id で書く。ほかの運営のロールの人が本人の id で書いた行は外れる)。今の super_admin の id は、`requireRole` の後に `getSupabaseAdmin().from('user_profiles').select('id').contains('roles', [DR_TEST_RECORDER_ROLE])` で読む。`user_profiles` の SELECT のポリシーは本人の行だけ (`"Users can view own profile"`。origin/main の `supabase/baseline/prod_schema.sql` の 10060 行。ほかの migration に `user_profiles` のポリシーは無い) なので、本人の client ではほかの super_admin が見えない。service_role を使うのはこの 1 本だけで、読む列は `id` だけ。役を外れた人の記録と、actor_id が今の super_admin の id でなくなった行 (アカウントが消えて actor_id が NULL になったものなど) は画面に出ない (監査行は残る。§21)。
   - 残る穴: 古いポリシー `"Admins can create audit logs"` は actor_id も見ないので、admin / super_admin / support のロールの人は、actor_id を NULL にした `backup.*` の行も、actor_id を super_admin の id にした `dr.test.*` の行も書ける。読む側ではこれを見分けられない (既存の欠陥。Issue #1736 でポリシーを直す。§21)。
 - 読み取りは、super_admin の一覧の 1 本 (`superAdminIds`) のあとに、次の 8 本を `Promise.all` で並べる (order はどれも `.order('created_at', { ascending: false }).order('id', { ascending: false })`):
   - 取得の最新 1 行 × 3 (`backupAuditAction(tier, 'completed')`): `.eq('action_type', <action>).eq('target_type', BACKUP_AUDIT_TARGET_TYPE).is('actor_id', null)` + order + `.limit(1).maybeSingle()`。
@@ -1646,7 +1646,7 @@ if __name__ == "__main__":
   - 訓練の一覧: `.in('action_type', [...DR_TEST_AUDIT_ACTION_TYPES]).eq('target_type', DR_TEST_AUDIT_TARGET_TYPE).in('actor_id', superAdminIds)` + order + `.limit(DR_TEST_LIST_LIMIT)`。
   - `superAdminIds` が空なら (本人が super_admin なので普通は起きない)、訓練の 4 本は読まず、最新は null・一覧は [] にする。
 - super_admin の一覧か 8 本のどれかが `error` を返したら 500。行は `backupAuditRowSchema` で検証し (1 行でも落ちれば 500)、`toBackupStatusResponse({ latestByTier, latestDrTestByKind, backups, drTests, superAdminIds }, new Date())` を返す (200)。`toBackupStatusResponse` は同じ条件 (`isBackupAuditRow` / `isDrTestAuditRow`) で行を見直す (route の絞り込みの書き忘れを応答に出さない)。`Cache-Control: no-store`。
-- 読めない (DB の失敗) → `internalError` の 500。閲覧は記録しない (利用者の情報を返さない)。
+- 読めない (DB の失敗) → `internalError` の 500。閲覧は記録しない (利用者の情報を返さない。返す `actor_id` は、取得の行では NULL、訓練の行では記録した super_admin の id だけ)。
 
 ### 7.2 `POST /api/super-admin/backups/dr-tests` (super_admin)
 
@@ -1725,7 +1725,7 @@ if __name__ == "__main__":
 | aws cli に渡す R2 の鍵 | — | `awsCommandEnv` が `BACKUP_R2_*` を `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` に写す (取得は GitHub の secret、`restore` は手元のシェルの復元用の読み取り専用のトークン。§4.4) |
 | 監査行の書き方 | — | runner の psql で全層を 1 回の取引 (全部か 0 行か)。details は base64 で SQL に入れる (§4.12) |
 | DR 訓練の記録の 400 | — (route が無い) | `OP_INVALID_INPUT` (`src/lib/super-admin/validation-errors.ts` の形。項目の文は schema の日本語で、画面が項目の下に出す) |
-| 画面の「層ごとの最新」「訓練の種類ごとの最新」 | — | action_type ごとに最新 1 行を読む (一覧の 100 行の窓によらない) |
+| 画面の「層ごとの最新」「訓練の種類ごとの最新」 | — | action_type ごとに最新 1 行を読む (一覧の 100 行の窓によらない。書いた経路の印でも絞る = 次の行) |
 | 取得・訓練の行を信じる条件 | — (`backup.*` / `dr.test.*` の行は無い。表の INSERT のポリシー 2 本は action_type を見ない) | action_type だけでは信じない。取得の行は actor_id NULL かつ target_type `database_backup`、訓練の行は target_type `dr_test` かつ actor が今の super_admin (§7.1・§7.3。鮮度の cron・画面の GET・`toBackupStatusResponse` が同じ条件)。INSERT のポリシーそのものは変えない (古いポリシーが残る間の穴は Issue #1736) |
 | weekly / annual の対象物の作り方 | 07 は weekly を月曜 03:00 UTC の別の Vercel Cron で取る (未実装) | daily と同じ手元の 3 ファイルを層のキーへもう一度送る (`aws s3 cp <ファイル> s3://…` と head-object。R2 の中のコピーは使わない。§3.3・§4.4) |
 | `admin_audit_logs` の UPDATE / DELETE の禁止 | RLS (`USING (false)`)。anon / authenticated に効き、postgres・service_role は越える | 変えない (取得の行も同じ扱い。対象物の改ざんの検出は bucket lock の `.sha256`) |
