@@ -23,7 +23,8 @@ import {
   type FamilyMenuMember,
   type FamilyMenuRpcRow,
 } from '@/schemas/membership/family-menu';
-import * as membershipBarrel from '@/schemas/membership';
+// vitest の @/ の解決 (vitest.config.ts の at-alias) はフォルダの index を補わないので、barrel は index まで書いて読む
+import * as membershipBarrel from '@/schemas/membership/index';
 import * as familyMenuSchemas from '@/schemas/membership/family-menu';
 
 // 週間献立の「家族の表示」の純関数・定数・受け取り (#1584 の 1・設計書 docs/design/family/10-family-menu-view.md §19.1)。
