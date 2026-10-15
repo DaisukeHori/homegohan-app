@@ -12,23 +12,17 @@ import {
   type SubStepOfStep4,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+// 呼びかけに出す名前は Web・モバイル共通の規則 (仮置きの 'Guest'・空は 'あなた'、30 文字超は切る。設計書 02-step0-welcome.md §7.2・#1649)
+import { HANDSON_TOUR_NICKNAME_FALLBACK, handsonTourNickname } from '@homegohan/shared';
 import { useReducedMotion } from '@/components/handson-tour/useReducedMotion';
 
 const Confetti = dynamic(() => import('react-confetti'), { ssr: false });
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourGraduatePage() {
   const router = useRouter();
   const prefersReducedMotion = useReducedMotion();
   const [subStep, setSubStep] = useState<SubStepOfStep4>('4.0');
-  const [nickname, setNickname] = useState('あなた');
+  const [nickname, setNickname] = useState(HANDSON_TOUR_NICKNAME_FALLBACK);
   const [isCompleteError, setIsCompleteError] = useState(false);
   const [windowSize, setWindowSize] = useState({ width: 0, height: 0 });
   const buttonActivationRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -66,7 +60,7 @@ export default function HandsonTourGraduatePage() {
         .eq('id', user.id)
         .single()
         .then(({ data }) => {
-          if (data?.nickname) setNickname(safeNickname(data.nickname));
+          if (data?.nickname) setNickname(handsonTourNickname(data.nickname));
         });
     });
 
