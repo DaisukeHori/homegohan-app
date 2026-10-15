@@ -1,6 +1,6 @@
 /**
- * #1446 / #1631 の回帰テスト: 食事の区分 (5 値) を手書きせず、@homegohan/shared の MealType / MEAL_ORDER / isMealType
- * から導き、any へのキャストで型を外さない。
+ * #1446 / #1631 の回帰テスト: 食事の区分 (5 値) の値の集合と並びを手書きせず、@homegohan/shared の MealType / MEAL_ORDER /
+ * isMealType から導き、any へのキャストで型を外さない。
  * (このファイル自身が差分の any キャストの grep の数に入らないよう、キャストの語は分けて組み立てる)
  *
  * - #1446: 献立画面 (Web・モバイル) と食事を追加するモーダル
@@ -10,14 +10,37 @@
  *   写真の判別 (classify-photo) の解析プロンプトの区分の表示名と、モバイルの週間献立のカードの短い名前の、5 値との比較の連鎖、
  *   並べ替えの API の使われていない「おやつ以外の 4 値」の並び (正本から 1 つ除いた並びの手書き)
  *
- * 5 値をキーに持つ表 ({ breakfast: …, …, midnight_snack: … }) は、型を Record<string, …> にすると MealType に値が増えても
- * tsc が漏れを止めない (表に無い値は undefined になる)。製品のソースでは Record<MealType, …> にする (除外表は Edge Functions だけ)。
- * 5 値すべてと 1 つずつ比べる連鎖 (mealType === 'breakfast' ? … : … mealType === 'midnight_snack' ? … : 既定の値 や
- * case 'breakfast': … の並び) も、MealType に値が増えると tsc が止めずに既定の値へ落ちるので、配列・union と同じ 5 値の手書きとして扱う。
+ * ■ 見張りの契約 (#1631)
+ * この番兵は、下の「捕まえる書き方」だけを見張る。書き方を 1 つずつ足して追いかける形はとらない。
+ * 「捕まえない書き方 (限界)」に当たる手書きを見落としても、この番兵の欠陥としては扱わない (見つけたら製品側を直すか、別の Issue にする)。
+ * 検査はコメントを除いてから行う (コメントの中の語で誤って赤にしない)。テストのファイルは期待値として 5 値を書くので走査しない。
+ *
+ * 捕まえる書き方 (TARGET_FILES の各ファイル。☆ は製品のソース全体の走査でも、除外表 (理由つき) の外なら赤):
+ *   1. ☆ 5 値すべてを引用符つきで並べた配列・z.enum の引数 (並びは問わない)
+ *   2. ☆ 5 値すべてを引用符つきで | でつないだ型の union
+ *   3. ☆ 5 値すべてと 1 つずつ比べる形 (=== / !== / == / != の左右どちらか、または case 'v':) が、ファイルのどこかに 5 値ぶんそろっている
+ *   4. 手書きの型の宣言 type MealType = …
+ *   5. おやつ・夜食の並び ('snack', 'midnight_snack') の手書き
+ *   6. 正本から 1 つだけ除いた 4 値を引用符つきで並べた配列
+ *   7. any へのキャスト (CAST_CHECK_EXCLUDED のファイルを除く)
+ *   8. ☆ 5 値をキーに持つ表 (オブジェクトのリテラル) を Record<string, …> の型で宣言したもの
+ *      (Record<string, …> は MealType に値が増えても tsc が漏れを止めない。製品のソースでは Record<MealType, …> にする)
+ *   9. NO_FIVE_KEY_TABLE_FILES のファイルでは、5 値をキーに持つ表そのもの (表示名は MEAL_LABELS、並びは MEAL_ORDER から引く)
+ *
+ * 捕まえない書き方 (限界):
+ *   a. 5 値のうち一部 (4 値以下) との比較 + 既定の値 (else) で残りを表す連鎖。例: Web の『食事を追加』モーダルの背景色と絵文字
+ *      (区分ごとの見た目の対応表。値の集合の正本の問題ではなく表示の表の置き場の問題なので、#1631 の範囲外として別の Issue で扱う)
+ *   b. 部分集合 (基本の 3 食など 3 値以下) の配列・union・比較。例: BASE_MEAL_TYPES、時刻で区分の並びを選ぶ 3 値の配列
+ *   c. 4 値の union・4 値との比較 (4 値は配列だけを見る)
+ *   d. 値を返すだけの分岐 (時刻から区分を選ぶ return 'breakfast' など。戻り値の MealType 型を tsc が確かめる)
+ *   e. Record<MealType, …> の表 (値の網羅は tsc が止める。表示名の文字列が MEAL_LABELS と重なることは見ない)
+ *   f. 引用符の無い値 (テンプレートリテラル・変数や定数を介した値・文字列の連結で作った値)
+ *   g. 比較が 1 つの連鎖になっているかは見ない (ファイルの中に散らばった 5 値ぶんの比較でも 3 として拾う)
+ *   h. HANDWRITTEN_ALLOWED / STRING_KEYED_TABLE_ALLOWED の除外表のファイル (正本そのものと、shared を import できない Edge Functions)
+ *   i. PRODUCT_SOURCE_DIRS の外のファイル・SOURCE_EXTENSIONS の外の拡張子
  *
  * 型 (tsc) は「手書きの 5 値が正本と同じ値か」までは見ないので、ソースを読んで手書きとキャストが戻っていないことを固定する。
- * コメントの中の語で誤って赤にしないよう、コメントを除いてから検査する。
- * あわせて、製品のソース全体を走査し、5 値の手書きがあるのは除外表 (理由つき) のファイルだけであることを確かめる。
+ * 正本から導いた値そのもの (並び・表示名・受け付ける値) は、それぞれの挙動のテストが固定する。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -414,7 +437,8 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
       case "midnight_snack": return 5;
     }`;
     expect(hasFiveWayComparison(stripComments(switchCases))).toBe(true);
-    // 5 値のうち一部だけとの比較 (基本の 3 食など)・コメントの中の連鎖・正本から引く形は拾わない
+    // 5 値のうち一部だけとの比較 (基本の 3 食など。4 値 + 既定の値の連鎖も含む = 冒頭の契約の限界 a・c)・コメントの中の連鎖・
+    // 正本から引く形は拾わない
     const partial = "if (t === 'breakfast') a(); if (t === 'lunch') b(); if (t === 'dinner') c(); if (t === 'snack') d();";
     expect(hasFiveWayComparison(partial)).toBe(false);
     expect(hasFiveWayComparison(stripComments(`// ${ternary.replace(/\n/g, ' ')}`))).toBe(false);

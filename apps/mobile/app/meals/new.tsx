@@ -916,7 +916,7 @@ export default function MealNewPage() {
           </View>
 
           {/* Meal type */}
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <View testID="meal-type-row-base" style={{ flexDirection: "row", gap: spacing.sm }}>
             {BASE_MEAL_TYPES.map((type) => {
               const config = MEAL_CONFIG[type];
               const isSel = type === selectedMealType;
@@ -931,7 +931,7 @@ export default function MealNewPage() {
               );
             })}
           </View>
-          <View style={{ flexDirection: "row", gap: spacing.sm }}>
+          <View testID="meal-type-row-extra" style={{ flexDirection: "row", gap: spacing.sm }}>
             {EXTRA_MEAL_TYPES.map((type) => {
               const config = MEAL_CONFIG[type];
               const isSel = type === selectedMealType;
