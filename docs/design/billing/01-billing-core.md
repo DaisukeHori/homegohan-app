@@ -2582,13 +2582,13 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | route | `POST /api/billing/checkout`、`GET /api/billing/checkout/preview`、`POST /api/billing/checkout/sync`、`GET /api/billing/subscription`、`POST /api/billing/subscription/cancel`、`POST /api/billing/subscription/resume`、`POST /api/billing/portal`、`POST /api/webhooks/stripe` |
 | ページ | `/account/billing`、`/account/billing/checkout` |
 | TS モジュール | `src/lib/billing/{core,stripe-gateway,repository,service,http,public-plans,account-deletion}.ts`、`src/app/pricing/PricingPageView.tsx`、`src/components/billing/checkout-confirmation.tsx` |
-| TS の export (core) | §8.1 のとおり (定数 30・型 20・関数 20・クラス 3・Zod 10) |
+| TS の export (core) | §8.1 の `export` のとおり (数は §8.1 が正。ここに写して二重に数えない) |
 | TS の export (verify) | `parseStripeSignatureHeader`、`verifyStripeSignature`、`verifyStripeWebhook`、`StripeSignatureHeader` |
 | TS の export (ほか) | `createStripeGateway`、`createBillingRepository`、`BillingRpcError`、`previewCheckout`、`startCheckout`、`syncSubscription`、`syncCheckoutSession`、`getBillingSummary`、`createPortalSession`、`scheduleCancellation`、`revokeCancellation`、`handleStripeEvent`、`billingInvalidInputResponse`、`billingErrorResponse`、`listPurchasablePlans`、`defaultAccountDeletionBilling`、`AccountDeletionBilling` |
 | 環境変数 | `STRIPE_WEBHOOK_SECRET` (一覧に追加。削除: `.env.example` の `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`) |
 | レート制限 | カテゴリ `billing` |
 | 退会の段階 | `billing` |
-| エラーコード | §13.1 の [NEW] 7 つ |
+| エラーコード | §13.1 の [NEW] 8 つ |
 | 画面の定数 | `CHECKOUT_SYNC_RETRY_MS = 3000`、`CHECKOUT_SYNC_MAX_RETRIES = 10` (`/account/billing` の page に置く。根拠: Webhook の到着は通常 1〜5 秒、30 秒で諦めて「時間をおいて再読み込み」を出す) |
 ---
 
@@ -2634,7 +2634,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | 文書 | 箇所 | 直し方 | 期日 |
 |---|---|---|---|
 | `docs/design/cross/04-api-conventions.md` | §4.1 プレフィックス表 | `BILL_` (課金の自己サービス) 400/403/404/409/422 の行を足す | 段 B と同じ PR |
-| 同 | §4.2 エラーコード一覧 | §13.1 の [NEW] 7 つ (`BILL_INVALID_INPUT` / `BILL_PLAN_NOT_PURCHASABLE` / `BILL_CUSTOMER_NOT_FOUND` / `BILL_NO_LIVE_SUBSCRIPTION` / `BILL_CANCEL_NOT_SCHEDULED` / `BILL_CHECKOUT_SESSION_MISMATCH` / `EXT_STRIPE_NOT_CONFIGURED` / `EXT_STRIPE_API_FAILED`) | 同上 |
+| 同 | §4.2 エラーコード一覧 | §13.1 の [NEW] 8 つ (`BILL_INVALID_INPUT` / `BILL_PLAN_NOT_PURCHASABLE` / `BILL_CUSTOMER_NOT_FOUND` / `BILL_NO_LIVE_SUBSCRIPTION` / `BILL_CANCEL_NOT_SCHEDULED` / `BILL_CHECKOUT_SESSION_MISMATCH` / `EXT_STRIPE_NOT_CONFIGURED` / `EXT_STRIPE_API_FAILED`) | 同上 |
 | 同 | §10.1 の注と見本 | 「未実装なのは Stripe の側だけ」を消し、Stripe の形 (`t=`/`v1=`。秘密は文字列のまま鍵。503 = 秘密なし・401 = 不一致) を本冊 §8.3 へのリンクに置き換える。§10.2 の `processed_stripe_events` を `stripe_webhook_events` + `billing_claim_stripe_event` に直す。§16 の TODO 行を閉じる | 同上 |
 | `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの表 | `billing-user:{uuid}`・`stripe-subscription:{sub_id}` の 2 行を足す (「Stripe webhook 二重処理防止 `stripe:event_id`」は claim に置き換えたと注記) | 段 A と同じ PR |
 | `docs/design/cross/08-legal-compliance.md` | §3.2 の見本・§9 の `handlePaymentFailed`・§10 | 見本の `/api/v1/webhooks/stripe` → `/api/webhooks/stripe`、`handlePaymentFailed` のメール送信は Stripe の顧客向けメール、`check_grace_period` の pg_cron は配線の冊、§10 は配線 | 段 B と同じ PR |
