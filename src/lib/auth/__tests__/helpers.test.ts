@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { aal2AuthMock } from '../../../../tests/helpers/mfa-claims';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Supabase モック
@@ -20,9 +21,12 @@ function makeQueryBuilder(finalResult: { data?: unknown; error?: unknown }) {
   return builder;
 }
 
+// 段 B (#1176) の requireRole は必須ロールのとき getSession → getClaims を呼ぶので、aal2 の claims を返すモックを広げる
+// (docs/design/cross/12-operator-mfa.md §22.4.2・§23 N-13)
 const supabaseClient = {
   auth: {
     getUser: mockGetUser,
+    ...aal2AuthMock(mockGetUser),
   },
   from: vi.fn(),
 };

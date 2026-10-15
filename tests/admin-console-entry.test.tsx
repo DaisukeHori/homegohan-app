@@ -24,6 +24,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReactElement } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveOnboardingRedirect } from '../lib/onboarding-routing';
+import { aal2AuthMock } from './helpers/mfa-claims';
 
 /** ログイン中のユーザー (null = ログインしていない)。failure を入れると、認証の確認そのものが想定外の例外で失敗する */
 const session = vi.hoisted(() => ({
@@ -51,31 +52,34 @@ vi.mock('next/link', () => ({
 
 // requireRole が使う Supabase クライアント: auth.getUser() と user_profiles の 1 行だけを返す
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: async () => {
-        if (session.failure) throw session.failure;
-        return session.current
-          ? { data: { user: { id: 'operator-1', email: 'operator@example.com' } }, error: null }
-          : { data: { user: null }, error: { message: 'Auth session missing!' } };
-      },
-    },
-    from: () => ({
-      select: () => ({
-        eq: () => ({
-          single: async () => ({
-            data: {
-              roles: session.current?.roles ?? null,
-              organization_id: null,
-              frozen_at: null,
-              unban_at: null,
-            },
-            error: null,
+  createClient: () => {
+    const getUser = async () => {
+      if (session.failure) throw session.failure;
+      return session.current
+        ? { data: { user: { id: 'operator-1', email: 'operator@example.com' } }, error: null }
+        : { data: { user: null }, error: { message: 'Auth session missing!' } };
+    };
+    // 段 B (#1176) の requireRole は getSession → getClaims を呼ぶ (docs/design/cross/12-operator-mfa.md §22.4.2・§23.1)。
+    // 投げる getUser は requireRole の最初の getAuthUser で先に投げるので、getClaims まで届かない
+    return {
+      auth: { getUser, ...aal2AuthMock(getUser) },
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            single: async () => ({
+              data: {
+                roles: session.current?.roles ?? null,
+                organization_id: null,
+                frozen_at: null,
+                unban_at: null,
+              },
+              error: null,
+            }),
           }),
         }),
       }),
-    }),
-  }),
+    };
+  },
 }));
 
 const { default: AdminHomePage } = await import('@/app/admin/page');
