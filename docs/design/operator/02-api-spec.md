@@ -584,9 +584,10 @@ LLM 使用量ダッシュボード (super_admin のみ)
 
 ## 9. 売上・経理 API
 
-> **現状 (2026-10, #1125)**: 課金 (Stripe の Webhook 受信・収益の日次スナップショットなどの集計バッチ) は**未開始**で、
-> 請求書・収益推移・Stripe 整合チェックの元になるデータが無い。画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は
-> 「課金は未開始のため準備中」と表示し、売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
+> **現状 (2026-10, #1125)**: Stripe の Webhook の受け口と契約の写しは billing/01 (`docs/design/billing/01-billing-core.md`) で入った。
+> 収益の日次スナップショットなどの集計バッチと、請求書・収益推移・Stripe 整合チェックの画面の実データ化は配線の冊で作る。
+> それまで画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は「課金は未開始のため準備中」と表示し、
+> 売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
 > (MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
 
 ### GET /api/admin/finance/dashboard
@@ -1430,24 +1431,20 @@ Stripe Webhook 受信 (idempotent)
 
 **ヘッダー**: `Stripe-Signature: t=xxxx,v1=xxxx`
 
-**処理フロー**:
+**処理フロー**: 正本は `docs/design/billing/01-billing-core.md` §9.6 (実装は `src/app/api/webhooks/stripe/route.ts`)。
 ```
-1. Stripe-Signature 検証 (stripe.webhooks.constructEvent)
-2. INSERT stripe_webhook_events (id = event.id)
-   → CONFLICT (id 重複) → 200 early return (replayed event)
-   → 成功 → processing_status = 'processing'
-3. event.type に応じた DB 更新:
-   subscription.created/updated → personal_subscriptions UPSERT
-   invoice.paid → personal_subscriptions.status = 'active'
-   invoice.payment_failed → personal_subscriptions.status = 'past_due'
-   customer.subscription.deleted → status = 'cancelled'
-   trial_will_end → trial 終了リマインダー送信
-   charge.dispute.created → ユーザー soft-suspend + 監査ログ
-4. UPDATE stripe_webhook_events SET processing_status = 'completed'
-5. エラー時: processing_status = 'failed', error_message をセット
+1. 署名の確認 (src/lib/webhook/verify.ts の verifyStripeWebhook。SDK を使わない。秘密なし 503 / 不一致 401)
+2. 処理の権利を取る: billing_claim_stripe_event (stripe_webhook_events。id = event.id)
+   → completed (処理済み) → 200
+   → in_progress (ほかが処理中・15 分以内) → 409 (Stripe が再送する)
+   → claimed → 3 へ
+3. 契約を Stripe から取り直して写像 (billing_apply_stripe_subscription) に渡す。イベントの中身で直接 UPDATE しない
+4. billing_finish_stripe_event: 成功 → completed (200) / 失敗 → failed + error_message (固定のコード) (500。Stripe が再送する)
 ```
 
-**冪等性保証**: `stripe_webhook_events.id` (Stripe event.id) が PRIMARY KEY のため、同一イベントの重複処理は CONFLICT で早期 return
+**冪等性保証**: `billing_claim_stripe_event` (`stripe_webhook_events.id` = Stripe の event.id)。2xx を返すのは処理済み (`completed`) になったときだけで、
+処理中は 409・失敗は 500 で Stripe に再送させる (`failed` と、15 分を過ぎた `processing` は再送で取り直せる)。
+試用終了のリマインダー (`trial_will_end`) は Stripe の顧客向けメールに任せ、チャージバック (`charge.dispute.created`) の処理は配線の冊で足す (billing/01 §12)
 
 ---
 
@@ -1548,8 +1545,8 @@ NPS サーベイ送信 (日次 14:00 JST)
 
 主要テストケース:
 
-1. `it('rejects webhook with invalid Stripe signature')`
-2. `it('returns already_processed on second webhook with same event_id')`
+1. `it('rejects webhook with invalid Stripe signature')` → billing/01 §14.1 のテスト 19・38 (`src/__tests__/lib/webhook/verify.test.ts`・`tests/webhooks-stripe-route.test.ts`)
+2. `it('returns already_processed on second webhook with same event_id')` → billing/01 §14.1 のテスト 40 (`tests/webhooks-stripe-route.test.ts`) と §14.2 のテスト 65
 3. `it('applies coupon discount correctly to subscription price')`
 4. `it('returns 403 when non-super_admin calls POST /api/super-admin/plans')`
 5. `it('updates plan status to deprecated and triggers migration job')`
@@ -1560,39 +1557,8 @@ NPS サーベイ送信 (日次 14:00 JST)
 `tests/integration/operator/admin-users.test.ts` で確認している。
 
 ```typescript
-// tests/unit/operator/stripe-webhook-signature.test.ts
-import { describe, it, expect } from 'vitest';
-import Stripe from 'stripe';
-import { validateStripeSignature } from '@/lib/operator/stripe-webhook';
-
-// 署名の生成と検証は手元で完結するので、環境変数を読まずにテスト用の固定の値を使う
-// (`process.env.<変数名>!` は使わない。#1182・#1434)
-const TEST_STRIPE_SECRET_KEY = 'sk_test_dummy_for_signature_test';
-const TEST_WEBHOOK_SECRET = 'whsec_test_dummy_for_signature_test';
-
-describe('Stripe Webhook 署名検証', () => {
-  const stripe = new Stripe(TEST_STRIPE_SECRET_KEY, {
-    apiVersion: '2024-11-20.acacia',
-  });
-
-  it('accepts webhook with valid signature', () => {
-    const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = TEST_WEBHOOK_SECRET;
-    const signature = stripe.webhooks.generateTestHeaderString({
-      payload,
-      secret,
-    });
-    expect(() => validateStripeSignature(payload, signature, secret)).not.toThrow();
-  });
-
-  it('rejects webhook with invalid signature', () => {
-    const payload = JSON.stringify({ type: 'customer.subscription.created' });
-    const secret = TEST_WEBHOOK_SECRET;
-    expect(() =>
-      validateStripeSignature(payload, 'invalid-sig', secret),
-    ).toThrow();
-  });
-});
+// Stripe の Webhook の署名の確認のテストは src/__tests__/lib/webhook/verify.test.ts にある (billing/01 §8.3・§14.1 のテスト 17〜19)。
+// Stripe の SDK を入れないので、署名の確認は src/lib/webhook/verify.ts の verifyStripeSignature / verifyStripeWebhook (t=/v1= の HMAC を自前で確かめる)。
 
 // tests/unit/operator/coupon-calculation.test.ts
 import { applyCoupon } from '@/lib/operator/coupon';
@@ -1646,7 +1612,7 @@ describe('operator API 権限テスト', () => {
 ## 25. 既存実装との関連
 
 - `/api/admin/*`, `/api/super-admin/*` は commit `32d13e1` で全削除済み → 完全新規実装
-- Stripe webhook ハンドラも新規 (`/api/webhooks/stripe`)
+- Stripe webhook ハンドラ (`/api/webhooks/stripe`) の実装は billing/01 (`docs/design/billing/01-billing-core.md` §9.6)
 
 ## 26. 未解決事項
 

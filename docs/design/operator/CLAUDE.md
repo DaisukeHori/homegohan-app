@@ -47,14 +47,15 @@ super_admin
 ### Stripe Webhook idempotency
 ```
 Stripe → POST /api/webhooks/stripe
-  → Stripe-Signature 検証
-  → INSERT stripe_webhook_events (PRIMARY KEY = event.id)
-    → 既存 → 200 早期 return (replayed)
-    → 新規 → イベント type に応じて DB 更新
-  → SET processing_status = 'completed'
+  → Stripe-Signature 検証 (秘密なし 503 / 不一致 401)
+  → billing_claim_stripe_event (stripe_webhook_events。PRIMARY KEY = event.id)
+    → completed (処理済み) → 200
+    → in_progress (ほかが処理中・15 分以内) → 409 (Stripe が再送する)
+    → claimed → 契約を Stripe から取り直して写像 billing_apply_stripe_subscription
+  → billing_finish_stripe_event: completed (200) / failed (500。Stripe が再送する)
 ```
 
-詳細は `05-stripe-integration.md`。
+詳細は `../billing/01-billing-core.md` §9.6 (正本)。
 
 ### 監査ログ閲覧 (super_admin のみ)
 - INSERT は admin / super_admin / support / sales / finance / content_moderator から可
@@ -72,9 +73,9 @@ Stripe → POST /api/webhooks/stripe
 - ON UPDATE CASCADE / ON DELETE RESTRICT で他ドメインとの整合性保証
 
 ### 2. Stripe との同期
-- DB が source of truth、Stripe が課金実行
-- 整合性は日次 reconciliation cron (`/api/cron/stripe-reconcile`) で担保
-- webhook の idempotency は `stripe_webhook_events` テーブルで保証
+- Stripe-backed な契約の正本は Stripe の Subscription。DB はその写しで、写す入口は `billing_apply_stripe_subscription` だけ (billing/01 §4.1 の 1.)
+- 整合性は日次 reconciliation cron (`/api/cron/stripe-reconcile`) で担保。不一致は写像を呼んで直す (配線の冊。billing/01 §12)
+- webhook の idempotency は `stripe_webhook_events` の claim (`billing_claim_stripe_event`) で保証
 
 ### 3. 監査ログの不可逆性
 - `admin_audit_logs` は 7 年保管、`UPDATE / DELETE 不可` (RLS + WITH CHECK)

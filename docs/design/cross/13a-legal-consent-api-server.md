@@ -232,7 +232,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | 同意の状況を知る API | 無し (画面の HTML か、`GET /api/profile` の列) | `GET /api/legal/status` |
 | `lib/legal-consent.ts` の `EXEMPT_PREFIXES` の `/api` | 画面の判定で対象外 (コメント「各 route が自分で認可する」) | 変えない (画面の判定の対象外のまま。コメントだけ本書のゲートを指すように直す) |
 | 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う)。Web の画面に出る文は変わらない (「同意しない」のボタンは `declineAndSignOutButton` = 現行と同じ「同意しない（ログアウトする）」。押している間の文はリテラルのまま) |
-| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` 2 本 | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う) |
+| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` の全部 (billing/01 §9.8 のあとは 5 本) | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う) |
 
 モバイルの行 (起動・改定の再同意・403 の扱い) は 13b §6.2。
 
@@ -277,8 +277,11 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/legal/accept` | exact | `consent_itself` | 同意の記録そのもの。止めると同意できない (`accept/route.ts`) |
 | `/api/legal/status` | exact | `consent_itself` | 同意の状況 (本書で新設)。止めるとモバイルが状態を知れない |
 | `/api/auth` | prefix | `auth_flow` | ログイン (`auth/login`)・Cookie の同期 (`auth/session-sync`)・ネイティブ認証ブリッジのコード (`auth/native-bridge/code`)・運営の MFA の自己サービス (`auth/mfa/*`。cross/12 §14.1〜14.6。登録・確認・回復は認証の途中)。認証の途中。bridge を止めると WebView で Web の同意画面も開けない。Web の `/auth/*` の対象外と同じ |
-| `/api/account/delete` | exact | `leave_service` | 退会。同意を取り下げる権利。凍結中も通す 2 本と同じ (`frozen.ts:49-52`) |
+| `/api/account/delete` | exact | `leave_service` | 退会。同意を取り下げる権利。凍結中も通す API (`FROZEN_ALLOWED_API_PATHS`) と同じ |
 | `/api/account/export` | exact | `leave_service` | 個人データの書き出し。同上 |
+| `/api/billing/subscription` | exact | `leave_service` | 有料プランの契約の要約。凍結中も通す (billing/01 §9.8)。凍結中は同意の画面に進めないので、ここにも入れる |
+| `/api/billing/subscription/cancel` | exact | `leave_service` | 有料プランの解約の予約 (期間末)。サービスから離れる操作。凍結中も通す (billing/01 §9.8)。解約の予約は新しい版への同意を求めない |
+| `/api/billing/portal` | exact | `leave_service` | Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提。凍結中も通す (billing/01 §9.8) |
 | `/api/push-tokens/claim` | exact | `device_cleanup` | 通知のトークンの claim (#1636)。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。凍結中・メンテナンス中も middleware が通す (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`) のと同じ理由。凍結中・メンテナンス中は同意できないので、ここで止めると前の利用者の行が外れず、前の利用者宛ての通知がこの端末に届き続ける。release (`/api/push-tokens/release`) は載せない (セッション無しで route が端末の秘密の値で認可するので、同意の判定に来ない) |
 | `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (データの削除の依頼もここから)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route |
 | `/api/log` | exact | `telemetry` | 画面・端末の失敗の報告の受け口 (`error-report.ts` → `POST /api/log`)。利用者のデータの利用ではなく運用のログ。未同意の人の失敗も残す |
@@ -299,7 +302,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/family/invites/[id]/reject` `/api/org/invites/[id]/reject` (認証任意) | 未ログインなら判定に来ない。ログイン済みなら Web の `/invite/*` の画面のゲートが先に同意を取る |
 | `/api/family/invites/[id]/accept` `/api/org/invites/[id]/accept` (招待を受ける) | ログイン済みの本人の操作 (route が `getUser` で確かめ、未ログインは 401。`family/invites/[id]/accept/route.ts:20`・`org/invites/[id]/accept/route.ts:17`)。受けると家族・組織とのデータの共有が始まるので、利用者のデータの利用そのもの。呼ぶ画面は Web の `/invite/[token]` (`src/app/invite/[token]/page.tsx:69` と、そこが描く `FamilyInviteAcceptModal.tsx:42`) で、`/invite` は画面の判定の対象外に無い (`lib/legal-consent.ts:78-91`) ので、ログイン済みの未同意の人は画面のゲートで先に同意画面へ回る |
 | `/api/family/invites` `/api/org/invites` (招待の一覧・作成) と `/api/family/invites/[id]/revoke` `/api/org/invites/[id]/revoke` (取り消し) | 招待する側 (家族の代表・組織の管理者。`org` は `requireOrgAdmin`) の操作で、相手のメールアドレスなど利用者のデータを扱う。運営と同じく役割の例外を作らない。呼ぶ画面 (Web `src/app/(main)/family/members/invite/page.tsx:51, 78`・`src/app/(org)/org/invites/page.tsx:33, 67, 99`、モバイル `apps/mobile/app/(org)/org/invites.tsx:40, 59, 82`) は、どれも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート) |
-| `/api/export/meals` (献立の CSV。Web の設定画面 `src/app/(main)/settings/page.tsx:176` とモバイルの設定タブ `apps/mobile/app/(tabs)/settings.tsx:210` が呼ぶ) | 書き出しの権利 (S7) は `/api/account/export` が受け持つ。そちらは本人の全データを出し、献立 (`user_daily_meals`・`planned_meals`) も含む (`src/lib/account-export-tables.ts:154-155`)。CSV は設定画面の便利機能で、呼ぶ画面はどちらも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート)。凍結中に通す 2 本 (`frozen.ts:49-52`) にも入っていない。許可リストを権利の 2 本に絞って揃える |
+| `/api/export/meals` (献立の CSV。Web の設定画面 `src/app/(main)/settings/page.tsx:176` とモバイルの設定タブ `apps/mobile/app/(tabs)/settings.tsx:210` が呼ぶ) | 書き出しの権利 (S7) は `/api/account/export` が受け持つ。そちらは本人の全データを出し、献立 (`user_daily_meals`・`planned_meals`) も含む (`src/lib/account-export-tables.ts:154-155`)。CSV は設定画面の便利機能で、呼ぶ画面はどちらも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート)。凍結中に通す API (`FROZEN_ALLOWED_API_PATHS`) にも入っていない。許可リストの `leave_service` を、退会・書き出しの 2 本と、凍結中も通す有料プランの解約の 3 本 (billing/01 §9.8) に絞って揃える |
 
 ### 6.5 判定の置き場所と順序
 
@@ -412,8 +415,12 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
   { path: LEGAL_CONSENT_ACCEPT_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の記録そのもの。止めると同意できない' },
   { path: LEGAL_CONSENT_STATUS_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の状況。止めるとアプリが状態を知れない' },
   { path: '/api/auth', match: 'prefix', reason: 'auth_flow', note: 'ログイン・Cookie の同期・ネイティブ認証ブリッジのコード。認証の途中' },
-  { path: '/api/account/delete', match: 'exact', reason: 'leave_service', note: '退会。同意を取り下げる権利 (凍結中も通す 2 本と同じ)' },
+  { path: '/api/account/delete', match: 'exact', reason: 'leave_service', note: '退会。同意を取り下げる権利 (凍結中も通す API と同じ)' },
   { path: '/api/account/export', match: 'exact', reason: 'leave_service', note: '個人データの書き出し。同上' },
+  // billing/01 §9.8: 凍結中も通す有料プランの解約の 3 本 (凍結中は同意の画面に進めないので、ここにも入れる。解約の予約は新しい版への同意を求めない)
+  { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service', note: '有料プランの契約の要約。解約できる契約か・解約の予約の日付を読む (凍結中も通す)' },
+  { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service', note: '有料プランの解約の予約 (期間末)。サービスから離れる操作 (凍結中も通す)' },
+  { path: '/api/billing/portal', match: 'exact', reason: 'leave_service', note: 'Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提 (凍結中も通す)' },
   {
     path: PUSH_TOKEN_CLAIM_API_PATH,
     match: 'exact',
@@ -1094,7 +1101,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `apiRequest('/api/pantry')` | `lib/supabase/__tests__/middleware-maintenance.test.ts` の API の行 | 確認のみ (同上。メンテナンスの判定は同意より先) | A |
 | `PROFILE_COLUMNS_WITH_LEGAL` の文字列 | `lib/supabase/__tests__/middleware-legal-consent.test.ts:626-637` (`列があるときの select は、同意済みの版の 2 列を含む 1 回だけ`) | 確認のみ (画面の分岐は変えない) | A |
 | `'/api/legal/accept'` `'/api/account/export'` (画面の判定の対象外) | `tests/legal-consent-gate.test.ts:58-59` (`EXEMPT_PATHS`) | 確認のみ (`isLegalConsentExemptPath` は変えない。`/api` は画面の判定では対象外のまま) | A |
-| `FROZEN_ALLOWED_API_PATHS` | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | 確認のみ (一覧は変えない)。新しい T-M14 が同意の許可リストとの包含を足す (通知のトークンの claim (#1636) も含めて。T-M18〜T-M20 がメンテナンスの例外と全 route の挙動で同じ包含を確かめる) | A |
+| `FROZEN_ALLOWED_API_PATHS` | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | 確認のみ (本冊は一覧を変えない。のちに billing/01 §9.8 が有料プランの解約の 3 本を足し、本冊の許可リストとスナップショット (T-M3) にも同じ 3 本が入った。T-M14 は一覧を import して包含を見るので、本数に依存しない)。新しい T-M14 が同意の許可リストとの包含を足す (通知のトークンの claim (#1636) も含めて。T-M18〜T-M20 がメンテナンスの例外と全 route の挙動で同じ包含を確かめる) | A |
 | `api/health$` (matcher) | `tests/health-middleware-exemption.test.ts` | 確認のみ。T-M15 が同じ読み方で再確認 | A |
 | `src/app/api/legal/status/route.ts` (新 route の走査) | `tests/api-raw-error-message-scan.test.ts` (本文に生のエラー文を入れない)、`tests/ai-consent-enforcement.test.ts` (AI に届く route の棚卸し)、`tests/supabase-service-role-client-scan.test.ts`、`tests/env-source-scan.test.ts` | 確認のみ: route は `internalError` と固定の文だけを返す / import は accept route と同じ構成 (`@/lib/supabase/server`・`@/lib/api/errors`・`@/lib/legal-consent`・`@homegohan/shared`・zod の schema) で AI の印に届かない / service role を使わない / `process.env` を直接読まない | A |
 | `LEGAL_CONSENT_ENFORCE` (読む場所) | `tests/env-source-scan.test.ts` (読むのは `lib/legal-consent.ts` だけ)、`tests/legal-consent-env-stub-style.test.ts` (テストは `vi.stubEnv`) | 確認のみ: status route と middleware は `isLegalConsentEnforced()` を呼ぶだけ。新しいテストは `vi.stubEnv` | A |
