@@ -30,7 +30,9 @@ import {
   MENU_REQUEST_EXISTING_PROTECTED_MESSAGE,
   MENU_REQUEST_FAILED_MESSAGE,
   MENU_REQUEST_FIXED_MESSAGES,
+  MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE,
   MENU_REQUEST_PARTIAL_SAVE_MESSAGE,
+  MENU_REQUEST_STALE_DISPLAY_MESSAGE,
   MENU_REQUEST_STALE_MESSAGE,
   SHOPPING_LIST_REQUEST_FAILED_MESSAGE,
 } from '../supabase/functions/_shared/stored-failure-messages';
@@ -39,8 +41,14 @@ import {
   weeklyMenuRequestErrorMessageForDisplay,
   weeklyMenuRequestErrorMessageForResponse,
 } from '../src/lib/weekly-menu-request-error';
-import { shoppingListRequestErrorMessageForResponse } from '../src/lib/shopping-list-request-error';
-import { menuRequestErrorMessageForDisplay } from '../apps/mobile/src/lib/menu-request-error';
+import {
+  shoppingListRequestErrorMessageForDisplay,
+  shoppingListRequestErrorMessageForResponse,
+} from '../src/lib/shopping-list-request-error';
+import {
+  menuRequestErrorMessageForDisplay,
+  shoppingListRequestErrorMessageForDisplay as mobileShoppingListRequestErrorMessageForDisplay,
+} from '../apps/mobile/src/lib/menu-request-error';
 
 /** 例外の文面・DB の生のエラー文の例 (画面に出してはいけないもの) */
 const RAW_MESSAGES = [
@@ -190,8 +198,9 @@ describe('isAiDailyLimitMessage: 上限 (1 日・究極モード) で止めた�
 });
 
 describe('画面に出すときの絞り込み (Web とアプリが同じ答え)', () => {
+  // 進まなくなった行の英語の印は、そのままではなく日本語の文にして出す (下の #1576 のテストで見る)
   const KNOWN = [
-    ...MENU_REQUEST_FIXED_MESSAGES,
+    ...MENU_REQUEST_FIXED_MESSAGES.filter((message) => message !== MENU_REQUEST_STALE_MESSAGE),
     AI_CONSENT_REQUIRED_MESSAGE,
     AI_CONSENT_CHECK_FAILED_MESSAGE,
     aiDailyLimitMessage(10),
@@ -223,6 +232,25 @@ describe('画面に出すときの絞り込み (Web とアプリが同じ答え)
     }
   });
 
+  // #1576: 'stale_request_timeout' は状態の確認の API と画面の失敗の表示で英語のまま利用者に出ていた
+  it('進まなくなった行の英語の印は、Web とアプリのどちらも日本語の文にして出す (#1576)', () => {
+    expect(weeklyMenuRequestErrorMessageForDisplay(MENU_REQUEST_STALE_MESSAGE)).toBe(MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(weeklyMenuRequestErrorMessageForResponse(MENU_REQUEST_STALE_MESSAGE)).toBe(MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(menuRequestErrorMessageForDisplay(MENU_REQUEST_STALE_MESSAGE)).toBe(MENU_REQUEST_STALE_DISPLAY_MESSAGE);
+    expect(MENU_REQUEST_STALE_DISPLAY_MESSAGE).toMatch(/[ぁ-んァ-ヶ一-龠]/);
+    expect(MENU_REQUEST_STALE_DISPLAY_MESSAGE).not.toMatch(/[A-Za-z]/);
+  });
+
+  it('出した文をもう一度通しても同じ文 (状態の確認の API が置き換えた文を画面が通しても変わらない。#1576)', () => {
+    for (const stored of [...MENU_REQUEST_FIXED_MESSAGES, ...KNOWN, ...RAW_MESSAGES]) {
+      const web = weeklyMenuRequestErrorMessageForDisplay(stored);
+      const mobile = menuRequestErrorMessageForDisplay(stored);
+      expect(mobile).toBe(web);
+      expect(weeklyMenuRequestErrorMessageForDisplay(web)).toBe(web);
+      expect(menuRequestErrorMessageForDisplay(mobile)).toBe(mobile);
+    }
+  });
+
   it('Web の固定の文は Edge Function と共用の定型の文と同じ値 (2 か所に別々に持たない)', () => {
     expect(WEEKLY_MENU_REQUEST_FAILED_MESSAGE).toBe(MENU_REQUEST_FAILED_MESSAGE);
     expect(MENU_REQUEST_STALE_MESSAGE).toBe('stale_request_timeout');
@@ -237,6 +265,54 @@ describe('買い物リストの状態の確認の API の絞り込み (result.er
     }
     for (const stored of RAW_MESSAGES) {
       expect(shoppingListRequestErrorMessageForResponse(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
+    }
+  });
+});
+
+// #1576: Edge Function の入口の targetSlots の判定 (findInvalidTargetSlotDate) の英語の文を行に書いていた
+describe('targetSlots の日付が正しくなかったときの文 (#1576)', () => {
+  it('定型の文の一覧に入っていて、日本語の文 (英字を含まない)。画面はそのまま出す', () => {
+    expect(MENU_REQUEST_FIXED_MESSAGES).toContain(MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE);
+    expect(MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE).toMatch(/[ぁ-んァ-ヶ一-龠]/);
+    expect(MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE).not.toMatch(/[A-Za-z]/);
+    expect(weeklyMenuRequestErrorMessageForDisplay(MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE)).toBe(
+      MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE,
+    );
+    expect(menuRequestErrorMessageForDisplay(MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE)).toBe(
+      MENU_REQUEST_INVALID_TARGET_SLOTS_MESSAGE,
+    );
+  });
+
+  it('判定の英語の文 (以前は行に書いていた値) は、画面では汎用の文になる (行に書いてはいけない文)', () => {
+    for (const stored of ['targetSlots[0] is not an object', 'targetSlots[1].date must be YYYY-MM-DD']) {
+      expect(weeklyMenuRequestErrorMessageForDisplay(stored)).toBe(MENU_REQUEST_FAILED_MESSAGE);
+      expect(menuRequestErrorMessageForDisplay(stored)).toBe(MENU_REQUEST_FAILED_MESSAGE);
+    }
+  });
+});
+
+// #1576: 買い物リストの作り直しの行 (result.error) を Realtime で受ける画面の絞り込み
+describe('買い物リストの作り直しの行を画面に出すときの絞り込み (Web とアプリが同じ答え。#1576)', () => {
+  const KNOWN_SHOPPING = [SHOPPING_LIST_REQUEST_FAILED_MESSAGE, AI_CONSENT_REQUIRED_MESSAGE, AI_CONSENT_CHECK_FAILED_MESSAGE, aiDailyLimitMessage(10)];
+
+  it.each(KNOWN_SHOPPING)('こちらで書いた文 %s はそのまま出す', (stored) => {
+    expect(shoppingListRequestErrorMessageForDisplay(stored)).toBe(stored);
+    expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBe(stored);
+  });
+
+  it.each(RAW_MESSAGES)('こちらで書いた文でない %s は定型の失敗の文に寄せる', (stored) => {
+    expect(shoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
+    expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
+  });
+
+  it('空 (null・undefined・空文字) は null (画面は自分の既定の文を出す)。文字列でない値は定型の失敗の文', () => {
+    for (const stored of [null, undefined, '']) {
+      expect(shoppingListRequestErrorMessageForDisplay(stored)).toBeNull();
+      expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBeNull();
+    }
+    for (const stored of [42, { message: 'raw' }]) {
+      expect(shoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
+      expect(mobileShoppingListRequestErrorMessageForDisplay(stored)).toBe(SHOPPING_LIST_REQUEST_FAILED_MESSAGE);
     }
   });
 });

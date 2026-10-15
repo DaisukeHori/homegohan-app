@@ -157,20 +157,21 @@ async function establishSession(
 
 /**
  * コードが無効 (形式不正・存在しない・期限切れ・使用済み・DB 障害) のとき。
- * この WebView が既に Cookie セッションを持っていれば (リロード・二重読み込み) そのまま next へ続ける。
- * 無ければ /login。セッションは作らないので is_native_app も設定しない。
+ * この WebView に残っている Cookie セッション (sb-*) を消して /login へ。既に Cookie セッションがあっても、それで next へ続けない (#1647)。
+ * セッションは作らないので is_native_app も設定しない。
+ *
+ * 続けない理由: code 付きで開くのは、ネイティブにいまログインしている利用者のためのブリッジ。Cookie セッションが誰のものかは
+ * ここでは分からない (引き換えに失敗したので、code の持ち主も分からない)。iOS では、前の利用者がオフラインでログアウトすると、
+ * WKWebView の Cookie の置き場に前の利用者の sb-* が残る (端末の側から消せない。code 付きで開くときは注入の JS も消さない。
+ * apps/mobile/src/lib/webViewUserStorageCleanup.ts の「Cookie」)。そこへ次の利用者のブリッジの引き換えが失敗すると、
+ * 以前は残った前の利用者の Cookie で getUser() が通り、前の利用者のまま next へ進んでいた。
+ * Cookie を消すのは、/login のあとに前の利用者のまま Web のページへ進まないため (signOut は使わない。サーバ側のセッションまで
+ * 失効させないため)。同じ code の再読み込み (WebView の読み込み直しは、リダイレクトの先の next を読み直すので、ふつうは起きない) も
+ * /login になる。WebView の中のログイン画面は session-expired をネイティブに送り (src/app/(auth)/login/page.tsx)、ネイティブが
+ * いまの利用者の新しい code で開き直す (apps/mobile/src/lib/webViewAuthMessages.ts。回数制限つき) ので、いまの利用者はそこで戻る。
  */
-async function continueIfAlreadySignedIn(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  nextPath: string,
-  requestUrl: string,
-) {
-  try {
-    const { data } = await supabase.auth.getUser()
-    if (data?.user) return redirectTo(nextPath, requestUrl)
-  } catch {
-    // 認証基盤の一時障害などは「セッションなし」として扱う
-  }
+function rejectInvalidCode(cookieStore: Awaited<ReturnType<typeof cookies>>, requestUrl: string) {
+  clearSupabaseAuthCookies(cookieStore)
   console.warn('[auth/native-bridge] Invalid, expired or already used code, redirecting to login')
   return redirectTo('/login', requestUrl)
 }
@@ -198,7 +199,7 @@ async function handleCode(requestUrl: URL, rawUrl: string, nextPath: string) {
   }
 
   if (!consumed) {
-    return continueIfAlreadySignedIn(supabase, nextPath, rawUrl)
+    return rejectInvalidCode(cookieStore, rawUrl)
   }
 
   // トークンは URL (クエリ) ではなく、引き換えた行から取り出す。

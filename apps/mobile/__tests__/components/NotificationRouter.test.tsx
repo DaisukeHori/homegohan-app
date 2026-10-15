@@ -107,11 +107,21 @@ describe('NotificationRouter — 通知のタップで遷移する (#1049 F7-11)
     render(<NotificationRouter />);
     await flush();
 
-    await tap(responseOf('n-1', { type: 'family_meal_request', deep_link: 'homegohan://family/meal-requests' }));
+    await tap(responseOf('n-1', { deep_link: 'homegohan://health/streaks/abc' }));
 
     expect(mockPush).toHaveBeenCalledTimes(1);
-    expect(mockPush).toHaveBeenCalledWith('/family');
+    expect(mockPush).toHaveBeenCalledWith('/health/streaks');
     expect(mockClearLast).toHaveBeenCalled();
+  });
+
+  it('家族の通知 (行き先の家族の画面は #1598 / #1610 で消した) では遷移しない (アプリが開くだけ)', async () => {
+    render(<NotificationRouter />);
+    await flush();
+
+    await tap(responseOf('n-family-1', { type: 'family_meal_request', deep_link: 'homegohan://family/meal-requests' }));
+    await tap(responseOf('n-family-2', { path: '/family' }));
+
+    expect(mockPush).not.toHaveBeenCalled();
   });
 
   it('通知のタップで起動したとき (getLastNotificationResponseAsync) も、data.path の画面へ遷移する', async () => {

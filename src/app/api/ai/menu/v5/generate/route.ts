@@ -17,11 +17,12 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
-import { isWithinMenuGenerationRange, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
+import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 
-const VALID_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner', 'snack', 'midnight_snack'];
+// 受け付ける食事の区分 (5 値)。値と並びの正本は @homegohan/shared の MEAL_ORDER (#1631。手書きしない)
+const VALID_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
 
 /** 1 日の主な食事の数 (朝・昼・夕)。slot の上限の計算に使う */
 const MAIN_MEALS_PER_DAY = 3;
@@ -59,7 +60,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       return { valid: false, slots: [], error: `targetSlots[${i}].date must be ${CALENDAR_DATE_REQUIREMENT}` };
     }
 
-    if (!mealType || typeof mealType !== 'string' || !VALID_MEAL_TYPES.includes(mealType as MealType)) {
+    if (!mealType || typeof mealType !== 'string' || !isMealType(mealType)) {
       return { valid: false, slots: [], error: `targetSlots[${i}].mealType must be one of: ${VALID_MEAL_TYPES.join(', ')}` };
     }
 
@@ -75,7 +76,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     }
     seenKeys.add(key);
 
-    validated.push({ date, mealType: mealType as MealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
+    validated.push({ date, mealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
   }
 
   // 日付の幅 (最も早い日〜最も遅い日) は、画面 (Web・モバイルの「期間を指定」) と同じ MENU_GENERATION_RANGE_MAX_DAYS 日まで (#1482)。

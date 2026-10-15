@@ -27,6 +27,7 @@ import {
 import {
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
   WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
   WEEKLY_MENU_REQUEST_STALE_MESSAGE,
 } from '@/lib/weekly-menu-request-error';
 import { AI_CONSENT_CHECK_FAILED_MESSAGE, AI_CONSENT_REQUIRED_MESSAGE } from '../supabase/functions/_shared/ai-consent';
@@ -369,7 +370,7 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
 
   // #1172: 献立生成のリクエストの失敗の文には、Edge Function が捕まえた例外の文面 (DB の生のエラー文・Edge Function の
   // 応答の本文) が入っていることがある。状態の確認の API と同じく、こちらで書いた文だけをそのまま出し、それ以外は固定の文にする
-  it('献立生成のリクエストの失敗の文: 生のエラー文は出さず固定の文にし、こちらで書いた文 (同意・stale・中止) はそのまま出す', async () => {
+  it('献立生成のリクエストの失敗の文: 生のエラー文は出さず固定の文にし、こちらで書いた文 (同意・中止) はそのまま、stale の印は日本語の文で出す', async () => {
     const RAW_DB = 'duplicate key value violates unique constraint "planned_meals_daily_meal_id_meal_type_key"';
     const RAW_EDGE = 'V5 returned 500: {"error":"relation \\"planned_meals\\" does not exist"}';
     const failedRow = (id: string, errorMessage: string | null) => ({
@@ -397,12 +398,14 @@ describe('generateAccountExport: 秘密・内部の列を出さない', () => {
       'w-2': WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
       'w-3': AI_CONSENT_REQUIRED_MESSAGE,
       'w-4': AI_CONSENT_CHECK_FAILED_MESSAGE,
-      'w-5': WEEKLY_MENU_REQUEST_STALE_MESSAGE,
+      // 進まなくなった行の英語の印は、日本語の文にして出す (#1576)
+      'w-5': WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
       'w-6': WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
       'w-7': null,
     });
     expect(text).not.toContain('planned_meals_daily_meal_id_meal_type_key');
     expect(text).not.toContain('V5 returned 500');
+    expect(text).not.toContain('stale_request_timeout');
     // 失敗の文のほかの列はそのまま出す
     expect(json.data.weekly_menu_requests[0]).toMatchObject({ id: 'w-1', status: 'failed', prompt: 'w-1-prompt' });
   });

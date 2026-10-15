@@ -553,12 +553,14 @@ export function isAiImagePipelineDish(dish: MealImageDish): boolean {
 }
 
 /**
- * 商品の献立の planned_meals.source_type (lib/catalog-products.ts の buildCatalogMealFields・端末の保存 (apps/mobile/app/meals/new.tsx) が書く)
+ * 商品の献立の planned_meals.source_type (lib/catalog-products.ts の buildCatalogMealFields が書く。
+ * 以前は端末の保存 (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx) も書いていた。画面は届かない画面として消したが (#1598)、
+ * その画面が書いた行は残るので、下の「端末の保存」の形も読み続ける)
  */
 export const CATALOG_PRODUCT_MEAL_SOURCE_TYPE = 'catalog_product';
 
 /**
- * 商品の献立で、商品の料理がある位置。商品を選ぶ保存 (buildCatalogMealFields・端末の保存) は、料理を商品の料理 1 つだけにする
+ * 商品の献立で、商品の料理がある位置。商品を選ぶ保存 (buildCatalogMealFields・以前の端末の保存) は、料理を商品の料理 1 つだけにする
  */
 const CATALOG_MEAL_PRODUCT_DISH_INDEX = 0;
 

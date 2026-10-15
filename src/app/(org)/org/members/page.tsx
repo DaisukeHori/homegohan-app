@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import Link from "next/link";
 import { membershipErrorMessageOfBody } from "@/lib/errors/membership-errors";
+import { normalizeProfileName } from "@/lib/profile-name";
 
 interface Member {
   id: string;
@@ -63,7 +64,7 @@ export default function MembersPage() {
   }, []);
 
   const handleRemove = async (memberId: string, memberNickname: string | null) => {
-    if (!confirm(`「${memberNickname ?? 'このメンバー'}」を組織から除名しますか？`)) return;
+    if (!confirm(`「${normalizeProfileName(memberNickname) ?? 'このメンバー'}」を組織から除名しますか？`)) return;
     setRemovingId(memberId);
     try {
       const res = await fetch(`/api/org/members/${memberId}/remove`, {
@@ -178,10 +179,10 @@ export default function MembersPage() {
                   <td className="p-4">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-100 to-blue-50 flex items-center justify-center font-bold text-blue-500 text-xs">
-                        {(member.nickname ?? 'U')[0].toUpperCase()}
+                        {(normalizeProfileName(member.nickname) ?? 'U')[0].toUpperCase()}
                       </div>
                       <span className="font-medium text-gray-900">
-                        {member.nickname ?? '(名前なし)'}
+                        {normalizeProfileName(member.nickname) ?? '(名前なし)'}
                         {member.id === currentUser?.id && (
                           <span className="ml-2 text-xs text-gray-400">(あなた)</span>
                         )}

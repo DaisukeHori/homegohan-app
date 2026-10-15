@@ -118,13 +118,8 @@ describe('app/(public) の画面は、すべて PublicPage を通る (#1049 F7-1
 
   it('画面を拾えている (拾い方が壊れて 0 件で通らないように)', () => {
     expect(screens).toEqual([
+      // company / contact / faq / guide / legal / news は、どこからも開かれない画面として消した (#1598)
       'about.tsx',
-      'company.tsx',
-      'contact.tsx',
-      'faq.tsx',
-      'guide.tsx',
-      'legal.tsx',
-      'news.tsx',
       'pricing.tsx',
       'privacy.tsx',
       'terms.tsx',

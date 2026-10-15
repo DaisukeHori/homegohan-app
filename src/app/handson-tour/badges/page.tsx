@@ -14,6 +14,8 @@ import {
   type SubStepOfStep3,
 } from '@homegohan/handson-tour-shared';
 import { createClient } from '@/lib/supabase/client';
+// 呼びかけに出す名前は Web・モバイル共通の規則 (仮置きの 'Guest'・空は 'あなた'、30 文字超は切る。設計書 02-step0-welcome.md §7.2・#1649)
+import { HANDSON_TOUR_NICKNAME_FALLBACK, handsonTourNickname } from '@homegohan/shared';
 import { scrollTourTargetIntoView } from '@/lib/handson-tour/scroll-target';
 
 type BadgeItem = {
@@ -33,14 +35,6 @@ type BadgeItem = {
  * 最後の行のカードも中央まで上げられるよう、画面の高さの半分を足す。吹き出しはカードの下に出るので、その分の場所も要る
  */
 const TOUR_SCROLL_SPACER = '50vh';
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 const BADGE_ICON_MAP: Record<string, string> = {
   first_bite: '🥄',
@@ -91,7 +85,7 @@ export default function HandsonTourBadgesPage() {
   const [subStep, setSubStep] = useState<SubStepOfStep3>('3.0');
   const [badges, setBadges] = useState<BadgeItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [nickname, setNickname] = useState('あなた');
+  const [nickname, setNickname] = useState(HANDSON_TOUR_NICKNAME_FALLBACK);
   const [userId, setUserId] = useState<string | null>(null);
   const mountTimeRef = useRef(Date.now());
   const prefersReducedMotion = useReducedMotion();
@@ -108,7 +102,7 @@ export default function HandsonTourBadgesPage() {
         .eq('id', user.id)
         .single()
         .then(({ data }) => {
-          if (data?.nickname) setNickname(safeNickname(data.nickname));
+          if (data?.nickname) setNickname(handsonTourNickname(data.nickname));
         });
     });
 
