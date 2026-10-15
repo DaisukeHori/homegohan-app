@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { getApi } from "../lib/api";
-import { formatCalendarDate, todayCalendarDate, todayLocal } from "@homegohan/shared";
+import { formatCalendarDate, pantryExpiringSoonUntil, todayCalendarDate, todayLocal } from "@homegohan/shared";
 import { handleAiConsentRequiredError } from "../lib/ai-consent";
 
 interface DailySummary {
@@ -292,17 +292,17 @@ export const useHomeData = (userId: string | undefined) => {
     }
   }
 
+  // 冷蔵庫の期限切れ間近 (今日から PANTRY_EXPIRING_SOON_DAYS 日後の期限まで。全画面共通の範囲 #1602)
   async function fetchExpiringItems(uid: string) {
     try {
-      const threeDaysLater = todayCalendarDate();
-      threeDaysLater.setDate(threeDaysLater.getDate() + 3);
+      const todayStr = getTodayStr();
 
       const { data } = await supabase
         .from("pantry_items")
         .select("*")
         .eq("user_id", uid)
-        .lte("expiration_date", formatCalendarDate(threeDaysLater))
-        .gte("expiration_date", getTodayStr())
+        .lte("expiration_date", pantryExpiringSoonUntil(todayStr))
+        .gte("expiration_date", todayStr)
         .order("expiration_date");
 
       if (data) setExpiringItems(data);
