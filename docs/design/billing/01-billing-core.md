@@ -3302,7 +3302,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 
 ### 17.3 受け入れの確認 (整合ゲートで読み取り)
 
-- テストカード `4242 4242 4242 4242` で `pro` 月額を買い、`/account/billing` に `trialing` が出る。`personal_subscriptions` に 1 行・`billing_customers` に 1 行・`stripe_webhook_events` に `completed` が 2〜3 行・`admin_audit_logs` に `system.billing.subscription_created` が 1 行。
+- テストカード `4242 4242 4242 4242` で `pro` 月額を買い、`/account/billing` に `trialing` が出る。`personal_subscriptions` に 1 行・`billing_customers` に 1 行・`stripe_webhook_events` に `completed` が 2〜3 行 (どの行の `payload` にも `customer_email` / `customer_name` / `customer_details` / `invoice_pdf` が無い。§9.6)・`admin_audit_logs` に `system.billing.subscription_created` が 1 行。
 - 解約の予約 → `cancel_at_period_end=true`。取り消し → `false`。
 - `stripe trigger invoice.payment_failed` → `past_due` と `system.payment.failed`。
 - 退会 → Stripe の契約が `canceled`、顧客の氏名・メールが空、`billing_customers.anonymized_at` が入り `user_id` が NULL。
