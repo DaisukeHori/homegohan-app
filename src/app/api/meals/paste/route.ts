@@ -75,6 +75,13 @@ export async function POST(request: Request) {
         { status: 403 },
       );
     }
+    // #1627: ハンズオンのお試しの記録は貼り付けられない (写した行は家族の側で本物の記録になってしまう)。持ち主の確認と隠した食事の確認のあとに DB が判定する
+    if (rpcError.message?.includes(MembershipErrorCode.MEAL_SANDBOX)) {
+      return NextResponse.json(
+        { error: { code: MembershipErrorCode.MEAL_SANDBOX, message: 'この食事はお試しの記録のため、ペーストできません' } },
+        { status: 403 },
+      );
+    }
     if (rpcError.message?.includes('NOT_IN_FAMILY')) {
       return NextResponse.json(
         { error: { code: MembershipErrorCode.NOT_IN_FAMILY, message: '家族グループに所属していません' } },

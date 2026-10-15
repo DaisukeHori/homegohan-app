@@ -37,6 +37,10 @@
  *  - 7 はテンプレートの `${...}` の中に process.env の読み取りが直接書かれているものだけを見る。
  *    いったん変数に入れてから埋め込む (`const u = process.env.X; `${u}/...``)・文字列の + 連結・
  *    `String(process.env.X)` を経由する、などは 7 では捕まらない (必須の変数なら 8 が、読む場所の側で捕まえる)。
+ *  - 5 の名前の一致は「前後が英数字でない」ことだけを見る (#1611)。`_` で連結した書き方 (`OPENAI_API_KEY_MISSING`・
+ *    `MISSING_XAI_API_KEY`) は見つけ、英数字に接したもの (`EXPORT_FAILED` の中の `PORT`。#1584) は見つけない。
+ *    そのため、名前を英数字に直接くっつけた書き方 (`MissingXAI_API_KEY`・`XAI_API_KEYerror`) はすり抜け、
+ *    逆に `_` で連結した別の語 (`PORT_IN_USE` のようなコード) も名前として捕まる (その場合はコードの語を変える)。
  *  - 走査の対象は PRODUCTION_ROOTS (src・lib・components・apps/mobile・packages/*\/src) の .ts / .tsx だけ。
  *    scripts/*.mjs・supabase/functions (Deno)・next.config.mjs などは見ない。
  */
@@ -196,7 +200,13 @@ function isEnvNameArgumentError(node: ts.Node): boolean {
 }
 
 /**
- * text に環境変数の名前 name が、1 つの語として書かれているか (前後が英数字・_ でない)。
+ * 名前の前後にあると「別の語の一部」とみなす文字 (英数字)。`_` は含めない (#1611)。
+ * `_` も含めると、`OPENAI_API_KEY_MISSING`・`MISSING_XAI_API_KEY` のように `_` で連結した書き方をすり抜ける。
+ */
+const ENV_NAME_WORD_CHAR = /[A-Za-z0-9]/;
+
+/**
+ * text に環境変数の名前 name が、1 つの語として書かれているか (前後が英数字でない。`_` で連結したものは見つける)。
  * 部分一致にすると、短い名前 (PORT など。#1584) が別の語 (EXPORT_FAILED のエラーコードなど) の一部にも当たる。
  */
 function containsEnvName(text: string, name: string): boolean {
@@ -204,7 +214,7 @@ function containsEnvName(text: string, name: string): boolean {
   while (from >= 0) {
     const before = from === 0 ? '' : text[from - 1];
     const after = text[from + name.length] ?? '';
-    if (!/[A-Za-z0-9_]/.test(before) && !/[A-Za-z0-9_]/.test(after)) return true;
+    if (!ENV_NAME_WORD_CHAR.test(before) && !ENV_NAME_WORD_CHAR.test(after)) return true;
     from = text.indexOf(name, from + 1);
   }
   return false;
@@ -411,10 +421,15 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
       'throw new MissingEnvError("XAI_API_KEY");', // 4: MissingEnvError の引数 (envName。message には入らない) は対象外
       "return NextResponse.json({ error: 'x', code: 'EXPORT_FAILED' }, { status: 500 });", // 5: 別の語の一部 (PORT) は対象外 (#1584)
       "throw new Error('PORT is not set');", // 6: 1 つの語として書いた任意の変数の名前
+      "throw new Error('OPENAI_API_KEY_MISSING');", // 7: 後ろに _ で連結した書き方 (#1611)
+      "return NextResponse.json({ error: 'MISSING_XAI_API_KEY' }, { status: 500 });", // 8: 前に _ で連結した書き方 (#1611)
+      "throw new Error('EXPORT_FAILED: PORTAL');", // 9: 英数字に接した PORT (EXPORT・PORTAL) は対象外 (#1584)
     ].join('\n');
 
     expect(LISTED_ENV_NAMES).toContain('PORT');
-    expect(findEnvNamesInErrorsOrResponses(source, LISTED_ENV_NAMES)).toEqual([1, 2, 6]);
+    expect(LISTED_ENV_NAMES).toContain('OPENAI_API_KEY');
+    expect(LISTED_ENV_NAMES).toContain('XAI_API_KEY');
+    expect(findEnvNamesInErrorsOrResponses(source, LISTED_ENV_NAMES)).toEqual([1, 2, 6, 7, 8]);
     // 必須の 3 つだけで走査すると、どちらも見つからない (以前の検査がすり抜けていた理由)
     expect(findEnvNamesInErrorsOrResponses(source, REQUIRED_ENV_NAMES)).toEqual([]);
   });
