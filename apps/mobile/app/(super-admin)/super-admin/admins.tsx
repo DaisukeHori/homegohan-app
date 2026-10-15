@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { normalizeProfileName } from "@homegohan/shared";
 
 import { Card, EmptyState, LoadingState } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";
@@ -63,7 +64,7 @@ export default function SuperAdminAdminsPage() {
     const granting = !currentRoles.includes(role);
     Alert.alert(
       granting ? "ロールを付与" : "ロールを剥奪",
-      `${admin.nickname ?? admin.id} に ${role} ロールを${granting ? "付与" : "剥奪"}します。よろしいですか？`,
+      `${normalizeProfileName(admin.nickname) ?? admin.id} に ${role} ロールを${granting ? "付与" : "剥奪"}します。よろしいですか？`,
       [
         { text: "キャンセル", style: "cancel" },
         {
@@ -108,7 +109,7 @@ export default function SuperAdminAdminsPage() {
                     <Ionicons name="shield-checkmark-outline" size={20} color={colors.purple} />
                   </View>
                   <View style={{ flex: 1, gap: 2 }}>
-                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{a.nickname ?? "(no name)"}</Text>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{normalizeProfileName(a.nickname) ?? "(no name)"}</Text>
                     <Text style={{ fontSize: 12, color: colors.textMuted }}>{a.id}</Text>
                   </View>
                 </View>

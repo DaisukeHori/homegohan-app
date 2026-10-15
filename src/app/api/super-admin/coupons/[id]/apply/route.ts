@@ -23,6 +23,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
 import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -41,10 +42,8 @@ export async function POST(request: NextRequest, props: RouteContext) {
     const parseResult = CouponApplySchema.safeParse(body);
 
     if (!parseResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_INPUT', message: parseResult.error.message, details: parseResult.error.issues } },
-        { status: 400 },
-      );
+      // #1641: POST・PATCH と同じ形 (message は最初の issue の文・details は issues)
+      return couponInvalidInputResponse(parseResult.error.issues);
     }
 
     const input = parseResult.data;
