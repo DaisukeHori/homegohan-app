@@ -3,6 +3,7 @@
 import React, { useId } from "react";
 import { RefreshCw, X, Sparkles, Check } from "lucide-react";
 import type { PlannedMeal, DishDetail } from "@/types/domain";
+import type { MealType } from "@homegohan/shared";
 import { todayLocal, formatDateJa } from "@/lib/date-utils";
 import { BottomSheet } from "@/components/common/BottomSheet";
 
@@ -17,7 +18,7 @@ const colors = {
   border: '#E8E8E8',
 };
 
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 interface MealPlanDay {
   id: string;

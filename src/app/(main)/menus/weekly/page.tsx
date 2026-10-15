@@ -28,6 +28,7 @@ import type { DailyMeal, PlannedMeal, ShoppingListItem, MealMode, MealDishes, Di
 import type { CatalogProductSummary } from "@/types/catalog";
 import ReactMarkdown from "react-markdown";
 import { useV4MenuGeneration } from "@/hooks/useV4MenuGeneration";
+import { BASE_MEAL_TYPES, EXTRA_MEAL_TYPES } from "@/lib/slot-builder";
 import { useNutritionFeedbackWatch } from "@/hooks/useNutritionFeedbackWatch";
 import { notifyMenuGenerated } from "@/lib/local-notification";
 import { DEFAULT_RADAR_NUTRIENTS, getNutrientDefinition, calculateDriPercentage, NUTRIENT_DEFINITIONS, NUTRIENT_BY_CATEGORY, CATEGORY_LABELS, THEME_LABELS_REQUEST, AI_CONDITIONS, getDishConfig as getDishConfigShared, type DishConfig, MEAL_LABELS, MEAL_ORDER as MEAL_ORDER_SHARED, type MealType, PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, SHOPPING_LIST_PHASES, type PhaseDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, formatLocalDate, todayLocal, parseLocalDate, addDays, formatExpiry, formatDateJa, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
@@ -187,10 +188,8 @@ const getDishConfig = (role?: string): { label: string; color: string; bg: strin
 
 // MEAL_LABELS は @homegohan/shared からインポート (MealType の型付き Record)
 
-// AIが自動生成する基本の3食
-const BASE_MEAL_TYPES: MealType[] = ['breakfast', 'lunch', 'dinner'];
-// 追加可能な食事タイプ
-const EXTRA_MEAL_TYPES: MealType[] = ['snack', 'midnight_snack'];
+// AIが自動生成する基本の3食 (BASE_MEAL_TYPES) と追加可能な食事タイプ (EXTRA_MEAL_TYPES) は lib/slot-builder から。
+// EXTRA_MEAL_TYPES は食事の区分の正本 MEAL_ORDER から基本の 3 食を除いて作る (#1631。ここで手書きしない)
 
 // 栄養素の値をフォーマット（浮動小数点誤差を修正）
 const formatNutrition = (value: number | null | undefined, decimals = 1): string => {
