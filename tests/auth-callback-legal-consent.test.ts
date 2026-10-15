@@ -35,7 +35,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('next/headers', () => ({
-  cookies: () => ({ getAll: () => [] }),
+  cookies: async () => ({ getAll: () => [] }),
 }));
 
 vi.mock('@/lib/supabase/server', () => ({

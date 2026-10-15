@@ -45,7 +45,7 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('next/headers', () => ({
   cookies: async () => ({ get: () => (mocks.cookieValue ? { value: mocks.cookieValue } : undefined) }),
-  headers: () => mocks.headers,
+  headers: async () => mocks.headers,
 }));
 
 // MainLayout の描画に不要な重い部品・通信は差し替える
