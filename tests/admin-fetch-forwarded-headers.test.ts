@@ -12,7 +12,7 @@ let incomingHeaders: Record<string, string> = {};
 
 vi.mock('next/headers', () => ({
   headers: async () => new Headers(incomingHeaders),
-  cookies: () => ({ getAll: () => [{ name: 'sb-access-token', value: 'session-value' }] }),
+  cookies: async () => ({ getAll: () => [{ name: 'sb-access-token', value: 'session-value' }] }),
 }));
 
 const fetchMock = vi.fn(async (..._args: unknown[]) => new Response('{}'));

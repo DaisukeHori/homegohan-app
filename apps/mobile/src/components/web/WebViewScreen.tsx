@@ -3,6 +3,10 @@ import { ActivityIndicator, Alert, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
+import { NATIVE_APP_TABS, findNativeAppTabByPathPrefix } from '@homegohan/shared';
+import { WebViewErrorView } from './WebViewErrorView';
+import { useResetInitialPathOnBlur } from './useResetInitialPathOnBlur';
+import { useWebViewHttpFailure } from './useWebViewHttpFailure';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
@@ -38,22 +42,17 @@ interface Props {
   header?: React.ReactNode;
 }
 
-// 各タブの「所有する」パス prefix と Expo Router タブルート のマッピング
-// path は各タブの root path (サブパスも含む前方一致で判定)
-const TAB_ROUTES: Array<{ pathPrefix: string; tab: string }> = [
-  { pathPrefix: '/menus', tab: '/(tabs)/menus' },
-  { pathPrefix: '/meals', tab: '/(tabs)/meals' },
-  { pathPrefix: '/comparison', tab: '/(tabs)/comparison' },
-  { pathPrefix: '/profile', tab: '/(tabs)/profile' },
-  { pathPrefix: '/home', tab: '/(tabs)/home' },
-];
+// 各タブの「受け持つ」パスの prefix と Expo Router のタブのルートの対応は、@homegohan/shared の NATIVE_APP_TABS だけが決める
+// (Web の NativeAppTabRouter も同じ表を見る)。以前はここと Web で別々の一覧を持っていて、'/meals' と '/meals/new' が
+// 食い違い、Web が送った tab-navigate が読み捨てられていた (#1612 / #1049 F7-22)
+const TAB_PATH_PREFIXES: string[] = NATIVE_APP_TABS.map((tab) => tab.pathPrefix);
 
 // Fix 1: postMessage 方式によるタブ独立性
 // WebView 内に inject して <a> クリックを capture phase で捕捉し、
 // 別タブのパスへの遷移を preventDefault + postMessage で React Native に通知する。
 // onNavigationStateChange / onShouldStartLoadWithRequest よりも確実 (SPA pushState も捕捉)。
 const buildTabInterceptScript = (currentTabRoot: string): string => {
-  const tabPaths = TAB_ROUTES.map((t) => t.pathPrefix);
+  const tabPaths = TAB_PATH_PREFIXES;
   return `
 (function() {
   // 自アプリのオリジン以外 (外部サイトが万一表示された場合) では何もしない (#1036)
@@ -134,7 +133,12 @@ type TabPressNavigation = {
   isFocused: () => boolean;
 };
 
-export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
+type WebViewScreenBodyProps = Props & {
+  /** 読み込みの失敗の画面で「再読み込み」が押されたとき (WebViewScreen を参照) */
+  onRetry: () => void;
+};
+
+const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, header, onRetry }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
@@ -150,10 +154,12 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   // (initialPath に使い捨ての _rb を付けて effectivePath を変え、下の useEffect で code を取り直す) を効かせるため。
   // path はコードに書かれた信頼できる値なので、受け付ける範囲はタブの prefix と同じ強さで限られる
   const params = useLocalSearchParams<{ initialPath?: string }>();
-  const effectivePath = sanitizeInitialPath(params.initialPath, path, [
-    ...TAB_ROUTES.map((t) => t.pathPrefix),
-    pathnameOf(path),
-  ]);
+  const effectivePath = sanitizeInitialPath(params.initialPath, path, [...TAB_PATH_PREFIXES, pathnameOf(path)]);
+
+  // 他のタブへ移ったら、残っている initialPath を消す (#1612 / #1049 F7-15。理由は useResetInitialPathOnBlur.ts)
+  useResetInitialPathOnBlur(Boolean(params.initialPath));
+  // サーバーが 5xx (503 を除く) を返したことを覚えて、案内と「再読み込み」を出す (#1612 / #1049 F7-15)
+  const httpFailure = useWebViewHttpFailure();
 
   // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)。
   // 再 bridge は、いま開いているパス (検証済みの effectivePath) に _rb を付けて開き直す。
@@ -172,7 +178,7 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
         // URL は JSON.stringify でリテラル化する (#1036)。
         // オリジンガードは付けない (guard: false)。このリセットは、WebView が自オリジンを表示していないときの復帰手段でもある:
         //   - 起動時にオフラインで直接 URL の読み込みに失敗すると、iOS は about:blank (origin は "null") のままエラー表示になる。
-        //     エラー表示に再試行手段は無く、init も再実行されないので、戻れるのはこの再タップだけ
+        //     読み込みの失敗の画面の「再読み込み」(#1612 F7-15。init からやり直す) と並ぶ、戻る手段の一つ
         //   - Android の shouldOverrideUrlLoading が待ち時間切れで許可に倒れ、外部ページが WebView に載った場合も同じ
         // このスクリプトが持つのは公開されている自オリジンの URL だけ (トークン・code は無い) なので、
         // 外部ページ上で実行されても漏れるものが無い。
@@ -221,8 +227,15 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
 
       // 掃除の JS は自アプリのオリジンのページでだけ動かす (#1036)。
       // injectedJavaScriptBeforeContentLoaded は WebView のすべての読み込みで動くので、外部ページが万一載っても、
-      // そのサイトの localStorage を消したり書いたりしない
-      setInjectedJS(pendingClearId ? buildOwnOriginOnlyScript(buildClearUserScopedWebStorageScript(pendingClearId)) : '');
+      // そのサイトの localStorage を消したり書いたりしない。
+      // 前の利用者の Supabase の認証の Cookie (iOS の WKWebView の置き場に残るもの) も、認証ブリッジ無しで開くときだけ消す
+      // (#1612 / #1049 F7-16)。ブリッジで開くときに消すと、ブリッジがいま張った新しい利用者の Cookie を消してしまう
+      // (ブリッジは同じ名前の Cookie を上書きするので、前の利用者の Cookie は残らない。webViewUserStorageCleanup.ts の「Cookie」)
+      setInjectedJS(
+        pendingClearId
+          ? buildOwnOriginOnlyScript(buildClearUserScopedWebStorageScript(pendingClearId, { clearAuthCookies: !code }))
+          : '',
+      );
       // 既定はトークンを一切含まない直接 URL。bridge に成功したときだけ code 付き URL に差し替える
       setUri(code ? buildBridgeUrl(code, nextPath) : buildWebUrl(nextPath));
     };
@@ -250,121 +263,149 @@ export const WebViewScreen: React.FC<Props> = ({ path, testID, header }) => {
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }} edges={['top']}>
       {header}
-      <WebView
-        ref={webViewRef}
-        testID={testID ?? 'webview-screen'}
-        source={{ uri }}
-        // セッション情報 (トークン・localStorage のセッション) はページコンテキストへ一切注入しない (#1036)。
-        // Web 側のセッションは native-bridge が Cookie に張る。
-        // 読み込み前に注入するのは、ネイティブのログアウト後の利用者別の localStorage の掃除 (#1037) だけで、
-        // 自アプリのオリジンのページでだけ動く (buildOwnOriginOnlyScript)
-        injectedJavaScriptBeforeContentLoaded={injectedJS || undefined}
-        // Fix 1: postMessage 方式のタブ intercept script を全ページロード後に inject
-        // capture phase click + pushState hook で SPA ナビゲーションも確実に捕捉
-        injectedJavaScript={buildTabInterceptScript(currentTabRoot)}
-        sharedCookiesEnabled={true}
-        thirdPartyCookiesEnabled={true}
-        contentInsetAdjustmentBehavior="never"
-        domStorageEnabled={true}
-        javaScriptEnabled={true}
-        startInLoadingState={true}
-        pullToRefreshEnabled={true}
-        // Fix 3: iOS 18 カメラバツボタン workaround
-        // <input type="file"> 経由カメラの dismiss が効かないケースへの対処
-        // 根本解決は次 PR で expo-image-picker ネイティブブリッジ実装予定
-        // TODO: Phase B-2 で <input type="file"> を expo-image-picker bridge に置換
-        allowsInlineMediaPlayback={true}
-        mediaPlaybackRequiresUserAction={false}
-        // #1036 / #1158: WebView を自アプリのオリジンに固定する。
-        // 他オリジンへのトップフレーム遷移 (レシピ外部リンク等) は WebView に載せず OS の既定ブラウザで開く。
-        // 他オリジンの iframe (Web の CSP が許す Turnstile) は WebView の中で読み込む (decideNavigation を参照)。
-        // originWhitelist は未アンカーの前方一致で境界にならないため、URL を厳密にパースして判定する。
-        // Android の shouldOverrideUrlLoading は JS の応答待ちが長引くと許可に倒れるので、
-        // これは多層防御の一つ (本命は、ページから参照できるトークンを持たせないこと)。
-        // originWhitelist は「どの URL を下の onShouldStartLoadWithRequest に渡すか」の入口 (WEB_VIEW_ORIGIN_WHITELIST を参照)。
-        // http(s) はすべて判定に渡し、自オリジンかどうかは decideNavigation が URL を厳密にパースして決める。
-        originWhitelist={WEB_VIEW_ORIGIN_WHITELIST}
-        onShouldStartLoadWithRequest={(request) => {
-          const decision = decideNavigation(request);
-          if (decision.openExternal) {
-            void openExternalUrl(decision.openExternal);
-          }
-          return decision.allow;
-        }}
-        // target="_blank" / window.open。iOS は onOpenWindow が無いと同じ WebView で開いてしまい (#1158)、
-        // Android は何も起きない。自オリジンは今の WebView で開き、他オリジンは既定ブラウザで開く。
-        onOpenWindow={(event) => {
-          const decision = decideOpenWindow(event.nativeEvent.targetUrl);
-          if (decision.navigateTo) {
-            webViewRef.current?.injectJavaScript(buildNavigateScript(decision.navigateTo));
-          } else if (decision.openExternal) {
-            void openExternalUrl(decision.openExternal);
-          }
-        }}
-        onMessage={(event) => {
-          // window.ReactNativeWebView はどのオリジンのページにも存在する。
-          // 送信元が自アプリのオリジンでなければ、tab-navigate / download 等のメッセージは一切処理しない。
-          // event.nativeEvent.url に入るもの (react-native-webview 13.13.5 のソースで確認):
-          //   - iOS: メッセージを送ったフレームの request URL (WKScriptMessage.frameInfo.request)
-          //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
-          //     非対応の古い WebView (fallback の JavascriptInterface) ではトップフレームの URL (getUrl())
-          // 最後のケースでは、自オリジンのページの中の他オリジンの iframe からのメッセージもこのゲートを通る。
-          // Web の CSP (next.config.mjs の frame-src) が許す他オリジンの iframe は Cloudflare Turnstile だけ
-          // (/login、/settings/account のパスワード変更など。webViewBridge.ts の WEB_VIEW_EMBED_ORIGINS)。
-          // この経路ではゲートが境界にならないので、Turnstile の iframe からのメッセージを止めるものは、下の各処理の中身の検証だけになる
-          // (tab-navigate はタブの prefix と sanitizeInitialPath、download は webViewDownload.ts の送信元・ファイル名・サイズ)。
-          // 埋め込みを足すときは、CSP とあわせて Android 実機で確認すること
-          // (onShouldStartLoadWithRequest 側の Android の注記は webViewBridge.ts の NavigationRequestLike を参照)
-          if (!isOwnOrigin(event.nativeEvent.url)) return;
-          try {
-            const data = JSON.parse(event.nativeEvent.data);
-            if (data.type === 'tab-navigate') {
-              const matched = TAB_ROUTES.find((t) => t.pathPrefix === data.path);
-              if (matched) {
-                setTimeout(() => {
-                  // Fix 2: fullPath (クエリパラメータ含む) を initialPath として渡すことで
-                  // 買い物リストのモーダル等を開くクエリが失われないようにする
-                  if (data.fullPath && data.fullPath !== data.path) {
-                    router.push({
-                      pathname: matched.tab,
-                      params: { initialPath: data.fullPath },
-                    });
-                  } else {
-                    router.push(matched.tab);
-                  }
-                }, 0);
-              }
-            } else if (data.type === 'navigate-back') {
-              // × ボタンや戻るボタン用: Expo Router の history を使って前画面に戻る
-              if (router.canGoBack()) {
-                router.back();
-              } else {
-                router.push('/(tabs)/home');
-              }
-            } else if (data.type === 'download') {
-              // Fix 3: iOS WebView でのエクスポート対応
-              // Web 側から postMessage で受け取ったファイル内容を expo-sharing で保存・共有
-              // filename / content / mimeType も送信元ページも WebView 内の JS が自由に作れるので信用せず、
-              // 送信元・ファイル名・サイズの検証と cacheDirectory への保存は webViewDownload.ts に集約 (#1159)
-              // 正規のエクスポートが失敗したときは、「押しても何も起きない」ように見えないよう利用者に知らせる
-              void handleWebViewDownload(data, event.nativeEvent.url).then((result) => {
-                const notice = getDownloadFailureNotice(result);
-                if (notice) Alert.alert(notice.title, notice.message);
-              });
-            } else if (data.type === 'sign-out' || data.type === 'session-expired') {
-              // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
-              handleAuthMessage(data, event.nativeEvent.url);
+      {/* 失敗の案内は WebView の部分だけを覆う (header = マイページの歯車は押せるまま残す) */}
+      <View style={{ flex: 1 }}>
+        <WebView
+          ref={webViewRef}
+          testID={testID ?? 'webview-screen'}
+          source={{ uri }}
+          // セッション情報 (トークン・localStorage のセッション) はページコンテキストへ一切注入しない (#1036)。
+          // Web 側のセッションは native-bridge が Cookie に張る。
+          // 読み込み前に注入するのは、ネイティブのログアウト後の利用者別の localStorage の掃除 (#1037) と、
+          // 認証ブリッジ無しで開くときの前の利用者の認証の Cookie の掃除 (#1612 F7-16) だけで、
+          // 自アプリのオリジンのページでだけ動く (buildOwnOriginOnlyScript)
+          injectedJavaScriptBeforeContentLoaded={injectedJS || undefined}
+          // Fix 1: postMessage 方式のタブ intercept script を全ページロード後に inject
+          // capture phase click + pushState hook で SPA ナビゲーションも確実に捕捉
+          injectedJavaScript={buildTabInterceptScript(currentTabRoot)}
+          sharedCookiesEnabled={true}
+          thirdPartyCookiesEnabled={true}
+          contentInsetAdjustmentBehavior="never"
+          domStorageEnabled={true}
+          javaScriptEnabled={true}
+          startInLoadingState={true}
+          pullToRefreshEnabled={true}
+          // Fix 3: iOS 18 カメラバツボタン workaround
+          // <input type="file"> 経由カメラの dismiss が効かないケースへの対処
+          // 根本解決は次 PR で expo-image-picker ネイティブブリッジ実装予定
+          // TODO: Phase B-2 で <input type="file"> を expo-image-picker bridge に置換
+          allowsInlineMediaPlayback={true}
+          mediaPlaybackRequiresUserAction={false}
+          // #1036 / #1158: WebView を自アプリのオリジンに固定する。
+          // 他オリジンへのトップフレーム遷移 (レシピ外部リンク等) は WebView に載せず OS の既定ブラウザで開く。
+          // 他オリジンの iframe (Web の CSP が許す Turnstile) は WebView の中で読み込む (decideNavigation を参照)。
+          // originWhitelist は未アンカーの前方一致で境界にならないため、URL を厳密にパースして判定する。
+          // Android の shouldOverrideUrlLoading は JS の応答待ちが長引くと許可に倒れるので、
+          // これは多層防御の一つ (本命は、ページから参照できるトークンを持たせないこと)。
+          // originWhitelist は「どの URL を下の onShouldStartLoadWithRequest に渡すか」の入口 (WEB_VIEW_ORIGIN_WHITELIST を参照)。
+          // http(s) はすべて判定に渡し、自オリジンかどうかは decideNavigation が URL を厳密にパースして決める。
+          originWhitelist={WEB_VIEW_ORIGIN_WHITELIST}
+          onShouldStartLoadWithRequest={(request) => {
+            const decision = decideNavigation(request);
+            if (decision.openExternal) {
+              void openExternalUrl(decision.openExternal);
             }
-          } catch {
-            // JSON パース失敗は無視
-          }
-        }}
-        renderLoading={() => (
-          <View testID="webview-loading" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color={colors.accent} />
-          </View>
-        )}
-      />
+            return decision.allow;
+          }}
+          // target="_blank" / window.open。iOS は onOpenWindow が無いと同じ WebView で開いてしまい (#1158)、
+          // Android は何も起きない。自オリジンは今の WebView で開き、他オリジンは既定ブラウザで開く。
+          onOpenWindow={(event) => {
+            const decision = decideOpenWindow(event.nativeEvent.targetUrl);
+            if (decision.navigateTo) {
+              webViewRef.current?.injectJavaScript(buildNavigateScript(decision.navigateTo));
+            } else if (decision.openExternal) {
+              void openExternalUrl(decision.openExternal);
+            }
+          }}
+          onMessage={(event) => {
+            // window.ReactNativeWebView はどのオリジンのページにも存在する。
+            // 送信元が自アプリのオリジンでなければ、tab-navigate / download 等のメッセージは一切処理しない。
+            // event.nativeEvent.url に入るもの (react-native-webview 13.13.5 のソースで確認):
+            //   - iOS: メッセージを送ったフレームの request URL (WKScriptMessage.frameInfo.request)
+            //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
+            //     非対応の古い WebView (fallback の JavascriptInterface) ではトップフレームの URL (getUrl())
+            // 最後のケースでは、自オリジンのページの中の他オリジンの iframe からのメッセージもこのゲートを通る。
+            // Web の CSP (next.config.mjs の frame-src) が許す他オリジンの iframe は Cloudflare Turnstile だけ
+            // (/login、/settings/account のパスワード変更など。webViewBridge.ts の WEB_VIEW_EMBED_ORIGINS)。
+            // この経路ではゲートが境界にならないので、Turnstile の iframe からのメッセージを止めるものは、下の各処理の中身の検証だけになる
+            // (tab-navigate はタブの prefix と sanitizeInitialPath、download は webViewDownload.ts の送信元・ファイル名・サイズ)。
+            // 埋め込みを足すときは、CSP とあわせて Android 実機で確認すること
+            // (onShouldStartLoadWithRequest 側の Android の注記は webViewBridge.ts の NavigationRequestLike を参照)
+            if (!isOwnOrigin(event.nativeEvent.url)) return;
+            try {
+              const data = JSON.parse(event.nativeEvent.data);
+              if (data.type === 'tab-navigate') {
+                // path はタブの pathPrefix そのもの (Web の NativeAppTabRouter も注入したスクリプトも、同じ表の pathPrefix を送る)
+                const matched = findNativeAppTabByPathPrefix(data.path);
+                if (matched) {
+                  setTimeout(() => {
+                    // Fix 2: fullPath (クエリパラメータ含む) を initialPath として渡すことで
+                    // 買い物リストのモーダル等を開くクエリが失われないようにする
+                    if (data.fullPath && data.fullPath !== data.path) {
+                      router.push({
+                        pathname: matched.route,
+                        params: { initialPath: data.fullPath },
+                      });
+                    } else {
+                      router.push(matched.route);
+                    }
+                  }, 0);
+                }
+              } else if (data.type === 'navigate-back') {
+                // × ボタンや戻るボタン用: Expo Router の history を使って前画面に戻る
+                if (router.canGoBack()) {
+                  router.back();
+                } else {
+                  router.push('/(tabs)/home');
+                }
+              } else if (data.type === 'download') {
+                // Fix 3: iOS WebView でのエクスポート対応
+                // Web 側から postMessage で受け取ったファイル内容を expo-sharing で保存・共有
+                // filename / content / mimeType も送信元ページも WebView 内の JS が自由に作れるので信用せず、
+                // 送信元・ファイル名・サイズの検証と cacheDirectory への保存は webViewDownload.ts に集約 (#1159)
+                // 正規のエクスポートが失敗したときは、「押しても何も起きない」ように見えないよう利用者に知らせる
+                void handleWebViewDownload(data, event.nativeEvent.url).then((result) => {
+                  const notice = getDownloadFailureNotice(result);
+                  if (notice) Alert.alert(notice.title, notice.message);
+                });
+              } else if (data.type === 'sign-out' || data.type === 'session-expired') {
+                // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
+                handleAuthMessage(data, event.nativeEvent.url);
+              }
+            } catch {
+              // JSON パース失敗は無視
+            }
+          }}
+          renderLoading={() => (
+            <View testID="webview-loading" style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+              <ActivityIndicator size="large" color={colors.accent} />
+            </View>
+          )}
+          // #1612 / #1049 F7-15: 読み込みに失敗したとき (オフライン・DNS・接続・時間切れなど) と、サーバーが 5xx を返したときに、
+          // 日本語の案内と「再読み込み」を出す (以前は何も無く、ライブラリの英語の文かサーバーのエラーページがそのまま出ていた)。
+          // 読み込みの失敗の画面は WebView の renderError が出す (react-native-webview は、次の読み込みが終わるまでこの画面を WebView の上に出し続ける)。
+          // 5xx はページの読み込み自体は成功扱いなので、onHttpError で覚えて下で WebView の上に重ねる。
+          // 503 は重ねない (メンテナンス中の画面を Web が 503 で返す。useWebViewHttpFailure.ts の shouldCoverHttpStatus)
+          onError={httpFailure.onLoadError}
+          onHttpError={httpFailure.onHttpError}
+          onLoadEnd={httpFailure.onLoadEnd}
+          renderError={() => <WebViewErrorView failure={{ kind: 'network' }} onRetry={onRetry} />}
+        />
+        {httpFailure.statusCode !== null ? (
+          <WebViewErrorView failure={{ kind: 'server', statusCode: httpFailure.statusCode }} onRetry={onRetry} />
+        ) : null}
+      </View>
     </SafeAreaView>
   );
+};
+
+/**
+ * 画面の入口。読み込みに失敗して「再読み込み」が押されたら、WebView の reload() ではなく、中身を作り直す (#1612 / #1049 F7-15)。
+ * 認証ブリッジの URL の code は一度しか使えない (#1036) ので、同じ URL を読み直すとログインできない。セッションの確認と
+ * code の発行 (init) を最初からやり直して、新しい URL で読み込む。iOS で起動時にオフラインだったときの about:blank からも、
+ * これで戻れる (以前はタブの再タップだけが戻る手段だった)。
+ */
+export const WebViewScreen: React.FC<Props> = (props) => {
+  const [attempt, setAttempt] = useState(0);
+  return <WebViewScreenBody key={attempt} {...props} onRetry={() => setAttempt((n) => n + 1)} />;
 };
