@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.9 (2026-10-15) |
+| 版 | v1.10 (2026-10-15) |
 | Status | 設計ゲート審査中 |
 | Issue | #1151 (購入の入口)・#1125 (Webhook の受け口) の「核」。配線の冊は `docs/design/billing/02-billing-wiring.md` (未作成) |
 | 範囲の正本 | `/Users/horidaisuke/claude-work/scratch/homegohan/specs/spec-d-billing-core.md` |
@@ -19,8 +19,8 @@
 | 目安 | 本冊 | 判定 |
 |---|---|---|
 | 設計書 800 行超 | 超える (正典コード・表 3 点・トレースを 1 冊に持つため) | 該当 |
-| 消費先レーン 3 以上 | API 8 本 (課金の route 7 + Webhook 1。§9・§15.3)・画面 3 つ・退会・モバイル = 4 以上 | 該当 |
-| 共有面 2 つ以上 | `personal_subscriptions` (family / org / AI 上限が読む)・`user_profiles.plan_key_cached` (機能フラグが読む。特権列ガード 2 本を置き換える)・`family_groups.plan_key` (トリガーを足す)・`src/lib/env.ts` の一覧・`cross/04` のエラー表・退会 (`src/lib/account-deletion.ts`)・本人のデータの書き出しの分類 (`src/lib/account-export-tables.ts`) | 該当 |
+| 消費先レーン 3 以上 | API 8 本 (課金の route 7 + Webhook 1。§9・§15.3)・画面 4 つ (`/pricing`・`/account/billing`・`/account/billing/checkout`・凍結中の解約の `/frozen/billing`。§10)・退会・モバイル = 4 以上 | 該当 |
+| 共有面 2 つ以上 | `personal_subscriptions` (family / org / AI 上限が読む)・`user_profiles.plan_key_cached` (機能フラグが読む。特権列ガード 2 本を置き換える)・`family_groups.plan_key` (トリガーを足す)・`src/lib/env.ts` の一覧・`cross/04` のエラー表・退会 (`src/lib/account-deletion.ts`)・本人のデータの書き出しの分類 (`src/lib/account-export-tables.ts`)・凍結中も通す API の一覧 (`src/lib/auth/frozen.ts` の `FROZEN_ALLOWED_API_PATHS`。§9.8) | 該当 |
 
 判定: **設計は 1 冊 (本書) のまま、実装を 3 段 (A: DB 層 / B: サーバ層 / C: 画面層。§15) に分け、段ごとに 2 枚レビューを挟む**。理由: Stripe の状態の写像 (SQL 関数) と、それを呼ぶ Webhook・API (TS) は 1 つの契約 (§8.1 のスナップショット) を挟んで表裏になっており、冊を分けると「未マージの核を参照する配線」の指摘 (2026-09-11 の分冊判定の根拠と同型) を自分で作ることになる。段 A は単独でマージでき (列の追加・RLS の是正・関数とトリガーの新設・特権列ガードへの 1 列の追加。既存の挙動で変わるのは、利用者が自分で書けていた権利の値 (契約の行・`plan_key_cached`・家族グループを作るときのプラン) を書けなくすることだけ)、段 B・C はそれぞれ段 A のマージ済みの実コードを参照する。
 
@@ -36,7 +36,7 @@
 | Webhook の受け口 (署名・冪等・順序の入れ替わり・再送・失敗の再処理) | ブランドのメール (支払失敗・試用終了の案内)。核では Stripe の顧客向けメール (Dashboard 設定) に任せる (§5.3) |
 | サブスクリプションの状態の正本と遷移表 (`billing_apply_stripe_subscription`) | チャージバック (`charge.dispute.created`) の運営対応・自動 BAN なし |
 | 権利判定の入口 (= 既存 `get_effective_plan` / `getEffectivePlan`。変えない) と `plan_key_cached`・`family_groups.plan_key` の同期 | `grace` での有料機能の制限 (402) の各入口への配線 |
-| Billing Portal (カードの変更・請求書の履歴)・解約の予約と取り消し | 組織ライセンス受領による一時停止 (`paused`) |
+| Billing Portal (カードの変更・請求書の履歴)・解約の予約と取り消し (凍結 (BAN) 中の利用者も解約の予約と Portal はできる。§9.8) | 組織ライセンス受領による一時停止 (`paused`) |
 | 退会での Stripe の解約と顧客の匿名化 (#1562) | 請求書番号 (`T` + 13 桁)・Stripe Invoice の設定 |
 | モバイル (アプリ内課金をしない) の導線の規則 | モバイル画面での契約状態の表示 |
 | 本番の準備手順 (§17。秘密の値は #1113 のオーナー作業で入る前提) | |
@@ -124,13 +124,13 @@
 | R13 | 退会で Stripe を即時解約し、顧客を匿名化して残す | spec (#1562) | `deleteAccount` に段階 `billing` (`prepare` の前) と `billing_recheck` (`deleteUser` の直前) を足す。どちらも顧客の開いたままの Checkout Session を閉じ (`expire`)、解約する契約を Stripe 側の一覧 (顧客の全契約) と DB の行の和で列挙して即時解約する (DB に写っていない契約・段階 `billing` のあとに完了した Checkout の契約も解約する。§11)。`deleteUser` のあとに Stripe に残った契約 (`billing_recheck` の列挙のあと `deleteUser` までの一瞬に完了した Checkout など) は、写像が「退会済み」(`customer_closed`) を返し、`syncSubscription` が即時解約する (§8.6・§7.3)。当社の DB にも氏名・メールを残さない: Webhook のイベントの記録は最小化した写しだけを保存する (§8.1 `minimizeStripeEventPayload`・§9.6) |
 | R14 | 利用者本人が契約の行と、その写し (`plan_key_cached`・`family_groups.plan_key`) を直接書けない | F6・F21・F23・`docs/design/CLAUDE.md` RLS 厳格化 | INSERT / UPDATE ポリシーから `user_id = auth.uid()` を外す (§6.2)。特権列ガード 2 本に `plan_key_cached` を足す (§6.4 (11))。家族グループを作るときのプランは代表者の契約から決め、`create_family_group` の `p_plan_key` を使わない (§6.4 (10)) |
 | R15 | 特商法の最終確認画面 | `cross/08` §3 | `/account/billing/checkout` (§10.2) |
-| R16 | 解約が `/account/billing` から 1 タップ | `cross/08` §3.1 | `POST /api/billing/subscription/cancel` (期間末で解約。取り消し可) (§9.5) |
+| R16 | 解約が `/account/billing` から 1 タップ | `cross/08` §3.1 | `POST /api/billing/subscription/cancel` (期間末で解約。取り消し可) (§9.5)。凍結 (BAN) 中の利用者は `/account/billing` を開けない (middleware が画面を `/frozen` へ回す) ので、凍結の画面から `/frozen/billing` を開いて 1 タップで解約を予約する。凍結中も契約の要約・解約の予約・Billing Portal の 3 本の API を通す (§9.8・§10.5・S21)。凍結は契約も Stripe の課金も止めないので、止めると凍結中の利用者は退会のほかに課金を止められず、確認画面 (§10.2) の「解約予告期間 (いつでも)」に反する |
 | R17 | 監査ログ必須 (課金的操作) | `docs/design/CLAUDE.md` | 状態の変化は写像関数が `admin_audit_logs` に書く。利用者の操作は route が service_role で書く (§8.6) |
 | R18 | migration の番号はマージ時に確定、`.down.sql` を対で設計 | spec | §6.1 |
 | R19 | as any 禁止・マジックナンバー禁止 | spec | §8.1 の定数に根拠。Stripe の型は Zod で自前に定義 (SDK を入れない) |
 | R20 | 2 PR 以上が触る共有面の台帳 | `docs/design/CLAUDE.md`「並行開発時の conflict 注意」(同時編集が起きやすい箇所 = `cross/04` のエラーコード一覧・`00-architecture.md`・migration の順序) | §16.3 (リポジトリに台帳のファイルは無い (origin/main に `docs/shared-state-surfaces.md` は 0 件) ので、本冊が触る共有面を本冊の中で台帳にする)。他の文書の追随は §16.2 |
 
-### 3.2 ユーザーシナリオ (20 本)
+### 3.2 ユーザーシナリオ (21 本)
 
 | ID | シナリオ |
 |---|---|
@@ -154,6 +154,7 @@
 | S18 | 家族プランの代表者の交代: `family_basic` を契約中の代表者 A が B に代表者を譲る (承諾、または運営の強制)。グループのプランは B の契約に従う (B に家族プランの契約が無ければ free に戻る)。A の契約はそのまま A のもの |
 | S19 | Stripe の一時停止と再開: Dashboard で作られた試用つきの契約が、支払い方法なしで試用を終えて Stripe の `paused` になる。後で支払い方法が付いて再開 (`resumed`) する |
 | S20 | 家族グループの作成: (a) `family_basic` を契約中の利用者が家族グループを作る → グループは `family_basic`。(b) 契約の無い利用者が `POST /api/family/groups` に `plan_key: 'family_pro'` を付けて作る → グループは `free` (課金なしで家族プランを名乗れない) |
+| S21 | 凍結中の解約: `pro` を契約中 (`active`) の利用者が凍結 (BAN) される。ログインすると凍結の画面 (`/frozen`) に回され、「有料プランの解約・お支払い」から `/frozen/billing` を開いて「解約する」で期間末の解約を予約する (次の更新で課金されない)。Billing Portal でカード・請求書も見られる。解約の取り消し・新規購入は凍結中はできない |
 
 ---
 
@@ -219,6 +220,7 @@
 | S18 | S3 の後、A (代表者・`family_basic` が `active`) が B に代表者を譲る → `accept_family_representative_transfer` (または `operator_force_representative_transfer`) が `UPDATE family_groups SET representative_id = B` → BEFORE UPDATE のトリガー `billing_family_plan_follow_representative` (§6.4 (10)。B の写像と advisory `billing-user:B` で直列): B に live な家族プランの契約が無い → 旧代表者 A に `plan_key='family_basic'` の live な行がある (= グループのプランは A の契約から来た) → `NEW.plan_key='free'`, `NEW.member_limit=4` → `get_effective_plan` は B とメンバーに `free`、A には個人契約の `family_basic` を返す。後で A が解約 → 写像の戻しは `representative_id = A` のグループ 0 行 (すでに free)。B が後で `family_pro` を買えば、写像が B のグループを `family_pro` にする。B が先に `family_pro` を契約していた場合は、交代の時点でトリガーが `family_pro`・上限 8 にする |
 | S19 | Dashboard で作られた試用つきの契約が試用終了 (支払い方法なし) で Stripe の `paused` → `customer.subscription.paused` → 取り直し (`paused`) → `expired` (`stripe_status='paused'`) → `plan_key_cached` は live な行から再計算 (NULL)・家族は free へ・監査 `status_changed trialing→expired`。後で支払い方法が付いて再開 → `customer.subscription.resumed` → 取り直し (`active`) → 他に live 行が無ければ `active` (監査 `status_changed expired→active`・家族の同期)。その間に利用者が別の契約を買っていたら `BILL_LIVE_ROW_CONFLICT` (S12 と同じ扱い) |
 | S20 | (a) `POST /api/family/groups` → `create_family_group` → `INSERT INTO family_groups (…, plan_key) VALUES (…, p_plan_key)` → BEFORE INSERT のトリガー (§6.4 (10)。代表者の写像と advisory `billing-user:<代表者>` で直列): 代表者に live な `family_basic` の行がある → `NEW.plan_key='family_basic'`・`NEW.member_limit=4` → メンバーは家族の `family_basic`。(b) 同じ流れで代表者に契約が無い → `NEW.plan_key='free'` (`p_plan_key='family_pro'` は使わない)・`member_limit` は既定の 4 → `get_effective_plan` は `free`。route と Zod (`plan_key` を受ける) は変えない (受けても DB が使わない。入力から外すのは family の冊。§16.2) |
+| S21 | 運営が `user_profiles.frozen_at` を入れる (契約の行も Stripe の契約も変わらない。凍結は課金を止めない。§12) → 利用者がログイン → middleware が画面を `/frozen` に回す → 「有料プランの解約・お支払い」→ `/frozen/billing` (`/frozen/` の下は凍結の差し戻しの対象外) → 画面が `GET /api/billing/subscription` → middleware: 凍結中だが `isFrozenAllowedApiPath` が真なので通す → route: `requireUserAllowingFrozen` (凍結を見ない。§9.8) → `getBillingSummary` → 要約 (`status: 'active'`・`can_cancel: true`・`has_customer: true`) → 画面は `billingStatusLines` の「ご利用中」と「解約する」「お支払い方法・請求書 (Stripe)」 →「解約する」→ 確認 → `POST /api/billing/subscription/cancel` (同じく通す) → `scheduleCancellation` (S6 と同じ: Stripe `cancel_at_period_end=true` → 写像 `api:cancel` → 監査 `user.billing.cancel_scheduled` (actor = 本人)) → 200 の要約で「ご利用中」「<日付> に解約されます」→ 期間末に Stripe が `customer.subscription.deleted` → `cancelled` (S6 と同じ)。「お支払い方法・請求書 (Stripe)」→ `POST /api/billing/portal` (通す) → Portal → 戻り先 `/account/billing` は middleware が `/frozen` へ回す。凍結中に `POST /api/billing/subscription/resume`・`/api/billing/checkout`・`/api/billing/checkout/sync`・`GET /api/billing/checkout/preview` を呼ぶと middleware が 403 `AUTH_ACCOUNT_FROZEN` (route に届いても `requireUser` が 403)。凍結が解ければ (一時 BAN の期限・運営の解除) `/account/billing` で取り消せる (期間末より前なら) |
 
 ---
 
@@ -238,7 +240,7 @@
 - **メール**: 支払失敗・試用終了・領収書の案内は Stripe の顧客向けメール (Dashboard の Customer emails) に任せ、核はアプリのメールを 1 通も送らない。送ると `tests/email-send-throttle-contract.test.ts` の除外・テンプレート・宛先停止リストとの整合が増える。ブランドのメールが要るなら配線で足す。
 - **試用の終了処理**: `04` §5.2 の日次ジョブ (試用終了 → `subscription.create`) は要らない。Checkout の `trial_period_days` と `payment_method_collection=always` で、Stripe が試用終了時に請求し `updated` を送る。
 - **Checkout の記録表**: `billing_checkout_sessions` は作らない。所有の確認は `client_reference_id`、プランは `metadata` で足りる。
-- **カスタム API 版のハンドラ**: イベントの payload から読むのは `id / type / created / livemode / data.object.id` と、`invoice` の `subscription` (acacia) か `parent.subscription_details.subscription` (basil) だけ。あとは取り直す。DB に残すイベントの記録も同じ考えで最小化した写しだけにする (`minimizeStripeEventPayload`。氏名・メールを DB に持たないので、退会で伏せる処理が要らない)。
+- **カスタム API 版のハンドラ**: 写し (`personal_subscriptions` ほか) を決めるためにイベントの payload から使うのは `id / type / created / livemode / data.object.id` と、`invoice` の `subscription` (acacia) か `parent.subscription_details.subscription` (basil) だけ。あとは取り直す。ほかに使うのは、`invoice.payment_failed` の監査 `system.payment.failed` の `details` に入れる請求の `id`・`attempt_count`・`amount_due` (写しには書かない。§8.2・§8.6) と、DB に残すイベントの記録の許可リストの項目 (下の最小化した写し) だけ。DB に残すイベントの記録も同じ考えで最小化した写しだけにする (`minimizeStripeEventPayload`。氏名・メールを DB に持たないので、退会で伏せる処理が要らない)。
 - **楽観的ロック (`If-Unmodified-Since`)**: 解約・取り消しの API には付けない。行は写しで、正本は Stripe。API は冪等 (すでに予約済みなら同じ結果を返す) で、DB 側は advisory lock で直列化する。`cross/02` §6.2 の表にロックキーの行を足す (§16.2)。
 - **SYSTEM ユーザー**: `'00000000-…'` の actor は作らない。system の監査行は `actor_id = NULL` (F14)。
 
@@ -969,6 +971,8 @@ ALTER TABLE public.personal_subscriptions
 | `cancelled` | × | × | NULL | ○ | 409 | ○ | ○ (履歴として残る) | – |
 | `expired` | × | × | NULL | ○ (`stripe_status='paused'` の行は Stripe で再開し得る。再開したときに別の live 行があれば §13.3 `BILL_LIVE_ROW_CONFLICT`。S19) | 409 | ○ | ○ (`stripe_status='paused'` なら再開で `trialing` / `active` に戻る。`incomplete_expired` は終端) | – |
 
+凍結 (BAN) 中の利用者 (`user_profiles.frozen_at` があり一時 BAN の解除前 = `isAccountFrozen` が真) は、上の表の列のうち「解約の予約 (`/cancel`)」「Portal」と契約の要約 (`GET /api/billing/subscription`) が凍結していないときと同じ値になる (middleware と route が凍結中も通す 3 本。§9.8)。「新規購入できる」は凍結中は全行で 403 `AUTH_ACCOUNT_FROZEN` (確認の `preview`・戻り画面の `checkout/sync` も)、解約の取り消し (`/resume`) も 403。凍結は status・`plan_key_cached`・家族の同期・写像を変えない (列「権利あり」「写像が書く」は凍結と関係なく同じ。§7.3 の凍結の行)。
+
 消費経路 (既存コード。origin/main で `personal_subscriptions` を名指しする `src/` の全ファイルと、本冊が書き換える写し (`user_profiles.plan_key_cached`・`family_groups.plan_key` / `member_limit`) を読む `src/`・`supabase/functions/`・DB 関数 (最新の定義) の全部) と本冊の影響。「読 / 書」= その経路が行を読むか書くか:
 
 | 消費経路 | 読 / 書 | 列 / 条件 | 本冊での変化 |
@@ -1014,6 +1018,7 @@ ALTER TABLE public.personal_subscriptions
 | 試用 | (04 の設計) SetupIntent + 日次ジョブで終了 | Checkout の `trial_period_days` + `payment_method_collection=always`。同じプランの再試用なし (0 日) |
 | 支払失敗 | (05 の設計) アプリがメール送信 | Stripe の顧客向けメール。アプリは `past_due` の写像 + 監査 |
 | 解約 | 無い | `/account/billing` から期間末の解約を予約・取り消し。即時解約は退会のとき |
+| 凍結 (BAN) 中の利用者の課金 | (課金が無い。凍結中は `/api/*` を退会と書き出しの 2 本を除いて 403・画面は `/frozen` へ) | 凍結は契約も Stripe の課金も止めない。`/frozen/billing` (§10.5) から解約の予約と Billing Portal ができる (`FROZEN_ALLOWED_API_PATHS` に契約の要約・解約の予約・Portal の 3 本を足し、3 本の route は `requireUserAllowingFrozen` で凍結を見ない。§9.8)。解約の取り消し・購入・同期・確認の内容は凍結中は 403 |
 | Billing Portal | 無い | `POST /api/billing/portal` |
 | 鍵 (`STRIPE_SECRET_KEY`) が無いときの `/account/billing` | (ページが無い) | 契約の要約 (`GET /api/billing/subscription`) と確認画面の内容 (`GET /api/billing/checkout/preview`) は 200 (Stripe を呼ばないので gateway を作らない)。Stripe を呼ぶ操作 (購入・同期・Portal・解約の予約と取り消し) だけが 503 |
 | 退会 | Stripe は未処理 | 段階 `billing` と `billing_recheck` (`deleteUser` の直前) で、開いた Checkout を閉じ、即時解約 (Stripe 側の顧客の全契約 + DB の行の和) + 顧客の匿名化。退会のあとに Stripe に生まれた契約は写像の入口 (`syncSubscription`) が即時解約 |
@@ -1044,6 +1049,11 @@ ALTER TABLE public.personal_subscriptions
 | 同上 (予約中) | 解約の取り消し `POST /api/billing/subscription/resume` | 同じ status (`cancel_at_period_end=false`, `cancel_at=NULL`) | live かつ S かつ `cancel_at_period_end` | Stripe 更新・写像 (`api:resume`)・監査 `user.billing.cancel_revoked` |
 | `trialing` / `active` / `past_due` / `grace` / `paused` | **Portal** で解約を予約 → `customer.subscription.updated` (`cancel_at_period_end=true`) (写像 `webhook:<event.id>`。route を通らない) | 同じ status (`cancel_at_period_end=true`, `cancel_at` = Stripe の値) | 鮮度 (`grace` / `paused` は保持の規則で `grace` / `paused` のまま) | UPDATE `cancel_at_period_end`・`cancel_at` のみ。**監査は書かない** (写像は status が変わったときだけ監査する。§6.4 の 11.。利用者の操作の記録は `stripe_webhook_events.payload` の最小化した写し (`status`・`cancel_at_period_end`・`cancel_at` を残す。§8.1) と Stripe の履歴に残る。§18 の 11)。`/account/billing` は `can_resume` になる (DB の側はテスト 103・要約の側はテスト 111) |
 | 同上 (予約中) | **Portal** で予約を取り消す → `customer.subscription.updated` (`cancel_at_period_end=false`) (写像 `webhook:<event.id>`) | 同じ status (`cancel_at_period_end=false`, `cancel_at=NULL`) | 鮮度 | 同上 (監査なし)。`/account/billing` は `can_cancel` になる (テスト 103・111) |
+| `trialing` / `active` / `past_due` / `grace` / `paused` で、利用者が凍結 (BAN) 中 (`isAccountFrozen` が真。§9.8) | 凍結中の解約予約 `POST /api/billing/subscription/cancel` (`/frozen/billing` の「解約する」。§10.5) | 同じ status (`cancel_at_period_end=true`, `cancel_at=current_period_end`) | live かつ S かつ予約なし (`can_cancel`)。凍結では止めない: middleware は `isFrozenAllowedApiPath` で通し、route は `requireUserAllowingFrozen` で凍結を見ない (§9.8) | 上の「利用者の解約予約」の行と同じ (Stripe `POST /subscriptions/{id}`・写像 `api:cancel`・監査 `user.billing.cancel_scheduled` (actor = 本人))。予約済みなら何もせず同じ要約 (冪等)。期間末の `deleted` は下の `cancelled` の行。S21 |
+| 同上 (凍結中。予約の有無を問わない) | 凍結中の Billing Portal `POST /api/billing/portal` (`/frozen/billing` の「お支払い方法・請求書 (Stripe)」) | 同じ (Portal を開くだけ。Portal の中で解約を予約 / 取り消せば、上の Portal の 2 行のとおり写る。写像は凍結を見ない) | 顧客がある (`has_customer`)。凍結では止めない (§9.8) | Stripe に Portal Session を作る。戻り先 `/account/billing` は、凍結中は middleware が `/frozen` へ回す (§10.5) |
+| 同上 (凍結中・予約中) | 凍結中の解約の取り消し `POST /api/billing/subscription/resume` | — (変わらない。予約は残り、期間末に `cancelled`) | 凍結中は通さない (`FROZEN_ALLOWED_API_PATHS` に無い) | middleware が 403 `AUTH_ACCOUNT_FROZEN` (route に届いても `requireUser` が 403)。`/frozen/billing` は「解約を取り消す」を描かない |
+| 任意 (行なし・live・live でない) で、利用者が凍結中 | 凍結中の新規購入 `POST /api/billing/checkout`・確認の内容 `GET /api/billing/checkout/preview`・戻り画面の同期 `POST /api/billing/checkout/sync` | — | 凍結中は通さない (`FROZEN_ALLOWED_API_PATHS` に無い) | middleware が 403 `AUTH_ACCOUNT_FROZEN` (route も `requireUser`)。顧客も Checkout Session も作らない。画面 (`/pricing`・`/account/billing`・`/account/billing/checkout`) も凍結中は `/frozen` へ回る。凍結の前に開いた Checkout を凍結中に完了した契約は、Webhook の写像で写る (写像は凍結を見ない。次の行)。その契約も `/frozen/billing` から解約を予約できる |
+| 任意 | 凍結 (運営が `frozen_at` を入れる)・凍結の解除 (`frozen_at` を外す・一時 BAN の `unban_at` を過ぎる) | 同じ (凍結は契約の行を変えない) | — | 何もしない。核は凍結で Stripe の課金を止めない (課金を止めるのは、利用者の解約の予約 (上の行)・運営の Stripe での解約・退会。§12・§18 の 20)。Webhook の受け口と写像は利用者の凍結を見ないので、凍結中も Stripe の変化 (更新・支払失敗・期間末の解約) はそのまま写る |
 | live (S) / `incomplete` | 既存の契約の Price (`items`) を運営が Stripe の Dashboard で付け替えた → `customer.subscription.updated` (写像)。核の画面と API は付け替えをしない (価格変更は新規契約のみ。`operator/04` §3.3・§0 の対象外。Portal のプランの変更は OFF。§17.1 の 3.) | 同じ status (Stripe の status の写像どおり) | 鮮度 | UPDATE `stripe_price_id`・`billing_interval` を Stripe の値に。`plan_key` は変えない (§6.4 (9) の 4.: 既存の行があればその `plan_key`。`metadata.plan_key` の有無・付け替え先の Price がどのプランかに関わらない) ので、`plan_key_cached`・家族のグループ (`plan_key` / `member_limit`) も変わらない。status が変わらなければ監査なし。別のプランに移す業務は新しい契約で行う (§18 の 16) |
 | `trialing` | 試用の終わりの前の通知 `customer.subscription.trial_will_end` (Stripe が試用の終わりの 3 日前に送る。`sync_subscription` = 契約を取り直して写す) (写像) | `trialing` (同じ)。取り直した Stripe の status が `trialing` でなければ (通知の処理より先に試用が終わった・解約された)、その status の行と同じ遷移 | 鮮度 | UPDATE (取り直した値。変わらない)。status が変わらないので監査は書かない。利用者への知らせは Stripe の顧客向けメール「試用終了前」(§17.1 の 4.) で、核はメールも監査も足さない。行が無ければ上の「–」の行 (契約が初めて写る)、退会済みなら下の `user_deleted` の 2 行。テスト 110 |
 | live (S) / `incomplete` | 保留中の付け替えの支払いが済んだ `customer.subscription.pending_update_applied` (`sync_subscription`) (写像)。核は保留つきの更新 (`payment_behavior=pending_if_incomplete`) を作らない (核が Stripe の契約に送る更新は解約の予約と取り消しの `cancel_at_period_end` だけ。§8.4) ので、運営が Stripe の Dashboard / API で付け替えたときだけ届く | 同じ status (Stripe の status の写像どおり) | 鮮度 | 上の「Price を付け替えた」の行と同じ: UPDATE `stripe_price_id`・`billing_interval` を Stripe の値に。`plan_key`・`plan_key_cached`・家族のグループは変えない。status が変わらなければ監査なし。テスト 110 (振り分け)・105 (写像) |
@@ -1100,6 +1110,7 @@ ALTER TABLE public.personal_subscriptions
 | `src/lib/billing/repository.ts` | `BillingRepository` の実装 (service_role の RPC と SELECT) | `core`・`@/lib/supabase/server`・`@/types/database.types` |
 | `src/lib/billing/service.ts` | ユースケース (facade)。route はこれだけを呼ぶ | `core`・`@/lib/db-logger`・`@/lib/site-config`・`@/lib/plan/entitlements` だけ。**`stripe-gateway`・`repository`・`@/lib/env` を import しない** (実装は route が作って `deps` で渡す。service が `stripe-gateway` を import すると、`@/lib/env` を通って Stripe を呼ばない GET の route まで AI の入口の棚卸し (§2.2 F24) に載る) |
 | `src/lib/billing/http.ts` | `BillingError` / `StripeApiError` / `AuthError` → `NextResponse` の対応と 400 の本文 | `core`・`next/server`・`@/lib/api/errors`・`@/lib/auth/errors` |
+| `src/lib/billing/auth.ts` | 凍結 (BAN) 中も通す 3 本の route の認証 `requireUserAllowingFrozen` (§9.8) | `@/lib/supabase/server`・`@/lib/auth/errors` だけ (`@/lib/env` に届くものを import しない。Stripe を呼ばない GET の route も使うため。F24) |
 | `src/lib/billing/public-plans.ts` | `/pricing` が読む「買えるプラン」の一覧 (RLS を通る client) | `core`・`@/lib/supabase/server`・`@/lib/db-logger` (`@/lib/env` に届くものを import しない。`/pricing` はページなので AI の印に届いてはいけない。F24) |
 | `src/lib/billing/account-deletion.ts` | 退会の段階 `billing` / `billing_recheck` (§11) | `core`・`stripe-gateway`・`repository`・`@/lib/account-deletion` (型だけ) |
 | `src/lib/webhook/verify.ts` | Stripe の署名の確認を足す (§8.3) | 既存のまま + `@/lib/env` |
@@ -1625,7 +1636,7 @@ export const StripeInvoiceRefSchema = z.looseObject({
 });
 export type StripeInvoiceRef = z.infer<typeof StripeInvoiceRefSchema>;
 
-/** イベントの外形。中身 (data.object) は id と object 以外を信じない (必ず取り直す。§4.1) */
+/** イベントの外形。中身 (data.object) は、写しを決めるのに id と object 以外を信じない (必ず取り直す。§4.1)。支払失敗の監査の details だけは請求の値を読む (§8.6) */
 export const StripeEventEnvelopeSchema = z.looseObject({
   id: z.string().startsWith('evt_'),
   object: z.literal('event'),
@@ -1999,6 +2010,66 @@ export function summarizeSubscription(row: SubscriptionRowView | null, hasCustom
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 契約の状態の表示文 (/account/billing と /frozen/billing が同じ文を出す。§10.3 の表)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** live な 5 値 (LIVE_SUBSCRIPTION_STATUSES) */
+export type LiveSubscriptionStatus = (typeof LIVE_SUBSCRIPTION_STATUSES)[number];
+
+/**
+ * status ごとの 1 行目の文 (§10.3 の表)。active は正常なので「ご利用中」だけを出す (お支払いの問題の文を付けない)。
+ * trialing は billingStatusLines が試用の終わりの日付「(X まで)」を続ける
+ */
+export const BILLING_STATUS_TEXT: Readonly<Record<LiveSubscriptionStatus, string>> = {
+  trialing: '無料期間中',
+  active: 'ご利用中',
+  past_due: 'お支払いに問題があります。お支払い方法をご確認ください',
+  grace: 'お支払いが確認できないため一部の機能を制限しています',
+  paused: '一時停止中',
+};
+/** 解約の予約中の 2 行目で、日付が無いとき (cancel_at も current_period_end も NULL。Stripe の予約では起きない) の文 */
+export const BILLING_CANCEL_SCHEDULED_WITHOUT_DATE_TEXT = '期間の終わりに解約されます';
+/** 画面の日付の書き方の言語 (Intl.DateTimeFormat の locales。日本語の「2026年10月21日」) */
+export const BILLING_DISPLAY_LOCALE = 'ja-JP';
+/**
+ * 画面の日付の時間帯 (IANA の名前)。Stripe の日時は UTC の ISO で写る (§6.4) ので、利用者 (日本) の暦の日付に直す
+ * (UTC のまま切ると、日本時間の 0〜9 時の終わりが前の日に見える)
+ */
+export const BILLING_DISPLAY_TIME_ZONE = 'Asia/Tokyo';
+const BILLING_DATE_FORMAT = new Intl.DateTimeFormat(BILLING_DISPLAY_LOCALE, {
+  timeZone: BILLING_DISPLAY_TIME_ZONE,
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+});
+
+/** ISO の日時を日本時間の日付「2026年10月21日」にする。null・日時として読めない値は null */
+export function formatBillingDate(iso: string | null): string | null {
+  if (iso === null) return null;
+  const time = Date.parse(iso);
+  return Number.isNaN(time) ? null : BILLING_DATE_FORMAT.format(time);
+}
+
+/**
+ * 契約の状態の表示 (§10.3 の表)。1 行目 = status の文 (trialing は「無料期間中 (X まで)」。X = trial_ends_at の日付)、
+ * 2 行目 = 解約の予約中 (cancel_at_period_end) なら「Y に解約されます」(Y = cancel_at、無ければ current_period_end の日付)。
+ * status が null (live な行が無い) か live でないときは空の配列 (画面は状態の文を出さない)。/account/billing と /frozen/billing が使う
+ */
+export function billingStatusLines(
+  summary: Pick<BillingSummary, 'status' | 'trial_ends_at' | 'current_period_end' | 'cancel_at_period_end' | 'cancel_at'>,
+): string[] {
+  const status = LIVE_SUBSCRIPTION_STATUSES.find((value) => value === summary.status);
+  if (status === undefined) return [];
+  const trialEnd = status === 'trialing' ? formatBillingDate(summary.trial_ends_at) : null;
+  const lines = [trialEnd === null ? BILLING_STATUS_TEXT[status] : `${BILLING_STATUS_TEXT[status]} (${trialEnd} まで)`];
+  if (summary.cancel_at_period_end) {
+    const cancelDate = formatBillingDate(summary.cancel_at ?? summary.current_period_end);
+    lines.push(cancelDate === null ? BILLING_CANCEL_SCHEDULED_WITHOUT_DATE_TEXT : `${cancelDate} に解約されます`);
+  }
+  return lines;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ポート (service.ts が使う。実装は stripe-gateway.ts / repository.ts。テストは偽物を渡す)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -2076,7 +2147,7 @@ export interface BillingRepository {
 
 - `core.ts` は I/O を持たない。`fetch` / `process.env` / Supabase を import したら blocking。
 - `STRIPE_TO_DB_STATUS` は §6.4 の `CASE` と 1 対 1 (`tests/billing-core.test.ts` (段 B。テスト 1) と `tests/integration/rls/billing-apply-subscription-rpc.test.ts` (段 A。テスト 53) の両方が、同じ 8 組をそれぞれのファイルに**リテラル**で書いて期待値に持つ。段 A のテストは core.ts を import しない。§14.2)。
-- 処理 (写像・監査) がイベントの `data.object` から読むのは `id` と (invoice のとき) `subscription` の参照だけ。それ以外の値を `personal_subscriptions` ほかの写しに書いたら blocking (§4.1 の原理 2)。
+- `handleStripeEvent` がイベントの `data.object` から使う (gateway・repository に渡す) 値は、写し (`personal_subscriptions`・`plan_key_cached`・`family_groups`) を決めるための `id` と (invoice のとき) `subscription` の参照と、`invoice.payment_failed` の監査 `system.payment.failed` の `details` に入れる請求の `id`・`attempt_count`・`amount_due` だけ (この 3 つは監査の記録で、写しには書かない。§8.6・S4)。それ以外の値を使う・`data.object` の値を写しに書いたら blocking (§4.1 の原理 2。テスト 33 が見る)。`StripeInvoiceRefSchema.safeParse` (`looseObject`) が知らない項目まで読むのは構わない (使わない値は捨てる)。DB に残すイベントの記録 (`minimizeStripeEventPayload`) は下の項目の許可リストで別に決める。
 - `stripe_webhook_events.payload` に書いてよいのは `minimizeStripeEventPayload(event)` の戻り値だけ (`BillingRepository.claimStripeEvent` の引数の型 `StoredStripeEventPayload` で強制する)。許可リスト `STORED_STRIPE_EVENT_OBJECT_FIELDS` に氏名・メールアドレス・住所・電話・`invoice_pdf` / `hosted_invoice_url` を足したら blocking。
 
 ### 8.3 `src/lib/webhook/verify.ts` に足す Stripe の署名の確認 (純粋な部分。型検査済み)
@@ -2324,7 +2395,7 @@ export function createStripeGateway(fetchImpl: typeof fetch = fetch): StripeGate
 
 - `DELETE /v1/subscriptions/{id}` の本文に `prorate=false` を付けるため、DELETE でも form-encode の本文を送る (Stripe は DELETE の本文を受け付ける)。
 - `fetchImpl` はテストで差し替える (`tests/billing-stripe-gateway.test.ts`)。
-- `createStripeGateway` は route の中で、認証 (`requireUser`) のあとに呼ぶ (鍵の有無の警告ログが未認証の連打で増えないように)。
+- `createStripeGateway` は route の中で、認証 (`requireUser`。凍結中も通す 2 本 (`portal`・`subscription/cancel`) は `requireUserAllowingFrozen`。§9.8) のあとに呼ぶ (鍵の有無の警告ログが未認証の連打で増えないように)。
 
 ### 8.5 `src/lib/billing/repository.ts` (BillingRepository の実装。service_role)
 
@@ -2697,7 +2768,8 @@ export async function recordStripeEventFailure(deps: BillingDeps, event: StripeE
 
 /**
  * 署名と claim を通ったイベントを処理する (POST /api/webhooks/stripe)。例外は route が finish(ok=false) + 500 にする。
- * data.object からは id と (invoice の) subscription の参照だけを読む (§4.1)。
+ * data.object から使うのは、写しを決めるための id と (invoice の) subscription の参照 (§4.1) と、invoice.payment_failed の
+ * 監査 system.payment.failed の details に入れる請求の id・attempt_count・amount_due だけ (この 3 つは写しには書かない。§8.2・テスト 33)。
  */
 export async function handleStripeEvent(deps: BillingDeps, event: StripeEventEnvelope): Promise<StripeEventOutcome> {
   const source = `webhook:${event.id}`;
@@ -2817,12 +2889,13 @@ export function billingErrorResponse(routeName: string, error: unknown, ctx: { u
 }
 ```
 
-`ForbiddenError` の `code` は `AUTH_ACCOUNT_FROZEN` (凍結中。`requireUser` が投げる)。文は固定 (`error.message` を本文に入れない。`tests/api-raw-error-message-scan.test.ts` の規則)。
+`ForbiddenError` の `code` は `AUTH_ACCOUNT_FROZEN` (凍結中。`requireUser` が投げる。凍結中も通す 3 本 (§9.8) は `requireUserAllowingFrozen` を使うので投げない)。文は固定 (`error.message` を本文に入れない。`tests/api-raw-error-message-scan.test.ts` の規則)。
+
 ---
 
 ## 9. API 仕様
 
-共通: 認証は `requireUser()` (`src/lib/auth/helpers.ts`。凍結中は 403 `AUTH_ACCOUNT_FROZEN`)。本文は JSON。応答は `{ data: … }` / `{ error: { code, message } }` (`cross/04` §5)。すべて `Cache-Control: no-store`。POST はレート制限 `billing` (10 回 / 分 / 利用者。超過は `rateLimitExceededResponse` の 429)。500 は `billingErrorResponse` → `internalError` (nested)。route は `src/lib/billing/service.ts` だけを呼び、`core.ts` の Zod で入力を検証する。`export const dynamic = 'force-dynamic'`。
+共通: 認証は `requireUser()` (`src/lib/auth/helpers.ts`。凍結中は 403 `AUTH_ACCOUNT_FROZEN`)。ただし凍結 (BAN) 中も通す 3 本 (`GET /api/billing/subscription`・`POST /api/billing/subscription/cancel`・`POST /api/billing/portal`) は `requireUserAllowingFrozen()` (`src/lib/billing/auth.ts`。凍結を見ない。§9.8)。本文は JSON。応答は `{ data: … }` / `{ error: { code, message } }` (`cross/04` §5)。すべて `Cache-Control: no-store`。POST はレート制限 `billing` (10 回 / 分 / 利用者。超過は `rateLimitExceededResponse` の 429)。500 は `billingErrorResponse` → `internalError` (nested)。route は `src/lib/billing/service.ts` だけを呼び、`core.ts` の Zod で入力を検証する。`export const dynamic = 'force-dynamic'`。
 
 本文の NULL 文字 (#1657): 本文を読む handler は `POST /api/billing/checkout` と `POST /api/billing/checkout/sync` の 2 つだけで、どちらも handler の最初の 2 行で `rejectNullCharacterBody(request)` を呼ぶ (400 `{ error, code: 'INVALID_CHARACTER' }` は既存の共通の形のまま。`plan_key` は `z.string()` なので、NULL 文字が `findPlan` の `.eq('plan_key', …)` まで届くと DB が拒んで 500 になる)。`cancel`・`resume`・`portal` は本文を読まず (`request.json()` を書かない)、この 2 行も置かない。Webhook (§9.6) は署名の確認より前に本文を JSON として読まないので置かず、`null-character-routes` の `EXCLUDED` に理由を書く (§16.1)。
 
@@ -2908,7 +2981,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 | | GET subscription | POST portal |
 |---|---|---|
 | 200 | `{ data: BillingSummary }` (鍵が無くても 200。gateway を作らない) | `{ data: { url } }` |
-| 401 / 403 | `AUTH_UNAUTHENTICATED` / `AUTH_ACCOUNT_FROZEN` | 同じ |
+| 401 / 403 | `AUTH_UNAUTHENTICATED`。凍結中も通す (403 `AUTH_ACCOUNT_FROZEN` は返さない。§9.8) | 同じ |
 | 404 | — | `BILL_CUSTOMER_NOT_FOUND` (まだ一度も購入していない) |
 | 429 | 返さない (レート制限を掛けない) | `RATE_LIMITED` |
 | 502 / 503 | 返さない (Stripe を呼ばない) | `EXT_STRIPE_API_FAILED` / `EXT_STRIPE_NOT_CONFIGURED` |
@@ -2921,7 +2994,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 |---|---|---|
 | 入力 | 無し | 無し |
 | 200 | `{ data: BillingSummary }` (予約済みなら何もせず同じ) | `{ data: BillingSummary }` |
-| 401 / 403 / 429 / 502 / 503 | 9.1 と同じ | 9.1 と同じ |
+| 401 / 429 / 502 / 503 | 9.1 と同じ | 9.1 と同じ |
+| 403 | 返さない (凍結中も通す。§9.8) | `AUTH_ACCOUNT_FROZEN` (凍結中。9.1 と同じ) |
 | 409 | `BILL_NO_LIVE_SUBSCRIPTION` (live かつ Stripe-backed の行が無い。手動付与は解約できない = 配線の画面) | `BILL_NO_LIVE_SUBSCRIPTION` / `BILL_CANCEL_NOT_SCHEDULED` |
 | Stripe | `POST /v1/subscriptions/{id}` `cancel_at_period_end=true` | 同 `false` |
 | 副作用 | 写像 (`api:cancel`)・監査 `user.billing.cancel_scheduled` | 写像 (`api:resume`)・監査 `user.billing.cancel_revoked` |
@@ -2959,6 +3033,84 @@ export const maxDuration = 30;
 ### 9.7 ログ (app_logs) の規則
 
 `createLogger('<ROUTE_NAME>')`。利用者の操作は `withUser(user.id)`。残すのは `plan_key` / `interval` / `stripe_subscription_id` / `checkout_session_id` / `event_id` / `event_type` / `status_from` / `status_to` / `request_id` だけ。メールアドレス・氏名・カード・秘密鍵・署名の値は残さない (db-logger のマスクに頼らず渡さない)。
+
+### 9.8 凍結 (BAN) 中の利用者が使える課金の API (3 本)
+
+理由: 凍結 (`user_profiles.frozen_at`。#1030) は契約も Stripe の課金も止めない (§12・§7.3 の凍結の行)。origin/main の middleware (`lib/supabase/middleware.ts:182-226`) は、凍結中の利用者の `/api/*` を、退会と書き出しの 2 本 (`src/lib/auth/frozen.ts` の `FROZEN_ALLOWED_API_PATHS`。#1445) を除いて 403 `AUTH_ACCOUNT_FROZEN` にし、画面は `/frozen` (`/frozen/` の下と `/contact` などを除く) に回す。そのままだと凍結中の利用者は `/account/billing` を開けず、解約の API も 403 で、退会のほかに課金を止める手段が無い。確認画面 (§10.2) は「解約予告期間 (いつでも。次回更新日まで利用可)」と表示し、R16 は 1 タップの解約を求めるので、凍結中も次の 3 本を通す。
+
+| API | 凍結中に通す理由 | 認証 |
+|---|---|---|
+| `GET /api/billing/subscription` (§9.4) | `/frozen/billing` (§10.5) が、解約できる契約か (`can_cancel`)・Portal を開けるか (`has_customer`)・状態と解約の予約の日付 (`billingStatusLines`) を読む。読み取りだけで、本人の契約だけを返す | `requireUserAllowingFrozen` |
+| `POST /api/billing/subscription/cancel` (§9.5) | 解約の予約 (期間末。次の更新から課金されない) | `requireUserAllowingFrozen` |
+| `POST /api/billing/portal` (§9.4) | 支払い方法の更新・請求書の履歴・Portal での解約 (§17.1 の 3.) | `requireUserAllowingFrozen` |
+
+通さないもの (凍結中は middleware が 403 `AUTH_ACCOUNT_FROZEN`。route に届いても `requireUser` が 403): `POST /api/billing/subscription/resume` (解約の取り消し = 利用を続ける操作)・`POST /api/billing/checkout`・`GET /api/billing/checkout/preview`・`POST /api/billing/checkout/sync` (購入 = 利用を始める操作)。`src/lib/auth/frozen.ts` の JSDoc の規則「足すのは本人がサービスから離れるための操作だけ」のとおり、離れる操作 (解約の予約) とその前提 (要約・Portal) だけを足す。Portal の中で予約を取り消すこと (Stripe の Portal の機能) は止めない (§18 の 21)。
+
+変えるもの:
+
+1. `src/lib/auth/frozen.ts`: 下の差分 (定数 3 つと、一覧の 3 行と、JSDoc の段落)。完全一致の判定 `isFrozenAllowedApiPath` はそのまま。middleware は一覧を読むだけなのでコードは変えない (コメント 2 か所だけ。§15.2)。
+2. 3 本の route: 骨格 (§9 の冒頭) の `import { requireUser } from '@/lib/auth/helpers';` を `import { requireUserAllowingFrozen } from '@/lib/billing/auth';` に、`const user = await requireUser();` を `const user = await requireUserAllowingFrozen();` に替える。ほかは骨格のまま (`billingErrorResponse` が `AuthError` を 401 にする。レート制限 `billing` は POST の 2 本にそのまま掛かる)。ほかの 4 本 (`checkout`・`checkout/preview`・`checkout/sync`・`subscription/resume`) は `requireUser` のまま (middleware がプロフィールを読めずに通したとき (fail-open) も、route が凍結を 403 にする)。どの route がどちらを呼ぶかは、テスト 115 が route のソースと `FROZEN_ALLOWED_API_PATHS` を突き合わせて見張る。
+3. `src/lib/billing/auth.ts` (新設): 下の `requireUserAllowingFrozen`。
+4. 画面: `/frozen/billing` (新設) と、凍結の画面 `/frozen` のリンク (§10.5)。
+
+```ts
+// tsc:skip — src/lib/auth/frozen.ts の差分の抜粋 (印の無い説明用の断片)。(1) ACCOUNT_EXPORT_API_PATH の定義の直後に 3 つの定数を足す。(2) FROZEN_ALLOWED_API_PATHS の JSDoc の末尾 (「一覧は tests (…) で固定している。」の行の後) に段落を 1 つ足す。(3) 配列の末尾に 3 行を足す。ほかの行 (isAccountFrozen・isFrozenAllowedApiPath・既存の JSDoc の文) は変えない
+/** 有料プランの契約の要約 (GET)。凍結中でも呼べる (billing/01 §9.8: /frozen/billing が、解約できる契約か・解約の予約の日付を読む) */
+export const BILLING_SUBSCRIPTION_API_PATH = '/api/billing/subscription';
+/** 有料プランの解約の予約 (POST。期間末に解約)。凍結中でも呼べる (billing/01 §9.8) */
+export const BILLING_CANCEL_API_PATH = '/api/billing/subscription/cancel';
+/** Stripe の Billing Portal を開く (POST。支払い方法の更新・請求書の履歴・Portal での解約)。凍結中でも呼べる (billing/01 §9.8) */
+export const BILLING_PORTAL_API_PATH = '/api/billing/portal';
+
+/*
+ * (FROZEN_ALLOWED_API_PATHS の JSDoc の末尾に足す段落)
+ *
+ * billing/01 §9.8: 有料プランの解約の予約と、その前提の 2 つ (契約の要約の読み取り・Billing Portal) も足す。
+ * 凍結は契約も Stripe の課金も止めないので、ここで止めると凍結中の利用者は退会のほかに課金を止められない
+ * (特定商取引法の最終確認画面の「解約予告期間 (いつでも)」に反する)。解約の取り消し (resume)・購入 (checkout・checkout/preview・checkout/sync) は
+ * 足さない (サービスの利用を続ける・始める操作のため)。どの route が凍結を見ない認証 (requireUserAllowingFrozen) を使うかは tests/api/billing-routes.test.ts が見張る
+ */
+export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
+  ACCOUNT_DELETE_API_PATH,
+  ACCOUNT_EXPORT_API_PATH,
+  BILLING_SUBSCRIPTION_API_PATH,
+  BILLING_CANCEL_API_PATH,
+  BILLING_PORTAL_API_PATH,
+]);
+```
+
+```ts
+// tsc:skip place=src/lib/billing/auth.ts — 既存のモジュール (@/lib/supabase/server・@/lib/auth/errors) を import するので単独の検査から外す (§8.0 の手順で置き場所に置いて検査する)
+import { AuthError } from '@/lib/auth/errors';
+import { createClient } from '@/lib/supabase/server';
+
+/** 凍結中も通す課金の route が受け取る利用者 (route は id だけを使う) */
+export interface BillingRouteUser {
+  id: string;
+  email: string | null;
+}
+
+/**
+ * 凍結 (BAN) 中の利用者も通す課金の route の認証 (billing/01 §9.8)。使うのは GET /api/billing/subscription・
+ * POST /api/billing/subscription/cancel・POST /api/billing/portal の 3 本だけ (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS に載る課金のパス。
+ * どの route が使うかはテスト 115 が見張る)。ログインのセッションだけを確かめ、凍結 (user_profiles.frozen_at) は見ない。
+ * requireUser() (src/lib/auth/helpers.ts) は凍結中に ForbiddenError('AUTH_ACCOUNT_FROZEN') を投げるので、この 3 本では使わない
+ */
+export async function requireUserAllowingFrozen(): Promise<BillingRouteUser> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  if (error || !user) throw new AuthError('AUTH_UNAUTHENTICATED');
+  return { id: user.id, email: user.email ?? null };
+}
+```
+
+- 一時 BAN (`unban_at` が未来) の継続中も同じ (`isAccountFrozen` が真の間)。凍結が解ければ、ほかの route も通常どおり通る。
+- メンテナンスモードの間は、凍結と関係なく 503 (§9.6 の注と同じ。`/api/billing/*` は `isMaintenanceExemptPath` に載せない)。
+- 同意のゲート (`cross/13a` の API の同意の許可リスト。設計中) は「`FROZEN_ALLOWED_API_PATHS` を含む」と決めているので、本冊の 3 本も未同意で通る側に入る (解約は利用規約の新しい版に同意しなくてもできる)。`cross/13a` の「2 本」の記述は §16.2 で直す。
+
 ---
 
 ## 10. 画面・モバイル
@@ -3025,7 +3177,20 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
 
 - `src/app/(main)/account/billing/page.tsx` (`"use client"`)。`GET /api/billing/subscription` を読む。
 - クエリ `checkout=success&session_id=` で開いたら、先に `POST /api/billing/checkout/sync` を呼ぶ (S9)。`status` がまだ無ければ「お申し込みを処理しています」を出し、`CHECKOUT_SYNC_RETRY_MS` (3 秒) ごとに `GET` を最大 `CHECKOUT_SYNC_MAX_RETRIES` (10 回) 読み直す。`checkout=cancelled` なら「お申し込みは完了していません」。
-- 表示: 現在のプラン (`effective_plan_key` が `plan_key` と違うときは「家族 / 組織のプランが適用中」も添える)・状態 (`trialing`「無料期間中 (X まで)」/ `active`・`past_due`「お支払いに問題があります。お支払い方法をご確認ください」/ `grace`「お支払いが確認できないため一部の機能を制限しています」/ `cancel_at_period_end`「X に解約されます」)・次回更新日・支払い周期。
+- 表示: 現在のプラン (`effective_plan_key` が `plan_key` と違うときは「家族 / 組織のプランが適用中」も添える)・状態 (下の表。`billingStatusLines(summary)` (§8.1) の戻り値を 1 行ずつ `<p>` で出す。画面に文を書かない)・次回更新日・支払い周期。
+
+  状態の表示文 (`status` × `cancel_at_period_end`。`summary` は `GET /api/billing/subscription` の `BillingSummary`。日付は `formatBillingDate` = 日本時間の「2026年10月21日」):
+
+  | `status` | 1 行目 (`BILLING_STATUS_TEXT`) | `cancel_at_period_end = false` | `cancel_at_period_end = true` (解約の予約中) |
+  |---|---|---|---|
+  | `trialing` | 無料期間中 (X まで)。X = `trial_ends_at` の日付 (NULL なら「無料期間中」だけ) | 1 行目だけ | 1 行目 + 2 行目「Y に解約されます」。Y = `cancel_at` の日付 (NULL なら `current_period_end` の日付。どちらも NULL なら「期間の終わりに解約されます」) |
+  | `active` | ご利用中 (お支払いの問題の文は出さない) | 1 行目だけ | 1 行目 + 2 行目 (同上) |
+  | `past_due` | お支払いに問題があります。お支払い方法をご確認ください | 1 行目だけ | 1 行目 + 2 行目 (同上) |
+  | `grace` | お支払いが確認できないため一部の機能を制限しています | 1 行目だけ | 1 行目 + 2 行目 (同上) |
+  | `paused` | 一時停止中 | 1 行目だけ | 1 行目 + 2 行目 (同上) |
+  | `null` (live な行が無い。`getBillingSummary` は `findLiveSubscription` を読むので、`incomplete` / `cancelled` / `expired` の行しか無いときも `null`。`billingStatusLines` は live でない status を受けても空を返す) | 文なし (空の配列) | — | — |
+
+  `cancel_at_period_end` は status と同時に成り立つ (§7.3 の予約の行は live 5 値のどれにも付く) ので、2 行目は 1 行目に足す (1 行目を置き換えない)。表はテスト 112 (関数) とテスト 113 (画面) が全組で見張る。
 - ボタン: `has_customer` → 「お支払い方法・請求書 (Stripe)」= `POST /api/billing/portal` → `url` へ。`can_cancel` → 「解約する」(確認ダイアログ) = `POST …/cancel`。`can_resume` → 「解約を取り消す」= `POST …/resume`。`can_purchase` → 「プランを見る」= `/pricing`。
 - `isNativeApp` なら表示だけ (ボタンは描かない)。
 - ボタンの POST (Portal・解約・取り消し) が 4xx / 5xx を返したら、`BILLING_ERROR_MESSAGES` の固定の文を出す (鍵が無いときの 503 `EXT_STRIPE_NOT_CONFIGURED` は「お支払いの受付は準備中です」)。要約の GET は鍵が無くても 200 なので、ページそのものは開ける (§9・S11)。
@@ -3042,9 +3207,23 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
   - ほかの公開ページ (`about` / `terms` / `privacy`) の「Web版を開く」は購入のページを開かないので残す。その先の Web のページからサイトの中を辿ると `/pricing` に行ける (トップ `/` のフッターなど) が、アプリが直接に開くのは購入のページではない。これをどう見るかはストアの規約の確認 (§18 の 2) に含める。
 - 上のほか、ネイティブの画面は本冊で変えない (契約の状態の表示は配線の冊)。
 - 規則 (ストアの規約に触れない形): アプリ内 (ネイティブ画面と、アプリが開く WebView のページの両方) に、有料プランの価格・購入ボタン・Web での購入への誘導 (リンク・文言) を出さない。既存の契約の状態 (プラン名・次回更新日・解約予約) を読み取り専用で出すのは可 (本冊では Web の `/account/billing` の WebView 表示がその形。ネイティブ画面での表示は配線の冊)。
-- 実装の仕組み: Web の 3 ページ (`/pricing` `/account/billing` `/account/billing/checkout`) が `is_native_app` Cookie (`useNativeAppMode` / `cookies()`) で購入導線を描かない。API 自体には制限を付けない (認可は同じ。制限は表示の規則)。
+- 実装の仕組み: Web の 3 ページ (`/pricing` `/account/billing` `/account/billing/checkout`) が `is_native_app` Cookie (`useNativeAppMode` / `cookies()`) で購入導線を描かない。凍結中の `/frozen/billing` (§10.5) は購入導線を持たず、解約と Portal のボタンをアプリの WebView (`isInNativeWebView()`) では描かない (`/account/billing` と同じく表示だけ)。API 自体には制限を付けない (認可は同じ。制限は表示の規則)。
 - 未確認: App Store / Google Play の規約の最新の文面と、審査での判断。openQuestions に残す (§18)。
 - 配布の順: 料金の画面を消した版のアプリを配布してから、Web で販売を始める (Price の登録。§17.3)。すでに配布した古い版 (料金の画面を持つ) が手元に残る利用者の扱いは §18 の 2。
+
+### 10.5 `/frozen/billing` — 凍結 (BAN) 中の解約とお支払い (§9.8)
+
+- `src/app/frozen/billing/page.tsx` (`"use client"`。default export `FrozenBillingPage`)。`/frozen/` の下なので、凍結中でも middleware が `/frozen` へ差し戻さない (`lib/supabase/middleware.ts:339-352` の `frozenExemptPaths` の前方一致)。同意のゲートも `/frozen` の下を対象外にしている (`lib/legal-consent.ts` の `EXEMPT_PREFIXES`)。
+- 呼ぶ API は `FROZEN_ALLOWED_API_PATHS` の課金の 3 本だけ (`src/lib/auth/frozen.ts` の `BILLING_SUBSCRIPTION_API_PATH`・`BILLING_CANCEL_API_PATH`・`BILLING_PORTAL_API_PATH` を import して使う。パスを文字列で書かない)。`/frozen/account` の画面 (退会と書き出し) と同じく、凍結中に 403 になる API を呼ばない。
+- 読み込み: マウント時に `setIsNativeApp(isInNativeWebView())` (`@/lib/native-auth-bridge`。`/frozen/account` と同じ判定。`useNativeAppMode` は `useSearchParams` を使うので、`(main)` の外のこのページでは使わない) のあと `fetch(BILLING_SUBSCRIPTION_API_PATH, { method: 'GET' })`。200 → 本文 `{ data: BillingSummary }` の `data` を状態に置く。401 → `router.push('/login')`。それ以外 → `role="alert"` で「契約の状態を読み込めませんでした。時間をおいて再度お試しください。」。読み込み中は「読み込んでいます…」。
+- 表示 (上から): 見出し「有料プランの解約・お支払い」/ 説明「アカウントが凍結されている間も、有料プランの解約の予約と、お支払い方法・請求書の確認はできます。」/ 状態: `summary.status` が `null` なら「有料プランの契約はありません。」、そうでなければ `billingStatusLines(summary)` (§10.3 の表) を 1 行ずつ `<p>` で出す / ボタン (下) / リンク「凍結のお知らせに戻る」(`/frozen`)・「サポートに問い合わせる」(`/contact`)。
+- ボタン (`isNativeApp` が偽のときだけ描く。アプリの WebView では状態の文だけ。§10.4・S14 と同じ規則):
+  - `summary.can_cancel` → 「解約する」。押すと `window.confirm('有料プランの解約を予約します。' + (d === null ? '次回の更新日' : d) + ' 以降は請求されません。よろしいですか？')` (`d = formatBillingDate(summary.current_period_end)`)。OK なら `fetch(BILLING_CANCEL_API_PATH, { method: 'POST' })` → 200 の `data` (`BillingSummary`) で状態を置き換え (2 行目「Y に解約されます」が出て、`can_cancel` が偽なのでボタンが消える)、`role="status"` で「解約を予約しました。」。押している間はボタンを無効にする。
+  - `summary.has_customer` → 「お支払い方法・請求書 (Stripe)」。押すと `fetch(BILLING_PORTAL_API_PATH, { method: 'POST' })` → 200 の `data.url` へ `window.location.assign`。Portal の戻り先は `/account/billing` (§8.6 `createPortalSession`) で、凍結中は middleware が `/frozen` へ回す (`/frozen` から再びこの画面へ来られる)。
+  - 描かないもの: 「解約を取り消す」(`can_resume` が真でも描かない。取り消しの API は凍結中は 403。§9.8)・「プランを見る」・`/pricing` へのリンク (購入は凍結中はできない)。
+  - POST が 2xx 以外: 401 → `router.push('/login')`。それ以外は本文の `error.code` が `BILLING_ERROR_MESSAGES` (§8.1) のキーならその文、キーでなければ (429 の `RATE_LIMITED`・500 など)「処理中にエラーが発生しました。時間をおいて再度お試しください。」を `role="alert"` で出す。
+- 凍結の画面 `src/app/frozen/page.tsx`: 「退会・データの書き出し」のリンクの下に、同じ見た目のリンク「有料プランの解約・お支払い」(`href` = 定数 `FROZEN_BILLING_PATH = "/frozen/billing"`。`FROZEN_ACCOUNT_PATH` と同じくファイルの先頭に置き、JSDoc に「凍結中の利用者が有料プランの解約の予約と Billing Portal を使う画面 (billing/01 §10.5)」)。説明の段落の最後の文「凍結中でも、データの書き出しと退会はできます。」を「凍結中でも、データの書き出しと退会、有料プランの解約はできます。」にする。ファイル冒頭の JSDoc に「billing/01 §10.5: 凍結中でも、有料プランの解約の画面 (/frozen/billing) へ行ける。」の 1 行を足す。ほかは変えない (ログアウトの順番・リンクの並び・文言)。
+- テスト: 116・117 (`src/__tests__/app/frozen-billing-page.test.tsx`)・118 (`src/__tests__/app/frozen-account-page.test.tsx` の `/frozen` の describe)。
 
 ---
 
@@ -3253,7 +3432,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | Webhook のイベント | `stripe_webhook_events` に全イベントの最小化した写し (`payload` = `StoredStripeEventPayload`。§8.1。氏名・メールアドレス・住所を持たない。配線が足す処理も `minimizeStripeEventPayload` を通して書く)。`processing_status` / `processing_started_at` / `attempt_count` / `error_message` (固定のコード) | 再処理は Stripe の再送が運ぶ (処理済みでないイベントには 2xx を返さないので、Stripe は最長 3 日まで再送し、`failed` と 15 分を過ぎた `processing` は再送で取り直される)。`stripe_event_stuck_check` は再処理のためには要らない。3 日の再送が尽きて残った `failed` / `processing` (`processing_started_at` が古い行) は、reconcile が写像で整合させ、Finance 画面に一覧を出す |
 | イベントの追加 | `STRIPE_EVENT_ACTIONS` に 1 行 (`charge.dispute.created` など) + `service.ts` の `switch` に 1 分岐 + Dashboard の登録 | チャージバック・メール |
 | 監査 | `admin_audit_logs` の `action_type` (§8.1 `BILLING_AUDIT_ACTIONS` の 9 つ)。`system.*` は `actor_id NULL`。`target_type` は `user` / `stripe_event` / `stripe_subscription` (§8.1 `BILLING_AUDIT_TARGET_TYPES`) | Finance 画面の履歴 (`system.billing.orphan_subscription_cancelled` (warn) は、退会した利用者の顧客に残った契約を解約したもの。最初の請求が済んでいれば運営が Stripe で返金する。§18 の 17) |
-| 要約 | `GET /api/billing/subscription` (`BillingSummary`) | モバイルの表示 |
+| 要約 | `GET /api/billing/subscription` (`BillingSummary`)。状態の文は `billingStatusLines` (§8.1・§10.3 の表) | モバイルの表示 (同じ文を使う) |
+| 凍結 (BAN) と課金 | 凍結 (`user_profiles.frozen_at`) は契約の行も Stripe の課金も変えない。写像と Webhook は利用者の凍結を見ない。凍結中の利用者は `/frozen/billing` から解約の予約と Billing Portal ができる (`FROZEN_ALLOWED_API_PATHS` に足す課金の 3 本と `requireUserAllowingFrozen`。§9.8・§10.5)。核に、凍結で Stripe の契約を止める (解約・一時停止) 処理は無い (§18 の 20) | 配線の冊も凍結を見ない (grace・reconcile は凍結と関係なく同じ)。運営が凍結にあわせて契約を解約・返金するときは Stripe で行い、届く `deleted` を写像が写す |
 | `grace` の機能制限 | `get_effective_plan` は `grace` を含めたまま。制限は各入口 (AI など) が `status='grace'` を見て 402 にする (05 §9) | 配線 |
 | 環境変数 | `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` (一覧)。鍵の有無は `createStripeGateway` が判定 | Vercel Cron の route も同じ gateway を使う |
 
@@ -3267,7 +3447,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 |---|---|---|---|
 | `BILL_INVALID_INPUT` [NEW] | 400 | Zod | 最初の issue の文 (details に全件) |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireUser` | 認証が必要です |
-| `AUTH_ACCOUNT_FROZEN` | 403 | `requireUser` | 権限がありません |
+| `AUTH_ACCOUNT_FROZEN` | 403 | middleware (凍結中の `/api/*`。`code` は同じで文は「アカウントが凍結されています」)・`requireUser` | 権限がありません。凍結中も通す 3 本 (`GET /api/billing/subscription`・`POST /api/billing/subscription/cancel`・`POST /api/billing/portal`。§9.8) は返さない |
 | `BILL_CHECKOUT_SESSION_MISMATCH` [NEW] | 403 | sync | このお申し込みは確認できません |
 | `BILL_CUSTOMER_NOT_FOUND` [NEW] | 404 | portal | お支払い情報がまだありません |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | checkout | すでに有効な契約があります |
@@ -3301,6 +3481,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | `BILL_UNKNOWN_PLAN` | subscription id / plan_key | plan_key を解決できない、または `subscription_plans` に無い | 同上。運営が Price を `subscription_plans` に登録する |
 | `BILL_UNKNOWN_STRIPE_STATUS` | status | Stripe が未知の status を返した (API 版の変更) | 同上。`STRIPE_API_VERSION` と Zod を見直す |
 | `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (別の Stripe 契約、または手動付与) がある。S12 の 2 本目、S19 で一時停止中に別の契約を買ってから再開した場合、`incomplete` の 1 本目が別の契約を買ったあとで完了した場合 (§7.3) | 同上。運営が Stripe で 2 本目を解約・返金する (S12)。解約すると届く `deleted` の写像が 2 本目の `cancelled` の行を INSERT する (§7.3 の「– → cancelled / expired」の行)。行が無いままでも、退会のときは Stripe の顧客の一覧から解約される (§11) |
+
 ---
 
 ## 14. テスト一覧 (it 名)
@@ -3346,7 +3527,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 30. `it('syncCheckoutSession: 403 when client_reference_id is not the user; no apply when session is not complete')`
 31. `it('scheduleCancellation is idempotent and audits once (a Stripe-backed paused row can be scheduled too); revokeCancellation 409 when not scheduled')`
 32. `it('handleStripeEvent: ignore / sync_subscription / invoice with and without subscription / payment_failed audits')`
-33. `it('handleStripeEvent reads nothing from data.object except id and the invoice subscription ref')`
+33. `it('handleStripeEvent uses nothing from data.object except id, the invoice subscription ref, and the invoice id / attempt_count / amount_due in the system.payment.failed audit details, and the apply snapshot comes only from the re-fetched subscription')` (§8.2。`customer.subscription.updated`・`invoice.paid`・`invoice.payment_failed` の 3 つのイベントで、`data.object` のほかの項目 (`customer_email`・`customer_name`・`amount_paid`・`status`・`metadata`・`lines` など) に目印の文字列・数値を入れて流す。偽の gateway と repository が受け取った引数を `JSON.stringify` してどこにも目印が出ないこと、`invoice.payment_failed` の監査の `details` のキーがちょうど `stripe_subscription_id`・`invoice_id`・`attempt_count`・`amount_due`・`event_id` の 5 つで値がイベントのものであること、`applyStripeSubscription` の snapshot が偽の `retrieveSubscription` の返した Subscription から作られる (請求の `attempt_count`・`amount_due` を持たない) ことを見る。`data.object` を Proxy で包んで「読んだキー」を数える書き方は、`StripeInvoiceRefSchema` (`looseObject`) が知らない項目まで読むので使わない)
 
 `tests/api/billing-routes.test.ts` (route。`@/lib/billing/service` をモック):
 34. `it('POST /api/billing/checkout: 401 unauthenticated, 403 frozen, 429 rate limited, 400 invalid body, 200 url')`
@@ -3453,6 +3634,28 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 `tests/billing-core.test.ts` (追加):
 111. `it('summarizeSubscription on rows shaped like the read-back after a Portal reservation and its revocation: a stripe-backed row with status active / trialing / past_due / grace and cancel_at_period_end true with cancel_at set gives can_resume true and can_cancel false; the same row with cancel_at_period_end false and cancel_at null gives can_cancel true and can_resume false')` (§7.3 の Portal の予約と取り消しの行の、画面の要約の側。行は `SubscriptionRowView` の形 (§8.5 `SUBSCRIPTION_VIEW_COLUMNS` の 9 列) をテストの中で組む。DB の側 (写像が `cancel_at_period_end`・`cancel_at` だけを変え、status を保ち、監査を書かない) はテスト 103 (段 A))
 
+追加 (R6 の指摘への対応。番号は 112〜119。段は §15.1):
+
+`tests/billing-core.test.ts` (追加。段 B):
+112. `it('billingStatusLines gives one status line per live status (trialing 無料期間中 (X まで) / active ご利用中 / past_due お支払いに問題があります。お支払い方法をご確認ください / grace お支払いが確認できないため一部の機能を制限しています / paused 一時停止中), adds Y に解約されます as a second line when cancel_at_period_end (Y = cancel_at, else current_period_end, else 期間の終わりに解約されます), returns [] for a null or non-live status, and formatBillingDate cuts the date in Asia/Tokyo')` (§10.3 の表の全組 = live 5 値 × 予約の有無の 10 組と、`null`・`cancelled` の 2 組を、期待値の文字列のリテラルで書く (`BILLING_STATUS_TEXT` から組み立てない)。日付は `'2026-10-20T15:30:00Z'` (日本時間で 21 日) を使い「2026年10月21日」になることを見る。`trialing` で `trial_ends_at` が NULL のときは「無料期間中」だけ・`formatBillingDate('not-a-date')` は null)
+
+`src/__tests__/app/account/billing-pages.test.ts` (追加。段 C):
+113. `it('/account/billing shows the §10.3 status lines for every live status with and without a scheduled cancellation: active shows ご利用中 and never お支払いに問題があります, paused shows 一時停止中, and a scheduled cancellation adds … に解約されます under the status line')` (偽の `fetch` が `GET /api/billing/subscription` に 10 組の要約を返し、描いた文をテスト 112 と同じリテラルで見る)
+
+`tests/api/billing-routes.test.ts` (追加。段 B):
+114. `it('GET /api/billing/subscription, POST /api/billing/subscription/cancel and POST /api/billing/portal authenticate with requireUserAllowingFrozen and return 200 for a frozen user without calling requireUser; POST checkout / checkout/sync / subscription/resume and GET checkout/preview call requireUser and return 403 AUTH_ACCOUNT_FROZEN when it throws ForbiddenError')` (`@/lib/billing/auth` の `requireUserAllowingFrozen` と `@/lib/auth/helpers` の `requireUser` をモックする。§9.8)
+115. `it('the billing routes whose URL path is in FROZEN_ALLOWED_API_PATHS call requireUserAllowingFrozen and not requireUser, and every other billing route calls requireUser and not requireUserAllowingFrozen')` (ソース走査: `src/app/api/billing/**/route.ts` を列挙し、ファイルのパスから URL (`/api/billing/…`) を作って `FROZEN_ALLOWED_API_PATHS` と突き合わせ、呼び出し (`requireUser(` / `requireUserAllowingFrozen(`) をコメントを除いたソースで見る。列挙が 7 本でなければ失敗 (走査の道が変わって 0 本で緑にならないように)。`FROZEN_ALLOWED_API_PATHS` の `/api/billing/` で始まる行がちょうど 3 本で、どれも列挙した route に当たることも見る。§9.8)
+
+`tests/billing-auth.test.ts` (新設。`src/lib/billing/auth.ts`。`@/lib/supabase/server` の `createClient` をモック。段 B):
+119. `it('requireUserAllowingFrozen returns the session user id and email without reading user_profiles, and throws AuthError AUTH_UNAUTHENTICATED when getUser returns no user or an error')` (偽の client の `from` は呼ばれたら失敗にする = 凍結の列を読まない)
+
+`src/__tests__/app/frozen-billing-page.test.tsx` (新設。`frozen-account-page.test.tsx` と同じく `react-dom/client` + `act` で描く。`next/navigation` の `useRouter`・`@/lib/native-auth-bridge` の `isInNativeWebView`・`fetch`・`window.confirm`・`window.location.assign` をモック。段 C。§10.5):
+116. `it('/frozen/billing reads GET /api/billing/subscription and shows the status lines; for a cancellable Stripe contract it confirms, calls POST /api/billing/subscription/cancel and shows the returned summary with … に解約されます and no cancel button; the Portal button calls POST /api/billing/portal and moves to its url; it never shows 解約を取り消す or a link to /pricing, and every fetched path is in FROZEN_ALLOWED_API_PATHS')`
+117. `it('/frozen/billing shows 有料プランの契約はありません without buttons when status is null, no cancel button for a manual contract, only the status lines in the app WebView, the fixed message for a 409 / 429 / 500 from cancel, and goes to /login on 401')`
+
+`src/__tests__/app/frozen-account-page.test.tsx` (追加。describe `凍結の画面 (/frozen)`。段 C):
+118. `it('有料プランの解約の画面 (/frozen/billing) へのリンクがある')` (リンクの文「有料プランの解約・お支払い」・`href` = `/frozen/billing`。§10.5)
+
 `tests/env-source-scan.test.ts` / `tests/check-env-script.test.ts`: 変更なし (一覧と `.env.example` を合わせれば緑)。
 
 ### 14.2 結合 (ローカル Supabase。`tests/integration/rls` と `security` に置き、CI の指定に当たる)
@@ -3517,8 +3720,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
 | A: DB 層 | migration + rollback (家族のトリガー・特権列ガードを含む)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト、本人の書き出しの `omit` と `billing_customers` の除外 (新しい列と表が migration と同時に見張りに当たるため)、`ai-usage-rpc.test.ts` と `plan-deprecate-subscribers.test.ts` の家族の作り方 (作成のトリガーで、INSERT で入れた家族プランが `free` に置き換わるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・`tests/integration/rls/ai-usage-rpc.test.ts`・`tests/integration/security/plan-deprecate-subscribers.test.ts` | 44〜49, 52〜70, 75, 80, 84, 85, 87, 88, 91, 92, 98, 99, 102〜106 (+ `account-export-scope` の延長・`ai-usage-rpc` と `plan-deprecate-subscribers` の追随)。どれも段 B の `src/lib/billing/*` を import しない (§14.2 の冒頭) |
-| B: サーバ層 | `src/lib/billing/*` (`public-plans.ts` を除く)、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、`ENV_SETUP.md`、API 7 本、Webhook、退会 (退会の既存テスト 3 本の追随を含む。§16.1)、AI の入口の一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` に 7 行 (§16.1。新しい route と退会の route が `@/lib/env` に届くため) | §8・§9・§11 | 1〜43, 72〜74, 81〜83, 86, 89, 90, 93〜96, 100, 107〜111 |
-| C: 画面層 | `/pricing` のデータ駆動化 (`src/lib/billing/public-plans.ts` を含む)、`/account/billing`、`/account/billing/checkout`、設定画面の行、public-claims の更新、手動の E2E の spec (`tests/e2e/.manual/billing-checkout.spec.ts`)、モバイルの料金の画面を消す (`apps/mobile`。§10.4。mobile の jest は `apps/mobile` で `npm test`) | §10・§14.3 | 50〜51, 76〜79, 97, 101 (+ 手動 71・mobile の `PublicPage.test.tsx` と `route-targets-exist.test.ts` の追随) |
+| B: サーバ層 | `src/lib/billing/*` (`public-plans.ts` を除く)、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、`ENV_SETUP.md`、API 7 本、Webhook、退会 (退会の既存テスト 3 本の追随を含む。§16.1)、AI の入口の一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` に 7 行 (§16.1。新しい route と退会の route が `@/lib/env` に届くため)、凍結中も通す 3 本 (`src/lib/auth/frozen.ts` の一覧と JSDoc・`src/lib/billing/auth.ts`・3 本の route の認証・middleware の見張り `middleware-frozen-allowed-api.test.ts` の追随・`lib/supabase/middleware.ts` のコメント 2 か所。§9.8。一覧の route が実在することを見張りが見るので、route と同じ段) | §8・§9・§11 | 1〜43, 72〜74, 81〜83, 86, 89, 90, 93〜96, 100, 107〜112, 114, 115, 119 (+ `middleware-frozen-allowed-api.test.ts` の追随) |
+| C: 画面層 | `/pricing` のデータ駆動化 (`src/lib/billing/public-plans.ts` を含む)、`/account/billing`、`/account/billing/checkout`、設定画面の行、public-claims の更新、手動の E2E の spec (`tests/e2e/.manual/billing-checkout.spec.ts`)、モバイルの料金の画面を消す (`apps/mobile`。§10.4。mobile の jest は `apps/mobile` で `npm test`)、凍結中の解約の画面 `/frozen/billing` と凍結の画面 `/frozen` のリンク (§10.5。`/frozen/account` の画面とテストはコメントだけ) | §10・§14.3 | 50〜51, 76〜79, 97, 101, 113, 116〜118 (+ 手動 71・mobile の `PublicPage.test.tsx` と `route-targets-exist.test.ts` の追随) |
 
 段 B は段 A のマージ後 (型の再生成済み) に始める。段 C は段 B のマージ後。
 
@@ -3526,13 +3729,13 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 
 新設:
 - `supabase/migrations/<番号>_billing_core.sql`・`supabase/rollbacks/<番号>_billing_core.down.sql`
-- `src/lib/billing/core.ts`・`stripe-gateway.ts`・`repository.ts`・`service.ts`・`http.ts`・`public-plans.ts`・`account-deletion.ts`
+- `src/lib/billing/core.ts`・`stripe-gateway.ts`・`repository.ts`・`service.ts`・`http.ts`・`public-plans.ts`・`account-deletion.ts`・`auth.ts` (§9.8)
 - `src/app/api/billing/checkout/route.ts`・`checkout/preview/route.ts`・`checkout/sync/route.ts`・`subscription/route.ts`・`subscription/cancel/route.ts`・`subscription/resume/route.ts`・`portal/route.ts`
 - `src/app/api/webhooks/stripe/route.ts`
-- `src/app/pricing/PricingPageView.tsx`・`src/app/(main)/account/billing/page.tsx`・`src/app/(main)/account/billing/checkout/page.tsx`・`src/components/billing/checkout-confirmation.tsx`
+- `src/app/pricing/PricingPageView.tsx`・`src/app/(main)/account/billing/page.tsx`・`src/app/(main)/account/billing/checkout/page.tsx`・`src/components/billing/checkout-confirmation.tsx`・`src/app/frozen/billing/page.tsx` (§10.5)
 - E2E (手動): `tests/e2e/.manual/billing-checkout.spec.ts` (テスト 71。§14.3)
 - mobile のテスト: `apps/mobile/__tests__/app/no-web-purchase-links.test.ts` (テスト 101。§10.4)
-- テスト: `tests/billing-core.test.ts`・`tests/billing-stripe-gateway.test.ts`・`tests/billing-service.test.ts`・`tests/billing-account-deletion.test.ts`・`tests/api/billing-routes.test.ts`・`tests/webhooks-stripe-route.test.ts`・`tests/billing-migration-contract.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts`・`tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`・`tests/integration/security/billing-personal-subscriptions-rls.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/settings/billing-link.test.ts`・`tests/billing-public-plans.test.ts` (テスト 97)
+- テスト: `tests/billing-core.test.ts`・`tests/billing-stripe-gateway.test.ts`・`tests/billing-service.test.ts`・`tests/billing-account-deletion.test.ts`・`tests/api/billing-routes.test.ts`・`tests/webhooks-stripe-route.test.ts`・`tests/billing-migration-contract.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts`・`tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`・`tests/integration/security/billing-personal-subscriptions-rls.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/settings/billing-link.test.ts`・`tests/billing-public-plans.test.ts` (テスト 97)・`tests/billing-auth.test.ts` (テスト 119)・`src/__tests__/app/frozen-billing-page.test.tsx` (テスト 116・117)
 
 変更:
 - `src/lib/webhook/verify.ts`・`src/__tests__/lib/webhook/verify.test.ts`
@@ -3542,6 +3745,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 - `src/__tests__/api/null-character-routes.test.ts` (`ENTRIES` 2 行と `EXCLUDED` 1 行。§16.1)
 - `src/app/pricing/page.tsx`・`tests/public-claims-guard.test.ts`
 - `src/app/(main)/settings/page.tsx` (行を 1 つ足す。テスト 79)
+- `src/lib/auth/frozen.ts` (定数 3 つ・`FROZEN_ALLOWED_API_PATHS` の 3 行・JSDoc の段落。§9.8)・`lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` (§16.1 の行)・`lib/supabase/middleware.ts` (コメント 2 か所だけ: `:193` と `:218-219` の「退会と個人データの書き出し (の API) だけ」を「凍結中も呼べる API (`FROZEN_ALLOWED_API_PATHS`。退会・書き出しと、有料プランの解約の 3 本。billing/01 §9.8)」に。コードは変えない) (段 B)
+- `src/app/frozen/page.tsx` (リンク 1 つ・定数 `FROZEN_BILLING_PATH`・説明の文 1 つ・冒頭の JSDoc 1 行。§10.5)・`src/__tests__/app/frozen-account-page.test.tsx` (テスト 118 と、冒頭のコメント `:10` の「凍結中でも止めない 2 つの API (FROZEN_ALLOWED_API_PATHS) 以外を呼ばない」を「凍結中でも止めない API (FROZEN_ALLOWED_API_PATHS) のうち退会と書き出しの 2 つ以外を呼ばない」に)・`src/app/frozen/account/page.tsx` (冒頭の JSDoc `:8` の「凍結中でも止めない 2 つ (…) だけ」を「凍結中でも止めない API (…) のうち退会と書き出しの 2 つだけ」にするコメントだけ。画面は変えない) (段 C)
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成)
 - `tests/integration/security/auth-users-fk-on-delete.test.ts` (期待の本数)
 - `tests/integration/rls/ai-usage-rpc.test.ts` (`createFamily` の家族のプランの入れ方だけ。§16.1)
@@ -3574,23 +3779,25 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | status の値 | `incomplete` |
 | 監査 action_type | §8.1 `BILLING_AUDIT_ACTIONS` の 9 つ (`system.billing.orphan_subscription_cancelled` を含む)。`target_type` の値 `stripe_subscription` |
 | route | `POST /api/billing/checkout`、`GET /api/billing/checkout/preview`、`POST /api/billing/checkout/sync`、`GET /api/billing/subscription`、`POST /api/billing/subscription/cancel`、`POST /api/billing/subscription/resume`、`POST /api/billing/portal`、`POST /api/webhooks/stripe` |
-| ページ | `/account/billing`、`/account/billing/checkout` |
-| TS モジュール | `src/lib/billing/{core,stripe-gateway,repository,service,http,public-plans,account-deletion}.ts`、`src/app/pricing/PricingPageView.tsx`、`src/components/billing/checkout-confirmation.tsx` |
+| ページ | `/account/billing`、`/account/billing/checkout`、`/frozen/billing` (凍結中の解約とお支払い。§10.5) |
+| TS モジュール | `src/lib/billing/{core,stripe-gateway,repository,service,http,public-plans,account-deletion,auth}.ts`、`src/app/pricing/PricingPageView.tsx`、`src/components/billing/checkout-confirmation.tsx`、`src/app/frozen/billing/page.tsx` |
 | TS の export (core) | §8.1 の `export` のとおり (数は §8.1 が正。ここに写して二重に数えない) |
 | TS の export (verify) | `parseStripeSignatureHeader`、`verifyStripeSignature`、`verifyStripeWebhook`、`StripeSignatureHeader` |
 | ポートのメソッド (§8.1。数は §8.1 が正) | `StripeGateway` の `listOpenCheckoutSessions`・`expireCheckoutSession` (退会で開いた Checkout を閉じる。§11) ほか、`BillingRepository` の各メソッド |
 | 写像の戻り値の項目 | `user_deleted` のときの `customer_closed` (§6.4 (9)・§8.1 `ApplySubscriptionResult`) |
 | 設計ゲートの検査の道具 (実装しない) | §8.0 の `design-module-check` (js。ブロックの 1 行目の印 `place=` / `append=` / `insert=` を読む) |
-| TS の export (ほか) | `createStripeGateway`、`createBillingRepository`、`BillingRpcError`、`BillingReadDeps`、`BillingDeps`、`CheckoutPreview`、`previewCheckout`、`startCheckout`、`syncSubscription`、`syncCheckoutSession`、`getBillingSummary`、`createPortalSession`、`scheduleCancellation`、`revokeCancellation`、`handleStripeEvent`、`recordStripeEventFailure`、`StripeEventOutcome`、`billingInvalidInputResponse`、`billingErrorResponse`、`listPurchasablePlans`、`collectSubscriptionsToCancel`、`expireOpenCheckoutSessions`、`defaultAccountDeletionBilling`、`AccountDeletionBilling`、`AccountDeletionBillingLogger`、`AccountDeletionBillingPhase`、`AccountDeletionBillingReport` (最後の 4 つは `src/lib/account-deletion.ts`) |
+| TS の export (ほか) | `createStripeGateway`、`createBillingRepository`、`BillingRpcError`、`BillingReadDeps`、`BillingDeps`、`CheckoutPreview`、`previewCheckout`、`startCheckout`、`syncSubscription`、`syncCheckoutSession`、`getBillingSummary`、`createPortalSession`、`scheduleCancellation`、`revokeCancellation`、`handleStripeEvent`、`recordStripeEventFailure`、`StripeEventOutcome`、`billingInvalidInputResponse`、`billingErrorResponse`、`listPurchasablePlans`、`collectSubscriptionsToCancel`、`expireOpenCheckoutSessions`、`defaultAccountDeletionBilling`、`AccountDeletionBilling`、`AccountDeletionBillingLogger`、`AccountDeletionBillingPhase`、`AccountDeletionBillingReport` (この 4 つは `src/lib/account-deletion.ts`)、`requireUserAllowingFrozen`・`BillingRouteUser` (`src/lib/billing/auth.ts`。§9.8)、`BILLING_SUBSCRIPTION_API_PATH`・`BILLING_CANCEL_API_PATH`・`BILLING_PORTAL_API_PATH` (`src/lib/auth/frozen.ts`。§9.8) |
 | 環境変数 | `STRIPE_WEBHOOK_SECRET` (一覧に追加。削除: `.env.example` の `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`) |
 | レート制限 | カテゴリ `billing` |
+| 凍結中も通す API の一覧 | `FROZEN_ALLOWED_API_PATHS` (`src/lib/auth/frozen.ts`) に 3 行 (`/api/billing/subscription`・`/api/billing/subscription/cancel`・`/api/billing/portal`。§9.8) |
 | 退会の段階 | `billing` (`prepare` の前)・`billing_recheck` (`delete_user` の直前) |
 | Webhook の応答 | 409 `{ error: 'event_in_progress' }` (§9.6 の 6'・§13.2) |
 | 本人のデータの書き出しの除外 | `ACCOUNT_EXPORT_EXCLUDED.billing_customers` |
 | 消す画面 (アプリ) | `apps/mobile/app/(public)/pricing.tsx` と入口の画面の「料金」のリンク (§10.4) |
 | AI の入口の一覧 (テストの道具) | `EXEMPT_ROUTES` の 7 行 (§16.1。`src/app/api/billing/{checkout,checkout/sync,portal,subscription/cancel,subscription/resume}/route.ts`・`src/app/api/webhooks/stripe/route.ts`・`src/app/api/account/delete/route.ts`) |
 | エラーコード | §13.1 の [NEW] 8 つ |
-| 画面の定数 | `CHECKOUT_SYNC_RETRY_MS = 3000`、`CHECKOUT_SYNC_MAX_RETRIES = 10` (`/account/billing` の page に置く。根拠: Webhook の到着は通常 1〜5 秒、30 秒で諦めて「時間をおいて再読み込み」を出す) |
+| 画面の定数 | `CHECKOUT_SYNC_RETRY_MS = 3000`、`CHECKOUT_SYNC_MAX_RETRIES = 10` (`/account/billing` の page に置く。根拠: Webhook の到着は通常 1〜5 秒、30 秒で諦めて「時間をおいて再読み込み」を出す)、`FROZEN_BILLING_PATH = "/frozen/billing"` (`src/app/frozen/page.tsx`。§10.5) |
+
 ---
 
 ## 16. 追随表
@@ -3604,7 +3811,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 1. 本冊が足す import の先が既存の走査テストの印に当たるか: AI の入口の棚卸し (`tests/helpers/ai-reach.ts` の `reachesAi`) を、新設・変更する route とページに当てる (§2.2 F24。印に届くのは `@/lib/env` を import するものだけ = `stripe-gateway.ts`・`verify.ts` を import する route と、`account-deletion.ts` を通る退会の route)。
 2. トリガーを足す表への書き込みの全数: `git grep -n -A3 -E "from\(['\"]family_groups['\"]\)" origin/main -- tests src supabase scripts | grep -E "insert\(|upsert\("` と `git grep -n -i "insert into (public\.)?family_groups" origin/main` と `git grep -n create_family_group origin/main -- tests`。`plan_key` に `free` 以外を入れるものだけが行になる (§2.2 F23)。
 3. RLS を変える表への書き込みの全数: `git grep -n "personal_subscriptions" origin/main -- tests src` のうち `insert(` / `update(` / `upsert(` の client が service_role でないもの (0 件。下の行)。
-4. 本冊が変える既存の関数・型 (`AccountDeletionStep`・`deleteAccount`・`SERVER_ENV_VARS`・`RateLimitCategory`・特権列ガード) と、本冊が同期元を変える列 `plan_key_cached` (§6.4 (9)・(11)) を名指しするテスト: `git grep -n <名前> origin/main -- tests src/__tests__`。
+4. 本冊が変える既存の関数・型 (`AccountDeletionStep`・`deleteAccount`・`SERVER_ENV_VARS`・`RateLimitCategory`・特権列ガード・凍結中も通す API の一覧 `FROZEN_ALLOWED_API_PATHS` / `isFrozenAllowedApiPath` と同じファイルの定数 (§9.8)) と、本冊が同期元を変える列 `plan_key_cached` (§6.4 (9)・(11)) を名指しするテスト: `git grep -n <名前> origin/main -- tests src/__tests__ lib/supabase/__tests__`。凍結の画面は `git grep -n -E "['\"]/frozen" origin/main -- src tests lib apps` も流す (§10.5)。
 5. 本冊が振る舞いを変える公開の面 (URL `/pricing`・`/account/billing`・`/account/billing/checkout`、`/pricing` の表示の文「有料プランは準備中です（販売開始前）」) を名指しするコードとテストを、Web だけでなくアプリ・共有のパッケージまで全域で: `git grep -n -E "['\"]/pricing['\"]|/pricing\b|/account/billing|有料プランは準備中" origin/main -- src apps packages tests ':!**/node_modules/**'`。出たファイルごとに「本冊のあとも正しいか」を決めて表に載せる (直す・変更なし・本冊の段の外 (§15.2 の「触らない」) のどれか)。
 
 | 番兵 | 反応する理由 (grep の語) | 直し方 | 段 |
@@ -3617,7 +3824,13 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/api-raw-error-message-scan.test.ts` | `src/app/api/billing/**`・`src/app/api/webhooks/stripe` の本文 | 固定の文だけ (`billingErrorResponse`)。`err.message` を本文に入れない | B |
 | `tests/lib-raw-error-message-scan.test.ts` | `src/lib/billing/*` の戻り値の `{ error: … }` | 結果のオブジェクトにエラーの `.message` を入れない (`StripeApiError.rawMessage` はログ専用) | B |
 | `tests/api-internal-error-routes-stage2.test.ts` | 新 route は対象外 | 変更なし | B |
-| `tests/role-check-source-scan.test.ts` | `src/app/api/billing/**` の handler | `requireUser` だけを使う。`roles` の手書き判定を書かない | B |
+| `tests/role-check-source-scan.test.ts` | `src/app/api/billing/**` の handler | `requireUser` (凍結中も通す 3 本は `requireUserAllowingFrozen`。§9.8・テスト 115) だけを使う。`roles` の手書き判定を書かない (このテストは `roles` の手書きの判定と組織・サポートの route だけを見るので、変更なしで緑) | B |
+| `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` (#1445。`FROZEN_ALLOWED_API_PATHS` を `toEqual` で固定・完全一致・凍結中に通すパスと 403 のままのパス・一覧の route の実在) | `FROZEN_ALLOWED_API_PATHS` に 3 行を足す (§9.8) | (1) 冒頭のコメントに「billing/01 §9.8: 有料プランの解約の予約と、その前提の 2 つ (契約の要約・Billing Portal) も止めない」を足す。(2) it「退会と書き出しの 2 つだけ (…)」の名前を「退会・書き出しと、有料プランの解約の 3 本 (契約の要約・解約の予約・Billing Portal) の 5 つだけ (足すときは、本人がサービスから離れるための操作かを確かめてから、このテストも直す)」にし、期待値を `['/api/account/delete', '/api/account/export', '/api/billing/subscription', '/api/billing/subscription/cancel', '/api/billing/portal']` に、`BILLING_SUBSCRIPTION_API_PATH`・`BILLING_CANCEL_API_PATH`・`BILLING_PORTAL_API_PATH` の値も `toBe` で見る。(3) 完全一致の it に、真になる 3 つと、偽になる `/api/billing`・`/api/billing/subscription/`・`/api/billing/subscription/resume`・`/api/billing/subscription/cancel/`・`/api/billing/checkout`・`/api/billing/checkout/sync`・`/api/billing/checkout/preview`・`/api/billing/portal/` を足す。(4) 凍結中に通す 2 つの `it.each` (Cookie と Bearer) に `['GET', '/api/billing/subscription']`・`['POST', '/api/billing/subscription/cancel']`・`['POST', '/api/billing/portal']` を足す。(5) 403 のままの `it.each` に `/api/billing/subscription/resume`・`/api/billing/checkout`・`/api/billing/checkout/sync`・`/api/billing/checkout/preview` を足す。「一覧のパスには、実際の route がある」は変えない (段 B で route ができるので緑) | B |
+| `src/__tests__/app/frozen-account-page.test.tsx` (`/frozen` のリンク・`/frozen/account` が `FROZEN_ALLOWED_API_PATHS` 以外を呼ばない) | `/frozen` にリンクを足す・一覧が 5 本になる | テスト 118 を足す。冒頭のコメント `:10` を直す (§15.2)。ほかの it は変えない (`/frozen/account` は課金の API を呼ばない。「以外を呼ばない」は `toContain` で見るので一覧が増えても緑。モックの `next/navigation` は `useRouter` だけで、`/frozen` は `useSearchParams` を使わないまま) | C |
+| `src/__tests__/app/frozen-page-logout.test.tsx` (`/frozen` のログアウトの順番) | `/frozen` の画面 | 変更なし (ボタン「ログアウト」を文で探す。リンクが 1 つ増えても変わらない) | — |
+| `tests/integration/security/frozen-account-self-service.test.ts` (#1445。凍結中の `/api` を本物の認証で) | 凍結中の `/api` | 変更なし (403 を見るのは `/api/pantry`・`/api/export/meals`。課金の 3 本を呼ばない) | — |
+| `lib/supabase/__tests__/middleware.test.ts:285`・`middleware-legal-consent.test.ts:236,363,375`・`tests/legal-consent-gate.test.ts:62,103` (`/frozen` の画面と前方一致) | `/frozen/billing` を足す | 変更なし (`/frozen/billing` は `/frozen` の前方一致で、凍結の差し戻しと同意のゲートの対象外のまま。§10.5) | — |
+| `tests/account-deletion-blocked-message.test.ts`・`src/lib/account-self-service.ts` (`ACCOUNT_DELETE_API_PATH` / `ACCOUNT_EXPORT_API_PATH` を import) | `src/lib/auth/frozen.ts` に定数を足す | 変更なし (2 つの定数の値と一覧の先頭 2 行は変えない) | — |
 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` の import | `repository.ts` は `getSupabaseAdmin` だけ。`@supabase/supabase-js` を import しない | B |
 | `tests/next15-async-request-api-scan.test.ts` | `createClient()`・`cookies()`・route の `params` | `await` を付ける。`pricing/page.tsx` は `await cookies()` | B・C |
 | `tests/site-config-guard.test.ts` | `success_url` / `return_url` | `getSiteUrl()` から作る (ドメインを書かない) | B |
@@ -3657,7 +3870,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/integration/rls/ai-usage-rpc.test.ts`・`ai-daily-limit-rpc.test.ts`・`coupon-apply-rpc.test.ts`・`tests/integration/security/plan-deprecate-subscribers.test.ts`・`account-export-scope.test.ts`・`tests/integration/operator/super-admin-plans-id.test.ts` | `personal_subscriptions` への INSERT/UPDATE | どれも service_role (`srAdmin` / `supabaseAdmin`) で書いているので RLS の変更に当たらない (`ai-usage-rpc.test.ts` と `plan-deprecate-subscribers.test.ts` は、家族のグループの作り方だけを別の行 (上の `ai-usage-rpc` の行と、下の `plan-deprecate-subscribers` の行) で直す。作成のトリガーに当たるため) (origin/main で確認: `account-export-scope.test.ts:205` の `insert()` は `:67-68` の `srAdmin.from(table).insert(row)`)。`account-export-scope.test.ts:505-507` の「出力しない列」の一覧に `stripe_status`・`stripe_synced_at` を足す (§14.2) | A |
 | `tests/integration/security/plan-deprecate-subscribers.test.ts:86-93` (`addFamily(planKey, status)` が service_role で `family_groups` に `plan_key: planKey` を付けて直接 INSERT し、F-1 (`:182-192`) が 409 `OP_PLAN_HAS_SUBSCRIBERS` と `counts.family_groups: 1` を期待する。後始末 `:134` は `delete().eq('plan_key', planKey)` で消し、`:139` で利用者を消す (`representative_id` は RESTRICT)) | 作成のトリガー (§6.4 (10)) は INSERT の呼び出し元を問わず、`subscriber` に家族プランの契約が無いので active のグループの `plan_key` を `free` に置き換える。そのままだと F-1 が 0 件で赤、後始末がグループを消せずに利用者の削除も失敗する (`dissolved` のグループはトリガーが触らないので F-2 は変わらない) | `addFamily` を「INSERT (`.select('id').single()` で id を受ける) のあと、service_role で `family_groups.plan_key` を `planKey` に UPDATE する」に直す (`ai-usage-rpc` の `createFamily` と同じ形。UPDATE OF `plan_key` はトリガーに当たらない)。コメントに「billing/01 §6.4 (10): active なグループの INSERT はトリガーが代表者の契約から plan_key を決めるので、プランの付いたグループは INSERT のあと service_role の UPDATE で作る」と書く。期待値・後始末は変えない | A |
 | service_role で `family_groups` に `plan_key` を入れずに直接 INSERT する結合テスト: `tests/integration/rls/family-member-names-scope.test.ts:125-130`・`family-rls-recursion.test.ts:101-106`・`hidden-content-visibility.test.ts:162`・`meals-meal-type-trigger.test.ts:565`・`membership-audit-select.test.ts:155`・`paste-meal-errors.test.ts:148`・`paste-meal-sandbox.test.ts:150`・`tests/integration/security/anon-definer-execute.test.ts:362`・`invite-rpc-token.test.ts:109`・`account-deletion.test.ts:266,733` (SQL の `insert into public.family_groups`) | 作成のトリガー (§6.4 (10)) | 変更なし (`plan_key` は既定の `free` で、代表者に家族プランの契約も無いので、トリガーの結果も `free` で同じ。`member_limit` は INSERT で触らない) | — |
-| `tests/ai-consent-enforcement.test.ts:164-167` (「AI へ送るコードに届く route は、すべて判定を呼ぶか、理由つきで除外されている」)・`:175-184` (「載せたファイルが実在し、届く」)・`:192-201` (「route 以外のファイルは届かない」)・`tests/ai-usage-contract.test.ts:185-187` (「公開ハンドラの全数 = 一覧の handlers」) / 一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` | `@/lib/env` (AI の印に届く。§2.2 F24) を import する `stripe-gateway.ts`・`verify.ts` に届く route: 新設の POST の 5 本 (`checkout`・`checkout/sync`・`portal`・`subscription/cancel`・`subscription/resume`)・`webhooks/stripe`・既存の `account/delete` (`account-deletion.ts` → `billing/account-deletion.ts` → `stripe-gateway.ts` → `env.ts`。§11) の 7 本 | `EXEMPT_ROUTES` の末尾 (既存の `webhooks/resend` の後) に下の 7 行を逐語で足す (段 B。退会の行も段 B の `account-deletion.ts` の変更と同じ PR)。**GET の 2 本 (`checkout/preview`・`subscription`) は載せない** (`stripe-gateway` を import しないので届かない。載せると `:175-184` が「届かない。一覧から外すこと」で赤。§9)。ページ (`/pricing`・`/account/billing`・`/account/billing/checkout`・設定画面) は `stripe-gateway` / `service` / `@/lib/env` を import しないので `:192-201` は緑のまま (`/pricing` が読む `public-plans.ts` は `db-logger` と `supabase/server` だけ。§8 の表)。`ai-consent-enforcement.test.ts`・`ai-usage-contract.test.ts` は変えない (`noAi` のハンドラは記録の検査の対象外)。届き方の裏付けはテスト 94 | B |
+| `tests/ai-consent-enforcement.test.ts:164-167` (「AI へ送るコードに届く route は、すべて判定を呼ぶか、理由つきで除外されている」)・`:175-184` (「載せたファイルが実在し、届く」)・`:192-201` (「route 以外のファイルは届かない」)・`tests/ai-usage-contract.test.ts:185-187` (「公開ハンドラの全数 = 一覧の handlers」) / 一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` | `@/lib/env` (AI の印に届く。§2.2 F24) を import する `stripe-gateway.ts`・`verify.ts` に届く route: 新設の POST の 5 本 (`checkout`・`checkout/sync`・`portal`・`subscription/cancel`・`subscription/resume`)・`webhooks/stripe`・既存の `account/delete` (`account-deletion.ts` → `billing/account-deletion.ts` → `stripe-gateway.ts` → `env.ts`。§11) の 7 本 | `EXEMPT_ROUTES` の末尾 (既存の `webhooks/resend` の後) に下の 7 行を逐語で足す (段 B。退会の行も段 B の `account-deletion.ts` の変更と同じ PR)。**GET の 2 本 (`checkout/preview`・`subscription`) は載せない** (`stripe-gateway` を import しないので届かない。載せると `:175-184` が「届かない。一覧から外すこと」で赤。§9)。ページ (`/pricing`・`/account/billing`・`/account/billing/checkout`・設定画面・`/frozen/billing`) は `stripe-gateway` / `service` / `@/lib/env` を import しないので `:192-201` は緑のまま (`/pricing` が読む `public-plans.ts` は `db-logger` と `supabase/server` だけ。`/frozen/billing` が読むのは `@/lib/billing/core`・`@/lib/auth/frozen`・`@/lib/native-auth-bridge` だけ。§8 の表・§10.5)。GET の `subscription` が import する `@/lib/billing/auth` (§9.8) も `supabase/server` と `auth/errors` だけで、届かない。`ai-consent-enforcement.test.ts`・`ai-usage-contract.test.ts` は変えない (`noAi` のハンドラは記録の検査の対象外)。届き方の裏付けはテスト 94 | B |
 | `tests/account-export.test.ts` | 偽の DB の `personal_subscriptions` の行 (新しい列を持たない) と、`omit` の 4 列が出ないこと | 変更なし (`omit` を足しても、偽の行に無い列は結果を変えない) | — |
 | `tests/admin-finance-exports-route.test.ts` | `subscriptions` の CSV の見出し 9 列・`created_at` の期間 | 変更なし (route の `select` は明示の 9 列のまま。§7.1) | — |
 | `tests/admin-users-email.test.ts`・`tests/admin-pii-view-audit.test.ts` | `/api/admin/users/[id]` の session client の `personal_subscriptions` (偽の結果) | 変更なし (route を変えない。運営ロールの SELECT ポリシーは保つ) | — |
@@ -3708,7 +3921,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 
 ### 16.2 他の文書への追随 (専権 PATCH。本冊の設計ゲート PASS 後、実装のマージと同じ PR か直後)
 
-**母集合の作り方**: `git grep -c -i -E "stripe|personal_subscriptions|plan_key_cached" origin/main -- docs '*.md' ':!docs/design/billing/**'` で出たファイル (origin/main `61c59321`・2026-10-15 で 44 本) を 1 本ずつ見て、本冊のあとも正しいかを決めた。どのファイルも下の表のどれかの行に入る (直す行・「変更なし」の行・「対象外」の行)。`docs/design/membership/*` は 0 件。実装の段 B の最初に同じ問い合わせを origin/main で流し直し、表に無いファイルが出たら報告する (他の文書は専権 PATCH なので、レーンは直さない)。
+**母集合の作り方**: `git grep -c -i -E "stripe|personal_subscriptions|plan_key_cached" origin/main -- docs '*.md' ':!docs/design/billing/**'` で出たファイル (origin/main `61c59321`・2026-10-15 で 44 本) を 1 本ずつ見て、本冊のあとも正しいかを決めた。凍結中も通す API (§9.8) の分は `git grep -l -E "FROZEN_ALLOWED_API_PATHS|isFrozenAllowedApiPath|/frozen/account" origin/main -- docs '*.md' ':!docs/design/billing/**'` (2 本: `cross/08`・`cross/13a`) を同じく見た。どのファイルも下の表のどれかの行に入る (直す行・「変更なし」の行・「対象外」の行)。`docs/design/membership/*` は 0 件。実装の段 B の最初に同じ問い合わせを origin/main で流し直し、表に無いファイルが出たら報告する (他の文書は専権 PATCH なので、レーンは直さない)。
 
 | 文書 | 箇所 | 直し方 | 期日 |
 |---|---|---|---|
@@ -3718,6 +3931,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの表 | `billing-user:{uuid}` (写像と、`family_groups` の作成・代表者の交代のトリガー)・`stripe-subscription:{sub_id}` の 2 行を足す (「Stripe webhook 二重処理防止 `stripe:event_id`」は claim に置き換えたと注記) | 段 A と同じ PR |
 | `docs/design/cross/08-legal-compliance.md` | §3.2 の見本・§9 の `handlePaymentFailed`・§10 | 見本の `/api/v1/webhooks/stripe` → `/api/webhooks/stripe`、`handlePaymentFailed` のメール送信は Stripe の顧客向けメール、`check_grace_period` の pg_cron は配線の冊、§10 は配線 | 段 B と同じ PR |
 | 同 | §16.2 手順・§16.3 表「Stripe の顧客・サブスクリプション」・§18・§19 | 段階 `billing` (`prepare` の前。開いた Checkout を閉じ・即時解約・顧客の匿名化) と `billing_recheck` (`deleteUser` の直前に同じ処理をもう一度) を足す。退会のあとに Stripe に生まれた契約は写像の入口が即時解約する (billing/01 §8.6) と書く。表の現行実装を「実装済み (billing/01 §11)」に。§19 の TODO 行「退会時の Stripe …」を閉じる | 段 B と同じ PR |
+| 同 (`cross/08`) | §16.2 削除フローの 1. と 2. (:791-797。凍結中の利用者は「退会 (POST /api/account/delete) と書き出し (GET /api/account/export) だけは止めない」) | 「だけは止めない」を「と、有料プランの解約の 3 本 (契約の要約・解約の予約・Billing Portal。billing/01 §9.8) は止めない」に。1. の凍結中の利用者の行に「有料の契約がある利用者は、退会の前に `/frozen/billing` から解約を予約できる (退会でも即時解約される。§11)」を足す | 段 B と同じ PR |
+| `docs/design/cross/13a-legal-consent-api-server.md` (設計中の冊。API の同意のゲート) | §6.2 の表の「許可リスト (凍結)」(:235「`FROZEN_ALLOWED_API_PATHS` 2 本」)・見張りの 4. (:934「2 本を含む」)・T-M14 (:989)・追随表 (:1083「確認のみ (一覧は変えない)」) | 「2 本」を「`FROZEN_ALLOWED_API_PATHS` の全部 (billing/01 §9.8 のあとは 5 本。数を書かずに一覧を参照する)」に。同意の許可リストが一覧を含むので、本冊の 3 本も未同意で通る (解約の予約は新しい版への同意を求めない。§9.8 の注)。13a の許可リストのスナップショット (見張りの 3.) に 3 本が入る | 13a の実装と本冊の段 B のうち、後にマージする方の PR (§16.3) |
 | `docs/design/operator/05-stripe-integration.md` | §4 全体・§6.1・§8・§9・§12・§13・§15 | §4 を「受け口の正本は billing/01 §9.6・§4.1。`as any` の見本と失敗イベントの扱いは廃止」に置き換える。§6.1 に `billing_customers` を足す。§8 の reconcile は「写像を呼ぶ」に (§12)。§15 の API 版は本冊 `STRIPE_API_VERSION` を正に | 段 B と同じ PR |
 | `docs/design/operator/04-plan-management.md` | §5.1 図・§5.2・§5.3 | 図に `incomplete` と「解約予約 (cancel_at_period_end)」を足す。§5.2 の SetupIntent + 日次ジョブを Checkout の `trial_period_days` に置き換える。§5.3 の「7 日後 cancelled」を「7 日後 grace・30 日後 cancelled」(05 §9 と同じ) に直す。§7 の `OP_TRIAL_ALREADY_USED` は「使わない (試用なしで購入できる)」と注記 | 段 B と同じ PR |
 | `docs/design/operator/01-data-model.md` | §3.7 DDL・§3.18・§3.9.1・§4 ER 図 | 新しい列・`incomplete`・ポリシーの置き換え・`billing_customers`・`plan_key_cached` の同期元 (写像)・`stripe_webhook_events.payload` は最小化した写し (氏名・メールアドレス・住所を持たない。本冊 §8.1・§9.6) を書く | 段 A と同じ PR |
@@ -3781,6 +3996,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `src/lib/rate-limit.ts` の `RateLimitCategory`・`CATEGORY_RULES` | B | カテゴリを足す PR | 行の追加だけ (§8.7) |
 | `src/lib/account-deletion.ts` の段階 (`AccountDeletionStep`) | B | 退会を変える PR | 段階の並び (§11) は本冊が正。同時に段階を変える PR とは直列にマージする |
 | `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES`・`src/__tests__/api/null-character-routes.test.ts` | B | route を足す PR すべて | 行の追加だけ (§16.1) |
+| `src/lib/auth/frozen.ts` の `FROZEN_ALLOWED_API_PATHS` と、それを固定する `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | B | 凍結中に通す API を変える PR・API の同意のゲート (`cross/13a`。許可リストがこの一覧を含み、スナップショットで固定する) | 行の追加だけ (§9.8)。`cross/13a` の実装と本冊の段 B は直列にマージし、後の方が相手の行を取り込んで両方の見張り (`middleware-frozen-allowed-api.test.ts` の `toEqual` と 13a のスナップショット) を直す (§16.2 の行) |
 | 受け口 `/api/webhooks/stripe`・`stripe_webhook_events`・`STRIPE_EVENT_ACTIONS` | B | 配線の冊・組織の課金の冊 | イベントの追加は §12「イベントの追加」の型。組織の契約は §16.2 の組織の行 |
 | `src/app/(main)/settings/page.tsx`・`src/app/pricing/page.tsx`・`apps/mobile/app/index.tsx` | C | 画面を変える PR | 行の追加・1 行の削除・`/pricing` の置き換えだけ (§15.2) |
 
@@ -3822,6 +4038,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 - `stripe trigger invoice.payment_failed` → `past_due` と `system.payment.failed`。
 - 退会 → Stripe の契約が `canceled`、顧客の氏名・メールが空、`billing_customers.anonymized_at` が入り `user_id` が NULL。退会の前に開いておいた Checkout の画面 (別のタブ) は `expired` で完了できない。
 - テストモードで、退会のあとに同じ顧客で作った契約 (`stripe` CLI で顧客 `cus_` に契約を作る) → Webhook の取り直しで即時解約され、`admin_audit_logs` に `system.billing.orphan_subscription_cancelled` が 1 行。
+- 凍結中の解約 (テストモード。テスト用の利用者で `pro` を買い、`user_profiles.frozen_at` を入れる) → ログインで `/frozen` に回り、「有料プランの解約・お支払い」から `/frozen/billing` →「解約する」で `cancel_at_period_end=true`・監査 `user.billing.cancel_scheduled` が 1 行。同じ利用者の `POST /api/billing/subscription/resume`・`POST /api/billing/checkout` は 403 `AUTH_ACCOUNT_FROZEN`。
 
 ---
 
@@ -3848,6 +4065,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | 17 | 退会のあとに Stripe に生まれた・残った契約 (`syncSubscription` が即時解約する。§8.6・§7.3) の最初の請求の返金と、解約しない場合の扱い | 自動で返金しない (核は返金を扱わない)。試用つきの最初の購入は試用中に解約されるので請求は起きない。試用の無い購入で最初の請求が済んでいれば、運営が監査 `system.billing.orphan_subscription_cancelled` (warn) から拾って Stripe で返金する。`customer_closed` が false の「退会済み」(当社の対応表に無い顧客の契約 = 同じ Stripe のテスト用アカウントを使う別の環境の契約、または運営が metadata の `user_id` を書き間違えた契約) は解約しない (当社の利用者のものと言えないため。運営が Finance 画面 (配線) で拾う) |
 | 18 | 退会の段階 `billing_recheck` と `deleteUser` の間の一瞬に完了した契約で、Webhook が `deleteUser` より前に着いて写ったもの (行は CASCADE で消える) | 次に届くイベント (同じ購入で続けて届く `invoice.paid` / `customer.subscription.updated`・試用の終わりの前の `trial_will_end`) の取り直しで `customer_closed` が true になり、即時解約される (§7.3)。間が数百ミリ秒しかないので起きにくい。配線の reconcile (`syncSubscription` を全契約に当てる) が最後の網になる (§12) |
 | 19 | 段 C で消す料金の画面 `app/(public)/pricing.tsx` を、#1659 の番兵 `tests/design-doc-removed-mobile-screens.test.ts` の一覧 `REMOVED_MOBILE_SCREENS` (#1673 で消した画面) に足すか | 足さない (§16.1 の行)。消したことはテスト 101 と `route-targets-exist.test.ts` の `removedScreens` が見る。足すなら、本冊で `app/(public)/pricing.tsx` を名指しする行のすべてに同じ行で「削除」を書く (段 C の PR で本冊の追随が要る) |
+| 20 | 凍結 (BAN) した利用者の有料の契約の課金を、凍結で自動的に止めるか (Stripe の解約・一時停止・返金) | 止めない (核に凍結を契機にした処理は無い。§12)。凍結中も利用者が `/frozen/billing` から解約を予約できるようにする (§9.8・§10.5)。運営が止めるときは Stripe で解約・返金し、届く `deleted` を写像が写す。業務の細部の判断なので、異議があれば戻す |
+| 21 | 凍結中の利用者が Billing Portal の中で解約の予約を取り消せる (Stripe の Portal の機能。核の取り消しの API `POST /api/billing/subscription/resume` は凍結中は 403) | 止めない (Portal は Stripe の画面で、核は Portal の中の操作を選ばない。取り消すと課金が続くのは利用者自身の操作の結果)。止めるなら §17.1 の 3. の Portal の構成を見直す (解約の取り消しは凍結していない利用者にも出なくなる) |
 
 ---
 
@@ -3864,5 +4083,6 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | v1.7 | 2026-10-15 | 網羅性 周 5 を反映: §8.1 `STRIPE_EVENT_ACTIONS` の `customer.subscription.trial_will_end`・`pending_update_applied`・`pending_update_expired`・`invoice.payment_action_required` の行を §7.3 に足し、12 種のイベントはどれも取り直しの合図で遷移は取り直した status で決まることを表の下に書く・`incomplete` のままの行に初回の請求の `payment_action_required` を足す・S1 / S4 のトレース・テスト 110 (§15.1 の段 B) |
 | v1.8 | 2026-10-15 | 設計ゲート R5 の指摘を反映: `/pricing` のカードは買える間隔 (`isPurchasable(plan, interval)` が真) ごとに金額と CTA「月額で始める」/「年額で始める」を出し、買えない間隔は金額も CTA も出さない・切替のトグルは置かない (§10.1 の表とカードの全パターン・§7.2・S1 / S3 のトレース・§10.4・テスト 50 / 51・§16.1 の `public-claims-guard` の行)・段 A の結合テストは段 B の `src/lib/billing/*` を import しない (§14.2 の冒頭・§15.1): テスト 103 から要約の検査を外して段 B のテスト 111 (`summarizeSubscription`) に移し、テスト 53 と 1 は status の写像の 8 組をリテラルで持つ (§8.2)・origin/main `56189b63` の新しい番兵 `tests/design-doc-removed-mobile-screens.test.ts` (#1659) を §16.1 に「変更なし」で載せ、料金の画面を一覧に足すかを §18 の 19 に |
 | v1.9 | 2026-10-15 | 網羅性 周 6 を反映: §16.2 に母集合の作り方 (`stripe|personal_subscriptions|plan_key_cached` を docs と `*.md` で grep した 44 本を 1 本ずつ判定) と、漏れていた文書の行 (operator/02 §9 の注・§21・§22・§24・§25、operator/03 §13・§26、operator/07 §4、operator/09 §3.2・§4・§9.1・§13・§12.2、cross/06 §4.2・§4.3・§4.4・§5.1・§9・§12、`00-architecture.md` :214 (SDK ラッパー → `billing/`)、org/04 :517 と requirements/02 :763-764 (一時停止は `pause_collection`)、requirements/03 の試用・DDL / RLS・reconcile、family / org の `migrate-to-personal`・family/03・family/08・組織の課金の文書、cross/07・cross/09、変更なしの文書と過去の記録) を足す・operator/CLAUDE.md の行に設計原則「2. Stripe との同期」を足す・R20 の指し先を新設の §16.3 (共有面の台帳。リポジトリに台帳のファイルは無い) に・§16.1 の母集合の問い 4. に `plan_key_cached` を足し、偽の DB で読むだけのテスト 3 本を「変更なし」の行に |
+| v1.10 | 2026-10-15 | 設計ゲート R6 の指摘を反映: (1) `/account/billing` の状態の表示文を `status` × `cancel_at_period_end` の表にし (`active` は「ご利用中」・`paused` は「一時停止中」・解約の予約は 2 行目に足す)、`billingStatusLines` / `formatBillingDate` を core に (§8.1・§10.3。テスト 112・113)。(2) 凍結 (BAN) 中の利用者も解約の予約・契約の要約・Billing Portal ができるように、`FROZEN_ALLOWED_API_PATHS` に 3 本を足し、3 本の route は `requireUserAllowingFrozen` で凍結を見ない (§9.8)。凍結中の解約の画面 `/frozen/billing` と `/frozen` のリンク (§10.5)・§7.1〜§7.3 の凍結の行・S21・§12 の凍結と課金の契約・§16 の追随 (テスト 114〜119)。(3) `handleStripeEvent` が `data.object` から使う値に、`invoice.payment_failed` の監査の `details` の請求の `id`・`attempt_count`・`amount_due` を足して §8.2・JSDoc・§5.2・テスト 33 の文をそろえる |
 | v1.1 | 2026-10-15 | 設計ゲート R1 の指摘を反映: 退会の解約を Stripe の顧客の一覧から列挙 (§11)・家族のプランを代表者に従わせるトリガー (作成と交代。§6.4 (10))・`plan_key_cached` を特権列ガードに (§6.4 (11))・Stripe の一時停止 / 再開 / unpaid の遷移 (§7.3)・`billing_customers` を書き出しから除外・処理中のイベントの再送は 409 (§6.4 (7)・§9.6)・`maxDuration` はリテラル (§9.6)・監査の `target_type` (§8.1) |
 
