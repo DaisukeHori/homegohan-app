@@ -3,6 +3,7 @@ import { generateRequestId } from '@/lib/db-logger';
 import { clampIntParam } from '@/lib/http-params';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // レシピ一覧取得
 export async function GET(request: Request) {
@@ -112,6 +113,9 @@ export async function GET(request: Request) {
 
 // レシピ作成
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const requestId = generateRequestId();
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
