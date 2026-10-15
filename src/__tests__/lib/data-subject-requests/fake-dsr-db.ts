@@ -84,6 +84,8 @@ export class FakeDsrDb {
   failNext: Partial<Record<Action, FakeError & { status?: number }>> = {};
   /** UPDATE を実行する直前に 1 回だけ呼ぶ (判定と書き込みの間に別の操作が入った状況の再現) */
   beforeUpdate: (() => void) | null = null;
+  /** true なら、件数を頼まれても count に null を返す (件数が取れなかった応答の再現) */
+  countUnavailable = false;
   private clock = Date.parse('2026-10-16T00:00:00.000Z');
 
   tick(): string {
@@ -198,7 +200,7 @@ export class FakeDsrDb {
     }
     if (call.limit !== null) rows = rows.slice(0, call.limit);
     const result = this.shape(rows, call, mode, HTTP_OK);
-    return call.count ? { ...result, count: total } : result;
+    return call.count && !this.countUnavailable ? { ...result, count: total } : result;
   }
 
   private executeInsert(call: FakeCall, mode: 'many' | 'maybeSingle' | 'single'): FakeResult {

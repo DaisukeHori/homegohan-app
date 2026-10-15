@@ -661,6 +661,13 @@ describe('listDsrForOperator', () => {
     expect(beyond).toEqual({ ok: true, data: { rows: [], total: null } });
   });
 
+  it('件数が取れなかった応答では、そのページの行数を total にする', async () => {
+    seedVerified('received');
+    seedVerified('in_progress', { user_id: OTHER });
+    db.countUnavailable = true;
+    expect(await list()).toMatchObject({ ok: true, data: { total: 2 } });
+  });
+
   it('416 以外の DB の失敗は 500', async () => {
     db.failNext.select = { code: 'XX000', message: 'x', status: 500 };
     expect(await list()).toMatchObject({ ok: false, status: 500, code: 'INTERNAL_ERROR' });
@@ -819,6 +826,12 @@ describe('updateDsrByOperator', () => {
     expect(await update(withNote, { status: to, response_note: '' })).toMatchObject({ status: 422 });
     expect(db.callsOf('update')).toHaveLength(0);
     expectNoEmails();
+  });
+
+  it('保存済みの応答が空白だけなら、status だけの fulfilled は 422 (空白は応答とみなさない)', async () => {
+    const row = seedVerified('in_progress', { response_note: '  \n ' });
+    expect(await update(row, { status: 'fulfilled' })).toEqual({ ok: false, status: 422, code: 'DSR_RESPONSE_NOTE_REQUIRED' });
+    expect(db.callsOf('update')).toHaveLength(0);
   });
 
   it('in_progress → in_progress (同じ状態の指定) は 409 DSR_INVALID_TRANSITION', async () => {

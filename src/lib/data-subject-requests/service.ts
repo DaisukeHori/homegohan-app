@@ -144,13 +144,6 @@ function internalFailure(cause: unknown): DsrServiceFailure {
   return fail(500, 'INTERNAL_ERROR', cause);
 }
 
-/** PostgREST のエラーの SQLSTATE (code) */
-function pgCodeOf(error: unknown): string | undefined {
-  if (typeof error !== 'object' || error === null) return undefined;
-  const { code } = error as { code?: unknown };
-  return typeof code === 'string' ? code : undefined;
-}
-
 /** 本人の verify / resend / withdraw が判定の前に読む 1 行 (service_role。本人の行だけ) */
 async function readRequesterActionRow(
   admin: DsrAdminClient,
@@ -237,7 +230,7 @@ export async function createDsr(
     .select(DSR_OWN_COLUMNS)
     .single();
   if (error) {
-    if (pgCodeOf(error) === PG_UNIQUE_VIOLATION) return fail(409, 'DSR_ALREADY_OPEN', error);
+    if (error.code === PG_UNIQUE_VIOLATION) return fail(409, 'DSR_ALREADY_OPEN', error);
     return internalFailure(error);
   }
   const row = rowAs<DsrOwnRow>(data);
@@ -390,7 +383,7 @@ export async function listDsrForOperator(
 
   const { data, error, count, status: httpStatus } = await query;
   const beyondLastPage =
-    !!error && (httpStatus === HTTP_RANGE_NOT_SATISFIABLE || pgCodeOf(error) === POSTGREST_RANGE_NOT_SATISFIABLE);
+    !!error && (httpStatus === HTTP_RANGE_NOT_SATISFIABLE || error.code === POSTGREST_RANGE_NOT_SATISFIABLE);
   if (error && !beyondLastPage) return internalFailure(error);
 
   const rows = beyondLastPage ? [] : rowsAs<DsrAdminListRow>(data);

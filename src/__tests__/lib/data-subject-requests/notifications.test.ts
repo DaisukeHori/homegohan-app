@@ -116,7 +116,7 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
     expect(getUserById).not.toHaveBeenCalled();
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(logs.info).toHaveBeenCalledTimes(1);
-    expect(logs.info.mock.calls[0][1]).toMatchObject({ dsr_request_id: ID, template });
+    expect(logs.info.mock.calls[0][1]).toStrictEqual({ dsr_request_id: ID, template });
     expect(logs.warn).not.toHaveBeenCalled();
   });
 
@@ -131,7 +131,7 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
 
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(logs.warn).toHaveBeenCalledTimes(1);
-    expect(logs.warn.mock.calls[0][1]).toEqual({
+    expect(logs.warn.mock.calls[0][1]).toStrictEqual({
       dsr_request_id: ID,
       template,
       error_code: 'unexpected_failure',
@@ -139,6 +139,15 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
       error_name: 'AuthApiError',
     });
     expectNoAddressInLogs(logs);
+  });
+
+  it.each(REQUESTER_SENDERS)('$template: エラーの手がかりは型が合うものだけ (文字列の code・数値の status・文字列の name)', async ({ template, send, status }) => {
+    const { admin } = makeAdmin(async () => ({ data: null, error: { code: 401, status: '500', name: null } }));
+    const logs = makeLog();
+
+    await send(admin, row({ status }), logs.log);
+
+    expect(logs.warn.mock.calls[0][1]).toStrictEqual({ dsr_request_id: ID, template });
   });
 
   it.each(REQUESTER_SENDERS)('$template: email が無い (null・空白) なら送らず warn', async ({ send, status }) => {
@@ -154,7 +163,7 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
     }
   });
 
-  it.each(REQUESTER_SENDERS)('$template: getUserById が例外を投げても reject せず、送らず warn', async ({ send, status }) => {
+  it.each(REQUESTER_SENDERS)('$template: getUserById が例外を投げても reject せず、送らず warn (エラーの名前だけを残す)', async ({ template, send, status }) => {
     const { admin } = makeAdmin(async () => {
       throw new Error(`boom ${EMAIL}`);
     });
@@ -164,7 +173,21 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
 
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(logs.warn).toHaveBeenCalledTimes(1);
+    expect(logs.warn.mock.calls[0][1]).toStrictEqual({ dsr_request_id: ID, template, error_name: 'Error' });
     expectNoAddressInLogs(logs);
+  });
+
+  it.each(REQUESTER_SENDERS)('$template: オブジェクトでない例外 (文字列・null) でも reject せず、手がかり無しで warn', async ({ template, send, status }) => {
+    for (const thrown of ['boom', null]) {
+      const { admin } = makeAdmin(async () => {
+        throw thrown;
+      });
+      const logs = makeLog();
+
+      await expect(send(admin, row({ status }), logs.log)).resolves.toBeUndefined();
+
+      expect(logs.warn.mock.calls[0][1]).toStrictEqual({ dsr_request_id: ID, template });
+    }
   });
 
   it.each(REQUESTER_SENDERS)('$template: sendEmail が { ok: false } (送れなかった) なら warn で resolve', async ({ template, send, status }) => {
@@ -181,7 +204,7 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
     await expect(send(admin, row({ status }), logs.log)).resolves.toBeUndefined();
 
     expect(logs.warn).toHaveBeenCalledTimes(1);
-    expect(logs.warn.mock.calls[0][1]).toMatchObject({
+    expect(logs.warn.mock.calls[0][1]).toStrictEqual({
       dsr_request_id: ID,
       template,
       error_code: 'rate_limit_exceeded',
@@ -208,14 +231,20 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
     expect(logs.warn.mock.calls[0][1]).toMatchObject({ error_code: 'not_configured', skipped: true });
   });
 
-  it.each(REQUESTER_SENDERS)('$template: sendEmail が例外を投げても reject せず warn', async ({ send, status }) => {
-    sendEmailMock.mockRejectedValue(new Error(`network down for ${EMAIL}`));
+  it.each(REQUESTER_SENDERS)('$template: sendEmail が例外を投げても reject せず warn', async ({ template, send, status }) => {
+    sendEmailMock.mockRejectedValue(Object.assign(new TypeError(`network down for ${EMAIL}`), { code: 'ECONNRESET' }));
     const { admin } = adminWithEmail();
     const logs = makeLog();
 
     await expect(send(admin, row({ status }), logs.log)).resolves.toBeUndefined();
 
     expect(logs.warn).toHaveBeenCalledTimes(1);
+    expect(logs.warn.mock.calls[0][1]).toStrictEqual({
+      dsr_request_id: ID,
+      template,
+      error_code: 'ECONNRESET',
+      error_name: 'TypeError',
+    });
     expectNoAddressInLogs(logs);
   });
 });
@@ -275,7 +304,7 @@ describe('運営への知らせ', () => {
 
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(logs.warn).toHaveBeenCalledTimes(1);
-    expect(logs.warn.mock.calls[0][1]).toMatchObject({ dsr_request_id: ID, template: DSR_EMAIL_TEMPLATES.operatorNotice });
+    expect(logs.warn.mock.calls[0][1]).toStrictEqual({ dsr_request_id: ID, template: DSR_EMAIL_TEMPLATES.operatorNotice });
   });
 
   it('設定ありならそのアドレスへ 1 通。本文に請求者の情報 (user_id・ニックネーム・メールアドレス・内容) を含まない', async () => {

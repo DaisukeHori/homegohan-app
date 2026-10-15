@@ -89,16 +89,18 @@ async function resolveRequesterEmail(
   }
 }
 
-/** 1 通を送る。失敗 (skipped を含む) と例外は warn ログにだけ残す。例外は投げない */
-async function deliver(
-  envelope: EmailEnvelope,
+/**
+ * 文面を組み立てて 1 通を送る。失敗 (skipped を含む) と例外 (組み立て・送信のどちらでも) は warn ログにだけ残す。例外は投げない
+ */
+async function renderAndDeliver(
+  render: () => EmailEnvelope,
   row: DsrNotificationRow,
   template: DsrEmailTemplate,
   log: DsrLogger,
 ): Promise<void> {
   const metadata = logMetadata(row, template);
   try {
-    const sent = await sendEmail(envelope);
+    const sent = await sendEmail(render());
     if (!sent.ok) {
       log.warn('dsr email: the email could not be sent', {
         ...metadata,
@@ -108,25 +110,8 @@ async function deliver(
       });
     }
   } catch (error) {
-    log.warn('dsr email: sending the email threw', { ...metadata, ...errorHints(error) });
+    log.warn('dsr email: building or sending the email threw', { ...metadata, ...errorHints(error) });
   }
-}
-
-/** 文面を組み立てて送る。組み立ての例外 (想定外の値) も warn ログにして、reject しない */
-async function renderAndDeliver(
-  render: () => EmailEnvelope,
-  row: DsrNotificationRow,
-  template: DsrEmailTemplate,
-  log: DsrLogger,
-): Promise<void> {
-  let envelope: EmailEnvelope;
-  try {
-    envelope = render();
-  } catch (error) {
-    log.warn('dsr email: building the email threw', { ...logMetadata(row, template), ...errorHints(error) });
-    return;
-  }
-  await deliver(envelope, row, template, log);
 }
 
 /** 本人確認のお願い (作成・再送のとき)。token は生のトークン (メールにだけ入れる) */
@@ -186,21 +171,11 @@ export async function sendDsrOperatorNotice(
   log: DsrLogger,
 ): Promise<void> {
   const template = DSR_EMAIL_TEMPLATES.operatorNotice;
-  let to: string | undefined;
-  try {
-    to = getOptionalEnv('ADMIN_NOTIFICATION_EMAIL');
-  } catch (error) {
-    log.warn('dsr email: reading ADMIN_NOTIFICATION_EMAIL threw; the operator notice is not sent', {
-      ...logMetadata(row, template),
-      ...errorHints(error),
-    });
-    return;
-  }
-  if (!to) {
+  const operatorAddress = getOptionalEnv('ADMIN_NOTIFICATION_EMAIL');
+  if (!operatorAddress) {
     log.warn('dsr email: ADMIN_NOTIFICATION_EMAIL is not set; the operator notice is not sent', logMetadata(row, template));
     return;
   }
-  const operatorAddress = to;
   await renderAndDeliver(
     () =>
       renderDsrOperatorNoticeEmail({
