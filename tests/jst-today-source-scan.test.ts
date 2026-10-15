@@ -690,6 +690,12 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
       '運営が隠したコンテンツの完全削除 (#1538) の期限 (hidden_at)。実行した時刻のちょうど 90 日前 (今からの相対時刻) で、' +
       '読むときと消すときの 2 回とも同じ期限で絞る。保管期間は隠した時刻から数えるので、暦日ではない',
   },
+  {
+    file: 'src/lib/data-subject-requests/service.ts',
+    rule: 'G',
+    count: 1,
+    reason: '運営の一覧の期限超過 (overdue=1) の絞り込み。応答期限 due_at を今の時刻 (ctx.now) と比べる。画面で選ぶ暦日ではない',
+  },
 ];
 
 const sources = listProductionSources();
