@@ -90,7 +90,10 @@ export interface ChallengeAggregate {
   participantCount: number | null;
   /** 値を出すのに必要な最小人数 (DB の関数が決める) */
   minParticipants: number;
-  /** 集計が済んだ参加者の平均。集計が済んだ人が最小人数に満たないときは null */
+  /**
+   * 集計が済んだ参加者の平均。集計が済んだ人が最小人数に満たないときは null。
+   * 人数も平均も、毎晩の更新の時点の控え (#1600。参加・やめる・脱退の直後には動かない)
+   */
   averageValue: number | null;
 }
 

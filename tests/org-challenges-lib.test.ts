@@ -5,7 +5,7 @@
  *   - 使える種類は 3 つ (朝食・野菜スコア・自炊)。歩数・体重・カスタムは使えない (健康データの同意の仕組みができるまで)
  *   - 画面・API の定義と、DB の定義がずれていない (contract):
  *       * 種類: DB の関数 update_org_challenge_progress が計算する種類 / 表の CHECK 制約の種類
- *       * 最小人数: DB の関数 get_org_challenge_aggregates の最小人数 (5)
+ *       * 最小人数: DB の関数 get_org_challenge_aggregates の最小人数 (10。#1600)
  *       * 順位表の人数: DB の関数 get_org_challenge_ranking の既定の人数 (cfg.default_limit) が RANKING_ENTRY_LIMIT と同じ。
  *         上限 (cfg.max_limit = 100) 以下。人数の数字は cfg にだけ書き、式には直に書かない
  *       * 状態: 表の CHECK 制約の状態
@@ -39,14 +39,26 @@ import {
 import { PUBLIC_ENV_VARS, SERVER_ENV_VARS } from '@/lib/env';
 
 const ROOT = path.resolve(__dirname, '..');
-/** この機能の migration。version (先頭の 14 桁) は付け替えられることがあるので、名前の後ろ半分で探す */
-function readMigration(): string {
-  const dir = path.join(ROOT, 'supabase/migrations');
-  const files = fs.readdirSync(dir).filter((f) => /^\d{14}_org_challenge_progress\.sql$/.test(f));
-  if (files.length !== 1) throw new Error(`org_challenge_progress の migration が ${files.length} 個ある: ${files.join(', ')}`);
-  return fs.readFileSync(path.join(dir, files[0]), 'utf-8');
+const MIGRATIONS_DIR = path.join(ROOT, 'supabase/migrations');
+/** migration のファイル名 (version 14 桁 + `_` + 名前 + `.sql`)。番号順に並べる */
+const MIGRATION_FILES = fs
+  .readdirSync(MIGRATIONS_DIR)
+  .filter((f) => /^\d{14}_.+\.sql$/.test(f))
+  .sort();
+
+/**
+ * 関数 1 本を最後に定義した migration の文面 (流した後に残る定義)。
+ * #1132 (*_org_challenge_progress.sql) のあと、#1600 (*_org_challenge_aggregate_snapshot.sql) が
+ * update_org_challenge_progress と get_org_challenge_aggregates を作り直したので、ファイル名ではなく定義で探す
+ */
+function definingMigration(name: string): string {
+  const pattern = new RegExp(String.raw`CREATE OR REPLACE FUNCTION public\.${name}\(`);
+  const found = MIGRATION_FILES.filter((f) =>
+    pattern.test(stripSqlComments(fs.readFileSync(path.join(MIGRATIONS_DIR, f), 'utf-8'))),
+  );
+  if (found.length === 0) throw new Error(`関数 ${name} を定義する migration が無い`);
+  return fs.readFileSync(path.join(MIGRATIONS_DIR, found[found.length - 1]), 'utf-8');
 }
-const MIGRATION = readMigration();
 const BASELINE = fs.readFileSync(path.join(ROOT, 'supabase/baseline/prod_schema.sql'), 'utf-8');
 
 /** SQL の中の 'a', 'b', 'c' のような文字列の並びを取り出す */
@@ -87,7 +99,9 @@ describe('使える種類と使えない種類', () => {
   });
 
   it('DB の関数 update_org_challenge_progress が計算する種類は、使える種類と同じ', () => {
-    const m = MIGRATION.match(/AND c\.challenge_type IN \(([^)]+)\)/);
+    const m = functionBody(definingMigration('update_org_challenge_progress'), 'update_org_challenge_progress').match(
+      /AND c\.challenge_type IN \(([^)]+)\)/,
+    );
     expect(m, 'migration に種類の絞り込みが見つからない').not.toBeNull();
     expect(quotedList(m![1]).sort()).toEqual([...ORG_CHALLENGE_TYPES].sort());
   });
@@ -120,10 +134,13 @@ describe('使える種類と使えない種類', () => {
 
 describe('最小人数 (DB の関数と同じ値)', () => {
   it('ORG_CHALLENGE_MIN_PARTICIPANTS は、DB の関数 get_org_challenge_aggregates の最小人数と同じ', () => {
-    const m = MIGRATION.match(/SELECT (\d+) AS min_participants/);
+    const m = functionBody(definingMigration('get_org_challenge_aggregates'), 'get_org_challenge_aggregates').match(
+      /SELECT (\d+) AS min_participants/,
+    );
     expect(m, 'migration に最小人数が見つからない').not.toBeNull();
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(Number(m![1]));
-    expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(5);
+    // 要件書 §6.4 の匿名化集計の最低人数 (#1600)
+    expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(10);
   });
 
   it('Web の定数・整形は @homegohan/shared の同じもの (モバイルの管理画面と値が分かれない)', () => {
@@ -155,7 +172,8 @@ function rowColumnsOf(types: string, table: string): string[] {
 describe('順位表の人数 (DB の関数 get_org_challenge_ranking の cfg と同じ値)', () => {
   /** 順位表の上限の人数 (migration の cfg.max_limit)。1 回に返す行数を、上位だけを見せる人数で打ち切る */
   const EXPECTED_MAX_LIMIT = 100;
-  const body = functionBody(MIGRATION, 'get_org_challenge_ranking');
+  const RANKING_MIGRATION = definingMigration('get_org_challenge_ranking');
+  const body = functionBody(RANKING_MIGRATION, 'get_org_challenge_ranking');
   const cfg = body.match(/SELECT (\d+) AS default_limit, (\d+) AS max_limit/);
 
   it('既定の人数 (cfg.default_limit) は RANKING_ENTRY_LIMIT と同じ。上限 (cfg.max_limit) は 100 で、既定の人数以上', () => {
@@ -167,7 +185,7 @@ describe('順位表の人数 (DB の関数 get_org_challenge_ranking の cfg と
 
   it('人数のしぼり込みは cfg を読む。引数の既定値は NULL (数字を引数と式の 2 か所に書かない)', () => {
     expect(body).toMatch(/LEAST\(GREATEST\(COALESCE\(p_limit, cfg\.default_limit\), 1\), cfg\.max_limit\)/);
-    const signature = stripSqlComments(MIGRATION).match(/CREATE OR REPLACE FUNCTION public\.get_org_challenge_ranking\(([\s\S]*?)\)\s*RETURNS/);
+    const signature = stripSqlComments(RANKING_MIGRATION).match(/CREATE OR REPLACE FUNCTION public\.get_org_challenge_ranking\(([\s\S]*?)\)\s*RETURNS/);
     expect(signature, 'get_org_challenge_ranking の引数が見つからない').not.toBeNull();
     expect(signature![1]).toMatch(/p_limit\s+integer DEFAULT NULL\b/);
     expect(signature![1]).not.toMatch(/DEFAULT \d/);
@@ -177,15 +195,16 @@ describe('順位表の人数 (DB の関数 get_org_challenge_ranking の cfg と
     ['get_org_challenge_ranking', /SELECT \d+ AS default_limit, \d+ AS max_limit/],
     ['get_org_challenge_aggregates', /SELECT \d+ AS min_participants/],
   ])('%s の本体には、cfg の外に人数の数字が無い (1 = 「1 人以上」と小数第 1 位の丸めだけ)', (name, cfgPattern) => {
-    const rest = functionBody(MIGRATION, name).replace(cfgPattern, '');
-    expect(functionBody(MIGRATION, name)).toMatch(cfgPattern);
+    const definition = functionBody(definingMigration(name), name);
+    const rest = definition.replace(cfgPattern, '');
+    expect(definition).toMatch(cfgPattern);
     const numbers = [...rest.matchAll(/(?<![\w.])\d+(?:\.\d+)?(?![\w.])/g)].map((m) => m[0]);
     expect(new Set(numbers)).toEqual(new Set(['1']));
   });
 });
 
 describe('集計に数えない記録 (お試しの記録・運営が隠した食事)。比較ランキングの集計と同じ決まり', () => {
-  const body = functionBody(MIGRATION, 'update_org_challenge_progress');
+  const body = functionBody(definingMigration('update_org_challenge_progress'), 'update_org_challenge_progress');
   const TYPES = fs.readFileSync(path.join(ROOT, 'src/types/database.types.ts'), 'utf-8');
   const SEGMENT_STATS = fs.readFileSync(path.join(ROOT, 'supabase/functions/calculate-segment-stats/index.ts'), 'utf-8');
 
@@ -370,10 +389,10 @@ describe('formatParticipantCount', () => {
     expect(formatParticipantCount(0)).toBe('0人');
   });
 
-  it('人数が無い (API が最小人数に満たないとき null で返す) ときは「5人未満」', () => {
-    expect(formatParticipantCount(null)).toBe('5人未満');
-    expect(formatParticipantCount(undefined)).toBe('5人未満');
-    expect(formatParticipantCount(Number.NaN)).toBe('5人未満');
+  it('人数が無い (API が最小人数に満たないとき null で返す) ときは「10人未満」', () => {
+    expect(formatParticipantCount(null)).toBe('10人未満');
+    expect(formatParticipantCount(undefined)).toBe('10人未満');
+    expect(formatParticipantCount(Number.NaN)).toBe('10人未満');
   });
 
   it('API が返した最小人数があれば、その人数で「未満」と表示する', () => {

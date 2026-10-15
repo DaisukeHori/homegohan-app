@@ -4614,6 +4614,38 @@ export type Database = {
           },
         ]
       }
+      organization_challenge_aggregates: {
+        Row: {
+          average_value: number | null
+          challenge_id: string
+          participant_count: number
+          ranked_count: number
+          updated_at: string
+        }
+        Insert: {
+          average_value?: number | null
+          challenge_id: string
+          participant_count: number
+          ranked_count: number
+          updated_at?: string
+        }
+        Update: {
+          average_value?: number | null
+          challenge_id?: string
+          participant_count?: number
+          ranked_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_challenge_aggregates_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: true
+            referencedRelation: "organization_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_challenge_participants: {
         Row: {
           challenge_id: string | null
@@ -8491,6 +8523,10 @@ export type Database = {
       record_ai_usage_at: {
         Args: { p_at: string; p_feature: string; p_user_id: string }
         Returns: undefined
+      }
+      refresh_org_challenge_aggregates: {
+        Args: { p_now?: string }
+        Returns: number
       }
       refund_ai_usage: {
         Args: { p_feature: string; p_usage_date: string; p_user_id: string }

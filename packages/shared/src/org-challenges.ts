@@ -8,14 +8,16 @@
 
 /**
  * 参加者数・平均を画面に出すのに必要な最小人数の、説明文用の値。
- * 実際の判定は DB の関数 get_org_challenge_aggregates (supabase/migrations/*_org_challenge_progress.sql の
- * `SELECT 5 AS min_participants`) が行い、API は判定に使った値 (minParticipants) を返す。この定数は、その値が来ないときの説明文の既定値で、
+ * 実際の判定は DB の関数 get_org_challenge_aggregates (それを最後に定義した migration。#1600 からは
+ * supabase/migrations/*_org_challenge_aggregate_snapshot.sql の `SELECT 10 AS min_participants`) が行い、
+ * API は判定に使った値 (minParticipants) を返す。この定数は、その値が来ないときの説明文の既定値で、
  * DB の関数と同じ値にそろえる (packages/shared/src/org-challenges.test.ts と tests/org-challenges-lib.test.ts が検査する)。
  * 少人数だと、誰が参加しているか・誰の値かが分かってしまうのを防ぐための下限。
+ * 10 人は、要件書 (docs/requirements/02-organization-management.md §6.4) の匿名化集計の最低人数 (#1600)。
  */
-export const ORG_CHALLENGE_MIN_PARTICIPANTS = 5;
+export const ORG_CHALLENGE_MIN_PARTICIPANTS = 10;
 
-/** 参加者数を画面に出す形にする。最小人数に満たない (API が null で返す) ときは「5人未満」 */
+/** 参加者数を画面に出す形にする。最小人数に満たない (API が null で返す) ときは「10人未満」 */
 export function formatParticipantCount(
   count: number | null | undefined,
   minParticipants: number = ORG_CHALLENGE_MIN_PARTICIPANTS,

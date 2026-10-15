@@ -14,17 +14,27 @@ import * as shared from './index';
 
 const ROOT = path.resolve(__dirname, '../../..');
 
-/** この機能の migration。version (先頭の 14 桁) は付け替えられることがあるので、名前の後ろ半分で探す */
-function readMigration(): string {
+/**
+ * get_org_challenge_aggregates を最後に定義した migration の、その関数の定義 (流した後に残る定義)。
+ * #1132 (*_org_challenge_progress.sql) のあと #1600 (*_org_challenge_aggregate_snapshot.sql) が作り直したので、
+ * ファイル名ではなく定義で探す。コメントの中の語は拾わない
+ */
+function latestAggregatesDefinition(): string {
   const dir = path.join(ROOT, 'supabase/migrations');
-  const files = fs.readdirSync(dir).filter((f) => /^\d{14}_org_challenge_progress\.sql$/.test(f));
-  expect(files, 'org_challenge_progress の migration がちょうど 1 本ある').toHaveLength(1);
-  return fs.readFileSync(path.join(dir, files[0]), 'utf8');
+  const definitions = fs
+    .readdirSync(dir)
+    .filter((f) => /^\d{14}_.+\.sql$/.test(f))
+    .sort()
+    .map((f) => fs.readFileSync(path.join(dir, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, ''))
+    .map((sql) => sql.match(/CREATE OR REPLACE FUNCTION public\.get_org_challenge_aggregates\([\s\S]*?\$\$([\s\S]*?)\$\$/))
+    .filter((m): m is RegExpMatchArray => m !== null);
+  expect(definitions.length, 'get_org_challenge_aggregates を定義する migration がある').toBeGreaterThan(0);
+  return definitions[definitions.length - 1][1];
 }
 
 describe('ORG_CHALLENGE_MIN_PARTICIPANTS', () => {
   it('DB の関数 get_org_challenge_aggregates の最小人数と同じ', () => {
-    const m = readMigration().match(/SELECT (\d+) AS min_participants/);
+    const m = latestAggregatesDefinition().match(/SELECT (\d+) AS min_participants/);
     expect(m, 'migration に最小人数が見つからない').not.toBeNull();
     expect(ORG_CHALLENGE_MIN_PARTICIPANTS).toBe(Number(m![1]));
   });
