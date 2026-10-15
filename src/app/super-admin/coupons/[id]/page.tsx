@@ -40,6 +40,15 @@ type Redemption = {
   ended_at: string | null;
 };
 
+type RedemptionsResponse = {
+  data?: Redemption[];
+  meta?: { total?: number; page?: number; per_page?: number };
+  error?: { message?: string };
+};
+
+/** 適用履歴の API (GET /api/super-admin/coupons/{id}/redemptions) のページ番号は 1 から */
+const FIRST_REDEMPTIONS_PAGE = 1;
+
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   active: { label: '有効', color: 'bg-green-100 text-green-700' },
   paused: { label: '停止中', color: 'bg-yellow-100 text-yellow-700' },
@@ -52,6 +61,10 @@ export default function CouponDetailPage() {
 
   const [coupon, setCoupon] = useState<Coupon | null>(null);
   const [redemptions, setRedemptions] = useState<Redemption[]>([]);
+  const [redemptionsTotal, setRedemptionsTotal] = useState<number | null>(null);
+  const [redemptionsPage, setRedemptionsPage] = useState(FIRST_REDEMPTIONS_PAGE);
+  const [redemptionsError, setRedemptionsError] = useState('');
+  const [isLoadingRedemptions, setIsLoadingRedemptions] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
   const [isSaving, setIsSaving] = useState(false);
@@ -84,14 +97,39 @@ export default function CouponDetailPage() {
     }
   }, [couponId]);
 
-  const fetchRedemptions = useCallback(async () => {
+  // 適用履歴 (#1571): API の既定のページ送り (1 ページ 50 件・meta.total) で読む。
+  // 1 ページ目は ?page を付けずに呼び (API の既定)、「さらに読み込む」で次のページを足していく。
+  // 取得に失敗したら黙って捨てず、画面に出す (#1570 の 404 が長く気づかれなかったため)。
+  const fetchRedemptions = useCallback(async (page: number = FIRST_REDEMPTIONS_PAGE) => {
     if (!coupon) return;
+    const isFirstPage = page === FIRST_REDEMPTIONS_PAGE;
+    setIsLoadingRedemptions(true);
+    setRedemptionsError('');
     try {
-      const res = await fetch(`/api/super-admin/coupons/${coupon.id}/redemptions`);
-      const data = await res.json() as { data?: Redemption[] };
-      if (data.data) setRedemptions(data.data);
+      const url = `/api/super-admin/coupons/${coupon.id}/redemptions${isFirstPage ? '' : `?page=${page}`}`;
+      const res = await fetch(url);
+      const data = await res.json().catch(() => ({})) as RedemptionsResponse;
+      if (!res.ok || !Array.isArray(data.data)) {
+        // 1 ページ目が取れなかったときは、前に読んだ履歴を「いまの履歴」として残さない (次のページの失敗なら、読んだ分は残す)
+        if (isFirstPage) {
+          setRedemptions([]);
+          setRedemptionsTotal(null);
+        }
+        setRedemptionsError(data.error?.message ?? '適用履歴の取得に失敗しました');
+        return;
+      }
+      const rows = data.data;
+      setRedemptions((prev) => (isFirstPage ? rows : [...prev, ...rows]));
+      setRedemptionsTotal(data.meta?.total ?? null);
+      setRedemptionsPage(page);
     } catch {
-      // non-critical
+      if (isFirstPage) {
+        setRedemptions([]);
+        setRedemptionsTotal(null);
+      }
+      setRedemptionsError('ネットワークエラーで適用履歴を取得できませんでした');
+    } finally {
+      setIsLoadingRedemptions(false);
     }
   }, [coupon]);
 
@@ -100,7 +138,7 @@ export default function CouponDetailPage() {
   }, [fetchCoupon]);
 
   useEffect(() => {
-    if (activeTab === 'redemptions') fetchRedemptions();
+    if (activeTab === 'redemptions') fetchRedemptions(FIRST_REDEMPTIONS_PAGE);
   }, [activeTab, fetchRedemptions]);
 
   const handleSave = async () => {
@@ -307,6 +345,11 @@ export default function CouponDetailPage() {
       {/* 適用履歴タブ */}
       {activeTab === 'redemptions' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          {redemptionsError && (
+            <div role="alert" data-testid="redemptions-error" className="px-4 py-3 text-sm text-red-700 bg-red-50 border-b border-red-200">
+              {redemptionsError}
+            </div>
+          )}
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200">
               <tr>
@@ -337,7 +380,7 @@ export default function CouponDetailPage() {
                   </td>
                 </tr>
               ))}
-              {redemptions.length === 0 && (
+              {redemptions.length === 0 && !redemptionsError && !isLoadingRedemptions && (
                 <tr>
                   <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                     適用履歴がありません
@@ -346,6 +389,20 @@ export default function CouponDetailPage() {
               )}
             </tbody>
           </table>
+          {redemptionsTotal !== null && redemptions.length < redemptionsTotal && (
+            <div className="px-4 py-3 border-t border-slate-100 flex items-center justify-between text-sm text-slate-500">
+              <span>{redemptions.length} / {redemptionsTotal} 件を表示</span>
+              <button
+                type="button"
+                data-testid="redemptions-load-more"
+                onClick={() => fetchRedemptions(redemptionsPage + 1)}
+                disabled={isLoadingRedemptions}
+                className="px-3 py-1.5 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                {isLoadingRedemptions ? '読み込み中...' : 'さらに読み込む'}
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>
