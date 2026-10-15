@@ -4,8 +4,9 @@
 //   - tests/design-doc-removed-mobile-screens.test.ts: 設計書 (docs/design/) が、消した画面をいまある画面として名指ししない
 //   - tests/docs-mobile-removed-references.test.ts: CLAUDE.md とモバイルの README が、消した名前をアプリの記述に書かない
 //   - tests/mobile-removed-files-references.test.ts: それ以外のソース・テスト・文書が、消したファイルや名前を、いまあるものとして名指ししない
-// パスは、どれもリポジトリの根からではなく、下の各定数のコメントに書いたディレクトリからの相対で書く
-// (この一覧そのものが、見張りの「apps/mobile/<ファイル>」の名指しに当たらないようにするため)。
+// パスは、どれもリポジトリの根からではなく、下の各定数のコメントに書いたディレクトリからの相対で書く。
+// この一覧そのものは tests/mobile-removed-files-references.test.ts の走査から外す (maestro の flow は名前だけの書き方も
+// 名指しとして数えるので、一覧の行が当たる)。
 
 /** #1673 (#1598 / #1610) と #1598 の続きで消したネイティブの画面 (apps/mobile/app からの相対) */
 export const REMOVED_MOBILE_SCREENS = [
@@ -96,6 +97,7 @@ export const REMOVED_MOBILE_SOURCE_FILES = [
   '__tests__/lib/super-admin-flags.test.ts',
   '__tests__/meals/detail.test.tsx',
   '__tests__/meals/favorite.test.tsx',
+  '__tests__/meals/status-badge.test.tsx',
   '__tests__/menu/pantry-item-expiry-days.test.tsx',
   '__tests__/menus-weekly/add-meal-slot-meal-types.test.tsx',
   '__tests__/menus-weekly/day-selector.test.tsx',
@@ -159,6 +161,10 @@ export const REMOVED_MOBILE_SOURCE_FILES = [
   'src/components/menu/StatsModal.tsx',
   'src/components/menu/WeeklyHeader.tsx',
   'src/components/photo/SignedPhotoImage.tsx',
+  'src/components/ui/ChipSelector.tsx',
+  'src/components/ui/ListItem.tsx',
+  'src/components/ui/StatCard.tsx',
+  'src/components/ui/StatusBadge.tsx',
   'src/hooks/useNutritionFeedbackWatch.ts',
   'src/hooks/useSignedPhotoUrl.ts',
   'src/lib/base64.ts',
@@ -184,6 +190,7 @@ export const MOBILE_NAMES_REMOVED_IN_1598 = [
   'AddMealModal',
   'AddMealSlotModal',
   'AddShoppingModal',
+  'AI_CONSENT_AUTOMATIC_LOCKED_NOTE',
   'BadgesPage',
   'ConfirmDeleteModal',
   'DishIconKey',
@@ -231,6 +238,7 @@ export const MOBILE_NAMES_REMOVED_IN_1598 = [
   'SignedPhotoImage',
   'SignedPhotoImageProps',
   'StatsModal',
+  'StatusBadge',
   'SuperAdminLayout',
   'SupportInquiriesPage',
   'SupportLayout',
