@@ -87,11 +87,17 @@ export type WebViewNativeCookieClearResult =
   /** Networking.clearCookies が無い・例外を投げた・上限の時間までに知らせが来なかった */
   | "failed";
 
+/** Networking のうち、ここで使う部分 (src/types/react-native-networking.d.ts) */
+export type CookieClearingNetworking = { clearCookies: (callback: (result: boolean) => void) => void };
+
 /**
  * ログアウトの時点で、WebView の Cookie の置き場を端末の側から空にする (#1612 / #1049 F7-16。上の「Cookie」の 1)。
  * 例外は投げない (消せなくてもログアウトは続ける)。サインアウトの前でも後でもよいが、ほかの掃除と同じ所 (clearUserScopedLocalData) で呼ぶ。
+ * networking はテストで差し替えるためのもので、アプリでは React Native の Networking を使う。
  */
-export function clearWebViewNativeCookies(): Promise<WebViewNativeCookieClearResult> {
+export function clearWebViewNativeCookies(
+  networking: Partial<CookieClearingNetworking> | undefined = Networking,
+): Promise<WebViewNativeCookieClearResult> {
   return new Promise((resolve) => {
     let settled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -102,12 +108,13 @@ export function clearWebViewNativeCookies(): Promise<WebViewNativeCookieClearRes
       resolve(result);
     };
     try {
-      if (typeof Networking?.clearCookies !== "function") {
+      const clearCookies = networking?.clearCookies;
+      if (typeof clearCookies !== "function") {
         finish("failed");
         return;
       }
       timer = setTimeout(() => finish("failed"), WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS);
-      Networking.clearCookies((result) => finish(result === true ? "cleared" : "nothing"));
+      clearCookies.call(networking, (result) => finish(result === true ? "cleared" : "nothing"));
     } catch {
       finish("failed");
     }
