@@ -11,7 +11,8 @@
  *   A. auth.users を指す外部キーに NO ACTION が 1 本も無い (許可リストは空。足すときは理由を書く)
  *   B. RESTRICT は「組織のオーナー」と「家族の代表者」の 2 本だけ (退会 API が先に 409 で止める仕様)
  *   C. SET NULL の外部キーの列はすべて NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
- *   D. 張り直した 32 本が、決めたとおりの動作 (CASCADE / SET NULL) になっている。admin_audit_logs の actor_id を指す外部キーは 1 本だけ
+ *   D. 張り直した 32 本 (と billing/01 で足した billing_customers.user_id の 1 本の計 33 本) が、決めたとおりの動作 (CASCADE / SET NULL) になっている。
+ *      admin_audit_logs の actor_id を指す外部キーは 1 本だけ
  *   E. 退会で消える表 (auth.users と、prepare_account_deletion が直接 DELETE する表から、CASCADE でたどれる表) を指す
  *      NO ACTION / RESTRICT の外部キーは、同じ削除で一緒に消える行からだけ参照されている (許可リスト)。
  *      同じ表を指す SET NULL の外部キーの列は NULL を許す (NOT NULL のままだと、退会が 23502 で失敗する)
@@ -111,7 +112,7 @@ const RESTRICT_ALLOWLIST: Readonly<Record<string, string>> = {
     '家族グループの代表者は、譲渡か解散をしないと退会できない (ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE)',
 };
 
-/** #1175 で張り直した 32 本の、決めた動作 */
+/** #1175 で張り直した 32 本と、billing/01 で足した 1 本 (計 33 本) の、決めた動作 */
 const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   // 本人だけの記録は本人と一緒に消す
   'nps_surveys.user_id': 'CASCADE',
@@ -148,6 +149,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'support_tickets.assignee_id': 'SET NULL',
   'system_settings.updated_by': 'SET NULL',
   'user_profiles.frozen_by': 'SET NULL',
+  // billing/01 §6.3: 利用者と Stripe Customer の対応表は、退会で行を残して紐づけだけ外す (anonymized_at が入った行が残る)
+  'billing_customers.user_id': 'SET NULL',
 };
 
 let fks: AuthUsersFk[];
