@@ -5,7 +5,7 @@
  * DB 側にも制約が無く (2026-10-06 の本番スナップショットで確認。#221 の meal_type の CHECK も本番には無い)、
  * 負のカロリーや桁外れの数値、NaN、想定外の meal_type がそのまま残っていた。
  * アプリ層 (src/lib/planned-meal-validation.ts) の確認を通らない書き込み経路
- * (モバイルが Supabase クライアントで直接 INSERT する apps/mobile/app/meals/new.tsx、
+ * (モバイルが Supabase クライアントで直接 INSERT していた apps/mobile/app/meals/new.tsx (2026-10-15 に画面ごと削除。#1598)、
  * service_role で書く Edge Function の献立生成) もあるため、DB 側でも止める。
  *
  * 修正 (20261008110000_planned_meals_value_checks.sql): BEFORE INSERT OR UPDATE OF の行トリガー

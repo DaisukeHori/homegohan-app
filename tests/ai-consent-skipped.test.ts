@@ -137,7 +137,6 @@ const READS_SKIPPED = /\baiSkippedReasonOf\(|\baiSummarySkippedNote\(/;
 const SKIPPED_NOT_SHOWN: Record<string, string> = {
   'src/app/(main)/meals/new/page.tsx':
     '健康診断の写真の読み取り (同意の確認を通ったあと) の結果を保存して、すぐ一覧へ移る。AI のレビューを表示しない',
-  'apps/mobile/app/meals/new.tsx': '同上 (アプリ)。保存して、すぐ血液検査の一覧へ移る',
   'apps/mobile/app/ai/[sessionId].tsx': '相談を閉じたら、すぐ前の画面へ戻る (要約を表示しない)',
   'apps/mobile/src/hooks/useHomeData.ts': 'アプリのホームは、この集計 (nutritionAnalysis) をどの画面にも出していない',
 };

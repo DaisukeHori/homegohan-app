@@ -200,12 +200,12 @@ export const HANDSON_TOUR_I18N_JA = {
       loading_text: 'バッジを確認中...',
 
       // intro
-      intro_title: '{nickname} さん、もう 2 つ獲得しています!',
+      intro_title: '{nickname} さん、もう 1 つ獲得しています!',
       intro_hint: 'タップで進む',
 
       // バッジ別吹き出し
       first_bite_title: 'はじめての一歩',
-      first_bite_bubble: '写真から記録を 1 度しました',
+      first_bite_bubble: '食事を記録するともらえるバッジです',
       planner_title: 'プランナー',
       planner_bubble: '献立を 1 度作りました',
       tutorial_complete_title: '使い方マスター',
@@ -219,7 +219,7 @@ export const HANDSON_TOUR_I18N_JA = {
       error_skip_button: 'あとで',
 
       // a11y
-      a11y_title: 'ステップ 4 / 5、{nickname} さん、もう 2 つバッジを獲得しています',
+      a11y_title: 'ステップ 4 / 5、{nickname} さん、もう 1 つバッジを獲得しています',
     },
 
     // ====== Step 4 卒業 ======

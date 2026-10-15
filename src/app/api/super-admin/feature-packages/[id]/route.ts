@@ -14,6 +14,7 @@ import { createClient } from '@/lib/supabase/server';
 import { FeaturePackageUpdateSchema } from '@/lib/super-admin/feature-packages-schemas';
 import { internalError } from '@/lib/api/errors';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { invalidInputResponse, invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -51,6 +52,9 @@ export async function GET(_request: NextRequest, props: RouteContext) {
 }
 
 export async function PATCH(request: NextRequest, props: RouteContext) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const params = await props.params;
   try {
     const user = await requireRole(['super_admin']);
