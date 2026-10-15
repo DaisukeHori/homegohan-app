@@ -95,6 +95,9 @@
 | F18 | route の規約: 500 は `internalError` (`src/lib/api/errors.ts:101`)、service_role は `getSupabaseAdmin` (`lib/supabase/server.ts:19`) だけ、`createClient` は `await`、400 は `{ error: { code, message, details } }` (`src/lib/super-admin/validation-errors.ts`)、レート制限は `checkRateLimit(key, category)` + `rateLimitExceededResponse` (`src/lib/rate-limit.ts:311,342`) | 各ファイル |
 | F19 | `05` §4.2 の `invoice.paid` の見本は `(invoice.lines.data[0] as any)` を使う (規約違反)。`05` §4.1 は失敗したイベントを `failed` にしたまま再送を 23505 で 200 にするため再処理されない。イベントの順序の入れ替わりの扱いは書かれていない | `05` :78-94・:126 |
 | F20 | 猶予の定義: `04` §5.1 / `05` §9 / `cross/08` §9 は past_due → 7 日で grace → 30 日で cancelled。`04` §5.3 だけ「7 日後に cancelled」で食い違う | 各ファイル |
+| F21 | 特権列ガード `guard_user_profiles_privileged` (BEFORE UPDATE) と `_on_insert` (BEFORE INSERT) の最新の定義は `20261008200700_legal_documents_acceptance.sql:77-129`。守る列は `roles` ほか 14 列で、`plan_key_cached` は入っていない。本番では `user_profiles` に本人の UPDATE ポリシー (`auth.uid() = id`) があり、`authenticated` が `plan_key_cached` に UPDATE の列権限を持つ。`plan_key_cached` を読むのは機能フラグ (`src/lib/feature-flags.ts:217-229`・`src/app/api/feature-flags/route.ts:45-56`)・運営のユーザー一覧と詳細 (`src/app/api/admin/users/route.ts:177`・`[id]/route.ts:139`)・`src/lib/super-admin/flag-active-users.ts:73`。書くアプリコードは無い | 同ファイル・本番 `information_schema.column_privileges`・grep |
+| F22 | 家族の代表者を変えるのは DB 関数 2 本: `operator_force_representative_transfer` (`UPDATE family_groups SET representative_id = p_new_rep_id`) と `accept_family_representative_transfer` (`… = auth.uid()`)。最新の定義は `20261008090100_family_lock_order.sql:224-339`。どちらも SECURITY DEFINER で、`family_groups` の行を `FOR NO KEY UPDATE` で先にロックする。`family_groups` には BEFORE UPDATE の `trg_guard_family_groups_privileged` (`authenticated` / `anon` が `representative_id` / `plan_key` / `member_limit` を変えたら 42501) がある。家族の代表者は退会できない (`deleteAccount` の段階 1 が 409) | 同ファイル・baseline 1779-1791・8514・`src/lib/account-deletion.ts:9` |
+| F23 | **家族のプランを本人が選べる穴**: `create_family_group(p_name, p_plan_key DEFAULT 'free')` (SECURITY DEFINER・`authenticated` に EXECUTE) は `p_plan_key` をそのまま `family_groups.plan_key` に入れる。`POST /api/family/groups` は `CreateFamilyGroupBodySchema` (`plan_key: z.string().default('free')`) の値を渡す。このため利用者は課金なしで `family_pro` のグループを作れ、`get_effective_plan` (F10) が自分とメンバーに `family_pro` を返す。`family_groups` に直接 INSERT するアプリコードは無い。結合テストで家族のプランを `p_plan_key` で入れているのは `tests/integration/rls/ai-usage-rpc.test.ts:152-160,400` だけ (ほかは `'free'`) | baseline 1199-1228・11780-11782・`src/app/api/family/groups/route.ts:45-52`・`src/schemas/membership/family-group.ts:8-11`・grep |
 
 ---
 
@@ -106,18 +109,18 @@
 |---|---|---|---|
 | R1 | 利用者が有料プランを自分で買える | #1151 | `POST /api/billing/checkout` → Stripe Checkout (§9.1) |
 | R2 | 決済完了後に `personal_subscriptions` が作られ、以後の更新が追随する | #1151・#1125 | 写像関数 `billing_apply_stripe_subscription` を Webhook と戻り画面の両方から呼ぶ (§4.2・§6.4) |
-| R3 | Webhook は署名を確かめ、冪等で、順序の入れ替わりと再送に耐え、失敗したイベントが再処理できる | spec・`cross/04` §10・F19 | 署名 (§8.3)・`billing_claim_stripe_event` (§6.4)・「イベントの中身を信じず Stripe から取り直す + 取り直した時刻で単調に写す」(§4.1) |
+| R3 | Webhook は署名を確かめ、冪等で、順序の入れ替わりと再送に耐え、失敗したイベントが再処理できる | spec・`cross/04` §10・F19 | 署名 (§8.3)・`billing_claim_stripe_event` (§6.4。`completed` だけを 200 で止め、処理中 (`in_progress`) は 409 で Stripe に再送させる)・「イベントの中身を信じず Stripe から取り直す + 取り直した時刻で単調に写す」(§4.1) |
 | R4 | 状態の正本と遷移表 (trialing / active / past_due / canceled / incomplete など × イベント) | spec | §7.3 (`incomplete` を CHECK に足す) |
-| R5 | 権利判定の入口 | spec | 既存 `get_effective_plan` / `getEffectivePlan` を変えない。`plan_key_cached`・`family_groups.plan_key` を写像の中で同期 (§6.4) |
+| R5 | 権利判定の入口 | spec | 既存 `get_effective_plan` / `getEffectivePlan` を変えない。`plan_key_cached`・`family_groups.plan_key` を写像の中で同期し、`plan_key_cached` は特権列ガードに足して本人が書けないようにする (§6.4 (11)) |
 | R6 | 顧客 (Customer) の作り方と利用者との対応 | spec | `billing_customers` (§6.3)。1 利用者 = 1 顧客。顧客は Checkout の前に作る |
 | R7 | クーポン | spec | Checkout は Stripe のプロモーションコード (`allow_promotion_codes`)。当社 `coupons` は運営の遡及適用 (`apply_coupon`) のまま、Checkout とは結ばない (§5.3) |
-| R8 | 家族プラン | spec | 代表者が買う。写像が代表者の active な家族グループの `plan_key` / `member_limit` を同期 (§6.4) |
+| R8 | 家族プラン | spec | 代表者が買う。写像が代表者の active な家族グループの `plan_key` / `member_limit` を同期 (§6.4)。グループを作ったとき・代表者が交代したときは、グループのプランを代表者の契約に合わせる (トリガー。§6.4 (10)) |
 | R9 | Billing Portal | spec | `POST /api/billing/portal` (§9.4)。カードの変更・請求書の履歴。プランの切替は Portal で許さない (§17) |
 | R10 | 失敗の扱い | spec | Stripe の Smart Retries + 顧客向けメール (Dashboard 設定) + DB `past_due` の写像 + 監査ログ `system.payment.failed`。`grace` 以降は配線 (§12) |
 | R11 | モバイル (アプリ内課金をしない) | spec | アプリ内に購入・価格・外部決済への誘導を出さない。WebView で開いた `/pricing` `/account/billing` は購入導線を描かない (§10.4) |
 | R12 | 本番の秘密の値 | spec・#1113 | `STRIPE_SECRET_KEY` (既存の一覧) と `STRIPE_WEBHOOK_SECRET` (一覧に足す)。無ければ 503 / 準備中 (§9・§10.1) |
-| R13 | 退会で Stripe を即時解約し、顧客を匿名化して残す | spec (#1562) | `deleteAccount` に段階 `billing` を足す (§11) |
-| R14 | 利用者本人が契約の行を直接書けない | F6・`docs/design/CLAUDE.md` RLS 厳格化 | INSERT / UPDATE ポリシーから `user_id = auth.uid()` を外す (§6.2) |
+| R13 | 退会で Stripe を即時解約し、顧客を匿名化して残す | spec (#1562) | `deleteAccount` に段階 `billing` を足す。解約する契約は Stripe 側の一覧 (顧客の全契約) と DB の行の和で列挙する (DB に写っていない契約も解約する。§11) |
+| R14 | 利用者本人が契約の行と、その写し (`plan_key_cached`・`family_groups.plan_key`) を直接書けない | F6・F21・F23・`docs/design/CLAUDE.md` RLS 厳格化 | INSERT / UPDATE ポリシーから `user_id = auth.uid()` を外す (§6.2)。特権列ガード 2 本に `plan_key_cached` を足す (§6.4 (11))。家族グループを作るときのプランは代表者の契約から決め、`create_family_group` の `p_plan_key` を使わない (§6.4 (10)) |
 | R15 | 特商法の最終確認画面 | `cross/08` §3 | `/account/billing/checkout` (§10.2) |
 | R16 | 解約が `/account/billing` から 1 タップ | `cross/08` §3.1 | `POST /api/billing/subscription/cancel` (期間末で解約。取り消し可) (§9.5) |
 | R17 | 監査ログ必須 (課金的操作) | `docs/design/CLAUDE.md` | 状態の変化は写像関数が `admin_audit_logs` に書く。利用者の操作は route が service_role で書く (§8.6) |
@@ -125,7 +128,7 @@
 | R19 | as any 禁止・マジックナンバー禁止 | spec | §8.1 の定数に根拠。Stripe の型は Zod で自前に定義 (SDK を入れない) |
 | R20 | 2 PR 以上が触る共有面の台帳 | `docs/design/CLAUDE.md` | §16.2 |
 
-### 3.2 ユーザーシナリオ (17 本)
+### 3.2 ユーザーシナリオ (20 本)
 
 | ID | シナリオ |
 |---|---|
@@ -146,6 +149,9 @@
 | S15 | プロモーションコード: Checkout 画面で Stripe のコードを入れて割引で買う。当社の `coupons` は関係しない |
 | S16 | テストモードのイベントが本番に届く: `livemode` が鍵のモードと違うので何もせず 200 |
 | S17 | Checkout を途中でやめる: `cancel_url` に戻る。何も作られず、契約は無い |
+| S18 | 家族プランの代表者の交代: `family_basic` を契約中の代表者 A が B に代表者を譲る (承諾、または運営の強制)。グループのプランは B の契約に従う (B に家族プランの契約が無ければ free に戻る)。A の契約はそのまま A のもの |
+| S19 | Stripe の一時停止と再開: Dashboard で作られた試用つきの契約が、支払い方法なしで試用を終えて Stripe の `paused` になる。後で支払い方法が付いて再開 (`resumed`) する |
+| S20 | 家族グループの作成: (a) `family_basic` を契約中の利用者が家族グループを作る → グループは `family_basic`。(b) 契約の無い利用者が `POST /api/family/groups` に `plan_key: 'family_pro'` を付けて作る → グループは `free` (課金なしで家族プランを名乗れない) |
 
 ---
 
@@ -181,9 +187,9 @@
 
 1. **Stripe-backed な行の正本は Stripe の Subscription オブジェクト。DB はその写し (projection)。** 写しを書く入口は DB 関数 `billing_apply_stripe_subscription` の 1 つだけ。Webhook・戻り画面・解約 API・配線のジョブ・reconcile のどれもこの関数を呼ぶ。
 2. **イベントの中身 (`data.object`) を信じない。イベントは「何かが変わった合図」として扱い、必ず Stripe から最新の Subscription を取り直してから写す。** 取り直した時刻 (`fetched_at`) を `stripe_synced_at` に残し、それより古い取り直しの結果は捨てる (単調)。順序の入れ替わり・再送・重複・同時処理のすべてが同じ 1 つの規則で片付く。
-3. **冪等キーは Stripe の `event.id`。** 受け口は `billing_claim_stripe_event` で「自分が処理する権利」を取ってから処理し、完了 / 失敗を記録する。失敗 (または 15 分以上 `processing` のまま) のイベントは再送で再び権利が取れる (= 再処理される)。
+3. **冪等キーは Stripe の `event.id`。** 受け口は `billing_claim_stripe_event` で「自分が処理する権利」を取ってから処理し、完了 / 失敗を記録する。2xx を返すのは処理が終わったとき (`completed`) だけ。ほかが処理中 (`in_progress`) なら 409 を返して Stripe に再送させる (Stripe は 2xx を受けるまで再送を続ける)。失敗 (または 15 分以上 `processing` のまま) のイベントは、その再送で再び権利が取れる (= 再処理される)。
 
-**写像の規則 (`stripe_status` → `status`)**: `incomplete → incomplete` / `incomplete_expired → expired` / `trialing → trialing` / `active → active` / `past_due → past_due` / `unpaid → past_due` / `canceled → cancelled` / `paused → expired`。保持の規則が 2 つ: DB が `grace` のとき Stripe が `past_due / unpaid` なら `grace` を保つ (grace は配線のジョブが past_due を段階的に進めたもの)。DB が `paused` (組織ライセンスの一時停止。配線) で Stripe が `active` かつ `pause_collection` 付きなら `paused` を保つ。
+**写像の規則 (`stripe_status` → `status`)**: `incomplete → incomplete` / `incomplete_expired → expired` / `trialing → trialing` / `active → active` / `past_due → past_due` / `unpaid → past_due` / `canceled → cancelled` / `paused → expired`。Stripe の `canceled` と `incomplete_expired` は終端 (Stripe はそこから別の status に戻さない) なので、`cancelled` と `stripe_status='incomplete_expired'` の `expired` はそれ以上動かない。Stripe の `paused` (試用が支払い方法なしで終わった契約) は再開 (`resumed`) し得るので、`stripe_status='paused'` の `expired` は `trialing / active` に戻り得る (§7.3)。保持の規則が 2 つ: DB が `grace` のとき Stripe が `past_due / unpaid` なら `grace` を保つ (grace は配線のジョブが past_due を段階的に進めたもの)。DB が `paused` (組織ライセンスの一時停止。配線) で Stripe が `active` かつ `pause_collection` 付きなら `paused` を保つ。
 
 ### 4.2 シナリオのトレース (上の構造で手で走らせたもの)
 
@@ -193,14 +199,14 @@
 |---|---|
 | S1 | `/pricing` (プランは `stripe_price_id` を持つ public な行だけ描く) → `/account/billing/checkout?plan_key=pro&interval=month` (確認・チェック) → `POST /api/billing/checkout` → `findLiveSubscription` 無し → `hasUsedTrial(pro)` false → trial 7 日 → `billing_customers` 無し → Stripe `POST /customers` (Idempotency-Key `billing-customer:<user_id>`) → `saveCustomer` → Stripe `POST /checkout/sessions` (`subscription_data[trial_period_days]=7`・`metadata[user_id,plan_key,interval]`・`client_reference_id=<user_id>`・`allow_promotion_codes=true`) → 監査 `user.billing.checkout_started` (actor = 本人・`details: {plan_key, interval, trial_days: 7, checkout_session_id}`。§8.6 `startCheckout`) → 200 `{ data: { url, session_id } }` → 画面が `url` へ移動 (§9.1) → 利用者が決済 → Stripe が `customer.subscription.created` (status `trialing`) と `checkout.session.completed` を送る → 受け口: 署名 OK → `claim` = claimed → `retrieveSubscription` (t1) → snapshot → RPC: 利用者 = metadata.user_id → ロック → 既存行無し → plan `pro` → status `trialing` (live) → 他の live 行無し → INSERT (`trial_started_at`・`trial_ends_at`・`stripe_synced_at = t1`・`trial_source='checkout'`) → `plan_key_cached='pro'` → 監査 `system.billing.subscription_created` → `completed`。7 日後: Stripe が請求 → 成功 → `customer.subscription.updated` (`active`) → 取り直し (t2 > t1) → UPDATE `status='active'`・`current_period_*` → 監査 `status_changed trialing→active` |
 | S2 | `POST /api/billing/checkout` → `hasUsedTrial(pro)` = `personal_subscriptions` に `user_id` 一致・`plan_key='pro'`・`trial_started_at IS NOT NULL` の行あり (cancelled の履歴) → trial 0 日 → `subscription_data[trial_period_days]` を付けない → 監査 `user.billing.checkout_started` (`trial_days: 0`) → 決済で即時課金 → `created` (`active`) → INSERT `active`。確認画面は「試用はお済みのため、お申し込み後すぐに課金が始まります」を表示 (`trial_days: 0` を事前計算 API `GET /api/billing/checkout/preview` で返す。§9.1) |
-| S3 | 同 S1 で `plan_key=family_basic`・`interval=year` → `stripe_yearly_price_id` を使う → `created` (`trialing`) → RPC: `subscription_plans.plan_type='family'` → `UPDATE family_groups SET plan_key='family_basic', member_limit=4 WHERE representative_id=<user> AND status='active'` → `get_effective_plan` は代表者には個人契約の `family_basic`、メンバーには家族の `family_basic` を返す。後に `cancelled` になれば `plan_key='free', member_limit=4` に戻す (この契約の plan_key を持つグループだけ) |
+| S3 | 同 S1 で `plan_key=family_basic`・`interval=year` → `stripe_yearly_price_id` を使う → `created` (`trialing`) → RPC: `subscription_plans.plan_type='family'` → `UPDATE family_groups SET plan_key='family_basic', member_limit=4 WHERE representative_id=<user> AND status='active'` → `get_effective_plan` は代表者には個人契約の `family_basic`、メンバーには家族の `family_basic` を返す。後に `cancelled` になれば `plan_key='free', member_limit=4` に戻す (この契約の plan_key を持つグループだけ)。代表者が交代したときは S18 |
 | S4 | 更新日に `invoice.payment_failed` → 受け口: `audit_payment_failed_and_sync` → 監査 `system.payment.failed` (warn, `details: {invoice_id, attempt_count, amount_due}`) → `invoiceSubscriptionId` → 取り直し (`past_due`) → UPDATE `status='past_due'`・`past_due_since=now()` → 監査 `status_changed active→past_due` (warn)。同時に Stripe の顧客向けメール (Dashboard で ON) が利用者に届く。3 日後 Smart Retry 成功 → `invoice.paid` + `customer.subscription.updated` (どちらが先でも) → 取り直し (`active`) → UPDATE `status='active'`・`past_due_since=NULL` |
 | S5 | S4 の後 7 日: 配線の `grace_period_check` が `status='past_due' AND past_due_since <= now()-7d` を `grace` (`grace_started_at=now()`) に進める (§12 の契約: 直接 UPDATE。写像は呼ばない)。その後 Stripe の再試行イベントで取り直し → Stripe は `past_due` → 保持の規則で `grace` のまま。30 日目: 配線が Stripe `DELETE /subscriptions/{id}` → Stripe が `customer.subscription.deleted` → 取り直し (`canceled`) → `cancelled`・`cancelled_at = ended_at`・`grace_started_at=NULL`・`past_due_since=NULL` → `plan_key_cached=NULL` → 監査 |
 | S6 | `/account/billing` →「解約する」(確認ダイアログ) → `POST /api/billing/subscription/cancel` → live かつ Stripe-backed の行あり → t0 を取る → Stripe `POST /subscriptions/{id}` (`cancel_at_period_end=true`) → 返ってきたオブジェクトを snapshot → RPC (`fetched_at=t0`) → UPDATE `cancel_at_period_end=true`・`cancel_at=current_period_end` (status は `active` のまま。遷移ではないので監査は route が `user.billing.cancel_scheduled` を書く) → 画面「<日付> まで利用できます」。Webhook の `updated` も届くが同じ内容 (t1 > t0 で適用。変化なし)。「解約を取り消す」→ `POST /api/billing/subscription/resume` → `cancel_at_period_end=false` → 同様。取り消さなければ期間末に Stripe が `deleted` → `cancelled`。**Portal から予約 / 取り消しした場合** (§17.1 項 3 で解約 ON): route を通らず、Stripe が `customer.subscription.updated` (`cancel_at_period_end=true` / `false`) を送る → 受け口が取り直して写像 (`webhook:<event.id>`) → UPDATE `cancel_at_period_end`・`cancel_at` (status は同じなので監査は書かない。記録は `stripe_webhook_events.payload` のイベント全体) → 画面は `can_resume` / `can_cancel` で次の操作を出す (§7.3) |
 | S7 | Portal でカード更新 → `customer.updated` / `payment_method.attached` が届く → `classifyStripeEvent` = `ignore` → 200 `{received: true, ignored: true}`。契約の行は変わらない |
-| S8 | (a) `updated` (active) が `created` より先: 先に届いた方で取り直し → Stripe の最新 (active) → INSERT `active` (t1)。後から `created` → 取り直し → 同じ最新 → t2 > t1 で適用、変化なし (監査なし)。(b) 同じ `event.id` が 2 回: 2 回目は `claim` = duplicate → 200。(c) 処理に失敗 (DB 障害) → `finish(ok=false)` で `failed` → 500 → Stripe が再送 → `claim` が `failed` 行を `processing` に戻して claimed → 再処理。(d) 2 つの Lambda が同時に同じ契約を処理: A が t1 で取り直し、B が t2 > t1 で取り直し、B が先に commit → A の RPC は `stripe_synced_at (t2) >= t1` で `skipped: 'stale'` → 200 |
+| S8 | (a) `updated` (active) が `created` より先: 先に届いた方で取り直し → Stripe の最新 (active) → INSERT `active` (t1)。後から `created` → 取り直し → 同じ最新 → t2 > t1 で適用、変化なし (監査なし)。(b) 同じ `event.id` が 2 回: 1 回目が終わっていれば 2 回目は `claim` = `completed` → 200。1 回目がまだ処理中なら `in_progress` → 409 → Stripe が後で再送 → そのときは `completed` → 200。(c) 処理に失敗 (DB 障害) → `finish(ok=false)` で `failed` → 500 → Stripe が再送 → `claim` が `failed` 行を `processing` に戻して claimed → 再処理。(d) 1 回目が `finish` まで届かずに死ぬ (関数の時間切れ・プロセス落ち・`finish` 自体の失敗) → 行は `processing` のまま → 15 分以内の再送は `in_progress` → 409 (Stripe は再送を続ける) → 15 分を過ぎた再送で `claim` が古い `processing` を取り直して claimed → 再処理。(e) 2 つの Lambda が同時に同じ契約を処理: A が t1 で取り直し、B が t2 > t1 で取り直し、B が先に commit → A の RPC は `stripe_synced_at (t2) >= t1` で `skipped: 'stale'` → 200 |
 | S9 | 決済完了 → `success_url` = `/account/billing?checkout=success&session_id=cs_…` → 画面が `POST /api/billing/checkout/sync {session_id}` → Stripe `GET /checkout/sessions/{id}` → `client_reference_id` が本人か確認 → `status='complete'` かつ `subscription` あり → `syncSubscription` (取り直し t0・RPC) → 契約が表示される。数秒後に Webhook が同じ契約を写す (t1 > t0・変化なし) |
-| S10 | `POST /api/account/delete` → `deleteAccount`: `check_blockers` → **`billing`**: `billing_customers` あり → 行 (`stripe_subscription_id` あり・status が cancelled / expired 以外) を列挙 → 各 `GET /subscriptions/{id}` → `canceled` でなければ `DELETE /subscriptions/{id}` → `POST /customers/{cus}` (`name=''`, `email=''`, `phone=''`, `description=''`, `address=''`, `shipping=''`, `metadata[user_id]=''`, `metadata[anonymized_at]=<ISO>`) → `billing_customers.anonymized_at=now()` → 以降は既存の段階 (`prepare` → … → `deleteUser`)。`deleteUser` で `personal_subscriptions` は CASCADE で消え、`billing_customers.user_id` は SET NULL。その後に届く `customer.subscription.deleted` → RPC: metadata.user_id は `auth.users` に無い → `skipped: 'user_deleted'` → 200 |
+| S10 | `POST /api/account/delete` → `deleteAccount`: `check_blockers` → **`billing`**: 解約の対象を 2 つの和で集める = (1) `billing_customers` の顧客の全契約を Stripe から列挙 (`GET /subscriptions?customer=<cus>&status=all`。DB に行が無い契約 = Webhook が着く前・S12 の 2 本目・S13 で写せなかった契約も入る) と (2) DB の行 (`stripe_subscription_id` あり・status が cancelled / expired 以外) のうち (1) に無いもの (`GET /subscriptions/{id}` で取る。別の顧客で作られた契約) → status が終端 (`canceled` / `incomplete_expired`) でないものを `DELETE /subscriptions/{id}` → `POST /customers/{cus}` (`name=''`, `email=''`, `phone=''`, `description=''`, `address=''`, `shipping=''`, `metadata[user_id]=''`, `metadata[anonymized_at]=<ISO>`) → `billing_customers.anonymized_at=now()` → 以降は既存の段階 (`prepare` → … → `deleteUser`)。`deleteUser` で `personal_subscriptions` は CASCADE で消え、`billing_customers.user_id` は SET NULL。その後に届く `customer.subscription.deleted` → RPC: metadata.user_id は `auth.users` に無い → `skipped: 'user_deleted'` → 200 |
 | S11 | `STRIPE_SECRET_KEY` 無し → `StripeGateway` の生成で `StripeNotConfiguredError` → `POST /api/billing/checkout` は 503 `EXT_STRIPE_NOT_CONFIGURED`。`/pricing` はプラン行に `stripe_price_id` が無い限り準備中 (鍵の有無とは独立)。`STRIPE_WEBHOOK_SECRET` 無し → 503 `webhook_not_configured` (Stripe は 2xx 以外を再送するので、設定後に届き直す) |
 | S12 | `POST /api/billing/checkout` → `findLiveSubscription` あり (Stripe-backed でも手動でも) → 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`。同時に 2 本来た場合は両方通り得る (check-then-act)。2 本目の契約の写像は RPC の `BILL_LIVE_ROW_CONFLICT` で失敗し、イベントが `failed` で残る (運営が Stripe で 2 本目を返金・解約する。§13) |
 | S13 | Dashboard で作られた契約の `created` → 取り直し → `metadata.plan_key` 無し → `findPlanKeyByPriceId(items[0].price.id)` で `subscription_plans.stripe_price_id / stripe_yearly_price_id` を引く → 当たれば写す。当たらなければ snapshot の `plan_key=null` → RPC `BILL_UNKNOWN_PLAN` → `failed` + 500 (Stripe が再送し続け、3 日で止まる) + 監査 `system.stripe.event_failed` (warn) |
@@ -208,6 +214,9 @@
 | S15 | Checkout 画面で Stripe のプロモーションコードを入れる (`allow_promotion_codes=true`) → 割引は Stripe の Subscription に付く → 当社の `coupons` / `coupon_redemptions` には何も書かれない。運営の遡及適用 (`apply_coupon`) は従来どおり `personal_subscriptions.id` 宛てに使える (Stripe には反映されない。05 §6 の「subscriptions.update (discount)」は配線の冊の課題) |
 | S16 | `event.livemode=false` が本番 (鍵 `sk_live_`) に届く → 署名は通る (エンドポイントの秘密は同じ) → `livemode` と鍵のモードの不一致 → 200 `{received: true, ignored: true}` + warn ログ。DB には何も書かない |
 | S17 | Checkout で「戻る」→ `cancel_url` = `/account/billing?checkout=cancelled` → 画面「お申し込みは完了していません」。Stripe にも DB にも契約は無い (顧客 `cus_` だけ残る。次回の購入で再利用) |
+| S18 | S3 の後、A (代表者・`family_basic` が `active`) が B に代表者を譲る → `accept_family_representative_transfer` (または `operator_force_representative_transfer`) が `UPDATE family_groups SET representative_id = B` → BEFORE UPDATE のトリガー `billing_family_plan_follow_representative` (§6.4 (10)): B に live な家族プランの契約が無い → 旧代表者 A に `plan_key='family_basic'` の live な行がある (= グループのプランは A の契約から来た) → `NEW.plan_key='free'`, `NEW.member_limit=4` → `get_effective_plan` は B とメンバーに `free`、A には個人契約の `family_basic` を返す。後で A が解約 → 写像の戻しは `representative_id = A` のグループ 0 行 (すでに free)。B が後で `family_pro` を買えば、写像が B のグループを `family_pro` にする。B が先に `family_pro` を契約していた場合は、交代の時点でトリガーが `family_pro`・上限 8 にする |
+| S19 | Dashboard で作られた試用つきの契約が試用終了 (支払い方法なし) で Stripe の `paused` → `customer.subscription.paused` → 取り直し (`paused`) → `expired` (`stripe_status='paused'`) → `plan_key_cached` は live な行から再計算 (NULL)・家族は free へ・監査 `status_changed trialing→expired`。後で支払い方法が付いて再開 → `customer.subscription.resumed` → 取り直し (`active`) → 他に live 行が無ければ `active` (監査 `status_changed expired→active`・家族の同期)。その間に利用者が別の契約を買っていたら `BILL_LIVE_ROW_CONFLICT` (S12 と同じ扱い) |
+| S20 | (a) `POST /api/family/groups` → `create_family_group` → `INSERT INTO family_groups (…, plan_key) VALUES (…, p_plan_key)` → BEFORE INSERT のトリガー (§6.4 (10)): 代表者に live な `family_basic` の行がある → `NEW.plan_key='family_basic'`・`NEW.member_limit=4` → メンバーは家族の `family_basic`。(b) 同じ流れで代表者に契約が無い → `NEW.plan_key='free'` (`p_plan_key='family_pro'` は使わない)・`member_limit` は既定の 4 → `get_effective_plan` は `free`。route と Zod (`plan_key` を受ける) は変えない (受けても DB が使わない。入力から外すのは family の冊。§16.2) |
 
 ---
 
@@ -333,7 +342,7 @@ CREATE TABLE IF NOT EXISTS public.billing_customers (
   updated_at          timestamptz NOT NULL DEFAULT now()
 );
 COMMENT ON TABLE public.billing_customers IS
-  '利用者と Stripe Customer (cus_) の対応。service_role だけが読み書きする (RLS は全部拒否)。退会で user_id は NULL になり、anonymized_at が入る';
+  '利用者と Stripe Customer (cus_) の対応。service_role だけが読み書きする (RLS は全部拒否)。退会で user_id は NULL になり、anonymized_at が入る。本人のデータの書き出しには出さない (src/lib/account-export-tables.ts の ACCOUNT_EXPORT_EXCLUDED)';
 DROP TRIGGER IF EXISTS billing_customers_set_updated_at ON public.billing_customers;
 CREATE TRIGGER billing_customers_set_updated_at
   BEFORE UPDATE ON public.billing_customers
@@ -353,13 +362,14 @@ COMMENT ON COLUMN public.stripe_webhook_events.processing_started_at IS
 COMMENT ON COLUMN public.stripe_webhook_events.attempt_count IS '権利を取った回数 (初回 1)';
 ```
 
-### 6.4 DB 関数 (3 本。EXECUTE は service_role だけ)
+### 6.4 DB 関数 (3 本。EXECUTE は service_role だけ)・家族のトリガー・特権列ガード
 
 ```sql
 -- migration: <番号はマージ時に確定>_billing_core.sql (後半)
 
 -- (7) Webhook の冪等キー (event.id) で処理の権利を取る。
---     戻り値: 'claimed' (この呼び出しが処理する) / 'duplicate' (completed、または他が processing 中で p_stuck_after 以内)。
+--     戻り値: 'claimed' (この呼び出しが処理する) / 'completed' (処理済み。受け口は 200) /
+--             'in_progress' (ほかが processing 中で p_stuck_after 以内。受け口は 409 を返し、Stripe に再送させる)。
 --     pending / failed の行、または processing のまま p_stuck_after より古い行は、再び権利を取れる (= 再処理)。
 --     p_stuck_after の既定 15 分は Vercel の関数の最長 (maxDuration) を十分に超える値 (operator/05 §8.3 と同じ値)。
 CREATE OR REPLACE FUNCTION public.billing_claim_stripe_event(
@@ -373,7 +383,8 @@ SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
-  v_id text;
+  v_id     text;
+  v_status text;
 BEGIN
   IF p_event_id IS NULL OR p_event_id = '' OR p_event_type IS NULL OR p_payload IS NULL THEN
     RAISE EXCEPTION 'billing_claim_stripe_event: p_event_id / p_event_type / p_payload are required' USING ERRCODE = '22023';
@@ -390,13 +401,18 @@ BEGIN
           AND COALESCE(public.stripe_webhook_events.processing_started_at, public.stripe_webhook_events.received_at)
               < now() - p_stuck_after)
   RETURNING id INTO v_id;
-  RETURN CASE WHEN v_id IS NULL THEN 'duplicate' ELSE 'claimed' END;
+  IF v_id IS NOT NULL THEN
+    RETURN 'claimed';
+  END IF;
+  -- 権利を取れなかった: 処理済みか、ほかが処理中か (ON CONFLICT DO UPDATE は WHERE が偽でも行をロックしているので、いまの値が読める)
+  SELECT e.processing_status INTO v_status FROM public.stripe_webhook_events AS e WHERE e.id = p_event_id;
+  RETURN CASE WHEN v_status = 'completed' THEN 'completed' ELSE 'in_progress' END;
 END
 $$;
 REVOKE ALL ON FUNCTION public.billing_claim_stripe_event(text, text, jsonb, interval) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.billing_claim_stripe_event(text, text, jsonb, interval) TO service_role;
 COMMENT ON FUNCTION public.billing_claim_stripe_event(text, text, jsonb, interval) IS
-  'billing/01 §6.4: Stripe Webhook の event.id で処理の権利を取る (claimed / duplicate)。failed と古い processing は再処理できる';
+  'billing/01 §6.4: Stripe Webhook の event.id で処理の権利を取る (claimed / completed / in_progress)。failed と古い processing は再処理できる';
 
 -- (8) 処理の結果を記録する。p_error には固定のコード (BILL_… / EXT_…) だけを渡す (生のエラー文・秘密は渡さない)。
 CREATE OR REPLACE FUNCTION public.billing_finish_stripe_event(
@@ -587,6 +603,7 @@ BEGIN
   ON CONFLICT DO NOTHING;
 
   -- 10. 個人契約のキャッシュ (live な行が無ければ NULL = free) と、家族プランのグループへの反映
+  --     (グループはいまの代表者 = v_user_id のものだけ。代表者が交代したときの付け替えは (10) のトリガーが受け持つ)
   UPDATE public.user_profiles AS p
      SET plan_key_cached = (
        SELECT s.plan_key FROM public.personal_subscriptions AS s
@@ -634,11 +651,136 @@ REVOKE ALL ON FUNCTION public.billing_apply_stripe_subscription(jsonb, timestamp
 GRANT EXECUTE ON FUNCTION public.billing_apply_stripe_subscription(jsonb, timestamptz, text) TO service_role;
 COMMENT ON FUNCTION public.billing_apply_stripe_subscription(jsonb, timestamptz, text) IS
   'billing/01 §6.4: Stripe の Subscription の最新の姿 (snapshot) を personal_subscriptions に写す唯一の入口。p_fetched_at で単調。plan_key_cached と family_groups.plan_key も同期する';
+
+-- (10) 家族グループを作ったとき・代表者が変わったときに、グループのプランを代表者の契約に合わせる (billing/01 §7.3・S18・S20)。
+--      不変条件: active なグループの plan_key は「いまの代表者の live な家族プラン (plan_type='family') の契約」のプラン。
+--      代表者を変えるのは family の DB 関数 2 本 (operator_force_representative_transfer / accept_family_representative_transfer)、
+--      グループを作るのは create_family_group。どの関数も変えず、family_groups の BEFORE INSERT / BEFORE UPDATE OF representative_id で
+--      合わせる (今後ほかの経路が増えても同じ規則になる)。
+--      - 代表者に live な家族プランの契約がある → そのプランと上限。
+--      - INSERT で契約が無い → plan_key = 'free' (create_family_group の p_plan_key は使わない。利用者が課金なしで家族プランを
+--        名乗れる穴 (F23) を閉じる)。member_limit は呼び出し側の値 (既定 4) のまま。
+--      - UPDATE で契約が無い → グループのプランが旧代表者の契約から来たもの (旧代表者に同じ plan_key の live な行がある) のときだけ
+--        free / 4 に戻す (ほかの経路 = service_role の直接の UPDATE で入ったプランは触らない)。
+--      名前は trg_guard_family_groups_privileged より前に並ぶ (同じ BEFORE UPDATE は名前の順に動く)。authenticated / anon が
+--      representative_id を直接変えた UPDATE は、そのあとのガードが 42501 で止めるので、ここで NEW を変えても書かれない。
+CREATE OR REPLACE FUNCTION public.billing_family_plan_follow_representative() RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_new_plan     public.subscription_plans%ROWTYPE;
+  v_old_is_owner boolean;
+BEGIN
+  IF TG_OP = 'UPDATE' AND NEW.representative_id IS NOT DISTINCT FROM OLD.representative_id THEN
+    RETURN NEW;
+  END IF;
+  IF NEW.status <> 'active' THEN
+    RETURN NEW;
+  END IF;
+  SELECT p.* INTO v_new_plan
+    FROM public.personal_subscriptions AS s
+    JOIN public.subscription_plans AS p ON p.plan_key = s.plan_key
+   WHERE s.user_id = NEW.representative_id
+     AND p.plan_type = 'family'
+     AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')
+   ORDER BY s.created_at DESC, s.id
+   LIMIT 1;
+  IF v_new_plan.id IS NOT NULL THEN
+    NEW.plan_key     := v_new_plan.plan_key;
+    -- 写像 (9) の 10. と同じ: member_limit の CHECK は 1〜20。max_members が無いプランは DDL の既定値 4
+    NEW.member_limit := LEAST(COALESCE(v_new_plan.max_members, 4), 20);
+    RETURN NEW;
+  END IF;
+  IF TG_OP = 'INSERT' THEN
+    NEW.plan_key := 'free';
+    RETURN NEW;
+  END IF;
+  SELECT EXISTS (
+    SELECT 1 FROM public.personal_subscriptions AS s
+     WHERE s.user_id = OLD.representative_id AND s.plan_key = OLD.plan_key
+       AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')
+  ) INTO v_old_is_owner;
+  IF v_old_is_owner THEN
+    NEW.plan_key     := 'free';
+    NEW.member_limit := 4;   -- family_groups.member_limit の DDL の既定値 (写像 (9) の 10. の戻しと同じ)
+  END IF;
+  RETURN NEW;
+END
+$$;
+REVOKE ALL ON FUNCTION public.billing_family_plan_follow_representative() FROM PUBLIC, anon, authenticated;
+COMMENT ON FUNCTION public.billing_family_plan_follow_representative() IS
+  'billing/01 §6.4 (10): family_groups の作成と代表者の交代で、plan_key / member_limit を代表者の live な家族プランの契約に合わせる (作成で契約が無ければ free)';
+DROP TRIGGER IF EXISTS family_groups_billing_plan_follow_representative ON public.family_groups;
+CREATE TRIGGER family_groups_billing_plan_follow_representative
+  BEFORE INSERT OR UPDATE OF representative_id ON public.family_groups
+  FOR EACH ROW EXECUTE FUNCTION public.billing_family_plan_follow_representative();
+
+-- (11) 特権列ガード 2 本に plan_key_cached を足す (本人が自分の契約の写しを書けないように。F21)。
+--      土台は 20261008200700_legal_documents_acceptance.sql の定義 (最新)。足すのは plan_key_cached の 1 行ずつだけで、ほかは逐語。
+--      写像 (9) は SECURITY DEFINER (所有者 postgres) なので current_user が authenticated / anon にならず、ガードに当たらない。
+CREATE OR REPLACE FUNCTION public.guard_user_profiles_privileged() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated','anon') THEN
+    IF NEW.roles            IS DISTINCT FROM OLD.roles
+       OR NEW.org_role         IS DISTINCT FROM OLD.org_role
+       OR NEW.organization_id  IS DISTINCT FROM OLD.organization_id
+       OR NEW.family_id        IS DISTINCT FROM OLD.family_id
+       OR NEW.is_active_in_org IS DISTINCT FROM OLD.is_active_in_org
+       OR NEW.joined_org_at    IS DISTINCT FROM OLD.joined_org_at
+       OR NEW.frozen_at        IS DISTINCT FROM OLD.frozen_at
+       OR NEW.frozen_by        IS DISTINCT FROM OLD.frozen_by
+       OR NEW.frozen_reason    IS DISTINCT FROM OLD.frozen_reason
+       OR NEW.unban_at         IS DISTINCT FROM OLD.unban_at
+       OR NEW.department_id    IS DISTINCT FROM OLD.department_id
+       OR NEW.terms_version_accepted   IS DISTINCT FROM OLD.terms_version_accepted
+       OR NEW.privacy_version_accepted IS DISTINCT FROM OLD.privacy_version_accepted
+       OR NEW.legal_accepted_at        IS DISTINCT FROM OLD.legal_accepted_at
+       OR NEW.plan_key_cached          IS DISTINCT FROM OLD.plan_key_cached THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.guard_user_profiles_privileged_on_insert() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') THEN
+    IF (NEW.roles IS NOT NULL AND NEW.roles IS DISTINCT FROM ARRAY['user']::text[])
+       OR NEW.org_role         IS NOT NULL
+       OR NEW.organization_id  IS NOT NULL
+       OR NEW.family_id        IS NOT NULL
+       OR NEW.is_active_in_org IS DISTINCT FROM false
+       OR NEW.joined_org_at    IS NOT NULL
+       OR NEW.frozen_at        IS NOT NULL
+       OR NEW.frozen_by        IS NOT NULL
+       OR NEW.frozen_reason    IS NOT NULL
+       OR NEW.unban_at         IS NOT NULL
+       OR NEW.department_id    IS NOT NULL
+       OR NEW.terms_version_accepted   IS NOT NULL
+       OR NEW.privacy_version_accepted IS NOT NULL
+       OR NEW.legal_accepted_at        IS NOT NULL
+       OR NEW.plan_key_cached          IS NOT NULL THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+COMMENT ON COLUMN public.user_profiles.plan_key_cached IS
+  '個人契約の plan_key の写し (live な行が無ければ NULL = free)。billing_apply_stripe_subscription だけが書く。本人は直接変更できない (guard_user_profiles_privileged)。billing/01';
 ```
 
 ### 6.5 migration が触らないもの
 
-`get_effective_plan`・`apply_coupon`・`subscription_plans`・`coupon_redemptions`・`idx_personal_subscriptions_active_per_user` (`incomplete` は述語に入らないので変えない)・`personal_subscriptions_select` / `_no_delete` ポリシー・`stripe_webhook_no_access_rls`。
+`get_effective_plan`・`apply_coupon`・`subscription_plans`・`coupon_redemptions`・`idx_personal_subscriptions_active_per_user` (`incomplete` は述語に入らないので変えない)・`personal_subscriptions_select` / `_no_delete` ポリシー・`stripe_webhook_no_access_rls`・family の DB 関数 (`create_family_group`・`operator_force_representative_transfer` / `accept_family_representative_transfer` ほか。グループの作成と代表者の交代は (10) のトリガーが受ける)・`guard_family_groups_privileged`・`user_profiles` の RLS ポリシーと列の権限 (`plan_key_cached` は (11) のガードで守る)。
+
+触る既存の定義は 2 つだけ: `guard_user_profiles_privileged` と `guard_user_profiles_privileged_on_insert` を `20261008200700` の定義を土台に CREATE OR REPLACE する ((11)。`plan_key_cached` を 1 行ずつ足すだけ)。
 
 ### 6.6 ロールバック
 
@@ -647,7 +789,66 @@ COMMENT ON FUNCTION public.billing_apply_stripe_subscription(jsonb, timestamptz,
 -- 先に Web のデプロイを戻すこと (新しい Web はこの関数と列を呼ぶ)。
 -- 消えるもの: billing_customers の全行、追加した列の値 (stripe_synced_at / stripe_status / cancel_at_period_end / billing_interval /
 --             processing_started_at / attempt_count)。status が incomplete の行は expired にしてから CHECK を戻す。
+-- 戻すもの: 特権列ガード 2 本を 20261008200700_legal_documents_acceptance.sql の定義に (plan_key_cached を外す)・
+--           plan_key_cached の列コメントを baseline の文に。
 SET LOCAL lock_timeout = '10s';
+
+DROP TRIGGER IF EXISTS family_groups_billing_plan_follow_representative ON public.family_groups;
+DROP FUNCTION IF EXISTS public.billing_family_plan_follow_representative();
+
+-- 20261008200700_legal_documents_acceptance.sql:77-129 の定義をそのまま戻す
+CREATE OR REPLACE FUNCTION public.guard_user_profiles_privileged() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated','anon') THEN
+    IF NEW.roles            IS DISTINCT FROM OLD.roles
+       OR NEW.org_role         IS DISTINCT FROM OLD.org_role
+       OR NEW.organization_id  IS DISTINCT FROM OLD.organization_id
+       OR NEW.family_id        IS DISTINCT FROM OLD.family_id
+       OR NEW.is_active_in_org IS DISTINCT FROM OLD.is_active_in_org
+       OR NEW.joined_org_at    IS DISTINCT FROM OLD.joined_org_at
+       OR NEW.frozen_at        IS DISTINCT FROM OLD.frozen_at
+       OR NEW.frozen_by        IS DISTINCT FROM OLD.frozen_by
+       OR NEW.frozen_reason    IS DISTINCT FROM OLD.frozen_reason
+       OR NEW.unban_at         IS DISTINCT FROM OLD.unban_at
+       OR NEW.department_id    IS DISTINCT FROM OLD.department_id
+       OR NEW.terms_version_accepted   IS DISTINCT FROM OLD.terms_version_accepted
+       OR NEW.privacy_version_accepted IS DISTINCT FROM OLD.privacy_version_accepted
+       OR NEW.legal_accepted_at        IS DISTINCT FROM OLD.legal_accepted_at THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION public.guard_user_profiles_privileged_on_insert() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO ''
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated', 'anon') THEN
+    IF (NEW.roles IS NOT NULL AND NEW.roles IS DISTINCT FROM ARRAY['user']::text[])
+       OR NEW.org_role         IS NOT NULL
+       OR NEW.organization_id  IS NOT NULL
+       OR NEW.family_id        IS NOT NULL
+       OR NEW.is_active_in_org IS DISTINCT FROM false
+       OR NEW.joined_org_at    IS NOT NULL
+       OR NEW.frozen_at        IS NOT NULL
+       OR NEW.frozen_by        IS NOT NULL
+       OR NEW.frozen_reason    IS NOT NULL
+       OR NEW.unban_at         IS NOT NULL
+       OR NEW.department_id    IS NOT NULL
+       OR NEW.terms_version_accepted   IS NOT NULL
+       OR NEW.privacy_version_accepted IS NOT NULL
+       OR NEW.legal_accepted_at        IS NOT NULL THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
+-- baseline (20251126124224) の文
+COMMENT ON COLUMN public.user_profiles.plan_key_cached IS 'personal_subscriptions の現在有効な plan_key キャッシュ (Edge Function が同期、常に最新とは限らない)';
 
 DROP FUNCTION IF EXISTS public.billing_apply_stripe_subscription(jsonb, timestamptz, text);
 DROP FUNCTION IF EXISTS public.billing_finish_stripe_event(text, boolean, text);
@@ -706,7 +907,7 @@ ALTER TABLE public.personal_subscriptions
 | `grace` | ○ | ○ (有料機能の制限は配線) | plan_key | 409 | ○ (S) | ○ | 保持 (Stripe が past_due/unpaid の間) | `grace_started_at <= now()-23d` → Stripe を解約 |
 | `paused` (配線の組織ライセンス) | ○ | × (`get_effective_plan` の対象外) | plan_key | 409 | ○ (S) | ○ | 保持 (Stripe が active + pause_collection の間) | – |
 | `cancelled` | × | × | NULL | ○ | 409 | ○ | ○ (履歴として残る) | – |
-| `expired` | × | × | NULL | ○ | 409 | ○ | ○ | – |
+| `expired` | × | × | NULL | ○ (`stripe_status='paused'` の行は Stripe で再開し得る。再開したときに別の live 行があれば §13.3 `BILL_LIVE_ROW_CONFLICT`。S19) | 409 | ○ | ○ (`stripe_status='paused'` なら再開で `trialing` / `active` に戻る。`incomplete_expired` は終端) | – |
 
 消費経路 (既存コード。origin/main で `personal_subscriptions` を名指しする `src/` の全ファイル) と本冊の影響。「読 / 書」= その経路が行を読むか書くか:
 
@@ -720,8 +921,13 @@ ALTER TABLE public.personal_subscriptions
 | `src/app/api/admin/finance/exports/route.ts:131-142` (`export_type='subscriptions'` の CSV。説明の文は `src/app/admin/finance/exports/page.tsx:30`「PII: user_id のみ」) | 読 | 明示の 9 列 `id, user_id, plan_key, status, starts_at, current_period_start, current_period_end, cancelled_at, created_at` (= 列の許可リスト)。status では絞らない。期間は `created_at` | 変えない。新しい 4 列 (`stripe_synced_at` / `stripe_status` / `cancel_at_period_end` / `billing_interval`) は許可リストに**足さない** (CSV に出ない。足すかは Finance の実データ化 = 配線の冊)。PII は従来どおり `user_id` だけ。`incomplete` と `cancelled_at = ended_at` の行は status / 日時の値のまま出る |
 | `src/app/api/admin/finance/invoices/[id]/route.ts:45-54` (請求書の詳細) | 読 | `stripe_webhook_events.payload.data.object.subscription` (acacia の形) を `stripe_subscription_id` に当てて `user_id, plan_key` を `.single()` で引く | 変えない。写像は 1 契約 1 行 (`stripe_subscription_id` UNIQUE。§2.2 F5) なので `.single()` が成り立つ。`payload` はイベント全体を残す (§9.6)。Webhook のエンドポイントの API 版を acacia に固定する (§17.1 項 2) ので top-level の `subscription` が読める (basil に上げると null になる。そのときは `invoiceSubscriptionId` (§8.1) の形に直すのが配線の冊の課題) |
 | `src/lib/account-export-tables.ts:237-242` / `tests/account-export*.test.ts` (本人のデータの書き出し) | 読 | `self('user_id')`・**`omit` 方式** (取得は全列、`omit` の列を出力前に消す。いまの `omit` = `stripe_customer_id`, `stripe_subscription_id`, `stripe_price_id`, `notes`) | `omit` に `stripe_status`・`stripe_synced_at` を足す (Stripe との同期の内部の記録。`tests/account-export-tables.test.ts` の `SENSITIVE_NAME` (`stripe_`) の見張りが、足さないと段 A の migration で赤になる)。`cancel_at_period_end`・`billing_interval` は本人の契約の内容なので書き出す (`status`・`current_period_end` と同じ扱い)。段 A (§15.1・追随表 §16.1・テスト 75) |
-| 機能フラグの段階公開 (`src/lib/feature-flags.ts`。`plan_key_cached`) | 読 | 空なら free | 写像が同期するので、購入後は plan で段階公開できる |
+| 同 `ACCOUNT_EXPORT_EXCLUDED` (`src/lib/account-export-tables.ts:269-`) と `tests/account-export-tables.test.ts:275` (「分類されていない表が無い」) | 読 (migration の表の一覧) | `user_id` (auth.users 参照) を持つ表は、出力するか除外 (理由つき) に分類する | 新設の `billing_customers` を `ACCOUNT_EXPORT_EXCLUDED` に足す (理由: Stripe の顧客 ID と利用者の対応表で、決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)。足さないと段 A の migration で赤になる。段 A (テスト 85) |
+| 機能フラグの段階公開 (`src/lib/feature-flags.ts:217-229`・`src/app/api/feature-flags/route.ts:45-56`・`src/lib/super-admin/flag-active-users.ts:73`。`plan_key_cached`) | 読 | 空なら free | 写像が同期するので、購入後は plan で段階公開できる。本人は書けない (§6.4 (11) の特権列ガード) |
+| 運営のユーザー一覧・詳細 (`src/app/api/admin/users/route.ts:177`・`[id]/route.ts:139`。`plan_key_cached ?? 'free'`) | 読 | プランの表示 | 変えない。写像が同期し、本人は書けないので、表示が契約と合う |
+| `user_profiles` の本人の UPDATE / INSERT (PostgREST。ポリシー `Users can update own profile` など) | 書 (本人) | 本人の行の全列 (列の権限あり) | `plan_key_cached` を変える UPDATE と、NULL 以外を入れる INSERT は特権列ガードが 42501 (`CANNOT_MODIFY_PRIVILEGED_COLUMN`) で止める。ほかの列の書き込みは変わらない (値を変えない送り直しは通る) |
 | `family_groups.plan_key` (family ドメイン) | 書 (写像) | FK | 代表者の個人契約 (`plan_type='family'`) から写像が同期 |
+| family の DB 関数 `create_family_group` (baseline 1199-1228) ← `POST /api/family/groups` (`src/app/api/family/groups/route.ts:45-52`) | 書 (`family_groups` の INSERT。`plan_key = p_plan_key`) | グループの作成。`p_plan_key` は利用者の入力 (F23) | 関数と route は変えない。BEFORE INSERT のトリガー (§6.4 (10)) が `plan_key` を代表者の live な家族プランの契約 (無ければ `free`) に置き換える。`p_plan_key` は効かなくなる (S20) |
+| family の DB 関数 `operator_force_representative_transfer` / `accept_family_representative_transfer` (`20261008090100_family_lock_order.sql:224-339`) | 書 (`family_groups.representative_id`) | 代表者の交代 | 関数は変えない。`family_groups` の BEFORE UPDATE OF `representative_id` のトリガー (§6.4 (10)) が `plan_key` / `member_limit` を新しい代表者の契約に付け替える (S18)。ロックの順: 関数は `family_groups` 行 → (トリガーの中で) `personal_subscriptions` をロックなしで読むだけ。写像は advisory 2 本 → 契約行 → `family_groups` 行。トリガーはロックを取らないので、写像がグループの行で待つことはあっても循環しない |
 | DB 関数 `apply_coupon` (`20261007160700_apply_coupon_rpc.sql:147-152, 260-265`) | 読・書 | 契約行を `FOR NO KEY UPDATE` でロックして `user_id, plan_key` を読み、`active_coupon_redemption_id` **だけ**を UPDATE | 変えない (Stripe には反映されない。§4.2 S15)。写像の UPDATE (§6.4 の 8.) は `active_coupon_redemption_id` に触れないので互いの列を上書きしない。ロックの順は apply_coupon = `coupons` 行 → 契約行、写像 = advisory 2 本 → 契約行で、写像は `coupons` を取らないので循環しない |
 | `src/lib/plan/coupon.ts:129-135` (`applyCoupon`) ← `src/app/api/super-admin/coupons/[id]/apply/route.ts:34-40` (super_admin・`getSupabaseAdmin()`) | 書 (RPC 経由) | `apply_coupon` を service_role で呼ぶだけ。直接の `.from('personal_subscriptions')` は無い | 変えない。RLS の是正 (§6.2) は service_role に当たらない。手動付与の行 (M) にも Stripe-backed の行 (S) にも従来どおり適用できる |
 | `src/app/api/super-admin/plans/[id]/price-impact/route.ts:8` | — | コメントだけ (集計しない。#1102) | 変えない |
@@ -736,14 +942,16 @@ ALTER TABLE public.personal_subscriptions
 | `status` の値 | 7 値 | 8 値 (`incomplete` を足す) |
 | Webhook の受け口 | 無い | `POST /api/webhooks/stripe` (署名・冪等・取り直し・単調) |
 | 失敗したイベント | (05 の設計) `failed` のまま再処理されない | 再送で `claim` が取れて再処理される |
+| 処理中のイベントの再送 | (05 の設計) 23505 で 200 | 409 (Stripe が再送を続ける)。15 分を過ぎた `processing` は再送で取り直す。200 を返すのは `completed` だけ |
 | 順序の入れ替わり | (05 の設計) 考慮なし | 常に最新を取り直し、`fetched_at` で単調 |
 | 試用 | (04 の設計) SetupIntent + 日次ジョブで終了 | Checkout の `trial_period_days` + `payment_method_collection=always`。同じプランの再試用なし (0 日) |
 | 支払失敗 | (05 の設計) アプリがメール送信 | Stripe の顧客向けメール。アプリは `past_due` の写像 + 監査 |
 | 解約 | 無い | `/account/billing` から期間末の解約を予約・取り消し。即時解約は退会のとき |
 | Billing Portal | 無い | `POST /api/billing/portal` |
-| 退会 | Stripe は未処理 | 段階 `billing` で即時解約 + 顧客の匿名化 |
-| `plan_key_cached` | 誰も同期しない | 写像が同期 |
-| `family_groups.plan_key` / `member_limit` | 誰も書かない | 代表者の家族プラン契約から写像が同期 |
+| 退会 | Stripe は未処理 | 段階 `billing` で即時解約 (Stripe 側の顧客の全契約 + DB の行の和) + 顧客の匿名化 |
+| 本人のデータの書き出しの分類 | `billing_customers` は無い | `billing_customers` を除外 (`ACCOUNT_EXPORT_EXCLUDED`) |
+| `plan_key_cached` | 誰も同期しない。本人が PostgREST から書ける (特権列ガードの対象外。F21) | 写像が同期。本人は書けない (特権列ガード 2 本に追加) |
+| `family_groups.plan_key` / `member_limit` | 作成のときだけ `create_family_group` が利用者の入力 (`p_plan_key`) を入れる (F23)。以後は誰も書かない | 代表者の家族プラン契約から写像が同期。グループの作成と代表者の交代ではトリガーが代表者の契約に合わせる (作成で契約が無ければ `free`) |
 | `updated_at` | トリガー無し | `update_updated_at_column` のトリガー |
 | 環境変数 | `STRIPE_SECRET_KEY` のみ一覧 | `STRIPE_WEBHOOK_SECRET` を一覧に足す。`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` は `.env.example` から消す (読む場所が無い) |
 | モバイル | 課金の記述なし | アプリ内に購入導線を出さない規則。WebView のページも購入導線を描かない |
@@ -755,6 +963,7 @@ ALTER TABLE public.personal_subscriptions
 | 現在 | 操作 / イベント (入口) | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
 | – | Checkout 完了 → `customer.subscription.created` / `checkout.session.completed` / 戻り画面の sync (写像) | `trialing` (試用あり) / `active` / `incomplete` (Stripe が incomplete のとき) | 利用者が解決できる・プランが解決できる・他に live 行が無い | INSERT・`billing_customers` 補完・`plan_key_cached`・家族の同期 (family)・監査 `subscription_created` |
+| – | 上と同じで、ガードを満たさない (同じ利用者に別の live 行がある / プランか利用者を解決できない) (写像) | – (行を作らない。Stripe の契約は生きたまま) | — | `BILL_LIVE_ROW_CONFLICT` / `BILL_UNKNOWN_PLAN` / `BILL_UNKNOWN_USER` → イベント `failed`・500・監査 `system.stripe.event_failed` (target は `stripe_event`。§9.6)。この契約は退会のとき Stripe の一覧から解約される (下の退会の行) |
 | `incomplete` | `customer.subscription.updated` (支払完了) (写像) | `active` / `trialing` | 鮮度 | UPDATE・監査 `status_changed` |
 | `incomplete` | `customer.subscription.updated/deleted` (`incomplete_expired`) (写像) | `expired` | 鮮度 | UPDATE・監査 |
 | `trialing` | 試用終了の請求成功 → `invoice.paid` + `updated` (写像) | `active` | 鮮度 | `current_period_*` 更新・監査 |
@@ -767,6 +976,8 @@ ALTER TABLE public.personal_subscriptions
 | `active` | 更新日の請求失敗 → `invoice.payment_failed` + `updated` (写像) | `past_due` | 鮮度 | `past_due_since=now()`・監査 (warn) |
 | `past_due` | Smart Retry 成功 → `invoice.paid` + `updated` (写像) | `active` | 鮮度 | `past_due_since=NULL`・監査 |
 | `past_due` | 再試行失敗 → `invoice.payment_failed` (写像) | `past_due` | 鮮度 | 監査 `system.payment.failed` (warn) のみ |
+| `trialing` / `active` | Stripe が `unpaid` (§17.1 項 5 が「未払いにする」になっていた場合、または `past_due` の間の取り直しが遅れて `unpaid` を読んだ) (写像) | `past_due` | 鮮度 | `past_due_since=now()`・`stripe_status='unpaid'`・監査 `status_changed <from>→past_due` (warn) |
+| `past_due` | Stripe が `past_due` → `unpaid` (写像) | `past_due` | 鮮度 | `stripe_status='unpaid'` だけ更新 (status は同じなので監査なし)。`past_due_since` は保つ |
 | `past_due` | 配線 `grace_period_check` (直接 UPDATE。§12) | `grace` | `past_due_since <= now() - 7 日` | `grace_started_at=now()` (配線が書く) |
 | `grace` | Stripe の再試行イベント (写像) | `grace` (保持) | Stripe が `past_due` / `unpaid` | 変化なし |
 | `grace` | 支払回復 → `invoice.paid` + `updated` (写像) | `active` | 鮮度 | `past_due_since=NULL`・`grace_started_at=NULL`・監査 |
@@ -779,10 +990,18 @@ ALTER TABLE public.personal_subscriptions
 | `incomplete` | 運営が Stripe で未完了の契約を解約 → `customer.subscription.deleted` (Stripe の status `canceled`) (写像) | `cancelled` | 鮮度 | UPDATE・監査 `status_changed incomplete→cancelled` (info)。`plan_key_cached` は live な行から再計算するので変わらない。家族は、同じプランの live な行が別にあれば戻さない (§6.4 の 10. の `NOT EXISTS`。2 本目の Checkout が live になったあとで 1 本目の未完了が終わる場合) |
 | `paused` (配線) | `updated` (Stripe `active` + `pause_collection`) (写像) | `paused` (保持) | — | 変化なし |
 | `paused` (配線) | 配線が `pause_collection` を外す → `updated` (写像) | `active` | 鮮度 | 監査 |
-| live (S) | 退会 (`deleteAccount` 段階 `billing`) | 行は `deleteUser` の CASCADE で消える | 顧客あり | Stripe `DELETE /subscriptions/{id}`・顧客の匿名化・`billing_customers.anonymized_at`・監査 `system.billing.account_deletion_stripe_cancelled` |
-| `cancelled` / `expired` | Stripe の再送イベント (写像) | 同じ | 鮮度 | 変化なし |
+| live (S) / `incomplete` / `expired` (`stripe_status='paused'`) | 退会 (`deleteAccount` 段階 `billing`) | 行は `deleteUser` の CASCADE で消える | 顧客がある、または DB に行がある | Stripe の status が終端でなければ `DELETE /subscriptions/{id}`・顧客の匿名化・`billing_customers.anonymized_at`・監査 `system.billing.account_deletion_stripe_cancelled`。後から届く `deleted` は `skipped: 'user_deleted'` |
+| – (DB に行が無い Stripe の契約: Webhook が着く前の契約・上の「ガードを満たさない」で写せなかった契約) | 退会 (`deleteAccount` 段階 `billing`) | – (行は作らない) | 顧客 (`billing_customers`) の契約として Stripe の一覧 (`listCustomerSubscriptions`) に出る | Stripe の status が終端でなければ `DELETE /subscriptions/{id}` (数に入る)・以降は上と同じ。S10 |
+| – (グループが無い) | 家族グループの作成 (`create_family_group` の INSERT) | グループの `plan_key` = 代表者の live な家族プランの契約のプラン (上限もそのプラン)。契約が無ければ `free` (上限は呼び出し側の値 = 既定 4) | 新しいグループが active | トリガー §6.4 (10)。`p_plan_key` は使わない (F23)。S20 |
+| live な家族プランの契約 (S。代表者 A) | 代表者の交代 (family の DB 関数 2 本の `UPDATE family_groups SET representative_id`) | 契約の行は変わらない (A の契約のまま) | グループが active・`representative_id` が変わった | トリガー §6.4 (10): 新しい代表者に live な家族プランの契約があれば `plan_key` / `member_limit` をそれに。無ければ、旧代表者 A に同じ `plan_key` の live な行があるとき `free` / 4 に戻す。監査は family 側の `membership_audit` (既存) だけ。以後 A の契約の写像はグループに当たらない (`representative_id = A` が 0 行)。S18 |
+| live (S) (`trialing` / `active` / `past_due` / `grace` / `paused`) | Stripe の一時停止 (試用が支払い方法なしで終わった。§4.1) → `customer.subscription.paused` / `updated` (Stripe `paused`) (写像) | `expired` (`stripe_status='paused'`) | 鮮度 (保持の規則は効かない: `grace` を保つのは Stripe が `past_due` / `unpaid` のとき、`paused` を保つのは Stripe が `active` + `pause_collection` のときだけ) | UPDATE・`plan_key_cached` 再計算・家族を free に (family)・監査 `status_changed <from>→expired` (info)。S19 |
+| `expired` (`stripe_status='paused'`) | Stripe の再開 → `customer.subscription.resumed` / `updated` (Stripe `active` / `trialing`) (写像) | `active` / `trialing` | 鮮度・同じ利用者に別の live 行が無い (あれば `BILL_LIVE_ROW_CONFLICT`・イベント `failed`・行は `expired` のまま) | UPDATE・`plan_key_cached`・家族の同期 (family)・監査 `status_changed expired→active` (info)。S19 |
+| `expired` (`stripe_status='paused'`) | Stripe 側の解約 → `customer.subscription.deleted` (写像) | `cancelled` | 鮮度 | `cancelled_at=ended_at`・監査 `status_changed expired→cancelled` (info) |
+| `cancelled` / `expired` (`stripe_status` が `canceled` / `incomplete_expired`) | Stripe の再送イベント・取り直し (写像) | 同じ | 鮮度 | 変化なし (Stripe ではこの 2 つは終端で、取り直しても同じ status が返る。UPDATE は同じ値を書くだけで監査も書かない) |
 | `cancelled` / `expired` | 新規購入 | 新しい行が `trialing` / `active` (古い行は履歴) | 他に live 行が無い | S1 と同じ |
-| 任意 | 同じ `event.id` の再配信 | — | `claim` = duplicate | 200 |
+| 任意 | 同じ `event.id` の再配信 (処理済み) | — | `claim` = `completed` | 200 `{ received: true, duplicate: true }` |
+| 任意 | 同じ `event.id` の再配信 (ほかが処理中で 15 分以内) | — | `claim` = `in_progress` | 409 `{ error: 'event_in_progress' }` (Stripe が後で再送する) |
+| 任意 | 同じ `event.id` の再配信 (`failed`、または 15 分を過ぎた `processing`) | 写像の結果どおり | `claim` = `claimed` | 再処理 (`attempt_count` +1) |
 | 任意 | 鮮度の古い取り直し (`fetched_at <= stripe_synced_at`) | — | — | `skipped: 'stale'` |
 | 任意 | 利用者が退会済み | — | `auth.users` に無い | `skipped: 'user_deleted'` |
 
@@ -832,8 +1051,14 @@ export const STRIPE_SIGNATURE_HEADER = 'stripe-signature';
 export const STRIPE_WEBHOOK_MAX_BODY_BYTES = 1024 * 1024;
 /** processing のままこの時間を過ぎたイベントは、再送で再び処理の権利を取れる (billing_claim_stripe_event の p_stuck_after。関数の最長実行時間 maxDuration を十分に超える値) */
 export const STRIPE_EVENT_STUCK_MINUTES = 15;
-/** Webhook の route の最長実行時間 (秒)。Stripe の取り直し 1 回 + RPC 1 回で足りる値 (Vercel の既定 10 秒だと Stripe が遅いときに切れる) */
+/**
+ * Webhook の route の最長実行時間 (秒)。Stripe の取り直し 1 回 + RPC 1 回で足りる値 (Vercel の既定 10 秒だと Stripe が遅いときに切れる)。
+ * route の `export const maxDuration` は Next の route segment config で、静的解析できるリテラルしか書けない (import した定数は解析されない)。
+ * そのため route には同じ値を数値リテラルで書き、この定数と一致することを tests/webhooks-stripe-route.test.ts (テスト 86) が見張る。
+ */
 export const STRIPE_WEBHOOK_MAX_DURATION_SECONDS = 30;
+/** Stripe の list API の 1 ページの件数の上限 (Stripe の仕様の最大値)。退会で顧客の契約を列挙するときに使う */
+export const STRIPE_LIST_PAGE_LIMIT = 100;
 /** stripe_webhook_events.error_message に残す長さ (固定のコードだけを入れるので十分) */
 export const STRIPE_EVENT_ERROR_MAX_CHARS = 500;
 /** Checkout / Portal の表示言語 */
@@ -876,6 +1101,11 @@ export const STRIPE_SUBSCRIPTION_STATUSES = [
   'paused',
 ] as const;
 export type StripeSubscriptionStatus = (typeof STRIPE_SUBSCRIPTION_STATUSES)[number];
+/** Stripe がそこから別の status に戻さない終端の値 (Stripe の仕様)。退会の解約はこれ以外を解約する */
+export const STRIPE_TERMINAL_SUBSCRIPTION_STATUSES = ['canceled', 'incomplete_expired'] as const satisfies readonly StripeSubscriptionStatus[];
+export function isTerminalStripeStatus(value: StripeSubscriptionStatus): boolean {
+  return (STRIPE_TERMINAL_SUBSCRIPTION_STATUSES as readonly string[]).includes(value);
+}
 
 /** personal_subscriptions.status の全 8 値 (§6.2 の CHECK と同じ) */
 export const SUBSCRIPTION_STATUSES = [
@@ -962,15 +1192,33 @@ export const BILLING_AUDIT_ACTIONS = [
 ] as const;
 export type BillingAuditAction = (typeof BILLING_AUDIT_ACTIONS)[number];
 export type BillingAuditSeverity = 'info' | 'warn' | 'critical';
-export interface BillingAuditEntry {
-  actor_id: string | null;
-  action_type: BillingAuditAction;
-  /** 利用者の id (target_type は常に 'user') */
-  target_id: string;
-  severity: BillingAuditSeverity;
-  /** 個人情報 (メール・氏名・カード) と秘密を入れない */
-  details: Record<string, unknown>;
-}
+/**
+ * admin_audit_logs.target_type (varchar(30)・NULL 可) に入れる値。
+ * 'user' = target_id は利用者の id。'stripe_event' = 利用者を解決できない Webhook の失敗 (system.stripe.event_failed)。
+ * target_id は NULL で、イベントの id は details.event_id に入れる (target_id は uuid 型なので evt_… は入らない)
+ */
+export const BILLING_AUDIT_TARGET_TYPES = ['user', 'stripe_event'] as const;
+export type BillingAuditTargetType = (typeof BILLING_AUDIT_TARGET_TYPES)[number];
+export type BillingAuditEntry =
+  | {
+      actor_id: string | null;
+      action_type: Exclude<BillingAuditAction, 'system.stripe.event_failed'>;
+      target_type: 'user';
+      /** 利用者の id */
+      target_id: string;
+      severity: BillingAuditSeverity;
+      /** 個人情報 (メール・氏名・カード) と秘密を入れない */
+      details: Record<string, unknown>;
+    }
+  | {
+      actor_id: null;
+      action_type: 'system.stripe.event_failed';
+      target_type: 'stripe_event';
+      target_id: null;
+      severity: BillingAuditSeverity;
+      /** { event_id, event_type, error_code } だけ */
+      details: { event_id: string; event_type: string; error_code: string };
+    };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // エラー (応答の本文は固定の文。生のエラー文は入れない)
@@ -1085,6 +1333,14 @@ export const StripeCheckoutSessionSchema = z.looseObject({
   metadata: StripeMetadata.nullable().optional(),
 });
 export type StripeCheckoutSession = z.infer<typeof StripeCheckoutSessionSchema>;
+
+/** GET /v1/subscriptions?customer=… の 1 ページ (Stripe の list オブジェクト) */
+export const StripeSubscriptionListSchema = z.looseObject({
+  object: z.literal('list'),
+  data: z.array(StripeSubscriptionSchema),
+  has_more: z.boolean(),
+});
+export type StripeSubscriptionList = z.infer<typeof StripeSubscriptionListSchema>;
 
 export const StripeCustomerSchema = z.looseObject({
   id: z.string(),
@@ -1423,6 +1679,8 @@ export interface StripeGateway {
   createCheckoutSession(params: StripeFormParams): Promise<StripeCheckoutSession>;
   retrieveCheckoutSession(sessionId: string): Promise<StripeCheckoutSession>;
   retrieveSubscription(subscriptionId: string): Promise<StripeSubscription>;
+  /** 顧客の全契約 (status=all。終端の契約も含む)。has_more の間は starting_after でページを進めて全部返す */
+  listCustomerSubscriptions(customerId: string): Promise<StripeSubscription[]>;
   updateCancelAtPeriodEnd(subscriptionId: string, cancelAtPeriodEnd: boolean): Promise<StripeSubscription>;
   cancelSubscriptionNow(subscriptionId: string): Promise<StripeSubscription>;
   anonymizeCustomer(customerId: string, anonymizedAtIso: string): Promise<void>;
@@ -1446,7 +1704,12 @@ export type ApplySubscriptionResult =
     }
   | { applied: false; skipped: 'stale' | 'user_deleted'; subscription_id?: string; user_id?: string };
 
-export type StripeEventClaim = 'claimed' | 'duplicate';
+/** billing_claim_stripe_event の戻り値。claimed = 処理する / completed = 処理済み (200) / in_progress = ほかが処理中 (409 で再送させる) */
+export type StripeEventClaim = 'claimed' | 'completed' | 'in_progress';
+export const STRIPE_EVENT_CLAIMS = ['claimed', 'completed', 'in_progress'] as const satisfies readonly StripeEventClaim[];
+export function isStripeEventClaim(value: unknown): value is StripeEventClaim {
+  return typeof value === 'string' && (STRIPE_EVENT_CLAIMS as readonly string[]).includes(value);
+}
 
 export interface BillingRepository {
   findPlan(planKey: string): Promise<PurchasablePlan | null>;
@@ -1459,7 +1722,7 @@ export interface BillingRepository {
   /** INSERT … ON CONFLICT (user_id) DO NOTHING のあと SELECT。同時の 2 本は同じ行を返す */
   saveCustomer(userId: string, stripeCustomerId: string): Promise<BillingCustomerRow>;
   markCustomerAnonymized(stripeCustomerId: string, anonymizedAtIso: string): Promise<void>;
-  /** 退会で解約する対象 (stripe_subscription_id があり、cancelled / expired 以外) */
+  /** 退会で解約する対象のうち DB が知っているもの (stripe_subscription_id があり、cancelled / expired 以外)。Stripe の顧客の一覧と和を取って使う (§11) */
   listStripeBackedSubscriptions(userId: string): Promise<Array<{ stripe_subscription_id: string; status: string }>>;
   applyStripeSubscription(input: { snapshot: SubscriptionSnapshot; fetchedAt: Date; source: string }): Promise<ApplySubscriptionResult>;
   claimStripeEvent(event: StripeEventEnvelope): Promise<StripeEventClaim>;
@@ -1567,6 +1830,7 @@ import {
   STRIPE_API_BASE_URL,
   STRIPE_API_VERSION,
   CUSTOMER_IDEMPOTENCY_KEY_PREFIX,
+  STRIPE_LIST_PAGE_LIMIT,
   STRIPE_LOCALE,
   StripeApiError,
   StripeNotConfiguredError,
@@ -1574,12 +1838,14 @@ import {
   StripeBillingPortalSessionSchema,
   StripeCheckoutSessionSchema,
   StripeCustomerSchema,
+  StripeSubscriptionListSchema,
   StripeSubscriptionSchema,
   buildCustomerAnonymizeParams,
   stripeKeyMode,
   toFormBody,
   type StripeFormParams,
   type StripeGateway,
+  type StripeSubscription,
 } from '@/lib/billing/core';
 import type { z } from 'zod';
 
@@ -1591,6 +1857,7 @@ const STRIPE_REQUEST_TIMEOUT_MS = 10_000;
 interface StripeRequest {
   method: 'GET' | 'POST' | 'DELETE';
   path: string;
+  /** GET はクエリ文字列に、POST / DELETE は本文に form-encode する */
   params?: StripeFormParams;
   idempotencyKey?: string;
 }
@@ -1610,12 +1877,16 @@ export function createStripeGateway(fetchImpl: typeof fetch = fetch): StripeGate
       'Stripe-Version': STRIPE_API_VERSION,
     };
     const init: RequestInit = { method: request.method, headers, signal: AbortSignal.timeout(STRIPE_REQUEST_TIMEOUT_MS) };
-    if (request.method !== 'GET') {
+    let url = `${STRIPE_API_BASE_URL}${request.path}`;
+    if (request.method === 'GET') {
+      const query = toFormBody(request.params ?? {});
+      if (query.length > 0) url = `${url}?${query}`;
+    } else {
       headers['Content-Type'] = 'application/x-www-form-urlencoded';
       init.body = toFormBody(request.params ?? {});
       if (request.idempotencyKey) headers['Idempotency-Key'] = request.idempotencyKey;
     }
-    const response = await fetchImpl(`${STRIPE_API_BASE_URL}${request.path}`, init);
+    const response = await fetchImpl(url, init);
     const requestId = response.headers.get('request-id');
     const json: unknown = await response.json().catch(() => null);
     if (!response.ok) {
@@ -1661,6 +1932,25 @@ export function createStripeGateway(fetchImpl: typeof fetch = fetch): StripeGate
       call({ method: 'GET', path: `/checkout/sessions/${encodeURIComponent(sessionId)}` }, StripeCheckoutSessionSchema),
     retrieveSubscription: (subscriptionId) =>
       call({ method: 'GET', path: `/subscriptions/${encodeURIComponent(subscriptionId)}` }, StripeSubscriptionSchema),
+    listCustomerSubscriptions: async (customerId) => {
+      // status=all: 既定の一覧は canceled を含まないので、終端も含めて全部取り、呼ぶ側が終端を除く (§11)
+      const all: StripeSubscription[] = [];
+      let startingAfter: string | undefined;
+      for (;;) {
+        const page = await call(
+          {
+            method: 'GET',
+            path: '/subscriptions',
+            params: { customer: customerId, status: 'all', limit: STRIPE_LIST_PAGE_LIMIT, starting_after: startingAfter },
+          },
+          StripeSubscriptionListSchema,
+        );
+        all.push(...page.data);
+        const last = page.data[page.data.length - 1];
+        if (!page.has_more || last === undefined) return all;
+        startingAfter = last.id;
+      }
+    },
     updateCancelAtPeriodEnd: (subscriptionId, cancelAtPeriodEnd) =>
       call(
         { method: 'POST', path: `/subscriptions/${encodeURIComponent(subscriptionId)}`, params: { cancel_at_period_end: cancelAtPeriodEnd } },
@@ -1694,6 +1984,7 @@ import type { Database } from '@/types/database.types';
 import {
   STRIPE_EVENT_STUCK_MINUTES,
   LIVE_SUBSCRIPTION_STATUSES,
+  isStripeEventClaim,
   type ApplySubscriptionResult,
   type BillingAuditEntry,
   type BillingCustomerRow,
@@ -1810,8 +2101,8 @@ export function createBillingRepository(admin: Admin = getSupabaseAdmin()): Bill
         p_stuck_after: `${STRIPE_EVENT_STUCK_MINUTES} minutes`,
       });
       if (error) throw error;
-      if (data !== 'claimed' && data !== 'duplicate') throw new Error('billing_claim_stripe_event が想定外の結果を返しました');
-      return data as StripeEventClaim;
+      if (!isStripeEventClaim(data)) throw new Error('billing_claim_stripe_event が想定外の結果を返しました');
+      return data satisfies StripeEventClaim;
     },
     async finishStripeEvent(eventId, outcome) {
       const { error } = await admin.rpc('billing_finish_stripe_event', {
@@ -1827,7 +2118,7 @@ export function createBillingRepository(admin: Admin = getSupabaseAdmin()): Bill
         actor_id: entry.actor_id,
         action_type: entry.action_type,
         target_id: entry.target_id,
-        target_type: 'user',
+        target_type: entry.target_type,
         severity: entry.severity,
         details: entry.details,
       });
@@ -1937,7 +2228,7 @@ export async function startCheckout(
   );
   if (!session.url) throw new BillingError('EXT_STRIPE_API_FAILED');
   await audit(deps.repository, {
-    actor_id: user.id, action_type: 'user.billing.checkout_started', target_id: user.id, severity: 'info',
+    actor_id: user.id, action_type: 'user.billing.checkout_started', target_type: 'user', target_id: user.id, severity: 'info',
     details: { plan_key: planKey, interval, trial_days: trialDays, checkout_session_id: session.id },
   });
   return { url: session.url, session_id: session.id };
@@ -1987,7 +2278,7 @@ export async function scheduleCancellation(deps: BillingDeps, userId: string): P
     const sub = await deps.gateway.updateCancelAtPeriodEnd(row.stripe_subscription_id, true);
     await deps.repository.applyStripeSubscription({ snapshot: projectSubscription(sub, row.plan_key), fetchedAt, source: 'api:cancel' });
     await audit(deps.repository, {
-      actor_id: userId, action_type: 'user.billing.cancel_scheduled', target_id: userId, severity: 'info',
+      actor_id: userId, action_type: 'user.billing.cancel_scheduled', target_type: 'user', target_id: userId, severity: 'info',
       details: { stripe_subscription_id: row.stripe_subscription_id, plan_key: row.plan_key },
     });
   }
@@ -2003,13 +2294,26 @@ export async function revokeCancellation(deps: BillingDeps, userId: string): Pro
   const sub = await deps.gateway.updateCancelAtPeriodEnd(row.stripe_subscription_id, false);
   await deps.repository.applyStripeSubscription({ snapshot: projectSubscription(sub, row.plan_key), fetchedAt, source: 'api:resume' });
   await audit(deps.repository, {
-    actor_id: userId, action_type: 'user.billing.cancel_revoked', target_id: userId, severity: 'info',
+    actor_id: userId, action_type: 'user.billing.cancel_revoked', target_type: 'user', target_id: userId, severity: 'info',
     details: { stripe_subscription_id: row.stripe_subscription_id, plan_key: row.plan_key },
   });
   return getBillingSummary(deps, userId);
 }
 
 export type StripeEventOutcome = { action: 'synced' | 'ignored' | 'skipped'; detail: string };
+
+/**
+ * 処理に失敗したイベントを記録する (POST /api/webhooks/stripe の catch。§9.6 の 8)。
+ * finish(ok=false) の失敗は投げる (route が 500。行は processing のまま残り、15 分後の再送で取り直す)。
+ * 監査は利用者を解決できないことがあるので target は stripe_event (target_id = NULL)。fail-open
+ */
+export async function recordStripeEventFailure(deps: BillingDeps, event: StripeEventEnvelope, errorCode: string): Promise<void> {
+  await deps.repository.finishStripeEvent(event.id, { ok: false, errorCode });
+  await audit(deps.repository, {
+    actor_id: null, action_type: 'system.stripe.event_failed', target_type: 'stripe_event', target_id: null, severity: 'warn',
+    details: { event_id: event.id, event_type: event.type, error_code: errorCode },
+  });
+}
 
 /**
  * 署名と claim を通ったイベントを処理する (POST /api/webhooks/stripe)。例外は route が finish(ok=false) + 500 にする。
@@ -2042,7 +2346,7 @@ export async function handleStripeEvent(deps: BillingDeps, event: StripeEventEnv
       const result = await syncSubscription(deps, subscriptionId, source);
       if (action === 'audit_payment_failed_and_sync' && result.applied) {
         await audit(deps.repository, {
-          actor_id: null, action_type: 'system.payment.failed', target_id: result.user_id, severity: 'warn',
+          actor_id: null, action_type: 'system.payment.failed', target_type: 'user', target_id: result.user_id, severity: 'warn',
           details: {
             stripe_subscription_id: subscriptionId, invoice_id: invoice.success ? invoice.data.id : null,
             attempt_count: invoice.success ? (invoice.data.attempt_count ?? null) : null,
@@ -2225,7 +2529,16 @@ export async function POST(request: Request): Promise<NextResponse> {
 
 ### 9.6 `POST /api/webhooks/stripe` — Webhook の受け口
 
-認証はログインのセッションではなく署名 (`cross/04` §10)。`export const runtime = 'nodejs'`・`export const dynamic = 'force-dynamic'`・`export const maxDuration = STRIPE_WEBHOOK_MAX_DURATION_SECONDS` (30)。
+認証はログインのセッションではなく署名 (`cross/04` §10)。route segment config は次の 3 行 (Next は静的解析できるリテラルしか読まないので、`maxDuration` は import した定数でなく数値リテラルで書く。既存の route と同じ書き方。値は `STRIPE_WEBHOOK_MAX_DURATION_SECONDS` と同じで、一致はテスト 86 が見張る):
+
+```ts
+// tsc:skip — src/app/api/webhooks/stripe/route.ts の先頭 (route segment config)
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+// 根拠は STRIPE_WEBHOOK_MAX_DURATION_SECONDS (src/lib/billing/core.ts): Stripe の取り直し 1 回 + RPC 1 回が収まる秒数。
+// route segment config は静的解析できるリテラルに限られるので、定数を import せず同じ値をここに書く (一致はテスト 86)
+export const maxDuration = 30;
+```
 
 | 順 | 処理 | 応答 |
 |---|---|---|
@@ -2234,11 +2547,13 @@ export async function POST(request: Request): Promise<NextResponse> {
 | 3 | `JSON.parse` → `StripeEventEnvelopeSchema.safeParse` | 読めない・形が違う → 400 `{ error: 'invalid_payload' }` |
 | 4 | `createStripeGateway()` (鍵が無ければ `StripeNotConfiguredError`) | 503 `{ error: 'stripe_not_configured' }` |
 | 5 | `event.livemode` と `gateway.mode` の不一致 (`mode` が null のときは不一致扱いにしない) | 200 `{ received: true, ignored: true }` + warn ログ。DB に書かない |
-| 6 | `repository.claimStripeEvent(event)` = `duplicate` | 200 `{ received: true, duplicate: true }` |
-| 7 | `handleStripeEvent(deps, event)` → `finishStripeEvent(id, { ok: true })` | 200 `{ received: true, action, detail }` |
-| 8 | 7 で例外 → `finishStripeEvent(id, { ok: false, errorCode })` (`errorCode` = `BillingRpcError.code` / `StripeApiError` なら `EXT_STRIPE_API_FAILED` / それ以外 `SYS_INTERNAL_ERROR`) → 監査 `system.stripe.event_failed` (warn, `details: { event_id, event_type, error_code }`。fail-open) | `internalError(ROUTE_NAME, error, { event_id, event_type })` = 500 (Stripe が再送する) |
+| 6 | `repository.claimStripeEvent(event)` = `completed` | 200 `{ received: true, duplicate: true }` (処理済み。Stripe は再送をやめてよい) |
+| 6' | 同 = `in_progress` (ほかが処理中で 15 分以内) | 409 `{ error: 'event_in_progress' }` + info ログ。2xx を返さないので Stripe は後で再送する。そのときには `completed` (200) か、15 分を過ぎた `processing` を取り直して処理する |
+| 7 | 同 = `claimed` → `handleStripeEvent(deps, event)` → `finishStripeEvent(id, { ok: true })` | 200 `{ received: true, action, detail }` |
+| 8 | 7 で例外 → `recordStripeEventFailure(deps, event, errorCode)` (§8.6。`finishStripeEvent(id, { ok: false, errorCode })` + 監査 `system.stripe.event_failed` (warn・`target_type: 'stripe_event'`・`target_id: null`・`details: { event_id, event_type, error_code }`。監査は fail-open))。`errorCode` = `BillingRpcError.code` / `StripeApiError` なら `EXT_STRIPE_API_FAILED` / それ以外 `SYS_INTERNAL_ERROR` | `internalError(ROUTE_NAME, error, { event_id, event_type })` = 500 (Stripe が再送する) |
 
-- `finishStripeEvent` 自体が失敗したら、その失敗も `internalError` に渡して 500 (行は `processing` のまま残り、15 分後の再送で再び権利が取れる)。
+- `finishStripeEvent` 自体が失敗したら (7 の `ok: true` でも 8 の `ok: false` でも)、その失敗も `internalError` に渡して 500。行は `processing` のまま残る。15 分以内の再送は 6' の 409 で返し (Stripe は再送を続ける)、15 分を過ぎた再送で 7 から再処理する。関数の時間切れ・プロセス落ちで 7 の途中で止まった場合も同じ道になる。
+- 409 と 500 のどちらも Stripe の再送の対象 (Stripe は 2xx 以外を、間隔を広げながら最長 3 日まで再送する)。3 日で再送が尽きたイベントは `failed` / `processing` のまま残る。その後の整合は reconcile (配線。§12) が写像で直す。
 - 本文に Stripe の生のエラー文・イベントの中身を入れない。`stripe_webhook_events.payload` にはイベントの JSON 全体を残す (service_role だけが読める。掃除は配線の冊)。
 
 ### 9.7 ログ (app_logs) の規則
@@ -2341,28 +2656,52 @@ export interface DeleteAccountParams {
 // tsc:skip — src/lib/billing/account-deletion.ts
 import { createStripeGateway } from '@/lib/billing/stripe-gateway';
 import { createBillingRepository } from '@/lib/billing/repository';
+import { isTerminalStripeStatus, type BillingRepository, type StripeGateway, type StripeSubscription } from '@/lib/billing/core';
 import type { AccountDeletionBilling, AccountDeletionLogger } from '@/lib/account-deletion';
+
+/**
+ * 退会で解約する契約を集める。DB の行だけでは足りない (Webhook が着く前の契約・写像が BILL_LIVE_ROW_CONFLICT /
+ * BILL_UNKNOWN_PLAN で失敗した契約は行が無い) ので、(1) 顧客の全契約を Stripe から列挙し、(2) DB の行のうち (1) に無いもの
+ * (別の顧客で作られた契約) を Stripe から取り直して足す。終端 (canceled / incomplete_expired) は除く。
+ */
+export async function collectSubscriptionsToCancel(
+  gateway: StripeGateway,
+  repository: BillingRepository,
+  userId: string,
+  customerId: string | null,
+): Promise<StripeSubscription[]> {
+  const byId = new Map<string, StripeSubscription>();
+  if (customerId !== null) {
+    for (const sub of await gateway.listCustomerSubscriptions(customerId)) byId.set(sub.id, sub);
+  }
+  for (const row of await repository.listStripeBackedSubscriptions(userId)) {
+    if (!byId.has(row.stripe_subscription_id)) byId.set(row.stripe_subscription_id, await gateway.retrieveSubscription(row.stripe_subscription_id));
+  }
+  return [...byId.values()].filter((sub) => !isTerminalStripeStatus(sub.status));
+}
 
 export const defaultAccountDeletionBilling: AccountDeletionBilling = {
   async cancelForAccountDeletion(userId: string, log: AccountDeletionLogger) {
     const repository = createBillingRepository();
     const customer = await repository.findCustomer(userId);
-    if (customer === null) return { cancelled_subscriptions: 0, customer: 'none' };
-    // 顧客があるのに鍵が無ければ、解約の義務を果たせないので止める (StripeNotConfiguredError → 段階 'billing' の 500)
+    const knownRows = await repository.listStripeBackedSubscriptions(userId);
+    if (customer === null && knownRows.length === 0) return { cancelled_subscriptions: 0, customer: 'none' };
+    // 顧客か契約があるのに鍵が無ければ、解約の義務を果たせないので止める (StripeNotConfiguredError → 段階 'billing' の 500)
     const gateway = createStripeGateway();
     let cancelled = 0;
-    for (const row of await repository.listStripeBackedSubscriptions(userId)) {
-      const current = await gateway.retrieveSubscription(row.stripe_subscription_id);
-      if (current.status !== 'canceled') {
-        await gateway.cancelSubscriptionNow(row.stripe_subscription_id);
-        cancelled += 1;
-      }
+    for (const sub of await collectSubscriptionsToCancel(gateway, repository, userId, customer?.stripe_customer_id ?? null)) {
+      await gateway.cancelSubscriptionNow(sub.id);
+      cancelled += 1;
+    }
+    if (customer === null) {
+      log.info('account deletion: stripe subscriptions cancelled (no billing customer row)', { cancelled_subscriptions: cancelled });
+      return { cancelled_subscriptions: cancelled, customer: 'none' };
     }
     const anonymizedAt = new Date().toISOString();
     await gateway.anonymizeCustomer(customer.stripe_customer_id, anonymizedAt);
     await repository.markCustomerAnonymized(customer.stripe_customer_id, anonymizedAt);
     await repository.recordAudit({
-      actor_id: userId, action_type: 'system.billing.account_deletion_stripe_cancelled', target_id: userId, severity: 'info',
+      actor_id: userId, action_type: 'system.billing.account_deletion_stripe_cancelled', target_type: 'user', target_id: userId, severity: 'info',
       details: { cancelled_subscriptions: cancelled, stripe_customer_id: customer.stripe_customer_id },
     });
     log.info('account deletion: stripe subscriptions cancelled and customer anonymized', { cancelled_subscriptions: cancelled });
@@ -2371,6 +2710,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 };
 ```
 
+- 解約する契約の母集合は `collectSubscriptionsToCancel` の和 (Stripe の顧客の全契約 ∪ DB の行)。DB の行だけで列挙すると、Webhook が着く前に退会した契約・§13.3 の業務エラーで写せなかった契約 (S12 の 2 本目・S13 の未知のプラン) が解約されずに課金が続く。両方に無い契約 (別の顧客で作られ、写像も失敗した契約) は見つけられない (§18 の 12)。
 - 解約は即時 (`DELETE /v1/subscriptions/{id}`、日割りの返金なし)。顧客は `name / email / phone / description / address / shipping` を消し、`metadata.user_id` を消し `metadata.anonymized_at` を入れて残す (請求書・支払いの記録は Stripe に残る。確定済みの請求書に印字された氏名は Stripe の仕様で変わらない)。
 - `billing_customers` は `deleteUser` で `user_id` が SET NULL になり、`anonymized_at` の入った行が残る。
 - 退会後に届く Webhook は RPC が `skipped: 'user_deleted'` を返す (S10)。
@@ -2387,9 +2727,10 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | `past_due → grace` | 配線の日次ジョブが `UPDATE personal_subscriptions SET status='grace', grace_started_at=now() WHERE status='past_due' AND past_due_since <= now() - interval '7 days' AND stripe_subscription_id IS NOT NULL` を直接行う (写像は呼ばない)。写像は Stripe が `past_due / unpaid` の間 `grace` を保つ | `grace_period_check` (09:30 JST) |
 | `grace → cancelled` | 配線のジョブが `grace_started_at <= now() - interval '23 days'` の行の Stripe を `cancelSubscriptionNow` し、届く `deleted` の写像で `cancelled` になる (DB を直接 `cancelled` にしない) | 同上 |
 | 手動付与 | `stripe_subscription_id IS NULL` の行。配線の画面が admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`) で書く。写像は触らない。`get_effective_plan` は区別しない | 運営の手動付与の画面・API |
+| 家族グループのプラン | 不変条件「active なグループの `plan_key` = いまの代表者の live な家族プランの契約のプラン (無ければ free)」を、写像 (購入・終了) とトリガー (グループの作成・代表者の交代。§6.4 (10)) が保つ。例外は service_role の直接の UPDATE (運営の手動) だけ | family の画面・運営の手動付与 (手動付与は代表者の個人契約 (M 行) で入れれば、次のグループ作成・交代でトリガーが拾う。既存のグループへの反映は配線の手動付与の画面が行う) |
 | 一時停止 (`paused`) | 配線が Stripe `pause_collection` を付け DB を `paused` (`paused_until` 必須) にする。写像は `active + pause_collection` の間 `paused` を保つ。`pause_collection` を外せば `active` に戻る | 組織ライセンス受領 (04 §5.4) |
 | 顧客の対応表 | `billing_customers (stripe_customer_id PK, user_id UNIQUE NULL 可, anonymized_at)` | Finance 画面の deep link (`getStripeLinks`) |
-| Webhook のイベント | `stripe_webhook_events` に全イベントの JSON。`processing_status` / `processing_started_at` / `attempt_count` / `error_message` (固定のコード) | `stripe_event_stuck_check` は不要になる (claim が代替)。残すなら `processing_started_at` を見る。`failed` の一覧を Finance 画面に出す |
+| Webhook のイベント | `stripe_webhook_events` に全イベントの JSON。`processing_status` / `processing_started_at` / `attempt_count` / `error_message` (固定のコード) | 再処理は Stripe の再送が運ぶ (処理済みでないイベントには 2xx を返さないので、Stripe は最長 3 日まで再送し、`failed` と 15 分を過ぎた `processing` は再送で取り直される)。`stripe_event_stuck_check` は再処理のためには要らない。3 日の再送が尽きて残った `failed` / `processing` (`processing_started_at` が古い行) は、reconcile が写像で整合させ、Finance 画面に一覧を出す |
 | イベントの追加 | `STRIPE_EVENT_ACTIONS` に 1 行 (`charge.dispute.created` など) + `service.ts` の `switch` に 1 分岐 + Dashboard の登録 | チャージバック・メール |
 | 監査 | `admin_audit_logs` の `action_type` (§8.1 `BILLING_AUDIT_ACTIONS`)。`system.*` は `actor_id NULL` | Finance 画面の履歴 |
 | 要約 | `GET /api/billing/subscription` (`BillingSummary`) | モバイルの表示 |
@@ -2424,7 +2765,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 
 | HTTP | 本文 | 意味 |
 |---|---|---|
-| 200 | `{ received: true, action, detail }` / `{ received: true, duplicate: true }` / `{ received: true, ignored: true }` | 処理した / 既に処理済み / 対象外・モード不一致 |
+| 200 | `{ received: true, action, detail }` / `{ received: true, duplicate: true }` / `{ received: true, ignored: true }` | 処理した / 既に処理済み (`completed`) / 対象外・モード不一致 |
+| 409 | `{ error: 'event_in_progress' }` | 同じ `event.id` をほかが処理中 (15 分以内)。Stripe が後で再送する |
 | 400 | `{ error: 'invalid_payload' }` | JSON でない・外形が違う |
 | 401 | `{ error: 'unauthorized' }` | 署名が無い・合わない・時刻が古い |
 | 413 | `{ error: 'payload_too_large' }` | 1 MiB 超 |
@@ -2438,7 +2780,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | `BILL_UNKNOWN_USER` | subscription id | metadata にも対応表にも既存の行にも利用者が無い | イベント `failed`・500・監査 `system.stripe.event_failed`。運営が Stripe の顧客に `metadata.user_id` を付けるか、契約を解約する |
 | `BILL_UNKNOWN_PLAN` | subscription id / plan_key | plan_key を解決できない、または `subscription_plans` に無い | 同上。運営が Price を `subscription_plans` に登録する |
 | `BILL_UNKNOWN_STRIPE_STATUS` | status | Stripe が未知の status を返した (API 版の変更) | 同上。`STRIPE_API_VERSION` と Zod を見直す |
-| `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (別の Stripe 契約、または手動付与) がある | 同上。運営が Stripe で 2 本目を解約・返金する (S12) |
+| `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (別の Stripe 契約、または手動付与) がある。S12 の 2 本目、S19 で一時停止中に別の契約を買ってから再開した場合 | 同上。運営が Stripe で 2 本目を解約・返金する (S12)。行が無いままでも、退会のときは Stripe の顧客の一覧から解約される (§11) |
 ---
 
 ## 14. テスト一覧 (it 名)
@@ -2495,18 +2837,18 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 37. `it('413 for oversized body before verifying the signature')`
 38. `it('503 webhook_not_configured when the secret is missing; 401 on bad signature; 400 on bad JSON')`
 39. `it('200 ignored on livemode mismatch without touching the repository')`
-40. `it('200 duplicate when claim returns duplicate; 200 synced when handled; 500 and finish(ok=false) on failure')`
+40. `it('200 duplicate when claim returns completed; 409 event_in_progress when claim returns in_progress; 200 synced when handled; 500 and finish(ok=false) on failure')`
 41. `it('response bodies never contain the event payload or raw error text')`
 
 `tests/account-deletion.test.ts` (追加):
 42. `it('runs the billing step after check_blockers and before prepare; a billing failure stops with step billing and does not call prepare/deleteUser')`
-43. `it('skips Stripe when the user has no billing customer')`
+43. `it('skips Stripe when the user has neither a billing customer nor a stripe-backed row')`
 
 `tests/billing-migration-contract.test.ts` (SQL の文面。DB は使わない):
 44. `it('migration adds incomplete to the status CHECK and keeps the other 7 values')`
 45. `it('migration drops the user_id = auth.uid() branch from INSERT/UPDATE policies and keeps SELECT/DELETE policies')`
-46. `it('billing functions are SECURITY DEFINER with search_path = "" and EXECUTE only for service_role')`
-47. `it('rollback restores the baseline policies verbatim and drops everything the migration added')`
+46. `it('billing RPC functions are SECURITY DEFINER with search_path = "" and EXECUTE only for service_role; the trigger function billing_family_plan_follow_representative is SECURITY DEFINER with search_path = "" and revoked from PUBLIC/anon/authenticated')`
+47. `it('rollback restores the baseline policies and the 20261008200700 guard definitions verbatim and drops everything the migration added')`
 48. `it('migration contains no UPDATE/DELETE of existing rows outside function bodies')`
 49. `it('migration comment does not attribute decisions (no "オーナー判断")')`
 
@@ -2536,6 +2878,27 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 `src/__tests__/app/settings/billing-link.test.ts` (新設。`support-link.test.ts` と同じ形):
 79. `it('settings shows プランとお支払い linking to /account/billing on web and hides it in native app mode')` (§10.3)
 
+追加 (R1 の指摘への対応。番号は 81〜91。段は §15.1):
+
+`tests/billing-stripe-gateway.test.ts` (追加):
+81. `it('listCustomerSubscriptions sends GET /subscriptions?customer=<cus>&status=all&limit=100 with no body and follows has_more with starting_after')`
+
+`tests/billing-account-deletion.test.ts` (新設。`src/lib/billing/account-deletion.ts`。gateway と repository を偽物に):
+82. `it('collectSubscriptionsToCancel unions the Stripe customer list with DB rows, retrieves DB-only ones, and drops canceled / incomplete_expired')`
+83. `it('cancelForAccountDeletion cancels a Stripe subscription that has no DB row (webhook not yet arrived / BILL_LIVE_ROW_CONFLICT) and anonymizes the customer')` (S10・§7.3 の退会の 2 行目)
+
+`tests/account-export-tables.test.ts` (追加):
+85. `it('billing_customers is in ACCOUNT_EXPORT_EXCLUDED with a reason (billing/01 §6.3)')`
+
+`tests/webhooks-stripe-route.test.ts` (追加):
+86. `it('maxDuration is a numeric literal in the route source and equals STRIPE_WEBHOOK_MAX_DURATION_SECONDS')` (route を import して `maxDuration` の値を比べ、route のソースが `/^export const maxDuration = \d+;/m` に当たることを見る。§9.6)
+
+`tests/billing-core.test.ts` (追加):
+89. `it('isTerminalStripeStatus is true only for canceled and incomplete_expired; isStripeEventClaim accepts only claimed / completed / in_progress')`
+
+`tests/billing-service.test.ts` (追加):
+90. `it('recordStripeEventFailure finishes the event as failed and audits system.stripe.event_failed with target_type stripe_event and target_id null, and still resolves when the audit fails')`
+
 `tests/env-source-scan.test.ts` / `tests/check-env-script.test.ts`: 変更なし (一覧と `.env.example` を合わせれば緑)。
 
 ### 14.2 結合 (ローカル Supabase。`tests/integration/rls` と `security` に置き、CI の指定に当たる)
@@ -2555,9 +2918,13 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 63. `it('is not executable by anon/authenticated (42501)')`
 64. `it('serializes concurrent applies for the same subscription (advisory lock)')`
 80. `it('does not reset the family group to free when a non-live row ends while another live row of the same plan exists')` (§6.4 の 10. の `NOT EXISTS`)
+84. `it('moves a live row to expired on Stripe paused and back to active on resumed, auditing both; a resumed row raises BILL_LIVE_ROW_CONFLICT when another live row exists')` (S19・§7.3)
+87. `it('follows the representative on family_groups.representative_id change: new representative with a live family contract → that plan and limit; otherwise free/4 only when the old representative owned the plan; untouched otherwise')` (S18・§6.4 (10)。service_role で `UPDATE family_groups SET representative_id` を直接流してトリガーを動かす。family の RPC は認証 (`auth.uid()`) が要るので使わない)
+92. `it('create_family_group ignores p_plan_key: the new group gets the representative live family plan and limit, or free without a contract')` (S20・F23。代表者の JWT で `create_family_group` を呼ぶ)
+91. `it('active → Stripe unpaid becomes past_due with past_due_since set; past_due → unpaid keeps past_due_since and writes no audit')` (§7.3)
 
 `tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`:
-65. `it('claims a new event, reports duplicate for completed and in-progress, re-claims failed and stuck processing')`
+65. `it('claims a new event, returns completed for a completed event and in_progress for a fresh processing one, re-claims failed and stuck processing')`
 66. `it('finish sets completed/processed_at or failed/error_message (truncated)')`
 
 `tests/integration/security/billing-personal-subscriptions-rls.test.ts`:
@@ -2565,6 +2932,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 68. `it('admin can still INSERT/UPDATE; anon has no INSERT/UPDATE/DELETE privilege')`
 69. `it('billing_customers is invisible to anon/authenticated and readable/writable by service_role')`
 70. `it('updated_at advances on UPDATE of personal_subscriptions')`
+88. `it('authenticated user cannot change own user_profiles.plan_key_cached by UPDATE nor set it on INSERT (CANNOT_MODIFY_PRIVILEGED_COLUMN), while service_role can')` (F21・§6.4 (11))
 
 `tests/integration/security/auth-users-fk-on-delete.test.ts` (既存): `billing_customers.user_id` の FK が SET NULL で NULL 可であることを A・C が自動で確かめる (期待の本数 D を 1 本足す。§16.1)。
 
@@ -2581,8 +2949,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト、本人の書き出しの `omit` (新しい列が migration と同時に見張りに当たるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts` | 44〜49, 52〜70, 75, 80 (+ `account-export-scope` の延長) |
-| B: サーバ層 | `src/lib/billing/*`、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、API 7 本、Webhook、退会 | §8・§9・§11 | 1〜43, 72〜74 |
+| A: DB 層 | migration + rollback (家族のトリガー・特権列ガードを含む)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト、本人の書き出しの `omit` と `billing_customers` の除外 (新しい列と表が migration と同時に見張りに当たるため)、`ai-usage-rpc.test.ts` の家族の作り方 (作成のトリガーで `p_plan_key` が効かなくなるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・`tests/integration/rls/ai-usage-rpc.test.ts` | 44〜49, 52〜70, 75, 80, 84, 85, 87, 88, 91, 92 (+ `account-export-scope` の延長・`ai-usage-rpc` の追随) |
+| B: サーバ層 | `src/lib/billing/*`、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、API 7 本、Webhook、退会 | §8・§9・§11 | 1〜43, 72〜74, 81〜83, 86, 89, 90 |
 | C: 画面層 | `/pricing` のデータ駆動化、`/account/billing`、`/account/billing/checkout`、設定画面の行、public-claims の更新 | §10 | 50〜51, 76〜79 (+ 手動 71) |
 
 段 B は段 A のマージ後 (型の再生成済み) に始める。段 C は段 B のマージ後。
@@ -2595,7 +2963,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 - `src/app/api/billing/checkout/route.ts`・`checkout/preview/route.ts`・`checkout/sync/route.ts`・`subscription/route.ts`・`subscription/cancel/route.ts`・`subscription/resume/route.ts`・`portal/route.ts`
 - `src/app/api/webhooks/stripe/route.ts`
 - `src/app/pricing/PricingPageView.tsx`・`src/app/(main)/account/billing/page.tsx`・`src/app/(main)/account/billing/checkout/page.tsx`・`src/components/billing/checkout-confirmation.tsx`
-- テスト: `tests/billing-core.test.ts`・`tests/billing-stripe-gateway.test.ts`・`tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`tests/webhooks-stripe-route.test.ts`・`tests/billing-migration-contract.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts`・`tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`・`tests/integration/security/billing-personal-subscriptions-rls.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/settings/billing-link.test.ts`
+- テスト: `tests/billing-core.test.ts`・`tests/billing-stripe-gateway.test.ts`・`tests/billing-service.test.ts`・`tests/billing-account-deletion.test.ts`・`tests/api/billing-routes.test.ts`・`tests/webhooks-stripe-route.test.ts`・`tests/billing-migration-contract.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts`・`tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`・`tests/integration/security/billing-personal-subscriptions-rls.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/settings/billing-link.test.ts`
 
 変更:
 - `src/lib/webhook/verify.ts`・`src/__tests__/lib/webhook/verify.test.ts`
@@ -2606,7 +2974,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 - `src/app/(main)/settings/page.tsx` (行を 1 つ足す。テスト 79)
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成)
 - `tests/integration/security/auth-users-fk-on-delete.test.ts` (期待の本数)
-- `src/lib/account-export-tables.ts` (`personal_subscriptions` の `omit` に `stripe_status`・`stripe_synced_at` を足すだけ。§7.1)・`tests/account-export-tables.test.ts` (テスト 75)・`tests/integration/security/account-export-scope.test.ts` (「出力しない列」の一覧に 2 列を足す。§14.2)
+- `tests/integration/rls/ai-usage-rpc.test.ts` (`createFamily` の家族のプランの入れ方だけ。§16.1)
+- `src/lib/account-export-tables.ts` (`personal_subscriptions` の `omit` に `stripe_status`・`stripe_synced_at` を足すことと、`ACCOUNT_EXPORT_EXCLUDED` に `billing_customers` (理由つき) を足すことの 2 つだけ。§7.1)・`tests/account-export-tables.test.ts` (テスト 75・85)・`tests/integration/security/account-export-scope.test.ts` (「出力しない列」の一覧に 2 列を足す。§14.2)
 - docs: `docs/design/billing/01-billing-core.md` (本書。設計ゲート PASS 後は実装中の小修正のみ)。他の設計書は §16.2 の行だけ (専権 PATCH)
 
 ### 15.3 新設一覧 (識別子)
@@ -2616,9 +2985,11 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | テーブル | `public.billing_customers` |
 | 列 | `personal_subscriptions.stripe_synced_at` / `.stripe_status` / `.cancel_at_period_end` / `.billing_interval`、`stripe_webhook_events.processing_started_at` / `.attempt_count` |
 | 制約 | `personal_subscriptions_billing_interval_check`、`personal_subscriptions_status_check` (置き換え: `incomplete` を追加) |
-| トリガー | `personal_subscriptions_set_updated_at`、`billing_customers_set_updated_at` |
+| トリガー | `personal_subscriptions_set_updated_at`、`billing_customers_set_updated_at`、`family_groups_billing_plan_follow_representative` (`family_groups` の BEFORE UPDATE OF `representative_id`) |
 | RLS ポリシー | `personal_subscriptions_insert_admin`、`personal_subscriptions_update_admin`、`billing_customers_no_access` (削除: `personal_subscriptions_insert`、`personal_subscriptions_update`) |
-| DB 関数 | `billing_claim_stripe_event(text, text, jsonb, interval)`、`billing_finish_stripe_event(text, boolean, text)`、`billing_apply_stripe_subscription(jsonb, timestamptz, text)` |
+| DB 関数 | `billing_claim_stripe_event(text, text, jsonb, interval)` (戻り値 `claimed` / `completed` / `in_progress`)、`billing_finish_stripe_event(text, boolean, text)`、`billing_apply_stripe_subscription(jsonb, timestamptz, text)`、トリガー関数 `billing_family_plan_follow_representative()` |
+| 既存の関数の置き換え | `guard_user_profiles_privileged()`・`guard_user_profiles_privileged_on_insert()` (`20261008200700` の定義に `plan_key_cached` を 1 行ずつ足す) |
+| 列コメントの置き換え | `user_profiles.plan_key_cached` (同期元を写像に) |
 | status の値 | `incomplete` |
 | 監査 action_type | §8.1 `BILLING_AUDIT_ACTIONS` の 8 つ |
 | route | `POST /api/billing/checkout`、`GET /api/billing/checkout/preview`、`POST /api/billing/checkout/sync`、`GET /api/billing/subscription`、`POST /api/billing/subscription/cancel`、`POST /api/billing/subscription/resume`、`POST /api/billing/portal`、`POST /api/webhooks/stripe` |
@@ -2626,10 +2997,12 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | TS モジュール | `src/lib/billing/{core,stripe-gateway,repository,service,http,public-plans,account-deletion}.ts`、`src/app/pricing/PricingPageView.tsx`、`src/components/billing/checkout-confirmation.tsx` |
 | TS の export (core) | §8.1 の `export` のとおり (数は §8.1 が正。ここに写して二重に数えない) |
 | TS の export (verify) | `parseStripeSignatureHeader`、`verifyStripeSignature`、`verifyStripeWebhook`、`StripeSignatureHeader` |
-| TS の export (ほか) | `createStripeGateway`、`createBillingRepository`、`BillingRpcError`、`previewCheckout`、`startCheckout`、`syncSubscription`、`syncCheckoutSession`、`getBillingSummary`、`createPortalSession`、`scheduleCancellation`、`revokeCancellation`、`handleStripeEvent`、`billingInvalidInputResponse`、`billingErrorResponse`、`listPurchasablePlans`、`defaultAccountDeletionBilling`、`AccountDeletionBilling` |
+| TS の export (ほか) | `createStripeGateway`、`createBillingRepository`、`BillingRpcError`、`previewCheckout`、`startCheckout`、`syncSubscription`、`syncCheckoutSession`、`getBillingSummary`、`createPortalSession`、`scheduleCancellation`、`revokeCancellation`、`handleStripeEvent`、`recordStripeEventFailure`、`StripeEventOutcome`、`billingInvalidInputResponse`、`billingErrorResponse`、`listPurchasablePlans`、`collectSubscriptionsToCancel`、`defaultAccountDeletionBilling`、`AccountDeletionBilling` |
 | 環境変数 | `STRIPE_WEBHOOK_SECRET` (一覧に追加。削除: `.env.example` の `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`) |
 | レート制限 | カテゴリ `billing` |
 | 退会の段階 | `billing` |
+| Webhook の応答 | 409 `{ error: 'event_in_progress' }` (§9.6 の 6'・§13.2) |
+| 本人のデータの書き出しの除外 | `ACCOUNT_EXPORT_EXCLUDED.billing_customers` |
 | エラーコード | §13.1 の [NEW] 8 つ |
 | 画面の定数 | `CHECKOUT_SYNC_RETRY_MS = 3000`、`CHECKOUT_SYNC_MAX_RETRIES = 10` (`/account/billing` の page に置く。根拠: Webhook の到着は通常 1〜5 秒、30 秒で諦めて「時間をおいて再読み込み」を出す) |
 ---
@@ -2658,6 +3031,12 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/account-deletion.test.ts`・`tests/account-deletion-email.test.ts`・`tests/account-delete-route.test.ts` | `AccountDeletionStep` に `billing`・`DeleteAccountParams.billing` | 偽の `billing` を渡す (既定は Stripe を呼ぶので、既存のテストには `{ cancelForAccountDeletion: async () => ({ cancelled_subscriptions: 0, customer: 'none' }) }` を渡す)。順序の期待に `billing` を足す | B |
 | `tests/integration/security/auth-users-fk-on-delete.test.ts` | `billing_customers_user_id_fkey` (SET NULL) | 検査 D の本数 (32 → 33) と、SET NULL の一覧に 1 行 | A |
 | `tests/account-export-tables.test.ts` / `src/lib/account-export-tables.ts` | `personal_subscriptions` は `omit` 方式 (全列を取って `omit` を消す)。`loadSchemaModel` が migration から列を読むので、段 A の migration で `stripe_status`・`stripe_synced_at` が `SENSITIVE_NAME` (`stripe_`) の見張り「出力する列に、秘密・他人を指す列が残っていない」に当たる | `omit` に `stripe_status`・`stripe_synced_at` を足す (同じ段 A の PR)。`cancel_at_period_end`・`billing_interval` は書き出す (本人の契約の内容)。テスト 75 を足す。`STORED_FAILURE_COLUMN` の見張りには当たらない (どの新しい列も名前が `error` / `failure` / `result` でない) | A |
+| `tests/account-export-tables.test.ts:275` (「分類されていない表が無い」)・`:321` (「除外リストの表は、実際にユーザー識別列を持つ」)・`:311` (「表がスキーマに実在する」) / `src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED` | 新設の `billing_customers` が `user_id` (auth.users 参照) を持つので、`requiredTables` が分類を求める | `ACCOUNT_EXPORT_EXCLUDED` に `billing_customers: 'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)'` を足す (同じ段 A の PR)。`:311` と `:321` は、表が migration にあり `user_id` を持つので緑のまま。テスト 85 を足す | A |
+| `tests/integration/security/legal-documents-acceptance.test.ts:555-583` (ガード関数 2 本に保護列が全部入っている) | `guard_user_profiles_privileged` / `_on_insert` の置き換え (§6.4 (11)) | 変更なし (14 列を `toContain` で見るので、`plan_key_cached` を足しても緑)。`plan_key_cached` の見張りはテスト 88 | A |
+| `tests/integration/rls/user-profiles-insert-guard.test.ts`・`tests/integration/security/family-member-status-guard.test.ts`・`invite-accept-missing-profile.test.ts` | 特権列ガードの挙動 | 変更なし (どれも `plan_key_cached` を入れない。値を変えない送り直しはガードを通る) | — |
+| `tests/integration/security/family-lock-order-race.test.ts`・`membership-transfer-accept.test.ts`・`family-child-promotion-consent.test.ts`・`family-invite-create.test.ts`・`tests/integration/rls/user-profiles-insert-guard.test.ts` (`create_family_group` を `p_plan_key: 'free'` で呼ぶ・代表者の交代を本物の RPC で流す) | `family_groups` の BEFORE INSERT / UPDATE OF `representative_id` に新しいトリガー | 変更なし (どれも家族プランの契約を作らず `'free'` で作るので、トリガーの結果は `free` で同じ。`member_limit` は INSERT では触らず、`family-lock-order-race` が後から service_role で入れる上限もそのまま) | — |
+| `tests/integration/rls/ai-usage-rpc.test.ts:152-160,400` (`createFamily(user, 'family_basic')` で `p_plan_key` に家族プランを入れ、`get_effective_plan` が `family_basic` を返すことを見る) | 作成のトリガーが `p_plan_key` を `free` に置き換える (F23 の穴を閉じる) | `createFamily` を「`create_family_group` を `p_plan_key` なしで呼び、`planKey` が `free` でなければ service_role で `family_groups.plan_key` を UPDATE する」に直す (service_role の直接の UPDATE は `plan_key` を変えてもトリガーに当たらない。§6.4 (10))。期待値は変えない | A |
+| `tests/integration/security/anon-definer-execute.test.ts` (A1: 許可リストに無い SECURITY DEFINER 関数に anon の EXECUTE が無い) | 新しい SECURITY DEFINER 関数 4 本 (RPC 3 本 + トリガー関数) | 変更なし (どれも `REVOKE ALL … FROM PUBLIC, anon, authenticated`) | — |
 | `tests/rls-canonical-coupon-experiment-recipe-flags.test.ts` | 対象 3 表のみ | 変更なし | — |
 | `tests/integration-ci-coverage.test.ts` | 新しい結合テストのパス | `tests/integration/rls/` と `tests/integration/security/` に置く (ワークフローの指定に当たる) | A |
 | `tests/e2e-api-paths.test.ts` | e2e spec が叩くパス | 新しい spec を `SPEC_FILES` に足さない限り反応しない | — |
@@ -2667,7 +3046,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/admin-view-audit-1326.test.ts` | admin / super-admin の route の `admin_audit_logs` 直接 INSERT。請求書の詳細 (`/api/admin/finance/invoices/[id]`) の偽の `personal_subscriptions` (`{ user_id, plan_key }`) | `/api/billing/*` は対象外。`repository.recordAudit` は `src/lib`。請求書の詳細の route は変えない (§7.1) | — |
 | `src/__tests__/lib/webhook/verify.test.ts` | `verifyStripeSignature` 等 | 17〜20 を足す | B |
 | `src/__tests__/lib/feature-flags.test.ts` / `src/__tests__/api/feature-flags.test.ts` | `plan_key_cached` | 意味は変えない (空 = free)。変更なし | — |
-| `tests/integration/rls/ai-usage-rpc.test.ts`・`ai-daily-limit-rpc.test.ts`・`coupon-apply-rpc.test.ts`・`tests/integration/security/plan-deprecate-subscribers.test.ts`・`account-export-scope.test.ts`・`tests/integration/operator/super-admin-plans-id.test.ts` | `personal_subscriptions` への INSERT/UPDATE | どれも service_role (`srAdmin` / `supabaseAdmin`) で書いているので RLS の変更に当たらない (origin/main で確認: `account-export-scope.test.ts:205` の `insert()` は `:67-68` の `srAdmin.from(table).insert(row)`)。`account-export-scope.test.ts:505-507` の「出力しない列」の一覧に `stripe_status`・`stripe_synced_at` を足す (§14.2) | A |
+| `tests/integration/rls/ai-usage-rpc.test.ts`・`ai-daily-limit-rpc.test.ts`・`coupon-apply-rpc.test.ts`・`tests/integration/security/plan-deprecate-subscribers.test.ts`・`account-export-scope.test.ts`・`tests/integration/operator/super-admin-plans-id.test.ts` | `personal_subscriptions` への INSERT/UPDATE | どれも service_role (`srAdmin` / `supabaseAdmin`) で書いているので RLS の変更に当たらない (`ai-usage-rpc.test.ts` は家族の作り方だけ別の行で直す。下の `ai-usage-rpc` の行) (origin/main で確認: `account-export-scope.test.ts:205` の `insert()` は `:67-68` の `srAdmin.from(table).insert(row)`)。`account-export-scope.test.ts:505-507` の「出力しない列」の一覧に `stripe_status`・`stripe_synced_at` を足す (§14.2) | A |
 | `tests/integration/rls/subscription-plans-yearly-price-id.test.ts` | コメントだけ (契約の行を作らない) | 変更なし | — |
 | `tests/account-export.test.ts` | 偽の DB の `personal_subscriptions` の行 (新しい列を持たない) と、`omit` の 4 列が出ないこと | 変更なし (`omit` を足しても、偽の行に無い列は結果を変えない) | — |
 | `tests/admin-finance-exports-route.test.ts` | `subscriptions` の CSV の見出し 9 列・`created_at` の期間 | 変更なし (route の `select` は明示の 9 列のまま。§7.1) | — |
@@ -2692,10 +3071,11 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/operator/05-stripe-integration.md` | §4 全体・§6.1・§8・§9・§12・§13・§15 | §4 を「受け口の正本は billing/01 §9.6・§4.1。`as any` の見本と失敗イベントの扱いは廃止」に置き換える。§6.1 に `billing_customers` を足す。§8 の reconcile は「写像を呼ぶ」に (§12)。§15 の API 版は本冊 `STRIPE_API_VERSION` を正に | 段 B と同じ PR |
 | `docs/design/operator/04-plan-management.md` | §5.1 図・§5.2・§5.3 | 図に `incomplete` と「解約予約 (cancel_at_period_end)」を足す。§5.2 の SetupIntent + 日次ジョブを Checkout の `trial_period_days` に置き換える。§5.3 の「7 日後 cancelled」を「7 日後 grace・30 日後 cancelled」(05 §9 と同じ) に直す。§7 の `OP_TRIAL_ALREADY_USED` は「使わない (試用なしで購入できる)」と注記 | 段 B と同じ PR |
 | `docs/design/operator/01-data-model.md` | §3.7 DDL・§3.18・§3.9.1・§4 ER 図 | 新しい列・`incomplete`・ポリシーの置き換え・`billing_customers`・`plan_key_cached` の同期元 (写像) を書く | 段 A と同じ PR |
-| `docs/design/operator/08-cron-batches.md` | §3.1 `stripe_event_stuck_check` の行・§3.2 の課金系の行 | `stripe_event_stuck_check` は不要 (claim が代替) と注記。`grace_period_check` / `stripe_integrity_check` は本冊 §12 の契約で作ると注記 | 配線の冊と同時 |
+| `docs/design/operator/08-cron-batches.md` | §3.1 `stripe_event_stuck_check` の行・§3.2 の課金系の行 | `stripe_event_stuck_check` は再処理のためには不要 (処理済みでないイベントに 2xx を返さず Stripe の再送で取り直す。§9.6) で、残るのは 3 日の再送が尽きたイベントの整合 (reconcile) と一覧だけ、と注記。`grace_period_check` / `stripe_integrity_check` は本冊 §12 の契約で作ると注記 | 配線の冊と同時 |
 | `docs/design/operator/CLAUDE.md` | 主要シーケンス「Stripe Webhook idempotency」 | claim 方式へ書き換え、`billing/01` へのリンク | 段 B と同じ PR |
 | `docs/design/CLAUDE.md` | ドメイン構成の表 | `billing/` の行 (課金の核と配線) を足す | 段 A と同じ PR |
-| `docs/design/family/01-data-model.md` ほか family | `family_groups.plan_key` / `member_limit` の書き手 | 「代表者の個人契約 (`plan_type='family'`) から billing/01 の写像が同期する」と注記。グループ作成時に代表者の live な家族プランを引き継ぐかは family の課題 (§18) | 段 A と同じ PR |
+| `docs/design/family/01-data-model.md` ほか family | `family_groups.plan_key` / `member_limit` の書き手・グループの作成と代表者の交代の節 | 「代表者の個人契約 (`plan_type='family'`) から billing/01 の写像が同期する。グループの作成と代表者の交代では `family_groups` のトリガー `family_groups_billing_plan_follow_representative` が代表者の契約に合わせる (作成で契約が無ければ free。`create_family_group` の `p_plan_key` は効かない。旧代表者の契約は旧代表者のまま)」と注記。live な家族プランの間は交代を止めるかは family の課題 (§18 の 13) | 段 A と同じ PR |
+| family の冊 (`POST /api/family/groups`・`src/schemas/membership/family-group.ts`) | `CreateFamilyGroupBodySchema.plan_key`・`create_family_group` の `p_plan_key` | 入力から外す (DB が使わなくなったため。F23・S20)。本冊の段では触らない (受けても無害) | family の冊 |
 | `docs/design/mobile/01-architecture.md` | 課金 | §10.4 の規則 (アプリ内に購入導線を出さない) を 1 節足す | 段 C と同じ PR |
 | `.env.example` | 84〜89 行 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=` を消す。`STRIPE_SECRET_KEY` の説明に Checkout / Portal を足す | 段 B |
 | `ENV_SETUP.md` (あれば) | Stripe の節 | §17 の手順への参照 | 段 B |
@@ -2735,13 +3115,15 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | 2 | App Store / Google Play の規約 (Web 課金への誘導の可否) の最新の文面と審査の判断は未確認 | アプリ内に購入導線・価格・誘導を出さない (§10.4) |
 | 3 | 当社の `coupons` を Checkout でも使えるようにするか (Stripe の Coupon / Promotion Code との同期が要る) | Checkout は Stripe のプロモーションコードだけ。`coupons` は運営の遡及適用のまま |
 | 4 | ブランドのメール (支払失敗・試用終了) を自前で送るか | Stripe の顧客向けメールに任せる (配線で足せる) |
-| 5 | 家族グループを後から作った代表者に、live な家族プランを引き継ぐか (family ドメイン) | 写像は「いまある active なグループ」だけ同期する |
+| 5 | 家族グループを後から作った代表者に、live な家族プランを引き継ぐか (family ドメイン) | 引き継ぐ (作成のトリガー。S20 (a))。作成時の `p_plan_key` は使わない (F23 の穴を閉じるため)。`POST /api/family/groups` の入力 `plan_key` を外すのは family の冊 (§16.2) |
 | 6 | `grace` で制限する有料機能の範囲 (05 §9 は AI 解析・家族共有・産業医) | 核は制限しない (`get_effective_plan` のまま)。配線の冊 |
 | 7 | `stripe_webhook_events.payload` (個人情報を含む JSON) の保存期間 | 配線の掃除のジョブで決める |
 | 8 | Checkout で住所の収集・税の自動計算 (インボイス制度の適格請求書) | 収集しない。請求書番号は配線の冊 |
 | 9 | `account-export-scope.test.ts:205` の `insert()` がどの client か (本人なら RLS の変更で落ちる) | 解決済み: origin/main で service_role (`srAdmin`。同ファイル 67-68 行) と確認。替える必要は無い (§16.1) |
 | 10 | 同時に 2 本の Checkout が完了したときの 2 本目 (`BILL_LIVE_ROW_CONFLICT`) を運営がどう処理するか | Finance 画面 (配線) に `failed` イベントを出し、運営が Stripe で解約・返金 |
 | 11 | Billing Portal での解約の予約 / 取り消し (route を通らない) を `admin_audit_logs` に残すか | 残さない (写像は status の変化だけを監査する。記録は `stripe_webhook_events.payload` のイベント全体と Stripe の履歴。§7.3)。要るなら写像に「`cancel_at_period_end` が変わったら `system.billing.cancel_changed` を書く」を足す (`BILLING_AUDIT_ACTIONS` が 1 つ増える) |
+| 12 | 退会で見つけられない契約: 別の顧客 (`billing_customers` に無い `cus_`) で作られ、写像も失敗して DB に行が無い契約 (Dashboard で手作業した場合だけ) | 解約されない。運営が Finance 画面 (配線) の `failed` イベントから拾って Stripe で解約する |
+| 13 | 家族プランを契約中の代表者が代表者を譲ったとき、契約 (支払い) は旧代表者に残り、グループは新しい代表者の契約に従う (無ければ free)。交代を止める・契約を移すなどの業務の扱い (family ドメイン) | 交代は止めない。グループのプランはいまの代表者の契約に従う (S18・§6.4 (10))。旧代表者の契約はそのまま旧代表者の個人の権利になる (解約は本人が `/account/billing` から) |
 
 ---
 
