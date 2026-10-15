@@ -182,6 +182,8 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
         dishName: updateData.dish_name ?? undefined,
         triggerSource,
         imageUrlOverride: manualImageUrl,
+        // 利用者がカバーを外した (image_url: null)。料理が 2 品以上なら、カバーを外して料理の画像 (AI の画像があれば) に戻す (#1553)
+        clearCover: body.image_url === null,
         imageModel,
         existingCover: existing.image_url ?? null,
         fallbackMealImageUrl: existing.image_url ?? null,
