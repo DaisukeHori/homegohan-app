@@ -188,6 +188,13 @@ export const SERVER_ENV_VARS = {
     description: 'Stripe の秘密鍵',
     whenMissing: 'Stripe との照合・価格の同期が動かない',
   },
+  STRIPE_WEBHOOK_SECRET: {
+    required: false,
+    description:
+      'Stripe の Webhook の署名の秘密 (whsec_ で始まる値。Stripe の Dashboard で Webhook のエンドポイントを登録すると出る)。' +
+      'POST /api/webhooks/stripe が、届いたイベントの署名をこれで確かめる (billing/01 §8.3)',
+    whenMissing: 'Stripe の Webhook を受け付けない (503)。購入・更新・解約が personal_subscriptions に写らない',
+  },
   GOOGLE_AI_STUDIO_API_KEY: {
     required: false,
     description: 'Google AI (Gemini) の API キー。別名の GOOGLE_GEN_AI_API_KEY と、どちらか一方でよい',
@@ -274,6 +281,13 @@ export const SERVER_ENV_VARS = {
       "同意が済んでいない利用者の画面の上に「同意のお願い」のお知らせを出すか (#1174)。'on' のときだけ出す。強制していない間だけ効く",
     whenMissing: 'お知らせを出さない (既定)',
     readOnlyBy: 'lib/legal-consent.ts',
+  },
+  DSR_RESPONSE_DUE_DAYS: {
+    required: false,
+    description: '個人情報の請求の応答期限 (日。1〜365 の 10 進の整数)',
+    whenMissing: '既定の 30 日。整数でない値・範囲外も 30 日',
+    // #1178 読み方 (1〜365 の整数でなければ既定の 30 日) を 1 か所に置く
+    readOnlyBy: 'src/lib/data-subject-requests/config.ts',
   },
   FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT: {
     required: false,
@@ -371,6 +385,17 @@ export const SERVER_ENV_VARS = {
     whenMissing: '既定の 1440 分 (24 時間) を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     // 解釈 (範囲・不正な値の扱い) は src/lib/auth/login-failures.ts の resolveLoginFailureResetMinutes。値を読むのは route だけ
     readOnlyBy: 'src/app/api/auth/login/route.ts',
+  },
+  OPERATOR_MFA_ENFORCE_FROM: {
+    required: false,
+    description:
+      '運営ロール (super_admin / admin / finance / org_industrial_doctor) の二段階認証 (TOTP) の登録の猶予の終わり (#1176。' +
+      'docs/design/cross/12-operator-mfa.md §12.2)。必須ロールで未登録の運営を、この日時まで通す (画面にバナー)。' +
+      '登録済みの運営には効かない (常に 6 桁の確認)。ISO 8601 + タイムゾーン必須 (例: 2026-11-01T00:00:00+09:00)',
+    whenMissing:
+      '必須ロールの運営は、未登録なら次のアクセスから登録を求められる (猶予なし)。不正な値 (形の違い・存在しない日時・範囲外の時差) も無視して即時にし、warn ログを残す',
+    // 解釈 (形・実在する日時の確認) は同じファイルの resolveMfaEnforceFrom。値を読むのは readMfaEnforceFromEnv だけ
+    readOnlyBy: 'src/lib/auth/mfa/policy.ts',
   },
 } as const satisfies Record<string, EnvVarSpec>;
 

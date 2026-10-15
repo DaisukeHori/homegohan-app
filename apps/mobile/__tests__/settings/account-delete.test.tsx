@@ -118,6 +118,14 @@ import {
   readPendingWebViewUserScopedStorageClear,
   resetWebViewUserStorageCleanupForTests,
 } from '../../src/lib/webViewUserStorageCleanup';
+import * as SecureStore from 'expo-secure-store';
+import { PUSH_TOKEN_RELEASE_API_PATH } from '@homegohan/shared';
+import { PUSH_INSTALL_SECRET_STORE_KEY } from '../../src/lib/pushInstallSecret';
+import {
+  PUSH_TOKEN_RELEASE_PENDING_KEY,
+  PUSH_TOKEN_VALUE_KEY_PREFIX,
+  releasePushTokenAfterSignedOut,
+} from '../../src/lib/pushTokenRelease';
 
 // Alert.alert をモックし、確認ダイアログでは "削除" ボタンを自動タップしたことにする
 const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation((title, _message, buttons) => {
@@ -396,6 +404,46 @@ describe('AccountSettingsPage — ログインが切れていて退会できな�
     expect(mockClearUserScopedAsyncStorage).toHaveBeenCalledWith('uid-1');
     expect(mockSignOut).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['no_rows', 'failed'])(
+    '401 のログアウトで push token の行の削除が %s でも、掃除の前に release の宛先を控え、続く SIGNED_OUT の release が行を消す (#1706)',
+    async (unregisterResult) => {
+      // 端末の秘密の値と、登録のときに控えた push token の値 (セッションが失効していて、本人のセッションでは行を消せない)
+      const deviceSecret = 'shared-device-secret-aaaaaaaaaaaaaaaaaaaaaa'; // gitleaks:allow
+      const token = 'ExponentPushToken[device]';
+      const valueKey = `${PUSH_TOKEN_VALUE_KEY_PREFIX}:uid-1`;
+      (SecureStore as unknown as { __reset: () => void }).__reset();
+      await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, deviceSecret);
+      await AsyncStorage.setItem(valueKey, token);
+      mockUnregisterExpoPushToken.mockResolvedValueOnce(unregisterResult);
+      // 本物の掃除と同じく、ログアウトの掃除はこの値を消す (user-storage.ts の USER_ID_KEY_PREFIXES)
+      mockClearUserScopedAsyncStorage.mockImplementation(async (userId: string) => {
+        callOrder.push('clearLocal');
+        await AsyncStorage.removeItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:${userId}`);
+      });
+      mockPost.mockRejectedValueOnce(new Error('HTTP 401 Unauthorized: {"error":"Unauthorized"}'));
+
+      render(<AccountSettingsPage />);
+      fireEvent.press(screen.getByTestId('account-delete-button'));
+      await waitFor(() => {
+        expect(mockReplace).toHaveBeenCalledWith('/');
+      });
+
+      expect(await AsyncStorage.getItem(valueKey)).toBeNull();
+      expect(JSON.parse((await AsyncStorage.getItem(PUSH_TOKEN_RELEASE_PENDING_KEY)) ?? 'null')).toEqual([
+        { userId: 'uid-1', token },
+      ]);
+
+      // サインアウトのあとに届く SIGNED_OUT の release (AuthProvider)。値はもう無いが、控えた宛先で行を消しに行く
+      await releasePushTokenAfterSignedOut('uid-1');
+
+      const releaseCalls = mockPost.mock.calls.filter(([path]) => path === PUSH_TOKEN_RELEASE_API_PATH);
+      expect(releaseCalls.map(([, body]) => body)).toEqual([
+        { expo_push_token: token, install_secret: deviceSecret, user_id: 'uid-1' },
+      ]);
+      expect(await AsyncStorage.getItem(PUSH_TOKEN_RELEASE_PENDING_KEY)).toBeNull();
+    },
+  );
 
   it('401 でも statusText が空 (HTTP/2) なら同じ扱い', async () => {
     mockPost.mockRejectedValueOnce(new Error('HTTP 401 : {"error":"Unauthorized"}'));

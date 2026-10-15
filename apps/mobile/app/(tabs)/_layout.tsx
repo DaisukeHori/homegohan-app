@@ -91,10 +91,6 @@ export default function TabsLayout() {
           }}
         />
         <Tabs.Screen
-          name="favorites"
-          options={{ href: null }}
-        />
-        <Tabs.Screen
           name="comparison"
           options={{
             title: "比較",
@@ -111,7 +107,6 @@ export default function TabsLayout() {
           }}
         />
         {/* タブバーに表示しないが(tabs)グループ内に必要なファイル */}
-        <Tabs.Screen name="health" options={{ href: null }} />
         <Tabs.Screen name="settings" options={{ href: null }} />
       </Tabs>
       <AIFloatingFab />

@@ -110,10 +110,7 @@ const FIRST = { href: '/', label: '最初の画面へ戻る' };
 const LAYOUTS: LayoutSpec[] = [
   { file: '_layout.tsx', boundary: 'root' },
   { file: '(auth)/_layout.tsx', boundary: 'auth', home: FIRST },
-  { file: '(org)/_layout.tsx', boundary: 'org', home: HOME },
   { file: '(public)/_layout.tsx', boundary: 'public', home: FIRST },
-  { file: '(super-admin)/_layout.tsx', boundary: 'super-admin', home: HOME },
-  { file: '(support)/_layout.tsx', boundary: 'support', home: HOME },
   { file: '(tabs)/_layout.tsx', boundary: 'tabs', home: ENTRY_AS_HOME },
   { file: 'handson-tour/_layout.tsx', boundary: 'handson-tour', home: HOME },
   { file: 'onboarding/_layout.tsx', boundary: 'onboarding', home: FIRST },

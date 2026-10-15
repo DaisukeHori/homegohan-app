@@ -492,4 +492,26 @@ describe('設計上の不変条件', () => {
     const spec = ACCOUNT_EXPORT_TABLES.find((t) => t.table === 'support_ticket_messages')!;
     expect(spec.eq).toEqual({ is_internal: false });
   });
+  // billing/01 §7.1・§16.1: Stripe との同期の内部の記録 (stripe_status・stripe_synced_at) は出さず、本人の契約の内容は出す
+  it('personal_subscriptions omits stripe_status and stripe_synced_at and exports cancel_at_period_end and billing_interval (billing/01 §7.1)', () => {
+    const spec = ACCOUNT_EXPORT_TABLES.find((t) => t.table === 'personal_subscriptions')!;
+    const exported = selectedColumns(spec).filter((c) => !(spec.omit ?? []).includes(c));
+    // 前提: 列は billing/01 の migration が足したもので、スキーマに実在する
+    for (const column of ['stripe_status', 'stripe_synced_at', 'cancel_at_period_end', 'billing_interval']) {
+      expect(tableOf('personal_subscriptions').columns, column).toContain(column);
+    }
+    expect(exported).not.toContain('stripe_status');
+    expect(exported).not.toContain('stripe_synced_at');
+    expect(exported).toContain('cancel_at_period_end');
+    expect(exported).toContain('billing_interval');
+  });
+
+  // billing/01 §6.3: 利用者と Stripe Customer の対応表は、決済の内部の識別子なので出さない
+  it('billing_customers is in ACCOUNT_EXPORT_EXCLUDED with a reason (billing/01 §6.3)', () => {
+    expect(exportedNames.has('billing_customers')).toBe(false);
+    expect(ACCOUNT_EXPORT_EXCLUDED.billing_customers).toMatch(/Stripe/);
+    expect(ACCOUNT_EXPORT_EXCLUDED.billing_customers.trim().length).toBeGreaterThan(0);
+    // 前提: 表は billing/01 の migration が作り、user_id を持つ (分類が必要な表)
+    expect(requiredTables(schema).has('billing_customers')).toBe(true);
+  });
 });

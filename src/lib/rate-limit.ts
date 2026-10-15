@@ -10,6 +10,7 @@ import { createLogger } from '@/lib/db-logger';
  * #1164 ファイルアップロード (POST /api/upload) のユーザー単位の回数制限にも使う
  * #1154 外国の AI 事業者への提供の同意を記録する API (POST /api/ai/consent) の連打防止にも使う
  * #1493 ブラウザ・端末からのログを受け取る API (POST /api/log) のユーザー単位の回数制限にも使う
+ * #1169 ブラウザが CSP の違反を報告する API (POST /api/csp-report) の IP 単位の制限にも使う
  *
  * 元は src/app/api/contact/route.ts の Upstash Ratelimit 実装を汎用化したもの。
  * `key` + カテゴリ単位でレート制限を判定する。
@@ -54,7 +55,12 @@ export type RateLimitCategory =
   | 'upload'
   | 'ai-consent'
   | 'auth-login'
-  | 'client-log';
+  | 'client-log'
+  | 'auth-mfa-verify'
+  | 'auth-mfa-recover'
+  | 'dsr'
+  | 'billing'
+  | 'csp-report';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -67,6 +73,8 @@ const MINUTE_SEC = 60;
 // 「日次」は暦日（0時リセット）ではなく、直近24時間のローリングウィンドウで判定する
 // （sliding window / in-memory どちらの実装も「初回リクエスト時刻 + 24h」を基準にするため）。
 const DAY_SEC = 24 * 60 * 60;
+// 「時間あたり」も直近 60 分のローリングウィンドウ
+const HOUR_SEC = 60 * MINUTE_SEC;
 
 // カテゴリ別ルール。先頭から順に判定し、どれか 1 つでも超過していれば失敗として打ち切る。
 //
@@ -89,6 +97,9 @@ const DAY_SEC = 24 * 60 * 60;
 // - contact: お問い合わせフォーム (src/app/api/contact/route.ts)。10 回/分。
 //   route が独自に持っていた制限と同じ値。Upstash 未設定のときは in-memory フォールバック、
 //   Upstash が例外を投げたときは fail-closed (例外を伝播) で、ほかのカテゴリと扱いは同じ
+// - csp-report: ブラウザが CSP の違反を報告する API (#1169。POST /api/csp-report。ログイン前でも届くので key はクライアント IP)。
+//   壊れたデプロイでは 1 画面につき止まったスクリプトの数 (数件) の報告が出る。30 回/分は 1 人の操作を十分に上回り、
+//   偽の報告の連打で app_logs (保持 30 日) を膨らませない。直近 24 時間の 300 回は 1 人の実際の使い方を十分に上回る値
 //
 // 【その他】
 // - export: 個人データエクスポート（#1131。AI は使わないが全テーブルを走査する重い読み取り）。
@@ -113,7 +124,15 @@ const DAY_SEC = 24 * 60 * 60;
 //   error-report.ts のエラー境界・push-issue-log.ts のプッシュ通知の登録失敗) は 1 回の出来事につき 1 行。
 //   直近 24 時間の 1000 回は、写真 200 枚分にあたり、1 日の実際の使い方を十分に上回る。
 //   超えた分は 429 で断る (送り手はどれも失敗を握りつぶすので、画面やサインアウトは止まらない)。
+// - auth-mfa-verify: 運営ロールの二段階認証の 6 桁の確認 (#1176。POST /api/auth/mfa/verify、key = 認証で確定した user.id)。
+//   設計 docs/design/cross/12-operator-mfa.md §12.5。6 桁 = 100 万通り。1 時間 20 回なら 30 秒の窓でも当たる確率は無視できる。
+//   本人が打ち間違えても 1 分 5 回あれば足りる
+// - auth-mfa-recover: バックアップコードによる回復 (#1176。POST /api/auth/mfa/recover、key = user.id)。
+//   50 bit のコード。1 時間 10 回で総当たりは不可能。本人は 10 個のうち 1 個を打てればよい
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
+  // 課金の操作 (Checkout の作成・Portal・解約の予約と取り消し・戻り画面の同期)。利用者ごと。
+  // Stripe の API を 1〜2 回呼ぶ操作なので、連打で Stripe 側のレート制限や顧客の重複を起こさない値
+  billing: [{ name: 'billing', max: 10, windowSec: MINUTE_SEC }],
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
   image: [
@@ -155,6 +174,23 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   'client-log': [
     { name: 'client-log', max: 30, windowSec: MINUTE_SEC },
     { name: 'client-log-daily', max: 1000, windowSec: DAY_SEC },
+  ],
+  // #1178 個人情報の請求 (作成・確認メールの再送。key = user.id)。1 日に 4 種 × 再送を含めても 20 で足りる (設計 cross/15 §17)
+  dsr: [
+    { name: 'dsr', max: 5, windowSec: 10 * MINUTE_SEC },
+    { name: 'dsr-daily', max: 20, windowSec: DAY_SEC },
+  ],
+  'auth-mfa-verify': [
+    { name: 'auth-mfa-verify', max: 5, windowSec: MINUTE_SEC },
+    { name: 'auth-mfa-verify-hourly', max: 20, windowSec: HOUR_SEC },
+  ],
+  'auth-mfa-recover': [
+    { name: 'auth-mfa-recover', max: 3, windowSec: MINUTE_SEC },
+    { name: 'auth-mfa-recover-hourly', max: 10, windowSec: HOUR_SEC },
+  ],
+  'csp-report': [
+    { name: 'csp-report', max: 30, windowSec: MINUTE_SEC },
+    { name: 'csp-report-daily', max: 300, windowSec: DAY_SEC },
   ],
 };
 

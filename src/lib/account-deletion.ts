@@ -8,12 +8,17 @@
  *
  * 流れ (どの段階も、やり直して何度流しても同じ結果になる。途中で失敗したら、そこで止めて ACCOUNT_DELETE_FAILED を返す):
  *   1. 組織のオーナー / 家族の代表者なら 409 で止める (譲渡か解散が先)。
+ *   1'. 段階 billing (billing/01 §11。src/lib/billing/account-deletion.ts): 顧客の開いたままの Stripe Checkout Session を閉じ、
+ *      Stripe の契約 (顧客の全契約と DB の行の和) のうち終端でないものを即時解約し、Stripe の顧客を匿名化する。
+ *      顧客も契約の行も無ければ Stripe を呼ばない。失敗したらここで止める (まだ何も変えていないのでやり直せる)。
  *   2. prepare_account_deletion (DB 関数): 本人の生のメールアドレスを残す記録 (メール配信ログ・問い合わせ・招待) を伏せる。
  *   3. release_user_membership (DB 関数): 組織のライセンス席を解放する。失敗しても削除は続ける (要手動リコンサイル)。
  *   4. Storage のファイルを消す (src/lib/account-deletion-storage.ts)。
  *   4'. 削除の実行記録を始める (#1562。DB 関数 begin_account_deletion_record)。gdpr_deletion_requests に、利用者の id の
  *      HMAC (subject_hash)・実行者 (本人 / 運営)・理由のコード・request_id を書く。利用者の id そのものは残さない。
  *      記録を書けなければ削除しない (記録の無い削除を作らない)。
+ *   4''. 段階 billing_recheck (billing/01 §11): 1' と同じ処理をもう一度 (1' のあとに完了した Checkout の契約・作られた顧客を閉じる)。
+ *      失敗したら 5 に進まない (アカウントは残り、もう一度の退会で片付く)。
  *   5. auth.admin.deleteUser。public 側の個人データは外部キーの CASCADE / SET NULL で消える・匿名化される
  *      (20261010000100_auth_users_fk_on_delete.sql。外部キーで失敗する経路は無い)。
  *      削除が済んだら (すでに消えていたときも)、記録に削除の日時を入れる (complete_account_deletion_record)。
@@ -34,15 +39,19 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { removeAccountStorage } from '@/lib/account-deletion-storage';
 import { notifyAccountDeleted, readAccountDeletionEmail } from '@/lib/account-deletion-notification';
+// billing/account-deletion.ts は account-deletion.ts から型だけを import するので、実行時の循環は無い
+import { defaultAccountDeletionBilling } from '@/lib/billing/account-deletion';
 
 /** どの段階で失敗したか (ログ用。応答には出さない) */
 export type AccountDeletionStep =
   | 'init'
   | 'check_blockers'
+  | 'billing'
   | 'prepare'
   | 'release_membership'
   | 'storage'
   | 'record'
+  | 'billing_recheck'
   | 'delete_user';
 
 /**
@@ -120,6 +129,8 @@ export interface DeleteAccountParams {
   now?: () => Date;
   /** 削除の実行者 (#1562。削除の実行記録に残す)。省略すると本人 ({ type: 'self' }) */
   executor?: AccountDeletionExecutor;
+  /** テストで差し替える。既定は src/lib/billing/account-deletion.ts の実装 (billing/01 §11) */
+  billing?: AccountDeletionBilling;
 }
 
 const LOG_NAME = 'lib/account-deletion';
@@ -296,6 +307,12 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
 
     completionEmailTo = await readAccountDeletionEmail(admin, userId, { log, requestId });
 
+    // billing/01 §11: 開いたままの Checkout を閉じ、Stripe の契約を即時解約し、顧客を匿名化する。
+    // まだ何も変えていないので、Stripe の失敗で止まってもやり直せる
+    step = 'billing';
+    const billing = params.billing ?? defaultAccountDeletionBilling;
+    const billingReport = await billing.cancelForAccountDeletion(userId, userLog, 'billing');
+
     step = 'prepare';
     const { data: prepareReport, error: prepareError } = await admin.rpc('prepare_account_deletion', {
       p_user_id: userId,
@@ -326,6 +343,11 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     step = 'record';
     const recordId = await beginDeletionRecord(admin, userId, params.executor ?? { type: 'self' }, requestId);
 
+    // billing/01 §11: deleteUser の直前にもう一度 (段階 billing のあとに完了した Checkout の契約・作られた顧客を閉じる)。
+    // 失敗したら delete_user に進まない (アカウントは残り、もう一度の退会で片付く)
+    step = 'billing_recheck';
+    const billingRecheckReport = await billing.cancelForAccountDeletion(userId, userLog, 'billing_recheck');
+
     step = 'delete_user';
     const { error: deleteError } = await admin.auth.admin.deleteUser(userId);
     if (deleteError) {
@@ -341,7 +363,7 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     await completeDeletionRecord(admin, recordId, log, requestId);
 
     // 削除後なので withUser は使わない。メールアドレスも user_id も載せない
-    log.info('account deleted', { request_id: requestId, deletion_record_id: recordId, prepare: prepareReport ?? null, storage });
+    log.info('account deleted', { request_id: requestId, deletion_record_id: recordId, prepare: prepareReport ?? null, storage, billing: billingReport, billing_recheck: billingRecheckReport });
   } catch (error) {
     userLog.error(`account deletion failed at step: ${step}`, toError(error), {
       step,
@@ -357,4 +379,38 @@ export async function deleteAccount(params: DeleteAccountParams): Promise<Delete
     await notifyAccountDeleted({ toEmail: completionEmailTo, deletedAt, requestId, log });
   }
   return { ok: true };
+}
+
+/** 退会で Stripe を扱う 2 つの段階 (billing/01 §11) */
+export type AccountDeletionBillingPhase = Extract<AccountDeletionStep, 'billing' | 'billing_recheck'>;
+
+/**
+ * 段階 billing / billing_recheck のロガー (createLogger(...).withUser(...) が返すものの一部)。
+ * AccountDeletionLogger (= ReturnType<typeof createLogger>) は使わない: deleteAccount が渡す userLog = log.withUser(userId) の戻り値は
+ * withUser を持たず、AccountDeletionLogger には代入できない (account-deletion-storage.ts の AccountStorageLogger と同じ形にする)
+ */
+export interface AccountDeletionBillingLogger {
+  info: (message: string, metadata?: Record<string, unknown>) => void;
+  warn: (message: string, metadata?: Record<string, unknown>) => void;
+}
+
+export interface AccountDeletionBillingReport {
+  /** 即時解約した契約の数 */
+  cancelled_subscriptions: number;
+  /** 閉じた (expire) Checkout Session の数 */
+  expired_checkout_sessions: number;
+  /** 顧客 (billing_customers) があれば anonymized (この呼び出しで匿名化した、または匿名化済み)。無ければ none */
+  customer: 'anonymized' | 'none';
+}
+
+export interface AccountDeletionBilling {
+  /**
+   * 開いたままの Checkout Session を閉じ、契約を即時解約し、顧客を匿名化する。顧客も Stripe-backed の行も無ければ何もしない。
+   * 失敗は例外 (その段階で止める)。同じ利用者に何度呼んでも同じ結果になる (2 回目は、閉じる Session・解約する契約が無ければ何もしない)
+   */
+  cancelForAccountDeletion(
+    userId: string,
+    log: AccountDeletionBillingLogger,
+    phase: AccountDeletionBillingPhase,
+  ): Promise<AccountDeletionBillingReport>;
 }

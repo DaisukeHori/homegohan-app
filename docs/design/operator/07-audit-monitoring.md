@@ -164,7 +164,24 @@ admin.sales.lead.activity_add       - 営業リードへの活動の記録 (POST
                                       (対象はリード (target_type = 'sales_lead')。details: activity_id / activity_type。活動の本文 details は入れない)
 admin.inquiry.update                - 問い合わせのステータス・管理者メモ更新 (PATCH / PUT /api/admin/inquiries/{id})。更新後の本文を返すので、変更が無い更新も記録する
                                       (details: inquiry_id / status_from / status_to / admin_notes_changed / changed。メモの中身は入れない。対象は 4.1.1 と同じ)
+admin.mfa.enroll                    - 運営ロールの二段階認証 (TOTP) の登録 (POST /api/auth/mfa/verify で unverified の factor の verify が成功したとき。#1176)
+                                      (severity: info。details: factor_id / backup_codes_issued / failed_step)
+admin.mfa.backup_codes_regenerate   - バックアップコードの再発行 (POST /api/auth/mfa/backup-codes。段 B。#1176)
+                                      (severity: info。details: backup_codes_issued / failed_step)
+admin.mfa.unenroll                  - 認証アプリの解除 (DELETE /api/auth/mfa/factors/{id}。段 B。#1176)
+                                      (severity: warn。details: factor_id / backup_codes_deleted / failed_step)
+admin.mfa.recover                   - バックアップコードによる回復 (POST /api/auth/mfa/recover。TOTP とコードを全部消す。#1176)
+                                      (severity: warn。details: factors_deleted / backup_codes_deleted / failed_step)
 ```
+
+運営ロールの二段階認証の 4 種 (`admin.mfa.*`。`docs/design/cross/12-operator-mfa.md` §17・§17.2) の記録のルール:
+- 本人の操作なので `actor_id` = `target_id` = 本人、`target_type` は `'user'`。書くのは `recordMfaAudit()` (`src/lib/auth/mfa/audit.ts`) だけで、
+  client は service_role (`org_industrial_doctor` は `audit_logs_insert_admins` の一覧に無く、本人の client では INSERT できないため)。
+- 秘密 (secret・QR・コードの値・ハッシュ) は details に入れない。数の欄の `null` は「その手順に届かなかった・失敗した」。
+- **fail-open**。ただし監査の起点 (取り消せない操作: verify の成功・コードの消費・unenroll の成功・再発行の呼び出し) の後は、
+  続く手順が途中で失敗しても、止まった手順の名前を `failed_step` に入れて **必ず 1 行書いてから** 応答する (起点より前の失敗は書かない)。
+- ログインごとの 6 桁の確認 (verified な factor の verify) は記録しない (ログインの一部。Supabase の auth 監査に残る)。
+- 自己サービスの `/api/auth/mfa/*` は `tests/admin-mutation-audit-coverage-1571.test.ts` の走査の 4 つのディレクトリの外にあるが、上の 4 種を記録する。
 
 #### 4.1.1 ユーザー PII 閲覧系操作 (#1200)
 
@@ -308,6 +325,11 @@ support.user.email_resend           - 確認メール再送
 
 ```
 system.payment.failed               - 支払失敗 (Stripe webhook)
+system.billing.subscription_created - 個人の契約の行ができた (写像 billing_apply_stripe_subscription。billing/01)
+system.billing.subscription_status_changed - 個人の契約の status が変わった (写像。past_due / grace になったときは severity=warn)
+system.stripe.event_failed          - Stripe の Webhook のイベントの処理に失敗した (severity=warn。target_type='stripe_event'・target_id は NULL)
+system.billing.account_deletion_stripe_cancelled - 退会で Stripe の Checkout を閉じ・契約を即時解約し・顧客を匿名化した (退会の段階 billing / billing_recheck)
+system.billing.orphan_subscription_cancelled - 退会した利用者の顧客に残った契約を即時解約した (severity=warn。target_type='stripe_subscription'・target_id は NULL)
 system.stripe.chargeback            - チャージバック発生 (severity=critical)
 system.stripe.reconcile_discrepancy - reconcile 不一致検出
 system.plan.auto_expire             - プラン自動期限切れ
@@ -367,6 +389,22 @@ export async function insertAuditLog(params: AuditLogParams): Promise<void> {
 **注意**:
 - `actor_id` は RLS の WITH CHECK で `auth.uid()` と一致することを強制するが、`service_role` を使う場合は RLS をバイパスするため、アプリ層で `actorId = await getCurrentUserId()` を必ず取得して渡すこと。
 - `actor_email_snapshot` / `actor_role_snapshot` は GDPR 削除により `actor_id` が NULL になった後も actor を特定するために使用する。これらはスナップショット列であり、後から変更されない。
+
+### 4.7 利用者の課金の操作 (billing/01)
+
+利用者本人の操作 (`actor_id` = `target_id` = 本人・`target_type = 'user'`)。書くのは `src/lib/billing/service.ts` だけ。
+名前の一覧は `src/lib/billing/core.ts` の `BILLING_AUDIT_ACTIONS` (4.5 の `system.payment.failed`・`system.billing.*`・`system.stripe.event_failed` も含めて 9 つ) が正。
+
+```
+user.billing.checkout_started       - Checkout Session を作った (POST /api/billing/checkout)
+user.billing.cancel_scheduled       - 有料プランの解約を予約した (期間末。POST /api/billing/subscription/cancel)
+user.billing.cancel_revoked         - 解約の予約を取り消した (POST /api/billing/subscription/resume)
+```
+
+課金の監査の `target_type` は `src/lib/billing/core.ts` の `BILLING_AUDIT_TARGET_TYPES` の 3 つ:
+`user` (target_id = 利用者の id)・`stripe_event` (利用者を解決できない Webhook の失敗。`system.stripe.event_failed`)・
+`stripe_subscription` (退会した利用者の顧客に残った契約の解約。`system.billing.orphan_subscription_cancelled`)。
+後の 2 つは `target_id` を NULL にし、Stripe の id (`evt_…` / `sub_…`。uuid ではない) は `details` に入れる。
 
 ## 5. 7 年保管とアーカイブ
 

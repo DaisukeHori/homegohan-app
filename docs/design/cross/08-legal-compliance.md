@@ -486,6 +486,13 @@ stateDiagram-v2
 
 ### 9.2 実装
 
+> **実装との対応 (billing/01-billing-core.md)**: `invoice.payment_failed` は受け口 (`POST /api/webhooks/stripe`) が契約を Stripe から取り直し、
+> 写像 (`billing_apply_stripe_subscription`) が `past_due`・`past_due_since` を写して、監査 `system.payment.failed` を書く (billing/01 §7.3・§9.6)。
+> 下の `handlePaymentFailed` (アプリが直接 UPDATE してメールを送る) は使わない。支払失敗の案内は Stripe の顧客向けメール
+> (Dashboard の Customer emails) に任せ、アプリはメールを送らない (billing/01 §5.3)。
+> `past_due → grace → cancelled` の時間の経過で進める処理 (下の pg_cron `check_grace_period`) は配線の冊で作る (billing/01 §12。
+> `grace → cancelled` は DB を直接 `cancelled` にせず、Stripe の契約を解約して届く `deleted` を写像が写す)。
+
 ```typescript
 // src/lib/billing/grace-period.ts
 
@@ -511,11 +518,7 @@ export async function handlePaymentFailed(userId: string): Promise<void> {
     .eq('user_id', userId)
     .eq('status', 'active');
 
-  // 通知送信
-  await sendEmail(userId, 'payment_failed', {
-    retry_url: '/account/billing',
-    support_url: '/support',
-  });
+  // 通知のメールはアプリから送らない: 支払失敗の案内は Stripe の顧客向けメール (billing/01-billing-core.md §5.3)
 }
 ```
 
@@ -543,8 +546,12 @@ $$);
 
 ## 10. チャージバック対応
 
+> **配線の冊で作る**: 受け口 `POST /api/webhooks/stripe` (billing/01-billing-core.md §9.6) は `charge.dispute.created` をまだ受け取らない
+> (`src/lib/billing/core.ts` の `STRIPE_EVENT_ACTIONS` に無いイベントは何もしない)。チャージバックの処理は配線の冊が、
+> billing/01 §12 の「イベントの追加」の型 (`STRIPE_EVENT_ACTIONS` に 1 行 + `service.ts` の分岐 + Dashboard の登録) で足す。下は見本。
+
 ```typescript
-// src/app/api/v1/webhooks/stripe/route.ts
+// src/app/api/webhooks/stripe/route.ts
 // charge.dispute.created イベントの処理
 
 async function handleDisputeCreated(event: Stripe.Event) {
@@ -793,12 +800,13 @@ $$);
 2. クライアント: POST /api/account/delete { confirm: true }
    - 認証済みセッションが必須 (未認証は 401、confirm がなければ 400)
    - 凍結中の利用者も呼べる (#1445)。middleware は凍結中の利用者の /api を 403 AUTH_ACCOUNT_FROZEN で止めるが、
-     退会 (POST /api/account/delete) と書き出し (GET /api/account/export) だけは止めない
+     退会 (POST /api/account/delete) と書き出し (GET /api/account/export) と、有料プランの解約の 3 本 (契約の要約・解約の予約・Billing Portal。
+     billing/01 §9.8) は止めない
      (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS。完全一致。一覧は lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)。
      ほかに凍結中でも止めないのは、通知のトークンの claim (POST /api/push-tokens/claim。#1636) だけ。利用者の操作ではなく
      端末の後片付け (同じ端末の前の利用者の行を外す) のため。退会・書き出しの一覧には入れず、src/lib/push-tokens.ts の
      isPushTokenClaimApiPath で別に判定する (全 route で広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts)。
-     規約の同意ゲート (13a) も、退会・書き出し・claim を止めない (packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS に exact の行がある。
+     規約の同意ゲート (13a) も、退会・書き出し・有料プランの解約の 3 本・claim を止めない (packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS に exact の行がある。
      凍結中は同意の画面に進めないため。凍結の判定で通るパスがすべて同意の許可リストにあることは
      lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で確かめる)
 3. 削除をブロックする条件 (409):
@@ -807,6 +815,9 @@ $$);
    - 家族グループの代表者 → ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE
      (先に代表者を譲渡するか、家族グループを解散する)
 4. 削除前の後始末 (service_role。実装は src/lib/account-deletion.ts。どの手順もやり直しても同じ結果になる):
+   - Stripe の後始末 (段階 billing。billing/01 §11。実装は src/lib/billing/account-deletion.ts): 顧客の開いたままの Checkout Session を閉じ、
+     Stripe の契約 (顧客の全契約と DB の行の和) のうち終端でないものを即時解約し、Stripe の顧客を匿名化する (まだなら)。
+     顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない (まだ何も変えていないので、やり直せる)
    - 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す: RPC prepare_account_deletion
      (メール配信ログ・問い合わせ・組織/家族の招待・家族の昇格リクエスト。pending の招待は revoked にする。失敗したら削除しない)
    - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける)
@@ -815,6 +826,10 @@ $$);
    - 削除の実行記録を始める (#1562): RPC begin_account_deletion_record。`gdpr_deletion_requests` に、利用者の id の
      HMAC (`subject_hash`)・実行者 (`executor_type` = self)・理由のコード (`reason` = user_request)・`request_id` を書く。
      利用者の id もメールアドレスも書かない。1 人に 1 行 (途中で止まった記録は使い直す)。失敗したら削除しない
+   - Stripe の後始末をもう一度 (段階 billing_recheck。billing/01 §11): 段階 billing と同じ処理を、deleteUser の直前にもう一度行う
+     (段階 billing のあとに完了した Checkout の契約・作られた顧客を閉じる)。失敗したら削除しない (アカウントは残り、もう一度の退会で片付く)。
+     退会のあとに Stripe に生まれた契約 (この段階のあと deleteUser までの間に完了したものなど) は、届いた Webhook の写像が
+     「退会済み」と判定し、Stripe で即時解約する (billing/01 §8.6)
 5. auth.users を削除 (auth.admin.deleteUser)
    - public 側のデータは FK の ON DELETE CASCADE / SET NULL で削除・匿名化される
      (auth.users を指す外部キーに NO ACTION は無い。20261010000100_auth_users_fk_on_delete.sql)
@@ -843,7 +858,7 @@ $$);
 | FK で消えない参照 (`invited_by` / `created_by` など) | FK の ON DELETE で処理 | 実装済み (#1175)。`auth.users` を指す NO ACTION の外部キーは 0 本。本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments` / `ai_content_logs`) は CASCADE、サポート・会計の記録 (`support_tickets` / `support_ticket_messages` / `coupon_redemptions` / `referral_rewards` / `email_delivery_logs`) と運営者・作成者・承認者の参照は行を残して SET NULL。テストが NO ACTION の再発を止める。`gdpr_deletion_requests.user_id` の外部キーは #1562 で外した (削除の実行記録は利用者の行を指さない。旧設計の行の `user_id` は begin_account_deletion_record が NULL にする) |
 | 利用者が作ったレシピ (`recipes`) | 非公開は削除、公開は匿名化して残す | 実装済み (#1175)。`recipes.user_id` は `ON DELETE SET NULL` で、`user_id` が NULL の行は RLS (`Users can view public recipes`) で全員に見える。そのまま退会させると非公開のレシピまで公開されるので、RPC `prepare_account_deletion` が本人の非公開レシピを先に消す。公開レシピは `user_id` だけが外れて残る (他の利用者のコレクション・いいね・コメントが付いていることがあるため) |
 | Storage の写真 (食事・冷蔵庫など) | 削除 | 実装済み (#1175)。3 バケットの `<user_id>/` 以下、旧パス (`meals/<user_id>/` など)、本人の行の URL が指す本人のファイル。持ち主がパスから分からない旧ファイル (バケット直下のタイムスタンプ名) は消さない |
-| Stripe の顧客・サブスクリプション | サブスクリプションは即時に解約し、顧客は氏名・メールを消す匿名化をして残す (#1562) | 行っていない。課金の核の設計 (docs/design/billing/01-billing-core.md) で扱う (§19) |
+| Stripe の顧客・サブスクリプション | サブスクリプションは即時に解約し、顧客は氏名・メールを消す匿名化をして残す (#1562) | 実装済み (billing/01 §11)。§16.2 の手順 4 の段階 billing (`prepare` の前) と billing_recheck (`deleteUser` の直前) が、開いたままの Checkout を閉じ、終端でない契約を即時解約し、顧客を匿名化する。退会のあとに Stripe に生まれた契約は、写像の入口 (`syncSubscription`) が即時解約する (billing/01 §8.6) |
 | 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
 | 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスは、退会に関係なく生のアドレスを持たない (#1562。migration 20261016190000)。トリガーが `email` を `email_hash` (正規化したアドレスの HMAC。鍵は Vault の `pii_hmac_key`) に置き換え、既存の行も置き換えた。#1163 の 24 時間の送信上限は `email_hash` 同士で比べるので、退会しても上限は戻らない |
 | 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
@@ -895,7 +910,7 @@ $$);
 | 既存 `/account/billing` (未実装) | 新規 | 特商法対応のチェックボックス含む Checkout フロー実装 |
 | `terms_acceptances` (未作成) | 新規 | migration で作成 |
 | Cookie バナー (未実装) | 新規 | `/app/layout.tsx` に `<CookieConsentBanner>` 追加 |
-| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。削除完了メール (#1152) は追加済み (§16.2 の手順 6。削除前の確認メールは送らない)。堅牢化 (#1175、T11) は追加済み (§16.3) |
+| 退会フロー (`POST /api/account/delete`) | 維持 | 即時削除が正式仕様 (§16、2026-10-08 オーナー判断 #1130)。削除完了メール (#1152) は追加済み (§16.2 の手順 6。削除前の確認メールは送らない)。堅牢化 (#1175、T11) は追加済み (§16.3)。Stripe の後始末 (段階 billing / billing_recheck) は追加済み (§16.2 の手順 4。billing/01 §11) |
 
 ---
 
@@ -906,7 +921,7 @@ $$);
 | 運営側適格請求書発行事業者番号 (T番号) の取得状況確認 | TODO | 法人向け機能リリース前 |
 | 弁護士レビュー: 特商法表示内容・利用規約 §X の医療免責文言 | TODO | Phase 1 リリース前 |
 | GPG 鍵を使った署名者の体制 (誰が鍵を管理するか) | TODO | バックアップ実装前 |
-| 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱い | 方針は決定 (§16.3: サブスクリプションは即時に解約し、顧客は氏名・メールを消す匿名化をして残す)。実装は TODO | 課金の核の設計 (docs/design/billing/01-billing-core.md) で扱う (#1562) |
+| 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱い | 済 (billing/01 §11) | 段階 billing / billing_recheck で即時解約と顧客の匿名化を行う (§16.2 の手順 4・§16.3) |
 | 削除の実行記録 (誰がいつ消したか) を何で残すか | 済 (#1562) | `gdpr_deletion_requests` に個人を特定できない形で残す (§16.4) |
 | `gdpr_deletion_requests` テーブルの廃止・用途変更 | 済 (#1562) | 削除の実行記録に当てた (§16.4) |
 | CloudSign API 連携の詳細設計 (法人電子締結) | TODO | operator/05-stripe-integration.md で定義 |
