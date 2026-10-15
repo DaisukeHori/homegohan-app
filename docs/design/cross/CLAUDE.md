@@ -15,10 +15,10 @@
 | `07-dr-backup.md` | 災害復旧 / バックアップ / リージョン | 03 §16.5 §22.8 |
 | `08-legal-compliance.md` | 特商法 / インボイス / GDPR / 利用規約 / 医療免責 | 03 §18 |
 | `09-testing.md` | テスト戦略統合 (Unit/Integration/E2E、CI/CD、モック、E2E シナリオ網羅) | 03 §16.4 §22.3 + 100-scenarios.md |
-| `12-operator-mfa.md` | 運営ロールの MFA (TOTP・AAL2 の入口・バックアップコード・解除) | 01 §3.1・#1176 |
+| `12-operator-mfa.md` | 運営ロールの MFA (TOTP・AAL2 の入口・バックアップコード・解除) | #1176 |
 | `13a-legal-consent-api-server.md` | 規約の同意ゲートを `/api` に掛ける (middleware の `/api` の分岐・許可リスト・`GET /api/legal/status`・`packages/shared` の判定と文面) | 08 §7.2 |
-| `14-parental-consent.md` | 未成年の年齢確認と保護者の同意 (生年月日・`parental_consents`・同意ゲートの判定) | 03 §17.10・#1173 |
-| `15-data-subject-requests.md` | 開示・訂正・利用停止の請求の受付 (表・本人と運営の経路・応答期限) | 08・#1178 |
+| `14-parental-consent.md` | 未成年の年齢確認と保護者の同意 (生年月日・`parental_consents`・同意ゲートの判定) | #1173 |
+| `15-data-subject-requests.md` | 開示・訂正・利用停止の請求の受付 (表・本人と運営の経路・応答期限) | #1178 |
 | `18-csp-nonce.md` | 本番の CSP の nonce 方式・違反の報告の受け口 | #1169 |
 
 10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。16・17 は並行して設計中の冊が使う。
