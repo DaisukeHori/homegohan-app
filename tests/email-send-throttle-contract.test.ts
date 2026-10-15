@@ -50,6 +50,9 @@ const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
     '本文は件数と関数名だけで、利用者の情報・ログの本文は含めない',
   'src/app/api/contact/route.ts':
     '宛先は環境変数 ADMIN_NOTIFICATION_EMAIL の固定アドレスだけで、利用者は宛先を指定できない。IP 単位の制限 (共通ヘルパー src/lib/rate-limit.ts の contact カテゴリ、10 回/分) がある',
+  // #1173 保護者の同意の控え
+  'src/app/api/family/members/child/route.ts':
+    '宛先はログイン中の本人 (auth.users.email) に固定で利用者は指定できない。送るのは子供の追加 (家族の人数上限と NOT_FAMILY_ADULT の認可つき) で同意を記録した 1 回だけ',
   'src/app/api/family/representative-transfer/[id]/accept/route.ts':
     '提案された本人だけが 1 回だけ実行できる (2 回目は TRANSFER_PROPOSAL_NOT_FOUND)。宛先は旧・新の代表者に固定で、利用者は宛先を指定できない',
   'src/app/api/org/owner-transfer/[id]/accept/route.ts':

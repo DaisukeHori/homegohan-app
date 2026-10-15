@@ -11,6 +11,7 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { SIGNUP_MINOR_NOTICE } from '@homegohan/shared';
 
 // ---- Mocks ----
 
@@ -121,5 +122,12 @@ describe('SignupScreen', () => {
         expect.any(Array)
       );
     });
+  });
+
+  it('#1173 T-EM2: 18 歳未満の方はご自身では登録できない旨の注記 (SIGNUP_MINOR_NOTICE) を出す', () => {
+    const { getByTestId, getByText } = render(<SignupScreen />);
+
+    expect(getByTestId('signup-minor-notice')).toBeTruthy();
+    expect(getByText(SIGNUP_MINOR_NOTICE)).toBeTruthy();
   });
 });
