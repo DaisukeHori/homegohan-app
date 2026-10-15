@@ -14,8 +14,27 @@
  *   - 失敗の結果に、DB・Storage の生のエラー文を入れない。request_id と段階を持つ (HTTP の応答は route が #1172 の internalError で返す)
  *   - すでに消えているユーザーの deleteUser (404) は成功として扱う (やり直せる)
  *   - ログにメールアドレスを載せない。削除後のログに user_id を付けない
+ *   - billing/01 §11: 段階 billing (check_blockers のあと・prepare の前) と billing_recheck (記録を始めたあと・deleteUser の直前)。
+ *     どちらの失敗もそこで止める。顧客も Stripe の契約の行も無ければ、既定の実装は Stripe を呼ばない
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// 既定の退会の段階 billing (src/lib/billing/account-deletion.ts) が使う DB と Stripe を偽物にする (テスト 43)。
+// ほかの it は deleteAccount に偽の billing を渡すので、これには届かない
+const { mockFindCustomer, mockListStripeBackedSubscriptions, mockCreateStripeGateway } = vi.hoisted(() => ({
+  mockFindCustomer: vi.fn(),
+  mockListStripeBackedSubscriptions: vi.fn(),
+  mockCreateStripeGateway: vi.fn(() => {
+    throw new Error('createStripeGateway must not be called');
+  }),
+}));
+vi.mock('@/lib/billing/repository', () => ({
+  createBillingRepository: () => ({
+    findCustomer: mockFindCustomer,
+    listStripeBackedSubscriptions: mockListStripeBackedSubscriptions,
+  }),
+}));
+vi.mock('@/lib/billing/stripe-gateway', () => ({ createStripeGateway: mockCreateStripeGateway }));
 import {
   accountDeletionFailure,
   accountDeletionHttp,
@@ -24,6 +43,8 @@ import {
   type DeleteAccountResult,
   type AccountDeletionAdmin,
   type AccountDeletionLogger,
+  type AccountDeletionBilling,
+  type AccountDeletionBillingPhase,
 } from '../src/lib/account-deletion';
 
 const USER = '11111111-1111-4111-8111-111111111111';
@@ -48,6 +69,8 @@ interface World {
   /** storage.list / remove の挙動 */
   storage: { listError?: { message: string } | null; entries?: Array<{ name: string; id: string | null }>; removeError?: { message: string } | null };
   deleteUser: { error?: { message: string; status?: number; code?: string } | null };
+  /** 退会の段階 billing / billing_recheck (billing/01 §11) で投げるもの */
+  billingThrows?: Partial<Record<AccountDeletionBillingPhase, Error>>;
 }
 
 function makeWorld(overrides: Partial<World> = {}): World {
@@ -143,8 +166,21 @@ beforeEach(() => {
   logs = makeLogger();
 });
 
+/** 偽の退会の段階 billing。呼ばれた phase を world.calls に "billing:<phase>" で残す */
+function makeBilling(target: World): AccountDeletionBilling {
+  return {
+    cancelForAccountDeletion: async (userId, _log, phase) => {
+      target.calls.push(`billing:${phase}`);
+      expect(userId).toBe(USER);
+      const error = target.billingThrows?.[phase];
+      if (error) throw error;
+      return { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' };
+    },
+  };
+}
+
 const run = (extra: Record<string, unknown> = {}) =>
-  deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger, ...extra });
+  deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger, billing: makeBilling(world), ...extra });
 
 describe('deleteAccount: 409 (従来と同じ形)', () => {
   it('組織のオーナーは ACCOUNT_DELETE_BLOCKED_ORG_OWNER。何も呼ばない', async () => {
@@ -208,10 +244,17 @@ describe('deleteAccount: 成功', () => {
 
     expect(result).toEqual({ ok: true });
     const order = world.calls.filter((call) => !call.startsWith('storage.list'));
-    expect(order.slice(0, 4)).toEqual(['from:organizations', 'from:family_groups', 'rpc:prepare_account_deletion', 'rpc:release_user_membership']);
+    expect(order.slice(0, 5)).toEqual([
+      'from:organizations',
+      'from:family_groups',
+      'billing:billing',
+      'rpc:prepare_account_deletion',
+      'rpc:release_user_membership',
+    ]);
     expect(world.calls.indexOf('storage.remove:fridge-images')).toBeGreaterThan(world.calls.indexOf('rpc:release_user_membership'));
-    expect(world.calls.slice(-3)).toEqual([
+    expect(world.calls.slice(-4)).toEqual([
       'rpc:begin_account_deletion_record',
+      'billing:billing_recheck',
       'auth.deleteUser',
       'rpc:complete_account_deletion_record',
     ]);
@@ -390,6 +433,63 @@ describe('deleteAccount: 失敗の扱い', () => {
     };
     const result = await deleteAccount({ userId: USER, admin, requestId: REQUEST_ID, logger: logs.logger });
     expect(result).toMatchObject({ ok: false, error: 'ACCOUNT_DELETE_FAILED', step: 'check_blockers' });
+  });
+});
+
+describe('deleteAccount: 退会の段階 billing / billing_recheck (billing/01 §11)', () => {
+  it('runs the billing step after check_blockers and before prepare, and the billing_recheck step after storage and right before deleteUser; a failure in billing stops with step billing without prepare/deleteUser, and a failure in billing_recheck stops with step billing_recheck without deleteUser', async () => {
+    world.storage.entries = [{ name: 'a.png', id: 'obj-1' }];
+    expect(await run()).toEqual({ ok: true });
+    const billingCalls = world.calls.filter((call) => call.startsWith('billing:'));
+    expect(billingCalls).toEqual(['billing:billing', 'billing:billing_recheck']);
+    const at = (call: string) => world.calls.indexOf(call);
+    expect(at('billing:billing')).toBeGreaterThan(at('from:family_groups'));
+    expect(at('billing:billing')).toBeLessThan(at('rpc:prepare_account_deletion'));
+    expect(at('billing:billing_recheck')).toBeGreaterThan(at('storage.remove:fridge-images'));
+    expect(at('auth.deleteUser')).toBe(at('billing:billing_recheck') + 1);
+    // 成功のログに 2 つの段階の結果が載る
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({
+      billing: { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' },
+      billing_recheck: { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' },
+    });
+
+    // 段階 billing の失敗: prepare にも deleteUser にも進まない
+    world = makeWorld({ billingThrows: { billing: new Error(SECRET_DB_MESSAGE) } });
+    const first = await run();
+    expect(first).toEqual(accountDeletionFailure(REQUEST_ID, 'billing'));
+    expect(world.calls).not.toContain('rpc:prepare_account_deletion');
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(JSON.stringify(first)).not.toContain('secret_constraint');
+
+    // 段階 billing_recheck の失敗: deleteUser に進まない (記録は始めたまま。やり直しで使い直す)
+    world = makeWorld({ billingThrows: { billing_recheck: new Error(SECRET_DB_MESSAGE) } });
+    const second = await run();
+    expect(second).toEqual(accountDeletionFailure(REQUEST_ID, 'billing_recheck'));
+    expect(world.calls).toContain('rpc:prepare_account_deletion');
+    expect(world.calls).toContain('rpc:begin_account_deletion_record');
+    expect(world.calls).not.toContain('auth.deleteUser');
+    expect(world.calls).not.toContain('rpc:complete_account_deletion_record');
+  });
+
+  it('skips Stripe in both billing passes when the user has neither a billing customer nor a stripe-backed row', async () => {
+    mockFindCustomer.mockResolvedValue(null);
+    mockListStripeBackedSubscriptions.mockResolvedValue([]);
+    mockCreateStripeGateway.mockClear();
+    // billing を渡さない = 既定の defaultAccountDeletionBilling
+    const result = await deleteAccount({ userId: USER, admin: makeAdmin(world), requestId: REQUEST_ID, logger: logs.logger });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockFindCustomer).toHaveBeenCalledTimes(2);
+    expect(mockFindCustomer).toHaveBeenCalledWith(USER);
+    expect(mockListStripeBackedSubscriptions).toHaveBeenCalledTimes(2);
+    expect(mockCreateStripeGateway).not.toHaveBeenCalled();
+    expect(world.calls).toContain('auth.deleteUser');
+    const info = logs.entries.find((entry) => entry.message === 'account deleted');
+    expect(info?.metadata).toMatchObject({
+      billing: { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' },
+      billing_recheck: { cancelled_subscriptions: 0, expired_checkout_sessions: 0, customer: 'none' },
+    });
   });
 });
 

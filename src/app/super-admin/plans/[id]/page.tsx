@@ -105,13 +105,16 @@ export default function PlanDetailPage() {
           display_order: displayOrder,
         }),
       });
-      const data = await res.json() as { data?: Plan; error?: { message: string } };
+      const data = await res.json() as { error?: { message: string } };
       if (!res.ok) {
         setSaveError(data.error?.message ?? '保存に失敗しました');
         return;
       }
       setSaveSuccess(true);
-      setPlan(data.data!);
+      // #1724: PATCH の応答はプランの行だけで、価格変更の履歴 (price_history) を含まない。
+      // 応答で plan を丸ごと置き換えると履歴の一覧が空になるので、画面の状態は GET (fetchPlan) だけから作る
+      // (公開・非公開・廃止の操作と同じ)。
+      await fetchPlan();
     } catch {
       setSaveError('ネットワークエラー');
     } finally {

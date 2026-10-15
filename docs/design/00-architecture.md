@@ -211,7 +211,7 @@ src/
 │   ├── supabase/                  # Supabase クライアント (既存)
 │   ├── auth/                      # 認証ヘルパー (新規 requireOrgRole)
 │   ├── plan/                      # getUserActivePlan() (新規)
-│   ├── stripe/                    # Stripe SDK ラッパー (新規)
+│   ├── billing/                   # 課金の核 (billing/01。core / stripe-gateway / repository / service / http / auth / account-deletion。Stripe は REST (fetch + form-encode) で、SDK を入れない)
 │   ├── llm/                       # LLM 呼び出しヘルパー (Edge Function 経由)
 │   ├── notifications/             # Push / Email 統合 (新規)
 │   ├── i18n/                      # next-intl (新規)
