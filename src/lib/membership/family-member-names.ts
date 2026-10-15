@@ -7,6 +7,7 @@
 //   1. family_members.display_name (子供のメンバーや、家族の中での呼び名)
 //   2. 本人のプロフィールの今の名前 (user_profiles.nickname。アカウントを持つメンバーだけ)。
 //      ただしアプリが「名前が無い」ときに入れる仮置き (PROFILE_NAME_PLACEHOLDER = 'Guest') は名前とみなさない
+//      (判定は src/lib/profile-name.ts。ホームの呼びかけ (src/lib/user-display.ts) と同じ。#1611)
 //   3. 両方無ければ null (画面は従来どおり「名前未設定」と出す)
 //
 // 他の家族の user_profiles は RLS で読めないので、2 はサーバー (GET /api/family/members/names) が service_role で
@@ -16,6 +17,7 @@
 // このファイルはブラウザからも読むので、サーバー専用のもの (service_role のクライアント・next/headers) を import しない。
 import { z } from 'zod';
 import { FamilyMemberNamesDataSchema, type FamilyMemberName } from '@/schemas/membership/family-member';
+import { PROFILE_NAME_PLACEHOLDER, normalizeName, normalizeProfileName } from '@/lib/profile-name';
 
 /** 名前を返す API の経路 */
 export const FAMILY_MEMBER_NAMES_API_PATH = '/api/family/members/names';
@@ -31,25 +33,10 @@ export interface FamilyMemberNameSource {
 }
 
 /**
- * プロフィールの名前が無いことを表す仮置き。名前が無いまま user_profiles を作る・更新するとき、アプリはこの値を入れる
- * (/api/profile・/api/onboarding/progress・/api/onboarding/complete、招待の承諾・法的文書の同意の RPC が行を作るとき)。
- * src/app/api/onboarding/status/route.ts は `nickname !== 'Guest'` を「名前が付いている」と読んでおり、ここも同じ意味で使う
- * (前後の空白を除いたうえでの厳密一致。大文字小文字の揺れは見ない — status と同じ)。家族の画面にこの英語の仮置きを名前として出さない。
+ * プロフィールの名前が無いことを表す仮置き ('Guest')。判定は src/lib/profile-name.ts に 1 つにまとめた (#1611。ホームの呼びかけと同じ)。
+ * 前後の空白を除いたうえでの厳密一致で、src/app/api/onboarding/status/route.ts の `nickname !== 'Guest'` と同じ値を仮置きとみなす。
  */
-export const PROFILE_NAME_PLACEHOLDER = 'Guest';
-
-/** 前後の空白を除き、空なら null にする (空白だけの名前は「無い」とみなす) */
-function normalizeName(value: string | null | undefined): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-/** プロフィールの名前を整える。空白だけ・仮置き (PROFILE_NAME_PLACEHOLDER) は「名前が無い」として null にする */
-function normalizeProfileName(value: string | null | undefined): string | null {
-  const name = normalizeName(value);
-  return name === PROFILE_NAME_PLACEHOLDER ? null : name;
-}
+export { PROFILE_NAME_PLACEHOLDER };
 
 /** display_name が無いので、プロフィールの名前を引く必要がある user_id (重複なし。アカウントを持たない子供は除く) */
 export function userIdsNeedingProfileName(rows: readonly FamilyMemberNameSource[]): string[] {
