@@ -33,7 +33,7 @@ Web (Next.js App Router) と Mobile (Expo WebView) の両対応。
 Mobile 専用:
 | 画面 ID | パス (Mobile) | 説明 |
 |---------|-------------|------|
-| FAM-M01 | `app/family/index.tsx` | FAM-003 の Mobile 版 |
+| ~~FAM-M01~~ | ~~`app/family/index.tsx`~~ | (2026-10-15 に削除。通常の操作で届かず、新しい家族のデータモデルにも追随していなかった。#1598 / #1610。アプリの家族の画面は WebView の Web の画面を使う) |
 | FAM-M02 | `app/family/invite-accept.tsx` | ディープリンク受諾画面 |
 | FAM-M03 | `app/family/shopping-list.tsx` | Realtime 同期買い物リスト |
 
@@ -652,7 +652,7 @@ CI で全家族画面の a11y スキャン。
 
 ## 10. 既存実装との関連
 
-- 既存 `apps/mobile/app/family/` は部分実装済 → clean-build で再構築
+- 既存 `apps/mobile/app/family/index.tsx` は 2026-10-15 に削除した (#1598 / #1610)。招待受諾 (FAM-M02) と買い物リスト (FAM-M03) は未実装
 - `WebViewScreen.tsx` は保持 (ブリッジ共通)
 - `apps/mobile/src/lib/pushNotifications.ts` に `setBadgeCountAsync` 追加が必要 (`mobile/03-push-notification.md` と連携)
 

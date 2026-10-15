@@ -207,7 +207,6 @@ export const MAESTRO_MISSING_TESTID_ALLOWLIST: readonly MissingTestIdAllowance[]
   { flow: "flows/home/23-state-midnight-snack.yaml", id: "home-ai-menu-button", reason: R.HOME_WEBVIEW },
   { flow: "flows/menus-weekly/01-tab-this-week-exists.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/menus-weekly/02-tab-no-menu.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
-  { flow: "flows/menus-weekly/04-favorites-via-profile.yaml", id: "tab-favorites", reason: R.FAVORITES_NOT_A_TAB },
   { flow: "flows/menus-weekly/08-ultimate-mode.yaml", id: "weekly-request-ultimate-toggle", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },
   { flow: "flows/menus-weekly/11-recipe-modal.yaml", id: "home-screen", reason: R.HOME_WEBVIEW },
   { flow: "flows/menus-weekly/11-recipe-modal.yaml", id: "recipe-dish-0", reason: R.NOT_IN_SOURCE_OUT_OF_SCOPE },

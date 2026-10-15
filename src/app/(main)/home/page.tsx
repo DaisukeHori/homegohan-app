@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import Image from "next/image";
+import { SignedPhotoImage } from "@/components/photo/SignedPhotoImage";
 import { motion, AnimatePresence } from "framer-motion";
 import { useHomeData } from "@/hooks/useHomeData";
 import { AiSkippedNotice } from "@/components/consent/AiSkippedNotice";
 import { Icons } from "@/components/icons";
 import { OrgChallengeEntry } from "@/components/org-challenges/OrgChallengeEntry";
 import { todayLocal, parseLocalDate } from "@/lib/date-utils";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
+import { STATUS_COLOR_TOKENS, type MealType } from "@homegohan/shared";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Calendar, Coffee, Sun, Moon, Sparkles,
@@ -38,7 +38,7 @@ const colors = {
 };
 
 type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
-type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack' | 'midnight_snack';
+// MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 
 const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
   cook: { icon: ChefHat, label: '自炊', color: colors.successText, bg: colors.successLight },
@@ -48,7 +48,8 @@ const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
 };
 
-const MEAL_CONFIG: Record<string, { icon: typeof Coffee; label: string; color: string; time: string }> = {
+// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める
+const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; time: string }> = {
   breakfast: { icon: Coffee, label: '朝食', color: '#FF9800', time: '7:00' },
   lunch: { icon: Sun, label: '昼食', color: '#4CAF50', time: '12:00' },
   dinner: { icon: Moon, label: '夕食', color: '#7C4DFF', time: '19:00' },
@@ -837,7 +838,7 @@ export default function HomePage() {
                             {/* 画像 */}
                             <div className="w-14 h-14 rounded-xl overflow-hidden bg-gray-100 flex-shrink-0">
                               {meal.imageUrl ? (
-                                <Image src={meal.imageUrl} width={56} height={56} alt={meal.dishName} className="w-full h-full object-cover" />
+                                <SignedPhotoImage src={meal.imageUrl} width={56} height={56} alt={meal.dishName} className="w-full h-full object-cover" />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center">
                                   <MealIcon size={20} color={colors.textMuted} />
@@ -1113,10 +1114,10 @@ export default function HomePage() {
             {bestMealThisWeek && bestMealThisWeek.imageUrl && (
               <div className="bg-white rounded-2xl overflow-hidden shadow-sm border border-gray-100">
                 <div className="relative h-32">
-                  <Image 
-                    src={bestMealThisWeek.imageUrl} 
-                    fill 
-                    alt={bestMealThisWeek.dishName} 
+                  <SignedPhotoImage
+                    src={bestMealThisWeek.imageUrl}
+                    fill
+                    alt={bestMealThisWeek.dishName}
                     className="object-cover"
                   />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />

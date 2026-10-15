@@ -32,6 +32,7 @@ import {
   AI_CONTENT_NOT_SUPPORTED_MESSAGE,
   countModeration,
   fetchModerationList,
+  withSignedModerationContentUrls,
   isModerationBacked,
   type ModerationBackedType,
   type NormalizedModerationItem,
@@ -109,7 +110,8 @@ export async function GET(request: Request) {
     combined.sort((a, b) => (a.created_at ?? '').localeCompare(b.created_at ?? ''));
 
     const from = (params.page - 1) * params.per_page;
-    const paged = combined.slice(from, from + params.per_page);
+    // 写真は返すページの分だけ署名する (#1365)
+    const paged = await withSignedModerationContentUrls(supabaseAdmin, combined.slice(from, from + params.per_page));
 
     return NextResponse.json({
       data: paged,

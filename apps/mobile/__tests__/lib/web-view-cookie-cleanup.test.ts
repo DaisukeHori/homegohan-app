@@ -4,7 +4,9 @@
  * 中身は apps/mobile/src/lib/webViewUserStorageCleanup.ts の「Cookie」を参照。
  *
  *   1. ログアウトの時点: clearWebViewNativeCookies が React Native の Networking.clearCookies で端末の Cookie の置き場を空にする。
- *      ログアウトの掃除の経路 (clearUserScopedLocalData) から呼ばれる。知らせが来ない・無い・例外でもログアウトを止めない
+ *      ログアウトの掃除の経路 (clearUserScopedLocalData) から呼ばれる。知らせが来ない・無い・例外でもログアウトを止めない。
+ *      完了を待つのは、このあとにサインアウトする経路だけ。起動時に未ログインと決まったとき ({ webViewNativeCookies: 'background' }) と
+ *      SIGNED_OUT (clearUserScopedLocalDataAfterSignedOut) は待たない (#1647)
  *   2. 次に WebView を開いたとき: localStorage の掃除と同じ注入の JS が、clearAuthCookies のときだけ
  *      USER_SCOPED_COOKIE_NAME_PREFIXES の接頭辞の Cookie (Supabase の認証の Cookie) を Path=/ で期限切れにする
  */
@@ -35,7 +37,10 @@ import {
   clearWebViewNativeCookies,
   resetWebViewUserStorageCleanupForTests,
 } from '../../src/lib/webViewUserStorageCleanup';
-import { clearUserScopedLocalData } from '../../src/lib/userScopedLocalData';
+import {
+  clearUserScopedLocalData,
+  clearUserScopedLocalDataAfterSignedOut,
+} from '../../src/lib/userScopedLocalData';
 
 // ── WebView の localStorage と document.cookie を真似る ──────────────────────
 
@@ -250,16 +255,128 @@ describe('clearWebViewNativeCookies (ログアウトの時点で端末の Cookie
 });
 
 describe('ログアウトの掃除の経路 (clearUserScopedLocalData) から Cookie も消す', () => {
-  it('clearUserScopedLocalData は、端末の Cookie の置き場を空にするのを待ってから戻る', async () => {
-    const networking = Networking;
-    const clearCookies = jest.fn((callback: (result: boolean) => void) => callback(true));
-    const original = networking?.clearCookies;
+  type Callback = (result: boolean) => void;
+  const networking = Networking as { clearCookies?: (callback: Callback) => void } | undefined;
+  const original = networking?.clearCookies;
+  /** 知らせを止めておく clearCookies (知らせが来ない端末を真似る)。release() で知らせる */
+  let pendingCallbacks: Callback[] = [];
+  const clearCookies = jest.fn((callback: Callback) => {
+    pendingCallbacks.push(callback);
+  });
+  const release = (result = true) => {
+    const callbacks = pendingCallbacks;
+    pendingCallbacks = [];
+    for (const callback of callbacks) callback(result);
+  };
+  /** AsyncStorage の掃除 (await の連鎖) を流しきるのに十分な回数 */
+  const FLUSH_MICROTASK_ROUNDS = 50;
+  /** 約束が、いまの時点で済んでいるか (マイクロタスクを流しきってから見る) */
+  async function isSettled(promise: Promise<unknown>): Promise<boolean> {
+    let settled = false;
+    void promise.then(() => {
+      settled = true;
+    });
+    for (let i = 0; i < FLUSH_MICROTASK_ROUNDS; i += 1) await Promise.resolve();
+    return settled;
+  }
+
+  beforeEach(() => {
+    pendingCallbacks = [];
+    clearCookies.mockClear();
     if (networking) networking.clearCookies = clearCookies;
-    try {
-      await clearUserScopedLocalData('user-1');
-    } finally {
-      if (networking && original) networking.clearCookies = original;
-    }
+  });
+
+  afterEach(() => {
+    release();
+    if (networking) networking.clearCookies = original;
+  });
+
+  it('前提: テストの環境で Networking を差し替えられる', () => {
+    expect(networking).toBeDefined();
+  });
+
+  it('clearUserScopedLocalData は (既定で) 端末の Cookie の置き場を空にするのを待ってから戻る (ログアウト・退会・起動時の失効の明言)', async () => {
+    const pending = clearUserScopedLocalData('user-1');
+
+    expect(await isSettled(pending)).toBe(false);
     expect(clearCookies).toHaveBeenCalledTimes(1);
+
+    release();
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it('{ webViewNativeCookies: "wait" } も同じく待つ', async () => {
+    const pending = clearUserScopedLocalData('user-1', { webViewNativeCookies: 'wait' });
+
+    expect(await isSettled(pending)).toBe(false);
+    // 最後の段 (Cookie の掃除) まで進んだうえで、その完了を待っている
+    expect(clearCookies).toHaveBeenCalledTimes(1);
+    release();
+    await expect(pending).resolves.toBeUndefined();
+  });
+
+  it('{ webViewNativeCookies: "background" } (起動時に未ログインと決まったとき) は、Cookie の掃除を始めるが完了を待たずに戻る', async () => {
+    const pending = clearUserScopedLocalData(null, { webViewNativeCookies: 'background' });
+
+    expect(await isSettled(pending)).toBe(true);
+    expect(clearCookies).toHaveBeenCalledTimes(1);
+    expect(pendingCallbacks).toHaveLength(1);
+  });
+
+  it('clearUserScopedLocalDataAfterSignedOut (SIGNED_OUT) は、Cookie の掃除を始めるが完了を待たずに戻る', async () => {
+    const pending = clearUserScopedLocalDataAfterSignedOut('user-1');
+
+    expect(await isSettled(pending)).toBe(true);
+    expect(clearCookies).toHaveBeenCalledTimes(1);
+  });
+
+  it('待たない経路で、知らせが来ず上限の時間が来ても、例外も拒否も外へ出さずログに残すだけ', async () => {
+    jest.useFakeTimers();
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const unhandled = jest.fn();
+    process.on('unhandledRejection', unhandled);
+    try {
+      await clearUserScopedLocalData(null, { webViewNativeCookies: 'background' });
+      expect(warn).not.toHaveBeenCalled();
+
+      jest.advanceTimersByTime(WEB_VIEW_NATIVE_COOKIE_CLEAR_TIMEOUT_MS);
+      for (let i = 0; i < FLUSH_MICROTASK_ROUNDS; i += 1) await Promise.resolve();
+
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('could not clear WebView cookies');
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', unhandled);
+      warn.mockRestore();
+    }
+  });
+
+  it('待たない経路で clearCookies が同期で例外を投げても、例外を外へ出さずログに残すだけ', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    clearCookies.mockImplementationOnce(() => {
+      throw new TypeError('native module missing');
+    });
+    try {
+      await expect(clearUserScopedLocalDataAfterSignedOut('user-1')).resolves.toBeUndefined();
+      for (let i = 0; i < FLUSH_MICROTASK_ROUNDS; i += 1) await Promise.resolve();
+      expect(warn).toHaveBeenCalledTimes(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('消し終わったときはログに残さない', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const pending = clearUserScopedLocalData('user-1');
+      // 最後の段 (Cookie の掃除) まで進んでから知らせる
+      expect(await isSettled(pending)).toBe(false);
+      expect(clearCookies).toHaveBeenCalledTimes(1);
+      release(true);
+      await pending;
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

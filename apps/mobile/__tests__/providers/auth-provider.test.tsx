@@ -44,6 +44,12 @@ jest.mock('../../src/lib/userScopedLocalData', () => ({
 
 import { AuthProvider, useAuth } from '../../src/providers/AuthProvider';
 
+/**
+ * 起動時に未ログインと決まったときの掃除は、端末の Cookie の置き場の掃除の完了を待たない (#1647)。
+ * 起動時にサーバーが失効と明言したとき (このあとにサインアウトする) は待つ (オプションを渡さない = 既定の "wait")
+ */
+const STARTUP_SIGNED_OUT_CLEAR_OPTIONS = { webViewNativeCookies: 'background' };
+
 // ── ヘルパー ──────────────────────────────────────────────────────────────────
 type AuthListener = (event: string, session: unknown) => void;
 let authListener: AuthListener;
@@ -213,6 +219,7 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         expect(text(api, 'session')).toBe('none');
         // 失効したセッションの利用者のキーを消す (userId が分かれば、その利用者のキーを狙って消す)
         expect(mockClearUserScopedLocalData).toHaveBeenCalledTimes(1);
+        // このあとにサインアウトするので、端末の Cookie の置き場の掃除も待つ (オプション無し = 既定の "wait"。#1647)
         expect(mockClearUserScopedLocalData).toHaveBeenCalledWith('user-revoked');
         // CLAUDE.md: サインアウトの前に消す
         expect(calls).toEqual(['clearUserScopedLocalData', 'signOut']);
@@ -465,7 +472,7 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         const api = renderProvider();
         await waitFor(() => expect(text(api, 'loading')).toBe('false'));
         // 起動時に未ログインと決まった掃除は、push token の値まで消す版
-        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null);
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null, STARTUP_SIGNED_OUT_CLEAR_OPTIONS);
         expect(mockClearAfterSignedOut).not.toHaveBeenCalled();
 
         act(() => authListener('SIGNED_OUT', null));
@@ -526,7 +533,7 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         const api = renderProvider();
 
         await waitFor(() => expect(mockClearUserScopedLocalData).toHaveBeenCalledTimes(1));
-        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null);
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null, STARTUP_SIGNED_OUT_CLEAR_OPTIONS);
         // 掃除が済むまでは読み込み中のまま (掃除の前に、次の利用者がログインできる画面を出さない)
         expect(text(api, 'loading')).toBe('true');
 
@@ -551,7 +558,7 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         await waitFor(() => expect(text(api, 'loading')).toBe('false'));
         expect(text(api, 'session')).toBe('none');
         expect(mockClearUserScopedLocalData).toHaveBeenCalledTimes(1);
-        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null);
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null, STARTUP_SIGNED_OUT_CLEAR_OPTIONS);
       });
 
       it('通信の失敗で getSession() が null を返し、保存済みのセッションも無いときも掃除する', async () => {
@@ -563,7 +570,7 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         await waitFor(() => expect(text(api, 'loading')).toBe('false'));
         expect(text(api, 'session')).toBe('none');
         expect(mockClearUserScopedLocalData).toHaveBeenCalledTimes(1);
-        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null);
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null, STARTUP_SIGNED_OUT_CLEAR_OPTIONS);
       });
 
       it('getSession() が例外を投げたときも掃除する', async () => {
@@ -574,7 +581,7 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         await waitFor(() => expect(text(api, 'loading')).toBe('false'));
         expect(text(api, 'session')).toBe('none');
         expect(mockClearUserScopedLocalData).toHaveBeenCalledTimes(1);
-        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null);
+        expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null, STARTUP_SIGNED_OUT_CLEAR_OPTIONS);
       });
 
       it('起動時の掃除が例外を投げても、読み込み中のまま固まらず未ログインになる', async () => {

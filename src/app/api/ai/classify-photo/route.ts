@@ -18,6 +18,8 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, issueAiUsageGrant } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { isMealType, MEAL_LABELS } from '@homegohan/shared';
 
 interface ImageInput {
   base64: string;
@@ -86,13 +88,13 @@ JSON では次の2項目だけ返してください:
 説明文や候補配列は返さないでください。`;
 }
 
+/** 食事の区分が無い・5 値のどれでもないときに、プロンプトで写真を呼ぶ名前 */
+const UNKNOWN_MEAL_TYPE_LABEL = '食事';
+
 function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): string {
-  const mealTypeLabel = mealType === 'breakfast' ? '朝食'
-    : mealType === 'lunch' ? '昼食'
-    : mealType === 'dinner' ? '夕食'
-    : mealType === 'snack' ? 'おやつ'
-    : mealType === 'midnight_snack' ? '夜食'
-    : '食事';
+  // 食事の区分の表示名は @homegohan/shared の MEAL_LABELS が正本 (#1631。手書きの比較の連鎖を持たない)。
+  // 本文の mealType は string で来るので isMealType で絞る
+  const mealTypeLabel = mealType !== undefined && isMealType(mealType) ? MEAL_LABELS[mealType] : UNKNOWN_MEAL_TYPE_LABEL;
 
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
 
@@ -250,6 +252,9 @@ async function requestMealAnalysis(
 }
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

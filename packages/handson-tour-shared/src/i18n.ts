@@ -92,12 +92,12 @@ export const HANDSON_TOUR_I18N_EN = {
       loading_text: 'Checking badges...',
 
       // intro
-      intro_title: '{nickname}, you already earned 2 more!',
+      intro_title: '{nickname}, you already earned 1 badge!',
       intro_hint: 'Tap to continue',
 
       // badge-specific bubbles
       first_bite_title: 'First bite',
-      first_bite_bubble: 'You logged a meal with a photo once',
+      first_bite_bubble: 'Earned by logging a meal',
       planner_title: 'Planner',
       planner_bubble: 'You created a meal plan once',
       tutorial_complete_title: 'App Master',
@@ -111,7 +111,7 @@ export const HANDSON_TOUR_I18N_EN = {
       error_skip_button: 'Later',
 
       // a11y
-      a11y_title: 'Step 4 / 5, {nickname}, you already earned 2 badges',
+      a11y_title: 'Step 4 / 5, {nickname}, you already earned 1 badge',
     },
 
     // ====== Step 4 Graduate (13 keys) ======
@@ -258,12 +258,17 @@ export const HANDSON_TOUR_I18N_JA = {
       loading_text: 'バッジを確認中...',
 
       // intro
-      intro_title: '{nickname} さん、もう 2 つ獲得しています!',
+      // 「n つ」は、ツアーが Step 3 までに実際に付けるバッジの数 (STEP3_BADGES_EARNED_IN_TOUR = planner の 1 つ) と合わせる (#1626)。
+      // お試しの記録は first_bite に数えない (#1314) ので、first_bite は Step 3 の時点では未獲得。a11y_title と英語版も同じ。
+      // 固定の文言なので、やり直しのツアーで planner のほかにも獲得済みのバッジがある人には、数が「獲得済」のカードの数と合わない
+      intro_title: '{nickname} さん、もう 1 つ獲得しています!',
       intro_hint: 'タップで進む',
 
       // バッジ別吹き出し
       first_bite_title: 'はじめての一歩',
-      first_bite_bubble: '写真から記録を 1 度しました',
+      // first_bite は、ツアーを通しただけなら未獲得 (#1314) だが、本物の食事の記録がある人のやり直しのツアーでは獲得済み。
+      // 吹き出しはどちらのカードを指しても食い違わないよう、獲得の有無を言わない、もらい方の説明にする (#1626)。英語版も同じ
+      first_bite_bubble: '食事を記録するともらえるバッジです',
       planner_title: 'プランナー',
       planner_bubble: '献立を 1 度作りました',
       tutorial_complete_title: '使い方マスター',
@@ -277,7 +282,7 @@ export const HANDSON_TOUR_I18N_JA = {
       error_skip_button: 'あとで',
 
       // a11y
-      a11y_title: 'ステップ 4 / 5、{nickname} さん、もう 2 つバッジを獲得しています',
+      a11y_title: 'ステップ 4 / 5、{nickname} さん、もう 1 つバッジを獲得しています',
     },
 
     // ====== Step 4 卒業 (13 キー: badge_disclaimer_title / badge_disclaimer_body を含む) ======

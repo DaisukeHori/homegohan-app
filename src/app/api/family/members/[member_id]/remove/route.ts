@@ -3,17 +3,21 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import {
   notifyMemberRemoved,
   readFamilyMemberToNotify,
   readFamilyNotice,
 } from '@/lib/membership/exit-notification';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ member_id: string }> },
 ) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const { member_id } = await params;
   const logger = createLogger('POST /api/family/members/[member_id]/remove', generateRequestId());
   const supabase = await createClient();
@@ -32,7 +36,7 @@ export async function POST(
     body = await request.json();
   } catch {
     return NextResponse.json(
-      { error: { code: 'INVALID_REQUEST', message: 'リクエストボディが不正です' } },
+      { error: { code: MembershipErrorCode.INVALID_REQUEST, message: 'リクエストボディが不正です' } },
       { status: 400 },
     );
   }
@@ -41,7 +45,7 @@ export async function POST(
 
   if (!parsed.family_id) {
     return NextResponse.json(
-      { error: { code: 'VALIDATION_ERROR', message: 'family_id は必須です' } },
+      { error: { code: MembershipErrorCode.VALIDATION_ERROR, message: 'family_id は必須です' } },
       { status: 400 },
     );
   }
@@ -62,10 +66,18 @@ export async function POST(
   });
 
   if (error) {
-    if (error.message?.includes('CANNOT_REMOVE_REPRESENTATIVE')) {
+    // 返す code はどれも MembershipErrorCode の値 (画面は membershipErrorMessageOfBody で code から理由の文を引く。#1576)
+    // 古い守り: remove_family_member は代表者を外そうとすると IS_FAMILY_REPRESENTATIVE を RAISE し、その 409 は下の
+    // mapPgErrorToHttp が返す (CANNOT_REMOVE_REPRESENTATIVE を RAISE する SQL は無い)
+    if (error.message?.includes(MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE)) {
       return NextResponse.json(
-        { error: { code: 'CANNOT_REMOVE_REPRESENTATIVE', message: '代表者は除名できません。先に代表者を譲渡してください。' } },
-        { status: 409 },
+        {
+          error: {
+            code: MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE,
+            message: '代表者は除名できません。先に代表者を譲渡してください。',
+          },
+        },
+        { status: ErrorStatusMap[MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE] },
       );
     }
     const { code, status } = mapPgErrorToHttp(error.message ?? '');

@@ -21,8 +21,10 @@ vi.mock('@/lib/db-logger', () => ({
 const {
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
   WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+  WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
   WEEKLY_MENU_REQUEST_STALE_MESSAGE,
   isKnownWeeklyMenuRequestErrorMessage,
+  weeklyMenuRequestErrorMessageForDisplay,
   weeklyMenuRequestErrorMessageForResponse,
   weeklyMenuRequestStoredErrorMessage,
 } = await import('@/lib/weekly-menu-request-error');
@@ -42,10 +44,10 @@ const INTERNAL_MESSAGES = [
   'new row violates row-level security policy for table "weekly_menus"',
 ];
 
+/** こちらで書いた文のうち、画面・応答の本文にもそのまま出すもの (進まなくなった行の英語の印は別に見る。#1576) */
 const KNOWN_MESSAGES = [
   AI_CONSENT_REQUIRED_MESSAGE,
   AI_CONSENT_CHECK_FAILED_MESSAGE,
-  WEEKLY_MENU_REQUEST_STALE_MESSAGE,
   WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE,
   WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
 ];
@@ -64,6 +66,36 @@ describe('src/lib/weekly-menu-request-error.ts', () => {
     expect(isKnownWeeklyMenuRequestErrorMessage(message)).toBe(true);
     expect(weeklyMenuRequestStoredErrorMessage(message)).toBe(message);
     expect(weeklyMenuRequestErrorMessageForResponse(message)).toBe(message);
+  });
+
+  // #1576: 進まなくなった行の印は行には英語のまま書くが、応答の本文・画面には日本語の文で出す
+  it('進まなくなった行の印は、書くときはそのまま・返すとき (応答の本文・画面) は日本語の文', () => {
+    expect(isKnownWeeklyMenuRequestErrorMessage(WEEKLY_MENU_REQUEST_STALE_MESSAGE)).toBe(true);
+    expect(weeklyMenuRequestStoredErrorMessage(WEEKLY_MENU_REQUEST_STALE_MESSAGE)).toBe(WEEKLY_MENU_REQUEST_STALE_MESSAGE);
+    expect(weeklyMenuRequestErrorMessageForResponse(WEEKLY_MENU_REQUEST_STALE_MESSAGE)).toBe(
+      WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
+    );
+    expect(weeklyMenuRequestErrorMessageForDisplay(WEEKLY_MENU_REQUEST_STALE_MESSAGE)).toBe(
+      WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE,
+    );
+    // 日本語の文で、英語の印・英字の単語を含まない
+    expect(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE).toMatch(/[ぁ-んァ-ヶ一-龠]/);
+    expect(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE).not.toMatch(/[A-Za-z]/);
+  });
+
+  it('返した文をもう一度通しても同じ文 (画面が応答の本文の文を絞り込みに通しても変わらない。#1576)', () => {
+    for (const stored of [...KNOWN_MESSAGES, ...INTERNAL_MESSAGES, WEEKLY_MENU_REQUEST_STALE_MESSAGE]) {
+      const once = weeklyMenuRequestErrorMessageForResponse(stored);
+      expect(weeklyMenuRequestErrorMessageForDisplay(once)).toBe(once);
+      expect(weeklyMenuRequestErrorMessageForResponse(once)).toBe(once);
+    }
+  });
+
+  it('日本語の文は行に書く文ではない (書くときは固定の文に寄せる)', () => {
+    expect(isKnownWeeklyMenuRequestErrorMessage(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE)).toBe(false);
+    expect(weeklyMenuRequestStoredErrorMessage(WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE)).toBe(
+      WEEKLY_MENU_REQUEST_FAILED_MESSAGE,
+    );
   });
 
   it.each(INTERNAL_MESSAGES)('内部の文 (%s) は、書くときも返すときも固定の文', (message) => {

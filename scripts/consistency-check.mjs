@@ -44,9 +44,9 @@ export class UsageError extends Error {}
 export function parseArgs(argv) {
   const [command, ...rest] = argv;
   if (command !== 'db' && command !== 'stale') {
-    throw new UsageError('使い方: consistency-check.mjs <db|stale> [--dry-run] (db は --migration-list / --db-diff / --db-diff-status も)');
+    throw new UsageError('使い方: consistency-check.mjs <db|stale> [--dry-run] (db は --migration-list / --db-diff / --db-diff-status / --db-diff-image-unavailable も)');
   }
-  const args = { command, dryRun: false, migrationList: null, dbDiff: null, dbDiffStatus: null };
+  const args = { command, dryRun: false, migrationList: null, dbDiff: null, dbDiffStatus: null, dbDiffImageUnavailable: false };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     const value = () => {
@@ -57,6 +57,8 @@ export function parseArgs(argv) {
     else if (a === '--migration-list') args.migrationList = value();
     else if (a === '--db-diff') args.dbDiff = value();
     else if (a === '--db-diff-status') args.dbDiffStatus = value();
+    // db diff が Docker イメージを取得できずに終わった (scripts/supabase-image-fallback.sh。#1523)
+    else if (a === '--db-diff-image-unavailable') args.dbDiffImageUnavailable = true;
     else throw new UsageError(`知らない引数です: ${a}`);
   }
   return args;
@@ -170,7 +172,12 @@ export function runDb(args, deps) {
   if (diffStatus !== null && !Number.isInteger(diffStatus)) throw new UsageError(`--db-diff-status が数値ではありません: ${statusText}`);
   const diffText = readOptional(args.dbDiff, readFile, exists) ?? '';
 
-  const { problems, drift } = buildDbProblems({ migrationListText, diffStatus, diffText });
+  const { problems, drift } = buildDbProblems({
+    migrationListText,
+    diffStatus,
+    diffText,
+    diffImageUnavailable: args.dbDiffImageUnavailable,
+  });
   const body = renderDbIssueBody({ problems, drift, runUrl: runUrlFrom(env), checkedAt: formatJst(now) });
 
   appendSummary(

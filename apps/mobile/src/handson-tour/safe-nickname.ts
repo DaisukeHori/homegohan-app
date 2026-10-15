@@ -3,21 +3,11 @@
 //
 // 以前は 5 つの画面 (app/handson-tour/{index,photo,menu,badges,graduate}.tsx) が同じ関数を 1 つずつ持ち、
 // 前後の空白を除くだけだったので、名前が無いときにアプリが入れる仮置きの 'Guest' を「Guest さん」と呼びかけていた。
-// 名前が無いかどうかは Web・モバイルのプロフィール画面・GET /api/onboarding/status と同じ
-// @homegohan/shared の normalizeProfileName (前後の空白を除いて 'Guest' と厳密一致・空・空白だけは名前なし) で決める。
+// 規則の本体は Web と共通の @homegohan/shared (packages/shared/src/handson-tour-nickname.ts。#1649) に置き、
+// ここはモバイルの 5 つの画面のために同じものを safeNickname の名前で読み直すだけで、規則を持たない。
 
-import { normalizeProfileName } from '@homegohan/shared';
-
-/** 名前が無いときの呼びかけ (設計書 §7.2 と同じ) */
-export const HANDSON_TOUR_NICKNAME_FALLBACK = 'あなた';
-
-/** 呼びかけに出す名前の最大の文字数。長い名前で吹き出しが崩れないよう、これを超えたら切って「…」を付ける (設計書 §7.2) */
-export const HANDSON_TOUR_NICKNAME_MAX_LENGTH = 30;
-
-/** 呼びかけに出す名前を決める。名前が無い (仮置きの 'Guest'・空・空白だけ) なら 'あなた' */
-export function safeNickname(raw: string | null | undefined): string {
-  const name = normalizeProfileName(raw);
-  if (!name) return HANDSON_TOUR_NICKNAME_FALLBACK;
-  if (name.length > HANDSON_TOUR_NICKNAME_MAX_LENGTH) return `${name.slice(0, HANDSON_TOUR_NICKNAME_MAX_LENGTH)}…`;
-  return name;
-}
+export {
+  HANDSON_TOUR_NICKNAME_FALLBACK,
+  HANDSON_TOUR_NICKNAME_MAX_LENGTH,
+  handsonTourNickname as safeNickname,
+} from '@homegohan/shared';
