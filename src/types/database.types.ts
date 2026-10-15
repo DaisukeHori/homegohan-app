@@ -5527,6 +5527,92 @@ export type Database = {
           },
         ]
       }
+      push_outbox: {
+        Row: {
+          attempts: number
+          created_at: string
+          dead_at: string | null
+          dedupe_key: string | null
+          expo_push_token: string
+          id: string
+          kind: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          payload: Json
+          push_token_id: string
+          receipt_checked_at: string | null
+          receipt_error: string | null
+          receipt_id: string | null
+          receipt_status: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          worker_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dead_at?: string | null
+          dedupe_key?: string | null
+          expo_push_token: string
+          id?: string
+          kind: string
+          last_error_code?: string | null
+          last_error_message?: string | null
+          last_status_code?: number | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          payload?: Json
+          push_token_id: string
+          receipt_checked_at?: string | null
+          receipt_error?: string | null
+          receipt_id?: string | null
+          receipt_status?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          worker_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dead_at?: string | null
+          dedupe_key?: string | null
+          expo_push_token?: string
+          id?: string
+          kind?: string
+          last_error_code?: string | null
+          last_error_message?: string | null
+          last_status_code?: number | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          payload?: Json
+          push_token_id?: string
+          receipt_checked_at?: string | null
+          receipt_error?: string | null
+          receipt_id?: string | null
+          receipt_status?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_outbox_push_token_id_fkey"
+            columns: ["push_token_id"]
+            isOneToOne: false
+            referencedRelation: "user_push_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recipe_collection_items: {
         Row: {
           added_at: string | null
@@ -8036,15 +8122,100 @@ export type Database = {
         Args: { p_alert_key: string; p_cooldown_minutes?: number }
         Returns: string
       }
+      claim_push_outbox: {
+        Args: { p_lease_seconds: number; p_limit: number; p_worker_id: string }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_at: string | null
+          dedupe_key: string | null
+          expo_push_token: string
+          id: string
+          kind: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          payload: Json
+          push_token_id: string
+          receipt_checked_at: string | null
+          receipt_error: string | null
+          receipt_id: string | null
+          receipt_status: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "push_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_push_receipts: {
+        Args: {
+          p_lease_seconds: number
+          p_limit: number
+          p_min_age_seconds: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_at: string | null
+          dedupe_key: string | null
+          expo_push_token: string
+          id: string
+          kind: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          payload: Json
+          push_token_id: string
+          receipt_checked_at: string | null
+          receipt_error: string | null
+          receipt_id: string | null
+          receipt_status: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "push_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
+      cleanup_push_outbox: {
+        Args: never
+        Returns: {
+          dead_deleted: number
+          expired: number
+          sent_deleted: number
+        }[]
+      }
       cleanup_stale_auth_login_failures: { Args: never; Returns: number }
       complete_account_deletion_record: {
         Args: { p_record_id: string }
         Returns: undefined
       }
       complete_handson_tour: { Args: never; Returns: Json }
+      complete_push_outbox: {
+        Args: { p_id: string; p_receipt_id: string; p_worker_id: string }
+        Returns: boolean
+      }
       consume_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
         Returns: Json
@@ -8213,9 +8384,35 @@ export type Database = {
         Args: { p_recipe_id?: string; p_recipe_uuid?: string }
         Returns: number
       }
+      defer_push_outbox: {
+        Args: { p_id: string; p_until: string; p_worker_id: string }
+        Returns: boolean
+      }
       enforce_membership_daily_cap: {
         Args: { p_email?: string; p_kind: string; p_scope_id: string }
         Returns: undefined
+      }
+      enqueue_push_notification: {
+        Args: {
+          p_dedupe_key?: string
+          p_kind: string
+          p_payload: Json
+          p_user_id: string
+        }
+        Returns: number
+      }
+      fail_push_outbox: {
+        Args: {
+          p_error_code: string
+          p_error_message: string
+          p_id: string
+          p_max_attempts: number
+          p_retry_after_seconds: number
+          p_retryable: boolean
+          p_status_code: number
+          p_worker_id: string
+        }
+        Returns: string
       }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
@@ -8734,6 +8931,15 @@ export type Database = {
       record_ai_usage_at: {
         Args: { p_at: string; p_feature: string; p_user_id: string }
         Returns: undefined
+      }
+      record_push_receipt: {
+        Args: {
+          p_error: string
+          p_id: string
+          p_status: string
+          p_worker_id: string
+        }
+        Returns: boolean
       }
       refund_ai_usage: {
         Args: { p_feature: string; p_usage_date: string; p_user_id: string }
