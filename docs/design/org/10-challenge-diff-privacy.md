@@ -4,6 +4,7 @@
 |---|---|---|
 | v1.0 | 2026-10-16 | 新設 (Issue #1688 の設計ゲート・A 型 4 相) |
 | v1.1 | 2026-10-16 | 構造 A に、同じ種類で期間が重なるチャレンジの公開を 1 本にする規則・管理者だった人の印・削除の制限・状態の NOT NULL を足す |
+| v1.2 | 2026-10-16 | 確定を組織ごとの鍵で 1 本ずつにし、確定の時刻を鍵を取ったあとの時計の時刻にする (確定の時刻の順 = コミットの順)。管理者が自分で持つ 2 つ目のアカウントを使う経路を残る限界に明記する |
 
 要件の正本は Issue #1688 の本文とコメント (コメント 0 件)、親の #1600 (本文とコメント 1 件) と #1132。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。既存のチャレンジ設計 `07-challenge.md` §15 (実装の正) を前提に、§15 が「#1688 で設計する」と送った守りだけを扱う。
 
@@ -23,9 +24,9 @@
 
 | # | 要件 | 出どころ | 本書の節 |
 |---|---|---|---|
-| R-1 | 管理者に見せる集計 (人数・平均) の 2 時点の差から、1 人の値を逆算できないこと (同じチャレンジの 2 時点に加え、同じ値になるチャレンジを 2 本並べた差も含む) | #1688 本文・#1600 本文 3「強化の候補」 | §4.1 (a)(e), §4.3 S-21〜S-23 |
+| R-1 | 管理者に見せる集計 (人数・平均) の 2 時点の差から、1 人の値を逆算できないこと (同じチャレンジの 2 時点に加え、同じ値になるチャレンジを 2 本並べた差も含む) | #1688 本文・#1600 本文 3「強化の候補」 | §4.1 (a)(e), §4.3 S-21〜S-23・S-26 |
 | R-2 | 管理者がチャレンジの状態・期間・種類を書き換えても、R-1 が破れないこと (旧ブランチの抜け道 1) | #1688「経緯」 | §4.1 (c), §4.3 S-6〜S-7・S-24 |
-| R-3 | 管理者が任意の役割で参加して順位表を受け取っても、やめた・外した人の値が分からないこと (旧ブランチの抜け道 2) | #1688「経緯」 | §4.1 (d), §4.3 S-8・S-20・S-25 |
+| R-3 | 管理者が任意の役割で参加して順位表を受け取っても、やめた・外した人の値が分からないこと (旧ブランチの抜け道 2) | #1688「経緯」 | §4.1 (d), §4.3 S-8・S-20・S-25 (1 つのアカウントでの役割の往復は閉じる)。管理者が別のメールアドレスで入れた 2 つ目の member のアカウントを使う経路 (S-27) は閉じない (§19-7・§20-4) |
 | R-4 | 控えの作成時点と計算日のずれが生まれる構造を持たないこと (旧ブランチの抜け道 3) | #1688「経緯」 | §4.2, §4.3 S-17 |
 | R-5 | 誰から何を守るか (同じ組織の管理者・参加者) を定め、要件書 §6.4 の「匿名化集計の最低人数 10 名以上」との関係を書く | #1688「設計で決めること」・`docs/requirements/02-organization-management.md:884` | §3.1 |
 | R-6 | 管理者がチャレンジの状態・期間・種類を変えられることとの両立 (確定後に変えられなくするのか) を決める | #1688「設計で決めること」 | §4.1 (c), §9.3 |
@@ -36,7 +37,7 @@
 | R-11 | 最小人数 10 は DB の関数の cfg に 1 か所だけ書き、共有の定数と突合する (既存の番兵) | `packages/shared/src/org-challenges.ts:18`・`tests/org-challenges-lib.test.ts:153` | §5.1, §16 |
 | R-12 | as any・マジックナンバーを使わない。意味のある数は名前付き定数に | 設計ゲートの規律 | §6 |
 
-### 0.3 ユーザーシナリオ (25 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (27 本。トレースは §4.3)
 
 | # | シナリオ |
 |---|---|
@@ -60,11 +61,13 @@
 | S-18 | 参加した人がちょうど 10 人で、終了前に 1 人が組織から外れる。終了時点の順位がついた人が 9 人なので平均は出ない (管理者は「外した人が参加していた」と推測しうるが、値は分からない。§19) |
 | S-19 | 部署を限定した開催中のチャレンジの参加者の所属部署が変わる (`user_profiles.department_id`。本人は変えられない特権列で、製品で変わるのは脱退・除名・退会での NULL だけ。ほかは service_role の直接の更新。チャレンジが参照する部署は削除できない)。その人は詳細を開けなくなるが、行は順位表にも終了時の確定にも残り、集計は動かない |
 | S-20 | 参加中のメンバー Y が順位表を見たあと、同じ組織の招待を admin の役割で承諾して管理者になり (`accept_org_invite` は同じ組織の在籍者の承諾を拒まず、`org_role` を招待の役割で上書きする)、X を組織から外し、member の役割の招待を承諾して戻ってから、もう一度順位表を見ようとする。管理者になった時点で、その組織にあるチャレンジすべてに Y の「管理者だった印」が付き、member に戻っても順位表は返らない (`reason: 'org_admin'`)。所有者の譲渡 (`accept_org_owner_transfer`) で owner になる経路も同じ |
-| S-21 | 管理者が、種類・開始日・終了日が同じチャレンジ A・B を作り、11 人が両方に参加する。X が B だけやめる。終了日の夜、同じバッチで A・B が completed になる。平均は、先に確定した 1 本 (確定の時刻が同じなら ID の小さい方) だけが出て、もう 1 本は出ない |
+| S-21 | 管理者が、種類・開始日・終了日が同じチャレンジ A・B を作り、11 人が両方に参加する。X が B だけやめる。終了日の夜、同じバッチで A・B が completed になる。平均は、先に確定した 1 本 (確定の時刻が早い方。同じなら ID の小さい方) だけが出て、もう 1 本は出ない |
 | S-22 | 管理者が A (開催中) を PUT で completed にし (前夜の値で確定)、X を組織から外し、同じ日に B (A と種類が同じで期間が重なる) を completed にする。A の平均が出ていれば B の平均は出ない。A が 10 人未満で出ていなければ、B の平均は出る (公開は B の 1 回だけ) |
 | S-23 | 管理者が、平均が出た A (completed) を PostgREST で消し、同じ種類・同じ期間の B を作り直して、メンバーにもう一度参加してもらう。A は消せない (DELETE が 0 行) ので、B の平均は S-22 の規則で出ない。開催中の A も消せない (中止してからなら消せる。中止は確定しない) |
 | S-24 | 管理者が PostgREST で、開催中のチャレンジの状態を NULL にして期間を書き換え、開催中に戻そうとする (NULL の状態を下書きのように使う)。状態の列は NOT NULL で、ガードも NULL への遷移を CHALLENGE_STATUS_LOCKED で止めるので、1 回目の UPDATE で止まる |
 | S-25 | 参加中のメンバー Y が順位表を見たあと、組織を抜け (`leave_org`。参加行は残る)、admin の役割の招待で入り直して X を外し、また抜けて member の役割の招待で入り直してから順位表を見ようとする。admin で入り直した時点で印が付き、member で入り直しても順位表は返らない。印の付いたチャレンジで参加をやめて参加し直しても、印は参加行とは別の表にあるので残る |
+| S-26 | 種類が同じで期間が重なる A・B がある。A の終了日を過ぎた夜 03:10 JST に夜の集計 (T1) が始まり、全員の値を計算し直している間に、管理者が B を PUT で completed にする (T2)。T2 は先にコミットし、管理者が一覧を開くと B の平均が出る。そのあと T1 が A を completed にしてコミットする。A の確定は T2 のコミットのあとに鍵を取ってから時刻を決めるので B より後になり、A の平均は出ず、B の平均は出たまま (一度出た平均は消えず、2 本目は出ない) |
+| S-27 | 管理者が、自分で持つ別のメールアドレスを member の役割で招待し (`create_org_invite` は宛先を絞らない。席が空いていれば通る)、そのアカウントで承諾して開催中のチャレンジに参加し、順位表を見る。管理者のアカウントで X を外し、2 つ目のアカウントでもう一度順位表を見ると、X の行が消えていて値が分かる。2 つ目のアカウントは一度も管理者になっていないので印は付かない。本書はこの経路を閉じない (§19-7。閉じるには順位表をやめる。§20-4) |
 
 ### 0.4 分冊判定
 
@@ -75,7 +78,7 @@
 | 語 | 意味 |
 |---|---|
 | 集計 | 管理者に見せる 2 値 = 参加者数と平均。`GET /api/org/challenges` が DB の関数 `get_org_challenge_aggregates` から取る |
-| 確定 | チャレンジが `completed` になる UPDATE と同じトランザクションで、順位がついた今のメンバーの平均と人数を `organization_challenge_aggregates` に 1 回だけ書くこと。以後は書き換えない |
+| 確定 | チャレンジが `completed` になる UPDATE と同じトランザクションで、順位がついた今のメンバーの平均と人数を `organization_challenge_aggregates` に 1 回だけ書くこと。同じ組織の確定は組織ごとの鍵で 1 本ずつ進み、確定の時刻 (`finalized_at`) は鍵を取ったあとの時計の時刻。以後は書き換えない |
 | 参加した人 (延べ) | 参加の INSERT のたびに +1 し、やめても・組織から外れても・退会しても減らない数 (`joined_count`)。画面の「参加者数」はこの値 |
 | 管理者 | `user_profiles.org_role` が `owner` / `admin` の人 (`requireOrgAdmin` が通す人)。メンバーを組織から外せる唯一の主体 |
 | 参加者 | `organization_challenge_participants` に行があり、今もその組織のメンバーである人 |
@@ -88,7 +91,7 @@
 ## 1. 目的・スコープ
 
 対象: 組織チャレンジ (`organization_challenges` / `organization_challenge_participants`) の、管理者に見せる集計と参加者に見せる順位表から、参加をやめた人・組織から外れた人の値 (と、できる範囲で参加の有無) を逆算させない守り。
-対象外: 順位表そのものをやめること (#1132 の方針の変更)・参加者どうしの社会的な知識 (「あの人がやめたと聞いた」) による結びつけ・内部の共謀 (管理者 2 人の分担)・歩数 / 体重 / カスタムの種類 (作成も参加もできない)・値の計算式 (`update_org_challenge_progress` は変えない)。
+対象外: 順位表そのものをやめること (#1132 の方針の変更)・参加者どうしの社会的な知識 (「あの人がやめたと聞いた」) による結びつけ・内部の共謀 (管理者 2 人の分担)・管理者が自分で持つ 2 つ目の member のアカウントを使う経路 (DB からは別の人に見え、共謀と同じ形。§19-7 の残る限界)・歩数 / 体重 / カスタムの種類 (作成も参加もできない)・値の計算式 (`update_org_challenge_progress` は変えない)。
 
 ## 2. 関連要件
 
@@ -105,7 +108,7 @@
 
 | 主体 | 持っている力 | 守る対象 | 本書の扱い |
 |---|---|---|---|
-| 組織の管理者 (owner / admin) | 集計を見る・メンバーを組織から外す (`remove_org_member`)・チャレンジを何本でも作る (種類・期間の重複を止める制約は無い)・チャレンジの状態を変える (API) と全列を書き換える・行を消す (ポリシー `Org admins can manage challenges` は FOR ALL で WITH CHECK 無し。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:9620`)・メンバーとして参加して順位表と自分の順位を見る・招待の承諾や所有者の譲渡で自分の役割を member と行き来する | 1 人の値 (current_value) と、できる範囲で参加の有無 | **本書の主対象**。平均の公開を「同じ種類で期間が重なるチャレンジの中で確定 1 回」にし、公開したチャレンジを消させず、順位表を管理者と管理者だった人に見せず、開始後の期間・種類と終了後の状態を不変にする |
+| 組織の管理者 (owner / admin) | 集計を見る・メンバーを組織から外す (`remove_org_member`)・チャレンジを何本でも作る (種類・期間の重複を止める制約は無い)・チャレンジの状態を変える (API) と全列を書き換える・行を消す (ポリシー `Org admins can manage challenges` は FOR ALL で WITH CHECK 無し。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:9620`)・メンバーとして参加して順位表と自分の順位を見る・招待の承諾や所有者の譲渡で自分の役割を member と行き来する・任意のメールアドレスを member の役割で招待してアカウントを増やす (`create_org_invite` は宛先を絞らず、席の上限だけを見る。`supabase/migrations/20261008100000_membership_daily_send_cap.sql:312`) | 1 人の値 (current_value) と、できる範囲で参加の有無 | **本書の主対象**。平均の公開を「同じ種類で期間が重なるチャレンジの中で確定 1 回」にし、公開したチャレンジを消させず、順位表を管理者と管理者だった人に見せず、開始後の期間・種類と終了後の状態を不変にする。ただし、管理者が別のメールアドレスで入れた 2 つ目の member のアカウントで順位表を見る経路は閉じない (§19-7) |
 | 参加者 (member) | 自分の参加・やめる・順位表 (上位 20 人と本人。名前なし) | 他の参加者の値と名前の結びつき | 順位表は #1132 の方針どおり値を名前なしで見せる。やめた人の行はその場で消える (§3.3 で理由)。社会的な知識による結びつけは対象外 (§19) |
 | 組織に所属しない人・他組織 | 何も見えない (既存の RLS・認可) | — | 変えない |
 
@@ -124,9 +127,9 @@
 | 夜ごとの控え (snapshot) を公開する | 採らない | 旧ブランチの形。全員の値を計算し直した夜にだけ控えを書いても、他の人の値が動かない夜 (新しい記録が無い) は差が正確に 1 人の値になる。書き直す条件 (counted_through) が抜け道の発生源になり、審査 4 周で閉じなかった |
 | 雑音の付加 (差分プライバシー) | 採らない | 10 人の平均の感度は 100 / 10 = 10 点で、有用な精度の雑音にできない。AWS も最小人数との併用に注記がある。公開が 1 回なら雑音は要らない |
 | 粗い丸め (整数・5 点刻み) | 採らない | 差を曖昧にするだけで閉じない。既存の小数第 1 位のまま |
-| クエリ監査・アクセス予算 | **採る (組織単位の公開の予算 = 重なりの中で 1 回)** | 公開面は固定の 2 値 (人数・平均) なので、問い合わせの監査は要らない。ただしチャレンジ単位の「公開 1 回」だけでは、管理者が同じ値になるチャレンジを何本も作れる (S-21・S-22)。予算は「同じ組織・同じ種類・期間が重なるチャレンジの平均の公開は 1 回」とし、平均を出す関数がその場で判定する (確定の時刻と ID の順。鍵や別の台帳は持たない)。公開した (completed の) チャレンジは利用者の権限では消せなくし、予算の記録が消えないようにする (S-23) |
+| クエリ監査・アクセス予算 | **採る (組織単位の公開の予算 = 重なりの中で 1 回)** | 公開面は固定の 2 値 (人数・平均) なので、問い合わせの監査は要らない。ただしチャレンジ単位の「公開 1 回」だけでは、管理者が同じ値になるチャレンジを何本も作れる (S-21・S-22)。予算は「同じ組織・同じ種類・期間が重なるチャレンジの平均の公開は 1 回」とし、平均を出す関数がその場で判定する (確定の時刻と ID の順。別の台帳は持たない。確定の時刻の順をコミットの順とそろえるため、確定のトリガーが組織ごとの鍵を 1 つ取る。S-26)。公開した (completed の) チャレンジは利用者の権限では消せなくし、予算の記録が消えないようにする (S-23) |
 | 母集団の凍結 (やめた人の値を残して平均を計算し続ける) | 採らない | 「やめた人の記録は、集計にも順位にも残らない」(`src/app/api/org/challenges/[id]/join/route.ts:20`) の約束と、組織から外れた人のデータの継続利用に反する |
-| 役割で順位表を伏せる | **採る (今の役割 + 管理者だった印)** | メンバーを組織から外せるのは管理者だけ。順位表を管理者に見せなければ、「外した人の行が消える」経路が無くなる。今の役割だけでは、1 人が member ⇄ admin を往復して「member で見る → admin で外す → member で見る」を組めるので (S-20・S-25)、管理者になった時点でその組織のチャレンジに印を付け、印のある人にも見せない (§4.1 (d)) |
+| 役割で順位表を伏せる | **採る (今の役割 + 管理者だった印)** | メンバーを組織から外せるのは管理者だけ。順位表を管理者に見せなければ、「外した人の行が消える」経路が無くなる。今の役割だけでは、1 人が member ⇄ admin を往復して「member で見る → admin で外す → member で見る」を組めるので (S-20・S-25)、管理者になった時点でその組織のチャレンジに印を付け、印のある人にも見せない (§4.1 (d))。印はアカウントに付くので、管理者が別のメールアドレスで入れた 2 つ目の member のアカウント (S-27) は閉じない (§19-7) |
 | 開始後の期間・種類と終了後の状態の不変 | **採る** | 書き換えで計算し直す経路 (旧ブランチの抜け道 1) を消す。API はもともと期間・種類を変えないので、PostgREST の直接の UPDATE をトリガーで止めるだけ。状態の列は NULL を許していた (CHECK は NULL を通す) ので NOT NULL にし、NULL を「下書き」として使う抜け道 (S-24) も消す |
 
 ### 3.3 順位表とメンバー一覧の読み方 (R-7)
@@ -145,8 +148,8 @@
 (a) **平均は確定 1 回**: 管理者に見せる平均は、チャレンジが `completed` になる UPDATE の AFTER トリガー `org_challenge_finalize` が、そのトランザクションの参加行 (順位がついた今のメンバー) から計算して `organization_challenge_aggregates` に書く値だけ。開催中は返さない。確定後は書き換えない (`ON CONFLICT ... DO UPDATE ... WHERE finalized_at IS NULL`)。中止 (cancelled) は確定しない。
 (b) **参加者数は延べ**: 参加の INSERT の AFTER トリガー `org_challenge_count_join` が `joined_count` を +1 する。DELETE・組織からの脱退・除名・退会では動かさない。管理者がメンバーを外しても数が動かないので、参加の有無が漏れない。10 人未満は NULL (既存の規則)。
 (c) **開始後の不変**: 状態の列を NOT NULL にする (NULL の行は先に draft にする)。BEFORE UPDATE トリガー `org_challenge_guard_update` が、状態の遷移表 (draft → active / completed / cancelled、active → completed / cancelled、終わった状態からは変えない。NULL への変更も止める) と、draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更、常時の `organization_id` の変更を RAISE で止める。API の PUT は遷移表を先に確かめて 409 を返し、DB の RAISE も 409 に写す。
-(d) **順位表は管理者と管理者だった人に見せない**: 見る人の今の `org_role` が owner / admin か、そのチャレンジに「管理者だった印」(§0.5) があれば返さない。印は `user_profiles` の AFTER INSERT / UPDATE OF `org_role`, `organization_id` のトリガー `org_challenge_mark_admin` が、その人が組織の管理者になった時点 (役割か組織が変わって owner / admin になった時点) で、その組織にあるチャレンジすべてに付ける。どの経路 (同じ組織の招待の承諾・抜けてからの入り直し・所有者の譲渡・運営の操作・service_role の直接の更新) で役割が変わっても同じトリガーが拾う。印は消さない (参加をやめて参加し直しても、member に戻っても残る)。`GET /api/org/challenges/[id]` は、今の役割か印で伏せるとき順位表の関数を呼ばず `ranking: { available: false, reason: 'org_admin' }` を返す。DB の関数 `get_org_challenge_ranking` も同じ 2 つの条件で 0 行 (API の確認が漏れても返らない)。自分の記録と順位 (`me`) は返す。
-(e) **重なるチャレンジの平均は 1 本だけ**: `get_org_challenge_aggregates` は、確定した平均 (確定時点の人数が最小人数以上) を返す前に、同じ組織・同じ種類で期間が重なり (§0.5)、自分より先に確定した (確定の時刻、同じなら ID の順) チャレンジで、確定時点の人数が最小人数以上のものがあるかを見る。あれば平均を NULL にする。種類と期間は開始後に変わらず ((c))、確定値も変わらないので、一度出た平均が後から消えたり、伏せた平均が後から出たりしない。
+(d) **順位表は管理者と管理者だった人に見せない**: 見る人の今の `org_role` が owner / admin か、そのチャレンジに「管理者だった印」(§0.5) があれば返さない。印は `user_profiles` の AFTER INSERT / UPDATE OF `org_role`, `organization_id` のトリガー `org_challenge_mark_admin` が、その人が組織の管理者になった時点 (役割か組織が変わって owner / admin になった時点) で、その組織にあるチャレンジすべてに付ける。どの経路 (同じ組織の招待の承諾・抜けてからの入り直し・所有者の譲渡・運営の操作・service_role の直接の更新) で役割が変わっても同じトリガーが拾う。印は消さない (参加をやめて参加し直しても、member に戻っても残る)。`GET /api/org/challenges/[id]` は、今の役割か印で伏せるとき順位表の関数を呼ばず `ranking: { available: false, reason: 'org_admin' }` を返す。DB の関数 `get_org_challenge_ranking` も同じ 2 つの条件で 0 行 (API の確認が漏れても返らない)。自分の記録と順位 (`me`) は返す。印はアカウント (user_id) に付くので、管理者が別のメールアドレスで招待して入れた 2 つ目の member のアカウントには付かない。その経路 (S-27) は閉じない (§19-7)。
+(e) **重なるチャレンジの平均は 1 本だけ**: `get_org_challenge_aggregates` は、確定した平均 (確定時点の人数が最小人数以上) を返す前に、同じ組織・同じ種類で期間が重なり (§0.5)、自分より先に確定した (確定の時刻、同じなら ID の順) チャレンジで、確定時点の人数が最小人数以上のものがあるかを見る。あれば平均を NULL にする。種類と期間は開始後に変わらず ((c))、確定値も変わらない。さらに、確定のトリガー `org_challenge_finalize` は、書く前に組織ごとの鍵 (`pg_advisory_xact_lock`。キーは `'org_challenge_finalize:' || organization_id`) を取り、確定の時刻を鍵を取ったあとの `clock_timestamp()` にする (トランザクションの開始時刻の `now()` は使わない)。同じ組織の確定は 1 本ずつ進み、後の確定は前の確定のコミットのあとに時刻を決めるので、確定の時刻の順がコミットの順と一致する。よって、ある確定が読めるとき、それより前の確定はすべて読める (読める確定の集合は、確定の時刻の順の先頭からの区間)。新しく読めるようになる確定は、すでに読める確定より必ず後ろなので、出ている平均を伏せることはない。これで、一度出た平均が後から消えたり、伏せた平均が後から出たりしない (S-26)。
 (f) **公開したチャレンジは消させない**: `organization_challenges` に RESTRICTIVE の DELETE ポリシー `Org challenges can be deleted only as draft or cancelled` を足し、利用者の権限 (authenticated) で消せるのを draft と cancelled だけにする。completed (平均を出しうる) と active (これから確定する) は消せない。(e) の判定の相手が消えて、同じ種類・期間のチャレンジを作り直すと 2 回目の公開ができてしまうのを止める。組織を消したときの CASCADE と service_role はポリシーを通らない (RLS は参照整合の動作と service_role に掛からない) ので、組織の削除と運営の操作は止めない。消せる行 (draft / cancelled) を消すと、参加行・集計の行・印は外部キーの CASCADE で一緒に消える (§9.3 の DELETE の行)。
 
 変えないもの: `update_org_challenge_progress` (値の計算・completed にする UPDATE)、pg_cron のジョブ、参加の INSERT / SELECT / DELETE のポリシー、`Org admins can manage challenges` ポリシー、参加をやめる DELETE (その場で行を消す)、メンバー向けの API の形 (順位表の `reason` を足すだけ)、招待・譲渡・脱退・除名の関数。
@@ -155,16 +158,16 @@
 
 | 案 | 構造 | 差分攻撃 (正確な差) | 書き換えの抜け道 | 足すもの | 裁定 |
 |---|---|---|---|---|---|
-| A: 本書 | 平均は終了時の確定 1 回で、同じ種類で期間が重なるチャレンジの中でも 1 回・公開したチャレンジは消せない・人数は延べ・開始後の不変・順位表は管理者と管理者だった人に出さない | 同じ値になる公開が 1 回なので差が無い | 不変のトリガーと NOT NULL で無い | 表 2・トリガー 4・ポリシー 1・関数 2 本の作り直し | **採る** |
+| A: 本書 | 平均は終了時の確定 1 回で、同じ種類で期間が重なるチャレンジの中でも 1 回・公開したチャレンジは消せない・人数は延べ・開始後の不変・順位表は管理者と管理者だった人に出さない | 同じ値になる公開が 1 回なので差が無い | 不変のトリガーと NOT NULL で無い | 表 2・トリガー 4・ポリシー 1・関数 2 本の作り直し・組織ごとの鍵 1 つ (確定のトリガーの中) | **採る** |
 | B: 夜ごとの控え (旧ブランチ) | 毎晩の計算し直しと同時に控えを書き、集計と順位表を控えから返す | 他の人の値が動かない夜は差が 1 人の値になる (記録の無い日) | 控えを書き直す条件に依存 (4 周で閉じず) | 表 2・関数 1・バッチの改修・集合の受け渡し | 採らない |
 | C: 開催中も平均を出すが、母集団が変わったら終了まで凍る | 抑制規則 | 最後の公開値と確定値の差 (母集団 1 人違い) が残る | A と同じ | A + 凍結の判定 | 採らない (閉じない) |
 | D: やめた人の値を残す (母集団の凍結) | 行を消さず left_at で印 | 差は無い | A と同じ | 行の意味の変更・約束の変更 | 採らない (約束と継続利用に反する) |
 
-「縁の発生源を消すより単純な構造は無いか」: 差分攻撃の発生源は「同じ値の集まりについて、母集団が違う公開値が 2 つある」こと。公開値が生まれる経路は 3 つで、A はそれぞれを発生源ごと消す: ①同じチャレンジの 2 時点 → 確定 1 回 ((a))、②同じ値になる別のチャレンジ (個人の値は種類と期間だけで決まる) → 重なりの中で 1 回 ((e)) と、判定の相手を消させない ((f))、③参加者に見せる順位表を、外す力を持つ人が前後で見る → 今の役割と管理者だった印 ((d))。控え・凍結・雑音はすべて「2 つ目の公開値をどう守るか」の対症療法になる。
+「縁の発生源を消すより単純な構造は無いか」: 差分攻撃の発生源は「同じ値の集まりについて、母集団が違う公開値が 2 つある」こと。公開値が生まれる経路は 3 つで、A はそれぞれを発生源ごと消す: ①同じチャレンジの 2 時点 → 確定 1 回 ((a))、②同じ値になる別のチャレンジ (個人の値は種類と期間だけで決まる) → 重なりの中で 1 回 ((e)) と、判定の相手を消させない ((f))、③参加者に見せる順位表を、外す力を持つ人が前後で見る → 今の役割と管理者だった印 ((d))。③は同じアカウントの経路だけを閉じ、管理者が 2 つ目のアカウントを使う経路 (S-27) は残る (§19-7)。控え・凍結・雑音はすべて「2 つ目の公開値をどう守るか」の対症療法になる。
 
-②の閉じ方の比較 (相 3 の裁定): 「同じ組織で種類が同じで期間が重なるチャレンジを作らせない」(除外の制約) は、既存のテストの fixture (同じ種類・同じ期間のチャレンジを同じ組織に何本も作る。`tests/integration/rls/org-challenge-progress.test.ts:617`〜`:621` など) と、部署を分けて同じ種類を同時に開く使い方を壊し、さらに消してから作り直す経路は別に止める必要がある。「手動の completed を止める」は S-21 (同じバッチで 2 本が終わる) を閉じない。平均を出す関数の中で「重なりの中で先に確定した 1 本だけ」を判定する形は、書き込みの経路を増やさず、同時に確定しても確定の時刻と ID の全順序で必ず 1 本に決まり、鍵も台帳も要らない。これを採る。
+②の閉じ方の比較 (相 3 の裁定): 「同じ組織で種類が同じで期間が重なるチャレンジを作らせない」(除外の制約) は、既存のテストの fixture (同じ種類・同じ期間のチャレンジを同じ組織に何本も作る。`tests/integration/rls/org-challenge-progress.test.ts:617`〜`:621` など) と、部署を分けて同じ種類を同時に開く使い方を壊し、さらに消してから作り直す経路は別に止める必要がある。「手動の completed を止める」は S-21 (同じバッチで 2 本が終わる) を閉じない。平均を出す関数の中で「重なりの中で先に確定した 1 本だけ」を判定する形は、書き込みの経路を増やさず、同時に確定しても確定の時刻と ID の全順序で必ず 1 本に決まり、台帳が要らない。ただし確定の時刻をトランザクションの開始時刻 (`now()`) にすると、先に始まって後にコミットした確定が、すでに読めている確定の前に割り込み、出ていた平均が消えて別の平均が出る (S-26。READ COMMITTED では「先に始まった」は「先にコミットした」ではない)。そこで確定のトリガーが組織ごとの鍵を取り、鍵を取ったあとの時計の時刻を確定の時刻にする ((e))。鍵を取るのは確定のトリガーだけ。製品の経路で 1 つのトランザクションが複数の組織の鍵を取るのは夜の集計 (自分の鍵 `public.update_org_challenge_progress` で 1 本ずつ動く) だけで、PUT と管理者の PostgREST の UPDATE は自分の組織の行だけを書く (`Org admins can manage challenges` の USING が `up.organization_id = organization_challenges.organization_id`。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:9620`)。行のロックは UPDATE の文の中で取り、確定のトリガー (AFTER ROW) は文の終わりに動くので、行のロックを待っている間に組織の鍵を持っていることも無い。よって製品の経路では鍵の取り合いで止まり合わない。service_role が 1 つのトランザクションの別々の文で複数の組織のチャレンジを終了にし、夜の集計と重なった場合だけは、PostgreSQL のデッドロック検出 (40P01) で片方が取り消されうる (取り消された側は何も書かない。夜の集計なら次の夜にやり直す)。鍵を待つ時間は、相手のトランザクションのコミットまで (夜の集計なら、値の計算し直しが終わって completed にしたあと、コミットまでの間)。「確定のときに公開するかを決めて列に残す」案は、同じ鍵が要るうえ書き込む列が増えるので採らない。平均を出す関数の中の判定と、確定のトリガーの組織ごとの鍵の組を採る。
 
-③の閉じ方の比較: 「招待の承諾で同じ組織の在籍者を拒む」(`accept_org_invite` の作り直し) は、抜けて入り直す経路 (S-25)・所有者の譲渡・運営の操作・service_role の直接の更新を別々に閉じる必要があり、本書の範囲の外の関数を触る。「参加行に在籍の世代を持たせる」は入り直しだけを閉じる。役割が owner / admin になったことを `user_profiles` の 1 本のトリガーで拾って印を付ける形は、経路を問わず閉じ、招待の関数を変えない。これを採る。印を「そのチャレンジの開始後に管理者だったか」ではなく「管理者になった時点で組織にあったチャレンジすべて」にするのは、印の要る場面 (member として見た → 管理者になった) では、見た時点でチャレンジがすでにあり、管理者になった時点にもあるから (§4.3 S-20 の証明)。
+③の閉じ方の比較: 「招待の承諾で同じ組織の在籍者を拒む」(`accept_org_invite` の作り直し) は、抜けて入り直す経路 (S-25)・所有者の譲渡・運営の操作・service_role の直接の更新を別々に閉じる必要があり、本書の範囲の外の関数を触る。「参加行に在籍の世代を持たせる」は入り直しだけを閉じる。役割が owner / admin になったことを `user_profiles` の 1 本のトリガーで拾って印を付ける形は、経路を問わず閉じ、招待の関数を変えない。これを採る。印はアカウントに付くので、1 人が別のメールアドレスで 2 つ目の member のアカウントを入れて使う経路 (S-27) は、この形でも招待の関数の作り直しでも閉じない (DB からは別の人で、共謀と区別できない。§19-7)。印を「そのチャレンジの開始後に管理者だったか」ではなく「管理者になった時点で組織にあったチャレンジすべて」にするのは、印の要る場面 (member として見た → 管理者になった) では、見た時点でチャレンジがすでにあり、管理者になった時点にもあるから (§4.3 S-20 の証明)。
 
 A を確定し、以後は蒸し返さない。
 
@@ -192,11 +195,13 @@ A を確定し、以後は蒸し返さない。
 | S-18 | 10 人参加 → 1 人除名 → 終了時の順位がついた今のメンバー 9 人 → 平均 NULL。管理者は「10 人のうち 1 人外した結果が 9 人」から参加の有無を推測しうる | 残る限界 (値ではない)。§19 |
 | S-19 | `department_id` は特権列 (`guard_user_profiles_privileged`、`supabase/migrations/20261008200700_legal_documents_acceptance.sql:77`) で、利用者の JWT では変えられない。製品で変わるのは S-3 / S-14 の NULL だけ (組織の所属と同時)。チャレンジが参照する部署は `organization_challenges_department_id_fkey` (ON DELETE の指定なし = NO ACTION) で削除できず、`DELETE /api/org/departments` は 23503 を 409 `DEPARTMENT_IN_USE` にする (`src/app/api/org/departments/route.ts:201`)。service_role で変えた場合: `get_org_challenge_ranking`・`org_challenge_finalize`・`get_org_challenge_aggregates` はどれも部署で絞らない (組織の結合だけ) ので、行は順位表と確定の母集団に残り、`joined_count` も不変。本人は `isVisibleToMember` (`src/lib/org-challenge-api.ts:77`) で詳細が 404 になるだけ。消える行が無いので差が無い | ✔ |
 | S-20 | 経路の事実: `accept_org_invite` (最新の定義 `supabase/migrations/20261007150200_invite_accept_creates_missing_profile.sql:97`) は別組織の在籍者だけを `ALREADY_IN_ORG` で拒み、同じ組織の在籍者の承諾では `INSERT ... ON CONFLICT (id) DO UPDATE SET organization_id = EXCLUDED.organization_id, org_role = EXCLUDED.org_role, ...` (`:151`〜`:156`) で役割を上書きする。所有者の譲渡 (`accept_org_owner_transfer`、`20251126124224_create_meal_planner_tables.sql:811`) は member / admin → owner と owner → admin。運営の組織作成 (`src/app/api/admin/organizations/route.ts:207`) は service_role で owner にする。走らせた結果: ① Y (member) が順位表を見る (印なし・役割 member → 返る)。② Y が admin の招待を承諾 → `ON CONFLICT DO UPDATE` が `user_profiles` の UPDATE になり、`org_role` が member → admin に変わるので `trg_org_challenge_mark_admin` が発火し、組織 A のチャレンジすべてに (C, Y) の印を INSERT。③ Y が X を外す (`remove_org_member` は呼び出した人の `org_role` を見る)。④ Y が member の招待を承諾 → 役割は member に戻るが印は残る。⑤ Y が詳細を開く → `hasRankingExclusion` が true → `reason: 'org_admin'`。関数も印で 0 行。前後の順位表の組ができない。所有者の譲渡で owner になった場合も ② と同じく発火する。証明 (印の範囲が足りること): 差を取るには「member で見た時刻 t1 < 管理者として外した時刻 t2 < member で見た時刻 t3」が要る。t1 に member で t2 に管理者なので、t1 < t_p ≤ t2 に役割が owner / admin になった時刻 t_p があり、そこでトリガーが動く。t1 に順位表を見たチャレンジ C は t1 にすでにあり (メンバーに見えるのは active / completed だけ)、active / completed の行は利用者の権限で消せない ((f))。中止してから消していれば t3 で見る順位表も無い。よって C は t_p にもある。よって (C, Y) の印が t_p に付き、t3 では返らない | ✔ (抜け道 2) |
-| S-21 | A・B は同じ種類・同じ期間なので、11 人の値は A と B で同じ。X が B をやめる (DELETE) → `joined_count` は A・B とも 11 のまま。終了日の夜のバッチ: 値の計算 → `UPDATE ... SET status = 'completed'` が A・B の 2 行を completed にし、行ごとの AFTER トリガーで A は 11 人、B は 10 人で確定する。`finalized_at` は同じ (同じトランザクションの `now()`)。`get_org_challenge_aggregates`: A・B の両方が `final_ranked_count >= 10` で `shown` に入る。ID の小さい方 (A とする) は、自分より前の重なる行が無いので平均が出る。B は `(A.finalized_at, A.id) < (B.finalized_at, B.id)` の A があるので NULL。公開は 1 本 | ✔ (R-1) |
+| S-21 | A・B は同じ種類・同じ期間なので、11 人の値は A と B で同じ。X が B をやめる (DELETE) → `joined_count` は A・B とも 11 のまま。終了日の夜のバッチ: 値の計算 → `UPDATE ... SET status = 'completed'` が A・B の 2 行を completed にし、行ごとの AFTER トリガーで A は 11 人、B は 10 人で確定する。`finalized_at` は行ごとに鍵を取ったあとの `clock_timestamp()` なので、先にトリガーが動いた行が早い (時計の値が同じなら ID の順で決まる)。2 行は同じトランザクションでコミットするので、読めるようになるのも同時。`get_org_challenge_aggregates`: A・B の両方が `final_ranked_count >= 10` で `eligible` に入る。`(finalized_at, id)` が小さい方 (A とする) は、自分より前の重なる行が無いので平均が出る。B は `(A.finalized_at, A.id) < (B.finalized_at, B.id)` の A があるので NULL。公開は 1 本 | ✔ (R-1) |
 | S-22 | A を PUT completed → 確定 (前夜の値。11 人)。X を外す。B を PUT completed → 確定 (同じ前夜の値。10 人)。`finalized_at` は A が先。B は A と種類が同じで期間が重なり、A が 10 人以上で先に確定しているので NULL。A が 9 人以下で確定していれば A は出ず、B は自分より前に「出る資格のある」重なる行が無いので出る。どちらの場合も公開は 1 本 | ✔ (R-1) |
 | S-23 | A (completed) の DELETE: `Org admins can manage challenges` (許可) と `Org challenges can be deleted only as draft or cancelled` (RESTRICTIVE。`status IN ('draft','cancelled')` が偽) の両方を満たす行だけが消えるので 0 行。A の控えも残り、B を作り直して確定しても S-22 と同じく NULL。active の A も 0 行。active の A を cancelled にしてからなら消せるが、cancelled は確定していない (平均を出していない) ので判定の相手を失っても公開は 1 回のまま。組織ごと消すと CASCADE で消えるが、そのときは管理者も組織も無い | ✔ (R-1) |
 | S-24 | `ALTER COLUMN status SET NOT NULL` の後なので、NULL への UPDATE は 23502 で失敗する。その前に BEFORE トリガーが `NEW.status IS NULL` を CHALLENGE_STATUS_LOCKED で止める (どちらでも行は変わらない)。INSERT で NULL を入れる経路も NOT NULL で止まる。migration の時点の NULL の行は先に draft にする (集計・参加・メンバー向けの一覧の対象外だった行で、下書きとして扱ってきたもの) | ✔ (抜け道 1) |
 | S-25 | ① Y (member) が順位表を見る。② `leave_org`: `organization_id` / `org_role` を NULL にする (参加行は残る)。トリガーは `organization_id` が NULL なので何もしない。③ admin の招待を承諾: `organization_id` NULL → A、`org_role` NULL → admin に変わる UPDATE で印が付く。④ X を外す。⑤ `leave_org` → member の招待を承諾: 役割は member、印は残る。⑥ 詳細を開く → `reason: 'org_admin'`。参加をやめて (DELETE) 参加し直しても、印は `organization_challenge_ranking_exclusions` にあり参加行の削除で消えない (FK はチャレンジと auth.users にだけ CASCADE) ので返らない | ✔ (抜け道 2) |
+| S-26 | T1 (夜の集計) は `update_org_challenge_progress` の自分の鍵を取り、値の計算し直しの文 (`20261014100100_org_challenge_progress.sql:120`〜`:199`) を走らせている。T2 (管理者の PUT) が B を completed にする: ガード可 → `org_challenge_finalize` が組織の鍵を取る (T1 はまだ completed の UPDATE (`:202`) に達しておらず組織の鍵を持たないので、すぐ取れる) → `finalized_at = clock_timestamp()` (= f_B) → 前夜の値で確定 → コミットして鍵を放す。管理者の GET: A は未確定、B は eligible で、前に重なる確定が無いので平均が出る。T1 が A を completed にする: `org_challenge_finalize` が組織の鍵を取る (T2 はコミット済みなのですぐ取れる) → `finalized_at = clock_timestamp()` (= f_A。T2 のコミットより後なので f_B < f_A) → 確定 → コミット。管理者の GET: A は `(B.finalized_at, B.id) < (A.finalized_at, A.id)` の B があるので NULL。B は前に A が無いので出たまま。逆の並び (T1 の確定が先に鍵を取る) では、T2 は T1 のコミットまで鍵を待ち、f_A < f_B で、A が出て B は出ない (B は一度も出ていない)。どちらでも、読める確定の集合は確定の時刻の順の先頭からの区間 (§4.1 (e)) なので、出た平均は出たままで、伏せた平均は伏せたまま。旧の形 (`now()` を確定の時刻にする) では f_A = T1 の開始時刻 < f_B となり、B が出たあとに A が出て B が消え、母集団が X の 1 人だけ違う 2 つの平均が両方見えた | ✔ (R-1) |
+| S-27 | `create_org_invite` (`supabase/migrations/20261008100000_membership_daily_send_cap.sql:312`) は呼び出した人が owner / admin で席が空いていれば、宛先のメールアドレスを絞らずに招待を作る (作成は `membership_audit` の `invite_created` に残る。同 `:65`)。`accept_org_invite` は承諾する人のメールアドレスが招待の宛先と同じことだけを確かめる (`20261007150200_invite_accept_creates_missing_profile.sql:131`)。管理者が自分で持つ別のメールアドレスのアカウント Z で member の招待を承諾すると、Z の `org_role` は member のまま入るので `trg_org_challenge_mark_admin` は何もしない。Z は参加し (参加の INSERT ポリシーは本人の行・開催中・種類・部署を見るだけで、招待した人を見ない)、順位表を受け取る → 管理者のアカウントで X を外す → Z でもう一度受け取ると X の行が消えている。Z は一度も管理者になっていないので印は無く、今の役割も member なので、API も DB の関数も順位表を返す。DB からは Z は別の人で、内部の共謀 (§1 の対象外) と区別できない。管理者に見せる集計 (延べ数・確定した平均) はこの経路でも動かない (§4.1 (a)(b)(e) は役割に依らない) | 閉じない (残る限界。§19-7・§20-4) |
 
 ---
 
@@ -227,7 +232,8 @@ A を確定し、以後は蒸し返さない。
 --      (NULL への変更を含む) を CHALLENGE_STATUS_LOCKED で止め、draft 以外での start_date / end_date / challenge_type / department_id と
 --      常時の organization_id の変更を CHALLENGE_PERIOD_LOCKED で止める (API の PUT は期間・種類を受け付けない。PostgREST の直接の UPDATE を止める)。
 --   6. トリガー org_challenge_finalize: completed への遷移と同じトランザクションで、順位がついた今のメンバーの平均 (小数第 1 位) と
---      人数を 1 回だけ書く (確定済みなら書かない)。中止 (cancelled) は確定しない。
+--      人数を 1 回だけ書く (確定済みなら書かない)。中止 (cancelled) は確定しない。書く前に組織ごとの鍵 (pg_advisory_xact_lock) を取り、
+--      確定の時刻を鍵を取ったあとの clock_timestamp() にする (同じ組織の確定を 1 本ずつにし、確定の時刻の順をコミットの順とそろえる)。
 --   7. トリガー org_challenge_mark_admin (user_profiles): 役割か組織が変わって組織の管理者 (owner / admin) になった時点で、
 --      その組織のチャレンジすべてに印を付ける (招待の承諾・所有者の譲渡・運営の操作・service_role の更新のどの経路でも)。
 --   8. ポリシー "Org challenges can be deleted only as draft or cancelled" (RESTRICTIVE・DELETE・authenticated): 利用者の権限で消せるのは
@@ -266,7 +272,8 @@ CREATE TABLE IF NOT EXISTS public.organization_challenge_aggregates (
   challenge_id        uuid PRIMARY KEY REFERENCES public.organization_challenges(id) ON DELETE CASCADE,
   -- 参加した人の延べ数。参加の INSERT ごとに +1。やめる・組織から外れる・退会では減らさない
   joined_count        integer NOT NULL DEFAULT 0 CHECK (joined_count >= 0),
-  -- 確定した時刻 (completed にした UPDATE の時刻)。NULL = 未確定 (開催中・下書き・中止)
+  -- 確定した時刻 (確定のトリガーが組織ごとの鍵を取ったあとの clock_timestamp()。同じ組織の中では、この順がコミットの順と一致する)。
+  -- NULL = 未確定 (開催中・下書き・中止)
   finalized_at        timestamptz,
   -- 確定時点の、順位がついた今のメンバーの人数と、その平均 (小数第 1 位)。人数 0 なら平均は NULL
   final_ranked_count  integer CHECK (final_ranked_count >= 0),
@@ -394,15 +401,25 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
+DECLARE
+  v_finalized_at timestamptz;
 BEGIN
+  -- 同じ組織の確定を 1 本ずつにする (コミットで外れる)。get_org_challenge_aggregates は「重なりの中で確定の時刻が最も早い 1 本」
+  -- だけに平均を出すので、確定の時刻の順がコミットの順と食い違うと、先に始まって後にコミットした確定が、すでに出ている平均の前に
+  -- 割り込んでそれを消す (#1688 §4.3 S-26)。鍵を取ったあとの時計の時刻を確定の時刻にすれば、後の確定の時刻は前の確定の
+  -- コミットより後になる。now() (トランザクションの開始時刻) は使わない
+  PERFORM pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended('org_challenge_finalize:' || NEW.organization_id::text, 0));
+  v_finalized_at := pg_catalog.clock_timestamp();
+
   INSERT INTO public.organization_challenge_aggregates AS a
          (challenge_id, joined_count, finalized_at, final_ranked_count, final_average_value, updated_at)
   SELECT NEW.id,
          0,
-         now(),
+         v_finalized_at,
          count(p.user_id) FILTER (WHERE p.rank IS NOT NULL),
          round(avg(p.current_value) FILTER (WHERE p.rank IS NOT NULL), 1),
-         now()
+         v_finalized_at
     FROM public.organization_challenge_participants AS p
     JOIN public.user_profiles AS up
       ON up.id = p.user_id
@@ -419,7 +436,7 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.org_challenge_finalize() FROM PUBLIC, anon, authenticated, service_role;
 COMMENT ON FUNCTION public.org_challenge_finalize() IS
-  '#1688: organization_challenges が completed になる UPDATE の AFTER トリガー。同じトランザクションの参加行 (順位がついた今のメンバー) から平均 (小数第 1 位) と人数を organization_challenge_aggregates に 1 回だけ書く (確定済みなら書かない)。';
+  '#1688: organization_challenges が completed になる UPDATE の AFTER トリガー。組織ごとの advisory lock (org_challenge_finalize:<organization_id>) を取ってから、同じトランザクションの参加行 (順位がついた今のメンバー) の平均 (小数第 1 位) と人数を organization_challenge_aggregates に 1 回だけ書く (確定済みなら書かない)。確定の時刻は鍵を取ったあとの clock_timestamp() (同じ組織の中で確定の時刻の順 = コミットの順)。';
 
 CREATE OR REPLACE TRIGGER trg_org_challenge_finalize
   AFTER UPDATE OF status ON public.organization_challenges
@@ -629,6 +646,9 @@ COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolea
 -- ─────────────────────────────────────────────────────────
 -- 11. 既存のチャレンジの埋め戻し (延べ数 = いまの参加行の数。completed は一度だけ確定。印は埋め戻さない)
 -- ─────────────────────────────────────────────────────────
+-- 確定の時刻は now() (この migration のトランザクションの開始時刻) でよい。確定のトリガーはこの migration のコミットまで
+-- 他のトランザクションから見えず (1. の ALTER TABLE が organization_challenges の排他ロックをコミットまで持つ)、以後の確定の時刻は
+-- コミットより後の clock_timestamp() なので、埋め戻した確定は必ずそれより前に並ぶ
 INSERT INTO public.organization_challenge_aggregates AS a (challenge_id, joined_count)
 SELECT c.id, count(p.id)
   FROM public.organization_challenges AS c
@@ -717,7 +737,7 @@ ALTER TABLE public.organization_challenges ALTER COLUMN status DROP NOT NULL;
 | 列 | 意味 | 書く経路 | 不変条件 |
 |---|---|---|---|
 | `joined_count` | 参加した人の延べ数 | `org_challenge_count_join` (+1) と埋め戻し | 減らない。DELETE / 脱退 / 除名 / 退会で動かない |
-| `finalized_at` | 確定の時刻 | `org_challenge_finalize` と埋め戻し (completed) | 一度入ったら変わらない (`WHERE a.finalized_at IS NULL`) |
+| `finalized_at` | 確定の時刻 (確定のトリガーが組織ごとの鍵を取ったあとの `clock_timestamp()`。埋め戻しは migration の `now()`) | `org_challenge_finalize` と埋め戻し (completed) | 一度入ったら変わらない (`WHERE a.finalized_at IS NULL`)。同じ組織の中では、確定の時刻の順がコミットの順と一致する (別のトランザクションの確定は、前の確定のコミットのあとに時刻を決める) |
 | `final_ranked_count` | 確定時点の順位がついた今のメンバーの人数 | 同上 | `finalized_at` と同時にだけ入る |
 | `final_average_value` | 確定した平均 (小数第 1 位) | 同上 | 人数 0 なら NULL。画面に出るのは、確定時点の人数が最小人数以上で、同じ種類で期間が重なり先に確定した資格のあるチャレンジが無いときだけ (§4.1 (e)) |
 | `organization_challenge_ranking_exclusions.(challenge_id, user_id)` | 管理者だった印 | `org_challenge_mark_admin` だけ (埋め戻さない) | 消さない (チャレンジの削除・退会の CASCADE でだけ消える)。参加行の削除・役割の変更で動かない |
@@ -998,15 +1018,15 @@ if (!mine) {
 | 状態 | 操作 (誰) | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
 | draft | PUT status=active (管理者) | active | `isOrgChallengeType` (既存 400)・遷移表 | 無し (値は次の夜の集計から) |
-| draft | PUT status=completed (管理者) | completed | 遷移表 | `org_challenge_finalize` が確定 (通常は人数 0 → 平均 NULL) |
+| draft | PUT status=completed (管理者) | completed | 遷移表・確定のトリガーの組織ごとの鍵 | `org_challenge_finalize` が確定 (通常は人数 0 → 平均 NULL) |
 | draft | PUT status=cancelled (管理者) | cancelled | 遷移表 | 無し |
-| draft | status=active / completed / cancelled の UPDATE (PostgREST。管理者の JWT) | active / completed / cancelled | ガード `org_challenge_guard_update` (遷移表の 5 本) | completed なら `org_challenge_finalize` が確定 (通常は人数 0 → 平均 NULL)。active は API の `isOrgChallengeType` の確認を通らないが、歩数・体重・カスタムを開始しても参加の INSERT ポリシーが種類で断る (`supabase/migrations/20261016170000_org_challenge_min10_join_policy.sql:117`。既存のまま) ので参加行はできない |
+| draft | status=active / completed / cancelled の UPDATE (PostgREST。管理者の JWT) | active / completed / cancelled | ガード `org_challenge_guard_update` (遷移表の 5 本)。completed は確定のトリガーの組織ごとの鍵 | completed なら `org_challenge_finalize` が確定 (通常は人数 0 → 平均 NULL)。active は API の `isOrgChallengeType` の確認を通らないが、歩数・体重・カスタムを開始しても参加の INSERT ポリシーが種類で断る (`supabase/migrations/20261016170000_org_challenge_min10_join_policy.sql:117`。既存のまま) ので参加行はできない |
 | draft | 期間・種類・部署の UPDATE (PostgREST) | draft | 無し | 無し |
-| active | 夜の集計で end_date < 今日 (JST) (バッチ) | completed | バッチの WHERE | 値の計算し直し → 確定 (同じトランザクション)。同じバッチで終わる重なるチャレンジも行ごとに確定し、平均を出すのは読むときに 1 本 (S-21) |
-| active | PUT status=completed (管理者) | completed | 遷移表 | 前夜までの値で確定。先に平均を出した重なるチャレンジがあれば、この平均は出ない (S-22) |
+| active | 夜の集計で end_date < 今日 (JST) (バッチ) | completed | バッチの WHERE・確定のトリガーの組織ごとの鍵 (同じ組織の別の確定がコミット前なら、そのコミットまで待つ) | 値の計算し直し → 確定 (同じトランザクション。確定の時刻は鍵を取ったあとの時計の時刻)。同じバッチで終わる重なるチャレンジも行ごとに確定し、平均を出すのは読むときに 1 本 (S-21)。計算し直しの間に PUT で終わった重なるチャレンジがあれば、そちらが先の確定になる (S-26) |
+| active | PUT status=completed (管理者) | completed | 遷移表・確定のトリガーの組織ごとの鍵 (夜の集計など、同じ組織の別の確定がコミット前なら、そのコミットまで待つ) | 前夜までの値で確定 (確定の時刻は鍵を取ったあとの時計の時刻)。先に平均を出した重なるチャレンジがあれば、この平均は出ない (S-22・S-26) |
 | active | PUT status=cancelled (管理者) | cancelled | 遷移表 | 無し (確定しない) |
 | active | PUT status=draft (管理者) | — | 409 `CHALLENGE_STATUS_LOCKED` | 書き込み無し |
-| active | status=completed / cancelled の UPDATE (PostgREST。管理者の JWT) | completed / cancelled | ガード (遷移表の 5 本) | completed なら PUT と同じく前夜までの値で確定 (S-10。§13 の節 M)。cancelled は確定しない (S-11。§13 の節 U) |
+| active | status=completed / cancelled の UPDATE (PostgREST。管理者の JWT) | completed / cancelled | ガード (遷移表の 5 本)。completed は確定のトリガーの組織ごとの鍵 | completed なら PUT と同じく前夜までの値で確定 (S-10。§13 の節 M)。cancelled は確定しない (S-11。§13 の節 U) |
 | active | status=draft の UPDATE (PostgREST。管理者の JWT) | — | RAISE `CHALLENGE_STATUS_LOCKED` (ガード) | 書き込み無し (S-6。§13 の節 G) |
 | active | 期間・種類・部署の UPDATE (PostgREST) | — | RAISE `CHALLENGE_PERIOD_LOCKED` | 書き込み無し |
 | completed / cancelled | PUT status=(別の値) (管理者) | — | 409 `CHALLENGE_STATUS_LOCKED` (API) / RAISE (DB) | 書き込み無し |
@@ -1026,6 +1046,7 @@ if (!mine) {
 | draft / cancelled | チャレンジの DELETE (管理者。PostgREST) | (行が消える) | 既存のポリシー + RESTRICTIVE `status IN ('draft','cancelled')` | 参加行・集計の行・印が CASCADE で消える (どちらの状態も平均を出していない。§4.1 (f)・S-23) |
 | active / completed | チャレンジの DELETE (管理者。PostgREST) | — | RESTRICTIVE のポリシーで対象外 (0 行。エラーにならない) | 書き込み無し (S-23) |
 | 任意 | 組織の削除 (CASCADE)・service_role の DELETE | (行が消える) | RLS を通らない | 参加行・集計の行・印が CASCADE で消える |
+| active (同じ組織の別のチャレンジの確定がコミット前) | status=completed (夜の集計・PUT・PostgREST のどれでも) | completed (先の確定のコミットを待ってから) | 確定のトリガーの組織ごとの鍵 (`org_challenge_finalize:<organization_id>`) | 確定の時刻は先の確定のコミットより後。読める確定の集合は確定の時刻の順の先頭からの区間のまま (出た平均は消えず、伏せた平均は出ない。S-26) |
 
 §6 の `ORG_CHALLENGE_STATUS_TRANSITIONS` が持つのは、この表のうち状態が変わる遷移 (draft → active / completed / cancelled、active → completed / cancelled) の 5 本。表では同じ遷移が API の PUT の行と PostgREST の直接の UPDATE の行の 2 つに出る (経路が違うだけで、遷移の集合は同じ 5 本)。DB のガードも同じ 5 本だけを通す (NULL への変更は通さない)。§6 の `ORG_CHALLENGE_DELETABLE_STATUSES` (draft / cancelled) は、この表の DELETE の行と同じ。
 
@@ -1081,7 +1102,7 @@ sequenceDiagram
   API->>DB: DELETE 本人の行 (集計の表は動かない)
   Cron->>DB: update_org_challenge_progress()
   DB->>DB: 値と順位の計算し直し → UPDATE status='completed' (end_date < 今日)
-  DB->>DB: trg_org_challenge_guard_update (active → completed 可) → trg_org_challenge_finalize (確定 1 回)
+  DB->>DB: trg_org_challenge_guard_update (active → completed 可) → trg_org_challenge_finalize (組織の鍵 → 確定 1 回。時刻は鍵の後の clock_timestamp)
   Admin->>API: GET /api/org/challenges
   DB-->>API: average_value = 確定値 (確定時の人数 ≥ 10)
   Admin->>API: PUT status=active (戻す)
@@ -1094,8 +1115,8 @@ sequenceDiagram
 
 | ファイル | it 名 (要点) |
 |---|---|
-| `tests/org-challenge-diff-privacy-migration-contract.test.ts` (新設。DB を使わない) | migration と down の 1 行目の名前が実ファイル名と一致し、本文のロールバックの参照が実在する / 状態の NULL を draft にする UPDATE と `ALTER COLUMN status SET NOT NULL` が、この順でガードのトリガーの作成より前にある。down は `DROP NOT NULL` を持つ / organization_challenge_aggregates と organization_challenge_ranking_exclusions を作り、どちらも RLS を有効にし、PUBLIC・anon・authenticated の権限を外し、ポリシーを作らない。印の表の外部キーは organization_challenges(id) と auth.users(id) に ON DELETE CASCADE / get_org_challenge_aggregates を最後に定義するのは本 migration で、本体は organization_challenge_aggregates から読み organization_challenge_participants を読まない。cfg の `SELECT 10 AS min_participants` が ORG_CHALLENGE_MIN_PARTICIPANTS と同じ。重なりの判定 (`e.challenge_type = c.challenge_type`・`e.start_date <= c.end_date`・`c.start_date <= e.end_date`・`(e.finalized_at, e.id) < (a.finalized_at, c.id)`) を持つ / get_org_challenge_ranking を最後に定義するのは本 migration で、cfg (20 / 100) と LEAST(GREATEST(...)) は 20261014100100 と同じ、除外する役割の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ、organization_challenge_ranking_exclusions の `NOT EXISTS` を持つ / update_org_challenge_progress を作り直さない (最後の定義は 20261014100100) / ガードの関数が通す遷移は ORG_CHALLENGE_STATUS_TRANSITIONS の 5 本と同じで、`NEW.status IS NULL` を断り、比較を `COALESCE(..., false)` で包む。止める列は start_date・end_date・challenge_type・department_id・organization_id / 確定のトリガーは `AFTER UPDATE OF status` と `NEW.status = 'completed'` の WHEN を持ち、INSERT は `WHERE a.finalized_at IS NULL` で 1 回だけ / 参加の INSERT にだけ延べ数のトリガーを付け、DELETE・UPDATE には付けない / 印のトリガーは `AFTER INSERT OR UPDATE OF org_role, organization_id ON public.user_profiles` で、関数の `NOT IN` の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ / 削除のポリシーは `AS RESTRICTIVE`・`FOR DELETE`・`TO authenticated` で、`status IN (...)` の並びが ORG_CHALLENGE_DELETABLE_STATUSES と同じ。`Org admins can manage challenges` を作り直さない / トリガー関数 4 本は PUBLIC・anon・authenticated・service_role から EXECUTE を外す / 埋め戻しは ON CONFLICT で冪等で、印は埋め戻さない / down はトリガー → 関数 → ポリシー → 2 本の関数の復元 → 表 2 つ → NOT NULL の順で、復元した定義が 20261016170000 と 20261014100100 の逐語 |
-| `tests/integration/rls/org-challenge-diff-privacy.test.ts` (新設。ローカル Supabase) | A: joined_count は参加で +1 し、やめても・組織から外れても (remove_org_member)・退会しても減らない。再参加は 2 と数える / B: 開催中は順位がついた人が 10 人いても average_value は NULL。participant_count は延べ数で 9 なら NULL・10 で出る / C: 終了日を過ぎた夜の集計 (update_org_challenge_progress の p_now) で completed になると、その時点の順位がついた今のメンバーの平均 (小数第 1 位) と人数が確定する / D: 確定後に参加をやめる・組織から外れる・service_role で値や順位を書き換えても average_value は変わらない / E: 確定は 1 回だけ。completed のまま値を変えて同じ関数を呼んでも final_* は変わらない / F: 確定時点の順位がついた人が 9 人なら NULL、10 人なら出る / G: 管理者の JWT で PostgREST を直接叩いても completed・cancelled から他の状態へ変えられない (P0001 CHALLENGE_STATUS_LOCKED)。active → draft も不可。active → NULL・draft → NULL も CHALLENGE_STATUS_LOCKED で、行は変わらない (続けて期間を書き換えることもできない)。draft → active / completed / cancelled、active → completed / cancelled は可 / H: active・completed・cancelled の start_date / end_date / challenge_type / department_id と、どの状態でも organization_id は変えられない (CHALLENGE_PERIOD_LOCKED)。draft なら期間を変えられる。title は終了後も変えられる / I [S-8・S-20・S-25]: 順位表は見る人が owner / admin なら 0 行。member には従来どおり。順位表を受け取った参加中の member が、同じ組織の admin の招待を本人の JWT の `accept_org_invite` で承諾すると、組織のチャレンジすべてに印が付き 0 行。member の招待を承諾して戻っても 0 行 (招待の行は `tests/integration/security/invite-accept-missing-profile.test.ts` の `orgInviteToken` と同じ作り方、ライセンスの枠も同じファイルの fixture と同じ作り方) / I2: `leave_org` → admin の招待で入り直す → `leave_org` → member の招待で入り直しても 0 行。印のあるチャレンジで参加をやめて参加し直しても 0 行 / I3: service_role で参加者の org_role を owner にしても (所有者の譲渡・運営の操作と同じ UPDATE) 印が付き、member に戻しても 0 行 / I4: 管理者だった間に無かったチャレンジ (member に戻ったあとに作られたもの) の順位表は返る。役割も組織も変わらない UPDATE (nickname の更新・同じ役割の上書き) では印が増えない / J: 集計の表と印の表は利用者の JWT では読めない・書けない。service_role は読める / K: 退会 (auth.users の削除) で参加行と印が消えても joined_count と確定値は変わらない / L: トリガー関数 4 本の EXECUTE は PUBLIC・anon・authenticated・service_role に無い。トリガー 4 本が付いている / M [S-10]: 管理者の JWT で active のチャレンジを completed に UPDATE すると、その時点の参加行 (前夜の計算の current_value。順位がついた今のメンバー) の平均と人数で確定する。そのあと夜の集計 (update_org_challenge_progress) が走っても final_* は変わらない (completed は計算し直しの対象外) / N [S-15]: migration ファイルの「11. 既存のチャレンジの埋め戻し」の節 (見出しの行から末尾まで) を読み、fixture のチャレンジの控えの行を service_role で消してから pgQuery で流すと、active のチャレンジは joined_count = 参加行の数で未確定、completed のチャレンジは順位がついた今のメンバーの人数と平均 (小数第 1 位) で確定する。確定済みの控えの行は上書きしない。2 回流しても結果が同じ / O [S-17]: 終了日が 3 日前のまま active のチャレンジ (夜の集計が 3 晩止まった状態) に update_org_challenge_progress(p_now) を 1 回呼ぶと、同じ呼び出しで値の計算し直し・completed・確定が行われ、final_average_value は呼び出しの後の参加行 (順位がついた今のメンバー) の current_value の平均 (小数第 1 位) と一致する。控えの表の時刻の列は finalized_at と updated_at だけで、計算日を別に持たない / P [S-19]: service_role で参加者の department_id を別の部署に変えても、その人の行は他の参加者の順位表と確定の人数に残り、joined_count も変わらない。利用者の JWT では department_id を変えられない (CANNOT_MODIFY_PRIVILEGED_COLUMN) / Q [S-21]: 同じ種類・同じ期間の A・B に 11 人が参加し X が B だけやめたあと、1 つの UPDATE (pgQuery) で A・B を同時に completed にすると、finalized_at は同じで、ID の小さい方の平均だけが出て、もう 1 本は NULL。joined_count は A・B とも 11 / R [S-22]: A を completed (11 人) → X を外す → B を completed (10 人) とすると B の平均は NULL。A の確定が 9 人 (平均が出ない) なら、後の B は 10 人で平均が出る。種類が違えば両方出る。同じ種類で期間が重ならなければ両方出る。終了日と開始日が同じ日 (両端を含む重なり) なら後の方は NULL / S [S-23]: 管理者の JWT の DELETE で、active と completed のチャレンジは消えない (0 行。エラーにならない)。draft と cancelled は消える。service_role の DELETE と組織の削除 (CASCADE) では消える / T [S-24]: service_role で status を NULL にする INSERT は 23502。管理者の JWT で status を NULL にする UPDATE は P0001 CHALLENGE_STATUS_LOCKED / U [S-11]: 順位がついた今のメンバーが 10 人いる active のチャレンジを、管理者の JWT で cancelled に UPDATE すると、集計の表の finalized_at・final_ranked_count・final_average_value は NULL のままで (確定しない)、get_org_challenge_aggregates の average_value は NULL。そのあと end_date を過ぎた p_now で update_org_challenge_progress を呼んでも確定しない (バッチは active だけを completed にする)。cancelled から active・completed・draft への UPDATE は P0001 CHALLENGE_STATUS_LOCKED、start_date の UPDATE は P0001 CHALLENGE_PERIOD_LOCKED で、行は変わらない |
+| `tests/org-challenge-diff-privacy-migration-contract.test.ts` (新設。DB を使わない) | migration と down の 1 行目の名前が実ファイル名と一致し、本文のロールバックの参照が実在する / 状態の NULL を draft にする UPDATE と `ALTER COLUMN status SET NOT NULL` が、この順でガードのトリガーの作成より前にある。down は `DROP NOT NULL` を持つ / organization_challenge_aggregates と organization_challenge_ranking_exclusions を作り、どちらも RLS を有効にし、PUBLIC・anon・authenticated の権限を外し、ポリシーを作らない。印の表の外部キーは organization_challenges(id) と auth.users(id) に ON DELETE CASCADE / get_org_challenge_aggregates を最後に定義するのは本 migration で、本体は organization_challenge_aggregates から読み organization_challenge_participants を読まない。cfg の `SELECT 10 AS min_participants` が ORG_CHALLENGE_MIN_PARTICIPANTS と同じ。重なりの判定 (`e.challenge_type = c.challenge_type`・`e.start_date <= c.end_date`・`c.start_date <= e.end_date`・`(e.finalized_at, e.id) < (a.finalized_at, c.id)`) を持つ / get_org_challenge_ranking を最後に定義するのは本 migration で、cfg (20 / 100) と LEAST(GREATEST(...)) は 20261014100100 と同じ、除外する役割の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ、organization_challenge_ranking_exclusions の `NOT EXISTS` を持つ / update_org_challenge_progress を作り直さない (最後の定義は 20261014100100) / ガードの関数が通す遷移は ORG_CHALLENGE_STATUS_TRANSITIONS の 5 本と同じで、`NEW.status IS NULL` を断り、比較を `COALESCE(..., false)` で包む。止める列は start_date・end_date・challenge_type・department_id・organization_id / 確定のトリガーは `AFTER UPDATE OF status` と `NEW.status = 'completed'` の WHEN を持ち、INSERT は `WHERE a.finalized_at IS NULL` で 1 回だけ / 確定の関数は INSERT より前に `pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('org_challenge_finalize:' \|\| NEW.organization_id::text, 0))` を持ち、確定の時刻 (finalized_at と updated_at) に鍵の後の `clock_timestamp()` を使い、本体 (コメントを除く) に `now()` を持たない / 参加の INSERT にだけ延べ数のトリガーを付け、DELETE・UPDATE には付けない / 印のトリガーは `AFTER INSERT OR UPDATE OF org_role, organization_id ON public.user_profiles` で、関数の `NOT IN` の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ / 削除のポリシーは `AS RESTRICTIVE`・`FOR DELETE`・`TO authenticated` で、`status IN (...)` の並びが ORG_CHALLENGE_DELETABLE_STATUSES と同じ。`Org admins can manage challenges` を作り直さない / トリガー関数 4 本は PUBLIC・anon・authenticated・service_role から EXECUTE を外す / 埋め戻しは ON CONFLICT で冪等で、印は埋め戻さない / down はトリガー → 関数 → ポリシー → 2 本の関数の復元 → 表 2 つ → NOT NULL の順で、復元した定義が 20261016170000 と 20261014100100 の逐語 |
+| `tests/integration/rls/org-challenge-diff-privacy.test.ts` (新設。ローカル Supabase) | A: joined_count は参加で +1 し、やめても・組織から外れても (remove_org_member)・退会しても減らない。再参加は 2 と数える / B: 開催中は順位がついた人が 10 人いても average_value は NULL。participant_count は延べ数で 9 なら NULL・10 で出る / C: 終了日を過ぎた夜の集計 (update_org_challenge_progress の p_now) で completed になると、その時点の順位がついた今のメンバーの平均 (小数第 1 位) と人数が確定する / D: 確定後に参加をやめる・組織から外れる・service_role で値や順位を書き換えても average_value は変わらない / E: 確定は 1 回だけ。completed のまま値を変えて同じ関数を呼んでも final_* は変わらない / F: 確定時点の順位がついた人が 9 人なら NULL、10 人なら出る / G: 管理者の JWT で PostgREST を直接叩いても completed・cancelled から他の状態へ変えられない (P0001 CHALLENGE_STATUS_LOCKED)。active → draft も不可。active → NULL・draft → NULL も CHALLENGE_STATUS_LOCKED で、行は変わらない (続けて期間を書き換えることもできない)。draft → active / completed / cancelled、active → completed / cancelled は可 / H: active・completed・cancelled の start_date / end_date / challenge_type / department_id と、どの状態でも organization_id は変えられない (CHALLENGE_PERIOD_LOCKED)。draft なら期間を変えられる。title は終了後も変えられる / I [S-8・S-20・S-25]: 順位表は見る人が owner / admin なら 0 行。member には従来どおり。順位表を受け取った参加中の member が、同じ組織の admin の招待を本人の JWT の `accept_org_invite` で承諾すると、組織のチャレンジすべてに印が付き 0 行。member の招待を承諾して戻っても 0 行 (招待の行は `tests/integration/security/invite-accept-missing-profile.test.ts` の `orgInviteToken` と同じ作り方、ライセンスの枠も同じファイルの fixture と同じ作り方) / I2: `leave_org` → admin の招待で入り直す → `leave_org` → member の招待で入り直しても 0 行。印のあるチャレンジで参加をやめて参加し直しても 0 行 / I3: service_role で参加者の org_role を owner にしても (所有者の譲渡・運営の操作と同じ UPDATE) 印が付き、member に戻しても 0 行 / I4: 管理者だった間に無かったチャレンジ (member に戻ったあとに作られたもの) の順位表は返る。役割も組織も変わらない UPDATE (nickname の更新・同じ役割の上書き) では印が増えない / J: 集計の表と印の表は利用者の JWT では読めない・書けない。service_role は読める / K: 退会 (auth.users の削除) で参加行と印が消えても joined_count と確定値は変わらない / L: トリガー関数 4 本の EXECUTE は PUBLIC・anon・authenticated・service_role に無い。トリガー 4 本が付いている / M [S-10]: 管理者の JWT で active のチャレンジを completed に UPDATE すると、その時点の参加行 (前夜の計算の current_value。順位がついた今のメンバー) の平均と人数で確定する。そのあと夜の集計 (update_org_challenge_progress) が走っても final_* は変わらない (completed は計算し直しの対象外) / N [S-15]: migration ファイルの「11. 既存のチャレンジの埋め戻し」の節 (見出しの行から末尾まで) を読み、fixture のチャレンジの控えの行を service_role で消してから pgQuery で流すと、active のチャレンジは joined_count = 参加行の数で未確定、completed のチャレンジは順位がついた今のメンバーの人数と平均 (小数第 1 位) で確定する。確定済みの控えの行は上書きしない。2 回流しても結果が同じ / O [S-17]: 終了日が 3 日前のまま active のチャレンジ (夜の集計が 3 晩止まった状態) に update_org_challenge_progress(p_now) を 1 回呼ぶと、同じ呼び出しで値の計算し直し・completed・確定が行われ、final_average_value は呼び出しの後の参加行 (順位がついた今のメンバー) の current_value の平均 (小数第 1 位) と一致する。控えの表の時刻の列は finalized_at と updated_at だけで、計算日を別に持たない / P [S-19]: service_role で参加者の department_id を別の部署に変えても、その人の行は他の参加者の順位表と確定の人数に残り、joined_count も変わらない。利用者の JWT では department_id を変えられない (CANNOT_MODIFY_PRIVILEGED_COLUMN) / Q [S-21]: 同じ種類・同じ期間の A・B に 11 人が参加し X が B だけやめたあと、1 つの UPDATE (pgQuery) で A・B を同時に completed にすると、集計の表の `(finalized_at, challenge_id)` が小さい方の平均だけが出て、もう 1 本は NULL (どちらが先かは集計の表から読んで期待値を決める)。joined_count は A・B とも 11 / R [S-22]: A を completed (11 人) → X を外す → B を completed (10 人) とすると B の平均は NULL。A の確定が 9 人 (平均が出ない) なら、後の B は 10 人で平均が出る。種類が違えば両方出る。同じ種類で期間が重ならなければ両方出る。終了日と開始日が同じ日 (両端を含む重なり) なら後の方は NULL / S [S-23]: 管理者の JWT の DELETE で、active と completed のチャレンジは消えない (0 行。エラーにならない)。draft と cancelled は消える。service_role の DELETE と組織の削除 (CASCADE) では消える / T [S-24]: service_role で status を NULL にする INSERT は 23502。管理者の JWT で status を NULL にする UPDATE は P0001 CHALLENGE_STATUS_LOCKED / U [S-11]: 順位がついた今のメンバーが 10 人いる active のチャレンジを、管理者の JWT で cancelled に UPDATE すると、集計の表の finalized_at・final_ranked_count・final_average_value は NULL のままで (確定しない)、get_org_challenge_aggregates の average_value は NULL。そのあと end_date を過ぎた p_now で update_org_challenge_progress を呼んでも確定しない (バッチは active だけを completed にする)。cancelled から active・completed・draft への UPDATE は P0001 CHALLENGE_STATUS_LOCKED、start_date の UPDATE は P0001 CHALLENGE_PERIOD_LOCKED で、行は変わらない / V [S-26] (並行の確定。トランザクションを開いたままにする接続は `tests/integration/rls/billing-apply-subscription-rpc.test.ts` の `startHolder` (postgres-meta の 1 回の要求 = 1 トランザクションで、`pg_sleep` の前後に文を流す) と `waitForLockWaiter` と同じ作り方。保持の秒数・待ちの上限は名前付き定数) / V-1『先に始まって後にコミットした確定は、すでに出ている平均を消さない』: 同じ種類・同じ期間の A・B (どちらも順位がついた今のメンバー 11 人) を作る。保持する接続で「`pg_sleep` → A を completed にする UPDATE」を流し、`pg_sleep` に入ったのを確かめてから、管理者の JWT で B を completed にする (コミットまで終わる)。この時点の get_org_challenge_aggregates は B の平均が出て A は NULL。保持する接続が終わったあとも B の平均は同じ値で出たままで、A は NULL。集計の表の A の finalized_at は B より後 / V-2『同じ組織の確定は鍵で 1 本ずつ進む』: 保持する接続で「A を completed にする UPDATE → `pg_sleep`」を流し、`pg_sleep` に入ったのを確かめてから、管理者の JWT で B を completed にする要求を出すと、その接続は advisory の鍵の待ちに入る (`waitForLockWaiter` に `'advisory'`)。保持する接続が終わると B の要求も終わり、A の finalized_at < B の finalized_at で、A の平均が出て B は NULL / V-3『別の組織の確定は待たない』: V-2 と同じく A の確定を保持している間に、別の組織のチャレンジを completed にする要求は、保持する接続が終わる前に終わる |
 | `tests/integration/rls/org-challenge-progress.test.ts` (既存の変更。節 H だけ) | 節 H (`:782`〜`:912`) を延べ数と確定した平均の意味に改める。it 名と期待値: H-1『参加した人 (延べ) が 9 人なら人数も平均も NULL、10 人で人数が出る。開催中の平均は常に NULL』(9 人: participant_count null・average_value null → 10 人目: participant_count 10・average_value null) / H-2『5 人 (#1600 の前の最小人数) では、もう人数も平均も出さない』(変えない) / H-3『終了時点で順位がついた人が 9 人なら確定した平均は NULL、10 人なら出る。未集計の人は延べ数にだけ入る』(breakfast_rate の c1: 順位つき 9 人 (80) + 未集計 1 人 → service_role で status を completed に UPDATE → participant_count 10・average_value null。veg_score の c2: 順位つき 9 人 (80) + 順位つき 1 人 (30) + 未集計 1 人 → completed → participant_count 11・average_value 75) / H-4『確定した平均は小数第 1 位に丸める』(veg_score で同じ 10 値を入れて completed → 2.9) / H-5『延べ数は、脱退した人・別の組織の人の参加行も INSERT のたびに数える。確定した平均は今の組織のメンバーだけ。参加者のいないチャレンジは人数 NULL。他組織のチャレンジは返らない』(challenge: 10 人 (10) + former (99) + b1 (99) → participant_count 12、completed にすると average_value 10。short (veg_score): 9 人 + former + b1 → participant_count 11、completed にすると平均 NULL (確定時点の今のメンバーは 9 人)。empty・other は従来どおり) / H-6『返す列は、集計の 4 列だけ』(変えない。participant_count 10 のまま緑)。completed にする UPDATE は `srAdmin.from('organization_challenges').update({ status: 'completed' }).eq('id', id)` (ガードの active → completed は可) |
 | `tests/integration/security/org-challenges-api.test.ts` (既存の変更) | C-3 を置き換え: 参加した管理者 (owner / admin) には順位表を返さない (reason: org_admin)。自分の記録・順位は返る。やめると reason: not_joined / C-5 [NEW] [S-2]: 順位がついた参加者の 1 人がやめると、ほかの参加者の GET [id] の順位表から、夜の集計を待たずにその行が消える (rankedCount が 1 減る)。管理者の GET /api/org/challenges の participantCount と平均は前後で同じ / C-6 [NEW] [S-20]: 参加中の member が admin の招待を承諾したあと member の招待で戻ると、GET [id] は reason: org_admin を返す / D-4 を改める [S-16]: 同じチャレンジについて、管理者の GET /api/org/challenges の participantCount と、メンバー向けの GET /api/org/my-challenges・GET [id] の participantCount が同じ値 (延べ数。10 未満は null)。管理者がメンバー向けの API を呼んでも同じ値で、メンバー向けの応答に平均の項目は無い (迂回できない) / D-1〜D-3 を置き換え: 開催中は順位がついた人が 10 人いても平均は null (visible = false)、参加した人数は延べ数で 10 以上なら出る / 終了すると終了時点の平均が出て、参加をやめた後も変わらない / 終了時点の順位がついた人が 9 人なら平均は null / D-8 [NEW]: 管理者がメンバーを外しても、参加した人数も (確定後の) 平均も変わらない / D-9 [NEW]: 終了したチャレンジを PUT で開催中に戻せない (409 CHALLENGE_STATUS_LOCKED)。PostgREST を直接叩いても戻らない / D-10 [NEW] [S-22]: 同じ種類で期間が重なるチャレンジを 2 本 PUT で終了すると、GET /api/org/challenges の平均は先に終了した 1 本だけ (後の 1 本は visible = false) / E-5 [NEW]: PUT は開催中 → 下書きを 409 にし、終了後もタイトル・説明・報酬は更新できる |
 | `tests/org-admin-routes.test.ts` (既存の変更) | PUT: 現在の状態が completed / cancelled で status を変えると 409 CHALLENGE_STATUS_LOCKED で何も更新しない / PUT: active → draft は 409 / PUT: 現在の行の読み取りは status があるときだけ 1 回 (challenge_type の確認と統合) / PUT: DB のガードの RAISE (P0001 CHALLENGE_STATUS_LOCKED) を 409 に写す。他の P0001 は従来どおり 500 / challenges GET: 返す形は変わらない (participantCount・aggregate) |
@@ -1136,6 +1157,7 @@ sequenceDiagram
 | トリガー | `trg_org_challenge_count_join` / `trg_org_challenge_guard_update` / `trg_org_challenge_finalize` / `trg_org_challenge_mark_admin` (`user_profiles`) | DB |
 | ポリシー | `Org challenges can be deleted only as draft or cancelled` (RESTRICTIVE・DELETE・authenticated) | DB (`organization_challenges`) |
 | RAISE の識別子 | `CHALLENGE_STATUS_LOCKED` / `CHALLENGE_PERIOD_LOCKED` | DB → API |
+| advisory lock のキー | `'org_challenge_finalize:' \|\| organization_id` (`hashtextextended(..., 0)`。確定のトリガーの中だけで取る) | DB (`org_challenge_finalize`) |
 | TS モジュール | `src/lib/org-challenge-privacy.ts` | lib |
 | 定数 | `ORG_ROLES` / `ORG_CHALLENGE_RANKING_HIDDEN_ROLES` / `ORG_CHALLENGE_RANKING_EXCLUSIONS_TABLE` / `ORG_CHALLENGE_DELETABLE_STATUSES` / `ORG_CHALLENGE_STATUS_TRANSITIONS` / `ORG_CHALLENGE_LOCK_ERROR_CODES` / `ORG_CHALLENGE_LOCK_HTTP_STATUS` / `RANKING_HIDDEN_REASONS` | 同上 (export) |
 | 定数 (モジュール内だけ) | `PG_RAISE_EXCEPTION_SQLSTATE` (`'P0001'`。export しない) | 同上 |
@@ -1212,8 +1234,9 @@ sequenceDiagram
 2. 参加している管理者の自分の順位 (`me.rank`) は、メンバーを外した次の夜に 1 つ上がりうる (「外した人は自分より上だった」の 1 bit)。値は分からない。
 3. 参加した人がちょうど最小人数のとき、1 人が外れると終了時の平均が出ない (外した人が参加していたことを推測しうる。値ではない)。
 4. `joined_count` は延べ数なので、1 人がやめて再参加を繰り返すと増える (集計の値には影響しない。「参加した人」の見かけの数だけ)。
-5. 別の人どうしの分担 (印の無いメンバーが前後の順位表を見て、管理者が間で外す) など内部の共謀は対象外。1 人が役割を往復して同じことをする経路 (S-20・S-25) は、印で閉じた (§4.1 (d))。
+5. 別の人どうしの分担 (印の無いメンバーが前後の順位表を見て、管理者が間で外す) など内部の共謀は対象外。1 つのアカウントで役割を往復して同じことをする経路 (S-20・S-25) は、印で閉じた (§4.1 (d))。1 人が 2 つ目のアカウントを使う経路は閉じていない (下の 7)。
 6. 種類の違うチャレンジ (朝食をとれた日の割合・野菜スコア・自炊の割合) の平均は、期間が重なっていても別々に出る。指標の計算式が違い (`update_org_challenge_progress`)、1 人の値どうしに決まった関係が無いので、2 本の差は 1 人の値にならない。
+7. 管理者が自分で持つ 2 つ目のアカウント (席を 1 つ使い、別のメールアドレスを member の役割で招待して入れたもの) で参加して順位表を見る経路 (S-27) は、1 人の経路として残る。`create_org_invite` は宛先を絞らず (`supabase/migrations/20261008100000_membership_daily_send_cap.sql:312`)、印はアカウントに付き、2 つ目のアカウントは一度も管理者にならないので、管理者のアカウントで X を外した前後の順位表から X の値が分かる。DB からは別の人で、上の 5 の共謀と区別できないので、本書の守り (印・今の役割) では閉じない。閉じるには順位表をやめる必要がある (上の 1 と同じ。§20-4)。管理者に見せる集計 (延べ数・確定した平均) はこの経路でも動かない。招待の作成は `membership_audit` の `invite_created` に残る (`20261008100000_membership_daily_send_cap.sql:65`) が、それは後から追えるだけで、止めはしない。
 
 ---
 
@@ -1222,7 +1245,7 @@ sequenceDiagram
 1. 管理者 (owner / admin) に順位表を見せない代わりに「管理者は参加できない」にするか。本書は「参加できるが順位表は見られない (自分の記録・順位は見られる)」を既定にする (#1132 の「管理者も参加するかを選ぶ」を残す)。
 2. 開催中は平均を出さず、終了後の確定値だけを出すこと (製品としての受け入れ)。本書はこれを既定にする (§3.2 の理由)。
 3. 「参加した人」(延べ数) の画面の文言。
-4. 順位表そのものを続けるか (残る限界 1)。本書は続ける。
+4. 順位表そのものを続けるか。本書は続ける。続けると次の 2 つが残る (どちらも、閉じるには順位表をやめる必要がある): 残る限界 1 (参加者が、やめた人を別の経路で知っていると、消えた行の値をその人に結びつけられる) と、残る限界 7 (管理者が、別のメールアドレスで入れた自分の 2 つ目の member のアカウントで、メンバーを外した前後の順位表を見て、外した人の値を知る。S-27)。後者は管理者 1 人でできる経路で、本書の主対象 (§3.1) の管理者に対して開いたまま残る。
 5. 管理者の状態変更 (PUT) の監査ログ。既存の PUT も監査していないため本書では足さない。足すなら `membership_audit` の `action` の CHECK を広げる必要があり、別の設計。
 6. `user_profiles.organization_id` を外す経路は `leave_org` / `remove_org_member` / `release_user_membership` (service_role。退会の処理から呼ぶ) の 3 つで、どれも `organization_id` / `org_role` / `department_id` を NULL にするだけで参加行を消さないことを定義で確かめた (`supabase/migrations/20251126124224_create_meal_planner_tables.sql:2084`・`:2878`・`:2803`。後の migration で作り直されていない)。ほかに組織の強制解散 (運営) も全員の所属を外す。実装の統合テスト (§13 A・K) で `remove_org_member` と退会の経路を確かめる。
 7. §17 の他の文書の追随。§17 の 8 行それぞれについて、誰がいつ直すかの確認が要る (本書では編集しない):
