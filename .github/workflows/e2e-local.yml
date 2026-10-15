@@ -99,7 +99,8 @@ jobs:
       # ユーザーは test ごとに、.env.local (上の手順が書く) の SUPABASE_SERVICE_ROLE_KEY でローカルの DB に作る (鍵が無ければ skip せず失敗する)。
       # tour/01〜07 は、ハンズオンツアー (初回の使い方ガイド) の判定 API と Step 0〜4・スキップ・やり直し (#846)。ユーザーは同じく test ごとに作る。
       # w5-3-menu-gen-adversarial と wave2-f2-queue-reliability は、週の献立の生成 (キュー・進捗・失敗の表示) の画面と API の嫌がらせ (#1622)。
-      # 生成の API (cleanup / pending / status) は画面の通信を差し替え、AI は呼ばない。直接 POST する検査は入力の検証と 5xx にならないことだけを見る。
+      # 画面が読む生成の API (cleanup / pending / status など) はブラウザの通信を差し替える。API へ直接送る検査 (入力の検証・5xx にならないこと・
+      # 他人の要求を読めないこと) は本物のサーバーに送る。ユーザーは共通のテストユーザー (authedPage) を使う。
       - name: Run Playwright tests (MVP, AI を使わないもの + 未ログインで読める公開ページ + Turnstile)
         env:
           PLAYWRIGHT_BASE_URL: http://localhost:3000
