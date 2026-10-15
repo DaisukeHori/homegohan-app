@@ -268,6 +268,39 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: 'Resend からのバウンス・苦情の知らせ。AI へは送らない (env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: '宛先停止リストに入れるだけ。送る先は無い (DB に書くだけ)' } },
   },
+  // billing/01 (課金の核)。Stripe の鍵 (STRIPE_SECRET_KEY) と Webhook の署名の秘密を getOptionalEnv で読むため、import を辿ると
+  // 環境変数の一覧 (src/lib/env.ts) に届くだけで、送る先は Stripe と DB だけ。利用者のデータを AI へ送らない。
+  // Stripe を呼ばない GET の 2 本 (checkout/preview・subscription) は stripe-gateway を import しないので、ここに載せない
+  'src/app/api/billing/checkout/route.ts': {
+    consent: '有料プランの購入 (Stripe Checkout の作成)。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'Stripe に顧客と Checkout Session を作るだけ。送る先は Stripe' } },
+  },
+  'src/app/api/billing/checkout/sync/route.ts': {
+    consent: '購入の戻り画面からの同期。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'Stripe から Checkout Session と契約を取り直して DB に写すだけ' } },
+  },
+  'src/app/api/billing/portal/route.ts': {
+    consent: 'Stripe の Billing Portal を開く。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'Stripe に Billing Portal の Session を作るだけ' } },
+  },
+  'src/app/api/billing/subscription/cancel/route.ts': {
+    consent: '解約の予約。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'Stripe の契約に期間末の解約を予約し、DB に写すだけ' } },
+  },
+  'src/app/api/billing/subscription/resume/route.ts': {
+    consent: '解約の予約の取り消し。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'Stripe の契約の解約の予約を外し、DB に写すだけ' } },
+  },
+  'src/app/api/webhooks/stripe/route.ts': {
+    consent: 'Stripe からの契約の知らせ。AI へは送らない (署名の秘密と鍵を読む env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'Stripe から契約を取り直して DB に写すだけ。送る先は Stripe' } },
+  },
+  // #1562 退会。段階 billing (billing/01 §11) が Stripe の鍵を読むため、account-deletion.ts → billing/account-deletion.ts →
+  // stripe-gateway.ts を辿って env.ts に届くだけ
+  'src/app/api/account/delete/route.ts': {
+    consent: '退会。AI へは送らない (退会の段階 billing が Stripe の鍵を読む env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: '退会 (Stripe の契約の解約と顧客の匿名化・本人のデータの削除)。送る先は Stripe と Supabase だけ' } },
+  },
 };
 
 /**

@@ -54,7 +54,8 @@ export type RateLimitCategory =
   | 'upload'
   | 'ai-consent'
   | 'auth-login'
-  | 'client-log';
+  | 'client-log'
+  | 'billing';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -114,6 +115,9 @@ const DAY_SEC = 24 * 60 * 60;
 //   直近 24 時間の 1000 回は、写真 200 枚分にあたり、1 日の実際の使い方を十分に上回る。
 //   超えた分は 429 で断る (送り手はどれも失敗を握りつぶすので、画面やサインアウトは止まらない)。
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
+  // 課金の操作 (Checkout の作成・Portal・解約の予約と取り消し・戻り画面の同期)。利用者ごと。
+  // Stripe の API を 1〜2 回呼ぶ操作なので、連打で Stripe 側のレート制限や顧客の重複を起こさない値
+  billing: [{ name: 'billing', max: 10, windowSec: MINUTE_SEC }],
   generation: [{ name: 'generation', max: 5, windowSec: MINUTE_SEC }],
   analysis: [{ name: 'analysis', max: 10, windowSec: MINUTE_SEC }],
   image: [
