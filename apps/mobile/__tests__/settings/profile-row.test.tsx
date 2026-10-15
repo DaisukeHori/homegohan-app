@@ -2,7 +2,7 @@
  * profile-row.test.tsx
  * RNTL tests for apps/mobile/app/(tabs)/settings.tsx — 「プロフィール」の行 (#1598)
  *
- * 以前は router.push("/profile") で、同じパスのネイティブのプロフィール画面 (app/profile/index.tsx) が、
+ * 以前は router.push("/profile") で、同じパスのネイティブのプロフィール画面 (app/profile/index.tsx。いまは消した) が、
  * マイページのタブ (app/(tabs)/profile.tsx。Web のマイページを WebView で開く) より先に当たっていた
  * (expo-router は index の画面を同じパスの画面より先に当てる)。その画面は、通常の操作で届かない
  * ネイティブの画面として消し、WebView の画面に一本化した。この行はマイページのタブのルートを名指しして開く。
@@ -99,7 +99,7 @@ describe('設定タブ — プロフィールの行 (#1598)', () => {
     expect(mockRouterPush).toHaveBeenCalledWith(PROFILE_TAB_ROUTE);
   });
 
-  it('行き先のタブの画面は実在し、同じパス /profile のネイティブの画面 (app/profile/index.tsx) は無い', () => {
+  it('行き先のタブの画面は実在し、同じパス /profile のネイティブの画面 (app/profile/index.tsx。消した) は無い', () => {
     expect(fs.existsSync(path.join(APP_DIR, '(tabs)', 'profile.tsx'))).toBe(true);
     expect(fs.existsSync(path.join(APP_DIR, 'profile', 'index.tsx'))).toBe(false);
     expect(fs.existsSync(path.join(APP_DIR, 'profile.tsx'))).toBe(false);

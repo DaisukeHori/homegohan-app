@@ -1,6 +1,6 @@
 /**
  * #1049 F7-18: AI 相談の送信が時間切れになったあとの扱い (src/lib/ai-chat-timeout.ts)。
- * AIAdvisorSheet と全画面の AI 相談 (app/ai/[sessionId].tsx) が同じ関数を使う。
+ * AIAdvisorSheet が使う (全画面の AI 相談 app/ai/[sessionId].tsx も使っていたが、#1598 で消した)。
  *   - 取り直した会話から、送った文が届いていたか・返答があるかを見分ける
  *   - 時間切れのときは送った文を入力欄に戻す (別の文が入っていれば残す)
  *   - 届いていたら、戻した文のままの入力欄を消す (二重に送らないため。書き換えていれば残す)
@@ -96,8 +96,9 @@ describe('clearInputIfDelivered (#1049 F7-18)', () => {
   });
 });
 
-describe('2 つの相談画面が同じ扱いを使う (#1049 F7-18。写さない)', () => {
-  it.each(['src/components/ai/AIAdvisorSheet.tsx', 'app/ai/[sessionId].tsx'])('%s', (file) => {
+// (全画面の AI 相談 app/ai/[sessionId].tsx は、通常の操作で届かないネイティブの画面として消した。#1598。いまの相談画面はシートだけ)
+describe('相談画面が共通の扱いを使う (#1049 F7-18。写さない)', () => {
+  it.each(['src/components/ai/AIAdvisorSheet.tsx'])('%s', (file) => {
     const source = fs.readFileSync(path.join(__dirname, '../..', file), 'utf8');
     for (const name of [
       'timeoutReloadOutcomeOf',

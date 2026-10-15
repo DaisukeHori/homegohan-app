@@ -8,7 +8,7 @@
  *   - PUT は、その key を書き換えず 409 SETTING_READ_ONLY を返す
  * 行そのものは消さない (本番のデータを消すことになるため)。
  *
- * 列の名前は DB のまま (snake_case) で返す: key / value / description / updated_at (#1486。モバイルの画面もこの名前で読む)。
+ * 列の名前は DB のまま (snake_case) で返す: key / value / description / updated_at (#1486。モバイルの運営の画面もこの名前で読んでいたが、#1598 で消した)。
  * PUT の description は省略可。送られたら保存する (文字列は前後の空白を除き、空なら null。null は説明を消す)。
  *
  * #1571: PUT で保存できたら super_admin.setting.change を監査ログに 1 行残す (対象の key・保存した value・説明を変えたか)。

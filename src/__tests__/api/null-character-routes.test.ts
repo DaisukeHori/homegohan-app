@@ -105,6 +105,7 @@ const ENTRIES: Entry[] = [
   { file: 'billing/checkout/sync/route.ts', method: 'POST', load: async () => (await import('@/app/api/billing/checkout/sync/route')).POST },
   { file: 'comparison/trigger/route.ts', method: 'POST', load: async () => (await import('@/app/api/comparison/trigger/route')).POST },
   { file: 'contact/route.ts', method: 'POST', load: async () => (await import('@/app/api/contact/route')).POST },
+  { file: 'csp-report/route.ts', method: 'POST', load: async () => (await import('@/app/api/csp-report/route')).POST },
   { file: 'family/groups/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/groups/route')).POST },
   { file: 'family/invites/[id]/accept/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/invites/[id]/accept/route')).POST },
   { file: 'family/invites/route.ts', method: 'POST', load: async () => (await import('@/app/api/family/invites/route')).POST },

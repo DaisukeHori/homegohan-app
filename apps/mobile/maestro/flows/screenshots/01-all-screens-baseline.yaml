@@ -3,7 +3,8 @@ env:
   E2E_USER_EMAIL: ${E2E_USER_01_EMAIL}
   E2E_USER_PASSWORD: ${E2E_USER_01_PASSWORD}
 ---
-# 01: レイアウト baseline - 主要8画面のスクリーンショット取得
+# 01: レイアウト baseline - タブの画面のスクリーンショット取得
+# (お気に入り・週の献立のネイティブの画面は、通常の操作で届かない画面として消した。#1598。週の献立は献立のタブの WebView が出す)
 # このフローはビジュアルリグレッション検知の基準画像を作成するために使用します
 # 初回実行時は baseline として保存し、以降の変更との差分を比較してください
 - runFlow: ../_shared/login.yaml
@@ -21,14 +22,6 @@ env:
       id: "menus-screen"
     timeout: 10000
 - takeScreenshot: menus-baseline
-# お気に入り画面
-- tapOn:
-    id: "tab-favorites"
-- extendedWaitUntil:
-    visible:
-      id: "favorites-screen"
-    timeout: 10000
-- takeScreenshot: favorites-baseline
 # 比較画面 (タブは WebView。ネイティブの比較画面 comparison-screen は #1598 で消した)
 - tapOn:
     id: "tab-comparison"
@@ -45,28 +38,3 @@ env:
       id: "webview-profile"
     timeout: 10000
 - takeScreenshot: profile-baseline
-# 週間献立画面
-- tapOn:
-    id: "tab-menus"
-- tapOn:
-    id: "menus-weekly-button"
-    optional: true
-- extendedWaitUntil:
-    visible:
-      id: "weekly-screen"
-    timeout: 10000
-- takeScreenshot: weekly-screen-baseline
-# 食事追加画面
-- tapOn:
-    id: "home-ai-fab"
-    optional: true
-- tapOn:
-    id: "tab-menus"
-- tapOn:
-    id: "menus-weekly-button"
-    optional: true
-- extendedWaitUntil:
-    visible:
-      id: "weekly-screen"
-    timeout: 5000
-- takeScreenshot: weekly-detail-baseline

@@ -231,7 +231,7 @@ export function aiConsentDeniedPayload(
 /**
  * 非同期の処理 (キューの献立生成・献立生成の続きの工程・買い物リストの作り直し) が、同意の判定で止めたときに
  * リクエストの行の失敗の欄 (weekly_menu_requests.error_message / shopping_list_requests.result.error) に書く文。
- * 画面はこの欄をそのまま表示する (Web とアプリの週の献立の画面・買い物リストなど) ので、
+ * 画面はこの欄をそのまま表示する (Web の週の献立の画面・買い物リスト、アプリの AI 相談のシートの 1日献立の作成など) ので、
  * コード (AI_CONSENT_REQUIRED) ではなく、応答の本文と同じ人向けの文を書く (#1172: 内部の詳細を出さない)。
  * 画面は aiConsentReasonOfStoredError でこの文を見分け、同意が必要なら同意画面へ案内する。
  */
