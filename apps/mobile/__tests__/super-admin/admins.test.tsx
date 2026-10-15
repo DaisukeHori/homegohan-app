@@ -182,3 +182,48 @@ describe('管理者管理画面 — ロールの変更', () => {
     expect(mockGet).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("管理者管理画面 — 仮置きの名前 'Guest' (#1635)", () => {
+  const GUEST_ADMINS_RESPONSE = {
+    admins: [
+      { id: 'admin-3', nickname: ' Guest ', roles: ['user', 'admin'], created_at: '2026-03-01T00:00:00.000Z' },
+      { id: 'admin-4', nickname: ' guest ', roles: ['user', 'admin'], created_at: '2026-04-01T00:00:00.000Z' },
+    ],
+  };
+
+  async function renderGuestLoaded() {
+    mockGet.mockResolvedValue(GUEST_ADMINS_RESPONSE);
+    render(<SuperAdminAdminsPage />);
+    await waitFor(() => {
+      expect(screen.getByTestId('admin-row-admin-3')).toBeTruthy();
+    });
+  }
+
+  it("一覧では仮置きの 'Guest' (前後の空白を除いて比べる) を名前として出さず (no name) にする。'guest' は本人の名前として出す", async () => {
+    await renderGuestLoaded();
+
+    expect(screen.getByText('(no name)')).toBeTruthy();
+    expect(screen.queryByText(/Guest/)).toBeNull();
+    expect(screen.getByText('guest')).toBeTruthy();
+  });
+
+  it("ロール変更の確認では、仮置きの 'Guest' の人を id で呼ぶ", async () => {
+    await renderGuestLoaded();
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('admin-role-admin-3-support'));
+    });
+
+    expect(lastAlert().message).toBe('admin-3 に support ロールを付与します。よろしいですか？');
+  });
+
+  it('ロール変更の確認では、本人が付けた名前を前後の空白を除いて呼ぶ', async () => {
+    await renderGuestLoaded();
+
+    await act(async () => {
+      fireEvent.press(screen.getByTestId('admin-role-admin-4-support'));
+    });
+
+    expect(lastAlert().message).toBe('guest に support ロールを付与します。よろしいですか？');
+  });
+});

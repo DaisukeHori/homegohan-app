@@ -22,16 +22,9 @@ import type { SubStepOfStep2 } from '@homegohan/handson-tour-shared';
 import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 import { TourOverlay } from '../../src/handson-tour/TourOverlay';
 import { useProfile } from '../../src/providers/ProfileProvider';
+import { safeNickname } from '../../src/handson-tour/safe-nickname';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourMenu() {
   const router = useRouter();

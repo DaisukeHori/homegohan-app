@@ -19,6 +19,7 @@ export * from './account-change-input';
 export * from './health-blood-test-reference';
 export * from './org-challenges';
 export * from './weekly-menu-ultimate-mode';
+export * from './profile-name';
 export type {
   Json,
   Database,
