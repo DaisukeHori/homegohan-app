@@ -15,6 +15,7 @@ import { createClient } from '@/lib/supabase/server';
 import { CouponRedemptionsQuerySchema } from '@/lib/super-admin/coupons-schemas';
 import { internalError } from '@/lib/api/errors';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
+import { couponInvalidQueryResponse } from '@/lib/super-admin/coupon-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -45,10 +46,8 @@ export async function GET(request: NextRequest, props: RouteContext) {
     });
 
     if (!queryResult.success) {
-      return NextResponse.json(
-        { error: { code: 'OP_INVALID_QUERY', message: queryResult.error.message } },
-        { status: 400 }
-      );
+      // #1641: 入力の 400 と同じ形 (message は最初の issue の文・details は issues)
+      return couponInvalidQueryResponse(queryResult.error.issues);
     }
 
     const { page, per_page } = queryResult.data;

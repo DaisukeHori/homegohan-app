@@ -21,7 +21,9 @@ import {
 } from '@/lib/super-admin/coupon-validity';
 import {
   COUPON_INVALID_INPUT_FALLBACK_MESSAGE,
+  COUPON_INVALID_QUERY_FALLBACK_MESSAGE,
   couponInvalidInputBody,
+  couponInvalidQueryBody,
 } from '@/lib/super-admin/coupon-errors';
 import { COUPON_VALID_UNTIL_BEFORE_FROM_MESSAGE } from '@/lib/super-admin/coupons-schemas';
 import { inEachTimeZone, TEST_TIME_ZONES } from './helpers/time-zones';
@@ -153,7 +155,9 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: (...args: unknown[]) => mockCreateClient(...args),
 }));
 
-const { POST } = await import('@/app/api/super-admin/coupons/route');
+const { POST, GET } = await import('@/app/api/super-admin/coupons/route');
+const { GET: GET_REDEMPTIONS } = await import('@/app/api/super-admin/coupons/[id]/redemptions/route');
+const { NextRequest } = await import('next/server');
 const { PATCH } = await import('@/app/api/super-admin/coupons/[id]/route');
 
 const actor = { id: 'sa-1', email: 'sa@example.com', roles: ['super_admin'], organization_id: null };
@@ -475,6 +479,56 @@ describe('400 OP_INVALID_INPUT の本文の形 (#1534 POST と PATCH で同じ)'
   it('issues が空のときは固定の文 (couponInvalidInputBody)', () => {
     expect(couponInvalidInputBody([])).toEqual({
       error: { code: 'OP_INVALID_INPUT', message: COUPON_INVALID_INPUT_FALLBACK_MESSAGE, details: [] },
+    });
+  });
+});
+
+/**
+ * #1641: クエリの 400 OP_INVALID_QUERY (一覧 GET・適用履歴 GET) も入力の 400 と同じ形。
+ * 以前は message が Zod の issues を JSON にした文字列 ('[' で始まる) で、details も無かった。
+ */
+describe('400 OP_INVALID_QUERY の本文の形 (#1641 一覧と適用履歴)', () => {
+  type QueryBody = { error: { code: string; message: string; details: { path: (string | number)[]; message: string }[] } };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRequireRole.mockResolvedValue(actor);
+    mockCreateClient.mockResolvedValue(fakeSupabase().client);
+  });
+
+  function expectQueryFirstIssue(body: QueryBody, path: readonly string[]) {
+    expect(body.error.code).toBe('OP_INVALID_QUERY');
+    expect(body.error.details).toHaveLength(1);
+    expect(body.error.details[0].path).toEqual(path);
+    expect(body.error.message).toBe(body.error.details[0].message);
+    expect(body.error.message.trimStart().startsWith('[')).toBe(false);
+  }
+
+  it.each([
+    ['page が 0', 'page=0', ['page']],
+    ['per_page が上限を超える', 'per_page=201', ['per_page']],
+    ['status が範囲外', 'status=deleted', ['status']],
+  ] as const)('GET /api/super-admin/coupons (%s)', async (_label, query, path) => {
+    const res = await GET(new NextRequest(`http://localhost/api/super-admin/coupons?${query}`) as never);
+    expect(res.status).toBe(400);
+    expectQueryFirstIssue((await res.json()) as QueryBody, path);
+  });
+
+  it.each([
+    ['page が 0', 'page=0', ['page']],
+    ['per_page が数でない', 'per_page=abc', ['per_page']],
+  ] as const)('GET /api/super-admin/coupons/[id]/redemptions (%s)', async (_label, query, path) => {
+    const res = await GET_REDEMPTIONS(
+      new NextRequest(`http://localhost/api/super-admin/coupons/coupon-1/redemptions?${query}`) as never,
+      { params: Promise.resolve({ id: 'coupon-1' }) },
+    );
+    expect(res.status).toBe(400);
+    expectQueryFirstIssue((await res.json()) as QueryBody, path);
+  });
+
+  it('issues が空のときは固定の文 (couponInvalidQueryBody)', () => {
+    expect(couponInvalidQueryBody([])).toEqual({
+      error: { code: 'OP_INVALID_QUERY', message: COUPON_INVALID_QUERY_FALLBACK_MESSAGE, details: [] },
     });
   });
 });

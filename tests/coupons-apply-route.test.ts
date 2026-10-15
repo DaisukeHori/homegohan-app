@@ -158,6 +158,29 @@ describe('POST /api/super-admin/coupons/[id]/apply (#1224 エラーコードと 
     expect(mockApplyCoupon).not.toHaveBeenCalled();
   });
 
+  /**
+   * #1641: apply の 400 も POST・PATCH (couponInvalidInputResponse) と同じ形。
+   * 以前は message が Zod の issues を JSON にした文字列 ('[' で始まる) だった。
+   */
+  it.each([
+    ['subscription_id が UUID でない', { subscription_id: 'not-a-uuid' }, ['subscription_id']],
+    ['subscription_target が範囲外', { subscription_target: 'team' }, ['subscription_target']],
+  ] as const)('400 の本文 (%s): message は最初の issue の文で、details に issues が入る (#1641)', async (_label, body, path) => {
+    const res = await POST(postRequest(body), { params: { id: 'coupon-1' } });
+
+    expect(res.status).toBe(400);
+    const json = (await res.json()) as {
+      error: { code: string; message: string; details: { path: (string | number)[]; message: string }[] };
+    };
+    expect(json.error.code).toBe('OP_INVALID_INPUT');
+    expect(json.error.details).toHaveLength(1);
+    expect(json.error.details[0].path).toEqual(path);
+    expect(json.error.message).toBe(json.error.details[0].message);
+    expect(json.error.message.trimStart().startsWith('[')).toBe(false);
+    expect(mockApplyCoupon).not.toHaveBeenCalled();
+    expect(mockGetSupabaseAdmin).toHaveBeenCalledTimes(1);
+  });
+
   it('成功時は redemption_id / discount_amount_jpy / duration_months を返し、監査ログ (apply_coupon) を書く', async () => {
     mockApplyCoupon.mockResolvedValue({ redemptionId: 'redemption-9', discountAmountJpy: 450, durationMonths: 6 });
     const insert = vi.fn(() => Promise.resolve({ data: null, error: null }));
