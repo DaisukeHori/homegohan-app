@@ -40,15 +40,22 @@ function envValueOrUndefined(value) {
 const CLIENT_ROUTER_CACHE_DYNAMIC_STALE_SEC = 30;
 const CLIENT_ROUTER_CACHE_STATIC_STALE_SEC = 300;
 
+/**
+ * 画像の最適化 (/_next/image) が、最適化した画像を使い回す最短の時間 (秒) (#1621)。
+ * Next 15 の既定は 60 秒。Next 16 で既定が 4 時間 (14400 秒) に変わった。
+ * 食事写真・冷蔵庫写真は、期限つきの署名付き URL (src/lib/photo-storage-signing.ts。既定 1 時間) を next/image に渡して出す
+ * (src/components/photo/SignedPhotoImage.tsx)。使い回す時間が署名の期限より長いと、期限が切れた URL を含む
+ * /_next/image の URL でも、最適化済みの写真が返り続ける。Next 16 への更新でこれを長くしないよう、Next 15 の既定の値を明示する。
+ * (元の画像の応答の Cache-Control の max-age がこれより長ければ、そちらが使われるのは Next 15 / 16 とも同じ)
+ * src/__tests__/config/next-config-images.test.ts が固定する。
+ */
+const IMAGE_OPTIMIZER_MINIMUM_CACHE_TTL_SEC = 60;
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // next build の中の ESLint は動かさない。lint は `npm run lint` (eslint .) で別に回している (CI の ci.yml と local-ci の unit 段)。
-  // Next 15 の next build は、ESLint 8.57 と flat config (eslint.config.mjs) の組み合わせで、ESLint 9 にしか通じない
-  // 外し方をしたまま古い設定 (useEslintrc / extensions) を渡し、「⨯ ESLint: Invalid Options」を出して lint を飛ばす (#1444)。
-  // 飛ばされると分かっている検査をビルドに残さない。
-  eslint: {
-    ignoreDuringBuilds: true,
-  },
+  // #1621 Next 16: next build は ESLint を動かさなくなり、設定の `eslint` の項目も無くなった (書くと設定の検査で警告が出る)。
+  // lint は `npm run lint` (eslint .) で別に回している (CI の ci.yml と local-ci の unit 段)。
+  // src/__tests__/config/next-config-build-lint.test.ts が、`eslint` の項目を戻していないことを確かめる。
   experimental: {
     staleTimes: {
       dynamic: CLIENT_ROUTER_CACHE_DYNAMIC_STALE_SEC,
@@ -119,6 +126,7 @@ const nextConfig = {
     ];
   },
   images: {
+    minimumCacheTTL: IMAGE_OPTIMIZER_MINIMUM_CACHE_TTL_SEC,
     remotePatterns: [
       {
         protocol: 'https',
