@@ -3,7 +3,9 @@
  *   - weekly_menu_requests.error_message (generate-menu-v4 / v5 と Next.js の API が書く)
  *   - shopping_list_requests.result.error (regenerate-shopping-list-v2 が書く)
  *
- * どちらの欄も、Web とアプリの画面が Supabase Realtime・直接の select・状態の確認の API で受けて、そのまま表示する。
+ * どちらの欄も、Web の画面が Supabase Realtime・直接の select・状態の確認の API で受けて、そのまま表示する
+ * (アプリは weekly_menu_requests.error_message だけを、生成のフック useV4MenuGeneration が Realtime・直接の select で受ける。
+ * 買い物リストのネイティブの画面は #1598 で消した)。
  * そのため、ここには catch で捕まえた例外の文面・DB (PostgREST) の生のエラー文・外部の AI の応答の本文を入れない。
  * 元の文は、書く側が console と構造化ログ (_shared/db-logger.ts の app_logs) にだけ残す。
  *

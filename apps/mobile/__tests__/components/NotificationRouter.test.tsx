@@ -107,36 +107,39 @@ describe('NotificationRouter — 通知のタップで遷移する (#1049 F7-11)
     render(<NotificationRouter />);
     await flush();
 
-    await tap(responseOf('n-1', { deep_link: 'homegohan://health/streaks/abc' }));
+    await tap(responseOf('n-1', { deep_link: 'homegohan://health/blood-tests/abc' }));
 
     expect(mockPush).toHaveBeenCalledTimes(1);
-    expect(mockPush).toHaveBeenCalledWith('/health/streaks');
+    expect(mockPush).toHaveBeenCalledWith('/health/blood-tests');
     expect(mockClearLast).toHaveBeenCalled();
   });
 
-  it('家族の通知 (行き先の家族の画面は #1598 / #1610 で消した) では遷移しない (アプリが開くだけ)', async () => {
+  it('行き先の画面を消した通知 (家族・食材・AI 相談など。#1598 / #1610 で消した) では遷移しない (アプリが開くだけ)', async () => {
     render(<NotificationRouter />);
     await flush();
 
     await tap(responseOf('n-family-1', { type: 'family_meal_request', deep_link: 'homegohan://family/meal-requests' }));
     await tap(responseOf('n-family-2', { path: '/family' }));
+    await tap(responseOf('n-removed-1', { path: '/pantry' }));
+    await tap(responseOf('n-removed-2', { deep_link: 'homegohan://ai/session-1' }));
+    await tap(responseOf('n-removed-3', { path: '/health/streaks' }));
 
     expect(mockPush).not.toHaveBeenCalled();
   });
 
   it('通知のタップで起動したとき (getLastNotificationResponseAsync) も、data.path の画面へ遷移する', async () => {
-    mockGetLast.mockResolvedValue(responseOf('n-2', { path: '/menus/weekly' }));
+    mockGetLast.mockResolvedValue(responseOf('n-2', { path: '/comparison' }));
 
     render(<NotificationRouter />);
     await flush();
 
-    expect(mockPush).toHaveBeenCalledWith('/menus/weekly');
+    expect(mockPush).toHaveBeenCalledWith('/comparison');
     // 次の起動で同じタップをもう一度扱わないよう消す
     expect(mockClearLast).toHaveBeenCalled();
   });
 
   it('同じ通知が、起動時の取得とリスナーの両方に届いても、遷移は 1 回だけ', async () => {
-    const response = responseOf('n-3', { path: '/pantry' });
+    const response = responseOf('n-3', { path: '/comparison' });
     mockGetLast.mockResolvedValue(response);
 
     render(<NotificationRouter />);
@@ -150,7 +153,7 @@ describe('NotificationRouter — 通知のタップで遷移する (#1049 F7-11)
     render(<NotificationRouter />);
     await flush();
 
-    await tap(responseOf('n-4', { path: '/pantry' }, 'dismiss'));
+    await tap(responseOf('n-4', { path: '/comparison' }, 'dismiss'));
 
     expect(mockPush).not.toHaveBeenCalled();
   });
@@ -173,7 +176,7 @@ describe('NotificationRouter — 遷移してよい状態になってから遷�
     const view = render(<NotificationRouter />);
     await flush();
 
-    await tap(responseOf('n-7', { path: '/pantry' }));
+    await tap(responseOf('n-7', { path: '/comparison' }));
     expect(mockPush).not.toHaveBeenCalled();
 
     mockAuth = SIGNED_IN;
@@ -186,7 +189,7 @@ describe('NotificationRouter — 遷移してよい状態になってから遷�
   it('ログインの確認中・プロフィールの読み込み中・ログイン直後の一瞬 (profile=null) は待ち、読めたら遷移する', async () => {
     mockAuth = { session: null, isLoading: true };
     mockProfile = { profile: null, isLoading: true };
-    mockGetLast.mockResolvedValue(responseOf('n-8', { path: '/health/streaks' }));
+    mockGetLast.mockResolvedValue(responseOf('n-8', { path: '/health/blood-tests' }));
     const view = render(<NotificationRouter />);
     await flush();
     expect(mockPush).not.toHaveBeenCalled();
@@ -208,7 +211,7 @@ describe('NotificationRouter — 遷移してよい状態になってから遷�
     view.rerender(<NotificationRouter />);
     await flush();
     expect(mockPush).toHaveBeenCalledTimes(1);
-    expect(mockPush).toHaveBeenCalledWith('/health/streaks');
+    expect(mockPush).toHaveBeenCalledWith('/health/blood-tests');
   });
 
   it('初期設定が済んでいない利用者は遷移しない (初期設定の流れに任せる)', async () => {
@@ -216,7 +219,7 @@ describe('NotificationRouter — 遷移してよい状態になってから遷�
     render(<NotificationRouter />);
     await flush();
 
-    await tap(responseOf('n-9', { path: '/pantry' }));
+    await tap(responseOf('n-9', { path: '/comparison' }));
 
     expect(mockPush).not.toHaveBeenCalled();
   });

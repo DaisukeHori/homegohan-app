@@ -3,7 +3,7 @@
  *
  * shopping_list_requests.result.error には、Edge Function (regenerate-shopping-list-v2) が catch で捕まえた例外の文面が
  * そのまま入る (DB (PostgREST) の生のエラー文・外部の AI の応答の本文 'Fast LLM API error: 500 - ...')。
- * Web とアプリの画面は応答の result.error をそのまま出すので、route は
+ * Web の画面は応答の result.error をそのまま出すので (アプリの買い物リストのネイティブの画面は #1598 で消した)、route は
  *   - こちらで書いた文 (同意の 2 文・固定の文) だけをそのまま返し、
  *   - それ以外は固定の文 (SHOPPING_LIST_REQUEST_FAILED_MESSAGE) にし、
  *   - 成功の result (stats) と、ほかの項目 (requestId / status / progress) はそのまま返す

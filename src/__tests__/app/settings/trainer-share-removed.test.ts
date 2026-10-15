@@ -137,7 +137,7 @@ describe('#1144 設定画面 (Web): 「トレーナーと共有」は出ない',
     expect(buttonLabels().some((label) => label.includes('トレーナーと共有'))).toBe(false);
   });
 
-  it('「データとプライバシー」は、データのエクスポート (JSON / CSV) と AI へのデータ提供の同意 (T15 / #1154) の 3 項目だけ', async () => {
+  it('「データとプライバシー」は、データのエクスポート (JSON / CSV)・AI へのデータ提供の同意 (T15 / #1154)・開示・訂正・利用停止の請求 (#1178) の 4 項目だけ', async () => {
     await renderSettings(true);
 
     const privacy = Array.from(container.querySelectorAll('h2')).find((e) => e.textContent === 'データとプライバシー');
@@ -146,12 +146,15 @@ describe('#1144 設定画面 (Web): 「トレーナーと共有」は出ない',
     const card = privacy!.nextElementSibling;
     expect(card).not.toBeNull();
     const labels = Array.from(card!.querySelectorAll('button')).map((b) => b.textContent ?? '');
-    expect(labels).toHaveLength(3);
+    expect(labels).toHaveLength(4);
     expect(labels[0]).toContain('データをエクスポート');
     expect(labels[1]).toContain('献立をCSVエクスポート');
     // 外国の AI 事業者への提供の同意の確認・撤回 (共有の機能ではない。押すと /settings/ai-consent へ移る)
     expect(labels[2]).toContain('AI へのデータ提供の同意');
     expect(labels[2]).not.toMatch(/共有|トレーナー/);
+    // 個人情報の開示・訂正・利用停止・消去の請求 (#1178 / #1702。共有の機能ではない。押すと /settings/data-requests へ移る)
+    expect(labels[3]).toContain('開示・訂正・利用停止の請求');
+    expect(labels[3]).not.toMatch(/共有|トレーナー/);
   });
 
   it('共有に使うスイッチ (role="switch") も無い', async () => {

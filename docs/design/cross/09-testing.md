@@ -169,9 +169,10 @@ supabase/functions/<function-name>/test.ts (Deno test)
 ## 11. モック戦略
 
 ### 11.1 Stripe
-- Unit/Integration: `tests/mocks/stripe.ts` で `vi.fn()` モック
-- E2E: Stripe Test Mode で実 API 呼び出し
-- Webhook 署名検証は実 webhooks.constructEvent を使用
+- Unit/Integration: `tests/mocks/stripe.ts` (`vi.fn()` のモック) は作らない。課金の核 (billing/01-billing-core.md §8.4・§8.6・§14.1) のテストは、
+  `createStripeGateway(fetchImpl)` に偽の fetch を渡し、service には `StripeGateway` / `BillingRepository` の偽物を渡す
+- E2E: Stripe Test Mode で実 API 呼び出し。手動 (`tests/e2e/.manual/`。CI では流さない。billing/01 §14.3)
+- Webhook 署名検証は `src/lib/webhook/verify.ts` の `verifyStripeSignature` / `verifyStripeWebhook` を使う (Stripe の SDK を入れないので `webhooks.constructEvent` は無い。billing/01 §8.3)
 
 ### 11.2 LLM (xAI / Gemini / Claude)
 - Unit/Integration: 全モック必須 (LLM は決定的でないため)

@@ -16,7 +16,6 @@ import {
   handleAiConsentRequiredError,
   handleStoredAiConsentFailure,
   isAiConsentRequiredError,
-  isAiConsentRequiredResponse,
   promptAiConsentRequired,
   resetAiConsentPromptForTests,
 } from "../../src/lib/ai-consent";
@@ -51,16 +50,6 @@ describe("isAiConsentRequiredError", () => {
     expect(isAiConsentRequiredError(new Error("通信できません"))).toBe(false);
     expect(isAiConsentRequiredError(null)).toBe(false);
     expect(isAiConsentRequiredError("HTTP 403")).toBe(false);
-  });
-});
-
-describe("isAiConsentRequiredResponse", () => {
-  it("403 + AI_CONSENT_REQUIRED だけを見分け、本文はあとで読める", async () => {
-    const res = new Response(body, { status: 403 });
-    await expect(isAiConsentRequiredResponse(res)).resolves.toBe(true);
-    await expect(res.json()).resolves.toMatchObject({ code: "AI_CONSENT_REQUIRED" });
-    await expect(isAiConsentRequiredResponse(new Response('{"error":"x"}', { status: 403 }))).resolves.toBe(false);
-    await expect(isAiConsentRequiredResponse(new Response(body, { status: 200 }))).resolves.toBe(false);
   });
 });
 

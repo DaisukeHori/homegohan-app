@@ -12,6 +12,11 @@
  *   順番は同じ。サインアウトが失敗したら (エラーが返る・例外が投げられる)、保管庫のセッションを端末だけで消し、
  *   AuthProvider の clearSession() で画面の状態も消す。例外は投げない。
  *
+ * push token の削除が失敗・0 件のとき (#1706):
+ *   端末データの削除が値 (push_token_value_v1:<利用者>) を消す前に、release の宛先を控える (recordPushTokenRelease)。
+ *   削除できた・何もしなかった (skipped) ときは控えない。控えの中身と、そのあとの release は sign-out-push-token-release.test.ts
+ *   (本物の pushTokenRelease.ts と掃除) で確かめる。
+ *
  * 退会のあとのログアウト (signOutAfterAccountDeletion。#1037):
  *   push token は消さない (auth.users の削除で ON DELETE CASCADE)。端末データの削除 → サインアウトの順。
  *   サインアウトが失敗したら、signOutOnDevice と同じく、保管庫のセッションと画面の状態を端末だけで消す。
@@ -32,6 +37,11 @@ jest.mock('../../src/lib/user-storage', () => ({
 jest.mock('../../src/lib/supabase', () => ({
   SUPABASE_AUTH_STORAGE_KEY: 'sb-test-auth-token',
   supabase: { auth: { signOut: (...args: unknown[]) => mockSignOut(...args) } },
+}));
+// release の宛先の控え (#1706)。中身は push-token-release.test.ts・sign-out-push-token-release.test.ts で確かめる。ここでは呼ぶかと順番だけを見る
+const mockRecordRelease = jest.fn();
+jest.mock('../../src/lib/pushTokenRelease', () => ({
+  recordPushTokenRelease: (...args: unknown[]) => mockRecordRelease(...args),
 }));
 const mockRemoveStoredItem = jest.fn();
 jest.mock('../../src/lib/secureSessionStorage', () => ({
@@ -64,6 +74,9 @@ beforeEach(() => {
   });
   mockClearStorage.mockImplementation(async () => {
     calls.push('clearStorage');
+  });
+  mockRecordRelease.mockImplementation(async () => {
+    calls.push('recordRelease');
   });
   mockSignOut.mockImplementation(async () => {
     calls.push('signOut');
@@ -234,6 +247,81 @@ describe('signOutOnDevice (設定画面の通常のログアウト。#1037)', ()
   });
 });
 
+/** 削除の結果ごとに、控えるかどうか (#1706)。failed・no_rows は行が残っているかもしれないので控える */
+const UNREGISTER_RESULT_CASES: ReadonlyArray<[string, boolean]> = [
+  ['failed', true],
+  ['no_rows', true],
+  ['deleted', false],
+  ['skipped', false],
+];
+
+describe.each([
+  [
+    'signOutOnDevice',
+    (userId: string | null, accessToken?: string) =>
+      signOutOnDevice(userId, { clearSession: mockClearSession, accessToken }),
+  ],
+  ['signOutWithCleanup', (userId: string | null, accessToken?: string) => signOutWithCleanup(userId, { accessToken })],
+])('%s: push token の削除が失敗・0 件のとき、掃除の前に release の宛先を控える (#1706)', (_name, run) => {
+  it.each(UNREGISTER_RESULT_CASES)('削除の結果が %s なら、控える: %s', async (result, shouldRecord) => {
+    mockUnregister.mockImplementation(async () => {
+      calls.push('unregister');
+      return result;
+    });
+
+    await expect(run('user-1')).resolves.toEqual({ error: null });
+
+    const cleanupAndSignOut = ['clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut'];
+    if (shouldRecord) {
+      // 控えは、値を消す掃除 (clearStorage) より前でなければ、値を読めない
+      expect(calls).toEqual(['unregister', 'recordRelease', ...cleanupAndSignOut]);
+      expect(mockRecordRelease).toHaveBeenCalledTimes(1);
+      expect(mockRecordRelease).toHaveBeenCalledWith('user-1');
+    } else {
+      expect(calls).toEqual(['unregister', ...cleanupAndSignOut]);
+      expect(mockRecordRelease).not.toHaveBeenCalled();
+    }
+  });
+
+  it('削除が例外を投げたら (行が消えたか分からない)、失敗として控え、ログアウトは最後まで行う', async () => {
+    mockUnregister.mockImplementation(async () => {
+      calls.push('unregister');
+      throw new Error('boom');
+    });
+
+    await expect(run('user-1')).resolves.toEqual({ error: null });
+
+    expect(calls).toEqual([
+      'unregister',
+      'recordRelease',
+      'clearStorage',
+      'requestWebViewClear',
+      'clearWebViewCookies',
+      'signOut',
+    ]);
+    expect(mockRecordRelease).toHaveBeenCalledWith('user-1');
+  });
+
+  it('控えが例外を投げても、掃除とサインアウトは行う', async () => {
+    mockUnregister.mockResolvedValue('no_rows');
+    mockRecordRelease.mockRejectedValue(new Error('storage busy'));
+
+    await expect(run('user-1')).resolves.toEqual({ error: null });
+
+    expect(mockClearStorage).toHaveBeenCalledWith('user-1');
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('控えたアクセストークンは削除にそのまま渡し、控えには利用者の ID だけを渡す', async () => {
+    mockUnregister.mockResolvedValue('failed');
+
+    await run('user-1', 'saved-access-token');
+
+    expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: 'saved-access-token' });
+    expect(mockRecordRelease).toHaveBeenCalledWith('user-1');
+  });
+});
+
 describe('signOutAfterAccountDeletion (退会のあと。#1037)', () => {
   it('端末データの削除 → サインアウトの順。push token は消さない (auth.users の削除で消える)。成功したら保管庫は直接消さない', async () => {
     const result = await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
@@ -275,6 +363,8 @@ describe('signOutAfterAccountDeletion (退会のあと。#1037)', () => {
 
     expect(mockClearSession).toHaveBeenCalledTimes(2);
     expect(mockUnregister).not.toHaveBeenCalled();
+    // 行を消しに行かないので、release の宛先も控えない (#1706)
+    expect(mockRecordRelease).not.toHaveBeenCalled();
   });
 
   it('サインアウトが例外を投げても、保管庫を消してエラーとして返す (例外にはしない)', async () => {

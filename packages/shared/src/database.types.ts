@@ -545,6 +545,30 @@ export type Database = {
         }
         Relationships: []
       }
+      billing_customers: {
+        Row: {
+          anonymized_at: string | null
+          created_at: string
+          stripe_customer_id: string
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          anonymized_at?: string | null
+          created_at?: string
+          stripe_customer_id: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          anonymized_at?: string | null
+          created_at?: string
+          stripe_customer_id?: string
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       blood_test_longitudinal_reviews: {
         Row: {
           blood_test_ids: string[]
@@ -1380,6 +1404,66 @@ export type Database = {
           id?: string
           steps?: number | null
           user_id?: string | null
+        }
+        Relationships: []
+      }
+      data_subject_requests: {
+        Row: {
+          admin_notes: string | null
+          created_at: string
+          details: string
+          due_at: string | null
+          id: string
+          request_type: string
+          resolved_at: string | null
+          response_note: string | null
+          status: string
+          updated_at: string
+          user_id: string | null
+          verification_expires_at: string | null
+          verification_method: string
+          verification_send_count: number
+          verification_sent_at: string | null
+          verification_token_hash: string | null
+          verified_at: string | null
+        }
+        Insert: {
+          admin_notes?: string | null
+          created_at?: string
+          details: string
+          due_at?: string | null
+          id?: string
+          request_type: string
+          resolved_at?: string | null
+          response_note?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          verification_expires_at?: string | null
+          verification_method?: string
+          verification_send_count?: number
+          verification_sent_at?: string | null
+          verification_token_hash?: string | null
+          verified_at?: string | null
+        }
+        Update: {
+          admin_notes?: string | null
+          created_at?: string
+          details?: string
+          due_at?: string | null
+          id?: string
+          request_type?: string
+          resolved_at?: string | null
+          response_note?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string | null
+          verification_expires_at?: string | null
+          verification_method?: string
+          verification_send_count?: number
+          verification_sent_at?: string | null
+          verification_token_hash?: string | null
+          verified_at?: string | null
         }
         Relationships: []
       }
@@ -4529,6 +4613,33 @@ export type Database = {
         }
         Relationships: []
       }
+      operator_mfa_backup_codes: {
+        Row: {
+          batch_id: string
+          code_hash: string
+          created_at: string
+          id: string
+          used_at: string | null
+          user_id: string
+        }
+        Insert: {
+          batch_id: string
+          code_hash: string
+          created_at?: string
+          id?: string
+          used_at?: string | null
+          user_id: string
+        }
+        Update: {
+          batch_id?: string
+          code_hash?: string
+          created_at?: string
+          id?: string
+          used_at?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       ops_alert_state: {
         Row: {
           alert_key: string
@@ -5044,7 +5155,9 @@ export type Database = {
       personal_subscriptions: {
         Row: {
           active_coupon_redemption_id: string | null
+          billing_interval: string | null
           cancel_at: string | null
+          cancel_at_period_end: boolean
           cancelled_at: string | null
           created_at: string
           current_period_end: string | null
@@ -5061,7 +5174,9 @@ export type Database = {
           status: string
           stripe_customer_id: string | null
           stripe_price_id: string | null
+          stripe_status: string | null
           stripe_subscription_id: string | null
+          stripe_synced_at: string | null
           trial_ends_at: string | null
           trial_source: string | null
           trial_started_at: string | null
@@ -5070,7 +5185,9 @@ export type Database = {
         }
         Insert: {
           active_coupon_redemption_id?: string | null
+          billing_interval?: string | null
           cancel_at?: string | null
+          cancel_at_period_end?: boolean
           cancelled_at?: string | null
           created_at?: string
           current_period_end?: string | null
@@ -5087,7 +5204,9 @@ export type Database = {
           status?: string
           stripe_customer_id?: string | null
           stripe_price_id?: string | null
+          stripe_status?: string | null
           stripe_subscription_id?: string | null
+          stripe_synced_at?: string | null
           trial_ends_at?: string | null
           trial_source?: string | null
           trial_started_at?: string | null
@@ -5096,7 +5215,9 @@ export type Database = {
         }
         Update: {
           active_coupon_redemption_id?: string | null
+          billing_interval?: string | null
           cancel_at?: string | null
+          cancel_at_period_end?: boolean
           cancelled_at?: string | null
           created_at?: string
           current_period_end?: string | null
@@ -5113,7 +5234,9 @@ export type Database = {
           status?: string
           stripe_customer_id?: string | null
           stripe_price_id?: string | null
+          stripe_status?: string | null
           stripe_subscription_id?: string | null
+          stripe_synced_at?: string | null
           trial_ends_at?: string | null
           trial_source?: string | null
           trial_started_at?: string | null
@@ -6210,29 +6333,35 @@ export type Database = {
       }
       stripe_webhook_events: {
         Row: {
+          attempt_count: number
           error_message: string | null
           event_type: string
           id: string
           payload: Json
           processed_at: string | null
+          processing_started_at: string | null
           processing_status: string
           received_at: string
         }
         Insert: {
+          attempt_count?: number
           error_message?: string | null
           event_type: string
           id: string
           payload: Json
           processed_at?: string | null
+          processing_started_at?: string | null
           processing_status?: string
           received_at?: string
         }
         Update: {
+          attempt_count?: number
           error_message?: string | null
           event_type?: string
           id?: string
           payload?: Json
           processed_at?: string | null
+          processing_started_at?: string | null
           processing_status?: string
           received_at?: string
         }
@@ -7834,6 +7963,23 @@ export type Database = {
           p_user_id: string
         }
         Returns: string
+      }
+      billing_apply_stripe_subscription: {
+        Args: { p_fetched_at: string; p_snapshot: Json; p_source: string }
+        Returns: Json
+      }
+      billing_claim_stripe_event: {
+        Args: {
+          p_event_id: string
+          p_event_type: string
+          p_payload: Json
+          p_stuck_after?: unknown
+        }
+        Returns: string
+      }
+      billing_finish_stripe_event: {
+        Args: { p_error?: string; p_event_id: string; p_ok: boolean }
+        Returns: undefined
       }
       calculate_segment_stats_finalize_retry_bodies: {
         Args: { p_at: string }

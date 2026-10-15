@@ -55,8 +55,7 @@ const SOURCE_CALLS = ['subscribeToProgress'];
 
 /** 非同期のリクエストの状態を読むファイル (足した・消したら、ここも直す) */
 const READER_FILES = [
-  'apps/mobile/app/menus/weekly/index.tsx',
-  'apps/mobile/app/shopping-list/index.tsx',
+  // (アプリの週の献立・買い物リストのネイティブの画面は、通常の操作で届かない画面として消した。#1598)
   'apps/mobile/src/hooks/useV4MenuGeneration.ts',
   'apps/mobile/src/lib/realtime.ts',
   'src/app/(main)/menus/weekly/page.tsx',
@@ -66,6 +65,9 @@ const READER_FILES = [
 
 /** 見分ける関数 */
 const HANDLER = 'handleStoredAiConsentFailure';
+
+/** アプリで失敗の欄を読む場所の数の下限 (空振りの見張り)。#1598 のあとの実数は 3 */
+const MIN_MOBILE_READ_SITES = 3;
 
 /**
  * 失敗パネルへ入る生成の失敗 (GEN_FAIL) を出すファイル → その dispatch の名前。
@@ -322,7 +324,8 @@ describe('読む側の構文木の検査: 失敗の欄を読む場所は、同�
 
   it('走査が空振りしていない (Web とアプリの両方で、失敗の欄を読む場所を見つけている)', () => {
     expect(sites.filter((s) => s.file.startsWith('src/')).length).toBeGreaterThanOrEqual(10);
-    expect(sites.filter((s) => s.file.startsWith('apps/mobile/')).length).toBeGreaterThanOrEqual(4);
+    // アプリは #1598 で週の献立・買い物リストの画面を消したあと、生成のフックの 3 か所
+    expect(sites.filter((s) => s.file.startsWith('apps/mobile/')).length).toBeGreaterThanOrEqual(MIN_MOBILE_READ_SITES);
   });
 
   it('失敗の欄を読む場所は、見分ける関数を通す (通さないものは PASS_THROUGH に理由つきで載っている)', () => {

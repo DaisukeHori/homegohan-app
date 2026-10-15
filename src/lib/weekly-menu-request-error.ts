@@ -2,7 +2,8 @@
  * 献立生成のリクエストの行 (weekly_menu_requests.error_message) に書く失敗の文と、画面へ返す文 (#1172)
  *
  * error_message は GET /api/ai/menu/weekly/status が応答の本文 (errorMessage / error_message) に入れ、
- * Web とアプリの週の献立の画面がそのまま表示する。そのため、ここには DB (PostgREST) の生のエラー文・例外の文面・
+ * Web の週の献立の画面がそのまま表示する (アプリの週の献立のネイティブの画面も表示していたが、#1598 で消した)。
+ * そのため、ここには DB (PostgREST) の生のエラー文・例外の文面・
  * Edge Function の応答の本文 (状態コード・本文) を入れない。原因は構造化ログ (app_logs) にだけ残す。
  *
  * 行に書いてよい文 (画面が見分ける、こちらで書いた文) は次のものだけ。それ以外の失敗は固定の文にする。

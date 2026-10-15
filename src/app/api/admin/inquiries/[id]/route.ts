@@ -1,9 +1,9 @@
 /**
  * GET   /api/admin/inquiries/[id] - 問い合わせ詳細 (#1121)
- * PATCH /api/admin/inquiries/[id] - ステータス・管理者メモの更新 (モバイル)
+ * PATCH /api/admin/inquiries/[id] - ステータス・管理者メモの更新 (モバイルの問い合わせ画面が使っていた。その画面は #1598 で消した)
  * PUT   /api/admin/inquiries/[id] - 同上 (Web。PATCH と同じ処理)
  *
- * 呼び出し元: Web の /support/inquiries、モバイルの admin / support の問い合わせ画面。
+ * 呼び出し元: Web の /support/inquiries (モバイルの support の問い合わせ画面も呼んでいたが、通常の操作で届かない画面として消した。#1598)。
  * 応答は { inquiry: {...} } (camelCase)。更新の入力は { status?, adminNotes? }。
  * 権限: admin, super_admin, support
  *

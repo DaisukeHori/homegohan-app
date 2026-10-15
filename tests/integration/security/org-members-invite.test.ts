@@ -1,5 +1,5 @@
 /**
- * #1235 (第2段) POST /api/org/members (モバイルの「メンバー追加」) を招待メール方式にすることの回帰テスト
+ * #1235 (第2段) POST /api/org/members (モバイルの「メンバー追加」が呼んでいた。その画面は #1598 で消した) を招待メール方式にすることの回帰テスト
  *
  * 修正前の POST /api/org/members は、組織の owner / admin が指定したメールアドレスとパスワードで
  * 「メール確認済み」の auth ユーザーを作っていた (auth.admin.createUser の email_confirm: true)。
