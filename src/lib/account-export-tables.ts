@@ -242,13 +242,6 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   },
   { table: 'coupon_redemptions', scope: self('user_id'), omit: ['approved_by'] },
   {
-    table: 'gdpr_deletion_requests',
-    scope: self('user_id'),
-    // #1562 から削除の実行記録。新しい記録は user_id を持たない (本人の行として出るのは旧設計の削除要求だけ)。
-    // subject_hash (利用者の id の HMAC) は内部の照合用の値なので出さない
-    omit: ['executed_by', 'notes', 'subject_hash'],
-  },
-  {
     table: 'announcement_reads',
     scope: self('user_id'),
     orderBy: ['user_id', 'announcement_id'],
@@ -285,6 +278,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   admin_user_notes: '運営スタッフが書いた内部メモ',
   moderation_flags: '運営によるモデレーションの内部記録',
   membership_audit: '所属変更の監査ログ (操作した人・相手の ID を含む)',
+  gdpr_deletion_requests:
+    '削除の実行記録 (#1562。退会した利用者の id の HMAC・日時・理由・実行者。利用者の id を持たず、本人が読める RLS ポリシーも無い。service_role だけが読み書きする)',
   experiment_assignments: 'A/B テストの内部割り当て',
   app_logs: 'アプリの動作ログ (内部のエラー記録)',
   ai_content_logs: 'AI 生成の内部ログ (費用・モデレーション用の列を含む)',
