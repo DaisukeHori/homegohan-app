@@ -367,8 +367,15 @@ describe('Step 3 の文言の「n つ」は、ツアーが Step 3 までに付�
     expect(enCountOf(en.a11y_title)).toBe(earnedCount);
   });
 
-  it('未獲得の first_bite の吹き出しは「記録しました」(獲得済みの言い方) ではなく、もらい方を案内する', () => {
-    expect(HANDSON_TOUR_I18N_JA.tour.step3.first_bite_bubble).toBe('食事を 1 回記録するともらえます');
-    expect(HANDSON_TOUR_I18N_EN.tour.step3.first_bite_bubble).toBe('Log a meal once to earn it');
+  // first_bite のカードは、ツアーを通しただけの人では未獲得、本物の食事の記録がある人のやり直しのツアーでは「獲得済」。
+  // 同じ吹き出しがどちらのカードも指すので、獲得済みの言い方 (「記録しました」) も、未獲得の言い方 (「もらえます」) もしない
+  it('first_bite の吹き出しは獲得の有無を言わず、もらい方を説明する (獲得済みでも未獲得でも食い違わない)', () => {
+    const ja = HANDSON_TOUR_I18N_JA.tour.step3.first_bite_bubble;
+    const en = HANDSON_TOUR_I18N_EN.tour.step3.first_bite_bubble;
+    expect(ja).toBe('食事を記録するともらえるバッジです');
+    expect(en).toBe('Earned by logging a meal');
+    // 獲得済みの言い方 (以前の「写真から記録を 1 度しました」) でも、未獲得の言い方 (「…するともらえます」) でもない
+    expect(ja).not.toMatch(/しました|もらえます|もらいました/);
+    expect(en).not.toMatch(/\byou (logged|earned)\b|\bto earn it\b/i);
   });
 });

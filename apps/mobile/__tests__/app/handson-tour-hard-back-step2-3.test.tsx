@@ -449,6 +449,22 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     expect(screen.getByTestId('overlay-body').props.children).not.toContain('{nickname}');
   });
 
+  // #1626: first_bite は、ツアーを通しただけなら未獲得、本物の食事の記録がある人のやり直しのツアーでは獲得済み。
+  // 吹き出し (3.2) はどちらでも同じ文言なので、獲得済みの言い方 (「…しました」) も未獲得の言い方 (「…もらえます」) もしない
+  it('Step 3 の first_bite の吹き出しは、獲得の有無を言わない共有の文言を出す', async () => {
+    jest.useFakeTimers();
+    const { resolveBadges } = holdBadges();
+    const screen = render(<HandsonTourBadges />);
+    await resolveBadges(BADGES_OK);
+    act(() => {
+      jest.advanceTimersByTime(HANDSON_TOUR_CONSTANTS.STEP3_INTRO_AUTO_MS);
+    });
+
+    expect(screen.getByTestId('overlay-title')).toHaveTextContent(i18n.step3.first_bite_title);
+    expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step3.first_bite_bubble);
+    expect(screen.getByTestId('overlay-body').props.children).not.toMatch(/しました|もらえます/);
+  });
+
   it('最後の吹き出し (3.4) で抜けたあとに【次へ】が押されても、Step 4 へ進まず完了も記録しない', async () => {
     jest.useFakeTimers();
     const { resolveBadges } = holdBadges();

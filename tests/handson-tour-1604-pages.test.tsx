@@ -400,6 +400,28 @@ describe('#1604 Step 3: 「獲得済」は /api/badges の earned で出す', ()
     }
   });
 
+  // #1626: first_bite の吹き出し (3.2) は、カードが「獲得済」でもそうでなくても同じ文言で指す。
+  // 獲得済みのカードを「…するともらえます」と言ったり、未獲得のカードを「…しました」と言ったりして、画面が食い違わないこと
+  it.each([
+    { label: 'ツアーを通しただけ (first_bite は未獲得)', earned: false },
+    { label: 'やり直しのツアーで first_bite が獲得済み', earned: true },
+  ])('$label: first_bite の吹き出しは、カードの「獲得済」の有無と食い違わない', async ({ earned }) => {
+    BADGES_RESPONSE.badges[0] = badge('first_bite', earned);
+    try {
+      await mountBadges();
+      await click('auto-advance'); // 3.1 → 3.2 (first_bite のカード)
+
+      const body = byTestId('bubble-body')?.textContent ?? '';
+      expect(byTestId('bubble-title')?.textContent).toBe(HANDSON_TOUR_I18N_JA.tour.step3.first_bite_title);
+      expect(body).toBe(HANDSON_TOUR_I18N_JA.tour.step3.first_bite_bubble);
+      expect(byTestId('badge-card-first_bite')?.textContent?.includes('獲得済')).toBe(earned);
+      // 獲得済みの言い方も未獲得の言い方もしない
+      expect(body).not.toMatch(/しました|もらえます/);
+    } finally {
+      BADGES_RESPONSE.badges[0] = badge('first_bite', earnedInTour('first_bite'));
+    }
+  });
+
   // #1626: 以前は intro が「もう 2 つ獲得しています」で、実際に「獲得済」が付くのは planner の 1 つだけだった
   it('intro の「もう n つ獲得しています」の n が、ツアーを通した状態で「獲得済」が付くカードの数と同じ', async () => {
     await mountBadges();
@@ -416,6 +438,8 @@ describe('#1604 Step 3: 「獲得済」は /api/badges の earned で出す', ()
     expect(introCount).toBe(earnedCards.length);
     expect(introCount).toBe(STEP3_BADGES_EARNED_IN_TOUR.length);
   });
+  // 注: intro の数は固定の文言 (ツアーを通した人の数)。やり直しのツアーで planner のほかにも獲得済みのバッジがある人には
+  // 「獲得済」のカードの数と合わない (#1626 では文言を「1 つ獲得」に直す範囲にとどめた。数を応答から埋める形にはしていない)
 
   it('tutorial_complete が獲得済み (やり直しのツアー) なら「獲得済」を付け、半透明にしない', async () => {
     BADGES_RESPONSE.badges[3] = badge('tutorial_complete', true);
