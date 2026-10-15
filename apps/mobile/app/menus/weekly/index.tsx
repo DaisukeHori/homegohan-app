@@ -11,15 +11,10 @@ import {
   ChevronRight,
   ChevronUp,
   CircleEllipsis,
-  Coffee,
-  CloudMoon,
   Heart,
-  Moon,
   Pencil,
   Plus,
   Sparkles,
-  Sun,
-  SunMedium,
   Trash2,
   X,
 } from "lucide-react-native";
@@ -38,7 +33,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Polygon, Text as SvgText } from "react-native-svg";
 
-import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, isMealType, type MealType, formatCalendarDate, todayCalendarDate, todayLocal, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
+import { NUTRIENT_DEFINITIONS, type NutrientDefinition, MODE_CONFIG as MODE_CONFIG_SHARED, MEAL_ORDER as MEAL_ORDER_SHARED, MEAL_LABELS, isMealType, type MealType, formatCalendarDate, todayCalendarDate, todayLocal, isUltimateModeWeeklyMenuRequest } from "@homegohan/shared";
 import { Button, Card, EmptyState, LoadingState, StatusBadge } from "../../../src/components/ui";
 import { AddMealModal } from "../../../src/components/menu/AddMealModal";
 import { AddMealSlotModal } from "../../../src/components/menu/AddMealSlotModal";
@@ -61,6 +56,7 @@ import { ManualEditModal, type ManualEditMeal } from "../../../src/components/me
 import { useV4MenuGeneration } from "../../../src/hooks/useV4MenuGeneration";
 import { colors, spacing, radius } from "../../../src/theme";
 import { getApi, getApiBaseUrl } from "../../../src/lib/api";
+import { MEAL_TYPE_COLORS, MEAL_TYPE_LUCIDE_ICONS, MEAL_TYPE_SHORT_LABELS } from "../../../src/lib/meal-type-visuals";
 import { submitImprove, type ImproveMealRequest } from "../../../src/lib/improve-meal";
 import { supabase } from "../../../src/lib/supabase";
 import { useProfile } from "../../../src/providers/ProfileProvider";
@@ -582,15 +578,15 @@ const DOW = ["月", "火", "水", "木", "金", "土", "日"];
 // 表示順: breakfast / lunch / dinner / snack / midnight_snack
 const MEAL_ORDER = MEAL_ORDER_SHARED;
 
-// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める。DB の行の meal_type (string) は isMealType で絞ってから引く。
-// shortLabel は献立のカードの番号付きの名前 (getMealLabel) の短い名前 (#1631。区分ごとの比較の連鎖を持たず、ここから引く)
-const MEAL_CONFIG: Record<MealType, { Icon: React.ComponentType<any>; label: string; shortLabel: string; color: string }> = {
-  breakfast: { Icon: Sun, label: "朝食", shortLabel: "朝", color: "#FF9800" },
-  lunch: { Icon: SunMedium, label: "昼食", shortLabel: "昼", color: "#4CAF50" },
-  snack: { Icon: Coffee, label: "おやつ", shortLabel: "おやつ", color: "#E91E63" },
-  dinner: { Icon: Moon, label: "夕食", shortLabel: "夕", color: "#7C4DFF" },
-  midnight_snack: { Icon: CloudMoon, label: "夜食", shortLabel: "夜食", color: "#3F51B5" },
-};
+// 区分の見た目 (アイコン・色・短い名前) はモバイルの区分の見た目の表、表示名は MEAL_LABELS から引く (#1665。手書きの表を持たない)。
+// DB の行の meal_type (string) は isMealType で絞ってから引く。
+// shortLabel は献立のカードの番号付きの名前 (getMealLabel) の短い名前 (#1631。区分ごとの比較の連鎖を持たない)
+const mealTypeConfig = (mealType: MealType) => ({
+  Icon: MEAL_TYPE_LUCIDE_ICONS[mealType],
+  label: MEAL_LABELS[mealType],
+  shortLabel: MEAL_TYPE_SHORT_LABELS[mealType],
+  color: MEAL_TYPE_COLORS[mealType],
+});
 
 // MODE_CONFIG — @homegohan/shared の抽象キーを App 用の実色値に変換
 const MODE_CONFIG = Object.fromEntries(
@@ -1276,9 +1272,9 @@ export default function WeeklyMenuPage() {
   }, [sortedMeals]);
 
   // 番号付きラベル: 1件目は「朝」「昼」「夕」、2件目は「朝食2」、3件目以降は「朝3」...
-  // 名前は MEAL_CONFIG の label / shortLabel から引く (#1631)。5 値以外の meal_type は、元の値をそのまま名前にする
+  // 名前は mealTypeConfig の label / shortLabel から引く (#1631・#1665)。5 値以外の meal_type は、元の値をそのまま名前にする
   const getMealLabel = (mealType: string, indexInGroup: number): string => {
-    const cfg = isMealType(mealType) ? MEAL_CONFIG[mealType] : null;
+    const cfg = isMealType(mealType) ? mealTypeConfig(mealType) : null;
     const base = cfg ? cfg.label : mealType;
     const short = cfg ? cfg.shortLabel : base;
     if (indexInGroup === 0) return short;
@@ -1828,7 +1824,7 @@ export default function WeeklyMenuPage() {
                       mealType={mealType}
                       dayId={selectedDay.id}
                       dayDate={selectedDay.day_date}
-                      mealLabel={MEAL_CONFIG[mealType].label}
+                      mealLabel={MEAL_LABELS[mealType]}
                       onPress={() => {
                         // plan 未作成 (id が null) でも AddMealModal を開く — API 側で user_daily_meals を自動作成
                         setAddMealModalDayId(selectedDay.id ?? null);
@@ -1843,7 +1839,7 @@ export default function WeeklyMenuPage() {
               })}
               {sortedMeals.map((m) => {
                 const mealCfg = isMealType(m.meal_type)
-                  ? MEAL_CONFIG[m.meal_type]
+                  ? mealTypeConfig(m.meal_type)
                   : { Icon: CircleEllipsis, label: m.meal_type, color: colors.textMuted };
                 const modeCfg = MODE_CONFIG[m.mode ?? "cook"] ?? MODE_CONFIG.cook;
                 const isGenerating = m.is_generating;
