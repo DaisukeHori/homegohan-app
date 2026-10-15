@@ -2,15 +2,12 @@ appId: com.homegohan.app
 name: "Handson Tour - 05: Step 2 簡単メニュー生成 → planner バッジ → Step 3"
 tags: ["handson-tour", "P1"]
 ---
-# シナリオ: Step 2 簡単メニュー toggle → 生成 → 結果 → 追加 → planner バッジ → Step 3
+# シナリオ: Step 2 の吹き出しを【次へ】【生成する】【次へ】【献立に追加】で進める → planner バッジ → Step 3
 # 確認ポイント:
-#   - Step 2 の intro 吹き出し後、toggle/generate ボタンが Spotlight で表示
-#   - v4-generate-button タップ → ローディング → 結果カード
-#   - v4-add-to-menu-button タップ → API 呼び出し
+#   - Step 2 の intro 吹き出し (tour-step-2-intro) が出る
+#   - 吹き出しの進行ボタン (tour-next-button) で 2.2 → 2.7 まで進められる
 #   - planner バッジ獲得通知
 #   - Step 3 の tour-step-3-loading が表示される
-# TODO: v4-no-cook-toggle / v4-generate-button / v4-result-card / v4-add-to-menu-button
-#       は mobile 未実装 (web 既存)。別 PR で fix。暫定テキストマッチで代替
 
 - runFlow:
     file: "../_shared/login-as-new-user.yaml"
@@ -42,54 +39,45 @@ tags: ["handson-tour", "P1"]
 - waitForAnimationToEnd:
     timeout: 4000
 
-# 簡単メニュー toggle (TODO: v4-simple-only-toggle testID mobile 未実装、別 PR で fix)
-- tapOn:
-    id: "v4-simple-only-toggle"
-    optional: true
-- tapOn:
-    text: "簡単"
-    optional: true
+# Step 2 のガイドは、吹き出しの進行ボタン (tour-next-button。apps/mobile/src/handson-tour/TourBubble.tsx) で進める
+# (apps/mobile/app/handson-tour/menu.tsx: 2.2【次へ】→ 2.3【次へ】→ 2.4【生成する】→ 2.5 読み込み → 2.6【次へ】→ 2.7【献立に追加】)。
+# 吹き出しのオーバーレイが下の献立の生成の画面を覆っているので、画面のボタンは押さず、進行ボタンだけを押す
 
-# TODO: tour-next-button を挟む場合の対応 (Step 2 ガイドの進行に依存)
+# 2.2 条件の吹き出し →【次へ】
+- extendedWaitUntil:
+    visible:
+      id: "tour-next-button"
+    timeout: 10000
 - tapOn:
     id: "tour-next-button"
-    optional: true
 
-# 生成ボタン (TODO: v4-generate-button testID mobile 未実装、別 PR で fix)
+# 2.3 メモの吹き出し →【次へ】
+- tapOn:
+    id: "tour-next-button"
+
+# 2.4 生成の吹き出し →【生成する】
 - extendedWaitUntil:
-    anyOf:
-      - visible:
-          id: "v4-generate-button"
-      - visible:
-          text: "生成する"
+    visible:
+      text: "生成する"
     timeout: 10000
-
 - tapOn:
-    id: "v4-generate-button"
-    optional: true
-- tapOn:
-    text: "生成する"
-    optional: true
+    id: "tour-next-button"
 
-# ローディング待機 (TODO: v4-loading-spinner testID 未実装、別 PR で fix)
-- waitForAnimationToEnd:
-    timeout: 8000
-
-# 結果カード確認 (TODO: v4-result-card / v4-result-dish-name testID 未実装、別 PR で fix)
-- assertVisible:
-    id: "v4-result-card"
-    optional: true
-- assertVisible:
-    text: "豚肉"
-    optional: true
-
-# 献立に追加ボタン (TODO: v4-add-to-menu-button testID 未実装、別 PR で fix)
+# 2.5 読み込み (STEP2_LOADING_DURATION_MS) のあと、2.6 結果の吹き出し →【次へ】
+- extendedWaitUntil:
+    visible:
+      text: "次へ"
+    timeout: 15000
 - tapOn:
-    id: "v4-add-to-menu-button"
-    optional: true
+    id: "tour-next-button"
+
+# 2.7 追加の吹き出し →【献立に追加】(Step 2 の完了)
+- extendedWaitUntil:
+    visible:
+      text: "献立に追加"
+    timeout: 10000
 - tapOn:
-    text: "献立に追加"
-    optional: true
+    id: "tour-next-button"
 
 - waitForAnimationToEnd:
     timeout: 5000
