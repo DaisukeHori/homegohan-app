@@ -24,10 +24,18 @@
  * ここで確かめるのは「ウィジェットが出したトークンが、Supabase へのリクエストの gotrue_meta_security.captcha_token
  * (ログインは POST /api/auth/login の本文の captchaToken) に入ること」まで。
  * ローカルの Supabase は CAPTCHA が無効なので、トークンの検証 (Cloudflare への問い合わせ) は、どの環境でもここでは行わない。
+ *
+ * #1672: 「新規登録」と「メール確認の再送 #1474」は、ウィジェットを外のネットワークに繋がずに動かす (helpers/turnstile-offline.ts)。
+ * テスト用サイトキーでも、ウィジェットの本体 (api.js) と iframe は challenges.cloudflare.com から読むので、常設の e2e で
+ * 外の通信の遅れ・失敗によって落ちることがあった。この 2 つで確かめたいのは「ウィジェットが出したトークンが、その画面の
+ * Supabase への要求に入ること」なので、テスト用サイトキーが出すのと同じダミーのトークンを出す手元の api.js に差し替え、
+ * 送られたトークンがそのダミーと一致することまで確かめる。URL は本物と同じなので、CSP の判定はそのまま受ける。
+ * 本物の api.js がこのアプリの CSP の下でトークンを出すことは、ログイン・パスワード再設定・api.js を読み込めないときのテストが確かめる。
  */
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { generateTestPassword } from "./helpers/credentials";
 import { acceptSignupLegalConsent } from "./helpers/signup";
+import { CLOUDFLARE_TEST_DUMMY_TOKEN, serveTurnstileOffline } from "./helpers/turnstile-offline";
 
 const REQUIRE_TURNSTILE = process.env.E2E_REQUIRE_TURNSTILE === "1";
 
@@ -172,13 +180,15 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await expectNoCloudflareCspViolations(page);
   });
 
-  test("新規登録: 実際のウィジェットがトークンを出すまで送信できず、出たら Supabase へ captcha_token を付けて送る", async ({
+  test("新規登録: ウィジェットがトークンを出すまで送信できず、出たら Supabase へ captcha_token を付けて送る (外のネットワークに繋がない)", async ({
     page,
   }) => {
     const requests = await interceptAuth(page, /\/auth\/v1\/signup/, {
       status: 422,
       body: { code: 422, error_code: "user_already_exists", msg: "User already registered" },
     });
+    // #1672: 外のネットワークに繋がない (ファイル冒頭のコメント)
+    const offline = await serveTurnstileOffline(page);
     await openWithWidget(page, "/signup");
 
     await page.locator("#email").fill("turnstile-e2e@example.com");
@@ -192,9 +202,10 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await submit.click();
 
     await expect.poll(() => requests.length, { timeout: 10_000 }).toBe(1);
-    expect(requests[0].gotrue_meta_security?.captcha_token).toMatch(/\S{10,}/);
+    expect(requests[0].gotrue_meta_security?.captcha_token).toBe(CLOUDFLARE_TEST_DUMMY_TOKEN);
     await expect(page.getByText("このメールアドレスは既に登録されています")).toBeVisible();
     await expectNoCloudflareCspViolations(page);
+    expect(offline.apiJsLoads(), "手元の api.js が使われていない (外のネットワークに繋いでいる)").toBeGreaterThanOrEqual(1);
   });
 
   test("パスワード再設定: 実際のウィジェットがトークンを出すまで送信できず、出たら Supabase へ captcha_token を付けて送る", async ({
@@ -216,10 +227,12 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await expectNoCloudflareCspViolations(page);
   });
 
-  test("メール確認の再送 (#1474): 実際のウィジェットがトークンを出すまで再送できず、出たら Supabase へ captcha_token を付けて送る", async ({
+  test("メール確認の再送 (#1474): ウィジェットがトークンを出すまで再送できず、出たら Supabase へ captcha_token を付けて送る (外のネットワークに繋がない)", async ({
     page,
   }) => {
     const requests = await interceptAuth(page, /\/auth\/v1\/resend/, { status: 200, body: {} });
+    // #1672: 外のネットワークに繋がない (ファイル冒頭のコメント)
+    const offline = await serveTurnstileOffline(page);
     await openWithWidget(page, "/auth/verify?email=turnstile-e2e%40example.com", RESEND_BUTTON_SELECTOR);
 
     const resend = page.locator(RESEND_BUTTON_SELECTOR);
@@ -229,9 +242,10 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await resend.click();
 
     await expect.poll(() => requests.length, { timeout: 10_000 }).toBe(1);
-    expect(requests[0].gotrue_meta_security?.captcha_token).toMatch(/\S{10,}/);
+    expect(requests[0].gotrue_meta_security?.captcha_token).toBe(CLOUDFLARE_TEST_DUMMY_TOKEN);
     await expect(page.getByText("確認メールを再送信しました")).toBeVisible();
     await expectNoCloudflareCspViolations(page);
+    expect(offline.apiJsLoads(), "手元の api.js が使われていない (外のネットワークに繋いでいる)").toBeGreaterThanOrEqual(1);
   });
 
   test("api.js を読み込めないとき (広告ブロッカーなど): エラーを案内して送信できず、読み込めるようになったら「もう一度確認する」で復帰できる", async ({

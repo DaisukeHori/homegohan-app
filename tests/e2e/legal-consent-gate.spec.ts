@@ -327,7 +327,14 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
 
     await page.waitForURL((url) => url.pathname === "/home", URL_CHANGE);
     // 同意した後は、もう同意画面へ回されない (ホームに留まる)
-    await page.reload();
+    // #1672: 読み込み直す前に、同意画面からホームへの遷移 (LegalConsentForm の window.location.assign) が終わる
+    // (DOMContentLoaded) のを待つ。waitForURL は URL_CHANGE (waitUntil: "commit") なので、遷移が確定した直後に返る。
+    // Chromium はこの遷移で、表示中の文書を別の RenderFrameHost に入れ替えることがある (戻る・進むのキャッシュのため)。
+    // 確定の直後は、DevTools (Playwright) がつながっている側が、入れ替えで外れた古い RenderFrameHost のままのことがあり、
+    // そこへ Page.reload を送ると Chromium が「Not attached to an active page」(content/browser/devtools/protocol/page_handler.cc の
+    // kErrorInactivePage。接続先の RenderFrameHost が active でない) で断る。遷移が終わるまで待てば、接続先は新しい文書に移っている
+    await page.waitForLoadState("domcontentloaded", { timeout: NAVIGATION_TIMEOUT });
+    await page.reload({ waitUntil: "domcontentloaded" });
     expect(new URL(page.url()).pathname).toBe("/home");
 
     const rows = await readAcceptances(user.id);
