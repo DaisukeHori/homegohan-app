@@ -13,9 +13,6 @@ const MEAL_CATEGORIES: Record<MealType, number> = {
   midnight_snack: 4,
 };
 
-// 基本の食事タイプの順序（おやつ以外）
-const BASE_MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'midnight_snack'];
-
 export async function POST(request: Request) {
   const supabase = await createClient();
   const { data: { user }, error: userError } = await supabase.auth.getUser();

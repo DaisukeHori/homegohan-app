@@ -7,7 +7,8 @@
  * - #1631: 献立生成の API (v4・v5) の受け付ける区分、AI 相談の許可リスト、planned_meals の許可リスト、食事の画面・モーダル・
  *   並べ替えの API の手書きの MealType、types/domain の MealType、食事の記録の画面の「おやつ・夜食」の手書き、
  *   AI 相談のシステムプロンプトの区分の表示名と並びの手書きの表 (MEAL_LABELS / MEAL_ORDER から引く)、
- *   写真の判別 (classify-photo) の解析プロンプトの区分の表示名と、モバイルの週間献立のカードの短い名前の、5 値との比較の連鎖
+ *   写真の判別 (classify-photo) の解析プロンプトの区分の表示名と、モバイルの週間献立のカードの短い名前の、5 値との比較の連鎖、
+ *   並べ替えの API の使われていない「おやつ以外の 4 値」の並び (正本から 1 つ除いた並びの手書き)
  *
  * 5 値をキーに持つ表 ({ breakfast: …, …, midnight_snack: … }) は、型を Record<string, …> にすると MealType に値が増えても
  * tsc が漏れを止めない (表に無い値は undefined になる)。製品のソースでは Record<MealType, …> にする (除外表は Edge Functions だけ)。
@@ -235,6 +236,18 @@ function hasFiveWayComparison(strippedSource: string): boolean {
   return MEAL_ORDER.every((mealType) => comparesWith(strippedSource, mealType));
 }
 
+/** 5 値のうち、引用符つきで含む値の数 */
+function countQuotedMealTypes(fragment: string): number {
+  return MEAL_ORDER.filter((mealType) => new RegExp(`['"]${mealType}['"]`).test(fragment)).length;
+}
+
+/** 正本から 1 つだけ除いた 4 値を手書きした配列があるか (おやつ以外の 4 値など。基本の 3 食の並びは拾わない) */
+function hasHandwrittenAllButOneArray(strippedSource: string): boolean {
+  return (strippedSource.match(ARRAY_LITERAL) ?? []).some(
+    (fragment) => countQuotedMealTypes(fragment) === MEAL_ORDER.length - 1,
+  );
+}
+
 /** 5 値を手書きした配列・union・比較の連鎖があるか (並びは問わない) */
 function hasHandwrittenFiveValues(strippedSource: string): boolean {
   const fragments = [
@@ -276,6 +289,10 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
 
   it.each(TARGET_FILES)('%s に「おやつ・夜食」の手書きの並びが無い', (file) => {
     expect(readStripped(file)).not.toMatch(HANDWRITTEN_EXTRA_PAIR);
+  });
+
+  it.each(TARGET_FILES)('%s に正本から 1 つ除いた 4 値の手書きの配列が無い', (file) => {
+    expect(hasHandwrittenAllButOneArray(readStripped(file))).toBe(false);
   });
 
   it.each(NO_FIVE_KEY_TABLE_FILES)('%s に 5 値をキーに持つ手書きの表 (表示名・並び) が無い', (file) => {
@@ -407,5 +424,20 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
     // 値を返すだけの分岐 (時刻から区分を選ぶ return 'breakfast' など) は比較ではないので拾わない
     const returnsOnly = "if (h < 10) return 'breakfast'; if (h < 14) return 'lunch'; if (h < 17) return 'snack'; if (h < 21) return 'dinner'; return 'midnight_snack';";
     expect(hasFiveWayComparison(returnsOnly)).toBe(false);
+  });
+
+  it('4 値の配列の検査は、正本から 1 つ除いた手書きの並びを実際に拾う (検査が空振りしていない)', () => {
+    // #1631 の R2 の掃除で消した、並べ替えの API の使われていない「おやつ以外の 4 値」の並び
+    expect(
+      hasHandwrittenAllButOneArray(
+        stripComments("const BASE_MEAL_ORDER: MealType[] = ['breakfast', 'lunch', 'dinner', 'midnight_snack'];"),
+      ),
+    ).toBe(true);
+    // 基本の 3 食の並び・正本から導いた形・コメントの中の並びは拾わない (5 値の配列はほかの検査が拾う)
+    expect(hasHandwrittenAllButOneArray("const BASE: MealType[] = ['breakfast', 'lunch', 'dinner'];")).toBe(false);
+    expect(hasHandwrittenAllButOneArray('const V = MEAL_ORDER.filter((t) => t !== SNACK);')).toBe(false);
+    expect(
+      hasHandwrittenAllButOneArray(stripComments("// ['breakfast', 'lunch', 'dinner', 'midnight_snack']")),
+    ).toBe(false);
   });
 });
