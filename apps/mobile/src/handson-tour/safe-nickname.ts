@@ -3,7 +3,7 @@
 //
 // 以前は 5 つの画面 (app/handson-tour/{index,photo,menu,badges,graduate}.tsx) が同じ関数を 1 つずつ持ち、
 // 前後の空白を除くだけだったので、名前が無いときにアプリが入れる仮置きの 'Guest' を「Guest さん」と呼びかけていた。
-// 名前が無いかどうかは Web・モバイルのプロフィール画面・GET /api/onboarding/status と同じ
+// 名前が無いかどうかは Web のプロフィール画面・GET /api/onboarding/status と同じ
 // @homegohan/shared の normalizeProfileName (前後の空白を除いて 'Guest' と厳密一致・空・空白だけは名前なし) で決める。
 
 import { normalizeProfileName } from '@homegohan/shared';

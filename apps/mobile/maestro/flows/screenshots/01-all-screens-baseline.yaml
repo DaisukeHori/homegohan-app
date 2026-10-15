@@ -29,20 +29,20 @@ env:
       id: "favorites-screen"
     timeout: 10000
 - takeScreenshot: favorites-baseline
-# 比較画面
+# 比較画面 (タブは WebView。ネイティブの比較画面 comparison-screen は #1598 で消した)
 - tapOn:
     id: "tab-comparison"
 - extendedWaitUntil:
     visible:
-      id: "comparison-screen"
+      id: "webview-comparison"
     timeout: 10000
 - takeScreenshot: comparison-baseline
-# プロフィール画面
+# マイページ (タブは WebView。ネイティブのプロフィール画面 profile-screen は #1598 で消した)
 - tapOn:
     id: "tab-profile"
 - extendedWaitUntil:
     visible:
-      id: "profile-screen"
+      id: "webview-profile"
     timeout: 10000
 - takeScreenshot: profile-baseline
 # 週間献立画面
