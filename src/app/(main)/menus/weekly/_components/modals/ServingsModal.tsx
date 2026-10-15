@@ -7,6 +7,7 @@ import { X } from "lucide-react";
 import type { ServingsConfig } from "@/types/domain";
 import { useServingsConfigStore } from "../../_state";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
+import { SERVINGS_MEAL_SHORT_LABELS, type ServingsMealType } from "@/lib/meal-type-visuals";
 
 const colors = {
   bg: '#F7F6F3',
@@ -21,9 +22,10 @@ const colors = {
 };
 
 type DayOfWeekKey = 'monday' | 'tuesday' | 'wednesday' | 'thursday' | 'friday' | 'saturday' | 'sunday';
-type MealTimeKey = 'breakfast' | 'lunch' | 'dinner';
+type MealTimeKey = ServingsMealType;
 
-const MEAL_TIME_LABELS: Record<MealTimeKey, string> = { breakfast: '朝', lunch: '昼', dinner: '夜' };
+// 区分の短い名前 (朝 / 昼 / 夜) は Web の区分の見た目の表から引く (#1665)
+const MEAL_TIME_LABELS: Record<MealTimeKey, string> = SERVINGS_MEAL_SHORT_LABELS;
 
 interface ServingsModalProps {
   onClose: () => void;

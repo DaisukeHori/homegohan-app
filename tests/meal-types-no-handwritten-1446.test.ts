@@ -28,8 +28,9 @@
  *   9. NO_FIVE_KEY_TABLE_FILES のファイルでは、5 値をキーに持つ表そのもの (表示名は MEAL_LABELS、並びは MEAL_ORDER から引く)
  *
  * 捕まえない書き方 (限界):
- *   a. 5 値のうち一部 (4 値以下) との比較 + 既定の値 (else) で残りを表す連鎖。例: Web の『食事を追加』モーダルの背景色と絵文字
- *      (区分ごとの見た目の対応表。値の集合の正本の問題ではなく表示の表の置き場の問題なので、#1631 の範囲外として別の Issue で扱う)
+ *   a. 5 値のうち一部 (4 値以下) との比較 + 既定の値 (else) で残りを表す連鎖。例: (#1665 より前の) Web の『食事を追加』モーダルの
+ *      背景色と絵文字 (区分ごとの見た目の対応表。値の集合の正本の問題ではなく表示の表の置き場の問題なので、#1631 の範囲外とした)。
+ *      区分の見た目の対応表は、このファイルの末尾の #1665 の番兵 (下の「#1665 の見張りの契約」) が見張る
  *   b. 部分集合 (基本の 3 食など 3 値以下) の配列・union・比較。例: BASE_MEAL_TYPES、時刻で区分の並びを選ぶ 3 値の配列
  *   c. 4 値の union・4 値との比較 (4 値は配列だけを見る)
  *   d. 値を返すだけの分岐 (時刻から区分を選ぶ return 'breakfast' など。戻り値の MealType 型を tsc が確かめる)
@@ -41,6 +42,28 @@
  *
  * 型 (tsc) は「手書きの 5 値が正本と同じ値か」までは見ないので、ソースを読んで手書きとキャストが戻っていないことを固定する。
  * 正本から導いた値そのもの (並び・表示名・受け付ける値) は、それぞれの挙動のテストが固定する。
+ *
+ * ■ #1665 の見張りの契約 (食事の区分ごとの見た目の対応表)
+ * 区分ごとの色・下地の色・絵文字・アイコン・表示名は、表 (Record<MealType, …>) 1 か所から引く:
+ *   - Web とモバイルで同じ値: packages/shared/src/meal-types.ts (MEAL_LABELS・MEAL_EMOJIS)
+ *   - Web: src/lib/meal-type-visuals.ts / モバイル: apps/mobile/src/lib/meal-type-visuals.ts
+ * 表の値そのもの (今の画面の色・絵文字) は tests/meal-type-visuals-1665.test.ts と apps/mobile/__tests__/lib/meal-type-visuals.test.ts が固定する。
+ * この番兵は、表の外に区分ごとの見た目の対応が新しく増えないことを、次の「捕まえる書き方」で見張る
+ * (PRODUCT_SOURCE_DIRS から VISUAL_SCAN_EXCLUDED_DIRS を除いた製品のソース。除外表 (理由つき) のファイルは見ない):
+ *   V1. 区分の値と == / === で比べた結果で値を選ぶ形が、ファイルの中で 2 つ以上の区分ぶんある
+ *       (三項演算子 x === 'v' ? … / 'v' === x ? …、switch の case 'v':、if (… === 'v') return …)。
+ *       5 値そろわない連鎖 (一部の区分 + 既定の値) も拾う (#1631 の番兵の限界 a を埋める)
+ *   V2. 5 値をキーに持つ表 (オブジェクトのリテラル。Record<MealType, …> も含む) が、見た目の表のファイル・除外表の外にある
+ *   V3. 区分の値を引用符つきで持つ項目と、見た目の項目 (label / shortLabel / icon / Icon / emoji / color / bg / background) を
+ *       同じ 1 つのオブジェクトのリテラルに並べた形 ({ type: 'breakfast', label: '朝食', icon: '🌅' } のような選択肢の一覧)
+ * 捕まえない書き方 (限界。見落としても番兵の欠陥としては扱わない):
+ *   v-a. 1 つの区分だけとの比較 (const isSnack = t === 'snack' など。片方の区分だけ特別に扱う判定は見た目の表ではない)
+ *   v-b. != / !== での比較 (if (t !== 'breakfast' && …) return null のような絞り込み)・includes() での判定
+ *   v-c. 引用符の無い値 (定数・変数・テンプレートリテラルを介した比較や項目)
+ *   v-d. 5 値そろわない表 (3 食だけの表など)。V3 の形に当たらない 3 値以下の表は見ない (型の網羅は tsc が止めない)
+ *   v-e. 入れ子の { } を含むオブジェクトの V3 (1 つのオブジェクトのリテラルの中に { } があると見ない)
+ *   v-f. VISUAL_SCAN_EXCLUDED_DIRS (Edge Functions (supabase/functions)・scripts。見た目を持たない) と、除外表のファイル
+ *   v-g. 比べた結果で値を選ぶのが、三項演算子・case・if (…) return の 3 つ以外の形 (&& / || での選び方、if の中の代入など)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -463,5 +486,197 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
     expect(
       hasHandwrittenAllButOneArray(stripComments("// ['breakfast', 'lunch', 'dinner', 'midnight_snack']")),
     ).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────
+// #1665: 食事の区分ごとの見た目の対応表は、表 1 か所 (Record<MealType, …>) から引く (契約は冒頭の「#1665 の見張りの契約」)
+// ─────────────────────────────────────────────
+
+/** 区分ごとの見た目の表を置くファイル (V2 の 5 値の表を持ってよい) */
+const MEAL_TYPE_VISUAL_TABLE_FILES: Record<string, string> = {
+  'packages/shared/src/meal-types.ts': 'Web とモバイルで同じ値の見た目 (MEAL_LABELS・MEAL_EMOJIS) の表',
+  'src/lib/meal-type-visuals.ts': 'Web の区分の見た目 (色・下地の色・アイコンの部品) の表',
+  'apps/mobile/src/lib/meal-type-visuals.ts': 'モバイルの区分の見た目 (色・アイコンの部品・短い名前) の表',
+};
+
+/** 見た目の表ではないが 5 値をキーに持つ表を置いてよいファイルと理由 (V2 の除外表) */
+const FIVE_KEY_NON_VISUAL_TABLE_ALLOWED: Record<string, string> = {
+  'src/app/api/meal-plans/meals/reorder/route.ts': '並べ替えの API の区分の並びの番号 (おやつは 0 で、どこへでも動かせる)。見た目ではない',
+};
+
+/** 区分との比較の連鎖 (V1) を残してよいファイルと理由 */
+const COMPARISON_CHAIN_ALLOWED: Record<string, string> = {
+  'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts':
+    'AI 相談のシステムプロンプトで、今の時刻と区分から「次の食事 / その次」の優先度の文言を選ぶ判定。区分ごとの見た目の表ではない',
+};
+
+/** 区分の値と見た目の項目を並べたオブジェクト (V3) を残してよいファイルと理由 */
+const VISUAL_OPTION_OBJECT_ALLOWED: Record<string, string> = {
+  'src/app/onboarding/questions/page.tsx':
+    '人数の設定 (曜日 × 朝・昼・夜) のフォームの列 ({ key, label })。人数の設定は 3 食だけで、区分ごとの見た目の表ではない (#1665 の範囲外)',
+  'apps/mobile/app/onboarding/questions.tsx':
+    '人数の設定 (曜日 × 朝・昼・夜) のフォームの列 ({ key, label })。人数の設定は 3 食だけで、区分ごとの見た目の表ではない (#1665 の範囲外)',
+  'apps/mobile/app/recipes/index.tsx': 'レシピの分類 (主菜・おやつ など) の選択肢。値 snack はレシピの分類で、食事の区分ではない',
+};
+
+/** 見た目の対応を見張らない製品のソースのディレクトリ (Edge Functions と scripts は見た目を持たない = 限界 v-f) */
+const VISUAL_SCAN_EXCLUDED_DIRS = ['supabase/functions/', 'scripts/'];
+
+/** == / === (!= / !== は含めない = 限界 v-b) */
+const STRICT_OR_LOOSE_EQUALS = String.raw`(?<![!=<>])={2,3}`;
+
+/** その区分と比べた結果で値を選ぶ形 (三項演算子・case・if (…) return) があるか */
+function selectsValueByComparisonWith(strippedSource: string, mealType: string): boolean {
+  const quoted = String.raw`['"]${mealType}['"]`;
+  return [
+    new RegExp(String.raw`${STRICT_OR_LOOSE_EQUALS}\s*${quoted}\s*\?`),
+    new RegExp(String.raw`${quoted}\s*${STRICT_OR_LOOSE_EQUALS}\s*[\w.$[\]]+\s*\?`),
+    new RegExp(String.raw`\bcase\s+${quoted}\s*:`),
+    new RegExp(String.raw`\bif\s*\([^()]*${STRICT_OR_LOOSE_EQUALS}\s*${quoted}[^()]*\)\s*(?:return\b|\{\s*return\b)`),
+  ].some((pattern) => pattern.test(strippedSource));
+}
+
+/** 比べた結果で値を選ぶ区分の数 (2 つ以上で連鎖とみなす = V1) */
+function countComparedMealTypes(strippedSource: string): number {
+  return MEAL_ORDER.filter((mealType) => selectsValueByComparisonWith(strippedSource, mealType)).length;
+}
+
+/** 連鎖とみなす、比べた区分の数の下限 (1 つだけとの比較は特別扱いの判定 = 限界 v-a) */
+const MIN_CHAINED_MEAL_TYPES = 2;
+
+/** 入れ子の無い { … } (V3 の 1 つのオブジェクトのリテラル) */
+const FLAT_OBJECT_LITERAL = /\{[^{}]*\}/g;
+/** 区分の値を引用符つきで持つ項目 (type: 'breakfast' / key: "lunch" など) */
+const MEAL_TYPE_VALUE_PROPERTY = new RegExp(String.raw`:\s*['"](?:${MEAL_ORDER.join('|')})['"]`);
+/** 見た目の項目 */
+const VISUAL_PROPERTY = /\b(?:label|shortLabel|icon|Icon|emoji|color|bg|background)\s*:/;
+
+/** 区分の値と見た目の項目を並べたオブジェクトのリテラル (V3) */
+function findVisualOptionObjects(strippedSource: string): string[] {
+  return (strippedSource.match(FLAT_OBJECT_LITERAL) ?? []).filter(
+    (fragment) => MEAL_TYPE_VALUE_PROPERTY.test(fragment) && VISUAL_PROPERTY.test(fragment),
+  );
+}
+
+/** 見た目の対応を見張る製品のソース (PRODUCT_SOURCE_DIRS から VISUAL_SCAN_EXCLUDED_DIRS を除いたもの) */
+function collectVisualScanFiles(): string[] {
+  return collectProductSourceFiles().filter((file) => !VISUAL_SCAN_EXCLUDED_DIRS.some((dir) => file.startsWith(dir)));
+}
+
+describe('#1665 食事の区分ごとの見た目は表 1 か所から引き、表の外に対応表を増やさない', () => {
+  it('見張るディレクトリは Web とモバイルの画面と共通のパッケージを含む (走査が空振りしていない)', () => {
+    const files = collectVisualScanFiles();
+    expect(files).toEqual(
+      expect.arrayContaining([
+        'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
+        'src/app/(main)/meals/[id]/page.tsx',
+        'apps/mobile/app/meals/[id].tsx',
+        'apps/mobile/app/menus/weekly/index.tsx',
+        'apps/mobile/src/components/menu/AddMealSlotModal.tsx',
+        ...Object.keys(MEAL_TYPE_VISUAL_TABLE_FILES),
+      ]),
+    );
+    expect(files.some((file) => file.startsWith('supabase/functions/'))).toBe(false);
+  });
+
+  it('除外表と見た目の表のファイルはどれも実在する (改名・削除で検査が空振りしない)', () => {
+    for (const file of [
+      ...Object.keys(MEAL_TYPE_VISUAL_TABLE_FILES),
+      ...Object.keys(FIVE_KEY_NON_VISUAL_TABLE_ALLOWED),
+      ...Object.keys(COMPARISON_CHAIN_ALLOWED),
+      ...Object.keys(VISUAL_OPTION_OBJECT_ALLOWED),
+    ]) {
+      expect(fs.existsSync(path.join(ROOT, file)), file).toBe(true);
+    }
+  });
+
+  it('V1: 区分との比較の連鎖 (三項・switch・if-return) は、除外表 (理由つき) のファイルにしか無い', () => {
+    const chained = collectVisualScanFiles().filter(
+      (file) => countComparedMealTypes(readStripped(file)) >= MIN_CHAINED_MEAL_TYPES,
+    );
+    expect(chained.filter((file) => !(file in COMPARISON_CHAIN_ALLOWED)).sort()).toEqual([]);
+    // 除外表の行は、いまも実際にある連鎖を指している (除外表が古くならない)
+    expect(chained).toEqual(expect.arrayContaining(Object.keys(COMPARISON_CHAIN_ALLOWED)));
+  });
+
+  it('V2: 5 値をキーに持つ表は、見た目の表のファイルと除外表 (理由つき) のファイルにしか無い', () => {
+    const withTable = collectVisualScanFiles().filter((file) => findFiveKeyTables(readStripped(file)).length > 0);
+    expect(
+      withTable
+        .filter((file) => !(file in MEAL_TYPE_VISUAL_TABLE_FILES) && !(file in FIVE_KEY_NON_VISUAL_TABLE_ALLOWED))
+        .sort(),
+    ).toEqual([]);
+    // 見た目の表のファイルと除外表の行は、いまも実際にある表を指している
+    expect(withTable).toEqual(
+      expect.arrayContaining([...Object.keys(MEAL_TYPE_VISUAL_TABLE_FILES), ...Object.keys(FIVE_KEY_NON_VISUAL_TABLE_ALLOWED)]),
+    );
+  });
+
+  it('V3: 区分の値と見た目の項目を並べたオブジェクトは、除外表 (理由つき) のファイルにしか無い', () => {
+    const withOptions = collectVisualScanFiles().filter((file) => findVisualOptionObjects(readStripped(file)).length > 0);
+    expect(withOptions.filter((file) => !(file in VISUAL_OPTION_OBJECT_ALLOWED)).sort()).toEqual([]);
+    expect(withOptions).toEqual(expect.arrayContaining(Object.keys(VISUAL_OPTION_OBJECT_ALLOWED)));
+  });
+
+  it('V1 の検査は、#1665 で消した比較の連鎖を実際に拾う (検査が空振りしていない)', () => {
+    // Web の『食事を追加』モーダルの下地の色と絵文字 (4 値 + 既定の値の連鎖。#1631 の番兵の限界 a)
+    const addMealSlotBackground = `background: type === 'breakfast' ? colors.warningLight
+      : type === 'lunch' ? colors.accentLight
+      : type === 'dinner' ? colors.purpleLight
+      : type === 'snack' ? colors.successLight
+      : colors.blueLight`;
+    expect(countComparedMealTypes(stripComments(addMealSlotBackground))).toBe(4);
+    // 3 食だけの表示名の連鎖 (買い物の範囲・モバイルの買い物リスト)・左右を入れ替えた比較・二重引用符・==
+    expect(
+      countComparedMealTypes("const label = mealType === 'breakfast' ? '朝食' : mealType === 'lunch' ? '昼食' : '夕食';"),
+    ).toBe(2);
+    expect(countComparedMealTypes(`const c = "breakfast" === t ? a : t == "dinner" ? b : c;`)).toBe(2);
+    // switch の case と if (…) return の連鎖
+    expect(countComparedMealTypes("switch (t) { case 'lunch': return '☀️'; case \"snack\": return '🍪'; default: return ''; }")).toBe(2);
+    expect(countComparedMealTypes("if (t === 'breakfast') return '🌅'; if (t === 'midnight_snack') { return '🌃'; }")).toBe(2);
+    // 1 つの区分だけとの比較 (限界 v-a)・!== の絞り込み (限界 v-b)・値を返すだけの分岐・コメントの中の連鎖・表から引く形は拾わない
+    expect(countComparedMealTypes("const isSnack = meal.mealType === 'snack'; const s = isSnack ? 1 : 2;")).toBe(0);
+    expect(
+      countComparedMealTypes("if (t !== 'breakfast' && t !== 'lunch' && t !== 'dinner') return null;"),
+    ).toBe(0);
+    expect(countComparedMealTypes("if (h < 10) return 'breakfast'; if (h < 14) return 'lunch';")).toBe(0);
+    expect(countComparedMealTypes(stripComments(`// ${addMealSlotBackground.replace(/\n/g, ' ')}`))).toBe(0);
+    expect(countComparedMealTypes('background: MEAL_TYPE_RECORD_THEME[type].bg, emoji: MEAL_EMOJIS[type]')).toBe(0);
+  });
+
+  it('V2 の検査は、#1665 で消した Record<MealType, …> の見た目の表を実際に拾う (検査が空振りしていない)', () => {
+    // Web のホームの区分の表 (Record<MealType, …> なので #1631 の番兵の検査 8 は拾わない)
+    const homeConfig = `const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string; time: string }> = {
+      breakfast: { icon: Coffee, label: '朝食', color: '#FF9800', time: '7:00' },
+      lunch: { icon: Sun, label: '昼食', color: '#4CAF50', time: '12:00' },
+      dinner: { icon: Moon, label: '夕食', color: '#7C4DFF', time: '19:00' },
+      snack: { icon: Coffee, label: 'おやつ', color: '#E91E63', time: '15:00' },
+      midnight_snack: { icon: Moon, label: '夜食', color: '#3F51B5', time: '22:00' },
+    };`;
+    expect(findFiveKeyTables(stripComments(homeConfig))).toHaveLength(1);
+    // モバイルの『食事タイプを選択』モーダルのアイコンの名前の表 (値が文字列だけの表)
+    const mobileIcons = `const MEAL_ICONS: Record<MealType, keyof typeof Ionicons.glyphMap> = {
+      breakfast: "sunny", lunch: "partly-sunny", dinner: "moon", snack: "cafe", midnight_snack: "cloudy-night",
+    };`;
+    expect(findFiveKeyTables(stripComments(mobileIcons))).toHaveLength(1);
+    // 3 食だけの表 (限界 v-d) は拾わない
+    expect(findFiveKeyTables("const L: Record<MealTimeKey, string> = { breakfast: '朝', lunch: '昼', dinner: '夜' };")).toEqual([]);
+  });
+
+  it('V3 の検査は、#1665 で消した選択肢の一覧を実際に拾う (検査が空振りしていない)', () => {
+    // Web の『献立を改善』の改善する食事の選択肢
+    const improveOptions = `const mealOptions = [
+      { type: 'breakfast', label: '朝食', icon: '🌅' },
+      { type: 'lunch', label: '昼食', icon: '☀️' },
+      { type: 'dinner', label: '夕食', icon: '🌙' },
+    ];`;
+    expect(findVisualOptionObjects(stripComments(improveOptions))).toHaveLength(3);
+    expect(findVisualOptionObjects(`{ value: "midnight_snack", color: c }`)).toHaveLength(1);
+    // 見た目の項目の無いオブジェクト・区分の値の無いオブジェクト・表から引く形・入れ子を含むもの (限界 v-e) は拾わない
+    expect(findVisualOptionObjects("{ mealType: 'snack', dayIndex: 1 }")).toEqual([]);
+    expect(findVisualOptionObjects("{ type: 'cook', label: '自炊' }")).toEqual([]);
+    expect(findVisualOptionObjects('{ type, label: MEAL_LABELS[type], icon: MEAL_EMOJIS[type] }')).toEqual([]);
+    expect(findVisualOptionObjects("{ type: 'breakfast', style: { color: c } }")).toEqual([]);
   });
 });
