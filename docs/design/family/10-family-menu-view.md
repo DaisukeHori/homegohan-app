@@ -1350,7 +1350,7 @@ describe('C-4: 生成型 (database.types.ts) の Returns は、route と同じ�
 });
 ```
 
-`GeneratedMealsReturn` は `Json` なので、値は DB の NULL を JSON の `null` で書ける (上は null になりうる 5 つの鍵を `null` にして、`groupFamilyMenuRows` が DDL の DEFAULT で埋めることも見る)。生成物の `family_menu_visible_members` の列が違えば、型の再生成の結果に合わせて値の型だけを直す (検査の向き = 生成型 → `FamilyMenuVisibleMemberRow` は変えない)。
+`GeneratedMealsReturn` は `Json` なので、値は DB の NULL を JSON の `null` で書ける (上は null になりうる鍵 (`image_url` と、DDL で NOT NULL でない 5 つ) をすべて `null` にして、`groupFamilyMenuRows` が `is_simple`・`display_order`・`is_completed` を DDL の DEFAULT で埋めることも見る)。生成物の `family_menu_visible_members` の列が違えば、型の再生成の結果に合わせて値の型だけを直す (検査の向き = 生成型 → `FamilyMenuVisibleMemberRow` は変えない)。
 
 ### 19.7 既存のテストの変更
 
