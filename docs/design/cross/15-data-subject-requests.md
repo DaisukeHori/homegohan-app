@@ -36,6 +36,8 @@
 | R-13 | cross/ の既存仕様は後方互換の追加だけ (inquiries の CHECK・ポリシーを変えない) | cross/CLAUDE.md §2 | §3.2 |
 | R-14 | auth.users を指す外部キーは必ず ON DELETE を書く・NO ACTION 0 本 | operator/01 冒頭・20261010000100 | §4.1 |
 
+Issue 本文との食い違い (本書を正とする): Issue の「該当箇所」の `src/app/(main)/privacy/page.tsx:41-42` は origin/main に無い。プライバシーポリシーは #1174 (PR #1382「利用規約とプライバシーポリシーを未ログインでも読めるようにする」) で `src/app/privacy/page.tsx` へ移っており、第6条は 70-71 行。本書 (§1・R-2) は移った先のパスを指す。Issue の要件の中身 (第6条の約束・inquiries に法定請求のカテゴリと本人確認・期限が無い) は移動の前後で変わらない。
+
 ### 0.3 ユーザーシナリオ (15 本。トレースは §3.3)
 
 | # | シナリオ |
@@ -819,8 +821,11 @@ export function withdrawDsr(admin: DsrAdminClient, params: { userId: string; id:
 export function listDsrForOperator(user: DsrUserClient, admin: DsrAdminClient, params: { query: DsrAdminListQuery; page: number; perPage: number }, ctx: DsrContext): Promise<DsrServiceResult<{ rows: DsrAdminSummaryDto[]; total: number | null }>>;
 export function getDsrForOperator(user: DsrUserClient, admin: DsrAdminClient, id: string, ctx: DsrContext): Promise<DsrServiceResult<DsrAdminDetailDto>>;
 /**
- * 運営の更新。順に: ifUnmodifiedSince が無い → 428 / 行が無い → 404 / updated_at ≠ ヘッダ → 412 / 遷移が表に無い → 409 DSR_INVALID_TRANSITION /
+ * 運営の更新。順に: ifUnmodifiedSince が無い → 428 / 行が無い → 404 / updated_at ≠ ヘッダ → 412 /
+ * 行の状態が DSR_ACTIONABLE_STATUSES (received / in_progress) に無い → 409 DSR_INVALID_TRANSITION (status の有無を問わない。応答・内部メモだけの更新も同じ) /
+ * status を指定し findDsrTransition('operator', 行の状態, status) が null (同じ状態の指定 in_progress → in_progress を含む) → 409 DSR_INVALID_TRANSITION /
  * fulfilled・rejected で更新後の response_note が空 → 422 / UPDATE が 0 行 → 409 CONFLICT_STALE_DATA。
+ * status が無い本文は「状態を変えずに response_note / admin_notes だけを直す」更新 (§8.3)。
  * 変更が無ければ書き込まない。fulfilled / rejected になったら dsr_resolved を送る (user_id が NULL なら送らず info ログ)
  */
 export function updateDsrByOperator(admin: DsrAdminClient, params: { id: string; ifUnmodifiedSince: string | null; input: DsrAdminUpdateInput }, ctx: DsrContext): Promise<DsrServiceResult<{ before: DsrRow; after: DsrRow; changed: { status: boolean; response_note: boolean; admin_notes: boolean } }>>;
@@ -829,6 +834,12 @@ export function updateDsrByOperator(admin: DsrAdminClient, params: { id: string;
 ```ts
 // tsc:skip  (新設モジュールを import するため、独立の検査では解決できない)
 // src/lib/data-subject-requests/notifications.ts — すべて best-effort (例外を投げない。失敗はログ。宛先は auth.users の登録アドレスを service_role で引き、メモリ上だけで使う)
+// 分岐 (4 関数とも Promise<void> を resolve し、reject しない):
+//   - 本人向け 3 つ (verification / received / resolved): row.user_id が NULL → 送らず info ログ (getUserById を呼ばない)
+//   - 本人向け 3 つ: admin.auth.admin.getUserById が error を返す・email が無い・例外 → 送らず warn ログ
+//   - 運営向け (operator notice): getOptionalEnv('ADMIN_NOTIFICATION_EMAIL') が未設定 → 送らず warn ログ
+//   - sendEmail が { ok: false } (skipped を含む) → warn ログ / sendEmail が例外 → catch して warn ログ
+//   - ログに宛先のアドレスを入れない (request_id と template 名だけ)
 import type { DsrAdminClient, DsrLogger } from '@/lib/data-subject-requests/service';
 import type { DsrRow } from '@/lib/data-subject-requests/core';
 
@@ -878,6 +889,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrRow, siteUrl
 | `GET /api/admin/data-requests/{id}` | パス id | 200 `{ data: DsrAdminDetailDto }` | 400、401、403、404 NOT_FOUND、500 |
 | `PATCH /api/admin/data-requests/{id}` | ヘッダ `If-Unmodified-Since` (GET が返した `updated_at` の文字列をそのまま。RFC 7231 の HTTP-date ではない — 秒未満が落ちて毎回 412 になるため)、本文 dsrAdminUpdateBodySchema | 200 `{ data: DsrAdminDetailDto }` | 400 INVALID_CHARACTER / INVALID_JSON / VALIDATION_ERROR、401、403、404、409 DSR_INVALID_TRANSITION / CONFLICT_STALE_DATA、412 CONFLICT_OPTIMISTIC_LOCK、422 DSR_RESPONSE_NOTE_REQUIRED、428 CONFLICT_PRECONDITION_REQUIRED、500 |
 
+- PATCH の `status` は状態を変えるときだけ送る。同じ状態の指定 (in_progress → in_progress) は遷移表に無いので 409 DSR_INVALID_TRANSITION (received は DSR_OPERATOR_TARGET_STATUSES に無いので 400 VALIDATION_ERROR)。`status` を送らず応答・内部メモだけを直す更新は、行が received / in_progress のときだけ受け付ける。本人確認待ち (運営は手を付けない。S-5) と終わった請求 (fulfilled / rejected / withdrawn。本人が読んだ応答と記録を書き換えない) は、本文の中身を問わず 409 DSR_INVALID_TRANSITION。
 - 一覧の `overdue=1` は `status IN (received, in_progress) AND due_at < now()`。`status` と同時に指定されたら両方で絞る。
 - 一覧の読み取りは本人のセッションの client (RLS `data_subject_requests_select_operator`)。service_role はニックネーム (`fetchNicknames`) と詳細のメールアドレス (`fetchUserEmails`) にだけ使う。
 - PATCH は読み直し → 比較 → 条件つき UPDATE (`.eq('id', id).eq('updated_at', ifUnmodifiedSince)`) → `select(DSR_ADMIN_COLUMNS).maybeSingle()`。変更が無ければ書き込まない (updated_at を動かさない) が、応答に本文を含むので監査は毎回記録する (問い合わせと同じ)。
@@ -891,14 +903,31 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrRow, siteUrl
 
 種類 (4) は状態遷移・画面・API に影響しない (表示の文言と、運営が取る手段 §9.2 の案内が違うだけ)。列挙は状態 × 操作で閉じる。
 
-| 状態 | 本人: 見る | 本人: verify | 本人: resend | 本人: withdraw | 運営: 見る | 運営: → in_progress | 運営: → fulfilled / rejected | 期限超過の判定 | 書き出し (export) | メール |
-|---|---|---|---|---|---|---|---|---|---|---|
-| pending_verification | 可 (期限切れ表示) | 可 (期限内・一致) | 可 (上限まで) | 可 | 可 (一覧は既定で非表示) | 409 | 409 | しない | 含む | dsr_verification (create / resend) |
-| received | 可 | 409 | 409 | 可 | 可 | 可 | 可 (応答必須) | する | 含む | dsr_received・dsr_operator_notice (verify 時) |
-| in_progress | 可 | 409 | 409 | 可 | 可 | — (同じ状態は変更なし) | 可 (応答必須) | する | 含む | なし |
-| fulfilled | 可 (応答を読む) | 409 | 409 | 409 | 可 | 409 | 409 | しない | 含む | dsr_resolved (遷移時) |
-| rejected | 可 (応答を読む) | 409 | 409 | 409 | 可 | 409 | 409 | しない | 含む | dsr_resolved (遷移時) |
-| withdrawn | 可 | 409 | 409 | 409 | 可 | 409 | 409 | しない | 含む | なし |
+#### (a) 本人がいる請求 (user_id が入っている)
+
+本人の列の 409 は `DSR_INVALID_STATE`、運営の列の 409 は `DSR_INVALID_TRANSITION`。
+
+| 状態 | 本人: 見る | 本人: verify | 本人: resend | 本人: withdraw | 運営: 見る | 運営: → in_progress | 運営: → fulfilled / rejected | 運営: 応答・内部メモだけ (status 無し) | 期限超過の判定 | 書き出し (export) | メール |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| pending_verification | 可 (期限切れ表示) | 可 (期限内・一致) | 可 (上限まで) | 可 | 可 (一覧は既定で非表示) | 409 | 409 | 409 | しない | 含む | dsr_verification (create / resend) |
+| received | 可 | 409 | 409 | 可 | 可 | 可 | 可 (応答必須) | 可 (状態は不変) | する | 含む | dsr_received・dsr_operator_notice (verify 時) |
+| in_progress | 可 | 409 | 409 | 可 | 可 | 409 (同じ状態の指定。状態を変えないときは status を送らない) | 可 (応答必須) | 可 (状態は不変) | する | 含む | なし |
+| fulfilled | 可 (応答を読む) | 409 | 409 | 409 | 可 | 409 | 409 | 409 | しない | 含む | dsr_resolved (遷移時) |
+| rejected | 可 (応答を読む) | 409 | 409 | 409 | 可 | 409 | 409 | 409 | しない | 含む | dsr_resolved (遷移時) |
+| withdrawn | 可 | 409 | 409 | 409 | 可 | 409 | 409 | 409 | しない | 含む | なし |
+
+#### (b) 退会済みの請求 (user_id が NULL。S-11)
+
+退会で `user_id` が外れても状態は変わらない (§8.3 の最終行)。本人の API はどれも `.eq('user_id', userId)` で読むので、退会済みの行は誰の本人の操作でも 404。書き出しの本人もいない。
+
+| 状態 | 本人: 見る / verify / resend / withdraw | 運営: 見る | 運営: → in_progress | 運営: → fulfilled / rejected | 運営: 応答・内部メモだけ | 期限超過の判定 | 書き出し | メール | 監査の target |
+|---|---|---|---|---|---|---|---|---|---|
+| pending_verification | 本人がいない (404) | 可 (請求者「退会済み」。本人確認待ちのタブに残る) | 409 | 409 | 409 | しない | 対象外 | なし (確認リンクは誰も開けない) | data_subject_request |
+| received | 本人がいない (404) | 可 (請求者「退会済み」) | 可 | 可 (応答必須。応答は記録として残る) | 可 | する (閉じるまで期限超過に出る) | 対象外 | dsr_resolved は送らない (info ログ) | data_subject_request |
+| in_progress | 本人がいない (404) | 可 | 409 (同じ状態) | 可 (応答必須) | 可 | する | 対象外 | dsr_resolved は送らない (info ログ) | data_subject_request |
+| fulfilled / rejected / withdrawn | 本人がいない (404) | 可 | 409 | 409 | 409 | しない | 対象外 | なし | data_subject_request |
+
+退会済みの行が新しく作られることは無い (create は本人のセッションが要る)。退会済みの pending_verification は誰も閉じられないが、本人確認の済んでいない請求なので運営の対応も期限も無く、記録として残すだけでよい (一覧の既定のタブ「受付済み」には出ない)。
 
 消費経路の全列挙: 書く側 = service.ts の 5 関数 (create / verify / resend / withdraw / updateByOperator)。読む側 = 本人の GET 2 本・運営の GET 2 本・account-export。表示 = 設定画面 2 つ・運営画面 2 つ・メール 4 通。既存テスト資産で反応するもの = §18。
 
@@ -930,9 +959,11 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrRow, siteUrl
 | received | update status=in_progress (運営) | in_progress | If-Unmodified-Since 一致 | 監査 admin.dsr.update |
 | received / in_progress | update status=fulfilled (運営) | fulfilled | 一致・更新後の response_note が非空 | resolved_at = now・監査・メール dsr_resolved |
 | received / in_progress | update status=rejected (運営) | rejected | 一致・更新後の response_note が非空 | resolved_at = now・監査・メール dsr_resolved |
-| received / in_progress | update (note だけ) (運営) | 不変 | 一致 | 監査 (変更が無くても記録) |
-| pending_verification / fulfilled / rejected / withdrawn | update status=* (運営) | — | 409 DSR_INVALID_TRANSITION | 書き込み無し |
-| 任意 | 退会 (本人。既存の API) | 状態不変 | — | user_id = NULL (FK) |
+| received / in_progress | update (status 無し。response_note / admin_notes だけ) (運営) | 不変 | 一致 | 変更があれば書く・監査 (変更が無くても記録) |
+| in_progress | update status=in_progress (運営) | — | 409 DSR_INVALID_TRANSITION (同じ状態の指定は遷移ではない) | 書き込み無し・監査無し |
+| pending_verification / fulfilled / rejected / withdrawn | update (運営。status の有無を問わない = 応答・内部メモだけの更新を含む) | — | 409 DSR_INVALID_TRANSITION | 書き込み無し・監査無し |
+| received / in_progress (user_id = NULL) | update status=fulfilled / rejected (運営) | fulfilled / rejected | 一致・更新後の response_note が非空 | resolved_at = now・監査 (target_type = data_subject_request)・dsr_resolved は送らない (info ログ) |
+| 任意 | 退会 (本人。既存の API) | 状態不変 | — | user_id = NULL (FK)。以後の本人の操作は 404 (§8.1 (b)) |
 
 期限切れ・期限超過は状態ではなく、`verification_expires_at` / `due_at` と現在時刻から計算する (表に無い遷移を作らない)。
 
@@ -949,6 +980,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrRow, siteUrl
 | 本人確認 | `src/app/(main)/settings/data-requests/verify/page.tsx` ("use client"。`useSearchParams` は Suspense 境界の中で呼ぶ: MainLayout.tsx:37 と同じ) | `?id=&token=` を読み、開いた時点で POST verify を 1 回呼ぶ。結果: 200 →「受け付けました。応答の期限は {due_at (JST)} です」+ 一覧へのリンク / 410 →「リンクの期限が切れています」+ 一覧 (再送) へのリンク / 400・404・409 →「このリンクは使えません」+ 一覧へのリンク。ログインしていなければ (main) の既存の仕組みで /login へ移る (その後、メールのリンクをもう一度開く案内をメール本文に書く) |
 
 - 文言は固定 (API の `error` 文字列を画面に出してよい: どれもこちらで書いた文)。429 は `Retry-After` から分の文を作る (accountExportRateLimitedMessage と同じ形の `dsrRateLimitedMessage` を core.ts ではなく画面側の helper `src/lib/data-subject-requests/client-messages.ts` に置く)。
+  シグネチャと文: `export function dsrRateLimitedMessage(retryAfterSec: number | null): string`。retryAfterSec が正の数なら `Math.ceil(retryAfterSec / SECONDS_PER_MINUTE)` で「N分ほど」、null・0 以下なら「しばらく」を wait にして `短い時間に請求の送信を繰り返したため、一時的に実行できません。${wait}待ってからもう一度お試しください。` を返す (src/lib/account-self-service.ts:66 の accountExportRateLimitedMessage と同じ式。`SECONDS_PER_MINUTE = 60` はファイル内の名前付き定数)。
 - モバイルアプリ (WebView) の中でも同じ画面が開く。ネイティブの設定画面からのリンクは §19。
 
 ### 9.2 運営 (/admin)
@@ -957,7 +989,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrRow, siteUrl
 |---|---|---|
 | ナビとカード | `src/app/admin/layout.tsx` のサイドバー (isAdmin のときだけ「開示等の請求」→ `DSR_ADMIN_PATH`)、`src/app/admin/page.tsx` のカード | content_moderator には出さない (API も 403) |
 | 一覧 | `src/app/admin/data-requests/page.tsx` ("use client") | タブ: 受付済み / 対応中 / 期限超過 (overdue=1) / 本人確認待ち / 終了 (fulfilled・rejected・withdrawn はタブ内で status を切替) / すべて。既定は「受付済み」。表の列: 受付番号・種類・状態・請求者 (requester_nickname。無ければ user_id の先頭 8 桁、NULL は「退会済み」)・受付 (verified_at)・期限 (due_at。overdue は赤)・作成。行クリックで詳細へ。ページング (per_page 50) |
-| 詳細・対応 | `src/app/admin/data-requests/[id]/page.tsx` ("use client") | 上: 種類・状態・受付番号・請求者 (nickname / email / user_id。退会済みは「退会済み」)・本人確認 (方法・verified_at・送信回数)・期限 (overdue は赤)・請求の内容 (details)。中: 対応の手段の案内 (種類ごとの固定文。開示: 利用者詳細 `/admin/users/{user_id}` と本人の書き出しの案内 / 訂正: 本人が直せる項目はプロフィールを案内、運営が直すものは利用者詳細 / 利用停止: 利用者詳細の凍結 / 消去: 本人の退会を案内。退会済みなら対応済みにする)。下: 状態の select (遷移表に無い選択肢は disabled)・応答 (response_note textarea)・内部メモ (admin_notes textarea)・保存 (PATCH。ヘッダに最後に取得した updated_at)。412 / 409 は「別の運営者が更新しました。再読み込みしてください」、422 は「応答を書いてください」、本人確認待ちは状態の変更を disabled |
+| 詳細・対応 | `src/app/admin/data-requests/[id]/page.tsx` ("use client") | 上: 種類・状態・受付番号・請求者 (nickname / email / user_id。退会済みは「退会済み」)・本人確認 (方法・verified_at・送信回数)・期限 (overdue は赤)・請求の内容 (details)。中: 対応の手段の案内 (種類ごとの固定文。開示: 利用者詳細 `/admin/users/{user_id}` と本人の書き出しの案内 / 訂正: 本人が直せる項目はプロフィールを案内、運営が直すものは利用者詳細 / 利用停止: 利用者詳細の凍結 / 消去: 本人の退会を案内。退会済みなら対応済みにする)。下: 状態の select (遷移表に無い選択肢は disabled)・応答 (response_note textarea)・内部メモ (admin_notes textarea)・保存 (PATCH。ヘッダに最後に取得した updated_at)。412 / 409 は「別の運営者が更新しました。再読み込みしてください」、422 は「応答を書いてください」。保存の本文の `status` は、select の値が読み込んだ状態から変わったときだけ入れる (変えないときは送らない。§7.4)。本人確認待ちと終わった請求 (fulfilled / rejected / withdrawn) は select・応答・内部メモ・保存をすべて disabled (表示だけ。API も 409) |
 
 ---
 
@@ -1020,7 +1052,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrRow, siteUrl
 | `CONFLICT_PRECONDITION_REQUIRED` | 428 | 運営 PATCH | `{ error: { code, message: 'If-Unmodified-Since ヘッダが必要です' } }` |
 | `CONFLICT_OPTIMISTIC_LOCK` | 412 | 運営 PATCH | `{ error: { code, message: '別の更新が先に行われました。再読み込みしてください' } }` |
 | `CONFLICT_STALE_DATA` | 409 | 運営 PATCH (UPDATE 0 行) | 同上の文 |
-| `DSR_INVALID_TRANSITION` | 409 | 運営 PATCH | `{ error: { code, message: '現在の状態からその状態へは変更できません' } }` |
+| `DSR_INVALID_TRANSITION` | 409 | 運営 PATCH (遷移表に無い status・同じ状態の指定・本人確認待ち / 終わった請求への更新。§7.4) | `{ error: { code, message: '現在の状態ではその変更はできません' } }` |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | 運営 PATCH | `{ error: { code, message: '対応済み・対応できずにするときは本人への応答を書いてください' } }` |
 | `INTERNAL_ERROR` | 500 | 全 route | internalError (本人: flat / 運営: nested)。DB の生のエラー文は入れない |
 
@@ -1065,16 +1097,20 @@ sequenceDiagram
 | ファイル | it 名 (要点) |
 |---|---|
 | `src/__tests__/lib/data-subject-requests/core.test.ts` | dsrCreateBodySchema: 4 種を受け、空・2001 字・未知の種類を拒む / dsrVerifyBodySchema: 64 桁の 16 進だけ通す / dsrAdminUpdateBodySchema: 3 つとも無ければ拒む・withdrawn と pending_verification は status に指定できない / DSR_TRANSITIONS: 表 §8.3 と 1 対 1 (本人 4・運営 5 の 9 本。それ以外は null) / isDsrVerificationExpired: pending_verification かつ expires_at < now だけ true / isDsrOverdue: received・in_progress かつ due_at < now だけ true・終わった請求は false / computeDsrDueAt: 30 日後 / resolveDsrResponseDueDays: '30' → 30・''・'0'・'-1'・'1.5'・'1e2'・'366' → 30・'365' → 365 / toDsrOwnDto: hash と admin_notes を含まない / dsrAuditTarget: user_id があれば user、無ければ data_subject_request |
+| `src/__tests__/lib/data-subject-requests/core.test.ts` (続き: §5 の残りの export) | computeDsrVerificationExpiresAt: sentAt + DSR_VERIFICATION_TTL_HOURS 時間 / buildDsrVerifyUrl: `${siteUrl}${DSR_VERIFY_PATH}?id=…&token=…` で id と token が URLSearchParams で読み戻せる / shortDsrId: 先頭 DSR_SHORT_ID_LENGTH 文字 / normalizeDsrNote: null・undefined・空白だけ → null、それ以外は trim せずそのまま / dsrRequiresResponseNote: fulfilled・rejected だけ true (6 値) / canWithdrawDsr: pending_verification・received・in_progress だけ true (6 値) / isDsrOpen・isDsrTerminal: 6 値で OPEN と TERMINAL が排他・和が全値、DSR_ACTIONABLE_STATUSES ⊂ DSR_OPEN_STATUSES / findDsrTransition: DSR_TRANSITIONS の 9 本で非 null、それ以外の (actor 2 × from 6 × to 6) は null (in_progress → in_progress の operator を含む) / dsrAdminListQuerySchema: 全部省略可・overdue は '1' だけ ('0'・'true' を拒む)・未知の status / request_type を拒む / dsrIdSchema: UUID だけ通す / toDsrAdminSummaryDto: overdue を isDsrOverdue で計算・requester_nickname を写す / toDsrAdminDetailDto: hash を含まず admin_notes と requester を含む・requester が null なら requester_nickname も null / DSR_STATUS_LABELS・DSR_REQUEST_TYPE_LABELS: 全値にラベル |
+| `src/__tests__/lib/data-subject-requests/config.test.ts` | getDsrResponseDueDays: vi.stubEnv('DSR_RESPONSE_DUE_DAYS', '10') → 10 / 未設定 → DSR_RESPONSE_DUE_DAYS_DEFAULT / 'abc'・'366' → 既定 (resolveDsrResponseDueDays に委ねていること)。各 it の後に vi.unstubAllEnvs |
+| `src/__tests__/lib/data-subject-requests/client-messages.test.ts` | dsrRateLimitedMessage: 120 → 「2分ほど」/ 61 → 「2分ほど」(切り上げ) / null・0 → 「しばらく」 |
+| `src/__tests__/lib/data-subject-requests/notifications.test.ts` (sendEmail と admin.auth.admin.getUserById をモック) | 本人向け 3 つ: 宛先は getUserById の email・template 名がそれぞれ dsr_verification / dsr_received / dsr_resolved / user_id が NULL → getUserById も sendEmail も呼ばず info ログ / getUserById が error・email 無し → 送らず warn / sendEmail が { ok: false } → warn で resolve / sendEmail が throw → reject せず warn。運営向け: ADMIN_NOTIFICATION_EMAIL 未設定 → 送らず warn / 設定あり → そのアドレスへ 1 通・本文に請求者の情報 (user_id・nickname・email・details) を含まない。どのログにも宛先のアドレスが入らない |
 | `src/__tests__/lib/data-subject-requests/tokens.test.ts` | generateDsrVerificationToken: 64 桁の 16 進と sha256 の hash / dsrTokenMatches: 一致で true・1 文字違いと null で false |
-| `tests/api/account-data-requests-route.test.ts` (Supabase をモック) | POST: 未ログイン 401 / NULL 文字 400 (DB に触れない) / 2001 字 400 / 23505 → 409 DSR_ALREADY_OPEN / 201 で hash を返さない・メールを 1 通送る・メール失敗でも 201 / 429 で DB に触れない。GET 一覧: 本人の client で読む・新しい順・最大 50。verify: 他人の id は 404 / received は 409 / 期限切れ 410 / 不一致 400 / 一致で received・due_at = +30 日・hash = null・メール 2 通。resend: send_count 5 で 409 DSR_VERIFICATION_LIMIT / 新しい hash と期限。withdraw: fulfilled は 409 / received は withdrawn + resolved_at |
-| `tests/admin-data-requests-route.test.ts` (本物の requireRole・recordAdminAudit。Supabase はモック) | 認可: admin / super_admin は 200、support・content_moderator は 403、未ログイン 401、認可に落ちた要求は表に触れない。一覧: status / request_type / overdue の絞り込み・並び (due_at 昇順 NULL 最後)・0 件は監査なし・1 件以上で admin.dsr.list 1 行 (details は条件と件数だけ)・416 は空ページ。詳細: 404 は監査なし / 200 で admin.dsr.view 1 行 (viewed_fields だけ・details の中身を入れない) / 退会済みは requester null。PATCH: ヘッダ無し 428 / 不一致 412 / 0 行 409 CONFLICT_STALE_DATA / pending_verification → in_progress は 409 DSR_INVALID_TRANSITION / rejected で応答空 422・書き込み無し / fulfilled で応答あり → resolved_at・メール dsr_resolved・監査 (status_from / status_to) / メモだけの更新も監査 / 変更なしは書き込まない / 監査の失敗で応答は変わらない / admin_audit_logs へ直接 INSERT しない |
+| `tests/api/account-data-requests-route.test.ts` (Supabase をモック) | POST: 未ログイン 401 / NULL 文字 400 (DB に触れない) / 2001 字 400 / 23505 → 409 DSR_ALREADY_OPEN / 201 で hash を返さない・メールを 1 通送る・メール失敗でも 201 / 429 で DB に触れない。GET 一覧: 本人の client で読む・新しい順・最大 50。verify: 他人の id は 404 / received・withdrawn・fulfilled は 409 DSR_INVALID_STATE (期限・token より先に判定。書き込みもメールも無し) / 期限切れ 410 / 不一致 400 / 一致で received・due_at = +30 日・hash = null・メール 2 通。resend: received・fulfilled・withdrawn は 409 DSR_INVALID_STATE (書き込みもメールも無し) / send_count 5 で 409 DSR_VERIFICATION_LIMIT / 新しい hash と期限。withdraw: fulfilled は 409 / received は withdrawn + resolved_at |
+| `tests/admin-data-requests-route.test.ts` (本物の requireRole・recordAdminAudit。Supabase はモック) | 認可: admin / super_admin は 200、support・content_moderator は 403、未ログイン 401、認可に落ちた要求は表に触れない。一覧: status / request_type / overdue の絞り込み・並び (due_at 昇順 NULL 最後)・0 件は監査なし・1 件以上で admin.dsr.list 1 行 (details は条件と件数だけ)・416 は空ページ。詳細: 404 は監査なし / 200 で admin.dsr.view 1 行 (viewed_fields だけ・details の中身を入れない) / 退会済みは requester null。PATCH: ヘッダ無し 428 / 不一致 412 / 0 行 409 CONFLICT_STALE_DATA / pending_verification → in_progress は 409 DSR_INVALID_TRANSITION / in_progress → in_progress は 409 DSR_INVALID_TRANSITION / status 無し (応答・内部メモだけ) は received・in_progress で 200、pending_verification・fulfilled・rejected・withdrawn で 409 DSR_INVALID_TRANSITION (書き込みも監査も無し) / 退会済み (user_id NULL) の received を fulfilled にでき、dsr_resolved を送らず監査の target_type が data_subject_request / rejected で応答空 422・書き込み無し / fulfilled で応答あり → resolved_at・メール dsr_resolved・監査 (status_from / status_to) / メモだけの更新も監査 / 変更なしは書き込まない / 監査の失敗で応答は変わらない / admin_audit_logs へ直接 INSERT しない |
 | `tests/data-subject-requests-migration-contract.test.ts` (SQL の文面) | CREATE TABLE に ON DELETE SET NULL の FK が 1 本 / CHECK の値が core.ts の DSR_REQUEST_TYPES・DSR_STATUSES と同じ / 長さの CHECK が DSR_DETAILS_MAX_LENGTH・DSR_NOTE_MAX_LENGTH と同じ / 部分一意索引の WHERE が DSR_OPEN_STATUSES / REVOKE が完全形で、authenticated は SELECT だけ、service_role に DELETE が無い / 既存の表・関数に触れる文が無い / down は DROP TABLE IF EXISTS だけ |
 | `tests/integration/rls/data-subject-requests.test.ts` (ローカル Supabase) | 本人は自分の行だけ SELECT できる / admin は全行、user ロールは他人の行が見えない / authenticated の INSERT・UPDATE は 42501 / service_role は INSERT・UPDATE でき DELETE は 42501 / 同じ人・同じ種類の 2 件目の開いている行は 23505・withdrawn にすれば入る / verified_consistency と resolved_consistency の CHECK が効く / updated_at がトリガーで進む / 退会で user_id が NULL になり行が残る |
 | `tests/integration/security/data-subject-requests-api.test.ts` (実 DB + 実 route) | 本人: create → verify → 一覧に received と due_at / 他人の id は 404 / 運営: support 403・admin 200・PATCH の 412 / 監査ログの inet 列 (x-forwarded-for 複数ホップ) |
 | `src/__tests__/lib/emails/dsr/dsr-emails.test.ts` | 4 通の template 名が snake_case で一意 / 件名 100 字以内 / 本文に details・response_note・メールアドレスを含まない / 確認リンクに id と token が入る / 日時が日本時間 |
 | `src/__tests__/app/settings/data-requests-link.test.ts` | 設定画面に `settings-data-requests-link` があり押すと DSR_SETTINGS_PATH へ push する |
 | `tests/settings-data-requests-page.test.tsx` | 新規の送信で POST を呼ぶ / 409 の文を出す / 本人確認待ちに再送と期限切れの表示 / 取り下げは確認の後に POST / fulfilled の応答を表示 / verify ページが 1 回だけ POST し 200・410・400 で文を出し分ける |
-| `tests/admin-data-requests-page.test.tsx` | 一覧の既定タブが受付済み / 期限超過が赤 / 詳細の保存が If-Unmodified-Since を送る / 412 で再読み込みの文 / 本人確認待ちは状態の変更が disabled |
+| `tests/admin-data-requests-page.test.tsx` | 一覧の既定タブが受付済み / 期限超過が赤 / 詳細の保存が If-Unmodified-Since を送る / 412 で再読み込みの文 / 状態を変えずに保存すると本文に status を入れない / 本人確認待ちと終わった請求 (fulfilled・rejected・withdrawn) は select・応答・内部メモ・保存が disabled |
 | 既存の番兵の更新 | §18 の各行 |
 
 ---
@@ -1136,6 +1172,7 @@ grep の語は、本設計が足す・変える名前 (tests/ と src/__tests__/
 | `tests/supabase-service-role-client-scan.test.ts` | `getSupabaseAdmin` | canonical の getSupabaseAdmin だけを使う (`@supabase/supabase-js` の createClient を import しない) | A〜C |
 | `tests/role-check-source-scan.test.ts` | `requireRole(` / `roles` の手書き判定 | 運営 route は `requireRole(DSR_OPERATOR_ROLES)` だけ。`profile?.roles` を書かない | C |
 | `tests/admin-view-audit-1326.test.ts` | `src/app/api/admin/**` の `admin_audit_logs` / `x-forwarded-for` | recordAdminAudit だけを使う | C |
+| `tests/admin-pii-view-audit.test.ts` (#1200。他ユーザーの情報を返す運営 GET の route ごとの単体テスト) | 反応しない (対象の route を固定の import で 6 本列挙するだけで、src/app/api/admin を走査しない) | 足さない。詳細 GET (requester の email を返す) の閲覧の監査は、問い合わせ詳細 (admin.inquiry.view は tests/admin-inquiries-route.test.ts) と同じく、本書の `tests/admin-data-requests-route.test.ts` (200 で admin.dsr.view 1 行・404 で記録なし・details に値を入れない・記録の失敗で応答は変わらない) と統合テスト (§15) で守る | — |
 | `tests/admin-console-links.test.ts` | `/admin/data-requests` へのリンク (`href=`, `router.push`) | リンクを足す前に page.tsx 2 つを作る。詳細への遷移は `/admin/data-requests/${id}` | C |
 | `tests/admin-console-entry.test.tsx` | サイドバーとカードの一覧 (`サポートチケット`, `お知らせ` の並び) | 期待値に「開示等の請求」を足す (admin / super_admin に出て content_moderator に出ない) | C |
 | `src/__tests__/app/settings/data-export.test.ts`、`support-link.test.ts`、`account-link.test.ts`、`tests/ai-consent-settings-entry.test.ts` | 設定画面の描画 (`settings/page.tsx`) | 項目を 1 つ足すだけで壊れない見込み。赤になったら期待値 (項目数) を実数に合わせる (緩めない) | B |
@@ -1153,6 +1190,7 @@ grep の語は、本設計が足す・変える名前 (tests/ と src/__tests__/
 |---|---|---|
 | `docs/design/cross/CLAUDE.md` のファイル一覧 | `15-data-subject-requests.md` の行 (開示・訂正・利用停止・消去の請求 / 要件 #1178) | 設計のマージと同日 |
 | `docs/design/cross/04-api-conventions.md` §4.2 | `[NEW] DSR_*` の 7 コードと、`CONFLICT_*` の使い所 (運営の PATCH) | 実装のマージと同日 |
+| `docs/design/operator/02-api-spec.md` §10 (サポート API。`PATCH /api/admin/inquiries/{id}` の節の後) と §23 | `GET /api/admin/data-requests`・`GET /api/admin/data-requests/{id}`・`PATCH /api/admin/data-requests/{id}` の 3 節 (権限 admin / super_admin、応答は §3.2 の `{ data, meta }`、中身は本書 §7.4 を canonical とする旨)。§23 のエラーコード一覧に `DSR_INVALID_TRANSITION` / `DSR_RESPONSE_NOTE_REQUIRED` と `CONFLICT_*` の使い所 | 実装のマージと同日 |
 | `docs/design/operator/07-audit-monitoring.md` §4.1.1 | `admin.dsr.list` / `admin.dsr.view` / `admin.dsr.update` の 3 行と target_type `data_subject_request` | 実装のマージと同日 |
 | `docs/design/operator/01-data-model.md` §3 | `data_subject_requests` は cross/15 を canonical とする旨の 1 行 (3.20 と同じ書き方) | 実装のマージと同日 |
 | `docs/design/operator/03-ui-spec.md` §3.2 | サイドバーの行「開示等の請求 (表示ロール: admin, super_admin)」 | 実装のマージと同日 |
