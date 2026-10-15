@@ -846,9 +846,6 @@ import { isAccountFrozen } from '@/lib/auth/frozen';
 import { hasAcceptedCurrentLegalDocuments } from '@homegohan/shared';
 
 // ── 定数 (§6.1) ────────────────────────────────────────────────────────────
-export const PUSH_OUTBOX_TABLE = 'push_outbox';
-export const PUSH_OUTBOX_STATUSES = ['queued', 'sent', 'dead'] as const;
-export type PushOutboxStatus = (typeof PUSH_OUTBOX_STATUSES)[number];
 /** worker がその行を処理する回数の上限 (既定)。PUSH_OUTBOX_MAX_ATTEMPTS で上書き。DB の fail_push_outbox が決める */
 export const PUSH_OUTBOX_MAX_ATTEMPTS = 3;
 export const PUSH_OUTBOX_MAX_ATTEMPTS_MIN = 1;
@@ -1130,7 +1127,7 @@ async function sendQueued(deps: PushOutboxWorkerDeps, options: PushOutboxRunOpti
   const rows = await deps.store.claimQueued(options.workerId, options.batchSize, PUSH_OUTBOX_LEASE_SECONDS);
   summary.claimed = rows.length;
   if (rows.length === 0) return;
-  const users = await deps.store.loadEligibility([...new Set(rows.map((row) => row.user_id))]);
+  const users = await deps.store.loadEligibility(Array.from(new Set(rows.map((row) => row.user_id))));
   const pending: Pending[] = [];
   for (const row of rows) {
     const nowMs = deps.now();
