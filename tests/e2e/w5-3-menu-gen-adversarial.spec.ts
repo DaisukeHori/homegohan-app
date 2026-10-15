@@ -17,6 +17,11 @@ import { jstThisMonday } from "./helpers/jst-week";
 // ─── helpers ───────────────────────────────────────────────────────────────
 // 今週の月曜日は、ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)。前後の週は暦の計算 (addDaysToDate) でずらす
 
+/** 1 週間の日数 */
+const DAYS_PER_WEEK = 7;
+/** C-10 の「約 10 年前」を週の数で表したもの (52 週 × 10 年。月曜日始まりの週のまま戻すため日数でなく週で数える) */
+const TEN_YEARS_IN_WEEKS = 520;
+
 const FAKE_REQUEST_ID = "00000000-dead-beef-cafe-000000000w53";
 const FAKE_REQUEST_ID_2 = "00000000-dead-beef-cafe-000000001w53";
 
@@ -51,6 +56,77 @@ async function stubWeeklyRequest(page: Page, requestId: string) {
       body: JSON.stringify({ status: "processing", message: "Generation started", requestId }),
     });
   });
+}
+
+/** status のモックが返す本文 (completed / failed を返すと、その要求は終わったものとして pending から消える) */
+type StatusBody = { status: string } & Record<string, unknown>;
+
+/** 終わった状態。サーバーの pending はこの状態の行を返さない (queued / pending / processing だけを返す) */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "failed"]);
+
+/**
+ * 生成が終わったあと、画面が生成中に戻らないことを見る待ちの長さ。
+ * 画面は Realtime がつながらないとき、監視を始めて 5 秒後にポーリングをやり直す (page.tsx の subscribeToRequestStatus)。
+ * それを超えて見る
+ */
+const AFTER_TERMINAL_SETTLE_MS = 7_000;
+
+/** 生成中のカード (ProgressTodoCard) が出る・消えるまでの待ちの上限 (ポーリングは 3 秒ごと。3 回目で completed を返すので 2 回分 + 余裕) */
+const PROGRESS_CARD_TIMEOUT_MS = 20_000;
+
+/**
+ * cleanup・pending・status を、サーバーと同じ整合で返すモック (#1622)。
+ *
+ * サーバーの pending (src/app/api/ai/menu/weekly/pending/route.ts) は queued / pending / processing の行だけを返す。
+ * status が completed / failed を返したあと (行が終わったあと) は、同じ行を生成中として返さない (hasPending: false)。
+ *
+ * 以前の F-22・E-18・B-6 のモックは、status が終わりを返したあとも pending が生成中を返し続けていた。
+ * 画面は生成が終わると (isGenerating が false に戻るたびに) pending を確かめ直すので、終わった要求をまた監視して
+ * 終わりをまた受け取る、終わらない輪になっていた (F-22 は生成中のカードが出たり消えたりし続けて赤、
+ * E-18 は要求が途切れず networkidle が来ないまま 60 秒で時間切れ、B-6 も同じ形で 1 回目が時間切れ)。
+ * サーバーは終わった行を pending で返さないので、実際の画面ではこの輪は起きない (テストの前提が古かった)。
+ */
+async function stubPendingConsistentWithStatus(
+  page: Page,
+  opts: { requestId: string; statusBodyAt: (callIndex: number) => StatusBody },
+): Promise<{ statusCalls: () => number; pendingCalls: () => number }> {
+  let statusCalls = 0;
+  let pendingCalls = 0;
+  let terminalReturned = false;
+
+  await page.route("**/api/ai/menu/weekly/cleanup", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
+    });
+  });
+  // サーバー (pending/route.ts) は、表示中の週 (date) と start_date が違う行を返さない。モックも date の週の行を返す
+  await page.route("**/api/ai/menu/weekly/pending*", async (route) => {
+    pendingCalls++;
+    const date = new URL(route.request().url()).searchParams.get("date");
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(
+        terminalReturned
+          ? { hasPending: false }
+          : { hasPending: true, requestId: opts.requestId, status: "processing", mode: "v5", startDate: date },
+      ),
+    });
+  });
+  await page.route("**/api/ai/menu/weekly/status*", async (route) => {
+    const body = opts.statusBodyAt(statusCalls);
+    statusCalls++;
+    if (TERMINAL_STATUSES.has(body.status)) terminalReturned = true;
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify(body),
+    });
+  });
+
+  return { statusCalls: () => statusCalls, pendingCalls: () => pendingCalls };
 }
 
 // ─── A. 連打・重複 ──────────────────────────────────────────────────────────
@@ -364,46 +440,24 @@ test("[menu-gen][adversarial] B-5: 生成中タブ閉じ再オープン → 進�
  *
  * 期待: ログアウト後に再ログインしてページを開いたとき、
  *       stale request が failed 扱いになって UI が生成中ループにならない
+ *
+ * #1622: pending は status が failed を返すまで生成中を返し、そのあとは返さない (サーバーと同じ。stubPendingConsistentWithStatus)。
+ * 以前は pending が生成中を返し続け、画面が終わった要求の監視をやり直す輪で networkidle が来ず、1 回目が時間切れになっていた
  */
 test("[menu-gen][adversarial] B-6: 生成中にサインアウト → stale 処理で failed 確認", async ({
   authedPage,
 }) => {
   // stale なリクエスト（21分前に更新されたもの）をシミュレート
-  // status=processing で returned → stale 判定で failed 化
+  // status=processing の行を status API が stale 判定で failed にした応答を返す
   const staleUpdatedAt = new Date(Date.now() - 21 * 60 * 1000).toISOString();
 
-  await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/pending*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        hasPending: true,
-        requestId: FAKE_REQUEST_ID,
-        status: "processing",
-        mode: "v5",
-        startDate: jstThisMonday(),
-      }),
-    });
-  });
-
-  // status API: stale なデータ（20分以上前の updated_at）
-  await authedPage.route("**/api/ai/menu/weekly/status*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        status: "failed",
-        errorMessage: "stale_request_timeout",
-        updatedAt: staleUpdatedAt,
-      }),
-    });
+  const counters = await stubPendingConsistentWithStatus(authedPage, {
+    requestId: FAKE_REQUEST_ID,
+    statusBodyAt: () => ({
+      status: "failed",
+      errorMessage: "stale_request_timeout",
+      updatedAt: staleUpdatedAt,
+    }),
   });
 
   await authedPage.addInitScript(
@@ -421,20 +475,20 @@ test("[menu-gen][adversarial] B-6: 生成中にサインアウト → stale 処�
   );
 
   await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
-  await authedPage.waitForTimeout(3_000);
 
-  // failed 状態のUIが表示されているか、または生成中ではないこと
-  const infiniteSpinner = authedPage
-    .locator("text=/生成中|処理中/")
-    .first();
-  const isStillGenerating = await infiniteSpinner.isVisible({ timeout: 3_000 }).catch(() => false);
+  // stale な要求の status (failed) を読み、失敗の表示を出す
+  await expect(
+    authedPage.getByTestId("generation-failed-modal"),
+    "[BUG] stale なリクエスト（21分以上前）の失敗が表示されなかった",
+  ).toBeVisible({ timeout: PROGRESS_CARD_TIMEOUT_MS });
+  expect(counters.statusCalls(), "status を一度も読んでいない").toBeGreaterThanOrEqual(1);
 
-  // stale な request で永遠に生成中表示のままになっていたら BUG
-  expect(
-    isStillGenerating,
-    "[BUG] stale なリクエスト（21分以上前）で UI が永遠に生成中のまま（ループ）",
-  ).toBe(false);
+  // stale な request で生成中表示に戻らない（ループしない）
+  await authedPage.waitForTimeout(AFTER_TERMINAL_SETTLE_MS);
+  await expect(
+    authedPage.getByTestId("generation-progress"),
+    "[BUG] stale なリクエスト（21分以上前）で UI が生成中に戻った（ループ）",
+  ).toBeHidden();
 });
 
 /**
@@ -638,9 +692,8 @@ test("[menu-gen][adversarial] C-10: 過去10年前の週をリクエスト → 5
   await authedPage.goto("/menus/weekly");
   await authedPage.waitForLoadState("domcontentloaded");
 
-  const tenYearsAgo = new Date();
-  tenYearsAgo.setFullYear(tenYearsAgo.getFullYear() - 10);
-  const dateStr = tenYearsAgo.toISOString().slice(0, 10);
+  // 端末 (Node のプロセス) の日付ではなく、JST の今週の月曜日から週の単位で戻す (#1564・#1622。月曜日のまま約 10 年前の週になる)
+  const dateStr = addDaysToDate(jstThisMonday(), -TEN_YEARS_IN_WEEKS * DAYS_PER_WEEK);
 
   const res = await authedPage.request.post("/api/ai/menu/weekly/request", {
     data: { startDate: dateStr },
@@ -708,9 +761,10 @@ test("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッ
   await authedPage.waitForLoadState("domcontentloaded");
 
   const monday = jstThisMonday();
-  const cases = [
+  const cases: Array<{ name: string; note: string; expectedStatus?: number; expectedCode?: string }> = [
     { name: "10000文字", note: "あ".repeat(10000) },
-    { name: "NULL byte", note: "test\x00injection" },
+    // #1622: NULL 文字は Postgres の text / jsonb に入らない (以前は insert が拒まれて 500)。route が DB に渡す前に 400 で断る
+    { name: "NULL byte", note: "test\x00injection", expectedStatus: 400, expectedCode: "INVALID_CHARACTER" },
     { name: "control chars", note: "test\x01\x02\x03\x1B[31m red\x1B[0m" },
     { name: "Unicode emoji bomb", note: "💣".repeat(1000) },
     { name: "SQL injection attempt", note: "'; DROP TABLE weekly_menu_requests; --" },
@@ -726,6 +780,10 @@ test("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッ
       res.status(),
       `[BUG] ${c.name} で 5xx クラッシュ: ${res.status()}`,
     ).not.toBeGreaterThanOrEqual(500);
+    if (c.expectedStatus !== undefined) {
+      expect(res.status(), `[BUG] ${c.name} を ${c.expectedStatus} で断っていない`).toBe(c.expectedStatus);
+      expect(await res.json()).toMatchObject({ code: c.expectedCode });
+    }
   }
 });
 
@@ -862,43 +920,21 @@ test("[menu-gen][adversarial] D-17: cleanup API が queued ステータスを認
  *
  * 期待: Edge Function が 50秒 abort した後、cron worker が二重に status を書き込まない
  *       → UI では failed が一度だけ表示されてループしない
+ *
+ * #1622: pending は status が failed を返すまで生成中を返し、そのあとは返さない (サーバーと同じ。stubPendingConsistentWithStatus)。
+ * 以前のモックは pending が「hasPending: true・status: failed」を返し続けた (サーバーは failed の行を pending で返さない)。
+ * 画面は終わった要求の監視をやり直し続け、要求が途切れず networkidle が来ないまま 60 秒で時間切れになっていた
  */
 test("[menu-gen][adversarial] E-18: タイムアウト後の status 整合性 → ループなし", async ({
   authedPage,
 }) => {
-  let statusCallCount = 0;
-
-  await authedPage.route("**/api/ai/menu/weekly/cleanup", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/pending*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        hasPending: true,
-        requestId: FAKE_REQUEST_ID,
-        status: "failed",
-        mode: "v5",
-        startDate: jstThisMonday(),
-      }),
-    });
-  });
-  await authedPage.route("**/api/ai/menu/weekly/status*", async (route) => {
-    statusCallCount++;
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        status: "failed",
-        errorMessage: "Edge function timeout after 50s",
-        updatedAt: new Date().toISOString(),
-      }),
-    });
+  const counters = await stubPendingConsistentWithStatus(authedPage, {
+    requestId: FAKE_REQUEST_ID,
+    statusBodyAt: () => ({
+      status: "failed",
+      errorMessage: "Edge function timeout after 50s",
+      updatedAt: new Date().toISOString(),
+    }),
   });
 
   await authedPage.addInitScript(
@@ -912,21 +948,24 @@ test("[menu-gen][adversarial] E-18: タイムアウト後の status 整合性 �
   );
 
   await authedPage.goto("/menus/weekly");
-  await authedPage.waitForLoadState("networkidle");
-  await authedPage.waitForTimeout(5_000);
 
-  // failed になった後にポーリングが停止していることを確認
-  // 5秒待って status API の呼び出し回数が過剰でない（ループしていない）
-  const callCountAfter5s = statusCallCount;
-  await authedPage.waitForTimeout(5_000);
-  const callCountAfter10s = statusCallCount;
+  // failed を受け取り、失敗の表示を出して、生成中のカードを消す
+  await expect(
+    authedPage.getByTestId("generation-failed-modal"),
+    "[BUG] タイムアウトの failed が表示されなかった",
+  ).toBeVisible({ timeout: PROGRESS_CARD_TIMEOUT_MS });
+  await expect(authedPage.getByTestId("generation-progress")).toBeHidden();
 
-  // failed 確認後はポーリングが止まるはず → 後半5秒で 0〜2回程度しか呼ばれない
-  const additionalCalls = callCountAfter10s - callCountAfter5s;
+  // failed を受け取ったあとはポーリングが止まる (Realtime がつながらないときの 5 秒後のやり直しも含めて、status を読み直さない)
+  const callsAtFailure = counters.statusCalls();
+  await authedPage.waitForTimeout(AFTER_TERMINAL_SETTLE_MS);
+  const additionalCalls = counters.statusCalls() - callsAtFailure;
   expect(
     additionalCalls,
-    `[BUG] failed 状態後もポーリングが続いている（後半5秒で ${additionalCalls} 回呼ばれた）`,
-  ).toBeLessThanOrEqual(3);
+    `[BUG] failed 状態後もポーリングが続いている（failed のあと ${AFTER_TERMINAL_SETTLE_MS} ms で ${additionalCalls} 回呼ばれた）`,
+  ).toBe(0);
+  // 生成中に戻らない
+  await expect(authedPage.getByTestId("generation-progress")).toBeHidden();
 });
 
 /**
@@ -1027,47 +1066,29 @@ test("[menu-gen][adversarial] E-19: 生成失敗後のリトライ → 新規req
  *
  * 期待: Supabase Realtime の postgres_changes が tab B に届き、
  *       献立データが更新されること（最低限：生成中UIが消える）
+ *
+ * #1622: pending は status が completed を返すまで生成中を返し、そのあとは返さない (サーバーと同じ。stubPendingConsistentWithStatus)。
+ * 以前のモックは pending が生成中を返し続け、画面は completed のあと pending を確かめ直して、終わった要求をまた監視し、
+ * 生成中のカードが出たり消えたりし続けていた (サーバーは completed の行を pending で返さないので、実際の画面では起きない)。
+ * 生成中を引き継いだこと (カードが出ること) も確かめる (以前は出ていなければ何も確かめずに通っていた)
  */
 test("[menu-gen][adversarial] F-22: tabA生成完了 → tabBでリアルタイム更新", async ({
   authedPage,
   context,
 }) => {
   const weekStr = jstThisMonday();
+  /** status の何回目 (0 始まり) から completed を返すか (最初の 2 回は processing) */
+  const COMPLETED_FROM_CALL_INDEX = 2;
 
   // tab B を先に開いておく（Realtime 購読を開始させる）
   const tabB = await context.newPage();
 
-  await tabB.route("**/api/ai/menu/weekly/cleanup", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ message: "No stuck requests found", cleaned: 0 }),
-    });
-  });
-  await tabB.route("**/api/ai/menu/weekly/pending*", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({
-        hasPending: true,
-        requestId: FAKE_REQUEST_ID,
-        status: "processing",
-        mode: "v5",
-        startDate: weekStr,
-      }),
-    });
-  });
-
-  let tabBStatusCallCount = 0;
-  await tabB.route("**/api/ai/menu/weekly/status*", async (route) => {
-    tabBStatusCallCount++;
-    // 最初2回は processing、3回目以降は completed
-    const status = tabBStatusCallCount >= 3 ? "completed" : "processing";
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ status, progress: null }),
-    });
+  const counters = await stubPendingConsistentWithStatus(tabB, {
+    requestId: FAKE_REQUEST_ID,
+    statusBodyAt: (callIndex) => ({
+      status: callIndex >= COMPLETED_FROM_CALL_INDEX ? "completed" : "processing",
+      progress: null,
+    }),
   });
 
   await tabB.addInitScript(
@@ -1081,27 +1102,21 @@ test("[menu-gen][adversarial] F-22: tabA生成完了 → tabBでリアルタイ�
   );
 
   await tabB.goto("/menus/weekly");
-  await tabB.waitForLoadState("networkidle");
-  await tabB.waitForTimeout(2_000);
 
   // tab B が生成中状態を引き継いでいることを確認
-  const generatingIndicator = tabB
-    .locator("text=/生成中|処理中|AIが献立/")
-    .first();
-  const isGenerating = await generatingIndicator.isVisible({ timeout: 5_000 }).catch(() => false);
+  const card = tabB.getByTestId("generation-progress");
+  await expect(card, "[BUG] tab B が生成中の状態を引き継がなかった").toBeVisible({ timeout: PROGRESS_CARD_TIMEOUT_MS });
 
-  // ポーリングが completed を受信した後、生成中UIが消えることを待つ（最大15秒）
-  await tabB.waitForTimeout(15_000);
+  // ポーリングが completed を受信した後、生成中UIが消える
+  await expect(
+    card,
+    "[BUG] completed 後もtab Bで生成中UIが残り続けている（ポーリング/Realtime が機能していない）",
+  ).toBeHidden({ timeout: PROGRESS_CARD_TIMEOUT_MS });
+  expect(counters.statusCalls(), "completed を返す前に生成中の UI が消えた").toBeGreaterThan(COMPLETED_FROM_CALL_INDEX);
 
-  const isStillGenerating = await generatingIndicator.isVisible({ timeout: 2_000 }).catch(() => false);
-
-  if (isGenerating) {
-    // 生成中が表示されていたなら、completed 後は消えているべき
-    expect(
-      isStillGenerating,
-      "[BUG] completed 後もtab Bで生成中UIが残り続けている（ポーリング/Realtime が機能していない）",
-    ).toBe(false);
-  }
+  // 完了のあと、生成中に戻らない
+  await tabB.waitForTimeout(AFTER_TERMINAL_SETTLE_MS);
+  await expect(card, "[BUG] completed 後に tab B が生成中に戻った").toBeHidden();
 
   await tabB.close();
 });
@@ -1218,7 +1233,12 @@ test("[menu-gen][adversarial] F-23: Ultimate Mode 6ステップの進捗%が逆�
 /**
  * Security: 任意ユーザーが他ユーザーの requestId で status を確認できない
  *
- * 期待: /api/ai/menu/weekly/status?requestId=<他人のID> → 404 or 403 or empty result
+ * 期待: /api/ai/menu/weekly/status?requestId=<他人のID> → { status: "not_found", requestId } だけ (状態・進捗・エラー文・時刻を返さない)
+ *
+ * #1622: status の route (src/app/api/ai/menu/weekly/status/route.ts) は本人の行 (user_id が自分) だけを読み、
+ * 他人の行と存在しない行に、同じ { status: "not_found", requestId } を返す (#780 で failed + "Request not found" から変えた。
+ * 他人の行の有無を応答から見分けられない)。このテストは #780 より前の failed を期待したままだった。
+ * 本人に絞ることと応答の形は src/__tests__/api/ai/menu/weekly-status-not-found.test.ts でも確かめる
  */
 test("[menu-gen][adversarial] Security: 他ユーザーのrequestIdでstatus確認不可", async ({
   authedPage,
@@ -1232,17 +1252,13 @@ test("[menu-gen][adversarial] Security: 他ユーザーのrequestIdでstatus確�
     `/api/ai/menu/weekly/status?requestId=${otherUsersRequestId}`,
   );
 
-  // 認証済みだが他人のリクエスト → 空 result（failed/not found）または 403
-  if (res.status() === 200) {
-    const body = await res.json().catch(() => ({}));
-    // user_id フィルタが効いていれば status=failed (not found)
-    expect(
-      body.status,
-      `[BUG] 他ユーザーの requestId で status が ${body.status} として返された（認可漏れの可能性）`,
-    ).toBe("failed");
-  } else {
-    expect([403, 404]).toContain(res.status());
-  }
+  expect(res.status(), `[BUG] 他ユーザーの requestId で ${res.status()} が返った`).toBe(200);
+  const body = await res.json();
+  // 本人に絞った結果が 0 行のときの応答だけを返す (他人の行の状態・進捗を返していない)
+  expect(
+    body,
+    `[BUG] 他ユーザーの requestId で not_found 以外が返された（認可漏れの可能性）: ${JSON.stringify(body)}`,
+  ).toEqual({ status: "not_found", requestId: otherUsersRequestId });
 });
 
 /**
