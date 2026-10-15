@@ -68,8 +68,14 @@ function collectSourceFiles(dir: string): string[] {
   return files.sort();
 }
 
-/** health 配下は走査で拾う (あとから足した画面も自動で対象になる)。home と pantry は決め打ち */
-const SCANNED_FILES = [...HOME_AND_PANTRY, ...collectSourceFiles(HEALTH_DIR)];
+/**
+ * 食事の区分ごとの見た目の表 (Web) (#1665)。home の今日の食事の区分の色は、home の画面からここへ移した。
+ * 色の表 (`const colors`) は持たないが、状態色の hex の直書きの検査は画面と同じく受ける。
+ */
+const MEAL_TYPE_VISUALS = 'src/lib/meal-type-visuals.ts';
+
+/** health 配下は走査で拾う (あとから足した画面も自動で対象になる)。home と pantry と区分の見た目の表は決め打ち */
+const SCANNED_FILES = [...HOME_AND_PANTRY, MEAL_TYPE_VISUALS, ...collectSourceFiles(HEALTH_DIR)];
 
 // ─────────────────────────────────────────────
 // 直書きを許す hex
@@ -87,20 +93,21 @@ const BANNED_LITERALS = new Set<string>([
 
 /**
  * 状態色ではないが、たまたま禁じる値と同じ hex を直書きしている箇所。理由を書いて足す (増やさないこと)。
- * 食事の種類の色 (朝食・昼食) は状態色ではなく、モバイルも同じ値 (apps/mobile/app/menus/weekly/index.tsx など) を使っている。
+ * 食事の種類の色 (朝食・昼食) は状態色ではなく、モバイルも同じ値 (apps/mobile/src/lib/meal-type-visuals.ts の MEAL_TYPE_COLORS) を使っている。
+ * #1665 で、home の今日の食事の区分の色は Web の区分の見た目の表 (MEAL_TYPE_HOME_THEME) へ移した。
  */
 const ALLOWED_LITERALS: { file: string; literal: string; line: RegExp; reason: string }[] = [
   {
-    file: 'src/app/(main)/home/page.tsx',
+    file: MEAL_TYPE_VISUALS,
     literal: '#FF9800',
     line: /^\s*breakfast:/,
-    reason: '朝食の色 (食事の種類の色。状態色ではない)。モバイルの朝食も #FF9800',
+    reason: 'home の朝食の色 (食事の種類の色。状態色ではない)。モバイルの朝食も #FF9800',
   },
   {
-    file: 'src/app/(main)/home/page.tsx',
+    file: MEAL_TYPE_VISUALS,
     literal: '#4CAF50',
     line: /^\s*lunch:/,
-    reason: '昼食の色 (食事の種類の色。状態色ではない)。モバイルの昼食も #4CAF50',
+    reason: 'home の昼食の色 (食事の種類の色。状態色ではない)。モバイルの昼食も #4CAF50',
   },
 ];
 

@@ -6,12 +6,14 @@ import Image from "next/image";
 import { useRouter } from "next/navigation";
 import type { CatalogProductSummary } from "@/types/catalog";
 import { extractCatalogProductFromMetadata } from "@/lib/catalog-products";
-import { parseLocalDate } from "@homegohan/shared";
+import { MEAL_LABELS, isMealType, parseLocalDate } from "@homegohan/shared";
+// 区分ごとの色は Web の区分の見た目の表から引く (#1665)
+import { MEAL_TYPE_RECORD_THEME } from "@/lib/meal-type-visuals";
 import { motion, AnimatePresence } from "framer-motion";
 import { 
   ChefHat, Store, UtensilsCrossed, Zap, FastForward,
   Check, Flame, Clock, Users, ChevronLeft, MoreVertical,
-  Trash2, Edit, Coffee, Sun, Moon, X
+  Trash2, Edit, X
 } from 'lucide-react';
 
 // カラーパレット
@@ -35,7 +37,6 @@ const colors = {
 };
 
 type MealMode = 'cook' | 'quick' | 'buy' | 'out' | 'skip';
-type MealType = 'breakfast' | 'lunch' | 'dinner';
 
 const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color: string; bg: string }> = {
   cook: { icon: ChefHat, label: '自炊', color: colors.success, bg: colors.successLight },
@@ -43,12 +44,6 @@ const MODE_CONFIG: Record<MealMode, { icon: typeof ChefHat; label: string; color
   buy: { icon: Store, label: '買う', color: colors.purple, bg: colors.purpleLight },
   out: { icon: UtensilsCrossed, label: '外食', color: colors.warning, bg: colors.warningLight },
   skip: { icon: FastForward, label: 'なし', color: colors.textMuted, bg: colors.bg },
-};
-
-const MEAL_CONFIG: Record<MealType, { icon: typeof Coffee; label: string; color: string }> = {
-  breakfast: { icon: Coffee, label: '朝食', color: colors.warning },
-  lunch: { icon: Sun, label: '昼食', color: colors.accent },
-  dinner: { icon: Moon, label: '夕食', color: colors.purple },
 };
 
 interface DishDetail {
@@ -74,7 +69,8 @@ const DAY_OF_WEEK_NAMES = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday
 interface PlannedMealDetail {
   id: string;
   dailyMealId: string;
-  mealType: MealType;
+  /** DB の行の meal_type (string)。区分の見た目を引く前に isMealType で絞る (#1665) */
+  mealType: string;
   mode: MealMode;
   dishName: string;
   description: string | null;
@@ -138,7 +134,7 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
         const mappedMeal: PlannedMealDetail = {
           id: data.id,
           dailyMealId: data.daily_meal_id,
-          mealType: data.meal_type as MealType,
+          mealType: data.meal_type,
           mode: (data.mode || 'cook') as MealMode,
           dishName: data.dish_name,
           description: data.description,
@@ -245,10 +241,14 @@ export default function MealDetailPage(props: { params: Promise<{ id: string }> 
     );
   }
 
-  const mealConfig = MEAL_CONFIG[meal.mealType];
+  // 区分の表示名は MEAL_LABELS、色は MEAL_TYPE_RECORD_THEME から引く (#1665)。
+  // 以前はこの画面だけ朝・昼・夕の 3 値の表を持ち、おやつ・夜食の食事では表に行が無く描画が止まっていた。
+  // 5 値以外の meal_type は、元の値をそのまま名前にして控えめな色で出す
+  const mealConfig = isMealType(meal.mealType)
+    ? { label: MEAL_LABELS[meal.mealType], color: MEAL_TYPE_RECORD_THEME[meal.mealType].color }
+    : { label: meal.mealType, color: colors.textMuted };
   const modeConfig = MODE_CONFIG[meal.mode];
   const ModeIcon = modeConfig.icon;
-  const MealIcon = mealConfig.icon;
 
   const formattedDate = new Date(meal.dayDate).toLocaleDateString('ja-JP', {
     month: 'long',

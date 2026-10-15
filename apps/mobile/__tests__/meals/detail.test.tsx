@@ -296,7 +296,7 @@ describe('MealDetailPage', () => {
     });
   });
 
-  // #1631: 区分の表 (MEAL_CONFIG) のキーは MealType。DB の行の meal_type (string) は isMealType で絞ってから引き、
+  // #1631: 区分の表のキーは MealType (#1665 で表は src/lib/meal-type-visuals.ts と MEAL_LABELS へ移した)。DB の行の meal_type (string) は isMealType で絞ってから引き、
   // 5 値以外は今までどおり元の値をそのまま表示名に出す
   describe('食事の区分の表示名 (#1631)', () => {
     const renderWithMealType = (mealType: string) => {

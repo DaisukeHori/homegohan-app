@@ -10,8 +10,9 @@ import { Button, Card } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";
 import { supabase } from "../../src/lib/supabase";
 import { getApi } from "../../src/lib/api";
+import { MEAL_TYPE_IONICONS, MEAL_TYPE_RECORD_THEME } from "../../src/lib/meal-type-visuals";
 import { MOCK_PHOTO_RESPONSE } from "@homegohan/handson-tour-shared";
-import { formatCalendarDate, MEAL_ORDER, parseLocalDate, todayCalendarDate, todayLocal, type MealType } from "@homegohan/shared";
+import { formatCalendarDate, MEAL_LABELS, MEAL_ORDER, parseLocalDate, todayCalendarDate, todayLocal, type MealType } from "@homegohan/shared";
 import { registerTourTarget, unregisterTourTarget } from "../../src/handson-tour/useTourOverlayLogic";
 import { handleAiConsentRequiredError, useLeaveModalRouteBeforeConsentScreen } from "../../src/lib/ai-consent";
 import { classifyPhotoFailureOf } from "../../src/lib/classify-photo-failure";
@@ -123,13 +124,12 @@ const PHOTO_MODE_COPY: Record<PhotoMode, { captureDescription: string; cameraLab
   },
 };
 
-const MEAL_CONFIG: Record<MealType, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string; bg: string }> = {
-  breakfast:      { icon: "sunny",        label: "朝食",   color: "#FF9800", bg: colors.warningLight },
-  lunch:          { icon: "partly-sunny", label: "昼食",   color: colors.accent, bg: colors.accentLight },
-  dinner:         { icon: "moon",         label: "夕食",   color: colors.purple, bg: colors.purpleLight },
-  snack:          { icon: "cafe",         label: "おやつ", color: "#E91E63", bg: "#FCE4EC" },
-  midnight_snack: { icon: "cloudy-night", label: "夜食",   color: colors.blue, bg: colors.blueLight },
-};
+/** 食事の区分のボタンの見た目 (アイコン・色・下地はモバイルの区分の見た目の表、表示名は MEAL_LABELS。#1665) */
+const mealTypeButtonConfig = (type: MealType) => ({
+  icon: MEAL_TYPE_IONICONS[type],
+  label: MEAL_LABELS[type],
+  ...MEAL_TYPE_RECORD_THEME[type],
+});
 
 const getWeekStart = (date: Date): Date => {
   const d = new Date(date);
@@ -918,7 +918,7 @@ export default function MealNewPage() {
           {/* Meal type */}
           <View testID="meal-type-row-base" style={{ flexDirection: "row", gap: spacing.sm }}>
             {BASE_MEAL_TYPES.map((type) => {
-              const config = MEAL_CONFIG[type];
+              const config = mealTypeButtonConfig(type);
               const isSel = type === selectedMealType;
               return (
                 <Pressable key={type} testID={`meal-type-select-${type}`} onPress={() => setSelectedMealType(type)} style={{
@@ -933,7 +933,7 @@ export default function MealNewPage() {
           </View>
           <View testID="meal-type-row-extra" style={{ flexDirection: "row", gap: spacing.sm }}>
             {EXTRA_MEAL_TYPES.map((type) => {
-              const config = MEAL_CONFIG[type];
+              const config = mealTypeButtonConfig(type);
               const isSel = type === selectedMealType;
               return (
                 <Pressable key={type} testID={`meal-type-select-${type}`} onPress={() => setSelectedMealType(type)} style={{
@@ -1311,7 +1311,7 @@ export default function MealNewPage() {
           <Text style={{ fontSize: 13, fontWeight: "500", color: colors.text }}>食事タイプ</Text>
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             {BASE_MEAL_TYPES.map((type) => {
-              const config = MEAL_CONFIG[type];
+              const config = mealTypeButtonConfig(type);
               const isSelected = type === selectedMealType;
               return (
                 <Pressable key={type} onPress={() => setSelectedMealType(type)} style={{
@@ -1326,7 +1326,7 @@ export default function MealNewPage() {
           </View>
           <View style={{ flexDirection: "row", gap: spacing.sm }}>
             {EXTRA_MEAL_TYPES.map((type) => {
-              const config = MEAL_CONFIG[type];
+              const config = mealTypeButtonConfig(type);
               const isSelected = type === selectedMealType;
               return (
                 <Pressable key={type} onPress={() => setSelectedMealType(type)} style={{
@@ -1344,7 +1344,7 @@ export default function MealNewPage() {
           <View style={{ padding: spacing.md, borderRadius: radius.md, backgroundColor: colors.card }}>
             <Text style={{ fontSize: 12, color: colors.textMuted, marginBottom: 4 }}>保存先</Text>
             <Text style={{ fontSize: 16, fontWeight: "600", color: colors.text }}>
-              {parseLocalDate(selectedDate).getMonth() + 1}月{parseLocalDate(selectedDate).getDate()}日（{weekDates.find((d) => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_CONFIG[selectedMealType].label}
+              {parseLocalDate(selectedDate).getMonth() + 1}月{parseLocalDate(selectedDate).getDate()}日（{weekDates.find((d) => d.dateStr === selectedDate)?.dayOfWeek}）の{MEAL_LABELS[selectedMealType]}
             </Text>
           </View>
 

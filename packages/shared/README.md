@@ -37,7 +37,7 @@ type NewMeal = TablesInsert<"planned_meals">;
 | `date-utils.ts` | `formatLocalDate`, `todayLocal`, `parseLocalDate`, `addDays` |
 | `nutrition-planner.ts` | `deriveMacroTargets`, `estimateGoalProjection` |
 | `dish-roles.ts` | `DishRole`, `DishConfig`, `getDishConfig` |
-| `meal-types.ts` | `MealType`, `MEAL_LABELS`, `MEAL_ORDER`, `isMealType` (食事の区分の正本。Web・モバイルは 5 値を手で書かずここから導く。#1446) |
+| `meal-types.ts` | `MealType`, `MEAL_LABELS`, `MEAL_EMOJIS`, `MEAL_ORDER`, `isMealType` (食事の区分の正本。Web・モバイルは 5 値を手で書かずここから導く。#1446。区分ごとの絵文字も Web・モバイル共通の見た目としてここに置く。#1665) |
 | `mode-config.ts` | `ModeKey`, `ModeConfig`, `MODE_CONFIG` |
 | `nutrition-constants.ts` | `NUTRIENT_DEFINITIONS`, `getNutrientDefinition`, `calculateDriPercentage` |
 | `theme-labels.ts` | `THEME_LABELS_REQUEST`, `AI_CONDITIONS` |

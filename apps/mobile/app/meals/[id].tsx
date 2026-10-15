@@ -2,11 +2,12 @@ import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
-import { isMealType, type MealType } from "@homegohan/shared";
+import { MEAL_LABELS, isMealType } from "@homegohan/shared";
 
 import { Button, Card, LoadingState, PageHeader, SectionHeader, StatusBadge } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";
 import { getApi } from "../../src/lib/api";
+import { MEAL_TYPE_COLORS, MEAL_TYPE_IONICONS } from "../../src/lib/meal-type-visuals";
 
 type Dish = {
   name?: string | null;
@@ -61,14 +62,8 @@ type PlannedMealDetail = {
   day_date: string | null;
 };
 
-// キーは MealType (#1631)。MealType に値が増えると、ここで型が漏れを止める。DB の行の meal_type (string) は isMealType で絞ってから引く
-const MEAL_CONFIG: Record<MealType, { icon: keyof typeof Ionicons.glyphMap; label: string; color: string }> = {
-  breakfast: { icon: "sunny", label: "朝食", color: "#FF9800" },
-  lunch: { icon: "partly-sunny", label: "昼食", color: "#4CAF50" },
-  snack: { icon: "cafe", label: "おやつ", color: "#E91E63" },
-  dinner: { icon: "moon", label: "夕食", color: "#7C4DFF" },
-  midnight_snack: { icon: "cloudy-night", label: "夜食", color: "#3F51B5" },
-};
+// 区分のアイコンと色はモバイルの区分の見た目の表、表示名は MEAL_LABELS から引く (#1665。手書きの表を持たない)。
+// DB の行の meal_type (string) は isMealType で絞ってから引く
 
 const MODE_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
   cook: { label: "自炊", color: colors.success, bg: colors.successLight },
@@ -371,7 +366,7 @@ export default function MealDetailPage() {
   }
 
   const mealCfg = isMealType(meal.meal_type)
-    ? MEAL_CONFIG[meal.meal_type]
+    ? { icon: MEAL_TYPE_IONICONS[meal.meal_type], label: MEAL_LABELS[meal.meal_type], color: MEAL_TYPE_COLORS[meal.meal_type] }
     : { icon: "ellipse" as keyof typeof Ionicons.glyphMap, label: meal.meal_type, color: colors.textMuted };
   const modeCfg = MODE_CONFIG[meal.mode ?? "cook"] ?? MODE_CONFIG.cook;
   const totalPFC = (meal.protein_g ?? 0) + (meal.fat_g ?? 0) + (meal.carbs_g ?? 0);
