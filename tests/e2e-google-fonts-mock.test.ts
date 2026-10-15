@@ -88,7 +88,7 @@ describe('Google Fonts のモック (e2e-local のビルド用)', () => {
       expect(result.css).toContain(`font-family: '${family}'`);
       expect(result.css).toContain('url(/_next/static/media/mock.ttf)');
       expect(result.css).not.toContain('fonts.gstatic.com');
-      expect(result.css).not.toContain('noto-sans-v27-latin-regular.ttf');
+      expect(result.css).not.toContain('Geist-Regular.ttf');
       expect(result.variable).toBe(options.variable);
       expect(result.adjustFontFallback).toBeTruthy();
 
