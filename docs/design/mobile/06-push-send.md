@@ -306,12 +306,9 @@ CREATE INDEX IF NOT EXISTS idx_push_outbox_receipt_pending
   ON public.push_outbox (sent_at) WHERE status = 'sent' AND receipt_checked_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_push_outbox_sent_at
   ON public.push_outbox (sent_at) WHERE status = 'sent';
-CREATE INDEX IF NOT EXISTS idx_push_outbox_dead_at
-  ON public.push_outbox (dead_at) WHERE status = 'dead';
-CREATE INDEX IF NOT EXISTS idx_push_outbox_user_id
-  ON public.push_outbox (user_id);
-CREATE INDEX IF NOT EXISTS idx_push_outbox_push_token_id
-  ON public.push_outbox (push_token_id);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_dead_at ON public.push_outbox (dead_at) WHERE status = 'dead';
+CREATE INDEX IF NOT EXISTS idx_push_outbox_user_id ON public.push_outbox (user_id);
+CREATE INDEX IF NOT EXISTS idx_push_outbox_push_token_id ON public.push_outbox (push_token_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_push_outbox_dedupe_key
   ON public.push_outbox (dedupe_key) WHERE dedupe_key IS NOT NULL;
 
@@ -1330,11 +1327,14 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | ある | 以内 | なし | 同意済み | false | – | – | – | 呼ばない | dead (`notifications_disabled`) |
 | ある | 以内 | なし | 同意済み | true | 一覧に無い | – | – | 呼ばない | dead (`unknown_kind`) |
 | ある | 以内 | なし | 同意済み | true | ある | 夜間 × `defer` | – (まだ見ない) | 呼ばない | queued (`next_attempt_at` = 夜の終わり。attempts 不変)。payload は夜明けの回で見る (形が違えばその回で `invalid_payload`) |
+| ある | 以内 | なし | 同意済み | `notification_preferences` の行が無い (= true として扱う) | ある | 夜間は既定 22:00〜07:00 (quiet は null) で判定 | 〃 | 〃 | true の行と同じ: 夜間 × `defer` は 07:00 JST まで queued、それ以外は下の payload 以降の行 (既定を入れるのは §6.5 `loadEligibility`) |
+| ある | 以内 | なし | 同意済み | true・`quiet_hours_start/end` が NULL (または `HH:MM` で始まらない) | ある | 夜間は既定 22:00〜07:00 で判定 (`parseClockMinutes` の fallback) | 〃 | 〃 | 同上 |
 | ある | 以内 | なし | 同意済み | true | ある | 昼 × `send` / `defer`、夜間 × `send` | 形が違う | 呼ばない | dead (`invalid_payload`) |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | ticket ok | sent (`receipt_id`)。15 分後に receipt → `receipt_status` ok / error / missing |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | ticket `DeviceNotRegistered` | dead → 端末の行を消す → CASCADE で行も消える |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | ticket のほかの error | dead (error の名前。例 `MessageTooBig`) |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | HTTP 429 / 5xx / 通信エラー | queued (attempts + 1・次は 1 分 → 5 分 → 15 分)。3 回目で dead。429 はこの回を打ち切る |
+| 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | 呼ばない (その塊の前で時間切れ `PUSH_OUTBOX_RUN_BUDGET_MS`、または前の塊が 429 で打ち切り。`stopped_early` = `budget` / `rate_limited`) | queued のまま (リースのまま残し、`PUSH_OUTBOX_LEASE_SECONDS` = 120 秒が切れたあとの回が取り直す。attempts・`last_error_*` は変えない) |
 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 〃 | 正しい | HTTP 4xx (429 以外)・応答の形の誤り | dead (`errors[0].code` / `invalid_response`) |
 
 登録 (トリガー §5.3) の入力の組み合わせ → 結果 (判定は左の列から順。書き手の対応は §3.2.1):
@@ -1376,7 +1376,7 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 | queued (リース) | `fail_push_outbox` (retryable・回数内) | queued | 同じ worker | attempts + 1・`next_attempt_at` = now + 間隔・last_error_* |
 | queued (リース) | `fail_push_outbox` (非 retryable / 回数切れ) | dead | 同じ worker | `dead_at`・last_error_*。`DeviceNotRegistered` なら worker が端末の行を消す → 行は CASCADE で消える |
 | queued (リース) | `defer_push_outbox` | queued | 同じ worker・`p_until` は今より後 2 日以内 | `next_attempt_at` = 夜の終わり (attempts 不変) |
-| queued (リース) | リース切れ (worker の停止) | queued | – | 次の回が取り直す (attempts 不変) |
+| queued (リース) | リース切れ (worker の停止・時間切れ / 429 の打ち切りで Expo に渡さずに残した行) | queued | – | 次の回が取り直す (attempts 不変) |
 | queued (リース無し / 切れ) | `cleanup_push_outbox` (鍵が無い回も) | dead | `created_at < now − 24 時間` | `dead_at`・`last_error_code = 'expired'` (attempts 不変)。リース中の行には触らない |
 | sent | `claim_push_receipts` | sent (リース) | `receipt_checked_at` NULL・`sent_at <= now − 15 分` | リース |
 | sent (リース) | `record_push_receipt` (ok / error / missing) | sent | 同じ worker | `receipt_checked_at`・`receipt_status`・`receipt_error`。error が `DeviceNotRegistered` なら端末の行を消す → CASCADE |
@@ -1409,14 +1409,14 @@ import: `randomUUID` (`crypto`)・`NextResponse`・`waitUntil` (`@vercel/functio
 
 | ファイル | it |
 |---|---|
-| `src/__tests__/lib/push/outbox.test.ts` | `送る条件: プロフィール無し / 24 時間超 / 凍結 / 未同意 (on だけ) / 設定 off の順で dead のコードが決まる`・`夜間: 22:00〜07:00 をまたぐ判定と、次の 07:00 JST の時刻`・`defer の種類だけ延期し、send の種類は夜でも送る`・`100 件ずつ Expo に渡し、ticket を同じ順の行に対応させる`・`ticket error の DeviceNotRegistered で端末の行を消す`・`HTTP 429 で塊を requeue してその回を打ち切る`・`時間切れで残りを次の回に回す (attempts は増えない)`・`receipt: ok / error / まだ無い / 24 時間超の missing`・`receipt の DeviceNotRegistered で端末の行を消す (S-10)`・`24 時間を超えた queued は Expo を呼ばずに expired で dead (claim した行)`・`processPushOutbox は cleanup の expired / sent / dead を要約の cleaned_* に入れる`・`PUSH_OUTBOX_QUEUED_MAX_AGE_MS と PUSH_OUTBOX_ERROR_CODES.EXPIRED が migration の cleanup_push_outbox の c_queued_max_age (24 hours)・'expired' と同じ (supabase/migrations/*_push_outbox.sql を読む)`・`retryDelaySeconds は 1 回目 60・2 回目 300・3 回目以上 900 秒で、5xx の fail にその間隔を渡す (S-08)`・`ログの meta に文面 (title / body)・token の全体・payload を出さない (R-15)`・`resolvePushOutboxSettings: 範囲外は既定に戻し ignored に名前`・`maskPushToken は末尾 4 文字だけ` |
+| `src/__tests__/lib/push/outbox.test.ts` | `送る条件: プロフィール無し / 24 時間超 / 凍結 / 未同意 (on だけ) / 設定 off の順で dead のコードが決まる`・`夜間: 22:00〜07:00 をまたぐ判定と、次の 07:00 JST の時刻`・`quiet_hours_start/end が null・形が違えば既定 22:00〜07:00 で夜間を判定する (parseClockMinutes の fallback)`・`defer の種類だけ延期し、send の種類は夜でも送る`・`100 件ずつ Expo に渡し、ticket を同じ順の行に対応させる`・`ticket error の DeviceNotRegistered で端末の行を消す`・`HTTP 429 で塊を requeue してその回を打ち切り、後続の塊は Expo に渡さず fail も呼ばない`・`時間切れで残りを次の回に回す (attempts は増えない)`・`receipt: ok / error / まだ無い / 24 時間超の missing`・`receipt の DeviceNotRegistered で端末の行を消す (S-10)`・`24 時間を超えた queued は Expo を呼ばずに expired で dead (claim した行)`・`processPushOutbox は cleanup の expired / sent / dead を要約の cleaned_* に入れる`・`PUSH_OUTBOX_QUEUED_MAX_AGE_MS と PUSH_OUTBOX_ERROR_CODES.EXPIRED が migration の cleanup_push_outbox の c_queued_max_age (24 hours)・'expired' と同じ (supabase/migrations/*_push_outbox.sql を読む)`・`retryDelaySeconds は 1 回目 60・2 回目 300・3 回目以上 900 秒で、5xx の fail にその間隔を渡す (S-08)`・`ログの meta に文面 (title / body)・token の全体・payload を出さない (R-15)`・`resolvePushOutboxSettings: 範囲外は既定に戻し ignored に名前`・`maskPushToken は末尾 4 文字だけ` |
 | `src/__tests__/lib/push/expo-transport.test.ts` | `Authorization: Bearer と content-type を付けて send の URL に POST する`・`429 / 5xx / 通信エラーは retryable、4xx は非 retryable で errors[0].code を使う`・`ticket の数がメッセージと違えば invalid_response`・`getReceipts は ids を送り、data の表を返す` |
 | `src/__tests__/lib/push/render.test.ts` | `weekly_menu_completed は日付入りの本文と data.path を返す`・`weekly_menu_failed は固定の本文 (開いて理由を確認してください)`・`payload の形が違えば null`・`知らない kind は null` |
 | `src/__tests__/api/cron/push-outbox.test.ts` (route は一番外側で 1 回だけ import) | `CRON_SECRET が合わなければ 401`・`EXPO_ACCESS_TOKEN が無ければ claim も Expo もせず cleanup_push_outbox だけを呼び、not_configured と掃除の件数を返す (S-07・R-12)`・`メンテナンス中は鍵の有無に依らず DB に触れず maintenance を返す (S-15)`・`要約を返し、変数名・文面・token の全体を応答に出さない (R-15)`・`RPC の失敗は 500 の汎用の本文` |
 | `tests/push-kinds-routes-contract.test.ts` | `PUSH_NOTIFICATION_KINDS の全部に文面がある`・`全部の path が NOTIFICATION_ROUTES の画面に解決される` |
 | `tests/push-expo-boundary-scan.test.ts` | `exp.host を書くのは src/lib/push/expo-transport.ts だけ (src・supabase/functions・apps/mobile/src を走査)` |
 | `tests/push-outbox-migration-contract.test.ts` | `表・索引・ポリシー・RPC 8 本・トリガーが migration にある`・`RPC は SECURITY INVOKER・search_path ''・EXECUTE は service_role だけ`・`トリガー関数は SECURITY DEFINER で EXECUTE を誰にも付けない`・`down.sql が全部を消す`・`トリガーの c_cancelled_message / c_stale_message が stored-failure-messages.ts の MENU_REQUEST_CANCELLED_MESSAGE / MENU_REQUEST_STALE_MESSAGE と同じ値` |
-| `tests/integration/rls/push-outbox.test.ts` (実 DB) | `anon / authenticated は表も RPC も 42501`・`enqueue は端末の行ごとに 1 行、dedupe_key で 2 回目は 0`・`端末の行が無い利用者の enqueue は 0 行 (S-03)`・`claim は SKIP LOCKED で 2 本が同じ行を取らない`・`fail は retryable と回数で requeued / dead`・`defer は attempts を増やさない`・`complete / fail / defer / record は別の worker_id では false / ignored`・`receipt の claim と record`・`端末の行の削除 (ログアウト・claim・release と同じ操作) で queued の行が消える (S-11)`・`auth.users の削除 (退会) で push_outbox の行が消える (S-12)`・`2 日以上の target_slots の行を completed にするとトリガーが 1 行積む (failed も。pending → processing では積まない。S-01)`・`中止 (中止しました) と止まった行の印 (stale_request_timeout) の failed では積まない (S-19・S-22)`・`attempt_limit_exceeded の failed (claim_menu_request) では積む (S-22)`・`target_slots が 1 日 (1 食・1 日 3 食) / NULL の completed では積まない (S-20・S-21)`・`completed のあと failed に書き換えても 2 行目は作られない (R-10)`・`enqueue が失敗しても weekly_menu_requests の更新は成功し行は 0 (2 日以上の target_slots の行の mode に 2,048 バイトを超える文字列を入れて payload の上限で失敗させる。R-02)`・`cleanup は期限の行だけ消す`・`cleanup は 24 時間を超えたリースの無い queued を expired の dead にし、リース中の行と 24 時間以内の行は触らない (S-07)` |
+| `tests/integration/rls/push-outbox.test.ts` (実 DB) | `anon / authenticated は表も RPC も 42501`・`enqueue は端末の行ごとに 1 行、dedupe_key で 2 回目は 0`・`端末の行が無い利用者の enqueue は 0 行 (S-03)`・`claim は SKIP LOCKED で 2 本が同じ行を取らない`・`fail は retryable と回数で requeued / dead`・`defer は attempts を増やさない`・`complete / fail / defer / record は別の worker_id では false / ignored`・`receipt の claim と record`・`createOutboxStore().loadEligibility は notification_preferences の行が無い利用者を notificationsEnabled true・quiet null で返し、行のある利用者は列の値を返す`・`端末の行の削除 (ログアウト・claim・release と同じ操作) で queued の行が消える (S-11)`・`auth.users の削除 (退会) で push_outbox の行が消える (S-12)`・`2 日以上の target_slots の行を completed にするとトリガーが 1 行積む (failed も。pending → processing では積まない。S-01)`・`中止 (中止しました) と止まった行の印 (stale_request_timeout) の failed では積まない (S-19・S-22)`・`attempt_limit_exceeded の failed (claim_menu_request) では積む (S-22)`・`target_slots が 1 日 (1 食・1 日 3 食) / NULL の completed では積まない (S-20・S-21)`・`completed のあと failed に書き換えても 2 行目は作られない (R-10)`・`enqueue が失敗しても weekly_menu_requests の更新は成功し行は 0 (2 日以上の target_slots の行の mode に 2,048 バイトを超える文字列を入れて payload の上限で失敗させる。R-02)`・`cleanup は期限の行だけ消す`・`cleanup は 24 時間を超えたリースの無い queued を expired の dead にし、リース中の行と 24 時間以内の行は触らない (S-07)` |
 
 ## 11. 段分け (同じ WF・同じ worktree。段ごとに 2 枚のレビュー)
 
