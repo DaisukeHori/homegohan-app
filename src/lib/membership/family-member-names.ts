@@ -34,7 +34,7 @@ export interface FamilyMemberNameSource {
 
 /**
  * プロフィールの名前が無いことを表す仮置き ('Guest')。判定は src/lib/profile-name.ts に 1 つにまとめた (#1611。ホームの呼びかけと同じ)。
- * 前後の空白を除いたうえでの厳密一致で、src/app/api/onboarding/status/route.ts の `nickname !== 'Guest'` と同じ値を仮置きとみなす。
+ * 前後の空白を除いたうえでの厳密一致で、src/app/api/onboarding/status/route.ts も同じ関数 (@homegohan/shared の normalizeProfileName) で判定する (#1635)。
  */
 export { PROFILE_NAME_PLACEHOLDER };
 

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import React, { useEffect, useState } from "react";
 import { Alert, Linking, Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from "react-native";
+import { normalizeProfileName } from "@homegohan/shared";
 
 import { Card, ListItem, LoadingState, PageHeader } from "../../src/components/ui";
 import { getApi } from "../../src/lib/api";
@@ -174,7 +175,12 @@ export default function ProfilePage() {
     router.replace("/");
   }
 
-  const displayName = profileData?.nickname || ctxProfile?.nickname || user?.email?.split("@")[0] || "ゲスト";
+  // 仮置きの 'Guest' (前後の空白を除いて比べる) と空・空白だけは名前として出さない。
+  // 判定は Web・GET /api/onboarding/status と同じ @homegohan/shared の normalizeProfileName (#1635)
+  const displayName =
+    normalizeProfileName(profileData?.nickname) ??
+    normalizeProfileName(ctxProfile?.nickname) ??
+    (user?.email?.split("@")[0] || "ゲスト");
 
   function updateField(field: string, value: any) {
     setEditForm((prev: any) => ({ ...prev, [field]: value }));
@@ -303,7 +309,7 @@ export default function ProfilePage() {
         {activeTab === "basic" && (
           <Card>
             <Text style={s.cardTitle}>基本情報</Text>
-            <Field label="ニックネーム" value={editForm.nickname} editing={isEditing} onChange={(v) => updateField("nickname", v)} testID="profile-nickname-input" />
+            <Field label="ニックネーム" value={isEditing ? editForm.nickname : normalizeProfileName(editForm.nickname)} editing={isEditing} onChange={(v) => updateField("nickname", v)} testID="profile-nickname-input" />
             <Field label="年齢" value={editForm.age?.toString()} editing={isEditing} onChange={(v) => updateField("age", v ? parseInt(v) : null)} keyboardType="number-pad" />
             {isEditing ? (
               <View style={s.field}>

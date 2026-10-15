@@ -11,6 +11,7 @@ export * from './design-tokens';
 export * from './legal-versions';
 export * from './service-unavailable';
 export * from './user-scoped-storage';
+export * from './native-app-tabs';
 export * from './password-policy';
 export * from './auth-captcha';
 export * from './account-change-errors';
@@ -18,6 +19,7 @@ export * from './account-change-input';
 export * from './health-blood-test-reference';
 export * from './org-challenges';
 export * from './weekly-menu-ultimate-mode';
+export * from './profile-name';
 export type {
   Json,
   Database,

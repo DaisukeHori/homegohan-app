@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, Text, View } from "react-native";
+import { normalizeProfileName } from "@homegohan/shared";
 
 import { Card, Button, SectionHeader, LoadingState, EmptyState } from "../../../src/components/ui";
 import { Input } from "../../../src/components/ui";
@@ -117,7 +118,7 @@ export default function OrgMembersPage() {
                     <Ionicons name="person" size={22} color={colors.accent} />
                   </View>
                   <View style={{ flex: 1, gap: 2 }}>
-                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{m.nickname ?? "(no name)"}</Text>
+                    <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{normalizeProfileName(m.nickname) ?? "(no name)"}</Text>
                     <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.sm }}>
                       <Ionicons name="shield-checkmark" size={12} color={colors.textMuted} />
                       <Text style={{ fontSize: 13, color: colors.textMuted }}>{(m.roles ?? []).join(", ") || "(none)"}</Text>

@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { normalizeProfileName } from "@homegohan/shared";
 
 import { Card, ProgressBar } from "../../src/components/ui";
 import { supabase } from "../../src/lib/supabase";
@@ -13,6 +14,8 @@ export default function OnboardingResume() {
   const { profile, refresh } = useProfile();
   const [isResetting, setIsResetting] = useState(false);
 
+  // 仮置きの 'Guest' (前後の空白を除いて比べる) と空・空白だけは名前として呼びかけない (#1635。Web と同じ判定)
+  const nickname = normalizeProfileName(profile?.nickname);
   const progress = profile?.onboardingProgress;
   const progressPercent = progress
     ? Math.round((progress.currentStep / progress.totalQuestions) * 100)
@@ -70,7 +73,7 @@ export default function OnboardingResume() {
       {/* Title */}
       <View style={styles.titleSection}>
         <Text style={styles.title}>
-          おかえりなさい{profile?.nickname ? `、\n${profile.nickname}さん` : ""}！
+          おかえりなさい{nickname ? `、\n${nickname}さん` : ""}！
         </Text>
         <Text style={styles.subtitle}>前回の設定の続きから再開しましょう</Text>
       </View>
