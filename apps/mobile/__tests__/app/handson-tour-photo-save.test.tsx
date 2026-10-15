@@ -7,12 +7,15 @@
  *   - §3.7 保存は共有の buildTourPhotoSaveBody (夕食・料理・カロリー・写真 null・sandbox true) を ?source=handson_tour で送る。
  *     成功したら Step 2 へ。sandbox_not_eligible はエラーにせず Step 2 へ
  *   - §3.10 失敗はエラー画面 (もう一度 / あとで)。連続 3 回の失敗で【あとで】を強調。【あとで】はホームへ + skip API
+ *   - §9 handson_tour_skipped は【あとで】が reason 'user_action'、端末バックが reason 'hard_back'
+ *     (01-trigger-flow §2.2: Step 1〜3 の端末バックは skipped{reason:'hard_back'} + skipped_at + /home。エラー画面でも同じ)
  *
  * 失敗の例外は、モバイルが実際に使う @homegohan/core の createHttpClient (fetch だけ差し替え) から作る
  * (エラーの文面 "HTTP <状態> <statusText>: <本文>" が変わったときにここで気付ける)。
  */
 import React from 'react';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { BackHandler } from 'react-native';
 import { createHttpClient, HttpNetworkError, type HttpClient } from '@homegohan/core';
 import {
   HANDSON_TOUR_CONSTANTS,
@@ -57,40 +60,52 @@ jest.mock('../../src/handson-tour/useTourOverlayLogic', () => ({
   unregisterTourTarget: jest.fn(),
 }));
 
-// 吹き出しのオーバーレイ (TourOverlay) は位置の計測やアニメーションを持つので、進行ボタン (primaryAction) だけを出す形に差し替える。
+// 吹き出しのオーバーレイ (TourOverlay) は位置の計測やアニメーションを持つので、進行ボタン (primaryAction) と端末バックだけを持つ形に差し替える。
+// 端末バックは本物の TourOverlay.tsx と同じく、hardwareBackPress で overlay.onSkip を呼んで true を返す。
 // 子 (画面) への注入 (childProps + mode + onSandboxComplete) は本物の TourSandboxWrapper と同じ
 jest.mock('../../src/handson-tour/TourSandboxWrapper', () => {
   const ReactActual = jest.requireActual('react');
-  const { Pressable, Text, View } = jest.requireActual('react-native');
-  return {
-    TourSandboxWrapper: (props: {
-      children: React.ReactElement;
-      childProps: object;
-      subStep: string;
-      onSandboxComplete: (result: unknown) => void;
-      overlay: { primaryAction?: { label: string; onPress: () => void; disabled?: boolean } };
-    }) =>
-      ReactActual.createElement(
-        View,
-        { testID: `overlay-sub-step-${props.subStep}` },
-        ReactActual.cloneElement(props.children, {
-          ...props.childProps,
-          mode: 'sandbox',
-          onSandboxComplete: props.onSandboxComplete,
-        }),
-        props.overlay.primaryAction
-          ? ReactActual.createElement(
-              Pressable,
-              {
-                testID: 'overlay-primary',
-                onPress: props.overlay.primaryAction.onPress,
-                disabled: props.overlay.primaryAction.disabled,
-              },
-              ReactActual.createElement(Text, null, props.overlay.primaryAction.label),
-            )
-          : null,
-      ),
-  };
+  const { BackHandler: BackHandlerActual, Pressable, Text, View } = jest.requireActual('react-native');
+  function MockTourSandboxWrapper(props: {
+    children: React.ReactElement;
+    childProps: object;
+    subStep: string;
+    onSandboxComplete: (result: unknown) => void;
+    overlay: { primaryAction?: { label: string; onPress: () => void; disabled?: boolean }; onSkip?: () => void };
+  }) {
+    const { onSkip } = props.overlay;
+    ReactActual.useEffect(() => {
+      const sub = BackHandlerActual.addEventListener('hardwareBackPress', () => {
+        if (onSkip) {
+          onSkip();
+          return true;
+        }
+        return false;
+      });
+      return () => sub.remove();
+    }, [onSkip]);
+    return ReactActual.createElement(
+      View,
+      { testID: `overlay-sub-step-${props.subStep}` },
+      ReactActual.cloneElement(props.children, {
+        ...props.childProps,
+        mode: 'sandbox',
+        onSandboxComplete: props.onSandboxComplete,
+      }),
+      props.overlay.primaryAction
+        ? ReactActual.createElement(
+            Pressable,
+            {
+              testID: 'overlay-primary',
+              onPress: props.overlay.primaryAction.onPress,
+              disabled: props.overlay.primaryAction.disabled,
+            },
+            ReactActual.createElement(Text, null, props.overlay.primaryAction.label),
+          )
+        : null,
+    );
+  }
+  return { TourSandboxWrapper: MockTourSandboxWrapper };
 });
 
 import HandsonTourPhoto from '../../app/handson-tour/photo';
@@ -135,6 +150,19 @@ function skipCalls(): Array<[string, RequestInit]> {
   return fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/handson-tour/skip'));
 }
 
+type HardwareBackListener = () => boolean | null | undefined;
+/** BackHandler.addEventListener で登録された端末バックの受け手 (登録順)。jest の preset は iOS なので本物の BackHandler は何も持たない */
+let hardwareBackListeners: HardwareBackListener[] = [];
+let addBackListenerSpy: jest.SpyInstance | null = null;
+
+/** Android の端末バックを 1 回押す。本物と同じく、後に登録したものから順に呼び、true を返したところで止める。止まらなければ false (= 既定の戻る) */
+function pressHardwareBack(): boolean {
+  for (const listener of [...hardwareBackListeners].reverse()) {
+    if (listener()) return true;
+  }
+  return false;
+}
+
 function analyticsCalls(eventName: string): unknown[] {
   return mockFireAnalytics.mock.calls.filter(([name]) => name === eventName).map(([, payload]) => payload);
 }
@@ -147,11 +175,22 @@ beforeEach(() => {
   global.fetch = fetchMock as unknown as typeof fetch;
   // 5xx のやり直し (待ち時間が入る) はしない。POST はもともとやり直さない
   mockClient = createHttpClient({ baseUrl: API_BASE_URL, retry: false });
+  hardwareBackListeners = [];
+  addBackListenerSpy = jest.spyOn(BackHandler, 'addEventListener').mockImplementation((eventName, listener) => {
+    if (eventName === 'hardwareBackPress') hardwareBackListeners.push(listener);
+    return {
+      remove: () => {
+        hardwareBackListeners = hardwareBackListeners.filter((registered) => registered !== listener);
+      },
+    };
+  });
 });
 
 afterEach(() => {
   global.fetch = originalFetch;
   jest.useRealTimers();
+  addBackListenerSpy?.mockRestore();
+  addBackListenerSpy = null;
 });
 
 describe('#1625: 保存で送る本文', () => {
@@ -347,6 +386,104 @@ describe('#1625: 保存の対象でない利用者 (sandbox_not_eligible) は St
     expect(screen.queryByTestId('tour-step-1-error')).toBeNull();
     expect(analyticsCalls('handson_tour_step_error')).toEqual([]);
     expect(analyticsCalls('handson_tour_step_completed')).toHaveLength(1);
+  });
+});
+
+describe('#1625: 端末バック (Android) は hard_back でツアーを抜ける (設計書 01-trigger-flow §2.2・03-step1 §9)', () => {
+  const SKIP_OK = jsonResponse(HTTP_OK, 'OK', { skipped_at: '2026-10-15T00:00:00.000Z' });
+
+  it('吹き出しの画面での端末バックは、skip API と handson_tour_skipped を reason hard_back で送り、ホームへ', async () => {
+    fetchMock.mockResolvedValue(SKIP_OK);
+    render(<HandsonTourPhoto />);
+
+    let handled = false;
+    await act(async () => {
+      handled = pressHardwareBack();
+    });
+
+    expect(handled).toBe(true);
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
+    expect(skipCalls()).toHaveLength(1);
+    expect(JSON.parse(String(skipCalls()[0][1].body))).toEqual({ step: 1, reason: 'hard_back' });
+    expect(analyticsCalls('handson_tour_skipped')).toEqual([
+      expect.objectContaining({ step: 1, reason: 'hard_back', user_id: 'user-1' }),
+    ]);
+    expect(saveCalls()).toHaveLength(0);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('エラー画面での端末バックも、既定の戻る (Step 0) にせず、reason hard_back で skip してホームへ', async () => {
+    fetchMock.mockImplementation(async (url: string) =>
+      String(url).includes('/api/handson-tour/skip') ? SKIP_OK : SAVE_FAILED,
+    );
+    const screen = render(<HandsonTourPhoto />);
+
+    fireEvent.press(screen.getByTestId('meal-save-button-press'));
+    await screen.findByTestId('tour-step-1-error');
+    // エラー画面ではオーバーレイを外すので、受け手はエラー画面の 1 つだけ
+    expect(hardwareBackListeners).toHaveLength(1);
+
+    let handled = false;
+    await act(async () => {
+      handled = pressHardwareBack();
+    });
+
+    expect(handled).toBe(true);
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
+    expect(skipCalls()).toHaveLength(1);
+    expect(JSON.parse(String(skipCalls()[0][1].body))).toEqual({ step: 1, reason: 'hard_back' });
+    expect(analyticsCalls('handson_tour_skipped')).toEqual([
+      expect.objectContaining({ step: 1, reason: 'hard_back' }),
+    ]);
+    expect(mockPush).not.toHaveBeenCalled();
+  });
+
+  it('エラー画面の【もう一度】で吹き出しの画面に戻ると、エラー画面の受け手は外れ、端末バックはオーバーレイが受ける (skip は 1 回)', async () => {
+    let resolveRetry: (response: FakeResponse) => void = () => undefined;
+    fetchMock
+      .mockResolvedValueOnce(SAVE_FAILED)
+      .mockImplementationOnce(
+        () =>
+          new Promise<FakeResponse>((resolve) => {
+            resolveRetry = resolve;
+          }),
+      )
+      .mockResolvedValue(SKIP_OK);
+    const screen = render(<HandsonTourPhoto />);
+
+    fireEvent.press(screen.getByTestId('meal-save-button-press'));
+    fireEvent.press(await screen.findByTestId('tour-step-1-error-retry'));
+    await waitFor(() => expect(screen.queryByTestId('tour-step-1-error')).toBeNull());
+    expect(hardwareBackListeners).toHaveLength(1);
+
+    await act(async () => {
+      pressHardwareBack();
+    });
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
+
+    // 抜けたあとに保存の応答 (成功) が返っても、Step 2 へ進めない
+    await act(async () => {
+      resolveRetry(SUCCESS);
+    });
+    expect(mockPush).not.toHaveBeenCalled();
+    expect(analyticsCalls('handson_tour_step_completed')).toEqual([]);
+    expect(skipCalls()).toHaveLength(1);
+    expect(JSON.parse(String(skipCalls()[0][1].body))).toEqual({ step: 1, reason: 'hard_back' });
+  });
+
+  it('端末バックを続けて押しても skip は 1 回だけ', async () => {
+    fetchMock.mockResolvedValue(SKIP_OK);
+    render(<HandsonTourPhoto />);
+
+    await act(async () => {
+      pressHardwareBack();
+      pressHardwareBack();
+    });
+
+    await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
+    expect(skipCalls()).toHaveLength(1);
+    expect(analyticsCalls('handson_tour_skipped')).toHaveLength(1);
+    expect(mockReplace).toHaveBeenCalledTimes(1);
   });
 });
 

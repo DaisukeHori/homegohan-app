@@ -2,9 +2,10 @@
 // Canonical: docs/design/family/09-onboarding-handson-tour/03-step1-photo.md
 
 import { useRouter } from 'expo-router';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  BackHandler,
   Image,
   Pressable,
   ScrollView,
@@ -184,6 +185,12 @@ function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, 
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
 
+/**
+ * Step 1 でツアーを抜ける理由 (設計書 03-step1 §9 の handson_tour_skipped と、skip API の reason)。
+ * 'user_action' = エラー画面の【あとで】 / 'hard_back' = Android の端末バック (設計書 01-trigger-flow §2.2)
+ */
+type Step1SkipReason = 'user_action' | 'hard_back';
+
 function safeNickname(raw: string | null | undefined): string {
   if (!raw) return 'あなた';
   const trimmed = raw.trim();
@@ -205,6 +212,9 @@ export default function HandsonTourPhoto() {
   const [saveError, setSaveError] = useState(false);
   const [saveErrorCount, setSaveErrorCount] = useState(0);
   const savingRef = useRef(false);
+  // ツアーを抜けた (skip を送ってホームへ向かった)。抜けたあとに保存の応答が返っても Step 2 へ進めない・エラー画面を出さない。
+  // 端末バックを続けて押しても skip を 1 回だけ送る
+  const leftTourRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
 
   // mount 時に step_viewed (step=1) を発火
@@ -270,8 +280,8 @@ export default function HandsonTourPhoto() {
   // ただし「この利用者はお試しの保存の対象ではない」(sandbox_not_eligible) は、通信や保存の失敗ではなく、何度送っても変わらない答えなので、
   // エラー画面を出さずに Step 2 へ進める (設定からのやり直し = 設計書 01-trigger-flow §1.2 / §4.2 は Step 4 まで通して見せる)。
   const handleSave = async () => {
-    // 二重送信を防ぐ (吹き出しの【保存】と、下の画面の保存ボタンの両方から呼ばれうる)
-    if (savingRef.current) return;
+    // 二重送信を防ぐ (吹き出しの【保存】と、下の画面の保存ボタンの両方から呼ばれうる)。ツアーを抜けたあと (ホームへの遷移中) も送らない
+    if (savingRef.current || leftTourRef.current) return;
     savingRef.current = true;
     setSaveError(false);
     advanceSubStep('1.7');
@@ -287,6 +297,9 @@ export default function HandsonTourPhoto() {
       savingRef.current = false;
       setIsSaving(false);
     }
+
+    // 保存の応答を待つ間に端末バックでツアーを抜けていたら、ここで終える (ホームへの遷移を Step 2 へ上書きしない)
+    if (leftTourRef.current) return;
 
     if (failure) {
       // 失敗は必ず記録する。そのうえでエラー画面を出す (設計書 03-step1 §3.10)
@@ -322,25 +335,48 @@ export default function HandsonTourPhoto() {
     router.push(HANDSON_TOUR_ROUTES.step2 as never);
   };
 
-  // エラー画面の【あとで】(設計書 03-step1 §3.10: /home へ遷移 + skip API。§9: handson_tour_skipped)
-  const handleSkip = async () => {
-    if (profile?.id) {
-      fireAnalytics('handson_tour_skipped', {
-        user_id: profile.id,
-        timestamp: new Date().toISOString(),
-        platform: 'ios' as const,
-        app_version: '1.0.0',
-        step: 1,
-        reason: 'user_action',
-      });
-    }
-    try {
-      await getApi().post('/api/handson-tour/skip', { step: 1, reason: 'user_action' });
-    } catch {
-      // 通信に失敗してもホームへ進める (Step 0 の【あとで】と同じ)
-    }
-    router.replace('/home' as never);
-  };
+  // ツアーを抜ける (/home へ遷移 + skip API。設計書 03-step1 §9: handson_tour_skipped)。呼び元は 3 つ:
+  //   - エラー画面の【あとで】 → 'user_action' (§3.10)
+  //   - 吹き出しのオーバーレイの端末バック (TourOverlay の hardwareBackPress が overlay.onSkip を呼ぶ) → 'hard_back'
+  //   - エラー画面の端末バック (下の useEffect。エラー画面ではオーバーレイを出さないので自前で受ける) → 'hard_back'
+  //   (設計書 01-trigger-flow §2.2: Step 1〜3 の端末バックは skipped{reason:'hard_back'} + skipped_at + /home)
+  const handleSkip = useCallback(
+    async (reason: Step1SkipReason) => {
+      if (leftTourRef.current) return;
+      leftTourRef.current = true;
+      if (profile?.id) {
+        fireAnalytics('handson_tour_skipped', {
+          user_id: profile.id,
+          timestamp: new Date().toISOString(),
+          platform: 'ios' as const,
+          app_version: '1.0.0',
+          step: 1,
+          reason,
+        });
+      }
+      try {
+        await getApi().post('/api/handson-tour/skip', { step: 1, reason });
+      } catch {
+        // 通信に失敗してもホームへ進める (Step 0 の【あとで】と同じ)
+      }
+      router.replace('/home' as never);
+    },
+    [profile?.id, router],
+  );
+
+  const handleSkipByUser = useCallback(() => handleSkip('user_action'), [handleSkip]);
+  const handleHardBack = useCallback(() => handleSkip('hard_back'), [handleSkip]);
+
+  // エラー画面の端末バック (Android)。エラー画面は TourSandboxWrapper (= TourOverlay の hardwareBackPress) を外して出すので、
+  // ここで受けないと端末バックが画面の戻る (Step 0 の Welcome) になってしまう。true を返して既定の戻るを止める
+  useEffect(() => {
+    if (!saveError) return undefined;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      void handleHardBack();
+      return true;
+    });
+    return () => sub.remove();
+  }, [saveError, handleHardBack]);
 
   // サブステップに応じた bubble 設定
   const getBubble = (): {
@@ -442,7 +478,7 @@ export default function HandsonTourPhoto() {
           </Pressable>
           <Pressable
             testID="tour-step-1-error-skip"
-            onPress={handleSkip}
+            onPress={handleSkipByUser}
             accessibilityRole="button"
             style={errorStyles.skipButton}
           >
@@ -465,7 +501,8 @@ export default function HandsonTourPhoto() {
           progress: { current: 2, total: 5 },
           primaryAction,
           showSkip: false,
-          onSkip: handleSkip,
+          // 端末バック (TourOverlay の hardwareBackPress) で呼ばれる。showSkip: false なので画面のスキップボタンからは呼ばれない
+          onSkip: handleHardBack,
           accessibilityLabel: i18n.step1.a11y_title,
         }}
         childProps={{
