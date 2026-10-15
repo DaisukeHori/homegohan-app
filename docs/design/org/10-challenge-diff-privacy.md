@@ -3,6 +3,7 @@
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-16 | 新設 (Issue #1688 の設計ゲート・A 型 4 相) |
+| v1.1 | 2026-10-16 | 構造 A に、同じ種類で期間が重なるチャレンジの公開を 1 本にする規則・管理者だった人の印・削除の制限・状態の NOT NULL を足す |
 
 要件の正本は Issue #1688 の本文とコメント (コメント 0 件)、親の #1600 (本文とコメント 1 件) と #1132。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。既存のチャレンジ設計 `07-challenge.md` §15 (実装の正) を前提に、§15 が「#1688 で設計する」と送った守りだけを扱う。
 
@@ -22,9 +23,9 @@
 
 | # | 要件 | 出どころ | 本書の節 |
 |---|---|---|---|
-| R-1 | 管理者に見せる集計 (人数・平均) の 2 時点の差から、1 人の値を逆算できないこと | #1688 本文・#1600 本文 3「強化の候補」 | §4.1, §4.3 |
-| R-2 | 管理者がチャレンジの状態・期間・種類を書き換えても、R-1 が破れないこと (旧ブランチの抜け道 1) | #1688「経緯」 | §4.1 (c), §4.3 S-6〜S-7 |
-| R-3 | 管理者が任意の役割で参加して順位表を受け取っても、やめた・外した人の値が分からないこと (旧ブランチの抜け道 2) | #1688「経緯」 | §4.1 (d), §4.3 S-8・S-20 |
+| R-1 | 管理者に見せる集計 (人数・平均) の 2 時点の差から、1 人の値を逆算できないこと (同じチャレンジの 2 時点に加え、同じ値になるチャレンジを 2 本並べた差も含む) | #1688 本文・#1600 本文 3「強化の候補」 | §4.1 (a)(e), §4.3 S-21〜S-23 |
+| R-2 | 管理者がチャレンジの状態・期間・種類を書き換えても、R-1 が破れないこと (旧ブランチの抜け道 1) | #1688「経緯」 | §4.1 (c), §4.3 S-6〜S-7・S-24 |
+| R-3 | 管理者が任意の役割で参加して順位表を受け取っても、やめた・外した人の値が分からないこと (旧ブランチの抜け道 2) | #1688「経緯」 | §4.1 (d), §4.3 S-8・S-20・S-25 |
 | R-4 | 控えの作成時点と計算日のずれが生まれる構造を持たないこと (旧ブランチの抜け道 3) | #1688「経緯」 | §4.2, §4.3 S-17 |
 | R-5 | 誰から何を守るか (同じ組織の管理者・参加者) を定め、要件書 §6.4 の「匿名化集計の最低人数 10 名以上」との関係を書く | #1688「設計で決めること」・`docs/requirements/02-organization-management.md:884` | §3.1 |
 | R-6 | 管理者がチャレンジの状態・期間・種類を変えられることとの両立 (確定後に変えられなくするのか) を決める | #1688「設計で決めること」 | §4.1 (c), §9.3 |
@@ -35,7 +36,7 @@
 | R-11 | 最小人数 10 は DB の関数の cfg に 1 か所だけ書き、共有の定数と突合する (既存の番兵) | `packages/shared/src/org-challenges.ts:18`・`tests/org-challenges-lib.test.ts:153` | §5.1, §16 |
 | R-12 | as any・マジックナンバーを使わない。意味のある数は名前付き定数に | 設計ゲートの規律 | §6 |
 
-### 0.3 ユーザーシナリオ (20 本。トレースは §4.3)
+### 0.3 ユーザーシナリオ (25 本。トレースは §4.3)
 
 | # | シナリオ |
 |---|---|
@@ -46,7 +47,7 @@
 | S-5 | 確定したあとに管理者が X を組織から外す (または X が参加をやめる)。確定した平均は変わらない。差は取れない |
 | S-6 | 管理者が終了したチャレンジを開催中に戻そうとする (API の PUT でも、PostgREST を直接叩いても)。409 / RAISE `CHALLENGE_STATUS_LOCKED` で変わらない |
 | S-7 | 管理者が開催中のチャレンジの開始日・終了日・種類・部署を PostgREST で書き換えようとする。RAISE `CHALLENGE_PERIOD_LOCKED` で変わらない (API の PUT はそもそも受け付けない) |
-| S-8 | 管理者 (owner / admin) が参加して詳細を開く。自分の記録と順位は見えるが、順位表は返らない (`reason: 'org_admin'`)。DB の関数も 0 行 |
+| S-8 | 管理者 (owner / admin) が参加して詳細を開く。自分の記録と順位は見えるが、順位表は返らない (`reason: 'org_admin'`)。DB の関数も 0 行。そのチャレンジがある間に管理者になったことがある人 (いまは member) も同じ |
 | S-9 | 参加している管理者が X を外したあとに自分の順位を見る。順位は次の夜の計算し直しまで変わらず、変わっても自分との上下しか分からない (値は分からない。§19) |
 | S-10 | 管理者が開催中のチャレンジを手動で終了 (PUT status=completed) する。前夜までの値で平均が確定し、以後変わらない |
 | S-11 | 管理者が開催中のチャレンジを中止 (cancelled) する。平均は確定しない (表示されない)。以後、状態も期間も変えられない |
@@ -58,11 +59,16 @@
 | S-17 | 夜の集計が止まっていた (何日か走らなかった) あとに走る。確定は「completed にする UPDATE」と同じトランザクションで、その直前に計算した値から取るので、控えの作成日と計算日がずれる余地が無い |
 | S-18 | 参加した人がちょうど 10 人で、終了前に 1 人が組織から外れる。終了時点の順位がついた人が 9 人なので平均は出ない (管理者は「外した人が参加していた」と推測しうるが、値は分からない。§19) |
 | S-19 | 部署を限定した開催中のチャレンジの参加者の所属部署が変わる (`user_profiles.department_id`。本人は変えられない特権列で、製品で変わるのは脱退・除名・退会での NULL だけ。ほかは service_role の直接の更新。チャレンジが参照する部署は削除できない)。その人は詳細を開けなくなるが、行は順位表にも終了時の確定にも残り、集計は動かない |
-| S-20 | 参加中の人の組織の役割が変わる。経路は 3 つ: 所有者の譲渡 (`accept_org_owner_transfer`。member / admin → owner、元の owner → admin)、同じ組織の招待の承諾 (`accept_org_invite` は同じ組織の在籍者の承諾を拒まず、`org_role` を招待の役割で上書きする。admin → member の降格と member → admin の昇格の両方)、組織を抜けて招待で入り直す (`leave_org` → `accept_org_invite`)。役割が変わった次の要求から、順位表は今の役割で決まる (owner / admin には返さない) |
+| S-20 | 参加中のメンバー Y が順位表を見たあと、同じ組織の招待を admin の役割で承諾して管理者になり (`accept_org_invite` は同じ組織の在籍者の承諾を拒まず、`org_role` を招待の役割で上書きする)、X を組織から外し、member の役割の招待を承諾して戻ってから、もう一度順位表を見ようとする。管理者になった時点で、その組織にあるチャレンジすべてに Y の「管理者だった印」が付き、member に戻っても順位表は返らない (`reason: 'org_admin'`)。所有者の譲渡 (`accept_org_owner_transfer`) で owner になる経路も同じ |
+| S-21 | 管理者が、種類・開始日・終了日が同じチャレンジ A・B を作り、11 人が両方に参加する。X が B だけやめる。終了日の夜、同じバッチで A・B が completed になる。平均は、先に確定した 1 本 (確定の時刻が同じなら ID の小さい方) だけが出て、もう 1 本は出ない |
+| S-22 | 管理者が A (開催中) を PUT で completed にし (前夜の値で確定)、X を組織から外し、同じ日に B (A と種類が同じで期間が重なる) を completed にする。A の平均が出ていれば B の平均は出ない。A が 10 人未満で出ていなければ、B の平均は出る (公開は B の 1 回だけ) |
+| S-23 | 管理者が、平均が出た A (completed) を PostgREST で消し、同じ種類・同じ期間の B を作り直して、メンバーにもう一度参加してもらう。A は消せない (DELETE が 0 行) ので、B の平均は S-22 の規則で出ない。開催中の A も消せない (中止してからなら消せる。中止は確定しない) |
+| S-24 | 管理者が PostgREST で、開催中のチャレンジの状態を NULL にして期間を書き換え、開催中に戻そうとする (NULL の状態を下書きのように使う)。状態の列は NOT NULL で、ガードも NULL への遷移を CHALLENGE_STATUS_LOCKED で止めるので、1 回目の UPDATE で止まる |
+| S-25 | 参加中のメンバー Y が順位表を見たあと、組織を抜け (`leave_org`。参加行は残る)、admin の役割の招待で入り直して X を外し、また抜けて member の役割の招待で入り直してから順位表を見ようとする。admin で入り直した時点で印が付き、member で入り直しても順位表は返らない。印の付いたチャレンジで参加をやめて参加し直しても、印は参加行とは別の表にあるので残る |
 
 ### 0.4 分冊判定
 
-目安 (設計書 800 行超 / 消費先レーン 3 以上 / 共有面 2 つ以上) のうち、消費先 (管理者 API・メンバー API・管理者の画面 Web / モバイル・メンバーの画面) と共有面 (`organization_challenges` への変更ガード・新しい集計の表) に当たる。それでも **1 冊**にする。理由: 核 (DB の表・トリガー・関数 2 本の作り直し・lib の正典) と配線 (API 2 本の分岐と画面の文言) は同じ不変条件「集計は確定 1 回・順位表は管理者に出さない」を 1 つの契約で共有し、配線だけの冊に残る判断が無い (文言の置き換えと分岐 1 つ)。実装 WF は §14 のとおり核 → 配線の 2 段に分け、段ごとに 2 枚レビューを閉じる。
+目安 (設計書 800 行超 / 消費先レーン 3 以上 / 共有面 2 つ以上) のうち、消費先 (管理者 API・メンバー API・管理者の画面 Web / モバイル・メンバーの画面) と共有面 (`organization_challenges` への変更ガードと削除のポリシー・新しい表 2 つ・`user_profiles` のトリガー) に当たる。それでも **1 冊**にする。理由: 核 (DB の表・トリガー・ポリシー・関数 2 本の作り直し・lib の正典) と配線 (API 2 本の分岐と画面の文言) は同じ不変条件「平均の公開は重なるチャレンジの中で 1 回・順位表は管理者と管理者だった人に出さない」を 1 つの契約で共有し、配線だけの冊に残る判断が無い (文言の置き換えと分岐 1 つ)。実装 WF は §14 のとおり核 → 配線の 2 段に分け、段ごとに 2 枚レビューを閉じる。
 
 ### 0.5 用語
 
@@ -73,7 +79,9 @@
 | 参加した人 (延べ) | 参加の INSERT のたびに +1 し、やめても・組織から外れても・退会しても減らない数 (`joined_count`)。画面の「参加者数」はこの値 |
 | 管理者 | `user_profiles.org_role` が `owner` / `admin` の人 (`requireOrgAdmin` が通す人)。メンバーを組織から外せる唯一の主体 |
 | 参加者 | `organization_challenge_participants` に行があり、今もその組織のメンバーである人 |
-| 差分攻撃 | 2 つの公開値 (母集団が 1 人だけ違う) の差から、その 1 人の値を出すこと |
+| 差分攻撃 | 2 つの公開値 (母集団が 1 人だけ違う) の差から、その 1 人の値を出すこと。2 つの公開値は、同じチャレンジの 2 時点でも、同じ値になる 2 本のチャレンジ (種類が同じで期間が重なる) でもよい |
+| 期間が重なる | 同じ組織の 2 本のチャレンジ c・s で、`s.start_date <= c.end_date AND c.start_date <= s.end_date` (両端を含む) |
+| 管理者だった印 | 表 `organization_challenge_ranking_exclusions` の行 (challenge_id, user_id)。その人が組織の管理者 (owner / admin) になった時点で、その組織にあったチャレンジすべてに付き、消えない。印のある人には、そのチャレンジの順位表を返さない |
 
 ---
 
@@ -97,7 +105,7 @@
 
 | 主体 | 持っている力 | 守る対象 | 本書の扱い |
 |---|---|---|---|
-| 組織の管理者 (owner / admin) | 集計を見る・メンバーを組織から外す (`remove_org_member`)・チャレンジの状態を変える (API) と全列を書き換える (ポリシー `Org admins can manage challenges` は FOR ALL で WITH CHECK 無し。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:9620`)・メンバーとして参加して順位表と自分の順位を見る | 1 人の値 (current_value) と、できる範囲で参加の有無 | **本書の主対象**。集計の公開を確定 1 回にし、順位表を見せず、開始後の期間・種類と終了後の状態を不変にする |
+| 組織の管理者 (owner / admin) | 集計を見る・メンバーを組織から外す (`remove_org_member`)・チャレンジを何本でも作る (種類・期間の重複を止める制約は無い)・チャレンジの状態を変える (API) と全列を書き換える・行を消す (ポリシー `Org admins can manage challenges` は FOR ALL で WITH CHECK 無し。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:9620`)・メンバーとして参加して順位表と自分の順位を見る・招待の承諾や所有者の譲渡で自分の役割を member と行き来する | 1 人の値 (current_value) と、できる範囲で参加の有無 | **本書の主対象**。平均の公開を「同じ種類で期間が重なるチャレンジの中で確定 1 回」にし、公開したチャレンジを消させず、順位表を管理者と管理者だった人に見せず、開始後の期間・種類と終了後の状態を不変にする |
 | 参加者 (member) | 自分の参加・やめる・順位表 (上位 20 人と本人。名前なし) | 他の参加者の値と名前の結びつき | 順位表は #1132 の方針どおり値を名前なしで見せる。やめた人の行はその場で消える (§3.3 で理由)。社会的な知識による結びつけは対象外 (§19) |
 | 組織に所属しない人・他組織 | 何も見えない (既存の RLS・認可) | — | 変えない |
 
@@ -111,19 +119,19 @@
 | 対策 | 採否 | 理由 |
 |---|---|---|
 | 最小度数 (k-匿名の度数規則。10 人未満は出さない) | 採用済み (#1600) | 1 回の集計を守る。2 回の差は守らないので、下の対策で補う |
-| 二次秘匿 (差で復元できる公開値を伏せる) | **採る (形を単純化)** | 統計表の二次秘匿は「差が取れる組を伏せる」。本書では公開を **1 チャレンジにつき 1 回 (終了時の確定値)** にし、差を取れる組そのものを作らない。開催中の平均は出さない |
+| 二次秘匿 (差で復元できる公開値を伏せる) | **採る (形を単純化)** | 統計表の二次秘匿は「差が取れる組を伏せる」。本書では公開を **1 チャレンジにつき 1 回 (終了時の確定値)** にし、さらに **同じ組織・同じ種類・期間が重なるチャレンジの中で、先に確定した 1 本だけ**を出す (後のものを伏せる = 二次秘匿)。個人の値は (本人, 種類, 開始日, 終了日と前日の早い方) だけで決まる (`supabase/migrations/20261014100100_org_challenge_progress.sql:120`〜`:176`) ので、種類と期間が同じなら 2 本の母集団の差がそのまま 1 人の値になるため。開催中の平均は出さない |
 | 時系列の抑制規則 (母集団が k 人以上変わるまで新しい値を出さない) | 採らない | 1 人やめたあと終了まで値が凍るので開催中の平均が使い物にならないうえ、終了時の確定と最後の公開値の母集団が 1 人違い、その間に他の人の記録が無ければ (休日・記録の少ない参加者) 差がそのまま 1 人の値になる |
 | 夜ごとの控え (snapshot) を公開する | 採らない | 旧ブランチの形。全員の値を計算し直した夜にだけ控えを書いても、他の人の値が動かない夜 (新しい記録が無い) は差が正確に 1 人の値になる。書き直す条件 (counted_through) が抜け道の発生源になり、審査 4 周で閉じなかった |
 | 雑音の付加 (差分プライバシー) | 採らない | 10 人の平均の感度は 100 / 10 = 10 点で、有用な精度の雑音にできない。AWS も最小人数との併用に注記がある。公開が 1 回なら雑音は要らない |
 | 粗い丸め (整数・5 点刻み) | 採らない | 差を曖昧にするだけで閉じない。既存の小数第 1 位のまま |
-| クエリ監査・アクセス予算 | 採らない | 公開面は固定の 2 値 (人数・平均) なので、「公開回数 = 1」が予算の代わりになる |
+| クエリ監査・アクセス予算 | **採る (組織単位の公開の予算 = 重なりの中で 1 回)** | 公開面は固定の 2 値 (人数・平均) なので、問い合わせの監査は要らない。ただしチャレンジ単位の「公開 1 回」だけでは、管理者が同じ値になるチャレンジを何本も作れる (S-21・S-22)。予算は「同じ組織・同じ種類・期間が重なるチャレンジの平均の公開は 1 回」とし、平均を出す関数がその場で判定する (確定の時刻と ID の順。鍵や別の台帳は持たない)。公開した (completed の) チャレンジは利用者の権限では消せなくし、予算の記録が消えないようにする (S-23) |
 | 母集団の凍結 (やめた人の値を残して平均を計算し続ける) | 採らない | 「やめた人の記録は、集計にも順位にも残らない」(`src/app/api/org/challenges/[id]/join/route.ts:20`) の約束と、組織から外れた人のデータの継続利用に反する |
-| 役割で順位表を伏せる | **採る** | メンバーを組織から外せるのは管理者だけ。順位表を管理者に見せなければ、「外した人の行が消える」経路が無くなる (ただし 1 人が member ⇄ admin を往復する経路は今の役割だけでは閉じない。S-20・§20 の 8) |
-| 開始後の期間・種類と終了後の状態の不変 | **採る** | 書き換えで計算し直す経路 (旧ブランチの抜け道 1) を消す。API はもともと期間・種類を変えないので、PostgREST の直接の UPDATE をトリガーで止めるだけ |
+| 役割で順位表を伏せる | **採る (今の役割 + 管理者だった印)** | メンバーを組織から外せるのは管理者だけ。順位表を管理者に見せなければ、「外した人の行が消える」経路が無くなる。今の役割だけでは、1 人が member ⇄ admin を往復して「member で見る → admin で外す → member で見る」を組めるので (S-20・S-25)、管理者になった時点でその組織のチャレンジに印を付け、印のある人にも見せない (§4.1 (d)) |
+| 開始後の期間・種類と終了後の状態の不変 | **採る** | 書き換えで計算し直す経路 (旧ブランチの抜け道 1) を消す。API はもともと期間・種類を変えないので、PostgREST の直接の UPDATE をトリガーで止めるだけ。状態の列は NULL を許していた (CHECK は NULL を通す) ので NOT NULL にし、NULL を「下書き」として使う抜け道 (S-24) も消す |
 
 ### 3.3 順位表とメンバー一覧の読み方 (R-7)
 
-- 順位表: **その場の行** (いまの `organization_challenge_participants`) のまま。管理者 (owner / admin) には返さない。控え (夜の時点の行) から返す形は採らない: 管理者の経路は役割で閉じ、参加者どうしの経路は控えにしても「他の人の値が動かない夜」に消えた行が特定できるので、控えの表と 2 本目の書き込み経路を足すだけの効果が無い。
+- 順位表: **その場の行** (いまの `organization_challenge_participants`) のまま。管理者 (owner / admin) と、そのチャレンジに管理者だった印のある人には返さない。控え (夜の時点の行) から返す形は採らない: 管理者の経路は役割で閉じ、参加者どうしの経路は控えにしても「他の人の値が動かない夜」に消えた行が特定できるので、控えの表と 2 本目の書き込み経路を足すだけの効果が無い。
 - メンバー一覧: 参加者の一覧 API は無く、作らない。`GET /api/org/members` (組織のメンバー) は参加を示さない。参加者数は、集計の表の延べ数 (`joined_count`) を管理者向け・メンバー向けの両方が同じ関数で読む。
 
 ---
@@ -132,25 +140,33 @@
 
 ### 4.1 構造
 
-公開値を「差の取れない形」にする 4 つの決まり。
+公開値を「差の取れない形」にする 6 つの決まり。
 
 (a) **平均は確定 1 回**: 管理者に見せる平均は、チャレンジが `completed` になる UPDATE の AFTER トリガー `org_challenge_finalize` が、そのトランザクションの参加行 (順位がついた今のメンバー) から計算して `organization_challenge_aggregates` に書く値だけ。開催中は返さない。確定後は書き換えない (`ON CONFLICT ... DO UPDATE ... WHERE finalized_at IS NULL`)。中止 (cancelled) は確定しない。
 (b) **参加者数は延べ**: 参加の INSERT の AFTER トリガー `org_challenge_count_join` が `joined_count` を +1 する。DELETE・組織からの脱退・除名・退会では動かさない。管理者がメンバーを外しても数が動かないので、参加の有無が漏れない。10 人未満は NULL (既存の規則)。
-(c) **開始後の不変**: BEFORE UPDATE トリガー `org_challenge_guard_update` が、状態の遷移表 (draft → active / completed / cancelled、active → completed / cancelled、終わった状態からは変えない) と、draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更、常時の `organization_id` の変更を RAISE で止める。API の PUT は遷移表を先に確かめて 409 を返し、DB の RAISE も 409 に写す。
-(d) **順位表は管理者に見せない**: `GET /api/org/challenges/[id]` は `org_role` が owner / admin なら順位表の関数を呼ばず `ranking: { available: false, reason: 'org_admin' }` を返す。DB の関数 `get_org_challenge_ranking` も、見る人が owner / admin なら 0 行 (API の確認が漏れても返らない)。自分の記録と順位 (`me`) は返す。
+(c) **開始後の不変**: 状態の列を NOT NULL にする (NULL の行は先に draft にする)。BEFORE UPDATE トリガー `org_challenge_guard_update` が、状態の遷移表 (draft → active / completed / cancelled、active → completed / cancelled、終わった状態からは変えない。NULL への変更も止める) と、draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更、常時の `organization_id` の変更を RAISE で止める。API の PUT は遷移表を先に確かめて 409 を返し、DB の RAISE も 409 に写す。
+(d) **順位表は管理者と管理者だった人に見せない**: 見る人の今の `org_role` が owner / admin か、そのチャレンジに「管理者だった印」(§0.5) があれば返さない。印は `user_profiles` の AFTER INSERT / UPDATE OF `org_role`, `organization_id` のトリガー `org_challenge_mark_admin` が、その人が組織の管理者になった時点 (役割か組織が変わって owner / admin になった時点) で、その組織にあるチャレンジすべてに付ける。どの経路 (同じ組織の招待の承諾・抜けてからの入り直し・所有者の譲渡・運営の操作・service_role の直接の更新) で役割が変わっても同じトリガーが拾う。印は消さない (参加をやめて参加し直しても、member に戻っても残る)。`GET /api/org/challenges/[id]` は、今の役割か印で伏せるとき順位表の関数を呼ばず `ranking: { available: false, reason: 'org_admin' }` を返す。DB の関数 `get_org_challenge_ranking` も同じ 2 つの条件で 0 行 (API の確認が漏れても返らない)。自分の記録と順位 (`me`) は返す。
+(e) **重なるチャレンジの平均は 1 本だけ**: `get_org_challenge_aggregates` は、確定した平均 (確定時点の人数が最小人数以上) を返す前に、同じ組織・同じ種類で期間が重なり (§0.5)、自分より先に確定した (確定の時刻、同じなら ID の順) チャレンジで、確定時点の人数が最小人数以上のものがあるかを見る。あれば平均を NULL にする。種類と期間は開始後に変わらず ((c))、確定値も変わらないので、一度出た平均が後から消えたり、伏せた平均が後から出たりしない。
+(f) **公開したチャレンジは消させない**: `organization_challenges` に RESTRICTIVE の DELETE ポリシー `Org challenges can be deleted only as draft or cancelled` を足し、利用者の権限 (authenticated) で消せるのを draft と cancelled だけにする。completed (平均を出しうる) と active (これから確定する) は消せない。(e) の判定の相手が消えて、同じ種類・期間のチャレンジを作り直すと 2 回目の公開ができてしまうのを止める。組織を消したときの CASCADE と service_role はポリシーを通らない (RLS は参照整合の動作と service_role に掛からない) ので、組織の削除と運営の操作は止めない。
 
-変えないもの: `update_org_challenge_progress` (値の計算・completed にする UPDATE)、pg_cron のジョブ、参加の INSERT / SELECT / DELETE のポリシー、参加をやめる DELETE (その場で行を消す)、メンバー向けの API の形 (順位表の `reason` を足すだけ)。
+変えないもの: `update_org_challenge_progress` (値の計算・completed にする UPDATE)、pg_cron のジョブ、参加の INSERT / SELECT / DELETE のポリシー、`Org admins can manage challenges` ポリシー、参加をやめる DELETE (その場で行を消す)、メンバー向けの API の形 (順位表の `reason` を足すだけ)、招待・譲渡・脱退・除名の関数。
 
 ### 4.2 代替案の比較と裁定 (1 回だけ)
 
 | 案 | 構造 | 差分攻撃 (正確な差) | 書き換えの抜け道 | 足すもの | 裁定 |
 |---|---|---|---|---|---|
-| A: 本書 | 平均は終了時の確定 1 回・人数は延べ・開始後の不変・順位表は管理者に出さない | 公開が 1 回なので差が無い | 不変のトリガーで無い | 表 1・トリガー 3・関数 2 本の作り直し | **採る** |
+| A: 本書 | 平均は終了時の確定 1 回で、同じ種類で期間が重なるチャレンジの中でも 1 回・公開したチャレンジは消せない・人数は延べ・開始後の不変・順位表は管理者と管理者だった人に出さない | 同じ値になる公開が 1 回なので差が無い | 不変のトリガーと NOT NULL で無い | 表 2・トリガー 4・ポリシー 1・関数 2 本の作り直し | **採る** |
 | B: 夜ごとの控え (旧ブランチ) | 毎晩の計算し直しと同時に控えを書き、集計と順位表を控えから返す | 他の人の値が動かない夜は差が 1 人の値になる (記録の無い日) | 控えを書き直す条件に依存 (4 周で閉じず) | 表 2・関数 1・バッチの改修・集合の受け渡し | 採らない |
 | C: 開催中も平均を出すが、母集団が変わったら終了まで凍る | 抑制規則 | 最後の公開値と確定値の差 (母集団 1 人違い) が残る | A と同じ | A + 凍結の判定 | 採らない (閉じない) |
 | D: やめた人の値を残す (母集団の凍結) | 行を消さず left_at で印 | 差は無い | A と同じ | 行の意味の変更・約束の変更 | 採らない (約束と継続利用に反する) |
 
-「縁の発生源を消すより単純な構造は無いか」: 差分攻撃の発生源は「母集団が違う公開値が 2 つある」こと。発生源ごと消すのは A (公開を 1 回にする) で、控え・凍結・雑音はすべて「2 つ目の公開値をどう守るか」の対症療法になる。A を確定し、以後は蒸し返さない。
+「縁の発生源を消すより単純な構造は無いか」: 差分攻撃の発生源は「同じ値の集まりについて、母集団が違う公開値が 2 つある」こと。公開値が生まれる経路は 3 つで、A はそれぞれを発生源ごと消す: ①同じチャレンジの 2 時点 → 確定 1 回 ((a))、②同じ値になる別のチャレンジ (個人の値は種類と期間だけで決まる) → 重なりの中で 1 回 ((e)) と、判定の相手を消させない ((f))、③参加者に見せる順位表を、外す力を持つ人が前後で見る → 今の役割と管理者だった印 ((d))。控え・凍結・雑音はすべて「2 つ目の公開値をどう守るか」の対症療法になる。
+
+②の閉じ方の比較 (相 3 の裁定): 「同じ組織で種類が同じで期間が重なるチャレンジを作らせない」(除外の制約) は、既存のテストの fixture (同じ種類・同じ期間のチャレンジを同じ組織に何本も作る。`tests/integration/rls/org-challenge-progress.test.ts:617`〜`:621` など) と、部署を分けて同じ種類を同時に開く使い方を壊し、さらに消してから作り直す経路は別に止める必要がある。「手動の completed を止める」は S-21 (同じバッチで 2 本が終わる) を閉じない。平均を出す関数の中で「重なりの中で先に確定した 1 本だけ」を判定する形は、書き込みの経路を増やさず、同時に確定しても確定の時刻と ID の全順序で必ず 1 本に決まり、鍵も台帳も要らない。これを採る。
+
+③の閉じ方の比較: 「招待の承諾で同じ組織の在籍者を拒む」(`accept_org_invite` の作り直し) は、抜けて入り直す経路 (S-25)・所有者の譲渡・運営の操作・service_role の直接の更新を別々に閉じる必要があり、本書の範囲の外の関数を触る。「参加行に在籍の世代を持たせる」は入り直しだけを閉じる。役割が owner / admin になったことを `user_profiles` の 1 本のトリガーで拾って印を付ける形は、経路を問わず閉じ、招待の関数を変えない。これを採る。印を「そのチャレンジの開始後に管理者だったか」ではなく「管理者になった時点で組織にあったチャレンジすべて」にするのは、印の要る場面 (member として見た → 管理者になった) では、見た時点でチャレンジがすでにあり、管理者になった時点にもあるから (§4.3 S-20 の証明)。
+
+A を確定し、以後は蒸し返さない。
 
 ### 4.3 シナリオのトレース (構造 A で手で走らせた記録)
 
@@ -163,7 +179,7 @@
 | S-5 | 確定後の DELETE / 除名は表を触らない。関数は表から読む。差 = 0 | ✔ |
 | S-6 | API: 現在の状態が completed / cancelled で status が違えば 409 `CHALLENGE_STATUS_LOCKED` (何も書かない)。PostgREST: ガードが RAISE。確定は `WHERE finalized_at IS NULL` で二度書かない | ✔ (抜け道 1) |
 | S-7 | ガード: `OLD.status` が draft でないとき期間・種類・部署の変更を RAISE `CHALLENGE_PERIOD_LOCKED`。計算し直しの経路が無い | ✔ (抜け道 1) |
-| S-8 | API: `profile.org_role` が owner / admin → 順位表の関数を呼ばず `reason: 'org_admin'`。関数も `meup.org_role NOT IN ('owner','admin')` で 0 行。`me` は本人の行 (RLS) から返す | ✔ (抜け道 2) |
+| S-8 | API: `profile.org_role` が owner / admin → 順位表の関数を呼ばず `reason: 'org_admin'`。member でも `hasRankingExclusion` が true → 同じ。関数も `meup.org_role NOT IN ('owner','admin')` と印の `NOT EXISTS` で 0 行。`me` は本人の行 (RLS) から返す | ✔ (抜け道 2) |
 | S-9 | 管理者の `me.rank` は夜の計算し直しでしか変わらない。X を外した次の夜、全員の値が動いた中で順位が 1 つ上がれば「X は自分より上だった」と分かりうる。値は分からない | 残る限界 (1 bit)。§19 |
 | S-10 | PUT status=completed → ガード可 → `org_challenge_finalize` が前夜までの値 (行の current_value) で確定。平均は開催中に出ていないので前後の差が無い | ✔ |
 | S-11 | PUT status=cancelled → ガード可 → 確定のトリガーは `NEW.status = 'completed'` だけなので書かない。以後の UPDATE はガードで RAISE | ✔ |
@@ -175,7 +191,12 @@
 | S-17 | 控えが無い。確定は「completed にする UPDATE」のトリガーで、その直前に同じトランザクションで計算した行から取る (バッチの経路)。手動終了 (S-10) は前夜の計算の行から取る。どちらも「いまの行」で、別の日付を記録しない | ✔ (抜け道 3) |
 | S-18 | 10 人参加 → 1 人除名 → 終了時の順位がついた今のメンバー 9 人 → 平均 NULL。管理者は「10 人のうち 1 人外した結果が 9 人」から参加の有無を推測しうる | 残る限界 (値ではない)。§19 |
 | S-19 | `department_id` は特権列 (`guard_user_profiles_privileged`、`supabase/migrations/20261008200700_legal_documents_acceptance.sql:77`) で、利用者の JWT では変えられない。製品で変わるのは S-3 / S-14 の NULL だけ (組織の所属と同時)。チャレンジが参照する部署は `organization_challenges_department_id_fkey` (ON DELETE の指定なし = NO ACTION) で削除できず、`DELETE /api/org/departments` は 23503 を 409 `DEPARTMENT_IN_USE` にする (`src/app/api/org/departments/route.ts:201`)。service_role で変えた場合: `get_org_challenge_ranking`・`org_challenge_finalize`・`get_org_challenge_aggregates` はどれも部署で絞らない (組織の結合だけ) ので、行は順位表と確定の母集団に残り、`joined_count` も不変。本人は `isVisibleToMember` (`src/lib/org-challenge-api.ts:77`) で詳細が 404 になるだけ。消える行が無いので差が無い | ✔ |
-| S-20 | `requireOrgMember` は要求のたびに `org_role` を読む (§7.2) ので、順位表は今の役割で決まる。所有者の譲渡 (`accept_org_owner_transfer`、`20251126124224_create_meal_planner_tables.sql:811`) は member / admin → owner と owner → admin だけで、管理者を member に戻さない。ところが `accept_org_invite` (最新の定義 `supabase/migrations/20261007150200_invite_accept_creates_missing_profile.sql:97`) は、別組織の在籍者だけを `ALREADY_IN_ORG` で拒み、同じ組織の在籍者の承諾では `org_role` を招待の役割で上書きする (`ON CONFLICT (id) DO UPDATE SET ... org_role = EXCLUDED.org_role`)。招待の作成 (`create_org_invite`、`supabase/migrations/20261008100000_membership_daily_send_cap.sql:315`・`src/lib/membership/org-invite.ts`) も在籍者の宛先を拒まない。また `leave_org` で抜けても参加行は残り、招待で入り直すと組織の結合で順位表に戻る。このため「member として順位表を見る → 管理者として X を外す → member に戻ってもう一度見る」の並びが組める (同じ宛先の未承諾の招待は作り直すと取り消されるので、1 人で組むには宛先のメールアドレスを 2 つ使い分ける。管理者が 2 人いれば分担でも組める)。構造 A (d) の「今の役割で伏せる」だけでは閉じない | **閉じていない** (抜け道 2 の変形)。§20 の 8 に差し戻し事由として記録 |
+| S-20 | 経路の事実: `accept_org_invite` (最新の定義 `supabase/migrations/20261007150200_invite_accept_creates_missing_profile.sql:97`) は別組織の在籍者だけを `ALREADY_IN_ORG` で拒み、同じ組織の在籍者の承諾では `INSERT ... ON CONFLICT (id) DO UPDATE SET organization_id = EXCLUDED.organization_id, org_role = EXCLUDED.org_role, ...` (`:151`〜`:156`) で役割を上書きする。所有者の譲渡 (`accept_org_owner_transfer`、`20251126124224_create_meal_planner_tables.sql:811`) は member / admin → owner と owner → admin。運営の組織作成 (`src/app/api/admin/organizations/route.ts:207`) は service_role で owner にする。走らせた結果: ① Y (member) が順位表を見る (印なし・役割 member → 返る)。② Y が admin の招待を承諾 → `ON CONFLICT DO UPDATE` が `user_profiles` の UPDATE になり、`org_role` が member → admin に変わるので `trg_org_challenge_mark_admin` が発火し、組織 A のチャレンジすべてに (C, Y) の印を INSERT。③ Y が X を外す (`remove_org_member` は呼び出した人の `org_role` を見る)。④ Y が member の招待を承諾 → 役割は member に戻るが印は残る。⑤ Y が詳細を開く → `hasRankingExclusion` が true → `reason: 'org_admin'`。関数も印で 0 行。前後の順位表の組ができない。所有者の譲渡で owner になった場合も ② と同じく発火する。証明 (印の範囲が足りること): 差を取るには「member で見た時刻 t1 < 管理者として外した時刻 t2 < member で見た時刻 t3」が要る。t1 に member で t2 に管理者なので、t1 < t_p ≤ t2 に役割が owner / admin になった時刻 t_p があり、そこでトリガーが動く。t1 に順位表を見たチャレンジ C は t1 にすでにあり (メンバーに見えるのは active / completed だけ)、active / completed の行は利用者の権限で消せない ((f))。中止してから消していれば t3 で見る順位表も無い。よって C は t_p にもある。よって (C, Y) の印が t_p に付き、t3 では返らない | ✔ (抜け道 2) |
+| S-21 | A・B は同じ種類・同じ期間なので、11 人の値は A と B で同じ。X が B をやめる (DELETE) → `joined_count` は A・B とも 11 のまま。終了日の夜のバッチ: 値の計算 → `UPDATE ... SET status = 'completed'` が A・B の 2 行を completed にし、行ごとの AFTER トリガーで A は 11 人、B は 10 人で確定する。`finalized_at` は同じ (同じトランザクションの `now()`)。`get_org_challenge_aggregates`: A・B の両方が `final_ranked_count >= 10` で `shown` に入る。ID の小さい方 (A とする) は、自分より前の重なる行が無いので平均が出る。B は `(A.finalized_at, A.id) < (B.finalized_at, B.id)` の A があるので NULL。公開は 1 本 | ✔ (R-1) |
+| S-22 | A を PUT completed → 確定 (前夜の値。11 人)。X を外す。B を PUT completed → 確定 (同じ前夜の値。10 人)。`finalized_at` は A が先。B は A と種類が同じで期間が重なり、A が 10 人以上で先に確定しているので NULL。A が 9 人以下で確定していれば A は出ず、B は自分より前に「出る資格のある」重なる行が無いので出る。どちらの場合も公開は 1 本 | ✔ (R-1) |
+| S-23 | A (completed) の DELETE: `Org admins can manage challenges` (許可) と `Org challenges can be deleted only as draft or cancelled` (RESTRICTIVE。`status IN ('draft','cancelled')` が偽) の両方を満たす行だけが消えるので 0 行。A の控えも残り、B を作り直して確定しても S-22 と同じく NULL。active の A も 0 行。A を cancelled にすると消せるが、cancelled は確定していない (平均を出していない) ので判定の相手を失っても公開は 1 回のまま。組織ごと消すと CASCADE で消えるが、そのときは管理者も組織も無い | ✔ (R-1) |
+| S-24 | `ALTER COLUMN status SET NOT NULL` の後なので、NULL への UPDATE は 23502 で失敗する。その前に BEFORE トリガーが `NEW.status IS NULL` を CHALLENGE_STATUS_LOCKED で止める (どちらでも行は変わらない)。INSERT で NULL を入れる経路も NOT NULL で止まる。migration の時点の NULL の行は先に draft にする (集計・参加・メンバー向けの一覧の対象外だった行で、下書きとして扱ってきたもの) | ✔ (抜け道 1) |
+| S-25 | ① Y (member) が順位表を見る。② `leave_org`: `organization_id` / `org_role` を NULL にする (参加行は残る)。トリガーは `organization_id` が NULL なので何もしない。③ admin の招待を承諾: `organization_id` NULL → A、`org_role` NULL → admin に変わる UPDATE で印が付く。④ X を外す。⑤ `leave_org` → member の招待を承諾: 役割は member、印は残る。⑥ 詳細を開く → `reason: 'org_admin'`。参加をやめて (DELETE) 参加し直しても、印は `organization_challenge_ranking_exclusions` にあり参加行の削除で消えない (FK はチャレンジと auth.users にだけ CASCADE) ので返らない | ✔ (抜け道 2) |
 
 ---
 
@@ -192,26 +213,38 @@
 -- 背景:
 --   管理者に見せる集計 (get_org_challenge_aggregates) は参加者の行をその場で数えていたので、参加をやめる・組織から外す前後の
 --   人数と平均の差から、やめた人の値が出た (最小人数の規則は 1 回の集計しか守らない)。参加者に見せる順位表も行をその場で読むので、
---   メンバーとして参加した管理者が、メンバーを外した前後で消えた 1 行の値を見られた。
+--   メンバーとして参加した管理者が、メンバーを外した前後で消えた 1 行の値を見られた。個人の値は種類と期間だけで決まるので、
+--   同じ種類・同じ期間のチャレンジを 2 本作れば、2 本の平均の差からも 1 人の値が出た。
 --
 -- 変更 (差の取れる公開値を作らない):
---   1. 表 organization_challenge_aggregates (チャレンジごとに 1 行): 参加した人の延べ数 (joined_count) と、終了時に 1 回だけ確定する
+--   1. organization_challenges.status を NOT NULL にする (NULL の行は先に draft にする。CHECK は NULL を通していた)。
+--   2. 表 organization_challenge_aggregates (チャレンジごとに 1 行): 参加した人の延べ数 (joined_count) と、終了時に 1 回だけ確定する
 --      平均 (final_average_value) と人数 (final_ranked_count)。読み書きは service_role と所有者だけ (RLS 有効・ポリシー無し)。
---   2. トリガー org_challenge_count_join: 参加の INSERT ごとに joined_count を +1 (やめる・組織から外れる・退会では減らさない)。
---   3. トリガー org_challenge_guard_update: 状態の遷移 (draft → active / completed / cancelled、active → completed / cancelled) 以外を
---      CHALLENGE_STATUS_LOCKED で止め、draft 以外での start_date / end_date / challenge_type / department_id と常時の organization_id の
---      変更を CHALLENGE_PERIOD_LOCKED で止める (API の PUT は期間・種類を受け付けない。PostgREST の直接の UPDATE を止める)。
---   4. トリガー org_challenge_finalize: completed への遷移と同じトランザクションで、順位がついた今のメンバーの平均 (小数第 1 位) と
+--   3. 表 organization_challenge_ranking_exclusions (管理者だった印): (challenge_id, user_id)。印のある人には順位表を返さない。
+--      読み書きは service_role と所有者だけ (RLS 有効・ポリシー無し)。
+--   4. トリガー org_challenge_count_join: 参加の INSERT ごとに joined_count を +1 (やめる・組織から外れる・退会では減らさない)。
+--   5. トリガー org_challenge_guard_update: 状態の遷移 (draft → active / completed / cancelled、active → completed / cancelled) 以外
+--      (NULL への変更を含む) を CHALLENGE_STATUS_LOCKED で止め、draft 以外での start_date / end_date / challenge_type / department_id と
+--      常時の organization_id の変更を CHALLENGE_PERIOD_LOCKED で止める (API の PUT は期間・種類を受け付けない。PostgREST の直接の UPDATE を止める)。
+--   6. トリガー org_challenge_finalize: completed への遷移と同じトランザクションで、順位がついた今のメンバーの平均 (小数第 1 位) と
 --      人数を 1 回だけ書く (確定済みなら書かない)。中止 (cancelled) は確定しない。
---   5. get_org_challenge_aggregates: 控えの表から返す。人数 = joined_count (最小人数未満は NULL)、平均 = 確定値 (確定時点の人数が
---      最小人数未満なら NULL。開催中は常に NULL)。名前・引数・返す列・SECURITY INVOKER・最小人数 (cfg の 10) は変えない。
---   6. get_org_challenge_ranking: 見る人が組織の管理者 (org_role が owner / admin) なら 0 行。ほかは 20261014100100 の定義のまま。
---   7. 埋め戻し: 既存のチャレンジに joined_count = いまの参加行の数。completed のチャレンジはいまの行から一度だけ確定。
---   変えないもの: update_org_challenge_progress・pg_cron のジョブ・参加の INSERT / SELECT / DELETE のポリシー。
+--   7. トリガー org_challenge_mark_admin (user_profiles): 役割か組織が変わって組織の管理者 (owner / admin) になった時点で、
+--      その組織のチャレンジすべてに印を付ける (招待の承諾・所有者の譲渡・運営の操作・service_role の更新のどの経路でも)。
+--   8. ポリシー "Org challenges can be deleted only as draft or cancelled" (RESTRICTIVE・DELETE・authenticated): 利用者の権限で消せるのは
+--      draft と cancelled だけ。平均を出しうるチャレンジを消して作り直す経路を止める。
+--   9. get_org_challenge_aggregates: 控えの表から返す。人数 = joined_count (最小人数未満は NULL)、平均 = 確定値 (確定時点の人数が
+--      最小人数未満なら NULL。開催中は常に NULL。同じ組織・同じ種類で期間が重なり、先に確定して最小人数を満たしたチャレンジがあれば NULL)。
+--      名前・引数・返す列・SECURITY INVOKER・最小人数 (cfg の 10) は変えない。
+--  10. get_org_challenge_ranking: 見る人が組織の管理者 (org_role が owner / admin) か、印がある人なら 0 行。ほかは 20261014100100 の定義のまま。
+--  11. 埋め戻し: 既存のチャレンジに joined_count = いまの参加行の数。completed のチャレンジはいまの行から一度だけ確定。
+--      印は埋め戻さない (いまの管理者は今の役割で伏せる。過去の役割の履歴は DB に無い)。
+--   変えないもの: update_org_challenge_progress・pg_cron のジョブ・参加の INSERT / SELECT / DELETE のポリシー・
+--   Org admins can manage challenges ポリシー・招待 / 譲渡 / 脱退 / 除名の関数。
 --
--- 本番のデータへの影響: 表を 1 つ足し、既存のチャレンジの行数だけ控えの行を作る。既存の行は書き換えない。
---   表への書き込みを待たせるロックはトリガーの付与 (一瞬) だけ。10 秒でロック待ちを諦める。
--- 冪等: CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE FUNCTION / CREATE OR REPLACE TRIGGER / 埋め戻しは ON CONFLICT。
+-- 本番のデータへの影響: 表を 2 つ足し、既存のチャレンジの行数だけ控えの行を作る。状態が NULL のチャレンジの行だけ draft に書き換える。
+--   表への書き込みを待たせるロックは NOT NULL の付与 (organization_challenges の全行を 1 回読む) とトリガーの付与だけ。10 秒でロック待ちを諦める。
+-- 冪等: UPDATE ... WHERE status IS NULL / SET NOT NULL / CREATE TABLE IF NOT EXISTS / CREATE OR REPLACE FUNCTION /
+--   CREATE OR REPLACE TRIGGER / DROP POLICY IF EXISTS → CREATE POLICY / 埋め戻しは ON CONFLICT。
 -- 確認: tests/org-challenge-diff-privacy-migration-contract.test.ts / tests/integration/rls/org-challenge-diff-privacy.test.ts /
 --       tests/integration/security/org-challenges-api.test.ts
 -- ロールバック: supabase/rollbacks/<番号>_org_challenge_diff_privacy.down.sql
@@ -219,7 +252,15 @@
 SET LOCAL lock_timeout = '10s';
 
 -- ─────────────────────────────────────────────────────────
--- 1. 集計の控え (チャレンジごとに 1 行)
+-- 1. 状態の NULL を無くす (ガードのトリガーより先に流す)
+-- ─────────────────────────────────────────────────────────
+-- NULL の行は、集計 (status = 'active' だけ)・参加 (ポリシーが status = 'active' を求める)・メンバー向けの一覧 (active / completed)
+-- のどれの対象でもなく、下書きとして扱ってきた。draft にそろえてから NOT NULL にする
+UPDATE public.organization_challenges SET status = 'draft' WHERE status IS NULL;
+ALTER TABLE public.organization_challenges ALTER COLUMN status SET NOT NULL;
+
+-- ─────────────────────────────────────────────────────────
+-- 2. 集計の控え (チャレンジごとに 1 行)
 -- ─────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS public.organization_challenge_aggregates (
   challenge_id        uuid PRIMARY KEY REFERENCES public.organization_challenges(id) ON DELETE CASCADE,
@@ -245,7 +286,26 @@ REVOKE ALL ON TABLE public.organization_challenge_aggregates FROM PUBLIC, anon, 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.organization_challenge_aggregates TO service_role;
 
 -- ─────────────────────────────────────────────────────────
--- 2. 参加の延べ数 (参加の INSERT ごとに +1)
+-- 3. 管理者だった印 (この人には、このチャレンジの順位表を返さない)
+-- ─────────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS public.organization_challenge_ranking_exclusions (
+  challenge_id uuid NOT NULL REFERENCES public.organization_challenges(id) ON DELETE CASCADE,
+  -- 印の付いた人。退会 (auth.users の削除) で印も消える
+  user_id      uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
+  -- 印を付けた時刻 (その組織の管理者になった時刻)
+  marked_at    timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (challenge_id, user_id)
+);
+
+COMMENT ON TABLE public.organization_challenge_ranking_exclusions IS
+  '#1688: 組織の管理者 (owner / admin) になった人の印。管理者になった時点でその組織にあったチャレンジごとに 1 行。印のある人には get_org_challenge_ranking が 0 行を返す (member に戻っても、参加し直しても消えない)。読み書きは service_role と所有者だけ。';
+
+ALTER TABLE public.organization_challenge_ranking_exclusions ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON TABLE public.organization_challenge_ranking_exclusions FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.organization_challenge_ranking_exclusions TO service_role;
+
+-- ─────────────────────────────────────────────────────────
+-- 4. 参加の延べ数 (参加の INSERT ごとに +1)
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.org_challenge_count_join()
 RETURNS trigger
@@ -274,7 +334,7 @@ CREATE OR REPLACE TRIGGER trg_org_challenge_count_join
   FOR EACH ROW EXECUTE FUNCTION public.org_challenge_count_join();
 
 -- ─────────────────────────────────────────────────────────
--- 3. 状態の遷移表と、開始後の期間・種類・部署の不変
+-- 5. 状態の遷移表と、開始後の期間・種類・部署の不変
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.org_challenge_guard_update()
 RETURNS trigger
@@ -282,18 +342,21 @@ LANGUAGE plpgsql
 SET search_path = ''
 AS $$
 DECLARE
-  -- 状態が NULL の行 (CHECK は NULL を通す) は下書きとみなす
-  v_from text := COALESCE(OLD.status, 'draft');
+  -- 状態の列は NOT NULL (1. で付けた) なので OLD.status は NULL にならない
+  v_from text := OLD.status;
 BEGIN
   IF NEW.status IS DISTINCT FROM OLD.status THEN
     -- 遷移表 (src/lib/org-challenge-privacy.ts の ORG_CHALLENGE_STATUS_TRANSITIONS と同じ):
-    --   draft → active / completed / cancelled、active → completed / cancelled。completed / cancelled からは変えない
-    IF NOT (
+    --   draft → active / completed / cancelled、active → completed / cancelled。completed / cancelled からは変えない。
+    --   NULL への変更も止める (NOT NULL の 23502 より先に、同じ識別子で断る)。
+    --   NOT (NULL) は NULL で IF を素通りするので、比較の結果を COALESCE で false に寄せてから否定する
+    IF NEW.status IS NULL OR NOT COALESCE(
          (v_from = 'draft'  AND NEW.status IN ('active', 'completed', 'cancelled'))
-      OR (v_from = 'active' AND NEW.status IN ('completed', 'cancelled'))
+      OR (v_from = 'active' AND NEW.status IN ('completed', 'cancelled')),
+         false
     ) THEN
       RAISE EXCEPTION 'CHALLENGE_STATUS_LOCKED' USING ERRCODE = 'P0001',
-        DETAIL = format('status %s -> %s', v_from, NEW.status);
+        DETAIL = format('status %L -> %L', v_from, NEW.status);
     END IF;
   END IF;
 
@@ -316,14 +379,14 @@ END $$;
 
 REVOKE ALL ON FUNCTION public.org_challenge_guard_update() FROM PUBLIC, anon, authenticated, service_role;
 COMMENT ON FUNCTION public.org_challenge_guard_update() IS
-  '#1688: organization_challenges の UPDATE を遷移表 (draft → active / completed / cancelled、active → completed / cancelled) に限り、draft 以外での start_date / end_date / challenge_type / department_id と、常時の organization_id の変更を止める。CHALLENGE_STATUS_LOCKED / CHALLENGE_PERIOD_LOCKED (P0001)。';
+  '#1688: organization_challenges の UPDATE を遷移表 (draft → active / completed / cancelled、active → completed / cancelled。NULL へは不可) に限り、draft 以外での start_date / end_date / challenge_type / department_id と、常時の organization_id の変更を止める。CHALLENGE_STATUS_LOCKED / CHALLENGE_PERIOD_LOCKED (P0001)。';
 
 CREATE OR REPLACE TRIGGER trg_org_challenge_guard_update
   BEFORE UPDATE ON public.organization_challenges
   FOR EACH ROW EXECUTE FUNCTION public.org_challenge_guard_update();
 
 -- ─────────────────────────────────────────────────────────
--- 4. 終了時の確定 (completed への遷移と同じトランザクションで 1 回だけ)
+-- 6. 終了時の確定 (completed への遷移と同じトランザクションで 1 回だけ)
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.org_challenge_finalize()
 RETURNS trigger
@@ -365,7 +428,62 @@ CREATE OR REPLACE TRIGGER trg_org_challenge_finalize
   EXECUTE FUNCTION public.org_challenge_finalize();
 
 -- ─────────────────────────────────────────────────────────
--- 5. 管理者に見せる集計: 控えの表から返す (名前・引数・返す列は 20261016170000 と同じ)
+-- 7. 管理者になったときの印 (user_profiles のどの経路の変更でも)
+-- ─────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.org_challenge_mark_admin()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+  -- 組織の管理者 (owner / admin。src/lib/org-challenge-privacy.ts の ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ並び) でなければ何もしない
+  IF NEW.organization_id IS NULL
+     OR NEW.org_role IS NULL
+     OR NEW.org_role NOT IN ('owner', 'admin') THEN
+    RETURN NULL;
+  END IF;
+  -- 役割も組織も変わっていない UPDATE (ほかの列の更新・同じ値の上書き) では付けない。管理者になった時点だけ
+  -- (INSERT のときは OLD を読まない。TG_OP で分けてから比べる)
+  IF TG_OP = 'UPDATE' THEN
+    IF OLD.org_role IS NOT DISTINCT FROM NEW.org_role
+       AND OLD.organization_id IS NOT DISTINCT FROM NEW.organization_id THEN
+      RETURN NULL;
+    END IF;
+  END IF;
+  INSERT INTO public.organization_challenge_ranking_exclusions (challenge_id, user_id)
+  SELECT c.id, NEW.id
+    FROM public.organization_challenges AS c
+   WHERE c.organization_id = NEW.organization_id
+  ON CONFLICT (challenge_id, user_id) DO NOTHING;
+  RETURN NULL;
+END $$;
+
+REVOKE ALL ON FUNCTION public.org_challenge_mark_admin() FROM PUBLIC, anon, authenticated, service_role;
+COMMENT ON FUNCTION public.org_challenge_mark_admin() IS
+  '#1688: user_profiles の INSERT と、org_role / organization_id の UPDATE の AFTER トリガー。役割か組織が変わって組織の管理者 (owner / admin) になった時点で、その組織のチャレンジすべてに organization_challenge_ranking_exclusions の印を付ける (既にあれば何もしない)。';
+
+CREATE OR REPLACE TRIGGER trg_org_challenge_mark_admin
+  AFTER INSERT OR UPDATE OF org_role, organization_id ON public.user_profiles
+  FOR EACH ROW EXECUTE FUNCTION public.org_challenge_mark_admin();
+
+-- ─────────────────────────────────────────────────────────
+-- 8. 削除の制限: 利用者の権限で消せるのは draft と cancelled だけ
+-- ─────────────────────────────────────────────────────────
+-- 平均を出しうる completed と、これから確定する active を消して同じ種類・期間で作り直すと、9. の「重なりの中で 1 本」の判定の
+-- 相手が消えて 2 回目の公開ができる。RESTRICTIVE なので Org admins can manage challenges (FOR ALL) と AND で効く。
+-- 組織の削除の CASCADE と service_role は RLS を通らないので止めない。
+-- 並びは src/lib/org-challenge-privacy.ts の ORG_CHALLENGE_DELETABLE_STATUSES と同じ
+DROP POLICY IF EXISTS "Org challenges can be deleted only as draft or cancelled" ON public.organization_challenges;
+CREATE POLICY "Org challenges can be deleted only as draft or cancelled"
+  ON public.organization_challenges
+  AS RESTRICTIVE
+  FOR DELETE
+  TO authenticated
+  USING (status IN ('draft', 'cancelled'));
+
+-- ─────────────────────────────────────────────────────────
+-- 9. 管理者に見せる集計: 控えの表から返す (名前・引数・返す列は 20261016170000 と同じ)
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.get_org_challenge_aggregates(p_organization_id uuid)
 RETURNS TABLE (
@@ -382,13 +500,35 @@ AS $$
   WITH cfg AS (
     -- 値を出すのに必要な最小人数 (要件書 §6.4 の匿名化集計の最低人数。#1600 で 10 人。個人を特定されない集計にする人数)
     SELECT 10 AS min_participants
+  ),
+  eligible AS (
+    -- 平均を出す資格のある確定 (この組織のチャレンジで、確定時点の順位がついた参加者が最小人数以上)。
+    -- 種類・期間は draft の後に変わらず (org_challenge_guard_update)、確定値も変わらない (org_challenge_finalize) ので、この集合は増えるだけ
+    SELECT s.id, s.challenge_type, s.start_date, s.end_date, sa.finalized_at
+      FROM public.organization_challenges AS s
+      JOIN public.organization_challenge_aggregates AS sa
+        ON sa.challenge_id = s.id
+     CROSS JOIN cfg
+     WHERE s.organization_id = p_organization_id
+       AND sa.final_ranked_count >= cfg.min_participants
   )
   SELECT c.id,
          -- 参加した人の延べ数 (参加のたびに +1。やめても・組織から外れても減らない)。最小人数に満たなければ NULL
          CASE WHEN a.joined_count >= cfg.min_participants THEN a.joined_count::bigint END,
          cfg.min_participants,
-         -- 終了時に確定した平均だけ。確定時点の順位がついた参加者が最小人数に満たなければ NULL。開催中・下書き・中止は常に NULL
-         CASE WHEN a.final_ranked_count >= cfg.min_participants THEN round(a.final_average_value, 1) END
+         -- 終了時に確定した平均だけ。確定時点の順位がついた参加者が最小人数に満たなければ NULL。開催中・下書き・中止は常に NULL。
+         -- 同じ種類で期間が重なり (両端を含む)、自分より先に確定した (確定の時刻、同じなら ID の順) 資格のあるチャレンジがあれば NULL
+         -- (個人の値は種類と期間で決まるので、2 本の平均の差から 1 人の値が出る。公開は重なりの中で 1 本だけ。#1688 §4.1 (e))
+         CASE WHEN a.final_ranked_count >= cfg.min_participants
+               AND NOT EXISTS (
+                 SELECT 1
+                   FROM eligible AS e
+                  WHERE e.challenge_type = c.challenge_type
+                    AND e.start_date <= c.end_date
+                    AND c.start_date <= e.end_date
+                    AND (e.finalized_at, e.id) < (a.finalized_at, c.id)
+               )
+              THEN round(a.final_average_value, 1) END
     FROM public.organization_challenges AS c
     LEFT JOIN public.organization_challenge_aggregates AS a
       ON a.challenge_id = c.id
@@ -402,10 +542,10 @@ GRANT EXECUTE ON FUNCTION public.get_org_challenge_aggregates(uuid)
   TO service_role;
 
 COMMENT ON FUNCTION public.get_org_challenge_aggregates(uuid) IS
-  '#1132 / #1600 / #1688: 管理者向けの集計。参加した人の延べ数 (joined_count。min_participants (10) 未満は NULL) と、終了時に確定した平均 (確定時点の順位がついた人が min_participants 未満なら NULL。開催中は NULL) を控えの表 organization_challenge_aggregates から返す。個人の値・ID は返さない。SECURITY INVOKER。service_role のみ。';
+  '#1132 / #1600 / #1688: 管理者向けの集計。参加した人の延べ数 (joined_count。min_participants (10) 未満は NULL) と、終了時に確定した平均 (確定時点の順位がついた人が min_participants 未満なら NULL。開催中は NULL。同じ組織・同じ種類で期間が重なり先に確定した資格のあるチャレンジがあれば NULL) を控えの表 organization_challenge_aggregates から返す。個人の値・ID は返さない。SECURITY INVOKER。service_role のみ。';
 
 -- ─────────────────────────────────────────────────────────
--- 6. 参加者に見せる順位表: 組織の管理者には返さない (ほかは 20261014100100 の定義のまま)
+-- 10. 参加者に見せる順位表: 組織の管理者と、管理者だった印のある人には返さない (ほかは 20261014100100 の定義のまま)
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.get_org_challenge_ranking(
   p_challenge_id uuid,
@@ -453,9 +593,10 @@ AS $$
     FROM ranked AS r
    CROSS JOIN cfg
    WHERE (r.pos <= LEAST(GREATEST(COALESCE(p_limit, cfg.default_limit), 1), cfg.max_limit) OR r.user_id = p_user_id)
-     -- 順位表を見られるのは、そのチャレンジの参加者本人 (今も組織のメンバー) で、組織の管理者でない人だけ。
+     -- 順位表を見られるのは、そのチャレンジの参加者本人 (今も組織のメンバー) で、組織の管理者でなく、管理者だった印も無い人だけ。
      -- 管理者 (org_role が owner / admin。メンバーを組織から外せる人) には 0 行 (#1688。src/lib/org-challenge-privacy.ts の
-     -- ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ並び)。参加していない人にも 0 行
+     -- ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ並び)。このチャレンジがある間に管理者になった人 (印。member に戻っても残る) にも 0 行。
+     -- 参加していない人にも 0 行
      AND EXISTS (
        SELECT 1
          FROM public.organization_challenges AS c2
@@ -467,6 +608,12 @@ AS $$
           AND meup.organization_id = c2.organization_id
         WHERE c2.id = p_challenge_id
           AND (meup.org_role IS NULL OR meup.org_role NOT IN ('owner', 'admin'))
+          AND NOT EXISTS (
+            SELECT 1
+              FROM public.organization_challenge_ranking_exclusions AS x
+             WHERE x.challenge_id = c2.id
+               AND x.user_id = p_user_id
+          )
      )
    ORDER BY r.pos
 $$;
@@ -477,10 +624,10 @@ GRANT EXECUTE ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, 
   TO service_role;
 
 COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean) IS
-  '#1132 / #1688: 参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) で組織の管理者 (owner / admin) でないときだけ、順位がついている参加者を上位 p_limit 人 (NULL は既定の default_limit = 20 人。1〜max_limit = 100 人) と本人の行について返す。管理者・参加していない人には 0 行。他人の user_id は返さない。nickname は p_with_names が true のときだけ。SECURITY INVOKER。service_role のみ。';
+  '#1132 / #1688: 参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) で、組織の管理者 (owner / admin) でなく、organization_challenge_ranking_exclusions の印も無いときだけ、順位がついている参加者を上位 p_limit 人 (NULL は既定の default_limit = 20 人。1〜max_limit = 100 人) と本人の行について返す。管理者・印のある人・参加していない人には 0 行。他人の user_id は返さない。nickname は p_with_names が true のときだけ。SECURITY INVOKER。service_role のみ。';
 
 -- ─────────────────────────────────────────────────────────
--- 7. 既存のチャレンジの埋め戻し (延べ数 = いまの参加行の数。completed は一度だけ確定)
+-- 11. 既存のチャレンジの埋め戻し (延べ数 = いまの参加行の数。completed は一度だけ確定。印は埋め戻さない)
 -- ─────────────────────────────────────────────────────────
 INSERT INTO public.organization_challenge_aggregates AS a (challenge_id, joined_count)
 SELECT c.id, count(p.id)
@@ -524,15 +671,19 @@ ON CONFLICT (challenge_id) DO UPDATE
 ```sql
 -- rollback: <番号>_org_challenge_diff_privacy.sql
 -- ⚠️ 守りが弱くなる: 戻すと、集計は参加者の行をその場で数える形 (20261016170000 の定義) に、順位表は管理者にも返す形
---    (20261014100100 の定義) に戻り、終了・中止したチャレンジの状態や開始後の期間を管理者が書き換えられる状態に戻る。
---    明示的な承認を得た場合に限って使う。
+--    (20261014100100 の定義) に戻り、終了・中止したチャレンジの状態や開始後の期間を管理者が書き換えられ、開催中・終了した
+--    チャレンジを消せる状態に戻る。明示的な承認を得た場合に限って使う。
 --
 -- 内容:
---   1. トリガー 3 本 (trg_org_challenge_count_join / trg_org_challenge_guard_update / trg_org_challenge_finalize) と、その関数 3 本を消す
---   2. get_org_challenge_aggregates(uuid) を 20261016170000_org_challenge_min10_join_policy.sql の定義 (最小人数 10。その場で数える) に戻す
---   3. get_org_challenge_ranking(uuid, uuid, integer, boolean) を 20261014100100_org_challenge_progress.sql の定義に戻す
---   4. 表 organization_challenge_aggregates を消す (控えのデータは失われる。参加行・チャレンジの行はそのまま)
---   権限 (service_role だけ) は 2・3 で流し直す。
+--   1. トリガー 4 本 (trg_org_challenge_count_join / trg_org_challenge_guard_update / trg_org_challenge_finalize /
+--      trg_org_challenge_mark_admin) と、その関数 4 本を消す
+--   2. ポリシー "Org challenges can be deleted only as draft or cancelled" を消す
+--   3. get_org_challenge_aggregates(uuid) を 20261016170000_org_challenge_min10_join_policy.sql の定義 (最小人数 10。その場で数える) に戻す
+--   4. get_org_challenge_ranking(uuid, uuid, integer, boolean) を 20261014100100_org_challenge_progress.sql の定義に戻す
+--   5. 表 organization_challenge_ranking_exclusions と organization_challenge_aggregates を消す (印と控えのデータは失われる。
+--      参加行・チャレンジの行はそのまま)
+--   6. organization_challenges.status の NOT NULL を外す (本番の定義に戻す。NULL から draft にした行は draft のまま)
+--   権限 (service_role だけ) は 3・4 で流し直す。
 -- 先に API のデプロイ (順位表の reason・PUT のガード) を戻す必要は無い (関数の名前・引数・返す列は変わらない。
 -- 管理者への順位表は API 側で伏せたまま)。本番に戻すときは、この内容を新しい migration として PR 経由で適用する。
 -- 何度流しても同じ結果になる (冪等)。
@@ -542,15 +693,23 @@ SET LOCAL lock_timeout = '10s';
 DROP TRIGGER IF EXISTS trg_org_challenge_count_join   ON public.organization_challenge_participants;
 DROP TRIGGER IF EXISTS trg_org_challenge_guard_update ON public.organization_challenges;
 DROP TRIGGER IF EXISTS trg_org_challenge_finalize     ON public.organization_challenges;
+DROP TRIGGER IF EXISTS trg_org_challenge_mark_admin   ON public.user_profiles;
 DROP FUNCTION IF EXISTS public.org_challenge_count_join();
 DROP FUNCTION IF EXISTS public.org_challenge_guard_update();
 DROP FUNCTION IF EXISTS public.org_challenge_finalize();
+DROP FUNCTION IF EXISTS public.org_challenge_mark_admin();
 
--- 2. 20261016170000 の get_org_challenge_aggregates をそのまま写す (本体は省略せず、同 migration の 44〜86 行の逐語)
--- 3. 20261014100100 の get_org_challenge_ranking をそのまま写す (同 migration の 269〜334 行の逐語)
+DROP POLICY IF EXISTS "Org challenges can be deleted only as draft or cancelled" ON public.organization_challenges;
+
+-- 3. 20261016170000 の get_org_challenge_aggregates をそのまま写す (本体は省略せず、同 migration の 44〜86 行の逐語)
+-- 4. 20261014100100 の get_org_challenge_ranking をそのまま写す (同 migration の 269〜334 行の逐語)
 --    どちらも REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role; GRANT EXECUTE ... TO service_role; を流し直す
+--    (ranking を先に戻してから印の表を消す。新しい定義が印の表を読んでいるため)
 
+DROP TABLE IF EXISTS public.organization_challenge_ranking_exclusions;
 DROP TABLE IF EXISTS public.organization_challenge_aggregates;
+
+ALTER TABLE public.organization_challenges ALTER COLUMN status DROP NOT NULL;
 ```
 
 ### 5.2 列の意味と不変条件
@@ -560,7 +719,9 @@ DROP TABLE IF EXISTS public.organization_challenge_aggregates;
 | `joined_count` | 参加した人の延べ数 | `org_challenge_count_join` (+1) と埋め戻し | 減らない。DELETE / 脱退 / 除名 / 退会で動かない |
 | `finalized_at` | 確定の時刻 | `org_challenge_finalize` と埋め戻し (completed) | 一度入ったら変わらない (`WHERE a.finalized_at IS NULL`) |
 | `final_ranked_count` | 確定時点の順位がついた今のメンバーの人数 | 同上 | `finalized_at` と同時にだけ入る |
-| `final_average_value` | 確定した平均 (小数第 1 位) | 同上 | 人数 0 なら NULL |
+| `final_average_value` | 確定した平均 (小数第 1 位) | 同上 | 人数 0 なら NULL。画面に出るのは、確定時点の人数が最小人数以上で、同じ種類で期間が重なり先に確定した資格のあるチャレンジが無いときだけ (§4.1 (e)) |
+| `organization_challenge_ranking_exclusions.(challenge_id, user_id)` | 管理者だった印 | `org_challenge_mark_admin` だけ (埋め戻さない) | 消さない (チャレンジの削除・退会の CASCADE でだけ消える)。参加行の削除・役割の変更で動かない |
+| `organization_challenges.status` | 状態 | 既存 (API の POST は draft、PUT は遷移表のとおり、バッチは active → completed) | NOT NULL。遷移は §9.3 の 5 本だけ |
 
 ### 5.3 RLS・権限の表
 
@@ -568,11 +729,13 @@ DROP TABLE IF EXISTS public.organization_challenge_aggregates;
 |---|---|---|---|---|---|---|
 | `organization_challenge_aggregates` | ✅ (ポリシー無し) | service_role・トリガー (所有者) | service_role・関数 (service_role が呼ぶ) | service_role・トリガー | service_role・FK CASCADE | — |
 | `organization_challenge_participants` | ✅ (変えない) | 本人 (Users can join challenges) | 本人 | 無し (service_role) | 本人 | — |
-| `organization_challenges` | ✅ (変えない) | 管理者 | 同組織 | 管理者 (ガードのトリガーが遷移・期間を制限) | 管理者 | — |
+| `organization_challenge_ranking_exclusions` | ✅ (ポリシー無し) | service_role・トリガー (所有者) | service_role (API の `hasRankingExclusion`)・関数 (service_role が呼ぶ) | service_role | service_role・FK CASCADE (チャレンジ・auth.users) | — |
+| `organization_challenges` | ✅ | 管理者 | 同組織 | 管理者 (ガードのトリガーが遷移・期間を制限) | 管理者で、行の status が draft / cancelled のときだけ (RESTRICTIVE の新設ポリシー) | — |
+| `user_profiles` | ✅ (変えない) | 既存 | 既存 | 既存 (新しい AFTER トリガー `trg_org_challenge_mark_admin` が印を書く) | 既存 | — |
 | `get_org_challenge_aggregates` / `get_org_challenge_ranking` | — | — | — | — | — | service_role だけ (変えない) |
-| トリガー関数 3 本 | — | — | — | — | — | 誰にも渡さない (トリガーは所有者の権限で動く。既存 `20261008100000_membership_daily_send_cap.sql` と同じ形) |
+| トリガー関数 4 本 | — | — | — | — | — | 誰にも渡さない (トリガーは所有者の権限で動く。既存 `20261008100000_membership_daily_send_cap.sql` と同じ形) |
 
-監査ログ: 本書は新しい監査の行を足さない。管理者の状態変更は既存の PUT でも監査していない (§20 に残す)。除名・脱退は既存の `membership_audit` に残る。
+監査ログ: 本書は新しい監査の行を足さない。管理者の状態変更は既存の PUT でも監査していない (§20 に残す)。除名・脱退は既存の `membership_audit` に残る。印は役割の変化から機械的に付くもので、操作の記録ではない (役割の変化そのものは招待の承諾・譲渡の監査に既存どおり残る)。
 
 ---
 
@@ -585,7 +748,7 @@ DROP TABLE IF EXISTS public.organization_challenge_aggregates;
 // #1688 組織チャレンジの集計の差分から、やめた人の値を逆算させない守りの正典 (定数・遷移表・Zod・純関数)。
 // DB 側の対 (遷移表・順位表を伏せる役割) は migration *_org_challenge_diff_privacy.sql のトリガーと関数。
 import { z } from 'zod';
-import type { PostgrestError } from '@supabase/supabase-js';
+import type { PostgrestError, SupabaseClient } from '@supabase/supabase-js';
 import { ORG_CHALLENGE_STATUSES } from '@/lib/org-challenges';
 
 export type OrgChallengeStatus = (typeof ORG_CHALLENGE_STATUSES)[number];
@@ -596,13 +759,44 @@ export type OrgRole = (typeof ORG_ROLES)[number];
 
 /**
  * 順位表を見せない役割 = 組織の管理者 (メンバーを組織から外せる人。外した人の行が消えるのを見せない)。
- * DB の関数 get_org_challenge_ranking の `meup.org_role NOT IN ('owner', 'admin')` と同じ並び (contract テストが突合する)
+ * DB の関数 get_org_challenge_ranking の `meup.org_role NOT IN ('owner', 'admin')` と、トリガー関数
+ * org_challenge_mark_admin の `NEW.org_role NOT IN ('owner', 'admin')` と同じ並び (contract テストが突合する)
  */
 export const ORG_CHALLENGE_RANKING_HIDDEN_ROLES = ['owner', 'admin'] as const satisfies readonly OrgRole[];
 
+/** 今の役割だけの判定。管理者だった印 (hasRankingExclusion) は別に見る */
 export function canViewChallengeRanking(orgRole: string | null | undefined): boolean {
   return !(ORG_CHALLENGE_RANKING_HIDDEN_ROLES as readonly string[]).includes(orgRole ?? '');
 }
+
+/** 管理者だった印の表 (§5.1 の 3.)。読み書きは service_role だけ */
+export const ORG_CHALLENGE_RANKING_EXCLUSIONS_TABLE = 'organization_challenge_ranking_exclusions';
+
+/**
+ * そのチャレンジに、その人の「管理者だった印」があるか。認可 (requireOrgMember) を通したあとに service_role のクライアントで呼ぶ。
+ * 読めなかったときは例外 (呼び出し側の catch で 500。「印が無い」とみなして順位表を返すことはしない)
+ */
+export async function hasRankingExclusion(
+  admin: Pick<SupabaseClient, 'from'>,
+  args: { challengeId: string; userId: string },
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from(ORG_CHALLENGE_RANKING_EXCLUSIONS_TABLE)
+    .select('challenge_id')
+    .eq('challenge_id', args.challengeId)
+    .eq('user_id', args.userId)
+    .maybeSingle();
+  if (error) {
+    throw new Error(`順位表を伏せる印の取得に失敗しました: ${error.message}`);
+  }
+  return data !== null;
+}
+
+/**
+ * 利用者の権限 (authenticated) で消せるチャレンジの状態。RESTRICTIVE ポリシー
+ * "Org challenges can be deleted only as draft or cancelled" の `status IN ('draft', 'cancelled')` と同じ並び (contract テストが突合する)
+ */
+export const ORG_CHALLENGE_DELETABLE_STATUSES = ['draft', 'cancelled'] as const satisfies readonly OrgChallengeStatus[];
 
 /** 状態 × 遷移先 (§9.3 の状態遷移表と 1 対 1。DB のトリガー org_challenge_guard_update と同じ) */
 export const ORG_CHALLENGE_STATUS_TRANSITIONS: Readonly<Record<OrgChallengeStatus, readonly OrgChallengeStatus[]>> = {
@@ -673,10 +867,11 @@ export type RankingSection = z.infer<typeof rankingSectionSchema>;
 
 | 関数 / トリガー | シグネチャ | 変更 |
 |---|---|---|
-| `get_org_challenge_aggregates(p_organization_id uuid) RETURNS TABLE (challenge_id uuid, participant_count bigint, min_participants integer, average_value numeric)` | 不変 | 本体: 控えの表から読む。`participant_count` = 延べ数 (10 未満は NULL)、`average_value` = 確定値 (開催中 NULL) |
-| `get_org_challenge_ranking(p_challenge_id uuid, p_user_id uuid, p_limit integer DEFAULT NULL, p_with_names boolean DEFAULT false) RETURNS TABLE (rank integer, current_value numeric, is_me boolean, nickname text, ranked_count bigint)` | 不変 | 本体: 見る人が owner / admin なら 0 行 |
+| `get_org_challenge_aggregates(p_organization_id uuid) RETURNS TABLE (challenge_id uuid, participant_count bigint, min_participants integer, average_value numeric)` | 不変 | 本体: 控えの表から読む。`participant_count` = 延べ数 (10 未満は NULL)、`average_value` = 確定値 (開催中 NULL。重なりの中で先に確定した資格のあるチャレンジがあれば NULL) |
+| `get_org_challenge_ranking(p_challenge_id uuid, p_user_id uuid, p_limit integer DEFAULT NULL, p_with_names boolean DEFAULT false) RETURNS TABLE (rank integer, current_value numeric, is_me boolean, nickname text, ranked_count bigint)` | 不変 | 本体: 見る人が owner / admin か、印があれば 0 行 |
 | `update_org_challenge_progress(p_now timestamptz DEFAULT now()) RETURNS jsonb` | 不変 (作り直さない) | completed にする UPDATE がトリガーを起こす |
-| `org_challenge_count_join()` / `org_challenge_guard_update()` / `org_challenge_finalize()` RETURNS trigger | 新設 | §5.1 |
+| `org_challenge_count_join()` / `org_challenge_guard_update()` / `org_challenge_finalize()` / `org_challenge_mark_admin()` RETURNS trigger | 新設 | §5.1 |
+| ポリシー `Org challenges can be deleted only as draft or cancelled` (RESTRICTIVE・DELETE・authenticated) | 新設 | §5.1 の 8. |
 
 ### 7.2 TypeScript
 
@@ -685,8 +880,9 @@ export type RankingSection = z.infer<typeof rankingSectionSchema>;
 | `canViewChallengeRanking(orgRole: string \| null \| undefined): boolean` | §6 | `src/lib/org-challenge-privacy.ts` (新設) |
 | `isOrgChallengeStatusTransitionAllowed(from: OrgChallengeStatus, to: OrgChallengeStatus): boolean` | §6 | 同上 |
 | `mapChallengeLockError(error: Pick<PostgrestError, 'code' \| 'message'>): { code: OrgChallengeLockErrorCode; status: number } \| null` | §6 | 同上 |
-| `requireOrgMember(): Promise<OrgMemberContext>` | 戻り値の `profile` に `org_role: OrgRole \| null` を足す (`select('organization_id, department_id, org_role')`。`src/lib/auth/org-member.ts:19`・`:48`) | 既存の変更 |
-| `fetchChallengeAggregates` / `fetchChallengeRanking` | シグネチャ・本体は不変 (`src/lib/org-challenge-api.ts`)。`ChallengeAggregate` の JSDoc の 2 か所 (`:88` 「今も組織のメンバーである参加者の人数」→ 参加した人の延べ数、`:94` 「集計が済んだ参加者の平均」→ 終了時に確定した平均。開催中は null) だけ現在形に直す | 既存 (段 B。コメントのみ) |
+| `hasRankingExclusion(admin: Pick<SupabaseClient, 'from'>, args: { challengeId: string; userId: string }): Promise<boolean>` | §6。読めなければ `Error` を投げる | 同上 |
+| `requireOrgMember(): Promise<OrgMemberContext>` | 戻り値の `profile` に `org_role: string \| null` を足す (`select('organization_id, department_id, org_role')`。値は `profile.org_role ?? null`。`src/lib/auth/org-member.ts:19`・`:48`)。型を `OrgRole` にしないのは、認可の層 (`src/lib/auth/`) からチャレンジの lib を import しないため。判定は `canViewChallengeRanking` が文字列で受ける | 既存の変更 |
+| `fetchChallengeAggregates` / `fetchChallengeRanking` | シグネチャ・本体は不変 (`src/lib/org-challenge-api.ts`)。`ChallengeAggregate` の JSDoc の 2 か所 (`:88` 「今も組織のメンバーである参加者の人数」→ 参加した人の延べ数、`:94` 「集計が済んだ参加者の平均」→ 終了時に確定した平均。開催中・確定時点の人数が最小人数未満・同じ種類で期間が重なり先に平均を出したチャレンジがあるときは null) だけ現在形に直す | 既存 (段 B。コメントのみ) |
 
 ---
 
@@ -716,11 +912,41 @@ if (error) {
 
 ### 8.2 `GET /api/org/challenges` (管理者)
 
-形は不変 (`participantCount`, `aggregate.{minParticipants, visible, averageValue}`)。意味が変わる: `participantCount` は延べ数、`averageValue` は確定値 (開催中は null = `visible: false`)。画面は `status` と `visible` で文言を決める (§10)。ファイル冒頭のコメント (`src/app/api/org/challenges/route.ts:22`〜`:23` の「参加者が最小人数に満たない」「集計が済んだ参加者が最小人数に満たない」) を「参加した人 (延べ) が最小人数に満たない」「終了時点の順位がついた参加者が最小人数に満たない、または終了していない」に現在形化する。
+形は不変 (`participantCount`, `aggregate.{minParticipants, visible, averageValue}`)。意味が変わる: `participantCount` は延べ数、`averageValue` は確定値 (開催中は null = `visible: false`。終了後でも、確定時点の人数が最小人数未満か、同じ種類で期間が重なり先に平均を出したチャレンジがあれば null。どちらの理由かは返さない)。画面は `status` と `visible` で文言を決める (§10)。ファイル冒頭のコメント (`src/app/api/org/challenges/route.ts:22`〜`:23` の「参加者が最小人数に満たない」「集計が済んだ参加者が最小人数に満たない」) を「参加した人 (延べ) が最小人数に満たない」「終了時点の順位がついた参加者が最小人数に満たない、または終了していない」に現在形化する。
 
 ### 8.3 `GET /api/org/challenges/[id]` (メンバー)
 
-`ranking` を §6 の `rankingSectionSchema` の形にする。`profile.org_role` が owner / admin (`canViewChallengeRanking` が false) なら順位表の関数を呼ばず `{ available: false, showNames, reason: 'org_admin' }`。参加していなければ `{ available: false, showNames, reason: 'not_joined' }`。それ以外は既存の `available: true` の形。`me` (本人の行) は役割に関わらず返す。`participantCount` は延べ数。
+`ranking` を §6 の `rankingSectionSchema` の形にする。判定は次の順 (上から最初に当たったもの):
+
+1. 参加していない (`mine` が null) → `{ available: false, showNames, reason: 'not_joined' }`。印は読まない。順位表の関数も呼ばない (既存どおり)
+2. `canViewChallengeRanking(profile.org_role)` が false (今 owner / admin) → `{ available: false, showNames, reason: 'org_admin' }`。印も順位表の関数も呼ばない
+3. `await hasRankingExclusion(admin, { challengeId: challenge.id, userId: user.id })` が true (管理者だった印) → `{ available: false, showNames, reason: 'org_admin' }`。順位表の関数は呼ばない。印を読めなければ例外 → 既存の `handleMemberError` で 500
+4. それ以外 → 既存の `fetchChallengeRanking` を呼び、既存の `available: true` の形
+
+`me` (本人の行) は役割・印に関わらず返す。`participantCount` は延べ数。`admin` (`getSupabaseAdmin()`) は既存どおり集計の前に 1 回だけ作る。
+
+```ts
+// tsc:skip
+// src/app/api/org/challenges/[id]/route.ts の ranking の組み立て (既存の `const ranking = mine ? ... : null` と返り値の ranking の置き換え。説明用の断片)
+let ranking: RankingSection;
+if (!mine) {
+  ranking = { available: false, showNames, reason: 'not_joined' };
+} else if (
+  !canViewChallengeRanking(profile.org_role) ||
+  (await hasRankingExclusion(admin, { challengeId: challenge.id, userId: user.id }))
+) {
+  ranking = { available: false, showNames, reason: 'org_admin' };
+} else {
+  const view = await fetchChallengeRanking(admin, { challengeId: challenge.id, userId: user.id, showNames });
+  ranking = {
+    available: true,
+    showNames,
+    rankedCount: view.rankedCount,
+    truncated: view.rankedCount > view.entries.length,
+    entries: view.entries,
+  };
+}
+```
 
 ### 8.4 `GET /api/org/my-challenges` (メンバー)
 
@@ -736,14 +962,16 @@ if (error) {
 
 ### 9.1 ①全パターン表 (状態 × 誰が何を見る・できる × 消費経路)
 
-| 状態 | 管理者: 参加者数 | 管理者: 平均 | 管理者: PUT status | 管理者: PostgREST で期間・種類・部署 | 参加者 (member): 順位表 | 管理者 (参加中): 順位表 | 本人: `me` | 参加 INSERT (ポリシー) | やめる DELETE |
-|---|---|---|---|---|---|---|---|---|---|
-| draft | 延べ数 (10 未満 NULL。通常 0 → NULL) | NULL | → active / completed / cancelled 可 | 可 | 見えない (メンバー向け API は draft を出さない) | 同左 | — | 拒否 (status が active でない) | 可 (行があれば) |
-| active | 延べ数 | NULL (「終了後に表示」) | → completed / cancelled 可。→ draft は 409 | RAISE `CHALLENGE_PERIOD_LOCKED` | その場の行 (上位 20 + 本人) | 返さない (`reason: 'org_admin'`) | 返す | 可 (条件は #1600 のまま) | 可 |
-| completed | 延べ数 | 確定値 (確定時の人数 ≥ 10) / NULL | すべて 409 `CHALLENGE_STATUS_LOCKED` | RAISE | その場の行 (最終の順位) | 返さない | 返す | 拒否 | 可 (確定値は動かない) |
-| cancelled | 延べ数 | NULL (確定しない) | すべて 409 | RAISE | 見えない (メンバー向け API は cancelled を出さない) | 同左 | — | 拒否 | 可 |
+| 状態 | 管理者: 参加者数 | 管理者: 平均 | 管理者: PUT status | 管理者: PostgREST で期間・種類・部署 | 管理者: PostgREST で行の DELETE | 参加者 (member・印なし): 順位表 | 管理者 (参加中) / 印のある member: 順位表 | 本人: `me` | 参加 INSERT (ポリシー) | やめる DELETE |
+|---|---|---|---|---|---|---|---|---|---|---|
+| draft | 延べ数 (10 未満 NULL。通常 0 → NULL) | NULL | → active / completed / cancelled 可 | 可 | 可 | 見えない (メンバー向け API は draft を出さない) | 同左 | — | 拒否 (status が active でない) | 可 (行があれば) |
+| active | 延べ数 | NULL (「終了後に表示」) | → completed / cancelled 可。→ draft は 409 | RAISE `CHALLENGE_PERIOD_LOCKED` | 0 行 (RESTRICTIVE ポリシー) | その場の行 (上位 20 + 本人) | 返さない (`reason: 'org_admin'`) | 返す | 可 (条件は #1600 のまま) | 可 |
+| completed | 延べ数 | 確定値 (確定時の人数 ≥ 10 で、同じ種類で期間が重なり先に確定した資格のあるチャレンジが無いとき) / NULL | すべて 409 `CHALLENGE_STATUS_LOCKED` | RAISE | 0 行 (RESTRICTIVE ポリシー) | その場の行 (最終の順位) | 返さない | 返す | 拒否 | 可 (確定値は動かない) |
+| cancelled | 延べ数 | NULL (確定しない) | すべて 409 | RAISE | 可 | 見えない (メンバー向け API は cancelled を出さない) | 同左 | — | 拒否 | 可 |
 
-消費経路の全列挙: 書く側 = トリガー 3 本 (`org_challenge_count_join` / `org_challenge_guard_update` / `org_challenge_finalize`)・埋め戻し。読む側 = `get_org_challenge_aggregates` (管理者 GET・メンバー GET 2 本)・`get_org_challenge_ranking` (メンバー GET [id])。表示 = `src/app/(org)/org/challenges/page.tsx`・`apps/mobile/app/(org)/org/challenges.tsx`・`src/app/(main)/challenges/page.tsx`・`src/app/(main)/challenges/[id]/page.tsx`。参照するだけで書かない = `DELETE /api/org/departments` (`src/app/api/org/departments/route.ts:201`。`organization_challenges.department_id` の外部キーは ON DELETE の指定なし (NO ACTION) で、チャレンジが参照する部署の削除は 23503 → 409 `DEPARTMENT_IN_USE`。チャレンジの行は UPDATE されず、ガードのトリガーも動かない。§9.3)。母集団を変える経路 (集計の表には書かない) = `remove_org_member` / `leave_org` / `release_user_membership` (所属を外す)・`accept_org_owner_transfer` / `accept_org_invite` (役割を変える)・auth.users の削除 (参加行の CASCADE)・本人の DELETE。既存テスト資産で反応するもの = §16。
+状態の値は 4 つだけ (NOT NULL。NULL の行は migration で draft にそろえる)。
+
+消費経路の全列挙: 書く側 = トリガー 4 本 (`org_challenge_count_join` / `org_challenge_guard_update` / `org_challenge_finalize` / `org_challenge_mark_admin`)・埋め戻し・状態の NULL の draft への書き換え。読む側 = `get_org_challenge_aggregates` (管理者 GET・メンバー GET 2 本)・`get_org_challenge_ranking` (メンバー GET [id])・`hasRankingExclusion` (メンバー GET [id])。削除の経路 = PostgREST の DELETE (利用者の権限。draft / cancelled だけ)・組織の削除の CASCADE・service_role。表示 = `src/app/(org)/org/challenges/page.tsx`・`apps/mobile/app/(org)/org/challenges.tsx`・`src/app/(main)/challenges/page.tsx`・`src/app/(main)/challenges/[id]/page.tsx`。参照するだけで書かない = `DELETE /api/org/departments` (`src/app/api/org/departments/route.ts:201`。`organization_challenges.department_id` の外部キーは ON DELETE の指定なし (NO ACTION) で、チャレンジが参照する部署の削除は 23503 → 409 `DEPARTMENT_IN_USE`。チャレンジの行は UPDATE されず、ガードのトリガーも動かない。§9.3)。母集団を変える経路 (集計の表には書かない) = `remove_org_member` / `leave_org` / `release_user_membership` (所属を外す)・auth.users の削除 (参加行の CASCADE)・本人の DELETE。役割を変える経路 (印を付ける。`trg_org_challenge_mark_admin` が拾う) = `accept_org_invite` (同じ組織の在籍者の上書き・入り直し)・`accept_org_owner_transfer`・運営の組織作成 (`src/app/api/admin/organizations/route.ts:207`)・service_role の直接の更新。既存テスト資産で反応するもの = §16。
 
 ### 9.2 ②状態比較表 (現行 vs 設計後)
 
@@ -751,13 +979,18 @@ if (error) {
 |---|---|---|
 | 管理者の参加者数 | 今も組織のメンバーである参加者の数 (その場で数える。除名で減る) | 参加の延べ数 `joined_count` (減らない) |
 | 管理者の平均 | 順位がついた今のメンバーの平均 (その場。開催中も出る。やめる・除名で動く) | 終了時に 1 回確定した値だけ。開催中は出ない |
+| 同じ種類で期間が重なるチャレンジの平均 | それぞれ出る (同じ値の 2 つの母集団の差が取れる) | 先に確定した資格のある 1 本だけ出る |
 | 終了後の集計 | 行の変化でいつでも動く (差がそのまま 1 人の値) | 不変 |
-| 管理者の状態変更 | どの状態からどの状態へも可 (PUT・PostgREST) | 遷移表だけ (終わった状態からは不可)。API 409・DB RAISE |
+| 管理者の状態変更 | どの状態からどの状態へも可 (PUT・PostgREST)。NULL も可 | 遷移表だけ (終わった状態からは不可。NULL は不可)。API 409・DB RAISE |
 | 管理者の期間・種類・部署の変更 | API は不可、PostgREST は可 | draft の間だけ可 (DB で止める) |
+| 管理者のチャレンジの削除 | PostgREST でどの状態でも可 | draft / cancelled だけ (active / completed は 0 行) |
 | 順位表 (参加した管理者) | 見られる | 見られない (自分の記録・順位は見られる) |
+| 順位表 (管理者になったことがある member) | 見られる | そのチャレンジがある間に管理者になっていれば見られない |
 | 順位表 (参加者) | その場の行 | 変えない |
 | `requireOrgMember().profile` | `organization_id`・`department_id` | + `org_role` |
-| 控えの表 | 無い | `organization_challenge_aggregates` (service_role のみ) |
+| `organization_challenges.status` | NULL 可 | NOT NULL |
+| 新しい表 | 無い | `organization_challenge_aggregates`・`organization_challenge_ranking_exclusions` (どちらも service_role のみ) |
+| `user_profiles` のトリガー | `trg_guard_user_profiles_privileged` / `_on_insert` (BEFORE) | + `trg_org_challenge_mark_admin` (AFTER) |
 | migration | — | 1 本 (+ down) |
 
 ### 9.3 ③状態遷移表 (状態 × 操作 → 遷移先・ガード・副作用)
@@ -768,13 +1001,14 @@ if (error) {
 | draft | PUT status=completed (管理者) | completed | 遷移表 | `org_challenge_finalize` が確定 (通常は人数 0 → 平均 NULL) |
 | draft | PUT status=cancelled (管理者) | cancelled | 遷移表 | 無し |
 | draft | 期間・種類・部署の UPDATE (PostgREST) | draft | 無し | 無し |
-| active | 夜の集計で end_date < 今日 (JST) (バッチ) | completed | バッチの WHERE | 値の計算し直し → 確定 (同じトランザクション) |
-| active | PUT status=completed (管理者) | completed | 遷移表 | 前夜までの値で確定 |
+| active | 夜の集計で end_date < 今日 (JST) (バッチ) | completed | バッチの WHERE | 値の計算し直し → 確定 (同じトランザクション)。同じバッチで終わる重なるチャレンジも行ごとに確定し、平均を出すのは読むときに 1 本 (S-21) |
+| active | PUT status=completed (管理者) | completed | 遷移表 | 前夜までの値で確定。先に平均を出した重なるチャレンジがあれば、この平均は出ない (S-22) |
 | active | PUT status=cancelled (管理者) | cancelled | 遷移表 | 無し (確定しない) |
 | active | PUT status=draft (管理者) | — | 409 `CHALLENGE_STATUS_LOCKED` | 書き込み無し |
 | active | 期間・種類・部署の UPDATE (PostgREST) | — | RAISE `CHALLENGE_PERIOD_LOCKED` | 書き込み無し |
 | completed / cancelled | PUT status=(別の値) (管理者) | — | 409 `CHALLENGE_STATUS_LOCKED` (API) / RAISE (DB) | 書き込み無し |
 | completed / cancelled | 期間・種類・部署の UPDATE (PostgREST) | — | RAISE `CHALLENGE_PERIOD_LOCKED` | 書き込み無し |
+| 任意 | status を NULL にする UPDATE (PostgREST) | — | RAISE `CHALLENGE_STATUS_LOCKED` (ガード)。NOT NULL も 23502 で止める | 書き込み無し (S-24) |
 | 任意 | 同じ status の指定 (管理者) | 不変 | 遷移表 (from === to は可) | 無し |
 | 任意 | title / description / target_value / target_unit / reward_description の更新 (管理者) | 不変 | 無し | 無し |
 | 任意 | organization_id の UPDATE (PostgREST) | — | RAISE `CHALLENGE_PERIOD_LOCKED` | 書き込み無し |
@@ -784,10 +1018,13 @@ if (error) {
 | 任意 | 退会 (`release_user_membership` → auth.users の削除) | 不変 | 既存 | 所属を外したあと参加行が CASCADE で消える。集計の表は動かない (S-14) |
 | 任意 | 参加者の所属部署の変更 (`user_profiles.department_id`。利用者の JWT では変えられない特権列。製品では脱退・除名・退会で NULL になるだけ。ほかは service_role) | 不変 | `guard_user_profiles_privileged` | 集計の表・順位表・確定の母集団は動かない (部署で絞らない)。本人は詳細が 404 (`isVisibleToMember`) (S-19) |
 | 任意 | 部署の削除 (管理者。`DELETE /api/org/departments`) | 不変 | 外部キー (NO ACTION) が 23503 → 409 `DEPARTMENT_IN_USE` (チャレンジが参照する部署) | チャレンジの行は書き換わらない (S-19) |
-| 任意 | 参加者の役割の変更 (`accept_org_owner_transfer` / 同じ組織の `accept_org_invite` / `leave_org` → `accept_org_invite`) | 不変 | 既存 | 順位表は次の要求から今の役割で決まる。member ⇄ admin の往復で順位表の前後を取れる経路が残る (S-20。§20 の 8) |
-| 任意 | チャレンジの DELETE (管理者。PostgREST) | (行が消える) | 既存のポリシー | 参加行と集計の行が CASCADE で消える |
+| 任意 | 組織のメンバーの役割か所属が変わり owner / admin になる (`accept_org_invite` の同じ組織の上書き・入り直し / `accept_org_owner_transfer` / 運営の操作 / service_role) | 不変 | 既存 | `trg_org_challenge_mark_admin` がその組織のチャレンジすべてに印を付ける。以後その人には順位表を返さない (S-20・S-25) |
+| 任意 | owner / admin から member に戻る・組織を抜ける | 不変 | 既存 | 印は残る (順位表は返さない)。印の無いチャレンジ (管理者だった間に無かったもの) は今の役割で決まる |
+| draft / cancelled | チャレンジの DELETE (管理者。PostgREST) | (行が消える) | 既存のポリシー + RESTRICTIVE `status IN ('draft','cancelled')` | 参加行・集計の行・印が CASCADE で消える (どちらの状態も平均を出していない) |
+| active / completed | チャレンジの DELETE (管理者。PostgREST) | — | RESTRICTIVE のポリシーで対象外 (0 行。エラーにならない) | 書き込み無し (S-23) |
+| 任意 | 組織の削除 (CASCADE)・service_role の DELETE | (行が消える) | RLS を通らない | 参加行・集計の行・印が CASCADE で消える |
 
-§6 の `ORG_CHALLENGE_STATUS_TRANSITIONS` が持つのは、この表のうち状態が変わる行 (draft → active / completed / cancelled、active → completed / cancelled) の 5 本。DB のガードも同じ 5 本だけを通す。
+§6 の `ORG_CHALLENGE_STATUS_TRANSITIONS` が持つのは、この表のうち状態が変わる行 (draft → active / completed / cancelled、active → completed / cancelled) の 5 本。DB のガードも同じ 5 本だけを通す (NULL への変更は通さない)。§6 の `ORG_CHALLENGE_DELETABLE_STATUSES` (draft / cancelled) は、この表の DELETE の行と同じ。
 
 ---
 
@@ -795,12 +1032,12 @@ if (error) {
 
 | 画面 | 現行 | 設計後 |
 |---|---|---|
-| 管理者 Web `src/app/(org)/org/challenges/page.tsx:203` 〜 `:206` の説明 | 「参加者が10人以上になるまでは参加者数を、集計が済んだ参加者が10人以上になるまでは平均を表示しません」 | 「参加者数は、これまでに参加した人の数で、やめた人や組織を離れた人を引きません。10人以上になるまでは表示しません。平均は、チャレンジが終了したあとに、終了時点の参加者が10人以上のときだけ表示します (開催中は表示しません)」 |
-| 管理者 Web 集計の欄 (`:356` 〜 `:383`) | 「参加者」/ 「集計中」+「集計が済んだ参加者が10人以上になると、平均を表示します」 | 人数の見出し「参加した人」。平均の欄: active / draft = 「終了後に表示」+「チャレンジが終了すると、終了時点の参加者 (10人以上) の平均を表示します」、completed で非表示 = 「表示なし」+「終了時点の参加者が10人未満のため、平均は表示しません」、completed で表示 = 値 + 「参加者の平均 (終了時点)」、cancelled = 平均の欄を出さない |
+| 管理者 Web `src/app/(org)/org/challenges/page.tsx:203` 〜 `:206` の説明 | 「参加者が10人以上になるまでは参加者数を、集計が済んだ参加者が10人以上になるまでは平均を表示しません」 | 「参加者数は、これまでに参加した人の数で、やめた人や組織を離れた人を引きません。10人以上になるまでは表示しません。平均は、チャレンジが終了したあとに、終了時点の参加者が10人以上のときだけ表示します (開催中は表示しません)。同じ種類で期間が重なるチャレンジは、先に終了したものの平均だけを表示します」 |
+| 管理者 Web 集計の欄 (`:356` 〜 `:383`) | 「参加者」/ 「集計中」+「集計が済んだ参加者が10人以上になると、平均を表示します」 | 人数の見出し「参加した人」。平均の欄: active / draft = 「終了後に表示」+「チャレンジが終了すると、終了時点の参加者 (10人以上) の平均を表示します」、completed で非表示 = 「表示なし」+「終了時点の参加者が10人未満か、同じ種類で期間が重なるチャレンジの平均をすでに表示しているため、平均は表示しません」、completed で表示 = 値 + 「参加者の平均 (終了時点)」、cancelled = 平均の欄を出さない |
 | 管理者モバイル `apps/mobile/app/(org)/org/challenges.tsx:155` | 「参加 {n}」 | 「参加した人 {n}」(`formatParticipantCount` はそのまま) |
 | メンバー一覧 `src/app/(main)/challenges/page.tsx:113` | 「会社の管理者には、参加者全体の人数と平均だけが表示されます (参加者が少ない間は、人数も平均も表示されません)」 | 「会社の管理者には、参加した人数と、チャレンジが終了したあとの平均だけが表示されます (参加した人が少ない間は表示されません)」 |
 | メンバー詳細 `src/app/(main)/challenges/[id]/page.tsx:275` | 同上 | 同上 |
-| メンバー詳細 順位表の節 | `ranking.available` のときだけ表示 | `ranking.available === false && ranking.reason === 'org_admin'` のとき「組織の管理者には順位表を表示しません (あなたの記録と順位だけが表示されます)」を出す。`not_joined` は既存どおり何も出さない |
+| メンバー詳細 順位表の節 | `ranking.available` のときだけ表示 | `ranking.available === false && ranking.reason === 'org_admin'` のとき「組織の管理者 (このチャレンジがある間に管理者になったことがある人を含む) には、順位表を表示しません (あなたの記録と順位だけが表示されます)」を出す。`not_joined` は既存どおり何も出さない |
 | メンバー詳細 やめる節の文 | 「参加をやめると、あなたの記録は順位から外れ、順位表も見られなくなります」 | 変えない |
 
 ---
@@ -809,7 +1046,9 @@ if (error) {
 
 | code | HTTP | 出どころ | 条件 | 本文 |
 |---|---|---|---|---|
-| `CHALLENGE_STATUS_LOCKED` [NEW] | 409 | PUT /api/org/challenges (API の遷移表・DB の RAISE の写し) | 遷移表に無い状態の変更 (終わった状態から、active → draft) | `{ error: 'このチャレンジの状態は変えられません', code }` |
+| `CHALLENGE_STATUS_LOCKED` [NEW] | 409 (API) / PostgREST の 4xx (直接の UPDATE) | PUT /api/org/challenges (API の遷移表・DB の RAISE の写し)・DB のトリガー `org_challenge_guard_update` | 遷移表に無い状態の変更 (終わった状態から、active → draft、NULL へ。API の PUT は NULL を既存の `INVALID_STATUS` (400) で先に断る) | `{ error: 'このチャレンジの状態は変えられません', code }` |
+| (エラーにならない) | PostgREST の 2xx・0 行 | RESTRICTIVE ポリシー `Org challenges can be deleted only as draft or cancelled` | active / completed のチャレンジの DELETE (利用者の権限) | 消えた行が 0 (RLS の対象外の行は黙って外れる)。API に DELETE は無い |
+| `23502` (not_null_violation) | PostgREST の 4xx | `organization_challenges.status` の NOT NULL | status を NULL にする INSERT (UPDATE はガードが先に断る) | PostgreSQL の既定の文 |
 | `CHALLENGE_PERIOD_LOCKED` [NEW] | (PostgREST の 4xx。API は出さない) | DB のトリガー `org_challenge_guard_update` | draft 以外での start_date / end_date / challenge_type / department_id、常時の organization_id の変更 | RAISE EXCEPTION (ERRCODE P0001) |
 | `INVALID_STATUS` | 400 | 既存 | DB が受け付けない status | 変えない |
 | `CHALLENGE_TYPE_DISABLED` | 400 (POST / PUT `/api/org/challenges`。§8.1 の PUT はこちら) / 409 (POST `/api/org/challenges/[id]/join`) | 既存 (`src/app/api/org/challenges/route.ts:152`・`:259`、`src/app/api/org/challenges/[id]/join/route.ts:54`) | 変えない | — |
@@ -852,17 +1091,20 @@ sequenceDiagram
 
 | ファイル | it 名 (要点) |
 |---|---|
-| `tests/org-challenge-diff-privacy-migration-contract.test.ts` (新設。DB を使わない) | migration と down の 1 行目の名前が実ファイル名と一致し、本文のロールバックの参照が実在する / organization_challenge_aggregates を作り、RLS を有効にし、PUBLIC・anon・authenticated の権限を外し、ポリシーを作らない / get_org_challenge_aggregates を最後に定義するのは本 migration で、本体は organization_challenge_aggregates から読み organization_challenge_participants を読まない。cfg の `SELECT 10 AS min_participants` が ORG_CHALLENGE_MIN_PARTICIPANTS と同じ / get_org_challenge_ranking を最後に定義するのは本 migration で、cfg (20 / 100) と LEAST(GREATEST(...)) は 20261014100100 と同じ、除外する役割の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ / update_org_challenge_progress を作り直さない (最後の定義は 20261014100100) / ガードの関数が通す遷移は ORG_CHALLENGE_STATUS_TRANSITIONS の 5 本と同じで、止める列は start_date・end_date・challenge_type・department_id・organization_id / 確定のトリガーは `AFTER UPDATE OF status` と `NEW.status = 'completed'` の WHEN を持ち、INSERT は `WHERE a.finalized_at IS NULL` で 1 回だけ / 参加の INSERT にだけトリガーを付け、DELETE・UPDATE には付けない / 埋め戻しは ON CONFLICT で冪等 / down はトリガー → 関数 → 2 本の関数の復元 → 表の順で、復元した定義が 20261016170000 と 20261014100100 の逐語 |
-| `tests/integration/rls/org-challenge-diff-privacy.test.ts` (新設。ローカル Supabase) | A: joined_count は参加で +1 し、やめても・組織から外れても (remove_org_member)・退会しても減らない。再参加は 2 と数える / B: 開催中は順位がついた人が 10 人いても average_value は NULL。participant_count は延べ数で 9 なら NULL・10 で出る / C: 終了日を過ぎた夜の集計 (update_org_challenge_progress の p_now) で completed になると、その時点の順位がついた今のメンバーの平均 (小数第 1 位) と人数が確定する / D: 確定後に参加をやめる・組織から外れる・service_role で値や順位を書き換えても average_value は変わらない / E: 確定は 1 回だけ。completed のまま値を変えて同じ関数を呼んでも final_* は変わらない / F: 確定時点の順位がついた人が 9 人なら NULL、10 人なら出る / G: 管理者の JWT で PostgREST を直接叩いても completed・cancelled から他の状態へ変えられない (P0001 CHALLENGE_STATUS_LOCKED)。active → draft も不可。draft → active / completed / cancelled、active → completed / cancelled は可 / H: active・completed・cancelled の start_date / end_date / challenge_type / department_id と、どの状態でも organization_id は変えられない (CHALLENGE_PERIOD_LOCKED)。draft なら期間を変えられる。title は終了後も変えられる / I [S-8・S-20]: 順位表は見る人が owner / admin なら 0 行。member には従来どおり。参加後に admin になった人も 0 行。所有者の譲渡 (`accept_org_owner_transfer`) で owner になった参加者も、元の owner (admin になる) も 0 行 / J: 控えの表は利用者の JWT では読めない・書けない。service_role は読める / K: 退会 (auth.users の削除) で参加行が消えても joined_count と確定値は変わらない / L: トリガー関数 3 本の EXECUTE は PUBLIC・anon・authenticated・service_role に無い。トリガー 3 本が付いている / M [S-10]: 管理者の JWT で active のチャレンジを completed に UPDATE すると、その時点の参加行 (前夜の計算の current_value。順位がついた今のメンバー) の平均と人数で確定する。そのあと夜の集計 (update_org_challenge_progress) が走っても final_* は変わらない (completed は計算し直しの対象外) / N [S-15]: migration ファイルの「7. 既存のチャレンジの埋め戻し」の節 (見出しの行から末尾まで) を読み、fixture のチャレンジの控えの行を service_role で消してから pgQuery で流すと、active のチャレンジは joined_count = 参加行の数で未確定、completed のチャレンジは順位がついた今のメンバーの人数と平均 (小数第 1 位) で確定する。確定済みの控えの行は上書きしない。2 回流しても結果が同じ / O [S-17]: 終了日が 3 日前のまま active のチャレンジ (夜の集計が 3 晩止まった状態) に update_org_challenge_progress(p_now) を 1 回呼ぶと、同じ呼び出しで値の計算し直し・completed・確定が行われ、final_average_value は呼び出しの後の参加行 (順位がついた今のメンバー) の current_value の平均 (小数第 1 位) と一致する。控えの表の時刻の列は finalized_at と updated_at だけで、計算日を別に持たない / P [S-19]: service_role で参加者の department_id を別の部署に変えても、その人の行は他の参加者の順位表と確定の人数に残り、joined_count も変わらない。利用者の JWT では department_id を変えられない (CANNOT_MODIFY_PRIVILEGED_COLUMN) |
-| `tests/integration/security/org-challenges-api.test.ts` (既存の変更) | C-3 を置き換え: 参加した管理者 (owner / admin) には順位表を返さない (reason: org_admin)。自分の記録・順位は返る。やめると reason: not_joined / C-5 [NEW] [S-2]: 順位がついた参加者の 1 人がやめると、ほかの参加者の GET [id] の順位表から、夜の集計を待たずにその行が消える (rankedCount が 1 減る)。管理者の GET /api/org/challenges の participantCount と平均は前後で同じ / D-4 を改める [S-16]: 同じチャレンジについて、管理者の GET /api/org/challenges の participantCount と、メンバー向けの GET /api/org/my-challenges・GET [id] の participantCount が同じ値 (延べ数。10 未満は null)。管理者がメンバー向けの API を呼んでも同じ値で、メンバー向けの応答に平均の項目は無い (迂回できない) / D-1〜D-3 を置き換え: 開催中は順位がついた人が 10 人いても平均は null (visible = false)、参加した人数は延べ数で 10 以上なら出る / 終了すると終了時点の平均が出て、参加をやめた後も変わらない / 終了時点の順位がついた人が 9 人なら平均は null / D-8 [NEW]: 管理者がメンバーを外しても、参加した人数も (確定後の) 平均も変わらない / D-9 [NEW]: 終了したチャレンジを PUT で開催中に戻せない (409 CHALLENGE_STATUS_LOCKED)。PostgREST を直接叩いても戻らない / E-5 [NEW]: PUT は開催中 → 下書きを 409 にし、終了後もタイトル・説明・報酬は更新できる |
+| `tests/org-challenge-diff-privacy-migration-contract.test.ts` (新設。DB を使わない) | migration と down の 1 行目の名前が実ファイル名と一致し、本文のロールバックの参照が実在する / 状態の NULL を draft にする UPDATE と `ALTER COLUMN status SET NOT NULL` が、この順でガードのトリガーの作成より前にある。down は `DROP NOT NULL` を持つ / organization_challenge_aggregates と organization_challenge_ranking_exclusions を作り、どちらも RLS を有効にし、PUBLIC・anon・authenticated の権限を外し、ポリシーを作らない。印の表の外部キーは organization_challenges(id) と auth.users(id) に ON DELETE CASCADE / get_org_challenge_aggregates を最後に定義するのは本 migration で、本体は organization_challenge_aggregates から読み organization_challenge_participants を読まない。cfg の `SELECT 10 AS min_participants` が ORG_CHALLENGE_MIN_PARTICIPANTS と同じ。重なりの判定 (`e.challenge_type = c.challenge_type`・`e.start_date <= c.end_date`・`c.start_date <= e.end_date`・`(e.finalized_at, e.id) < (a.finalized_at, c.id)`) を持つ / get_org_challenge_ranking を最後に定義するのは本 migration で、cfg (20 / 100) と LEAST(GREATEST(...)) は 20261014100100 と同じ、除外する役割の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ、organization_challenge_ranking_exclusions の `NOT EXISTS` を持つ / update_org_challenge_progress を作り直さない (最後の定義は 20261014100100) / ガードの関数が通す遷移は ORG_CHALLENGE_STATUS_TRANSITIONS の 5 本と同じで、`NEW.status IS NULL` を断り、比較を `COALESCE(..., false)` で包む。止める列は start_date・end_date・challenge_type・department_id・organization_id / 確定のトリガーは `AFTER UPDATE OF status` と `NEW.status = 'completed'` の WHEN を持ち、INSERT は `WHERE a.finalized_at IS NULL` で 1 回だけ / 参加の INSERT にだけ延べ数のトリガーを付け、DELETE・UPDATE には付けない / 印のトリガーは `AFTER INSERT OR UPDATE OF org_role, organization_id ON public.user_profiles` で、関数の `NOT IN` の並びが ORG_CHALLENGE_RANKING_HIDDEN_ROLES と同じ / 削除のポリシーは `AS RESTRICTIVE`・`FOR DELETE`・`TO authenticated` で、`status IN (...)` の並びが ORG_CHALLENGE_DELETABLE_STATUSES と同じ。`Org admins can manage challenges` を作り直さない / トリガー関数 4 本は PUBLIC・anon・authenticated・service_role から EXECUTE を外す / 埋め戻しは ON CONFLICT で冪等で、印は埋め戻さない / down はトリガー → 関数 → ポリシー → 2 本の関数の復元 → 表 2 つ → NOT NULL の順で、復元した定義が 20261016170000 と 20261014100100 の逐語 |
+| `tests/integration/rls/org-challenge-diff-privacy.test.ts` (新設。ローカル Supabase) | A: joined_count は参加で +1 し、やめても・組織から外れても (remove_org_member)・退会しても減らない。再参加は 2 と数える / B: 開催中は順位がついた人が 10 人いても average_value は NULL。participant_count は延べ数で 9 なら NULL・10 で出る / C: 終了日を過ぎた夜の集計 (update_org_challenge_progress の p_now) で completed になると、その時点の順位がついた今のメンバーの平均 (小数第 1 位) と人数が確定する / D: 確定後に参加をやめる・組織から外れる・service_role で値や順位を書き換えても average_value は変わらない / E: 確定は 1 回だけ。completed のまま値を変えて同じ関数を呼んでも final_* は変わらない / F: 確定時点の順位がついた人が 9 人なら NULL、10 人なら出る / G: 管理者の JWT で PostgREST を直接叩いても completed・cancelled から他の状態へ変えられない (P0001 CHALLENGE_STATUS_LOCKED)。active → draft も不可。active → NULL・draft → NULL も CHALLENGE_STATUS_LOCKED で、行は変わらない (続けて期間を書き換えることもできない)。draft → active / completed / cancelled、active → completed / cancelled は可 / H: active・completed・cancelled の start_date / end_date / challenge_type / department_id と、どの状態でも organization_id は変えられない (CHALLENGE_PERIOD_LOCKED)。draft なら期間を変えられる。title は終了後も変えられる / I [S-8・S-20・S-25]: 順位表は見る人が owner / admin なら 0 行。member には従来どおり。順位表を受け取った参加中の member が、同じ組織の admin の招待を本人の JWT の `accept_org_invite` で承諾すると、組織のチャレンジすべてに印が付き 0 行。member の招待を承諾して戻っても 0 行 (招待の行は `tests/integration/security/invite-accept-missing-profile.test.ts` の `orgInviteToken` と同じ作り方、ライセンスの枠も同じファイルの fixture と同じ作り方) / I2: `leave_org` → admin の招待で入り直す → `leave_org` → member の招待で入り直しても 0 行。印のあるチャレンジで参加をやめて参加し直しても 0 行 / I3: service_role で参加者の org_role を owner にしても (所有者の譲渡・運営の操作と同じ UPDATE) 印が付き、member に戻しても 0 行 / I4: 管理者だった間に無かったチャレンジ (member に戻ったあとに作られたもの) の順位表は返る。役割も組織も変わらない UPDATE (nickname の更新・同じ役割の上書き) では印が増えない / J: 集計の表と印の表は利用者の JWT では読めない・書けない。service_role は読める / K: 退会 (auth.users の削除) で参加行と印が消えても joined_count と確定値は変わらない / L: トリガー関数 4 本の EXECUTE は PUBLIC・anon・authenticated・service_role に無い。トリガー 4 本が付いている / M [S-10]: 管理者の JWT で active のチャレンジを completed に UPDATE すると、その時点の参加行 (前夜の計算の current_value。順位がついた今のメンバー) の平均と人数で確定する。そのあと夜の集計 (update_org_challenge_progress) が走っても final_* は変わらない (completed は計算し直しの対象外) / N [S-15]: migration ファイルの「11. 既存のチャレンジの埋め戻し」の節 (見出しの行から末尾まで) を読み、fixture のチャレンジの控えの行を service_role で消してから pgQuery で流すと、active のチャレンジは joined_count = 参加行の数で未確定、completed のチャレンジは順位がついた今のメンバーの人数と平均 (小数第 1 位) で確定する。確定済みの控えの行は上書きしない。2 回流しても結果が同じ / O [S-17]: 終了日が 3 日前のまま active のチャレンジ (夜の集計が 3 晩止まった状態) に update_org_challenge_progress(p_now) を 1 回呼ぶと、同じ呼び出しで値の計算し直し・completed・確定が行われ、final_average_value は呼び出しの後の参加行 (順位がついた今のメンバー) の current_value の平均 (小数第 1 位) と一致する。控えの表の時刻の列は finalized_at と updated_at だけで、計算日を別に持たない / P [S-19]: service_role で参加者の department_id を別の部署に変えても、その人の行は他の参加者の順位表と確定の人数に残り、joined_count も変わらない。利用者の JWT では department_id を変えられない (CANNOT_MODIFY_PRIVILEGED_COLUMN) / Q [S-21]: 同じ種類・同じ期間の A・B に 11 人が参加し X が B だけやめたあと、1 つの UPDATE (pgQuery) で A・B を同時に completed にすると、finalized_at は同じで、ID の小さい方の平均だけが出て、もう 1 本は NULL。joined_count は A・B とも 11 / R [S-22]: A を completed (11 人) → X を外す → B を completed (10 人) とすると B の平均は NULL。A の確定が 9 人 (平均が出ない) なら、後の B は 10 人で平均が出る。種類が違えば両方出る。同じ種類で期間が重ならなければ両方出る。終了日と開始日が同じ日 (両端を含む重なり) なら後の方は NULL / S [S-23]: 管理者の JWT の DELETE で、active と completed のチャレンジは消えない (0 行。エラーにならない)。draft と cancelled は消える。service_role の DELETE と組織の削除 (CASCADE) では消える / T [S-24]: service_role で status を NULL にする INSERT は 23502。管理者の JWT で status を NULL にする UPDATE は P0001 CHALLENGE_STATUS_LOCKED |
+| `tests/integration/rls/org-challenge-progress.test.ts` (既存の変更。節 H だけ) | 節 H (`:782`〜`:912`) を延べ数と確定した平均の意味に改める。it 名と期待値: H-1『参加した人 (延べ) が 9 人なら人数も平均も NULL、10 人で人数が出る。開催中の平均は常に NULL』(9 人: participant_count null・average_value null → 10 人目: participant_count 10・average_value null) / H-2『5 人 (#1600 の前の最小人数) では、もう人数も平均も出さない』(変えない) / H-3『終了時点で順位がついた人が 9 人なら確定した平均は NULL、10 人なら出る。未集計の人は延べ数にだけ入る』(breakfast_rate の c1: 順位つき 9 人 (80) + 未集計 1 人 → service_role で status を completed に UPDATE → participant_count 10・average_value null。veg_score の c2: 順位つき 9 人 (80) + 順位つき 1 人 (30) + 未集計 1 人 → completed → participant_count 11・average_value 75) / H-4『確定した平均は小数第 1 位に丸める』(veg_score で同じ 10 値を入れて completed → 2.9) / H-5『延べ数は、脱退した人・別の組織の人の参加行も INSERT のたびに数える。確定した平均は今の組織のメンバーだけ。参加者のいないチャレンジは人数 NULL。他組織のチャレンジは返らない』(challenge: 10 人 (10) + former (99) + b1 (99) → participant_count 12、completed にすると average_value 10。short (veg_score): 9 人 + former + b1 → participant_count 11、completed にすると平均 NULL (確定時点の今のメンバーは 9 人)。empty・other は従来どおり) / H-6『返す列は、集計の 4 列だけ』(変えない。participant_count 10 のまま緑)。completed にする UPDATE は `srAdmin.from('organization_challenges').update({ status: 'completed' }).eq('id', id)` (ガードの active → completed は可) |
+| `tests/integration/security/org-challenges-api.test.ts` (既存の変更) | C-3 を置き換え: 参加した管理者 (owner / admin) には順位表を返さない (reason: org_admin)。自分の記録・順位は返る。やめると reason: not_joined / C-5 [NEW] [S-2]: 順位がついた参加者の 1 人がやめると、ほかの参加者の GET [id] の順位表から、夜の集計を待たずにその行が消える (rankedCount が 1 減る)。管理者の GET /api/org/challenges の participantCount と平均は前後で同じ / C-6 [NEW] [S-20]: 参加中の member が admin の招待を承諾したあと member の招待で戻ると、GET [id] は reason: org_admin を返す / D-4 を改める [S-16]: 同じチャレンジについて、管理者の GET /api/org/challenges の participantCount と、メンバー向けの GET /api/org/my-challenges・GET [id] の participantCount が同じ値 (延べ数。10 未満は null)。管理者がメンバー向けの API を呼んでも同じ値で、メンバー向けの応答に平均の項目は無い (迂回できない) / D-1〜D-3 を置き換え: 開催中は順位がついた人が 10 人いても平均は null (visible = false)、参加した人数は延べ数で 10 以上なら出る / 終了すると終了時点の平均が出て、参加をやめた後も変わらない / 終了時点の順位がついた人が 9 人なら平均は null / D-8 [NEW]: 管理者がメンバーを外しても、参加した人数も (確定後の) 平均も変わらない / D-9 [NEW]: 終了したチャレンジを PUT で開催中に戻せない (409 CHALLENGE_STATUS_LOCKED)。PostgREST を直接叩いても戻らない / D-10 [NEW] [S-22]: 同じ種類で期間が重なるチャレンジを 2 本 PUT で終了すると、GET /api/org/challenges の平均は先に終了した 1 本だけ (後の 1 本は visible = false) / E-5 [NEW]: PUT は開催中 → 下書きを 409 にし、終了後もタイトル・説明・報酬は更新できる |
 | `tests/org-admin-routes.test.ts` (既存の変更) | PUT: 現在の状態が completed / cancelled で status を変えると 409 CHALLENGE_STATUS_LOCKED で何も更新しない / PUT: active → draft は 409 / PUT: 現在の行の読み取りは status があるときだけ 1 回 (challenge_type の確認と統合) / PUT: DB のガードの RAISE (P0001 CHALLENGE_STATUS_LOCKED) を 409 に写す。他の P0001 は従来どおり 500 / challenges GET: 返す形は変わらない (participantCount・aggregate) |
-| `tests/org-challenge-member-routes.test.ts` (既存の変更) | GET [id]: 参加している管理者 (owner / admin) には順位表を返さず reason: org_admin。順位表の DB 関数を呼ばない。me は返す / GET [id]: 参加していない人は reason: not_joined / requireOrgMember は org_role を読む |
-| `tests/org-challenge-privacy-lib.test.ts` (新設) | ORG_CHALLENGE_STATUS_TRANSITIONS は §9.3 の状態が変わる行と 1 対 1 (5 本) / isOrgChallengeStatusTransitionAllowed: 4 × 4 の全組 (同じ状態は true・終わった状態からは自分以外 false) / canViewChallengeRanking: owner・admin は false、member・null・undefined・未知の文字列は true / ORG_CHALLENGE_RANKING_HIDDEN_ROLES は migration の NOT IN の並びと同じ (contract) / mapChallengeLockError: P0001 + CHALLENGE_STATUS_LOCKED → 409、P0001 + CHALLENGE_PERIOD_LOCKED → 409、P0001 で別の文 → null、別の code → null / rankingSectionSchema: 2 形を受け、reason の無い available=false を拒む |
-| `tests/org-challenges-lib.test.ts` (既存。変更不要の確認) | 「最小人数」「順位表の人数 (cfg)」「cfg の外に人数の数字が無い」は最後の定義 (本 migration) に対してそのまま緑であること (round(..., 1) と GREATEST(..., 1) の 1 だけ) |
+| `tests/org-challenge-member-routes.test.ts` (既存の変更) | `worldTables()` に `organization_challenge_ranking_exclusions: []` を足す (adminDb が空の表として答える) / `:461` と `:537` の `toEqual({ available: false, showNames })` に `reason: 'not_joined'` を足す / `:540` の it『参加している管理者は、一般のメンバーと同じく順位表を見られる』を『参加している管理者 (owner / admin) には順位表を返さず reason: org_admin。順位表の DB 関数を呼ばず、印の表も読まない。me は返す』に置き換える / [NEW] 『member でも、このチャレンジに管理者だった印がある人には reason: org_admin。順位表の DB 関数を呼ばない』(adminDb の organization_challenge_ranking_exclusions に (C_VEG, MEMBER_A1) の行) / [NEW] 『印は service_role のクライアントで、チャレンジ ID と本人の ID で絞って読む』/ [NEW] 『印の表を読めないときは 500 (汎用メッセージだけ。順位表を返さない)』(adminDb を errors つきで作り直す) |
+| `tests/org-member-auth.test.ts` (既存の変更) | `:99` の it『本人の行だけを、認証で確定した本人の ID で読む (必要な 2 列だけ)』を『(必要な 3 列だけ)』に改め、`:106` の期待を `'organization_id, department_id, org_role'` にする / [NEW]『組織の役割 (org_role) を返す。owner・admin・member はそのまま』(OWNER・ADMIN・MEMBER の 3 人で `profile.org_role` を確かめる) |
+| `tests/org-challenge-privacy-lib.test.ts` (新設) | ORG_CHALLENGE_STATUS_TRANSITIONS は §9.3 の状態が変わる行と 1 対 1 (5 本) / isOrgChallengeStatusTransitionAllowed: 4 × 4 の全組 (同じ状態は true・終わった状態からは自分以外 false) / canViewChallengeRanking: owner・admin は false、member・null・undefined・未知の文字列は true / ORG_CHALLENGE_RANKING_HIDDEN_ROLES は migration の 2 つの NOT IN の並びと同じ (contract) / ORG_CHALLENGE_DELETABLE_STATUSES は draft と cancelled で、ORG_CHALLENGE_STATUSES の部分集合 / mapChallengeLockError: P0001 + CHALLENGE_STATUS_LOCKED → 409、P0001 + CHALLENGE_PERIOD_LOCKED → 409、P0001 で別の文 → null、別の code → null / hasRankingExclusion: 行があれば true・無ければ false・読めなければ例外 (模擬のクライアントで、表名とチャレンジ ID・本人の ID の絞り込みを確かめる) / rankingSectionSchema: 2 形を受け、reason の無い available=false を拒む |
+| `tests/org-challenges-lib.test.ts` (既存。変更不要の確認) | 「最小人数」「順位表の人数 (cfg)」「cfg の外に人数の数字が無い」は最後の定義 (本 migration) に対してそのまま緑であること (round(..., 1) と GREATEST(..., 1) の 1 だけ。重なりの判定と印の条件は数字を持たない) |
 | `tests/org-challenge-min10-join-policy-migration-contract.test.ts` (既存の変更) | 「最後に定義するのは本 migration」を「本 migration の次に定義するのは *_org_challenge_diff_privacy.sql で、それ以外に無い」に改める |
-| `tests/org-challenge-pages.test.tsx` (既存の変更) | 管理者の説明文 (延べ数・終了後の平均) / 開催中は「終了後に表示」/ 終了で 10 人未満は「表示なし」/ 終了で表示は「参加者の平均 (終了時点)」/ 中止は平均の欄が無い / メンバー一覧・詳細の説明文 / 詳細: reason が org_admin のとき「組織の管理者には順位表を表示しません」を出し、順位表 (ol) を出さない |
+| `tests/org-challenge-pages.test.tsx` (既存の変更) | 管理者の説明文 (延べ数・終了後の平均・重なるチャレンジ) / 開催中は「終了後に表示」/ 終了で非表示は「表示なし」と 10 人未満・重なりの説明 / 終了で表示は「参加者の平均 (終了時点)」/ 中止は平均の欄が無い / メンバー一覧・詳細の説明文 / 詳細: reason が org_admin のとき「組織の管理者 (このチャレンジがある間に管理者になったことがある人を含む) には、順位表を表示しません」を出し、順位表 (ol) を出さない / 模擬の応答 (`:336`・`:399`) の ranking に reason を足す |
 | `apps/mobile/__tests__/app/org/challenges-screen.test.tsx` (既存の変更) | 「参加した人」の文言 |
-| `tests/database-types-migrations-contract.test.ts` (既存。生成物の更新で緑) | organization_challenge_aggregates が両方の型ファイルにある。トリガー関数 3 本は型に出ない |
+| `tests/database-types-migrations-contract.test.ts` (既存。生成物の更新で緑) | organization_challenge_aggregates と organization_challenge_ranking_exclusions が両方の型ファイルにある。organization_challenges.status の Row が `string` (NOT NULL)。トリガー関数 4 本は型に出ない |
+| `tests/account-export-tables.test.ts` (既存。分類の追加で緑) | organization_challenge_ranking_exclusions (user_id を持つ) が `ACCOUNT_EXPORT_EXCLUDED` に理由つきである |
 
 ---
 
@@ -870,11 +1112,11 @@ sequenceDiagram
 
 | 段 | 内容 | 触るファイル |
 |---|---|---|
-| 核 (段 A) | migration + down・`src/lib/org-challenge-privacy.ts`・型の生成物 2 本・contract テスト・RLS 統合テスト・`tests/org-challenge-min10-join-policy-migration-contract.test.ts` の改め | `supabase/migrations/<番号>_org_challenge_diff_privacy.sql`、`supabase/rollbacks/<番号>_org_challenge_diff_privacy.down.sql`、`src/lib/org-challenge-privacy.ts`、`src/types/database.types.ts`、`packages/shared/src/database.types.ts`、`tests/org-challenge-diff-privacy-migration-contract.test.ts`、`tests/org-challenge-privacy-lib.test.ts`、`tests/integration/rls/org-challenge-diff-privacy.test.ts`、`tests/org-challenge-min10-join-policy-migration-contract.test.ts`。条件つき: `tests/account-export-tables.test.ts` が新表で赤になったときだけ `src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED` に理由つきで 1 行足す (§16) |
-| 配線 (段 B) | API 2 本の分岐・`requireOrgMember` の `org_role`・画面 4 つの文言・既存テストの改め | `src/app/api/org/challenges/route.ts`、`src/app/api/org/challenges/[id]/route.ts`、`src/app/api/org/challenges/[id]/join/route.ts` (コメントのみ)、`src/lib/org-challenge-api.ts` (`ChallengeAggregate` の JSDoc のみ。§7.2)、`src/lib/auth/org-member.ts`、`src/app/(org)/org/challenges/page.tsx`、`apps/mobile/app/(org)/org/challenges.tsx`、`src/app/(main)/challenges/page.tsx`、`src/app/(main)/challenges/[id]/page.tsx`、`tests/integration/security/org-challenges-api.test.ts`、`tests/org-admin-routes.test.ts`、`tests/org-challenge-member-routes.test.ts`、`tests/org-challenge-pages.test.tsx`、`apps/mobile/__tests__/app/org/challenges-screen.test.tsx` |
-| 横断整合 | 段 A の関数と段 B の API の契約 (reason・409)・画面の文言と API の意味・§16 の番兵が全部緑 | — |
+| 核 (段 A) | migration + down・`src/lib/org-challenge-privacy.ts`・型の生成物 2 本・書き出しの分類・contract テスト・RLS 統合テスト 2 本 (新設と節 H の改め)・`tests/org-challenge-min10-join-policy-migration-contract.test.ts` の改め | `supabase/migrations/<番号>_org_challenge_diff_privacy.sql`、`supabase/rollbacks/<番号>_org_challenge_diff_privacy.down.sql`、`src/lib/org-challenge-privacy.ts`、`src/types/database.types.ts`、`packages/shared/src/database.types.ts`、`src/lib/account-export-tables.ts` (`ACCOUNT_EXPORT_EXCLUDED` に `organization_challenge_ranking_exclusions: 'チャレンジの順位表を伏せる印 (組織の管理者になった記録)。守りの内部の記録で、本人が入力したデータではない'` の 1 行)、`tests/org-challenge-diff-privacy-migration-contract.test.ts`、`tests/org-challenge-privacy-lib.test.ts`、`tests/integration/rls/org-challenge-diff-privacy.test.ts`、`tests/integration/rls/org-challenge-progress.test.ts` (節 H だけ)、`tests/org-challenge-min10-join-policy-migration-contract.test.ts` |
+| 配線 (段 B) | API 2 本の分岐・`requireOrgMember` の `org_role`・画面 4 つの文言・既存テストの改め | `src/app/api/org/challenges/route.ts`、`src/app/api/org/challenges/[id]/route.ts`、`src/app/api/org/challenges/[id]/join/route.ts` (コメントのみ)、`src/lib/org-challenge-api.ts` (`ChallengeAggregate` の JSDoc のみ。§7.2)、`src/lib/auth/org-member.ts`、`src/app/(org)/org/challenges/page.tsx`、`apps/mobile/app/(org)/org/challenges.tsx`、`src/app/(main)/challenges/page.tsx`、`src/app/(main)/challenges/[id]/page.tsx`、`tests/integration/security/org-challenges-api.test.ts`、`tests/org-admin-routes.test.ts`、`tests/org-challenge-member-routes.test.ts`、`tests/org-member-auth.test.ts`、`tests/org-challenge-pages.test.tsx`、`apps/mobile/__tests__/app/org/challenges-screen.test.tsx` |
+| 横断整合 | 段 A の関数と段 B の API の契約 (reason・409・印)・画面の文言と API の意味・§16 の番兵が全部緑 | — |
 
-触るファイルの母集合は上の 2 行 (段 A の条件つきの 1 本を含む) で閉じる。消費経路 (§9.1) のうち触らないと確かめたもの: `src/app/api/org/my-challenges/route.ts` (§8.4。形もコメントも事実のまま)、`src/app/api/org/departments/route.ts` (参照だけ。§9.3)、`remove_org_member` / `leave_org` / `release_user_membership` / `accept_org_owner_transfer` / `accept_org_invite` (集計の表に書かない。ただし S-20 の扱いは §20 の 8 の裁定しだいで変わる)。`docs/design/org/07-challenge.md` / `09-rls-policies.md` などの他の文書は §17 (実装の PR または docs PR)。
+触るファイルの母集合は上の 2 行で閉じる (条件つきのファイルは無い)。消費経路 (§9.1) のうち触らないと確かめたもの: `src/app/api/org/my-challenges/route.ts` (§8.4。形もコメントも事実のまま)、`src/app/api/org/departments/route.ts` (参照だけ。§9.3)、`remove_org_member` / `leave_org` / `release_user_membership` / `accept_org_owner_transfer` / `accept_org_invite` / `src/app/api/admin/organizations/route.ts` (集計の表に書かない。役割の変化は `user_profiles` のトリガーが拾うので、関数と route は変えない)、`src/lib/auth/helpers.ts` の `requireOrgAdmin` (変えない)。`docs/design/org/07-challenge.md` / `09-rls-policies.md` などの他の文書は §17 (実装の PR または docs PR)。
 
 ---
 
@@ -884,21 +1126,25 @@ sequenceDiagram
 |---|---|---|
 | migration | `<番号>_org_challenge_diff_privacy.sql` / `.down.sql` | `supabase/migrations/`・`supabase/rollbacks/` |
 | 表 | `organization_challenge_aggregates` (challenge_id, joined_count, finalized_at, final_ranked_count, final_average_value, updated_at) | DB |
+| 表 | `organization_challenge_ranking_exclusions` (challenge_id, user_id, marked_at。主キー (challenge_id, user_id)) | DB |
 | CHECK | `organization_challenge_aggregates_final_shape` | DB |
-| トリガー関数 | `org_challenge_count_join()` / `org_challenge_guard_update()` / `org_challenge_finalize()` | DB |
-| トリガー | `trg_org_challenge_count_join` / `trg_org_challenge_guard_update` / `trg_org_challenge_finalize` | DB |
+| 列の制約 | `organization_challenges.status` の NOT NULL | DB |
+| トリガー関数 | `org_challenge_count_join()` / `org_challenge_guard_update()` / `org_challenge_finalize()` / `org_challenge_mark_admin()` | DB |
+| トリガー | `trg_org_challenge_count_join` / `trg_org_challenge_guard_update` / `trg_org_challenge_finalize` / `trg_org_challenge_mark_admin` (`user_profiles`) | DB |
+| ポリシー | `Org challenges can be deleted only as draft or cancelled` (RESTRICTIVE・DELETE・authenticated) | DB (`organization_challenges`) |
 | RAISE の識別子 | `CHALLENGE_STATUS_LOCKED` / `CHALLENGE_PERIOD_LOCKED` | DB → API |
 | TS モジュール | `src/lib/org-challenge-privacy.ts` | lib |
-| 定数 | `ORG_ROLES` / `ORG_CHALLENGE_RANKING_HIDDEN_ROLES` / `ORG_CHALLENGE_STATUS_TRANSITIONS` / `ORG_CHALLENGE_LOCK_ERROR_CODES` / `ORG_CHALLENGE_LOCK_HTTP_STATUS` / `RANKING_HIDDEN_REASONS` | 同上 |
-| 関数 | `canViewChallengeRanking` / `isOrgChallengeStatusTransitionAllowed` / `mapChallengeLockError` | 同上 |
+| 定数 | `ORG_ROLES` / `ORG_CHALLENGE_RANKING_HIDDEN_ROLES` / `ORG_CHALLENGE_RANKING_EXCLUSIONS_TABLE` / `ORG_CHALLENGE_DELETABLE_STATUSES` / `ORG_CHALLENGE_STATUS_TRANSITIONS` / `ORG_CHALLENGE_LOCK_ERROR_CODES` / `ORG_CHALLENGE_LOCK_HTTP_STATUS` / `RANKING_HIDDEN_REASONS` | 同上 |
+| 関数 | `canViewChallengeRanking` / `hasRankingExclusion` / `isOrgChallengeStatusTransitionAllowed` / `mapChallengeLockError` | 同上 |
 | Zod | `rankingEntrySchema` / `rankingSectionSchema` | 同上 |
 | 型 | `OrgChallengeStatus` / `OrgRole` / `OrgChallengeLockErrorCode` / `RankingHiddenReason` / `RankingSection` | 同上 |
 | API の項目 | `ranking.reason` (`'not_joined' \| 'org_admin'`) | `GET /api/org/challenges/[id]` |
 | エラーコード | `CHALLENGE_STATUS_LOCKED` (409) | `PUT /api/org/challenges` |
 | `requireOrgMember` の項目 | `profile.org_role` | `src/lib/auth/org-member.ts` |
+| 書き出しの分類 | `ACCOUNT_EXPORT_EXCLUDED.organization_challenge_ranking_exclusions` | `src/lib/account-export-tables.ts` |
 | テスト | `tests/org-challenge-diff-privacy-migration-contract.test.ts` / `tests/org-challenge-privacy-lib.test.ts` / `tests/integration/rls/org-challenge-diff-privacy.test.ts` | tests |
 
-変えない識別子: `get_org_challenge_aggregates` / `get_org_challenge_ranking` (名前・引数・返す列)・`update_org_challenge_progress`・pg_cron のジョブ `update-org-challenge-progress`・ポリシー 3 本・`ORG_CHALLENGE_MIN_PARTICIPANTS`・`RANKING_ENTRY_LIMIT`・route のパス。
+変えない識別子: `get_org_challenge_aggregates` / `get_org_challenge_ranking` (名前・引数・返す列)・`update_org_challenge_progress`・pg_cron のジョブ `update-org-challenge-progress`・参加のポリシー 3 本・`Org admins can manage challenges`・`ORG_CHALLENGE_MIN_PARTICIPANTS`・`RANKING_ENTRY_LIMIT`・route のパス・招待 / 譲渡 / 脱退 / 除名の関数。
 
 ---
 
@@ -907,19 +1153,25 @@ sequenceDiagram
 | grep の語 | 反応する番兵 | いまの検査 | 直し方 | 段 |
 |---|---|---|---|---|
 | `get_org_challenge_aggregates` | `tests/org-challenge-min10-join-policy-migration-contract.test.ts:81` | 「最後に定義するのは #1600 の migration で、1 つ前は #1132」 | 「#1600 の次に定義するのは `*_org_challenge_diff_privacy.sql` で、それ以外に無い」に改める (#1600 の本文・down の検査は不変) | A |
+| 同上 (結合テスト) | `tests/integration/rls/org-challenge-progress.test.ts:782`〜`:912` (節 H) | 開催中の平均 (55・75・2.9) と、脱退した人・別組織の人を数えない人数 (10・NULL) | 延べ数と確定した平均の意味に改める (§13 の H-1〜H-6)。H-2・H-6 は変えずに緑 | A |
 | `SELECT (\d+) AS min_participants` | `packages/shared/src/org-challenges.test.ts:36`・`tests/org-challenges-lib.test.ts:153` | 最後の定義の cfg が定数と同じ | 本 migration の cfg に `SELECT 10 AS min_participants` を残す (§5.1)。改め不要 | A (確認) |
-| `cfg の外に人数の数字が無い` (`tests/org-challenges-lib.test.ts:212` の `it.each`) | 同上 | 本体の数字の集合が {1} | aggregates の本体に `round(..., 1)` 以外の数字を書かない (`::bigint` は数字でない)。ranking の本体に足す条件に数字を書かない。改め不要 | A (確認) |
-| `get_org_challenge_ranking` | `tests/org-challenges-lib.test.ts:190`〜 | cfg (20 / 100)・LEAST(GREATEST(...))・`p_limit integer DEFAULT NULL` | 本 migration の定義が 20261014100100 の逐語 + NOT IN の条件なので緑。改め不要 | A (確認) |
+| `cfg の外に人数の数字が無い` (`tests/org-challenges-lib.test.ts:212` の `it.each`) | 同上 | 本体の数字の集合が {1} (コメントは除いて数える) | aggregates の本体に `round(..., 1)` 以外の数字を書かない (`::bigint`・重なりの判定は数字を持たない)。ranking の本体に足す条件 (役割・印) に数字を書かない。改め不要 | A (確認) |
+| `get_org_challenge_ranking` | `tests/org-challenges-lib.test.ts:190`〜 | cfg (20 / 100)・LEAST(GREATEST(...))・`p_limit integer DEFAULT NULL` | 本 migration の定義が 20261014100100 の逐語 + 役割と印の条件なので緑。改め不要 | A (確認) |
+| 同上 (結合テスト) | `tests/integration/rls/org-challenge-progress.test.ts:974`〜 (節 J) | 参加者・非参加者・管理者 (非参加) の順位表 | 管理者 (`admin`) は参加していないので 0 行のまま。印は beforeAll の役割の設定 (チャレンジが無い時点) では付かない。改め不要 | A (確認) |
 | `update_org_challenge_progress` | `tests/org-challenges-lib.test.ts:224`〜 (`definingMigration`) | 最後の定義が is_sandbox を読み meals を読まない | 作り直さないので不変 | — |
-| `organization_challenge_aggregates` (新表) | `tests/database-types-migrations-contract.test.ts` | migration の CREATE TABLE が型ファイル 2 本にある | ローカルスタックで `gen types` を取り直し 2 本に写す (同テストの冒頭の手順) | A |
-| 同上 | `tests/account-export-tables.test.ts` | user_id 系の列を持つ表・出力する表の子表は分類が要る | 新表は `challenge_id` だけで、親 `organization_challenges` は出力対象でないので分類不要。赤になったら理由つきで `ACCOUNT_EXPORT_EXCLUDED` に足す | A (確認) |
-| 同上 | `tests/integration/security/auth-users-fk-on-delete.test.ts:144` | auth.users を指す外部キーの一覧 | 新表は auth.users を指さない。不変 | — |
+| `organization_challenge_aggregates` / `organization_challenge_ranking_exclusions` (新表) | `tests/database-types-migrations-contract.test.ts` | migration の CREATE TABLE が型ファイル 2 本にある | ローカルスタックで `gen types` を取り直し 2 本に写す (同テストの冒頭の手順)。`organization_challenges.status` の Row も `string` になる | A |
+| 同上 | `tests/account-export-tables.test.ts` | user_id 系の列を持つ表・出力する表の子表は分類が要る | 集計の表は `challenge_id` だけで、親 `organization_challenges` は出力対象でないので分類不要。印の表は `user_id` を持つので `ACCOUNT_EXPORT_EXCLUDED` に理由つきで足す (§14 段 A) | A |
+| 同上 | `tests/integration/security/auth-users-fk-on-delete.test.ts` | auth.users を指す外部キーの一覧 (NO ACTION・RESTRICT・SET DEFAULT が無いこと、SET NULL の列が NULL を許すこと、決めた 32 本の動作) | 印の表の `user_id` は ON DELETE CASCADE。NO ACTION / RESTRICT / SET NULL のどの検査にも当たらず、決めた 32 本の一覧 (#1175) の外なので不変 | — |
+| 同上 | `tests/integration/security/anon-definer-execute.test.ts` | anon が EXECUTE できる SECURITY DEFINER 関数は許可リストの 2 本だけ | 新しいトリガー関数 4 本は PUBLIC・anon・authenticated・service_role から EXECUTE を外す (§5.1)。不変 | — |
 | `-- migration:` / `supabase/rollbacks/` | `tests/migration-file-version-integrity.test.ts` | 1 行目の名前・down の参照の一致 | 番号確定時に migration・down・本文の 3 箇所をそろえる | A |
 | `cron.schedule` | `tests/log-cleanup-dau-snapshot-contract.test.ts` (08-cron-batches の数) | ジョブの数と名前 | ジョブを足さない。不変 | — |
-| `{ available: false, showNames` | `tests/integration/security/org-challenges-api.test.ts:502`・`tests/org-challenge-member-routes.test.ts:453` 付近 | `toEqual({ available: false, showNames: false })` | `reason` を足した形に改める (§13) | B |
-| `select('organization_id, department_id')` | `tests/org-challenge-member-routes.test.ts` の user_profiles の模擬 (`:115`〜) | 模擬の行はすでに `org_role` を持つ | 列を足しても模擬は同じ。select 文字列を比べる assertion があれば改める | B |
+| `{ available: false, showNames` | `tests/integration/security/org-challenges-api.test.ts:502`・`tests/org-challenge-member-routes.test.ts:461`・`:537` | `toEqual({ available: false, showNames: ... })` | `reason` を足した形に改める (§13) | B |
+| `一般のメンバーと同じく順位表を見られる` | `tests/org-challenge-member-routes.test.ts:540`・`tests/integration/security/org-challenges-api.test.ts:487` (C-3) | 参加した管理者に順位表が返る | 返さない (reason: org_admin) に置き換える (§13) | B |
+| `select('organization_id, department_id')` | `tests/org-member-auth.test.ts:106` (it『… (必要な 2 列だけ)』`:99`) | select の文字列を厳密に比べる | `'organization_id, department_id, org_role'` と「3 列だけ」に改める (§13) | B |
+| 同上 | `tests/org-challenge-member-routes.test.ts` の user_profiles の模擬 (`:115`〜) | 模擬の行はすでに `org_role` を持つ | 列を足しても模擬は同じ。改め不要 | B (確認) |
 | `参加者が10人以上になるまでは参加者数を` ほかの文言 | `tests/org-challenge-pages.test.tsx:213`・`:386`・`:651`〜`:716` | 画面の文言 | §10 の文言に改める | B |
-| `Org admins can manage challenges` | `docs/operations/rls-drift-20261006.md`・`docs/design/cross/12-operator-mfa.md` | ポリシーの文面 | ポリシーは変えない (ガードはトリガー)。不変 | — |
+| `Org admins can manage challenges` | `docs/operations/rls-drift-20261006.md`・`docs/design/cross/12-operator-mfa.md` | ポリシーの文面 | このポリシーは変えない (RESTRICTIVE を別に足す)。`rls-drift-20261006.md` は 2026-10-06 時点の本番と migration の突合の記録 (`:100`) で、ポリシーの一覧を持たないので追随しない | — |
+| `trg_guard_user_profiles_privileged` (`user_profiles` のトリガー) | `tests/integration/rls/user-profiles-insert-guard.test.ts` ほか | 特権列のガード (BEFORE) | 新しいトリガーは AFTER で、特権列を書かない (印の表にだけ書く)。不変 | — |
 | `rejectNullCharacterBody` の一覧 | `src/__tests__/api/null-character-routes.test.ts` | 本文を読む route の一覧 | 新しい route を足さない。不変 | — |
 | `08-cron-batches.md` §3.0 の文 | 同上の contract | ジョブの説明 | 不変 (completed にする UPDATE が確定を起こすことは §17 で注記候補) | — |
 
@@ -929,21 +1181,22 @@ sequenceDiagram
 
 | 文書 | 直す点 | 期日 |
 |---|---|---|
-| `docs/design/org/07-challenge.md` §15 (`:431`〜`:433`) | 「参加者に見せるもの」に「管理者 (owner / admin) には順位表を返さない」、「管理者に見せるもの」を「参加した人の延べ数と、終了時に 1 回確定した平均。既知の限界の文を本書 (#1688) への参照に現在形化」、「RLS」に控えの表とトリガー 3 本 | 実装のマージと同 PR |
-| `docs/design/org/09-rls-policies.md` §14 の注記・§18 の表 | `organization_challenge_aggregates` の行 (RLS ✅・ポリシー無し・service_role のみ) と、`organization_challenges` の UPDATE にガードのトリガーがある注記 | 同上 |
-| `docs/design/org/01-data-model.md` `organization_challenges` の節 | 新表の DDL の参照 | 同上 |
+| `docs/design/org/07-challenge.md` §15 (`:431`〜`:433`) | 「参加者に見せるもの」に「管理者 (owner / admin) と、チャレンジがある間に管理者になった人には順位表を返さない」、「管理者に見せるもの」を「参加した人の延べ数と、終了時に 1 回確定した平均 (同じ種類で期間が重なるチャレンジの中で 1 本)。既知の限界の文を本書 (#1688) への参照に現在形化」、「RLS」に新しい表 2 つ・トリガー 4 本・削除のポリシー | 実装のマージと同 PR |
+| `docs/design/org/09-rls-policies.md` §14 の注記・§18 の表 | `organization_challenge_aggregates` と `organization_challenge_ranking_exclusions` の行 (RLS ✅・ポリシー無し・service_role のみ)、`organization_challenges` の DELETE の RESTRICTIVE ポリシーと UPDATE のガードのトリガーの注記 | 同上 |
+| `docs/design/org/01-data-model.md` `organization_challenges` の節 | 新しい表 2 つの DDL の参照・`status` の NOT NULL | 同上 |
 | `docs/design/cross/04-api-conventions.md` §4.2 | `CHALLENGE_STATUS_LOCKED` (409) を含む `CHALLENGE_*` の追記候補 (既存の `CHALLENGE_*` も未掲載) | docs PR |
 | `docs/design/operator/08-cron-batches.md` §3.0 の `update-org-challenge-progress` の説明 | 「completed にする UPDATE で平均が確定する (トリガー)」の 1 文 | docs PR |
 | `docs/requirements/02-organization-management.md` §1.4 の表 (チャレンジ参加・進捗 API の行) | #1688 の守りが入った旨 | docs PR |
-| 招待の設計 (`accept_org_invite` の定義 `supabase/migrations/20261007150200_invite_accept_creates_missing_profile.sql:97` を扱う文書) | 同じ組織の在籍者が招待を承諾すると `org_role` が招待の役割で上書きされる (所有者が member になりうる)。本件の §20 の 8 の裁定と合わせて、別 Issue で扱うかを決める | 本書の構造裁定の差し戻しと同時 |
+| 招待の設計 `docs/design/membership/02-flow-spec.md` (`accept_org_invite` の流れ。最新の定義は `supabase/migrations/20261007150200_invite_accept_creates_missing_profile.sql:97`) | 同じ組織の在籍者が招待を承諾すると `org_role` が招待の役割で上書きされる (所有者が member になりうる)。本件の順位表の守りは印で閉じたので本件の前提ではないが、招待の既存の欠陥として別 Issue で扱うかを決める | 別 Issue の起票の判断 |
 | `src/app/api/org/challenges/[id]/join/route.ts:20` のコメント | 「やめた人の記録は、集計にも順位にも残らない」に「管理者の集計 (延べ数・確定した平均) は動かない」を足す | 段 B |
 
 ---
 
+
 ## 18. 既存実装との関連 (R-8: 流用か作り直しか)
 
 - **作り直す**。旧ブランチ `fix/issue-1600-org-challenge-min10` (22 ファイル・+2,772/−202) の中心は「毎晩の控えと counted_through」で、本書はその構造を採らない (§3.2・§4.2)。流用するのは、INSERT ポリシーの強化 (すでに main の #1600 に入っている) と、テストの fixture の書き方 (`tests/integration/rls/org-challenge-progress.test.ts` の `createChallenge` / `join` / `pgQuery` の形) だけ。
-- 保持: `update_org_challenge_progress`・pg_cron・ポリシー 3 本・`fetchChallengeAggregates` / `fetchChallengeRanking`・route のパスと形 (`ranking.reason` を足す)。
+- 保持: `update_org_challenge_progress`・pg_cron・参加のポリシー 3 本と `Org admins can manage challenges`・招待 / 譲渡 / 脱退 / 除名の関数・`fetchChallengeAggregates` / `fetchChallengeRanking`・route のパスと形 (`ranking.reason` を足す)。
 - 新規: §15。
 - 削除: 無し。
 
@@ -955,7 +1208,8 @@ sequenceDiagram
 2. 参加している管理者の自分の順位 (`me.rank`) は、メンバーを外した次の夜に 1 つ上がりうる (「外した人は自分より上だった」の 1 bit)。値は分からない。
 3. 参加した人がちょうど最小人数のとき、1 人が外れると終了時の平均が出ない (外した人が参加していたことを推測しうる。値ではない)。
 4. `joined_count` は延べ数なので、1 人がやめて再参加を繰り返すと増える (集計の値には影響しない。「参加した人」の見かけの数だけ)。
-5. 別の人どうしの分担 (メンバーが前後の順位表を見て、管理者が間で外す) など内部の共謀は対象外。1 人が役割を往復して同じことをする経路 (S-20) は共謀ではないので、ここには入れない (§20 の 8)。
+5. 別の人どうしの分担 (印の無いメンバーが前後の順位表を見て、管理者が間で外す) など内部の共謀は対象外。1 人が役割を往復して同じことをする経路 (S-20・S-25) は、印で閉じた (§4.1 (d))。
+6. 種類の違うチャレンジ (朝食をとれた日の割合・野菜スコア・自炊の割合) の平均は、期間が重なっていても別々に出る。指標の計算式が違い (`update_org_challenge_progress`)、1 人の値どうしに決まった関係が無いので、2 本の差は 1 人の値にならない。
 
 ---
 
@@ -968,4 +1222,7 @@ sequenceDiagram
 5. 管理者の状態変更 (PUT) の監査ログ。既存の PUT も監査していないため本書では足さない。足すなら `membership_audit` の `action` の CHECK を広げる必要があり、別の設計。
 6. `user_profiles.organization_id` を外す経路は `leave_org` / `remove_org_member` / `release_user_membership` (service_role。退会の処理から呼ぶ) の 3 つで、どれも `organization_id` / `org_role` / `department_id` を NULL にするだけで参加行を消さないことを定義で確かめた (`supabase/migrations/20251126124224_create_meal_planner_tables.sql:2084`・`:2878`・`:2803`。後の migration で作り直されていない)。ほかに組織の強制解散 (運営) も全員の所属を外す。実装の統合テスト (§13 A・K) で `remove_org_member` と退会の経路を確かめる。
 7. §17 の他の文書の追随 (docs PR の起票)。
-8. **差し戻し事由 (構造 A (d) の穴。S-20)**: 順位表を「今の役割」で伏せるだけでは、1 人が member ⇄ admin を往復して「member で見る → admin で外す → member で見る」を組める。経路は、同じ組織の在籍者による招待の承諾 (`accept_org_invite` が `org_role` を上書きする) と、`leave_org` → 招待で入り直す (参加行が残り、組織の結合で順位表に戻る)。どちらも本書の範囲の外の関数 (招待) か、本書の構造の追加で閉じる必要がある。候補 (どれを採るかは構造裁定に戻して決める): (i) 「そのチャレンジの開始後に一度でも組織の管理者だった人には、順位表を返さない」を DB に記録して守る (役割の変更と招待の承諾を `user_profiles` の UPDATE / INSERT のトリガーで拾う)、(ii) `accept_org_invite` が同じ組織の在籍者の承諾を拒み、加えて組織を抜けて入り直した人には抜ける前に参加したチャレンジの順位表を返さない、(iii) 参加行に参加時点の組織の在籍の世代 (`joined_org_at` など) を持たせ、入り直した人の古い参加行を順位表と確定から外す (往復の 2 本目の経路だけを閉じるので (ii) の前半と組にする)。なお同じ組織の在籍者が招待を承諾すると所有者 (`organizations.owner_id`) の `org_role` も member に書き換わりうるのは、本件と独立の既存の欠陥 (§17 に記録)。
+8. 同じ組織・同じ種類で期間が重なるチャレンジは、先に確定した 1 本の平均だけを出し、後のものは出さない (§4.1 (e))。部署ごとに同じ種類を同時に開く使い方では、2 本目以降の平均が出ない。本書はこれを既定にする (重なりそのものを禁じると既存の使い方とテストを壊すため。§4.2)。
+9. 開催中・終了したチャレンジは、管理者が消せない (中止してからなら消せる。§4.1 (f))。いまの管理画面に削除の操作は無い (API にも DELETE は無い)。
+10. 管理者になったことがある人は、その時点で組織にあったチャレンジの順位表を、member に戻ったあとも見られない (自分の記録と順位は見られる)。役割を一時的に変えただけの人にも効く。本書はこれを既定にする (§4.3 S-20 の証明のとおり、印の範囲をこれより狭くすると往復の経路が残る)。
+11. 同じ組織の在籍者が招待を承諾すると所有者 (`organizations.owner_id`) の `org_role` も member に書き換わりうるのは、本件と独立の招待の既存の欠陥 (§17)。本件の守りは印で閉じるので、この欠陥の修正を前提にしない。
