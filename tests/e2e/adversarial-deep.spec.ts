@@ -16,17 +16,11 @@
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { login } from "./fixtures/auth";
+import { jstThisMonday } from "./helpers/jst-week";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
-
-/** 今週月曜の YYYY-MM-DD */
-function thisMonday(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = (day === 0 ? -6 : 1 - day);
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().split("T")[0];
-}
+// 今週の月曜日は jstThisMonday (JST の週) で作る (#1564)。献立の週のページはブラウザ (Asia/Tokyo) の JST の週で
+// 今週の月曜日を決めるので、プロセス (CI は UTC) やブラウザの toISOString (UTC) で作ると JST の月曜 0:00〜8:59 は前の週になる。
 
 /** ネットワークをオフラインにして fn を実行し、その後オンラインに戻す */
 async function withOffline<T>(
@@ -119,16 +113,22 @@ test("A-1: 週間献立ボタンを 2 回連打してもリクエストは 1 件
  * A-2: /api/ai/menu/weekly/request に認証なしで POST すると 401 が返ること。
  *       rate limit も認証後にのみ意味を持つため、認証チェックが先行していることを確認。
  */
-test("A-2: 未認証 POST /api/ai/menu/weekly/request → 401", async ({ page }) => {
-  // cookie なしで直接 fetch
-  const res = await page.request.post(
-    "/api/ai/menu/weekly/request",
-    {
-      data: { startDate: thisMonday() },
-      headers: { "Content-Type": "application/json" },
-    },
-  );
-  expect(res.status()).toBe(401);
+test.describe("A-2 (未ログイン)", () => {
+  // playwright.config.ts の共有ログイン状態 (storageState) を引き継がない。引き継ぐとログイン済みで送られ、
+  // 401 ではなく 200 が返る (本当に週の献立の生成を頼んでしまう)
+  test.use({ storageState: { cookies: [], origins: [] } });
+
+  test("A-2: 未認証 POST /api/ai/menu/weekly/request → 401", async ({ page }) => {
+    // cookie なしで直接 fetch
+    const res = await page.request.post(
+      "/api/ai/menu/weekly/request",
+      {
+        data: { startDate: jstThisMonday() },
+        headers: { "Content-Type": "application/json" },
+      },
+    );
+    expect(res.status()).toBe(401);
+  });
 });
 
 /**
@@ -163,17 +163,22 @@ test("B-1: 生成中セッション期限切れ → UI がフリーズしない"
   await page.waitForLoadState("networkidle");
 
   // isGenerating が true になる状態を localStorage で模倣
+  // weekStartDate はページが復元の条件に使う「表示中の週の月曜日」(JST) と同じにする。ブラウザの中の
+  // new Date().toISOString() は UTC の今日で、月曜以外は週と一致せず復元の経路を通らなかった (#1564)
   const fakeRequestId = "00000000-dead-beef-0000-000000000000";
-  await page.evaluate((reqId) => {
-    localStorage.setItem(
-      "weeklyMenuGenerating",
-      JSON.stringify({
-        weekStartDate: new Date().toISOString().split("T")[0],
-        timestamp: Date.now(),
-        requestId: reqId,
-      }),
-    );
-  }, fakeRequestId);
+  await page.evaluate(
+    ({ reqId, weekStartDate }) => {
+      localStorage.setItem(
+        "weeklyMenuGenerating",
+        JSON.stringify({
+          weekStartDate,
+          timestamp: Date.now(),
+          requestId: reqId,
+        }),
+      );
+    },
+    { reqId: fakeRequestId, weekStartDate: jstThisMonday() },
+  );
 
   // Cookie を全クリア（セッション期限切れ模倣）
   await context.clearCookies();
@@ -466,17 +471,18 @@ test("E-2: /menus/weekly に再訪した際に isGenerating が残留しない",
   await page.goto("/menus/weekly");
   await page.waitForLoadState("networkidle");
 
-  // 生成中状態を古いタイムスタンプで仕込む（5分超 = stale）
-  await page.evaluate(() => {
+  // 生成中状態を古いタイムスタンプで仕込む（5分超 = stale）。
+  // weekStartDate は表示中の週の月曜日 (JST) にそろえ、週の不一致ではなく stale の判定で消えることを見る (#1564)
+  await page.evaluate((weekStartDate) => {
     localStorage.setItem(
       "weeklyMenuGenerating",
       JSON.stringify({
-        weekStartDate: new Date().toISOString().split("T")[0],
+        weekStartDate,
         timestamp: Date.now() - 6 * 60 * 1000, // 6 分前 = stale
         requestId: "stale-request-id-xxx",
       }),
     );
-  });
+  }, jstThisMonday());
 
   // /home に遷移して戻る
   await page.goto("/home");

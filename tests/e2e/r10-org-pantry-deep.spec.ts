@@ -12,6 +12,7 @@
  */
 
 import { test, expect, type Page } from "./fixtures/auth";
+import { addDaysToDate, todayLocal } from "../../packages/shared/src/date-utils";
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -865,10 +866,8 @@ test.describe("B. Pantry — 賞味期限通知 & UI 表示", () => {
     // まず /home でアイテムを作成してセッションを確立
     await authedPage.goto("/home");
 
-    // 2日後の日付を計算
-    const twoDaysLater = new Date();
-    twoDaysLater.setDate(twoDaysLater.getDate() + 2);
-    const expiryDate = twoDaysLater.toISOString().split("T")[0];
+    // 2日後の日付を計算 (食品庫のページは JST の今日から期限までの日数で判定するので、JST の暦日で作る #1564)
+    const expiryDate = addDaysToDate(todayLocal(), 2);
     const itemName = `R10-expiring-${Date.now()}`;
 
     // 作成 (APIは /home からでも動作)
@@ -930,9 +929,8 @@ test.describe("B. Pantry — 賞味期限通知 & UI 表示", () => {
   }, testInfo) => {
     await authedPage.goto("/home");
 
-    const sevenDaysLater = new Date();
-    sevenDaysLater.setDate(sevenDaysLater.getDate() + 7);
-    const expiryDate = sevenDaysLater.toISOString().split("T")[0];
+    // 7日後 (JST の暦日。UTC の今日から作ると JST の 0:00〜8:59 は 6 日後になる #1564)
+    const expiryDate = addDaysToDate(todayLocal(), 7);
     const itemName = `R10-safe-expiry-${Date.now()}`;
 
     const createRes = await apiPost(authedPage, "/api/pantry", {
@@ -1132,10 +1130,15 @@ test.describe("B. Pantry — カテゴリ & データ整合性", () => {
   }, testInfo) => {
     await authedPage.goto("/home");
 
+    /** 写真から読み取った「あと何日」(この日数ぶん JST の今日から後ろが期限になる) */
+    const DAYS_REMAINING = 3;
     const ts = Date.now();
     const itemName = `R10-days-${ts}`;
+    // サーバー (from-photo) は JST の今日 (todayLocal) に日数を足して期限を決める。こちらも JST の暦日で求め、
+    // 保存の前後で JST の日付をまたいだときだけ、どちらの日の答えも受け入れる (#1564。以前は UTC の今日から作り ±2 日を許していた)
+    const todayBeforeSave = todayLocal();
     const saveRes = await apiPost(authedPage, "/api/pantry/from-photo", {
-      ingredients: [{ name: itemName, category: "vegetable", daysRemaining: 3 }],
+      ingredients: [{ name: itemName, category: "vegetable", daysRemaining: DAYS_REMAINING }],
       mode: "append",
     });
     expect(saveRes.status).toBe(200);
@@ -1143,20 +1146,18 @@ test.describe("B. Pantry — カテゴリ & データ整合性", () => {
     const listRes = await apiGet(authedPage, "/api/pantry");
     const items = (listRes.json as any)?.items ?? [];
     const found = items.find((i: any) => i.name === itemName);
+    const todayAfterSave = todayLocal();
 
     if (found?.expirationDate) {
-      const expected = new Date();
-      expected.setDate(expected.getDate() + 3);
-      const expectedStr = expected.toISOString().split("T")[0];
+      const expectedDates = [
+        addDaysToDate(todayBeforeSave, DAYS_REMAINING),
+        addDaysToDate(todayAfterSave, DAYS_REMAINING),
+      ];
       testInfo.annotations.push({
         type: "result",
-        description: `B-24: expected=${expectedStr}, actual=${found.expirationDate}`,
+        description: `B-24: expected=${expectedDates.join(" or ")}, actual=${found.expirationDate}`,
       });
-      // 日付は ±1日の誤差許容 (タイムゾーン)
-      const diff = Math.abs(
-        new Date(found.expirationDate).getTime() - expected.getTime(),
-      );
-      expect(diff).toBeLessThan(2 * 24 * 60 * 60 * 1000); // 2日以内
+      expect(expectedDates).toContain(found.expirationDate);
     }
 
     if (found?.id) await apiDelete(authedPage, `/api/pantry/${found.id}`);

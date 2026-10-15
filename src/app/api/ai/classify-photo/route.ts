@@ -18,6 +18,7 @@ import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, issueAiUsageGrant } from '@/lib/plan/entitlements';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
+import { isMealType, MEAL_LABELS } from '@homegohan/shared';
 
 interface ImageInput {
   base64: string;
@@ -86,13 +87,13 @@ JSON では次の2項目だけ返してください:
 説明文や候補配列は返さないでください。`;
 }
 
+/** 食事の区分が無い・5 値のどれでもないときに、プロンプトで写真を呼ぶ名前 */
+const UNKNOWN_MEAL_TYPE_LABEL = '食事';
+
 function buildMealAnalysisPrompt(mealType?: string, imageCount: number = 1): string {
-  const mealTypeLabel = mealType === 'breakfast' ? '朝食'
-    : mealType === 'lunch' ? '昼食'
-    : mealType === 'dinner' ? '夕食'
-    : mealType === 'snack' ? 'おやつ'
-    : mealType === 'midnight_snack' ? '夜食'
-    : '食事';
+  // 食事の区分の表示名は @homegohan/shared の MEAL_LABELS が正本 (#1631。手書きの比較の連鎖を持たない)。
+  // 本文の mealType は string で来るので isMealType で絞る
+  const mealTypeLabel = mealType !== undefined && isMealType(mealType) ? MEAL_LABELS[mealType] : UNKNOWN_MEAL_TYPE_LABEL;
 
   const imageCountText = imageCount > 1 ? `${imageCount}枚の` : '';
 
