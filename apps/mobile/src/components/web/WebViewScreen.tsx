@@ -178,7 +178,7 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
         // URL は JSON.stringify でリテラル化する (#1036)。
         // オリジンガードは付けない (guard: false)。このリセットは、WebView が自オリジンを表示していないときの復帰手段でもある:
         //   - 起動時にオフラインで直接 URL の読み込みに失敗すると、iOS は about:blank (origin は "null") のままエラー表示になる。
-        //     エラー表示に再試行手段は無く、init も再実行されないので、戻れるのはこの再タップだけ
+        //     読み込みの失敗の画面の「再読み込み」(#1612 F7-15。init からやり直す) と並ぶ、戻る手段の一つ
         //   - Android の shouldOverrideUrlLoading が待ち時間切れで許可に倒れ、外部ページが WebView に載った場合も同じ
         // このスクリプトが持つのは公開されている自オリジンの URL だけ (トークン・code は無い) なので、
         // 外部ページ上で実行されても漏れるものが無い。
