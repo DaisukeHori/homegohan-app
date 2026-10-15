@@ -175,7 +175,7 @@ refresh_token をローテーションしてしまわないようにするため
 
 #### ログアウト時フロー
 
-順の正は `apps/mobile/src/lib/signOut.ts` (設定画面のログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
+順の正は `apps/mobile/src/lib/signOut.ts` (設定画面のログアウトと、アカウントの画面 (`app/settings/account.tsx`) で退会の API が 401 (ログインが切れている) を返したときのログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
 未ログインになるほかの経路 (起動時・`SIGNED_OUT`) との関係は `apps/mobile/src/providers/AuthProvider.tsx` の先頭の表と 05-auth-session.md §3。
 
 ```
