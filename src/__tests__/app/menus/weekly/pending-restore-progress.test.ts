@@ -13,12 +13,11 @@
 // 3. 週間献立の画面 (page.tsx) の入り直しの 2 か所が、監視を始める前に空の進捗を置くこと・週を切り替えないこと
 //    (page.tsx は巨大なクライアントコンポーネントで、全体の描画での検証は現実的でないため、既存の配線テストと同じくソースを検査する)
 
-import React from 'react';
+import React, { act } from 'react';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { act } from 'react-dom/test-utils';
 import { PROGRESS_PHASES, ULTIMATE_PROGRESS_PHASES, isUltimateModeWeeklyMenuRequest } from '@homegohan/shared';
 
 import { ProgressTodoCard } from '@/app/(main)/menus/weekly/_components/ProgressTodoCard';
