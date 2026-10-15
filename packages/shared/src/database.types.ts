@@ -8217,6 +8217,17 @@ export type Database = {
         Args: { p_email?: string; p_kind: string; p_scope_id: string }
         Returns: undefined
       }
+      family_menu_planned_meals: {
+        Args: { p_end_date: string; p_start_date: string }
+        Returns: Json
+      }
+      family_menu_visible_members: {
+        Args: never
+        Returns: {
+          member_id: string
+          user_id: string
+        }[]
+      }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
         Returns: {
