@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.4 (2026-10-15) |
+| 版 | v1.5 (2026-10-15) |
 | Status | 設計ゲート審査中 |
 | Issue | #1151 (購入の入口)・#1125 (Webhook の受け口) の「核」。配線の冊は `docs/design/billing/02-billing-wiring.md` (未作成) |
 | 範囲の正本 | `/Users/horidaisuke/claude-work/scratch/homegohan/specs/spec-d-billing-core.md` |
@@ -525,8 +525,10 @@ BEGIN
     RETURN jsonb_build_object('applied', false, 'skipped', 'stale', 'subscription_id', v_existing.id, 'user_id', v_user_id);
   END IF;
 
-  -- 4. プラン (snapshot の plan_key → 既存の行の plan_key)
-  IF v_plan_key IS NULL AND v_existing.id IS NOT NULL THEN
+  -- 4. プラン (既存の行の plan_key → snapshot の plan_key)。行の plan_key は行を作ったときに決まり、以後変わらない
+  --    (既存の契約の Price を Stripe の Dashboard で付け替えても、プラン・plan_key_cached・家族のグループは変えない。
+  --    付け替え先の Price が別のプラン (家族 ↔ 個人) でも、家族のグループの戻しが取り残されない。billing/01 §7.3)
+  IF v_existing.id IS NOT NULL THEN
     v_plan_key := v_existing.plan_key;
   END IF;
   IF v_plan_key IS NULL THEN
@@ -939,7 +941,7 @@ ALTER TABLE public.personal_subscriptions
 | status | live (部分 UNIQUE の述語) | 権利あり (`get_effective_plan`) | `plan_key_cached` | 新規購入できる (`POST /checkout`) | 解約の予約 (`/cancel`) | Portal | 写像が書く | S5 の配線ジョブが読む |
 |---|---|---|---|---|---|---|---|---|
 | – (行なし) | – | free (家族 / 組織があればそれ) | NULL | ○ | 409 | 顧客があれば ○ | INSERT で作る (最初の写像の status のまま。`trialing` / `active` / `past_due` / `incomplete` に加え、終端・非 live の `cancelled` / `expired` も履歴の行として作る。§7.3 の「–」の行) | – |
-| `incomplete` (S のみ) | × | × | NULL | ○ (live でないため。Stripe 側で完了すると 2 本目になり得る → §13 の `BILL_LIVE_ROW_CONFLICT` の説明) | 409 | ○ | ○ | – |
+| `incomplete` (S のみ) | × | × | NULL | ○ (live でないため。Stripe 側で完了すると 2 本目になり得る → §13 の `BILL_LIVE_ROW_CONFLICT` の説明) | 409 | ○ (開けるだけ = 支払い方法の更新。§7.3 の Portal の解約の予約の行は live 5 値だけで、`incomplete` の行は「Stripe が `incomplete` のままの `updated`」の行が受け持つ) | ○ | – |
 | `trialing` | ○ | ○ | plan_key | 409 | ○ (S) / 409 (M) | ○ | ○ | – |
 | `active` | ○ | ○ | plan_key | 409 | ○ (S) / 409 (M) | ○ | ○ | – |
 | `past_due` | ○ | ○ | plan_key | 409 | ○ (S) / 409 (M) | ○ | ○ | `past_due_since <= now()-7d` → `grace` |
@@ -948,12 +950,13 @@ ALTER TABLE public.personal_subscriptions
 | `cancelled` | × | × | NULL | ○ | 409 | ○ | ○ (履歴として残る) | – |
 | `expired` | × | × | NULL | ○ (`stripe_status='paused'` の行は Stripe で再開し得る。再開したときに別の live 行があれば §13.3 `BILL_LIVE_ROW_CONFLICT`。S19) | 409 | ○ | ○ (`stripe_status='paused'` なら再開で `trialing` / `active` に戻る。`incomplete_expired` は終端) | – |
 
-消費経路 (既存コード。origin/main で `personal_subscriptions` を名指しする `src/` の全ファイル) と本冊の影響。「読 / 書」= その経路が行を読むか書くか:
+消費経路 (既存コード。origin/main で `personal_subscriptions` を名指しする `src/` の全ファイルと、本冊が書き換える写し (`user_profiles.plan_key_cached`・`family_groups.plan_key` / `member_limit`) を読む `src/`・`supabase/functions/`・DB 関数 (最新の定義) の全部) と本冊の影響。「読 / 書」= その経路が行を読むか書くか:
 
 | 消費経路 | 読 / 書 | 列 / 条件 | 本冊での変化 |
 |---|---|---|---|
 | `get_effective_plan` (`20261010140000_ai_usage_foundation.sql:108-115`) | 読 | `status IN ('trialing','active','grace','past_due')` | 変えない。`incomplete` は対象外のまま |
-| `src/lib/super-admin/plan-subscribers.ts:10,80` | 読 | live 5 値で数える | 変えない (`incomplete` は数えない) |
+| 同 `get_effective_plan` の b. 家族 (`20261010140000_ai_usage_foundation.sql:122-134`) | 読 | active なメンバーとして属する active な家族の `family_groups.plan_key` | 変えない。`family_groups.plan_key` を写像とトリガー (§6.4 (9) の 10.・(10)) が代表者の家族プランの契約に合わせるので、メンバーの権利が代表者の契約に従う (S3・S18・S20) |
+| `src/lib/super-admin/plan-subscribers.ts:10-13,78-94` (`countPlanSubscribers`。プランの廃止の前の確認で、1 件でもあれば `PATCH /api/super-admin/plans/[id]` が廃止を止める) | 読 | `personal_subscriptions`: `plan_key` 一致かつ live 5 値 / `family_groups`: `plan_key` 一致かつ `status='active'` / `organizations`: `plan` 一致かつ `status='active'` | 変えない (`incomplete` は数えない)。`family_groups.plan_key` を写像とトリガー (§6.4 (9) の 10.・(10)) が書くようになるので、グループの数は「代表者に live な家族プランの契約があるグループ」の数になる: 契約が終われば `free` に戻って数から外れ、グループの作成で `p_plan_key` に入れた家族プランは効かない (S20) ので、作っただけのグループが廃止を止めることはなくなる。本冊より前に `create_family_group` で入った家族プランのグループ (F23) は、代表者の写像かトリガーが動くまで数に残る |
 | `src/app/api/admin/users/[id]/route.ts:93-100` (運営のユーザー詳細) | 読 | session client (運営ロールの SELECT ポリシー) で `user_id = <id>` かつ `status IN ('active','trialing','paused','past_due','grace')` の最新 1 行の `plan_key, status, current_period_end` | 変えない。SELECT ポリシーは保つ (§6.2)。`incomplete` は live でないので出ない |
 | `src/app/api/admin/finance/dashboard/route.ts:45-56` | 読 | 直接集計 (配線で実データ化) | 変えない |
 | `src/app/api/admin/finance/reconciliation/route.ts:68` | 読 | `status IN ('active','trialing','past_due','grace')` | 変えない |
@@ -963,11 +966,14 @@ ALTER TABLE public.personal_subscriptions
 | `src/lib/account-export-tables.ts:237-242` / `tests/account-export*.test.ts` (本人のデータの書き出し) | 読 | `self('user_id')`・**`omit` 方式** (取得は全列、`omit` の列を出力前に消す。いまの `omit` = `stripe_customer_id`, `stripe_subscription_id`, `stripe_price_id`, `notes`) | `omit` に `stripe_status`・`stripe_synced_at` を足す (Stripe との同期の内部の記録。`tests/account-export-tables.test.ts` の `SENSITIVE_NAME` (`stripe_`) の見張りが、足さないと段 A の migration で赤になる)。`cancel_at_period_end`・`billing_interval` は本人の契約の内容なので書き出す (`status`・`current_period_end` と同じ扱い)。段 A (§15.1・追随表 §16.1・テスト 75) |
 | 同 `ACCOUNT_EXPORT_EXCLUDED` (`src/lib/account-export-tables.ts:269-`) と `tests/account-export-tables.test.ts:275` (「分類されていない表が無い」) | 読 (migration の表の一覧) | `user_id` (auth.users 参照) を持つ表は、出力するか除外 (理由つき) に分類する | 新設の `billing_customers` を `ACCOUNT_EXPORT_EXCLUDED` に足す (理由: Stripe の顧客 ID と利用者の対応表で、決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)。足さないと段 A の migration で赤になる。段 A (テスト 85) |
 | 機能フラグの段階公開 (`src/lib/feature-flags.ts:217-229`・`src/app/api/feature-flags/route.ts:45-56`・`src/lib/super-admin/flag-active-users.ts:73`。`plan_key_cached`) | 読 | 空なら free | 写像が同期するので、購入後は plan で段階公開できる。本人は書けない (§6.4 (11) の特権列ガード) |
+| Edge Function の AI 相談の緊急停止スイッチ (`supabase/functions/_shared/ai-chat-flag.ts:52,98-108`。`isAiChatEnabledForUser` が service_role で `user_profiles.plan_key_cached` を読み、`?? 'free'` を `FlagUserContext.planKey` にしてフラグ `ai_chat_enabled` の条件を判定) | 読 | 空なら free | コードは変えない (`supabase/functions/` は §15.2 で触らない)。写像が同期するので、`ai_chat_enabled` にプランの条件があれば、購入後は契約のプランで判定される (いまは誰も同期しないので全員 `free` として判定)。本人は書けない (§6.4 (11))。上の行の `src/lib/feature-flags.ts` と同じ規則 (空なら free) なので、Web と Edge Function で判定が分かれない |
 | 運営のユーザー一覧・詳細 (`src/app/api/admin/users/route.ts:177`・`[id]/route.ts:139`。`plan_key_cached ?? 'free'`) | 読 | プランの表示 | 変えない。写像が同期し、本人は書けないので、表示が契約と合う |
 | `user_profiles` の本人の UPDATE / INSERT (PostgREST。ポリシー `Users can update own profile` など) | 書 (本人) | 本人の行の全列 (列の権限あり) | `plan_key_cached` を変える UPDATE と、NULL 以外を入れる INSERT は特権列ガードが 42501 (`CANNOT_MODIFY_PRIVILEGED_COLUMN`) で止める。ほかの列の書き込みは変わらない (値を変えない送り直しは通る) |
 | `family_groups.plan_key` (family ドメイン) | 書 (写像) | FK | 代表者の個人契約 (`plan_type='family'`) から写像が同期 |
-| family の DB 関数 `create_family_group` (baseline 1199-1228) ← `POST /api/family/groups` (`src/app/api/family/groups/route.ts:45-52`) | 書 (`family_groups` の INSERT。`plan_key = p_plan_key`) | グループの作成。`p_plan_key` は利用者の入力 (F23) | 関数と route は変えない。BEFORE INSERT のトリガー (§6.4 (10)) が `plan_key` を代表者の live な家族プランの契約 (無ければ `free`) に置き換える。`p_plan_key` は効かなくなる (S20) |
+| family の DB 関数 `create_family_group` (baseline 1199-1228) ← `POST /api/family/groups` (`src/app/api/family/groups/route.ts:45-52`) ← 画面 `src/app/(main)/family/setup/page.tsx:15,33,95-105` (プランの選択欄の値を `plan_key` で送る) | 書 (`family_groups` の INSERT。`plan_key = p_plan_key`) | グループの作成。`p_plan_key` は利用者の入力 (F23) | 関数と route と画面は変えない。BEFORE INSERT のトリガー (§6.4 (10)) が `plan_key` を代表者の live な家族プランの契約 (無ければ `free`) に置き換える。`p_plan_key` は効かなくなる (S20)。画面の選択欄は残るが、選んだ値は効かない (外すのは family の冊。§16.2・§18 の 5) |
 | family の DB 関数 `operator_force_representative_transfer` / `accept_family_representative_transfer` (`20261008090100_family_lock_order.sql:224-339`) | 書 (`family_groups.representative_id`) | 代表者の交代 | 関数は変えない。`family_groups` の BEFORE UPDATE OF `representative_id` のトリガー (§6.4 (10)) が `plan_key` / `member_limit` を新しい代表者の契約に付け替える (S18)。ロックの順: 関数は `family_groups` 行 → (トリガーの中で) advisory `billing-user:<新しい代表者>` → `personal_subscriptions` をロックなしで読む。写像は advisory 2 本 (`billing-user:<利用者>` が先) → 契約行 → `user_profiles` 行 → `family_groups` 行。トリガーが新しい代表者の鍵を取るので、新しい代表者の写像とは直列になる (写像が先ならトリガーは commit 済みの契約を読み、トリガーが先なら写像は交代・作成の commit のあとで WHERE `representative_id = 新しい代表者` に当てる)。循環しない理由: 新しい代表者の写像の `family_groups` の UPDATE は、交代中の行 (見えている代表者は旧代表者) の WHERE に当たらないので行のロックを待たない。行のロックを待つのは旧代表者の写像だけで、トリガーは旧代表者の鍵を取らない。グループの作成 (`create_family_group`) は INSERT (トリガーで鍵) → `family_members` → `user_profiles` の順で、写像の鍵 → `user_profiles` と同じ向き |
+| family の DB 関数の人数の上限の確認 (最新の定義: `accept_family_invite` = `20261008090100_family_lock_order.sql:123` (`FOR NO KEY UPDATE`)・`add_family_child` = `20261007160000_family_member_limit_row_lock.sql:146` (`FOR UPDATE`)・`create_family_invite` = `20261008100000_membership_daily_send_cap.sql:275` (ロックなし)。`20261007150200_invite_accept_creates_missing_profile.sql:67` と `20261007160000_family_member_limit_row_lock.sql:93` の `accept_family_invite` は同じ引数の `20261008090100` で置き換え済み) | 読 | `family_groups.member_limit` と active なメンバーの数を比べ、`v_count >= v_limit` で `MEMBER_LIMIT_EXCEEDED` | 関数は変えない。写像とトリガー (§6.4 (9) の 10.・(10)) が `member_limit` を書き換えるので、上限はその時点の値で効く (`family_basic` 4・`family_pro` 8・`free` 4。F8)。承諾と子供の追加は家族の行をロックしてから読むので、写像の `family_groups` の UPDATE と同時でも commit 済みの値で数える (写像は family の関数のロックを取らないので循環しない)。上限が下がったとき (`family_pro` の終了・代表者の交代で 8 → 4) に、すでに上限を超えているメンバーは外さない (新しい招待の作成・承諾・子供の追加だけが `MEMBER_LIMIT_EXCEEDED` で止まる)。超えた分の扱いは §18 の 15 |
+| family の画面 (`src/app/(main)/family/dashboard/page.tsx:56,132`・`src/app/(main)/family/members/page.tsx:60,191`) | 読 | `family_groups.member_limit` を読み「`<人数>/<上限>` 人」を表示 | 画面は変えない。上限の表示が契約に合わせて変わる (4 / 8)。上限が下がって超えている間は `6/4 人` のように人数が上限を上回って表示される (§18 の 15) |
 | DB 関数 `apply_coupon` (`20261007160700_apply_coupon_rpc.sql:147-152, 260-265`) | 読・書 | 契約行を `FOR NO KEY UPDATE` でロックして `user_id, plan_key` を読み、`active_coupon_redemption_id` **だけ**を UPDATE | 変えない (Stripe には反映されない。§4.2 S15)。写像の UPDATE (§6.4 の 8.) は `active_coupon_redemption_id` に触れないので互いの列を上書きしない。ロックの順は apply_coupon = `coupons` 行 → 契約行、写像 = advisory 2 本 → 契約行 (どちらも契約行は `FOR NO KEY UPDATE`。写像は §6.4 (9) の 3.) で、写像は `coupons` を取らないので循環しない |
 | `src/lib/plan/coupon.ts:129-135` (`applyCoupon`) ← `src/app/api/super-admin/coupons/[id]/apply/route.ts:34-40` (super_admin・`getSupabaseAdmin()`) | 書 (RPC 経由) | `apply_coupon` を service_role で呼ぶだけ。直接の `.from('personal_subscriptions')` は無い | 変えない。RLS の是正 (§6.2) は service_role に当たらない。手動付与の行 (M) にも Stripe-backed の行 (S) にも従来どおり適用できる |
 | `src/app/api/super-admin/plans/[id]/price-impact/route.ts:8` | — | コメントだけ (集計しない。#1102) | 変えない |
@@ -994,6 +1000,7 @@ ALTER TABLE public.personal_subscriptions
 | 本人のデータの書き出しの分類 | `billing_customers` は無い | `billing_customers` を除外 (`ACCOUNT_EXPORT_EXCLUDED`) |
 | `plan_key_cached` | 誰も同期しない。本人が PostgREST から書ける (特権列ガードの対象外。F21) | 写像が同期。本人は書けない (特権列ガード 2 本に追加) |
 | `family_groups.plan_key` / `member_limit` | 作成のときだけ `create_family_group` が利用者の入力 (`p_plan_key`) を入れる (F23)。以後は誰も書かない | 代表者の家族プラン契約から写像が同期。グループの作成と代表者の交代ではトリガーが代表者の契約に合わせる (作成で契約が無ければ `free`) |
+| 契約の行の `plan_key` | 書き手が無い (運営の手動付与だけ) | 行を作ったときに決まり、以後変わらない (写像は既存の行の `plan_key` を使う。Stripe 側で Price を付け替えても変えない。§6.4 (9) の 4.・§7.3) |
 | `updated_at` | トリガー無し | `update_updated_at_column` のトリガー |
 | 環境変数 | `STRIPE_SECRET_KEY` のみ一覧 | `STRIPE_WEBHOOK_SECRET` を一覧に足す。`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` は `.env.example` から消す (読む場所が無い) |
 | 特定商取引法の表記 (`/legal`)・`/faq`・トップの FAQ | 販売価格ほか 5 行と FAQ が「有料プランは準備中です（販売開始前）」 | 本冊の段では変えない (Price を登録するまでは文のとおり)。販売開始 (§17.3) の前提として、別の PR で販売の内容に改める (文面は業務・法務の判断。§18 の 14) |
@@ -1010,12 +1017,14 @@ ALTER TABLE public.personal_subscriptions
 | – | 行の無い契約に、終端か非 live の状態で初めて届いたイベントの取り直し (写像)。例: S12 の 2 本目 (`BILL_LIVE_ROW_CONFLICT` で写せなかった) を運営が Stripe で解約した `customer.subscription.deleted`・S13 で写せなかった契約が Price の登録後に `canceled` / `incomplete_expired` / `paused` で写る・Webhook が着く前に Stripe 側で終わった契約 | `cancelled` (Stripe `canceled`。`cancelled_at = ended_at`) / `expired` (Stripe `incomplete_expired` / `paused`) (INSERT) | 利用者とプランが解決できる (できなければ上の行と同じ `BILL_UNKNOWN_*`)。live でないので衝突の検査はしない (部分 UNIQUE に当たらない) | INSERT (履歴の行。`trial_start` があれば `trial_started_at` も入り、同じプランの再購入の試用の判定 `hasUsedTrial` に数える)・`billing_customers` 補完・`plan_key_cached` は live な行から再計算 (変わらない)・家族の戻しを評価 (代表者のグループの `plan_key` がこのプランで、同じ利用者に同じプランの live な行が無いときだけ free / 4。§6.4 (9) の 10.。S12 で同じプランの 1 本目が live なら戻さない)・監査 `subscription_created` (`from` NULL・`to` `cancelled` / `expired`・info) |
 | `incomplete` | `customer.subscription.updated` (支払完了) (写像) | `active` / `trialing` | 鮮度・同じ利用者に別の live 行が無い (`incomplete` は live でないので、その間に別の契約を買えている。あれば `BILL_LIVE_ROW_CONFLICT`・イベント `failed`・行は `incomplete` のまま。§7.1 の `incomplete` の行・§13.3) | UPDATE・`plan_key_cached`・家族の同期 (family)・監査 `status_changed` |
 | `incomplete` | `customer.subscription.updated/deleted` (`incomplete_expired`) (写像) | `expired` | 鮮度 | UPDATE・監査 |
+| `incomplete` | `customer.subscription.updated` で Stripe の status が `incomplete` のまま (初回の請求の支払い待ち・認証 (3D セキュア) 待ち・支払い方法の付け替え・Portal で解約の予約が付いた / 外れた など) と、初回の請求の `invoice.payment_failed` (写像) | `incomplete` (同じ) | 鮮度 | UPDATE (`current_period_*`・`cancel_at_period_end`・`cancel_at`・`stripe_synced_at` を Stripe の値に)。status が変わらないので監査 `status_changed` は書かない。`plan_key_cached` は live な行から再計算 (変わらない)。家族は live でないので戻しの評価だけ (§6.4 (9) の 10. の else。同じプランの live な行があれば何もしない)。`invoice.payment_failed` なら監査 `system.payment.failed` (warn) は書く (§8.6 は status で絞らない。`applied` か `stale` のとき)。`/account/billing` は live でないので `can_cancel` / `can_resume` のどちらも出さず、`can_purchase` (§8.1 `summarizeSubscription`) |
 | `trialing` | 試用終了の請求成功 → `invoice.paid` + `updated` (写像) | `active` | 鮮度 | `current_period_*` 更新・監査 |
 | `trialing` | 試用終了の請求失敗 → `invoice.payment_failed` + `updated` (写像) | `past_due` | 鮮度 | `past_due_since=now()`・監査 `status_changed` (warn。写像) + `system.payment.failed` (warn) (invoice.payment_failed の処理が写像の結果 `applied` か `stale` のとき書く。stale = 同時に届いた `updated` の新しい取り直しが先に写した場合でも書く。退会済み (`user_deleted`) だけ書かない。§8.6) |
 | `trialing` / `active` / `past_due` / `grace` / `paused` | 利用者の解約予約 `POST /api/billing/subscription/cancel` | 同じ status (`cancel_at_period_end=true`, `cancel_at=current_period_end`) | live かつ S (`findLiveSubscription` の live 5 値。`paused` は写像の保持の規則で `paused` のまま = Stripe が `active` + `pause_collection` の間。予約が期間末に効くと下の「`paused` (配線) Stripe 側の解約」の行) | Stripe `POST /subscriptions/{id}`・写像 (`api:cancel`)・監査 `user.billing.cancel_scheduled` (actor = 本人) |
 | 同上 (予約中) | 解約の取り消し `POST /api/billing/subscription/resume` | 同じ status (`cancel_at_period_end=false`, `cancel_at=NULL`) | live かつ S かつ `cancel_at_period_end` | Stripe 更新・写像 (`api:resume`)・監査 `user.billing.cancel_revoked` |
 | `trialing` / `active` / `past_due` / `grace` / `paused` | **Portal** で解約を予約 → `customer.subscription.updated` (`cancel_at_period_end=true`) (写像 `webhook:<event.id>`。route を通らない) | 同じ status (`cancel_at_period_end=true`, `cancel_at` = Stripe の値) | 鮮度 (`grace` / `paused` は保持の規則で `grace` / `paused` のまま) | UPDATE `cancel_at_period_end`・`cancel_at` のみ。**監査は書かない** (写像は status が変わったときだけ監査する。§6.4 の 11.。利用者の操作の記録は `stripe_webhook_events.payload` の最小化した写し (`status`・`cancel_at_period_end`・`cancel_at` を残す。§8.1) と Stripe の履歴に残る。§18 の 11)。`/account/billing` は `can_resume` になる |
 | 同上 (予約中) | **Portal** で予約を取り消す → `customer.subscription.updated` (`cancel_at_period_end=false`) (写像 `webhook:<event.id>`) | 同じ status (`cancel_at_period_end=false`, `cancel_at=NULL`) | 鮮度 | 同上 (監査なし)。`/account/billing` は `can_cancel` になる |
+| live (S) / `incomplete` | 既存の契約の Price (`items`) を運営が Stripe の Dashboard で付け替えた → `customer.subscription.updated` (写像)。核の画面と API は付け替えをしない (価格変更は新規契約のみ。`operator/04` §3.3・§0 の対象外。Portal のプランの変更は OFF。§17.1 の 3.) | 同じ status (Stripe の status の写像どおり) | 鮮度 | UPDATE `stripe_price_id`・`billing_interval` を Stripe の値に。`plan_key` は変えない (§6.4 (9) の 4.: 既存の行があればその `plan_key`。`metadata.plan_key` の有無・付け替え先の Price がどのプランかに関わらない) ので、`plan_key_cached`・家族のグループ (`plan_key` / `member_limit`) も変わらない。status が変わらなければ監査なし。別のプランに移す業務は新しい契約で行う (§18 の 16) |
 | `active` | 更新日の請求成功 → `invoice.paid` + `updated` (写像) | `active` | 鮮度 | `current_period_*` 更新 (監査なし) |
 | `active` | 更新日の請求失敗 → `invoice.payment_failed` + `updated` (写像) | `past_due` | 鮮度 | `past_due_since=now()`・監査 `status_changed` (warn。写像) + `system.payment.failed` (warn) (invoice.payment_failed の処理が写像の結果 `applied` か `stale` のとき書く。stale = 同時に届いた `updated` の新しい取り直しが先に写した場合でも書く。退会済み (`user_deleted`) だけ書かない。§8.6) |
 | `past_due` | Smart Retry 成功 → `invoice.paid` + `updated` (写像) | `active` | 鮮度 | `past_due_since=NULL`・監査 |
@@ -1500,7 +1509,7 @@ export interface SubscriptionSnapshot {
   stripe_customer_id: string;
   /** Checkout の metadata.user_id。無ければ null (SQL が顧客の対応表・既存の行で解決する) */
   user_id: string | null;
-  /** metadata.plan_key → Price からの解決。どちらも無ければ null (SQL が既存の行で解決し、無ければ BILL_UNKNOWN_PLAN) */
+  /** metadata.plan_key → Price からの解決。どちらも無ければ null。SQL は既存の行があればその plan_key を使い (行を作ったときに決まり、以後変わらない。§7.3)、行が無くて null なら BILL_UNKNOWN_PLAN */
   plan_key: string | null;
   stripe_price_id: string | null;
   billing_interval: BillingInterval | null;
@@ -3121,6 +3130,11 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 98. `it('an apply that runs while a direct UPDATE (past_due → grace, or active → paused) holds the row waits for it and keeps grace with grace_started_at / paused; a direct UPDATE that waits for an apply re-evaluates its WHERE on the applied row')` (§6.4 (9) の 3. の `FOR NO KEY UPDATE`・§12。`family-lock-order-race.test.ts` と同じく postgres-meta (`/pg/query`) の接続で「UPDATE のあと `pg_sleep` でトランザクションを開いたまま」にし、`pg_stat_activity` で待ちに入ったのを確かめてから RPC を呼ぶ。逆の順 (RPC を先に開いたまま、配線の UPDATE を後から) も 1 本)
 99. `it('the first apply of a subscription with no row inserts a cancelled / expired row without the live-row conflict check, keeps plan_key_cached, resets the family group only when no live row of the same plan remains, and audits subscription_created with to = cancelled')` (§7.3 の「– → cancelled / expired」の行・S12。同じ利用者に live な 1 本目がある状態で、2 本目の snapshot を `canceled` で写す)
 
+追加 (網羅性 周 4 への対応。番号は 103〜105。どれも上の `tests/integration/rls/billing-apply-subscription-rpc.test.ts`。段 A):
+103. `it('a Portal-style updated snapshot that only sets / clears cancel_at_period_end on an active (also trialing / past_due / grace) row updates cancel_at_period_end and cancel_at, keeps the status, writes no admin_audit_logs row, and summarizeSubscription on the read-back row gives can_resume then can_cancel')` (§7.3 の Portal の予約と取り消しの行。`p_source = 'webhook:evt_…'`。`summarizeSubscription` は `src/lib/billing/core.ts` の純関数を読み戻した行に当てる)
+104. `it('an updated snapshot that keeps Stripe incomplete leaves the row incomplete, updates cancel_at_period_end / current_period_*, writes no status_changed audit and leaves plan_key_cached NULL')` (§7.3 の「`incomplete` のまま」の行)
+105. `it('keeps plan_key of an existing row when a later snapshot carries another plan (price swapped in the Dashboard, with and without metadata.plan_key): stripe_price_id / billing_interval follow Stripe, plan_key / plan_key_cached / family_groups.plan_key and member_limit stay, no audit')` (§6.4 (9) の 4.・§7.3 の Price の付け替えの行。`family_basic` の代表者の行に `pro` の Price の snapshot を当てる)
+
 `tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`:
 65. `it('claims a new event, returns completed for a completed event and in_progress for a fresh processing one, re-claims failed and stuck processing')`
 66. `it('finish sets completed/processed_at or failed/error_message (truncated)')`
@@ -3147,7 +3161,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (家族のトリガー・特権列ガードを含む)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト、本人の書き出しの `omit` と `billing_customers` の除外 (新しい列と表が migration と同時に見張りに当たるため)、`ai-usage-rpc.test.ts` と `plan-deprecate-subscribers.test.ts` の家族の作り方 (作成のトリガーで、INSERT で入れた家族プランが `free` に置き換わるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・`tests/integration/rls/ai-usage-rpc.test.ts`・`tests/integration/security/plan-deprecate-subscribers.test.ts` | 44〜49, 52〜70, 75, 80, 84, 85, 87, 88, 91, 92, 98, 99, 102 (+ `account-export-scope` の延長・`ai-usage-rpc` と `plan-deprecate-subscribers` の追随) |
+| A: DB 層 | migration + rollback (家族のトリガー・特権列ガードを含む)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト、本人の書き出しの `omit` と `billing_customers` の除外 (新しい列と表が migration と同時に見張りに当たるため)、`ai-usage-rpc.test.ts` と `plan-deprecate-subscribers.test.ts` の家族の作り方 (作成のトリガーで、INSERT で入れた家族プランが `free` に置き換わるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・`tests/integration/rls/ai-usage-rpc.test.ts`・`tests/integration/security/plan-deprecate-subscribers.test.ts` | 44〜49, 52〜70, 75, 80, 84, 85, 87, 88, 91, 92, 98, 99, 102〜105 (+ `account-export-scope` の延長・`ai-usage-rpc` と `plan-deprecate-subscribers` の追随) |
 | B: サーバ層 | `src/lib/billing/*` (`public-plans.ts` を除く)、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、`ENV_SETUP.md`、API 7 本、Webhook、退会 (退会の既存テスト 3 本の追随を含む。§16.1)、AI の入口の一覧 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` に 7 行 (§16.1。新しい route と退会の route が `@/lib/env` に届くため) | §8・§9・§11 | 1〜43, 72〜74, 81〜83, 86, 89, 90, 93〜96, 100 |
 | C: 画面層 | `/pricing` のデータ駆動化 (`src/lib/billing/public-plans.ts` を含む)、`/account/billing`、`/account/billing/checkout`、設定画面の行、public-claims の更新、手動の E2E の spec (`tests/e2e/.manual/billing-checkout.spec.ts`)、モバイルの料金の画面を消す (`apps/mobile`。§10.4。mobile の jest は `apps/mobile` で `npm test`) | §10・§14.3 | 50〜51, 76〜79, 97, 101 (+ 手動 71・mobile の `PublicPage.test.tsx` と `route-targets-exist.test.ts` の追随) |
 
@@ -3349,7 +3363,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/operator/CLAUDE.md` | 主要シーケンス「Stripe Webhook idempotency」 | claim 方式へ書き換え、`billing/01` へのリンク | 段 B と同じ PR |
 | `docs/design/CLAUDE.md` | ドメイン構成の表 | `billing/` の行 (課金の核と配線) を足す | 段 A と同じ PR |
 | `docs/design/family/01-data-model.md` ほか family | `family_groups.plan_key` / `member_limit` の書き手・グループの作成と代表者の交代の節 | 「代表者の個人契約 (`plan_type='family'`) から billing/01 の写像が同期する。グループの作成と代表者の交代では `family_groups` のトリガー `family_groups_billing_plan_follow_representative` が代表者の契約に合わせる (新しい代表者の advisory `billing-user:<uuid>` を取り、写像と直列) (作成で契約が無ければ free。`create_family_group` の `p_plan_key` は効かない。旧代表者の契約は旧代表者のまま)」と注記。live な家族プランの間は交代を止めるかは family の課題 (§18 の 13) | 段 A と同じ PR |
-| family の冊 (`POST /api/family/groups`・`src/schemas/membership/family-group.ts`) | `CreateFamilyGroupBodySchema.plan_key`・`create_family_group` の `p_plan_key` | 入力から外す (DB が使わなくなったため。F23・S20)。本冊の段では触らない (受けても無害) | family の冊 |
+| family の冊 (`POST /api/family/groups`・`src/schemas/membership/family-group.ts`・`src/app/(main)/family/setup/page.tsx`) | `CreateFamilyGroupBodySchema.plan_key`・`create_family_group` の `p_plan_key`・作成の画面のプランの選択欄 (`page.tsx:15,33,95-105`) | 入力と選択欄から外す (DB が使わなくなったため。選択欄は選んでも効かない。F23・S20)。本冊の段では触らない (受けても無害) | family の冊 |
+| family の冊 (`docs/design/family/` の人数の上限の節) | `member_limit` が下がったときに、すでに上限を超えているメンバーの扱い (§7.1 の人数の上限の確認の行・§18 の 15) | 本冊は外さない (新しい招待・承諾・子供の追加だけが止まる)。外す・通知するなどを決めるなら family の冊で | family の冊 |
 | `docs/design/mobile/01-architecture.md` | 課金 | §10.4 の規則 (アプリ内に購入導線を出さない) を 1 節足す | 段 C と同じ PR |
 | `.env.example` | 84〜89 行 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=` を消す。`STRIPE_SECRET_KEY` の説明に Checkout / Portal を足す | 段 B |
 | `ENV_SETUP.md` | 表「必須 / 任意」の「任意」の行 (課金 `STRIPE_SECRET_KEY`)・節「機能ごとに要る環境変数（`check:env` では任意）」 | 「任意」の行の課金に `STRIPE_WEBHOOK_SECRET` を足す。節に `4. **Stripe (課金) 関連**` を足し、`STRIPE_SECRET_KEY` (Checkout・Billing Portal・退会の解約) と `STRIPE_WEBHOOK_SECRET` (`/api/webhooks/stripe` の署名の確認。無ければ 503) を書き、本冊 §17 の手順を指す (番号は 1〜3 に続けて 4。`tests/env-source-scan.test.ts` が番号の飛びを見る) | 段 B |
@@ -3402,7 +3417,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | 2 | App Store / Google Play の規約 (Web 課金への誘導の可否) の最新の文面と審査の判断は未確認。あわせて (a) すでに配布した版のアプリ (料金の画面から Web の `/pricing` を外部のブラウザで開く) が販売開始のあとに手元に残る扱い、(b) アプリが「Web版を開く」で開く購入でないページ (`/about` など) から、サイトの中を辿って `/pricing` に行けることの扱い | アプリ内に購入導線・価格・誘導を出さない (§10.4)。料金の画面は消す。(a) は販売開始の前に料金の画面の無い版を配布する (§17.3。ローンチ前で配布済みの版が無ければ当たらない)。(b) はアプリが直接に開くのは購入のページではないので変えない |
 | 3 | 当社の `coupons` を Checkout でも使えるようにするか (Stripe の Coupon / Promotion Code との同期が要る) | Checkout は Stripe のプロモーションコードだけ。`coupons` は運営の遡及適用のまま |
 | 4 | ブランドのメール (支払失敗・試用終了) を自前で送るか | Stripe の顧客向けメールに任せる (配線で足せる) |
-| 5 | 家族グループを後から作った代表者に、live な家族プランを引き継ぐか (family ドメイン) | 引き継ぐ (作成のトリガー。S20 (a))。作成時の `p_plan_key` は使わない (F23 の穴を閉じるため)。`POST /api/family/groups` の入力 `plan_key` を外すのは family の冊 (§16.2) |
+| 5 | 家族グループを後から作った代表者に、live な家族プランを引き継ぐか (family ドメイン) | 引き継ぐ (作成のトリガー。S20 (a))。作成時の `p_plan_key` は使わない (F23 の穴を閉じるため)。`POST /api/family/groups` の入力 `plan_key` と、作成の画面 (`src/app/(main)/family/setup/page.tsx`) のプランの選択欄 (選んでも効かない) を外すのは family の冊 (§16.2) |
 | 6 | `grace` で制限する有料機能の範囲 (05 §9 は AI 解析・家族共有・産業医) | 核は制限しない (`get_effective_plan` のまま)。配線の冊 |
 | 7 | `stripe_webhook_events` の行の保存期間 | 配線の掃除のジョブで決める。`payload` は最小化した写しで氏名・メールアドレス・住所を持たない (§8.1・§9.6) ので、退会の匿名化 (#1562) のために消す必要は無い |
 | 8 | Checkout で住所の収集・税の自動計算 (インボイス制度の適格請求書) | 収集しない。請求書番号は配線の冊 |
@@ -3412,6 +3427,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | 12 | 退会で見つけられない契約: 別の顧客 (`billing_customers` に無い `cus_`) で作られ、写像も失敗して DB に行が無い契約 (Dashboard で手作業した場合だけ) | 解約されない。運営が Finance 画面 (配線) の `failed` イベントから拾って Stripe で解約する |
 | 13 | 家族プランを契約中の代表者が代表者を譲ったとき、契約 (支払い) は旧代表者に残り、グループは新しい代表者の契約に従う (無ければ free)。交代を止める・契約を移すなどの業務の扱い (family ドメイン) | 交代は止めない。グループのプランはいまの代表者の契約に従う (S18・§6.4 (10))。旧代表者の契約はそのまま旧代表者の個人の権利になる (解約は本人が `/account/billing` から) |
 | 14 | 特定商取引法に基づく表記 (`/legal`) の「販売価格」「支払方法」「支払時期」「サービス提供時期」「解約について」と、`/faq`・トップの FAQ の文面 (いまは「有料プランは準備中です（販売開始前）」)。販売を始めるときに何と書くか (本冊の仕組みでは、支払方法 = Stripe の Checkout が受け付ける方法 (Dashboard の設定による。`payment_method_types` は指定しない)・支払時期 = 申し込み時 (無料期間のあるプランは無料期間の終わり) と以後の更新日・提供時期 = 決済の完了後すぐ・解約 = `/account/billing` からいつでも、次回更新日の前日まで使え、日割りの返金なし) は業務・法務の判断 | 本冊の段では変えない。販売開始 (§17.3 の Price の登録) の前提として、別の PR で改める (`tests/public-claims-guard.test.ts` の `/legal`・FAQ の describe の it と `b10` の E2E 4-1 / 4-3 も同じ PR) |
+| 15 | 家族のグループの人数の上限 (`member_limit`) が下がったとき (`family_pro` 8 の契約の終了・代表者の交代で 4 に) に、すでに上限を超えているメンバーをどうするか (family ドメイン) | 外さない。新しい招待の作成・承諾・子供の追加だけが既存の `MEMBER_LIMIT_EXCEEDED` で止まり、画面は `6/4 人` のように表示する (§7.1)。外す・通知するなどは family の冊 (§16.2) |
+| 16 | 契約中のプランを別のプランに移す (例: `pro` → `family_basic`) 業務の扱い | 核では扱わない。Portal のプランの変更は OFF (§17.1 の 3.)・核の API に無い。運営が Stripe の Dashboard で Price を付け替えても、行の `plan_key` は変えない (§7.3)。移すときは解約 (期間末) のあと新しく購入する |
 
 ---
 
@@ -3423,5 +3440,6 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | v1.2 | 2026-10-15 | 設計ゲート R2 の指摘を反映: 新しい route と退会の route を AI の入口の一覧 `EXEMPT_ROUTES` に (§16.1・F24)・Webhook のイベントの記録を最小化 (`minimizeStripeEventPayload`。§8.1・§9.6・§11)・Stripe を呼ばない GET の 2 本は gateway を作らない (`BillingReadDeps`。§8.6・§9・S11)・`listPurchasablePlans` は失敗で空を返す (§10.1)・`plan-deprecate-subscribers` の家族の作り方 (§16.1・F23)・§16.1 に母集合の作り方 |
 | v1.3 | 2026-10-15 | 網羅性 周 3 を反映: `paused` (Stripe-backed) の解約の予約・取り消し (API と Portal) を §7.3 の行に足して §7.1 と揃える (テスト 31・55)・`supabase/baseline/` は凍結 (§6.5・§15.2・§16.1) |
 | v1.4 | 2026-10-15 | 設計ゲート R3 の指摘を反映: 写像は契約の行を `FOR NO KEY UPDATE` でロックしてから読み、配線の直接の UPDATE (grace / paused) を巻き戻さない (§6.4 (9)・§7.3・§12。テスト 98)・`invoice.payment_failed` の監査は写像が stale でも書く (`ApplySubscriptionResult` の stale は `user_id` 必須。§8.1・§8.6・S4。テスト 100)・行の無い契約の最初の写像が終端・非 live なら `cancelled` / `expired` の行を INSERT する遷移を §7.3 に (テスト 99)・退会で匿名化した顧客の metadata の無い契約は `user_deleted` (§6.4 (9) の 1.。テスト 60)・アプリの料金の画面を消す (§10.4。テスト 101)・R12 の `/pricing` は鍵と独立・§17 を「鍵 → Price」の順に (§17.3 に販売開始の前提)・`/pricing` の 1 件以上の描き方と `public-claims-guard` の直し方・§16.1 の母集合の作り方に 5 つ目の問い合わせ (公開の面)・家族のトリガーが新しい代表者の advisory `billing-user` を取り写像と直列に (§6.4 (10)。テスト 102)・メンテナンス中の Webhook (§9.6) |
+| v1.5 | 2026-10-15 | 網羅性 周 4 を反映: §7.1 の消費経路に `get_effective_plan` の家族・Edge Function の AI 相談のスイッチ (`plan_key_cached`)・`countPlanSubscribers` の家族の数・family の人数の上限の確認 (DB 関数 3 本の最新の定義) と画面 2 つ・家族の作成の画面のプランの選択欄を足す。§7.3 に「`incomplete` のままの `updated`」と「既存の契約の Price の付け替え」の行を足し、写像の 4. を既存の行の `plan_key` 優先に (行の `plan_key` は作成時に固定)。テスト 103〜105。§18 の 15・16 |
 | v1.1 | 2026-10-15 | 設計ゲート R1 の指摘を反映: 退会の解約を Stripe の顧客の一覧から列挙 (§11)・家族のプランを代表者に従わせるトリガー (作成と交代。§6.4 (10))・`plan_key_cached` を特権列ガードに (§6.4 (11))・Stripe の一時停止 / 再開 / unpaid の遷移 (§7.3)・`billing_customers` を書き出しから除外・処理中のイベントの再送は 409 (§6.4 (7)・§9.6)・`maxDuration` はリテラル (§9.6)・監査の `target_type` (§8.1) |
 
