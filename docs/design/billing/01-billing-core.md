@@ -19,7 +19,7 @@
 | 目安 | 本冊 | 判定 |
 |---|---|---|
 | 設計書 800 行超 | 超える (正典コード・表 3 点・トレースを 1 冊に持つため) | 該当 |
-| 消費先レーン 3 以上 | API 7 本・画面 3 つ・退会・モバイル = 4 以上 | 該当 |
+| 消費先レーン 3 以上 | API 8 本 (課金の route 7 + Webhook 1。§9・§15.3)・画面 3 つ・退会・モバイル = 4 以上 | 該当 |
 | 共有面 2 つ以上 | `personal_subscriptions` (family / org / AI 上限が読む)・`user_profiles.plan_key_cached` (機能フラグが読む。特権列ガード 2 本を置き換える)・`family_groups.plan_key` (トリガーを足す)・`src/lib/env.ts` の一覧・`cross/04` のエラー表・退会 (`src/lib/account-deletion.ts`)・本人のデータの書き出しの分類 (`src/lib/account-export-tables.ts`) | 該当 |
 
 判定: **設計は 1 冊 (本書) のまま、実装を 3 段 (A: DB 層 / B: サーバ層 / C: 画面層。§15) に分け、段ごとに 2 枚レビューを挟む**。理由: Stripe の状態の写像 (SQL 関数) と、それを呼ぶ Webhook・API (TS) は 1 つの契約 (§8.1 のスナップショット) を挟んで表裏になっており、冊を分けると「未マージの核を参照する配線」の指摘 (2026-09-11 の分冊判定の根拠と同型) を自分で作ることになる。段 A は単独でマージでき (列の追加・RLS の是正・関数とトリガーの新設・特権列ガードへの 1 列の追加。既存の挙動で変わるのは、利用者が自分で書けていた権利の値 (契約の行・`plan_key_cached`・家族グループを作るときのプラン) を書けなくすることだけ)、段 B・C はそれぞれ段 A のマージ済みの実コードを参照する。
@@ -2440,11 +2440,14 @@ export function billingErrorResponse(routeName: string, error: unknown, ctx: { u
 
 共通: 認証は `requireUser()` (`src/lib/auth/helpers.ts`。凍結中は 403 `AUTH_ACCOUNT_FROZEN`)。本文は JSON。応答は `{ data: … }` / `{ error: { code, message } }` (`cross/04` §5)。すべて `Cache-Control: no-store`。POST はレート制限 `billing` (10 回 / 分 / 利用者。超過は `rateLimitExceededResponse` の 429)。500 は `billingErrorResponse` → `internalError` (nested)。route は `src/lib/billing/service.ts` だけを呼び、`core.ts` の Zod で入力を検証する。`export const dynamic = 'force-dynamic'`。
 
-route の骨格 (全 route 共通。`// tsc:skip`):
+本文の NULL 文字 (#1657): 本文を読む handler は `POST /api/billing/checkout` と `POST /api/billing/checkout/sync` の 2 つだけで、どちらも handler の最初の 2 行で `rejectNullCharacterBody(request)` を呼ぶ (400 `{ error, code: 'INVALID_CHARACTER' }` は既存の共通の形のまま。`plan_key` は `z.string()` なので、NULL 文字が `findPlan` の `.eq('plan_key', …)` まで届くと DB が拒んで 500 になる)。`cancel`・`resume`・`portal` は本文を読まず (`request.json()` を書かない)、この 2 行も置かない。Webhook (§9.6) は署名の確認より前に本文を JSON として読まないので置かず、`null-character-routes` の `EXCLUDED` に理由を書く (§16.1)。
+
+route の骨格 (全 route 共通。本文を読まない route は NULL 文字の 2 行と `request.json()` を除く。`// tsc:skip`):
 
 ```ts
 // tsc:skip — src/app/api/billing/checkout/route.ts (骨格。ほかの route も同じ形)
 import { NextResponse } from 'next/server';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { requireUser } from '@/lib/auth/helpers';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { CheckoutRequestSchema } from '@/lib/billing/core';
@@ -2458,6 +2461,10 @@ const ROUTE_NAME = 'POST /api/billing/checkout';
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // 本文の NULL 文字 (U+0000) は認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)。
+  // null-character-routes は handler の最初の 2 行がこの形であることを見る (本文を読む checkout と sync だけに置く)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   let userId: string | undefined;
   try {
     const user = await requireUser();
@@ -2940,7 +2947,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 `tests/integration/security/account-export-scope.test.ts` (既存の「出力しない列」の it を延長): `personal_subscriptions` の `not.toHaveProperty` の一覧 (いま 4 列) に `stripe_status`・`stripe_synced_at` を足す (§7.1・§16.1)。
 
 ### 14.3 E2E (Playwright。Stripe のテストモードが要るので `tests/e2e/.manual/` に置き CI では流さない)
-71. `it('E2E: buy pro monthly with test card 4242, land on /account/billing, see trialing')` (手順書 §17.3)
+71. `it('E2E: buy pro monthly with test card 4242, land on /account/billing, see trialing')` (手順書 §17.3)。ファイルは `tests/e2e/.manual/billing-checkout.spec.ts` (§15.2 の新設)。PR の CI は流さない (origin/main の `.github/workflows/e2e-local.yml` は spec を名指しで並べ、`e2e.yml` の PR の実行は MVP スイートだけ)。`playwright.config.ts` の `testDir` は `./tests/e2e` で、手動の `full_suite` (`npx playwright test`) からは外れないので、spec の冒頭で `process.env.E2E_STRIPE_TEST_MODE !== '1'` なら `test.skip` する (Stripe のテストモードで動かすときだけ付ける。`auth-turnstile.spec.ts` の、前提が無ければ全部スキップする形と同じ)。ログインは共通の `authedPage` (`tests/e2e/fixtures/auth.ts`) を使い、パスワードのログインやアカウントの値を spec に書かない (§16.1 の `e2e-test-session`・`no-committed-credentials` の行)
 
 ---
 
@@ -2951,8 +2958,8 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
 | A: DB 層 | migration + rollback (家族のトリガー・特権列ガードを含む)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト、本人の書き出しの `omit` と `billing_customers` の除外 (新しい列と表が migration と同時に見張りに当たるため)、`ai-usage-rpc.test.ts` の家族の作り方 (作成のトリガーで `p_plan_key` が効かなくなるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・`tests/integration/rls/ai-usage-rpc.test.ts` | 44〜49, 52〜70, 75, 80, 84, 85, 87, 88, 91, 92 (+ `account-export-scope` の延長・`ai-usage-rpc` の追随) |
-| B: サーバ層 | `src/lib/billing/*`、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、API 7 本、Webhook、退会 | §8・§9・§11 | 1〜43, 72〜74, 81〜83, 86, 89, 90 |
-| C: 画面層 | `/pricing` のデータ駆動化、`/account/billing`、`/account/billing/checkout`、設定画面の行、public-claims の更新 | §10 | 50〜51, 76〜79 (+ 手動 71) |
+| B: サーバ層 | `src/lib/billing/*`、`verify.ts`、`env.ts`、`rate-limit.ts`、`.env.example`、`ENV_SETUP.md`、API 7 本、Webhook、退会 (退会の既存テスト 3 本の追随を含む。§16.1) | §8・§9・§11 | 1〜43, 72〜74, 81〜83, 86, 89, 90 |
+| C: 画面層 | `/pricing` のデータ駆動化、`/account/billing`、`/account/billing/checkout`、設定画面の行、public-claims の更新、手動の E2E の spec (`tests/e2e/.manual/billing-checkout.spec.ts`) | §10・§14.3 | 50〜51, 76〜79 (+ 手動 71) |
 
 段 B は段 A のマージ後 (型の再生成済み) に始める。段 C は段 B のマージ後。
 
@@ -2964,13 +2971,15 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 - `src/app/api/billing/checkout/route.ts`・`checkout/preview/route.ts`・`checkout/sync/route.ts`・`subscription/route.ts`・`subscription/cancel/route.ts`・`subscription/resume/route.ts`・`portal/route.ts`
 - `src/app/api/webhooks/stripe/route.ts`
 - `src/app/pricing/PricingPageView.tsx`・`src/app/(main)/account/billing/page.tsx`・`src/app/(main)/account/billing/checkout/page.tsx`・`src/components/billing/checkout-confirmation.tsx`
+- E2E (手動): `tests/e2e/.manual/billing-checkout.spec.ts` (テスト 71。§14.3)
 - テスト: `tests/billing-core.test.ts`・`tests/billing-stripe-gateway.test.ts`・`tests/billing-service.test.ts`・`tests/billing-account-deletion.test.ts`・`tests/api/billing-routes.test.ts`・`tests/webhooks-stripe-route.test.ts`・`tests/billing-migration-contract.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts`・`tests/integration/rls/billing-webhook-events-claim-rpc.test.ts`・`tests/integration/security/billing-personal-subscriptions-rls.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/settings/billing-link.test.ts`
 
 変更:
 - `src/lib/webhook/verify.ts`・`src/__tests__/lib/webhook/verify.test.ts`
-- `src/lib/env.ts`・`.env.example`
+- `src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` (§16.2 の行。origin/main に在る)
 - `src/lib/rate-limit.ts`・`src/__tests__/lib/rate-limit.test.ts` (テスト 74)
-- `src/lib/account-deletion.ts`・`tests/account-deletion.test.ts`
+- `src/lib/account-deletion.ts`・`tests/account-deletion.test.ts`・`tests/account-deletion-email.test.ts`・`src/__tests__/api/account/delete-missing-env.test.ts` (§16.1 の退会の行。`tests/account-delete-route.test.ts` は変えない)
+- `src/__tests__/api/null-character-routes.test.ts` (`ENTRIES` 2 行と `EXCLUDED` 1 行。§16.1)
 - `src/app/pricing/page.tsx`・`tests/public-claims-guard.test.ts`
 - `src/app/(main)/settings/page.tsx` (行を 1 つ足す。テスト 79)
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成)
@@ -2986,7 +2995,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | テーブル | `public.billing_customers` |
 | 列 | `personal_subscriptions.stripe_synced_at` / `.stripe_status` / `.cancel_at_period_end` / `.billing_interval`、`stripe_webhook_events.processing_started_at` / `.attempt_count` |
 | 制約 | `personal_subscriptions_billing_interval_check`、`personal_subscriptions_status_check` (置き換え: `incomplete` を追加) |
-| トリガー | `personal_subscriptions_set_updated_at`、`billing_customers_set_updated_at`、`family_groups_billing_plan_follow_representative` (`family_groups` の BEFORE UPDATE OF `representative_id`) |
+| トリガー | `personal_subscriptions_set_updated_at`、`billing_customers_set_updated_at`、`family_groups_billing_plan_follow_representative` (`family_groups` の BEFORE INSERT OR UPDATE OF `representative_id`。§6.4 (10)) |
 | RLS ポリシー | `personal_subscriptions_insert_admin`、`personal_subscriptions_update_admin`、`billing_customers_no_access` (削除: `personal_subscriptions_insert`、`personal_subscriptions_update`) |
 | DB 関数 | `billing_claim_stripe_event(text, text, jsonb, interval)` (戻り値 `claimed` / `completed` / `in_progress`)、`billing_finish_stripe_event(text, boolean, text)`、`billing_apply_stripe_subscription(jsonb, timestamptz, text)`、トリガー関数 `billing_family_plan_follow_representative()` |
 | 既存の関数の置き換え | `guard_user_profiles_privileged()`・`guard_user_profiles_privileged_on_insert()` (`20261008200700` の定義に `plan_key_cached` を 1 行ずつ足す) |
@@ -3016,7 +3025,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 
 | 番兵 | 反応する理由 (grep の語) | 直し方 | 段 |
 |---|---|---|---|
-| `tests/env-source-scan.test.ts` | `STRIPE_WEBHOOK_SECRET` を `getOptionalEnv` で読む (一覧に無い名前は型で通らない)・`.env.example` との突き合わせ | `SERVER_ENV_VARS` に足す (§8.7)。`.env.example` の行はそのまま。`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` の行を消す | B |
+| `tests/env-source-scan.test.ts` | `STRIPE_WEBHOOK_SECRET` を `getOptionalEnv` で読む (一覧に無い名前は型で通らない)・`.env.example` との突き合わせ | `SERVER_ENV_VARS` に足す (§8.7)。`.env.example` の行はそのまま。`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` の行を消す。同じファイルの `ENV_SETUP.md` の検査 (「必須の環境変数」の節が `required: true` とちょうど一致・「機能ごとに要る環境変数」の節の番号が 1 から飛ばない) は、`STRIPE_WEBHOOK_SECRET` を任意 (`required: false`) にし、§16.2 の `ENV_SETUP.md` の項目を `4.` で足せば緑のまま | B |
 | `tests/check-env-script.test.ts` | 一覧の読み込み | 変更なし (一覧の追加で緑) | B |
 | `tests/database-types-migrations-contract.test.ts` | `billing_customers`・`billing_claim_stripe_event`・`billing_finish_stripe_event`・`billing_apply_stripe_subscription` | 両方の `database.types.ts` を再生成する (冒頭の手順。270k / 256 で) | A |
 | `tests/schema-checked-supabase.test.ts` / `tests/schema-checked-db.test.ts` | `.from('billing_customers')` | 型の再生成で緑 | A → B |
@@ -3029,18 +3038,25 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/site-config-guard.test.ts` | `success_url` / `return_url` | `getSiteUrl()` から作る (ドメインを書かない) | B |
 | `tests/email-send-throttle-contract.test.ts` | `@/lib/emails/send` | 核はメールを送らないので反応しない | — |
 | `tests/public-claims-guard.test.ts` | `src/app/pricing/page.tsx` の描画・「準備中」 | `@/lib/billing/public-plans` をモック。0 件 → 準備中 (既存)、1 件 → 価格と CTA (新規)。禁止文字列の一覧から、載せてよくなった価格の表現を外す | C |
-| `tests/account-deletion.test.ts`・`tests/account-deletion-email.test.ts`・`tests/account-delete-route.test.ts` | `AccountDeletionStep` に `billing`・`DeleteAccountParams.billing` | 偽の `billing` を渡す (既定は Stripe を呼ぶので、既存のテストには `{ cancelForAccountDeletion: async () => ({ cancelled_subscriptions: 0, customer: 'none' }) }` を渡す)。順序の期待に `billing` を足す | B |
+| `tests/account-deletion.test.ts`・`tests/account-deletion-email.test.ts` (`deleteAccount` を偽の `admin` で直接呼ぶ) | `AccountDeletionStep` に `billing`・`DeleteAccountParams.billing` | 偽の `billing` を渡す (既定の `defaultAccountDeletionBilling` は `createBillingRepository()` → `getSupabaseAdmin()` を呼び、単体テストでは環境変数が無く段階 `billing` で 500 になるので、既存のテストには `{ cancelForAccountDeletion: async () => ({ cancelled_subscriptions: 0, customer: 'none' }) }` を渡す。`account-deletion-email` は `run()` の `deleteAccount` の引数に足す)。順序の期待に `billing` を足す | B |
+| `src/__tests__/api/account/delete-missing-env.test.ts` (route を本物の `deleteAccount` ごと動かし、`getSupabaseAdmin` も本物。`@supabase/supabase-js` の `createClient` を差し替え、成功の it で `mockCreateAdminClient` が 1 回だけ呼ばれることを見る) | 既定の `defaultAccountDeletionBilling` が `createBillingRepository()` で 2 つ目の service_role のクライアントを作り (`getSupabaseAdmin` は呼ぶたびに作る。`lib/supabase/server.ts:19`)、`findCustomer` の `.maybeSingle()` が偽のクエリ (`emptyQuery`) に無いので段階 `billing` の 500 になる | `vi.mock('@/lib/billing/account-deletion', …)` で `defaultAccountDeletionBilling` を `{ cancelForAccountDeletion: vi.fn(async () => ({ cancelled_subscriptions: 0, customer: 'none' })) }` に差し替える (route は `billing` を渡さないので、差し替えはモジュールの単位)。`mockCreateAdminClient` の 1 回の期待は変えない。成功の it に「差し替えた `cancelForAccountDeletion` が `USER_ID` で 1 回呼ばれた」を足す | B |
+| `tests/account-delete-route.test.ts` | `@/lib/account-deletion` を読み込む | 変更なし (`deleteAccount` をモックし、route は `billing` を渡さないので `toHaveBeenCalledWith({ userId, admin, requestId })` は同じ。読み込みだけでは Stripe も DB も呼ばない) | — |
+| `src/__tests__/api/null-character-routes.test.ts` (本文を読む handler は `ENTRIES` か `EXCLUDED` にちょうど 1 回載る・`ENTRIES` の handler は最初の 2 行が `rejectNullCharacterBody`。`BODY_READ_PATTERN` = `request.json()` / `.text()` / `.formData()` / `readJsonBody(`) | 新しい `billing/checkout/route.ts` の POST・`billing/checkout/sync/route.ts` の POST (`request.json()`)・`webhooks/stripe/route.ts` の POST (`request.text()`)。既存の `account/delete` の行は `deleteAccount` に届く前 (NULL 文字の 400 か、偽の `createClient` が投げる認証) で止まるので変わらない | `ENTRIES` に `billing/checkout/route.ts` と `billing/checkout/sync/route.ts` の POST を足す (§9 の骨格の 2 行)。`EXCLUDED` に `'POST webhooks/stripe/route.ts': '本文は Stripe が署名して送るもので、利用者は書けない。大きさの上限と署名の確認より前に本文を JSON として読まない作り (billing/01 §9.6)'` を足す (既存の `webhooks/resend` と同じ理由)。`cancel`・`resume`・`portal` は本文を読まないので載せない | B |
+| `tests/integration/security/account-deletion.test.ts` (本物の `deleteAccount` をローカルの Supabase で) | 既定の `defaultAccountDeletionBilling` が動く | 変更なし (結合テストの環境には `NEXT_PUBLIC_SUPABASE_URL`・`SUPABASE_SERVICE_ROLE_KEY` があり、利用者に `billing_customers` の行も Stripe の契約の行も無いので `findCustomer` / `listStripeBackedSubscriptions` が空で `{ cancelled_subscriptions: 0, customer: 'none' }` を返し、Stripe を呼ばない。段 A の migration 適用後に流す) | — |
 | `tests/integration/security/auth-users-fk-on-delete.test.ts` | `billing_customers_user_id_fkey` (SET NULL) | 検査 D の本数 (32 → 33) と、SET NULL の一覧に 1 行 | A |
 | `tests/account-export-tables.test.ts` / `src/lib/account-export-tables.ts` | `personal_subscriptions` は `omit` 方式 (全列を取って `omit` を消す)。`loadSchemaModel` が migration から列を読むので、段 A の migration で `stripe_status`・`stripe_synced_at` が `SENSITIVE_NAME` (`stripe_`) の見張り「出力する列に、秘密・他人を指す列が残っていない」に当たる | `omit` に `stripe_status`・`stripe_synced_at` を足す (同じ段 A の PR)。`cancel_at_period_end`・`billing_interval` は書き出す (本人の契約の内容)。テスト 75 を足す。`STORED_FAILURE_COLUMN` の見張りには当たらない (どの新しい列も名前が `error` / `failure` / `result` でない) | A |
 | `tests/account-export-tables.test.ts:275` (「分類されていない表が無い」)・`:321` (「除外リストの表は、実際にユーザー識別列を持つ」)・`:311` (「表がスキーマに実在する」) / `src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED` | 新設の `billing_customers` が `user_id` (auth.users 参照) を持つので、`requiredTables` が分類を求める | `ACCOUNT_EXPORT_EXCLUDED` に `billing_customers: 'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)'` を足す (同じ段 A の PR)。`:311` と `:321` は、表が migration にあり `user_id` を持つので緑のまま。テスト 85 を足す | A |
 | `tests/integration/security/legal-documents-acceptance.test.ts:555-583` (ガード関数 2 本に保護列が全部入っている) | `guard_user_profiles_privileged` / `_on_insert` の置き換え (§6.4 (11)) | 変更なし (14 列を `toContain` で見るので、`plan_key_cached` を足しても緑)。`plan_key_cached` の見張りはテスト 88 | A |
 | `tests/integration/rls/user-profiles-insert-guard.test.ts`・`tests/integration/security/family-member-status-guard.test.ts`・`invite-accept-missing-profile.test.ts` | 特権列ガードの挙動 | 変更なし (どれも `plan_key_cached` を入れない。値を変えない送り直しはガードを通る) | — |
-| `tests/integration/security/family-lock-order-race.test.ts`・`membership-transfer-accept.test.ts`・`family-child-promotion-consent.test.ts`・`family-invite-create.test.ts`・`tests/integration/rls/user-profiles-insert-guard.test.ts` (`create_family_group` を `p_plan_key: 'free'` で呼ぶ・代表者の交代を本物の RPC で流す) | `family_groups` の BEFORE INSERT / UPDATE OF `representative_id` に新しいトリガー | 変更なし (どれも家族プランの契約を作らず `'free'` で作るので、トリガーの結果は `free` で同じ。`member_limit` は INSERT では触らず、`family-lock-order-race` が後から service_role で入れる上限もそのまま) | — |
+| `tests/integration/security/family-lock-order-race.test.ts`・`membership-transfer-accept.test.ts`・`family-child-promotion-consent.test.ts`・`family-invite-create.test.ts`・`family-member-limit-race.test.ts`・`membership-daily-cap.test.ts`・`invite-email-throttle.test.ts`・`family-promote-legacy-overload.test.ts`・`invite-accept-missing-profile.test.ts`・`family-member-status-guard.test.ts`・`tests/integration/rls/user-profiles-insert-guard.test.ts` (`create_family_group` を `p_plan_key: 'free'` で呼ぶ・代表者の交代を本物の RPC で流す。origin/main の `git grep create_family_group -- tests` で `ai-usage-rpc.test.ts` (別の行) を除く 11 本がこれで全部) | `family_groups` の BEFORE INSERT / UPDATE OF `representative_id` に新しいトリガー | 変更なし (どれも家族プランの契約を作らず `'free'` で作るので、トリガーの結果は `free` で同じ。`member_limit` は INSERT では触らず、`family-lock-order-race` が後から service_role で入れる上限もそのまま) | — |
 | `tests/integration/rls/ai-usage-rpc.test.ts:152-160,400` (`createFamily(user, 'family_basic')` で `p_plan_key` に家族プランを入れ、`get_effective_plan` が `family_basic` を返すことを見る) | 作成のトリガーが `p_plan_key` を `free` に置き換える (F23 の穴を閉じる) | `createFamily` を「`create_family_group` を `p_plan_key` なしで呼び、`planKey` が `free` でなければ service_role で `family_groups.plan_key` を UPDATE する」に直す (service_role の直接の UPDATE は `plan_key` を変えてもトリガーに当たらない。§6.4 (10))。期待値は変えない | A |
 | `tests/integration/security/anon-definer-execute.test.ts` (A1: 許可リストに無い SECURITY DEFINER 関数に anon の EXECUTE が無い) | 新しい SECURITY DEFINER 関数 4 本 (RPC 3 本 + トリガー関数) | 変更なし (どれも `REVOKE ALL … FROM PUBLIC, anon, authenticated`) | — |
 | `tests/rls-canonical-coupon-experiment-recipe-flags.test.ts` | 対象 3 表のみ | 変更なし | — |
 | `tests/integration-ci-coverage.test.ts` | 新しい結合テストのパス | `tests/integration/rls/` と `tests/integration/security/` に置く (ワークフローの指定に当たる) | A |
 | `tests/e2e-api-paths.test.ts` | e2e spec が叩くパス | 新しい spec を `SPEC_FILES` に足さない限り反応しない | — |
+| `tests/e2e-test-session.test.ts` (「テストの道具が、パスワードのログインを呼ばない」。`tests/e2e` の下のコードを `.auth` / `.output` / `.report` 以外すべて走査する) | 新しい `tests/e2e/.manual/billing-checkout.spec.ts` | `authedPage` を使い、`signInWithPassword` / `grant_type=password` を書かない (§14.3) | C |
+| `tests/no-committed-credentials.test.ts` (git で管理するファイルに、特定のアカウントの資格情報が無い) | 新しい spec | テストカードの番号 (Stripe の公開のテスト用の値) のほかに、アカウントのメールアドレス・パスワードを書かない (§14.3) | C |
+| `src/__tests__/api/family/groups.test.ts` (`POST /api/family/groups` の単体。RPC は偽の結果) | `plan_key: 'free'` を送る | 変更なし (DB のトリガーは単体テストに届かない。入力 `plan_key` を外すのは family の冊。§16.2) | — |
 | `tests/cron-secret-contract.test.ts` | `/api/cron/*` | 核に cron は無い | — |
 | `tests/edge-function-dep-pinning.test.ts` | `supabase/functions` | Edge Function を足さない | — |
 | `tests/zod-single-copy-1444.test.ts` | 依存 | 依存を足さない (`stripe` を入れない) | — |
@@ -3079,7 +3095,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | family の冊 (`POST /api/family/groups`・`src/schemas/membership/family-group.ts`) | `CreateFamilyGroupBodySchema.plan_key`・`create_family_group` の `p_plan_key` | 入力から外す (DB が使わなくなったため。F23・S20)。本冊の段では触らない (受けても無害) | family の冊 |
 | `docs/design/mobile/01-architecture.md` | 課金 | §10.4 の規則 (アプリ内に購入導線を出さない) を 1 節足す | 段 C と同じ PR |
 | `.env.example` | 84〜89 行 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=` を消す。`STRIPE_SECRET_KEY` の説明に Checkout / Portal を足す | 段 B |
-| `ENV_SETUP.md` (あれば) | Stripe の節 | §17 の手順への参照 | 段 B |
+| `ENV_SETUP.md` | 表「必須 / 任意」の「任意」の行 (課金 `STRIPE_SECRET_KEY`)・節「機能ごとに要る環境変数（`check:env` では任意）」 | 「任意」の行の課金に `STRIPE_WEBHOOK_SECRET` を足す。節に `4. **Stripe (課金) 関連**` を足し、`STRIPE_SECRET_KEY` (Checkout・Billing Portal・退会の解約) と `STRIPE_WEBHOOK_SECRET` (`/api/webhooks/stripe` の署名の確認。無ければ 503) を書き、本冊 §17 の手順を指す (番号は 1〜3 に続けて 4。`tests/env-source-scan.test.ts` が番号の飛びを見る) | 段 B |
 
 ---
 
