@@ -839,12 +839,12 @@ $$);
 | Storage の写真 (食事・冷蔵庫など) | 削除 | 実装済み (#1175)。3 バケットの `<user_id>/` 以下、旧パス (`meals/<user_id>/` など)、本人の行の URL が指す本人のファイル。持ち主がパスから分からない旧ファイル (バケット直下のタイムスタンプ名) は消さない |
 | Stripe の顧客・サブスクリプション | サブスクリプションは即時に解約し、顧客は氏名・メールを消す匿名化をして残す (#1562) | 行っていない。課金の核の設計 (docs/design/billing/01-billing-core.md) で扱う (§19) |
 | 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
-| 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスは、退会に関係なく生のアドレスを持たない (#1562。migration 20261015190000)。トリガーが `email` を `email_hash` (正規化したアドレスの HMAC。鍵は Vault の `pii_hmac_key`) に置き換え、既存の行も置き換えた。#1163 の 24 時間の送信上限は `email_hash` 同士で比べるので、退会しても上限は戻らない |
+| 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスは、退会に関係なく生のアドレスを持たない (#1562。migration 20261016190000)。トリガーが `email` を `email_hash` (正規化したアドレスの HMAC。鍵は Vault の `pii_hmac_key`) に置き換え、既存の行も置き換えた。#1163 の 24 時間の送信上限は `email_hash` 同士で比べるので、退会しても上限は戻らない |
 | 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い (削除の実行記録)
 
-#1562 で、このテーブルを「削除の実行記録」に当てた (migration 20261015190000_deletion_record_and_invite_email_hash.sql)。
+#1562 で、このテーブルを「削除の実行記録」に当てた (migration 20261016190000_deletion_record_and_invite_email_hash.sql)。
 旧設計の DDL は operator/01-data-model.md §3.21。列の追加・外部キーとポリシーの変更は migration が正。
 
 | 列 | 中身 |

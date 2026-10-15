@@ -6,7 +6,7 @@
 
 対象外: `auth.users`（Supabase Auth 管轄）、`dataset_*`（公開マスター）、family 系・org 系テーブル。
 
-> **退会との関係 (#1175)**: この文書の DDL の `REFERENCES auth.users(id)` に `ON DELETE` の指定が無いものは、設計時の記述。実際の定義は `supabase/migrations/20261010000100_auth_users_fk_on_delete.sql` で、本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments`) は `ON DELETE CASCADE`、サポート・会計の記録 (`support_tickets.user_id` / `support_ticket_messages.sender_id` / `coupon_redemptions.user_id` / `referral_rewards.referrer_id, referred_id`) と運営者・作成者・承認者の列 (`created_by` / `changed_by` / `actor_id` / `assignee_id` / `ack_by` など) は `ON DELETE SET NULL` (列は NULL を許す。`coupon_redemptions` は匿名化の日時 `anonymized_at` を持つ)。`auth.users` を指す外部キーを足すときは、必ず `ON DELETE` を書く (CLAUDE.md の「退会」)。`gdpr_deletion_requests.user_id` の外部キーは #1562 (`20261015190000`) で外した (削除の実行記録は利用者の行を指さない)。
+> **退会との関係 (#1175)**: この文書の DDL の `REFERENCES auth.users(id)` に `ON DELETE` の指定が無いものは、設計時の記述。実際の定義は `supabase/migrations/20261010000100_auth_users_fk_on_delete.sql` で、本人だけの記録 (`nps_surveys` / `csat_feedbacks` / `experiment_assignments`) は `ON DELETE CASCADE`、サポート・会計の記録 (`support_tickets.user_id` / `support_ticket_messages.sender_id` / `coupon_redemptions.user_id` / `referral_rewards.referrer_id, referred_id`) と運営者・作成者・承認者の列 (`created_by` / `changed_by` / `actor_id` / `assignee_id` / `ack_by` など) は `ON DELETE SET NULL` (列は NULL を許す。`coupon_redemptions` は匿名化の日時 `anonymized_at` を持つ)。`auth.users` を指す外部キーを足すときは、必ず `ON DELETE` を書く (CLAUDE.md の「退会」)。`gdpr_deletion_requests.user_id` の外部キーは #1562 (`20261016190000`) で外した (削除の実行記録は利用者の行を指さない)。
 
 ## 2. 関連要件
 
@@ -1000,7 +1000,7 @@ CREATE POLICY "email_blacklist_admin" ON email_blacklist
 > 下の `cooling_until` (30 日の待機) と `cancelled_at` は、待機期間を前提にした旧設計の列。
 > **#1562**: このテーブルは削除の実行記録に当てた (cross/08-legal-compliance.md §16.4)。列の追加 (`subject_hash` / `executor_type` /
 > `reason` / `request_id`)・`user_id` の外部キーを外したこと・利用者向けのポリシーを外したこと (service_role だけ) は
-> migration `20261015190000_deletion_record_and_invite_email_hash.sql` が正。下の DDL とポリシーは旧設計の記述。
+> migration `20261016190000_deletion_record_and_invite_email_hash.sql` が正。下の DDL とポリシーは旧設計の記述。
 
 ```sql
 CREATE TABLE gdpr_deletion_requests (

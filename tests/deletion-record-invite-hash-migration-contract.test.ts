@@ -1,5 +1,5 @@
 /**
- * #1562 migration 20261015190000_deletion_record_and_invite_email_hash.sql (と、そのロールバック) と、退会の本体の
+ * #1562 migration 20261016190000_deletion_record_and_invite_email_hash.sql (と、そのロールバック) と、退会の本体の
  * ソース走査 contract テスト (DB は使わない)
  *
  * 本物の DB での振る舞いは tests/integration/security/deletion-record-and-invite-email-hash.test.ts・account-deletion.test.ts・
@@ -19,9 +19,9 @@ import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase/migrations');
-const MIGRATION_NAME = '20261015190000_deletion_record_and_invite_email_hash.sql';
+const MIGRATION_NAME = '20261016190000_deletion_record_and_invite_email_hash.sql';
 const CAP_MIGRATION_NAME = '20261008100000_membership_daily_send_cap.sql';
-const ROLLBACK = 'supabase/rollbacks/20261015190000_deletion_record_and_invite_email_hash.down.sql';
+const ROLLBACK = 'supabase/rollbacks/20261016190000_deletion_record_and_invite_email_hash.down.sql';
 const ACCOUNT_DELETION = 'src/lib/account-deletion.ts';
 
 /** `--` から行末までのコメントを除く (この migration では、文字列リテラルの中に `--` は出てこない) */

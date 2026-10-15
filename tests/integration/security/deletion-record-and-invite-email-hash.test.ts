@@ -1,7 +1,7 @@
 /**
  * #1562 削除の実行記録 (gdpr_deletion_requests) と、招待の監査 (membership_audit) の招待先アドレスのハッシュ化 (実 DB)
  *
- * migration 20261015190000_deletion_record_and_invite_email_hash.sql が入れたものを確かめる:
+ * migration 20261016190000_deletion_record_and_invite_email_hash.sql が入れたものを確かめる:
  *   A. ハッシュ: pii_hmac_hex は Vault の鍵 pii_hmac_key を使う HMAC-SHA256 (16 進 64 文字)。同じ入力は同じ値、用途 (domain) が違えば別の値。
  *      membership_invite_email_hash は大文字小文字と前後の空白を揃えてからハッシュにする。空・NULL は NULL
  *   B. membership_audit: metadata に生のアドレス (email) を書いても、保存されるのは email_hash だけ (INSERT / UPDATE とも)。
