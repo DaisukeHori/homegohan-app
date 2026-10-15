@@ -886,9 +886,10 @@ export function formatBackupCode(normalized: string): string {
 ```ts
 // tsc:skip (backup-codes.ts の続き。型は database.types.ts の再生成後に Tables<'operator_mfa_backup_codes'> を使う)
 // 下の 4 関数とも、PostgREST の error を受けたら throw new Error('operator_mfa_backup_codes の読み書きに失敗しました', { cause: error })
-// (固定の文。PostgREST の文を message に入れない §23 N-5)。route の扱いは §17.2: 監査の起点より前の呼び出し (status・reset の数の読み取り・
-// recover の消費) は catch で internalError(ROUTE_NAME, error, { userId }) にして 500 を返す。起点の後の呼び出し (登録の verify と再発行の
-// issueBackupCodes・解除と回復の deleteBackupCodes) は catch で手順を止め、failed_step を持って監査を書いてから応答する (§14.3〜§14.6)。
+// (固定の文。PostgREST の文を message に入れない §23 N-5)。route の扱いは §17.2: 監査を書かない route (status の countRemainingBackupCodes) と
+// 監査の起点より前の呼び出し (recover の consumeBackupCode) は catch で internalError(ROUTE_NAME, error, { userId }) にして 500 を返す。
+// 起点の後の呼び出し (登録の verify と再発行の issueBackupCodes・解除と回復の deleteBackupCodes) は catch で手順を止め、failed_step を持って
+// 監査を書いてから応答する (§14.3〜§14.6)。reset (fail-closed) の countRemainingBackupCodes / deleteBackupCodes は catch で 500 (§14.7)。
 // 0 行は失敗ではない (consumeBackupCode は false・countRemainingBackupCodes は 0・deleteBackupCodes は 0 を返す) §13.6
 export interface BackupCodeStoreClient { from(table: 'operator_mfa_backup_codes'): PostgrestQueryBuilder<...> }
 
@@ -2548,7 +2549,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `14 ファイルのどれにも素の requireRole( が無く、redirect('/login') の文字列も残っていない`
 - `表の 14 ファイルが全部存在し、§20 の PAGE_ROOTS の中で requireRoleForPage を呼ぶファイルの集合 ((support) の server layout を除く) と表のファイルの集合が同じ (表の漏れ・余りを見張る)`
 
-`tests/mfa-pages-browser.test.tsx` (A。B と C で it を足す。`@/lib/auth/mfa/client` の関数を差し替え、`window.ReactNativeWebView` の無いブラウザで描く。§15.2 の表を見張る)
+`tests/mfa-pages-browser.test.tsx` (A。B と C で it を足す。`@/lib/auth/mfa/client` の通信の関数を差し替え (`vi.mock` の factory で `importOriginal` の元のモジュールを広げ、`getMfaStatus` などの通信の関数だけを `vi.fn` にする。`mfaErrorMessage`・`MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE`・定数は本物を使う)、`window.ReactNativeWebView` の無いブラウザで描く。§15.2 の表を見張る)
 - `4 画面とも、関数の 401 の失敗で window.location.assign('/login?next=' + encodeURIComponent(この画面の pathname + search)) へ移る`
 - `状態: 未登録なら [登録する] が /settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa へ移る。403 PERM_DENIED は運営ロールだけの文言`
 - `登録: status の enrolled が true なら /settings/security/mfa へ戻し startMfaEnrollment を呼ばない。enroll の 409 AUTH_2FA_ALREADY_ENROLLED も /settings/security/mfa へ。effect が 2 回動いても startMfaEnrollment は 1 回`
@@ -2610,7 +2611,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `local-ci-slot.test.ts` (変更・B。`scripts/supabase-local.sh` が組み立てる config.toml を既に読んでいる describe に足す): `枠 0 と枠 1 以上の config.toml は [auth.mfa.totp] の enroll_enabled と verify_enabled が true (運営の MFA の結合テストの前提。cross/12 §22.3)`
 - `src/__tests__/api/null-character-routes.test.ts` (変更・A と C): 新しい it は足さない。EXCLUDED に 3 行を足す (§23 N-28) と、既存の「本文を読む handler は、表か EXCLUDED のどちらかにちょうど 1 回載っている」が新しい route を数えて緑のまま
 - `admin-mutation-audit-coverage-1571.test.ts` (変更・C): 新しい it は足さない。`EXPECTED` に reset の 1 行を足す (§23 N-38) と、既存の (a)「変更系の handler の一覧が表 (EXPECTED) と一致し、「audited」はすべて recordAdminAudit に届く」(と、その中の「外したものが実は記録している」の検査)・「外したものには理由がある」と (b)「src のすべての呼び出しが request を渡している」が緑のまま。自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外なので、表に行は要らない
-- `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` (変えない・A と C): `src/app/api` の全 route を列挙して未同意で通す `it.each` が、新しい route を自動で数える (`/api/auth/mfa/*` の 6 本は許可リストの `/api/auth` の prefix で 200、reset は 403 `LEGAL_CONSENT_REQUIRED`)。許可リストのスナップショットと「各行は実在する route に当たる」は変わらない (§23 N-39)
+- `lib/supabase/__tests__/middleware-legal-consent-api.test.ts` (変えない・A・B・C で走らせて確認): `src/app/api` の全 route を列挙して未同意で通す `it.each` が、新しい route を自動で数える (`/api/auth/mfa/*` の 6 本は許可リストの `/api/auth` の prefix で 200、reset は 403 `LEGAL_CONSENT_REQUIRED`)。許可リストのスナップショットと「各行は実在する route に当たる」は変わらない (§23 N-39)
 - `operator-mfa-mobile-roles-sync.test.ts` (D): `apps/mobile/src/lib/mfa-gate.ts` の `MOBILE_MFA_REQUIRED_ROLES` と `src/lib/auth/mfa/policy.ts` の `MFA_REQUIRED_ROLES` が同じ集合 (`tests/account-deletion-blocked-message.test.ts` と同じく `../apps/mobile/src/lib/...` の相対パスで両方を import する)。`MOBILE_TOTP_CODE_PATTERN` と `TOTP_CODE_PATTERN` の `source` が同じ
 
 ### 21.4 結合 (`tests/integration/security/operator-mfa.test.ts`。B。ローカル Supabase + Next)
@@ -3041,7 +3042,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 |---|---|---|---|---|---|
 | N-1 | `tests/database-types-migrations-contract.test.ts` | `operator_mfa_backup_codes` | migration の CREATE TABLE が型ファイルに無い | ローカルで `gen types` を取り直し 2 ファイルに写す (冒頭の手順) | A |
 | N-2 | `tests/env-source-scan.test.ts`・`src/__tests__/lib/env.test.ts`・`tests/check-env-script.test.ts` | `OPERATOR_MFA_ENFORCE_FROM`・`process.env.OPERATOR_MFA_ENFORCE_FROM` | 一覧に無い変数を読む / `.env.example` に無い / readOnlyBy 以外が読む | `SERVER_ENV_VARS` に `readOnlyBy: 'src/lib/auth/mfa/policy.ts'` で登録・`.env.example` に説明つきで追加・値を読むのは policy.ts だけ | A |
-| N-3 | `tests/rate-limit-single-implementation.test.ts` | `@upstash/ratelimit` | 新 route が自前の制限を持つと赤 | `checkRateLimit(user.id, 'auth-mfa-verify' | 'auth-mfa-recover')` だけを使う | A/B |
+| N-3 | `tests/rate-limit-single-implementation.test.ts` | `@upstash/ratelimit` | 新 route が自前の制限を持つと赤 | `checkRateLimit(user.id, 'auth-mfa-verify')`・`checkRateLimit(user.id, 'auth-mfa-recover')` だけを使う | A/B |
 | N-4 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` (`@supabase/supabase-js`)・`SUPABASE_SERVICE_ROLE_KEY` | 自前で service_role の client を作ると赤 | `getSupabaseAdmin()` だけを使う (`src/lib/auth/mfa/backup-codes.ts` も route から受け取る) | A/B/C |
 | N-5 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message`・`internalError` | 本文に Supabase の生の文を入れると赤 | 4xx は固定の文、5xx は `internalError`。`AuthError` / `ForbiddenError` の message だけ本文に出してよい。src/lib の新しいファイルも結果のオブジェクトに `.message` / `.details` / `.hint` を入れない: `backup-codes.ts` の 4 関数は固定の文の `Error` を投げて PostgREST の error は `cause` に入れる (§12.3)・`recordMfaAudit` は `recordAdminAudit` の戻りをそのまま返す (新しいオブジェクトを作らない §17.1)・`client.ts` は本文の `code` だけを読む (§15.1)。`lib-raw-error-message-scan` の `ALLOWED` は増やさない | A/B/C |
 | N-6 | `tests/next15-async-request-api-scan.test.ts` | `createClient()`・`headers()`・`params` | await 無し / `params` が Promise でないと赤 | `await createClient()`・`(await headers()).get('authorization')`・`factors/[id]` と `admins/[id]` は `params: Promise<{ id: string }>` | A/B/C |
