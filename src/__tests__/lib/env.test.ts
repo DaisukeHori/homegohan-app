@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・DSR_RESPONSE_DUE_DAYS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・DSR_RESPONSE_DUE_DAYS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -438,6 +438,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],
       // #1463 献立の単発追加の date_offset_days の上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS', 'src/lib/menu-plan-date-offset.ts'],
+      // #1176 運営ロールの MFA の登録の猶予の終わり。形と実在する日時の確認 (不正なら猶予なしにして warn) を 1 か所に置く
+      ['OPERATOR_MFA_ENFORCE_FROM', 'src/lib/auth/mfa/policy.ts'],
       // #1157 エラー急増の運用メール。未設定・不正な値の扱い (ログと応答の status) を cron の route 1 か所に置く
       // #1493 ブラウザ・端末から届いた error の急増の通知のしきい値 (サーバーとは別に数える)
       ['OPS_ALERT_CLIENT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
@@ -469,6 +471,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('LEGAL_CONSENT_ENFORCE');
       // @ts-expect-error LEGAL_CONSENT_NOTICE も同じ
       getOptionalEnv('LEGAL_CONSENT_NOTICE');
+      // @ts-expect-error OPERATOR_MFA_ENFORCE_FROM の値を読むのは src/lib/auth/mfa/policy.ts の readMfaEnforceFromEnv だけ
+      getOptionalEnv('OPERATOR_MFA_ENFORCE_FROM');
       // @ts-expect-error OPS_ALERT_EMAIL の値を読むのは cron の route (src/app/api/cron/app-log-alerts/route.ts) だけ
       getOptionalEnv('OPS_ALERT_EMAIL');
       // @ts-expect-error OPS_ALERT_ERROR_THRESHOLD も同じ

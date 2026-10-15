@@ -25,6 +25,8 @@ import {
   saveResponseAsDownload,
   signOutAfterAccountDeletion,
 } from "@/lib/account-self-service";
+import { getMfaStatus } from "@/lib/auth/mfa/client";
+import { useInNativeWebView } from "@/components/auth/mfa/useInNativeWebView";
 
 type WeekStartDay = 'sunday' | 'monday';
 
@@ -68,6 +70,21 @@ export default function SettingsPage() {
     notifications: true,
     autoAnalyze: true
   });
+
+  // 運営ロールの二段階認証 (#1176。docs/design/cross/12-operator-mfa.md §15.2): ブラウザで status が 200 のときだけ入口の行を出す。
+  // アプリの WebView の中では status を呼ばず、行も出さない (MFA の設定はブラウザだけ §16.4)。失敗 (401 / 403 / 500 / 通信) でも画面は移らない
+  const mfaPlace = useInNativeWebView();
+  const [showMfaEntry, setShowMfaEntry] = useState(false);
+  useEffect(() => {
+    if (mfaPlace !== 'browser') return;
+    let cancelled = false;
+    void getMfaStatus().then((result) => {
+      if (!cancelled && result.ok) setShowMfaEntry(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [mfaPlace]);
 
   const [weekStartDay, setWeekStartDay] = useState<WeekStartDay>('monday');
   const [savingWeekStart, setSavingWeekStart] = useState(false);
@@ -383,6 +400,25 @@ export default function SettingsPage() {
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
+
+             {/* 運営ロールの二段階認証 (#1176)。ブラウザで GET /api/auth/mfa/status が 200 のときだけ出す */}
+             {showMfaEntry ? (
+               <button
+                 type="button"
+                 data-testid="settings-mfa-link"
+                 onClick={() => router.push('/settings/security/mfa')}
+                 className="w-full flex items-center justify-between p-4 border-t border-gray-50 hover:bg-gray-50 transition-colors"
+               >
+                 <div className="flex items-center gap-3">
+                   <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-600" aria-hidden="true">🛡️</div>
+                   <div className="text-left">
+                     <span className="font-bold text-gray-700">セキュリティ (二段階認証)</span>
+                     <p className="text-xs text-gray-400">認証アプリとバックアップコード</p>
+                   </div>
+                 </div>
+                 <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+               </button>
+             ) : null}
 
           </div>
         </div>
