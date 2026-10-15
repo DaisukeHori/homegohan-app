@@ -157,6 +157,28 @@ describe('fetchChallengeRanking', () => {
     expect(JSON.stringify(view)).not.toContain('花子');
   });
 
+  it.each(['Guest', ' Guest ', '   '])(
+    '表示名を出す設定でも、ニックネームが %j (仮置き・空白だけ) の人は「参加者」 (#1649)',
+    async (nickname) => {
+      const rpc = rpcReturning([{ rank: 1, current_value: 10, is_me: false, nickname, ranked_count: 1 }]);
+
+      const view = await fetchChallengeRanking({ rpc } as never, { challengeId: CHALLENGE_ID, userId: USER_ID, showNames: true });
+
+      expect(view.entries.map((e) => e.label)).toEqual(['参加者']);
+    },
+  );
+
+  it.each([
+    ['guest', 'guest'],
+    [' 太郎 ', '太郎'],
+  ])('表示名を出す設定で、ニックネームが %j (本人が付けた名前) ならその名前 (#1649)', async (nickname, expected) => {
+    const rpc = rpcReturning([{ rank: 1, current_value: 10, is_me: false, nickname, ranked_count: 1 }]);
+
+    const view = await fetchChallengeRanking({ rpc } as never, { challengeId: CHALLENGE_ID, userId: USER_ID, showNames: true });
+
+    expect(view.entries.map((e) => e.label)).toEqual([expected]);
+  });
+
   it('上位の人数を指定できる', async () => {
     const rpc = rpcReturning([]);
 

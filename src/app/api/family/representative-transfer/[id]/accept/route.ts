@@ -8,6 +8,7 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderFamilyTransferCompletedEmail } from '@/lib/emails/membership/family-transfer-completed';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 // accept_family_representative_transfer が RAISE するコードごとの、利用者向けの文言。
 // RPC の生メッセージ (エラーコード文字列) は画面に出さない
@@ -78,7 +79,8 @@ export async function POST(
       supabase.from('user_profiles').select('nickname').eq('id', user.id).single(),
       resolveAuthEmails([oldRepId], { logger: log }),
     ]);
-    const newRepName = newRepProfile?.nickname || '新代表者';
+    // 名前が無い (空・空白だけ・仮置きの 'Guest') ときは既定の呼称 (#1649)
+    const newRepName = normalizeProfileName(newRepProfile?.nickname) ?? '新代表者';
 
     const envelopes: EmailEnvelope[] = [];
     const oldRepEmail = oldRepId ? oldRepEmails.get(oldRepId) : undefined;

@@ -21,6 +21,7 @@ import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { checkInviteEmailLimits, inviteThrottleFailureFromRpcError } from '@/lib/membership/invite-throttle';
 import { buildOrgInviteUrl } from '@/lib/membership/urls';
 import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 export type OrgInviteRole = 'admin' | 'member';
 
@@ -172,7 +173,8 @@ export async function createOrgInviteWithEmail(params: CreateOrgInviteParams): P
     const emailVars: InviteEmailVars = {
       display_name: displayName ?? null,
       email_address: email,
-      inviter_name: inviter.nickname ?? inviter.email?.split('@')[0] ?? '招待者',
+      // 招待者の名前が無い (空・空白だけ・仮置きの 'Guest') ときは、今の既定どおりメールアドレスの @ の前 → '招待者' (#1649)
+      inviter_name: normalizeProfileName(inviter.nickname) ?? inviter.email?.split('@')[0] ?? '招待者',
       scope_name: orgData?.name ?? '組織',
       invite_url: inviteUrl,
       // 'YYYY-MM-DD'。期限の時刻 (timestamptz) が属する JST の暦日 (#1433)。

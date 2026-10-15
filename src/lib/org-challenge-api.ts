@@ -11,6 +11,7 @@ import { type SupabaseClient } from '@supabase/supabase-js';
 import { NextResponse } from 'next/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { normalizeProfileName } from '@/lib/profile-name';
 import {
   RANKING_ENTRY_LIMIT,
   RANKING_OTHER_LABEL,
@@ -173,7 +174,8 @@ export async function fetchChallengeRanking(
 
   const rows = (data ?? []) as RankingRpcRow[];
   const entries = rows.map((row): RankingEntry => {
-    const nickname = row.nickname?.trim();
+    // 名前が無い (空・空白だけ・仮置きの 'Guest') 参加者は、名前を出す設定でも「参加者」のラベルにする (#1649)
+    const nickname = normalizeProfileName(row.nickname);
     return {
       rank: toNumber(row.rank) ?? 0,
       value: toNumber(row.current_value) ?? 0,
