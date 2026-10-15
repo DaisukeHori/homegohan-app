@@ -17,6 +17,7 @@ import {
   isLegalConsentNoticeEnabled,
   resolveLegalConsent,
 } from '@/lib/legal-consent'
+import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalConsentApiDecision } from '@homegohan/shared'
 // Edge Runtime (middleware) で動くので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabasePublicConfig } from '@/lib/env-required'
 import { internalError } from '@/lib/api/errors'
@@ -195,24 +196,32 @@ export async function updateSession(request: NextRequest) {
     // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
     // #1148: メンテナンスモードの判定にも、ここで読んだユーザー ID とロールを使う (運営ロールは通す)
+    // #1442: 同意ゲートも、ここで読んだ同じプロフィールの行で判定する (クエリは増やさない)。
+    //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED)。
+    //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・問い合わせ・ログ・
+    //   状態の窓口・利用者のセッションを持たない経路) だけ。役割による例外は無い。
+    //   プロフィールを読めなかったとき (profileError) と同意の列が無い DB (legalColumnsAvailable = false) は、凍結と同じく素通り (#348 の fail-open)。
+    //   画面の分岐と同じ fetchMiddlewareProfile を使い、列が無い DB では列を除いた select でやり直す。
     let apiUserId: string | undefined
     let apiRoles: string[] | null = null
+    let apiProfile: MiddlewareProfile | null = null
+    let apiProfileReadable = false
+    let apiLegalColumnsAvailable = false
     try {
       const { data: { user: apiUser }, error: apiUserError } = await supabase.auth.getUser()
 
       if (!apiUserError && apiUser) {
         apiUserId = apiUser.id
-        const { data: apiProfile, error: apiProfileError } = await supabase
-          .from('user_profiles')
-          .select('roles, frozen_at, unban_at')
-          .eq('id', apiUser.id)
-          .maybeSingle()
+        const { profile, profileError, legalColumnsAvailable } = await fetchMiddlewareProfile(supabase, apiUser.id)
 
-        if (!apiProfileError) {
-          apiRoles = Array.isArray(apiProfile?.roles) ? apiProfile.roles : []
+        if (!profileError) {
+          apiProfile = profile
+          apiProfileReadable = true
+          apiLegalColumnsAvailable = legalColumnsAvailable
+          apiRoles = Array.isArray(profile?.roles) ? profile.roles : []
           const apiFrozen = isAccountFrozen({
-            frozenAt: apiProfile?.frozen_at ?? null,
-            unbanAt: apiProfile?.unban_at ?? null,
+            frozenAt: profile?.frozen_at ?? null,
+            unbanAt: profile?.unban_at ?? null,
           })
 
           // #1445: 退会と個人データの書き出し (FROZEN_ALLOWED_API_PATHS) だけは、凍結中でも止めない。
@@ -235,6 +244,24 @@ export async function updateSession(request: NextRequest) {
     // ロールを確かめられなかった (プロフィールを読めなかった) ときは、運営かどうか分からないので、運営ではない人として扱う
     if (!maintenanceExempt && !isOperatorRoles(apiRoles) && (await isMaintenanceFlagOn(apiUserId, apiRoles))) {
       return withSessionCookies(supabaseResponse, maintenanceApiResponse())
+    }
+
+    // #1442: 同意の判定 (凍結・メンテナンスの後)。利用者が確定し、プロフィールを読め、同意の列がある DB のときだけ
+    if (apiUserId && apiProfileReadable && apiLegalColumnsAvailable) {
+      const legalDecision = resolveLegalConsentApiDecision({
+        pathname: request.nextUrl.pathname,
+        accepted: apiProfile,
+        enforce: isLegalConsentEnforced(),
+      })
+      if (legalDecision === 'deny') {
+        return withSessionCookies(
+          supabaseResponse,
+          NextResponse.json(legalConsentRequiredBody(), {
+            status: LEGAL_CONSENT_REQUIRED_STATUS,
+            headers: { 'Cache-Control': 'private, no-store' },
+          }),
+        )
+      }
     }
 
     return supabaseResponse
@@ -364,7 +391,7 @@ export async function updateSession(request: NextRequest) {
       //   - LEGAL_CONSENT_ENFORCE=on のとき: 同意画面 /legal-consent へ回す (戻り先は next)
       //   - LEGAL_CONSENT_NOTICE=on のとき (強制していない間): 通す。画面の上に「同意のお願い」のお知らせを出すだけ
       //   - どちらも on でない (既定): 何もしない。お知らせも出さず、誰も止めない
-      // /api/* はこの分岐の手前 (上の isApiRoute) で返っているので対象外。ほかの対象外 (規約・同意画面・認証の途中・
+      // /api/* はこの分岐の手前 (上の isApiRoute) で返っているので対象外 (API の同意ゲートは上の /api の分岐。#1442)。ほかの対象外 (規約・同意画面・認証の途中・
       // 問い合わせ・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
       // リダイレクトは画面の取得 (GET / HEAD) にだけ掛ける (POST を 307 で同意画面へ回しても、受け取れず失敗するだけのため)。
       // オンボーディングの差し戻し (下) より先に見る: 同意の前に初期設定 (健康情報の入力) へ進ませない。
