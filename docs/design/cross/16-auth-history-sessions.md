@@ -1,9 +1,9 @@
 # ログイン履歴・不審なログインの通知・セッションの一覧と失効・パスワードの再利用の防止
 
-> 版: v1.4 (2026-10-16 設計ゲート R3 の修正) / Issue: #1190 (`[セキュリティ] ログイン履歴・不審ログイン通知が皆無`)・#1189 (`[セキュリティ] アクティブセッション/デバイス一覧・個別失効UIが存在しない`)・#1198 (`[運用] password_historyテーブルはあるがパスワード再利用防止ロジックが未実装のstub`)
+> 版: v1.5 (2026-10-16 設計ゲート R4 の修正) / Issue: #1190 (`[セキュリティ] ログイン履歴・不審ログイン通知が皆無`)・#1189 (`[セキュリティ] アクティブセッション/デバイス一覧・個別失効UIが存在しない`)・#1198 (`[運用] password_historyテーブルはあるがパスワード再利用防止ロジックが未実装のstub`)
 > 位置づけ: `cross/01-auth-session.md` §3.2 (`INSERT user_sessions_metadata`)・§4.3〜4.4 (セッションの一覧・個別失効・ログアウト)・§7.1 (過去履歴禁止の世代数)・§9.1 (リセット時の `password_history` 照合) を、実装できる粒度に展開した正典。§4.3 の「同時 5 端末」と §4.4 の `supabaseAdmin.auth.admin.signOut(sessionId)` は本書が改める (§23)。DDL の正典 `operator/01-data-model.md` §3.23 / §3.25 は本書 §11 が改定する (§23)。
 > ローンチに要るものとしてこの群を作る (オーナーの選択 2026-10-15・選択式)。前提: ローンチ前で利用者ゼロ (正しい形で作る)。
-> 改定履歴: v1.0 2026-10-15 初版。v1.1 2026-10-15 R1 の修正: ① パスワードの更新と「他の端末をログアウト」を、サーバーの client の `auth.updateUser` / `auth.signOut` から、本人の access token で GoTrue を呼ぶ形 (`updatePasswordWithAccessToken`・`signOutOtherSessions`) に改めた (Bearer だけのモバイルの要求ではサーバーの client にセッションが無い §3) ② 不審の判定の比べる相手 (prior) を「同じ利用者の前の行すべて」に改め、履歴が保持期間で消えた利用者を `history_expired` として知らせる (§10.1・§12.3) ③ 再設定の認可の `amr` に `otp` (token_hash / implicit の経路) を加えた (§12.4) ④ 番兵 (§22 N-24・N-33・N-34) と触るファイル (§21) を閉じた。 v1.2 2026-10-15 周 2 の網羅性の反映: 全パターン表に local のログアウトと凍結の行 (§8 の行 21・22)、Web の route の文脈の記録の例外の握り (§13.5)、テスト (§20) と触るファイル (§21.3・段 A の列挙 §0.2) の漏れ、番兵 N-19 の行数 (SECURITY INVOKER の 1 本を除く 8 本) と N-35〜N-38、§23 の期日の段の分け方。 v1.3 2026-10-15 R2 の修正: ① 通知の取り置きと戻しを DB の関数 `claim_login_alerts` (`FOR UPDATE SKIP LOCKED`)・`release_login_alert` (§11.4) にした (PostgREST では原子的に書けない) ② worker の行 `LoginAlertRow` に `ip_address` を足し、cron の route の `send` の組み立てを逐語にした (§13.3・§14.8) ③ モバイルの再設定の画面の、ログアウトに渡す利用者 ID とエラーの文言 (§16・§22 N-28) ④ 端末名の登録の重複よけを利用者 ID から access token に改めた (ログインし直しでも登録する §16) ⑤ 段 B と段 C を直列にした (同じファイルを触る §0.2) ⑥ 番兵 N-39 (`tests/jst-today-source-scan.test.ts` の規則 G) ⑦ プロフィールの行が最初のログインより後に作られる新規の利用者の `last_login_at` / `login_count` を、行を作るときのトリガー `user_profiles_fill_login_stats` で入れる (§11.3)。 v1.4 2026-10-16 R3 の修正: ① 利用者の API 7 本の認証を `requireUser` (プロフィールの行が無いと 401) から、行が無くても通る `requireSessionUser` (§12.4) に改めた (本番の 195 人のうち 130 人は行が無く、再設定と端末名の登録が後退していた §3) ② 再設定 (`p_current_password` が NULL) は、パスワードの無い利用者 (Google / Apple だけ) と比べられない形のハッシュの利用者を止めない (§11.5。いまの `updateUser` と同じ。S-28) ③ 状態遷移表に、終わった行 (ended) の通知の取り置き・完了・戻しを足し、終わったログインにも知らせると決めた (§10・S-29) ④ メールの「端末」は UA から決まる決まった言葉だけにし、利用者が書ける端末名 (`device_name`) はメールに載せず一覧に添えるだけ・使える文字を絞った (§7.1・§12.5・§13.4・§18・S-31) ⑤ 段 D の閲覧の監査は利用者の client で記録する (§14.9) ⑥ R-13 の結合テストを、トリガーの本体を必ず失敗させる形にした (§20.3)。
+> 改定履歴: v1.0 2026-10-15 初版。v1.1 2026-10-15 R1 の修正: ① パスワードの更新と「他の端末をログアウト」を、サーバーの client の `auth.updateUser` / `auth.signOut` から、本人の access token で GoTrue を呼ぶ形 (`updatePasswordWithAccessToken`・`signOutOtherSessions`) に改めた (Bearer だけのモバイルの要求ではサーバーの client にセッションが無い §3) ② 不審の判定の比べる相手 (prior) を「同じ利用者の前の行すべて」に改め、履歴が保持期間で消えた利用者を `history_expired` として知らせる (§10.1・§12.3) ③ 再設定の認可の `amr` に `otp` (token_hash / implicit の経路) を加えた (§12.4) ④ 番兵 (§22 N-24・N-33・N-34) と触るファイル (§21) を閉じた。 v1.2 2026-10-15 周 2 の網羅性の反映: 全パターン表に local のログアウトと凍結の行 (§8 の行 21・22)、Web の route の文脈の記録の例外の握り (§13.5)、テスト (§20) と触るファイル (§21.3・段 A の列挙 §0.2) の漏れ、番兵 N-19 の行数 (SECURITY INVOKER の 1 本を除く 8 本) と N-35〜N-38、§23 の期日の段の分け方。 v1.3 2026-10-15 R2 の修正: ① 通知の取り置きと戻しを DB の関数 `claim_login_alerts` (`FOR UPDATE SKIP LOCKED`)・`release_login_alert` (§11.4) にした (PostgREST では原子的に書けない) ② worker の行 `LoginAlertRow` に `ip_address` を足し、cron の route の `send` の組み立てを逐語にした (§13.3・§14.8) ③ モバイルの再設定の画面の、ログアウトに渡す利用者 ID とエラーの文言 (§16・§22 N-28) ④ 端末名の登録の重複よけを利用者 ID から access token に改めた (ログインし直しでも登録する §16) ⑤ 段 B と段 C を直列にした (同じファイルを触る §0.2) ⑥ 番兵 N-39 (`tests/jst-today-source-scan.test.ts` の規則 G) ⑦ プロフィールの行が最初のログインより後に作られる新規の利用者の `last_login_at` / `login_count` を、行を作るときのトリガー `user_profiles_fill_login_stats` で入れる (§11.3)。 v1.4 2026-10-16 R3 の修正: ① 利用者の API 7 本の認証を `requireUser` (プロフィールの行が無いと 401) から、行が無くても通る `requireSessionUser` (§12.4) に改めた (本番の 195 人のうち 130 人は行が無く、再設定と端末名の登録が後退していた §3) ② 再設定 (`p_current_password` が NULL) は、パスワードの無い利用者 (Google / Apple だけ) と比べられない形のハッシュの利用者を止めない (§11.5。いまの `updateUser` と同じ。S-28) ③ 状態遷移表に、終わった行 (ended) の通知の取り置き・完了・戻しを足し、終わったログインにも知らせると決めた (§10・S-29) ④ メールの「端末」は UA から決まる決まった言葉だけにし、利用者が書ける端末名 (`device_name`) はメールに載せず一覧に添えるだけ・使える文字を絞った (§7.1・§12.5・§13.4・§18・S-31) ⑤ 段 D の閲覧の監査は利用者の client で記録する (§14.9) ⑥ R-13 の結合テストを、トリガーの本体を必ず失敗させる形にした (§20.3)。 v1.5 2026-10-16 R4 の修正: ① 端末の種類が分からないログイン (`other/server`・`other/other`。一覧・メールでは「不明な端末」) を既知にせず、新しい端末として知らせる (Node の既定の UA `node` で GoTrue を直接呼ぶ攻撃者 S-4 に通知が届かなかった。§10.1・§12.3・S-32) ② 照合と再設定の認可が効くのはアプリの経路 (本書の API) だけと改め、盗んだセッションで GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路 (S-33) を残る穴として書いた。GoTrue の設定 `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` を ON にできるよう、変更の API は `current_password` も GoTrue に渡す (§7.1・§13.2・§13.7・§24・Q-18) ③ `auth` の表のトリガーは表の所有者 (`supabase_auth_admin`) でないと DROP できないので、migration は同じ名前が無いときだけ作り、`.down.sql` は本体を「何もしない」に置き換えて残す (§3・§11.3・§11.7) ④ R-13 の結合テストの refresh・ログアウトの it を、行がある状態で制約を足す形に分けた (§20.3)。§10 にトリガーの失敗の行を足した。
 
 ---
 
@@ -45,9 +45,9 @@
 ## 1. 目的・スコープ
 
 1. **ログインの記録** (#1190): どの経路 (Web の `/api/auth/login`・Web の OAuth / メールのリンク・モバイルの直接の `signInWithPassword`・anon キーで GoTrue を直接呼ぶ攻撃者) でも漏れなく記録する。記録の入口は、呼ぶ側が選べない場所 = **`auth.sessions` への INSERT のトリガー** (§7.1)。1 行 = 1 ログイン (= 1 セッション)。終了 (ログアウト・失効・パスワード変更による失効・放置の終了) は DELETE のトリガーで同じ行に刻む。
-2. **不審なログインの通知** (#1190): 新しい端末の種類 (OS × ブラウザ / アプリ) または新しい国からのログインを、本人のメールアドレスに知らせる。判定は Vercel Cron (毎分) の worker が純関数 `decideLoginAlert` で行う。IP の範囲が新しいことは記録・表示するが、それだけでは知らせない (§7.1)。
+2. **不審なログインの通知** (#1190): 新しい端末の種類 (OS × ブラウザ / アプリ) または新しい国からのログインを、本人のメールアドレスに知らせる。端末の種類が分からないログイン (Node などのサーバーの UA・空の UA。「不明な端末」) は、前にも同じことがあっても新しい端末として知らせる (§10.1)。判定は Vercel Cron (毎分) の worker が純関数 `decideLoginAlert` で行う。IP の範囲が新しいことは記録・表示するが、それだけでは知らせない (§7.1)。
 3. **セッションの一覧と個別の失効** (#1189): Web とモバイルの設定から、ログイン中の端末を一覧し、1 つずつ失効させる。失効 = SECURITY DEFINER の RPC `auth_session_revoke` が `auth.sessions` の行を消す (GoTrue は、行の無い session_id の JWT を `session_not_found` で断り、refresh も失敗する §3)。
-4. **パスワードの再利用の防止** (#1198): `password_history` への記録は **`auth.users.encrypted_password` の変更のトリガー** (どの経路でも漏れない)。照合は、変更・再設定を受ける **サーバーの API** が、DB の `auth_password_check` (pgcrypto の `crypt()` で bcrypt を比べる) で行う。世代数はロール別 (cross/01 §7.1: 個人 3 / 組織 5 / 運営 10)。
+4. **パスワードの再利用の防止** (#1198): `password_history` への記録は **`auth.users.encrypted_password` の変更のトリガー** (どの経路でも漏れない)。照合は、変更・再設定を受ける **サーバーの API** が、DB の `auth_password_check` (pgcrypto の `crypt()` で bcrypt を比べる) で行う。世代数はロール別 (cross/01 §7.1: 個人 3 / 組織 5 / 運営 10)。照合と再設定の認可が効くのは本書の API を通る経路 (Web とモバイルの画面はすべてこれを通る) だけで、GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路は照合を通らない (記録はトリガーで残る。§7.1・§24・S-33)。
 5. **運営の画面** (#1190): `/admin/users/{id}` に直近のログイン履歴の節を足す。`user_profiles.last_login_at` / `login_count` (いま誰も書いていない) を 1 のトリガーが供給する (プロフィールの行が最初のログインより後に作られる新規の利用者は、行を作るときのトリガーがそれまでの記録から入れる §11.3)。
 
 ## 2. 関連要件・正典
@@ -66,13 +66,15 @@
 | `docs/design/cross/13a-legal-consent-api-server.md` (マージ済みの設計・未実装) | §6.4 の許可リスト `LEGAL_CONSENT_EXEMPT_API_PATHS` | `/api/auth` (prefix・`auth_flow`) と `/api/cron` (prefix・`no_user_session`) が許可リストにあるので、本書の `/api/auth/sessions*`・`/api/auth/login-history`・`/api/auth/password/*`・`/api/cron/login-alerts` は同意のゲートで止まらない (未同意でも端末の失効・パスワードの変更ができる)。`/api/admin/users/{id}/login-history` は 13a の扱いのまま。本書から 13a は変えない |
 | `docs/design/cross/12-operator-mfa.md` (未マージ) | §3.1・§13.2 | `auth.getClaims` の使い方が同じ。識別子は共有しない (§25 Q-5) |
 
-## 3. 前提の事実 (origin/main 5a48abc9・本番 DB の読み取り 2026-10-15。R1 で origin/main 61c59321、R2・R3 で bffe1b6f と突き合わせ、本書が参照する識別子はすべて残っている。R3 で本番 DB を 2026-10-16 に読み直した)
+## 3. 前提の事実 (origin/main 5a48abc9・本番 DB の読み取り 2026-10-15。R1 で origin/main 61c59321、R2・R3 で bffe1b6f、R4 で 36c926ad と突き合わせ、本書が参照する識別子はすべて残っている。R3・R4 で本番 DB を 2026-10-16 に読み直した)
 
-- `auth.sessions` の列: `id uuid, user_id, created_at, updated_at, factor_id, aal, not_after, refreshed_at (timestamp without time zone), user_agent text, ip inet, tag, oauth_client_id, refresh_token_hmac_key, refresh_token_counter, scopes`。所有者 `supabase_auth_admin`。`postgres` は SELECT / INSERT / UPDATE / DELETE / TRIGGER を持つ。`auth` スキーマのトリガーは 0 本 (本書が最初)。拡張: `pgcrypto 1.3` (スキーマ `extensions`)・`pg_cron 1.6.4`・`pg_net 0.19.5`・`supabase_vault`。
+- `auth.sessions` の列: `id uuid, user_id, created_at, updated_at, factor_id, aal, not_after, refreshed_at (timestamp without time zone), user_agent text, ip inet, tag, oauth_client_id, refresh_token_hmac_key, refresh_token_counter, scopes`。所有者 `supabase_auth_admin`。`postgres` は SELECT / INSERT / UPDATE / DELETE / TRIGGER を持つ。`auth` スキーマのトリガーは 0 本 (本書が最初)。**`auth.sessions` と `auth.users` の所有者は `supabase_auth_admin` で、`postgres` (migration を流す役割) はその役割の member ではない** (2026-10-16 の読み取り: `pg_has_role('postgres', 'supabase_auth_admin', 'MEMBER')` は false・`has_table_privilege('postgres', …, 'TRIGGER')` は true・PostgreSQL 17.6)。PostgreSQL では、CREATE TRIGGER は表の TRIGGER の権限で行えるが、DROP TRIGGER (`IF EXISTS` でも、トリガーがあるとき) と `ALTER TABLE … DISABLE TRIGGER` は表の所有者だけが行える。よって `postgres` は `auth` の表にトリガーを作れるが、消せない (§11.3・§11.7)。`user_profiles`・`user_sessions_metadata`・`password_history` の所有者は `postgres`。拡張: `pgcrypto 1.3` (スキーマ `extensions`)・`pg_cron 1.6.4`・`pg_net 0.19.5`・`supabase_vault`。
 - 本番の行数: `auth.sessions` 1,331 (`auth.users` 195)。`user_sessions_metadata` 0・`password_history` 0 (どちらも stub。`src/` に読む・書くコードは無い)。
 - **`ip` / `user_agent` は作成時に入る**: 一度も refresh していない 1,328 行の全部に `ip` と `user_agent` がある (GoTrue の `tokens/service.go` は `session.ApplyGrantParams(&grantParams)` の後に `tx.Create(session)`)。refresh のたびに refresh した側の `user_agent` / `ip` / `refreshed_at` で上書きされる (`UpdateOnlyRefreshInfo`)。
 - **Web のログインは Next.js のサーバーが GoTrue を呼ぶ**ので、GoTrue が記録する UA は `node` (699 行)・IP は Vercel のもの。利用者の IP / UA は `POST /api/auth/login` (`src/app/api/auth/login/route.ts`) と `/auth/callback` (`src/app/(auth)/auth/callback/route.ts`) の request にしか無い。モバイルは `apps/mobile/app/(auth)/login.tsx:163` が GoTrue を直接呼ぶので、GoTrue の記録が端末の実値 (iOS のアプリは `CFNetwork/…`、Android は `okhttp/…`)。Web の refresh は主に Next.js の middleware (`lib/supabase/middleware.ts`) がサーバーで行う。ほかに browser の client (`@supabase/ssr` の `createBrowserClient` の自動更新と `src/hooks/useHomeData.ts:183` の `refreshSession()`) と、サーバーの `POST /api/auth/session-sync` (`src/app/api/auth/session-sync/route.ts:11` の `getSession()` が期限切れの access token を更新する。`:20` の `refreshSession()` は Cookie のセッションに token が無いときだけ呼ばれ、auth-js は refresh token が無いので GoTrue を呼ばずに `AuthSessionMissingError` を返す) も更新する。どの経路も同じ行の UPDATE で、新しい行は作らない (§8 の行 7)。
 - GoTrue (supabase/auth master の実コード): `PUT /user` のパスワード更新は `user.UpdatePassword(tx, &session.ID)` → `LogoutAllExceptMe` (他のセッションを **DELETE**)。`secure_password_change` が ON のときだけ、セッションが無いか作成から 24 時間を過ぎていると nonce (再認証) を求める。`PUT /admin/users/{id}` は `UpdatePassword(tx, nil)` → `Logout` (本人の分も含めて **全部** DELETE)。`POST /logout?scope=others|global` も `auth.sessions` を DELETE。JWT の `session_id` の行が無いと `session_not_found` (403) を返す。期限や放置で行を消す仕組みは無い (timebox / inactivity は Pro の設定で、本番は未設定: 1,331 行が残っている)。この挙動のうち P-1 (他の端末の失効)・P-2 (本人は残る)・P-4 (`scope: 'others'`) は `tests/integration/security/password-update-revokes-sessions.test.ts` が GoTrue v2.183.0 で固定している。
+- **GoTrue の `PUT /user` は、本人の access token と公開の anon キーがあれば、アプリを通らずに誰でも呼べる** (アプリの API・画面の検査は効かない)。GoTrue (supabase/auth master の `internal/api/user.go` の `UserUpdate`) には、現在のパスワードを求める設定 `UpdatePasswordRequireCurrentPassword` (環境変数 `GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD`・既定 OFF。`internal/conf/configuration.go`) があり、ON のとき、パスワードを持つ利用者の `PUT /user` に本文の `current_password` を求める (無ければ 400 `current_password_required`、違えば 400 `current_password_invalid`。`internal/api/apierrors/errorcode.go`)。ただし再設定のセッション (`session.IsRecovery()` = `amr` に `otp`・`magiclink`・`recovery` のどれか。`internal/models/factor.go`。期限は見ない) は求めない。supabase-js は v2.102.0 から `updateUser` に `current_password` を渡せる (Supabase の文書「Password-based Auth」)。ホスト版の設定画面・Management API でこの設定を変えられるかは確かめられていない (§24・Q-18)。`secure_password_change` (`UpdatePasswordRequireReauthentication`) が求める再認証は、セッションが無いか作成から 24 時間を過ぎたときだけ (作成から 24 時間以内の盗んだセッションは止めない)。
+- GoTrue は、DB の暗号化の設定 (`GOTRUE_SECURITY_DB_ENCRYPTION_*`) が ON のとき、パスワードのログイン (`/token?grant_type=password`) の中で `encrypted_password` を書き直す (`internal/api/token.go` の `shouldReEncrypt` の枝の `db.UpdateOnly(user, "encrypted_password")`。「パスワードの変更ではなく暗号化の変更」とコメントがある)。本番の `encrypted_password` は全員 bcrypt (`$2…`。下の行) なので、いまは書き直していない。
 - **サーバーの client は、Bearer だけの要求ではセッションを持たない**: `createClient()` (`lib/supabase/server.ts`) は `Authorization` を `global.headers` に入れるだけで、セッションの保管は Cookie。モバイル (`getApi()` は Bearer だけを送る) の要求では保管が空。auth-js 2.105.3 の `_updateUser` は保管にセッションが無いと `AuthSessionMissingError` (code 無し) を投げ、`_signOut` は保管のセッションが無いと GoTrue を呼ばずに `{ error: null }` を返す。よって本人のセッションで GoTrue を変える操作 (パスワードの更新・他の端末のログアウト) は、本人の access token を明示して GoTrue を呼ぶ (§13.7・§14.3)。`auth.admin.signOut(jwt, scope)` (`GoTrueAdminApi`) は `POST /logout?scope=<scope>` を渡した JWT で呼ぶ。
 - **再設定のセッションの `amr`** (supabase/auth master の `internal/api/verify.go`): `POST /verify` (token_hash。Web の `/auth/callback` と モバイルの `authLink.ts:66` の `verifyOtp`) と、`GET /verify` の implicit の経路 (GoTrue の `GET /verify` がメールのリンクを開いたブラウザの要求でセッションを作り、token をフラグメントで返す → モバイルの再設定の画面 `apps/mobile/app/(auth)/auth/reset-password.tsx:48` の `setSession`。モバイルの client は `flowType` を指定しないので implicit) は、どちらも `models.OTP` (`otp`) で token を出す。アプリの `resetPasswordForEmail` の `redirectTo` は `/auth/reset-password` (`apps/mobile/app/(auth)/auth/forgot-password.tsx:36`) なので、再設定のリンクは `authLink.ts` (`verify.tsx`・`login.tsx` が使う) を通らず、再設定の画面が自分で `setSession` / `exchangeCodeForSession` を呼ぶ。`recovery` になるのは PKCE の code の経路 (Web の `resetPasswordForEmail` → `/auth/reset-password?code=…` を browser の client (`@supabase/ssr` の `detectSessionInUrl`) が交換) だけ。モバイルの再設定の画面にも code の枝 (`reset-password.tsx:45` の `exchangeCodeForSession`) があるが、モバイルの client は implicit で `code_verifier` を保管しないので、いまは GoTrue の `/token?grant_type=pkce` が交換を断り、セッションは作られない (client を PKCE にすれば `recovery`)。再設定の画面は token_hash の形を扱わない (いまの挙動。本書は変えない)。本番の `auth.mfa_amr_claims` は `password` 1,364・`otp` 2 で、`recovery` は 0 (2026-10-15)。アプリは `signInWithOtp` (メールのリンクでのログイン) を使っていない (origin/main の `src/`・`apps/mobile/` に 0 件)。
 - 既存コード: `src/lib/auth/guarded-login.ts` (`performGuardedLogin`。副作用は deps)・`src/lib/auth/login-failures.ts` (環境変数の解釈 `resolveLoginFailureResetMinutes` の形)・`lib/supabase/server.ts` (`createClient()` は Cookie と `Authorization: Bearer` の両方を使う・`getSupabaseAdmin()`)・`src/lib/auth/helpers.ts` (`requireUser` / `requireRole`)・`src/lib/admin/audit.ts` (`recordAdminAudit` / `extractClientIp`)・`src/lib/rate-limit.ts` (`checkRateLimit(key, category)`・`auth-login` 10 回/分)・`src/lib/emails/send.ts` (`sendEmail`。停止リスト・再試行・Idempotency-Key)・`src/lib/cron-auth.ts` (`requireCronAuth`)・`src/lib/env.ts` (`readOnlyBy`)・`apps/mobile/src/lib/api.ts` (`getApi()`: Bearer 付きで Next.js の API を呼ぶ)・`apps/mobile/src/lib/account-credentials.ts` (`changePassword`: 再認証 → `updateUser` → `signOut({scope:'others'})`)・`src/app/(main)/settings/account/page.tsx` (同じ 3 段を browser で)・`src/app/(auth)/auth/reset-password/page.tsx` (`updateUser` → `signOut({scope:'global'})`)・`packages/shared/src/password-policy.ts` (`validatePassword`・8 文字以上・英数)・`packages/shared/src/account-change-input.ts` (`validatePasswordChangeInput`)。
@@ -89,12 +91,12 @@
 |---|---|---|---|
 | R-1 | どの経路のログインも漏れなく記録する (呼ぶ側が記録を避けられない) | #1190 本文 (乗っ取りの早期発見) | §7.1 / §11.3 |
 | R-2 | 1 回のログインにつき: 日時・IP・IP の範囲・UA・端末の種類・端末名 (モバイル)・国 (Web)・終了の日時と理由を持つ。終わった行は 90 日で消す | #1190 本文・仕様ファイル「IP と端末の扱い・保持期間」 | §11.1 / §11.6 / §12.1 |
-| R-3 | 新しい端末の種類・新しい国からのログインを本人にメールで知らせる (初めてのログインは知らせない。IP の範囲だけが新しいときは記録のみ)。比べる相手は同じ利用者の前のログインすべて (長く続いているセッションを含む)。履歴が保持期間で消えた利用者のログインは「初めて」とみなさず知らせる。作成から判定までの間に終わったログインも知らせる (すぐにログアウトして通知を逃れさせない)。メールの「端末」は UA から決まる決まった言葉だけで、利用者が書ける値 (端末名) は載せない | #1190 本文 (乗っ取りの早期発見) | §10 / §10.1 / §12.3 / §13.4 / §18 |
+| R-3 | 新しい端末の種類・新しい国からのログインを本人にメールで知らせる (初めてのログインは知らせない。IP の範囲だけが新しいときは記録のみ)。端末の種類が分からないログイン (サーバーの UA・空の UA = 「不明な端末」) は、前にも不明な端末があっても新しい端末として知らせる (Node の既定の UA で GoTrue を直接呼ぶと何もせずに「不明な端末」になるため)。比べる相手は同じ利用者の前のログインすべて (長く続いているセッションを含む)。履歴が保持期間で消えた利用者のログインは「初めて」とみなさず知らせる。作成から判定までの間に終わったログインも知らせる (すぐにログアウトして通知を逃れさせない)。メールの「端末」は UA から決まる決まった言葉だけで、利用者が書ける値 (端末名) は載せない | #1190 本文 (乗っ取りの早期発見) | §10 / §10.1 / §12.3 / §13.4 / §18 |
 | R-4 | 利用者がログイン中の端末を一覧し、1 つずつ・または他の端末を全部失効できる (Web・モバイル) | #1189 本文 | §14.1〜14.4 / §15 / §16 |
 | R-5 | 失効した端末は、次の API の要求・次の refresh で未ログインになる (PostgREST を JWT で直接呼ぶ要求は、JWT の期限まで通る §24) | #1189 本文 | §3 / §11.4 |
 | R-6 | 更新 (refresh) の無いまま 30 日過ぎたセッションは自動で終える | 仕様ファイル「sessions の扱い」・cross/01 §4.1 (個人の絶対 30 日) | §11.6 |
-| R-7 | パスワードの変更・再設定で、直近 N 世代 (個人 3 / 組織 5 / 運営 10) と同じパスワードを断る。記録はどの経路でも漏れない | #1198 本文・cross/01 §7.1・§9.1 | §11.3 (トリガー) / §11.5 / §12.2 / §14.6〜14.7 |
-| R-8 | 変更は現在のパスワードを確かめる。再設定はメールのリンク / コードで作ったセッション (`amr` に 60 分以内の `recovery` または `otp`) だけが行える。再設定は、パスワードの無い利用者 (Google / Apple だけ) が最初のパスワードを作る経路としても今までどおり使える | #1198 本文・cross/01 §9.1・いまの再設定の画面の挙動 (§3) | §11.5 / §12.4 / §14.6 / §14.7 |
+| R-7 | パスワードの変更・再設定で、直近 N 世代 (個人 3 / 組織 5 / 運営 10) と同じパスワードを断る。断るのはアプリの経路 (本書の API。Web とモバイルの画面はすべてこれを通る)。GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路は照合を通らない (§3・S-33)。記録はどの経路でも漏れない (トリガー) | #1198 本文・cross/01 §7.1・§9.1 | §11.3 (トリガー) / §11.5 / §12.2 / §14.6〜14.7 / §24 |
+| R-8 | 変更は現在のパスワードを確かめる。再設定はメールのリンク / コードで作ったセッション (`amr` に 60 分以内の `recovery` または `otp`) だけが行える。この 2 つはアプリの経路の決まり。盗んだセッションで GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路は、GoTrue の設定 `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` を ON にしたときだけ止まる (本書の変更の API は、その設定でも動くよう `current_password` を GoTrue に渡す §13.7。ON にするかは §24・Q-18)。再設定は、パスワードの無い利用者 (Google / Apple だけ) が最初のパスワードを作る経路としても今までどおり使える | #1198 本文・cross/01 §9.1・いまの再設定の画面の挙動 (§3) | §11.5 / §12.4 / §13.7 / §14.6 / §14.7 / §24 |
 | R-9 | 運営 (admin / super_admin) が利用者の直近のログイン履歴を見られ、閲覧は監査ログに残る | #1190 本文・docs/design/CLAUDE.md 監査ログ必須 | §17 |
 | R-10 | `user_profiles.last_login_at` / `login_count` が埋まる (プロフィールの行が最初のログインより後に作られる新規の利用者の、最初のログインも数える) | #1190 本文 (「最終ログイン」の単一列) | §11.3 |
 | R-11 | migration の番号は決めない。対の `.down.sql` を作る。既存の関数・ポリシーは origin/main の定義を土台にする | 仕様ファイル | §11 |
@@ -103,14 +105,14 @@
 | R-14 | 既存の番兵 (走査テスト・契約テスト) に反応するものを列挙し、直し方と段を決める | 設計ゲートの要件 | §22 |
 | R-15 | `user_profiles` の行が無い利用者 (新規登録の直後・同意や初期設定の前) も、端末の一覧・失効・端末名の登録・パスワードの変更・再設定ができる (いまの再設定の画面はプロフィールの行に依らず動くので、後退させない) | §3 (行の無い利用者 130 人・いまの `updateUser` の画面) | §12.4 (`requireSessionUser`) / §14 |
 
-## 5. ユーザーシナリオ (31 本)
+## 5. ユーザーシナリオ (33 本)
 
 | # | 誰が | 何をする | 期待 |
 |---|---|---|---|
 | S-1 | 新規の利用者 (Web) | メールとパスワードで初めてログイン | `user_sessions_metadata` に 1 行 (Web の IP / UA / 国で上書き済み)。この時点ではプロフィールの行がまだ無い (同意・初期設定で作られる §7.1) ので `user_profiles` は変わらず、同意で行が作られるときに `last_login_at` (= このログインの日時) と `login_count = 1` が入る。初めてなので通知は無し。設定の一覧に「この端末」として出る |
 | S-2 | S-1 の利用者 | 別の PC の Firefox からログイン | 新しい端末の種類 → 1〜2 分以内に「新しい端末からのログイン」のメール。一覧に 2 行 |
 | S-3 | S-1 の利用者 | iPhone のアプリでログイン | GoTrue の記録 (`CFNetwork/…`) から「ほめゴハンのアプリ (iPhone・iPad)」。アプリが端末名 (`iPhone 15 Pro (iOS 18)`) を登録。新しい端末の種類 → メール |
-| S-4 | 攻撃者 (パスワードを盗んだ) | anon キーで GoTrue の `/token?grant_type=password` を直接呼ぶ | 記録される (トリガー)。端末の種類が本人の履歴に無ければメール。本人は一覧で見つけて失効できる |
+| S-4 | 攻撃者 (パスワードを盗んだ) | anon キーで GoTrue の `/token?grant_type=password` を直接呼ぶ (Node の supabase-js・素の fetch なら、UA は何もしなくても既定の `node`) | 記録される (トリガー)。UA が `node` などのサーバーの既定・空なら端末の種類は「不明な端末」(`other/server`・`other/other`) で、本人の履歴に不明な端末があってもメール。ブラウザの UA なら、その種類が本人の履歴に無ければメール。UA を本人の端末の種類に偽ると鳴らない (端末の種類で比べる方式の限界 §25 Q-4)。本人は一覧で見つけて失効できる |
 | S-5 | S-1 の利用者 | 同じ PC の同じブラウザでログアウト → ログイン | 前の行は `revoked_at` + `signed_out`。新しい行は既知の端末・IP の範囲 → 通知無し |
 | S-6 | 利用者 (Web) | Google でログイン (`signInWithOAuth` → `/auth/callback`) | callback が code を交換した直後に、request の IP / UA / 国で上書き。以降は S-1 と同じ |
 | S-7 | 利用者 (Web) | 一覧で「見覚えの無い端末」の「ログアウトさせる」を押す | `DELETE /api/auth/sessions/{id}` → RPC が `auth.sessions` を消す → 行は `revoked_by_user`。その端末の次の要求は `session_not_found` → middleware が `/login` へ (Web) / `getUser()` の失効で SIGNED_OUT (モバイル) |
@@ -121,7 +123,7 @@
 | S-12 | 個人の利用者 | 2 回前に使ったパスワードに変える | 422 `VALID_PASSWORD_HISTORY` (直近 3 世代)。4 回前なら通る |
 | S-13 | 利用者 (Web / モバイル) | 正しい現在のパスワードで変更 | 200。GoTrue の `PUT /user` は本人の access token で呼ぶ (Web は Cookie のセッションの token、モバイルは Bearer の JWT)。トリガーが `password_history` に新しいハッシュを残す。GoTrue が他のセッションを消す (P-1) → 一覧はこの端末だけ。履歴に `signed_out` が並ぶ |
 | S-14 | 利用者 (Web) | 再設定メールのリンクで `/auth/reset-password` を開き、直近に使ったパスワードを入れる | 422 `VALID_PASSWORD_HISTORY`。別のパスワードなら 200 → ページは今までどおり全端末をログアウト (`signOut global`)。リンクの形 (PKCE の code → `amr` `recovery` / token_hash → `amr` `otp`) のどちらでも通る |
-| S-15 | 攻撃者 (ログイン中のセッションを盗んだ) | `/auth/reset-password` を開いて現在のパスワード無しで変えようとする | 403 `AUTH_RECOVERY_SESSION_REQUIRED` (`amr` に 60 分以内の `recovery` / `otp` が無い。盗んだセッションは `password` / `oauth`)。今までは通っていた (改善) |
+| S-15 | 攻撃者 (ログイン中のセッションを盗んだ) | `/auth/reset-password` を開いて (= 本書の `POST /api/auth/password/reset` で) 現在のパスワード無しで変えようとする | 403 `AUTH_RECOVERY_SESSION_REQUIRED` (`amr` に 60 分以内の `recovery` / `otp` が無い。盗んだセッションは `password` / `oauth`)。アプリの画面・API の経路では、今まで通っていたものが止まる。同じセッションで GoTrue を直接呼ぶ経路は S-33 |
 | S-16 | admin | `/admin/users/{id}` を開く | 「ログイン履歴」の節に直近 20 回 (日時・端末・IP・国・印・終了)。`admin_audit_logs` に `admin.user.view_login_history` が 1 行。support には節が出ない (API も 403) |
 | S-17 | モバイルの利用者 | 30 日アプリを開かない | 03:55 JST のジョブが `auth.sessions` を消す (`idle_expired`)。次に開くと refresh が失敗 → ログイン画面 (既存の #1599 の流れ) |
 | S-18 | 利用者 (停止リストに載っている・送信ドメイン未検証) | 新しい端末からログイン | worker は送信を試み、`sendEmail` が失敗 → `alert_sent_at` は NULL のまま `done`。印 (`is_new_device`) は残る。再送はしない |
@@ -138,6 +140,8 @@
 | S-29 | 攻撃者 (パスワードを盗んだ) | ログインして、作成から 15 秒以内にログアウトする | 行は `revoked_at` が入った ended / `pending` のまま。worker は終わった行も取り置いて判定し (`revoked_at` を見ない §10)、端末の種類が本人の履歴に無ければメール |
 | S-30 | 新規の利用者 (`user_profiles` の行がまだ無い) | 同意・初期設定の前に「パスワードを忘れた」から再設定する / アプリで初めてログインする | 再設定は 200 (`requireSessionUser` は行を要さない §12.4)。アプリの `PATCH /api/auth/sessions/current` も 200 で、最初のセッションの行に端末名が入る。どちらも `requireUser` の 401 にならない |
 | S-31 | 攻撃者 (パスワードを盗んだ) | ログイン直後、判定の前に `PATCH /api/auth/sessions/current` で `device_name` に「あなたの iPhone 15 Pro」や URL を書く | 日本語・`:`・`/` などの使えない文字を含むので 400 `VALIDATION_ERROR` (使える文字は英数字・空白・`()._,+-` §12.5)。英数字だけの名前 (例 `iPhone 15 Pro`) は書けるが、メールの「端末」は UA から決まる言葉 (`deviceLabelOf`) だけで端末名は載らない (§13.4)。一覧では UA の言葉を見出しにし、端末名は「端末名: …」として添えるだけ (§15) |
+| S-32 | 利用者 (Web・前にもログインしたことがある) | `/api/auth/login` でログインしたが、route の文脈の記録 (`recordWebLoginContext`) が DB の一時的な失敗で書けなかった | ログインは成功する (§13.5)。行は `context_source='auth'`・UA `node` (端末の種類 `other/server` = 不明な端末) のまま。worker は不明な端末を新しい端末として判定し、本人に「端末: 不明な端末」のメールが 1 通 (送る側に倒す §10.1 の行 5) |
+| S-33 | 攻撃者 (ログイン中のセッションを盗んだ) | anon キーと盗んだ access token で、GoTrue の `PUT /auth/v1/user { password }` を直接呼ぶ (本書の API を通らない) | GoTrue の設定 `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` が OFF (いまの既定) なら、パスワードは変わり、GoTrue が本人の他の端末を消す (P-1)。履歴の照合も再設定の認可も通らない (本書の範囲では防げない §24・Q-18)。記録は残る: トリガーが `password_history` に 1 行を足し、他の端末の行は `signed_out` になる。ON なら 400 `current_password_required` で変わらない (盗んだセッションの `amr` は `password` / `oauth` で、GoTrue の再設定の免除 (`otp`・`magiclink`・`recovery`) に当たらない §3) |
 
 ## 6. 構想 (相 2) — 構造と、全シナリオのトレース
 
@@ -160,7 +164,7 @@
    GET /api/auth/sessions / login-history ◀── RLS (本人の行)          DELETE /api/auth/sessions/{id} ──▶ RPC auth_session_revoke ──DELETE auth.sessions──▶ (DELETE トリガー)
    POST /api/auth/sessions/revoke-others ──▶ signOutOtherSessions (admin.auth.admin.signOut(本人の access token, 'others')) ──▶ GoTrue ─DELETE auth.sessions (他)─▶ (DELETE トリガー)
    GET /api/admin/users/{id}/login-history ◀── service_role + 監査
-   POST /api/auth/password/change|reset ──▶ RPC auth_password_check (crypt) ──ok──▶ updatePasswordWithAccessToken (本人の access token で PUT /auth/v1/user) ──▶ GoTrue ─UPDATE auth.users.encrypted_password─▶ AFTER UPDATE on_auth_user_password_changed ──▶ password_history (直近 10 件に切り詰め)
+   POST /api/auth/password/change|reset ──▶ RPC auth_password_check (crypt) ──ok──▶ updatePasswordWithAccessToken (本人の access token で PUT /auth/v1/user。変更は current_password も渡す) ──▶ GoTrue ─UPDATE auth.users.encrypted_password─▶ AFTER UPDATE on_auth_user_password_changed ──▶ password_history (直近 10 件に切り詰め)
    (本人の access token = readSessionAuth が検証した token。Web は Cookie のセッションの token、モバイルは Bearer の JWT)
 ```
 
@@ -168,6 +172,7 @@
 - **判定は純関数 2 つ**: `decideLoginAlert` (§12.3) と `deviceFamilyOf` (§12.1)。I/O (行の読み書き・メール) は worker が集めて渡す。
 - **失効は DELETE 1 文**: `auth_session_revoke` が `auth.sessions` から消す。GoTrue 自身のログアウトと同じ結果になり、DELETE トリガーが終了を刻むので、「アプリの表だけ revoke 済み」という食い違いが生まれない。
 - **パスワードの照合は DB の中で、更新は本人の access token で**: 平文を受けるのはサーバーの route だけ。ハッシュは DB から出さない (`crypt()` で比べる)。更新は `updatePasswordWithAccessToken` (本人の access token で GoTrue の `PUT /auth/v1/user`) → GoTrue が他のセッションを消す (P-1)。`createClient()` の `auth.updateUser` は使わない (Bearer だけの要求では保管にセッションが無く `AuthSessionMissingError` §3)。`admin.updateUserById` も使わない (本人のセッションまで消える §3)。
+- **照合と再設定の認可はアプリの経路の決まり**: 効くのは本書の API を通る変更・再設定だけ。access token を持つ人 (盗んだ人を含む) は GoTrue の `PUT /auth/v1/user` を直接呼べるので、その経路は照合も再設定の認可も通らない (記録はトリガーで残る S-33)。直接の経路の「現在のパスワード無しの変更」を止めるのは GoTrue の設定 `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` で、本書の変更の API はその設定が ON でも動くよう `current_password` を GoTrue に渡す (§13.7)。DB のガードで止める案は §7.1 で退けた (§24・Q-18)。
 - **他の端末のログアウトも本人の access token で**: `signOutOtherSessions` が `auth.admin.signOut(token, 'others')` を呼ぶ。`createClient()` の `auth.signOut({ scope: 'others' })` は、Bearer だけの要求では GoTrue を呼ばずに成功を返す (§3) ので使わない。
 - **worker は取り置き → 判定 → 送信 → 完了の 4 手**で、行の状態 (`alert_status`) が進行を表す (§10)。取り置きは行が live か ended か (`revoked_at`) を見ない (終わったログインも知らせる S-29)。
 - **利用者の API 7 本の認証は `requireSessionUser`** (§12.4): `getUser` で本人を確かめ、`readSessionAuth` で JWT と access token を読み、`user_profiles` の行は `maybeSingle` で読む (行が無ければ roles = [] で通し、行があって凍結中なら 403)。`requireUser` は行が無いと 401 にするので使わない (§3。行の無い利用者の再設定と端末名の登録を止めない R-15)。運営の route (§14.9) は今までどおり `requireRole`。
@@ -180,7 +185,7 @@
 | S-1 | `/api/auth/login` → `performGuardedLogin` → `signIn` (GoTrue INSERT → トリガー → 行 `pending`, `context_source='auth'`, UA `node`。`user_profiles` の UPDATE は 0 行) → route が `getClaims(access_token)` で `session_id` → `recordWebLoginContext` (IP / UA / 国。`context_source='web'`) → 200 → 同意 (`accept_legal_documents` の `INSERT INTO user_profiles`) → BEFORE INSERT `trg_user_profiles_fill_login_stats` が `last_login_at` = この行の `created_at`・`login_count = 1` | worker: prior 0 件・アカウントは作ってから 90 日以内 → `first_login` → `done` | 通知無し。`GET /api/auth/sessions` が `is_current=true` の 1 行 |
 | S-2 | 同上 (Firefox) | worker: prior 1 件 (`windows/chrome`) ≠ `windows/firefox` → `isNewDevice` → `renderLoginNewDeviceEmail` → `sendEmail` → `alert_sent_at` | メール 1 通 |
 | S-3 | モバイル `signInWithPassword` (GoTrue INSERT → トリガー: `CFNetwork` → 後で `ios/app`) → `AuthProvider` の SIGNED_IN → `registerDeviceName(session.access_token)` (この access token ではまだ登録していない) → `PATCH /api/auth/sessions/current` (`DeviceNameBodySchema` の使える文字 → `requireSessionUser` → `device_name`, `context_source='mobile'`) | worker: `ios/app` は新 → メール (「端末」は `deviceLabelOf` の「ほめゴハンのアプリ (iPhone・iPad)」。端末名は載せない) | 一覧に UA の言葉の見出しと「端末名: iPhone 15 Pro (iOS 18)」の行 |
-| S-4 | GoTrue 直接 → INSERT → トリガー (端末の実 UA) | worker: 新しい端末の種類ならメール | 本人が S-7 で失効 |
+| S-4 | GoTrue 直接 → INSERT → トリガー (攻撃者の道具の UA。Node の supabase-js・fetch なら `node`) | worker: `deviceFamilyOf('node')` = `other/server` (不明な端末) → `decideLoginAlert` は prior に `other/server` の行があっても既知にしない → `new_device` → メール (端末: 不明な端末)。ブラウザの UA なら、その種類が prior に無ければ `new_device` | 本人が S-7 で失効 |
 | S-5 | `signOut()` → GoTrue DELETE → `on_auth_session_deleted` (`signed_out`) → 再ログイン → INSERT | worker: 同じ `deviceFamilyKey`・同じ `ip_network` → `known` | 通知無し |
 | S-6 | `/auth/callback` → `exchangeCodeForSession` (INSERT) → `recordWebLoginContext` | S-1 と同じ | 国は `x-vercel-ip-country` |
 | S-7 | `DELETE /api/auth/sessions/{id}` → `requireSessionUser` → `revokeSession` → RPC: `auth.uid()` 一致・`auth.jwt()->>'session_id'` ≠ id → `ended_reason='revoked_by_user'` → `DELETE auth.sessions` → トリガー (`revoked_at`) → `'revoked'` → 200 | 相手の端末: Web は middleware の `getUser()` が `session_not_found` → `/login`。モバイルは `getUser()` の失効 → SIGNED_OUT (AuthProvider の表) | 履歴に `revoked_by_user` |
@@ -189,25 +194,27 @@
 | S-10 | 既存の画面 → `signOut()` (global) → DELETE × n | `signed_out` | 変更なし |
 | S-11 | `POST /api/auth/password/change` → Zod → `validatePassword` → `requireSessionUser` (roles = 本人の行の roles。行が無ければ []) → `generations=3` → RPC `auth_password_check(uid, current, new, 3)` → `'current_mismatch'` | `performPasswordChange` → `{ kind: 'current_mismatch' }` → 400 | `updateUser` は呼ばれない |
 | S-12 | 同上 → `crypt(new, history[1])` が一致 → `'reused'` | 422 `VALID_PASSWORD_HISTORY` | 同上 |
-| S-13 | 同上 (route は `requireSessionUser` の `ctx.session` で本人の access token を持つ) → `'ok'` → `updatePasswordWithAccessToken(ctx.session.accessToken, new)` (`PUT /auth/v1/user`。Web は Cookie のセッションの token、モバイルは Bearer の JWT) → GoTrue: UPDATE `encrypted_password` → `on_auth_user_password_changed` (INSERT + 切り詰め) → `LogoutAllExceptMe` → DELETE トリガー | 200 `{ ok: true }` | 一覧は 1 行。モバイルも同じ |
+| S-13 | 同上 (route は `requireSessionUser` の `ctx.session` で本人の access token を持つ) → `'ok'` → `updatePasswordWithAccessToken(ctx.session.accessToken, new, current)` (`PUT /auth/v1/user`。本文に `current_password` も入る。Web は Cookie のセッションの token、モバイルは Bearer の JWT) → GoTrue: UPDATE `encrypted_password` → `on_auth_user_password_changed` (INSERT + 切り詰め) → `LogoutAllExceptMe` → DELETE トリガー | 200 `{ ok: true }` | 一覧は 1 行。モバイルも同じ |
 | S-14 | `/auth/reset-password` → `POST /api/auth/password/reset` → `requireSessionUser` → `hasRecentRecoveryMethod` = true (`recovery` または `otp`) → RPC (`p_current_password` = NULL) → `'reused'` → 422 / `'ok'` → `updatePasswordWithAccessToken` → 200 → ページの `signOutEverywhere` (既存) | 既存の順 (clear → signOut global → broadcast) は変えない | テスト N-25 は API の呼び出しを足すだけ |
 | S-15 | 同上。`amr` = `[{ method: 'password' }]` → `hasRecentRecoveryMethod` = false | 403 `AUTH_RECOVERY_SESSION_REQUIRED` | 変更されない |
 | S-16 | page → `adminFetch('/api/admin/users/{id}/login-history')` → `requireRole(['admin','super_admin'])` → `isUuid` → `getSupabaseAdmin()` で 20 行 → 1 行以上なら `recordAdminAudit` (`supabase` は `await createClient()` の利用者の client。`actor_id = auth.uid()` の WITH CHECK を通す) で `admin.user.view_login_history` → `{ data: { entries } }` | support: 403 → page は節を描かない (`actor.roles` で呼び分け) | 監査 1 行 |
 | S-17 | `expire_idle_auth_sessions()`: `refreshed_at` が 30 日より古い → `ended_reason='idle_expired'` → `DELETE auth.sessions` → トリガー | アプリ: refresh 400 → SIGNED_OUT | 行は 90 日後に消える |
 | S-18 | worker → `sendEmail` が `{ ok: false }` → `finishLoginAlert(status 'done', sentAt null)` | 再送しない (`alert_attempts` は例外のときだけ増える) | 印は残る |
 | S-19 | 2 つの worker が同時に RPC `claim_login_alerts` → 候補の行を `FOR UPDATE SKIP LOCKED` で選ぶので、片方が取った (ロックした) 行をもう片方は飛ばす。取った側の commit 後は `processing` で条件に合わない | Resend は同じキーで 2 通目を送らない | 1 通 |
-| S-20 | トリガー本体で例外 → `EXCEPTION WHEN OTHERS` → `RAISE WARNING` → `RETURN NULL` | GoTrue のトランザクションは続く | 記録だけ欠ける |
+| S-20 | トリガー本体で例外 → `EXCEPTION WHEN OTHERS` → `RAISE WARNING` → `RETURN NULL` (本体の書き込みは巻き戻る) | GoTrue のトランザクションは続く | 記録だけ欠ける: INSERT なら行が作られず、refresh なら `last_active_at` が前のまま、DELETE なら行が live のまま (03:55 JST の照合 `reconcile_user_sessions_metadata` が `signed_out` に揃える §8 の行 20)。§10 のトリガーの失敗の行 |
 | S-21 | RPC: `p_current_password` があり、`encrypted_password` が NULL / 空 → `'no_password'` | 409 | — |
 | S-22 | `passwordHistoryGenerationsFor(['super_admin'])` = 10 | RPC の `LIMIT 10` | — |
 | S-23 | native-bridge は `setSession` で Cookie を張るだけ (GoTrue に新しい行は無い) | 一覧は `ios/app` の 1 行 | — |
 | S-24 | `auth.users` DELETE → FK CASCADE | 行が消える (トリガーは `auth.sessions` の DELETE で先に `signed_out` を書くが、その後 CASCADE で消える) | — |
 | S-25 | GoTrue INSERT → トリガー → worker: `priorLogins` = `listPriorLogins` (`created_at < row.created_at`・期間で絞らない) に 100 日前の live の行 (`ios/app`) | `decideLoginAlert`: prior 1 件・`windows/chrome` は無い → `new_device` → `send` | メール 1 通 (§10.1 の行 5) |
-| S-26 | 同上。`listPriorLogins` は 0 件 (終わった行は 90 日で消えた) → `accountOf` の `createdAt` は 90 日より前 | `decideLoginAlert`: prior 空・アカウントの年齢 > 90 日 → `history_expired` (`isNewDevice` = 端末の種類が分かる) → `send` | メール 1 通 (§10.1 の行 2) |
-| S-27 | メールのリンクを開いたブラウザ → GoTrue の `GET /verify` (implicit の枝) が `auth.sessions` に INSERT (トリガー: UA / IP はリンクを開いたブラウザのもの・`amr` `otp`。§8 の行 27) → `homegohan://auth/reset-password#access_token=…` → `reset-password.tsx` の `useEffect` が `setSession` (`:48`。GoTrue が作った行を端末に保管するだけで INSERT しない。SIGNED_IN → `registerDeviceName` が端末名を書く) → 再設定の画面の `onSubmit` → `getApi().post('/api/auth/password/reset')` (Bearer) → `requireSessionUser` (中の `readSessionAuth` が Bearer の JWT を読む。`amr` `otp`) → `hasRecentRecoveryMethod` = true → RPC → `'ok'` → `updatePasswordWithAccessToken(Bearer の JWT, new)` → 200 | 画面は既存の `signOutWithCleanup` | 変更される |
+| S-26 | 同上。`listPriorLogins` は 0 件 (終わった行は 90 日で消えた) → `accountOf` の `createdAt` は 90 日より前 | `decideLoginAlert`: prior 空・アカウントの年齢 > 90 日 → `history_expired` (`isNewDevice` = true。端末の種類が分からなくても同じ §10.1 の行 3) → `send` | メール 1 通 (§10.1 の行 2) |
+| S-27 | メールのリンクを開いたブラウザ → GoTrue の `GET /verify` (implicit の枝) が `auth.sessions` に INSERT (トリガー: UA / IP はリンクを開いたブラウザのもの・`amr` `otp`。§8 の行 27) → `homegohan://auth/reset-password#access_token=…` → `reset-password.tsx` の `useEffect` が `setSession` (`:48`。GoTrue が作った行を端末に保管するだけで INSERT しない。SIGNED_IN → `registerDeviceName` が端末名を書く) → 再設定の画面の `onSubmit` → `getApi().post('/api/auth/password/reset')` (Bearer) → `requireSessionUser` (中の `readSessionAuth` が Bearer の JWT を読む。`amr` `otp`) → `hasRecentRecoveryMethod` = true → RPC → `'ok'` → `updatePasswordWithAccessToken(Bearer の JWT, new, null)` → 200 | 画面は既存の `signOutWithCleanup` | 変更される |
 | S-28 | 再設定のリンク → `POST /api/auth/password/reset` → `requireSessionUser` → `hasRecentRecoveryMethod` = true → RPC `auth_password_check(uid, NULL, new, 3)`: `encrypted_password` が空だが `p_current_password` が NULL なので `no_password` を返さず、履歴 (0 行) と比べて `'ok'` → `updatePasswordWithAccessToken` → GoTrue が `encrypted_password` を書く → `on_auth_user_password_changed` が 1 行 | 200 → ページの全端末のログアウト (既存) | 最初のパスワードができる |
 | S-29 | GoTrue INSERT (`pending`) → 15 秒以内に `signOut` → DELETE トリガー (`revoked_at`・`signed_out`。`alert_status` は `pending` のまま) → 次の回の `claim_login_alerts` (`revoked_at` を見ない) が取る → `decideLoginAlert` → 新しい端末の種類なら `send` → `finishLoginAlert` | ended / `pending` → ended / `processing` → ended / `done` (§10 の ended の行) | メール 1 通 |
 | S-30 | 再設定: `requireSessionUser` → `getUser` は本人・`user_profiles` は 0 行 (`maybeSingle` の `data` が null) → roles = [] で通す → 以下 S-14 と同じ (`generations` = 3)。アプリ: SIGNED_IN → `registerDeviceName` → `PATCH sessions/current` → `requireSessionUser` (同じく行無しで通す) → `setCurrentDeviceName` | `requireUser` を通らないので `AUTH_PROFILE_NOT_FOUND` (401) にならない | 200 |
 | S-31 | `PATCH sessions/current` → `DeviceNameBodySchema` の `DEVICE_NAME_PATTERN` に合わない → 400。英数字だけなら 200 で書ける → worker の `send` には `deviceLabelOf(family)` だけを渡す (`LoginAlertRow` は `device_name` を持たない §13.3) | メールの「端末」は UA の言葉 | 一覧では見出し = UA の言葉、端末名は添え書き |
+| S-32 | `/api/auth/login` → `signIn` (GoTrue INSERT → トリガー: UA `node`・`context_source='auth'`) → `recordWebLoginContext` が `false` (または例外を §13.5 の try が握る) → `warn` → 200 (`signed-in`) | worker: `deviceFamilyOf('node')` = `other/server` → prior が 1 件以上 → 不明な端末は既知にしない → `new_device` → `send` (端末: 不明な端末・国の行は無し) | メール 1 通。ログインは成功のまま |
+| S-33 | 攻撃者 → GoTrue `PUT /auth/v1/user` (anon キー + 盗んだ JWT。本書の route を通らない) → GoTrue の `UserUpdate`: (OFF) `UpdatePassword` → `on_auth_user_password_changed` (INSERT・切り詰め) → `LogoutAllExceptMe` → DELETE トリガー (`signed_out`) / (ON) `session.IsRecovery()` が偽 (`amr` `password`) なので `current_password` を求めて 400 | `auth_password_check` は呼ばれない (照合なし) | OFF: 変わる・記録は残る / ON: 変わらない |
 
 ## 7. 構造裁定 (相 3・1 回だけ)
 
@@ -243,8 +250,12 @@
 | | (c) `admin.updateUserById` | 不採用 | 本人のセッションも消える (§3) |
 | **他の端末のログアウトの呼び方** | (a) `auth.admin.signOut(本人の access token, 'others')` (`signOutOtherSessions`) | **採用** (R1) | JWT を明示して GoTrue の `/logout?scope=others` を呼ぶ。Web とモバイルが同じ経路 |
 | | (b) `createClient()` の `auth.signOut({ scope: 'others' })` | 不採用 (R1) | Bearer だけの要求では GoTrue を呼ばずに `{ error: null }` を返す (§3)。モバイルで何も消さずに 200 になる |
-| **再設定の認可** | (a) `amr` に 60 分以内の `recovery` または `otp` (`RECOVERY_AMR_METHODS`) | **採用** (R1 で `otp` を加えた) | 盗んだ普通のセッション (`password` / `oauth`) で現在のパスワード無しに変える穴 (S-15) を閉じる。再設定のリンクの形で `amr` が変わる (PKCE の code → `recovery`、token_hash / implicit → `otp` §3) ので両方を受ける。`otp` はメールのリンク / コードでメールボックスを持つことを示したセッションで、`recovery` と同じ強さ。`getClaims` は署名を確かめる |
+| **再設定の認可** | (a) `amr` に 60 分以内の `recovery` または `otp` (`RECOVERY_AMR_METHODS`) | **採用** (R1 で `otp` を加えた) | 盗んだ普通のセッション (`password` / `oauth`) で現在のパスワード無しに変える穴 (S-15) を、アプリの経路 (本書の API・画面) で閉じる (GoTrue を直接呼ぶ経路は下の「GoTrue の `PUT /user` の直接の呼び出し」の行・S-33)。再設定のリンクの形で `amr` が変わる (PKCE の code → `recovery`、token_hash / implicit → `otp` §3) ので両方を受ける。`otp` はメールのリンク / コードでメールボックスを持つことを示したセッションで、`recovery` と同じ強さ。`getClaims` は署名を確かめる |
 | | (b) `recovery` だけ | 不採用 (R1) | token_hash (Web の `/auth/callback`)・implicit (モバイル) の正当な再設定が全部 403 になる |
+| **GoTrue の `PUT /user` の直接の呼び出し** (access token + 公開の anon キーで、本書の API を通らずにパスワードを変える S-33) | (a) 本書はアプリの経路だけを守る。直接の経路の「現在のパスワード無しの変更」は GoTrue の設定 `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` (§3) に任せ、本書の変更の API はその設定が ON でも動くよう `current_password` を GoTrue に渡す (§13.7)。ON にするかはオーナーの判断 (§24・Q-18)。直接の経路の履歴の照合は行わない (記録はトリガーで残る) | **採用** (R4) | GoTrue 自身が、再設定のセッション (`otp`・`magiclink`・`recovery`) を除いて現在のパスワードを求める仕組みを持つ。設定 1 つで、アプリの外の経路にも「現在のパスワードか、再設定のセッション」の決まりが掛かる (GoTrue は再設定のセッションの期限を見ない §3)。照合 (再利用の禁止) は平文が要るので、GoTrue を直接呼ぶ経路では行えない (下の (b) の ④) |
+| | (b) `auth.users` の `BEFORE UPDATE OF encrypted_password` のガードが、`auth_password_check` が `ok` のときに出す短命の許可を消費し、許可が無ければ例外で更新を止める | 不採用 (R4) | ① ガードの失敗・許可の欠落がパスワードの更新を止める (R-13 の逆)。管理 API (`PUT /admin/users/{id}`)・Supabase の画面からの変更・既存の結合テスト (`tests/integration/security/password-update-revokes-sessions.test.ts`・`account-credentials-change.test.ts` の `updateUser({ password })`) は許可を持たないので、全部止まる ② GoTrue は DB の暗号化の設定が ON のとき、パスワードのログインの中で `encrypted_password` を書き直す (§3) ので、その設定に変わるとガードがログインそのものを止める ③ 許可は RPC と GoTrue への別の HTTP の要求をまたぎ、トリガーには新しいハッシュ (塩つき) しか見えないので、許可を「照合したパスワード」に結び付けられない ④ 再利用の照合はトリガーではできない (平文が無い) ので、ガードが止めるのは「本書の API を通らない変更」で、直接の経路の再利用の照合にはならない |
+| **端末の種類が分からないログイン** (UA が `node`・`undici` などのサーバーの既定 = `other/server`、空・読めない UA = `other/other`。一覧・メールの言葉はどちらも「不明な端末」) | (a) 既知にしない: prior に同じ不明な種類の行があっても新しい端末として知らせる。prior が空で履歴が消えた (`history_expired`) ときも知らせる | **採用** (R4) | Node の supabase-js・素の fetch で GoTrue を直接呼ぶと、UA は何もしなくても `node` になる (S-4)。既知にすると、この経路の攻撃者には通知が 1 通も届かない (国も入らない §7.1 の「地域」の行)。Web の正規のログインは作成から 15 秒のうちに route が実際の UA に書き換える (§13.5) ので、判定の時点で `node` のまま残るのは、文脈の記録に失敗したログイン (S-32) か、スクリプトからのログインだけ。前者で本人に 1 通届くのは、送る側に倒す方針 (`LOGIN_ALERT_PRIOR_MAX_ROWS` の注記と同じ) で受け入れる |
+| | (b) 既知とみなす (送らない) | 不採用 (R4) | 上の穴 (R-3) |
 | **不審の判定の比べる相手** | (a) 同じ利用者の前の行すべて (`created_at < row.created_at`。期間では絞らない) + アカウントの作成日時で「履歴が消えた」を見分ける | **採用** (R1) | 長く続く live の行は消えないので必ず入る (S-25)。終わった行は 90 日で消えるので、作成から 90 日を過ぎたアカウントで prior が空なら、初めてと断定できない → 知らせる (S-26)。作成から 90 日以内なら消えた行は無い (消すのは `revoked_at` が 90 日より前の行だけ) ので、prior が空なら本当に初めて |
 | | (b) 直近 90 日に作られた行だけ | 不採用 (R1) | 90 日より前に作られて今も続く端末を取りこぼし、乗っ取りを `first_login` と誤る |
 | | (c) `user_profiles.login_count` で初めてかを見る | 不採用 (R1) | 新規登録の直後の最初のログインでは `user_profiles` の行がまだ無い (行は同意・初期設定で作られる。migration 20261008200700 の `INSERT INTO public.user_profiles` の注記) ので、数が当てにならない |
@@ -260,7 +271,7 @@
 
 ### 7.2 F の問い — 縁の発生源を消すより単純な構造は無いか
 
-- 記録の入口は `auth.sessions` のトリガー 1 つに畳んだ。アプリ側の「文脈の上書き」は Web の 2 route とモバイルの 1 call の 3 か所で、どれも無くても記録は残る (端末の種類が `other/server` / 端末名無しになるだけ)。
+- 記録の入口は `auth.sessions` のトリガー 1 つに畳んだ。アプリ側の「文脈の上書き」は Web の 2 route とモバイルの 1 call の 3 か所で、どれも無くても記録は残る (Web の文脈が無いと端末の種類が `other/server` (不明な端末) のままで、判定は新しい端末として知らせる側に倒れる S-32。端末名が無いと一覧は UA の言葉だけになる)。
 - 残る縁は 6 つで、いずれもテスト (§20) が見張る: ① Web で GoTrue に新しいセッションを作る route が増えたのに `recordWebLoginContext` を呼ばない (走査 `tests/auth/web-login-context-source-scan.test.ts`: `exchangeCodeForSession` / `verifyOtp` / `signInWithPassword` を呼ぶ `src/app/**/route.ts` は同じ handler で `recordWebLoginContext` を呼ぶ) ② `password_history` の切り詰め数と TS の世代数の最大が食い違う (契約テスト) ③ SQL の 30 日 / 90 日 / `/24` / `/48` と TS の定数が食い違う (契約テスト) ④ パスワードを更新する画面が API を通らず `updateUser({ password })` を直接呼ぶ (走査 `tests/auth/password-update-source-scan.test.ts`: `src/`・`apps/mobile/` の本番コードで `updateUser({ password` は 0 件)。 ⑤ 本人として GoTrue を変える route が、サーバーの client の `auth.updateUser` / `auth.signOut` に戻り、Bearer だけのモバイルの要求で黙って失敗する (同じ走査: `revoke-others` と `password/**` の route は `auth.signOut(` / `auth.updateUser(` を呼ばない。結合テスト §20.3 が Bearer だけの更新・失効を実 GoTrue で確かめる)。 ⑥ 利用者の route が `requireUser` に戻り、`user_profiles` の行が無い利用者を 401 にする (route のテスト §20.2 の「行の無い利用者でも 200」の it と、`requireSessionUser` の単体テスト §20.1)。
 - 「申告しない (トリガー) + 文脈だけ上書き」より単純な構造 (申告だけ) は、S-4 を取りこぼす。「上書きもしない」は Web の記録が全部 `node` / Vercel の IP になる。
 
@@ -307,19 +318,20 @@
 |---|---|---|
 | ログインの記録 | 無し (`user_sessions_metadata` 0 行。cross/01 §3.2 の INSERT は未実装) | `auth.sessions` のトリガーが全経路を記録 (§11.3) |
 | `user_profiles.last_login_at` / `login_count` | 誰も書かない (運営の画面は `-`) | `auth.sessions` の INSERT トリガーが書く。プロフィールの行がまだ無い (新規登録の直後の) ログインは、行を作るときの BEFORE INSERT トリガーが記録から入れる |
-| 不審なログインの通知 | 無し | 新しい端末の種類 / 国でメール (§12.3・§18)。判定の前に終わったログインも判定して知らせる (§10・S-29)。メールの「端末」は UA から決まる言葉だけ (利用者が書ける端末名は載せない §7.1) |
+| 不審なログインの通知 | 無し | 新しい端末の種類 / 国でメール (§12.3・§18)。端末の種類が分からないログイン (不明な端末) は、前にもあっても新しい端末として知らせる (§10.1・S-4・S-32)。判定の前に終わったログインも判定して知らせる (§10・S-29)。メールの「端末」は UA から決まる言葉だけ (利用者が書ける端末名は載せない §7.1) |
 | セッションの一覧 | 無し | `/settings/security/sessions` (Web)・`settings/sessions` (モバイル)・`GET /api/auth/sessions`。見出しは UA から決まる言葉 (`device_label`)、アプリが登録した端末名 (`device_name`。英数字・空白・`()._,+-` だけ) は「端末名: …」として添える |
 | 個別の失効 | 無し (`signOut()` の global だけ) | `DELETE /api/auth/sessions/{id}` → RPC |
 | 他の端末のログアウト | パスワード変更の副作用だけ | `POST /api/auth/sessions/revoke-others` (Web / モバイル。本人の access token で GoTrue の `/logout?scope=others`) |
 | 不審の判定の比べる相手 | — | 同じ利用者の前の行すべて (期間で絞らない) + アカウントの作成日時 (§10.1) |
 | 放置されたセッション | 永久に残る (1,331 行) | 30 日で終える (pg_cron) |
-| パスワード変更 (Web / モバイル) | browser / 端末が `signInWithPassword` → `updateUser` → `signOut({scope:'others'})` (Web は Turnstile つき) | `POST /api/auth/password/change` (現在のパスワードは DB で確認・履歴の照合・更新は本人の access token で `PUT /auth/v1/user`。他の端末の失効は GoTrue が同じ更新の中で行う。Turnstile は要らない)。成功の表示は常に「この端末以外のログインはすべて解除しました」(「他の端末のログアウトを確認できませんでした」の注意書きは無くなる) |
-| パスワード再設定 | 画面が `updateUser` → 全端末のログアウト。プロフィールの行の有無・パスワードの有無に依らず動く (パスワードの無い利用者は最初のパスワードを作れる) | 画面が `POST /api/auth/password/reset` (`amr` の `recovery` / `otp` の確認・履歴の照合) → 今までどおり全端末のログアウト。プロフィールの行が無い利用者 (`requireSessionUser` §12.4・S-30) と、パスワードの無い利用者 (Google / Apple だけ。`auth_password_check` は再設定では `no_password` を返さない §11.5・S-28) も今までどおり通る。bcrypt でない形のハッシュの利用者も再設定は通る (変更は 409) |
+| パスワード変更 (Web / モバイル) | browser / 端末が `signInWithPassword` → `updateUser` → `signOut({scope:'others'})` (Web は Turnstile つき) | `POST /api/auth/password/change` (現在のパスワードは DB で確認・履歴の照合・更新は本人の access token で `PUT /auth/v1/user` (`current_password` も渡す §13.7)。他の端末の失効は GoTrue が同じ更新の中で行う。Turnstile は要らない)。成功の表示は常に「この端末以外のログインはすべて解除しました」(「他の端末のログアウトを確認できませんでした」の注意書きは無くなる)。照合が効くのはこの API の経路だけで、access token で GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路 (いまも同じ) は照合を通らず、現在のパスワードも GoTrue の設定 `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` が ON のときだけ求められる (§24・S-33。変わらない点) |
+| パスワード再設定 | 画面が `updateUser` → 全端末のログアウト。プロフィールの行の有無・パスワードの有無に依らず動く (パスワードの無い利用者は最初のパスワードを作れる) | 画面が `POST /api/auth/password/reset` (`amr` の `recovery` / `otp` の確認・履歴の照合) → 今までどおり全端末のログアウト。プロフィールの行が無い利用者 (`requireSessionUser` §12.4・S-30) と、パスワードの無い利用者 (Google / Apple だけ。`auth_password_check` は再設定では `no_password` を返さない §11.5・S-28) も今までどおり通る。bcrypt でない形のハッシュの利用者も再設定は通る (変更は 409)。`amr` の確認と照合はこの API の経路だけで、GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路は通らない (§24・S-33。変わらない点) |
 | `password_history` | 0 行 (stub) | トリガーで全経路を記録。既存 195 人分は migration で写す |
 | 運営の利用者詳細 | 最終ログインの 1 列 | 1 列 + ログイン履歴の節 (admin / super_admin。監査つき) |
 | 利用者の API の認証 | — (新しい API) | `requireSessionUser` (§12.4)。`user_profiles` の行が無くても通る (行があれば凍結を見る)。`requireUser` は使わない (行が無いと 401 §3) |
 | `sessions_revoke_self` (本人の UPDATE ポリシー) | ある (本人が印・終了を直接書ける) | 消す。本人は SELECT だけ。書くのは service_role・RPC・トリガー |
 | `secure_password_change` 前提 | 直前の `signInWithPassword` で回避 | OFF を前提 (§24)。ON なら 403 `AUTH_REAUTHENTICATION_REQUIRED` (ログインし直し) |
+| GoTrue の `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` | OFF (既定)。ON にすると、いまの画面 (`current_password` を渡さない `updateUser`) の変更が 400 になる | OFF のまま。ON にしても本書の API は動く (変更は `current_password` を渡し、再設定のセッションは GoTrue が免除する §13.7)。ON にするかは §24・Q-18 |
 | cross/12 (MFA) との関係 | — | 独立。verify の他セッション失効は `signed_out` として記録される |
 
 ## 10. ③ 状態遷移表
@@ -329,6 +341,7 @@
 | 状態 (live / alert) | 操作 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
 | (無し) | `auth.sessions` INSERT | live / pending | `ON CONFLICT (session_id) DO NOTHING` | `user_profiles.last_login_at` / `login_count` (プロフィールの行があるときだけ。無ければ 0 行の更新で、行を作るときに入る。下の注) |
+| (無し) | `auth.sessions` INSERT で、トリガーの本体が失敗 (S-20) | (無し) (行は作られない) | — | WARNING だけ。ログインは成功 (R-13)。行は後からも作られない (照合 `reconcile` は live の行を終えるだけ) ので、このログインは記録・通知されない (記録は best-effort) |
 | (無し) | migration の写し (既存の 1,331 行) | live / done | 既存の行だけ | 通知はしない (`is_new_*` NULL) |
 | live / pending | Web route の `recordWebLoginContext` | live / pending | `context_source='auth'` の行だけ上書き (mobile の端末名は消さない) | `ip_address` / `ip_network` / `user_agent` / `country_code` / `context_source='web'` |
 | live / * | `PATCH sessions/current` | 同じ | 本人の `session_id` の行 (終わったセッションの JWT は `requireSessionUser` の `getUser` が 401 にする)・`device_name` は `DEVICE_NAME_PATTERN` の文字だけ (§12.5。合わなければ 400 で何も変えない) | `device_name` / `context_source='mobile'` |
@@ -342,6 +355,7 @@
 | ended / processing | 例外 → RPC `release_login_alert` | ended / pending (`alert_attempts + 1`) または ended / done (`alert_attempts + 1 >= 3`) | live / processing の戻しの行と同じ | 同じ |
 | live / * | `auth.sessions` UPDATE `refreshed_at` | 同じ | — | `last_active_at` |
 | live / * | `auth.sessions` DELETE (ログアウト・GoTrue の失効・MFA) | ended (`signed_out`) / 同じ | `ended_reason` が未設定のときだけ `signed_out` | `revoked_at = now` |
+| live / * | `auth.sessions` UPDATE `refreshed_at` / DELETE で、トリガーの本体が失敗 (S-20) | 同じ (本体の UPDATE は巻き戻る) | — | WARNING だけ。refresh・ログアウトは成功 (R-13)。DELETE の取り残し (live のまま・`auth.sessions` に行が無い) は、下の `reconcile_user_sessions_metadata` の行が ended (`signed_out`) に揃える |
 | live / * | RPC `auth_session_revoke` | ended (`revoked_by_user`) / 同じ | `user_id = auth.uid()`・`session_id ≠ auth.jwt()->>'session_id'` | DELETE → 上の行 |
 | live / * | `expire_idle_auth_sessions` | ended (`idle_expired`) / 同じ | `COALESCE(refreshed_at, created_at) < now - 30 日` | DELETE → 上の行 |
 | live / * | `reconcile_user_sessions_metadata` | ended (`signed_out`) / 同じ | `auth.sessions` に行が無い | `revoked_at = now` |
@@ -354,20 +368,20 @@
 
 ### 10.1 worker の判定の入力 × 結果 (`decideLoginAlert` の全パターン)
 
-prior = `listPriorLogins` が返す、同じ利用者の `created_at < row.created_at` の行 (live・終わった行の両方。期間では絞らない。自分の行は含めない)。アカウントの年齢 = worker の `now()` − `auth.users.created_at`。保持 = `LOGIN_HISTORY_RETENTION_DAYS` (90 日)。
+prior = `listPriorLogins` が返す、同じ利用者の `created_at < row.created_at` の行 (live・終わった行の両方。期間では絞らない。自分の行は含めない)。アカウントの年齢 = worker の `now()` − `auth.users.created_at`。保持 = `LOGIN_HISTORY_RETENTION_DAYS` (90 日)。不明な端末 = `deviceFamilyOf` が `other/server` (`node`・`undici` などのサーバーの UA。§12.1 の `SERVER_DEVICE_FAMILY_KEY`) か `other/other` (空・読めない UA。`UNKNOWN_DEVICE_FAMILY_KEY`) を返す種類で、一覧・メールの言葉はどちらも「不明な端末」。不明な端末は端末を表さないので、prior に同じ値があっても既知にしない (§7.1)。
 
 | # | prior | アカウントの年齢 | current の端末の種類 | 国・IP の範囲 | reason | `isNewDevice` / `isNewIp` / `isNewCountry` | 送る |
 |---|---|---|---|---|---|---|---|
 | 1 | 空 | ≤ 保持 | 何でも | 何でも | `first_login` | false / false / false | 送らない (S-1) |
-| 2 | 空 | > 保持 | `other/server` 以外 | 何でも | `history_expired` | true / (`ip_network` があれば true) / false | 送る (S-26) |
-| 3 | 空 | > 保持 | `other/server` | 何でも | `history_expired` | false / (同上) / false | 送らない (端末が分からない) |
-| 4 | 1 件以上 (90 日より前に作られた live の行を含む) | 問わない | prior に同じ種類がある、または `other/server` | 国が同じか、国の分かる prior が無い、または current の国が不明。IP の範囲は既知 | `known` | false / false / false | 送らない (S-5) |
-| 5 | 1 件以上 (同上) | 問わない | prior に無い種類 | 行 4 と同じ | `new_device` | true / * / false | 送る (S-2・S-3・S-25) |
+| 2 | 空 | > 保持 | 不明な端末でない | 何でも | `history_expired` | true / (`ip_network` があれば true) / false | 送る (S-26) |
+| 3 | 空 | > 保持 | 不明な端末 | 何でも | `history_expired` | true / (同上) / false | 送る (端末: 不明な端末。比べる相手が無く、端末も分からない) |
+| 4 | 1 件以上 (90 日より前に作られた live の行を含む) | 問わない | 不明な端末でなく、prior に同じ種類がある | 国が同じか、国の分かる prior が無い、または current の国が不明。IP の範囲は既知 | `known` | false / false / false | 送らない (S-5) |
+| 5 | 1 件以上 (同上) | 問わない | prior に無い種類、または不明な端末 (prior に同じ不明な種類があっても) | 行 4 と同じ | `new_device` | true / * / false | 送る (S-2・S-3・S-4・S-25・S-32) |
 | 6 | 1 件以上 | 問わない | 既知 (行 4 と同じ) | 国の分かる prior があり、current の国がそのどれとも違う | `new_country` | false / * / true | 送る |
-| 7 | 1 件以上 | 問わない | prior に無い種類 | 行 6 と同じ | `new_device_and_country` | true / * / true | 送る |
+| 7 | 1 件以上 | 問わない | 行 5 と同じ (prior に無い種類、または不明な端末) | 行 6 と同じ | `new_device_and_country` | true / * / true | 送る |
 | 8 | 1 件以上 | 問わない | 既知 | 国は行 4 と同じ。IP の範囲だけが prior に無い | `known` | false / true / false | 送らない (記録のみ §7.1) |
 
-`*` = IP の範囲の新旧で変わる (送るかどうかには効かない)。行 1 が「初めて」と断定できる理由: 終わった行が消えるのは `revoked_at < now − 90 日` のときだけ (§11.6) で、`revoked_at ≥ created_at ≥ auth.users.created_at` なので、アカウントの年齢が 90 日以下なら消えた行は 1 つも無い。live の行は保持で消えない (利用者の削除の CASCADE だけ)。行 2 は「作成から 90 日を過ぎてから初めてログインした」利用者にも当たり、その人には本人のログインでメールが 1 通届く (§25 Q-13)。
+`*` = IP の範囲の新旧で変わる (送るかどうかには効かない)。行 1 が「初めて」と断定できる理由: 終わった行が消えるのは `revoked_at < now − 90 日` のときだけ (§11.6) で、`revoked_at ≥ created_at ≥ auth.users.created_at` なので、アカウントの年齢が 90 日以下なら消えた行は 1 つも無い。live の行は保持で消えない (利用者の削除の CASCADE だけ)。行 2・3 は「作成から 90 日を過ぎてから初めてログインした」利用者にも当たり、その人には本人のログインでメールが 1 通届く (§25 Q-13)。行 5 の不明な端末は、Web の文脈の記録に失敗した本人のログイン (S-32) にも当たり、本人に「不明な端末」のメールが 1 通届く (送る側に倒す §7.1)。
 
 ## 11. データモデル (migration の正典)
 
@@ -437,7 +451,7 @@ ON CONFLICT (user_id, changed_at) DO NOTHING;
 -- [cross16-backfill:end]
 ```
 
-### 11.3 トリガー関数 5 本 (`auth` の表の 4 本は SECURITY DEFINER・所有者 postgres。`user_profiles` の 1 本は SECURITY INVOKER。どれも `search_path = ''`・失敗は握る)
+### 11.3 トリガー関数 5 本 (`auth` の表の 4 本は SECURITY DEFINER・所有者 postgres。`user_profiles` の 1 本は SECURITY INVOKER。どれも `search_path = ''`・失敗は握る) とトリガー 5 本 (`auth` の表の 4 本は、同じ名前が無いときだけ作る)
 
 ```sql
 CREATE OR REPLACE FUNCTION public.auth_session_created()
@@ -521,19 +535,36 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 
--- トリガー (auth の表に足すのはトリガーだけ。表・列は変えない)
-DROP TRIGGER IF EXISTS on_auth_session_created ON auth.sessions;
-CREATE TRIGGER on_auth_session_created AFTER INSERT ON auth.sessions
-  FOR EACH ROW EXECUTE FUNCTION public.auth_session_created();
-DROP TRIGGER IF EXISTS on_auth_session_refreshed ON auth.sessions;
-CREATE TRIGGER on_auth_session_refreshed AFTER UPDATE OF refreshed_at ON auth.sessions
-  FOR EACH ROW WHEN (OLD.refreshed_at IS DISTINCT FROM NEW.refreshed_at) EXECUTE FUNCTION public.auth_session_refreshed();
-DROP TRIGGER IF EXISTS on_auth_session_deleted ON auth.sessions;
-CREATE TRIGGER on_auth_session_deleted AFTER DELETE ON auth.sessions
-  FOR EACH ROW EXECUTE FUNCTION public.auth_session_deleted();
-DROP TRIGGER IF EXISTS on_auth_user_password_changed ON auth.users;
-CREATE TRIGGER on_auth_user_password_changed AFTER INSERT OR UPDATE OF encrypted_password ON auth.users
-  FOR EACH ROW EXECUTE FUNCTION public.password_history_record();
+-- トリガー (auth の表に足すのはトリガーだけ。表・列は変えない)。auth.sessions / auth.users の所有者は supabase_auth_admin で、
+-- postgres は TRIGGER の権限で CREATE TRIGGER はできるが、DROP TRIGGER はできない (表の所有者だけ。IF EXISTS でも、トリガーが
+-- あると所有者の確認で失敗する §3)。よって DROP TRIGGER を書かず、同じ名前のトリガーが無いときだけ作る (2 回目の適用・ロールバック
+-- の後の適用では作らない。本体は上の CREATE OR REPLACE FUNCTION が入れ替える。トリガーの定義 (時機・列・WHEN) を変えたくなったら、
+-- 同じ名前は使えないので新しい名前で作る)。2 行の目印の間は結合テスト (§20.3) が切り出してもう一度流す
+-- [cross16-auth-triggers:begin]
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t
+                  WHERE t.tgrelid = 'auth.sessions'::regclass AND t.tgname = 'on_auth_session_created') THEN
+    CREATE TRIGGER on_auth_session_created AFTER INSERT ON auth.sessions
+      FOR EACH ROW EXECUTE FUNCTION public.auth_session_created();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t
+                  WHERE t.tgrelid = 'auth.sessions'::regclass AND t.tgname = 'on_auth_session_refreshed') THEN
+    CREATE TRIGGER on_auth_session_refreshed AFTER UPDATE OF refreshed_at ON auth.sessions
+      FOR EACH ROW WHEN (OLD.refreshed_at IS DISTINCT FROM NEW.refreshed_at) EXECUTE FUNCTION public.auth_session_refreshed();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t
+                  WHERE t.tgrelid = 'auth.sessions'::regclass AND t.tgname = 'on_auth_session_deleted') THEN
+    CREATE TRIGGER on_auth_session_deleted AFTER DELETE ON auth.sessions
+      FOR EACH ROW EXECUTE FUNCTION public.auth_session_deleted();
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t
+                  WHERE t.tgrelid = 'auth.users'::regclass AND t.tgname = 'on_auth_user_password_changed') THEN
+    CREATE TRIGGER on_auth_user_password_changed AFTER INSERT OR UPDATE OF encrypted_password ON auth.users
+      FOR EACH ROW EXECUTE FUNCTION public.password_history_record();
+  END IF;
+END $$;
+-- [cross16-auth-triggers:end]
 
 -- 権限: 誰にも直接は実行させない (anon の番兵 §22 N-19)。トリガーとして動くときは EXECUTE を確かめられない (確かめるのは CREATE TRIGGER の時だけ。
 -- migration 20261010000100 の注記と同じ)。auth の表の 4 本は、GoTrue の役割 (supabase_auth_admin) にだけ GRANT を明示しておく
@@ -574,6 +605,7 @@ EXCEPTION WHEN OTHERS THEN
 END;
 $$;
 REVOKE ALL ON FUNCTION public.user_profiles_fill_login_stats() FROM PUBLIC, anon, authenticated, service_role;
+-- user_profiles の所有者は postgres (§3) なので、こちらは DROP TRIGGER IF EXISTS → CREATE で作り直せる
 DROP TRIGGER IF EXISTS trg_user_profiles_fill_login_stats ON public.user_profiles;
 CREATE TRIGGER trg_user_profiles_fill_login_stats BEFORE INSERT ON public.user_profiles
   FOR EACH ROW EXECUTE FUNCTION public.user_profiles_fill_login_stats();
@@ -788,7 +820,7 @@ BEGIN
   END LOOP;
 END $$;
 
--- 毎日 03:55 JST (18:55 UTC)。ほかのジョブ (03:15 / 03:45 JST) と重ねない。同じ名前・同じ処理のジョブは先に外す (20261011070000 と同じ形)
+-- 毎日 03:55 JST (18:55 UTC)。ほかの毎日のジョブ (03:10 / 03:15 / 03:25 / 03:45 JST。docs/design/operator/08-cron-batches.md §3.0) と重ねない。同じ名前・同じ処理のジョブは先に外す (20261011070000 と同じ形)
 DO $$
 DECLARE v_job record;
 BEGIN
@@ -811,7 +843,98 @@ END $$;
 
 ### 11.7 `.down.sql`
 
-順に: `cron.unschedule('cleanup-auth-sessions-and-login-history')` → 保守の関数 3 本を DROP → RPC 4 本 (`auth_session_revoke(uuid)`・`auth_password_check(uuid, text, text, integer)`・`claim_login_alerts(integer, integer, integer)`・`release_login_alert(text, integer)`) を DROP → トリガー 5 本 (`auth.sessions` の 3・`auth.users` の 1・`user_profiles` の `trg_user_profiles_fill_login_stats`) を DROP → トリガー関数 5 本を DROP → `user_profiles.last_login_at` の COMMENT を前の文 (`'最終ログイン日時 (auth.users.last_sign_in_at を Edge Function が同期)'`) に戻す → 索引 2 本を DROP → CHECK 3 本を DROP → 足した列 12 本を DROP → `CREATE POLICY sessions_revoke_self ON public.user_sessions_metadata FOR UPDATE USING (user_id = auth.uid())` を戻す → `GRANT ALL ON TABLE public.user_sessions_metadata, public.password_history TO anon, authenticated` を戻す (baseline の状態)。写した行 (11.2) は消さない (列は既存のものだけで、害が無い)。
+`supabase/rollbacks/<番号はマージ時に確定>_auth_history_sessions.down.sql` の全文 (この順)。`auth.sessions` / `auth.users` のトリガー 4 本は消さない: 表の所有者は `supabase_auth_admin` で、ロールバックを流す `postgres` は DROP TRIGGER も `ALTER TABLE … DISABLE TRIGGER` もできない (§3)。代わりに、`postgres` が持つトリガー関数 4 本の本体を「何もしない」(`RETURN NULL` だけ) に置き換え、トリガーと関数は残す (トリガーが関数に依るので、関数も消せない)。残った 4 本は記録をしないので、消した列・表を読まない。もう一度 migration を流すと、`CREATE OR REPLACE FUNCTION` が本体を戻し、トリガーは同じ名前があるので作らない (§11.3)。トリガーそのものを消すには表の所有者の権限が要る (Supabase のサポートに頼む §24・§25 Q-11)。
+
+```sql
+-- 1. pg_cron のジョブ (無ければ何もしない。cron.unschedule(name) は無い名前で例外になるので jobid で外す)
+DO $$
+DECLARE v_job record;
+BEGIN
+  FOR v_job IN SELECT jobid FROM cron.job WHERE jobname = 'cleanup-auth-sessions-and-login-history' ORDER BY jobid LOOP
+    PERFORM cron.unschedule(v_job.jobid);
+  END LOOP;
+END $$;
+
+-- 2. 保守の関数 3 本と RPC 4 本
+DROP FUNCTION IF EXISTS public.expire_idle_auth_sessions();
+DROP FUNCTION IF EXISTS public.reconcile_user_sessions_metadata();
+DROP FUNCTION IF EXISTS public.cleanup_ended_user_sessions_metadata();
+DROP FUNCTION IF EXISTS public.auth_session_revoke(uuid);
+DROP FUNCTION IF EXISTS public.auth_password_check(uuid, text, text, integer);
+DROP FUNCTION IF EXISTS public.claim_login_alerts(integer, integer, integer);
+DROP FUNCTION IF EXISTS public.release_login_alert(text, integer);
+
+-- 3. user_profiles のトリガーと関数 (表の所有者は postgres なので消せる)
+DROP TRIGGER IF EXISTS trg_user_profiles_fill_login_stats ON public.user_profiles;
+DROP FUNCTION IF EXISTS public.user_profiles_fill_login_stats();
+
+-- 4. auth の表のトリガー 4 本は消せない (所有者 supabase_auth_admin §3)。関数の本体を「何もしない」に置き換えて残す
+--    (SECURITY DEFINER・search_path・権限 (supabase_auth_admin だけ EXECUTE) は CREATE OR REPLACE で変わらない)
+CREATE OR REPLACE FUNCTION public.auth_session_created()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  RETURN NULL;
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.auth_session_refreshed()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  RETURN NULL;
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.auth_session_deleted()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  RETURN NULL;
+END;
+$$;
+CREATE OR REPLACE FUNCTION public.password_history_record()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = '' AS $$
+BEGIN
+  RETURN NULL;
+END;
+$$;
+DO $$
+DECLARE fn text;
+BEGIN
+  FOREACH fn IN ARRAY ARRAY['auth_session_created', 'auth_session_refreshed', 'auth_session_deleted', 'password_history_record'] LOOP
+    EXECUTE format(
+      'COMMENT ON FUNCTION public.%I() IS %L', fn,
+      'cross/16 のロールバックで本体を空にした (何も記録しない)。auth の表のトリガーは表の所有者 (supabase_auth_admin) でないと消せないので残る。migration をもう一度流すと本体が戻る');
+  END LOOP;
+END $$;
+
+-- 5. user_profiles.last_login_at の COMMENT を baseline (20251126124224) の文に戻す
+COMMENT ON COLUMN public.user_profiles.last_login_at IS '最終ログイン日時 (auth.users.last_sign_in_at を Edge Function が同期)';
+
+-- 6. 索引・制約・列 (§11.1 で足したもの)
+DROP INDEX IF EXISTS public.idx_sessions_alert_queue;
+DROP INDEX IF EXISTS public.idx_sessions_ended;
+ALTER TABLE public.user_sessions_metadata
+  DROP CONSTRAINT IF EXISTS user_sessions_metadata_context_source_check,
+  DROP CONSTRAINT IF EXISTS user_sessions_metadata_alert_status_check,
+  DROP CONSTRAINT IF EXISTS user_sessions_metadata_ended_reason_check;
+ALTER TABLE public.user_sessions_metadata
+  DROP COLUMN IF EXISTS ip_network,
+  DROP COLUMN IF EXISTS country_code,
+  DROP COLUMN IF EXISTS context_source,
+  DROP COLUMN IF EXISTS device_family,
+  DROP COLUMN IF EXISTS is_new_device,
+  DROP COLUMN IF EXISTS is_new_ip,
+  DROP COLUMN IF EXISTS is_new_country,
+  DROP COLUMN IF EXISTS alert_status,
+  DROP COLUMN IF EXISTS alert_claimed_at,
+  DROP COLUMN IF EXISTS alert_attempts,
+  DROP COLUMN IF EXISTS alert_sent_at,
+  DROP COLUMN IF EXISTS ended_reason;
+
+-- 7. ポリシーと表の権限を baseline (20251126124224:10870・13031〜13032・12815〜12816) の状態に戻す
+DROP POLICY IF EXISTS sessions_revoke_self ON public.user_sessions_metadata;
+CREATE POLICY sessions_revoke_self ON public.user_sessions_metadata FOR UPDATE USING (user_id = auth.uid());
+GRANT ALL ON TABLE public.user_sessions_metadata, public.password_history TO anon, authenticated;
+```
+
+写した行 (§11.2) と、トリガーが書いた `user_sessions_metadata` / `password_history` の行は消さない (残る列は既存のものだけで、害が無い)。ロールバックの後に残るのは、`auth` の表のトリガー 4 本と、本体が空の関数 4 本だけ (`SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal` で 4 行)。
 
 ### 11.8 型の生成物
 
@@ -862,8 +985,14 @@ export function resolveLoginAlertMode(raw: string | undefined): LoginAlertSettin
 export type DeviceOs = 'ios' | 'android' | 'macos' | 'windows' | 'linux' | 'other';
 export type DeviceClient = 'app' | 'safari' | 'chrome' | 'firefox' | 'edge' | 'server' | 'other';
 export interface DeviceFamily { readonly os: DeviceOs; readonly client: DeviceClient; readonly key: string }
-/** Next.js のサーバー経由で GoTrue に届いた UA (node / undici / Vercel)。端末の情報を持たないので、判定では「端末の種類が分からない」として扱う */
+/**
+ * サーバーの UA (node / undici / Next.js / Vercel) の種類。Web のログインの直後 (route が実際の UA に上書きする前 §13.5) と、
+ * Node の道具 (supabase-js・素の fetch。既定の UA が node) で GoTrue を直接呼んだログイン (S-4)。端末を表さないので、
+ * 判定では prior に同じ値があっても既知にしない (login-alert-policy.ts・§10.1)。一覧・メールの言葉は「不明な端末」
+ */
 export const SERVER_DEVICE_FAMILY_KEY = 'other/server';
+/** 空・読めない UA (OS もクライアントも分からない) の種類。SERVER_DEVICE_FAMILY_KEY と同じく、判定では既知にしない。言葉は「不明な端末」 */
+export const UNKNOWN_DEVICE_FAMILY_KEY = 'other/other';
 /** UA の読む長さの上限 (細工された長い UA で正規表現に時間を使わせない) */
 const UA_MAX_LENGTH = 512;
 const SERVER_UA = /^(node|undici|next\.js|vercel edge functions)/i;
@@ -955,8 +1084,11 @@ export interface LoginHistoryHorizon {
   /** LOGIN_HISTORY_RETENTION_DAYS (constants.ts。実装では import して渡す) */
   readonly retentionDays: number;
 }
-/** device-family.ts の SERVER_DEVICE_FAMILY_KEY と同じ値 (実装では import する) */
-const SERVER_DEVICE_FAMILY_KEY = 'other/server';
+/**
+ * 端末を表さない種類 (「不明な端末」)。device-family.ts の SERVER_DEVICE_FAMILY_KEY ('other/server') と UNKNOWN_DEVICE_FAMILY_KEY
+ * ('other/other') と同じ値 (実装では 2 つを import して集合を作る)。prior に同じ値があっても既知にしない (§10.1・§7.1)
+ */
+const UNIDENTIFIED_DEVICE_FAMILY_KEYS: ReadonlySet<string> = new Set(['other/server', 'other/other']);
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 const MINUTES_PER_HOUR = 60;
@@ -965,7 +1097,9 @@ const MS_PER_DAY = HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PE
 /**
  * prior = 同じ利用者の、この行より前に作られた行すべて (live・終わった行の両方。期間では絞らない §13.3)。
  * prior が空で、アカウントの年齢が保持の日数以下なら初めてのログイン (消えた行はあり得ない §10.1)。
- * 保持の日数を超えていれば、履歴が消えた (比べる相手が無い) とみなし、端末の種類が分かれば新しい端末として知らせる。
+ * 保持の日数を超えていれば、履歴が消えた (比べる相手が無い) とみなし、新しい端末として知らせる (不明な端末でも同じ)。
+ * current が不明な端末 (UNIDENTIFIED_DEVICE_FAMILY_KEYS) なら、prior に同じ値があっても新しい端末とする
+ * (Node の既定の UA で GoTrue を直接呼ぶ攻撃者 S-4 を、何もしないで既知にさせない)。
  */
 export function decideLoginAlert(
   current: LoginContext,
@@ -977,17 +1111,17 @@ export function decideLoginAlert(
     if (accountAgeMs <= horizon.retentionDays * MS_PER_DAY) {
       return { isNewDevice: false, isNewIp: false, isNewCountry: false, shouldNotify: false, reason: 'first_login' };
     }
-    const deviceKnowable = current.deviceFamilyKey !== SERVER_DEVICE_FAMILY_KEY;
     return {
-      isNewDevice: deviceKnowable,
+      isNewDevice: true,
       isNewIp: current.ipNetwork !== null,
       isNewCountry: false,
-      shouldNotify: deviceKnowable,
+      shouldNotify: true,
       reason: 'history_expired',
     };
   }
   const deviceKnown =
-    current.deviceFamilyKey === SERVER_DEVICE_FAMILY_KEY || prior.some((p) => p.deviceFamilyKey === current.deviceFamilyKey);
+    !UNIDENTIFIED_DEVICE_FAMILY_KEYS.has(current.deviceFamilyKey) &&
+    prior.some((p) => p.deviceFamilyKey === current.deviceFamilyKey);
   const isNewDevice = !deviceKnown;
   const isNewIp = current.ipNetwork !== null && !prior.some((p) => p.ipNetwork === current.ipNetwork);
   const priorWithCountry = prior.filter((p) => p.countryCode !== null);
@@ -1265,10 +1399,11 @@ export interface PasswordChangeDeps {
   /** admin.rpc('auth_password_check', { p_user_id, p_current_password, p_new_password, p_generations }) の戻りを絞って返す */
   checkPassword(input: PasswordChangeInput): Promise<PasswordCheckOutcome>;
   /**
-   * updatePasswordWithAccessToken(session.accessToken, newPassword) (§13.7。session = readSessionAuth の結果)。
+   * updatePasswordWithAccessToken(session.accessToken, input.newPassword, input.currentPassword) (§13.7。session = readSessionAuth の結果)。
+   * currentPassword は変更なら現在のパスワード (GoTrue の UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD が ON でも通るよう GoTrue にも渡す)、再設定なら null。
    * createClient() の auth.updateUser は使わない (Bearer だけの要求ではセッションが無く AuthSessionMissingError §3)
    */
-  updatePassword(newPassword: string): Promise<UpdatePasswordOutcome>;
+  updatePassword(input: { newPassword: string; currentPassword: string | null }): Promise<UpdatePasswordOutcome>;
 }
 export type PasswordChangeResult =
   | { kind: 'changed' } | { kind: 'current_mismatch' } | { kind: 'reused' } | { kind: 'no_password' } | { kind: 'unsupported_hash' }
@@ -1278,14 +1413,17 @@ export type PasswordChangeResult =
 const GOTRUE_WEAK_PASSWORD = 'weak_password';
 const GOTRUE_SAME_PASSWORD = 'same_password';
 const GOTRUE_REAUTHENTICATION_NEEDED = 'reauthentication_needed';
+/** GoTrue の UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD が ON で、渡した current_password が違う (DB の照合の後に別の要求でパスワードが変わった) */
+const GOTRUE_CURRENT_PASSWORD_INVALID = 'current_password_invalid';
 export async function performPasswordChange(input: PasswordChangeInput, deps: PasswordChangeDeps): Promise<PasswordChangeResult> {
   const check = await deps.checkPassword(input);
   if (check !== 'ok') return { kind: check };
-  const { error } = await deps.updatePassword(input.newPassword);
+  const { error } = await deps.updatePassword({ newPassword: input.newPassword, currentPassword: input.currentPassword });
   if (!error) return { kind: 'changed' };
   if (error.code === GOTRUE_WEAK_PASSWORD) return { kind: 'weak' };
   if (error.code === GOTRUE_SAME_PASSWORD) return { kind: 'reused' };
   if (error.code === GOTRUE_REAUTHENTICATION_NEEDED) return { kind: 'reauthentication_required' };
+  if (error.code === GOTRUE_CURRENT_PASSWORD_INVALID) return { kind: 'current_mismatch' };
   return { kind: 'upstream-error', code: error.code, status: error.status };
 }
 ```
@@ -1408,14 +1546,19 @@ function gotrueErrorCodeOf(body: unknown): string | null {
 }
 /**
  * accessToken = readSessionAuth(...).accessToken (Web は Cookie のセッションの token、モバイルは Bearer の JWT)。
+ * currentPassword = 変更なら現在のパスワード (本文の current_password に入れる)、再設定なら null (本文に入れない)。
+ * GoTrue は UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD が OFF (既定) なら current_password を読まない。ON なら、再設定のセッション
+ * (amr が otp・magiclink・recovery) を除いてこれを照合する (§3)。本書は変更でいつも渡すので、どちらの設定でも同じに動く (§24・Q-18)。
  * 成功なら { error: null }。GoTrue が 4xx / 5xx なら { error: { code, status } } (例外にしない)。通信の失敗は fetch の例外のまま投げる。
  * パスワード・token・GoTrue の英文はログにも戻り値にも入れない
  */
 export async function updatePasswordWithAccessToken(
   accessToken: string,
   newPassword: string,
+  currentPassword: string | null,
   fetchImpl: FetchLike = fetch,
 ): Promise<UpdatePasswordOutcome> {
+  const body = currentPassword === null ? { password: newPassword } : { password: newPassword, current_password: currentPassword };
   const response = await fetchImpl(`${getSupabaseUrl()}${GOTRUE_USER_PATH}`, {
     method: 'PUT',
     headers: {
@@ -1424,7 +1567,7 @@ export async function updatePasswordWithAccessToken(
       'Content-Type': 'application/json',
       [GOTRUE_API_VERSION_HEADER]: GOTRUE_API_VERSION,
     },
-    body: JSON.stringify({ password: newPassword }),
+    body: JSON.stringify(body),
     cache: 'no-store',
   });
   if (response.ok) return { error: null };
@@ -1433,7 +1576,7 @@ export async function updatePasswordWithAccessToken(
 }
 ```
 
-GoTrue の `PUT /user` は、パスワードを変えた同じトランザクションで本人 (JWT の `session_id`) 以外のセッションを消す (P-1 / P-2 §3)。`secure_password_change` が ON で nonce が要るときは `code: 'reauthentication_needed'` が返る (§24)。
+GoTrue の `PUT /user` は、パスワードを変えた同じトランザクションで本人 (JWT の `session_id`) 以外のセッションを消す (P-1 / P-2 §3)。`secure_password_change` が ON で nonce が要るときは `code: 'reauthentication_needed'` が返る (§24)。`UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` が ON で `current_password` が違うときは `code: 'current_password_invalid'` (`performPasswordChange` が `current_mismatch` にする §13.2)、無いときは `current_password_required` (変更ではいつも渡し、再設定のセッションは GoTrue が免除するので起きない。起きたら `upstream-error`)。
 
 ### 13.8 利用者の API の認証 `requireSessionUser` (`src/lib/auth/sessions/session-claims.ts`。本体は §12.4)
 
@@ -1476,13 +1619,13 @@ export declare function requireSessionUser(supabase: SupabaseClient, authorizati
 1. `rejectNullCharacterBody` → `readJsonBody` + `PasswordChangeBodySchema` (違えば 400 `VALIDATION_ERROR`) → `validatePassword(new_password)` (packages/shared。違えば 422 `VALID_PASSWORD_WEAK` に理由の文言) → `new_password === current_password` なら 422 `VALID_PASSWORD_HISTORY` (「現在のパスワードと違うものに」)。
 2. `requireSessionUser` (§12.4) → `checkRateLimit(ctx.user.id, 'auth-password-change')` (超過 429 `RATE_LIMITED` + `Retry-After`)。
 3. `generations = passwordHistoryGenerationsFor(ctx.roles)` (`ctx.roles` は `requireSessionUser` が読んだ本人の行の roles。行が無ければ `[]` で 3 世代。route は `user_profiles` を自分で読まない)。
-4. `performPasswordChange({ userId: ctx.user.id, currentPassword, newPassword, generations }, { checkPassword: (input) => <getSupabaseAdmin().rpc('auth_password_check', { p_user_id: input.userId, p_current_password: input.currentPassword, p_new_password: input.newPassword, p_generations: input.generations }) の data を PasswordCheckOutcome に絞る。error・知らない値は例外>, updatePassword: (password) => updatePasswordWithAccessToken(ctx.session.accessToken, password) })`。`createClient()` の `auth.updateUser` は呼ばない (§3: Bearer だけのモバイルの要求ではセッションが無く必ず失敗する)。
+4. `performPasswordChange({ userId: ctx.user.id, currentPassword, newPassword, generations }, { checkPassword: (input) => <getSupabaseAdmin().rpc('auth_password_check', { p_user_id: input.userId, p_current_password: input.currentPassword, p_new_password: input.newPassword, p_generations: input.generations }) の data を PasswordCheckOutcome に絞る。error・知らない値は例外>, updatePassword: ({ newPassword, currentPassword }) => updatePasswordWithAccessToken(ctx.session.accessToken, newPassword, currentPassword) })` (変更では `currentPassword` = 本文の `current_password` が GoTrue にも渡る §13.7)。`createClient()` の `auth.updateUser` は呼ばない (§3: Bearer だけのモバイルの要求ではセッションが無く必ず失敗する)。
 5. 結果 → `changed` 200 `{ ok: true }` / `current_mismatch` 400 `AUTH_CURRENT_PASSWORD_MISMATCH` / `reused` 422 `VALID_PASSWORD_HISTORY` / `no_password` 409 `AUTH_PASSWORD_NOT_SET` / `unsupported_hash` 409 `AUTH_PASSWORD_NOT_SET` (文言は「この方法では変更できません。お問い合わせください」) / `weak` 422 `VALID_PASSWORD_WEAK` / `reauthentication_required` 403 `AUTH_REAUTHENTICATION_REQUIRED` / `upstream-error` → `internalError`。
 6. 他の端末の失効は GoTrue が行う (P-1)。route は `signOut` を呼ばない。
 
 ### 14.7 `POST /api/auth/password/reset`
 
-1 は `PasswordResetBodySchema`。2 は `requireSessionUser` (プロフィールの行が無い利用者も通る S-30) → `!hasRecentRecoveryMethod(ctx.session.claims, new Date(), PASSWORD_RESET_RECOVERY_MAX_AGE_MINUTES)` なら 403 `AUTH_RECOVERY_SESSION_REQUIRED` (「再設定メールのリンクから開き直してください」。`amr` の `recovery` / `otp` §12.4) → rate-limit は `'auth-password-reset'`。3 は 14.6 と同じ (`ctx.roles`)。4 は `currentPassword: null`・`updatePassword` は 14.6 と同じ (`updatePasswordWithAccessToken(ctx.session.accessToken, …)`)。5 は `changed` 200・`reused` 422 `VALID_PASSWORD_HISTORY`・`weak` 422・`reauthentication_required` 403・`upstream-error` → `internalError`。`current_mismatch`・`no_password`・`unsupported_hash` は再設定では起き得ない (§11.5 の決定表の行 6・7。パスワードの無い利用者は最初のパスワードを作れる S-28)。起きたら `internalError`。全端末のログアウトはページが行う (既存)。
+1 は `PasswordResetBodySchema`。2 は `requireSessionUser` (プロフィールの行が無い利用者も通る S-30) → `!hasRecentRecoveryMethod(ctx.session.claims, new Date(), PASSWORD_RESET_RECOVERY_MAX_AGE_MINUTES)` なら 403 `AUTH_RECOVERY_SESSION_REQUIRED` (「再設定メールのリンクから開き直してください」。`amr` の `recovery` / `otp` §12.4) → rate-limit は `'auth-password-reset'`。3 は 14.6 と同じ (`ctx.roles`)。4 は `currentPassword: null`・`updatePassword` は 14.6 と同じ (`updatePasswordWithAccessToken(ctx.session.accessToken, newPassword, null)`。本文は `password` だけ。再設定のセッションは GoTrue の `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` の免除に当たる §3)。5 は `changed` 200・`reused` 422 `VALID_PASSWORD_HISTORY`・`weak` 422・`reauthentication_required` 403・`upstream-error` → `internalError`。`current_mismatch`・`no_password`・`unsupported_hash` は再設定では起き得ない (§11.5 の決定表の行 6・7。パスワードの無い利用者は最初のパスワードを作れる S-28)。起きたら `internalError`。全端末のログアウトはページが行う (既存)。
 
 ### 14.8 `GET /api/cron/login-alerts` (Vercel Cron 毎分)
 
@@ -1595,15 +1738,15 @@ ${emailSignature()}
 
 ### 20.1 単体 (段の印が無い行は段 A。置き場は `src/lib/auth/__tests__/`。別の置き場の行はパスを書く)
 
-- `sessions-device-family.test.ts`: 「iPhone の Safari を ios/safari にする」「Android の Chrome を android/chrome にする」「Windows の Edge を edge にする (Chrome より先に見る)」「Mac の Firefox を macos/firefox にする」「CFNetwork を含む UA を ios/app にする」「okhttp を android/app にする」「node・undici・Vercel Edge Functions を other/server にする」「空・null を other/other にする」「512 文字より後ろは見ない」「deviceLabelOf が app・server・不明・ブラウザの 4 つの形の文言を返す」
-- `sessions-login-alert-policy.test.ts`: 「履歴が無く、アカウントが保持の日数以内に作られたなら first_login で送らない (保持の日数ちょうども first_login)」「履歴が無く、アカウントが保持の日数より前に作られたなら history_expired で、端末の種類が分かれば送る」「history_expired でも server の UA なら送らない」「同じ端末の種類と同じ IP の範囲は known」「端末の種類が新しければ new_device で送る」「IP の範囲だけが新しいときは isNewIp だけで送らない」「国が分かる履歴があり国が違えば new_country で送る」「国が分からない履歴しか無ければ国では送らない」「server の UA の行は端末の種類が不明として扱い、new_device にしない」「端末と国が両方新しければ new_device_and_country」
+- `sessions-device-family.test.ts`: 「iPhone の Safari を ios/safari にする」「Android の Chrome を android/chrome にする」「Windows の Edge を edge にする (Chrome より先に見る)」「Mac の Firefox を macos/firefox にする」「CFNetwork を含む UA を ios/app にする」「okhttp を android/app にする」「node・undici・Vercel Edge Functions を other/server にする」「空・null を other/other にする」「deviceFamilyOf('node') の key は SERVER_DEVICE_FAMILY_KEY、deviceFamilyOf('') の key は UNKNOWN_DEVICE_FAMILY_KEY」「512 文字より後ろは見ない」「deviceLabelOf が app・server・不明・ブラウザの 4 つの形の文言を返す」
+- `sessions-login-alert-policy.test.ts`: 「履歴が無く、アカウントが保持の日数以内に作られたなら first_login で送らない (保持の日数ちょうども first_login)」「履歴が無く、アカウントが保持の日数より前に作られたなら history_expired で送る」「history_expired は current が不明な端末 (other/server・other/other) でも送る (isNewDevice は true)」「同じ端末の種類と同じ IP の範囲は known」「端末の種類が新しければ new_device で送る」「IP の範囲だけが新しいときは isNewIp だけで送らない」「国が分かる履歴があり国が違えば new_country で送る」「国が分からない履歴しか無ければ国では送らない」「current が other/server (Node の既定の UA node) なら、prior に other/server の行があっても new_device で送る (S-4・S-32)」「current が other/other (空の UA) なら、prior に other/other の行があっても new_device で送る」「端末と国が両方新しければ new_device_and_country」
 - `sessions-session-claims.test.ts`: 「Bearer があれば getSession を呼ばずその JWT を getClaims に渡し、accessToken にその JWT を返す」「Bearer が無ければ Cookie のセッションの access_token を渡し、accessToken にその token を返す」「token が無い・getClaims が error・claims の形が違うときは null」「hasRecentRecoveryMethod は 60 分以内の recovery を真にする」「hasRecentRecoveryMethod は 60 分以内の otp を真にする」「password・oauth だけなら偽」「60 分より古い recovery / otp は偽」「requireSessionUser は getUser が error か user 無しなら AuthError (AUTH_UNAUTHENTICATED)」「requireSessionUser は claims が読めない・sub が getUser の id と違うなら AuthError (AUTH_UNAUTHENTICATED)」「requireSessionUser は user_profiles の行が無ければ (maybeSingle の data が null) roles [] で通し、凍結の判定で止めない (S-30)」「requireSessionUser は行があって凍結中なら ForbiddenError AUTH_ACCOUNT_FROZEN、unban_at が過ぎていれば通す」「requireSessionUser は行の roles を返し、null は []」「requireSessionUser は user_profiles の読み取りが error なら SessionUserProfileReadError (値・英文を持たない)」
-- `password-gotrue-user.test.ts`: 「PUT <SUPABASE_URL>/auth/v1/user に Bearer の access token・apikey・X-Supabase-Api-Version: 2024-01-01 を付け、本文は password だけ」「2xx なら error は null」「4xx の本文の code (文字列) と status を返す」「code が数値で error_code が文字列の古い形は error_code を返す」「本文が JSON でなければ code は null で status を返す」「fetch の例外はそのまま投げる」
+- `password-gotrue-user.test.ts`: 「PUT <SUPABASE_URL>/auth/v1/user に Bearer の access token・apikey・X-Supabase-Api-Version: 2024-01-01 を付ける」「currentPassword が null なら本文は { password } だけ、文字列なら { password, current_password }」「2xx なら error は null」「4xx の本文の code (文字列) と status を返す」「code が数値で error_code が文字列の古い形は error_code を返す」「本文が JSON でなければ code は null で status を返す」「fetch の例外はそのまま投げる」
 - `sessions-constants.test.ts`: 「AUTH_LOGIN_ALERT は未設定で on、off で off、ほかの値は on に戻して ignored」
 - `sessions-ip-network.test.ts`: 「IPv4 を /24 の範囲にする」「IPv6 を /48 の範囲にする」「不正な文字列は null」
 - `sessions-request-context.test.ts`: 「countryCodeOf は x-vercel-ip-country が大文字 2 文字 (例 JP) ならその値を返す」「ヘッダが無ければ null」「小文字・3 文字・数字・空・前後の空白つきなど /^[A-Z]{2}$/ に合わなければ null」
 - `password-policy.test.ts`: 「運営のロールを 1 つでも持てば 10」「org_ のロールは 5」「それ以外は 3」「空の配列は 3」
-- `password-change.test.ts`: 「checkPassword が ok 以外なら updatePassword を呼ばず同じ kind を返す」「updatePassword の weak_password → weak」「same_password → reused」「reauthentication_needed → reauthentication_required」「その他のエラー → upstream-error に code と status」「成功 → changed」
+- `password-change.test.ts`: 「checkPassword が ok 以外なら updatePassword を呼ばず同じ kind を返す」「updatePassword に newPassword と currentPassword を渡す (再設定は currentPassword が null)」「current_password_invalid → current_mismatch」「updatePassword の weak_password → weak」「same_password → reused」「reauthentication_needed → reauthentication_required」「その他のエラー → upstream-error に code と status」「成功 → changed」
 - `sessions-login-alert-worker.test.ts` (段 B): 「取り置いた行ごとに判定し、送るべき行だけ send を呼ぶ」「decideLoginAlert に accountOf の createdAt・now()・LOGIN_HISTORY_RETENTION_DAYS を渡す (prior が空で古いアカウントなら送る)」「accountOf が null の行は送らずに印を false で finish し、skipped に数える」「alertMode が off なら送らず印だけ finish する」「email が無い行は skipped」「send が ok: false でも done (sentAt null) にして再送しない」「send に渡す端末の文言は deviceLabelOf(deviceFamilyOf(user_agent)) で、取り置いた行に device_name があっても使わない (S-31)」「1 行の例外は release して次へ進み、failed に数える」「release も例外を投げても次の行へ進み、failed に数える」「戻り値に件数だけを返す」「createLoginAlertWorkerDeps の send は、行の created_at・ip_address (ip_network ではない)・country_code と端末の文言で renderLoginNewDeviceEmail を作り、sendEmail に idempotencyKey login-alert:<session_id> を付けて渡す」「createLoginAlertWorkerDeps の claim / release は LOGIN_ALERT_BATCH_SIZE・LOGIN_ALERT_MIN_AGE_SECONDS・LOGIN_ALERT_RECLAIM_MINUTES・LOGIN_ALERT_MAX_ATTEMPTS を RPC の引数にする」「createLoginAlertWorkerDeps の accountOf は getUserById が 404 なら null、ほかの error は例外」
 - `sessions-client.test.ts` (B。Web の `src/lib/auth/sessions/client.ts`): 「listSessions は GET /api/auth/sessions を呼び、応答を SessionsResponseSchema で検証して返す」「revokeSession(id) は DELETE /api/auth/sessions/{id}、revokeOtherSessions は POST /api/auth/sessions/revoke-others、listLoginHistory は GET /api/auth/login-history を呼ぶ」「4xx / 5xx の本文の code と error を { code, message } にして返す」「応答が Zod に合わなければ、生の本文を出さずに失敗として返す」「fetch の reject は通信エラーの { code, message } にする」
 - `password-client.test.ts` (C。Web の `src/lib/auth/password/client.ts`): 「changePassword は POST /api/auth/password/change に { current_password, new_password } を JSON で送る」「resetPassword は POST /api/auth/password/reset に { new_password } を送る」「200 は成功、400 / 403 / 409 / 422 / 429 / 500 は本文の code と error を { code, message } にする」「fetch の reject は通信エラーにする」「戻り値・例外にパスワードを含めない」
@@ -1613,17 +1756,17 @@ ${emailSignature()}
 ### 20.2 route (`tests/api/`)
 
 - `auth-sessions-routes.test.ts` (B): 「GET は本人の live の行を device_label と is_current つきで返す」「GET は claims が読めなければ 401」「DELETE は revoked で 200、current で 409、not_found で 404、UUID でなければ 404」「DELETE は RPC を本人の client で呼ぶ (service_role を使わない)」「revoke-others は Cookie のセッションの access token で auth.admin.signOut(token, 'others') を呼び、残りの件数を返す」「revoke-others は Bearer だけの要求 (Cookie 無し) でも Bearer の JWT を auth.admin.signOut に渡す」「revoke-others は createClient() の auth.signOut を呼ばない」「revoke-others は auth.admin.signOut が error なら 500 で remaining を返さない」「revoke-others は claims が読めなければ 401」「PATCH current は device_name を検証し、行が無ければ 404」「PATCH current は日本語・`:`・`/`・`@`・改行を含む device_name を 400 VALIDATION_ERROR にし、setCurrentDeviceName を呼ばない (S-31)。`iPhone 15 Pro (iOS 18.0)` は通す」「GET と PATCH current は user_profiles の行が無い利用者 (maybeSingle が null) でも 200 (requireUser の 401 にならない S-30)」「login-history は 20 件まで」「凍結中は 403」「どの応答にも Cache-Control: private, no-store」
-- `auth-password-routes.test.ts` (C): 「change: 入力の検証で弾くときは RPC も updateUser も呼ばない」「change: current_mismatch → 400」「change: reused → 422 VALID_PASSWORD_HISTORY」「change: no_password → 409」「change: 成功 → 200 で signOut を呼ばない」「change: rate-limit 超過 → 429」「change: roles から世代数を決めて RPC に渡す (super_admin は 10)」「change: Bearer だけの要求 (Cookie 無し) でも createClient() の auth.updateUser を呼ばず、updatePasswordWithAccessToken に Bearer の JWT を渡す」「change: Cookie の要求では Cookie のセッションの access token を渡す」「change: updatePasswordWithAccessToken の weak_password → 422 VALID_PASSWORD_WEAK」「reset: amr に recovery も otp も無い (password) → 403」「reset: 60 分より古い recovery → 403」「reset: amr の recovery (PKCE) → 200」「reset: amr の otp (token_hash / implicit) → 200」「reset: 直近の世代と同じパスワード (RPC が reused) → 422 VALID_PASSWORD_HISTORY で、updatePasswordWithAccessToken を呼ばない (S-14)」「reset: RPC に p_current_password = null を渡す」「reset: Bearer だけの要求でも Bearer の JWT で更新する」「reset: user_profiles の行が無い利用者でも 200 で、RPC の p_generations は 3 (S-30)」「change: 世代数は requireSessionUser の roles から決め、route は user_profiles を読まない」「reset: RPC が current_mismatch・no_password・unsupported_hash を返したら 500 (再設定では起き得ない §14.7)」「本文にパスワードも生のエラー文も出ない」
+- `auth-password-routes.test.ts` (C): 「change: 入力の検証で弾くときは RPC も updateUser も呼ばない」「change: current_mismatch → 400」「change: reused → 422 VALID_PASSWORD_HISTORY」「change: no_password → 409」「change: 成功 → 200 で signOut を呼ばない」「change: rate-limit 超過 → 429」「change: roles から世代数を決めて RPC に渡す (super_admin は 10)」「change: Bearer だけの要求 (Cookie 無し) でも createClient() の auth.updateUser を呼ばず、updatePasswordWithAccessToken に Bearer の JWT と、第 3 引数に本文の current_password を渡す」「change: Cookie の要求では Cookie のセッションの access token を渡す」「change: updatePasswordWithAccessToken の weak_password → 422 VALID_PASSWORD_WEAK」「reset: amr に recovery も otp も無い (password) → 403」「reset: 60 分より古い recovery → 403」「reset: amr の recovery (PKCE) → 200」「reset: amr の otp (token_hash / implicit) → 200」「reset: 直近の世代と同じパスワード (RPC が reused) → 422 VALID_PASSWORD_HISTORY で、updatePasswordWithAccessToken を呼ばない (S-14)」「reset: RPC に p_current_password = null を渡す」「reset: Bearer だけの要求でも Bearer の JWT で更新し、updatePasswordWithAccessToken の第 3 引数は null」「change: updatePasswordWithAccessToken が current_password_invalid を返したら 400 AUTH_CURRENT_PASSWORD_MISMATCH」「reset: user_profiles の行が無い利用者でも 200 で、RPC の p_generations は 3 (S-30)」「change: 世代数は requireSessionUser の roles から決め、route は user_profiles を読まない」「reset: RPC が current_mismatch・no_password・unsupported_hash を返したら 500 (再設定では起き得ない §14.7)」「本文にパスワードも生のエラー文も出ない」
 - `auth-login-context.test.ts` (B。login と callback の文脈の記録 §13.5): 「login: signInWithPassword が data.session を返すと、getClaims の sub / session_id と route の clientIp (extractClientIp(request.headers))・user-agent・countryCodeOf(request.headers) で recordWebLoginContext を 1 回呼ぶ」「login: data.session が無い・error があるときは getClaims も recordWebLoginContext も呼ばない」「login: getClaims が投げても、recordWebLoginContext が false を返しても 200 (signed-in) で、warn を 1 回出す」「callback: code の交換と token_hash の verifyOtp の成功の直後に recordWebLoginContext を呼ぶ」「callback: 記録が投げてもリダイレクト先は変わらない」「warn のログに token・IP・UA を出さない」
 - `cron-login-alerts-route.test.ts` (B): 「processLoginAlerts に createLoginAlertWorkerDeps(getSupabaseAdmin()) の deps を渡し、route は sendEmail を呼ばない」「CRON_SECRET が合わなければ 401」「AUTH_LOGIN_ALERT=off を worker に渡す」「不正な値は変数名だけを warn に出す」「応答は件数だけ」
 - `admin-user-login-history-route.test.ts` (D): 「support は 403」「admin は 20 件を返し admin.user.view_login_history を 1 行記録する」「行は getSupabaseAdmin() の client で読み、recordAdminAudit には createClient() の client を渡す (service_role の client を渡さない §14.9)」「0 件のときは記録しない」「UUID でなければ 404」
 
 ### 20.3 走査・契約 (`tests/`)
 
-- `auth-history-sessions-migration-contract.test.ts` (A): 「トリガー関数 5 本のうち auth の表の 4 本は SECURITY DEFINER、user_profiles_fill_login_stats は SECURITY INVOKER で、5 本とも search_path = ''・EXCEPTION WHEN OTHERS を持つ」「SQL の /24・/48・30 days・90 days・c_max_generations 10 が constants.ts / policy.ts の値と一致する」「auth.sessions に 3 本・auth.users に 1 本・user_profiles に 1 本 (BEFORE INSERT) のトリガーを CREATE する」「RPC 4 本と保守 3 本の REVOKE / GRANT が決めたとおり (claim_login_alerts・release_login_alert は SECURITY INVOKER で service_role だけ)」「claim_login_alerts は FOR UPDATE SKIP LOCKED で候補を選ぶ」「.down.sql が migration の作るもの (トリガー・関数・索引・制約・列・ジョブ) を全部消し、ポリシーと GRANT と user_profiles.last_login_at の COMMENT を戻す」「既存の行の写し (§11.2) は [cross16-backfill:begin] / [cross16-backfill:end] の目印の間にあり、user_sessions_metadata の写しは ON CONFLICT (session_id) DO NOTHING、password_history の写しは NOT EXISTS と ON CONFLICT (user_id, changed_at) DO NOTHING を持つ」「pg_cron のジョブの名前と時刻」
+- `auth-history-sessions-migration-contract.test.ts` (A): 「トリガー関数 5 本のうち auth の表の 4 本は SECURITY DEFINER、user_profiles_fill_login_stats は SECURITY INVOKER で、5 本とも search_path = ''・EXCEPTION WHEN OTHERS を持つ」「SQL の /24・/48・30 days・90 days・c_max_generations 10 が constants.ts / policy.ts の値と一致する」「auth.sessions に 3 本・auth.users に 1 本・user_profiles に 1 本 (BEFORE INSERT) のトリガーを CREATE する」「RPC 4 本と保守 3 本の REVOKE / GRANT が決めたとおり (claim_login_alerts・release_login_alert は SECURITY INVOKER で service_role だけ)」「claim_login_alerts は FOR UPDATE SKIP LOCKED で候補を選ぶ」「migration は auth.sessions / auth.users に DROP TRIGGER を書かず、その 4 本の CREATE TRIGGER は、[cross16-auth-triggers:begin] / [cross16-auth-triggers:end] の目印の間で、それぞれ pg_trigger に同じ名前が無いときだけ (IF NOT EXISTS の中で) 行う (表の所有者でない postgres の 2 回目の適用が所有者の確認に当たらない §11.3)」「.down.sql は DROP TRIGGER を user_profiles の trg_user_profiles_fill_login_stats にだけ書き、auth の表には DROP TRIGGER も DISABLE TRIGGER も書かない。トリガー関数 4 本 (auth_session_created・auth_session_refreshed・auth_session_deleted・password_history_record) は DROP せず、本体が RETURN NULL だけの CREATE OR REPLACE FUNCTION にする (§11.7)」「.down.sql は、そのほかの migration の作るもの (RPC 4 本・保守 3 本・user_profiles_fill_login_stats・索引・制約・列・ジョブ) を消し、ポリシーと GRANT と user_profiles.last_login_at の COMMENT を戻す」「既存の行の写し (§11.2) は [cross16-backfill:begin] / [cross16-backfill:end] の目印の間にあり、user_sessions_metadata の写しは ON CONFLICT (session_id) DO NOTHING、password_history の写しは NOT EXISTS と ON CONFLICT (user_id, changed_at) DO NOTHING を持つ」「pg_cron のジョブの名前と時刻」
 - `auth/web-login-context-source-scan.test.ts` (B): 「src/app の route.ts で signInWithPassword / exchangeCodeForSession / verifyOtp を呼ぶ handler は、同じ handler で recordWebLoginContext を呼ぶ (login と callback の 2 ファイル)」
 - `auth/password-update-source-scan.test.ts` (C): 「src と apps/mobile の本番コードに updateUser({ password の呼び出しが無い (API を通す)」「signInWithPassword を本人確認に使う画面 (settings/account・account-credentials) が無い」「src/app/api/auth/sessions/revoke-others/route.ts と src/app/api/auth/password/**/route.ts は auth.signOut( と auth.updateUser( を呼ばない (本人の access token で GoTrue を呼ぶ §13.7・§14.3。Bearer だけの要求で黙って失敗する形に戻さない)」
-- `tests/integration/security/auth-history-sessions.test.ts` (A。ローカル Supabase): 「プロフィールの行がある利用者がパスワードでサインインすると、user_sessions_metadata に 1 行 (ip / user_agent / ip_network) が入り、user_profiles.last_login_at がその行の created_at に、login_count が 1 増える」「プロフィールの行が無い利用者 (admin.createUser の直後) のサインインも成功し、user_sessions_metadata に 1 行が入る (user_profiles は 0 行の更新)。そのあと accept_legal_documents と同じ列で user_profiles の行を作ると、last_login_at = そのセッションの created_at・login_count = 1 が入る (S-1)」「last_login_at を明示して作る user_profiles の行は、トリガーが変えない」「refresh で last_active_at が進み、user_agent は変わらない」「signOut (global) で revoked_at と signed_out」「auth_session_revoke は他人の行を消せず not_found、本人の他の行を消すと revoked、自分の行は current」「消した後の JWT で getUser すると session_not_found」「updateUser で password_history が 1 行増え、11 回変えると 10 行に切り詰まる」「auth_password_check が §11.5 の決定表の 7 行を返す: bcrypt の利用者は変更で current_mismatch / reused / ok、再設定 (p_current_password = NULL) で reused / ok。パスワード無しで作った利用者 (admin.createUser に password を渡さない) は変更で no_password、再設定で ok。encrypted_password を pgQuery で `$argon2id$` で始まる値にした利用者は変更で unsupported_hash、再設定で ok (bcrypt の履歴と同じなら reused)」「パスワード無しで作った利用者が generate_link (recovery) → POST /verify (token_hash) の JWT で updatePasswordWithAccessToken を呼ぶと、encrypted_password が bcrypt になり password_history が 1 行になる (S-28)」「expire_idle_auth_sessions が refreshed_at の古い行だけを消して idle_expired にする」「reconcile が auth.sessions に無い live の行を signed_out にする」「cleanup が 90 日より古い終了行だけを消す」「anon / authenticated は 7 本の関数 (RPC 4 本と保守 3 本) のうち auth_session_revoke だけを (authenticated が) 実行できる」「記録の失敗でログインを止めない (R-13・S-20): pgQuery で `ALTER TABLE public.user_sessions_metadata ADD CONSTRAINT cross16_test_force_fail CHECK (false) NOT VALID` を足した間、プロフィールの行がある利用者のパスワードのサインインは成功し (session が返り、その access token で getUser が通る)、auth.sessions にその session_id の行があり、user_sessions_metadata にはその session_id の行が無く、user_profiles.login_count は増えない (本体の INSERT が失敗して UPDATE ごと巻き戻る)。続けて refreshSession と signOut (global) も error 無しで成功する (auth_session_refreshed・auth_session_deleted の UPDATE も CHECK で失敗して握られる)。finally で `ALTER TABLE public.user_sessions_metadata DROP CONSTRAINT IF EXISTS cross16_test_force_fail`」「履歴の記録の失敗でパスワードの更新を止めない (R-13): pgQuery で `ALTER TABLE public.password_history ADD CONSTRAINT cross16_test_force_fail CHECK (false) NOT VALID` を足した間、updatePasswordWithAccessToken は error が null で、auth.users.encrypted_password は変わり、password_history の行数は変わらない。finally で DROP CONSTRAINT IF EXISTS」「ログインの数の補完の失敗でプロフィールの行の作成を止めない (R-13): pgQuery で `REVOKE SELECT ON public.user_sessions_metadata FROM service_role` をした間、service_role の client で user_profiles に `{ id, nickname: 'Guest', age_group: 'unspecified', gender: 'unspecified' }` (accept_legal_documents と同じ既定値) を INSERT すると、error 無しで行ができ、last_login_at は NULL のまま (user_profiles_fill_login_stats は SECURITY INVOKER なので service_role として SELECT し、権限の不足を握る)。finally で `GRANT SELECT ON public.user_sessions_metadata TO service_role`。3 つとも、EXCEPTION WHEN OTHERS を消すとサインイン・更新・INSERT が失敗して赤になる (WARNING は GoTrue・PostgREST の接続に返るのでテストからは読まない)」「Cookie を持たず Bearer の JWT だけで updatePasswordWithAccessToken を呼ぶと、encrypted_password が変わり、呼んだセッションは残り、同じ利用者の他のセッションは消える」「signOutOtherSessions(admin, Bearer の JWT) は同じ利用者の他のセッションを消し、呼んだセッションは残す」「generate_link (recovery) → POST /verify (token_hash) で作ったセッションの JWT は amr に otp を持ち、hasRecentRecoveryMethod が真」「パスワードでサインインしたセッションの JWT は amr が password で、hasRecentRecoveryMethod が偽」「listPriorLogins は created_at が 90 日より前の live の行も返し、自分の行と、後に作られた行は返さない」「claimLoginAlerts を 2 つ同時に (Promise.all で) 呼ぶと、同じ pending の行はどちらか一方だけが返し、両方の戻りの session_id に重なりが無い (S-19)」「claimLoginAlerts は created_at が minAgeSeconds より新しい行と done の行を取らず、取った行を processing・alert_claimed_at = now にする」「claimLoginAlerts は processing のまま alert_claimed_at が reclaimMinutes より前の行を取り直し、reclaimMinutes 以内の processing の行は取らない (§10 の取り置きの行)」「claimLoginAlerts は 1 回に batchSize 行までしか取らない」「claimLoginAlerts は revoked_at のある (終わった) pending の行も取り (サインインして minAgeSeconds より前に signOut した行)、finishLoginAlert で done にする。revoked_at と ended_reason は変わらない (§10 の ended の行・S-29)」「releaseLoginAlert は processing の行の alert_attempts を 1 増やして pending に戻し (alert_claimed_at は NULL)、maxAttempts 回目 (attempts が 3 になる回) で done にする。processing でない行は変えない (§10 の例外の行)」「finishLoginAlert は done にして device_family・is_new_*・alert_sent_at を書く」「recordWebLoginContext は context_source = auth の行を web にして IP・ip_network・UA・国を書き true、context_source = mobile の行 (端末名あり) と web の行は変えずに false (§10 の recordWebLoginContext の行のガード)」「setCurrentDeviceName は本人の行に device_name と context_source = mobile を書き、他人の session_id では false」「migration の [cross16-backfill:begin] と [cross16-backfill:end] の間 (§11.2) を切り出し、ローカルの postgres-meta (`/pg/query`。anon-definer-execute.test.ts の pgQuery と同じ口) でもう一度流しても、user_sessions_metadata と password_history の行数は変わらない (冪等)」「auth.admin.deleteUser で、その利用者の user_sessions_metadata と password_history の行が消える (FK の CASCADE。S-24)」「サインインしたセッションの access_token と refresh_token を、別の client (persistSession: false) の auth.setSession に渡しても (`/auth/native-bridge` の establishSession と同じ呼び方)、その利用者の user_sessions_metadata の行数は変わらず、行の session_id は setSession の後の getClaims の session_id と同じ (WebView はネイティブの行を借り、行を増やさない。S-23)」
+- `tests/integration/security/auth-history-sessions.test.ts` (A。ローカル Supabase): 「プロフィールの行がある利用者がパスワードでサインインすると、user_sessions_metadata に 1 行 (ip / user_agent / ip_network) が入り、user_profiles.last_login_at がその行の created_at に、login_count が 1 増える」「プロフィールの行が無い利用者 (admin.createUser の直後) のサインインも成功し、user_sessions_metadata に 1 行が入る (user_profiles は 0 行の更新)。そのあと accept_legal_documents と同じ列で user_profiles の行を作ると、last_login_at = そのセッションの created_at・login_count = 1 が入る (S-1)」「last_login_at を明示して作る user_profiles の行は、トリガーが変えない」「refresh で last_active_at が進み、user_agent は変わらない」「signOut (global) で revoked_at と signed_out」「auth_session_revoke は他人の行を消せず not_found、本人の他の行を消すと revoked、自分の行は current」「消した後の JWT で getUser すると session_not_found」「updateUser で password_history が 1 行増え、11 回変えると 10 行に切り詰まる」「auth_password_check が §11.5 の決定表の 7 行を返す: bcrypt の利用者は変更で current_mismatch / reused / ok、再設定 (p_current_password = NULL) で reused / ok。パスワード無しで作った利用者 (admin.createUser に password を渡さない) は変更で no_password、再設定で ok。encrypted_password を pgQuery で `$argon2id$` で始まる値にした利用者は変更で unsupported_hash、再設定で ok (bcrypt の履歴と同じなら reused)」「パスワード無しで作った利用者が generate_link (recovery) → POST /verify (token_hash) の JWT で updatePasswordWithAccessToken (第 3 引数 null) を呼ぶと、encrypted_password が bcrypt になり password_history が 1 行になる (S-28)」「expire_idle_auth_sessions が refreshed_at の古い行だけを消して idle_expired にする」「reconcile が auth.sessions に無い live の行を signed_out にする」「cleanup が 90 日より古い終了行だけを消す」「anon / authenticated は 7 本の関数 (RPC 4 本と保守 3 本) のうち auth_session_revoke だけを (authenticated が) 実行できる」「記録の失敗でログインを止めない (R-13・S-20): pgQuery で `ALTER TABLE public.user_sessions_metadata ADD CONSTRAINT cross16_test_force_fail CHECK (false) NOT VALID` を足した間、プロフィールの行がある利用者のパスワードのサインインは成功し (session が返り、その access token で getUser が通る)、auth.sessions にその session_id の行があり、user_sessions_metadata にはその session_id の行が無く、user_profiles.login_count は増えない (auth_session_created の本体の INSERT が失敗して UPDATE ごと巻き戻る)。finally で `ALTER TABLE public.user_sessions_metadata DROP CONSTRAINT IF EXISTS cross16_test_force_fail`」「記録の失敗で更新 (refresh)・ログアウトを止めない (R-13・S-20。auth_session_refreshed・auth_session_deleted): 先に制約を足さずにサインインし、user_sessions_metadata にその session_id の行があること (revoked_at が NULL) を確かめ、その行の last_active_at を控える。そのあと pgQuery で `ALTER TABLE public.user_sessions_metadata ADD CONSTRAINT cross16_test_force_fail CHECK (false) NOT VALID` を足した間に、refreshSession は error 無しで新しい session を返し、pgQuery で読む auth.sessions のその行の refreshed_at は前と変わる (サインインの直後は NULL。トリガーの WHEN が真 = 本体が動いた) が、user_sessions_metadata の行の last_active_at は控えた値のまま (本体の UPDATE が CHECK で失敗し、握られて巻き戻る)。続けて refresh の後の session で signOut (global) も error 無しで成功し、auth.sessions のその行は消え、user_sessions_metadata の行は revoked_at も ended_reason も NULL のまま (同じく巻き戻る)。finally で DROP CONSTRAINT IF EXISTS (live のまま残った行は、別の it の reconcile の対象になる §10 のトリガーの失敗の行)。制約を足す前に行を作るのが要: 行が無いと 2 つの UPDATE は 0 行の更新で CHECK に当たらず、EXCEPTION の枝を通らない」「履歴の記録の失敗でパスワードの更新を止めない (R-13): pgQuery で `ALTER TABLE public.password_history ADD CONSTRAINT cross16_test_force_fail CHECK (false) NOT VALID` を足した間、updatePasswordWithAccessToken は error が null で、auth.users.encrypted_password は変わり、password_history の行数は変わらない。finally で DROP CONSTRAINT IF EXISTS」「ログインの数の補完の失敗でプロフィールの行の作成を止めない (R-13): pgQuery で `REVOKE SELECT ON public.user_sessions_metadata FROM service_role` をした間、service_role の client で user_profiles に `{ id, nickname: 'Guest', age_group: 'unspecified', gender: 'unspecified' }` (accept_legal_documents と同じ既定値) を INSERT すると、error 無しで行ができ、last_login_at は NULL のまま (user_profiles_fill_login_stats は SECURITY INVOKER なので service_role として SELECT し、権限の不足を握る)。finally で `GRANT SELECT ON public.user_sessions_metadata TO service_role`。R-13 の 4 つの it は、どれも失敗させる書き込み・読み取りが必ず起きる形 (INSERT は必ず 1 行・UPDATE は行がある状態・SELECT は権限の確認) で、対応するトリガー関数 (auth_session_created / auth_session_refreshed と auth_session_deleted / password_history_record / user_profiles_fill_login_stats) の EXCEPTION WHEN OTHERS を消すと、サインイン・refresh とログアウト・パスワードの更新・INSERT が失敗して赤になる (WARNING は GoTrue・PostgREST の接続に返るのでテストからは読まない)」「Cookie を持たず Bearer の JWT だけで updatePasswordWithAccessToken を (第 3 引数に現在のパスワードを入れて) 呼ぶと、encrypted_password が変わり、呼んだセッションは残り、同じ利用者の他のセッションは消える (本文の current_password は、GoTrue の UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD が OFF のローカルでも更新を妨げない)」「signOutOtherSessions(admin, Bearer の JWT) は同じ利用者の他のセッションを消し、呼んだセッションは残す」「generate_link (recovery) → POST /verify (token_hash) で作ったセッションの JWT は amr に otp を持ち、hasRecentRecoveryMethod が真」「パスワードでサインインしたセッションの JWT は amr が password で、hasRecentRecoveryMethod が偽」「listPriorLogins は created_at が 90 日より前の live の行も返し、自分の行と、後に作られた行は返さない」「claimLoginAlerts を 2 つ同時に (Promise.all で) 呼ぶと、同じ pending の行はどちらか一方だけが返し、両方の戻りの session_id に重なりが無い (S-19)」「claimLoginAlerts は created_at が minAgeSeconds より新しい行と done の行を取らず、取った行を processing・alert_claimed_at = now にする」「claimLoginAlerts は processing のまま alert_claimed_at が reclaimMinutes より前の行を取り直し、reclaimMinutes 以内の processing の行は取らない (§10 の取り置きの行)」「claimLoginAlerts は 1 回に batchSize 行までしか取らない」「claimLoginAlerts は revoked_at のある (終わった) pending の行も取り (サインインして minAgeSeconds より前に signOut した行)、finishLoginAlert で done にする。revoked_at と ended_reason は変わらない (§10 の ended の行・S-29)」「releaseLoginAlert は processing の行の alert_attempts を 1 増やして pending に戻し (alert_claimed_at は NULL)、maxAttempts 回目 (attempts が 3 になる回) で done にする。processing でない行は変えない (§10 の例外の行)」「finishLoginAlert は done にして device_family・is_new_*・alert_sent_at を書く」「recordWebLoginContext は context_source = auth の行を web にして IP・ip_network・UA・国を書き true、context_source = mobile の行 (端末名あり) と web の行は変えずに false (§10 の recordWebLoginContext の行のガード)」「setCurrentDeviceName は本人の行に device_name と context_source = mobile を書き、他人の session_id では false」「migration の [cross16-backfill:begin] と [cross16-backfill:end] の間 (§11.2) を切り出し、ローカルの postgres-meta (`/pg/query`。anon-definer-execute.test.ts の pgQuery と同じ口) でもう一度流しても、user_sessions_metadata と password_history の行数は変わらない (冪等)」「migration の [cross16-auth-triggers:begin] と [cross16-auth-triggers:end] の間 (§11.3 の auth の表のトリガーを作る DO ブロック) を切り出し、pgQuery でもう一度流しても失敗せず、pg_trigger の on_auth_session_created・on_auth_session_refreshed・on_auth_session_deleted (auth.sessions)・on_auth_user_password_changed (auth.users) は 1 本ずつのまま (同じ名前があれば作らない)」「auth.admin.deleteUser で、その利用者の user_sessions_metadata と password_history の行が消える (FK の CASCADE。S-24)」「サインインしたセッションの access_token と refresh_token を、別の client (persistSession: false) の auth.setSession に渡しても (`/auth/native-bridge` の establishSession と同じ呼び方)、その利用者の user_sessions_metadata の行数は変わらず、行の session_id は setSession の後の getClaims の session_id と同じ (WebView はネイティブの行を借り、行を増やさない。S-23)」
 
 ### 20.4 画面 (Web `src/__tests__/app/`・モバイル `apps/mobile/__tests__/`)
 
@@ -1662,7 +1805,7 @@ ${emailSignature()}
 
 | 種類 | 名前 |
 |---|---|
-| 定数 | `IP_NETWORK_PREFIX_V4`・`IP_NETWORK_PREFIX_V6`・`LOGIN_HISTORY_RETENTION_DAYS`・`SESSION_IDLE_EXPIRE_DAYS`・`LOGIN_ALERT_BATCH_SIZE`・`LOGIN_ALERT_MIN_AGE_SECONDS`・`LOGIN_ALERT_RECLAIM_MINUTES`・`LOGIN_ALERT_MAX_ATTEMPTS`・`LOGIN_HISTORY_PAGE_SIZE`・`AUTH_LOGIN_ALERT_ENV_NAME`・`SERVER_DEVICE_FAMILY_KEY`・`PASSWORD_HISTORY_GENERATIONS`・`PASSWORD_HISTORY_MAX_GENERATIONS`・`PASSWORD_RESET_RECOVERY_MAX_AGE_MINUTES`・`RECOVERY_AMR_METHODS`・`LOGIN_ALERT_PRIOR_MAX_ROWS`・`GOTRUE_API_VERSION`・`GOTRUE_API_VERSION_HEADER`・`GOTRUE_USER_PATH`・`PASSWORD_INPUT_MAX_LENGTH`・`DEVICE_NAME_MAX_LENGTH`・`DEVICE_NAME_PATTERN`・`SESSIONS_SETTINGS_PATH`・`ACCOUNT_SETTINGS_PATH`・モバイルの `DEVICE_NAME_DISALLOWED_CHARS` (`apps/mobile/src/lib/device-name.ts`) |
+| 定数 | `IP_NETWORK_PREFIX_V4`・`IP_NETWORK_PREFIX_V6`・`LOGIN_HISTORY_RETENTION_DAYS`・`SESSION_IDLE_EXPIRE_DAYS`・`LOGIN_ALERT_BATCH_SIZE`・`LOGIN_ALERT_MIN_AGE_SECONDS`・`LOGIN_ALERT_RECLAIM_MINUTES`・`LOGIN_ALERT_MAX_ATTEMPTS`・`LOGIN_HISTORY_PAGE_SIZE`・`AUTH_LOGIN_ALERT_ENV_NAME`・`SERVER_DEVICE_FAMILY_KEY`・`UNKNOWN_DEVICE_FAMILY_KEY`・`PASSWORD_HISTORY_GENERATIONS`・`PASSWORD_HISTORY_MAX_GENERATIONS`・`PASSWORD_RESET_RECOVERY_MAX_AGE_MINUTES`・`RECOVERY_AMR_METHODS`・`LOGIN_ALERT_PRIOR_MAX_ROWS`・`GOTRUE_API_VERSION`・`GOTRUE_API_VERSION_HEADER`・`GOTRUE_USER_PATH`・`PASSWORD_INPUT_MAX_LENGTH`・`DEVICE_NAME_MAX_LENGTH`・`DEVICE_NAME_PATTERN`・`SESSIONS_SETTINGS_PATH`・`ACCOUNT_SETTINGS_PATH`・モバイルの `DEVICE_NAME_DISALLOWED_CHARS` (`apps/mobile/src/lib/device-name.ts`) |
 | Zod | `SessionRowSchema`・`SessionClaimsSchema`・`PasswordChangeBodySchema`・`PasswordResetBodySchema`・`DeviceNameBodySchema`・`EndedReasonSchema`・`SessionSummarySchema`・`SessionsResponseSchema`・`LoginHistoryEntrySchema`・`LoginHistoryResponseSchema` |
 | 型・クラス | `SessionUserContext`・`SessionUserProfileReadError` (例外のクラス)・`LoginAlertMode`・`LoginAlertSetting`・`DeviceOs`・`DeviceClient`・`DeviceFamily`・`LoginContext`・`LoginAlertReason`・`LoginAlertDecision`・`LoginHistoryHorizon`・`SessionClaims`・`SessionClaimsReader`・`SessionAuth`・`PriorLoginRow`・`LoginAlertAccount`・`FetchLike`・`ContextSource`・`EndedReason`・`AlertStatus`・`SessionRow`・`RevokeOutcome`・`PasswordCheckOutcome`・`PasswordChangeInput`・`UpdatePasswordOutcome`・`PasswordChangeDeps`・`PasswordChangeResult`・`LoginAlertRow`・`PriorLogin`・`LoginAlertWorkerDeps`・`LoginAlertWorkerSummary`・`SessionSummary`・`LoginHistoryEntry`・`LoginNewDeviceEmailVars` |
 | 関数 | `resolveLoginAlertMode`・`deviceFamilyOf`・`deviceLabelOf`・`ipNetworkOf`・`decideLoginAlert`・`bearerTokenOf`・`readSessionAuth`・`hasRecentRecoveryMethod`・`requireSessionUser`・`passwordHistoryGenerationsFor`・`performPasswordChange`・`updatePasswordWithAccessToken`・`listLiveSessions`・`listLoginHistory`・`listPriorLogins`・`revokeSession`・`signOutOtherSessions`・`setCurrentDeviceName`・`recordWebLoginContext`・`claimLoginAlerts`・`finishLoginAlert`・`releaseLoginAlert`・`processLoginAlerts`・`createLoginAlertWorkerDeps`・`countryCodeOf`・`renderLoginNewDeviceEmail`・Web の `listSessions` / `revokeSession` / `revokeOtherSessions` / `listLoginHistory` / `changePassword` / `resetPassword`・共通の `describePasswordChangeApiError`・モバイルの `deviceNameOf` / `registerDeviceName` |
@@ -1744,7 +1887,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-29 | `tests/login-failure-grant-claim-cleanup-contract.test.ts`・`tests/integration/security/log-cleanup-and-dau-snapshot.test.ts` | `cron.job` | 自分のジョブだけを見る | 変更なし。新しいジョブは §20.3 の契約テストが見る (migration の全ジョブの名前と数を 08 の記述と突き合わせる番兵は別にある → N-32) | A |
 | N-30 | `tests/mobile-super-admin-api-contract.test.ts`・`apps/mobile/__tests__/app/error-boundaries.test.tsx` | `(super-admin)`・`_layout.tsx` | 対象外 (新しい画面は `settings/sessions.tsx` で layout ではない) | 変更なし (走らせて確認) | B |
 | N-31 | `src/__tests__/app/faq/account-answers.test.ts` (#1187 の「モバイルのアカウント管理: … 実際に Supabase で変更する」の it。origin/main 243〜255 行) | `updateUser({ password: input.newPassword })`・`signOut({ scope: "others" })`・`{ email: input.email }` | `apps/mobile/src/lib/account-credentials.ts` の本文に 3 つの文字列があることを読む走査。§16 で `changePassword` が `getApi().post('/api/auth/password/change', …)` になり、前の 2 つの文字列が消えて赤 | その it の `credentials` への期待 3 つのうち、`updateUser({ password: input.newPassword })` と `signOut({ scope: "others" })` の 2 つを `expect(credentials).toContain('/api/auth/password/change')` の 1 つに置き換える (引用符の種類に依らないよう、path だけを見る)。`{ email: input.email }` の期待 (メールアドレスの変更は今までどおり Supabase の `updateUser`) と、画面・部品の見出しの期待はそのまま。it の名前の「実際に Supabase で変更する」を「パスワードは API (`/api/auth/password/change`) で、メールアドレスは Supabase で変更する」に。同じ describe の Web のアカウント画面の it (見出しと入力欄の文言) は、§15 で文言を変えないので変更なし (走らせて確認) | C |
-| N-32 | `tests/log-cleanup-dau-snapshot-contract.test.ts` (「#1125 設計書の『いま』の記述が、木の実物と合っている」の Vercel Cron の 2 本と pg_cron の 1 本の it。origin/main 313〜358 行) | `vercel.json` の `crons`・migration の `cron.schedule(` (名前は `tests/helpers/migration-cron-jobs.ts` が数える) | vercel.json の cron の名前 (path の最後の部分) と、migration が pg_cron に登録するジョブの名前を、`docs/design/operator/08-cron-batches.md` の §3.0・§3.1 の注記・§3.2 の注記・§5 の注記がすべて挙げ、§3.0・§3.1 の注記・§3.2 の注記の本数の宣言が実数と同じであることを見る。本設計で pg_cron の `cleanup-auth-sessions-and-login-history` (段 A) と Vercel Cron の `login-alerts` (段 B) が 1 本ずつ増えるので、08 を直さないとその段の全件が赤。§11.6 は名前を文字列で直書きしているので、見張りは名前を解ける (未解決 0 件) | 08 をその段の PR で直す (手順は §23 の 08 の行)。段 A: §3.0 の「migration が pg_cron に登録しているジョブは N つ」と §3.1 の注記の「… の N つ」を +1 し、両方に `` `cleanup-auth-sessions-and-login-history` `` を書く。段 B: §3.0 と §3.2 の注記の「`vercel.json` に登録されている Vercel Cron は … の N 本」を +1 し、§3.0・§3.2 の注記・§5 の注記に `` `login-alerts` `` を書く (名前は path の最後の部分。`` `/api/cron/login-alerts` `` の書き方だけでは数えられない)。N は PR の時点の origin/main の実数から数える (origin/main 5a48abc9・61c59321 のどちらでも pg_cron 8 → 9・Vercel 2 → 3。名前を解く見張り `tests/helpers/migration-cron-jobs.ts` と `tests/migration-cron-job-names.test.ts` は、§11.6 の直書きの名前を解ける) | A・B |
+| N-32 | `tests/log-cleanup-dau-snapshot-contract.test.ts` (「#1125 設計書の『いま』の記述が、木の実物と合っている」の Vercel Cron の 2 本と pg_cron の 1 本の it。origin/main 313〜358 行) | `vercel.json` の `crons`・migration の `cron.schedule(` (名前は `tests/helpers/migration-cron-jobs.ts` が数える) | vercel.json の cron の名前 (path の最後の部分) と、migration が pg_cron に登録するジョブの名前を、`docs/design/operator/08-cron-batches.md` の §3.0・§3.1 の注記・§3.2 の注記・§5 の注記がすべて挙げ、§3.0・§3.1 の注記・§3.2 の注記の本数の宣言が実数と同じであることを見る。本設計で pg_cron の `cleanup-auth-sessions-and-login-history` (段 A) と Vercel Cron の `login-alerts` (段 B) が 1 本ずつ増えるので、08 を直さないとその段の全件が赤。§11.6 は名前を文字列で直書きしているので、見張りは名前を解ける (未解決 0 件) | 08 をその段の PR で直す (手順は §23 の 08 の行)。段 A: §3.0 の「migration が pg_cron に登録しているジョブは N つ」と §3.1 の注記の「… の N つ」を +1 し、両方に `` `cleanup-auth-sessions-and-login-history` `` を書く。段 B: §3.0 と §3.2 の注記の「`vercel.json` に登録されている Vercel Cron は … の N 本」を +1 し、§3.0・§3.2 の注記・§5 の注記に `` `login-alerts` `` を書く (名前は path の最後の部分。`` `/api/cron/login-alerts` `` の書き方だけでは数えられない)。N は PR の時点の origin/main の実数から数える (origin/main 36c926ad では pg_cron 9 → 10 (`20261016100000_purge_hidden_content.sql` の `purge-hidden-content` で 9 になった)・Vercel 2 → 3。名前を解く見張り `tests/helpers/migration-cron-jobs.ts` と `tests/migration-cron-job-names.test.ts` は、§11.6 の直書きの名前を解ける) | A・B |
 | N-33 | `src/__tests__/lib/auth/logout-guidance.test.ts` (origin/main 61c59321 の 67〜92 行の describe「#1552 他の端末のログアウトを確認できなかったときの注意書き」と、148〜154 行の it「アカウント画面は、案内の文を直書きせず、この出し分けを使う」) | `describeOthersNotSignedOutNote`・`src/app/(main)/settings/account/page.tsx` | it が画面のソースに `describeOthersNotSignedOutNote(accountActionsPlacement)` があることを読む。§15 でその呼び出しが消えて赤。関数も §21.3 で消す | describe「#1552 他の端末のログアウトを確認できなかったときの注意書き」(4 it。`it.each` を含む) を削除し、import から `describeOthersNotSignedOutNote` を外す。it「アカウント画面は…」の `expect(account).toContain('describeOthersNotSignedOutNote(accountActionsPlacement)')` を `expect(account).not.toContain('describeOthersNotSignedOutNote')` に置き換える (ほかの 4 つの期待 = `describeForgotCurrentPasswordNote(accountActionsPlacement)`・`useAccountActionsPlacement(isNativeApp)`・2 つの `not.toContain` はそのまま)。describe「#1552 現在のパスワードを思い出せない人への案内」と構文の it は変えない | C |
 | N-34 | `tests/mobile-sign-out-doc-callers.test.ts` (origin/main 61c59321 で増えた見張り) | `signOutOnDevice`・`apps/mobile/app/**` | `apps/mobile/app` の中で `signOutOnDevice` を呼ぶ画面は設定画面 (`(tabs)/settings.tsx`) だけでないと赤 | 新しい画面 `apps/mobile/app/settings/sessions.tsx` は `signOutOnDevice` を呼ばない (この端末には解除のボタンを出さない §15。他の端末は API で消す)。`docs/design/mobile/05-auth-session.md` への追記 (§23) にも「端末からのログアウト」の行を足さない | B |
 | N-35 | `src/__tests__/lib/emails/templates-site-config.test.ts` (「テンプレート一覧が、実際にあるテンプレートのファイルと一致している」の it と、`TEMPLATES` を回す 3 つの describe) | `src/lib/emails/account/*.ts`・`getEmailFrom()`・`emailSignature()` | `account/` のファイルを `readdirSync` で数え、`TEMPLATES` と同じでないと赤。§18 の `account/login-new-device.ts` が増える | `TEMPLATES` に 1 件足す: `{ file: 'account/login-new-device', name: 'login-new-device', render: () => renderLoginNewDeviceEmail({ to_email: 'taro@example.com', logged_in_at: new Date('2026-10-15T01:00:00.000Z'), device_label: 'Windows の Chrome', ip_address: '203.0.113.10', country_code: 'JP' }), mentionsSupport: true }` (本文が `getSupportEmail()` を書くので true)。§18 の本文は `getEmailFrom()`・`emailSignature()` を使い、URL は `${getSiteUrl()}` で始めるので、ドメインの直書きの it も通る | B |
@@ -1757,7 +1900,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 
 | 文書 | 箇所 | 直し方 | 期日 |
 |---|---|---|---|
-| `docs/design/cross/01-auth-session.md` | §3.2 (`INSERT user_sessions_metadata`)・§4.3 (5 端末)・§4.4 (`admin.signOut(sessionId)`)・§9.1 (step 4)・§13.1 / §13.3・§16・§17 | §3.2 の INSERT を「DB のトリガー (cross/16 §11.3)」に。§4.3 を「上限は設けない。一覧・個別失効・30 日の自動終了 (cross/16)」に。§4.4 の擬似コードを「個別の失効は RPC `auth_session_revoke` (cross/16 §11.4)。ログアウトは今までどおり `signOut()`」に。§9.1 の step 4 を「`POST /api/auth/password/reset` (cross/16 §14.7)」に。§13.1 / §13.3 に「→ cross/16 §11 が正典」。§16 の Integration 行 (5 端末上限) を本書のテストに。§17 の middleware 行を消す | 段ごとに分ける: §3.2・§13.1・§13.3 は段 A、§4.3・§4.4・§16・§17 は段 B、§9.1 は段 C の PR (§21.3) |
+| `docs/design/cross/01-auth-session.md` | §3.2 (`INSERT user_sessions_metadata`)・§4.3 (5 端末)・§4.4 (`admin.signOut(sessionId)`)・§9.1 (step 4)・§13.1 / §13.3・§16・§17 | §3.2 の INSERT を「DB のトリガー (cross/16 §11.3)」に。§4.3 を「上限は設けない。一覧・個別失効・30 日の自動終了 (cross/16)」に。§4.4 の擬似コードを「個別の失効は RPC `auth_session_revoke` (cross/16 §11.4)。ログアウトは今までどおり `signOut()`」に。§9.1 の step 4 を「`POST /api/auth/password/reset` (cross/16 §14.7)。照合と再設定の認可はこの API の経路だけで、GoTrue の `PUT /auth/v1/user` を直接呼ぶ経路は通らない (cross/16 §24・S-33)」に。§13.1 / §13.3 に「→ cross/16 §11 が正典」。§16 の Integration 行 (5 端末上限) を本書のテストに。§17 の middleware 行を消す | 段ごとに分ける: §3.2・§13.1・§13.3 は段 A、§4.3・§4.4・§16・§17 は段 B、§9.1 は段 C の PR (§21.3) |
 | `docs/design/operator/01-data-model.md` | §3.23・§3.25・§3.9.1・§3.1 の順序 | §3.25 に 12 列・索引 2 本・CHECK 3 本・`sessions_revoke_self` の削除・GRANT の変更・RPC `claim_login_alerts` / `release_login_alert` を写し「→ cross/16 §11.1・§11.4 が正典」。§3.23 に「書くのはトリガー `password_history_record` (cross/16 §11.3)」。§3.9.1 の `last_login_at` の注記「auth.users.last_sign_in_at を Edge Function が同期」を「`auth.sessions` の INSERT のトリガー `auth_session_created` が書き、行がまだ無かった最初のログインは行を作るときのトリガー `user_profiles_fill_login_stats` が入れる (cross/16 §11.3)」に。§3.1 の一覧の末尾に本 migration (番号はマージ時の値) | 段 A |
 | `docs/design/cross/02-rls-patterns.md` | §4.1 の self_ownership の「用途」の行・§9 の `rls_hardening.sql` テンプレートの「2. user_sessions_metadata」(`sessions_self_select`・`sessions_self_update`・「INSERT は Edge Function (service_role) のみ」) と「4. password_history」(「service_role のみアクセス可 (パスワード変更 Edge Function 経由)」) | §4.1 の用途の例から `user_sessions_metadata`・`password_history` を外す (前者は本人の SELECT だけ、後者は本人に何も見せない)。§9 の 2. を、本書 §11.1 の後の実際の形に: SELECT のポリシーは実名 `sessions_self` (`USING (user_id = auth.uid())`)・UPDATE のポリシーは無し (`sessions_revoke_self` は本書の migration が消す。02 の `sessions_self_update` はもともと実名とずれていた)・注記を「書くのは `auth.sessions` のトリガー・RPC `auth_session_revoke` / `claim_login_alerts` / `release_login_alert`・service_role だけ (cross/16 §11.1・§11.3・§11.4)」に。4. の注記を「書くのはトリガー `password_history_record`、読むのは RPC `auth_password_check` (どちらも SECURITY DEFINER。cross/16 §11.3・§11.5)。PUBLIC・anon・authenticated の表の権限は無い」に | 段 A |
 | `docs/requirements/03-operator-admin.md` | §17.1 の `password_history` の DDL の下・§17.4 の `user_sessions_metadata` の DDL の下 | 要件の文は変えず、2 か所に注記を 1 行ずつ: §17.1「記録はトリガー・照合はサーバーの API と RPC `auth_password_check` (cross/16 §11.3・§11.5)」、§17.4「列の追加・ポリシー・一覧と失効・30 日の自動終了は cross/16 が正典。同時 5 端末の上限・ロール別のタイムアウト・`/account/sessions` のパスは採らない (cross/16 §0.3)」。注記を足すか、要件の文そのものを改めるかはオーケストレーターが決める (§25 Q-17) | オーケストレーターの判断 (Q-17) |
@@ -1766,9 +1909,9 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | `docs/design/operator/07-audit-monitoring.md` | §4.1.1 | `admin.user.view_login_history` (details: `returned_count`・severity info・0 件は記録しない) | 段 D |
 | `docs/design/operator/02-api-spec.md` | §4 ユーザー管理 API | `GET /api/admin/users/{id}/login-history` の節 | 段 D |
 | `docs/design/operator/03-ui-spec.md` | §6 ユーザー詳細 | 「ログイン履歴 (直近 20 回)」の節 | 段 D |
-| `docs/design/operator/08-cron-batches.md` | §3.0 実装状況 (見出しの日付・本数と名前の文・「そのほか」の箇条書き)・§3.1 の注記・§3.2 の表と注記・§5 の注記 | 段 A (pg_cron): §3.0 の「いま、このリポジトリの migration が pg_cron に登録しているジョブは 8 つある」を 9 つに、「残りの 6 つ `…`」を 7 つにして `` `cleanup-auth-sessions-and-login-history` `` を足す。「そのほか」の箇条書きに 1 項目: migration `<番号はマージ時に確定>_auth_history_sessions.sql` (#1190) がジョブ `` `cleanup-auth-sessions-and-login-history` `` を毎日 03:55 JST (`55 18 * * *` UTC) に登録し、`expire_idle_auth_sessions()` (30 日更新の無いセッションを終える)・`reconcile_user_sessions_metadata()` (GoTrue 側に無いのに終わっていない行を終える)・`cleanup_ended_user_sessions_metadata()` (終わってから 90 日を過ぎた行を消す) を呼ぶ。3 つの関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/<番号はマージ時に確定>_auth_history_sessions.down.sql`。詳しくは cross/16 §11.6。§3.1 の注記の「migration が pg_cron に登録しているのは、… この表に無い `…` の 8 つ (§3.0)」の列挙に `` `cleanup-auth-sessions-and-login-history` `` を足して 9 つに。段 B (Vercel): §3.0 の「`vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (…) の 2 本である」に `` `login-alerts` `` (#1190。新しい端末・地域からのログインを本人にメールで知らせる。毎分) を足して 3 本に。§3.2 の表に 1 行を足す (ジョブ名の列 = `` `login_alerts` (実装済み: #1190) ``・スケジュール (JST) の列 = 毎分・概要の列 = 新しい端末・地域からのログインを本人にメールで知らせる (`/api/cron/login-alerts`。設計は cross/16 §13.3・§14.8)) (行に「実装済み」を書くので、注記の「この表のほかの 11 本」は 11 のまま)。§3.2 の注記の「… の 2 本」に `` `login-alerts` `` (この表の `login_alerts`) を足して 3 本に。§5 の注記の「`vercel.json` にあるのは `process-menu-queue` と `app-log-alerts` だけ」に `` `login-alerts` `` を足す。どちらの段も、本数は PR の時点の origin/main の実数 + 1 (並行の案件が先に cron を足していれば、その数から数える)。本数の宣言の文の、宣言より前の括弧の中に「の <数> 本」「の <数> つ」を書かない (番兵の正規表現が先に当たる)。見出し・注記の日付はその PR の日付に。直したら `tests/log-cleanup-dau-snapshot-contract.test.ts` を offload で流して緑を確かめる (§22 N-32) | 段 A・段 B のそれぞれの PR と同じ PR (後続の PR にすると、その段の全件が赤) |
+| `docs/design/operator/08-cron-batches.md` | §3.0 実装状況 (見出しの日付・本数と名前の文・「そのほか」の箇条書き)・§3.1 の注記・§3.2 の表と注記・§5 の注記 | 段 A (pg_cron): §3.0 の「いま、このリポジトリの migration が pg_cron に登録しているジョブは 9 つある」を 10 つに、「残りの 7 つ `…`」を 8 つにして (origin/main 36c926ad の数。PR の時点の実数 + 1 にする) `` `cleanup-auth-sessions-and-login-history` `` を足す。「そのほか」の箇条書きに 1 項目: migration `<番号はマージ時に確定>_auth_history_sessions.sql` (#1190) がジョブ `` `cleanup-auth-sessions-and-login-history` `` を毎日 03:55 JST (`55 18 * * *` UTC) に登録し、`expire_idle_auth_sessions()` (30 日更新の無いセッションを終える)・`reconcile_user_sessions_metadata()` (GoTrue 側に無いのに終わっていない行を終える)・`cleanup_ended_user_sessions_metadata()` (終わってから 90 日を過ぎた行を消す) を呼ぶ。3 つの関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/<番号はマージ時に確定>_auth_history_sessions.down.sql`。詳しくは cross/16 §11.6。§3.1 の注記の「migration が pg_cron に登録しているのは、… この表に無い `…` の 9 つ (§3.0)」の列挙に `` `cleanup-auth-sessions-and-login-history` `` を足して 10 つに。段 B (Vercel): §3.0 の「`vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (…) の 2 本である」に `` `login-alerts` `` (#1190。新しい端末・地域からのログインを本人にメールで知らせる。毎分) を足して 3 本に。§3.2 の表に 1 行を足す (ジョブ名の列 = `` `login_alerts` (実装済み: #1190) ``・スケジュール (JST) の列 = 毎分・概要の列 = 新しい端末・地域からのログインを本人にメールで知らせる (`/api/cron/login-alerts`。設計は cross/16 §13.3・§14.8)) (行に「実装済み」を書くので、注記の「この表のほかの 11 本」は 11 のまま)。§3.2 の注記の「… の 2 本」に `` `login-alerts` `` (この表の `login_alerts`) を足して 3 本に。§5 の注記の「`vercel.json` にあるのは `process-menu-queue` と `app-log-alerts` だけ」に `` `login-alerts` `` を足す。どちらの段も、本数は PR の時点の origin/main の実数 + 1 (並行の案件が先に cron を足していれば、その数から数える)。本数の宣言の文の、宣言より前の括弧の中に「の <数> 本」「の <数> つ」を書かない (番兵の正規表現が先に当たる)。見出し・注記の日付はその PR の日付に。直したら `tests/log-cleanup-dau-snapshot-contract.test.ts` を offload で流して緑を確かめる (§22 N-32) | 段 A・段 B のそれぞれの PR と同じ PR (後続の PR にすると、その段の全件が赤) |
 | `docs/design/mobile/05-auth-session.md` | §2・§3 の末尾 | 「ログイン直後と起動時に `PATCH /api/auth/sessions/current` で端末名を登録 (cross/16 §16)」の 1 節 | 段 B |
-| `docs/operations/auth-protection.md` | §3.2 (攻撃対策) | 本書の前提 (§24) の 4 行: Secure password change は OFF のまま・JWT の有効期間・Session timebox / inactivity は使わない (本書の 30 日のジョブが代わり)・`auth.sessions` / `auth.users` のトリガー 4 本が残っているかの年 1 回の点検 (§24 の最終行。確かめ方は `SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal`) | 段 A |
+| `docs/operations/auth-protection.md` | §3.2 (攻撃対策) | 本書の前提 (§24) の 6 行: Secure password change は OFF のまま・`UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` の値と、OFF の間は盗んだセッションで GoTrue を直接呼ぶ変更 (cross/16 S-33) を防げないこと (ON にするかは cross/16 Q-18 の結論を写す)・JWT の有効期間・Session timebox / inactivity は使わない (本書の 30 日のジョブが代わり)・`auth.sessions` / `auth.users` のトリガー 4 本が残っているかの年 1 回の点検 (確かめ方は `SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal`)・その 4 本は表の所有者 (`supabase_auth_admin`) でないと消せず、migration のロールバックは本体を空にして残すこと (cross/16 §11.7。消すときは Supabase のサポートに頼む) | 段 A |
 | `ENV_SETUP.md`・`.env.example` | 環境変数 | `AUTH_LOGIN_ALERT` の説明 (N-2) | 段 B |
 | `src/lib/account-export-tables.ts` | `ACCOUNT_EXPORT_EXCLUDED` の `user_sessions_metadata` の理由 | 「ログインの記録 (IP・端末・不審の印)。本人には設定の『ログイン中の端末』と『最近のログイン』で見せる」に改める (分類は変えない) | 段 B |
 
@@ -1776,11 +1919,13 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 
 | 前提 | 確かめ方 | 外れたとき |
 |---|---|---|
-| Supabase の「Secure password change」(`secure_password_change`) が OFF | ダッシュボード → Authentication → Providers → Email | ON だと、作成から 24 時間を過ぎたセッションの変更が 403 `AUTH_REAUTHENTICATION_REQUIRED` (ログインし直せば通る)。本書は nonce (メールの OTP) を扱わない |
+| Supabase の「Secure password change」(`secure_password_change`) が OFF | ダッシュボード → Authentication → Providers → Email | ON だと、作成から 24 時間を過ぎたセッションの変更が 403 `AUTH_REAUTHENTICATION_REQUIRED` (ログインし直せば通る)。本書は nonce (メールの OTP) を扱わない。ON でも、作成から 24 時間以内の盗んだセッションで GoTrue を直接呼ぶ変更 (S-33) は止まらない (§3) |
+| GoTrue の `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` (既定 OFF §3) の値と、ON にするか (Q-18) | ホスト版の設定画面・Management API で見られるか・変えられるかは確かめられていない (Q-18) | OFF (いまの前提) の間は、access token を盗んだ人が GoTrue の `PUT /auth/v1/user` を直接呼ぶと、現在のパスワード無しにパスワードを変えられ、本書の照合・再設定の認可も通らない (S-33。記録はトリガーで残る)。これは本書の前からある穴で、本書は防がない (アプリの経路だけを守る §7.1)。ON にすると止まる (再設定のセッションは GoTrue が免除する)。本書の API は ON でも動く (変更は `current_password` を渡す §13.7)。ON にするのは段 C のマージの後 (それまでの画面は `current_password` を渡さない `updateUser({ password })` で変更し、ON だと 400 になる) |
 | JWT (access token) の有効期間は既定の 1 時間以下 | Authentication → Sessions | 失効した端末が PostgREST を直接呼ぶ要求は、JWT の期限まで通る (GoTrue のログアウトと同じ性質。本書の API と refresh は即時に止まる) |
 | Session timebox / inactivity timeout は未設定のまま | 同上 | 設定すると GoTrue が `auth.sessions` を消す側になる。本書のトリガーは DELETE を記録するだけなので壊れないが、30 日のジョブと二重になる |
 | 送信ドメインの検証 (`docs/operations/email-domain.md`) | Resend | 未検証の間は通知が届かない (worker は印だけ付ける。`AUTH_LOGIN_ALERT=off` と同じ結果。届く前提の文言をアプリには書かない) |
-| `auth` スキーマのトリガーは Supabase の管理対象の表に足すもの | — | Supabase 側の移行で `auth.sessions` / `auth.users` が作り直されるとトリガーが消える (記録が止まるだけでログインは止まらない)。`reconcile` と結合テスト (§20.3) が異常を見つける。年に 1 度の点検を `docs/operations/auth-protection.md` に書く (§23) |
+| `auth` スキーマのトリガーは Supabase の管理対象の表に足すもの。表の所有者は `supabase_auth_admin` で、migration を流す `postgres` は作れるが消せない (§3) | 年に 1 度 `pg_trigger` で 4 本を数える (§23 の `auth-protection.md` の行) | Supabase 側の移行で `auth.sessions` / `auth.users` が作り直されるとトリガーが消える (記録が止まるだけでログインは止まらない)。`reconcile` と結合テスト (§20.3) が異常を見つける。migration のロールバック (§11.7) は 4 本を消せないので、関数の本体を空にして残す (記録はしない)。トリガーそのものを消すには表の所有者の権限が要る (Supabase のサポート Q-11) |
+| GoTrue の DB の暗号化の設定 (`GOTRUE_SECURITY_DB_ENCRYPTION_*`) は OFF | 本番の `encrypted_password` が全員 bcrypt (`$2…`) (§3) | ON にすると `encrypted_password` が暗号文になり、`auth_password_check` は比べられない (変更は 409 `AUTH_PASSWORD_NOT_SET`・再設定は暗号文の行と比べずに通る)。GoTrue は切り替わった後のログインで `encrypted_password` を書き直す (§3) ので、`password_history` に暗号文の行が足される |
 
 ## 25. 未解決事項 (オーケストレーターへの問い)
 
@@ -1789,17 +1934,18 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | Q-1 | `secure_password_change` の本番の値 (§24) | OFF を前提。ON なら §14.6 の 403 で案内 |
 | Q-2 | 失効が PostgREST の直接の要求に効くのは JWT の期限 (≤ 1 時間) 後でよいか | よい (GoTrue のログアウトと同じ)。短くするなら JWT の期限の設定で |
 | Q-3 | 放置の終了を 30 日の 1 値にしてよいか (cross/01 §4.1 はロール別) | 1 値。ロール別は `user_profiles.roles` を JOIN する別の migration で足せる |
-| Q-4 | 「新しい IP の範囲」だけで通知しないでよいか (§7.1) | しない。変えるなら `decideLoginAlert` の `shouldNotify` 1 行 |
+| Q-4 | 「新しい IP の範囲」だけで通知しないでよいか (§7.1)。端末の種類で比べる方式の限界: 攻撃者が UA を本人の端末の種類 (例 Windows の Chrome) に偽ると、端末の種類では鳴らず、GoTrue を直接呼ぶ経路には国も入らないので通知は届かない (S-4。偽らない Node の既定の UA は「不明な端末」として鳴る §10.1) | しない。変えるなら `decideLoginAlert` の `shouldNotify` 1 行 (IP の範囲で鳴らせば UA を偽る攻撃者も拾えるが、携帯回線・家庭の回線の本人のログインのたびにも鳴る) |
 | Q-5 | cross/12 (MFA) の `SessionClaimsSchema` / `bearerJwtOf` と本書の `session-claims.ts` は同じ役割。先にマージした方を正にして、後の方が import に寄せる | 本書は独立に書く (未マージの枝に依存しない)。統合は後の実装 WF の 1 コミット |
 | Q-6 | 仕様ファイルの「`src/modules/<name>/` + facade」はこのリポジトリに無い | 既存の `src/lib/auth/<領域>/` に合わせた |
 | Q-7 | モバイルが API の応答を検証する Zod を `packages/shared` に写すか、型だけにするか | 型だけ (`sessions-api.ts` の中に同じ形の type)。写すなら `packages/shared/src/auth-sessions.ts` |
 | Q-8 | 既存の 1,331 セッション・195 人のパスワードの写し (§11.2) を migration でやってよいか | やる (ローンチ前・テストの利用者。写さないと一覧に「この端末」が出ない) |
 | Q-9 | Web のパスワード変更から Turnstile を外す (§15) | 外す (再認証のサインインが無くなり、API は本人のセッション + rate-limit で守る) |
 | Q-10 | support にログイン履歴を見せるか | 見せない (IP は PII。admin / super_admin だけ) |
-| Q-11 | `auth` スキーマにトリガーを置くことへの合意 (§24 の最終行) | 置く (Supabase の文書どおりの作法。失敗は握る) |
+| Q-11 | `auth` スキーマにトリガーを置くことへの合意 (§24)。置いたトリガーは表の所有者 (`supabase_auth_admin`) でないと消せない (§3) | 置く (Supabase の文書どおりの作法。失敗は握る)。migration のロールバックは関数の本体を空にして 4 本を残す (§11.7)。トリガーそのものを消す必要が出たら Supabase のサポートに頼む |
 | Q-12 | 再設定の認可で `amr` の `otp` も受けてよいか (§7.1・§12.4) | 受ける。token_hash (Web の `/auth/callback`) と implicit (モバイルの既定) の再設定は `otp` になる (§3)。`otp` はメールのリンク / コードでメールボックスを持つことを示したセッションで、`recovery` と同じ強さ。`recovery` だけにするなら、Web とモバイルの再設定を PKCE に揃える (モバイルの `flowType: 'pkce'`・メールの雛形) 別の案件が先に要る |
-| Q-13 | 作成から 90 日を過ぎて初めてログインした利用者 (と、移行の時点でセッションが 1 つも無かった既存の利用者の、移行後の最初のログイン) に `history_expired` のメールが 1 通届いてよいか (§10.1 の行 2) | よい (本人のログインでの 1 通。履歴が消えた乗っ取り (S-26) を取りこぼさない側に倒す)。なくすには、消えない「ログインしたことがある」の印 (新しい表) が要る |
+| Q-13 | 作成から 90 日を過ぎて初めてログインした利用者 (と、移行の時点でセッションが 1 つも無かった既存の利用者の、移行後の最初のログイン) に `history_expired` のメールが 1 通届いてよいか (§10.1 の行 2・3)。あわせて、移行で写した行 (§11.2) のうち Web のログイン (UA `node` = 不明な端末) は比べる相手の端末の種類にならないので、Web だけを使ってきた既存の利用者には、移行の後の Web の最初のログインで `new_device` のメールが 1 通届く (§10.1 の行 5) | よい (本人のログインでの 1 通。履歴が消えた乗っ取り (S-26) を取りこぼさない側に倒す)。なくすには、消えない「ログインしたことがある」の印 (新しい表) が要る |
 | Q-14 | `user_profiles.last_login_at` / `login_count` は特権列ガード (`guard_user_profiles_privileged` / `_on_insert`、20261008200700) の対象外で、本人が自分の行を PostgREST で書き換えられる (本書の前から同じ)。本書がこの 2 列を「最終ログイン」として意味のある値にするので、ガードに足すか | 本書では足さない (ガードの関数は同意の設計 20261008200700 の持ち物で、`CREATE OR REPLACE` は本書の範囲の外)。運営の画面の値は参考で、ログインの事実はログイン履歴 (`user_sessions_metadata`。本人は SELECT だけ §11.1) が持つ。足すなら別 Issue |
 | Q-15 | 再設定で、パスワードの無い利用者 (Google / Apple だけ) が最初のパスワードを作れることを残してよいか (§11.5・S-28) | 残す (いまの `updateUser` の画面と同じ挙動。メールのリンクで本人を確かめたセッションだけが通る R-8)。断るなら §11.5 の決定表の行 6・7 を「パスワードが無ければ `no_password`」に改め、§9 の再設定の行に後退として書く |
 | Q-16 | 端末名に使える文字を英数字・空白・`()._,+-` に絞ってよいか (§12.5)。アプリは機種名 (`modelName`) を送り、利用者が付けた端末の名前 (`deviceName`) は送らない | 絞る (攻撃者も自分のセッションに書けるので、URL・日本語の文で人を欺かせない §7.1)。機種名と OS の版は英数字で書ける。合わない名前は登録されず、一覧は UA の言葉 (`device_label`) で出る |
 | Q-17 | 要件 `docs/requirements/03-operator-admin.md` §17.4 の「同時ログイン: 最大 5 端末」・ロール別のタイムアウト・`/account/sessions`・`/account/sessions/revoke-all` を本書は採らない (§0.3・§15・§14.3)。要件の文書に注記を足すか、要件の文を改めるか | 注記だけ (§23 の行)。要件の文の改定は設計の PR では行わない (要件の変更は発注の側の判断のため) |
+| Q-18 | 盗んだセッション (access token) で GoTrue の `PUT /auth/v1/user` を直接呼ぶ変更 (S-33) を、本書は防がない (照合と再設定の認可はアプリの経路だけ §7.1)。GoTrue の `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` を ON にするか。ホスト版で変えられるか (§3 では確かめられていない) | 本書の API は ON に備える (変更は `current_password` を GoTrue に渡す §13.7)。ON にするか・変えられるかの確認はオーナーの判断 (§24)。変えられない・ON にしないなら、本書の前からある穴として受け入れる (`secure_password_change` を ON にすると、作成から 24 時間を過ぎた盗んだセッションに限って止まる)。DB のガードで止める案は §7.1 で退けた (止められるのは「API を通らない変更」だけで、ログイン・管理 API まで止めうる)。ON にしても、直接の経路の再利用 (履歴の照合) は止まらない (現在のパスワードか再設定のセッションを持つ本人が直接呼ぶ場合。本人が自分で決まりを外すだけで、乗っ取りにはならない) |
