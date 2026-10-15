@@ -1225,8 +1225,8 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
   // ラベル (label=com.supabase.cli.project=<project_id>) で絞って返す。ラベルで絞らない一覧は全部を返す
   // (絞り忘れると、ほかの枠のものまで「この枠のもの」に見える)。rm / volume rm は呼ばれた引数を FAKE_CALLS に書いてから行を消す。
   // 一覧 (ps / volume ls) を打ったことは FAKE_LISTS に書く (枠 0 で docker を打たないことを確かめるため)。
-  // 一覧は、FAKE_LS_FAIL があれば両方、FAKE_VLS_FAIL があればボリュームだけが失敗する。
-  // FAKE_LS_FAIL_AFTER_RM=1 なら、コンテナの rm のあとから一覧が失敗する (消したあとの確かめが取れない場面)
+  // 一覧は、FAKE_LS_FAIL があれば両方、FAKE_CLS_FAIL があればコンテナだけ、FAKE_VLS_FAIL があればボリュームだけが失敗する。
+  // FAKE_LS_FAIL_AFTER_RM (all / c / v) を付けると、コンテナの rm のあとから、その一覧が失敗する (消したあとの確かめが取れない場面)
   const fakeDocker = [
     "fake_remove() { local kind=\"$1\" x; shift; for x; do awk -v k=\"$kind\" -v x=\"$x\" '!($1 == k && $2 == x)' \"$FAKE_STATE\" >\"$FAKE_STATE.tmp\" && mv \"$FAKE_STATE.tmp\" \"$FAKE_STATE\"; done; }",
     "fake_list() { awk -v k=\"$1\" -v p=\"$2\" -v all=\"$3\" '$1 == k && (all == 1 || $3 == p) { print $2 }' \"$FAKE_STATE\"; }",
@@ -1234,7 +1234,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     '  local a p="" all=1 n=0',
     '  for a; do case "$a" in label=com.supabase.cli.project=*) p="${a#label=com.supabase.cli.project=}"; all=0 ;; esac; done',
     '  case "$1" in',
-    '    ps) echo "LIST c ${p:-all}" >>"$FAKE_LISTS"; [ ! -e "$FAKE_LS_FAIL" ] || return 1; fake_list c "$p" "$all" ;;',
+    '    ps) echo "LIST c ${p:-all}" >>"$FAKE_LISTS"; [ ! -e "$FAKE_LS_FAIL" ] && [ ! -e "$FAKE_CLS_FAIL" ] || return 1; fake_list c "$p" "$all" ;;',
     '    volume)',
     '      case "$2" in',
     '        ls) echo "LIST v ${p:-all}" >>"$FAKE_LISTS"; [ ! -e "$FAKE_LS_FAIL" ] && [ ! -e "$FAKE_VLS_FAIL" ] || return 1; fake_list v "$p" "$all" ;;',
@@ -1246,7 +1246,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     '      [ ! -f "$FAKE_STATE.rmn" ] || n="$(cat "$FAKE_STATE.rmn")"',
     '      if [ "$n" -lt "${FAKE_RM_FAILS:-0}" ]; then echo "$((n + 1))" >"$FAKE_STATE.rmn"; return 1; fi',
     '      fake_remove c "$@"',
-    '      [ "${FAKE_LS_FAIL_AFTER_RM:-0}" = 0 ] || : >"$FAKE_LS_FAIL" ;;',
+    '      case "${FAKE_LS_FAIL_AFTER_RM:-}" in all) : >"$FAKE_LS_FAIL" ;; c) : >"$FAKE_CLS_FAIL" ;; v) : >"$FAKE_VLS_FAIL" ;; esac ;;',
     '    *) echo "DOCKER_OTHER $1" >>"$FAKE_CALLS"; return 1 ;;',
     "  esac",
     "}",
@@ -1257,6 +1257,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
   //   prune-foreign:        同じく失敗し、そのあいだに控えていないコンテナがこの枠の project_id で作られた (他人のもの)
   //   prune-foreign-volume: 同じく失敗し、そのあいだに控えていないボリュームがこの枠の project_id で作られた (他人のもの)
   //   prune-lsfail:         同じく失敗し、そのあと docker の一覧 (コンテナ・ボリュームとも) が取れなくなった
+  //   prune-clsfail:        同じく失敗し、そのあと docker のコンテナの一覧だけが取れなくなった
   //   prune-vlsfail:        同じく失敗し、そのあと docker のボリュームの一覧だけが取れなくなった
   const fakeRunIn = [
     "run_in() {",
@@ -1267,6 +1268,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     '    prune-foreign) echo "c foreign0001 $SLOT_PROJECT_ID" >>"$FAKE_STATE"; return 1 ;;',
     '    prune-foreign-volume) echo "v foreignvol0001 $SLOT_PROJECT_ID" >>"$FAKE_STATE"; return 1 ;;',
     '    prune-lsfail) : >"$FAKE_LS_FAIL"; return 1 ;;',
+    '    prune-clsfail) : >"$FAKE_CLS_FAIL"; return 1 ;;',
     '    prune-vlsfail) : >"$FAKE_VLS_FAIL"; return 1 ;;',
     "  esac",
     "}",
@@ -1340,7 +1342,7 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     next?: boolean;
     fresh?: boolean;
     stage?: string;
-    lsFailAfterRm?: boolean;
+    lsFailAfterRm?: "all" | "c" | "v";
     call?: string;
   }) => {
     caseNo += 1;
@@ -1364,8 +1366,9 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
       FAKE_CALLS: calls,
       FAKE_LISTS: lists,
       FAKE_LS_FAIL: path.join(dir, "ls-fail"),
+      FAKE_CLS_FAIL: path.join(dir, "cls-fail"),
       FAKE_VLS_FAIL: path.join(dir, "vls-fail"),
-      FAKE_LS_FAIL_AFTER_RM: opts.lsFailAfterRm ? "1" : "0",
+      FAKE_LS_FAIL_AFTER_RM: opts.lsFailAfterRm ?? "",
       FAKE_STOP: opts.stop ?? "ok",
       FAKE_RM_FAILS: String(opts.rmFails ?? 0),
       HARNESS_CALL: opts.call ?? "",
@@ -1478,32 +1481,41 @@ describe("scripts/local-ci.sh: ローカル Supabase を止めたあとの残り
     expect(red(r.rows).map((row) => [row[0], row[8].includes("docker で枠の project_id のコンテナ / ボリュームの一覧を取れず")])).toEqual([["integration:teardown", true]]);
   });
 
-  it("止めたあとにボリュームの一覧だけを取れなくても、消えたと見なさずに赤にし、コンテナも消さない", () => {
-    const r = runTeardown({ slot: "1", state: [...stackOf("1", "own"), ...others()], stop: "prune-vlsfail" });
-    expect(r.status, r.err).toBe(EXIT_RED);
-    expect(rmCalls(r.calls)).toEqual([]);
-    expect(sorted(r.left)).toEqual(sorted([...stackOf("1", "own"), ...others()]));
-    expect(red(r.rows).map((row) => [row[0], row[8].includes("docker で枠の project_id のコンテナ / ボリュームの一覧を取れず")])).toEqual([["integration:teardown", true]]);
-  });
+  // 一覧が片方 (コンテナ / ボリューム) だけ取れない場面。コンテナとボリュームは別々に一覧を取るので、どちらの失敗も同じ確かめを通す
+  const ONE_LIST_FAILS: { label: string; stop: string }[] = [
+    { label: "コンテナ", stop: "prune-clsfail" },
+    { label: "ボリューム", stop: "prune-vlsfail" },
+  ];
+  for (const fails of ONE_LIST_FAILS) {
+    it(`止めたあとに${fails.label}の一覧だけを取れなくても、消えたと見なさずに赤にし、何も消さない`, () => {
+      const r = runTeardown({ slot: "1", state: [...stackOf("1", "own"), ...others()], stop: fails.stop });
+      expect(r.status, r.err).toBe(EXIT_RED);
+      expect(rmCalls(r.calls)).toEqual([]);
+      expect(sorted(r.left)).toEqual(sorted([...stackOf("1", "own"), ...others()]));
+      expect(red(r.rows).map((row) => [row[0], row[8].includes("docker で枠の project_id のコンテナ / ボリュームの一覧を取れず")])).toEqual([["integration:teardown", true]]);
+    });
 
-  it("次の段の前にボリュームの一覧を取れなければ、自分のものだけかを見分けられないので、何も消さずに赤にする", () => {
-    const r = runTeardown({ slot: "1", state: [...stackOf("1", "own"), ...others()], stop: "prune-vlsfail", next: true });
-    expect(r.out, r.err).toContain("STACK_RED");
-    expect(rmCalls(r.calls)).toEqual([]);
-    const reds = red(r.rows);
-    expect(reds.map((row) => row[0])).toEqual(["integration:teardown", "e2e:setup"]);
-    expect(reds[1][8]).toContain("ロックを取らずに手で起動したスタックなどかもしれないので消さずに赤で終える");
-    expect(r.status).toBe(EXIT_RED);
-  });
+    it(`次の段の前に${fails.label}の一覧を取れなければ、自分のものだけかを見分けられないので、何も消さずに赤にする`, () => {
+      const r = runTeardown({ slot: "1", state: [...stackOf("1", "own"), ...others()], stop: fails.stop, next: true });
+      expect(r.out, r.err).toContain("STACK_RED");
+      expect(rmCalls(r.calls)).toEqual([]);
+      const reds = red(r.rows);
+      expect(reds.map((row) => row[0])).toEqual(["integration:teardown", "e2e:setup"]);
+      expect(reds[1][8]).toContain("ロックを取らずに手で起動したスタックなどかもしれないので消さずに赤で終える");
+      expect(r.status).toBe(EXIT_RED);
+    });
+  }
 
-  it("消したあとに docker で一覧を取れなければ、消えたと見なさずに赤にする", () => {
-    const r = runTeardown({ slot: "1", state: [...stackOf("1", "own"), ...others()], stop: "prune", lsFailAfterRm: true });
-    expect(r.status, r.err).toBe(EXIT_RED);
-    expect(rmCalls(r.calls)).toEqual(["DOCKER_RM owndb ownkong", `VOLUME_RM supabase_db_${projectOf("1")} supabase_storage_${projectOf("1")}`]);
-    const reds = red(r.rows);
-    expect(reds.map((row) => row[0])).toEqual(["integration:teardown"]);
-    expect(reds[0][8]).toContain("消したあとに docker で一覧を取れず、消えたかを確かめられない");
-  });
+  for (const after of ["all", "c", "v"] as const) {
+    it(`消したあとに docker で一覧 (${after === "all" ? "両方" : after === "c" ? "コンテナ" : "ボリューム"}) を取れなければ、消えたと見なさずに赤にする`, () => {
+      const r = runTeardown({ slot: "1", state: [...stackOf("1", "own"), ...others()], stop: "prune", lsFailAfterRm: after });
+      expect(r.status, r.err).toBe(EXIT_RED);
+      expect(rmCalls(r.calls)).toEqual(["DOCKER_RM owndb ownkong", `VOLUME_RM supabase_db_${projectOf("1")} supabase_storage_${projectOf("1")}`]);
+      const reds = red(r.rows);
+      expect(reds.map((row) => row[0])).toEqual(["integration:teardown"]);
+      expect(reds[0][8]).toContain("消したあとに docker で一覧を取れず、消えたかを確かめられない");
+    });
+  }
 
   it("枠 0 は、止めきれなければ何も消さずに <段>:teardown を赤にし、終了コードを赤 (EXIT_RED) にする (枠を使わない作業と共有しているので消さないが、判定は飲み込まない)", () => {
     // others() は枠 0 のスタック (s0…)・枠 2 のスタック・ほかの project のもの
@@ -1657,7 +1669,8 @@ describe("scripts/supabase-local.sh: stop の prune の衝突のやり直し (#1
   const PRUNE_CONFLICT = "failed to prune containers: Error response from daemon: a prune operation is already running";
   const bin = path.join(tmp, "bin");
   fs.mkdirSync(bin);
-  // CLI の代わり: 呼ばれるたびに FAKE_COUNT に 1 行足し、FAKE_FAILS 回目までは FAKE_ERROR を stderr に出して FAKE_FAIL_CODE で終わる
+  // CLI の代わり: 呼ばれるたびに FAKE_COUNT に 1 行足し、FAKE_FAILS 回目までは FAKE_ERROR を stderr に出して FAKE_FAIL_CODE で終わる。
+  // 通る回は FAKE_WARN があればそれを stderr に出してから 0 で終わる
   const fakeCli = path.join(bin, "fake-supabase");
   fs.writeFileSync(
     fakeCli,
@@ -1666,6 +1679,7 @@ describe("scripts/supabase-local.sh: stop の prune の衝突のやり直し (#1
       'echo "$1" >>"$FAKE_COUNT"',
       'n="$(wc -l <"$FAKE_COUNT" | tr -d " ")"',
       'if [ "$n" -le "${FAKE_FAILS:-0}" ]; then echo "$FAKE_ERROR" >&2; exit "${FAKE_FAIL_CODE:-1}"; fi',
+      '[ -z "${FAKE_WARN:-}" ] || echo "$FAKE_WARN" >&2',
       'echo "FAKECLI $1 ok"',
       "",
     ].join("\n"),
@@ -1749,6 +1763,13 @@ describe("scripts/supabase-local.sh: stop の prune の衝突のやり直し (#1
 
   it("1 回で通れば打ち直さない", () => {
     const r = runStop({ cmd: "stop", fails: 0 });
+    expect(r.status, r.err).toBe(0);
+    expect(r.calls).toEqual(["stop"]);
+    expect(r.sleeps).toEqual([]);
+  });
+
+  it("通った回の stderr に prune の衝突の文言が出ていても、終了コードが 0 なら打ち直さない (判定は終了コードで行う)", () => {
+    const r = runStop({ cmd: "stop", fails: 0, env: { FAKE_WARN: PRUNE_CONFLICT } });
     expect(r.status, r.err).toBe(0);
     expect(r.calls).toEqual(["stop"]);
     expect(r.sleeps).toEqual([]);
