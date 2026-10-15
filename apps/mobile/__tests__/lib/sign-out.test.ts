@@ -4,7 +4,7 @@
  *
  * ログアウトの順番:
  *   1. この端末の push token を user_push_tokens から消す (RLS のため、サインアウトの「前」)
- *   2. ユーザー別の端末データを消す (AsyncStorage と、WebView の localStorage の掃除の依頼。#1037)
+ *   2. ユーザー別の端末データを消す (AsyncStorage と、WebView の localStorage の掃除の依頼。#1037。WebView の Cookie。#1612 F7-16)
  *   3. サインアウト
  * push token の削除や端末データの掃除が失敗しても、ログアウトは止めない。
  *
@@ -39,8 +39,11 @@ jest.mock('../../src/lib/secureSessionStorage', () => ({
 }));
 // WebView の localStorage の掃除の依頼 (中身は web-view-user-storage-cleanup.test.ts で確かめる)。ここでは順番だけを見る
 const mockRequestWebViewClear = jest.fn();
+// WebView の Cookie の掃除 (端末の Cookie の置き場を空にする。#1612 F7-16。中身は web-view-cookie-cleanup.test.ts)
+const mockClearWebViewCookies = jest.fn();
 jest.mock('../../src/lib/webViewUserStorageCleanup', () => ({
   requestWebViewUserScopedStorageClear: (...args: unknown[]) => mockRequestWebViewClear(...args),
+  clearWebViewNativeCookies: (...args: unknown[]) => mockClearWebViewCookies(...args),
 }));
 
 import {
@@ -72,6 +75,10 @@ beforeEach(() => {
   mockRequestWebViewClear.mockImplementation(async () => {
     calls.push('requestWebViewClear');
   });
+  mockClearWebViewCookies.mockImplementation(async () => {
+    calls.push('clearWebViewCookies');
+    return 'cleared';
+  });
   mockClearSession.mockImplementation(() => {
     calls.push('clearSession');
   });
@@ -81,7 +88,7 @@ describe('signOutWithCleanup', () => {
   it('push token の削除 → 端末データの削除 → サインアウトの順に実行する (削除はサインアウトより前でなければ RLS で拒否される)', async () => {
     const result = await signOutWithCleanup('user-1');
 
-    expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'signOut']);
+    expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
     // アクセストークンを渡さなければ、削除は現在のセッションで認可される (設定画面・マイページ)
     expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: undefined });
     expect(mockClearStorage).toHaveBeenCalledWith('user-1');
@@ -92,7 +99,7 @@ describe('signOutWithCleanup', () => {
     await signOutWithCleanup('user-1', { accessToken: 'saved-access-token' });
 
     expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: 'saved-access-token' });
-    expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'signOut']);
+    expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
   });
 
   it('push token の削除が失敗 (failed / skipped) でも、ログアウトは最後まで行う', async () => {
@@ -124,6 +131,22 @@ describe('signOutWithCleanup', () => {
     expect(mockSignOut).toHaveBeenCalledTimes(1);
   });
 
+  it('WebView の Cookie の掃除で例外が出ても、サインアウトする (#1612 F7-16)', async () => {
+    mockClearWebViewCookies.mockRejectedValue(new Error('unexpected'));
+
+    await expect(signOutWithCleanup('user-1')).resolves.toEqual({ error: null });
+
+    expect(mockSignOut).toHaveBeenCalledTimes(1);
+  });
+
+  it('WebView の掃除の依頼で例外が出ても、WebView の Cookie の掃除はする (#1612 F7-16)', async () => {
+    mockRequestWebViewClear.mockRejectedValue(new Error('unexpected'));
+
+    await signOutWithCleanup('user-1');
+
+    expect(mockClearWebViewCookies).toHaveBeenCalledTimes(1);
+  });
+
   it('ユーザー ID が分からなくても (null) 実行できる。端末データの掃除は null で行う', async () => {
     await signOutWithCleanup(null);
 
@@ -145,7 +168,7 @@ describe('signOutOnDevice (設定画面の通常のログアウト。#1037)', ()
   it('push token の削除 → 端末データの削除 → サインアウトの順。成功したら保管庫は直接消さず、画面の状態も消さない (SIGNED_OUT で消える)', async () => {
     const result = await signOutOnDevice('user-1', { clearSession: mockClearSession });
 
-    expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'signOut']);
+    expect(calls).toEqual(['unregister', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
     expect(mockUnregister).toHaveBeenCalledWith('user-1', { accessToken: undefined });
     expect(mockClearStorage).toHaveBeenCalledWith('user-1');
     expect(mockRemoveStoredItem).not.toHaveBeenCalled();
@@ -166,6 +189,7 @@ describe('signOutOnDevice (設定画面の通常のログアウト。#1037)', ()
       'unregister',
       'clearStorage',
       'requestWebViewClear',
+      'clearWebViewCookies',
       'signOut',
       'removeStored:sb-test-auth-token',
       'removeStored:sb-test-auth-token-code-verifier',
@@ -214,7 +238,7 @@ describe('signOutAfterAccountDeletion (退会のあと。#1037)', () => {
   it('端末データの削除 → サインアウトの順。push token は消さない (auth.users の削除で消える)。成功したら保管庫は直接消さない', async () => {
     const result = await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
 
-    expect(calls).toEqual(['clearStorage', 'requestWebViewClear', 'signOut']);
+    expect(calls).toEqual(['clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
     expect(mockClearStorage).toHaveBeenCalledWith('user-1');
     expect(mockUnregister).not.toHaveBeenCalled();
     expect(mockRemoveStoredItem).not.toHaveBeenCalled();
@@ -234,12 +258,23 @@ describe('signOutAfterAccountDeletion (退会のあと。#1037)', () => {
     expect(calls).toEqual([
       'clearStorage',
       'requestWebViewClear',
+      'clearWebViewCookies',
       'signOut',
       'removeStored:sb-test-auth-token',
       'removeStored:sb-test-auth-token-code-verifier',
       'clearSession',
     ]);
     expect(result).toEqual({ error: failure });
+  });
+
+  it('サインアウトが失敗しても、push token の行は消しに行かない (行は auth.users の削除で ON DELETE CASCADE で消えている。AuthProvider.tsx の先頭の表の通信の失敗の行 #1636)', async () => {
+    mockSignOut.mockResolvedValueOnce({ error: new Error('network') });
+    await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
+    mockSignOut.mockRejectedValueOnce(new Error('unexpected'));
+    await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
+
+    expect(mockClearSession).toHaveBeenCalledTimes(2);
+    expect(mockUnregister).not.toHaveBeenCalled();
   });
 
   it('サインアウトが例外を投げても、保管庫を消してエラーとして返す (例外にはしない)', async () => {

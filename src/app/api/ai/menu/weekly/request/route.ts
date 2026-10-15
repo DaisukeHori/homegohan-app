@@ -7,6 +7,11 @@ import { callGenerateMenuV4WithRetry, markWeeklyMenuRequestFailed } from '@/lib/
 import { callGenerateMenuV5WithRetry } from '@/lib/generate-menu-v5-retry';
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 import { internalError } from '@/lib/api/errors';
+import {
+  containsNullCharacter,
+  NULL_CHARACTER_ERROR_CODE,
+  NULL_CHARACTER_ERROR_MESSAGE,
+} from '@/lib/api/null-character';
 import { cancelPendingMealImageJobs } from '../../../../../../lib/meal-image-jobs';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
@@ -105,6 +110,14 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json().catch(() => ({}));
+    // 本文のどこかの文字列 (note・cheatDay・constraints / preferences の中身・detectedIngredients など) に NULL 文字があれば、
+    // DB (prompt の text・constraints の jsonb) が拒んで 500 になる。どの項目も DB に渡す前に 400 で断る (#1622)
+    if (containsNullCharacter(body)) {
+      return NextResponse.json(
+        { error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE },
+        { status: 400 },
+      );
+    }
     const startDate = body?.startDate;
     _startDate = startDate;
 

@@ -545,14 +545,14 @@ UC-ORG-17 シナリオ。
 
 **認証**: 必須 (未認証は 401 `NOT_AUTHENTICATED`)
 
-**対象**: 本人の `user_profiles.family_id` の家族のうち、`status = 'active'` のメンバー。メンバーの行はログイン中の利用者のクライアントで読む (RLS `family_members_select_self_or_family` = 自分が active なメンバーである家族の行だけ)。`family_id` が無ければ `members: []`。
+**対象**: 本人の `user_profiles.family_id` の家族のうち、`status = 'active'` のメンバー。メンバーの行はログイン中の利用者のクライアントで読む (RLS `family_members_select_self_or_family` = `user_id = auth.uid() OR is_active_family_member(family_id)`。読めるのは、自分が active なメンバーである家族の行と、状態によらない自分自身の行。自分自身の active でない行はこの API の `status = 'active'` の条件で落ちるので、返る行は「自分が active なメンバーである家族の active な行」だけになる)。`family_id` が無ければ `members: []`。
 
 **表示名の決め方** (メンバーごとに、上から最初に決まったもの):
 
 | 順 | 値 | 備考 |
 |---|---|---|
 | 1 | `family_members.display_name` | 前後の空白を除く。空・空白だけは「無い」 |
-| 2 | 本人のプロフィールの今の名前 (`user_profiles.nickname`) | アカウントを持つメンバーだけ。他の家族の `user_profiles` は RLS で読めないので、1 が無いメンバーの `user_id` の分だけ service_role で `nickname` 列を引く。仮置きの `'Guest'` (前後の空白を除いて厳密一致。`src/lib/profile-name.ts`) と空・空白だけは「無い」 |
+| 2 | 本人のプロフィールの今の名前 (`user_profiles.nickname`) | アカウントを持つメンバーだけ。他の家族の `user_profiles` は RLS で読めないので、1 が無いメンバーの `user_id` の分だけ service_role で `nickname` 列を引く。仮置きの `'Guest'` (前後の空白を除いて厳密一致。`@homegohan/shared` の `normalizeProfileName` (`packages/shared/src/profile-name.ts`)。Web は `src/lib/profile-name.ts` 経由で同じものを使う) と空・空白だけは「無い」 |
 | 3 | `null` | 画面は従来どおり「名前未設定」と出す |
 
 プロフィールの名前を引けなかった (service_role の問い合わせの失敗) ときも 200 で返し、その人の名前は `null` にする (名前の補完は表示の改善なので、画面の読み込みを止めない)。
@@ -1770,7 +1770,7 @@ cross/04-api-conventions §error-format に準拠:
 
 ### 15.6.1 Zod schema の配置(2026-05-08 確定)
 
-Next.js 14 App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: PR #810 で発生したビルドエラー)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
+Next.js App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: Next.js 14 のときに PR #810 で発生したビルドエラー。いまの Web の Next.js 15 でも同じ制約)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
 
 集約配置(canonical):
 

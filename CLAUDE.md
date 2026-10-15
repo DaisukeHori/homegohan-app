@@ -201,7 +201,8 @@ Web の画面で利用者がログアウトするときは、`clearUserScopedLoc
   - ルーターのキャッシュは、Next 14 と同じ時間 (動的 30 秒・静的 300 秒) を `next.config.mjs` の `experimental.staleTimes` で明示している (`src/__tests__/config/next-config-client-router-cache.test.ts` が固定する)。
   - `fetch` と GET の route handler は Next 15 の既定 (キャッシュしない) のまま。Next 14 の「既定でキャッシュする」動きは、古い件数・古いログを返す不具合のもとで、キャッシュさせたくない所には `cache: 'no-store'` や `dynamic = 'force-dynamic'` を書いてあった (残してある)。キャッシュしたい `fetch` を足すときは、`cache: 'force-cache'` か `next: { revalidate }` を明示する。
 - 型の版は実行時の React にそろえてある。ルート `package.json` の `@types/react` / `@types/react-dom` は **19 系** (19.2)。モバイルは自前の `@types/react ~19.0.10` を `apps/mobile/node_modules` に入れ子で持ち、`apps/mobile/tsconfig.json` の `paths` で `react` の型をそれに固定している (Web とモバイルで型の版が違う間は外さない)。`tests/react-types-version-contract.test.ts` が検査する。
-- テストの `act` は `react` から import する (`import { act } from 'react'`)。`react-dom/test-utils` の `act` は React 19 で非推奨 (呼ぶたびに警告が出る)。
+- テストの `act` は `react` から import する (`import { act } from 'react'`)。`react-dom/test-utils` の `act` は React 19 で非推奨 (呼ぶたびに警告が出る)。 Web では `react-dom/test-utils` と `react-test-renderer` の import (動的 import・require を含む) を `eslint.config.mjs` のルールが止める (`tests/react19-deprecated-imports-guard.test.ts` が検査する。モバイルの `apps/mobile` は対象外) (#1621)。
+- テストで `next/headers` をモックするときは、`cookies` / `headers` / `draftMode` を Promise を返す形 (`async () => …` など) で書く。同期の値を返すと、本番コードが `await` を忘れてもテストが通ってしまう (`tests/next15-async-request-api-scan.test.ts` が検査する。#1621)。
 - ルートで依存を更新する `npm install` が、ルートと `apps/mobile` の React の版の違いで ERESOLVE になることがある。その場合は `npm install --package-lock-only --legacy-peer-deps` で `package-lock.json` だけ更新し、続けて `npm install --package-lock-only` を 1 回実行して形をそろえる。差分が意図した変更だけであることと `npm ci --dry-run` が通ることを確認する。
 
 ---

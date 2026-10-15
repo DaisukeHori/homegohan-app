@@ -4,7 +4,8 @@
  * 本物の DB での振る舞い (お試しの記録を貼ると断られ、家族の側に行ができない) は
  * tests/integration/rls/paste-meal-sandbox.test.ts が確かめる。
  * ここでは、番号の付け直し (main の取り込みで最大より上へ移したもの) や、後の migration の上書きで崩れやすい所を、ファイルの文面だけで確かめる。
- *   1. paste_meal_to_family を定義する migration のうち、番号の最も大きいもの (= 流した後に残る定義) が本 migration で、
+ *   1. paste_meal_to_family を定義する migration のうち、本 migration の 1 つ前が #1101 の migration で、
+ *      番号の最も大きいもの (= 流した後に残る定義。#1634 からは *_paste_meal_reject_missing_source.sql) が
  *      お試しの記録 (MEAL_SANDBOX) と、運営が隠した食事 (MEAL_HIDDEN。#1101) の両方を断っている。
  *      断る確認は、持ち主の確認 (NOT_MEAL_OWNER) のあと・行を書く (UPDATE / INSERT) 前にある
  *   2. 本 migration の定義は、1 つ前の定義 (#1101 の migration) に MEAL_SANDBOX の確認を足しただけ (ほかは変えていない)
@@ -86,15 +87,17 @@ describe('#1627 paste_meal_to_family がお試しの記録を断る migration', 
     expect(versions.size).toBe(migrationFiles.length);
   });
 
-  it('paste_meal_to_family を最後に定義する migration が本 migration で、1 つ前は #1101 の migration', () => {
+  it('paste_meal_to_family を定義する migration のうち、本 migration の 1 つ前は #1101 の migration', () => {
     expect(definers.length).toBeGreaterThanOrEqual(2);
-    expect(definers[definers.length - 1]).toBe(rejectSandbox[0]);
-    expect(definers[definers.length - 2]).toBe(PREVIOUS_DEFINER);
+    const index = definers.indexOf(rejectSandbox[0]);
+    expect(index).toBeGreaterThanOrEqual(1);
+    expect(definers[index - 1]).toBe(PREVIOUS_DEFINER);
     expect(versionOf(rejectSandbox[0]) > versionOf(PREVIOUS_DEFINER)).toBe(true);
   });
 
-  it('最後の定義は、持ち主の確認のあと・行を書く前に MEAL_HIDDEN と MEAL_SANDBOX の両方を断る (SECURITY DEFINER と search_path は保つ)', () => {
-    const definition = definitionOf(stripLineComments(read(`${MIGRATIONS_DIR}/${rejectSandbox[0]}`)));
+  it('最後の定義 (流した後に残る定義) は、持ち主の確認のあと・行を書く前に MEAL_HIDDEN と MEAL_SANDBOX の両方を断る (SECURITY DEFINER と search_path は保つ)', () => {
+    // #1634 で後の migration (*_paste_meal_reject_missing_source.sql) が定義し直したので、本 migration ではなく最後の定義を見る
+    const definition = definitionOf(stripLineComments(read(`${MIGRATIONS_DIR}/${definers[definers.length - 1]}`)));
     expect(definition).toMatch(SANDBOX_CHECK);
     expect(definition).toMatch(/IF v_source\.hidden_at IS NOT NULL THEN RAISE EXCEPTION 'MEAL_HIDDEN'/);
     expect(definition).toMatch(/SECURITY DEFINER SET search_path TO 'public'/);
