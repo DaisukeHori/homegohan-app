@@ -20,6 +20,7 @@ export * from './health-blood-test-reference';
 export * from './org-challenges';
 export * from './weekly-menu-ultimate-mode';
 export * from './profile-name';
+export * from './signed-photo-url';
 export type {
   Json,
   Database,
