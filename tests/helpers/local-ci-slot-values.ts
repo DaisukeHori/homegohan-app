@@ -16,6 +16,11 @@ import path from "node:path";
 
 /** 枠の値の表の正本 */
 export const SLOT_LIB = "scripts/lib/local-ci-slot.sh";
+/**
+ * scripts/supabase-local.sh が SLOT_LIB と一緒に source する、イメージの取得のやり直しの部品 (#1523)。
+ * supabase-local.sh を一時的なリポジトリに写して動かすテストは、これも写す
+ */
+export const SUPABASE_IMAGE_PULL_LIB = "scripts/lib/supabase-image-pull.sh";
 
 /** 出力の中で、枠の区切りを示す行の頭 (SLOT_*= の行と取り違えない) */
 const SLOT_HEADER = "@@slot ";
