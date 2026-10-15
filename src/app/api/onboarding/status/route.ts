@@ -1,6 +1,7 @@
 import { createClient } from '@/lib/supabase/server'
 import { NextResponse } from 'next/server'
 import { internalError } from '@/lib/api/errors'
+import { normalizeProfileName } from '@homegohan/shared'
 
 // オンボーディング状態取得API (OB-API-03)
 export async function GET() {
@@ -43,8 +44,11 @@ export async function GET() {
       response.progress = profile.onboarding_progress
     }
 
-    if (profile?.nickname && profile.nickname !== 'Guest') {
-      response.nickname = profile.nickname
+    // 仮置きの 'Guest' (前後の空白を除いて比べる) と空・空白だけは「名前が付いていない」として返さない。
+    // 判定は Web・モバイルと同じ @homegohan/shared の normalizeProfileName (#1635)
+    const nickname = normalizeProfileName(profile?.nickname)
+    if (nickname) {
+      response.nickname = nickname
     }
 
     return NextResponse.json(response)

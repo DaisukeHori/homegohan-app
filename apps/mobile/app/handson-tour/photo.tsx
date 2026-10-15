@@ -32,6 +32,7 @@ import { Card } from '../../src/components/ui';
 import { getApi } from '../../src/lib/api';
 import { colors, radius, spacing } from '../../src/theme';
 import { useProfile } from '../../src/providers/ProfileProvider';
+import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { TourSandboxWrapper } from '../../src/handson-tour/TourSandboxWrapper';
 import {
   tourPhotoSaveErrorOutcomeOf,
@@ -190,14 +191,6 @@ const i18n = HANDSON_TOUR_I18N_JA.tour;
  * 'user_action' = エラー画面の【あとで】 / 'hard_back' = Android の端末バック (設計書 01-trigger-flow §2.2)
  */
 type Step1SkipReason = 'user_action' | 'hard_back';
-
-function safeNickname(raw: string | null | undefined): string {
-  if (!raw) return 'あなた';
-  const trimmed = raw.trim();
-  if (!trimmed) return 'あなた';
-  if (trimmed.length > 30) return `${trimmed.slice(0, 30)}…`;
-  return trimmed;
-}
 
 export default function HandsonTourPhoto() {
   const router = useRouter();
