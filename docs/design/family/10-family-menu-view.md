@@ -1181,6 +1181,8 @@ describe('C-4: 生成型 (database.types.ts) の Returns の要素は、その�
 
 ## 20. 新設一覧
 
+新設のテストは 10 ファイル (段 A が 5・段 B が 5。どれも origin/main に無い)。「テスト」の行の「名前」の列は path、「場所」の列は中身の節。
+
 | 種別 | 名前 | 場所 | 段 |
 |---|---|---|---|
 | migration | `<番号はマージ時に確定>_family_menu_view_functions.sql` / `.down.sql` | `supabase/migrations` / `supabase/rollbacks` | A |
@@ -1193,7 +1195,16 @@ describe('C-4: 生成型 (database.types.ts) の Returns の要素は、その�
 | ファイル | `src/hooks/useFamilyMenu.ts` | `useFamilyMenu`・`FAMILY_MENU_CACHE_TTL_MS`・型 3 つ | B |
 | ファイル | `src/components/membership/FamilyMenuRows.tsx` | `FamilyMenuMealRows`・`FamilyMenuDayNotes` | B |
 | route (URL) | `GET /api/family/menu` | — | A |
-| テスト | §19.1〜19.6 の 10 ファイル (§19.1・§19.2・§19.3・§19.5 は 1 つずつ、§19.4 は 4 つ、§19.6 は 2 つ = `tests/family-menu-view-migration-contract.test.ts` と C-4 の `src/__tests__/lib/membership/family-menu-rpc-types.test.ts`) | — | A / B |
+| テスト | `src/__tests__/lib/membership/family-menu.test.ts` | §19.1 単体 (純関数・定数・`fetchFamilyMenu`) | A |
+| テスト | `src/__tests__/api/family/menu.test.ts` | §19.2 route (`GET /api/family/menu`) | A |
+| テスト | `tests/integration/rls/family-menu-visibility.test.ts` | §19.3 実 DB (関数 2 本の見える・見えない) | A |
+| テスト | `tests/family-menu-view-migration-contract.test.ts` | §19.6 契約 C-1〜C-3・C-5・C-6 (DB を使わない) | A |
+| テスト | `src/__tests__/lib/membership/family-menu-rpc-types.test.ts` | §19.6 契約 C-4 (生成型 → 正典の型の片方向。tsc の対象に置く) | A |
+| テスト | `src/__tests__/components/membership/family-menu-rows.test.tsx` | §19.4 画面 (`FamilyMenuMealRows`・`FamilyMenuDayNotes`) | B |
+| テスト | `src/__tests__/components/membership/family-view-switcher.test.tsx` | §19.4 画面 (`FamilyViewSwitcher` の名前と「(献立は非公開)」) | B |
+| テスト | `src/__tests__/hooks/useFamilyMenu.test.ts` | §19.4 hook (`useFamilyMenu`) | B |
+| テスト | `src/__tests__/app/menus/weekly/family-menu-wiring.test.ts` | §19.4 配線 (`page.tsx` の source の静的検査) | B |
+| テスト | `tests/e2e/family/02-family-menu-view.spec.ts` | §19.5 e2e (spec02-01〜03) | B |
 | 変更 | `src/app/(main)/menus/weekly/page.tsx`・`src/components/membership/FamilyViewSwitcher.tsx`・`src/lib/membership/family-member-names.ts` (定数 1 つ)・`tests/integration/security/anon-definer-execute.test.ts`・`.github/workflows/e2e-local.yml` (Playwright の引数とコメント)・`scripts/local-ci.sh` (PW_ARGS)・`tests/e2e-api-paths.test.ts` (SPEC_FILES)・型ファイル 2 本 (`src/types/database.types.ts`・`packages/shared/src/database.types.ts`) | — | A / B |
 
 ## 21. 既存の番兵 (契約テスト・走査テスト) の追随表
