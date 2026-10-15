@@ -27,6 +27,7 @@
  * 合計: 13 ケース
  */
 import { test, expect } from "../fixtures/fresh-user";
+import { addDaysToDate, todayLocal } from "../../../packages/shared/src/date-utils";
 import { gotoWeekly, openFridgeModal, openShoppingModal } from "./_helpers";
 
 // ─────────────────────────────────────────────
@@ -118,10 +119,8 @@ test.describe("FridgeModal", () => {
     const uniqueName = `期限切れテスト_${Date.now()}`;
     await nameInput.fill(uniqueName);
 
-    // 昨日の日付をセット
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const dateStr = yesterday.toISOString().split('T')[0];
+    // 昨日の日付をセット (冷蔵庫のモーダルは JST の今日から期限までの日数で色とラベルを決めるので、JST の暦日で作る #1564)
+    const dateStr = addDaysToDate(todayLocal(), -1);
     const dateInput = page.locator('input[type="date"]');
     await dateInput.fill(dateStr);
 
@@ -204,10 +203,8 @@ test.describe("FridgeModal", () => {
     const uniqueName = `警告テスト_${Date.now()}`;
     await nameInput.fill(uniqueName);
 
-    // 3日後の日付をセット
-    const threeDaysLater = new Date();
-    threeDaysLater.setDate(threeDaysLater.getDate() + 3);
-    const dateStr = threeDaysLater.toISOString().split('T')[0];
+    // 3日後の日付をセット (JST の暦日。UTC の今日から作ると JST の 0:00〜8:59 は 2 日後になる #1564)
+    const dateStr = addDaysToDate(todayLocal(), 3);
     const dateInput = page.locator('input[type="date"]');
     await dateInput.fill(dateStr);
 

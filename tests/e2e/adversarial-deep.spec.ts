@@ -16,17 +16,11 @@
 
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { login } from "./fixtures/auth";
+import { jstThisMonday } from "./helpers/jst-week";
 
 // ─── helpers ───────────────────────────────────────────────────────────────
-
-/** 今週月曜の YYYY-MM-DD */
-function thisMonday(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = (day === 0 ? -6 : 1 - day);
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().split("T")[0];
-}
+// 今週の月曜日は jstThisMonday (JST の週) で作る (#1564)。献立の週のページはブラウザ (Asia/Tokyo) の JST の週で
+// 今週の月曜日を決めるので、プロセス (CI は UTC) やブラウザの toISOString (UTC) で作ると JST の月曜 0:00〜8:59 は前の週になる。
 
 /** ネットワークをオフラインにして fn を実行し、その後オンラインに戻す */
 async function withOffline<T>(
@@ -124,7 +118,7 @@ test("A-2: 未認証 POST /api/ai/menu/weekly/request → 401", async ({ page })
   const res = await page.request.post(
     "/api/ai/menu/weekly/request",
     {
-      data: { startDate: thisMonday() },
+      data: { startDate: jstThisMonday() },
       headers: { "Content-Type": "application/json" },
     },
   );
@@ -163,17 +157,22 @@ test("B-1: 生成中セッション期限切れ → UI がフリーズしない"
   await page.waitForLoadState("networkidle");
 
   // isGenerating が true になる状態を localStorage で模倣
+  // weekStartDate はページが復元の条件に使う「表示中の週の月曜日」(JST) と同じにする。ブラウザの中の
+  // new Date().toISOString() は UTC の今日で、月曜以外は週と一致せず復元の経路を通らなかった (#1564)
   const fakeRequestId = "00000000-dead-beef-0000-000000000000";
-  await page.evaluate((reqId) => {
-    localStorage.setItem(
-      "weeklyMenuGenerating",
-      JSON.stringify({
-        weekStartDate: new Date().toISOString().split("T")[0],
-        timestamp: Date.now(),
-        requestId: reqId,
-      }),
-    );
-  }, fakeRequestId);
+  await page.evaluate(
+    ({ reqId, weekStartDate }) => {
+      localStorage.setItem(
+        "weeklyMenuGenerating",
+        JSON.stringify({
+          weekStartDate,
+          timestamp: Date.now(),
+          requestId: reqId,
+        }),
+      );
+    },
+    { reqId: fakeRequestId, weekStartDate: jstThisMonday() },
+  );
 
   // Cookie を全クリア（セッション期限切れ模倣）
   await context.clearCookies();
@@ -466,17 +465,18 @@ test("E-2: /menus/weekly に再訪した際に isGenerating が残留しない",
   await page.goto("/menus/weekly");
   await page.waitForLoadState("networkidle");
 
-  // 生成中状態を古いタイムスタンプで仕込む（5分超 = stale）
-  await page.evaluate(() => {
+  // 生成中状態を古いタイムスタンプで仕込む（5分超 = stale）。
+  // weekStartDate は表示中の週の月曜日 (JST) にそろえ、週の不一致ではなく stale の判定で消えることを見る (#1564)
+  await page.evaluate((weekStartDate) => {
     localStorage.setItem(
       "weeklyMenuGenerating",
       JSON.stringify({
-        weekStartDate: new Date().toISOString().split("T")[0],
+        weekStartDate,
         timestamp: Date.now() - 6 * 60 * 1000, // 6 分前 = stale
         requestId: "stale-request-id-xxx",
       }),
     );
-  });
+  }, jstThisMonday());
 
   // /home に遷移して戻る
   await page.goto("/home");
