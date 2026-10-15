@@ -944,7 +944,9 @@ function V4GenerateModalNormal({
                 </div>
 
                 {/* Generate button */}
+                {/* data-testid: 押したあとは文言が「献立を作成中...」に変わるので、e2e の連打の検査 (w5-3 A-1) は文言ではなく testid で同じボタンを指す (#1672) */}
                 <button
+                  data-testid="v4-generate-submit-button"
                   onClick={handleGenerate}
                   disabled={!selectedMode || isGenerating || isSubmitting}
                   className={`w-full py-4 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${

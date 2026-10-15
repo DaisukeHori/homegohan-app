@@ -150,7 +150,7 @@ Web と Mobile は同時並行。
 
 | タスク | ファイル |
 |---|---|
-| `<MealNewScreen>` mode='sandbox' 対応 | `apps/mobile/app/meals/new.tsx` |
+| ~~`<MealNewScreen>` mode='sandbox' 対応~~ | ~~`apps/mobile/app/meals/new.tsx`~~ (2026-10-15 に削除。#1598。スキャンのタブは WebView で、ツアーの Step 1 は `app/handson-tour/photo.tsx` が受け持つ) |
 | `<V4GenerateModal>` Mobile 版 mode='sandbox' 対応 | (該当 Mobile コンポーネント、要調査) |
 | Mobile badges 画面の sandbox 対応 | (該当 Mobile 画面) |
 | testID 全件 (v4 系 + badge-card-{code}) | 各画面 |

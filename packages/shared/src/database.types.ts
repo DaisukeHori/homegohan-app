@@ -8145,6 +8145,7 @@ export type Database = {
         Args: { p_function_name: string }
         Returns: number
       }
+      invoke_process_meal_image_jobs: { Args: never; Returns: number }
       is_active_family_adult: {
         Args: { p_family_id: string }
         Returns: boolean
@@ -8816,6 +8817,10 @@ export type Database = {
       }
       request_child_promotion: {
         Args: { p_email: string; p_member_id: string }
+        Returns: Json
+      }
+      requeue_stale_meal_image_jobs: {
+        Args: { p_now?: string }
         Returns: Json
       }
       reset_e2e_test_users: { Args: never; Returns: undefined }

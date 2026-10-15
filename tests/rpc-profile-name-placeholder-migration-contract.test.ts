@@ -12,11 +12,15 @@
  *   4. normalize_profile_name の実行権限は、引数の型まで含めて全ロールから外し、service_role にだけ付ける
  *   5. ロールバックは、3 つの RPC を 1 つ前の定義にそのまま戻してから normalize_profile_name を消す
  *   6. 冒頭のコメント・「戻し方」の参照が実際のファイル名と一致する。本 migration の番号を書いたファイルが、実在する version だけを指す
+ *   7. 本 migration の version は、ほかの migration・ロールバックの version と重ならない (main に入った別の migration と同じ番号にしない)
+ *   8. Edge Functions の写し (supabase/functions/_shared/profile-name.ts) が、migration の文面から組み立てた SQL の判定と同じ答えを返す
+ *      (写しと正本の一致は tests/edge-profile-name-sync.test.ts。ここは SQL ⇄ 写し。実 DB での突き合わせは結合テスト)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { PROFILE_NAME_PLACEHOLDER } from '@homegohan/shared';
+import { normalizeProfileName as edgeNormalizeProfileName } from '../supabase/functions/_shared/profile-name';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = 'supabase/migrations';
@@ -27,11 +31,14 @@ const PREVIOUS_FILE = '20251126124224_create_meal_planner_tables.sql';
 
 /** migration のファイル名 (version 14 桁 + `_` + 名前 + `.sql`) */
 const MIGRATION_FILE = /^(\d{14})_.+\.sql$/;
+/** ロールバックのファイル名のうち、version 14 桁で始まるもの (version + `_` + 名前 + `.down.sql`) */
+const ROLLBACK_FILE = /^(\d{14})_.+\.down\.sql$/;
 /** 文面に書かれた migration の version らしい 14 桁の数 (2000 年代の日時) */
 const VERSION_TOKEN = /\b20\d{12}\b/g;
 
 /** 本 migration の番号を書いているコード・テスト */
 const REFERENCING_FILES = [
+  'packages/shared/src/profile-name.ts',
   'src/lib/membership/family-member-names.ts',
   'tests/integration/security/rpc-profile-name-placeholder.test.ts',
 ];
@@ -249,6 +256,41 @@ describe('#1678 SQL の RPC が仮置きの名前を返さない migration', () 
       }
     }
     expect(dangling).toEqual([]);
+  });
+
+  it('本 migration の version は、ほかの migration・ロールバックの version と重ならない', () => {
+    const own = versionOf(ours[0]);
+    expect(migrationFiles.filter((name) => versionOf(name) === own)).toEqual(ours);
+    const rollbacksWithOwnVersion = fs
+      .readdirSync(path.join(ROOT, ROLLBACKS_DIR))
+      .filter((name) => ROLLBACK_FILE.exec(name)?.[1] === own);
+    expect(rollbacksWithOwnVersion).toEqual([ours[0].replace(/\.sql$/, '.down.sql')]);
+  });
+
+  it('Edge Functions の写し (_shared/profile-name.ts) は、migration の文面から組み立てた SQL の判定と同じ答えを返す', () => {
+    const match = NORMALIZER_BODY.exec(definitionOf(ourCode(), NORMALIZER));
+    expect(match).not.toBeNull();
+    const sqlTrimmed = new Set(decodeEscapes(match![1]));
+    const sqlPlaceholder = match![2];
+    // btrim(p_value, 集合) → 空なら NULL → 仮置きなら NULL を、migration の文面のとおりに組み立てる
+    const sqlNormalize = (value: string | null): string | null => {
+      if (value === null) return null;
+      const chars = [...value];
+      let start = 0;
+      let end = chars.length;
+      while (start < end && sqlTrimmed.has(chars[start].codePointAt(0)!)) start += 1;
+      while (end > start && sqlTrimmed.has(chars[end - 1].codePointAt(0)!)) end -= 1;
+      const trimmed = chars.slice(start, end).join('');
+      return trimmed === '' || trimmed === sqlPlaceholder ? null : trimmed;
+    };
+    const cases: Array<string | null> = [null, '', 'Guest', ' Guest ', 'guest', 'Guests', '山田 太郎', ' 山田 太郎 '];
+    for (let cp = 0; cp <= LAST_BMP_CODE_POINT; cp += 1) {
+      // 1 文字ずつ、仮置きの前後と名前の前後に付ける (除く文字 / 除かない文字の境目を全部当てる)
+      const ch = String.fromCharCode(cp);
+      cases.push(`${ch}Guest${ch}`, `${ch}花子${ch}`);
+    }
+    const mismatches = cases.filter((value) => sqlNormalize(value) !== edgeNormalizeProfileName(value));
+    expect(mismatches.map((value) => JSON.stringify(value)).slice(0, 5)).toEqual([]);
   });
 
   it('migration の冒頭と結合テストが挙げるテストのファイルが実在する', () => {

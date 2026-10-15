@@ -3,7 +3,6 @@ import { Ionicons } from "@expo/vector-icons";
 import React, { useState } from "react";
 import {
   Alert,
-  Image,
   Modal,
   Pressable,
   SafeAreaView,
@@ -14,6 +13,7 @@ import {
 } from "react-native";
 
 import { getApi } from "../../lib/api";
+import { SignedPhotoImage } from "../photo/SignedPhotoImage";
 import { colors, radius, spacing } from "../../theme";
 import { RoleBadge } from "./RoleBadge";
 
@@ -268,7 +268,7 @@ export const RecipeModal: React.FC<Props> = ({ visible, dish, onClose }) => {
             {(dish.imageUrl || dish.imageStatus) && (
               <View style={styles.imageSection}>
                 {dish.imageUrl ? (
-                  <Image source={{ uri: dish.imageUrl }} style={styles.dishImage} resizeMode="cover" />
+                  <SignedPhotoImage uri={dish.imageUrl} style={styles.dishImage} resizeMode="cover" />
                 ) : (
                   <View style={styles.imagePlaceholder}>
                     <Ionicons name="image-outline" size={32} color={colors.textMuted} />

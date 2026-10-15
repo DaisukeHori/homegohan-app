@@ -6,8 +6,9 @@
  *     Web の招待ページ (src/app/invite/[token]/page.tsx) に「Guest 様から招待が届いています」と出た
  *   - get_promotion_details: requested_by_name が同じ形 (src/app/family/promotions/[token]/page.tsx に「Guest 様から」)
  *   - create_family_group: 作成者の nickname を family_members.display_name に写すので、'Guest' が入った
- * 修正後 (20261015180000_rpc_profile_name_placeholder.sql):
+ * 修正後 (20261015190000_rpc_profile_name_placeholder.sql):
  *   - public.normalize_profile_name(text) が @homegohan/shared の normalizeProfileName と同じ判定をする
+ *     (Edge Functions の写し supabase/functions/_shared/profile-name.ts とも同じ答えになることを、同じ入力で確かめる)
  *     (前後の空白 = JavaScript の trim と同じ文字を除く・空と仮置きの 'Guest' は NULL)
  *   - get_invite_details / get_promotion_details は、名前が無ければメールアドレスを返す
  *   - create_family_group は、名前が無ければ display_name を NULL にする (前後の空白は除いて写す)
@@ -24,6 +25,8 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 // 結合テストの設定 (vitest.integration.config.ts) は @homegohan/shared の別名を持たないので、判定の本体を直接読む
 import { PROFILE_NAME_PLACEHOLDER, normalizeProfileName } from '../../../packages/shared/src/profile-name';
+// Edge Functions が使う写し (#1649)。正本との一致は tests/edge-profile-name-sync.test.ts が見張る。ここでは SQL とも一致することを見る
+import { normalizeProfileName as edgeNormalizeProfileName } from '../../../supabase/functions/_shared/profile-name';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -204,7 +207,7 @@ afterAll(async () => {
   }
 }, CLEANUP_TIMEOUT_MS);
 
-describe('#1678 normalize_profile_name (SQL) は normalizeProfileName (TS) と同じ答えを返す', () => {
+describe('#1678 normalize_profile_name (SQL) は normalizeProfileName (TS の正本・Edge の写し) と同じ答えを返す', () => {
   // 仮置き・空・空白・大小違い・実名・NULL と、JavaScript の trim が除く / 除かない文字の境目
   const PARITY_CASES: ReadonlyArray<readonly [label: string, value: string | null]> = [
     ['仮置き', 'Guest'],
@@ -228,7 +231,9 @@ describe('#1678 normalize_profile_name (SQL) は normalizeProfileName (TS) と�
   ];
 
   it.each(PARITY_CASES)('%s', async (_label, value) => {
-    expect(await sqlNormalize(value)).toBe(normalizeProfileName(value));
+    const sql = await sqlNormalize(value);
+    expect(sql).toBe(normalizeProfileName(value));
+    expect(sql, 'Edge の写し').toBe(edgeNormalizeProfileName(value));
   });
 
   it('期待値の確認: 上の対応表で、名前なし (null) と名前の両方が含まれる', () => {
@@ -262,7 +267,9 @@ describe('#1678 normalize_profile_name (SQL) は normalizeProfileName (TS) と�
     }
     for (const core of [PROFILE_NAME_PLACEHOLDER, 'はなこ']) {
       const padded = `${jsWhitespace}${core}${jsWhitespace}`;
-      expect(await sqlNormalize(padded), core).toBe(normalizeProfileName(padded));
+      const sql = await sqlNormalize(padded);
+      expect(sql, core).toBe(normalizeProfileName(padded));
+      expect(sql, `${core} (Edge の写し)`).toBe(edgeNormalizeProfileName(padded));
     }
   });
 

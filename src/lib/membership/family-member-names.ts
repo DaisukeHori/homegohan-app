@@ -55,7 +55,7 @@ export function userIdsNeedingProfileName(rows: readonly FamilyMemberNameSource[
  * profileNames は user_id → プロフィールの名前 (user_profiles.nickname)。引けなかった人は入っていなくてよい。
  * プロフィールの名前が仮置き ('Guest') の人は、名前が無い人と同じく null にする。
  * display_name の側は仮置きを見ない: display_name にプロフィールの名前を写す RPC は、どれも仮置き・空白だけの名前を写さない
- * (家族の作成 create_family_group は supabase/migrations/20261015180000_rpc_profile_name_placeholder.sql (#1678)、
+ * (家族の作成 create_family_group は supabase/migrations/20261015190000_rpc_profile_name_placeholder.sql (#1678)、
  *  招待・昇格の承諾は supabase/migrations/20261015170000_accept_copies_profile_name.sql (#1584)。判定は normalizeProfileName と同じ)。
  * 本番の family_members に display_name が 'Guest' の行は無い (2026-10-15 時点。#1678 で数えた) ので、既存の行も書き換えていない。
  */

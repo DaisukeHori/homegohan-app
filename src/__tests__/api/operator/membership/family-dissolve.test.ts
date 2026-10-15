@@ -429,3 +429,33 @@ describe('POST /api/operator/membership/family/[id]/dissolve: service-role の�
     expect(mocks.createServiceRoleClient).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/operator/membership/family/[id]/dissolve: 宛名に仮置きの Guest を使わない (#1649)', () => {
+  function setNickname(nickname: string) {
+    const row = fake.tables.user_profiles.find((r) => r.id === ADULT_ID);
+    if (!row) throw new Error('宛先の user_profiles の行がありません');
+    row.nickname = nickname;
+  }
+
+  it.each(['Guest', ' Guest ', '   ', ''])('nickname が %j なら、宛名はメールアドレス (Guest を載せない)', async (nickname) => {
+    setNickname(nickname);
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    const [envelope] = sentTo(ADULT_EMAIL);
+    expect(envelope.text.startsWith(`${ADULT_EMAIL} 様`)).toBe(true);
+    expect(envelope.text).not.toContain('Guest');
+  });
+
+  it.each([
+    ['guest', 'guest'],
+    [' 太郎 ', '太郎'],
+  ])('nickname が %j (本人が付けた名前) なら、その名前を宛名にする', async (nickname, expected) => {
+    setNickname(nickname);
+
+    await call();
+
+    expect(sentTo(ADULT_EMAIL)[0].text.startsWith(`${expected} 様`)).toBe(true);
+  });
+});
