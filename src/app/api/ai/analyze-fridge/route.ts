@@ -1,4 +1,4 @@
-import { fetchImageAsBase64, generateGeminiJson } from '../../../../lib/ai/gemini-json';
+import { fetchImageAsBase64, generateGeminiJson, type GeminiImageInput } from '../../../../lib/ai/gemini-json';
 import {
   fridgeAnalysisSchema,
   normalizeFridgeAnalysisResult,
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
     const { imageBase64, mimeType } = body;
     const imageUrl: string | undefined = body.imageUrl ?? body.inventoryImageUrl;
 
-    let images: { base64: string; mimeType: string }[];
+    let images: GeminiImageInput[];
     if (Array.isArray(body.images) && body.images.length > 0) {
       images = body.images;
     } else if (imageBase64) {
