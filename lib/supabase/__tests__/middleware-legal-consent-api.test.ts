@@ -231,6 +231,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
       { path: '/api/push-tokens/claim', match: 'exact', reason: 'device_cleanup' },
       { path: '/api/contact', match: 'exact', reason: 'contact' },
       { path: '/api/log', match: 'exact', reason: 'telemetry' },
+      { path: '/api/csp-report', match: 'exact', reason: 'telemetry' },
       { path: '/api/feature-flags', match: 'exact', reason: 'client_status' },
       { path: '/api/health', match: 'exact', reason: 'no_user_session' },
       { path: '/api/cron', match: 'prefix', reason: 'no_user_session' },
