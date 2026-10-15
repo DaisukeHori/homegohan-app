@@ -4,7 +4,7 @@ import { createFakeServiceRole, type FakeServiceRole } from '../../operator/memb
 // GET /api/family/members/names — 家族の画面に出すメンバーの名前 (#1584)。
 //
 // 以前は、招待を承諾したメンバーの family_members.display_name が NULL のままで、家族の画面に「名前未設定」と出ていた。
-// 承諾のときは本人のプロフィールの名前を display_name に写す (supabase/migrations/20261015120000_accept_copies_profile_name.sql。
+// 承諾のときは本人のプロフィールの名前を display_name に写す (supabase/migrations/20261015170000_accept_copies_profile_name.sql。
 // 仮置きの 'Guest'・空白だけは写さない)。それより前に承諾した人や、承諾のときに名前が無かった人は NULL のままなので、
 // display_name → 本人のプロフィールの今の名前 (user_profiles.nickname。仮置きの 'Guest' は名前とみなさない) → null の順に決める。
 // 他の家族の user_profiles は RLS で読めないので、名前だけを service_role で引く。

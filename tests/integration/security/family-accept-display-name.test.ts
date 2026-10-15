@@ -3,7 +3,7 @@
  *
  * 修正前: accept_family_invite は family_members の行を display_name なし (NULL) で作り、
  *   display_name だけを読む所 (週間献立の家族の表示の切り替え) では名前が無いままだった。
- * 修正後 (20261015120000_accept_copies_profile_name.sql):
+ * 修正後 (20261015170000_accept_copies_profile_name.sql):
  *   - accept_family_invite: 承諾した本人の user_profiles.nickname を、@homegohan/shared の normalizeProfileName と同じ判定で写す
  *     (前後の空白を除く・空白だけと仮置きの 'Guest' は写さず NULL のまま・プロフィールの行が無い人も NULL のまま)
  *   - accept_child_promotion: 子供のときの display_name が入っていれば上書きしない。空 (NULL・空白だけ) のときだけ写す

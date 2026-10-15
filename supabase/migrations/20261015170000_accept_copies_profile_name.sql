@@ -1,4 +1,4 @@
--- migration: 20261015120000_accept_copies_profile_name.sql
+-- migration: 20261015170000_accept_copies_profile_name.sql
 -- Issue #1584 の 2: 家族の招待を承諾したメンバーの display_name に、本人のプロフィールの名前を写す
 --
 -- 背景:
@@ -28,7 +28,7 @@
 -- 既存データへの影響: なし (関数の本文だけを置き換える)。承諾済みで display_name が NULL の行は埋めない
 --   (埋めるかどうかは件数を確かめてから別に決める。読み取りと書き込みの SQL の案は docs/operations/family-member-display-name-backfill.md)。
 -- 冪等: CREATE OR REPLACE FUNCTION のため、2 回続けて適用してもエラーにならない。
--- 戻し方: supabase/rollbacks/20261015120000_accept_copies_profile_name.down.sql
+-- 戻し方: supabase/rollbacks/20261015170000_accept_copies_profile_name.down.sql
 --   (20261008090100_family_lock_order.sql の定義 = 名前を写さない形に戻す)
 -- 確かめるテスト:
 --   tests/integration/security/family-accept-display-name.test.ts (実 DB: 写る・Guest / 空白だけ / 行なしは写さない・既存の呼び名を上書きしない)

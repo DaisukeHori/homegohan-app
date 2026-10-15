@@ -1,4 +1,4 @@
--- rollback: 20261015120000_accept_copies_profile_name.sql
+-- rollback: 20261015170000_accept_copies_profile_name.sql
 -- accept_family_invite と accept_child_promotion を、20261008090100_family_lock_order.sql の定義 (承諾のときに名前を写さない形) に戻す (#1584)。
 -- ⛔ 20261008090100 より前の定義には戻さない (#1310 のロックの順番の巻き戻しになるため)。
 -- 戻しても、すでに写した display_name はそのまま残る (データは戻さない)。戻した後に承諾した人の display_name は NULL になり、

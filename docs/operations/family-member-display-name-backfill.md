@@ -1,6 +1,6 @@
 # 承諾済みメンバーの display_name を埋める (#1584 の 2・未実施)
 
-`20261015120000_accept_copies_profile_name.sql` から、家族の招待の承諾 (`accept_family_invite`) と子供の昇格の承諾
+`20261015170000_accept_copies_profile_name.sql` から、家族の招待の承諾 (`accept_family_invite`) と子供の昇格の承諾
 (`accept_child_promotion`) は、承諾した本人のプロフィールの名前 (`user_profiles.nickname`) を `family_members.display_name` に写す。
 この migration より前に承諾した行は `display_name` が NULL のまま残る。
 
