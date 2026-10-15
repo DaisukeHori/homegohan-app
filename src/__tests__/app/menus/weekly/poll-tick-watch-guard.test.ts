@@ -69,8 +69,8 @@ function guardLine(watchName: string): string {
   return `if (!${watchName}.active) return;`;
 }
 
-/** 早い return だけの行 (if (...) return;) */
-const EARLY_RETURN_LINE = /^if \(.+\) return;$/;
+/** 早い return だけの行 (if (...) return;。行末のコメントは許す) */
+const EARLY_RETURN_LINE = /^if \(.+\) return;(\s*\/\/.*)?$/;
 /** 終わりの処理を呼ぶ await (その先は呼ばれた側が印を確かめる) */
 const TERMINAL_AWAIT = /await finish(Regenerate|Improve)\(/;
 
