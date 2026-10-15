@@ -18,6 +18,8 @@
  *    「audited」と判定できないので、そうするときは表に理由を書いて「delegated」にする。
  *  - handler が `export async function POST` / `export const POST =` / `export { x as POST }` のどれかで書かれていることを前提にする。
  *  - (b) は呼び出しの引数がオブジェクトのリテラルのときだけ見る (変数に入れたオブジェクトを渡すと見えない。そう書かないこと)。
+ *  - 走査は上の 4 つのディレクトリだけ。その外にある運営ロール専用の変更系 (2026-10-15 時点: POST /api/announcements・
+ *    POST /api/comparison/trigger。どちらも記録が無い) は見ていない (#1571 の範囲の外。別の Issue で扱う)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
