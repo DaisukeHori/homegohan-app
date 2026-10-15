@@ -2,7 +2,8 @@
 /**
  * tests/next-swc-styled-jsx-transform.test.ts
  *
- * `<style jsx>` (styled-jsx) を持つファイルが、Next 15 の SWC の変換で止まらないことを確かめる (#1444)。
+ * `<style jsx>` (styled-jsx) を持つファイルが、Next の SWC の変換で止まらないことを確かめる (#1444。#1621 で Next 16 に上げたあとも、
+ * next build は webpack (--webpack) で動かしているので、webpack のローダーと同じ SWC の設定で確かめる)。
  *
  * Next 15.5.27 の SWC は、`<style jsx global>` がある src/components/AIChatBubble.tsx で、変数に入れたコンポーネント
  * (`const Icon = actionInfo?.icon || Sparkles; <Icon />`) を JSX で描く形に当たると、SSR 向けとブラウザ向けの変換が
@@ -71,7 +72,7 @@ const { getLoaderSWCOptions } = require(require.resolve('next/dist/build/swc/opt
 })().catch((error) => { console.log('ERROR ' + String(error)); process.exit(1); });
 `;
 
-describe('styled-jsx を持つファイルを、Next 15 の SWC が止まらずに変換できる (#1444)', () => {
+describe('styled-jsx を持つファイルを、Next の SWC が止まらずに変換できる (#1444・#1621)', () => {
   const files = listStyledJsxFiles();
 
   it('styled-jsx を持つファイルを見つけている (探し方が空回りしていない)', () => {
