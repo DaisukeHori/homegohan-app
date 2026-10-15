@@ -212,7 +212,12 @@ describe('page.tsx: resumePendingGeneration は GEN_RESUME_PENDING を送る (#1
     expect(start).toBeGreaterThan(-1);
     const end = pageSource.indexOf('}, []);', start);
     expect(end).toBeGreaterThan(start);
-    const body = pageSource.slice(start, end);
+    // コメントの行 (経緯の説明に setIsGenerating(true) の名前が出る) を除いたコードの行だけを見る
+    const body = pageSource
+      .slice(start, end)
+      .split('\n')
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join('\n');
     expect(body).toContain('dispatchAiGen(resumePendingGenerationAction(ultimateMode));');
     expect(body).toContain('generationCancelledRef.current = false;');
     expect(body).not.toContain('setIsGenerating(true)');
