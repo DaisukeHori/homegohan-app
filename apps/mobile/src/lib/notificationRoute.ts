@@ -1,8 +1,8 @@
 /**
  * プッシュ通知をタップしたときに開く画面を、通知の data から決める (#1049 F7-11)。
  *
- * 行き先は data.path (アプリ内のパス。例: '/family') か、data.deep_link (homegohan:// の URL。
- * docs/design/mobile/03-push-notification.md §3.3 の例: 'homegohan://family/meal-requests') に入る。
+ * 行き先は data.path (アプリ内のパス。例: '/pantry') か、data.deep_link (homegohan:// の URL。例: 'homegohan://health/streaks')
+ * に入る (通知の data の形は docs/design/mobile/03-push-notification.md §3.3)。
  * どちらも homegohan:// の後ろがアプリ内のパス (expo-router の画面) になる。app.json の scheme が "homegohan" で、
  * expo-router は URL のパスをそのまま app/ の画面に当てるため (docs/design/mobile/02-deep-link.md §3.1 はこのスキームで
  * 受ける URL の一覧で、通知の行き先の形はここで決める。通知の data の形は 03-push-notification.md §3.3)。
@@ -13,7 +13,9 @@
  *   - パスの各区間は英数字・'_'・'-' だけ (MAX_PATH_SEGMENTS 区間まで)。'..'・'%' (エンコード)・'\' を含むものは無視
  *   - クエリは任意だが、使える文字を絞る。ハッシュ (#) を含むものは無視
  *   - 行き先は NOTIFICATION_ROUTES に載せた画面だけ。設定・アカウント・管理・初期設定・ログインの画面は開かない
- *   - 画面が無い下位のパス ('/family/meal-requests' など) は、載せた中で一番近い上位の画面 ('/family') を開く
+ *   - 家族の画面 ('/family') はアプリに無い (通常の操作で届かないネイティブの画面として消した。#1598 / #1610)。
+ *     家族の通知 (§3.3 の例の 'homegohan://family/meal-requests') は行き先が決まらず、アプリが開くだけになる
+ *   - 画面が無い下位のパス ('/health/streaks/abc' など) は、載せた中で一番近い上位の画面 ('/health/streaks') を開く
  *     (「Unmatched Route」の画面を出さないため)。上位に落ちたときは、下位のためのクエリは引き継がない
  */
 
@@ -33,8 +35,7 @@ export const NOTIFICATION_ROUTES: readonly string[] = [
   "/favorites",
   "/health",
   "/profile",
-  // 家族・AI 相談
-  "/family",
+  // AI 相談
   "/ai",
   "/ai/important",
   "/ai/:sessionId",
@@ -99,7 +100,7 @@ export function resolveNotificationHref(data: unknown): string | null {
   const raw = rawTargetOf(data);
   if (raw === null || raw.length > MAX_TARGET_LENGTH || raw.includes("#")) return null;
 
-  // 'homegohan://family' → '/family'。先頭が '/' のアプリ内のパスはそのまま ('//host' はスキーム相対の URL なので除く)
+  // 'homegohan://pantry' → '/pantry'。先頭が '/' のアプリ内のパスはそのまま ('//host' はスキーム相対の URL なので除く)
   let target: string;
   if (raw.startsWith(DEEP_LINK_SCHEME)) {
     target = `/${raw.slice(DEEP_LINK_SCHEME.length)}`;
@@ -114,7 +115,7 @@ export function resolveNotificationHref(data: unknown): string | null {
   const query = questionMark === -1 ? "" : target.slice(questionMark + 1);
   if (query !== "" && !QUERY_PATTERN.test(query)) return null;
 
-  // 末尾の '/' は許す ('homegohan://family/')。途中の空の区間 ('/a//b') は不正
+  // 末尾の '/' は許す ('homegohan://pantry/')。途中の空の区間 ('/a//b') は不正
   const segments = pathname.replace(/\/$/, "").split("/").slice(1);
   if (segments.length === 0 || segments.length > MAX_PATH_SEGMENTS) return null;
   if (!segments.every((segment) => SEGMENT_PATTERN.test(segment))) return null;

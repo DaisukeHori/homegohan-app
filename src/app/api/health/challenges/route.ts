@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { challengePeriod } from '@/lib/jst-day-ranges';
 import { createClient } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // チャレンジ一覧の取得
 export async function GET(request: NextRequest) {
@@ -42,6 +43,9 @@ export async function GET(request: NextRequest) {
 
 // チャレンジの作成
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   const { data: { user } } = await supabase.auth.getUser();
   

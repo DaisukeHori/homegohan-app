@@ -79,7 +79,8 @@ const TARGET_FILES = [
   'src/app/(main)/menus/weekly/page.tsx',
   'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
   // #1631
-  'apps/mobile/app/meals/new.tsx',
+  // (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx も対象だったが、スキャンのタブが WebView になって
+  //  通常の操作で届かない画面だったので、画面ごと消した。#1598。食事の記録は Web の src/app/(main)/meals/new/page.tsx が受け持つ)
   'lib/slot-builder.ts',
   'src/app/(main)/home/page.tsx',
   'src/app/(main)/meals/new/page.tsx',
@@ -102,8 +103,7 @@ const TARGET_FILES = [
  * 食事の区分の手書きの検査 (5 値・MealType の型・おやつと夜食の並び) は外さない。
  */
 const CAST_CHECK_EXCLUDED: Record<string, string> = {
-  'apps/mobile/app/meals/new.tsx':
-    '#1631 より前からある画像の選択 (mediaTypes) と Text / Pressable の ref の any キャスト。食事の区分とは関係しない',
+  // (apps/mobile/app/meals/new.tsx の行は、画面ごと消したので除いた。#1598)
   'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts':
     '#1631 より前からある LLM の呼び出しの引数 (chat.completions.create に渡す本文) の any キャスト。食事の区分とは関係しない',
   'apps/mobile/app/meals/[id].tsx':
@@ -497,7 +497,7 @@ describe('#1446 / #1631 食事の区分は正本から導き、any へのキャ�
 const MEAL_TYPE_VISUAL_TABLE_FILES: Record<string, string> = {
   'packages/shared/src/meal-types.ts': 'Web とモバイルで同じ値の見た目 (MEAL_LABELS・MEAL_EMOJIS) の表',
   'src/lib/meal-type-visuals.ts': 'Web の区分の見た目 (色・下地の色・アイコンの部品) の表',
-  'apps/mobile/src/lib/meal-type-visuals.ts': 'モバイルの区分の見た目 (色・下地の色・アイコンの部品・短い名前) の表',
+  'apps/mobile/src/lib/meal-type-visuals.ts': 'モバイルの区分の見た目 (色・アイコンの部品・短い名前) の表',
 };
 
 /** 見た目の表ではないが 5 値をキーに持つ表を置いてよいファイルと理由 (V2 の除外表) */
@@ -571,7 +571,8 @@ describe('#1665 食事の区分ごとの見た目は表 1 か所から引き、�
       expect.arrayContaining([
         'src/app/(main)/menus/weekly/_components/modals/AddMealSlotModal.tsx',
         'src/app/(main)/meals/[id]/page.tsx',
-        'apps/mobile/app/meals/new.tsx',
+        'apps/mobile/app/meals/[id].tsx',
+        'apps/mobile/app/menus/weekly/index.tsx',
         'apps/mobile/src/components/menu/AddMealSlotModal.tsx',
         ...Object.keys(MEAL_TYPE_VISUAL_TABLE_FILES),
       ]),

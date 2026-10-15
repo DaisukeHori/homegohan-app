@@ -16,6 +16,7 @@ import { createLogger } from '@/lib/db-logger';
 import { plannedMealValidationErrorBody, validatePlannedMealInput } from '@/lib/planned-meal-validation';
 import { internalError } from '@/lib/api/errors';
 import { uuidOrNull } from '@/lib/http-params';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 /**
  * 食事一覧取得（日付ベースモデル: user_daily_meals → planned_meals）
@@ -75,6 +76,9 @@ export async function GET(request: Request) {
  * 新しい食事を追加（日付ベースモデル: user_daily_meals upsert → planned_meals insert）
  */
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
   
   try {

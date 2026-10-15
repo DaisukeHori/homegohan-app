@@ -427,19 +427,25 @@ test.describe("onboarding 完了 → handson-tour 自動起動 → graduate → 
         });
       });
       // badges ページが /api/badges を呼ぶ — new user には real data がないためモック
+      // 形は GET /api/badges の実際の応答 (badges の行 + earned + obtainedAt)。中身はツアーを通した状態に合わせる:
+      // Step 2 で付く planner だけが獲得済みで、first_bite はお試しの記録では付かない (#1314 / #1626)
+      const tourBadge = (code: string, name: string, earned: boolean) => ({
+        code,
+        name,
+        description: '',
+        icon: null,
+        earned,
+        obtainedAt: earned ? new Date().toISOString() : null,
+      });
       await page.route('**/api/badges**', async (route) => {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
           body: JSON.stringify({
             badges: [
-              {
-                code: 'first_bite',
-                name: '初めての記録',
-                description: '最初の食事を記録しました',
-                icon_url: null,
-                obtained_at: new Date().toISOString(),
-              },
+              tourBadge('first_bite', 'はじめの一歩', false),
+              tourBadge('planner', '計画上手', true),
+              tourBadge('tutorial_complete', '使い方マスター', false),
             ],
           }),
         });

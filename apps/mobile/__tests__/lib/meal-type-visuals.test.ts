@@ -1,8 +1,8 @@
 /**
  * #1665: 食事の区分ごとの見た目の表 (モバイル) の値を固定する。
  *
- * 食事の詳細・食事の記録・週間献立のカード・『食事タイプを選択』モーダルが手書きの表で持っていた
- * アイコン・色・下地の色・短い名前を、src/lib/meal-type-visuals.ts の表へ移した。画面の見た目は変えないので、
+ * 食事の詳細・週間献立のカード・『食事タイプを選択』モーダルが手書きの表で持っていた
+ * アイコン・色・短い名前を、src/lib/meal-type-visuals.ts の表へ移した。画面の見た目は変えないので、
  * 表の値は移す前の各画面の値と同じであることを確かめる。期待する値は、移す前の画面のソースにあった値を手で書く。
  * Web と共通のパッケージの表は tests/meal-type-visuals-1665.test.ts が固定する。
  */
@@ -13,12 +13,11 @@ import {
   MEAL_TYPE_COLORS,
   MEAL_TYPE_IONICONS,
   MEAL_TYPE_LUCIDE_ICONS,
-  MEAL_TYPE_RECORD_THEME,
   MEAL_TYPE_SHORT_LABELS,
 } from "../../src/lib/meal-type-visuals";
 
 describe("モバイルの区分の見た目の表 (#1665)", () => {
-  it("Ionicons の名前は、移す前の食事の詳細・食事の記録・『食事タイプを選択』モーダルの表と同じ", () => {
+  it("Ionicons の名前は、移す前の食事の詳細・『食事タイプを選択』モーダルの表と同じ", () => {
     expect(MEAL_TYPE_IONICONS).toEqual({
       breakfast: "sunny",
       lunch: "partly-sunny",
@@ -47,16 +46,6 @@ describe("モバイルの区分の見た目の表 (#1665)", () => {
       dinner: "#7C4DFF",
       snack: "#E91E63",
       midnight_snack: "#3F51B5",
-    });
-  });
-
-  it("食事の記録 (/meals/new) の色と下地の色は、移す前の表 (テーマの色を展開した値) と同じ", () => {
-    expect(MEAL_TYPE_RECORD_THEME).toEqual({
-      breakfast: { color: "#FF9800", bg: "#FEF9EE" },
-      lunch: { color: "#E07A5F", bg: "#FDF0ED" },
-      dinner: { color: "#7C6BA0", bg: "#F5F3F8" },
-      snack: { color: "#E91E63", bg: "#FCE4EC" },
-      midnight_snack: { color: "#5B8BC7", bg: "#EEF4FB" },
     });
   });
 

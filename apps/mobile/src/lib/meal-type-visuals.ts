@@ -1,26 +1,24 @@
 /**
  * 食事の区分ごとの見た目の表 (モバイル) (#1665)
  *
- * 区分 (MealType の 5 値) ごとの色・下地の色・アイコンの部品・短い名前を、モバイルではここ 1 か所に置く。
+ * 区分 (MealType の 5 値) ごとの色・アイコンの部品・短い名前を、モバイルではここ 1 か所に置く。
  * 各画面は区分との比較の連鎖 (三項・if・switch) や手書きの表を持たず、ここから引く。
  * - 表示名は @homegohan/shared の MEAL_LABELS、絵文字は MEAL_EMOJIS (Web とモバイルで同じ値) から引く。
  * - Web の見た目の表は src/lib/meal-type-visuals.ts。
  * - 表は Record<MealType, …> なので、MealType に値が増えると tsc が漏れを止める。
  *
- * 画面ごとに今の色が違うので、値を揃えずに表を分けている (#1665 では画面の見た目を変えない):
- * - MEAL_TYPE_COLORS: 食事の詳細・週間献立のカード・『食事タイプを選択』モーダル (鮮やかな色。Web のホームと同じ値)。
- * - MEAL_TYPE_RECORD_THEME: 食事の記録 (/meals/new) の区分のボタン (朝食とおやつは鮮やかな色、ほかはテーマの色)。
+ * - MEAL_TYPE_COLORS: 食事の詳細・週間献立のカード・『食事タイプを選択』モーダルの区分の色 (鮮やかな色。Web のホームと同じ値)。
+ * (以前は食事の新規作成の画面 (apps/mobile/app/meals/new.tsx) の区分のボタンの色と下地の色の表も持っていたが、
+ *  その画面を消したので表も消した。#1598。食事の記録は WebView の中の Web の画面 (/meals/new) が受け持つ)
  */
 import type { Ionicons } from "@expo/vector-icons";
 import { CloudMoon, Coffee, Moon, Sun, SunMedium } from "lucide-react-native";
 import type { MealType } from "@homegohan/shared";
 
-import { colors } from "../theme";
-
 /** lucide-react-native のアイコンの部品 (どのアイコンも同じ型) */
 export type MealTypeLucideIcon = typeof Sun;
 
-/** Ionicons のアイコンの名前 (食事の詳細・食事の記録・『食事タイプを選択』モーダル) */
+/** Ionicons のアイコンの名前 (食事の詳細・『食事タイプを選択』モーダル) */
 export const MEAL_TYPE_IONICONS: Record<MealType, keyof typeof Ionicons.glyphMap> = {
   breakfast: "sunny",
   lunch: "partly-sunny",
@@ -45,15 +43,6 @@ export const MEAL_TYPE_COLORS: Record<MealType, string> = {
   dinner: "#7C4DFF",
   snack: "#E91E63",
   midnight_snack: "#3F51B5",
-};
-
-/** 食事の記録 (/meals/new) の区分のボタンの色と、選んだときの下地の色 */
-export const MEAL_TYPE_RECORD_THEME: Record<MealType, { color: string; bg: string }> = {
-  breakfast: { color: MEAL_TYPE_COLORS.breakfast, bg: colors.warningLight },
-  lunch: { color: colors.accent, bg: colors.accentLight },
-  dinner: { color: colors.purple, bg: colors.purpleLight },
-  snack: { color: MEAL_TYPE_COLORS.snack, bg: "#FCE4EC" },
-  midnight_snack: { color: colors.blue, bg: colors.blueLight },
 };
 
 /**

@@ -233,7 +233,7 @@ image_error?: string | null;
 - `src/app/api/meal-plans/add-from-photo/route.ts`
 - `supabase/functions/analyze-meal-photo/index.ts`
 - `src/app/api/ai/consultation/actions/[actionId]/execute/route.ts`
-- `apps/mobile/app/meals/new.tsx` は API 共通化対象
+- `apps/mobile/app/meals/new.tsx` は API 共通化対象だった（2026-10-15 に削除。スキャンのタブは WebView で Web の `/meals/new` を出す。#1598）
 
 ### Worker
 
