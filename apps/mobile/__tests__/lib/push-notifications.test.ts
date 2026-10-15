@@ -514,6 +514,11 @@ describe('registerAndSaveExpoPushToken — 同じトークンのほかの利用�
 // #1636: claim に端末の秘密の値を付ける (同じ端末の前の利用者の行だけを外す)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** expo-secure-store のテスト用の差し替え (__mocks__/expo-secure-store.js) の、失敗の注入とメモリ上の表 */
+function secureStoreMock(): { __failWith: (method: string, error: Error) => void; __store: Map<string, string> } {
+  return jest.requireMock('expo-secure-store');
+}
+
 /** サーバーが発行する端末の秘密の値 (ダミー。43 文字の base64url) */
 const ISSUED_SECRET = 'issued-device-secret-aaaaaaaaaaaaaaaaaaaaaa'; // gitleaks:allow
 const TEST_TOKEN = 'ExponentPushToken[test-token]';
@@ -551,18 +556,15 @@ describe('registerAndSaveExpoPushToken — 端末の秘密の値で claim する
   });
 
   it('保管庫を読めないときは、秘密の値を送らず作り直しも頼まない (この端末の前の利用者の行を外せなくならないように)', async () => {
-    const getSpy = jest.spyOn(SecureStore, 'getItemAsync').mockRejectedValue(new Error('User interaction is not allowed'));
-    const setSpy = jest.spyOn(SecureStore, 'setItemAsync');
-    mockPost.mockResolvedValue({ released: 0, install_secret: ISSUED_SECRET });
-    try {
-      await registerAndSaveExpoPushToken();
-    } finally {
-      getSpy.mockRestore();
-    }
+    await SecureStore.setItemAsync(PUSH_INSTALL_SECRET_STORE_KEY, ISSUED_SECRET);
+    secureStoreMock().__failWith('getItemAsync', new Error('User interaction is not allowed'));
+    mockPost.mockResolvedValue({ released: 0, install_secret: 'another-secret-bbbbbbbbbbbbbbbbbbbbbbbbbbbb' // gitleaks:allow });
+
+    await registerAndSaveExpoPushToken();
 
     expect(claimCalls()).toEqual([[PUSH_TOKEN_CLAIM_API_PATH, { expo_push_token: TEST_TOKEN }]]);
-    expect(setSpy).not.toHaveBeenCalled();
-    setSpy.mockRestore();
+    // 前の値はそのまま (応答に値が入っていても置き換えない)
+    expect(secureStoreMock().__store.get(PUSH_INSTALL_SECRET_STORE_KEY)).toBe(ISSUED_SECRET);
   });
 
   it('応答の値が形に合わないとき・値が無いときは保管庫に置かない (次の claim でまた作ってもらう)', async () => {
@@ -580,13 +582,11 @@ describe('registerAndSaveExpoPushToken — 端末の秘密の値で claim する
   });
 
   it('保管庫に置けなくても登録は成功扱い (値は次の claim で作り直す)', async () => {
-    const setSpy = jest.spyOn(SecureStore, 'setItemAsync').mockRejectedValue(new Error('keystore broken'));
+    secureStoreMock().__failWith('setItemAsync', new Error('keystore broken'));
     mockPost.mockResolvedValue({ released: 0, install_secret: ISSUED_SECRET });
-    try {
-      await expect(registerAndSaveExpoPushToken()).resolves.toBe(TEST_TOKEN);
-    } finally {
-      setSpy.mockRestore();
-    }
+
+    await expect(registerAndSaveExpoPushToken()).resolves.toBe(TEST_TOKEN);
+    expect(secureStoreMock().__store.has(PUSH_INSTALL_SECRET_STORE_KEY)).toBe(false);
   });
 
   it('秘密の値つきの claim が成功したら、同じトークンの release の控えを捨てる (ほかのトークンの控えは残す)', async () => {

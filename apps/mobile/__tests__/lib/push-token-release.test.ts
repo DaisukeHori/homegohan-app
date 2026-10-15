@@ -124,12 +124,12 @@ describe('releasePushTokenAfterSignedOut (#1636)', () => {
 
   it('保管庫を読めないときは通信せず、控えを残す (次の起動でやり直す)', async () => {
     await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-a`, TOKEN);
-    const getSpy = jest.spyOn(SecureStore, 'getItemAsync').mockRejectedValue(new Error('User interaction is not allowed'));
-    try {
-      await releasePushTokenAfterSignedOut('user-a');
-    } finally {
-      getSpy.mockRestore();
-    }
+    (jest.requireMock('expo-secure-store') as { __failWith: (method: string, error: Error) => void }).__failWith(
+      'getItemAsync',
+      new Error('User interaction is not allowed'),
+    );
+
+    await releasePushTokenAfterSignedOut('user-a');
 
     expect(mockPost).not.toHaveBeenCalled();
     expect(await pending()).toEqual([{ userId: 'user-a', token: TOKEN }]);
@@ -199,15 +199,21 @@ describe('releasePushTokenAfterSignedOut (#1636)', () => {
   });
 
   it('例外を投げない (AsyncStorage が壊れていても)', async () => {
-    const getSpy = jest.spyOn(AsyncStorage, 'getItem').mockRejectedValue(new Error('storage broken'));
+    // AsyncStorage のモックの getItem は jest.fn。spyOn + mockRestore だと実装まで消えるので、元の実装を戻す
+    const getItem = AsyncStorage.getItem as jest.Mock;
+    const original = getItem.getMockImplementation();
+    getItem.mockImplementation(async () => {
+      throw new Error('storage broken');
+    });
     try {
       await expect(releasePushTokenAfterSignedOut('user-a')).resolves.toBeUndefined();
       await expect(flushPendingPushTokenReleases()).resolves.toBeUndefined();
       await expect(recordPushTokenRelease('user-a')).resolves.toBeUndefined();
       await expect(forgetPendingPushTokenReleases(TOKEN)).resolves.toBeUndefined();
     } finally {
-      getSpy.mockRestore();
+      getItem.mockImplementation(original);
     }
+    expect(mockPost).not.toHaveBeenCalled();
   });
 });
 
