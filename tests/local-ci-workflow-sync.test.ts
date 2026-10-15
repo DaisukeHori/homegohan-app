@@ -183,6 +183,9 @@ const STEP_CONDITIONS: Record<string, "diagnostic" | "always"> = {
   "failure()": "diagnostic",
   "always()": "always",
   "!cancelled()": "always",
+  // security-regression.yml の 2 本目の結合テスト: 1 本目が落ちても回すが、ローカル Supabase が起動できなかったときは回さない (#1523)。
+  // スクリプトは supabase-local.sh start の失敗で段を止める (stage_integration) ので、起動できたときに 1 本目の結果によらず回す「always」と同じ
+  "!cancelled() && steps.supabase.outcome == 'success'": "always",
 };
 /** スクリプトが CI のコマンドの後ろに足してよい引数 (結果を JSON でファイルへ出すためだけのもの)。true は値を次の語に取るもの */
 const REPORTING_FLAGS = new Map<string, boolean>([
@@ -1316,7 +1319,7 @@ describe("検査ロジック自体 (ワークフローやスクリプトを変�
       // ワークフロー全体の環境変数を足す
       [".github/workflows/security-regression.yml", "  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true", "  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true\n  NODE_ENV: test"],
       // 2 本目の実行条件を変える
-      [".github/workflows/security-regression.yml", "if: ${{ !cancelled() }}", "if: success()"],
+      [".github/workflows/security-regression.yml", "if: ${{ !cancelled() && steps.supabase.outcome == 'success' }}", "if: success()"],
       // ci.yml にステップを足す (npm / node)
       [".github/workflows/ci.yml", "      - run: npm test", "      - run: npm test\n      - run: npm run check:new"],
       [".github/workflows/ci.yml", "      - run: npm test", "      - run: npm test\n      - run: node scripts/check.mjs"],

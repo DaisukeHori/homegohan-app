@@ -88,8 +88,10 @@ export function classifyMigrationDrift(rows) {
  * @param {string|null} input.migrationListText `migration list --linked` の出力 (取得できなかったら null)
  * @param {number|null} input.diffStatus        `db diff --linked` の終了コード (実行できなかったら null)
  * @param {string}      input.diffText          `db diff --linked` の出力 (SQL)。空なら差分なし
+ * @param {boolean}     [input.diffImageUnavailable] `db diff` が Docker イメージを取得できずに終わった
+ *                                                (scripts/supabase-image-fallback.sh が取得元を替えてやり直しても取れなかった。#1523)
  */
-export function buildDbProblems({ migrationListText, diffStatus, diffText }) {
+export function buildDbProblems({ migrationListText, diffStatus, diffText, diffImageUnavailable = false }) {
   const problems = [];
   const drift = classifyMigrationDrift(parseMigrationList(migrationListText ?? ''));
 
@@ -128,6 +130,14 @@ export function buildDbProblems({ migrationListText, diffStatus, diffText }) {
       kind: 'diff-not-run',
       title: '本番のスキーマとの比較 (db diff) を実行できませんでした',
       detail: '前の手順が失敗したため、`supabase db diff --linked` を実行していません。実行ログを確認してください。',
+    });
+  } else if (diffStatus !== 0 && diffImageUnavailable) {
+    // migration が流せないのではなく、シャドウ DB のイメージを取れなかった (検査の中身の失敗ではない)。
+    // 確かめられていないことに変わりはないので、問題として残す (Issue は閉じない)
+    problems.push({
+      kind: 'diff-image-unavailable',
+      title: '本番のスキーマとの比較 (db diff) を、Docker イメージを取得できずに確かめられませんでした',
+      detail: `\`supabase db diff --linked\` のシャドウ DB のイメージを、取得元を替えてやり直しても取得できませんでした (終了コード ${diffStatus}。レート制限などの一過性の理由で、migration や本番の不整合ではありません)。時間をおいて、この workflow を手で実行し直してください (docs/operations/ci-supabase-image-pull.md)。`,
     });
   } else if (diffStatus !== 0) {
     problems.push({

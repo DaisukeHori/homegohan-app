@@ -9,10 +9,11 @@
 // 実 DB での動き (ジョブの登録・Vault が無いときの失敗・送る要求の中身・時刻ごとの本文・権限) は
 // tests/integration/security/schedule-calculate-segment-stats-cron.test.ts が確かめる。
 // ここでは、ファイルどうしの取り決めがずれていないことだけを、DB 無しで確かめる:
-//   - モバイルの比較画面が案内する更新の間隔 (時間) が、ジョブの cron 式の間隔と同じ
+//   - ジョブの cron 式の間隔が 1 時間 (以前ここで突き合わせていたモバイルの比較画面 app/comparison/index.tsx の
+//     更新の間隔の案内は、比較のタブ (WebView) と重なる届かない画面として消した。#1598)
 //   - 直前の期間の集計し直しを担う JST 0 時台 (UTC 15 時台) の回が、ジョブのスケジュールに含まれる。
 //     集計し直す範囲 (期間の始まりから c_finalize_window) は、ジョブの間隔と同じ
-//   - ジョブが集計する期間の種類が、画面 (モバイル・Web) の選択肢と、手動の API が受け付ける種類と、
+//   - ジョブが集計する期間の種類が、画面 (Web。アプリの比較のタブも WebView でこの画面を出す) の選択肢と、手動の API が受け付ける種類と、
 //     Edge Function が「直前の期間」を受け付ける種類 (JST_CALENDAR_PERIOD_TYPES) を、過不足なく含む
 //   - 関数に渡す本文は periodType と previousPeriod: true だけ (過去の任意の期間を指定しない)
 
@@ -27,7 +28,6 @@ const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
 const MIGRATION = read('supabase/migrations/20261009100000_schedule_calculate_segment_stats.sql');
 const ROLLBACK = read('supabase/rollbacks/20261009100000_schedule_calculate_segment_stats.down.sql');
-const MOBILE_SCREEN = read('apps/mobile/app/comparison/index.tsx');
 const WEB_PAGE = read('src/app/(main)/comparison/page.tsx');
 const TRIGGER_ROUTE = read('src/app/api/comparison/trigger/route.ts');
 
@@ -99,17 +99,10 @@ describe('#1406 セグメント統計の定期実行の設定', () => {
     expect(scheduledJob()).toEqual({ name: JOB_NAME, expression: '5 * * * *' });
   });
 
-  it('モバイルの比較画面が案内する更新の間隔 (時間) は、ジョブの間隔と同じ (1 時間ごと)', () => {
+  it('ジョブの間隔は 1 時間ごと (日・月・曜日は * )', () => {
     const [, hourField, dayOfMonth, month, dayOfWeek] = scheduledJob().expression.split(/\s+/);
     expect([dayOfMonth, month, dayOfWeek]).toEqual(['*', '*', '*']);
-    const interval = intervalHoursOf(hoursOf(hourField));
-    expect(interval).toBe(1);
-
-    const shown = /const RANKING_UPDATE_INTERVAL_HOURS = (\d+);/.exec(MOBILE_SCREEN)?.[1];
-    expect(shown, 'apps/mobile/app/comparison/index.tsx に RANKING_UPDATE_INTERVAL_HOURS が無い').toBeDefined();
-    expect(Number(shown)).toBe(interval);
-    expect(MOBILE_SCREEN).toContain('ランキングは ${RANKING_UPDATE_INTERVAL_HOURS} 時間ごとに更新されます。');
-    expect(MOBILE_SCREEN, '毎日の時刻の案内が残っていない').not.toMatch(/毎日|RANKING_UPDATE_TIME_JST/);
+    expect(intervalHoursOf(hoursOf(hourField))).toBe(1);
   });
 
   it('期間が切り替わる JST 0 時台 (UTC 15 時台) の回がスケジュールに含まれ、直前の期間を集計し直す範囲はジョブの間隔と同じ', () => {
@@ -130,14 +123,12 @@ describe('#1406 セグメント統計の定期実行の設定', () => {
     // 直前の期間 (previousPeriod: true) を Edge Function が受け付ける種類と同じ
     expect(scheduled).toEqual([...JST_CALENDAR_PERIOD_TYPES]);
 
-    const mobileOptions = [...MOBILE_SCREEN.matchAll(/value: "([a-z_]+)" as const/g)].map((m) => m[1]);
-    expect(mobileOptions.length, 'モバイルの選択肢の取り出しが空振りしていないこと').toBeGreaterThan(0);
     const webOptions = quotedList(/\(\[([^\]]*)\] as const\)\.map\(\(period\)/.exec(WEB_PAGE)?.[1] ?? '');
     expect(webOptions.length, 'Web の選択肢の取り出しが空振りしていないこと').toBeGreaterThan(0);
     const routeTypes = quotedList(/const PERIOD_TYPES = \[([^\]]*)\] as const/.exec(TRIGGER_ROUTE)?.[1] ?? '');
     expect(routeTypes, '手動の API の受け付ける種類は、定期実行と同じ').toEqual(scheduled);
 
-    for (const option of [...mobileOptions, ...webOptions]) {
+    for (const option of webOptions) {
       expect(scheduled, `画面の選択肢 ${option} が定期実行の対象に無い (その期間の画面が空のままになる)`).toContain(option);
     }
   });
