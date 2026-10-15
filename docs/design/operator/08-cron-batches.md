@@ -815,9 +815,10 @@ export function withCronMonitoring(jobName: string, handler: CronHandler): CronH
 
 ```typescript
 // POST /api/super-admin/cron-jobs/{jobName}/run
-export async function POST(request: Request, { params }: { params: { jobName: string } }) {
+// Next 15: route handler の params は Promise (await して読む)
+export async function POST(request: Request, { params }: { params: Promise<{ jobName: string }> }) {
   const user = await requireRole(['super_admin']);
-  const { jobName } = params;
+  const { jobName } = await params;
 
   // 監査ログ
   await insertAuditLog({

@@ -1770,7 +1770,7 @@ cross/04-api-conventions §error-format に準拠:
 
 ### 15.6.1 Zod schema の配置(2026-05-08 確定)
 
-Next.js 14 App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: PR #810 で発生したビルドエラー)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
+Next.js App Router の `route.ts` は HTTP method handler(GET/POST 等)と予約済み config 以外の `export` を許可しない(参考: Next.js 14 のときに PR #810 で発生したビルドエラー。いまの Web の Next.js 15 でも同じ制約)。本ドキュメント §15.2.3 / §15.3.3 / §15.4.2 / §15.4.3 で示している Zod schema は **`src/lib/handson-tour/schemas.ts` に集約 export し、`route.ts` から import する** こと。`route.ts` 内 inline 定義 + export は Next.js 制約違反。
 
 集約配置(canonical):
 
