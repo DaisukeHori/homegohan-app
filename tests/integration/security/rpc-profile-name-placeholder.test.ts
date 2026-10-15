@@ -6,7 +6,7 @@
  *     Web の招待ページ (src/app/invite/[token]/page.tsx) に「Guest 様から招待が届いています」と出た
  *   - get_promotion_details: requested_by_name が同じ形 (src/app/family/promotions/[token]/page.tsx に「Guest 様から」)
  *   - create_family_group: 作成者の nickname を family_members.display_name に写すので、'Guest' が入った
- * 修正後 (20261015190000_rpc_profile_name_placeholder.sql):
+ * 修正後 (20261016200000_rpc_profile_name_placeholder.sql):
  *   - public.normalize_profile_name(text) が @homegohan/shared の normalizeProfileName と同じ判定をする
  *     (Edge Functions の写し supabase/functions/_shared/profile-name.ts とも同じ答えになることを、同じ入力で確かめる)
  *     (前後の空白 = JavaScript の trim と同じ文字を除く・空と仮置きの 'Guest' は NULL)
