@@ -1,10 +1,10 @@
 // tests/helpers/mobile-removed-1598.ts
 // #1598 で消したモバイルのファイル・名前・maestro の flow の一覧。見張りのテストがこの 1 か所を共有する。
 // 画面を戻すときは、この一覧と、それを読む見張りを一緒に直す。
-//   - tests/design-doc-removed-mobile-screens.test.ts: 設計書 (docs/design/) が、消した画面をいまある画面として名指ししない
+//   - tests/design-doc-removed-mobile-screens.test.ts: 設計書 (docs/design/) が、消した画面・ファイルをいまあるものとして名指ししない
 //   - tests/docs-mobile-removed-references.test.ts: CLAUDE.md とモバイルの README が、消した名前をアプリの記述に書かない
 //   - tests/mobile-removed-files-references.test.ts: それ以外のソース・テスト・文書が、消したファイルや名前を、いまあるものとして名指ししない
-// パスは、どれもリポジトリの根からではなく、下の各定数のコメントに書いたディレクトリからの相対で書く。
+// パスは、下の各定数のコメントに書いたディレクトリからの相対で書く (リポジトリの根からの相対は REMOVED_REPO_FILES だけ)。
 // この一覧そのものは tests/mobile-removed-files-references.test.ts の走査から外す (maestro の flow は名前だけの書き方も
 // 名指しとして数えるので、一覧の行が当たる)。
 
@@ -271,3 +271,9 @@ export const REMOVED_MAESTRO_FLOW_DIRS = [
   'flows/shopping',
   'menus-weekly',
 ] as const;
+
+/**
+ * #1598 の続きで、消した画面と一緒に消した、apps/mobile の外のファイル (リポジトリの根からの相対)。
+ * tests/mobile-super-admin-api-contract.test.ts は、消した (super-admin) の画面が呼ぶ API の実在を確かめるテストだった
+ */
+export const REMOVED_REPO_FILES = ['tests/mobile-super-admin-api-contract.test.ts'] as const;
