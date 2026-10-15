@@ -1,9 +1,9 @@
 # 運営ロールの MFA (二段階認証) 設計 — Supabase Auth の TOTP と AAL2 の入口
 
-> 版: v1.4 (2026-10-15 設計ゲート R4 の修正) / Issue: #1176 (`[セキュリティ] super_admin/admin/産業医ロールに必須と設計されたMFA/2FAが実装ゼロ`)
+> 版: v1.5 (2026-10-15 設計ゲート R5 の修正) / Issue: #1176 (`[セキュリティ] super_admin/admin/産業医ロールに必須と設計されたMFA/2FAが実装ゼロ`)
 > 位置づけ: `cross/01-auth-session.md` §5 (2FA / MFA) の方針を、実装できる粒度に展開した正典。§5 と本書が食い違うときは本書が正 (§24 の追随表で §5 を本書へのポインタに改める)。
 > ローンチまでに作る (オーナーの選択 2026-10-15・選択式)。
-> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。 v1.2 2026-10-15 R2 の指摘を反映: 毎回の challenge の verify でも Supabase が同じ利用者の他の aal1 のセッションを終えることを §3.1・§10・§14.3・§16・§26.3 に明記し、シナリオ S-25・結合テスト M-9・Q-11 を足す・単体テストのモックに `getSession` と `getClaims` の両方を返す `aal2AuthMock` を定める (§22.4.2・N-13・N-14)・自前でサインインする結合テスト 5 本を `signInForIntegration` に寄せる (§22.4.1・N-16)・`resolveMfaEnforceFrom` が存在しない日時 (2026-02-30 など) と範囲外の時差を拒否する (§12.1)。 網羅性 (周 3) の反映: 前提の実測を origin/main `62eadfa4` に取り直す。#1673 (ネイティブの画面を消して WebView に一本化) で `apps/mobile/app/comparison/index.tsx` とそのテストが消え、「再計算」を呼ぶ画面が Web にもモバイルにも無くなったので、モバイルの入口を (super-admin)・(support) の 2 区画に絞り、S-23 を「API を直接呼ぶ」に改める (§3.2・§16・§20・§21.6・§22.3・§23 N-26・§25)・§22.2 に client.ts の関数・Zod スキーマ・interface・走査の関数を足す・§23 N-14 の `src/__tests__/api/org/**` を 7 本中の 5 本として除外の 2 本と理由を書く・S-13 / S-15 / S-18 / S-19 のテストを足す (§21)・運営の page を import する既存の単体テストの追随を §23 N-27 に足す。 v1.3 2026-10-15 R3 の指摘を反映: §12.1 の正典の正規表現を名前つきのグループから位置のグループに改める (tsconfig の target が ES2017 で TS1503 になるため)・アプリのホームのタブ (WebView の `/home` → middleware が admin / super_admin を `/admin` へ回す) の経路が実在するので、Q-8 の「経路は無い」を改め、WebView の中では 6 桁の確認をネイティブに頼み (ネイティブの確認画面 → WebView の読み込み直し)、登録・回復・設定はブラウザへ案内し、借り物のセッションでの verify / factor 削除を 409 `AUTH_2FA_NATIVE_SESSION` で断る (§16.4 新設・§3.2・§5 S-26〜S-28・§6.2・§7.1・§8・§9・§10・§14.3・§14.4・§15・§19・§21・§22・§23・§26・Q-8)・e2e の `injectSession` が利用者のロールを読んで自動で aal2 に上げる契約を定め (`{ assurance: 'aal1' }` で上げない)、`openUserContext` を母集合に入れる (§22.4.3・N-17)・本文を読む新しい route を `src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せ、reset の理由の NULL 文字を Zod で断る (§14.7・N-28)・ローカルの Supabase の TOTP は `supabase/config.toml` ではなく `scripts/supabase-local.sh` の組み立てに足す (verify_jwt の番兵が config.toml のほかの行を許さないため。§22.3・N-29)・単体テストのモックの `aal2AuthMock` を「同じモックの `getUser`」を受け取る形に改め、`tests/helpers/route-world.ts` の `makeClient` を直す先に入れ、N-14 を 1 本ずつの直し方の表にする (§22.4.2・N-13・N-14)。前提の実測を origin/main `8c682e42` に取り直す。 網羅性 (周 4) の反映: §10 に (U2, S2) × 運営の入口・(U1/U2, S2) × Web の `/support/*`・借り物の S2 × 運営の画面 (U2 / U1)・借り物の access_token の寿命の行を足す・§3.2 と §20 の定数の行番号 (`inquiries/[id]/route.ts:46,109`・`finance/exports/route.ts:103`・`NPS_EXPORT_ROLES` の定義 :32) を origin/main `8c682e42` の実測に直す。 v1.4 2026-10-15 R4 の指摘を反映: DB (PostgREST / RPC) を直接呼ぶ経路を範囲外にしていたのを改め、段 E (判定の関数 `public.operator_mfa_satisfied()`・SECURITY DEFINER の関数 7 本・RLS のポリシー 58 本の運営の枝・カタログの機械検査) として本書の範囲に入れる (§0.2・§0.3・§3.2・§5 S-24・S-29〜S-31・§6・§7.1・§8・§9・§10・§11.4・§13.6・§19.1・§20.1・§21.8・§22・§23 N-32〜N-35・§24・§25・§26.2・付録 A。Issue #1176 が名指しした「パスワードだけの super_admin が org / family の強制移譲・解散を行える」を DB の経路でも閉じるため)・自分の unverified な factor の `DELETE /factors/{id}` を 404 にする (verified な TOTP factor だけを解除の対象にする `isVerifiedTotpFactorId`。§10・§12.4・§14.4・§21)・`tests/e2e/helpers/totp.mjs` を段 A に移す (§22.1)・テストの道具の MFA の回数制限の扱い (ローカルの Supabase では効かないことの根拠・番兵 M-13・429 の文言) を §22.4.4 に足す・運営の layout 3 + page 11 の `next` / `forbiddenPath` / バナーの `next` をファイルごとに決める (§13.4.2。super-admin と (operator) の layout は現行の行き先を保つ)・結合テストの M-8 と M-11 の猶予の枝を外し、猶予の分岐を単体と route のテストで守る (§21.1・§21.4)。 網羅性 (周 5) の反映: §10 に借り物の S1 / S2 で enroll / recover / backup-codes / status を直接呼ぶ行を足し (借り物でないときと同じ応答。Web の側で token を発行し直さない)、§21.2 にその it を足す・§8 の消費経路と §9 にロールだけで行き先を決める経路 (`auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect`・ハンズオンツアーの `ADMIN_ROLES`) を足す・§8 の軸の列の「—」を「その行の判定がその軸を読まない」と定義し、P-4 の猶予の欄に明記する・§3.2 の `org_industrial_doctor` の列挙に `src/lib/auth/helpers.ts:124` (コメント) を足す・origin/main `5a48abc9` と突き合わせ、migration の最大の番号を `20261015170000` に直す (§3・§11.1)。
+> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。 v1.2 2026-10-15 R2 の指摘を反映: 毎回の challenge の verify でも Supabase が同じ利用者の他の aal1 のセッションを終えることを §3.1・§10・§14.3・§16・§26.3 に明記し、シナリオ S-25・結合テスト M-9・Q-11 を足す・単体テストのモックに `getSession` と `getClaims` の両方を返す `aal2AuthMock` を定める (§22.4.2・N-13・N-14)・自前でサインインする結合テスト 5 本を `signInForIntegration` に寄せる (§22.4.1・N-16)・`resolveMfaEnforceFrom` が存在しない日時 (2026-02-30 など) と範囲外の時差を拒否する (§12.1)。 網羅性 (周 3) の反映: 前提の実測を origin/main `62eadfa4` に取り直す。#1673 (ネイティブの画面を消して WebView に一本化) で `apps/mobile/app/comparison/index.tsx` とそのテストが消え、「再計算」を呼ぶ画面が Web にもモバイルにも無くなったので、モバイルの入口を (super-admin)・(support) の 2 区画に絞り、S-23 を「API を直接呼ぶ」に改める (§3.2・§16・§20・§21.6・§22.3・§23 N-26・§25)・§22.2 に client.ts の関数・Zod スキーマ・interface・走査の関数を足す・§23 N-14 の `src/__tests__/api/org/**` を 7 本中の 5 本として除外の 2 本と理由を書く・S-13 / S-15 / S-18 / S-19 のテストを足す (§21)・運営の page を import する既存の単体テストの追随を §23 N-27 に足す。 v1.3 2026-10-15 R3 の指摘を反映: §12.1 の正典の正規表現を名前つきのグループから位置のグループに改める (tsconfig の target が ES2017 で TS1503 になるため)・アプリのホームのタブ (WebView の `/home` → middleware が admin / super_admin を `/admin` へ回す) の経路が実在するので、Q-8 の「経路は無い」を改め、WebView の中では 6 桁の確認をネイティブに頼み (ネイティブの確認画面 → WebView の読み込み直し)、登録・回復・設定はブラウザへ案内し、借り物のセッションでの verify / factor 削除を 409 `AUTH_2FA_NATIVE_SESSION` で断る (§16.4 新設・§3.2・§5 S-26〜S-28・§6.2・§7.1・§8・§9・§10・§14.3・§14.4・§15・§19・§21・§22・§23・§26・Q-8)・e2e の `injectSession` が利用者のロールを読んで自動で aal2 に上げる契約を定め (`{ assurance: 'aal1' }` で上げない)、`openUserContext` を母集合に入れる (§22.4.3・N-17)・本文を読む新しい route を `src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せ、reset の理由の NULL 文字を Zod で断る (§14.7・N-28)・ローカルの Supabase の TOTP は `supabase/config.toml` ではなく `scripts/supabase-local.sh` の組み立てに足す (verify_jwt の番兵が config.toml のほかの行を許さないため。§22.3・N-29)・単体テストのモックの `aal2AuthMock` を「同じモックの `getUser`」を受け取る形に改め、`tests/helpers/route-world.ts` の `makeClient` を直す先に入れ、N-14 を 1 本ずつの直し方の表にする (§22.4.2・N-13・N-14)。前提の実測を origin/main `8c682e42` に取り直す。 網羅性 (周 4) の反映: §10 に (U2, S2) × 運営の入口・(U1/U2, S2) × Web の `/support/*`・借り物の S2 × 運営の画面 (U2 / U1)・借り物の access_token の寿命の行を足す・§3.2 と §20 の定数の行番号 (`inquiries/[id]/route.ts:46,109`・`finance/exports/route.ts:103`・`NPS_EXPORT_ROLES` の定義 :32) を origin/main `8c682e42` の実測に直す。 v1.4 2026-10-15 R4 の指摘を反映: DB (PostgREST / RPC) を直接呼ぶ経路を範囲外にしていたのを改め、段 E (判定の関数 `public.operator_mfa_satisfied()`・SECURITY DEFINER の関数 7 本・RLS のポリシー 58 本の運営の枝・カタログの機械検査) として本書の範囲に入れる (§0.2・§0.3・§3.2・§5 S-24・S-29〜S-31・§6・§7.1・§8・§9・§10・§11.4・§13.6・§19.1・§20.1・§21.8・§22・§23 N-32〜N-35・§24・§25・§26.2・付録 A。Issue #1176 が名指しした「パスワードだけの super_admin が org / family の強制移譲・解散を行える」を DB の経路でも閉じるため)・自分の unverified な factor の `DELETE /factors/{id}` を 404 にする (verified な TOTP factor だけを解除の対象にする `isVerifiedTotpFactorId`。§10・§12.4・§14.4・§21)・`tests/e2e/helpers/totp.mjs` を段 A に移す (§22.1)・テストの道具の MFA の回数制限の扱い (ローカルの Supabase では効かないことの根拠・番兵 M-13・429 の文言) を §22.4.4 に足す・運営の layout 3 + page 11 の `next` / `forbiddenPath` / バナーの `next` をファイルごとに決める (§13.4.2。super-admin と (operator) の layout は現行の行き先を保つ)・結合テストの M-8 と M-11 の猶予の枝を外し、猶予の分岐を単体と route のテストで守る (§21.1・§21.4)。 網羅性 (周 5) の反映: §10 に借り物の S1 / S2 で enroll / recover / backup-codes / status を直接呼ぶ行を足し (借り物でないときと同じ応答。Web の側で token を発行し直さない)、§21.2 にその it を足す・§8 の消費経路と §9 にロールだけで行き先を決める経路 (`auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect`・ハンズオンツアーの `ADMIN_ROLES`) を足す・§8 の軸の列の「—」を「その行の判定がその軸を読まない」と定義し、P-4 の猶予の欄に明記する・§3.2 の `org_industrial_doctor` の列挙に `src/lib/auth/helpers.ts:124` (コメント) を足す・origin/main `5a48abc9` と突き合わせ、migration の最大の番号を `20261015170000` に直す (§3・§11.1)。 v1.5 2026-10-15 R5 の指摘を反映: super_admin の reset の手順を「対象の profile → `listFactors` → `countRemainingBackupCodes` (未使用の残数) → 監査 (fail-closed。details の `factors_before` / `backup_codes_before` をこの 2 つの読み取りで作る) → `deleteFactor` ×n → `deleteBackupCodes`」に改め、読み取りの失敗は監査を書かずに 500 にする (§6.2 S-7・§8・§10・§14.7・§14.8.2・§17・§21.2)・監査の facade `src/lib/auth/mfa/audit.ts` (`MFA_AUDIT_ACTIONS`・`MFA_AUDIT_SEVERITY`・`MfaAuditDetailsMap`・`recordMfaAudit` のシグネチャと戻り値の扱い) を §17.1 に逐語で置く・画面の通信の facade `src/lib/auth/mfa/client.ts` (`MFA_API_PATHS`・`MfaClientResult`・`requestMfaApi`・7 関数・`mfaErrorMessage`) を §15.1 に、enroll / verify / recover / backup-codes / 解除 / reset の応答の Zod を §14 に逐語で置き、画面ごとの結果の扱いを §15.2 の表にする・バックアップコードの表の 4 関数の DB の失敗の扱い (例外にして route が 500) を §12.3・§13.6 で決める・結合テスト M-5 (reset) を段 C に移す (§21.4)・client と audit の単体テストと、ブラウザの画面の分岐のテストを足す (§21.1・§22)・設定画面を描く既存の単体テスト 8 本を §23 N-36 に足す。origin/main `c100ca9d` と突き合わせ、migration の最大の番号を `20261015180000` に直す (§3・§11.1)。
 
 ---
 
@@ -67,7 +67,7 @@
 
 ## 3. 前提の事実 (origin/main 2026-10-15 の実コード・実データ)
 
-実測の基準は origin/main `8c682e42` (2026-10-15。R3 の修正で取り直し)。網羅性 (周 5) で origin/main `5a48abc9` (2026-10-15) と突き合わせた: `8c682e42` からの差 (#1679 バッジの期間の表 `user_badge_period_awards`・#1680 招待の承諾で表示名を写す `accept_family_invite` / `accept_child_promotion`) は、`requireRole([...])` 104・`requireSuperAdmin()` 9・route 26 / 27 / 9 / 3・§23 N-14 の 23 本・N-16 の母集合 39 本・付録 A の 58 本・§11.4 の 7 本 (新しいポリシー・関数に運営ロールの文字列は無い) を変えない。変わるのは `supabase/migrations` の最大の番号だけ (§11.1)。⚠️ 本書の `file:line` は origin/main のもの。設計のブランチ (`design/operator-mfa`) の作業ツリーは古い `e62b5d5f` の上にあるので、そこで開くと行がずれる (例: `src/app/api/admin/finance/exports/route.ts` の `requireRole(NPS_EXPORT_ROLES)` は origin/main で 103 行目・`e62b5d5f` で 99 行目。`src/app/api/admin/inquiries/[id]/route.ts` は origin/main で 46・109 行目・`e62b5d5f` で 45・108 行目)。突き合わせは `git show origin/main:<path>` で行う。`62eadfa4` からの差 (#1675 料理の写真のカバー・#1676 ツアーの文言) は本書の入口・テストの道具・番兵に触れない。それより前の `e62b5d5f` との差のうち本書に効くのは #1673 で `apps/mobile/app/comparison/index.tsx` (再計算のボタン) が消えたことだけで、§3.2 の他の数 (`requireRole([...])` 104・route 26 / 27 / 9 / 3・`requireSuperAdmin()` 9・layout 3 / page 11) は変わらない。
+実測の基準は origin/main `8c682e42` (2026-10-15。R3 の修正で取り直し)。網羅性 (周 5) で origin/main `5a48abc9` (2026-10-15) と突き合わせた: `8c682e42` からの差 (#1679 バッジの期間の表 `user_badge_period_awards`・#1680 招待の承諾で表示名を写す `accept_family_invite` / `accept_child_promotion`) は、`requireRole([...])` 104・`requireSuperAdmin()` 9・route 26 / 27 / 9 / 3・§23 N-14 の 23 本・N-16 の母集合 39 本・付録 A の 58 本・§11.4 の 7 本 (新しいポリシー・関数に運営ロールの文字列は無い) を変えない。変わるのは `supabase/migrations` の最大の番号だけ (§11.1)。⚠️ 本書の `file:line` は origin/main のもの。設計のブランチ (`design/operator-mfa`) の作業ツリーは古い `e62b5d5f` の上にあるので、そこで開くと行がずれる (例: `src/app/api/admin/finance/exports/route.ts` の `requireRole(NPS_EXPORT_ROLES)` は origin/main で 103 行目・`e62b5d5f` で 99 行目。`src/app/api/admin/inquiries/[id]/route.ts` は origin/main で 46・109 行目・`e62b5d5f` で 45・108 行目)。突き合わせは `git show origin/main:<path>` で行う。`62eadfa4` からの差 (#1675 料理の写真のカバー・#1676 ツアーの文言) は本書の入口・テストの道具・番兵に触れない。それより前の `e62b5d5f` との差のうち本書に効くのは #1673 で `apps/mobile/app/comparison/index.tsx` (再計算のボタン) が消えたことだけで、§3.2 の他の数 (`requireRole([...])` 104・route 26 / 27 / 9 / 3・`requireSuperAdmin()` 9・layout 3 / page 11) は変わらない。R5 の修正で origin/main `c100ca9d` (2026-10-15) と突き合わせた: `5a48abc9` からの差 (#1681 食事と冷蔵庫の写真の署名付き URL・#1677 料理画像のジョブを pg_cron で拾い直す) は本書の数を変えない (新しい route `src/app/api/storage/signed-urls/route.ts` は `requireRole` を呼ばない一般の route・新しい SECURITY DEFINER の関数 `requeue_stale_meal_image_jobs` / `invoke_process_meal_image_jobs` は運営ロールを見ない・`supabase/config.toml` に足された `[functions.process-meal-image-jobs]` は §23 N-29 の規則の中)。変わるのは `supabase/migrations` の最大の番号 (`20261015180000`) だけ (§11.1)。
 
 ### 3.1 実装の現状
 
@@ -214,7 +214,7 @@
 | S-4 | `/admin/users` | roles=[support] → required=false → `not_required` (claims を読まない) | 今までどおり |
 | S-5 | `/admin` | required → aal1 → verified 無し → `now < enforceFrom` → `pass_grace` → `actor.assurance.decision='pass_grace'` → layout が `<MfaGraceBanner enforceFrom>` を描く | 通る + バナー |
 | S-6 | verify 画面 → recover 画面 | `POST /api/auth/mfa/recover {code}` → `requireRole(REQUIRED, {assurance:'session'})` → rate limit → `consumeBackupCode` (UPDATE ... WHERE used_at IS NULL RETURNING = 1 行) → `admin.mfa.deleteFactor` ×全 factor → `deleteBackupCodes(user)` → 監査 `admin.mfa.recover` (warn) → 200 `{ ok:true, next:'/login?next=...' }`。Supabase が全セッションを終了しているので画面は `/login` へ | 再ログイン → S-1 の後半 |
-| S-7 | `/admin/users/{id}` の解除 | `POST /api/super-admin/admins/{id}/mfa/reset {reason, identity_check}` → `requireRole(['super_admin'])` (AAL2 必須) → self なら 403 → 対象の profile を service_role で読む (無ければ 404) → 監査 `super_admin.mfa.reset` を **先に** 書く (失敗なら 500 で何もしない) → `admin.mfa.listFactors` → `deleteFactor` ×n → `deleteBackupCodes` → 200 `{ data: { factors_deleted, backup_codes_deleted } }` | 対象は全セッション終了 → 再ログイン → 登録 |
+| S-7 | `/admin/users/{id}` の解除 | `POST /api/super-admin/admins/{id}/mfa/reset {reason, identity_check, identity_confirmed}` → `requireRole(['super_admin'])` (AAL2 必須) → self なら 403 → 本文 (400) → 対象の profile を service_role で読む (無ければ 404) → 消す前の数を読む: `admin.auth.admin.mfa.listFactors({ userId: id })` (全 factor) と `countRemainingBackupCodes(admin, id)` (未使用の残数)。どちらかを読めなければ 500 で、監査も削除もしない → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` = 読んだ factor の数・`backup_codes_before` = 未使用の残数) を削除より **先に** `recordMfaAudit` で書く (`ok` が false なら 500 で何もしない) → 読んだ factor を `deleteFactor` ×n → `deleteBackupCodes` → 200 `{ data: { user_id, factors_deleted, backup_codes_deleted } }` | 対象は全セッション終了 → 再ログイン → 登録 |
 | S-8 | `/settings/security/mfa` | `POST /api/auth/mfa/backup-codes` → `requireRole(REQUIRED)` (既定 = AAL2) → `issueBackupCodes` (DELETE 全行 → INSERT 10) → 監査 → 200 `{ backup_codes: [...] }` | 1 回表示 |
 | S-9 | 同上 | `DELETE /api/auth/mfa/factors/{id}` → `requireRole(REQUIRED)` (AAL2) → id が本人の verified な TOTP factor か (`isVerifiedTotpFactorId(user, id)`。違えば 404) → `mfa.unenroll` → `deleteBackupCodes` → `auth.refreshSession()` (aal1 の token に更新) → 監査 `admin.mfa.unenroll` (warn) → 200。画面は setup へ | 新しい factor で登録 |
 | S-10 | モバイル `(super-admin)/_layout.tsx` | `hasRole('super_admin')` → `<OperatorMfaGate>` → `resolveOperatorMfaGate(roles)` → `requiresOperatorMfa` = true → `supabase.auth.mfa.getAuthenticatorAssuranceLevel()` → `decideMobileOperatorGate` → `verify` → `MfaVerifyGate`: `listFactors()` の verified な totp の先頭 → `challengeAndVerify({factorId, code})` → セッションが aal2 (Supabase が同じ利用者の他のセッション = Web のブラウザの aal1 などを終える §26.3) → 再判定 → `allow` | 画面が開く。`api.ts` は毎回 `getSession()` の token を使うので Bearer も aal2 |
@@ -318,7 +318,7 @@
 | `/api/auth/mfa/backup-codes` | — | `operator_mfa_backup_codes` (全削除 → 10 行)・`admin_audit_logs` |
 | `/api/auth/mfa/factors/{id}` DELETE | factors | Supabase (unenroll・refresh)・`operator_mfa_backup_codes` (全削除)・`admin_audit_logs` |
 | `/api/auth/mfa/recover` | `operator_mfa_backup_codes` | 同表 (1 行を消費 → 全削除)・Supabase (admin deleteFactor ×n)・`admin_audit_logs` |
-| `/api/super-admin/admins/{id}/mfa/reset` | 対象の profile・factors | `admin_audit_logs` (先)・Supabase (admin deleteFactor ×n)・`operator_mfa_backup_codes` (全削除) |
+| `/api/super-admin/admins/{id}/mfa/reset` | 対象の profile・factors (`admin.mfa.listFactors`)・`operator_mfa_backup_codes` の未使用の行の数 (`countRemainingBackupCodes`)。どれも監査より前 | `admin_audit_logs` (読み取りの後・削除の前)・Supabase (admin deleteFactor ×n)・`operator_mfa_backup_codes` (使用済みを含む全削除) |
 | 画面 `/settings/security/mfa*` | status API | 上の API 経由だけ (DB に直接触れない) |
 | Web の (support) 区画 (`src/app/(support)/support/layout.tsx`) | `requireRoleForPage` 経由 (上の 1 行目と同じ) | — |
 | ログイン後の行き先の振り分け (`src/app/(auth)/auth/callback/route.ts:143`) | `user_profiles.roles` だけ (admin / super_admin なら `/admin`)。AAL・factor を読まない (変えない §3.2) | — (行き先を決めるだけ。`/admin` に着いた後は `admin/layout.tsx` の `requireRoleForPage` が判定する) |
@@ -345,7 +345,7 @@
 | ログイン時の challenge | 無し | `/settings/security/mfa/verify?next=` (運営の画面に入るときに回される) |
 | バックアップコード | 無し | 10 個・`operator_mfa_backup_codes` に SHA-256・1 回で無効・AAL2 で再発行 |
 | 紛失時 | 無し | 本人: バックアップコードで TOTP を消して登録し直す。他人: super_admin の解除 API |
-| 監査 | 無し | 5 種の action_type (§17) |
+| 監査 | 無し | 5 種の action_type (§17)。書くのは `recordMfaAudit` (§17.1) だけ。reset は削除の前に fail-closed で書く |
 | ログイン後・`/`・`/home` の行き先 (`src/app/(auth)/auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect` = `lib/onboarding-routing.ts:78-80`) | roles に admin / super_admin があれば `/admin` (AAL を見ない) | 変えない (ロールだけで `/admin` へ振り分ける)。`/admin` に着いた後、`admin/layout.tsx` の `requireRoleForPage` が必須ロールの aal1 を MFA の画面へ回す (振り分けの側で AAL を見ないので、行き先が 2 段になる。U2 の aal1 は `/admin` → `/settings/security/mfa/verify?next=%2Fadmin`) |
 | Web の (support) 区画 | client component がロールだけ見る (admin が AAL1 で開くと、移行後は API の 403 だらけになる) | server layout の `requireRoleForPage` が、必須ロールで AAL1 なら MFA の画面へ回す。support だけの人は今までどおり。ロールの無い人は `/home` (今の client の判定と同じ行き先) |
 | モバイルの運営の区画 ((super-admin)・(support)) | roles だけ | roles + 必須ロールなら AAL2 (TOTP 入力)。未登録はブラウザへ案内。support だけの人は今までどおり |
@@ -407,13 +407,15 @@
 | (U2, S2) | factor 削除 (本人の verified な TOTP factor でない id: 他人・存在しない・本人の unverified) | — | 変化なし | 404 `AUTH_2FA_NOT_ENROLLED` (unenroll も監査もしない) |
 | (U1, S2) | token の refresh | — | (U1, S1) または (U1, S2) | Supabase が返す token の `aal` に従う。アプリは追加の処理をしない (どちらになっても入口の判定は P-3 / P-5〜P-7 の行で決まる) |
 | (U1, S2) | ログアウト | — | (U1, S0) | — |
-| (U2, S*) | super_admin の reset (他人) | 実行者の `requireRole(['super_admin'])` が通る (実行者が `pass` = aal2、または未登録で猶予中の `pass_grace`)・自分でない・対象の `user_profiles` がある・監査の記録に成功 | **(U1, S0)** | 監査 `super_admin.mfa.reset` (critical) を先に → 全 factor 削除 (全セッション終了) → コード全削除 |
-| (U1, S*) | super_admin の reset (他人) | 同上 | (U1, S0 または S* のまま) | factor が 0 でも 200 (削除数 0)。コードも 0 |
+| (U2, S*) | super_admin の reset (他人) | 実行者の `requireRole(['super_admin'])` が通る (実行者が `pass` = aal2、または未登録で猶予中の `pass_grace`)・自分でない・対象の `user_profiles` がある・対象の factor の一覧と未使用のコードの数を読めた・監査の記録に成功 | **(U1, S0)** | factor の一覧 (`listFactors`) と未使用のコードの数 (`countRemainingBackupCodes`) を読む → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` / `backup_codes_before` はこの 2 つ) → 読んだ全 factor を削除 (全セッション終了) → コード全削除 (使用済みを含む) |
+| (U1, S*) | super_admin の reset (他人) | 同上 | (U1, S0 または S* のまま) | factor (unverified を含む) が 0 でも 200 (削除数 0)。監査は読んだ数 (`factors_before: 0` を含む) で残る |
 | (U*, S*) | super_admin の reset | 実行者が super_admin でない (ロールの交差で落ちる) | 変化なし | 403 `FORBIDDEN` (例外は `ForbiddenError` の `PERM_DENIED`。本文に `err.code` を出さない §14.8.2)。監査も削除もしない |
 | (U*, S*) | super_admin の reset | 実行者が super_admin・実行者のセッションが aal1 で、実行者が verified な factor を持つ / 未登録で猶予中でない | 変化なし | 403 `FORBIDDEN` (例外は `MfaRequiredError` の `AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED`。本文に `err.code` を出さない §14.8.2)。監査も削除もしない |
 | (U*, S*) | super_admin の reset (自分の id) | 実行者の `requireRole(['super_admin'])` が通る・`id === actor.id` | 変化なし | 403 `OP_SELF_MODIFY` (S-12・§6.2)。本文の検証より前に断る。監査も削除もしない |
 | (U*, S*) | super_admin の reset (他人) | 本文の形が違う (`identity_confirmed: false`・`reason` の NULL 文字を含む) / 対象の `user_profiles` が無い | 変化なし | 400 `OP_INVALID_INPUT` / 404 `NOT_FOUND`。監査も削除もしない |
+| (U*, S*) | super_admin の reset (他人) | 対象の `user_profiles` の読み取り (DB の error)・factor の一覧 (`listFactors` の error)・未使用のコードの数 (`countRemainingBackupCodes` が投げる) のどれかを読めない | 変化なし | 500 `INTERNAL_ERROR`。監査を書かず、factor もコードも消さない (§14.7) |
 | (U*, S*) | super_admin の reset (他人) | 監査 `super_admin.mfa.reset` の記録に失敗 (`ok` が false) | 変化なし | 500 `INTERNAL_ERROR`。factor もコードも消さない (§14.7) |
+| (U2, S*) | super_admin の reset (他人) | 監査は記録できたが `deleteFactor` か `deleteBackupCodes` が失敗 | 消せたところまで変わる (失敗した所で止まる) | 500 `INTERNAL_ERROR`。監査行 (要求された事実と消す前の数) は残る。失敗は `internalError` が app_logs に残す。もう一度実行すれば残りを消せる (監査はもう 1 行) |
 | (U0, S*) | ロールの付与 (必須ロール) | super_admin | (U1, S*) | 次の入口で上の U1 の行 |
 | (U0, S1/S2) | 自己サービス API (status / enroll / verify / recover / backup-codes 再発行 / factor 削除) | — | 変化なし | 403 `PERM_DENIED` (対象ロールでない。P-1・§14.8.1。claims も factor も読まない) |
 | (U0, S1/S2) | 運営の入口 | — | 変化なし | `not_required` (claims を読まない) → ロールの交差の結果のまま (support など必須でない運営ロールは今までどおり通る・運営ロールが無ければ既存の 403 / `/login`。P-1・§3.3) |
@@ -464,7 +466,7 @@
 
 ### 11.1 `operator_mfa_backup_codes` (新規)
 
-ファイル: `supabase/migrations/<番号はマージ時に確定>_operator_mfa_backup_codes.sql` (番号は origin/main の `supabase/migrations` の最大より大きい値でマージ直前に確定。2026-10-15 時点 (origin/main `5a48abc9`) の最大は `20261015170000`)。
+ファイル: `supabase/migrations/<番号はマージ時に確定>_operator_mfa_backup_codes.sql` (番号は origin/main の `supabase/migrations` の最大より大きい値でマージ直前に確定。2026-10-15 時点 (origin/main `c100ca9d`) の最大は `20261015180000`)。
 
 ```sql
 -- migration: <番号はマージ時に確定>_operator_mfa_backup_codes.sql
@@ -863,15 +865,18 @@ export function formatBackupCode(normalized: string): string {
 
 ```ts
 // tsc:skip (backup-codes.ts の続き。型は database.types.ts の再生成後に Tables<'operator_mfa_backup_codes'> を使う)
+// 下の 4 関数とも、PostgREST の error を受けたら throw new Error('operator_mfa_backup_codes の読み書きに失敗しました', { cause: error })
+// (固定の文。PostgREST の文を message に入れない §23 N-5)。route は try / catch の catch で internalError(ROUTE_NAME, error, { userId }) にして 500 を返す。
+// 0 行は失敗ではない (consumeBackupCode は false・countRemainingBackupCodes は 0・deleteBackupCodes は 0 を返す) §13.6
 export interface BackupCodeStoreClient { from(table: 'operator_mfa_backup_codes'): PostgrestQueryBuilder<...> }
 
 /** 旧行を全部消して 10 個を発行し、画面に 1 回だけ出す正規化済みのコードを返す */
 export async function issueBackupCodes(admin: BackupCodeStoreClient, userId: string): Promise<string[]>;
 /** 1 個を消費する (UPDATE ... SET used_at = now() WHERE user_id = ? AND code_hash = ? AND used_at IS NULL RETURNING id)。消費できたら true。0 行 (無い・使用済み・同時に使われた) なら false */
 export async function consumeBackupCode(admin: BackupCodeStoreClient, userId: string, normalized: string): Promise<boolean>;
-/** 未使用の残数 */
+/** 未使用 (used_at IS NULL) の残数。status の backup_codes_remaining と、reset の監査の backup_codes_before (§14.7・§17) */
 export async function countRemainingBackupCodes(admin: BackupCodeStoreClient, userId: string): Promise<number>;
-/** その利用者の行を全部消す (回復・解除・再発行の前)。消した行数を返す */
+/** その利用者の行を使用済みも含めて全部消す (回復・解除・reset・再発行の前)。消した行数を返す */
 export async function deleteBackupCodes(admin: BackupCodeStoreClient, userId: string): Promise<number>;
 ```
 
@@ -1222,7 +1227,9 @@ export async function requireSuperAdmin(): Promise<{ userId: string }> {
 | `requireSuperAdmin` | 上と同じ (委ねる) | | |
 | `requireRoleForPage` | 投げない (redirect) | | 上の例外を回す先に変える (2FA 以外の 403 は `forbiddenPath`、既定 `PAGE_FORBIDDEN_DEFAULT_PATH`)。NEXT_REDIRECT 以外の例外はそのまま投げる |
 | `readSessionAssurance` | `AuthError` | `AUTH_UNAUTHENTICATED` | token 無し・署名無効・sub 不一致 |
-| `consumeBackupCode` | 投げない | | 0 行は false。DB の失敗は呼び出し側が `internalError` |
+| `issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes` (§12.3) | `Error` (固定の文。`cause` に PostgREST の error) | | DB の失敗のときだけ。route の catch が `internalError` で 500 にする。`consumeBackupCode` の 0 行 (無い・使用済み・同時に使われた) は例外にせず false |
+| `recordMfaAudit` (§17.1) | 投げない | | 戻り値は `recordAdminAudit` の `RecordAdminAuditResult` のまま。記録できなければ `{ ok: false, error }` (`error` は本文に入れない §23 N-5)。`ok` を読むのは fail-closed の reset だけ |
+| `src/lib/auth/mfa/client.ts` の `requestMfaApi` と 7 関数 (§15.1) | 投げない | | 通信の失敗・4xx / 5xx・契約の形でない 2xx は `MfaClientFailure` (`{ ok: false, status, code, retryAfterSec }`)。画面は §15.2 の表で分ける |
 | `public.operator_mfa_satisfied()` (SQL・段 E) | 投げない | | `boolean`。真 = 必須ロールなし・aal2・verified な TOTP なし (§11.4) |
 | SQL の 7 本の関数 (§11.4 の表・段 E) | `RAISE EXCEPTION` (P0001) | `OPERATOR_MFA_REQUIRED` | 役割の判定を通った後で `operator_mfa_satisfied()` が偽 (PostgREST は HTTP 400) |
 
@@ -1259,7 +1266,23 @@ export type MfaStatusResponse = z.infer<typeof MfaStatusResponseSchema>;
 
 - 段: A。認可: `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })` (段 A では `requireRole(MFA_REQUIRED_ROLES)` と引数 1 つで呼ぶ。段 B で第 2 引数 `{ assurance: 'session' }` を足す。§0.2)。
 - 手順: verified な TOTP factor があれば 409 `AUTH_2FA_ALREADY_ENROLLED` (先に `DELETE /factors/{id}`)。unverified な TOTP factor を全部 `mfa.unenroll` (S-20)。`mfa.enroll({ factorType: 'totp', issuer: MFA_TOTP_ISSUER, friendlyName: MFA_TOTP_FRIENDLY_NAME })`。
-- 応答 200 `{ ok: true, factor_id, qr_code_svg, secret, uri }` (`qr_code_svg` = auth-js の `totp.qr_code`。画面は `data:image/svg+xml;utf-8,` を前置する)。これらをログに出さない。
+- 応答 200 = 下の `MfaEnrollResponseSchema` (`{ ok: true, factor_id, qr_code_svg, secret, uri }`。`factor_id` = auth-js の `data.id`・`qr_code_svg` = `data.totp.qr_code`・`secret` = `data.totp.secret`・`uri` = `data.totp.uri`。画面は `qr_code_svg` に `data:image/svg+xml;utf-8,` を前置する)。これらをログに出さない。
+
+§14 の応答の Zod は `src/lib/auth/mfa/schemas.ts` に置く (route は返す値をこの型で作り、`src/lib/auth/mfa/client.ts` §15.1 が 2xx の本文をこれで読む)。schemas.ts は client component からも import されるので、zod と `@/lib/api/null-character` (§14.7) 以外を import しない (`node:crypto` を持つ `backup-codes.ts` も import しない。バックアップコードの個数 `BACKUP_CODE_COUNT` は応答の Zod では見ず、route の単体テストで見る §21.2)。
+
+```ts
+import { z } from 'zod';
+
+/** POST /api/auth/mfa/enroll の 200 (段 A) */
+export const MfaEnrollResponseSchema = z.object({
+  ok: z.literal(true),
+  factor_id: z.string().min(1),
+  qr_code_svg: z.string().min(1),
+  secret: z.string().min(1),
+  uri: z.string().min(1),
+});
+export type MfaEnrollResponse = z.infer<typeof MfaEnrollResponseSchema>;
+```
 
 ### 14.3 `POST /api/auth/mfa/verify`
 
@@ -1274,11 +1297,19 @@ export const MfaVerifyBodySchema = z.object({
   code: z.string().regex(TOTP_CODE_PATTERN),
 });
 export type MfaVerifyBody = z.infer<typeof MfaVerifyBodySchema>;
+
+/** POST /api/auth/mfa/verify の 200 (段 A)。backup_codes は登録 (unverified の factor の verify) のときだけ・formatBackupCode 済み (XXXXX-XXXXX) */
+export const MfaVerifyResponseSchema = z.object({
+  ok: z.literal(true),
+  aal: z.literal('aal2'),
+  backup_codes: z.array(z.string().min(1)).optional(),
+});
+export type MfaVerifyResponse = z.infer<typeof MfaVerifyResponseSchema>;
 ```
 
 - 段: A。認可: `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })` (段 A では `requireRole(MFA_REQUIRED_ROLES)` と引数 1 つで呼ぶ。段 B で第 2 引数 `{ assurance: 'session' }` を足す。§0.2)。
 - 手順: 本文を検証 (400 `VALIDATION_ERROR`) → `const { data: { session } } = await supabase.auth.getSession()` が `isNativeBridgedSession(session)` (`src/lib/native-auth-bridge.ts`。アプリの WebView の借り物のセッション §16.4) なら 409 `AUTH_2FA_NATIVE_SESSION` (rate limit を数えず Supabase も呼ばない) → `checkRateLimit(user.id, 'auth-mfa-verify')` (429 `RATE_LIMITED` + `Retry-After`) → `ownsFactor(user, factor_id)` でなければ 404 `AUTH_2FA_NOT_ENROLLED` → `wasUnverified = (その factor の status === 'unverified')` → `supabase.auth.mfa.challengeAndVerify({ factorId, code })` → error: 6 桁の不一致 (`error.code === 'mfa_verification_failed'` または status 400/422) → 400 `AUTH_2FA_INVALID`・429 → `RATE_LIMITED`・それ以外 → 500 → 成功: ssr client がセッション (aal2) を Cookie に書く → `wasUnverified` なら `issueBackupCodes(admin, user.id)` + 監査 `admin.mfa.enroll` (fail-open) → 応答。
-- 応答 200 `{ ok: true, aal: 'aal2', backup_codes?: string[] }` (`backup_codes` は `wasUnverified` のときだけ。表示用に `formatBackupCode` 済み)。
+- 応答 200 = `MfaVerifyResponseSchema` (`{ ok: true, aal: 'aal2', backup_codes?: string[] }`。`backup_codes` は `wasUnverified` のときだけで、`issueBackupCodes` の戻り (正規化済みの 10 個) を `formatBackupCode` したもの)。
 - 成功すると、登録 (`wasUnverified`) でも毎回の challenge でも、Supabase が同じ利用者の他のセッション (他の端末・ブラウザの aal1 を含む) を終える (§3.1・§26.3)。route はこれに対して何もしない。
 - 本文の NULL 文字: `rejectNullCharacterBody` を呼ばない (`src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せる §23 N-28)。`factor_id` は `z.uuid()`、`code` は `/^\d{6}$/` で、NULL 文字を含む値は 400 `VALIDATION_ERROR` になり DB にも Supabase にも届かない。
 
@@ -1287,6 +1318,18 @@ export type MfaVerifyBody = z.infer<typeof MfaVerifyBodySchema>;
 - 段: B (AAL2 を確かめる仕組みが段 B で入るため)。認可: `requireRole(MFA_REQUIRED_ROLES)` (既定 = AAL2 が要る)。
 - 手順: `supabase.auth.getSession()` の session が `isNativeBridgedSession` なら 409 `AUTH_2FA_NATIVE_SESSION` (`unenroll` も `refreshSession` も呼ばない。借り物のセッションは refresh できず、unenroll だけが済んで 500 になるのを防ぐ §16.4) → `isVerifiedTotpFactorId(user, id)` でなければ 404 `AUTH_2FA_NOT_ENROLLED` (他人の factor・存在しない id・本人の unverified な factor・TOTP でない factor。`unenroll`・`deleteBackupCodes`・`refreshSession`・監査のどれも呼ばない。§10) → `mfa.unenroll({ factorId })` → `deleteBackupCodes(admin, user.id)` → `supabase.auth.refreshSession()` (新しい token は aal1。Cookie を更新) → 監査 `admin.mfa.unenroll` (warn・fail-open) → 200 `{ ok: true, aal: 'aal1' }`。
 - 必須ロールなので、この直後から運営の入口は `enrollment_required` になる (画面は setup へ続ける)。
+- 応答 200 = 下の `MfaUnenrollResponseSchema` (段 B で schemas.ts に足す)。
+
+```ts
+import { z } from 'zod';
+
+/** DELETE /api/auth/mfa/factors/{id} の 200 (段 B)。refresh の後のセッションは aal1 */
+export const MfaUnenrollResponseSchema = z.object({
+  ok: z.literal(true),
+  aal: z.literal('aal1'),
+});
+export type MfaUnenrollResponse = z.infer<typeof MfaUnenrollResponseSchema>;
+```
 
 ### 14.5 `POST /api/auth/mfa/recover` (バックアップコードで回復)
 
@@ -1300,10 +1343,20 @@ export const MfaRecoverBodySchema = z.object({
   code: z.string().min(1).max(BACKUP_CODE_INPUT_MAX_LENGTH),
 });
 export type MfaRecoverBody = z.infer<typeof MfaRecoverBodySchema>;
+
+/** 回復の後に画面が移る先 (Supabase が全セッションを終えているので、ログインからやり直して登録へ) */
+export const MFA_RECOVER_NEXT_PATH = '/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup';
+
+/** POST /api/auth/mfa/recover の 200 (段 A)。route は next に MFA_RECOVER_NEXT_PATH を入れる */
+export const MfaRecoverResponseSchema = z.object({
+  ok: z.literal(true),
+  next: z.string().min(1),
+});
+export type MfaRecoverResponse = z.infer<typeof MfaRecoverResponseSchema>;
 ```
 
 - 段: A。認可: `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })` (AAL1 で呼ぶ) (段 A では `requireRole(MFA_REQUIRED_ROLES)` と引数 1 つで呼ぶ。段 B で第 2 引数 `{ assurance: 'session' }` を足す。§0.2)。
-- 手順: 本文 (400) → `checkRateLimit(user.id, 'auth-mfa-recover')` (429) → `normalizeBackupCode` → `isWellFormedBackupCode` でなければ 400 `AUTH_2FA_INVALID` (形が違うコードは DB に触れない) → verified factor が無ければ 409 `AUTH_2FA_NOT_ENROLLED` → `consumeBackupCode(admin, user.id, normalized)` が false なら 400 `AUTH_2FA_INVALID` → `admin.auth.admin.mfa.listFactors({ userId })` → 各 factor を `deleteFactor({ id, userId })` → `deleteBackupCodes(admin, user.id)` → 監査 `admin.mfa.recover` (warn・fail-open。details: `{ factors_deleted, backup_codes_deleted }`) → 200 `{ ok: true, next: '/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup' }`。
+- 手順: 本文 (400) → `checkRateLimit(user.id, 'auth-mfa-recover')` (429) → `normalizeBackupCode` → `isWellFormedBackupCode` でなければ 400 `AUTH_2FA_INVALID` (形が違うコードは DB に触れない) → verified factor が無ければ 409 `AUTH_2FA_NOT_ENROLLED` → `consumeBackupCode(admin, user.id, normalized)` が false なら 400 `AUTH_2FA_INVALID` → `admin.auth.admin.mfa.listFactors({ userId })` → 各 factor を `deleteFactor({ id, userId })` → `deleteBackupCodes(admin, user.id)` → 監査 `admin.mfa.recover` (warn・fail-open。details: `{ factors_deleted, backup_codes_deleted }` §17) → 200 `{ ok: true, next: MFA_RECOVER_NEXT_PATH }` (= `'/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup'`)。
 - verified な factor を消した時点で Supabase が本人の全セッションを終了する (§3.1)。画面は応答の `next` へ移る。
 - 本文の NULL 文字: `rejectNullCharacterBody` を呼ばない (EXCLUDED に理由つき §23 N-28)。`normalizeBackupCode` が英数字以外 (NULL 文字を含む) を取り除き、DB に届くのは `user_id` と SHA-256 の hex だけ。監査の details も数だけ。
 - 攻撃面: パスワードを知る攻撃者がコードを総当たりする → 50 bit × 1 時間 10 回で不可能。コードを知る攻撃者 → 本人の TOTP を消して自分のを登録できる (バックアップコードの性質そのもの。監査 `admin.mfa.recover` が warn で残り、本人は全セッション終了で気づく)。
@@ -1311,7 +1364,19 @@ export type MfaRecoverBody = z.infer<typeof MfaRecoverBodySchema>;
 ### 14.6 `POST /api/auth/mfa/backup-codes` (再発行)
 
 - 段: B。認可: `requireRole(MFA_REQUIRED_ROLES)` (AAL2)。verified factor が無ければ 409 `AUTH_2FA_NOT_ENROLLED`。
-- 手順: `issueBackupCodes` → 監査 `admin.mfa.backup_codes_regenerate` (info・fail-open) → 200 `{ ok: true, backup_codes: string[] }`。
+- 手順: `issueBackupCodes` → 監査 `admin.mfa.backup_codes_regenerate` (info・fail-open) → 200 `{ ok: true, backup_codes: string[] }` (`issueBackupCodes` の戻りを `formatBackupCode` したもの)。
+- 応答 200 = 下の `MfaBackupCodesResponseSchema` (段 B で schemas.ts に足す)。
+
+```ts
+import { z } from 'zod';
+
+/** POST /api/auth/mfa/backup-codes の 200 (段 B)。backup_codes は formatBackupCode 済み (XXXXX-XXXXX) */
+export const MfaBackupCodesResponseSchema = z.object({
+  ok: z.literal(true),
+  backup_codes: z.array(z.string().min(1)),
+});
+export type MfaBackupCodesResponse = z.infer<typeof MfaBackupCodesResponseSchema>;
+```
 
 ### 14.7 `POST /api/super-admin/admins/{id}/mfa/reset` (運営の別の人による解除・段 C)
 
@@ -1338,14 +1403,35 @@ export const MfaResetBodySchema = z.object({
   identity_confirmed: z.literal(true),
 });
 export type MfaResetBody = z.infer<typeof MfaResetBodySchema>;
+
+/** POST /api/super-admin/admins/{id}/mfa/reset の 200 (段 C。運営 API の nested の形) */
+export const MfaResetResponseSchema = z.object({
+  data: z.object({
+    user_id: z.string().min(1),
+    factors_deleted: z.number().int().nonnegative(),
+    backup_codes_deleted: z.number().int().nonnegative(),
+  }),
+});
+export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
 ```
 
 - 本文の形は運営 API (nested): `{ error: { code, message, details? } }` / `{ data: {...} }`。
 - 本文の NULL 文字: `rejectNullCharacterBody` を呼ばない (`src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せる §23 N-28。入口で呼ぶと「最初の文」の規則で `requireRole` と自分の id の判定より前に本文を読むことになり、下の手順の順序と食い違うため)。`reason` の NULL 文字は `MfaResetBodySchema` の refine が 400 `OP_INVALID_INPUT` にする (`src/app/api/admin/finance/refunds/route.ts` の理由の扱いと同じ型)。`identity_check` は列挙、`identity_confirmed` は `true` だけで、ほかの文字列は DB に届かない。
 - 段: C (段 B の後にマージ)。認可: `requireRole(['super_admin'])` (AAL2)。`id === actor.id` → 403 `OP_SELF_MODIFY`。
-- 手順: 本文 (400 `OP_INVALID_INPUT`。`readJsonBody` と `src/lib/super-admin/validation-errors.ts` の形) → 対象の `user_profiles` を service_role で読む (無ければ 404 `NOT_FOUND`) → **監査 `super_admin.mfa.reset` (critical) を先に書く。`recordAdminAudit` の `ok` が false なら 500 `INTERNAL_ERROR` で何もしない** → `admin.auth.admin.mfa.listFactors({ userId: id })` → 各 `deleteFactor` → `deleteBackupCodes(admin, id)` → 200 `{ data: { user_id, factors_deleted, backup_codes_deleted } }`。
-- 削除に失敗したら 500 (監査行は「要求された」事実として残る。失敗は `internalError` が app_logs に残す)。
-- 対象が必須ロールでなくても (factor が無くても) 200 (削除数 0)。
+- 手順 (この順。どこかで止まったら後ろは何もしない。応答の code は §14.8.2):
+  1. `isCrossOrigin` なら 403 `FORBIDDEN_ORIGIN` (§14 冒頭の共通)。
+  2. `const actor = await requireRole(['super_admin'])` (AAL2)。`id === actor.id` なら 403 `OP_SELF_MODIFY`。
+  3. 本文 (400 `OP_INVALID_INPUT`。`readJsonBody` と `src/lib/super-admin/validation-errors.ts` の形)。
+  4. `const admin = getSupabaseAdmin()`。対象の `user_profiles` を読む (無ければ 404 `NOT_FOUND`・読み取りの失敗は 500)。
+  5. **消す前の数を読む (監査の details の材料)**: `admin.auth.admin.mfa.listFactors({ userId: id })` の `data.factors` を `factors` として持つ (状態・種類を問わない全 factor。`error` なら 500)。`const backupCodesBefore = await countRemainingBackupCodes(admin, id)` (未使用 = `used_at IS NULL` の行の数。DB の失敗で投げれば 500 §13.6)。**どちらの失敗でも監査を書かず、何も消さない** (まだ何もしていないので「要求された」行も残さない。失敗は `internalError` が app_logs に残す)。
+  6. **監査 `super_admin.mfa.reset` (critical) を削除より先に書く**: `const audit = await recordMfaAudit({ admin, actorId: actor.id, targetUserId: id, action: MFA_AUDIT_ACTIONS.reset, details: { reason: body.reason, identity_check: body.identity_check, factors_before: factors.length, backup_codes_before: backupCodesBefore }, request, routeName: ROUTE_NAME })` (§17.1)。`audit.ok` が false なら 500 `INTERNAL_ERROR` で何も消さない (fail-closed)。
+  7. 5 で読んだ `factors` を 1 つずつ `admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: id })` (`error` が 1 つでもあれば 500)。
+  8. `const backupCodesDeleted = await deleteBackupCodes(admin, id)` (使用済みを含む全行。DB の失敗で投げれば 500)。
+  9. 200 `{ data: { user_id: id, factors_deleted: factors.length, backup_codes_deleted: backupCodesDeleted } }` (`MfaResetResponseSchema`)。
+- 5 の後に対象が新しく作った factor (監査と削除の間の数 ms) は消えない。unverified なら対象が次に登録するときに enroll が先に消す (S-20)。verified な factor を作るには対象が 6 桁の verify まで済ませる必要があり、そのときは対象自身が登録し直したことになる。
+- 7・8 で失敗したら 500 (監査行は「要求された」事実と消す前の数として残る。消せたところまで変わった状態で止まる。もう一度実行すれば残りを消せる (監査はもう 1 行)。失敗は `internalError` が app_logs に残す)。
+- 対象が必須ロールでなくても (factor が無くても) 200 (削除数 0。監査は `factors_before: 0` で残る)。
+- `backup_codes_before` (未使用の残数) と `backup_codes_deleted` (使用済みを含む全行) は数え方が違うので、使用済みの行があれば一致しない (§17)。
 
 ### 14.8 エラーの対応
 
@@ -1384,7 +1470,7 @@ export type MfaResetBody = z.infer<typeof MfaResetBodySchema>;
 | 本文の形 (`identity_confirmed: false`・`reason` の NULL 文字を含む)・JSON として読めない | 400 | `OP_INVALID_INPUT` (`src/lib/super-admin/validation-errors.ts` の形) |
 | 対象の `user_profiles` が無い | 404 | `NOT_FOUND` |
 | 別オリジン (§14 冒頭の共通) | 403 | `FORBIDDEN_ORIGIN` |
-| 監査の記録に失敗 (何もしない)・factor / コードの削除に失敗 | 500 | `INTERNAL_ERROR` |
+| 対象の profile・factor の一覧・未使用のコードの数を読めない (監査を書かず何もしない)・監査の記録に失敗 (何もしない)・factor / コードの削除に失敗 | 500 | `INTERNAL_ERROR` |
 
 ---
 
@@ -1399,17 +1485,19 @@ export type MfaResetBody = z.infer<typeof MfaResetBodySchema>;
 
 | パス | 役割 | 主な要素 |
 |---|---|---|
-| `/settings/security/mfa` | 状態と管理 | 段 A: `GET status` → 登録済み: factor の登録日・残りのバックアップコード数 / 未登録: [登録する] → setup。403 `PERM_DENIED` は「この画面は運営ロールの人だけ」。段 B で足す: 登録済みのとき [バックアップコードを再発行]・[認証アプリを解除] (どちらも AAL2 が無いと 403 → verify へ `next=/settings/security/mfa` で回す) |
+| `/settings/security/mfa` | 状態と管理 | 段 A: `GET status` → 登録済み: factor の登録日・残りのバックアップコード数 / 未登録: [登録する] → `setup?next=%2Fsettings%2Fsecurity%2Fmfa`。403 `PERM_DENIED` は「この画面は運営ロールの人だけ」。段 B で足す: 登録済みのとき [バックアップコードを再発行]・[認証アプリを解除] (どちらも AAL2 が無いと 403 → verify へ `next=/settings/security/mfa` で回す) |
 | `/settings/security/mfa/setup?next=` | 登録 | ① `POST enroll` → QR (`<img src="data:image/svg+xml;utf-8,...">`) と手入力用の secret (password 型の欄 + 表示切替) ② `TotpCodeForm` (6 桁。`inputMode="numeric"` `autoComplete="one-time-code"`) → `POST verify` ③ `BackupCodesPanel` (10 個を 1 回表示・コピー・テキストで保存・「保存した」チェックで [続ける] が有効) → `next` へ `router.push` + `router.refresh()`。409 `AUTH_2FA_ALREADY_ENROLLED` は状態画面へ |
 | `/settings/security/mfa/verify?next=` | challenge | `GET status` で factor id を得て `TotpCodeForm` → `POST verify` → `next`。リンク「認証アプリが使えない (バックアップコード)」→ recover。401 は `/login?next=` |
 | `/settings/security/mfa/recover` | 回復 | 説明 (TOTP と残りのコードが全部消え、全端末でログアウトされ、再ログイン後に登録し直す) → コード 1 個 (`XXXXX-XXXXX`) → `POST recover` → 応答の `next` へ `window.location.assign` (セッションは終了している) |
-| `/settings` (既存・変更) | 入口 | 「セキュリティ (二段階認証)」の行。`GET status` が 200 のときだけ出す (403 は出さない) |
+| `/settings` (既存・変更) | 入口 | 「セキュリティ (二段階認証)」の行。ブラウザで `GET status` が 200 のときだけ出す (403 は出さない。アプリの WebView の中では status を呼ばず行も出さない §15.2) |
 | `/admin/layout.tsx` 他 2 つ (変更)・`(support)/support/layout.tsx` (新規 §13.4.1) | 猶予のバナー (段 B) | `actor.assurance?.decision === 'pass_grace'` のとき `<MfaGraceBanner enforceFrom={actor.assurance.enforce_from} next={§13.4.2 の表の値 ((support) は SUPPORT_AREA_NEXT)}>` (「MM/DD HH:mm までに認証アプリを登録してください」(JST で表示) + `setup?next=` へのリンク)。props は `{ enforceFrom: string (ISO 8601) ; next: string }` |
 | `/admin/users/{id}` (変更・段 C) | 解除 | 実行者が super_admin で、対象が `MFA_REQUIRED_ROLES` のどれかを持つときだけ `<OperatorMfaResetSection userId>`: 理由 (必須)・本人確認の方法 (選択)・「本人確認を行った」チェック → 確認ダイアログ → `POST reset` → 結果 (削除した factor とコードの数) |
 
+上の表は画面の要素の一覧。各画面が `src/lib/auth/mfa/client.ts` の結果 (成功・`status`・`code`) でどう動くかは §15.2 の表が正。
+
 部品: `src/components/auth/mfa/TotpCodeForm.tsx` (6 桁入力 + 送信 + エラー文言)・`src/components/auth/mfa/BackupCodesPanel.tsx` (一覧・コピー・保存・確認チェック)・`src/components/auth/mfa/NativeAppMfaNotice.tsx` と `src/components/auth/mfa/useInNativeWebView.ts` (アプリの WebView の中の案内 §16.4)・`src/components/admin/MfaGraceBanner.tsx`・`src/components/admin/OperatorMfaResetSection.tsx`。
 
-画面の文言 (code → 文。`src/lib/auth/mfa/client.ts` の `mfaErrorMessage`):
+画面の文言 (code → 文。`src/lib/auth/mfa/client.ts` の `mfaErrorMessage`。実装は §15.1 の `MFA_ERROR_MESSAGES` で、この表と同じ文。下の 5 行 (`UNAUTHORIZED` 〜 `NOT_FOUND`) は reset (§14.7・段 C) の nested の本文の code):
 
 | code | 文言 |
 |---|---|
@@ -1421,7 +1509,251 @@ export type MfaResetBody = z.infer<typeof MfaResetBodySchema>;
 | `PERM_DENIED` | この画面は運営ロールの方だけが使えます。 |
 | `AUTH_UNAUTHENTICATED` | ログインが切れました。もう一度ログインしてください。 |
 | `AUTH_2FA_NATIVE_SESSION` | アプリの中では、この画面で二段階認証の確認や解除ができません。アプリの確認画面か、ブラウザで行ってください。 |
+| `UNAUTHORIZED` | ログインが切れました。もう一度ログインしてください。 |
+| `FORBIDDEN` | この操作には super_admin の権限と、二段階認証の確認が必要です。 |
+| `OP_SELF_MODIFY` | 自分自身の二段階認証は、ここでは解除できません。バックアップコードか、二段階認証の設定の画面で解除してください。 |
+| `OP_INVALID_INPUT` | 入力内容を確認してください (理由・本人確認の方法・確認のチェックが必要です)。 |
+| `NOT_FOUND` | 対象の利用者が見つかりません。 |
 | それ以外 | 処理中にエラーが発生しました。しばらくしてからお試しください。 |
+
+### 15.1 `src/lib/auth/mfa/client.ts` — 画面の通信の facade (段 A。段 B・C で関数を足す)
+
+React に依存しない。fetch を 1 回呼び、結果を判別共用体 `MfaClientResult<T>` で返す (**例外を投げない**。`src/lib/account-self-service.ts` の `AccountExportResult` と同じ考え方)。画面は `result.ok` で分け、失敗は `status` と `code` で分ける (§15.2)。2xx の本文は §14 の応答の Zod で読み、形が違えば失敗 (`MFA_CLIENT_NO_STATUS`) として扱う。失敗の本文は自己サービス (§14.1〜14.6) の flat の `{ error, code }` と、reset (§14.7) の nested の `{ error: { code, message } }` の両方から `code` だけを読む (文面は読まない。画面の文は `mfaErrorMessage`)。
+
+⚠️ client component (`"use client"`) が import するので、client.ts と import 先の `src/lib/auth/mfa/schemas.ts` はサーバー専用のもの (`next/headers`・`@/lib/supabase/server`・`node:crypto` を持つ `backup-codes.ts`・`@/lib/auth/helpers` を持つ `page-guard.ts`) を import しない。画面が回す先のパス (`/settings/security/mfa/...`) は §13.4 の `MFA_PAGE_PATHS` と同じ文字列を画面に書く (`MFA_PAGE_PATHS` を持つ `page-guard.ts` は client component から import できない)。行き先の文字列は §15.2 の表のとおりで、`tests/mfa-pages-browser.test.tsx` (§21.1) が見張る。
+
+1 つ目のブロック (段 A の分。`MFA_API_PATHS` の `backupCodes`・`factors` と `mfaFactorPath` は段 B、`superAdminAdmins` と `mfaResetPath` は段 C で足す):
+
+```ts
+import { z } from 'zod';
+
+/** §14 の API のパス。画面はこれ以外の API の URL を組み立てない */
+export const MFA_API_PATHS = {
+  status: '/api/auth/mfa/status',
+  enroll: '/api/auth/mfa/enroll',
+  verify: '/api/auth/mfa/verify',
+  recover: '/api/auth/mfa/recover',
+  /** 段 B (§14.6) */
+  backupCodes: '/api/auth/mfa/backup-codes',
+  /** 段 B (§14.4)。DELETE の URL は mfaFactorPath(id) */
+  factors: '/api/auth/mfa/factors',
+  /** 段 C (§14.7)。POST の URL は mfaResetPath(userId) */
+  superAdminAdmins: '/api/super-admin/admins',
+} as const;
+
+/** DELETE /api/auth/mfa/factors/{id} の URL (段 B) */
+export function mfaFactorPath(factorId: string): string {
+  return `${MFA_API_PATHS.factors}/${encodeURIComponent(factorId)}`;
+}
+
+/** POST /api/super-admin/admins/{id}/mfa/reset の URL (段 C) */
+export function mfaResetPath(userId: string): string {
+  return `${MFA_API_PATHS.superAdminAdmins}/${encodeURIComponent(userId)}/mfa/reset`;
+}
+
+/** HTTP の応答として扱えなかった (fetch が例外を投げた・2xx なのに本文が §14 の形でない) ときの status。HTTP のステータスに 0 は無い */
+export const MFA_CLIENT_NO_STATUS = 0;
+/** 本文から code を読めないときの code (mfaErrorMessage は既定の文を返す) */
+export const MFA_CLIENT_UNKNOWN_CODE = 'UNKNOWN';
+/** JSON の本文を送るときのヘッダ (verify / recover / reset) */
+export const MFA_JSON_HEADERS: Readonly<Record<string, string>> = { 'Content-Type': 'application/json' };
+
+export interface MfaClientSuccess<T> {
+  readonly ok: true;
+  readonly data: T;
+}
+
+export interface MfaClientFailure {
+  readonly ok: false;
+  /** HTTP のステータス (401 / 403 / 404 / 409 / 429 / 500 など)。応答として扱えなかったときは MFA_CLIENT_NO_STATUS */
+  readonly status: number;
+  /** 本文の code (§14.8)。読めなければ MFA_CLIENT_UNKNOWN_CODE */
+  readonly code: string;
+  /** Retry-After ヘッダの秒 (429)。無い・正の有限の数でないときは null */
+  readonly retryAfterSec: number | null;
+}
+
+/** client.ts の関数の戻り値 */
+export type MfaClientResult<T> = MfaClientSuccess<T> | MfaClientFailure;
+
+/** 自己サービス API の失敗の本文 (§14 冒頭の flat の形) */
+const FlatErrorBodySchema = z.object({ code: z.string().min(1) });
+/** reset の失敗の本文 (運営 API の nested の形 §14.8.2) */
+const NestedErrorBodySchema = z.object({ error: z.object({ code: z.string().min(1) }) });
+
+function failureCodeOf(body: unknown): string {
+  const flat = FlatErrorBodySchema.safeParse(body);
+  if (flat.success) return flat.data.code;
+  const nested = NestedErrorBodySchema.safeParse(body);
+  return nested.success ? nested.data.error.code : MFA_CLIENT_UNKNOWN_CODE;
+}
+
+function retryAfterSecOf(responseHeaders: Headers): number | null {
+  const raw = responseHeaders.get('Retry-After');
+  if (raw === null) return null;
+  const seconds = Number(raw);
+  return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+}
+
+const NO_RESPONSE_FAILURE: MfaClientFailure = {
+  ok: false,
+  status: MFA_CLIENT_NO_STATUS,
+  code: MFA_CLIENT_UNKNOWN_CODE,
+  retryAfterSec: null,
+};
+
+/**
+ * API を 1 回呼び、2xx の本文を schema で読む。例外は投げない。
+ * Cookie のセッションで呼ぶので credentials は same-origin、応答は本人だけのものなので cache は no-store。
+ */
+export async function requestMfaApi<T>(
+  path: string,
+  init: Pick<RequestInit, 'method' | 'headers' | 'body'>,
+  schema: z.ZodType<T>,
+): Promise<MfaClientResult<T>> {
+  let response: Response;
+  try {
+    response = await fetch(path, { ...init, credentials: 'same-origin', cache: 'no-store' });
+  } catch {
+    return NO_RESPONSE_FAILURE;
+  }
+  let body: unknown = null;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (response.ok) {
+    const parsed = schema.safeParse(body);
+    return parsed.success ? { ok: true, data: parsed.data } : NO_RESPONSE_FAILURE;
+  }
+  return {
+    ok: false,
+    status: response.status,
+    code: failureCodeOf(body),
+    retryAfterSec: retryAfterSecOf(response.headers),
+  };
+}
+
+/** 画面の文言 (§15 の表と同じ文)。Map にして、constructor などの Object の名前の code を拾わない */
+const MFA_ERROR_MESSAGES: ReadonlyMap<string, string> = new Map<string, string>([
+  ['AUTH_2FA_INVALID', '確認コードが正しくありません。認証アプリの最新のコードを入力してください。'],
+  ['RATE_LIMITED', '試行回数が多すぎます。しばらくしてから再度お試しください。'],
+  ['AUTH_2FA_NOT_ENROLLED', '認証アプリが登録されていません。先に登録してください。'],
+  ['AUTH_2FA_ALREADY_ENROLLED', '認証アプリはすでに登録されています。変更するには先に解除してください。'],
+  ['AUTH_2FA_REQUIRED', 'この操作には二段階認証の確認が必要です。'],
+  ['PERM_DENIED', 'この画面は運営ロールの方だけが使えます。'],
+  ['AUTH_UNAUTHENTICATED', 'ログインが切れました。もう一度ログインしてください。'],
+  ['AUTH_2FA_NATIVE_SESSION', 'アプリの中では、この画面で二段階認証の確認や解除ができません。アプリの確認画面か、ブラウザで行ってください。'],
+  ['UNAUTHORIZED', 'ログインが切れました。もう一度ログインしてください。'],
+  ['FORBIDDEN', 'この操作には super_admin の権限と、二段階認証の確認が必要です。'],
+  ['OP_SELF_MODIFY', '自分自身の二段階認証は、ここでは解除できません。バックアップコードか、二段階認証の設定の画面で解除してください。'],
+  ['OP_INVALID_INPUT', '入力内容を確認してください (理由・本人確認の方法・確認のチェックが必要です)。'],
+  ['NOT_FOUND', '対象の利用者が見つかりません。'],
+]);
+
+/** 表に無い code (MFA_CLIENT_UNKNOWN_CODE・INTERNAL_ERROR・VALIDATION_ERROR など) の文 */
+export const MFA_FALLBACK_ERROR_MESSAGE = '処理中にエラーが発生しました。しばらくしてからお試しください。';
+
+export function mfaErrorMessage(code: string): string {
+  return MFA_ERROR_MESSAGES.get(code) ?? MFA_FALLBACK_ERROR_MESSAGE;
+}
+```
+
+2 つ目のブロック (同じファイルの続き。段 A は上の 4 関数、段 B で 2 関数、段 C で 1 関数を足す):
+
+```ts
+// tsc:skip (client.ts の続き。上のブロックの識別子と、schemas.ts (段 A で新設) の Zod を使うので、型検査は実装の tsc で行う。§14 の Zod は各節のブロックで型検査している)
+import {
+  MfaEnrollResponseSchema,
+  MfaRecoverResponseSchema,
+  MfaStatusResponseSchema,
+  MfaVerifyResponseSchema,
+  type MfaEnrollResponse,
+  type MfaRecoverBody,
+  type MfaRecoverResponse,
+  type MfaStatusResponse,
+  type MfaVerifyBody,
+  type MfaVerifyResponse,
+  // 段 B
+  MfaBackupCodesResponseSchema,
+  MfaUnenrollResponseSchema,
+  type MfaBackupCodesResponse,
+  type MfaUnenrollResponse,
+  // 段 C
+  MfaResetResponseSchema,
+  type MfaResetBody,
+  type MfaResetResponse,
+} from '@/lib/auth/mfa/schemas';
+
+/** GET /api/auth/mfa/status (§14.1。段 A) */
+export function getMfaStatus(): Promise<MfaClientResult<MfaStatusResponse>> {
+  return requestMfaApi<MfaStatusResponse>(MFA_API_PATHS.status, { method: 'GET' }, MfaStatusResponseSchema);
+}
+
+/** POST /api/auth/mfa/enroll (§14.2。段 A)。本文なし */
+export function startMfaEnrollment(): Promise<MfaClientResult<MfaEnrollResponse>> {
+  return requestMfaApi<MfaEnrollResponse>(MFA_API_PATHS.enroll, { method: 'POST' }, MfaEnrollResponseSchema);
+}
+
+/** POST /api/auth/mfa/verify (§14.3。段 A) */
+export function verifyMfaCode(body: MfaVerifyBody): Promise<MfaClientResult<MfaVerifyResponse>> {
+  return requestMfaApi<MfaVerifyResponse>(
+    MFA_API_PATHS.verify,
+    { method: 'POST', headers: MFA_JSON_HEADERS, body: JSON.stringify(body) },
+    MfaVerifyResponseSchema,
+  );
+}
+
+/** POST /api/auth/mfa/recover (§14.5。段 A) */
+export function recoverWithBackupCode(body: MfaRecoverBody): Promise<MfaClientResult<MfaRecoverResponse>> {
+  return requestMfaApi<MfaRecoverResponse>(
+    MFA_API_PATHS.recover,
+    { method: 'POST', headers: MFA_JSON_HEADERS, body: JSON.stringify(body) },
+    MfaRecoverResponseSchema,
+  );
+}
+
+/** POST /api/auth/mfa/backup-codes (§14.6。段 B)。本文なし */
+export function regenerateBackupCodes(): Promise<MfaClientResult<MfaBackupCodesResponse>> {
+  return requestMfaApi<MfaBackupCodesResponse>(MFA_API_PATHS.backupCodes, { method: 'POST' }, MfaBackupCodesResponseSchema);
+}
+
+/** DELETE /api/auth/mfa/factors/{id} (§14.4。段 B)。本文なし */
+export function unenrollMfaFactor(factorId: string): Promise<MfaClientResult<MfaUnenrollResponse>> {
+  return requestMfaApi<MfaUnenrollResponse>(mfaFactorPath(factorId), { method: 'DELETE' }, MfaUnenrollResponseSchema);
+}
+
+/** POST /api/super-admin/admins/{id}/mfa/reset (§14.7。段 C。OperatorMfaResetSection が呼ぶ) */
+export function resetOperatorMfa(userId: string, body: MfaResetBody): Promise<MfaClientResult<MfaResetResponse>> {
+  return requestMfaApi<MfaResetResponse>(
+    mfaResetPath(userId),
+    { method: 'POST', headers: MFA_JSON_HEADERS, body: JSON.stringify(body) },
+    MfaResetResponseSchema,
+  );
+}
+```
+
+### 15.2 画面ごとの結果の扱い (client.ts の結果 → 画面の動き)
+
+共通:
+- MFA の 4 画面 (状態・setup・verify・recover) は、`useInNativeWebView()` が `'browser'` になってから (§15 冒頭) 関数を呼ぶ。
+- MFA の 4 画面では、どの関数の失敗でも `status === 401` なら `window.location.assign('/login?next=' + encodeURIComponent(window.location.pathname + window.location.search))` (セッション切れ。S-19・T-MFA-5)。下の表の「失敗」の列は 401 以外。
+- `MFA_CLIENT_NO_STATUS` (通信の失敗・契約の形でない 2xx) と 500 は `mfaErrorMessage(code)` (既定の文) を出し、同じ操作をもう一度押せるようにする。
+- `next` は `getSafeRedirectPath(searchParams.get('next'))` で、null なら `/admin` (§15 冒頭)。下の表の `next` はこの値。
+
+| 画面・部品 | 呼ぶ関数 (いつ) | 成功 (`result.ok`) | 失敗 (401 以外) |
+|---|---|---|---|
+| 状態 `/settings/security/mfa` | `getMfaStatus()` (最初の描画の後に 1 回) | `data.enrolled` が true: 登録日 (`data.factor.created_at` を JST)・残り `data.backup_codes_remaining` 個・(段 B) [バックアップコードを再発行]・[認証アプリを解除]。false: [登録する] → `router.push('/settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa')` | `mfaErrorMessage(code)` を出す (403 `PERM_DENIED` は「この画面は運営ロールの方だけが使えます。」) |
+| 状態の [バックアップコードを再発行] (段 B) | `regenerateBackupCodes()` (確認ダイアログの後) | `BackupCodesPanel` に `data.backup_codes` を出し、「保存した」で閉じて `getMfaStatus()` を呼び直す | 403 `AUTH_2FA_REQUIRED` → `router.push('/settings/security/mfa/verify?next=%2Fsettings%2Fsecurity%2Fmfa')`。それ以外は `mfaErrorMessage(code)` |
+| 状態の [認証アプリを解除] (段 B) | `unenrollMfaFactor(data.factor.id)` (確認ダイアログの後) | `router.push('/settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa')` → `router.refresh()` (S-9。Cookie はサーバーが aal1 の token に替えている) | 403 `AUTH_2FA_REQUIRED` → 1 つ上の行と同じ verify へ。それ以外は `mfaErrorMessage(code)` |
+| 登録 `/settings/security/mfa/setup?next=` | `getMfaStatus()` → `data.enrolled` が false なら続けて `startMfaEnrollment()` (最初の描画の後に 1 回だけ。`useRef` の印で 2 回目を止める: React の開発時の effect の 2 回の実行で factor を作り直さない) | status の `enrolled` が true → `router.replace('/settings/security/mfa')` (enroll を呼ばない)。enroll の成功 → QR (`data:image/svg+xml;utf-8,` + `data.qr_code_svg`)・手入力用の `data.secret`・`TotpCodeForm` | enroll の 409 `AUTH_2FA_ALREADY_ENROLLED` → `router.replace('/settings/security/mfa')`。それ以外は `mfaErrorMessage(code)` |
+| 登録の 6 桁 (setup の `TotpCodeForm`) | `verifyMfaCode({ factor_id: <enroll の data.factor_id>, code })` | `data.backup_codes` があれば `BackupCodesPanel` に出し、「保存した」のチェックの後の [続ける] で `router.push(next)` → `router.refresh()`。無ければ (登録の verify では起きない) そのまま `router.push(next)` → `router.refresh()` | `TotpCodeForm` の中に `mfaErrorMessage(code)` (400 `AUTH_2FA_INVALID`・429 `RATE_LIMITED` など)。欄を空にして打ち直せるようにする |
+| 確認 `/settings/security/mfa/verify?next=` | `getMfaStatus()` (最初の描画の後に 1 回) | `data.aal === 'aal2'` → `router.replace(next)`。`data.enrolled` が false → `router.replace('/settings/security/mfa/setup?next=' + encodeURIComponent(next))`。それ以外 → `TotpCodeForm` (`data.factor.id` を持つ) とリンク「認証アプリが使えない (バックアップコード)」→ `/settings/security/mfa/recover` | `mfaErrorMessage(code)` を出す |
+| 確認の 6 桁 (verify の `TotpCodeForm`) | `verifyMfaCode({ factor_id: <status の data.factor.id>, code })` | `router.push(next)` → `router.refresh()` | `TotpCodeForm` の中に `mfaErrorMessage(code)` |
+| 回復 `/settings/security/mfa/recover` | `recoverWithBackupCode({ code })` ([回復する] で) | `window.location.assign(getSafeRedirectPath(data.next) ?? '/login')` (Supabase が全セッションを終えているので、ページごと移る) | `mfaErrorMessage(code)` (400 `AUTH_2FA_INVALID`・409 `AUTH_2FA_NOT_ENROLLED`・429 `RATE_LIMITED` など) |
+| 設定 `/settings` の「セキュリティ (二段階認証)」の行 (段 A) | `useInNativeWebView()` が `'browser'` になったら `getMfaStatus()` を 1 回 (`'undecided'` と `'in_app'` では呼ばず、行も出さない。MFA の設定はブラウザだけ §16) | 行を出す (押すと `router.push('/settings/security/mfa')`) | 行を出さない。401 でも画面を移らない (設定の画面は運営でない利用者も開く。§23 N-36) |
+| `OperatorMfaResetSection` (`/admin/users/{id}`。段 C) | `resetOperatorMfa(userId, { reason, identity_check, identity_confirmed: true })` (確認ダイアログの後) | 「認証アプリ `result.data.data.factors_deleted` 件・バックアップコード `result.data.data.backup_codes_deleted` 件を消しました」 | `mfaErrorMessage(code)` (401 の `UNAUTHORIZED` も文を出すだけ。運営の画面の移動は layout の `requireRoleForPage` が受け持つ) |
 
 ---
 
@@ -1664,14 +1996,114 @@ export function useWebAuthMessages(currentPath: string, options?: WebAuthMessage
 
 | action_type | severity | actor | target | details | 失敗時 |
 |---|---|---|---|---|---|
-| `admin.mfa.enroll` | info | 本人 | 本人 (`user`) | `{ factor_id, backup_codes_issued: 10 }` | fail-open (ログ) |
-| `admin.mfa.backup_codes_regenerate` | info | 本人 | 本人 | `{ backup_codes_issued: 10 }` | fail-open |
+| `admin.mfa.enroll` | info | 本人 | 本人 (`user`) | `{ factor_id, backup_codes_issued }` | fail-open (ログ) |
+| `admin.mfa.backup_codes_regenerate` | info | 本人 | 本人 | `{ backup_codes_issued }` | fail-open |
 | `admin.mfa.unenroll` | warn | 本人 | 本人 | `{ factor_id, backup_codes_deleted }` | fail-open |
 | `admin.mfa.recover` | warn | 本人 | 本人 | `{ factors_deleted, backup_codes_deleted }` | fail-open |
 | `super_admin.mfa.reset` | critical | super_admin | 対象 (`user`) | `{ reason, identity_check, factors_before, backup_codes_before }` | **fail-closed (書けなければ実行しない)** |
 
 - 秘密 (secret・QR・コードの値・ハッシュ) は details に入れない。`ip_address` / `user_agent` は `recordAdminAudit` が付ける。
 - verify (通常の challenge) は記録しない (ログインの一部。Supabase の `auth.audit_log_entries` に残る)。
+- details の値の出どころ (どれも route がその時点で持っている値。監査のためだけに別の読み取りをしない。reset の 2 つは削除の前に読む §14.7):
+
+| details の欄 | action | 値 |
+|---|---|---|
+| `factor_id` | enroll / unenroll | verify した factor の id (§14.3 の `factor_id`) / 解除した factor の id (§14.4 の `{id}`) |
+| `backup_codes_issued` | enroll / backup_codes_regenerate | `issueBackupCodes` の戻りの配列の長さ (= `BACKUP_CODE_COUNT`。10) |
+| `backup_codes_deleted` | unenroll / recover | `deleteBackupCodes` の戻り (使用済みを含めて消した行の数) |
+| `factors_deleted` | recover | 消した factor の数 (§14.5 の `listFactors` で読んだ数。`deleteFactor` が全部成功したときに書く) |
+| `reason` / `identity_check` | reset | `MfaResetBodySchema` で検証した本文の値 (`reason` は trim 済み・`identity_check` は `MFA_RESET_IDENTITY_CHECKS` の 1 つ) |
+| `factors_before` | reset | 削除の前に `admin.auth.admin.mfa.listFactors({ userId: id })` が返した factor の数 (状態・種類を問わない。この後に消す数) |
+| `backup_codes_before` | reset | 削除の前の `countRemainingBackupCodes(admin, id)` (未使用 = `used_at IS NULL` の残数。使用済みの行は数えない。応答の `backup_codes_deleted` は使用済みを含む全行なので、一致しないことがある) |
+
+### 17.1 `src/lib/auth/mfa/audit.ts` — 監査の facade (段 A。reset の action と details の型も段 A で置く)
+
+```ts
+import {
+  recordAdminAudit,
+  type AdminAuditSeverity,
+  type RecordAdminAuditParams,
+  type RecordAdminAuditResult,
+} from '@/lib/admin/audit';
+
+/** §17 の action_type (operator/07 §4 の命名) */
+export const MFA_AUDIT_ACTIONS = {
+  enroll: 'admin.mfa.enroll',
+  backupCodesRegenerate: 'admin.mfa.backup_codes_regenerate',
+  unenroll: 'admin.mfa.unenroll',
+  recover: 'admin.mfa.recover',
+  reset: 'super_admin.mfa.reset',
+} as const;
+
+export type MfaAuditAction = (typeof MFA_AUDIT_ACTIONS)[keyof typeof MFA_AUDIT_ACTIONS];
+
+/** action ごとの severity (§17 の表) */
+export const MFA_AUDIT_SEVERITY: Readonly<Record<MfaAuditAction, AdminAuditSeverity>> = {
+  'admin.mfa.enroll': 'info',
+  'admin.mfa.backup_codes_regenerate': 'info',
+  'admin.mfa.unenroll': 'warn',
+  'admin.mfa.recover': 'warn',
+  'super_admin.mfa.reset': 'critical',
+};
+
+/** target_type (本人・対象のどちらも利用者。varchar(30)) */
+export const MFA_AUDIT_TARGET_TYPE = 'user';
+
+/** action ごとの details の形 (§17 の表と、値の出どころの表)。秘密 (secret・QR・コードの値・ハッシュ) の欄は持たない */
+export interface MfaAuditDetailsMap {
+  'admin.mfa.enroll': { factor_id: string; backup_codes_issued: number };
+  'admin.mfa.backup_codes_regenerate': { backup_codes_issued: number };
+  'admin.mfa.unenroll': { factor_id: string; backup_codes_deleted: number };
+  'admin.mfa.recover': { factors_deleted: number; backup_codes_deleted: number };
+  /** identity_check は MfaResetBodySchema で検証済みの MFA_RESET_IDENTITY_CHECKS の 1 つ (schemas.ts の段 C の定数に依らないよう string で持つ) */
+  'super_admin.mfa.reset': { reason: string; identity_check: string; factors_before: number; backup_codes_before: number };
+}
+
+export interface RecordMfaAuditInput<A extends MfaAuditAction> {
+  /** service_role の client (getSupabaseAdmin())。§17: org_industrial_doctor は本人の client で INSERT できない */
+  admin: RecordAdminAuditParams['supabase'];
+  /** 操作した人 (自己サービスは本人・reset は実行した super_admin) */
+  actorId: string;
+  /** 対象の利用者 (自己サービスは actorId と同じ・reset は対象) */
+  targetUserId: string;
+  action: A;
+  details: MfaAuditDetailsMap[A];
+  /** ip_address / user_agent を取り出す要求 (route の request) */
+  request: Pick<Request, 'headers'>;
+  /** 失敗を app_logs に出すときの名前 (その route の ROUTE_NAME) */
+  routeName: string;
+}
+
+/**
+ * MFA の監査を admin_audit_logs に 1 行書く (recordAdminAudit を包む)。例外は投げない。
+ * 戻り値は recordAdminAudit のまま返す: fail-closed の reset は ok を読み、false なら 500 で何もしない。
+ * fail-open の 4 種 (enroll / backup_codes_regenerate / unenroll / recover) は await するが戻り値を読まない
+ * (失敗は recordAdminAudit が app_logs に残す)。
+ */
+export async function recordMfaAudit<A extends MfaAuditAction>(input: RecordMfaAuditInput<A>): Promise<RecordAdminAuditResult> {
+  return recordAdminAudit({
+    supabase: input.admin,
+    actorId: input.actorId,
+    actionType: input.action,
+    targetId: input.targetUserId,
+    targetType: MFA_AUDIT_TARGET_TYPE,
+    details: input.details,
+    severity: MFA_AUDIT_SEVERITY[input.action],
+    request: input.request,
+    routeName: input.routeName,
+  });
+}
+```
+
+呼ぶ場所 (5 か所。どれも `admin` = `getSupabaseAdmin()`・`request` = その route の要求・`routeName` = その route の `ROUTE_NAME`):
+
+| action | route | 呼ぶ時点 | `actorId` / `targetUserId` | 戻り値 |
+|---|---|---|---|---|
+| `MFA_AUDIT_ACTIONS.enroll` | `POST /api/auth/mfa/verify` (§14.3) | `wasUnverified` のとき `issueBackupCodes` の後・応答の前 | 本人 / 本人 | 読まない (fail-open) |
+| `MFA_AUDIT_ACTIONS.backupCodesRegenerate` | `POST /api/auth/mfa/backup-codes` (§14.6) | `issueBackupCodes` の後・応答の前 | 本人 / 本人 | 読まない |
+| `MFA_AUDIT_ACTIONS.unenroll` | `DELETE /api/auth/mfa/factors/{id}` (§14.4) | `refreshSession` の後・応答の前 | 本人 / 本人 | 読まない |
+| `MFA_AUDIT_ACTIONS.recover` | `POST /api/auth/mfa/recover` (§14.5) | `deleteBackupCodes` の後・応答の前 | 本人 / 本人 | 読まない |
+| `MFA_AUDIT_ACTIONS.reset` | `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7) | `listFactors` と `countRemainingBackupCodes` の後・`deleteFactor` の前 | 実行した super_admin / 対象 | `ok` が false なら 500 `INTERNAL_ERROR` で何も消さない |
 
 ---
 
@@ -1931,11 +2363,31 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `formatBackupCode は 5-5 で区切る`
 - `consumeBackupCode は UPDATE … used_at IS NULL の 1 文で、0 行なら false`
 - `issueBackupCodes は旧行を全部消してから 10 行を入れる`
+- `countRemainingBackupCodes は used_at IS NULL の行だけを数え、deleteBackupCodes は使用済みを含む全行を消して消した数を返す`
+- `4 関数は PostgREST の error で固定の文の Error を投げ (message に PostgREST の文を入れず cause に持つ)、consumeBackupCode の 0 行は投げずに false (§13.6)`
 
 `mfa-factors.test.ts` (A)
 - `findVerifiedTotpFactor は verified な totp だけを返す (unverified / phone は無視。複数なら最古)`
 - `listUnverifiedTotpFactorIds / ownsFactor`
 - `isVerifiedTotpFactorId は本人の verified な totp の id だけ true (本人の unverified な totp・phone・他人の id・存在しない id は false)`
+
+`mfa-audit.test.ts` (A。`@/lib/admin/audit` の `recordAdminAudit` を差し替え)
+- `MFA_AUDIT_ACTIONS は §17 の 5 つの action_type (admin.mfa.enroll / admin.mfa.backup_codes_regenerate / admin.mfa.unenroll / admin.mfa.recover / super_admin.mfa.reset)`
+- `MFA_AUDIT_SEVERITY は enroll と backup_codes_regenerate が info・unenroll と recover が warn・reset が critical`
+- `recordMfaAudit は recordAdminAudit に supabase = admin・actorId・actionType = action・targetId = targetUserId・targetType = 'user'・severity = MFA_AUDIT_SEVERITY[action]・details・request・routeName をそのまま渡す`
+- `recordMfaAudit は recordAdminAudit の戻り ({ ok: true } と { ok: false, error } のどちらも) をそのまま返す`
+
+`mfa-client.test.ts` (A。B と C で it を足す。`fetch` を `vi.stubGlobal` で差し替え)
+- `requestMfaApi: 2xx で本文が schema に合えば { ok: true, data }`
+- `requestMfaApi: 2xx でも本文が JSON でない・schema に合わなければ { ok: false, status: MFA_CLIENT_NO_STATUS, code: MFA_CLIENT_UNKNOWN_CODE, retryAfterSec: null }`
+- `requestMfaApi: 4xx / 5xx は status と本文の code を返す (flat の { error, code } と nested の { error: { code, message } } の両方)。code が読めなければ MFA_CLIENT_UNKNOWN_CODE`
+- `requestMfaApi: Retry-After ヘッダの秒を retryAfterSec に入れる (無い・0・負・数でないなら null)`
+- `requestMfaApi: fetch が例外を投げても例外にせず、MFA_CLIENT_NO_STATUS の失敗を返す`
+- `requestMfaApi: fetch に credentials: same-origin と cache: no-store を渡す`
+- `getMfaStatus / startMfaEnrollment / verifyMfaCode / recoverWithBackupCode は MFA_API_PATHS の status / enroll / verify / recover を GET / POST / POST / POST で呼び、verify と recover だけが JSON の本文 (Content-Type: application/json) を送る`
+- (B) `regenerateBackupCodes は POST /api/auth/mfa/backup-codes、unenrollMfaFactor は DELETE /api/auth/mfa/factors/<encodeURIComponent(id)> を本文なしで呼ぶ`
+- (C) `resetOperatorMfa は POST /api/super-admin/admins/<encodeURIComponent(userId)>/mfa/reset を JSON の本文で呼び、成功は data.data の 3 つの値、失敗は nested の本文の code (OP_SELF_MODIFY など)`
+- `mfaErrorMessage は §15 の文言の表の code の文を返し、表に無い code (UNKNOWN・INTERNAL_ERROR・constructor・toString を含む) は MFA_FALLBACK_ERROR_MESSAGE`
 
 `mfa-assurance.test.ts` (A。supabase を差し替え)
 - `bearerJwtOf: 3 セグメントの Bearer だけ token にする (CRON_SECRET 形式は null)`
@@ -1976,6 +2428,17 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `14 ファイルのどれにも素の requireRole( が無く、redirect('/login') の文字列も残っていない`
 - `表の 14 ファイルが全部存在し、§20 の PAGE_ROOTS の中で requireRoleForPage を呼ぶファイルの集合 ((support) の server layout を除く) と表のファイルの集合が同じ (表の漏れ・余りを見張る)`
 
+`tests/mfa-pages-browser.test.tsx` (A。B と C で it を足す。`@/lib/auth/mfa/client` の関数を差し替え、`window.ReactNativeWebView` の無いブラウザで描く。§15.2 の表を見張る)
+- `4 画面とも、関数の 401 の失敗で window.location.assign('/login?next=' + encodeURIComponent(この画面の pathname + search)) へ移る`
+- `状態: 未登録なら [登録する] が /settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa へ移る。403 PERM_DENIED は運営ロールだけの文言`
+- `登録: status の enrolled が true なら /settings/security/mfa へ戻し startMfaEnrollment を呼ばない。enroll の 409 AUTH_2FA_ALREADY_ENROLLED も /settings/security/mfa へ。effect が 2 回動いても startMfaEnrollment は 1 回`
+- `登録: verify の成功の backup_codes を BackupCodesPanel に出し、「保存した」の後の [続ける] で next へ`
+- `確認: status の aal が aal2 なら next へ・enrolled が false なら setup?next= へ。verify の 400 は TotpCodeForm に AUTH_2FA_INVALID の文言`
+- `回復: 成功で応答の next (getSafeRedirectPath を通した値) へ window.location.assign`
+- `設定 /settings の入口の行: ブラウザでは getMfaStatus の成功のときだけ出し、401 / 403 でも画面を移らない。window.ReactNativeWebView があれば getMfaStatus を呼ばず行も出さない`
+- (B) `状態の [再発行] と [解除] は 403 AUTH_2FA_REQUIRED で /settings/security/mfa/verify?next=%2Fsettings%2Fsecurity%2Fmfa へ。[解除] の成功で /settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa へ`
+- (C) `OperatorMfaResetSection: 確認ダイアログの後に resetOperatorMfa を 1 回呼び、成功で消した数を、失敗で mfaErrorMessage(code) を出す`
+
 ### 21.2 route
 
 `tests/api/auth-mfa-routes.test.ts` (A。段 A の 4 route。段 A の `requireRole` はゲートを持たないので、AAL の 403 の検査は入れない)
@@ -1999,7 +2462,10 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `DELETE / POST は別オリジンを 403 FORBIDDEN_ORIGIN`
 
 `tests/super-admin-mfa-reset-route.test.ts` (C)
-- `reset: super_admin 以外 → 403 / aal1 → 403 / 自分 → 403 OP_SELF_MODIFY / 対象無し → 404 / 本文 → 400 OP_INVALID_INPUT (identity_confirmed:false も) / 監査の記録に失敗 → 500 で factor を消さない / 成功で監査 critical → deleteFactor ×n → deleteBackupCodes → data の数`
+- `reset: super_admin 以外 → 403 / aal1 → 403 / 自分 → 403 OP_SELF_MODIFY / 対象無し → 404 / 本文 → 400 OP_INVALID_INPUT (identity_confirmed:false も) / 監査の記録に失敗 → 500 で factor を消さない`
+- `reset: 成功は listFactors → countRemainingBackupCodes → 監査 (critical・details = { reason, identity_check, factors_before: 読んだ factor の数, backup_codes_before: 未使用の残数}) → 読んだ factor ごとに deleteFactor → deleteBackupCodes の順で、200 の data は { user_id, factors_deleted, backup_codes_deleted } (使用済みの行があれば backup_codes_before と backup_codes_deleted は違う値)`
+- `reset: listFactors の error・countRemainingBackupCodes の例外 → 500 で、監査を書かず deleteFactor も deleteBackupCodes も呼ばない`
+- `reset: deleteFactor の error → 500 で、監査は 1 行書いた後 (要求の記録は残る)`
 - `reset: reason に NULL 文字 (U+0000) → 400 OP_INVALID_INPUT で、監査も factor の削除もしない (§14.7。jsonb に U+0000 を渡さない)`
 
 ### 21.3 走査・契約 (`tests/`)
@@ -2021,7 +2487,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `M-2: enroll → verify (helpers/totp で 6 桁) → aal2 → GET /api/admin/users が 200、backup_codes が 10 個`
 - `M-3: 新しいログイン (aal1) は 403 → verify → 200 (ログインごとに challenge)`
 - `M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションの token は 401`
-- `M-5: super_admin の reset で対象の factor と行が消え、admin_audit_logs に super_admin.mfa.reset (critical) が 1 行。自分自身は 403`
+- (C) `M-5: super_admin の reset で対象の factor と行が消え、admin_audit_logs に super_admin.mfa.reset (critical) が 1 行で、details の factors_before と backup_codes_before が、reset の前にテストが数えた対象の factor の数 (admin.mfa.listFactors) と operator_mfa_backup_codes の未使用の行の数に等しい。自分自身は 403` (reset の route は段 C で入るので、この it は段 C の PR でこのファイルに足す §22.3)
 - `M-6: operator_mfa_backup_codes は anon / authenticated から読めない (42501)`
 - `M-7: support だけのユーザーは aal1 のまま /api/support/stats が 200`
 - (M-8 は欠番。v1.3 までの「OPERATOR_MFA_ENFORCE_FROM を未来にした Next の枠」は結合テストの基盤に無いので外し、§21.1 の `mfa-gate.test.ts` の猶予の it に移した。番号は振り直さない)
@@ -2100,15 +2566,15 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | A | `src/lib/auth/mfa/policy.ts` | §12.1 / §12.2 |
 | A | `src/lib/auth/mfa/backup-codes.ts` | §12.3 |
 | A | `src/lib/auth/mfa/factors.ts` | §12.4 |
-| A | `src/lib/auth/mfa/schemas.ts` | §14 の Zod (`MfaStatusResponseSchema` / `MfaVerifyBodySchema` / `MfaRecoverBodySchema` / `TOTP_CODE_PATTERN` / `BACKUP_CODE_INPUT_MAX_LENGTH`) |
+| A | `src/lib/auth/mfa/schemas.ts` | §14 の Zod と型 (`MfaStatusResponseSchema` / `MfaEnrollResponseSchema` / `MfaVerifyBodySchema` / `MfaVerifyResponseSchema` / `MfaRecoverBodySchema` / `MfaRecoverResponseSchema` / `TOTP_CODE_PATTERN` / `BACKUP_CODE_INPUT_MAX_LENGTH` / `MFA_RECOVER_NEXT_PATH`)。段 B で `MfaUnenrollResponseSchema` / `MfaBackupCodesResponseSchema`、段 C で `MfaResetBodySchema` / `MfaResetResponseSchema` などを足す (§22.3)。import は zod と `@/lib/api/null-character` だけ (client からも読むため §14.2) |
 | A | `src/lib/auth/mfa/assurance.ts` (段 A は §13.2 の 1 つ目のブロックだけ。段 B で `assertOperatorAssurance` を足す) | §13.2 |
-| A | `src/lib/auth/mfa/audit.ts` | `MFA_AUDIT_ACTIONS`・`recordMfaAudit` (§17) |
-| A | `src/lib/auth/mfa/client.ts` (段 A は `getMfaStatus` / `startMfaEnrollment` / `verifyMfaCode` / `recoverWithBackupCode` と、その 4 つのパスの `MFA_API_PATHS`。段 B で `regenerateBackupCodes` / `unenrollMfaFactor` とその 2 つのパスを足す) | `MFA_API_PATHS`・上の 6 関数・`mfaErrorMessage` (§15) |
+| A | `src/lib/auth/mfa/audit.ts` | §17.1 の全部 (`MFA_AUDIT_ACTIONS`・`MfaAuditAction`・`MFA_AUDIT_SEVERITY`・`MFA_AUDIT_TARGET_TYPE`・`MfaAuditDetailsMap`・`RecordMfaAuditInput`・`recordMfaAudit`。reset の action と details の型も段 A で置く) |
+| A | `src/lib/auth/mfa/client.ts` (段 A は §15.1 の 1 つ目のブロックのうち `MFA_API_PATHS` の 4 つのパス (status / enroll / verify / recover) とそれ以外の全部 (`MFA_CLIENT_NO_STATUS`・`MFA_CLIENT_UNKNOWN_CODE`・`MFA_JSON_HEADERS`・`MfaClientSuccess`・`MfaClientFailure`・`MfaClientResult`・`requestMfaApi`・`MFA_FALLBACK_ERROR_MESSAGE`・`mfaErrorMessage`) と、2 つ目のブロックの `getMfaStatus` / `startMfaEnrollment` / `verifyMfaCode` / `recoverWithBackupCode`。段 B・C で足すものは §22.3) | §15.1 |
 | A | `src/app/api/auth/mfa/status/route.ts`・`enroll/route.ts`・`verify/route.ts`・`recover/route.ts` | §14.1・14.2・14.3・14.5 |
 | A | `src/app/(main)/settings/security/mfa/page.tsx`・`setup/page.tsx`・`verify/page.tsx`・`recover/page.tsx` | §15 (状態の画面のボタン 2 つは段 B) |
 | A | `src/components/auth/mfa/TotpCodeForm.tsx`・`BackupCodesPanel.tsx` | §15 |
 | A | `src/components/auth/mfa/useInNativeWebView.ts`・`src/components/auth/mfa/NativeAppMfaNotice.tsx` | §16.4.2・§16.4.3 |
-| A | テスト: `src/lib/auth/__tests__/mfa-policy.test.ts`・`mfa-backup-codes.test.ts`・`mfa-factors.test.ts`・`mfa-assurance.test.ts`・`tests/api/auth-mfa-routes.test.ts`・`tests/operator-mfa-backup-codes-migration-contract.test.ts`・`tests/helpers/totp.ts`・`tests/e2e/helpers/totp.mjs` (段 A で作る。`tests/totp-helper.test.ts` が 2 つを突き合わせるため。使うのは段 B の `test-session.mjs`)・`tests/totp-helper.test.ts`・`tests/native-app-mfa-notice.test.tsx`・`tests/mfa-pages-native-webview.test.tsx` | §21 |
+| A | テスト: `src/lib/auth/__tests__/mfa-policy.test.ts`・`mfa-backup-codes.test.ts`・`mfa-factors.test.ts`・`mfa-audit.test.ts`・`mfa-client.test.ts`・`mfa-assurance.test.ts`・`tests/mfa-pages-browser.test.tsx`・`tests/api/auth-mfa-routes.test.ts`・`tests/operator-mfa-backup-codes-migration-contract.test.ts`・`tests/helpers/totp.ts`・`tests/e2e/helpers/totp.mjs` (段 A で作る。`tests/totp-helper.test.ts` が 2 つを突き合わせるため。使うのは段 B の `test-session.mjs`)・`tests/totp-helper.test.ts`・`tests/native-app-mfa-notice.test.tsx`・`tests/mfa-pages-native-webview.test.tsx` | §21 |
 | B | `src/app/api/auth/mfa/factors/[id]/route.ts`・`backup-codes/route.ts` | §14.4・14.6 |
 | B | `src/lib/auth/page-guard.ts` | §13.4 |
 | B | `src/app/(support)/support/layout.tsx` | §13.4.1 |
@@ -2124,13 +2590,13 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 
 | 種類 | 名前 |
 |---|---|
-| 定数 | `MFA_REQUIRED_ROLES`・`OPERATOR_MFA_ENFORCE_FROM_ENV_NAME`・`BACKUP_CODE_COUNT`・`BACKUP_CODE_LENGTH`・`BACKUP_CODE_ALPHABET`・`BACKUP_CODE_INPUT_MAX_LENGTH`・`TOTP_CODE_PATTERN`・`MFA_TOTP_ISSUER`・`MFA_TOTP_FRIENDLY_NAME`・`MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MFA_PAGE_PATHS`・`PAGE_FORBIDDEN_DEFAULT_PATH`・`MFA_API_PATHS`・`MFA_AUDIT_ACTIONS`・`HOUR_SEC` (rate-limit.ts)・`SUPPORT_AREA_ROLES`・`SUPPORT_AREA_NEXT`・`SUPPORT_AREA_FORBIDDEN_PATH` (`src/app/(support)/support/layout.tsx` の中)・`ADMIN_AREA_NEXT` (`src/app/admin/layout.tsx` の中)・`SUPER_ADMIN_AREA_NEXT`・`SUPER_ADMIN_AREA_FORBIDDEN_PATH` (`src/app/super-admin/layout.tsx` の中)・`OPERATOR_MEMBERSHIP_AREA_NEXT`・`OPERATOR_MEMBERSHIP_AREA_FORBIDDEN_PATH` (`src/app/(operator)/operator/membership/layout.tsx` の中)・`MOBILE_MFA_REQUIRED_ROLES`・`MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`・`MOBILE_TOTP_CODE_PATTERN` (モバイル)・`ENFORCE_FROM_PATTERN`・`ENFORCE_FROM_GROUP`・`OMITTED_SECOND`・`MONTH_INDEX_OFFSET` (`src/lib/auth/mfa/policy.ts` の中。export しない)・`NATIVE_APP_MFA_VERIFY_NOTICE`・`NATIVE_APP_MFA_BROWSER_ONLY_NOTICE`・`NATIVE_APP_MFA_FALLBACK_NOTICE` (`src/components/auth/mfa/NativeAppMfaNotice.tsx`)・`BACKUP_CODE_DISPLAY_GROUP`・`ALPHABET_MASK` (`src/lib/auth/mfa/backup-codes.ts` の中。export しない) |
+| 定数 | `MFA_REQUIRED_ROLES`・`OPERATOR_MFA_ENFORCE_FROM_ENV_NAME`・`BACKUP_CODE_COUNT`・`BACKUP_CODE_LENGTH`・`BACKUP_CODE_ALPHABET`・`BACKUP_CODE_INPUT_MAX_LENGTH`・`TOTP_CODE_PATTERN`・`MFA_TOTP_ISSUER`・`MFA_TOTP_FRIENDLY_NAME`・`MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MFA_PAGE_PATHS`・`PAGE_FORBIDDEN_DEFAULT_PATH`・`MFA_API_PATHS`・`MFA_CLIENT_NO_STATUS`・`MFA_CLIENT_UNKNOWN_CODE`・`MFA_JSON_HEADERS`・`MFA_FALLBACK_ERROR_MESSAGE` (`src/lib/auth/mfa/client.ts`)・`MFA_ERROR_MESSAGES`・`NO_RESPONSE_FAILURE` (client.ts の中。export しない)・`MFA_RECOVER_NEXT_PATH` (`src/lib/auth/mfa/schemas.ts`)・`MFA_AUDIT_ACTIONS`・`MFA_AUDIT_SEVERITY`・`MFA_AUDIT_TARGET_TYPE` (`src/lib/auth/mfa/audit.ts`)・`HOUR_SEC` (rate-limit.ts)・`SUPPORT_AREA_ROLES`・`SUPPORT_AREA_NEXT`・`SUPPORT_AREA_FORBIDDEN_PATH` (`src/app/(support)/support/layout.tsx` の中)・`ADMIN_AREA_NEXT` (`src/app/admin/layout.tsx` の中)・`SUPER_ADMIN_AREA_NEXT`・`SUPER_ADMIN_AREA_FORBIDDEN_PATH` (`src/app/super-admin/layout.tsx` の中)・`OPERATOR_MEMBERSHIP_AREA_NEXT`・`OPERATOR_MEMBERSHIP_AREA_FORBIDDEN_PATH` (`src/app/(operator)/operator/membership/layout.tsx` の中)・`MOBILE_MFA_REQUIRED_ROLES`・`MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`・`MOBILE_TOTP_CODE_PATTERN` (モバイル)・`ENFORCE_FROM_PATTERN`・`ENFORCE_FROM_GROUP`・`OMITTED_SECOND`・`MONTH_INDEX_OFFSET` (`src/lib/auth/mfa/policy.ts` の中。export しない)・`NATIVE_APP_MFA_VERIFY_NOTICE`・`NATIVE_APP_MFA_BROWSER_ONLY_NOTICE`・`NATIVE_APP_MFA_FALLBACK_NOTICE` (`src/components/auth/mfa/NativeAppMfaNotice.tsx`)・`BACKUP_CODE_DISPLAY_GROUP`・`ALPHABET_MASK` (`src/lib/auth/mfa/backup-codes.ts` の中。export しない) |
 | 定数 (テストの道具) | `TOTP_STEP_SECONDS`・`TOTP_DIGITS` (`tests/helpers/totp.ts`)・`TOTP_RETRY_ONCE` (`tests/integration/helpers/mfa.ts`)・`TEST_AAL2_ACCESS_TOKEN`・`TEST_AAL2_SESSION_ID`・`TEST_CLAIMS_NO_USER_MESSAGE` (`tests/helpers/mfa-claims.ts`)・`E2E_MFA_REQUIRED_ROLES`・`E2E_TOTP_FRIENDLY_NAME`・`E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE` (`tests/e2e/helpers/test-session.mjs`)・`MFA_PROMOTION_RATE_LIMITED_MESSAGE` (`tests/integration/helpers/mfa.ts`)・`SUPABASE_MFA_BURST_LIMIT` (`tests/integration/security/operator-mfa.test.ts` の中。M-13)・`EXPECTED_PAGE_GUARDS` (`tests/operator-page-guard-wiring.test.ts` の中)・`POLICY_ROLES_COLUMN_PATTERN`・`POLICY_OPERATOR_ROLE_LITERAL_PATTERN`・`DB_GATED_POLICY_MIN_COUNT`・`FUNCTION_ROLES_PATTERN`・`FUNCTION_OPERATOR_ROLE_LITERAL_PATTERN`・`DB_GATED_FUNCTION_MIN_COUNT`・`DB_FUNCTION_SCAN_EXCLUSIONS` (`tests/integration/security/operator-mfa-db-gate.test.ts` の中 §20.1)・`EXPECTED_DB_GATE_POLICY_STATEMENTS` (`tests/operator-mfa-db-gate-migration-contract.test.ts` の中) |
-| Zod スキーマ | `SessionClaimsSchema` (`src/lib/auth/mfa/assurance.ts`。段 A)・`MfaStatusResponseSchema`・`MfaVerifyBodySchema`・`MfaRecoverBodySchema` (`src/lib/auth/mfa/schemas.ts`。段 A)・`MfaResetBodySchema` (段 C で `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS` と一緒に `src/lib/auth/mfa/schemas.ts` に足す §22.3) |
-| 型 | `MfaRequiredRole`・`AuthenticatorAssuranceLevel`・`MfaEnforceFromSetting`・`OperatorAssuranceDecision`・`DecideOperatorAssuranceInput`・`OperatorAssuranceResult`・`OperatorAssuranceSummary`・`SessionAssurance`・`VerifiedTotpFactor`・`RequireRoleOptions`・`RequireRoleForPageOptions`・`MfaRequiredCode`・`MfaStatusResponse`・`MfaVerifyBody`・`MfaRecoverBody`・`MfaResetBody`・`MobileAal`・`MobileOperatorGate`・`MobileOperatorGateInput`・`TestSessionClaims`・`TestGetUser`・`TestGetClaimsResult`・`Aal2AuthMock`・`InjectSessionAssurance`・`InjectSessionOptions`・`InjectedSession` (テストの道具)・`WallClockParts` (policy.ts の中。export しない)・`InNativeWebViewState` (Web)・`WebAuthMessagesOptions` (モバイル。`apps/mobile/src/lib/webViewAuthMessages.ts`)・interface `AssertOperatorAssuranceInput` (`src/lib/auth/mfa/assurance.ts`。段 B)・interface `BackupCodeStoreClient` (`src/lib/auth/mfa/backup-codes.ts`。段 A) |
+| Zod スキーマ | `SessionClaimsSchema` (`src/lib/auth/mfa/assurance.ts`。段 A)・`MfaStatusResponseSchema`・`MfaEnrollResponseSchema`・`MfaVerifyBodySchema`・`MfaVerifyResponseSchema`・`MfaRecoverBodySchema`・`MfaRecoverResponseSchema` (`src/lib/auth/mfa/schemas.ts`。段 A)・`MfaUnenrollResponseSchema`・`MfaBackupCodesResponseSchema` (段 B で schemas.ts に足す)・`MfaResetBodySchema`・`MfaResetResponseSchema` (段 C で `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS` と一緒に `src/lib/auth/mfa/schemas.ts` に足す §22.3)・`FlatErrorBodySchema`・`NestedErrorBodySchema` (`src/lib/auth/mfa/client.ts` の中。export しない) |
+| 型 | `MfaRequiredRole`・`AuthenticatorAssuranceLevel`・`MfaEnforceFromSetting`・`OperatorAssuranceDecision`・`DecideOperatorAssuranceInput`・`OperatorAssuranceResult`・`OperatorAssuranceSummary`・`SessionAssurance`・`VerifiedTotpFactor`・`RequireRoleOptions`・`RequireRoleForPageOptions`・`MfaRequiredCode`・`MfaStatusResponse`・`MfaEnrollResponse`・`MfaVerifyBody`・`MfaVerifyResponse`・`MfaRecoverBody`・`MfaRecoverResponse`・`MfaUnenrollResponse`・`MfaBackupCodesResponse`・`MfaResetBody`・`MfaResetResponse` (`src/lib/auth/mfa/schemas.ts`)・`MfaClientSuccess`・`MfaClientFailure`・`MfaClientResult` (`src/lib/auth/mfa/client.ts`)・`MfaAuditAction`・`MfaAuditDetailsMap`・`RecordMfaAuditInput` (`src/lib/auth/mfa/audit.ts`)・`MobileAal`・`MobileOperatorGate`・`MobileOperatorGateInput`・`TestSessionClaims`・`TestGetUser`・`TestGetClaimsResult`・`Aal2AuthMock`・`InjectSessionAssurance`・`InjectSessionOptions`・`InjectedSession` (テストの道具)・`WallClockParts` (policy.ts の中。export しない)・`InNativeWebViewState` (Web)・`WebAuthMessagesOptions` (モバイル。`apps/mobile/src/lib/webViewAuthMessages.ts`)・interface `AssertOperatorAssuranceInput` (`src/lib/auth/mfa/assurance.ts`。段 B)・interface `BackupCodeStoreClient` (`src/lib/auth/mfa/backup-codes.ts`。段 A) |
 | クラス | `MfaRequiredError`・`OperatorMfaGateError` (モバイル) |
 | 関数 | `resolveMfaEnforceFrom`・`isExistingWallClock`・`wallClockPartsOf` (policy.ts の中。export しない)・`readMfaEnforceFromEnv`・`isMfaRequiredRoleSet`・`decideOperatorAssurance`・`generateBackupCode(s)`・`normalizeBackupCode`・`isWellFormedBackupCode`・`hashBackupCode`・`formatBackupCode`・`issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes`・`findVerifiedTotpFactor`・`listUnverifiedTotpFactorIds`・`ownsFactor`・`isVerifiedTotpFactorId`・`isTotp` (`src/lib/auth/mfa/factors.ts` の中。export しない)・`bearerJwtOf`・`readSessionAssurance`・`assertOperatorAssurance`・`mfaRedirectPathFor`・`requireRoleForPage`・`recordMfaAudit`・`requiresOperatorMfa`・`toMobileAal`・`decideMobileOperatorGate`・`resolveOperatorMfaGate`・`resolveSessionMfaGate` (モバイル)・`requestNativeMfaVerify`・`isNativeBridgedSession` (`src/lib/native-auth-bridge.ts`)・`useInNativeWebView` (Web の hook)・`promoteTestSessionToAal2` (e2e)・`readE2eUserRoles` (e2e。`tests/e2e/fixtures/fresh-user.ts` の中。export しない)・`promoteToAal2`・`signInForIntegration` (結合)・`generateTotp`・`decodeBase32`・`aal2Claims`・`aal2AuthMock` (テスト)・`collectRequireRoleArgumentIdentifiers` (`tests/operator-mfa-entry-points-scan.test.ts` の中の走査の関数。§20 の `ROLE_CONSTANT_NAMES` を集める) |
-| 関数 (Web の画面の通信。`src/lib/auth/mfa/client.ts`) | `getMfaStatus`・`startMfaEnrollment`・`verifyMfaCode`・`recoverWithBackupCode` (段 A)・`regenerateBackupCodes`・`unenrollMfaFactor` (段 B)・`mfaErrorMessage` (段 A。§15 の文言の表) |
+| 関数 (Web の画面の通信。`src/lib/auth/mfa/client.ts` §15.1) | `requestMfaApi`・`getMfaStatus`・`startMfaEnrollment`・`verifyMfaCode`・`recoverWithBackupCode`・`mfaErrorMessage` (段 A。`mfaErrorMessage` は §15 の文言の表)・`mfaFactorPath`・`regenerateBackupCodes`・`unenrollMfaFactor` (段 B)・`mfaResetPath`・`resetOperatorMfa` (段 C)・`failureCodeOf`・`retryAfterSecOf` (client.ts の中。export しない) |
 | React の部品 | `TotpCodeForm`・`BackupCodesPanel`・`MfaGraceBanner`・`OperatorMfaResetSection`・`NativeAppMfaNotice` (Web)・`MfaVerifyGate`・`OperatorMfaGate`・`NativeMfaVerifyModal` (モバイル)・`SupportAreaGuardLayout` (`src/app/(support)/support/layout.tsx` の既定の export) |
 | route | `GET /api/auth/mfa/status`・`POST /api/auth/mfa/enroll`・`POST /api/auth/mfa/verify`・`DELETE /api/auth/mfa/factors/{id}`・`POST /api/auth/mfa/recover`・`POST /api/auth/mfa/backup-codes`・`POST /api/super-admin/admins/{id}/mfa/reset` |
 | 画面 | `/settings/security/mfa`・`/setup`・`/verify`・`/recover` |
@@ -2163,7 +2629,9 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | B | `src/lib/auth/operator-permissions.ts` | `requireSuperAdmin` の委譲 (§13.5) |
 | B | `src/lib/auth/index.ts` | `requireRoleForPage`・`MfaRequiredError`・`MFA_PAGE_PATHS` を公開 |
 | B | `src/app/api/auth/mfa/status/route.ts`・`enroll/route.ts`・`verify/route.ts`・`recover/route.ts` (段 A で新設) | `requireRole(MFA_REQUIRED_ROLES)` に第 2 引数 `{ assurance: 'session' }` を足す (§20 ②) |
-| B | `src/lib/auth/mfa/client.ts`・`src/app/(main)/settings/security/mfa/page.tsx` (段 A で新設) | 再発行と解除の関数・ボタン (§15)。WebView の中では段 A の案内のまま (ボタンも出さない) |
+| B | `src/lib/auth/mfa/client.ts`・`src/app/(main)/settings/security/mfa/page.tsx` (段 A で新設) | client.ts に `MFA_API_PATHS` の `backupCodes`・`factors` と `mfaFactorPath`・`regenerateBackupCodes`・`unenrollMfaFactor` (§15.1)。状態の画面に再発行と解除のボタン (§15.2 の表の段 B の 2 行)。WebView の中では段 A の案内のまま (ボタンも出さない) |
+| B | `src/lib/auth/mfa/schemas.ts` (段 A で新設) | `MfaUnenrollResponseSchema`・`MfaUnenrollResponse` (§14.4)・`MfaBackupCodesResponseSchema`・`MfaBackupCodesResponse` (§14.6) |
+| B | `src/lib/auth/__tests__/mfa-client.test.ts`・`tests/mfa-pages-browser.test.tsx` (段 A で新設) | §21.1 の (B) の it を足す |
 | B | `scripts/supabase-local.sh` | `prepare()` が組み立てる config.toml の「ローカル専用」の並び (`[auth.rate_limit]` の後) に、`echo '[auth.mfa.totp]'`・`echo 'enroll_enabled = true'`・`echo 'verify_enabled = true'` の 3 行と、その前に理由のコメントの `echo` を 1 行 (「ローカル専用: 運営の MFA (docs/design/cross/12-operator-mfa.md) の結合テストが TOTP の登録と確認を使う。CLI の既定に依らないよう明示する」) を足す (枠 0 でも枠 1 以上でも足す。`slot_config` の外) |
 | B | `tests/local-ci-slot.test.ts` | §21.3 の it を 1 つ足す (§23 N-29) |
 | — | `src/lib/admin/not-supported.ts` (`respondNotSupported`) | **変えない**。既定 (aal2) の `requireRole` を呼ぶのでゲートが付き、`MfaRequiredError` は catch の `ForbiddenError` 枝で 403 `FORBIDDEN` + `err.message` になる (§19.3)。§20 の `GATED_HELPER_FUNCTIONS` に登録して ①⑤ で見張る |
@@ -2178,7 +2646,10 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | B | `tests/e2e-test-session.test.ts` | §21.3 の it を足す (`/auth/v1/factors` を直接呼ぶのは補助関数だけ・`E2E_MFA_REQUIRED_ROLES` の一致) |
 | B | `src/lib/auth/__tests__/helpers.test.ts` (§23 N-13)・`tests/helpers/route-world.ts` の `makeClient` と、`createClient` を差し替えて `requireRole` を本物で通す単体テスト 4 本 (§23 N-14 の表の「直す」行) | Supabase のモックの `auth` に `...aal2AuthMock(<同じモックの getUser>)` (§22.4.2。`getSession` と `getClaims` の両方) を足す。`user.factors` は足さない。直し方はファイルごとに §23 N-14 の表 |
 | C | `src/app/admin/users/[id]/page.tsx` | 解除セクション |
-| C | `src/lib/auth/mfa/schemas.ts` (段 A で新設) | `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MfaResetBodySchema`・`MfaResetBody` を足す (§14.7。reason の NULL 文字の refine を含む) |
+| C | `src/lib/auth/mfa/schemas.ts` (段 A で新設) | `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MfaResetBodySchema`・`MfaResetBody`・`MfaResetResponseSchema`・`MfaResetResponse` を足す (§14.7。reason の NULL 文字の refine を含む) |
+| C | `src/lib/auth/mfa/client.ts` (段 A で新設) | `MFA_API_PATHS` の `superAdminAdmins` と `mfaResetPath`・`resetOperatorMfa` (§15.1。`OperatorMfaResetSection` が呼ぶ) |
+| C | `tests/integration/security/operator-mfa.test.ts` (段 B で新設) | M-5 (reset) を足す (§21.4) |
+| C | `src/lib/auth/__tests__/mfa-client.test.ts`・`tests/mfa-pages-browser.test.tsx` (段 A で新設) | §21.1 の (C) の it を足す |
 | C | `src/__tests__/api/null-character-routes.test.ts` | `EXCLUDED` に `POST super-admin/admins/[id]/mfa/reset/route.ts` の 1 行を理由つきで足す (§23 N-28) |
 | D | `apps/mobile/app/(super-admin)/_layout.tsx`・`apps/mobile/app/(support)/_layout.tsx` | `OperatorMfaGate` で `Stack` を包む (§16.3) |
 | D | `tests/operator-mfa-entry-points-scan.test.ts` (段 B で新設) | ⑨⑩ と `MOBILE_*` の定数を足す (§20) |
@@ -2395,7 +2866,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-2 | `tests/env-source-scan.test.ts`・`src/__tests__/lib/env.test.ts`・`tests/check-env-script.test.ts` | `OPERATOR_MFA_ENFORCE_FROM`・`process.env.OPERATOR_MFA_ENFORCE_FROM` | 一覧に無い変数を読む / `.env.example` に無い / readOnlyBy 以外が読む | `SERVER_ENV_VARS` に `readOnlyBy: 'src/lib/auth/mfa/policy.ts'` で登録・`.env.example` に説明つきで追加・値を読むのは policy.ts だけ | A |
 | N-3 | `tests/rate-limit-single-implementation.test.ts` | `@upstash/ratelimit` | 新 route が自前の制限を持つと赤 | `checkRateLimit(user.id, 'auth-mfa-verify' | 'auth-mfa-recover')` だけを使う | A/B |
 | N-4 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` (`@supabase/supabase-js`)・`SUPABASE_SERVICE_ROLE_KEY` | 自前で service_role の client を作ると赤 | `getSupabaseAdmin()` だけを使う (`src/lib/auth/mfa/backup-codes.ts` も route から受け取る) | A/B/C |
-| N-5 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message`・`internalError` | 本文に Supabase の生の文を入れると赤 | 4xx は固定の文、5xx は `internalError`。`AuthError` / `ForbiddenError` の message だけ本文に出してよい | A/B/C |
+| N-5 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message`・`internalError` | 本文に Supabase の生の文を入れると赤 | 4xx は固定の文、5xx は `internalError`。`AuthError` / `ForbiddenError` の message だけ本文に出してよい。src/lib の新しいファイルも結果のオブジェクトに `.message` / `.details` / `.hint` を入れない: `backup-codes.ts` の 4 関数は固定の文の `Error` を投げて PostgREST の error は `cause` に入れる (§12.3)・`recordMfaAudit` は `recordAdminAudit` の戻りをそのまま返す (新しいオブジェクトを作らない §17.1)・`client.ts` は本文の `code` だけを読む (§15.1)。`lib-raw-error-message-scan` の `ALLOWED` は増やさない | A/B/C |
 | N-6 | `tests/next15-async-request-api-scan.test.ts` | `createClient()`・`headers()`・`params` | await 無し / `params` が Promise でないと赤 | `await createClient()`・`(await headers()).get('authorization')`・`factors/[id]` と `admins/[id]` は `params: Promise<{ id: string }>` | A/B/C |
 | N-7 | `tests/role-check-source-scan.test.ts` | `requireRole(`・`roles?.` | route で roles を手書き判定すると赤。`usingRequireRole > 40` の番兵 | 新 route は `requireRole(MFA_REQUIRED_ROLES, …)` を呼ぶ (配列リテラルでないので ROLE_GATED_ROUTES には入れない) | A |
 | N-8 | `tests/admin-view-audit-1326.test.ts` | `admin_audit_logs`・`x-forwarded-for` | `src/app/api/super-admin/**` で直接 INSERT / 直読みすると赤 | reset route は `recordMfaAudit` (→ `recordAdminAudit`) 経由 | C |
@@ -2426,6 +2897,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-33 | `tests/integration/rls/subscription-plans-yearly-price-id.test.ts:135-144` | `pg_policies`・`subscription_plans` | subscription_plans のポリシーの一覧を `[mutate_super_admin, select_public]` の 2 本で固定している。段 E で `subscription_plans_select_operator` が増える | 期待する一覧に `{ policyname: 'subscription_plans_select_operator', cmd: 'SELECT' }` を足す (名前の順で 2 番目) | E |
 | N-34 | `tests/database-types-migrations-contract.test.ts` | `CREATE OR REPLACE FUNCTION`・`operator_mfa_satisfied` | migration が作った public の関数 (トリガー関数を除く) が型ファイルの `Functions` に無いと赤。7 本の関数の `CREATE OR REPLACE` は既に型にある | 2 つの型ファイルを作り直して `operator_mfa_satisfied` を入れる (§11.4・§22.3) | E |
 | N-35 | 運営ロールの JWT で PostgREST / RPC を直接呼ぶ既存の結合テスト (例: `tests/integration/security/family-lock-order-race.test.ts`・`org-admin-residual-cleanup.test.ts`・`tests/integration/rls/is-inactive-user-rpc.test.ts`・`tests/integration/rls/csat-nps-summary-rpc.test.ts`・`tests/integration/security/account-export-scope.test.ts`) | `rpc(`・`from(`・`super_admin`・`admin` | 段 E で運営の枝と 7 本の関数が判定を通す | 変えない: 自前で `signInWithPassword` した運営は TOTP を登録していないので判定は真 (未登録の枝)。`createTestUserWithRoles` / `signInForIntegration` で作った運営は段 B から aal2 の JWT なので真。段 E の PR で結合のスイートを全部流し、`OPERATOR_MFA_REQUIRED` と運営の枝の 0 行の失敗が残らないことを確かめる (残ったら、その it が登録済みの運営の aal1 の token で運営の枝を使っているので、aal2 の token に直し、PR の本文に書く) | E |
+| N-36 | 設定画面 `src/app/(main)/settings/page.tsx` を描く既存の単体テスト 8 本: `src/__tests__/app/main-layout-signed-out.test.tsx`・`src/__tests__/app/native-account-actions.test.ts`・`src/__tests__/app/settings/account-link.test.ts`・`src/__tests__/app/settings/data-export.test.ts`・`src/__tests__/app/settings/support-link.test.ts`・`src/__tests__/app/settings/trainer-share-removed.test.ts`・`tests/account-deletion-blocked-message.test.ts`・`tests/ai-consent-settings-entry.test.ts` (origin/main `c100ca9d` の実測。ソースを文字列で読むだけの `src/__tests__/app/faq/account-answers.test.ts`・`src/__tests__/lib/auth/logout-guidance.test.ts` は描かない) | `fetch`・`/api/auth/mfa/status` | 段 A で設定画面が、ブラウザ (`window.ReactNativeWebView` が無い) なら最初の描画の後に `getMfaStatus()` を呼ぶ (§15.2)。8 本とも `fetch` を `vi.stubGlobal` で差し替えていて、知らない URL には 500 を返すか (7 本) 例外を投げる (`data-export.test.ts` の `unexpected fetch`) | 変更なし (走らせて確認)。`requestMfaApi` は 500 も例外も `MfaClientFailure` にして投げない (§15.1) ので、入口の行は出ず画面も移らない (`main-layout-signed-out` の `hrefSetter` は呼ばれない)。`data-export` の `/api/account/export` の回数の検査は URL で絞っているので数が変わらない | A |
 
 
 ### 23.1 N-14 の 23 本の 1 本ずつの扱い (段 B)
