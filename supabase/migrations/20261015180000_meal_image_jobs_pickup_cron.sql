@@ -1,4 +1,4 @@
--- migration: 20261015120000_meal_image_jobs_pickup_cron.sql
+-- migration: 20261015180000_meal_image_jobs_pickup_cron.sql
 -- #1561: 料理画像のジョブ (meal_image_jobs) の、待ちのまま残ったジョブと処理中のまま止まったジョブを、pg_cron で定期に拾い直す
 --
 -- 背景 (#1532 の整合ゲートの残り):
@@ -81,7 +81,7 @@
 --
 -- 冪等: CREATE OR REPLACE FUNCTION / 同じ名前のジョブの登録解除 → 登録。何度流しても同じ結果になる。
 -- 確認: tests/integration/security/meal-image-jobs-pickup-cron.test.ts / tests/meal-image-jobs-pickup-cron-contract.test.ts
--- ロールバック: supabase/rollbacks/20261015120000_meal_image_jobs_pickup_cron.down.sql
+-- ロールバック: supabase/rollbacks/20261015180000_meal_image_jobs_pickup_cron.down.sql
 --   (ジョブの登録を外し、関数を消す。取り戻したジョブ・失敗の印をつけた料理は元に戻さない)
 
 -- ─────────────────────────────────────────────────────────

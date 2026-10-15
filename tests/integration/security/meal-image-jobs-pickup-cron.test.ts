@@ -1,7 +1,7 @@
 /**
  * #1561 料理画像のジョブを pg_cron で定期に拾い直す migration の回帰テスト (ローカル Supabase の実 DB)
  *
- * migration 20261015120000_meal_image_jobs_pickup_cron.sql が作るもの:
+ * migration 20261015180000_meal_image_jobs_pickup_cron.sql が作るもの:
  *   - public.requeue_stale_meal_image_jobs(p_now): processing のまま、貸し出しの期限 (leased_until) から 5 分より長く過ぎたジョブを取り戻す。
  *     attempt_count を 1 足し、3 回に届いたら failed (料理が生成中で同じ料理なら image_status = failed)、届かなければ pending に戻す
  *   - public.invoke_process_meal_image_jobs(): 最後の更新から 1 分を過ぎた待ちのジョブがあれば、Vault の app_cron_secret を Bearer に付けて
@@ -51,7 +51,7 @@ if (!url || !anonKey || !serviceKey) {
 }
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
-const VERSION = '20261015120000';
+const VERSION = '20261015180000';
 const NAME = 'meal_image_jobs_pickup_cron';
 const MIGRATION_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/migrations/${VERSION}_${NAME}.sql`), 'utf8');
 const ROLLBACK_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/rollbacks/${VERSION}_${NAME}.down.sql`), 'utf8');

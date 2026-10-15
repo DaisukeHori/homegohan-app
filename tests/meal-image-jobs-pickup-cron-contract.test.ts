@@ -2,7 +2,7 @@
 /**
  * #1561 料理画像のジョブを pg_cron で定期に拾い直す migration の契約 (DB を使わない静的な検査)
  *
- * migration 20261015120000_meal_image_jobs_pickup_cron.sql が作るもの:
+ * migration 20261015180000_meal_image_jobs_pickup_cron.sql が作るもの:
  *   - public.requeue_stale_meal_image_jobs(p_now): processing のまま、貸し出しの期限から c_stale_grace より長く過ぎたジョブを取り戻す
  *     (attempt_count + 1。c_max_attempts に届いたら failed、届かなければ pending)
  *   - public.invoke_process_meal_image_jobs(): 待ちのジョブがあれば、Vault の app_cron_secret で process-meal-image-jobs を 1 回呼ぶ
@@ -24,7 +24,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
-const VERSION = '20261015120000';
+const VERSION = '20261015180000';
 const NAME = 'meal_image_jobs_pickup_cron';
 const MIGRATION_PATH = path.join(ROOT, 'supabase', 'migrations', `${VERSION}_${NAME}.sql`);
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${VERSION}_${NAME}.down.sql`);

@@ -285,7 +285,7 @@ const SEGMENT_STATS_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261009100000_
 /** 確定の回の再試行 public.invoke_calculate_segment_stats_finalize_retry と、そのジョブを足した migration (#1500) */
 const SEGMENT_STATS_FINALIZE_RETRY_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261011120000_segment_stats_finalize_retry.sql');
 /** 料理画像の待ちのジョブを拾う public.invoke_process_meal_image_jobs と、そのジョブを足した migration (#1561) */
-const MEAL_IMAGE_PICKUP_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261015120000_meal_image_jobs_pickup_cron.sql');
+const MEAL_IMAGE_PICKUP_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261015180000_meal_image_jobs_pickup_cron.sql');
 /** 料理画像の処理の Edge Function (#1561 で pg_cron から Vault の app_cron_secret で呼ぶようになった) */
 const MEAL_IMAGE_WORKER_FUNCTION = 'process-meal-image-jobs';
 

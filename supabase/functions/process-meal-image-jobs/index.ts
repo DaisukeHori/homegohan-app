@@ -32,7 +32,7 @@ const logger = createLogger(FUNCTION_NAME);
 /**
  * ジョブを取るときにつける貸し出しの長さ (ミリ秒)。この間に終わらなかったジョブ (関数の実行が打ち切られたなど) は、
  * pg_cron のジョブ requeue-stale-meal-image-jobs (public.requeue_stale_meal_image_jobs) が、期限からさらに 5 分過ぎたら取り戻す (#1561)。
- * 長さを変えるときは、migration 20261015120000_meal_image_jobs_pickup_cron.sql の c_stale_grace の説明も確かめる
+ * 長さを変えるときは、migration 20261015180000_meal_image_jobs_pickup_cron.sql の c_stale_grace の説明も確かめる
  * (tests/meal-image-jobs-pickup-cron-contract.test.ts が、貸し出し + 猶予が Edge Function の実行時間の上限より長いことを突き合わせる)
  */
 const JOB_LEASE_MS = 2 * 60_000;

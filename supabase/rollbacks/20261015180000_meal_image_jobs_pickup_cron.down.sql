@@ -1,4 +1,4 @@
--- rollback: 20261015120000_meal_image_jobs_pickup_cron.sql
+-- rollback: 20261015180000_meal_image_jobs_pickup_cron.sql
 -- 戻すと #1561 より前の状態 (料理画像の待ちのジョブを定期に拾う仕組みも、止まったジョブを取り戻す仕組みも無い状態) に戻る。
 --
 -- 内容:
