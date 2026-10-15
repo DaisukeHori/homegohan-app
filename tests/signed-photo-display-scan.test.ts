@@ -8,7 +8,7 @@
  * を使い、サーバーが本人の写真だと確かめて署名した URL を表示する。
  *
  * 見るもの: 本番の .tsx (src・apps/mobile/app・apps/mobile/src) の JSX の Image / img 要素の src / source 属性に、
- * 保存された写真の URL を表す名前 (image_url・imageUrl・photo_url・photoUrl) が書かれていないこと。
+ * 保存された写真の URL を表す名前 (image_url・imageUrl・photo_url・photoUrl・content_url (運営の審査の写真)) が書かれていないこと。
  * 例外は下の ALLOWED (理由つき)。
  *
  * 限界 (見張りであって証明ではない): 名前の違う変数 (preview・uri など) に入れ替えてから渡すもの、
@@ -24,7 +24,7 @@ const ROOT = path.resolve(__dirname, '..');
 const SCAN_ROOTS = ['src', 'apps/mobile/app', 'apps/mobile/src'];
 const RAW_IMAGE_TAGS = new Set(['Image', 'img']);
 const SOURCE_ATTRIBUTES = new Set(['src', 'source']);
-const STORED_PHOTO_URL_NAME = /(image_?url|photo_?url)/i;
+const STORED_PHOTO_URL_NAME = /(image_?url|photo_?url|content_?url)/i;
 
 /** 例外 (ファイル → 理由)。ここに足すときは、署名付き URL を通さなくてよい理由を書く */
 const ALLOWED: Record<string, string> = {
