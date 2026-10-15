@@ -30,6 +30,7 @@ import type { SubStepOfStep1 } from '@homegohan/handson-tour-shared';
 
 import { Card } from '../../src/components/ui';
 import { getApi } from '../../src/lib/api';
+import { getAnalyticsAppVersion } from '../../src/lib/app-version';
 import { colors, radius, spacing } from '../../src/theme';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { safeNickname } from '../../src/handson-tour/safe-nickname';
@@ -217,7 +218,7 @@ export default function HandsonTourPhoto() {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
       platform: 'ios' as const,
-      app_version: '1.0.0',
+      app_version: getAnalyticsAppVersion(),
       step: 1,
       sub_step: '1.1',
     });
@@ -301,7 +302,7 @@ export default function HandsonTourPhoto() {
           user_id: profile.id,
           timestamp: new Date().toISOString(),
           platform: 'ios' as const,
-          app_version: '1.0.0',
+          app_version: getAnalyticsAppVersion(),
           step: 1,
           sub_step: '1.6',
           ...failure,
@@ -319,7 +320,7 @@ export default function HandsonTourPhoto() {
         user_id: profile.id,
         timestamp: new Date().toISOString(),
         platform: 'ios' as const,
-        app_version: '1.0.0',
+        app_version: getAnalyticsAppVersion(),
         step: 1,
         dwell_ms: Date.now() - mountTimeRef.current,
       });
@@ -342,7 +343,7 @@ export default function HandsonTourPhoto() {
           user_id: profile.id,
           timestamp: new Date().toISOString(),
           platform: 'ios' as const,
-          app_version: '1.0.0',
+          app_version: getAnalyticsAppVersion(),
           step: 1,
           reason,
         });

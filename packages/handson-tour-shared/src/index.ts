@@ -5,6 +5,7 @@ export * from './types';
 export * from './mocks';
 export * from './i18n';
 export * from './personalize';
+export * from './step2-result-bubble';
 export * from './constants';
 export * from './analytics';
 export * from './url-routes';

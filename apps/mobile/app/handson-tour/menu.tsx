@@ -14,17 +14,49 @@ import {
   HANDSON_TOUR_ROUTES,
   MOCK_MENU_RESPONSE,
   STEP2_SUB_STEP_TO_TARGET,
-  personalize,
   fireAnalytics,
 } from '@homegohan/handson-tour-shared';
-import type { SubStepOfStep2 } from '@homegohan/handson-tour-shared';
+import type { Step2ResultBubbleProfile, SubStepOfStep2 } from '@homegohan/handson-tour-shared';
 
 import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 import { TourOverlay } from '../../src/handson-tour/TourOverlay';
+import {
+  EMPTY_MENU_TOUR_PROFILE,
+  fetchMenuTourProfile,
+  type MenuTourProfileFailure,
+} from '../../src/handson-tour/menu-tour-profile';
+import { buildMenuTourBubble } from '../../src/handson-tour/tour-bubbles';
+import { getAnalyticsAppVersion } from '../../src/lib/app-version';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { safeNickname } from '../../src/handson-tour/safe-nickname';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
+
+/**
+ * 2.6 の吹き出しに使うプロフィールの取得の失敗を記録する (Web の reportTourProfileFailures と同じ error_code)。
+ * ツアーは体験モードなので止めないが、黙って握りつぶすと「パーソナライズが全員分効いていない」に気づけない (#1040)。
+ * 記録するのはテーブル名と PostgREST のエラーコードだけ (値や文面は出さない)。
+ */
+function reportMenuTourProfileFailure(userId: string, failure: MenuTourProfileFailure): void {
+  const detail = `${failure.table} select failed${failure.code ? ` (${failure.code})` : ''}`;
+  console.warn(`[handson-tour] step 2 profile fetch: ${detail}`);
+  // 計測の失敗 (開発時の payload 検証エラーなど) でツアーを止めない
+  try {
+    fireAnalytics('handson_tour_step_error', {
+      user_id: userId,
+      timestamp: new Date().toISOString(),
+      platform: 'ios' as const,
+      app_version: getAnalyticsAppVersion(),
+      step: 2,
+      // 取得は画面を開いた直後 (Step 2 の最初の sub_step) に行う
+      sub_step: '2.1',
+      error_code: 'profile_fetch_failed',
+      error_message: detail,
+    });
+  } catch {
+    // 計測の失敗は無視
+  }
+}
 
 export default function HandsonTourMenu() {
   const router = useRouter();
@@ -32,7 +64,23 @@ export default function HandsonTourMenu() {
   const nickname = safeNickname(profile?.nickname);
 
   const [subStep, setSubStep] = useState<SubStepOfStep2>('2.1');
+  // 2.6 の吹き出し (除外する食材・料理の経験) に使う。取れるまで / 取れなければ既定値 (除外なし・beginner 扱い)
+  const [tourProfile, setTourProfile] = useState<Step2ResultBubbleProfile>(EMPTY_MENU_TOUR_PROFILE);
   const mountTimeRef = React.useRef(Date.now());
+
+  useEffect(() => {
+    const userId = profile?.id;
+    if (!userId) return;
+    let cancelled = false;
+    void fetchMenuTourProfile(userId).then(({ profile: loaded, failure }) => {
+      if (cancelled) return;
+      setTourProfile(loaded);
+      if (failure) reportMenuTourProfileFailure(userId, failure);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile?.id]);
 
   const advanceSubStep = (next: SubStepOfStep2) => {
     setSubStep(next);
@@ -45,7 +93,7 @@ export default function HandsonTourMenu() {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
       platform: 'ios' as const,
-      app_version: '1.0.0',
+      app_version: getAnalyticsAppVersion(),
       step: 2,
       sub_step: '2.1',
     });
@@ -91,70 +139,13 @@ export default function HandsonTourMenu() {
         user_id: profile.id,
         timestamp: new Date().toISOString(),
         platform: 'ios' as const,
-        app_version: '1.0.0',
+        app_version: getAnalyticsAppVersion(),
         step: 2,
         dwell_ms,
       });
     }
     advanceSubStep('2.8');
     setTimeout(() => advanceSubStep('2.9'), 500);
-  };
-
-  const getBubble = (): {
-    title?: string;
-    body: string;
-    position: 'top' | 'bottom' | 'left' | 'right' | 'auto';
-    testId?: string;
-  } => {
-    switch (subStep) {
-      case '2.1':
-        return {
-          title: i18n.step2.intro_title,
-          body: i18n.step2.intro_hint,
-          position: 'auto',
-          // E2E (Maestro) が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
-          testId: 'tour-step-2-intro',
-        };
-      case '2.2':
-        return {
-          body: i18n.step2.flags_bubble,
-          position: 'bottom',
-        };
-      case '2.3':
-        return {
-          body: i18n.step2.note_bubble,
-          position: 'top',
-        };
-      case '2.4':
-        return {
-          body: i18n.step2.generate_bubble,
-          position: 'top',
-        };
-      case '2.5':
-        return {
-          body: i18n.step2.generate_bubble,
-          position: 'auto',
-        };
-      case '2.6':
-        return {
-          title: personalize(i18n.step2.result_title, { nickname }),
-          body: i18n.step2.result_bubble_no_exclude,
-          position: 'bottom',
-        };
-      case '2.7':
-        return {
-          body: i18n.step2.add_bubble,
-          position: 'top',
-        };
-      case '2.8':
-      case '2.9':
-        return {
-          body: i18n.step2.add_bubble,
-          position: 'auto',
-        };
-      default:
-        return { body: '', position: 'auto' };
-    }
   };
 
   const isAutoStep = ['2.1', '2.5', '2.8', '2.9'].includes(subStep);
@@ -222,7 +213,7 @@ export default function HandsonTourMenu() {
         <TourOverlay
           targetTestId={targetTestId}
           targetTestIds={targetTestIds}
-          bubble={getBubble()}
+          bubble={buildMenuTourBubble(subStep, { nickname, profile: tourProfile })}
           progress={{ current: 3, total: 5 }}
           primaryAction={getPrimaryAction()}
           showSkip={false}
