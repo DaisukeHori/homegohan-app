@@ -198,6 +198,17 @@ async function seedUser(user: TestUser, tag: 'A' | 'B') {
   // user_badges は主キーが (user_id, badge_id) で id 列を持たない
   const badge = await must<{ id: string }>('select badges', srAdmin.from('badges').select('id').limit(1).single());
   await must('insert user_badges', srAdmin.from('user_badges').insert({ user_id: uid, badge_id: badge.id, message: mark('BADGE') }));
+  // バッジを取った期間 (#1528)。主キーは (user_id, badge_id, period_type, period_start)
+  await must(
+    'insert user_badge_period_awards',
+    srAdmin.from('user_badge_period_awards').insert({
+      user_id: uid,
+      badge_id: badge.id,
+      period_type: 'weekly',
+      period_start: '2026-10-05',
+      message: mark('BADGE-PERIOD'),
+    }),
+  );
 
   await insert('terms_acceptances', { user_id: uid, document_type: 'terms_of_service', document_version: 'v1', ip_address: '203.0.113.1' });
   await insert('cookie_consents', { user_id: uid, analytics: true });
@@ -461,6 +472,7 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       support_tickets: 1,
       support_ticket_messages: 2, // 本人 + サポートの返信。内部メモは含まない
       user_badges: 1,
+      user_badge_period_awards: 1,
     });
   });
 
@@ -531,6 +543,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
     expect(data.user_badges[0]).toHaveProperty('badge');
     expect((data.user_badges[0].badge as Record<string, unknown>).name).toEqual(expect.any(String));
     expect(data.user_badges[0].badge).not.toHaveProperty('condition_json');
+    expect(data.user_badge_period_awards[0]).toHaveProperty('badge');
+    expect(data.user_badge_period_awards[0].badge).not.toHaveProperty('condition_json');
   });
 
   it('1000 行を超えるテーブルも、本物の PostgREST のページングで取りこぼし・重複なく全件出る', async () => {

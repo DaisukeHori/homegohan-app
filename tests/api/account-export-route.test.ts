@@ -47,7 +47,10 @@ let userCounter = 0;
 const newUserId = () => `00000000-0000-4000-8000-${String(++userCounter).padStart(12, '0')}`;
 const OTHER = 'ffffffff-ffff-4fff-8fff-ffffffffffff';
 
-const RELATIONS: NonNullable<FakePostgrestOptions['relations']> = { user_badges: { badges: 'badge_id' } };
+const RELATIONS: NonNullable<FakePostgrestOptions['relations']> = {
+  user_badges: { badges: 'badge_id' },
+  user_badge_period_awards: { badges: 'badge_id' },
+};
 for (const t of ACCOUNT_EXPORT_TABLES) {
   if (t.scope.kind === 'parent') RELATIONS[t.table] = { [t.scope.parent]: t.scope.fk };
 }
