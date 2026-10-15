@@ -389,17 +389,17 @@ CREATE POLICY "terms_no_delete"
 | 同意済みの版 | `user_profiles.terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` | NULL = 未同意。特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象で、本人は直接書き換えられない |
 | 同意の記録 | DB 関数 `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent)` (SECURITY DEFINER、authenticated のみ) | `auth.uid()` 本人の行だけを書く。`user_profiles` の 3 列を更新し (行が無ければ既定値で作る)、`terms_acceptances` に文書ごとに 1 行足す (同じ版は重複して足さない)。UPDATE / DELETE は RLS で禁止のまま |
 | 記録の API | `POST /api/legal/accept` | body の版がいま有効な版と一致するときだけ関数を呼ぶ (違えば 409)。IP・user_agent は、body ではなくサーバーが受け取ったリクエストから取る |
-| ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 同意済みの版が `LEGAL_DOCUMENTS` と違う、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク。戻り先は強制と同じ `buildLegalConsentPath` で作り、いまのクエリも残す) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す |
+| ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 同意済みの版が `LEGAL_DOCUMENTS` と違う、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク。戻り先は強制と同じ `buildLegalConsentPath` で作り、いまのクエリも残す) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す。`/api/*` は middleware の `/api` の分岐で判定する (許可リストは `packages/shared/src/legal-consent-api.ts`。`LEGAL_CONSENT_ENFORCE=on` で未同意なら 403 `LEGAL_CONSENT_REQUIRED`。設計書 13a) |
 | 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、データ削除の依頼先 (お問い合わせ) を案内する |
 | サインアップ | `src/app/(auth)/signup/page.tsx` | 「続行することで同意したものとみなされます」をやめ、必須チェックボックスにした (チェックするまで Google 登録も登録ボタンも押せない)。このチェックは同意の記録を残さない。記録が残るのは同意画面で同意したときだけ。登録後は、`/auth/callback` が初期設定を始めていない未同意の人を `LEGAL_CONSENT_ENFORCE` の値に関わらず同意画面へ回す (下の「初回の作成」の行。#1435) |
 | 初回の作成 | `src/app/(auth)/auth/callback/route.ts` (判定は `lib/legal-consent.ts` の `resolveFirstSignInDestination`) | 初期設定を始めていない (プロフィールの行が無い、または `onboarding_started_at` / `onboarding_completed_at` がどちらも NULL) のに、いま有効な版に同意していない人を、`LEGAL_CONSENT_ENFORCE` の値に関わらず `/legal-consent?next=<本来の遷移先>` へ回す。サインアップ画面の Google 登録・メール確認と、ログイン画面の「Googleで続ける」で初めて入った人 (サインアップ画面のチェックを通らない) が、どれもここを通る。ログイン画面には、初めての人には同意の画面が出ることを、規約・プライバシーポリシーへのリンクつきで出す (みなし同意の文面は出さない)。回さないもの: 管理者・プロフィールを読めなかったとき・遷移先がゲートの対象外のパス (`/auth/*` など)。初期設定を始めたあとの人を止めるかは、これまでどおりゲートの強制で決まる |
 
-ゲートの対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
+画面の判定の対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル (`/api/*` は画面の判定では対象外で、API は 13a のゲートが判定する)。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
 
 **重要変更時の対応**:
 - 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。`LEGAL_DOCUMENTS` の値を書き換えて出す
 - 強制 (`LEGAL_CONSENT_ENFORCE=on`) を始める日はオーナーが決める。始める前に、お知らせだけの期間 (`LEGAL_CONSENT_NOTICE=on`) を置くかどうかも決める。お知らせも既定では出ない
-  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (版・施行日は仮置きのまま。お知らせだけの期間は置いていない)。ゲートが掛かるのは Web の画面の取得だけで、モバイルのネイティブの画面と `/api/*` は対象外 (#1442)
+  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (版・施行日は仮置きのまま。お知らせだけの期間は置いていない)。ゲートは Web の画面の取得に掛かり、13a で `/api/*` にも掛けた (403 `LEGAL_CONSENT_REQUIRED`)。モバイルのネイティブの画面は対象外 (#1442)
 - 全ユーザーへ 30 日前メール通知 (Resend 一斉送信): **未実装**。本番のメール配信は、送信ドメインの検証が済むまで動かない
 - アプリ内強制再同意: 上のゲート (ダッシュボードアクセス時にインターセプト) として実装済み。効くのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (既定は off)
 - 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う

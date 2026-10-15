@@ -17,7 +17,11 @@ import {
   LEGAL_DOCUMENT_LABELS,
   LEGAL_DOCUMENT_PATHS,
   LEGAL_DOCUMENT_TYPES,
+  LEGAL_CONSENT_COPY,
   formatLegalEffectiveDate,
+  legalConsentAgreeLabel,
+  legalConsentReadFullTextLabel,
+  legalConsentVersionLine,
   type LegalDocumentType,
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
@@ -36,7 +40,8 @@ interface LegalConsentFormProps {
 
 type Phase = 'idle' | 'submitting' | 'declining' | 'declined';
 
-const GENERIC_ERROR = '同意の記録に失敗しました。時間をおいて、もう一度お試しください。';
+// 文面は packages/shared の LEGAL_CONSENT_COPY (アプリのネイティブの同意画面と共用。#1442)
+const GENERIC_ERROR = LEGAL_CONSENT_COPY.acceptFailed;
 
 export default function LegalConsentForm({ next, isReconsent, outdated }: LegalConsentFormProps) {
   const [agreed, setAgreed] = useState<Record<LegalDocumentType, boolean>>({
@@ -81,7 +86,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
       if (res.status === 409) {
         // 画面を開いたまま規約が改定された。読み込み直して、いまの版を読んでもらう
         setNeedsReload(true);
-        setError('利用規約・プライバシーポリシーが更新されました。画面を読み込み直して、内容をご確認ください。');
+        setError(LEGAL_CONSENT_COPY.versionMismatch);
       } else {
         setError(GENERIC_ERROR);
       }
@@ -120,7 +125,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
         <div className="space-y-2">
           <h1 className="text-2xl font-bold tracking-tight text-gray-900">ご利用を終了しました</h1>
           <p className="text-sm leading-relaxed text-gray-600">
-            利用規約・プライバシーポリシーに同意いただけない場合、ほめゴハンはご利用いただけません。ログアウトしました。
+            {LEGAL_CONSENT_COPY.declineUnavailable}ログアウトしました。
           </p>
         </div>
 
@@ -152,11 +157,9 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
   return (
     <form onSubmit={handleAccept} className="space-y-6" noValidate>
       <div className="space-y-2">
-        <h1 className="text-2xl font-bold tracking-tight text-gray-900">利用規約・プライバシーポリシーへの同意</h1>
+        <h1 className="text-2xl font-bold tracking-tight text-gray-900">{LEGAL_CONSENT_COPY.heading}</h1>
         <p className="text-sm leading-relaxed text-gray-600">
-          {isReconsent
-            ? '利用規約・プライバシーポリシーが改定されました。引き続きご利用いただくには、内容をご確認のうえ、同意をお願いします。'
-            : 'ほめゴハンをご利用いただくには、利用規約とプライバシーポリシーへの同意が必要です。内容をご確認ください。'}
+          {isReconsent ? LEGAL_CONSENT_COPY.introReconsent : LEGAL_CONSENT_COPY.introFirst}
         </p>
       </div>
 
@@ -170,17 +173,17 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-bold text-gray-900">{label}</h2>
                 {revised && (
-                  <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-700">改定あり</span>
+                  <span className="rounded-full bg-orange-100 px-2 py-0.5 text-xs font-bold text-orange-700">{LEGAL_CONSENT_COPY.revisedBadge}</span>
                 )}
               </div>
               <p className="text-xs text-gray-500">
-                版: {version} ／ 施行日: {formatLegalEffectiveDate(effectiveDate)}
+                {legalConsentVersionLine(version, formatLegalEffectiveDate(effectiveDate))}
               </p>
               <Link
                 href={LEGAL_DOCUMENT_PATHS[type]}
                 className="inline-block text-sm font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800"
               >
-                {label}の全文を読む
+                {legalConsentReadFullTextLabel(label)}
               </Link>
               <label className="flex cursor-pointer items-start gap-3 pt-1">
                 <input
@@ -195,7 +198,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
                   disabled={busy}
                   className="mt-0.5 h-5 w-5 shrink-0 accent-[#FF8A65]"
                 />
-                <span className="text-sm text-gray-800">{label}の内容を確認し、同意します</span>
+                <span className="text-sm text-gray-800">{legalConsentAgreeLabel(label)}</span>
               </label>
             </li>
           );
@@ -223,7 +226,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
           disabled={!allAgreed || busy}
           className="w-full rounded-full bg-[#FF8A65] py-4 font-bold text-white shadow-lg transition-all duration-300 hover:bg-[#FF7043] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >
-          {phase === 'submitting' ? '記録しています...' : '同意して続ける'}
+          {phase === 'submitting' ? '記録しています...' : LEGAL_CONSENT_COPY.acceptButton}
         </button>
         <button
           type="button"
@@ -231,7 +234,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
           disabled={busy}
           className="w-full rounded-full py-3 text-sm font-bold text-gray-500 underline underline-offset-4 hover:text-gray-700 disabled:opacity-50"
         >
-          {phase === 'declining' ? 'ログアウトしています...' : '同意しない（ログアウトする）'}
+          {phase === 'declining' ? 'ログアウトしています...' : LEGAL_CONSENT_COPY.declineAndSignOutButton}
         </button>
       </div>
     </form>

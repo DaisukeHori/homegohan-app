@@ -81,7 +81,7 @@ const EXEMPT_PREFIXES = [
   // 同意しない人が運営に連絡する窓口 (データの削除の依頼もここから)。凍結中の人も同じ扱い
   '/contact',
   '/frozen',
-  // API は画面ではない。各 route が自分で認可する (middleware の /api/* の分岐はそもそもここへ来ないが、念のため)
+  // API は画面ではない。API の同意ゲートは middleware の /api の分岐 (判定は packages/shared の resolveLegalConsentApiDecision。#1442)
   '/api',
   // ハンズオンツアー。ツアーの途中で同意画面へ飛ばして流れを切らない
   '/handson-tour',
