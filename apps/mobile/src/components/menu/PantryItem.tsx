@@ -1,7 +1,7 @@
 import { Trash2 } from 'lucide-react-native';
 import React from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { formatLocalDate, parseLocalDate, todayCalendarDate } from '@homegohan/shared';
+import { classifyPantryExpiry, formatLocalDate, parseLocalDate, todayCalendarDate, todayLocal, type PantryExpiryStatus } from '@homegohan/shared';
 
 import { colors } from '../../theme/colors';
 import { radius } from '../../theme/spacing';
@@ -16,7 +16,8 @@ export type PantryItemData = {
   addedAt: string | null;
 };
 
-export type ExpiryStatus = 'expired' | 'expiringSoon' | 'normal';
+/** 期限の状態 (#1602。Web・モバイルの全画面で共通の PantryExpiryStatus) */
+export type ExpiryStatus = PantryExpiryStatus;
 
 /** 1 日のミリ秒 */
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
@@ -33,12 +34,14 @@ export function daysFromToday(expiryDate: string): number {
   return Math.round((expiryDay.getTime() - todayCalendarDate().getTime()) / MS_PER_DAY);
 }
 
+/**
+ * 期限の状態 (期限切れ / 期限間近 / それ以外)。判定は全画面共通の classifyPantryExpiry (#1602)。
+ * 「期限間近」は今日から PANTRY_EXPIRING_SOON_DAYS (3 日) 後の期限まで (以前はこの表示だけ 1 日以内だった)。
+ * 期限は daysFromToday と同じく日本の暦日にしてから比べる (YYYY-MM-DD は同じ日、ISO 8601 の時刻はその時刻の日本の日付)
+ */
 export function getExpiryStatus(expiryDate: string | null): ExpiryStatus {
   if (!expiryDate) return 'normal';
-  const days = daysFromToday(expiryDate);
-  if (days < 0) return 'expired';
-  if (days <= 1) return 'expiringSoon';
-  return 'normal';
+  return classifyPantryExpiry(formatLocalDate(new Date(expiryDate)), todayLocal());
 }
 
 interface Props {

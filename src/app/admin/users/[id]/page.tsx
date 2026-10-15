@@ -13,6 +13,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -98,11 +99,11 @@ export default async function AdminUserDetailPage(props: PageProps) {
           ユーザー管理
         </Link>
         {' / '}
-        <span className="text-gray-900">{profile.nickname ?? profile.id.slice(0, 8)}</span>
+        <span className="text-gray-900">{normalizeProfileName(profile.nickname) ?? profile.id.slice(0, 8)}</span>
       </nav>
 
       <h1 className="text-2xl font-bold text-gray-900 mb-6">
-        {profile.nickname ?? '(名前なし)'}
+        {normalizeProfileName(profile.nickname) ?? '(名前なし)'}
       </h1>
 
       {/* 基本情報セクション */}

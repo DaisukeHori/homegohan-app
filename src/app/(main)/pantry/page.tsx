@@ -8,13 +8,10 @@ import { useRevokeBlobUrls } from "@/hooks/useRevokeBlobUrls";
 import { ArrowLeft, Camera, Plus, Trash2, RefreshCw, Package, AlertCircle, X, Pencil } from "lucide-react";
 import { PantryItemForm, emptyPantryItemFormValues, type PantryItemFormValues } from "@/components/pantry/PantryItemForm";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
-import { STATUS_COLOR_TOKENS } from "@homegohan/shared";
-import { addDaysToDate, isCalendarDate, todayLocal } from "@/lib/date-utils";
+import { STATUS_COLOR_TOKENS, classifyPantryExpiry } from "@homegohan/shared";
+import { todayLocal } from "@/lib/date-utils";
 import { useAiConsent } from "@/hooks/useAiConsent";
 import { aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
-
-/** 「期限間近」とみなす期限の範囲 (今日から何日後の期限までか。今日が期限のものも含む)。#1594 の前と同じ 3 日 */
-const EXPIRING_SOON_DAYS = 3;
 
 const colors = {
   bg: "#FAF9F7",
@@ -280,19 +277,8 @@ export default function PantryPage() {
     other: "その他",
   };
 
-  // 「期限間近」の判定の今日 (#1594)。日本の暦日で、描画のたびに求める
+  // 期限の判定の今日 (#1594)。日本の暦日で、描画のたびに求める
   const expiryToday = todayLocal();
-
-  /**
-   * 期限 (YYYY-MM-DD) が今日 (日本の暦日) から EXPIRING_SOON_DAYS 日後まで (両端を含む) か (#1594)。
-   * 以前は期限を new Date(dateStr) (その日の UTC の 0 時 = 日本の 9 時) にして今の時刻と比べていたので、
-   * 期限が今日の食材は日本の 9 時に「期限間近」から外れ、3 日後が期限の食材は日本の 9 時まで「期限間近」にならなかった。
-   * 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ。日付になっていない値は判定しない (以前も NaN の比較で false)
-   */
-  const isExpiringSoon = (dateStr: string | null): boolean => {
-    if (!isCalendarDate(dateStr)) return false;
-    return dateStr >= expiryToday && dateStr <= addDaysToDate(expiryToday, EXPIRING_SOON_DAYS);
-  };
 
   return (
     <div className="min-h-screen pb-24" style={{ backgroundColor: colors.bg }}>
@@ -466,69 +452,82 @@ export default function PantryPage() {
           </div>
         ) : (
           <div className="space-y-2">
-            {items.map((item) => (
-              <motion.div
-                key={item.id}
-                layout
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, x: -20 }}
-                role="button"
-                tabIndex={0}
-                onClick={() => openEditItem(item)}
-                onKeyDown={(e) => { if (e.key === 'Enter') openEditItem(item); }}
-                className="flex items-center justify-between p-4 rounded-2xl cursor-pointer"
-                style={{ backgroundColor: colors.card }}
-              >
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="font-medium truncate" style={{ color: colors.text }}>{item.name}</p>
-                    {item.expirationDate && isExpiringSoon(item.expirationDate) && (
-                      <span
-                        data-testid="expiry-soon-badge"
-                        className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: colors.errorLight, color: colors.dangerText }}
-                      >
-                        期限間近
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <span className="text-xs" style={{ color: colors.textMuted }}>
-                      {categoryLabel[item.category] || item.category}
-                    </span>
-                    {item.amount && (
-                      <span className="text-xs" style={{ color: colors.textMuted }}>・{item.amount}</span>
-                    )}
-                    {item.expirationDate && (
-                      <span
-                        className="text-xs"
-                        style={{ color: isExpiringSoon(item.expirationDate) ? colors.dangerText : colors.textMuted }}
-                      >
-                        ・{item.expirationDate}まで
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {/* UX2-18: 編集不可だった機能非対称を解消 */}
-                <button
-                  onClick={(e) => { e.stopPropagation(); openEditItem(item); }}
-                  aria-label="編集"
-                  className="ml-2 p-2 rounded-full"
-                  style={{ color: colors.textMuted }}
+            {items.map((item) => {
+              const expiryStatus = classifyPantryExpiry(item.expirationDate, expiryToday);
+              return (
+                <motion.div
+                  key={item.id}
+                  layout
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, x: -20 }}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openEditItem(item)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') openEditItem(item); }}
+                  className="flex items-center justify-between p-4 rounded-2xl cursor-pointer"
+                  style={{ backgroundColor: colors.card }}
                 >
-                  <Pencil size={16} />
-                </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
-                  aria-label="削除"
-                  className="ml-1 p-2 rounded-full"
-                  style={{ color: colors.textMuted }}
-                >
-                  <Trash2 size={16} />
-                </button>
-              </motion.div>
-            ))}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium truncate" style={{ color: colors.text }}>{item.name}</p>
+                      {/* 期限切れ / 期限間近のバッジ (#1602。判定はモバイルの食品庫と同じ classifyPantryExpiry) */}
+                      {expiryStatus === "expired" && (
+                        <span
+                          data-testid="expiry-expired-badge"
+                          className="text-xs font-semibold px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: colors.dangerText, color: colors.card }}
+                        >
+                          期限切れ
+                        </span>
+                      )}
+                      {expiryStatus === "expiringSoon" && (
+                        <span
+                          data-testid="expiry-soon-badge"
+                          className="text-xs px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: colors.errorLight, color: colors.dangerText }}
+                        >
+                          期限間近
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className="text-xs" style={{ color: colors.textMuted }}>
+                        {categoryLabel[item.category] || item.category}
+                      </span>
+                      {item.amount && (
+                        <span className="text-xs" style={{ color: colors.textMuted }}>・{item.amount}</span>
+                      )}
+                      {item.expirationDate && (
+                        <span
+                          className="text-xs"
+                          style={{ color: expiryStatus !== "normal" ? colors.dangerText : colors.textMuted }}
+                        >
+                          ・{item.expirationDate}まで
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* UX2-18: 編集不可だった機能非対称を解消 */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); openEditItem(item); }}
+                    aria-label="編集"
+                    className="ml-2 p-2 rounded-full"
+                    style={{ color: colors.textMuted }}
+                  >
+                    <Pencil size={16} />
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(item.id); }}
+                    aria-label="削除"
+                    className="ml-1 p-2 rounded-full"
+                    style={{ color: colors.textMuted }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </div>

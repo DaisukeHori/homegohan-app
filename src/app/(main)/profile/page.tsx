@@ -16,6 +16,7 @@ import { assignAtPath } from "@/lib/assign-at-path";
 import type { UserProfile, FitnessGoal, WorkStyle, CookingExperience, DietStyle } from "@/types/domain";
 import { Icons } from "@/components/icons";
 import { ChevronRight, ChevronLeft, Check, Sparkles } from "lucide-react";
+import { normalizeProfileName } from "@/lib/profile-name";
 
 type TabType = 'basic' | 'goals' | 'sports' | 'health' | 'diet' | 'cooking' | 'lifestyle';
 
@@ -132,6 +133,10 @@ function ProfilePageContent() {
   const [isGuidedMode, setIsGuidedMode] = useState(false);
   const [guidedTabs, setGuidedTabs] = useState<TabType[]>([]);
   const [guidedStepIndex, setGuidedStepIndex] = useState(0);
+
+  // 見出しとアイコンに出す名前。名前が無いときに入る仮置きの 'Guest' は名前として出さず、メールアドレスの @ の前に寄せる (#1649)。
+  // 編集の入力欄 (editForm) は保存されている値をそのまま出す
+  const headerName = normalizeProfileName(profile?.nickname);
 
   useEffect(() => {
     const getData = async () => {
@@ -409,11 +414,11 @@ function ProfilePageContent() {
             <div className="flex flex-col items-center relative z-10">
               <div className="w-20 h-20 rounded-full p-1 bg-gradient-to-tr from-orange-400 to-orange-300 mb-4">
                 <div className="w-full h-full rounded-full bg-white border-4 border-white overflow-hidden flex items-center justify-center text-2xl font-bold text-orange-400">
-                  {profile?.nickname?.[0] || user?.email?.[0]?.toUpperCase() || '👤'}
+                  {headerName?.[0] || user?.email?.[0]?.toUpperCase() || '👤'}
                 </div>
               </div>
 
-              <h1 className="text-xl font-bold text-gray-900 mb-1">{profile?.nickname || user?.email?.split('@')[0]}</h1>
+              <h1 className="text-xl font-bold text-gray-900 mb-1">{headerName || user?.email?.split('@')[0]}</h1>
               <p className="text-sm text-gray-400 mb-4">{profile?.goalText || "目標を設定しましょう"}</p>
 
               {/* プロファイル完成度 */}

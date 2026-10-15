@@ -94,8 +94,10 @@ cd apps/mobile && npx expo start
 # Edge Functionsデプロイ
 npx supabase functions deploy <関数名> --project-ref flmeolcfutuwwbjmzyoz
 
-# 型生成
-npx supabase gen types typescript --project-id flmeolcfutuwwbjmzyoz > types/database.ts
+# 型生成 (本番に接続しない。ローカルの Supabase から作り、標準出力に出す。PostgrestVersion の扱いと
+# packages/shared への写しを含む手順の正本は docs/design/operator/09-runbook.md の「5. 型の再生成」)
+bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh reset
+npm run -s types:supabase > /tmp/database.types.generated.ts
 ```
 
 ---

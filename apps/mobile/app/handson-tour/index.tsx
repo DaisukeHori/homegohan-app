@@ -29,6 +29,7 @@ import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { TourProgress } from '../../src/handson-tour/TourProgress';
 import { useReducedMotion } from '../../src/handson-tour/useReducedMotion';
 import { getApi } from '../../src/lib/api';
+import { getAnalyticsAppVersion } from '../../src/lib/app-version';
 import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 
 const i18n = HANDSON_TOUR_I18N_JA.tour;
@@ -70,7 +71,7 @@ export default function HandsonTourWelcome() {
       user_id: profile.id,
       timestamp: now,
       platform: tourAnalyticsPlatform(),
-      app_version: '1.0.0',
+      app_version: getAnalyticsAppVersion(),
     };
     fireAnalytics('handson_tour_eligible', { ...common, entry_source: 'auto' as const });
     fireAnalytics('handson_tour_step_viewed', { ...common, step: 0 });
@@ -87,7 +88,7 @@ export default function HandsonTourWelcome() {
     if (profile?.id) {
       const now = new Date().toISOString();
       const dwell_ms = Date.now() - mountTimeRef.current;
-      const common = { user_id: profile.id, timestamp: now, platform: tourAnalyticsPlatform(), app_version: '1.0.0' };
+      const common = { user_id: profile.id, timestamp: now, platform: tourAnalyticsPlatform(), app_version: getAnalyticsAppVersion() };
       fireAnalytics('handson_tour_started', { ...common, entry_source: 'auto' as const });
       fireAnalytics('handson_tour_step_completed', { ...common, step: 0, dwell_ms });
     }
@@ -103,7 +104,7 @@ export default function HandsonTourWelcome() {
         user_id: profile.id,
         timestamp: new Date().toISOString(),
         platform: tourAnalyticsPlatform(),
-        app_version: '1.0.0',
+        app_version: getAnalyticsAppVersion(),
         step: 0,
         reason: 'user_action',
       });
