@@ -35,7 +35,7 @@ export type AiGenerationAction =
   | { type: 'GEN_START'; payload?: { meal?: { dayIndex: number; mealType: MealType } } }
   | { type: 'GEN_PROGRESS'; payload: GenerationProgress }
   | { type: 'GEN_PROGRESS_CLEAR' }
-  | { type: 'GEN_PROGRESS_IF_EMPTY'; payload: GenerationProgress }
+  | { type: 'GEN_PROGRESS_WHILE_GENERATING'; payload: GenerationProgress }
   | { type: 'GEN_RESUME_PENDING'; payload: GenerationProgress }
   | { type: 'GEN_SUCCESS' }
   | { type: 'GEN_FAIL'; payload: { error: string | null; requestId: string | null } }
@@ -105,14 +105,17 @@ export function aiGenerationReducer(
     case 'GEN_PROGRESS_CLEAR':
       return { ...state, generationProgress: null };
 
-    // #1644: 「今の進捗が null のときだけ置く」。ポーリング (restoreGeneration・献立の改善) が、Realtime が届いていない間も
-    // DB の進捗で表示を保つための action。判定は reducer の中で今の状態に対して行う
-    // (以前は setGenerationProgress((prev) => prev ?? ...) の関数形で、prev がその setter を握った描画の時点の値 (null) で
-    // 解決され、今の進捗を DB の値で置き直していた)。
-    // 今が null のときは GEN_PROGRESS と同じ (前の進捗が無いので Math.max のクランプも同じ形で通す)。
-    // 今に進捗があるときは何も変えない (同じ state をそのまま返す)。
-    case 'GEN_PROGRESS_IF_EMPTY':
-      if (state.generationProgress !== null) return state;
+    // #1663: ポーリング (V4 の生成・献立の改善) が DB から読んだ進捗を置く action。
+    // 生成中 (isGenerating) のときだけ GEN_PROGRESS と同じに置く (割合は Math.max で戻らない。Realtime も GEN_PROGRESS なので、
+    // Realtime が届くときはそちらが先に進み、遅れて着いたポーリングの応答で割合が戻らない)。
+    // 生成中でないとき (完了・失敗・中止で GEN_SUCCESS / GEN_FAIL / setIsGenerating(false) が先に着いた) は何も変えない
+    // (同じ state をそのまま返す)。判定は reducer の中で今の状態に対して行う (ポーリングの closure は前の描画の isGenerating を握っているため)。
+    // 別の生成が始まったあと (isGenerating はまた true) に着いた前の生成の応答は、呼び出し側の監視の印 (#1657) で止める。
+    // 以前 (#1644) はポーリングが「今の進捗が null のときだけ置く」action (GEN_PROGRESS_IF_EMPTY) を使い、生成の開始で
+    // 初期の進捗 (3% / 5%) を置いたあとは一度も DB の進捗を置かず、Realtime がつながらない間は完了まで初期の進捗のまま止まって見えた
+    // (その action は、要る経路が無くなったので外した)。
+    case 'GEN_PROGRESS_WHILE_GENERATING':
+      if (!state.isGenerating) return state;
       return aiGenerationReducer(state, { type: 'GEN_PROGRESS', payload: action.payload });
 
     // #1629: 画面に入り直して生成中の行 (GET /api/ai/menu/weekly/pending) を見つけたときの復元。

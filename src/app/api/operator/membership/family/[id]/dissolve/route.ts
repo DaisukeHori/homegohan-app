@@ -13,8 +13,10 @@ import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
 import { renderForceDissolveEmail } from '@/lib/emails/membership/operator-force-dissolve';
+import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,6 +72,20 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       return internalError(ROUTE_NAME, rpcError, { userId: operatorId }, { shape: 'nested' });
     }
 
+    // 監査ログ (#1571)。RPC が書く membership_audit とは別に、運営の操作として admin_audit_logs にも 1 行残す
+    // (操作した人の IP・User-Agent はこちらにだけ残る)。記録に失敗しても操作は完了のまま (失敗は db-logger に残る)
+    await recordAdminAudit({
+      supabase,
+      actorId: operatorId,
+      actionType: 'super_admin.family.dissolve',
+      targetId: familyId,
+      targetType: 'family_group',
+      details: { reason },
+      severity: 'critical',
+      request: req,
+      routeName: ROUTE_NAME,
+    });
+
     // 通知メール (best-effort)。解散はすでに完了しているので、失敗しても 200 を返し、ログに残す。
     // ログには宛先のメールアドレスを残さない。
     const log = logger.withUser(operatorId);
@@ -96,7 +112,9 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         .in('id', userIds);
       const nicknameMap: Record<string, string> = {};
       for (const p of profiles ?? []) {
-        nicknameMap[p.id] = p.nickname ?? '';
+        // 名前が無い (空・空白だけ・仮置きの 'Guest') 人は入れない。メールはアドレスを宛名にする (#1649)
+        const name = normalizeProfileName(p.nickname);
+        if (name) nicknameMap[p.id] = name;
       }
 
       const familyName = preFg?.name ?? '';

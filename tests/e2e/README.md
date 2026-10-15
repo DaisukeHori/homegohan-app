@@ -109,7 +109,7 @@ HAR にはログイン要求のパスワードやアクセストークンが平�
 
 | ワークフロー | 対象 | テストユーザー |
 |---|---|---|
-| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。既定 (強制なし・お知らせなし) のサーバーと、`LEGAL_CONSENT_ENFORCE=on`・`LEGAL_CONSENT_NOTICE=on` でそれぞれ別ポートに起動したサーバーの 3 回)、未同意なら AI へ送らないことと同意画面を確かめる `ai-consent-first-use.spec.ts` (#1154)、Cloudflare Turnstile の `auth-turnstile.spec.ts` (#1165)、主要ペルソナ (家族・admin・super_admin) の happy path の `family/01-invite-accept-share.spec.ts`・`operator/01-admin-flow.spec.ts`・`operator/02-super-admin-flow.spec.ts` (#856。ユーザーは test ごとに service_role で作る)、ハンズオンツアー (初回の使い方ガイド) の判定 API と Step 0〜4・スキップ・やり直しの `tour/01〜07` (#846。同じくユーザーは test ごとに作る。`tests/e2e-tour-contract.test.ts` が skip を書かないことと、この一覧から外れないことを検査する)、週の献立の生成 (キュー・進捗・失敗の表示) の嫌がらせの `w5-3-menu-gen-adversarial.spec.ts` と `wave2-f2-queue-reliability.spec.ts` (#1622。画面が読む生成の API はブラウザの通信を差し替え、API へ直接送る検査 (入力の検証・5xx にならないこと) は本物のサーバーに送る。`tests/e2e-menu-queue-suite.test.ts` がこの一覧から外れないことを検査する) を実行。アプリは Cloudflare 公式のテスト用サイトキー付きでビルドする | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
+| `.github/workflows/e2e-local.yml` | PR のコード。ローカルの Supabase (`scripts/supabase-local.sh`) と本番ビルド (`next build && next start`) で、MVP のうち AI を使わない 01 / 04 / 05 と、未ログインで読める公開ページの `public-policy-pages.spec.ts` (利用規約・プライバシーポリシー #1174)、規約の再同意ゲートの `legal-consent-gate.spec.ts` (#1174。既定 (強制なし・お知らせなし) のサーバーと、`LEGAL_CONSENT_ENFORCE=on`・`LEGAL_CONSENT_NOTICE=on` でそれぞれ別ポートに起動したサーバーの 3 回)、未同意なら AI へ送らないことと同意画面を確かめる `ai-consent-first-use.spec.ts` (#1154)、Cloudflare Turnstile の `auth-turnstile.spec.ts` (#1165)、主要ペルソナ (家族・admin・super_admin) の happy path の `family/01-invite-accept-share.spec.ts`・`operator/01-admin-flow.spec.ts`・`operator/02-super-admin-flow.spec.ts` (#856。ユーザーは test ごとに service_role で作る)、ハンズオンツアー (初回の使い方ガイド) の判定 API と Step 0〜4・スキップ・やり直しの `tour/01〜07` (#846。同じくユーザーは test ごとに作る。`tests/e2e-tour-contract.test.ts` が skip を書かないことと、この一覧から外れないことを検査する)、週の献立の生成 (キュー・進捗・失敗の表示) の嫌がらせの `w5-3-menu-gen-adversarial.spec.ts` と `wave2-f2-queue-reliability.spec.ts` (#1622。画面が読む生成の API はブラウザの通信を差し替え、API へ直接送る検査 (入力の検証・5xx にならないこと) は本物のサーバーに送る。本物の生成の API へ送るテストと生成のモーダルから送るテストは、生成のレート制限 (利用者ごとに 1 分 5 回) と 1 日の AI の上限を共通のテストユーザーで分け合わないよう、テストごとに作るユーザー (`regularUser`) を使う (#1672)。`tests/e2e-menu-queue-suite.test.ts` がこの一覧から外れないことを検査する) を実行。アプリは Cloudflare 公式のテスト用サイトキー付きでビルドする | 実行ごとにローカルの DB に作る (`scripts/create-e2e-accounts.ts`、パスワードは実行ごとにランダム) |
 | `.github/workflows/e2e.yml` | 本番 URL。ローカル dev server は起動しない | 本番の `e2e-user-01〜04@homegohan.test`。Secrets `E2E_USER_EMAIL` (= `e2e-user-01@homegohan.test`) / `E2E_USER_PASSWORD` が必要 (未設定ならジョブを最初に止める) |
 
 本番のテストユーザーのパスワードはランダムな値で、Secrets `E2E_USER_PASSWORD` にだけ置く (リポジトリにも `.env.local` の共有にも書かない)。
@@ -148,6 +148,13 @@ Supabase の Auth API はブラウザの通信を差し替えるので、Supabas
   同じビルドで `01-login.spec.ts` も動くので、実際のウィジェットがトークンを出すのを待ってからログインし (`E2E_REQUIRE_TURNSTILE=1` ではウィジェットが無ければ失敗)、
   トークンが `POST /api/auth/login` の本文に付いて届くことも確かめる。こちらは API を差し替えず、本物のサーバーでログインまで通す。
   ローカルの Supabase は CAPTCHA を有効にしない (有効にすると、トークン無しで認証する結合テストが全部止まる)。
+- **「新規登録」「メール確認の再送 (#1474)」「`api.js` を読み込めないとき」は、外のネットワークに繋がない** (#1672)。テスト用サイトキーでも、ウィジェットの本体 (`api.js`) と
+  iframe は `challenges.cloudflare.com` から読むので、外の通信の遅れ・失敗で常設の e2e が落ちることがあった。この 3 つは
+  `helpers/turnstile-offline.ts` で `challenges.cloudflare.com` への通信を手元の応答に差し替え、テスト用サイトキーが出すのと同じ
+  ダミーのトークン (`XXXX.DUMMY.TOKEN.XXXX`) を出す (新規登録・再送では、それが Supabase への要求に入ることを確かめる)。URL は本物と同じなので、CSP の判定はそのまま受ける。
+  本物の `api.js` がこのアプリの CSP の下でトークンを出すことは、ログイン・パスワード再設定のテストが確かめる。
+  ほかの spec でも、確かめたいことが Turnstile でないのに、ウィジェットのトークンが出るまで押せないボタンを押すときは、同じ道具で外のネットワークに繋がない
+  (`legal-consent-gate.spec.ts` のサインアップ画面の同意のチェック)。
 - **ログイン・新規登録・パスワード再設定の画面では `networkidle` を待たない**。ウィジェットが Cloudflare と通信し続けるので成り立たず、
   テストの時間切れまで待ち続ける。フォームを使うときは `helpers/login-form.ts` の `waitForLoginFormReady` (入力欄・ウィジェットのトークン・
   押せる送信ボタンを待つ)、画面を開くだけなら `waitForLoadState("load")` を使う。`src/__tests__/config/e2e-auth-page-wait.test.ts` が検査する。

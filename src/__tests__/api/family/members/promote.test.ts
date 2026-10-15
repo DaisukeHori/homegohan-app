@@ -360,6 +360,22 @@ describe('POST /api/family/members/[member_id]/promote', () => {
     });
   });
 
+  // #1649: RPC は COALESCE(nickname, email) で依頼者名を返すので、名前が無い人は仮置きの 'Guest' が届く。名前として載せない
+  it.each([
+    ['Guest', validUser.email],
+    [' Guest ', validUser.email],
+    ['   ', validUser.email],
+    ['guest', 'guest'],
+    [' 山田花子 ', '山田花子'],
+  ])('RPC の requester_name が %j なら、メールの依頼者名は %j (#1649)', async (requesterName, expected) => {
+    mockRpc.mockResolvedValue({ data: { ...rpcResult, requester_name: requesterName }, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(renderFamilyPromoteEmail).toHaveBeenCalledWith(expect.objectContaining({ requester_name: expected }));
+  });
+
   it('NEXT_PUBLIC_APP_URL が未設定なら accept_url はサイトの URL の既定値 (DEFAULT_SITE_URL) を基点にする', async () => {
     vi.stubEnv('NEXT_PUBLIC_APP_URL', undefined);
     mockRpc.mockResolvedValue({ data: rpcResult, error: null });

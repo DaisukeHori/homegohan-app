@@ -271,15 +271,19 @@ ASCII では 3 個のドットを示しているが、実装上は **5 個** が
 ### 6.4 nickname 取得
 
 ```ts
+// web・mobile 共通: 呼びかけの名前は §7.2 の handsonTourNickname で決める
+// (仮置きの 'Guest'・空・空白だけ・null は 'あなた'。30 文字を超えたら切って「…」)
+import { handsonTourNickname } from '@homegohan/shared';
+
 // web
 import { useUser } from '@/hooks/useUser';
 const { profile } = useUser();
-const nickname = profile?.nickname?.trim() || 'あなた';
+const nickname = handsonTourNickname(profile?.nickname);
 
-// mobile
+// mobile (apps/mobile/src/handson-tour/safe-nickname.ts の safeNickname は同じ関数を読み直したもの)
 import { useProfile } from '@/hooks/useProfile';
 const profile = useProfile();
-const nickname = profile?.nickname?.trim() || 'あなた';
+const nickname = handsonTourNickname(profile?.nickname);
 ```
 
 ---

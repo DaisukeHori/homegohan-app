@@ -175,7 +175,7 @@ refresh_token をローテーションしてしまわないようにするため
 
 #### ログアウト時フロー
 
-順の正は `apps/mobile/src/lib/signOut.ts` (設定・マイページのログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
+順の正は `apps/mobile/src/lib/signOut.ts` (設定画面のログアウトは `signOutOnDevice`、退会のあとは `signOutAfterAccountDeletion`)。
 未ログインになるほかの経路 (起動時・`SIGNED_OUT`) との関係は `apps/mobile/src/providers/AuthProvider.tsx` の先頭の表と 05-auth-session.md §3。
 
 ```
@@ -513,6 +513,8 @@ apps/mobile/
 - `apps/mobile/assets/handson-tour/sample-meal.jpg` 新規(~200KB、Web から cp)
 
 詳細行数目安は family/09 §16-files-structure.md §1.3 参照(合計 ~1740 行)。
+
+上の木は設計時の一覧。あとから `src/handson-tour/` に足したファイル (`useLeaveTour.ts`・`tour-platform.ts`・`safe-nickname.ts`・`photo-save-failure.ts`・`menu-tour-profile.ts`・`tour-bubbles.ts`) を含むいまの一覧は 16-files-structure.md の §1.3 の表と §5 の木 (`tests/handson-tour-files-structure-doc.test.ts` が実ファイルと突き合わせる)。
 
 ### 12.4 既存ファイル修正
 
