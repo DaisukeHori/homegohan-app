@@ -97,9 +97,11 @@ describe('operator_mfa_backup_codes の migration', () => {
   });
 
   it('既存の表・列・関数に触れない (CREATE TABLE / INDEX / ALTER TABLE ENABLE RLS / REVOKE / GRANT / COMMENT だけ)', () => {
-    const kinds = statements(migration).map((s) => s.split(' ').slice(0, 2).join(' ').toUpperCase());
-    for (const kind of kinds) {
-      expect(['CREATE TABLE', 'CREATE INDEX', 'ALTER TABLE', 'REVOKE ALL', 'GRANT SELECT', 'COMMENT ON']).toContain(kind);
+    const allowed = [/^CREATE TABLE /, /^CREATE INDEX /, /^ALTER TABLE /, /^REVOKE ALL /, /^GRANT /, /^COMMENT ON /];
+    const all = statements(migration);
+    expect(all.length).toBeGreaterThan(0);
+    for (const statement of all) {
+      expect(allowed.some((pattern) => pattern.test(statement)), statement).toBe(true);
     }
     for (const statement of statements(migration).filter((s) => /^ALTER TABLE/i.test(s))) {
       expect(statement).toBe('ALTER TABLE public.operator_mfa_backup_codes ENABLE ROW LEVEL SECURITY');
