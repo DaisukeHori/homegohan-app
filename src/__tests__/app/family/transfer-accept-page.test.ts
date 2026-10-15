@@ -38,7 +38,7 @@ let root: Root;
 let client: ReturnType<typeof createPageClient>;
 
 /** 山田家の代表者 (花子) から、ログイン中の自分 (太郎) への譲渡提案。期限内で pending */
-function buildClient(options: { proposerProfileReadable: boolean }) {
+function buildClient(options: { proposerProfileReadable: boolean; proposerNickname?: string }) {
   return createPageClient({
     userId: ids.ME_ID,
     tables: {
@@ -56,7 +56,9 @@ function buildClient(options: { proposerProfileReadable: boolean }) {
       ],
       family_groups: [{ id: ids.FAMILY_ID, name: '山田家' }],
       // 他人の user_profiles は RLS で読めないことが多い。読める場合 (将来のポリシー変更など) と読めない場合の両方を確かめる
-      user_profiles: options.proposerProfileReadable ? [{ id: ids.OLD_REP_ID, nickname: '花子' }] : [],
+      user_profiles: options.proposerProfileReadable
+        ? [{ id: ids.OLD_REP_ID, nickname: options.proposerNickname ?? '花子' }]
+        : [],
     },
   });
 }
@@ -118,5 +120,29 @@ describe('家族の代表者譲渡の承諾ページ: 提案者の読み取り (
     expect(container.textContent).toContain('山田家');
     const labels = Array.from(container.querySelectorAll('button')).map((button) => button.textContent);
     expect(labels).toEqual(expect.arrayContaining(['承諾する (代表者になる)', '拒否する']));
+  });
+});
+
+describe('家族の代表者譲渡の承諾ページ: 名前が無い提案者 (#1649)', () => {
+  it.each(['Guest', ' Guest '])(
+    "提案者の名前が仮置きの '%s' なら、名前として出さず「代表者」と表示する",
+    async (nickname) => {
+      client = buildClient({ proposerProfileReadable: true, proposerNickname: nickname });
+      state.client = client;
+
+      await renderPage();
+
+      expect(container.textContent).toContain('代表者 様から');
+      expect(container.textContent).not.toContain('Guest');
+    },
+  );
+
+  it('本人が付けた名前は前後の空白を除いて出す', async () => {
+    client = buildClient({ proposerProfileReadable: true, proposerNickname: '  花子 ' });
+    state.client = client;
+
+    await renderPage();
+
+    expect(container.textContent).toContain('花子 様から');
   });
 });

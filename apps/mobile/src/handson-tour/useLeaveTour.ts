@@ -10,6 +10,7 @@ import { BackHandler } from 'react-native';
 import { fireAnalytics } from '@homegohan/handson-tour-shared';
 
 import { getApi } from '../lib/api';
+import { getAnalyticsAppVersion } from '../lib/app-version';
 import { tourAnalyticsPlatform } from './tour-platform';
 
 /** ツアーを抜けたことを記録する API (handson_tour_skipped_at を付ける。src/app/api/handson-tour/skip/route.ts) */
@@ -47,7 +48,7 @@ export function useLeaveTour(step: TourLeavableStep, userId: string | undefined)
           user_id: userId,
           timestamp: new Date().toISOString(),
           platform: tourAnalyticsPlatform(),
-          app_version: '1.0.0',
+          app_version: getAnalyticsAppVersion(),
           step,
           reason,
         });

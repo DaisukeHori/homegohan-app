@@ -3,7 +3,7 @@ import * as ImagePicker from "expo-image-picker";
 import { Link } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Image, Pressable, ScrollView, Text, View } from "react-native";
-import { addDaysToDate, isCalendarDate, todayLocal } from "@homegohan/shared";
+import { addDaysToDate, classifyPantryExpiry, todayLocal } from "@homegohan/shared";
 
 import { Button } from "../../src/components/ui/Button";
 import { Card } from "../../src/components/ui/Card";
@@ -87,28 +87,11 @@ type FridgeIngredient = {
   daysRemaining: number;
 };
 
-/** 「期限間近」とみなす期限の範囲 (今日から何日後の期限までか。今日が期限のものも含む)。#1594 の前と同じ 3 日 */
-const EXPIRING_SOON_DAYS = 3;
-
 /*
- * 期限の判定は、画面の今日 (todayLocal = 日本の暦日) と期限の日付 (YYYY-MM-DD) を暦日どうしで比べる (#1594)。
- * 以前は期限を new Date(dateStr) (その日の UTC の 0 時 = 日本の 9 時) にして今の時刻と比べていたので、
- * 期限の日の日本の 9 時から「期限切れ」になり (期限の日のうちは期限切れにしないのが正しい)、「期限間近」の境目も 9 時間ずれていた。
- * 4 桁の年の YYYY-MM-DD どうしは、文字列の大小が日付の前後と同じ。日付になっていない値は判定しない (以前も NaN の比較で false)。
- * today は画面が描画のたびに求める todayLocal() (expiryToday)
+ * 期限の判定 (期限切れ / 期限間近 / それ以外) は @homegohan/shared の classifyPantryExpiry (#1602。Web の食品庫と同じ関数)。
+ * 画面の今日 (todayLocal = 日本の暦日) と期限の日付 (YYYY-MM-DD) を暦日どうしで比べる (#1594)。
+ * 「期限間近」の日数は全画面共通の PANTRY_EXPIRING_SOON_DAYS (3 日)。today は画面が描画のたびに求める todayLocal() (expiryToday)
  */
-
-/** 期限 (YYYY-MM-DD) が今日 (日本の暦日) より前か */
-function isExpired(dateStr: string | null, today: string): boolean {
-  if (!isCalendarDate(dateStr)) return false;
-  return dateStr < today;
-}
-
-/** 期限 (YYYY-MM-DD) が今日から EXPIRING_SOON_DAYS 日後まで (両端を含む) か */
-function isExpiringSoon(dateStr: string | null, today: string): boolean {
-  if (!isCalendarDate(dateStr)) return false;
-  return dateStr >= today && dateStr <= addDaysToDate(today, EXPIRING_SOON_DAYS);
-}
 
 export default function PantryPage() {
   const [items, setItems] = useState<PantryItem[]>([]);
@@ -642,12 +625,12 @@ export default function PantryPage() {
                       <Text style={{ fontWeight: "400", color: colors.textLight }}>{`  ${it.amount}`}</Text>
                     ) : null}
                   </Text>
-                  {isExpired(it.expirationDate, expiryToday) && (
+                  {classifyPantryExpiry(it.expirationDate, expiryToday) === "expired" && (
                     <View testID={`pantry-expired-badge-${it.id}`} style={{ backgroundColor: "#EF9A9A", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
                       <Text style={{ fontSize: 11, color: "#B71C1C", fontWeight: "600" }}>期限切れ</Text>
                     </View>
                   )}
-                  {!isExpired(it.expirationDate, expiryToday) && isExpiringSoon(it.expirationDate, expiryToday) && (
+                  {classifyPantryExpiry(it.expirationDate, expiryToday) === "expiringSoon" && (
                     <View testID={`pantry-expiring-badge-${it.id}`} style={{ backgroundColor: "#FFEBEE", borderRadius: 10, paddingHorizontal: 8, paddingVertical: 2 }}>
                       <Text style={{ fontSize: 11, color: colors.error, fontWeight: "600" }}>期限間近</Text>
                     </View>
@@ -663,8 +646,8 @@ export default function PantryPage() {
                     </Text>
                   </View>
                   <View style={{ flexDirection: "row", alignItems: "center", gap: spacing.xs }}>
-                    <Ionicons name="calendar-outline" size={14} color={(isExpired(it.expirationDate, expiryToday) || isExpiringSoon(it.expirationDate, expiryToday)) ? colors.error : colors.textMuted} />
-                    <Text style={{ fontSize: 13, color: (isExpired(it.expirationDate, expiryToday) || isExpiringSoon(it.expirationDate, expiryToday)) ? colors.error : colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
+                    <Ionicons name="calendar-outline" size={14} color={classifyPantryExpiry(it.expirationDate, expiryToday) !== "normal" ? colors.error : colors.textMuted} />
+                    <Text style={{ fontSize: 13, color: classifyPantryExpiry(it.expirationDate, expiryToday) !== "normal" ? colors.error : colors.textMuted }}>期限: {it.expirationDate ?? "-"}</Text>
                   </View>
                 </View>
 

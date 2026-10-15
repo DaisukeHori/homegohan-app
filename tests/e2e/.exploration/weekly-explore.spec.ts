@@ -24,6 +24,8 @@
 import { test, expect } from "../fixtures/auth";
 import * as fs from "fs";
 import * as path from "path";
+import { addDaysToDate, todayLocal } from "../../../packages/shared/src/date-utils";
+import { jstThisMonday } from "../helpers/jst-week";
 
 // ============================================================
 // Helpers
@@ -49,19 +51,9 @@ async function saveJson(name: string, data: unknown) {
   console.log(`[json] ${filePath}`);
 }
 
-function getThisMonday(): string {
-  const d = new Date();
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d.toISOString().slice(0, 10);
-}
-
-function addDaysStr(dateStr: string, days: number): string {
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
+// 今週の月曜日は jstThisMonday、今日は todayLocal、前後の日は addDaysToDate (いずれも JST の暦日) で作る (#1564)。
+// ページはブラウザ (Asia/Tokyo) の JST の暦日で週と今日を決めるので、プロセス (CI は UTC) の new Date() から作ると
+// JST の 0:00〜8:59 は 1 日 (月曜なら 1 週間) 前になる。
 
 const FAKE_REQUEST_ID = "00000000-0000-0000-0000-000000001234";
 
@@ -286,7 +278,7 @@ test("S3+S4: range モードで生成ボタン → POST /api/ai/menu/v5/generate
 // S5: 進捗バー表示 (queued → processing) — モック使用
 // ============================================================
 test("S5: queued ステータスで進捗バーが表示される (mock)", async ({ authedPage: page }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   // pending API をモック: queued 状態を返す
   await page.route("**/api/ai/menu/weekly/pending*", async (route) => {
@@ -363,7 +355,7 @@ test("S5: queued ステータスで進捗バーが表示される (mock)", async
 // S6: タブを切り替えて戻る → 進捗バー復元
 // ============================================================
 test("S6: タブ切替後に進捗バーが復元される (mock)", async ({ authedPage: page, context }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await page.route("**/api/ai/menu/weekly/pending*", async (route) => {
     await route.fulfill({
@@ -611,7 +603,7 @@ test("S7+S8: 実際の生成を開始し completed まで観察 (最大 3 分)",
 test("S9: failed ステータスでエラーモーダルと再試行ボタンが表示される (mock)", async ({
   authedPage: page,
 }) => {
-  const weekStr = getThisMonday();
+  const weekStr = jstThisMonday();
 
   await page.route("**/api/ai/menu/weekly/pending*", async (route) => {
     await route.fulfill({
@@ -968,9 +960,8 @@ test("S13: 6 日範囲 generation — v5/generate に送られる slot 数を確
   await page.waitForTimeout(500);
 
   // 6 日間の範囲を設定: 開始日 = 今日, 終了日 = 今日 + 5
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const sixDaysLater = addDaysStr(todayStr, 5);
+  const todayStr = todayLocal();
+  const sixDaysLater = addDaysToDate(todayStr, 5);
 
   // 開始日を設定
   const startDateInput = page.locator("input[type='date']").nth(0);

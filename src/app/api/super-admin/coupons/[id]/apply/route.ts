@@ -24,6 +24,7 @@ import { CouponApplySchema } from '@/lib/super-admin/coupons-schemas';
 import { applyCoupon, CouponApplyError } from '@/lib/plan/coupon';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { couponInvalidInputResponse } from '@/lib/super-admin/coupon-errors';
+import { invalidJsonBodyResponse, readJsonBody } from '@/lib/super-admin/validation-errors';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -38,7 +39,12 @@ export async function POST(request: NextRequest, props: RouteContext) {
     const supabaseAdmin = getSupabaseAdmin();
     const supabase = await createClient();
 
-    const body = await request.json();
+    const bodyResult = await readJsonBody(request);
+    if (!bodyResult.ok) {
+      // #1654: 本文が JSON として読めないときは 400 OP_INVALID_INPUT (外側の catch の 500 に落とさない)
+      return invalidJsonBodyResponse();
+    }
+    const body = bodyResult.body;
     const parseResult = CouponApplySchema.safeParse(body);
 
     if (!parseResult.success) {

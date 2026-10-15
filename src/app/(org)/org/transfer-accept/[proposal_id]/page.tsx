@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { normalizeProfileName } from "@/lib/profile-name";
 
 interface ProposalInfo {
   id: string;
@@ -183,7 +184,7 @@ export default function TransferAcceptPage() {
             <div className="flex justify-between text-sm">
               <span className="text-gray-500">提案者</span>
               <span className="font-medium text-gray-900">
-                {fromUser?.nickname ?? '(不明)'}
+                {normalizeProfileName(fromUser?.nickname) ?? '(不明)'}
               </span>
             </div>
             <div className="flex justify-between text-sm">

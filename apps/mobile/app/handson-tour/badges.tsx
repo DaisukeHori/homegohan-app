@@ -24,7 +24,9 @@ import type { SubStepOfStep3 } from '@homegohan/handson-tour-shared';
 import { useProfile } from '../../src/providers/ProfileProvider';
 import { safeNickname } from '../../src/handson-tour/safe-nickname';
 import { TourOverlay } from '../../src/handson-tour/TourOverlay';
+import { buildBadgesTourBubble } from '../../src/handson-tour/tour-bubbles';
 import { getApi } from '../../src/lib/api';
+import { getAnalyticsAppVersion } from '../../src/lib/app-version';
 import { useLeaveTour, useTourHardBack } from '../../src/handson-tour/useLeaveTour';
 import { tourAnalyticsPlatform } from '../../src/handson-tour/tour-platform';
 
@@ -55,7 +57,7 @@ export default function HandsonTourBadges() {
       user_id: profile.id,
       timestamp: new Date().toISOString(),
       platform: tourAnalyticsPlatform(),
-      app_version: '1.0.0',
+      app_version: getAnalyticsAppVersion(),
       step: 3,
     });
   }, [profile?.id]);
@@ -121,7 +123,7 @@ export default function HandsonTourBadges() {
             user_id: profile.id,
             timestamp: new Date().toISOString(),
             platform: tourAnalyticsPlatform(),
-            app_version: '1.0.0',
+            app_version: getAnalyticsAppVersion(),
             step: 3,
             dwell_ms,
           });
@@ -130,51 +132,6 @@ export default function HandsonTourBadges() {
         break;
       default:
         break;
-    }
-  };
-
-  const getBubble = (): {
-    title?: string;
-    body: string;
-    position: 'top' | 'bottom' | 'left' | 'right' | 'auto';
-    testId?: string;
-  } => {
-    switch (subStep) {
-      case '3.0':
-        return {
-          body: i18n.step3.loading_text,
-          position: 'auto',
-        };
-      case '3.1':
-        return {
-          title: personalize(i18n.step3.intro_title, { nickname }),
-          // 本文は intro_hint (Step 1 / 2 の intro と同じ形)。以前は intro_title をそのまま入れていて、
-          // 「{nickname} さん、…」の波括弧が画面に出ていた (#1626 で見つけた)
-          body: i18n.step3.intro_hint,
-          position: 'auto',
-          // E2E (Maestro) が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
-          testId: 'tour-step-3-intro',
-        };
-      case '3.2':
-        return {
-          title: i18n.step3.first_bite_title,
-          body: i18n.step3.first_bite_bubble,
-          position: 'bottom',
-        };
-      case '3.3':
-        return {
-          title: i18n.step3.planner_title,
-          body: i18n.step3.planner_bubble,
-          position: 'bottom',
-        };
-      case '3.4':
-        return {
-          title: i18n.step3.tutorial_complete_title,
-          body: i18n.step3.tutorial_complete_bubble,
-          position: 'bottom',
-        };
-      default:
-        return { body: '', position: 'auto' };
     }
   };
 
@@ -209,7 +166,7 @@ export default function HandsonTourBadges() {
             ? (STEP3_SUB_STEP_TO_TARGET[subStep] as string[])
             : undefined
         }
-        bubble={getBubble()}
+        bubble={buildBadgesTourBubble(subStep, { nickname })}
         progress={{ current: 4, total: 5 }}
         primaryAction={
           isManualStep

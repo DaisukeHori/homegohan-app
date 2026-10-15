@@ -12,6 +12,7 @@ import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { adminFetch } from '@/lib/admin/fetch';
+import { normalizeProfileName } from '@/lib/profile-name';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -68,7 +69,7 @@ export default async function AdminUserFreezePage(props: PageProps) {
         </Link>
         {' / '}
         <Link href={`/admin/users/${id}`} className="hover:text-orange-500 transition-colors">
-          {profile.nickname ?? id.slice(0, 8)}
+          {normalizeProfileName(profile.nickname) ?? id.slice(0, 8)}
         </Link>
         {' / '}
         <span className="text-gray-900">{isBanned ? '凍結解除' : '凍結'}</span>
@@ -78,7 +79,7 @@ export default async function AdminUserFreezePage(props: PageProps) {
         {isBanned ? '凍結解除' : 'ユーザー凍結 (BAN)'}
       </h1>
       <p className="text-sm text-gray-500 mb-6">
-        対象: <span className="font-medium text-gray-800">{profile.nickname ?? '(名前なし)'}</span>
+        対象: <span className="font-medium text-gray-800">{normalizeProfileName(profile.nickname) ?? '(名前なし)'}</span>
       </p>
 
       <div className="bg-white rounded-lg border border-gray-200 p-6">
