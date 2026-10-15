@@ -5,6 +5,7 @@ import { NextResponse } from 'next/server'
 import { fromUserProfile } from '@/lib/converter'
 import { calculateNutritionTargets } from '@homegohan/core'
 import { buildNutritionCalculatorInput } from '@/lib/build-nutrition-input'
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 
 /**
  * プロフィールAPI
@@ -59,6 +60,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request)
+  if (nullCharacterRejection) return nullCharacterRejection
   const requestId = generateRequestId()
   const logger = createLogger('POST /api/profile', requestId)
   try {
@@ -137,6 +141,9 @@ export async function POST(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request)
+  if (nullCharacterRejection) return nullCharacterRejection
   const requestId = generateRequestId()
   const logger = createLogger('PUT /api/profile', requestId)
   try {

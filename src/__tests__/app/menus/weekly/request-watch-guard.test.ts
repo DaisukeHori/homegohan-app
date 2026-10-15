@@ -67,12 +67,12 @@ describe('週間献立の画面の監視の印 (#1622)', () => {
   });
 
   it('Realtime の接続の失敗からのポーリングの始め直しは、印が立っているときだけ', () => {
-    const fallback = sliceBetween(subscribeCode, "status === 'CHANNEL_ERROR'", 'startPolling(targetDate, requestId, ultimateMode);');
+    const fallback = sliceBetween(subscribeCode, "status === 'CHANNEL_ERROR'", 'startPolling(targetDate, requestId, ultimateMode, watch);');
     expect(fallback).toContain('watch.active');
   });
 
   it('5 秒後の確認からのポーリングの始め直しは、印が立っているときだけ', () => {
-    const timer = sliceBetween(subscribeCode, 'setTimeout(() => {', 'startPolling(targetDate, requestId, ultimateMode);');
+    const timer = sliceBetween(subscribeCode, 'setTimeout(() => {', 'startPolling(targetDate, requestId, ultimateMode, watch);');
     expect(timer).toContain('!realtimeConnected');
     expect(timer).toContain('!pollingIntervalRef.current');
     expect(timer).toContain('watch.active');

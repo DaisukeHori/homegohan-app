@@ -392,10 +392,14 @@ const handleReplayTour = () => {
 // src/app/api/meal-plans/add-from-photo/route.ts
 import { z } from 'zod';
 
+// 本文は packages/handson-tour-shared/src/photo-save.ts の buildTourPhotoSaveBody() が組み立てる
+// (TourPhotoSaveBody: sandbox / mealType / dishes / totalCalories / imageUrl)。日付 (dayDate) は送らない
 const RequestSchema = z.object({
   // 既存フィールド
-  dishName: z.string(),
-  calories: z.number(),
+  mealType: z.string(),
+  dishes: z.array(z.object({ name: z.string(), cal: z.number(), role: z.string() })),
+  totalCalories: z.number(),
+  imageUrl: z.string().nullable(),
   // ...
   // 追加
   sandbox: z.boolean().optional().default(false),
@@ -436,10 +440,8 @@ export async function POST(req: Request) {
 
   if (error) return Response.json({ error: { code: 'internal_error', message: error.message } }, { status: 500 });
 
-  // first_bite バッジ付与 (既存ロジック流用)
-  const badgeResult = await tryAwardBadge(userId, 'first_bite');
-
-  return Response.json({ meal_id: meal.id, badge_awarded: badgeResult });
+  // バッジは付けない。お試しの記録 (is_sandbox = true) はバッジの判定に数えない (#1314)
+  return Response.json({ success: true, sandbox: true, mealId: meal.id });
 }
 ```
 

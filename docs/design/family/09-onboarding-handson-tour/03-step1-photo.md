@@ -18,9 +18,9 @@ Step 1 は **「写真 1 枚で食事が記録できる」体験を提供する*
 | AI 解析 | 固定 mock レスポンスを 1.5 秒ローディング後表示 | mock (実 Gemini API は呼ばない) |
 | 結果表示 | mock データを既存 result 画面に流し込む | mock |
 | 保存 | 実 API `POST /api/meal-plans/add-from-photo?source=handson_tour` を呼ぶ + body に `sandbox: true` | **実 API** |
-| バッジ判定 | サーバー側で `first_bite` バッジを実際に付与 (条件: meals INSERT したので発火) | **実 API** |
+| バッジ判定 | 付与しない (お試しの記録はバッジの判定に数えない。#1314。`first_bite` は実際の食事の記録で付く) | — |
 
-→ ユーザー体験は完全 mock (90 秒で完走可能) + バッジは実獲得 (既存システムと整合)。
+→ ユーザー体験は完全 mock (90 秒で完走可能)。ツアー中に実際に付くバッジは Step 2 の `planner` と、卒業時の `tutorial_complete`。
 
 ---
 
@@ -258,7 +258,7 @@ const handleSave = async () => {
 - API 成功後、即時 `/handson-tour/menu` へ遷移
 - 遷移は §02-step0 §5 と同じ exit アニメーション (200ms fade)
 
-#### サーバー副作用 (実バッジ付与)
+#### サーバー副作用 (お試しの記録の保存。バッジは付けない)
 サーバー側で:
 
 ```sql
@@ -270,14 +270,9 @@ INSERT INTO meals (
 ) VALUES ($1, $2, $3, $4, $5, true, now())
 RETURNING id;
 
--- first_bite バッジ付与 (既存ロジック流用、ただし sandbox 行もカウントする方針)
-INSERT INTO user_badges (user_id, badge_id, obtained_at)
-SELECT $1, b.id, now() FROM badges b
-WHERE b.code = 'first_bite'
-  AND NOT EXISTS (SELECT 1 FROM user_badges ub WHERE ub.user_id = $1 AND ub.badge_id = b.id);
+-- user_badges には INSERT しない。お試しの記録 (is_sandbox = true) はバッジの判定に数えない (#1314)。
+-- GET /api/badges の first_bite の判定 (完了した食事の数) も is_sandbox の記録を数えないので、Step 3 の時点で first_bite は未獲得のまま。
 ```
-
-→ 既に first_bite を持っているユーザー (= force=1 で再表示してる場合) は INSERT されない (NOT EXISTS で防御、§19-rollout)。
 
 実装 (#1604) との差:
 - force=1 の再表示 (完了・スキップ済み) は、17-security §2.1 の段階 1 で 409 sandbox_not_eligible / already_finished になり、meals には入らない。画面は §3.7 のとおり Step 2 へ進む。
@@ -598,8 +593,7 @@ env:
 
 ### 11.3 Integration
 - 保存後、`meals` に `is_sandbox=true` の行が追加されている
-- `user_badges` に `first_bite` が追加されている (新規ユーザーの場合)
-- `force=1` で再表示時、すでに first_bite を持つユーザーには重複 INSERT されない
+- `user_badges` に `first_bite` が追加されない (お試しの記録はバッジに数えない。#1314)
 
 ---
 

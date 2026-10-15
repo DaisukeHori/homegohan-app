@@ -24,11 +24,10 @@
  * 挙動 (案内を出す・エラーの表示を出さない) は、代表の画面ごとの jest のテストが確かめる:
  *   apps/mobile/__tests__/ai/advisor-sheet-consent.test.tsx・ai/day-menu-consent.test.tsx・pantry/analyze-consent.test.tsx・
  *   menus-weekly/use-v4-menu-generation.test.tsx・menus-weekly/improve-consent.test.tsx (改善モーダルの 2 つの置き場)・
- *   menus-weekly/manual-edit-photo-consent.test.tsx (手動編集の上の写真の解析)・
- *   meals/new-consent.test.tsx (modal で開く食事の新規作成。画面を閉じてから同意画面へ移る)
+ *   menus-weekly/manual-edit-photo-consent.test.tsx (手動編集の上の写真の解析)
  *   (と、判定の関数そのものは lib/ai-consent.test.ts)。
- * モーダルの上に開く部品が自分で案内を出さない (開いた側が閉じてから出す) こと、modal で開く画面 (Stack.Screen の presentation) が
- * 画面を閉じてから同意画面へ移ることは tests/ai-consent-mobile-modal-nesting.test.ts。
+ * モーダルの上に開く部品が自分で案内を出さない (開いた側が閉じてから出す) こと、modal で開く画面 (Stack.Screen の presentation) を
+ * 置かないことは tests/ai-consent-mobile-modal-nesting.test.ts。
  * 受け付けたあとにサーバーが止めた失敗 (リクエストの行に保存された文) の扱いは tests/ai-consent-stored-failure-readers.test.ts
  */
 import fs from 'node:fs';
@@ -57,7 +56,6 @@ const AI_ENTRY_FILES = [
   'app/health/blood-tests.tsx',
   'app/health/checkups/new.tsx',
   'app/health/insights.tsx',
-  'app/meals/new.tsx',
   'app/menus/weekly/index.tsx',
   'app/menus/weekly/request/index.tsx',
   'app/pantry/index.tsx',

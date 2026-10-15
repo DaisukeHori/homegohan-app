@@ -122,7 +122,7 @@ stateDiagram-v2
   Welcome --> Skipped: 【あとで】 / hard_back
 
   Step1Photo --> Step1Loading: 【保存】タップ
-  Step1Loading --> Step2Menu: API 200 (meal_log INSERT + first_bite 付与)
+  Step1Loading --> Step2Menu: API 200 (meals INSERT is_sandbox=true。バッジは付けない)
   Step1Loading --> Step1Error: API failure
   Step1Error --> Step1Loading: 【リトライ】
   Step1Error --> Skipped: 【あとで】
@@ -161,7 +161,7 @@ stateDiagram-v2
 
 | 遷移 | DB 副作用 |
 |---|---|
-| Step 1 完了 (Step1Loading → Step2Menu) | `meals` INSERT (`is_sandbox=true`) + `user_badges` INSERT (`first_bite`、未保有時のみ) |
+| Step 1 完了 (Step1Loading → Step2Menu) | `meals` INSERT (`is_sandbox=true`)。`user_badges` には INSERT しない (お試しの記録はバッジに数えない。#1314) |
 | Step 2 完了 | `user_daily_meals` INSERT + `user_badges` INSERT (`planner`) |
 | Step 3 表示 | DB 副作用なし (read only) |
 | Step 4 完了 | `user_profiles.handson_tour_completed_at` UPDATE + `user_badges` INSERT (`tutorial_complete`) |
@@ -253,7 +253,7 @@ v1 では中断後に **Step 0 から再開** する。途中状態の永続化�
 
 問題点:
 - `meals` に `is_sandbox=true` で 1 行追加済み
-- `user_badges` に first_bite 追加済み (新規ユーザーの場合)
+- (`user_badges` には何も足されていない。お試しの記録は first_bite に数えない。#1314)
 - 再起動で Step 0 から再開すると、Step 1 で再度 INSERT が走る
 
 #### 解決方法 (§24.4 で詳述)

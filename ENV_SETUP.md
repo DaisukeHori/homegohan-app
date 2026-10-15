@@ -236,7 +236,7 @@ SELECT cron.alter_job(
 ```
 
 - **UTC 15 時台（= JST 0 時台）の回を必ず含めてください。** 直前の期間の集計し直しは、期間が切り替わってから 1 時間以内（`calculate_segment_stats_request_bodies` の `c_finalize_window`）の回だけが行います。含めないと、期間の最終の値が入らないうえ、比較のバッジが一度も判定されません。`'5 */3 * * *'` は UTC 0, 3, …, 15, 18, 21 時なので含みます。`'5 */2 * * *'` は含まないので使えません。
-- 間隔を変えたら、モバイルの比較画面の案内（`apps/mobile/app/comparison/index.tsx` の `RANKING_UPDATE_INTERVAL_HOURS`）も同じ時間に直し、次の migration でジョブのスケジュールも揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration と画面を突き合わせます）。
+- 間隔を変えるときは、次の migration でジョブのスケジュールを揃えてください（`tests/segment-stats-schedule-sync.test.ts` が migration の間隔・期間の種類と、Web の比較画面の選択肢・手動の API を突き合わせます）。アプリの比較のタブは WebView で Web の比較画面を出します（以前あったネイティブの比較画面 `apps/mobile/app/comparison/index.tsx` の更新の間隔の案内は、タブと同じパスの届かない画面として消しました。#1598）。
 - 今の設定は `SELECT jobname, schedule, active FROM cron.job WHERE jobname = 'calculate-segment-stats';` で確かめられます。
 
 ### 比較ランキングの集計が動いているかの確かめ方

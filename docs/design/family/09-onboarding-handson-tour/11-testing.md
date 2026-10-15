@@ -304,12 +304,12 @@ describe('POST /api/meal-plans/add-from-photo with sandbox', () => {
     expect(res.status).toBe(403);
   });
 
-  it('sandbox=true で first_bite バッジ付与', async () => {
+  it('sandbox=true の保存では first_bite バッジを付けない (#1314)', async () => {
     await fetch('/api/meal-plans/add-from-photo?source=handson_tour', {
       method: 'POST', body: JSON.stringify({ sandbox: true, ... }),
     });
     const badges = await getUserBadges(testUserId);
-    expect(badges).toContainEqual(expect.objectContaining({ code: 'first_bite' }));
+    expect(badges).not.toContainEqual(expect.objectContaining({ code: 'first_bite' }));
   });
 });
 ```
