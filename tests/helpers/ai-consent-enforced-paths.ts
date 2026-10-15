@@ -301,6 +301,32 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: '退会。AI へは送らない (退会の段階 billing が Stripe の鍵を読む env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: '退会 (Stripe の契約の解約と顧客の匿名化・本人のデータの削除)。送る先は Stripe と Supabase だけ' } },
   },
+  // #1178 / #1702 個人情報の請求 (DSR) の本人向けの API。メール (src/lib/data-subject-requests/notifications.ts) が運営への知らせの宛先を
+  // getOptionalEnv('ADMIN_NOTIFICATION_EMAIL') で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
+  // 送る先は DB (data_subject_requests) とメール (Resend) だけ。利用者のデータを AI へ送らない
+  'src/app/api/account/data-requests/route.ts': {
+    consent: '個人情報の請求の一覧と作成。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: {
+      GET: { noAi: '本人の請求を DB から読むだけ' },
+      POST: { noAi: '請求の行を作り、本人確認のメールを送るだけ' },
+    },
+  },
+  'src/app/api/account/data-requests/[id]/route.ts': {
+    consent: '個人情報の請求の詳細。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { GET: { noAi: '本人の請求を 1 件 DB から読むだけ' } },
+  },
+  'src/app/api/account/data-requests/[id]/verify/route.ts': {
+    consent: '個人情報の請求の本人確認。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'トークンを突き合わせて受付にし、受付のメールと運営への知らせを送るだけ' } },
+  },
+  'src/app/api/account/data-requests/[id]/resend-verification/route.ts': {
+    consent: '個人情報の請求の本人確認のメールの再送。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: '新しいトークンで本人確認のメールを送り直すだけ' } },
+  },
+  'src/app/api/account/data-requests/[id]/withdraw/route.ts': {
+    consent: '個人情報の請求の取り下げ。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: '本人の請求を取り下げにするだけ (メールも送らない)' } },
+  },
 };
 
 /**

@@ -11,7 +11,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
-import { UsersSearchSchema } from '@/lib/admin/users-schemas';
+import { UsersSearchSchema, type UserListItem, type UsersListResponse } from '@/lib/admin/users-schemas';
 import { canViewUserEmail, fetchUserEmails, findUserIdsByEmail } from '@/lib/admin/user-emails';
 import { buildUserSearchFilter } from '@/lib/admin/users-search';
 import { isAccountFrozen } from '@/lib/auth/frozen';
@@ -170,7 +170,8 @@ export async function GET(request: Request) {
       )
     : new Map<string, string>();
 
-  const users = rows.map((u) => ({
+  // 応答の形は UserListItem (src/lib/admin/users-schemas.ts) が正本。一覧の画面 (/admin/users・/support/users) も同じ型で読む (#1717)
+  const users: UserListItem[] = rows.map((u) => ({
     id: u.id,
     email: emails.get(u.id) ?? null,
     nickname: u.nickname,
@@ -223,15 +224,16 @@ export async function GET(request: Request) {
     });
   }
 
-  return NextResponse.json(
-    {
-      data: users,
-      meta: {
-        total: count ?? 0,
-        page: params.page,
-        per_page: params.per_page,
-      },
+  const body: UsersListResponse = {
+    data: users,
+    meta: {
+      total: count ?? 0,
+      page: params.page,
+      per_page: params.per_page,
     },
+  };
+  return NextResponse.json(
+    body,
     // メールアドレスを含むため、共有キャッシュに残さない
     { headers: { 'Cache-Control': 'no-store' } },
   );

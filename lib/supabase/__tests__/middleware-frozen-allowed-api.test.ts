@@ -160,6 +160,9 @@ describe('updateSession (#1445): 凍結中の利用者の /api', () => {
     '/api/billing/checkout',
     '/api/billing/checkout/sync',
     '/api/billing/checkout/preview',
+    // #1178 個人情報の請求 (DSR) の本人向けの API は、凍結中は受け付けない (設計 cross/15 S-13・§21。FROZEN_ALLOWED_API_PATHS に足さない)
+    '/api/account/data-requests',
+    '/api/account/data-requests/00000000-0000-4000-8000-000000000000/withdraw',
   ])('%s は今までどおり 403 AUTH_ACCOUNT_FROZEN', async (path) => {
     const res = await updateSession(request(path));
 
