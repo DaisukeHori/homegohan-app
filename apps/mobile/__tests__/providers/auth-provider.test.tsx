@@ -47,10 +47,12 @@ jest.mock('../../src/lib/userScopedLocalData', () => ({
 const mockReleaseAfterSignedOut = jest.fn();
 const mockFlushPendingReleases = jest.fn();
 const mockRecordRelease = jest.fn();
+const mockRecordStoredReleases = jest.fn();
 jest.mock('../../src/lib/pushTokenRelease', () => ({
   releasePushTokenAfterSignedOut: (...args: unknown[]) => mockReleaseAfterSignedOut(...args),
   flushPendingPushTokenReleases: (...args: unknown[]) => mockFlushPendingReleases(...args),
   recordPushTokenRelease: (...args: unknown[]) => mockRecordRelease(...args),
+  recordPushTokenReleasesForStoredValues: (...args: unknown[]) => mockRecordStoredReleases(...args),
 }));
 
 import { AuthProvider, useAuth } from '../../src/providers/AuthProvider';
@@ -113,6 +115,7 @@ beforeEach(() => {
   mockReleaseAfterSignedOut.mockResolvedValue(undefined);
   mockFlushPendingReleases.mockResolvedValue(undefined);
   mockRecordRelease.mockResolvedValue(undefined);
+  mockRecordStoredReleases.mockResolvedValue(undefined);
   mockGetStoredSession.mockResolvedValue(null);
   mockOnAuthStateChange.mockImplementation((listener: AuthListener) => {
     authListener = listener;
@@ -728,6 +731,71 @@ describe('AuthProvider — user_push_tokens の行の後片付け (#1636)', () =
     expect(mockRecordRelease).not.toHaveBeenCalled();
   });
 
+  // 起動時に未ログインと決まる 4 つの経路 (どれも settleSignedOutAtStartup を通る)。アプリが閉じている間に refresh_token が失効すると、
+  // supabase-js の初期化がセッションを消し、ここに来る。サインアウトした利用者は分からない
+  it.each([
+    ['getSession() が null (保存済みのセッションが無い)', () => mockGetSession.mockResolvedValue({ data: { session: null }, error: null })],
+    [
+      'refresh_token の失効で getSession() が null とエラーを返した',
+      () =>
+        mockGetSession.mockResolvedValue({
+          data: { session: null },
+          error: authError('AuthApiError', 400, 'Invalid Refresh Token', 'refresh_token_not_found'),
+        }),
+    ],
+    [
+      '通信の失敗で getSession() が null を返し、保存済みのセッションも無い',
+      () => {
+        mockGetSession.mockResolvedValue({ data: { session: null }, error: retryableFetchError() });
+        mockGetStoredSession.mockResolvedValue(null);
+      },
+    ],
+    ['getSession() が例外を投げた', () => mockGetSession.mockRejectedValue(new Error('storage exploded'))],
+  ])(
+    '起動時に未ログインと決まったとき (%s): 掃除が値を消す前に残っている値を全部控え、掃除のあとに release を始める (#1636)',
+    async (_label, arrange) => {
+      const calls: string[] = [];
+      mockRecordStoredReleases.mockImplementation(async () => {
+        calls.push('recordStored');
+      });
+      mockClearUserScopedLocalData.mockImplementation(async (userId: unknown) => {
+        calls.push(`clear:${String(userId)}`);
+      });
+      mockFlushPendingReleases.mockImplementation(async () => {
+        calls.push('flush');
+      });
+      arrange();
+
+      const api = renderProvider();
+
+      await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+      expect(text(api, 'session')).toBe('none');
+      expect(calls).toEqual(['recordStored', 'clear:null', 'flush']);
+      expect(mockRecordRelease).not.toHaveBeenCalled();
+    },
+  );
+
+  it('起動時に未ログインと決まったとき: 控えが例外を投げても、掃除・やり直し・未ログインは続ける (#1636)', async () => {
+    mockRecordStoredReleases.mockRejectedValue(new Error('record failed'));
+
+    const api = renderProvider();
+
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    expect(text(api, 'session')).toBe('none');
+    expect(mockClearUserScopedLocalData).toHaveBeenCalledWith(null, STARTUP_SIGNED_OUT_CLEAR_OPTIONS);
+    expect(mockFlushPendingReleases).toHaveBeenCalledTimes(1);
+  });
+
+  it('SIGNED_OUT: サインアウトした利用者が分からない (起動の直後に supabase-js の初期化が届けた) ときも、null で release を呼ぶ (#1636)', async () => {
+    // 起動時の復元が終わる前 (lastKnownUserIdRef が null) に、supabase-js の初期化が失効したセッションを消して SIGNED_OUT を届ける
+    mockGetSession.mockImplementation(() => new Promise(() => {}));
+    renderProvider();
+
+    act(() => authListener('SIGNED_OUT', null));
+
+    await waitFor(() => expect(mockReleaseAfterSignedOut).toHaveBeenCalledWith(null));
+  });
+
   it('起動時にサーバーが失効と明言したとき: 掃除で値が消える前に宛先を控え、そのあと掃除 → サインアウト', async () => {
     const calls: string[] = [];
     mockRecordRelease.mockImplementation(async (userId: unknown) => {
@@ -751,6 +819,8 @@ describe('AuthProvider — user_push_tokens の行の後片付け (#1636)', () =
 
     await waitFor(() => expect(text(api, 'loading')).toBe('false'));
     expect(calls).toEqual(['record:user-revoked', 'clearUserScopedLocalData', 'signOut']);
+    // 失効の明言では利用者が分かるので、その利用者の値だけを控える (残っている値の全部ではない)
+    expect(mockRecordStoredReleases).not.toHaveBeenCalled();
   });
 
   it('起動時にサーバーが失効と明言したとき: 控えが例外を投げても、掃除とサインアウトは続ける', async () => {
@@ -785,5 +855,6 @@ describe('AuthProvider — user_push_tokens の行の後片付け (#1636)', () =
     expect(mockReleaseAfterSignedOut).not.toHaveBeenCalled();
     expect(mockFlushPendingReleases).not.toHaveBeenCalled();
     expect(mockRecordRelease).not.toHaveBeenCalled();
+    expect(mockRecordStoredReleases).not.toHaveBeenCalled();
   });
 });

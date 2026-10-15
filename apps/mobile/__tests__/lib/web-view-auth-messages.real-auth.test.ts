@@ -624,7 +624,9 @@ describe('AuthProvider と一緒に動かしたとき: session-expired の getUs
       // この試験が見たい順番になっている: 最初の掃除 (SIGNED_OUT の掃除) は、削除が値を読むより前に走り、値を残した。
       // 値は、削除が読んだあとの掃除 (signOutWithCleanup) で消えた。そのあとの signOut() の SIGNED_OUT でもう一度掃除が走る。
       // 値を読むのは、ログアウトの削除 (signOutWithCleanup) と、SIGNED_OUT のあとのセッション無しの release (#1636。
-      // pushTokenRelease.ts。この試験では端末の秘密の値が無いので通信しない) の 2 か所で、どちらも値を消す掃除より前
+      // pushTokenRelease.ts。この試験では端末の秘密の値が無いので通信しない) の 2 か所で、どちらも値を消す掃除より前。
+      // signOut() のあとの SIGNED_OUT (利用者が分からない) の release も端末に残っている値をまとめて読む (getAllKeys・multiGet。
+      // ここでは記録しない) が、値はもう消えているので宛先にならない
       const removesValue = storageLog.indexOf('cleanup:removes-push-token-value');
       expect(storageLog[0]).toBe('cleanup:keeps-push-token-value');
       expect(removesValue).toBeGreaterThan(1);

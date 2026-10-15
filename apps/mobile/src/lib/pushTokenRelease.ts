@@ -8,6 +8,10 @@
  * そこで、セッション無しの release の API (POST /api/push-tokens/release) を、端末の秘密の値 (pushInstallSecret.ts) で認可して呼ぶ。
  * サーバーは、利用者 ID・トークン・秘密の値のハッシュの 3 つが合う行だけを消す。
  *
+ * サインアウトした利用者が分からないとき (起動時に supabase-js の初期化がセッションを消した = アプリが閉じている間に refresh_token が
+ * 失効した、など) は、端末に残っている値 (push_token_value_v1:<利用者>) を全部、release の宛先にする。その時点で端末は未ログインなので、
+ * 残っている値はどれもサインアウトした利用者のもの (recordPushTokenReleasesForStoredValues・releasePushTokenAfterSignedOut(null))。
+ *
  * 消せなかったとき (圏外・メンテナンス中の 503・サーバーのエラー) は、消す宛先 (利用者 ID とトークンの値) を AsyncStorage に
  * 控え (PUSH_TOKEN_RELEASE_PENDING_KEY)、次の起動 (未ログインと決まったとき) と次の SIGNED_OUT でやり直す。
  * 控えは利用者別のキーではない (ログアウトの掃除で消さない): 次の利用者がログインしても、前の利用者の行を消し終えるまで残す。
@@ -92,6 +96,37 @@ async function writePending(entries: PendingRelease[]): Promise<void> {
   }
 }
 
+/** 控えに宛先を足す (同じ宛先は重ねない)。足すものが無ければ書かない */
+async function addPendingLocked(entries: readonly PendingRelease[]): Promise<void> {
+  if (entries.length === 0) return;
+  const next = await readPending();
+  for (const entry of entries) {
+    if (!next.some((kept) => kept.userId === entry.userId && kept.token === entry.token)) next.push(entry);
+  }
+  await writePending(next);
+}
+
+/**
+ * 端末に残っている push token の値 (push_token_value_v1:<利用者>) を全部読み、release の宛先にする (控えには書かない)。
+ * 読むだけなので順番の列 (serialized) の外で動く。読めない・壊れているものは読み飛ばす。例外は投げない
+ */
+async function readAllStoredPushTokenValues(): Promise<PendingRelease[]> {
+  const keyPrefix = `${PUSH_TOKEN_VALUE_KEY_PREFIX}:`;
+  try {
+    const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(keyPrefix));
+    if (keys.length === 0) return [];
+    const pairs = await AsyncStorage.multiGet(keys);
+    const entries: PendingRelease[] = [];
+    for (const [key, token] of pairs) {
+      const entry = { userId: key.slice(keyPrefix.length), token };
+      if (isPendingRelease(entry)) entries.push(entry);
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
 let queue: Promise<void> = Promise.resolve();
 
 /** 控えの読み書きを伴う処理を 1 つずつ順に動かす。例外は外へ出さない */
@@ -138,11 +173,21 @@ async function flushLocked(): Promise<void> {
  * SIGNED_OUT (supabase-js がセッションを消したあと) に呼ぶ。サインアウトした利用者の、この端末の push token の行を消す。
  * 値は、SIGNED_OUT の掃除 (clearUserScopedLocalDataAfterSignedOut) が残した push_token_value_v1:<利用者> から読む
  * (ログアウト (signOut.ts) を通ったときは、そこで行を消して値も消してあるので、ここでは何もしない)。
+ * サインアウトした利用者が分からない (userId が null。起動の直後に supabase-js の初期化が失効したセッションを消したときなど) は、
+ * 端末に残っている値を全部、宛先にする (SIGNED_OUT のあとなので端末は未ログインで、残っている値はどれもサインアウトした利用者のもの)。
+ * 値は呼んだ時点で読み始める (前の release の通信を待たない。待つあいだに次の利用者がログインして値を書いても、その値を拾わない)。
  * 消せなかったら控え、前に控えた宛先もあわせてやり直す。例外は投げない
  */
 export function releasePushTokenAfterSignedOut(userId: string | null | undefined): Promise<void> {
+  if (userId) {
+    return serialized(async () => {
+      await recordLocked(userId);
+      await flushLocked();
+    });
+  }
+  const stored = readAllStoredPushTokenValues();
   return serialized(async () => {
-    await recordLocked(userId);
+    await addPendingLocked(await stored);
     await flushLocked();
   });
 }
@@ -157,10 +202,7 @@ async function recordLocked(userId: string | null | undefined): Promise<void> {
     token = null;
   }
   if (!token) return;
-  const pending = await readPending();
-  if (!pending.some((entry) => entry.userId === userId && entry.token === token)) {
-    await writePending([...pending, { userId, token }]);
-  }
+  await addPendingLocked([{ userId, token }]);
 }
 
 /**
@@ -173,7 +215,24 @@ export function recordPushTokenRelease(userId: string | null | undefined): Promi
   return serialized(() => recordLocked(userId));
 }
 
-/** 起動時に未ログインと決まったときに呼ぶ。前に消せなかった宛先をやり直す。例外は投げない */
+/**
+ * 起動時に未ログインと決まったとき (AuthProvider の settleSignedOutAtStartup) に、掃除が値を消す前に呼ぶ。
+ * 端末に残っている push token の値 (push_token_value_v1:<利用者>) を全部、release の宛先として控える (通信はしない)。
+ * 起動時はサインアウトした利用者がふつう分からない (アプリが閉じている間に refresh_token が失効し、supabase-js の初期化がセッションを
+ * 消した、など) ので、利用者を問わず全部を宛先にする (未ログインなので、残っている値はどれもサインアウトした利用者のもの)。
+ * 待つのは値を読むところまで。控えへの書き込みは順番の列に積む (前の release の通信を待たないので、起動の画面を遅らせない。
+ * このあとに呼ぶ flushPendingPushTokenReleases・releasePushTokenAfterSignedOut は、列の順でこの宛先を見る)。例外は投げない。
+ *
+ * 保管庫を読めない起動 (iOS で端末のロックを一度も解除していない起動など) では、実はログイン中の利用者の値も宛先になる。
+ * そのときは端末の秘密の値も同じ保管庫 (同じ AFTER_FIRST_UNLOCK_THIS_DEVICE_ONLY) で読めないので、やり直し (flushLocked) は
+ * 通信せずに控えを残す。次にセッションが戻った起動の登録 (claim の成功) が、同じトークンの控えを外す (forgetPendingPushTokenReleases)
+ */
+export async function recordPushTokenReleasesForStoredValues(): Promise<void> {
+  const stored = await readAllStoredPushTokenValues();
+  void serialized(() => addPendingLocked(stored));
+}
+
+/** 起動時に未ログインと決まったときに呼ぶ。前に消せなかった宛先 (と、直前に控えた宛先) をやり直す。例外は投げない */
 export function flushPendingPushTokenReleases(): Promise<void> {
   return serialized(flushLocked);
 }

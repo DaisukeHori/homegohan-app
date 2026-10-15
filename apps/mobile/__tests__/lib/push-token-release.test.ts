@@ -9,6 +9,8 @@
  *   - 端末の秘密の値が無いときは通信せず控えを捨てる。保管庫を読めないときは通信せず控えを残す
  *   - 控えは同じ宛先を重ねず、上限を超えたら古いものから捨てる。壊れた控えは空として扱う
  *   - claim の成功で、同じトークンの控えだけを捨てる (forgetPendingPushTokenReleases)
+ *   - サインアウトした利用者が分からないとき (起動時に supabase-js の初期化がセッションを消したなど) は、端末に残っている値を全部宛先にする
+ *     (recordPushTokenReleasesForStoredValues・releasePushTokenAfterSignedOut(null))
  */
 
 const mockPost = jest.fn();
@@ -28,7 +30,9 @@ import {
   flushPendingPushTokenReleases,
   forgetPendingPushTokenReleases,
   recordPushTokenRelease,
+  recordPushTokenReleasesForStoredValues,
   releasePushTokenAfterSignedOut,
+  waitForPushTokenReleases,
 } from '../../src/lib/pushTokenRelease';
 
 /** この端末の秘密の値 (ダミー。43 文字の base64url) */
@@ -214,6 +218,153 @@ describe('releasePushTokenAfterSignedOut (#1636)', () => {
       getItem.mockImplementation(original);
     }
     expect(mockPost).not.toHaveBeenCalled();
+  });
+
+  it('例外を投げない (端末のキーの一覧・まとめ読みが壊れていても)', async () => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-a`, TOKEN);
+    const getAllKeys = AsyncStorage.getAllKeys as jest.Mock;
+    const multiGet = AsyncStorage.multiGet as jest.Mock;
+    const originalGetAllKeys = getAllKeys.getMockImplementation();
+    const originalMultiGet = multiGet.getMockImplementation();
+    try {
+      getAllKeys.mockImplementation(async () => {
+        throw new Error('storage broken');
+      });
+      await expect(recordPushTokenReleasesForStoredValues()).resolves.toBeUndefined();
+      await expect(releasePushTokenAfterSignedOut(null)).resolves.toBeUndefined();
+      getAllKeys.mockImplementation(originalGetAllKeys);
+      multiGet.mockImplementation(async () => {
+        throw new Error('storage broken');
+      });
+      await expect(recordPushTokenReleasesForStoredValues()).resolves.toBeUndefined();
+      await expect(releasePushTokenAfterSignedOut(null)).resolves.toBeUndefined();
+      await waitForPushTokenReleases();
+    } finally {
+      getAllKeys.mockImplementation(originalGetAllKeys);
+      multiGet.mockImplementation(originalMultiGet);
+    }
+    // 読めなかったので、宛先は無い (通信もしない)
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(await pending()).toBeNull();
+  });
+});
+
+describe('サインアウトした利用者が分からないとき: 端末に残っている値を全部宛先にする (#1636)', () => {
+  const TOKEN_B = 'ExponentPushToken[device-b]';
+
+  async function seedStoredValues() {
+    await AsyncStorage.multiSet([
+      [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-a`, TOKEN],
+      [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-b`, TOKEN_B],
+      // 宛先にしないもの: 値が空・利用者の ID が空・ほかの接頭辞 (接頭辞が前方で一致するだけのキーを含む)
+      [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-empty`, ''],
+      [`${PUSH_TOKEN_VALUE_KEY_PREFIX}:`, TOKEN],
+      [`${PUSH_TOKEN_VALUE_KEY_PREFIX}x:user-c`, TOKEN],
+      ['push_token_registered_v2:user-d', 'true'],
+    ]);
+  }
+
+  function releasedBodies(): unknown[] {
+    return releaseCalls().map((call) => call[1]);
+  }
+
+  it('releasePushTokenAfterSignedOut(null): 残っている値の利用者すべての行の release を呼ぶ', async () => {
+    await seedStoredValues();
+
+    await releasePushTokenAfterSignedOut(null);
+
+    expect(releasedBodies()).toEqual(
+      expect.arrayContaining([
+        { expo_push_token: TOKEN, install_secret: DEVICE_SECRET, user_id: 'user-a' },
+        { expo_push_token: TOKEN_B, install_secret: DEVICE_SECRET, user_id: 'user-b' },
+      ]),
+    );
+    expect(releasedBodies()).toHaveLength(2);
+    expect(await pending()).toBeNull();
+  });
+
+  it('recordPushTokenReleasesForStoredValues: 値を読んだ時点で返り、通信しない。そのあと値が消えても、やり直しで全員分を消す', async () => {
+    await seedStoredValues();
+
+    await recordPushTokenReleasesForStoredValues();
+    // 起動時の掃除 (ID なし) が値を消す (控えは、読んだ時点の値で書く)
+    await AsyncStorage.multiRemove([`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-a`, `${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-b`]);
+    await waitForPushTokenReleases();
+
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(await pending()).toEqual(
+      expect.arrayContaining([
+        { userId: 'user-a', token: TOKEN },
+        { userId: 'user-b', token: TOKEN_B },
+      ]),
+    );
+    expect(await pending()).toHaveLength(2);
+
+    await flushPendingPushTokenReleases();
+
+    expect(releasedBodies()).toHaveLength(2);
+    expect(await pending()).toBeNull();
+  });
+
+  it('recordPushTokenReleasesForStoredValues: 前の release の通信を待たずに返る (起動の画面を遅らせない)', async () => {
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-a`, TOKEN);
+    // 前の release が通信したまま終わらない
+    let finishPost: () => void = () => undefined;
+    mockPost.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPost = () => resolve({ released: 1 });
+        }),
+    );
+    const inFlight = releasePushTokenAfterSignedOut('user-a');
+    const MAX_TICKS = 20;
+    for (let i = 0; i < MAX_TICKS && releaseCalls().length === 0; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    expect(releaseCalls()).toHaveLength(1);
+
+    await AsyncStorage.setItem(`${PUSH_TOKEN_VALUE_KEY_PREFIX}:user-b`, TOKEN_B);
+    await recordPushTokenReleasesForStoredValues();
+
+    // 返った時点で、前の release はまだ終わっていない。控えへの書き込みはそのあとに積まれる
+    finishPost();
+    await inFlight;
+    await waitForPushTokenReleases();
+    expect(await pending()).toEqual(
+      expect.arrayContaining([
+        { userId: 'user-a', token: TOKEN },
+        { userId: 'user-b', token: TOKEN_B },
+      ]),
+    );
+  });
+
+  it('保管庫を読めない (実はログイン中かもしれない) ときは通信せず、控えを残す', async () => {
+    await seedStoredValues();
+    (SecureStore as unknown as { __failWith: (method: string, error: Error) => void }).__failWith(
+      'getItemAsync',
+      new Error('User interaction is not allowed'),
+    );
+
+    await recordPushTokenReleasesForStoredValues();
+    await flushPendingPushTokenReleases();
+
+    expect(mockPost).not.toHaveBeenCalled();
+    expect(await pending()).toHaveLength(2);
+
+    // 次にセッションが戻った起動の登録 (claim の成功) が、同じトークンの控えを外す (ログイン中の利用者の行は消さない)
+    await forgetPendingPushTokenReleases(TOKEN);
+    expect(await pending()).toEqual([{ userId: 'user-b', token: TOKEN_B }]);
+  });
+
+  it('控えにある宛先と同じものは重ねない', async () => {
+    await seedStoredValues();
+    mockPost.mockRejectedValue(new TypeError('Network request failed'));
+
+    await releasePushTokenAfterSignedOut(null);
+    await recordPushTokenReleasesForStoredValues();
+    await releasePushTokenAfterSignedOut(null);
+
+    expect(await pending()).toHaveLength(2);
   });
 });
 
