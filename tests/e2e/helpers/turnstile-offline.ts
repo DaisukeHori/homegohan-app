@@ -13,8 +13,8 @@
  * URL は本物と同じなので、この文書の CSP (next.config.mjs の script-src / frame-src) の判定はそのまま受ける
  * (差し替えはブラウザが通信を出したあとに効く。CSP に止められた通信は差し替えまで届かない)。
  *
- * 本物のウィジェットが本物の CSP の下でトークンを出すこと自体は、auth-turnstile.spec.ts のログイン・パスワード再設定と、
- * api.js を読み込めないときのテストが、引き続き本物の api.js で確かめる。
+ * 本物のウィジェットが本物の CSP の下でトークンを出すこと自体は、auth-turnstile.spec.ts のログイン・パスワード再設定のテストが、
+ * 引き続き本物の api.js で確かめる。
  * アプリが呼ぶ window.turnstile の形は src/lib/auth/turnstile.ts の TurnstileApi / TurnstileRenderOptions。
  */
 import type { Page } from "@playwright/test";

@@ -25,12 +25,13 @@
  * (ログインは POST /api/auth/login の本文の captchaToken) に入ること」まで。
  * ローカルの Supabase は CAPTCHA が無効なので、トークンの検証 (Cloudflare への問い合わせ) は、どの環境でもここでは行わない。
  *
- * #1672: 「新規登録」と「メール確認の再送 #1474」は、ウィジェットを外のネットワークに繋がずに動かす (helpers/turnstile-offline.ts)。
+ * #1672: 「新規登録」と「メール確認の再送 #1474」と「api.js を読み込めないとき」は、ウィジェットを外のネットワークに繋がずに動かす (helpers/turnstile-offline.ts)。
  * テスト用サイトキーでも、ウィジェットの本体 (api.js) と iframe は challenges.cloudflare.com から読むので、常設の e2e で
  * 外の通信の遅れ・失敗によって落ちることがあった。この 2 つで確かめたいのは「ウィジェットが出したトークンが、その画面の
  * Supabase への要求に入ること」なので、テスト用サイトキーが出すのと同じダミーのトークンを出す手元の api.js に差し替え、
  * 送られたトークンがそのダミーと一致することまで確かめる。URL は本物と同じなので、CSP の判定はそのまま受ける。
- * 本物の api.js がこのアプリの CSP の下でトークンを出すことは、ログイン・パスワード再設定・api.js を読み込めないときのテストが確かめる。
+ * 「api.js を読み込めないとき」で確かめたいのは、読み込めないときの案内とやり直しでの復帰なので、復帰のあとも手元の api.js を使う。
+ * 本物の api.js がこのアプリの CSP の下でトークンを出すことは、ログイン・パスワード再設定のテストが確かめる。
  */
 import { test, expect, type Page, type Request } from "@playwright/test";
 import { generateTestPassword } from "./helpers/credentials";
@@ -251,6 +252,11 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
   test("api.js を読み込めないとき (広告ブロッカーなど): エラーを案内して送信できず、読み込めるようになったら「もう一度確認する」で復帰できる", async ({
     page,
   }) => {
+    // #1672: 読み込めるようになったあとの api.js は、外のネットワークに繋がない手元のもの (ファイル冒頭のコメント)。
+    // ここで確かめたいのは「読み込めないときの案内と、やり直しでの復帰」で、本物の api.js は要らない
+    // (常設の e2e で、復帰のあとの本物のウィジェットが error になり落ちることがあった)。
+    // 下の abort はあとから登録するので、外すまでは先に当たる
+    const offline = await serveTurnstileOffline(page);
     const apiJs = /challenges\.cloudflare\.com\/turnstile\/v0\/api\.js/;
     await page.route(apiJs, (route) => route.abort());
     await openWithWidget(page, "/login");
@@ -261,11 +267,14 @@ test.describe("Turnstile (Cloudflare のテスト用サイトキー)", () => {
     await expect(widget).toContainText("ボットではないことの確認を完了できませんでした");
     await expect(submit).toBeDisabled();
 
+    expect(offline.apiJsLoads(), "読み込めない間に api.js が届いている").toBe(0);
+
     await page.unroute(apiJs);
     await widget.getByRole("button", { name: "もう一度確認する" }).click();
 
     await waitUntilTokenReady(page);
     await expect(submit).toBeEnabled();
     await expectNoCloudflareCspViolations(page);
+    expect(offline.apiJsLoads(), "やり直しで api.js を読み直していない").toBeGreaterThanOrEqual(1);
   });
 });
