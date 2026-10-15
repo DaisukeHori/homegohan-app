@@ -19,6 +19,7 @@ import {
   HANDSON_TOUR_CONSTANTS,
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
+  personalize,
 } from '@homegohan/handson-tour-shared';
 
 import { tourAnalyticsPlatformOf } from '../../src/handson-tour/tour-platform';
@@ -432,6 +433,20 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
     expect(skipCalls()).toHaveLength(1);
     expect(JSON.parse(String(skipCalls()[0][1].body))).toEqual({ step: 3, reason: 'hard_back' });
+  });
+
+  // #1626: 文言は Web と共有 (packages/handson-tour-shared)。お試しの記録は first_bite に数えないので、Step 3 の時点で付いているのは planner の 1 つ
+  it('Step 3 の intro は「もう 1 つ獲得しています」をニックネームで埋めて出し、本文に {nickname} の波括弧を残さない', async () => {
+    const { resolveBadges } = holdBadges();
+    const screen = render(<HandsonTourBadges />);
+    await resolveBadges(BADGES_OK);
+
+    expect(screen.getByTestId('overlay-title')).toHaveTextContent('テスト さん、もう 1 つ獲得しています!');
+    expect(screen.getByTestId('overlay-title')).toHaveTextContent(
+      personalize(i18n.step3.intro_title, { nickname: 'テスト' }),
+    );
+    expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step3.intro_hint);
+    expect(screen.getByTestId('overlay-body').props.children).not.toContain('{nickname}');
   });
 
   it('最後の吹き出し (3.4) で抜けたあとに【次へ】が押されても、Step 4 へ進まず完了も記録しない', async () => {

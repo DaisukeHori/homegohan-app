@@ -14,7 +14,13 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { HANDSON_TOUR_CONSTANTS, HANDSON_TOUR_ROUTES } from '@homegohan/handson-tour-shared';
+import {
+  HANDSON_TOUR_CONSTANTS,
+  HANDSON_TOUR_I18N_JA,
+  HANDSON_TOUR_ROUTES,
+  STEP3_BADGES_EARNED_IN_TOUR,
+  personalize,
+} from '@homegohan/handson-tour-shared';
 import { createFakeTourDb } from './helpers/fake-tour-profile-db';
 
 const mocks = vi.hoisted(() => ({
@@ -321,8 +327,16 @@ function badge(code: string, earned: boolean) {
   };
 }
 
+/** ツアーを通した利用者が Step 3 に来たときの獲得状態 (#1626: お試しの記録は first_bite に数えないので、付いているのは planner だけ) */
+const earnedInTour = (code: string): boolean => (STEP3_BADGES_EARNED_IN_TOUR as readonly string[]).includes(code);
+
 const BADGES_RESPONSE = {
-  badges: [badge('first_bite', true), badge('streak_3', false), badge('planner', true), badge('tutorial_complete', false)],
+  badges: [
+    badge('first_bite', earnedInTour('first_bite')),
+    badge('streak_3', false),
+    badge('planner', earnedInTour('planner')),
+    badge('tutorial_complete', false),
+  ],
   newEarnedCount: 0,
   newEarnedBadgeCodes: [],
   stats: { completedMeals: 0, cookMeals: 0, streak: 0 },
@@ -362,16 +376,45 @@ describe('#1604 Step 3: 「獲得済」は /api/badges の earned で出す', ()
     stubBrowserApis();
   });
 
-  it('earned のバッジ (first_bite / planner) だけに「獲得済」が付き、tutorial_complete などには付かない', async () => {
+  it('earned のバッジ (ツアーで付く planner) だけに「獲得済」が付き、first_bite (お試しの記録では付かない。#1626) や tutorial_complete などには付かない', async () => {
     await mountBadges();
 
-    expect(byTestId('badge-card-first_bite')?.textContent).toContain('獲得済');
     expect(byTestId('badge-card-planner')?.textContent).toContain('獲得済');
+    expect(byTestId('badge-card-first_bite')?.textContent).not.toContain('獲得済');
     expect(byTestId('badge-card-tutorial_complete')?.textContent).not.toContain('獲得済');
     expect(byTestId('badge-card-streak_3')?.textContent).not.toContain('獲得済');
     // 未獲得の tutorial_complete は半透明 (設計書 05-step3 §3.6)
     expect(byTestId('badge-card-tutorial_complete')?.className).toContain('opacity-50');
-    expect(byTestId('badge-card-first_bite')?.className).toContain('bg-blue-50');
+    expect(byTestId('badge-card-planner')?.className).toContain('bg-blue-50');
+    expect(byTestId('badge-card-first_bite')?.className).not.toContain('bg-blue-50');
+  });
+
+  it('first_bite が獲得済み (本物の食事の記録がある人のやり直しのツアー) なら「獲得済」を付ける', async () => {
+    BADGES_RESPONSE.badges[0] = badge('first_bite', true);
+    try {
+      await mountBadges();
+      expect(byTestId('badge-card-first_bite')?.textContent).toContain('獲得済');
+      expect(byTestId('badge-card-first_bite')?.className).toContain('bg-blue-50');
+    } finally {
+      BADGES_RESPONSE.badges[0] = badge('first_bite', earnedInTour('first_bite'));
+    }
+  });
+
+  // #1626: 以前は intro が「もう 2 つ獲得しています」で、実際に「獲得済」が付くのは planner の 1 つだけだった
+  it('intro の「もう n つ獲得しています」の n が、ツアーを通した状態で「獲得済」が付くカードの数と同じ', async () => {
+    await mountBadges();
+
+    const earnedCards = [...container.querySelectorAll('[data-testid^="badge-card-"]')].filter((card) =>
+      card.textContent?.includes('獲得済'),
+    );
+    const intro = byTestId('bubble-body')?.textContent ?? '';
+    const introCount = Number(/(\d+)\s*つ獲得/.exec(intro)?.[1]);
+
+    // 吹き出しは共有の文言 (packages/handson-tour-shared の intro_title) を、プロフィールのニックネームで埋めたもの
+    expect(intro).toBe(personalize(HANDSON_TOUR_I18N_JA.tour.step3.intro_title, { nickname: 'はなこ' }));
+    expect(earnedCards.map((card) => card.getAttribute('data-testid'))).toEqual(['badge-card-planner']);
+    expect(introCount).toBe(earnedCards.length);
+    expect(introCount).toBe(STEP3_BADGES_EARNED_IN_TOUR.length);
   });
 
   it('tutorial_complete が獲得済み (やり直しのツアー) なら「獲得済」を付け、半透明にしない', async () => {

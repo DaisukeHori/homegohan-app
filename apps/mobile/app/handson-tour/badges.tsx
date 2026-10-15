@@ -67,7 +67,7 @@ export default function HandsonTourBadges() {
         await getApi().get('/api/badges');
         // 応答を待つ間に端末バックでツアーを抜けていたら、ここで終える (ホームへの遷移中に吹き出しを出さない)
         if (leftTourRef.current) return;
-        // first_bite と planner が獲得済みであることを期待
+        // ツアーが Step 3 までに付けるのは planner だけ (STEP3_BADGES_EARNED_IN_TOUR)。お試しの記録は first_bite に数えない (#1314 / #1626)
         setIsLoading(false);
         advanceSubStep('3.1');
       } catch {
@@ -148,7 +148,9 @@ export default function HandsonTourBadges() {
       case '3.1':
         return {
           title: personalize(i18n.step3.intro_title, { nickname }),
-          body: i18n.step3.intro_title,
+          // 本文は intro_hint (Step 1 / 2 の intro と同じ形)。以前は intro_title をそのまま入れていて、
+          // 「{nickname} さん、…」の波括弧が画面に出ていた (#1626 で見つけた)
+          body: i18n.step3.intro_hint,
           position: 'auto',
           // E2E (Maestro) が各 Step の最初の intro 吹き出しを見分ける目印 (設計書 09-onboarding-handson-tour の testID 一覧。#846)
           testId: 'tour-step-3-intro',

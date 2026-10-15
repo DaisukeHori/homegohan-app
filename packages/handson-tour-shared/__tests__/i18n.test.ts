@@ -6,6 +6,7 @@
 import { describe, it, expect } from 'vitest';
 import { HANDSON_TOUR_I18N_JA, HANDSON_TOUR_I18N_EN } from '../src/i18n';
 import { personalize } from '../src/personalize';
+import { STEP3_BADGES_EARNED_IN_TOUR } from '../src/constants';
 
 describe('i18n keys completeness', () => {
   const t = HANDSON_TOUR_I18N_JA.tour;
@@ -331,5 +332,43 @@ describe('HANDSON_TOUR_I18N_EN は JA と同じキー名・placeholder を持つ
       }
     }
     expect(empty).toEqual([]);
+  });
+});
+
+// #1626: Step 3 の intro は「もう n つ獲得しています」と言う。以前は「2 つ」だったが、Step 1 のお試しの記録は
+// first_bite に数えない (#1314) ので、ツアーを通した利用者が Step 3 の時点で持っているのは planner の 1 つだけだった。
+// 文言の数を、ツアーが実際に付けるバッジの数 (STEP3_BADGES_EARNED_IN_TOUR) と突き合わせる
+describe('Step 3 の文言の「n つ」は、ツアーが Step 3 までに付けるバッジの数と合う (#1626)', () => {
+  const earnedCount = STEP3_BADGES_EARNED_IN_TOUR.length;
+  /** 文言に書かれたバッジの数。JA は「n つ」、EN は「n badge(s)」。見つからなければ null */
+  const jaCountOf = (text: string): number | null => {
+    const m = /(\d+)\s*つ/.exec(text);
+    return m ? Number(m[1]) : null;
+  };
+  const enCountOf = (text: string): number | null => {
+    const m = /(\d+)\s*badges?\b/.exec(text);
+    return m ? Number(m[1]) : null;
+  };
+
+  it('ツアーが Step 3 までに付けるのは planner だけ (お試しの記録では first_bite を付けない)', () => {
+    expect([...STEP3_BADGES_EARNED_IN_TOUR]).toEqual(['planner']);
+  });
+
+  it('JA の intro_title / a11y_title の数が、付けるバッジの数と同じ', () => {
+    const ja = HANDSON_TOUR_I18N_JA.tour.step3;
+    expect(jaCountOf(ja.intro_title)).toBe(earnedCount);
+    expect(jaCountOf(ja.a11y_title)).toBe(earnedCount);
+    expect(personalize(ja.intro_title, { nickname: '花子' })).toBe('花子 さん、もう 1 つ獲得しています!');
+  });
+
+  it('EN の intro_title / a11y_title の数が、付けるバッジの数と同じ', () => {
+    const en = HANDSON_TOUR_I18N_EN.tour.step3;
+    expect(enCountOf(en.intro_title)).toBe(earnedCount);
+    expect(enCountOf(en.a11y_title)).toBe(earnedCount);
+  });
+
+  it('未獲得の first_bite の吹き出しは「記録しました」(獲得済みの言い方) ではなく、もらい方を案内する', () => {
+    expect(HANDSON_TOUR_I18N_JA.tour.step3.first_bite_bubble).toBe('食事を 1 回記録するともらえます');
+    expect(HANDSON_TOUR_I18N_EN.tour.step3.first_bite_bubble).toBe('Log a meal once to earn it');
   });
 });
