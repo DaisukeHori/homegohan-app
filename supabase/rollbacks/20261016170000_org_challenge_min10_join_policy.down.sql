@@ -1,4 +1,4 @@
--- rollback: 20261015190000_org_challenge_min10_join_policy.sql
+-- rollback: 20261016170000_org_challenge_min10_join_policy.sql
 -- ⚠️ 守りが弱くなる: 戻すと、管理者向けの集計 (get_org_challenge_aggregates) の最小人数が 5 人に戻り、
 --    参加の INSERT ポリシーも #1238 の形 (本人・自分の組織のチャレンジ・進捗 0・順位なし) に戻って、利用者の JWT で PostgREST に
 --    直接 INSERT すると、別の部署向け・下書き・終わったチャレンジにも参加行を作れる状態に戻る (#1600 の前の状態)。

@@ -1,4 +1,4 @@
--- migration: 20261015190000_org_challenge_min10_join_policy.sql
+-- migration: 20261016170000_org_challenge_min10_join_policy.sql
 -- #1600: 組織チャレンジの集計の最小人数を 5 → 10 人にし、参加の直接の INSERT を API と同じ条件で拒む。#1132 (20261014100100_org_challenge_progress.sql) の残り
 --
 -- 背景:
@@ -33,7 +33,7 @@
 -- 確認: tests/integration/rls/org-challenge-progress.test.ts (H: 9 人では返さず 10 人で返す) /
 --       tests/integration/rls/challenge-participants-org-scope.test.ts (#1600 INSERT) /
 --       tests/integration/security/org-challenges-api.test.ts (D) / tests/org-challenge-min10-join-policy-migration-contract.test.ts
--- ロールバック: supabase/rollbacks/20261015190000_org_challenge_min10_join_policy.down.sql
+-- ロールバック: supabase/rollbacks/20261016170000_org_challenge_min10_join_policy.down.sql
 --   (戻すと、最小人数が 5 人に戻り、別の部署向け・下書き・終わったチャレンジへの直接の INSERT が通る状態に戻る。守りが弱くなるので注意)
 
 SET LOCAL lock_timeout = '10s';
