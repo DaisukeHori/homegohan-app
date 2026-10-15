@@ -231,7 +231,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | 未同意の `/api` 呼び出し | 通る | 403 `{ error, code: 'LEGAL_CONSENT_REQUIRED' }` (許可リスト以外) |
 | 同意の状況を知る API | 無し (画面の HTML か、`GET /api/profile` の列) | `GET /api/legal/status` |
 | `lib/legal-consent.ts` の `EXEMPT_PREFIXES` の `/api` | 画面の判定で対象外 (コメント「各 route が自分で認可する」) | 変えない (画面の判定の対象外のまま。コメントだけ本書のゲートを指すように直す) |
-| 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う) |
+| 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う)。Web の画面に出る文は変わらない (「同意しない」のボタンは `declineAndSignOutButton` = 現行と同じ「同意しない（ログアウトする）」。押している間の文はリテラルのまま) |
 | 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` 2 本 | 変えない。同意の許可リストはこれを含む (テストで固定) |
 
 モバイルの行 (起動・改定の再同意・403 の扱い) は 13b §6.2。
@@ -539,7 +539,8 @@ export function isLegalConsentStatus(body: unknown): body is LegalConsentStatus 
 /**
  * 利用規約・プライバシーポリシーの同意画面の文面 (#1174 の Web の同意画面 src/app/legal-consent/LegalConsentForm.tsx と、
  * #1442 のアプリのネイティブの同意画面 apps/mobile/src/components/legal/LegalConsentScreen.tsx が同じ値を使う。文面を 2 か所に持たない)。
- * 値は #1174 の Web の文面そのまま (tests/e2e/legal-consent-gate.spec.ts と tests/legal-consent-page.test.tsx がこの文で画面を探す)。
+ * declineButton 以外の値は #1174 の Web の文面そのまま (tests/e2e/legal-consent-gate.spec.ts と tests/legal-consent-page.test.tsx がこの文で画面を探す)。
+ * declineButton だけは Web で使わない (Web のボタンは declineAndSignOutButton)。
  * 文書の名前 (利用規約 / プライバシーポリシー) は legal-versions.ts の LEGAL_DOCUMENT_LABELS。
  */
 export const LEGAL_CONSENT_COPY = {
@@ -549,7 +550,14 @@ export const LEGAL_CONSENT_COPY = {
     '利用規約・プライバシーポリシーが改定されました。引き続きご利用いただくには、内容をご確認のうえ、同意をお願いします。',
   revisedBadge: '改定あり',
   acceptButton: '同意して続ける',
+  /**
+   * アプリの「同意しない」のボタンと、その後の確認の Alert の見出し (13b §6.6)。アプリはこのボタンでは
+   * ログアウトせず、Alert の「ログアウト」で初めてログアウトするので、「（ログアウトする）」を付けない。
+   * Web のボタンの文 (declineAndSignOutButton) はこの文で始まる (テストが /同意しない/ の部分一致で探すため。T-C2 が固定)。
+   */
   declineButton: '同意しない',
+  /** Web の「同意しない」のボタン (押すとすぐログアウトする)。#1174 の LegalConsentForm.tsx:234 の文そのまま。全角の括弧 */
+  declineAndSignOutButton: '同意しない（ログアウトする）',
   /** 同意を送ったら版が変わっていた (409) ときの案内 (POST /api/legal/accept の 409 の本文と同じ文) */
   versionMismatch: '利用規約・プライバシーポリシーが更新されました。画面を読み込み直して、内容をご確認ください。',
   /** 同意しない人への案内 (Web は「同意しない」の後の画面、アプリは確認の Alert に出す) */
@@ -791,7 +799,8 @@ export async function GET() {
 #### 6.6.7 `src/app/legal-consent/LegalConsentForm.tsx` の差分 (文面を shared から取る)
 
 ```ts
-// tsc:skip — 既存ファイルへの差分 (JSX)。値は変えない (LEGAL_CONSENT_COPY の値は現在のリテラルと同じ)
+// tsc:skip — 既存ファイルへの差分 (JSX)。画面に出る文は 1 文字も変えない (使う LEGAL_CONSENT_COPY の値は、置き換える現在のリテラルと同じ。
+// declineButton は Web では使わない)
 // import に足す
 import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLabel, legalConsentVersionLine } from '@homegohan/shared';
 // 39 行目:  const GENERIC_ERROR = '同意の記録に失敗しました。…'  →  const GENERIC_ERROR = LEGAL_CONSENT_COPY.acceptFailed;
@@ -802,7 +811,12 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 // 177 行目: 版: {version} ／ 施行日: {formatLegalEffectiveDate(effectiveDate)}  →  {legalConsentVersionLine(version, formatLegalEffectiveDate(effectiveDate))}
 // 183 行目: {label}の全文を読む  →  {legalConsentReadFullTextLabel(label)}
 // 198 行目: {label}の内容を確認し、同意します  →  {legalConsentAgreeLabel(label)}
-// 「同意して続ける」「同意しない」のボタンの文字  →  LEGAL_CONSENT_COPY.acceptButton / LEGAL_CONSENT_COPY.declineButton
+// 226 行目: {phase === 'submitting' ? '記録しています...' : '同意して続ける'}
+//   →  {phase === 'submitting' ? '記録しています...' : LEGAL_CONSENT_COPY.acceptButton}
+// 234 行目: {phase === 'declining' ? 'ログアウトしています...' : '同意しない（ログアウトする）'}
+//   →  {phase === 'declining' ? 'ログアウトしています...' : LEGAL_CONSENT_COPY.declineAndSignOutButton}
+//   (押している間の文「記録しています...」「ログアウトしています...」は Web だけの文なのでリテラルのまま。LEGAL_CONSENT_COPY に足さない)
+//   ⛔ LEGAL_CONSENT_COPY.declineButton (「同意しない」) を Web のボタンに使わない・文字列の連結で「（ログアウトする）」を足さない
 // 「同意しない」の後の画面の 1 文「利用規約・プライバシーポリシーに同意いただけない場合、ほめゴハンはご利用いただけません。」
 //   →  LEGAL_CONSENT_COPY.declineUnavailable (その後の「ログアウトしました。」は Web だけの文なのでリテラルのまま)
 ```
@@ -988,6 +1002,12 @@ sequenceDiagram
 |---|---|
 | T-C1 | `Web の同意フォーム (LegalConsentForm.tsx) は共有の文面 (LEGAL_CONSENT_COPY) を使い、見出し・導入・ボタンのリテラルを持たない` |
 | T-C2 | `LEGAL_CONSENT_COPY の値は e2e が探す文 (見出し・チェックの文・ボタンの文) と同じ` |
+| T-C3 | `Web の「同意しない」のボタンは declineAndSignOutButton を使い、declineButton を使わない` |
+
+T-C1 と T-C3 の検査の仕方 (コメントを拾わない): `LegalConsentForm.tsx` を `ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX)` で読み (既存の `tests/admin-console-links.test.ts:117` と同じ形)、`StringLiteral`・`NoSubstitutionTemplateLiteral`・テンプレートの各部分・`JsxText` のノードの文を集める (コメントは AST のノードにならないので入らない。ファイル冒頭のコメント 4・7〜9 行目、102・190 行目の「同意して続ける」「同意しない」は対象外になる)。
+- T-C1: 集めた文のどれも、`Object.values(LEGAL_CONSENT_COPY)` のどの値も含まない (部分一致)。押している間の文「記録しています...」「ログアウトしています...」と「ログアウトしました。」は LEGAL_CONSENT_COPY の値を含まないので、リテラルのままで緑。
+- T-C3: 同じ AST に `LEGAL_CONSENT_COPY.declineAndSignOutButton` の参照 (PropertyAccessExpression) が 1 つ以上あり、`LEGAL_CONSENT_COPY.declineButton` の参照が 0 個。
+- T-C2 は値を逐語で固定する: `heading` = `'利用規約・プライバシーポリシーへの同意'`、`acceptButton` = `'同意して続ける'` (e2e `legal-consent-gate.spec.ts:165` の `name: "同意して続ける"` と unit `legal-consent-page.test.tsx:254` の `toBe('同意して続ける')`)、`declineAndSignOutButton` = `'同意しない（ログアウトする）'` (#1174 の `LegalConsentForm.tsx:234` の文)、`declineAndSignOutButton.startsWith(declineButton)` が真 (e2e `:412` の `/同意しない/` と unit `:228` の `includes('同意しない')` が Web のボタンを見つけられる)、`legalConsentAgreeLabel('利用規約')` = `'利用規約の内容を確認し、同意します'`。
 
 **F. E2E `tests/e2e/legal-consent-gate.spec.ts` に足す (API の結合。`page.request` でセッション Cookie を使う)**
 
@@ -1054,7 +1074,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `api/health$` (matcher) | `tests/health-middleware-exemption.test.ts` | 確認のみ。T-M15 が同じ読み方で再確認 | A |
 | `src/app/api/legal/status/route.ts` (新 route の走査) | `tests/api-raw-error-message-scan.test.ts` (本文に生のエラー文を入れない)、`tests/ai-consent-enforcement.test.ts` (AI に届く route の棚卸し)、`tests/supabase-service-role-client-scan.test.ts`、`tests/env-source-scan.test.ts` | 確認のみ: route は `internalError` と固定の文だけを返す / import は accept route と同じ構成 (`@/lib/supabase/server`・`@/lib/api/errors`・`@/lib/legal-consent`・`@homegohan/shared`・zod の schema) で AI の印に届かない / service role を使わない / `process.env` を直接読まない | A |
 | `LEGAL_CONSENT_ENFORCE` (読む場所) | `tests/env-source-scan.test.ts` (読むのは `lib/legal-consent.ts` だけ)、`tests/legal-consent-env-stub-style.test.ts` (テストは `vi.stubEnv`) | 確認のみ: status route と middleware は `isLegalConsentEnforced()` を呼ぶだけ。新しいテストは `vi.stubEnv` | A |
-| `LegalConsentForm.tsx` の文面 (`利用規約・プライバシーポリシーへの同意` `改定されました` `改定あり` `同意して続ける` `同意しない`) | `tests/legal-consent-page.test.tsx:153-181, 228-254`、`tests/e2e/legal-consent-gate.spec.ts:162-165`、`tests/e2e/helpers/legal-consent.ts`、`tests/native-sign-out-order-source-scan.test.ts` (signOut の順) | 確認のみ (値は同じ。sign-out の順も触らない)。T-C2 が同じ文であることを固定 | A |
+| `LegalConsentForm.tsx` の文面 (`利用規約・プライバシーポリシーへの同意` `改定されました` `改定あり` `同意して続ける` `同意しない（ログアウトする）`) | `tests/legal-consent-page.test.tsx:153-181, 228-254`、`tests/e2e/legal-consent-gate.spec.ts:162-165, 412`、`tests/e2e/helpers/legal-consent.ts:19-21`、`tests/native-sign-out-order-source-scan.test.ts` (signOut の順) | 確認のみ (画面に出る文は同じ。Web の「同意しない」のボタンは `declineAndSignOutButton` = 現行の文。sign-out の順も触らない)。T-C2 が同じ文であることを、T-C3 が Web で `declineButton` を使わないことを固定 | A |
 | `export * from` (shared の index) | `packages/shared/src/*.test.ts` に index の export を固定するものは無い | — | A |
 | `supabase.from(` (アプリの直読み) | 無し (番兵は無い) | §6.13 の限界として明記 | — |
 
