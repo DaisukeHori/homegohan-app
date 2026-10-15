@@ -227,9 +227,11 @@ describe("membershipErrorMessage / membershipErrorMessageOfBody (#1478)", () => 
   });
 });
 
-// #1576: 家族の除名の API (/api/family/members/[member_id]/remove) が返す code は、すべて MembershipErrorCode の値
+// #1576: 家族の除名の API (/api/family/members/[member_id]/remove) が返す code は、すべて MembershipErrorCode の値。
+// 代表者を外そうとしたときの 409 は IS_FAMILY_REPRESENTATIVE (RPC が RAISE する文)。CANNOT_REMOVE_REPRESENTATIVE は route の古い守り
 describe("家族の除名の API が返す code が表にある (#1576)", () => {
   it.each([
+    ["IS_FAMILY_REPRESENTATIVE", 409],
     ["CANNOT_REMOVE_REPRESENTATIVE", 409],
     ["INVALID_REQUEST", 400],
     ["VALIDATION_ERROR", 400],
@@ -241,7 +243,30 @@ describe("家族の除名の API が返す code が表にある (#1576)", () => 
     expect(mapPgErrorToHttp(`ERROR: ${code}`)).toEqual({ code, status });
   });
 
-  it("代表者を外せない文は、代表者を譲る案内を含み、IS_FAMILY_REPRESENTATIVE に化けない", () => {
+  it("remove_family_member が代表者の除名で RAISE するのは IS_FAMILY_REPRESENTATIVE で、CANNOT_REMOVE_REPRESENTATIVE を RAISE する migration は無い", () => {
+    const migrationsDir = path.join(__dirname, "..", "supabase/migrations");
+    const sqlFiles = fs.readdirSync(migrationsDir).filter((name) => name.endsWith(".sql")).sort();
+    const raises = (sql: string, code: string) => sql.includes(`RAISE EXCEPTION '${code}'`);
+    const sources = sqlFiles.map((name) => fs.readFileSync(path.join(migrationsDir, name), "utf8"));
+    expect(sources.filter((sql) => raises(sql, "CANNOT_REMOVE_REPRESENTATIVE"))).toEqual([]);
+
+    // いちばん新しい remove_family_member の定義の本体 (次の CREATE FUNCTION まで) を見る
+    const definition = /CREATE (?:OR REPLACE )?FUNCTION "?public"?\."?remove_family_member"?\(/g;
+    const definitions = sources.filter((sql) => sql.match(definition) !== null);
+    expect(definitions.length).toBeGreaterThan(0);
+    const latest = definitions[definitions.length - 1];
+    const starts = [...latest.matchAll(definition)].map((match) => match.index ?? 0);
+    const rest = latest.slice(starts[starts.length - 1] + 1);
+    const nextFunction = rest.search(/CREATE (?:OR REPLACE )?FUNCTION /);
+    const body = nextFunction === -1 ? rest : rest.slice(0, nextFunction);
+    expect(body).toMatch(/v_target\.role = 'representative' THEN\s+RAISE EXCEPTION 'IS_FAMILY_REPRESENTATIVE'/);
+    expect(mapPgErrorToHttp("ERROR: IS_FAMILY_REPRESENTATIVE")).toEqual({
+      code: MembershipErrorCode.IS_FAMILY_REPRESENTATIVE,
+      status: 409,
+    });
+  });
+
+  it("古い守りの CANNOT_REMOVE_REPRESENTATIVE の文は、代表者を譲る案内を含み、IS_FAMILY_REPRESENTATIVE に化けない", () => {
     expect(mapPgErrorToHttp("ERROR: CANNOT_REMOVE_REPRESENTATIVE").code).toBe(
       MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE,
     );

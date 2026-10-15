@@ -34,7 +34,9 @@ export enum MembershipErrorCode {
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
   NOT_FAMILY_REPRESENTATIVE = 'NOT_FAMILY_REPRESENTATIVE',
   CANNOT_TRANSFER_TO_CHILD = 'CANNOT_TRANSFER_TO_CHILD',
-  // #1576: remove_family_member が代表者を外そうとしたときに RAISE するコード (/api/family/members/[member_id]/remove が返す)
+  // #1576: /api/family/members/[member_id]/remove が、RPC のエラー文にこのコードが含まれるときにだけ返す古い守り。
+  // remove_family_member は代表者を外そうとすると IS_FAMILY_REPRESENTATIVE を RAISE する (このコードを RAISE する SQL は無い)。
+  // 代表者の除名の 409 の本文の code は IS_FAMILY_REPRESENTATIVE になる
   CANNOT_REMOVE_REPRESENTATIVE = 'CANNOT_REMOVE_REPRESENTATIVE',
   // #1232: 子供メンバー昇格の本人同意フロー
   PROMOTION_REQUEST_NOT_FOUND = 'PROMOTION_REQUEST_NOT_FOUND',

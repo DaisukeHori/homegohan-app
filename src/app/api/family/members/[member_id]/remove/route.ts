@@ -63,6 +63,8 @@ export async function POST(
 
   if (error) {
     // 返す code はどれも MembershipErrorCode の値 (画面は membershipErrorMessageOfBody で code から理由の文を引く。#1576)
+    // 古い守り: remove_family_member は代表者を外そうとすると IS_FAMILY_REPRESENTATIVE を RAISE し、その 409 は下の
+    // mapPgErrorToHttp が返す (CANNOT_REMOVE_REPRESENTATIVE を RAISE する SQL は無い)
     if (error.message?.includes(MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE)) {
       return NextResponse.json(
         {
