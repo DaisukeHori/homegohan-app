@@ -1,7 +1,7 @@
 /**
  * #1532 積み直しの道具 (scripts/lib/meal-image-backfill.ts の runMealImageBackfill) が処理を起こす条件と件数。
  *
- *   - limit は積めた行と重複 (同じ料理のジョブが待ち・処理中) の数 (countMealImageJobsToProcess)。書き込みに失敗した行は数えない
+ *   - limit は積めた行と重複 (同じ料理のジョブが待ち) の数 (countMealImageJobsToProcess)。書き込みに失敗した行・処理中の重複 (#1561) は数えない
  *   - 1 行も積めず重複も無い (書き込みの失敗だけ) なら起こさない
  * 積み方 (enqueueMealImageJobs) と起こす関数 (triggerMealImageJobProcessing) は作り物にして、渡した値だけを見る。
  * 実 DB に対しての積み直しは tests/integration/rls/meal-image-backfill.test.ts
@@ -72,7 +72,7 @@ describe('#1532 runMealImageBackfill: 処理を起こす条件と件数', () => 
   });
 
   it('limit は積めた行と重複の数 (3 品のうち 1 品の書き込みが失敗なら 2)', async () => {
-    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 1, failed: 1 });
+    h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 1, duplicatesProcessing: 0, failed: 1 });
     const report = await runMealImageBackfill(makeAdmin(), options());
 
     expect(h.enqueue).toHaveBeenCalledTimes(1);
@@ -87,12 +87,21 @@ describe('#1532 runMealImageBackfill: 処理を起こす条件と件数', () => 
     expect(report.triggeredMeals).toBe(1);
   });
 
-  it('書き込みの失敗だけ (積めた行も重複も無い) なら起こさない', async () => {
-    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, failed: WAITING_DISHES.length });
+  it('#1561 重複がどれも処理中なら起こさない。処理中の重複も報告の合計に数える', async () => {
+    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 2, duplicatesProcessing: 2, failed: 0 });
     const report = await runMealImageBackfill(makeAdmin(), options());
 
     expect(h.trigger).not.toHaveBeenCalled();
     expect(report.triggeredMeals).toBe(0);
-    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 0, failed: WAITING_DISHES.length });
+    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 2, duplicatesProcessing: 2, failed: 0 });
+  });
+
+  it('書き込みの失敗だけ (積めた行も重複も無い) なら起こさない', async () => {
+    h.enqueue.mockResolvedValue({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: WAITING_DISHES.length });
+    const report = await runMealImageBackfill(makeAdmin(), options());
+
+    expect(h.trigger).not.toHaveBeenCalled();
+    expect(report.triggeredMeals).toBe(0);
+    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: WAITING_DISHES.length });
   });
 });

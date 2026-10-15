@@ -246,6 +246,8 @@ const BATCH_ONLY_SOURCES = [
   "supabase/functions/stripe-price-sync/index.ts",
   "supabase/functions/backfill-ingredient-embeddings/index.ts",
   "supabase/functions/create-derived-recipe/index.ts",
+  // 料理画像のジョブの処理。service role key か、pg_cron の CRON_SECRET (requireServiceRole) で呼ぶ (#1561)
+  "supabase/functions/process-meal-image-jobs/index.ts",
   // import-*-catalog (6 関数) の共通ハンドラ
   "supabase/functions/_shared/catalog/import-runner.ts",
   "supabase/functions/import-convenience-catalog/index.ts",

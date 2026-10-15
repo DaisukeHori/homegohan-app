@@ -579,3 +579,82 @@ describe('formatDishLeftPendingLastError (#1553)', () => {
     );
   });
 });
+
+describe('認証: pg_cron (Vault の app_cron_secret = CRON_SECRET) からも呼べる (#1561)', () => {
+  /** pg_cron のジョブ process-pending-meal-image-jobs が Bearer に付ける値 (テスト用) */
+  const CRON_SECRET = 'test-cron-secret';
+  /** public.invoke_process_meal_image_jobs が送る本文 (献立を指定せず、件数だけ) */
+  const CRON_BODY = { limit: 5 };
+  const BASE_ENV = { SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY, GOOGLE_AI_STUDIO_API_KEY: 'test-google-key' };
+
+  async function call(headers: Record<string, string>, body: unknown = CRON_BODY): Promise<Response> {
+    return await handler(
+      new Request(URL_, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }),
+    );
+  }
+
+  afterAll(() => {
+    h.env = { ...BASE_ENV };
+  });
+
+  it('Bearer が CRON_SECRET と合えば、献立を指定しない本文で待ちのジョブを処理する', async () => {
+    h.env = { ...BASE_ENV, CRON_SECRET };
+
+    const res = await call({ authorization: `Bearer ${CRON_SECRET}` });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { processed: number; jobs: Array<{ jobId: string; status: string }> };
+    expect(body.jobs).toEqual([expect.objectContaining({ jobId: JOB_ID, status: 'completed' })]);
+    expect(h.jobs[0].status).toBe('completed');
+    expect(h.generateCalls).toBe(1);
+  });
+
+  it('CRON_SECRET が未設定のあいだは、service role key でない Bearer を 503 (Service not configured) で止め、ジョブに触れない', async () => {
+    h.env = { ...BASE_ENV };
+
+    const res = await call({ authorization: `Bearer ${CRON_SECRET}` });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: 'Service not configured' });
+    expect(h.jobUpdates).toEqual([]);
+    expect(h.jobs[0].status).toBe('pending');
+    expect(h.generateCalls).toBe(0);
+  });
+
+  it('CRON_SECRET と合わない Bearer・Bearer の無い要求は 401 で止め、ジョブに触れない', async () => {
+    h.env = { ...BASE_ENV, CRON_SECRET };
+
+    for (const headers of [{ authorization: 'Bearer wrong-secret' }, {}]) {
+      const res = await call(headers);
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ error: 'Unauthorized' });
+    }
+    expect(h.jobUpdates).toEqual([]);
+    expect(h.generateCalls).toBe(0);
+  });
+
+  it('service role key (Bearer か apikey) は、CRON_SECRET が未設定でも従来どおり通る', async () => {
+    h.env = { ...BASE_ENV };
+
+    const viaApiKey = await call({ apikey: SERVICE_ROLE_KEY });
+    expect(viaApiKey.status).toBe(200);
+    expect(h.jobs[0].status).toBe('completed');
+  });
+
+  it('ジョブを取るときの貸し出しは 2 分 (JOB_LEASE_MS)。これを過ぎてさらに 5 分で pg_cron が取り戻す', async () => {
+    h.env = { ...BASE_ENV };
+    /** 貸し出しの長さ (index.ts の JOB_LEASE_MS) */
+    const LEASE_MS = 2 * 60_000;
+    /** 要求を送ってから貸し出しをつけるまでの時間の幅 (同じテストの中なので十分に大きい) */
+    const CLOCK_SLACK_MS = 60_000;
+    const before = Date.now();
+
+    await runWorker();
+
+    const lock = h.jobUpdates.find((update) => update.values.status === 'processing');
+    expect(lock).toBeDefined();
+    const leasedUntil = Date.parse(String(lock?.values.leased_until));
+    expect(leasedUntil - before).toBeGreaterThanOrEqual(LEASE_MS);
+    expect(leasedUntil - before).toBeLessThan(LEASE_MS + CLOCK_SLACK_MS);
+  });
+});

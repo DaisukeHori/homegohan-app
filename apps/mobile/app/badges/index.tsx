@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { formatBadgePeriodAwards, type BadgePeriodAwards } from "@homegohan/shared";
 import { useLocalSearchParams } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 import { Animated, ScrollView, Text, View } from "react-native";
@@ -15,6 +16,8 @@ type Badge = {
   description: string;
   earned: boolean;
   obtainedAt: string | null;
+  /** 比較ランキングのバッジを取った期間 (最新の期間と回数)。GET /api/badges が獲得済みで期間の記録があるバッジだけに付ける (#1528) */
+  periodAwards?: BadgePeriodAwards | null;
 };
 
 // Highlight border + background animation for tutorial mode (§1.2 Q10)
@@ -90,6 +93,19 @@ function HighlightedBadgeCard({ badge, isHighlighted, inTutorialMode }: { badge:
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={{ fontSize: 15, fontWeight: "700", color: colors.text }}>{badge.name}</Text>
               <Text style={{ fontSize: 13, color: colors.textLight }}>{badge.description}</Text>
+              {/* #1528: 確定した期間に取ったバッジ (先週・先月の 1 位など) は、どの期間のものかと、その判定の文を添える */}
+              {badge.earned && badge.periodAwards ? (
+                <>
+                  <Text testID={`badges-badge-period-${badge.code}`} style={{ fontSize: 12, fontWeight: "700", color: colors.accent }}>
+                    獲得した期間: {formatBadgePeriodAwards(badge.periodAwards)}
+                  </Text>
+                  {badge.periodAwards.latest.message ? (
+                    <Text testID={`badges-badge-period-message-${badge.code}`} style={{ fontSize: 12, color: colors.textLight }}>
+                      {badge.periodAwards.latest.message}
+                    </Text>
+                  ) : null}
+                </>
+              ) : null}
               {badge.obtainedAt ? (
                 <Text style={{ fontSize: 12, color: colors.textMuted }}>獲得: {badge.obtainedAt}</Text>
               ) : null}

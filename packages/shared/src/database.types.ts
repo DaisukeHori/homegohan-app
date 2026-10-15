@@ -6512,6 +6512,44 @@ export type Database = {
         }
         Relationships: []
       }
+      user_badge_period_awards: {
+        Row: {
+          awarded_at: string
+          badge_id: string
+          context_json: Json | null
+          message: string | null
+          period_start: string
+          period_type: string
+          user_id: string
+        }
+        Insert: {
+          awarded_at?: string
+          badge_id: string
+          context_json?: Json | null
+          message?: string | null
+          period_start: string
+          period_type: string
+          user_id: string
+        }
+        Update: {
+          awarded_at?: string
+          badge_id?: string
+          context_json?: Json | null
+          message?: string | null
+          period_start?: string
+          period_type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_badge_period_awards_badge_id_fkey"
+            columns: ["badge_id"]
+            isOneToOne: false
+            referencedRelation: "badges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_badges: {
         Row: {
           badge_id: string
@@ -8034,6 +8072,17 @@ export type Database = {
       }
       get_effective_plan: { Args: { p_user_id: string }; Returns: string }
       get_invite_details: { Args: { p_token: string }; Returns: Json }
+      get_my_badge_period_award_summaries: {
+        Args: never
+        Returns: {
+          award_count: number
+          badge_id: string
+          latest_awarded_at: string
+          latest_message: string
+          latest_period_start: string
+          latest_period_type: string
+        }[]
+      }
       get_nps_summary: {
         Args: { p_from?: string; p_plan_key?: string; p_to?: string }
         Returns: {
@@ -8100,6 +8149,7 @@ export type Database = {
         Args: { p_function_name: string }
         Returns: number
       }
+      invoke_process_meal_image_jobs: { Args: never; Returns: number }
       invoke_purge_hidden_content: { Args: never; Returns: number }
       is_active_family_adult: {
         Args: { p_family_id: string }
@@ -8771,6 +8821,10 @@ export type Database = {
       }
       request_child_promotion: {
         Args: { p_email: string; p_member_id: string }
+        Returns: Json
+      }
+      requeue_stale_meal_image_jobs: {
+        Args: { p_now?: string }
         Returns: Json
       }
       reset_e2e_test_users: { Args: never; Returns: undefined }

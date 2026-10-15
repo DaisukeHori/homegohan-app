@@ -5,12 +5,15 @@ import { useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { Badge } from "@/types/domain";
+import { formatBadgePeriodAwards, type BadgePeriodAwards } from "@homegohan/shared";
 
 // 拡張型定義
 interface BadgeWithStatus extends Badge {
   earned: boolean;
   obtainedAt?: string;
   icon?: string; // マッピング用
+  /** 比較ランキングのバッジを取った期間 (最新の期間と回数)。GET /api/badges が獲得済みで期間の記録があるバッジだけに付ける (#1528) */
+  periodAwards?: BadgePeriodAwards | null;
 }
 
 // アイコンマッピング（コードベース）
@@ -249,6 +252,13 @@ function BadgesPageInner() {
                 {badge.name}
               </h3>
 
+              {/* #1528: 確定した期間に取ったバッジ (先週・先月の 1 位など) は、どの期間のものかを添える */}
+              {badge.earned && badge.periodAwards && (
+                <p data-testid="badge-card-period" className="text-[11px] font-bold text-[#FF8A65] leading-tight">
+                  {formatBadgePeriodAwards(badge.periodAwards)}
+                </p>
+              )}
+
               {!badge.earned && (
                 <div className="absolute inset-0 bg-black/5 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity backdrop-blur-sm p-2 pointer-events-none">
                    <p className="text-xs font-bold text-gray-700">{badge.description}</p>
@@ -320,10 +330,29 @@ function BadgesPageInner() {
                   </p>
                 </div>
 
+                {/* #1528: 確定した期間に取ったバッジは、最新の期間とその判定の文・取った回数を出す */}
+                {selectedBadge.earned && selectedBadge.periodAwards && (
+                  <div data-testid="badge-detail-period">
+                    <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
+                      獲得した期間
+                    </p>
+                    <p className="text-sm text-gray-700">{selectedBadge.periodAwards.latest.label}</p>
+                    {selectedBadge.periodAwards.latest.message && (
+                      <p className="text-sm text-gray-700 mt-1">{selectedBadge.periodAwards.latest.message}</p>
+                    )}
+                    {selectedBadge.periodAwards.count > 1 && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        これまでに {selectedBadge.periodAwards.count} 回獲得しました（最新の期間を表示しています）
+                      </p>
+                    )}
+                  </div>
+                )}
+
                 {selectedBadge.earned && selectedBadge.obtainedAt && (
                   <div>
                     <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1">
-                      取得日時
+                      {/* 取得日時 (obtainedAt) は初めて取った日。2 回以上取ったバッジは、上の「獲得した期間」(最新) と区別する (#1528) */}
+                      {(selectedBadge.periodAwards?.count ?? 0) > 1 ? '初めて取得した日' : '取得日時'}
                     </p>
                     <p className="text-sm text-gray-700">
                       {new Date(selectedBadge.obtainedAt).toLocaleDateString('ja-JP', {

@@ -30,6 +30,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ModerationType } from './moderation-schemas';
+import { parsePhotoObjectUrl, signPhotoUrlsForAuthorizedViewer, type PhotoSigningAdmin } from '../photo-storage-signing';
 
 /** 現時点で実バックエンドテーブルが存在するモデレーション対象タイプ */
 export type ModerationBackedType = 'food' | 'recipe';
@@ -103,6 +104,29 @@ function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
     resolved_at: (row.reviewed_at as string | null) ?? null,
     created_at: (row.created_at as string | null) ?? null,
   };
+}
+
+/**
+ * 通報されたコンテンツの写真 (content_url) を、運営の画面で見られる署名付き URL に替える (#1365 段 1)。
+ * 食事写真・冷蔵庫写真のバケットはこれから非公開にするので、保存された公開 URL をそのまま返さない。
+ * 写真の持ち主は通報された利用者 (運営本人ではない) なので、持ち主の確認はせず、呼び出し側の requireRole
+ * (admin / super_admin / content_moderator) を通ったことを条件に署名する。呼び出し側は requireRole の後にだけ呼ぶこと。
+ * 2 つのバケットの URL でないもの (外部の画像など) はそのまま。署名できなかった写真は null (表示しない)。
+ */
+export async function withSignedModerationContentUrls<T extends Pick<NormalizedModerationItem, 'content_url'>>(
+  admin: PhotoSigningAdmin,
+  items: readonly T[],
+): Promise<T[]> {
+  const photoUrls = items
+    .map((item) => item.content_url)
+    .filter((url): url is string => typeof url === 'string' && parsePhotoObjectUrl(url) !== null);
+  if (photoUrls.length === 0) return [...items];
+  const signedUrls = await signPhotoUrlsForAuthorizedViewer(admin, photoUrls);
+  return items.map((item) =>
+    typeof item.content_url === 'string' && Object.prototype.hasOwnProperty.call(signedUrls, item.content_url)
+      ? { ...item, content_url: signedUrls[item.content_url] }
+      : item,
+  );
 }
 
 function backingTable(type: ModerationBackedType): 'moderation_flags' | 'recipe_flags' {

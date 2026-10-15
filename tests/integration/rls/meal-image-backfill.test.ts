@@ -155,7 +155,7 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
       candidateMeals: 2,
       candidateDishes: 3,
       processedMeals: 0,
-      enqueue: { inserted: 0, duplicates: 0, failed: 0 },
+      enqueue: { inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 0 },
       triggeredMeals: 0,
     });
     expect(report.skipped).toMatchObject({ no_subject_hash: 1, catalog_meal_dish: 1, meal_cover_preserved: 1, not_ai_image: 1 });
@@ -168,7 +168,7 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
   it('B-2: --apply は日付の新しい献立から maxMeals 件まで、対象の料理だけを積む (42P10 にならない)', async () => {
     const report = await runMealImageBackfill(srAdmin, { ...options(), apply: true });
 
-    expect(report).toMatchObject({ apply: true, processedMeals: 1, enqueue: { inserted: 2, duplicates: 0, failed: 0 }, triggeredMeals: 0 });
+    expect(report).toMatchObject({ apply: true, processedMeals: 1, enqueue: { inserted: 2, duplicates: 0, duplicatesProcessing: 0, failed: 0 }, triggeredMeals: 0 });
     const rows = await jobRows();
     expect(rows.map((row) => [row.planned_meal_id, row.dish_index, row.status, row.trigger_source])).toEqual([
       [newerMealId, 0, 'pending', MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE],
@@ -182,7 +182,7 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
   it('B-3: もう一度 --apply しても、待ちのジョブと同じ料理は重複として数え、行を増やさない', async () => {
     const report = await runMealImageBackfill(srAdmin, { ...options(), apply: true });
 
-    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 2, failed: 0 });
+    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 2, duplicatesProcessing: 0, failed: 0 });
     expect(await jobRows()).toHaveLength(2);
   });
 

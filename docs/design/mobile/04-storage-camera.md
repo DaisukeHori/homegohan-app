@@ -117,6 +117,9 @@ export async function uploadMealPhoto(options: UploadMealPhotoOptions): Promise<
 
   const { data: { publicUrl } } = supabase.storage.from('meal-photos').getPublicUrl(data.path);
 
+  // publicUrl は「どのファイルか」を表す識別子として DB に保存するだけで、画面には直接出さない (#1365)。
+  // 表示は SignedPhotoImage (apps/mobile/src/components/photo/SignedPhotoImage.tsx) を通し、
+  // POST /api/storage/signed-urls が本人の写真だけに署名した URL (有効期限つき) を使う。
   return { publicUrl, storagePath: data.path };
 }
 ```
