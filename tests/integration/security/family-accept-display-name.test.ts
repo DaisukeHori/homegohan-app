@@ -128,7 +128,8 @@ async function promoteChild(
   nickname: string | null,
   overrideChildName?: string | null,
 ): Promise<string | null> {
-  const { rep, familyId } = await createFamily(label);
+  // ラベルは招待のケースと重ならないよう promo- を付ける (メールアドレスがラベルから作られるため)
+  const { rep, familyId } = await createFamily(`promo-${label}`);
   const child = await asUser(rep.jwt).rpc('add_family_child', {
     p_family_id: familyId,
     p_display_name: childName,
