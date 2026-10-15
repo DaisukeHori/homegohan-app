@@ -11,7 +11,7 @@
 --   1. update_org_challenge_progress(timestamptz)・get_org_challenge_aggregates(uuid)・
 --      get_org_challenge_ranking(uuid, uuid, integer, boolean) を、
 --      20261014100100_org_challenge_progress.sql の定義にそのまま戻す (権限も同じ: service_role だけ)
---   2. refresh_org_challenge_aggregates(timestamptz) と、表 organization_challenge_ranking_entries (順位表の控え)・
+--   2. refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[]) と、表 organization_challenge_ranking_entries (順位表の控え)・
 --      organization_challenge_aggregates (集計の控え) を消す
 --   3. 参加の INSERT ポリシー「Users can join challenges」を、#1238 の定義 (supabase/baseline/prod_schema.sql と同じ) に戻す
 --   参加者の行・チャレンジの行には触れない。
@@ -279,7 +279,7 @@ COMMENT ON FUNCTION public.get_org_challenge_aggregates(uuid) IS
 COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean) IS
   '#1132: 参加者に見せる順位表。p_user_id がそのチャレンジの参加者 (今も組織のメンバー) のときだけ、順位がついている参加者を上位 p_limit 人 (NULL は既定の default_limit = 20 人。1〜max_limit = 100 人にそろえる) と本人の行について返す (参加していない人には 0 行)。他人の user_id は返さない (is_me だけ)。nickname は p_with_names が true のときだけ入る。SECURITY INVOKER。service_role のみ。';
 
-DROP FUNCTION IF EXISTS public.refresh_org_challenge_aggregates(timestamptz);
+DROP FUNCTION IF EXISTS public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[]);
 DROP TABLE IF EXISTS public.organization_challenge_ranking_entries;
 DROP TABLE IF EXISTS public.organization_challenge_aggregates;
 

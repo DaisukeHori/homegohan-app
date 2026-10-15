@@ -24,14 +24,22 @@
 --   2. 表 organization_challenge_ranking_entries (順位表の控え。順位がついた参加者 1 人 1 行) を作る。
 --        challenge_id・user_id・rank・current_value・joined_at (同じ順位の並べ方に使う)。権限は 1 と同じ (service_role だけ)。
 --        アカウントを消した人の行は、その場で消える (auth.users を ON DELETE CASCADE で参照する)。
---   3. refresh_org_challenge_aggregates(p_now timestamptz DEFAULT now())  SECURITY DEFINER / service_role だけが実行できる
---        参加者の行から、集計 (1) と順位表 (2) の控えを数え直す。対象は次のチャレンジだけ:
---          * 開催中 (status = 'active') で、控えが無いか、集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだもの。
---            開始前のチャレンジも入る (順位がついた人はまだいないので、人数だけ。平均は NULL)
---          * 終了・中止 (completed / cancelled) で、控えがまだ無いもの (最初の 1 回だけ)
+--   3. refresh_org_challenge_aggregates(p_now timestamptz DEFAULT now(), p_recomputed_ids uuid[] DEFAULT '{}', p_count_only_ids uuid[] DEFAULT '{}')
+--        SECURITY DEFINER / service_role だけが実行できる。
+--        参加者の行から、集計 (1) と順位表 (2) の控えを数え直す。どのチャレンジを書くかは自分では決めず、呼び出し元
+--        (update_org_challenge_progress) が渡した 2 つの id の集合に従う:
+--          * p_recomputed_ids (今夜、値と順位を計算し直したチャレンジ): 人数・順位がついた人数・平均・順位表を書く
+--          * p_count_only_ids (今夜は値を計算しない開催中のチャレンジ = 開始前・食事の記録から計算できない種類): 人数だけを書く
+--            (順位がついた人数は 0・平均は NULL・順位表は空。古い値を控えに入れない)
+--        どちらも、開催中で、控えが無いか、集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだものだけ書く
+--        (渡されても、最後の日が進んでいなければ書かない)。
+--        ほかに、終了・中止 (completed / cancelled) で控えがまだ無いものは、最初の 1 回だけ参加者の行のまま書く。
+--        どちらの集合にも入っていない開催中のチャレンジは書かない (単独で呼んでも、値を計算し直さずに最後の日だけ進めることはない)。
 --        下書きは控えを作らない。書いたチャレンジの数を返す。
---   4. update_org_challenge_progress(p_now) が、進み具合と順位を書いたあと、終了にする前に refresh_org_challenge_aggregates(p_now) を呼ぶ。
---        定義は 20261014100100 のものに、この呼び出しと、返す jsonb の aggregates (控えを書いたチャレンジの数) を足しただけ。
+--   4. update_org_challenge_progress(p_now) が、今夜、値を計算し直すチャレンジと人数だけを控えに書くチャレンジを 1 か所で選び、
+--        値を計算し直すのはその集合だけにする (開催中で、控えが無いか最後の日が進んだもの。進まない夜は参加者の行の値も順位も書かない)。
+--        進み具合と順位を書いたあと、終了にする前に refresh_org_challenge_aggregates(p_now, その 2 つの集合) を呼ぶ。
+--        そのほかの定義は 20261014100100 のものと同じ (返す jsonb に aggregates (控えを書いたチャレンジの数) を足した)。
 --        終了日を過ぎたチャレンジは、終了にする前に最後の集計が控えに入る。
 --   5. get_org_challenge_aggregates(p_organization_id) を、控え (1) から読むように変える。最小人数を 10 人にする。
 --        返す列・型・SECURITY INVOKER・STABLE・search_path は変えない。控えの無いチャレンジ (下書き・作ったばかり) は
@@ -52,12 +60,22 @@
 --     やめた (外れた) 人だけが動いた前後の平均・順位表を、管理者 (メンバーとして参加した管理者を含む) が並べて見る機会を作らない。
 --     やめた人の行を夜まで残す (参加行の削除を遅らせる) 形は採らない: 管理者がメンバーを組織から外す経路
 --     (user_profiles.organization_id の変更) を守れないため。
---   - 控えを書き直すのは「集計に含める最後の日が進んだとき」だけにする (counted_through)。ほかの人の値が同じまま、
---     人の出入りだけが控えに入るのを防ぐため。これで次の場面でも控えは動かない:
+--   - 「値を計算し直すチャレンジ」と「控えに値を書くチャレンジ」を同じ集合にする。決めるのは update_org_challenge_progress の 1 か所だけで、
+--     refresh_org_challenge_aggregates はその集合を受け取って書く (自分では選ばない)。2 つを別々の条件で選ぶと、値を計算し直さない夜にも
+--     控えが書き直され、ほかの人の古い値のまま人の出入りだけが控えに入る (開始日を先へ動かす・種類を変える・数え直しだけを単独で呼ぶ、で起きた)。
+--   - 選ぶのは「開催中で、控えが無いか、集計に含める最後の日が進んだ (counted_through より後になった)」チャレンジだけ。
+--     進まない夜は、控えも、参加者の行の値と順位 (本人に見える自分の順位) も書かない。ほかの人の値が同じまま、
+--     人の出入りだけが控えや順位に入るのを防ぐため。これで次の場面でも、控えも参加者の行も動かない:
 --       * 終了したチャレンジを管理者が開催中に戻す (API の PUT でも、ポリシー "Org admins can manage challenges" で PostgREST を
---         直接叩いても): 最後の日は終了日のままで進まないので、書き直さない (終了したチャレンジは値が変わらず、書き直すと差がそのまま 1 人の値になる)
+--         直接叩いても): 最後の日は終了日のままで進まないので、計算も書き直しもしない (終了したチャレンジは値が変わらず、
+--         書き直すと差がそのまま 1 人の値になる。順位が詰まると、自分より上の人が外れたことが分かる)
 --       * 終了日を前の夜の最後の日 (以前) に縮める: 同じく進まない
 --       * 同じ日に毎晩の更新や数え直しをもう一度流す: 同じく進まない
+--       * 数え直し (refresh_org_challenge_aggregates) だけを単独で呼ぶ: 集合を渡さなければ、開催中のチャレンジは何も書かない
+--   - 最後の日が進んでも値を計算しない開催中のチャレンジ (開始前・食事の記録から計算できない種類。管理者が開始日を先へ動かした・
+--     種類を変えた場合を含む) は、人数だけを控えに書き、順位がついた人数 0・平均なし・順位表は空にする。
+--     参加者の行に残った古い値・順位を、人の出入りのあとの人数と組み合わせて控えに入れないため。
+--     開始日や種類を戻したあとの夜は、全員の値を計算し直してから控えに入る (前に値を書いた夜から 2 日以上進んだ値になる)。
 --   - 参加者数も控えから返す。人数がその場で動くと、管理者があるメンバーを外した前後の人数の差から、その人が参加していたかが分かる。
 --   - 残る限界:
 --       * 夜の更新の前後で、ほかの人の値がほとんど動かない (前日に記録が少ない) ときは、前の夜と次の夜の平均・順位表の差から、
@@ -74,13 +92,15 @@
 --   (SECURITY DEFINER の持ち主 postgres として動くので、GRANT は要らない)。
 --
 -- 本番のデータへの影響:
---   - 表を 2 つ足し、refresh_org_challenge_aggregates(now()) で控えを最初に作る (開催中・終了・中止のチャレンジ。下書きは作らない)。
+--   - 表を 2 つ足し、refresh_org_challenge_aggregates(now(), 開催中のチャレンジ全部, 空) で控えを最初に作る
+--     (開催中・終了・中止のチャレンジ。下書きは作らない)。
 --     値は、いまの参加者の行から数えたもの (この migration を流す前に管理者・参加者に見えていた値と同じ)。
 --     既存の表の行は 1 件も書き換えない。
 --   - 最小人数が 10 人になるので、参加者が 5〜9 人のチャレンジは、管理者の画面で人数も平均も出なくなる (「10人未満」)。
 --   - 流したあとは、参加・参加のやめ・メンバーの脱退が、管理者に見える人数と平均・参加者に見える順位表に、
 --     次の夜の更新 (03:10 JST) まで反映されない。
---     この migration を JST 0:00〜03:10 に流したときは、その日の 03:10 の更新でも最後の日が進まないので、控えは翌日の 03:10 まで動かない。
+--     この migration を JST 0:00〜03:10 に流したときは、その日の 03:10 の更新でも最後の日が進まないので、控えも、
+--     参加者の進み具合と順位も、その日は計算し直さず、翌日の 03:10 の更新で 2 日分まとめて進む。
 --   - 新しい INSERT ポリシーは、既存の参加行には効かない (作るときだけ)。いまある「別の部署向け・下書き・終わったチャレンジ」の
 --     参加行は消さない。
 --   - 表への書き込みを待たせるロックは、ポリシーの付け替え (ACCESS EXCLUSIVE。一瞬) だけ。10 秒でロック待ちを諦める。
@@ -113,7 +133,7 @@ REVOKE ALL ON TABLE public.organization_challenge_aggregates FROM PUBLIC, anon, 
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.organization_challenge_aggregates TO service_role;
 
 COMMENT ON TABLE public.organization_challenge_aggregates IS
-  '#1600: 組織チャレンジの集計の控え (1 チャレンジ 1 行)。毎晩の update_org_challenge_progress が refresh_org_challenge_aggregates で書き、get_org_challenge_aggregates が最小人数で隠して読む。集計に含める最後の日が進んだときだけ書き直し、参加・やめる・脱退の直後や、ほかの人の値が動かないとき (終了したチャレンジを開催中に戻したとき) に集計が動かないようにする。service_role のみ。';
+  '#1600: 組織チャレンジの集計の控え (1 チャレンジ 1 行)。毎晩の update_org_challenge_progress が refresh_org_challenge_aggregates で書き、get_org_challenge_aggregates が最小人数で隠して読む。集計に含める最後の日が進み、その夜に全員の値を計算し直したときだけ値まで書き直し (値を計算しない開始前・対象外の種類は人数だけ)、参加・やめる・脱退の直後や、ほかの人の値が動かないとき (終了したチャレンジを開催中に戻したとき) に集計が動かないようにする。service_role のみ。';
 COMMENT ON COLUMN public.organization_challenge_aggregates.participant_count IS
   '今も組織のメンバーである参加者の人数 (最小人数に満たなくてもそのまま入れる。隠すのは get_org_challenge_aggregates)';
 COMMENT ON COLUMN public.organization_challenge_aggregates.ranked_count IS
@@ -121,7 +141,7 @@ COMMENT ON COLUMN public.organization_challenge_aggregates.ranked_count IS
 COMMENT ON COLUMN public.organization_challenge_aggregates.average_value IS
   '順位がついた参加者の current_value の平均 (丸める前)。順位がついた人がいなければ NULL';
 COMMENT ON COLUMN public.organization_challenge_aggregates.counted_through IS
-  '控えを書いたときの、集計に含める最後の日 (JST の暦日 = min(終了日, p_now の前日))。refresh_org_challenge_aggregates は、これより後の日まで集計に含められるようになったときだけ書き直す';
+  '控えを書いたときの、集計に含める最後の日 (JST の暦日 = min(終了日, p_now の前日))。refresh_org_challenge_aggregates は、これより後の日まで集計に含められるようになったときだけ書き直す (値まで書くのは、update_org_challenge_progress がその夜に値を計算し直したチャレンジだけ)';
 COMMENT ON COLUMN public.organization_challenge_aggregates.updated_at IS
   '控えを書いた集計の時刻 (refresh_org_challenge_aggregates の p_now)';
 
@@ -148,19 +168,24 @@ COMMENT ON COLUMN public.organization_challenge_ranking_entries.joined_at IS
   '参加した時刻 (organization_challenge_participants.joined_at の写し)。同じ順位の人の並べ方に使う';
 
 -- ─────────────────────────────────────────────────────────
--- 3. 控えを数え直す (毎晩の更新から呼ぶ。試験・手動の再計算でも呼べる)
+-- 3. 控えを数え直す (毎晩の更新から、値を計算し直した集合を渡して呼ぶ。試験・手動では集合を渡して呼ぶ)
 -- ─────────────────────────────────────────────────────────
-CREATE OR REPLACE FUNCTION public.refresh_org_challenge_aggregates(p_now timestamptz DEFAULT now())
+CREATE OR REPLACE FUNCTION public.refresh_org_challenge_aggregates(
+  p_now            timestamptz DEFAULT now(),
+  p_recomputed_ids uuid[]      DEFAULT '{}'::uuid[],  -- 今夜、値と順位を計算し直したチャレンジ (値まで控えに書く)
+  p_count_only_ids uuid[]      DEFAULT '{}'::uuid[]   -- 今夜は値を計算しない開催中のチャレンジ (人数だけ控えに書く)
+)
 RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
-  v_today    date;
-  v_last_day date;
-  v_targets  uuid[];
-  v_written  integer := 0;
+  v_today      date;
+  v_last_day   date;
+  v_full       uuid[];
+  v_count_only uuid[];
+  v_written    integer := 0;
 BEGIN
   -- 今日 (JST の暦日)。集計に含める最後の日は前日 (update_org_challenge_progress と同じ決め方)
   v_today    := (COALESCE(p_now, now()) AT TIME ZONE 'Asia/Tokyo')::date;
@@ -169,28 +194,45 @@ BEGIN
   -- update_org_challenge_progress と同じ鍵で直列にする (中から呼ばれたときは、同じトランザクションが持っている鍵をもう一度取るだけ)
   PERFORM pg_advisory_xact_lock(hashtextextended('public.update_org_challenge_progress', 0));
 
-  -- 数え直すチャレンジ:
-  --   開催中で、控えが無いか、集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだもの (開始前も入る)。
-  --     最後の日が進まない (終了したチャレンジを開催中に戻した・終了日を縮めた・同じ日にもう一度流した) ときは書き直さない。
-  --     ほかの人の値が同じまま、人の出入りだけが控えに入ると、前後の差がそのまま 1 人の値になるため
-  --   終了・中止で、控えがまだ無いもの (最初の 1 回だけ。以後は開催中に戻されない限り書き直さない)
+  -- 書くチャレンジ (どれを書くかは呼び出し元が渡した集合に従い、ここでは「書いてよいか」だけを確かめる):
+  --   開催中のチャレンジは、控えが無いか、集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだものだけ。
+  --     最後の日が進まない (終了したチャレンジを開催中に戻した・終了日を縮めた・同じ日にもう一度流した) ときは、渡されても書かない
+  --     v_count_only: p_count_only_ids に入っているもの。人数だけ (両方に入っていたら、値を書かないこちらにする)
+  --     v_full:       p_recomputed_ids に入っているもの。人数・順位がついた人数・平均・順位表
+  --     どちらにも入っていないものは書かない (値を計算し直していないのに最後の日だけ進めると、次の計算の機会を飛ばし、
+  --     ほかの人の古い値のまま人の出入りだけが控えに入る)
+  --   終了・中止で、控えがまだ無いもの: 最初の 1 回だけ、参加者の行のまま (v_full。以後は開催中に戻されない限り書き直さない)
   --   下書きは控えを作らない
-  SELECT COALESCE(array_agg(c.id), '{}'::uuid[])
-    INTO v_targets
-    FROM public.organization_challenges AS c
-    LEFT JOIN public.organization_challenge_aggregates AS s
-      ON s.challenge_id = c.id
-   WHERE (c.status = 'active'
-          AND (s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through))
-      OR (c.status IN ('completed', 'cancelled') AND s.challenge_id IS NULL);
+  WITH picked AS (
+    SELECT c.id,
+           CASE
+             WHEN c.status = 'active' AND c.id = ANY (COALESCE(p_count_only_ids, '{}'::uuid[])) THEN 'count_only'
+             WHEN c.status = 'active' AND c.id = ANY (COALESCE(p_recomputed_ids, '{}'::uuid[])) THEN 'full'
+             WHEN c.status IN ('completed', 'cancelled') THEN 'full'
+           END AS mode
+      FROM public.organization_challenges AS c
+      LEFT JOIN public.organization_challenge_aggregates AS s
+        ON s.challenge_id = c.id
+     WHERE (c.status = 'active'
+            AND (s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through))
+        OR (c.status IN ('completed', 'cancelled') AND s.challenge_id IS NULL)
+  )
+  SELECT COALESCE(array_agg(k.id) FILTER (WHERE k.mode = 'full'), '{}'::uuid[]),
+         COALESCE(array_agg(k.id) FILTER (WHERE k.mode = 'count_only'), '{}'::uuid[])
+    INTO v_full, v_count_only
+    FROM picked AS k;
 
-  -- 集計 (人数と平均) の控え
+  -- 集計 (人数と平均) の控え。人数だけのチャレンジは、順位がついた人数を 0・平均を NULL にする (参加者の行に残った古い値を入れない)
   WITH agg AS (
     SELECT c.id                                                          AS challenge_id,
            LEAST(c.end_date, v_last_day)                                 AS counted_through,
            (count(m.user_id))::integer                                   AS participants,
-           (count(m.user_id) FILTER (WHERE m.rank IS NOT NULL))::integer AS ranked,
-           avg(m.current_value) FILTER (WHERE m.rank IS NOT NULL)        AS average_value
+           CASE WHEN c.id = ANY (v_count_only) THEN 0
+                ELSE (count(m.user_id) FILTER (WHERE m.rank IS NOT NULL))::integer
+           END                                                           AS ranked,
+           CASE WHEN c.id = ANY (v_count_only) THEN NULL
+                ELSE avg(m.current_value) FILTER (WHERE m.rank IS NOT NULL)
+           END                                                           AS average_value
       FROM public.organization_challenges AS c
       LEFT JOIN LATERAL (
         -- 今も組織のメンバーである参加者だけ
@@ -201,7 +243,7 @@ BEGIN
            AND up.organization_id = c.organization_id
          WHERE p.challenge_id = c.id
       ) AS m ON true
-     WHERE c.id = ANY (v_targets)
+     WHERE c.id = ANY (v_full) OR c.id = ANY (v_count_only)
      GROUP BY c.id, c.end_date
   ),
   written AS (
@@ -219,9 +261,10 @@ BEGIN
   )
   SELECT count(*) INTO v_written FROM written;
 
-  -- 順位表の控え: 同じチャレンジについて、いまの順位で置き換える (順位がついた、今も組織のメンバーである参加者だけ)
+  -- 順位表の控え: 書いたチャレンジについて置き換える。値まで書くチャレンジだけ、いまの順位で入れる
+  -- (順位がついた、今も組織のメンバーである参加者だけ)。人数だけのチャレンジは空にする
   DELETE FROM public.organization_challenge_ranking_entries AS e
-   WHERE e.challenge_id = ANY (v_targets);
+   WHERE e.challenge_id = ANY (v_full) OR e.challenge_id = ANY (v_count_only);
 
   INSERT INTO public.organization_challenge_ranking_entries (challenge_id, user_id, rank, current_value, joined_at)
   SELECT c.id, p.user_id, p.rank, p.current_value, p.joined_at
@@ -231,7 +274,7 @@ BEGIN
     JOIN public.user_profiles AS up
       ON up.id = p.user_id
      AND up.organization_id = c.organization_id
-   WHERE c.id = ANY (v_targets)
+   WHERE c.id = ANY (v_full)
      AND p.rank IS NOT NULL;
 
   RETURN v_written;
@@ -239,7 +282,7 @@ END
 $$;
 
 -- ─────────────────────────────────────────────────────────
--- 4. 進み具合と順位の計算 (20261014100100 の定義に、控えの数え直しを足す)
+-- 4. 進み具合と順位の計算 (20261014100100 の定義に、今夜の対象を選ぶ 1 か所と、控えの数え直しを足す)
 -- ─────────────────────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.update_org_challenge_progress(p_now timestamptz DEFAULT now())
 RETURNS jsonb
@@ -253,6 +296,8 @@ DECLARE
   v_challenges   integer := 0;
   v_participants integer := 0;
   v_changed      integer := 0;
+  v_recompute    uuid[];
+  v_count_only   uuid[];
   v_aggregates   integer := 0;
   v_completed    integer := 0;
 BEGIN
@@ -263,17 +308,35 @@ BEGIN
   -- 同時に 2 回走らせない (同じ参加行の更新が順不同に重なってデッドロックするのを防ぐ)
   PERFORM pg_advisory_xact_lock(hashtextextended('public.update_org_challenge_progress', 0));
 
+  -- 今夜の対象を選ぶ (#1600。値を計算し直す集合と、控えに値を書く集合を同じにするため、選ぶのはここ 1 か所だけ):
+  --   開催中で、控えが無いか、集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだチャレンジ。
+  --   最後の日が進まない夜 (終了したチャレンジを開催中に戻した・終了日を縮めた・同じ日にもう一度流した) は、
+  --   参加者の行の値も順位も書かない (ほかの人の値が同じまま順位だけ詰まると、外れた人が自分より上だったかが分かる)
+  --     v_recompute:  そのうち、食事の記録から計算できる種類で、集計できる日が 1 日以上あるもの (値と順位を計算し直し、控えに値まで書く)
+  --     v_count_only: それ以外 (開始前・計算できない種類。控えには人数だけ書く)
+  SELECT COALESCE(array_agg(x.id) FILTER (WHERE x.computable), '{}'::uuid[]),
+         COALESCE(array_agg(x.id) FILTER (WHERE NOT x.computable), '{}'::uuid[])
+    INTO v_recompute, v_count_only
+    FROM (
+      SELECT c.id,
+             (c.challenge_type IN ('breakfast_rate', 'veg_score', 'cooking_rate')
+              AND c.start_date <= LEAST(c.end_date, v_last_day)) AS computable
+        FROM public.organization_challenges AS c
+        LEFT JOIN public.organization_challenge_aggregates AS s
+          ON s.challenge_id = c.id
+       WHERE c.status = 'active'
+         AND (s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through)
+    ) AS x;
+
   WITH target AS (
-    -- 開催中で、指標を食事の記録から出せる種類のチャレンジ。集計できる日が 1 日以上あるものだけ
+    -- 開催中で、指標を食事の記録から出せる種類のチャレンジ。集計できる日が 1 日以上あるもの (上で選んだ v_recompute)
     SELECT c.id AS challenge_id,
            c.organization_id,
            c.challenge_type,
            c.start_date,
            LEAST(c.end_date, v_last_day) AS last_day
       FROM public.organization_challenges AS c
-     WHERE c.status = 'active'
-       AND c.challenge_type IN ('breakfast_rate', 'veg_score', 'cooking_rate')
-       AND c.start_date <= LEAST(c.end_date, v_last_day)
+     WHERE c.id = ANY (v_recompute)
   ),
   member AS (
     -- 参加者。今も、そのチャレンジの組織のメンバーである人だけ
@@ -344,8 +407,9 @@ BEGIN
          (SELECT count(*) FROM upd)
     INTO v_challenges, v_participants, v_changed;
 
-  -- 管理者に見せる集計と、参加者に見せる順位表の控えを、いま書いた値で数え直す (#1600)。終了にする前に呼ぶので、終了日を過ぎたチャレンジの最後の集計も入る
-  v_aggregates := public.refresh_org_challenge_aggregates(p_now);
+  -- 管理者に見せる集計と、参加者に見せる順位表の控えを、いま書いた値で数え直す (#1600)。書くのは上で選んだ 2 つの集合だけ。
+  -- 終了にする前に呼ぶので、終了日を過ぎたチャレンジの最後の集計も入る
+  v_aggregates := public.refresh_org_challenge_aggregates(p_now, v_recompute, v_count_only);
 
   -- 終了日を過ぎた開催中のチャレンジを終了にする。最後の日までの値は、上で計算済み
   UPDATE public.organization_challenges
@@ -467,9 +531,9 @@ AS $$
 $$;
 
 -- 関数の権限: service_role だけ (置き換えた 3 本も流し直す)
-REVOKE ALL ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz)
+REVOKE ALL ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[])
   FROM PUBLIC, anon, authenticated, service_role;
-GRANT EXECUTE ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz)
+GRANT EXECUTE ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[])
   TO service_role;
 
 REVOKE ALL ON FUNCTION public.update_org_challenge_progress(timestamptz)
@@ -487,10 +551,10 @@ REVOKE ALL ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boo
 GRANT EXECUTE ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean)
   TO service_role;
 
-COMMENT ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz) IS
-  '#1600: 組織チャレンジの集計の控え (organization_challenge_aggregates: 今も組織のメンバーである参加者の人数・順位がついた人数・その平均・集計に含めた最後の日) と順位表の控え (organization_challenge_ranking_entries) を、参加者の行から数え直す。対象は、開催中で控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだチャレンジ (開始前も含む) と、控えがまだ無い終了・中止のチャレンジだけ (下書きは作らない)。書いたチャレンジの数を返す。update_org_challenge_progress が毎晩呼ぶ。p_now は試験用。service_role のみ。';
+COMMENT ON FUNCTION public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[]) IS
+  '#1600: 組織チャレンジの集計の控え (organization_challenge_aggregates: 今も組織のメンバーである参加者の人数・順位がついた人数・その平均・集計に含めた最後の日) と順位表の控え (organization_challenge_ranking_entries) を、参加者の行から数え直す。書くチャレンジは自分では選ばず、呼び出し元が渡した集合に従う: p_recomputed_ids (その夜に値と順位を計算し直したもの) は値まで、p_count_only_ids (値を計算しない開催中のもの = 開始前・対象外の種類) は人数だけ (順位がついた人数 0・平均 NULL・順位表は空)。どちらも開催中で、控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだものだけ書く。ほかに、控えがまだ無い終了・中止のチャレンジを最初の 1 回だけ書く (下書きは作らない)。集合を渡さずに単独で呼んでも、開催中のチャレンジは書かない。書いたチャレンジの数を返す。update_org_challenge_progress が毎晩呼ぶ。p_now は試験用。service_role のみ。';
 COMMENT ON FUNCTION public.update_org_challenge_progress(timestamptz) IS
-  '#1132: 開催中の組織チャレンジ (breakfast_rate / veg_score / cooking_rate) の参加者ごとの current_value を食事の記録 (user_daily_meals / planned_meals。JST の暦日。前日まで) から計算し、チャレンジの中で rank() をつける。#1600: そのあと集計と順位表の控え (organization_challenge_aggregates / organization_challenge_ranking_entries) を refresh_org_challenge_aggregates で数え直す。終了日 (JST) を過ぎた開催中のチャレンジは completed にする。p_now は試験用。pg_cron が毎日 18:10 UTC (03:10 JST) に呼ぶ。service_role のみ。';
+  '#1132: 開催中の組織チャレンジ (breakfast_rate / veg_score / cooking_rate) の参加者ごとの current_value を食事の記録 (user_daily_meals / planned_meals。JST の暦日。前日まで) から計算し、チャレンジの中で rank() をつける。#1600: 計算し直すのは、控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだチャレンジだけ (進まない夜は参加者の行の値も順位も書かない)。そのあと集計と順位表の控え (organization_challenge_aggregates / organization_challenge_ranking_entries) を、計算し直した集合と人数だけ書く集合 (開始前・対象外の種類) を渡して refresh_org_challenge_aggregates で数え直す。終了日 (JST) を過ぎた開催中のチャレンジは completed にする。p_now は試験用。pg_cron が毎日 18:10 UTC (03:10 JST) に呼ぶ。service_role のみ。';
 COMMENT ON FUNCTION public.get_org_challenge_aggregates(uuid) IS
   '#1132 / #1600: 管理者向けの集計。組織のチャレンジごとに、毎晩の更新の時点の控え (organization_challenge_aggregates) から、参加者数と、集計が済んだ参加者の平均だけを返す。個人の値・ID は返さない。控えの参加者が min_participants (10) に満たないときは参加者数を、集計が済んだ人が min_participants に満たないときは平均を NULL にする。控えの無いチャレンジ (下書き・作ったばかり) は両方 NULL。SECURITY INVOKER。service_role のみ。';
 COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolean) IS
@@ -499,7 +563,13 @@ COMMENT ON FUNCTION public.get_org_challenge_ranking(uuid, uuid, integer, boolea
 -- ─────────────────────────────────────────────────────────
 -- 7. 控えを最初に作る (流す前に管理者・参加者に見えていた値と同じ値。開催中・終了・中止のチャレンジ。下書きは作らない)
 -- ─────────────────────────────────────────────────────────
-SELECT public.refresh_org_challenge_aggregates(now());
+-- 開催中のチャレンジは全部、いまの参加者の行の値のまま書く (p_recomputed_ids に渡す。値は前の夜の更新が計算したもの)。
+-- 終了・中止は、控えの無いものとして最初の 1 回だけ書かれる
+SELECT public.refresh_org_challenge_aggregates(
+  now(),
+  ARRAY(SELECT c.id FROM public.organization_challenges AS c WHERE c.status = 'active'),
+  '{}'::uuid[]
+);
 
 -- ─────────────────────────────────────────────────────────
 -- 8. 参加の INSERT ポリシーに、API と同じ条件を足す

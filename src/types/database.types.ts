@@ -8560,7 +8560,11 @@ export type Database = {
         Returns: undefined
       }
       refresh_org_challenge_aggregates: {
-        Args: { p_now?: string }
+        Args: {
+          p_count_only_ids?: string[]
+          p_now?: string
+          p_recomputed_ids?: string[]
+        }
         Returns: number
       }
       refund_ai_usage: {

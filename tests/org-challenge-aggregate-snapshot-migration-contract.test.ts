@@ -9,10 +9,12 @@
  *   1. 関数 update_org_challenge_progress / get_org_challenge_aggregates / get_org_challenge_ranking / refresh_org_challenge_aggregates を
  *      最後に定義した migration が本 migration で、get_org_challenge_aggregates は控え (organization_challenge_aggregates) から、
  *      get_org_challenge_ranking は順位表の控え (organization_challenge_ranking_entries) から読み、参加者の行を直接数えない・並べない
- *   2. update_org_challenge_progress の定義は、20261014100100 の定義に「控えの数え直し」と返す jsonb の aggregates を足しただけ。
- *      数え直しは、進み具合・順位の書き込みのあと・終了にする前
- *   3. 控えを書き直すのは、開催中で集計に含める最後の日が進んだチャレンジ (控えが無いものを含む。開始前も) と、控えの無い終了・中止の
- *      チャレンジだけ。下書きは作らない
+ *   2. update_org_challenge_progress の定義は、20261014100100 の定義に「今夜の対象を選ぶ 1 か所」(開催中で、控えが無いか
+ *      集計に含める最後の日が進んだもの。値を計算し直す集合と人数だけ書く集合に分ける)・計算の対象をその集合に絞ること・
+ *      「控えの数え直し (その 2 つの集合を渡す)」・返す jsonb の aggregates を足しただけ。数え直しは、進み具合・順位の書き込みのあと・終了にする前
+ *   3. refresh_org_challenge_aggregates は、書くチャレンジを自分では選ばない (種類・開始日を見ない)。渡された集合のうち、
+ *      開催中で集計に含める最後の日が進んだものだけを書き、値まで書くのは「値を計算し直した」集合だけ (人数だけの集合は、順位がついた
+ *      人数 0・平均 NULL・順位表は空)。ほかに控えの無い終了・中止のチャレンジを最初の 1 回だけ書く。下書きは作らない
  *   4. 権限: 4 本とも service_role だけ。控えの 2 つの表は RLS を有効にし、ポリシーを作らず、anon / authenticated の権限を外す
  *   5. 参加の INSERT ポリシーの最後の定義が、API (POST /api/org/challenges/[id]/join) と同じ条件を見る
  *   6. ロールバックは、20261014100100 の 3 本の定義と #1238 の INSERT ポリシー (本番 baseline) にそのまま戻し、控えと関数を消す
@@ -32,7 +34,7 @@ const PREVIOUS_STEM_SUFFIX = '_org_challenge_progress';
 const REQUIRED_MIN_PARTICIPANTS = 10;
 /** 本 migration が service_role だけに EXECUTE を渡す関数 (引数の型まで含めた完全形)。先頭は本 migration で新しく作るもの */
 const SERVICE_ROLE_FUNCTIONS = [
-  'public.refresh_org_challenge_aggregates(timestamptz)',
+  'public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[])',
   'public.update_org_challenge_progress(timestamptz)',
   'public.get_org_challenge_aggregates(uuid)',
   'public.get_org_challenge_ranking(uuid, uuid, integer, boolean)',
@@ -102,6 +104,11 @@ function lastJoinPolicy(): string {
   return statements[statements.length - 1][0];
 }
 
+/** 正規表現の中で文字どおりに扱う (関数の完全形の . ( ) [ ] など) */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /** 空白の違いを無視して比べる */
 function squash(sql: string): string {
   return sql.replace(/\s+/g, ' ').trim();
@@ -162,33 +169,63 @@ describe('1. 最後の定義が本 migration で、集計は控えから読む',
   });
 });
 
-describe('2. update_org_challenge_progress は、1 つ前の定義に控えの数え直しを足しただけ', () => {
-  const CALL = /\n\s*v_aggregates := public\.refresh_org_challenge_aggregates\(p_now\);\n/;
-  const DECLARE = /\n\s*v_aggregates\s+integer := 0;/;
+describe('2. update_org_challenge_progress は、1 つ前の定義に「今夜の対象を選ぶ 1 か所」と控えの数え直しを足しただけ', () => {
+  /** 今夜の対象を選ぶ文 (値を計算し直す集合と、人数だけ書く集合) */
+  const SELECTION = /\n\s*SELECT COALESCE\(array_agg\(x\.id\) FILTER \(WHERE x\.computable\), '\{\}'::uuid\[\]\),[\s\S]*?INTO v_recompute, v_count_only[\s\S]*?\) AS x;\n/;
+  /** 計算の対象 (target) を、上で選んだ集合に絞る条件 */
+  const TARGET_WHERE = /WHERE c\.id = ANY \(v_recompute\)\n/;
+  /** 1 つ前の定義の、計算の対象の条件 (上の選ぶ文の computable と同じ式) */
+  const PREVIOUS_TARGET_WHERE =
+    "WHERE c.status = 'active' AND c.challenge_type IN ('breakfast_rate', 'veg_score', 'cooking_rate') AND c.start_date <= LEAST(c.end_date, v_last_day)\n";
+  const CALL = /\n\s*v_aggregates := public\.refresh_org_challenge_aggregates\(p_now, v_recompute, v_count_only\);\n/;
+  const DECLARES = [/\n\s*v_recompute\s+uuid\[\];/, /\n\s*v_count_only\s+uuid\[\];/, /\n\s*v_aggregates\s+integer := 0;/];
   const RESULT_KEY = /\n\s*'aggregates',\s+v_aggregates,/;
 
-  it('数え直しの呼び出し・変数・返す jsonb のキーを除くと、20261014100100 の定義と同じ', () => {
+  it('足した部分 (対象を選ぶ文・対象の絞り込み・数え直しの呼び出し・変数・返す jsonb のキー) を除くと、20261014100100 の定義と同じ', () => {
     const current = definition(MIGRATION, 'update_org_challenge_progress');
-    for (const added of [CALL, DECLARE, RESULT_KEY]) expect(current).toMatch(added);
-    const stripped = current.replace(CALL, '\n').replace(DECLARE, '').replace(RESULT_KEY, '');
+    for (const added of [SELECTION, TARGET_WHERE, CALL, ...DECLARES, RESULT_KEY]) expect(current).toMatch(added);
+    let stripped = current.replace(SELECTION, '\n').replace(TARGET_WHERE, PREVIOUS_TARGET_WHERE).replace(CALL, '\n').replace(RESULT_KEY, '');
+    for (const declared of DECLARES) stripped = stripped.replace(declared, '');
     expect(squash(stripped)).toBe(squash(definition(PREVIOUS, 'update_org_challenge_progress')));
   });
 
-  it('数え直しは、進み具合・順位の書き込みのあと、終了にする (completed) 前', () => {
+  it('今夜の対象は、開催中で、控えが無いか集計に含める最後の日が進んだものだけ。値を計算し直すのは計算できる種類で集計できる日があるもの、残りは人数だけ', () => {
+    const selection = squash(bodyOf(MIGRATION, 'update_org_challenge_progress').match(SELECTION)![0]);
+    expect(selection).toContain(
+      "WHERE c.status = 'active' AND (s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through)",
+    );
+    expect(selection).toContain("COALESCE(array_agg(x.id) FILTER (WHERE NOT x.computable), '{}'::uuid[])");
+    // 計算できるかの式は、1 つ前の定義の計算の対象の条件 (種類・開始日) と同じ
+    const computable = selection.match(/\((c\.challenge_type IN \([^)]*\) AND c\.start_date <= LEAST\(c\.end_date, v_last_day\))\) AS computable/);
+    expect(computable, '計算できるかの式が見つからない').not.toBeNull();
+    expect(squash(PREVIOUS_TARGET_WHERE)).toContain(computable![1]);
+    expect(quotedList(computable![1]).sort()).toEqual([...ORG_CHALLENGE_TYPES].sort());
+  });
+
+  it('計算の対象 (target) は、選んだ集合 (v_recompute) だけ。状態・種類・開始日の条件を別に書かない (選ぶのは 1 か所だけ)', () => {
+    const target = bodyOf(MIGRATION, 'update_org_challenge_progress').match(/WITH target AS \(([\s\S]*?)\),\s*member AS/);
+    expect(target, '計算の対象 (target) が見つからない').not.toBeNull();
+    const where = squash(target![1].split('FROM public.organization_challenges AS c')[1]);
+    expect(where).toBe('WHERE c.id = ANY (v_recompute)');
+  });
+
+  it('数え直しは、進み具合・順位の書き込みのあと、終了にする (completed) 前。選んだ 2 つの集合を渡す', () => {
     const body = bodyOf(MIGRATION, 'update_org_challenge_progress');
+    const selected = body.search(SELECTION);
     const written = body.indexOf('UPDATE public.organization_challenge_participants');
-    const refresh = body.search(/public\.refresh_org_challenge_aggregates\(p_now\)/);
+    const refresh = body.search(/public\.refresh_org_challenge_aggregates\(p_now, v_recompute, v_count_only\)/);
     const complete = body.indexOf("SET status = 'completed'");
-    expect(written).toBeGreaterThan(-1);
+    expect(selected).toBeGreaterThan(-1);
+    expect(written).toBeGreaterThan(selected);
     expect(refresh).toBeGreaterThan(written);
     expect(complete).toBeGreaterThan(refresh);
   });
 });
 
-describe('3. 控えを書き直すのは、集計に含める最後の日が進んだときだけ', () => {
+describe('3. 控えを書き直すのは、渡された集合のうち、集計に含める最後の日が進んだものだけ', () => {
   const body = bodyOf(MIGRATION, 'refresh_org_challenge_aggregates');
-  /** 数え直すチャレンジを選ぶ文 (SELECT ... INTO v_targets ... ;) */
-  const targets = body.match(/SELECT COALESCE\(array_agg\(c\.id\), '\{\}'::uuid\[\]\)\s+INTO v_targets([\s\S]*?);/);
+  /** 書くチャレンジを選ぶ文 (WITH picked AS ( ... ) SELECT ... INTO v_full, v_count_only FROM picked AS k;) */
+  const picked = body.match(/WITH picked AS \(([\s\S]*?)\)\s*SELECT ([\s\S]*?)\s+INTO v_full, v_count_only\s+FROM picked AS k;/);
 
   it('集計に含める最後の日は、update_org_challenge_progress と同じ決め方 (JST の今日の前日。終了日で打ち切る)', () => {
     expect(body).toMatch(/v_today\s+:= \(COALESCE\(p_now, now\(\)\) AT TIME ZONE 'Asia\/Tokyo'\)::date;/);
@@ -197,28 +234,62 @@ describe('3. 控えを書き直すのは、集計に含める最後の日が進�
     expect(body).toMatch(/LEAST\(c\.end_date, v_last_day\)\s+AS counted_through/);
   });
 
-  it("対象は、開催中で控えが無いか最後の日が進んだもの (開始日は見ない) と、控えの無い終了・中止。下書きは入らない", () => {
-    expect(targets, '数え直すチャレンジを選ぶ文が見つからない').not.toBeNull();
-    const where = squash(targets![1]);
-    expect(where).toContain(
+  it('引数は p_now と、値を計算し直した集合・人数だけ書く集合 (既定は空 = 単独で呼んでも開催中のチャレンジは書かない)', () => {
+    const header = squash(definition(MIGRATION, 'refresh_org_challenge_aggregates').split('$$')[0]);
+    expect(header).toContain(
+      "refresh_org_challenge_aggregates( p_now timestamptz DEFAULT now(), p_recomputed_ids uuid[] DEFAULT '{}'::uuid[], p_count_only_ids uuid[] DEFAULT '{}'::uuid[] )",
+    );
+  });
+
+  it("書いてよいのは、開催中で控えが無いか最後の日が進んだもの (update_org_challenge_progress の選ぶ文と同じ式) と、控えの無い終了・中止。下書きは入らない", () => {
+    expect(picked, '書くチャレンジを選ぶ文が見つからない').not.toBeNull();
+    const cte = squash(picked![1]);
+    expect(cte).toContain(
       "WHERE (c.status = 'active' AND (s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through)) " +
         "OR (c.status IN ('completed', 'cancelled') AND s.challenge_id IS NULL)",
     );
-    expect(where).not.toMatch(/start_date/);
-    expect(quotedList(where).sort()).toEqual(['active', 'cancelled', 'completed']);
+    const updateSelection = squash(bodyOf(MIGRATION, 'update_org_challenge_progress'));
+    expect(updateSelection).toContain('(s.challenge_id IS NULL OR LEAST(c.end_date, v_last_day) > s.counted_through)');
+    expect(quotedList(cte.split('WHERE')[1]).sort()).toEqual(['active', 'cancelled', 'completed']);
   });
 
-  it('集計と順位表の控えは、選んだチャレンジだけを書く。最後の日 (counted_through) も一緒に書く', () => {
-    expect([...body.matchAll(/c\.id = ANY \(v_targets\)/g)]).toHaveLength(2);
-    expect(body).toMatch(/DELETE FROM public\.organization_challenge_ranking_entries AS e\s+WHERE e\.challenge_id = ANY \(v_targets\);/);
+  it('書くチャレンジは自分では選ばない: 種類・開始日を見ず、開催中のものは渡された集合に入っているものだけ。両方に入っていたら人数だけ', () => {
+    expect(body).not.toMatch(/challenge_type/);
+    expect(body).not.toMatch(/start_date/);
+    const cte = squash(picked![1]);
+    const countOnly = cte.indexOf("WHEN c.status = 'active' AND c.id = ANY (COALESCE(p_count_only_ids, '{}'::uuid[])) THEN 'count_only'");
+    const full = cte.indexOf("WHEN c.status = 'active' AND c.id = ANY (COALESCE(p_recomputed_ids, '{}'::uuid[])) THEN 'full'");
+    expect(countOnly).toBeGreaterThan(-1);
+    expect(full).toBeGreaterThan(countOnly);
+    expect(cte).toContain("WHEN c.status IN ('completed', 'cancelled') THEN 'full'");
+    // CASE に ELSE は無い (どれにも当たらない開催中のチャレンジは NULL になり、どちらの集合にも入らない)
+    expect(cte).not.toMatch(/\bELSE\b/);
+    expect(squash(picked![2])).toBe(
+      "COALESCE(array_agg(k.id) FILTER (WHERE k.mode = 'full'), '{}'::uuid[]), COALESCE(array_agg(k.id) FILTER (WHERE k.mode = 'count_only'), '{}'::uuid[])",
+    );
+  });
+
+  it('人数だけのチャレンジは、順位がついた人数 0・平均 NULL・順位表は空 (参加者の行に残った値・順位を控えに入れない)', () => {
+    const agg = squash(body.match(/WITH agg AS \(([\s\S]*?)\),\s*written AS/)![1]);
+    expect(agg).toContain('CASE WHEN c.id = ANY (v_count_only) THEN 0 ELSE (count(m.user_id) FILTER (WHERE m.rank IS NOT NULL))::integer END AS ranked');
+    expect(agg).toContain('CASE WHEN c.id = ANY (v_count_only) THEN NULL ELSE avg(m.current_value) FILTER (WHERE m.rank IS NOT NULL) END AS average_value');
+    expect(agg).toContain('WHERE c.id = ANY (v_full) OR c.id = ANY (v_count_only)');
+    expect(body).toMatch(
+      /DELETE FROM public\.organization_challenge_ranking_entries AS e\s+WHERE e\.challenge_id = ANY \(v_full\) OR e\.challenge_id = ANY \(v_count_only\);/,
+    );
+    // 順位表に行を入れるのは、値まで書くチャレンジだけ
+    expect(body).toMatch(/WHERE c\.id = ANY \(v_full\)\s+AND p\.rank IS NOT NULL;/);
+    expect([...body.matchAll(/INSERT INTO public\.organization_challenge_ranking_entries/g)]).toHaveLength(1);
+  });
+
+  it('最後の日 (counted_through) も一緒に書く。値が同じでも最後の日は進めて書く', () => {
     expect(body).toMatch(/counted_through\s+= EXCLUDED\.counted_through/);
-    // 値が同じでも最後の日は進めて書く (書かずにおくと、次の機会に「進んだ」と見なされ、人の出入りだけが控えに入る)
+    // 書かずにおくと、次の機会に「進んだ」と見なされ、人の出入りだけが控えに入る
     expect(body).not.toMatch(/IS DISTINCT FROM/);
   });
 
-  it('数えるのは今も組織のメンバーである参加者だけ (update_org_challenge_progress と同じ絞り込み)。順位表は順位がついた人だけ', () => {
+  it('数えるのは今も組織のメンバーである参加者だけ (update_org_challenge_progress と同じ絞り込み)', () => {
     expect([...body.matchAll(/JOIN public\.user_profiles AS up\s+ON up\.id = p\.user_id\s+AND up\.organization_id = c\.organization_id/g)]).toHaveLength(2);
-    expect(body).toMatch(/WHERE c\.id = ANY \(v_targets\)\s+AND p\.rank IS NOT NULL;/);
   });
 
   it('update_org_challenge_progress と同じ鍵で直列にする', () => {
@@ -232,11 +303,17 @@ describe('3. 控えを書き直すのは、集計に含める最後の日が進�
     expect(header).toContain('SECURITY DEFINER');
     expect(header).toContain("SET search_path = ''");
   });
+
+  it('控えを最初に作る呼び出しは、開催中のチャレンジを全部「値を計算し直した」集合として渡す (流す前に見えていた値のまま)', () => {
+    expect(squash(MIGRATION)).toContain(
+      "SELECT public.refresh_org_challenge_aggregates( now(), ARRAY(SELECT c.id FROM public.organization_challenges AS c WHERE c.status = 'active'), '{}'::uuid[] );",
+    );
+  });
 });
 
 describe('4. 権限', () => {
   it.each(SERVICE_ROLE_FUNCTIONS)('%s の EXECUTE は service_role だけ (PUBLIC / anon / authenticated から外す)', (fn) => {
-    const escaped = fn.replace(/[.()]/g, (c) => `\\${c}`);
+    const escaped = escapeRegExp(fn);
     expect(MIGRATION).toMatch(new RegExp(String.raw`REVOKE ALL ON FUNCTION ${escaped}\s+FROM PUBLIC, anon, authenticated, service_role;`));
     expect(MIGRATION).toMatch(new RegExp(String.raw`GRANT EXECUTE ON FUNCTION ${escaped}\s+TO service_role;`));
     const grants = [...MIGRATION.matchAll(new RegExp(String.raw`GRANT [A-Z, ]+ ON FUNCTION ${escaped}\s+TO ([a-z_, ]+);`, 'g'))];
@@ -308,7 +385,7 @@ describe('6. ロールバック', () => {
 
   it('戻した 3 本の EXECUTE も service_role だけ', () => {
     for (const fn of SERVICE_ROLE_FUNCTIONS.slice(1)) {
-      const escaped = fn.replace(/[.()]/g, (c) => `\\${c}`);
+      const escaped = escapeRegExp(fn);
       expect(ROLLBACK).toMatch(new RegExp(String.raw`REVOKE ALL ON FUNCTION ${escaped}\s+FROM PUBLIC, anon, authenticated, service_role;`));
       expect(ROLLBACK).toMatch(new RegExp(String.raw`GRANT EXECUTE ON FUNCTION ${escaped}\s+TO service_role;`));
     }
@@ -319,7 +396,7 @@ describe('6. ロールバック', () => {
       ...REPLACED_FUNCTIONS.map((name) => ROLLBACK.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`)),
     );
     expect(Math.min(...REPLACED_FUNCTIONS.map((name) => ROLLBACK.indexOf(`CREATE OR REPLACE FUNCTION public.${name}(`)))).toBeGreaterThan(-1);
-    const dropFn = ROLLBACK.indexOf('DROP FUNCTION IF EXISTS public.refresh_org_challenge_aggregates(timestamptz);');
+    const dropFn = ROLLBACK.indexOf('DROP FUNCTION IF EXISTS public.refresh_org_challenge_aggregates(timestamptz, uuid[], uuid[]);');
     expect(dropFn).toBeGreaterThan(restored);
     for (const table of SNAPSHOT_TABLES) {
       expect(ROLLBACK.indexOf(`DROP TABLE IF EXISTS public.${table};`), table).toBeGreaterThan(dropFn);

@@ -133,10 +133,15 @@ async function createChallenge(seed: ChallengeSeed = {}): Promise<string> {
  * 管理者に見せる集計と、参加者に見せる順位表の控えを数え直す (毎晩 03:10 JST の update_org_challenge_progress の中で呼ばれるもの。#1600)。
  * 集計も順位表も控えから返るので、参加行を用意したあとに呼ぶ。
  * 控えは、集計に含める最後の日 (JST の前日) が進んだときだけ書き直されるので、同じテストの中で「次の夜」を表すときは
- * pNow に nextNight() を渡す (省略は DB の now())
+ * pNow に nextNight() を渡す (省略は DB の now())。
+ * refresh_org_challenge_aggregates は、値まで書くチャレンジを自分では選ばず、毎晩の更新が「値を計算し直した」と渡した集合に従うので、
+ * このファイルで作ったチャレンジを全部その集合として渡す (service_role で直接入れた参加行の値を、その夜に計算し直した値と見なす)
  */
 async function refreshAggregates(pNow?: string): Promise<void> {
-  const { error } = await srAdmin.rpc('refresh_org_challenge_aggregates', pNow ? { p_now: pNow } : {});
+  const { error } = await srAdmin.rpc('refresh_org_challenge_aggregates', {
+    ...(pNow ? { p_now: pNow } : {}),
+    p_recomputed_ids: createdChallengeIds,
+  });
   if (error) throw new Error(`refresh_org_challenge_aggregates: ${error.code} ${error.message}`);
 }
 

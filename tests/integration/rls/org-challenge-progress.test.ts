@@ -8,10 +8,13 @@
  *   - update_org_challenge_progress(p_now): 開催中の 3 種類のチャレンジ (breakfast_rate / veg_score / cooking_rate) の
  *     参加者ごとの current_value を、JST の暦日・前日までの記録から計算し、チャレンジの中で rank() をつける。
  *     終了日 (JST) を過ぎた開催中のチャレンジを completed にする。service_role だけが実行できる。
+ *     #1600 から、計算し直すのは、控えが無いか集計に含める最後の日 (min(終了日, 前日)) が控えを書いたときより進んだチャレンジだけ
+ *     (進まない夜は、参加者の行の値も順位も書かない)。
  *   - get_org_challenge_aggregates(p_organization_id): 管理者に見せる集計。参加者数と平均だけ。
- *     #1600 から、毎晩の更新の時点の控え (organization_challenge_aggregates) から返す。控えは refresh_org_challenge_aggregates(p_now) が
- *     書き (update_org_challenge_progress が毎晩呼ぶ)、開催中で集計に含める最後の日 (min(終了日, 前日)) が進んだチャレンジ
- *     (控えが無いもの・開始前を含む) と、控えの無い終了・中止のチャレンジだけを数え直す (下書きは作らない)。
+ *     #1600 から、毎晩の更新の時点の控え (organization_challenge_aggregates) から返す。控えは
+ *     refresh_org_challenge_aggregates(p_now, p_recomputed_ids, p_count_only_ids) が書く。update_org_challenge_progress が毎晩、
+ *     その夜に値を計算し直したチャレンジ (値まで書く) と、値を計算しない開催中のチャレンジ (開始前・対象外の種類。人数だけ書く) を渡して呼ぶ。
+ *     どちらも開催中で集計に含める最後の日が進んだものだけ。ほかに控えの無い終了・中止のチャレンジを最初の 1 回だけ書く (下書きは作らない)。
  *     控えの参加者が 10 人に満たなければ参加者数は NULL、集計が済んだ参加者が 10 人に満たなければ平均は NULL。service_role だけが実行できる。
  *   - get_org_challenge_ranking(p_challenge_id, p_user_id, p_limit, p_with_names): 参加者に見せる順位表。
  *     #1600 から、同じときに書く順位表の控え (organization_challenge_ranking_entries) から並べる。
@@ -31,7 +34,10 @@
  *      他組織のチャレンジは返さない・個人の値の列が無い
  *   K. 集計の差分 (#1600): 参加をやめた直後・組織から外れた直後には集計も順位表も動かない (前後の差から 1 人の値を逆算できない)。
  *      次の夜の更新で、全員の値の計算し直しと一緒に反映される。終了・中止のチャレンジの集計は、やめても動かない。
- *      終了したチャレンジを開催中に戻しても・終了日を縮めても・同じ日にもう一度流しても、最後の日が進まないので控えは動かない。
+ *      終了したチャレンジを開催中に戻しても・終了日を縮めても・同じ日にもう一度流しても、最後の日が進まないので、控えも、
+ *      参加者の行の値と順位 (本人に見える自分の順位) も動かない。
+ *      開始日を先へ動かす・種類を変える (値を計算しない夜) と、控えは人数だけになり、古い値を控えに入れない。
+ *      数え直しを単独で呼んでも (値を計算し直した集合を渡さなければ)、開催中のチャレンジの控えは動かない。
  *      開始前のチャレンジも控えを作る (人数だけ)。下書きは作らない。表は service_role だけ
  *   I. RLS: 参加者の行は本人だけが読める (管理者・参加していない人・他組織の人は読めない)。本人の行だけ消せる
  *   J. 参加者向けの順位表: 参加者本人にだけ返る (管理者・参加していない人・脱退した人・他組織の人には 0 行)・他人の ID を返さない・
@@ -258,9 +264,17 @@ interface ProgressResult {
   completed: number;
 }
 
-/** 集計の控えだけを数え直す (#1600。毎晩の update_org_challenge_progress の中でも呼ばれる)。書いた行の数を返す */
-async function refreshAggregates(pNow: string): Promise<number> {
-  const { data, error } = await srAdmin.rpc('refresh_org_challenge_aggregates', { p_now: pNow });
+/**
+ * 集計の控えだけを数え直す (#1600。毎晩の update_org_challenge_progress の中でも呼ばれる)。書いた行の数を返す。
+ * 参加行の値を service_role で直接入れたテストで使う。refresh_org_challenge_aggregates は、値まで書くチャレンジを自分では選ばず、
+ * 呼び出し元 (毎晩の更新) が「値を計算し直した」と渡した集合に従うので、このテストで作ったチャレンジを全部その集合として渡す
+ * (直接入れた値を、その夜に計算し直した値と見なす)。
+ */
+async function refreshAggregates(pNow: string, recomputedIds: string[] = createdChallengeIds): Promise<number> {
+  const { data, error } = await srAdmin.rpc('refresh_org_challenge_aggregates', {
+    p_now: pNow,
+    p_recomputed_ids: recomputedIds,
+  });
   if (error) throw new Error(`refresh_org_challenge_aggregates: ${error.code} ${error.message}`);
   return data as number;
 }
@@ -393,7 +407,7 @@ describe('#1132 A. 関数の種類・権限・pg_cron のジョブ', () => {
   it('refresh_org_challenge_aggregates は SECURITY DEFINER・search_path が空・integer を返す (#1600)', async () => {
     const p = (await procs()).get('refresh_org_challenge_aggregates');
     expect(p, 'refresh_org_challenge_aggregates が無い').toBeDefined();
-    expect(p!.args).toBe('p_now timestamp with time zone');
+    expect(p!.args).toBe('p_now timestamp with time zone, p_recomputed_ids uuid[], p_count_only_ids uuid[]');
     expect(p!.prosecdef).toBe(true);
     expect(p!.proconfig).toContain('search_path=""');
     expect(p!.result).toBe('integer');
@@ -695,6 +709,19 @@ describe('#1132 E. チャレンジの終了 (completed) と、対象外のチャ
     }
     expect((await participants(future)).get(a1.id)).toEqual({ value: 0, rank: null });
     expect(result.completed).toBe(1);
+    // 歩数のチャレンジは値を計算しないので、控えは人数だけ (参加者の行に入っている目印の値・順位を控えに入れない。#1600)
+    const { data: stepsSnapshot, error: snapshotError } = await srAdmin
+      .from('organization_challenge_aggregates')
+      .select('participant_count, ranked_count, average_value')
+      .eq('challenge_id', steps)
+      .single();
+    expect(snapshotError).toBeNull();
+    expect(stepsSnapshot).toEqual({ participant_count: 1, ranked_count: 0, average_value: null });
+    const { data: stepsRanking } = await srAdmin
+      .from('organization_challenge_ranking_entries')
+      .select('user_id')
+      .eq('challenge_id', steps);
+    expect(stepsRanking).toEqual([]);
   });
 });
 
@@ -714,7 +741,8 @@ describe('#1132 F. 繰り返し実行しても同じ結果。終了日より後�
     const second = await runProgress(NOW_MIDWEEK);
 
     expect(first.changed).toBe(3);
-    expect(second).toMatchObject({ participants: 3, changed: 0, completed: 0 });
+    // 同じ日の 2 回目は、集計に含める最後の日が進まないので、計算の対象にもしない (#1600)
+    expect(second).toMatchObject({ challenges: 0, participants: 0, changed: 0, aggregates: 0, completed: 0 });
     expect(await participants(challenge)).toEqual(snapshot);
     expect(snapshot.get(a2.id)).toEqual({ value: 50, rank: 1 });
     expect(snapshot.get(a1.id)).toEqual({ value: 25, rank: 2 });
@@ -1141,7 +1169,8 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
     for (const challenge of [notStarted, draft]) {
       for (const u of members().slice(0, 10)) await join(challenge, u.id);
     }
-    await refreshAggregates(NOW_MIDWEEK);
+    // 毎晩の更新: 開始前のチャレンジは値を計算しないので、人数だけを控えに書く
+    await runProgress(NOW_MIDWEEK);
 
     // 開始前でも、参加者が 10 人いれば人数は出る (main の、その場で数える形と同じ見え方。「10人未満」と偽らない)
     expect(await snapshotRow(notStarted)).toMatchObject({ participant_count: 10, ranked_count: 0, average_value: null });
@@ -1156,7 +1185,7 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
     // 開始前の人の出入りも、次の夜の数え直しでまとめて入る (直後は動かない)
     await join(notStarted, a11.id);
     expect((await aggregates(orgA)).get(notStarted)).toMatchObject({ participant_count: 10 });
-    await refreshAggregates(NEXT_NIGHT);
+    await runProgress(NEXT_NIGHT); // 最後の日 03-06 は、まだ開始日 03-07 より前
     expect((await aggregates(orgA)).get(notStarted)).toMatchObject({ participant_count: 11, average_value: null });
     expect(await snapshotRow(draft)).toBeNull();
   });
@@ -1195,15 +1224,19 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
 
   it('K-7: 終了したチャレンジを管理者が開催中に戻しても (PostgREST を直接叩いても)、夜の更新で控えは動かない。外したメンバーの値を前後の差から出せない', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
-    // 11 人。a1 だけ期間の 7 日とも朝食を食べた (100)。ほかの 10 人は 0 → 平均 100 / 11 = 9.1
+    // 11 人と、メンバーとして参加した管理者。a1 だけ期間の 7 日とも朝食を食べた (100)。ほかの 11 人は 0 → 平均 100 / 12 = 8.3
     for (const u of members()) await join(challenge, u.id);
+    await join(challenge, admin.id);
     await seedA1Breakfasts();
     await runProgress(FINAL_NIGHT);
     expect(await challengeStatus(challenge)).toBe('completed');
     const final = (await aggregates(orgA)).get(challenge)!;
-    expect(final).toMatchObject({ participant_count: 11, average_value: 9.1 });
+    expect(final).toMatchObject({ participant_count: 12, average_value: 8.3 });
     const finalRow = await snapshotRow(challenge);
     const finalRanking = await rankingSnapshot(challenge);
+    // 管理者が自分で見られる自分の順位 (参加者の行。GET /api/org/challenges/[id] の me.rank): a1 (1 位) の次の 2 位
+    const finalRows = await participants(challenge);
+    expect(finalRows.get(admin.id)).toEqual({ value: 0, rank: 2 });
 
     // 管理者が a1 を組織から外し、チャレンジを開催中に戻す (管理者の JWT で、ポリシー "Org admins can manage challenges" の経路)
     await setMembership(a1.id, null);
@@ -1217,10 +1250,13 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
       expect(reopened.data).toHaveLength(1);
 
       // 次の夜の更新: ほかの 10 人の値は終了日までの記録のまま同じ。最後の日 (終了日) が進まないので、控えは書き直さない
-      await runProgress(AFTER_FINAL_NIGHT);
+      const night = await runProgress(AFTER_FINAL_NIGHT);
       expect((await aggregates(orgA)).get(challenge)).toEqual(final);
       expect(await snapshotRow(challenge)).toEqual(finalRow);
       expect(await rankingSnapshot(challenge)).toEqual(finalRanking);
+      // 参加者の行の値と順位も計算し直さない (計算し直すと、a1 が外れて管理者の順位が 2 → 1 に詰まり、外れた人が上にいたと分かる)
+      expect(await participants(challenge)).toEqual(finalRows);
+      expect(night.changed).toBe(0);
       // 開催中に戻したチャレンジは、終了日を過ぎているので、また終了になる
       expect(await challengeStatus(challenge)).toBe('completed');
     } finally {
@@ -1231,12 +1267,15 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
   it('K-8: 開催中のチャレンジの終了日を、前の夜に集計した最後の日まで縮めても、次の夜の更新で控えは動かない', async () => {
     const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
     for (const u of members()) await join(challenge, u.id);
+    await join(challenge, admin.id); // メンバーとして参加した管理者
     await seedA1Breakfasts();
     // 期間の途中 (最後の日 03-05): a1 = 100、ほか 0
     await runProgress(NOW_MIDWEEK);
     const before = await snapshotRow(challenge);
-    expect(before).toMatchObject({ participant_count: 11, counted_through: '2020-03-05' });
+    expect(before).toMatchObject({ participant_count: 12, counted_through: '2020-03-05' });
     const beforeRanking = await rankingSnapshot(challenge);
+    const beforeRows = await participants(challenge);
+    expect(beforeRows.get(admin.id)).toEqual({ value: 0, rank: 2 });
 
     // a1 が組織から外れ、管理者が終了日を 03-05 (前の夜の最後の日) に縮める。ほかの人の値は 03-05 までの記録のまま同じになる
     await setMembership(a1.id, null);
@@ -1249,7 +1288,120 @@ describe('#1600 K. 集計の差分: やめた直後・組織から外れた直�
       expect(shortened.error).toBeNull();
       expect(shortened.data).toHaveLength(1);
 
-      await runProgress(NEXT_NIGHT);
+      const night = await runProgress(NEXT_NIGHT);
+      expect(await snapshotRow(challenge)).toEqual(before);
+      expect(await rankingSnapshot(challenge)).toEqual(beforeRanking);
+      // 参加者の行の値と順位も動かない (管理者の順位が 2 → 1 に詰まらない)
+      expect(await participants(challenge)).toEqual(beforeRows);
+      expect(night.changed).toBe(0);
+    } finally {
+      await setMembership(a1.id, orgA);
+    }
+  });
+
+  it.each([
+    {
+      label: '開始日を、次の夜の最後の日 (03-06) より後の 03-07 へ動かす',
+      change: { start_date: '2020-03-07' },
+      restore: { start_date: START },
+    },
+    {
+      label: '種類を、食事の記録から計算できない歩数 (steps) にする',
+      change: { challenge_type: 'steps' },
+      restore: { challenge_type: 'breakfast_rate' },
+    },
+  ])(
+    'K-10: 開催中のチャレンジで、管理者が$label (PostgREST を直接叩いても): 値を計算しない夜は、控えは人数だけで古い値を入れず、参加者の行の値と順位も動かない。戻した次の夜に、全員の値を計算し直して入る',
+    async ({ change, restore }) => {
+      const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+      for (const u of members()) await join(challenge, u.id);
+      await join(challenge, admin.id); // メンバーとして参加した管理者
+      await seedA1Breakfasts();
+      // 期間の途中 (最後の日 03-05): a1 = 100、ほか 0。12 人 → 平均 8.3
+      await runProgress(NOW_MIDWEEK);
+      expect(await snapshotRow(challenge)).toMatchObject({ participant_count: 12, ranked_count: 12, counted_through: '2020-03-05' });
+      expect((await aggregates(orgA)).get(challenge)).toMatchObject({ participant_count: 12, average_value: 8.3 });
+      const rowsBefore = await participants(challenge);
+      expect(rowsBefore.get(admin.id)).toEqual({ value: 0, rank: 2 });
+
+      // a1 が組織から外れ、管理者がチャレンジを書き換える (ポリシー "Org admins can manage challenges" の経路)
+      await setMembership(a1.id, null);
+      try {
+        const changed = await asUser(admin.jwt!).from('organization_challenges').update(change).eq('id', challenge).select('id');
+        expect(changed.error).toBeNull();
+        expect(changed.data).toHaveLength(1);
+
+        // 次の夜: 最後の日は 03-06 に進むが、値は計算しない。控えに、ほかの 11 人の古い値 (平均 0) と人の出入りを組み合わせて入れない
+        const night = await runProgress(NEXT_NIGHT);
+        expect(night.changed).toBe(0);
+        expect(await snapshotRow(challenge)).toMatchObject({
+          participant_count: 11,
+          ranked_count: 0,
+          average_value: null,
+          counted_through: '2020-03-06',
+        });
+        expect(await rankingSnapshot(challenge)).toEqual([]);
+        expect((await aggregates(orgA)).get(challenge)).toMatchObject({ participant_count: 11, average_value: null });
+        expect(await rankingFor(challenge, admin.id)).toEqual([]);
+        expect(await participants(challenge)).toEqual(rowsBefore);
+
+        // 戻した次の夜 (最後の日 03-07): 全員の値を 03-02〜03-07 の記録で計算し直してから、控えに値まで入れる
+        const restored = await asUser(admin.jwt!).from('organization_challenges').update(restore).eq('id', challenge).select('id');
+        expect(restored.error).toBeNull();
+        expect(restored.data).toHaveLength(1);
+        await runProgress('2020-03-08T03:00:00Z');
+        expect(await snapshotRow(challenge)).toMatchObject({ participant_count: 11, ranked_count: 11, counted_through: '2020-03-07' });
+        expect(await rankingSnapshot(challenge)).toHaveLength(11);
+        expect((await participants(challenge)).get(admin.id)).toEqual({ value: 0, rank: 1 });
+      } finally {
+        await setMembership(a1.id, orgA);
+      }
+    },
+  );
+
+  it('K-11: 数え直し (refresh_org_challenge_aggregates) だけを、値を計算し直した集合を渡さずに単独で呼んでも、開催中のチャレンジの控えは動かず、最後の日も進まない。その夜の更新で、全員の値を計算し直してから書く', async () => {
+    const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+    for (const u of members()) await join(challenge, u.id);
+    await seedA1Breakfasts();
+    await runProgress(NOW_MIDWEEK);
+    const before = await snapshotRow(challenge);
+    expect(before).toMatchObject({ participant_count: 11, ranked_count: 11, counted_through: '2020-03-05' });
+    const beforeRanking = await rankingSnapshot(challenge);
+
+    await setMembership(a1.id, null);
+    try {
+      // 次の日の JST 02:00 (毎晩の 03:10 の更新の前): 数え直しだけを単独で呼ぶ (集合は既定の空)
+      const alone = await srAdmin.rpc('refresh_org_challenge_aggregates', { p_now: '2020-03-06T17:00:00Z' });
+      expect(alone.error).toBeNull();
+      expect(await snapshotRow(challenge)).toEqual(before);
+      expect(await rankingSnapshot(challenge)).toEqual(beforeRanking);
+
+      // 同じ日の JST 03:10 の更新: 最後の日 (03-06) が進んでいるので、全員の値を計算し直してから書く (a1 が外れる)
+      await runProgress('2020-03-06T18:10:00Z');
+      expect(await snapshotRow(challenge)).toMatchObject({ participant_count: 10, ranked_count: 10, counted_through: '2020-03-06' });
+      expect((await rankingSnapshot(challenge)).map((r) => r.user_id)).not.toContain(a1.id);
+    } finally {
+      await setMembership(a1.id, orgA);
+    }
+  });
+
+  it('K-12: 同じ日に毎晩の更新をもう一度流しても、メンバーが外れていても、参加者の行の値と順位 (本人に見える自分の順位) も控えも動かない', async () => {
+    const challenge = await createChallenge({ type: 'breakfast_rate', start: START, end: END });
+    for (const u of members()) await join(challenge, u.id);
+    await join(challenge, admin.id); // メンバーとして参加した管理者
+    await seedA1Breakfasts();
+    await runProgress(NOW_MIDWEEK);
+    const rowsBefore = await participants(challenge);
+    expect(rowsBefore.get(admin.id)).toEqual({ value: 0, rank: 2 });
+    const before = await snapshotRow(challenge);
+    const beforeRanking = await rankingSnapshot(challenge);
+
+    await setMembership(a1.id, null);
+    try {
+      // 同じ日 (JST 03-06 19:00) の 2 回目: 最後の日 (03-05) が進まないので、計算の対象にしない
+      const again = await runProgress('2020-03-06T10:00:00Z');
+      expect(again).toMatchObject({ challenges: 0, participants: 0, changed: 0 });
+      expect(await participants(challenge)).toEqual(rowsBefore);
       expect(await snapshotRow(challenge)).toEqual(before);
       expect(await rankingSnapshot(challenge)).toEqual(beforeRanking);
     } finally {

@@ -99,8 +99,9 @@ describe('使える種類と使えない種類', () => {
   });
 
   it('DB の関数 update_org_challenge_progress が計算する種類は、使える種類と同じ', () => {
+    // #1600 から、種類の絞り込みは「今夜の対象を選ぶ文」の computable の式 ((c.challenge_type IN (...) AND c.start_date <= ...)) にある
     const m = functionBody(definingMigration('update_org_challenge_progress'), 'update_org_challenge_progress').match(
-      /AND c\.challenge_type IN \(([^)]+)\)/,
+      /\(c\.challenge_type IN \(([^)]+)\)/,
     );
     expect(m, 'migration に種類の絞り込みが見つからない').not.toBeNull();
     expect(quotedList(m![1]).sort()).toEqual([...ORG_CHALLENGE_TYPES].sort());
