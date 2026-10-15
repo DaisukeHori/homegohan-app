@@ -696,6 +696,14 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
     count: 1,
     reason: '運営の一覧の期限超過 (overdue=1) の絞り込み。応答期限 due_at を今の時刻 (ctx.now) と比べる。画面で選ぶ暦日ではない',
   },
+  {
+    file: 'src/lib/auth/sessions/store.ts',
+    rule: 'G',
+    count: 1,
+    reason:
+      '不審なログインの判定で、同じ利用者の「判定する行より前に作られた行」を読む (listPriorLogins の created_at < 判定する行の created_at)。' +
+      'DB の行の時刻どうしの比較で、暦日ではない (cross/16 §13.1)',
+  },
 ];
 
 const sources = listProductionSources();

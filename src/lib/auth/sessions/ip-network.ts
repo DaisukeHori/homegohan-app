@@ -50,7 +50,8 @@ function expandIpv6(ip: string): number[] | null {
     for (let i = 0; i < EMBEDDED_IPV4_GROUPS; i += 1) {
       embeddedV4.push((octets[i * 2] << BITS_PER_OCTET) | octets[i * 2 + 1]);
     }
-    text = text.slice(0, lastColon + 1) + '0';
+    // IPv4 の 2 グループぶんを 0 の仮のグループにして展開し、あとで差し替える
+    text = `${text.slice(0, lastColon + 1)}0:0`;
   }
   const parseGroups = (part: string): number[] =>
     part === '' ? [] : part.split(':').map((group) => Number.parseInt(group, HEX_RADIX));
@@ -65,7 +66,7 @@ function expandIpv6(ip: string): number[] | null {
     if (zeros < 0) return null;
     groups = [...head, ...new Array<number>(zeros).fill(0), ...rest];
   }
-  if (embeddedV4.length > 0) groups = [...groups.slice(0, groups.length - 1), ...embeddedV4];
+  if (embeddedV4.length > 0) groups = [...groups.slice(0, groups.length - EMBEDDED_IPV4_GROUPS), ...embeddedV4];
   if (groups.length !== IPV6_GROUPS || groups.some((g) => !Number.isInteger(g))) return null;
   return groups;
 }
