@@ -9,3 +9,4 @@ export * from './constants';
 export * from './analytics';
 export * from './url-routes';
 export * from './steps';
+export * from './photo-save';
