@@ -20,6 +20,7 @@ import {
   HANDSON_TOUR_I18N_JA,
   HANDSON_TOUR_ROUTES,
   buildStep2ResultBubbleBody,
+  personalize,
 } from '@homegohan/handson-tour-shared';
 
 import { tourAnalyticsPlatformOf } from '../../src/handson-tour/tour-platform';
@@ -464,6 +465,36 @@ describe('#1642: Step 3 (バッジ) の端末バックは hard_back でツアー
     await waitFor(() => expect(mockReplace).toHaveBeenCalledWith('/home'));
     expect(skipCalls()).toHaveLength(1);
     expect(JSON.parse(String(skipCalls()[0][1].body))).toEqual({ step: 3, reason: 'hard_back' });
+  });
+
+  // #1626: 文言は Web と共有 (packages/handson-tour-shared)。お試しの記録は first_bite に数えないので、Step 3 の時点で付いているのは planner の 1 つ
+  it('Step 3 の intro は「もう 1 つ獲得しています」をニックネームで埋めて出し、本文に {nickname} の波括弧を残さない', async () => {
+    const { resolveBadges } = holdBadges();
+    const screen = render(<HandsonTourBadges />);
+    await resolveBadges(BADGES_OK);
+
+    expect(screen.getByTestId('overlay-title')).toHaveTextContent('テスト さん、もう 1 つ獲得しています!');
+    expect(screen.getByTestId('overlay-title')).toHaveTextContent(
+      personalize(i18n.step3.intro_title, { nickname: 'テスト' }),
+    );
+    expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step3.intro_hint);
+    expect(screen.getByTestId('overlay-body').props.children).not.toContain('{nickname}');
+  });
+
+  // #1626: first_bite は、ツアーを通しただけなら未獲得、本物の食事の記録がある人のやり直しのツアーでは獲得済み。
+  // 吹き出し (3.2) はどちらでも同じ文言なので、獲得済みの言い方 (「…しました」) も未獲得の言い方 (「…もらえます」) もしない
+  it('Step 3 の first_bite の吹き出しは、獲得の有無を言わない共有の文言を出す', async () => {
+    jest.useFakeTimers();
+    const { resolveBadges } = holdBadges();
+    const screen = render(<HandsonTourBadges />);
+    await resolveBadges(BADGES_OK);
+    act(() => {
+      jest.advanceTimersByTime(HANDSON_TOUR_CONSTANTS.STEP3_INTRO_AUTO_MS);
+    });
+
+    expect(screen.getByTestId('overlay-title')).toHaveTextContent(i18n.step3.first_bite_title);
+    expect(screen.getByTestId('overlay-body')).toHaveTextContent(i18n.step3.first_bite_bubble);
+    expect(screen.getByTestId('overlay-body').props.children).not.toMatch(/しました|もらえます/);
   });
 
   it('最後の吹き出し (3.4) で抜けたあとに【次へ】が押されても、Step 4 へ進まず完了も記録しない', async () => {

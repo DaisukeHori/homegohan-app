@@ -69,7 +69,7 @@ export default function HandsonTourBadges() {
         await getApi().get('/api/badges');
         // 応答を待つ間に端末バックでツアーを抜けていたら、ここで終える (ホームへの遷移中に吹き出しを出さない)
         if (leftTourRef.current) return;
-        // first_bite と planner が獲得済みであることを期待
+        // ツアーが Step 3 までに付けるのは planner だけ (STEP3_BADGES_EARNED_IN_TOUR)。お試しの記録は first_bite に数えない (#1314 / #1626)
         setIsLoading(false);
         advanceSubStep('3.1');
       } catch {
