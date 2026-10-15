@@ -81,7 +81,7 @@ AI献立の共通保存ポイントは1箇所に寄せられている。
 | Web photo analyze update | `src/app/api/ai/analyze-meal-photo/route.ts` + `supabase/functions/analyze-meal-photo/index.ts` | 解析後に meal 更新 | user photo をどう dish に反映するか定義 |
 | Mobile detail edit | `src/app/api/meals/[id]/route.ts` | meal fields update | keep / stale / regenerate ルールが必要 |
 | Mobile manual add | `src/app/api/meals/route.ts` | 新規 insert | 初期画像状態の定義が必要 |
-| Mobile photo meal create | `apps/mobile/app/meals/new.tsx` | Supabase直書き insert/delete | API共通化かロジック複製回避が必要 |
+| Mobile photo meal create | `apps/mobile/app/meals/new.tsx`（2026-10-15 に削除。#1598） | Supabase直書き insert/delete | 画面ごと削除したので対象外（スキャンのタブは WebView） |
 | AI consultation direct update | `src/app/api/ai/consultation/actions/[actionId]/execute/route.ts` | `update_meal`, `delete_meal`, `complete_meal` | 画像の stale 判定が必要 |
 | Manual image generation | `src/app/api/ai/image/generate/route.ts` | 現状は meal image のみ生成 | dish正本へ移行が必要 |
 
@@ -249,7 +249,7 @@ AI生成以外の更新でも stale 判定が必要。
 - `src/app/api/meal-plans/add-from-photo/route.ts`
 - `supabase/functions/analyze-meal-photo/index.ts`
 - `src/app/api/ai/consultation/actions/[actionId]/execute/route.ts`
-- `apps/mobile/app/meals/new.tsx`
+- `apps/mobile/app/meals/new.tsx`（2026-10-15 に削除。#1598）
 
 ## Worker Placement
 

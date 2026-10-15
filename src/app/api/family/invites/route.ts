@@ -16,6 +16,7 @@ import {
 } from '@/lib/membership/invite-throttle';
 import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 招待一覧取得
 export async function GET(_request: Request) {
@@ -59,6 +60,9 @@ export async function GET(_request: Request) {
 
 // 招待発行
 export async function POST(request: Request) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   const supabase = await createClient();
 
   const { data: { user }, error: authError } = await supabase.auth.getUser();

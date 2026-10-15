@@ -104,7 +104,6 @@ export default function RootLayout() {
             <Stack.Screen name="(org)" />
             <Stack.Screen name="(support)" />
             <Stack.Screen name="(super-admin)" />
-            <Stack.Screen name="meals/new" options={{ presentation: "modal" }} />
           </Stack>
         </ProfileProvider>
       </AuthProvider>

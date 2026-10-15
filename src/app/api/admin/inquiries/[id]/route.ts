@@ -31,6 +31,7 @@ import {
   toInquiryDto,
   type InquiryRow,
 } from '@/lib/admin/inquiries';
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export const dynamic = 'force-dynamic';
 
@@ -221,9 +222,15 @@ async function updateInquiry(request: Request, { params }: RouteContext, method:
 }
 
 export async function PATCH(request: Request, context: RouteContext) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   return updateInquiry(request, context, 'PATCH');
 }
 
 export async function PUT(request: Request, context: RouteContext) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request);
+  if (nullCharacterRejection) return nullCharacterRejection;
   return updateInquiry(request, context, 'PUT');
 }

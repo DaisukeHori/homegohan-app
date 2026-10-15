@@ -4,6 +4,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { toPerformanceCheckin, fromPerformanceCheckin, toCheckinAverages } from '@/lib/converter'
 import { sanitizePerformanceCheckinPayload } from '@/lib/performance-payloads'
 import { internalError } from '@/lib/api/errors'
+import { rejectNullCharacterBody } from '@/lib/api/reject-null-character'
 
 /** 期間の指定が無いときに返す、直近の日数 (JST の今日から何日前までか) */
 const DEFAULT_CHECKIN_LOOKBACK_DAYS = 30
@@ -120,6 +121,9 @@ export async function GET(request: NextRequest) {
  * 日次チェックインを作成/更新（upsert）
  */
 export async function POST(request: NextRequest) {
+  // 本文の文字列に NULL 文字 (U+0000) があると、DB (text / jsonb) に届いたところで拒まれて 500 になる。本文を読む handler はどれも、認証・DB に触れる前に 400 で断る (#1657。一覧と例外は src/__tests__/api/null-character-routes.test.ts)
+  const nullCharacterRejection = await rejectNullCharacterBody(request)
+  if (nullCharacterRejection) return nullCharacterRejection
   try {
     const supabase = await createClient()
     const { data: { user }, error: authError } = await supabase.auth.getUser()
