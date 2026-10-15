@@ -121,6 +121,17 @@ type DsrAdminListRow = Pick<
   'id' | 'user_id' | 'request_type' | 'status' | 'verified_at' | 'due_at' | 'resolved_at' | 'created_at' | 'updated_at'
 >;
 
+/**
+ * PostgREST の応答の行を、読んだ列 (DSR_*_COLUMNS) の型として扱う。列の一覧を文字列の連結で組み立てているので、
+ * supabase-js は行の型を推論できない (GenericStringError になる)。列の一覧と行の型の対応は core.test.ts と契約テストが固定する
+ */
+function rowsAs<T>(data: unknown): T[] {
+  return (data ?? []) as T[];
+}
+function rowAs<T>(data: unknown): T {
+  return data as T;
+}
+
 function ok<T>(data: T): DsrServiceResult<T> {
   return { ok: true, data };
 }
@@ -154,7 +165,7 @@ async function readRequesterActionRow(
     .maybeSingle();
   if (error) return internalFailure(error);
   if (!data) return fail(404, 'NOT_FOUND');
-  return ok(data as DsrRequesterActionRow);
+  return ok(rowAs<DsrRequesterActionRow>(data));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -178,7 +189,7 @@ export async function listOwnDsr(
     .order('id', { ascending: false })
     .limit(DSR_OWN_LIST_LIMIT);
   if (error) return internalFailure(error);
-  const rows = (data ?? []) as DsrOwnRow[];
+  const rows = rowsAs<DsrOwnRow>(data);
   return ok(rows.map((row) => toDsrOwnDto(row, ctx.now)));
 }
 
@@ -200,7 +211,7 @@ export async function getOwnDsr(
     .maybeSingle();
   if (error) return internalFailure(error);
   if (!data) return fail(404, 'NOT_FOUND');
-  return ok(toDsrOwnDto(data as DsrOwnRow, ctx.now));
+  return ok(toDsrOwnDto(rowAs<DsrOwnRow>(data), ctx.now));
 }
 
 /** 行を作り、本人確認メールを送る (メールは best-effort: 失敗しても行は返す)。23505 は 409 DSR_ALREADY_OPEN */
@@ -229,7 +240,7 @@ export async function createDsr(
     if (pgCodeOf(error) === PG_UNIQUE_VIOLATION) return fail(409, 'DSR_ALREADY_OPEN', error);
     return internalFailure(error);
   }
-  const row = data as DsrOwnRow;
+  const row = rowAs<DsrOwnRow>(data);
   await sendDsrVerificationEmail(admin, row, token, params.siteUrl, ctx.log);
   return ok(toDsrOwnDto(row, ctx.now));
 }
@@ -270,7 +281,7 @@ export async function verifyDsr(
   if (error) return internalFailure(error);
   if (!data) return fail(409, 'DSR_INVALID_STATE');
 
-  const updated = data as DsrOwnRow;
+  const updated = rowAs<DsrOwnRow>(data);
   const siteUrl = getSiteUrl();
   await Promise.all([
     sendDsrReceivedEmail(admin, updated, siteUrl, ctx.log),
@@ -314,7 +325,7 @@ export async function resendDsrVerification(
   if (error) return internalFailure(error);
   if (!data) return fail(409, 'DSR_INVALID_STATE');
 
-  const updated = data as DsrOwnRow;
+  const updated = rowAs<DsrOwnRow>(data);
   await sendDsrVerificationEmail(admin, updated, token, params.siteUrl, ctx.log);
   return ok(toDsrOwnDto(updated, ctx.now));
 }
@@ -346,7 +357,7 @@ export async function withdrawDsr(
     .maybeSingle();
   if (error) return internalFailure(error);
   if (!data) return fail(409, 'DSR_INVALID_STATE');
-  return ok(toDsrOwnDto(data as DsrOwnRow, ctx.now));
+  return ok(toDsrOwnDto(rowAs<DsrOwnRow>(data), ctx.now));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -382,7 +393,7 @@ export async function listDsrForOperator(
     !!error && (httpStatus === HTTP_RANGE_NOT_SATISFIABLE || pgCodeOf(error) === POSTGREST_RANGE_NOT_SATISFIABLE);
   if (error && !beyondLastPage) return internalFailure(error);
 
-  const rows = (beyondLastPage ? [] : (data ?? [])) as DsrAdminListRow[];
+  const rows = beyondLastPage ? [] : rowsAs<DsrAdminListRow>(data);
   const names = await fetchNicknames(
     rows.map((row) => row.user_id),
     ctx.log,
@@ -402,7 +413,7 @@ export async function getDsrForOperator(
   const { data, error } = await admin.from(DSR_TABLE).select(DSR_ADMIN_COLUMNS).eq('id', id).maybeSingle();
   if (error) return internalFailure(error);
   if (!data) return fail(404, 'NOT_FOUND');
-  const row = data as DsrAdminRow;
+  const row = rowAs<DsrAdminRow>(data);
 
   let requester: DsrAdminDetailDto['requester'] = null;
   if (row.user_id) {
@@ -448,7 +459,7 @@ export async function updateDsrByOperator(
     .maybeSingle();
   if (readError) return internalFailure(readError);
   if (!current) return fail(404, 'NOT_FOUND');
-  const before = current as DsrAdminRow;
+  const before = rowAs<DsrAdminRow>(current);
   if (before.updated_at !== ifUnmodifiedSince) return fail(412, 'CONFLICT_OPTIMISTIC_LOCK');
   if (!DSR_ACTIONABLE_STATUSES.includes(before.status)) return fail(409, 'DSR_INVALID_TRANSITION');
 
@@ -491,7 +502,7 @@ export async function updateDsrByOperator(
     .maybeSingle();
   if (writeError) return internalFailure(writeError);
   if (!written) return fail(409, 'CONFLICT_STALE_DATA');
-  const after = written as DsrAdminRow;
+  const after = rowAs<DsrAdminRow>(written);
 
   if (changed.status && (after.status === 'fulfilled' || after.status === 'rejected')) {
     await sendDsrResolvedEmail(admin, after, getSiteUrl(), ctx.log);
