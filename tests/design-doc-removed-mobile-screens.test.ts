@@ -17,6 +17,10 @@
  *   4. 設計書のコードが文字列 (`'…'` / `"…"`) で持つ `apps/mobile/app/<パス>` は、消した画面やその区画 (消した画面を含むディレクトリ) を指さない
  *      (注記があっても赤。glob の `/**` は外して確かめる)
  *   5. 走査が空振りしていない (#1673 が直した mobile/01-architecture.md §12.4 の行と、コードの文字列の 1 件以上を見つける)
+ *   6. 設計書は設計の正典で、画面を消す枝は書き換えない。2〜4 で赤になる行のうち、まだ設計書の側で直していないものは、
+ *      設計書ごと・名指しごとの数を一覧に書き、見張りは一覧と突き合わせる (tests/helpers/design-doc-pending-1598.ts)。
+ *      注記で済むもの = tests/helpers/design-doc-pending-notes-1598.ts、設計の改定が要るもの = tests/helpers/design-doc-pending-revisions-1598.ts。
+ *      一覧より多い名指し (新しく足した名指し) も、一覧より少ない名指し (直したのに一覧に残っているもの) も赤
  * ディレクトリの木の中の短い名前 (`meals/new.tsx`) は行だけでは場所が分からないので、木ごとの検査が受け持つ
  * (family/09 の §5 の木は tests/handson-tour-files-structure-doc.test.ts)。
  * 設計書の走査は、ファイルの一番外側 (収集のとき) で 1 回だけ、消したものをまとめた正規表現で行う
@@ -26,6 +30,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
+import {
+  filesInBothLedgers,
+  type PendingEntry,
+  pendingEntryShapeProblems,
+  reconcilePending,
+} from './helpers/design-doc-pending-1598';
+import { PENDING_NOTE_MENTIONS } from './helpers/design-doc-pending-notes-1598';
+import { PENDING_REVISION_MENTIONS } from './helpers/design-doc-pending-revisions-1598';
 import {
   REMOVED_MAESTRO_FLOW_DIRS,
   REMOVED_MAESTRO_FLOWS,
@@ -161,7 +173,31 @@ function scanDesignDocs(): Scan {
 /** 設計書の走査 (収集のときに 1 回だけ) */
 const scanned = scanDesignDocs();
 
-const describeMention = (mention: Mention): string => `${mention.file}:${mention.line} (${mention.target})`;
+/** まだ設計書の側で直していない名指しの一覧 (注記で済むもの + 設計の改定が要るもの) */
+const PENDING: readonly PendingEntry[] = [...PENDING_NOTE_MENTIONS, ...PENDING_REVISION_MENTIONS];
+
+/** 消した部品・テスト・maestro の flow・根のファイルの、リポジトリの根からのパスか (一覧の file の名指しが指してよいもの) */
+function isRemovedFileTarget(target: string): boolean {
+  return removedFilesMentionedIn(`\`${target}\``).includes(target);
+}
+
+/** 一覧の 1 行が、この見張りの名指しとして成り立っているか (種類ごとに、消したものを指しているか) */
+function pendingTargetProblem(entry: PendingEntry): string | null {
+  const where = `${entry.file} (${entry.kind}: ${entry.target})`;
+  if (!entry.file.startsWith(`${DESIGN_DIR}/`) || !entry.file.endsWith('.md')) return `設計書ではない: ${where}`;
+  if (!fs.existsSync(path.join(ROOT, entry.file))) return `設計書が無い: ${where}`;
+  switch (entry.kind) {
+    case 'screen':
+      return (REMOVED_MOBILE_SCREENS as readonly string[]).includes(entry.target) ? null : `消した画面ではない: ${where}`;
+    case 'file':
+      return isRemovedFileTarget(entry.target) ? null : `消したファイルではない: ${where}`;
+    case 'codeLiteral':
+      return pointsToRemovedScreen(entry.target) ? null : `消した画面・区画ではない: ${where}`;
+    case 'pushPath':
+      // 通知の行き先は tests/design-doc-push-paths-resolve.test.ts が確かめる
+      return null;
+  }
+}
 
 describe('#1659 設計書は、#1598 で消したモバイルのネイティブの画面とファイルを、いまあるものとして名指ししない', () => {
   it('消した画面と、apps/mobile の外で一緒に消したファイルは無い (戻すなら、この一覧と設計書を一緒に直す)', () => {
@@ -232,18 +268,85 @@ describe('#1659 設計書は、#1598 で消したモバイルのネイティブ�
     expect(scanned.codeLiterals.length).toBeGreaterThan(0);
   });
 
-  it('消した画面のファイルを名指しする行は、同じ行で消したことを書く', () => {
-    const stale = scanned.screens.filter((mention) => !REMOVAL_NOTE.test(mention.text)).map(describeMention);
-    expect(stale).toEqual([]);
+  it('消した画面のファイルを名指しする行は、同じ行で消したことを書く (まだ直していない名指しは一覧の数のとおり)', () => {
+    const stale = scanned.screens.filter((mention) => !REMOVAL_NOTE.test(mention.text));
+    expect(reconcilePending(stale, 'screen', PENDING)).toEqual({ unlisted: [], resolved: [] });
   });
 
-  it('消した部品・テスト・maestro の flow・根のファイルを名指しする行も、同じ行で消したことを書く', () => {
-    const stale = scanned.files.filter((mention) => !REMOVAL_NOTE.test(mention.text)).map(describeMention);
-    expect(stale).toEqual([]);
+  it('消した部品・テスト・maestro の flow・根のファイルを名指しする行も、同じ行で消したことを書く (まだ直していない名指しは一覧の数のとおり)', () => {
+    const stale = scanned.files.filter((mention) => !REMOVAL_NOTE.test(mention.text));
+    expect(reconcilePending(stale, 'file', PENDING)).toEqual({ unlisted: [], resolved: [] });
   });
 
-  it('設計書のコードの文字列 (機械検査の定数など) は、消した画面やその区画を指さない (同じ行に消したと書いても赤)', () => {
-    const stale = scanned.codeLiterals.filter((mention) => pointsToRemovedScreen(mention.target)).map(describeMention);
-    expect(stale).toEqual([]);
+  it('設計書のコードの文字列 (機械検査の定数など) は、消した画面やその区画を指さない (同じ行に消したと書いても赤。設計の改定を待つものは一覧の数のとおり)', () => {
+    const stale = scanned.codeLiterals.filter((mention) => pointsToRemovedScreen(mention.target));
+    expect(reconcilePending(stale, 'codeLiteral', PENDING)).toEqual({ unlisted: [], resolved: [] });
+  });
+});
+
+describe('#1598 まだ設計書の側で直していない名指しの一覧 (設計書は画面を消す枝が書き換えない)', () => {
+  const screenAt = (file: string, target: string, line: number) => ({ file, target, line });
+  const BADGES = 'badges/index.tsx';
+  const DOC = `${DESIGN_DIR}/x.md`;
+  const listed: readonly PendingEntry[] = [{ file: DOC, kind: 'screen', target: BADGES, count: 2 }];
+
+  it('突き合わせ: 一覧の数と同じなら空・1 行増えたら「一覧に無い」(行つき)・直して減ったら「直したのに一覧に残っている」', () => {
+    const two = [screenAt(DOC, BADGES, 3), screenAt(DOC, BADGES, 9)];
+    expect(reconcilePending(two, 'screen', listed)).toEqual({ unlisted: [], resolved: [] });
+    expect(reconcilePending([...two, screenAt(DOC, BADGES, 12)], 'screen', listed)).toEqual({
+      unlisted: [`${DOC} (${BADGES}): 一覧 2・実際 3 (行 3, 9, 12)`],
+      resolved: [],
+    });
+    expect(reconcilePending([screenAt(DOC, BADGES, 3)], 'screen', listed)).toEqual({
+      unlisted: [],
+      resolved: [`${DOC} (${BADGES}): 一覧 2・実際 1`],
+    });
+    expect(reconcilePending([], 'screen', listed)).toEqual({ unlisted: [], resolved: [`${DOC} (${BADGES}): 一覧 2・実際 0`] });
+  });
+
+  it('突き合わせ: 別の設計書・別の名指し・別の種類の一覧では許さない', () => {
+    expect(reconcilePending([screenAt(`${DESIGN_DIR}/y.md`, BADGES, 1)], 'screen', listed).unlisted).toEqual([
+      `${DESIGN_DIR}/y.md (${BADGES}): 一覧 0・実際 1 (行 1)`,
+    ]);
+    expect(reconcilePending([screenAt(DOC, 'pantry/index.tsx', 4)], 'screen', listed).unlisted).toEqual([
+      `${DOC} (pantry/index.tsx): 一覧 0・実際 1 (行 4)`,
+    ]);
+    // 種類が違う一覧は数えない (file の名指しを screen の一覧で許さない)
+    expect(reconcilePending([screenAt(DOC, BADGES, 3)], 'file', listed)).toEqual({
+      unlisted: [`${DOC} (${BADGES}): 一覧 0・実際 1 (行 3)`],
+      resolved: [],
+    });
+  });
+
+  it('一覧の形: 同じ組の重複と、1 以上の整数でない数を見つける', () => {
+    expect(pendingEntryShapeProblems([...listed, ...listed])).toEqual([`重複: ${DOC} (screen: ${BADGES})`]);
+    expect(pendingEntryShapeProblems([{ file: DOC, kind: 'screen', target: BADGES, count: 0 }])).toEqual([
+      `数が 1 以上の整数でない: ${DOC} (screen: ${BADGES}) = 0`,
+    ]);
+    expect(pendingEntryShapeProblems(PENDING)).toEqual([]);
+  });
+
+  it('一覧の行は、いまある設計書の中の、消した画面・ファイル・区画を指す (別のものを許す行を置かない)', () => {
+    expect(PENDING.map(pendingTargetProblem).filter((problem) => problem !== null)).toEqual([]);
+    // 消していない画面・ファイル・区画を許す行は、形の検査で落ちる
+    expect(pendingTargetProblem({ file: DOC, kind: 'screen', target: BADGES, count: 1 })).toBe(`設計書が無い: ${DOC} (screen: ${BADGES})`);
+    const doc = PENDING_NOTE_MENTIONS[0]?.file ?? KNOWN_REMOVAL_LINE.file;
+    expect(pendingTargetProblem({ file: doc, kind: 'screen', target: '(tabs)/settings.tsx', count: 1 })).toBe(
+      `消した画面ではない: ${doc} (screen: (tabs)/settings.tsx)`,
+    );
+    expect(pendingTargetProblem({ file: doc, kind: 'file', target: 'apps/mobile/src/lib/api.ts', count: 1 })).toBe(
+      `消したファイルではない: ${doc} (file: apps/mobile/src/lib/api.ts)`,
+    );
+    expect(pendingTargetProblem({ file: doc, kind: 'codeLiteral', target: 'handson-tour', count: 1 })).toBe(
+      `消した画面・区画ではない: ${doc} (codeLiteral: handson-tour)`,
+    );
+    expect(pendingTargetProblem({ file: 'docs/x.md', kind: 'screen', target: BADGES, count: 1 })).toBe(
+      `設計書ではない: docs/x.md (screen: ${BADGES})`,
+    );
+  });
+
+  it('1 つの設計書は、注記で済む一覧と設計の改定が要る一覧のどちらか一方にだけ載る (2 つの差分が同じ設計書に触れない)', () => {
+    expect(filesInBothLedgers(PENDING_NOTE_MENTIONS, PENDING_REVISION_MENTIONS)).toEqual([]);
+    expect(filesInBothLedgers(listed, [{ file: DOC, kind: 'file', target: 'tests/x.ts', count: 1 }])).toEqual([DOC]);
   });
 });

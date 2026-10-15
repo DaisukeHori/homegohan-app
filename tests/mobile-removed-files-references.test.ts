@@ -28,7 +28,7 @@
  *   - docs/design/: tests/design-doc-removed-mobile-screens.test.ts が受け持つ
  *   - docs/requirements/: 要件の記録。これから作るファイル (新規) も名指しするので、実在とは突き合わせない
  *   - .cursor/: 作業の計画の記録
- *   - 見張りのテスト 3 本と、消したものの一覧 (EXCLUDED_FILES): 捕まえることを確かめるために元の文を持つ・一覧そのもの
+ *   - 見張りのテスト 3 本と、消したものの一覧・設計書がまだ直していない名指しの一覧 2 つ (EXCLUDED_FILES): 捕まえることを確かめるために元の文を持つ・一覧そのもの
  * この検査の限界: パスも「ファイル の 名前」も書かずに、消した画面を言葉だけで「いまある」と書いた文
  * (「モバイルの管理画面が使う」など) は捕まえない。apps/mobile の外のファイルの `src/<パス>` は Web のパスと区別できないので、
  * 部品・関数・テストは `apps/mobile/<パス>` の書き方だけを見る。apps/mobile の中でも、リポジトリの根に同じパスがある
@@ -62,12 +62,17 @@ const REMOVAL_NOTE = /削除|消し[たまて、]/;
 
 /** 見ないディレクトリ (理由はファイルの先頭のコメント) */
 const EXCLUDED_DIRS = ['supabase/migrations/', 'docs/design/', 'docs/requirements/', '.cursor/'] as const;
-/** 見ないファイル: 元の文をそのまま持つ見張りのテストと、消したものの一覧 (flow は名前だけでも名指しとして数えるので、一覧に当たる) */
+/**
+ * 見ないファイル: 元の文をそのまま持つ見張りのテストと、消したものの一覧 (flow は名前だけでも名指しとして数えるので、一覧に当たる)。
+ * 設計書がまだ直していない名指しの一覧 2 つも、設計書の名指しを写して数で持つので見ない (一覧の行は設計書の見張りが確かめる)
+ */
 const EXCLUDED_FILES = [
   'tests/mobile-removed-files-references.test.ts',
   'tests/docs-mobile-removed-references.test.ts',
   'tests/design-doc-removed-mobile-screens.test.ts',
   'tests/helpers/mobile-removed-1598.ts',
+  'tests/helpers/design-doc-pending-notes-1598.ts',
+  'tests/helpers/design-doc-pending-revisions-1598.ts',
 ] as const;
 /** 見るテキストのファイルの拡張子 */
 const TEXT_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.md', '.yaml', '.yml', '.sh', '.json'] as const;
