@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TURNSTILE_SCRIPT_SRC } from '@/lib/auth/turnstile';
+import { buildContentSecurityPolicy, cspDirectivesOf } from '@/lib/security/csp';
 
 // #1165 ログイン・新規登録・パスワード再設定の bot 対策 (Cloudflare Turnstile) の設定まわりの検査。
 //
@@ -23,34 +24,29 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function loadCspDirectives(): Promise<Map<string, string[]>> {
-  vi.resetModules();
-  // next.config.mjs は import 時に process.env を読むので、クエリ文字列を付けてフレッシュに評価する
-  const mod = await import(/* @vite-ignore */ `../../../next.config.mjs?t=${Date.now()}-${Math.random()}`);
-  const headerGroups = await mod.default.headers();
-  const securityGroup = headerGroups.find((group: any) => group.source === '/(.*)');
-  const csp = securityGroup.headers.find((header: any) => header.key === 'Content-Security-Policy').value as string;
-  return new Map(
-    csp.split('; ').map((directive) => {
-      const [name, ...sources] = directive.split(' ');
-      return [name, sources] as [string, string[]];
-    }),
-  );
+/** 方針の組み立てに渡す見本の nonce (base64。CSP_NONCE_PATTERN を満たす) */
+const SAMPLE_NONCE = 'dGVzdA==';
+
+/** CSP の方針 (src/lib/security/csp.ts。middleware が毎リクエスト付ける) をディレクティブごとに分ける (#1169) */
+function loadCspDirectives(supabaseUrl?: string): Map<string, string[]> {
+  return cspDirectivesOf(buildContentSecurityPolicy({ nonce: SAMPLE_NONCE, isDev: false, supabaseUrl }));
 }
 
-describe('Turnstile: CSP (next.config.mjs)', () => {
-  it('script-src が Cloudflare の api.js を許可する。今までの許可 (self / unsafe-inline / vercel-scripts) は保つ', async () => {
-    const csp = await loadCspDirectives();
+describe('Turnstile: CSP (src/lib/security/csp.ts)', () => {
+  it('script-src が Cloudflare の api.js を許可する。今までの許可 (self / nonce / vercel-scripts) は保つ', () => {
+    const csp = loadCspDirectives();
     const scriptSrc = csp.get('script-src') ?? [];
 
     expect(scriptSrc).toContain(CLOUDFLARE_ORIGIN);
     expect(scriptSrc).toContain("'self'");
-    expect(scriptSrc).toContain("'unsafe-inline'");
+    expect(scriptSrc).toContain(`'nonce-${SAMPLE_NONCE}'`);
+    // #1169: 本番の script-src は 'unsafe-inline' を持たない (インラインは nonce で許可する)
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
     expect(scriptSrc).toContain('*.vercel-scripts.com');
   });
 
-  it('frame-src が Cloudflare のウィジェット (iframe) を許可する。frame-src を足しても、自分のページの iframe は今までどおり許可する', async () => {
-    const csp = await loadCspDirectives();
+  it('frame-src が Cloudflare のウィジェット (iframe) を許可する。frame-src を足しても、自分のページの iframe は今までどおり許可する', () => {
+    const csp = loadCspDirectives();
     const frameSrc = csp.get('frame-src') ?? [];
 
     expect(frameSrc).toContain(CLOUDFLARE_ORIGIN);
@@ -58,8 +54,8 @@ describe('Turnstile: CSP (next.config.mjs)', () => {
     expect(frameSrc).toContain("'self'");
   });
 
-  it('許可は script-src と frame-src だけ。default-src を広げず、ほかのページに iframe で埋め込まれることも許さない', async () => {
-    const csp = await loadCspDirectives();
+  it('許可は script-src と frame-src だけ。default-src を広げず、ほかのページに iframe で埋め込まれることも許さない', () => {
+    const csp = loadCspDirectives();
 
     expect(csp.get('default-src')).toEqual(["'self'"]);
     expect(csp.get('frame-ancestors')).toEqual(["'none'"]);
@@ -69,18 +65,16 @@ describe('Turnstile: CSP (next.config.mjs)', () => {
     }
   });
 
-  it('アプリが読み込む api.js の URL (src/lib/auth/turnstile.ts) のオリジンが、CSP の script-src にある', async () => {
-    const csp = await loadCspDirectives();
+  it('アプリが読み込む api.js の URL (src/lib/auth/turnstile.ts) のオリジンが、CSP の script-src にある', () => {
+    const csp = loadCspDirectives();
 
     expect(new URL(TURNSTILE_SCRIPT_SRC).origin).toBe(CLOUDFLARE_ORIGIN);
     expect(csp.get('script-src')).toContain(new URL(TURNSTILE_SCRIPT_SRC).origin);
   });
 
-  it('本番の Supabase (*.supabase.co) でも、ローカルの Supabase でも、Cloudflare の許可は変わらない', async () => {
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
-    const local = await loadCspDirectives();
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://flmeolcfutuwwbjmzyoz.supabase.co');
-    const production = await loadCspDirectives();
+  it('本番の Supabase (*.supabase.co) でも、ローカルの Supabase でも、Cloudflare の許可は変わらない', () => {
+    const local = loadCspDirectives('http://127.0.0.1:54321');
+    const production = loadCspDirectives('https://flmeolcfutuwwbjmzyoz.supabase.co');
 
     for (const csp of [local, production]) {
       expect(csp.get('script-src')).toContain(CLOUDFLARE_ORIGIN);

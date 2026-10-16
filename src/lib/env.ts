@@ -296,6 +296,14 @@ export const SERVER_ENV_VARS = {
     whenMissing: 'お知らせを出さない (既定)',
     readOnlyBy: 'lib/legal-consent.ts',
   },
+  CSP_REPORT_ONLY: {
+    required: false,
+    description:
+      "本番の CSP を『報告だけ』(Content-Security-Policy-Report-Only) にするスイッチ (#1169)。'on' のときだけ違反を止めず、/api/csp-report へ報告だけ送らせる",
+    whenMissing: '強制する (既定)。nonce の無いインラインスクリプトは止まり、報告も届く',
+    // middleware (Edge Runtime) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (on だけ) を csp.ts の isCspReportOnly に 1 つ置く
+    readOnlyBy: 'src/lib/security/csp.ts',
+  },
   DSR_RESPONSE_DUE_DAYS: {
     required: false,
     description: '個人情報の請求の応答期限 (日。1〜365 の 10 進の整数)',

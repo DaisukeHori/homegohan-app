@@ -10,7 +10,7 @@
  *     本物と同じく challenges.cloudflare.com の iframe を container に置き、テスト用サイトキーが出すのと同じ
  *     ダミーのトークン (CLOUDFLARE_TEST_DUMMY_TOKEN) を callback に渡す。
  *   - それ以外 (iframe の中身): 空の HTML。
- * URL は本物と同じなので、この文書の CSP (next.config.mjs の script-src / frame-src) の判定はそのまま受ける
+ * URL は本物と同じなので、この文書の CSP (src/lib/security/csp.ts の script-src / frame-src) の判定はそのまま受ける
  * (差し替えはブラウザが通信を出したあとに効く。CSP に止められた通信は差し替えまで届かない)。
  *
  * 本物のウィジェットが本物の CSP の下でトークンを出すこと自体は、auth-turnstile.spec.ts のログイン・パスワード再設定のテストが、
