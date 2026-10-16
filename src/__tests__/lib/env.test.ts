@@ -427,7 +427,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['AUTH_LOGIN_FAILURE_RESET_MINUTES', 'src/app/api/auth/login/route.ts'],
       ['CRON_SECRET', 'src/lib/cron-auth.ts'],
       ['CRON_SECRET_PREVIOUS', 'src/lib/cron-auth.ts'],
-      // #1169 本番の CSP を「報告だけ」にするスイッチ。middleware (Edge Runtime) が読むので、何も import しない csp.ts の isCspReportOnly 1 か所で読む
+      // #1169 本番の CSP を「報告だけ」にするスイッチ。proxy (src/proxy.ts) が読むので、何も import しない csp.ts の isCspReportOnly 1 か所で読む
       ['CSP_REPORT_ONLY', 'src/lib/security/csp.ts'],
       // #1178 個人情報の請求の応答期限 (日)。1〜365 の整数でなければ既定の 30 日にする読み方を 1 か所に置く
       ['DSR_RESPONSE_DUE_DAYS', 'src/lib/data-subject-requests/config.ts'],
@@ -438,9 +438,9 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['EXPO_ACCESS_TOKEN', 'src/app/api/cron/push-outbox/route.ts'],
       // #1148 機能フラグの対象ユーザー数を 1 人ずつ数える上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', 'src/lib/super-admin/flag-active-users.ts'],
-      // #1496 機能フラグの行をメモリに覚える時間。middleware (Edge Runtime) も読むので、何も import しないファイル 1 か所で読む
+      // #1496 機能フラグの行をメモリに覚える時間。proxy (src/proxy.ts) も読むので、何も import しないファイル 1 か所で読む
       ['FEATURE_FLAG_CACHE_TTL_MS', 'src/lib/feature-flag-cache-ttl.ts'],
-      // #1174 の同意ゲートのフラグ。middleware (Edge Runtime) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
+      // #1174 の同意ゲートのフラグ。proxy (src/proxy.ts) が lib/legal-consent.ts の isLegalConsentFlagOn で読む
       ['LEGAL_CONSENT_ENFORCE', 'lib/legal-consent.ts'],
       ['LEGAL_CONSENT_NOTICE', 'lib/legal-consent.ts'],
       // #1463 献立の単発追加の date_offset_days の上限。正の整数でなければ既定値にする読み方を 1 か所に置く

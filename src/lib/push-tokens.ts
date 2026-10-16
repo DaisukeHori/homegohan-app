@@ -2,7 +2,8 @@ import { PUSH_TOKEN_CLAIM_API_PATH } from '@homegohan/shared';
 
 /**
  * 端末の通知 (Expo Push) のトークンの扱い (#1599 / #1636)。POST /api/push-tokens/claim・release と middleware が使う。
- * middleware (Edge) からも読むので、Node の部品 (node:crypto など) をここに置かない (ハッシュは push-token-install-secret.ts)。
+ * 全リクエストの前に動く proxy (src/proxy.ts) からも lib/supabase/middleware.ts 経由で読むので、Node の部品 (node:crypto など) を
+ * ここに置かない (ハッシュは push-token-install-secret.ts。#1744 の前の middleware は Edge Runtime で node:crypto を使えなかった)。
  *
  * user_push_tokens は UNIQUE(user_id, expo_push_token) なので、同じ端末のトークンが複数の利用者の行に併存できる。
  * 共有の端末で、前の利用者のログアウトの削除が失敗する (オフラインなど) と、前の利用者の行が残り、

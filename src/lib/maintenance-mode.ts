@@ -23,7 +23,7 @@
  *     isPushTokenClaimApiPath。release など、ほかの /api/push-tokens/* は止める)
  *   - /_next/* (Next の静的ファイル)。ミドルウェアの matcher が外しているが、念のためここでも通す
  *
- * 静的ファイル (画像・manifest・robots・サービスワーカーなど) は、ミドルウェアの matcher (src/middleware.ts) が外していて、
+ * 静的ファイル (画像・manifest・robots・サービスワーカーなど) は、ミドルウェアの matcher (src/proxy.ts) が外していて、
  * そもそもミドルウェアに届かない。ここで拡張子 (.json / .txt / .js / .css など) を見て通すことはしない:
  * 動的なページのパス (/meals/abc.json のような、末尾が静的ファイルに見えるもの) まで、メンテナンス中の画面を通り抜けてしまうため。
  * 静的ファイルを足すときは、matcher に足す (tests/health-middleware-exemption.test.ts と src/__tests__/lib/maintenance-mode.test.ts が見る)。

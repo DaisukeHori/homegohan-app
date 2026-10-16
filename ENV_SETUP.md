@@ -514,7 +514,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 
 ### 任意の環境変数: CSP を「報告だけ」にする（`CSP_REPORT_ONLY`）
 
-本番の Content-Security-Policy（CSP）は、`src/middleware.ts` が毎リクエスト作る nonce で Next のスクリプトだけを許し、`script-src` に `'unsafe-inline'` を持ちません（#1169。方針の正本は `src/lib/security/csp.ts`）。このスイッチは、ローンチ後に、ある画面でスクリプトが止まる報告（`app_logs` の `function_name = csp-report`。運営は `/super-admin/logs` で絞る）が集まったときの戻し方です。Vercel の環境変数に設定します。値の読み方は `LEGAL_CONSENT_ENFORCE` と同じです（`on` のときだけ有効。大文字小文字と前後の空白は区別しません）。
+本番の Content-Security-Policy（CSP）は、`src/proxy.ts` が毎リクエスト作る nonce で Next のスクリプトだけを許し、`script-src` に `'unsafe-inline'` を持ちません（#1169。方針の正本は `src/lib/security/csp.ts`）。このスイッチは、ローンチ後に、ある画面でスクリプトが止まる報告（`app_logs` の `function_name = csp-report`。運営は `/super-admin/logs` で絞る）が集まったときの戻し方です。Vercel の環境変数に設定します。値の読み方は `LEGAL_CONSENT_ENFORCE` と同じです（`on` のときだけ有効。大文字小文字と前後の空白は区別しません）。
 
 - 未設定、または `on` 以外（既定）: 強制します（`Content-Security-Policy`）。nonce の無いインラインスクリプトは止まり、違反の報告も `/api/csp-report` に届きます。
 - `on`: `Content-Security-Policy-Report-Only` で返し、違反を止めず報告だけ届かせます。

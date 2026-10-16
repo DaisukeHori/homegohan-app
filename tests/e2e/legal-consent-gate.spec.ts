@@ -195,6 +195,16 @@ const privacyCheckbox = (page: Page) => page.getByRole("checkbox", { name: /プ�
 const acceptButton = (page: Page) => page.getByRole("button", { name: "同意して続ける" });
 const birthDateField = (page: Page) => page.getByLabel("生年月日", { exact: true });
 const banner = (page: Page) => page.getByTestId("legal-consent-banner");
+/**
+ * 帯は 1 ページに 1 つ (#1774)。page.goto は読み込みの終わり (load) まで待つので、その時点の DOM を、待たずに (再試行せずに) 数える。
+ * このときはサーバーが送った HTML が全部 DOM に入っていて、React が後送りの中身 (<div hidden id="S:n">) を入れ替える前のことがある。
+ * 以前は、ここで帯が 2 つ (fallback と、隠れた中身) あり、getByTestId が strict mode で間欠的に落ちていた
+ */
+async function expectSingleBannerAfterLoad(page: Page) {
+  expect(await banner(page).count(), "読み込みの終わりの時点で、帯はちょうど 1 つ").toBe(1);
+  await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+  await expect(banner(page)).toHaveCount(1);
+}
 
 /**
  * 同意画面で 2 つのチェックを入れて「同意して続ける」を押す。
@@ -612,7 +622,7 @@ test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONS
     const user = await signInAsNewUser(page, { profile: true });
 
     await page.goto("/home");
-    await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expectSingleBannerAfterLoad(page);
     expect(new URL(page.url()).pathname).toBe("/home");
 
     // お知らせは画面の流れの中にある (固定表示でボトムナビ・ヘッダー・モーダルに重ならない)
@@ -635,7 +645,7 @@ test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONS
     await signInAsNewUser(page, { profile: true });
 
     await page.goto("/home?from=e2e");
-    await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expectSingleBannerAfterLoad(page);
     await expect(banner(page).getByRole("link", { name: "確認して同意する" })).toHaveAttribute(
       "href",
       "/legal-consent?next=%2Fhome%3Ffrom%3De2e",
