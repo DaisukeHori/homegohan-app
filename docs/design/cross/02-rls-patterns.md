@@ -57,7 +57,7 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 
 ```sql
 -- テンプレート: self_ownership
--- 用途: user_sessions_metadata, password_history, notification_preferences 等
+-- 用途: notification_preferences 等
 
 CREATE POLICY "{table}_self_read"
   ON {table_name} FOR SELECT
@@ -509,15 +509,13 @@ CREATE POLICY "subscription_plans_public_read"
 -- ============================================================
 ALTER TABLE user_sessions_metadata ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "sessions_self_select"
+CREATE POLICY "sessions_self"
   ON user_sessions_metadata FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (user_id = auth.uid());
 
-CREATE POLICY "sessions_self_update"
-  ON user_sessions_metadata FOR UPDATE
-  USING (auth.uid() = user_id);
-
--- INSERT は Edge Function (service_role) のみ
+-- UPDATE のポリシーは無い (sessions_revoke_self は cross/16 の migration が消した)
+-- 書くのは auth.sessions のトリガー・RPC auth_session_revoke / claim_login_alerts / release_login_alert・service_role だけ
+-- (cross/16 §11.1・§11.3・§11.4)
 
 -- ============================================================
 -- 3. admin_audit_logs (immutable)
@@ -557,7 +555,8 @@ CREATE POLICY "password_history_no_direct_access"
   ON password_history FOR ALL
   USING (false);
 
--- service_role のみアクセス可 (パスワード変更 Edge Function 経由)
+-- 書くのはトリガー password_history_record、読むのは RPC auth_password_check (どちらも SECURITY DEFINER。
+-- cross/16 §11.3・§11.5)。PUBLIC・anon・authenticated の表の権限は無い
 
 COMMIT;
 ```
