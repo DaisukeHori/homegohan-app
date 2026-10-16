@@ -79,9 +79,26 @@ fs.writeFileSync(
   ].join("\n"),
   { mode: 0o755 },
 );
-// sleep は待たずに秒数を書く。docker は supabase-local.sh の ensure_docker の docker info だけに答える
+// sleep は待たずに秒数を書く。docker は supabase-local.sh の ensure_docker の docker info と、start のあとの Kong の入れ直し
+// (tune_kong_keepalive。#1779: kong reload が通り、.kong_env に使い回しの数 0 が入っている) だけに答える。
+// 入れ直しの流れそのものは tests/supabase-local-kong-keepalive.test.ts が確かめる
 fs.writeFileSync(path.join(bin, "sleep"), '#!/usr/bin/env bash\necho "$1" >>"$FAKE_SLEEPS"\n', { mode: 0o755 });
-fs.writeFileSync(path.join(bin, "docker"), '#!/usr/bin/env bash\n[ "$1" = info ]\n', { mode: 0o755 });
+fs.writeFileSync(
+  path.join(bin, "docker"),
+  [
+    "#!/usr/bin/env bash",
+    '[ "$1" = info ] && exit 0',
+    'if [ "$1" = exec ]; then',
+    '  case " $* " in',
+    '    *" kong reload "*) exit 0 ;;',
+    '    *" cat /usr/local/kong/.kong_env "*) echo "upstream_keepalive_pool_size = 0"; exit 0 ;;',
+    "  esac",
+    "fi",
+    "exit 1",
+    "",
+  ].join("\n"),
+  { mode: 0o755 },
+);
 
 type Run = { status: number | null; out: string; err: string; calls: string[]; sleeps: number[]; summary: string; tmpLeft: string[] };
 let caseNo = 0;
