@@ -27,7 +27,9 @@
  * 変えたら FONT_REQUESTS も同じに直す (tests/e2e-google-fonts-mock.test.ts が、layout.tsx の指定から Next.js が作る URL が
  * ここに全部あることを確かめる)。
  *
- * 使うのは e2e のビルド (.github/workflows/e2e-local.yml と scripts/local-ci.sh の e2e 段) だけ。本番 (Vercel) のビルドには関係しない。
+ * 使うのは e2e のビルド (.github/workflows/e2e-local.yml と scripts/local-ci.sh の e2e 段) と、結合テストの next dev
+ * (.github/workflows/security-regression.yml と scripts/local-ci.sh の integration 段。#1792: Turbopack の next dev はフォントの取得・解決に
+ * 失敗すると全ページを 500 にする) だけ。本番 (Vercel) のビルドには関係しない。
  */
 
 const GOOGLE_FONTS_CSS_URL = 'https://fonts.googleapis.com/css2';

@@ -39,6 +39,7 @@
 | 組織管理 | admin, super_admin |
 | モデレーション | admin, super_admin, content_moderator |
 | サポートチケット | admin, super_admin, support |
+| 開示等の請求 (`/admin/data-requests`。個人情報の請求。cross/15 §9.2) | admin, super_admin |
 | 売上・経理 | admin, super_admin, finance |
 | クーポン | admin, super_admin, sales |
 | 営業 CRM | admin, super_admin, sales |

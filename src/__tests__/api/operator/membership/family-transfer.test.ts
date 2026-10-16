@@ -125,6 +125,8 @@ function buildFake(leadingUserCount = 0): FakeServiceRole {
 /**
  * operator_force_representative_transfer の挙動 (supabase/baseline/prod_schema.sql) を再現する。
  * ★representative_id を新代表者へ書き換えた「後の」行を返す。ここが #1209 の原因そのもの。
+ * 新代表者の id は Postgres の uuid と同じく大文字小文字を区別せずに比べ、保存するのは行の user_id (小文字) にする (#1790)。
+ * そのため大文字の to_user_id をそのまま RPC に渡しても譲渡は成り立ち、route の側の突き合わせのずれだけがテストに出る
  */
 function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
   fake.events.push(`rpc:${RPC_NAME}`);
@@ -132,7 +134,8 @@ function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
   const target = members.find(
     (m) =>
       m.family_id === args.p_family_id &&
-      m.user_id === args.p_new_rep_id &&
+      typeof m.user_id === 'string' &&
+      m.user_id.toLowerCase() === args.p_new_rep_id.toLowerCase() &&
       m.status === 'active' &&
       (m.role === 'representative' || m.role === 'adult'),
   );
@@ -146,7 +149,7 @@ function simulateRepresentativeTransfer(fake: FakeServiceRole, args: RpcArgs) {
     if (m.family_id === args.p_family_id && m.user_id === oldRepId && m.status === 'active') m.role = 'adult';
   }
   target.role = 'representative';
-  family.representative_id = args.p_new_rep_id;
+  family.representative_id = target.user_id;
   return { data: { ...family }, error: null };
 }
 
@@ -630,5 +633,65 @@ describe('POST /api/operator/membership/family/[id]/transfer: 宛名に仮置き
     await call();
 
     expect(sentTo(MEMBER_EMAIL)[0].text.startsWith(`${expected} 様`)).toBe(true);
+  });
+});
+
+describe('POST /api/operator/membership/family/[id]/transfer: 大文字の to_user_id でも新代表者の通知と宛先がずれない (#1790)', () => {
+  // 16 進の英字を含む NEW_REP_ID を、すべて大文字・大文字小文字の混在にした値 (どちらも小文字にすると NEW_REP_ID)
+  const NEW_REP_ID_UPPER = 'B0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A22';
+  const NEW_REP_ID_MIXED = 'B0eeBC99-9c0B-4Ef8-bB6d-6Bb9bD380a22';
+  const renderedVars = () => vi.mocked(renderForceTransferEmail).mock.calls.map(([vars]) => vars);
+
+  it.each([
+    ['すべて大文字', NEW_REP_ID_UPPER],
+    ['大文字小文字の混在', NEW_REP_ID_MIXED],
+  ])('to_user_id が%s: 新代表者には new_owner の通知、全員の新オーナー欄は新代表者のアドレス、RPC には小文字の id', async (_label, toUserId) => {
+    expect(toUserId).not.toBe(NEW_REP_ID);
+    expect(toUserId.toLowerCase()).toBe(NEW_REP_ID);
+
+    const res = await call({ to_user_id: toUserId, reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(RPC_NAME, {
+      p_family_id: FAMILY_ID,
+      p_new_rep_id: NEW_REP_ID,
+      p_reason: REASON,
+    });
+    expect(fake.tables.family_groups[0].representative_id).toBe(NEW_REP_ID);
+
+    const roleOf = (address: string) => renderedVars().find((vars) => vars.recipient_email === address)?.recipient_role;
+    expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(roleOf(MEMBER_EMAIL)).toBe('member');
+    expect(renderedVars()).toHaveLength(3);
+    for (const vars of renderedVars()) {
+      expect(vars).toMatchObject({ old_owner_email: OLD_EMAIL, new_owner_email: NEW_EMAIL });
+    }
+    expect(valueUnder(sentTo(MEMBER_EMAIL)[0].text, '新オーナー')).toBe(NEW_EMAIL);
+
+    // 宛先は小文字の id で 1 人 1 回だけ引く (大文字の id で同じ人を二重に引かない)
+    expect(fake.auth.admin.getUserById.mock.calls.map(([id]) => id).sort()).toEqual(
+      [OLD_REP_ID, NEW_REP_ID, MEMBER_ID].sort(),
+    );
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(JSON.stringify([mocks.rpc.mock.calls, fake.auth.admin.getUserById.mock.calls])).not.toContain(toUserId);
+  });
+
+  it('通知の失敗のログに残す to_user_id も小文字にそろえた値', async () => {
+    const sendError = new Error('EMAIL_SEND_FAILED: temporarily unavailable');
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === OLD_EMAIL) throw sendError;
+      return { id: 'email-ok' };
+    });
+
+    const res = await call({ to_user_id: NEW_REP_ID_UPPER, reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), sendError, {
+      family_id: FAMILY_ID,
+      to_user_id: NEW_REP_ID,
+      failed_count: 1,
+    });
   });
 });
