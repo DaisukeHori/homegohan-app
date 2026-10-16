@@ -4,7 +4,7 @@
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート審査中 (v2.7) |
+| Status | 設計ゲート審査中 (v2.8) |
 | Issue | #1442 (親: #1174 の同意ゲート。先例: #1154 の AI 同意の 403・#1030 / #1445 の凍結の API ゲート。前提: #1598 の WebView への一本化と PR #1733) |
 | 分冊 | 本冊 = 配線 (段 B: モバイル + Web → ネイティブの合図 1 本)。核 (段 A: サーバー + `packages/shared`) は `13a-legal-consent-api-server.md` (着地済み) |
 | 正典の関係 | 13a とともに `08-legal-compliance.md` §7.2 (同意ゲート) の配線を広げる冊。§7.2 の「モバイルのネイティブの画面は対象外」の記述は本冊のマージで現在形に直す (§6.19)。`cross/14-parental-consent.md` §0.5 が 13b に求める「生年月日の欄・未成年の案内」は、本冊では Web の同意画面をそのまま使うことで満たす (§6.19・§6.22) |
@@ -35,7 +35,7 @@
 
 ### 0.3 一次情報 (origin/main `564c1c25`。行番号は 2026-10-17 時点)
 
-`88b803f5` (本冊の v2.0〜v2.4 の基準) から `564c1c25` までに、本冊が触る・読むファイルのうち変わったのは次だけ (`git diff --name-only 88b803f5 564c1c25`)。(1) #1808 (運営の MFA の段 D モバイル。`f5920c6a`): `apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/src/lib/webViewAuthMessages.ts` とそのテスト 2 本 (`WebViewScreen.auth-messages.test.tsx`・`web-view-auth-messages.test.ts`)、新しい `NativeMfaVerifyModal.tsx`・`MfaVerifyGate.tsx`・`operator-mfa.ts`・`mfa-gate.ts` とそのテスト、`docs/design/mobile/05-auth-session.md` §6。(2) 設計書の追随と現在形化 (#1810・#1811): `CLAUDE.md`・`docs/design/cross/13a-legal-consent-api-server.md`・`docs/design/mobile/01-architecture.md`・`05-auth-session.md` は 1 行の書き換えだけで行はずれない。`docs/design/cross/14-parental-consent.md` は 1222 行目の後に 2 行が入った (§6.19 の 14 の行のうち 1431・1779・1830 行目は取り直した)。`docs/design/mobile/03-push-notification.md` は書き直された (§6.19 の行を取り直した)。新しい番兵 `tests/design-doc-followup-owned-edits.test.ts` (§6.18)。ほかのファイルの行番号は `88b803f5` と同じ。`564c1c25` から origin/main `eff674fa` (2026-10-17。#1813・#1815) までに、本冊が触る・読むファイルのうち変わったのは `.env.example` (`OPS_ALERT_EMAIL` の説明に 2 行が入り、`LEGAL_CONSENT_ENFORCE` の `on` の説明が 192-193 行目から 194-195 行目へずれた。§6.19 の行を取り直した) と `ENV_SETUP.md` (本冊が指す 498・501 行目はずれない) だけ。
+`88b803f5` (本冊の v2.0〜v2.4 の基準) から `564c1c25` までに、本冊が触る・読むファイルのうち変わったのは次だけ (`git diff --name-only 88b803f5 564c1c25`)。(1) #1808 (運営の MFA の段 D モバイル。`f5920c6a`): `apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/src/lib/webViewAuthMessages.ts` とそのテスト 2 本 (`WebViewScreen.auth-messages.test.tsx`・`web-view-auth-messages.test.ts`)、新しい `NativeMfaVerifyModal.tsx`・`MfaVerifyGate.tsx`・`operator-mfa.ts`・`mfa-gate.ts` とそのテスト、`docs/design/mobile/05-auth-session.md` §6。(2) 設計書の追随と現在形化 (#1810・#1811): `CLAUDE.md`・`docs/design/cross/13a-legal-consent-api-server.md`・`docs/design/mobile/01-architecture.md`・`05-auth-session.md` は 1 行の書き換えだけで行はずれない。`docs/design/cross/14-parental-consent.md` は 1222 行目の後に 2 行が入った (§6.19 の 14 の行のうち 1431・1779・1830 行目は取り直した)。`docs/design/mobile/03-push-notification.md` は書き直された (§6.19 の行を取り直した)。新しい番兵 `tests/design-doc-followup-owned-edits.test.ts` (§6.18)。ほかのファイルの行番号は `88b803f5` と同じ。`564c1c25` から origin/main `eff674fa` (2026-10-17。#1813・#1815) までに、本冊が触る・読むファイルのうち変わったのは `.env.example` (`OPS_ALERT_EMAIL` の説明に 2 行が入り、`LEGAL_CONSENT_ENFORCE` の `on` の説明が 192-193 行目から 194-195 行目へずれた。§6.19 の行を取り直した) と `ENV_SETUP.md` (本冊が指す 498・501 行目はずれない) だけ。`eff674fa` から origin/main `83e287ca` (2026-10-17) までに、本冊が触る・読むファイル (§6.16 と、本表・§3.3・§6.19 が file:line で指すファイル) は変わっていない (`git diff --name-only eff674fa 83e287ca`)。`564c1c25` からの差のうち `packages/shared/src/database.types.ts` は運営の MFA の関数 (`operator_mfa_satisfied`) の型が 1 行入っただけで、本冊は読まない。
 
 下の表の `node_modules/...` の行は、`package-lock.json` の版 (表の最後の行) の実物で取った。
 
@@ -152,19 +152,19 @@ Issue の全体 (3 つの経路) は 13a §1.1。本冊が解決するのは次�
 
 | ID | 要件 | 出どころ | 検証 (§6.14 の it) |
 |---|---|---|---|
-| R-6 | モバイルは、ログイン後、初期設定より先に同意の状態を確かめ、未同意なら同意画面へ回す | Issue 本文「起動時・初期設定の前に同意の状態を確かめて同意画面へ回す」 | T-G1, T-IDX1, T-TL1, T-OB1, T-ML6, T-ML11, T-SC2, T-P1, T-P7 |
+| R-6 | モバイルは、ログイン後、初期設定より先に同意の状態を確かめ、未同意なら同意画面へ回す | Issue 本文「起動時・初期設定の前に同意の状態を確かめて同意画面へ回す」 | T-G1, T-G5, T-G6, T-IDX1, T-TL1, T-OB1, T-ML6, T-ML11, T-SC2, T-P1, T-P5, T-P7 |
 | R-7 | 今の main のネイティブの画面と起動の流れを実コードで列挙し、同意の前に使えてしまう経路を表にする。WebView の中の画面は Web の同意ゲートが受け持つ | Issue 本文 | §3.3 |
 | R-12 | 同意画面は Web の `/legal-consent` を WebView で開き、Web と同じ要件 (必須チェック 2 つ・全文へのリンク・同意しない = ログアウト + 削除の依頼先の案内・生年月日・未成年の案内) をそのまま使う。ネイティブに同意の画面を作らない。アプリでも「同意しない」「登録をやめる」の後の Web の案内 (削除の依頼先・請求の画面) が見える | #1598 のコメントの記録 (WebView への一本化)・cross/14 §0.5・cross/08 §7.2 (同意画面の行) | T-SC1, T-SC3, T-ML6, T-ML10, T-G7, T-WV2, T-W2, E2E (既存の `legal-consent-gate.spec.ts`) |
-| R-15 | ネイティブの側が `/api` を呼んで 403 `LEGAL_CONSENT_REQUIRED` を受けたら、どの画面からでも同意画面へ回し、同意が済んだら元の画面に戻る (画面の入力を失わない。タブの区画は §8 Q-6) | Issue 本文「API の 403 の専用コード」 | T-API1, T-FR1, T-P3, T-P8, T-P9, T-G1, T-G3, T-G8, T-G9, T-TL1, T-OB1, T-ML9, T-ML11, T-TM1, T-TM2, T-TM3, T-TP1, T-TB1 |
-| R-16 | 同意が済んだことをネイティブが知る合図は Web の同意画面が送る (`legal-consent-accepted`)。旧版のアプリはこの合図を捨てても壊れない | `src/lib/native-auth-bridge.ts:22` の既存の規則 | T-W1, T-W3, T-WV1, T-P4 |
+| R-15 | ネイティブの側が `/api` を呼んで 403 `LEGAL_CONSENT_REQUIRED` を受けたら、どの画面からでも同意画面へ回し、同意が済んだら元の画面に戻る (画面の入力を失わない。タブの区画は §8 Q-6) | Issue 本文「API の 403 の専用コード」 | T-ML1, T-ML5, T-API1, T-FR1, T-P3, T-P8, T-P9, T-G1, T-G3, T-G6, T-G8, T-G9, T-TL1, T-OB1, T-ML8, T-ML9, T-ML11, T-TM1, T-TM2, T-TM3, T-TP1, T-TB1 |
+| R-16 | 同意が済んだことをネイティブが知る合図は Web の同意画面が送る (`legal-consent-accepted`)。旧版のアプリはこの合図を捨てても壊れない | `src/lib/native-auth-bridge.ts:22` の既存の規則 | T-W1, T-W3, T-WV1, T-ML5, T-P4, T-P6 |
 | R-17 | 配布 (#1115) の前の旧版のアプリの扱い (旧版も `/api` の 403 で止まる) を書く | Issue 本文「どこまで止めるか…設計で決める」と 13a の着地 | §6.21 |
 | R-18 | 13a の設計書・実コード (`packages/shared`・middleware・status route) を変えない。食い違いは本冊で指摘する | 本冊の前提 | §6.22 |
 
-R-1〜R-5・R-14 (サーバー) と、両方に関わる R-8〜R-11・R-13 は 13a §3.1。
+R-1〜R-5・R-14 (サーバー) と、両方に関わる R-8〜R-11・R-13 は 13a §3.1。そのうち R-8 (改定の再同意) と R-9 (`ENFORCE` が off・同意の状態を読めない) のモバイル側を確かめる本冊の it: R-8 = T-P3, T-P4, T-P6 (§6.12)。R-9 = T-P2, T-G5 (`unknown` で止めない。§6.11。13a §3.2 の S9 の行が挙げる組と同じ), T-P1 (`required: false` なら `clear`。S8・S24)。
 
 ### 3.2 ユーザーシナリオ (21 本)
 
-サーバーだけで結果が決まる S6・S7・S10・S11・S14・S16・S17 と、両方に関わる S5・S8・S9・S15 は 13a §3.2 (S5・S8・S9 のモバイル側の走らせ方は本冊 §4.2 に重ねて書く)。
+サーバーだけで結果が決まる S6・S7・S10・S11・S14・S16・S17 と、両方に関わる S5・S8・S9・S15 は 13a §3.2 (S5・S8・S9・S15 のモバイル側の走らせ方は本冊 §4.2 に重ねて書く)。
 
 | ID | シナリオ |
 |---|---|
@@ -258,6 +258,7 @@ Web (段 B1)
 | S5 (モバイル側) | 血液検査の画面で入力の途中に保存 → `getApi().post('/api/health/blood-tests')` → middleware が 403 `LEGAL_CONSENT_REQUIRED` → `withFriendlyErrors` が `legalConsentRequiredErrorOf(e)` で見分け、`notifyLegalConsentRequired()` → Provider が state を `required` にして `refresh()` → Gate が pathname `/health/blood-tests` の上に同意画面を push (血液検査の画面は Stack に残る。入力も残る) → 画面側の catch は `LegalConsentRequiredError` (message = 固定の文) を受けて `Alert.alert("失敗", 固定の文)` を出す (`blood-tests.tsx:371-372`。OS のダイアログは同意画面より上に出るので、OK で閉じると下に同意画面が見える) → 同意 → `accepted` → `clear` → Gate が `back()` → 血液検査の画面に入力が残ったまま戻る → もう一度保存 → 200 |
 | S8 (モバイル側) | status `enforced: false, required: false` → `clear` → 今までどおり |
 | S9 (モバイル側) | status が 500 → `isLegalConsentStatus` を通らない or 例外 → `loading` から `unknown` → 止めない → DB が戻った後の API 呼び出しが 403 → S5 の経路 |
+| S15 (モバイル側) | 同意の列がまだ無い DB (migration の反映前) → status route の select が失敗して 500 (13a §4.2 の S15) → S9 と同じく `loading` から `unknown` → 止めない (入口は振り分け、タブも描く)。middleware も `/api` の同意の判定を飛ばすので、画面の API は 403 `LEGAL_CONSENT_REQUIRED` にならず、Gate は何もしない (`unknown` は前面に戻っても取り直さない。§6.11) → migration が反映された後、未同意の人の最初の API 呼び出しが 403 → S5 の経路。アプリを起動し直せば status を取り直し、`required` なら S3 の経路 |
 | S12 | pathname `/auth/reset-password` は `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` の `/auth` (前方一致) → Gate は push しない (`openedRef` も立てない) → 再設定 (`reset-password.tsx:90-96`: updateUser → `signOutWithCleanup` → `router.replace('/login')`) → ログアウトで Provider は `clear`。ゲートが開いた同意画面が無ければ Gate は何もせず、ログイン画面。起動の直後にゲートが開いた同意画面の上に deep link で再設定の画面が重なっていた (`openedRef` が立ったまま) ときは、Gate が session 無し・前面は同意画面でない・`openedRef` で `dismissAll` → `replace('/')` を積む。再設定の画面の `replace('/login')` と同じ描画の前後で流れ、どちらの順でも下に残った同意画面は畳まれ、最後はウェルカムかログイン画面 (どちらも未ログインの画面) → ログインし直すと S3 |
 | S13 | 同意画面 (WebView) を開いたまま改定 → Web の form が `POST /api/legal/accept` で 409 → `setNeedsReload(true)` と「更新されました」(`LegalConsentForm.tsx:160-163`) → 読み込み直す (Web の画面の中) → `page.tsx` が新しい版で form を出す → 同意 → S1 の後半。ネイティブに 409 の分岐は要らない |
 | S18 | 起動 → status の fetch が通信失敗 → `unknown` → `index.tsx` は振り分ける (`unknown` は待たない) → 画面の API も失敗 (今までどおり「通信できません」) → 通信が戻る → 最初の API 呼び出しが 403 → S5 の経路 (初期設定へ進んでいたら S28)。ホームのタブを先に開き直した場合は、WebView の中で Web のゲートが同意画面へ回し、そこで同意すると Web の form が `accepted` の合図を送る → Provider が `clear` (元が `unknown` でも同じ) |
@@ -384,9 +385,9 @@ Web (段 B1)
 | none / old | 同意する (Web の form) | ok | 版が一致 | Web が `legal-consent-accepted` を送る → `clear` → 同意画面の route を閉じる |
 | ok | アプリを起動 (保存済みのセッション) | 同じ | — | `loading` → status 200 `required: false` → `clear` → 入口が初期設定かホームへ振り分ける。同意画面は出ない (S2) |
 | ok | 画面を開く (対象・対象外とも) | 同じ | — | 通す (Gate は何もしない) |
-| unreadable | アプリを起動 (保存済みのセッション) | 同じ | — | `loading` → status 500 (13a §6.3 の unreadable × status) → `unknown` → 止めない。入口は振り分け、タブも描く (§6.11) |
+| unreadable | アプリを起動 (保存済みのセッション) | 同じ | — | `loading` → status 500 (13a §6.3 の unreadable × status。13a の `unreadable` は DB 障害 (S9) と同意の列が無い DB (S15) の両方) → `unknown` → 止めない。入口は振り分け、タブも描く (§6.11) |
 | unreadable | 画面を開く (対象・対象外とも) | 同じ | — | 通す (`unknown` では Gate は何もしない)。画面が呼ぶ `/api` も 13a で素通り |
-| unreadable | DB が戻る | none / old / ok | — | Provider は `unknown` のまま (前面に戻っても取り直さない。下の Provider の表)。none / old なら次の `/api` の 403 で `required` → 同意画面 (S5 の経路)。ok なら何も起きない |
+| unreadable | DB が戻る・同意の列の migration が反映される | none / old / ok | — | Provider は `unknown` のまま (前面に戻っても取り直さない。下の Provider の表)。none / old なら次の `/api` の 403 で `required` → 同意画面 (S5 の経路)。ok なら何も起きない |
 
 **Provider の状態** (`LegalConsentState`。端末の利用者ごとに 1 つ):
 
@@ -1768,4 +1769,5 @@ Q-2 (13a の直読み)・Q-3 (ENFORCE off のときの新規の人)・Q-5・Q-6 
 | v2.5 | 2026-10-17 | 設計ゲート R3 の指摘を反映: ①基準の main を `564c1c25` に取り直した (#1808 の運営の MFA の段 D モバイルが `WebViewScreen.tsx`・`webViewAuthMessages.ts` を変えた)。6.6.15 は型も第 2 引数も新設せず、既存の `WebAuthMessagesOptions` に `afterSignOut` を足して既存の `optionsRef` から読み、`WebViewScreen` は `onMfaVerifyRequested` と並べて渡す形に書き直した (行番号も取り直した)。§0.3 の `<Modal>` の一覧に `NativeMfaVerifyModal` と運営の MFA の行を足し、§3.3 の Modal の段落と §6.2 にその扱い (変えない) を書いた。T-WV3 を足した ②同意を待つ同意画面を置き換える `REPLACE` (ログインの直後の `routeAfterSignIn`) は、通すと下のタブの route が残り同意の後にタブが 2 つ並ぶので、同じ置き換えを同意画面のすぐ下の route に向け直す (`replace-below`・`REPLACE_ACTION_TYPE`・`legalConsentScreenRemovalDecision` の第 3 引数 `hasRouteBelow`)。§0.3 に `REPLACE` の行き先と `beforeRemove` の一次情報、シナリオ S30 とトレース、遷移表の行、T-ML6・T-SC2 を直した。③ main の突き合わせ (`564c1c25`。#1810・#1811 の設計書の追随): §6.19 の 14 の行番号 (1431・1779・1830) と mobile/03 の行 (105-110) を取り直し、`ENV_SETUP.md` 501 行目の前の文を逐語 (全角の括弧) に直し、§6.18 に新しい番兵 `tests/design-doc-followup-owned-edits.test.ts` の行を足した |
 | v2.6 | 2026-10-17 | 網羅性 (周 4) の漏れを反映: ①通知のトークンの後片付けの release (`POST /api/push-tokens/release`。セッション無し。13a の許可リストに無い) を §0.3・§3.3 の起動時の処理の行・§6.1 の 2 行 (未ログインのセッション無し = 同意の判定に掛からない / ログイン中の未同意 = 403 → 同意画面・控えに残してやり直す)・§6.18 の確認のみの行に足した ②本冊は 13a を変えない (R-18) に合わせ、§6.16 の専権の行から 13a を外し、§6.19 の 13a の行と §6.22 の扱いの列を「指摘だけ」にし、13a の現在形化の扱いを §8 Q-10 に置いた ③§6.19 の他の文書への追随を §8 Q-11 に挙げた ④§6.18 の T-C1・T-C2 が 13a §6.14 の既存の it であることを §6.14 と §6.18 に書いた |
 | v2.7 | 2026-10-17 | 設計ゲート R4 の指摘を反映: ホーム以外のタブ (設定の画面など) で `/api` が 403 になると、タブの layout のスピナーで `Tabs` の navigator が外れて state が消え、pathname が `(tabs)` の route の `params.screen` のパス (例 `/settings` → `/home`) に変わる。ゲートは pathname が変わった描画でもう一度 push し、同意画面が 2 枚重なって、同意の後に下の 1 枚が残っていた。ゲートは effect の時点の今のナビゲーションの state (`useNavigationContainerRef().getCurrentRoute()`) で前面がもう同意画面なら積まない (6.6.10。定数 `LEGAL_CONSENT_SCREEN_ROUTE_NAME`)。§0.3 に pathname の 1 描画の遅れ・`getCurrentRoute()`・`ImperativeApiEmitter` の effect の順・navigator が外れたときの pathname・`NAVIGATE` の同じ名前の扱いの行を足した。S27 のトレースの「ナビゲーションの state は変わらない」を直し、シナリオ S31 (ホーム以外のタブ) とトレース・§6.1〜§6.3 の行・Gate の規則の表の行・T-G8・T-G9 を足した。§6.3 と 6.6.10 の「古い同意画面は戻って来たときに閉じる」に、同意画面のすぐ上に同意画面が積まれないことの根拠を足した。origin/main `eff674fa` との突き合わせで `.env.example` の行 (192-193 → 194-195) を取り直した |
+| v2.8 | 2026-10-17 | 網羅性 (周 5) の漏れを反映: ①両方に関わるシナリオ S15 (同意の列が無い DB) のモバイル側のトレースを §4.2 に足し (status 500 → `unknown`・止めない・migration の反映の後の最初の 403 で同意画面)、§3.2 の前書きと §6.3 の `unreadable` の行に S15 を明記した ②§6.14 の it のうち要件行列から辿れなかった T-G5・T-G6・T-ML1・T-ML5・T-ML8・T-P2・T-P5・T-P6 を §3.1 の R-6・R-15・R-16 の検証の列と、13a の R-8・R-9 のモバイル側の注記に足した ③§0.3 に origin/main `83e287ca` までの差の確認 (本冊が触る・読むファイルは `eff674fa` から変わっていない) を足した |
 | v2.0 | 2026-10-17 | #1598 の WebView への一本化と PR #1733 (ネイティブの画面 60 本の削除) の後の main (`88b803f5`) に合わせて書き直し。同意画面をネイティブで作らず Web の `/legal-consent` の WebView の route にし、ゲートを `screenLayout` から route の push に変えた (§5.2)。土台から落としたもの・残したものは §0.5。旧版の扱い (§6.21) と 13a との食い違い (§6.22) を足した |
