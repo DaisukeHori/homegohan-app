@@ -368,3 +368,54 @@ describe('#1235 API: 組織管理 API は同じ組織の org_role = owner / admi
     expect(res.status).toBe(403);
   });
 });
+
+// ================================================================
+// #1735 組織の設定: 画面が送る業種・従業員数・連絡先が保存され、GET で返る (本物の DB・RLS を通す)
+// ================================================================
+describe('#1735 API: 組織の設定の業種・従業員数・連絡先を保存し、GET で返す', () => {
+  // 組織の設定の画面 (@homegohan/shared の buildOrgSettingsUpdateBody) が送るのと同じ形の本文。組織名は変えない
+  // (上の「残存した org_admin だけのユーザーは組織名を変更できない」が B の名前を見ているため)
+  const SAVED = {
+    industry: '製造',
+    employee_count: 120,
+    contact_email: `hr-${TS}@homegohan.test`,
+    contact_name: '人事 太郎',
+  };
+
+  it('招待で admin になったユーザーが PUT した値が organizations の列に書かれ、GET で返る', async () => {
+    const put = await apiCall<{ data: Record<string, unknown> }>('PUT', '/api/org/settings', invitedAdmin.jwt, SAVED);
+    expect(put.status).toBe(200);
+    expect(put.body.data).toMatchObject({ id: orgB, ...SAVED });
+
+    const { data: row } = await srAdmin
+      .from('organizations')
+      .select('industry, employee_count, contact_email, contact_name')
+      .eq('id', orgB)
+      .single();
+    expect(row).toEqual(SAVED);
+
+    const got = await apiCall<{ data: Record<string, unknown> }>('GET', '/api/org/settings', legacyOwner.jwt);
+    expect(got.status).toBe(200);
+    expect(got.body.data).toMatchObject({ id: orgB, name: `#1235 Org B ${TS}`, ...SAVED });
+  });
+
+  it('空文字・null で消せる。送らなかった項目は変わらない', async () => {
+    const put = await apiCall('PUT', '/api/org/settings', invitedAdmin.jwt, { industry: '', contact_name: null });
+    expect(put.status).toBe(200);
+
+    const { data: row } = await srAdmin
+      .from('organizations')
+      .select('industry, employee_count, contact_email, contact_name')
+      .eq('id', orgB)
+      .single();
+    expect(row).toEqual({ ...SAVED, industry: null, contact_name: null });
+  });
+
+  it('従業員数が範囲の外なら 400 で、何も書かない', async () => {
+    const put = await apiCall('PUT', '/api/org/settings', invitedAdmin.jwt, { employee_count: 0 });
+    expect(put.status).toBe(400);
+
+    const { data: row } = await srAdmin.from('organizations').select('employee_count').eq('id', orgB).single();
+    expect(row?.employee_count).toBe(SAVED.employee_count);
+  });
+});

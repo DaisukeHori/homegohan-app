@@ -1137,7 +1137,7 @@ cd /Volumes/DevSSD/wt/<worktree>
 OFFLOAD=/Users/horidaisuke/claude-work/dev-infra/bin/offload
 $OFFLOAD --host auto -e TZ=UTC -- npx tsc --noEmit
 $OFFLOAD --host auto -e TZ=UTC -- npm run lint
-$OFFLOAD --host auto -e TZ=UTC -- npx vitest run --reporter=json             # 全件 (passed / failed の実数で判定)
+$OFFLOAD --host auto -e TZ=UTC --fetch offload-vitest.json -- npx vitest run --reporter=json --outputFile=offload-vitest.json   # 全件 (passed / failed の実数で判定。vitest 5 の json reporter は出力先を書かないと標準出力でなく .vitest/json/ に書く)
 git diff origin/main...HEAD | grep -n 'as any'                               # 0 件
 ```
 
