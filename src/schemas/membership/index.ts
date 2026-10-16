@@ -18,3 +18,4 @@ export * from './membership-audit';
 export * from './meal-paste';
 export * from './share-settings';
 export * from './operator-membership';
+export * from './family-menu';
