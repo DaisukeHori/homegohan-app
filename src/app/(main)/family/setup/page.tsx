@@ -4,15 +4,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-const PLAN_OPTIONS = [
-  { value: 'free', label: '無料プラン' },
-  { value: 'family_plus', label: 'ファミリープラス' },
-] as const;
-
 export default function FamilySetupPage() {
   const router = useRouter();
   const [name, setName] = useState('');
-  const [planKey, setPlanKey] = useState<string>('free');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -30,7 +24,7 @@ export default function FamilySetupPage() {
       const res = await fetch('/api/family/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), plan_key: planKey }),
+        body: JSON.stringify({ name: name.trim() }),
       });
 
       const json = await res.json();
@@ -85,25 +79,6 @@ export default function FamilySetupPage() {
               disabled={loading}
             />
             <p className="text-xs text-gray-400 mt-1">{name.length}/60 文字</p>
-          </div>
-
-          {/* プラン選択 */}
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              プラン
-            </label>
-            <select
-              value={planKey}
-              onChange={(e) => setPlanKey(e.target.value)}
-              className="w-full rounded-xl border border-gray-200 bg-white px-4 py-3 text-gray-900 focus:border-green-400 focus:outline-none focus:ring-2 focus:ring-green-100"
-              disabled={loading}
-            >
-              {PLAN_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
-              ))}
-            </select>
           </div>
 
           {/* エラー */}
