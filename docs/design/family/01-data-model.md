@@ -369,6 +369,8 @@ CREATE INDEX idx_family_members_child     ON family_members(family_group_id)
   WHERE user_id IS NULL AND role = 'child';  -- 子供代理操作クエリ用
 CREATE INDEX idx_family_members_birthdate ON family_members(birth_date)
   WHERE birth_date IS NOT NULL AND user_id IS NULL;  -- 18歳到達バッチ用
+  -- 実体は設計書 cross/14-parental-consent.md の idx_family_members_child_birth_date
+  -- (ON family_members (birth_date) WHERE role = 'child' AND user_id IS NULL)
 
 -- family_invites
 CREATE INDEX idx_family_invites_token     ON family_invites(token);
@@ -765,38 +767,7 @@ WHERE user_id IS NULL
 
 ## 4.13 `parental_consents` (子供同意記録)
 
-> **NOTE: operator/01-data-model.md から移動。**
-> `family_members(id)` を FK 参照するため family/ ドメインで定義する。
-> マイグレーション適用は family_members 作成後。
-
-```sql
--- マイグレーション: 2026MMDD010_create_parental_consents.sql
--- ※ family_members (family/ ドメイン) 適用後に実行すること
-
-CREATE TABLE parental_consents (
-  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  family_member_id  UUID NOT NULL REFERENCES family_members(id) ON DELETE CASCADE,
-  parent_user_id    UUID NOT NULL REFERENCES auth.users(id),
-  signed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ip_address        INET,
-  user_agent        TEXT,
-  consent_version   VARCHAR(20) NOT NULL
-);
-
-ALTER TABLE parental_consents ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "parental_consents_select" ON parental_consents
-  FOR SELECT USING (
-    parent_user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM user_profiles
-      WHERE id = auth.uid() AND ARRAY['admin','super_admin']::TEXT[] && roles
-    )
-  );
-
-CREATE INDEX idx_parental_consents_member ON parental_consents(family_member_id);
-CREATE INDEX idx_parental_consents_parent ON parental_consents(parent_user_id);
-```
+DDL・RLS・索引は設計書 [`cross/14-parental-consent.md`](../cross/14-parental-consent.md) §6.4 の 4 が正 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。
 
 ## 9. 未解決事項
 

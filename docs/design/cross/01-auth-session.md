@@ -329,35 +329,11 @@ API・ヘルパー・エラー型・管理画面の表示をすべて削除し�
 
 ## 12. 子供アカウント保護 (COPPA / 日本)
 
-### 12.1 年齢区分と制限
+未成年の年齢確認と保護者の同意は、設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) に移した (同意の記録の表・RPC・同意ゲート・画面はそちら。実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。要点:
 
-| 年齢 | 根拠法 | 要件 |
-|------|-------|------|
-| 13 歳未満 | 米国 COPPA | 保護者電子署名同意必須 |
-| 18 歳未満 | 日本 個人情報保護法 | 保護者同意必須 |
-
-- 子供アカウント自体は `auth.users` を持たない (`family_members.user_id IS NULL`)
-- `family_members.birth_date` で年齢計算
-- 13 歳未満には Push 通知送信不可
-- `parental_consents` テーブルに同意記録 (§13 DDL 参照)
-
-### 12.2 保護者同意フロー
-
-```mermaid
-sequenceDiagram
-    actor Parent
-    participant Client
-    participant Next
-
-    Parent->>Client: 子供の家族メンバー登録 (birth_date 入力)
-    Client->>Next: POST /api/family/members {birth_date: ...}
-    Next->>Next: calcAge(birth_date) < 18
-    Next-->>Client: {consent_required: true, consent_version: "v2026.1"}
-    Parent->>Client: 同意文書読み + 電子署名
-    Client->>Next: POST /api/family/members/consent {member_id, signature}
-    Next->>Next: INSERT parental_consents
-    Next-->>Client: 201 Created
-```
+- 生年月日は同意画面 (`/legal-consent`) で聞く。本人の生年月日は `user_profiles.birth_date` に 1 回だけ記録し、保護者の同意とのつながり (昇格の経路) が無い 18 歳未満の自己登録と、13 歳未満の自己登録は断る (`LEGAL_MINOR_SELF_SIGNUP_REFUSED`)。
+- 保護者の同意は子供の追加と同時に記録する (`add_family_child` が子供の行と同じトランザクションで `parental_consents` に署名を 1 行入れる)。別の同意の API は無い。
+- 同意の取り消しは、子供を家族から外すこと (トリガーが `revoked_at` を入れる)。
 
 ---
 
@@ -369,8 +345,7 @@ sequenceDiagram
 
 ### 13.2 parental_consents
 
-// parental_consents の DDL は family/01-data-model.md §4.13 を参照
-// RLS ポリシーも family/01-data-model.md §4.13 に集約
+DDL・RLS は設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) §6.4 の 4 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。
 
 ### 13.3 user_sessions_metadata
 
