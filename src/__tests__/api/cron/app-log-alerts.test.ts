@@ -1640,6 +1640,8 @@ describe('GET /api/cron/app-log-alerts: 定期処理の失敗 (cron_failure。#1
   }
 
   it('CF-1: 失敗が無ければ cron_failure_counts だけを呼び、below_threshold。権利を取らない', async () => {
+    setScenario({ counts: { data: [], error: null } });
+
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
