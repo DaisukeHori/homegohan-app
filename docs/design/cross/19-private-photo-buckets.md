@@ -83,7 +83,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 
 | 目安 | 本設計 | 判定 |
 |---|---|---|
-| 設計書 800 行超 | 超える (約 1,090 行。正典コードと表が大半) | 当たる |
+| 設計書 800 行超 | 超える (約 1,170 行。正典コードと表が大半) | 当たる |
 | 消費先レーン 3 以上 | migration + 戻し / 結合テスト 3 本 / 契約テスト / FAQ・コメント / 文書の追随 の 5 面 | 当たる |
 | 共有面 2 つ以上 | `storage.buckets` (1 面)。`storage.objects` のポリシー・共有の定数・台帳・契約は変えない | 当たらない |
 
@@ -138,8 +138,8 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 | 列 | 非 NULL | 2 つのバケットの公開 URL | 備考 |
 |---|---|---|---|
 | `planned_meals.image_url` | 12 | 12 (すべて `fridge-images` の `generated/<user_id>/…`) | 12 件ともオブジェクトが実在。他の形の URL は 0 |
-| `weekly_menu_requests.result_json` (jsonb) | 49 (全 229 行) | 9 行。JSON の中の `days[].meals[].imageUrl` に 188 か所 (すべて `fridge-images` の公開形 `…/object/public/fridge-images/generated/<その行の user_id>/…`。188 のオブジェクトはすべて実在し、`planned_meals.image_url` の 12 とは重ならない) | 9 行とも `status = completed`・作成 2025-11-25〜2025-11-26 (利用者 1 人)。書く側は origin/main に無い (`src` `apps` `packages` `supabase/functions` の `result_json` の grep は、書き出しのコメント 1 件と生成された型だけ。最後の書き手は `f60a43c0` (2026-01-12 献立生成を generate-menu-v4 に統一) で消えた)。読む側と扱いは §3.3 R-12 |
-| `meals.photo_url` | 0 | 0 | 書く側: `src/lib/handson-tour/sandbox-photo-meal.ts:78` (`saveSandboxPhotoMeal`。`POST /api/meal-plans/add-from-photo` の体験ツアーの経路が呼ぶ)。読む側: `lib/converter.ts:292` (`toMeal`)・運営の審査と、退会の掃除・完全削除 (§3.3 R-3・R-5) |
+| `weekly_menu_requests.result_json` (jsonb) | 49 (全 229 行) | 9 行。JSON の中の `days[].meals[].imageUrl` に 188 か所 (すべて `fridge-images` の公開形 `…/object/public/fridge-images/generated/<その行の user_id>/…`。188 のオブジェクトはすべて実在し、`planned_meals.image_url` の 12 とは重ならない) | 9 行とも `status = completed`・作成 2025-11-25〜2025-11-26 (利用者 1 人)。書く側は origin/main に無い (`src` `apps` `packages` `supabase/functions` の `result_json` の grep は、書き出しのコメント 1 件と生成された型だけ。最後の書き手は `f60a43c0` (2026-01-12 献立生成を generate-menu-v4 に統一) で消えた)。読む側と扱いは §3.3 RD-12 |
+| `meals.photo_url` | 0 | 0 | 書く側: `src/lib/handson-tour/sandbox-photo-meal.ts:78` (`saveSandboxPhotoMeal`。`POST /api/meal-plans/add-from-photo` の体験ツアーの経路が呼ぶ)。読む側: `lib/converter.ts:292` (`toMeal`)・運営の審査と、退会の掃除・完全削除 (§3.3 RD-3・RD-5) |
 | `recipes.image_url` | 0 | 0 | `POST /api/recipes` は `body.imageUrl` をそのまま入れる (利用者が書ける) |
 | `weekly_menu_requests.inventory_image_url` | 0 | 0 | 週の献立の依頼 (S-8) |
 | `meal_image_jobs.result_image_url` / `reference_image_urls` | 0 / 0 | 0 / 0 | `reference_image_urls` はコードが常に `[]` を入れる (`supabase/functions/_shared/meal-image.ts:845`) |
@@ -148,34 +148,36 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 
 `fridge_snapshots` (`POST /api/pantry/from-photo` が `image_url` を INSERT する表) は本番に存在しない (SELECT で `relation does not exist`)。本書の範囲外 (§21 Q-6)。
 
-### 3.3 公開 URL を作る・保存する・読む経路の全列挙と、非公開化の後の扱い (R-5)
+### 3.3 公開 URL を作る・保存する・読む経路の全列挙と、非公開化の後の扱い (要件 R-5)
 
-凡例: 「書く」= 公開形の文字列を作って保存する / 「読む」= 文字列からオブジェクトを読む。扱いの列が本書で決めたこと。
+凡例: 「書く」= 公開形の文字列を作って保存する / 「読む」= 文字列からオブジェクトを読む。扱いの列が本書で決めたこと。経路の番号は W-n (書く) と RD-n (読む・消す・保存だけなど) で、§0.2 の要件の番号 R-n とは別の記号 (本書で要件を指すときは「要件 R-n」と書く)。
 
 | # | 経路 | 場所 (origin/main) | 種類 | 非公開化の後の扱い |
 |---|---|---|---|---|
 | W-1 | `POST /api/upload` → `fridge-images` の `<user_id>/<folder>/` に upload → `getPublicUrl` の `{ url }` を返す | `src/app/api/upload/route.ts:126-147` | 書く | 変えない。返す文字列は保存形 (§5)。呼び手は `meals/new/page.tsx:1121-1145` だけで、`add-from-photo` に渡して `planned_meals.image_url` に保存する。画面には出さない (S-20) |
 | W-2 | `POST /api/ai/image/generate` → `<user_id>/generated/<timestamp>.png` に upload → `{ imageUrl }` | `src/app/api/ai/image/generate/route.ts:136-159` | 書く | 変えない。呼び手 `menus/weekly/page.tsx:4496-4520` は `PATCH /api/meal-plans/meals/[id]` に渡して保存し、モーダルは `SignedPhotoImage` で出す (`ImageGenerateModal.tsx:121`) |
-| W-3 | 週の献立の依頼: ブラウザが `<user_id>/fridge/<timestamp>.<ext>` に直接 upload → `getPublicUrl` | `src/app/(main)/menus/weekly/request/page.tsx:60-67` | 書く | 変えない。INSERT ポリシー (本人のフォルダ) はそのまま。表示は `SignedPhotoImage` (`:205`)、解析は R-2 の経路 |
+| W-3 | 週の献立の依頼: ブラウザが `<user_id>/fridge/<timestamp>.<ext>` に直接 upload → `getPublicUrl` | `src/app/(main)/menus/weekly/request/page.tsx:60-67` | 書く | 変えない。INSERT ポリシー (本人のフォルダ) はそのまま。表示は `SignedPhotoImage` (`:205`)、解析は RD-2 の経路 |
 | W-4 | Edge Function `analyze-meal-photo` (同期・背景): 本人の JWT で `<user_id>/meals/` に upload → `getPublicUrl` → 応答の `imageUrl` / `planned_meals.image_url` と `dishes[].image_url` (`buildPhotoDishList`) | `supabase/functions/analyze-meal-photo/index.ts:95-110, 196-209, 252` | 書く | 変えない (AI への入力は base64 で、URL を読まない) |
 | W-5 | Edge Function `process-meal-image-jobs`: service_role で `generated/<planned_meal_id>/<job_id>-<timestamp>.png` に upload → `getPublicUrl` → 料理の `image_url`・カバー・`meal_image_jobs.result_image_url` | `supabase/functions/process-meal-image-jobs/index.ts:276-301, 318-319` | 書く | 変えない。表示は `generated/<本人の献立の id>/` の決まりで署名される (S-6) |
 | W-6 | 利用者が書ける列: `PATCH /api/meals/[id]` (`image_url`)・`POST /api/meals`・`POST /api/meal-plans/meals`・`POST /api/recipes` (`imageUrl`)・`consultation-action-executor.ts:785`・`add-from-photo`・`pantry/from-photo` (`fridge_snapshots`) | `src/app/api/meals/[id]/route.ts:153-197` ほか §3.2 | 書く | 変えない。他人の URL を書いても段 1 の持ち主の確認で表示されず、本書で公開 URL も閉じる (S-18) |
-| R-1 | Web の画面の表示: `SignedPhotoImage` (7 か所: `home/page.tsx:835, 1111`・`meals/[id]/page.tsx:274`・`ImageGenerateModal.tsx:121`・`ManualEditModal.tsx:310`・`RecipeModal.tsx:197`・`menus/weekly/request/page.tsx:205`) → `useSignedPhotoUrl` → `POST /api/storage/signed-urls` → `signOwnedPhotoUrls` (service_role) | `src/components/photo/SignedPhotoImage.tsx`・`src/hooks/useSignedPhotoUrl.ts`・`src/app/api/storage/signed-urls/route.ts:64-80` | 読む | 変えない。`tests/signed-photo-display-scan.test.ts` が素の `<Image>` / `<img>` への直渡しを止めている |
-| R-2 | AI の読み出し: `POST /api/ai/analyze-fridge` (`:58-63`)・`POST /api/ai/nutrition` (`:120-128`) → `resolvePhotoUrlForOwnerRead` → 署名付き URL で `fetchImageAsBase64` / LLM の `image_url` | `src/app/api/ai/analyze-fridge/route.ts`・`src/app/api/ai/nutrition/route.ts` | 読む | 変えない |
-| R-3 | 運営の審査: `fetchModerationList` / `fetchModerationSingle` の `content_url` を `withSignedModerationContentUrls` → `signPhotoUrlsForAuthorizedViewer` (呼び手は `src/app/api/admin/moderation/queue/route.ts:114`・`src/app/api/admin/moderation/[type]/[id]/route.ts:184`・`src/app/api/admin/moderation/route.ts:75-76`)。描画: 一覧 `src/app/admin/moderation/page.tsx:171` と詳細 `src/app/admin/moderation/[type]/[id]/page.tsx:175` が、API の返した `content_url` (署名済み) を素の `<img src>` に入れる | `src/lib/admin/moderation-backend.ts:104-130` | 読む | 変えない (service_role の署名は非公開バケットでも通る。B-5 で確かめる)。素の `<img>` の 2 ファイルは `tests/signed-photo-display-scan.test.ts:32-35` の許可表に「API がサーバーで署名してから返す」の理由つきで載っている |
-| R-4 | 家族の献立: `family_menu_planned_meals` は `image_url` を返さない | `supabase/migrations/20261016241000_family_menu_view_functions.sql:13-15, 65`・`src/components/membership/FamilyMenuRows.tsx:8` | 読まない | 変えない (family/10 Q-8 のとおり広げない) |
-| R-5 | 退会の掃除・完全削除: service_role の `remove` | `src/lib/account-deletion-storage.ts:118-135, 309-340`・`supabase/functions/_shared/hidden-content-purge.ts:180-195` | 消す | 変えない (delete はバケットの公開/非公開に関係しない) |
-| R-6 | Edge Function `analyze-fridge` (`imageUrl` をそのまま xAI に渡す) | `supabase/functions/analyze-fridge/index.ts:50-91` | 読む (上流が) | 変えない。リポジトリに呼び手が無い (`functions/v1/analyze-fridge` の grep 0 件。モバイルの経路は #1598 で消えた)。保存形の URL を渡されれば上流の取得が失敗するが、Web は R-2 を使う。整理は §21 Q-5 |
-| R-7 | モバイル (`apps/mobile`): `getPublicUrl`・`/object/public` の組み立て 0 件。`useHomeData.ts:54, 60, 133, 390-409` が `planned_meals.image_url` を select するが、描画する `Image` は無い (`tests/signed-photo-display-scan.test.ts` の対象で 0 件) | `apps/mobile/src/hooks/useHomeData.ts` | 読まない | 変えない。写真を出す画面は WebView の Web の画面 (R-1) |
-| R-8 | メール (`src/lib/emails`)・OG 画像 (`src/app/layout.tsx:65, 76` は静的 `/og-image.png`)・共有の画面 | grep 0 件 | 無し | 無し (写真の URL をメールや OG に載せる経路は無い) |
-| R-9 | 書き出し (`src/lib/account-export-tables.ts:164` ほか) | JSON に保存形の文字列をそのまま出す (`weekly_menu_requests` は列を指定して出し、`result_json` は出さない。R-12) | 文字列を出す | 変えない。写真のファイルは書き出しに入っていない (段 1 以前から)。文字列は非公開化の後は開けない識別子 (§21 Q-3) |
-| R-11 | 健康診断の詳細の画面: `checkup.image_url` を素の `<img src>` に入れる | `src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx:453-461` | 読む (別バケット) | 変えない。`health-checkups` バケット (もとから非公開・本書の対象外) 向けで、`health_checkups.image_url` を保存するコードは未実装 (本番の非 NULL 0 行。§3.2)。`tests/signed-photo-display-scan.test.ts:36-37` の許可表に「#1365 の 2 つのバケットの対象外」の理由つきで載っている |
-| R-10 | `tests/` の結合テスト: `storage-fridge-images-rls` P-1 / M-3 が公開 URL の 200 を期待、`photo-signed-urls` S-4 がテストの中でバケットを切り替え、`afterAll` で `public: true` に戻す | §17 | テスト | 本書で直す (R-13・§9.6) |
-| R-13 | 運営の審査で隠すとき、ペーストの複製 (`paste_group_id`) を同じ中身かで決める: `hideModeratedContent` が `meals.photo_url` を select し、`isSameMealContent` で文字列どうしを比べる | `src/lib/admin/moderation-backend.ts:300-305, 344-361` | 文字列を比べる (オブジェクトを読まない) | 変えない。保存形の文字列は書き換えない (§5) ので、比べた結果は非公開化の前後で同じ |
-| R-14 | 退会の掃除の対象集め: `collectReferencedUrls` が `meals.photo_url` (と `planned_meals.image_url` ほかの列) を service_role で select し、保存形を `parseStorageObjectUrl` で解釈して消す対象を決める | `src/lib/account-deletion-storage.ts:213-300` (`meals.photo_url` は `:223-227`)・`:353-370` (解釈) | 文字列を解釈する (消す対象を決める。オブジェクトは R-5 の `remove` で消す) | 変えない。保存形の解釈はバケットの公開/非公開に関係しない |
-| R-12 | `weekly_menu_requests.result_json` の `days[].meals[].imageUrl` (本番 9 行・188 か所。§3.2)。書く側は無い (最後の書き手は `f60a43c0` で消えた)。読む側: `lib/converter.ts:319` の `toWeeklyMenuRequest` は `resultJson` に写すが呼び手が 0 件。`apps/mobile/src/lib/realtime.ts:33` は `select('*')` だが `subscribeWeeklyMenuRequest` の呼び手が 0 件。Realtime の購読 (`src/app/(main)/menus/weekly/page.tsx:2364, 4058`・`src/hooks/useV4MenuGeneration.ts:102`・`apps/mobile/src/hooks/useV4MenuGeneration.ts:129`) の `payload.new` は行全体を含むが、`result_json` を読むコードは無い (`src` `apps` `packages` `supabase/functions` の `result_json` / `resultJson` の grep は、書き出しのコメント 1 件と生成された型だけ)。書き出しは列を指定して `result_json` を外す (`src/lib/account-export-tables.ts:158-167`。`tests/account-export.test.ts:367, 371`・`tests/integration/security/account-export-scope.test.ts:547` が出ないことを見る) | `lib/converter.ts:313-319`・`src/lib/account-export-tables.ts:158-167` | 保存だけ (読む経路が無い) | 変えない (§5 のとおり書き換えない)。非公開化の後、JSON の中の文字列は開けない識別子になるが、画面にも AI にも書き出しにも出ないので、表示は何も変わらない。オブジェクトは `generated/<その行の user_id>/…` にあり、退会の掃除は `LEGACY_FOLDER_PARENTS` (`src/lib/account-deletion-storage.ts:42`) の `generated/<user_id>/` で消す (R-5。変えない) |
+| W-7 | `POST /api/ai/nutrition` (`imageUrl` を受けて写真から栄養を推定する): RD-2 で本人の写真であることを確かめ (他人の写真は 403 `PHOTO_NOT_READABLE` で保存しない)、受け取った文字列 (保存形) をそのまま `planned_meals.image_url` (`:200`) と、`buildPhotoDishList` (`:176`) で `dishes[].image_url` に保存する | `src/app/api/ai/nutrition/route.ts:100-128, 176, 195-213` | 書く (呼び手が渡した保存形をそのまま保存する。`getPublicUrl` は呼ばない) | 変えない。保存するのは呼び手が渡した保存形で、署名付き URL ではない (署名付き URL は LLM に渡すだけで保存しない)。表示は RD-1 |
+| RD-1 | Web の画面の表示: `SignedPhotoImage` (7 か所: `home/page.tsx:835, 1111`・`meals/[id]/page.tsx:274`・`ImageGenerateModal.tsx:121`・`ManualEditModal.tsx:310`・`RecipeModal.tsx:197`・`menus/weekly/request/page.tsx:205`) → `useSignedPhotoUrl` → `POST /api/storage/signed-urls` → `signOwnedPhotoUrls` (service_role) | `src/components/photo/SignedPhotoImage.tsx`・`src/hooks/useSignedPhotoUrl.ts`・`src/app/api/storage/signed-urls/route.ts:64-80` | 読む | 変えない。`tests/signed-photo-display-scan.test.ts` が素の `<Image>` / `<img>` への直渡しを止めている |
+| RD-2 | AI の読み出し: `POST /api/ai/analyze-fridge` (`:58-63`)・`POST /api/ai/nutrition` (`:120-128`) → `resolvePhotoUrlForOwnerRead` → 署名付き URL で `fetchImageAsBase64` / LLM の `image_url` | `src/app/api/ai/analyze-fridge/route.ts`・`src/app/api/ai/nutrition/route.ts` | 読む | 変えない |
+| RD-3 | 運営の審査: `fetchModerationList` / `fetchModerationSingle` の `content_url` を `withSignedModerationContentUrls` → `signPhotoUrlsForAuthorizedViewer` (呼び手は `src/app/api/admin/moderation/queue/route.ts:114`・`src/app/api/admin/moderation/[type]/[id]/route.ts:184`・`src/app/api/admin/moderation/route.ts:75-76`)。描画: 一覧 `src/app/admin/moderation/page.tsx:171` と詳細 `src/app/admin/moderation/[type]/[id]/page.tsx:175` が、API の返した `content_url` (署名済み) を素の `<img src>` に入れる | `src/lib/admin/moderation-backend.ts:104-130` | 読む | 変えない (service_role の署名は非公開バケットでも通る。B-5 で確かめる)。素の `<img>` の 2 ファイルは `tests/signed-photo-display-scan.test.ts:32-35` の許可表に「API がサーバーで署名してから返す」の理由つきで載っている |
+| RD-4 | 家族の献立: `family_menu_planned_meals` は `image_url` を返さない | `supabase/migrations/20261016241000_family_menu_view_functions.sql:13-15, 65`・`src/components/membership/FamilyMenuRows.tsx:8` | 読まない | 変えない (family/10 Q-8 のとおり広げない) |
+| RD-5 | 退会の掃除・完全削除: service_role の `remove` | `src/lib/account-deletion-storage.ts:118-135, 309-340`・`supabase/functions/_shared/hidden-content-purge.ts:180-195` | 消す | 変えない (delete はバケットの公開/非公開に関係しない) |
+| RD-6 | Edge Function `analyze-fridge` (`imageUrl` をそのまま xAI に渡す) | `supabase/functions/analyze-fridge/index.ts:50-91` | 読む (上流が) | 変えない。リポジトリに呼び手が無い (`functions/v1/analyze-fridge` の grep 0 件。モバイルの経路は #1598 で消えた)。保存形の URL を渡されれば上流の取得が失敗するが、Web は RD-2 を使う。整理は §21 Q-5 |
+| RD-7 | モバイル (`apps/mobile`): `getPublicUrl`・`/object/public` の組み立て 0 件。`useHomeData.ts:54, 60, 133, 390-409` が `planned_meals.image_url` を select するが、描画する `Image` は無い (`tests/signed-photo-display-scan.test.ts` の対象で 0 件) | `apps/mobile/src/hooks/useHomeData.ts` | 読まない | 変えない。写真を出す画面は WebView の Web の画面 (RD-1) |
+| RD-8 | メール (`src/lib/emails`)・OG 画像 (`src/app/layout.tsx:65, 76` は静的 `/og-image.png`)・共有の画面 | grep 0 件 | 無し | 無し (写真の URL をメールや OG に載せる経路は無い) |
+| RD-9 | 書き出し (`src/lib/account-export-tables.ts:164` ほか) | JSON に保存形の文字列をそのまま出す (`weekly_menu_requests` は列を指定して出し、`result_json` は出さない。RD-12) | 文字列を出す | 変えない。写真のファイルは書き出しに入っていない (段 1 以前から)。文字列は非公開化の後は開けない識別子 (§21 Q-3) |
+| RD-10 | `tests/` の結合テスト: `storage-fridge-images-rls` P-1 / M-3 が公開 URL の 200 を期待、`photo-signed-urls` S-4 がテストの中でバケットを切り替え、`afterAll` で `public: true` に戻す | §17 | テスト | 本書で直す (要件 R-13・§9.6) |
+| RD-11 | 健康診断の詳細の画面: `checkup.image_url` を素の `<img src>` に入れる | `src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx:453-461` | 読む (別バケット) | 変えない。`health-checkups` バケット (もとから非公開・本書の対象外) 向けで、`health_checkups.image_url` を保存するコードは未実装 (本番の非 NULL 0 行。§3.2)。`tests/signed-photo-display-scan.test.ts:36-37` の許可表に「#1365 の 2 つのバケットの対象外」の理由つきで載っている |
+| RD-12 | `weekly_menu_requests.result_json` の `days[].meals[].imageUrl` (本番 9 行・188 か所。§3.2)。書く側は無い (最後の書き手は `f60a43c0` で消えた)。読む側: `lib/converter.ts:319` の `toWeeklyMenuRequest` は `resultJson` に写すが呼び手が 0 件。`apps/mobile/src/lib/realtime.ts:33` は `select('*')` だが `subscribeWeeklyMenuRequest` の呼び手が 0 件。Realtime の購読 (`src/app/(main)/menus/weekly/page.tsx:2364, 4058`・`src/hooks/useV4MenuGeneration.ts:102`・`apps/mobile/src/hooks/useV4MenuGeneration.ts:129`) の `payload.new` は行全体を含むが、`result_json` を読むコードは無い (`src` `apps` `packages` `supabase/functions` の `result_json` / `resultJson` の grep は、書き出しのコメント 1 件と生成された型だけ)。書き出しは列を指定して `result_json` を外す (`src/lib/account-export-tables.ts:158-167`。`tests/account-export.test.ts:367, 371`・`tests/integration/security/account-export-scope.test.ts:547` が出ないことを見る) | `lib/converter.ts:313-319`・`src/lib/account-export-tables.ts:158-167` | 保存だけ (読む経路が無い) | 変えない (§5 のとおり書き換えない)。非公開化の後、JSON の中の文字列は開けない識別子になるが、画面にも AI にも書き出しにも出ないので、表示は何も変わらない。オブジェクトは `generated/<その行の user_id>/…` にあり、退会の掃除は `LEGACY_FOLDER_PARENTS` (`src/lib/account-deletion-storage.ts:42`) の `generated/<user_id>/` で消す (RD-5。変えない) |
+| RD-13 | 運営の審査で隠すとき、ペーストの複製 (`paste_group_id`) を同じ中身かで決める: `hideModeratedContent` が `meals.photo_url` を select し、`isSameMealContent` で文字列どうしを比べる | `src/lib/admin/moderation-backend.ts:300-305, 344-361` | 文字列を比べる (オブジェクトを読まない) | 変えない。保存形の文字列は書き換えない (§5) ので、比べた結果は非公開化の前後で同じ |
+| RD-14 | 退会の掃除の対象集め: `collectReferencedUrls` が `meals.photo_url` (と `planned_meals.image_url` ほかの列) を service_role で select し、保存形を `parseStorageObjectUrl` で解釈して消す対象を決める | `src/lib/account-deletion-storage.ts:213-300` (`meals.photo_url` は `:223-227`)・`:353-370` (解釈) | 文字列を解釈する (消す対象を決める。オブジェクトは RD-5 の `remove` で消す) | 変えない。保存形の解釈はバケットの公開/非公開に関係しない |
+| RD-15 | Web のホームのデータ: `useHomeData` が `planned_meals` を利用者の JWT で select し (`:249-262` の今日の献立 `planned_meals(*)`・`:571-585` の今週のベスト料理 `.not('image_url', 'is', null)`)、`toPlannedMeal` で `imageUrl` に写して `home/page.tsx:835` (今日の献立) と `:1111` (今週のベスト料理) の `SignedPhotoImage` に渡す | `src/hooks/useHomeData.ts:249-262, 571-585` | 文字列を取り出す (オブジェクトを読まない。描画は RD-1) | 変えない。`apps/mobile` の同名の hook (RD-7) とは別のファイル |
 
-経路の閉包: DB の列は §3.2 の全列の走査で閉じる (公開 URL を持つ列は `planned_meals.image_url` と `weekly_menu_requests.result_json` の 2 つだけ。前者と §3.2 の 0 件の列の経路は W-1〜W-6・R-1〜R-11・R-13・R-14、後者は R-12)。列ごとの読み手は列名の grep で閉じる: `meals.photo_url` は `photo_url` の grep (`src` `lib` `apps` `packages` `supabase/functions`。テストと生成された型を除く) で `lib/converter.ts:292` (`toMeal`)・`src/lib/admin/moderation-backend.ts` (R-3 の `:70-75, 149, 195`・R-13 の `:300-305, 346, 355`)・`src/lib/account-deletion-storage.ts:223-227` (R-14)・`supabase/functions/_shared/hidden-content-purge.ts:67` (R-5) の 4 ファイルだけ (書く側の `sandbox-photo-meal.ts` は §3.2)。`getPublicUrl` の呼び出しは W-1〜W-5 の 5 ファイル 6 か所だけ (`src` `apps` `packages` `supabase/functions` の grep)。`/storage/v1/` の文字列の組み立ては `packages/shared/src/signed-photo-url.ts` と `supabase/functions/_shared/storage-object-url.ts` の解釈 (読む側) だけ。`createSignedUrl(s)` は `src/lib/photo-storage-signing.ts:127` だけ。`storage.from(...)` の残りは `remove` (R-5・`health/checkups/[id]/route.ts:147`・`process-meal-image-jobs/index.ts:464`) で、読み出しではない。DB の写真の列を素の `<img>` / `<Image>` の `src` に入れる画面は `tests/signed-photo-display-scan.test.ts` の許可表の 3 ファイル (R-3 の 2 つ・R-11) だけで、ほかは `SignedPhotoImage` (R-1)。
+経路の閉包: DB の列は §3.2 の全列の走査で閉じる (公開 URL を持つ列は `planned_meals.image_url` と `weekly_menu_requests.result_json` の 2 つだけ。前者と §3.2 の 0 件の列の経路は W-1〜W-7・RD-1〜RD-11・RD-13〜RD-15、後者は RD-12)。列ごとの読み手は列名の grep で閉じる: `meals.photo_url` は `photo_url` の grep (`src` `lib` `apps` `packages` `supabase/functions`。テストと生成された型を除く) で `lib/converter.ts:292` (`toMeal`)・`src/lib/admin/moderation-backend.ts` (RD-3 の `:70-75, 149, 195`・RD-13 の `:300-305, 346, 355`)・`src/lib/account-deletion-storage.ts:223-227` (RD-14)・`supabase/functions/_shared/hidden-content-purge.ts:67` (RD-5) の 4 ファイルだけ (書く側の `sandbox-photo-meal.ts` は §3.2)。`getPublicUrl` の呼び出しは W-1〜W-5 の 5 ファイル 6 か所だけ (`src` `apps` `packages` `supabase/functions` の grep)。`/storage/v1/` の文字列の組み立ては `packages/shared/src/signed-photo-url.ts` と `supabase/functions/_shared/storage-object-url.ts` の解釈 (読む側) だけ。`createSignedUrl(s)` は `src/lib/photo-storage-signing.ts:127` だけ。`storage.from(...)` の残りは `remove` (RD-5・`health/checkups/[id]/route.ts:147`・`process-meal-image-jobs/index.ts:464`) で、読み出しではない。DB の写真の列を素の `<img>` / `<Image>` の `src` に入れる画面は `tests/signed-photo-display-scan.test.ts` の許可表の 3 ファイル (RD-3 の 2 つ・RD-11) だけで、ほかは `SignedPhotoImage` (RD-1)。`planned_meals.image_url` を select して画面に渡す読み手 (Web の `src/hooks/useHomeData.ts` (RD-15) ほか) は、取り出す場所がどこでも描画が RD-1 か許可表の 3 ファイルに行き着くので、描画の側 (`tests/signed-photo-display-scan.test.ts`) で閉じる。モバイルの同名の hook (RD-7) は描画が無い。
 
 ---
 
@@ -245,7 +247,7 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 
 ---
 
-## 5. 保存済みの URL の扱い (R-6)
+## 5. 保存済みの URL の扱い (要件 R-6)
 
 **採る: 読むときに変換する (保存済みの文字列は書き換えない。書く側も今の文字列のまま)。**
 
@@ -258,11 +260,11 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 
 保存形の意味を「公開 URL」から「オブジェクトを指す識別子」に改める。`getPublicUrl` は通信をせずに文字列を組み立てるだけなので、書く側はそのまま使う (名前が実態と違うことはコメントで補う。§9.7)。
 
-`weekly_menu_requests.result_json` の 188 か所も同じく書き換えない。この JSON には書く側も読む側も無く (§3.3 R-12)、変換する読み手も要らない。非公開化の後は開けない識別子として残るだけで、表示・AI・書き出しのどれにも出ない。
+`weekly_menu_requests.result_json` の 188 か所も同じく書き換えない。この JSON には書く側も読む側も無く (§3.3 RD-12)、変換する読み手も要らない。非公開化の後は開けない識別子として残るだけで、表示・AI・書き出しのどれにも出ない。
 
 ---
 
-## 6. 誰が何を読めるか (R-7) と migration
+## 6. 誰が何を読めるか (要件 R-7) と migration
 
 ### 6.1 アクセス表 (設計後)
 
@@ -274,15 +276,16 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 | 他人 (ログイン) | 公開 URL | 4xx | 4xx | `public = false` |
 | 他人 (ログイン) | `authenticated` の経路 / `list` | 本人のフォルダ以外は 4xx / 0 件 | 4xx / 0 件 | `fridge_images_select_own_folder` (変えない)・`meal_photos` にポリシー無し |
 | 他人 (ログイン) | `POST /api/storage/signed-urls` | null (`notOwned`) | null | 段 1 の持ち主の確認 |
-| 本人 | 公開 URL (JWT を付けても) | 4xx | 4xx | `public = false`。公開の経路は認証を見ない (B-4 で確かめる)。画面は使わない (R-1) |
+| 本人 | 公開 URL (JWT を付けても) | 4xx | 4xx | `public = false`。公開の経路は認証を見ない (B-4 で確かめる)。画面は使わない (RD-1) |
 | 本人 | `POST /api/storage/signed-urls` → 署名付き URL | 200 (今のパス・旧パス・`generated/<user_id>/`・`generated/<本人の献立>/`) | 200 (`<user_id>/…`) | service_role の署名 (RLS を通らない) |
 | 本人 | `authenticated` の経路 (JWT) | `<user_id>/…` は 200、旧パスは 4xx | 4xx | ポリシーは本人のフォルダだけ。アプリは使わない (B-6 で記録) |
 | 本人 | upload (JWT) | `<user_id>/…` だけ可 | 不可 | INSERT ポリシー (変えない) |
 | 家族 | 家族の献立 | 経路が無い | 経路が無い | family/10 Q-8 |
 | 組織 | – | 経路が無い | 経路が無い | 組織の画面に写真は無い |
+| 運営 (ログイン済み。admin / super_admin / content_moderator) | 公開 URL (運営の JWT を付けても) | 4xx | 4xx | `public = false`。公開の経路は JWT も役割も見ないので、他人・本人の公開 URL の行と同じ。運営の画面は公開 URL を使わず、審査 API の署名付き URL を使う (§3.3 RD-3) |
 | 運営 (admin / super_admin / content_moderator) | 審査 API → 署名付き URL | 200 | 200 | `requireRole` + `signPhotoUrlsForAuthorizedViewer` |
 | AI (サーバーが代理) | `resolvePhotoUrlForOwnerRead` → 署名付き URL | 本人の写真だけ 200 | 同左 | 段 1 |
-| 上流 (xAI。Edge Function `analyze-fridge` が受け取った URL をそのまま渡す) | 保存形の URL を上流が直接 GET | 4xx (上流の取得が失敗する) | 4xx | `public = false`。リポジトリに呼び手が無い (§3.3 R-6)。整理は §21 Q-5 |
+| 上流 (xAI。Edge Function `analyze-fridge` が受け取った URL をそのまま渡す) | 保存形の URL を上流が直接 GET | 4xx (上流の取得が失敗する) | 4xx | `public = false`。リポジトリに呼び手が無い (§3.3 RD-6)。整理は §21 Q-5 |
 | service_role (退会の掃除・完全削除・画像生成ジョブ) | `list` / `remove` / `upload` | 可 | 可 | RLS を通らない。公開/非公開に無関係 |
 
 ### 6.2 `storage.objects` のポリシーは変えない
@@ -304,7 +307,7 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 
 ---
 
-## 7. 有効期限・キャッシュ・失効 (R-9)
+## 7. 有効期限・キャッシュ・失効 (要件 R-9)
 
 | 項目 | 設計 | 根拠 |
 |---|---|---|
@@ -320,7 +323,7 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 
 ---
 
-## 8. 順序 (R-10)
+## 8. 順序 (要件 R-10)
 
 | 順 | 何を | なぜ表示が途切れないか |
 |---|---|---|
@@ -329,7 +332,7 @@ origin/main 81e963d5 (2026-10-16 の突き合わせ) までに入った変更は
 | マージと適用 (オーケストレーター) | 番号を確定して PR ① をマージ → `deploy-supabase-migrations.yml` が本番に適用 (§6.3) | 同上 |
 | 適用の確認 (オーケストレーター) | 本番の `storage.buckets` を SELECT し、公開 URL が 4xx・本人の画面に写真が出ることを確かめる (§20 の「適用の直後」の行) | – |
 | 実装段 B (本書。実装 WF ②・PR ②) | 適用の確認がすべて期待どおりになった後に、オーケストレーターが起動する。FAQ の 1 行 (9.5) + `docs/operations/` の 2 文書 (§18。`rls-drift` の注記にはオーケストレーターが仕様で渡す確定した番号を書く) | 文言は本番の事実 (`public = false`) を確かめてから出す。適用が止まった (例外・CI の赤) ときは起動しない (§11.3) |
-| 設計正典の追随 (オーケストレーター) | `docs/design/operator/02-api-spec.md`・`docs/design/family/10-family-menu-view.md` の 2 件 + 任意 2 件 (§18) を docs PR で。適用の確認の後 (`docs/design/cross/CLAUDE.md` の 1 行は別で、本冊の設計 PR と同日) | 文書だけ (表示に関係しない) |
+| 設計正典の追随 (オーケストレーター) | `docs/design/operator/02-api-spec.md`・`docs/design/family/10-family-menu-view.md` の 2 件 + 任意の 3 ファイル (`docs/design/00-architecture.md`・`docs/design/mobile/04-storage-camera.md`・`docs/design/mobile/CLAUDE.md`) と、`docs/design/family/10-family-menu-view.md` の任意の 2 か所 (`:89`・`:90`) (§18) を docs PR で。適用の確認の後 (`docs/design/cross/CLAUDE.md` の 1 行は別で、本冊の設計 PR と同日) | 文書だけ (表示に関係しない) |
 
 ベースラインの取り直しはどの段にも入れない (§6.3)。
 
@@ -800,7 +803,7 @@ describe('#1365 段 2 4. 段 1 の説明文', () => {
 ```
 
 - `tests/public-claims-guard.test.ts:130-132` の禁止語 (「第三者がアクセスすることはできません」など) を使わない。同 `:407-412` の「プライバシーポリシーへ案内する」は残す。
-- 運営の審査 (R-3) と同意のある AI の解析 (R-2) は「ご本人のために」の外にあるが、それらはプライバシーポリシーの範囲なので文に書かない (案内の文で足りる)。
+- 運営の審査 (RD-3) と同意のある AI の解析 (RD-2) は「ご本人のために」の外にあるが、それらはプライバシーポリシーの範囲なので文に書かない (案内の文で足りる)。
 
 ### 9.6 既存の結合テスト 2 本の直し (実装段 A)
 
@@ -925,12 +928,13 @@ export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMeal
 | 本人 | 署名付き URL (今のパス・旧パス・`generated/<user_id>/`・`generated/<献立>/`) | 200 | 200 | B-4・`tests/integration/security/photo-signed-urls.test.ts` S-1 (既存) |
 | 本人 | 署名付き URL (期限切れ) | 4xx | 4xx | B-8 |
 | 本人 | `meal_photos` の署名付き URL | 200 | 200 | B-7 |
+| 運営 (JWT) | 公開 URL | 200 | 4xx | B-3 (他人の JWT)・B-4 (本人の JWT) と同じ経路。公開の経路は JWT の中身 (役割) を見ないので、役割ごとの it は足さない (JWT つきでも 4xx であることは B-3・B-4 が確かめる。運営の JWT を作る準備 (役割の付与) を足しても、検査する経路は変わらない) |
 | 運営 | 審査 API の署名付き URL | 200 | 200 | B-5・`tests/moderation-photo-signing.test.ts` (既存) |
 | ログインしているが運営でない利用者 (一般・`support`) | 審査 API (`requireRole` が拒む) | 403 (署名しない・service_role に切り替えない) | 403 (同じ) | `tests/integration/operator/admin-moderation-detail.test.ts` の `403 for general user`・`403 for support role (staff of another domain)` (一覧 `GET /api/admin/moderation/queue`)・`tests/moderation-route-contracts.test.ts` の `403: 権限不足` (詳細 `GET /api/admin/moderation/[type]/[id]`。`getSupabaseAdmin` を呼ばない) (既存) |
 | 匿名 | 審査 API | 401 (署名しない) | 401 (同じ) | `tests/integration/operator/admin-moderation-detail.test.ts` の `401 for no auth`・`tests/moderation-route-contracts.test.ts` の `401: 未認証` (既存) |
 | AI (サーバー) | `resolvePhotoUrlForOwnerRead` (本人の写真) | 署名付き URL | 署名付き URL | `src/__tests__/api/analyze-fridge-photo-owner.test.ts` の `本人の写真は、署名した URL で読む (公開 URL では取りに行かない)`・`src/__tests__/api/nutrition-photo-owner.test.ts` (既存) |
 | AI (サーバー) | `resolvePhotoUrlForOwnerRead` (他人の写真) | 403 `PHOTO_NOT_READABLE` (読まない・AI に渡さない) | 403 `PHOTO_NOT_READABLE` | `src/__tests__/api/analyze-fridge-photo-owner.test.ts` の `他人の写真の URL は 403 で、読まない・AI に渡さない・回数も数えない`・`src/__tests__/api/nutrition-photo-owner.test.ts` の `他人の写真の URL は 403 PHOTO_NOT_READABLE で、署名しない・AI に渡さない・回数も数えない・保存しない` (既存。§12・S-18) |
-| 上流 (xAI) | Edge Function `analyze-fridge` が渡した保存形の URL を直接 GET (§3.3 R-6) | 200 | 4xx (上流の取得が失敗する) | – (リポジトリに呼び手が無い。公開 URL の 4xx は B-2 と同じ。整理は §21 Q-5) |
+| 上流 (xAI) | Edge Function `analyze-fridge` が渡した保存形の URL を直接 GET (§3.3 RD-6) | 200 | 4xx (上流の取得が失敗する) | – (リポジトリに呼び手が無い。公開 URL の 4xx は B-2 と同じ。整理は §21 Q-5) |
 | 家族 | 家族の献立 | 経路なし | 経路なし | `tests/integration/rls/family-menu-visibility.test.ts:441` の `family_menu_planned_meals が返す jsonb の配列の各要素の鍵は 12 個だけ (… image_url が無い …)` (既存) |
 | 組織 | – | 経路なし | 経路なし | – (組織の画面に写真は無い。§6.1) |
 | 本人 (JWT) | upload `<user_id>/…` / 他人のフォルダ / 旧パス / `meal_photos` | 可 / 不可 / 不可 / 不可 | 同じ | `tests/integration/security/storage-fridge-images-rls.test.ts` U-1〜U-5・M-1 (既存) |
@@ -944,7 +948,7 @@ export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMeal
 | `storage.buckets.public` (`health-checkups`) | false | false (触らない) |
 | `storage.objects` のポリシー | 5 本 | 5 本 (変えない) |
 | 保存形 (DB の列の文字列) | 公開 URL と同じ (本番: `planned_meals.image_url` 12 行・`weekly_menu_requests.result_json` 9 行の JSON の中の 188 か所。§3.2) | 同じ文字列 (意味は識別子。書き換えない。§5) |
-| 書く側 (W-1〜W-6) | `getPublicUrl` の文字列 | 同じ (コメントだけ) |
+| 書く側 (W-1〜W-7) | `getPublicUrl` の文字列 (W-1〜W-5) と、利用者が渡した文字列 (W-6・W-7) | 同じ (コメントだけ) |
 | 画面の表示 | 署名付き URL (段 1) | 同じ |
 | AI の読み出し / 運営の審査 | 署名付き URL (段 1) | 同じ |
 | 公開 URL を知っている第三者 | 読める | 読めない (4xx) |
@@ -1012,7 +1016,7 @@ sequenceDiagram
 
 ## 14. テスト一覧 (it 名)
 
-| ファイル | it | 要件 |
+| ファイル | it | 要件 (§0.2) |
 |---|---|---|
 | `tests/integration/security/photo-buckets-private.test.ts` (新) | `B-1: meal_photos と fridge-images は public = false。health-checkups も非公開のまま` / `B-2: 保存された公開 URL は、未ログインでは 4xx (今のパス・旧パス・generated/・バケット直下)` / `B-3: 他人は公開 URL でも 4xx で、署名の API の決まりでは null` / `B-4: 本人は署名付き URL で見られる (今のパス・旧パス・generated/<user_id>/・generated/<本人の献立>/)。公開 URL は本人の JWT でも 4xx` / `B-5: 運営の審査の署名 (持ち主を確かめない) も非公開バケットで通る` / `B-6: 本人の JWT の authenticated の経路は、本人のフォルダだけ 200 (旧パスは 4xx。ポリシーは変えていない)` / `B-7: meal_photos も同じ (公開 URL は未ログイン・他人・本人のどれでも 4xx。他人は署名されず、本人の署名付き URL は 200)` / `B-8: 署名付き URL は有効期限を過ぎると 4xx` | R-1〜R-4, R-7, R-11 |
 | `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets.sql は 1 本だけ` / `ローカル / CI で非公開になる: 版が本番の台帳の最大 (ledger_max_version) より新しい、または取り直したベースラインで 2 つとも public = false` / `c_buckets は PHOTO_STORAGE_BUCKETS (meal_photos / fridge-images) とちょうど同じ` / `public = false にする UPDATE が 1 つあり、storage.objects のポリシーを作らず・消さず、health-checkups に触れない` / `同じ版の .down.sql があり、同じバケットを public = true に戻す` / `%s は公開バケットを前提にした語を持たない` (STAGE1_FILES の 7 本) | R-1, R-8, R-12, R-13 |
@@ -1033,13 +1037,13 @@ sequenceDiagram
 | A. 非公開化 | migration + 戻し + 契約テスト + 結合テスト (新 1・直し 2) + 段 1 のコメントの現在形化 (9.7 の必須 5 ファイル。書く側 3 ファイルは任意) | `supabase/migrations/<番号>_private_photo_buckets.sql`、`supabase/rollbacks/<番号>_private_photo_buckets.down.sql`、`tests/private-photo-buckets-migration-contract.test.ts`、`tests/integration/security/photo-buckets-private.test.ts`、`tests/integration/security/photo-signed-urls.test.ts`、`tests/integration/security/storage-fridge-images-rls.test.ts`、`src/lib/photo-storage-signing.ts`、`packages/shared/src/signed-photo-url.ts`、`src/app/api/storage/signed-urls/route.ts`、`src/lib/admin/moderation-backend.ts`、`tests/signed-photo-display-scan.test.ts` |
 | (マージ・適用・適用の確認。オーケストレーター) | PR ① の番号を確定してマージ → CI の適用 (§6.3) → §20 の「適用の直後」の行 | – |
 | B. 利用者向けの文言と運用の文書 (実装 WF ②。上の確認がすべて期待どおりになった後に、オーケストレーターが origin/main から新しい worktree を切って起動する) | FAQ の 1 行 (9.5)・`docs/operations/` の 2 文書の現在形化 (§18 の期日「実装段 B」の 2 行)。起動の仕様にオーケストレーターが書くもの: 確定した migration のファイル名 (`rls-drift` の注記に書く) と、§20 の「適用の直後」の結果 | `src/app/faq/page.tsx`、`docs/operations/rls-drift-20261006.md`、`docs/operations/meal-image-pipeline.md` (この 3 ファイルだけ) |
-| (設計正典の追随。オーケストレーターの docs PR) | §18 の期日「オーケストレーターの docs PR」の行 | `docs/design/cross/CLAUDE.md` (本冊の設計 PR と同日)、`docs/design/operator/02-api-spec.md`・`docs/design/family/10-family-menu-view.md` (適用の確認の後)。任意: `docs/design/00-architecture.md`・`docs/design/mobile/04-storage-camera.md` |
+| (設計正典の追随。オーケストレーターの docs PR) | §18 の期日「オーケストレーターの docs PR」の行 | `docs/design/cross/CLAUDE.md` (本冊の設計 PR と同日)、`docs/design/operator/02-api-spec.md`・`docs/design/family/10-family-menu-view.md` (適用の確認の後)。任意: 任意の 3 ファイル (`docs/design/00-architecture.md`・`docs/design/mobile/04-storage-camera.md`・`docs/design/mobile/CLAUDE.md`) と、`docs/design/family/10-family-menu-view.md` の任意の 2 か所 (`:89`・`:90`) |
 
 実装段 B を別の WF にする理由: §8 の最後の段落 (B が書く事実は A の WF が返った後のマージと CI の適用の後にしか存在しない)。B は A のコードに依存しない (A のマージ後の origin/main から切る) ので、A の worktree を引き継がない。
 
 設計正典 (`docs/design/**`) はどちらの実装段にも入れない (実装レーンは設計正典を編集しない)。実装段 A・B の実装者は `docs/design/**` を編集しない (読むのは可)。食い違いを見つけたら報告だけにする。ベースラインの取り直し (`supabase/baseline/**`) もどちらにも入れない (§6.3)。
 
-型の検査 (R-15): 9.3 の正典コードの `as unknown as` は `client()` の `realtime: { transport: ws as unknown as typeof WebSocket }` の 1 か所だけで、`ws` (Node の WebSocket) を supabase-js の `transport` の型 (ブラウザの `WebSocket`) に合わせる既存の定型と同じ形 (origin/main 81e963d5 の `tests/` で 122 ファイルが同じ行を持つ。`tests/integration/security/photo-signed-urls.test.ts:30` も同じ)。このリポジトリには `as unknown as` の件数を数えてベースラインと比べる検査 (型安全ラチェット) は無い (origin/main の `tests` `scripts` に `as unknown as` を数えるコードは無く、`eslint.config.mjs` も `no-explicit-any` などを有効にしていない) ので、この 1 か所でベースラインを超えて赤になる検査は無い。実装者は 9.3 / 9.4 / 9.6 の正典コードの外で `as any`・`as unknown as` を足さない。
+型の検査 (要件 R-15): 9.3 の正典コードの `as unknown as` は `client()` の `realtime: { transport: ws as unknown as typeof WebSocket }` の 1 か所だけで、`ws` (Node の WebSocket) を supabase-js の `transport` の型 (ブラウザの `WebSocket`) に合わせる既存の定型と同じ形 (origin/main 81e963d5 の `tests/` で 122 ファイルが同じ行を持つ。`tests/integration/security/photo-signed-urls.test.ts:30` も同じ)。このリポジトリには `as unknown as` の件数を数えてベースラインと比べる検査 (型安全ラチェット) は無い (origin/main の `tests` `scripts` に `as unknown as` を数えるコードは無く、`eslint.config.mjs` も `no-explicit-any` などを有効にしていない) ので、この 1 か所でベースラインを超えて赤になる検査は無い。実装者は 9.3 / 9.4 / 9.6 の正典コードの外で `as any`・`as unknown as` を足さない。
 
 実装段 A の migration の番号はマージ直前に確定する (契約テストは版を「`ledger_max_version` より新しい」かどうかでしか見ないので、番号を付け替えても赤にならない。付け替えでそろえる箇所は §17 の `migration-file-version-integrity` の行)。本書の段ではベースラインを取り直さないので、契約テストは論理和の前者 (版 > `ledger_max_version`) で緑。いつか誰かが取り直した後も、論理和の後者 (ベースラインで 2 つとも `public = false`) で緑のまま (§11.3)。
 
@@ -1056,7 +1060,7 @@ sequenceDiagram
 | 型 (テスト内) | `TestUser` (9.3) |
 | 製品コードの関数・定数・型・Zod | 無し |
 | route・環境変数・エラーコード・テーブル・列・RLS ポリシー・Storage のパス | 無し |
-| 変えるもの | `storage.buckets.public` の 2 行 (本番の設定)。結合テスト 2 本 (9.6: `tests/integration/security/photo-signed-urls.test.ts`・`tests/integration/security/storage-fridge-images-rls.test.ts`)。コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)。FAQ の 1 行 (9.5)。文書 (§18): 実装段 B の 2 件 (`docs/operations/rls-drift-20261006.md`・`docs/operations/meal-image-pipeline.md`)・オーケストレーターの docs PR の 3 件 (`docs/design/cross/CLAUDE.md`・`docs/design/operator/02-api-spec.md`・`docs/design/family/10-family-menu-view.md`) と任意 2 件 (`docs/design/00-architecture.md`・`docs/design/mobile/04-storage-camera.md`)。`supabase/baseline/**` は変えない (§6.3) |
+| 変えるもの | `storage.buckets.public` の 2 行 (本番の設定)。結合テスト 2 本 (9.6: `tests/integration/security/photo-signed-urls.test.ts`・`tests/integration/security/storage-fridge-images-rls.test.ts`)。コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)。FAQ の 1 行 (9.5)。文書 (§18): 実装段 B の 2 件 (`docs/operations/rls-drift-20261006.md`・`docs/operations/meal-image-pipeline.md`)・オーケストレーターの docs PR の 3 件 (`docs/design/cross/CLAUDE.md`・`docs/design/operator/02-api-spec.md`・`docs/design/family/10-family-menu-view.md`) と任意の 3 ファイル (`docs/design/00-architecture.md`・`docs/design/mobile/04-storage-camera.md`・`docs/design/mobile/CLAUDE.md`)・`docs/design/family/10-family-menu-view.md` の任意の 2 か所 (`:89`・`:90`)。`supabase/baseline/**` は変えない (§6.3) |
 
 列挙の基準: §9 の正典コードで新しく宣言するモジュール直下の名前 (テストの中の名前を含む。`const` と `let` の両方)。既存の名前 (`PHOTO_STORAGE_BUCKETS`・`signOwnedPhotoUrls` など) と it の中の局所の変数 (`targets`・`signed`・`res`・`appliedOnLocalStack`・`baselinePrivate` など) は数えない。
 
@@ -1064,7 +1068,7 @@ sequenceDiagram
 
 ## 17. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果: `fridge-images`・`meal_photos`・`PHOTO_STORAGE_BUCKETS`・`getPublicUrl`・`object/public`・`updateBucket`・`公開バケット`・`段 2`・`prod_storage`・`storage_buckets.csv`・`supabase/rollbacks`・`_private_photo_buckets`・`ledger_max_version`・`supabase\/rollbacks` (正規表現の中で逃がした形)・`-- migration:` / `-- rollback:` (1 行目の見出し)・`写真データはどこに保存`・`photo urls were not signed`・`minimumCacheTTL`・`PHOTO_SIGNED_URL_TTL_SECONDS`。加えて、§3.2 の全列の走査で見つけた保存先 `result_json` (本書は変えないが、§3.3 R-12 の「書き出しに出ない」の根拠になる番兵を引くため)。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果: `fridge-images`・`meal_photos`・`PHOTO_STORAGE_BUCKETS`・`getPublicUrl`・`object/public`・`updateBucket`・`公開バケット`・`段 2`・`prod_storage`・`storage_buckets.csv`・`supabase/rollbacks`・`_private_photo_buckets`・`ledger_max_version`・`supabase\/rollbacks` (正規表現の中で逃がした形)・`-- migration:` / `-- rollback:` (1 行目の見出し)・`写真データはどこに保存`・`photo urls were not signed`・`minimumCacheTTL`・`PHOTO_SIGNED_URL_TTL_SECONDS`。加えて、§3.2 の全列の走査で見つけた保存先 `result_json` (本書は変えないが、§3.3 RD-12 の「書き出しに出ない」の根拠になる番兵を引くため)。
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 実装段 |
 |---|---|---|---|---|
@@ -1073,14 +1077,14 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/integration/security/storage-upload-paths.test.ts` | `object/public/fridge-images/` | P-1 が `POST /api/upload` の `url` に `/storage/v1/object/public/fridge-images/` を期待 | 変更なし (保存形は公開 URL と同じ文字列のまま。§5) | – |
 | `tests/integration/security/account-deletion.test.ts`・`tests/integration/security/purge-hidden-content.test.ts` | `getPublicUrl` | 保存形の文字列を行に入れ、service_role の remove を確かめる | 変更なし (remove は公開/非公開に無関係) | – |
 | `tests/integration/security/account-delete-route.test.ts` | `fridge-images` (`:109`・`:130`・`:145` の `from('fridge-images')`) | service_role で `<member>/route-…png` を upload・`list` で有無を見る・`remove` で片付ける | 変更なし (service_role の upload / list / remove は RLS を通らず、公開/非公開に無関係。公開 URL を読まない) | – |
-| `tests/account-export.test.ts`・`tests/integration/security/account-export-scope.test.ts` | `result_json` (`account-export.test.ts:105-106, 367, 371`・`account-export-scope.test.ts:127, 547`) | 書き出しが `weekly_menu_requests` の `result_json` を select せず、応答にも出さないことを見る | 変更なし (本書は書き出しも `result_json` も変えない。§3.3 R-12 の根拠) | – |
+| `tests/account-export.test.ts`・`tests/integration/security/account-export-scope.test.ts` | `result_json` (`account-export.test.ts:105-106, 367, 371`・`account-export-scope.test.ts:127, 547`) | 書き出しが `weekly_menu_requests` の `result_json` を select せず、応答にも出さないことを見る | 変更なし (本書は書き出しも `result_json` も変えない。§3.3 RD-12 の根拠) | – |
 | `tests/integration/rls/family-menu-visibility.test.ts` | `object/public/fridge-images/generated/` | 文字列を `image_url` に入れ、応答に出ないことを見る | 変更なし | – |
 | `tests/integration-ci-coverage.test.ts` | `tests/integration/security` | 結合テストが CI の指定に当たる | 変更なし (新しいファイルは `tests/integration/security/` 配下) | A |
 | `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets`・`c_buckets`・`STALE_WORDS`・`ledger_max_version`・`prod_storage` | – | 新設 (9.4)。本書の段ではベースラインを取り直さない (§6.3) ので、1. の 2 本目は「版 > `ledger_max_version`」の側で緑。いつか誰かが取り直して `ledger_max_version` が本書の版以上になっても、「ベースラインで 2 つとも `public = false`」の側で緑 (取り直しの PR で直す・外すものは無い) | A |
 | `tests/helpers/schema-snapshot.ts` (`tests/account-export-tables.test.ts` などが使う) | `ledger_max_version` | `ledger_max_version` より新しい migration の `CREATE TABLE` / `DROP TABLE` を重ねる | 変更なし (本書の migration は public のテーブルを作らない。取り直しの後に本書の migration が重ねる対象から外れても結果は同じ) | – |
 | `tests/photo-storage-signing.test.ts`・`tests/moderation-photo-signing.test.ts`・`src/__tests__/api/storage-signed-urls.test.ts`・`src/__tests__/api/analyze-fridge-photo-owner.test.ts`・`src/__tests__/api/nutrition-photo-owner.test.ts`・`tests/signed-photo-url-resolver.test.ts`・`tests/signed-photo-image-web.test.tsx` | `fridge-images`・`meal_photos`・`object/public` | 署名の決まりの単体 (偽の client) | 変更なし (決まりを変えない) | – |
 | `tests/signed-photo-display-scan.test.ts` | `段 2 でバケットを非公開にする` | ヘッダの説明が将来形 | 9.7 のとおりコメントだけ直す (`STALE_WORDS` が見張る) | A |
-| `src/__tests__/api/upload-rate-limit.test.ts`・`tests/api-security-cluster.test.ts`・`tests/image-route-contracts.test.ts`・`tests/ai-rate-limit-contracts.test.ts`・`tests/process-meal-image-jobs-worker-edges.test.ts`・`tests/analyze-fridge-handler.test.ts`・`tests/analyze-fridge-validation.test.ts`・`tests/ai-consent-enforcement-edge.test.ts`・`tests/ai-consent-enforcement-routes.test.ts` | `getPublicUrl`・`object/public` | 書く側の mock (`ai-consent-enforcement-routes.test.ts:215`・`ai-consent-enforcement-edge.test.ts:326` の `getPublicUrl`) と、公開形の文字列を入力に使う検査 (`analyze-fridge-handler.test.ts:98, 146`・`analyze-fridge-validation.test.ts:12, 111`・`ai-consent-enforcement-edge.test.ts:381`。Edge Function `analyze-fridge` の入力の形の検査で、実物の Storage を読まない) | 変更なし (書く側も Edge Function `analyze-fridge` も変えない。§3.3 R-6) | – |
+| `src/__tests__/api/upload-rate-limit.test.ts`・`tests/api-security-cluster.test.ts`・`tests/image-route-contracts.test.ts`・`tests/ai-rate-limit-contracts.test.ts`・`tests/process-meal-image-jobs-worker-edges.test.ts`・`tests/analyze-fridge-handler.test.ts`・`tests/analyze-fridge-validation.test.ts`・`tests/ai-consent-enforcement-edge.test.ts`・`tests/ai-consent-enforcement-routes.test.ts` | `getPublicUrl`・`object/public` | 書く側の mock (`ai-consent-enforcement-routes.test.ts:215`・`ai-consent-enforcement-edge.test.ts:326` の `getPublicUrl`) と、公開形の文字列を入力に使う検査 (`analyze-fridge-handler.test.ts:98, 146`・`analyze-fridge-validation.test.ts:12, 111`・`ai-consent-enforcement-edge.test.ts:381`。Edge Function `analyze-fridge` の入力の形の検査で、実物の Storage を読まない) | 変更なし (書く側も Edge Function `analyze-fridge` も変えない。§3.3 RD-6) | – |
 | `tests/gemini-json.test.ts` | `object/public` (`:106-108`) | `fetchImageAsBase64` に公開形の URL を渡し、資格情報と断片を落とした URL で fetch すること (fetch は mock) を見る | 変更なし (URL の正規化の単体で、実物の Storage を読まない) | – |
 | `src/__tests__/api/family/menu.test.ts`・`tests/meal-cover-ownership.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/process-meal-image-jobs-write-race.test.ts`・`tests/hidden-content-purge.test.ts`・`tests/account-deletion-storage.test.ts`・`tests/account-deletion.test.ts` | `fridge-images/generated/`・`object/public`・`fridge-images` / `meal_photos` (`account-deletion.test.ts:112, 254, 261, 263` は偽の Storage のバケット名の走査と呼び出し順) | 文字列のフィクスチャ・偽の Storage | 変更なし (バケット名と remove の順序を変えない) | – |
 | `src/__tests__/config/next-config-images.test.ts` | `minimumCacheTTL`・`PHOTO_SIGNED_URL_MIN_TTL_SECONDS` | 60 秒 ≤ 署名の期限の下限 | 変更なし (期限も `next.config.mjs` も変えない) | – |
@@ -1093,6 +1097,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `src/__tests__/app/faq/account-answers.test.ts` | `faq/page` | アカウントまわりの回答だけを見る | 変更なし | – |
 | `scripts/supabase-local.sh` (ローカル / CI のスタックを組み立てる) | `ledger_max_version` (`:121` の `baseline_version` が `manifest.json` から読む・`:184` が 14 桁を確かめる)・`prod_storage.sql` (`:238` がベースラインに連結する) | `:259` で版が `ledger_max_version` より大きい migration だけをベースラインの後に足す | 変更なし (§6.3 の「取り直しの前はローカルに当たり、後は当たらずベースラインの `public = false` で非公開」はこの動きに依拠する) | – |
 | `scripts/baseline/build_baseline.py` (ベースラインの取り直し) | `storage_buckets.csv` (`:73` が読む)・`prod_storage.sql` (`:263` が書く)・`ledger_max_version` (`:290`) | `:84-85` が `INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) VALUES (…)` の形で書く | 変更なし (9.4 の `baselinePublicOf` はこの形を読む。取り直しで形は変わらない) | – |
+| `scripts/baseline/snapshot_catalog.sql` (カタログの読み取りの照会。READ ONLY のトランザクションで流し、最後は ROLLBACK) | `storage_buckets.csv` (`:30` が `storage.buckets` の `id, name, public, file_size_limit, allowed_mime_types` を書く) | `.github/workflows/prod-schema-snapshot.yml:89` (本番)・`scripts/baseline/drift_report.sh:72` (本番)・`scripts/supabase-local.sh:477` (`verify`。ローカル) から psql で流れ、`public` の値をそのまま CSV に写す | 変更なし (照会の形は変えない。本番の適用の後に流せば `fridge-images` / `meal_photos` の `public` は f が出る。それを `supabase/baseline/catalog` に取り込むのはいつかの取り直しで、本書の段の外。§6.3) | – |
 | `scripts/baseline/squash_migrations.py` (#1116 の統合) | `prod_storage.sql` (`:37`)・`ledger_max_version` (`:53`) | 台帳の最大以下の migration を 1 本に統合し、残りをプレースホルダにする | 変更なし。統合は 1 回限りでやり直さない (`supabase/baseline/README.md:24`) ので、本書の migration のファイル (と契約テスト 9.4 の 1. の「1 本だけ」・`migration-file-version-integrity` の戻し口の対) は取り直しの後も残る | – |
 | `scripts/baseline/verify_baseline.py` (スクリプト。CI では流れない) | `storage_buckets.csv`・`bucket … differs` | `bash scripts/supabase-local.sh verify` (`:457-479`) から呼ばれ、ベースラインだけを適用した DB のカタログを、同じスナップショットのカタログ `supabase/baseline/catalog` (`:478`) と比べる | 変更なし。比べる 2 つが同じスナップショットから出るので、本番の適用の前後でも、いつかの取り直しの前後でも、本書による `bucket … differs` は出ない (本書はベースラインを取り直さない。§6.3) | – |
 | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:13959-13961` (ベースラインの写し) | `public = true` の INSERT | ベースライン (#1116) | 変更なし (本書の migration が後から UPDATE する。統合はやり直さない: `supabase/baseline/README.md`) | – |
@@ -1102,17 +1107,20 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 ## 18. 他の文書への追随表 (本設計では編集しない。期日の列のとおり、実装段 B の PR かオーケストレーターの docs PR で足す)
 
-実装段 B (実装レーン) が触る文書は `docs/operations/` の 2 件だけ。`docs/design/**` (設計正典) は実装レーンが編集しないので、`docs/design/**` の行の期日はすべてオーケストレーターの docs PR (任意の 2 行も、行うならそこ)。
+実装段 B (実装レーン) が触る文書は `docs/operations/` の 2 件だけ。`docs/design/**` (設計正典) は実装レーンが編集しないので、`docs/design/**` の行の期日はすべてオーケストレーターの docs PR (任意の行も、行うならそこ)。
 
 | 文書 | 直すこと | 期日 |
 |---|---|---|
 | `docs/design/cross/CLAUDE.md` ファイル一覧 | `19-private-photo-buckets.md` の行 (担当範囲: 食事写真・冷蔵庫写真のバケットの非公開化 (段 2)・誰が何を読めるかの表・署名付き URL の寿命。要件参照: #1365) を `18-csp-nonce.md` の次に足す。「16・17 は並行して設計中の冊が使う」の文は実在 (16・17 とも main にある) に合わせる | 本冊の設計 PR と同日 (設計書は本冊だけを編集するので、オーケストレーターの docs PR) |
-| `docs/operations/rls-drift-20261006.md` §3.1 P-2 / P-3 | 「推奨」の列の後に「2026-10 時点: P-3〜P-6 のポリシーは `20261007073232` で本人のフォルダに限定し、バケットは #1365 段 2 (`<番号>_private_photo_buckets.sql`) で非公開にした」の注記 | 実装段 B (A のマージと適用の確認の後の別の WF。`<番号>` はオーケストレーターが仕様で渡す確定した番号) |
+| `docs/operations/rls-drift-20261006.md` §3.1 P-2〜P-6 (`:48-52`) | 「推奨」の列の後に、行ごとの 2026-10 時点の注記: P-2「バケット (`meal_photos`・`fridge-images`) は #1365 段 2 (`<番号>_private_photo_buckets.sql`) で非公開にした」/ P-3・P-4「`20261007073232` で消した (`meal_photos` にポリシーは無く、利用者は upload も一覧もできない)。P-3 の「公開バケットのため URL が分かれば閲覧はもともと可能」は、段 2 の後は当たらない」/ P-5「`20261007073232` で本人のフォルダの INSERT (`fridge_images_insert_own_folder`) に置き換えた」/ P-6 (SELECT TO anon, authenticated)「`20261007073232` で消し、本人のフォルダの SELECT (`fridge_images_select_own_folder`。authenticated だけで、anon の SELECT は無い) に置き換えた。段 2 の後は、公開 URL でも anon は読めない」 | 実装段 B (A のマージと適用の確認の後の別の WF。`<番号>` はオーケストレーターが仕様で渡す確定した番号) |
 | `docs/design/operator/02-api-spec.md:334` | 「画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う」→「画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)」 | オーケストレーターの docs PR (適用の確認の後。設計正典なので実装段 A・B には入れない) |
 | `docs/operations/meal-image-pipeline.md:28` | 「Storage の `fridge-images`（公開バケット）」→「Storage の `fridge-images`（非公開バケット。表示は署名付き URL。#1365）」 | 実装段 B (同上) |
 | `docs/design/family/10-family-menu-view.md` Q-8 | 「署名の決まりを変えるとき (#1365 の段 2) に…」→ 段 2 (本書) は署名の決まりを広げなかったので、家族に画像を出すなら別の設計で決める旨 | オーケストレーターの docs PR (適用の確認の後。設計正典なので実装段 A・B には入れない) |
+| `docs/design/family/10-family-menu-view.md:89` (保存された写真の署名の事実の行)・`:90` (本番の `image_url` の行)・`:154` (S-20) | 書き換えは要らない (`:89` の署名の決まりは本書で変えず、段 2 の後も正しい。`:154` は応答に `image_url` の鍵が無い構造で、バケットの公開/非公開に依らない)。足すなら `:89` の行末に「バケットは非公開 (cross/19)。公開 URL を直接開いても読めない」の 1 文、`:90` の「他人には null」の後に「公開 URL でも読めない (cross/19)」 | 任意 (行うならオーケストレーターの docs PR。適用の確認の後。Q-8 の行と同じ PR) |
 | `docs/design/00-architecture.md:25` | バケットの名前が `meal-photos` (実在は `meal_photos`) で `org-logos` / `user-avatars` は存在しない。本書の範囲外だが、名前だけ実在に合わせる | 任意 (行うならオーケストレーターの docs PR。実装段 A・B には入れない) |
-| `docs/design/mobile/04-storage-camera.md` §3.2 (`:45`)・§3.3 `uploadMealPhoto()` (`:65, 77, 106, 118-123`)・§3.8 (`:320-325`)・§4 (`:346`)・§5.1 / §5.2 (`:377-379, 407`)・§7 (`:439`)・§9 (`:504`) | この冊の `uploadMealPhoto()` (`meal-photos` バケットへ upload し、`getPublicUrl` の `publicUrl` を返して DB に保存する) と家族共有のポリシー・`public = false` の記述は、本書と別の構想 (未実装。実在のモバイルは `getPublicUrl` を呼ばない。§3.3 R-7)。`:120-122` はすでに「`publicUrl` は識別子として保存するだけで画面に出さない (#1365)」と書いている。直すなら、各所に「実在のバケットは `meal_photos` (下線)。バケットは cross/19 で非公開にし、保存する文字列は保存形 (識別子)。表示は署名付き URL。家族共有のポリシーは採っていない」の注記を足す (行の書き換えはしない) | 任意 (行うならオーケストレーターの docs PR。適用の確認の後。実装段 A・B には入れない) |
+| `docs/design/mobile/04-storage-camera.md` §3.2 (`:45`)・§3.3 `uploadMealPhoto()` (`:65, 77, 106, 118-123`)・§3.8 (`:320-325`)・§4 (`:346`)・§5.1 / §5.2 (`:377-379, 407`)・§7 (`:439`)・§9 (`:504`) | この冊の `uploadMealPhoto()` (`meal-photos` バケットへ upload し、`getPublicUrl` の `publicUrl` を返して DB に保存する) と家族共有のポリシー・`public = false` の記述は、本書と別の構想 (未実装。実在のモバイルは `getPublicUrl` を呼ばない。§3.3 RD-7)。`:120-122` はすでに「`publicUrl` は識別子として保存するだけで画面に出さない (#1365)」と書いている。直すなら、各所に「実在のバケットは `meal_photos` (下線)。バケットは cross/19 で非公開にし、保存する文字列は保存形 (識別子)。表示は署名付き URL。家族共有のポリシーは採っていない」の注記を足す (行の書き換えはしない) | 任意 (行うならオーケストレーターの docs PR。適用の確認の後。実装段 A・B には入れない) |
+| `docs/design/mobile/CLAUDE.md:78` (§5 食事写真アップロード「Supabase Storage `meal-photos` バケットへ direct upload」)・同 `:12` (ファイル一覧の `04-storage-camera.md` の行) | `04-storage-camera.md` と同じ構想 (未実装。実在のモバイルは写真を upload しない・`getPublicUrl` を呼ばない。§3.3 RD-7)。直すなら `:78` に「実在のバケットは `meal_photos`。cross/19 で非公開にし、表示は署名付き URL」の注記を足す (行の書き換えはしない) | 任意 (行うならオーケストレーターの docs PR。`04-storage-camera.md` の行と同じ PR。実装段 A・B には入れない) |
+| `docs/requirements/01-family-management.md` §15.2 (`:1936-1944`。ネイティブの ImagePicker から `meal-photos` へ direct upload・`family_group_id` で家族に閲覧権) | 追随の対象外 (変更なし)。要件の文書で、本書の範囲 (#1365・#1538 の項目 2) はこの要件を実装も変更もしない。モバイルは WebView に一本化され (#1598)、この経路は実在しない (§3.3 RD-7)。家族への写真の共有は family/10 Q-8 のとおり広げない。要件を改めるかは別の Issue | – |
 | `supabase/baseline/refresh-request.txt` (と `supabase/baseline/**`) | 変更なし。本書ではベースラインを取り直さない (理由は §6.3: 取り直さなくてもローカル / CI は本書の migration で非公開になる・`refresh-request.txt` を変えても出力は artifact だけで、リポジトリへは書き戻らない (`.github/workflows/prod-schema-snapshot.yml:16`)・`verify` は同じスナップショットどうしを比べる)。いつか誰かが `supabase/baseline/README.md` の「取り直し方」で取り直すときは、本番の適用の後に取れば `prod_storage.sql` が `public = false` になり、契約テスト 9.4 は論理和の後者で緑のまま | – |
 | `.env.example:238`・`ENV_SETUP.md` | 変更なし (`PHOTO_SIGNED_URL_TTL_SECONDS` の説明は現在形のまま正しい) | – |
 
@@ -1123,7 +1131,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 区分 | 対象 |
 |---|---|
 | 保持 (変えない) | 段 1 の全部 (`packages/shared/src/signed-photo-url.ts`・`src/lib/photo-storage-signing.ts`・`src/app/api/storage/signed-urls/route.ts`・`src/components/photo/SignedPhotoImage.tsx`・`src/hooks/useSignedPhotoUrl.ts`・`src/lib/signed-photo-url-client.ts`・AI の route 2 本・`moderation-backend.ts`)、書く側 5 か所 (W-1〜W-5)、`storage.objects` のポリシー 5 本、`supabase/functions/_shared/storage-object-url.ts`・`hidden-content-purge.ts`・`src/lib/account-deletion-storage.ts`、`next.config.mjs` の `images`、環境変数、`supabase/baseline/**` (ベースラインは取り直さない。§6.3) |
-| 変更 | `storage.buckets.public` (migration)、結合テスト 2 本 (9.6: `photo-signed-urls.test.ts`・`storage-fridge-images-rls.test.ts`)、コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)、FAQ の 1 行 (9.5)、文書 (§18。実装段 B の `docs/operations/` 2 件・オーケストレーターの docs PR の `docs/design/**` 3 件と任意 2 件。§16 の「変えるもの」と同じ) |
+| 変更 | `storage.buckets.public` (migration)、結合テスト 2 本 (9.6: `photo-signed-urls.test.ts`・`storage-fridge-images-rls.test.ts`)、コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)、FAQ の 1 行 (9.5)、文書 (§18。実装段 B の `docs/operations/` 2 件・オーケストレーターの docs PR の `docs/design/**` 3 件と任意の 3 ファイル・family/10 の任意の 2 か所。§16 の「変えるもの」と同じ) |
 | 新規 | migration + 戻し、結合テスト 1 本、契約テスト 1 本 |
 | 削除 | 無し (`photo-signed-urls.test.ts` の `updateBucket` の呼び出しは消す) |
 
