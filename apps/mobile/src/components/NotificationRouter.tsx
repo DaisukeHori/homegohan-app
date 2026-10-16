@@ -19,14 +19,18 @@
  *   - ProfileProvider は、ログインの直後の一瞬 profile=null・isLoading=false になる (新しいユーザーの読み込みは
  *     その描画の後に始まる)。この間を「初期設定が済んでいない」と取り違えて捨てないよう、今のユーザーの
  *     プロフィールが読めるまで待つ
+ *   - 規約の同意の状態が決まり (#1442)、前面が同意画面でも入口でもなくなってから移る
+ *     (同意が要る間は LegalConsentGate が同意画面 1 つに畳み、同意の後に入口へ移す。そこへ push を重ねない)
  */
 
 import * as Notifications from "expo-notifications";
-import { router } from "expo-router";
+import { router, usePathname } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 
+import { ENTRY_SCREEN_PATH, isNavigationHeldForLegalConsent } from "../lib/legal-consent";
 import { resolveNotificationHref } from "../lib/notificationRoute";
 import { useAuth } from "../providers/AuthProvider";
+import { useLegalConsent } from "../providers/LegalConsentProvider";
 import { useProfile } from "../providers/ProfileProvider";
 
 /** フォアグラウンドで届いた通知の扱い。バナーと通知センターに出し、音を鳴らし、バッジ (サーバーが数えた値) を付ける */
@@ -40,6 +44,8 @@ const FOREGROUND_NOTIFICATION_BEHAVIOR: Notifications.NotificationBehavior = {
 export function NotificationRouter() {
   const { session, isLoading: authLoading } = useAuth();
   const { profile, isLoading: profileLoading } = useProfile();
+  const { state: legalConsentState } = useLegalConsent();
+  const pathname = usePathname();
   // タップされた通知の行き先 (まだ遷移していないもの)
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   // 同じ通知のタップを 2 回扱わない (起動時の取得とリスナーの両方に届くことがある)
@@ -96,6 +102,10 @@ export function NotificationRouter() {
     }
     // 今のユーザーのプロフィールが読めるまで待つ (読み込み中・ログイン直後の一瞬の null・前のユーザーの残り)
     if (profileLoading || !profile || profile.id !== session.user.id) return;
+    // #1442: 同意の状態が決まるまで・同意が要る間・前面が同意画面の間 (同意の直後で、ゲートの router.replace('/') がまだ流れていない) と、
+    // 前面が入口の間 (入口の Redirect の router.replace がまだ流れていない) は行き先を保留する。
+    // 同じ描画で push すると、expo-router の routingQueue で push と replace が並び、移った先の画面が置き換わる
+    if (isNavigationHeldForLegalConsent(legalConsentState, pathname) || pathname === ENTRY_SCREEN_PATH) return;
     setPendingHref(null);
     if (!profile.onboardingCompletedAt) return;
     try {
@@ -104,7 +114,7 @@ export function NotificationRouter() {
       // 遷移の失敗でアプリを落とさない
       console.warn("[NotificationRouter] navigation failed", error);
     }
-  }, [pendingHref, authLoading, session, profileLoading, profile]);
+  }, [pendingHref, authLoading, session, profileLoading, profile, legalConsentState, pathname]);
 
   return null;
 }

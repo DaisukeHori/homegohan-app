@@ -498,7 +498,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - `on`: 同意が済むまで、画面を開くと同意画面（`/legal-consent`）へ回します。同意すると元の画面に戻ります。`/api/*` は 403（`{ error, code: 'LEGAL_CONSENT_REQUIRED' }`）で止めます（同意そのもの・認証・退会と書き出し・問い合わせ・ログなどの許可リストを除く。一覧は `packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS`。#1442）。画面で次は回しません: 利用規約（`/terms`）、プライバシーポリシー（`/privacy`）、特定商取引法の表記（`/legal`）、問い合わせ（`/contact`）、凍結の案内（`/frozen`）、認証の途中の画面（`/auth/*`。アプリの認証ブリッジを含む）、ハンズオンツアー（`/handson-tour`）。
 - 同意しない人は、同意画面の「同意しない」でログアウトでき、データの削除は問い合わせフォームから依頼する案内が出ます。
 - 強制を始める前に決めること（オーナー）: ①版番号と施行日と同意文言（弁護士の確認。いまの値は仮置き）②強制を始める日。③始める前に、お知らせだけの期間（`LEGAL_CONSENT_NOTICE=on`）を置くかどうか。
-- 本番は 2026-10-10 に `on` にしました（オーナー判断。版と施行日は仮置きのまま、お知らせだけの期間は置いていません）。`/api/*` は middleware の `/api` の分岐で止めます（403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`。#1442・設計書 `docs/design/cross/13a-legal-consent-api-server.md`）。モバイルのネイティブの画面はゲートを通りません（#1442）。
+- 本番は 2026-10-10 に `on` にしました（オーナー判断。版と施行日は仮置きのまま、お知らせだけの期間は置いていません）。`/api/*` は middleware の `/api` の分岐で止めます（403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`。#1442・設計書 `docs/design/cross/13a-legal-consent-api-server.md`）。アプリも起動時と `/api` の 403 で同意画面（Web と同じ画面）を出します（#1442・設計書 13b）。
 - 改定のたびにやること: `LEGAL_DOCUMENTS` の `version` と `effectiveDate` を書き換えて出す。版が変わると、同意済みの人も含めて、全員に再同意を求めます（版を変えずに文面だけ直すと、再同意は求めません）。
 - 戻し方: 環境変数を消す（または `off` にする）と、再デプロイ後に既存の利用者を同意画面へ回さなくなります。初めてサインインした新規の人は、`/auth/callback` が引き続き同意画面へ回します（#1435）。記録済みの同意は残ります。
 
