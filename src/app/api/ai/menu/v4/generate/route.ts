@@ -28,6 +28,7 @@ import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } 
 import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -86,8 +87,12 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       }
     }
 
+    // DB の id は小文字。大文字・混在で送られた plannedMealId が、DB で見つかった id の集合 (foundIds / byId) との照合で
+    // 「見つからない」扱いになり黙って外されないよう、受け取った直後にそろえ、以後 (重複の判定・照合・DB) はそろえた値だけを使う (#1793)
+    const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
+
     // Check for duplicates (date+mealType must be unique, unless plannedMealId differs)
-    const key = (typeof plannedMealId === 'string' ? plannedMealId : null) || `${date}:${mealType}`;
+    const key = normalizedPlannedMealId || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
     }
@@ -96,7 +101,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     validated.push({
       date,
       mealType,
-      plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined,
+      plannedMealId: normalizedPlannedMealId,
     });
   }
   

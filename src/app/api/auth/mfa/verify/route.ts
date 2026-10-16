@@ -33,6 +33,7 @@ import {
 } from '@/lib/auth/mfa/route-support';
 import { MfaVerifyBodySchema, type MfaVerifyResponse } from '@/lib/auth/mfa/schemas';
 import { createLogger } from '@/lib/db-logger';
+import { normalizeUuid } from '@/lib/http-params';
 import { isNativeBridgedSession } from '@/lib/native-auth-bridge';
 import { checkRateLimit, getRetryAfterSec } from '@/lib/rate-limit';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
@@ -76,7 +77,10 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return mfaJson({ error: VALIDATION_ERROR_MESSAGE, code: 'VALIDATION_ERROR' }, HTTP_BAD_REQUEST);
   }
-  const { factor_id: factorId, code } = parsed.data;
+  const { code } = parsed.data;
+  // factor の id は小文字 (Supabase の user.factors)。大文字・混在で送られた本人の factor_id が ownsFactor の === で 404 にならないよう、
+  // 受け取った直後にそろえ、以後 (判定・challengeAndVerify・監査) はそろえた値だけを使う (#1793)
+  const factorId = normalizeUuid(parsed.data.factor_id);
 
   try {
     const supabase = await createClient();

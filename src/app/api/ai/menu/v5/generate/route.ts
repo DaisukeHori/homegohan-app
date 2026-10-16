@@ -21,6 +21,7 @@ import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RA
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 // 受け付ける食事の区分 (5 値)。値と並びの正本は @homegohan/shared の MEAL_ORDER (#1631。手書きしない)
 const VALID_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
@@ -71,13 +72,17 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       }
     }
 
-    const key = (typeof plannedMealId === 'string' ? plannedMealId : null) || `${date}:${mealType}`;
+    // DB の id は小文字。大文字・混在で送られた plannedMealId が、DB で見つかった id の集合 (foundIds / byId) との照合で
+    // 「見つからない」扱いになり黙って外されないよう、受け取った直後にそろえ、以後 (重複の判定・照合・DB) はそろえた値だけを使う (#1793)
+    const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
+
+    const key = normalizedPlannedMealId || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
     }
     seenKeys.add(key);
 
-    validated.push({ date, mealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
+    validated.push({ date, mealType, plannedMealId: normalizedPlannedMealId });
   }
 
   // 日付の幅 (最も早い日〜最も遅い日) は、画面 (Web・モバイルの「期間を指定」) と同じ MENU_GENERATION_RANGE_MAX_DAYS 日まで (#1482)。

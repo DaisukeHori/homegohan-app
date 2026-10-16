@@ -18,7 +18,7 @@ import { aiDailyLimitMessage } from "../_shared/ai-daily-limit.ts";
 import { SHOPPING_LIST_REQUEST_FAILED_MESSAGE } from "../_shared/stored-failure-messages.ts";
 import { getCorsHeaders, withCors } from "../_shared/cors.ts";
 import { aggregateIngredientOccurrences, InputIngredient } from "../_shared/shopping-list-aggregation.ts";
-import { verifyRequestOwnership } from "../_shared/request-ownership.ts";
+import { normalizeUuid, verifyRequestOwnership } from "../_shared/request-ownership.ts";
 import { replaceActiveShoppingList } from "../_shared/shopping-list-replace.ts";
 import { aiConsentDeniedResponse, checkAiConsent } from "../_shared/ai-consent-guard.ts";
 import { aiConsentDeniedStoredMessage } from "../_shared/ai-consent.ts";
@@ -591,7 +591,10 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { requestId, userId: bodyUserId, startDate, endDate, servingsConfig } = await req.json();
+    const { requestId, userId: rawBodyUserId, startDate, endDate, servingsConfig } = await req.json();
+    // JWT の利用者 id は小文字。大文字・混在で送られた本人の userId が下の !== で 403 にならないよう、受け取った直後にそろえ、
+    // 以後 (判定・所有権の確認・DB) はそろえた値だけを使う (#1793。文字列でない値はそのまま = 今までどおりの判定)
+    const bodyUserId = typeof rawBodyUserId === "string" ? normalizeUuid(rawBodyUserId) : rawBodyUserId;
 
     // 認証（auth-first: body必須フィールドのバリデーションより先に行う）: 二系統を許可する
     // 1) 信頼された内部呼び出し（src/app/api/shopping-list/regenerate/route.ts が
