@@ -15,6 +15,7 @@ import { redirect } from 'next/navigation';
 import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { DSR_ADMIN_PATH } from '@/lib/data-subject-requests/core';
 
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   let actor;
@@ -107,6 +108,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
             >
               <span>サポートチケット</span>
+            </Link>
+          )}
+
+          {/* 個人情報の開示等の請求 (#1178。運営のロールは DSR_OPERATOR_ROLES = admin / super_admin。content_moderator には出さない) */}
+          {isAdmin && (
+            <Link
+              href={DSR_ADMIN_PATH}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>開示等の請求</span>
             </Link>
           )}
 

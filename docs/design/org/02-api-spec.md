@@ -80,6 +80,10 @@
 ```json
 {
   "name": "株式会社 ABC 改名",
+  "industry": "製造",
+  "employee_count": 120,
+  "contact_email": "hr@example.com",
+  "contact_name": "人事 太郎",
   "billing_email": "billing@example.com",
   "primary_color": "#336699",
   "settings": {
@@ -87,6 +91,11 @@
   }
 }
 ```
+
+- 送られたキーだけを更新する。`industry` / `contact_email` / `contact_name` の空文字と null は「消す」(null) として保存する。
+- `employee_count` は 1〜1,000,000 の整数 (要件 02 §10.1) または null。`contact_email` はメールアドレスの形。
+- 組織の設定画面 (03-ui-spec §20.1 BasicInfoForm の業種/従業員数/連絡先) が送るキーは、ここで受け取るキーと一致させる
+  (知らないキーを捨てて 200 を返すと、画面は保存できたと表示してしまう)。
 
 **レスポンス 200**: 更新後の organization オブジェクト
 
