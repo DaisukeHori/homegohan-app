@@ -9,6 +9,8 @@
  *   3. / と /login で CSP 違反が 0 件で、src の無い <script> はすべて nonce を持つ (ハイドレーションも動く)
  *   4. Turnstile (script-src / frame-src) の許可が残っている
  *   5. 受け口 POST /api/csp-report の 204 / 415 / 400 / 413
+ *   6. ログイン後の主な画面 (/home・/menus/weekly ほか) でも CSP 違反が 0 件で、ブラウザの zod が jitless になっている
+ *      (#1721: zod 4 の JIT の試し new Function("") が script-src に当たって報告されていた。src/instrumentation-client.ts で切る)
  *
  * PR の e2e の門 (.github/workflows/e2e-local.yml の 1 本目の npx playwright test と、それを写した scripts/local-ci.sh の PW_ARGS) で流す
  * (tests/e2e-csp-nonce-suite.test.ts が一覧から外れないことを見張る)。CSP_REPORT_ONLY は付けずに起動する (強制を期待する)。
@@ -17,8 +19,10 @@
 import { test, expect, type Page } from "@playwright/test";
 import { CSP_HEADER, CSP_REPORT_PATH, cspDirectivesOf } from "../../src/lib/security/csp";
 import { serveTurnstileOffline } from "./helpers/turnstile-offline";
+import { test as authedTest } from "./fixtures/auth";
 
-// playwright.config.ts の共有ログイン状態 (storageState) を引き継がず、未ログインで確かめる (/login がホームへ回されない)
+// playwright.config.ts の共有ログイン状態 (storageState) を引き継がず、未ログインで確かめる (/login がホームへ回されない)。
+// ログイン後の画面の確認 (authedTest) は、authedPage の fixture がテストごとにセッションの Cookie を入れてログインする
 test.use({ storageState: { cookies: [], origins: [] } });
 
 /** 本番ビルドの初回の描画を待てるよう、画面の要素の待ちだけ長めにする */
@@ -32,6 +36,22 @@ const STATUS_ACCEPTED = 204;
 const STATUS_BAD_REQUEST = 400;
 const STATUS_PAYLOAD_TOO_LARGE = 413;
 const STATUS_UNSUPPORTED_MEDIA_TYPE = 415;
+/** ログイン後の主な画面を順に開くので、1 本のテストの時間の上限を広げる (画面ごとに本番ビルドの初回の描画を待つ) */
+const AUTHED_SCREENS_TIMEOUT = 180_000;
+/**
+ * ログイン後に開く主な画面と、ハイドレーションが済んだ目印 (#1721)。/menus/weekly は整合ゲートで zod の JIT の試しが
+ * 報告された画面。目印は、クライアントのモジュール (zod のスキーマを作るものを含む) が読み込まれて描画まで進んだことを待つためのもの
+ */
+const AUTHED_SCREENS: ReadonlyArray<{ path: string; ready: string }> = [
+  { path: "/home", ready: "body" },
+  // 7 曜日ラベルのいずれか (tests/e2e/04-menu-page.spec.ts と同じ目印)
+  { path: "/menus/weekly", ready: "text=/月|火|水|木|金|土|日/" },
+  { path: "/meals/new", ready: "body" },
+  { path: "/health", ready: "body" },
+  { path: "/profile", ready: "body" },
+  { path: "/settings", ready: "body" },
+];
+
 /** ログイン画面の入力に入れる見本のメールアドレス (送信はしない) */
 const SAMPLE_EMAIL = "csp-nonce@example.com";
 
@@ -69,6 +89,13 @@ async function collectCspViolations(page: Page): Promise<void> {
 
 async function cspViolationsOf(page: Page): Promise<string[]> {
   return page.evaluate(() => (window as unknown as { __cspViolations: string[] }).__cspViolations);
+}
+
+/** ブラウザの zod の設定 (zod は globalThis.__zod_globalConfig に置く) の jitless。src/instrumentation-client.ts が true にする */
+async function zodJitlessOf(page: Page): Promise<boolean | undefined> {
+  return page.evaluate(
+    () => (globalThis as unknown as { __zod_globalConfig?: { jitless?: boolean } }).__zod_globalConfig?.jitless,
+  );
 }
 
 /** src の無い <script> の nonce (ブラウザは属性を隠すので script.nonce で読む) */
@@ -180,4 +207,24 @@ test.describe("#1169 CSP の nonce 方式", () => {
     expect(oversized.status()).toBe(STATUS_PAYLOAD_TOO_LARGE);
     expect((await oversized.json()).code).toBe("CSP_REPORT_TOO_LARGE");
   });
+});
+
+authedTest.describe("#1721 ログイン後の主な画面の CSP 違反", () => {
+  authedTest(
+    "ログイン後の主な画面 (/home・/menus/weekly ほか) を開くと securitypolicyviolation が 0 件で、zod は jitless (new Function の試しをしない)",
+    async ({ authedPage: page }) => {
+      authedTest.setTimeout(AUTHED_SCREENS_TIMEOUT);
+      await collectCspViolations(page);
+
+      for (const screen of AUTHED_SCREENS) {
+        await page.goto(screen.path);
+        // クライアントのチャンクの読み込みとハイドレーション (zod のスキーマが作られるところ) が済むまで待つ
+        await page.waitForLoadState("networkidle");
+        await page.locator(screen.ready).first().waitFor({ state: "visible", timeout: NAVIGATION_TIMEOUT });
+
+        expect(await zodJitlessOf(page), `${screen.path}: zod の jitless`).toBe(true);
+        expect(await cspViolationsOf(page), `${screen.path}: CSP 違反`).toEqual([]);
+      }
+    },
+  );
 });
