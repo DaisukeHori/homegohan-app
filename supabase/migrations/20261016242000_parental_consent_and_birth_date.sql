@@ -1,4 +1,4 @@
--- migration: 20261016235000_parental_consent_and_birth_date.sql
+-- migration: 20261016242000_parental_consent_and_birth_date.sql
 -- Issue #1173 (実装 #1713 段 A): 未成年の年齢確認と保護者の同意 (設計書 docs/design/cross/14-parental-consent.md §6.4)
 --
 -- 背景:
@@ -40,7 +40,7 @@
 --     新しい引数を送る形 (段 B) と同時に反映すること (段 A だけを先に本番へ入れると、子供の追加と、生年月日の無い利用者の同意の記録が失敗する)。
 --
 -- 冪等: ADD COLUMN IF NOT EXISTS・CREATE TABLE / INDEX IF NOT EXISTS・DROP ... IF EXISTS の後に作る・CREATE OR REPLACE FUNCTION。
--- ロールバック: supabase/rollbacks/20261016235000_parental_consent_and_birth_date.down.sql
+-- ロールバック: supabase/rollbacks/20261016242000_parental_consent_and_birth_date.down.sql
 --   (戻すと生年月日と同意の記録が消える。先に Web のデプロイを戻すこと)
 -- 確かめるテスト:
 --   tests/integration/security/parental-consent.test.ts・tests/integration/security/legal-documents-acceptance.test.ts (実 DB)

@@ -1,7 +1,7 @@
 /**
  * #1173 未成年の年齢確認と保護者の同意 (DB) の結合テスト
  * 設計書 docs/design/cross/14-parental-consent.md §6.13 の B (T-DB7〜T-DB32・T-DB34〜T-DB38。T-DB1〜T-DB6・T-DB33 は
- * legal-documents-acceptance.test.ts)。migration: 20261016235000_parental_consent_and_birth_date.sql
+ * legal-documents-acceptance.test.ts)。migration: 20261016242000_parental_consent_and_birth_date.sql
  *
  * 確かめること:
  *   - add_family_child: 生年月日は必須 (列に入れる)。18 歳未満は保護者の電子署名 (版・氏名・親権者の確認) を同じトランザクションで記録する。

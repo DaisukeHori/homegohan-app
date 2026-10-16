@@ -1,4 +1,4 @@
--- rollback: 20261016235000_parental_consent_and_birth_date.sql
+-- rollback: 20261016242000_parental_consent_and_birth_date.sql
 -- #1173 (#1713 段 A) の migration を戻す: 1〜12 の逆順。
 --   12. 4 関数 (create_family_group・accept_family_invite・accept_family_representative_transfer・accept_org_owner_transfer) を
 --       土台の定義に戻し (本文を写す。create_family_group は 20261016200000 の normalize_profile_name の式つき。normalize_profile_name は消さない)、
