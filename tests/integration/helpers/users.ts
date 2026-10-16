@@ -3,6 +3,7 @@
  * Creates real Supabase auth users with operator roles for integration testing
  */
 import { signInForIntegration } from './mfa';
+import { retryIdempotentSetup } from './setup-transient-retry';
 import { supabaseAdmin } from './supabase';
 
 export interface TestUser {
@@ -38,9 +39,9 @@ export async function createTestUserWithRoles(params: {
 
   // Upsert user_profiles with roles
   // user_profiles の必須列は nickname / age_group / gender (display_name 列は存在しない)
-  const { error: profileError } = await supabaseAdmin
-    .from('user_profiles')
-    .upsert(
+  // 既知の行 (id) の upsert なので、ゲートウェイの一時的な失敗のときだけやり直す (#1779。helpers/setup-transient-retry.ts)
+  const { error: profileError } = await retryIdempotentSetup(supabaseAdmin, 'createTestUserWithRoles: user_profiles の upsert', (db) =>
+    db.from('user_profiles').upsert(
       {
         id: userId,
         nickname: `Test ${params.roles.join('+')}`,
@@ -48,8 +49,9 @@ export async function createTestUserWithRoles(params: {
         gender: 'other',
         roles: params.roles,
       },
-      { onConflict: 'id' }
-    );
+      { onConflict: 'id' },
+    ),
+  );
 
   if (profileError) {
     // Cleanup auth user on failure
