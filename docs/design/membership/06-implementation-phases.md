@@ -127,8 +127,7 @@ P0-P7 のタスク分解。各 phase で **並列起動可否** を明示。
 - ペースト API (`POST /api/meals/paste`) と RPC `paste_meal_to_family`。これを呼び出す画面は今のところない。ペースト機能そのものを今後どうするかは、別に判断する。
 - `meals.paste_group_id` と `idx_meals_paste_group` (DB は変更しない)。
 
-まだ作っていないもの (2026-10-08 時点)。
-- 献立画面の mix 表示 (03-ui-spec.md §5)。ビューの切り替え (`FamilyViewSwitcher`) は置いてあるが、選んだ内容で食事を絞り込む処理は無い。
+献立画面の家族の表示 (03-ui-spec.md §5 の mix 表示の後継)。ビューの切り替え (`FamilyViewSwitcher`) で選んだ家族のメンバーの献立を、自分の献立の下に読み取り専用の行で出す。正典は `docs/design/family/10-family-menu-view.md` (#1748)。
 
 ### 検証
 - E2E `09-meal-paste.spec.ts` PASS

@@ -825,7 +825,8 @@ export async function fetchFamilyMenu(
 // tsc:skip (React の hook。段 A の lib を import するので型検査は実装の tsc で行う)
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchFamilyMenu, type FamilyMenuData, type FamilyMenuFetchResult } from '@/lib/membership/family-menu';
+import { fetchFamilyMenu, type FamilyMenuFetchResult } from '@/lib/membership/family-menu';
+import type { FamilyMenuData } from '@/schemas/membership/family-menu';
 
 /** 同じ週の取り直しを抑える時間。page.tsx の weekDataCache の CACHE_TTL (5 分) と同じ */
 export const FAMILY_MENU_CACHE_TTL_MS = 5 * 60 * 1000;
