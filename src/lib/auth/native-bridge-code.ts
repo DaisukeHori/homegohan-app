@@ -28,7 +28,7 @@ export const NATIVE_BRIDGE_CODE_TTL_SECONDS = 60
 
 /**
  * auth-js がセッションを「期限切れ間近」とみなして更新を始める余裕 (秒)。
- * @supabase/auth-js 2.105 の EXPIRY_MARGIN_MS (= 3 × 30 秒)。getSession() / getUser() の内部
+ * @supabase/auth-js 2.117 の EXPIRY_MARGIN_MS (= 3 × 30 秒。値は 2.105 と同じ)。getSession() / getUser() の内部
  * (__loadSession) は、有効期限までの残りがこれ未満だと refresh_token でトークンを更新 (ローテーション) する。
  */
 const AUTH_JS_EXPIRY_MARGIN_SECONDS = 90
