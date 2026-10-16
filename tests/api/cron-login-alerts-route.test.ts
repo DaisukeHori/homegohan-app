@@ -5,7 +5,10 @@
  * worker (src/lib/auth/sessions/login-alert-worker.ts) は vi.mock し、route が渡す deps・alertMode・応答の形を見る。
  * worker の中身は sessions-login-alert-worker.test.ts が見る。
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 
 const mocks = vi.hoisted(() => ({
   processLoginAlerts: vi.fn(),
@@ -104,5 +107,19 @@ describe('GET /api/cron/login-alerts (§14.8)', () => {
     expect(res.status).toBe(500);
     expect(JSON.stringify(await res.json())).not.toContain('claim_login_alerts');
     expect(mocks.logError).toHaveBeenCalled();
+  });
+});
+
+// 設計 §14.8 の逐語: `vercel.json` に `{ "path": "/api/cron/login-alerts", "schedule": "*/1 * * * *" }` (毎分)
+const LOGIN_ALERTS_CRON_PATH = '/api/cron/login-alerts';
+const LOGIN_ALERTS_CRON_SCHEDULE = '*/1 * * * *';
+const VercelJsonCronsSchema = z.object({ crons: z.array(z.object({ path: z.string(), schedule: z.string() })) });
+
+describe('vercel.json の login-alerts の登録 (§14.8)', () => {
+  it('/api/cron/login-alerts がちょうど 1 本、毎分 (*/1 * * * *) で登録されている', () => {
+    const raw = fs.readFileSync(path.resolve(__dirname, '../../vercel.json'), 'utf-8');
+    const { crons } = VercelJsonCronsSchema.parse(JSON.parse(raw));
+    const entries = crons.filter((cron) => cron.path === LOGIN_ALERTS_CRON_PATH);
+    expect(entries).toEqual([{ path: LOGIN_ALERTS_CRON_PATH, schedule: LOGIN_ALERTS_CRON_SCHEDULE }]);
   });
 });
