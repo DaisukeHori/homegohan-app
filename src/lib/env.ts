@@ -167,6 +167,20 @@ export const SERVER_ENV_VARS = {
     whenMissing: '既定の 60 分を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
   },
+  EMAIL_OUTBOX_MAX_ATTEMPTS: {
+    required: false,
+    description:
+      'メールの送信待ち (email_outbox) の試行の上限 (#1193)。最初の 1 回を含む回数で、これだけ失敗したら届けられなかった (dead) にする。1〜20 の整数',
+    whenMissing: '既定の 6 回を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    // 未設定・不正な値の扱い (warn のログ) を、送信待ちの cron の route 1 か所に置いている
+    readOnlyBy: 'src/app/api/cron/email-outbox/route.ts',
+  },
+  EMAIL_OUTBOX_BATCH_SIZE: {
+    required: false,
+    description: 'メールの送信待ち (email_outbox) を 1 回の cron (毎分) で取り出して送る件数の上限 (#1193)。1〜100 の整数',
+    whenMissing: '既定の 20 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/email-outbox/route.ts',
+  },
   SUPPORT_REPLY_TO: {
     required: false,
     description: 'サポート返信メールの返信先アドレス',
