@@ -43,7 +43,7 @@ export function OperatorMfaResetSection({ userId }: { userId: string }) {
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!canSubmit || identityCheck === '') return;
+    if (!canSubmit) return;
     if (!window.confirm(RESET_CONFIRM_MESSAGE)) return;
     setSubmitting(true);
     setMessage(null);
