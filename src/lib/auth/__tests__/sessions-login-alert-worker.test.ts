@@ -71,7 +71,7 @@ function makeDeps(options: {
     accountOf: vi.fn(async () =>
       options.account === undefined ? { email: 'taro@example.com', createdAt: RECENT_ACCOUNT } : options.account,
     ),
-    send: vi.fn(async (r: LoginAlertRow) => {
+    send: vi.fn(async (r: LoginAlertRow, _deviceLabel: string, _to: string) => {
       calls.push(`send:${r.session_id}`);
       return { ok: options.sendOk ?? true };
     }),
