@@ -115,7 +115,12 @@ describe('#1103 項目 10 migration の形', () => {
     const later = fs
       .readdirSync(path.join(ROOT, MIGRATIONS_DIR))
       .filter((f) => MIGRATION_FILE.test(f) && !f.endsWith(`${STEM_SUFFIX}.sql`))
-      .filter((f) => /ALTER TABLE\s+(?:ONLY\s+)?(?:"?public"?\.)?"?org_license_pools"?\s+ADD/i.test(stripComments(read(`${MIGRATIONS_DIR}/${f}`))));
+      .filter((f) =>
+        // 列の追加 (ADD COLUMN / ADD <列名>) だけを見る。制約の追加 (ADD CONSTRAINT。主キー・外部キー) は列を増やさない
+        /ALTER TABLE\s+(?:ONLY\s+)?(?:"?public"?\.)?"?org_license_pools"?\s+ADD\s+(?!CONSTRAINT\b)/i.test(
+          stripComments(read(`${MIGRATIONS_DIR}/${f}`)),
+        ),
+      );
     expect(later).toEqual([]);
   });
 
