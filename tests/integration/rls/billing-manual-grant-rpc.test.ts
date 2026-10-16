@@ -693,7 +693,8 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     expect(await planKeyCached(noExpiry.id)).toBe('pro');
 
     // 引数の不足は 22023 (業務エラーではない)。利用者・プラン (NULL と空文字) のどれが欠けても同じで、行は書かれない。
-    // プランの欠けは、入口の検査を外すとプランの検査の BILL_PLAN_NOT_GRANTABLE (P0001) に落ちるので、コードで区別できる
+    // 入口の検査を外すと、NULL は後の業務エラーの DETAIL が NULL になって 22004、空文字は BILL_PLAN_NOT_GRANTABLE (P0001) になるので、
+    // コードで区別できる
     const missingArgsUser = await createUser('grant-missing-args');
     const missingArgs: Array<[string, Record<string, unknown>]> = [
       ['p_user_id NULL', { p_user_id: null, p_plan_key: 'pro', p_expires_at: null }],
