@@ -119,8 +119,9 @@ STOP_RETRY_WAIT_UNIT="$((10#$STOP_RETRY_WAIT_UNIT))"
 # 入口の Kong の、奥への接続の使い回し (#1779)。
 # CLI 2.62.10 の Kong (public.ecr.aws/supabase/kong:2.8.1) は Kong の既定のまま、奥 (PostgREST など) への接続を使い回す
 # (upstream_keepalive_pool_size = 60・upstream_keepalive_idle_timeout = 60 秒。2026-10-17 に d256 でコンテナの .kong_env を読んで確認)。
-# ところが PostgREST は、使われていない接続を Kong より先に閉じる (2026-10-17 に d256 で測ると、最後の要求から約 58 秒で
-# PostgREST が閉じ、Kong の側には TIME_WAIT が残らなかった。Auth・Storage・pg-meta への接続は Kong が 60 秒で閉じた)。
+# ところが PostgREST は、使われていない接続を Kong の 60 秒より前に閉じることがある (2026-10-17 に d256 で、要求を 6 本ずつ
+# 同時に送ってから 2 秒ごとに Kong の中の netstat を見た。PostgREST への 6 本は最後の要求から約 58 秒で、Kong の側に TIME_WAIT を
+# 残さずに消えた = PostgREST が先に閉じた。Auth・Storage・pg-meta への 6 本ずつは、同じころ Kong の側が TIME_WAIT になった = Kong が閉じた)。
 # PostgREST が閉じるのと、Kong がその接続で次の要求を送るのが重なると、Kong の error.log に
 # 「upstream prematurely closed connection while reading response header from upstream」が出て、呼び出し側には 502
 # (An invalid response was received from the upstream server。エラーの code は無い) が返る。

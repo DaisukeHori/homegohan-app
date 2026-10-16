@@ -7,7 +7,8 @@
  *
  * 原因 (2026-10-17 に d256 で確かめた事実):
  *   - CLI 2.62.10 の Kong 2.8.1 は、Kong の既定のまま奥への接続を使い回す (upstream_keepalive_pool_size = 60・idle 60 秒)
- *   - PostgREST は、使われていない接続を最後の要求から約 58 秒で閉じる (Kong の 60 秒より先)
+ *   - PostgREST は、使われていない接続を Kong の 60 秒より前に閉じることがある (測ったときは最後の要求から約 58 秒。Kong の側に
+ *     TIME_WAIT が残らなかった = PostgREST が先に閉じた)
  *   - 閉じるのと Kong がその接続で次の要求を送るのが重なると、Kong の error.log に
  *     「upstream prematurely closed connection while reading response header from upstream」が出て 502 になる。
  *     nginx は POST・PATCH を別の接続で送り直さないので、落ちるのは状態を変える要求だけ
