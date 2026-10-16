@@ -69,6 +69,7 @@
 - `family_groups.plan_key` は `subscription_plans` への FK
 - `family_basic` (4 名) / `family_pro` (8 名) / `family_addon` (組織同梱)
 - メンバー追加時は `member_limit` チェック
+- `plan_key` / `member_limit` は代表者の個人契約から課金の写像 `billing_apply_stripe_subscription` が同期し、グループの作成と代表者の交代ではトリガー `family_groups_billing_plan_follow_representative` が代表者の契約に合わせる (契約が無ければ作成で `free`。`create_family_group` の `p_plan_key` は効かない。旧代表者の契約は旧代表者のまま。`docs/design/billing/01-billing-core.md` §6.4 (9)・(10)・01-data-model §4.1 の注)
 
 ### 3. 子供メンバーの特殊性
 - `family_members.user_id IS NULL` で子供を表現

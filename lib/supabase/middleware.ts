@@ -18,6 +18,7 @@ import {
   isLegalConsentNoticeEnabled,
   resolveLegalConsent,
 } from '@/lib/legal-consent'
+import { withMinorGuardianStatus } from '@/lib/legal-consent-minor'
 import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalConsentApiDecision } from '@homegohan/shared'
 // Edge Runtime (middleware) で動くので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabasePublicConfig } from '@/lib/env-required'
@@ -48,7 +49,8 @@ function withSessionCookies(from: NextResponse, to: NextResponse): NextResponse 
 // その間も profileError 扱いにすると、全員の凍結判定とオンボーディングの差し戻しが一斉に止まってしまう (#348 の fail-open)。
 // そこで、同意済みの版の列を除いた select でやり直し、同意ゲートだけを素通りさせる。
 const PROFILE_COLUMNS = 'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at'
-const PROFILE_COLUMNS_WITH_LEGAL = `${PROFILE_COLUMNS}, terms_version_accepted, privacy_version_accepted`
+// #1173: 生年月日 (birth_date) も同じ select で読む (同意ゲートが「生年月日がある」と「18 歳未満なら保護者の同意とのつながり」も見るため)
+const PROFILE_COLUMNS_WITH_LEGAL = `${PROFILE_COLUMNS}, terms_version_accepted, privacy_version_accepted, birth_date`
 const PG_UNDEFINED_COLUMN = '42703'
 
 interface MiddlewareProfile {
@@ -59,6 +61,7 @@ interface MiddlewareProfile {
   unban_at?: string | null
   terms_version_accepted?: string | null
   privacy_version_accepted?: string | null
+  birth_date?: string | null
 }
 
 async function fetchMiddlewareProfile(supabase: ReturnType<typeof createServerClient>, userId: string) {
@@ -198,7 +201,8 @@ export async function updateSession(request: NextRequest) {
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
     // #1148: メンテナンスモードの判定にも、ここで読んだユーザー ID とロールを使う (運営ロールは通す)
     // #1442: 同意ゲートも、ここで読んだ同じプロフィールの行で判定する (クエリは増やさない)。
-    //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED)。
+    //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED。
+    //   生年月日の未入力・保護者の同意とのつながりの無い 18 歳未満も (#1173))。
     //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・
     //   本人の権利の請求 (開示・訂正・利用停止・消去。#1751)・問い合わせ・ログ・
     //   状態の窓口・端末の後片付け (通知のトークンの claim。#1636)・利用者のセッションを持たない経路) だけ。役割による例外は無い。
@@ -261,7 +265,8 @@ export async function updateSession(request: NextRequest) {
     if (apiUserId && apiProfileReadable && apiLegalColumnsAvailable) {
       const legalDecision = resolveLegalConsentApiDecision({
         pathname: request.nextUrl.pathname,
-        accepted: apiProfile,
+        // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (rpc を 1 回。失敗は素通り)
+        accepted: await withMinorGuardianStatus(supabase, apiProfile),
         enforce: isLegalConsentEnforced(),
       })
       if (legalDecision === 'deny') {
@@ -410,7 +415,8 @@ export async function updateSession(request: NextRequest) {
       if (legalColumnsAvailable) {
         const legalDecision = resolveLegalConsent({
           pathname: request.nextUrl.pathname,
-          accepted: profile,
+          // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (rpc を 1 回。失敗は素通り)
+          accepted: await withMinorGuardianStatus(supabase, profile),
           enforce: isLegalConsentEnforced(),
           notice: isLegalConsentNoticeEnabled(),
         })

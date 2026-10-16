@@ -1497,8 +1497,9 @@ CREATE TABLE personal_subscriptions (
                               REFERENCES subscription_plans(plan_key)
                               ON UPDATE CASCADE ON DELETE RESTRICT,
   -- ステータス
+  -- incomplete = Stripe の incomplete (初回の支払いが済んでいない。live ではない。docs/design/billing/01-billing-core.md §6.2)
   status                   VARCHAR(20) NOT NULL DEFAULT 'trialing'
-    CHECK (status IN ('trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due')),
+    CHECK (status IN ('incomplete', 'trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due')),
   -- 試用
   trial_started_at         TIMESTAMPTZ,
   trial_ends_at            TIMESTAMPTZ,
@@ -1517,6 +1518,12 @@ CREATE TABLE personal_subscriptions (
   stripe_customer_id       VARCHAR(255),
   stripe_subscription_id   VARCHAR(255) UNIQUE,
   stripe_price_id          VARCHAR(255),
+  -- Stripe の写し (billing/01 §6.2。書くのは DB 関数 billing_apply_stripe_subscription だけ)
+  stripe_synced_at         TIMESTAMPTZ,  -- Stripe から取り直した時刻。これより古い取り直しは適用しない
+  stripe_status            VARCHAR(30),  -- Stripe の Subscription.status の素の値
+  cancel_at_period_end     BOOLEAN NOT NULL DEFAULT false,  -- true なら期間末に解約される
+  billing_interval         VARCHAR(10)
+    CHECK (billing_interval IS NULL OR billing_interval IN ('month', 'year')),
   -- クーポン適用
   active_coupon_redemption_id UUID REFERENCES coupon_redemptions(id),
   -- メタ
@@ -1537,8 +1544,8 @@ CREATE INDEX idx_personal_subscriptions_trial_ending ON personal_subscriptions(t
 
 **RLS ポリシー**:
 - SELECT: 本人 (`user_id = auth.uid()`) or admin / super_admin / finance
-- INSERT: 本人 (Stripe Webhook 経由) or admin
-- UPDATE: 本人 (cancel / pause) or admin / super_admin / Stripe Webhook
+- INSERT: admin / super_admin (本人は書けない。Stripe の写しは service_role の `billing_apply_stripe_subscription` が書く。billing/01 §6.2)
+- UPDATE: admin / super_admin (本人は書けない。解約の予約・取り消しは API が Stripe に送り、写像が写す。Stripe の写しは service_role の `billing_apply_stripe_subscription` が書く)
 - DELETE: 不可 (履歴保持)
 
 **`active_coupon_redemption_id` のロジック** (重複適用不可、§4.19):
@@ -2693,6 +2700,8 @@ CREATE TABLE parental_consents (
   consent_version VARCHAR(20) NOT NULL  -- 同意文書のバージョン
 );
 ```
+
+> 注: 設計は `docs/design/cross/14-parental-consent.md`。表の列はそちらが正 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。
 
 ### 17.11 impersonation (なりすまし支援) — 提供しない (#1124)
 

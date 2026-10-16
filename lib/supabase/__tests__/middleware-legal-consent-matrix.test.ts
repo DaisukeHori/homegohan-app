@@ -65,6 +65,8 @@ type EnforceKey = keyof typeof ENFORCE_VALUES;
 const CURRENT = {
   terms_version_accepted: LEGAL_DOCUMENTS.terms_of_service.version,
   privacy_version_accepted: LEGAL_DOCUMENTS.privacy_policy.version,
+  // 成人の placeholder。#1173 で生年月日が無いと同意ゲートを通れないため
+  birth_date: '1990-01-01',
 };
 const STATES = {
   notAccepted: { label: '未同意', accepted: { terms_version_accepted: null, privacy_version_accepted: null } },

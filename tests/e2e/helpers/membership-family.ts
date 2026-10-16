@@ -11,6 +11,12 @@
 import type { Page } from "@playwright/test";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
+import { todayLocal } from "../../../packages/shared/src/date-utils";
+import {
+  ADULT_AGE_YEARS,
+  PARENTAL_CONSENT_DOCUMENT,
+  calculateAgeYears,
+} from "../../../packages/shared/src/parental-consent";
 
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 dotenvConfig({ path: path.resolve(__dirname, "../../../../.env.local") });
@@ -314,8 +320,70 @@ export async function acceptFamilyInvite(params: {
 // addChild
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 子供の既定の年齢 (addChild で age も birth_date も省いたとき) */
+const DEFAULT_CHILD_AGE = 8;
+/** 2 月 29 日の生まれを平年に写すときの日 (2 月 28 日) */
+const LEAP_DAY_FALLBACK = "02-28";
+/** E2E の子供の同意に入れる署名の氏名 */
+const TEST_GUARDIAN_SIGNED_NAME = "テスト 保護者";
+
+/**
+ * JST の今日 (todayLocal) に age 歳になる生年月日 (今日の年から age を引いた年の同じ月日)。
+ * 今日が 2 月 29 日で、その年が閏年でなければ 2 月 28 日にする (Date の toISOString は使わない。#1173)
+ */
+export function birthDateForAge(age: number): string {
+  const [year, month, day] = todayLocal().split("-");
+  const birthYear = Number(year) - age;
+  const isLeapYear = (birthYear % 4 === 0 && birthYear % 100 !== 0) || birthYear % 400 === 0;
+  const monthDay = month === "02" && day === "29" && !isLeapYear ? LEAP_DAY_FALLBACK : `${month}-${day}`;
+  return `${String(birthYear).padStart(4, "0")}-${monthDay}`;
+}
+
+/**
+ * 18 歳未満の子供の行に、保護者の同意 (parental_consents) を service_role の REST で 1 行入れる (#1173)。
+ * 本番の経路 (add_family_child) と同じ「同意の無い未成年の子供はいない」状態にする (昇格の spec が PARENTAL_CONSENT_REQUIRED で落ちないように)。
+ * 18 歳以上なら何もしない。
+ */
+export async function insertParentalConsentForChild(params: {
+  familyId: string;
+  memberId: string;
+  parentUserId: string;
+  birthDate: string;
+}): Promise<void> {
+  const age = calculateAgeYears(params.birthDate, todayLocal());
+  if (age === null || age >= ADULT_AGE_YEARS) return;
+  const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
+  const resp = await fetch(`${supabaseUrl}/rest/v1/parental_consents`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      apikey: serviceRoleKey,
+      Authorization: `Bearer ${serviceRoleKey}`,
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify({
+      family_member_id: params.memberId,
+      family_id: params.familyId,
+      parent_user_id: params.parentUserId,
+      signed_name: TEST_GUARDIAN_SIGNED_NAME,
+      guardian_attested: true,
+      consent_version: PARENTAL_CONSENT_DOCUMENT.version,
+      child_birth_date: params.birthDate,
+      child_age_at_signing: age,
+    }),
+  });
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new Error(
+      `[membership-family] parental_consents INSERT 失敗 (${resp.status}): ${text.substring(0, 300)}`,
+    );
+  }
+}
+
 /**
  * service_role API 経由で子供メンバを直接 INSERT する。
+ * 生年月日は列 family_members.birth_date に入れる (引数の birth_date、無ければ age (既定 8) から作る。#1173)。
+ * 18 歳未満なら、続けて保護者の同意の行を入れる (署名者 = ownerUserId)。
  * @returns family_members.id (member_id)
  */
 export async function addChild(params: {
@@ -327,14 +395,13 @@ export async function addChild(params: {
 }): Promise<string> {
   const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
 
+  const age = params.age ?? DEFAULT_CHILD_AGE;
+  const birthDate = params.birth_date ?? birthDateForAge(age);
   const childProfile: Record<string, unknown> = {
-    age: params.age ?? 8,
+    age,
     gender: "unspecified",
     allergies: [],
   };
-  if (params.birth_date) {
-    childProfile.birth_date = params.birth_date;
-  }
 
   const resp = await fetch(`${supabaseUrl}/rest/v1/family_members`, {
     method: "POST",
@@ -350,6 +417,7 @@ export async function addChild(params: {
       role: "child",
       display_name: params.name,
       child_profile: childProfile,
+      birth_date: birthDate,
       share_meals: true,
       share_health: false,
       share_menu: true,
@@ -367,6 +435,12 @@ export async function addChild(params: {
   if (!rows[0]?.id) {
     throw new Error("[membership-family] addChild: member id が返却されませんでした");
   }
+  await insertParentalConsentForChild({
+    familyId: params.familyId,
+    memberId: rows[0].id,
+    parentUserId: params.ownerUserId,
+    birthDate,
+  });
   return rows[0].id;
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { NextResponse } from 'next/server';
+import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 
 // Supabase クライアントのモック
 const mockGetUser = vi.fn();
@@ -118,5 +119,27 @@ describe('POST /api/family/groups', () => {
 
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('RPC_FAILED');
+  });
+});
+
+describe('POST /api/family/groups: 18 歳未満の本人 (#1173 T-MN1)', () => {
+  it('RPC が MINOR_ACCOUNT_NOT_ALLOWED を含む文を返したら 403 { error: { code, message: MEMBERSHIP_ERROR_MESSAGES の文 } } で、DB の生の文を本文に出さない (S21)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
+    mockRpc.mockResolvedValue({ data: null, error: { message: 'MINOR_ACCOUNT_NOT_ALLOWED: caller user_profiles.birth_date is under 18' } });
+
+    const res = await POST(
+      new Request('http://localhost/api/family/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(validBody),
+      }),
+    );
+    const text = await res.text();
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(text)).toEqual({
+      error: { code: 'MINOR_ACCOUNT_NOT_ALLOWED', message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED] },
+    });
+    expect(text).not.toContain('birth_date');
   });
 });

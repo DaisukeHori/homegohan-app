@@ -6,6 +6,7 @@
 // - 既存 pending リクエストの表示 / 取消 (DELETE) / 再送 (フォーム再表示) を追加
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { PARENTAL_CONSENT_COPY } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
 
 interface FamilyMember {
@@ -122,6 +123,15 @@ export default function PromoteMemberPage() {
       const json = await res.json();
 
       if (!res.ok) {
+        // #1173: 保護者の同意が無い 13〜17 歳の子供 / 13 歳未満の子供は、専用の文を出す
+        if (json.error?.code === 'PARENTAL_CONSENT_REQUIRED') {
+          setError(PARENTAL_CONSENT_COPY.promotionConsentMissing);
+          return;
+        }
+        if (json.error?.code === 'PROMOTION_UNDER_COPPA_AGE') {
+          setError(PARENTAL_CONSENT_COPY.promotionUnderCoppaAge);
+          return;
+        }
         setError(json.error?.message ?? 'リクエストの送信に失敗しました');
         return;
       }

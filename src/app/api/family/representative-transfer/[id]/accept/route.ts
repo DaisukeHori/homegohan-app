@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
@@ -19,6 +19,8 @@ const TRANSFER_ACCEPT_MESSAGES: Partial<Record<MembershipErrorCode | 'UNKNOWN', 
   [MembershipErrorCode.TRANSFER_ACCEPTOR_NOT_IN_FAMILY]:
     'あなたは現在この家族のメンバーではないため、代表者権限を引き継げません。',
   [MembershipErrorCode.TRANSFER_PROPOSAL_EXPIRED]: '譲渡提案の有効期限が切れています。',
+  // #1173: 18 歳未満の本人は代表者を引き受けない (DB の関数が先頭で断る)
+  [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
 };
 
 export async function POST(

@@ -404,9 +404,11 @@ describe('出力する列に、秘密・他人を指す列が残っていない'
 
   it('同意の記録 (IP アドレス・User-Agent を含む) は本人の個人データなので出力する', () => {
     // 秘密ではなく本人の個人データ。除外すると同意の証跡が本人に渡らなくなる
-    for (const name of ['cookie_consents', 'terms_acceptances', 'external_data_consents']) {
+    for (const name of ['cookie_consents', 'terms_acceptances', 'external_data_consents', 'parental_consents']) {
       expect(exportedNames.has(name), name).toBe(true);
     }
+    // #1173 (T-EX1): 保護者の同意は署名した本人 (parent_user_id) の行だけ。家族の他の大人が署名した行は出さない
+    expect(ACCOUNT_EXPORT_TABLES.find((t) => t.table === 'parental_consents')?.scope).toEqual({ kind: 'self', column: 'parent_user_id' });
   });
 });
 
