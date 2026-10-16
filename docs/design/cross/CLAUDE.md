@@ -19,9 +19,12 @@
 | `13a-legal-consent-api-server.md` | 規約の同意ゲートを `/api` に掛ける (middleware の `/api` の分岐・許可リスト・`GET /api/legal/status`・`packages/shared` の判定と文面) | 08 §7.2 |
 | `14-parental-consent.md` | 未成年の年齢確認と保護者の同意 (生年月日・`parental_consents`・同意ゲートの判定) | #1173 |
 | `15-data-subject-requests.md` | 開示・訂正・利用停止の請求の受付 (表・本人と運営の経路・応答期限) | #1178 |
+| `16-auth-history-sessions.md` | ログイン履歴・不審ログインの通知・セッションの一覧と失効・パスワードの再利用の防止 | #1190 #1189 #1198 |
+| `17-backup-automation.md` | 長期バックアップの自動化と DR 訓練の記録 | #1129 #1191 |
 | `18-csp-nonce.md` | 本番の CSP の nonce 方式・違反の報告の受け口 | #1169 |
+| `19-private-photo-buckets.md` | 食事写真と冷蔵庫写真のバケットを非公開にする (公開 URL を使う経路の全列挙・保存済みの URL の扱い) | #1365 |
 
-10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。16・17 は並行して設計中の冊が使う。
+10・11 は欠番 (13a は分冊前の 13 の番号を引き継いでいる)。
 
 ## このドメインの役割
 
