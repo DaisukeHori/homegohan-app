@@ -215,7 +215,8 @@ describe('必須の環境変数が無いとき (リリースビルド: __DEV__=f
     jest.spyOn(console, 'error').mockImplementation(() => {});
     const { supabase } = loadSupabaseModule();
 
-    for (const use of [
+    // #1621 変数の名前を use にしない (eslint-plugin-react-hooks 7 が React 19 の use と見なして rules-of-hooks で止める)
+    for (const access of [
       () => supabase.auth,
       () => supabase.from('user_profiles'),
       () => supabase.auth.getSession(),
@@ -223,7 +224,7 @@ describe('必須の環境変数が無いとき (リリースビルド: __DEV__=f
     ]) {
       let thrown: (Error & { missing?: string[] }) | undefined;
       try {
-        use();
+        access();
       } catch (error) {
         thrown = error as Error & { missing?: string[] };
       }
