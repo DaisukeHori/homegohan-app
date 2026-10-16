@@ -179,16 +179,21 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `FAM_PARENTAL_CONSENT_REQUIRED` | 保護者同意が必要 | 403 |
 | `FAM_CHILD_PROMOTE_AUTH_REQUIRED` | 子供アカウント独立化には親の再認証が必要 | 401 |
 
+注: 家族の API の実コードは接頭辞なしの `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) を使う。保護者の同意は `PARENTAL_CONSENT_REQUIRED` (403)。ほかに `CHILD_BIRTH_DATE_REQUIRED` / `CHILD_BIRTH_DATE_INVALID` (400)・`PARENTAL_CONSENT_VERSION_MISMATCH` (409)・`PARENTAL_CONSENT_SIGNER_NOT_ADULT` (403)・`PROMOTION_UNDER_COPPA_AGE` (403)・`MINOR_ACCOUNT_NOT_ALLOWED` (403。家族と組織の API) (設計書 `docs/design/cross/14-parental-consent.md`)。
+
 #### LEGAL 系
 
 利用規約・プライバシーポリシーの同意 (`docs/design/cross/08-legal-compliance.md` §7.2・`docs/design/cross/13a-legal-consent-api-server.md`)。
 
 | コード | 説明 | HTTP |
 |--------|------|------|
-| `LEGAL_CONSENT_REQUIRED` | 規約への同意が必要 (middleware の `/api` の分岐が、未同意の人の API を止める。本文は平たい形 `{ error, code }`) | 403 |
+| `LEGAL_CONSENT_REQUIRED` | 規約への同意が必要 (middleware の `/api` の分岐が、未同意の人の API を止める。生年月日の未入力・保護者の同意とのつながりの無い 18 歳未満も止める (設計書 14)。本文は平たい形 `{ error, code }`) | 403 |
 | `LEGAL_VERSION_MISMATCH` | 同意を送った版が、いま有効な版と違う (`POST /api/legal/accept`。本文に `current` を添える) | 409 |
 | `LEGAL_BAD_REQUEST` | 同意の記録の入力が不正 (`POST /api/legal/accept`) | 400 |
 | `LEGAL_UNSUPPORTED_MEDIA_TYPE` | 同意の記録の Content-Type が JSON でない (`POST /api/legal/accept`) | 415 |
+| `LEGAL_BIRTH_DATE_REQUIRED` | 生年月日が未記録で、body に `birth_date` が無い (`POST /api/legal/accept`。設計書 14) | 400 |
+| `LEGAL_BIRTH_DATE_INVALID` | 生年月日が暦に無い日・未来・120 年超 (`POST /api/legal/accept`。設計書 14) | 400 |
+| `LEGAL_MINOR_SELF_SIGNUP_REFUSED` | 13 歳未満、または保護者の同意とのつながりの無い 18 歳未満の自己登録 (`POST /api/legal/accept`。何も記録しない。設計書 14) | 403 |
 | `CSP_REPORT_INVALID` | **[NEW]** CSP の違反の報告の本文の形が不正 (`POST /api/csp-report`。cross/18 §9.10) | 400 |
 | `CSP_REPORT_TOO_LARGE` | **[NEW]** CSP の違反の報告の本文が大きすぎる (`POST /api/csp-report`。cross/18 §9.10) | 413 |
 | `CSP_REPORT_UNSUPPORTED_MEDIA_TYPE` | **[NEW]** CSP の違反の報告の Content-Type が `application/csp-report` / `application/json` でない (`POST /api/csp-report`。cross/18 §9.10) | 415 |

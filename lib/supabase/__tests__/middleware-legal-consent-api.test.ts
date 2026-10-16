@@ -17,6 +17,8 @@
  *   route の中の分岐 (動的な区間は固定の値で置き換える)・本番の LEGAL_CONSENT_ENFORCE の実値 (§6.13 の限界の表)。
  *
  * 画面の同意ゲート (#1174) は middleware-legal-consent.test.ts。モックはそれと同型。
+ * #1173 (設計書 cross/14 T-API5): 生年月日の未入力・保護者の同意とのつながりの無い 18 歳未満も 403。
+ *   18 歳未満のときだけ rpc('legal_minor_has_guardian_path') を 1 回聞く (失敗は素通り)。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -43,6 +45,7 @@ const mockGetSession = vi.fn();
 const mockGetUser = vi.fn();
 const mockMaybeSingle = vi.fn();
 const mockSelect = vi.fn();
+const mockRpc = vi.fn();
 const mockCreateServerClient = vi.fn();
 
 mockCreateServerClient.mockImplementation(() => ({
@@ -60,6 +63,7 @@ mockCreateServerClient.mockImplementation(() => ({
       };
     },
   }),
+  rpc: mockRpc,
 }));
 
 vi.mock('@supabase/ssr', () => ({
@@ -77,7 +81,7 @@ import { config } from '@/proxy';
 import { stubSupabasePublicEnv } from './supabase-public-env';
 
 const PROFILE_COLUMNS_WITH_LEGAL =
-  'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted';
+  'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted, birth_date';
 const PROFILE_COLUMNS_WITHOUT_LEGAL = 'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at';
 
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
@@ -87,6 +91,11 @@ const FROZEN_AT = '2026-07-01T00:00:00.000Z';
 
 const ACCEPTED_CURRENT = { terms: CURRENT_TERMS, privacy: CURRENT_PRIVACY };
 const NOT_ACCEPTED = { terms: null, privacy: null };
+/** 成人の placeholder。#1173 で生年月日が無いと同意画面 / 403 になるため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+/** #1173 の 17 歳の it で固定する時刻 (JST 2026-10-16 12:00) と、その日に 17 歳の生年月日 */
+const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+const BIRTH_DATE_17 = '2008-10-17';
 
 /** 動的な区間 ([id] など) を置き換える固定の値 (middleware は path だけで決めるので、値は何でもよい) */
 const DYNAMIC_SEGMENT_SAMPLE = 'sample-id';
@@ -108,7 +117,7 @@ function consentProfile(
       unban_at: null,
       ...(accepted === 'columns-missing'
         ? {}
-        : { terms_version_accepted: accepted.terms, privacy_version_accepted: accepted.privacy }),
+        : { terms_version_accepted: accepted.terms, privacy_version_accepted: accepted.privacy, birth_date: ADULT_BIRTH_DATE }),
       ...overrides,
     },
     error: null,
@@ -529,6 +538,57 @@ describe('updateSession — /api の同意ゲート (#1442): 403 の形・順序
     const post = await updateSession(apiRequest('/home', { method: 'POST' }));
     expect(post.status).toBe(200);
     expect(post.headers.get('location')).toBeNull();
+  });
+});
+
+describe('updateSession — /api の同意ゲートの生年月日と保護者の同意とのつながり (#1173 T-API5)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it('版は同意済みで birth_date が無い人の /api/meals は 403 LEGAL_CONSENT_REQUIRED (本文は legalConsentRequiredBody() のまま)。許可リストのパスは通る', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: null }));
+
+    const res = await updateSession(apiRequest('/api/meals'));
+    await expectLegalConsentRequired(res);
+
+    for (const path of ['/api/legal/accept', '/api/legal/status', '/api/account/delete']) {
+      const exempt = await updateSession(apiRequest(path, { method: 'POST' }));
+      expect(await isLegalConsentDenied(exempt), path).toBe(false);
+    }
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('17 歳の人は rpc(legal_minor_has_guardian_path) が false なら 403、true なら 200、エラーなら 200 (素通り)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: BIRTH_DATE_17 }));
+
+    mockRpc.mockResolvedValueOnce({ data: false, error: null });
+    await expectLegalConsentRequired(await updateSession(apiRequest('/api/meals')));
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('legal_minor_has_guardian_path');
+
+    mockRpc.mockResolvedValueOnce({ data: true, error: null });
+    expect((await updateSession(apiRequest('/api/meals'))).status).toBe(200);
+
+    mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'boom' } });
+    expect((await updateSession(apiRequest('/api/meals'))).status).toBe(200);
+    expect(mockRpc).toHaveBeenCalledTimes(3);
+  });
+
+  it('1990-01-01 の人は rpc を呼ばずに通す。/api の分岐の select は PROFILE_COLUMNS_WITH_LEGAL (birth_date を含む) の 1 回だけ', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT));
+
+    const res = await updateSession(apiRequest('/api/meals'));
+
+    expect(res.status).toBe(200);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockSelect).toHaveBeenCalledWith(PROFILE_COLUMNS_WITH_LEGAL);
+    expect(PROFILE_COLUMNS_WITH_LEGAL.endsWith(', birth_date')).toBe(true);
   });
 });
 
