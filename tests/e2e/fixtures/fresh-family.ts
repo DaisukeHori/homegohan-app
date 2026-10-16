@@ -20,6 +20,12 @@ import {
   injectSession,
   type FreshUserInfo,
 } from "./fresh-user";
+import { birthDateForAge, insertParentalConsentForChild } from "../helpers/membership-family";
+
+/** E2E の大人の生年月日の placeholder (#1173。18 歳未満の子供の同意に署名する代表者の年齢の検査を通し、強制ありのサーバーで生年月日の同意画面に回されない) */
+const ADULT_BIRTH_DATE = "1990-01-01";
+/** 子供の年齢の最初の値 (i 番目の子供は CHILD_BASE_AGE + i 歳) */
+const CHILD_BASE_AGE = 8;
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ws = require("ws") as typeof WebSocket;
@@ -120,6 +126,7 @@ async function upsertUserProfile(
     age_group: "30s",
     gender: "unspecified",
     roles: ["user"],
+    birth_date: ADULT_BIRTH_DATE,
     onboarding_completed_at:
       fields.onboarding_completed_at ?? new Date().toISOString(),
     ...(fields.family_id !== undefined ? { family_id: fields.family_id } : {}),
@@ -197,6 +204,8 @@ async function insertFamilyMember(params: {
   role: "representative" | "adult" | "child";
   displayName: string;
   childProfile?: Record<string, unknown>;
+  /** 子供の行 (user_id NULL) の生年月日。必須 (#1173 の CHECK family_members_child_birth_date_required) */
+  birthDate?: string;
 }): Promise<string> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -214,6 +223,9 @@ async function insertFamilyMember(params: {
   }
   if (params.childProfile) {
     body.child_profile = params.childProfile;
+  }
+  if (params.birthDate) {
+    body.birth_date = params.birthDate;
   }
 
   const resp = await fetch(`${supabaseUrl}/rest/v1/family_members`, {
@@ -348,16 +360,26 @@ async function buildFamilyFixture(opts: {
   // 7. child メンバを追加 (user_id=NULL)
   const children: FamilyMemberInfo[] = [];
   for (let i = 0; i < childCount; i++) {
+    const childAge = CHILD_BASE_AGE + i;
+    const childBirthDate = birthDateForAge(childAge);
     const childMemberId = await insertFamilyMember({
       familyId,
       userId: null,
       role: "child",
       displayName: `子供${i + 1}`,
       childProfile: {
-        age: 8 + i,
+        age: childAge,
         gender: i % 2 === 0 ? "male" : "female",
         allergies: [],
       },
+      birthDate: childBirthDate,
+    });
+    // #1173: 18 歳未満の子供には保護者の同意 (署名者 = 代表者) を入れる (本番の add_family_child と同じ状態)
+    await insertParentalConsentForChild({
+      familyId,
+      memberId: childMemberId,
+      parentUserId: ownerUser.id,
+      birthDate: childBirthDate,
     });
 
     children.push({

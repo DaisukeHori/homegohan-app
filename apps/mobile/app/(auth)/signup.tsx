@@ -4,6 +4,7 @@ import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { SIGNUP_MINOR_NOTICE } from "@homegohan/shared";
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -281,6 +282,11 @@ export default function SignupScreen() {
             </Text>
           </Pressable>
         </View>
+
+        {/* #1173: 18 歳未満の方はご自身では登録できない旨の注記 (年齢の確認は登録後の同意画面で行う) */}
+        <Text testID="signup-minor-notice" style={{ fontSize: 12, color: colors.textMuted, marginTop: spacing.sm }}>
+          {SIGNUP_MINOR_NOTICE}
+        </Text>
 
         {/* ログインリンク */}
         <View style={{ flexDirection: "row", justifyContent: "center", marginTop: 24, gap: 4 }}>

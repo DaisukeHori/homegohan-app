@@ -11,6 +11,9 @@
  *     ご利用いただけないことと、データ削除の依頼先 (お問い合わせ) を案内する。
  *     API は呼ばない。signOut に失敗したら案内に進まず、エラーを出す
  *
+ * #1173 (設計書 cross/14 T-F1〜T-F7): 生年月日の欄 (needsBirthDate)・18 歳未満の自己登録の案内 (minor_refused)・
+ *   保護者の同意とのつながりが無い 18 歳未満の案内 (guardianMissing)・「登録をやめる」(退会) の流れ
+ *
  * このリポジトリには @testing-library/react が無いため、サーバー側は react-dom/server、フォームは react-dom/client + act で描画する。
  */
 import { act } from 'react';
@@ -18,6 +21,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+  LEGAL_CONSENT_BIRTH_DATE_COPY,
   LEGAL_DOCUMENTS,
   LEGAL_DOCUMENT_LABELS,
   LEGAL_DOCUMENT_PATHS,
@@ -45,6 +49,9 @@ const mocks = vi.hoisted(() => ({
   clearUserScopedLocalStorage: vi.fn(),
   notifyNativeSignOut: vi.fn(),
   broadcastSignOut: vi.fn(),
+  rpc: vi.fn(),
+  deleteOwnAccount: vi.fn(),
+  signOutAfterAccountDeletion: vi.fn(),
   callOrder: [] as string[],
 }));
 
@@ -60,6 +67,7 @@ vi.mock('@/lib/supabase/server', () => ({
   createClient: () => ({
     auth: { getUser: mocks.getUser },
     from: () => ({ select: () => ({ eq: () => ({ maybeSingle: mocks.maybeSingle }) }) }),
+    rpc: mocks.rpc,
   }),
 }));
 
@@ -87,6 +95,23 @@ vi.mock('@/lib/native-auth-bridge', () => ({
   },
 }));
 
+// #1173: 「登録をやめる」の退会の呼び出し (文の定数と関数はそのまま、通信する 2 つだけ差し替える)
+vi.mock('@/lib/account-self-service', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/account-self-service')>();
+  return {
+    ...actual,
+    deleteOwnAccount: () => {
+      mocks.callOrder.push('deleteOwnAccount');
+      return mocks.deleteOwnAccount();
+    },
+    signOutAfterAccountDeletion: (client: unknown) => {
+      mocks.callOrder.push('signOutAfterAccountDeletion');
+      return mocks.signOutAfterAccountDeletion(client);
+    },
+  };
+});
+
+const { ACCOUNT_DELETE_FAILED_MESSAGE, accountDeletionBlockedMessage } = await import('@/lib/account-self-service');
 const { default: LegalConsentPage } = await import('@/app/legal-consent/page');
 const { default: LegalConsentForm } = await import('@/app/legal-consent/LegalConsentForm');
 
@@ -95,6 +120,11 @@ const { default: LegalConsentForm } = await import('@/app/legal-consent/LegalCon
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
 const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
 const ALL_OUTDATED = ['terms_of_service', 'privacy_policy'] as const;
+/** 成人の placeholder。#1173 で生年月日が無いと同意画面を出すため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+/** #1173 の 17 歳の it で固定する時刻 (JST 2026-10-16 12:00) と、その日に 17 歳の生年月日 */
+const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+const BIRTH_DATE_17 = '2008-10-17';
 
 function profileRow(data: Record<string, unknown> | null) {
   mocks.maybeSingle.mockResolvedValue({ data, error: null });
@@ -111,6 +141,12 @@ beforeEach(() => {
   mocks.getUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
   profileRow(null);
   mocks.signOut.mockResolvedValue({ error: null });
+  mocks.deleteOwnAccount.mockResolvedValue({ kind: 'deleted' });
+  mocks.signOutAfterAccountDeletion.mockResolvedValue(undefined);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe('/legal-consent ページ (サーバー側)', () => {
@@ -125,7 +161,7 @@ describe('/legal-consent ページ (サーバー側)', () => {
   });
 
   it('★現行の版に同意済みの人は、同意画面を見せず、戻り先へ回す', async () => {
-    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY });
+    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: ADULT_BIRTH_DATE });
 
     await expect(renderPage({ next: '/menus/weekly?date=2026-10-08' })).rejects.toThrow('NEXT_REDIRECT');
 
@@ -133,7 +169,7 @@ describe('/legal-consent ページ (サーバー側)', () => {
   });
 
   it('戻り先が無い・安全でないときは /home', async () => {
-    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY });
+    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: ADULT_BIRTH_DATE });
 
     for (const next of [undefined, '', 'https://evil.example/', '//evil.example/', '/legal-consent', '/api/account/export']) {
       mocks.redirect.mockClear();
@@ -143,7 +179,7 @@ describe('/legal-consent ページ (サーバー側)', () => {
   });
 
   it('next が複数あっても、先頭だけを使う', async () => {
-    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY });
+    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: ADULT_BIRTH_DATE });
 
     await expect(renderPage({ next: ['/pantry', '/profile'] })).rejects.toThrow('NEXT_REDIRECT');
 
@@ -218,7 +254,16 @@ describe('/legal-consent フォーム (クライアント側)', () => {
 
   async function renderForm(props: Partial<React.ComponentProps<typeof LegalConsentForm>> = {}) {
     await act(async () => {
-      root.render(<LegalConsentForm next="/menus/weekly" isReconsent={false} outdated={[...ALL_OUTDATED]} {...props} />);
+      root.render(
+        <LegalConsentForm
+          next="/menus/weekly"
+          isReconsent={false}
+          outdated={[...ALL_OUTDATED]}
+          needsBirthDate={false}
+          guardianMissing={false}
+          {...props}
+        />,
+      );
     });
   }
 
@@ -536,5 +581,287 @@ describe('/legal-consent フォーム (クライアント側)', () => {
 
       expect(container.querySelector('[data-testid="legal-consent-dsr-link"] a[href="/settings/data-requests"]')).not.toBeNull();
     });
+  });
+});
+
+describe('#1173 /legal-consent ページ (サーバー側) の生年月日と保護者の同意とのつながり (T-F6・T-F7)', () => {
+  it('T-F6: isLegalConsentComplete なら next へ、birth_date だけ無い人にはフォームを needsBirthDate=true で出す。17 歳で rpc が true の人は next へ送る', async () => {
+    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: null });
+    const html = await renderPage({ next: '/pantry' });
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(html).toContain('name="birth_date"');
+    expect(html).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.introBirthDateOnly);
+    expect(html.match(/type="checkbox"/g)).toHaveLength(2);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: BIRTH_DATE_17 });
+    mocks.rpc.mockResolvedValueOnce({ data: true, error: null });
+    await expect(renderPage({ next: '/pantry' })).rejects.toThrow('NEXT_REDIRECT');
+    expect(mocks.redirect).toHaveBeenCalledWith('/pantry');
+    expect(mocks.rpc).toHaveBeenCalledWith('legal_minor_has_guardian_path');
+  });
+
+  it('T-F7: 17 歳で rpc が false の人には guardianMissing の案内だけを出す (生年月日の欄・チェック・「同意しない」は出さない)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    profileRow({ terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: BIRTH_DATE_17 });
+    mocks.rpc.mockResolvedValueOnce({ data: false, error: null });
+
+    const html = await renderPage({ next: '/pantry' });
+
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(html).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading);
+    expect(html).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton);
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain('name="birth_date"');
+    expect(html).not.toContain('同意しない');
+  });
+});
+
+describe('#1173 /legal-consent フォーム (クライアント側) の生年月日と未成年の案内 (T-F1〜T-F5・T-F7)', () => {
+  let container: HTMLDivElement;
+  let root: Root;
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let locationMock: { assign: ReturnType<typeof vi.fn>; reload: ReturnType<typeof vi.fn> };
+
+  function jsonResponse(body: unknown, status = 200) {
+    return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
+  }
+
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => jsonResponse({ accepted: true }));
+    vi.stubGlobal('fetch', fetchMock);
+    locationMock = { assign: vi.fn(), reload: vi.fn() };
+    vi.stubGlobal('location', locationMock);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(async () => {
+    await act(async () => {
+      root.unmount();
+    });
+    container.remove();
+    vi.unstubAllGlobals();
+  });
+
+  async function renderForm(props: Partial<React.ComponentProps<typeof LegalConsentForm>> = {}) {
+    await act(async () => {
+      root.render(
+        <LegalConsentForm
+          next="/menus/weekly"
+          isReconsent={false}
+          outdated={[...ALL_OUTDATED]}
+          needsBirthDate
+          guardianMissing={false}
+          {...props}
+        />,
+      );
+    });
+  }
+
+  const checkboxes = () => Array.from(container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'));
+  const birthInput = () => container.querySelector<HTMLInputElement>('input[name="birth_date"]');
+  const submitButton = () => container.querySelector<HTMLButtonElement>('button[type="submit"]')!;
+  const buttonWithText = (text: string) =>
+    Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find((b) => b.textContent?.includes(text)) ?? null;
+  const alertText = () => container.querySelector('[role="alert"]')?.textContent ?? null;
+
+  async function setBirthDate(value: string) {
+    const input = birthInput()!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    await act(async () => {
+      setter.call(input, value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+  }
+
+  async function checkBoth() {
+    for (const checkbox of checkboxes()) {
+      await act(async () => {
+        checkbox.click();
+      });
+    }
+  }
+
+  async function click(button: HTMLButtonElement | null) {
+    expect(button).not.toBeNull();
+    await act(async () => {
+      button!.click();
+    });
+  }
+
+  it.each([
+    ['新規 (S1)', { isReconsent: false, outdated: [...ALL_OUTDATED] }],
+    ['版は同意済みで生年月日だけが無い (S3)', { isReconsent: true, outdated: [] }],
+  ] as const)('T-F1: needsBirthDate のとき生年月日の欄 (required) が出て、チェックは最初どちらもオフ。欄だけでは押せず、欄 + 2 チェックで押せる。POST に birth_date が入る — %s', async (_name, props) => {
+    await renderForm({ ...props, outdated: [...props.outdated] });
+
+    const input = birthInput();
+    expect(input).not.toBeNull();
+    expect(input!.required).toBe(true);
+    expect(input!.getAttribute('aria-required')).toBe('true');
+    expect(checkboxes().every((box) => !box.checked)).toBe(true);
+    expect(submitButton().disabled).toBe(true);
+
+    await setBirthDate(ADULT_BIRTH_DATE);
+    expect(submitButton().disabled).toBe(true);
+
+    await checkBoth();
+    expect(submitButton().disabled).toBe(false);
+
+    await click(submitButton());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({
+      terms_version: CURRENT_TERMS,
+      privacy_version: CURRENT_PRIVACY,
+      birth_date: ADULT_BIRTH_DATE,
+    });
+
+    if (props.isReconsent) {
+      expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.introBirthDateOnly);
+      expect(container.textContent).not.toContain('改定あり');
+    } else {
+      expect(container.textContent).not.toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.introBirthDateOnly);
+    }
+  });
+
+  it('T-F1: 未来の日付では押せず、欄の下に invalid の文を出す', async () => {
+    await renderForm();
+    await checkBoth();
+    await setBirthDate('2999-01-01');
+    expect(submitButton().disabled).toBe(true);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
+  });
+
+  it('T-F2: needsBirthDate が false のとき欄は出ず、POST に birth_date を入れない', async () => {
+    await renderForm({ needsBirthDate: false });
+    expect(birthInput()).toBeNull();
+    await checkBoth();
+    await click(submitButton());
+    const [, init] = fetchMock.mock.calls[0];
+    expect(JSON.parse(init.body)).toEqual({ terms_version: CURRENT_TERMS, privacy_version: CURRENT_PRIVACY });
+  });
+
+  it('T-F1: 400 LEGAL_BIRTH_DATE_INVALID は欄のエラーにする', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: 'LEGAL_BIRTH_DATE_INVALID' } }, 400));
+    await renderForm();
+    await setBirthDate(ADULT_BIRTH_DATE);
+    await checkBoth();
+    await click(submitButton());
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.invalid);
+    expect(locationMock.assign).not.toHaveBeenCalled();
+  });
+
+  async function reachMinorRefused() {
+    fetchMock.mockResolvedValue(jsonResponse({ error: { code: 'LEGAL_MINOR_SELF_SIGNUP_REFUSED' } }, 403));
+    await renderForm();
+    await setBirthDate('2011-04-01');
+    await checkBoth();
+    await click(submitButton());
+  }
+
+  it('T-F3: 403 LEGAL_MINOR_SELF_SIGNUP_REFUSED で案内 (見出し・2 つのボタン) が出る。フォームは出ない (S4)', async () => {
+    await reachMinorRefused();
+
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedBody);
+    expect(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.fixButton)).not.toBeNull();
+    expect(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton)).not.toBeNull();
+    expect(container.querySelector('form')).toBeNull();
+    expect(checkboxes()).toHaveLength(0);
+    expect(locationMock.assign).not.toHaveBeenCalled();
+  });
+
+  it('T-F4: 「生年月日を直す」でフォームに戻り、入力を直して送り直せる (S5)', async () => {
+    await reachMinorRefused();
+    await click(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.fixButton));
+
+    expect(birthInput()).not.toBeNull();
+    fetchMock.mockResolvedValue(jsonResponse({ accepted: true }));
+    await setBirthDate(ADULT_BIRTH_DATE);
+    expect(submitButton().disabled).toBe(false);
+    await click(submitButton());
+
+    expect(JSON.parse(fetchMock.mock.calls[1][1].body).birth_date).toBe(ADULT_BIRTH_DATE);
+    expect(locationMock.assign).toHaveBeenCalledWith('/menus/weekly');
+  });
+
+  it('T-F5: 「登録をやめる」で deleteOwnAccount → signOutAfterAccountDeletion の順に呼び、「登録をやめました」が出る', async () => {
+    await reachMinorRefused();
+    mocks.callOrder.length = 0;
+    await click(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton));
+
+    expect(mocks.callOrder).toEqual(['deleteOwnAccount', 'signOutAfterAccountDeletion']);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnHeading);
+    expect(container.querySelector('a[href="/signup"]')).not.toBeNull();
+  });
+
+  it.each([
+    ['failed', { kind: 'failed' }, ACCOUNT_DELETE_FAILED_MESSAGE],
+    ['unauthorized', { kind: 'unauthorized' }, ACCOUNT_DELETE_FAILED_MESSAGE],
+    ['blocked', { kind: 'blocked', message: '代表者のため退会できません', blocker: 'family_group' }, accountDeletionBlockedMessage('代表者のため退会できません')],
+  ] as const)('T-F5: deleteOwnAccount が %s なら案内に戻り、文を出す (signOutAfterAccountDeletion を呼ばない)', async (_name, result, message) => {
+    await reachMinorRefused();
+    mocks.deleteOwnAccount.mockResolvedValue(result);
+    await click(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton));
+
+    expect(mocks.signOutAfterAccountDeletion).not.toHaveBeenCalled();
+    expect(alertText()).toContain(message);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading);
+    expect(container.textContent).not.toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnHeading);
+  });
+
+  it('T-F7: guardianMissing のときは「保護者の同意とのつながりがありません」と「登録をやめる」だけを出す (生年月日の欄・チェック・「同意しない」は出ない)', async () => {
+    await renderForm({ guardianMissing: true });
+
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingBody);
+    expect(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton)).not.toBeNull();
+    expect(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.fixButton)).toBeNull();
+    expect(buttonWithText('同意しない')).toBeNull();
+    expect(birthInput()).toBeNull();
+    expect(checkboxes()).toHaveLength(0);
+  });
+
+  it('T-F7: guardianMissing の「登録をやめる」は deleteOwnAccount → signOutAfterAccountDeletion の順で「登録をやめました」', async () => {
+    await renderForm({ guardianMissing: true });
+    mocks.callOrder.length = 0;
+    await click(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton));
+
+    expect(mocks.callOrder).toEqual(['deleteOwnAccount', 'signOutAfterAccountDeletion']);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnHeading);
+  });
+
+  it.each([
+    ['failed', { kind: 'failed' }, ACCOUNT_DELETE_FAILED_MESSAGE],
+    ['blocked', { kind: 'blocked', message: null, blocker: null }, accountDeletionBlockedMessage(null)],
+  ] as const)('T-F7: guardianMissing の「登録をやめる」が %s なら guardian_missing の案内に戻って文を出す', async (_name, result, message) => {
+    await renderForm({ guardianMissing: true });
+    mocks.deleteOwnAccount.mockResolvedValue(result);
+    await click(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton));
+
+    expect(mocks.signOutAfterAccountDeletion).not.toHaveBeenCalled();
+    expect(alertText()).toContain(message);
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading);
+  });
+
+  it('退会の送信中はボタンを無効にし、「削除しています...」を出す', async () => {
+    let resolveDelete: (value: unknown) => void = () => {};
+    mocks.deleteOwnAccount.mockImplementation(() => new Promise((resolve) => (resolveDelete = resolve)));
+    await renderForm({ guardianMissing: true });
+    await click(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton));
+
+    const busy = buttonWithText('削除しています...');
+    expect(busy).not.toBeNull();
+    expect(busy!.disabled).toBe(true);
+
+    await act(async () => {
+      resolveDelete({ kind: 'deleted' });
+    });
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnHeading);
   });
 });

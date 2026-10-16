@@ -67,7 +67,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 - 記録の保持期間: 記録の行は、最後の失敗 (`last_failed_at`。無ければ `updated_at`) から **8 日** が経つと、毎日 03:45 JST の pg_cron のジョブ `cleanup-stale-login-failures-and-grant-claims` が消す (`supabase/migrations/20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql`、#1492)。8 日は、回数を 0 に戻すまでの時間の上限 (10080 分 = 7 日) より 1 日長いので、数えている途中の行は消さない (上限より古い行は、どの設定でも回数の判定に使われない)。
 - ロックをしないので、ロック中の応答 (423)・ロックの残り時間の案内・ロックの通知のメール (本人・運営)・ロックを外す API は無い。
 - **ボットの確認が働かないもの**: モバイルのアプリのログイン (アプリはまだ Supabase を直接呼ぶ)、Supabase の Auth API を直接呼ぶ攻撃 (URL と anon key は公開されている)、Google ログイン。直接呼ぶ攻撃は、Supabase の CAPTCHA (§6 手順 5) とレート制限 (§3.1) で止める。
-- DB には、ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) が残っている。アプリからは呼ばない。消すかどうかは別に決める (関数・列の削除になるため)。
+- ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) は、DB から消してある (`supabase/migrations/20261017010000_drop_auth_login_lock_objects.sql`、#1542)。
 
 ---
 
@@ -323,6 +323,7 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 
 - **ダッシュボードの前提**: Supabase の Authentication → Multi-Factor で、TOTP の Enroll / Verify が有効であること (Supabase の既定は有効)。ローカルの Supabase は `scripts/supabase-local.sh` が組み立てる config.toml の `[auth.mfa.totp]` で有効にしている。
 - **`OPERATOR_MFA_ENFORCE_FROM` の決め方**: 未設定なら、未登録の必須ロールは次のアクセスから登録を求められる (猶予なし)。運営に登録の期間を渡したいときは、ISO 8601 + タイムゾーンの日時 (例: `2026-11-01T00:00:00+09:00`) を入れる。その日時までは未登録でも運営の画面を使え、画面の上に期日のバナーが出る。登録済みの運営には効かない (常に 6 桁を求める)。形が違う値・存在しない日時は無視して猶予なしになる (警告のログを 1 回出す)。全員が登録したら消す。
+- 別の super_admin の解除 (`/admin/users/{id}` の「二段階認証を解除」) は、対象の認証アプリとバックアップコードを消す前に、対象のすべての端末のログインを終える (SQL の関数 `operator_mfa_end_sessions`。cross/12 §11.5・§14.7)。対象はすべての端末で再ログインになる。DB (PostgREST) を直接呼ぶ経路だけは access token の期限 (Supabase の JWT の寿命の設定。既定 1 時間) まで残る (設計書 §0.3)
 - **super_admin が 2 人とも認証アプリを使えなくなったとき (最後の手段)**: バックアップコードも無いときは、Supabase のダッシュボードの Authentication → Users → 対象の利用者 → MFA factors で factor を削除する。次のログインで登録を求められるので、登録し直す。⚠️ factor の削除だけでは、その利用者の既存のセッションは終わらない (2026-10-16 のローカルの GoTrue v2.183.0 の実測で、削除の前の aal1 のセッションが残った)。アプリの回復 (`/settings/security/mfa/recover`) は route が全セッションを終えるが、ダッシュボードの削除はそれをしない。6 桁を入れたセッション (aal2) が他の端末に残っていると、factor が消えてもそのセッションは運営の入口を通る (設計書 P-3) ので、端末の紛失・盗難が疑われるときは、登録し直した後にパスワードの再設定 (`/auth/reset-password`。すべての端末からログアウトする) を行う。
 - **JWT の署名鍵が対称 (HS256) のプロジェクト**では、運営の要求ごとに `getClaims` が Auth へ 1 回問い合わせる (getUser と同程度)。非対称の鍵に移すとサーバーの中で確かめられる。
 - **アプリ (ホームのタブの WebView で開く運営画面)** の猶予の扱いは Web と同じ。猶予中は未登録の必須ロールも通り (画面の上に期日のバナー)、猶予を過ぎると WebView の中の「ブラウザで登録」の案内で止まる (設計書 §16。アプリのネイティブの運営の区画は 2026-10-16 に削除したので、区画のゲートは無い)。

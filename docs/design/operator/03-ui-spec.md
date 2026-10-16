@@ -147,6 +147,11 @@
 - 時系列ノート一覧
 - 追加フォーム (Markdown エディタ)
 
+**二段階認証を解除** (段 C #1707。`src/components/admin/OperatorMfaResetSection.tsx`。cross/12 §15・§15.3):
+- 出す条件: 実行者が super_admin で、対象が二段階認証の必須ロール (super_admin / admin / finance / org_industrial_doctor) のどれかを持つとき
+- 理由 (必須・500 文字まで)・本人確認の方法 (選択)・「本人確認を行った」のチェックがそろうまで [解除する] を押せない
+- 押すと確認ダイアログ → `POST /api/super-admin/admins/{id}/mfa/reset` → 消した数 (認証アプリ・バックアップコード) か、失敗の文を出す。対象はすべての端末でログアウトされる
+
 ---
 
 ## 7. `/admin/organizations` — 組織一覧

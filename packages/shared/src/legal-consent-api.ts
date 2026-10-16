@@ -1,6 +1,6 @@
 /**
  * 利用規約・プライバシーポリシーの同意ゲートを /api とモバイルのネイティブの画面にも掛ける (#1442)。
- * サーバー (Edge の middleware・API Route)・Web・モバイルで同じ値と判定を使うための、純粋な定数と関数だけのファイル。
+ * サーバー (proxy (旧 middleware)・API Route)・Web・モバイルで同じ値と判定を使うための、純粋な定数と関数だけのファイル。
  * Node / Deno / RN 固有の API は使わない。副作用は無い。
  *
  *   - LEGAL_CONSENT_EXEMPT_API_PATHS / isLegalConsentExemptApiPath: 未同意でも止めない /api (理由つき)
@@ -8,7 +8,7 @@
  *   - LEGAL_CONSENT_REQUIRED_*: 止めたときの 403 (平たい { error, code }。#1154 の AI 同意と同じ形)
  *   - resolveLegalConsentStatus / isLegalConsentStatus: GET /api/legal/status の応答 (サーバーが作り、モバイルが読む)
  *
- * 同意済みかどうかの判定そのもの (hasAcceptedCurrentLegalDocuments) は legal-versions.ts にあり、ここはそれを呼ぶだけ。
+ * 同意ゲートを通れるかの判定 (isLegalConsentComplete / getLegalConsentGaps。版 + 生年月日 + 18 歳未満なら保護者の同意とのつながり。#1173) は parental-consent.ts にあり、ここはそれを呼ぶだけ。
  *
  * ⚠ 下の import は './legal-versions'・'./push-token-claim' からの相対 import にしている (packages/shared の中から自分のパッケージ名で
  *   import しない。Metro / Jest は exports の "." しか解決しない)。
@@ -17,10 +17,15 @@ import {
   LEGAL_DOCUMENTS,
   LEGAL_DOCUMENT_TYPES,
   getOutdatedLegalDocuments,
-  hasAcceptedCurrentLegalDocuments,
-  type AcceptedLegalVersions,
   type LegalDocumentType,
 } from './legal-versions';
+import {
+  LEGAL_CONSENT_GAP_VALUES,
+  getLegalConsentGaps,
+  isLegalConsentComplete,
+  type LegalConsentGap,
+  type LegalConsentProfile,
+} from './parental-consent';
 import { PUSH_TOKEN_CLAIM_API_PATH } from './push-token-claim';
 
 /** 本人の同意の状況を返す API (#1442 で新設) */
@@ -142,23 +147,28 @@ export type LegalConsentApiDecision = 'allow' | 'deny';
 export interface ResolveLegalConsentApiInput {
   /** リクエストの path (クエリを含まない) */
   pathname: string;
-  /** user_profiles の行の同意済みの版。行が無いときは null / undefined (= 未同意) */
-  accepted: AcceptedLegalVersions | null | undefined;
+  /**
+   * user_profiles の行の同意済みの版と生年月日。18 歳未満なら withMinorGuardianStatus が入れた minor_guardian_ok を含む。
+   * 行が無いときは null / undefined (= 未同意)
+   */
+  accepted: LegalConsentProfile | null | undefined;
   /** LEGAL_CONSENT_ENFORCE=on か (lib/legal-consent.ts の isLegalConsentEnforced の結果) */
   enforce: boolean;
+  /** JST の今日 (YYYY-MM-DD)。省くと todayLocal()。テストが日を固定するため */
+  today?: string;
 }
 
 /**
  * middleware の /api の分岐が呼ぶ判定。凍結・メンテナンスの判定の後に呼ぶ (順は middleware が決める)。
  *   - 強制していない (enforce = false) → allow (既存の挙動のまま)
  *   - 許可リストのパス → allow
- *   - それ以外で、いま有効な版に同意していない (未同意・旧版・行なし) → deny (403 LEGAL_CONSENT_REQUIRED)
+ *   - それ以外で、同意ゲートを満たしていない (未同意・旧版・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満) → deny (403 LEGAL_CONSENT_REQUIRED)
  * 役割 (admin / super_admin) による例外は作らない (規約はスタッフにも適用される)。
  */
 export function resolveLegalConsentApiDecision(input: ResolveLegalConsentApiInput): LegalConsentApiDecision {
   if (!input.enforce) return 'allow';
   if (isLegalConsentExemptApiPath(input.pathname)) return 'allow';
-  return hasAcceptedCurrentLegalDocuments(input.accepted) ? 'allow' : 'deny';
+  return isLegalConsentComplete(input.accepted, input.today) ? 'allow' : 'deny';
 }
 
 /** いま有効な文書の版と施行日 (status の応答。snake_case) */
@@ -177,12 +187,17 @@ export interface LegalConsentAcceptedVersions {
 export interface LegalConsentStatus {
   /** LEGAL_CONSENT_ENFORCE=on か */
   enforced: boolean;
-  /** いま有効な版に (両方) 同意済みか */
+  /** 同意ゲートを満たしているか (= gaps が空。#1173 から版だけでなく生年月日と、18 歳未満なら保護者の同意とのつながりも含む) */
   accepted: boolean;
   /** 同意画面を出す必要があるか = enforced && !accepted。アプリのゲートはこの値だけを見る */
   required: boolean;
   /** いま有効な版に同意していない文書 (未同意・旧版) */
   outdated: LegalDocumentType[];
+  /**
+   * 同意画面で埋めるもの (getLegalConsentGaps の答え。順は 文書 → 'birth_date' → 'guardian_consent')。
+   * アプリは 'birth_date' で生年月日の欄を、'guardian_consent' で退会の案内を出す
+   */
+  gaps: LegalConsentGap[];
   /** いま有効な版と施行日。同意画面はこの値を表示し、同意の記録 (POST /api/legal/accept) にもこの版を送る (端末のバンドルの定数は使わない) */
   current: Record<LegalDocumentType, LegalConsentCurrentDocument>;
   /** 本人の同意済みの版 (NULL = 未同意) */
@@ -190,19 +205,23 @@ export interface LegalConsentStatus {
 }
 
 export interface ResolveLegalConsentStatusInput {
-  accepted: AcceptedLegalVersions | null | undefined;
+  accepted: LegalConsentProfile | null | undefined;
   enforced: boolean;
+  /** JST の今日 (YYYY-MM-DD)。省くと todayLocal()。テストが日を固定するため */
+  today?: string;
 }
 
-/** status route が呼ぶ。判定は resolveLegalConsentApiDecision と同じ関数 (hasAccepted…) に基づく */
+/** status route が呼ぶ。判定は resolveLegalConsentApiDecision と同じ述語 (isLegalConsentComplete = gaps が空) に基づく */
 export function resolveLegalConsentStatus(input: ResolveLegalConsentStatusInput): LegalConsentStatus {
   const outdated = getOutdatedLegalDocuments(input.accepted);
-  const accepted = outdated.length === 0;
+  const gaps = getLegalConsentGaps(input.accepted, input.today);
+  const accepted = gaps.length === 0;
   return {
     enforced: input.enforced,
     accepted,
     required: input.enforced && !accepted,
     outdated,
+    gaps,
     current: {
       terms_of_service: {
         version: LEGAL_DOCUMENTS.terms_of_service.version,
@@ -237,6 +256,8 @@ export function isLegalConsentStatus(body: unknown): body is LegalConsentStatus 
   if (typeof b.enforced !== 'boolean' || typeof b.accepted !== 'boolean' || typeof b.required !== 'boolean') return false;
   const documentTypes: readonly string[] = LEGAL_DOCUMENT_TYPES;
   if (!Array.isArray(b.outdated) || !b.outdated.every((v) => typeof v === 'string' && documentTypes.includes(v))) return false;
+  const gapValues: readonly string[] = LEGAL_CONSENT_GAP_VALUES;
+  if (!Array.isArray(b.gaps) || !b.gaps.every((v) => typeof v === 'string' && gapValues.includes(v))) return false;
   const current = b.current;
   if (!current || typeof current !== 'object') return false;
   if (!LEGAL_DOCUMENT_TYPES.every((type) => isCurrentDocument((current as Record<string, unknown>)[type]))) return false;

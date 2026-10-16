@@ -27,7 +27,7 @@ describe('next.config.mjs headers (#1044)', () => {
     vi.unstubAllEnvs();
   });
 
-  // #1169: CSP は src/middleware.ts が毎リクエスト nonce つきで付ける (src/lib/security/csp.ts)。
+  // #1169: CSP は src/proxy.ts が毎リクエスト nonce つきで付ける (src/lib/security/csp.ts)。
   // headers() にも書くと応答に 2 つ並び、ブラウザは両方を満たすものしか通さないので、nonce の無い方が nonce つきのスクリプトを止める。
   // 方針の中身 (#1166 PostHog・F6-09 の許可済みドメイン・Supabase の origin) の検査は src/__tests__/lib/security/csp.test.ts にある
   it('headers() に Content-Security-Policy が無い (CSP は middleware が付ける。二重に付けない)', async () => {

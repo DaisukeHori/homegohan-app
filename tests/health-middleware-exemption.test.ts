@@ -5,7 +5,7 @@
  * #1181: 死活監視用の /api/health が、認証ミドルウェア (Supabase のセッション処理) を通らず、
  * 未ログインのまま route に届くことの回帰テスト。
  *
- *   1. src/middleware.ts の matcher: ちょうど /api/health だけをミドルウェアの対象から外す。
+ *   1. src/proxy.ts の matcher: ちょうど /api/health だけをミドルウェアの対象から外す。
  *      /api/health/* (健康記録 API) や /health (健康記録ページ) は従来どおり対象のまま。
  *   2. updateSession: matcher を通って呼ばれた場合でも、未ログインの /api/health を
  *      ログインへリダイレクトしたり 401/403 で止めたりしない。
@@ -33,7 +33,7 @@ vi.mock('@/lib/feature-flags', () => ({
   isFeatureEnabled: vi.fn(async () => false),
 }));
 
-import { config } from '@/middleware';
+import { config } from '@/proxy';
 import { updateSession } from '@/lib/supabase/middleware';
 import { stubSupabasePublicEnv } from '../lib/supabase/__tests__/supabase-public-env';
 
@@ -46,7 +46,7 @@ function runsMiddleware(pathname: string): boolean {
   return new RegExp(`^${matcher}$`).test(pathname);
 }
 
-describe('src/middleware.ts の matcher (#1181)', () => {
+describe('src/proxy.ts の matcher (#1181)', () => {
   it('ちょうど /api/health はミドルウェアを通さない', () => {
     expect(runsMiddleware('/api/health')).toBe(false);
   });

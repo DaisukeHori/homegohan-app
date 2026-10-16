@@ -319,6 +319,14 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない',
   },
+  // ---- #1707 運営ロールの MFA: 別の super_admin による解除 (段 C。docs/design/cross/12-operator-mfa.md §11.5・§23 N-32) ----
+  {
+    sig: 'operator_mfa_end_sessions(uuid)',
+    anon: false,
+    authenticated: false,
+    serviceRole: true,
+    why: '別の super_admin による MFA の解除 (段 C) が service_role で呼び、対象の auth.sessions の行を消す。anon / authenticated は呼べない (cross/12 §11.5)',
+  },
 ];
 
 describe('#1103 (7) B: 関数ごとの EXECUTE 権限 (決定表)', () => {

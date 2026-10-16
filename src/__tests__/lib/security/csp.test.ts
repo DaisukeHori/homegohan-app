@@ -2,7 +2,7 @@
 /**
  * #1169: 本番の CSP の方針 (src/lib/security/csp.ts) の検査 (docs/design/cross/18-csp-nonce.md §15・§21)。
  *
- * 方針の正本は csp.ts の 1 か所で、src/middleware.ts が毎リクエスト nonce つきで付ける (next.config.mjs には書かない)。
+ * 方針の正本は csp.ts の 1 か所で、src/proxy.ts が毎リクエスト nonce つきで付ける (next.config.mjs には書かない)。
  * 以前 next.config.mjs の CSP を見ていた検査 (#1166 PostHog・F6-09 の許可済みドメイン・Supabase の origin) もここへ移した。
  */
 import fs from 'node:fs';

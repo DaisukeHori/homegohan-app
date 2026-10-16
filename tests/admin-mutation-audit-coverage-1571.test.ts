@@ -66,6 +66,7 @@ const EXPECTED: Record<string, Expectation> = {
   'src/app/api/operator/membership/family/[id]/transfer/route.ts POST': 'audited',
   'src/app/api/operator/membership/org/[id]/dissolve/route.ts POST': 'audited',
   'src/app/api/operator/membership/org/[id]/transfer/route.ts POST': 'audited',
+  'src/app/api/super-admin/admins/[id]/mfa/reset/route.ts POST': { exempt: '監査 super_admin.mfa.reset は recordMfaAudit (src/lib/auth/mfa/audit.ts) の中の recordAdminAudit で、削除より先に fail-closed で書く (docs/design/cross/12-operator-mfa.md §14.7・§17.1)。別のファイルの関数なので、この走査では audited と判定できない' },
   'src/app/api/super-admin/coupons/[id]/apply/route.ts POST': 'audited',
   'src/app/api/super-admin/coupons/[id]/route.ts DELETE': 'audited',
   'src/app/api/super-admin/coupons/[id]/route.ts PATCH': 'audited',

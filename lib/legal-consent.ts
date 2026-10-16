@@ -14,9 +14,13 @@
  * どちらも on でない既定では、未同意の人にも何も出さず、誰も止めない。同意の記録は、同意画面 /legal-consent を
  * 開いて同意したときだけ残る (強制やお知らせを始める日はオーナーが決める)。
  *
- * ここは副作用のない関数だけを置く (Edge ランタイムの middleware から import されるので、Node 専用の API は使わない)。
+ * 生年月日の未入力と、保護者の同意とのつながりが無い 18 歳未満も同意画面へ回す (#1173。判定は packages/shared の
+ * isLegalConsentComplete。つながりは呼ぶ側が lib/legal-consent-minor.ts の withMinorGuardianStatus で DB に聞いて入れる)。
+ *
+ * ここは副作用のない関数だけを置く。ブラウザで動くコンポーネント (LegalConsentForm・LegalConsentBanner) も import するので、
+ * Node 専用の API は使わない (全リクエストの前に動く proxy (src/proxy.ts) も lib/supabase/middleware.ts 経由で読む)。
  */
-import { hasAcceptedCurrentLegalDocuments, type AcceptedLegalVersions } from '@homegohan/shared';
+import { isLegalConsentComplete, type LegalConsentProfile } from '@homegohan/shared';
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect';
 import {
   LEGAL_CONSENT_PATH,
@@ -122,8 +126,11 @@ export function isLegalConsentExemptPath(pathname: string): boolean {
 
 export interface ResolveLegalConsentInput {
   pathname: string;
-  /** プロフィールの同意済みの版。行が無い (新規登録したばかり) ときは null / undefined */
-  accepted: AcceptedLegalVersions | null | undefined;
+  /**
+   * プロフィールの同意済みの版と生年月日 (18 歳未満なら withMinorGuardianStatus が入れた minor_guardian_ok を含む)。
+   * 行が無い (新規登録したばかり) ときは null / undefined
+   */
+  accepted: LegalConsentProfile | null | undefined;
   /** LEGAL_CONSENT_ENFORCE=on か (isLegalConsentEnforced の結果) */
   enforce: boolean;
   /** LEGAL_CONSENT_NOTICE=on か (isLegalConsentNoticeEnabled の結果)。強制しているときは見ない */
@@ -131,7 +138,7 @@ export interface ResolveLegalConsentInput {
 }
 
 export function resolveLegalConsent(input: ResolveLegalConsentInput): LegalConsentDecision {
-  if (hasAcceptedCurrentLegalDocuments(input.accepted)) return 'none';
+  if (isLegalConsentComplete(input.accepted)) return 'none';
   if (isLegalConsentExemptPath(input.pathname)) return 'none';
   if (input.enforce) return 'redirect';
   return input.notice ? 'banner' : 'none';
@@ -162,7 +169,7 @@ export interface FirstSignInLegalConsentInput {
   next: string;
   /** user_profiles の行。新規登録の直後は行が無い (null) */
   profile:
-    | (AcceptedLegalVersions & {
+    | (LegalConsentProfile & {
         onboarding_started_at?: string | null;
         onboarding_completed_at?: string | null;
       })

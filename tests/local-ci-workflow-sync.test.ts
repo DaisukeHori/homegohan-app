@@ -94,6 +94,8 @@ const EXCLUDED_WORKFLOWS: Record<string, string> = {
   ".github/workflows/prod-schema-snapshot.yml": "本番 Supabase のスキーマを読み取る (本番の接続情報を使う)。ローカル CI は本番に触れない",
   ".github/workflows/deploy-supabase-migrations.yml":
     "PR ジョブは本番の migration 台帳とのドリフトを検知する (本番に接続する)。migration を含む PR は CI の緑を待ってからマージする (CLAUDE.md の「マージ前の検査」)",
+  ".github/workflows/db-backup.yml":
+    "backup ジョブは本番に接続して取得する (PR では動かない)。roundtrip-check ジョブはローカルのスタックの public を落として戻す破壊的な検査で、local-ci.sh の段が使う同じ枠のスタックと同居できない。scripts/backup-db.mjs・scripts/lib/backup-db.mjs・scripts/supabase-local.sh・この workflow を変える PR は CI のこのジョブの緑を待ってからマージする (手元では node scripts/backup-db.mjs roundtrip-local --slot <空いている枠> で同じ検査を流せる)",
 };
 
 /** スクリプトで作業用 worktree を指す変数。CI の作業ディレクトリ (リポジトリの直下) にあたる */

@@ -34,6 +34,11 @@ const user = await requireRole(['admin', 'super_admin', 'sales']);
 
 必須ロール (super_admin / admin / finance / org_industrial_doctor) の利用者には、`requireRole` が AAL2 (認証アプリの 6 桁を入れたセッション) を求める (`cross/12-operator-mfa.md` §13.1)。aal1 のセッションは `MfaRequiredError` (`ForbiddenError` の派生。code `AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED`) で、route の既存の `catch (ForbiddenError)` が 403 を返す (cross/12 §19.3)。画面 (layout / page) は `requireRoleForPage` (`src/lib/auth/page-guard.ts`) を呼び、2FA が未完了なら MFA の画面へ回す (cross/12 §13.4)。
 
+**`POST /api/super-admin/admins/{id}/mfa/reset`** (運営の別の人 (super_admin) による二段階認証の解除。cross/12 §14.7・§14.8.2・段 C #1707):
+- 認可は `requireRole(['super_admin'])` (AAL2)。自分自身は 403 `OP_SELF_MODIFY`。本文 `{ reason, identity_check, identity_confirmed: true }` (`MfaResetBodySchema`。違えば 400 `OP_INVALID_INPUT`)。対象の `user_profiles` が無ければ 404 `NOT_FOUND`。
+- 手順: 消す前の数 (factor の一覧・未使用のバックアップコードの数) を読む → 監査 `super_admin.mfa.reset` (critical。fail-closed) → 対象の全セッションを終える (service_role だけが呼べる SQL の関数 `operator_mfa_end_sessions`。cross/12 §11.5) → factor を消す → バックアップコードを消す → 200 `{ data: { user_id, factors_deleted, backup_codes_deleted } }`。
+- 500 のときに済んでいること: 読み取りの失敗・監査の失敗は何もしていない (監査行も無い / 書けていない)。全セッションの終了の失敗は監査行だけが残り、何も消えていない (もう一度実行できる)。factor・コードの削除の失敗はセッションが終わった後で、消せたところまで変わっている (もう一度実行すれば残りを消せる)。
+
 ### 3.2 レスポンス形式
 
 成功:
@@ -400,7 +405,7 @@ BAN 解除
 > | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す。切り替えは運営画面 `/super-admin/flags` | OFF |
 >
 > フラグの値はサーバーのメモリに最大 30 秒覚えるため、PATCH で切り替えてから全員に反映されるまで最大 30 秒かかる
-> (下の PATCH の「即座に」は、この遅れを除いた意味)。ミドルウェア (Edge) と API route (Node) は別々にメモリを持つ。
+> (下の PATCH の「即座に」は、この遅れを除いた意味)。proxy (`src/proxy.ts`。#1744 で middleware から改名し、Node.js の runtime で動く) と API route は、メモリを共有するとは限らない。
 
 ### GET /api/super-admin/flags
 フラグ一覧
@@ -490,7 +495,7 @@ BAN 解除
 `/signup` (新規登録) は止める。
 `/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
 `/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。
-画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/middleware.ts`) が外していて、そもそもミドルウェアが走らない。
+画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/proxy.ts`) が外していて、そもそもミドルウェアが走らない。
 拡張子で通す処理は持たないので、動的なページのパスは、末尾が `.json` や `.txt` に見えても (`/meals/abc.json` など) 止める。
 フラグを読めない・行が無いときは止めない (OFF 扱い)。
 

@@ -1,6 +1,6 @@
 /**
- * #1176 運営ロールの MFA の画面の通信の facade のテスト (段 A・段 B)。docs/design/cross/12-operator-mfa.md §15.1・§21.1 (mfa-client.test.ts)
- * fetch を vi.stubGlobal で差し替える。段 C の関数の it はその段で足す。
+ * #1176 運営ロールの MFA の画面の通信の facade のテスト (段 A・段 B・段 C)。docs/design/cross/12-operator-mfa.md §15.1・§21.1 (mfa-client.test.ts)
+ * fetch を vi.stubGlobal で差し替える。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -11,9 +11,11 @@ import {
   getMfaStatus,
   mfaErrorMessage,
   mfaFactorPath,
+  mfaResetPath,
   recoverWithBackupCode,
   regenerateBackupCodes,
   requestMfaApi,
+  resetOperatorMfa,
   startMfaEnrollment,
   unenrollMfaFactor,
   verifyMfaCode,
@@ -132,6 +134,8 @@ describe('段 A の 4 関数', () => {
       // 段 B (§14.4・§14.6)
       backupCodes: '/api/auth/mfa/backup-codes',
       factors: '/api/auth/mfa/factors',
+      // 段 C (§14.7)
+      superAdminAdmins: '/api/super-admin/admins',
     });
     const calls = fetchMock.mock.calls.map((call) => {
       const [path, init] = call as [string, RequestInit];
@@ -199,6 +203,41 @@ describe('段 B の 2 関数', () => {
     await expect(unenrollMfaFactor('f-1')).resolves.toMatchObject({ ok: false, status: MFA_CLIENT_NO_STATUS });
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'x', code: 'AUTH_2FA_REQUIRED' }, 403));
     await expect(regenerateBackupCodes()).resolves.toMatchObject({ ok: false, status: 403, code: 'AUTH_2FA_REQUIRED' });
+  });
+});
+
+describe('段 C の関数', () => {
+  const RESET_BODY = { reason: '端末の紛失 (ビデオ通話で本人を確認)', identity_check: 'video_call', identity_confirmed: true } as const;
+  /** encodeURIComponent が効くことを見るための、区切りを含む id */
+  const ODD_USER_ID = 'a/b?c';
+
+  it('resetOperatorMfa は POST /api/super-admin/admins/<encodeURIComponent(userId)>/mfa/reset を JSON の本文で呼び、成功は data.data の 3 つの値、失敗は nested の本文の code (OP_SELF_MODIFY など)', async () => {
+    expect(MFA_API_PATHS.superAdminAdmins).toBe('/api/super-admin/admins');
+    expect(mfaResetPath(ODD_USER_ID)).toBe('/api/super-admin/admins/a%2Fb%3Fc/mfa/reset');
+
+    const data = { user_id: FACTOR_ID, factors_deleted: 1, backup_codes_deleted: 10 };
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data }, 200));
+    await expect(resetOperatorMfa(FACTOR_ID, RESET_BODY)).resolves.toEqual({ ok: true, data: { data } });
+    expect(fetchMock).toHaveBeenLastCalledWith(`/api/super-admin/admins/${FACTOR_ID}/mfa/reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(RESET_BODY),
+      credentials: 'same-origin',
+      cache: 'no-store',
+    });
+
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: { code: 'OP_SELF_MODIFY', message: '自分自身' } }, 403));
+    await expect(resetOperatorMfa(ODD_USER_ID, RESET_BODY)).resolves.toEqual({
+      ok: false,
+      status: 403,
+      code: 'OP_SELF_MODIFY',
+      retryAfterSec: null,
+    });
+    expect(fetchMock.mock.calls.at(-1)?.[0]).toBe('/api/super-admin/admins/a%2Fb%3Fc/mfa/reset');
+
+    // 200 でも MfaResetResponseSchema の形でなければ失敗 (factors_deleted が負)
+    fetchMock.mockResolvedValueOnce(jsonResponse({ data: { ...data, factors_deleted: -1 } }, 200));
+    await expect(resetOperatorMfa(FACTOR_ID, RESET_BODY)).resolves.toEqual(NO_RESPONSE);
   });
 });
 

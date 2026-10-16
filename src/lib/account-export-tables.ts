@@ -242,6 +242,9 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   { table: 'terms_acceptances', scope: self('user_id') },
   { table: 'cookie_consents', scope: self('user_id') },
   { table: 'external_data_consents', scope: self('user_id') },
+  // 保護者の同意 (#1173)。署名した本人 (parent_user_id) の行だけ。署名の氏名・日時・版・IP・UA は本人の個人データ
+  // (terms_acceptances と同じ)。子供の生年月日の写し (child_birth_date) は本人が入力した値。家族の他の大人が署名した行は出さない
+  { table: 'parental_consents', scope: self('parent_user_id'), orderBy: ['signed_at', 'id'] },
   {
     table: 'personal_subscriptions',
     scope: self('user_id'),

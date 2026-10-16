@@ -10,12 +10,12 @@
  * なので、この除外が Vercel 上の計測を守っているわけではない。効くのは、Vercel が応答しないとき
  * (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき)。害は無いので残している。
  *
- * src/middleware.ts の matcher は、/_vercel/ 以下をミドルウェアの対象から外す。
+ * src/proxy.ts の matcher は、/_vercel/ 以下をミドルウェアの対象から外す。
  * それ以外のパスの扱いは変えない (tests/health-middleware-exemption.test.ts の除外もそのまま)。
  */
 
 import { describe, expect, it } from 'vitest';
-import { config } from '@/middleware';
+import { config } from '@/proxy';
 
 /**
  * Next.js は matcher を path-to-regexp で正規表現に変換する。この matcher は
@@ -27,7 +27,7 @@ function runsMiddleware(pathname: string): boolean {
   return new RegExp(`^${matcher}$`).test(pathname);
 }
 
-describe('src/middleware.ts の matcher (#1179)', () => {
+describe('src/proxy.ts の matcher (#1179)', () => {
   it('Speed Insights のスクリプトと計測値の送信先 (/_vercel/speed-insights/*) はミドルウェアを通さない', () => {
     expect(runsMiddleware('/_vercel/speed-insights/script.js')).toBe(false);
     expect(runsMiddleware('/_vercel/speed-insights/vitals')).toBe(false);
