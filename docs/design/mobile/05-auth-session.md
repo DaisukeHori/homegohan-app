@@ -665,6 +665,8 @@ Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の�
 | どれでも (Web・ネイティブ) | `signOut()` (scope global / local) の `/logout` が 5xx・接続の失敗 | 失効前 (access token が有効。残り 90 秒未満で更新に失敗していても) | 保管を残して `{ error }`。`SIGNED_OUT` 無し (残り 90 秒未満で更新が失敗したときは `/logout` まで届かず、`{ error }` で返った。やり直せない失敗なら、その更新が捨てて `SIGNED_OUT`) | 保管を消して `SIGNED_OUT` を出し `{ error }` (§9.1 の `_signOut` の失敗の ②) | Web は `MainLayout` §6.3 (成功のときと同じ)。ネイティブは AuthProvider の `SIGNED_OUT` の行と `signOutOrForgetLocally` の端末での消去 (S-20・閉包 W-6・M-4)。scope `others` は両版とも保管を残す |
 | どれでも (Web・ネイティブ) | `signOut()` (scope global / local) で、更新が 5xx・接続の失敗で終わる (控えの間も) | 失効後 | `/logout` を呼ばずに `{ error }`。保管は残り `SIGNED_OUT` 無し (`:3185-3187`) | 同じ (`:3433-3435`。§9.1 の `_signOut` の失敗の ①) | ネイティブは `signOutOrForgetLocally` の端末での消去 (`clearStoredSessionLocally`・`clearSession`) が後始末の本体 (S-22。§3 の `{ error }` の行の (b))。`signOutWithCleanup` の経路はログイン中のまま残る。Web は Cookie が残る (呼び出し側は変えない) |
 | どれでも (Web・ネイティブ) | `signOut()` (scope global / local) で、更新がやり直せない失敗 (400 など) | 失効後 | 更新が捨てて `SIGNED_OUT`、`signOut()` は `{ error }` | 同じ | 成功のときと同じ後続 (`SIGNED_OUT` の行)。ネイティブの `signOutOrForgetLocally` の端末での消去は重なる (害は無い) |
+| どれでも (Web・ネイティブ) | `signOut()` (scope global / local) で保管が空 (サーバーの応答が先に Cookie を消した後・`getUser()` の 403 の後など) | — | GoTrue を呼ばず `_removeSession` → `SIGNED_OUT` → `{ error: null }` (`:3202-3206`) | 同じ (`:3437-3438`・`:3453-3456`) | 成功のときと同じ後続 (`SIGNED_OUT` の行。③ (a) の「保管なし」× `signOut()` の行) |
+| どれでも (Web・ネイティブ) | `signOut({ scope: 'others' })` | 失効前 (access token が有効)、または保管が空 | 他の端末のセッションだけを取り消し、保管は残り `SIGNED_OUT` 無し。`/logout` が失敗なら `{ error }`。保管が空なら何もせず `{ error: null }` | 同じ (`:3446`・`:3453` の `scope !== 'others'` の分岐を通らない) | 呼び出し 2 行 (閉包 W-6 の `src/app/(main)/settings/account/page.tsx:151`・M-4 の `apps/mobile/src/lib/account-credentials.ts:80`) は変わらない。失効後は上の scope global / local の 2 行と同じ (セッションの読み込みで決まる) |
 | どれでも (Web・ネイティブ) | `_useSession` を通る呼び出し (規則 U: 引数なしの `getUser()`・`updateUser`・`mfa.*`・引数なしの `refreshSession()`) | 90〜0 秒 (更新が失敗) | `{ session: null, error }` を受け取り、呼び出しはそのエラーで終わる | 保管の access token で GoTrue を呼ぶ (`refreshSession()` は控えの間は控えた失敗) | 閉包 W-2・W-4・W-9・M-2・M-3・M-6。サーバーが失効と答えれば 401 / 403 (両版で同じ) |
 | ふつうのブラウザ (PKCE) | `signInWithOAuth` / `signUp` / `resetPasswordForEmail` / メールの `updateUser` → コールバックの route の `exchangeCodeForSession(code)` | — | verifier の Cookie は従来のキー 1 つ | 3 つ (flow ごと・一覧・従来)。コールバックは flow id 無しで従来のキーを読む | 更新をまたぐ flow も通る (S-21・閉包 W-7・W-8)。flow ごとと一覧の Cookie は `_removeSession` か 5 本の輪で消える |
 | Next の route (Cookie / Bearer の token) | `getClaims(token)` で token が期限切れ | 失効後 | `Error` を投げ、route まで上がる (`recordWebLoginContextFromRequest` は catch して warn の stage `exception`) | `{ data: null, error }` → `readSessionAssurance` が `AUTH_UNAUTHENTICATED` (401)。`readSessionAuth` は null → `requireSessionUser` が `AUTH_UNAUTHENTICATED`・`recordWebLoginContextFromRequest` は warn の stage `claims` | `src/lib/auth/mfa/assurance.ts:68-69` (閉包 W-9)・`src/lib/auth/sessions/session-claims.ts:43-44` (閉包 W-10) |
@@ -731,9 +733,12 @@ Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の�
 | 有効 / 失効前・控え中 (控えが切れた後) / 失効後・控え無し | tick / `getSession()` / 復帰 | その時間帯の控え中 (失効前・控え中 / 失効後・控え中) | `/token` が 5xx・接続の失敗 (`AuthRetryableFetchError`。約 25 秒やり直した後) | 捨てない (失効後でも)。控え (60 秒)。`SIGNED_OUT` 無し |
 | 任意 | `setSession` (読み込み直し後の新しい Cookie) / 他タブの `SIGNED_IN` | 有効 | — | 控えを消す |
 | 有効 / 失効前・控え中 | `signOut()` (scope `others` 以外) | 捨てた | — (`/logout` が失敗しても。2.105.3 は失敗なら元の状態のまま) | `SIGNED_OUT` |
-| 失効後・控え中 | `signOut()` (scope `others` 以外) | 失効後・控え中 | 控えが有効 | `/logout` を呼ばずに `{ error }` (`:3433-3435`)。保管は残り `SIGNED_OUT` 無し |
-| 失効後・控え無し | `signOut()` (scope `others` 以外) | 捨てた | `/token` が 400 | 更新が `_removeSession` → `SIGNED_OUT`。`signOut()` は `{ error }` |
-| 失効後・控え無し | `signOut()` (scope `others` 以外) | 失効後・控え中 | `/token` が 5xx・接続の失敗 (約 25 秒やり直した後) | `{ error }`。保管は残り `SIGNED_OUT` 無し。控え (60 秒) |
+| 有効 / 失効前・控え中 | `signOut({ scope: 'others' })` | 元の状態のまま | — (`/logout` (scope `others`) の成否に依らない) | 他の端末のセッションだけを取り消す。保管は残り `SIGNED_OUT` 無し (`scope !== 'others'` の分岐 `:3446`・`:3453` を通らない)。`/logout` が失敗なら `{ error }`、成功なら `{ error: null }` (両版で同じ。① の scope `others` の行) |
+| 失効後・控え中 | `signOut()` (どの scope でも。セッションの読み込みで決まる) | 失効後・控え中 | 控えが有効 | `/logout` を呼ばずに `{ error }` (`:3433-3435`)。保管は残り `SIGNED_OUT` 無し |
+| 失効後・控え無し | `signOut()` (どの scope でも。セッションの読み込みで決まる) | 捨てた | `/token` が 400 | 更新が `_removeSession` → `SIGNED_OUT`。`signOut()` は `{ error }` |
+| 失効後・控え無し | `signOut()` (どの scope でも。セッションの読み込みで決まる) | 失効後・控え中 | `/token` が 5xx・接続の失敗 (約 25 秒やり直した後) | `{ error }`。保管は残り `SIGNED_OUT` 無し。控え (60 秒) |
+| 保管なし | `signOut()` (scope `others` 以外) | 保管なし | 保管が空 (`__loadSession` が `{ session: null, error: null }`。`:2532-2534`) | GoTrue を呼ばず `_removeSession` (消すものは無い) → `SIGNED_OUT` → `{ error: null }` (`:3437-3438`・`:3453-3456`・`_removeSession` の通知 `:4438`。両版で同じ。§9.12 の「`_signOut` で保管にセッションが無い」の行) |
+| 保管なし | `signOut({ scope: 'others' })` | 保管なし | 保管が空 | 何もせず `{ error: null }`。`SIGNED_OUT` 無し (両版で同じ) |
 
 (b) `MainLayout` (コードは変えない。ガードに `isInNativeWebView()` とある行は WebView の中、`isInNativeWebView()` でないとある行はふつうのブラウザ。ガードが — の行は両方)
 
@@ -762,7 +767,7 @@ Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の�
 | 失効後・控え中 | WebView の `session-expired` | 変わらない (何もしない) | 控え (`getSession()`) が null | `no-session` (S-23) |
 | 失効後・控え中 → 控えが切れた後の契機で更新が成功 | `TOKEN_REFRESHED` | 変わらない (WebView は自分では読み込み直さない) | — | 次のタブを開く・同じタブを押し直す・次の `session-expired` で bridge が通る |
 
-2.117 で変わるのは (a) と (c) の控え中の行と、(a) の「失効後 → 保管なし」の行 (2.105 の前面では、ブラウザが先に捨てるので起きなかった)。(b) の「監視中 → 再ブリッジ待ち」の事象は、失効前に来なくなり、失効後 (≤ 90 秒) か `signOut()` (失効後・控え中の `signOut()` を除く) でだけ来る。失効後でも、ブラウザより先にサーバーの応答が Cookie を消すと来ず、(b) は監視中のまま (S-27)。ふつうのブラウザの「監視中 → ログアウト済み」(`SIGNED_OUT`) も同じで、サーバーの応答が先に Cookie を消すと来ず、監視中のまま (S-28。サーバーのセッションが消えたときの 403 の経路では両版で同じ)。(b) の「再ブリッジ待ち → タイマー満了」は、(c) の「失効後・控え中」の `session-expired` (何もしない) のあとでも起きる (S-23。待ちは `SIGNED_OUT` が届いたときだけ)。
+2.117 で変わるのは (a) と (c) の控え中の行と、(a) の「失効後 → 保管なし」の行 (2.105 の前面では、ブラウザが先に捨てるので起きなかった)。(b) の「監視中 → 再ブリッジ待ち」の事象は、失効前に来なくなり、失効後 (≤ 90 秒) か `signOut()` (失効後・控え中の `signOut()` と scope `others` を除く。保管なしの `signOut()` でも来る) でだけ来る。失効後でも、ブラウザより先にサーバーの応答が Cookie を消すと来ず、(b) は監視中のまま (S-27)。ふつうのブラウザの「監視中 → ログアウト済み」(`SIGNED_OUT`) も同じで、サーバーの応答が先に Cookie を消すと来ず、監視中のまま (S-28。サーバーのセッションが消えたときの 403 の経路では両版で同じ)。(b) の「再ブリッジ待ち → タイマー満了」は、(c) の「失効後・控え中」の `session-expired` (何もしない) のあとでも起きる (S-23。待ちは `SIGNED_OUT` が届いたときだけ)。
 
 ### 9.7 Cookie の読み書き (ssr 0.12) への移行
 
@@ -1046,7 +1051,7 @@ H-1・H-2 は 2.105.3 では赤になる (控えが無く、通信が戻った�
 | `GET /user` → 403 `session_not_found` | `AuthSessionMissingError` → `_removeSession` | 同じ | §3・§6.2 (ネイティブ)・middleware の画面の分岐 (`/login`) |
 | ふつうのブラウザの実 token で、サーバーの応答 (middleware の `getUser()` の 403 `session_not_found`・失効後の `getSession()` の更新の 400) が先に Cookie を消す | 403 では同じ (ブラウザに事象なし)。400 は前面では起きない (ブラウザが失効の 120 秒前に捨てる) | ブラウザに事象なし (`SIGNED_OUT` は出ない)。失効の後 (ブラウザが自分で捨てるまでの最大 90 秒) にも起き得る | `MainLayout` は何もしない (user-scoped の localStorage は残る)。画面の移動で middleware が `/login?next=…` へ回し、認証の要る `/api/*` は未ログインとして答える。裁定 H2 で受け入れる (S-28) |
 | `_updateUser` で保管にセッションが無い | `AuthSessionMissingError` | 同じ | cross/16 §3 (本人の access token を明示して GoTrue を呼ぶ) |
-| `_signOut` で保管にセッションが無い | GoTrue を呼ばず `{ error: null }` | 同じ | cross/16 §3 |
+| `_signOut` で保管にセッションが無い | GoTrue を呼ばず `_removeSession` → `SIGNED_OUT` → `{ error: null }` (scope `others` なら何もせず `{ error: null }`。`SIGNED_OUT` 無し) | 同じ (§9.6 ③ (a) の「保管なし」の行) | cross/16 §3 |
 | `signOut()` (scope global / local) の `/logout` が 5xx・接続の失敗 (access token が有効) | 保管を残して `{ error }`。`SIGNED_OUT` 無し | 保管を消して `SIGNED_OUT` を出し `{ error }` (`GoTrueClient.js:3446-3449`) | Web は `MainLayout` §6.3。ネイティブは AuthProvider の `SIGNED_OUT` の行と `signOutOrForgetLocally` (S-20) |
 | `signOut()` (scope global / local) で、access token が失効していて更新が 5xx・接続の失敗で終わる (控えの間も) | `/logout` を呼ばずに `{ error }`。保管は残り `SIGNED_OUT` 無し (`:3185-3187`) | 同じ (`GoTrueClient.js:3433-3435`) | ネイティブは `signOutOrForgetLocally` の端末での消去が後始末の本体 (S-22)。`signOutWithCleanup` の経路と Web は保管が残る (§3 の `{ error }` の行の (b)) |
 | `getClaims(token)` で token が期限切れ | `Error` を投げる (route まで上がる) | `{ data: null, error: AuthInvalidJwtError }` | `src/lib/auth/mfa/assurance.ts:68-69` が `AUTH_UNAUTHENTICATED` (401) にする。`src/lib/auth/sessions/session-claims.ts:43-44` の `readSessionAuth` が null を返し、`requireSessionUser` は `AuthError('AUTH_UNAUTHENTICATED')`・`recordWebLoginContextFromRequest` は warn の stage `claims` (2.105.3 は `exception`)。閉包 W-9・W-10 |
