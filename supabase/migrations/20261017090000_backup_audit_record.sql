@@ -1,5 +1,5 @@
--- migration: 20261017020000_backup_audit_record.sql
--- 戻し方: supabase/rollbacks/20261017020000_backup_audit_record.down.sql
+-- migration: 20261017090000_backup_audit_record.sql
+-- 戻し方: supabase/rollbacks/20261017090000_backup_audit_record.down.sql
 -- #1129 バックアップの取得 (GitHub Actions) が admin_audit_logs に結果を 1 行残すための関数。
 -- 呼ぶのは所有者 postgres (Actions が SUPABASE_DB_PASSWORD で繋ぐロール) だけ。anon / authenticated / service_role からは外す。
 -- postgres は admin_audit_logs の所有者で rolbypassrls なので、INSERT の RLS (actor_id = auth.uid()) に当たらない
