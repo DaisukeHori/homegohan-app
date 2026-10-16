@@ -19,7 +19,8 @@
 
 import { router } from "expo-router";
 import { useEffect } from "react";
-import { Pressable, Text, View } from "react-native";
+import { Pressable, View } from "react-native";
+import { Text } from "./ui/Text";
 
 import { reportBoundaryError } from "../lib/error-report";
 import { colors, radius, spacing } from "../theme";

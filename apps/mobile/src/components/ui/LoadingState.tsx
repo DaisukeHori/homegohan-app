@@ -1,4 +1,5 @@
-import { ActivityIndicator, Text, View, ViewStyle } from 'react-native';
+import { ActivityIndicator, View, ViewStyle } from 'react-native';
+import { Text } from './Text';
 import { colors, spacing } from '../../theme';
 
 type LoadingStateProps = {

@@ -3,7 +3,8 @@ import { Link, router } from "expo-router";
 import * as Linking from "expo-linking";
 import * as WebBrowser from "expo-web-browser";
 import { useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
+import { Text, TextInput } from "../../src/components/ui/Text";
 import { SIGNUP_MINOR_NOTICE } from "@homegohan/shared";
 import Svg, { Path } from "react-native-svg";
 

@@ -11,7 +11,8 @@
  * onVerified を受けた WebViewScreen は、モーダルを閉じて WebView を読み込み直す (新しいブリッジは aal2 の access_token を運ぶ)。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Modal, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, View } from 'react-native';
+import { Text } from './ui/Text';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { MfaVerifyGate } from './MfaVerifyGate';

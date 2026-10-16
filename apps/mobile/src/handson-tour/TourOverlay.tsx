@@ -4,7 +4,8 @@
 
 import MaskedView from '@react-native-masked-view/masked-view';
 import React, { useCallback, useEffect } from 'react';
-import { BackHandler, Pressable, StyleSheet, Text, View } from 'react-native';
+import { BackHandler, Pressable, StyleSheet, View } from 'react-native';
+import { Text } from '../components/ui/Text';
 import Animated, {
   useAnimatedStyle,
   useSharedValue,
