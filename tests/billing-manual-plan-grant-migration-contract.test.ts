@@ -315,7 +315,7 @@ describe('billing/02 段 A: ロックの順', () => {
     expect(grant).not.toContain('FOR UPDATE');
     // その family_groups の UPDATE は、家族プランのときだけ・代表者の active なグループだけ・値が変わるときだけ (写像 (9) の 10. と同じ式)。
     // 振る舞いは結合テスト 41 が見る (個人プランの付与でグループが変わらない・max_members 25 / NULL で 20 / 4)。ここは文面の崩れを先に捕まえる。
-    // 値が変わるときだけの条件は、同じ値の UPDATE を省くだけで DB の上の結果を変えないので、文面で守る
+    // 値が変わるときだけの条件 (同じ値なら family_groups の行をロックしない = 写像と同じ) は、行の値を変えないので結合テストの結果に出ない — 文面で守る
     expect(grant).toContain(
       "IF v_plan.plan_type = 'family' THEN v_member_limit := LEAST(COALESCE(v_plan.max_members, c_default_member_limit), c_max_member_limit); UPDATE public.family_groups AS g SET plan_key = p_plan_key, member_limit = v_member_limit WHERE g.representative_id = p_user_id AND g.status = 'active' AND (g.plan_key IS DISTINCT FROM p_plan_key OR g.member_limit IS DISTINCT FROM v_member_limit); END IF;",
     );
