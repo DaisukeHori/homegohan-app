@@ -17,6 +17,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { RoleChangeBodySchema } from '@/lib/admin/users-schemas';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,7 +43,10 @@ async function handleRoleChange(request: Request, params: Params) {
     throw err;
   }
 
-  const { id } = await params.params;
+  const { id: rawId } = await params.params;
+  // UUID の形なら小文字にそろえ、以後はこの値だけを使う (#1707。自分の判定・DB・RPC・監査)。
+  // そろえないと、大文字にした自分の UUID が下の自分の判定をすり抜ける (RPC の CANNOT_MODIFY_OWN_ROLES では止まるが、code が OP_PERMISSION_DENIED になる)
+  const id = normalizeUuid(rawId);
 
   let body: unknown;
   try {
@@ -65,7 +69,7 @@ async function handleRoleChange(request: Request, params: Params) {
   const { roles } = parseResult.data;
 
   // 自分自身のロール変更は禁止
-  if (id === actor.id) {
+  if (id === normalizeUuid(actor.id)) {
     return NextResponse.json(
       { error: { code: 'OP_SELF_MODIFY', message: '自分自身のロールは変更できません' } },
       { status: 403 },
