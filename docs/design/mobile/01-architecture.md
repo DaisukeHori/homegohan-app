@@ -76,6 +76,7 @@ Web の設定画面にしか無い項目 (パスワード・メールアドレ�
 9. **ネイティブの部品の差し込み**: `header` に渡した部品を WebView の上 (上端の安全領域の内側) に置く (マイページの歯車。#1037)
 10. **読み込みの失敗の案内と再読み込み** (#1612 F7-15): 読み込みそのものの失敗 (オフライン・DNS・接続・時間切れなど) は `renderError` で、サーバーの 5xx は `onHttpError` で受け、WebView の部分 (header を除く) を覆う日本語の案内と「再読み込み」を出す (`src/components/web/WebViewErrorView.tsx`)。4xx は Web のページが案内を出すので何もしない。503 も重ねない: Web はメンテナンス中に専用の画面 (再読み込み・運営の方のログインの導線つき。`src/lib/maintenance-mode.ts` の `maintenancePageResponse`) を 503 で返し、`onHttpError` には本文が渡らないので、503 を「エラー」と断定して覆うとメンテナンス中が「エラー」と伝わる (`shouldCoverHttpStatus`)。5xx の案内は、5xx を受けなかった読み込みの `onLoadEnd` か `onError` で消す (`onLoadStart` は Android で `onHttpError` より後に来るので使わない。iOS のページの中の移動の `onLoadEnd` は数えない。`src/components/web/useWebViewHttpFailure.ts`)。「再読み込み」は `reload()` ではなく、WebView を作り直して bridge の code の発行からやり直す (code は一度しか使えない)
 11. **タブを離れたときの `initialPath` の消去** (#1612 F7-15): タブ同士の移動で離れたタブの route の `initialPath` を `setParams` で消す (`src/components/web/useResetInitialPathOnBlur.ts`)。残ったままだと、同じ `initialPath` を渡し直しても値が変わらず読み込み直さない。タブの上にネイティブの画面を重ねたとき (タブを持つ親の画面が手前でない) と、タブ以外の WebViewScreen では消さない
+12. **規約の同意画面** (#1442・設計書 cross/13b): 同意が要る間はルートのゲート (`LegalConsentGate`) がスタックを同意画面の route (`app/legal-consent.tsx` = `WebViewScreen path="/legal-consent"`) 1 つに畳み、Web の同意画面が `legal-consent-accepted` を送ったら入口へ戻す。`onMessage` はこの合図を `LegalConsentProvider` に知らせる。ログアウト後の移り先は props の `afterSignOut` で変えられ、同意画面だけが渡す
 
 #### postMessage プロトコル (Web → Native)
 
@@ -263,6 +264,7 @@ apps/mobile/
 ├── app/                              # Expo Router (ページ)
 │   ├── _layout.tsx                  # 既存 + Linking.addEventListener 追加 (02-deep-link.md)
 │   ├── index.tsx                    # ルートリダイレクト
+│   ├── legal-consent.tsx            # 規約の同意画面: WebViewScreen path="/legal-consent" (13b。#1442)
 │   ├── (auth)/                      # ネイティブ認証画面
 │   ├── (tabs)/                      # ネイティブタブバー (WebView のタブの表の正は @homegohan/shared の NATIVE_APP_TABS)
 │   │   ├── _layout.tsx
@@ -281,16 +283,20 @@ apps/mobile/
 │   ├── components/
 │   │   └── web/
 │   │       └── WebViewScreen.tsx    # 既存 (メンテナンス)
+│   │   └── legal/
+│   │       └── LegalConsentGate.tsx # 新規: 同意が要る間、スタックを同意画面 1 つに畳む (13b)
 │   ├── lib/
 │   │   ├── supabase.ts              # 既存
 │   │   ├── api.ts                   # 既存
 │   │   ├── deeplink.ts              # 既存 + parseInviteLink() 追加 (02-deep-link.md)
 │   │   ├── pushNotifications.ts     # 既存 + setBadgeCountAsync 追加 (03-push-notification.md)
 │   │   ├── storage.ts               # 既存 + uploadMealPhoto() 追加 (04-storage-camera.md。以前の storage.ts は 2026-10-16 に削除した。#1598)
-│   │   └── nativeBridge.ts          # 新規: Web ↔ Native 通信ハブ
+│   │   ├── nativeBridge.ts          # 新規: Web ↔ Native 通信ハブ
+│   │   └── legal-consent.ts         # 新規: 403 LEGAL_CONSENT_REQUIRED の見分け・同意画面の扱い (13b)
 │   ├── providers/
 │   │   ├── AuthProvider.tsx         # 既存
-│   │   └── ProfileProvider.tsx      # 既存
+│   │   ├── ProfileProvider.tsx      # 既存
+│   │   └── LegalConsentProvider.tsx # 新規: GET /api/legal/status から同意の状態を決める (13b)
 │   └── theme/                       # 既存
 │
 ├── app.json                         # scheme: "homegohan" 設定済み
@@ -449,7 +455,7 @@ useEffect(() => {
 ### 修正
 
 - `app/_layout.tsx`: Linking.addEventListener 追加 + バージョンチェック呼び出し追加
-- `src/components/web/WebViewScreen.tsx`: `onMessage` ハンドラーに `open-image-picker` / `upload-meal-photo` 追加
+- `src/components/web/WebViewScreen.tsx`: `onMessage` ハンドラーに `open-image-picker` / `upload-meal-photo` 追加。規約の同意画面向けに `legal-consent-accepted` の受け口と props `afterSignOut` (13b。#1442)
 
 ### 新規
 

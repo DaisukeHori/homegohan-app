@@ -38,6 +38,18 @@ const OWNED_EDITS: readonly OwnedEdit[] = [
     target: 'docs/design/operator/02-api-spec.md',
     pattern: /「(画像ファイル \(`photo_url` \/ `image_url`\) そのものは隠さない[^」]*)」→「([^」]*)」/,
   },
+  {
+    // cross/13b §6.19: 実装 PR 側 (ENV_SETUP.md) の追随。行の 2 列目と 3 列目の「…」が前の文と後の文
+    owner: 'docs/design/cross/13b-legal-consent-mobile.md',
+    target: 'ENV_SETUP.md',
+    pattern: /「([^」]*)」[^「]*「([^」]*)」/,
+  },
+  {
+    // cross/13b §6.19: オーケストレーターの docs PR が持つ
+    owner: 'docs/design/cross/13b-legal-consent-mobile.md',
+    target: 'CLAUDE.md',
+    pattern: /「([^」]*)」[^「]*「([^」]*)」/,
+  },
 ];
 
 function read(rel: string): string {
