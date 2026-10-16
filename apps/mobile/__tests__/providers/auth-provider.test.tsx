@@ -55,6 +55,12 @@ jest.mock('../../src/lib/pushTokenRelease', () => ({
   recordPushTokenReleasesForStoredValues: (...args: unknown[]) => mockRecordStoredReleases(...args),
 }));
 
+// この端末のログインへの端末名の登録 (#1189。cross/16 §16)。中身は device-name.test.ts で確かめる。ここでは渡す access token を見る
+const mockRegisterDeviceName = jest.fn();
+jest.mock('../../src/lib/device-name', () => ({
+  registerDeviceName: (...args: unknown[]) => mockRegisterDeviceName(...args),
+}));
+
 import { AuthProvider, useAuth } from '../../src/providers/AuthProvider';
 
 /**
@@ -117,6 +123,7 @@ beforeEach(() => {
   mockRecordRelease.mockResolvedValue(undefined);
   mockRecordStoredReleases.mockResolvedValue(undefined);
   mockGetStoredSession.mockResolvedValue(null);
+  mockRegisterDeviceName.mockResolvedValue(undefined);
   mockOnAuthStateChange.mockImplementation((listener: AuthListener) => {
     authListener = listener;
     return { data: { subscription: { unsubscribe: mockUnsubscribe } } };
@@ -856,5 +863,63 @@ describe('AuthProvider — user_push_tokens の行の後片付け (#1636)', () =
     expect(mockFlushPendingReleases).not.toHaveBeenCalled();
     expect(mockRecordRelease).not.toHaveBeenCalled();
     expect(mockRecordStoredReleases).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthProvider — 端末名の登録 (#1189。cross/16 §16・§20.4)', () => {
+  it('SIGNED_IN でセッションの access token を registerDeviceName に渡す', async () => {
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+    expect(mockRegisterDeviceName).not.toHaveBeenCalled();
+
+    act(() => authListener('SIGNED_IN', makeSession('user-1', 'access-signed-in')));
+
+    expect(mockRegisterDeviceName).toHaveBeenCalledTimes(1);
+    expect(mockRegisterDeviceName).toHaveBeenCalledWith('access-signed-in');
+  });
+
+  it('INITIAL_SESSION でセッションがあれば、その access token で registerDeviceName を呼ぶ', async () => {
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    act(() => authListener('INITIAL_SESSION', makeSession('user-1', 'access-initial')));
+
+    expect(mockRegisterDeviceName).toHaveBeenCalledTimes(1);
+    expect(mockRegisterDeviceName).toHaveBeenCalledWith('access-initial');
+  });
+
+  it('SIGNED_OUT のあとに別のセッションで SIGNED_IN すると、新しい access token でもう一度呼ぶ', async () => {
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    act(() => authListener('SIGNED_IN', makeSession('user-1', 'access-first')));
+    act(() => authListener('SIGNED_OUT', null));
+    act(() => authListener('SIGNED_IN', makeSession('user-1', 'access-second')));
+
+    expect(mockRegisterDeviceName.mock.calls).toEqual([['access-first'], ['access-second']]);
+  });
+
+  it('セッションが無い (未ログインで起動・SIGNED_OUT) ときは呼ばない', async () => {
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    act(() => authListener('INITIAL_SESSION', null));
+    act(() => authListener('SIGNED_OUT', null));
+
+    expect(mockRegisterDeviceName).not.toHaveBeenCalled();
+  });
+
+  it('registerDeviceName が reject しても、セッションの状態と掃除の表 (既存の it) は変わらない', async () => {
+    mockRegisterDeviceName.mockRejectedValue(new Error('register failed'));
+    const api = renderProvider();
+    await waitFor(() => expect(text(api, 'loading')).toBe('false'));
+
+    act(() => authListener('SIGNED_IN', makeSession('user-9', 'access-9')));
+    await waitFor(() => expect(text(api, 'session')).toBe('access-9'));
+    expect(text(api, 'user')).toBe('user-9');
+
+    act(() => authListener('SIGNED_OUT', null));
+    await waitFor(() => expect(mockClearAfterSignedOut).toHaveBeenCalledWith('user-9'));
+    expect(text(api, 'session')).toBe('none');
   });
 });

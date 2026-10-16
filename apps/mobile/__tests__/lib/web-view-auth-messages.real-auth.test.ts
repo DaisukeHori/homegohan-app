@@ -49,6 +49,8 @@ jest.mock('expo-notifications', () => ({
   AndroidImportance: { DEFAULT: 3 },
 }));
 jest.mock('expo-device', () => ({ __esModule: true, isDevice: true }));
+// この端末のログインへの端末名の登録 (#1189。cross/16 §16・§22 N-37)。fetch の偽物の呼び出しの数・順の期待を変えない
+jest.mock('../../src/lib/device-name', () => ({ registerDeviceName: jest.fn(() => Promise.resolve()) }));
 jest.mock('expo-constants', () => ({ __esModule: true, default: {} }));
 
 const PAGE = 'https://homegohan-app.vercel.app/settings';
