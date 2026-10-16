@@ -21,6 +21,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DsrAdminDetailDto, DsrAdminSummaryDto } from '@/lib/data-subject-requests/core';
+import { aal2AuthMock } from './helpers/mfa-claims';
 
 type Row = Record<string, unknown>;
 type ClientKind = 'session' | 'admin';
@@ -248,12 +249,15 @@ function createBuilder(client: ClientKind, table: TableName) {
 }
 
 function createClientFake(client: ClientKind) {
+  const getUser = async () =>
+    client === 'session' && world.actor
+      ? { data: { user: { id: world.actor.id, email: `${world.actor.id}@example.com` } }, error: null }
+      : { data: { user: null }, error: { message: 'Auth session missing!' } };
   return {
     auth: {
-      getUser: async () =>
-        client === 'session' && world.actor
-          ? { data: { user: { id: world.actor.id, email: `${world.actor.id}@example.com` } }, error: null }
-          : { data: { user: null }, error: { message: 'Auth session missing!' } },
+      getUser,
+      // 運営 MFA 段 B (#1707): 必須ロールの requireRole は getSession → getClaims で AAL2 を確かめる
+      ...aal2AuthMock(getUser),
       admin: {
         getUserById: async (id: string) => {
           if (client !== 'admin') throw new Error('fake: auth.admin は service_role だけ');

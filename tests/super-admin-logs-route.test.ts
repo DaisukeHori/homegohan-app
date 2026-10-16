@@ -40,24 +40,26 @@ const logError = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase/server', () => ({
   // requireRole が使う、ログイン中の本人の権限の client。user_profiles 以外 (app_logs など) に触れたら失敗させる
-  createClient: () => ({
-    auth: {
-      getUser: async () =>
-        state.user
-          ? { data: { user: state.user }, error: null }
-          : { data: { user: null }, error: { message: 'Auth session missing!' } },
-    },
-    from: (table: string) => {
-      if (table !== 'user_profiles') throw new Error(`本人の権限の client が ${table} に触れた`);
-      const builder = {
-        select: () => builder,
-        eq: () => builder,
-        single: async () =>
-          state.profile ? { data: state.profile, error: null } : { data: null, error: { message: 'no rows' } },
-      };
-      return builder;
-    },
-  }),
+  createClient: () => {
+    const getUser = async () =>
+      state.user
+        ? { data: { user: state.user }, error: null }
+        : { data: { user: null }, error: { message: 'Auth session missing!' } };
+    // 段 B (#1176) の requireRole は getSession → getClaims を呼ぶ (docs/design/cross/12-operator-mfa.md §22.4.2・§23.1)
+    return {
+      auth: { getUser, ...aal2AuthMock(getUser) },
+      from: (table: string) => {
+        if (table !== 'user_profiles') throw new Error(`本人の権限の client が ${table} に触れた`);
+        const builder = {
+          select: () => builder,
+          eq: () => builder,
+          single: async () =>
+            state.profile ? { data: state.profile, error: null } : { data: null, error: { message: 'no rows' } },
+        };
+        return builder;
+      },
+    };
+  },
   getSupabaseAdmin: () => getSupabaseAdmin(),
 }));
 
@@ -73,6 +75,7 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 import * as logsRoute from '../src/app/api/super-admin/logs/route';
+import { aal2AuthMock } from './helpers/mfa-claims';
 
 const { GET } = logsRoute;
 
