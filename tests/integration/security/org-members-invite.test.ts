@@ -179,9 +179,8 @@ describe('#1235 POST /api/org/members は招待メールを送る', () => {
     });
     expect(error).toBeNull();
     createdUserIds.push(created.user!.id);
-    await srAdmin
-      .from('user_profiles')
-      .upsert({ id: created.user!.id, nickname: 'invitee', age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+    await retryIdempotentSetup(srAdmin, '招待される人: user_profiles の upsert', (db) =>
+      db.from('user_profiles').upsert({ id: created.user!.id, nickname: 'invitee', age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
     const signIn = await anon().auth.signInWithPassword({ email: NEW_EMAIL, password: PASSWORD });
     expect(signIn.error).toBeNull();
 

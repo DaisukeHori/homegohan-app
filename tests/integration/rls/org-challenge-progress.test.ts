@@ -1099,12 +1099,11 @@ describe('#1132 J. get_org_challenge_ranking: 参加者本人にだけ順位表�
         );
         extraIds.push(...created);
       }
-      const { error: profileError } = await srAdmin
-        .from('user_profiles')
-        .upsert(
+      const { error: profileError } = await retryIdempotentSetup(srAdmin, '上限を超える参加者: user_profiles の upsert', (db) =>
+        db.from('user_profiles').upsert(
           extraIds.map((id, i) => ({ id, nickname: `it1132-many${i}`, age_group: '30s', gender: 'other' })),
           { onConflict: 'id' },
-        );
+        ));
       if (profileError) throw new Error(`profiles: ${profileError.message}`);
       const { error: memberError } = await srAdmin
         .from('user_profiles')
