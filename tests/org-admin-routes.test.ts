@@ -1018,3 +1018,25 @@ describe('壊れた JSON は 500 ではなく 400', () => {
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 大文字の部署 id (#1790)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('departments PUT: 大文字の id でも、更新する部署と返す人数がずれない (#1790)', () => {
+  // Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の id でも更新は自組織の部署に当たる。
+  // route は id を小文字にそろえてから更新と人数の集計 (キーは DB から読んだ小文字の department_id) に使う
+  it('id が大文字: 自組織の部署を更新し、人数は実際の所属人数 (0 にしない)', async () => {
+    // DEPT_A の 16 進の英字 (末尾の d) を大文字にした値
+    const id = DEPT_A.toUpperCase();
+    expect(id).not.toBe(DEPT_A);
+    expect(id.toLowerCase()).toBe(DEPT_A);
+
+    const res = await departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { id, name: '改名' }) as never);
+    const body = await json(res);
+
+    expect(res.status).toBe(200);
+    expect(body.department).toMatchObject({ id: DEPT_A, name: '改名', memberCount: 2 });
+    expect(sessionDb.rows('departments').find((d) => d.id === DEPT_A)?.name).toBe('改名');
+  });
+});

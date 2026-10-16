@@ -82,6 +82,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `ORG_` | 組織管理ドメイン固有 | 400, 422 |
 | `OP_` | 運営管理ドメイン固有 | 400, 422 |
 | `BILL_` | 課金の自己サービス (購入・解約の予約・Billing Portal。`docs/design/billing/01-billing-core.md` §13.1) | 400, 403, 404, 409, 422 |
+| `DSR_` | 個人情報の請求 (開示・訂正・利用停止・消去。`docs/design/cross/15-data-subject-requests.md` §13) | 400, 409, 410, 422 |
 | `SYS_` | システム内部エラー | 500 |
 
 ### 4.2 エラーコード一覧表
@@ -234,6 +235,22 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `BILL_NO_LIVE_SUBSCRIPTION` | **[NEW]** 解約の予約・取り消しの対象になる、有効で Stripe の契約がある行が無い (`POST /api/billing/subscription/cancel` / `resume`) | 409 |
 | `BILL_CANCEL_NOT_SCHEDULED` | **[NEW]** 解約が予約されていないのに取り消そうとした (`POST /api/billing/subscription/resume`) | 409 |
 | `BILL_PLAN_NOT_PURCHASABLE` | **[NEW]** 買えないプラン (無い・公開でない・個人 / 家族でない・free・その期間の Price が無い・金額 0。`POST /api/billing/checkout`・`GET /api/billing/checkout/preview`) | 422 |
+
+#### DSR 系
+
+個人情報の請求 (`/api/account/data-requests/**`・`/api/admin/data-requests/**`。`docs/design/cross/15-data-subject-requests.md` §7・§13 が canonical)。本人向けの route は平たい形 `{ error, code }`、運営向けの route は nested `{ error: { code, message } }`。
+
+| コード | 説明 | HTTP |
+|--------|------|------|
+| `DSR_ALREADY_OPEN` | **[NEW]** 同じ種類の請求がすでに開いている (本人の作成。部分一意索引の 23505) | 409 |
+| `DSR_INVALID_STATE` | **[NEW]** 請求の状態がその操作を受け付けない (本人の確認・再送・取り下げ。判定の後に状態が変わって UPDATE が 0 行のときも) | 409 |
+| `DSR_VERIFICATION_INVALID` | **[NEW]** 本人確認のリンクのトークンが一致しない | 400 |
+| `DSR_VERIFICATION_EXPIRED` | **[NEW]** 本人確認のリンクの期限が切れている | 410 |
+| `DSR_VERIFICATION_LIMIT` | **[NEW]** 本人確認のメールの送信回数の上限 | 409 |
+| `DSR_INVALID_TRANSITION` | **[NEW]** 運営の更新が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。`PATCH /api/admin/data-requests/{id}`) | 409 |
+| `DSR_RESPONSE_NOTE_REQUIRED` | **[NEW]** 対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`) | 422 |
+
+運営の更新 (`PATCH /api/admin/data-requests/{id}`) は、上の CONFLICT 系の 3 コードを楽観的ロックに使う: `If-Unmodified-Since` が無い → `CONFLICT_PRECONDITION_REQUIRED` (428)、GET が返した `updated_at` と行が違う → `CONFLICT_OPTIMISTIC_LOCK` (412)、条件つきの UPDATE が 0 行 → `CONFLICT_STALE_DATA` (409)。ヘッダの値は GET が返した `updated_at` の文字列そのまま (HTTP-date ではない。cross/15 §7.4)。
 
 ---
 
