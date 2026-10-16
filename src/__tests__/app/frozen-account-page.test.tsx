@@ -7,7 +7,7 @@
  *   - 退会: 「削除します」と入力するまで押せない。POST /api/account/delete { confirm: true } のあと、
  *     端末のユーザー別データを消してから signOut し (CLAUDE.md の規約)、/login へ移る
  *   - 組織のオーナー・家族の代表者 (409) は、サーバーの文と、凍結中は譲渡できないのでサポートへ、の案内を出す
- *   - この画面は凍結中でも止めない 2 つの API (FROZEN_ALLOWED_API_PATHS) 以外を呼ばない
+ *   - この画面は凍結中でも止めない API (FROZEN_ALLOWED_API_PATHS) のうち退会と書き出しの 2 つ以外を呼ばない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する (frozen-page-logout.test.tsx と同じ)。
  */
@@ -117,6 +117,13 @@ describe('凍結の画面 (/frozen)', () => {
 
     const link = Array.from(container.querySelectorAll('a')).find((a) => a.textContent === '退会・データの書き出し')
     expect(link?.getAttribute('href')).toBe('/frozen/account')
+  })
+
+  it('有料プランの解約の画面 (/frozen/billing) へのリンクがある', async () => {
+    await render(<FrozenPage />)
+
+    const link = Array.from(container.querySelectorAll('a')).find((a) => a.textContent === '有料プランの解約・お支払い')
+    expect(link?.getAttribute('href')).toBe('/frozen/billing')
   })
 })
 
