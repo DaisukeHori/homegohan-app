@@ -11,19 +11,23 @@
  * サーバー専用のもの (next/headers・@/lib/supabase/server・node:crypto を持つ backup-codes.ts・@/lib/auth/helpers を持つ page-guard.ts) を import しない。
  *
  * 段 A は status / enroll / verify / recover の 4 つ。段 B で MFA_API_PATHS の backupCodes・factors と mfaFactorPath・
- * regenerateBackupCodes・unenrollMfaFactor、段 C で superAdminAdmins と mfaResetPath・resetOperatorMfa を足す (§22.3)。
+ * regenerateBackupCodes・unenrollMfaFactor を足した。段 C で superAdminAdmins と mfaResetPath・resetOperatorMfa を足す (§22.3)。
  * MFA_ERROR_MESSAGES は reset の code の行も段 A から持つ。
  */
 import { z } from 'zod';
 import {
+  MfaBackupCodesResponseSchema,
   MfaEnrollResponseSchema,
   MfaRecoverResponseSchema,
   MfaStatusResponseSchema,
+  MfaUnenrollResponseSchema,
   MfaVerifyResponseSchema,
+  type MfaBackupCodesResponse,
   type MfaEnrollResponse,
   type MfaRecoverBody,
   type MfaRecoverResponse,
   type MfaStatusResponse,
+  type MfaUnenrollResponse,
   type MfaVerifyBody,
   type MfaVerifyResponse,
 } from '@/lib/auth/mfa/schemas';
@@ -34,7 +38,16 @@ export const MFA_API_PATHS = {
   enroll: '/api/auth/mfa/enroll',
   verify: '/api/auth/mfa/verify',
   recover: '/api/auth/mfa/recover',
+  /** 段 B (§14.6) */
+  backupCodes: '/api/auth/mfa/backup-codes',
+  /** 段 B (§14.4)。DELETE の URL は mfaFactorPath(id) */
+  factors: '/api/auth/mfa/factors',
 } as const;
+
+/** DELETE /api/auth/mfa/factors/{id} の URL (段 B) */
+export function mfaFactorPath(factorId: string): string {
+  return `${MFA_API_PATHS.factors}/${encodeURIComponent(factorId)}`;
+}
 
 /** HTTP の応答として扱えなかった (fetch が例外を投げた・2xx なのに本文が §14 の形でない) ときの status。HTTP のステータスに 0 は無い */
 export const MFA_CLIENT_NO_STATUS = 0;
@@ -172,4 +185,14 @@ export function recoverWithBackupCode(body: MfaRecoverBody): Promise<MfaClientRe
     { method: 'POST', headers: MFA_JSON_HEADERS, body: JSON.stringify(body) },
     MfaRecoverResponseSchema,
   );
+}
+
+/** POST /api/auth/mfa/backup-codes (§14.6。段 B)。本文なし */
+export function regenerateBackupCodes(): Promise<MfaClientResult<MfaBackupCodesResponse>> {
+  return requestMfaApi<MfaBackupCodesResponse>(MFA_API_PATHS.backupCodes, { method: 'POST' }, MfaBackupCodesResponseSchema);
+}
+
+/** DELETE /api/auth/mfa/factors/{id} (§14.4。段 B)。本文なし */
+export function unenrollMfaFactor(factorId: string): Promise<MfaClientResult<MfaUnenrollResponse>> {
+  return requestMfaApi<MfaUnenrollResponse>(mfaFactorPath(factorId), { method: 'DELETE' }, MfaUnenrollResponseSchema);
 }

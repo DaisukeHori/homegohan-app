@@ -12,14 +12,18 @@
  *     記録の扱いの説明 (参加は自由・順位は参加者だけ・管理者には人数と平均だけ)
  *   - 詳細: 数え方の説明。参加する前に、順位表に表示名が出るかを説明する。参加する / 参加をやめる (確認つき)。
  *     順位表は API が返したときだけ出す (参加していない人には出さない)。終了したチャレンジには参加ボタンを出さない
+ *     #1688: API が reason = 'org_admin' を返したとき (組織の管理者・管理者だった人) は、順位表を出さない旨を説明する
  *   - 参加者数は、最小人数に満たない (API が null で返す) とき「10人未満」と出す
- *   - 管理者向け: 平均は API が出してよいと判断したときだけ出す。歩数・体重・カスタムは選べない (準備中)
+ *   - 管理者向け: 平均は API が出してよいと判断した、終了したチャレンジだけに出す (#1688: 開催中は「終了後に表示」・
+ *     終了して出さないときは「表示なし」・中止は欄なし)。参加者数は延べ数。状態のボタンは下書きに「開始」・開催中に「終了」だけ。
+ *     歩数・体重・カスタムは選べない (準備中)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { rankingSectionSchema } from '@/lib/org-challenge-privacy';
 
 const nav = vi.hoisted(() => ({ id: '00000000-0000-4000-8000-0000000000c1', push: vi.fn() }));
 
@@ -210,14 +214,17 @@ describe('メンバー向けの一覧 (/challenges)', () => {
     expect(link!.textContent).toContain('参加者 12人');
   });
 
-  it('記録の扱いを説明する: 参加は自由・順位は参加した人だけ・管理者には人数と平均だけ・いつでもやめられる', async () => {
+  it('記録の扱いを説明する: 参加は自由・順位は参加した人だけ・管理者には参加した人数と終了後の平均だけ・いつでもやめられる', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ challenges: [listChallenge()] }));
 
     await render(<ChallengesListPage />);
 
     expect(text()).toContain('参加するかどうかは、あなたの自由です');
     expect(text()).toContain('順位が見えるのは、参加した人だけです');
-    expect(text()).toContain('会社の管理者には、参加者全体の人数と平均だけが表示されます');
+    expect(text()).toContain(
+      '会社の管理者には、参加した人数と、チャレンジが終了したあとの平均だけが表示されます (参加した人が少ない間は表示されません)',
+    );
+    expect(text()).not.toContain('参加者全体の人数と平均');
     expect(text()).toContain('あなたの記録や順位は表示されません');
     expect(text()).toContain('参加は、いつでもやめられます');
   });
@@ -333,7 +340,7 @@ function detailBody(overrides: Record<string, unknown> = {}) {
     minParticipants: 10,
     joined: false,
     me: null,
-    ranking: { available: false, showNames: false },
+    ranking: { available: false, showNames: false, reason: 'not_joined' },
     ...overrides,
   };
 }
@@ -383,7 +390,7 @@ describe('メンバー向けの詳細 (/challenges/[id])', () => {
     expect(text()).toContain('参加者 10人未満');
   });
 
-  it('参加する前に、見え方を説明する (表示名は出ない / 管理者には人数と平均だけ / いつでもやめられる)', async () => {
+  it('参加する前に、見え方を説明する (表示名は出ない / 管理者には参加した人数と終了後の平均だけ / いつでもやめられる)', async () => {
     fetchMock.mockResolvedValue(jsonResponse(detailBody()));
 
     await render(<ChallengeDetailPage />);
@@ -391,12 +398,15 @@ describe('メンバー向けの詳細 (/challenges/[id])', () => {
     expect(text()).toContain('参加は自由です');
     expect(text()).toContain('参加した人どうしにだけ表示されます');
     expect(text()).toContain('ほかの参加者のニックネームは表示されません');
-    expect(text()).toContain('会社の管理者には、参加者全体の人数と平均だけが表示されます');
+    expect(text()).toContain(
+      '会社の管理者には、参加した人数と、チャレンジが終了したあとの平均だけが表示されます (参加した人が少ない間は表示されません)',
+    );
+    expect(text()).not.toContain('参加者全体の人数と平均');
     expect(text()).toContain('いつでも参加をやめられます');
   });
 
   it('表示名を出す設定のときは、順位表にニックネームが表示されると説明する', async () => {
-    fetchMock.mockResolvedValue(jsonResponse(detailBody({ ranking: { available: false, showNames: true } })));
+    fetchMock.mockResolvedValue(jsonResponse(detailBody({ ranking: { available: false, showNames: true, reason: 'not_joined' } })));
 
     await render(<ChallengeDetailPage />);
 
@@ -415,6 +425,9 @@ describe('メンバー向けの詳細 (/challenges/[id])', () => {
     expect(container.querySelector('#my-record')).toBeNull();
     expect(container.querySelector('ol')).toBeNull();
     expect(hasButton('参加をやめる')).toBe(false);
+    // 参加していない (reason = not_joined) ときは、管理者向けの「順位表を表示しません」の説明も出さない
+    expect(container.querySelector('#ranking-hidden-title')).toBeNull();
+    expect(text()).not.toContain('順位表を表示しません');
   });
 
   it('「参加する」を押すと POST /join を呼び、読み直して参加中の表示になる', async () => {
@@ -608,6 +621,80 @@ describe('メンバー向けの詳細 (/challenges/[id])', () => {
 
     expect(container.querySelector('a[href="/challenges"]')).not.toBeNull();
   });
+
+  // #1688: 組織の管理者 (参加している owner / admin と、このチャレンジがある間に管理者になったことがある人) には、
+  // API が順位表を返さず reason = 'org_admin' を返す。自分の記録と順位 (me) は返る
+  const orgAdminBody = (overrides: Record<string, unknown> = {}) =>
+    detailBody({
+      joined: true,
+      me: { currentValue: 50, rank: 2, joinedAt: '2026-10-02T00:00:00Z' },
+      ranking: { available: false, showNames: false, reason: 'org_admin' },
+      ...overrides,
+    });
+
+  it('reason が org_admin のときは、順位表を出さず、管理者には順位表を表示しない旨を説明する。自分の記録と順位は出す', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(orgAdminBody()));
+
+    await render(<ChallengeDetailPage />);
+
+    const hidden = container.querySelector('section[aria-labelledby="ranking-hidden-title"]');
+    expect(hidden).not.toBeNull();
+    expect(hidden!.textContent).toContain(
+      '組織の管理者 (このチャレンジがある間に管理者になったことがある人を含む) には、順位表を表示しません (あなたの記録と順位だけが表示されます)',
+    );
+    // 順位表 (ol) と、その区画は出さない
+    expect(container.querySelector('ol')).toBeNull();
+    expect(container.querySelector('#ranking-title')).toBeNull();
+    // 自分の記録と順位は出す。順位表の人数 (「/ n人」) は返らないので出さない
+    expect(container.querySelector('#my-record')).not.toBeNull();
+    expect(container.querySelector('#my-record')!.closest('section')!.textContent).toContain('2位');
+    expect(text()).toContain('50%');
+    expect(text()).not.toMatch(/\/ \d+人/);
+    // 参加中なので、やめる操作は出す
+    expect(hasButton('参加をやめる')).toBe(true);
+  });
+
+  it('reason が org_admin で、まだ集計されていない (rank が null) ときも、集計待ちの説明と順位表を出さない旨を出す', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(orgAdminBody({ me: { currentValue: 0, rank: null, joinedAt: '2026-10-08T00:00:00Z' } })));
+
+    await render(<ChallengeDetailPage />);
+
+    expect(text()).toContain('参加したばかりのため、まだ集計されていません');
+    expect(text()).toContain('には、順位表を表示しません');
+    expect(container.querySelector('ol')).toBeNull();
+  });
+
+  it('参加をやめて reason が not_joined に変わると、管理者向けの説明は消え、参加ボタンに戻る', async () => {
+    let left = false;
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith('/join')) {
+        left = true;
+        return jsonResponse({ joined: false });
+      }
+      return jsonResponse(left ? detailBody() : orgAdminBody());
+    });
+    await render(<ChallengeDetailPage />);
+    expect(container.querySelector('#ranking-hidden-title')).not.toBeNull();
+
+    await click(button('参加をやめる'));
+    await click(button('やめる'));
+
+    expect(container.querySelector('#ranking-hidden-title')).toBeNull();
+    expect(text()).not.toContain('順位表を表示しません');
+    expect(hasButton('このチャレンジに参加する')).toBe(true);
+  });
+
+  it('このファイルの模擬の応答の ranking は、API の正本の形 (rankingSectionSchema) に合う', () => {
+    const rankings = [
+      detailBody().ranking,
+      joinedBody().ranking,
+      orgAdminBody().ranking,
+      { available: false, showNames: true, reason: 'not_joined' },
+    ];
+    for (const ranking of rankings) expect(rankingSectionSchema.safeParse(ranking).success).toBe(true);
+    // reason の無い available = false は正本の形ではない (画面は reason で出し分ける)
+    expect(rankingSectionSchema.safeParse({ available: false, showNames: false }).success).toBe(false);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -625,7 +712,8 @@ function adminChallenge(overrides: Record<string, unknown> = {}) {
     startDate: '2026-10-01',
     endDate: '2026-10-31',
     rewardDescription: null,
-    status: 'active',
+    // 平均 (visible = true) を出すのは終了したチャレンジだけなので、既定は終了 (completed)
+    status: 'completed',
     departmentId: null,
     departmentName: null,
     participantCount: 12,
@@ -633,6 +721,13 @@ function adminChallenge(overrides: Record<string, unknown> = {}) {
     createdAt: '2026-09-01T00:00:00Z',
     ...overrides,
   };
+}
+
+/** 管理者の画面のカードの、参加した人の数の欄 (見出し「参加した人」の直前の値) */
+function participantCountCell(): string {
+  const heading = Array.from(container.querySelectorAll('p')).find((el) => el.textContent === '参加した人');
+  expect(heading, '見出し「参加した人」が見つからない').toBeDefined();
+  return heading!.previousElementSibling?.textContent ?? '';
 }
 
 function setNativeValue(element: HTMLInputElement | HTMLSelectElement, value: string) {
@@ -648,23 +743,24 @@ async function change(element: HTMLInputElement | HTMLSelectElement, value: stri
 }
 
 describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
-  it('参加者数と平均を出す (平均は単位つき)。個人の記録・順位は出さない', async () => {
+  it('終了したチャレンジは、参加した人の数と確定した平均を出す (平均は単位つき)。個人の記録・順位は出さない', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ challenges: [adminChallenge()] }));
 
     await render(<OrgChallengesAdminPage />);
 
     expect(text()).toContain('朝食チャレンジ');
-    expect(text()).toContain('12');
-    expect(text()).toContain('参加者');
+    expect(participantCountCell()).toBe('12');
     expect(text()).toContain('63.2%');
-    expect(text()).toContain('参加者の平均');
+    expect(text()).toContain('参加者の平均 (終了時点)');
+    expect(text()).not.toContain('終了後に表示');
+    expect(text()).not.toContain('表示なし');
     // 個人の順位 (「2位」など)・順位表は出ない
     expect(text()).not.toMatch(/\d+位/);
     expect(text()).not.toContain('順位表');
     expect(container.querySelector('ol')).toBeNull();
   });
 
-  it('管理者向けの説明: 参加は社員の自由・見えるのは集計だけ・順位は参加者どうしにだけ・少人数の間は人数も平均も出さない', async () => {
+  it('管理者向けの説明: 参加は社員の自由・見えるのは集計だけ・順位は参加者どうしにだけ・参加者数は延べ数・平均は終了後だけ・重なるチャレンジは先の 1 本だけ', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ challenges: [] }));
 
     await render(<OrgChallengesAdminPage />);
@@ -672,39 +768,87 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     expect(text()).toContain('参加は社員の自由です');
     expect(text()).toContain('管理者に見えるのは、チャレンジごとの集計 (参加者数と平均) だけです');
     expect(text()).toContain('順位は、参加した社員どうしにだけ表示されます');
-    expect(text()).toContain('参加者が10人以上になるまでは参加者数を');
-    expect(text()).toContain('集計が済んだ参加者が10人以上になるまでは平均を表示しません');
+    expect(text()).toContain(
+      '参加者数は、これまでに参加した人の数で、やめた人や組織を離れた人を引きません。10人以上になるまでは表示しません。',
+    );
+    expect(text()).toContain(
+      '平均は、チャレンジが終了したあとに、終了時点の参加者が10人以上のときだけ表示します (開催中は表示しません)。',
+    );
+    expect(text()).toContain('同じ種類で期間が重なるチャレンジは、先に終了したものの平均だけを表示します');
+    // 旧の説明 (集計が済んだ参加者で平均を出す) は残さない
+    expect(text()).not.toContain('集計が済んだ参加者');
   });
 
-  it('参加者が最小人数に満たない (null) ときは「10人未満」。平均は「集計中」で、必要な人数を説明する', async () => {
+  it('開催中は、参加した人が最小人数に満たない (null) ときは「10人未満」。平均は「終了後に表示」で、終了時点の人数の条件を説明する', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        challenges: [adminChallenge({ participantCount: null, aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
+        challenges: [
+          adminChallenge({ status: 'active', participantCount: null, aggregate: { minParticipants: 10, visible: false, averageValue: null } }),
+        ],
       }),
     );
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).toContain('10人未満');
-    expect(text()).toContain('集計中');
-    expect(text()).toContain('集計が済んだ参加者が10人以上になると、平均を表示します');
+    expect(participantCountCell()).toBe('10人未満');
+    expect(text()).toContain('終了後に表示');
+    expect(text()).toContain('チャレンジが終了すると、終了時点の参加者 (10人以上) の平均を表示します');
     expect(text()).not.toContain('参加者の平均');
+    expect(text()).not.toContain('表示なし');
+    expect(text()).not.toContain('集計中');
   });
 
-  it('参加者は 10 人以上いるが集計が済んだ人が足りないときは、人数は出して平均は「集計中」', async () => {
+  it('開催中は、参加した人が 10 人以上でも平均は「終了後に表示」。API の最小人数があればそれを使う', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({
-        challenges: [adminChallenge({ participantCount: 11, aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
+        challenges: [adminChallenge({ status: 'active', participantCount: 16, aggregate: { minParticipants: 15, visible: false, averageValue: null } })],
       }),
     );
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).not.toContain('10人未満');
-    expect(text()).toContain('集計中');
+    expect(participantCountCell()).toBe('16');
+    expect(text()).toContain('終了後に表示');
+    expect(text()).toContain('終了時点の参加者 (15人以上) の平均を表示します');
   });
 
-  it('平均が 0 のときも「集計中」ではなく 0 を出す', async () => {
+  it('開催中・下書きのチャレンジは、API が平均を返しても終了前の値としては出さない (平均は終了時に確定した値だけ)', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        challenges: [
+          adminChallenge({ id: 'a', status: 'active', aggregate: { minParticipants: 10, visible: true, averageValue: 63.2 } }),
+          adminChallenge({ id: 'd', status: 'draft', aggregate: { minParticipants: 10, visible: true, averageValue: 41.5 } }),
+        ],
+      }),
+    );
+
+    await render(<OrgChallengesAdminPage />);
+
+    expect(text()).not.toContain('63.2%');
+    expect(text()).not.toContain('41.5%');
+    expect(text()).not.toContain('参加者の平均');
+    expect(text().match(/終了後に表示/g)).toHaveLength(2);
+  });
+
+  it('終了して平均を出さない (API の visible = false) ときは「表示なし」と、終了時点の人数か重なるチャレンジのためだと説明する。人数は出す', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        challenges: [adminChallenge({ status: 'completed', participantCount: 11, aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
+      }),
+    );
+
+    await render(<OrgChallengesAdminPage />);
+
+    expect(participantCountCell()).toBe('11');
+    expect(text()).toContain('表示なし');
+    expect(text()).toContain(
+      '終了時点の参加者が10人未満か、同じ種類で期間が重なるチャレンジの平均をすでに表示しているため、平均は表示しません',
+    );
+    expect(text()).not.toContain('参加者の平均');
+    expect(text()).not.toContain('終了後に表示');
+  });
+
+  it('終了して平均が 0 のときも「表示なし」ではなく 0 を出す', async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ challenges: [adminChallenge({ aggregate: { minParticipants: 10, visible: true, averageValue: 0 } })] }),
     );
@@ -712,7 +856,24 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     await render(<OrgChallengesAdminPage />);
 
     expect(text()).toContain('0%');
-    expect(text()).not.toContain('集計中');
+    expect(text()).toContain('参加者の平均 (終了時点)');
+    expect(text()).not.toContain('表示なし');
+  });
+
+  it('中止したチャレンジには、平均の欄を出さない (中止は平均を確定しない)。参加した人の数は出す', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({
+        challenges: [adminChallenge({ status: 'cancelled', participantCount: 12, aggregate: { minParticipants: 10, visible: false, averageValue: null } })],
+      }),
+    );
+
+    await render(<OrgChallengesAdminPage />);
+
+    expect(text()).toContain('中止');
+    expect(participantCountCell()).toBe('12');
+    expect(text()).not.toContain('終了後に表示');
+    expect(text()).not.toContain('表示なし');
+    expect(text()).not.toContain('参加者の平均');
   });
 
   it('計算できない種類 (歩数) のチャレンジには、平均の欄を出さない', async () => {
@@ -725,8 +886,64 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     await render(<OrgChallengesAdminPage />);
 
     expect(text()).toContain('歩数');
-    expect(text()).not.toContain('集計中');
+    expect(text()).not.toContain('終了後に表示');
+    expect(text()).not.toContain('表示なし');
     expect(text()).not.toContain('参加者の平均');
+  });
+
+  it.each([
+    ['draft', ['開始']],
+    ['active', ['終了']],
+    ['completed', []],
+    ['cancelled', []],
+  ] as const)('状態のボタンは、%s のカードには %j だけを出す (終わった状態には押すと 409 になるボタンを置かない)', async (status, expected) => {
+    fetchMock.mockResolvedValue(jsonResponse({ challenges: [adminChallenge({ status })] }));
+
+    await render(<OrgChallengesAdminPage />);
+
+    const statusButtons = ['開始', '終了'].filter((label) => hasButton(label));
+    expect(statusButtons).toEqual(expected);
+  });
+
+  it('「終了」を押すと PUT /api/org/challenges に status = completed を送り、一覧を読み直す', async () => {
+    let completed = false;
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string }) => {
+      if (init?.method === 'PUT') {
+        completed = true;
+        return jsonResponse({ success: true });
+      }
+      return jsonResponse({
+        challenges: [
+          completed
+            ? adminChallenge({ status: 'completed' })
+            : adminChallenge({ status: 'active', aggregate: { minParticipants: 10, visible: false, averageValue: null } }),
+        ],
+      });
+    });
+    await render(<OrgChallengesAdminPage />);
+    expect(text()).toContain('終了後に表示');
+
+    await click(button('終了'));
+
+    const put = fetchMock.mock.calls.find((c) => c[1]?.method === 'PUT')!;
+    expect(put[0]).toBe('/api/org/challenges');
+    expect(JSON.parse(put[1].body)).toEqual({ id: '00000000-0000-4000-8000-0000000000d1', status: 'completed' });
+    expect(text()).toContain('63.2%');
+    expect(text()).toContain('参加者の平均 (終了時点)');
+    expect(hasButton('終了')).toBe(false);
+  });
+
+  it('状態を変えられない (409 CHALLENGE_STATUS_LOCKED) ときは、API のメッセージを出す', async () => {
+    fetchMock.mockImplementation(async (url: string, init?: { method?: string }) =>
+      init?.method === 'PUT'
+        ? jsonResponse({ error: 'このチャレンジの状態は変えられません', code: 'CHALLENGE_STATUS_LOCKED' }, 409)
+        : jsonResponse({ challenges: [adminChallenge({ status: 'active', aggregate: { minParticipants: 10, visible: false, averageValue: null } })] }),
+    );
+    await render(<OrgChallengesAdminPage />);
+
+    await click(button('終了'));
+
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('このチャレンジの状態は変えられません');
   });
 
   it('作成フォーム: 使える 3 種類だけ選べる。歩数・体重・カスタムは「準備中」で選べない', async () => {

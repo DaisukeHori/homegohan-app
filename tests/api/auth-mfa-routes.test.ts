@@ -2,7 +2,8 @@
  * #1176 運営ロールの MFA の自己サービス API (段 A の 4 route) の route テスト。
  * docs/design/cross/12-operator-mfa.md §14.1・§14.2・§14.3・§14.5・§17.2・§21.2 (auth-mfa-routes.test.ts)
  *
- * 段 A の requireRole はゲートを持たない (AAL を見ない) ので、AAL の 403 の検査は入れない (§0.2・§21.2)。
+ * この 4 route は段 B から requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' }) で AAL を見ないので、AAL の 403 の検査は入れない
+ * (§0.2・§21.2。段 B の後も aal1 で使えることは tests/api/auth-mfa-aal2-routes.test.ts が見る)。
  * requireRole は本物 (@/lib/auth/helpers) を通し、Supabase の client (本人・service_role) を偽物にする。
  * バックアップコードの表の 4 関数と監査 (recordMfaAudit) は差し替え、呼ぶ順と引数を見る。回数制限は本物 (Upstash 未設定 = in-memory)。
  */
@@ -16,6 +17,8 @@ const mocks = vi.hoisted(() => {
     profile: null as null | { roles: string[]; organization_id: null; frozen_at: null; unban_at: null },
     session: null as null | { access_token: string; refresh_token: string },
     claims: null as null | Record<string, unknown>,
+    /** next/headers の headers() が返す要求のヘッダ (Bearer の経路を試す it だけ Authorization を入れる) */
+    requestHeaders: new Headers(),
   };
   const userClient = {
     auth: {
@@ -40,7 +43,7 @@ const mocks = vi.hoisted(() => {
     })),
   };
   const adminClient = {
-    auth: { admin: { mfa: { listFactors: vi.fn(), deleteFactor: vi.fn() } } },
+    auth: { admin: { signOut: vi.fn(), mfa: { listFactors: vi.fn(), deleteFactor: vi.fn() } } },
   };
   return {
     order,
@@ -62,7 +65,7 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 vi.mock('next/headers', () => ({
-  headers: async () => new Headers(),
+  headers: async () => mocks.state.requestHeaders,
   cookies: async () => ({ get: () => undefined, set: () => undefined }),
 }));
 
@@ -177,6 +180,7 @@ beforeEach(() => {
     mocks.userClient.auth.mfa.challengeAndVerify,
     mocks.userClient.auth.mfa.unenroll,
     mocks.userClient.auth.mfa.enroll,
+    mocks.adminClient.auth.admin.signOut,
     mocks.adminClient.auth.admin.mfa.listFactors,
     mocks.adminClient.auth.admin.mfa.deleteFactor,
     mocks.issueBackupCodes,
@@ -189,6 +193,7 @@ beforeEach(() => {
   }
   vi.unstubAllEnvs();
   mocks.order.length = 0;
+  mocks.state.requestHeaders = new Headers();
   userSeq += 1;
   userId = `11111111-1111-4111-8111-${String(userSeq).padStart(12, '0')}`;
   signIn();
@@ -217,6 +222,10 @@ beforeEach(() => {
     mocks.order.push('listFactors');
     return { data: { factors: [factor(VERIFIED_FACTOR_ID, 'verified'), factor(UNVERIFIED_FACTOR_ID, 'unverified')] }, error: null };
   });
+  mocks.adminClient.auth.admin.signOut.mockImplementation(async (jwt: string, scope: string) => {
+    mocks.order.push(`signOut:${jwt}:${scope}`);
+    return { data: null, error: null };
+  });
   mocks.adminClient.auth.admin.mfa.deleteFactor.mockImplementation(async ({ id }: { id: string }) => {
     mocks.order.push(`deleteFactor:${id}`);
     return { data: { id }, error: null };
@@ -241,7 +250,7 @@ beforeEach(() => {
 });
 
 describe('段 A の route の認可', () => {
-  it('4 route とも requireRole を MFA_REQUIRED_ROLES の引数 1 つで呼ぶ (段 A の requireRole は今のまま。{ assurance } は段 B)', async () => {
+  it("4 route とも requireRole を MFA_REQUIRED_ROLES と { assurance: 'session' } で呼ぶ (段 B で第 2 引数を足した §0.2・走査 ②)", async () => {
     signIn({ factors: [factor(VERIFIED_FACTOR_ID, 'verified')] });
     await status();
     await enroll();
@@ -249,7 +258,7 @@ describe('段 A の route の認可', () => {
     await recover();
     expect(vi.mocked(requireRole)).toHaveBeenCalledTimes(4);
     for (const call of vi.mocked(requireRole).mock.calls) {
-      expect(call).toEqual([MFA_REQUIRED_ROLES]);
+      expect(call).toEqual([MFA_REQUIRED_ROLES, { assurance: 'session' }]);
     }
   });
 });
@@ -507,7 +516,7 @@ describe('POST /api/auth/mfa/verify', () => {
 });
 
 describe('POST /api/auth/mfa/recover', () => {
-  it('POST /recover: 形の違うコードは DB に触れず 400 / 無いコード → 400 / verified な factor が無い → 409 / 消費できたら全 factor を admin で消し、残りの行を消し、監査 warn (details { factors_deleted: 消した数, backup_codes_deleted: 消した行の数, failed_step: null })、next を返す / 4 回目 → 429', async () => {
+  it('POST /recover: 形の違うコードは DB に触れず 400 / 無いコード → 400 / verified な factor が無い → 409 / 消費できたら本人の全セッションを終え (admin.signOut の global)、全 factor を admin で消し、残りの行を消し、監査 warn (details { factors_deleted: 消した数, backup_codes_deleted: 消した行の数, failed_step: null })、next を返す / 4 回目 → 429', async () => {
     signIn({ factors: [factor(VERIFIED_FACTOR_ID, 'verified')] });
     for (const bad of ['ABCDE-FGHJ', 'ABCDE-FGHJ0', 'IIIII-OOOOO']) {
       const result = await recover({ code: bad });
@@ -555,6 +564,7 @@ describe('POST /api/auth/mfa/recover', () => {
     expect(mocks.order).toEqual([
       'listFactors',
       'consumeBackupCode',
+      'signOut:header.payload.signature:global',
       `deleteFactor:${VERIFIED_FACTOR_ID}`,
       `deleteFactor:${UNVERIFIED_FACTOR_ID}`,
       'deleteBackupCodes',
@@ -629,6 +639,44 @@ describe('POST /api/auth/mfa/recover', () => {
     const auditFailed = await recover();
     expect(auditFailed.status).toBe(200);
   });
+
+  it("POST /recover: 全セッションを終える admin.signOut が error なら factor もコードも消さず (deleteFactor・deleteBackupCodes を呼ばない)、監査を details { factors_deleted: 0, backup_codes_deleted: null, failed_step: 'sign_out_sessions' } で 1 回書いて 500 (生のエラー文を出さない)", async () => {
+    signIn({ factors: [factor(VERIFIED_FACTOR_ID, 'verified')] });
+    mocks.adminClient.auth.admin.signOut.mockImplementationOnce(async () => {
+      mocks.order.push('signOut');
+      return { data: null, error: { message: RAW_DB_TEXT, status: 500 } };
+    });
+    const signOutFailed = await recover();
+    expect(signOutFailed.status).toBe(500);
+    expect(signOutFailed.body.code).toBe('INTERNAL_ERROR');
+    expect(JSON.stringify(signOutFailed.body)).not.toContain('violates');
+    expect(mocks.order).toEqual(['listFactors', 'consumeBackupCode', 'signOut', 'audit']);
+    expect(mocks.adminClient.auth.admin.mfa.deleteFactor).not.toHaveBeenCalled();
+    expect(mocks.deleteBackupCodes).not.toHaveBeenCalled();
+    expect(auditCalls()).toEqual([
+      expect.objectContaining({
+        action: 'admin.mfa.recover',
+        details: { factors_deleted: 0, backup_codes_deleted: null, failed_step: 'sign_out_sessions' },
+      }),
+    ]);
+  });
+
+  it('POST /recover: Cookie のセッションが無くモバイルの Bearer JWT で呼ばれたら、その token で全セッションを終える。token がどちらにも無ければ 401 で、コードを消費しない', async () => {
+    signIn({ factors: [factor(VERIFIED_FACTOR_ID, 'verified')] });
+    mocks.state.session = null;
+    mocks.state.requestHeaders = new Headers({ authorization: 'Bearer mobile.header.signature' });
+    const viaBearer = await recover();
+    expect(viaBearer.status).toBe(200);
+    expect(mocks.adminClient.auth.admin.signOut).toHaveBeenCalledWith('mobile.header.signature', 'global');
+
+    vi.mocked(mocks.consumeBackupCode).mockClear();
+    vi.mocked(mocks.adminClient.auth.admin.signOut).mockClear();
+    mocks.state.requestHeaders = new Headers();
+    const noToken = await recover();
+    expect(noToken.status).toBe(401);
+    expect(mocks.consumeBackupCode).not.toHaveBeenCalled();
+    expect(mocks.adminClient.auth.admin.signOut).not.toHaveBeenCalled();
+  });
 });
 
 describe('route の共通', () => {
@@ -643,6 +691,8 @@ describe('route の共通', () => {
     expect(recovered.status).toBe(200);
     expect(recovered.body.next).toBe(MFA_RECOVER_NEXT_PATH);
     expect(mocks.adminClient.auth.admin.mfa.deleteFactor).toHaveBeenCalledTimes(2);
+    // 借り物の token で全セッションを終える (同じ session_id のネイティブのセッションも終わる §10)
+    expect(mocks.adminClient.auth.admin.signOut).toHaveBeenCalledWith('header.payload.signature', 'global');
   });
 
   it('POST は別オリジンを 403 FORBIDDEN_ORIGIN', async () => {

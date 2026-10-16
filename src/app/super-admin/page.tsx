@@ -8,7 +8,7 @@ import { redirect } from 'next/navigation';
  * super_admin の画面は /super-admin/plans などの下にあるので、入口に来た人はプラン管理へ送る
  * (layout.tsx のログイン後の戻り先も /super-admin/plans)。
  *
- * super_admin 以外の人は、同じ階層の layout.tsx が requireRole(['super_admin']) で弾く。
+ * super_admin 以外の人は、同じ階層の layout.tsx が requireRoleForPage(['super_admin'], ...) で弾く。
  * 権限の判定はそちらに任せ、ここでは重ねない。
  */
 export default function SuperAdminIndexPage() {
