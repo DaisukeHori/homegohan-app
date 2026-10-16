@@ -2232,6 +2232,7 @@ export default function WeeklyMenuPage() {
           setGenerationProgress(null);
           localStorage.removeItem('weeklyMenuGenerating');
           localStorage.removeItem('singleMealGenerating');
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- セッション切れ (401)。ページごと移り、middleware に Cookie とログインの状態を判定し直させる (#142)
           window.location.href = '/login';
           return;
         }
@@ -3979,6 +3980,7 @@ export default function WeeklyMenuPage() {
           }
           setIsRegenerating(false);
           setRegeneratingMealId(null);
+          // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- セッション切れ (401)。ページごと移り、middleware に Cookie とログインの状態を判定し直させる (#142)
           window.location.href = '/login';
           return;
         }

@@ -39,6 +39,7 @@ const UNENROLL_CONFIRM_MESSAGE =
 
 /** セッション切れ (401) ならログインへ移る (§15.2 の共通の規則) */
 function goToLoginForCurrentPage(): void {
+  // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- セッション切れ (401) はページごとログインへ移る (docs/design/cross/12-operator-mfa.md §15.2)
   window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`);
 }
 
