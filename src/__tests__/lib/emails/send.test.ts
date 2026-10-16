@@ -1,20 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EmailEnvelopeSchema, maskEmailAddress, sendEmail, type EmailEnvelope } from '@/lib/emails/send';
+import { maskEmailAddress as maskEmailAddressInOutbox } from '@/lib/emails/outbox';
 import { EmailSendError, isEmailFailure } from '@/lib/emails/send-result';
 import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
-import { maskSecrets } from '../../../../supabase/functions/_shared/log-sanitizer';
 
-// #1193 メール送信の失敗の記録・再試行・Idempotency-Key。
-// Resend の SDK とロガー (app_logs) だけをモックにし、sendEmail 本体は実物を通す。
+// #1193 sendEmail は送信待ち (email_outbox) に登録するだけ (Resend は呼ばない。送るのは worker: outbox.test.ts)。
+// 設計: docs/design/operator/10-logs-and-mail-retry.md §6.3・§12。
+// Resend の SDK・ロガー (app_logs)・停止リスト・service role の Supabase をモックにし、sendEmail 本体は実物を通す。
 // vi.mock はホイストされるため、モック関数は vi.hoisted で定義する
 const mocks = vi.hoisted(() => ({
   emailsSend: vi.fn(),
+  logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
   createLogger: vi.fn(),
   lookupEmailSuppression: vi.fn(),
+  getSupabaseAdmin: vi.fn(),
+  from: vi.fn(),
+  /** email_outbox への insert(row) の row */
+  outboxInserts: [] as Record<string, unknown>[],
+  /** insert(...).select('id').single() の結果 */
+  insertSelectResult: vi.fn(),
+  /** select を付けない insert(...) の結果 (停止リストの dead の記録) */
+  insertResult: vi.fn(),
 }));
 
+// Resend を呼ばないことを確かめるためにモックにする (呼ばれたら赤)
 vi.mock('resend', () => {
   class MockResend {
     emails = { send: mocks.emailsSend };
@@ -31,10 +42,17 @@ vi.mock('@/lib/emails/suppression', () => ({
   lookupEmailSuppression: mocks.lookupEmailSuppression,
 }));
 
+// service role の Supabase。既定は email_outbox への INSERT が成功する偽物 (無いと環境変数の不足で例外 → すべて outbox_failed)
+vi.mock('@/lib/supabase/server', () => ({
+  getSupabaseAdmin: mocks.getSupabaseAdmin,
+}));
+
 // 本物のキーではないダミー値 (ログに出ないことを確かめるための目印。秘密情報の書式にしない)
 const API_KEY = 'dummy-api-key-for-test-0123456789';
 const RECIPIENT = 'test@example.com';
 const MASKED_RECIPIENT = 't***@example.com';
+const OUTBOX_ID = '00000000-0000-4000-8000-0000000000aa';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 const validEnvelope: EmailEnvelope = {
   to: RECIPIENT,
@@ -44,42 +62,51 @@ const validEnvelope: EmailEnvelope = {
   template: 'org_invite_new',
 };
 
-/** Resend の SDK が返す形 ({ data, error, headers }) */
-const accepted = (id = 'sent-id') => ({ data: { id }, error: null, headers: null });
-const rejected = (name: string, statusCode: number | null, message = `${name}: message`) => ({
-  data: null,
-  error: { name, statusCode, message },
-  headers: null,
-});
+/** 偽物の insert: 行を積み、.select('id').single() と、select を付けない await の両方に答える */
+function fakeInsert(row: Record<string, unknown>) {
+  mocks.outboxInserts.push(row);
+  return {
+    select: (columns: string) => {
+      expect(columns).toBe('id');
+      return { single: () => mocks.insertSelectResult() };
+    },
+    then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+      Promise.resolve().then(() => mocks.insertResult()).then(resolve, reject),
+  };
+}
 
 beforeEach(() => {
-  vi.useFakeTimers();
   vi.stubEnv('RESEND_API_KEY', API_KEY);
+  mocks.outboxInserts.length = 0;
   mocks.createLogger.mockReturnValue({
     debug: vi.fn(),
-    info: vi.fn(),
+    info: mocks.logInfo,
     warn: mocks.logWarn,
     error: mocks.logError,
   });
-  mocks.emailsSend.mockResolvedValue(accepted());
   mocks.lookupEmailSuppression.mockResolvedValue({ status: 'clear' });
+  mocks.insertSelectResult.mockResolvedValue({ data: { id: OUTBOX_ID }, error: null });
+  mocks.insertResult.mockResolvedValue({ error: null });
+  mocks.from.mockImplementation((table: string) => {
+    if (table !== 'email_outbox') throw new Error(`unexpected table ${table}`);
+    return { insert: fakeInsert };
+  });
+  mocks.getSupabaseAdmin.mockReturnValue({ from: mocks.from });
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
   mocks.emailsSend.mockReset();
+  mocks.getSupabaseAdmin.mockReset();
+  mocks.insertSelectResult.mockReset();
+  mocks.insertResult.mockReset();
 });
 
-/** 再試行の待ち時間 (fake timers) をすべて進めて、結果を受け取る */
-async function sendAndSettle(envelope: EmailEnvelope = validEnvelope, options?: Parameters<typeof sendEmail>[1]) {
-  const pending = sendEmail(envelope, options);
-  await vi.runAllTimersAsync();
-  return pending;
-}
+const sendAndSettle = (envelope: EmailEnvelope = validEnvelope, options?: Parameters<typeof sendEmail>[1]) =>
+  sendEmail(envelope, options);
 
-const loggedText = () => JSON.stringify([mocks.logWarn.mock.calls, mocks.logError.mock.calls]);
+const loggedText = () => JSON.stringify([mocks.logInfo.mock.calls, mocks.logWarn.mock.calls, mocks.logError.mock.calls]);
 
 describe('EmailEnvelopeSchema', () => {
   it('正常な envelope を parse できる', () => {
@@ -124,47 +151,80 @@ describe('EmailEnvelopeSchema', () => {
   });
 });
 
-describe('sendEmail: 送れた場合', () => {
-  it('{ ok: true, id, attempts: 1 } を返し、Resend へ 1 回だけ送る。ログは何も残さない', async () => {
-    mocks.emailsSend.mockResolvedValueOnce(accepted('sent-id'));
+describe('sendEmail: 登録 (送信待ち email_outbox)', () => {
+  it('登録: queued の行を INSERT し ok:true / id=行の id / attempts 0 を返す。Resend は呼ばない', async () => {
+    const result = await sendAndSettle({ ...validEnvelope, html: '<p>テスト本文</p>', reply_to: 'support@example.test' });
 
-    const result = await sendAndSettle();
-
-    expect(result).toEqual({ ok: true, id: 'sent-id', attempts: 1, skipped: false, error: null });
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ ok: true, id: OUTBOX_ID, attempts: 0, skipped: false, error: null });
+    expect(isEmailFailure(result)).toBe(false);
+    expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(mocks.from).toHaveBeenCalledWith('email_outbox');
+    expect(mocks.outboxInserts).toEqual([
+      {
+        template: 'org_invite_new',
+        to_email: RECIPIENT,
+        from_email: DEFAULT_EMAIL_FROM,
+        reply_to: 'support@example.test',
+        subject: 'テスト件名',
+        text_body: 'テスト本文',
+        html_body: '<p>テスト本文</p>',
+        user_id: null,
+        idempotency_key: expect.stringMatching(UUID_PATTERN),
+        redact_after_send: false,
+        status: 'queued',
+      },
+    ]);
+    // 受け付けたことを info に残す (宛先はマスク)
+    expect(mocks.logInfo).toHaveBeenCalledWith('メールを送信待ちに登録しました', {
+      template: 'org_invite_new',
+      recipient: MASKED_RECIPIENT,
+      outbox_id: OUTBOX_ID,
+    });
     expect(mocks.logWarn).not.toHaveBeenCalled();
     expect(mocks.logError).not.toHaveBeenCalled();
   });
 
-  it('宛先・件名・本文・返信先・HTML を Resend へ渡す。template (文面の名前) は Resend へ送らない', async () => {
-    await sendAndSettle({
-      ...validEnvelope,
-      html: '<p>テスト本文</p>',
-      reply_to: 'support@example.test',
-    });
+  it('返信先・HTML が無い封筒は NULL で登録する', async () => {
+    await sendAndSettle();
 
-    const [payload] = mocks.emailsSend.mock.calls[0];
-    expect(payload).toEqual({
-      from: validEnvelope.from,
-      to: RECIPIENT,
-      subject: validEnvelope.subject,
-      text: validEnvelope.text,
-      html: '<p>テスト本文</p>',
-      replyTo: 'support@example.test',
-    });
-    expect(payload).not.toHaveProperty('template');
+    expect(mocks.outboxInserts[0]).toMatchObject({ reply_to: null, html_body: null });
   });
 
-  it('template の名前に不備があっても (長すぎる・空など)、メールは止めずに送る。ログに出すときは 64 文字に切る', async () => {
-    mocks.emailsSend.mockResolvedValueOnce(rejected('validation_error', 400)); // ログを出させる
+  it('idempotencyKey / userId / redactAfterSend を行に入れる', async () => {
+    await sendAndSettle(validEnvelope, { idempotencyKey: 'org-invite:1234', userId: 'user-1', redactAfterSend: true });
 
-    const result = await sendAndSettle({ ...validEnvelope, template: 'x'.repeat(200) });
+    expect(mocks.outboxInserts[0]).toMatchObject({
+      idempotency_key: 'org-invite:1234',
+      user_id: 'user-1',
+      redact_after_send: true,
+    });
+  });
 
-    expect(result).toMatchObject({ ok: false, attempts: 1 }); // 入力の不備ではなく Resend の失敗
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
-    expect(mocks.logError.mock.calls[0][2].template).toBe('x'.repeat(64));
-    mocks.emailsSend.mockResolvedValueOnce(accepted());
-    await expect(sendAndSettle({ ...validEnvelope, template: '' })).resolves.toMatchObject({ ok: true });
+  it('別々の sendEmail 呼び出しには別の Idempotency-Key を使う (同じ内容のメールを別々に送る正当なケースを止めない)', async () => {
+    await sendAndSettle();
+    await sendAndSettle();
+
+    const [first, second] = mocks.outboxInserts.map((row) => row.idempotency_key);
+    expect(first).toEqual(expect.stringMatching(UUID_PATTERN));
+    expect(first).not.toBe(second);
+  });
+
+  it('template が無い封筒は unknown で登録 (ログも unknown)', async () => {
+    const { template: _template, ...withoutTemplate } = validEnvelope;
+
+    await sendAndSettle(withoutTemplate);
+
+    expect(mocks.outboxInserts[0]).toMatchObject({ template: 'unknown' });
+    expect(mocks.logInfo.mock.calls[0][1]).toMatchObject({ template: 'unknown' });
+  });
+
+  it('template は 100 文字で切って登録し (表の CHECK)、ログには 64 文字に切って出す。空の template は unknown', async () => {
+    await sendAndSettle({ ...validEnvelope, template: 'x'.repeat(200) });
+    await sendAndSettle({ ...validEnvelope, template: '' });
+
+    expect(mocks.outboxInserts[0].template).toBe('x'.repeat(100));
+    expect(mocks.logInfo.mock.calls[0][1].template).toBe('x'.repeat(64));
+    expect(mocks.outboxInserts[1].template).toBe('unknown');
   });
 
   it('from を省略した封筒には既定の送信元を使う', async () => {
@@ -173,220 +233,71 @@ describe('sendEmail: 送れた場合', () => {
 
     await sendAndSettle(withoutFrom as EmailEnvelope); // from は schema の default (site-config の既定値) で補われる
 
-    expect(mocks.emailsSend.mock.calls[0][0].from).toBe(DEFAULT_EMAIL_FROM);
+    expect(mocks.outboxInserts[0].from_email).toBe(DEFAULT_EMAIL_FROM);
   });
-});
 
-describe('sendEmail: 再試行する失敗 (429 / 5xx / 通信エラー)', () => {
-  it.each([
-    ['429 rate_limit_exceeded', rejected('rate_limit_exceeded', 429)],
-    ['500 internal_server_error', rejected('internal_server_error', 500)],
-    ['502 (JSON でない応答)', rejected('application_error', 502)],
-    ['503', rejected('application_error', 503)],
-    ['504', rejected('application_error', 504)],
-    ['通信エラー (SDK は statusCode: null で返す)', rejected('application_error', null, 'Unable to fetch data.')],
-    ['409 concurrent_idempotent_requests (同じキーの送信が処理中)', rejected('concurrent_idempotent_requests', 409)],
-  ])('%s: 再試行して、次に受け付けられれば ok を返す (attempts: 2)', async (_label, failure) => {
-    mocks.emailsSend.mockResolvedValueOnce(failure).mockResolvedValueOnce(accepted('retried-id'));
+  it('登録に失敗したら ok:false outbox_failed (retryable) で error ログ (error.details は載せない)', async () => {
+    mocks.insertSelectResult.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'permission denied for table email_outbox', code: '42501', details: `Failing row contains (${RECIPIENT})` },
+    });
 
     const result = await sendAndSettle();
 
-    expect(result).toEqual({ ok: true, id: 'retried-id', attempts: 2, skipped: false, error: null });
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(2);
-  });
-
-  it('SDK が例外を投げた場合も通信エラーと同じく再試行する', async () => {
-    mocks.emailsSend.mockRejectedValueOnce(new Error('socket hang up')).mockResolvedValueOnce(accepted());
-
-    const result = await sendAndSettle();
-
-    expect(result).toMatchObject({ ok: true, attempts: 2 });
-  });
-
-  it('待ち時間は指数バックオフ: 1 回目の再試行まで 500ms、次に 1000ms、次に 2000ms', async () => {
-    mocks.emailsSend
-      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
-      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
-      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
-      .mockResolvedValueOnce(accepted('fourth'));
-
-    const pending = sendEmail(validEnvelope);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(499);
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1); // 500ms
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(2);
-
-    await vi.advanceTimersByTimeAsync(999);
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(1); // 1000ms
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(3);
-
-    await vi.advanceTimersByTimeAsync(1999);
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(1); // 2000ms
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(4);
-
-    await expect(pending).resolves.toEqual({ ok: true, id: 'fourth', attempts: 4, skipped: false, error: null });
-  });
-
-  it('最初の 1 回に加えて最大 3 回まで再試行し (合計 4 回)、それでも直らなければ ok: false を返す。例外は投げない', async () => {
-    mocks.emailsSend.mockResolvedValue(rejected('application_error', 503, 'Service Unavailable'));
-
-    const result = await sendAndSettle();
-
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(4);
-    expect(result).toMatchObject({ ok: false, id: null, attempts: 4, skipped: false });
+    expect(result).toMatchObject({ ok: false, id: null, attempts: 0, skipped: false });
+    expect(isEmailFailure(result)).toBe(true);
     expect(result.error).toBeInstanceOf(EmailSendError);
     expect(result.error).toMatchObject({
-      name: 'EmailSendError',
-      code: 'application_error',
-      statusCode: 503,
-      attempts: 4,
+      code: 'outbox_failed',
+      statusCode: null,
+      attempts: 0,
       retryable: true,
-      message: 'EMAIL_SEND_FAILED: Service Unavailable',
+      message: 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした',
     });
-    // 最後の失敗のあとには待たない (タイマーが残らない)
-    expect(vi.getTimerCount()).toBe(0);
-  });
-
-  it('通信エラーが続いたときも 4 回で諦め、error.code は network_error になる', async () => {
-    mocks.emailsSend.mockRejectedValue(new Error('fetch failed'));
-
-    const result = await sendAndSettle();
-
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(4);
-    expect(result).toMatchObject({ ok: false, attempts: 4 });
-    expect(result.error).toMatchObject({ code: 'network_error', statusCode: null, retryable: true });
-  });
-
-  it('再試行の途中で直らない種類の失敗 (400) に変わったら、そこで止める', async () => {
-    mocks.emailsSend
-      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
-      .mockResolvedValueOnce(rejected('validation_error', 422, 'Invalid `to` field.'));
-
-    const result = await sendAndSettle();
-
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({ ok: false, attempts: 2 });
-    expect(result.error).toMatchObject({ code: 'validation_error', statusCode: 422, retryable: false });
-  });
-
-  it('再試行で回復したときは、上流の不調に気づけるよう警告を 1 件だけ残す (エラーは残さない)', async () => {
-    mocks.emailsSend.mockResolvedValueOnce(rejected('rate_limit_exceeded', 429)).mockResolvedValueOnce(accepted());
-
-    await sendAndSettle();
-
-    expect(mocks.logError).not.toHaveBeenCalled();
-    expect(mocks.logWarn).toHaveBeenCalledTimes(1);
-    expect(mocks.logWarn).toHaveBeenCalledWith('メールの送信は再試行で成功しました', {
-      template: 'org_invite_new',
-      recipient: MASKED_RECIPIENT,
-      attempts: 2,
-      last_error_code: 'rate_limit_exceeded',
-      last_status_code: 429,
-    });
-  });
-});
-
-describe('sendEmail: 再試行しない失敗 (400 / 403 など)', () => {
-  it.each([
-    ['400 validation_error', rejected('validation_error', 400)],
-    ['403 validation_error (送信元ドメインが未検証など)', rejected('validation_error', 403, 'The homegohan.app domain is not verified')],
-    ['422 validation_error', rejected('validation_error', 422)],
-    ['401 invalid_api_key', rejected('invalid_api_key', 401)],
-    ['403 restricted_api_key', rejected('restricted_api_key', 403)],
-    ['404 not_found', rejected('not_found', 404)],
-    ['409 invalid_idempotent_request (同じキーで中身が違う)', rejected('invalid_idempotent_request', 409)],
-    ['429 daily_quota_exceeded (送信数の上限。待っても直らない)', rejected('daily_quota_exceeded', 429)],
-    ['429 monthly_quota_exceeded (送信数の上限。待っても直らない)', rejected('monthly_quota_exceeded', 429)],
-    ['statusCode が無い validation_error (想定外の形)', { data: null, error: { name: 'validation_error', message: 'bad' } }],
-    // SDK が送る前に弾いた入力の不備は statusCode: null で返る。通信の失敗 (application_error) とは区別して再試行しない
-    ['statusCode: null の missing_required_field (SDK が送る前に弾いた入力の不備)', rejected('missing_required_field', null)],
-  ])('%s: 再試行せずに ok: false を返す (Resend へ 1 回だけ)', async (_label, failure) => {
-    mocks.emailsSend.mockResolvedValue(failure);
-
-    const result = await sendAndSettle();
-
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
-    expect(vi.getTimerCount()).toBe(0);
-    expect(result).toMatchObject({ ok: false, id: null, attempts: 1, skipped: false });
-    expect(result.error).toBeInstanceOf(EmailSendError);
-    expect(result.error).toMatchObject({ retryable: false, attempts: 1 });
-  });
-
-  it('Resend のエラーコードと HTTP ステータスを error に持つ', async () => {
-    mocks.emailsSend.mockResolvedValue(rejected('validation_error', 403, 'The homegohan.app domain is not verified'));
-
-    const result = await sendAndSettle();
-
-    expect(result.error).toMatchObject({
-      code: 'validation_error',
-      statusCode: 403,
-      message: 'EMAIL_SEND_FAILED: The homegohan.app domain is not verified',
-    });
-  });
-
-  it('成功した応答に ID が無いときは、再試行せずに invalid_response で失敗にする', async () => {
-    mocks.emailsSend.mockResolvedValue({ data: null, error: null, headers: null });
-
-    const result = await sendAndSettle();
-
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ ok: false, attempts: 1 });
-    expect(result.error).toMatchObject({ code: 'invalid_response', retryable: false });
-  });
-});
-
-describe('sendEmail: 失敗の記録 (app_logs)', () => {
-  it("createLogger('email') で、文面の名前・マスクした宛先・Resend のエラーコード・送った回数をエラーログに残す", async () => {
-    mocks.emailsSend.mockResolvedValue(rejected('validation_error', 403, 'The homegohan.app domain is not verified'));
-
-    const result = await sendAndSettle();
-
-    expect(mocks.createLogger).toHaveBeenCalledWith('email');
     expect(mocks.logError).toHaveBeenCalledTimes(1);
-    expect(mocks.logError).toHaveBeenCalledWith('メールの送信に失敗しました', result.error, {
-      template: 'org_invite_new',
-      recipient: MASKED_RECIPIENT,
-      error_code: 'validation_error',
-      status_code: 403,
-      attempts: 1,
-      retryable: false,
-    });
-    expect(mocks.logWarn).not.toHaveBeenCalled();
+    const [message, error, meta] = mocks.logError.mock.calls[0];
+    expect(message).toBe('メールを送信待ちに登録できませんでした');
+    expect((error as Error).message).toBe('permission denied for table email_outbox');
+    expect(meta).toEqual({ template: 'org_invite_new', recipient: MASKED_RECIPIENT, error_code: 'outbox_failed', pg_code: '42501' });
+    expect(loggedText()).not.toContain(RECIPIENT);
+    expect(mocks.emailsSend).not.toHaveBeenCalled();
   });
 
-  it('再試行を使い切って失敗したときも、エラーログは 1 件だけ (retryable: true, attempts: 4)', async () => {
-    mocks.emailsSend.mockResolvedValue(rejected('rate_limit_exceeded', 429, 'Too many requests'));
+  it('INSERT が行を返さない (data: null・error: null) ときも outbox_failed', async () => {
+    mocks.insertSelectResult.mockResolvedValueOnce({ data: null, error: null });
 
+    const result = await sendAndSettle();
+
+    expect(result.error).toMatchObject({ code: 'outbox_failed', retryable: true });
+    expect(mocks.logError.mock.calls[0][2]).toMatchObject({ error_code: 'outbox_failed', pg_code: null });
+  });
+
+  it('getSupabaseAdmin や insert が例外を投げても、例外にせず ok:false outbox_failed を返す (エラー文の中のアドレスはマスク)', async () => {
+    mocks.getSupabaseAdmin.mockImplementationOnce(() => {
+      throw new Error('missing service role key');
+    });
+    const first = await sendAndSettle();
+    mocks.insertSelectResult.mockRejectedValueOnce(new Error(`network down while inserting ${RECIPIENT}`));
+    const second = await sendAndSettle();
+
+    for (const result of [first, second]) {
+      expect(result).toMatchObject({ ok: false, skipped: false, attempts: 0 });
+      expect(result.error).toMatchObject({ code: 'outbox_failed', retryable: true });
+    }
+    expect(mocks.logError).toHaveBeenCalledTimes(2);
+    expect((mocks.logError.mock.calls[1][1] as Error).message).toBe(`network down while inserting ${MASKED_RECIPIENT}`);
+    expect(mocks.logError.mock.calls[1][2]).toEqual({
+      template: 'org_invite_new',
+      recipient: MASKED_RECIPIENT,
+      error_code: 'outbox_failed',
+      pg_code: null,
+    });
+    expect(loggedText()).not.toContain(RECIPIENT);
+  });
+
+  it('ログに宛先・件名・本文・API キーを残さない', async () => {
     await sendAndSettle();
-
-    expect(mocks.logError).toHaveBeenCalledTimes(1);
-    expect(mocks.logError.mock.calls[0][2]).toEqual({
-      template: 'org_invite_new',
-      recipient: MASKED_RECIPIENT,
-      error_code: 'rate_limit_exceeded',
-      status_code: 429,
-      attempts: 4,
-      retryable: true,
-    });
-  });
-
-  it('template が無い封筒は unknown として記録する', async () => {
-    mocks.emailsSend.mockResolvedValue(rejected('validation_error', 400));
-    const { template: _template, ...withoutTemplate } = validEnvelope;
-
-    await sendAndSettle(withoutTemplate);
-
-    expect(mocks.logError.mock.calls[0][2]).toMatchObject({ template: 'unknown' });
-  });
-
-  it('ログに宛先のメールアドレス・件名・本文・API キーを残さない', async () => {
-    mocks.emailsSend.mockResolvedValue(rejected('application_error', 503, 'Service Unavailable'));
-
+    mocks.insertSelectResult.mockResolvedValueOnce({ data: null, error: { message: 'x', code: '23514' } });
     await sendAndSettle();
 
     const text = loggedText();
@@ -395,66 +306,6 @@ describe('sendEmail: 失敗の記録 (app_logs)', () => {
     expect(text).not.toContain(validEnvelope.text);
     expect(text).not.toContain(API_KEY);
   });
-
-  it('Resend のエラー文に宛先のアドレスが含まれていても、結果の error にもログにもそのまま出さない', async () => {
-    mocks.emailsSend.mockResolvedValue(
-      rejected('validation_error', 422, `The recipient ${RECIPIENT} is not allowed (reply-to: boss@corp.example.jp)`),
-    );
-
-    const result = await sendAndSettle();
-
-    expect(result.error?.message).not.toContain(RECIPIENT);
-    expect(result.error?.message).toContain(MASKED_RECIPIENT);
-    expect(result.error?.message).toContain('b***@corp.example.jp'); // 宛先以外のアドレスも同じ
-    expect(result.error?.message).not.toContain('boss@corp.example.jp');
-    expect(loggedText()).not.toContain(RECIPIENT);
-  });
-
-  it('マスクした宛先は、app_logs のサニタイザ ([email] への置換) に消されずに残る', () => {
-    // サニタイザはメールアドレスをすべて [email] にする。マスクした形が残るのは、* がアドレスの文字に含まれないため
-    expect(maskSecrets({ recipient: maskEmailAddress(RECIPIENT) })).toEqual({ recipient: MASKED_RECIPIENT });
-    expect(maskSecrets({ recipient: RECIPIENT })).toEqual({ recipient: '[email]' });
-  });
-});
-
-describe('sendEmail: Idempotency-Key', () => {
-  it('Resend へ idempotencyKey を付けて送る', async () => {
-    await sendAndSettle();
-
-    const [, requestOptions] = mocks.emailsSend.mock.calls[0];
-    expect(requestOptions).toEqual({ idempotencyKey: expect.any(String) });
-    expect(requestOptions.idempotencyKey).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
-  });
-
-  it('再試行では同じキーを使う (1 回目が届いていても二重に送られない)', async () => {
-    mocks.emailsSend
-      .mockResolvedValueOnce(rejected('application_error', 503))
-      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
-      .mockResolvedValueOnce(accepted());
-
-    await sendAndSettle();
-
-    const keys = mocks.emailsSend.mock.calls.map(([, requestOptions]) => requestOptions.idempotencyKey);
-    expect(keys).toHaveLength(3);
-    expect(new Set(keys).size).toBe(1);
-  });
-
-  it('別々の sendEmail 呼び出しには別のキーを使う (同じ内容のメールを別々に送る正当なケースを止めない)', async () => {
-    await sendAndSettle();
-    await sendAndSettle();
-
-    const [first, second] = mocks.emailsSend.mock.calls.map(([, requestOptions]) => requestOptions.idempotencyKey);
-    expect(first).not.toBe(second);
-  });
-
-  it('呼び出し側がキーを指定したときは、それを最初の送信にも再試行にも使う', async () => {
-    mocks.emailsSend.mockResolvedValueOnce(rejected('application_error', 502)).mockResolvedValueOnce(accepted());
-
-    await sendAndSettle(validEnvelope, { idempotencyKey: 'org-invite:1234' });
-
-    const keys = mocks.emailsSend.mock.calls.map(([, requestOptions]) => requestOptions.idempotencyKey);
-    expect(keys).toEqual(['org-invite:1234', 'org-invite:1234']);
-  });
 });
 
 describe('sendEmail: RESEND_API_KEY が未設定', () => {
@@ -462,11 +313,12 @@ describe('sendEmail: RESEND_API_KEY が未設定', () => {
     vi.stubEnv('RESEND_API_KEY', undefined);
   });
 
-  it('送らずに skipped: true (ok は false) を返す。Resend は呼ばず、再試行もしない', async () => {
+  it('登録せずに skipped: true (ok は false) を返す。Resend も呼ばない', async () => {
     const result = await sendAndSettle();
 
     expect(mocks.emailsSend).not.toHaveBeenCalled();
-    expect(vi.getTimerCount()).toBe(0);
+    expect(mocks.outboxInserts).toEqual([]);
+    expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
     expect(result).toMatchObject({ ok: false, id: null, attempts: 0, skipped: true });
     expect(result.error).toBeInstanceOf(EmailSendError);
     expect(result.error).toMatchObject({ code: 'not_configured', statusCode: null, retryable: false });
@@ -496,14 +348,16 @@ describe('sendEmail: RESEND_API_KEY が未設定', () => {
 
     expect(result).toMatchObject({ ok: false, skipped: true });
     expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(mocks.outboxInserts).toEqual([]);
   });
 });
 
 describe('sendEmail: 文面 (封筒) が不正', () => {
-  it('件名が長すぎる: Resend へ送らず ok: false (invalid_envelope) を返し、エラーログに残す。例外は投げない', async () => {
+  it('件名が長すぎる: 登録せず ok: false (invalid_envelope) を返し、エラーログに残す。例外は投げない', async () => {
     const result = await sendAndSettle({ ...validEnvelope, subject: 'あ'.repeat(101) });
 
     expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(mocks.outboxInserts).toEqual([]);
     expect(result).toMatchObject({ ok: false, id: null, attempts: 0, skipped: false });
     expect(result.error).toMatchObject({ code: 'invalid_envelope', retryable: false });
     expect(result.error?.message).toContain('subject');
@@ -519,7 +373,7 @@ describe('sendEmail: 文面 (封筒) が不正', () => {
   it('宛先がメールアドレスの形でない: アドレスらしき値をログに出さず、*** にする', async () => {
     const result = await sendAndSettle({ ...validEnvelope, to: 'taro-at-example' });
 
-    expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(mocks.outboxInserts).toEqual([]);
     expect(result).toMatchObject({ ok: false });
     expect(mocks.logError.mock.calls[0][2]).toMatchObject({ recipient: '***' });
     expect(loggedText()).not.toContain('taro-at-example');
@@ -549,6 +403,26 @@ describe('sendEmail: 宛先停止リスト (email_blacklist。#1184)', () => {
     expect(isEmailFailure(result)).toBe(true);
   });
 
+  it('送らなかった記録として dead (suppressed・attempts 0) の行を 1 行 INSERT する (queued の行は作らない)', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValueOnce({ status: 'suppressed', reason: 'bounce' });
+
+    await sendAndSettle(validEnvelope, { userId: 'user-1' });
+
+    expect(mocks.outboxInserts).toEqual([
+      expect.objectContaining({
+        template: 'org_invite_new',
+        to_email: RECIPIENT,
+        user_id: 'user-1',
+        redact_after_send: false,
+        status: 'dead',
+        dead_at: expect.any(String),
+        last_error_code: 'suppressed',
+      }),
+    ]);
+    expect(Number.isFinite(Date.parse(String(mocks.outboxInserts[0].dead_at)))).toBe(true);
+    expect(mocks.outboxInserts[0]).not.toHaveProperty('attempts'); // attempts は表の既定 0
+  });
+
   it('苦情 (complaint) で載っている宛先も同じく送らない', async () => {
     mocks.lookupEmailSuppression.mockResolvedValueOnce({ status: 'suppressed', reason: 'complaint' });
 
@@ -575,18 +449,48 @@ describe('sendEmail: 宛先停止リスト (email_blacklist。#1184)', () => {
     expect(result.error?.message).not.toContain(RECIPIENT);
   });
 
-  it('載っていなければ、今までどおり送る (引き当ては 1 回だけ。再試行のたびには引かない)', async () => {
-    mocks.emailsSend
-      .mockResolvedValueOnce(rejected('rate_limit_exceeded', 429))
-      .mockResolvedValueOnce(accepted('after-retry'));
+  it('redactAfterSend の登録で宛先が停止リストに載っていれば、行を作らずに suppressed を返す (R-10)', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValueOnce({ status: 'suppressed', reason: 'bounce' });
 
-    const result = await sendAndSettle();
+    const result = await sendAndSettle(validEnvelope, { redactAfterSend: true });
 
-    expect(result).toMatchObject({ ok: true, id: 'after-retry', attempts: 2 });
-    expect(mocks.lookupEmailSuppression).toHaveBeenCalledTimes(1);
+    expect(result.error?.code).toBe('suppressed');
+    expect(mocks.outboxInserts).toEqual([]);
+    expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
   });
 
-  it('停止リストを引けなかったとき (DB の失敗・時間切れ) は送る。引けなかったことを warn に残す (エラー文の中のアドレスはマスク)', async () => {
+  it('停止リストで dead の行を残す INSERT が { error } でも例外でも、結果は suppressed のまま (warn を残す)', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValue({ status: 'suppressed', reason: 'bounce' });
+    mocks.insertResult.mockResolvedValueOnce({ error: { message: 'x', code: '42501' } });
+    const first = await sendAndSettle();
+    mocks.insertResult.mockRejectedValueOnce(new Error(`boom ${RECIPIENT}`));
+    const second = await sendAndSettle();
+    mocks.getSupabaseAdmin.mockImplementationOnce(() => {
+      throw new Error('missing service role key');
+    });
+    const third = await sendAndSettle();
+
+    for (const result of [first, second, third]) {
+      expect(result).toMatchObject({ ok: false, skipped: false });
+      expect(result.error?.code).toBe('suppressed');
+    }
+    const recordWarns = mocks.logWarn.mock.calls.filter(([message]) => message === '送らなかった記録 (dead) を残せませんでした');
+    expect(recordWarns).toHaveLength(3);
+    expect(recordWarns[0][1]).toEqual({ template: 'org_invite_new', recipient: MASKED_RECIPIENT, pg_code: '42501' });
+    expect(recordWarns[1][1]).toEqual({ template: 'org_invite_new', recipient: MASKED_RECIPIENT, error_message: `boom ${MASKED_RECIPIENT}` });
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain(RECIPIENT);
+  });
+
+  it('載っていなければ queued で登録する (引き当ては 1 回だけ)', async () => {
+    const result = await sendAndSettle();
+
+    expect(result).toMatchObject({ ok: true, id: OUTBOX_ID });
+    expect(mocks.lookupEmailSuppression).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxInserts[0]).toMatchObject({ status: 'queued' });
+  });
+
+  it('停止リストを引けなかったとき (DB の失敗・時間切れ) は登録する。引けなかったことを warn に残す (エラー文の中のアドレスはマスク)', async () => {
     mocks.lookupEmailSuppression.mockResolvedValueOnce({
       status: 'lookup_failed',
       error: { message: `timeout while reading ${RECIPIENT}`, code: '57014' },
@@ -594,45 +498,29 @@ describe('sendEmail: 宛先停止リスト (email_blacklist。#1184)', () => {
 
     const result = await sendAndSettle();
 
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
-    expect(result).toMatchObject({ ok: true, attempts: 1 });
+    expect(result).toMatchObject({ ok: true, id: OUTBOX_ID, attempts: 0 });
+    expect(mocks.outboxInserts[0]).toMatchObject({ status: 'queued' });
     expect(mocks.logWarn).toHaveBeenCalledTimes(1);
+    expect(mocks.logWarn.mock.calls[0][0]).toBe('宛先停止リストを引けなかったため、確かめずにメールを送信待ちに登録します');
     expect(mocks.logWarn.mock.calls[0][1]).toMatchObject({ recipient: MASKED_RECIPIENT, error_code: '57014' });
     expect(loggedText()).not.toContain(RECIPIENT);
   });
 
-  it('RESEND_API_KEY が無いとき・封筒が不正なときは、停止リストを引かない (送らないので DB を読む必要がない)', async () => {
+  it('RESEND_API_KEY が無いとき・封筒が不正なときは、停止リストを引かない (登録しないので DB を読む必要がない)', async () => {
     vi.stubEnv('RESEND_API_KEY', '');
     await sendAndSettle();
     vi.stubEnv('RESEND_API_KEY', API_KEY);
     await sendAndSettle({ ...validEnvelope, subject: '' });
 
     expect(mocks.lookupEmailSuppression).not.toHaveBeenCalled();
+    expect(mocks.outboxInserts).toEqual([]);
   });
 });
 
 describe('maskEmailAddress', () => {
-  it.each([
-    ['taro@example.com', 't***@example.com'],
-    ['abc@example.com', 'a***@example.com'],
-    // ローカル部が短いと 1 文字目が実質アドレスそのものなので、1 文字目も隠す
-    ['ab@example.com', '***@example.com'],
-    ['a@example.com', '***@example.com'],
-    ['first.last+tag@sub.example.co.jp', 'f***@sub.example.co.jp'],
-    // アドレスの形でないものは、元の文字列を一切出さない
-    ['not-an-email', '***'],
-    ['@example.com', '***'],
-    ['taro@', '***'],
-    ['', '***'],
-  ])('%s → %s', (input, expected) => {
-    expect(maskEmailAddress(input)).toBe(expected);
-  });
-
-  it('サロゲートペア (絵文字) の途中で切らない (孤立サロゲートは app_logs の JSON 保存を失敗させる)', () => {
-    const masked = maskEmailAddress('😀😀😀😀@example.com');
-
-    expect(masked).toBe('😀***@example.com');
-    expect(() => encodeURIComponent(masked)).not.toThrow(); // 孤立サロゲートがあると URIError
+  it('maskEmailAddress は @/lib/emails/send から再エクスポートされ、outbox のものと同じ関数', () => {
+    expect(maskEmailAddress).toBe(maskEmailAddressInOutbox);
+    expect(maskEmailAddress(RECIPIENT)).toBe(MASKED_RECIPIENT);
   });
 });
 
@@ -671,24 +559,11 @@ describe('EmailEnvelopeSchema: 送信元 (#1194)', () => {
     expect(templates.EmailEnvelopeSchema).toBe(envelope.EmailEnvelopeSchema);
   });
 
-  it('sendEmail: from の無い envelope は、EMAIL_FROM を送信元にして Resend へ渡す', async () => {
+  it('sendEmail: from の無い envelope は、EMAIL_FROM を送信元にして送信待ちに登録する', async () => {
     vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
-    mocks.emailsSend.mockResolvedValueOnce(accepted());
 
     await sendAndSettle(withoutFrom as unknown as EmailEnvelope);
 
-    expect(mocks.emailsSend.mock.calls[0][0].from).toBe('ほめゴハン <noreply@mail.example.test>');
-  });
-
-  it('sendEmail: 送信元のドメインが未検証で Resend が断ったときは、例外ではなく失敗の結果を返し、運用ログに残す (#1193)', async () => {
-    mocks.emailsSend.mockResolvedValueOnce(
-      rejected('validation_error', 403, 'The example.test domain is not verified'),
-    );
-
-    const result = await sendAndSettle(validEnvelope);
-
-    expect(result).toMatchObject({ ok: false, skipped: false, attempts: 1 }); // 403 は待っても直らないので再試行しない
-    expect(result.error).toBeInstanceOf(EmailSendError);
-    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.outboxInserts[0].from_email).toBe('ほめゴハン <noreply@mail.example.test>');
   });
 });
