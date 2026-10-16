@@ -25,6 +25,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 import { signInForIntegration } from '../helpers/mfa';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -120,9 +121,9 @@ async function createUser(label: string, roles: string[]): Promise<TestUser> {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   // サインインは使い捨てのクライアントで行う。必須ロールなら TOTP で aal2 にする (#1176。cross/12 §22.4.1)
   const jwt = await signInForIntegration({ email, password, roles });

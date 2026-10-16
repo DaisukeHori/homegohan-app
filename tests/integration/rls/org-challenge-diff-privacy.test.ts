@@ -30,6 +30,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -126,9 +127,9 @@ async function createUser(label: string, options: { signIn?: boolean } = {}): Pr
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname: `it1688-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: data.user.id, nickname: `it1688-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   let jwt: string | null = null;
   if (options.signIn) {

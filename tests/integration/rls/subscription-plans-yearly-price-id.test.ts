@@ -31,6 +31,7 @@ import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -168,12 +169,12 @@ async function createUser(label: string, roles: string[]): Promise<TestUser> {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert(
-      { id: data.user.id, nickname: `yearly-price-${label}`, age_group: '30s', gender: 'other', roles },
-      { onConflict: 'id' },
-    );
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert(
+        { id: data.user.id, nickname: `yearly-price-${label}`, age_group: '30s', gender: 'other', roles },
+        { onConflict: 'id' },
+      ));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });

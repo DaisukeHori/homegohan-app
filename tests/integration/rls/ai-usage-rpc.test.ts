@@ -28,6 +28,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
 import { createPlaceholderOrgOwner } from '../helpers/org-owner';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -118,9 +119,9 @@ async function createUser(label: string, options: { withJwt?: boolean } = {}): P
   const userId = data.user.id;
   createdUserIds.push(userId);
 
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: `usage-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: `usage-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
 
   if (!options.withJwt) return { userId, jwt: null };

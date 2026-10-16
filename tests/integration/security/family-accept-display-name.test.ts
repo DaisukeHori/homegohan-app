@@ -20,6 +20,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 // 結合テストの設定 (vitest.integration.config.ts) は @homegohan/shared の別名を持たないので、判定の本体を直接読む
 import { PROFILE_NAME_PLACEHOLDER, normalizeProfileName } from '../../../packages/shared/src/profile-name';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -66,9 +67,9 @@ async function createUser(label: string, nickname: string | null): Promise<TestU
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
   if (nickname !== null) {
-    const { error: profileError } = await srAdmin
-      .from('user_profiles')
-      .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+    const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+      db.from('user_profiles')
+        .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
     if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   }
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)

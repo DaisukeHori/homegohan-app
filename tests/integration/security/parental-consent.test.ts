@@ -25,6 +25,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
 import { PARENTAL_CONSENT_DOCUMENT, addDaysToDate, todayLocal } from '@homegohan/shared';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -140,12 +141,11 @@ async function createUser(
   createdUserIds.push(data.user.id);
   if (options.withProfile !== false) {
     const birthDate = options.birthDate === undefined ? ADULT_BIRTH_DATE : options.birthDate;
-    const { error: profileError } = await srAdmin
-      .from('user_profiles')
-      .upsert(
+    const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+      db.from('user_profiles').upsert(
         { id: data.user.id, nickname: `parental-${label}`, age_group: '30s', gender: 'other', birth_date: birthDate },
         { onConflict: 'id' },
-      );
+      ));
     if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   }
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)

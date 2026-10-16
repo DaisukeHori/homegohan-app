@@ -17,6 +17,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 
+import { retryIdempotentSetup } from './setup-transient-retry';
+
 // ---------------------------------------------------------------
 // 関数形式 (PR #839 由来) — 各呼び出し時に env を読む。lazy 評価。
 // ---------------------------------------------------------------
@@ -143,9 +145,10 @@ export async function createTestUser(
     roles: options.roles ?? [],
   };
 
-  const { error: profileError } = await client
-    .from('user_profiles')
-    .upsert(profileData, { onConflict: 'id' });
+  // 既知の行 (id) の upsert なので、ゲートウェイの一時的な失敗のときだけやり直す (#1779。helpers/setup-transient-retry.ts)
+  const { error: profileError } = await retryIdempotentSetup(client, 'createTestUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles').upsert(profileData, { onConflict: 'id' }),
+  );
 
   if (profileError) {
     // Cleanup auth user before throwing
