@@ -28,6 +28,7 @@ import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } 
 import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -87,7 +88,11 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     }
 
     // Check for duplicates (date+mealType must be unique, unless plannedMealId differs)
-    const key = (typeof plannedMealId === 'string' ? plannedMealId : null) || `${date}:${mealType}`;
+    // UUID の形なら小文字にそろえてから使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の plannedMealId でも
+    // planned_meals の .in('id', ...) は自分の食事に当たるが、DB から読んだ id (小文字) との突き合わせ (foundIds / byId) が外れて
+    // plannedMealId が消され、既存の食事を置き換えない生成になる。同じ食事を大文字小文字だけ変えて 2 回送る重複もここで弾く
+    const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
+    const key = normalizedPlannedMealId || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
     }
@@ -96,7 +101,7 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
     validated.push({
       date,
       mealType,
-      plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined,
+      plannedMealId: normalizedPlannedMealId,
     });
   }
   

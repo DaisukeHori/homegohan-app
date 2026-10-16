@@ -17,6 +17,7 @@ import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { normalizeUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,7 +46,12 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         { status: 400 },
       );
     }
-    const { to_user_id, reason } = parsed.data;
+    const { reason } = parsed.data;
+    // 本文の to_user_id は UUID の形を確かめたうえで小文字にそろえ、以後の RPC・監査・宛先の解決・役割の判定・ログには
+    // そろえた値だけを使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字のままでも RPC は
+    // 新しいオーナーに譲渡するが、DB から読んだメンバーの id (小文字) との `===` と emailMap のキーが外れ、
+    // 新しいオーナーに一般メンバー向けの通知が届き、新オーナー欄のアドレスも空になる
+    const to_user_id = normalizeUuid(parsed.data.to_user_id);
 
     // 通知メール用に、RPC 実行"前"の旧オーナーと組織名を控えておく (#1209)。
     // operator_force_owner_transfer は organizations.owner_id を新オーナーへ書き換えた後の行を返すため、
