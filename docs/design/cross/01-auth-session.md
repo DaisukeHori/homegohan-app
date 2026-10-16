@@ -38,7 +38,7 @@
 sequenceDiagram
     actor User
     participant Client
-    participant Next as Next.js Edge
+    participant Next as Next.js (proxy・Node.js runtime)
     participant Supabase as Supabase Auth
     participant Redis as Upstash Redis
 
@@ -95,35 +95,13 @@ Set-Cookie: sb-refresh-token=...; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Ag
 
 ### 4.3 同時ログイン上限
 
-最大 **5 端末** まで。超過時は最古のセッション (`last_active_at` が最も古い) を強制無効化。
+上限は設けない。一覧・個別失効・30 日の自動終了 (cross/16)。
 
-ユーザーは `/account/sessions` でセッション一覧を確認し、個別・全端末ログアウトが可能。
+ユーザーは Web の `/settings/security/sessions`・アプリの `settings/sessions` でログイン中の端末を一覧し、1 つずつ・または他の端末をすべてログアウトできる (`GET /api/auth/sessions`・`DELETE /api/auth/sessions/{id}`・`POST /api/auth/sessions/revoke-others`。cross/16 §14.1〜14.3・§15・§16)。
 
 ### 4.4 ログアウト時の Cookie 完全削除
 
-```typescript
-// /api/auth/logout
-export async function POST(req: Request) {
-  const response = NextResponse.json({ ok: true });
-  const cookieNames = ['sb-access-token', 'sb-refresh-token'];
-  cookieNames.forEach(name => {
-    response.cookies.set(name, '', {
-      maxAge: 0,
-      path: '/',
-      secure: true,
-      httpOnly: true,
-      sameSite: 'lax',
-    });
-  });
-  // Supabase Auth sign out
-  await supabaseAdmin.auth.admin.signOut(sessionId);
-  // user_sessions_metadata を revoke
-  await db.from('user_sessions_metadata')
-    .update({ revoked_at: new Date().toISOString() })
-    .eq('session_id', sessionId);
-  return response;
-}
-```
+個別の失効は RPC `auth_session_revoke` (cross/16 §11.4)。ログアウトは今までどおり `signOut()`。
 
 ---
 
@@ -495,7 +473,7 @@ sequenceDiagram
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
 | Unit | `requireRole`, `requireOrgRole`, `resolveOrganizationId`, HIBP チェック | Vitest |
-| Integration | ログイン失敗の回数 (何回失敗してもロックしない・時間で戻る)、セッション同時 5 端末上限 | Vitest + Supabase Local |
+| Integration | ログイン失敗の回数 (何回失敗してもロックしない・時間で戻る)、ログインの記録・セッションの失効・通知の取り置き (`tests/integration/security/auth-history-sessions.test.ts`。cross/16 §20.3) | Vitest + Supabase Local |
 | E2E | 正常ログイン → (必須ロールの運営は MFA の画面。cross/12 §21.5) → ダッシュボード到達、パスワードリセット全フロー | Playwright |
 | Security | CAPTCHA バイパス試行、enumeration 対策、Cookie 属性 | Playwright + 手動 |
 
@@ -505,7 +483,6 @@ sequenceDiagram
 
 | 資産 | 状態 | 対応 |
 |------|------|------|
-| `src/proxy.ts` (セッション同期。#1744 で `src/middleware.ts` から改名) | 保持 | `user_sessions_metadata` 更新ロジックを追加 |
 | Supabase Auth Email+Password | 保持 | そのまま利用 |
 | `/api/auth/login`, `/api/auth/logout` 既存 | 要確認 | 本仕様に合わせてリファクタ |
 | `user_profiles.roles` 列 | 保持・拡張 | 12 ロール体系へ migration |
