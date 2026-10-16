@@ -751,6 +751,11 @@ describe('catalog・台帳・cron の定義', () => {
     for (const word of ['INSERT', 'UPDATE', 'DELETE', 'cron.unschedule']) expect(CRON_JOBS_SQL).not.toContain(word);
   });
 
+  it("CRON_JOBS_SQL は取得した人と同じ username を NULL にする (pg_cron 1.6.4 は superuser でない人が username を渡すと止める)", () => {
+    expect(CRON_JOBS_SQL).toContain("CASE WHEN j.username = CURRENT_USER THEN 'NULL' ELSE pg_catalog.quote_literal(j.username) END");
+    expect(CRON_JOBS_SQL).toContain("%L, %s, %L);'");
+  });
+
   it('checkCatalogCapture: そろえば ok と ledger・cron_jobs / ジョブ 0 本でも ok / 欠けると catalog_failed', () => {
     const base = { csvLineCounts: csvAll, ledgerText: LEDGER_TXT, cronJobsText: CRON_SQL, fixupsBytes: 10 };
     expect(checkCatalogCapture(base)).toEqual({
