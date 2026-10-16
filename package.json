@@ -34,8 +34,8 @@
   },
   "dependencies": {
     "@google/genai": "^1.44.0",
-    "@supabase/ssr": "^0.1.0",
-    "@supabase/supabase-js": "^2.78.0",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.117.3",
     "@upstash/ratelimit": "^2.2.0",
     "@upstash/redis": "^1.37.0",
     "@vercel/functions": "^3.10.1",

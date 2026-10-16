@@ -18,7 +18,7 @@ export const MFA_QR_SVG_DATA_URL_PREFIX = 'data:image/svg+xml;utf-8,';
 
 /**
  * auth-js の data.totp.qr_code を素の SVG にする (enroll の route の qr_code_svg §14.2)。
- * auth-js (@supabase/auth-js 2.105.3 の GoTrueClient._enroll) は Supabase の応答の SVG に MFA_QR_SVG_DATA_URL_PREFIX を
+ * auth-js (@supabase/auth-js 2.117.3 の GoTrueClient._enroll) は Supabase の応答の SVG に MFA_QR_SVG_DATA_URL_PREFIX を
  * 前置して返す。そのまま返すと画面の前置きと 2 重になり、QR の画像が壊れる (#1707)。
  * 前置きが無い値 (auth-js が前置きをやめたとき) はそのまま返す。外すのは先頭の 1 回だけ。
  */

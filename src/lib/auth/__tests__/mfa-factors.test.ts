@@ -72,7 +72,7 @@ describe('factors', () => {
   it('toBareQrCodeSvg は auth-js が付けた data URL の前置きを先頭から 1 回だけ外す (前置きの無い値はそのまま #1707)', () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>';
     expect(MFA_QR_SVG_DATA_URL_PREFIX).toBe('data:image/svg+xml;utf-8,');
-    // auth-js 2.105.3 の mfa.enroll が返す形
+    // auth-js 2.117.3 の mfa.enroll が返す形
     expect(toBareQrCodeSvg(`data:image/svg+xml;utf-8,${svg}`)).toBe(svg);
     expect(toBareQrCodeSvg(svg)).toBe(svg);
     // 先頭でない位置の同じ文字列は外さない
