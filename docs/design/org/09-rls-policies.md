@@ -453,6 +453,11 @@ CREATE POLICY "participants_update" ON org_challenge_participants
 > 順位表と集計は、DB の関数 (`get_org_challenge_ranking` / `get_org_challenge_aggregates`。service_role のみ) を API が認可のあとに呼んで返す。
 > 詳細は `07-challenge.md` §15。
 
+> **集計の差分の守り (#1688)**: migration `supabase/migrations/20261016240000_org_challenge_diff_privacy.sql` (設計 `org/10-challenge-diff-privacy.md` §5) で次を足した。
+> - `organization_challenges` の DELETE: RESTRICTIVE のポリシー「Org challenges can be deleted only as draft or cancelled」(`TO authenticated`・`USING (status IN ('draft', 'cancelled'))`。同 migration `:280`〜`:286`)。「Org admins can manage challenges」(FOR ALL) と AND で効くので、管理者でも消せるのは draft と cancelled だけ。組織の削除の CASCADE と service_role は RLS を通らないので止めない。
+> - `organization_challenges` の UPDATE: ポリシーではなく BEFORE のトリガー `trg_org_challenge_guard_update` (関数 `org_challenge_guard_update`。同 `:132`〜`:179`)。状態の遷移 (draft → active / completed / cancelled、active → completed / cancelled) 以外と NULL への変更を `CHALLENGE_STATUS_LOCKED`、draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更と、常時の `organization_id` の変更を `CHALLENGE_PERIOD_LOCKED` で止める (どちらも P0001)。トリガーなので、ロールを問わず効く。
+> - 新しい表 `organization_challenge_aggregates` (集計の控え。同 `:57`〜`:79`) と `organization_challenge_ranking_exclusions` (管理者だった印。同 `:84`〜`:98`): RLS 有効・ポリシー無し。`PUBLIC` / `anon` / `authenticated` から全権限を外し、service_role にだけ SELECT / INSERT / UPDATE / DELETE を許す。書くのは SECURITY DEFINER のトリガー関数 `org_challenge_count_join` / `org_challenge_finalize` / `org_challenge_mark_admin`。
+
 ## 15. hr_webhook_events / hr_revoke_jobs
 
 ```sql
@@ -547,8 +552,10 @@ CREATE POLICY "meals_industrial_doctor" ON user_daily_meals
 | `org_health_access_logs` | ✅ | service_role | 産業医(自分) + org_admin | ❌ | ❌ |
 | `org_health_notes` | ✅ | org_industrial_doctor | org_industrial_doctor | org_industrial_doctor (非AI) | ❌ |
 | `organization_invites` | ✅ | org_admin/manager | org_admin/manager | service_role + admin/manager | org_admin |
-| `organization_challenges` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin |
+| `organization_challenges` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin (draft / cancelled だけ。#1688) |
 | `org_challenge_participants` | ✅ | 本人 + service | 本人 + admin/manager | service_role | ❌ |
+| `organization_challenge_aggregates` | ✅ | service_role | service_role | service_role | service_role |
+| `organization_challenge_ranking_exclusions` | ✅ | service_role | service_role | service_role | service_role |
 | `hr_webhook_events` | ✅ | service_role | service_role | service_role | service_role |
 | `hr_revoke_jobs` | ✅ | service_role | service_role | service_role | service_role |
 
