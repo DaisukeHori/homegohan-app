@@ -67,7 +67,6 @@ export default function Index() {
         }}>
           {[
             { href: "/about", label: "アプリについて" },
-            { href: "/pricing", label: "料金" },
             { href: "/terms", label: "利用規約" },
             { href: "/privacy", label: "プライバシー" },
           ].map((item) => (
