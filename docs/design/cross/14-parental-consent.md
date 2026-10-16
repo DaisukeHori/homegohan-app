@@ -1794,7 +1794,7 @@ cd <worktree>
 OFFLOAD=<テストを別の機械で流す道具 (開発環境の offload)>
 $OFFLOAD --host auto -e TZ=UTC -- npx tsc --noEmit
 $OFFLOAD --host auto -e TZ=UTC -- npm run lint
-$OFFLOAD --host auto -e TZ=UTC -- npx vitest run --reporter=json      # 全件 (passed / failed の実数で判定)
+$OFFLOAD --host auto -e TZ=UTC --fetch offload-vitest.json -- npx vitest run --reporter=json --outputFile=offload-vitest.json   # 全件 (passed / failed の実数で判定。vitest 5 の json reporter は出力先を書かないと標準出力でなく .vitest/json/ に書く)
 $OFFLOAD --host auto -e TZ=UTC -- npx vitest run --config vitest.integration.config.ts tests/integration/security/parental-consent.test.ts tests/integration/security/legal-documents-acceptance.test.ts tests/integration/security/family-member-limit-race.test.ts tests/integration/security/account-deletion.test.ts tests/integration/security/anon-definer-execute.test.ts tests/integration/security/auth-users-fk-on-delete.test.ts tests/integration/security/account-export-scope.test.ts tests/integration/security/family-member-status-guard.test.ts tests/integration/security/rpc-profile-name-placeholder.test.ts
 git diff origin/main...HEAD | grep -n 'as any'                        # 0 件
 ```
