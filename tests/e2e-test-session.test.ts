@@ -37,13 +37,19 @@ import {
   TEST_SESSION_NO_HTTP_STATUS,
   TEST_SESSION_RETRY_BASE_DELAY_MS,
   TEST_SESSION_VERIFY_RETRY_STATUS,
+  E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE,
+  E2E_MFA_RATE_LIMITED_STATUS,
+  E2E_MFA_REQUIRED_ROLES,
+  E2E_TOTP_FRIENDLY_NAME,
   createTestSession,
   describeTestSessionFailure,
   missingTestSessionEnv,
+  promoteTestSessionToAal2,
   readTestSessionConfig,
   testSessionMaxAttempts,
   type TestSessionConfig,
 } from "./e2e/helpers/test-session.mjs";
+import { MFA_REQUIRED_ROLES } from "../src/lib/auth/mfa/policy";
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -851,5 +857,98 @@ describe("Maestro の reset-onboarding.js (#1547)", () => {
     }
     // 既定の回数も同じ
     expect(readMaxAttempts(undefined)).toBe(TEST_SESSION_DEFAULT_MAX_ATTEMPTS);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
+// 運営の MFA の昇格 (#1176。docs/design/cross/12-operator-mfa.md §22.4.3・§21.3)
+// ───────────────────────────────────────────────────────────────────────────
+
+const FACTOR_ID = "test-factor-id";
+const TOTP_SECRET = "TESTTOTPSECRETSHOULDNEVERBEPRINTED";
+const CHALLENGE_ID = "test-challenge-id";
+const AAL2_ACCESS_TOKEN = "test-aal2-access-token";
+const FIXED_TOTP_CODE = "123456";
+const FACTORS_URL = `${SUPABASE_URL}/auth/v1/factors`;
+const CHALLENGE_URL = `${FACTORS_URL}/${FACTOR_ID}/challenge`;
+const MFA_VERIFY_URL = `${FACTORS_URL}/${FACTOR_ID}/verify`;
+
+function makeMfaFetch(overrides: Partial<Record<string, Handler>> = {}) {
+  return makeFetch({
+    [FACTORS_URL]: () => Response.json({ id: FACTOR_ID, type: "totp", totp: { secret: TOTP_SECRET, qr_code: "<svg/>", uri: "otpauth://x" } }),
+    [CHALLENGE_URL]: () => Response.json({ id: CHALLENGE_ID, expires_at: 1_900_000_000 }),
+    [MFA_VERIFY_URL]: () => Response.json({ ...SESSION, access_token: AAL2_ACCESS_TOKEN }),
+    ...overrides,
+  });
+}
+
+describe("promoteTestSessionToAal2 (tests/e2e/helpers/test-session.mjs)", () => {
+  it("promoteTestSessionToAal2 は anon key と Bearer access_token で POST /auth/v1/factors → /factors/{id}/challenge → /factors/{id}/verify の 3 つだけを呼び、aal2 の session と factorId / secret を返す", async () => {
+    const { fetchImpl, calls } = makeMfaFetch();
+    const totpImpl = vi.fn(() => FIXED_TOTP_CODE);
+    const result = await promoteTestSessionToAal2(SESSION, { config: CONFIG, fetchImpl, totpImpl });
+    expect(result).toEqual({
+      ok: true,
+      session: { ...SESSION, access_token: AAL2_ACCESS_TOKEN },
+      factorId: FACTOR_ID,
+      secret: TOTP_SECRET,
+    });
+    expect(calls.map((c) => [c.method, c.url])).toEqual([
+      ["POST", FACTORS_URL],
+      ["POST", CHALLENGE_URL],
+      ["POST", MFA_VERIFY_URL],
+    ]);
+    for (const call of calls) {
+      expect(call.headers.get("apikey")).toBe(ANON_KEY);
+      expect(call.headers.get("authorization")).toBe(`Bearer ${ACCESS_TOKEN}`);
+    }
+    expect(calls[0].body).toEqual({ factor_type: "totp", friendly_name: E2E_TOTP_FRIENDLY_NAME });
+    expect(calls[2].body).toEqual({ challenge_id: CHALLENGE_ID, code: FIXED_TOTP_CODE });
+    expect(totpImpl).toHaveBeenCalledWith(TOTP_SECRET);
+  });
+
+  it("promoteTestSessionToAal2 の失敗は段 (mfa-enroll / mfa-challenge / mfa-verify) とステータスを返し、鍵・トークン・secret の値を説明に含めない", async () => {
+    const leaky = () => new Response(`${TOTP_SECRET} ${ANON_KEY} ${ACCESS_TOKEN}`, { status: 500 });
+    const cases: Array<[string, Partial<Record<string, Handler>>, string, number]> = [
+      ["enroll", { [FACTORS_URL]: leaky }, "mfa-enroll", 500],
+      ["challenge", { [CHALLENGE_URL]: () => new Response("rate", { status: E2E_MFA_RATE_LIMITED_STATUS }) }, "mfa-challenge", E2E_MFA_RATE_LIMITED_STATUS],
+      ["verify", { [MFA_VERIFY_URL]: () => new Response("bad", { status: 422 }) }, "mfa-verify", 422],
+      ["verify (access_token 無し)", { [MFA_VERIFY_URL]: () => Response.json({ user: {} }) }, "mfa-verify", 200],
+    ];
+    for (const [label, overrides, step, status] of cases) {
+      const { fetchImpl } = makeMfaFetch(overrides);
+      const result = await promoteTestSessionToAal2(SESSION, { config: CONFIG, fetchImpl, totpImpl: () => FIXED_TOTP_CODE });
+      expect(result.ok, label).toBe(false);
+      if (result.ok) continue;
+      expect(result.step, label).toBe(step);
+      expect(result.status, label).toBe(status);
+      expect(result.detail, label).not.toContain(TOTP_SECRET);
+      expect(result.detail, label).not.toContain(ANON_KEY);
+      expect(result.detail, label).not.toContain(ACCESS_TOKEN);
+    }
+    // 環境変数が足りなければ、どこにも接続せずに段 config
+    const { fetchImpl, calls } = makeMfaFetch();
+    const missing = await promoteTestSessionToAal2(SESSION, { env: {}, fetchImpl });
+    expect(missing).toMatchObject({ ok: false, step: "config" });
+    expect(calls).toHaveLength(0);
+    // 429 の例外の頭の文は結合テストの道具と同じ文
+    expect(E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE).toContain("§22.4.4");
+  });
+
+  it("E2E_MFA_REQUIRED_ROLES は src/lib/auth/mfa/policy.ts の MFA_REQUIRED_ROLES と同じ集合", () => {
+    expect([...E2E_MFA_REQUIRED_ROLES].sort()).toEqual([...MFA_REQUIRED_ROLES].sort());
+  });
+
+  it("コメントを除いたコードで /auth/v1/factors を直接呼ぶのは tests/e2e/helpers/test-session.mjs だけ", () => {
+    const FACTORS_ROUTE = /\/auth\/v1\/factors\b/;
+    const files = ["tests/e2e", "scripts", "apps/mobile/maestro"].flatMap(listCodeFiles);
+    const owners = files.filter((rel) => {
+      const text = fs.readFileSync(path.join(ROOT, rel), "utf8");
+      return FACTORS_ROUTE.test(text) && FACTORS_ROUTE.test(stripComments(rel, text));
+    });
+    expect(owners).toEqual([path.join(SHARED_HELPER)]);
+    // 検査そのものの確認: コメントの中は拾わず、コードの中は拾う
+    expect(FACTORS_ROUTE.test(stripComments("s.ts", "// POST /auth/v1/factors"))).toBe(false);
+    expect(FACTORS_ROUTE.test(stripComments("s.ts", "await fetch(`${u}/auth/v1/factors`);"))).toBe(true);
   });
 });

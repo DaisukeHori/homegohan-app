@@ -555,7 +555,7 @@ describe('onShouldStartLoadWithRequest', () => {
     expect(openURLSpy).toHaveBeenCalledWith('https://cookpad.example/recipe/123');
   });
 
-  // Web の CSP (next.config.mjs の frame-src) は Cloudflare Turnstile の iframe を許す。iOS はサブフレームの読み込みも
+  // Web の CSP (src/lib/security/csp.ts の frame-src) は Cloudflare Turnstile の iframe を許す。iOS はサブフレームの読み込みも
   // onShouldStartLoadWithRequest に渡すので、止めると /login や /settings/account (パスワード変更) で送信できなくなる
   it('Turnstile の iframe (サブフレーム) は WebView の中で読み込み、外部ブラウザは開かない', async () => {
     await renderScreen('/settings/account');

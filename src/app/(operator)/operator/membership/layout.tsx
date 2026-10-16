@@ -4,10 +4,17 @@
  * docs/design/membership/05-operator-emergency-ui.md §5.1 準拠
  */
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
+
+/**
+ * 認証・2FA の画面から戻る先 (/operator/membership には page.tsx が無いので、今の行き先の画面にする。
+ * docs/design/cross/12-operator-mfa.md §13.4.2)
+ */
+const OPERATOR_MEMBERSHIP_AREA_NEXT = '/operator/membership/orgs/inactive';
+/** ロール不足・凍結のときの行き先 (今までの行き先のまま) */
+const OPERATOR_MEMBERSHIP_AREA_FORBIDDEN_PATH = '/login?redirect=/operator/membership/orgs/inactive';
 
 const navItems = [
   {
@@ -35,14 +42,12 @@ export default async function OperatorMembershipLayout({
 }: {
   children: React.ReactNode;
 }) {
-  try {
-    await requireRole(['super_admin']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login?redirect=/operator/membership/orgs/inactive');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → 今までの行き先 (#1176。cross/12 §13.4)
+  const actor = await requireRoleForPage(['super_admin'], {
+    next: OPERATOR_MEMBERSHIP_AREA_NEXT,
+    forbiddenPath: OPERATOR_MEMBERSHIP_AREA_FORBIDDEN_PATH,
+  });
+  const grace = actor.assurance?.decision === 'pass_grace' ? actor.assurance.enforce_from : null;
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -107,6 +112,7 @@ export default async function OperatorMembershipLayout({
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
         <div className="p-8 max-w-7xl mx-auto">
+          {grace ? <MfaGraceBanner enforceFrom={grace} next={OPERATOR_MEMBERSHIP_AREA_NEXT} /> : null}
           {children}
         </div>
       </main>

@@ -66,7 +66,7 @@ export const MfaRecoverBodySchema = z.object({
 });
 export type MfaRecoverBody = z.infer<typeof MfaRecoverBodySchema>;
 
-/** 回復の後に画面が移る先 (Supabase が全セッションを終えているので、ログインからやり直して登録へ) */
+/** 回復の後に画面が移る先 (回復の route が本人の全セッションを終えているので、ログインからやり直して登録へ) */
 export const MFA_RECOVER_NEXT_PATH = '/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup';
 
 /** POST /api/auth/mfa/recover の 200 (段 A)。route は next に MFA_RECOVER_NEXT_PATH を入れる */
@@ -75,3 +75,24 @@ export const MfaRecoverResponseSchema = z.object({
   next: z.string().min(1),
 });
 export type MfaRecoverResponse = z.infer<typeof MfaRecoverResponseSchema>;
+
+// ── DELETE /api/auth/mfa/factors/{id} (§14.4。段 B) ──────────────────────────
+
+/**
+ * DELETE /api/auth/mfa/factors/{id} の 200 (段 B)。aal はこの応答の後の Cookie の access_token の claim:
+ * refresh できれば aal1・refresh に失敗したら aal2 のまま (解除は済んでいる。§14.4・§17.2)。画面はどちらでも setup へ進む
+ */
+export const MfaUnenrollResponseSchema = z.object({
+  ok: z.literal(true),
+  aal: z.enum(['aal1', 'aal2']),
+});
+export type MfaUnenrollResponse = z.infer<typeof MfaUnenrollResponseSchema>;
+
+// ── POST /api/auth/mfa/backup-codes (§14.6。段 B) ────────────────────────────
+
+/** POST /api/auth/mfa/backup-codes の 200 (段 B)。backup_codes は formatBackupCode 済み (XXXXX-XXXXX) */
+export const MfaBackupCodesResponseSchema = z.object({
+  ok: z.literal(true),
+  backup_codes: z.array(z.string().min(1)),
+});
+export type MfaBackupCodesResponse = z.infer<typeof MfaBackupCodesResponseSchema>;

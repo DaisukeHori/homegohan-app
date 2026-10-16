@@ -388,6 +388,17 @@ describe("scripts/supabase-local.sh が枠に合わせて組み立てる config.
     }
   });
 
+  it("枠 0 と枠 1 以上の config.toml は [auth.mfa.totp] の enroll_enabled と verify_enabled が true (運営の MFA の結合テストの前提。cross/12 §22.3)", () => {
+    expectSharedBuilds();
+    for (const slot of SHARED_BUILD_ORDER) {
+      const tables = tomlTables(configOf(slot));
+      expect(tables.get("auth.mfa.totp")?.get("enroll_enabled"), `枠 ${slot}`).toBe("true");
+      expect(tables.get("auth.mfa.totp")?.get("verify_enabled"), `枠 ${slot}`).toBe("true");
+    }
+    // リポジトリの config.toml には書かない (verify_jwt の番兵 tests/edge-function-verify-jwt.test.ts が許さない §23 N-29)
+    expect(repoConfig.has("auth.mfa.totp")).toBe(false);
+  });
+
   it("範囲外の枠は config.toml を作らずに止まる", () => {
     const r = build(String(slotMax() + 1));
     expect(r.status).not.toBe(0);

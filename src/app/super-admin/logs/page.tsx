@@ -4,7 +4,7 @@
  * /super-admin/logs — 運用ログ (app_logs) の閲覧 (#1157)
  *
  * GET /api/super-admin/logs を呼んで、API ルート・Edge Function・ブラウザが記録したログを新しい順に表示する。
- * 読み取り専用。権限は layout.tsx (requireRole(['super_admin'])) と API の両方で見ている。
+ * 読み取り専用。権限は layout.tsx (requireRoleForPage(['super_admin'], ...)) と API の両方で見ている。
  *
  * - 絞り込み: レベル / 発生元 / 関数名 / ユーザー ID / リクエスト ID / 期間。入力したあと「絞り込む」で反映する
  *   (1 文字ごとに検索を走らせない)。行の詳細にある「この値で絞り込む」で、その行の値をそのまま条件にできる。
