@@ -2018,7 +2018,7 @@ ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS preferences JSONB
 
 **確認事項**:
 - 既存稼働: iOS のみ Apple Configurator 2 + TestFlight (`hori@hori.tech` アカウント)
-- Android: 未確認 → 送信の worker (`GET /api/cron/push-outbox`。`docs/design/mobile/06-push-send.md`) は本番で動いている。Android の端末に届くかは、FCM の資格情報を EAS に登録してから確かめる (オーナーの作業。下の「新規 EAS Secret 設定」の Android の行・`mobile/06-push-send.md` §14。未登録の間は Android の端末だけ届かない)
+- Android: 未確認 → 送信の worker (`GET /api/cron/push-outbox`) は本番の Vercel Cron に登録済み。ただし本番に `EXPO_ACCESS_TOKEN` が入るまでは、送らずに掃除だけをする (iOS・Android とも届かない。入れるのはオーナーの作業で、#1115)。Android はこれに加えて、FCM V1 の資格情報を EAS に登録してから実機で確かめる (`docs/design/mobile/06-push-send.md` §14。登録までは Android の端末だけ届かない)
 - Expo Push Token は両 OS 対応するが、内部的には APNs / FCM へ振り分け
 
 **新規 EAS Secret 設定**:
