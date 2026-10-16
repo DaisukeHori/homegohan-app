@@ -653,3 +653,53 @@ describe('updateSession — 規約の再同意ゲート (#1174): 同意済みの
     );
   });
 });
+
+describe('updateSession — 規約の再同意ゲート (#1174): 本人の権利の請求の画面 (#1751)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** 請求の画面と、本人確認のメールのリンクの着地 (src/lib/data-subject-requests/core.ts の DSR_SETTINGS_PATH / buildDsrVerifyUrl) */
+  const DSR_PAGES = [
+    '/settings/data-requests',
+    '/settings/data-requests/verify?id=00000000-0000-4000-8000-000000000000&token=sample-token',
+  ];
+
+  it.each(DSR_PAGES)('未同意 × ENFORCE=on でも、%s は同意画面へ回さずに開ける', async (path) => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    const res = await updateSession(pageRequest(path));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it.each(DSR_PAGES)('旧版に同意した人 (改定の後) も、%s は同意画面へ回さずに開ける', async (path) => {
+    mockMaybeSingle.mockResolvedValue(consentProfile({ terms: 'v0-old', privacy: CURRENT_PRIVACY }));
+
+    const res = await updateSession(pageRequest(path));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('設定画面 (/settings) そのものと、ほかの設定の画面は、従来どおり同意画面へ回す', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    for (const path of ['/settings', '/settings/account', '/settings/data-requestsx']) {
+      const res = await updateSession(pageRequest(path));
+      expect(res.status, path).toBe(307);
+      expect(res.headers.get('location'), path).toBe(`http://localhost/legal-consent?next=${encodeURIComponent(path)}`);
+    }
+  });
+
+  it.each(DSR_PAGES)('★凍結中の人は、未同意でも同意済みでも、%s を開くと従来どおり /frozen へ回す (凍結が先。cross/15 S-13)', async (path) => {
+    for (const accepted of [NOT_ACCEPTED, ACCEPTED_CURRENT]) {
+      mockMaybeSingle.mockResolvedValue(consentProfile(accepted, { frozen_at: '2026-07-01T00:00:00.000Z' }));
+
+      const res = await updateSession(pageRequest(path));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe('http://localhost/frozen');
+    }
+  });
+});

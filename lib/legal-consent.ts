@@ -80,6 +80,12 @@ const EXEMPT_PREFIXES = [
   '/legal',
   // 同意しない人が運営に連絡する窓口 (データの削除の依頼もここから)。凍結中の人も同じ扱い
   '/contact',
+  // 本人の権利の請求 (開示・訂正・利用停止・消去) の画面と、本人確認のメールのリンクの着地 (/settings/data-requests/verify) (#1751)。
+  // 規約への同意を条件にできない本人の権利なので、未同意でも開ける (呼ぶ API /api/account/data-requests も、API の同意ゲートの
+  // 許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS にある)。値は src/lib/data-subject-requests/core.ts の DSR_SETTINGS_PATH と同じ
+  // (middleware から zod を含む core.ts を読み込まないよう文字列で書く。一致は tests/legal-consent-gate.test.ts が確かめる)。
+  // 設定画面 (/settings) そのものは対象のまま。凍結中は凍結の差し戻し (/frozen) が先に効くので、凍結中は開けない (cross/15 S-13)
+  '/settings/data-requests',
   '/frozen',
   // API は画面ではない。API の同意ゲートは middleware の /api の分岐 (判定は packages/shared の resolveLegalConsentApiDecision。#1442)
   '/api',

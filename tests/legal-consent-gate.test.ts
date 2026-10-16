@@ -14,6 +14,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEGAL_DOCUMENTS } from '@homegohan/shared';
+import { DSR_SETTINGS_PATH, DSR_VERIFY_PATH } from '@/lib/data-subject-requests/core';
 import {
   LEGAL_CONSENT_PATH,
   buildLegalConsentNext,
@@ -60,6 +61,10 @@ const EXEMPT_PATHS = [
   '/contact',
   '/contact/',
   '/frozen',
+  // 本人の権利の請求の画面と、本人確認のメールのリンクの着地 (#1751)
+  '/settings/data-requests',
+  '/settings/data-requests/',
+  '/settings/data-requests/verify',
   '/handson-tour',
   '/handson-tour/photo',
   '/_next/static/chunks/main.js',
@@ -77,6 +82,9 @@ const GATED_PATHS = [
   '/meals/new',
   '/profile',
   '/settings',
+  // 設定画面のほかの画面は対象のまま (#1751 で外すのは請求の画面だけ)
+  '/settings/account',
+  '/settings/ai-consent',
   '/health/settings',
   '/onboarding/welcome',
   '/onboarding/questions',
@@ -106,6 +114,9 @@ const LOOK_ALIKE_PATHS = [
   '/api-docs',
   '/handson-tourx',
   '/_nextx',
+  '/settings/data-requestsx',
+  '/settings/data-requests-x',
+  '/settings/data-request',
 ];
 
 const FLAG_ON_VALUES = ['on', 'ON', 'On', ' on ', 'on\n'];
@@ -190,6 +201,22 @@ function expectedForGated(enforce: boolean, notice: boolean): 'redirect' | 'bann
   if (enforce) return 'redirect';
   return notice ? 'banner' : 'none';
 }
+
+describe('isLegalConsentExemptPath: 本人の権利の請求の画面 (#1751)', () => {
+  it('請求の画面 (DSR_SETTINGS_PATH) と本人確認の画面 (DSR_VERIFY_PATH) は、ゲートの対象外 (lib/legal-consent.ts の文字列と core.ts の定数が一致する)', () => {
+    expect(DSR_SETTINGS_PATH).toBe('/settings/data-requests');
+    expect(isLegalConsentExemptPath(DSR_SETTINGS_PATH)).toBe(true);
+    expect(isLegalConsentExemptPath(DSR_VERIFY_PATH)).toBe(true);
+  });
+
+  it('強制 (enforce) でも、未同意・旧版の人を請求の画面から同意画面へ回さない。設定画面 (/settings) は回す', () => {
+    for (const accepted of [ACCEPTED.none, ACCEPTED.noRow, ACCEPTED.termsOld, ACCEPTED.onlyTerms]) {
+      expect(resolveLegalConsent({ pathname: DSR_SETTINGS_PATH, accepted, enforce: true, notice: false })).toBe('none');
+      expect(resolveLegalConsent({ pathname: DSR_VERIFY_PATH, accepted, enforce: true, notice: false })).toBe('none');
+      expect(resolveLegalConsent({ pathname: '/settings', accepted, enforce: true, notice: false })).toBe('redirect');
+    }
+  });
+});
 
 describe('resolveLegalConsent: 同意済みの版 × パス × フラグ', () => {
   describe.each([
