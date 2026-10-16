@@ -108,7 +108,7 @@ function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
 
 /**
  * 通報されたコンテンツの写真 (content_url) を、運営の画面で見られる署名付き URL に替える (#1365 段 1)。
- * 食事写真・冷蔵庫写真のバケットはこれから非公開にするので、保存された公開 URL をそのまま返さない。
+ * 食事写真・冷蔵庫写真のバケットは非公開なので、保存された公開 URL をそのまま返さない。
  * 写真の持ち主は通報された利用者 (運営本人ではない) なので、持ち主の確認はせず、呼び出し側の requireRole
  * (admin / super_admin / content_moderator) を通ったことを条件に署名する。呼び出し側は requireRole の後にだけ呼ぶこと。
  * 2 つのバケットの URL でないもの (外部の画像など) はそのまま。署名できなかった写真は null (表示しない)。

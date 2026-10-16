@@ -3,15 +3,14 @@
  * Web (src/lib/signed-photo-url-client.ts) が使う (モバイルの apps/mobile/src/lib/signed-photo-url.ts は #1598 で消した。
  * 使っていたネイティブの画面と一緒に消した。アプリの写真は WebView の Web の画面が出す)。
  *
- * 2 つのバケット (meal_photos / fridge-images) はまだ公開 (public) のまま。DB には公開 URL の文字列が
- * 保存されている (書き換えない。段 2 で扱う)。画面は、保存された URL をそのまま表示せず、
+ * 2 つのバケット (meal_photos / fridge-images) は非公開 (段 2)。DB には公開 URL と同じ形の文字列 (保存形) が
+ * 保存されている (書き換えない。そのままでは読めない識別子)。画面は、保存された URL をそのまま表示せず、
  * サーバー (POST /api/storage/signed-urls) に渡して、本人の写真であることを確かめたうえで署名した URL を表示する。
- * 段 2 でバケットを非公開にしても、表示の経路は変わらない。
  *
  * このファイルは実行環境に依存しない (React・Next.js・React Native・Node.js の API を使わない)。
  */
 
-/** 署名付き URL で表示する (= 段 2 で非公開にする) バケット */
+/** 署名付き URL で表示する (非公開の) バケット */
 export const PHOTO_STORAGE_BUCKETS = ['meal_photos', 'fridge-images'] as const;
 export type PhotoStorageBucket = (typeof PHOTO_STORAGE_BUCKETS)[number];
 

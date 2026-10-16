@@ -9,7 +9,7 @@
  * 2026-10-07 のオーナー判断「自分のフォルダに限定」:
  *   - fridge-images のアップロードと一覧は本人のフォルダ ((storage.foldername(name))[1] = auth.uid()) だけ
  *   - meal_photos (コードから使われていない) はアップロードと一覧を止める
- *   - どちらも公開バケットのまま (保存済みの公開 URL での表示は変わらない)
+ *   - どちらも非公開 (#1365 段 2)。保存済みの URL は署名付き URL でだけ読める
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/storage-fridge-images-rls.test.ts
@@ -134,7 +134,7 @@ describe('fridge-images: アップロードは本人のフォルダだけ', () =
   });
 });
 
-describe('fridge-images: 一覧は本人のフォルダだけ。公開 URL での表示はそのまま', () => {
+describe('fridge-images: 一覧は本人のフォルダだけ。公開 URL では読めない', () => {
   it('L-1: 本人は自分のフォルダを一覧できる', async () => {
     expect(await listNames(asUser(userA.jwt), 'fridge-images', `${userA.id}/fridge`)).toContain(`a-${TS}.png`);
   });
@@ -147,10 +147,10 @@ describe('fridge-images: 一覧は本人のフォルダだけ。公開 URL で�
     expect(await listNames(anon(), 'fridge-images', `${userB.id}/fridge`)).toEqual([]);
   });
 
-  it('P-1: 公開 URL では誰でも表示できる (公開バケットのまま)', async () => {
+  it('P-1: 公開 URL では読めない (非公開バケット。#1365 段 2)', async () => {
     const { data } = anon().storage.from('fridge-images').getPublicUrl(`${userB.id}/fridge/b-${TS}.png`);
     const res = await fetch(data.publicUrl);
-    expect(res.status).toBe(200);
+    expect(res.status).not.toBe(200);
   });
 });
 
@@ -169,9 +169,9 @@ describe('meal_photos: アップロードと一覧を止める', () => {
     expect(await listNames(asUser(userA.jwt), 'meal_photos', userB.id)).toEqual([]);
   });
 
-  it('M-3: 公開 URL では表示できる (公開バケットのまま)', async () => {
+  it('M-3: 公開 URL では読めない (非公開バケット。#1365 段 2)', async () => {
     const { data } = anon().storage.from('meal_photos').getPublicUrl(`${userB.id}/seed-${TS}.png`);
     const res = await fetch(data.publicUrl);
-    expect(res.status).toBe(200);
+    expect(res.status).not.toBe(200);
   });
 });
