@@ -69,8 +69,8 @@ Web の設定画面にしか無い項目 (パスワード・メールアドレ�
 5. **ダウンロード処理**: Web 側 `postMessage({ type: 'download' })` を受け取り `expo-sharing` で共有
 6. **タブ再タップ時リセット**: `navigation.addListener('tabPress')` でアクティブ WebView を初期 URL へ `window.location.replace`。**オリジンガードは付けない**: 起動時のオフラインで直接 URL の読み込みに失敗して `about:blank` のまま固まった場合や、Android のナビゲーションガードが待ち時間切れで許可して外部ページが載った場合は、WebView が自アプリのオリジンを表示していない。そのとき戻れる手段の一つ (読み込みの失敗の画面の「再読み込み」は 10. を参照)。スクリプトが持つのは公開されている自オリジンの URL だけでトークン・code は含まないので、外部ページ上で実行されても漏れるものは無い
 7. **WebView を自アプリのオリジンに固定**: `onShouldStartLoadWithRequest` / `onOpenWindow` で他オリジンへのトップフレームの遷移を遮断し、OS の既定ブラウザで開く (#1158)。`onMessage` は送信元が自アプリのオリジンのときだけ処理する。オリジンは `EXPO_PUBLIC_WEB_URL` の 1 つだけ (Cookie はホスト単位のため)。
-   他オリジンの http(s) の**サブフレーム** (iframe) は WebView の中で読み込む。どの iframe を読めるかは Web の CSP (`next.config.mjs` の `frame-src`) が決め、WebView にはページから参照できるトークンが無いため。今 `frame-src` が許す他オリジンは Cloudflare Turnstile (`https://challenges.cloudflare.com`) だけで、`/login` や設定のパスワード変更 (`/settings/account`) がこれを使う (止めるとトークンが取れず送信できない)。
-   Android はどのフレームの遷移かを報告しない (`isTopFrame` が無い) ので、`frame-src` の他オリジンの一覧 (`WEB_VIEW_EMBED_ORIGINS`) はフレームを問わず WebView の中で読み込む。`frame-src` に他オリジンを足したら `WEB_VIEW_EMBED_ORIGINS` にも足す (Jest が `next.config.mjs` と突き合わせる。OTA が無効なので配布済みのアプリは後から直せない)。Android の WebView が iframe の読み込みをこの判定に渡すかは、Turnstile のある画面を Android 実機で確かめる
+   他オリジンの http(s) の**サブフレーム** (iframe) は WebView の中で読み込む。どの iframe を読めるかは Web の CSP (`src/lib/security/csp.ts` の `frame-src`。`src/middleware.ts` が毎リクエスト付ける #1169) が決め、WebView にはページから参照できるトークンが無いため。今 `frame-src` が許す他オリジンは Cloudflare Turnstile (`https://challenges.cloudflare.com`) だけで、`/login` や設定のパスワード変更 (`/settings/account`) がこれを使う (止めるとトークンが取れず送信できない)。
+   Android はどのフレームの遷移かを報告しない (`isTopFrame` が無い) ので、`frame-src` の他オリジンの一覧 (`WEB_VIEW_EMBED_ORIGINS`) はフレームを問わず WebView の中で読み込む。`frame-src` に他オリジンを足したら `WEB_VIEW_EMBED_ORIGINS` にも足す (Jest が `src/lib/security/csp.ts` と突き合わせる。OTA が無効なので配布済みのアプリは後から直せない)。Android の WebView が iframe の読み込みをこの判定に渡すかは、Turnstile のある画面を Android 実機で確かめる
 8. **`initialPath` の検証**: deep link (`homegohan://home?initialPath=...`) からも指定できるため、単一の `/` で始まる同一オリジンのパスで、かつどれかのタブの prefix (`NATIVE_APP_TABS` の `pathPrefix` = `/menus` `/meals` `/comparison` `/profile` `/home`) か、その画面自身の `path` のパス部分の配下のものだけを受け付ける。`//evil.example` や、攻撃者の code で被害者を攻撃者のアカウントにログインさせる `/auth/native-bridge?code=...` (login CSRF)、`/menus/../auth/...` のようにドットセグメントで prefix の外へ抜けるものは、その画面の既定パス (`path`) へ戻す。tab-navigate が渡す `fullPath` は必ずどれかのタブの prefix に一致するので、正規の経路は塞がない。
    画面自身の `path` を入れるのは、タブ以外の画面 (`/settings/ai-consent`) でも `session-expired` の再ブリッジ (`initialPath` に使い捨ての `_rb` を付けて開き直す。05-auth-session.md §6.2) を効かせるため。`path` はコードに書かれた値なので、受け付ける範囲はタブの prefix と同じ強さで限られる。再ブリッジは、この検証を通ったあとのパス (`effectivePath`) に `_rb` を付ける (検証で弾かれた `initialPath` を基準にすると、`_rb` を付けても既定パスに戻されて読み込み直しが起きない)
 9. **ネイティブの部品の差し込み**: `header` に渡した部品を WebView の上 (上端の安全領域の内側) に置く (マイページの歯車。#1037)
@@ -588,3 +588,12 @@ Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family
 | Universal Links 対応 (Phase 2) | 低 | Apple Configurator 2 配布が続く間は不要 |
 | Biometric 認証 (Face ID / Touch ID) | 中 | `cross/01-auth-session.md` Phase 2 予定 |
 | OTA Update (expo-updates) | 低 | `app.json` で `enabled: false` のまま。大型変更時に検討 |
+
+## 14. 課金 (アプリ内課金をしない)
+
+正典は `docs/design/billing/01-billing-core.md` §10.4。
+
+- アプリ内 (ネイティブの画面と、アプリが開く WebView のページの両方) に、有料プランの価格・購入ボタン・Web での購入への誘導 (リンク・文言) を出さない。既存の契約の状態 (プラン名・次回更新日・解約予約) を読み取り専用で出すのは可 (ネイティブの画面での表示は billing の配線の冊)。
+- ネイティブの料金の画面 `app/(public)/pricing.tsx` (Web の `/pricing` を外部のブラウザで開いていた) と、入口の画面 `app/index.tsx` の「料金」のリンクは削除した (外部のブラウザには `is_native_app` の Cookie が無く、Web の `/pricing` が価格と購入の CTA を描くため)。`apps/mobile/__tests__/app/no-web-purchase-links.test.ts` が、`app/` と `src/` に `/pricing`・`/account/billing` を開くコードが無いことを見張る。
+- Web の `/pricing`・`/account/billing`・`/account/billing/checkout` は `is_native_app` の Cookie (`cookies()` / `useNativeAppMode`) で購入導線を描かない。`/frozen/billing` はアプリの WebView (`isInNativeWebView()`) では解約と Billing Portal のボタンを描かない。API には制限を付けない (認可は同じ。制限は表示の規則)。
+- 配布の順: 料金の画面を消した版のアプリを配布してから、Web で販売を始める (billing/01 §17.3)。ストアの規約の最新の文面と審査での判断は billing/01 §18 の 2。
