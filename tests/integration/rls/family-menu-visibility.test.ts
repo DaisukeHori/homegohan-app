@@ -254,6 +254,8 @@ beforeAll(async () => {
     role: 'child',
     display_name: `F-child-${TS}`,
     child_profile: { birth_year: 2018 },
+    // #1173 (cross/14): アカウントの無い子供の行は生年月日が必須 (family_members_child_birth_date_required)
+    birth_date: '2018-04-01',
     status: 'active',
   });
   promoChildOffId = await insertMember({
@@ -261,7 +263,11 @@ beforeAll(async () => {
     user_id: null,
     role: 'child',
     display_name: `F-promo-off-${TS}`,
-    child_profile: { birth_year: 2012 },
+    child_profile: { birth_year: 1990 },
+    // #1173 (cross/14): アカウントの無い子供の行は生年月日が必須 (family_members_child_birth_date_required)。
+    // 昇格の it で本人のアカウントにつなぐので 18 歳以上にする (18 歳未満は保護者の同意が無いと request_child_promotion が
+    // PARENTAL_CONSENT_REQUIRED で止める。他の昇格の結合テストと同じ成人の placeholder の値)
+    birth_date: '1990-01-01',
     status: 'active',
   });
   promoChildOnId = await insertMember({
@@ -269,7 +275,11 @@ beforeAll(async () => {
     user_id: null,
     role: 'child',
     display_name: `F-promo-on-${TS}`,
-    child_profile: { birth_year: 2012 },
+    child_profile: { birth_year: 1990 },
+    // #1173 (cross/14): アカウントの無い子供の行は生年月日が必須 (family_members_child_birth_date_required)。
+    // 昇格の it で本人のアカウントにつなぐので 18 歳以上にする (18 歳未満は保護者の同意が無いと request_child_promotion が
+    // PARENTAL_CONSENT_REQUIRED で止める。他の昇格の結合テストと同じ成人の placeholder の値)
+    birth_date: '1990-01-01',
     status: 'active',
   });
   removedMemberId = await insertMember({
