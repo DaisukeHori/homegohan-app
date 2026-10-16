@@ -584,9 +584,9 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
     }
   });
 
-  it('C-6: 参加中の member が admin の招待を承諾したあと member の招待で戻ると、順位表は返らない (管理者だった印)', async () => {
+  it('C-6: 参加中の member が admin に上がったあと member に戻ると、順位表は返らない (管理者だった印)。同じ組織の招待では役割を変えられない (#1799)', async () => {
     const challenge = await seedRanking();
-    // m6 は部署なし (accept_org_invite は所属と役割を書き換え、部署を変えない)
+    // m6 は部署なし (下の setMembership は部署を null にする)
     expect((await apiCall('POST', `/api/org/challenges/${challenge}/join`, m6.jwt)).status).toBe(200);
     const before = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, m6.jwt);
     expect(before.body.ranking.available).toBe(true);
@@ -605,8 +605,14 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
     }
 
     try {
-      await acceptInvite('admin');
-      await acceptInvite('member');
+      // #1799: 同じ組織の在籍者には招待を作れない (承諾で org_role を招待の役割に上書きする経路は閉じた)
+      await expect(acceptInvite('admin')).rejects.toThrow(/ALREADY_IN_ORG/);
+      const { data: unchanged } = await srAdmin.from('user_profiles').select('org_role').eq('id', m6.id).single();
+      expect(unchanged?.org_role).toBe('member');
+
+      // 役割の往復は、残る経路 (所有者の譲渡・運営の操作と同じ service_role の UPDATE) で確かめる
+      await setMembership(m6.id, orgA, 'admin');
+      await setMembership(m6.id, orgA, 'member');
       const { data: profile } = await srAdmin.from('user_profiles').select('org_role').eq('id', m6.id).single();
       expect(profile?.org_role).toBe('member');
 
