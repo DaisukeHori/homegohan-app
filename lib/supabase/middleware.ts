@@ -199,10 +199,12 @@ export async function updateSession(request: NextRequest) {
     // #1148: メンテナンスモードの判定にも、ここで読んだユーザー ID とロールを使う (運営ロールは通す)
     // #1442: 同意ゲートも、ここで読んだ同じプロフィールの行で判定する (クエリは増やさない)。
     //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED)。
-    //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・問い合わせ・ログ・
+    //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・
+    //   本人の権利の請求 (開示・訂正・利用停止・消去。#1751)・問い合わせ・ログ・
     //   状態の窓口・端末の後片付け (通知のトークンの claim。#1636)・利用者のセッションを持たない経路) だけ。役割による例外は無い。
     //   凍結・メンテナンスの判定で通したパスは、すべてこの一覧にもある (無いと凍結中・メンテナンス中に同意できず必ず 403 になる。
-    //   lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で見張る)。
+    //   lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で見張る)。逆は求めない
+    //   (本人の権利の請求は未同意でも通すが、凍結中は上の凍結の分岐が 403 AUTH_ACCOUNT_FROZEN で止める)。
     //   プロフィールを読めなかったとき (profileError) と同意の列が無い DB (legalColumnsAvailable = false) は、凍結と同じく素通り (#348 の fail-open)。
     //   画面の分岐と同じ fetchMiddlewareProfile を使い、列が無い DB では列を除いた select でやり直す。
     let apiUserId: string | undefined
@@ -401,7 +403,7 @@ export async function updateSession(request: NextRequest) {
       //   - LEGAL_CONSENT_NOTICE=on のとき (強制していない間): 通す。画面の上に「同意のお願い」のお知らせを出すだけ
       //   - どちらも on でない (既定): 何もしない。お知らせも出さず、誰も止めない
       // /api/* はこの分岐の手前 (上の isApiRoute) で返っているので対象外 (API の同意ゲートは上の /api の分岐。#1442)。ほかの対象外 (規約・同意画面・認証の途中・
-      // 問い合わせ・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
+      // 問い合わせ・本人の権利の請求の画面 (#1751)・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
       // リダイレクトは画面の取得 (GET / HEAD) にだけ掛ける (POST を 307 で同意画面へ回しても、受け取れず失敗するだけのため)。
       // オンボーディングの差し戻し (下) より先に見る: 同意の前に初期設定 (健康情報の入力) へ進ませない。
       // 同意済みの版の列がまだ無い DB (legalColumnsAvailable = false) では素通りさせる。
