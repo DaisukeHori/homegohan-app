@@ -733,17 +733,33 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     expect(await mustFamily(keeperFamily)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
     expect(await planKeyCached(keeper.id)).toBe('family_pro');
 
-    // 代表者でない利用者の付与は、どのグループにも触れない
+    // 代表者でない利用者の付与・取り消し・期限切れは、どのグループにも触れない
     const outsider = await createUser('family-outsider');
     const bystanderRep = await createUser('family-bystander');
     const bystanderFamily = await insertFamily(bystanderRep.id);
     await grant(outsider.id, 'family_basic');
     expect(await mustFamily(bystanderFamily)).toMatchObject({ plan_key: 'free', member_limit: 4 });
     expect(await planKeyCached(outsider.id)).toBe('family_basic');
-    await tryRevoke(outsider.id);
-    expect(await mustFamily(bystanderFamily)).toMatchObject({ plan_key: 'free', member_limit: 4 });
+    // 取り消し・期限切れの同期は「この行のプランを持つグループ」だけを free / 4 に戻すので、他人のグループが
+    // 取り消すプラン (family_basic) を持っていないと、代表者の条件 (g.representative_id = p_user_id) を外しても
+    // 結果が変わらない。他人のグループを先に family_basic / 4 にしておき、条件が効いていることを見る
+    const { error: bystanderPlanError } = await srAdmin
+      .from('family_groups')
+      .update({ plan_key: 'family_basic', member_limit: 4 })
+      .eq('id', bystanderFamily);
+    expect(bystanderPlanError).toBeNull();
+    const outsiderRevoked = await tryRevoke(outsider.id);
+    expect(outsiderRevoked.error).toBeNull();
+    expect(outsiderRevoked.data).toMatchObject({ plan_key: 'family_basic', status_to: 'cancelled' });
+    expect(await mustFamily(bystanderFamily)).toMatchObject({ status: 'active', plan_key: 'family_basic', member_limit: 4 });
+    // 期限切れの経路 (§6.4) も同じ同期を通る
+    await grant(outsider.id, 'family_basic');
+    await makeDue(outsider.id);
+    expect(await expireForUser(outsider.id)).toBe(1);
+    expect(await liveRowsOf(outsider.id)).toEqual([]);
+    expect(await mustFamily(bystanderFamily)).toMatchObject({ status: 'active', plan_key: 'family_basic', member_limit: 4 });
 
-    // 解散したグループは、付与でも取り消しでも plan_key / member_limit を変えない
+    // 解散したグループは、付与でも取り消しでも期限切れでも plan_key / member_limit を変えない
     const dissolvedRep = await createUser('family-dissolved');
     const dissolvedFamily = await insertFamily(dissolvedRep.id);
     const { error: dissolveError } = await srAdmin
@@ -753,8 +769,27 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     expect(dissolveError).toBeNull();
     await grant(dissolvedRep.id, 'family_pro');
     expect(await mustFamily(dissolvedFamily)).toMatchObject({ status: 'dissolved', plan_key: 'family_basic', member_limit: 3 });
-    await tryRevoke(dissolvedRep.id);
-    expect(await mustFamily(dissolvedFamily)).toMatchObject({ status: 'dissolved', plan_key: 'family_basic', member_limit: 3 });
+    // 取り消し・期限切れの同期は g.plan_key = 取り消すプラン の行だけを見るので、解散したグループが取り消すプラン (family_pro) を
+    // 持っていないと、status の条件 (g.status = 'active') を外しても結果が変わらない。先に family_pro / 8 にしておく (§7.3 の M 行代表者)
+    const { error: dissolvedPlanError } = await srAdmin
+      .from('family_groups')
+      .update({ plan_key: 'family_pro', member_limit: 8 })
+      .eq('id', dissolvedFamily);
+    expect(dissolvedPlanError).toBeNull();
+    const dissolvedRevoked = await tryRevoke(dissolvedRep.id);
+    expect(dissolvedRevoked.error).toBeNull();
+    expect(dissolvedRevoked.data).toMatchObject({ plan_key: 'family_pro', status_to: 'cancelled' });
+    expect(await mustFamily(dissolvedFamily)).toMatchObject({ status: 'dissolved', plan_key: 'family_pro', member_limit: 8 });
+    await grant(dissolvedRep.id, 'family_pro');
+    await makeDue(dissolvedRep.id);
+    expect(await expireForUser(dissolvedRep.id)).toBe(1);
+    expect(await liveRowsOf(dissolvedRep.id)).toEqual([]);
+    expect(await mustFamily(dissolvedFamily)).toMatchObject({ status: 'dissolved', plan_key: 'family_pro', member_limit: 8 });
+
+    // 解散した代表者の取り消し・期限切れ (family_pro) は、同じ family_pro / 8 を持つ他人の active なグループ
+    // (rep のグループ = ほかの経路で入ったプラン・keeper のグループ = keeper の live な行) にも触れない
+    expect(await mustFamily(familyId)).toMatchObject({ status: 'active', plan_key: 'family_pro', member_limit: 8 });
+    expect(await mustFamily(keeperFamily)).toMatchObject({ status: 'active', plan_key: 'family_pro', member_limit: 8 });
   });
 });
 
