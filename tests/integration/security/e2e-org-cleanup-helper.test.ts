@@ -21,6 +21,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
 import { cleanup, createFreshOrg, setUserOrgRole } from '../../e2e/helpers/membership';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -56,12 +57,12 @@ async function createUser(label: string): Promise<string> {
 
 /** 利用者を組織のメンバーにする (user_profiles を作る。特権列なので service_role で) */
 async function joinOrg(userId: string, orgId: string, role: 'admin' | 'member'): Promise<void> {
-  const { error } = await srAdmin
-    .from('user_profiles')
-    .upsert(
+  const { error } = await retryIdempotentSetup(srAdmin, `joinOrg(${role}): user_profiles の upsert`, (db) =>
+    db.from('user_profiles').upsert(
       { id: userId, nickname: `e2e-cleanup-${role}`, age_group: '30s', gender: 'other', organization_id: orgId, org_role: role },
       { onConflict: 'id' },
-    );
+    ),
+  );
   if (error) throw new Error(`joinOrg(${role}): ${error.message}`);
 }
 
