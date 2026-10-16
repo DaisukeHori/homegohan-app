@@ -4,6 +4,7 @@ import { internalError } from '@/lib/api/errors';
 // MealType (食事の区分 5 値) は @homegohan/shared が正本 (#1631。手書きしない)
 import type { MealType } from '@homegohan/shared';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 // 食事タイプのカテゴリ（順序変更の制約用）
 const MEAL_CATEGORIES: Record<MealType, number> = {
@@ -23,11 +24,15 @@ export async function POST(request: Request) {
   if (userError || !user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
   try {
-    const { mealId, direction, dayId } = await request.json();
+    const { mealId: rawMealId, direction, dayId: rawDayId } = await request.json();
     
-    if (!mealId || !direction || !dayId) {
+    if (!rawMealId || !direction || !rawDayId) {
       return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
     }
+    // DB の id は小文字。大文字・混在で送られた mealId が findIndex の === で 404 にならないよう、受け取った直後にそろえ、
+    // 以後 (照合・DB) はそろえた値だけを使う (#1793。文字列でない値はそのまま = 今までどおり見つからない)
+    const mealId = typeof rawMealId === 'string' ? normalizeUuid(rawMealId) : rawMealId;
+    const dayId = typeof rawDayId === 'string' ? normalizeUuid(rawDayId) : rawDayId;
 
     // その日の全ての食事を取得（display_order順）
     const { data: meals, error: fetchError } = await supabase

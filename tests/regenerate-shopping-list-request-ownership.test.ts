@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { verifyRequestOwnership } from "../supabase/functions/_shared/request-ownership.ts";
+import { normalizeUuid, verifyRequestOwnership } from "../supabase/functions/_shared/request-ownership.ts";
+import { normalizeUuid as normalizeUuidNext } from "../src/lib/http-params";
 
 // #1240: regenerate-shopping-list-v2 は service role (RLS の対象外) で shopping_list_requests を更新する。
 // body の requestId の持ち主を確かめずに書き込むと、他人のジョブ行 (status / progress / shopping_list_id) を
@@ -107,5 +108,42 @@ describe("regenerate-shopping-list-v2 の配線 (#1240)", () => {
       expect(body).toContain('.eq("id", requestId)');
       expect(body).toContain('.eq("user_id", userId)');
     }
+  });
+});
+
+// #1793: JWT の利用者 id は小文字。body の userId を大文字・混在の UUID で送った本人が 403 にならないよう、受け取った直後にそろえる
+describe("regenerate-shopping-list-v2 の body の userId の大文字・小文字 (#1793)", () => {
+  // 16 進の英字を含む id
+  const HEX_USER_ID = "abcdef12-3456-4abc-8def-0123456789ab";
+
+  it("UC-1: normalizeUuid は UUID の形の文字列を小文字にし、形でない値はそのまま返す (Next.js の normalizeUuid と同じ答え)", () => {
+    const mixed = HEX_USER_ID.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
+    expect(mixed).not.toBe(HEX_USER_ID);
+    expect(normalizeUuid(HEX_USER_ID.toUpperCase())).toBe(HEX_USER_ID);
+    expect(normalizeUuid(mixed)).toBe(HEX_USER_ID);
+    expect(normalizeUuid(HEX_USER_ID)).toBe(HEX_USER_ID);
+    for (const value of [HEX_USER_ID, HEX_USER_ID.toUpperCase(), mixed, "NOT-A-UUID", "", ` ${HEX_USER_ID.toUpperCase()}`, "ABCDEF12-3456-4ABC-8DEF-0123456789AB-X"]) {
+      expect(normalizeUuid(value), value).toBe(normalizeUuidNext(value));
+    }
+    expect(normalizeUuid("NOT-A-UUID")).toBe("NOT-A-UUID");
+  });
+
+  it("UC-2: body の userId は受け取った直後にそろえ、本人の確認 (!==) と service role の経路の userId にはそろえた値だけを使う", () => {
+    const source = readFileSync(
+      path.resolve(__dirname, "../supabase/functions/regenerate-shopping-list-v2/index.ts"),
+      "utf8",
+    );
+    const read = source.indexOf("userId: rawBodyUserId");
+    const normalize = source.indexOf(
+      'const bodyUserId = typeof rawBodyUserId === "string" ? normalizeUuid(rawBodyUserId) : rawBodyUserId;',
+    );
+    const compare = source.indexOf("if (bodyUserId && bodyUserId !== authResult.userId)");
+    const trusted = source.indexOf("userId = bodyUserId;");
+    expect(read).toBeGreaterThan(-1);
+    expect(normalize).toBeGreaterThan(read);
+    expect(compare).toBeGreaterThan(normalize);
+    expect(trusted).toBeGreaterThan(normalize);
+    // 受け取った生の値は、そろえる 1 行のほかでは使わない
+    expect(source.split("rawBodyUserId").length - 1).toBe(4);
   });
 });

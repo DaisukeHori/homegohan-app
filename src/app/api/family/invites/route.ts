@@ -18,6 +18,7 @@ import { buildFamilyInviteUrl } from '@/lib/membership/urls';
 import { jstDayOfTimestamp } from '@/lib/jst-day-ranges';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 // 招待一覧取得
 export async function GET(_request: Request) {
@@ -99,7 +100,10 @@ export async function POST(request: Request) {
     );
   }
 
-  const { family_id, email, custom_message } = parsed.data;
+  const { email, custom_message } = parsed.data;
+  // DB の id は小文字。大文字・混在で送られた family_id が招待者の family_id との !== で 403 にならないよう、受け取った直後にそろえ、
+  // 以後 (判定・グループ名の取得・RPC) はそろえた値だけを使う (#1793)
+  const family_id = normalizeUuid(parsed.data.family_id);
 
   // 招待者のプロフィール取得 (名前, family_id 確認)
   // user_profiles に display_name 列は無い。存在しない列を select すると PostgREST が 42703 で失敗し、
