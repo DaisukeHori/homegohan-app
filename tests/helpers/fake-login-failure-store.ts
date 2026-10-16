@@ -9,7 +9,7 @@
  *   - どちらも p_reset_after_minutes が整数で 1 以上でなければ 22023 のエラー
  *   - auth_login_clear_failures: 行を消す
  *   - ロックのための古い関数 (auth_login_lock_status / auth_login_record_failure / auth_login_apply_lock /
- *     auth_login_account_user_id) は、アプリから呼ばれてはいけないので、知らない関数としてエラーを返す
+ *     auth_login_account_user_id) は、DB から消した (#1542) ので、知らない関数としてエラーを返す
  * 「いま」は now (書き換えられる)。本物の DB での挙動は tests/integration/security/auth-login-lock.test.ts が確かめる。
  */
 import type { LoginFailureRpcClient } from '@/lib/auth/login-failures';

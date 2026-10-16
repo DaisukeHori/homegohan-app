@@ -171,8 +171,6 @@ interface LoginRow {
   /** updated_at を何分前にするか */
   updatedAgo: number;
   failureCount: number;
-  /** ロックがあったころの列。値が入っていても、保持期間を過ぎれば行ごと消える */
-  lockedUntilFuture?: boolean;
   /** 掃除のあとも残るべきか */
   kept: boolean;
 }
@@ -212,14 +210,6 @@ const LOGIN_ROWS: LoginRow[] = [
     failureCount: 1,
     kept: false,
   },
-  {
-    label: 'stale-with-locked-until',
-    lastFailedAgo: STALE_AFTER_MINUTES + BOUNDARY_MARGIN_MINUTES,
-    updatedAgo: STALE_AFTER_MINUTES + BOUNDARY_MARGIN_MINUTES,
-    failureCount: 20,
-    lockedUntilFuture: true,
-    kept: false,
-  },
   { label: 'no-failure-time-fresh', lastFailedAgo: null, updatedAgo: 1, failureCount: 0, kept: true },
   {
     label: 'no-failure-time-stale',
@@ -238,16 +228,14 @@ async function seedLoginRows(rows: readonly LoginRow[]): Promise<void> {
   const values = rows
     .map((r) => {
       const lastFailed = r.lastFailedAgo === null ? 'NULL' : `now() - make_interval(mins => ${r.lastFailedAgo})`;
-      const lockedUntil = r.lockedUntilFuture ? `now() + make_interval(mins => ${MINUTES_PER_DAY})` : 'NULL';
-      return `(public.auth_login_email_hash(${lit(loginEmail(r.label))}), ${r.failureCount}, ${lockedUntil}, ${lastFailed}, now() - make_interval(mins => ${r.updatedAgo}), now() - make_interval(mins => ${r.updatedAgo}))`;
+      return `(public.auth_login_email_hash(${lit(loginEmail(r.label))}), ${r.failureCount}, ${lastFailed}, now() - make_interval(mins => ${r.updatedAgo}), now() - make_interval(mins => ${r.updatedAgo}))`;
     })
     .join(',\n');
   await asPostgres(`
-    INSERT INTO public.auth_login_failures (email_hash, failure_count, locked_until, last_failed_at, created_at, updated_at)
+    INSERT INTO public.auth_login_failures (email_hash, failure_count, last_failed_at, created_at, updated_at)
     VALUES ${values}
     ON CONFLICT (email_hash) DO UPDATE
       SET failure_count = EXCLUDED.failure_count,
-          locked_until = EXCLUDED.locked_until,
           last_failed_at = EXCLUDED.last_failed_at,
           created_at = EXCLUDED.created_at,
           updated_at = EXCLUDED.updated_at;
