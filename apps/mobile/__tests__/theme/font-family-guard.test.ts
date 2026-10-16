@@ -7,6 +7,9 @@
  *     パッケージの入口から読むと、使わない 6 つの字形 (1 つ約 5.7 MB) もアプリと OTA の更新に入るため。
  *  3. 字形はネイティブに埋め込まない (app.json に expo-font のプラグインを置かない)。OTA の更新で届けるため。
  *  4. ライブラリが中で Text を描く style (tabBarLabelStyle など) に、fontWeight を直に書かない (useFontStyle を通す)。
+ *  5. app/ の navigator (Stack / Tabs) は、ライブラリが描く文字の style を必ず渡し、その値は useFontStyle / useFontFaceStyle で作る:
+ *     ヘッダを出す (headerShown: false でない) なら headerTitleStyle と headerBackTitleStyle、Tabs なら tabBarLabelStyle。
+ *     渡さないと、その文字だけシステムの字形で描かれるため。値が字形に置き換わることは __tests__/app/navigator-font-styles.test.tsx が描いて確かめる。
  *
  * 拾い方が壊れて 0 件で通らないよう、それぞれ「拾えるはずのもの」(ui/Text.tsx 自身の import など) が拾えることも見る。
  */
@@ -125,5 +128,106 @@ describe('ライブラリが中で Text を描く style (#588)', () => {
         .map(({ line, index }) => `${path.relative(MOBILE_ROOT, file)}:${index + 1}: ${line.trim()}`),
     );
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('navigator (Stack / Tabs) がライブラリの描く文字に字形を渡す (#588)', () => {
+  const APP_DIR = path.join(MOBILE_ROOT, 'app');
+  const LAYOUT_FILES = walk(APP_DIR).filter((file) => path.basename(file) === '_layout.tsx');
+
+  interface NavigatorUse {
+    navigator: 'Stack' | 'Tabs';
+    /** screenOptions={...} の {...} の中身。screenOptions が無ければ null */
+    options: string | null;
+  }
+
+  /** JSX の <Stack ...> / <Tabs ...> (Stack.Screen などは除く) と、その screenOptions の中身 */
+  function navigatorUses(source: string): NavigatorUse[] {
+    const uses: NavigatorUse[] = [];
+    for (const match of source.matchAll(/<(Stack|Tabs)\b(?!\.)/g)) {
+      const start = (match.index ?? 0) + match[0].length;
+      let depth = 0;
+      let end = start;
+      // タグの終わり (波括弧の外の '>') まで
+      while (end < source.length && !(depth === 0 && source[end] === '>')) {
+        if (source[end] === '{') depth += 1;
+        else if (source[end] === '}') depth -= 1;
+        end += 1;
+      }
+      const tag = source.slice(start, end);
+      const optionsAt = tag.indexOf('screenOptions={');
+      let options: string | null = null;
+      if (optionsAt >= 0) {
+        const open = optionsAt + 'screenOptions='.length;
+        let level = 0;
+        let close = open;
+        do {
+          if (tag[close] === '{') level += 1;
+          else if (tag[close] === '}') level -= 1;
+          close += 1;
+        } while (level > 0 && close < tag.length);
+        options = tag.slice(open + 1, close - 1);
+      }
+      uses.push({ navigator: match[1] as NavigatorUse['navigator'], options });
+    }
+    return uses;
+  }
+
+  /** そのファイルで、key の値が useFontStyle / useFontFaceStyle で作った変数として渡されているか */
+  function passesFontHookValue(source: string, options: string, key: string): boolean {
+    const value = options.match(new RegExp(`\\b${key}\\b\\s*(:\\s*([A-Za-z_$][\\w$]*))?\\s*(?=[,}\\s]|$)`));
+    if (!value) return false;
+    const variable = value[2] ?? key;
+    return new RegExp(`const\\s+${variable}\\s*=\\s*useFont(?:Face)?Style\\(`).test(source);
+  }
+
+  /** ライブラリが描く文字の style のうち、渡していない・useFontStyle / useFontFaceStyle を通していないもの */
+  function missingFontStylesOf(source: string): string[] {
+    return navigatorUses(source).flatMap(({ navigator, options }) => {
+      const keys: string[] = [];
+      const headerShown = options === null || !/\bheaderShown\s*:\s*false\b/.test(options);
+      if (headerShown) keys.push('headerTitleStyle', 'headerBackTitleStyle');
+      if (navigator === 'Tabs') keys.push('tabBarLabelStyle');
+      return keys
+        .filter((key) => options === null || !passesFontHookValue(source, options, key))
+        .map((key) => `<${navigator}> ${key}`);
+    });
+  }
+
+  function missingFontStyles(file: string): string[] {
+    return missingFontStylesOf(fs.readFileSync(file, 'utf8')).map((hit) => `${path.relative(MOBILE_ROOT, file)}: ${hit}`);
+  }
+
+  it('拾い方の確認: 全ての _layout.tsx の navigator を拾い、ヘッダを出す区画とタブを見分ける', () => {
+    const found = LAYOUT_FILES.flatMap((file) =>
+      navigatorUses(fs.readFileSync(file, 'utf8')).map(({ navigator, options }) => ({
+        file: path.relative(MOBILE_ROOT, file),
+        navigator,
+        headerShown: options === null || !/\bheaderShown\s*:\s*false\b/.test(options),
+      })),
+    );
+    expect(found).toEqual(
+      expect.arrayContaining([
+        { file: 'app/(public)/_layout.tsx', navigator: 'Stack', headerShown: true },
+        { file: 'app/(tabs)/_layout.tsx', navigator: 'Tabs', headerShown: false },
+        { file: 'app/_layout.tsx', navigator: 'Stack', headerShown: false },
+      ]),
+    );
+  });
+
+  it('拾い方の確認: 渡していない・字形に置き換えずに渡した形は拾える', () => {
+    const plain = 'export default () => <Stack screenOptions={{ headerShown: true }} />;';
+    expect(navigatorUses(plain)).toEqual([{ navigator: 'Stack', options: '{ headerShown: true }' }]);
+    expect(missingFontStylesOf(plain)).toEqual(['<Stack> headerTitleStyle', '<Stack> headerBackTitleStyle']);
+    const constOnly =
+      'const TAB = { fontWeight: "600" } as const;\n<Tabs screenOptions={{ headerShown: false, tabBarLabelStyle: TAB }}>';
+    expect(passesFontHookValue(constOnly, navigatorUses(constOnly)[0].options ?? '', 'tabBarLabelStyle')).toBe(false);
+    const hooked =
+      'const tabBarLabelStyle = useFontStyle(TAB);\n<Tabs screenOptions={{ headerShown: false, tabBarLabelStyle }}>';
+    expect(passesFontHookValue(hooked, navigatorUses(hooked)[0].options ?? '', 'tabBarLabelStyle')).toBe(true);
+  });
+
+  it('ヘッダを出す区画は headerTitleStyle / headerBackTitleStyle を、Tabs は tabBarLabelStyle を字形に置き換えて渡す', () => {
+    expect(LAYOUT_FILES.flatMap(missingFontStyles)).toEqual([]);
   });
 });

@@ -1,6 +1,6 @@
 import { Children, createContext, forwardRef, isValidElement, useContext } from 'react';
 import type { ReactNode } from 'react';
-import { Text as RNText, TextInput as RNTextInput } from 'react-native';
+import { StyleSheet, Text as RNText, TextInput as RNTextInput } from 'react-native';
 import type { StyleProp, TextInputProps, TextProps, TextStyle } from 'react-native';
 
 import { resolveFontStyle } from '../../theme/fonts';
@@ -34,11 +34,27 @@ function useFontsReady(): boolean {
 }
 
 /**
- * Text / TextInput 以外に渡す文字の style (タブの見出しの tabBarLabelStyle など、ライブラリが中で Text を描くもの) を、
- * 共通の部品と同じ字形に置き換える。
+ * Text / TextInput 以外に渡す文字の style (タブの見出しの tabBarLabelStyle など、ライブラリが中で Text を描き、
+ * TextStyle をそのまま受けるもの) を、共通の部品と同じ字形に置き換える。
  */
 export function useFontStyle(style: StyleProp<TextStyle>): StyleProp<TextStyle> {
   return resolveFontStyle(style, { fontsReady: useFontsReady(), inheritFromParent: false });
+}
+
+/** 字形の props (fontFamily / fontWeight) だけを受けるライブラリに渡す style */
+export type FontFaceStyle = Pick<TextStyle, 'fontFamily' | 'fontWeight'>;
+
+/**
+ * 字形の props だけを受けるライブラリ (native-stack の見出しの headerTitleStyle・戻るボタンの文字の headerBackTitleStyle など。
+ * TextStyle のほかの props や ColorValue の color は受けない) に渡す style を、共通の部品と同じ字形で作る。
+ * fontWeight を省くと Regular。字形を読み込めていないときは、システムの字形のまま fontWeight だけを返す (省いたときは空)。
+ */
+export function useFontFaceStyle(fontWeight?: TextStyle['fontWeight']): FontFaceStyle {
+  const resolved: TextStyle = StyleSheet.flatten(useFontStyle(fontWeight === undefined ? {} : { fontWeight })) ?? {};
+  const faceStyle: FontFaceStyle = {};
+  if (resolved.fontFamily !== undefined) faceStyle.fontFamily = resolved.fontFamily;
+  if (resolved.fontWeight !== undefined) faceStyle.fontWeight = resolved.fontWeight;
+  return faceStyle;
 }
 
 /** react-native の Text と同じ props。字形だけを Noto Sans JP に置き換える */
