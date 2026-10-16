@@ -1169,12 +1169,12 @@ sequenceDiagram
   participant API as Next.js API Route
   participant DB as Supabase DB
   participant EF as Edge Function
-  participant Push as notify-push
+  participant Push as push_outbox (RPC enqueue_push_notification)
 
   Note over Client,Push: パターン③ 家族リクエストフロー
   Client->>API: POST /api/family/meal-requests { assignee_id: 夫UUID }
   API->>DB: INSERT family_meal_requests (status=pending)
-  API->>Push: notify assignee (Push通知)
+  API->>Push: enqueue_push_notification(assignee) (Push通知)
   API-->>Client: 201 { id, status: "pending" }
 
   Client->>API: POST /api/family/meal-requests/{id}/ai-propose
@@ -1185,15 +1185,17 @@ sequenceDiagram
 
   Client->>API: POST /api/family/meal-requests/{id}/propose
   API->>DB: UPDATE status=proposed
-  API->>Push: notify requester
+  API->>Push: enqueue_push_notification(requester)
   API-->>Client: 200 { status: "proposed" }
 
   Client->>API: POST /api/family/meal-requests/{id}/accept
   API->>DB: UPDATE status=accepted
   API->>DB: INSERT planned_meals (source_request_id)
-  API->>Push: notify assignee
+  API->>Push: enqueue_push_notification(assignee)
   API-->>Client: 200 { planned_meal_id }
 ```
+
+図の `Push` は送信待ちに積むだけで、Expo に送るのは worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md` §4。Edge Function `notify-push` は作らない)。家族の通知の種類は後回し (06 §3.2)。
 
 ## 13. テスト方針
 

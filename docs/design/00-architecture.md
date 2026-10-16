@@ -249,7 +249,7 @@ supabase/
     ├── family-shared-menu-generate/  # 新規 (家族全員制約和集合献立)
     ├── industrial-doctor-advice/  # 保留 (#1133。LLM は未採用)
     ├── stripe-price-sync/         # 新規 (価格変更時の Stripe 連携)
-    ├── notify-push/               # 新規 (Expo Push 一斉送信)
+    ├── notify-push/               # 作らない。送信は Next の worker GET /api/cron/push-outbox (mobile/06-push-send.md)
     ├── notify-email/              # 新規 (Resend 一斉送信)
     └── scan-file/                 # 新規 (ClamAV ウイルススキャン)
 ```

@@ -182,7 +182,8 @@ supabase/functions/<function-name>/test.ts (Deno test)
 
 ### 11.3 Push 通知 (Expo Push)
 - 全テスト: モック
-- `expo-server-sdk` の `sendPushNotificationsAsync` を `vi.fn()` で代替
+- SDK (`expo-server-sdk`) は使わない (`mobile/06-push-send.md` §4.3)。Expo を呼ぶ `src/lib/push/expo-transport.ts` は `createExpoTransport(token, fetchImpl)` で `fetch` を差し替え、テストは `vi.fn<typeof fetch>()` のモックを渡す (`src/__tests__/lib/push/expo-transport.test.ts`)
+- worker の本体 (`processPushOutbox`) のテストは、transport (`send` / `getReceipts`) と store を作り物にする (`src/__tests__/lib/push/outbox.test.ts`)
 
 ### 11.4 Resend (Email)
 - Unit/Integration: モック

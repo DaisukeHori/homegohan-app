@@ -1611,6 +1611,13 @@ NPS サーベイ送信 (日次 14:00 JST)
 
 ---
 
+### GET /api/cron/push-outbox
+Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#1136)。処理・応答・環境変数は `mobile/06-push-send.md` §6.6。
+
+**認証**: `CRON_SECRET` ヘッダー
+
+---
+
 ## 23. エラーコード一覧
 
 | コード | HTTP | 意味 |
