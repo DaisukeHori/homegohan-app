@@ -52,7 +52,7 @@ function valueImportsFromReactNative(source: string): string[] {
 /** react-native の Text / TextInput を直接読んでいる箇所 (require・名前空間の import を含む) */
 function directTextUses(file: string): string[] {
   const source = fs.readFileSync(file, 'utf8');
-  const hits = valueImportsFromReactNative(source).filter((name) => name === 'Text' || name === 'TextInput');
+  const hits: string[] = valueImportsFromReactNative(source).filter((name) => name === 'Text' || name === 'TextInput');
   if (/require\(\s*['"]react-native['"]\s*\)\.(Text|TextInput)\b/.test(source)) hits.push('require');
   if (/import\s+\*\s+as\s+\w+\s+from\s+['"]react-native['"]/.test(source)) hits.push('namespace');
   return hits.map((hit) => `${path.relative(MOBILE_ROOT, file)}: ${hit}`);
