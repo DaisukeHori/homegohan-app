@@ -251,6 +251,11 @@ describe('billing/02 段 A: 付与の入口の検査と業務エラー', () => {
     ]);
     // 引数の不足は 22023
     expect(grant).toContain("RAISE EXCEPTION 'billing_grant_manual_subscription: p_user_id / p_plan_key are required' USING ERRCODE = '22023';");
+    // 利用者は auth.users と user_profiles の両方にあること (退会済み・プロフィール未作成は BILL_UNKNOWN_USER。§6.2 の 1.)。
+    // user_profiles.id は auth.users を参照するので、auth.users の側を外しても DB の上の結果は変わらない — 文面で守る
+    expect(grant).toContain(
+      "IF NOT EXISTS (SELECT 1 FROM auth.users AS u WHERE u.id = p_user_id) OR NOT EXISTS (SELECT 1 FROM public.user_profiles AS p WHERE p.id = p_user_id) THEN RAISE EXCEPTION 'BILL_UNKNOWN_USER'",
+    );
     // 検査の順: 期限 → 利用者 → プラン → ロック → live の衝突 → INSERT
     const order = [
       'BILL_MANUAL_EXPIRES_AT_PAST',
@@ -308,6 +313,12 @@ describe('billing/02 段 A: ロックの順', () => {
     expect(grantOrder.every((position) => position > -1)).toBe(true);
     expect([...grantOrder].sort((a, b) => a - b)).toEqual(grantOrder);
     expect(grant).not.toContain('FOR UPDATE');
+    // その family_groups の UPDATE は、家族プランのときだけ・代表者の active なグループだけ・値が変わるときだけ (写像 (9) の 10. と同じ式)。
+    // 振る舞いは結合テスト 41 が見る (個人プランの付与でグループが変わらない・max_members 25 / NULL で 20 / 4)。ここは文面の崩れを先に捕まえる。
+    // 値が変わるときだけの条件は、同じ値の UPDATE を省くだけで DB の上の結果を変えないので、文面で守る
+    expect(grant).toContain(
+      "IF v_plan.plan_type = 'family' THEN v_member_limit := LEAST(COALESCE(v_plan.max_members, c_default_member_limit), c_max_member_limit); UPDATE public.family_groups AS g SET plan_key = p_plan_key, member_limit = v_member_limit WHERE g.representative_id = p_user_id AND g.status = 'active' AND (g.plan_key IS DISTINCT FROM p_plan_key OR g.member_limit IS DISTINCT FROM v_member_limit); END IF;",
+    );
 
     // 取り消し・期限切れ: 行の UPDATE の後、内部の同期 (family_groups → user_profiles) を呼ぶ
     for (const name of ['billing_revoke_manual_subscription', 'billing_expire_manual_subscription_for_user'] as const) {
@@ -369,6 +380,8 @@ describe('billing/02 段 A: 期限切れのプロシージャ', () => {
       /FOR v_target IN SELECT DISTINCT s\.user_id FROM public\.personal_subscriptions AS s WHERE .* ORDER BY s\.user_id LOOP/,
     );
     expect(body).toContain('s.stripe_subscription_id IS NULL');
+    // live な行だけ (1 人分の関数も鍵の後で同じ条件を見直すので、外しても DB の上の結果は変わらず、毎日の呼び出しが増えるだけ — 文面で守る)
+    expect(body).toContain("AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')");
     expect(body).toContain('s.current_period_end IS NOT NULL AND s.current_period_end <= now()');
     expect(body).toContain('PERFORM public.billing_expire_manual_subscription_for_user(v_target.user_id); COMMIT; END LOOP;');
     expect(body.split('COMMIT').length - 1).toBe(1);
