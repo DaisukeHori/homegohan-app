@@ -1092,3 +1092,4 @@ describe('壊れた JSON は 500 ではなく 400', () => {
     expect(await json(res)).toEqual({ error: 'Invalid JSON' });
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
+});
