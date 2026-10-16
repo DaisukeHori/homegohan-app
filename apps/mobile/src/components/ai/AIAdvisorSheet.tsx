@@ -20,10 +20,9 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../ui/Text";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
 import {

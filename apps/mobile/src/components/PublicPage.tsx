@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import { router } from "expo-router";
 import React from "react";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { Pressable, ScrollView, View } from "react-native";
+import { Text } from "./ui/Text";
 
 import { Card } from "./ui";
 import { webPageUrl } from "../lib/siteConfig";

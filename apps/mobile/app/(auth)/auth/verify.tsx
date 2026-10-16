@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import { Redirect, router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
+import { ActivityIndicator, Alert, Pressable, View } from "react-native";
+import { Text } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { completeAuthLink } from "../../../src/lib/authLink";
