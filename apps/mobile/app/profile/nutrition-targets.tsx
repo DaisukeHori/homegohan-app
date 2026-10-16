@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 
 import { useEffect, useState } from "react";
-import { Alert, ScrollView, Text, View } from "react-native";
+import { Alert, ScrollView, View } from "react-native";
+import { Text } from "../../src/components/ui/Text";
 
 import { Button, Card, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { colors, spacing, radius } from "../../src/theme";

@@ -7,9 +7,9 @@ import {
   Dimensions,
   Pressable,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
+import { Text } from '../components/ui/Text';
 
 import type { TargetRect, TourBubbleProps } from '@homegohan/handson-tour-shared';
 

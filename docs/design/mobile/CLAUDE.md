@@ -11,6 +11,7 @@
 | `03-push-notification.md` | Expo Push / バッジカウント / 通知種別 on-off / Quiet Hours | 01 §15.3-4 |
 | `04-storage-camera.md` | meal-photos バケット / native ImagePicker / EXIF 削除 | 01 §15.2 |
 | `05-auth-session.md` | セッションの保管 (SecureStore) / 起動時の復元 / Google ログイン / push token / WebView とネイティブのログアウト・セッション失効の同期 | #1038 |
+| `06-push-send.md` | サーバーからの Push 通知の送信: 送信待ち `push_outbox` / worker `GET /api/cron/push-outbox` / receipt / 種類の一覧 (`PUSH_NOTIFICATION_KINDS`) | 01 §15.3-4・#1136 |
 
 ## ドメインの役割
 
@@ -69,9 +70,9 @@ React Native + Expo SDK 53 によるモバイルアプリ:
 
 ### 4. Push 通知
 - Expo Push Token を `user_push_tokens` に登録
-- バッジカウントは payload の `badge` フィールド + `setBadgeCountAsync`
+- バッジカウント: いまのサーバーからの送信 (`06-push-send.md`) は payload に `badge` を入れない (06 §1.2)。アプリ側の扱いは `03` §3.5
 - 通知種別ごとの on/off (`notification_preferences.preferences` JSONB)
-- Quiet Hours (22:00-7:00) は緊急通知以外スキップ
+- Quiet Hours (22:00-7:00) に送るか待つかは種類ごとに決める (`06-push-send.md` §3.2 の「夜間」の列・§6.3。`03` §3.7)
 
 ### 5. 食事写真アップロード
 - Web 側 `<input type="file">` は iOS 18 でカメラ dismiss バグ → ネイティブ ImagePicker 必須
@@ -91,7 +92,7 @@ React Native + Expo SDK 53 によるモバイルアプリ:
 
 | 提供内容 | 利用先 |
 |---------|------|
-| Expo Push Token | `cross/03-design-system.md` (notify-push Edge Function) |
+| Expo Push Token | `mobile/06-push-send.md` (`push_outbox` の worker `GET /api/cron/push-outbox` が送る。Edge Function `notify-push` は作らない) |
 | ディープリンク受諾フロー | family / org の invite フロー |
 | Native ImagePicker | family の食事写真アップロード |
 
@@ -99,7 +100,7 @@ React Native + Expo SDK 53 によるモバイルアプリ:
 
 - **Unit**: deeplink parser / pushNotifications ロジック
 - **E2E**: Maestro (or Detox) でディープリンク受諾フロー / Push 通知受信
-- **Manual**: Apple Configurator 2 で実機検証 (Push の APNs / バッジ表示)
+- **Manual**: Apple Configurator 2 で実機検証 (Push の APNs。バッジ表示はいまは対象外: `03` §7)
 
 ## 既存実装との関連
 

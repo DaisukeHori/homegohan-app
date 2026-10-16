@@ -6,7 +6,7 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
 
 ### Frontend (Web)
 - **Framework**: Next.js 16 (App Router。#1621 で 15 から上げた。バンドラーは Next 16 の既定の Turbopack (#1745 で webpack から移った))
-- **Runtime**: Node.js 22.x / Edge Runtime (一部 Edge Function)
+- **Runtime**: Node.js 22.x (proxy・Route Handler・画面とも Next の Node.js の runtime。Next の Edge Runtime で動くものは無い (#1744 で proxy と `/api/cron/process-menu-queue` を Node.js に移した)。Supabase の Edge Functions (Deno) は下の Backend の節)
 - **UI**: React 19 + Tailwind CSS v4 + Lucide Icons
 - **State**: Server Components + Server Actions、クライアント state は最小限
 - **Forms**: React Hook Form + Zod
@@ -249,7 +249,7 @@ supabase/
     ├── family-shared-menu-generate/  # 新規 (家族全員制約和集合献立)
     ├── industrial-doctor-advice/  # 保留 (#1133。LLM は未採用)
     ├── stripe-price-sync/         # 新規 (価格変更時の Stripe 連携)
-    ├── notify-push/               # 新規 (Expo Push 一斉送信)
+    ├── notify-push/               # 作らない。送信は Next の worker GET /api/cron/push-outbox (mobile/06-push-send.md)
     ├── notify-email/              # 新規 (Resend 一斉送信)
     └── scan-file/                 # 新規 (ClamAV ウイルススキャン)
 ```

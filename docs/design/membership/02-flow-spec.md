@@ -32,6 +32,7 @@ server  → 認可: caller.org_role IN ('owner','admin')
         → SUPABASE: SELECT seat_limit/used_seats from org_license_pools
         → IF seats full → 400 SEAT_LIMIT_EXCEEDED
         → SUPABASE.rpc('create_org_invite', { ... }) → invite row
+        → 宛先がこの組織の在籍者・持ち主なら 409 ALREADY_IN_ORG (RPC 内。招待を作らない・既存の pending も取り消さない。#1799)
         → 既存 pending 招待は revoked 化 (RPC 内)
         → SUPABASE.admin.listUsers({ filter: `email.eq.${email}` })
         → IF 既存 → invite_url = `${BASE_URL}/invite/${token}`, template = 'A'
@@ -65,6 +66,11 @@ server  → SUPABASE.rpc('accept_org_invite', { token })
 
 ### 1.3 Error path
 ```
+[Alice] [承諾する] - だが既に同じ組織に所属 (持ち主を含む。#1799)
+  → server: ALREADY_IN_ORG エラー (org_role は変えない。招待は pending のまま・席数も監査ログも変わらない)
+  → UI: 「既に組織に所属しています。」
+  → 不要な招待は /api/org/invites/{token}/reject で拒否できる
+
 [Alice] [承諾する] - だが既に他組織所属
   → server: ALREADY_IN_ORG エラー
   → UI: 「あなたは現在 orgA に所属しています。orgB に移動しますか?」

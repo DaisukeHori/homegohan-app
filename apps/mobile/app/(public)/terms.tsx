@@ -1,4 +1,4 @@
-import { Text } from "react-native";
+import { Text } from "../../src/components/ui/Text";
 
 import { PublicPage } from "../../src/components/PublicPage";
 

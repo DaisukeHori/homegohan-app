@@ -30,7 +30,8 @@ import {
   useState,
   type RefObject,
 } from 'react';
-import { Linking, Pressable, Text, View } from 'react-native';
+import { Linking, Pressable, View } from 'react-native';
+import { Text } from '../ui/Text';
 import { WebView } from 'react-native-webview';
 import type { WebViewMessageEvent } from 'react-native-webview';
 

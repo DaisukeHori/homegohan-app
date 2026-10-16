@@ -5,6 +5,8 @@
  *   - 429 AI_DAILY_LIMIT (今日の AI の利用回数の上限に達した。#1149): AiDailyLimitError (src/lib/ai-daily-limit.ts)
  *   - 503 AI_CHAT_DISABLED (AI 相談の緊急停止中)・503 MAINTENANCE_MODE (メンテナンス中) (#1457)・
  *     503 AI_CONSENT_CHECK_FAILED (同意の状況を読めなかった。#1486): ServiceUnavailableError (src/lib/service-unavailable.ts)
+ *   - 403 LEGAL_CONSENT_REQUIRED (規約への同意が必要。#1442): 固定の文の LegalConsentRequiredError (src/lib/legal-consent.ts)。
+ *     見分けるときに LegalConsentProvider へ知らせ、ゲートがルートの Stack を同意画面 1 つに畳む
  * getApi() (src/lib/api.ts の withFriendlyErrors) は、同じ 2 つの判定で getApi() の Error を置き換える。
  * 生の fetch (ストリーミングで受ける AI 相談の送信・1 食の作り直し・献立の削除や完了の切り替え・書き出し・買い物リストの全削除)
  * にはその置き換えが効かないので、この関数を通す。
@@ -12,6 +14,7 @@
  * tests/mobile-service-unavailable-raw-fetch.test.ts (AI 相談を呼ぶファイル) が見張る。
  */
 import { aiDailyLimitErrorOf, isAiDailyLimitError, type AiDailyLimitError } from "./ai-daily-limit";
+import { isLegalConsentRequiredError, legalConsentRequiredErrorOf, type LegalConsentRequiredError } from "./legal-consent";
 import {
   isServiceUnavailableError,
   SERVICE_UNAVAILABLE_ALERT_TITLE,
@@ -22,15 +25,19 @@ import {
 /** 上限 (429 AI_DAILY_LIMIT) を Alert で出すときの見出し (#1149 で決めた見出しのまま) */
 const AI_DAILY_LIMIT_ALERT_TITLE = "エラー";
 
+/** 規約への同意が必要 (403 LEGAL_CONSENT_REQUIRED) を Alert で出すときの見出し (AI 同意の案内 promptAiConsentRequired と同じ語) */
+const LEGAL_CONSENT_ALERT_TITLE = "同意が必要です";
+
 /** サーバーに止められたことを表す例外 (message は画面にそのまま出せる固定の文) */
-export type StoppedByServerError = AiDailyLimitError | ServiceUnavailableError;
+export type StoppedByServerError = AiDailyLimitError | ServiceUnavailableError | LegalConsentRequiredError;
 
 export function isStoppedByServerError(error: unknown): error is StoppedByServerError {
-  return isAiDailyLimitError(error) || isServiceUnavailableError(error);
+  return isAiDailyLimitError(error) || isServiceUnavailableError(error) || isLegalConsentRequiredError(error);
 }
 
 /** 止められたことを Alert で出すときの見出し: 緊急停止・メンテナンス中 (#1457)・同意の状況を読めなかった (#1486) は「ご利用いただけません」、上限 (#1149) は「エラー」 */
 export function stoppedByServerAlertTitleOf(error: StoppedByServerError): string {
+  if (isLegalConsentRequiredError(error)) return LEGAL_CONSENT_ALERT_TITLE;
   return isServiceUnavailableError(error) ? SERVICE_UNAVAILABLE_ALERT_TITLE : AI_DAILY_LIMIT_ALERT_TITLE;
 }
 
@@ -43,5 +50,5 @@ export function stoppedByServerAlertTitleOf(error: StoppedByServerError): string
  */
 export function errorOfFailedResponse(status: number, bodyText: string): Error {
   const raw = new Error(`HTTP ${status}: ${bodyText}`);
-  return aiDailyLimitErrorOf(raw) ?? serviceUnavailableErrorOf(raw) ?? raw;
+  return aiDailyLimitErrorOf(raw) ?? serviceUnavailableErrorOf(raw) ?? legalConsentRequiredErrorOf(raw) ?? raw;
 }

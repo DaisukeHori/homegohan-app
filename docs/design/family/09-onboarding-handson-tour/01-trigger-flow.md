@@ -254,6 +254,8 @@ stateDiagram-v2
 - `tutorial_complete` バッジは初回のみ付与済 (再付与なし)
 - UI は通常通り卒業画面表示 (= もう一度卒業セレモニーを楽しめる)
 
+アプリでツアーの途中に規約の同意が要るようになったとき (13b) は、ルートのゲートが同意画面 1 つに畳むのでツアーは外れる (skip も complete も記録しない)。同意の後はホームへ戻り、ツアーはこの経路 (`/handson-tour?force=1`) で開き直す。
+
 ### 4.3 Analytics
 
 `/settings` から開始した場合、`handson_tour_started { entry_source: 'settings_force' }` を発火。auto-trigger 開始と区別して集計。

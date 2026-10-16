@@ -375,6 +375,16 @@ system.gdpr_delete.batch            - GDPR 削除バッチ実行
 system.ban.auto                     - 自動 BAN (不正検知)
 ```
 
+### 4.5a バックアップと DR 訓練の操作 (cross/17-backup-automation.md §10)
+
+| action_type | 誰が | 書き方 | severity | target_type |
+|---|---|---|---|---|
+| `backup.daily.completed` / `backup.weekly.completed` / `backup.annual.completed` | GitHub Actions (actor 無し) | `record_backup_audit` (所有者 `postgres` だけが呼べる) | info | `database_backup` |
+| `backup.daily.failed` / `backup.weekly.failed` / `backup.annual.failed` | 同上 | 同上 | warn | 同上 |
+| `dr.test.monthly.pitr` / `dr.test.quarterly.restore` / `dr.test.annual.drill` | super_admin | `recordAdminAudit` (本人の client。`actor_id = auth.uid()`) | success → info、failed / skipped → warn | `dr_test` |
+
+読む側 (`/super-admin/backups`・`/api/cron/backup-freshness`) は action_type だけで信じず、書いた経路の印で絞る。取得の行は actor_id が NULL かつ target_type が `database_backup`、訓練の行は target_type が `dr_test` かつ actor が今の super_admin (cross/17 §7.1・§10)。`admin_audit_logs` の INSERT のポリシーが action_type を見ない既存の欠陥は Issue #1736 で直す。
+
 ### 4.6 監査ログ INSERT ヘルパー
 
 ```typescript
@@ -461,6 +471,7 @@ user.billing.cancel_revoked         - 解約の予約を取り消した (POST /a
 ```sql
 -- 1 年経過した admin_audit_logs を Cold Storage 用テーブルに移動
 -- 実際の S3 転送は Vercel Cron が担当
+-- (未実装の計画。DB の論理バックアップは cross/17 の GitHub Actions → R2 で、このアーカイブの転送は担わない。7 年アーカイブは別の設計。cross/17 §1・§21)
 SELECT cron.schedule(
   'audit-log-archive',
   '0 3 1 * *',  -- 毎月1日 03:00 UTC

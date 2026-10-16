@@ -79,6 +79,8 @@ Supabase は関数の作成時に anon / authenticated / service_role へ EXECUT
 2026-10-07 取得分では `family_promotion_requests`（#1232。token 列を列単位 GRANT で隠している）がこれに当たり、`verify` が不一致を検出した。
 `prod_table_acl.sql` でテーブルごとに API ロールの権限を本番の `relacl` どおりに付け直し、最後に本番の列単位 GRANT を付け直している（テーブル単位の REVOKE は列単位の権限も外すため）。
 
+**DB バックアップの復元でも同じ道具を使います（#1129）:** `scripts/baseline/build_restore_fixups.py` が `build_baseline.py` の同じ 3 つの関数（`build_function_acl_sql`・`build_table_acl_sql`・`build_storage_sql`）で DB バックアップの `fixups.sql`（dump を流しても戻らない権限と storage のポリシー）を作ります。`snapshot_catalog.sql` と `verify_baseline.py` も、DB バックアップの取得と復元の検査が使います。これらのどれかを変える PR は、`docs/design/cross/17-backup-automation.md` の取得（`tests/backup-db.test.ts` の golden と `CATALOG_CSV_FILES` の it、`roundtrip-check`）も赤くなりうるので、そちらも確かめます。復元の手順は `docs/operations/backup-restore.md` です。
+
 ## 秘密情報の扱い
 
 - スキーマとカタログ、上記マスタテーブルのデータのみを取得する。ユーザーデータは取得しない。

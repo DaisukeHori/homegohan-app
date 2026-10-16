@@ -182,7 +182,8 @@ supabase/functions/<function-name>/test.ts (Deno test)
 
 ### 11.3 Push 通知 (Expo Push)
 - 全テスト: モック
-- `expo-server-sdk` の `sendPushNotificationsAsync` を `vi.fn()` で代替
+- SDK (`expo-server-sdk`) は使わない (`mobile/06-push-send.md` §4.3)。Expo を呼ぶ `src/lib/push/expo-transport.ts` は `createExpoTransport(token, fetchImpl)` で `fetch` を差し替え、テストは `vi.fn<typeof fetch>()` のモックを渡す (`src/__tests__/lib/push/expo-transport.test.ts`)
+- worker の本体 (`processPushOutbox`) のテストは、transport (`send` / `getReceipts`) と store を作り物にする (`src/__tests__/lib/push/outbox.test.ts`)
 
 ### 11.4 Resend (Email)
 - Unit/Integration: モック
@@ -270,7 +271,7 @@ PR 時 vs main マージ時の実行ステージ分岐:
 ### 17.1 Nightly Run (毎日 03:00 JST)
 - E2E full (実 LLM API 含む)
 - 負荷テスト (k6)
-- DR 復元テスト (月 1 回、staging に PITR)
+- DR 復元テスト (月 1 回、staging に PITR。Pro になるまでは行わず `/super-admin/backups` で `monthly_pitr` を `skipped` で記録する。論理バックアップの復元は、月曜の取得の restore_check と PR の `roundtrip-check` が受け持つ。cross/17 §4.8・§9.2・§15)
 
 ## 18. E2E シナリオ網羅 (Phase 1 = 30 spec)
 

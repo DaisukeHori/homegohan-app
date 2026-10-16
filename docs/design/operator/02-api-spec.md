@@ -371,7 +371,7 @@ BAN 解除
   行がもう無い (持ち主が先に消した) ときは `hidden: false` / `content_found: false`。すでに隠れていた行は `hidden: true` / `content_found: true`
   で、`hidden_ids` は空
   隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
-- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
+- 画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
 - `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
@@ -1026,6 +1026,16 @@ super_admin だけ。I/O・エラー・監査は `10-logs-and-mail-retry.md` §9
 
 super_admin だけ。I/O・エラー・監査は `10-logs-and-mail-retry.md` §9.2・§10・§11
 
+### GET /api/super-admin/backups
+DB バックアップの取得の状態と DR 訓練の記録の読み取り (層ごとの最新・鮮度・取得と訓練の一覧。#1129・#1191)。
+
+super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md` §7.1 を canonical とする (行は action_type だけで信じず、書いた経路の印で絞る)
+
+### POST /api/super-admin/backups/dr-tests
+DR 訓練の結果を `dr.test.<種類>` で記録 (#1191)。
+
+super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md` §7.2 を canonical とする (本文は同 §5.3 の `drTestRecordBodySchema`。記録できなければ 500 を返し、201 は返さない)
+
 ---
 
 ## 14. 営業 CRM API
@@ -1606,6 +1616,13 @@ NPS サーベイ送信 (日次 14:00 JST)
 
 ### GET /api/cron/email-outbox
 メールの送信待ちを送る worker (毎分。Vercel Cron。#1193)。処理・応答・環境変数は `10-logs-and-mail-retry.md` §6.5。
+
+**認証**: `CRON_SECRET` ヘッダー
+
+---
+
+### GET /api/cron/push-outbox
+Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#1136)。処理・応答・環境変数は `mobile/06-push-send.md` §6.6。
 
 **認証**: `CRON_SECRET` ヘッダー
 

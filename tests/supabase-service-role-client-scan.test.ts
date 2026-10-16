@@ -17,6 +17,11 @@
  *
  * 走査は TypeScript の構文木で行うので、コメントの中の import や createClient には反応しない。
  *
+ * 所要時間 (#1814): 以前は src と lib の全ファイルを、規則ごとに構文木にしていた (1 ファイルを 2 回以上)。
+ * 今は (a) 構文木を作る前に本文を文字列で見て、どの規則にも違反しえないファイルは構文木にしない
+ * (理由は mayViolateAnyRule のコメント) (b) 構文木は 1 ファイル 1 回だけ作り、規則の間で使い回す。
+ * どちらも検査の意味は変えない (コメントの中の文字列で絞り込みを通っても、構文木の検査で反応しない)。
+ *
  * 限界 (このテストは見張りであって、証明ではない。すり抜ける書き方はレビューで見る):
  *  - service_role の鍵を引数で受け取って、一覧にあるファイルの createClient に渡す書き方は捕まらない
  *    (一覧のファイルが鍵を受け取る口を作らないことは、一覧に足すときのレビューで見る)。
@@ -88,8 +93,44 @@ const SUPABASE_JS_CLIENT_ALLOWLIST: readonly AllowedClientCreator[] = [
 // 構文木の走査
 // ─────────────────────────────────────────────────────────────────────────────
 
-function parse(source: string, fileName: string) {
-  return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+/**
+ * 構文木の使い回し (#1814)。同じファイル名・同じ本文なら、前に作った構文木を返す。
+ * 走査では規則ごとに同じファイルを何度も調べるので、1 ファイル 1 回だけ作る。
+ * 本文が違えば (確認の仕組みのテストで同じ仮のファイル名に別の本文を渡すとき) 作り直す。
+ * 走査は node.text だけを読み、親をたどらないので、親の参照は張らない (setParentNodes = false)
+ */
+const parsedFiles = new Map<string, { source: string; sourceFile: ts.SourceFile }>();
+
+function parse(source: string, fileName: string): ts.SourceFile {
+  const cached = parsedFiles.get(fileName);
+  if (cached && cached.source === source) return cached.sourceFile;
+  const sourceFile = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
+  parsedFiles.set(fileName, { source, sourceFile });
+  return sourceFile;
+}
+
+/** 構文木を作る前の絞り込みで探す文字列。モジュール名と、service_role の鍵の取り出し口の名前 */
+const PREFILTER_NEEDLES: readonly string[] = [SUPABASE_JS_MODULE, SUPABASE_SSR_MODULE, ...SERVICE_ROLE_KEY_SOURCES];
+
+/** 文字列・識別子の中で、書いた文字と値の文字を食い違わせる唯一の手段 (エスケープ) の印 */
+const ESCAPE_MARK = '\\';
+
+/**
+ * 本文を文字列で見て、どれかの規則に違反しうるか (構文木を作る前の絞り込み・#1814)。
+ * false のファイルは、どの規則にも違反しえない:
+ *  - 規則 1 (createClient の import の一覧) と規則 3 (@supabase/ssr のクライアント) は、値が
+ *    '@supabase/supabase-js' か '@supabase/ssr' の文字列 (import・export の from・import()・require の引数) が
+ *    コメントの外にあるときにだけ反応する。値がそれと同じ文字列は、本文にもその文字が並ぶ
+ *  - 規則 2 と規則 3 の鍵の取り出し口は、規則 1 か規則 3 に当たったファイル (と一覧のファイル) でだけ調べる。
+ *    名前を含むかも見るのは念のため (含むファイルは構文木で調べる)
+ *  - 規則 4 (古い行) と規則 2 は一覧のファイルを名指しで調べるので、この絞り込みを通さない
+ *  - 値と本文の文字が食い違うのは、エスケープ ('\u0040supabase/…'・'\x40…'・'@supabase\/…'・行の継続・
+ *    識別子の \u…) を使ったときだけ。どれもバックスラッシュを含むので、バックスラッシュを含むファイルは
+ *    名前を含まなくても構文木で調べる (確認の仕組みのテストに例がある)
+ * 名前を含んでいても、それがコメントの中だけなら構文木の検査で反応しない (絞り込みは調べる範囲を減らすだけ)
+ */
+function mayViolateAnyRule(source: string): boolean {
+  return source.includes(ESCAPE_MARK) || PREFILTER_NEEDLES.some((needle) => source.includes(needle));
 }
 
 /** import { a, b as c } / export { a } from の、型だけでない名前 (別名の元の名前) */
@@ -215,6 +256,41 @@ describe('走査の仕組みの確認 (検出が空振りしないこと)', () =
     expect(findServiceRoleKeySources(source)).toEqual(['SERVICE_ROLE_JWT', 'SUPABASE_SERVICE_ROLE_KEY', 'getSupabaseServiceConfig']);
     expect(findServiceRoleKeySources("import { getSupabaseAnonKey } from '@/lib/env-required';")).toEqual([]);
   });
+
+  it('構文木を作る前の絞り込みは、モジュール名・鍵の取り出し口の名前・エスケープを含むファイルを通し、ほかは通さない (#1814)', () => {
+    expect(mayViolateAnyRule("import { createClient } from '@supabase/supabase-js';")).toBe(true);
+    expect(mayViolateAnyRule("import { createServerClient } from '@supabase/ssr';")).toBe(true);
+    for (const name of SERVICE_ROLE_KEY_SOURCES) {
+      expect(mayViolateAnyRule(`const key = ${name};`)).toBe(true);
+    }
+    // コメントの中だけでも通す (反応するかどうかは構文木の検査が決める)
+    expect(mayViolateAnyRule("// import { createClient } from '@supabase/supabase-js';")).toBe(true);
+    expect(mayViolateAnyRule("import { createClient } from '@/lib/supabase/server';\nexport const x = 1;")).toBe(false);
+    expect(mayViolateAnyRule('export const supabaseUrl = getSupabaseUrl();')).toBe(false);
+  });
+
+  it('エスケープで書いたモジュール名・鍵の名前も、絞り込みを通って構文木の検査で見つかる (#1814)', () => {
+    // 本文の文字はモジュール名と違うが、値は同じ。バックスラッシュを含むので絞り込みを通す
+    const escapedModule = "import { createClient } from '\\u0040supabase/supabase-js';";
+    const escapedSlash = "import { createServerClient } from '@supabase\\/ssr';";
+    const escapedKey = 'const key = process.env.\\u0053UPABASE_SERVICE_ROLE_KEY;';
+
+    expect(escapedModule.includes(SUPABASE_JS_MODULE)).toBe(false);
+    expect(mayViolateAnyRule(escapedModule)).toBe(true);
+    expect(createsSupabaseJsClient(escapedModule)).toBe(true);
+    expect(escapedSlash.includes(SUPABASE_SSR_MODULE)).toBe(false);
+    expect(mayViolateAnyRule(escapedSlash)).toBe(true);
+    expect(createsSsrClient(escapedSlash)).toBe(true);
+    expect(PREFILTER_NEEDLES.some((needle) => escapedKey.includes(needle))).toBe(false);
+    expect(mayViolateAnyRule(escapedKey)).toBe(true);
+    expect(findServiceRoleKeySources(escapedKey)).toEqual(['SUPABASE_SERVICE_ROLE_KEY']);
+  });
+
+  it('同じファイル名でも本文が変われば構文木を作り直す (使い回しで古い結果を返さない・#1814)', () => {
+    expect(createsSupabaseJsClient("import { createClient } from '@supabase/supabase-js';", 'same.ts')).toBe(true);
+    expect(createsSupabaseJsClient("import type { SupabaseClient } from '@supabase/supabase-js';", 'same.ts')).toBe(false);
+    expect(createsSupabaseJsClient("import { createClient } from '@supabase/supabase-js';", 'same.ts')).toBe(true);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -225,6 +301,8 @@ describe('service_role の Supabase クライアントは canonical の getSupab
   const files = SCAN_ROOTS.flatMap((root) => collectProductionFiles(path.join(ROOT, root)));
   const sources = new Map(files.map((file) => [relativeOf(file), fs.readFileSync(file, 'utf-8')]));
   const allowlisted = new Map(SUPABASE_JS_CLIENT_ALLOWLIST.map((entry) => [entry.file, entry]));
+  // 規則 1 と規則 3 で構文木にするのは、絞り込みを通ったファイルだけ (#1814。理由は mayViolateAnyRule)
+  const candidates = [...sources.entries()].filter(([, source]) => mayViolateAnyRule(source));
 
   it('走査の対象が空でない (置き場の名前が変わっても空振りしない)', () => {
     expect(sources.has(CANONICAL_FILE)).toBe(true);
@@ -233,8 +311,16 @@ describe('service_role の Supabase クライアントは canonical の getSupab
     expect([...sources.keys()].some((file) => file.startsWith('src/lib/'))).toBe(true);
   });
 
+  it('絞り込みは、一覧のファイル・canonical を落とさず、全体より少ない (#1814)', () => {
+    const candidateFiles = new Set(candidates.map(([file]) => file));
+
+    for (const entry of SUPABASE_JS_CLIENT_ALLOWLIST) expect(candidateFiles.has(entry.file)).toBe(true);
+    expect(candidateFiles.has(CANONICAL_FILE)).toBe(true);
+    expect(candidateFiles.size).toBeLessThan(sources.size);
+  });
+
   it('@supabase/supabase-js の createClient を import するのは、理由つきの一覧のファイルだけ', () => {
-    const offenders = [...sources.entries()]
+    const offenders = candidates
       .filter(([file, source]) => createsSupabaseJsClient(source, file) && !allowlisted.has(file))
       .map(([file, source]) => ({ file, serviceRoleKeySources: findServiceRoleKeySources(source, file) }));
 
@@ -251,7 +337,7 @@ describe('service_role の Supabase クライアントは canonical の getSupab
   });
 
   it('@supabase/ssr のクライアントを作るファイルは、service_role の鍵の取り出し口に触れない (canonical を除く)', () => {
-    const ssrFiles = [...sources.entries()].filter(([file, source]) => createsSsrClient(source, file));
+    const ssrFiles = candidates.filter(([file, source]) => createsSsrClient(source, file));
     const offenders = ssrFiles
       // canonical は Cookie のセッションのクライアント (createClient。anon キー) と getSupabaseAdmin を同じファイルに持つ
       .filter(([file]) => file !== CANONICAL_FILE)

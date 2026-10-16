@@ -488,6 +488,8 @@ COMMIT;
 | `feature_flags` | public_read + admin_write | |
 | `support_tickets` | self_ownership + support_read | |
 
+運営ロールの MFA (cross/12 §11.4。段 E): 運営ロール (`user_profiles.roles` の super_admin / admin / finance / org_industrial_doctor) の条件の項は `(<条件> AND (SELECT public.operator_mfa_satisfied()))` にし、そのポリシーは `TO authenticated` にする。運営ロールを確かめる SECURITY DEFINER の関数は、役割の判定の直後に `IF NOT public.operator_mfa_satisfied() THEN RAISE EXCEPTION 'OPERATOR_MFA_REQUIRED'` を足す (cross/12 §11.4。`tests/integration/security/operator-mfa-db-gate.test.ts` の DB-1・DB-2 が見張る)。
+
 ---
 
 ## 9. マイグレーション: rls_hardening.sql テンプレート
@@ -573,6 +575,7 @@ COMMIT;
 | Integration | service_role バイパスが Edge Function 以外で使われていないか | CI での grep チェック |
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
+| Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
 
 ### 10.1 RLS テストの基本パターン
 

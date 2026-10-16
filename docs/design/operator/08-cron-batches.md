@@ -14,7 +14,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ### 3.0 実装状況 (2026-10-16 更新)
 
-§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6) の 4 本である。
+§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (§3.2 の `backup_freshness`。#1129) の 5 本である。
 Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 いま、このリポジトリの migration が pg_cron に登録しているジョブは 11 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 9 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` は、下の箇条書きの「そのほか」に書く。
 
@@ -38,7 +38,7 @@ Stripe Webhook・収益スナップショット・ライセンス系のバッチ
 - そのほか、migration `20261016100000_purge_hidden_content.sql` (#1538) が、ジョブ `purge-hidden-content` を毎日 03:25 JST (`25 18 * * *` UTC) に登録している。運営が隠した (`hidden_at` が入った) 食事 (`meals`)・レシピ (`recipes`) のうち、隠してから 90 日 (オーナーの選択 2026-10-15) を過ぎた行と、その画像のファイルを完全に消す。画像は SQL では消せない (`storage.objects` の `protect_objects_delete` トリガー) ので、`public.invoke_purge_hidden_content()` が `calculate-segment-stats` と同じ秘密 (Vault の `app_cron_secret`) を付けて Edge Function `purge-hidden-content` を `net.http_post` で呼び、その中で「画像を Storage API で消す → 行を消す」を行う (本体は `supabase/functions/_shared/hidden-content-purge.ts`)。画像は、行の持ち主のフォルダにあり、ほかの行が使っていないもの (`public.hidden_content_purge_referenced_needles` で確かめる) だけを消す。1 回の実行は 300 秒で切り上げ、残りは翌日に消す。通報 (`moderation_flags` / `recipe_flags`) は外部キーの CASCADE で一緒に消え、運営の判断の記録は `admin_audit_logs` に残る (02-api-spec.md の `delete_*` の意味)。呼び出しの関数の `EXECUTE` は所有者 (`postgres`) だけ、画像の確認の関数は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016100000_purge_hidden_content.down.sql`。詳しくはその migration の冒頭のコメント。
 - そのほか、migration `20261016234000_email_outbox.sql` (#1193) が、ジョブ `cleanup-email-outbox` を毎日 03:20 JST (`20 18 * * *` UTC) に登録している。`SELECT public.cleanup_email_outbox();` を呼び、`email_outbox` の sent を 7 日・dead を 30 日で消す (queued は消さない)。関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016234000_email_outbox.down.sql`。詳しくは `10-logs-and-mail-retry.md` §5
 - そのほか、migration `20261016243000_auth_history_sessions.sql` (#1190) が、ジョブ `cleanup-auth-sessions-and-login-history` を毎日 03:55 JST (`55 18 * * *` UTC) に登録している。`SELECT public.expire_idle_auth_sessions(), public.reconcile_user_sessions_metadata(), public.cleanup_ended_user_sessions_metadata();` を呼び、30 日更新の無いセッションを終え (`expire_idle_auth_sessions()`)、GoTrue 側に無いのに終わっていないログインの記録を終え (`reconcile_user_sessions_metadata()`)、終わってから 90 日を過ぎたログインの記録を消す (`cleanup_ended_user_sessions_metadata()`)。3 つの関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`。詳しくは cross/16 §11.6。
-- 過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
+- 過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。この 6 本も含め、本番の `cron.job` の定義は DB バックアップの書庫の `cron_jobs.sql` に入り、新しいプロジェクトへの復元で戻す (cross/17 §4.3・`docs/operations/backup-restore.md` §6)。
 
 #### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
 
@@ -141,17 +141,14 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | ジョブ名 | スケジュール | 概要 |
 |---------|-----------|------|
 | `license_expire_batch` | daily 02:00 UTC | ライセンス期限切れ処理 |
-| `family_freeze_grace_batch` | daily 03:00 UTC | 家族グループ凍結猶予チェック |
-| `family_archive_purge_batch` | daily 04:00 UTC | 解散グループの物理削除 (90 日後) |
-| `meal_request_expire_batch` | hourly :00 | 期限切れ食事リクエスト処理 |
-| `data_integrity_check` | daily 03:30 UTC | データ整合性確認 |
 | `license_used_count_reconcile` | monthly 01 04:00 UTC | ライセンス使用数照合 |
 | `infra_metrics_cleanup` | daily 05:00 UTC | 30 日超の infra_metrics 削除 |
 | `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出 |
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 | `update-org-challenge-progress` | daily 18:10 UTC (03:10 JST) | 組織チャレンジの進み具合 (current_value) と順位 (rank) を食事の記録から計算し、終了日 (JST) を過ぎたチャレンジを completed にする (`update_org_challenge_progress()`。#1132。詳細は `org/07-challenge.md` §15)。completed にする UPDATE で平均が確定する (トリガー `trg_org_challenge_finalize`。migration `20261016240000_org_challenge_diff_privacy.sql:227`〜`:231`。#1688) |
 
-> **2026-10-16 時点の状態**: 上の 10 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
+> **2026-10-16 時点の状態**: 上の 6 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 5 本は、どれも migration で登録していない (§4 の関数 3 本は本番に無い)。
+> `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 本は、operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (operator/11 §5.4。保存期間の確認の後)。
 > `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
 > `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` の 11 つ (§3.0)。
@@ -170,10 +167,11 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `grace_period_check` | daily 09:30 | 支払失敗グレースペリオドチェック |
 | `revenue_snapshot` | daily 01:00 | 日次収益スナップショット生成 |
 | `dau_snapshot` | daily 01:30 | DAU/WAU/MAU スナップショット |
-| `logical_backup` | daily 02:00 | pg_dump → S3 |
+| `logical_backup` | daily 02:00 | pg_dump → S3。Vercel Cron としては置かず、GitHub Actions の `db-backup.yml` (02:23 JST) が取って R2 に置く (cross/17) |
 | `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
+| `backup_freshness` (実装済み: #1129) | daily 14:37 | 最新の `backup.daily.completed` が 30 時間より古ければ `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/backup-freshness`。設計は cross/17 §7.3) |
 
-> **2026-10-16 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6) の 4 本。この表のほかの 11 本は、Vercel Cron としては実装されていない。
+> **2026-10-16 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (この表の `backup_freshness`。#1129) の 5 本。この表のほかの 11 本は、Vercel Cron としては実装されていない (`logical_backup` は GitHub Actions で取る。cross/17)。
 > 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > `dau_snapshot` は、Vercel Cron ではなく pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。時刻は同じ 01:30 JST。
 > それ以外の行は未実装のまま (作るときは別の PR)。
@@ -192,22 +190,6 @@ GRANT USAGE ON SCHEMA cron TO postgres;
 -- ジョブ登録
 SELECT cron.schedule('license_expire_batch', '0 2 * * *', $$
   SELECT process_license_expire();
-$$);
-
-SELECT cron.schedule('family_freeze_grace_batch', '0 3 * * *', $$
-  SELECT process_family_freeze_grace_to_archive();
-$$);
-
-SELECT cron.schedule('family_archive_purge_batch', '0 4 * * *', $$
-  SELECT process_family_archive_purge();
-$$);
-
-SELECT cron.schedule('meal_request_expire_batch', '0 * * * *', $$
-  SELECT process_meal_request_expire();
-$$);
-
-SELECT cron.schedule('data_integrity_check', '30 3 * * *', $$
-  SELECT run_data_integrity_check();
 $$);
 
 SELECT cron.schedule('license_used_count_reconcile', '0 4 1 * *', $$
@@ -285,154 +267,19 @@ $$ LANGUAGE plpgsql;
 
 ### 4.3 `family_freeze_grace_batch` — 家族グループ凍結猶予チェック
 
-```sql
-CREATE OR REPLACE FUNCTION process_family_freeze_grace_to_archive()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  archived_count INT := 0;
-  _group RECORD;
-BEGIN
-  -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更 (frozen → archived 遷移のみ)
-  FOR _group IN
-    SELECT id, owner_id FROM family_groups
-    WHERE status = 'frozen'
-      AND freeze_grace_until IS NOT NULL
-      AND freeze_grace_until <= NOW()
-  LOOP
-    UPDATE family_groups
-    SET status = 'archived', archived_at = NOW()
-    WHERE id = _group.id;
-
-    archived_count := archived_count + 1;
-
-    -- org/05-offboarding-flow.md §8 から統合: owner の個人プラン確認 → auto-migrate
-    -- カード登録済なら個人プランへ自動移行 (source_org_assignment_id を NULL に)
-    -- カード未登録なら Free に降格
-    -- 通知を pg_notify 経由で送信 (Edge Function が受信してメール/Push を送る)
-    PERFORM pg_notify(
-      'family_group_archived',
-      jsonb_build_object(
-        'group_id', _group.id,
-        'owner_id', _group.owner_id,
-        'reason',   'freeze_grace_expired'
-      )::TEXT
-    );
-  END LOOP;
-
-  RAISE NOTICE 'family_freeze_grace_batch: % groups archived', archived_count;
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `family_freeze_grace_batch` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。
 
 ### 4.4 `family_archive_purge_batch` — 解散グループの物理削除 (90 日後)
 
--- 責務の分離:
--- - process_family_freeze_grace_to_archive (org/05): frozen → archived 遷移のみ
--- - process_family_archive_purge (本関数): archived から 90 日後の物理削除のみ
-
-```sql
-CREATE OR REPLACE FUNCTION process_family_archive_purge()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  purge_count INT;
-BEGIN
-  -- archived_at から 90 日経過した family_groups を物理削除 (frozen → archived 遷移は行わない)
-  -- CASCADE で関連テーブルも削除される
-  DELETE FROM family_groups
-  WHERE status = 'archived'
-    AND archived_at <= NOW() - INTERVAL '90 days';
-
-  GET DIAGNOSTICS purge_count = ROW_COUNT;
-  RAISE NOTICE 'family_archive_purge_batch: % groups purged', purge_count;
-
-  -- 監査ログ (service_role で挿入)
-  INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-  VALUES (
-    '00000000-0000-0000-0000-000000000000',  -- SYSTEM_USER_ID
-    'system.family.archive_purge',
-    'info',
-    jsonb_build_object('purge_count', purge_count, 'executed_at', NOW())
-  );
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `family_archive_purge_batch` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。解散した家族の物理削除は、pg_cron のジョブ `purge-dissolved-family-groups` として operator/11 §5.4 で設計した (解散から 90 日を過ぎた行を消す。保存期間と消す範囲の確認の後に着手する)。
 
 ### 4.5 `meal_request_expire_batch` — 期限切れ食事リクエスト
 
-```sql
-CREATE OR REPLACE FUNCTION process_meal_request_expire()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  UPDATE family_meal_requests
-  SET status = 'expired'
-  WHERE status IN ('pending', 'proposed')
-    AND expires_at IS NOT NULL
-    AND expires_at <= NOW();
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `meal_request_expire_batch` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。
 
 ### 4.6 `data_integrity_check` — データ整合性確認
 
-```sql
-CREATE OR REPLACE FUNCTION run_data_integrity_check()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  orphan_count INT;
-BEGIN
-  -- 1. personal_subscriptions で plan_key が存在しないレコードをチェック
-  SELECT COUNT(*) INTO orphan_count
-  FROM personal_subscriptions ps
-  WHERE NOT EXISTS (
-    SELECT 1 FROM subscription_plans sp WHERE sp.plan_key = ps.plan_key
-  );
-
-  IF orphan_count > 0 THEN
-    INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-    VALUES (
-      '00000000-0000-0000-0000-000000000000',
-      'system.integrity.orphan_subscriptions',
-      'critical',
-      jsonb_build_object('count', orphan_count)
-    );
-    -- pg_notify で Slack 通知 (trigger 経由)
-  END IF;
-
-  -- 2. active な personal_subscriptions の重複チェック
-  SELECT COUNT(*) INTO orphan_count
-  FROM (
-    SELECT user_id, COUNT(*) cnt
-    FROM personal_subscriptions
-    WHERE status IN ('trialing', 'active', 'paused', 'past_due')
-    GROUP BY user_id HAVING COUNT(*) > 1
-  ) dups;
-
-  IF orphan_count > 0 THEN
-    INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-    VALUES (
-      '00000000-0000-0000-0000-000000000000',
-      'system.integrity.duplicate_active_subscriptions',
-      'critical',
-      jsonb_build_object('dup_user_count', orphan_count)
-    );
-  END IF;
-
-  RAISE NOTICE 'data_integrity_check completed at %', NOW();
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `data_integrity_check` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。
 
 ### 4.7 `license_used_count_reconcile` — ライセンス使用数月次照合
 
@@ -476,7 +323,7 @@ $$ LANGUAGE plpgsql;
 
 ## 5. Vercel Cron ジョブ詳細
 
-> **2026-10-16 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
+> **2026-10-16 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (cross/17 §7.3) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
 > `revenue_snapshot` (§5.8) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。
 
 ### 5.1 vercel.json 設定
