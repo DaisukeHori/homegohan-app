@@ -5,6 +5,7 @@ import { ActivityIndicator, Platform, View } from "react-native";
 
 import { colors } from "../../src/theme";
 import { useAuth } from "../../src/providers/AuthProvider";
+import { useLegalConsent } from "../../src/providers/LegalConsentProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { AIFloatingFab } from "../../src/components/ai/AIFloatingFab";
 import { ErrorFallback } from "../../src/components/ErrorFallback";
@@ -23,12 +24,15 @@ const TAB_BAR_LABEL_STYLE = { fontSize: 11, fontWeight: "600" } as const;
 export default function TabsLayout() {
   const { session, isLoading } = useAuth();
   const { isLoading: profileLoading, profile } = useProfile();
+  const { state: legalConsentState } = useLegalConsent();
   // タブの見出しは react-navigation が中で Text を描くので、共通の部品と同じ字形に置き換えて渡す (#588)
   const tabBarLabelStyle = useFontStyle(TAB_BAR_LABEL_STYLE);
 
   if (!session) return <Redirect href="/" />;
 
-  if (isLoading || profileLoading) {
+  // #1442: 同意の状態が分かるまで・同意が要る間は、タブ (WebView) と AI の FAB を描かない。
+  // 描くと WebView の中で Web の同意画面が別に開く
+  if (isLoading || profileLoading || legalConsentState === "loading" || legalConsentState === "required") {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
         <ActivityIndicator size="large" color={colors.accent} />
