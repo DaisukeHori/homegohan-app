@@ -56,11 +56,11 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/emails/send';
 import type { SendEmailResult } from '@/lib/emails/send-result';
-import { EmailEnvelopeSchema } from '@/lib/emails/envelope';
 import { renderAppLogErrorSpikeEmail } from '@/lib/emails/ops/app-log-error-spike';
 import { renderEmailDeadLetterEmail } from '@/lib/emails/ops/email-dead-letter';
 import { SUPER_ADMIN_EMAIL_OUTBOX_PATH } from '@/lib/emails/outbox';
 import { getSiteUrl } from '@/lib/site-config';
+import { resolveOpsAlertRecipient } from '@/lib/ops-alerts/recipient';
 import {
   APP_LOG_ALERT_COUNT_RPC,
   APP_LOG_ALERT_KEYS,
@@ -396,14 +396,13 @@ async function checkAppLogErrors(): Promise<NextResponse> {
   const logger = createLogger(ROUTE_NAME, requestId);
 
   // 宛先。未設定なら何もしない (本番は、オーナーが決めて設定するまで未設定)。
-  // 値そのもの (メールアドレス) はログに出さない
-  const configured = process.env.OPS_ALERT_EMAIL?.trim();
-  if (!configured) {
+  // 読み口は backup-freshness と共有する (src/lib/ops-alerts/recipient.ts。#1129)。値そのもの (メールアドレス) はログに出さない
+  const recipient = resolveOpsAlertRecipient();
+  if (recipient.status === 'disabled') {
     logger.info('OPS_ALERT_EMAIL が未設定のため、エラー急増の通知は行いません');
     return NextResponse.json({ status: 'disabled' });
   }
-  const recipient = EmailEnvelopeSchema.shape.to.safeParse(configured);
-  if (!recipient.success) {
+  if (recipient.status === 'invalid_config') {
     logger.warn('OPS_ALERT_EMAIL がメールアドレス (1 つ) の形ではないため、エラー急増の通知は行いません');
     return NextResponse.json({ status: 'invalid_config' });
   }
@@ -425,15 +424,15 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     const supabase = getSupabaseAdmin();
 
     // サーバーの error を先に判定する。client の数え方が失敗しても、サーバーの障害の通知はここで済んでいる
-    const server = await checkScope('server', supabase, recipient.data, settings, requestId, logger);
+    const server = await checkScope('server', supabase, recipient.email, settings, requestId, logger);
     if ('response' in server) return server.response;
 
     // ブラウザ・端末から届いた error (#1493)。別のキー・別のしきい値で、server の結果とは独立に判定する
-    const client = await checkScope('client', supabase, recipient.data, settings, requestId, logger);
+    const client = await checkScope('client', supabase, recipient.email, settings, requestId, logger);
     if ('response' in client) return client.response;
 
     // 届けられなかったメール (#1193)。server / client とは独立に判定する (ここが失敗しても、前の 2 つの通知は済んでいる)
-    const deadLetter = await checkEmailDeadLetters(supabase, recipient.data, settings, requestId, logger);
+    const deadLetter = await checkEmailDeadLetters(supabase, recipient.email, settings, requestId, logger);
     if ('response' in deadLetter) return deadLetter.response;
 
     return NextResponse.json({
