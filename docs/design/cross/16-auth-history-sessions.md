@@ -329,6 +329,8 @@
 | 33 | ロールバック (§11.7) の後に、もう一度 migration を流す | 運営 (保守) | 変化なし | (本体が戻る) | 無し | 残っていた行は列の既定で `done` (通知の対象に戻らない)。戻った後のログインは行 1〜6 と同じ `pending` (S-35) |
 | 34 | メールアドレス変更の申し込み | Web `src/app/(main)/settings/account/page.tsx:299` / モバイル `apps/mobile/src/lib/account-credentials.ts:98` の `updateUser({ email }, { emailRedirectTo })` (GoTrue の `PUT /auth/v1/user`。origin/main 5ff68e67。本書は変えない §0.3) | 変化なし (確認のメールを送るだけで、セッションの行は作らない・消さない) | — (`auth.users` の UPDATE で `on_auth_user_password_changed` が動いても、`encrypted_password` が前と同じなので `password_history_record` は行を足さない §11.3) | 無し | 行は変わらない。確認のリンクを開いたときのセッションは行 5 (§20.3 の結合テストの updateUser({ email }) の it) |
 | 35 | 盗んだ refresh token で GoTrue の `/token?grant_type=refresh_token` を直接 | 攻撃者 (anon キー + 本人の端末から盗んだ refresh token。S-36) | UPDATE `refreshed_at` (UA / IP は攻撃者の値で上書きされる。INSERT はしない §3) | refreshed | 無し | `last_active_at` だけ (行 7 と同じ)。`user_agent` / `ip_address` / 端末の種類・通知の状態は変わらず、通知は無い (待ちの行を作るのは INSERT のトリガーだけ §10。限界 §25 Q-21) |
+| 36 | MFA の回復 (cross/12 §14.5) | `POST /api/auth/mfa/recover` (本人の access token で `admin.signOut(token, 'global')`) | DELETE × 全部 (GoTrue) | deleted | — | `signed_out` |
+| 37 | 運営による MFA の解除 (cross/12 §14.7・§11.5) | `POST /api/super-admin/admins/{id}/mfa/reset` (service_role の RPC `operator_mfa_end_sessions`) | DELETE × 全部 (SQL) | deleted | — | `signed_out` (トリガー `on_auth_session_deleted` が書く。`ended_reason` の値は増やさない cross/12 Q-18) |
 
 ## 9. ② 状態比較表 (現行 vs 設計後)
 
@@ -351,7 +353,7 @@
 | `sessions_revoke_self` (本人の UPDATE ポリシー) | ある (本人が印・終了を直接書ける) | 消す。本人は SELECT だけ。書くのは service_role・RPC・トリガー |
 | `secure_password_change` 前提 | 直前の `signInWithPassword` で回避 | OFF を前提 (§24)。ON なら 403 `AUTH_REAUTHENTICATION_REQUIRED` (ログインし直し) |
 | GoTrue の `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` | OFF (既定)。ON にすると、いまの画面 (`current_password` を渡さない `updateUser`) の変更が 400 になる | OFF のまま。ON にしても本書の API は動く (変更は `current_password` を渡し、再設定のセッションは GoTrue が免除する §13.7)。ON にするかは §24・Q-18 |
-| cross/12 (MFA) との関係 | — | 独立。verify の他セッション失効は `signed_out` として記録される |
+| cross/12 (MFA) との関係 | — | 独立。verify の他セッション失効・回復・運営による解除の全セッションの終了は `signed_out` として記録される (§8 の行 16・36・37) |
 
 ## 10. ③ 状態遷移表
 
