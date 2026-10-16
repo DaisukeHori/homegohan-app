@@ -271,7 +271,7 @@ PR 時 vs main マージ時の実行ステージ分岐:
 ### 17.1 Nightly Run (毎日 03:00 JST)
 - E2E full (実 LLM API 含む)
 - 負荷テスト (k6)
-- DR 復元テスト (月 1 回、staging に PITR)
+- DR 復元テスト (月 1 回、staging に PITR。Pro になるまでは行わず `/super-admin/backups` で `monthly_pitr` を `skipped` で記録する。論理バックアップの復元は、月曜の取得の restore_check と PR の `roundtrip-check` が受け持つ。cross/17 §4.8・§9.2・§15)
 
 ## 18. E2E シナリオ網羅 (Phase 1 = 30 spec)
 
