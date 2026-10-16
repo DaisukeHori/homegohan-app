@@ -308,6 +308,7 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   meal_nutrition_debug_logs: '栄養計算のデバッグログ',
   meal_image_jobs: '画像生成ジョブのキュー (処理状態・リース情報などの内部データ)',
   shopping_list_requests: '買い物リスト生成ジョブの処理状態 (結果は shopping_lists に出力済み)',
+  push_outbox: 'Push 通知の送信待ちの運用の記録 (端末の token と依頼 ID)。本人のデータの写しではない',
   billing_customers:
     'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
 
