@@ -10,10 +10,13 @@
  *   - 運営向け: ADMIN_NOTIFICATION_EMAIL が未設定 → 送らず warn ログ
  *   - sendEmail が { ok: false } (skipped を含む) → warn ログ / sendEmail が例外 → catch して warn ログ
  * - ログに宛先のアドレスを入れない (請求の id と template 名と、エラーのコードだけ)。
+ * - 本人向け 3 通は sendEmail に userId (請求した本人) を渡す (#1708)。退会の伏せ字 (prepare_account_deletion の段 1b) が、
+ *   登録アドレスを変えたあとでも user_id で送信待ちの行を見つけられるように。運営向けは渡さない (宛先は運営で、本人の行ではない)。
+ *   本人確認のリンクの生のトークンは、文面 (renderDsrVerificationEmail) の contains_secret により、送れた・届けられなかったあとに伏せられる。
  * - 送信回数の制限 (invite-throttle) を通さない理由は tests/email-send-throttle-contract.test.ts の EXEMPT_EMAIL_SENDERS。
  */
 import { getOptionalEnv } from '@/lib/env';
-import { sendEmail } from '@/lib/emails/send';
+import { sendEmail, type SendEmailOptions } from '@/lib/emails/send';
 import type { EmailEnvelope } from '@/lib/emails/envelope';
 import { renderDsrVerificationEmail } from '@/lib/emails/dsr/verification';
 import { renderDsrReceivedEmail } from '@/lib/emails/dsr/received';
@@ -89,6 +92,11 @@ async function resolveRequesterEmail(
   }
 }
 
+/** 本人向けのメールの送り方: 誰についてのメールか (email_outbox.user_id) に請求した本人を入れる */
+function requesterSendOptions(row: DsrNotificationRow): SendEmailOptions {
+  return row.user_id ? { userId: row.user_id } : {};
+}
+
 /**
  * 文面を組み立てて 1 通を送る。失敗 (skipped を含む) と例外 (組み立て・送信のどちらでも) は warn ログにだけ残す。例外は投げない
  */
@@ -97,10 +105,11 @@ async function renderAndDeliver(
   row: DsrNotificationRow,
   template: DsrEmailTemplate,
   log: DsrLogger,
+  options: SendEmailOptions = {},
 ): Promise<void> {
   const metadata = logMetadata(row, template);
   try {
-    const sent = await sendEmail(render());
+    const sent = await sendEmail(render(), options);
     if (!sent.ok) {
       log.warn('dsr email: the email could not be sent', {
         ...metadata,
@@ -136,6 +145,7 @@ export async function sendDsrVerificationEmail(
     row,
     template,
     log,
+    requesterSendOptions(row),
   );
 }
 
@@ -161,6 +171,7 @@ export async function sendDsrReceivedEmail(
     row,
     template,
     log,
+    requesterSendOptions(row),
   );
 }
 
@@ -221,5 +232,6 @@ export async function sendDsrResolvedEmail(
     row,
     template,
     log,
+    requesterSendOptions(row),
   );
 }

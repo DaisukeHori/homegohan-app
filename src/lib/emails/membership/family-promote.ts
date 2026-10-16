@@ -24,6 +24,8 @@ export function renderFamilyPromoteEmail(vars: FamilyPromoteEmailVars): EmailEnv
 
   return {
     template: 'family_promote',
+    // 承認ページのリンク (accept_url = /family/promotions/<token>) に本人同意のトークンが入る。送れた・届けられなかったあとに送信待ちの行の宛先・件名・本文を伏せる (#1708)
+    contains_secret: true,
     to: vars.email_address,
     from: getEmailFrom(),
     subject: '【ほめゴハン】家族グループへの参加確認のお願い',
