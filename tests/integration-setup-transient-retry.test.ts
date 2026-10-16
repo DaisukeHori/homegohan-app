@@ -12,6 +12,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createClient } from "@supabase/supabase-js";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -348,6 +349,112 @@ function listTestFiles(dir: string): string[] {
   });
 }
 
+/** 準備の問い合わせの後ろに続いてよい、絞り込み・形だけを変える呼び出し (状態を変えない) */
+const SETUP_CHAIN_TAIL = new Set([
+  "eq", "neq", "in", "is", "match", "select", "single", "maybeSingle", "order", "limit", "range", "filter", "not", "or",
+  "gt", "gte", "lt", "lte", "like", "ilike", "contains", "returns", "overrideTypes", "throwOnError", "csv", "abortSignal",
+]);
+/** 準備のフック (この中の select / upsert は準備) */
+const SETUP_HOOKS = new Set(["beforeAll", "beforeEach"]);
+/** 検査の本体・後片付け・まとまり (ここで止まれば、外の関数の中ではない) */
+const NON_SETUP_BLOCKS = new Set(["it", "test", "afterAll", "afterEach", "describe"]);
+
+type SetupContext = "hook" | "function" | "other";
+
+/** node を囲む一番近いまとまり: 準備のフック / 名前のある関数 (利用者を作る関数など) / それ以外 */
+function setupContextOf(node: ts.Node): SetupContext {
+  for (let n: ts.Node | undefined = node.parent; n; n = n.parent) {
+    if (ts.isCallExpression(n)) {
+      const callee = ts.isPropertyAccessExpression(n.expression) ? n.expression.expression : n.expression;
+      if (ts.isIdentifier(callee) && SETUP_HOOKS.has(callee.text)) return "hook";
+      if (ts.isIdentifier(callee) && NON_SETUP_BLOCKS.has(callee.text)) return "other";
+    }
+    if (ts.isFunctionDeclaration(n) && n.name) return "function";
+    if (ts.isVariableDeclaration(n) && n.initializer && (ts.isArrowFunction(n.initializer) || ts.isFunctionExpression(n.initializer))) {
+      return "function";
+    }
+  }
+  return "other";
+}
+
+/**
+ * やり直しを通さずに準備をしている箇所 (#1779 の同じ型) を返す。
+ * - 準備のフックの中、または名前のある関数の中で、`await <変数>.from(...).upsert(...)` (既知の行の upsert)
+ * - 準備のフックの中で、`await <変数>.from(...).select(...)`
+ * 受け手が呼び出し (`userClient(jwt)` など、その場で作る本人の client) のものは、検査の本体として数えない。
+ * retryIdempotentSetup の op の中 (受け手が db・await されない) は数えない。
+ */
+function findUnretriedSetupSites(fileName: string, source: string): string[] {
+  const sf = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isAwaitExpression(node)) {
+      const methods: string[] = [];
+      let fromCall: ts.CallExpression | null = null;
+      let e: ts.Expression = node.expression;
+      while (ts.isCallExpression(e) && ts.isPropertyAccessExpression(e.expression)) {
+        methods.unshift(e.expression.name.text);
+        if (e.expression.name.text === "from") {
+          fromCall = e;
+          break;
+        }
+        e = e.expression.expression;
+      }
+      const receiver = fromCall && ts.isPropertyAccessExpression(fromCall.expression) ? fromCall.expression.expression : null;
+      const kind = methods[1];
+      if (
+        receiver &&
+        (ts.isIdentifier(receiver) || ts.isPropertyAccessExpression(receiver)) &&
+        (kind === "upsert" || kind === "select") &&
+        methods.slice(2).every((m) => SETUP_CHAIN_TAIL.has(m))
+      ) {
+        const context = setupContextOf(node);
+        if (context === "hook" || (kind === "upsert" && context === "function")) {
+          const { line } = sf.getLineAndCharacterOfPosition(node.getStart(sf));
+          found.push(`${fileName}:${line + 1} ${receiver.getText(sf)}.from(...).${kind} (${context})`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
+describe("findUnretriedSetupSites (各テストファイルの準備の構造の検査そのもの)", () => {
+  it("利用者を作る関数の service_role の user_profiles の upsert (#1758 の parental-consent の形) を拾い、やり直しを通した形は拾わない", () => {
+    const before = [
+      "async function createUser(label: string) {",
+      "  const { error: profileError } = await srAdmin",
+      "    .from('user_profiles')",
+      "    .upsert({ id: 'x', nickname: label, birth_date: null }, { onConflict: 'id' });",
+      "}",
+    ].join("\n");
+    const after = [
+      "async function createUser(label: string) {",
+      "  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>",
+      "    db.from('user_profiles').upsert({ id: 'x', nickname: label, birth_date: null }, { onConflict: 'id' }));",
+      "}",
+    ].join("\n");
+    expect(findUnretriedSetupSites("a.test.ts", before)).toEqual(["a.test.ts:2 srAdmin.from(...).upsert (function)"]);
+    expect(findUnretriedSetupSites("a.test.ts", after)).toEqual([]);
+  });
+
+  it("準備のフックの select・upsert を拾い、it の本体と、その場で作る本人の client は拾わない", () => {
+    const source = [
+      "beforeAll(async () => { const { data } = await admin.from('plans').select('id').eq('code', 'p').single(); });",
+      "beforeEach(async () => { await ctx.admin.from('ai_daily_limits').upsert({ user_id: 'u' }); });",
+      "it('本体', async () => { await admin.from('plans').select('id'); await admin.from('plans').upsert({ id: 'p' }); });",
+      "const register = async (jwt: string) => { await userClient(jwt).from('user_push_tokens').upsert({ token: 't' }); };",
+      "function read() { return admin.from('plans').select('id'); }",
+    ].join("\n");
+    expect(findUnretriedSetupSites("b.test.ts", source)).toEqual([
+      "b.test.ts:1 admin.from(...).select (hook)",
+      "b.test.ts:2 ctx.admin.from(...).upsert (hook)",
+    ]);
+  });
+});
+
 describe("同じ型を全域で (helpers と各ファイルの準備がやり直しを使う)", () => {
   it("helpers の service_role の準備 (行を作る・読む) は、すべて retryIdempotentSetup の db を通す", () => {
     for (const file of SETUP_HELPER_FILES) {
@@ -363,6 +470,13 @@ describe("同じ型を全域で (helpers と各ファイルの準備がやり直
       const text = fs.readFileSync(file, "utf8");
       return (text.match(outerProfileUpsert) ?? []).map((hit) => `${path.relative(ROOT, file)}: ${hit}`);
     });
+    expect(offenders).toEqual([]);
+  });
+
+  it("各テストファイルで、利用者を作る関数などの upsert と、準備のフックの select / upsert は、すべて retryIdempotentSetup を通す (main から入るファイルも含む)", () => {
+    const offenders = listTestFiles(path.join(ROOT, "tests/integration")).flatMap((file) =>
+      findUnretriedSetupSites(path.relative(ROOT, file), fs.readFileSync(file, "utf8")),
+    );
     expect(offenders).toEqual([]);
   });
 });
