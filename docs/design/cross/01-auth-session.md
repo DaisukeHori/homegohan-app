@@ -57,7 +57,8 @@ sequenceDiagram
         Next-->>Client: AUTH_INVALID_CREDENTIALS
     end
     Supabase-->>Next: session (access_token, refresh_token)
-    Next->>Next: INSERT user_sessions_metadata
+    Note over Supabase: auth.sessions の INSERT のトリガーが user_sessions_metadata に記録 (cross/16 §11.3)
+    Next->>Supabase: ログインの文脈 (IP・UA・国) を記録 (cross/16 §13.5)
     Note over Next: 2FA が必須ロールの場合
     alt MFA required
         Next-->>Client: AUTH_2FA_REQUIRED
@@ -367,6 +368,8 @@ sequenceDiagram
 
 <!-- DDL/RLS は operator/01-data-model.md §3.23 を参照 (canonical)。本ドキュメントは設計方針のみ記述 -->
 
+→ 記録のトリガー・照合の RPC は cross/16 §11 が正典 (`password_history_record`・`auth_password_check`)。
+
 ### 13.2 parental_consents
 
 // parental_consents の DDL は family/01-data-model.md §4.13 を参照
@@ -375,6 +378,8 @@ sequenceDiagram
 ### 13.3 user_sessions_metadata
 
 <!-- DDL は operator/01-data-model.md §3.25 を参照 (canonical) -->
+
+→ 列・トリガー・RPC・保守のジョブは cross/16 §11 が正典 (記録は `auth.sessions` のトリガー)。
 
 ### 13.4 failed_invite_lookups
 
