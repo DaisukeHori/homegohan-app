@@ -12,6 +12,14 @@
  *   /api/log はログイン済みなら誰でも書けるので、まとめて数えると、利用者が error を書くだけでサーバーの障害の通知を鳴らせ、
  *   そのクールダウンで本物の障害の通知を止められてしまう。キーが別なので、クールダウンも共有しない。
  *   server を先に判定する (client の数え方が失敗しても、サーバーの障害の通知はその前に済んでいる)。
+ * 3 つ目の種類 email_dead_letter (届けられなかったメール。#1193) は、server / client のあとに判定する:
+ *   - 送信待ち (email_outbox) の dead のうち、まだ知らせていない (dead_alerted_at が NULL の) 行を template ごとに数える
+ *     (DB の email_outbox_dead_counts。窓は持たない。宛先停止・退会・運用メール自身 (template が ops_ で始まる) は数えない)。
+ *   - 1 件からで、キー email_dead_letter の権利 (claim_ops_alert) を取れたら、mark_email_outbox_dead_alerted でその行に印
+ *     (dead_alerted_at = 権利の時刻) を付け、印を付けた行の件数で 1 通送る (文面は src/lib/emails/ops/email-dead-letter.ts)。
+ *   - 権利が取れない回 (抑止の間) は印を付けないので、その間に dead になった行は抑止が明けた最初の回で知らせる。
+ *   - 運用メールを送れずに権利を返すときは、unmark_email_outbox_dead_alerted で印も外し、次の回に持ち越す
+ *     (docs/design/operator/10-logs-and-mail-retry.md §8)。
  *
  * - 認証: Vercel Cron が付ける `Authorization: Bearer <CRON_SECRET>` (src/lib/cron-auth.ts の requireCronAuth。
  *   定数時間の比較と、入れ替え中の旧シークレット CRON_SECRET_PREVIOUS の受け付けは共通ヘルパーが行う)。
@@ -22,19 +30,22 @@
  *   クールダウンの分数は 2 種類で同じ値を使う。
  * - 同じアラートはクールダウン (既定 60 分) の間は送り直さない。「送ってよいか」は DB の claim_ops_alert が原子的に決める
  *   (Vercel Cron はまれに同じ回を 2 回呼ぶ。読んでから書く作りだと 2 通届く)。
- *   メールを送れなかったとき (送信の設定が未完了・Resend が断った・例外) は、release_ops_alert で権利を返す。
+ *   メールを送れなかったとき (送信の設定が未完了・送信待ちへの登録の失敗・例外など) は、release_ops_alert で権利を返す。
  *   送れていないのに「送った」と記録したままだと、設定が直ったあともクールダウンの間は通知が来ないため。
+ *   ただし宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) のときは返さない
+ *   (送り直しても同じ結果で、15 分ごとの繰り返しになるため。#1577 の 8。NON_RELEASING_SEND_ERROR_CODES)。
  *   権利を取ったあとで関数ごと止められた (時間切れ・デプロイの切り替えなど) ときだけは返せず、次の通知が最大でクールダウンの分だけ遅れる (まれ)。
- * - メールが届くことには依存しない。本番はまだ送信ドメインが未検証で、メールは届かない。送れなかったときは
- *   sendEmail が app_logs に記録し (error)、この route も件数と関数名を warn で残す。応答は 200 のままにする
+ * - メールが届くことには依存しない。sendEmail は送信待ち (email_outbox) に登録するだけで、送るのは worker
+ *   (GET /api/cron/email-outbox)。登録できなかったときは sendEmail が app_logs に記録し (error)、この route も件数と関数名を warn で残す。応答は 200 のままにする
  *   (数える処理自体は正常に動いている。送れなかったかどうかは応答の status で分かる)。
  * - infra_alerts は書かない (インフラ画面は「未接続」のまま: #1180)。
  * - メールにも、ログにも、応答にも、ユーザー ID・メールアドレス・ログの本文は入れない。載せるのは件数と関数名だけ。
  *
- * 応答 (JSON): { status, total?, threshold?, window_minutes?, client? }
+ * 応答 (JSON): { status, total?, threshold?, window_minutes?, client?, email_dead_letter? }
  *   status / total / threshold は server の判定。client は { status, total, threshold } で、client の判定 (#1493)。
+ *   email_dead_letter は { status, total, threshold } で、届けられなかったメールの判定 (#1193。窓を持たないので window_minutes は付けない)。
  *   status: disabled / invalid_config / below_threshold / deduped / sent / send_skipped / send_failed
- *   (disabled / invalid_config のときは何も数えないので、total 以降と client は無い)
+ *   (disabled / invalid_config のときは何も数えないので、total 以降と client・email_dead_letter は無い)
  *   DB の失敗 (数える・権利を取る) は 500。本文は汎用メッセージだけで、詳細は app_logs に残す (#1172)。
  */
 import { NextResponse } from 'next/server';
@@ -47,19 +58,25 @@ import { sendEmail } from '@/lib/emails/send';
 import type { SendEmailResult } from '@/lib/emails/send-result';
 import { EmailEnvelopeSchema } from '@/lib/emails/envelope';
 import { renderAppLogErrorSpikeEmail } from '@/lib/emails/ops/app-log-error-spike';
+import { renderEmailDeadLetterEmail } from '@/lib/emails/ops/email-dead-letter';
+import { SUPER_ADMIN_EMAIL_OUTBOX_PATH } from '@/lib/emails/outbox';
 import { getSiteUrl } from '@/lib/site-config';
 import {
   APP_LOG_ALERT_COUNT_RPC,
   APP_LOG_ALERT_KEYS,
   APP_LOG_ALERT_MAX_FUNCTIONS,
   APP_LOG_ALERT_WINDOW_MINUTES,
+  EMAIL_DEAD_LETTER_ALERT_THRESHOLD,
   SUPER_ADMIN_LOGS_PATH,
   exceedsErrorThreshold,
+  normalizeDeadCountRows,
   parseErrorCountRows,
   resolveAppLogAlertSettings,
   summarizeErrorCounts,
   type AppLogAlertScope,
   type AppLogAlertSettings,
+  type AppLogErrorSpikeScope,
+  type ErrorSummary,
 } from '@/lib/ops-alerts/app-log-error-spike';
 
 // sendEmail (Resend の SDK と node:crypto) は Node.js ランタイムで動く。Edge にはしない
@@ -71,7 +88,7 @@ export const dynamic = 'force-dynamic';
 // 数えた件数も、送る権利 (claim_ops_alert) も、毎回同じ古い値になった。ローカルの動作確認で、DB を書き換えても応答が変わらなかった。
 // Next 15 (#1444) では fetch は既定でキャッシュしないが、既定に頼らず、この route の fetch はすべてキャッシュしないと明示しておく。
 export const fetchCache = 'force-no-store';
-export const maxDuration = 60; // Vercel Pro: 60s OK (メールの再試行を含めても数秒で終わる)
+export const maxDuration = 60; // Vercel Pro: 60s OK (メールは送信待ちに登録するだけなので数秒で終わる)
 
 /** 構造化ログ (app_logs.function_name) の名前。cron/process-menu-queue と同じ付け方 */
 const ROUTE_NAME = 'cron/app-log-alerts';
@@ -86,7 +103,7 @@ const LOG_FLUSH_GRACE_MS = 1000;
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 type Logger = ReturnType<typeof createLogger>;
 
-/** 1 種類 (server / client) の判定の結果 */
+/** 1 種類 (server / client / email_dead_letter) の判定の結果 */
 type SpikeStatus = 'below_threshold' | 'deduped' | 'sent' | 'send_skipped' | 'send_failed';
 
 interface SpikeResult {
@@ -104,7 +121,21 @@ type SpikeOutcome = { readonly result: SpikeResult } | { readonly response: Next
 const SCOPE_LOG_LABEL: Readonly<Record<AppLogAlertScope, string>> = {
   server: 'エラー急増',
   client: 'ブラウザ・端末のエラー急増',
+  email_dead_letter: '届けられなかったメール',
 };
+
+/**
+ * sendEmail の結果が ok: false でも、送る権利 (と届けられなかったメールの印) を返さない失敗のコード (#1577 の 8)。
+ * 宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) は、送り直しても同じ結果になり、
+ * 権利を返すと 15 分ごとの繰り返しになるため。クールダウン (既定 60 分) の抑止を効かせる (suppressed は dead の行が画面に残る)。
+ * それ以外 (送信の設定が未完了・送信待ちへの登録の失敗 outbox_failed など) は現行どおり権利を返し、次の回でもう一度試す
+ */
+const NON_RELEASING_SEND_ERROR_CODES: ReadonlySet<string> = new Set(['suppressed', 'invalid_envelope']);
+
+/** 届けられなかったメールの通知に使う DB の関数 (§5.2 (5)(7)(8))。数える関数は種類ごとの表から取る (値の型は 'email_outbox_dead_counts') */
+const DEAD_LETTER_COUNT_RPC = APP_LOG_ALERT_COUNT_RPC.email_dead_letter;
+const DEAD_LETTER_MARK_RPC = 'mark_email_outbox_dead_alerted';
+const DEAD_LETTER_UNMARK_RPC = 'unmark_email_outbox_dead_alerted';
 
 /**
  * 取った「送る権利」を返す。失敗しても例外にしない (すでに「送れなかった」という本題を抱えているため)。
@@ -139,7 +170,7 @@ async function releaseClaim(
  * 種類ごとに、数える DB の関数・ops_alert_state のキー・しきい値が違う (クールダウンの分数と宛先は同じ)。
  */
 async function checkScope(
-  scope: AppLogAlertScope,
+  scope: AppLogErrorSpikeScope,
   supabase: AdminClient,
   recipient: string,
   settings: AppLogAlertSettings,
@@ -216,13 +247,140 @@ async function checkScope(
   const { result } = sent;
   const label = SCOPE_LOG_LABEL[scope];
   if (result.ok) {
-    logger.info(`${label}を運用メールに知らせました`, { ...alertMeta, email_id: result.id });
+    logger.info(`${label}を運用メールに知らせました`, { ...alertMeta, outbox_id: result.id });
     return { result: { status: 'sent', ...counts } };
   }
 
-  // 送れなかった、または送らなかった (送信の設定が未完了)。権利を返して、15 分後の次の回でもう一度試せるようにする。
+  // 送れなかった、または送らなかった。宛先停止・文面の不備は送り直しても同じなので、権利を返さない (抑止が効く。#1577 の 8)。
+  // それ以外 (送信の設定が未完了・送信待ちへの登録の失敗など) は権利を返して、15 分後の次の回でもう一度試せるようにする。
   // 失敗そのものの記録 (宛先をマスクした error) は sendEmail が済ませている
-  await releaseClaim(supabase, scope, claimedAt, settings.cooldownMinutes, logger);
+  if (!NON_RELEASING_SEND_ERROR_CODES.has(result.error.code)) {
+    await releaseClaim(supabase, scope, claimedAt, settings.cooldownMinutes, logger);
+  }
+  logger.warn(
+    result.skipped
+      ? `${label}を検知しましたが、メールの送信設定が未完了のため通知を送っていません`
+      : `${label}を検知しましたが、通知メールを送れませんでした`,
+    { ...alertMeta, error_code: result.error.code },
+  );
+  return { result: { status: result.skipped ? 'send_skipped' : 'send_failed', ...counts } };
+}
+
+/**
+ * 運用メールを送れなかったときに、mark_email_outbox_dead_alerted で付けた印 (dead_alerted_at = 権利の時刻) を外し、次の回に持ち越す。
+ * 失敗しても例外にしない (releaseClaim と同じ)。外せなかった行は通知の対象から外れたまま (送信待ちの画面には残る)。
+ */
+async function unmarkDeadLetters(supabase: AdminClient, alertedAt: string, logger: Logger): Promise<void> {
+  const message = '届けられなかったメールの「知らせた」印を外せませんでした。該当の行は次の通知に入りません (送信待ちの画面には残ります)';
+  try {
+    const { error } = await supabase.rpc(DEAD_LETTER_UNMARK_RPC, { p_alerted_at: alertedAt });
+    if (error) {
+      logger.warn(message, { scope: 'email_dead_letter', pg_code: error.code });
+    }
+  } catch (err) {
+    logger.warn(message, { scope: 'email_dead_letter', error_name: err instanceof Error ? err.name : typeof err });
+  }
+}
+
+/** 権利を取ったあとの段 (印を付ける → 文面を作って送る) の結果 */
+type DeadLetterNotice =
+  | { readonly kind: 'notified'; readonly result: SendEmailResult; readonly summary: ErrorSummary }
+  | { readonly kind: 'nothing_marked' }
+  | { readonly kind: 'failed'; readonly error: unknown };
+
+/**
+ * 届けられなかったメール (email_outbox の dead) について: まだ知らせていない行を数える → 1 件から → 権利を取る → 印を付ける → 印を付けた件数で送る。
+ * 窓は持たない。抑止の間 (権利が取れない回) と cron の発火の遅れの間に dead になった行も、印が付くまで毎回数える (R-13)。
+ * 送れずに権利を返すときは、印も外す (§8.3)。
+ */
+async function checkEmailDeadLetters(
+  supabase: AdminClient,
+  recipient: string,
+  settings: AppLogAlertSettings,
+  requestId: string,
+  logger: Logger,
+): Promise<SpikeOutcome> {
+  const scope = 'email_dead_letter' as const;
+  const threshold = EMAIL_DEAD_LETTER_ALERT_THRESHOLD;
+
+  // 1. まだ知らせていない dead を template ごとに数える (template と件数だけ。宛先・件名・本文は読まない)
+  const counted = await supabase.rpc(DEAD_LETTER_COUNT_RPC, { p_limit: APP_LOG_ALERT_MAX_FUNCTIONS });
+  if (counted.error) {
+    return { response: internalError(ROUTE_NAME, counted.error, { requestId, scope, rpc: DEAD_LETTER_COUNT_RPC }) };
+  }
+  const pending = summarizeErrorCounts(parseErrorCountRows(normalizeDeadCountRows(counted.data), DEAD_LETTER_COUNT_RPC));
+  if (!exceedsErrorThreshold(pending.total, threshold)) {
+    return { result: { status: 'below_threshold', total: pending.total, threshold } };
+  }
+
+  // 2. 送る権利を取る。抑止の間なら NULL で、送らない。印も付けないので、その行は抑止が明けた最初の回でもう一度数えられる
+  const claimed = await supabase.rpc('claim_ops_alert', {
+    p_alert_key: APP_LOG_ALERT_KEYS[scope],
+    p_cooldown_minutes: settings.cooldownMinutes,
+  });
+  if (claimed.error) {
+    return { response: internalError(ROUTE_NAME, claimed.error, { requestId, scope, rpc: 'claim_ops_alert' }) };
+  }
+  const claimedAt = typeof claimed.data === 'string' && claimed.data ? claimed.data : null;
+  if (!claimedAt) {
+    return { result: { status: 'deduped', total: pending.total, threshold } };
+  }
+
+  // 3. 印を付け (dead_alerted_at = 権利の時刻)、印を付けた行の件数で文面を作って送る (数えたあとに dead になった行も、印が付けばこの通知に入る)。
+  //    権利を取ったあとの RPC の失敗・応答の形の誤り・例外はここで受け、印と権利を返してから扱う
+  let notice: DeadLetterNotice;
+  try {
+    const marked = await supabase.rpc(DEAD_LETTER_MARK_RPC, { p_alerted_at: claimedAt, p_limit: APP_LOG_ALERT_MAX_FUNCTIONS });
+    if (marked.error) {
+      notice = { kind: 'failed', error: marked.error };
+    } else {
+      const summary = summarizeErrorCounts(parseErrorCountRows(normalizeDeadCountRows(marked.data), DEAD_LETTER_MARK_RPC));
+      if (summary.total === 0) {
+        notice = { kind: 'nothing_marked' };
+      } else {
+        const envelope = renderEmailDeadLetterEmail({
+          to_email: recipient,
+          total: summary.total,
+          cooldown_minutes: settings.cooldownMinutes,
+          templates: summary.functions,
+          other_count: summary.otherCount,
+          outbox_url: `${getSiteUrl()}${SUPER_ADMIN_EMAIL_OUTBOX_PATH}`,
+          detected_at: new Date(),
+        });
+        notice = { kind: 'notified', result: await sendEmail(envelope), summary };
+      }
+    }
+  } catch (thrown) {
+    notice = { kind: 'failed', error: thrown };
+  }
+
+  if (notice.kind === 'failed') {
+    // 印の RPC がエラーを返しても、DB では付いていることがある (応答だけが失われた) ので、外す操作は必ず呼ぶ (付いていなければ 0 行)
+    await unmarkDeadLetters(supabase, claimedAt, logger);
+    await releaseClaim(supabase, scope, claimedAt, settings.cooldownMinutes, logger);
+    return { response: internalError(ROUTE_NAME, notice.error, { requestId, scope, stage: 'mark_or_send' }) };
+  }
+  if (notice.kind === 'nothing_marked') {
+    // 数えてから印を付けるまでに、行が再送 (queued) や掃除で dead でなくなった。知らせるものが無いので権利を返す
+    await releaseClaim(supabase, scope, claimedAt, settings.cooldownMinutes, logger);
+    return { result: { status: 'below_threshold', total: 0, threshold } };
+  }
+
+  const { result, summary } = notice;
+  const counts = { total: summary.total, threshold };
+  // ログには件数と文面の名前 (template) だけを残す。メールが届かなくても、ここから何が起きていたか分かる
+  const alertMeta = { scope, ...counts, other_count: summary.otherCount, templates: summary.functions };
+  const label = SCOPE_LOG_LABEL[scope];
+  if (result.ok) {
+    logger.info(`${label}を運用メールに知らせました`, { ...alertMeta, outbox_id: result.id });
+    return { result: { status: 'sent', ...counts } };
+  }
+  // 送れなかった、または送らなかった (§8.3)。宛先停止・文面の不備は送り直しても同じなので、印も権利も返さない (抑止が効き、行は画面に残る)。
+  // それ以外 (送信の設定が未完了・送信待ちへの登録の失敗など) は印と権利を返し、15 分後の次の回で同じ行をもう一度知らせる
+  if (!NON_RELEASING_SEND_ERROR_CODES.has(result.error.code)) {
+    await unmarkDeadLetters(supabase, claimedAt, logger);
+    await releaseClaim(supabase, scope, claimedAt, settings.cooldownMinutes, logger);
+  }
   logger.warn(
     result.skipped
       ? `${label}を検知しましたが、メールの送信設定が未完了のため通知を送っていません`
@@ -274,10 +432,15 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     const client = await checkScope('client', supabase, recipient.data, settings, requestId, logger);
     if ('response' in client) return client.response;
 
+    // 届けられなかったメール (#1193)。server / client とは独立に判定する (ここが失敗しても、前の 2 つの通知は済んでいる)
+    const deadLetter = await checkEmailDeadLetters(supabase, recipient.data, settings, requestId, logger);
+    if ('response' in deadLetter) return deadLetter.response;
+
     return NextResponse.json({
       ...server.result,
       window_minutes: APP_LOG_ALERT_WINDOW_MINUTES,
       client: client.result,
+      email_dead_letter: deadLetter.result,
     });
   } catch (err) {
     return internalError(ROUTE_NAME, err, { requestId });

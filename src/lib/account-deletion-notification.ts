@@ -5,7 +5,8 @@
  * セッションを盗んだ第三者が退会させた場合に、本来の利用者が気づけるようにするため。退会の受付時のメールは送らない。
  *
  * - 宛先: auth.users の登録アドレス。退会の後では引けないので、deleteAccount が記録を伏せる・消す前に
- *   readAccountDeletionEmail で控えておき、メモリ上だけで使う。ログ・メール送信ログ (email_delivery_logs) には書かない
+ *   readAccountDeletionEmail で控えておき、メモリ上だけで使う。ログには書かない。送信待ち (email_outbox) には、
+ *   送れたあと・届けられなかったあとは伏せた形でだけ残る (sendEmail の redactAfterSend。宛先が停止リストに載っていれば行を作らない。#1193)
  *   (#1175 / #1437 で退会時に伏せている生のアドレスを、ここで新しく残さないため)。
  *   失敗の記録は sendEmail (src/lib/emails/send.ts) がマスクした宛先 (t***@example.com) で残す。
  * - 送るのは auth.admin.deleteUser が成功した後の 1 回だけ。409 (組織のオーナー・家族の代表者) や途中の失敗 (500) では送らない。
@@ -27,7 +28,7 @@ export const ACCOUNT_DELETED_EMAIL_TEMPLATE = 'account_deleted';
 /**
  * 完了メールの送信を待つ最長時間 (ミリ秒)。
  * POST /api/account/delete の maxDuration (60 秒) の中で、Storage の掃除 (最長 45 秒。src/lib/account-deletion-storage.ts) の
- * 後に送るため、残りに収まる長さにしてある。sendEmail の再試行 (待ち 500ms → 1s → 2s) が一通り収まる長さでもある。
+ * 後に送るため、残りに収まる長さにしてある (sendEmail は送信待ちに登録するだけで、Resend へ送るのは worker。#1193)。
  * 超えたら待つのをやめて退会の成功を返す (メールは届かない可能性があるので、警告ログに残す)。
  */
 export const ACCOUNT_DELETED_EMAIL_TIMEOUT_MS = 5000;
@@ -144,7 +145,9 @@ export async function notifyAccountDeleted(params: {
 
   const attempt = async (): Promise<void> => {
     try {
-      const sent = await sendEmail(renderAccountDeletedEmail({ to_email: toEmail, deleted_at: deletedAt }));
+      // redactAfterSend: 送れたとき・届けられなかったときに、送信待ちの行の宛先・件名・本文を伏せる (R-10)。
+      // userId は渡さない (削除の後で、email_outbox.user_id は auth.users への外部キーのため)
+      const sent = await sendEmail(renderAccountDeletedEmail({ to_email: toEmail, deleted_at: deletedAt }), { redactAfterSend: true });
       // sendEmail のエラー文は宛先をマスク済み。失敗の詳細は sendEmail も app_logs に残すが、
       // ここでは退会のどの request_id の完了メールかが分かる形でも残す
       if (isEmailFailure(sent)) {

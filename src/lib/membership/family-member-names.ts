@@ -23,6 +23,13 @@ import { PROFILE_NAME_PLACEHOLDER, normalizeName, normalizeProfileName } from '@
 /** 名前を返す API の経路 */
 export const FAMILY_MEMBER_NAMES_API_PATH = '/api/family/members/names';
 
+/**
+ * 名前が決まらないメンバー (display_name もプロフィールの名前も無い) に出す語。家族の 4 画面のリテラルと同じ語
+ * (4 画面のリテラルは寄せていない。docs/design/family/10-family-menu-view.md Q-6)。
+ * 週間献立の家族の表示の切り替え (FamilyViewSwitcher) と家族の献立の行・注記 (FamilyMenuRows) が使う (同 §12・§16)
+ */
+export const FAMILY_MEMBER_NAME_FALLBACK = '名前未設定';
+
 /** 名前を返す API の応答 ({ data: { members } }) */
 const FamilyMemberNamesResponseSchema = z.object({ data: FamilyMemberNamesDataSchema });
 

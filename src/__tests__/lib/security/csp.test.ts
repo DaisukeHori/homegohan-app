@@ -16,6 +16,7 @@ import {
   CSP_REPORT_ONLY_HEADER,
   CSP_REPORT_PATH,
   CSP_TURNSTILE_ORIGIN,
+  HOLIDAYS_API_ORIGIN,
   buildContentSecurityPolicy,
   cspDirectivesOf,
   cspHeaderName,
@@ -115,7 +116,9 @@ describe('buildContentSecurityPolicy (#1169)', () => {
     const policy = productionPolicy(PRODUCTION_SUPABASE_URL);
 
     expect(policy).toContain("img-src 'self' data: blob: *.supabase.co images.unsplash.com;");
-    expect(policy).toContain("connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co;");
+    expect(policy).toContain(
+      "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co https://holidays-jp.github.io;",
+    );
     expect(supabaseLocalOrigins(PRODUCTION_SUPABASE_URL)).toBeNull();
   });
 
@@ -218,6 +221,38 @@ describe('許可済みのドメイン (以前は next.config.mjs の CSP を見�
     expect(directive(policy, 'img-src')).toEqual(expect.arrayContaining(['*.supabase.co', 'images.unsplash.com']));
     expect(directive(policy, 'font-src')).toEqual(["'self'"]);
     expect(policy).toContain("style-src 'self' 'unsafe-inline'");
+  });
+
+  it('#1769: connect-src に祝日の API のオリジン (HOLIDAYS_API_ORIGIN) が入り、ほかの許可先は変わらない', () => {
+    expect(HOLIDAYS_API_ORIGIN).toBe('https://holidays-jp.github.io');
+    // 本番の Supabase: 以前の許可先 4 つ + 祝日の API の 1 つだけ (順も含めて)
+    expect(directive(productionPolicy(PRODUCTION_SUPABASE_URL), 'connect-src')).toEqual([
+      "'self'",
+      '*.supabase.co',
+      '*.vercel.app',
+      'wss://*.supabase.co',
+      HOLIDAYS_API_ORIGIN,
+    ]);
+    // ローカルの Supabase: 祝日の API の後に、ローカルの origin (http / ws) が続く
+    expect(directive(productionPolicy(LOCAL_SUPABASE_URL), 'connect-src')).toEqual([
+      "'self'",
+      '*.supabase.co',
+      '*.vercel.app',
+      'wss://*.supabase.co',
+      HOLIDAYS_API_ORIGIN,
+      'http://127.0.0.1:54321',
+      'ws://127.0.0.1:54321',
+    ]);
+    // dev の方針でも同じ (isDev が変えるのは script-src の 'unsafe-eval' だけ)
+    expect(
+      directive(buildContentSecurityPolicy({ nonce: SAMPLE_NONCE, isDev: true, supabaseUrl: PRODUCTION_SUPABASE_URL }), 'connect-src'),
+    ).toContain(HOLIDAYS_API_ORIGIN);
+    // 祝日の API のオリジンは connect-src にだけ足す (script-src・img-src・frame-src などには足さない)
+    const policy = productionPolicy(PRODUCTION_SUPABASE_URL);
+    for (const [name, sources] of cspDirectivesOf(policy)) {
+      if (name === 'connect-src') continue;
+      expect(sources, name).not.toContain(HOLIDAYS_API_ORIGIN);
+    }
   });
 
   // #1166: 利用状況の計測 (PostHog) はやめた。CSP が PostHog への送信を許していると、

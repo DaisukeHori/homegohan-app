@@ -17,12 +17,30 @@ const mocks = vi.hoisted(() => ({
   logWarn: vi.fn(),
   logError: vi.fn(),
   emailsSend: vi.fn(),
+  /** #1193 sendEmail が送信待ち (email_outbox) に入れた行 */
+  outboxRows: [] as Array<Record<string, unknown>>,
 }));
 
-/** email_blacklist だけを持つ偽物の service_role クライアント */
+/** 送信待ちに登録した行の id (固定) */
+const OUTBOX_ROW_ID = '00000000-0000-4000-8000-0000000000bb';
+
+/** email_blacklist と email_outbox (#1193。sendEmail の登録先) を持つ偽物の service_role クライアント */
 function fakeAdmin() {
   return {
     from(table: string) {
+      if (table === 'email_outbox') {
+        return {
+          // insert(row).select('id').single() は登録した行の id を返し、select を付けない insert は { error: null }
+          insert(row: Record<string, unknown>) {
+            mocks.outboxRows.push(row);
+            return {
+              select: () => ({ single: () => Promise.resolve({ data: { id: OUTBOX_ROW_ID }, error: null }) }),
+              then: (resolve: (value: unknown) => unknown, reject?: (reason: unknown) => unknown) =>
+                Promise.resolve({ error: null }).then(resolve, reject),
+            };
+          },
+        };
+      }
       if (table !== 'email_blacklist') throw new Error(`unexpected table ${table}`);
       return {
         upsert(
@@ -292,18 +310,25 @@ describe('POST /api/webhooks/resend: 冪等', () => {
 });
 
 describe('受けた宛先へは送らない (Webhook → sendEmail の通し)', () => {
-  it('ハードバウンスの宛先へは sendEmail が Resend を呼ばず suppressed を返す。ほかの宛先へは送る', async () => {
+  it('ハードバウンスの宛先へは sendEmail が Resend を呼ばず suppressed を返し (dead の行を 1 行残す)。ほかの宛先は送信待ちに登録する (ok: true・Resend は呼ばない・queued の行が 1 行)', async () => {
     vi.stubEnv('RESEND_API_KEY', 'dummy-api-key-for-test');
+    mocks.outboxRows.length = 0;
     mocks.emailsSend.mockResolvedValue({ data: { id: 'sent-id' }, error: null, headers: null });
     await POST(signedRequest(bouncedEvent('Hard@Example.com', 'Permanent')));
 
     const blocked = await sendEmail({ to: 'Hard@Example.com', from: 'noreply@example.test', subject: 's', text: 't', template: 'org_invite_new' });
     expect(blocked.ok).toBe(false);
     expect(blocked.error?.code).toBe('suppressed');
-    expect(mocks.emailsSend).not.toHaveBeenCalled();
+    expect(mocks.outboxRows).toEqual([
+      expect.objectContaining({ to_email: 'Hard@Example.com', status: 'dead', last_error_code: 'suppressed' }),
+    ]);
 
     const sent = await sendEmail({ to: 'other@example.com', from: 'noreply@example.test', subject: 's', text: 't', template: 'org_invite_new' });
-    expect(sent.ok).toBe(true);
-    expect(mocks.emailsSend).toHaveBeenCalledTimes(1);
+    expect(sent).toMatchObject({ ok: true, id: OUTBOX_ROW_ID });
+    expect(mocks.outboxRows.filter((row) => row.status === 'queued')).toEqual([
+      expect.objectContaining({ to_email: 'other@example.com', status: 'queued' }),
+    ]);
+    // 送るのは worker (GET /api/cron/email-outbox)。sendEmail は Resend を呼ばない
+    expect(mocks.emailsSend).not.toHaveBeenCalled();
   });
 });
