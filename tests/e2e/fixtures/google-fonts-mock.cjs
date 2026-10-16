@@ -14,8 +14,12 @@
  *
  * next/font は @font-face が 1 つも無い CSS を受け付けない (postcss-next-font.js:
  * "Font loaders must return one or more @font-face's") ため、要求された太さごとに @font-face を返し、
- * フォントファイルには Next.js に同梱されている小さな実フォント (Noto Sans のラテン文字だけ) を使う。
+ * フォントファイルには Next.js に同梱されている小さな実フォント (ラテン文字だけの Geist。Next 15 までは Noto Sans だった。#1621) を使う。
  * 日本語の文字は端末の代替フォントで表示される。e2e のテストはフォントの見た目に依存しない。
+ *
+ * このモックが効くのは webpack のビルド (next build --webpack) だけ (#1621)。Next 16 の既定の Turbopack は、このファイルを
+ * 自前のバンドラーで評価する (node_modules を解決できない) うえ、CSS が指すフォントファイルはモックの有無に関わらず
+ * Google Fonts へ取りに行く。そのため package.json の build / dev は --webpack を付けている (tests/next16-bundler-contract.test.ts)。
  *
  * 使うのは .github/workflows/e2e-local.yml のビルドだけ。本番 (Vercel) のビルドには関係しない。
  * tests/e2e-google-fonts-mock.test.ts が、この仕組みが今の Next.js で効くことを確かめる。
@@ -26,10 +30,10 @@ const path = require('node:path');
 
 const GOOGLE_FONTS_CSS_URL = 'https://fonts.googleapis.com/';
 
-/** モックの @font-face が指す実フォント (Next.js に同梱。ラテン文字だけの Noto Sans) */
+/** モックの @font-face が指す実フォント (Next.js 16 に同梱。ラテン文字だけの Geist。Next 15 の noto-sans-v27-latin-regular.ttf は無くなった。#1621) */
 function localFontFile() {
   const nextDir = path.dirname(require.resolve('next/package.json'));
-  const file = path.join(nextDir, 'dist/compiled/@vercel/og/noto-sans-v27-latin-regular.ttf');
+  const file = path.join(nextDir, 'dist/compiled/@vercel/og/Geist-Regular.ttf');
   if (!fs.existsSync(file)) {
     throw new Error(`#1330: モックが使うフォントファイルが見つからない (Next.js の更新で場所が変わった可能性): ${file}`);
   }

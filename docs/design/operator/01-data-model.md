@@ -57,6 +57,7 @@
 29. user_sessions_metadata
 30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meals.is_sandbox + user_daily_meals.is_sandbox + badges seed + RPC 2 本
 31. operator_mfa_backup_codes (§3.27)  ← cross/12 §11.1。auth.users への FK だけで、他の運営の表に依存しない (migration 20261016230000)
+32. email_outbox (正本は 10-logs-and-mail-retry.md §5)
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター
@@ -515,9 +516,14 @@ CREATE POLICY "audit_logs_select_super_admin" ON admin_audit_logs
   );
 
 -- INSERT: admin 系全ロールから可、actor_id = auth.uid() を強制
+-- (#1736: system.* の action_type と actor の表示の列は本人の JWT では書けない。詳細は 07-audit-monitoring.md §3.2)
 CREATE POLICY "audit_logs_insert_admins" ON admin_audit_logs
-  FOR INSERT WITH CHECK (
+  FOR INSERT TO authenticated WITH CHECK (
     actor_id = auth.uid()
+    AND action_type NOT LIKE 'system.%'
+    AND actor_email_snapshot IS NULL
+    AND actor_role_snapshot IS NULL
+    AND impersonated_by IS NULL
     AND EXISTS (
       SELECT 1 FROM user_profiles
       WHERE id = auth.uid()
@@ -942,6 +948,8 @@ CREATE POLICY "stripe_webhook_no_access_rls" ON stripe_webhook_events
 ```
 
 ### 3.19 `email_delivery_logs` / `email_blacklist`
+
+新しい書き込みは email_outbox。email_delivery_logs は残すが書かない (#1193)
 
 ```sql
 CREATE TABLE email_delivery_logs (

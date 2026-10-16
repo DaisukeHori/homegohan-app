@@ -3244,6 +3244,13 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 
 §11.4 の 4 と、ロールバックの (a) の全文。どちらも、本番 (= `supabase/baseline/prod_schema.sql` の取得時点。ベースラインより後の migration はこの 58 本に触れていない §3.2) の `pg_policies` の式を、空白を 1 つにまとめて 1 行にしたもの。表の名前の並び (表・ポリシーの名前の順)。1 行 = 1 文。式の中の `user_profiles`・`support_tickets`・`org_role_enum` はスキーマを書いていないが、migration の既定の search_path (`"$user", public, extensions`) で public に解決される (本番の `pg_policies` がこの形で返す式そのもの)。
 
+**注 (#1736 との突き合わせ。段 E の migration を書く前に付録 A を取り直す)**: `20261016238000_admin_audit_logs_insert_actor_only.sql` (#1736) は、
+下の A.1 / A.2 の先頭の 2 本に触れる。① `"Admins can create audit logs"` を DROP する (本番から消えるので、段 E の `ALTER POLICY "Admins can create audit logs"` は
+42704 で失敗する) ② `audit_logs_insert_admins` を `TO authenticated` で作り直し、WITH CHECK に `action_type NOT LIKE 'system.%'`・
+`actor_email_snapshot IS NULL`・`actor_role_snapshot IS NULL`・`impersonated_by IS NULL` を足す (下の式のまま `ALTER POLICY` すると、この 4 項が消える)。
+#1736 が本番に入った後は、A.3 の出し方で母集合を取り直す (`"Admins can create audit logs"` が抜けて 57 本になる見込み)。
+`audit_logs_insert_admins` は、その時点の `pg_policies` の式の運営ロールの条件の項だけを §11.4 の規則で置き換える (#1736 の 4 項は残す)。
+
 ### A.1 up (migration の 4。57 文 + subscription_plans の 3 文)
 
 ```sql

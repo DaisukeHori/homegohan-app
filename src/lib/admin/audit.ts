@@ -21,6 +21,8 @@
  *  - RLS (audit_logs_insert_admins) は actor_id = auth.uid() かつ運営ロールのときだけ
  *    INSERT を許す。そのため user-scoped client (createClient()) を渡すこと。
  *    service_role を使う場合は、呼び出し側が必ず認可 (requireRole 等) を先に通すこと。
+ *    本人の client では action_type が 'system.' で始まる行と、actor_email_snapshot / actor_role_snapshot /
+ *    impersonated_by を入れた行は書けない (#1736。system.* は service_role / SECURITY DEFINER が actor_id NULL で書く予約の名前)。
  *  - 閲覧の記録は fail-open。記録に失敗しても例外は投げず、閲覧そのものは止めない。
  *    失敗は db-logger 経由で app_logs に error として残す。
  *    返金のように「記録できないなら実行しない」操作は、戻り値の ok を見て呼び出し側で止めること。

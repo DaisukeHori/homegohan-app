@@ -303,9 +303,12 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   ai_usage_grant_claims:
     'AI 利用回数の「数え済みの印」の使用済みの記録 (写真の判別 → 解析を 1 回に数えるための内部の照合用。乱数の ID と時刻だけ。1 日より古い記録は、毎日 03:45 JST の pg_cron のジョブ cleanup-stale-login-failures-and-grant-claims が利用者を問わず消すので、残るのは長くて 2 日弱。service_role だけが読み書きする)',
   email_delivery_logs: 'メール配信の運用ログ',
+  email_outbox:
+    'メールの送信待ち (outbox) の運用の記録 (#1193)。招待リンクなどの本文を含み、本人のデータの写しではない。service_role だけが読み書きし、送れた行は 7 日・届けられなかった行は 30 日で消える',
   meal_nutrition_debug_logs: '栄養計算のデバッグログ',
   meal_image_jobs: '画像生成ジョブのキュー (処理状態・リース情報などの内部データ)',
   shopping_list_requests: '買い物リスト生成ジョブの処理状態 (結果は shopping_lists に出力済み)',
+  push_outbox: 'Push 通知の送信待ちの運用の記録 (端末の token と依頼 ID)。本人のデータの写しではない',
   billing_customers:
     'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
 

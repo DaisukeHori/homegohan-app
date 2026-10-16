@@ -15,6 +15,7 @@
 | `07-audit-monitoring.md` | admin_audit_logs / 監査ログ操作網羅リスト / エラー監視 (app_logs) と性能計測 (Speed Insights)。Sentry / Better Stack / Status Page は不採用 (#1179) | 03 §5.3 §22.9 |
 | `08-cron-batches.md` | pg_cron + Vercel Cron 全 job (license_expire / freeze_grace / archive_purge / trial_reminder) | 03 §15.17 |
 | `09-runbook.md` | 運用手順書 (Stripe reconcile / HR retry / deprecated rollback / incident response / DR) | 03 §15 §16.5 |
+| `10-logs-and-mail-retry.md` | email_outbox / worker / dead の通知 / ログ閲覧の検索と監査 | 03 §5.3 §22.9 §15 |
 
 ## ドメインの役割
 
