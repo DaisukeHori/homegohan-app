@@ -1,4 +1,5 @@
-import { Text, View, ViewStyle } from 'react-native';
+import { View, ViewStyle } from 'react-native';
+import { Text } from './Text';
 import { colors } from '../../theme';
 
 type ProgressBarProps = {

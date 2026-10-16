@@ -2,6 +2,8 @@ export { colors } from './colors';
 export type { ColorKey } from './colors';
 export { spacing, radius } from './spacing';
 export { typography } from './typography';
+export { fontFamilies } from './fonts';
+export type { FontFace } from './fonts';
 
 // shadows: COMMON.md Section 4 準拠
 export const shadows = {

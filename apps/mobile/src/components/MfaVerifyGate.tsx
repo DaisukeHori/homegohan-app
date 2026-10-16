@@ -8,7 +8,8 @@
  * verify は端末のセッションで行う。apps/mobile/src/lib/api.ts は毎回 getSession() の token を使うので、verify の後の Bearer は aal2。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Text, View } from 'react-native';
+import { ActivityIndicator, View } from 'react-native';
+import { Text } from './ui/Text';
 
 import { Button, Input } from './ui';
 import { MOBILE_MFA_ENROLL_ON_WEB_MESSAGE, MOBILE_TOTP_CODE_PATTERN } from '../lib/mfa-gate';

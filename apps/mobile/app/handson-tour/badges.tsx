@@ -7,9 +7,9 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
+import { Text } from '../../src/components/ui/Text';
 
 import {
   HANDSON_TOUR_CONSTANTS,

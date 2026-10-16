@@ -8,6 +8,7 @@ import { useAuth } from "../../src/providers/AuthProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
 import { AIFloatingFab } from "../../src/components/ai/AIFloatingFab";
 import { ErrorFallback } from "../../src/components/ErrorFallback";
+import { useFontStyle } from "../../src/components/ui/Text";
 
 // この区画 (ホーム・献立・スキャン・比較・マイページ) の画面で描画の例外が起きたとき、
 // アプリ全体をクラッシュさせずに再試行を出す (#1207)。
@@ -17,9 +18,13 @@ export function ErrorBoundary(props: ErrorBoundaryProps) {
   return <ErrorFallback {...props} boundary="tabs" homeHref="/" />;
 }
 
+const TAB_BAR_LABEL_STYLE = { fontSize: 11, fontWeight: "600" } as const;
+
 export default function TabsLayout() {
   const { session, isLoading } = useAuth();
   const { isLoading: profileLoading, profile } = useProfile();
+  // タブの見出しは react-navigation が中で Text を描くので、共通の部品と同じ字形に置き換えて渡す (#588)
+  const tabBarLabelStyle = useFontStyle(TAB_BAR_LABEL_STYLE);
 
   if (!session) return <Redirect href="/" />;
 
@@ -54,7 +59,7 @@ export default function TabsLayout() {
           },
           tabBarActiveTintColor: colors.accent,
           tabBarInactiveTintColor: colors.textMuted,
-          tabBarLabelStyle: { fontSize: 11, fontWeight: "600" },
+          tabBarLabelStyle,
         }}
       >
         <Tabs.Screen

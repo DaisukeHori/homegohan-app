@@ -8,9 +8,9 @@ import {
   Pressable,
   SafeAreaView,
   StyleSheet,
-  Text,
   View,
 } from 'react-native';
+import { Text } from '../../src/components/ui/Text';
 import Animated, {
   Easing,
   useAnimatedStyle,

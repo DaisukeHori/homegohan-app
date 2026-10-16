@@ -9,7 +9,8 @@
  *   - null            : 省いていないのに分析が無い (AI の失敗)。従来どおり「AI分析を実行できませんでした」
  */
 import { router } from "expo-router";
-import { StyleSheet, Text, View } from "react-native";
+import { StyleSheet, View } from "react-native";
+import { Text } from "../ui/Text";
 
 import {
   AI_CONSENT_CHECK_FAILED_SKIPPED_NOTE,
