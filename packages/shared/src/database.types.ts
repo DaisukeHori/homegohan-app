@@ -9249,6 +9249,7 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: number
       }
+      operator_mfa_satisfied: { Args: never; Returns: boolean }
       organizations_owner_id_unchanged: {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean

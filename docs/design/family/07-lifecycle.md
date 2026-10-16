@@ -160,7 +160,7 @@ SELECT cron.schedule(
       );
 
     -- owner に通知
-    -- (実際の Push/Email 送信は notify-push/notify-email Edge Function 経由)
+    -- (Push は enqueue_push_notification で送信待ちに積み、worker GET /api/cron/push-outbox が送る (mobile/06-push-send.md。種類は後回し: 06 §3.2)。Email は notify-email Edge Function 経由)
   $$
 );
 ```
@@ -239,7 +239,7 @@ sequenceDiagram
   participant API as Next.js API
   participant DB as Supabase DB
   participant RT as Realtime
-  participant Push as notify-push
+  participant Push as push_outbox (RPC enqueue_push_notification)
 
   Owner->>API: POST /groups/{id}/split { split_members, new_group_name, new_owner_id, meal_history_mode }
 
@@ -248,7 +248,7 @@ sequenceDiagram
   API->>DB: acquire_family_group_lock(group_id)
 
   alt split_members に child が含まれる
-    API->>Push: notify all split_members (同意要求)
+    API->>Push: enqueue_push_notification(split_members の各人) (同意要求)
     Note over API: 24h 以内の同意待ち (async)
     API-->>Owner: 202 { split_id, status: 'awaiting_consent' }
   else child なし
@@ -268,10 +268,12 @@ sequenceDiagram
   end
 
   API->>DB: shopping_list_mode 処理 (owner or new_owner に帰属)
-  API->>Push: notify all affected members
+  API->>Push: enqueue_push_notification(影響を受けるメンバーの各人)
   API->>DB: INSERT family_activity_log { action_type: 'group_split' }
   API-->>Owner: 200 { original_group_id, new_group_id }
 ```
+
+図の `Push` は送信待ちに積むだけで、Expo に送るのは worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md` §4。Edge Function `notify-push` は作らない)。家族の通知の種類は後回し (06 §3.2)。
 
 ### 5.3 同意フロー詳細
 

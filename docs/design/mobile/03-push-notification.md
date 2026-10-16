@@ -8,6 +8,7 @@ Expo Push Notifications を使用したプッシュ通知の設計を定義す�
 **対象外**:
 - Web 側の通知ベル UI → `family/03-ui-spec.md` / `org/03-ui-spec.md`
 - メール通知 (`notify-email` Edge Function) → `operator/08-cron-batches.md`
+- サーバーからの送信 (送信待ち `push_outbox`・worker `GET /api/cron/push-outbox`・receipt・種類の一覧 `PUSH_NOTIFICATION_KINDS`) → `06-push-send.md` (#1136)
 
 ## 2. 関連要件
 
@@ -20,7 +21,7 @@ Expo Push Notifications を使用したプッシュ通知の設計を定義す�
 ### 3.1 Expo Push 通知の概要
 
 ```
-送信者 (Next.js / Edge Function)
+送信者 (Next.js の worker GET /api/cron/push-outbox。06-push-send.md)
   → Expo Push API (https://exp.host/--/api/v2/push/send)
     → APNs (iOS) / FCM (Android)
       → ユーザーのデバイス
@@ -146,26 +147,15 @@ await supabase.from('user_push_tokens').upsert({
 
 ### 3.3 ペイロード形式
 
-```typescript
-// notify-push Edge Function が送信するペイロード型
-type PushPayload = {
-  to: string;                    // Expo Push Token
-  title: string;                 // 通知タイトル (日本語)
-  body: string;                  // 通知本文 (日本語)
-  data?: Record<string, unknown>; // アプリ内ルーティング用データ
-  badge?: number;                // iOS バッジ数 (サーバー側計算値)
-  sound?: 'default' | null;      // 通知音
-  categoryIdentifier?: string;   // iOS アクション定義 (§3.4 参照)
-  channelId?: string;            // Android チャンネル ID
-  priority?: 'default' | 'normal' | 'high';
-  ttl?: number;                  // Time-to-live (秒)
-};
-```
+サーバーが Expo に渡す 1 件の型は `06-push-send.md` §6.3 の `PushMessage` (`src/lib/push/outbox.ts`) が正。
+項目は `to` (Expo Push Token)・`title`・`body`・`data`・`sound` (`'default'`)・`channelId` (Android。`EXPO_DEFAULT_ANDROID_CHANNEL_ID` = `'default'`)・
+`priority`・`ttl` (秒。種類ごとの `ttlSeconds`) で、`badge` (§3.5) と `categoryIdentifier` (§3.4) は入れない。
 
-`data` フィールドは通知タップ後の画面遷移に使用する:
+`data` フィールドは通知タップ後の画面遷移に使用する。いま送る種類 (`weekly_menu_completed` / `weekly_menu_failed`) の `data` は
+`{ kind, path, request_id }` (`path` は献立のタブ。06 §3.2)。下は後回しの家族の種類 (06 §3.2) の例で、行き先は決まっていない (§3.5 の注):
 
 ```typescript
-// 家族献立リクエスト通知の例
+// 家族献立リクエスト通知の例 (後回しの種類。06 §3.2)
 {
   type: 'family_meal_request',
   family_group_id: 'uuid',
@@ -186,12 +176,16 @@ type PushPayload = {
 | 試用期間終了 | `trial_ending` | 「試用期間が間もなく終了します」| 「あと {N} 日で試用期間が終了します」|
 | ライセンス更新 | `license_renewal` | 「ライセンスの更新が必要です」| 「年間ライセンスが {日付} に期限切れになります」|
 
+この 7 種はどれも後回し (`06-push-send.md` §3.2 の「後回し」の表。発火元の機能が未実装か、アプリに行き先の画面が無い)。
+いま送る種類は 06 §3.2 の `weekly_menu_completed` / `weekly_menu_failed` の 2 つ (`packages/shared/src/push-notification-kinds.ts` の `PUSH_NOTIFICATION_KINDS`)。
+送るペイロードに `categoryIdentifier` は入れない (§3.3)。
+
 ### 3.5 バッジカウント設計
 
 #### クライアント側実装
 
-アプリはバッジを手で数え直さない (`setBadgeCountAsync` を呼ばない)。バッジの値はサーバー (`notify-push`) がペイロードの `badge` に入れ、
-後ろで受けたときは OS が、前面で受けたときは下の `NotificationRouter` の `shouldSetBadge: true` で、その値を付ける。
+アプリはバッジを手で数え直さない (`setBadgeCountAsync` を呼ばない)。サーバーからの送信 (`06-push-send.md`) は、いまペイロードに `badge` を入れない (06 §1.2。下の「サーバー側バッジ計算」)。
+ペイロードに `badge` がある通知は、後ろで受けたときは OS が、前面で受けたときは下の `NotificationRouter` の `shouldSetBadge: true` で、その値を付ける。
 
 > **実装 (#1049 F7-11)**: フォアグラウンドの表示 (`setNotificationHandler`) と通知のタップ (`addNotificationResponseReceivedListener` /
 > `getLastNotificationResponseAsync`) は、`src/components/NotificationRouter.tsx` にまとめ、`app/_layout.tsx` が Provider の内側に置く
@@ -201,43 +195,17 @@ type PushPayload = {
 > 許した画面 (`NOTIFICATION_ROUTES`) にだけ遷移する。画面が無い下位のパス (例: `health/blood-tests/abc`) は、一番近い上位の画面 (`/health/blood-tests`) を開く (以前の例の `/health/streaks` の画面は、通常の操作で届かないネイティブの画面として 2026-10-16 に削除した。#1598)。
 > アプリには家族の画面が無い (ネイティブの家族の画面 `app/family/index.tsx` は、通常の操作で届かない画面として消した。#1598 / #1610)。
 > §3.3 の例の `homegohan://family/meal-requests` のような家族の通知は、行き先が決まらず、アプリが開くだけになる。
-> 家族の通知の行き先 (WebView で Web の家族の画面を開くなど) は、家族の通知を送る実装 (`notify-push`) を作るときに決める。
+> 家族の通知の行き先 (WebView で Web の家族の画面を開くなど) は、`06-push-send.md` §3.2 の後回しの行のとおり、家族の種類を足すときに決める。
 
 #### サーバー側バッジ計算
 
-`notify-push` Edge Function がペイロードの `badge` フィールドに最新の未読数を付与する。
-
-```typescript
-// supabase/functions/notify-push/index.ts (新規)
-// バッジ数の計算例
-
-async function calculateBadgeCount(userId: string, supabaseClient: SupabaseClient): Promise<number> {
-  // 未確認の家族献立リクエスト数
-  const { count: mealRequestCount } = await supabaseClient
-    .from('family_meal_requests')
-    .select('id', { count: 'exact', head: true })
-    .eq('assignee_id', userId)
-    .eq('status', 'pending');
-
-  // 提案済みリクエスト (確認待ち) 数
-  const { count: proposedCount } = await supabaseClient
-    .from('family_meal_requests')
-    .select('id', { count: 'exact', head: true })
-    .eq('requester_id', userId)
-    .eq('status', 'proposed');
-
-  // システム通知 (未読)
-  const { count: systemCount } = await supabaseClient
-    .from('user_notifications')
-    .select('id', { count: 'exact', head: true })
-    .eq('user_id', userId)
-    .eq('is_read', false);
-
-  return (mealRequestCount ?? 0) + (proposedCount ?? 0) + (systemCount ?? 0);
-}
-```
+付けない (`06-push-send.md` §1.2)。サーバーからの送信はペイロードに `badge` を入れない。未読の数え方の元
+(`family_meal_requests` / `user_notifications`) が実装に無いため。
 
 #### バッジデクリメントのタイミング
+
+いまは対象外。サーバーからの送信はペイロードに `badge` を入れず (06 §1.2)、アプリはバッジを数え直さない (上の「クライアント側実装」) ので、
+下の表の減らし方は実装に無い。バッジを付けるときに決め直す (06 §1.2 の対象外)。
 
 | タイミング | 処理 | 実装箇所 |
 |-----------|------|---------|
@@ -320,45 +288,27 @@ settings.tsx (既存) の「一般」セクション変更:
 
 ### 3.7 Quiet Hours
 
-**デフォルト**: 22:00-07:00 は緊急通知以外送信しない。
+**デフォルト**: 22:00-07:00。夜間に送るか待つかは種類ごとに決める (`06-push-send.md` §3.2 の「夜間」の列。以前の「緊急通知だけ即送信」を種類ごとの方針にした: 06 の R-06)。
 
-#### サーバー側実装 (`notify-push` Edge Function)
+#### サーバー側実装 → `06-push-send.md` §6.3
 
-```typescript
-// notify-push Edge Function 内の Quiet Hours チェック
+- 夜間の判定は worker (`src/lib/push/outbox.ts`) が送る直前に行う。種類の方針 (`PUSH_NOTIFICATION_KIND_SPECS` の `quietHours`) が
+  `defer` なら夜の終わりまで延期し (`defer_push_outbox` で `push_outbox.next_attempt_at` を延ばす。試行の回数は増やさない)、`send` なら夜でも送る。
+  いま送る 2 種 (`weekly_menu_completed` / `weekly_menu_failed`) はどちらも `send`
+- 夜間の時刻は `notification_preferences.quiet_hours_start` / `quiet_hours_end` (NULL や形の違う値なら 22:00 / 07:00)。
+  時計は JST 固定 (`PUSH_QUIET_HOURS_UTC_OFFSET_MINUTES` = 540。`user_profiles` に `timezone` 列は無い)
+- 表 `pending_push_notifications` は作らない (§4)
 
-const URGENT_CATEGORIES = ['family_frozen', 'license_renewal'];
+#### ユーザーカスタマイズ
 
-function isInQuietHours(timezone: string): boolean {
-  const now = new Date();
-  const hour = parseInt(now.toLocaleTimeString('ja-JP', {
-    timeZone: timezone,
-    hour: '2-digit',
-    hour12: false,
-  }));
-  return hour >= 22 || hour < 7;
-}
-
-// 送信前チェック
-if (isInQuietHours(userTimezone) && !URGENT_CATEGORIES.includes(categoryIdentifier)) {
-  // Quiet Hours: DB の pending_push_notifications に積んで朝 7:00 に送信
-  await scheduleForMorning(payload, userId);
-  return;
-}
-```
-
-`user_profiles` テーブルの `timezone` 列 (または `notification_preferences.quiet_hours_start/end`) を参照。
-デフォルト timezone は `'Asia/Tokyo'`。
-
-#### ユーザーカスタマイズ (Phase 2)
-
-現時点では固定 (22:00-07:00)。ユーザー設定 UI は Phase 2 以降。
+夜間の時刻 (`quiet_hours_start` / `quiet_hours_end`) は、Web の健康記録の設定画面 (`src/app/(main)/health/settings/page.tsx`。`GET/PUT /api/health/notifications/preferences`) が読み書きし、
+worker はその値を使う (06 §2・§6.3)。
 
 ### 3.8 iOS / Android 差分
 
 | 機能 | iOS | Android |
 |------|-----|---------|
-| バッジ | ペイロードの `badge` を OS が付ける (前面では `NotificationRouter` の `shouldSetBadge: true`。アプリは `setBadgeCountAsync` を呼ばない) | Android 8+ は `setNotificationChannelAsync` のバッジ設定が必要 |
+| バッジ | ペイロードの `badge` を OS が付ける (前面では `NotificationRouter` の `shouldSetBadge: true`。アプリは `setBadgeCountAsync` を呼ばない)。いまのサーバーからの送信は `badge` を入れないので付かない (06 §1.2) | Android 8+ は `setNotificationChannelAsync` のバッジ設定が必要 |
 | 通知音 | `sound: 'default'` | チャンネルの `sound` 設定を継承 |
 | 通知チャンネル | 不要 (iOS は自動) | `setNotificationChannelAsync` で `"default"` チャンネル必須 |
 | 通知権限 | 初回起動時に `requestPermissionsAsync` | Android 13+ (`POST_NOTIFICATIONS`) は手動リクエスト必要 |
@@ -387,32 +337,24 @@ if (Platform.OS === 'android') {
 
 現時点では `"default"` チャンネルのみ実装し、Phase 2 で細分化。
 
-### 3.9 `notify-push` Edge Function との連携
+### 3.9 サーバーからの送信の経路 → `06-push-send.md` §4
+
+Edge Function `notify-push` は作らない (06 §4.3 で退けた案 A)。送信の経路は次のとおり (正は 06)。
 
 ```
-呼び出し元:
-  - Next.js API Route (/api/family/meal-requests → 通知トリガー)
-  - pg_cron バッチ (trial_ending / license_renewal の定期通知)
+登録 (発火元):
+  RPC enqueue_push_notification(p_user_id, p_kind, p_payload, p_dedupe_key)  (06 §5.2 (1)。EXECUTE は service_role だけ)
+    → 利用者の端末の行 (user_push_tokens) ごとに push_outbox に 1 行 (queued)。端末が無ければ 0 行
+  いまの発火元は weekly_menu_requests のトリガー enqueue_weekly_menu_result_push だけ (06 §5.3)。
+  後回しの種類 (§3.4 の 7 種など) は、PUSH_NOTIFICATION_KINDS に足してから発火元がこの RPC を呼ぶ (06 §3.2)
 
-呼び出し方法:
-  supabase.functions.invoke('notify-push', {
-    body: {
-      user_ids: ['uuid1', 'uuid2'],
-      category: 'family_meal_request',
-      title: '献立リクエストが届きました',
-      body: '堀 花子さんからリクエスト: 明日の夕食',
-      data: { type: 'family_meal_request', request_id: 'uuid' },
-    }
-  })
-
-notify-push 内部処理:
-  1. user_ids から user_push_tokens を取得
-  2. 各ユーザーの notification_preferences を確認
-     → category が false なら送信スキップ
-  3. Quiet Hours チェック (通常通知の場合)
-  4. バッジ数計算 (calculateBadgeCount)
-  5. Expo Push API に一括送信 (chunking: 100件/バッチ)
-  6. 送信結果をログ保存
+送信 (worker = GET /api/cron/push-outbox。Vercel Cron が毎分呼ぶ。06 §6.6):
+  1. claim_push_outbox で送信待ちを取る (SKIP LOCKED とリース)
+  2. 送る条件を確かめる (凍結・同意・notifications_enabled。種類ごとの on/off (§3.6) は見ない)
+  3. 夜間の判定 (§3.7)
+  4. 文面を作る (src/lib/push/render.ts。badge は入れない)
+  5. Expo Push API に 100 件ずつ送る (src/lib/push/expo-transport.ts だけが Expo を呼ぶ)
+  6. 約 15 分後の回で receipt を確かめる・期限の行を掃除する。回の件数と届けられなかった行の理由は app_logs (06 §8)
 ```
 
 ## 4. データモデル
@@ -436,43 +378,37 @@ CREATE TABLE IF NOT EXISTS user_push_tokens (
 -- notification_preferences (既存 + 拡張)
 -- preferences JSONB 列を追加 (§3.6 参照)
 
--- pending_push_notifications (新規: Quiet Hours 遅延送信用)
-CREATE TABLE pending_push_notifications (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id UUID NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  payload JSONB NOT NULL,
-  scheduled_at TIMESTAMPTZ NOT NULL, -- 送信予定時刻
-  sent_at TIMESTAMPTZ,               -- 送信完了時刻
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_pending_push_scheduled ON pending_push_notifications(scheduled_at)
-  WHERE sent_at IS NULL;
+-- pending_push_notifications は作らない (06-push-send.md §1.2)。
+-- 夜間の延期は push_outbox.next_attempt_at で表す (§3.7)。
+-- 送信待ちの表 push_outbox は 06 §5.1 (migration 20261016237000_push_outbox.sql)
 ```
 
 ## 5. シーケンス
 
 ### 5.1 個別献立リクエスト通知フロー
 
+個別献立リクエストの種類 (`family_meal_request`) は後回し (`06-push-send.md` §3.2)。下の図は、種類を `PUSH_NOTIFICATION_KINDS` に足したあとの流れで、
+送信の経路は 06 §4 (足すまでは、この種類の行は worker が `unknown_kind` で届けられなかった行にする)。
+
 ```mermaid
 sequenceDiagram
   participant Wife as 妻 (Web)
   participant API as Next.js API
-  participant Edge as notify-push (Edge Fn)
+  participant Outbox as push_outbox (RPC enqueue_push_notification)
+  participant Worker as worker GET /api/cron/push-outbox
   participant Expo as Expo Push API
   participant APNs as APNs
   participant Husband as 夫 (Mobile)
 
   Wife->>API: POST /api/family/meal-requests
   API->>API: INSERT family_meal_requests
-  API->>Edge: supabase.functions.invoke('notify-push', { user_ids: [夫のID], category: 'family_meal_request' })
-  Edge->>Edge: user_push_tokens から夫のトークン取得
-  Edge->>Edge: notification_preferences 確認 → family_meal_request: true
-  Edge->>Edge: calculateBadgeCount(夫のID) → 3
-  Edge->>Expo: POST /--/api/v2/push/send [{ to: token, badge: 3, ... }]
+  API->>Outbox: enqueue_push_notification(夫のID, 'family_meal_request', payload, dedupe_key)
+  Outbox->>Outbox: user_push_tokens の夫の端末の行ごとに 1 行 (queued)
+  Worker->>Outbox: claim_push_outbox (Vercel Cron が毎分呼ぶ)
+  Worker->>Worker: 送る条件 (凍結・同意・notifications_enabled)・夜間・文面 (render.ts)
+  Worker->>Expo: POST /--/api/v2/push/send [{ to: token, title, body, data, ... }] (badge は入れない)
   Expo->>APNs: APN 送信
-  APNs->>Husband: Push 通知表示 (バッジ 3)
-  Husband->>Husband: (前面のとき) NotificationRouter の setNotificationHandler (shouldSetBadge: true) でバッジ 3 を付ける
+  APNs->>Husband: Push 通知表示
   Husband->>Husband: 通知タップ → アプリが開く (家族の画面はアプリに無いので、notificationRoute は行き先を決めない。§3.5 の「実装 (#1049 F7-11)」の注)
 ```
 
@@ -504,10 +440,10 @@ sequenceDiagram
 | claim で発行された端末の秘密の値を保管庫に置けない (#1636) | 登録は成功扱い。次の claim でまた作ってもらう (本人の行のハッシュは書き換わる) |
 | 端末の保管庫を読めない (#1636) | claim は秘密の値なしで送る (ハッシュの無い古い行だけが外れる)。値は作り直さない。次回起動時に再試行 |
 | `POST /api/push-tokens/release` の失敗 (#1636) | 宛先を控え (`push_token_release_pending_v1`)、次の起動 (未ログイン)・次の `SIGNED_OUT` で再試行。400 は捨てる |
-| Expo Push API がトークン無効を返す (`DeviceNotRegistered`) | `user_push_tokens` から該当トークンを削除 |
+| Expo Push API がトークン無効を返す (`DeviceNotRegistered`) | worker が `user_push_tokens` から該当の端末の行を削除 (ticket と receipt の両方。その端末宛ての送信待ちの行は FK の CASCADE で消える。`06-push-send.md` §6.3) |
 | Push 権限が拒否済み | OS 設定画面へ誘導 (`Linking.openSettings()`) |
-| Quiet Hours 中の緊急通知 | `URGENT_CATEGORIES` はスキップせず即送信 |
-| Android FCM 未設定 | `notify-push` Edge Function での送信時にエラー → ログ記録し iOS のみ送信 |
+| Quiet Hours 中の通知 | 種類の方針 (`quietHours`) が `send` なら即送信、`defer` なら夜の終わりまで延期 (§3.7・06 §6.3) |
+| Android FCM 未設定 | 06 の worker で `InvalidCredentials` になり (receipt で返れば error の記録と warn、ticket で返れば届けられなかった行)、iOS には届く (06 §1.2・§9) |
 
 ## 7. テスト方針
 
@@ -517,21 +453,23 @@ sequenceDiagram
 |--------|---------|------|
 | フォアグラウンドの表示と通知のタップ (#1049 F7-11) | `__tests__/components/NotificationRouter.test.tsx` | `setNotificationHandler` の表示の設定と、外したときの解除。タップ (起動中・終了からの起動) で `resolveNotificationHref` の行き先へ遷移する |
 | 通知の行き先 (#1049 F7-11) | `__tests__/lib/notification-route.test.ts` | `data.path` / `data.deep_link` の許す形・上位の画面への置き換え・`NOTIFICATION_ROUTES` の画面が `app/` に実在すること |
-| Quiet Hours ロジック | `__tests__/lib/quietHours.test.ts` | 22:00-07:00 でスキップされることを確認 |
+| Quiet Hours ロジック (サーバー) | `src/__tests__/lib/push/outbox.test.ts` (リポジトリの根からの相対。06 §10) | 22:00〜07:00 をまたぐ判定・`defer` の種類だけ延期し `send` の種類は夜でも送る |
 
 ### Manual テスト (必須)
 
 | 検証項目 | 手順 |
 |---------|------|
 | iOS Push 受信 | Apple Configurator 2 インストール → Push 送信テスト |
-| バッジ数表示 | Push 受信後にホーム画面でバッジ確認 |
-| バッジデクリメント | 対象画面を開いてバッジが減ることを確認 |
+| バッジ数表示 | いまは対象外 (サーバーからの送信は `badge` を入れない: 06 §1.2)。バッジを付けるときに、Push 受信後にホーム画面でバッジを確認する |
+| バッジデクリメント | いまは対象外 (§3.5 の「バッジデクリメントのタイミング」)。バッジを付けるときに、対象画面を開いてバッジが減ることを確認する |
 | Android FCM (未実機確認) | Android 実機 or エミュレーターで確認 |
 
 ### Maestro E2E
 
+下の例はいまは対象外で、`maestro/push-notification-badge.yaml` は置かない (サーバーからの送信は `badge` を入れない: 06 §1.2)。バッジを付けるときに置く。
+
 ```yaml
-# maestro/push-notification-badge.yaml
+# maestro/push-notification-badge.yaml (いまは対象外)
 # Push 送信後のバッジ表示確認 (テスト環境での送信)
 appId: com.homegohan.app
 ---
@@ -557,18 +495,18 @@ appId: com.homegohan.app
 ### 新規
 
 - `app/settings/notifications.tsx` (通知種別個別設定画面)
-- `supabase/functions/notify-push/index.ts` (Edge Function)
+- `supabase/functions/notify-push/index.ts` (Edge Function) → 作らない (`06-push-send.md`。送信は Next の worker `src/app/api/cron/push-outbox/route.ts`。サーバーからの送信の新設の一覧は 06 §12)
 - `supabase/migrations/alter_user_push_tokens_add_org.sql`
 - `supabase/migrations/alter_notification_preferences_add_jsonb.sql`
-- `supabase/migrations/create_pending_push_notifications.sql`
+- `supabase/migrations/create_pending_push_notifications.sql` → 作らない (06。夜間の延期は `push_outbox.next_attempt_at`)
 
 ## 9. 未解決事項
 
 | 項目 | 優先度 | 担当 |
 |------|--------|------|
-| Android FCM Server Key の取得・EAS Secret 登録 | 高 | `notify-push` 実装前に必要 |
-| `pending_push_notifications` の pg_cron 送信バッチ (Quiet Hours 遅延送信) | 中 | `operator/08-cron-batches.md` に依頼 |
+| Android FCM Server Key の取得・EAS Secret 登録 | 高 | `06-push-send.md` の worker の本番投入の前に必要 (06 §14) |
+| ~~`pending_push_notifications` の pg_cron 送信バッチ (Quiet Hours 遅延送信)~~ | – | 解消済み: 表もバッチも作らない。夜間の延期は `push_outbox.next_attempt_at` で、毎分の worker が送る (06 §6.3) |
 | iOS の Rich Push (通知に画像表示) | 低 | Phase 2 |
 | Push 通知アクション (通知センターから直接「承認」ボタン) | 低 | iOS `categoryIdentifier` + Action Buttons で実装可能、Phase 2 |
-| バッジ数の正確性担保 (複数デバイス対応) | 中 | 複数端末所有ユーザーで不整合が発生しうる。サーバー側から常に最新値を badge に含めることで解消 |
+| バッジ数の正確性担保 (複数デバイス対応) | 中 | いまのサーバーからの送信は `badge` を入れない (06 §1.2) ので、端末の間の食い違いは起きない。バッジを付けるときに決め直す (06 §1.2 の対象外) |
 | Expo Push Token の有効期限・再登録 | 中 | 端末リセット時にトークンが変わる → `DeviceNotRegistered` エラーをトリガーとして自動削除＆再登録 |
