@@ -165,6 +165,14 @@ Step 4: 監査ログ記録
 
 ### 5.1 失敗確認
 
+pg_cron のジョブの失敗は、運用メール (`ops_cron_failure`。`OPS_ALERT_EMAIL`) で届く。知らせた失敗は `public.cron_failure_alerts` に残る (operator/11 §4)。止まっているとき (有効なジョブがあるのに 60 分以上動いていない) は `ops_pg_cron_stalled` が届く。次の SQL で確かめる。
+
+```sql
+-- pg_cron が動いているか (停止の確認。最新の start_time が古ければ止まっている)
+SELECT jobname, schedule, active FROM cron.job ORDER BY jobid;
+SELECT jobid, status, start_time, end_time FROM cron.job_run_details ORDER BY start_time DESC LIMIT 20;
+```
+
 ```sql
 -- 失敗したジョブを確認
 SELECT jobid, status, start_time, end_time, return_message
@@ -176,7 +184,7 @@ ORDER BY start_time DESC;
 
 ### 5.2 手動実行
 
-**方法 A: /super-admin/cron-jobs UI から実行**
+**方法 A: /super-admin/cron-jobs UI から実行** (未実装。08 §7)
 1. super_admin でログイン
 2. `/super-admin/cron-jobs` を開く
 3. 失敗したジョブの [今すぐ実行] をクリック
@@ -186,11 +194,8 @@ ORDER BY start_time DESC;
 **方法 B: Supabase SQL Editor から直接実行**
 
 ```sql
--- 例: license_expire_batch を手動実行
-SELECT process_license_expire();
-
--- 例: data_integrity_check を手動実行
-SELECT run_data_integrity_check();
+-- 例: cleanup-old-app-logs の関数を手動実行
+SELECT public.cleanup_old_logs();
 ```
 
 ### 5.3 Vercel Cron の手動実行
