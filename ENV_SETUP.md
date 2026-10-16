@@ -773,6 +773,24 @@ migration auto-deploy のため以下の Repository secrets が必要:
 
 設定場所: GitHub リポジトリ → Settings → Secrets and variables → Actions → New repository secret
 
+### DB バックアップ（`.github/workflows/db-backup.yml`。#1129 / #1191）
+
+毎日の DB の論理バックアップ（本番を暗号化して Cloudflare R2 に置く）には、次の secrets と variables が要ります。**どれも無いうちは、取得は `not_configured` で止まり（DB の中身を取り出す前に止まります）、Issue「【自動】DB バックアップの失敗」が立ちます。** 登録の順番（R2 のバケット・API トークン・age の鍵対 → 登録 → 最初の実行）と値の作り方は `docs/operations/backup-restore.md` の 2 章です。値はここにも Issue にも書きません。
+
+| 種類 | 名前 | 中身 |
+|---|---|---|
+| secret | `BACKUP_R2_ACCESS_KEY_ID` | R2 の API トークン「Object Read & Write」（このバケットだけに絞る）の Access Key ID |
+| secret | `BACKUP_R2_SECRET_ACCESS_KEY` | 同じトークンの Secret Access Key |
+| variable | `BACKUP_R2_ACCOUNT_ID` | Cloudflare のアカウント ID（公開してよい） |
+| variable | `BACKUP_R2_BUCKET` | R2 のバケット名（既定の名前は `homegohan-db-backups`） |
+| variable | `BACKUP_AGE_RECIPIENT` | age の公開鍵（`age1…`）。秘密鍵は GitHub・Vercel・Supabase・リポジトリに置かない |
+
+- 任意の調整用の variable が 4 つあります。DB が育って時間切れになったときだけ入れます（無ければ既定）。形が違う値は黙って既定に戻さず `not_configured` で止まります: `BACKUP_DUMP_TIMEOUT_MINUTES`・`BACKUP_UPLOAD_TIMEOUT_MINUTES`・`BACKUP_RESTORE_CHECK_TIMEOUT_MINUTES`・`BACKUP_ZSTD_LEVEL`。
+- 本番に繋ぐ `SUPABASE_ACCESS_TOKEN`・`SUPABASE_DB_PASSWORD`（上の migration auto-deploy と同じ secrets）はそのまま使います。
+- GitHub が自動で入れるもの（`GITHUB_TOKEN`・`GITHUB_REPOSITORY`・`GITHUB_RUN_ID`・`GITHUB_RUN_ATTEMPT`・`GITHUB_SHA`・`RUNNER_TEMP`）は設定しません。
+- **復元**（`node scripts/backup-db.mjs restore`）は、オーナーの手元のシェルに R2 の 4 つ（`BACKUP_R2_ACCOUNT_ID`・`BACKUP_R2_BUCKET`・`BACKUP_R2_ACCESS_KEY_ID`・`BACKUP_R2_SECRET_ACCESS_KEY`）を置いて流します。前の 2 つは上の variable と同じ値で、後ろの 2 つのキーは**復元用の読み取り専用（Object Read only）のトークン**のものです（取得用の Read & Write のキーは手元に写さない）。値は書かず、パスワードマネージャーから取ります（`docs/operations/backup-restore.md` の 5 章）。
+- 新しい Supabase プロジェクトへ復元するときの接続先 `NEW_DB_URL` は、`docs/operations/backup-restore.md` の 6 章でオーナーの手元のシェルにだけ置く変数です。パスワードを含む秘密なので、GitHub・Vercel には置きません。
+
 ---
 
 ## 📚 参考リンク
