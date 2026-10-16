@@ -1,5 +1,5 @@
 /**
- * 運営ロールの MFA (AAL2) の入口の走査 (#1176。docs/design/cross/12-operator-mfa.md §20。段 B で新設・段 D で ⑨⑩ を足す)
+ * 運営ロールの MFA (AAL2) の入口の走査 (#1176。docs/design/cross/12-operator-mfa.md §20。段 B で新設。⑨・⑩ は欠番)
  *
  * 運営の入口は requireRole の末尾の 1 か所で AAL2 を求める (§7.1)。その 1 か所を取りこぼす書き方が無いことを、
  * ソースの構文木 (TypeScript。コメント・文字列の中は見ない。ただし (a) は文字列リテラルそのものを見る) で毎回確かめる:
