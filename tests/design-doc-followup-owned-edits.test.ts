@@ -44,20 +44,24 @@ function read(rel: string): string {
   return fs.readFileSync(path.join(ROOT, rel), 'utf8');
 }
 
-/** 追随表の、対象の文書の行 (1 列目が `target` で始まる行) */
-function followupRow(ownerText: string, target: string): string | undefined {
-  return ownerText.split('\n').find((line) => line.startsWith(`| \`${target}`));
+/** 正典の中の、対象の文書の行 (1 列目が `target` で始まる行)。関係の表と追随表の両方に同じ文書の行があるので、全部を返す */
+function rowsOf(ownerText: string, target: string): string[] {
+  return ownerText.split('\n').filter((line) => line.startsWith(`| \`${target}`));
 }
 
 describe('追随表が逐語で決めた書き換えは、対象の文書に前か後の文のどちらかで残る', () => {
   for (const edit of OWNED_EDITS) {
     describe(`${edit.owner} → ${edit.target}`, () => {
-      const row = followupRow(read(edit.owner), edit.target);
-      const match = row?.match(edit.pattern) ?? null;
+      const rows = rowsOf(read(edit.owner), edit.target);
+      const matches = rows.flatMap((line) => {
+        const found = line.match(edit.pattern);
+        return found ? [found] : [];
+      });
+      const match = matches[0] ?? null;
 
       it('追随表の行が前の文と後の文を逐語で持つ', () => {
-        expect(row, `${edit.owner} に ${edit.target} の行が無い`).toBeDefined();
-        expect(match, `${edit.owner} の ${edit.target} の行の書き方が変わった: ${row}`).not.toBeNull();
+        expect(rows.length, `${edit.owner} に ${edit.target} の行が無い`).toBeGreaterThan(0);
+        expect(matches, `${edit.owner} の ${edit.target} の行の書き方が変わった: ${rows.join('\n')}`).toHaveLength(1);
         expect(match?.[1]).not.toBe(match?.[2]);
       });
 
