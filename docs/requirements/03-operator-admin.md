@@ -2694,7 +2694,7 @@ CREATE TABLE parental_consents (
 );
 ```
 
-> 注: 設計は `docs/design/cross/14-parental-consent.md`。表の列はそちらが正 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。
+> 注: 設計は `docs/design/cross/14-parental-consent.md`。表の列はそちらが正 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。
 
 ### 17.11 impersonation (なりすまし支援) — 提供しない (#1124)
 

@@ -9,7 +9,7 @@
  *   - user_profiles に同意済みの版 (terms_version_accepted / privacy_version_accepted) と同意日時 (legal_accepted_at) を足す
  *   - その 3 列は、特権列ガード (guard_user_profiles_privileged と _on_insert) で本人の直接 UPDATE / INSERT を拒否する
  *   - SECURITY DEFINER の accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent, p_birth_date) だけが書く
- *     (#1173 で生年月日 p_birth_date を足した。20261016242000_parental_consent_and_birth_date.sql)。
+ *     (#1173 で生年月日 p_birth_date を足した。20261017030000_parental_consent_and_birth_date.sql)。
  *     書く行は auth.uid() 本人だけ。プロフィール行が無ければ既定値で作る。terms_acceptances に証跡を 1 文書ずつ足す
  *
  * 確認すること:

@@ -767,7 +767,7 @@ WHERE user_id IS NULL
 
 ## 4.13 `parental_consents` (子供同意記録)
 
-DDL・RLS・索引は設計書 [`cross/14-parental-consent.md`](../cross/14-parental-consent.md) §6.4 の 4 が正 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。
+DDL・RLS・索引は設計書 [`cross/14-parental-consent.md`](../cross/14-parental-consent.md) §6.4 の 4 が正 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。
 
 ## 9. 未解決事項
 

@@ -292,7 +292,7 @@ API・ヘルパー・エラー型・管理画面の表示をすべて削除し�
 
 ## 12. 子供アカウント保護 (COPPA / 日本)
 
-未成年の年齢確認と保護者の同意は、設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) に移した (同意の記録の表・RPC・同意ゲート・画面はそちら。実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。要点:
+未成年の年齢確認と保護者の同意は、設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) に移した (同意の記録の表・RPC・同意ゲート・画面はそちら。実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。要点:
 
 - 生年月日は同意画面 (`/legal-consent`) で聞く。本人の生年月日は `user_profiles.birth_date` に 1 回だけ記録し、保護者の同意とのつながり (昇格の経路) が無い 18 歳未満の自己登録と、13 歳未満の自己登録は断る (`LEGAL_MINOR_SELF_SIGNUP_REFUSED`)。
 - 保護者の同意は子供の追加と同時に記録する (`add_family_child` が子供の行と同じトランザクションで `parental_consents` に署名を 1 行入れる)。別の同意の API は無い。
@@ -310,7 +310,7 @@ API・ヘルパー・エラー型・管理画面の表示をすべて削除し�
 
 ### 13.2 parental_consents
 
-DDL・RLS は設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) §6.4 の 4 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。
+DDL・RLS は設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。
 
 ### 13.3 user_sessions_metadata
 

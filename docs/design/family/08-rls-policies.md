@@ -153,7 +153,7 @@ CREATE POLICY "family_members_delete" ON family_members
 
 ### 5.1 `parental_consents`
 
-正は設計書 [`cross/14-parental-consent.md`](../cross/14-parental-consent.md) §6.4 の 4 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。クライアント (`authenticated`) は SELECT だけ。書けるのは SECURITY DEFINER の関数 (`add_family_child`・取り消しのトリガー) と `service_role` だけ。
+正は設計書 [`cross/14-parental-consent.md`](../cross/14-parental-consent.md) §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。クライアント (`authenticated`) は SELECT だけ。書けるのは SECURITY DEFINER の関数 (`add_family_child`・取り消しのトリガー) と `service_role` だけ。
 
 ```sql
 ALTER TABLE public.parental_consents ENABLE ROW LEVEL SECURITY;
