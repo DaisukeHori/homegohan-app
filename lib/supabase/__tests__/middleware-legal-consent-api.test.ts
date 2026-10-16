@@ -573,6 +573,20 @@ describe('updateSession — /api の同意ゲート (#1442): 本人の権利の�
   });
 
   it.each(DSR_ROUTES)(
+    '%s (%s %s) は user_profiles の行が無い (新規登録の直後) × ENFORCE=on でも通す (route の認証も行を要さない。tests/api/account-data-requests-missing-profile.test.ts)',
+    async (_name, method, path) => {
+      mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+      // 同じ「行なし」で、許可リストの外の /api は 403 LEGAL_CONSENT_REQUIRED (この it の 200 が素通りの設定によるものでないことの対照)
+      await expectLegalConsentRequired(await updateSession(apiRequest('/api/profile', { method: 'GET' })));
+
+      const res = await updateSession(apiRequest(path, { method }));
+
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it.each(DSR_ROUTES)(
     '%s (%s %s) は 凍結中なら、未同意でも同意済みでも 403 AUTH_ACCOUNT_FROZEN のまま (凍結中の請求は /contact。cross/15 S-13)',
     async (_name, method, path) => {
       for (const accepted of [NOT_ACCEPTED, ACCEPTED_CURRENT]) {

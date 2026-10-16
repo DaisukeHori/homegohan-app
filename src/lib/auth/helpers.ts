@@ -8,7 +8,7 @@
 
 import { type User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError } from './errors';
+import { AuthError, ForbiddenError, UserProfileReadError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
 import { isAccountFrozen } from './frozen';
 import { isOrgAdmin, type OrgAdminRole } from './org-admin';
@@ -84,6 +84,41 @@ export async function requireUser(): Promise<User> {
   const user = await getAuthUser();
   const { frozen_at, unban_at } = await getUserProfile(user.id);
   assertNotFrozen(frozen_at, unban_at);
+  return user;
+}
+
+/**
+ * #1751: requireUser と同じく本人のセッションと凍結を確かめるが、user_profiles の行が無い利用者を 401 にせず通す。
+ *
+ * 行は新規登録の時点では無く、同意 (DB 関数 accept_legal_documents)・初期設定・招待の承諾で作られる。
+ * 規約への同意も初期設定の完了も条件にできない本人の権利の API (/api/account/data-requests/**。
+ * src/lib/data-subject-requests/requester-http.ts の authenticateDsrRequester) は、行の無い利用者
+ * (新規登録の直後に、同意の画面の案内から請求の画面へ来た人) も通す必要がある。requireUser は行が無いと
+ * AuthError('AUTH_PROFILE_NOT_FOUND') (route では 401) にするので使えない。
+ *
+ * - 凍結は行の frozen_at なので、行が無ければ凍結は無い。行があって凍結中なら requireUser と同じく
+ *   ForbiddenError('AUTH_ACCOUNT_FROZEN') (一時 BAN の unban_at を過ぎていれば通す)
+ * - 行の読み取りそのものの失敗は UserProfileReadError (行が無いのと区別し、凍結を確かめられないまま通さない。route は 500)
+ * - 0 行を失敗にしないよう .maybeSingle() で読む (.single() は 0 行をエラーにする)
+ *
+ * ほかの route は requireUser のまま (行を前提に roles・組織を読むため)。
+ */
+export async function requireUserAllowingMissingProfile(): Promise<User> {
+  const user = await getAuthUser();
+  const supabase = await createClient();
+  const { data: profile, error } = await supabase
+    .from('user_profiles')
+    .select('frozen_at, unban_at')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    throw new UserProfileReadError(error);
+  }
+  if (profile) {
+    const row = profile as { frozen_at?: string | null; unban_at?: string | null };
+    assertNotFrozen(row.frozen_at ?? null, row.unban_at ?? null);
+  }
   return user;
 }
 

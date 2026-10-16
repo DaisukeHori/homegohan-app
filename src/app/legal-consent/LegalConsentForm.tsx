@@ -9,7 +9,9 @@
 // - 「同意しない」: ログアウトして、ご利用いただけないこと・保存データの削除の依頼先 (お問い合わせ) を案内する
 // - 開示・訂正・利用停止・消去の請求の画面 (/settings/data-requests) への案内 (#1751): 規約への同意を条件にできない本人の権利なので、
 //   未同意のまま開ける (画面の同意ゲートの対象外・API の許可リスト)。初期設定の前の人 (新規登録の直後) も開ける
-//   (初期設定の差し戻しの対象外。lib/onboarding-routing.ts の isDataSubjectRequestsPath)。フォームの下と「同意しない」の後の案内の 2 か所に出す
+//   (初期設定の差し戻しの対象外。lib/onboarding-routing.ts の isDataSubjectRequestsPath)。この人たちには user_profiles の行がまだ無いが、
+//   請求の API の認証も行を要さない (src/lib/data-subject-requests/requester-http.ts の authenticateDsrRequester)。
+//   フォームの下と「同意しない」の後の案内の 2 か所に出す
 //
 // 文面へのリンクは同じタブで開く。アプリ (WebView) では target="_blank" のリンクが開けないことがあり、
 // 同意の根拠になる文面を読めなくなるのを避けるため。読んだあとはブラウザの「戻る」で、この画面に戻れる。

@@ -38,8 +38,8 @@ vi.mock('@/lib/supabase/server', () => ({
 import * as authHelpers from '../helpers';
 import * as authBarrel from '../index';
 import * as authErrors from '../errors';
-import { requireUser, requireRole, requireOrgRole } from '../helpers';
-import { AuthError, ForbiddenError } from '../errors';
+import { requireUser, requireUserAllowingMissingProfile, requireRole, requireOrgRole } from '../helpers';
+import { AuthError, ForbiddenError, UserProfileReadError } from '../errors';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // テストヘルパー
@@ -129,6 +129,128 @@ describe('requireUser', () => {
     const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
     setupUserProfile(fakeUser.id, ['user'], null, '2026-07-01T00:00:00.000Z', future);
     await expect(requireUser()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
+  });
+
+  it('user_profiles の行が無い利用者は AuthError(AUTH_PROFILE_NOT_FOUND) のまま (#1751 でも変えない。行の無い利用者を通すのは requireUserAllowingMissingProfile だけ)', async () => {
+    setupGetUser(fakeUser);
+    setupUserProfileNotFound(fakeUser.id);
+    await expect(requireUser()).rejects.toMatchObject({ name: 'AuthError', code: 'AUTH_PROFILE_NOT_FOUND' });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// requireUserAllowingMissingProfile (#1751: 本人の権利の請求の API が使う。行の無い利用者を通す)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('requireUserAllowingMissingProfile (#1751)', () => {
+  /** 一時 BAN の残りの例 (1 日) */
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+  /** PostgREST が .single() で 0 行のときに返すエラー (.maybeSingle() は 0 行を data: null・error: null で返す) */
+  const NO_ROW_ERROR = { code: 'PGRST116', message: 'JSON object requested, multiple (or no) rows returned' };
+
+  /** user_profiles の読み取りの記録 (select の列・絞り込み・最後に呼んだのが maybeSingle か single か) */
+  let profileReads: Array<{ columns: string; filters: Array<[string, unknown]>; terminal: string }>;
+
+  /**
+   * user_profiles の読み取りを、本物の PostgREST と同じ 0 行の扱いで返す。
+   * row = null は「行が無い」(maybeSingle は data: null・error: null、single は PGRST116)。readError は読み取りそのものの失敗
+   */
+  function setupProfileRow(row: Record<string, unknown> | null, readError: unknown = null) {
+    supabaseClient.from = vi.fn().mockImplementation((table: string) => {
+      const read = { columns: '', filters: [] as Array<[string, unknown]>, terminal: '' };
+      if (table === 'user_profiles') profileReads.push(read);
+      const builder = {
+        select: (columns: string) => {
+          read.columns = columns;
+          return builder;
+        },
+        eq: (column: string, value: unknown) => {
+          read.filters.push([column, value]);
+          return builder;
+        },
+        maybeSingle: async () => {
+          read.terminal = 'maybeSingle';
+          return readError ? { data: null, error: readError } : { data: row, error: null };
+        },
+        single: async () => {
+          read.terminal = 'single';
+          if (readError) return { data: null, error: readError };
+          return row ? { data: row, error: null } : { data: null, error: NO_ROW_ERROR };
+        },
+      };
+      return builder;
+    });
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    profileReads = [];
+  });
+
+  it('★user_profiles の行が無い利用者 (新規登録の直後) を通し、本人の user を返す。行は maybeSingle で frozen_at・unban_at だけを本人の id で読む', async () => {
+    setupGetUser(fakeUser);
+    setupProfileRow(null);
+
+    const user = await requireUserAllowingMissingProfile();
+
+    expect(user).toEqual(fakeUser);
+    expect(profileReads).toEqual([{ columns: 'frozen_at, unban_at', filters: [['id', fakeUser.id]], terminal: 'maybeSingle' }]);
+  });
+
+  it('同じ「行が無い」状態で、requireUser は AUTH_PROFILE_NOT_FOUND (この関数だけが通す)', async () => {
+    setupGetUser(fakeUser);
+    setupProfileRow(null);
+
+    await expect(requireUser()).rejects.toMatchObject({ code: 'AUTH_PROFILE_NOT_FOUND' });
+    await expect(requireUserAllowingMissingProfile()).resolves.toEqual(fakeUser);
+  });
+
+  it('行があり凍結されていなければ通す', async () => {
+    setupGetUser(fakeUser);
+    setupProfileRow({ frozen_at: null, unban_at: null });
+
+    await expect(requireUserAllowingMissingProfile()).resolves.toEqual(fakeUser);
+  });
+
+  it('行があり凍結中 (無期限 BAN) なら ForbiddenError(AUTH_ACCOUNT_FROZEN)。行が無い人を通しても、凍結は今までどおり止める', async () => {
+    setupGetUser(fakeUser);
+    setupProfileRow({ frozen_at: '2026-07-01T00:00:00.000Z', unban_at: null });
+
+    await expect(requireUserAllowingMissingProfile()).rejects.toThrow(ForbiddenError);
+    await expect(requireUserAllowingMissingProfile()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
+  });
+
+  it('一時 BAN が続いている (unban_at が未来) なら ForbiddenError、過ぎていれば通す', async () => {
+    setupGetUser(fakeUser);
+    const future = new Date(Date.now() + ONE_DAY_MS).toISOString();
+    setupProfileRow({ frozen_at: '2026-07-01T00:00:00.000Z', unban_at: future });
+    await expect(requireUserAllowingMissingProfile()).rejects.toMatchObject({ code: 'AUTH_ACCOUNT_FROZEN' });
+
+    setupProfileRow({ frozen_at: '2026-07-01T00:00:00.000Z', unban_at: '2026-07-02T00:00:00.000Z' });
+    await expect(requireUserAllowingMissingProfile()).resolves.toEqual(fakeUser);
+  });
+
+  it('読み取りそのものの失敗は UserProfileReadError (AuthError・ForbiddenError ではない = 凍結を確かめられないまま通さない)。DB の文は message に入れず、code はログ用に持つ', async () => {
+    setupGetUser(fakeUser);
+    const dbError = { code: 'PGRST301', message: 'connection refused to db.internal:5432' };
+    setupProfileRow(null, dbError);
+
+    const error = await requireUserAllowingMissingProfile().catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(UserProfileReadError);
+    expect(error).not.toBeInstanceOf(AuthError);
+    expect(error).not.toBeInstanceOf(ForbiddenError);
+    expect((error as UserProfileReadError).code).toBe('PGRST301');
+    expect((error as UserProfileReadError).cause).toBe(dbError);
+    expect((error as UserProfileReadError).message).not.toContain('db.internal');
+  });
+
+  it('未認証 (user = null) なら AuthError(AUTH_UNAUTHENTICATED)。user_profiles は読まない', async () => {
+    setupGetUser(null);
+    setupProfileRow(null);
+
+    await expect(requireUserAllowingMissingProfile()).rejects.toMatchObject({ name: 'AuthError', code: 'AUTH_UNAUTHENTICATED' });
+    expect(profileReads).toEqual([]);
   });
 });
 
