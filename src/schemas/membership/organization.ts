@@ -23,7 +23,8 @@ export const OrgStatusSchema = z.enum(['active', 'suspended', 'dissolved']);
 export const OrganizationSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
-  owner_id: z.string().uuid().nullable(),
+  // 列は NOT NULL (#1103 項目 10 / migration 20261017040000)
+  owner_id: z.string().uuid(),
   plan: z.string().nullable(),
   status: OrgStatusSchema,
   contact_email: z.string().email().nullable(),

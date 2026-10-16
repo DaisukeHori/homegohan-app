@@ -24,9 +24,13 @@
 --   3. owner_id を SET NOT NULL にする。
 --   変えないもの: 外部キー organizations_owner_id_fkey (auth.users・ON DELETE RESTRICT)・索引・RLS・関数・トリガー。
 --
--- 同時に動く書き込み: 最初に organizations を ACCESS EXCLUSIVE で、user_profiles を SHARE でロックする
+-- 1 つの文 (DO ブロック) にまとめる: supabase の migration の適用はファイルをトランザクションで包まない
+--   (ローカルの db reset で SET LOCAL が「トランザクションの外」の警告になり、文ごとの LOCK TABLE は失敗する)。
+--   消す・埋める・NOT NULL を 1 つの文にして、途中で止まったら何も変わらないようにする (DO ブロックは 1 つの暗黙のトランザクション)。
+-- 同時に動く書き込み: ブロックの最初に organizations を ACCESS EXCLUSIVE で、user_profiles を SHARE でロックする
 --   (確かめてから消す・埋めるまでの間に、組織へのメンバーの追加・役割の変更・組織を参照する行の追加が入らないように。
---   外部キーの検査は organizations の行のロックを取るので、参照する行の追加もここで待つ)。10 秒でロック待ちを諦める。
+--   外部キーの検査は organizations の行のロックを取るので、参照する行の追加もここで待つ)。
+--   ロック待ちは c_lock_timeout (10 秒) で諦める (set_config の第 3 引数 true = このトランザクションの中だけ)。
 -- 本番のデータへの影響: 組織 4 行と、その org_license_pools の 4 行 (CASCADE) を消す。組織 2 行の owner_id を埋める。
 --   消した行は戻せない (ロールバックは NOT NULL を外すだけ)。
 -- 冪等: 2 回目以降は owner_id が NULL の組織が無いので、1・2 は何もしない。SET NOT NULL は付いていても成功する。
@@ -34,13 +38,10 @@
 --       tests/integration/security/organizations-owner-id-not-null.test.ts
 -- ロールバック: supabase/rollbacks/20261017040000_organizations_owner_id_not_null.down.sql
 
-SET LOCAL lock_timeout = '10s';
-
-LOCK TABLE public.organizations IN ACCESS EXCLUSIVE MODE;
-LOCK TABLE public.user_profiles IN SHARE MODE;
-
 DO $$
 DECLARE
+  -- ロック待ちを諦めるまでの時間 (他の migration の SET LOCAL lock_timeout = '10s' と同じ)
+  c_lock_timeout constant text := '10s';
   -- 消してよい組織の件数の上限。2026-10-16 の本番の読み取りで、owner_id が NULL でメンバーが 0 人の組織は 4 件。
   -- これより多ければ、読み取りの後に状態が変わっているので止める
   c_max_deletions constant integer := 4;
@@ -56,6 +57,10 @@ DECLARE
   v_org record;
   v_owners uuid[];
 BEGIN
+  PERFORM set_config('lock_timeout', c_lock_timeout, true);
+  LOCK TABLE public.organizations IN ACCESS EXCLUSIVE MODE;
+  LOCK TABLE public.user_profiles IN SHARE MODE;
+
   -- ── 1. メンバーが 0 人の組織 (owner_id が NULL) を消す ──
   SELECT coalesce(array_agg(o.id ORDER BY o.id), ARRAY[]::uuid[])
     INTO v_targets
@@ -144,7 +149,7 @@ BEGIN
     END IF;
     UPDATE public.organizations SET owner_id = v_owners[1] WHERE id = v_org.id;
   END LOOP;
-END $$;
 
--- ── 3. NOT NULL ──
-ALTER TABLE public.organizations ALTER COLUMN owner_id SET NOT NULL;
+  -- ── 3. NOT NULL ──
+  ALTER TABLE public.organizations ALTER COLUMN owner_id SET NOT NULL;
+END $$;
