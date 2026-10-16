@@ -576,7 +576,9 @@ describe('#1125 (B) C-1. pg_cron_last_run_at', () => {
     expect(result[0].active_jobs).toBe(active[0].n);
     expect(result[0].active_jobs).toBeGreaterThanOrEqual(1);
     // 1 日先に入れた行が最新の start_time (関数が返す時刻 = 実行履歴の最大の start_time)
-    expect(new Date(result[0].last_run_at).getTime()).toBe(Number(active[0].latest_ms));
+    // マイクロ秒の丸め (切り捨てと四捨五入) で 1 ミリ秒ずれうるので、1 ミリ秒までの差を許す
+    const LAST_RUN_TOLERANCE_MS = 1;
+    expect(Math.abs(new Date(result[0].last_run_at).getTime() - Number(active[0].latest_ms))).toBeLessThanOrEqual(LAST_RUN_TOLERANCE_MS);
     expect(new Date(result[0].last_run_at).getTime()).toBeGreaterThan(Date.now());
   });
 });
