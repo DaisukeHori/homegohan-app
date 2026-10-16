@@ -22,6 +22,10 @@
 //   - 表の名前を変数や組み立てた文字列で渡す書き方 (`.from(TABLE)`)。表の名前は文字列のリテラルで書く前提
 //     (その代わり、規則 A で「'health_streaks' という文字列を持つファイル」そのものを一覧で固定している)
 //   - `.from('health_streaks')` を変数に入れてから `.insert(...)` を呼ぶ書き方 (規則 B の書き手の判定は、同じ式の連鎖だけを見る)
+//
+// 所要時間 (#1814): 規則 A・B・E は、全ファイルを構文木にする前に本文を文字列で見て、探す値の文字
+// ('health_streaks'・'health-streaks') もバックスラッシュも含まないファイルは構文木にしない (理由は mayContainValue のコメント)。
+// 検査の意味は変えない (文字を含むファイルは、コメントの中だけでも構文木で調べ、構文木の検査が決める)。
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -92,11 +96,38 @@ function listSourceFiles(): string[] {
   return out.sort();
 }
 
+const sourceTextCache = new Map<string, string>();
+function readSource(rel: string): string {
+  const cached = sourceTextCache.get(rel);
+  if (cached !== undefined) return cached;
+  const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  sourceTextCache.set(rel, text);
+  return text;
+}
+
+/** 文字列・識別子の中で、書いた文字と値の文字を食い違わせる唯一の手段 (エスケープ) の印 */
+const ESCAPE_MARK = '\\';
+
+/** updateHealthStreak のモジュール (src/lib/health-streaks.ts) を指すモジュール指定子が必ず含む文字 (importsHealthStreaksLib の正規表現) */
+const HEALTH_STREAKS_MODULE_NAME = 'health-streaks';
+
+/**
+ * 構文木を作る前の絞り込み (#1814)。本文 text の、コメントの外の文字列のリテラル (モジュール指定子を含む) に、
+ * 値が needle を含むものがありうるか。false なら、構文木で調べても needle を含む値の文字列は見つからない:
+ *  - 値が needle を含む文字列のリテラルは、エスケープを使わなければ、本文にも needle の文字が並ぶ
+ *  - 値と本文の文字が食い違うのは、エスケープ ('health\_streaks'・'\u0068ealth_streaks'・行の継続など) を
+ *    使ったときだけで、どれもバックスラッシュを含む。だからバックスラッシュを含むファイルは構文木で調べる
+ * true でも、それがコメントの中だけなら構文木の検査で反応しない (絞り込みは調べる範囲を減らすだけ)
+ */
+function mayContainValue(text: string, needle: string): boolean {
+  return text.includes(ESCAPE_MARK) || text.includes(needle);
+}
+
 const sourceFileCache = new Map<string, ts.SourceFile>();
 function parse(rel: string): ts.SourceFile {
   const cached = sourceFileCache.get(rel);
   if (cached) return cached;
-  const text = fs.readFileSync(path.join(ROOT, rel), 'utf8');
+  const text = readSource(rel);
   const kind = rel.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(rel, text, ts.ScriptTarget.Latest, true, kind);
   sourceFileCache.set(rel, sf);
@@ -173,14 +204,32 @@ describe('#1802: 連続日数 (health_streaks) にハンズオンのお試しの
     expect(FILES).toContain('supabase/functions/calculate-segment-stats/index.ts');
   });
 
+  it('構文木を作る前の絞り込みは、探す値の文字かバックスラッシュを含む本文だけを通す (#1814)', () => {
+    expect(mayContainValue("supabase.from('health_streaks').select('*')", TABLE)).toBe(true);
+    expect(mayContainValue("import { updateHealthStreak } from '@/lib/health-streaks';", HEALTH_STREAKS_MODULE_NAME)).toBe(true);
+    // コメントの中だけでも通す (反応するかどうかは構文木の検査が決める)
+    expect(mayContainValue('// health_streaks は読まない', TABLE)).toBe(true);
+    expect(mayContainValue("supabase.from('health_records').upsert(row)", TABLE)).toBe(false);
+    expect(mayContainValue("import { x } from '@/lib/health-records';", HEALTH_STREAKS_MODULE_NAME)).toBe(false);
+    // エスケープで書いた値 (本文の文字は needle と違うが、値は同じ) は、バックスラッシュで通す
+    const escapedTable = "supabase.from('health\\u005fstreaks').insert(row)";
+    expect(escapedTable.includes(TABLE)).toBe(false);
+    expect(mayContainValue(escapedTable, TABLE)).toBe(true);
+    const escapedModule = "import { updateHealthStreak } from '@/lib/health\\-streaks';";
+    expect(escapedModule.includes(HEALTH_STREAKS_MODULE_NAME)).toBe(false);
+    expect(mayContainValue(escapedModule, HEALTH_STREAKS_MODULE_NAME)).toBe(true);
+  });
+
   it("規則 A: 'health_streaks' という文字列を持つ本番のファイルは、理由を書いた一覧とちょうど同じ", () => {
-    const touching = FILES.filter((rel) => stringLiterals(rel).includes(TABLE));
+    const touching = FILES.filter((rel) => mayContainValue(readSource(rel), TABLE) && stringLiterals(rel).includes(TABLE));
     expect(touching).toEqual(Object.keys(FILES_TOUCHING_HEALTH_STREAKS).sort());
   });
 
   it('規則 B: health_streaks の行を足す・変える (insert / upsert / update) のは src/lib/health-streaks.ts だけ', () => {
-    const writers = FILES.filter((rel) =>
-      chainedMethodsOnTable(rel, TABLE).some((method) => WRITE_METHODS.has(method)),
+    const writers = FILES.filter(
+      (rel) =>
+        mayContainValue(readSource(rel), TABLE) &&
+        chainedMethodsOnTable(rel, TABLE).some((method) => WRITE_METHODS.has(method)),
     );
     expect(writers).toEqual(['src/lib/health-streaks.ts']);
     // 唯一の書き手は insert と update の両方を持つ (判定が空振りしていないことの確かめ)
@@ -210,7 +259,12 @@ describe('#1802: 連続日数 (health_streaks) にハンズオンのお試しの
   });
 
   it('規則 E: updateHealthStreak を呼ぶのは、health_records を保存する 3 か所だけ', () => {
-    const importers = FILES.filter((rel) => rel !== 'src/lib/health-streaks.ts' && importsHealthStreaksLib(rel));
+    const importers = FILES.filter(
+      (rel) =>
+        rel !== 'src/lib/health-streaks.ts' &&
+        mayContainValue(readSource(rel), HEALTH_STREAKS_MODULE_NAME) &&
+        importsHealthStreaksLib(rel),
+    );
     expect(importers).toEqual([...HEALTH_STREAK_CALLERS].sort());
     for (const rel of HEALTH_STREAK_CALLERS) {
       // どれも health_records を upsert してから連続日数を進める
