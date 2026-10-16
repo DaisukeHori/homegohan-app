@@ -4,7 +4,7 @@
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート審査中 (v2.2) |
+| Status | 設計ゲート審査中 (v2.3) |
 | Issue | #1442 (親: #1174 の同意ゲート。先例: #1154 の AI 同意の 403・#1030 / #1445 の凍結の API ゲート。前提: #1598 の WebView への一本化と PR #1733) |
 | 分冊 | 本冊 = 配線 (段 B: モバイル + Web → ネイティブの合図 1 本)。核 (段 A: サーバー + `packages/shared`) は `13a-legal-consent-api-server.md` (着地済み) |
 | 正典の関係 | 13a とともに `08-legal-compliance.md` §7.2 (同意ゲート) の配線を広げる冊。§7.2 の「モバイルのネイティブの画面は対象外」の記述は本冊のマージで現在形に直す (§6.19)。`cross/14-parental-consent.md` §0.5 が 13b に求める「生年月日の欄・未成年の案内」は、本冊では Web の同意画面をそのまま使うことで満たす (§6.19・§6.22) |
@@ -19,7 +19,7 @@
 
 ### 0.1 一言でいうと
 
-- モバイル: **1 枚のゲート (`LegalConsentGate`。ルートの layout に 1 つ)** が、サインイン中で「同意が要る」(`GET /api/legal/status` の `required`、または `/api` の 403 `LEGAL_CONSENT_REQUIRED`) なら、**同意画面の route (`app/legal-consent.tsx` = Web の `/legal-consent` を `WebViewScreen` で開く画面) をいまの画面の上に push する**。同意が済むと (Web の同意画面がネイティブへ `{ type: 'legal-consent-accepted' }` を送る) ゲートがその route を閉じ、元の画面にそのまま戻る (画面の入力も残る)。ログインの直後に着く 3 か所 (入口 `app/index.tsx`・タブ `app/(tabs)/_layout.tsx`・初期設定 `app/onboarding/_layout.tsx`) は、同意の状態が分かるまで・同意が要る間は中身を描かない (初期設定より先に同意)。「同意しない」でログアウトしたら、ゲートが同意画面の下に残った画面ごと畳んでウェルカムへ戻す。
+- モバイル: **1 枚のゲート (`LegalConsentGate`。ルートの layout に 1 つ)** が、サインイン中で「同意が要る」(`GET /api/legal/status` の `required`、または `/api` の 403 `LEGAL_CONSENT_REQUIRED`) なら、**同意画面の route (`app/legal-consent.tsx` = Web の `/legal-consent` を `WebViewScreen` で開く画面) をいまの画面の上に push する**。同意が済むと (Web の同意画面がネイティブへ `{ type: 'legal-consent-accepted' }` を送る) ゲートがその route を閉じ、元の画面にそのまま戻る (画面の入力も残る)。ログインの直後に着く 3 か所 (入口 `app/index.tsx`・タブ `app/(tabs)/_layout.tsx`・初期設定 `app/onboarding/_layout.tsx`) は、同意の状態が分かるまで・同意が要る間は中身を描かない (初期設定より先に同意)。ただし初期設定の layout は、このログインで中身を一度描いた後に同意が要るようになったときは中身を描いたままにし、同意の後に同じ画面へ入力が残ったまま戻す。「同意しない」「登録をやめる」でログアウトしたら、同意画面は Web の案内 (削除の依頼先・請求の画面) を出したまま残り、上に「閉じる」を出す。閉じると、ゲートが同意画面の下に残った画面ごと畳んでウェルカムへ戻す。同意を待つ間は、下に残ったハンズオンツアーの段が端末の戻るを受けない (ツアーを抜けない)。
 - 同意画面そのもの (チェック 2 つ・全文へのリンク・同意しない・生年月日・未成年の案内・409 の読み込み直し) は **Web の `/legal-consent` が持つものをそのまま使う**。ネイティブに同意の画面を作らない。AI 同意の画面 (`app/settings/ai-consent.tsx` = Web の `/settings/ai-consent`) と同じ形。
 - サーバー側 (`/api` の 403・`GET /api/legal/status`・shared の判定と文面) は 13a (着地済み)。本冊はそれを使う側。
 
@@ -29,7 +29,7 @@
 |---|---|---|
 | 設計書 800 行超 | 超える (表・トレース・正典コードを持つため) | トリガー |
 | 消費先レーン 3 以上 | モバイル (apps/mobile) 1 つ + Web の合図 2 ファイル (`src/lib/native-auth-bridge.ts`・`src/app/legal-consent/LegalConsentForm.tsx`) | 2 |
-| 共有面 2 つ以上 | `WebViewScreen.tsx` (全 WebView の画面が通る) 1 つ。`packages/shared` はコメントの現在形化だけ (`legal-consent-copy.ts`・`parental-consent.ts`。export・値は変えない。§6.19) | 1 |
+| 共有面 2 つ以上 | `WebViewScreen.tsx` とそれが使う `useWebAuthMessages` (`webViewAuthMessages.ts`) (全 WebView の画面が通る 1 つの面)。`packages/shared` はコメントの現在形化だけ (`legal-consent-copy.ts`・`parental-consent.ts`。export・値は変えない。§6.19) | 1 |
 
 **判定: 1 冊・2 段 (B1 = Web の合図 → B2 = モバイル)。** 核 (13a) と配線 (本冊) の分冊は済んでいる。本冊の中をさらに分けない理由: 本冊の契約は 13a の実コード (shared の export・status の形・403 の形) と、Web → ネイティブの合図 1 本だけで、冊をまたぐ契約が増えない。段 B1 (Web の 2 ファイル) を先に閉じるのは、旧版のアプリが知らない type のメッセージを捨てる (`src/lib/native-auth-bridge.ts:22`) ので、Web だけ先に出しても壊れないため。
 
@@ -44,18 +44,21 @@
 | ログインの後の振り分け `routeAfterSignIn`: profile を PostgREST で読み、`?next=` があればそこへ、無ければ初期設定の完了 → `/(tabs)/home`・開始済み → `/onboarding/resume`・未開始 → `/onboarding/welcome` へ `router.replace` (入口を通らない)。メールとパスワード (`:220`) と Google (`:124`) の両方 | `apps/mobile/app/(auth)/login.tsx:75-99` |
 | サインアップはアプリの中でセッションを作らない (確認メールの Alert の後に `/(auth)/login` へ)。確認メールのリンクは `/auth/verify` で session を作り `/(tabs)/home` へ | `apps/mobile/app/(auth)/signup.tsx:100, 117-118`、`apps/mobile/app/(auth)/auth/verify.tsx:76-84` |
 | 初期設定の layout: auth の読み込み中はスピナー、session 無し → `/login`、それ以外は `Stack` を描く (同意も profile も見ない)。振り分け: 完了 → home、開始済み → resume、未開始 → welcome | `apps/mobile/app/onboarding/_layout.tsx:15-24`、`apps/mobile/app/onboarding/index.tsx:17-25` |
-| ハンズオンツアーの layout: 未ログイン → `/login`。`GET /api/handson-tour/status` を取り、失敗したらツアーを出す | `apps/mobile/app/handson-tour/_layout.tsx:30-61` |
-| ツアーの献立の段は RN の `<Modal>` を 2 つ常に開く (`V4GenerateModal` のサンドボックス = `visible={true}`、吹き出し `TourOverlay` を包む `<Modal visible={true}>`)。2.9 で Step 3 へ `router.push`。サンドボックスの `POST /api/menu-plans/add` の失敗は握りつぶして先へ進む | `apps/mobile/app/handson-tour/menu.tsx:108-135, 199-233`、`apps/mobile/src/components/menu/V4GenerateModal.tsx:267-293` |
+| 初期設定の質問の画面は、答え (`answers`)・いまの質問 (`currentStep`)・戻る履歴 (`stepHistory`) を画面の state に持つ (答えはその都度 `user_profiles` にも PostgREST で保存)。最後の答えで `POST /api/onboarding/complete` が失敗すると、計算中の表示をやめて Alert を出し、最後の質問に戻る (入力欄は答えの先頭で空にしている)。完了の画面は計算の結果 (`targets`) を画面の state に持ち、保存の失敗は Alert | `apps/mobile/app/onboarding/questions.tsx:758-905, 911-951`、`apps/mobile/app/onboarding/complete/index.tsx:76-101, 123-180` |
+| ハンズオンツアーの layout: 未ログインになると **effect の中で** `router.replace('/login')` (`Redirect` と違い、前面かどうかを見ない。前面の route を置き換える)。`GET /api/handson-tour/status` を取り、失敗したらツアーを出す | `apps/mobile/app/handson-tour/_layout.tsx:30-61` |
+| ツアーの献立の段は RN の `<Modal>` を 2 つ常に開く (`V4GenerateModal` のサンドボックス = `visible={true}`、吹き出し `TourOverlay` を包む `<Modal visible={true}>`)。2.9 で Step 3 へ `router.push` (effect の依存は `[subStep]`)。Step 3 へ移った後も献立の段は Stack の下にマウントされたまま (`subStep` は 2.9 のまま)。サンドボックスの `POST /api/menu-plans/add` の失敗は握りつぶして先へ進む | `apps/mobile/app/handson-tour/menu.tsx:108-135, 199-233`、`apps/mobile/app/handson-tour/_layout.tsx:74-83`、`apps/mobile/src/components/menu/V4GenerateModal.tsx:267-293` |
 | ツアーを抜ける `leaveTour`: skip の API の後に `router.replace('/home')` | `apps/mobile/src/handson-tour/useLeaveTour.ts:42-62` |
+| ツアーの段の端末の戻る (Android): 吹き出しの `TourOverlay` は描かれている間ずっと `BackHandler` の受け手を張り、`onSkip` があれば呼んで true を返す (無ければ false)。写真・バッジの段は、吹き出しを出さない画面 (写真の保存の失敗・バッジの読み込み中と失敗) で `useTourHardBack` を張る。献立の段の吹き出しは RN の Modal の中で、Modal の `onRequestClose` も `handleHardBack`。どの段も `handleHardBack` = `leaveTour('hard_back')`。Stack の下に残った段の受け手も張られたまま | `apps/mobile/src/handson-tour/TourOverlay.tsx:66-80`、`apps/mobile/src/handson-tour/useLeaveTour.ts:69-82`、`apps/mobile/app/handson-tour/photo.tsx:328-338, 455-468`、`apps/mobile/app/handson-tour/badges.tsx:101-108, 162-182`、`apps/mobile/app/handson-tour/menu.tsx:137-141, 214-231` |
+| RN の `BackHandler` は後から張った受け手から順に呼び、true を返したところで止める。react-navigation の戻る (`GO_BACK` を流す受け手) はナビゲーションのコンテナの mount で先に張られるので、画面が張った受け手が先に受ける。同意画面を上に push しても、下の段の受け手は外れない | `apps/mobile/__tests__/app/handson-tour-hard-back-step2-3.test.tsx:152-158` (`pressHardwareBack` が同じ順を再現する) |
 | RN の `<Modal>` は push した route より上に出る (開いたままだと、push した同意画面を隠す)。app と src で `<Modal>` を描くのは `(tabs)/settings.tsx:453`・`AIAdvisorSheet.tsx:600`・`AIDayMenuModal.tsx:101`・`V4GenerateModal.tsx:287, 703` (`703` の通常版は main のどこからも使われない)・`handson-tour/menu.tsx:215` | `tests/ai-consent-mobile-modal-nesting.test.ts:1-35` |
 | API クライアント: `withFriendlyErrors` は 429 と 503 だけを固定の文の例外に置き換え、403 はそのまま投げる | `apps/mobile/src/lib/api.ts:72-78` |
 | 生の fetch の失敗の応答から Error を作る `errorOfFailedResponse` (同じ 2 つの判定)。`StoppedByServerError` の union と Alert の見出し | `apps/mobile/src/lib/failed-response.ts:26-35, 44-47` |
 | AI 同意の 403 をアプリが見分ける形 (`HTTP 403 …: {json}`)。案内は `router.push('/settings/ai-consent')` | `apps/mobile/src/lib/ai-consent.ts:76-77, 86-97, 120` |
 | Error の message から本文の文を取り出す `getApiErrorMessage` (平たい `{ error: '文' }` の文字列も読む) | `apps/mobile/src/lib/api-error.ts:38-68` |
-| `WebViewScreen`: props は `path`・`testID`・`header`。認証ブリッジ (`POST /api/auth/native-bridge/code` → `/auth/native-bridge?code&next`) を自分で行い、`onMessage` は送り元が自オリジンのときだけ `tab-navigate`・`navigate-back`・`download`・`sign-out`・`session-expired` を処理する。注入スクリプトは `<a>` のクリックと `history.pushState` だけを捕まえる (`window.location.assign` による全体の読み込みでは `tab-navigate` を送らない) | `apps/mobile/src/components/web/WebViewScreen.tsx:37-43, 54-125, 197-247, 320-378` |
-| Web からの `sign-out` / `session-expired` の処理。`sign-out` は `signOutWithCleanup` → `router.replace('/')`。送り元の検査 `isFromWebOrigin` | `apps/mobile/src/lib/webViewAuthMessages.ts:50, 64-68, 77-91, 205-225, 291-318` |
+| `WebViewScreen`: props は `path`・`testID`・`header` (WebView の上 (上端の安全領域の内側) に置くネイティブの部品)。認証ブリッジ (`POST /api/auth/native-bridge/code` → `/auth/native-bridge?code&next`) を自分で行い、`onMessage` は送り元が自オリジンのときだけ `tab-navigate`・`navigate-back`・`download`・`sign-out`・`session-expired` を処理する。注入スクリプトは `<a>` のクリックと `history.pushState` だけを捕まえる (`window.location.assign` による全体の読み込みでは `tab-navigate` を送らない) | `apps/mobile/src/components/web/WebViewScreen.tsx:37-43, 54-125, 197-247, 320-378` |
+| Web からの `sign-out` / `session-expired` の処理。`sign-out` は `signOutWithCleanup` → `goToWelcome` = `router.replace('/')` (`useWebAuthMessages(currentPath)` の中で決まっていて、使う画面からは変えられない)。ログアウトは同時に 1 つだけ (`signOutInFlight`)。送り元の検査 `isFromWebOrigin` | `apps/mobile/src/lib/webViewAuthMessages.ts:50, 64-68, 77-91, 159-168, 205-225, 291-318`、`apps/mobile/src/components/web/WebViewScreen.tsx:167` |
 | Web → ネイティブのメッセージの型は `sign-out`・`session-expired`・`mfa-verify-required` の 3 つ。旧版のアプリは知らない type を捨てる。`postMessage` の送り方 `post()` | `src/lib/native-auth-bridge.ts:22, 33, 86-108, 126-132, 151-154` |
-| Web の同意画面: 同意済みなら `next` へ redirect、生年月日の欄 (`needsBirthDate`)・保護者の同意の案内 (`guardianMissing`) を出す。同意が記録できたら `window.location.assign(next)`。「同意しない」は `notifyNativeSignOut()` → `signOut()` → `broadcastSignOut()`。「登録をやめる」は退会 → `signOutAfterAccountDeletion` (ネイティブへ `sign-out` を送る) | `src/app/legal-consent/page.tsx:41-79`、`src/app/legal-consent/LegalConsentForm.tsx:41, 126-171, 173-194, 198-214`、`src/lib/account-self-service.ts:18` |
+| Web の同意画面: 同意済みなら `next` へ redirect、生年月日の欄 (`needsBirthDate`)・保護者の同意の案内 (`guardianMissing`) を出す。同意が記録できたら `window.location.assign(next)`。「同意しない」は `notifyNativeSignOut()` (ネイティブへ `sign-out`) → `signOut()` を待つ → `broadcastSignOut()` → 案内の画面 (`phase === 'declined'`: 「ご利用を終了しました」・データの削除の依頼先 = お問い合わせ `/contact`・請求の画面 `/settings/data-requests`・ログイン `/login` へのリンク)。案内はネイティブへ `sign-out` を送った**後**に描かれる。「登録をやめる」は退会 → `signOutAfterAccountDeletion` (ネイティブへ `sign-out` を送る) → 「登録をやめました」(`/signup` へのリンク) | `src/app/legal-consent/page.tsx:41-79`、`src/app/legal-consent/LegalConsentForm.tsx:41, 126-171, 173-194, 198-214, 216-228, 280-325`、`src/lib/account-self-service.ts:18` |
 | Web の画面の同意ゲートの対象外 (`/legal-consent` 自身・`/auth/*`・`/terms`・`/privacy` など)。`next` は `/api` と同意画面自身なら `/home` | `lib/legal-consent.ts:91-125, 210-216`、`lib/onboarding-routing.ts:67-70` |
 | middleware の `/api` の分岐の同意の判定 (凍結 → メンテナンス → 同意) と、画面の判定 | `lib/supabase/middleware.ts:264-281, 405-425` |
 | 通知のトークンの claim (`POST /api/push-tokens/claim`) は 13a の許可リストにある (`device_cleanup`)。登録そのものは PostgREST の upsert (middleware を通らない) | `packages/shared/src/legal-consent-api.ts:119-124`、`apps/mobile/src/lib/pushNotifications.ts:295-302, 324` |
@@ -139,15 +142,15 @@ Issue の全体 (3 つの経路) は 13a §1.1。本冊が解決するのは次�
 |---|---|---|---|
 | R-6 | モバイルは、ログイン後、初期設定より先に同意の状態を確かめ、未同意なら同意画面へ回す | Issue 本文「起動時・初期設定の前に同意の状態を確かめて同意画面へ回す」 | T-G1, T-IDX1, T-TL1, T-OB1, T-P1, T-P7 |
 | R-7 | 今の main のネイティブの画面と起動の流れを実コードで列挙し、同意の前に使えてしまう経路を表にする。WebView の中の画面は Web の同意ゲートが受け持つ | Issue 本文 | §3.3 |
-| R-12 | 同意画面は Web の `/legal-consent` を WebView で開き、Web と同じ要件 (必須チェック 2 つ・全文へのリンク・同意しない = ログアウト + 削除の依頼先の案内・生年月日・未成年の案内) をそのまま使う。ネイティブに同意の画面を作らない | #1598 のコメントの記録 (WebView への一本化)・cross/14 §0.5 | T-SC1, T-W2, E2E (既存の `legal-consent-gate.spec.ts`) |
-| R-15 | ネイティブの側が `/api` を呼んで 403 `LEGAL_CONSENT_REQUIRED` を受けたら、どの画面からでも同意画面へ回し、同意が済んだら元の画面に戻る (画面の入力を失わない) | Issue 本文「API の 403 の専用コード」 | T-API1, T-FR1, T-P3, T-P8, T-G1, T-G3, T-TL1 |
+| R-12 | 同意画面は Web の `/legal-consent` を WebView で開き、Web と同じ要件 (必須チェック 2 つ・全文へのリンク・同意しない = ログアウト + 削除の依頼先の案内・生年月日・未成年の案内) をそのまま使う。ネイティブに同意の画面を作らない。アプリでも「同意しない」「登録をやめる」の後の Web の案内 (削除の依頼先・請求の画面) が見える | #1598 のコメントの記録 (WebView への一本化)・cross/14 §0.5・cross/08 §7.2 (同意画面の行) | T-SC1, T-SC3, T-G7, T-WV2, T-W2, E2E (既存の `legal-consent-gate.spec.ts`) |
+| R-15 | ネイティブの側が `/api` を呼んで 403 `LEGAL_CONSENT_REQUIRED` を受けたら、どの画面からでも同意画面へ回し、同意が済んだら元の画面に戻る (画面の入力を失わない。タブの区画は §8 Q-6) | Issue 本文「API の 403 の専用コード」 | T-API1, T-FR1, T-P3, T-P8, T-G1, T-G3, T-TL1, T-OB1, T-TM1, T-TM2, T-TM3, T-TP1, T-TB1 |
 | R-16 | 同意が済んだことをネイティブが知る合図は Web の同意画面が送る (`legal-consent-accepted`)。旧版のアプリはこの合図を捨てても壊れない | `src/lib/native-auth-bridge.ts:22` の既存の規則 | T-W1, T-W3, T-WV1, T-P4 |
 | R-17 | 配布 (#1115) の前の旧版のアプリの扱い (旧版も `/api` の 403 で止まる) を書く | Issue 本文「どこまで止めるか…設計で決める」と 13a の着地 | §6.21 |
 | R-18 | 13a の設計書・実コード (`packages/shared`・middleware・status route) を変えない。食い違いは本冊で指摘する | 本冊の前提 | §6.22 |
 
 R-1〜R-5・R-14 (サーバー) と、両方に関わる R-8〜R-11・R-13 は 13a §3.1。
 
-### 3.2 ユーザーシナリオ (17 本)
+### 3.2 ユーザーシナリオ (19 本)
 
 サーバーだけで結果が決まる S6・S7・S10・S11・S14・S16・S17 と、両方に関わる S5・S8・S9・S15 は 13a §3.2 (S5・S8・S9 のモバイル側の走らせ方は本冊 §4.2 に重ねて書く)。
 
@@ -156,20 +159,22 @@ R-1〜R-5・R-14 (サーバー) と、両方に関わる R-8〜R-11・R-13 は 1
 | S1 | 新規登録 (アプリのネイティブのサインアップ) → 確認メール → ログイン (メールとパスワード、または確認メールのリンク) → 初期設定の前に同意画面 (WebView) → 同意 → 初期設定へ |
 | S2 | 既存の利用者 (同意済み) がアプリを起動 → 今までどおりホーム (余計な画面は出ない) |
 | S3 | 既存の利用者 (未同意・ENFORCE=on) がアプリを起動 → 同意画面 → 同意 → 元の入口 (ホーム) |
-| S4 | アプリの同意画面で「同意しない」→ Web がログアウトし、ネイティブもログアウト → ウェルカム画面 (削除の依頼先はお問い合わせ) |
+| S4 | アプリの同意画面で「同意しない」→ Web がログアウトし、ネイティブもログアウト → 同意画面に Web の案内 (「ご利用を終了しました」・削除の依頼先 = お問い合わせ・請求の画面) が出たまま、上に「閉じる」が出る → 「閉じる」→ ウェルカム画面 |
 | S5 (モバイル側) | 規約の改定の後、血液検査の画面で入力の途中に保存 → `/api` が 403 → 同意画面がその上に開く → 同意 → 同じ画面に入力が残ったまま戻る → もう一度保存 |
-| S12 | 未同意のセッションが残る端末で、パスワード再設定のリンクを開く → `/auth/reset-password` はゲートの対象外 → 再設定できる → ログアウトしてログイン画面へ (既存の流れ) → ログイン後に同意画面 |
+| S12 | 未同意のセッションが残る端末で、パスワード再設定のリンクを開く → `/auth/reset-password` はゲートの対象外 → 再設定できる → ログアウトしてログイン画面へ (既存の流れ。起動の直後に開いた同意画面が下に残っていたときはウェルカムへ) → ログイン後に同意画面 |
 | S13 | 同意画面 (WebView) を開いたまま改定 → Web の同意画面が 409 を受けて「更新されました」と読み込み直しを促す → 読み込み直して新しい版で同意 |
 | S18 | 機内モードでアプリを起動 (保存済みのセッション) → status を取れず `unknown` → 画面は開く (通信できない案内は今までどおり) → 通信が戻った最初の API 呼び出しが 403 なら同意画面 |
 | S19 | 生年月日がプロフィールに無い人 (cross/14。`gaps` に `'birth_date'`) がアプリを起動 → `required` → 同意画面 (WebView) に生年月日の欄が出る → 入力して同意 → 元の画面へ |
-| S20 | 18 歳未満の本人が自分で登録 → 同意画面で生年月日を入れる → Web が 403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` → 案内 →「登録をやめる」→ 退会 → Web がネイティブへ `sign-out` → ウェルカム画面 |
+| S20 | 18 歳未満の本人が自分で登録 → 同意画面で生年月日を入れる → Web が 403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` → 案内 →「登録をやめる」→ 退会 → Web がネイティブへ `sign-out` → 同意画面に「登録をやめました」が出たまま「閉じる」→ ウェルカム画面 |
 | S21 | 未同意の人が通知をタップしてアプリを開く → 同意画面が先 → 同意 → 通知の行き先 (血液検査の画面) へ |
 | S22 | 13b より前のビルド (配布前の開発機) で、未同意の人が初期設定の完了を押す → `/api/onboarding/complete` が 403 → 画面に固定の文「利用規約・プライバシーポリシーへの同意が必要です…」が出る → ホームのタブ (WebView) を開くと Web の同意画面 → 同意すると以後の API が通る (§6.21) |
 | S23 | 未同意の人が deep link で `homegohan://health/blood-tests` を開く → 画面が 1 往復ぶん見えてから同意画面が上に開く (その間の API は 403) → 同意 → 血液検査の画面 |
 | S24 | `LEGAL_CONSENT_ENFORCE` が off → status は `required: false` → 同意画面は出ない (13a の S8 と同じ) |
-| S25 | ハンズオンツアーの途中で改定 → 次の API (写真の保存) が 403 → 同意画面がツアーの上に開く → 同意 → ツアーの同じ段に戻る |
+| S25 | ハンズオンツアーの途中で改定 → 次の API (写真の保存) が 403 → 同意画面がツアーの上に開く (Android の戻るボタンを押してもツアーを抜けない) → 同意 → ツアーの同じ段に戻る |
 | S26 | ハンズオンツアーの献立の段 (RN の Modal を出している段) で改定 → 献立の追加 (サンドボックス) の API が 403 → 段の Modal が閉じ、同意画面が見える → 同意 → Modal が戻り、ツアーの続き (Step 3) へ |
 | S27 | タブの AI の FAB から AI 相談のシート (RN の Modal) を開いたまま改定 → 送信の API が 403 → シートが閉じ (タブの layout がスピナーになり FAB ごと外れる)、同意画面が見える → 同意 → タブ (ホーム) に戻る。シートは閉じたまま (もう一度 FAB から開く) |
+| S28 | 初期設定の途中で同意が要るようになる (S18 の `unknown` のまま初期設定へ進んだ・初期設定の途中で改定が入った) → 最後の質問に答えると `POST /api/onboarding/complete` が 403 → 初期設定の画面の上に同意画面が開く (初期設定の画面は外れない) → 同意 → 同じ質問の画面に、それまでの答えが残ったまま戻る → 最後の質問にもう一度答えて完了 |
+| S29 | ハンズオンツアーの卒業の段 (献立の段・バッジの段は Stack の下に残っている) で改定 → 完了の API が 403 → 同意画面が上に開く (下の献立の段の Modal は開き直さず、Step 3 も積み直さない。Android の戻るボタンを押してもツアーを抜けない) → 同意 → 卒業の段のエラーの画面に戻る →「もう一度」で完了 |
 
 ### 3.3 今の main に残るネイティブの画面と起動の流れ (実コードで列挙。R-7)
 
@@ -187,12 +192,12 @@ R-1〜R-5・R-14 (サーバー) と、両方に関わる R-8〜R-11・R-13 は 1
 | 設定から開く | `profile/nutrition-targets.tsx` (`settings.tsx:339`) | `/profile/nutrition-targets` | ネイティブ | `POST /api/nutrition-targets/calculate` (`:107-108`) | 設定からだけ | 対象 |
 | 設定から開く | `settings/account.tsx` (`settings.tsx:436`) | `/settings/account` | ネイティブ | `POST /api/account/delete` (`:66`。許可リスト) | 設定からだけ | 対象 (退会の API は未同意でも通る。画面自体は同意の後) |
 | 設定から開く | `settings/ai-consent.tsx` (`settings.tsx:374`・`ai-consent.ts:120`) | `/settings/ai-consent` | WebView (`/settings/ai-consent`) | WebView の中 | 設定からと、AI の 403 の案内から | 対象 |
-| 初期設定 | `onboarding/index.tsx`, `welcome.tsx`, `questions.tsx`, `resume.tsx`, `complete/index.tsx` | `/onboarding`, `/onboarding/welcome`, `/onboarding/questions`, `/onboarding/resume`, `/onboarding/complete` | ネイティブ | `POST /api/onboarding/complete` (`welcome.tsx:20-21`、`questions.tsx:943-944`)、`POST /api/nutrition-targets/calculate`・`PUT /api/nutrition/targets` (`complete/index.tsx:127-140`)。`questions.tsx:905` は `user_profiles` を PostgREST で upsert (ゲートの外。§1.3) | **開ける。Issue の 2 の経路** (入口が同意を見ずに `/onboarding` へ回す。ログインの `routeAfterSignIn` は入口を通らずに `/onboarding/welcome` か `/onboarding/resume` へ直接回す) | 対象 (R-6: 入口と初期設定の layout が同意の状態を待ち、`required` なら同意画面が先) |
-| ツアー | `handson-tour/index.tsx`, `photo.tsx`, `menu.tsx`, `badges.tsx`, `graduate.tsx` | `/handson-tour`, `/handson-tour/photo`, `/handson-tour/menu`, `/handson-tour/badges`, `/handson-tour/graduate` | ネイティブ | layout: `GET /api/handson-tour/status` (`_layout.tsx:43-44`)。`POST /api/handson-tour/skip` (`index.tsx:114`、`src/handson-tour/useLeaveTour.ts:57`)、`POST /api/meal-plans/add-from-photo` (`photo.tsx:282`)、`POST /api/menu-plans/add` (`menu.tsx` が描く `src/components/menu/V4GenerateModal.tsx:272-273`)、`GET /api/badges` (`badges.tsx:69`)、`POST /api/handson-tour/complete` (`graduate.tsx:88, 198-199`) | 開ける (初期設定の完了 `complete/index.tsx:374` と、設定の「ツアーをもう一度」`settings.tsx:392` から) | 対象 (Web は `/handson-tour` の画面を対象外にするが、ネイティブは同意画面をツアーの上に開き、同意の後に同じ段へ戻るので流れが切れない)。献立の段 (`menu.tsx`) は RN の Modal を常に開くので、`required` の間は Modal を閉じ、Step 3 へ進まない (6.6.17) |
+| 初期設定 | `onboarding/index.tsx`, `welcome.tsx`, `questions.tsx`, `resume.tsx`, `complete/index.tsx` | `/onboarding`, `/onboarding/welcome`, `/onboarding/questions`, `/onboarding/resume`, `/onboarding/complete` | ネイティブ | `POST /api/onboarding/complete` (`welcome.tsx:20-21`、`questions.tsx:943-944`)、`POST /api/nutrition-targets/calculate`・`PUT /api/nutrition/targets` (`complete/index.tsx:127-140`)。`questions.tsx:905` は `user_profiles` を PostgREST で upsert (ゲートの外。§1.3) | **開ける。Issue の 2 の経路** (入口が同意を見ずに `/onboarding` へ回す。ログインの `routeAfterSignIn` は入口を通らずに `/onboarding/welcome` か `/onboarding/resume` へ直接回す) | 対象 (R-6: 入口と初期設定の layout が同意の状態を待ち、`required` なら同意画面が先)。初期設定の layout は、このログインで `Stack` を一度描いた後に `required` になったときは `Stack` を描いたままにし、同意画面をその上に開く (質問の途中の答え・計算の結果を残す。6.6.13・S28) |
+| ツアー | `handson-tour/index.tsx`, `photo.tsx`, `menu.tsx`, `badges.tsx`, `graduate.tsx` | `/handson-tour`, `/handson-tour/photo`, `/handson-tour/menu`, `/handson-tour/badges`, `/handson-tour/graduate` | ネイティブ | layout: `GET /api/handson-tour/status` (`_layout.tsx:43-44`)。`POST /api/handson-tour/skip` (`index.tsx:114`、`src/handson-tour/useLeaveTour.ts:57`)、`POST /api/meal-plans/add-from-photo` (`photo.tsx:282`)、`POST /api/menu-plans/add` (`menu.tsx` が描く `src/components/menu/V4GenerateModal.tsx:272-273`)、`GET /api/badges` (`badges.tsx:69`)、`POST /api/handson-tour/complete` (`graduate.tsx:88, 198-199`) | 開ける (初期設定の完了 `complete/index.tsx:374` と、設定の「ツアーをもう一度」`settings.tsx:392` から) | 対象 (Web は `/handson-tour` の画面を対象外にするが、ネイティブは同意画面をツアーの上に開き、同意の後に同じ段へ戻るので流れが切れない)。同意を待つ間は、写真・献立・バッジの段 (Stack の下に残った段も) が端末の戻るを受けない (`TourOverlay` の `onSkip`・`useTourHardBack`・献立の段の Modal の `onRequestClose` を外す。戻るは同意画面が受ける。6.6.17)。献立の段 (`menu.tsx`) は RN の Modal を常に開くので、待ちがこの段が前面の間に始まったときだけ Modal を閉じ、待つ間は Step 3 へ進まない。Step 3 への push は 1 回だけ (6.6.17・S26・S29) |
 | 部品 (全タブ) | `src/components/ai/AIFloatingFab.tsx` → `AIAdvisorSheet.tsx` → `AIDayMenuModal.tsx` | (タブの上) | ネイティブのシート | `/api/ai/consultation/...` (`AIAdvisorSheet.tsx:196-308, 426-430`。生の fetch は `:331, 446`)、`POST /api/ai/menu/v4/generate` (`src/hooks/useV4MenuGeneration.ts:86-87`) | タブが描かれていれば開ける | 対象 (`required` の間はタブを描かないので FAB も出ない。FAB は `(tabs)/_layout.tsx:112` が `Tabs` の隣に描くので、シートを開いたままの 403 でもタブの layout のスピナーでシートの RN の Modal ごと外れ、同意画面が上に開く。S27) |
 | 起動時の処理 | `app/_layout.tsx:38-57` の `PushTokenRegistrar`、`src/components/NotificationRouter.tsx` | — | — | claim `POST /api/push-tokens/claim` (`pushNotifications.ts:324`。許可リスト)、失敗の報告 `POST /api/log` (`:150-151`。許可リスト) | 同意の前でも通る (許可リスト) | 変えない (claim)。通知の行き先への遷移は同意の後に延ばす (6.6.13) |
 
-RN の `<Modal>` (push した同意画面より上に出る。§0.3) を描く所の扱い: `(tabs)/settings.tsx` のログアウトの確認・`AIAdvisorSheet` と `AIDayMenuModal` (タブの AI の FAB から) は、どれもタブの中なので、`required` の間タブの layout がスピナーになると一緒に外れる (6.6.13)。`V4GenerateModal` の通常版は使われていない。残る `handson-tour/menu.tsx` の 2 つ (常に開く) は、`required` の間閉じる (6.6.17)。
+RN の `<Modal>` (push した同意画面より上に出る。§0.3) を描く所の扱い: `(tabs)/settings.tsx` のログアウトの確認・`AIAdvisorSheet` と `AIDayMenuModal` (タブの AI の FAB から) は、どれもタブの中なので、`required` の間タブの layout がスピナーになると一緒に外れる (6.6.13)。`V4GenerateModal` の通常版は使われていない。残る `handson-tour/menu.tsx` の 2 つ (常に開く) は、献立の段が前面の間に同意の待ちが始まったときだけ、待ちが明けるまで閉じる (6.6.17)。献立の段が Step 3 以降の段の下に残っている間に始まった待ちでは閉じない (閉じると、待ちが明けたときに背面の Modal が開き直して前面の段を覆う。S29)。
 
 対象外のパスの一覧 (`MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`。§6.7) は、この表の「対象外」の行 = `(auth)` と `(public)` の画面と、同意画面そのもの (`/legal-consent`) に一致する。一致はテスト T-ML3 が `apps/mobile/app/(auth)` と `(public)` のファイル名から確かめる。
 
@@ -206,16 +211,17 @@ PR #1733 で消えた画面 (運営・組織・サポートの区画、AI 相談
 
 ```
 モバイル (段 B2)
-  apps/mobile/src/lib/legal-consent.ts                 ← 403 の見分け・LegalConsentRequiredError・合図 (required / accepted) の購読・対象外のパス・同意画面のパスとメッセージの type・状態の型と利用者ごとの記録の純粋な関数・同意画面で止める「戻る」の action
-  apps/mobile/src/providers/LegalConsentProvider.tsx   ← GET /api/legal/status を user ごとに取り、利用者ごとの記録から state (loading / clear / required / unknown) を描画のその場で決める。合図で state を動かす
-  apps/mobile/src/components/legal/LegalConsentGate.tsx ← ルートの layout に 1 つ。required なら同意画面の route を push、済んだら閉じる。ログアウトしたら下に残った画面ごと畳む (描くものは無い)
-  apps/mobile/app/legal-consent.tsx                    ← 同意画面の route = WebViewScreen path="/legal-consent"。同意が要る間は「戻る」の操作 (GO_BACK / POP / POP_TO_TOP) で閉じない
+  apps/mobile/src/lib/legal-consent.ts                 ← 403 の見分け・LegalConsentRequiredError・合図 (required / accepted) の購読・対象外のパス・同意画面と入口のパスとメッセージの type・状態の型と利用者ごとの記録の純粋な関数・同意画面の扱い (同意を待つ / ログアウトの後の案内 / それ以外) と取り除く操作の決定・Modal を閉じる間と初期設定の layout が待つ間の判定
+  apps/mobile/src/providers/LegalConsentProvider.tsx   ← GET /api/legal/status を user ごとに取り、利用者ごとの記録から state (loading / clear / required / unknown) を描画のその場で決める。合図で state を動かす。待つ間と Modal を閉じる間のフック (ツアーの段が使う)
+  apps/mobile/src/components/legal/LegalConsentGate.tsx ← ルートの layout に 1 つ。required なら同意画面の route を push、済んだら閉じる。同意を待っていた同意画面の上でログアウトしたら畳まずに待ち、同意画面が入口へ移った後に下に残った画面ごと畳む (描くものは無い)
+  apps/mobile/app/legal-consent.tsx                    ← 同意画面の route = WebViewScreen path="/legal-consent"。同意が要る間は「戻る」の操作 (GO_BACK / POP / POP_TO_TOP) で閉じない。ログアウトの後はウェルカムへ移らず Web の案内を残し、上に「閉じる」を出す
   apps/mobile/app/_layout.tsx                          ← Provider と Gate を置く。legal-consent の Stack.Screen (gestureEnabled: false)
-  apps/mobile/app/index.tsx, app/(tabs)/_layout.tsx, app/onboarding/_layout.tsx ← 同意の状態が分かる (clear / unknown) まで・required の間は中身を描かない (ログインの直後に着く 3 か所)
+  apps/mobile/app/index.tsx, app/(tabs)/_layout.tsx, app/onboarding/_layout.tsx ← 同意の状態が分かる (clear / unknown) まで・required の間は中身を描かない (ログインの直後に着く 3 か所)。初期設定の layout は、このログインで一度描いた後は required でも描いたまま
   apps/mobile/src/components/NotificationRouter.tsx    ← 同意の状態が分かるまで・required の間・同意画面と入口 ('/') にいる間は通知の行き先へ移らない
-  apps/mobile/app/handson-tour/menu.tsx                ← required の間は RN の Modal 2 つを閉じ、Step 3 へ進まない
+  apps/mobile/app/handson-tour/menu.tsx, photo.tsx, badges.tsx ← 同意を待つ間は端末の戻るを受けない。献立の段は、待ちが前面の間に始まったときだけ RN の Modal 2 つを閉じ、待つ間は Step 3 へ進まない (push は 1 回だけ)
   apps/mobile/src/lib/api.ts, failed-response.ts       ← 403 LEGAL_CONSENT_REQUIRED → Provider へ知らせ + 固定の文の例外
-  apps/mobile/src/components/web/WebViewScreen.tsx     ← onMessage に legal-consent-accepted の分岐 1 つ
+  apps/mobile/src/components/web/WebViewScreen.tsx     ← onMessage に legal-consent-accepted の分岐 1 つ。props に afterSignOut (Web からのログアウトの後の移り先を、使う画面が決める)
+  apps/mobile/src/lib/webViewAuthMessages.ts           ← useWebAuthMessages に afterSignOut を渡せるようにする (渡さなければ今までどおりウェルカムへ)
 Web (段 B1)
   src/lib/native-auth-bridge.ts                         ← notifyNativeLegalConsentAccepted (type: 'legal-consent-accepted')
   src/app/legal-consent/LegalConsentForm.tsx            ← 同意を記録できたら、next へ移る前にネイティブへ知らせる
@@ -223,31 +229,33 @@ Web (段 B1)
 
 判定の規則 (13a §4.1 の「モバイルの判定」をそのまま使う): **`session && !exempt(pathname) && state === 'required'` → 同意画面を上に開く**。`required` は `GET /api/legal/status` (サーバーが `enforced && !accepted` を計算) か、`/api` の 403 `LEGAL_CONSENT_REQUIRED` で決まる。モバイルはフラグも版も読まない。
 
-同意画面の route を「上に開く」理由 (画面の代わりに描かない・ルートの外に重ねない): 元の画面のコンポーネントが残るので入力が消えない (R-15)。ただし RN の `<Modal>` は push した route より上に出るので、Modal を開いたままの画面は `required` の間 Modal を閉じる (§3.3 の Modal の段落)。`WebViewScreen` は `useNavigation` / `useLocalSearchParams` / `useRouter` を使うので、ナビゲーターの中 (route) に置く必要がある。AI 同意の画面を `router.push('/settings/ai-consent')` で開く既存の形 (`ai-consent.ts:120`) と同じ。
+同意画面の route を「上に開く」理由 (画面の代わりに描かない・ルートの外に重ねない): 元の画面のコンポーネントが残るので入力が消えない (R-15)。だから中身を描かずに待つのは、まだ一度も描いていない layout (ログインの直後・起動の直後) と、描くと WebView の中で Web の同意画面が別に開くタブの layout だけにする (§8 Q-6)。ただし RN の `<Modal>` は push した route より上に出るので、Modal を開いたままの画面は、前面の間に同意の待ちが始まったら Modal を閉じる (§3.3 の Modal の段落)。同じく、下に残った画面が張った端末の戻るの受け手は同意画面より先に受けるので、同意を待つ間は受け手を外す (§0.3・6.6.17)。`WebViewScreen` は `useNavigation` / `useLocalSearchParams` / `useRouter` を使うので、ナビゲーターの中 (route) に置く必要がある。AI 同意の画面を `router.push('/settings/ai-consent')` で開く既存の形 (`ai-consent.ts:120`) と同じ。
 
 ### 4.2 トレース (全シナリオを構造で手で走らせる)
 
 | ID | 走らせた結果 |
 |---|---|
-| S1 | サインアップ (`signup.tsx:100`) → 確認メールの Alert → `/(auth)/login` (`:117-118`。アプリの中ではセッションを作らない) → 経路は 2 つ。(A) 確認メールのリンク → `/auth/verify` (対象外) → session → `verify.tsx:84` の `Redirect` で `/(tabs)/home`。(B) ログイン (`login.tsx:163`) → SIGNED_IN → session → `(auth)/_layout.tsx:29` の `Redirect` で `/(tabs)/home`、続いて `routeAfterSignIn` (`login.tsx:75-99`) が profile を読み、初期設定が未開始なので `router.replace('/onboarding/welcome')`。どちらも、user が入った描画から同意の状態は `loading` (記録が今の利用者のものでない。6.6.9) → タブの layout も初期設定の layout も (6.6.13) スピナーで中身を描かない → `LegalConsentProvider` が `GET /api/legal/status` (許可リスト → 200) → 行が無いので `accepted: false`、本番は `enforced: true` → `required: true` → state `required` → `LegalConsentGate` が前面の pathname (`/home` か `/onboarding/welcome`。どちらも対象) の上に `router.push('/legal-consent')`。(B) で `routeAfterSignIn` の `replace` が push の後に流れたときは、同意画面が `/onboarding/welcome` に置き換わる (`REPLACE` は「戻る」でないので同意画面の `beforeRemove` は止めない。6.6.11) → 初期設定の layout は `required` でスピナー → Gate が pathname の変化でもう一度 push → `app/legal-consent.tsx` = `WebViewScreen path="/legal-consent"` → ブリッジ (`/api/auth/native-bridge/code` は許可リスト、`/auth/native-bridge` は画面の判定の対象外) → Web の `/legal-consent` (画面の判定の対象外。`page.tsx` が profile を読み、未同意なので form を出す) → チェック 2 つ → `POST /api/legal/accept` (許可リスト → 200) → form が `notifyNativeLegalConsentAccepted()` → `window.location.assign('/home')` → ネイティブ: `WebViewScreen.onMessage` (送り元は自オリジン) → `notifyLegalConsentAccepted()` → Provider が state を `clear` にして `refresh()` → Gate: pathname `/legal-consent` で `required` でないので `router.back()` → (A) タブの layout が `clear` で描き、`profile.onboardingCompletedAt` 無しなので `(tabs)/_layout.tsx:35-41` が `/onboarding/welcome` へ。(B) 初期設定の layout が `clear` で `Stack` を描き、welcome → 初期設定 (`POST /api/onboarding/complete` は同意済みなので通る)。初期設定の画面は同意の前に一度も描かれない (R-6) |
+| S1 | サインアップ (`signup.tsx:100`) → 確認メールの Alert → `/(auth)/login` (`:117-118`。アプリの中ではセッションを作らない) → 経路は 2 つ。(A) 確認メールのリンク → `/auth/verify` (対象外) → session → `verify.tsx:84` の `Redirect` で `/(tabs)/home`。(B) ログイン (`login.tsx:163`) → SIGNED_IN → session → `(auth)/_layout.tsx:29` の `Redirect` で `/(tabs)/home`、続いて `routeAfterSignIn` (`login.tsx:75-99`) が profile を読み、初期設定が未開始なので `router.replace('/onboarding/welcome')`。どちらも、user が入った描画から同意の状態は `loading` (記録が今の利用者のものでない。6.6.9) → タブの layout も初期設定の layout (このログインでまだ `Stack` を描いていない) も (6.6.13) スピナーで中身を描かない → `LegalConsentProvider` が `GET /api/legal/status` (許可リスト → 200) → 行が無いので `accepted: false`、本番は `enforced: true` → `required: true` → state `required` → `LegalConsentGate` が前面の pathname (`/home` か `/onboarding/welcome`。どちらも対象) の上に `router.push('/legal-consent')`。(B) で `routeAfterSignIn` の `replace` が push の後に流れたときは、同意画面が `/onboarding/welcome` に置き換わる (`REPLACE` は「戻る」でないので同意画面の `beforeRemove` は止めない。6.6.11) → 初期設定の layout (置き換えで新しく mount され、まだ `Stack` を描いていない) は `required` でスピナー → Gate が pathname の変化でもう一度 push → `app/legal-consent.tsx` = `WebViewScreen path="/legal-consent"` → ブリッジ (`/api/auth/native-bridge/code` は許可リスト、`/auth/native-bridge` は画面の判定の対象外) → Web の `/legal-consent` (画面の判定の対象外。`page.tsx` が profile を読み、未同意なので form を出す) → チェック 2 つ → `POST /api/legal/accept` (許可リスト → 200) → form が `notifyNativeLegalConsentAccepted()` → `window.location.assign('/home')` → ネイティブ: `WebViewScreen.onMessage` (送り元は自オリジン) → `notifyLegalConsentAccepted()` → Provider が state を `clear` にして `refresh()` → Gate: pathname `/legal-consent` で `required` でないので `router.back()` → (A) タブの layout が `clear` で描き、`profile.onboardingCompletedAt` 無しなので `(tabs)/_layout.tsx:35-41` が `/onboarding/welcome` へ。(B) 初期設定の layout が `clear` で `Stack` を描き、welcome → 初期設定 (`POST /api/onboarding/complete` は同意済みなので通る)。初期設定の画面は同意の前に一度も描かれない (R-6) |
 | S2 | 起動 → `index.tsx` は auth / profile / 同意の状態の読み込み中スピナー → status 200 `required: false` → `clear` → `/(tabs)/home` → `(tabs)/_layout` が描く。同意画面は出ない。status の 1 往復は ProfileProvider の読み取りと並行なので、起動が目に見えて遅くならない |
 | S3 | 起動 → `index.tsx` スピナー → `required` → `index.tsx` はスピナーのまま (振り分けない) → Gate が `/` の上に同意画面を push → 同意 → `accepted` の合図 → `clear` → Gate が `back()` → `index.tsx` が `/(tabs)/home` へ |
-| S4 | 同意画面 (WebView) の「同意しない」→ Web が `clearUserScopedLocalStorage()` → `notifyNativeSignOut()` → `signOut()` → `broadcastSignOut()` (`LegalConsentForm.tsx:179-188`) → ネイティブ: `useWebAuthMessages` が `sign-out` を受けて `performNativeSignOut` → `signOutWithCleanup` の最後の `supabase.auth.signOut()` → SIGNED_OUT → `AuthProvider` が `setSession(null)` (描き直しはまだ) → `goToWelcome` = `router.replace('/')` (`webViewAuthMessages.ts:313-315`。expo-router の `routingQueue` に積まれ、次の描画の後に流れる) → 同意画面の `beforeRemove` は `REPLACE` を止めない (「戻る」でない。6.6.11) → 同意画面が入口 `/` に置き換わる → session null の描画: Provider の state は `clear` (user 無し)、入口はウェルカム → Gate: session 無しで、このログインの間にゲートが同意画面を開いていた (`openedRef`) ので、`router.canDismiss()` なら `router.dismissAll()` → `router.replace('/')` (同意画面の下に残った画面 (S5 なら血液検査の画面) ごと畳み、Stack は入口だけ) → ウェルカム画面。描き直しが `goToWelcome` の `replace` より先に来ても、Gate が先に畳み、後の `replace('/')` は入口を入口に置き換えるだけで同じ結果。削除の依頼先は Web の「同意しない」の後の画面 (お問い合わせへのリンク) が案内する |
+| S4 | 同意画面 (WebView) の「同意しない」→ Web が `clearUserScopedLocalStorage()` → `notifyNativeSignOut()` → `signOut()` を待つ → `broadcastSignOut()` → `setPhase('declined')` (`LegalConsentForm.tsx:173-190`) で、同意画面の WebView に「ご利用を終了しました」・データの削除の依頼先 (お問い合わせ `/contact`)・請求の画面 (`/settings/data-requests`)・ログインへのリンクを描く (`:280-325`) → ネイティブ: `useWebAuthMessages` が `sign-out` を受けて `performNativeSignOut` → `signOutWithCleanup` の最後の `supabase.auth.signOut()` → SIGNED_OUT → `AuthProvider` が `setSession(null)` → session null の描画: Provider の state は `clear` (user 無し)。同意画面の route はサインイン中に `required` を見ていた (`legalConsentScreenSawRequired`) ので扱いが `signed-out-notice` になり (6.6.8)、`WebViewScreen` の `header` に「閉じる」(testID `legal-consent-close`) を出す (WebView は作り直さないので Web の案内はそのまま)。Gate: session 無し・同意画面が前面・`openedRef` (同意画面が前面で `required` のときに立てた) なので何もしない (畳まない。6.6.10) → `performNativeSignOut` が `goToWelcome` の代わりに同意画面の `afterSignOut` を呼ぶ (6.6.15) → `supabase.auth.getSession()` が null なので移らない (ウェルカムへの `replace('/')` をしない) → 利用者は案内を読み、リンクを WebView の中で開ける (§8 Q-9)。この間に下の画面のコードが別の画面へ移そうとしても (ツアーが下にあれば、その layout の effect の `router.replace('/login')`。`handson-tour/_layout.tsx:35-37`)、同意画面の `beforeRemove` が `REPLACE` を止める (`signed-out-notice` は別の画面へ移る操作を止める。6.6.8) →「閉じる」(または Android の戻るボタン = `GO_BACK` を止めて同じ処理) → 同意画面が `closingRef` を立てて `router.replace('/')` (以後の取り除く操作は止めない) → 同意画面が入口 `/` に置き換わる → Gate: session 無し・前面は同意画面でない・`openedRef` なので、`router.canDismiss()` なら `router.dismissAll()` → `router.replace('/')` (同意画面の下に残った画面 (S5 なら血液検査の画面) ごと畳み、Stack は入口だけ)・`openedRef` を外す → ウェルカム画面。ネイティブのログアウトが通信の失敗で済まなかったとき (端末にセッションが残る) は §6.8 の行 |
 | S5 (モバイル側) | 血液検査の画面で入力の途中に保存 → `getApi().post('/api/health/blood-tests')` → middleware が 403 `LEGAL_CONSENT_REQUIRED` → `withFriendlyErrors` が `legalConsentRequiredErrorOf(e)` で見分け、`notifyLegalConsentRequired()` → Provider が state を `required` にして `refresh()` → Gate が pathname `/health/blood-tests` の上に同意画面を push (血液検査の画面は Stack に残る。入力も残る) → 画面側の catch は `LegalConsentRequiredError` (message = 固定の文) を受けて `Alert.alert("失敗", 固定の文)` を出す (`blood-tests.tsx:371-372`。OS のダイアログは同意画面より上に出るので、OK で閉じると下に同意画面が見える) → 同意 → `accepted` → `clear` → Gate が `back()` → 血液検査の画面に入力が残ったまま戻る → もう一度保存 → 200 |
 | S8 (モバイル側) | status `enforced: false, required: false` → `clear` → 今までどおり |
 | S9 (モバイル側) | status が 500 → `isLegalConsentStatus` を通らない or 例外 → `loading` から `unknown` → 止めない → DB が戻った後の API 呼び出しが 403 → S5 の経路 |
-| S12 | pathname `/auth/reset-password` は `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` の `/auth` (前方一致) → Gate は push しない → 再設定 (`reset-password.tsx:90-96`: updateUser → `signOutWithCleanup` → `/login`) → ログアウトで Provider は `clear` → ログインし直すと S3 |
+| S12 | pathname `/auth/reset-password` は `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` の `/auth` (前方一致) → Gate は push しない (`openedRef` も立てない) → 再設定 (`reset-password.tsx:90-96`: updateUser → `signOutWithCleanup` → `router.replace('/login')`) → ログアウトで Provider は `clear`。ゲートが開いた同意画面が無ければ Gate は何もせず、ログイン画面。起動の直後にゲートが開いた同意画面の上に deep link で再設定の画面が重なっていた (`openedRef` が立ったまま) ときは、Gate が session 無し・前面は同意画面でない・`openedRef` で `dismissAll` → `replace('/')` を積む。再設定の画面の `replace('/login')` と同じ描画の前後で流れ、どちらの順でも下に残った同意画面は畳まれ、最後はウェルカムかログイン画面 (どちらも未ログインの画面) → ログインし直すと S3 |
 | S13 | 同意画面 (WebView) を開いたまま改定 → Web の form が `POST /api/legal/accept` で 409 → `setNeedsReload(true)` と「更新されました」(`LegalConsentForm.tsx:160-163`) → 読み込み直す (Web の画面の中) → `page.tsx` が新しい版で form を出す → 同意 → S1 の後半。ネイティブに 409 の分岐は要らない |
-| S18 | 起動 → status の fetch が通信失敗 → `unknown` → `index.tsx` は振り分ける (`unknown` は待たない) → 画面の API も失敗 (今までどおり「通信できません」) → 通信が戻る → 最初の API 呼び出しが 403 → S5 の経路。ホームのタブを先に開き直した場合は、WebView の中で Web のゲートが同意画面へ回し、そこで同意すると Web の form が `accepted` の合図を送る → Provider が `clear` (元が `unknown` でも同じ) |
+| S18 | 起動 → status の fetch が通信失敗 → `unknown` → `index.tsx` は振り分ける (`unknown` は待たない) → 画面の API も失敗 (今までどおり「通信できません」) → 通信が戻る → 最初の API 呼び出しが 403 → S5 の経路 (初期設定へ進んでいたら S28)。ホームのタブを先に開き直した場合は、WebView の中で Web のゲートが同意画面へ回し、そこで同意すると Web の form が `accepted` の合図を送る → Provider が `clear` (元が `unknown` でも同じ) |
 | S19 | `gaps` に `'birth_date'` → `accepted: false` → `required: true` → 同意画面 (WebView) → `page.tsx:77` が `needsBirthDate` を form に渡し、生年月日の欄が出る → `POST /api/legal/accept` に `birth_date` が付く (`LegalConsentForm.tsx:134`) → 200 → `accepted` の合図 → S1 の後半。ネイティブは `required` を見るだけ (cross/14 §0.5 の契約のとおり) |
-| S20 | 生年月日を入れて同意 → Web が 403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` → form が `minor_refused` の案内 (`:150-153`) →「登録をやめる」→ `deleteOwnAccount()` → `signOutAfterAccountDeletion` (Web。ネイティブへ `sign-out`) → ネイティブは S4 と同じ経路でウェルカム画面 |
+| S20 | 生年月日を入れて同意 → Web が 403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` → form が `minor_refused` の案内 (`:150-153`) →「登録をやめる」→ `deleteOwnAccount()` → `signOutAfterAccountDeletion` (Web。ネイティブへ `sign-out`) → `setPhase('withdrawn')` で「登録をやめました」(`/signup` へのリンク。`LegalConsentForm.tsx:198-228`) → ネイティブは S4 と同じ経路で、案内を残したまま「閉じる」を出す →「閉じる」→ ウェルカム画面 |
 | S21 | 通知をタップして起動 → `NotificationRouter` が行き先 `/health/blood-tests` を保留 → 同意の状態が `loading` / `required` の間は `pendingHref` を消化しない (6.6.13) → `index.tsx` スピナーの上に同意画面 → 同意 → `clear` → 同じ描画の effect で、`NotificationRouter` は pathname がまだ `/legal-consent` なので保留のまま、Gate が `router.back()` → 入口 `/` に戻る → 入口が `clear` で `Redirect` (`/(tabs)/home`)。`NotificationRouter` は pathname が入口 `/` の間も保留 (入口の `Redirect` の `replace` と同じ描画で push すると、`routingQueue` で push の後に流れる `replace` が移った先を置き換える) → `replace` が流れて pathname `/home` → `NotificationRouter` が `router.push('/health/blood-tests')` → Gate は `clear` なので何もしない → Stack は [ホーム, 血液検査] |
 | S22 | 旧版 (13b 無し): `POST /api/onboarding/complete` → 403 → `withFriendlyErrors` は 403 を素通し → 画面の catch → `getApiErrorMessage(e, …)` が本文の `error` (固定の文) を返す → Alert に固定の文。ホームのタブ (WebView) → Web のゲートが `/legal-consent` へ → 同意 → form が `accepted` の合図を送るが旧版は知らない type を捨てる (害は無い) → `window.location.assign('/home')` → 以後の `/api` が通る (§6.21) |
 | S23 | deep link `homegohan://health/blood-tests` → expo-router が直接その画面を開く → Provider が status を取るまで (1 往復) 画面が見える。その間に押した保存は 403 で S5 の経路 → `required` → Gate が同意画面を上に開く → 同意 → `back()` → 血液検査の画面 |
 | S24 | `enforced: false` → `required: false` → `clear` → 同意画面は出ない。403 も来ない (13a の S8) |
-| S25 | ツアーの写真の保存 (`photo.tsx:282`) が 403 → `required` → 同意画面がツアーの上に開く (`handson-tour/_layout` の `TourProvider` と段の状態は残る) → 同意 → `back()` → 同じ段 → もう一度保存。同意画面の上で Android の戻るボタンを押し、写真の段のエラー画面の `useTourHardBack` (`useLeaveTour.ts:73-82`) が受けたときは、`leaveTour` が `router.replace('/home')` → 同意画面の `beforeRemove` は `REPLACE` を止めない → 同意画面が `/(tabs)/home` に置き換わる → タブの layout は `required` でスピナー → Gate がもう一度 push → 同意 → ホーム (ツアーは抜けた。skip の API の 403 は `leaveTour` の catch が握る) |
-| S26 | ツアーの献立の段: サンドボックスの作成のタイマー (`V4GenerateModal.tsx:270-283`) が `POST /api/menu-plans/add` → 403 → `withFriendlyErrors` が `notifyLegalConsentRequired()` → 例外はサンドボックスの catch が握り、`onSandboxComplete` → 2.8 → 500 ms 後に 2.9 → 描画: `required` → `menu.tsx` の `consentHold` (`isNavigationHeldForLegalConsent`。6.6.8) が true → `V4GenerateModal` と吹き出しの `<Modal>` が `visible={false}` (吹き出しの `TourOverlay` も外れ、戻るボタンの受け口も無くなる) → Gate が pathname `/handson-tour/menu` の上に同意画面を push → 同意画面が見える → 2.9 の effect は `consentHold` の間 Step 3 へ push しない → 同意 → `clear` → 同じ描画の effect で Gate が `back()` を積む。献立の段は pathname がまだ `/legal-consent` なので `consentHold` は true のまま (Modal は閉じたまま・push しない。同じ描画で push すると、`routingQueue` で `back()` の後に流れ、閉じた同意画面の位置からツアーの区画をもう 1 つ積んでしまう) → `back()` が流れて pathname `/handson-tour/menu` → `consentHold` が false → Modal が `visible={true}` に戻り、2.9 の effect が走り直して Step 3 (`/handson-tour/badges`) へ push |
+| S25 | ツアーの写真の保存 (`photo.tsx:282`) が 403 → `required` → 写真の段は保存の失敗のエラー画面 (`tourPhotoSaveErrorOutcomeOf`) になり、ふつうなら `useTourHardBack(saveError, …)` を張るが、同意を待つ間 (`useNavigationHeldForLegalConsent` が true) は張らない (6.6.17) → Gate が同意画面をツアーの上に開く (`handson-tour/_layout` の `TourProvider` と段の状態は残る) → 同意画面の上で Android の戻るボタンを押すと、下の段 (写真の段と、その下の Step 0) の受け手は張られていないか `onSkip` が無いので false を返し、react-navigation の `GO_BACK` が同意画面の `beforeRemove` に止められる (画面はそのまま。ツアーを抜けず、skip の API も計測も送らない) → 同意 → `clear` → Gate が `back()` → pathname `/handson-tour/photo` → 待ちが明け、エラー画面の `useTourHardBack` が張られる →「もう一度」で保存 → Step 2 |
+| S26 | ツアーの献立の段: サンドボックスの作成のタイマー (`V4GenerateModal.tsx:270-283`) が `POST /api/menu-plans/add` → 403 → `withFriendlyErrors` が `notifyLegalConsentRequired()` → 例外はサンドボックスの catch が握り、`onSandboxComplete` → 2.8 → 500 ms 後に 2.9 → 描画: `required`、前面は `/handson-tour/menu` → `menu.tsx` の `legalConsentHeld` (`useNavigationHeldForLegalConsent`) が true、`modalHold` (`useModalHoldForLegalConsent(HANDSON_TOUR_ROUTES.step2)`) も待ちが前面の間に始まったので true → `V4GenerateModal` と吹き出しの `<Modal>` が `visible={false}` (吹き出しの `TourOverlay` も外れる。`onSkip` と Modal の `onRequestClose` も待つ間は外す) → Gate が pathname `/handson-tour/menu` の上に同意画面を push → 同意画面が見える (`modalHold` は pathname が `/legal-consent` に変わっても true のまま) → 2.9 の effect は `legalConsentHeld` の間 Step 3 へ push しない → 同意 → `clear` → 同じ描画の effect で Gate が `back()` を積む。献立の段は pathname がまだ `/legal-consent` なので `legalConsentHeld` も `modalHold` も true のまま (Modal は閉じたまま・push しない。同じ描画で push すると、`routingQueue` で `back()` の後に流れ、閉じた同意画面の位置からツアーの区画をもう 1 つ積んでしまう) → `back()` が流れて pathname `/handson-tour/menu` → 両方 false → Modal が `visible={true}` に戻り、2.9 の effect が走り直して Step 3 (`/handson-tour/badges`) へ push し、`step3PushedRef` を立てる |
 | S27 | タブ (pathname `/home`) の AI の FAB (`(tabs)/_layout.tsx:112` の `AIFloatingFab`) → `AIAdvisorSheet` (RN の `<Modal visible>`。`AIAdvisorSheet.tsx:600-602`) を開いたまま送信 → 生の fetch (`:446`) が 403 → `errorOfFailedResponse` (`:462`) が `legalConsentRequiredErrorOf` で見分け、`notifyLegalConsentRequired()` → Provider が `required` → 送信の catch (`:553`) は `isStoppedByServerError` が true なので `Alert.alert("同意が必要です", 固定の文)` (`:566-569`) → 描画: タブの layout (6.6.13) が `required` でスピナーを返し、`Tabs` と `AIFloatingFab` が外れる → シートと、その上の `AIDayMenuModal` (`:834` の `visible && …`) の RN の Modal も一緒に外れる (push した同意画面を隠さない) → Gate: pathname は `/home` のまま (タブの layout が中身を描かなくても、ナビゲーションの state は変わらない) で対象 → `router.push('/legal-consent')` → OS の Alert を OK で閉じると同意画面が見える → 同意 → `accepted` → `clear` → Gate が `back()` → タブの layout が描き直し、ホームのタブ (Q-6)。FAB は描き直しで新しく mount されるのでシートは閉じたまま、送信の途中の入力は残らない (Q-6)。外れた後に送信の catch や finally が呼ぶ `setState` は、外れた部品への更新として React が捨てる |
+| S28 | `unknown` (S18) のまま、または同意の後に改定が入ったまま初期設定を進める → 初期設定の layout は `clear` / `unknown` で `Stack` を描き、`shownRef` を立てる (6.6.13) → 最後の質問の答え (`questions.tsx:911-951`) で `POST /api/onboarding/complete` が 403 → `withFriendlyErrors` が `notifyLegalConsentRequired()` → Provider が `required` → 初期設定の layout は `shouldHoldOnboardingForLegalConsent(required, true)` が false なので `Stack` を描いたまま (質問の画面の `answers`・`currentStep`・`stepHistory` が残る) → 質問の画面の catch が計算中の表示をやめて `Alert.alert("保存失敗", 固定の文)` → Gate が pathname `/onboarding/questions` の上に同意画面を push (初期設定の画面は RN の Modal も WebView も持たないので同意画面を隠さない) → 同意 → `clear` → Gate が `back()` → 最後の質問の画面 (それまでの答えは残る。最後の質問の入力欄は答えの先頭で空にしてあるので、もう一度選ぶ) → `POST /api/onboarding/complete` が通り、完了の画面へ。完了の画面で保存 (`complete/index.tsx:123-180`) が 403 になったときも同じで、計算の結果を残したまま戻る |
+| S29 | ツアーの Stack は [Step 0, 写真, 献立, バッジ, 卒業] (献立の段は 2.9 で `step3PushedRef` を立てたまま下に残り、Modal は `visible={true}` のまま) → 卒業の段の完了の API (`graduate.tsx:88`) が 403 → エラーの画面 → Provider が `required`。描画: 前面は `/handson-tour/graduate` なので、献立の段の `modalHold` は false のまま (`nextModalHoldForLegalConsent(false, true, false)`)。Modal を閉じず、待ちが明けても開き直さない。`legalConsentHeld` は true なので、献立の段の 2.9 の effect は走り直すが push しない。待ちが明けて走り直しても `step3PushedRef` が立っているので push しない。写真・献立・バッジの段の `TourOverlay` の `onSkip` は待つ間 `undefined`、バッジの段の `useTourHardBack` も張らない → Gate が同意画面を push → Android の戻るボタンは下の段のどれにも受けられず、同意画面の `beforeRemove` が `GO_BACK` を止める → 同意 → Gate が `back()` → 卒業の段のエラーの画面 →「もう一度」(`graduate.tsx:198-199`) で完了 → ホーム |
 
 ---
 
@@ -279,15 +287,17 @@ Web (段 B1)
 | 主体 | 経路 | ENFORCE=on | ENFORCE=off | 変更 |
 |---|---|---|---|---|
 | 未ログイン | モバイルの画面 | Gate は何もしない (入口はウェルカム) | 同左 | なし |
-| 未同意 (行なし / NULL / 旧版 / 生年月日なし / 保護者の同意のつながりの無い 18 歳未満) | モバイル ネイティブの画面 (対象) | **同意画面 (WebView) をその画面の上に開く。入口・タブ・初期設定の layout は同意の状態が分かるまで・`required` の間は中身を描かない** | 通す (`required: false`) | **新** |
+| 未同意 (行なし / NULL / 旧版 / 生年月日なし / 保護者の同意のつながりの無い 18 歳未満) | モバイル ネイティブの画面 (対象) | **同意画面 (WebView) をその画面の上に開く。入口・タブ・初期設定の layout は同意の状態が分かるまで・`required` の間は中身を描かない (初期設定の layout は、このログインで一度描いた後は描いたまま)** | 通す (`required: false`) | **新** |
 | 未同意 | モバイル 対象外の画面 (`/login` `/signup` `/auth/*` `/about` `/privacy` `/terms` `/legal-consent`) | 通す | 通す | 新 (一覧の固定) |
 | 未同意 | モバイル WebView のタブの中の画面 | Web の画面の判定が WebView の中で `/legal-consent` へ回す (既存)。本冊は `required` の間タブを描かないので、ふつうはネイティブの同意画面の route が先に出る | 通す | なし (Web) / 新 (描く順) |
 | 未同意 | ネイティブの画面が呼ぶ `/api` (許可リスト外) | 403 (13a) → **同意画面を上に開く** | 通す | **新** (モバイルの扱い) |
 | 未同意 | 通知のタップ・deep link | 同意画面が先。通知の行き先は同意の後 (同意画面が閉じ、入口の振り分けが済んでから) | 通す | **新** |
 | 未同意 | ログインの直後 (`(auth)/_layout` の `Redirect`・`login.tsx` の `routeAfterSignIn`・`/auth/verify` の `Redirect`) | 着く先 (タブ・初期設定の layout) は同意の状態が分かるまで・`required` の間は中身を描かない。同意画面がその上に開く。`?next=` で app 直下の画面に着いたときは status の 1 往復だけ見える (§8 Q-4) | 通す | **新** |
-| 未同意 | RN の Modal を常に開く画面 (ツアーの献立の段) | `loading` / `required` の間・同意画面が閉じるまでは Modal を閉じ、Step 3 へ進まない | 通す | **新** |
+| 未同意 | RN の Modal を常に開く画面 (ツアーの献立の段) | 前面の間に待ち (`loading` / `required` / 同意画面が前面) が始まったら、待ちが明けるまで Modal を閉じる。Stack の下に残っている間に始まった待ちでは閉じない。待つ間は Step 3 へ進まない (push は 1 回だけ。S26・S29) | 通す | **新** |
+| 未同意 | 端末の戻るを受ける画面 (ツアーの写真・献立・バッジの段。Stack の下に残った段も) | 待つ間は受けない (ツアーを抜けない)。戻るは同意画面の `beforeRemove` が止める (S25・S29) | 通す | **新** |
+| 未同意 (改定の後) | 初期設定の途中 (このログインで初期設定の `Stack` を描いた後) で `/api` が 403 | 初期設定の layout は `Stack` を描いたまま、同意画面を上に開く。同意の後は同じ画面に、答え・計算の結果が残ったまま戻る (S28) | 通す | **新** |
 | 未同意 (改定の後) | タブの AI のシート (RN の Modal) を開いたまま `/api` が 403 | タブの layout がスピナーになり、FAB とシートの Modal が外れる → 同意画面を上に開く。同意の後はタブに戻り、シートは閉じたまま (S27) | 通す | **新** |
-| 未同意 | 同意画面で「同意しない」「登録をやめる」 | ログアウト → ゲートが同意画面の下に残った画面ごと畳み、ウェルカムへ | 同左 (ENFORCE=off では同意画面が出ない) | **新** |
+| 未同意 | 同意画面で「同意しない」「登録をやめる」 | ログアウト → 同意画面は Web の案内 (削除の依頼先・請求の画面・「登録をやめました」) を出したまま残り、上に「閉じる」を出す (下の画面のコードの移動は止める) →「閉じる」か Android の戻る → 入口 → ゲートが同意画面の下に残った画面ごと畳み、ウェルカムへ (S4・S20) | 同左 (ENFORCE=off では同意画面が出ない) | **新** |
 | 同意済み | すべて | 通す (同意画面は出ない) | 通す | なし |
 | status を取れない (通信の失敗・500) | モバイル | `unknown` → 止めない。次の 403 で `required` | 同左 | 新 (方針の明記) |
 
@@ -304,10 +314,13 @@ Web (段 B1)
 | 同意画面 | 無し (ネイティブ)。Web の `/legal-consent` はタブの WebView の中でだけ | `app/legal-consent.tsx` (Web の `/legal-consent` の WebView) を route として持つ |
 | Web → ネイティブのメッセージ | `sign-out`・`session-expired`・`mfa-verify-required` | + `legal-consent-accepted` (同意を記録できた直後) |
 | 通知のタップの遷移 | ログインと今の利用者のプロフィールが分かってから | + 同意の状態が `clear` / `unknown` になり、前面が同意画面でも入口 (`/`) でもなくなってから |
-| 初期設定の layout | session があれば `Stack` を描く (`onboarding/_layout.tsx:15-24`) | 同意の状態が `loading` / `required` の間はスピナー (`Stack` を描かない) |
-| ツアーの献立の段の Modal 2 つ | 常に開く (`menu.tsx:202-232`) | 同意の状態が `loading` / `required` の間と、前面が同意画面の間は閉じる。2.9 の Step 3 への push も同じ間は待つ |
-| 同意画面から抜ける操作 | (同意画面が無い) | 同意が要る間は「戻る」(`GO_BACK` / `POP` / `POP_TO_TOP`) だけを止める。別の画面へ移る操作 (`REPLACE` / `NAVIGATE` / `PUSH` / `RESET`) は止めず、移った先が対象ならゲートがもう一度開く |
-| 同意画面の上でのログアウト | (同意画面が無い) | ゲートが `dismissAll` → `replace('/')` で下の画面ごと畳む (Stack は入口だけ) |
+| 初期設定の layout | session があれば `Stack` を描く (`onboarding/_layout.tsx:15-24`) | このログインでまだ `Stack` を描いていない間は、同意の状態が `loading` / `required` ならスピナー (`Stack` を描かない)。一度描いた後は `required` になっても描いたまま (同意画面が上に開く) |
+| ツアーの献立の段の Modal 2 つ | 常に開く (`menu.tsx:202-232`) | 献立の段が前面の間に待ち (`loading` / `required` / 前面が同意画面) が始まったら、待ちが明けるまで閉じる。Stack の下に残っている間に始まった待ちでは変えない |
+| ツアーの献立の段の Step 3 への push | 2.9 で push (effect の依存は `[subStep]`) | 待つ間は push しない。push は 1 回だけ (`step3PushedRef`。待ちの開け閉めで effect が走り直しても積み直さない) |
+| ツアーの段の端末の戻る (Android) | 写真・献立・バッジの段が (Stack の下に残っても) 受けてツアーを抜ける (`leaveTour('hard_back')`) | 待つ間は受けない (`TourOverlay` の `onSkip`・`useTourHardBack`・献立の段の Modal の `onRequestClose` を外す)。戻るは同意画面が受ける |
+| 同意画面から抜ける操作 | (同意画面が無い) | 同意が要る間は「戻る」(`GO_BACK` / `POP` / `POP_TO_TOP`) だけを止める。別の画面へ移る操作 (`REPLACE` / `NAVIGATE` / `RESET`) は止めず、移った先が対象ならゲートがもう一度開く。ログアウトの後 (案内を出している間) は `GO_BACK` / `POP` を入口への移動に置き換え、ゲートの `dismissAll` (`POP_TO_TOP`) は通し、別の画面へ移る操作は止める |
+| 同意画面の上でのログアウト (「同意しない」「登録をやめる」) | (同意画面が無い。タブの WebView の中の Web の同意画面で押すと、ネイティブは `goToWelcome` でウェルカムへ移り、Web の案内は見えない) | 同意画面は Web の案内を出したまま残り、上に「閉じる」を出す。閉じると入口へ移り、ゲートが `dismissAll` → `replace('/')` で下の画面ごと畳む (Stack は入口だけ) |
+| Web からのログアウトの後の移り先 (`useWebAuthMessages`) | どの WebView でも `router.replace('/')` | 既定は同じ。`WebViewScreen` の `afterSignOut` を渡した画面 (同意画面だけ) はそれを呼ぶ |
 | 同意画面の文面 (`LEGAL_CONSENT_COPY`) | Web の form が使う | 変えない (ネイティブは使わない) |
 
 ### 6.3 ③ 状態遷移表
@@ -320,11 +333,16 @@ Web (段 B1)
 |---|---|---|---|---|
 | anon | ログイン (アプリ。メールとパスワード・Google・確認メールのリンク) | none / old / ok / unreadable のどれか (行の中身で決まる) | — | user が入った描画から `loading` (6.6.9) → `LegalConsentProvider` が status を取る (`required` / `clear` / `unknown`)。着く先 (`(auth)/_layout` と `verify` の `Redirect` = タブ、`routeAfterSignIn` = 初期設定かタブ、`?next=` の画面) のうち、タブと初期設定の layout は `loading` / `required` の間スピナー。`required` なら Gate が着いた画面の上に同意画面を開く (S1) |
 | none / old | アプリを起動 (保存済みのセッション) | 同じ | — | `loading` → status 200 `required: true` → `required` → 入口は振り分けず、Gate が同意画面を上に開く (S3) |
-| none / old | 同意しない・登録をやめる (アプリの同意画面 = Web の form) | anon | — | Web が `sign-out` を送る → ネイティブは `signOutWithCleanup` → `goToWelcome` の `replace('/')` (同意画面は `REPLACE` を止めない) → session 無し → Gate が `dismissAll` (`canDismiss` のとき) → `replace('/')` で下の画面ごと畳む → ウェルカム (S4・S20) |
-| none / old | 同意画面で Android の戻るボタン | 同じ | `required` | 同意画面の `beforeRemove` が `GO_BACK` を止める (画面はそのまま) |
-| none / old | 同意画面の下の画面のコードが別の画面へ移す (例: ツアーを抜ける `replace('/home')`) | 同じ | `required` | 同意画面は `REPLACE` / `NAVIGATE` / `PUSH` を止めない → 移った先が対象なら Gate がもう一度同意画面を開く (S25) |
+| none / old | 同意しない・登録をやめる (アプリの同意画面 = Web の form) | anon (同意画面に案内) | — | Web が `sign-out` を送る → ネイティブは `signOutWithCleanup` → session 無し → 同意画面の扱いが `signed-out-notice` になり「閉じる」を出す。Gate は畳まない。`goToWelcome` の代わりに同意画面の `afterSignOut` が呼ばれ、端末にセッションが無いので移らない。Web は同じ WebView に案内 (削除の依頼先・請求の画面・「登録をやめました」) を描く (S4・S20) |
+| anon (同意画面に案内) | 「閉じる」・Android の戻るボタン (`GO_BACK`) | anon | — | 同意画面が `closingRef` を立てて `router.replace('/')` (戻るは止めて同じ処理) → 前面が入口になる → Gate が `dismissAll` (`canDismiss` のとき) → `replace('/')` で下の画面ごと畳む → ウェルカム (S4) |
+| anon (同意画面に案内) | 下の画面のコードが別の画面へ移す (ツアーの layout の未ログインの `replace('/login')`・下の WebView の `goToWelcome` の `replace('/')`) | 同じ | — | 同意画面の `beforeRemove` が止める (`signed-out-notice` は別の画面へ移る操作を止める)。案内を残す |
+| anon (同意画面に案内) | 案内のリンク (お問い合わせ・請求の画面・ログイン・新規登録) | 同じ | — | WebView の中で Web の画面を開く (ネイティブは何もしない。§8 Q-9) |
+| none / old | 同意画面で Android の戻るボタン | 同じ | `required` | 下にツアーの段 (写真・献立・バッジ) があっても、その受け手は待つ間は外れている (6.6.17) ので、戻るは react-navigation の `GO_BACK` になり、同意画面の `beforeRemove` が止める (画面はそのまま。ツアーを抜けない。S25・S29) |
+| none / old | 同意画面の下の画面のコードが別の画面へ移す (例: ログインの直後の `routeAfterSignIn` の `replace('/onboarding/welcome')`) | 同じ | `required` | 同意画面は `REPLACE` / `NAVIGATE` / `RESET` を止めない → 移った先が対象なら Gate がもう一度同意画面を開く (S1 の (B)) |
 | none / old | 画面を開く (対象) | 同じ | `required` | 同意画面の route をその上に開く |
 | none / old | タブの AI のシート (RN の Modal) を開いたまま、シートの `/api` が 403 | 同じ | — | Provider が `required` → タブの layout がスピナー (`AIFloatingFab` とシート・`AIDayMenuModal` の Modal が外れる) → Gate がタブのパスの上に同意画面を開く → 同意 → タブに戻り、シートは閉じたまま (S27) |
+| none / old | 初期設定の画面 (このログインで初期設定の `Stack` を描いた後) で `/api` が 403 | 同じ | — | Provider が `required` → 初期設定の layout は `Stack` を描いたまま → Gate が初期設定の画面の上に同意画面を開く → 同意 → 同じ画面 (答え・計算の結果が残る。S28) |
+| none / old | ツアーの卒業の段 (献立の段が Stack の下に残る) で `/api` が 403 | 同じ | — | 献立の段は Modal を閉じず (待ちが前面の間に始まっていない)、Step 3 を積み直さない (`step3PushedRef`)。下の段の端末の戻るの受け手は外れる → Gate が同意画面を開く → 同意 → 卒業の段 (S29) |
 | none / old | 画面を開く (対象外) | 同じ | — | 通す |
 | none / old | 同意する (Web の form) | ok | 版が一致 | Web が `legal-consent-accepted` を送る → `clear` → 同意画面の route を閉じる |
 | ok | アプリを起動 (保存済みのセッション) | 同じ | — | `loading` → status 200 `required: false` → `clear` → 入口が初期設定かホームへ振り分ける。同意画面は出ない (S2) |
@@ -358,25 +376,37 @@ Web (段 B1)
 
 | session | state | pathname | 操作 |
 |---|---|---|---|
-| 無し | any | 同意画面、または、このログインの間にゲートが同意画面を開き、まだ同意で閉じていない (`openedRef`) | `router.canDismiss()` なら `router.dismissAll()`、続けて `router.replace('/')` (下に残った画面ごと畳む)。`openedRef` を外す |
-| 無し | any | それ以外 (`openedRef` も無し) | 何もしない (ふつうのログアウトは今までどおり) |
+| 無し | any | 同意画面で、`openedRef` あり (同意を待っていた同意画面の上でログアウトした) | 何もしない (畳まない。同意画面が Web の案内と「閉じる」を出す。閉じると前面が入口になり、次の行で畳む) |
+| 無し | any | 同意画面で `openedRef` 無し (未ログインのまま deep link で開いた)、または同意画面でなく `openedRef` あり (案内から入口へ移った後) | `router.canDismiss()` なら `router.dismissAll()`、続けて `router.replace('/')` (下に残った画面ごと畳む)。`openedRef` を外す |
+| 無し | any | 同意画面でなく、`openedRef` も無し | 何もしない (ふつうのログアウトは今までどおり) |
 | あり | required | 対象外 (`/login` `/signup` `/auth/*` `/about` `/privacy` `/terms`) | 何もしない |
-| あり | required | 同意画面 | 何もしない (開いている) |
+| あり | required | 同意画面 | 遷移しない (開いている)。`openedRef` を立てる (deep link で開いた同意画面でも、この後のログアウトで案内を残す) |
 | あり | required | 対象 | `router.push('/legal-consent')`。`openedRef` を立てる |
 | あり | loading / clear / unknown | 同意画面 | `router.back()` (戻れなければ `router.replace('/')`)。`openedRef` を外す |
 | あり | loading / clear / unknown | それ以外 | 遷移しない。`openedRef` を外す (このあとのふつうのログアウトでは畳まない) |
 
+**同意画面の route の扱い** (`LegalConsentScreenMode`。`app/legal-consent.tsx` が描画のたびに `legalConsentScreenModeOf` で決める。`sawRequired` = この同意画面がサインイン中に `required` を見た。Gate の `openedRef` と同じ条件で立て、同じ条件で外す) と、取り除く操作 (`beforeRemove` の `action.type`) の決定 (`legalConsentScreenRemovalDecision`):
+
+| session | state | `sawRequired` | 扱い | 「戻る」(`GO_BACK` / `POP` / `POP_TO_TOP`) | 別の画面へ移る操作 (`REPLACE` / `NAVIGATE` / `RESET` など) | 画面 |
+|---|---|---|---|---|---|---|
+| あり | required | (立てる) | `awaiting-consent` | 止める (block) | 通す (allow。移った先が対象なら Gate が開き直す) | Web の同意画面 |
+| あり | loading / clear / unknown | (外す) | `free` | 通す | 通す | Web の同意画面 (Gate が `back()` で閉じる) |
+| 無し | any | 立っている | `signed-out-notice` | `GO_BACK` / `POP` は止めて入口へ移す (close: `closingRef` を立てて `router.replace('/')`)。`POP_TO_TOP` (ゲートが下の画面ごと畳む `dismissAll`) は通す | 止める (block。案内を残す) | Web の案内 + 上に「閉じる」 |
+| 無し | any | 立っていない | `free` | 通す | 通す | (Gate が畳む) |
+
+`closingRef` が立った後 (「閉じる」・戻る・ログアウトに失敗したときの入口への移動) は、どの操作も止めない (同意画面が自分で入口へ移る途中)。
+
 タブの上の部品 (AI の FAB とシート) は route ではないので pathname に出ない (pathname はタブのパスのまま)。表の「あり・required・対象」の行で同意画面を開き、シートの RN の Modal はタブの layout のスピナーで外れる (S27)。
 
-同意画面の route が `beforeRemove` を止めるのは、`required` の間の「戻る」の操作 (`GO_BACK` / `POP` / `POP_TO_TOP`。`LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES`) だけ (6.6.11)。別の画面へ移る操作は止めない (止めると、ログアウトの `replace('/')` やツアーを抜ける `replace('/home')` が取り消され、利用者が同意画面から出られなくなる)。移った先が対象のパスなら、Gate が pathname の変化でもう一度同意画面を開く。`required` でなくなった後は Gate の `back()` で閉じる。プログラムの遷移 (Redirect・通知) で同意画面の下や上に別の画面が積まれても、同意画面に戻って来たときに同じ規則で閉じるので、古い同意画面が残らない。
+同意画面の route が、サインイン中に `beforeRemove` を止めるのは、`required` の間の「戻る」の操作 (`GO_BACK` / `POP` / `POP_TO_TOP`。`LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES`) だけ (6.6.11)。別の画面へ移る操作は止めない (止めると、ログインの直後の `routeAfterSignIn` の `replace` などが取り消され、利用者が同意画面から出られなくなる)。移った先が対象のパスなら、Gate が pathname の変化でもう一度同意画面を開く。`required` でなくなった後は Gate の `back()` で閉じる。ログアウトの後 (`signed-out-notice`) は、同意画面に出口 (「閉じる」と、入口への移動に置き換えた「戻る」) があるので、別の画面へ移る操作を止めて案内を残す。プログラムの遷移 (Redirect・通知) で同意画面の下や上に別の画面が積まれても、同意画面に戻って来たときに同じ規則で閉じるので、古い同意画面が残らない。
 
-**同じ描画で積む遷移の順** (expo-router の `routingQueue` は、同じ描画の effect が積んだ遷移を積んだ順に流す。§0.3): Gate が同意画面を閉じる `back()` と同じ描画で、別の部品が `push` を積むと、`back()` の後に流れた `push` の行き先が狂う (または `push` の後に流れた `back()` がそれを閉じる)。そこで、同意の後に自分から移る部品 (`NotificationRouter`・ツアーの献立の段) は、前面が同意画面の間は移らず (`isNavigationHeldForLegalConsent`)、Gate の `back()` が流れて pathname が変わった次の描画で移る。`Redirect` は `useFocusEffect` の中で移るので、同意画面の下にある間は移らない (対象外)。
+**同じ描画で積む遷移の順** (expo-router の `routingQueue` は、同じ描画の effect が積んだ遷移を積んだ順に流す。§0.3): Gate が同意画面を閉じる `back()` と同じ描画で、別の部品が `push` を積むと、`back()` の後に流れた `push` の行き先が狂う (または `push` の後に流れた `back()` がそれを閉じる)。そこで、同意の後に自分から移る部品 (`NotificationRouter`・ツアーの献立の段) は、前面が同意画面の間は移らず (`isNavigationHeldForLegalConsent`)、Gate の `back()` が流れて pathname が変わった次の描画で移る。ツアーの献立の段は、待ちの開け閉めで effect が走り直すので、Step 3 への push を `step3PushedRef` で 1 回に限る (Stack の下に残った献立の段が、Step 3 以降の段の上の同意画面の開け閉めで Step 3 を積み直さない。S29)。`Redirect` は `useFocusEffect` の中で移るので、同意画面の下にある間は移らない (対象外)。ツアーの layout の未ログインの `router.replace('/login')` は effect の中なので下にあっても流れ、前面の同意画面を置き換えようとする (§0.3)。案内を出している間 (`signed-out-notice`) は同意画面がそれを止める。
 
 ### 6.5 判定の置き場所と順序
 
 **サーバー** は 13a §6.5。
 
-**モバイル** (`apps/mobile/app/_layout.tsx`): `AuthProvider` → `LegalConsentProvider` → `ProfileProvider` → `PushTokenRegistrar` + `NotificationRouter` + `LegalConsentGate` → `<Stack>` (`legal-consent` の `Stack.Screen` に `gestureEnabled: false`)。順序: ①`AuthProvider` が session を決める ②`LegalConsentProvider` が user ごとに status を取る (ProfileProvider と並行) ③`index.tsx` / `(tabs)/_layout` / `onboarding/_layout` は auth (と、入口とタブは profile)・同意の状態がそろうまで待つ (`required` の間は中身を描かない) ④`LegalConsentGate` が pathname と state で同意画面の route を開け閉めし、ゲートが開いた後のログアウトでは下の画面ごと畳む ⑤`NotificationRouter` は同意の状態が `clear` / `unknown` になり、前面が同意画面でも入口 (`/`) でもなくなってから行き先へ移る。`NotificationRouter` と `LegalConsentGate` の並び (兄弟の順) には頼らない (⑤の待ちで、同じ描画に `back()` と `push` が並ばない。§6.3 の「同じ描画で積む遷移の順」)。
+**モバイル** (`apps/mobile/app/_layout.tsx`): `AuthProvider` → `LegalConsentProvider` → `ProfileProvider` → `PushTokenRegistrar` + `NotificationRouter` + `LegalConsentGate` → `<Stack>` (`legal-consent` の `Stack.Screen` に `gestureEnabled: false`)。順序: ①`AuthProvider` が session を決める ②`LegalConsentProvider` が user ごとに status を取る (ProfileProvider と並行) ③`index.tsx` / `(tabs)/_layout` / `onboarding/_layout` は auth (と、入口とタブは profile)・同意の状態がそろうまで待つ (`required` の間は中身を描かない。初期設定の layout は、このログインで一度描いた後は描いたまま) ④`LegalConsentGate` が pathname と state で同意画面の route を開け閉めする。同意を待っていた同意画面の上でログアウトしたら、同意画面 (`app/legal-consent.tsx`) が Web の案内と「閉じる」を出し、入口へ移った後にゲートが下の画面ごと畳む ⑤`NotificationRouter` は同意の状態が `clear` / `unknown` になり、前面が同意画面でも入口 (`/`) でもなくなってから行き先へ移る。`NotificationRouter` と `LegalConsentGate` の並び (兄弟の順) には頼らない (⑤の待ちで、同じ描画に `back()` と `push` が並ばない。§6.3 の「同じ描画で積む遷移の順」)。⑥ツアーの段 (写真・献立・バッジ) は同意を待つ間、端末の戻るの受け手を外し、献立の段は前面の間に始まった待ちでだけ Modal を閉じる (6.6.17)。
 
 ### 6.6 正典コード
 
@@ -393,11 +423,13 @@ Web (段 B1)
  *     生の fetch (src/lib/failed-response.ts の errorOfFailedResponse) の両方がここを通る
  *   - 止められたこと (required) と、Web の同意画面で同意が記録できたこと (accepted) を LegalConsentProvider に知らせる (notify / subscribe)。
  *     Provider は state を動かし、ルートのゲート (LegalConsentGate) が同意画面の route を開け閉めする
- *   - 同意画面の route のパス (app/legal-consent.tsx = Web の /legal-consent を WebViewScreen で開く画面) と、
+ *   - 同意画面の route のパス (app/legal-consent.tsx = Web の /legal-consent を WebViewScreen で開く画面)・入口のパスと、
  *     Web の同意画面がネイティブへ送るメッセージの type
  *   - ゲートの対象外のパス (認証の途中・公開ページ・同意画面そのもの。Web の isLegalConsentExemptPath と同じ基準)
  *   - 同意の状態の型と、利用者ごとの記録から状態を決める純粋な関数 (LegalConsentProvider が使う)
- *   - 同意画面の route が止める「戻る」の操作と、同意の後に自分から移る部品が待つ条件
+ *   - 同意画面の route の扱い (同意を待つ / ログアウトの後の案内 / それ以外) と、取り除く操作 (beforeRemove) をどうするか
+ *   - 同意の後に自分から移る部品・端末の戻るを受ける部品が待つ条件、RN の Modal を出す画面が Modal を閉じる条件、
+ *     初期設定の layout が中身を描かずに待つ条件
  *
  * AI 同意 (src/lib/ai-consent.ts) と違い、各画面に呼び出しを足さない。止められたら同意画面が上に開くので、
  * 画面は自分のエラー表示をそのままにしてよい (出るのは固定の文だけ)。
@@ -420,6 +452,12 @@ export const LEGAL_CONSENT_SCREEN_PATH = "/legal-consent";
  * (src/lib/native-auth-bridge.ts の notifyNativeLegalConsentAccepted と同じ値。同じテストが固定する)
  */
 export const LEGAL_CONSENT_ACCEPTED_MESSAGE_TYPE = "legal-consent-accepted";
+
+/**
+ * 入口 (app/index.tsx) のパス。未ログインならウェルカム、サインイン中なら初期設定かホームへ Redirect する。
+ * ログアウトの後にゲートと同意画面が移る先。通知の行き先へ移るのを、入口の Redirect が流れるまで待つ (NotificationRouter) のにも使う
+ */
+export const ENTRY_SCREEN_PATH = "/";
 
 // "HTTP 403 Forbidden: {...}" / HTTP/2 で statusText が空の "HTTP 403 : {...}" / 生の fetch の "HTTP 403: {...}"
 // (src/lib/ai-consent.ts・src/lib/api-error.ts と同じ形)
@@ -560,25 +598,103 @@ export function legalConsentEntryAfterEvent(
   };
 }
 
+/** router.dismissAll() の action の type (@react-navigation の StackActions.popToTop)。ゲートが下の画面ごと畳むときに使う */
+const DISMISS_ALL_ACTION_TYPE = "POP_TO_TOP";
+
 /**
  * 同意画面の route から「戻る」で抜ける操作の action の type (@react-navigation: GO_BACK = Android の戻るボタンと router.back()、
- * POP = router.dismiss()、POP_TO_TOP = router.dismissAll())。同意が要る間は、これだけを beforeRemove で止める。
- * 別の画面へ移る操作 (REPLACE・NAVIGATE・PUSH・RESET。例: Web の「同意しない」の後の router.replace('/')、ツアーを抜ける
- * router.replace('/home')) は止めない。止めると利用者が同意画面から出られなくなる。移った先が対象の画面なら、ゲートがもう一度開く
+ * POP = router.dismiss()、POP_TO_TOP = router.dismissAll())。それ以外 (REPLACE・NAVIGATE・RESET など) は「別の画面へ移る操作」
  */
-export const LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES: readonly string[] = ["GO_BACK", "POP", "POP_TO_TOP"];
+export const LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES: readonly string[] = ["GO_BACK", "POP", DISMISS_ALL_ACTION_TYPE];
 
-export function shouldBlockLegalConsentScreenRemoval(required: boolean, actionType: string): boolean {
-  return required && LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES.includes(actionType);
+/**
+ * 同意画面の route (app/legal-consent.tsx) の今の扱い。
+ *   awaiting-consent   サインイン中で同意が要る (required)。「戻る」で閉じさせない
+ *   signed-out-notice  同意を待っていた間にログアウトした (Web の「同意しない」「登録をやめる」の後)。Web の案内 (削除の依頼先・
+ *                      請求の画面・「登録をやめました」) を出したまま残し、「閉じる」か「戻る」で入口へ移る
+ *   free               それ以外 (同意が済んだ・required でない・未ログインのまま開いた)。何も止めない (ゲートが閉じる・畳む)
+ */
+export type LegalConsentScreenMode = "awaiting-consent" | "signed-out-notice" | "free";
+
+/**
+ * 同意画面の route が、サインイン中に required を見たか (sawRequired)。描画のたびに前の値から次の値を作る。
+ * サインイン中は required の間だけ立て (同意が済んだら外す)、ログアウトの後は前の値を保つ。
+ * LegalConsentGate の openedRef (同意画面が前面で required のときに立て、サインイン中に required でなくなったら外す) と同じ条件
+ */
+export function legalConsentScreenSawRequired(prev: boolean, signedIn: boolean, state: LegalConsentState): boolean {
+  if (!signedIn) return prev;
+  return state === "required";
+}
+
+export function legalConsentScreenModeOf(
+  signedIn: boolean,
+  state: LegalConsentState,
+  sawRequired: boolean,
+): LegalConsentScreenMode {
+  if (signedIn) return state === "required" ? "awaiting-consent" : "free";
+  return sawRequired ? "signed-out-notice" : "free";
+}
+
+/** 同意画面の route を取り除く操作 (beforeRemove) をどうするか。allow = 通す / block = 止める / close = 止めて入口へ移す */
+export type LegalConsentScreenRemovalDecision = "allow" | "block" | "close";
+
+/**
+ * awaiting-consent: 「戻る」だけを止め、別の画面へ移る操作 (例: ログインの直後の routeAfterSignIn の router.replace) は通す
+ *   (止めると利用者が同意画面から出られなくなる。移った先が対象ならゲートがもう一度開く)。
+ * signed-out-notice: 端末の戻る・dismiss (GO_BACK・POP) は止めて入口へ移す (下に残った画面は未ログインで開いてはいけないので
+ *   1 度も見せない。入口へ移った後にゲートが畳む)。dismissAll (POP_TO_TOP) は通す: ゲートが下の画面ごと畳む操作で、
+ *   この画面が前面でないとき (deep link で上に別の画面が重なった後のログアウト) も、この画面を含めて畳む。
+ *   別の画面へ移る操作 (下の画面のコードの router.replace。例: ツアーの layout の未ログインの replace('/login')) は止めて案内を残す。
+ *   同意画面が自分で入口へ移るとき (「閉じる」など) は、この判定の前に通す (app/legal-consent.tsx の closingRef)。
+ * free: 何も止めない
+ */
+export function legalConsentScreenRemovalDecision(
+  mode: LegalConsentScreenMode,
+  actionType: string,
+): LegalConsentScreenRemovalDecision {
+  const isBack = LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES.includes(actionType);
+  if (mode === "awaiting-consent") return isBack ? "block" : "allow";
+  if (mode === "signed-out-notice") {
+    if (actionType === DISMISS_ALL_ACTION_TYPE) return "allow";
+    return isBack ? "close" : "block";
+  }
+  return "allow";
 }
 
 /**
- * 同意の後に自分から画面を移す部品 (NotificationRouter・ツアーの献立の段) が、移るのを待つ間か。
- * 状態が分かるまで・同意が要る間に加えて、前面が同意画面の間 (同意の直後で、ゲートの router.back() がまだ流れていない) も待つ。
- * 同じ描画で back() と push が積まれると、expo-router の routingQueue が積んだ順に流し、行き先が狂うため
+ * 同意の後に自分から画面を移す部品 (NotificationRouter・ツアーの献立の段) と、端末の戻るを受ける部品 (ツアーの写真・献立・バッジの段) が
+ * 待つ間か。状態が分かるまで・同意が要る間に加えて、前面が同意画面の間 (同意の直後で、ゲートの router.back() がまだ流れていない・
+ * ログアウトの後の案内を出している) も待つ。
+ * 同じ描画で back() と push が積まれると、expo-router の routingQueue が積んだ順に流し、行き先が狂うため。
+ * 端末の戻るは、下の画面が張った受け手が同意画面より先に受ける (RN の BackHandler は後から張ったものから呼ぶ) ため
  */
 export function isNavigationHeldForLegalConsent(state: LegalConsentState, pathname: string): boolean {
   return state === "loading" || state === "required" || pathname === LEGAL_CONSENT_SCREEN_PATH;
+}
+
+/**
+ * RN の Modal を出す画面 (ツアーの献立の段) が、Modal を閉じて待つか。描画のたびに前の値から次の値を作る。
+ * 待つ間 (isNavigationHeldForLegalConsent) が、その画面が前面の間に始まったときだけ閉じ、待ちが明けるまで閉じたままにする
+ * (同意画面がその画面の上に開くので、RN の Modal が開いたままだと同意画面を隠す)。
+ * その画面が背面 (Stack の下) にいる間に始まった待ちでは閉じない。閉じると、待ちが明けたときに背面の画面の Modal が開き直し、
+ * 前面の画面を覆うため
+ */
+export function nextModalHoldForLegalConsent(prevHold: boolean, held: boolean, screenIsFront: boolean): boolean {
+  if (!held) return false;
+  return prevHold || screenIsFront;
+}
+
+/**
+ * 初期設定の layout (app/onboarding/_layout.tsx) が中身 (Stack) を描かずに待つか。
+ * shownInThisLogin = この layout がこのログインの間に Stack を一度描いた。
+ *   まだ描いていない (ログインの直後・起動の直後): 状態が分かるまで (loading) と required の間は描かない (初期設定より先に同意。R-6)
+ *   描いた後 (clear / unknown で初期設定を進めていた): required になっても描いたままにする。同意画面はゲートが上に開き、
+ *   同意の後に同じ画面へ、画面の state (質問の途中の答え・計算の結果) が残ったまま戻る (R-15)。
+ *   初期設定の画面は RN の Modal も WebView も持たないので、上に開いた同意画面を隠さない
+ */
+export function shouldHoldOnboardingForLegalConsent(state: LegalConsentState, shownInThisLogin: boolean): boolean {
+  if (shownInThisLogin) return false;
+  return state === "loading" || state === "required";
 }
 ```
 
@@ -586,15 +702,18 @@ export function isNavigationHeldForLegalConsent(state: LegalConsentState, pathna
 
 ```ts
 // tsc:skip — JSX と本冊で新設する ../lib/legal-consent の相対 import を含む RN のモジュール。実装では apps/mobile の tsc の対象
+import { usePathname } from "expo-router";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AppState } from "react-native";
 import { LEGAL_CONSENT_STATUS_API_PATH, isLegalConsentStatus, type LegalConsentStatus } from "@homegohan/shared";
 
 import { getApi } from "../lib/api";
 import {
+  isNavigationHeldForLegalConsent,
   legalConsentEntryAfterEvent,
   legalConsentEntryAfterFailure,
   legalConsentStateOf,
+  nextModalHoldForLegalConsent,
   subscribeLegalConsentEvents,
   type LegalConsentEntry,
   type LegalConsentState,
@@ -680,6 +799,33 @@ export function useLegalConsent(): LegalConsentContextValue {
   if (!ctx) throw new Error("useLegalConsent must be used within <LegalConsentProvider>");
   return ctx;
 }
+
+/**
+ * 同意の後に自分から移る部品・端末の戻るを受ける部品が待つ間か (isNavigationHeldForLegalConsent を今の状態と前面のパスで)。
+ * ツアーの写真・献立・バッジの段が使う (Stack の下に残った段も、前面のパスで同じ値になる)
+ */
+export function useNavigationHeldForLegalConsent(): boolean {
+  const { state } = useLegalConsent();
+  const pathname = usePathname();
+  return isNavigationHeldForLegalConsent(state, pathname);
+}
+
+/**
+ * RN の Modal を出す画面が、Modal を閉じて待つ間か (nextModalHoldForLegalConsent)。screenPath = その画面のパス
+ * (ツアーの献立の段は HANDSON_TOUR_ROUTES.step2)。待ちがその画面が前面の間に始まったときだけ true になり、待ちが明けるまで保つ。
+ * 前の描画の値は ref に持ち、描画のたびに今の値に合わせる (同じ入力なら同じ値になるので、描き直しが 2 回あっても変わらない)
+ */
+export function useModalHoldForLegalConsent(screenPath: string): boolean {
+  const { state } = useLegalConsent();
+  const pathname = usePathname();
+  const holdRef = useRef(false);
+  holdRef.current = nextModalHoldForLegalConsent(
+    holdRef.current,
+    isNavigationHeldForLegalConsent(state, pathname),
+    pathname === screenPath,
+  );
+  return holdRef.current;
+}
 ```
 
 #### 6.6.10 `apps/mobile/src/components/legal/LegalConsentGate.tsx` (新設。段 B2)
@@ -689,7 +835,7 @@ export function useLegalConsent(): LegalConsentContextValue {
 import { router, usePathname, useRootNavigationState } from "expo-router";
 import { useEffect, useRef } from "react";
 
-import { LEGAL_CONSENT_SCREEN_PATH, isMobileLegalConsentExemptPath } from "../../lib/legal-consent";
+import { ENTRY_SCREEN_PATH, LEGAL_CONSENT_SCREEN_PATH, isMobileLegalConsentExemptPath } from "../../lib/legal-consent";
 import { useAuth } from "../../providers/AuthProvider";
 import { useLegalConsent } from "../../providers/LegalConsentProvider";
 
@@ -698,9 +844,12 @@ import { useLegalConsent } from "../../providers/LegalConsentProvider";
  *   - サインイン中で required、いまの画面が対象 (対象外のパスでも同意画面でもない) → 同意画面を上に開く (router.push)。
  *     下の画面は Stack に残るので、同意の後に入力が残ったまま戻れる
  *   - サインイン中で、同意画面にいて required でない (同意が済んだ・取り直しで required でなくなった) → 閉じる (router.back)
- *   - session が無くなった (「同意しない」「登録をやめる」の後のログアウトなど) とき、同意画面にいるか、このログインの間にゲートが開いた
- *     同意画面がまだ同意で閉じていなければ → 下に残った画面ごと畳んで入口へ (router.dismissAll → router.replace('/'))。
- *     同意画面の下には未ログインで開いてはいけない画面 (血液検査の入力の途中など) が残っているため
+ *   - session が無くなった (「同意しない」「登録をやめる」の後のログアウトなど) とき:
+ *       同意を待っていた同意画面 (openedRef) が前面なら、何もしない。同意画面 (app/legal-consent.tsx) が Web の案内を出したまま
+ *       「閉じる」を出し、閉じる (か戻る) と入口へ移る
+ *       同意画面が前面で openedRef が無い (未ログインのまま deep link で開いた)、または前面が同意画面でなく openedRef がある
+ *       (案内から入口へ移った後) なら → 下に残った画面ごと畳んで入口へ (router.dismissAll → router.replace('/'))。
+ *       同意画面の下には未ログインで開いてはいけない画面 (血液検査の入力の途中など) が残っているため
  *   - それ以外は何もしない。pathname が変わるたびに判定するので、通知・deep link・Redirect・下の画面のコードが別の画面へ移しても、
  *     required なら必ず同意画面が上に来る。古い同意画面が下に残っても、戻って来たときに同じ規則で閉じる
  * ナビゲーターの準備 (useRootNavigationState の key) が済むまでは何もしない (起動の直後に push しても届かないため)。
@@ -711,7 +860,10 @@ export function LegalConsentGate() {
   const { state } = useLegalConsent();
   const pathname = usePathname();
   const navigationReady = Boolean(useRootNavigationState()?.key);
-  /** このログインの間にゲートが同意画面を開き、まだ同意で閉じていない (ログアウトのときに下の画面ごと畳むかどうか) */
+  /**
+   * このログインの間に、同意画面が required のまま前面にあった (ゲートが開いた・deep link で開いた) まま、同意で閉じていない。
+   * ログアウトのときに、案内を残して待つか・下の画面ごと畳むかを決める (同意画面の sawRequired と同じ条件で立て、同じ条件で外す)
+   */
   const openedRef = useRef(false);
 
   useEffect(() => {
@@ -719,25 +871,30 @@ export function LegalConsentGate() {
     const onConsentScreen = pathname === LEGAL_CONSENT_SCREEN_PATH;
     try {
       if (!session) {
+        // 同意を待っていた同意画面の上でログアウトした: 畳まずに待つ (同意画面が入口へ移ると、次の描画で下の分岐が畳む)
+        if (onConsentScreen && openedRef.current) return;
         if (onConsentScreen || openedRef.current) {
           openedRef.current = false;
           if (router.canDismiss()) router.dismissAll();
-          router.replace("/");
+          router.replace(ENTRY_SCREEN_PATH);
         }
         return;
       }
       if (state === "required") {
-        if (!isMobileLegalConsentExemptPath(pathname)) {
+        if (onConsentScreen) {
+          // 開いている (重ねて push しない)。この後にログアウトしたら案内を残す
+          openedRef.current = true;
+        } else if (!isMobileLegalConsentExemptPath(pathname)) {
           openedRef.current = true;
           router.push(LEGAL_CONSENT_SCREEN_PATH);
         }
         return;
       }
-      // required でない: ゲートが開いた同意画面はもう要らない (同意が済んだ・取り直しで required でなくなった)
+      // required でない: 同意画面はもう要らない (同意が済んだ・取り直しで required でなくなった)
       openedRef.current = false;
       if (onConsentScreen) {
         if (router.canGoBack()) router.back();
-        else router.replace("/");
+        else router.replace(ENTRY_SCREEN_PATH);
       }
     } catch (error) {
       // 遷移の失敗でアプリを落とさない (NotificationRouter と同じ)。pathname か state か session が変わればもう一度試みる
@@ -749,48 +906,126 @@ export function LegalConsentGate() {
 }
 ```
 
-`isMobileLegalConsentExemptPath` は同意画面のパスも対象外に含むので、同意画面にいる間は重ねて push しない。session 無しの分岐で `router.back()` を使わないのは、戻った先 (同意画面の下の画面) が未ログインのまま見えるため。`dismissAll` (`POP_TO_TOP`) は、session 無しの描画では状態が `clear` (6.6.9) なので同意画面の `beforeRemove` に止められない (6.6.11)。`dismissAll` の後の `replace('/')` は、残った最初の route を入口に置き換える。
+`isMobileLegalConsentExemptPath` は同意画面のパスも対象外に含むので、同意画面にいる間は重ねて push しない (同意画面の分岐を先に見る)。対象外のパス (`/auth/reset-password` など) では `openedRef` を立てない (S12 のパスワード再設定の後のログアウトは、今までどおり再設定の画面の `replace('/login')` に任せる)。session 無しの分岐で `router.back()` を使わないのは、戻った先 (同意画面の下の画面) が未ログインのまま見えるため。畳む操作は同意画面の `beforeRemove` に止められない (6.6.8・6.6.11): 同意画面が前面で畳むのは扱いが `free` (未ログインのまま開いた) のときだけ。案内を出している同意画面 (`signed-out-notice`) が Stack の下に残っているとき (deep link で上に再設定の画面などが重なった後のログアウト。S12) も、`dismissAll` (`POP_TO_TOP`) は通す。案内から入口へ移るときは、同意画面が `closingRef` を立ててから自分で `replace('/')` するので、その後のゲートの `dismissAll` の時点で同意画面はもう Stack に無い。`dismissAll` の後の `replace('/')` は、残った最初の route を入口に置き換える。
 
 #### 6.6.11 `apps/mobile/app/legal-consent.tsx` (新設。段 B2。同意画面の route)
 
 ```ts
 // tsc:skip — JSX と本冊で新設する相対 import を含む RN の画面。実装では apps/mobile の tsc の対象
-import { useNavigation } from "expo-router";
-import { useEffect, useRef } from "react";
+import { router, useNavigation } from "expo-router";
+import { useCallback, useEffect, useRef } from "react";
+import { View } from "react-native";
 
+import { Button } from "../src/components/ui";
 import { WebViewScreen } from "../src/components/web/WebViewScreen";
-import { LEGAL_CONSENT_SCREEN_PATH, shouldBlockLegalConsentScreenRemoval } from "../src/lib/legal-consent";
+import {
+  ENTRY_SCREEN_PATH,
+  LEGAL_CONSENT_SCREEN_PATH,
+  legalConsentScreenModeOf,
+  legalConsentScreenRemovalDecision,
+  legalConsentScreenSawRequired,
+} from "../src/lib/legal-consent";
+import { supabase } from "../src/lib/supabase";
+import { useAuth } from "../src/providers/AuthProvider";
 import { useLegalConsent } from "../src/providers/LegalConsentProvider";
+import { colors, spacing } from "../src/theme";
+
+/** ログアウトの後 (Web の案内を出している間) に、WebView の上に出すボタンの文 */
+const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
 
 /**
  * 利用規約・プライバシーポリシーへの同意画面 (#1442)。Web の /legal-consent を WebView で開く
- * (文面・チェック・生年月日 (cross/14)・未成年の案内・「登録をやめる」・409 の読み込み直しは Web の画面のまま。2 か所に持たない)。
- * AI 同意の画面 (settings/ai-consent.tsx) と同じ形。開け閉めは LegalConsentGate が行い、この画面は自分では移らない。
+ * (文面・チェック・生年月日 (cross/14)・未成年の案内・「登録をやめる」・409 の読み込み直し・「同意しない」の後の案内は Web の画面のまま。
+ * 2 か所に持たない)。AI 同意の画面 (settings/ai-consent.tsx) と同じ形。開け閉めは LegalConsentGate が行う。
  * Web の画面は、同意を記録できたら { type: 'legal-consent-accepted' } を、「同意しない」「登録をやめる」では { type: 'sign-out' } を
  * ネイティブへ送る (WebViewScreen の onMessage が受ける)。
- * 同意が要る間は、「戻る」の操作 (Android の戻るボタン = GO_BACK・dismiss = POP・dismissAll = POP_TO_TOP) でこの画面を閉じさせない
- * (iOS のスワイプは app/_layout.tsx の gestureEnabled: false)。別の画面へ移る操作 (REPLACE など) は止めない
- * (ログアウトの後の router.replace('/')・ツアーを抜ける router.replace('/home') を取り消すと、ここから出られなくなる。
- * 移った先が対象なら LegalConsentGate がもう一度開く)。requiredRef は描画のたびに今の状態に合わせる
- * (router の操作は次の描画の後に流れるので、beforeRemove はその時点の状態を見る)。
+ * 扱い (LegalConsentScreenMode。src/lib/legal-consent.ts) ごとの振る舞い:
+ *   awaiting-consent   「戻る」の操作 (Android の戻るボタン = GO_BACK・dismiss = POP・dismissAll = POP_TO_TOP) でこの画面を閉じさせない
+ *                      (iOS のスワイプは app/_layout.tsx の gestureEnabled: false)。別の画面へ移る操作 (REPLACE など) は止めない
+ *                      (ログインの直後の routeAfterSignIn の replace を取り消すと、ここから出られなくなる。移った先が対象なら
+ *                      LegalConsentGate がもう一度開く)
+ *   signed-out-notice  Web からの sign-out でネイティブもログアウトした後。ウェルカムへ移らず (WebViewScreen の afterSignOut)、
+ *                      Web の案内 (削除の依頼先・請求の画面・「登録をやめました」) を残し、WebView の上に「閉じる」を出す。
+ *                      「閉じる」と端末の戻る・dismiss は入口へ移す。下の画面のコードが別の画面へ移そうとしても止める (案内を残す)。
+ *                      ゲートの dismissAll (下の画面ごと畳む) は止めない
+ *                      入口へ移った後、LegalConsentGate が下に残った画面ごと畳む
+ *   free               何も止めない (LegalConsentGate が閉じる・畳む)
+ * modeRef は描画のたびに今の扱いに合わせる (router の操作は次の描画の後に流れるので、beforeRemove はその時点の扱いを見る)。
  */
 export default function LegalConsentScreen() {
   const navigation = useNavigation();
+  const { session } = useAuth();
   const { state } = useLegalConsent();
-  const requiredRef = useRef(state === "required");
-  requiredRef.current = state === "required";
+  const signedIn = session !== null;
+  /** この同意画面がサインイン中に required を見たか (LegalConsentGate の openedRef と同じ条件) */
+  const sawRequiredRef = useRef(false);
+  sawRequiredRef.current = legalConsentScreenSawRequired(sawRequiredRef.current, signedIn, state);
+  const mode = legalConsentScreenModeOf(signedIn, state, sawRequiredRef.current);
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  /** この画面が自分で入口へ移る途中 (「閉じる」・戻る・ログアウトに失敗したときの入口への移動)。以後の取り除く操作は止めない */
+  const closingRef = useRef(false);
+
+  const close = useCallback(() => {
+    closingRef.current = true;
+    router.replace(ENTRY_SCREEN_PATH);
+  }, []);
 
   useEffect(() => {
     return navigation.addListener("beforeRemove", (event) => {
-      if (shouldBlockLegalConsentScreenRemoval(requiredRef.current, event.data.action.type)) event.preventDefault();
+      if (closingRef.current) return;
+      const decision = legalConsentScreenRemovalDecision(modeRef.current, event.data.action.type);
+      if (decision === "allow") return;
+      event.preventDefault();
+      if (decision === "close") close();
     });
-  }, [navigation]);
+  }, [navigation, close]);
 
-  return <WebViewScreen path={LEGAL_CONSENT_SCREEN_PATH} testID="webview-legal-consent" />;
+  // Web からの sign-out (「同意しない」「登録をやめる」) と、失効の session-expired で、ネイティブのログアウトが済んだ後に呼ばれる
+  // (webViewAuthMessages.ts の goToWelcome の代わり)。ウェルカムへ移らず、Web の案内を残す。
+  // ネイティブのログアウトが通信の失敗で済まず、端末にセッションが残ったとき (signOutWithCleanup は失敗のときに端末のセッションを消さない。
+  // §6.8) は、今までどおり入口へ移す (入口は required でスピナー → LegalConsentGate が同意画面を開き直す)
+  const afterSignOut = useCallback(() => {
+    void supabase.auth.getSession().then(
+      ({ data }) => {
+        if (data.session) close();
+      },
+      () => close(),
+    );
+  }, [close]);
+
+  return (
+    <WebViewScreen
+      path={LEGAL_CONSENT_SCREEN_PATH}
+      testID="webview-legal-consent"
+      afterSignOut={afterSignOut}
+      header={
+        mode === "signed-out-notice" ? (
+          <View
+            style={{
+              flexDirection: "row",
+              justifyContent: "flex-end",
+              paddingHorizontal: spacing.lg,
+              paddingVertical: spacing.sm,
+              backgroundColor: colors.card,
+              borderBottomWidth: 1,
+              borderBottomColor: colors.border,
+            }}
+          >
+            <Button variant="ghost" size="sm" onPress={close} testID="legal-consent-close">
+              {LEGAL_CONSENT_CLOSE_LABEL}
+            </Button>
+          </View>
+        ) : undefined
+      }
+    />
+  );
 }
 ```
 
 `WebViewScreen` は `path` に `?mode=app` を足してブリッジの `next` にする (`webViewBridge.ts:306-317, 323-326`)。Web の `/legal-consent` は `next` クエリが無いので、同意の後の移動先は `/home` (`lib/legal-consent.ts:210-216`)。その移動は全体の読み込み (`window.location.assign`) なので `tab-navigate` は送られず、ネイティブは `legal-consent-accepted` の合図で先に route を閉じる。
+
+`header` は `WebViewScreen` の既存の props (WebView の上の安全領域の内側に置く。§0.3)。`header` が変わっても `WebViewScreen` は作り直さない (WebView の `key` は「再読み込み」の回数だけ) ので、ログアウトの後に「閉じる」が出ても Web の案内は消えない。見た目の数値は `src/theme` の `spacing`・`colors` と、`PageHeader` (`src/components/ui/PageHeader.tsx`) と同じ下線 1 px だけを使う。
 
 #### 6.6.12 `apps/mobile/app/_layout.tsx` の差分 (段 B2)
 
@@ -828,6 +1063,8 @@ import { LegalConsentProvider } from "../src/providers/LegalConsentProvider";
 
 #### 6.6.13 `apps/mobile/app/index.tsx`・`apps/mobile/app/(tabs)/_layout.tsx`・`apps/mobile/app/onboarding/_layout.tsx`・`apps/mobile/src/components/NotificationRouter.tsx` の差分 (段 B2)
 
+入口とタブの layout は、`required` の間はずっと中身を描かない (入口は入力を持たない。タブは描くと WebView の中で Web の同意画面が別に開く。§8 Q-6)。初期設定の layout だけは、このログインで `Stack` を一度描いた後は `required` でも描いたままにする (下の 2 つ目のブロック。S28)。
+
 ```ts
 // tsc:skip — 既存ファイルへの差分 (JSX)。行は origin/main 88b803f5
 // --- app/index.tsx ---
@@ -845,23 +1082,12 @@ import { useLegalConsent } from "../../src/providers/LegalConsentProvider";   //
 //   描くと WebView の中で Web の同意画面が別に開き、ネイティブの同意画面の後に古い form が残る):
 //   if (isLoading || profileLoading || legalConsentState === "loading" || legalConsentState === "required") {
 
-// --- app/onboarding/_layout.tsx ---
-import { useLegalConsent } from "../../src/providers/LegalConsentProvider";   // 6 行目の useAuth の import の後
-//   16 行目の後:
-//   const { state: legalConsentState } = useLegalConsent();
-//   18 行目の条件を次にする (#1442: ログインの直後 (login.tsx の routeAfterSignIn が /onboarding/welcome・/onboarding/resume へ入口を通らずに移る) も、
-//   同意の状態が分かるまで・同意が要る間は初期設定の画面を描かない。同意画面はゲートがこの上に開く。unknown は待たない):
-//   if (isLoading || (session && (legalConsentState === "loading" || legalConsentState === "required"))) {
-//   (session 無しのときの <Redirect href="/login" /> (22 行目) は変えない。session 無しの状態は clear)
-
 // --- src/components/NotificationRouter.tsx ---
 // 25 行目の import を次にする:
 //   import { router, usePathname } from "expo-router";
-import { isNavigationHeldForLegalConsent } from "../lib/legal-consent";   // 28 行目の resolveNotificationHref の import の後
+import { ENTRY_SCREEN_PATH, isNavigationHeldForLegalConsent } from "../lib/legal-consent";   // 28 行目の resolveNotificationHref の import の後
 import { useLegalConsent } from "../providers/LegalConsentProvider";   // 30 行目の useProfile の import の後
-//   38 行目 (FOREGROUND_NOTIFICATION_BEHAVIOR の定義) の後に足す:
-//   /** 入口 (app/index.tsx) のパス。session があれば初期設定かホームへ Redirect する途中なので、ここでは移らない (#1442) */
-//   const ENTRY_SCREEN_PATH = "/";
+//   (ENTRY_SCREEN_PATH = 入口 (app/index.tsx) のパス。session があれば初期設定かホームへ Redirect する途中なので、ここでは移らない)
 //   42 行目の後:
 //   const { state: legalConsentState } = useLegalConsent();
 //   const pathname = usePathname();
@@ -872,6 +1098,58 @@ import { useLegalConsent } from "../providers/LegalConsentProvider";   // 30 行
 //   107 行目の依存の配列に legalConsentState と pathname を足す
 //   先頭の説明 (15-21 行目) に「同意の状態が決まり (#1442)、前面が同意画面でも入口でもなくなってから移る」を足す
 ```
+
+`app/onboarding/_layout.tsx` は全体 (origin/main `88b803f5` の 24 行) を次に置き換える (`ErrorBoundary` は今のまま):
+
+```ts
+// tsc:skip — JSX と本冊で新設する相対 import を含む RN の layout。実装では apps/mobile の tsc の対象
+import { Redirect, Stack } from "expo-router";
+import type { ErrorBoundaryProps } from "expo-router";
+import { useEffect, useRef } from "react";
+
+import { ErrorFallback } from "../../src/components/ErrorFallback";
+import { LoadingState } from "../../src/components/ui";
+import { shouldHoldOnboardingForLegalConsent } from "../../src/lib/legal-consent";
+import { useAuth } from "../../src/providers/AuthProvider";
+import { useLegalConsent } from "../../src/providers/LegalConsentProvider";
+import { colors } from "../../src/theme";
+
+// この区画 (初期設定) の画面で描画の例外が起きたとき、アプリ全体をクラッシュさせずに再試行を出す (#1207)。
+// 回答はその都度サーバーへ保存されるので、「最初の画面へ戻る」(/ → 初期設定の入口) からやり直せる。
+export function ErrorBoundary(props: ErrorBoundaryProps) {
+  return <ErrorFallback {...props} boundary="onboarding" homeHref="/" homeLabel="最初の画面へ戻る" />;
+}
+
+/**
+ * #1442: ログインの直後 (login.tsx の routeAfterSignIn が /onboarding/welcome・/onboarding/resume へ入口を通らずに移る) も、
+ * 同意の状態が分かるまで・同意が要る間は初期設定の画面を描かない (同意画面はゲートがこの上に開く。unknown は待たない)。
+ * このログインで Stack を一度描いた後に同意が要るようになった (unknown のまま進めた・途中で改定が入った) ときは Stack を描いたままにし、
+ * 同意画面を上に開かせる。外すと、質問の途中の答えや計算の結果 (画面の state) が同意の後に消える (shouldHoldOnboardingForLegalConsent)
+ */
+export default function OnboardingLayout() {
+  const { session, isLoading } = useAuth();
+  const { state: legalConsentState } = useLegalConsent();
+  /** このログインの間に Stack を一度描いたか (描いたら立て、ログアウトしたら外す) */
+  const shownRef = useRef(false);
+  const hold = session !== null && shouldHoldOnboardingForLegalConsent(legalConsentState, shownRef.current);
+  const showStack = !isLoading && session !== null && !hold;
+
+  useEffect(() => {
+    if (showStack) shownRef.current = true;
+    else if (session === null) shownRef.current = false;
+  }, [showStack, session]);
+
+  if (isLoading || hold) {
+    return <LoadingState style={{ backgroundColor: colors.bg }} />;
+  }
+
+  if (!session) return <Redirect href="/login" />;
+
+  return <Stack screenOptions={{ headerShown: false }} />;
+}
+```
+
+`shownRef` は描いた描画の後 (effect) に立つので、`clear` / `unknown` で `Stack` を描いた次の描画からは、`required` になっても `hold` が false になる。`session` 無しの描画 (ログアウト) で外すので、次のログインはまた待つ (ログアウトの後はふつう `Redirect` でこの layout ごと外れる)。初期設定の画面は RN の Modal も WebView も持たない (§0.3 の `<Modal>` の一覧) ので、`Stack` を描いたままでも、上に開いた同意画面を隠さない。
 
 #### 6.6.14 `apps/mobile/src/lib/api.ts` と `failed-response.ts` の差分 (段 B2)
 
@@ -895,11 +1173,21 @@ const LEGAL_CONSENT_ALERT_TITLE = "同意が必要です";
 // 先頭のコメント (1-13 行目) に 403 LEGAL_CONSENT_REQUIRED の行を足す。41-42 行目の「同意の 403 の見分け… 形を変えない」は AI 同意の話なのでそのまま
 ```
 
-#### 6.6.15 `apps/mobile/src/components/web/WebViewScreen.tsx` の差分 (段 B2)
+#### 6.6.15 `apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/src/lib/webViewAuthMessages.ts` の差分 (段 B2)
 
 ```ts
 // tsc:skip — 既存ファイルへの差分 (JSX)。行は origin/main 88b803f5
+// --- src/components/web/WebViewScreen.tsx ---
 import { notifyLegalConsentAccepted, parseLegalConsentMessage } from '../../lib/legal-consent';
+// 37-43 行目の Props に足す (header の後):
+//   // Web からのログアウト (sign-out・失効の session-expired) でネイティブもログアウトした後に呼ぶ。渡さなければ今までどおり
+//   // ウェルカム画面へ (router.replace('/'))。規約の同意画面 (app/legal-consent.tsx) だけが渡し、ウェルカムへ移らずに
+//   // Web の「同意しない」「登録をやめる」の後の案内を残す (#1442)
+//   afterSignOut?: () => void;
+// 141 行目の分割代入に afterSignOut を足す:
+//   const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, header, afterSignOut, onRetry }) => {
+// 167 行目を次にする:
+//   const handleAuthMessage = useWebAuthMessages(effectivePath, { afterSignOut });
 // onMessage (320-378 行目) の sign-out / session-expired の分岐 (371-374 行目) の後に足す。
 // 送り元が自オリジンであることは 334 行目 (isOwnOrigin) で確かめ済み:
 //   } else if (parseLegalConsentMessage(data)) {
@@ -907,7 +1195,34 @@ import { notifyLegalConsentAccepted, parseLegalConsentMessage } from '../../lib/
 //     notifyLegalConsentAccepted();
 //   }
 // 322 行目のコメントの列挙 (tab-navigate / download 等) に legal-consent-accepted を足す
+
+// --- src/lib/webViewAuthMessages.ts ---
+// 283 行目 (useWebAuthMessages の説明) の前に足す:
+//   export type WebAuthMessagesOptions = {
+//     /**
+//      * ネイティブのログアウトが済んだ後 (sign-out・失効の session-expired) に、ウェルカム画面へ移る代わりに呼ぶ。
+//      * 渡さなければ router.replace('/')。規約の同意画面 (app/legal-consent.tsx) だけが渡す (#1442)
+//      */
+//     afterSignOut?: () => void;
+//   };
+// 291 行目を次にする (説明 (283-290 行目) に @param options の行を足す):
+//   export function useWebAuthMessages(
+//     currentPath: string,
+//     options: WebAuthMessagesOptions = {},
+//   ): (data: unknown, senderUrl: unknown) => void {
+// 304 行目 (routerRef.current = router) の後に足す (返す関数の identity を変えないため、最新の値を ref で持つ):
+//   const afterSignOutRef = useRef(options.afterSignOut);
+//   afterSignOutRef.current = options.afterSignOut;
+// 313-315 行目 (goToWelcome) を次にする:
+//   goToWelcome: () => {
+//     const afterSignOut = afterSignOutRef.current;
+//     if (afterSignOut) afterSignOut();
+//     else routerRef.current.replace("/");
+//   },
+// WebAuthHandlerDeps の goToWelcome の説明 (162 行目) を「ログアウト後に移る (既定はウェルカム画面。useWebAuthMessages の afterSignOut で変えられる)」にする
 ```
+
+`handleWebAuthMessage` と `performNativeSignOut` (deps を受ける側) は変えない。移り先を決めるのは `useWebAuthMessages` が作る `goToWelcome` だけで、`afterSignOut` を渡さない画面 (タブ・AI 同意の画面) は今までどおり `router.replace('/')`。
 
 #### 6.6.16 Web の差分 (段 B1): `src/lib/native-auth-bridge.ts`・`src/app/legal-consent/LegalConsentForm.tsx`
 
@@ -949,35 +1264,64 @@ export function notifyNativeLegalConsentAccepted(): boolean {
 
 同意の記録が失敗した分岐 (401・403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED`・400・409・その他) では送らない。「同意しない」「登録をやめる」は既存の `sign-out` の合図のまま。
 
-#### 6.6.17 `apps/mobile/app/handson-tour/menu.tsx` の差分 (段 B2)
+#### 6.6.17 ハンズオンツアーの段 `apps/mobile/app/handson-tour/menu.tsx`・`photo.tsx`・`badges.tsx` の差分 (段 B2)
+
+同意を待つ間 (`useNavigationHeldForLegalConsent`) は、どの段も端末の戻るを受けない (受け手が Stack の下に残っていても先に受けるため。§0.3)。戻るは react-navigation の `GO_BACK` になり、同意画面の `beforeRemove` が扱う (6.6.11)。献立の段の RN の Modal は、待ちが献立の段が前面の間に始まったときだけ閉じる (`useModalHoldForLegalConsent`)。
 
 ```ts
 // tsc:skip — 既存ファイルへの差分 (JSX)。行は origin/main 88b803f5
-// 7 行目の import を次にする:
-//   import { usePathname, useRouter } from 'expo-router';
-import { isNavigationHeldForLegalConsent } from '../../src/lib/legal-consent';   // 33 行目の safeNickname の import の後
-import { useLegalConsent } from '../../src/providers/LegalConsentProvider';   // 同上
-// 66 行目の後に足す:
-//   const { state: legalConsentState } = useLegalConsent();
-//   const pathname = usePathname();
-//   // #1442: 同意の状態が決まるまで・同意が要る間・同意画面が前面の間は、この段の RN の Modal (V4GenerateModal と吹き出しの Modal) を閉じ、
-//   // Step 3 へ進まない。RN の Modal は push した同意画面より上に出るので、開いたままだと同意画面を隠す
-//   // (tests/ai-consent-mobile-modal-nesting.test.ts の先頭の説明と同じ理由)。同意画面が閉じてから Modal を戻し、2.9 なら Step 3 へ進む
-//   const consentHold = isNavigationHeldForLegalConsent(legalConsentState, pathname);
+// --- app/handson-tour/menu.tsx ---
+// 7 行目の import は変えない (前面のパスは Provider のフックが読む)
+import { useModalHoldForLegalConsent, useNavigationHeldForLegalConsent } from '../../src/providers/LegalConsentProvider';   // 33 行目の safeNickname の import の後
+// 74 行目 (useLeaveTour) の後に足す:
+//   // #1442: 同意を待つ間 (状態が決まるまで・同意が要る間・同意画面が前面の間) は、Step 3 へ進まず、端末の戻るでツアーを抜けない
+//   // (戻るは同意画面が受ける)。RN の Modal 2 つは、待ちがこの段が前面の間に始まったときだけ閉じる (同意画面を隠さないため。
+//   // この段が Step 3 以降の段の下に残っている間に始まった待ちでは閉じない: 閉じると、待ちが明けたときに Modal が開き直して前面の段を覆う)
+//   const legalConsentHeld = useNavigationHeldForLegalConsent();
+//   const modalHold = useModalHoldForLegalConsent(HANDSON_TOUR_ROUTES.step2);
+//   /** Step 3 へ push した (待ちの開け閉めで下の effect が走り直しても、もう一度 push しない) */
+//   const step3PushedRef = React.useRef(false);
 // 124-127 行目 (case '2.9') を次にする:
 //   case '2.9':
-//     // Step 3 へ遷移 (ツアーを抜けたあと・同意を待つ間は進めない。同意の後は consentHold の変化でこの effect が走り直す)
-//     if (!leftTourRef.current && !consentHold) router.push(HANDSON_TOUR_ROUTES.step3 as never);
+//     // Step 3 へ遷移 (ツアーを抜けたあと・同意を待つ間・もう push したあとは進めない。同意の後は legalConsentHeld の変化でこの effect が走り直す)
+//     if (!leftTourRef.current && !legalConsentHeld && !step3PushedRef.current) {
+//       step3PushedRef.current = true;
+//       router.push(HANDSON_TOUR_ROUTES.step3 as never);
+//     }
 //     break;
-// 135 行目の依存の配列を [subStep, consentHold] にする
-// 204 行目 (V4GenerateModal の visible) を visible={!consentHold} にする。201 行目のコメントを「V4GenerateModal は内部で React Native <Modal> を使う。同意を待つ間だけ閉じる (#1442)」に
-// 216 行目 (吹き出しを包む <Modal> の visible) を visible={!consentHold} にする
+// 135 行目の依存の配列を [subStep, legalConsentHeld] にする
+// 201 行目のコメントを「V4GenerateModal は内部で React Native <Modal> を使う。この段が前面の間に始まった同意の待ちの間だけ閉じる (#1442)」に、
+// 204 行目 (V4GenerateModal の visible) を visible={!modalHold} にする
+// 216 行目 (吹き出しを包む <Modal> の visible) を visible={!modalHold} にする
+// 220 行目 (onRequestClose) を onRequestClose={legalConsentHeld ? undefined : handleHardBack} にする
+// 229 行目 (TourOverlay の onSkip) を onSkip={legalConsentHeld ? undefined : handleHardBack} にする
+
+// --- app/handson-tour/photo.tsx ---
+import { useNavigationHeldForLegalConsent } from '../../src/providers/LegalConsentProvider';   // 34 行目の useProfile の import の後
+// 207 行目 (useLeaveTour) の後に足す:
+//   // #1442: 同意を待つ間は端末の戻るを受けない (同意画面の下に残っても、受け手は同意画面より先に受けるため。戻るは同意画面が受ける)
+//   const legalConsentHeld = useNavigationHeldForLegalConsent();
+// 338 行目を次にする:
+//   useTourHardBack(saveError && !legalConsentHeld, handleHardBack);
+// 464 行目 (overlay の onSkip) を次にする:
+//   onSkip: legalConsentHeld ? undefined : handleHardBack,
+
+// --- app/handson-tour/badges.tsx ---
+import { useNavigationHeldForLegalConsent } from '../../src/providers/LegalConsentProvider';   // 24 行目の useProfile の import の後
+// 46 行目 (useLeaveTour) の後に足す (photo.tsx と同じコメント):
+//   const legalConsentHeld = useNavigationHeldForLegalConsent();
+// 108 行目を次にする:
+//   useTourHardBack((isLoading || error) && !legalConsentHeld, handleHardBack);
+// 180 行目 (TourOverlay の onSkip) を次にする:
+//   onSkip={legalConsentHeld ? undefined : handleHardBack}
 ```
 
-- `consentHold` が切り替わると、2.1 と 2.5 の段のタイマーは張り直される (effect が走り直すため。同意の後にその段の待ちを最初からやり直すだけ)。
-- `V4GenerateModal` (サンドボックス) は `visible` が戻ると作成前の表示に戻る (`V4GenerateModal.tsx:257-265` の既存の effect)。ツアーの段の進み (`subStep`) は `menu.tsx` が持つので、段は戻らない。
-- `visible={false}` の RN の `<Modal>` は中身を描かないので、吹き出しの `TourOverlay` (端末の戻るボタンの受け口 `onSkip`) と `<Modal>` の `onRequestClose` も、その間は効かない。同意画面の上で Android の戻るボタンを押しても、ツアーを抜けない。
-- 他の段 (`index`・`photo`・`badges`・`graduate`) は RN の `<Modal>` を描かない (§0.3 の `<Modal>` の一覧) ので変えない。
+- `TourOverlay` は `onSkip` が無いとき、端末の戻るの受け手で false を返す (`TourOverlay.tsx:72-79`)。張ったままでも次の受け手へ渡すので、`TourOverlay` と `useLeaveTour.ts` は変えない。`onSkip` の型は省略可 (`packages/handson-tour-shared/src/types.ts:116`)。
+- `useTourHardBack(false, …)` は受け手を張らない (`useLeaveTour.ts:75`)。待ちが明けると張り直すので、同意の後は今までどおりエラー画面・読み込み中の画面の端末の戻るでツアーを抜けられる。
+- 献立の段の `legalConsentHeld` が切り替わると、2.1 と 2.5 の段のタイマーは張り直される (effect が走り直すため。同意の後にその段の待ちを最初からやり直すだけ)。2.9 では `step3PushedRef` が push を 1 回に限る。
+- `V4GenerateModal` (サンドボックス) は `visible` が戻ると作成前の表示に戻る (`V4GenerateModal.tsx:257-265` の既存の effect)。ツアーの段の進み (`subStep`) は `menu.tsx` が持つので、段は戻らない。`modalHold` が false のまま (背面で待ちが始まった) なら `visible` は変わらないので、この effect も走らない。
+- `visible={false}` の RN の `<Modal>` は中身を描かないので、その間は吹き出しの `TourOverlay` も外れる。`modalHold` が false のまま (背面) でも、`onSkip` と `onRequestClose` は `legalConsentHeld` で外しているので、同意画面の上の端末の戻るでツアーを抜けない。
+- `index` (Step 0) と `graduate` (Step 4) は端末の戻るの受け手も RN の `<Modal>` も持たない (§0.3) ので変えない。
 
 ### 6.7 定数 (新設。すべて名前付き・根拠つき)
 
@@ -987,8 +1331,10 @@ import { useLegalConsent } from '../../src/providers/LegalConsentProvider';   //
 | `LEGAL_CONSENT_ACCEPTED_MESSAGE_TYPE` | `'legal-consent-accepted'` | 同上 (Web は `native-auth-bridge.ts` のリテラル) | Web → ネイティブの合図の type。既存の 3 つと同じ命名 (kebab-case)。T-W3 が両側の一致を固定 |
 | `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` | 7 本 (6.6.8) | 同上 | `(auth)` `(public)` の画面と同意画面。T-ML3 がファイル名と突き合わせる |
 | `LEGAL_CONSENT_ALERT_TITLE` | `'同意が必要です'` | `apps/mobile/src/lib/failed-response.ts` | Alert の見出し (AI 同意の案内 `ai-consent.ts:114` と同じ語) |
-| `LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES` | `['GO_BACK', 'POP', 'POP_TO_TOP']` | `apps/mobile/src/lib/legal-consent.ts` | 同意画面が `required` の間に止める「戻る」の action の type (@react-navigation の action の名前。§0.3)。T-ML6 が固定 |
-| `ENTRY_SCREEN_PATH` | `'/'` | `apps/mobile/src/components/NotificationRouter.tsx` (モジュールの中だけ) | 入口 (`app/index.tsx`) のパス。通知の行き先へ移るのを、入口の `Redirect` が流れるまで待つ (6.6.13)。T-NR2 が固定 |
+| `LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES` | `['GO_BACK', 'POP', 'POP_TO_TOP']` | `apps/mobile/src/lib/legal-consent.ts` | 同意画面の「戻る」の action の type (@react-navigation の action の名前。§0.3)。`awaiting-consent` で止め、`signed-out-notice` で入口への移動に置き換える。T-ML6 が固定 |
+| `DISMISS_ALL_ACTION_TYPE` | `'POP_TO_TOP'` | `apps/mobile/src/lib/legal-consent.ts` (モジュールの中だけ) | `router.dismissAll()` の action の type。`signed-out-notice` の同意画面がゲートの畳む操作だけは通すのに使う (6.6.8)。T-ML6 が固定 |
+| `ENTRY_SCREEN_PATH` | `'/'` | `apps/mobile/src/lib/legal-consent.ts` (export) | 入口 (`app/index.tsx`) のパス。ログアウトの後にゲートと同意画面が移る先 (6.6.10・6.6.11)。通知の行き先へ移るのを、入口の `Redirect` が流れるまで待つ (6.6.13)。T-G4・T-SC3・T-NR2 が固定 |
+| `LEGAL_CONSENT_CLOSE_LABEL` | `'閉じる'` | `apps/mobile/app/legal-consent.tsx` (モジュールの中だけ) | ログアウトの後 (Web の案内を出している間) に WebView の上に出すボタンの文。T-SC3 が固定 |
 
 shared・Web の定数と、方針 (運用で変えうる値・環境変数を足さない) は 13a §6.7。本冊も運用で変えうる値 (しきい値・時間・回数) と環境変数を足さない。Zod は足さない (status の形の正本は 13a §6.6.3。モバイルは `isLegalConsentStatus` で確かめる)。
 
@@ -1002,7 +1348,8 @@ shared・Web の定数と、方針 (運用で変えうる値・環境変数を�
 | status を取れない (通信・500・形が違う) | `LegalConsentProvider` | 例外は投げない | 何も出ない | `unknown` (止めない)。`required` のときは保つ |
 | 同意画面の WebView の読み込みに失敗 (オフライン・5xx) | `WebViewScreen` | 既存の `WebViewErrorView` (「再読み込み」) | 日本語の案内 | 再読み込みでブリッジからやり直す (既存) |
 | `legal-consent-accepted` の合図が届かない (WebView のプロセスの落ち・通信) | — | — | 同意画面に Web の `/home` が出る | 前面に戻ったとき・次の起動で status を取り直す (`required: false` → 閉じる)。手で閉じる口は無い (§8 Q-2) |
-| 「同意しない」の後のネイティブの `signOut` が通信の失敗で `{ error }` を返す (`signOutWithCleanup` は端末のセッションを消さない。`AuthProvider.tsx:39` の表の既存の限界) | `webViewAuthMessages.ts` | 例外は投げない | `goToWelcome` の `replace('/')` で入口へ移るが、session が残るので入口はスピナー (`required`) | Gate が入口の上に同意画面をもう一度開く (ブリッジで Web にもログインし直し、同意画面が出る)。ログアウトしたい人は通信が戻ってから「同意しない」をもう一度押す (§8 Q-8) |
+| 「同意しない」の後のネイティブの `signOut` が通信の失敗で `{ error }` を返す (`signOutWithCleanup` は端末のセッションを消さない。`AuthProvider.tsx:39` の表の既存の限界) | `webViewAuthMessages.ts` → 同意画面の `afterSignOut` | 例外は投げない | 同意画面の `afterSignOut` が `getSession()` で端末のセッションの残りを見て、入口へ移す (`closingRef` を立てて `replace('/')`)。session が残るので入口はスピナー (`required`) | Gate が入口の上に同意画面をもう一度開く (ブリッジで Web にもログインし直し、同意画面が出る)。ログアウトしたい人は通信が戻ってから「同意しない」をもう一度押す (§8 Q-8) |
+| 「同意しない」の後、Web の `signOut` だけが通信の失敗で終わる (ネイティブはログアウトできた) | Web の form | Web が「ログアウトに失敗しました…」を出し、form に戻る | 同意画面は `signed-out-notice` で「閉じる」を出す。Web は form のまま | 「閉じる」でウェルカムへ (ネイティブはログアウト済み)。Web で「同意しない」をもう一度押してもよい (ネイティブはセッションが無いので何もしない) |
 
 ### 6.10 シーケンス (アプリの起動と同意)
 
@@ -1029,8 +1376,11 @@ sequenceDiagram
         W->>W: 「更新されました」→ 読み込み直し (Web の中)
     else 「同意しない」/「登録をやめる」
         W->>G: postMessage { type: 'sign-out' } (既存)
-        G->>G: signOutWithCleanup → router.replace('/') (REPLACE は同意画面が止めない)
-        G->>G: session 無し → dismissAll → replace('/') (下の画面ごと畳む) → ウェルカム
+        G->>G: signOutWithCleanup → session 無し (Gate は畳まずに待つ)
+        G->>W: afterSignOut (ウェルカムへ移らない) → 同意画面に「閉じる」
+        W->>W: Web の案内 (削除の依頼先・請求の画面・「登録をやめました」)
+        W->>G: 「閉じる」/ Android の戻る → router.replace('/')
+        G->>G: dismissAll → replace('/') (下の画面ごと畳む) → ウェルカム
     end
 ```
 
@@ -1066,9 +1416,12 @@ ENFORCE が off・#1435・middleware で読めない・列が無い DB の行は
 | T-ML3 | 同 | `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS は apps/mobile/app の (auth) と (public) の画面のパスと同意画面 (/legal-consent) に一致し、似た名前 (/loginx /authx /legal-consentx) は対象外にしない` |
 | T-ML4 | 同 | `parseLegalConsentMessage: { type: 'legal-consent-accepted' } だけを受け、ほかの type・文字列・null は null` |
 | T-ML5 | 同 | `subscribeLegalConsentEvents: required / accepted を購読者に配り、解除した購読者には配らない。resetLegalConsentListenersForTests で全部外れる` |
-| T-ML6 | 同 | `shouldBlockLegalConsentScreenRemoval: required なら GO_BACK・POP・POP_TO_TOP だけを止め、REPLACE・NAVIGATE・PUSH・RESET は止めない。required でなければ何も止めない` |
+| T-ML6 | 同 | `legalConsentScreenRemovalDecision: awaiting-consent は GO_BACK・POP・POP_TO_TOP を block、REPLACE・NAVIGATE・PUSH・RESET を allow。signed-out-notice は GO_BACK・POP を close、POP_TO_TOP を allow、REPLACE・NAVIGATE・PUSH・RESET を block。free は全部 allow (LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES は 3 つ)` |
 | T-ML7 | 同 | `legalConsentStateOf: 未ログインは clear、記録が無い・別の利用者の記録なら loading、今の利用者の記録ならその状態。legalConsentEntryAfterFailure は今の利用者の記録を保ち、無ければ unknown。legalConsentEntryAfterEvent は required / clear にし、status は今の利用者のものだけ残す` |
 | T-ML8 | 同 | `isNavigationHeldForLegalConsent: loading・required、または pathname が /legal-consent なら true。clear・unknown で同意画面以外なら false` |
+| T-ML9 | 同 | `nextModalHoldForLegalConsent: 待ちが無ければ false。待ちが前面で始まれば true になり、前面でなくなっても (pathname が同意画面) 待ちの間は true を保つ。背面で始まった待ちでは false のまま (待ちの間に前面にならない限り)` |
+| T-ML10 | 同 | `legalConsentScreenSawRequired / legalConsentScreenModeOf: サインイン中の required で立ち awaiting-consent、サインイン中の loading・clear・unknown で外れ free。ログアウトの後は前の値を保ち、立っていれば signed-out-notice、立っていなければ free。ENTRY_SCREEN_PATH は '/'` |
+| T-ML11 | 同 | `shouldHoldOnboardingForLegalConsent: まだ描いていなければ loading・required で true、clear・unknown で false。一度描いた後はどの状態でも false` |
 | T-P1 | `providers/legal-consent-provider.test.tsx` | `user が居れば GET /api/legal/status を取り、required に応じて required / clear になる (status も持つ)` |
 | T-P2 | 同 | `status の取得に失敗 (通信・500・形の違い) したら unknown (止めない)。clear / required のときの取り直しの失敗は前の状態を保つ` |
 | T-P3 | 同 | `required の合図を受けたら即 required にし、status を取り直す。取り直しに失敗しても required を保つ` |
@@ -1077,24 +1430,32 @@ ENFORCE が off・#1435・middleware で読めない・列が無い DB の行は
 | T-P7 | 同 | `user が入った最初の描画から loading (clear の描画を挟まない。描画ごとの state を記録して確かめる)。同じ user がログアウトしてログインし直したら、前の記録を使わず loading から取り直す` |
 | T-P6 | 同 | `required のままアプリが前面に戻ったら (AppState active) status を取り直す。loading / clear / unknown のときは取り直さない` |
 | T-P8 | 同 | `loading の間 (最初の status の応答を保留したまま) に required の合図を受けたら即 required にし、保留していた最初の応答 (required: false) が後から返っても捨てる (取り直しの応答で決まる)。accepted の合図なら即 clear にし、同じく最初の応答は捨てる` |
+| T-P9 | 同 (expo-router の `usePathname` をモックする) | `useNavigationHeldForLegalConsent は今の状態と前面のパスで isNavigationHeldForLegalConsent と同じ値。useModalHoldForLegalConsent('/handson-tour/menu') は、前面が /handson-tour/menu のまま required になると true、pathname が /legal-consent に変わっても true、clear になり pathname が /handson-tour/menu に戻ると false。前面が /handson-tour/graduate のまま required になったときは、pathname が /legal-consent に変わっても false のまま` |
 | T-G1 | `components/legal-consent-gate.test.tsx` | `session あり & required & 対象のパス (/ /home /onboarding/welcome /health/blood-tests /handson-tour /settings) なら router.push('/legal-consent') を 1 回呼ぶ (同じ pathname の再描画で重ねて呼ばない)` |
 | T-G2 | 同 | `対象外のパス (/login /signup /auth/reset-password /about /privacy /terms /legal-consent) は required でも push しない` |
 | T-G3 | 同 | `同意画面 (/legal-consent) にいて clear / unknown なら router.back() (canGoBack が false なら router.replace('/'))` |
-| T-G4 | 同 | `session が無ければ push しない。ゲートが同意画面を開いた後に session が無くなったら、pathname が入口 (/) に移っていても router.dismissAll() (canDismiss が true のとき) と router.replace('/') をこの順に 1 回ずつ呼び、back() は呼ばない。開いていない・同意で閉じた後・state が required でなくなった後 (ふつうのログアウト) は何もしない` |
+| T-G4 | 同 | `session が無ければ push しない。ゲートが同意画面を開いた後に session が無くなり、pathname が入口 (/) に移ったら router.dismissAll() (canDismiss が true のとき) と router.replace('/') をこの順に 1 回ずつ呼び、back() は呼ばない。未ログインのまま同意画面にいる (ゲートが開いていない) ときも同じく畳む。開いていない・同意で閉じた後・state が required でなくなった後 (ふつうのログアウト) は何もしない。対象外のパス (/auth/reset-password) で required のままログアウトしても何もしない` |
 | T-G5 | 同 | `loading / unknown / clear で対象のパスにいても push しない` |
 | T-G6 | 同 | `ナビゲーターの準備 (useRootNavigationState の key) が済むまでは何もせず、済んだら判定する。router が例外を投げても落ちない` |
+| T-G7 | 同 | `required で同意画面が前面 (ゲートが開いた・同意画面に直接いた) のまま session が無くなったら、pathname が /legal-consent の間は dismissAll も replace も back も呼ばない。そのあと pathname が / に変わった描画で dismissAll と replace('/') を 1 回ずつ呼ぶ` |
 | T-SC1 | `app/legal-consent-screen.test.tsx` | `WebViewScreen を path='/legal-consent'・testID='webview-legal-consent' で描く` |
-| T-SC2 | 同 | `required の間は beforeRemove の GO_BACK・POP・POP_TO_TOP を preventDefault で止め、REPLACE・NAVIGATE は止めない。clear になったら何も止めない` |
+| T-SC2 | 同 | `サインイン中で required の間は beforeRemove の GO_BACK・POP・POP_TO_TOP を preventDefault で止め、REPLACE・NAVIGATE は止めない。clear になったら何も止めない。「閉じる」(testID legal-consent-close) は出さない` |
+| T-SC3 | 同 (`AuthProvider`・`LegalConsentProvider`・`../src/lib/supabase`・`WebViewScreen` をモックし、`WebViewScreen` が受けた `header` と `afterSignOut` を記録する) | `required を見た後に session が無くなると header に「閉じる」(testID legal-consent-close) を出し、押すと router.replace('/') を 1 回呼ぶ。その間の beforeRemove は GO_BACK を preventDefault して router.replace('/') を呼び、REPLACE を preventDefault し、POP_TO_TOP は止めない。「閉じる」の後は REPLACE も止めない。required を見ないまま session が無い (未ログインで開いた) ときは「閉じる」を出さず何も止めない。afterSignOut は getSession が null なら移らず、session が残っていれば router.replace('/') を呼ぶ` |
 | T-RL1 | `app/root-layout-config.test.tsx` (追記) | `LegalConsentProvider が AuthProvider の中・ProfileProvider の外にあり、LegalConsentGate が描かれ、Stack.Screen 'legal-consent' が gestureEnabled: false で宣言されている` |
 | T-IDX1 | `app/index-legal-consent.test.tsx` (新設) | `session あり: 同意の状態が loading / required ならスピナー (Redirect を描かない)、clear / unknown なら今までどおり onboarding / home へ Redirect。session 無しはウェルカム` |
 | T-TL1 | `home/tab-layout.test.tsx` (追記) | `同意の状態が loading / required ならスピナーで Tabs も AI の FAB (testID ai-floating-fab) も描かず、clear / unknown なら Tabs (6 本) と FAB を描く。clear で描いた後に required へ変わると FAB が外れる (シートの Modal ごと外れる。S27)` |
-| T-OB1 | `app/onboarding-layout-legal-consent.test.tsx` (新設) | `session あり: 同意の状態が loading / required なら LoadingState を描き Stack を描かない。clear / unknown なら Stack を描く。session 無しは /login へ Redirect` |
-| T-TM1 | `app/handson-tour-menu-legal-consent.test.tsx` (新設。`handson-tour-menu-bubble.test.tsx` と同じモック。`V4GenerateModal` のモックは受け取った visible を記録する) | `同意の状態が required の間、または pathname が /legal-consent の間は V4GenerateModal と吹き出しの Modal を visible=false で描き、2.9 でも Step 3 へ push しない。clear になり pathname が /handson-tour/menu に戻ると visible=true に戻り、2.9 なら Step 3 へ 1 回 push する` |
+| T-OB1 | `app/onboarding-layout-legal-consent.test.tsx` (新設) | `session あり: まだ Stack を描いていない間は、同意の状態が loading / required なら LoadingState を描き Stack を描かない。clear / unknown なら Stack を描く。clear で Stack を描いた後に required へ変わっても Stack を描いたまま (LoadingState にしない)。session 無しは /login へ Redirect し、その後に session が戻ったら loading / required の間また LoadingState` |
+| T-TM1 | `app/handson-tour-menu-legal-consent.test.tsx` (新設。`handson-tour-menu-bubble.test.tsx` と同じモック。`LegalConsentProvider` のモックの `useNavigationHeldForLegalConsent` と `useModalHoldForLegalConsent` の値をテストから変える。`V4GenerateModal` のモックは受け取った visible を記録する) | `modalHold が true の間は V4GenerateModal と吹き出しの Modal を visible=false で描き、legalConsentHeld が true の間は 2.9 でも Step 3 へ push しない。両方 false に戻ると visible=true に戻り、2.9 なら Step 3 へ 1 回 push する` |
+| T-TM2 | 同 | `Step 3 へ push した後 (2.9) に legalConsentHeld が true → false と変わっても (背面のまま modalHold は false)、Step 3 へもう一度 push せず、V4GenerateModal と吹き出しの Modal の visible は true のまま変わらない。legalConsentHeld が true の間、TourOverlay の onSkip と Modal の onRequestClose は undefined` |
 | T-NR1 | `components/NotificationRouter.test.tsx` (追記) | `同意の状態が loading / required の間は行き先を保留し、clear になったら router.push する (unknown も移る)` |
 | T-NR2 | 同 | `clear でも pathname が /legal-consent か入口 (/) の間は行き先を保留し、pathname が /home に変わった描画で 1 回 router.push する (同意画面の上・入口の上では push しない)` |
 | T-API1 | `lib/api-client.test.ts` (追記) | `withFriendlyErrors: 403 LEGAL_CONSENT_REQUIRED は LegalConsentRequiredError に置き換わり、購読者に required を知らせる。AI 同意の 403 は今までどおりそのまま` |
 | T-FR1 | `lib/failed-response.test.ts` (追記) | `errorOfFailedResponse: 403 LEGAL_CONSENT_REQUIRED は LegalConsentRequiredError。isStoppedByServerError が true で見出しは「同意が必要です」。AI 同意の 403 は今までどおり HTTP 403: … のまま` |
 | T-WV1 | `components/WebViewScreen.legal-consent.test.tsx` (新設。`WebViewScreen.auth-messages.test.tsx` と同じモック) | `onMessage に自オリジンから { type: 'legal-consent-accepted' } が届いたら購読者に accepted を知らせる。他オリジンからは知らせない。知らない type は何もしない` |
+| T-WV2 | 同 | `afterSignOut を渡した WebViewScreen に自オリジンから sign-out が届くと、signOutWithCleanup の後に afterSignOut を 1 回呼び、router.replace('/') を呼ばない。渡さなければ今までどおり router.replace('/')` |
+| T-TM3 | `app/handson-tour-hard-back-step2-3.test.tsx` (追記。`LegalConsentProvider` のモックの値をテストから変える) | `献立の段: legalConsentHeld が true の間は端末の戻る (pressHardwareBack) が false を返し (受け手が受けない)、吹き出しを包む Modal の onRequestClose は undefined。skip の API も handson_tour_skipped も送らない。false に戻ると今までどおり hard_back で抜ける` |
+| T-TB1 | 同 | `バッジの段: 吹き出しの画面・読み込み中・取得の失敗の画面のどれでも、legalConsentHeld が true の間は端末の戻るが false を返し、skip を送らない。false に戻ると今までどおり hard_back で抜ける` |
+| T-TP1 | `app/handson-tour-photo-save.test.tsx` (追記。`LegalConsentProvider` のモックの値をテストから変える) | `写真の段: 吹き出しの画面と保存の失敗のエラー画面で、legalConsentHeld が true の間は端末の戻るが false を返し、skip を送らない。false に戻るとエラー画面の端末の戻るは今までどおり hard_back で抜ける` |
 
 **H. Web (段 B1) vitest**
 
@@ -1124,7 +1485,7 @@ B1 → B2 の順 (B1 は旧版のアプリと両立する。§0.2)。段ごと�
 |---|---|---|
 | B1 | 変更 | `src/lib/native-auth-bridge.ts`, `src/app/legal-consent/LegalConsentForm.tsx`, `src/__tests__/lib/native-auth-bridge.test.ts`, `tests/legal-consent-page.test.tsx` |
 | B2 | 新設 | `apps/mobile/src/lib/legal-consent.ts`, `apps/mobile/src/providers/LegalConsentProvider.tsx`, `apps/mobile/src/components/legal/LegalConsentGate.tsx`, `apps/mobile/app/legal-consent.tsx`, `apps/mobile/__tests__/lib/legal-consent.test.ts`, `apps/mobile/__tests__/providers/legal-consent-provider.test.tsx`, `apps/mobile/__tests__/components/legal-consent-gate.test.tsx`, `apps/mobile/__tests__/app/legal-consent-screen.test.tsx`, `apps/mobile/__tests__/app/index-legal-consent.test.tsx`, `apps/mobile/__tests__/app/onboarding-layout-legal-consent.test.tsx`, `apps/mobile/__tests__/app/handson-tour-menu-legal-consent.test.tsx`, `apps/mobile/__tests__/components/WebViewScreen.legal-consent.test.tsx`, `tests/legal-consent-mobile-contract.test.ts` |
-| B2 | 変更 | `apps/mobile/app/_layout.tsx`, `apps/mobile/app/index.tsx`, `apps/mobile/app/(tabs)/_layout.tsx`, `apps/mobile/app/onboarding/_layout.tsx`, `apps/mobile/app/handson-tour/menu.tsx`, `apps/mobile/src/components/NotificationRouter.tsx`, `apps/mobile/src/lib/api.ts`, `apps/mobile/src/lib/failed-response.ts`, `apps/mobile/src/components/web/WebViewScreen.tsx`, `apps/mobile/__tests__/app/root-layout-config.test.tsx`, `apps/mobile/__tests__/home/tab-layout.test.tsx`, `apps/mobile/__tests__/components/NotificationRouter.test.tsx`, `apps/mobile/__tests__/lib/api-client.test.ts`, `apps/mobile/__tests__/lib/failed-response.test.ts`, `apps/mobile/__tests__/app/handson-tour-menu-bubble.test.tsx`, `apps/mobile/__tests__/app/handson-tour-hard-back-step2-3.test.tsx`, `packages/shared/src/legal-consent-copy.ts` (コメントだけ。§6.19), `packages/shared/src/parental-consent.ts` (124 行目のコメントだけ。§6.19), `.env.example` (§6.19), `ENV_SETUP.md` (§6.19) |
+| B2 | 変更 | `apps/mobile/app/_layout.tsx`, `apps/mobile/app/index.tsx`, `apps/mobile/app/(tabs)/_layout.tsx`, `apps/mobile/app/onboarding/_layout.tsx`, `apps/mobile/app/handson-tour/menu.tsx`, `apps/mobile/app/handson-tour/photo.tsx`, `apps/mobile/app/handson-tour/badges.tsx`, `apps/mobile/src/components/NotificationRouter.tsx`, `apps/mobile/src/lib/api.ts`, `apps/mobile/src/lib/failed-response.ts`, `apps/mobile/src/components/web/WebViewScreen.tsx`, `apps/mobile/src/lib/webViewAuthMessages.ts`, `apps/mobile/__tests__/app/root-layout-config.test.tsx`, `apps/mobile/__tests__/home/tab-layout.test.tsx`, `apps/mobile/__tests__/components/NotificationRouter.test.tsx`, `apps/mobile/__tests__/lib/api-client.test.ts`, `apps/mobile/__tests__/lib/failed-response.test.ts`, `apps/mobile/__tests__/app/handson-tour-menu-bubble.test.tsx`, `apps/mobile/__tests__/app/handson-tour-hard-back-step2-3.test.tsx`, `apps/mobile/__tests__/app/handson-tour-photo-save.test.tsx`, `packages/shared/src/legal-consent-copy.ts` (コメントだけ。§6.19), `packages/shared/src/parental-consent.ts` (124 行目のコメントだけ。§6.19), `.env.example` (§6.19), `ENV_SETUP.md` (§6.19) |
 | 専権 (オーケストレーター) | 変更 | `docs/design/cross/08-legal-compliance.md`, `docs/design/cross/CLAUDE.md`, `docs/design/cross/13a-legal-consent-api-server.md` (§6.22 の現在形化。オーケストレーター判断), `docs/design/cross/14-parental-consent.md`, `docs/design/mobile/01-architecture.md`, `docs/design/mobile/05-auth-session.md`, `CLAUDE.md` (§6.19) |
 
 段 A の触るファイルは 13a §6.16。
@@ -1135,10 +1496,12 @@ B1 → B2 の順 (B1 は旧版のアプリと両立する。§0.2)。段ごと�
 |---|---|---|
 | ファイル | `apps/mobile/src/lib/legal-consent.ts`, `apps/mobile/src/providers/LegalConsentProvider.tsx`, `apps/mobile/src/components/legal/LegalConsentGate.tsx`, `apps/mobile/app/legal-consent.tsx` | mobile |
 | route (アプリ) | `/legal-consent` (`app/legal-consent.tsx`。Web の `/legal-consent` の WebView) | mobile |
-| 定数 | `LEGAL_CONSENT_SCREEN_PATH`, `LEGAL_CONSENT_ACCEPTED_MESSAGE_TYPE`, `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`, `LEGAL_CONSENT_ALERT_TITLE`, `LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES`, `ENTRY_SCREEN_PATH` (`NotificationRouter.tsx` の中だけ) | §6.7 |
-| 関数 (mobile) | `legalConsentRequiredErrorOf`, `isLegalConsentRequiredError`, `subscribeLegalConsentEvents`, `notifyLegalConsentRequired`, `notifyLegalConsentAccepted`, `resetLegalConsentListenersForTests`, `parseLegalConsentMessage`, `isMobileLegalConsentExemptPath`, `legalConsentStateOf`, `legalConsentEntryAfterFailure`, `legalConsentEntryAfterEvent`, `shouldBlockLegalConsentScreenRemoval`, `isNavigationHeldForLegalConsent` (以上 `src/lib/legal-consent.ts`), `useLegalConsent` (`src/providers/LegalConsentProvider.tsx`) | mobile |
+| 定数 | `LEGAL_CONSENT_SCREEN_PATH`, `LEGAL_CONSENT_ACCEPTED_MESSAGE_TYPE`, `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`, `LEGAL_CONSENT_ALERT_TITLE`, `LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES`, `DISMISS_ALL_ACTION_TYPE` (`src/lib/legal-consent.ts` の中だけ), `ENTRY_SCREEN_PATH`, `LEGAL_CONSENT_CLOSE_LABEL` (`app/legal-consent.tsx` の中だけ) | §6.7 |
+| 関数 (mobile) | `legalConsentRequiredErrorOf`, `isLegalConsentRequiredError`, `subscribeLegalConsentEvents`, `notifyLegalConsentRequired`, `notifyLegalConsentAccepted`, `resetLegalConsentListenersForTests`, `parseLegalConsentMessage`, `isMobileLegalConsentExemptPath`, `legalConsentStateOf`, `legalConsentEntryAfterFailure`, `legalConsentEntryAfterEvent`, `legalConsentScreenSawRequired`, `legalConsentScreenModeOf`, `legalConsentScreenRemovalDecision`, `isNavigationHeldForLegalConsent`, `nextModalHoldForLegalConsent`, `shouldHoldOnboardingForLegalConsent` (以上 `src/lib/legal-consent.ts`), `useLegalConsent`, `useNavigationHeldForLegalConsent`, `useModalHoldForLegalConsent` (以上 `src/providers/LegalConsentProvider.tsx`) | mobile |
 | 関数 (Web) | `notifyNativeLegalConsentAccepted` | `src/lib/native-auth-bridge.ts` |
-| 型 | `LegalConsentState`, `LegalConsentEntry`, `LegalConsentEvent`, `LegalConsentRequiredError` (class) (以上 `src/lib/legal-consent.ts`。`LegalConsentState` は `LegalConsentProvider.tsx` からも re-export)。`NativeAuthMessage` の union に `{ type: 'legal-consent-accepted' }` | 各所 |
+| 型 | `LegalConsentState`, `LegalConsentEntry`, `LegalConsentEvent`, `LegalConsentRequiredError` (class), `LegalConsentScreenMode`, `LegalConsentScreenRemovalDecision` (以上 `src/lib/legal-consent.ts`。`LegalConsentState` は `LegalConsentProvider.tsx` からも re-export)、`WebAuthMessagesOptions` (`src/lib/webViewAuthMessages.ts`)。`NativeAuthMessage` の union に `{ type: 'legal-consent-accepted' }` | 各所 |
+| props・引数 | `WebViewScreen` の `afterSignOut?: () => void`、`useWebAuthMessages` の第 2 引数 `options: WebAuthMessagesOptions = {}` | mobile |
+| testID | `webview-legal-consent` (同意画面の WebView)、`legal-consent-close` (ログアウトの後の「閉じる」) | mobile |
 | 部品 | `LegalConsentProvider`, `LegalConsentGate`, `LegalConsentScreen` (route の default export) | mobile |
 | メッセージ (Web → ネイティブ) | `legal-consent-accepted` | 両側 |
 | テーブル・列・RLS・Storage・migration・環境変数・Zod・shared の export | **無し** | — |
@@ -1157,18 +1520,20 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `apps/mobile/app/index.tsx` | 直接のテストは無い (`apps/mobile/__tests__/settings/logout.test.tsx:174` はコメントで触れるだけ) | **足す** (T-IDX1) | B2 |
 | `apps/mobile/app/(tabs)/_layout.tsx` | `apps/mobile/__tests__/home/tab-layout.test.tsx:52-70, 205-210` (`useAuth` / `useProfile` のモック。`Tabs.Screen` 6 本) | **直す**: `useLegalConsent` のモックを足す (既定 `clear`)。T-TL1 を足す。6 本の宣言は変えない | B2 |
 | `NotificationRouter.tsx` | `apps/mobile/__tests__/components/NotificationRouter.test.tsx:33-43` (expo-router のモックは `router.push` だけ。`useAuth` / `useProfile` のモック) | **直す**: `useLegalConsent` のモックを足す (既定 `clear`)。expo-router のモックに `usePathname: () => mockPathname` を足す (既定 `'/home'`。入口 `'/'` や同意画面を既定にすると既存の it が保留で赤になる)。T-NR1・T-NR2 を足す | B2 |
-| `apps/mobile/app/onboarding/_layout.tsx` (と、同じく `useLegalConsent` を読む `(tabs)/_layout.tsx`・`LegalConsentProvider` と `LegalConsentGate` を import するルートの `_layout.tsx`) | `apps/mobile/__tests__/app/error-boundaries.test.tsx:29-92, 110-117, 156` (全 `_layout.tsx` を `require` し、`ErrorBoundary` だけを描く。`../../src/lib/api` と `AuthProvider` はモック済み) | 確認のみ: `_layout.tsx` は増えない (`app/legal-consent.tsx` は layout でない)。default export を描かないので `useLegalConsent` は呼ばれず、`LegalConsentProvider` のモジュールの読み込み (`../lib/api` はモック・`@homegohan/shared`・`react-native` の `AppState`) も通る。T-OB1 を新設で足す | B2 |
-| `apps/mobile/app/handson-tour/menu.tsx` | `apps/mobile/__tests__/app/handson-tour-menu-bubble.test.tsx:17-84`・`apps/mobile/__tests__/app/handson-tour-hard-back-step2-3.test.tsx:30-115` (menu を描く。expo-router のモックは `useRouter` だけ)、`tests/ai-consent-mobile-modal-nesting.test.ts` (`<Modal>` の入れ子と `visible` の書き方を構文木で読む)、`tests/e2e/tour/04-step2-menu.spec.ts` (Web) | **直す**: 2 つの jest のテストに `jest.mock('../../src/providers/LegalConsentProvider', () => ({ useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }) }))` を足し、expo-router のモックに `usePathname: () => '/handson-tour/menu'` を足す (足さないと `useLegalConsent` が Provider の外で例外・`usePathname` が undefined で赤)。modal-nesting は確認のみ: `visible={!consentHold}` は `props の visible で開く` (`visible={visible}`) にも `visible && …` にも当たらず、menu は自分で AI 同意の案内を出す部品を置かない (今の検査の対象の組は変わらない)。E2E は Web の画面なので変わらない。T-TM1 を新設で足す | B2 |
+| `apps/mobile/app/onboarding/_layout.tsx` (と、同じく `useLegalConsent` を読む `(tabs)/_layout.tsx`・`LegalConsentProvider` と `LegalConsentGate` を import するルートの `_layout.tsx`) | `apps/mobile/__tests__/app/error-boundaries.test.tsx:29-92, 110-117, 156` (全 `_layout.tsx` を `require` し、`ErrorBoundary` だけを描く。`../../src/lib/api` と `AuthProvider` はモック済み) | 確認のみ: `_layout.tsx` は増えない (`app/legal-consent.tsx` は layout でない)。default export を描かないので `useLegalConsent` は呼ばれず、`LegalConsentProvider` のモジュールの読み込み (`../lib/api` はモック・`@homegohan/shared`・`react-native` の `AppState`・`expo-router` の `usePathname` (読み込むだけで呼ばない)) と、初期設定の layout が読む `../../src/lib/legal-consent` (純粋な関数) も通る。T-OB1 を新設で足す | B2 |
+| `apps/mobile/app/handson-tour/menu.tsx`・`badges.tsx` | `apps/mobile/__tests__/app/handson-tour-menu-bubble.test.tsx:17-84`・`apps/mobile/__tests__/app/handson-tour-hard-back-step2-3.test.tsx:30-115` (menu と badges を描く。expo-router のモックは `useRouter` だけ)、`tests/ai-consent-mobile-modal-nesting.test.ts` (`<Modal>` の入れ子と `visible` の書き方を構文木で読む)、`tests/e2e/tour/04-step2-menu.spec.ts`・`05-step3-badges.spec.ts` (Web) | **直す**: 2 つの jest のテストに `jest.mock('../../src/providers/LegalConsentProvider', () => ({ useNavigationHeldForLegalConsent: () => mockLegalConsentHeld, useModalHoldForLegalConsent: () => mockModalHold }))` を足す (`let mockLegalConsentHeld = false; let mockModalHold = false;` を `beforeEach` で false に戻す。足さないと `useLegalConsent` が Provider の外で例外で赤)。段は `usePathname` を直接使わない (Provider のフックが読む) ので、expo-router のモックは変えない。modal-nesting は確認のみ: `visible={!modalHold}` は `props の visible で開く` (`visible={visible}`) にも `visible && …` にも当たらず、menu は自分で AI 同意の案内を出す部品を置かない (今の検査の対象の組は変わらない)。E2E は Web の画面なので変わらない。T-TM1・T-TM2 を新設で、T-TM3・T-TB1 を hard-back のテストに足す | B2 |
+| `apps/mobile/app/handson-tour/photo.tsx` | `apps/mobile/__tests__/app/handson-tour-photo-save.test.tsx:30-111` (photo を描く。expo-router のモックは `useRouter` だけ。`TourSandboxWrapper` のモックが `overlay.onSkip` で端末の戻るの受け手を張る)、`tests/e2e/tour/03-step1-photo.spec.ts` (Web) | **直す**: 上と同じ `LegalConsentProvider` のモック (`useNavigationHeldForLegalConsent: () => mockLegalConsentHeld`) を足す (既定 false で既存の it は変わらない)。T-TP1 を足す | B2 |
+| `useWebAuthMessages` (`webViewAuthMessages.ts`) と `WebViewScreen` の props | `apps/mobile/__tests__/lib/web-view-auth-messages.test.ts`・`web-view-auth-messages.real-auth.test.ts` (`handleWebAuthMessage` に `goToWelcome` の `jest.fn` を直接渡す)、`apps/mobile/__tests__/components/WebViewScreen.auth-messages.test.tsx` (`afterSignOut` を渡さずに sign-out → `router.replace('/')` を期待)、`WebViewScreen.no-any-cast.test.ts` (`webViewAuthMessages.ts` も対象)、`tests/integration/security/push-issue-log-after-session-revoked.test.ts` (コメントで触れるだけ) | 確認のみ: `handleWebAuthMessage`・`WebAuthHandlerDeps` の形と `goToWelcome` の名前は変えない。`afterSignOut` を渡さない既定は今までどおり `router.replace('/')`。`as` の追加無し。T-WV2 を足す | B2 |
 | `withFriendlyErrors` | `apps/mobile/__tests__/lib/api-client.test.ts`、`apps/mobile/__tests__/lib/failed-response.test.ts:172-176` (AI 同意の 403 は同じ例外をそのまま投げる) | **足す** (T-API1)。既存の期待は変えない (`legalConsentRequiredErrorOf` は AI 同意の 403 に null を返す) | B2 |
 | `errorOfFailedResponse` / `isStoppedByServerError` / `stoppedByServerAlertTitleOf` | `apps/mobile/__tests__/lib/failed-response.test.ts:94-104` (AI 同意の 403 は `HTTP 403: …` のまま)、`tests/ai-daily-limit-mobile-raw-fetch.test.ts` (生の fetch が `errorOfFailedResponse` を通る)、`tests/mobile-service-unavailable-raw-fetch.test.ts` | **足す** (T-FR1)。走査テストは確認のみ (通す場所は変えない。本冊は生の fetch を足さない) | B2 |
 | `WebViewScreen.tsx` の `onMessage` | `apps/mobile/__tests__/components/WebViewScreen.auth-messages.test.tsx:26-54, 92-95`、`WebViewScreen.bridge.test.tsx`、`WebViewScreen.test.tsx`、`WebViewScreen.no-any-cast.test.ts` | 確認のみ (既存の分岐は変えない。`as` の追加無し)。T-WV1 を同じモックで足す | B2 |
 | `router.push(` `href=` の行き先 | `apps/mobile/__tests__/app/route-targets-exist.test.ts:35-37, 202-207, 224-232` (行き先が実在する画面に当たる・同じ URL の画面は 1 つ) | 確認のみ: `router.push('/legal-consent')` は `app/legal-consent.tsx` に当たる。同じ URL の画面は無い。画面の数の下限 (25) は超えたまま | B2 |
-| `app/legal-consent.tsx` (新しい画面) | `apps/mobile/__tests__/lib/notification-route.test.ts` (`NOTIFICATION_ROUTES` が実在する画面に当たる)、`tests/ai-consent-mobile-modal-nesting.test.ts` (`<Modal>` と `presentation`)、`tests/mobile-ui-parts-used.test.ts`、`tests/native-app-tabs-contract.test.ts` | 確認のみ: 通知の行き先に足さない。`Modal` を使わない。ui の部品を使わない。タブではない | B2 |
+| `app/legal-consent.tsx` (新しい画面) | `apps/mobile/__tests__/lib/notification-route.test.ts` (`NOTIFICATION_ROUTES` が実在する画面に当たる)、`tests/ai-consent-mobile-modal-nesting.test.ts` (`<Modal>` と `presentation`)、`tests/mobile-ui-parts-used.test.ts`、`tests/native-app-tabs-contract.test.ts` | 確認のみ: 通知の行き先に足さない。`Modal` を使わない。ui の部品は既に使い手のある `Button` だけを使う (検査は使い手があることを見るだけ)。タブではない。`router.replace(ENTRY_SCREEN_PATH)` は定数なので `route-targets-exist.test.ts` の拾う書き方 (`'/'` で始まる文字列) に当たらない | B2 |
 | `signOutOnDevice` を呼ぶ画面 | `tests/mobile-sign-out-doc-callers.test.ts:34-37` | 確認のみ: 本冊は呼ぶ画面を足さない (「同意しない」は Web → `sign-out` → `signOutWithCleanup` の既存の経路) | B2 |
 | `LEGAL_CONSENT_COPY`・`declineButton` | `tests/legal-consent-copy.test.ts:81-87` (T-C2: `declineAndSignOutButton.startsWith(declineButton)`) | 確認のみ: 値は変えない。アプリが使わなくなる旨はコメントの現在形化 (§6.19) | B2 |
 | `apps/mobile/src/lib/legal-consent.ts` (新しいモジュール) | `tests/ai-consent-mobile-entry-points.test.ts` (`requireAiConsent` を呼ぶ API を呼ぶ関数の判定漏れ)、`tests/env-source-scan.test.ts` (`process.env` の読み方)、`tests/jst-today-source-scan.test.ts` | 確認のみ: `/api/legal/status` は AI の API ではない。`process.env` と日付を読まない | B2 |
 | `docs/design/cross/13b-legal-consent-mobile.md` (本冊) | `tests/design-doc-removed-mobile-screens.test.ts:12-23, 87-110` (設計書が消した画面・ファイルを `app/<パス>` で名指ししない・コードの文字列で消した区画を指さない) | 確認のみ: 本冊は消した画面を名指ししない (§3.3 は数だけ)。コードの文字列に `apps/mobile/app/...` を書くのは `(auth)` `(public)` だけ (T-ML3) | — |
-| `apps/mobile/maestro/flows/_shared/login-as-new-user.yaml` ほか新規ユーザーの flow | maestro (CI では流れない)。`tests/maestro-flow-testids.test.ts` (flow の testID が実在する) | §8 Q-1 (サーバーが ENFORCE=on なら同意画面のステップが要る。新しい testID `webview-legal-consent` を flow に書くときは一覧に足す) | B2 |
+| `apps/mobile/maestro/flows/_shared/login-as-new-user.yaml` ほか新規ユーザーの flow | maestro (CI では流れない)。`tests/maestro-flow-testids.test.ts` (flow の testID が実在する) | §8 Q-1 (サーバーが ENFORCE=on なら同意画面のステップが要る。新しい testID `webview-legal-consent`・`legal-consent-close` を flow に書くときは一覧に足す) | B2 |
 
 段 A の行 (と、アプリの直読みの限界の行) は 13a §6.18。
 
@@ -1178,13 +1543,14 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 
 | 文書 | 直す所 | 直し方 |
 |---|---|---|
-| `docs/design/cross/08-legal-compliance.md` §7.2 | 402 行目「モバイルのネイティブの画面は対象外 (#1442)」、409 行目 | 402 行目を「13b でモバイルにも掛けた (ルートのゲートが Web の `/legal-consent` の WebView を上に開く。設計書 13b)」に現在形化。409 行目の「ネイティブのサインアップ画面には同意のチェックが無い」はそのまま (本冊の対象外) で、「起動時のゲート (13b) で使う前に同意する」を添える |
+| `docs/design/cross/08-legal-compliance.md` §7.2 | 402 行目「モバイルのネイティブの画面は対象外 (#1442)」、409 行目 | 402 行目を「13b でモバイルにも掛けた (ルートのゲートが Web の `/legal-consent` の WebView を上に開く。「同意しない」の後の案内もアプリの同意画面に残る。設計書 13b)」に現在形化。409 行目の「ネイティブのサインアップ画面には同意のチェックが無い」はそのまま (本冊の対象外) で、「起動時のゲート (13b) で使う前に同意する」を添える |
 | `docs/design/cross/CLAUDE.md` | ファイル一覧 (19 行目の 13a の行の次) | `13b-legal-consent-mobile.md` の行を足す: 「規約の同意ゲートをモバイルのネイティブの画面にも掛ける (ルートのゲート・Web の `/legal-consent` の WebView の route・`legal-consent-accepted` の合図)」 |
 | `docs/design/cross/14-parental-consent.md` | 7-8 行目 (正典の関係「13b は未マージ」)、31 行目「13b のネイティブの同意画面に生年月日の欄を足すのは 13b 側の追随」、79 行目「Web のフォームと 13b のネイティブの画面が同じ値を使う」、97 行目 (状態)、104-106 行目 (§0.5 の 13b の 3 項)、365 行目「同意画面の欄は 13b の追随」、1023 行目 (§6.5.1 の正典コードのコメント「同意画面 (/legal-consent・13b のネイティブ)」。`packages/shared/src/parental-consent.ts:124` の写し)、1429 行目 (§6.9 の表の行「13b のネイティブの同意画面 … (13b の追随)」)、1777 行目 (§6.18 の 13b の行「main には未マージ」「§0.5 の契約を写す」)、1828 行目 (§8 の 10「13b が着地するまで、モバイルのネイティブの画面には同意ゲートが掛からない」) | 「13b はネイティブの同意画面を作らず、Web の `/legal-consent` を WebView で開く (設計書 13b §5.2)。生年月日の欄・未成年の案内・「登録をやめる」は Web の画面がそのまま効き、13b 側の追随は無い」に現在形化。1023 行目は下の `parental-consent.ts` の行と同じ文に。1777 行目は「main の設計書・ネイティブの同意画面を作らないので写す契約は無い (`required` を見るだけ)」に。1828 行目の「13b が着地するまで…掛からない」は 13b の実装の着地で過去形にする |
 | `docs/design/cross/13a-legal-consent-api-server.md` | 7 行目 (分冊「13b は本冊がマージされた後に…実装する」)・8 行目 (正典の関係「…13b のマージで現在形に直す」)・§0.1 の 3 項目め (21 行目)・§0.2 (34・35 行目)・§1.1 の 1 (64 行目)・§3.1 の検証の列の説明 (112 行目の T-PT1)・§3.2 の S5 の検証 (120 行目の T-G2・T-SC2)・§5.3 (195 行目)・§6.6.2 の正典コードのコメント (599-616 行目。613 行目の「(13b §6.6)」を含む)・§6.7 の説明 (910 行目の `VERSION_MISMATCH_STATUS`) | §6.22 の 1・2・4・5・8〜11 の現在形化 (13a の判断・コードは変えない。13b の記述だけを本冊に合わせる)。7・8・35 行目は 13b の実装の着地で「13b は実装済み」「13b のマージで現在形に直した」に。オーケストレーター判断 |
 | `docs/design/mobile/03-push-notification.md` 104-108 行目 | 同意ゲートでも claim を止めない (13a §6.4 の許可リスト) | **直さない (確認のみ)**: 本冊は `PushTokenRegistrar` と claim を変えない (§0.5) ので、記述は本冊の後も正しい |
 | `docs/design/mobile/01-architecture.md` §3.2・§6・§11 | 61-78 行目 (`WebViewScreen` の役割)、261-298 行目 (ファイルの木)、441-460 行目 (保持 / 修正 / 新規) | §3.2 に「`legal-consent-accepted` を受けて同意画面の route を閉じる (13b)」を足す。木に `app/legal-consent.tsx` (`WebViewScreen path="/legal-consent"`。同意画面。13b)・`src/providers/LegalConsentProvider.tsx`・`src/components/legal/LegalConsentGate.tsx`・`src/lib/legal-consent.ts` を足す。§11 の修正に `WebViewScreen.tsx` の `onMessage` の `legal-consent-accepted` を足す |
-| `docs/design/mobile/05-auth-session.md` §6 | WebView とネイティブの合図の一覧 (`sign-out` / `session-expired`) | `legal-consent-accepted` (同意を記録できた直後。ネイティブは同意画面の route を閉じる) の行を足す |
+| `docs/design/mobile/05-auth-session.md` §6 | WebView とネイティブの合図の一覧 (`sign-out` / `session-expired`) | `legal-consent-accepted` (同意を記録できた直後。ネイティブは同意画面の route を閉じる) の行を足す。`sign-out` の後の移り先に「規約の同意画面 (`app/legal-consent.tsx`) だけは `WebViewScreen` の `afterSignOut` でウェルカムへ移らず、Web の「同意しない」「登録をやめる」の後の案内を残して「閉じる」を出す (13b)」を足す |
+| `docs/design/family/09-onboarding-handson-tour/01-trigger-flow.md` §2.2 (169-176 行目) | ハードバックの表 (Step 1〜3 は skip + `/home`) | 表の下に「規約の同意画面 (13b) がツアーの上に開いている間の端末の戻るは、ツアーを抜けない (同意画面が受ける。写真・献立・バッジの段は同意を待つ間、戻るの受け手を外す)」を足す |
 | `CLAUDE.md` (リポジトリ) 138 行目 | 末尾の「モバイルのネイティブの画面はゲートを通らない (#1442)」 | 「モバイルはルートのゲート (`GET /api/legal/status` と `/api` の 403) で Web の `/legal-consent` の WebView を上に開く (#1442・設計書 cross/13b)」に |
 | `ENV_SETUP.md` 501 行目 (実装 PR 側) | 「モバイルのネイティブの画面はゲートを通りません (#1442)」 | 「アプリも起動時と `/api` の 403 で同意画面 (Web と同じ画面) を出します (#1442・設計書 13b)」に |
 | `.env.example` 192-193 行目 (実装 PR 側) | `on` の説明 | 「アプリも起動時に同意画面を出す」を足す |
@@ -1231,7 +1597,7 @@ git diff origin/main...HEAD | grep -n 'as any'                                  
 | 8 | §1.1 の 1 (64 行目): 「モバイルのネイティブの画面 (health / settings / favorites のタブ、AI 相談、レシピ、パントリーなど)」 | 今の main のネイティブの画面は §3.3 の 29 画面 (初期設定・ツアー・設定タブとそこから開く画面・AI 相談のシート)。健康・お気に入りのタブ・レシピ・パントリーの画面は #1598 の一本化と PR #1733 で消えた (§1.1 の 1) | 13a の判断は変わらない (ネイティブの画面が未同意で使える、という問題の書き方は同じ)。画面の例の現在形化 (§6.19) |
 | 9 | §3.1 の下の説明 (112 行目): 「T-ML*・T-P*・T-G*・T-SC*・T-RL1・T-API1・T-FR1・T-PT1 は 13b §6.14 の it」 | T-PT1 は欠番 (§6.14 の欠番の段落。`PushTokenRegistrar` を待たせる差分を落とした。§0.5) | 13a の R の検証の列から T-PT1 を外す現在形化 (§6.19) |
 | 10 | §3.2 の S5 の検証 (120 行目): 「T-G2 (画面の代わりに同意画面)・T-SC2 (同意して `refresh`)」 | 本冊の T-G2 は「対象外のパスでは開かない」、T-SC2 は「同意画面が `required` の間だけ「戻る」を止める」。S5 のモバイルの検証は T-API1・T-P3・T-G1 (対象のパスの上に開く)・T-G3 (同意の後に閉じる)・T-P4 (合図で `clear`) | S5 の検証の列の現在形化 (§6.19) |
-| 11 | §6.7 の説明 (910 行目): 「モバイルの定数 (`MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`・`VERSION_MISMATCH_STATUS`・`LEGAL_CONSENT_ALERT_TITLE`) は 13b §6.7」 | `VERSION_MISMATCH_STATUS` は無い (409 は Web の form が扱う。§0.5)。本冊の定数は §6.7 の 6 つ | 定数の列挙の現在形化 (§6.19) |
+| 11 | §6.7 の説明 (910 行目): 「モバイルの定数 (`MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`・`VERSION_MISMATCH_STATUS`・`LEGAL_CONSENT_ALERT_TITLE`) は 13b §6.7」 | `VERSION_MISMATCH_STATUS` は無い (409 は Web の form が扱う。§0.5)。本冊の定数は §6.7 の 8 つ | 定数の列挙の現在形化 (§6.19) |
 
 ---
 
@@ -1239,8 +1605,8 @@ git diff origin/main...HEAD | grep -n 'as any'                                  
 
 | 区分 | 対象 |
 |---|---|
-| 保持 (変えない) | 13a §7 の保持のとおり。加えて 13a の実コード (shared の export・`/api` の分岐・status route) は本冊で変えない。Web の同意画面の中身 (`page.tsx`・form の分岐・文面)・`webViewAuthMessages.ts`・`PushTokenRegistrar`・`AuthProvider`・`ProfileProvider`・`WebViewScreen` のブリッジと既存の分岐・`NOTIFICATION_ROUTES`・`(auth)` `(public)` `handson-tour` の layout・`login.tsx` の `routeAfterSignIn`・`useLeaveTour`・`V4GenerateModal` |
-| 変更 | `apps/mobile/app/_layout.tsx` (Provider と Gate と `Stack.Screen`)、`index.tsx` / `(tabs)/_layout.tsx` / `onboarding/_layout.tsx` / `NotificationRouter.tsx` (同意の状態を待つ)、`handson-tour/menu.tsx` (同意を待つ間は Modal を閉じ、Step 3 へ進まない)、`api.ts` / `failed-response.ts` (403 の置き換え)、`WebViewScreen.tsx` (合図の分岐 1 つ)、`src/lib/native-auth-bridge.ts` / `LegalConsentForm.tsx` (合図の送信) |
+| 保持 (変えない) | 13a §7 の保持のとおり。加えて 13a の実コード (shared の export・`/api` の分岐・status route) は本冊で変えない。Web の同意画面の中身 (`page.tsx`・form の分岐・案内・文面)・`webViewAuthMessages.ts` の `handleWebAuthMessage` とログアウトの処理・`PushTokenRegistrar`・`AuthProvider`・`ProfileProvider`・`WebViewScreen` のブリッジと既存の分岐・`NOTIFICATION_ROUTES`・`(auth)` `(public)` `handson-tour` の layout・`login.tsx` の `routeAfterSignIn`・`useLeaveTour` (`useTourHardBack` を含む)・`TourOverlay`・`V4GenerateModal`・初期設定の各画面 |
+| 変更 | `apps/mobile/app/_layout.tsx` (Provider と Gate と `Stack.Screen`)、`index.tsx` / `(tabs)/_layout.tsx` / `onboarding/_layout.tsx` / `NotificationRouter.tsx` (同意の状態を待つ。初期設定の layout は一度描いた後は描いたまま)、`handson-tour/menu.tsx` (前面で始まった待ちの間は Modal を閉じ、待つ間は Step 3 へ進まない。push は 1 回)・`photo.tsx`・`badges.tsx` (待つ間は端末の戻るを受けない)、`api.ts` / `failed-response.ts` (403 の置き換え)、`WebViewScreen.tsx` (合図の分岐 1 つと `afterSignOut`)、`webViewAuthMessages.ts` (`useWebAuthMessages` の `afterSignOut`)、`src/lib/native-auth-bridge.ts` / `LegalConsentForm.tsx` (合図の送信) |
 | 新規 | §6.17 |
 | 削除 | 無し |
 
@@ -1251,15 +1617,16 @@ git diff origin/main...HEAD | grep -n 'as any'                                  
 | ID | 事項 | 本書の仮定 |
 |---|---|---|
 | Q-1 | maestro の新規ユーザーの flow (`login-as-new-user.yaml` など) は、サーバーが ENFORCE=on なら同意画面 (WebView) のステップが要る。maestro は CI で流れないので、本書は flow の追随を段 B2 の候補に置く | 段 B2 で `_shared/accept-legal-consent-if-shown.yaml` を足す (任意。WebView の中の操作になるので、Web の testID を使う) |
-| Q-2 | 同意画面の WebView の中で「全文を読む」(`/terms`) へ移ると、ネイティブの戻るボタンが無い。Web の画面のリンクをたどれば (同意の前はどの画面も Web のゲートが同意画面へ戻す) 戻れる。合図を取りこぼしたときに同意画面を手で閉じる口も無い (前面に戻ったときの取り直しで閉じる) | ネイティブのヘッダー (戻る・更新) は足さない。AI 同意の画面 (`settings/ai-consent.tsx`) と同じ扱い |
+| Q-2 | 同意画面の WebView の中で「全文を読む」(`/terms`) へ移ると、ネイティブの戻るボタンが無い。Web の画面のリンクをたどれば (同意の前はどの画面も Web のゲートが同意画面へ戻す) 戻れる。合図を取りこぼしたときに同意画面を手で閉じる口も無い (前面に戻ったときの取り直しで閉じる) | サインイン中はネイティブのヘッダー (戻る・更新) は足さない。AI 同意の画面 (`settings/ai-consent.tsx`) と同じ扱い。ログアウトの後 (Web の案内を出している間) だけ「閉じる」を出す (6.6.11) |
 | Q-3 | `apps/mobile/src/hooks/useHomeData.ts` は app からも src からも import されていない (13a §1.3 が直読みの経路として挙げる)。消すかどうか | 本冊では触らない (別の片付け) |
 | Q-4 | deep link とログインの `?next=` (`login.tsx:86-89`) で app 直下の画面 (`/health/blood-tests` など) を直接開いたとき、status の 1 往復のあいだ画面が見える (S23)。その間の API は 403 で止まる | 受け入れる。待つのはログインの直後と起動の直後にふつうに着く 3 か所 (入口・タブ・初期設定の layout) だけにする (app 直下の画面ごとに待ちを足す案は、置き場が画面の数だけ増えるので取らない。同意そのものはゲート 1 か所が受け持つ)。通知は `NotificationRouter` が待つので起きない |
 | Q-5 | expo-router 5.1.11 の `useRootNavigationState` の `key` でナビゲーターの準備を待つ (土台の Q-1 の `screenLayout` の未確認は本冊で消えた)。`router.push` が準備前に例外を投げても `try` で受け、pathname か state の変化でやり直す | 準備の判定はこれで足りる |
-| Q-6 | `required` の間タブ (`(tabs)/_layout`) をスピナーにするので、改定の再同意の後はタブがホームに戻る (選んでいたタブは残らない)。タブの上の AI の FAB とシートも外れるので、シートを開いたまま 403 を受けたときは、同意の後にシートは閉じていて、送信の途中の入力は残らない (S27)。app 直下の画面 (血液検査など) は残る | 受け入れる (改定は稀。app 直下の画面の入力は残る。シートの入力を残すためにタブを描いたままにすると、タブの WebView の中で Web の同意画面が別に開く (6.6.13) ので取らない) |
+| Q-6 | `required` の間タブ (`(tabs)/_layout`) をスピナーにするので、改定の再同意の後はタブがホームに戻る (選んでいたタブは残らない)。タブの区画のネイティブの設定の画面 (`(tabs)/settings.tsx`。通知の設定の切り替えの途中など) も同じく外れる。タブの上の AI の FAB とシートも外れるので、シートを開いたまま 403 を受けたときは、同意の後にシートは閉じていて、送信の途中の入力は残らない (S27)。app 直下の画面 (血液検査など) と、初期設定の画面 (一度描いた後。S28) は残る | 受け入れる (改定は稀。app 直下の画面と初期設定の入力は残る。タブの区画を残すためにタブを描いたままにすると、タブの WebView の中で Web の同意画面が別に開く (6.6.13) ので取らない。初期設定の layout は WebView も RN の Modal も持たないので、描いたままにできる) |
 | Q-7 | プログラムの遷移 (Redirect・通知・下の画面のコードの `replace`) が同意画面の上や下に別の画面を積んだとき、古い同意画面が Stack に残ることがある。戻って来たとき Gate の規則で閉じる (§6.3)。ログアウトのときは Gate が下の画面ごと畳む | 受け入れる (自動で閉じる) |
 | Q-8 | 「同意しない」の後のネイティブの `signOut` が通信の失敗で終わると、端末のセッションが残り、同意画面が開き直す (§6.8)。`signOutWithCleanup` が失敗のときに端末のセッションを消さないのは既存の決め (`AuthProvider.tsx:39` の表) | 本冊では変えない (ログアウトの経路の決めは mobile/05 の範囲)。通信が戻ってから「同意しない」をもう一度押せばログアウトできる |
+| Q-9 | ログアウトの後に同意画面に残す Web の案内のリンク (お問い合わせ・請求の画面・ログイン・新規登録) は、WebView の中で Web の画面を開く。請求の画面 (`/settings/data-requests`) はログインが要るので Web のログインの画面になり、そこでログインすると WebView の中だけ (Web だけ) のログインになる (ネイティブはログアウトしたまま。「閉じる」でウェルカム)。また、status を取れない (`unknown`) 間にタブの WebView の中で Web の同意画面が出て、そこで「同意しない」を押したときは、タブの WebView は `afterSignOut` を渡さないので今までどおりウェルカムへ移り、案内は見えない | 受け入れる。請求の画面へログインして進む流れは Web の既存の作り (cross/08 §7.2・#1751) で、アプリの中でも同じ画面が使える。次にネイティブでログインすると、ブリッジが WebView の Cookie を張り直す。タブの中の同意画面は `unknown` の間だけの経路で、取り直し (起動し直し・403) の後はネイティブの同意画面が先に出る |
 
-Q-2 (13a の直読み)・Q-3 (ENFORCE off のときの新規の人)・Q-5・Q-6 は 13a §8。
+Q-2 (13a の直読み)・Q-3 (ENFORCE off のときの新規の人)・Q-5・Q-6 は 13a §8 (本冊の Q とは番号が別)。
 
 ---
 
@@ -1271,4 +1638,5 @@ Q-2 (13a の直読み)・Q-3 (ENFORCE off のときの新規の人)・Q-5・Q-6 
 | v1.1 | 2026-10-15 | 13 を 13a (核: サーバー + shared) と 13b (配線: モバイル) に分冊 (`origin/design/legal-consent-mobile`。main には未マージ) |
 | v2.1 | 2026-10-17 | 設計ゲート R1 の指摘を反映: ログインの直後に入口を通らず初期設定へ着く経路 (`routeAfterSignIn`) のために初期設定の layout も待つ・状態を利用者ごとの記録から描画のその場で決める (ログインの直後の clear の描画を無くす)・同意画面が止めるのは「戻る」の操作だけにし、ログアウトでは下の画面ごと畳む・通知の行き先へ移るのは同意画面と入口が前面でなくなってから・ツアーの献立の段の RN の Modal を同意を待つ間は閉じる (6.6.17)。シナリオ S26 を足した |
 | v2.2 | 2026-10-17 | 網羅性 (周 2) の漏れを反映: Provider の状態遷移に loading × `/api` の 403 と loading × `legal-consent-accepted` の行 (T-P8)・タブの AI のシートを開いたままの 403 のシナリオ S27 とトレース・状態遷移の行 (T-TL1 に FAB を足した)・T-PT1 を欠番として明記・他の文書への追随表に 14 の 1023 / 1429 / 1777 / 1828 行目・13a の 7 / 8 / 35 / 64 / 112 / 120 / 910 行目・`parental-consent.ts:124` と `LegalConsentForm.tsx:96` のコメント・mobile/03 の確認のみの行を足し、13a との食い違い (§6.22) に 8〜11 を足した。S5 と §6.8 の「固定の文は一瞬」を、OS の Alert は同意画面より上に残るに直した |
+| v2.3 | 2026-10-17 | 設計ゲート R2 の指摘を反映: ①「同意しない」「登録をやめる」の後、同意画面をウェルカムへ移さず Web の案内 (削除の依頼先・請求の画面) を残し「閉じる」を出す (`WebViewScreen` / `useWebAuthMessages` の `afterSignOut`・同意画面の扱い `LegalConsentScreenMode`・ゲートは案内の間は畳まない。S4・S20・T-SC3・T-G7・T-WV2・Q-9) ②同意を待つ間はツアーの写真・献立・バッジの段が端末の戻るを受けない (S25・S29・T-TM3・T-TB1・T-TP1) ③初期設定の layout は、このログインで一度描いた後は `required` でも `Stack` を描いたまま (S28・T-OB1) ④献立の段の Modal は前面で始まった待ちの間だけ閉じ、Step 3 への push を 1 回に限る (`useModalHoldForLegalConsent`・`step3PushedRef`。S29・T-TM2)。入口のパス `ENTRY_SCREEN_PATH` を `src/lib/legal-consent.ts` に移した。シナリオ S28・S29 を足した |
 | v2.0 | 2026-10-17 | #1598 の WebView への一本化と PR #1733 (ネイティブの画面 60 本の削除) の後の main (`88b803f5`) に合わせて書き直し。同意画面をネイティブで作らず Web の `/legal-consent` の WebView の route にし、ゲートを `screenLayout` から route の push に変えた (§5.2)。土台から落としたもの・残したものは §0.5。旧版の扱い (§6.21) と 13a との食い違い (§6.22) を足した |
