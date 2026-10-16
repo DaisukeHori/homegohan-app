@@ -20,7 +20,7 @@ import {
 } from '@/lib/legal-consent'
 import { withMinorGuardianStatus } from '@/lib/legal-consent-minor'
 import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalConsentApiDecision } from '@homegohan/shared'
-// Edge Runtime (middleware) で動くので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
+// 全リクエストの前に動く proxy (src/proxy.ts) から呼ばれるので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabasePublicConfig } from '@/lib/env-required'
 import { internalError } from '@/lib/api/errors'
 

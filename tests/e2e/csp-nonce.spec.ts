@@ -2,7 +2,7 @@
  * #1169: 本番の CSP (nonce 方式) と違反の報告の受け口を、本物のブラウザと本番ビルド (next build && next start) で確かめる
  * (docs/design/cross/18-csp-nonce.md §8.2・§15・§21)。
  *
- * 方針の正本は src/lib/security/csp.ts で、src/middleware.ts が毎リクエスト nonce を作って応答とリクエストヘッダーに載せる。
+ * 方針の正本は src/lib/security/csp.ts で、src/proxy.ts が毎リクエスト nonce を作って応答とリクエストヘッダーに載せる。
  * Next はリクエストヘッダーの方針から nonce を読み、自分が出すインラインスクリプトに付ける。ここでは次を見る。
  *   1. / の応答の Content-Security-Policy は 1 つだけ (next.config.mjs と二重に付いていない) で、nonce を持ち 'unsafe-inline' を持たない
  *   2. nonce は要求ごとに違う

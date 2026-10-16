@@ -5,8 +5,8 @@
  * 空の値の扱い) は Edge Functions と共通で、supabase/functions/_shared/cron-secret.ts にある。
  * 新しい cron ルートを足すときは、シークレットを自分で比べず、必ずこの関数を通す。
  *
- * Edge Runtime (export const runtime = 'edge') のルートからも呼べるよう、node:crypto には頼らない
- * (node:crypto の timingSafeEqual は Edge Runtime で使えない)。
+ * 照合は Deno で動く Edge Functions と共通の 1 つの実装 (checkCronSecret) なので、ここでも node:crypto には頼らない
+ * (共通の実装は Web 標準の crypto.subtle だけを使う)。
  *
  * 入れ替えの手順は ENV_SETUP.md の「Cron の共有シークレットの保管場所とローテーション」。
  *
