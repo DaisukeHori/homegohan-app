@@ -14,11 +14,11 @@
  * メールに載せるのは「名前」と「件数」だけ。cron.job_run_details の command / return_message・app_logs の本文・ユーザー ID は読まない。
  */
 
-/** 失敗の出どころ。DB の cron_failure_alerts.source の CHECK と同じ 2 つ */
+/** 失敗の出どころ。DB の cron_failure_alerts.source の CHECK と同じ 2 つ (tests/cron-failure-monitoring-contract.test.ts が突き合わせる) */
 export const CRON_FAILURE_SOURCES = ['pg_cron', 'vercel_cron'] as const;
 export type CronFailureSource = (typeof CRON_FAILURE_SOURCES)[number];
 
-/** 失敗を見る範囲 (日)。DB の cron_failure_candidates() の c_lookback と同じ値 (文面に書くだけ。数えるのは DB) */
+/** 失敗を見る範囲 (日)。DB の cron_failure_candidates() の c_lookback と同じ値 (文面に書くだけ。数えるのは DB。tests/cron-failure-monitoring-contract.test.ts が突き合わせる) */
 export const CRON_FAILURE_LOOKBACK_DAYS = 7;
 
 /**
