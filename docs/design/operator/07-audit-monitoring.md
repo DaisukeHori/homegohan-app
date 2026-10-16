@@ -222,7 +222,14 @@ admin.finance.invoice.view          - 請求書詳細の閲覧 (GET /api/admin/f
 admin.sales.lead.list               - 営業リード一覧 (担当者の連絡先を含む) (GET /api/admin/sales/leads) (#1326)
 admin.sales.lead.view               - 営業リード詳細 (連絡先・活動履歴) の閲覧 (GET /api/admin/sales/leads/{id}) (#1326)
 super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /api/super-admin/coupons/{id}/redemptions) (#1326)
+admin.dsr.list                      - 個人情報の請求の一覧 (GET /api/admin/data-requests)。1 件以上返したとき・1 検索 = 1 行 (#1178)
+admin.dsr.view                      - 個人情報の請求の詳細 (内容・本人への応答・内部メモ・請求者のメールアドレス) の閲覧 (GET /api/admin/data-requests/{id}) (#1178)
+admin.dsr.update                    - 個人情報の請求の対応 (状態・本人への応答・内部メモ。PATCH /api/admin/data-requests/{id})。200 のたびに (変更が無くても)。対応済み・対応できずにしたときは severity warn (#1178)
 ```
+
+個人情報の請求 (`admin.dsr.*`。canonical は `docs/design/cross/15-data-subject-requests.md` §11): 対象は請求した本人 (`target_type = 'user'`)。
+退会済み (`user_id` が NULL) の請求は請求そのもの (`target_type = 'data_subject_request'`・`target_id` = 請求の id)。一覧は `target_id` = null・`target_type = 'data_subject_request'`。
+請求の id はどれも `details.request_id` に入れる (一覧は `buildListViewDetails()` の条件と件数だけ)。内容・応答・内部メモの値は入れない。
 
 一覧・検索の記録 (#1326):
 - 1 回の検索 (1 回の GET) = 1 行。`details` は `{ filters, returned_count, total }` (`buildListViewDetails()`)。

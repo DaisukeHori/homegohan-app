@@ -37,6 +37,8 @@
  *
  * #1686 で足したもの: tests/edge-function-deploy-use-api.test.ts は、同じ型 (テストの中で、関数のデプロイの段の run を bash で動かす)。
  *
+ * #1792 で足したもの: tests/local-ci-dev-server-ready.test.ts は、同じ型 (テストの中で、local-ci の dev サーバの確かめを bash と curl で動かす)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -88,6 +90,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/edge-function-deploy-use-api.test.ts",
   "tests/fast-llm-missing-env.test.ts",
   "tests/image-route-contracts.test.ts",
+  "tests/local-ci-dev-server-ready.test.ts",
   "tests/local-ci-workflow-sync.test.ts",
   "tests/markdown-lite.test.ts",
   "tests/nutrition-analysis-sugar-target.test.ts",

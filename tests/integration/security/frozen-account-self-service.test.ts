@@ -4,7 +4,7 @@
  * middleware (lib/supabase/middleware.ts) は凍結中の利用者の /api 呼び出しを 403 AUTH_ACCOUNT_FROZEN で止める (#1030)。
  * 退会 (POST /api/account/delete) と書き出し (GET /api/account/export) だけは止めない (src/lib/auth/frozen.ts の
  * FROZEN_ALLOWED_API_PATHS)。本物の認証・本物の DB を通して、次を確かめる:
- *   A. 凍結中 (無期限) の利用者でも、ほかの API は今までどおり 403 AUTH_ACCOUNT_FROZEN
+ *   A. 凍結中 (無期限) の利用者でも、ほかの API (個人情報の請求 /api/account/data-requests を含む。#1702) は今までどおり 403 AUTH_ACCOUNT_FROZEN
  *   B. 凍結中の利用者が書き出しを呼ぶと 200 で、本人のデータの JSON が返る
  *   C. 凍結中の利用者が退会を呼ぶと 200 { success: true } で、アカウントが消える (prepare_account_deletion などの後始末も通る)
  *   D. 一時 BAN の継続中 (unban_at が未来) の利用者も退会できる
@@ -100,8 +100,10 @@ afterAll(async () => {
 }, 90_000);
 
 describe('#1445 凍結中の利用者: ほかの API は止めたまま、退会と書き出しは通す', () => {
-  it('A: ほかの API (GET /api/pantry・GET /api/export/meals) は今までどおり 403 AUTH_ACCOUNT_FROZEN', async () => {
-    for (const path of ['/api/pantry', '/api/export/meals']) {
+  // #1702 個人情報の請求 (GET /api/account/data-requests) も凍結中は受け付けない (設計 cross/15 S-13・§18)。
+  // middleware の 403 を、単体の it.each (middleware-frozen-allowed-api.test.ts) に加えて本物の認証・本物の middleware で固定する
+  it('A: ほかの API (GET /api/pantry・GET /api/export/meals・GET /api/account/data-requests) は今までどおり 403 AUTH_ACCOUNT_FROZEN', async () => {
+    for (const path of ['/api/pantry', '/api/export/meals', '/api/account/data-requests']) {
       const res = await apiCall<{ error?: { code?: string } }>('GET', path, permanent.jwt);
       expect(res.status, path).toBe(403);
       expect(res.body.error?.code, path).toBe('AUTH_ACCOUNT_FROZEN');
