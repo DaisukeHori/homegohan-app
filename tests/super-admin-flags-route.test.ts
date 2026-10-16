@@ -109,15 +109,17 @@ function adminClient() {
 }
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: () => ({
-    auth: {
-      getUser: async () =>
-        state.user
-          ? { data: { user: state.user }, error: null }
-          : { data: { user: null }, error: { message: 'Auth session missing!' } },
-    },
-    from: (table: string) => sessionFrom(table),
-  }),
+  createClient: () => {
+    const getUser = async () =>
+      state.user
+        ? { data: { user: state.user }, error: null }
+        : { data: { user: null }, error: { message: 'Auth session missing!' } };
+    // 段 B (#1176) の requireRole は getSession → getClaims を呼ぶ (docs/design/cross/12-operator-mfa.md §22.4.2・§23.1)
+    return {
+      auth: { getUser, ...aal2AuthMock(getUser) },
+      from: (table: string) => sessionFrom(table),
+    };
+  },
   getSupabaseAdmin: () => getSupabaseAdmin(),
 }));
 
@@ -138,6 +140,7 @@ vi.mock('@/lib/feature-flags', () => ({
 
 import { GET, POST } from '../src/app/api/super-admin/flags/route';
 import { DELETE, PATCH } from '../src/app/api/super-admin/flags/[key]/route';
+import { aal2AuthMock } from './helpers/mfa-claims';
 
 function flag(key: string, overrides: Row = {}): Row {
   return {

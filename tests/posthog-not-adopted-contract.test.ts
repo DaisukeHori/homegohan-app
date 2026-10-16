@@ -8,7 +8,7 @@
  *   2. package.json (ルート・apps/mobile・packages/*) の依存に、PostHog の package が無い
  *   3. 環境変数の設定例 (.env.example・apps/mobile/env.example) に、POSTHOG の変数が無い
  *   4. ハンズオンツアーの fireAnalytics の送り先 (adapter) を、テスト以外のソースが注入していない (setAnalyticsAdapter を使っていない)
- * CSP (next.config.mjs の connect-src) に PostHog の送信先が無いことは、src/__tests__/config/next-config-headers.test.ts が検査する。
+ * CSP (src/lib/security/csp.ts の connect-src) に PostHog の送信先が無いことは、src/__tests__/lib/security/csp.test.ts が検査する。
  *
  * 4 は、PostHog 以外の送り先でも、fireAnalytics が知らないうちに外部へ送り始めないようにするためのもの。
  * fireAnalytics は adapter を注入されない限り何も送らない。今は誰も注入していない。

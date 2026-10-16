@@ -15,10 +15,8 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import type { RoleName } from '@/lib/auth/types';
 import { DSR_ADMIN_PATH, DSR_OPERATOR_ROLES } from '@/lib/data-subject-requests/core';
 
@@ -33,7 +31,7 @@ interface ConsoleSection {
 // §3.2 ではサポートチケット・売上・経理・営業 CRM を support / finance / sales にも出すが、
 // いまの運営コンソールに入れるのは admin / super_admin / content_moderator だけ (layout.tsx)。
 // 入れるロールを広げるのはオーナーの判断待ちなので、ここでは admin / super_admin だけに出す。
-// 広げるときは、layout.tsx の requireRole と、ここ・サイドバーのロールを一緒に直す。
+// 広げるときは、layout.tsx の requireRoleForPage と、ここ・サイドバーのロールを一緒に直す。
 const ADMIN_ROLES: ReadonlyArray<RoleName> = ['admin', 'super_admin'];
 
 const SECTIONS: ReadonlyArray<ConsoleSection> = [
@@ -94,15 +92,8 @@ const SECTIONS: ReadonlyArray<ConsoleSection> = [
 ];
 
 export default async function AdminHomePage() {
-  let actor;
-  try {
-    actor = await requireRole(['admin', 'super_admin', 'content_moderator']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  const actor = await requireRoleForPage(['admin', 'super_admin', 'content_moderator'], { next: '/admin' });
 
   const roles = actor.roles;
   const sections = SECTIONS.filter((section) => section.roles.some((role) => roles.includes(role)));

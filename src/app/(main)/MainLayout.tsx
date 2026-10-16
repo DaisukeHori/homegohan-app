@@ -129,6 +129,7 @@ export default function MainLayout({
     // ログアウトとして扱う: 端末のユーザー別データを消して、ログイン画面へ移る
     const treatAsSignedOut = () => {
       clearUserScopedLocalStorage();
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- ログアウト後はページごと読み込み直し、前のユーザーの画面の状態 (メモリ上のキャッシュ・notifyNativeSignOut の記録) を捨てる (docs/design/mobile/05-auth-session.md)
       window.location.href = '/login';
     };
 

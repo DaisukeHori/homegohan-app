@@ -8,10 +8,11 @@
 
 import { type User } from '@supabase/supabase-js';
 import { createClient } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError } from './errors';
+import { AuthError, ForbiddenError, UserProfileReadError } from './errors';
 import { type RoleName, type OrgRoleName, type UserProfile } from './types';
 import { isAccountFrozen } from './frozen';
 import { isOrgAdmin, type OrgAdminRole } from './org-admin';
+import { assertOperatorAssurance } from './mfa/assurance';
 
 export { type RoleName, type OrgRoleName, type UserProfile };
 
@@ -75,6 +76,20 @@ function assertNotFrozen(frozenAt: string | null, unbanAt: string | null): void 
 // 公開 API
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** requireRole の第 2 引数 (#1176。docs/design/cross/12-operator-mfa.md §13.1) */
+export interface RequireRoleOptions {
+  /**
+   * 'aal2' (既定): 必須ロール (MFA_REQUIRED_ROLES) を持つ利用者には AAL2 を求める (cross/12 §12.1 の判定)。
+   * 'session': ロールだけ見て AAL は見ない。使ってよいのは自己サービスの /api/auth/mfa/* だけ
+   *            (tests/operator-mfa-entry-points-scan.test.ts の MFA_SELF_SERVICE_ROUTES 以外は赤)。
+   */
+  assurance?: 'aal2' | 'session';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 公開 API (関数)
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * Supabase auth で取得した user を返す。未認証なら 401 相当の AuthError を throw する。
  * #1030: frozen_at がセットされている(かつ一時 BAN 未解除)場合は 403 相当の
@@ -88,16 +103,57 @@ export async function requireUser(): Promise<User> {
 }
 
 /**
+ * #1751: requireUser と同じく本人のセッションと凍結を確かめるが、user_profiles の行が無い利用者を 401 にせず通す。
+ *
+ * 行は新規登録の時点では無く、同意 (DB 関数 accept_legal_documents)・初期設定・招待の承諾で作られる。
+ * 規約への同意も初期設定の完了も条件にできない本人の権利の API (/api/account/data-requests/**。
+ * src/lib/data-subject-requests/requester-http.ts の authenticateDsrRequester) は、行の無い利用者
+ * (新規登録の直後に、同意の画面の案内から請求の画面へ来た人) も通す必要がある。requireUser は行が無いと
+ * AuthError('AUTH_PROFILE_NOT_FOUND') (route では 401) にするので使えない。
+ *
+ * - 凍結は行の frozen_at なので、行が無ければ凍結は無い。行があって凍結中なら requireUser と同じく
+ *   ForbiddenError('AUTH_ACCOUNT_FROZEN') (一時 BAN の unban_at を過ぎていれば通す)
+ * - 行の読み取りそのものの失敗は UserProfileReadError (行が無いのと区別し、凍結を確かめられないまま通さない。route は 500)
+ * - 0 行を失敗にしないよう .maybeSingle() で読む (.single() は 0 行をエラーにする)
+ *
+ * ほかの route は requireUser のまま (行を前提に roles・組織を読むため)。
+ */
+export async function requireUserAllowingMissingProfile(): Promise<User> {
+  const user = await getAuthUser();
+  const supabase = await createClient();
+  const { data: profile, error } = await supabase
+    .from('user_profiles')
+    .select('frozen_at, unban_at')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    throw new UserProfileReadError(error);
+  }
+  if (profile) {
+    const row = profile as { frozen_at?: string | null; unban_at?: string | null };
+    assertNotFrozen(row.frozen_at ?? null, row.unban_at ?? null);
+  }
+  return user;
+}
+
+/**
  * 指定ロールのいずれかを保有していれば UserProfile を返す。なければ 403 相当の ForbiddenError を throw する。
  * 認証済み user 取得 + user_profiles.roles 取得 + intersect を行う。
  *
+ * #1176: ロールの交差の後に、必須ロール (super_admin / admin / finance / org_industrial_doctor) の利用者には
+ * セッションの AAL2 を求める (cross/12 §13.1)。2FA が未完了なら MfaRequiredError (ForbiddenError の派生) を throw する。
+ *
  * @param allowedRoles - 許可するロールの配列
- * @returns 認証済みユーザーの UserProfile
- * @throws AuthError (401) - 未認証の場合
+ * @param options - { assurance: 'session' } で AAL の判定を外す (自己サービスの /api/auth/mfa/* だけ)
+ * @returns 認証済みユーザーの UserProfile (既定のときは assurance に判定の要約)
+ * @throws AuthError (401) - 未認証の場合・セッションの claims を読めない場合
  * @throws ForbiddenError (403) - ロール不足の場合、または #1030: アカウント凍結中の場合
+ * @throws MfaRequiredError (403) - 二段階認証の確認 (AUTH_2FA_REQUIRED) か登録 (AUTH_2FA_ENROLLMENT_REQUIRED) が要る場合
  */
 export async function requireRole(
   allowedRoles: ReadonlyArray<RoleName>,
+  options: RequireRoleOptions = {},
 ): Promise<UserProfile> {
   const user = await getAuthUser();
   const { roles, organization_id, frozen_at, unban_at } = await getUserProfile(user.id);
@@ -110,11 +166,17 @@ export async function requireRole(
     );
   }
 
+  // [#1176] ロールの交差の後・戻り値の前に 1 か所。
+  // Authorization ヘッダは assurance.ts が「Cookie のセッションが無いときだけ」next/headers から読む
+  // (ここで無条件に headers() を呼ぶと、要求の外で動く既存の単体テストが落ちる)
+  const assurance = options.assurance === 'session' ? undefined : await assertOperatorAssurance({ user, roles });
+
   return {
     id: user.id,
     email: user.email,
     roles,
     organization_id,
+    assurance,
   };
 }
 

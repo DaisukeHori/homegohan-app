@@ -1,7 +1,7 @@
 /**
  * POST /api/auth/mfa/enroll — 認証アプリ (TOTP) の登録を始める (#1176。docs/design/cross/12-operator-mfa.md §14.2)
  *
- * 認可: requireRole(MFA_REQUIRED_ROLES)。段 A は引数 1 つで呼ぶ (段 B で第 2 引数 { assurance: 'session' } を足す §0.2)。
+ * 認可: requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' }) (ロールだけ見て AAL は見ない。aal1 で使う §0.2・走査 ②)。
  * 手順: 別オリジン → 403 FORBIDDEN_ORIGIN / verified な TOTP factor があれば 409 AUTH_2FA_ALREADY_ENROLLED (先に解除) /
  *       unverified な TOTP factor を全部 mfa.unenroll (登録を途中でやめた factor を溜めない S-20) / mfa.enroll(totp)。
  * 応答 200 = MfaEnrollResponseSchema ({ ok, factor_id, qr_code_svg, secret, uri })。これらの値はログに出さない。
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
 
   let actorId: string;
   try {
-    actorId = (await requireRole(MFA_REQUIRED_ROLES)).id;
+    actorId = (await requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })).id;
   } catch (err) {
     return mfaAuthFailure(err) ?? mfaInternalError(ROUTE_NAME, err);
   }

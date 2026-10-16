@@ -11,9 +11,9 @@
  *   2. スクリプトの読み込み先は、同じオリジンのパス。設定が無いときの既定値は /_vercel/speed-insights/script.js。
  *      Vercel は、有効にしたプロジェクトのビルドに設定 (NEXT_PUBLIC_VERCEL_OBSERVABILITY_CLIENT_CONFIG) を渡し、
  *      その中の読み込み先・送信先 (/<固有のパス>/script.js、/<固有のパス>/vitals) が優先される。これも同じオリジンのパス。
- *   3. next.config.mjs の CSP は、script-src と connect-src に 'self' を持つ。
+ *   3. CSP の方針 (src/lib/security/csp.ts。middleware が毎リクエスト付ける #1169) は、script-src と connect-src に 'self' を持つ。
  *
- * 2 と 3 がそろっているので、Speed Insights のために CSP を変える必要がない (next.config.mjs は変えていない)。
+ * 2 と 3 がそろっているので、Speed Insights のために CSP を変える必要がない (src/lib/security/csp.ts は変えていない)。
  * パッケージを上げて読み込み先が別のオリジンに変わったり、CSP から 'self' が消えたりしたら、ここで落ちる。
  *
  * 注意: 2 で動かしているのは '@vercel/speed-insights' 本体 (dist/index.mjs) の injectSpeedInsights で、
@@ -31,6 +31,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { injectSpeedInsights } from '@vercel/speed-insights';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { scrubSpeedInsightsEvent } from '@/lib/speed-insights-scrub';
+import { buildContentSecurityPolicy } from '@/lib/security/csp';
 
 // next/font/google は Next.js のビルド時にだけ使える (テストで呼ぶと失敗する) ので、フォント変数だけ返す偽物にする
 vi.mock('next/font/google', () => ({
@@ -122,13 +123,9 @@ describe('#1179 Speed Insights のスクリプトの読み込み先と CSP', () 
     delete window.siq;
   });
 
-  /** next.config.mjs は import 時に process.env を読むので、フレッシュに評価して CSP の値を取り出す */
-  async function loadCsp(): Promise<string> {
-    vi.resetModules();
-    const mod = await import(/* @vite-ignore */ `../next.config.mjs?t=${Date.now()}-${Math.random()}`);
-    const headerGroups = await mod.default.headers();
-    const securityGroup = headerGroups.find((g: { source: string }) => g.source === '/(.*)');
-    return securityGroup.headers.find((h: { key: string }) => h.key === 'Content-Security-Policy').value as string;
+  /** CSP の方針 (src/lib/security/csp.ts) を本番の形 (dev でない) で組み立てる。nonce は見本の base64 */
+  function loadCsp(): string {
+    return buildContentSecurityPolicy({ nonce: 'dGVzdA==', isDev: false, supabaseUrl: undefined });
   }
 
   function sourcesOf(csp: string, directive: string): string[] {
@@ -168,8 +165,8 @@ describe('#1179 Speed Insights のスクリプトの読み込み先と CSP', () 
     expect(script.dataset.endpoint).toMatch(/^\/[^/]/);
   });
 
-  it("CSP は script-src と connect-src に 'self' を持つ (Speed Insights のために外部ホストを足していない)", async () => {
-    const csp = await loadCsp();
+  it("CSP は script-src と connect-src に 'self' を持つ (Speed Insights のために外部ホストを足していない)", () => {
+    const csp = loadCsp();
 
     expect(sourcesOf(csp, 'script-src')).toContain("'self'");
     expect(sourcesOf(csp, 'connect-src')).toContain("'self'");

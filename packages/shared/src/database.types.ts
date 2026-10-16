@@ -4824,6 +4824,41 @@ export type Database = {
           },
         ]
       }
+      organization_challenge_aggregates: {
+        Row: {
+          challenge_id: string
+          final_average_value: number | null
+          final_ranked_count: number | null
+          finalized_at: string | null
+          joined_count: number
+          updated_at: string
+        }
+        Insert: {
+          challenge_id: string
+          final_average_value?: number | null
+          final_ranked_count?: number | null
+          finalized_at?: string | null
+          joined_count?: number
+          updated_at?: string
+        }
+        Update: {
+          challenge_id?: string
+          final_average_value?: number | null
+          final_ranked_count?: number | null
+          finalized_at?: string | null
+          joined_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_challenge_aggregates_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: true
+            referencedRelation: "organization_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_challenge_participants: {
         Row: {
           challenge_id: string | null
@@ -4859,6 +4894,32 @@ export type Database = {
           },
         ]
       }
+      organization_challenge_ranking_exclusions: {
+        Row: {
+          challenge_id: string
+          marked_at: string
+          user_id: string
+        }
+        Insert: {
+          challenge_id: string
+          marked_at?: string
+          user_id: string
+        }
+        Update: {
+          challenge_id?: string
+          marked_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_challenge_ranking_exclusions_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: false
+            referencedRelation: "organization_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_challenges: {
         Row: {
           challenge_type: string
@@ -4871,7 +4932,7 @@ export type Database = {
           organization_id: string | null
           reward_description: string | null
           start_date: string
-          status: string | null
+          status: string
           target_unit: string | null
           target_value: number | null
           title: string
@@ -4887,7 +4948,7 @@ export type Database = {
           organization_id?: string | null
           reward_description?: string | null
           start_date: string
-          status?: string | null
+          status?: string
           target_unit?: string | null
           target_value?: number | null
           title: string
@@ -4903,7 +4964,7 @@ export type Database = {
           organization_id?: string | null
           reward_description?: string | null
           start_date?: string
-          status?: string | null
+          status?: string
           target_unit?: string | null
           target_value?: number | null
           title?: string
@@ -8549,6 +8610,17 @@ export type Database = {
           p_worker_id: string
         }
         Returns: string
+      }
+      family_menu_planned_meals: {
+        Args: { p_end_date: string; p_start_date: string }
+        Returns: Json
+      }
+      family_menu_visible_members: {
+        Args: never
+        Returns: {
+          member_id: string
+          user_id: string
+        }[]
       }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }

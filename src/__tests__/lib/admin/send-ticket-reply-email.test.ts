@@ -1,32 +1,23 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { EmailEnvelope } from '@/lib/emails/envelope';
+import { EmailSendError } from '@/lib/emails/send-result';
 
-// resend とロガー (app_logs) だけをモックし、sendEmail 本体 (RESEND_API_KEY 未設定なら skipped: true を返す、
-// 一時的な失敗は再試行する等) は実装のまま通す。
+// sendEmail をモックにする (ticket-messages.test.ts と同じ形)。#1193 で sendEmail は Resend を呼ばず
+// 送信待ち (email_outbox) に登録するだけになった。sendEmail そのものは send.test.ts、送信 (再試行) は outbox.test.ts が受け持つ。
 // vi.mock はホイストされるため、モック関数は vi.hoisted で定義する
-const { mockEmailsSend, mockGetUserById, mockAdminInsert, mockGetSupabaseAdmin, emailLogWarn, emailLogError } =
-  vi.hoisted(() => ({
-    mockEmailsSend: vi.fn(),
-    mockGetUserById: vi.fn(),
-    mockAdminInsert: vi.fn(),
-    mockGetSupabaseAdmin: vi.fn(),
-    emailLogWarn: vi.fn(),
-    emailLogError: vi.fn(),
-  }));
+const { mockSendEmail, mockGetUserById, mockAdminInsert, mockGetSupabaseAdmin } = vi.hoisted(() => ({
+  mockSendEmail: vi.fn(),
+  mockGetUserById: vi.fn(),
+  mockAdminInsert: vi.fn(),
+  mockGetSupabaseAdmin: vi.fn(),
+}));
 
-vi.mock('resend', () => {
-  class MockResend {
-    emails = { send: mockEmailsSend };
-  }
-  return { Resend: MockResend };
-});
+vi.mock('@/lib/emails/send', () => ({
+  sendEmail: mockSendEmail,
+}));
 
 vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: mockGetSupabaseAdmin,
-}));
-
-// sendEmail が失敗・未設定を残す createLogger('email') (app_logs)。呼び出し元の logger とは別物
-vi.mock('@/lib/db-logger', () => ({
-  createLogger: () => ({ debug: vi.fn(), info: vi.fn(), warn: emailLogWarn, error: emailLogError }),
 }));
 
 const { sendTicketReplyEmail, TICKET_REPLY_EMAIL_TEMPLATE } = await import(
@@ -47,8 +38,10 @@ const logger = { warn: vi.fn(), error: vi.fn() };
 
 const run = () => sendTicketReplyEmail({ ticket, messageId: MESSAGE_ID, messageBody: REPLY_BODY, logger });
 
+/** sendEmail に渡した封筒 (EmailEnvelope の形: to / text / reply_to) */
+const sentEnvelope = () => mockSendEmail.mock.calls[0][0] as EmailEnvelope;
+
 beforeEach(() => {
-  vi.stubEnv('RESEND_API_KEY', 're_test_key');
   vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.test');
   vi.stubEnv('SUPPORT_REPLY_TO', '');
   vi.stubEnv('EMAIL_FROM', '');
@@ -61,34 +54,54 @@ beforeEach(() => {
     data: { user: { id: CUSTOMER_ID, email: CUSTOMER_EMAIL } },
     error: null,
   });
-  mockEmailsSend.mockResolvedValue({ data: { id: 're_abc123' }, error: null });
+  mockSendEmail.mockResolvedValue({ ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null });
   mockAdminInsert.mockResolvedValue({ error: null });
 });
 
 afterEach(() => {
-  vi.useRealTimers();
   vi.unstubAllEnvs();
   vi.clearAllMocks();
   vi.restoreAllMocks();
   mockGetSupabaseAdmin.mockReset();
   mockGetUserById.mockReset();
-  mockEmailsSend.mockReset();
+  mockSendEmail.mockReset();
   mockAdminInsert.mockReset();
 });
 
-describe('sendTicketReplyEmail: 送信できる場合', () => {
+describe('sendTicketReplyEmail: 送信待ちに登録できる場合', () => {
   it('チケットの顧客本人のメールアドレス宛に、返信の本文を載せて送り、sent を返す', async () => {
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'sent' });
-    expect(mockEmailsSend).toHaveBeenCalledTimes(1);
-    const sent = mockEmailsSend.mock.calls[0][0];
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    const sent = sentEnvelope();
     expect(sent.to).toBe(CUSTOMER_EMAIL);
     expect(sent.from).toBe(DEFAULT_EMAIL_FROM);
     expect(sent.subject).toContain('ログインできません');
     expect(sent.subject).toContain('#a1b2c3d4');
     expect(sent.text).toContain(REPLY_BODY);
+    expect(sent.template).toBe(TICKET_REPLY_EMAIL_TEMPLATE);
+    expect(TICKET_REPLY_EMAIL_TEMPLATE).toBe('support_ticket_reply');
     expect(logger.warn).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('sendEmail の 2 つ目の引数は { userId: ticket.user_id }', async () => {
+    await run();
+
+    expect(mockSendEmail.mock.calls[0][1]).toEqual({ userId: CUSTOMER_ID });
+  });
+
+  it('email_delivery_logs には書かない (送信の記録は email_outbox)', async () => {
+    await run();
+
+    expect(mockAdminInsert).not.toHaveBeenCalled();
+  });
+
+  it('sendEmail が ok:true (送信待ちに受け付けた) なら sent を返す (登録したあとの送信の失敗はここでは分からない: R-24)', async () => {
+    mockSendEmail.mockResolvedValue({ ok: true, id: 'outbox-id-2', attempts: 0, skipped: false, error: null });
+
+    await expect(run()).resolves.toEqual({ status: 'sent' });
     expect(logger.error).not.toHaveBeenCalled();
   });
 
@@ -98,32 +111,7 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
     expect(mockGetUserById).toHaveBeenCalledTimes(1);
     expect(mockGetUserById).toHaveBeenCalledWith(CUSTOMER_ID);
     // 取り違え防止: 管理者や他のユーザーのアドレスには送らない
-    expect(mockEmailsSend.mock.calls[0][0].to).toBe(CUSTOMER_EMAIL);
-  });
-
-  it('email_delivery_logs に実在する列だけで 1 行残す (recipient_id / template_key / subject は使わない)', async () => {
-    await run();
-
-    expect(mockAdminInsert).toHaveBeenCalledTimes(1);
-    const [table, row] = mockAdminInsert.mock.calls[0];
-    expect(table).toBe('email_delivery_logs');
-    expect(row).toEqual({
-      user_id: CUSTOMER_ID,
-      email: CUSTOMER_EMAIL,
-      template: 'support_ticket_reply',
-      resend_message_id: 're_abc123',
-      status: 'sent',
-      metadata: logMeta,
-    });
-    expect(TICKET_REPLY_EMAIL_TEMPLATE).toBe('support_ticket_reply');
-    expect(Object.keys(row).sort()).toEqual([
-      'email',
-      'metadata',
-      'resend_message_id',
-      'status',
-      'template',
-      'user_id',
-    ]);
+    expect(sentEnvelope().to).toBe(CUSTOMER_EMAIL);
   });
 
   it('お問い合わせフォームの URL は NEXT_PUBLIC_APP_URL 基点 (末尾の / は除く)', async () => {
@@ -131,7 +119,7 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
 
     await run();
 
-    const text: string = mockEmailsSend.mock.calls[0][0].text;
+    const text = sentEnvelope().text;
     expect(text.split('\n')).toContain('https://app.example.test/contact');
     expect(text).not.toContain('test//contact');
   });
@@ -141,14 +129,14 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
 
     await run();
 
-    expect(mockEmailsSend.mock.calls[0][0].text.split('\n')).toContain(`${DEFAULT_SITE_URL}/contact`);
+    expect(sentEnvelope().text.split('\n')).toContain(`${DEFAULT_SITE_URL}/contact`);
   });
 
   it('SUPPORT_REPLY_TO 未設定: reply_to を付けない (noreply のまま)', async () => {
     await run();
 
-    expect(mockEmailsSend.mock.calls[0][0].replyTo).toBeUndefined();
-    expect(mockEmailsSend.mock.calls[0][0].text).toContain('返信しても届きません');
+    expect(sentEnvelope().reply_to).toBeUndefined();
+    expect(sentEnvelope().text).toContain('返信しても届きません');
   });
 
   it('SUPPORT_REPLY_TO 設定: 返信先に使う', async () => {
@@ -157,8 +145,8 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'sent' });
-    expect(mockEmailsSend.mock.calls[0][0].replyTo).toBe('support@example.test');
-    expect(mockEmailsSend.mock.calls[0][0].text).toContain('そのまま返信していただくと');
+    expect(sentEnvelope().reply_to).toBe('support@example.test');
+    expect(sentEnvelope().text).toContain('そのまま返信していただくと');
   });
 
   it('SUPPORT_REPLY_TO がメールアドレスの形式でなくても、通知は止めずに noreply のまま送り警告を残す', async () => {
@@ -167,102 +155,65 @@ describe('sendTicketReplyEmail: 送信できる場合', () => {
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'sent' });
-    expect(mockEmailsSend.mock.calls[0][0].replyTo).toBeUndefined();
+    expect(sentEnvelope().reply_to).toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('SUPPORT_REPLY_TO'));
   });
 });
 
-describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させず、結果を返してログに残す)', () => {
-  it('RESEND_API_KEY 未設定: 送らずに skipped / not_configured を返し、警告を残す (送信ログは作らない)', async () => {
-    vi.stubEnv('RESEND_API_KEY', undefined);
+describe('sendTicketReplyEmail: 送信待ちに登録できない場合 (返信は失敗させず、結果を返してログに残す)', () => {
+  it('RESEND_API_KEY 未設定 (sendEmail が skipped / not_configured): skipped / not_configured を返し、警告を残す', async () => {
+    mockSendEmail.mockResolvedValue({
+      ok: false,
+      id: null,
+      attempts: 0,
+      skipped: true,
+      error: new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: メールの送信の設定が無いため、メールを送信しませんでした', null, 0, false),
+    });
 
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'skipped', reason: 'not_configured' });
-    expect(mockEmailsSend).not.toHaveBeenCalled();
     expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('skipped'), logMeta);
     expect(logger.error).not.toHaveBeenCalled();
-    // #1193 設定漏れは console だけでなく app_logs (sendEmail の createLogger('email')) にも警告として残る。失敗のエラーログにはしない
-    expect(emailLogWarn).toHaveBeenCalledWith(expect.stringContaining('RESEND_API_KEY'), {
-      template: 'support_ticket_reply',
-      recipient: 'c***@example.com',
-    });
-    expect(emailLogError).not.toHaveBeenCalled();
   });
 
-  it('Resend がエラーを返す: failed / send_failed を返し、構造化ログに記録する (送信ログは作らない)', async () => {
-    mockEmailsSend.mockResolvedValue({
-      data: null,
-      error: { message: 'The homegohan.app domain is not verified', name: 'validation_error' },
-    });
+  it('送信待ちに登録できない (outbox_failed) なら failed / send_failed。構造化ログに記録する', async () => {
+    const error = new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした', null, 0, true);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: false, error });
 
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'send_failed' });
     expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledTimes(1);
-    const [message, error, metadata] = logger.error.mock.calls[0];
+    const [message, loggedError, metadata] = logger.error.mock.calls[0];
     expect(message).toContain('send failed');
-    expect((error as Error).message).toBe('EMAIL_SEND_FAILED: The homegohan.app domain is not verified');
+    expect(loggedError).toBe(error);
     expect(metadata).toEqual(logMeta);
     // ログに顧客のメールアドレスを載せない
     expect(JSON.stringify(logger.error.mock.calls[0][2])).not.toContain(CUSTOMER_EMAIL);
   });
 
-  it('Resend の呼び出しが例外になる (ネットワーク断など): 3 回再試行しても直らなければ failed / send_failed', async () => {
-    vi.useFakeTimers();
-    mockEmailsSend.mockRejectedValue(new Error('fetch failed'));
-
-    const pending = run();
-    await vi.runAllTimersAsync();
-    const outcome = await pending;
-
-    expect(outcome).toEqual({ status: 'failed', reason: 'send_failed' });
-    expect(mockEmailsSend).toHaveBeenCalledTimes(4); // 最初の 1 回 + 再試行 3 回
-    expect(mockAdminInsert).not.toHaveBeenCalled();
-    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('send failed'), expect.any(Error), logMeta);
-    // #1193 sendEmail 自身も、文面の名前・マスクした宛先・エラーコードを app_logs に残す
-    expect(emailLogError).toHaveBeenCalledTimes(1);
-    expect(emailLogError.mock.calls[0][2]).toEqual({
-      template: 'support_ticket_reply',
-      recipient: 'c***@example.com',
-      error_code: 'network_error',
-      status_code: null,
-      attempts: 4,
-      retryable: true,
+  it.each([['suppressed'], ['invalid_envelope']])('宛先停止リスト・文面の不備 (%s) も failed / send_failed', async (code) => {
+    mockSendEmail.mockResolvedValue({
+      ok: false,
+      id: null,
+      attempts: 0,
+      skipped: false,
+      error: new EmailSendError(code, `EMAIL_${code.toUpperCase()}`, null, 0, false),
     });
+
+    await expect(run()).resolves.toEqual({ status: 'failed', reason: 'send_failed' });
   });
 
-  it('一時的な失敗 (503) は再試行して、直れば sent を返し、送信ログには最終的に受け付けられたメール ID を残す', async () => {
-    vi.useFakeTimers();
-    mockEmailsSend
-      .mockResolvedValueOnce({ data: null, error: { message: 'Service Unavailable', name: 'application_error', statusCode: 503 } })
-      .mockResolvedValueOnce({ data: { id: 're_retried' }, error: null });
-
-    const pending = run();
-    await vi.runAllTimersAsync();
-    const outcome = await pending;
-
-    expect(outcome).toEqual({ status: 'sent' });
-    expect(mockEmailsSend).toHaveBeenCalledTimes(2);
-    expect(mockAdminInsert).toHaveBeenCalledTimes(1);
-    expect(mockAdminInsert.mock.calls[0][1]).toMatchObject({ resend_message_id: 're_retried', status: 'sent' });
-    expect(logger.error).not.toHaveBeenCalled();
-  });
-
-  it('再試行しても直らない失敗 (403: 送信元ドメインが未検証) は 1 回だけ送って failed。送信ログは作らず、エラーコードを記録する', async () => {
-    mockEmailsSend.mockResolvedValue({
-      data: null,
-      error: { message: 'The homegohan.app domain is not verified', name: 'validation_error', statusCode: 403 },
-    });
+  it('文面の組み立てなどで sendEmail が例外を投げても、failed / send_failed を返し記録する', async () => {
+    mockSendEmail.mockRejectedValue(new Error('render failed'));
 
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'send_failed' });
-    expect(mockEmailsSend).toHaveBeenCalledTimes(1);
-    expect(mockAdminInsert).not.toHaveBeenCalled();
-    expect(emailLogError.mock.calls[0][2]).toMatchObject({ error_code: 'validation_error', status_code: 403, attempts: 1 });
+    expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('send failed'), expect.any(Error), logMeta);
   });
 
   it('顧客のユーザーが見つからない (getUserById がエラーを返す): failed / no_recipient、送信しない', async () => {
@@ -274,7 +225,7 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'no_recipient' });
-    expect(mockEmailsSend).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('recipient lookup failed'), expect.anything(), logMeta);
   });
@@ -289,7 +240,7 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
 
     expect(outcome).toEqual({ status: 'failed', reason: 'no_recipient' });
     expect(mockGetUserById).not.toHaveBeenCalled();
-    expect(mockEmailsSend).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('has left'), logMeta);
     expect(logger.error).not.toHaveBeenCalled();
@@ -301,7 +252,7 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'no_recipient' });
-    expect(mockEmailsSend).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
 
@@ -313,7 +264,7 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'no_recipient' });
-    expect(mockEmailsSend).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
     expect(logger.error).toHaveBeenCalledTimes(1);
   });
 
@@ -326,41 +277,9 @@ describe('sendTicketReplyEmail: 送信できない場合 (返信は失敗させ�
     const outcome = await run();
 
     expect(outcome).toEqual({ status: 'failed', reason: 'no_recipient' });
-    expect(mockEmailsSend).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('no email'), logMeta);
-  });
-});
-
-describe('sendTicketReplyEmail: 送信ログの書き込みに失敗した場合', () => {
-  it('INSERT が { error } を返しても (supabase-js は例外にしない)、送信済みなので sent を返し、失敗を記録する', async () => {
-    mockAdminInsert.mockResolvedValue({
-      error: { message: 'new row violates check constraint', code: '23514' },
-    });
-
-    const outcome = await run();
-
-    expect(outcome).toEqual({ status: 'sent' });
-    expect(mockEmailsSend).toHaveBeenCalledTimes(1);
-    expect(logger.error).toHaveBeenCalledTimes(1);
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('delivery log insert failed'),
-      expect.anything(),
-      logMeta,
-    );
-  });
-
-  it('INSERT が例外を投げても、sent を返し、失敗を記録する', async () => {
-    mockAdminInsert.mockRejectedValue(new Error('connection reset'));
-
-    const outcome = await run();
-
-    expect(outcome).toEqual({ status: 'sent' });
-    expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('delivery log insert failed'),
-      expect.any(Error),
-      logMeta,
-    );
   });
 });
 

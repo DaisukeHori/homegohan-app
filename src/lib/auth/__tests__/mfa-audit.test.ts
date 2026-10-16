@@ -104,9 +104,10 @@ describe('MFA の監査', () => {
     await expect(recordMfaAudit(input)).resolves.toBe(failure);
   });
 
-  it('MFA_AUDIT_FAILED_STEPS は §17.2 の 4 つの手順の名前 (issue_backup_codes / delete_factor / delete_backup_codes / refresh_session) で、recordMfaAudit は details の failed_step と null の数 (backup_codes_issued: null など) もそのまま渡す', async () => {
+  it('MFA_AUDIT_FAILED_STEPS は §17.2 の 5 つの手順の名前 (issue_backup_codes / sign_out_sessions / delete_factor / delete_backup_codes / refresh_session) で、recordMfaAudit は details の failed_step と null の数 (backup_codes_issued: null など) もそのまま渡す', async () => {
     expect(MFA_AUDIT_FAILED_STEPS).toEqual({
       issueBackupCodes: 'issue_backup_codes',
+      signOutSessions: 'sign_out_sessions',
       deleteFactor: 'delete_factor',
       deleteBackupCodes: 'delete_backup_codes',
       refreshSession: 'refresh_session',

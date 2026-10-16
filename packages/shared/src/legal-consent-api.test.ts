@@ -49,6 +49,9 @@ const EXEMPT_SAMPLES = [
   '/api/auth/native-bridge/code',
   '/api/account/delete',
   '/api/account/export',
+  // 本人の権利の請求 (#1751。prefix)
+  '/api/account/data-requests',
+  '/api/account/data-requests/00000000-0000-4000-8000-000000000000/verify',
   '/api/billing/subscription',
   '/api/billing/subscription/cancel',
   '/api/billing/portal',
@@ -76,6 +79,10 @@ const NOT_EXEMPT_SAMPLES = [
   '/api/legal/status/x',
   '/api/account/delete-xxx',
   '/api/account/export/x',
+  // 本人の権利の請求の似た名前 (prefix は `${path}/` 以下だけ)
+  '/api/account/data-requestsx',
+  '/api/account/data-requests-x',
+  '/api/account/data-request',
   // 有料プラン: 凍結中も通す 3 本だけ。購入・解約の取り消し・似た名前は止める
   '/api/billing/checkout',
   '/api/billing/checkout/preview',
@@ -247,5 +254,44 @@ describe('legalConsentRequiredBody (T-SH7)', () => {
     for (const word of ['user_profiles', 'terms_version', 'supabase', 'sql']) {
       expect(body.error.toLowerCase()).not.toContain(word);
     }
+  });
+});
+
+/** 本人の権利の請求 (#1751) の route (src/app/api/account/data-requests 以下)。動的な区間 ([id]) は固定の値に置き換える */
+const DSR_SAMPLE_ID = '00000000-0000-4000-8000-000000000000';
+const DSR_ROUTES: ReadonlyArray<readonly [string, string]> = [
+  ['一覧 (GET)', '/api/account/data-requests'],
+  ['作成 (POST)', '/api/account/data-requests'],
+  ['詳細 (GET)', `/api/account/data-requests/${DSR_SAMPLE_ID}`],
+  ['本人確認 (POST verify)', `/api/account/data-requests/${DSR_SAMPLE_ID}/verify`],
+  ['確認のメールの再送 (POST resend-verification)', `/api/account/data-requests/${DSR_SAMPLE_ID}/resend-verification`],
+  ['取り下げ (POST withdraw)', `/api/account/data-requests/${DSR_SAMPLE_ID}/withdraw`],
+];
+
+describe('本人の権利の請求 /api/account/data-requests (#1751): 未同意でも止めない', () => {
+  it('許可リストに prefix の 1 行として入り、理由の種類は data_subject_rights', () => {
+    const entries = LEGAL_CONSENT_EXEMPT_API_PATHS.filter((entry) => entry.reason === 'data_subject_rights');
+    expect(entries.map(({ path, match, reason }) => ({ path, match, reason }))).toEqual([
+      { path: '/api/account/data-requests', match: 'prefix', reason: 'data_subject_rights' },
+    ]);
+    expect(entries[0].note).toContain('凍結中は通さない');
+  });
+
+  it.each(DSR_ROUTES)('%s の %s は、未同意 (行なし・NULL・片方だけ・旧版) × enforce でも allow', (_name, pathname) => {
+    for (const [, accepted] of NOT_ACCEPTED_CASES) {
+      expect(resolveLegalConsentApiDecision({ pathname, accepted, enforce: true }), pathname).toBe('allow');
+    }
+  });
+
+  it.each([
+    '/api/account/data-requestsx',
+    '/api/account/data-requests-x',
+    '/api/account/data-requestsX/verify',
+    '/api/account/data-request',
+    '/api/account/data-request/x',
+    '/api/admin/data-requests',
+    '/api/admin/data-requests/x',
+  ])('似た名前・運営の API の %s は、未同意なら deny', (pathname) => {
+    expect(resolveLegalConsentApiDecision({ pathname, accepted: null, enforce: true })).toBe('deny');
   });
 });

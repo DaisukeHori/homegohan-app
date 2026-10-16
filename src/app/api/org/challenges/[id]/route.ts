@@ -6,7 +6,11 @@
  * 部署を限定したものは、その部署のメンバーだけ) 以外は、存在を知らせないよう 404 にする。
  *
  * 順位表を見られるのは、そのチャレンジの参加者本人だけ (#1132 の方針)。
- *   - 参加していないメンバー (管理者を含む) には、順位表を返さない (ranking.available = false)
+ *   - 参加していないメンバー (管理者を含む) には、順位表を返さない (ranking.available = false・reason = 'not_joined')
+ *   - #1688: 参加していても、組織の管理者 (今の役割が owner / admin。メンバーを組織から外せる人) と、このチャレンジに
+ *     「管理者だった印」がある人 (このチャレンジがある間に管理者になったことがある人。member に戻っても残る) には返さない
+ *     (ranking.available = false・reason = 'org_admin')。外した人の行が消える前後の順位表を見せないため。自分の記録と順位 (me) は返す。
+ *     DB の関数 get_org_challenge_ranking も同じ 2 つの条件で 0 行を返す
  *   - 順位表は、DB の関数 get_org_challenge_ranking が組み立てる。service_role で呼ぶが、
  *     関数の中でも「呼び出した本人が参加者であること」を確かめる。他人の user_id は返らず、本人かどうか (isMe) だけ
  *   - 参加者の表示名は、環境変数 ORG_CHALLENGE_SHOW_NAMES が有効なときだけ出す。
@@ -33,6 +37,7 @@ import {
   ORG_CHALLENGE_MIN_PARTICIPANTS,
   showParticipantNames,
 } from '@/lib/org-challenges';
+import { canViewChallengeRanking, hasRankingExclusion, type RankingSection } from '@/lib/org-challenge-privacy';
 
 const ROUTE = 'GET /api/org/challenges/[id]';
 
@@ -72,14 +77,37 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
     } | null;
 
     // 参加者数と順位表は、認可のあとに service_role の DB 関数で取る (自分の組織・このチャレンジだけが対象)。
-    // 参加者数は、参加者が最小人数に満たないとき null (管理者向けの API と同じ DB の関数・同じ規則)
+    // 参加者数は参加した人の延べ数で、最小人数に満たないとき null (管理者向けの API と同じ DB の関数・同じ規則)
     const admin = getSupabaseAdmin();
     const aggregates = await fetchChallengeAggregates(admin, profile.organization_id);
     const aggregate = aggregates.get(challenge.id);
     const showNames = showParticipantNames();
-    const ranking = mine
-      ? await fetchChallengeRanking(admin, { challengeId: challenge.id, userId: user.id, showNames })
-      : null;
+
+    // 順位表 (#1688 §8.3。上から最初に当たったもの):
+    //   1. 参加していない → not_joined (印も順位表の関数も読まない)
+    //   2. 今の役割が owner / admin → org_admin (印も順位表の関数も読まない)
+    //   3. このチャレンジに管理者だった印がある → org_admin (順位表の関数は呼ばない。印を読めなければ例外で 500)
+    //   4. それ以外 → 順位表
+    let ranking: RankingSection;
+    if (!mine) {
+      // showNames は、参加を決める前に「順位表に表示名が出るか」を説明するために返す
+      ranking = { available: false, showNames, reason: 'not_joined' };
+    } else if (
+      !canViewChallengeRanking(profile.org_role) ||
+      (await hasRankingExclusion(admin, { challengeId: challenge.id, userId: user.id }))
+    ) {
+      ranking = { available: false, showNames, reason: 'org_admin' };
+    } else {
+      const view = await fetchChallengeRanking(admin, { challengeId: challenge.id, userId: user.id, showNames });
+      ranking = {
+        available: true,
+        showNames,
+        rankedCount: view.rankedCount,
+        // 上位と本人の行だけのとき true (全員は載せていない)
+        truncated: view.rankedCount > view.entries.length,
+        entries: view.entries,
+      };
+    }
 
     return NextResponse.json({
       challenge: toMemberChallengeDto(challenge),
@@ -94,17 +122,7 @@ export async function GET(_request: Request, props: { params: Promise<{ id: stri
             joinedAt: mine.joined_at,
           }
         : null,
-      ranking: ranking
-        ? {
-            available: true,
-            showNames,
-            rankedCount: ranking.rankedCount,
-            // 上位と本人の行だけのとき true (全員は載せていない)
-            truncated: ranking.rankedCount > ranking.entries.length,
-            entries: ranking.entries,
-          }
-        : // 参加していない人には順位表を返さない。showNames は、参加を決める前に「順位表に表示名が出るか」を説明するために返す
-          { available: false, showNames },
+      ranking,
     });
   } catch (error) {
     return handleMemberError(ROUTE, error);

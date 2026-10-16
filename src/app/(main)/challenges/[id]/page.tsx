@@ -4,7 +4,9 @@
 //
 // #1132 の方針:
 //   - 参加は任意。いつでもやめられる (やめると、記録は順位から外れる)
-//   - 順位表は参加者どうしにだけ見せる。管理者(参加していない人を含む)には、順位表を出さない
+//   - 順位表は参加者どうしにだけ見せる。参加していない人には、順位表を出さない (API が reason = 'not_joined' を返す)
+//   - #1688: 組織の管理者 (参加している管理者と、このチャレンジがある間に管理者になったことがある人を含む) にも順位表を出さない
+//     (API が reason = 'org_admin' を返す)。その旨を説明し、自分の記録と順位だけを見せる
 //   - 参加者の表示名は、社内の方針が決まるまで出さない (順位と「参加者」「あなた」だけ)。出すかどうかは API が決める
 // 画面は、API (GET /api/org/challenges/[id]) が返したものをそのまま見せる。
 
@@ -19,13 +21,7 @@ import {
   formatParticipantCount,
   isOrgChallengeType,
 } from "@/lib/org-challenges";
-
-interface RankingEntry {
-  rank: number;
-  value: number;
-  isMe: boolean;
-  label: string;
-}
+import type { RankingSection } from "@/lib/org-challenge-privacy";
 
 interface ChallengeDetail {
   challenge: {
@@ -40,20 +36,13 @@ interface ChallengeDetail {
     rewardDescription: string | null;
     status: string;
   };
-  /** 参加者が最小人数に満たないときは null (API が人数を返さない) */
+  /** これまでに参加した人の延べ数 (やめても減らない)。最小人数に満たないときは null (API が人数を返さない) */
   participantCount: number | null;
   minParticipants?: number;
   joined: boolean;
   me: { currentValue: number; rank: number | null; joinedAt: string | null } | null;
-  ranking:
-    | { available: false; showNames?: boolean }
-    | {
-        available: true;
-        showNames: boolean;
-        rankedCount: number;
-        truncated: boolean;
-        entries: RankingEntry[];
-      };
+  /** 形の正本は src/lib/org-challenge-privacy.ts の rankingSectionSchema */
+  ranking: RankingSection;
 }
 
 type DetailState =
@@ -272,7 +261,7 @@ export default function ChallengeDetailPage() {
                   ? "順位表には、参加した人のニックネームが表示されます。"
                   : "順位表に、ほかの参加者のニックネームは表示されません (順位と記録だけ)。"}
               </li>
-              <li>会社の管理者には、参加者全体の人数と平均だけが表示されます (参加者が少ない間は、人数も平均も表示されません)。あなたの記録や順位は表示されません。</li>
+              <li>会社の管理者には、参加した人数と、チャレンジが終了したあとの平均だけが表示されます (参加した人が少ない間は表示されません)。あなたの記録や順位は表示されません。</li>
               <li>いつでも参加をやめられます。やめると、あなたの記録は順位から外れます。</li>
             </ul>
             {isActive ? (
@@ -352,6 +341,15 @@ export default function ChallengeDetailPage() {
                 ))}
               </ol>
             )}
+          </section>
+        )}
+
+        {!ranking.available && ranking.reason === "org_admin" && (
+          <section aria-labelledby="ranking-hidden-title" className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+            <h2 id="ranking-hidden-title" className="font-bold text-gray-900 mb-1">順位表</h2>
+            <p className="text-sm text-gray-700">
+              組織の管理者 (このチャレンジがある間に管理者になったことがある人を含む) には、順位表を表示しません (あなたの記録と順位だけが表示されます)。
+            </p>
           </section>
         )}
 

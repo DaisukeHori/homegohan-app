@@ -29,20 +29,25 @@ const API_ROOT = path.join(ROOT, "src/app/api");
  * (抽出に失敗して 0 件のまま通ることを防ぐ。足したときの件数を書く)。
  * family/01・operator/01・operator/02 と、その道具の helpers/persona-api.ts は、主要ペルソナの happy path (#856)。
  * local-ci.sh / e2e-local.yml で実際に流れるが、存在しないパスを叩くと 404 の偽の結果になるので、ここでも見る。
+ * family/02 は、週間献立の家族の表示 (#1584)。local-ci.sh / e2e-local.yml で流れる。
  * tour/helpers.ts は、ハンズオンツアーの E2E (tests/e2e/tour) が呼ぶ・待つ API の道具 (#846。同じく local-ci.sh / e2e-local.yml で流れる)。
  * w5-3-menu-gen-adversarial は、週の献立の生成の API へ直接送る検査を含む (#1622 で local-ci.sh / e2e-local.yml の常設に入れた)。
  * 存在しないパスを叩くと 404 になり、「5xx でない」を見る検査が偽で通るので、ここでも見る。
+ * operator/03-mfa は運営の MFA (#1176) の画面と、自己サービスの状態・運営の API の 403 / 200 を見る。
  * 同じく常設に入れた wave2-f2-queue-reliability は、API を画面の通信の差し替え (page.route のパターン) でしか書かず、
  * ここで取り出す "/api/..." の文字列を持たないので対象にしない。
  */
 const SPEC_FILES: ReadonlyArray<{ file: string; minRefs: number }> = [
   { file: "tests/e2e/w5-12-admin-adversarial.spec.ts", minRefs: 21 },
   { file: "tests/e2e/family/01-invite-accept-share.spec.ts", minRefs: 3 },
+  { file: "tests/e2e/family/02-family-menu-view.spec.ts", minRefs: 4 },
   { file: "tests/e2e/operator/01-admin-flow.spec.ts", minRefs: 7 },
   { file: "tests/e2e/operator/02-super-admin-flow.spec.ts", minRefs: 12 },
   { file: "tests/e2e/helpers/persona-api.ts", minRefs: 1 },
   { file: "tests/e2e/tour/helpers.ts", minRefs: 3 },
   { file: "tests/e2e/w5-3-menu-gen-adversarial.spec.ts", minRefs: 15 },
+  // #1176 運営の MFA の画面 (段 B。docs/design/cross/12-operator-mfa.md §23 N-10)
+  { file: "tests/e2e/operator/03-mfa.spec.ts", minRefs: 4 },
 ];
 
 /**
