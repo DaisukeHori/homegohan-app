@@ -30,3 +30,6 @@ export type { RecipeState, RecipeAction } from './reducers/recipeReducer';
 
 export { uiFlagReducer, initialUiFlagState } from './reducers/uiFlagReducer';
 export type { UiFlagState, UiFlagAction } from './reducers/uiFlagReducer';
+
+// #1769: 祝日の一覧を取る URL (オリジンは CSP の connect-src と同じ定数)
+export { japaneseHolidaysUrl } from './japaneseHolidays';

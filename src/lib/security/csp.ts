@@ -25,6 +25,13 @@ export const CSP_NONCE_PATTERN = /^[A-Za-z0-9+\/]+={0,2}$/;
  * コメントでも二重引用符で囲んだ frame-src の例を書かない。src/__tests__/lib/security/csp.test.ts が 1 か所だけであることを見張る)
  */
 export const CSP_TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+/**
+ * 日本の祝日の一覧 (公開情報) を返す API のオリジン (#1769)。週間献立 (/menus/weekly) がブラウザから
+ * `${HOLIDAYS_API_ORIGIN}/api/v1/<年>/date.json` を fetch するので、connect-src に足す。
+ * 取得の URL は src/app/(main)/menus/weekly/_state/japaneseHolidays.ts がこの定数から組み立てる (2 か所の値がずれないように)。
+ * 送るのは年だけで、利用者のデータは送らない (tests/ai-consent-provider-inventory.test.ts の NON_AI_HOSTS)
+ */
+export const HOLIDAYS_API_ORIGIN = 'https://holidays-jp.github.io';
 /** CSP_REPORT_ONLY を有効とみなす唯一の値 (lib/legal-consent.ts の LEGAL_CONSENT_FLAG_ON と同じ読み方) */
 const CSP_REPORT_ONLY_FLAG_ON = 'on';
 /** Supabase のクラウド (本番) のホストの末尾。これ以外 (ローカルの Supabase) のときだけ origin を方針に足す */
@@ -92,8 +99,8 @@ export function buildContentSecurityPolicy(input: CspBuildInput): string {
     "frame-src 'self' https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
-    // #1166: PostHog の送信先は許可しない
-    `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co${supabaseConnectSrc}`,
+    // #1166: PostHog の送信先は許可しない。#1769: 週間献立の祝日の取得 (HOLIDAYS_API_ORIGIN)
+    `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${HOLIDAYS_API_ORIGIN}${supabaseConnectSrc}`,
     "frame-ancestors 'none'",
     "font-src 'self'",
     "object-src 'none'",
