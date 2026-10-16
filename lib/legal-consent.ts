@@ -14,7 +14,8 @@
  * どちらも on でない既定では、未同意の人にも何も出さず、誰も止めない。同意の記録は、同意画面 /legal-consent を
  * 開いて同意したときだけ残る (強制やお知らせを始める日はオーナーが決める)。
  *
- * ここは副作用のない関数だけを置く (Edge ランタイムの middleware から import されるので、Node 専用の API は使わない)。
+ * ここは副作用のない関数だけを置く。ブラウザで動くコンポーネント (LegalConsentForm・LegalConsentBanner) も import するので、
+ * Node 専用の API は使わない (全リクエストの前に動く proxy (src/proxy.ts) も lib/supabase/middleware.ts 経由で読む)。
  */
 import { hasAcceptedCurrentLegalDocuments, type AcceptedLegalVersions } from '@homegohan/shared';
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect';

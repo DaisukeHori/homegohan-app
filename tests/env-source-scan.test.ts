@@ -614,7 +614,7 @@ function importChain(seen: Map<string, string | null>, target: string): string {
 describe('ブラウザ・proxy・cron route のコードは zod を持つ src/lib/env.ts に到達しない (#1182)', () => {
   // zod は最小のスキーマでも minify 後に約 59 KB (gzip 約 16 KB)。ブラウザ向けのバンドルは全ページの JS に、
   // proxy のバンドルは全リクエストの前に読み込まれる。必須の変数は何も import しない env-required.ts から取り出す。
-  // #1744 で middleware (Edge Runtime) を proxy (Node.js runtime) に、cron route を Edge から Node.js に移したが、
+  // #1744 で Edge Runtime の middleware を Node.js runtime の proxy に、cron route を Edge から Node.js に移したが、
   // 全リクエスト・毎分の呼び出しで読み込むコードを軽く保つため、到達しないことは変えずに見張る
   const ENTRIES = [
     { file: 'lib/supabase/client.ts', why: 'ブラウザの Supabase クライアント (ほぼ全ページの JS に入る)' },

@@ -310,7 +310,7 @@ export async function isFeatureEnabled(
  * 自分の API route 側のメモリを新しくするために呼ぶ。
  * 呼ぶ前に始まっていた読み出しは打ち切らない。その読み出しが古い値で終わると、その値がメモリに戻ることがある
  * (最大 FEATURE_FLAG_CACHE_TTL_MS)。
- * 他のインスタンスと、ミドルウェア (Edge ランタイム。API route (Node) とはメモリが別) は、
+ * 他のインスタンスと、proxy (src/proxy.ts。API route とメモリを共有するとは限らない) は、
  * 最大 FEATURE_FLAG_CACHE_TTL_MS 遅れて反映される。
  */
 export function invalidateFeatureFlag(key: string): void {
