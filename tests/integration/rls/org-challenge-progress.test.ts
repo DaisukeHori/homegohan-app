@@ -43,6 +43,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { RANKING_ENTRY_LIMIT } from '@/lib/org-challenges';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -97,6 +98,8 @@ const createdChallengeIds: string[] = [];
 
 let orgA = '';
 let orgB = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない。afterAll で組織の後に消す */
+let orgOwnerId = '';
 
 // 組織 A のメンバー。a1〜a7 が参加者、admin は組織 A の管理者 (参加しない)。
 // a8〜a11 は、管理者向けの集計の最小人数 (10 人。#1600) を超える人数をそろえるためのメンバー (H でだけ参加する)
@@ -256,9 +259,13 @@ async function runProgress(pNow: string): Promise<ProgressResult> {
 }
 
 beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, '1132');
   const { data: orgs, error: orgError } = await srAdmin
     .from('organizations')
-    .insert([{ name: `#1132 Org A ${RUN}` }, { name: `#1132 Org B ${RUN}` }])
+    .insert([
+      { name: `#1132 Org A ${RUN}`, owner_id: orgOwnerId },
+      { name: `#1132 Org B ${RUN}`, owner_id: orgOwnerId },
+    ])
     .select('id, name');
   if (orgError || !orgs) throw new Error(`organizations: ${orgError?.message}`);
   orgA = orgs.find((o) => o.name.startsWith('#1132 Org A'))!.id;
@@ -307,6 +314,8 @@ afterAll(async () => {
   await srAdmin.from('user_daily_meals').delete().in('user_id', createdUserIds);
   await srAdmin.from('organization_challenge_participants').delete().in('user_id', createdUserIds);
   if (orgA || orgB) await srAdmin.from('organizations').delete().in('id', [orgA, orgB].filter(Boolean));
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.auth.admin.deleteUser(id);
   }

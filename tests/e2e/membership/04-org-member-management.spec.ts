@@ -9,6 +9,7 @@ import { test, expect } from '../fixtures/fresh-org';
 import { createFreshUser, cleanupFreshUser, injectSession } from '../fixtures/fresh-user';
 import { createClient } from '@supabase/supabase-js';
 import {
+  cleanup,
   getUserProfile,
   setUserOrgRole,
 } from '../helpers/membership';
@@ -162,6 +163,9 @@ test.describe('org メンバ管理', () => {
         await bobPage.close();
       }
     } finally {
+      // 譲渡が成立すると organizations.owner_id が Bob を指す (owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)。
+      // Bob を消す前に組織を消す (cleanup は所属を外してから組織を消す。fixture の後片付けの cleanup は消えた組織に対して何もしない)
+      await cleanup({ orgIds: [orgId] });
       await cleanupFreshUser(supabaseAdmin, bob.id);
     }
   });
