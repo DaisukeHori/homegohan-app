@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect'
 import { resolveFirstSignInDestination } from '@/lib/legal-consent'
+import { recordWebLoginContextFromRequest } from '@/lib/auth/sessions/web-login-context'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -61,6 +62,7 @@ export async function GET(request: Request) {
     try {
       const { data, error } = await supabase.auth.exchangeCodeForSession(code)
       authSuccess = !error
+      if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
       if (error) {
         console.error('[auth/callback] Code exchange error:', error.message, error)
       } else {
@@ -79,6 +81,7 @@ export async function GET(request: Request) {
         type: type as 'signup' | 'email' | 'recovery' | 'invite',
       })
       authSuccess = !error
+      if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
       if (error) {
         console.error('[auth/callback] Email verification error:', error.message, error)
       } else {
@@ -99,6 +102,7 @@ export async function GET(request: Request) {
         type: type as 'signup' | 'email' | 'recovery' | 'invite',
       })
       authSuccess = !error
+      if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
       if (error) {
         console.error('[auth/callback] PKCE token verification error:', error.message, error)
       } else {
