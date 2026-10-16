@@ -642,6 +642,7 @@ Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の�
 | WebView (借り物) | `signOut()` | 失効後 (控え切れ) | (同上) | 更新が 400 → 捨てて `SIGNED_OUT` → `{ error }` | 成功のときと同じ (S-7・S-8) |
 | ふつうのブラウザ (実 token) | tick・`getSession()` | 120〜0 秒 (失効と答えられた) | 捨てて `/login` | 残す → 失効後に `SIGNED_OUT` → `/login` | `MainLayout` (S-9) |
 | ふつうのブラウザ (実 token) | 更新が成功 | 120〜0 秒 | `TOKEN_REFRESHED` | 同じ (控えは消える) | — |
+| ふつうのブラウザ (実 token) | 画面の `getUser()` (引数なし。閉包 W-2) が `403 session_not_found` (サーバーのセッションが消えた: 全端末ログアウト・退会など) | 任意 (access token の署名と期限は有効) | `AuthSessionMissingError` → `_removeSession` → `SIGNED_OUT`。呼び出しは `user: null` とそのエラーを受け取る | 同じ (§9.1 の `getUser()` の行 `GoTrueClient.js:2724-2731`) | `MainLayout` §6.3 (localStorage を消し `/login`。③ (b) の `isInNativeWebView()` でない行。S-9 の後続と同じ)。呼び出し側は変えない。両版で同じ (§9.12 の `GET /user` の行) |
 | ふつうのブラウザ・ネイティブ (実 token) | `signOut()` (scope global / local) で `/logout` が成功 (401 / 403 / 404 = サーバーにセッションがもう無い、も同じ扱い。§9.1 の `_signOut` の失敗の行の ②) | 失効前 (access token が有効)、または失効後で更新が成功 | `_removeSession` → `SIGNED_OUT` → `{ error: null }` | 同じ | ふつうのブラウザは `MainLayout` §6.3 (localStorage を消し `/login`。③ (b) の `isInNativeWebView()` でない行)。ネイティブは §3 のログアウトの行 → AuthProvider の `SIGNED_OUT` の行 (`AuthProvider.tsx:240-259`。掃除と release)。`signOutOrForgetLocally` の端末での消去は重なる (害は無い。閉包 W-6・M-4) |
 | Next の middleware (借り物の Cookie) | `/api` の `getSession()`・画面の `getUser()` | 90〜0 秒 | 捨てて `SIGNED_OUT` → `applyServerStorage` が Cookie を消す応答 | 残す。Cookie は変わらない | 要求は access token で通る。見張りが先に読み込み直すのが常 |
 | Next の middleware (借り物の Cookie) | 同上 | 失効後 | Cookie を消す | 同じ (捨てて `SIGNED_OUT` → Cookie を消す応答) | 画面は `/login` へ → ログイン画面が `session-expired` (§6.2)。`/api/*` の要求では応答で Cookie を消すだけで、ブラウザの auth-js に事象は届かない (上の「先に Cookie を消した後」の行。S-27) |
@@ -884,7 +885,7 @@ export function createClient() {
 
 **A. `src/__tests__/app/main-layout-signed-out.test.tsx`** (ヘッダーのコメント `:2-13` も 2.117 の文に直す)
 
-このファイルの it は 9 件 (`it.each` の 2 行を 2 件と数える。直した後は A-9 を足して 10 件)。2.117.3 で赤になるのは次の 6 件で、残る 3 件 (`:278`・`:291`・`:337`) は残り 3,000 秒の種で更新が走らないので緑のまま (A-5〜A-7)。
+このファイルの it は 9 件 (`it.each` の 2 行を 2 件と数える)。直した後は同じ数え方で 11 件 = A-1 (2) + A-2〜A-4 (3) + A-5〜A-7 (3) + A-8 (2。いまの 1 件を `it.each` の 2 行にする) + A-9 (1。新設)。2.117.3 で赤になるのは次の 6 件で、残る 3 件 (`:278`・`:291`・`:337`) は残り 3,000 秒の種で更新が走らないので緑のまま (A-5〜A-7)。
 
 | 現行の it (origin/main の行) | 種 | 2.117.3 で赤になる assert | 赤になる理由 | 直した後 |
 |---|---|---|---|---|
