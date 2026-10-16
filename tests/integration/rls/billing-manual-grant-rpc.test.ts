@@ -147,11 +147,16 @@ const NOW_TOLERANCE_MS = 60_000;
 
 const profileBase = { age_group: '30s', gender: 'other' };
 
-async function createUser(label: string, options: { jwt?: boolean; roles?: string[] } = {}): Promise<TestUser> {
+/**
+ * 利用者を作る。profile: false は auth.users だけを作り、user_profiles を作らない (プロフィール未作成の利用者。
+ * このリポジトリの migration に、auth.users の INSERT でプロフィールを作るトリガーは無い)
+ */
+async function createUser(label: string, options: { jwt?: boolean; roles?: string[]; profile?: boolean } = {}): Promise<TestUser> {
   const email = `rls-billing-manual-${label}-${++seq}-${TS}@homegohan.test`;
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
+  if (options.profile === false) return { id: data.user.id, email, jwt: null };
   const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
     db.from('user_profiles')
       .upsert(
@@ -511,6 +516,10 @@ function expectNoDeadlock(...outcomes: Outcome[]) {
 // プランの用意・クーポン
 // ---------------------------------------------------------------------------------------------
 
+/** 試験で作るプランの月額 (円) と版。値そのものは付与の関数の結果に関わらない */
+const TEST_PLAN_MONTHLY_PRICE_JPY = 100;
+const TEST_PLAN_VERSION = 1;
+
 /** status が public でないプランを作る (draft / deprecated)。plan_type は personal */
 async function createPlan(status: 'draft' | 'deprecated'): Promise<string> {
   const planKey = `it_mg_${status}_${++seq}_${TS}`;
@@ -519,12 +528,44 @@ async function createPlan(status: 'draft' | 'deprecated'): Promise<string> {
     display_name: `manual grant ${status} ${TS}`,
     plan_type: 'personal',
     status,
-    monthly_price_jpy: 100,
-    version: 1,
+    monthly_price_jpy: TEST_PLAN_MONTHLY_PRICE_JPY,
+    version: TEST_PLAN_VERSION,
   });
   if (error) throw new Error(`subscription_plans insert (${status}): ${error.message}`);
   createdPlanKeys.push(planKey);
   return planKey;
+}
+
+/** family_groups_member_limit_check の上限 (1〜20) と、member_limit の DDL の既定値 (付与の丸め・既定の期待値) */
+const MEMBER_LIMIT_CAP = 20;
+const MEMBER_LIMIT_DEFAULT = 4;
+/** 上限 (MEMBER_LIMIT_CAP) を超える max_members。プラン管理の入力 (plans-schemas の max_members) に上限が無いので作れる */
+const MAX_MEMBERS_OVER_CAP = 25;
+
+/** observeRolledBack の DO ブロックが最後に RAISE する印 (観測した値の JSON を運ぶ) */
+const ROLLED_BACK_MARKER = 'MG_ROLLED_BACK';
+
+/**
+ * postgres-meta の 1 回の要求で DO ブロックを流し、ブロックが観測した値 (jsonb) を例外の文で持ち帰る。
+ * ブロックは最後に RAISE EXCEPTION '<ROLLED_BACK_MARKER> %', <jsonb>::text; で終わるので、中の INSERT・付与・取り消しは
+ * すべてロールバックされ、並行する結合テストには見えない (一時的な public の family プランを公開プランの一覧に出さない)。
+ * 印の無い失敗 (途中の例外。例: member_limit の CHECK の 23514) は、その文のまま投げる
+ */
+async function observeRolledBack(declarations: string, statements: string): Promise<Record<string, unknown>> {
+  const res = await pgRequest(`DO $observe$
+    DECLARE
+      v_out jsonb := '{}'::jsonb;
+      ${declarations}
+    BEGIN
+      ${statements}
+      RAISE EXCEPTION '${ROLLED_BACK_MARKER} %', v_out::text;
+    END
+    $observe$;`);
+  const body = res.body as { error?: unknown } | null;
+  const message = typeof body?.error === 'string' ? body.error : JSON.stringify(body);
+  const match = new RegExp(`${ROLLED_BACK_MARKER} (\\{[^\\n]*\\})`).exec(message);
+  if (res.ok || !match) throw new Error(`DO ブロックが観測の印で終わらなかった (${res.status}): ${message}`);
+  return JSON.parse(match[1]) as Record<string, unknown>;
 }
 
 /** 承認者 (coupons.created_by / coupon_redemptions.approved_by) */
@@ -650,9 +691,21 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     expect(noExpiryRow).toMatchObject({ status: 'active', stripe_subscription_id: null, current_period_end: null });
     expect(await planKeyCached(noExpiry.id)).toBe('pro');
 
-    // 引数の不足は 22023 (業務エラーではない)
-    const missing = await srAdmin.rpc('billing_grant_manual_subscription', { p_user_id: null, p_plan_key: 'pro', p_expires_at: null });
-    expect(missing.error?.code).toBe('22023');
+    // 引数の不足は 22023 (業務エラーではない)。利用者・プラン (NULL と空文字) のどれが欠けても同じで、行は書かれない。
+    // プランの欠けは、入口の検査を外すとプランの検査の BILL_PLAN_NOT_GRANTABLE (P0001) に落ちるので、コードで区別できる
+    const missingArgsUser = await createUser('grant-missing-args');
+    const missingArgs: Array<[string, Record<string, unknown>]> = [
+      ['p_user_id NULL', { p_user_id: null, p_plan_key: 'pro', p_expires_at: null }],
+      ['p_plan_key NULL', { p_user_id: missingArgsUser.id, p_plan_key: null, p_expires_at: null }],
+      ['p_plan_key empty', { p_user_id: missingArgsUser.id, p_plan_key: '', p_expires_at: null }],
+    ];
+    for (const [label, params] of missingArgs) {
+      const missing = await srAdmin.rpc('billing_grant_manual_subscription', params);
+      expect(missing.data, label).toBeNull();
+      expect(missing.error?.code, label).toBe('22023');
+    }
+    expect(await rowsOf(missingArgsUser.id)).toEqual([]);
+    expect(await planKeyCached(missingArgsUser.id)).toBeNull();
   });
 
   // 40
@@ -664,6 +717,21 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     const onStripe = await tryGrant(stripeUser.id, 'family_basic');
     expect(onStripe.data).toBeNull();
     expect(onStripe.error).toMatchObject({ code: 'P0001', message: 'BILL_LIVE_ROW_CONFLICT', details: stripeRow.id });
+    expect(await rowsOf(stripeUser.id)).toHaveLength(1);
+    // live の 5 値 (trialing / active / paused / past_due / grace。部分 UNIQUE idx_personal_subscriptions_active_per_user と同じ集合) の
+    // どれでも衝突する。どれかが衝突の検査から抜けると、業務エラーとして名指しされず、INSERT が部分 UNIQUE の違反 (23505) になる。
+    // active 以外は、同じ S 行の status を postgres で書き換えて用意する (paused は paused_until が要る = ps_paused_until_required)
+    for (const status of ['trialing', 'paused', 'past_due', 'grace'] as const) {
+      await pgQuery(
+        `UPDATE public.personal_subscriptions
+            SET status = '${status}',
+                paused_until = CASE WHEN '${status}' = 'paused' THEN now() + interval '${FUTURE_DAYS} day' ELSE paused_until END
+          WHERE id = '${stripeRow.id}'::uuid;`,
+      );
+      const onLive = await tryGrant(stripeUser.id, 'family_basic');
+      expect(onLive.data, status).toBeNull();
+      expect(onLive.error, status).toMatchObject({ code: 'P0001', message: 'BILL_LIVE_ROW_CONFLICT', details: stripeRow.id });
+    }
     expect(await rowsOf(stripeUser.id)).toHaveLength(1);
 
     // live な M 行 (同じプランでも別のプランでも)
@@ -692,6 +760,16 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     const missingId = randomUUID();
     const unknown = await tryGrant(missingId, 'pro');
     expect(unknown.error).toMatchObject({ code: 'P0001', message: 'BILL_UNKNOWN_USER', details: missingId });
+    // auth.users にはいるがプロフィールが無い利用者も BILL_UNKNOWN_USER (§6.2 の 1.。personal_subscriptions.user_id の FK は auth.users
+    // なので、プロフィールの検査が抜けると行が INSERT されてしまう)
+    const noProfile = await createUser('no-profile', { profile: false });
+    const { data: noProfileRows, error: noProfileReadError } = await srAdmin.from('user_profiles').select('id').eq('id', noProfile.id);
+    expect(noProfileReadError).toBeNull();
+    expect(noProfileRows).toEqual([]);
+    const onNoProfile = await tryGrant(noProfile.id, 'pro');
+    expect(onNoProfile.data).toBeNull();
+    expect(onNoProfile.error).toMatchObject({ code: 'P0001', message: 'BILL_UNKNOWN_USER', details: noProfile.id });
+    expect(await rowsOf(noProfile.id)).toEqual([]);
 
     // 過去の期限 (now() 以前)
     const pastUser = await createUser('past-expiry');
@@ -724,6 +802,74 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     await tryRevoke(rep.id);
     expect(await mustFamily(familyId)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
 
+    // member_limit = LEAST(COALESCE(max_members, 4), 20): 上限を超える max_members は 20 に丸め、max_members の無いプランは 4。
+    // seed の family プラン (4・8) では丸めも既定も効かないので、max_members が 25 と NULL の public な family プランを作って付与する。
+    // 公開プランの一覧を見るほかの結合テストに見せないよう、プランの作成から付与・取り消しまでを 1 つの DO ブロックで流してロールバックする
+    const capRep = await createUser('family-cap');
+    const capFamily = await insertFamily(capRep.id);
+    const overCapPlan = `it_mg_family_over_cap_${++seq}_${TS}`;
+    const noMaxPlan = `it_mg_family_no_max_${++seq}_${TS}`;
+    const groupOf = `(SELECT jsonb_build_object('plan_key', g.plan_key, 'member_limit', g.member_limit) FROM public.family_groups AS g WHERE g.id = v_family)`;
+    const observed = await observeRolledBack(
+      `v_rep uuid := '${capRep.id}'::uuid;
+       v_family uuid := '${capFamily}'::uuid;`,
+      `INSERT INTO public.subscription_plans (plan_key, display_name, plan_type, status, monthly_price_jpy, version, max_members)
+       VALUES ('${overCapPlan}', 'manual grant over cap ${TS}', 'family', 'public', ${TEST_PLAN_MONTHLY_PRICE_JPY}, ${TEST_PLAN_VERSION}, ${MAX_MEMBERS_OVER_CAP}),
+              ('${noMaxPlan}', 'manual grant no max ${TS}', 'family', 'public', ${TEST_PLAN_MONTHLY_PRICE_JPY}, ${TEST_PLAN_VERSION}, NULL);
+       PERFORM public.billing_grant_manual_subscription(v_rep, '${overCapPlan}', NULL);
+       v_out := v_out || jsonb_build_object('overCap', ${groupOf});
+       PERFORM public.billing_revoke_manual_subscription(v_rep);
+       v_out := v_out || jsonb_build_object('overCapRevoked', ${groupOf});
+       PERFORM public.billing_grant_manual_subscription(v_rep, '${noMaxPlan}', NULL);
+       v_out := v_out || jsonb_build_object('noMax', ${groupOf});
+       PERFORM public.billing_revoke_manual_subscription(v_rep);
+       v_out := v_out || jsonb_build_object('noMaxRevoked', ${groupOf});`,
+    );
+    expect(observed).toEqual({
+      overCap: { plan_key: overCapPlan, member_limit: MEMBER_LIMIT_CAP },
+      overCapRevoked: { plan_key: 'free', member_limit: MEMBER_LIMIT_DEFAULT },
+      noMax: { plan_key: noMaxPlan, member_limit: MEMBER_LIMIT_DEFAULT },
+      noMaxRevoked: { plan_key: 'free', member_limit: MEMBER_LIMIT_DEFAULT },
+    });
+    // ロールバックされている (プランも契約の行も残らず、グループは作ったときの free / 4 のまま)
+    const { data: leftoverPlans, error: leftoverError } = await srAdmin
+      .from('subscription_plans')
+      .select('plan_key')
+      .in('plan_key', [overCapPlan, noMaxPlan]);
+    expect(leftoverError).toBeNull();
+    expect(leftoverPlans).toEqual([]);
+    expect(await rowsOf(capRep.id)).toEqual([]);
+    expect(await mustFamily(capFamily)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: MEMBER_LIMIT_DEFAULT });
+
+    // 個人プラン (pro) の付与・取り消し・期限切れは、代表者の active なグループに触れない (§6.2 の 6. は「家族プランなら」。
+    // §7.3 の付与の行も家族プランのときだけグループを合わせる)
+    const personalRep = await createUser('family-personal-rep');
+    const personalFamily = await insertFamily(personalRep.id);
+    await grant(personalRep.id, 'pro');
+    expect(await mustFamily(personalFamily)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+    expect(await planKeyCached(personalRep.id)).toBe('pro');
+    expect((await tryRevoke(personalRep.id)).error).toBeNull();
+    expect(await mustFamily(personalFamily)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+    await grant(personalRep.id, 'pro', futureExpiry());
+    await makeDue(personalRep.id);
+    expect(await expireForUser(personalRep.id)).toBe(1);
+    expect(await mustFamily(personalFamily)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+    // 取り消し・期限切れの同期も家族プランのときだけ (§6.3)。グループが free のままだと、同期の条件 (plan_type = 'family') を外しても
+    // g.plan_key = 'pro' の行が無く結果が変わらない。ほかの経路 (service_role) でグループを pro / 4 にしておき、条件が効いていることを見る
+    const { error: personalPlanError } = await srAdmin
+      .from('family_groups')
+      .update({ plan_key: 'pro', member_limit: MEMBER_LIMIT_DEFAULT })
+      .eq('id', personalFamily);
+    expect(personalPlanError).toBeNull();
+    await grant(personalRep.id, 'pro');
+    expect((await tryRevoke(personalRep.id)).error).toBeNull();
+    expect(await mustFamily(personalFamily)).toMatchObject({ status: 'active', plan_key: 'pro', member_limit: 4 });
+    await grant(personalRep.id, 'pro', futureExpiry());
+    await makeDue(personalRep.id);
+    expect(await expireForUser(personalRep.id)).toBe(1);
+    expect(await mustFamily(personalFamily)).toMatchObject({ status: 'active', plan_key: 'pro', member_limit: 4 });
+    expect(await planKeyCached(personalRep.id)).toBeNull();
+
     // 同じ利用者に同じプランの live な行があるときは戻さない (内部の同期を postgres で直接呼ぶ。部分 UNIQUE で live は 1 行)
     const keeper = await createUser('family-keeper');
     const keeperFamily = await insertFamily(keeper.id);
@@ -732,6 +878,27 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     await pgQuery(`SELECT public.billing_manual_subscription_sync_after_end('${keeper.id}'::uuid, 'family_pro');`);
     expect(await mustFamily(keeperFamily)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
     expect(await planKeyCached(keeper.id)).toBe('family_pro');
+
+    // 戻さない条件の live な行は「同じ利用者」の「同じプラン」のものだけ:
+    // (1) ほかの利用者 (keeper) が family_pro の live な行を持っていても、rep2 の取り消しで rep2 のグループは free / 4 に戻る
+    const rep2 = await createUser('family-rep2');
+    const rep2Family = await insertFamily(rep2.id);
+    await grant(rep2.id, 'family_pro');
+    expect(await mustFamily(rep2Family)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
+    expect((await liveRowsOf(keeper.id)).map((r) => r.plan_key)).toEqual(['family_pro']);
+    expect((await tryRevoke(rep2.id)).error).toBeNull();
+    expect(await mustFamily(rep2Family)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+    // (2) 同じ利用者の別のプラン (pro) の live な行は数えない。公開の経路では終わった行のほかに live な行は無い
+    //     (部分 UNIQUE で live は 1 行) ので、keeper と同じく内部の同期を postgres で直接呼ぶ。グループはほかの経路で family_basic / 4 にしておく
+    await grant(rep2.id, 'pro');
+    const { error: rep2PlanError } = await srAdmin
+      .from('family_groups')
+      .update({ plan_key: 'family_basic', member_limit: MEMBER_LIMIT_DEFAULT })
+      .eq('id', rep2Family);
+    expect(rep2PlanError).toBeNull();
+    await pgQuery(`SELECT public.billing_manual_subscription_sync_after_end('${rep2.id}'::uuid, 'family_basic');`);
+    expect(await mustFamily(rep2Family)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+    expect(await planKeyCached(rep2.id)).toBe('pro');
 
     // 代表者でない利用者の付与・取り消し・期限切れは、どのグループにも触れない
     const outsider = await createUser('family-outsider');
