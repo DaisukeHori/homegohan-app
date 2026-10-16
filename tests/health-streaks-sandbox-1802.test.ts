@@ -46,7 +46,8 @@ const KNOWN_STREAK_TYPES = ['daily_record', 'meal_record', 'health_record', 'exe
 
 /**
  * 'health_streaks' という文字列を持つ本番のファイルと、その理由。ちょうどこの一覧 (増えても減っても落ちる)。
- * 型の定義・読むだけ・利用者が自分の行を消すだけのファイルは、連続日数を進めないので、お試しの記録とは関わらない。
+ * 読むだけ・利用者が自分の行を消すだけのファイルは、連続日数を進めないので、お試しの記録とは関わらない。
+ * (DB の型の定義 database.types.ts は、表の名前をプロパティの名前 (識別子) で書くので、文字列のリテラルとしては数えない)
  */
 const FILES_TOUCHING_HEALTH_STREAKS: Record<string, string> = {
   'src/lib/health-streaks.ts': '唯一の書き手。daily_record (健康の記録の連続日数) だけを書く',
@@ -56,8 +57,6 @@ const FILES_TOUCHING_HEALTH_STREAKS: Record<string, string> = {
   'apps/mobile/src/hooks/useHomeData.ts': 'モバイルのホームで daily_record を読むだけ',
   'src/lib/account-export-tables.ts': 'アカウントの書き出しで自分の行を読むだけ',
   'supabase/functions/calculate-segment-stats/index.ts': '比較ランキングの集計で meal_record / breakfast を読むだけ (書く処理は無い。#1528)',
-  'src/types/database.types.ts': 'DB の型の定義',
-  'packages/shared/src/database.types.ts': 'DB の型の定義 (共有パッケージ)',
 };
 
 /** updateHealthStreak を import するファイル (どれも health_records を保存した後に呼ぶ)。ちょうどこの一覧 */
