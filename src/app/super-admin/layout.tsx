@@ -22,6 +22,7 @@ const superAdminNavItems = [
 // 運用・監視。プラン管理とは見出しを分ける (アプリログはプランと関係ないため)
 const superAdminOperationsNavItems = [
   { href: '/super-admin/logs', label: 'アプリログ', icon: '📜' },
+  { href: '/super-admin/backups', label: 'バックアップ・DR', icon: '🗄️' },
 ];
 
 export default async function SuperAdminLayout({

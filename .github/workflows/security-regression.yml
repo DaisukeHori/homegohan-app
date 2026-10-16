@@ -65,9 +65,13 @@ jobs:
       # tests/integration/security/feature-flags-runtime.test.ts が切り替えの反映を待つ時間がこれで決まる
       # (本物の 30 秒を待つと、ON と OFF の 2 回で 1 テストに 1 分以上かかる。#1496)。テストのステップにも同じ値を渡す。
       # 本番 (Vercel) には足さない
+      # NEXT_FONT_GOOGLE_MOCKED_RESPONSES: next dev も e2e のビルド (e2e-local.yml) と同じ Google Fonts のモックで、フォントを外へ取りに行かせない。
+      # Turbopack の next dev は next/font/google の取得・解決に失敗すると全ページを 500 にし、結合テストが全部赤になる (#1792)。
+      # 詳細は tests/e2e/fixtures/google-fonts-mock.cjs。本番 (Vercel) には関係しない
       - name: Start Next dev server
         env:
           FEATURE_FLAG_CACHE_TTL_MS: "2000"
+          NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/tests/e2e/fixtures/google-fonts-mock.cjs
         run: |
           nohup npm run dev > /tmp/next-dev.log 2>&1 &
           for i in $(seq 1 120); do
