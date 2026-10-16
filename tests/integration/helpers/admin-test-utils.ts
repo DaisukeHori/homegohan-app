@@ -7,6 +7,7 @@
  */
 import { expect } from 'vitest';
 import type { ApiResponse } from './api';
+import { retryIdempotentSetup } from './setup-transient-retry';
 import { supabaseAdmin } from './supabase';
 import {
   cleanupAuditLogs,
@@ -98,16 +99,17 @@ export async function latestAuditLog(params: {
   actionType: string;
   targetId?: string;
 }): Promise<AuditLogRow | null> {
-  let query = supabaseAdmin
-    .from('admin_audit_logs')
-    .select('*')
-    .eq('actor_id', params.actorId)
-    .eq('action_type', params.actionType)
-    .order('created_at', { ascending: false })
-    .limit(1);
-  if (params.targetId) query = query.eq('target_id', params.targetId);
-
-  const { data, error } = await query;
+  // 読み取りだけなので、ゲートウェイの一時的な失敗のときだけやり直す (#1779。helpers/setup-transient-retry.ts)
+  const { data, error } = await retryIdempotentSetup(supabaseAdmin, 'latestAuditLog: admin_audit_logs の select', (db) => {
+    const query = db
+      .from('admin_audit_logs')
+      .select('*')
+      .eq('actor_id', params.actorId)
+      .eq('action_type', params.actionType)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    return params.targetId ? query.eq('target_id', params.targetId) : query;
+  });
   if (error) throw new Error(`latestAuditLog failed: ${error.message}`);
   return (data?.[0] as AuditLogRow | undefined) ?? null;
 }

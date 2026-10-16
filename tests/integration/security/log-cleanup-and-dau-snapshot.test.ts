@@ -48,6 +48,7 @@ import path from 'node:path';
 import { createClient, type PostgrestError, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -164,9 +165,9 @@ async function createAuthUser(label: string, roles?: string[]): Promise<{ id: st
   createdUserIds.push(data.user.id);
   if (roles) {
     // user_profiles の必須列は nickname / age_group / gender
-    const { error: profileError } = await sr
-      .from('user_profiles')
-      .upsert({ id: data.user.id, nickname: `t24-${label}`, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' });
+    const { error: profileError } = await retryIdempotentSetup(sr, 'createAuthUser: user_profiles の upsert', (db) =>
+      db.from('user_profiles')
+        .upsert({ id: data.user.id, nickname: `t24-${label}`, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' }));
     if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
     // サインインは使い捨てのクライアントで行う (sr でサインインすると service_role でなくなる)
     const signIn = await client(anonKey).auth.signInWithPassword({ email, password: PASSWORD });

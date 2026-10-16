@@ -24,6 +24,7 @@ import {
 } from '../helpers/users';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const TS = Date.now();
 
@@ -38,7 +39,8 @@ beforeAll(async () => {
     createTestUserWithRoles({ email: testEmail('llm-sa', TS), roles: ['super_admin'] }),
     createTestUserWithRoles({ email: testEmail('llm-admin', TS), roles: ['admin'] }),
   ]);
-  const { data } = await supabaseAdmin.from('ai_daily_limits').select('plan_key, daily_limit').eq('plan_key', QUOTA_TEST_PLAN).maybeSingle();
+  const { data } = await retryIdempotentSetup(supabaseAdmin, 'beforeAll: ai_daily_limits の select', (db) =>
+    db.from('ai_daily_limits').select('plan_key, daily_limit').eq('plan_key', QUOTA_TEST_PLAN).maybeSingle());
   originalQuotaRow = data;
 }, 60000);
 

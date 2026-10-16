@@ -25,6 +25,7 @@ import {
   fetchMenuTourProfile,
   fetchPhotoTourProfile,
 } from '../../../src/lib/handson-tour/tour-profile';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -99,9 +100,9 @@ async function createTestUser(
   created.push(userId);
 
   // user_profiles の必須列は nickname / age_group / gender (行が既にあっても上書きできるよう upsert)
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: `Tour ${label}`, age_group: '30s', gender: 'other', ...profile }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createTestUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: `Tour ${label}`, age_group: '30s', gender: 'other', ...profile }, { onConflict: 'id' }));
   if (profileError) throw new Error(`Failed to upsert profile for ${email}: ${profileError.message}`);
 
   if (nutritionTarget) {

@@ -25,6 +25,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -93,9 +94,9 @@ async function createTestUser(label: string, roles: string[]): Promise<TestUser>
   }
   const userId = authData.user.id;
 
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: `rls-1103-${label}`, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createTestUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: `rls-1103-${label}`, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' }));
   if (profileError) {
     await srAdmin.auth.admin.deleteUser(userId);
     throw new Error(`Failed to create profile ${email}: ${profileError.message}`);

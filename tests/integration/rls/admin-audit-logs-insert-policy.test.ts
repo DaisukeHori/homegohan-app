@@ -26,6 +26,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -80,12 +81,12 @@ async function createUser(label: string, roles: string[]): Promise<TestUser> {
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
   // roles は特権列なので service_role で設定する (本人の JWT では変更できない)
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert(
-      { id: data.user.id, nickname: `rls-1736-${label}`, age_group: '30s', gender: 'other', roles },
-      { onConflict: 'id' },
-    );
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert(
+        { id: data.user.id, nickname: `rls-1736-${label}`, age_group: '30s', gender: 'other', roles },
+        { onConflict: 'id' },
+      ));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await client(anonKey).auth.signInWithPassword({ email, password });

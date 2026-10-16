@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { supabaseAdmin } from '../helpers/supabase';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -125,9 +126,9 @@ async function selectLegacySetting(): Promise<SettingRow | null> {
 }
 
 async function setLegacySetting(value: unknown): Promise<void> {
-  const { error } = await supabaseAdmin
-    .from('system_settings')
-    .upsert({ key: 'feature_flags', value, updated_at: new Date().toISOString() });
+  const { error } = await retryIdempotentSetup(supabaseAdmin, 'setLegacySetting: system_settings の upsert', (db) =>
+    db.from('system_settings')
+      .upsert({ key: 'feature_flags', value, updated_at: new Date().toISOString() }));
   expect(error, 'system_settings の UPSERT').toBeNull();
 }
 
