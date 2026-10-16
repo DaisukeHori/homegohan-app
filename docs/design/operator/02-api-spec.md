@@ -803,6 +803,39 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 ---
 
+### GET /api/admin/data-requests
+個人情報の請求 (開示・訂正・利用停止・消去。`data_subject_requests`) の一覧 (#1178 / #1702)。中身は `docs/design/cross/15-data-subject-requests.md` §7.4 を canonical とする。
+
+**クエリ**: `?status=&request_type=&overdue=1&page=&per_page=` (`page` / `per_page` は `clampIntParam` で丸める。`overdue=1` は受付済み・対応中で応答期限を過ぎたもの)
+
+**レスポンス**: §3.2 の `{ "data": [DsrAdminSummary], "meta": { "total", "page", "per_page" } }`。並びは応答期限の昇順 (期限の無いものは最後)。範囲外のページは空のページ (`total: null`)。一覧は概要だけで、請求の内容・本人への応答・内部メモは詳細でだけ返す。1 件以上返したときに `admin.dsr.list` を記録する (07-audit-monitoring.md §4.1.1)。
+
+**権限**: `admin`, `super_admin` (未ログインは 401、それ以外のロールは 403 `OP_PERMISSION_DENIED`)
+
+---
+
+### GET /api/admin/data-requests/{id}
+個人情報の請求の詳細。レスポンスは `{ "data": DsrAdminDetail }` (概要 + 内容・本人への応答・内部メモ・請求者のニックネームとメールアドレス。退会済みなら請求者は `null`)。`id` が UUID でなければ 400、無ければ 404。返すたびに `admin.dsr.view` を記録する。中身は cross/15 §7.4 を canonical とする。
+
+**権限**: `admin`, `super_admin`
+
+---
+
+### PATCH /api/admin/data-requests/{id}
+個人情報の請求の対応 (状態・本人への応答・内部メモの更新)。中身は cross/15 §7.4・§8.3 (状態遷移表) を canonical とする。
+
+**ヘッダ**: `If-Unmodified-Since` (GET が返した `updated_at` の文字列をそのまま。HTTP-date ではない)
+
+**リクエスト**: `{ "status": "in_progress|fulfilled|rejected", "response_note": "...", "admin_notes": "..." }` (どれか 1 つ以上)
+
+**レスポンス**: 更新後の `{ "data": DsrAdminDetail }`。200 のたびに `admin.dsr.update` を記録する (変更が無くても)。
+
+エラーコードは `INVALID_CHARACTER` / `INVALID_JSON` / `VALIDATION_ERROR` (400)、`AUTH_UNAUTHENTICATED` (401)、`OP_PERMISSION_DENIED` (403)、`NOT_FOUND` (404)、`DSR_INVALID_TRANSITION` / `CONFLICT_STALE_DATA` (409)、`CONFLICT_OPTIMISTIC_LOCK` (412)、`DSR_RESPONSE_NOTE_REQUIRED` (422)、`CONFLICT_PRECONDITION_REQUIRED` (428)、`INTERNAL_ERROR` (500)。
+
+**権限**: `admin`, `super_admin`
+
+---
+
 ## 11. 通知配信 API
 
 ### GET /api/admin/notifications/campaigns
@@ -1554,6 +1587,9 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
 | `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
+| `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
+| `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
+| `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行 |
 
 ## 24. テスト方針
 
