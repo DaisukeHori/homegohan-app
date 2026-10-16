@@ -214,6 +214,14 @@ describe('退会の完了メール: 成功したときに 1 回だけ送る', ()
     expect(envelope.text).toContain('2026年10月10日 00:05 (日本時間)');
   });
 
+  it('完了メールは redactAfterSend: true で登録する (sendEmail の 2 つ目の引数。userId は渡さない)', async () => {
+    await run();
+
+    // #1193 送信待ち (email_outbox) の行は、送れたとき・届けられなかったときに宛先・件名・本文を伏せる (R-10)
+    expect(mocks.sendEmail.mock.calls[0][1]).toEqual({ redactAfterSend: true });
+    expect(mocks.sendEmail.mock.calls[0][1]).not.toHaveProperty('userId');
+  });
+
   it('順番: 宛先を引くのは確認の後・記録を伏せる (prepare) 前。送るのは deleteUser の成功の後', async () => {
     await run();
 
