@@ -212,6 +212,7 @@ super_admin.mfa.reset               - 別の super_admin による運営の二�
 admin.user.view                     - 管理コンソールでのユーザー詳細閲覧 (GET /api/admin/users/{id})
 admin.user.view_support             - サポートコンソールでのユーザー詳細閲覧 (GET /api/support/users/{id})
 admin.user.view_notes               - サポートコンソールでの管理ノート閲覧 (GET /api/support/users/{id}/notes)
+admin.user.view_login_history       - 管理コンソールでの利用者のログイン履歴 (IP・端末・国) の閲覧 (GET /api/admin/users/{id}/login-history)。1 件以上返したとき。details: returned_count・severity info (#1720・cross/16 §14.9)
 admin.support.ticket.view           - チケット詳細 (件名・メッセージ本文) の閲覧 (GET /api/admin/support/tickets/{id})
 admin.support.ticket.view_messages  - チケットのメッセージ一覧の閲覧 (GET /api/admin/support/tickets/{id}/messages)
 admin.inquiry.view                  - 問い合わせ詳細 (本文・管理者メモ) の閲覧 (GET /api/admin/inquiries/{id})。一覧は概要 (件名・連絡先・状態) だけなので記録しない

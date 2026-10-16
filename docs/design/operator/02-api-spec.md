@@ -226,6 +226,41 @@ BAN 解除
 
 ---
 
+### GET /api/admin/users/{id}/login-history
+利用者のログイン履歴 (直近 20 回。#1720 段 D。canonical は `docs/design/cross/16-auth-history-sessions.md` §14.9)
+
+**権限**: `admin`, `super_admin` (`support` は 403)
+
+**レスポンス** (各行は `LoginHistoryEntrySchema` (cross/16 §12.5)。created_at の降順。`ended_at` は `revoked_at`):
+```json
+{
+  "data": {
+    "entries": [
+      {
+        "session_id": "uuid",
+        "created_at": "2026-10-15T01:00:00+00:00",
+        "last_active_at": "2026-10-15T02:00:00+00:00",
+        "device_label": "iPhone・iPad の Safari",
+        "device_name": null,
+        "ip_address": "203.0.113.7",
+        "country_code": "JP",
+        "ended_at": null,
+        "ended_reason": null,
+        "is_new_device": false,
+        "is_new_ip": false,
+        "is_new_country": false,
+        "alert_sent_at": null
+      }
+    ]
+  }
+}
+```
+
+- 行は service_role で読む。1 件以上返したときだけ `admin.user.view_login_history` を監査に 1 行 (details: `returned_count`。0 件は記録しない)
+- UUID でない id は 404 `NOT_FOUND`。401 / 403 は `{ error: { code, message } }` (`AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED`)。`Cache-Control: private, no-store`
+
+---
+
 ### GET /api/admin/users/{id}/audit-logs
 ユーザーへの操作履歴
 

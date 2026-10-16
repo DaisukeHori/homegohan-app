@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 /** メールに書く有効期限 (提案から何日後か)。以前と同じ 7 日 */
 const OWNER_TRANSFER_EMAIL_EXPIRY_DAYS = 7;
@@ -52,7 +53,14 @@ export async function POST(request: Request) {
   let body: z.infer<typeof BodySchema>;
   try {
     const raw = await request.json();
-    body = BodySchema.parse(raw);
+    const parsedBody = BodySchema.parse(raw);
+    // DB・auth の id は小文字。大文字・混在で送られた UUID が profile との !== で 403 にならないよう、受け取った直後にそろえ、
+    // 以後 (判定・RPC・宛先の取得) はそろえた値だけを使う (#1793)
+    body = {
+      ...parsedBody,
+      organization_id: normalizeUuid(parsedBody.organization_id),
+      to_user_id: normalizeUuid(parsedBody.to_user_id),
+    };
   } catch {
     return NextResponse.json(
       { error: { code: 'INVALID_BODY', message: 'リクエストボディが不正です' } },

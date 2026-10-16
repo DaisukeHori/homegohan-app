@@ -30,6 +30,7 @@
 | `07-challenge.md` | F-ORG-006 チャレンジ機能 | 02 §5.6 |
 | `08-sso-saml.md` | SSO Phase 2 (SAML / OIDC / SCIM / JIT) | 02 §6.4 + 03 §17.3 |
 | `09-rls-policies.md` | RLS ポリシー一覧 (organization_id 境界 / 産業医境界) | 02 §7 |
+| `10-challenge-diff-privacy.md` | F-ORG-006 チャレンジの集計の差分から 1 人の値を逆算させない守り (#1688。`07-challenge.md` §15 の続き) | 02 §5.6 |
 
 ## ドメインの役割
 
