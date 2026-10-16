@@ -121,7 +121,7 @@ export function isLegalConsentComplete(
 export const SIGNUP_MINOR_NOTICE =
   '18歳未満の方はご自身では登録できません。13歳以上の方は、保護者の方が家族に追加し、保護者の同意のうえで、ご本人のアカウントとつなぐことができます。';
 
-/** 同意画面 (/legal-consent・13b のネイティブ) の生年月日の欄と、未成年の案内の文 */
+/** 同意画面 (Web の /legal-consent。アプリも WebView で同じ画面を開く。13b) の生年月日の欄と、未成年の案内の文 */
 export const LEGAL_CONSENT_BIRTH_DATE_COPY = {
   label: '生年月日',
   /** 版は同意済みで、生年月日だけが無い人 (S3: isReconsent ∧ outdated が空) の導入文。それ以外の導入文は LEGAL_CONSENT_COPY.introFirst / introReconsent のまま */

@@ -5,7 +5,7 @@
 | Status | 設計ゲート審査中 (v1.10) |
 | Issue | #1173 (要件 03 §17.10。先例: #1174 の規約の同意 (`accept_legal_documents`)・#1232 の子供の昇格 (本人同意)・#1154 の AI 同意 (`external_data_consents.revoked_at`)) |
 | 分冊 | 1 冊・2 段 (段 A = DB + `packages/shared` + 書き出しの分類 / 段 B = Web + API + メール + モバイルの注記)。§0.2 |
-| 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a (#1442) は実装まで main に着地済み (#1697)・13b は未マージ。両冊との契約は §0.5 |
+| 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a (#1442) は実装まで main に着地済み (#1697)・13b は設計書が main に着地済み。両冊との契約は §0.5 |
 | 範囲の正本 | Issue #1173 の本文とコメント (範囲と方針の記録のコメントを含む。要点は §1.2 にも写した) |
 | 読み手 | 実装 (Sonnet 5.5) と敵対レビュー。実装は §6 だけを読んで手を止めずに書けることを完成条件にする |
 
@@ -28,7 +28,7 @@
 | 消費先レーン 3 以上 | DB (migration)・shared・Web (画面 5 + route 2)・メール・モバイル (注記 1 行) | トリガー |
 | 共有面 2 つ以上 | `packages/shared` の export・`lib/legal-consent.ts` + `lib/supabase/middleware.ts` (全リクエスト)・`family_members` の列と guard・`accept_legal_documents` の signature | トリガー |
 
-**判定: 1 冊・2 段。** 核と配線に分けない理由: 消費先の多さは「同じ 2 つの述語 (生年月日がある / 同意が有効) を読む側」が多いだけで、冊をまたぐ契約が述語と DB 関数の signature しか無い。モバイルのネイティブで触るのはサインアップ画面の注記 1 行だけ (家族の画面は WebView で Web の画面を開くので、子供の追加・同意は Web の画面がそのまま効く。§0.3)。13b のネイティブの同意画面に生年月日の欄を足すのは 13b 側の追随 (§0.5) で、本冊は API の契約だけを決める。段 A (DB + shared) を先に閉じ、段 B (Web + API + メール) は段 A の実コード (再生成した `database.types.ts`・shared の export) を見て書く。
+**判定: 1 冊・2 段。** 核と配線に分けない理由: 消費先の多さは「同じ 2 つの述語 (生年月日がある / 同意が有効) を読む側」が多いだけで、冊をまたぐ契約が述語と DB 関数の signature しか無い。モバイルのネイティブで触るのはサインアップ画面の注記 1 行だけ (家族の画面は WebView で Web の画面を開くので、子供の追加・同意は Web の画面がそのまま効く。§0.3)。13b はネイティブの同意画面を作らず Web の同意画面を WebView で開くので、生年月日の欄を足す 13b 側の追随は無い (§0.5)。本冊は API の契約だけを決める。段 A (DB + shared) を先に閉じ、段 B (Web + API + メール) は段 A の実コード (再生成した `database.types.ts`・shared の export) を見て書く。
 
 ### 0.3 一次情報 (下の表の行番号は origin/main `5ff68e67` (2026-10-16) で取り直したもの)
 
@@ -76,7 +76,7 @@
 | 昇格の画面の失敗の扱い: 依頼の画面は `setError(json.error?.message ?? …)` (route の message は固定の文「参加リクエストの作成に失敗しました」)。承諾の画面は `mapActionError(code, fallback)` の `switch` (`PROMOTION_*`・`ALREADY_*`・`CONFLICT_RETRY`・`default`)。route は `mapPgErrorToHttp` (enum の値を単語境界で照合) | `src/app/(main)/family/members/[id]/promote/page.tsx:124-126`、`src/app/family/promotions/[token]/page.tsx:134-151`、`src/app/api/family/members/[member_id]/promote/route.ts:113-118`、`src/lib/errors/membership-errors.ts:134-158` |
 | `/api` の同意ゲートの判定 (13a・#1697): `resolveLegalConsentApiDecision(input)` = 強制していない → allow / 許可リストのパス → allow / それ以外は `hasAcceptedCurrentLegalDocuments(input.accepted) ? 'allow' : 'deny'` (本体の 1 行は `:146`)。`ResolveLegalConsentApiInput.accepted` の型は `AcceptedLegalVersions` (`:127-134`)。import は `./legal-versions` (`:16-23`) と `./push-token-claim` (`:24`。#1636) からの相対 (shared の中で自分のパッケージ名を使わない)。middleware の `/api` の分岐は 凍結 → メンテナンス → 同意 の順で、`fetchMiddlewareProfile` が読んだ行をそのまま `accepted` に渡す (判定は `:259-273`)。403 の本文は `legalConsentRequiredBody()` (`{ error, code }` の 2 キー。文は `LEGAL_CONSENT_REQUIRED_MESSAGE`) | `packages/shared/src/legal-consent-api.ts:16-24, 125-147`、`lib/supabase/middleware.ts:196-274` |
 | `GET /api/legal/status` (13a): route は `LEGAL_COLUMNS = 'terms_version_accepted, privacy_version_accepted'` (`:24`) を本人のセッションで読み (`:38`)、`resolveLegalConsentStatus({ accepted: profile, enforced: isLegalConsentEnforced() })` (`:44`) の結果を `LegalConsentStatusSchema` で parse して返す (`:46-50`)。`resolveLegalConsentStatus` は `accepted = outdated.length === 0`・`required = enforced && !accepted` (`:183-206`)。応答の型 `LegalConsentStatus` (`:162-175`) と、アプリが使う手書きの形の検査 `isLegalConsentStatus` (`:219-232`)。Zod の正本 `LegalConsentStatusSchema` は `.strict()` で、`required === (enforced && !accepted)` を refine で固定する | `src/app/api/legal/status/route.ts:24, 38, 44-50`、`packages/shared/src/legal-consent-api.ts:149-232`、`src/lib/legal-consent-api.ts:36-59` |
-| 同意画面の文面の置き場所 (13a): `packages/shared/src/legal-consent-copy.ts` の `LEGAL_CONSENT_COPY` (見出し・導入 2 通り・改定の印・ボタン・409 / 失敗の文) と関数 3 つ (チェックの文・全文リンクの文・版の行)。Web のフォームと 13b のネイティブの画面が同じ値を使う。`tests/legal-consent-copy.test.ts` の T-C1 は、フォームの文字列リテラル・JSX のテキスト (構文木。コメントは拾わない) が `LEGAL_CONSENT_COPY` のどの値も含まないことと、8 つのキーをフォームが参照することを固定し、走査の空振りの番兵として `'記録しています...'`・`'ログアウトしています...'` のリテラルがフォームにあることを求める | `packages/shared/src/legal-consent-copy.ts:8-44`、`tests/legal-consent-copy.test.ts:61-96` |
+| 同意画面の文面の置き場所 (13a): `packages/shared/src/legal-consent-copy.ts` の `LEGAL_CONSENT_COPY` (見出し・導入 2 通り・改定の印・ボタン・409 / 失敗の文) と関数 3 つ (チェックの文・全文リンクの文・版の行)。Web のフォームが使う (13b はネイティブの同意画面を作らず、Web の同意画面を WebView で開く)。`tests/legal-consent-copy.test.ts` の T-C1 は、フォームの文字列リテラル・JSX のテキスト (構文木。コメントは拾わない) が `LEGAL_CONSENT_COPY` のどの値も含まないことと、8 つのキーをフォームが参照することを固定し、走査の空振りの番兵として `'記録しています...'`・`'ログアウトしています...'` のリテラルがフォームにあることを求める | `packages/shared/src/legal-consent-copy.ts:8-44`、`tests/legal-consent-copy.test.ts:61-96` |
 | 本人を家族の行・代表者にする関数は年齢を見ない: `create_family_group(p_name text, p_plan_key text DEFAULT 'free')` の最新の定義は #1678 (#1700) の `20261016200000` (NOT_AUTHENTICATED → ALREADY_IN_FAMILY → `family_groups` と `family_members` (role `'representative'`) の INSERT。baseline (`20251126124224:1199-1226`) の本文の、代表者の `display_name` に写す式だけを `(SELECT public.normalize_profile_name(nickname) FROM user_profiles WHERE id = auth.uid())` にし、その上に `-- #1678: …` のコメント 1 行を足したもの。見出しは baseline と同じ引用符つきの書き方)。`accept_family_invite(p_token, p_share_meals, p_share_health, p_share_menu)` の最新の定義は #1584 (NOT_AUTHENTICATED → 招待の family_id → 家族の行のロック → 招待のロック → 期限・使用済み → メールの一致 → ALREADY_IN_FAMILY → 家族の status → 上限 → INSERT (role `'adult'`))。どちらも生年月日・年齢を見ない | `supabase/migrations/20261016200000_rpc_profile_name_placeholder.sql:205-233`、`20261015170000:37-144` |
 | 役割の譲渡の承諾も年齢を見ない: `accept_family_representative_transfer(p_proposal_id)` (宛先が本人の pending の提案 → 期限 → 家族の行のロック → 承諾者が家族の active な大人 / 代表者 → 提案を accepted → `family_members.role` と `family_groups.representative_id` の入れ替え)、`accept_org_owner_transfer(p_proposal_id)` (宛先が本人の pending の提案 → 期限 → 承諾者が組織の所属 → 提案を accepted → `org_role` と `organizations.owner_id` の入れ替え。baseline の定義のまま)。提案の表 `ownership_transfer_proposals` (scope `'family'` / `'organization'`、status の既定 `'pending'`、expires_at の既定 7 日後)。運営の `operator_force_representative_transfer`・`operator_force_owner_transfer` と、組織の作成 (`POST /api/admin/organizations` が body の `owner_id` を入れる) も年齢を見ない | `20261008090100:224, 269-339`、`20251126124224:811-869, 1390-1402, 2328-2364`、`src/app/api/admin/organizations/route.ts` |
 | 退会の 409 の判定 `findBlocker`: `organizations.owner_id` が本人の行、または `family_groups.representative_id` が本人の行が 1 つでもあれば 409 (`ACCOUNT_DELETE_BLOCKED_ORG_OWNER` / `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE`)。家族の status (解散済み) は見ない。運営の強制解散 `operator_force_dissolve_family` はメンバーを left・家族を dissolved にするが `representative_id` は残す | `src/lib/account-deletion.ts:237-274`、`20261008090100:188-222` |
@@ -94,15 +94,15 @@
 
 ### 0.5 13a / 13b (#1442) との契約
 
-- 状態 (2026-10-16・`5ff68e67`): 13a は**設計書も実装も main に着地済み** (実装は #1697・`44c471e4`。§0.3 の 13a の 3 行)。13b は設計中 (`origin/design/legal-consent-api-mobile` / `origin/design/legal-consent-mobile`。main には未マージ)。
+- 状態 (2026-10-16・`5ff68e67`): 13a は**設計書も実装も main に着地済み** (実装は #1697・`44c471e4`。§0.3 の 13a の 3 行)。13b は設計書が main に着地済み (`docs/design/cross/13b-legal-consent-mobile.md`)。
 - 13a の実装は `/api` の deny と `GET /api/legal/status` を版だけで決めている (`resolveLegalConsentApiDecision` の本体 `legal-consent-api.ts:146` の `hasAcceptedCurrentLegalDocuments(input.accepted) ? 'allow' : 'deny'` と、`resolveLegalConsentStatus` の `accepted = outdated.length === 0`)。**本冊の段 B が次の 4 つを必ず行う** (条件つきの作業ではない。§6.14):
   1. `packages/shared/src/legal-consent-api.ts` の判定を `isLegalConsentComplete` (§6.5.2) に差し替え、status に `gaps` を足す (§6.5.6 の 17)。
   2. `src/lib/legal-consent-api.ts` の `LegalConsentStatusSchema` に `gaps` を足す (§6.5.6 の 18)。
   3. `GET /api/legal/status` の route で、読む列に `birth_date` を足し、profile を `withMinorGuardianStatus` (§6.5.8) に通してから判定に渡す (§6.5.6 の 19)。
   4. middleware の `/api` の分岐で、`resolveLegalConsentApiDecision` に渡す profile を `withMinorGuardianStatus` に通す (§6.5.6 の 4。列は画面の分岐と同じ `PROFILE_COLUMNS_WITH_LEGAL` を 1 回だけ読むので、`birth_date` は列の定数に足すだけで両方の分岐に入る)。
   13a の設計書 (`docs/design/cross/13a-legal-consent-api-server.md`) の記述の直しは §6.18 の 13a の行 (オーケストレーター)。
-- 13b のネイティブの同意画面は、`GET /api/legal/status` の `gaps` に `'birth_date'` があれば生年月日の欄を出し、`POST /api/legal/accept` に `birth_date` を付ける。403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` を受けたら Web と同じ案内 (§6.9) を出す。`gaps` に `'guardian_consent'` があれば Web の `guardian_missing` と同じ案内 (`LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading` / `guardianMissingBody` と「登録をやめる」) を出す。アプリのゲートが見る `required` は本冊の後も `enforced && !accepted` のままで、`accepted` が `gaps` の空と一致する (§6.8) ので、13b は `required` を見るだけで生年月日の未入力と保護者の同意とのつながりの無い 18 歳未満も同意画面へ回せる。本冊はこの API の形 (§6.8) だけを決め、画面は 13b の追随に委ねる。
-- 13b が着地するまでは、モバイルのネイティブの画面に同意ゲートが掛からない (版の同意と同じ、既存の制約)。`/api` は 13a の分岐が本冊の述語で止める (アプリの API 呼び出しも 403 `LEGAL_CONSENT_REQUIRED` になる)。生年月日の未入力と「保護者の同意とのつながりが無い」の画面での案内は、それまでは Web の画面 (WebView を含む) だけ (§8 の 10)。13b の設計書 (`docs/design/cross/13b-legal-consent-mobile.md`。`origin/design/legal-consent-mobile` にあり、main には未マージ) の直しは §6.18 の 13b の行 (担当・期日はそこ)。
+- 13b はネイティブの同意画面を作らず、Web の `/legal-consent` を WebView で開く (設計書 13b §5.2)。生年月日の欄・403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` の案内 (§6.9)・`guardian_missing` の案内と「登録をやめる」は Web の画面がそのまま効き、13b 側の追随は無い。アプリのゲートが見る `required` は本冊の後も `enforced && !accepted` のままで、`accepted` が `gaps` の空と一致する (§6.8) ので、13b は `required` を見るだけで生年月日の未入力と保護者の同意とのつながりの無い 18 歳未満も同意画面 (WebView) へ回せる。本冊はこの API の形 (§6.8) だけを決める。
+- モバイルのネイティブの画面には、13b の実装の着地 (ルートのゲート) で同意ゲートが掛かる。`/api` は 13a の分岐が本冊の述語で止める (アプリの API 呼び出しも 403 `LEGAL_CONSENT_REQUIRED` になる)。生年月日の未入力と「保護者の同意とのつながりが無い」の案内は、アプリでも Web の同意画面 (WebView) が出す (§8 の 10)。13b の設計書 (`docs/design/cross/13b-legal-consent-mobile.md`) は main にあり、§6.18 の 13b の行 (担当・期日はそこ) を写す契約は無い。
 - 13b とはマージ順に依存しない: 本冊が先なら 13b が本冊の実コード (`gaps`・`LEGAL_CONSENT_BIRTH_DATE_COPY`) に合わせる。13b が先でも、`required` の意味は変わらないので 13b の画面は本冊のマージで生年月日の欄を出す追随だけが要る (§6.18 の 13b の行)。
 
 ---
@@ -362,7 +362,7 @@
 | `parental_consents` の保持 | — (表が無い) | 取り消し (外す) のあとも、署名者の退会のあとも、子供の行が消えたあと (昇格した本人の退会など) も残る (紐づけの列だけ NULL)。消えるのは家族の行の削除だけ (`family_id` の CASCADE)。§8 の 2 |
 | 文言 | — | `packages/shared/src/parental-consent.ts` + `/legal/parental-consent` |
 | メール | — | `family_parental_consent_recorded` (署名者本人宛の控え) |
-| モバイル (ネイティブ) | サインアップに注記なし | `SIGNUP_MINOR_NOTICE` 1 行。同意画面の欄は 13b の追随 |
+| モバイル (ネイティブ) | サインアップに注記なし | `SIGNUP_MINOR_NOTICE` 1 行。同意画面の欄は Web の同意画面 (アプリも WebView で開く。13b) |
 
 ### 6.3 ③ 状態遷移表
 
@@ -1020,7 +1020,7 @@ export function isLegalConsentComplete(
 export const SIGNUP_MINOR_NOTICE =
   '18歳未満の方はご自身では登録できません。13歳以上の方は、保護者の方が家族に追加し、保護者の同意のうえで、ご本人のアカウントとつなぐことができます。';
 
-/** 同意画面 (/legal-consent・13b のネイティブ) の生年月日の欄と、未成年の案内の文 */
+/** 同意画面 (Web の /legal-consent。アプリも WebView で同じ画面を開く。13b) の生年月日の欄と、未成年の案内の文 */
 export const LEGAL_CONSENT_BIRTH_DATE_COPY = {
   label: '生年月日',
   /** 版は同意済みで、生年月日だけが無い人 (S3: isReconsent ∧ outdated が空) の導入文。それ以外の導入文は LEGAL_CONSENT_COPY.introFirst / introReconsent のまま */
@@ -1428,7 +1428,7 @@ export async function withMinorGuardianStatus<P extends LegalConsentProfile>(
 | `/legal/parental-consent` | 公開 | 同意文書の全文・版・施行日 |
 | `/family/setup`・招待の承諾 (`FamilyInviteAcceptModal`)・`/family/transfer-accept/[proposal_id]`・`/org/transfer-accept/[proposal_id]` | 403 `MINOR_ACCOUNT_NOT_ALLOWED` | 変えない (個別に扱わない code では route の `error.message` を出す。§0.3)。route の文は `MEMBERSHIP_ERROR_MESSAGES.MINOR_ACCOUNT_NOT_ALLOWED` |
 | `/legal` (特定商取引法に基づく表記。既存) | — | 変えない。同意書へのリンクは足さない (`/legal` は販売事業者の表記の 1 ページで、法務文書の一覧ではない。同意書へは子供の追加画面 (§6.5.6 の 9)・メンバーの画面 (10)・控えのメールから着く)。`/legal/parental-consent` は middleware の公開のパス `/legal` の下なので未ログインでも読め、同意ゲートの対象外 (T-LP2) |
-| 13b のネイティブの同意画面 | `gaps` に `'birth_date'` / `'guardian_consent'` | 生年月日の欄 + 403 の案内 / `guardian_missing` と同じ案内 (13b の追随) |
+| 13b のアプリの同意画面 (Web の同意画面を WebView で開く) | `gaps` に `'birth_date'` / `'guardian_consent'` | 生年月日の欄 + 403 の案内 / `guardian_missing` と同じ案内 (Web の画面がそのまま効く。13b の追随は無い) |
 | 運営の画面 | — | 作らない (RLS で運営は読める。画面は別 Issue) |
 
 ### 6.10 メールの文面 (§6.5.5 の 1 通だけ。宛先は署名者本人)
@@ -1776,7 +1776,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `docs/design/family/01-data-model.md` §4.2 (`birth_date` 列) と §4.13 (草案 DDL) | 草案の `parental_consents` (列 7・RLS が parent_user_id だけ) | §4.13 を `14` §6.4 の 4 への参照に。`idx_family_members_birthdate` (18 歳到達バッチ用) の行に「本冊の `idx_family_members_child_birth_date` が実体」を注記 |
 | `docs/design/operator/01-data-model.md` `:54` (適用順の一覧の「26. parental_consents ← family/01-data-model.md で定義」)・§3.22 `:1041-1045` (「DDL は family/01-data-model.md に移動済み」の NOTE)・§8 `:1613` (`family_members` の FK の注) | 草案 DDL の所在を `family/01` §4.13 と書いている。`family/01` §4.13 も本冊への参照に変わる (上の行) ので、そのままだと参照が 2 段になり、草案の列 (7 列) を正と読む余地が残る | 3 か所とも「`parental_consents` は設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)」を直接指す文に置き換える。§3.22 の「family/ ドメインの後に作る」(FK の順序の注) は事実なので残す |
 | `docs/design/family/07-lifecycle.md` `:140-160` (18 歳到達バッチの SQL。`fm.birth_date` を読む)・`:485, 495, 552` (同じバッチのテスト例の fixture に `birth_date`) | 草案が前提にしていた列 `family_members.birth_date` が本冊で実体になる | 本文の SQL と fixture は**変えない** (18 歳到達バッチは未実装で本冊の範囲外 (§1.3)。列名 `birth_date` と「アカウント無しの子供の行 (`user_id IS NULL`) の生年月日」という意味は実体と同じなので、読み替えは要らない。草案の `family_group_id` などの旧い列名はこのバッチを作る冊が直す)。バッチの節の冒頭に 1 行「`family_members.birth_date` は設計書 `cross/14` で実体化した (アカウント無しの子供の行は必須)。年齢は JST の暦日で数える (`public.age_years_jst`。`AGE(fm.birth_date)` は DB のタイムゾーンの今日で数えるので、実装時は `age_years_jst` に合わせる)」を足す |
-| `docs/design/cross/13b-legal-consent-mobile.md` (`origin/design/legal-consent-mobile` の設計書。main には未マージ) | ネイティブの同意画面 (`GET /api/legal/status` を読んで欄を出す・`POST /api/legal/accept` を呼ぶ) | §0.5 の契約を写す: `gaps` に `'birth_date'` があれば生年月日の欄 (文は `LEGAL_CONSENT_BIRTH_DATE_COPY`)、`POST /api/legal/accept` の body に `birth_date`、403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で `minorRefusedHeading` / `minorRefusedBody` と「生年月日を直す」「登録をやめる」(既存の退会)、400 `LEGAL_BIRTH_DATE_INVALID` で欄のエラー (形の崩れた日付は 400 `LEGAL_BAD_REQUEST`。日付の選択の部品は `YYYY-MM-DD` を送るので通常は起きない)、`gaps` に `'guardian_consent'` があれば `guardianMissingHeading` / `guardianMissingBody` と「登録をやめる」だけ。期日: 13b の設計書が本冊より先に main に入っていれば本冊の実装 PR と同時。13b がまだ設計中なら、13b の設計ゲートの次の周で 13b の設計者に本冊の §0.5・§6.8 を渡して書かせる (どちらもオーケストレーターが投入する) |
+| `docs/design/cross/13b-legal-consent-mobile.md` (main の設計書) | アプリの同意画面 (Web の同意画面を WebView で開く。`GET /api/legal/status` の `required` を見るだけ) | ネイティブの同意画面を作らないので写す契約は無い。Web の同意画面が §0.5 の契約を満たす: `gaps` に `'birth_date'` があれば生年月日の欄 (文は `LEGAL_CONSENT_BIRTH_DATE_COPY`)、`POST /api/legal/accept` の body に `birth_date`、403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で `minorRefusedHeading` / `minorRefusedBody` と「生年月日を直す」「登録をやめる」(既存の退会)、400 `LEGAL_BIRTH_DATE_INVALID` で欄のエラー (形の崩れた日付は 400 `LEGAL_BAD_REQUEST`。日付の選択の部品は `YYYY-MM-DD` を送るので通常は起きない)、`gaps` に `'guardian_consent'` があれば `guardianMissingHeading` / `guardianMissingBody` と「登録をやめる」だけ。期日: 無し (13b の設計書は main にあり、ネイティブの同意画面を作らない) |
 | `docs/design/family/02-api-spec.md` §5.2・§5.6・§5.7 | 子供の追加の body (`birth_date`)・昇格 | §5.2 に `birth_date` 必須と `consent`、「18 歳未満の子供の同意に署名できるのは 18 歳以上と確かめられる大人だけ (`PARENTAL_CONSENT_SIGNER_NOT_ADULT`)」を、§5.7 に「18 歳未満は有効な保護者の同意が要る (`PARENTAL_CONSENT_REQUIRED`)。13 歳未満は昇格できない (`PROMOTION_UNDER_COPPA_AGE`。本人のアカウントを作らない)」を足す。`FAM_CHILD_PROMOTE_AUTH_REQUIRED` 等の未実装の行は触らない |
 | `docs/design/membership/02-flow-spec.md` §5 (organization owner 譲渡)・§6 (family 家族グループ作成)・§7 (family 招待 + 受諾)・§10 (family 代表者譲渡) と `docs/design/family/02-api-spec.md` §4.1 (`POST /api/family/groups`)・§6.4 (招待受諾) | 各フローの失敗の扱い | 「本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 14 §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (`02-flow-spec.md` §9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)」を各節に 1 行ずつ足す |
 | `docs/design/family/08-rls-policies.md` | テーブル一覧 | 「§5.1 `parental_consents`」を足し、`14` §6.4 の 4 のポリシーを写す |
@@ -1827,7 +1827,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 7. **`user_profiles.age` との二重化**: 栄養計算は `age` のまま。`birth_date` から導出に寄せるかは別 Issue。
 8. **`cross/04` の `FAM_PARENTAL_CONSENT_REQUIRED`**: 実コードの語彙 (接頭辞なし) に合わせる注記を §6.18 で足す。接頭辞つきに統一するなら家族の API 全体の改名になるので別冊。
 9. **Push の送信側**: このリポジトリに無い。作るときは `isUnderCoppaAge(user_profiles.birth_date)` で除外する (本冊では 13 歳未満の本人のアカウントは作られない (14) ので、除外は保険)。
-10. **13b との着地順** (§0.5)。13a は実装まで着地済みで、本冊の段 B が `/api` の分岐と `GET /api/legal/status` を本冊の述語に差し替える (`/api` は本冊のマージで止まる)。13b はどちらが先でも後の冊が合わせる。13b が着地するまで、モバイルのネイティブの画面には同意ゲートが掛からない (版の同意と同じ既存の制約) ので、生年月日の未入力・保護者の同意とのつながりが無い 18 歳未満の画面での案内は、それまでは Web の画面 (WebView を含む) だけ (アプリのネイティブの画面からの API 呼び出しは 403 `LEGAL_CONSENT_REQUIRED` で止まる)。
+10. **13b との着地順** (§0.5)。13a は実装まで着地済みで、本冊の段 B が `/api` の分岐と `GET /api/legal/status` を本冊の述語に差し替える (`/api` は本冊のマージで止まる)。13b はどちらが先でも後の冊が合わせる。13b の実装が着地すると、モバイルのネイティブの画面にも同意ゲートが掛かり、生年月日の未入力・保護者の同意とのつながりが無い 18 歳未満の案内はアプリでも Web の同意画面 (WebView) が出す (それまでは、アプリのネイティブの画面からの API 呼び出しは 403 `LEGAL_CONSENT_REQUIRED` で止まる)。
 11. **同意の有効期限**: 本冊は期限を設けない (子供を外すまで有効。§6.2 の「同意の有効期限」・P31)。定期の再同意 (例: 一定年数ごと・13 歳になったとき) を求めるなら、3 と同じく `parental_consent_active` に条件を足す設計 (同意待ちの状態が復活する) が要るので、別冊。要否はオーナーの確認。
 12. **署名者の範囲 (要件との違い)**: 要件 03 §17.10 は 13 歳未満の同意の署名者を「親 (家族 owner)」と書く。本冊は、家族の大人 (代表者または大人の役割) のうち自分の `user_profiles.birth_date` で 18 歳以上と確かめられる人なら署名できる形にした (§6.4 の 9・P12〜P14b)。理由: 代表者が親権者とは限らない (祖父母が代表者で、親が大人のメンバーのことがある)。親権者であることは署名の「私はこのお子さまの親権者または法定保護者です」の確認で本人に宣言させる。18 歳未満 (昇格した本人) と生年月日の無い人は署名できない。代表者だけに絞るなら、§6.4 の 9 の署名者の検査に `v_caller_role = 'representative'` の条件を足すだけ (エラーの code は同じ)。どちらにするかはオーナーの確認。
 13. **保護者の同意とのつながりが切れた 18 歳未満の本人のアカウント**: 本冊は同意ゲートで止め、退会の道だけを出す (アカウントと記録は残り、保護者が家族に追加し直して依頼し直すか、18 歳になれば使える。§6.3 (a))。一定期間後に自動で退会させる・記録を消す運用にするかは、5 と同じくオーナーの確認。

@@ -52,6 +52,11 @@ jest.mock('../../src/providers/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
   useAuth: () => ({ session: null, user: null, isLoading: false }),
 }));
+jest.mock('../../src/providers/LegalConsentProvider', () => ({
+  LegalConsentProvider: ({ children }: { children: React.ReactNode }) => children,
+  useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }),
+}));
+jest.mock('../../src/components/legal/LegalConsentGate', () => ({ LegalConsentGate: () => null }));
 jest.mock('../../src/providers/ProfileProvider', () => ({
   ProfileProvider: ({ children }: { children: React.ReactNode }) => children,
 }));

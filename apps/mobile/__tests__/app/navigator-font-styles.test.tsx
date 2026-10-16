@@ -62,6 +62,9 @@ jest.mock('../../src/providers/ProfileProvider', () => ({
     profile: { onboardingCompletedAt: '2024-01-01', onboardingStartedAt: null },
   }),
 }));
+jest.mock('../../src/providers/LegalConsentProvider', () => ({
+  useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }),
+}));
 jest.mock('../../src/components/ai/AIFloatingFab', () => ({ AIFloatingFab: () => null }));
 jest.mock('@expo/vector-icons', () => ({ Ionicons: 'Ionicons' }));
 

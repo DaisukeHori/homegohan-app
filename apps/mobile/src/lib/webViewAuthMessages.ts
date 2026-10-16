@@ -8,6 +8,7 @@
  *     利用者が Web 側 (設定・マイページ) でログアウトする。Web は supabase.auth.signOut() の「前」に送る
  *     (signOut() の途中の SIGNED_OUT が session-expired として先に届くのを避けるため。理由は native-auth-bridge.ts の notifyNativeSignOut)。
  *     ネイティブも、push token の削除 → 端末データの削除 → サインアウトを行い、ウェルカム画面へ戻る。
+     useWebAuthMessages の options.afterSignOut を渡した画面 (規約の同意画面) は、ウェルカム画面へ戻る代わりにそれを呼ぶ (#1442)。
  *     これが無いと、Web だけがログアウトし、ネイティブは保存済みのセッションを持ったまま
  *     (Web の signOut は全端末のセッションを失効させるので、最大 1 時間後の更新で突然ログアウトする) になる (F7-04)。
  *
@@ -58,7 +59,7 @@ export type WebAuthMessage = { type: "sign-out" } | { type: "session-expired" } 
 export type WebAuthResult =
   /** メッセージの形式が違う、または自分の Web オリジンから届いたものではない */
   | "ignored"
-  /** ログアウトした (ウェルカム画面へ戻した) */
+  /** ログアウトした (ウェルカム画面へ戻した。options.afterSignOut を渡した画面ではそれを呼んだ) */
   | "signed-out"
   /** WebView を読み込み直させた */
   | "rebridged"
@@ -167,7 +168,7 @@ export function withRebridgeNonce(path: string, nonce: number | string = Date.no
 export type WebAuthHandlerDeps = {
   /** WebView を新しい bridge で読み込み直す */
   rebridge: () => void;
-  /** ログアウト後にウェルカム画面へ戻る */
+  /** ログアウト後に移る (既定はウェルカム画面。useWebAuthMessages の options.afterSignOut で変えられる) */
   goToWelcome: () => void;
   limiter: RebridgeLimiter;
   /**
@@ -308,6 +309,11 @@ export type WebAuthMessagesOptions = {
    * 利用者が 6 桁を入れた後に 1 回だけ呼ぶもので、制限に当たると aal2 になったのに WebView が古いままになるため)
    */
   onMfaVerifyRequested?: (rebridge: () => void) => void;
+  /**
+   * ネイティブのログアウトが済んだ後 (sign-out・失効の session-expired) に、ウェルカム画面へ移る代わりに呼ぶ。
+   * 渡さなければ router.replace('/')。規約の同意画面 (app/legal-consent.tsx) だけが渡す (#1442)
+   */
+  afterSignOut?: () => void;
 };
 
 /**
@@ -316,7 +322,8 @@ export type WebAuthMessagesOptions = {
  * @param currentPath この WebView がいま開いているパス (WebViewScreen が initialPath を検証したあとの effectivePath)。
  *   再ブリッジではこのパスに _rb を付けて開き直す。deep link や tab-navigate の initialPath を検証せずに基準にすると、
  *   WebViewScreen の検証で弾かれる値のとき _rb を付けても既定のパスに戻されて effectivePath が変わらず、読み込み直しが起きない
- * @param options     省略できる。onMfaVerifyRequested を渡すと mfa-verify-required を受ける (cross/12 §16.4.4)
+ * @param options     省略できる。onMfaVerifyRequested を渡すと mfa-verify-required を受ける (cross/12 §16.4.4)。
+ *   afterSignOut を渡すと、ネイティブのログアウトの後にウェルカム画面へ移る代わりにそれを呼ぶ (#1442)
  * @returns (data, senderUrl) => void。sign-out / session-expired / mfa-verify-required 以外のメッセージは何もしない
  */
 export function useWebAuthMessages(
@@ -350,7 +357,9 @@ export function useWebAuthMessages(
       limiter: limiterRef.current as RebridgeLimiter,
       rebridge,
       goToWelcome: () => {
-        routerRef.current.replace("/");
+        const afterSignOut = optionsRef.current?.afterSignOut;
+        if (afterSignOut) afterSignOut();
+        else routerRef.current.replace("/");
       },
       // 確認の後の読み込み直しは回数制限 (limiter) を通さない (WebAuthMessagesOptions の注記)
       requestMfaVerify: onMfaVerifyRequested ? () => onMfaVerifyRequested(rebridge) : undefined,
