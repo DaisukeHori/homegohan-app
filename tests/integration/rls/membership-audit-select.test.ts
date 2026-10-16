@@ -25,6 +25,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -84,6 +85,8 @@ async function setOrgMembership(userId: string, orgId: string, orgRole: 'owner' 
 
 let orgA = '';
 let orgB = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない。afterAll で組織の後に消す */
+let orgOwnerId = '';
 let familyId = '';
 
 let orgOwner: TestUser; // A の owner
@@ -127,9 +130,13 @@ async function visibleRows(c: SupabaseClient): Promise<string[]> {
 }
 
 beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, 'rls-audit');
   const { data: orgs, error: orgError } = await srAdmin
     .from('organizations')
-    .insert([{ name: `rls-audit Org A ${TS}` }, { name: `rls-audit Org B ${TS}` }])
+    .insert([
+      { name: `rls-audit Org A ${TS}`, owner_id: orgOwnerId },
+      { name: `rls-audit Org B ${TS}`, owner_id: orgOwnerId },
+    ])
     .select('id, name');
   if (orgError || !orgs) throw new Error(`organizations: ${orgError?.message}`);
   orgA = orgs.find((o) => o.name.startsWith('rls-audit Org A'))!.id;
@@ -206,6 +213,8 @@ afterAll(async () => {
       .in('id', createdUserIds);
   }
   if (orgA || orgB) await srAdmin.from('organizations').delete().in('id', [orgA, orgB].filter(Boolean));
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.from('user_profiles').delete().eq('id', id);
     await srAdmin.auth.admin.deleteUser(id);

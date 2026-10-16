@@ -3,6 +3,7 @@
  * (#1707・#1176。docs/design/cross/12-operator-mfa.md §14.7・§14.8.2・§17・§17.2)
  *
  * 認可: requireRole(['super_admin']) (段 B の AAL2 のゲートを通る)。自分自身は 403 OP_SELF_MODIFY (本人はバックアップコードか、AAL2 での解除を使う)。
+ * パスの id は UUID の形なら小文字にそろえてから使う (normalizeUuid。大文字の自分の UUID で自分の判定をすり抜けさせない #1707)。
  * 本文の形は運営 API (nested): 失敗は { error: { code, message } }・成功は { data: {...} } (MfaResetResponseSchema)。
  * 手順 (この順。どこかで止まったら後ろは何もしない):
  *   1. 別オリジン → 403 FORBIDDEN_ORIGIN
@@ -34,6 +35,7 @@ import { countRemainingBackupCodes, deleteBackupCodes } from '@/lib/auth/mfa/bac
 import { isCrossOriginRequest, MFA_NO_STORE_HEADERS } from '@/lib/auth/mfa/route-support';
 import { MfaResetBodySchema, type MfaResetResponse } from '@/lib/auth/mfa/schemas';
 import { endUserSessions, type OperatorSessionRpcClient } from '@/lib/auth/mfa/sessions';
+import { normalizeUuid } from '@/lib/http-params';
 import { invalidInputBody, invalidJsonBodyBody, readJsonBody } from '@/lib/super-admin/validation-errors';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -88,9 +90,12 @@ export async function POST(request: NextRequest, { params }: Params) {
     return internalErrorResponse(err, {});
   }
 
-  const { id } = await params;
+  const { id: rawId } = await params;
+  // UUID の形なら小文字にそろえ、以後はこの値だけを使う (#1707。自分の判定・DB・endUserSessions・deleteFactor・監査・応答)。
+  // そろえないと、大文字にした自分の UUID が下の自分の判定をすり抜け、uuid 型で比べる DB では自分の行に当たる
+  const id = normalizeUuid(rawId);
   // 本文の検証より前に断る (§10 の自分の id の行)
-  if (id === actorId) return errorJson('OP_SELF_MODIFY', SELF_MODIFY_MESSAGE, HTTP_FORBIDDEN);
+  if (id === normalizeUuid(actorId)) return errorJson('OP_SELF_MODIFY', SELF_MODIFY_MESSAGE, HTTP_FORBIDDEN);
 
   const raw = await readJsonBody(request);
   if (!raw.ok) return json(invalidJsonBodyBody(), HTTP_BAD_REQUEST);

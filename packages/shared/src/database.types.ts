@@ -5122,7 +5122,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string | null
+          owner_id: string
           plan: string | null
           settings: Json | null
           status: string
@@ -5140,7 +5140,7 @@ export type Database = {
           industry?: string | null
           logo_url?: string | null
           name: string
-          owner_id?: string | null
+          owner_id: string
           plan?: string | null
           settings?: Json | null
           status?: string
@@ -5158,7 +5158,7 @@ export type Database = {
           industry?: string | null
           logo_url?: string | null
           name?: string
-          owner_id?: string | null
+          owner_id?: string
           plan?: string | null
           settings?: Json | null
           status?: string
@@ -8180,7 +8180,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string | null
+          owner_id: string
           plan: string | null
           settings: Json | null
           status: string
@@ -9179,7 +9179,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string | null
+          owner_id: string
           plan: string | null
           settings: Json | null
           status: string
@@ -9210,7 +9210,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string | null
+          owner_id: string
           plan: string | null
           settings: Json | null
           status: string

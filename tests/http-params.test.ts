@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { clampIntParam, isUuid, readJsonBody } from '../src/lib/http-params';
+import { clampIntParam, isUuid, normalizeUuid, readJsonBody } from '../src/lib/http-params';
 
 /**
  * #1048 F2-16: クエリの NaN・不正日付で未処理例外500 / limit 未クランプ の回帰テスト。
@@ -94,5 +94,24 @@ describe('readJsonBody', () => {
 
   it('does not throw when json() itself rejects', async () => {
     expect(await readJsonBody({ json: () => Promise.reject(new Error('stream already read')) })).toEqual({ ok: false });
+  });
+});
+
+/**
+ * #1707: パスの id を実行者の id と比べる前にそろえる。大文字の UUID は小文字に、UUID の形でない値はそのまま。
+ */
+describe('normalizeUuid', () => {
+  const LOWER = 'abcdef12-3456-4abc-8def-0123456789ab';
+
+  it('lowercases an upper-case or mixed-case UUID so it equals the lower-case id from auth.getUser()', () => {
+    expect(normalizeUuid(LOWER.toUpperCase())).toBe(LOWER);
+    expect(normalizeUuid('ABCdef12-3456-4AbC-8dEf-0123456789AB')).toBe(LOWER);
+    expect(normalizeUuid(LOWER)).toBe(LOWER);
+  });
+
+  it('returns a value that is not UUID-shaped unchanged (the caller answers 404 / 400 for it)', () => {
+    expect(normalizeUuid('NOT-A-UUID')).toBe('NOT-A-UUID');
+    expect(normalizeUuid('')).toBe('');
+    expect(normalizeUuid(`${LOWER.toUpperCase()}X`)).toBe(`${LOWER.toUpperCase()}X`);
   });
 });

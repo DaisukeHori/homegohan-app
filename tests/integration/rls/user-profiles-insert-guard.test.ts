@@ -15,6 +15,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -48,6 +49,8 @@ const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const createdUserIds: string[] = [];
 let userSeq = 0;
 let orgId = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10) */
+let orgOwnerId = '';
 let familyId = '';
 
 /** プロフィール行を持たない (新規登録しただけの) ユーザーを作る */
@@ -74,9 +77,10 @@ async function getProfile(userId: string) {
 const base = { nickname: 'insert-guard', age_group: 'unspecified', gender: 'unspecified' };
 
 beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, 'profile-insert-guard');
   const { data: org, error: orgError } = await srAdmin
     .from('organizations')
-    .insert({ name: `profile insert guard org ${TS}` })
+    .insert({ name: `profile insert guard org ${TS}`, owner_id: orgOwnerId })
     .select('id')
     .single();
   if (orgError || !org) throw new Error(`organizations: ${orgError?.message}`);
@@ -102,6 +106,7 @@ afterAll(async () => {
     await srAdmin.auth.admin.deleteUser(id);
   }
   if (orgId) await srAdmin.from('organizations').delete().eq('id', orgId);
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
 }, 60_000);
 
 describe('user_profiles: 本人が自分の行を作るときに特権列を入れられない', () => {

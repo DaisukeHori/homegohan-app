@@ -26,6 +26,7 @@ import {
   setupFamilyWithTwoMembers,
   cleanupFamily,
 } from "../helpers/membership-paste";
+import { cleanup as cleanupOrgs } from "../helpers/membership";
 import * as path from "path";
 import { config as dotenvConfig } from "dotenv";
 
@@ -196,17 +197,11 @@ test.describe("運営管理者 緊急介入 (super_admin)", () => {
       expect(Array.isArray(body.data), "data が配列であること").toBe(true);
     } finally {
       // cleanup
+      // 組織を先に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。所属している利用者が残ると、
+      // 組織の DELETE は org_role を残したまま organization_id だけを外そうとして CHECK user_profiles_org_consistency に反する。
+      // cleanupOrgs は所属を外してから組織を消し、失敗すれば例外にする
       if (orgId) {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-        await fetch(`${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`, {
-          method: "DELETE",
-          headers: {
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-            Prefer: "return=minimal",
-          },
-        }).catch(() => {});
+        await cleanupOrgs({ orgIds: [orgId] });
       }
       await cleanupFreshUser(supabaseAdmin, inactiveOwner.id);
     }
@@ -302,17 +297,11 @@ test.describe("運営管理者 緊急介入 (super_admin)", () => {
       const auditRows = (await auditResp.json()) as Array<{ id: string; action: string; metadata: unknown }>;
       expect(auditRows.length, "membership_audit に operator_force_owner_transfer が記録されること").toBeGreaterThanOrEqual(1);
     } finally {
+      // 組織を先に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。所属している利用者が残ると、
+      // 組織の DELETE は org_role を残したまま organization_id だけを外そうとして CHECK user_profiles_org_consistency に反する。
+      // cleanupOrgs は所属を外してから組織を消し、失敗すれば例外にする
       if (orgId) {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-        await fetch(`${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`, {
-          method: "DELETE",
-          headers: {
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-            Prefer: "return=minimal",
-          },
-        }).catch(() => {});
+        await cleanupOrgs({ orgIds: [orgId] });
       }
       await cleanupFreshUser(supabaseAdmin, orgOwner.id);
       await cleanupFreshUser(supabaseAdmin, orgMember.id);
@@ -385,17 +374,11 @@ test.describe("運営管理者 緊急介入 (super_admin)", () => {
       ).toBe("dissolved");
     } finally {
       // 解散後は status が dissolved なのでそのまま削除
+      // 組織を先に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。所属している利用者が残ると、
+      // 組織の DELETE は org_role を残したまま organization_id だけを外そうとして CHECK user_profiles_org_consistency に反する。
+      // cleanupOrgs は所属を外してから組織を消し、失敗すれば例外にする
       if (orgId) {
-        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-        await fetch(`${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`, {
-          method: "DELETE",
-          headers: {
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-            Prefer: "return=minimal",
-          },
-        }).catch(() => {});
+        await cleanupOrgs({ orgIds: [orgId] });
       }
       await cleanupFreshUser(supabaseAdmin, orgOwner.id);
       await cleanupFreshUser(supabaseAdmin, orgMember.id);
