@@ -203,6 +203,8 @@ const EXCLUDED: Readonly<Record<string, string>> = {
     'factor_id は z.uuid()、code は 6 桁の数字 (TOTP_CODE_PATTERN) の検査を通ったものだけが Supabase に届く。NULL 文字を含む値は 400 VALIDATION_ERROR で、DB に書かない',
   'POST auth/mfa/recover/route.ts':
     'code は normalizeBackupCode で英数字以外 (NULL 文字を含む) を取り除き、DB には user_id と SHA-256 の hex だけが届く。監査の details も数だけ',
+  'POST super-admin/admins/[id]/mfa/reset/route.ts':
+    'reason の NULL 文字は MfaResetBodySchema (src/lib/auth/mfa/schemas.ts) の refine で 400 OP_INVALID_INPUT にする (tests/super-admin-mfa-reset-route.test.ts が確かめる)。identity_check は列挙、identity_confirmed は true だけ',
   'POST auth/native-bridge/code/route.ts':
     'Bearer の確認と本文の長さの上限 (MAX_BODY_CHARS) を、本文を JSON として読むより前に行う作り。refresh_token を渡す rpc (issue_native_bridge_code) の失敗は 503 で返す (500 にならない)',
   'POST legal/accept/route.ts':
