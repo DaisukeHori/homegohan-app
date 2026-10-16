@@ -1,4 +1,4 @@
-import { createContext, forwardRef, useContext } from 'react';
+import { Children, createContext, forwardRef, isValidElement, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { Text as RNText, TextInput as RNTextInput } from 'react-native';
 import type { StyleProp, TextInputProps, TextProps, TextStyle } from 'react-native';
@@ -45,9 +45,12 @@ export const Text = forwardRef<RNText, TextProps>(function Text({ style, childre
   const fontsReady = useFontsReady();
   const inheritFromParent = useContext(InsideTextContext);
   const resolved = resolveFontStyle(style, { fontsReady, inheritFromParent });
+  // 入れ子の Text がありうる (子に部品がある) ときだけ、子に「Text の中」を伝える。
+  // 文字だけの子はそのまま渡す (react-native の Text と同じ children のまま描く)
+  const hasElementChild = Children.toArray(children).some(isValidElement);
   return (
     <RNText ref={ref} {...props} style={resolved}>
-      <InsideTextContext.Provider value>{children}</InsideTextContext.Provider>
+      {hasElementChild ? <InsideTextContext.Provider value>{children}</InsideTextContext.Provider> : children}
     </RNText>
   );
 });
