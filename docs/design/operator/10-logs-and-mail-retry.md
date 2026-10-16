@@ -1,7 +1,7 @@
 # operator/ 運用ログの閲覧・アラートとメール送信の送信待ち (outbox)・再試行・デッドレター (#1157 / #1193)
 
 版: v1.5 (2026-10-16 審査 R5 の修正)
-改定履歴: v1.0 2026-10-15 新設 (A 型設計ゲート・叩き台) / v1.1 2026-10-15 R1 の指摘の修正 (409 の再試行・dead になった退会の完了メールの伏せ字・アラートの種類の型・cron の数・既存テストの追随) / v1.2 2026-10-15 R2 の指摘の修正 (既存の番兵 3 本の追随・env.ts の 2 項目・requeue の handler の形) / v1.3 2026-10-15 R3 の指摘の修正 (サポートの返信の「メール未送信」の案内の範囲・お問い合わせの管理者通知を送信待ちへ載せ替え・番兵 2 本の追随) / v1.4 2026-10-16 R4 の指摘の修正 (退会の伏せ字に 1c を足す: 他人宛の行の件名・本文・返信先に入った退会者のアドレスを、その部分だけ伏せる。シナリオ S-17) / v1.5 2026-10-16 R5 の指摘の修正 (届けられなかったメールの通知を、15 分の窓で数える形から「まだ知らせていない dead を数え、知らせた行に印 `dead_alerted_at` を付ける」形に替える: 抑止 (60 分) の間・cron の遅れの間に dead になった行も、次に権利を取れた回で 1 回だけ知らせる (持ち越さない例外は §8.3)。RPC 2 本 (`mark_email_outbox_dead_alerted` / `unmark_email_outbox_dead_alerted`)・列 1 つ・シナリオ S-18)
+改定履歴: v1.0 2026-10-15 新設 (A 型設計ゲート・叩き台) / v1.1 2026-10-15 R1 の指摘の修正 (409 の再試行・dead になった退会の完了メールの伏せ字・アラートの種類の型・cron の数・既存テストの追随) / v1.2 2026-10-15 R2 の指摘の修正 (既存の番兵 3 本の追随・env.ts の 2 項目・requeue の handler の形) / v1.3 2026-10-15 R3 の指摘の修正 (サポートの返信の「メール未送信」の案内の範囲・お問い合わせの管理者通知を送信待ちへ載せ替え・番兵 2 本の追随) / v1.4 2026-10-16 R4 の指摘の修正 (退会の伏せ字に 1c を足す: 他人宛の行の件名・本文・返信先に入った退会者のアドレスを、その部分だけ伏せる。シナリオ S-17) / v1.5 2026-10-16 R5 の指摘の修正 (届けられなかったメールの通知を、15 分の窓で数える形から「まだ知らせていない dead を数え、知らせた行に印 `dead_alerted_at` を付ける」形に替える: 抑止 (60 分) の間・cron の遅れの間に dead になった行も、次に権利を取れた回で 1 回だけ知らせる (持ち越さない例外は §8.3)。RPC 2 本 (`mark_email_outbox_dead_alerted` / `unmark_email_outbox_dead_alerted`)・列 1 つ・シナリオ S-18) / v1.6 2026-10-17 #1708 の整合の指摘の追随 (件名・本文に秘密 (招待・本人確認・本人同意のトークンを含むリンク) を含む文面は、封筒の `contains_secret` で宣言し、`sendEmail` が `redact_after_send` を立てる。送れた・dead のときに退会の完了メールと同じく伏せる: R-10・§6.3・§6.7)
 
 ## 0. 位置づけと分冊判定
 
@@ -76,7 +76,7 @@
 | R-07 | 停止リスト (`email_blacklist`) に載った宛先へは送らない (登録時・送信時の両方) | #1184 | §6.2 §6.3 |
 | R-08 | `RESEND_API_KEY` が無い環境 (開発・CI・未設定の本番) では行を作らず、現行どおり skipped を返す | send.ts の現行・テスト多数 | §6.3 |
 | R-09 | 宛先のメールアドレス・件名・本文は `app_logs`・監査ログ・運用メール・API の応答に出さない (表の中だけ) | send.ts の方針・cross/08 §16.2 | §6.2 §6.3 §9.2 |
-| R-10 | 退会した本人の生のアドレスを `email_outbox` に残さない (`prepare_account_deletion` が、本人の行 (user_id・宛先が一致) の宛先・件名・本文を伏せ、他人宛の行の件名・本文・返信先に入った本人のアドレスも、その部分だけを伏せる (状態は変えない)。退会の完了メール (`redact_after_send`) は sent になったときも dead になったときも宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない) | cross/08-legal-compliance.md §16.2 手順 4・6 | §5.2 (2)(3) §5.3 §6.3 §7.3 |
+| R-10 | 退会した本人の生のアドレスを `email_outbox` に残さない (`prepare_account_deletion` が、本人の行 (user_id・宛先が一致) の宛先・件名・本文を伏せ、他人宛の行の件名・本文・返信先に入った本人のアドレスも、その部分だけを伏せる (状態は変えない)。退会の完了メール (`redact_after_send`) は sent になったときも dead になったときも宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない)。件名・本文に秘密 (招待・本人確認・本人同意のトークンを含むリンク) を含む文面 (封筒の `contains_secret`。§6.7) も同じく `redact_after_send` で登録し、生のトークンを sent の 7 日・dead の 30 日のあいだ残さない (cross/15 §3.1 の「生のトークンは保存しない」) | cross/08-legal-compliance.md §16.2 手順 4・6・cross/15 §3.1 | §5.2 (2)(3) §5.3 §6.3 §7.3 |
 | R-11 | 表は service_role だけが読み書きできる (RLS + GRANT の完全形) | ops_alert_state の権限の考え方 | §5.1 §5.2 |
 | R-12 | 送信済み・dead の行は期限で消える (sent 7 日・dead 30 日)。queued が古くなりすぎたら dead にする (7 日) | app_logs の 30 日と同じ考え方・招待の期限 7 日 | §5.2 (6) §6.2 |
 | R-13 | 届けられなかったメールがあれば、運用メールに知らせる (既存の急増通知と同じ宛先・同じ抑止)。数える対象の dead の行は、どれも 1 回だけ通知の件数に入る (抑止の間・cron の発火の遅れの間に dead になった行も、抑止が明けた最初の回で知らせる。通知を送れずに権利を返した回の分は次の回に持ち越す。持ち越さない例外は §8.3) | 仕様「アラート…既存の急増通知との関係」 | §5.2 (5)(7)(8) §8 |
@@ -155,7 +155,7 @@ flowchart LR
 | S-01 | POST family/invites → RPC で招待作成 → `sendEmail` → 検証 OK → 鍵あり → `lookupEmailSuppression` clear → INSERT (queued, next_attempt_at = now, attempts 0) → `{ ok: true, id }` → 201。worker (≤ 60 秒後): claim → 期限内 → 停止リスト clear → Resend 200 → `complete_email_outbox` → sent | 一致 |
 | S-02 | worker 1 回目: Resend 503 (retryable) → `fail_email_outbox(retryable=true, max=6, retry_after=60)` → attempts 1・queued・next = +60 秒。2 回目 (1 分後): 503 → attempts 2・next = +300 秒。3 回目 (5 分後): 200 → sent | 一致 (間隔の表 §6.1) |
 | S-03 | worker: Resend 403 `validation_error` (statusCode 403 → retryable false) → `fail_email_outbox(retryable=false)` → dead (attempts 1・dead_at)。app-log-alerts (≤ 15 分後): `email_outbox_dead_counts(p_limit 10)` (まだ知らせていない dead。窓なし) → 1 件 > しきい値 0 → `claim_ops_alert('email_dead_letter', 60)` → 取った時刻 T → `mark_email_outbox_dead_alerted(T, 10)` が行に `dead_alerted_at = T` を付けて 1 件を返す → その件数で `sendEmail(運用メール)` → queued → worker が送る (ドメイン未検証なら、この運用メールも dead になるが、template が `ops_` で始まるので数えない)。super_admin: ドメイン検証後に画面で再送 → `requeue_email_outbox` → queued (attempts 0) → sent | 一致 |
-| S-04 | `sendEmail`: 停止リスト suppressed → INSERT (status dead, last_error_code 'suppressed', attempts 0, dead_at now。`redactAfterSend` の登録だけは INSERT しない: S-08) → 現行と同じ `suppressed` の失敗を返す。`email_outbox_dead_counts` は `last_error_code = 'suppressed'` を除くので通知しない | 一致 |
+| S-04 | `sendEmail`: 停止リスト suppressed → INSERT (status dead, last_error_code 'suppressed', attempts 0, dead_at now。`redact_after_send` の登録 (退会の完了メール・秘密を含む文面) だけは INSERT しない: S-08・§6.7) → 現行と同じ `suppressed` の失敗を返す。`email_outbox_dead_counts` は `last_error_code = 'suppressed'` を除くので通知しない | 一致 |
 | S-05 | `sendEmail`: 鍵なし → INSERT せず skipped (`not_configured`) | 一致 (現行の挙動) |
 | S-06 | claim で `lease_expires_at = now + 120 秒`・`worker_id`。5 通目の途中で停止 → 行は queued のまま lease 内。次の分の worker は lease が切れるまで取らない → 2 分後の回で取り直し → 同じ `idempotency_key` で Resend へ → Resend は 24 時間同じキーを覚え、1 回目が届いていれば同じ結果を返す。1 回目の要求がまだ Resend の中で処理中なら 409 `concurrent_idempotent_requests` が返る → `isRetryableResendError` が true (現行の send.ts と同じ) → `fail_email_outbox(retryable=true)` → queued・次の回で同じキーを送り直し、1 回目の結果を受け取って sent (dead にしない) | 一致 |
 | S-07 | 2 本の claim が同時: `FOR UPDATE SKIP LOCKED` で行の集合が重ならない。complete / fail は `worker_id` の一致を条件にするので、もう片方の更新は 0 行 | 一致 |
@@ -959,7 +959,10 @@ export interface SendEmailOptions {
   idempotencyKey?: string;
   /** 誰についてのメールか (email_outbox.user_id)。退会時の伏せ字と画面の絞り込みに使う。分かる呼び出し元だけ渡す */
   userId?: string;
-  /** 送れたとき・届けられずに dead になったときに宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない (退会の完了メール)。既定 false */
+  /**
+   * 送れたとき・届けられずに dead になったときに宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない (退会の完了メール)。既定 false。
+   * 封筒の contains_secret が true (件名・本文に秘密を含む文面。#1708) なら、ここを渡さなくても同じく伏せる (false を渡しても伏せる)
+   */
   redactAfterSend?: boolean;
 }
 
@@ -982,7 +985,8 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
   if (!process.env.RESEND_API_KEY) { /* 現行の not_configured の分岐をそのまま */ }
 
   // 3. 停止リスト。載っていれば dead の行を残し (best-effort)、現行と同じ suppressed の失敗を返す。引けなければ登録して worker に任せる。
-  //    redactAfterSend (退会の完了メール) の行は残さない: 宛先を伏せる経路 (complete / fail) を通らず、退会した本人の生のアドレスが残るため (R-10)
+  //    redact_after_send の行 (退会の完了メール・秘密を含む文面) は残さない: 宛先・件名・本文を伏せる経路 (complete / fail) を通らず、
+  //    退会した本人の生のアドレス (R-10) や本文の生のトークン (#1708) が残るため
   const suppression = await lookupEmailSuppression(v.to);
   const row = {
     template: v.template?.slice(0, 100) || UNKNOWN_EMAIL_TEMPLATE,
@@ -990,7 +994,8 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
     subject: v.subject, text_body: v.text, html_body: v.html ?? null,
     user_id: options.userId ?? null,
     idempotency_key: options.idempotencyKey ?? randomUUID(),
-    redact_after_send: options.redactAfterSend ?? false,
+    // 秘密を含む文面 (contains_secret) は、呼び出し元が redactAfterSend を渡し忘れても伏せる (#1708)
+    redact_after_send: options.redactAfterSend === true || v.contains_secret === true,
   };
   if (suppression.status === 'suppressed') {
     logger.warn('宛先停止リストに載っている宛先のため、メールを送信しませんでした', { template, recipient, suppression_reason: suppression.reason });
@@ -1256,6 +1261,26 @@ export function renderContactAdminNotificationEmail(vars: ContactAdminNotificati
 ```
 
 件名は現行の `[お問い合わせ] ${subject}` と同じ形で、100 文字を超える分だけ切る (問い合わせの件名は 100 文字まで入るので、接頭辞を足すと `EmailEnvelopeSchema` の上限を超え、`invalid_envelope` で送られなくなるため)。`template` の行は `src/__tests__/lib/emails/template-names.test.ts` の正規表現 (`^\s+template: '…',$`) に当たる形で 1 行に書く。
+
+
+### 6.7 秘密を含む文面の伏せ字 (#1708)
+
+件名・本文に秘密 (受け取った人だけが使えるもの = 招待・本人確認・本人同意のトークンを含むリンク) を入れる文面は、封筒 (`src/lib/emails/envelope.ts` の `EmailEnvelopeSchema`) の `contains_secret: z.literal(true).optional()` を `true` にして返す。`sendEmail` は `redact_after_send = options.redactAfterSend === true || v.contains_secret === true` で登録する (§6.3)。伏せる処理は退会の完了メールと同じ RPC (§5.2 (2)(3)) で、migration は足さない。
+
+| template | 文面のファイル | 秘密 (項目) |
+|---|---|---|
+| `dsr_verification` | `src/lib/emails/dsr/verification.ts` | `verify_url` (`?id=&token=<生のトークン>`。DB には sha256 だけを置く: cross/15 §3.1) |
+| `family_invite` / `family_invite_new` / `family_invite_existing` | `src/lib/emails/membership/family-invite*.ts` | `invite_url` (`/invite/<招待のトークン>`) |
+| `org_invite_new` / `org_invite_existing` | `src/lib/emails/membership/org-invite-*.ts` | `invite_url` (`/invite/<招待のトークン>`) |
+| `family_promote` | `src/lib/emails/membership/family-promote.ts` | `accept_url` (`/family/promotions/<本人同意のトークン>`) |
+
+- 秘密に数えないもの: 譲渡の提案 (`org_transfer_proposed` / `family_transfer_proposed`) の `accept_url` は提案の id で、承諾できるのはログインした譲渡先の本人だけ。保護者の同意の控え (`family_parental_consent_recorded`。#1713) の `document_url` は同意書の全文の公開の頁 (`/legal/parental-consent`)、`members_url` はメンバー管理画面で、どちらも固定のリンク。ほかの文面のリンクは、ログインした本人・運営だけが開ける画面への固定のリンク。サインアップの確認・パスワードの再設定のメールは Supabase Auth が送り、`sendEmail` を通らない。
+- 宣言は文面の側に置く (呼び出し元が `redactAfterSend` を渡す形は、呼び出し元ごとの付け忘れを防げないため)。宣言の漏れは `src/__tests__/lib/emails/secret-templates.test.ts` が見張る (文面ごとの秘密あり / 秘密なしの分類表と、文面のコードが使う `_url` / `_link` / `_token` / `_code` の項目の突き合わせ。新しい文面・新しいリンクの項目は分類しないと赤)。
+- 送るまで (queued の間) は本文にトークンが残る (worker が送るのに要る)。最長は再試行を使い切るまで (§6.1 の待ちの合計で約 5 時間 21 分) か、worker が止まっていれば 7 日 (`expired` で dead)。
+- 伏せたあとは、運営の画面 (§9.2) では `redacted: true` の行として出て、再送はできない (`requeue_email_outbox` が 'redacted'。画面は「宛先を伏せた行は再送できません」)。招待・本人確認を送り直すのは、招待した人の再招待・本人の「確認メールを再送」(新しいトークン) で行う。`template` は伏せないので、どの文面の行かは画面で分かる。
+- 登録の時点で宛先が停止リストに載っていれば、行を作らない (§6.3。dead の行にトークン入りの本文を残さないため)。送らなかったことは `app_logs` の warn (文面の名前・マスクした宛先) に残る。
+- この変更より前に送られた行 (sent・dead) は、さかのぼって伏せない (データの書き換えになるため)。sent は 7 日、dead は 30 日で `cleanup_email_outbox` が消す。
+- テスト: `src/__tests__/lib/emails/secret-templates.test.ts` (宣言の走査)・`src/__tests__/lib/emails/send.test.ts` (秘密を含む文面のすべてで `redact_after_send` が立つ・停止リストでは行を作らない)・`tests/integration/rls/email-outbox-secret-templates.test.ts` (実 DB: 秘密を含む文面のすべてで、sent と dead のあとに宛先・件名・本文が伏せられ、どの列にもトークンが残らない・再送は 'redacted')。文面の見本は `tests/helpers/secret-email-samples.ts`。
 
 ## 7. 表 3 点
 
