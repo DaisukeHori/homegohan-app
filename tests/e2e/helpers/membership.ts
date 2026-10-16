@@ -65,7 +65,7 @@ function getEnv() {
 /**
  * org を作成し、指定 userId を owner に設定して org_id を返す。
  * service_role REST API を直接使用。
- * organizations.owner_id は NOT NULL (#1103 項目 10 / migration 20261017040000) なので INSERT に含める。
+ * organizations.owner_id は NOT NULL (#1103 項目 10 / migration 20261017100000) なので INSERT に含める。
  */
 export async function createFreshOrg(options: {
   ownerUserId: string;

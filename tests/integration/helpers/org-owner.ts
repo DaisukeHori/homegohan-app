@@ -1,7 +1,7 @@
 /**
  * 結合テストで組織 (organizations) を作るときの「持ち主」を用意する。
  *
- * organizations.owner_id は NOT NULL (#1103 項目 10 / migration 20261017040000_organizations_owner_id_not_null.sql)。
+ * organizations.owner_id は NOT NULL (#1103 項目 10 / migration 20261017100000_organizations_owner_id_not_null.sql)。
  * 外部キーは auth.users(id) ON DELETE RESTRICT なので、持ち主のユーザーは組織より先には消せない。
  *
  * ここで作る持ち主は auth.users の行だけ (user_profiles は作らない) で、どの組織のメンバーにもならない。

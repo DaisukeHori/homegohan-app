@@ -185,7 +185,7 @@ export async function readOrganizationNotice(
       kind: 'organization',
       id: organizationId,
       name: typeof data?.name === 'string' ? data.name : null,
-      // owner_id の列は NOT NULL (#1103 項目 10 / migration 20261017040000)。行が見えない・値が文字列で読めないときは
+      // owner_id の列は NOT NULL (#1103 項目 10 / migration 20261017100000)。行が見えない・値が文字列で読めないときは
       // オーナーが分からないので、脱退は通知しない (防御)
       leaveRecipientId: typeof data?.owner_id === 'string' ? data.owner_id : null,
     };

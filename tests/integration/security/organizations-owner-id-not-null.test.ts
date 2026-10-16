@@ -1,5 +1,5 @@
 /**
- * #1103 項目 10: migration 20261017040000_organizations_owner_id_not_null.sql の振る舞いを、本物の DB (ローカルの Supabase) で確かめる。
+ * #1103 項目 10: migration 20261017100000_organizations_owner_id_not_null.sql の振る舞いを、本物の DB (ローカルの Supabase) で確かめる。
  *
  * 結合テストの DB には、この migration がすでに当たっている (owner_id は NOT NULL で、NULL の組織は無い)。そこで、
  * 1 回の問い合わせ (postgres-meta の /pg/query。複数の文を 1 つの暗黙のトランザクションで流す) の中で
@@ -46,11 +46,11 @@ const srAdmin: SupabaseClient = createClient(url, serviceKey, {
 
 const ROOT = path.resolve(__dirname, '../../..');
 const MIGRATION = fs.readFileSync(
-  path.join(ROOT, 'supabase/migrations/20261017040000_organizations_owner_id_not_null.sql'),
+  path.join(ROOT, 'supabase/migrations/20261017100000_organizations_owner_id_not_null.sql'),
   'utf8',
 );
 const ROLLBACK = fs.readFileSync(
-  path.join(ROOT, 'supabase/rollbacks/20261017040000_organizations_owner_id_not_null.down.sql'),
+  path.join(ROOT, 'supabase/rollbacks/20261017100000_organizations_owner_id_not_null.down.sql'),
   'utf8',
 );
 

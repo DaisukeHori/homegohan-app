@@ -30,6 +30,12 @@ const ERROR_CODES = [
 
 /** migration のファイル名 (version 14 桁 + `_` + 名前 + `.sql`) */
 const MIGRATION_FILE = /^(\d{14})_.+\.sql$/;
+/**
+ * main を取り込んだ時点 (2026-10-16) の main の migration の最大。本 migration はこれより後に並べる。
+ * main に入った migration は CI が本番へ当てるので、本番の台帳の最大 version はこれ以上になる。台帳の最大以下の
+ * LOCAL_ONLY は deploy-supabase-migrations.yml の drift guard が exit 1 で止める (本 migration も後続も当たらない)。
+ */
+const MAIN_MAX_MIGRATION_AT_MERGE = '20261017090000_backup_audit_record';
 
 const read = (rel: string): string => fs.readFileSync(path.join(ROOT, rel), 'utf-8');
 /** SQL のコメント (-- から行末、/* ... *\/) を取り除く */
@@ -68,6 +74,19 @@ describe('#1103 項目 10 migration の形', () => {
     expect(migration().split('\n', 1)[0]).toBe(`-- migration: ${name}.sql`);
     expect(rollback().split('\n', 1)[0]).toBe(`-- rollback: ${name}.sql`);
     expect(migration()).toContain(`supabase/rollbacks/${name}.down.sql`);
+  });
+
+  it('version は main を取り込んだ時点の main の最大の migration より大きい (本番の台帳の最大以下だと drift guard で止まる)', () => {
+    const files = fs.readdirSync(path.join(ROOT, MIGRATIONS_DIR));
+    // 取り込んだ main の最大の migration が木にある (main を取り込まずに番号だけ上げた状態を通さない)
+    expect(files).toContain(`${MAIN_MAX_MIGRATION_AT_MERGE}.sql`);
+    const version = (name: string): string => MIGRATION_FILE.exec(`${name}.sql`)?.[1] ?? '';
+    const floor = version(MAIN_MAX_MIGRATION_AT_MERGE);
+    expect(floor).toMatch(/^\d{14}$/);
+    expect(version(stem()) > floor, `${stem()} は ${MAIN_MAX_MIGRATION_AT_MERGE} より後`).toBe(true);
+    // 同じ version の migration が他に無い (台帳は version で突き合わせる)
+    const sameVersion = files.filter((f) => MIGRATION_FILE.exec(f)?.[1] === version(stem()));
+    expect(sameVersion).toEqual([`${stem()}.sql`]);
   });
 
   it('文は DO ブロック 1 つだけ (supabase の適用はファイルをトランザクションで包まないので、途中で止まっても何も残さない)', () => {

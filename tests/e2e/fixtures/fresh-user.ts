@@ -349,7 +349,7 @@ export async function upsertUserProfile(
 /**
  * organizations テーブルに test 用 fresh org を作成する。
  * service_role REST API 経由で INSERT し、新規作成された org の id を返す。
- * owner_id は NOT NULL (#1103 項目 10 / migration 20261017040000) なので、持ち主のユーザーを必ず渡す。
+ * owner_id は NOT NULL (#1103 項目 10 / migration 20261017100000) なので、持ち主のユーザーを必ず渡す。
  * 持ち主のユーザーは、この組織を消してから消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。
  * 組織の後片付けは tests/e2e/helpers/membership.ts の cleanup (所属を外してから組織を消す) を使う。
  */

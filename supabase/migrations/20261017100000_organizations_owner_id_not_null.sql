@@ -1,4 +1,4 @@
--- migration: 20261017040000_organizations_owner_id_not_null.sql
+-- migration: 20261017100000_organizations_owner_id_not_null.sql
 -- #1103 項目 10: organizations.owner_id を NOT NULL にする (設計 docs/design/membership/00-overview.md の
 -- 「organizations.owner_id は常に NOT NULL」と、docs/design/membership/01-data-model.md §2.1 の SET NOT NULL に実物を合わせる)。
 --
@@ -36,7 +36,7 @@
 -- 冪等: 2 回目以降は owner_id が NULL の組織が無いので、1・2 は何もしない。SET NOT NULL は付いていても成功する。
 -- 確認: tests/organizations-owner-id-not-null-migration-contract.test.ts /
 --       tests/integration/security/organizations-owner-id-not-null.test.ts
--- ロールバック: supabase/rollbacks/20261017040000_organizations_owner_id_not_null.down.sql
+-- ロールバック: supabase/rollbacks/20261017100000_organizations_owner_id_not_null.down.sql
 
 DO $$
 DECLARE
