@@ -12,6 +12,7 @@
 | `org/` | 組織管理 | 02 全体 |
 | `operator/` | 運営管理 | 03 §1-15 |
 | `mobile/` | モバイル App | 01 §15 |
+| `billing/` | 個人の有料プランの課金: 核 (`01-billing-core.md`。Stripe Checkout・Webhook・契約の写し `personal_subscriptions`・Billing Portal・解約) と配線 (運用バッチ・運営の Finance 画面。`02-billing-wiring.md` は未作成) | Issue #1151・#1125 |
 
 各ドメインに `CLAUDE.md` がある。**そのドメインで作業する Claude セッションは、まずそのドメインの CLAUDE.md を読むこと**。
 

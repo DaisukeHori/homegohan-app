@@ -4,7 +4,8 @@
  * 本物の DB での振る舞い (写る・'Guest' / 空白だけ / プロフィールの行なしは写さない・子供の呼び名を上書きしない) は
  * tests/integration/security/family-accept-display-name.test.ts が確かめる。
  * ここでは、番号の付け直しや後の migration の上書き、判定の文字の集合のずれで崩れやすい所を、ファイルの文面だけで確かめる。
- *   1. accept_family_invite / accept_child_promotion を最後に定義する migration が本 migration で、1 つ前は #1310 の migration
+ *   1. accept_family_invite / accept_child_promotion は、本 migration の定義を土台に #1173 の migration が作り直す
+ *      (差分の契約は tests/parental-consent-migration-contract.test.ts の T-MIG1・T-MIG4・T-MIG5)。本 migration はその 1 つ前、#1310 の migration は 2 つ前
  *   2. 本 migration の定義は、1 つ前の定義に「名前を読む SELECT」と display_name の列を足しただけ (ほかは変えていない)
  *   3. 前後の空白として除く文字の集合が、JavaScript の String.prototype.trim (= normalizeProfileName) が除く文字の集合と同じ。
  *      仮置きの文字列が PROFILE_NAME_PLACEHOLDER と同じ
@@ -114,13 +115,14 @@ describe('#1584 承諾のときにプロフィールの名前を写す migration
     expect(versions.size).toBe(migrationFiles.length);
   });
 
-  it.each(FUNCTIONS)('%s を最後に定義する migration が本 migration で、1 つ前は #1310 の migration', (fn) => {
+  it.each(FUNCTIONS)('%s を最後に定義するのは #1173 の _parental_consent_and_birth_date で、その 1 つ前が本 migration、2 つ前が #1310 の migration', (fn) => {
     const definers = migrationFiles.filter((name) =>
       definesPattern(fn).test(stripLineComments(read(`${MIGRATIONS_DIR}/${name}`))),
     );
-    expect(definers.length).toBeGreaterThanOrEqual(2);
-    expect(definers[definers.length - 1]).toBe(ours[0]);
-    expect(definers[definers.length - 2]).toBe(previous[0]);
+    expect(definers.length).toBeGreaterThanOrEqual(3);
+    expect(definers[definers.length - 1]).toMatch(/_parental_consent_and_birth_date\.sql$/);
+    expect(definers[definers.length - 2]).toBe(ours[0]);
+    expect(definers[definers.length - 3]).toBe(previous[0]);
   });
 
   it('accept_family_invite は、1 つ前の定義に名前を読む SELECT と INSERT の display_name の列を足しただけ', () => {

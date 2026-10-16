@@ -11,7 +11,8 @@
  *   - 両方の型ファイルが同じ中身 (packages/shared の写しがずれていない)
  *
  * 型に出ないものの扱い (除外):
- *   - DROP したもの: migration を番号順に見て、最後が DROP なら「無いはず」に数える (いまの migration に DROP は無い)
+ *   - DROP したもの: migration を番号順に見て、最後が DROP なら「無いはず」に数える
+ *     (#1542 の 20261017010000_drop_auth_login_lock_objects.sql がロックの関数 4 本を消した。下の番兵が拾えていることを確かめる)
  *   - トリガー関数 (RETURNS trigger): PostgREST の RPC として呼べないので supabase gen types が出さない。規則で除外し、
  *     実際に型に出ていないことも確かめる (出ていたら規則の前提が崩れている)
  *   - それ以外で型に出ないもの: EXCLUDED_FUNCTIONS / EXCLUDED_TABLES に理由を付けて書く
@@ -55,6 +56,13 @@ const SENTINEL_FUNCTIONS = [
   'auth_login_count_failure',
   'snapshot_daily_active_users',
   'claim_ops_alert',
+] as const;
+/** DROP の規則の番兵: 作ったあとで DROP FUNCTION IF EXISTS で消した関数 (#1542) */
+const SENTINEL_DROPPED_FUNCTIONS = [
+  'auth_login_lock_status',
+  'auth_login_record_failure',
+  'auth_login_apply_lock',
+  'auth_login_account_user_id',
 ] as const;
 /** トリガー関数の規則の番兵 (migration が RETURNS trigger で作っている関数) */
 const SENTINEL_TRIGGER_FUNCTIONS = ['update_updated_at_column', 'validate_meals_meal_type'] as const;
@@ -179,6 +187,13 @@ describe('#1495 migration の読み取り (番兵)', () => {
     // RETURNS trigger でない関数 (RETURNS jsonb) をトリガー関数と見なしていない
     expect(migrations.function.get('consume_ai_usage')?.returnsTrigger).toBe(false);
   });
+
+  it('DROP FUNCTION IF EXISTS (引数の型つき) で消した関数を「無いはず」に数えている (#1542)', () => {
+    for (const name of SENTINEL_DROPPED_FUNCTIONS) {
+      expect(migrations.function.get(name), name).toMatchObject({ last: 'drop', file: '20261017010000_drop_auth_login_lock_objects.sql' });
+      expect(expectedFunctions, name).not.toContain(name);
+    }
+  });
 });
 
 describe.each(TYPE_FILES)('#1495 %s が migration に追随している', (relative) => {
@@ -197,6 +212,10 @@ describe.each(TYPE_FILES)('#1495 %s が migration に追随している', (relat
     const functionIsLive = (name: string) => migrations.function.get(name)?.last === 'create';
     expect([...types.tables].filter((name) => !tableIsLive(name))).toEqual([]);
     expect([...types.functions].filter((name) => !functionIsLive(name))).toEqual([]);
+  });
+
+  it('消した関数 (#1542) は型に出ていない', () => {
+    expect(SENTINEL_DROPPED_FUNCTIONS.filter((name) => types.functions.has(name))).toEqual([]);
   });
 
   it('トリガー関数は型に出ていない (除外の規則の前提)', () => {

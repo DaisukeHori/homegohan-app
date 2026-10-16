@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { SIGNUP_MINOR_NOTICE } from "@homegohan/shared";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -214,6 +215,8 @@ function SignupContent() {
               登録するには、チェックして同意してください。
             </p>
           )}
+          {/* #1173: 18 歳未満の方はご自身では登録できない旨の注記 (チェックの有無に関わらず常に出す。年齢の確認は同意画面で行う) */}
+          <p className="mt-2 pl-8 text-xs text-gray-500">{SIGNUP_MINOR_NOTICE}</p>
         </div>
 
         <Button
