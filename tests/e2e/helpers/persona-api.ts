@@ -20,6 +20,8 @@ import {
   injectSession,
   upsertUserProfile,
   type FreshUserInfo,
+  type InjectedSession,
+  type InjectSessionOptions,
 } from "../fixtures/fresh-user";
 
 /** アプリの URL (local-ci.sh / e2e-local.yml が PLAYWRIGHT_BASE_URL に枠のポートを入れる) */
@@ -156,7 +158,8 @@ export async function deleteRoleUser(userId: string): Promise<void> {
 export async function openUserContext(
   browser: Browser,
   email: string,
-): Promise<{ context: BrowserContext; page: Page }> {
+  options: InjectSessionOptions = {},
+): Promise<{ context: BrowserContext; page: Page; session: InjectedSession }> {
   const context = await browser.newContext({
     baseURL: E2E_BASE_URL,
     storageState: EMPTY_STORAGE_STATE,
@@ -165,8 +168,9 @@ export async function openUserContext(
   });
   try {
     const page = await context.newPage();
-    await injectSession(page, email);
-    return { context, page };
+    // 必須ロールの運営は injectSession が自動で aal2 に上げる (#1176。cross/12 §22.4.3)。MFA の画面を試す spec は { assurance: 'aal1' }
+    const session = await injectSession(page, email, options);
+    return { context, page, session };
   } catch (err) {
     await context.close().catch(() => {});
     throw err;

@@ -1,10 +1,54 @@
 import { type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
+import { getSupabaseUrl } from '@/lib/env-required'
+import {
+  CSP_HEADER,
+  CSP_NONCE_HEADER,
+  CSP_REPORT_ONLY_HEADER,
+  buildContentSecurityPolicy,
+  cspHeaderName,
+  generateCspNonce,
+  isCspReportOnly,
+} from '@/lib/security/csp'
+
+/** Supabase の URL (ローカルの Supabase なら方針に origin を足す)。無ければ undefined (updateSession が 500 で止める。ここでは止めない) */
+function supabaseUrlOrUndefined(): string | undefined {
+  try {
+    return getSupabaseUrl()
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * #1169: このリクエストの nonce と方針を作り、リクエストヘッダーに載せる (Next は content-security-policy から nonce を読み、
+ * 画面は x-csp-nonce から読める)。クライアントが同じ名前のヘッダーを送ってきても、捨てて付け直す (#1174 の x-legal-consent-pending と同じ)。
+ * updateSession は NextResponse.next({ request }) を作るので、呼ぶ前に載せる。
+ * request.headers.set は try / catch で包まない (載せられないと Next が nonce を付けられず、強制の方針が全ページを止める。黙って壊れるより止まる)
+ */
+function attachCspToRequest(request: NextRequest): { headerName: string; policy: string } {
+  const nonce = generateCspNonce()
+  const policy = buildContentSecurityPolicy({
+    nonce,
+    isDev: process.env.NODE_ENV === 'development',
+    supabaseUrl: supabaseUrlOrUndefined(),
+  })
+  const headerName = cspHeaderName(isCspReportOnly())
+  request.headers.delete(CSP_NONCE_HEADER)
+  request.headers.delete(CSP_HEADER)
+  request.headers.delete(CSP_REPORT_ONLY_HEADER)
+  request.headers.set(CSP_NONCE_HEADER, nonce)
+  request.headers.set(headerName, policy)
+  return { headerName, policy }
+}
 
 export async function middleware(request: NextRequest) {
+  const csp = attachCspToRequest(request)
   const res = await updateSession(request)
+  // どの分岐の応答 (next / redirect / 403 / 503 / 500) にも同じ方針を付ける
+  res.headers.set(csp.headerName, csp.policy)
 
-  // ?mode=app が付いていれば is_native_app Cookie をセット
+  // ?mode=app が付いていれば is_native_app Cookie をセット (既存。変えない)
   // これにより SSR 初回レンダリング時に cookies() で native 判定できる
   const isAppMode = request.nextUrl.searchParams.get('mode') === 'app'
   const existingCookie = request.cookies.get('is_native_app')?.value
@@ -44,6 +88,3 @@ export const config = {
     '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
-
-
-

@@ -66,9 +66,13 @@ const OPS_EMAIL = 'ops-owner@example.test';
 const SITE_URL = 'https://app.example.test';
 const CLAIMED_AT = '2026-10-09T01:15:00.123456+00:00';
 const CLIENT_CLAIMED_AT = '2026-10-09T01:15:00.654321+00:00';
+/** #1193 届けられなかったメールの通知のキー (email_dead_letter) で権利を取った時刻 (= 印 dead_alerted_at の値) */
+const DEAD_CLAIMED_AT = '2026-10-09T01:15:00.789012+00:00';
 
 /** #1493 クライアントの error が無いときの、応答の client (既定のしきい値 100 件) */
 const CLIENT_QUIET = { status: 'below_threshold', total: 0, threshold: 100 } as const;
+/** #1193 まだ知らせていない dead が無いときの、応答の email_dead_letter (しきい値 0 = 1 件から) */
+const DEAD_LETTER_QUIET = { status: 'below_threshold', total: 0, threshold: 0 } as const;
 
 function makeRequest(authorization?: string) {
   return new Request('http://localhost/api/cron/app-log-alerts', {
@@ -92,6 +96,12 @@ const SURGE_ROWS: CountRow[] = [
   { function_name: null, error_count: 4, total_count: 42 },
 ];
 
+/** #1193 まだ知らせていない (または印を付けた) dead の行 (email_outbox_dead_counts / mark_email_outbox_dead_alerted の形)。全体 3 件 */
+const DEAD_ROWS = [
+  { template: 'family_invite', dead_count: 2, total_count: 3 },
+  { template: 'support_ticket_reply', dead_count: 1, total_count: 3 },
+];
+
 /** 全体が total 件で、1 つの関数に集中している行 */
 const rowsOf = (total: number): CountRow[] =>
   total === 0 ? [] : [{ function_name: 'POST /api/meals', error_count: total, total_count: total }];
@@ -106,6 +116,14 @@ interface Scenario {
   clientCounts: RpcResult;
   /** #1493 クライアントの通知のキー (app_logs_client_error_spike) で権利を取ったときの応答 */
   clientClaim: RpcResult;
+  /** #1193 まだ知らせていない dead の数え方 (email_outbox_dead_counts) の応答 */
+  deadCounts: RpcResult;
+  /** #1193 届けられなかったメールの通知のキー (email_dead_letter) で権利を取ったときの応答 */
+  deadClaim: RpcResult;
+  /** #1193 印を付ける RPC (mark_email_outbox_dead_alerted) の応答 (印を付けた行の template ごとの件数) */
+  deadMark: RpcResult;
+  /** #1193 印を外す RPC (unmark_email_outbox_dead_alerted) の応答 (外した行数) */
+  deadUnmark: RpcResult;
 }
 
 let scenario: Scenario;
@@ -118,6 +136,11 @@ function setScenario(overrides: Partial<Scenario> = {}) {
     // クライアントの error は、既定では 1 件も無い (サーバーの判定だけを見るテストに混ざらないように)
     clientCounts: { data: [], error: null },
     clientClaim: { data: CLIENT_CLAIMED_AT, error: null },
+    // まだ知らせていない dead は、既定では 1 件も無い (印を付ける・外す RPC は呼ばれない)
+    deadCounts: { data: [], error: null },
+    deadClaim: { data: DEAD_CLAIMED_AT, error: null },
+    deadMark: { data: DEAD_ROWS, error: null },
+    deadUnmark: { data: 0, error: null },
     ...overrides,
   };
 }
@@ -162,7 +185,11 @@ beforeEach(() => {
   mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
     if (fn === 'app_log_error_counts') return scenario.counts;
     if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
+    if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
+    if (fn === 'mark_email_outbox_dead_alerted') return scenario.deadMark;
+    if (fn === 'unmark_email_outbox_dead_alerted') return scenario.deadUnmark;
     if (fn === 'claim_ops_alert') {
+      if (args?.p_alert_key === 'email_dead_letter') return scenario.deadClaim;
       return args?.p_alert_key === 'app_logs_client_error_spike' ? scenario.clientClaim : scenario.claim;
     }
     if (fn === 'release_ops_alert') return scenario.release;
@@ -324,7 +351,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     // 何も起きなかった回は、ログを増やさない (15 分おきに積み上がらない)
@@ -337,7 +364,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(1);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
   });
@@ -347,7 +374,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -402,7 +429,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(rpcCalls('release_ops_alert')).toHaveLength(0);
   });
@@ -413,6 +440,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     mocks.rpc.mockImplementation(async (fn: string) => {
       if (fn === 'app_log_error_counts') return scenario.counts;
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
+      if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
       if (fn === 'claim_ops_alert') {
         claims += 1;
         return { data: claims === 1 ? CLAIMED_AT : null, error: null };
@@ -429,11 +457,12 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it('D-4: 権利を取る前にはメールを送らない (数える → 権利を取る → 送る の順)', async () => {
+  it('D-4: 権利を取る前にはメールを送らない (数える → 権利を取る → 送る の順)。最後に届けられなかったメールを数える', async () => {
     const order: string[] = [];
     mocks.rpc.mockImplementation(async (fn: string) => {
       order.push(fn);
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
+      if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
       return fn === 'app_log_error_counts' ? scenario.counts : fn === 'claim_ops_alert' ? scenario.claim : scenario.release;
     });
     mocks.sendEmail.mockImplementation(async () => {
@@ -444,7 +473,8 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     await GET(authed());
 
     // サーバーの判定 (数える → 権利 → 送る) を済ませてから、クライアントの error を数える (#1493)
-    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts']);
+    // その後に届けられなかったメール (#1193) を数える
+    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts', 'email_outbox_dead_counts']);
   });
 
   it('D-5: 送れたときは権利を返さない (60 分の抑止が効く)', async () => {
@@ -469,13 +499,14 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
       threshold: 50,
       window_minutes: 15,
       client: CLIENT_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
 
     setScenario({ counts: { data: rowsOf(51), error: null } });
     const over = await GET(authed());
-    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
     // メールの文面のしきい値も、上書きした値になる
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 50 件を超えると');
@@ -489,7 +520,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
   });
 
   it('E-3: OPS_ALERT_COOLDOWN_MINUTES で、権利を取るときのクールダウンを変える。メールの文面も同じ値', async () => {
@@ -520,7 +551,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
       const res = await GET(authed());
 
-      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
       expect(rpcCalls('claim_ops_alert'), cooldown).toEqual([
         ['claim_ops_alert', { p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 }],
       ]);
@@ -539,7 +570,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn.mock.calls[0][1]).toEqual({ ignored_env: ['OPS_ALERT_COOLDOWN_MINUTES'] });
   });
@@ -550,7 +581,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn).not.toHaveBeenCalled();
   });
@@ -663,7 +694,7 @@ describe('GET /api/cron/app-log-alerts: メールの内容 (#1157)', () => {
   it('M-6: 送れたら info を 1 行残す (件数と関数名・メールの ID だけ。宛先は出さない)', async () => {
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     expect(mocks.logInfo).toHaveBeenCalledTimes(1);
     const [, meta] = mocks.logInfo.mock.calls[0];
     expect(meta).toMatchObject({
@@ -671,7 +702,7 @@ describe('GET /api/cron/app-log-alerts: メールの内容 (#1157)', () => {
       threshold: 20,
       window_minutes: 15,
       other_count: 0,
-      email_id: 'email-id-1',
+      outbox_id: 'email-id-1',
     });
     expect(meta.functions).toEqual([
       { name: 'POST /api/meals', count: 30 },
@@ -691,7 +722,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
     // claim が返した時刻をそのまま渡す (同じ時刻の行だけを消すため)
     expect(rpcCalls('release_ops_alert')).toEqual([
       ['release_ops_alert', { p_alert_key: 'app_logs_error_spike', p_claimed_at: CLAIMED_AT }],
@@ -772,6 +803,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     mocks.rpc.mockImplementation(async (fn: string) => {
       if (fn === 'app_log_error_counts') return scenario.counts;
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
+      if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
       if (fn === 'claim_ops_alert') return scenario.claim;
       throw new Error('network down');
     });
@@ -850,7 +882,7 @@ describe('GET /api/cron/app-log-alerts: DB の失敗は 500 (汎用メッセー�
 // そのほか
 // ---------------------------------------------------------------
 describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
-  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は 4 つの RPC だけ)', async () => {
+  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は 5 つの RPC だけ)', async () => {
     await GET(authed());
     mocks.sendEmail.mockResolvedValue(failedResult);
     await GET(authed());
@@ -861,6 +893,7 @@ describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
       'app_log_client_error_counts',
       'app_log_error_counts',
       'claim_ops_alert',
+      'email_outbox_dead_counts',
       'release_ops_alert',
     ]);
   });
@@ -936,6 +969,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'below_threshold', total: 21, threshold: 100 },
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
@@ -961,6 +995,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 101, threshold: 100 },
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toEqual([
       ['claim_ops_alert', { p_alert_key: 'app_logs_client_error_spike', p_cooldown_minutes: 60 }],
@@ -975,7 +1010,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
     expect(mocks.logInfo).toHaveBeenCalledTimes(1);
     const [message, meta] = mocks.logInfo.mock.calls[0];
     expect(message).toBe('ブラウザ・端末のエラー急増を運用メールに知らせました');
-    expect(meta).toMatchObject({ scope: 'client', total: 101, threshold: 100, email_id: 'email-id-1' });
+    expect(meta).toMatchObject({ scope: 'client', total: 101, threshold: 100, outbox_id: 'email-id-1' });
   });
 
   it('K-3: クールダウンを共有しない: サーバーの通知がクールダウン中 (deduped) でも、クライアントの急増は知らせる', async () => {
@@ -992,6 +1027,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 150, threshold: 100 },
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
@@ -1012,6 +1048,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'deduped', total: 400, threshold: 100 },
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
@@ -1029,6 +1066,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 120, threshold: 100 },
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail.mock.calls.map(([envelope]) => envelope.subject)).toEqual([
@@ -1049,6 +1087,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 31, threshold: 30 },
+      email_dead_letter: DEAD_LETTER_QUIET,
     });
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 30 件を超えると');
     expect(mocks.logWarn).not.toHaveBeenCalled();
@@ -1105,5 +1144,371 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
 
     expect(res.status).toBe(500);
     expect(rpcCalls('app_log_client_error_counts')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------
+// #1193 届けられなかったメール (email_outbox の dead) を 1 件から知らせる (3 つ目の種類 email_dead_letter)
+// 設計: docs/design/operator/10-logs-and-mail-retry.md §8
+// ---------------------------------------------------------------
+describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email_dead_letter。#1193)', () => {
+  /** サーバー・クライアントの error は 0 件 (急増の通知は送らない)。届けられなかったメールだけがある回 */
+  const deadOnly = (overrides: Partial<Scenario> = {}) =>
+    setScenario({ counts: { data: [], error: null }, deadCounts: { data: DEAD_ROWS, error: null }, ...overrides });
+  const SERVER_QUIET = { status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET } as const;
+  const suppressedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('suppressed', 'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした', null, 0, false),
+  } as const;
+  const invalidEnvelopeResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('invalid_envelope', 'EMAIL_INVALID_ENVELOPE: subject: too long', null, 0, false),
+  } as const;
+  const outboxFailedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした', null, 0, true),
+  } as const;
+  const outboxSentResult = { ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null } as const;
+  const claimKeys = () => rpcCalls('claim_ops_alert').map(([, args]) => (args as { p_alert_key: string }).p_alert_key);
+  const deadLetterCalls = () =>
+    mocks.rpc.mock.calls
+      .map(([fn, args]) => [fn, args] as const)
+      .filter(
+        ([fn, args]) =>
+          String(fn).includes('email_outbox') ||
+          ((fn === 'claim_ops_alert' || fn === 'release_ops_alert') && (args as { p_alert_key?: string })?.p_alert_key === 'email_dead_letter'),
+      );
+
+  it('T-1: まだ知らせていない dead が 1 件でもあれば知らせる。数える → 権利 (email_dead_letter) → 印を付ける → 印を付けた件数で送る', async () => {
+    deadOnly();
+    mocks.sendEmail.mockResolvedValue(outboxSentResult);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: { status: 'sent', total: 3, threshold: 0 } });
+    expect(rpcCalls('email_outbox_dead_counts')).toEqual([['email_outbox_dead_counts', { p_limit: 10 }]]);
+    expect(rpcCalls('claim_ops_alert')).toEqual([['claim_ops_alert', { p_alert_key: 'email_dead_letter', p_cooldown_minutes: 60 }]]);
+    expect(rpcCalls('mark_email_outbox_dead_alerted')).toEqual([
+      ['mark_email_outbox_dead_alerted', { p_alerted_at: DEAD_CLAIMED_AT, p_limit: 10 }],
+    ]);
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toHaveLength(0);
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    const envelope = mocks.sendEmail.mock.calls[0][0];
+    expect(envelope.template).toBe('ops_email_dead_letter');
+    expect(envelope.to).toBe(OPS_EMAIL);
+    expect(envelope.subject).toBe('【ほめゴハン運用】届けられなかったメールがあります (3 件)');
+    expect(envelope.text).toContain(' 1. family_invite … 2 件');
+    expect(envelope.text).toContain(' 2. support_ticket_reply … 1 件');
+    expect((envelope.text as string).split('\n')).toContain(`${SITE_URL}/super-admin/email-outbox`);
+    expect(mocks.logInfo).toHaveBeenCalledTimes(1);
+    const [message, meta] = mocks.logInfo.mock.calls[0];
+    expect(message).toBe('届けられなかったメールを運用メールに知らせました');
+    expect(meta).toMatchObject({ scope: 'email_dead_letter', total: 3, threshold: 0, outbox_id: 'outbox-id-1' });
+    expect(meta).not.toHaveProperty('email_id');
+  });
+
+  it('T-1b: 文面の件数は数えた件数ではなく、印を付けた行の件数 (数えたあとに dead になった行も入る)', async () => {
+    deadOnly({ deadMark: { data: [{ template: 'family_invite', dead_count: 5, total_count: 5 }], error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ email_dead_letter: { status: 'sent', total: 5, threshold: 0 } });
+    expect(mocks.sendEmail.mock.calls[0][0].subject).toBe('【ほめゴハン運用】届けられなかったメールがあります (5 件)');
+  });
+
+  it('T-2: まだ知らせていない dead が 0 件なら below_threshold (claim_ops_alert をキー email_dead_letter で呼ばず、mark も呼ばない)', async () => {
+    setScenario({ counts: { data: [], error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    expect(rpcCalls('email_outbox_dead_counts')).toHaveLength(1);
+    expect(claimKeys()).not.toContain('email_dead_letter');
+    expect(rpcCalls('mark_email_outbox_dead_alerted')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('T-3: server / client の通知を送ってから email_dead_letter を数える (呼び出しの順の末尾が 数える → 権利 → 印 → 送る)', async () => {
+    setScenario({ deadCounts: { data: DEAD_ROWS, error: null } });
+    const order: string[] = [];
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      order.push(fn === 'claim_ops_alert' ? `claim_ops_alert:${args?.p_alert_key}` : fn);
+      return harness?.(fn, args);
+    });
+    mocks.sendEmail.mockImplementation(async (envelope: { template?: string }) => {
+      order.push(`sendEmail:${envelope.template}`);
+      return sentResult;
+    });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    expect(order).toEqual([
+      'app_log_error_counts',
+      'claim_ops_alert:app_logs_error_spike',
+      'sendEmail:ops_app_log_error_spike',
+      'app_log_client_error_counts',
+      'email_outbox_dead_counts',
+      'claim_ops_alert:email_dead_letter',
+      'mark_email_outbox_dead_alerted',
+      'sendEmail:ops_email_dead_letter',
+    ]);
+  });
+
+  it('T-3b: email_outbox_dead_counts の失敗は 500 で、server の通知はその前に済んでいる。印も権利も触らない', async () => {
+    setScenario({ deadCounts: { data: null, error: { code: '42P01', message: 'relation "public.email_outbox" does not exist' } } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(mocks.sendEmail.mock.calls[0][0].subject).toBe('【ほめゴハン運用】エラーが急増しています (直近 15 分で 42 件)');
+    expect(claimKeys()).toEqual(['app_logs_error_spike']);
+    expect(rpcCalls('mark_email_outbox_dead_alerted')).toHaveLength(0);
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toHaveLength(0);
+  });
+
+  it('T-3c: 数えた応答の形が想定外・権利を取る RPC の失敗は 500 (印も権利も触らない)', async () => {
+    deadOnly({ deadCounts: { data: { rows: [] }, error: null } });
+    const malformed = await GET(authed());
+    expect(malformed.status).toBe(500);
+
+    vi.clearAllMocks();
+    deadOnly({ deadClaim: { data: null, error: { code: '42501', message: 'permission denied' } } });
+    const claimFailed = await GET(authed());
+    expect(claimFailed.status).toBe(500);
+
+    expect(rpcCalls('mark_email_outbox_dead_alerted')).toHaveLength(0);
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toHaveLength(0);
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['suppressed (宛先が停止リスト)', suppressedResult],
+    ['invalid_envelope (文面の不備)', invalidEnvelopeResult],
+  ])('T-4: sendEmail が %s なら、権利も印も返さない (release_ops_alert も unmark も呼ばない) で send_failed', async (_label, result) => {
+    deadOnly();
+    mocks.sendEmail.mockResolvedValue(result);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ email_dead_letter: { status: 'send_failed', total: 3, threshold: 0 } });
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toHaveLength(0);
+    const [message, meta] = mocks.logWarn.mock.calls[0];
+    expect(message).toBe('届けられなかったメールを検知しましたが、通知メールを送れませんでした');
+    expect(meta).toMatchObject({ scope: 'email_dead_letter', total: 3, error_code: result.error.code });
+  });
+
+  it.each([
+    ['outbox_failed (送信待ちへの登録の失敗)', outboxFailedResult, 'send_failed'],
+    ['skipped (not_configured)', skippedResult, 'send_skipped'],
+    ['Resend 由来のコード (validation_error。現行どおり返す)', failedResult, 'send_failed'],
+  ])('T-5: sendEmail が %s なら、印を外して (unmark) から権利を返す (この順)', async (_label, result, status) => {
+    deadOnly();
+    mocks.sendEmail.mockResolvedValue(result);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ email_dead_letter: { status, total: 3, threshold: 0 } });
+    expect(deadLetterCalls().map(([fn]) => fn)).toEqual([
+      'email_outbox_dead_counts',
+      'claim_ops_alert',
+      'mark_email_outbox_dead_alerted',
+      'unmark_email_outbox_dead_alerted',
+      'release_ops_alert',
+    ]);
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toEqual([
+      ['unmark_email_outbox_dead_alerted', { p_alerted_at: DEAD_CLAIMED_AT }],
+    ]);
+    expect(rpcCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'email_dead_letter', p_claimed_at: DEAD_CLAIMED_AT }],
+    ]);
+  });
+
+  it('T-6: 抑止の間に dead になった行を取りこぼさない (R-13・S-18)。権利を取れた回だけ印を付け、取れない回は印を付けない', async () => {
+    const SECOND_CLAIMED_AT = '2026-10-09T02:22:00.111111+00:00';
+    const deadClaims = [DEAD_CLAIMED_AT, null, SECOND_CLAIMED_AT];
+    let deadClaimIndex = 0;
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      if (fn === 'claim_ops_alert' && args?.p_alert_key === 'email_dead_letter') {
+        const data = deadClaims[deadClaimIndex];
+        deadClaimIndex += 1;
+        return { data, error: null };
+      }
+      return harness?.(fn, args);
+    });
+
+    // 1 回目: family_invite 1 件 → 権利を取り、印を付けて 1 通目
+    deadOnly({
+      deadCounts: { data: [{ template: 'family_invite', dead_count: 1, total_count: 1 }], error: null },
+      deadMark: { data: [{ template: 'family_invite', dead_count: 1, total_count: 1 }], error: null },
+    });
+    const first = await (await GET(authed())).json();
+    // 2 回目: 抑止の間に support_ticket_reply が 1 件 dead → 数えるが権利が取れない (deduped)。印は付けない
+    deadOnly({
+      deadCounts: { data: [{ template: 'support_ticket_reply', dead_count: 1, total_count: 1 }], error: null },
+      deadMark: { data: [{ template: 'support_ticket_reply', dead_count: 1, total_count: 1 }], error: null },
+    });
+    const second = await (await GET(authed())).json();
+    // 3 回目 (cron の発火が遅れた): 窓で区切らないので、2 回目に数えた行がまだ印なしで数えられ、2 通目になる
+    const third = await (await GET(authed())).json();
+
+    expect(first.email_dead_letter).toEqual({ status: 'sent', total: 1, threshold: 0 });
+    expect(second.email_dead_letter).toEqual({ status: 'deduped', total: 1, threshold: 0 });
+    expect(third.email_dead_letter).toEqual({ status: 'sent', total: 1, threshold: 0 });
+    expect(rpcCalls('email_outbox_dead_counts')).toEqual([
+      ['email_outbox_dead_counts', { p_limit: 10 }],
+      ['email_outbox_dead_counts', { p_limit: 10 }],
+      ['email_outbox_dead_counts', { p_limit: 10 }],
+    ]);
+    expect(rpcCalls('mark_email_outbox_dead_alerted')).toEqual([
+      ['mark_email_outbox_dead_alerted', { p_alerted_at: DEAD_CLAIMED_AT, p_limit: 10 }],
+      ['mark_email_outbox_dead_alerted', { p_alerted_at: SECOND_CLAIMED_AT, p_limit: 10 }],
+    ]);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(2);
+    expect(mocks.sendEmail.mock.calls[0][0].text).toContain(' 1. family_invite … 1 件');
+    expect(mocks.sendEmail.mock.calls[1][0].text).toContain(' 1. support_ticket_reply … 1 件');
+    expect(mocks.sendEmail.mock.calls[1][0].text).not.toContain('family_invite');
+  });
+
+  it.each([
+    ['{ error } を返す', { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } }],
+    ['配列でない応答を返す', { data: { template: 'family_invite' }, error: null }],
+    ['件数が不正な行を返す', { data: [{ template: 'family_invite', dead_count: -1, total_count: 1 }], error: null }],
+  ])('T-7: 印を付ける RPC が %s なら、unmark と release_ops_alert を呼んでから 500 (汎用メッセージ)。文面は送らない', async (_label, deadMark) => {
+    deadOnly({ deadMark });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual({ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' });
+    expect(deadLetterCalls().map(([fn]) => fn)).toEqual([
+      'email_outbox_dead_counts',
+      'claim_ops_alert',
+      'mark_email_outbox_dead_alerted',
+      'unmark_email_outbox_dead_alerted',
+      'release_ops_alert',
+    ]);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+  });
+
+  it('T-7b: 印を付ける RPC が例外を投げても、sendEmail が例外を投げても、印と権利を返してから 500', async () => {
+    deadOnly();
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      if (fn === 'mark_email_outbox_dead_alerted') throw new Error('network down');
+      return harness?.(fn, args);
+    });
+    const thrownMark = await GET(authed());
+    expect(thrownMark.status).toBe(500);
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toHaveLength(1);
+    expect(rpcCalls('release_ops_alert')).toHaveLength(1);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => harness?.(fn, args));
+    deadOnly();
+    mocks.sendEmail.mockRejectedValue(new Error(`socket hang up while sending to ${OPS_EMAIL}`));
+    const thrownSend = await GET(authed());
+    expect(thrownSend.status).toBe(500);
+    const body = await thrownSend.json();
+    expect(JSON.stringify(body)).not.toContain('socket hang up');
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toEqual([
+      ['unmark_email_outbox_dead_alerted', { p_alerted_at: DEAD_CLAIMED_AT }],
+    ]);
+    expect(rpcCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'email_dead_letter', p_claimed_at: DEAD_CLAIMED_AT }],
+    ]);
+  });
+
+  it('T-8: 印を付けた行が 0 件 (数えたあとに再送・掃除で減った) なら、メールを送らず権利を返して below_threshold (total 0)。unmark は呼ばない', async () => {
+    deadOnly({ deadMark: { data: [], error: null } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ email_dead_letter: { status: 'below_threshold', total: 0, threshold: 0 } });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(rpcCalls('unmark_email_outbox_dead_alerted')).toHaveLength(0);
+    expect(rpcCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'email_dead_letter', p_claimed_at: DEAD_CLAIMED_AT }],
+    ]);
+  });
+
+  it('T-9: 印を外す RPC が { error } を返しても例外を投げても、応答は send_failed のまま。warn (「印を外せませんでした」) を残す', async () => {
+    deadOnly({ deadUnmark: { data: null, error: { code: '57014', message: 'timeout' } } });
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+    const errored = await GET(authed());
+    expect(errored.status).toBe(200);
+    await expect(errored.json()).resolves.toMatchObject({ email_dead_letter: { status: 'send_failed' } });
+    const erroredWarn = mocks.logWarn.mock.calls.find(([message]) => String(message).includes('印を外せませんでした'));
+    expect(erroredWarn?.[1]).toEqual({ scope: 'email_dead_letter', pg_code: '57014' });
+    expect(rpcCalls('release_ops_alert')).toHaveLength(1); // 印を外せなくても権利は返す
+
+    vi.clearAllMocks();
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      if (fn === 'unmark_email_outbox_dead_alerted') throw new TypeError('network down');
+      return harness?.(fn, args);
+    });
+    deadOnly();
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+    const thrown = await GET(authed());
+    expect(thrown.status).toBe(200);
+    await expect(thrown.json()).resolves.toMatchObject({ email_dead_letter: { status: 'send_failed' } });
+    const thrownWarn = mocks.logWarn.mock.calls.find(([message]) => String(message).includes('印を外せませんでした'));
+    expect(thrownWarn?.[1]).toEqual({ scope: 'email_dead_letter', error_name: 'TypeError' });
+  });
+
+  it('T-10: 急増の通知も、送信が suppressed / invalid_envelope なら権利を返さない (#1577 の 8)。outbox_failed は返す', async () => {
+    mocks.sendEmail.mockResolvedValueOnce(suppressedResult);
+    const suppressed = await (await GET(authed())).json();
+    expect(suppressed.status).toBe('send_failed');
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+
+    vi.clearAllMocks();
+    mocks.sendEmail.mockResolvedValueOnce(invalidEnvelopeResult);
+    await GET(authed());
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+
+    vi.clearAllMocks();
+    mocks.sendEmail.mockResolvedValueOnce(outboxFailedResult);
+    await GET(authed());
+    expect(rpcCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'app_logs_error_spike', p_claimed_at: CLAIMED_AT }],
+    ]);
+  });
+
+  it('T-11: ログ・応答に宛先・件名・本文・ユーザー ID を出さない (件数と template だけ)', async () => {
+    deadOnly();
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+
+    const res = await GET(authed());
+    const body = JSON.stringify(await res.json());
+    const logged = JSON.stringify([mocks.logInfo.mock.calls, mocks.logWarn.mock.calls, mocks.logError.mock.calls]);
+
+    for (const text of [body, logged]) {
+      expect(text).not.toContain(OPS_EMAIL);
+    }
+    expect(logged).toContain('family_invite');
   });
 });

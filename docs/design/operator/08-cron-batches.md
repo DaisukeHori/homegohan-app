@@ -12,11 +12,11 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ## 3. ジョブ一覧
 
-### 3.0 実装状況 (2026-10-15 更新)
+### 3.0 実装状況 (2026-10-16 更新)
 
-§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (§3.2 の `app_log_alerts`。#1157) の 2 本である。
+§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6) の 4 本である。
 Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
-いま、このリポジトリの migration が pg_cron に登録しているジョブは 10 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 8 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox` は、下の箇条書きの「そのほか」に書く。
+いま、このリポジトリの migration が pg_cron に登録しているジョブは 11 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 9 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` は、下の箇条書きの「そのほか」に書く。
 
 | ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
 |---------|---------|-------------|------|
@@ -37,6 +37,7 @@ Stripe Webhook・収益スナップショット・ライセンス系のバッチ
   - 間隔の定数・猶予の決め方・ロールバック (`supabase/rollbacks/20261015180000_meal_image_jobs_pickup_cron.down.sql`) は、その migration の冒頭のコメント。運用の手順は `docs/operations/meal-image-pipeline.md`。
 - そのほか、migration `20261016100000_purge_hidden_content.sql` (#1538) が、ジョブ `purge-hidden-content` を毎日 03:25 JST (`25 18 * * *` UTC) に登録している。運営が隠した (`hidden_at` が入った) 食事 (`meals`)・レシピ (`recipes`) のうち、隠してから 90 日 (オーナーの選択 2026-10-15) を過ぎた行と、その画像のファイルを完全に消す。画像は SQL では消せない (`storage.objects` の `protect_objects_delete` トリガー) ので、`public.invoke_purge_hidden_content()` が `calculate-segment-stats` と同じ秘密 (Vault の `app_cron_secret`) を付けて Edge Function `purge-hidden-content` を `net.http_post` で呼び、その中で「画像を Storage API で消す → 行を消す」を行う (本体は `supabase/functions/_shared/hidden-content-purge.ts`)。画像は、行の持ち主のフォルダにあり、ほかの行が使っていないもの (`public.hidden_content_purge_referenced_needles` で確かめる) だけを消す。1 回の実行は 300 秒で切り上げ、残りは翌日に消す。通報 (`moderation_flags` / `recipe_flags`) は外部キーの CASCADE で一緒に消え、運営の判断の記録は `admin_audit_logs` に残る (02-api-spec.md の `delete_*` の意味)。呼び出しの関数の `EXECUTE` は所有者 (`postgres`) だけ、画像の確認の関数は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016100000_purge_hidden_content.down.sql`。詳しくはその migration の冒頭のコメント。
 - そのほか、migration `20261016234000_email_outbox.sql` (#1193) が、ジョブ `cleanup-email-outbox` を毎日 03:20 JST (`20 18 * * *` UTC) に登録している。`SELECT public.cleanup_email_outbox();` を呼び、`email_outbox` の sent を 7 日・dead を 30 日で消す (queued は消さない)。関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016234000_email_outbox.down.sql`。詳しくは `10-logs-and-mail-retry.md` §5
+- そのほか、migration `20261016243000_auth_history_sessions.sql` (#1190) が、ジョブ `cleanup-auth-sessions-and-login-history` を毎日 03:55 JST (`55 18 * * *` UTC) に登録している。`SELECT public.expire_idle_auth_sessions(), public.reconcile_user_sessions_metadata(), public.cleanup_ended_user_sessions_metadata();` を呼び、30 日更新の無いセッションを終え (`expire_idle_auth_sessions()`)、GoTrue 側に無いのに終わっていないログインの記録を終え (`reconcile_user_sessions_metadata()`)、終わってから 90 日を過ぎたログインの記録を消す (`cleanup_ended_user_sessions_metadata()`)。3 つの関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`。詳しくは cross/16 §11.6。
 - 過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。
 
 #### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
@@ -150,10 +151,10 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 | `update-org-challenge-progress` | daily 18:10 UTC (03:10 JST) | 組織チャレンジの進み具合 (current_value) と順位 (rank) を食事の記録から計算し、終了日 (JST) を過ぎたチャレンジを completed にする (`update_org_challenge_progress()`。#1132。詳細は `org/07-challenge.md` §15) |
 
-> **2026-10-14 時点の状態**: 上の 10 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
+> **2026-10-16 時点の状態**: 上の 10 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
 > `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
 > `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
-> migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox` の 10 つ (§3.0)。
+> migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` の 11 つ (§3.0)。
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
 
@@ -172,7 +173,7 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `logical_backup` | daily 02:00 | pg_dump → S3 |
 | `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
 
-> **2026-10-10 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue` と `app-log-alerts` (この表の `app_log_alerts`。#1157) の 2 本。この表のほかの 11 本は、Vercel Cron としては実装されていない。
+> **2026-10-16 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6) の 4 本。この表のほかの 11 本は、Vercel Cron としては実装されていない。
 > 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > `dau_snapshot` は、Vercel Cron ではなく pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。時刻は同じ 01:30 JST。
 > それ以外の行は未実装のまま (作るときは別の PR)。
@@ -475,7 +476,7 @@ $$ LANGUAGE plpgsql;
 
 ## 5. Vercel Cron ジョブ詳細
 
-> **2026-10-10 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue` と `app-log-alerts` だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
+> **2026-10-16 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
 > `revenue_snapshot` (§5.8) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。
 
 ### 5.1 vercel.json 設定

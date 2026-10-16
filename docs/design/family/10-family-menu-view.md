@@ -825,7 +825,8 @@ export async function fetchFamilyMenu(
 // tsc:skip (React の hook。段 A の lib を import するので型検査は実装の tsc で行う)
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchFamilyMenu, type FamilyMenuData, type FamilyMenuFetchResult } from '@/lib/membership/family-menu';
+import { fetchFamilyMenu, type FamilyMenuFetchResult } from '@/lib/membership/family-menu';
+import type { FamilyMenuData } from '@/schemas/membership/family-menu';
 
 /** 同じ週の取り直しを抑える時間。page.tsx の weekDataCache の CACHE_TTL (5 分) と同じ */
 export const FAMILY_MENU_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -1148,7 +1149,7 @@ sequenceDiagram
 | `FamilyMenuRpcRowsSchema: 12 の鍵の要素の配列を読み、is_simple / calories_kcal / cooking_time_minutes / display_order / is_completed の null を通し、知らない鍵 (memo・image_url など) は捨てる。配列でない値・null・鍵の欠けた要素・型の違う要素 (dish_names が null・day_date が日付の形でない) は通らない` | §13・§15.2・S-12・S-20 |
 | `fetchFamilyMenu: 200 の正しい本文は ok、401 は unauthorized、400 は invalid、403 (AUTH_ACCOUNT_FROZEN と LEGAL_CONSENT_REQUIRED の本文)・503 (MAINTENANCE_MODE の本文)・500 と形の違う本文と例外は failed (例外を投げない)` | S-14・S-26・S-33・S-34 (403 / 503 の本文は §15.2 の middleware の形) |
 | `fetchFamilyMenu: 同じオリジンの相対パス (FAMILY_MENU_API_PATH で始まり、startDate / endDate のクエリを持つ URL) を cache: 'no-store' で呼ぶ` | S-16 (WebView は同じオリジンの Cookie のセッションで通る)・S-18 |
-| `barrel: @/schemas/membership から読んだ FamilyMenuDataSchema と FamilyMenuResponseSchema は @/schemas/membership/family-menu のものと同じ (index.ts の再 export)` | §13 (barrel の 1 行) |
+| `barrel: @/schemas/membership から読んだ FamilyMenuDataSchema と FamilyMenuResponseSchema は @/schemas/membership/family-menu のものと同じ (index.ts の再 export)` | §13 (barrel の 1 行。vitest の `@/` の解決 (`vitest.config.ts` の `at-alias`) はフォルダの `index` を補わないので、テストは `@/schemas/membership/index` と書いて読む) |
 | `FAMILY_MENU_NOTE_TEXT: 5 つの鍵 (notSharing / noAccount / noMealsToday / loadFailed / loading) を持ち、{name} を持つのは notSharing / noAccount / noMealsToday だけ` | §12・§16.2 |
 
 ### 19.2 route — `src/__tests__/api/family/menu.test.ts` (段 A。`tests/helpers/route-world.ts` の `makeClient` に rpc の偽物を渡す)
@@ -1177,7 +1178,7 @@ middleware を通した it — `lib/supabase/__tests__/middleware-family-menu.te
 | `凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (凍結が先)。メンテナンス中かつ未同意の運営でない人は 503 (メンテナンスが先)` | §8 の V の判定の順 |
 | `/api/family/menu は isFrozenAllowedApiPath・isPushTokenClaimApiPath・isMaintenanceExemptPath・isLegalConsentExemptApiPath のどれにも当たらない` | V-6〜V-8 (例外の一覧に足していない) |
 
-### 19.3 実 DB — `tests/integration/rls/family-menu-visibility.test.ts` (段 A。利用者 13 人 (`family-member-names-scope.test.ts` の 7 人 + 退会の it 専用の、代表者でない大人 1 人 + 昇格の it 専用の 2 人 + 家族 H の it 専用の 3 人 (家族を作る 1 人と、招待を承諾する 2 人))・家族 2 つ (+ 家族 H の it が作る 1 つ)。`family-member-names-scope.test.ts` の準備を写す (除名済みで `family_id` が残った `removed` と、行が無いのに `family_id` だけが家族 G を指す `intruder` を含む)。家族 F には昇格の it のために子供の行を 2 つ足す (P-6 の子供の行とは別)。退会の it は他の it の結果を変えないよう、その専用の 1 人だけを消す。凍結の it は `adult` の `frozen_at` を service role で入れ、`finally` で NULL に戻す。鍵と `dish_names` の 2 つの it は、`adult` の範囲内の 1 日 (他の it と別の日) に service role で `user_daily_meals` (`is_sandbox = FALSE`) の 1 行とその子の `planned_meals` を 3 行足す: `dishes` に料理ごとの栄養・材料・作り方・`image_url` を持つ配列 (name の無い要素・`name` が数・空の name を混ぜる)・キーつきのオブジェクト・NULL。3 行とも `memo` と `generation_metadata` に値を入れ、`image_url` には 1 行目 `<SUPABASE_URL>/storage/v1/object/public/fridge-images/generated/<id>/a.png`・2 行目 `https://images.unsplash.com/photo-1`・3 行目 NULL を入れる (返さない列に値があっても鍵が出ないことを見るため)。足した行はその it の `finally` で消す)。`family_menu_planned_meals` の結果は jsonb の配列 1 つなので、本節の it の「行」はその配列の要素、「0 行」は `family_menu_visible_members` が 0 行・`family_menu_planned_meals` が空の配列 `[]` を返すことをいう
+### 19.3 実 DB — `tests/integration/rls/family-menu-visibility.test.ts` (段 A。利用者 13 人 (`family-member-names-scope.test.ts` の 7 人 + 退会の it 専用の、代表者でない大人 1 人 + 昇格の it 専用の 2 人 + 家族 H の it 専用の 3 人 (家族を作る 1 人と、招待を承諾する 2 人))・家族 2 つ (+ 家族 H の it が作る 1 つ)。`family-member-names-scope.test.ts` の準備を写す (除名済みで `family_id` が残った `removed` と、行が無いのに `family_id` だけが家族 G を指す `intruder` を含む。退出 (`left`) の行は、家族 G の大人が以前 F に居た行として F に 1 行足す (一意索引は active だけなので G の active の行と両立する))。家族 F には昇格の it のために子供の行を 2 つ足す (P-6 の子供の行とは別)。退会の it は他の it の結果を変えないよう、その専用の 1 人だけを消す。凍結の it は `adult` の `frozen_at` を service role で入れ、`finally` で NULL に戻す。鍵と `dish_names` の 2 つの it は、`adult` の範囲内の 1 日 (他の it と別の日) に service role で `user_daily_meals` (`is_sandbox = FALSE`) の 1 行とその子の `planned_meals` を 3 行足す: `dishes` に料理ごとの栄養・材料・作り方・`image_url` を持つ配列 (name の無い要素・`name` が数・空の name を混ぜる)・キーつきのオブジェクト・NULL。3 行とも `memo` と `generation_metadata` に値を入れ、`image_url` には 1 行目 `<SUPABASE_URL>/storage/v1/object/public/fridge-images/generated/<id>/a.png`・2 行目 `https://images.unsplash.com/photo-1`・3 行目 NULL を入れる (返さない列に値があっても鍵が出ないことを見るため)。足した行はその it の `finally` で消す)。`family_menu_planned_meals` の結果は jsonb の配列 1 つなので、本節の it の「行」はその配列の要素、「0 行」は `family_menu_visible_members` が 0 行・`family_menu_planned_meals` が空の配列 `[]` を返すことをいう
 
 | it | 見るもの |
 |---|---|

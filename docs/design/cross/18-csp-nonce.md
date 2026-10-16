@@ -3,6 +3,7 @@
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-16 | 新設 (Issue #1169 の設計ゲート・A 型 4 相) |
+| v1.1 | 2026-10-16 | #1769 の追随: connect-src に祝日の API のオリジン (`HOLIDAYS_API_ORIGIN` = `https://holidays-jp.github.io`) を足す (§9.1・§12.2) |
 
 要件の正本は Issue #1169 の本文 (コメント 0 件)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/18 (cross/ の既存は 01〜09・12・13a・14・15。16 は同じ時期の別の設計 (ログイン履歴・セッション #1190)、17 はバックアップの設計が使う)。
@@ -99,7 +100,7 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 
 - Issue #1169 (本文)。関連 #275 / PR #280 (`'unsafe-eval'` の削除)・#1165 (Turnstile の CSP)・#1179 (Speed Insights と CSP)・#1166 (PostHog の撤去)・#1174 / #1442 (同意ゲートと middleware の分岐)・#1148 (メンテナンス)・#1030 (凍結)・#1493 (`POST /api/log` と回数制限)・#1182 / #1434 (環境変数の規則)・#1657 (NULL 文字)。
 - `docs/design/CLAUDE.md` §4 (snake_case)・§6 (監査ログは本件に無し: 運営の操作が無い)。`cross/04` §4 (エラーコード)。`cross/13a` §6.4 (同意の許可リスト)。`cross/06` (レート制限)。`operator/10` (app_logs のビューア)。`mobile/01` §7 (WebView と `frame-src`)。
-- 一次情報 (本書が依拠するもの): Next 15 公式ガイド「Content Security Policy」(nonce は middleware で毎リクエスト作り、リクエストヘッダー `Content-Security-Policy` と `x-nonce` に載せ、応答にも同じ値を付ける。nonce を使うページは動的レンダリング必須。Next は framework script・ページのバンドル・Next 生成のインライン script / style・`nonce` prop を持つ `<Script>` に自動で付与する)。Next 15.5 の実装 `server/app-render/app-render.js` は **リクエストヘッダー** `content-security-policy` (無ければ `content-security-policy-report-only`) から `getScriptNonceFromHeader` で `script-src` (無ければ `default-src`) の `'nonce-…'` を読む。nonce に HTML のエスケープ文字 (`&` `>` `<` U+2028 U+2029) があると例外 (base64 には含まれない)。Cloudflare Turnstile 公式「Content Security Policy」: nonce を使わない明示の代替は `script-src https://challenges.cloudflare.com` と `frame-src https://challenges.cloudflare.com` (pre-clearance を使うなら `connect-src 'self'`)。`@vercel/speed-insights` 2.0.0 の `inject` は `document.createElement("script")` に `src` を付けて差し込み、インラインの script 要素は作らない (`window.si` は JS の代入)。
+- 一次情報 (本書が依拠するもの): Next 15 公式ガイド「Content Security Policy」(nonce は middleware で毎リクエスト作り、リクエストヘッダー `Content-Security-Policy` と `x-nonce` に載せ、応答にも同じ値を付ける。nonce を使うページは動的レンダリング必須。Next は framework script・ページのバンドル・Next 生成のインライン script / style・`nonce` prop を持つ `<Script>` に自動で付与する)。Next 15.5 の実装 `server/app-render/app-render.js` は **リクエストヘッダー** `content-security-policy` (無ければ `content-security-policy-report-only`) から `getScriptNonceFromHeader` で `script-src` (無ければ `default-src`) の `'nonce-…'` を読む。nonce に HTML のエスケープ文字 (`&` `>` `<` U+2028 U+2029) があると例外 (base64 には含まれない)。Next 16 (16.4.1。2d90460e で更新) でも読む経路は同じ (`server/route-modules/app-page/parse-request-headers.js` がリクエストヘッダー `content-security-policy` (無ければ `-report-only`) を `getScriptNonceFromHeader` に渡す)。違いは、形の崩れた nonce を例外にせず無視して nonce 無しで描画を続けること (`/^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/` に当たる最初の値を使う)。`src/middleware.ts` は Next 16 でも `middleware` の名前のまま動く (`proxy` への改名は本件の範囲外)。Cloudflare Turnstile 公式「Content Security Policy」: nonce を使わない明示の代替は `script-src https://challenges.cloudflare.com` と `frame-src https://challenges.cloudflare.com` (pre-clearance を使うなら `connect-src 'self'`)。`@vercel/speed-insights` 2.0.0 の `inject` は `document.createElement("script")` に `src` を付けて差し込み、インラインの script 要素は作らない (`window.si` は JS の代入)。
 
 ---
 
@@ -206,7 +207,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 
 ### 5.3 動的になるページ (現状、祖先の layout にも自身にも動的のマーカーが無いもの。ファイル内のマーカーの機械分類で、ビルドの実測ではない)
 
-`src/app/page.tsx` (LP)・`about`・`company`・`contact`・`faq`・`guide`・`legal`・`news`・`pricing`・`privacy`・`terms`・`(auth)/{login,signup,auth/forgot-password,auth/reset-password,auth/verify}`・`frozen/{page,account}`・`invite/[token]`・`family/promotions/[token]`・`onboarding/{page,complete,questions,resume,welcome}`・`(operator)/operator/membership/{audit,families/inactive,orgs/inactive,families/[id]/transfer,orgs/[id]/transfer}`・`super-admin/{page,audit-logs,coupons/[id],coupons/new,experiments/*,exports/*,feature-packages/[id],feature-packages/new,flags,flags/new,infra/*,llm/*,logs,plans/[id],plans/[id]/price-change,plans/new}`・`(org)/org/{page,challenges,dashboard,departments,invites,members,settings,settings/owner-transfer,transfer-accept/[proposal_id]}`・`(support)/support/{page,inquiries,users}`・`not-found` (`/_not-found`)。マーカーを持つのは、自身に `export const dynamic = 'force-dynamic'` がある `legal-consent`・`super-admin/{coupons,feature-packages,plans}` の一覧、祖先の `handson-tour/layout.tsx` が `cookies()` を読む `handson-tour/*`、祖先の layout が動的 (`export const dynamic = 'force-dynamic'`) の `(main)`・`admin` 配下だけ。`(auth)/*`・`frozen/*`・`invite/[token]`・`family/promotions/[token]`・`onboarding/questions` は `'use client'` のページで、`(auth)/layout.tsx`・`onboarding/layout.tsx` もマーカーを持たず、`frozen/`・`invite/`・`family/promotions/` には layout が無い (`useSearchParams` を使うページもあるが、下のとおりクライアントのフックは数えない) ので、上の「動的になる」側に入る。`(org)/layout.tsx`・`(support)/layout.tsx` は `'use client'` で動的のマーカーを持たないので、配下の page は自身のマーカーで分けた (どれも持たない: `useParams` / `useSearchParams` はクライアントのフックで、ファイル内のマーカーには数えない。`(org)/org/page.tsx` は `redirect('/org/dashboard')` だけの Server Component)。`generateStaticParams`・`revalidate = N`・`force-static` の指定は `src/app` に無い (grep 0 件) ので衝突しない。
+`src/app/page.tsx` (LP)・`about`・`company`・`contact`・`faq`・`guide`・`legal`・`news`・`pricing`・`privacy`・`terms`・`(auth)/{login,signup,auth/forgot-password,auth/reset-password,auth/verify}`・`frozen/{page,account,billing}`・`invite/[token]`・`family/promotions/[token]`・`onboarding/{page,complete,questions,resume,welcome}`・`(operator)/operator/membership/{audit,families/inactive,orgs/inactive,families/[id]/transfer,orgs/[id]/transfer}`・`super-admin/{page,audit-logs,coupons/[id],coupons/new,experiments/*,exports/*,feature-packages/[id],feature-packages/new,flags,flags/new,infra/*,llm/*,logs,plans/[id],plans/[id]/price-change,plans/new}`・`(org)/org/{page,challenges,dashboard,departments,invites,members,settings,settings/owner-transfer,transfer-accept/[proposal_id]}`・`(support)/support/{page,inquiries,users}`・`not-found` (`/_not-found`)。マーカーを持つのは、自身に `export const dynamic = 'force-dynamic'` がある `legal-consent`・`super-admin/{coupons,feature-packages,plans}` の一覧、祖先の `handson-tour/layout.tsx` が `cookies()` を読む `handson-tour/*`、祖先の layout が動的 (`export const dynamic = 'force-dynamic'`) の `(main)`・`admin` 配下だけ。`(auth)/*`・`frozen/*`・`invite/[token]`・`family/promotions/[token]`・`onboarding/questions` は `'use client'` のページで、`(auth)/layout.tsx`・`onboarding/layout.tsx` もマーカーを持たず、`frozen/`・`invite/`・`family/promotions/` には layout が無い (`useSearchParams` を使うページもあるが、下のとおりクライアントのフックは数えない) ので、上の「動的になる」側に入る。`(org)/layout.tsx`・`(support)/layout.tsx` は `'use client'` で動的のマーカーを持たないので、配下の page は自身のマーカーで分けた (どれも持たない: `useParams` / `useSearchParams` はクライアントのフックで、ファイル内のマーカーには数えない。`(org)/org/page.tsx` は `redirect('/org/dashboard')` だけの Server Component)。`generateStaticParams`・`revalidate = N`・`force-static` の指定は `src/app` に無い (grep 0 件) ので衝突しない。
 
 ### 5.4 影響と扱い
 
@@ -327,6 +328,13 @@ export const CSP_NONCE_PATTERN = /^[A-Za-z0-9+\/]+={0,2}$/;
  * コメントでも二重引用符で囲んだ frame-src の例を書かない。src/__tests__/lib/security/csp.test.ts が 1 か所だけであることを見張る)
  */
 export const CSP_TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+/**
+ * 日本の祝日の一覧 (公開情報) を返す API のオリジン (#1769)。週間献立 (/menus/weekly) がブラウザから
+ * `${HOLIDAYS_API_ORIGIN}/api/v1/<年>/date.json` を fetch するので、connect-src に足す。
+ * 取得の URL は src/app/(main)/menus/weekly/_state/japaneseHolidays.ts がこの定数から組み立てる (2 か所の値がずれないように)。
+ * 送るのは年だけで、利用者のデータは送らない (tests/ai-consent-provider-inventory.test.ts の NON_AI_HOSTS)
+ */
+export const HOLIDAYS_API_ORIGIN = 'https://holidays-jp.github.io';
 /** CSP_REPORT_ONLY を有効とみなす唯一の値 (lib/legal-consent.ts の LEGAL_CONSENT_FLAG_ON と同じ読み方) */
 const CSP_REPORT_ONLY_FLAG_ON = 'on';
 /** Supabase のクラウド (本番) のホストの末尾。これ以外 (ローカルの Supabase) のときだけ origin を方針に足す */
@@ -394,8 +402,8 @@ export function buildContentSecurityPolicy(input: CspBuildInput): string {
     "frame-src 'self' https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
-    // #1166: PostHog の送信先は許可しない
-    `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co${supabaseConnectSrc}`,
+    // #1166: PostHog の送信先は許可しない。#1769: 週間献立の祝日の取得 (HOLIDAYS_API_ORIGIN)
+    `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${HOLIDAYS_API_ORIGIN}${supabaseConnectSrc}`,
     "frame-ancestors 'none'",
     "font-src 'self'",
     "object-src 'none'",
@@ -1240,7 +1248,8 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 | CSP の置き場 | `next.config.mjs` `headers()` の `'/(.*)'` (静的な文字列) | `src/lib/security/csp.ts` (純関数) + `src/middleware.ts` (毎リクエスト)。`next.config.mjs` には無い |
 | `script-src` | `'self' 'unsafe-inline' [dev: 'unsafe-eval'] *.vercel-scripts.com https://challenges.cloudflare.com` | `'self' 'nonce-<24 文字>' [dev: 'unsafe-eval'] 'report-sample' *.vercel-scripts.com https://challenges.cloudflare.com` |
 | `style-src` | `'self' 'unsafe-inline'` | 同じ (据え置き) |
-| `default-src` / `frame-src` / `img-src` / `connect-src` / `frame-ancestors` / `font-src` / `object-src` | 現行の値 | 同じ |
+| `default-src` / `frame-src` / `img-src` / `frame-ancestors` / `font-src` / `object-src` | 現行の値 | 同じ |
+| `connect-src` | `'self' *.supabase.co *.vercel.app wss://*.supabase.co` (+ ローカルの Supabase の origin) | `https://holidays-jp.github.io` (`HOLIDAYS_API_ORIGIN`) を足す (#1769。週間献立の祝日の取得がブラウザに止められていた)。ほかの許可先は同じ |
 | 報告 | 無し | `report-uri /api/csp-report` → `app_logs` (warn / `csp-report`) |
 | 報告だけ (report-only) | 無し | `CSP_REPORT_ONLY=on` でヘッダー名が変わる |
 | CSP が付く応答 | `headers()` が当たる全応答 (matcher の外も) | middleware の全応答 (matcher の外には付かない: §22 Q-4) |

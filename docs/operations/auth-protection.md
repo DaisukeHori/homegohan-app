@@ -67,7 +67,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 - 記録の保持期間: 記録の行は、最後の失敗 (`last_failed_at`。無ければ `updated_at`) から **8 日** が経つと、毎日 03:45 JST の pg_cron のジョブ `cleanup-stale-login-failures-and-grant-claims` が消す (`supabase/migrations/20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql`、#1492)。8 日は、回数を 0 に戻すまでの時間の上限 (10080 分 = 7 日) より 1 日長いので、数えている途中の行は消さない (上限より古い行は、どの設定でも回数の判定に使われない)。
 - ロックをしないので、ロック中の応答 (423)・ロックの残り時間の案内・ロックの通知のメール (本人・運営)・ロックを外す API は無い。
 - **ボットの確認が働かないもの**: モバイルのアプリのログイン (アプリはまだ Supabase を直接呼ぶ)、Supabase の Auth API を直接呼ぶ攻撃 (URL と anon key は公開されている)、Google ログイン。直接呼ぶ攻撃は、Supabase の CAPTCHA (§6 手順 5) とレート制限 (§3.1) で止める。
-- DB には、ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) が残っている。アプリからは呼ばない。消すかどうかは別に決める (関数・列の削除になるため)。
+- ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) は、DB から消してある (`supabase/migrations/20261017010000_drop_auth_login_lock_objects.sql`、#1542)。
 
 ---
 
@@ -92,7 +92,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | 確認 | `/verify` (メールのリンク・OTP の確認) | IP アドレスごと・5 分あたり | 30 回 | |
 | 匿名サインイン | `/signup` (メールも電話も無いもの) | IP アドレスごと・1 時間あたり | 30 回 | |
 | Web3 サインイン | `/token` | IP アドレスごと・5 分あたり | 30 回 | |
-| 多要素認証 (MFA) の challenge / verify | `/factors/:id/challenge` `/factors/:id/verify` | IP アドレスごと・1 分あたり | 15 回 (変更不可) | 変更できないので記入は不要 (このアプリは MFA を使っていない) |
+| 多要素認証 (MFA) の challenge / verify | `/factors/:id/challenge` `/factors/:id/verify` | IP アドレスごと・1 分あたり | 15 回 (変更不可) | 変更できないので記入は不要 (運営ロールは TOTP を使う。docs/design/cross/12-operator-mfa.md・下の §11) |
 | 同じユーザーへの再送 | `/signup` の確認メール、`/recover`、`/otp` | ユーザーごと | 60 秒に 1 回 | |
 
 超えると 429 (Too Many Requests) が返る。画面は「しばらくしてから再度お試しください」と表示し、ログインではクールダウンも付ける (`src/app/(auth)/login/page.tsx`)。
@@ -110,6 +110,13 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | パスワードの最小文字数 | | アプリ側の確認は 8 文字以上・英字と数字を含む (`src/lib/auth/validate-password.ts`) |
 | パスワードに必須の文字の種類 | | |
 | メールアドレスの確認 (Confirm email) | | 有効だと、登録後にメールのリンクを押すまでログインできない |
+| Secure password change (`secure_password_change`。Authentication → Providers → Email) | | **OFF のまま**にする。ON だと、作成から 24 時間を過ぎたセッションのパスワードの変更に再認証 (メールのコード) が要り、アプリの画面はそれを扱わない (`docs/design/cross/16-auth-history-sessions.md` §24) |
+| GoTrue の DB の暗号化 (`GOTRUE_SECURITY_DB_ENCRYPTION_*`) | | **OFF のまま**にする。ON にすると `auth.users.encrypted_password` が暗号文になり、過去のパスワードとの照合 (RPC `auth_password_check`。bcrypt を比べる) ができない (cross/16 §3) |
+| `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` (パスワードの変更に現在のパスワードを求める) | | 既定は OFF。OFF の間は、access token を盗んだ人が GoTrue の `PUT /auth/v1/user` を直接呼ぶと、現在のパスワード無しで変えられる (アプリの照合も通らない。cross/16 S-33)。ON にするかは cross/16 §25 Q-18 の結論に従う (ON にできるのは、パスワードの変更の API (cross/16 段 C) が入った後) |
+| JWT (access token) の有効期間 (Authentication → Sessions) | | 既定の 1 時間以下にする。失効させた端末が PostgREST を直接呼ぶ要求は、JWT の期限まで通る (cross/16 §24) |
+| Session timebox / inactivity timeout (Authentication → Sessions) | | **使わない** (未設定のまま)。代わりに pg_cron のジョブ `cleanup-auth-sessions-and-login-history` が、30 日更新の無いセッションを終える (cross/16 §11.6) |
+| `auth.sessions` / `auth.users` のトリガー 4 本が残っているか | | 年に 1 回、SQL エディタで `SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal` を流し、`on_auth_session_created`・`on_auth_session_refreshed`・`on_auth_session_deleted`・`on_auth_user_password_changed` の 4 行があることを確かめる。Supabase 側の移行で表が作り直されると消え、ログインの記録とパスワードの履歴が止まる (ログインは止まらない) |
+| その 4 本のトリガーの消し方 | | 表の所有者 (`supabase_auth_admin`) でないと消せない。migration のロールバック (`supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`) は関数の本体を空にして残す (cross/16 §11.7)。トリガーそのものを消すときは Supabase のサポートに頼む |
 
 ### 3.3 メール送信についての注意
 
@@ -307,3 +314,19 @@ Cloudflare ダッシュボード → Turnstile → Add widget で作る。
 - [x] 本番向け e2e・動作確認スクリプト (`--with-auth`)・Maestro 補助スクリプトのログインの対応を依頼する (§4 の「未対応」だった 2 つは #1474 で対応済み。e2e・`--with-auth`・Maestro 補助スクリプトの Supabase の直接の呼び出しは #1547 で対応済み)
 - [ ] **Supabase で CAPTCHA を有効にする時期**を決める (§6 手順 5)
 - [ ] プライバシーポリシーへの追記が要るか判断する (§9)
+
+---
+
+## 11. 運営の MFA (二段階認証) の運用
+
+正典は `docs/design/cross/12-operator-mfa.md`。必須ロール (super_admin / admin / finance / org_industrial_doctor) は、認証アプリ (TOTP) の 6 桁を入れたセッション (aal2) でなければ運営の画面・API を使えない (#1176 / #1707)。
+
+- **ダッシュボードの前提**: Supabase の Authentication → Multi-Factor で、TOTP の Enroll / Verify が有効であること (Supabase の既定は有効)。ローカルの Supabase は `scripts/supabase-local.sh` が組み立てる config.toml の `[auth.mfa.totp]` で有効にしている。
+- **`OPERATOR_MFA_ENFORCE_FROM` の決め方**: 未設定なら、未登録の必須ロールは次のアクセスから登録を求められる (猶予なし)。運営に登録の期間を渡したいときは、ISO 8601 + タイムゾーンの日時 (例: `2026-11-01T00:00:00+09:00`) を入れる。その日時までは未登録でも運営の画面を使え、画面の上に期日のバナーが出る。登録済みの運営には効かない (常に 6 桁を求める)。形が違う値・存在しない日時は無視して猶予なしになる (警告のログを 1 回出す)。全員が登録したら消す。
+- **super_admin が 2 人とも認証アプリを使えなくなったとき (最後の手段)**: バックアップコードも無いときは、Supabase のダッシュボードの Authentication → Users → 対象の利用者 → MFA factors で factor を削除する。次のログインで登録を求められるので、登録し直す。⚠️ factor の削除だけでは、その利用者の既存のセッションは終わらない (2026-10-16 のローカルの GoTrue v2.183.0 の実測で、削除の前の aal1 のセッションが残った)。アプリの回復 (`/settings/security/mfa/recover`) は route が全セッションを終えるが、ダッシュボードの削除はそれをしない。6 桁を入れたセッション (aal2) が他の端末に残っていると、factor が消えてもそのセッションは運営の入口を通る (設計書 P-3) ので、端末の紛失・盗難が疑われるときは、登録し直した後にパスワードの再設定 (`/auth/reset-password`。すべての端末からログアウトする) を行う。
+- **JWT の署名鍵が対称 (HS256) のプロジェクト**では、運営の要求ごとに `getClaims` が Auth へ 1 回問い合わせる (getUser と同程度)。非対称の鍵に移すとサーバーの中で確かめられる。
+- **アプリ (ホームのタブの WebView で開く運営画面)** の猶予の扱いは Web と同じ。猶予中は未登録の必須ロールも通り (画面の上に期日のバナー)、猶予を過ぎると WebView の中の「ブラウザで登録」の案内で止まる (設計書 §16。アプリのネイティブの運営の区画は 2026-10-16 に削除したので、区画のゲートは無い)。
+- **6 桁を入れるたびに (登録のときだけでなく毎回)、同じ人の他の端末・ブラウザの aal1 のセッションがログアウトされる**。例: Web で 6 桁を入れるとスマホのアプリが再ログインになる。アプリから防ぐ手段は無い (Supabase の verify の挙動。設計書 §26.3・S-25・Q-11)。
+- **段 E (DB の経路) の後は**、DB (PostgREST / RPC) を本人の JWT で直接呼ぶ経路も、TOTP を登録済みの運営に aal2 を求める。未登録の運営は DB では止めない (猶予を過ぎても登録しない運営は、Web の運営の画面が登録へ回す。設計書 §0.3)。
+- **アプリのホームのタブ (WebView の `/admin`)** では 6 桁をアプリの確認画面で入れ、登録・回復・設定 (バックアップコードの再発行・認証アプリの解除) はブラウザで行う (設計書 §16.4)。アプリの確認画面は段 D の版から開くので、それより前のアプリでは、アプリの更新かブラウザを使う。
+- バックアップコード (10 個・1 回だけ使える) は `/settings/security/mfa` で発行し直せる (6 桁を入れたセッションだけ)。発行し直すと古いコードはすべて使えなくなる。

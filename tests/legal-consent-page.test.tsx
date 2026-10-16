@@ -503,5 +503,38 @@ describe('/legal-consent フォーム (クライアント側)', () => {
       await renderForm();
       expect(declineButton().disabled).toBe(false);
     });
+
+    it('「同意しない」の後の案内にも、開示・訂正・利用停止・消去の請求の画面 (/settings/data-requests) へのリンクを出す (#1751)', async () => {
+      await renderForm();
+
+      await act(async () => {
+        declineButton().click();
+      });
+
+      const guide = container.querySelector('[data-testid="legal-consent-dsr-guide"]');
+      expect(guide).not.toBeNull();
+      expect(guide!.textContent).toContain('同意していなくても');
+      expect(guide!.querySelector('a[href="/settings/data-requests"]')).not.toBeNull();
+    });
+  });
+
+  describe('本人の権利の請求の案内 (#1751)', () => {
+    it('同意のフォームの下に、同意せずに請求の画面 (/settings/data-requests) へ進むリンクを出す。押しても同意の API は呼ばない', async () => {
+      await renderForm();
+
+      const guide = container.querySelector('[data-testid="legal-consent-dsr-link"]');
+      expect(guide).not.toBeNull();
+      expect(guide!.textContent).toContain('開示・訂正・利用停止・消去');
+      const link = guide!.querySelector<HTMLAnchorElement>('a[href="/settings/data-requests"]');
+      expect(link).not.toBeNull();
+      expect(link!.getAttribute('target')).toBeNull();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('再同意 (改定の後) のフォームにも同じリンクを出す', async () => {
+      await renderForm({ isReconsent: true });
+
+      expect(container.querySelector('[data-testid="legal-consent-dsr-link"] a[href="/settings/data-requests"]')).not.toBeNull();
+    });
   });
 });

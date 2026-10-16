@@ -39,9 +39,16 @@
  *   起きなかった競合なので、/verify の 403 は generate_link からやり直す (回数は testSessionMaxAttempts。待ち時間は乱数で
  *   ずらし、同じ競合を繰り返さないようにする)。
  *
+ * 運営の MFA (#1176。docs/design/cross/12-operator-mfa.md §22.4.3): 必須ロールの運営の画面・API は aal2 のセッションだけを通すので、
+ * promoteTestSessionToAal2 が createTestSession のセッション (aal1) に TOTP を登録・確認して aal2 にする
+ * (anon key と Bearer access_token で /auth/v1/factors → /factors/{id}/challenge → /factors/{id}/verify。
+ * tests/e2e-test-session.test.ts が、ほかに /auth/v1/factors を直接呼ぶファイルが無いことを検査する)。
+ *
  * 鍵の値は、出力・ログ・失敗の結果に含めない (失敗の結果は、どの段かと HTTP のステータスと説明。応答の本文の先頭は
  * responseBodyPreview に分けて持つので、本文を出さない呼び出し側 (smoke) は説明だけを出せる)。
  */
+
+import { generateTotp } from "./totp.mjs";
 
 /** 読む環境変数の名前 (今までのテストと同じもの。値は出さない) */
 export const TEST_SESSION_ENV_NAMES = Object.freeze({
@@ -98,7 +105,7 @@ export const TEST_SESSION_RETRY_BASE_DELAY_MS = 200;
  * @typedef {{ access_token: string; refresh_token?: string; expires_at?: number; expires_in?: number; token_type?: string; [key: string]: unknown }} SupabaseSessionJson
  */
 
-/** @typedef {"config" | "generate_link" | "verify"} TestSessionStep */
+/** @typedef {"config" | "generate_link" | "verify" | "mfa-enroll" | "mfa-challenge" | "mfa-verify"} TestSessionStep */
 
 /**
  * 失敗の結果。
@@ -137,6 +144,25 @@ export function testSessionMaxAttempts(env = process.env) {
   }
   return TEST_SESSION_DEFAULT_MAX_ATTEMPTS;
 }
+
+/**
+ * 必須ロール。src/lib/auth/mfa/policy.ts の MFA_REQUIRED_ROLES の写し
+ * (.mjs は TypeScript を import できない。一致は tests/e2e-test-session.test.ts が確かめる)
+ */
+export const E2E_MFA_REQUIRED_ROLES = Object.freeze(["super_admin", "admin", "finance", "org_industrial_doctor"]);
+
+/** 昇格で登録する factor の表示名 (1 利用者 1 個) */
+export const E2E_TOTP_FRIENDLY_NAME = "e2e-authenticator";
+
+/**
+ * promoteTestSessionToAal2 の 429 を injectSession が例外にするときの頭 (結合の MFA_PROMOTION_RATE_LIMITED_MESSAGE と同じ文)。
+ * ローカルの Supabase では MFA の回数制限が効かない前提で、待って試し直さない (§22.4.4)
+ */
+export const E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE =
+  "Supabase の MFA の回数制限 (429) に当たりました。ローカルの Supabase では MFA の回数制限が効かない前提です (docs/design/cross/12-operator-mfa.md §22.4.4。結合テスト M-13 を確かめてください)";
+
+/** MFA の回数制限の HTTP ステータス (やり直さない) */
+export const E2E_MFA_RATE_LIMITED_STATUS = 429;
 
 /**
  * 環境変数から、テスト用のセッションを作るのに要る値を読む。1 つでも無ければ null。
@@ -309,4 +335,105 @@ async function createTestSessionOnce(email, config, fetchImpl) {
 export function describeTestSessionFailure(result) {
   const body = result.responseBodyPreview ? `: ${result.responseBodyPreview}` : "";
   return `テスト用のセッションを作れませんでした (${result.step}): ${result.detail}${body}`;
+}
+
+/**
+ * @typedef {{ ok: true; session: SupabaseSessionJson; factorId: string; secret: string } | TestSessionFailure} PromoteTestSessionResult
+ */
+
+/**
+ * @typedef {object} PromoteTestSessionOptions
+ * @property {TestSessionEnv} [env] - 設定を読む環境変数。省略時は process.env
+ * @property {TestSessionConfig | null} [config] - 省略時は env から読む (readTestSessionConfig)
+ * @property {typeof fetch} [fetchImpl] - 送る関数 (単体テストは差し替える)。省略時は globalThis.fetch
+ * @property {(secret: string) => string} [totpImpl] - 6 桁を作る関数 (単体テストで差し替える)。省略時は totp.mjs の generateTotp
+ */
+
+/**
+ * createTestSession の session (aal1) を aal2 にする (#1176。docs/design/cross/12-operator-mfa.md §22.4.3)。
+ * anon key (apikey) と Authorization: Bearer <session.access_token> で
+ *   POST /auth/v1/factors { factor_type: 'totp', friendly_name: E2E_TOTP_FRIENDLY_NAME } → { id, totp: { secret } }
+ *   POST /auth/v1/factors/{id}/challenge → { id: challengeId }
+ *   POST /auth/v1/factors/{id}/verify { challenge_id, code: generateTotp(secret) } → 新しい session (aal2)
+ * 戻り: { ok: true, session, factorId, secret } か、createTestSession と同じ形の失敗 ({ ok: false, step: 'mfa-enroll' | 'mfa-challenge' | 'mfa-verify' | 'config', status, ... })。
+ * 失敗の説明に鍵・トークン・secret の値を入れない。challenge / verify の 429 はやり直さず、そのまま失敗として返す (§22.4.4)。
+ * verify は同じ利用者の他の aal1 のセッションを終える (§26.3) ので、1 利用者につき 1 回 (最初のセッション) だけ呼ぶ。
+ *
+ * @param {SupabaseSessionJson} session - createTestSession の session (aal1)
+ * @param {PromoteTestSessionOptions} [options]
+ * @returns {Promise<PromoteTestSessionResult>}
+ */
+export async function promoteTestSessionToAal2(session, options = {}) {
+  const env = options.env ?? process.env;
+  const config = options.config === undefined ? readTestSessionConfig(env) : options.config;
+  if (!config) {
+    const missing = missingTestSessionEnv(env);
+    const names = missing.length > 0 ? missing : Object.values(TEST_SESSION_ENV_NAMES);
+    return failure("config", TEST_SESSION_NO_HTTP_STATUS, `環境変数 ${names.join(" / ")} が未設定です`);
+  }
+  const fetchImpl = options.fetchImpl ?? globalThis.fetch;
+  const totpImpl = options.totpImpl ?? ((secret) => generateTotp(secret));
+  const headers = {
+    "Content-Type": "application/json",
+    apikey: config.anonKey,
+    Authorization: `Bearer ${session.access_token}`,
+  };
+
+  // 1. TOTP の factor を登録する (unverified)
+  /** @type {Response} */
+  let enrollResp;
+  try {
+    enrollResp = await fetchImpl(`${config.supabaseUrl}/auth/v1/factors`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ factor_type: "totp", friendly_name: E2E_TOTP_FRIENDLY_NAME }),
+    });
+  } catch (err) {
+    return networkFailure("mfa-enroll", err);
+  }
+  if (!enrollResp.ok) return httpFailure("mfa-enroll", enrollResp);
+  /** @type {{ id?: unknown; totp?: { secret?: unknown } } | null} */
+  const factor = await enrollResp.json().catch(() => null);
+  const factorId = factor?.id;
+  const secret = factor?.totp?.secret;
+  if (typeof factorId !== "string" || !factorId || typeof secret !== "string" || !secret) {
+    return failure("mfa-enroll", enrollResp.status, "応答に factor の id か TOTP の secret がありません");
+  }
+  const factorPath = `${config.supabaseUrl}/auth/v1/factors/${encodeURIComponent(factorId)}`;
+
+  // 2. challenge を作る
+  /** @type {Response} */
+  let challengeResp;
+  try {
+    challengeResp = await fetchImpl(`${factorPath}/challenge`, { method: "POST", headers, body: "{}" });
+  } catch (err) {
+    return networkFailure("mfa-challenge", err);
+  }
+  if (!challengeResp.ok) return httpFailure("mfa-challenge", challengeResp);
+  /** @type {{ id?: unknown } | null} */
+  const challenge = await challengeResp.json().catch(() => null);
+  const challengeId = challenge?.id;
+  if (typeof challengeId !== "string" || !challengeId) {
+    return failure("mfa-challenge", challengeResp.status, "応答に challenge の id がありません");
+  }
+
+  // 3. 6 桁で確かめる → aal2 のセッション
+  /** @type {Response} */
+  let verifyResp;
+  try {
+    verifyResp = await fetchImpl(`${factorPath}/verify`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ challenge_id: challengeId, code: totpImpl(secret) }),
+    });
+  } catch (err) {
+    return networkFailure("mfa-verify", err);
+  }
+  if (!verifyResp.ok) return httpFailure("mfa-verify", verifyResp);
+  /** @type {SupabaseSessionJson | null} */
+  const promoted = await verifyResp.json().catch(() => null);
+  if (!promoted || typeof promoted.access_token !== "string" || !promoted.access_token) {
+    return failure("mfa-verify", verifyResp.status, "応答に access_token がありません");
+  }
+  return { ok: true, session: promoted, factorId, secret };
 }
