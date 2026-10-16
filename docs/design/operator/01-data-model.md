@@ -991,10 +991,10 @@ CREATE INDEX idx_stripe_webhook_status ON stripe_webhook_events(processing_statu
 
 ALTER TABLE stripe_webhook_events ENABLE ROW LEVEL SECURITY;
 
--- service_role のみアクセス (Webhook ハンドラは Edge Function 経由)
+-- service_role のみアクセス (Webhook の受け口 POST /api/webhooks/stripe は Next の route で、service_role で呼ぶ)
 CREATE POLICY "stripe_webhook_no_access_rls" ON stripe_webhook_events
   FOR ALL USING (false);
--- Edge Function は service_role で bypass
+-- 受け口 (Next の route) は service_role で呼ぶので RLS を bypass する
 ```
 
 - 冪等は DB 関数 `billing_claim_stripe_event` (`event.id` で処理の権利を取る。戻り値 `claimed` / `completed` / `in_progress`) と `billing_finish_stripe_event` で取る。受け口 `POST /api/webhooks/stripe` が呼ぶ (billing/01 §6.4・§9.6)。
