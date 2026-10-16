@@ -1,7 +1,7 @@
 /**
  * #1148 機能フラグの実サーバーでの確認 (Next dev サーバ + ローカル Supabase)
  *
- * feature_flags の 2 つのフラグを DB で切り替えて、実際のミドルウェア (Edge) と API route (Node) がそれに従うことを確かめる。
+ * feature_flags の 2 つのフラグを DB で切り替えて、実際の proxy (src/proxy.ts) と API route がそれに従うことを確かめる。
  *   - maintenance_mode = ON:
  *       一般ユーザー・未ログインの API は 503 MAINTENANCE_MODE (Retry-After 付き)、ページは 503 の HTML。
  *       運営 (admin) は通る。死活監視 (/api/health)・フラグの取得 (/api/feature-flags)・/login・/terms は止まらない。

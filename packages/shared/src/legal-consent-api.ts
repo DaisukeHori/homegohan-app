@@ -1,6 +1,6 @@
 /**
  * 利用規約・プライバシーポリシーの同意ゲートを /api とモバイルのネイティブの画面にも掛ける (#1442)。
- * サーバー (Edge の middleware・API Route)・Web・モバイルで同じ値と判定を使うための、純粋な定数と関数だけのファイル。
+ * サーバー (proxy (旧 middleware)・API Route)・Web・モバイルで同じ値と判定を使うための、純粋な定数と関数だけのファイル。
  * Node / Deno / RN 固有の API は使わない。副作用は無い。
  *
  *   - LEGAL_CONSENT_EXEMPT_API_PATHS / isLegalConsentExemptApiPath: 未同意でも止めない /api (理由つき)

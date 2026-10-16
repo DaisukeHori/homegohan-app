@@ -14,7 +14,7 @@
  *
  * 注: /api/health/* 配下 (blood-tests / goals / records など) は健康記録機能の API で、
  * このファイルとは別物。そちらは従来どおり各 route で認証する。
- * このパスだけは src/middleware.ts の matcher で認証ミドルウェアから外してある
+ * このパスだけは src/proxy.ts の matcher で認証ミドルウェアから外してある
  * (Supabase のセッション処理を通さず、認証基盤の不調に引きずられないようにするため)。
  */
 
