@@ -723,6 +723,13 @@ function adminChallenge(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/** 管理者の画面のカードの、参加した人の数の欄 (見出し「参加した人」の直前の値) */
+function participantCountCell(): string {
+  const heading = Array.from(container.querySelectorAll('p')).find((el) => el.textContent === '参加した人');
+  expect(heading, '見出し「参加した人」が見つからない').toBeDefined();
+  return heading!.previousElementSibling?.textContent ?? '';
+}
+
 function setNativeValue(element: HTMLInputElement | HTMLSelectElement, value: string) {
   const proto = element instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
   Object.getOwnPropertyDescriptor(proto, 'value')!.set!.call(element, value);
@@ -742,8 +749,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     await render(<OrgChallengesAdminPage />);
 
     expect(text()).toContain('朝食チャレンジ');
-    expect(text()).toContain('12');
-    expect(text()).toContain('参加した人');
+    expect(participantCountCell()).toBe('12');
     expect(text()).toContain('63.2%');
     expect(text()).toContain('参加者の平均 (終了時点)');
     expect(text()).not.toContain('終了後に表示');
@@ -784,7 +790,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).toContain('10人未満');
+    expect(participantCountCell()).toBe('10人未満');
     expect(text()).toContain('終了後に表示');
     expect(text()).toContain('チャレンジが終了すると、終了時点の参加者 (10人以上) の平均を表示します');
     expect(text()).not.toContain('参加者の平均');
@@ -801,8 +807,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).not.toContain('人未満');
-    expect(text()).toContain('16');
+    expect(participantCountCell()).toBe('16');
     expect(text()).toContain('終了後に表示');
     expect(text()).toContain('終了時点の参加者 (15人以上) の平均を表示します');
   });
@@ -834,8 +839,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
 
     await render(<OrgChallengesAdminPage />);
 
-    expect(text()).not.toContain('10人未満');
-    expect(text()).toContain('11');
+    expect(participantCountCell()).toBe('11');
     expect(text()).toContain('表示なし');
     expect(text()).toContain(
       '終了時点の参加者が10人未満か、同じ種類で期間が重なるチャレンジの平均をすでに表示しているため、平均は表示しません',
@@ -866,8 +870,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     await render(<OrgChallengesAdminPage />);
 
     expect(text()).toContain('中止');
-    expect(text()).toContain('12');
-    expect(text()).toContain('参加した人');
+    expect(participantCountCell()).toBe('12');
     expect(text()).not.toContain('終了後に表示');
     expect(text()).not.toContain('表示なし');
     expect(text()).not.toContain('参加者の平均');
