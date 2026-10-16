@@ -271,7 +271,7 @@ describe('POST /api/operator/membership/org/[id]/transfer: 通知メールの宛
     expect(json.data).toMatchObject({ id: ORG_ID, name: 'ほめゴハン株式会社', owner_id: NEW_OWNER_ID });
   });
 
-  it('旧オーナーがいない組織 (owner_id が NULL) に新オーナーを割り当てる: 通知は送り、旧オーナー扱いの人は作らない', async () => {
+  it('譲渡前の owner_id が NULL で読めた (列は NOT NULL なので通常は起きない・防御) 組織に新オーナーを割り当てる: 通知は送り、旧オーナー扱いの人は作らない', async () => {
     fake.tables.organizations[0].owner_id = null;
 
     const res = await call();

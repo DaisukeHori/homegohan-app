@@ -196,7 +196,7 @@ describe('POST /api/org/leave: 脱退の通知メール (#1160)', () => {
     }
   });
 
-  it('組織にオーナーがいない (owner_id が NULL) ときは、脱退は成功させ、誰にも送らず、宛先の検索もしない', async () => {
+  it('組織の owner_id が NULL で読めた (列は NOT NULL なので通常は起きない・防御) ときは、脱退は成功させ、誰にも送らず、宛先の検索もしない', async () => {
     fake.tables.organizations = [{ id: ORG_ID, name: '株式会社ほめゴハン', owner_id: null }];
 
     const res = await call();

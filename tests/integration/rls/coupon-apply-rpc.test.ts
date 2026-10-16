@@ -33,6 +33,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { randomUUID } from 'node:crypto';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { applyCoupon, CouponApplyError, type ApplyCouponResult } from '@/lib/plan/coupon';
 
 // ---------------------------------------------------------------
@@ -193,10 +194,17 @@ async function createSubscription(
   return data.id as string;
 }
 
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。最初に組織を作るときに 1 人だけ作り、afterAll で組織の後に消す */
+let orgOwnerId: string | null = null;
+async function orgOwner(): Promise<string> {
+  orgOwnerId ??= await createPlaceholderOrgOwner(srAdmin, '1224');
+  return orgOwnerId;
+}
+
 async function createOrg(plan: string | null): Promise<string> {
   const { data, error } = await srAdmin
     .from('organizations')
-    .insert({ name: `T1224 org ${TS}-${++seq}`, plan })
+    .insert({ name: `T1224 org ${TS}-${++seq}`, plan, owner_id: await orgOwner() })
     .select('id')
     .single();
   if (error || !data) throw new Error(`failed to create organizations: ${error?.message}`);
@@ -294,6 +302,8 @@ afterAll(async () => {
   if (createdOrgIds.length > 0) {
     await srAdmin.from('organizations').delete().in('id', createdOrgIds);
   }
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.auth.admin.deleteUser(id);
   }

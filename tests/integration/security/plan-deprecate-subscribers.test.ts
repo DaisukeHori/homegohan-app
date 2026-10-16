@@ -104,6 +104,8 @@ async function addFamily(planKey: string, status: 'active' | 'dissolved') {
 async function addOrganization(planKey: string, status: 'active' | 'dissolved') {
   const { error } = await srAdmin.from('organizations').insert({
     name: `it-1127 ${status} ${TS}`,
+    // owner_id は NOT NULL (#1103 項目 10)。家族の代表者と同じく契約者にする (afterAll で組織を消してからユーザーを消す)
+    owner_id: subscriber.userId,
     plan: planKey,
     status,
     ...(status === 'dissolved' ? { dissolved_at: new Date().toISOString() } : {}),
@@ -144,7 +146,7 @@ afterAll(async () => {
     await srAdmin.from('subscription_plans').delete().eq('plan_key', planKey);
   }
   await cleanupAuditLogs(superAdmin.userId);
-  // family_groups.representative_id は ON DELETE RESTRICT なので、家族グループを消したあとにユーザーを消す
+  // family_groups.representative_id と organizations.owner_id は ON DELETE RESTRICT なので、家族グループ・組織を消したあとにユーザーを消す
   await Promise.all([cleanupTestUser(superAdmin.userId), cleanupTestUser(subscriber.userId)]);
 }, 60_000);
 

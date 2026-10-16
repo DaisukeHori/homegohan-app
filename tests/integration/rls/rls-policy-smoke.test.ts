@@ -14,6 +14,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -152,12 +153,15 @@ const TS = Date.now();
 let regularUser: RlsTestUser;
 let adminUser: RlsTestUser;
 let testOrgId: string;
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない。afterAll で組織の後に消す */
+let orgOwnerId = '';
 
 beforeAll(async () => {
   // テスト用 organization を service_role で作成 (cleanup 用に ID 保持)
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, 'rls-smoke');
   const { data: orgData, error: orgError } = await srAdmin
     .from('organizations')
-    .insert({ name: `RLS Smoke Test Org ${TS}`, plan: 'standard' })
+    .insert({ name: `RLS Smoke Test Org ${TS}`, plan: 'standard', owner_id: orgOwnerId })
     .select('id')
     .single();
 
@@ -191,6 +195,8 @@ afterAll(async () => {
   if (testOrgId) {
     await srAdmin.from('organizations').delete().eq('id', testOrgId);
   }
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
 }, 30_000);
 
 // ================================================================
@@ -339,7 +345,7 @@ describe('authenticated(org_admin): 自組織のみ SELECT', () => {
     // 別のテスト組織を作成
     const { data: otherOrg } = await srAdmin
       .from('organizations')
-      .insert({ name: `Other Org ${TS}`, plan: 'standard' })
+      .insert({ name: `Other Org ${TS}`, plan: 'standard', owner_id: orgOwnerId })
       .select('id')
       .single();
 

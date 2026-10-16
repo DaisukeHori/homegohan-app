@@ -294,10 +294,12 @@ test.describe('org 招待 — エッジケース', () => {
         await alicePage.close();
       }
     } finally {
-      await cleanupFreshUser(supabaseAdmin, alice.id);
+      // org を先に削除する (organizations.owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)。
+      // alice は orgA の持ち主で、orgA に所属したまま (ALREADY_IN_ORG で止まれば orgA に残る)。cleanup は所属を外してから組織を消す
       if (orgAId) {
         await cleanup({ orgIds: [orgAId] });
       }
+      await cleanupFreshUser(supabaseAdmin, alice.id);
     }
   });
 
