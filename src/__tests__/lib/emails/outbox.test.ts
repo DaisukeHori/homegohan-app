@@ -151,8 +151,8 @@ describe('resolveEmailOutboxSettings', () => {
       batchSize: 20,
       ignored: ['EMAIL_OUTBOX_MAX_ATTEMPTS', 'EMAIL_OUTBOX_BATCH_SIZE'],
     });
-    // 値そのものは返さない
-    expect(JSON.stringify(settings)).not.toContain(batchSize);
+    // 値そのものは返さない (返すのは変数名と既定値だけ)
+    expect(Object.keys(settings).sort()).toEqual(['batchSize', 'ignored', 'maxAttempts']);
   });
 });
 

@@ -44,11 +44,13 @@ const ROUTE_NAME = 'cron/email-outbox';
 const LOG_FLUSH_GRACE_MS = 1000;
 
 export async function GET(req: Request) {
-  const authError = await requireCronAuth(req); // 1. 認証 (401 / 503)。tests/cron-secret-contract.test.ts の規則 4
+  // 1. 認証 (401 / 503)。tests/cron-secret-contract.test.ts の規則 4
+  const authError = await requireCronAuth(req);
   if (authError) return authError;
   const requestId = generateRequestId();
   const logger = createLogger(ROUTE_NAME, requestId);
-  const apiKey = process.env.RESEND_API_KEY; // 2. 鍵が無ければ取らない (queued は残り、鍵が入った回で送る)
+  // 2. 鍵が無ければ取らない (queued は残り、鍵が入った回で送る)
+  const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     logger.warn('RESEND_API_KEY が未設定のため、送信待ちのメールを送りません');
     return NextResponse.json({ status: 'not_configured' });

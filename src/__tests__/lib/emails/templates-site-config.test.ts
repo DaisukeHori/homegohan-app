@@ -315,9 +315,11 @@ describe('メールの文面: ソースにドメイン・送信元・問い合�
         .readdirSync(path.join(EMAILS_DIR, 'membership'))
         .filter((f) => f.endsWith('.ts') && !['templates.ts', 'scope-label.ts'].includes(f))
         .map((f) => `membership/${f.replace(/\.ts$/, '')}`),
+      // #1193 contact-admin-notification.ts は運営 (ADMIN_NOTIFICATION_EMAIL) への通知で、利用者向けの文面ではない
+      // (ops/* の運用メールと同じく署名・問い合わせ先を載せない。送信元は getEmailFrom で決める)
       ...fs
         .readdirSync(path.join(EMAILS_DIR, 'support'))
-        .filter((f) => f.endsWith('.ts'))
+        .filter((f) => f.endsWith('.ts') && f !== 'contact-admin-notification.ts')
         .map((f) => `support/${f.replace(/\.ts$/, '')}`),
       // #1178 format.ts は文面の部品 (日時の表示) で、メールの文面ではない
       ...fs

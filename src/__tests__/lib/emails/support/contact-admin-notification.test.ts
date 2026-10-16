@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmailEnvelopeSchema } from '@/lib/emails/envelope';
 import {
@@ -80,5 +82,15 @@ describe('renderContactAdminNotificationEmail (#1193)', () => {
     expect(lines).toContain('件名: ログインできません');
     expect(text).toContain('--- 内容 ---\nパスワードを再設定しても\nログインできません。');
     expect(lines).toContain(INQUIRIES_URL);
+  });
+
+  it('ソースに送信元・問い合わせ先・URL のドメインを直接書かない (送信元は getEmailFrom、URL は呼び出し側が渡す)', () => {
+    const source = fs.readFileSync(path.resolve(__dirname, '../../../../lib/emails/support/contact-admin-notification.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+    expect(code).not.toMatch(/noreply@/);
+    expect(code).not.toMatch(/support@/);
+    expect(code).not.toMatch(/https?:\/\//);
+    expect(code).toContain('getEmailFrom()');
   });
 });
