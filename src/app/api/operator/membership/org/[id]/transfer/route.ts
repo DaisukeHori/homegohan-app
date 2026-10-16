@@ -16,8 +16,8 @@ import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force
 import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
-import { normalizeUuid } from '@/lib/http-params';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { normalizeUuid } from '@/lib/http-params';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,9 +47,10 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       );
     }
     const { reason } = parsed.data;
-    // DB・auth の id は小文字。z.string().uuid() は大文字・混在も通すので、そのままだと通知の宛先の立場の判定
-    // (uid === to_user_id。uid は DB から読んだ小文字) が外れ、新オーナーに一般メンバー向けの本文が届く。
-    // 受け取った直後にそろえ、以後 (RPC・監査・宛先の取得・立場の判定・ログ) はそろえた値だけを使う (#1793)
+    // 本文の to_user_id は UUID の形を確かめたうえで小文字にそろえ、以後の RPC・監査・宛先の解決・役割の判定・ログには
+    // そろえた値だけを使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字のままでも RPC は
+    // 新しいオーナーに譲渡するが、DB から読んだメンバーの id (小文字) との `===` と emailMap のキーが外れ、
+    // 新しいオーナーに一般メンバー向けの通知が届き、新オーナー欄のアドレスも空になる
     const to_user_id = normalizeUuid(parsed.data.to_user_id);
 
     // 通知メール用に、RPC 実行"前"の旧オーナーと組織名を控えておく (#1209)。

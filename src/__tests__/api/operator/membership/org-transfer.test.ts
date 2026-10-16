@@ -116,18 +116,23 @@ function buildFake(leadingUserCount = 0): FakeServiceRole {
 /**
  * operator_force_owner_transfer の挙動 (supabase/baseline/prod_schema.sql) を再現する。
  * ★organizations.owner_id を新オーナーへ書き換えた「後の」行を返す。ここが #1209 の原因そのもの。
+ * 新オーナーの id は Postgres の uuid と同じく大文字小文字を区別せずに比べ、保存するのは行の id (小文字) にする (#1790)。
+ * そのため大文字の to_user_id をそのまま RPC に渡しても譲渡は成り立ち、route の側の突き合わせのずれだけがテストに出る
  */
 function simulateOwnerTransfer(fake: FakeServiceRole, args: RpcArgs) {
   fake.events.push(`rpc:${RPC_NAME}`);
   const profiles = fake.tables.user_profiles;
-  const target = profiles.find((p) => p.id === args.p_new_owner_id && p.organization_id === args.p_organization_id);
+  const target = profiles.find(
+    (p) =>
+      String(p.id).toLowerCase() === args.p_new_owner_id.toLowerCase() && p.organization_id === args.p_organization_id,
+  );
   const org = fake.tables.organizations.find((o) => o.id === args.p_organization_id);
   if (!target || !org) return { data: null, error: { message: 'TARGET_NOT_IN_ORG', code: 'P0001' } };
 
   const oldOwner = profiles.find((p) => p.id === org.owner_id);
   if (oldOwner) oldOwner.org_role = 'admin';
   target.org_role = 'owner';
-  org.owner_id = args.p_new_owner_id;
+  org.owner_id = target.id;
   return { data: { ...org }, error: null };
 }
 
@@ -625,31 +630,19 @@ describe('POST /api/operator/membership/org/[id]/transfer: 宛名に仮置きの
   });
 });
 
-describe('POST /api/operator/membership/org/[id]/transfer: to_user_id を大文字・混在の UUID で送っても (#1793)', () => {
-  // z.string().uuid() は大文字・混在も通す。DB から読んだ uid (小文字) と本文の to_user_id を === で比べていたため、
-  // 新オーナーに一般メンバー (member) 向けの本文が届いていた。受け取った直後にそろえることを固定する
-  /** 英字を 1 文字おきに大文字にする (大文字・小文字の混在) */
-  const mixedCase = (id: string) => id.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
-
-  beforeEach(() => {
-    // 本物と同じく、DB (uuid の比較) と Auth (getUserById) は大文字小文字を区別しない
-    // (ここが === のままだと、そろえ忘れは RPC の失敗になり「譲渡は通るのに通知の立場が違う」症状を再現できない)
-    mocks.rpc.mockImplementation(async (name: string, args: RpcArgs) => {
-      if (name !== RPC_NAME) throw new Error(`unexpected rpc: ${name}`);
-      return simulateOwnerTransfer(fake, { ...args, p_organization_id: args.p_organization_id.toLowerCase(), p_new_owner_id: args.p_new_owner_id.toLowerCase() });
-    });
-    const lookup = fake.auth.admin.getUserById.getMockImplementation();
-    if (!lookup) throw new Error('getUserById の実装がありません');
-    fake.auth.admin.getUserById.mockImplementation(async (id: string) => lookup(id.toLowerCase()));
-  });
+describe('POST /api/operator/membership/org/[id]/transfer: 大文字の to_user_id でも新オーナーの通知と宛先がずれない (#1790)', () => {
+  // 16 進の英字を含む NEW_OWNER_ID を、すべて大文字・大文字小文字の混在にした値 (どちらも小文字にすると NEW_OWNER_ID)
+  const NEW_OWNER_ID_UPPER = 'B0EEBC99-9C0B-4EF8-BB6D-6BB9BD380A22';
+  const NEW_OWNER_ID_MIXED = 'B0eeBC99-9c0B-4Ef8-bB6d-6Bb9bD380a22';
 
   it.each([
-    ['大文字', NEW_OWNER_ID.toUpperCase()],
-    ['大文字・小文字の混在', mixedCase(NEW_OWNER_ID)],
-  ])('%s: 新オーナーには new_owner の本文を送り、RPC・宛先の取得にはそろえた小文字の id を渡す', async (_label, sentId) => {
-    expect(sentId).not.toBe(NEW_OWNER_ID); // そろえる前と後で値が違う (英字を含む) こと
+    ['すべて大文字', NEW_OWNER_ID_UPPER],
+    ['大文字小文字の混在', NEW_OWNER_ID_MIXED],
+  ])('to_user_id が%s: 新オーナーには new_owner の通知、全員の新オーナー欄は新オーナーのアドレス、RPC には小文字の id', async (_label, toUserId) => {
+    expect(toUserId).not.toBe(NEW_OWNER_ID);
+    expect(toUserId.toLowerCase()).toBe(NEW_OWNER_ID);
 
-    const res = await call({ to_user_id: sentId, reason: REASON });
+    const res = await call({ to_user_id: toUserId, reason: REASON });
 
     expect(res.status).toBe(200);
     expect(mocks.rpc).toHaveBeenCalledWith(RPC_NAME, {
@@ -657,19 +650,41 @@ describe('POST /api/operator/membership/org/[id]/transfer: to_user_id を大文�
       p_new_owner_id: NEW_OWNER_ID,
       p_reason: REASON,
     });
+    expect(fake.tables.organizations[0].owner_id).toBe(NEW_OWNER_ID);
 
-    const rendered = vi.mocked(renderForceTransferEmail).mock.calls.map(([vars]) => vars);
-    const roleOf = (address: string) => rendered.find((vars) => vars.recipient_email === address)?.recipient_role;
-    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
+    const roleOf = (address: string) => renderedVars().find((vars) => vars.recipient_email === address)?.recipient_role;
     expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
     expect(roleOf(MEMBER_EMAIL)).toBe('member');
-    expect(rendered).toHaveLength(3);
-    for (const vars of rendered) {
+    expect(renderedVars()).toHaveLength(3);
+    for (const vars of renderedVars()) {
       expect(vars).toMatchObject({ old_owner_email: OLD_EMAIL, new_owner_email: NEW_EMAIL });
     }
-    // 宛先のアドレスは 1 人 1 回だけ引く (大文字の id と小文字の id で同じ人を二重に引かない)
-    expect(fake.auth.admin.getUserById.mock.calls.map(([id]) => id).sort()).toEqual([OLD_OWNER_ID, NEW_OWNER_ID, MEMBER_ID].sort());
-    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(valueUnder(sentTo(MEMBER_EMAIL)[0].text, '新オーナー')).toBe(NEW_EMAIL);
+
+    // 宛先は小文字の id で 1 人 1 回だけ引く (大文字の id で同じ人を二重に引かない)
+    expect(fake.auth.admin.getUserById.mock.calls.map(([id]) => id).sort()).toEqual(
+      [OLD_OWNER_ID, NEW_OWNER_ID, MEMBER_ID].sort(),
+    );
     expect(mocks.logWarn).not.toHaveBeenCalled();
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(JSON.stringify([mocks.rpc.mock.calls, fake.auth.admin.getUserById.mock.calls])).not.toContain(toUserId);
+  });
+
+  it('通知の失敗のログに残す to_user_id も小文字にそろえた値', async () => {
+    const sendError = new Error('EMAIL_SEND_FAILED: temporarily unavailable');
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === OLD_EMAIL) throw sendError;
+      return { id: 'email-ok' };
+    });
+
+    const res = await call({ to_user_id: NEW_OWNER_ID_UPPER, reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), sendError, {
+      organization_id: ORG_ID,
+      to_user_id: NEW_OWNER_ID,
+      failed_count: 1,
+    });
   });
 });

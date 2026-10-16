@@ -87,11 +87,11 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       }
     }
 
-    // DB の id は小文字。大文字・混在で送られた plannedMealId が、DB で見つかった id の集合 (foundIds / byId) との照合で
-    // 「見つからない」扱いになり黙って外されないよう、受け取った直後にそろえ、以後 (重複の判定・照合・DB) はそろえた値だけを使う (#1793)
-    const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
-
     // Check for duplicates (date+mealType must be unique, unless plannedMealId differs)
+    // UUID の形なら小文字にそろえてから使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の plannedMealId でも
+    // planned_meals の .in('id', ...) は自分の食事に当たるが、DB から読んだ id (小文字) との突き合わせ (foundIds / byId) が外れて
+    // plannedMealId が消され、既存の食事を置き換えない生成になる。同じ食事を大文字小文字だけ変えて 2 回送る重複もここで弾く
+    const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
     const key = normalizedPlannedMealId || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };

@@ -407,9 +407,10 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     expect(inserted.values).toEqual({ name: '新部署', organization_id: ORG_A });
   });
 
-  // #1793: 人数の Map (fetchMemberCounts) の鍵は DB の小文字の department_id。本文の id を大文字・混在のまま使うと、
+  // #1790・#1793: 人数の Map (fetchMemberCounts) の鍵は DB の小文字の department_id。本文の id を大文字・混在のまま使うと、
   // 更新は DB (uuid の比較は大文字小文字を区別しない) で通るのに人数の照合が外れ、memberCount が 0 で返っていた
-  describe('departments PUT: 部署の id を大文字・混在で送っても (#1793)', () => {
+  // (#1790 が足した「大文字の id」のケースは、下の it.each の「大文字」が同じ確かめ (200・id/name/memberCount・更新された行) を含む)
+  describe('departments PUT: 部署の id を大文字・混在で送っても、更新する部署と返す人数がずれない (#1790・#1793)', () => {
     // 16 進の英字を含む id (DB の id は小文字)。所属は ADMIN_A と MEMBER_A の 2 人
     const DEPT_HEX = 'abcdef12-3456-4abc-8def-0123456789ab';
     /** 英字を 1 文字おきに大文字にする (大文字・小文字の混在) */
@@ -461,6 +462,7 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
       ['大文字・小文字の混在', mixedCase(DEPT_HEX)],
     ])('%s: 更新でき、memberCount は所属している実際の人数 (2 人)。DB にはそろえた小文字の id を渡す', async (_label, sentId) => {
       expect(sentId).not.toBe(DEPT_HEX); // そろえる前と後で値が違う (英字を含む) こと
+      expect(sentId.toLowerCase()).toBe(DEPT_HEX); // 小文字にそろえると DB の id になる
       const passedIds = compareDepartmentIdLikePostgres();
 
       const res = await departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { id: sentId, name: '改名' }) as never);
@@ -1090,4 +1092,3 @@ describe('壊れた JSON は 500 ではなく 400', () => {
     expect(await json(res)).toEqual({ error: 'Invalid JSON' });
     expect(mockLoggerError).not.toHaveBeenCalled();
   });
-});

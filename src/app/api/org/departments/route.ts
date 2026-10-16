@@ -154,13 +154,13 @@ export async function PUT(request: NextRequest) {
     const parsed = await readJsonBody(request);
     if (!parsed.ok) return invalidJsonResponse();
     const body = (parsed.body ?? {}) as { id?: unknown; name?: unknown };
-    if (!body.id || typeof body.id !== 'string') {
+    const rawId = body.id;
+    if (!rawId || typeof rawId !== 'string') {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
     }
-    // 人数の Map (fetchMemberCounts) の鍵は DB の小文字の department_id。大文字・混在で送られた id のままだと、
-    // 更新は DB (uuid の比較は大文字小文字を区別しない) で通るのに counts.get が外れて memberCount が 0 になる。
-    // 受け取った直後にそろえ、以後 (DB・人数の照合) はそろえた値だけを使う (#1793)
-    const id = normalizeUuid(body.id);
+    // UUID の形なら小文字にそろえてから使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の id でも
+    // 更新は自組織の部署に当たるが、人数の集計 (counts。キーは DB から読んだ小文字の department_id) の get が外れて人数が 0 になる
+    const id = normalizeUuid(rawId);
     const name = validateName(body.name);
     if (!name) return invalidNameResponse();
 
