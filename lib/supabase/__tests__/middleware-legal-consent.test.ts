@@ -17,6 +17,9 @@
  *   (全 route の表・許可リスト・順序は middleware-legal-consent-api.test.ts)
  *
  * 既存の差し戻しのテストは lib/supabase/__tests__/middleware.test.ts。
+ *
+ * #1173 (設計書 cross/14 T-MW1〜T-MW4): 生年月日 (birth_date) の無い人と、保護者の同意とのつながりの無い 18 歳未満も同意画面へ回す。
+ * 18 歳未満のときだけ rpc('legal_minor_has_guardian_path') を 1 回聞く (失敗は素通り)。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -30,6 +33,7 @@ const mockGetSession = vi.fn();
 const mockGetUser = vi.fn();
 const mockMaybeSingle = vi.fn();
 const mockSelect = vi.fn();
+const mockRpc = vi.fn();
 const mockCreateServerClient = vi.fn();
 
 mockCreateServerClient.mockImplementation(() => ({
@@ -47,6 +51,7 @@ mockCreateServerClient.mockImplementation(() => ({
       };
     },
   }),
+  rpc: mockRpc,
 }));
 
 vi.mock('@supabase/ssr', () => ({
@@ -71,6 +76,14 @@ const overriddenHeaders = (res: Response) => res.headers.get('x-middleware-overr
 
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
 const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
+/** 成人の placeholder。#1173 で生年月日が無いと同意画面 / 403 になるため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+/** #1173 の 17 歳の it で固定する時刻 (JST 2026-10-16 12:00) と、その日に 17 歳の生年月日 */
+const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+const BIRTH_DATE_17 = '2008-10-17';
+/** #1173 で birth_date を足した、同意ゲートが読む列 (lib/supabase/middleware.ts の PROFILE_COLUMNS_WITH_LEGAL) */
+const PROFILE_COLUMNS_WITH_LEGAL =
+  'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted, birth_date';
 
 function consentProfile(
   accepted: { terms: string | null; privacy: string | null } | 'columns-missing',
@@ -85,7 +98,7 @@ function consentProfile(
       unban_at: null,
       ...(accepted === 'columns-missing'
         ? {}
-        : { terms_version_accepted: accepted.terms, privacy_version_accepted: accepted.privacy }),
+        : { terms_version_accepted: accepted.terms, privacy_version_accepted: accepted.privacy, birth_date: ADULT_BIRTH_DATE }),
       ...overrides,
     },
     error: null,
@@ -405,7 +418,7 @@ describe('updateSession — 規約の再同意ゲート (#1174): 強制 (LEGAL_C
     expect(await res.json()).toEqual({ error: LEGAL_CONSENT_REQUIRED_MESSAGE, code: 'LEGAL_CONSENT_REQUIRED' });
     expect(mockSelect).toHaveBeenCalledTimes(1);
     expect(mockSelect).toHaveBeenCalledWith(
-      'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted',
+      PROFILE_COLUMNS_WITH_LEGAL,
     );
   });
 
@@ -420,7 +433,7 @@ describe('updateSession — 規約の再同意ゲート (#1174): 強制 (LEGAL_C
       expect(res.headers.get('location')).toBeNull();
       expect(mockSelect).toHaveBeenCalledTimes(1);
       expect(mockSelect).toHaveBeenCalledWith(
-        'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted',
+        PROFILE_COLUMNS_WITH_LEGAL,
       );
     },
   );
@@ -641,7 +654,7 @@ describe('updateSession — 規約の再同意ゲート (#1174): 同意済みの
     expect(mockMaybeSingle).toHaveBeenCalledTimes(2);
   });
 
-  it('列があるときの select は、同意済みの版の 2 列を含む 1 回だけ (追加のクエリを増やさない)', async () => {
+  it('列があるときの select は、同意済みの版と生年月日の 3 列を含む 1 回だけ (追加のクエリを増やさない)', async () => {
     mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT));
 
     await updateSession(pageRequest('/home'));
@@ -649,8 +662,67 @@ describe('updateSession — 規約の再同意ゲート (#1174): 同意済みの
     expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
     expect(mockSelect).toHaveBeenCalledTimes(1);
     expect(mockSelect).toHaveBeenCalledWith(
-      'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted',
+      PROFILE_COLUMNS_WITH_LEGAL,
     );
+  });
+});
+
+describe('updateSession — 同意ゲートの生年月日と保護者の同意とのつながり (#1173 T-MW1〜T-MW4)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it('T-MW1: 版が一致して birth_date が無い人は ENFORCE=on で /legal-consent?next=… へ 307 (S3)、birth_date があれば回さない', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: null }));
+    const res = await updateSession(pageRequest('/home'));
+    expect(res.status).toBe(307);
+    expect(res.headers.get('location')).toBe('http://localhost/legal-consent?next=%2Fhome');
+
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT));
+    const ok = await updateSession(pageRequest('/home'));
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get('location')).toBeNull();
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('T-MW2: 画面の分岐の select は PROFILE_COLUMNS_WITH_LEGAL (birth_date を含む) の 1 回だけ', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: null }));
+
+    await updateSession(pageRequest('/home'));
+
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockSelect).toHaveBeenCalledWith(PROFILE_COLUMNS_WITH_LEGAL);
+  });
+
+  it('T-MW4: 版が一致し 17 歳の人は、rpc が false なら 307、true なら回さない、エラーなら回さない (素通り)。1990-01-01 の人では rpc を呼ばない', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: BIRTH_DATE_17 }));
+
+    mockRpc.mockResolvedValueOnce({ data: false, error: null });
+    const denied = await updateSession(pageRequest('/home'));
+    expect(denied.status).toBe(307);
+    expect(denied.headers.get('location')).toBe('http://localhost/legal-consent?next=%2Fhome');
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('legal_minor_has_guardian_path');
+
+    mockRpc.mockResolvedValueOnce({ data: true, error: null });
+    const allowed = await updateSession(pageRequest('/home'));
+    expect(allowed.status).toBe(200);
+    expect(allowed.headers.get('location')).toBeNull();
+
+    mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'boom' } });
+    const failOpen = await updateSession(pageRequest('/home'));
+    expect(failOpen.status).toBe(200);
+    expect(failOpen.headers.get('location')).toBeNull();
+    expect(mockRpc).toHaveBeenCalledTimes(3);
+
+    mockRpc.mockClear();
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT));
+    expect((await updateSession(pageRequest('/home'))).status).toBe(200);
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });
 

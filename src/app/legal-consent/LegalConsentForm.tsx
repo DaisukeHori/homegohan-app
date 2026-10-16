@@ -7,6 +7,10 @@
 //   どちらかが未チェックの間は「同意して続ける」を押せない)
 // - 「同意して続ける」: POST /api/legal/accept で同意を記録し、元の画面 (next) へ戻る。記録は DB 関数が本人の行だけに行う
 // - 「同意しない」: ログアウトして、ご利用いただけないこと・保存データの削除の依頼先 (お問い合わせ) を案内する
+// - #1173: 生年月日がプロフィールに無い人 (needsBirthDate) には生年月日の欄を出す (必須)。18 歳未満の自己登録は
+//   サーバーが 403 LEGAL_MINOR_SELF_SIGNUP_REFUSED で断り、案内 (生年月日を直す / 登録をやめる = 退会) を出す。
+//   保護者の同意とのつながりが無い 18 歳未満の本人 (guardianMissing) には、案内と「登録をやめる」だけを出す。
+//   チェックの初期値は生年月日だけを聞く人でもオフのまま (文書ごとの必須のチェックを本人が付ける)
 // - 開示・訂正・利用停止・消去の請求の画面 (/settings/data-requests) への案内 (#1751): 規約への同意を条件にできない本人の権利なので、
 //   未同意のまま開ける (画面の同意ゲートの対象外・API の許可リスト)。初期設定の前の人 (新規登録の直後) も開ける
 //   (初期設定の差し戻しの対象外。lib/onboarding-routing.ts の isDataSubjectRequestsPath)。この人たちには user_profiles の行がまだ無いが、
@@ -18,6 +22,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import {
+  LEGAL_CONSENT_BIRTH_DATE_COPY,
   LEGAL_DOCUMENTS,
   LEGAL_DOCUMENT_LABELS,
   LEGAL_DOCUMENT_PATHS,
@@ -27,12 +32,20 @@ import {
   legalConsentAgreeLabel,
   legalConsentReadFullTextLabel,
   legalConsentVersionLine,
+  todayLocal,
+  validateBirthDate,
   type LegalDocumentType,
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
 import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
 import { LEGAL_CONSENT_PATH } from '@/lib/legal-consent';
+import {
+  ACCOUNT_DELETE_FAILED_MESSAGE,
+  accountDeletionBlockedMessage,
+  deleteOwnAccount,
+  signOutAfterAccountDeletion,
+} from '@/lib/account-self-service';
 import { DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from '@/lib/data-subject-requests/core';
 
 interface LegalConsentFormProps {
@@ -42,30 +55,72 @@ interface LegalConsentFormProps {
   isReconsent: boolean;
   /** いま有効な版に同意していない文書 */
   outdated: LegalDocumentType[];
+  /** プロフィールに生年月日が無い (欄を出して必須にする。#1173) */
+  needsBirthDate: boolean;
+  /** 18 歳未満の本人で、保護者の同意とのつながりが無い (案内と「登録をやめる」だけを出す。#1173) */
+  guardianMissing: boolean;
 }
 
-type Phase = 'idle' | 'submitting' | 'declining' | 'declined';
+type Phase =
+  | 'idle'
+  | 'submitting'
+  | 'declining'
+  | 'declined'
+  | 'minor_refused'
+  | 'guardian_missing'
+  | 'withdrawing'
+  | 'withdrawn';
+
+/** 「登録をやめる」の失敗のあとに戻る案内の画面 */
+type WithdrawOrigin = 'minor_refused' | 'guardian_missing';
+
+/** 18 歳未満の自己登録を断ったときの応答の code (POST /api/legal/accept の 403) */
+const MINOR_REFUSED_CODE = 'LEGAL_MINOR_SELF_SIGNUP_REFUSED';
+/** 生年月日が暦に無い日・未来・120 年超のときの応答の code (POST /api/legal/accept の 400) */
+const BIRTH_DATE_INVALID_CODE = 'LEGAL_BIRTH_DATE_INVALID';
+const HTTP_BAD_REQUEST = 400;
+const HTTP_UNAUTHORIZED = 401;
+const HTTP_FORBIDDEN = 403;
+const HTTP_CONFLICT = 409;
+
+/** 応答の本文の { error: { code } } を読む (読めなければ null) */
+async function readErrorCode(res: Response): Promise<string | null> {
+  const body: unknown = await res.json().catch(() => null);
+  if (!body || typeof body !== 'object') return null;
+  const error = (body as { error?: unknown }).error;
+  if (!error || typeof error !== 'object') return null;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
 
 // 文面は packages/shared の LEGAL_CONSENT_COPY (アプリのネイティブの同意画面と共用。#1442)
 const GENERIC_ERROR = LEGAL_CONSENT_COPY.acceptFailed;
 
-export default function LegalConsentForm({ next, isReconsent, outdated }: LegalConsentFormProps) {
+export default function LegalConsentForm({ next, isReconsent, outdated, needsBirthDate, guardianMissing }: LegalConsentFormProps) {
   const [agreed, setAgreed] = useState<Record<LegalDocumentType, boolean>>({
     terms_of_service: false,
     privacy_policy: false,
   });
-  const [phase, setPhase] = useState<Phase>('idle');
+  const [phase, setPhase] = useState<Phase>(guardianMissing ? 'guardian_missing' : 'idle');
   const [error, setError] = useState<string | null>(null);
   const [needsReload, setNeedsReload] = useState(false);
+  const [birthDate, setBirthDate] = useState('');
+  const [birthDateRejected, setBirthDateRejected] = useState(false);
+  const [withdrawOrigin, setWithdrawOrigin] = useState<WithdrawOrigin>('minor_refused');
 
   const allAgreed = LEGAL_DOCUMENT_TYPES.every((type) => agreed[type]);
-  const busy = phase === 'submitting' || phase === 'declining';
+  const birthDateValid = !needsBirthDate || validateBirthDate(birthDate, todayLocal()) === null;
+  // 入力があって受け付けられない値か、サーバーが受け付けなかった (400 LEGAL_BIRTH_DATE_INVALID) とき、欄の下に文を出す
+  const showBirthDateInvalid = needsBirthDate && ((birthDate !== '' && !birthDateValid) || birthDateRejected);
+  const canSubmit = allAgreed && birthDateValid;
+  const busy = phase === 'submitting' || phase === 'declining' || phase === 'withdrawing';
 
   const handleAccept = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    if (!allAgreed || busy) return;
+    if (!canSubmit || busy) return;
     setError(null);
     setNeedsReload(false);
+    setBirthDateRejected(false);
     setPhase('submitting');
 
     try {
@@ -75,6 +130,8 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
         body: JSON.stringify({
           terms_version: LEGAL_DOCUMENTS.terms_of_service.version,
           privacy_version: LEGAL_DOCUMENTS.privacy_policy.version,
+          // 生年月日はプロフィールに無いときだけ送る (行にあればサーバーは無視する)
+          ...(needsBirthDate ? { birth_date: birthDate } : {}),
         }),
       });
 
@@ -83,14 +140,24 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
         window.location.assign(next);
         return;
       }
-      if (res.status === 401) {
+      if (res.status === HTTP_UNAUTHORIZED) {
         // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- セッション切れ (401)。ページごとログインへ移り、middleware に Cookie とログインの状態を判定し直させる
         window.location.assign(
           `/login?next=${encodeURIComponent(`${LEGAL_CONSENT_PATH}?next=${encodeURIComponent(next)}`)}`,
         );
         return;
       }
-      if (res.status === 409) {
+      if (res.status === HTTP_FORBIDDEN && (await readErrorCode(res)) === MINOR_REFUSED_CODE) {
+        // 18 歳未満の自己登録。何も記録されていない。案内 (生年月日を直す / 登録をやめる) を出す
+        setPhase('minor_refused');
+        return;
+      }
+      if (res.status === HTTP_BAD_REQUEST && (await readErrorCode(res)) === BIRTH_DATE_INVALID_CODE) {
+        setBirthDateRejected(true);
+        setPhase('idle');
+        return;
+      }
+      if (res.status === HTTP_CONFLICT) {
         // 画面を開いたまま規約が改定された。読み込み直して、いまの版を読んでもらう
         setNeedsReload(true);
         setError(LEGAL_CONSENT_COPY.versionMismatch);
@@ -125,6 +192,90 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
       setPhase('idle');
     }
   };
+
+  // 「登録をやめる」: 本人のアカウントを削除し (既存の退会)、ログアウトして「登録をやめました」を出す。
+  // 失敗したら理由の文を出して、元の案内 (minor_refused / guardian_missing) に戻る
+  const handleWithdraw = async (origin: WithdrawOrigin) => {
+    if (busy) return;
+    setError(null);
+    setWithdrawOrigin(origin);
+    setPhase('withdrawing');
+    const result = await deleteOwnAccount();
+    if (result.kind === 'deleted') {
+      // 端末のデータの消去・ネイティブへの通知・ログアウトの順は signOutAfterAccountDeletion の中
+      await signOutAfterAccountDeletion(createClient());
+      setPhase('withdrawn');
+      return;
+    }
+    // 409 (家族の代表者・組織のオーナー) はサーバーの文を出す。譲渡の画面への案内はここでは出さない
+    // (同意が済んでいない人の譲渡の API は同意ゲートが止めるため)
+    setError(result.kind === 'blocked' ? accountDeletionBlockedMessage(result.message) : ACCOUNT_DELETE_FAILED_MESSAGE);
+    setPhase(origin);
+  };
+
+  if (phase === 'withdrawn') {
+    return (
+      <div className="space-y-6" data-testid="legal-consent-withdrawn">
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">{LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnHeading}</h1>
+          <p className="text-sm leading-relaxed text-gray-600">{LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnBody}</p>
+        </div>
+        <Link href="/signup" className="inline-block font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800">
+          新規登録の画面へ
+        </Link>
+      </div>
+    );
+  }
+
+  // 案内の画面 (退会の送信中も同じ画面のまま、ボタンを無効にする)
+  const noticeOrigin: WithdrawOrigin | null =
+    phase === 'minor_refused' || phase === 'guardian_missing' ? phase : phase === 'withdrawing' ? withdrawOrigin : null;
+  if (noticeOrigin !== null) {
+    const origin = noticeOrigin;
+    const isGuardianMissing = origin === 'guardian_missing';
+    return (
+      <div className="space-y-6" data-testid={isGuardianMissing ? 'legal-consent-guardian-missing' : 'legal-consent-minor-refused'}>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold tracking-tight text-gray-900">
+            {isGuardianMissing ? LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading : LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading}
+          </h1>
+          <p className="text-sm leading-relaxed text-gray-600">
+            {isGuardianMissing ? LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingBody : LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedBody}
+          </p>
+        </div>
+
+        {error && (
+          <div role="alert" className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm font-medium text-red-600">
+            <p>{error}</p>
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {!isGuardianMissing && (
+            <button
+              type="button"
+              onClick={() => {
+                setError(null);
+                setPhase('idle');
+              }}
+              disabled={busy}
+              className="w-full rounded-full bg-[#FF8A65] py-4 font-bold text-white shadow-lg transition-all duration-300 hover:bg-[#FF7043] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
+            >
+              {LEGAL_CONSENT_BIRTH_DATE_COPY.fixButton}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => handleWithdraw(origin)}
+            disabled={busy}
+            className="w-full rounded-full py-3 text-sm font-bold text-gray-500 underline underline-offset-4 hover:text-gray-700 disabled:opacity-50"
+          >
+            {phase === 'withdrawing' ? '削除しています...' : LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (phase === 'declined') {
     return (
@@ -179,9 +330,46 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
       <div className="space-y-2">
         <h1 className="text-2xl font-bold tracking-tight text-gray-900">{LEGAL_CONSENT_COPY.heading}</h1>
         <p className="text-sm leading-relaxed text-gray-600">
-          {isReconsent ? LEGAL_CONSENT_COPY.introReconsent : LEGAL_CONSENT_COPY.introFirst}
+          {isReconsent
+            ? outdated.length === 0 && needsBirthDate
+              ? LEGAL_CONSENT_BIRTH_DATE_COPY.introBirthDateOnly
+              : LEGAL_CONSENT_COPY.introReconsent
+            : LEGAL_CONSENT_COPY.introFirst}
         </p>
       </div>
+
+      {needsBirthDate && (
+        <div className="space-y-2 rounded-2xl border border-gray-200 p-4" data-testid="legal-consent-birth-date">
+          <label htmlFor="legal-consent-birth-date" className="block font-bold text-gray-900">
+            {LEGAL_CONSENT_BIRTH_DATE_COPY.label}
+          </label>
+          <input
+            id="legal-consent-birth-date"
+            type="date"
+            name="birth_date"
+            required
+            aria-required="true"
+            aria-describedby="legal-consent-birth-date-hint"
+            aria-invalid={showBirthDateInvalid}
+            max={todayLocal()}
+            value={birthDate}
+            onChange={(e) => {
+              setBirthDate(e.target.value);
+              setBirthDateRejected(false);
+            }}
+            disabled={busy}
+            className="w-full rounded-xl border border-gray-300 px-3 py-2 text-gray-900"
+          />
+          <p id="legal-consent-birth-date-hint" className="text-xs text-gray-500">
+            {LEGAL_CONSENT_BIRTH_DATE_COPY.hint}
+          </p>
+          {showBirthDateInvalid && (
+            <p role="alert" className="text-xs font-medium text-red-600">
+              {LEGAL_CONSENT_BIRTH_DATE_COPY.invalid}
+            </p>
+          )}
+        </div>
+      )}
 
       <ul className="space-y-3">
         {LEGAL_DOCUMENT_TYPES.map((type) => {
@@ -243,7 +431,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
       <div className="space-y-3">
         <button
           type="submit"
-          disabled={!allAgreed || busy}
+          disabled={!canSubmit || busy}
           className="w-full rounded-full bg-[#FF8A65] py-4 font-bold text-white shadow-lg transition-all duration-300 hover:bg-[#FF7043] disabled:cursor-not-allowed disabled:opacity-50 disabled:shadow-none"
         >
           {phase === 'submitting' ? '記録しています...' : LEGAL_CONSENT_COPY.acceptButton}

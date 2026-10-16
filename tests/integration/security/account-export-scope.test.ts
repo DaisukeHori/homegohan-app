@@ -329,6 +329,41 @@ beforeAll(async () => {
   created.familyGroupId = family.id;
   await insert('family_members', { family_id: family.id, user_id: B.id, role: 'representative', display_name: `MEMBER-B-${RUN}` });
   await insert('family_members', { family_id: family.id, user_id: A.id, role: 'adult', display_name: `MEMBER-A-${RUN}` });
+  // #1173 (T-EX2): 子供 2 人と保護者の同意 3 行 (A が署名・B が署名・署名者も子供の行も外れた取り消し済みの行)。
+  // A は家族の大人なので RLS では 3 行とも読めるが、書き出しには本人が署名した行だけが出る
+  const childA = await insert('family_members', {
+    family_id: family.id,
+    user_id: null,
+    role: 'child',
+    display_name: `CHILD-1-${RUN}`,
+    child_profile: {},
+    birth_date: '2018-04-01',
+  });
+  const childB = await insert('family_members', {
+    family_id: family.id,
+    user_id: null,
+    role: 'child',
+    display_name: `CHILD-2-${RUN}`,
+    child_profile: {},
+    birth_date: '2018-04-01',
+  });
+  const consentRow = (signedName: string) => ({
+    family_id: family.id,
+    signed_name: signedName,
+    guardian_attested: true,
+    consent_version: 'v1',
+    child_birth_date: '2018-04-01',
+    child_age_at_signing: 8,
+  });
+  await insert('parental_consents', { ...consentRow(`SIGNED-A-${RUN}`), family_member_id: childA.id, parent_user_id: A.id });
+  await insert('parental_consents', { ...consentRow(`SIGNED-B-${RUN}`), family_member_id: childB.id, parent_user_id: B.id });
+  await insert('parental_consents', {
+    ...consentRow(`SIGNED-NOBODY-${RUN}`),
+    family_member_id: null,
+    parent_user_id: null,
+    revoked_at: new Date().toISOString(),
+    revoked_reason: 'member_deleted',
+  });
 
   // システムのレシピ (user_id IS NULL, 公開)
   const systemRecipe = await insert('recipes', { user_id: null, name: `SYSTEM-RECIPE-${RUN}`, is_public: true });
@@ -477,6 +512,7 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       recipe_comments: 1,
       family_members: 1, // 自分の所属行だけ。B の行は含まない
       family_groups: 0,
+      parental_consents: 1, // #1173: A が署名した行だけ。B が署名した行・署名者の外れた行は含まない
       organization_challenge_participants: 1, // 同じ組織の B の参加行は含まない
       cookie_consents: 1, // 匿名 (user_id IS NULL) の行は含まない
       support_tickets: 1,
@@ -497,6 +533,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
     expect(text).not.toContain(`SYSTEM-RECIPE-${RUN}`);
     expect(text).not.toContain(`ANON-SESSION-${RUN}`);
     expect(text).not.toContain(`STAFF-OWN`);
+    // #1173: 署名者の外れた保護者の同意の行 (A は RLS では読める) は出ない
+    expect(text).not.toContain(`SIGNED-NOBODY-${RUN}`);
     // 秘密 / 内部の列の値
     for (const hidden of [
       `cus-A-${RUN}`,
@@ -514,7 +552,7 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       expect(text, hidden).not.toContain(hidden);
     }
     // 本人のデータは入っている
-    for (const shown of [`NICK-A-${RUN}`, `MEMO-A-${RUN}`, `DISH-1-A-${RUN}`, `COMMENT-A-${RUN}`, `PROMPT-A-${RUN}`, `SUPPORT-REPLY-A-${RUN}`, `CHAT-A-${RUN}`, `DSR-A-${RUN}`]) {
+    for (const shown of [`SIGNED-A-${RUN}`, `NICK-A-${RUN}`, `MEMO-A-${RUN}`, `DISH-1-A-${RUN}`, `COMMENT-A-${RUN}`, `PROMPT-A-${RUN}`, `SUPPORT-REPLY-A-${RUN}`, `CHAT-A-${RUN}`, `DSR-A-${RUN}`]) {
       expect(text, shown).toContain(shown);
     }
   });
@@ -583,6 +621,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
     expect(json.summary.complete).toBe(true);
     expect(json.data.family_groups.map((g) => g.name)).toEqual([`FAMILY-B-${RUN}`]);
     expect(json.data.family_members.map((m) => m.user_id)).toEqual([B.id]);
+    // #1173 (T-EX2): B が署名した保護者の同意の 1 行だけ
+    expect(json.data.parental_consents.map((c) => c.signed_name)).toEqual([`SIGNED-B-${RUN}`]);
     expect(json.data.recipes.map((r) => r.name)).toEqual([`RECIPE-B-${RUN}`]);
     expect(json.data.support_tickets).toHaveLength(1);
 

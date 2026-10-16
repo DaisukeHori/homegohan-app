@@ -136,6 +136,8 @@ sequenceDiagram
 
 ### 4.1 18 歳到達バッチ (親通知)
 
+`family_members.birth_date` は設計書 `cross/14-parental-consent.md` で実体化した (アカウント無しの子供の行は必須)。年齢は JST の暦日で数える (`public.age_years_jst`。下の `AGE(fm.birth_date)` は DB のタイムゾーンの今日で数えるので、実装時は `age_years_jst` に合わせる)。
+
 ```sql
 -- cron_setup.sql: 月次バッチ
 SELECT cron.schedule(

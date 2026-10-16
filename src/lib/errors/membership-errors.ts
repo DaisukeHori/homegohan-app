@@ -45,6 +45,15 @@ export enum MembershipErrorCode {
   PROMOTION_EMAIL_MISMATCH = 'PROMOTION_EMAIL_MISMATCH',
   PROMOTION_MEMBER_UNAVAILABLE = 'PROMOTION_MEMBER_UNAVAILABLE',
   PROMOTION_DIRECT_DISABLED = 'PROMOTION_DIRECT_DISABLED',
+  // #1173: 子供の生年月日と保護者の同意
+  CHILD_BIRTH_DATE_REQUIRED = 'CHILD_BIRTH_DATE_REQUIRED',
+  CHILD_BIRTH_DATE_INVALID = 'CHILD_BIRTH_DATE_INVALID',
+  PARENTAL_CONSENT_REQUIRED = 'PARENTAL_CONSENT_REQUIRED',
+  PARENTAL_CONSENT_VERSION_MISMATCH = 'PARENTAL_CONSENT_VERSION_MISMATCH', // route だけが返す (RPC は RAISE しない)
+  PARENTAL_CONSENT_SIGNER_NOT_ADULT = 'PARENTAL_CONSENT_SIGNER_NOT_ADULT', // add_family_child だけが RAISE する
+  PROMOTION_UNDER_COPPA_AGE = 'PROMOTION_UNDER_COPPA_AGE', // request_child_promotion / accept_child_promotion だけが RAISE する
+  // create_family_group / accept_family_invite / accept_family_representative_transfer / accept_org_owner_transfer だけが RAISE する
+  MINOR_ACCOUNT_NOT_ALLOWED = 'MINOR_ACCOUNT_NOT_ALLOWED',
   // invite
   INVITE_NOT_FOUND = 'INVITE_NOT_FOUND',
   INVITE_EXPIRED = 'INVITE_EXPIRED',
@@ -110,6 +119,13 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.PROMOTION_EMAIL_MISMATCH]: 403,
   [MembershipErrorCode.PROMOTION_MEMBER_UNAVAILABLE]: 409,
   [MembershipErrorCode.PROMOTION_DIRECT_DISABLED]: 403,
+  [MembershipErrorCode.CHILD_BIRTH_DATE_REQUIRED]: 400,
+  [MembershipErrorCode.CHILD_BIRTH_DATE_INVALID]: 400,
+  [MembershipErrorCode.PARENTAL_CONSENT_REQUIRED]: 403,
+  [MembershipErrorCode.PARENTAL_CONSENT_VERSION_MISMATCH]: 409,
+  [MembershipErrorCode.PARENTAL_CONSENT_SIGNER_NOT_ADULT]: 403,
+  [MembershipErrorCode.PROMOTION_UNDER_COPPA_AGE]: 403,
+  [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: 403,
   [MembershipErrorCode.INVITE_NOT_FOUND]: 404,
   [MembershipErrorCode.INVITE_EXPIRED]: 410,
   [MembershipErrorCode.INVITE_ALREADY_USED]: 409,
@@ -200,6 +216,18 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.PROMOTION_EMAIL_MISMATCH]: '昇格の依頼の宛先とログイン中のメールアドレスが一致しません。',
   [MembershipErrorCode.PROMOTION_MEMBER_UNAVAILABLE]: '昇格の対象のメンバーは、いまは昇格できません。',
   [MembershipErrorCode.PROMOTION_DIRECT_DISABLED]: 'この方法では昇格できません。本人の同意の手続きを使ってください。',
+  [MembershipErrorCode.CHILD_BIRTH_DATE_REQUIRED]: '生年月日を入力してください。',
+  [MembershipErrorCode.CHILD_BIRTH_DATE_INVALID]:
+    '生年月日を正しく入力してください（未来の日付、120年より前の日付は登録できません）。',
+  [MembershipErrorCode.PARENTAL_CONSENT_REQUIRED]:
+    '18歳未満のお子さまを追加するには、保護者の同意（確認・同意・署名）が必要です。',
+  [MembershipErrorCode.PARENTAL_CONSENT_VERSION_MISMATCH]:
+    '保護者の同意書が更新されました。画面を読み込み直して、内容をご確認ください。',
+  [MembershipErrorCode.PARENTAL_CONSENT_SIGNER_NOT_ADULT]:
+    '保護者の同意は、生年月日を登録した18歳以上の方だけが記録できます。',
+  [MembershipErrorCode.PROMOTION_UNDER_COPPA_AGE]: '13歳未満のお子さまは、ご本人のアカウントとつなげません。',
+  [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]:
+    '18歳未満の方は、家族グループの作成・家族の招待からの参加・家族の代表者や組織のオーナーの引き受けはできません。保護者の方の家族には、保護者から届く「アカウントをつなぐ」案内から参加できます。',
   [MembershipErrorCode.INVITE_NOT_FOUND]: '招待が見つかりません。',
   [MembershipErrorCode.INVITE_EXPIRED]: '招待の期限が切れています。',
   [MembershipErrorCode.INVITE_ALREADY_USED]: 'この招待はすでに使われています。',

@@ -135,7 +135,7 @@ PostHog による利用状況の計測は採用しない (オーナー判断 202
 
 「いま有効な版」と施行日は `packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS` に集約する (#1174)。`/terms`・`/privacy` の版・施行日の表示、同意の記録 (DB 関数 `accept_legal_documents` が `user_profiles` の `terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` と `terms_acceptances` に書く)、再同意ゲートは、すべてこの定数を見る。内容が変わる改定をするときは、必ず `version` を上げる (上げると全員に再同意を求める)。版・施行日・同意文言は弁護士の確認を経て決める。
 
-- ゲートは `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`)。環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ、未同意の人を `/legal-consent?next=...` へ回す。強制していない間は、`LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上にお知らせを出す。どちらも未設定 (既定) なら何も出さず、既存の利用者は止めない。ただし、初めてサインインした新規の人 (初期設定を始めておらず、いまの版に未同意) は、フラグに関わらず `/auth/callback` が `resolveFirstSignInDestination` で同意画面へ回す (#1435)。2 つのフラグの読み方は `isLegalConsentFlagOn` で共有する (`ENV_SETUP.md` 参照)。本番は 2026-10-10 から `LEGAL_CONSENT_ENFORCE=on` (オーナー判断。版・施行日は仮置きのまま)。`/api/*` は middleware の `/api` の分岐 (403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`) で止める (#1442・設計書 cross/13a)。モバイルのネイティブの画面はゲートを通らない (#1442)。
+- ゲートは `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`)。環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ、未同意の人を `/legal-consent?next=...` へ回す。強制していない間は、`LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上にお知らせを出す。どちらも未設定 (既定) なら何も出さず、既存の利用者は止めない。ただし、初めてサインインした新規の人 (初期設定を始めておらず、いまの版に未同意) は、フラグに関わらず `/auth/callback` が `resolveFirstSignInDestination` で同意画面へ回す (#1435)。2 つのフラグの読み方は `isLegalConsentFlagOn` で共有する (`ENV_SETUP.md` 参照)。本番は 2026-10-10 から `LEGAL_CONSENT_ENFORCE=on` (オーナー判断。版・施行日は仮置きのまま)。`/api/*` は middleware の `/api` の分岐 (403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`) で止める (#1442・設計書 cross/13a)。同意ゲートは生年月日の未入力と、保護者の同意とのつながりが無い 18 歳未満も同意画面へ回す (#1173・cross/14)。モバイルのネイティブの画面はゲートを通らない (#1442)。
 - 対象外のパスは `isLegalConsentExemptPath` (`/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` `/api/*` `/handson-tour` と静的ファイル)。同意なしで開けないと困る画面 (認証の途中・問い合わせなど) を足すときは、ここと `tests/legal-consent-gate.test.ts` に足す。`/legal-consent` は初期設定の差し戻し (`resolveOnboardingRedirect`) からも除いてある (外すと、初期設定前の新規登録者が同意画面との間で無限にリダイレクトする)。
 - 同意済みの版の 3 列は、特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象。書けるのは `accept_legal_documents` (SECURITY DEFINER。`auth.uid()` 本人の行だけ) だけ。この 2 本のガード関数を `CREATE OR REPLACE` するときは、既存の列を外さず、この 3 列も残す (`tests/integration/security/legal-documents-acceptance.test.ts` が検査する)。
 
@@ -264,12 +264,17 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 
 家族のメンバー・所属・代表者を変える関数 (`accept_family_invite` / `add_family_child` / `leave_family` / `remove_family_member` / `operator_force_dissolve_family` / `operator_force_representative_transfer` / `accept_family_representative_transfer` / `accept_child_promotion`) は、**最初に `family_groups` の行をロックし**、そのあとで子の行 (`family_invites` / `ownership_transfer_proposals` / `family_members` / `family_promotion_requests` / `user_profiles`) を触る (#1310)。代表者による家族の削除 (`DELETE FROM family_groups` + CASCADE) は、DELETE 文が最初に家族の行を取るので、もともとこの順になっている。
 
+課金の側で家族の行を書くもの:
+- 課金の写像 `billing_apply_stripe_subscription`: 家族プランの同期で `family_groups` の行を UPDATE してから `user_profiles` の行を UPDATE する (`docs/design/billing/01-billing-core.md` §6.4 (9) の 10.)。
+- `family_groups` のトリガー `family_groups_billing_plan_follow_representative` (関数 `billing_family_plan_follow_representative`): グループの作成と代表者の交代で advisory `billing-user:<新しい代表者>` を取る (代表者の交代では家族の行のロックのあと。作成では INSERT の BEFORE トリガーの中。billing/01 §6.4 (10))。
+
 順番がそろっていないと、運営の強制解散・家族の削除と同時に走ったときに、解散済みの家族に active のメンバーが残る / デッドロック (40P01) する。
 
 - 家族に関わる関数を `CREATE OR REPLACE` するときは、既存のロックを外さない。別の migration が同じ関数を書き換えているときは、最新の定義の上に積む (古い本文で上書きするとロックが消える)。
 - 新しく足す家族の行のロックは `FOR NO KEY UPDATE` にする (`add_family_child` だけは #1213 のまま `FOR UPDATE`)。`FOR UPDATE` だと、子の行を先に持つ関数が最後に取る外部キーの確認 (`FOR KEY SHARE`) が待たされ、逆向きに待ち合ってデッドロックする。
+- 課金の写像を変えるときも、家族の行を `user_profiles` より先に取る。
 - 子の行を先に取って、あとで家族の行を外部キーの確認で取る関数 (`create_family_invite` の再招待 / `request_child_promotion`) は、まだ家族の行を先に取らない。代表者の DELETE と同時に走ると、まれにどちらかがデッドロックで失敗する (既知。やり直せば通る)。
-- 回帰テスト: `tests/integration/security/family-lock-order-race.test.ts`
+- 回帰テスト: `tests/integration/security/family-lock-order-race.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts` のテスト 106 (写像と運営の強制解散・代表者の家族の削除が同時に走っても 40P01 にならない)
 
 ---
 

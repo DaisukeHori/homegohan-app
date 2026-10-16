@@ -196,6 +196,7 @@ async function callViaApi(call: Call): Promise<Outcome> {
           p_family_id: call.familyId,
           p_display_name: call.name,
           p_child_profile: { note: '#1213' },
+          p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
         });
   return { ok: !error, message: error?.message ?? null };
 }
@@ -203,7 +204,7 @@ async function callViaApi(call: Call): Promise<Outcome> {
 function callSql(call: Call): string {
   return call.kind === 'accept'
     ? `public.accept_family_invite('${call.token}')`
-    : `public.add_family_child('${call.familyId}'::uuid, '${call.name}', '{"note":"#1213"}'::jsonb)`;
+    : `public.add_family_child('${call.familyId}'::uuid, '${call.name}', '{"note":"#1213"}'::jsonb, '1990-01-01'::date)`;
 }
 
 /**
@@ -451,6 +452,7 @@ describe('#1213 上限と解散済みの家族 (順番に呼ぶ)', () => {
       p_family_id: familyId,
       p_display_name: 's1-child',
       p_child_profile: { note: '#1213' },
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     expect(fullChild.data).toBeNull();
     expect(fullChild.error?.code).toBe('P0001');
@@ -464,6 +466,7 @@ describe('#1213 上限と解散済みの家族 (順番に呼ぶ)', () => {
       p_family_id: familyId,
       p_display_name: 's1-child',
       p_child_profile: { note: '#1213' },
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     expect(child.error).toBeNull();
     expect(child.data).toMatchObject({
@@ -487,6 +490,7 @@ describe('#1213 上限と解散済みの家族 (順番に呼ぶ)', () => {
         p_family_id: target,
         p_display_name: 's2-child',
         p_child_profile: { note: '#1213' },
+        p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
       });
       expect(res.data).toBeNull();
       expect(res.error?.message).toBe('NOT_FAMILY_ADULT');
@@ -519,6 +523,7 @@ describe('#1213 上限と解散済みの家族 (順番に呼ぶ)', () => {
       p_family_id: familyId,
       p_display_name: 'd1-child',
       p_child_profile: { note: '#1213' },
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     expect(child.data).toBeNull();
     expect(child.error?.message).toBe('FAMILY_NOT_FOUND');
@@ -558,7 +563,8 @@ describe('#1213 関数の属性と権限 (CREATE OR REPLACE で変わらない)'
     `);
     expect(rows.map((r) => r.sig)).toEqual([
       'accept_family_invite(text,boolean,boolean,boolean)',
-      'add_family_child(uuid,text,jsonb)',
+      // #1173: 生年月日と保護者の同意の引数を足した signature だけ (旧 3 引数は DROP)
+      'add_family_child(uuid,text,jsonb,date,text,text,boolean,inet,text)',
     ]);
     for (const row of rows) {
       expect(row.secdef).toBe(true);
@@ -578,6 +584,7 @@ describe('#1213 関数の属性と権限 (CREATE OR REPLACE で変わらない)'
       p_family_id: '00000000-0000-4000-8000-000000001213',
       p_display_name: 'a2-child',
       p_child_profile: {},
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     expect(child.error?.code).toBe('42501');
   });

@@ -12,9 +12,11 @@
 
 import { expect } from "@playwright/test";
 import { test } from "../fixtures/fresh-family";
+import { PARENTAL_CONSENT_DOCUMENT } from "../../../packages/shared/src/parental-consent";
 import {
   addChild,
   apiFetch,
+  birthDateForAge,
   getFamilyMemberFromDB,
   getPendingPromotionRequest,
   getUserFamilyIdFromDB,
@@ -110,6 +112,9 @@ test.describe("family 子供メンバ管理 (β-5, β-6)", () => {
 
     const childProfile = member!.child_profile as Record<string, unknown>;
     expect(childProfile.age).toBe(10);
+    // #1173: 生年月日は列 family_members.birth_date に入り、child_profile には入らない
+    expect(member!.birth_date).toBe(birthDateForAge(10));
+    expect(childProfile).not.toHaveProperty("birth_date");
   });
 
   /**
@@ -120,33 +125,31 @@ test.describe("family 子供メンバ管理 (β-5, β-6)", () => {
   }) => {
     const { ownerPage, family } = freshFamilyWithOwner;
 
+    // #1173: 生年月日は必須で、18 歳未満 (7 歳) は保護者の同意 (版・署名・親権者の確認) を一緒に送る
     const result = await apiFetch(ownerPage, "/api/family/members/child", {
       method: "POST",
       body: {
         display_name: "APIテスト子供",
         family_id: family.familyId,
         child_profile: {
-          age: 7,
           gender: "male",
           allergies: ["小麦"],
+        },
+        birth_date: birthDateForAge(7),
+        consent: {
+          version: PARENTAL_CONSENT_DOCUMENT.version,
+          signed_name: "テスト 保護者",
+          guardian_attested: true,
         },
       },
     });
 
-    // 成功 (201) か、API 未実装 (404) のいずれか
-    // 500 は許容しない
-    expect(result.status).not.toBe(500);
     console.log("[spec-07] POST /api/family/members/child status:", result.status);
-
-    if (result.status === 201 || result.status === 200) {
-      const body = result.body as Record<string, unknown>;
-      const data = (body.data ?? body) as Record<string, unknown>;
-      // member が返却される場合
-      if (data.role) {
-        expect(data.role).toBe("child");
-        expect(data.user_id).toBeNull();
-      }
-    }
+    expect(result.status).toBe(201);
+    const body = result.body as { data: { member: Record<string, unknown>; consent_recorded: boolean } };
+    expect(body.data.member.role).toBe("child");
+    expect(body.data.member.user_id).toBeNull();
+    expect(body.data.consent_recorded).toBe(true);
   });
 
   /**

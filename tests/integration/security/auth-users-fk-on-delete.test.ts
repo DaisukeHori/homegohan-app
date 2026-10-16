@@ -161,6 +161,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'data_subject_requests.user_id': 'SET NULL',
   // cross/12 §11.1: 運営の二段階認証のバックアップコードは本人の認証の材料なので、本人と一緒に消す
   'operator_mfa_backup_codes.user_id': 'CASCADE',
+  // cross/14 §6.4 (#1173): 保護者の同意の署名者は、退会で行を残して紐づけだけ外す (同意の記録として残す。20261010000100 の方針 2)
+  'parental_consents.parent_user_id': 'SET NULL',
   // org/10 §5.1 (#1688): チャレンジの順位表を伏せる「管理者だった印」は本人に付く守りの記録なので、退会で本人と一緒に消す
   'organization_challenge_ranking_exclusions.user_id': 'CASCADE',
 
