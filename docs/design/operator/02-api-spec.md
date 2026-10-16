@@ -32,6 +32,8 @@ const user = await requireRole(['admin', 'super_admin', 'finance']);
 const user = await requireRole(['admin', 'super_admin', 'sales']);
 ```
 
+必須ロール (super_admin / admin / finance / org_industrial_doctor) の利用者には、`requireRole` が AAL2 (認証アプリの 6 桁を入れたセッション) を求める (`cross/12-operator-mfa.md` §13.1)。aal1 のセッションは `MfaRequiredError` (`ForbiddenError` の派生。code `AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED`) で、route の既存の `catch (ForbiddenError)` が 403 を返す (cross/12 §19.3)。画面 (layout / page) は `requireRoleForPage` (`src/lib/auth/page-guard.ts`) を呼び、2FA が未完了なら MFA の画面へ回す (cross/12 §13.4)。
+
 ### 3.2 レスポンス形式
 
 成功:

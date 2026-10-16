@@ -2,7 +2,7 @@
  * Test user creation and cleanup helpers
  * Creates real Supabase auth users with operator roles for integration testing
  */
-import { createClient } from '@supabase/supabase-js';
+import { signInForIntegration } from './mfa';
 import { supabaseAdmin } from './supabase';
 
 export interface TestUser {
@@ -57,38 +57,14 @@ export async function createTestUserWithRoles(params: {
     throw new Error(`Failed to upsert profile for ${params.email}: ${profileError.message}`);
   }
 
-  // Sign in to get JWT
-  const { data: signInData, error: signInError } = await supabaseAdmin.auth.admin.generateLink({
-    type: 'magiclink',
-    email: params.email,
-  });
-
-  if (signInError || !signInData) {
-    // Fall back to password sign-in via anon client
-  }
-
-  // Use sign in with password to get access token.
-  // 共有の supabaseAdmin でサインインすると、以後の supabaseAdmin の要求がこのユーザーの
-  // JWT で送られ service_role でなくなる (supabase-js がセッションを保持する) ため、
-  // サインインは使い捨てのクライアントで行う。
-  const signInClient = createClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { autoRefreshToken: false, persistSession: false } },
-  );
-  const signInResult = await signInClient.auth.signInWithPassword({
-    email: params.email,
-    password,
-  });
-
-  if (signInResult.error || !signInResult.data.session) {
-    throw new Error(`Failed to sign in test user ${params.email}: ${signInResult.error?.message}`);
-  }
+  // Sign in to get JWT。必須ロール (運営の MFA の対象) なら TOTP を登録・確認して aal2 の JWT にする
+  // (段 B から運営の入口は aal2 だけを通す。docs/design/cross/12-operator-mfa.md §22.4.1)
+  const jwt = await signInForIntegration({ email: params.email, password, roles: params.roles });
 
   return {
     userId,
     email: params.email,
-    jwt: signInResult.data.session.access_token,
+    jwt,
     roles: params.roles,
   };
 }

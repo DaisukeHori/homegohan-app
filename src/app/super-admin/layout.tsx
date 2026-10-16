@@ -4,10 +4,14 @@
  * operator/03-ui-spec.md §3 (共通レイアウト) / §22 (super_admin ダッシュボード) 準拠
  */
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
+
+/** 認証・2FA の画面から戻る先 (/super-admin の page は /super-admin/plans へ回すだけ。docs/design/cross/12-operator-mfa.md §13.4.2) */
+const SUPER_ADMIN_AREA_NEXT = '/super-admin/plans';
+/** ロール不足・凍結のときの行き先 (今までの行き先のまま) */
+const SUPER_ADMIN_AREA_FORBIDDEN_PATH = '/login?redirect=/super-admin/plans';
 
 const superAdminNavItems = [
   { href: '/super-admin/plans', label: 'プラン管理', icon: '📋' },
@@ -25,18 +29,12 @@ export default async function SuperAdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Server Component でロールガード
-  try {
-    await requireRole(['super_admin']);
-  } catch (err) {
-    if (err instanceof AuthError) {
-      redirect('/login?redirect=/super-admin/plans');
-    }
-    if (err instanceof ForbiddenError) {
-      redirect('/login?redirect=/super-admin/plans');
-    }
-    throw err;
-  }
+  // Server Component でロールガード。未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → 今までの行き先 (#1176。cross/12 §13.4)
+  const actor = await requireRoleForPage(['super_admin'], {
+    next: SUPER_ADMIN_AREA_NEXT,
+    forbiddenPath: SUPER_ADMIN_AREA_FORBIDDEN_PATH,
+  });
+  const grace = actor.assurance?.decision === 'pass_grace' ? actor.assurance.enforce_from : null;
 
   return (
     <div className="min-h-screen flex bg-slate-50">
@@ -112,6 +110,7 @@ export default async function SuperAdminLayout({
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto">
         <div className="p-8 max-w-7xl mx-auto">
+          {grace ? <MfaGraceBanner enforceFrom={grace} next={SUPER_ADMIN_AREA_NEXT} /> : null}
           {children}
         </div>
       </main>

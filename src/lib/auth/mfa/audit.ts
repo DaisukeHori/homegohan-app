@@ -36,9 +36,14 @@ export const MFA_AUDIT_SEVERITY: Readonly<Record<MfaAuditAction, AdminAuditSever
 /** target_type (本人・対象のどちらも利用者。varchar(30)) */
 export const MFA_AUDIT_TARGET_TYPE = 'user';
 
-/** 監査の起点の後で止まった手順の名前 (§17.2)。details の failed_step に入れる (最後まで進めば null) */
+/**
+ * 監査の起点の後で止まった手順の名前 (§17.2)。details の failed_step に入れる (最後まで進めば null)。
+ * signOutSessions は回復の「本人の全セッションを終える」(admin.signOut の scope 'global')。admin の deleteFactor だけでは
+ * セッションが終わらない (2026-10-16 のローカルの GoTrue v2.183.0 の実測) ので、回復の route が自分で終える
+ */
 export const MFA_AUDIT_FAILED_STEPS = {
   issueBackupCodes: 'issue_backup_codes',
+  signOutSessions: 'sign_out_sessions',
   deleteFactor: 'delete_factor',
   deleteBackupCodes: 'delete_backup_codes',
   refreshSession: 'refresh_session',
@@ -68,7 +73,7 @@ export interface MfaAuditDetailsMap {
   'admin.mfa.recover': {
     factors_deleted: number;
     backup_codes_deleted: number | null;
-    failed_step: Extract<MfaAuditFailedStep, 'delete_factor' | 'delete_backup_codes'> | null;
+    failed_step: Extract<MfaAuditFailedStep, 'sign_out_sessions' | 'delete_factor' | 'delete_backup_codes'> | null;
   };
   /** identity_check は MfaResetBodySchema で検証済みの MFA_RESET_IDENTITY_CHECKS の 1 つ (schemas.ts の段 C の定数に依らないよう string で持つ) */
   'super_admin.mfa.reset': { reason: string; identity_check: string; factors_before: number; backup_codes_before: number };

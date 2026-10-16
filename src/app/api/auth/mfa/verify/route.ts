@@ -2,7 +2,7 @@
  * POST /api/auth/mfa/verify — 認証アプリの 6 桁を確かめて、セッションを aal2 にする (#1176。docs/design/cross/12-operator-mfa.md §14.3)
  *
  * 登録 (unverified な factor の verify) と、ログインごとの確認 (verified な factor の verify) の両方を受ける。
- * 認可: requireRole(MFA_REQUIRED_ROLES)。段 A は引数 1 つで呼ぶ (段 B で第 2 引数 { assurance: 'session' } を足す §0.2)。
+ * 認可: requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' }) (ロールだけ見て AAL は見ない。aal1 で使う §0.2・走査 ②)。
  * 手順:
  *   別オリジン → 403 / 認可 → 401・403 / 本文 (MfaVerifyBodySchema) → 400 VALIDATION_ERROR /
  *   アプリの WebView の借り物のセッション (refresh_token が使えない値) → 409 AUTH_2FA_NATIVE_SESSION (回数制限を数えず Supabase も呼ばない §16.4) /
@@ -61,7 +61,7 @@ export async function POST(request: NextRequest) {
 
   let actorId: string;
   try {
-    actorId = (await requireRole(MFA_REQUIRED_ROLES)).id;
+    actorId = (await requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })).id;
   } catch (err) {
     return mfaAuthFailure(err) ?? mfaInternalError(ROUTE_NAME, err);
   }

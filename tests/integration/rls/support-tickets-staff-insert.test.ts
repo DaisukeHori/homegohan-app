@@ -23,6 +23,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { signInForIntegration } from '../helpers/mfa';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -116,7 +117,17 @@ async function createRlsTestUser(params: { email: string; roles: string[] }): Pr
     throw new Error(`Failed to set roles for ${params.email}: ${updateError.message}`);
   }
 
-  return { userId, email: params.email, jwt };
+  // 運営の API を呼ぶ JWT は roles を入れた後にサインインし直して作る。必須ロールなら TOTP で aal2 にする
+  // (#1176。docs/design/cross/12-operator-mfa.md §22.4.1。上のプロフィールの作成に使った aal1 のセッションは使わない)
+  let operatorJwt: string;
+  try {
+    operatorJwt = await signInForIntegration({ email: params.email, password, roles: params.roles });
+  } catch (err) {
+    await srAdmin.auth.admin.deleteUser(userId);
+    throw err;
+  }
+
+  return { userId, email: params.email, jwt: operatorJwt };
 }
 
 async function deleteRlsTestUser(userId: string): Promise<void> {
