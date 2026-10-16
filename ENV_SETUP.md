@@ -381,10 +381,13 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 | `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | サーバーの `error` のしきい値。直近 15 分のサーバーの `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
 | `OPS_ALERT_CLIENT_ERROR_THRESHOLD`（任意） | `300` | ブラウザ・端末から届いた `error` のしきい値（#1493）。直近 15 分のその `error` が**この件数を超えたら**、サーバーとは別の通知を送る。1〜100000 の整数 | 既定の 100 件。不正な値は既定値に戻す（サーバーのしきい値と同じ） |
 | `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
+| `OPS_ALERT_PG_CRON_STALL_MINUTES`（任意） | `120` | pg_cron の停止のしきい値（#1125 の B）。有効なジョブがあるのに、最新の実行から**この分数を超えて**1 つも動いていなければ通知する。10〜1440 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
 
 - 通知する条件: 直近 15 分のサーバーの `error` が **20 件を超えた**とき（21 件から）。ブラウザ・端末から届いた `error` は **100 件を超えた**とき（101 件から）に別の通知を送る。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` / `OPS_ALERT_CLIENT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
 - 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる。分数は 2 種類で同じだが、抑止は種類ごとに別々）（DB の `ops_alert_state` で覚える。キーはサーバーが `app_logs_error_spike`、ブラウザ・端末が `app_logs_client_error_spike`。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
 - **届けられなかったメール**（送信待ち `email_outbox` の dead。#1193）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます（3 つ目の通知。キーは `email_dead_letter`）。1 件からで、まだ知らせていない dead を数え、知らせた行には印を付けます（同じメールを 2 回は数えません。抑止の間に届けられなかったものは、抑止が明けた最初の回で知らせます）。宛先停止リスト・退会で送らなかったものと、運用メール自身は数えません。メールに載るのは、文面の名前（template）ごとの件数と、送信待ちの画面（`/super-admin/email-outbox`）へのリンクだけです。
+- **定期処理の失敗**（4 つ目の通知。キーは `cron_failure`。#1125 の B）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます。対象は、pg_cron のジョブの失敗した実行（`cron.job_run_details` の `status = 'failed'`）と、Vercel Cron の route が 500 を返した回（`app_logs` の固定文の error）です。1 件から、直近 7 日のうちまだ知らせていないものを数え、知らせた失敗は台帳 `cron_failure_alerts` に記録します（同じ失敗を 2 回は数えません。抑止の間に起きたものは、抑止が明けた最初の回で知らせます）。ブラウザ・端末が書いた行（`source = 'client'`）は数えません。メールに載るのは、`pg_cron/<ジョブ名>`・`vercel_cron/<route 名>` ごとの件数と運用ログ画面へのリンクだけです。
+- **pg_cron の停止**（5 つ目の通知。キーは `pg_cron_stalled`。#1125 の B）も同じ宛先に知らせます。有効なジョブがあるのに、最新の実行から `OPS_ALERT_PG_CRON_STALL_MINUTES`（既定 60 分）を超えて 1 つも動いていないときです。止まったままなら、抑止（既定 60 分）ごとに 1 通届きます。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
 - **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'cron/email-outbox'` の error（届けられなかった行は `/super-admin/email-outbox` にも残る）と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
 - ブラウザ・端末から届いたログ（`POST /api/log`）は、利用者ごとに 1 分 30 回・直近 24 時間で 1000 回までしか受け付けません（超えると 429。#1493）。

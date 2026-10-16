@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => ({
   logError: vi.fn(),
   /** true の間、文面を作る関数が例外を投げる (権利を取ったあとの例外の確認用) */
   renderThrows: false,
+  /** true の間、定期処理の失敗の文面を作る関数が例外を投げる (#1125 の B。P-28) */
+  renderCronFailureThrows: false,
+  /** true の間、pg_cron の停止の文面を作る関数が例外を投げる (#1125 の B。P-24) */
+  renderPgCronStalledThrows: false,
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -58,6 +62,28 @@ vi.mock('@/lib/emails/ops/app-log-error-spike', async (importOriginal) => {
   };
 });
 
+// #1125 (B) 定期処理の失敗・pg_cron の停止の文面も実物を通し、それぞれのフラグが true のときだけ例外にする
+vi.mock('@/lib/emails/ops/cron-failure', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/emails/ops/cron-failure')>();
+  return {
+    ...actual,
+    renderCronFailureEmail: (vars: Parameters<typeof actual.renderCronFailureEmail>[0]) => {
+      if (mocks.renderCronFailureThrows) throw new Error('render failed');
+      return actual.renderCronFailureEmail(vars);
+    },
+  };
+});
+vi.mock('@/lib/emails/ops/pg-cron-stalled', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/emails/ops/pg-cron-stalled')>();
+  return {
+    ...actual,
+    renderPgCronStalledEmail: (vars: Parameters<typeof actual.renderPgCronStalledEmail>[0]) => {
+      if (mocks.renderPgCronStalledThrows) throw new Error('render failed');
+      return actual.renderPgCronStalledEmail(vars);
+    },
+  };
+});
+
 const { GET } = await import('@/app/api/cron/app-log-alerts/route');
 
 const SECRET = 'dummy-cron-secret-0123456789abcdef';
@@ -73,6 +99,14 @@ const DEAD_CLAIMED_AT = '2026-10-09T01:15:00.789012+00:00';
 const CLIENT_QUIET = { status: 'below_threshold', total: 0, threshold: 100 } as const;
 /** #1193 まだ知らせていない dead が無いときの、応答の email_dead_letter (しきい値 0 = 1 件から) */
 const DEAD_LETTER_QUIET = { status: 'below_threshold', total: 0, threshold: 0 } as const;
+/** #1125 (B) 定期処理の失敗の通知のキー (cron_failure) で権利を取った時刻 (= 台帳の印 alerted_at の値) */
+const CRON_FAILURE_CLAIMED_AT = '2026-10-09T01:15:00.246802+00:00';
+/** #1125 (B) pg_cron の停止の通知のキー (pg_cron_stalled) で権利を取った時刻 */
+const PG_CRON_STALLED_CLAIMED_AT = '2026-10-09T01:15:00.135791+00:00';
+/** #1125 (B) まだ知らせていない定期処理の失敗が無いときの、応答の cron_failure (しきい値 0 = 1 件から) */
+const CRON_FAILURE_QUIET = { status: 'below_threshold', total: 0, threshold: 0 } as const;
+/** #1125 (B) pg_cron が無い (既定の場面) ときの、応答の pg_cron_stalled (既定のしきい値 60 分) */
+const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 60 } as const;
 
 function makeRequest(authorization?: string) {
   return new Request('http://localhost/api/cron/app-log-alerts', {
@@ -124,6 +158,18 @@ interface Scenario {
   deadMark: RpcResult;
   /** #1193 印を外す RPC (unmark_email_outbox_dead_alerted) の応答 (外した行数) */
   deadUnmark: RpcResult;
+  /** #1125 (B) まだ知らせていない定期処理の失敗の数え方 (cron_failure_counts) の応答 */
+  cronFailureCounts: RpcResult;
+  /** #1125 (B) 定期処理の失敗の通知のキー (cron_failure) で権利を取ったときの応答 */
+  cronFailureClaim: RpcResult;
+  /** #1125 (B) 台帳に印を付ける RPC (mark_cron_failures_alerted) の応答 */
+  cronFailureMark: RpcResult;
+  /** #1125 (B) 台帳の印を外す RPC (unmark_cron_failures_alerted) の応答 (外した行数) */
+  cronFailureUnmark: RpcResult;
+  /** #1125 (B) pg_cron の最新の実行の読み取り (pg_cron_last_run_at) の応答 */
+  pgCronLastRun: RpcResult;
+  /** #1125 (B) pg_cron の停止の通知のキー (pg_cron_stalled) で権利を取ったときの応答 */
+  pgCronStalledClaim: RpcResult;
 }
 
 let scenario: Scenario;
@@ -141,6 +187,13 @@ function setScenario(overrides: Partial<Scenario> = {}) {
     deadClaim: { data: DEAD_CLAIMED_AT, error: null },
     deadMark: { data: DEAD_ROWS, error: null },
     deadUnmark: { data: 0, error: null },
+    // 既定では失敗が 1 件も無く、pg_cron の無い DB と同じ (既存のテストに混ざらない)
+    cronFailureCounts: { data: [], error: null },
+    cronFailureClaim: { data: CRON_FAILURE_CLAIMED_AT, error: null },
+    cronFailureMark: { data: [], error: null },
+    cronFailureUnmark: { data: 0, error: null },
+    pgCronLastRun: { data: [{ cron_available: false, active_jobs: 0, last_run_at: null }], error: null },
+    pgCronStalledClaim: { data: PG_CRON_STALLED_CLAIMED_AT, error: null },
     ...overrides,
   };
 }
@@ -169,6 +222,8 @@ let consoleWarn: MockInstance<typeof console.warn>;
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.renderThrows = false;
+  mocks.renderCronFailureThrows = false;
+  mocks.renderPgCronStalledThrows = false;
   vi.stubEnv('CRON_SECRET', SECRET);
   vi.stubEnv('CRON_SECRET_PREVIOUS', undefined);
   vi.stubEnv('OPS_ALERT_EMAIL', OPS_EMAIL);
@@ -176,6 +231,7 @@ beforeEach(() => {
   vi.stubEnv('OPS_ALERT_ERROR_THRESHOLD', undefined);
   vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', undefined);
   vi.stubEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD', undefined);
+  vi.stubEnv('OPS_ALERT_PG_CRON_STALL_MINUTES', undefined);
   vi.stubEnv('NEXT_PUBLIC_APP_URL', SITE_URL);
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -188,8 +244,14 @@ beforeEach(() => {
     if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
     if (fn === 'mark_email_outbox_dead_alerted') return scenario.deadMark;
     if (fn === 'unmark_email_outbox_dead_alerted') return scenario.deadUnmark;
+    if (fn === 'cron_failure_counts') return scenario.cronFailureCounts;
+    if (fn === 'mark_cron_failures_alerted') return scenario.cronFailureMark;
+    if (fn === 'unmark_cron_failures_alerted') return scenario.cronFailureUnmark;
+    if (fn === 'pg_cron_last_run_at') return scenario.pgCronLastRun;
     if (fn === 'claim_ops_alert') {
       if (args?.p_alert_key === 'email_dead_letter') return scenario.deadClaim;
+      if (args?.p_alert_key === 'cron_failure') return scenario.cronFailureClaim;
+      if (args?.p_alert_key === 'pg_cron_stalled') return scenario.pgCronStalledClaim;
       return args?.p_alert_key === 'app_logs_client_error_spike' ? scenario.clientClaim : scenario.claim;
     }
     if (fn === 'release_ops_alert') return scenario.release;
@@ -351,7 +413,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     // 何も起きなかった回は、ログを増やさない (15 分おきに積み上がらない)
@@ -364,7 +426,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(1);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
   });
@@ -374,7 +436,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -429,7 +491,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(rpcCalls('release_ops_alert')).toHaveLength(0);
   });
@@ -437,7 +499,9 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
   it('D-3: 急増が続いて何度呼ばれても、権利を取れた 1 回だけメールが出る', async () => {
     // DB の挙動を写す: 最初の 1 回だけ権利を取れて、以降はクールダウン中
     let claims = 0;
-    mocks.rpc.mockImplementation(async (fn: string) => {
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);
       if (fn === 'app_log_error_counts') return scenario.counts;
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
@@ -459,8 +523,10 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
 
   it('D-4: 権利を取る前にはメールを送らない (数える → 権利を取る → 送る の順)。最後に届けられなかったメールを数える', async () => {
     const order: string[] = [];
-    mocks.rpc.mockImplementation(async (fn: string) => {
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
       order.push(fn);
+      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
       return fn === 'app_log_error_counts' ? scenario.counts : fn === 'claim_ops_alert' ? scenario.claim : scenario.release;
@@ -474,7 +540,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
 
     // サーバーの判定 (数える → 権利 → 送る) を済ませてから、クライアントの error を数える (#1493)
     // その後に届けられなかったメール (#1193) を数える
-    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts', 'email_outbox_dead_counts']);
+    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts', 'email_outbox_dead_counts', 'cron_failure_counts', 'pg_cron_last_run_at']);
   });
 
   it('D-5: 送れたときは権利を返さない (60 分の抑止が効く)', async () => {
@@ -499,14 +565,14 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
       threshold: 50,
       window_minutes: 15,
       client: CLIENT_QUIET,
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
 
     setScenario({ counts: { data: rowsOf(51), error: null } });
     const over = await GET(authed());
-    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
     // メールの文面のしきい値も、上書きした値になる
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 50 件を超えると');
@@ -520,7 +586,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
   });
 
   it('E-3: OPS_ALERT_COOLDOWN_MINUTES で、権利を取るときのクールダウンを変える。メールの文面も同じ値', async () => {
@@ -551,7 +617,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
       const res = await GET(authed());
 
-      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
       expect(rpcCalls('claim_ops_alert'), cooldown).toEqual([
         ['claim_ops_alert', { p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 }],
       ]);
@@ -570,7 +636,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn.mock.calls[0][1]).toEqual({ ignored_env: ['OPS_ALERT_COOLDOWN_MINUTES'] });
   });
@@ -581,7 +647,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn).not.toHaveBeenCalled();
   });
@@ -694,7 +760,7 @@ describe('GET /api/cron/app-log-alerts: メールの内容 (#1157)', () => {
   it('M-6: 送れたら info を 1 行残す (件数と関数名・メールの ID だけ。宛先は出さない)', async () => {
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(mocks.logInfo).toHaveBeenCalledTimes(1);
     const [, meta] = mocks.logInfo.mock.calls[0];
     expect(meta).toMatchObject({
@@ -722,7 +788,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     // claim が返した時刻をそのまま渡す (同じ時刻の行だけを消すため)
     expect(rpcCalls('release_ops_alert')).toEqual([
       ['release_ops_alert', { p_alert_key: 'app_logs_error_spike', p_claimed_at: CLAIMED_AT }],
@@ -800,7 +866,9 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
 
   it('F-6: 権利を返す RPC が例外を投げても、応答は send_failed のまま', async () => {
     mocks.sendEmail.mockResolvedValue(failedResult);
-    mocks.rpc.mockImplementation(async (fn: string) => {
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);
       if (fn === 'app_log_error_counts') return scenario.counts;
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
@@ -882,7 +950,7 @@ describe('GET /api/cron/app-log-alerts: DB の失敗は 500 (汎用メッセー�
 // そのほか
 // ---------------------------------------------------------------
 describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
-  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は 5 つの RPC だけ)', async () => {
+  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は RPC だけ。既定の場面で呼ぶのは 7 つ)', async () => {
     await GET(authed());
     mocks.sendEmail.mockResolvedValue(failedResult);
     await GET(authed());
@@ -893,7 +961,9 @@ describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
       'app_log_client_error_counts',
       'app_log_error_counts',
       'claim_ops_alert',
+      'cron_failure_counts',
       'email_outbox_dead_counts',
+      'pg_cron_last_run_at',
       'release_ops_alert',
     ]);
   });
@@ -969,7 +1039,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'below_threshold', total: 21, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
@@ -995,7 +1065,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 101, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toEqual([
       ['claim_ops_alert', { p_alert_key: 'app_logs_client_error_spike', p_cooldown_minutes: 60 }],
@@ -1027,7 +1097,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 150, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
@@ -1048,7 +1118,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'deduped', total: 400, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
@@ -1066,7 +1136,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 120, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail.mock.calls.map(([envelope]) => envelope.subject)).toEqual([
@@ -1087,7 +1157,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 31, threshold: 30 },
-      email_dead_letter: DEAD_LETTER_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
     });
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 30 件を超えると');
     expect(mocks.logWarn).not.toHaveBeenCalled();
@@ -1195,7 +1265,7 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: { status: 'sent', total: 3, threshold: 0 } });
+    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: { status: 'sent', total: 3, threshold: 0 }, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(rpcCalls('email_outbox_dead_counts')).toEqual([['email_outbox_dead_counts', { p_limit: 10 }]]);
     expect(rpcCalls('claim_ops_alert')).toEqual([['claim_ops_alert', { p_alert_key: 'email_dead_letter', p_cooldown_minutes: 60 }]]);
     expect(rpcCalls('mark_email_outbox_dead_alerted')).toEqual([
@@ -1232,7 +1302,7 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: DEAD_LETTER_QUIET });
+    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
     expect(rpcCalls('email_outbox_dead_counts')).toHaveLength(1);
     expect(claimKeys()).not.toContain('email_dead_letter');
     expect(rpcCalls('mark_email_outbox_dead_alerted')).toHaveLength(0);
@@ -1264,6 +1334,8 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
       'claim_ops_alert:email_dead_letter',
       'mark_email_outbox_dead_alerted',
       'sendEmail:ops_email_dead_letter',
+      'cron_failure_counts',
+      'pg_cron_last_run_at',
     ]);
   });
 
@@ -1510,5 +1582,685 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
       expect(text).not.toContain(OPS_EMAIL);
     }
     expect(logged).toContain('family_invite');
+  });
+});
+
+// ---------------------------------------------------------------
+// 定期処理の失敗 (cron_failure) と pg_cron の停止 (pg_cron_stalled)。#1125 の B
+// 設計: docs/design/operator/11-ops-batches-non-billing.md §4・§6.2・§7.1
+// ---------------------------------------------------------------
+describe('GET /api/cron/app-log-alerts: 定期処理の失敗 (cron_failure。#1125 の B)', () => {
+  const GENERIC = { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' };
+  /** まだ知らせていない (または印を付けた) 失敗の行 (cron_failure_counts / mark_cron_failures_alerted の形)。全体 3 件 */
+  const FAILURE_ROWS = [
+    { source: 'pg_cron', job_name: 'cleanup-old-app-logs', failed_count: 2, total_count: 3 },
+    { source: 'vercel_cron', job_name: 'cron/email-outbox', failed_count: 1, total_count: 3 },
+  ];
+  /** サーバー・クライアントの error と dead は 0 件 (急増の通知は送らない)。定期処理の失敗だけがある回 */
+  const failureOnly = (overrides: Partial<Scenario> = {}) =>
+    setScenario({
+      counts: { data: [], error: null },
+      cronFailureCounts: { data: FAILURE_ROWS, error: null },
+      cronFailureMark: { data: FAILURE_ROWS, error: null },
+      ...overrides,
+    });
+  const outboxSentResult = { ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null } as const;
+  const outboxFailedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした', null, 0, true),
+  } as const;
+  const suppressedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('suppressed', 'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした', null, 0, false),
+  } as const;
+  const invalidEnvelopeResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('invalid_envelope', 'EMAIL_INVALID_ENVELOPE: subject: too long', null, 0, false),
+  } as const;
+  const cronFailureKeyCalls = (fn: 'claim_ops_alert' | 'release_ops_alert') =>
+    rpcCalls(fn).filter(([, args]) => (args as { p_alert_key?: string })?.p_alert_key === 'cron_failure');
+  /** RPC と sendEmail の呼び出しの順 (RPC 名。claim / release はキーつき) を記録する */
+  function recordOrder(): string[] {
+    const order: string[] = [];
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      order.push(fn === 'claim_ops_alert' || fn === 'release_ops_alert' ? `${fn}:${args?.p_alert_key}` : fn);
+      return harness?.(fn, args);
+    });
+    return order;
+  }
+
+  it('CF-1: 失敗が無ければ cron_failure_counts だけを呼び、below_threshold。権利を取らない', async () => {
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ cron_failure: CRON_FAILURE_QUIET });
+    expect(rpcCalls('cron_failure_counts')).toEqual([['cron_failure_counts', { p_limit: 10 }]]);
+    expect(cronFailureKeyCalls('claim_ops_alert')).toHaveLength(0);
+    expect(rpcCalls('mark_cron_failures_alerted')).toHaveLength(0);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-2: 失敗が 1 件あれば権利 (キー cron_failure) を取り、mark で台帳に書き、書けた件数で ops_cron_failure を 1 通送る', async () => {
+    failureOnly();
+    mocks.sendEmail.mockResolvedValue(outboxSentResult);
+    const order = recordOrder();
+    mocks.sendEmail.mockImplementation(async () => {
+      order.push('sendEmail');
+      return outboxSentResult;
+    });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 0,
+      threshold: 20,
+      window_minutes: 15,
+      client: CLIENT_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET,
+      cron_failure: { status: 'sent', total: 3, threshold: 0 },
+      pg_cron_stalled: PG_CRON_STALLED_QUIET,
+    });
+    expect(rpcCalls('claim_ops_alert')).toContainEqual(['claim_ops_alert', { p_alert_key: 'cron_failure', p_cooldown_minutes: 60 }]);
+    expect(rpcCalls('mark_cron_failures_alerted')).toEqual([
+      ['mark_cron_failures_alerted', { p_alerted_at: CRON_FAILURE_CLAIMED_AT, p_limit: 10 }],
+    ]);
+    // 数える → 権利 → 台帳に書く → 送る の順 (権利を取る前に台帳へ書かず、台帳に書く前に送らない)
+    const tail = order.slice(order.indexOf('cron_failure_counts'));
+    expect(tail.slice(0, 4)).toEqual(['cron_failure_counts', 'claim_ops_alert:cron_failure', 'mark_cron_failures_alerted', 'sendEmail']);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    const envelope = mocks.sendEmail.mock.calls[0][0] as { template: string; to: string; subject: string; text: string };
+    expect(envelope.template).toBe('ops_cron_failure');
+    expect(envelope.to).toBe(OPS_EMAIL);
+    expect(envelope.subject).toBe('【ほめゴハン運用】定期処理が失敗しています (3 件)');
+    expect(envelope.text).toContain('pg_cron/cleanup-old-app-logs … 2 件');
+    expect(envelope.text).toContain('vercel_cron/cron/email-outbox … 1 件');
+    expect(envelope.text).toContain(`${SITE_URL}/super-admin/logs`);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(0);
+  });
+
+  it('CF-3: 抑止の間 (権利 NULL) は mark を呼ばず deduped', async () => {
+    failureOnly({ cronFailureClaim: { data: null, error: null } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ cron_failure: { status: 'deduped', total: 3, threshold: 0 } });
+    expect(rpcCalls('mark_cron_failures_alerted')).toHaveLength(0);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-4: mark が 0 行なら権利を返して below_threshold', async () => {
+    failureOnly({ cronFailureMark: { data: [], error: null } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ cron_failure: { status: 'below_threshold', total: 0, threshold: 0 } });
+    expect(cronFailureKeyCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'cron_failure', p_claimed_at: CRON_FAILURE_CLAIMED_AT }],
+    ]);
+    // 0 行しか書いていないので、印を外す操作は呼ばない
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-5: 送れなかった (outbox_failed) ときは unmark → release の順で返し、send_failed', async () => {
+    failureOnly();
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+    const order = recordOrder();
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ cron_failure: { status: 'send_failed', total: 3, threshold: 0 } });
+    expect(rpcCalls('unmark_cron_failures_alerted')).toEqual([['unmark_cron_failures_alerted', { p_alerted_at: CRON_FAILURE_CLAIMED_AT }]]);
+    expect(cronFailureKeyCalls('release_ops_alert')).toEqual([
+      ['release_ops_alert', { p_alert_key: 'cron_failure', p_claimed_at: CRON_FAILURE_CLAIMED_AT }],
+    ]);
+    expect(order.indexOf('unmark_cron_failures_alerted')).toBeGreaterThan(order.indexOf('mark_cron_failures_alerted'));
+    expect(order.indexOf('release_ops_alert:cron_failure')).toBeGreaterThan(order.indexOf('unmark_cron_failures_alerted'));
+    // 件数と名前を warn に残す (メールが届かない間の手がかり)
+    const warned = mocks.logWarn.mock.calls.find(([message]) => String(message).includes('定期処理の失敗を検知しましたが、通知メールを送れませんでした'));
+    expect(warned?.[1]).toMatchObject({ scope: 'cron_failure', total: 3, threshold: 0, error_code: 'outbox_failed' });
+
+    // 送信設定が未完了 (skipped) でも同じく返す。応答は send_skipped
+    vi.clearAllMocks();
+    mocks.sendEmail.mockResolvedValue(skippedResult);
+    const skipped = await GET(authed());
+    await expect(skipped.json()).resolves.toMatchObject({ cron_failure: { status: 'send_skipped', total: 3, threshold: 0 } });
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(1);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+  });
+
+  it('CF-6: suppressed / invalid_envelope のときは unmark も release もしない', async () => {
+    for (const result of [suppressedResult, invalidEnvelopeResult]) {
+      vi.clearAllMocks();
+      failureOnly();
+      mocks.sendEmail.mockResolvedValue(result);
+
+      const res = await GET(authed());
+
+      expect(res.status).toBe(200);
+      await expect(res.json(), result.error.code).resolves.toMatchObject({ cron_failure: { status: 'send_failed', total: 3, threshold: 0 } });
+      expect(rpcCalls('unmark_cron_failures_alerted'), result.error.code).toHaveLength(0);
+      expect(cronFailureKeyCalls('release_ops_alert'), result.error.code).toHaveLength(0);
+    }
+  });
+
+  it('CF-7: mark の RPC が error なら unmark → release のあと 500', async () => {
+    failureOnly({ cronFailureMark: { data: null, error: { code: '42501', message: 'permission denied for table cron_failure_alerts' } } });
+    const order = recordOrder();
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    // 印の RPC がエラーを返しても、DB では付いていることがあるので、外す操作は必ず呼ぶ
+    expect(rpcCalls('unmark_cron_failures_alerted')).toEqual([['unmark_cron_failures_alerted', { p_alerted_at: CRON_FAILURE_CLAIMED_AT }]]);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+    expect(order.indexOf('release_ops_alert:cron_failure')).toBeGreaterThan(order.indexOf('unmark_cron_failures_alerted'));
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-8: mark の応答の source が想定外 (形の誤り) なら unmark → release のあと 500 (黙って 0 件にしない。P-7)', async () => {
+    failureOnly({ cronFailureMark: { data: [{ source: 'github_actions', job_name: 'x', failed_count: 1, total_count: 1 }], error: null } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(1);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-9: メールと応答とログに、処理の名前と件数だけが出る (command・本文・ユーザー ID は出ない)', async () => {
+    const rows = FAILURE_ROWS.map((row) => ({
+      ...row,
+      command: "SELECT net.http_post(url := 'https://example.test', headers := '{\"Authorization\": \"Bearer dummy-secret\"}')",
+      return_message: 'ERROR: secret token dummy-secret leaked',
+      message: 'user 123e4567-e89b-12d3-a456-426614174000 taro@example.com',
+    }));
+    failureOnly({ cronFailureCounts: { data: rows, error: null }, cronFailureMark: { data: rows, error: null } });
+    mocks.sendEmail.mockResolvedValue(outboxSentResult);
+
+    const res = await GET(authed());
+
+    const body = JSON.stringify(await res.json());
+    const logged = JSON.stringify([mocks.logInfo.mock.calls, mocks.logWarn.mock.calls, mocks.logError.mock.calls]);
+    const mailed = JSON.stringify(mocks.sendEmail.mock.calls);
+    for (const text of [body, logged, mailed]) {
+      expect(text).not.toContain('dummy-secret');
+      expect(text).not.toContain('123e4567-e89b-12d3-a456-426614174000');
+      expect(text).not.toContain('taro@example.com');
+      expect(text).not.toContain('net.http_post');
+    }
+    expect(mailed).toContain('pg_cron/cleanup-old-app-logs');
+    expect(logged).toContain('cleanup-old-app-logs');
+    expect(body).not.toContain(OPS_EMAIL);
+    expect(logged).not.toContain(OPS_EMAIL);
+  });
+
+  it('CF-10: claim_ops_alert が error なら 500。mark も unmark も release も呼ばない (P-21)', async () => {
+    failureOnly({ cronFailureClaim: { data: null, error: { code: '42501', message: 'permission denied' } } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(rpcCalls('mark_cron_failures_alerted')).toHaveLength(0);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-11: 送れなかったときに unmark が error を返しても、warn を 1 行残して release を呼び、応答は send_failed のまま (P-22)', async () => {
+    failureOnly({ cronFailureUnmark: { data: null, error: { code: 'XX000', message: 'unmark failed' } } });
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ cron_failure: { status: 'send_failed' } });
+    const warned = mocks.logWarn.mock.calls.filter(([message]) => String(message).includes('「知らせた」印を外せませんでした'));
+    expect(warned).toHaveLength(1);
+    expect(warned[0][1]).toEqual({ scope: 'cron_failure', pg_code: 'XX000' });
+    // 印を外せなくても、権利は返す
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+
+    // RPC が例外を投げた場合も同じ
+    vi.clearAllMocks();
+    failureOnly();
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      if (fn === 'unmark_cron_failures_alerted') throw new TypeError('network down');
+      return harness?.(fn, args);
+    });
+    const thrown = await GET(authed());
+    await expect(thrown.json()).resolves.toMatchObject({ cron_failure: { status: 'send_failed' } });
+    const thrownWarn = mocks.logWarn.mock.calls.find(([message]) => String(message).includes('「知らせた」印を外せませんでした'));
+    expect(thrownWarn?.[1]).toEqual({ scope: 'cron_failure', error_name: 'TypeError' });
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+  });
+
+  it('CF-12: cron_failure_counts が error、または応答の形が誤り (failed_count が整数でない・source が想定外) なら 500。claim_ops_alert (キー cron_failure) も mark も sendEmail (ops_cron_failure) も呼ばない (P-8)', async () => {
+    const bad: ReadonlyArray<RpcResult> = [
+      { data: null, error: { code: '42P01', message: 'relation "public.cron_failure_alerts" does not exist' } },
+      { data: [{ source: 'pg_cron', job_name: 'a', failed_count: 'many', total_count: 1 }], error: null },
+      { data: [{ source: 'github_actions', job_name: 'a', failed_count: 1, total_count: 1 }], error: null },
+      { data: [{ source: 'pg_cron', job_name: 7, failed_count: 1, total_count: 1 }], error: null },
+      { data: { rows: [] }, error: null },
+    ];
+    for (const cronFailureCounts of bad) {
+      vi.clearAllMocks();
+      setScenario({ counts: { data: [], error: null }, cronFailureCounts });
+
+      const res = await GET(authed());
+
+      expect(res.status, JSON.stringify(cronFailureCounts)).toBe(500);
+      await expect(res.json()).resolves.toEqual(GENERIC);
+      expect(cronFailureKeyCalls('claim_ops_alert')).toHaveLength(0);
+      expect(rpcCalls('mark_cron_failures_alerted')).toHaveLength(0);
+      expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+      expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+      expect(mocks.logError).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('CF-13: 権利と印を取ったあとで文面の作成または sendEmail が例外を投げたら、unmark → release の順で返してから 500 (P-28)', async () => {
+    // sendEmail が例外
+    failureOnly();
+    mocks.sendEmail.mockRejectedValue(new Error('unexpected'));
+    let order = recordOrder();
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(1);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+    expect(order.indexOf('release_ops_alert:cron_failure')).toBeGreaterThan(order.indexOf('unmark_cron_failures_alerted'));
+
+    // 文面の作成が例外 (mark で台帳に書いたあと)
+    vi.clearAllMocks();
+    failureOnly();
+    mocks.sendEmail.mockResolvedValue(outboxSentResult);
+    mocks.renderCronFailureThrows = true;
+    order = recordOrder();
+
+    const rendered = await GET(authed());
+
+    expect(rendered.status).toBe(500);
+    expect(order.filter((name) => name === 'mark_cron_failures_alerted')).toHaveLength(1);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(1);
+    expect(cronFailureKeyCalls('release_ops_alert')).toHaveLength(1);
+    expect(order.indexOf('release_ops_alert:cron_failure')).toBeGreaterThan(order.indexOf('unmark_cron_failures_alerted'));
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CF-14: cron_failure_counts に渡す引数は { p_limit: 10 } だけ (窓・時刻を渡さない。回の隙間の失敗も次の回で数える: S-04・R-03)', async () => {
+    await GET(authed());
+    await GET(authed());
+
+    const calls = rpcCalls('cron_failure_counts');
+    expect(calls).toHaveLength(2);
+    for (const [, args] of calls) {
+      expect(args).toStrictEqual({ p_limit: 10 });
+    }
+  });
+
+  it('CF-15: 送れなかった (outbox_failed) ときに release_ops_alert が error を返しても、warn を 1 行残し、応答は send_failed のまま (P-26)', async () => {
+    failureOnly({ release: { data: null, error: { code: '57014', message: 'canceling statement due to statement timeout' } } });
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ cron_failure: { status: 'send_failed' } });
+    const warned = mocks.logWarn.mock.calls.filter(([message]) => String(message).includes('送る権利を返せませんでした'));
+    expect(warned).toHaveLength(1);
+    expect(warned[0][1]).toEqual({ scope: 'cron_failure', pg_code: '57014' });
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(1);
+  });
+
+  it('CF-16: OPS_ALERT_EMAIL が未設定・形が不正の回は、失敗が有る場面 (cronFailureCounts に 1 件・pgCronLastRun が 61 分前) でも cron_failure_counts も pg_cron_last_run_at も呼ばず disabled / invalid_config (DB に触れない。S-05・P-15)', async () => {
+    const stalled = { data: [{ cron_available: true, active_jobs: 17, last_run_at: new Date(Date.now() - 61 * 60_000).toISOString() }], error: null };
+    for (const [value, status] of [
+      [undefined, 'disabled'],
+      ['', 'disabled'],
+      ['not-an-address', 'invalid_config'],
+    ] as const) {
+      vi.clearAllMocks();
+      vi.stubEnv('OPS_ALERT_EMAIL', value);
+      failureOnly({ pgCronLastRun: stalled });
+
+      const res = await GET(authed());
+
+      expect(res.status).toBe(200);
+      await expect(res.json(), String(value)).resolves.toEqual({ status });
+      expectNothingTouched();
+      expect(rpcCalls('cron_failure_counts')).toHaveLength(0);
+      expect(rpcCalls('pg_cron_last_run_at')).toHaveLength(0);
+    }
+  });
+});
+
+describe('GET /api/cron/app-log-alerts: pg_cron の停止 (pg_cron_stalled。#1125 の B)', () => {
+  const GENERIC = { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' };
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const lastRun = (minutes: number | null, activeJobs = 17): RpcResult => ({
+    data: [{ cron_available: true, active_jobs: activeJobs, last_run_at: minutes === null ? null : minutesAgo(minutes) }],
+    error: null,
+  });
+  /** サーバー・クライアントの error と dead と失敗は 0 件。pg_cron の停止だけを見る回 */
+  const stalledOnly = (overrides: Partial<Scenario> = {}) => setScenario({ counts: { data: [], error: null }, pgCronLastRun: lastRun(61), ...overrides });
+  const outboxFailedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした', null, 0, true),
+  } as const;
+  const suppressedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('suppressed', 'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした', null, 0, false),
+  } as const;
+  const invalidEnvelopeResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('invalid_envelope', 'EMAIL_INVALID_ENVELOPE: subject: too long', null, 0, false),
+  } as const;
+  const stalledKeyCalls = (fn: 'claim_ops_alert' | 'release_ops_alert') =>
+    rpcCalls(fn).filter(([, args]) => (args as { p_alert_key?: string })?.p_alert_key === 'pg_cron_stalled');
+
+  it('ST-1: pg_cron_last_run_at が 61 分前なら権利 (キー pg_cron_stalled) を取り ops_pg_cron_stalled を送る。応答の total は分数', async () => {
+    stalledOnly();
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ pg_cron_stalled: { status: 'sent', total: 61, threshold: 60 } });
+    expect(rpcCalls('pg_cron_last_run_at')).toEqual([['pg_cron_last_run_at']]);
+    expect(stalledKeyCalls('claim_ops_alert')).toEqual([['claim_ops_alert', { p_alert_key: 'pg_cron_stalled', p_cooldown_minutes: 60 }]]);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    const envelope = mocks.sendEmail.mock.calls[0][0] as { template: string; to: string; subject: string; text: string };
+    expect(envelope.template).toBe('ops_pg_cron_stalled');
+    expect(envelope.to).toBe(OPS_EMAIL);
+    expect(envelope.subject).toBe('【ほめゴハン運用】pg_cron のジョブが 60 分以上動いていません');
+    expect(envelope.text).toContain('有効なジョブが 17 本あるのに、最新の実行から 61 分');
+    // 台帳は使わない
+    expect(rpcCalls('mark_cron_failures_alerted')).toHaveLength(0);
+    expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    expect(stalledKeyCalls('release_ops_alert')).toHaveLength(0);
+  });
+
+  it('ST-2: 60 分ちょうどは送らない', async () => {
+    stalledOnly({ pgCronLastRun: lastRun(60) });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ pg_cron_stalled: { status: 'below_threshold', total: 60, threshold: 60 } });
+    expect(stalledKeyCalls('claim_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('ST-3: cron_available = false / active_jobs = 0 は below_threshold で権利を取らない', async () => {
+    const cases: ReadonlyArray<RpcResult> = [
+      { data: [{ cron_available: false, active_jobs: 0, last_run_at: null }], error: null },
+      { data: [{ cron_available: false, active_jobs: 17, last_run_at: minutesAgo(600) }], error: null },
+      { data: [{ cron_available: true, active_jobs: 0, last_run_at: minutesAgo(600) }], error: null },
+    ];
+    for (const pgCronLastRun of cases) {
+      vi.clearAllMocks();
+      stalledOnly({ pgCronLastRun });
+
+      const res = await GET(authed());
+
+      await expect(res.json(), JSON.stringify(pgCronLastRun)).resolves.toMatchObject({
+        pg_cron_stalled: { status: 'below_threshold', total: 0, threshold: 60 },
+      });
+      expect(stalledKeyCalls('claim_ops_alert')).toHaveLength(0);
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+    }
+  });
+
+  it('ST-4: 履歴が無い (last_run_at null) のに有効なジョブがあれば送る', async () => {
+    stalledOnly({ pgCronLastRun: lastRun(null, 5) });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ pg_cron_stalled: { status: 'sent', total: 0, threshold: 60 } });
+    const envelope = mocks.sendEmail.mock.calls[0][0] as { text: string };
+    expect(envelope.text).toContain('最新の実行: 記録なし');
+    expect(envelope.text).toContain('有効なジョブが 5 本あるのに');
+  });
+
+  it('ST-5: 送れなかったとき、outbox_failed / not_configured は権利を返し、suppressed / invalid_envelope は返さない (P-13)', async () => {
+    for (const [result, released] of [
+      [outboxFailedResult, true],
+      [skippedResult, true],
+      [suppressedResult, false],
+      [invalidEnvelopeResult, false],
+    ] as const) {
+      vi.clearAllMocks();
+      stalledOnly();
+      mocks.sendEmail.mockResolvedValue(result);
+
+      const res = await GET(authed());
+
+      expect(res.status).toBe(200);
+      await expect(res.json(), result.error.code).resolves.toMatchObject({
+        pg_cron_stalled: { status: result.skipped ? 'send_skipped' : 'send_failed', total: 61, threshold: 60 },
+      });
+      expect(stalledKeyCalls('release_ops_alert'), result.error.code).toHaveLength(released ? 1 : 0);
+      if (released) {
+        expect(stalledKeyCalls('release_ops_alert')[0]).toEqual([
+          'release_ops_alert',
+          { p_alert_key: 'pg_cron_stalled', p_claimed_at: PG_CRON_STALLED_CLAIMED_AT },
+        ]);
+      }
+      // 停止の通知は台帳を使わないので、印を外す操作は呼ばない
+      expect(rpcCalls('unmark_cron_failures_alerted')).toHaveLength(0);
+    }
+  });
+
+  it('ST-6: OPS_ALERT_PG_CRON_STALL_MINUTES でしきい値を変える。不正な値は既定に戻して warn', async () => {
+    vi.stubEnv('OPS_ALERT_PG_CRON_STALL_MINUTES', '120');
+    stalledOnly({ pgCronLastRun: lastRun(100) });
+    const under = await GET(authed());
+    await expect(under.json()).resolves.toMatchObject({ pg_cron_stalled: { status: 'below_threshold', total: 100, threshold: 120 } });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    stalledOnly({ pgCronLastRun: lastRun(130) });
+    const over = await GET(authed());
+    await expect(over.json()).resolves.toMatchObject({ pg_cron_stalled: { status: 'sent', total: 130, threshold: 120 } });
+    const envelope = mocks.sendEmail.mock.calls[0][0] as { subject: string };
+    expect(envelope.subject).toContain('120 分以上');
+
+    // 不正な値 (範囲外・整数でない) は既定の 60 分に戻し、変数名だけを warn に残す (値は出さない)
+    for (const bad of ['5', '1441', 'abc', '1.5']) {
+      vi.clearAllMocks();
+      vi.stubEnv('OPS_ALERT_PG_CRON_STALL_MINUTES', bad);
+      stalledOnly({ pgCronLastRun: lastRun(61) });
+
+      const res = await GET(authed());
+
+      await expect(res.json(), bad).resolves.toMatchObject({ pg_cron_stalled: { status: 'sent', total: 61, threshold: 60 } });
+      const warned = mocks.logWarn.mock.calls.find(([message]) => String(message).includes('環境変数の値が正しくないため'));
+      expect(warned?.[1], bad).toEqual({ ignored_env: ['OPS_ALERT_PG_CRON_STALL_MINUTES'] });
+      expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain(`"${bad}"`);
+    }
+  });
+
+  it('ST-7: 停止の回で claim_ops_alert が error なら 500 で、release を呼ばない (P-23)', async () => {
+    stalledOnly({ pgCronStalledClaim: { data: null, error: { code: '42501', message: 'permission denied' } } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('ST-8: 停止の回で sendEmail が例外なら release を呼んでから 500 (P-24)', async () => {
+    stalledOnly();
+    mocks.sendEmail.mockRejectedValue(new Error('unexpected'));
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(stalledKeyCalls('release_ops_alert')).toHaveLength(1);
+
+    // 文面の作成が例外でも同じ
+    vi.clearAllMocks();
+    stalledOnly();
+    mocks.renderPgCronStalledThrows = true;
+    const rendered = await GET(authed());
+    expect(rendered.status).toBe(500);
+    expect(stalledKeyCalls('release_ops_alert')).toHaveLength(1);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('ST-9: pg_cron_last_run_at が error、または応答の形が誤り (cron_available が真偽値でない) なら 500。claim_ops_alert (キー pg_cron_stalled) も sendEmail (ops_pg_cron_stalled) も呼ばない (P-14)', async () => {
+    const bad: ReadonlyArray<RpcResult> = [
+      { data: null, error: { code: '42501', message: 'permission denied for schema cron' } },
+      { data: [{ cron_available: 'yes', active_jobs: 17, last_run_at: minutesAgo(61) }], error: null },
+      { data: [{ cron_available: true, active_jobs: -1, last_run_at: minutesAgo(61) }], error: null },
+      { data: [{ cron_available: true, active_jobs: 17, last_run_at: 12345 }], error: null },
+      { data: [], error: null },
+      { data: [{ cron_available: true, active_jobs: 17, last_run_at: 'not-a-date' }], error: null },
+    ];
+    for (const pgCronLastRun of bad) {
+      vi.clearAllMocks();
+      stalledOnly({ pgCronLastRun });
+
+      const res = await GET(authed());
+
+      expect(res.status, JSON.stringify(pgCronLastRun)).toBe(500);
+      await expect(res.json()).resolves.toEqual(GENERIC);
+      expect(stalledKeyCalls('claim_ops_alert')).toHaveLength(0);
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+    }
+  });
+
+  it('ST-10: 61 分前で止まっていても、権利が NULL (抑止の間) なら deduped。sendEmail も release も呼ばない。権利はクールダウン (既定 60 分) で取る (止まっている間は 60 分ごとに 1 通: S-07・P-11)', async () => {
+    stalledOnly({ pgCronStalledClaim: { data: null, error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ pg_cron_stalled: { status: 'deduped', total: 61, threshold: 60 } });
+    expect(stalledKeyCalls('claim_ops_alert')).toEqual([['claim_ops_alert', { p_alert_key: 'pg_cron_stalled', p_cooldown_minutes: 60 }]]);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+  });
+});
+
+describe('GET /api/cron/app-log-alerts: 5 種類の判定の順 (#1125 の B)', () => {
+  const GENERIC = { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' };
+  const FAILURE_ROWS = [{ source: 'pg_cron', job_name: 'cleanup-old-app-logs', failed_count: 1, total_count: 1 }];
+  const stalledRun = {
+    data: [{ cron_available: true, active_jobs: 17, last_run_at: new Date(Date.now() - 90 * 60_000).toISOString() }],
+    error: null,
+  } as const;
+  /** 5 種類ともに通知が要る場面 */
+  const everything = (overrides: Partial<Scenario> = {}) =>
+    setScenario({
+      clientCounts: { data: rowsOf(101), error: null },
+      deadCounts: { data: DEAD_ROWS, error: null },
+      cronFailureCounts: { data: FAILURE_ROWS, error: null },
+      cronFailureMark: { data: FAILURE_ROWS, error: null },
+      pgCronLastRun: stalledRun,
+      ...overrides,
+    });
+
+  it('ORD-1: server → client → email_dead_letter → cron_failure → pg_cron_stalled の順で、後ろの 500 は前の通知を止めない', async () => {
+    everything();
+    const order: string[] = [];
+    mocks.sendEmail.mockImplementation(async (envelope: { template?: string }) => {
+      order.push(`sendEmail:${envelope.template}`);
+      return sentResult;
+    });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      status: 'sent',
+      client: { status: 'sent' },
+      email_dead_letter: { status: 'sent' },
+      cron_failure: { status: 'sent', total: 1, threshold: 0 },
+      pg_cron_stalled: { status: 'sent', total: 90, threshold: 60 },
+    });
+    expect(order).toEqual([
+      'sendEmail:ops_app_log_error_spike',
+      'sendEmail:ops_app_log_error_spike',
+      'sendEmail:ops_email_dead_letter',
+      'sendEmail:ops_cron_failure',
+      'sendEmail:ops_pg_cron_stalled',
+    ]);
+    expect(rpcCalls('claim_ops_alert').map(([, args]) => (args as { p_alert_key: string }).p_alert_key)).toEqual([
+      'app_logs_error_spike',
+      'app_logs_client_error_spike',
+      'email_dead_letter',
+      'cron_failure',
+      'pg_cron_stalled',
+    ]);
+
+    // 最後の pg_cron_stalled が 500 でも、前の 4 つの通知は送り終えている
+    vi.clearAllMocks();
+    everything({ pgCronLastRun: { data: null, error: { code: '42501', message: 'permission denied for schema cron' } } });
+    const failed = await GET(authed());
+    expect(failed.status).toBe(500);
+    await expect(failed.json()).resolves.toEqual(GENERIC);
+    expect(mocks.sendEmail.mock.calls.map(([envelope]) => (envelope as { template: string }).template)).toEqual([
+      'ops_app_log_error_spike',
+      'ops_app_log_error_spike',
+      'ops_email_dead_letter',
+      'ops_cron_failure',
+    ]);
+  });
+
+  it('ORD-2: server の急増を送ったあと cron_failure_counts が error なら 500。server の sendEmail は 1 回呼ばれたまま (取り消さない)、client と email_dead_letter の数える RPC は呼ばれ、pg_cron_last_run_at と claim_ops_alert (キー cron_failure / pg_cron_stalled) は呼ばない (S-19・P-8)', async () => {
+    setScenario({ cronFailureCounts: { data: null, error: { code: '57P01', message: 'terminating connection due to administrator command' } } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect((mocks.sendEmail.mock.calls[0][0] as { template: string }).template).toBe('ops_app_log_error_spike');
+    expect(rpcCalls('app_log_client_error_counts')).toHaveLength(1);
+    expect(rpcCalls('email_outbox_dead_counts')).toHaveLength(1);
+    expect(rpcCalls('pg_cron_last_run_at')).toHaveLength(0);
+    const keys = rpcCalls('claim_ops_alert').map(([, args]) => (args as { p_alert_key: string }).p_alert_key);
+    expect(keys).toEqual(['app_logs_error_spike']);
+    // server の通知は済んでいるので、権利は返さない
+    expect(rpcCalls('release_ops_alert')).toHaveLength(0);
   });
 });
