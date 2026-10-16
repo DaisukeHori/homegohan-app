@@ -46,6 +46,10 @@
 #   SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS   stop / stop-leftover が prune の衝突で失敗したときに CLI の stop を打つ回数の上限
 #                                        (最初の 1 回を含む。既定: STOP_RETRY_ATTEMPTS_DEFAULT。1 以上の整数)
 #   SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT  そのやり直しの待ち時間の単位秒 (既定: STOP_RETRY_WAIT_UNIT_DEFAULT。n 回目は n 倍。0 以上の整数)
+#   SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE
+#                                    start のあと (と、db reset で Kong を再起動したあと) に、入口の Kong の奥への接続の使い回しの数
+#                                    (Kong の upstream_keepalive_pool_size) を入れ直す値 (既定: KONG_UPSTREAM_KEEPALIVE_POOL_SIZE_DEFAULT = 0
+#                                    = 使い回さない。0 以上の整数。Kong の既定の 60 を入れると CLI のままの動きに戻る。#1779。tune_kong_keepalive)
 #
 # IPv6 について: Claude Code Cloud の VM はカーネルで IPv6 が無効 (ipv6.disable=1)。
 # CLI 2.62.10 既定の Realtime v2.65.3 は IPv6 での待ち受けがハードコードされており起動に失敗する。
@@ -111,6 +115,33 @@ if ! [[ "$STOP_RETRY_WAIT_UNIT" =~ ^[0-9]+$ ]]; then
 fi
 STOP_RETRY_ATTEMPTS="$((10#$STOP_RETRY_ATTEMPTS))"
 STOP_RETRY_WAIT_UNIT="$((10#$STOP_RETRY_WAIT_UNIT))"
+
+# 入口の Kong の、奥への接続の使い回し (#1779)。
+# CLI 2.62.10 の Kong (public.ecr.aws/supabase/kong:2.8.1) は Kong の既定のまま、奥 (PostgREST など) への接続を使い回す
+# (upstream_keepalive_pool_size = 60・upstream_keepalive_idle_timeout = 60 秒。2026-10-17 に d256 でコンテナの .kong_env を読んで確認)。
+# ところが PostgREST は、使われていない接続を Kong より先に閉じる (2026-10-17 に d256 で測ると、最後の要求から約 58 秒で
+# PostgREST が閉じ、Kong の側には TIME_WAIT が残らなかった。Auth・Storage・pg-meta への接続は Kong が 60 秒で閉じた)。
+# PostgREST が閉じるのと、Kong がその接続で次の要求を送るのが重なると、Kong の error.log に
+# 「upstream prematurely closed connection while reading response header from upstream」が出て、呼び出し側には 502
+# (An invalid response was received from the upstream server。エラーの code は無い) が返る。
+# nginx は送り直しても安全な要求 (GET・HEAD など) だけを別の接続で送り直し、POST・PATCH は送り直さないので、
+# 結合テストでは準備の INSERT・UPDATE・RPC・/pg/query (どれも POST か PATCH) だけが落ちていた。
+# (2026-10-17 の d256 の結合テスト 1 回 (Kong への要求 28,388 件) で 502 が 1 件 (POST /rest/v1/rpc/...)。その 1 件の error.log が
+#  上の文言で、同じ時刻の PostgREST のログには再起動・スキーマの読み直し・接続の失敗のどれも無く、コンテナの die / oom も無かった)
+# ローカルでは使い回しの得がほとんど無い (同じ Docker のネットワークの中の TCP 接続) ので、起動したあとに使い回しを止める。
+# 0 = 使い回さない (要求ごとに新しい接続を開き、使い終わったら閉じる)。Kong の既定の 60 を入れると CLI のままの動きに戻る
+readonly KONG_UPSTREAM_KEEPALIVE_POOL_SIZE_DEFAULT=0
+KONG_UPSTREAM_KEEPALIVE_POOL_SIZE="${SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE:-$KONG_UPSTREAM_KEEPALIVE_POOL_SIZE_DEFAULT}"
+if ! [[ "$KONG_UPSTREAM_KEEPALIVE_POOL_SIZE" =~ ^[0-9]+$ ]]; then
+  log "SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE は 0 以上の整数にしてください: $KONG_UPSTREAM_KEEPALIVE_POOL_SIZE"
+  exit 2
+fi
+KONG_UPSTREAM_KEEPALIVE_POOL_SIZE="$((10#$KONG_UPSTREAM_KEEPALIVE_POOL_SIZE))"
+# CLI 2.62.10 が Kong を起動するときに渡す nginx の雛形 (コンテナの起動コマンドの
+# `kong docker-start --nginx-conf /home/kong/custom_nginx.template`)。reload でも同じ雛形を渡す (渡さないと Kong の既定の雛形で作り直す)
+readonly KONG_NGINX_TEMPLATE="/home/kong/custom_nginx.template"
+# Kong が設定を書き出す場所 (Kong の既定の prefix /usr/local/kong の .kong_env)。reload のあとに値が入ったかをここで確かめる
+readonly KONG_ENV_FILE="/usr/local/kong/.kong_env"
 
 cli() {
   # shellcheck disable=SC2086
@@ -288,7 +319,36 @@ cmd_start() {
   err="$(mktemp "${TMPDIR:-/tmp}/supabase-local-start.XXXXXX")"
   sip_run "supabase start" - "$err" "$START_NOT_READY_PATTERN" cli start "${args[@]}" || status=$?
   rm -f "$err"
+  if [ "$status" -eq 0 ] && ! tune_kong_keepalive; then
+    status=1
+  fi
   return "$status"
+}
+
+# 入口の Kong の、奥への接続の使い回しの数を KONG_UPSTREAM_KEEPALIVE_POOL_SIZE に入れ直す (#1779。理由は上の定数の説明)。
+# CLI は Kong の環境変数を決め打ちで起動するので、起動したあとにコンテナの中で `kong reload` を打ち、その 1 回だけ
+# KONG_UPSTREAM_KEEPALIVE_POOL_SIZE を渡す (reload は設定を書き出し直して nginx に HUP を送る。受け付け中の要求は古い worker が
+# 最後まで返すので、入れ直しの間に要求を落とさない)。コンテナを docker restart すると CLI の起動時の設定に戻るので、
+# Kong を再起動したら (restart_kong_and_wait) もう一度呼ぶ。
+# 入れ直したあと、Kong が書き出した設定 (.kong_env) に値が入ったかを確かめ、入っていなければ失敗にする
+# (黙って使い回しのまま結合テストを流すと、間欠的な 502 が戻ってきても気付けない)
+tune_kong_keepalive() {
+  local container="supabase_kong_$PROJECT_ID" kong_env actual
+  if ! docker exec -e "KONG_UPSTREAM_KEEPALIVE_POOL_SIZE=$KONG_UPSTREAM_KEEPALIVE_POOL_SIZE" "$container" \
+      kong reload --nginx-conf "$KONG_NGINX_TEMPLATE" >&2; then
+    log "Kong ($container) の奥への接続の使い回しを $KONG_UPSTREAM_KEEPALIVE_POOL_SIZE に入れ直せませんでした (kong reload が失敗)"
+    return 1
+  fi
+  if ! kong_env="$(docker exec "$container" cat "$KONG_ENV_FILE")"; then
+    log "Kong ($container) の設定 ($KONG_ENV_FILE) を読めませんでした"
+    return 1
+  fi
+  actual="$(printf '%s\n' "$kong_env" | sed -n 's/^upstream_keepalive_pool_size = \([0-9]*\)$/\1/p' | head -n1)"
+  if [ "$actual" != "$KONG_UPSTREAM_KEEPALIVE_POOL_SIZE" ]; then
+    log "Kong ($container) の upstream_keepalive_pool_size が ${actual:-(無い)} のままです (入れ直そうとした値: $KONG_UPSTREAM_KEEPALIVE_POOL_SIZE)"
+    return 1
+  fi
+  log "Kong ($container) の奥への接続の使い回しを $KONG_UPSTREAM_KEEPALIVE_POOL_SIZE にしました (upstream_keepalive_pool_size。0 = 使い回さない。#1779)"
 }
 
 cmd_reset() {
@@ -328,7 +388,9 @@ restart_kong_and_wait() {
       "$api/storage/v1/bucket" || true)"
     if [ "$code" = "200" ]; then
       log "Storage API が応答しました"
-      return 0
+      # docker restart で Kong は CLI の起動時の設定 (奥への接続を使い回す) に戻っているので、入れ直す (#1779)
+      tune_kong_keepalive
+      return
     fi
     sleep 2
   done
