@@ -1,8 +1,11 @@
 // @vitest-environment node
 /**
- * #1444 Next 15 の非同期の規約 (async request API) のソース走査 contract テスト
+ * #1444 Next 15 以降の非同期の規約 (async request API) のソース走査 contract テスト (#1621 で Next 16 に合わせた)
  *
  * Next 15 では cookies() / headers() / draftMode() と、route・page・layout の params / searchParams が Promise になった。
+ * Next 15 には同期のまま読む互換の道が残っていたが、Next 16 で無くなった (同期で読むと動かない)。Next 16 では、
+ * 画像を作るメタデータのファイル (opengraph-image / twitter-image / icon / apple-icon) の default export が受ける
+ * params と id、sitemap の default export が受ける id も Promise になった (#1621。今のコードにこれらのファイルは無い)。
  * それに合わせて lib/supabase/server.ts の createClient() も async にした。ところが、Next 14 のつもりで書かれたコードが
  * main から入ってくると (#1415 の組織チャレンジの API が実例)、テキストの衝突が無いので git は黙って取り込み、
  *   - await しない createClient() の Promise に .auth / .from を呼んで落ちる
@@ -19,6 +22,8 @@
  *      その引数に型を書いていないもの (({ params }) => … など。変数の型や包む関数から型が決まる書き方) は、Promise かどうかを
  *      確かめられないので落とす (#1621)。同じファイルの関数まで辿れないもの (別のファイルからの再公開・export *・
  *      関数を包む呼び出し (export const GET = withX(…)) など) も「辿れない」として落とす。
+ *      Next 16 で Promise になった、画像のメタデータのファイルの default export の第 1 引数の params / id と、
+ *      sitemap の default export の第 1 引数の id も、同じ決まりで見る (#1621)。
  *   3. テストの next/headers のモック (vi.mock / vi.doMock の factory が返すオブジェクト) の cookies / headers / draftMode は、
  *      Promise を返す形で書く (async の関数・Promise.resolve を返す関数・vi.fn(それら)・vi.fn().mockResolvedValue(…))。
  *      同期の値を返すモックでは、本番コードが await を忘れてもテストが通ってしまう (#1621)
@@ -70,8 +75,17 @@ const PAGE_PROPS_ARG_INDEX = 0;
 /** default export の第 1 引数で params / searchParams を受けるファイル (App Router の規約のファイル名) */
 const PAGE_LIKE_FILE = /^(page|layout|default|template)\.(ts|tsx)$/;
 const ROUTE_FILE = /^route\.(ts|tsx)$/;
-/** Promise で受けなければならない props の名前 */
-const ASYNC_PROP_NAMES = ['params', 'searchParams'];
+/** Promise で受けなければならない props の名前 (page / layout など) */
+const ASYNC_PROP_NAMES: readonly string[] = ['params', 'searchParams'];
+/**
+ * 画像を作るメタデータのファイル (#1621 Next 16)。default export の第 1 引数の params と id が Promise になった
+ * (generateImageMetadata が受ける params は同期のまま。ここでは見ない)
+ */
+const IMAGE_METADATA_FILE = /^(opengraph-image|twitter-image|icon|apple-icon)\.(ts|tsx)$/;
+const IMAGE_METADATA_ASYNC_PROP_NAMES: readonly string[] = ['params', 'id'];
+/** sitemap のファイル (#1621 Next 16)。default export の第 1 引数の id (generateSitemaps が返した id) が Promise になった */
+const SITEMAP_FILE = /^sitemap\.(ts|tsx)$/;
+const SITEMAP_ASYNC_PROP_NAMES: readonly string[] = ['id'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 構文木の走査
@@ -142,8 +156,13 @@ function membersOf(type: ts.TypeNode, sf: ts.SourceFile): ts.NodeArray<ts.TypeEl
   return null;
 }
 
-/** 引数の型のうち、Promise で受けていない params / searchParams (例: "GET の params") */
-function syncPropsOf(label: string, param: ts.ParameterDeclaration | undefined, sf: ts.SourceFile): string[] {
+/** 引数の型のうち、Promise で受けていない props (既定は params / searchParams。例: "GET の params") */
+function syncPropsOf(
+  label: string,
+  param: ts.ParameterDeclaration | undefined,
+  sf: ts.SourceFile,
+  asyncPropNames: readonly string[] = ASYNC_PROP_NAMES,
+): string[] {
   if (!param) return [];
   // 型を書いていない引数 (({ params }) => … など) は、変数の型や包む関数から型が決まるので、ここでは Promise かを確かめられない (#1621)
   if (!param.type) return [`${label} の引数に型が無い (Promise<...> の型を書く)`];
@@ -152,7 +171,7 @@ function syncPropsOf(label: string, param: ts.ParameterDeclaration | undefined, 
   const found: string[] = [];
   for (const member of members) {
     if (!ts.isPropertySignature(member) || !member.name || !ts.isIdentifier(member.name)) continue;
-    if (ASYNC_PROP_NAMES.includes(member.name.text) && !isPromiseType(member.type)) found.push(`${label} の ${member.name.text}`);
+    if (asyncPropNames.includes(member.name.text) && !isPromiseType(member.type)) found.push(`${label} の ${member.name.text}`);
   }
   return found;
 }
@@ -237,11 +256,25 @@ function exportedFunctions(sf: ts.SourceFile): ExportedFunction[] {
   return result;
 }
 
-/** route.ts / page.tsx などで、Promise で受けていない params / searchParams */
+/** default export の第 1 引数で Promise の props を受けるファイルなら、その props の名前 (それ以外は null) */
+function defaultExportAsyncPropNames(base: string): readonly string[] | null {
+  if (PAGE_LIKE_FILE.test(base)) return ASYNC_PROP_NAMES;
+  if (IMAGE_METADATA_FILE.test(base)) return IMAGE_METADATA_ASYNC_PROP_NAMES;
+  if (SITEMAP_FILE.test(base)) return SITEMAP_ASYNC_PROP_NAMES;
+  return null;
+}
+
+/** 走査するファイル (route と、default export の第 1 引数で Promise の props を受けるファイル) か */
+function isRequestPropsFile(base: string): boolean {
+  return ROUTE_FILE.test(base) || defaultExportAsyncPropNames(base) !== null;
+}
+
+/** route.ts / page.tsx などで、Promise で受けていない params / searchParams (画像のメタデータ・sitemap は params / id) */
 function findSyncRequestProps(source: string, fileName: string): string[] {
   const base = path.basename(fileName);
   const sf = parse(source, fileName);
   const found: string[] = [];
+  const defaultPropNames = defaultExportAsyncPropNames(base);
   for (const fn of exportedFunctions(sf)) {
     if (ROUTE_FILE.test(base) && fn.name === '*') {
       found.push('export * の handler を辿れない (同じファイルの関数で書く)');
@@ -251,9 +284,9 @@ function findSyncRequestProps(source: string, fileName: string): string[] {
       if (!fn.params) found.push(`${fn.name} の handler を辿れない (同じファイルの関数で書く)`);
       else found.push(...syncPropsOf(fn.name, fn.params[ROUTE_CONTEXT_ARG_INDEX], sf));
     }
-    if (PAGE_LIKE_FILE.test(base) && fn.isDefault) {
+    if (defaultPropNames && fn.isDefault) {
       if (!fn.params) found.push('default export を辿れない (同じファイルの関数で書く)');
-      else found.push(...syncPropsOf('default export', fn.params[PAGE_PROPS_ARG_INDEX], sf));
+      else found.push(...syncPropsOf('default export', fn.params[PAGE_PROPS_ARG_INDEX], sf, defaultPropNames));
     }
   }
   return found;
@@ -593,11 +626,63 @@ describe('走査の仕組みの確認: テストの next/headers のモック (#
   });
 });
 
+describe('走査の仕組みの確認: Next 16 で Promise になった画像のメタデータの params / id と sitemap の id (#1621)', () => {
+  it('opengraph-image / twitter-image / icon / apple-icon の default export の同期の params / id を見つける', () => {
+    for (const fileName of ['opengraph-image.tsx', 'twitter-image.tsx', 'icon.tsx', 'apple-icon.ts']) {
+      expect(
+        findSyncRequestProps(
+          'export default async function Image({ params, id }: { params: { slug: string }; id: string }) { return null; }',
+          fileName,
+        ),
+      ).toEqual(['default export の params', 'default export の id']);
+    }
+    expect(findSyncRequestProps('export default function Image({ params }) { return null; }', 'opengraph-image.tsx')).toEqual([
+      'default export の引数に型が無い (Promise<...> の型を書く)',
+    ]);
+  });
+
+  it('画像のメタデータの params / id を Promise で受けたもの・引数の無いものには反応しない', () => {
+    expect(
+      findSyncRequestProps(
+        'export default async function Image(props: { params: Promise<{ slug: string }>; id: Promise<string> }) { return null; }',
+        'opengraph-image.tsx',
+      ),
+    ).toEqual([]);
+    expect(findSyncRequestProps('export default function Icon() { return null; }', 'icon.tsx')).toEqual([]);
+  });
+
+  it('sitemap の default export の同期の id を見つけ、Promise で受けたものには反応しない', () => {
+    expect(findSyncRequestProps('export default async function sitemap({ id }: { id: number }) { return []; }', 'sitemap.ts')).toEqual([
+      'default export の id',
+    ]);
+    expect(findSyncRequestProps('export default async function sitemap(props: { id: Promise<string> }) { return []; }', 'sitemap.ts')).toEqual(
+      [],
+    );
+    expect(findSyncRequestProps('export default function sitemap() { return []; }', 'sitemap.ts')).toEqual([]);
+  });
+
+  it('画像のメタデータ・sitemap のファイルは、page の searchParams の決まりでは見ない (それぞれの props の名前だけを見る)', () => {
+    expect(
+      findSyncRequestProps('export default function Image(props: { searchParams: { q: string } }) { return null; }', 'opengraph-image.tsx'),
+    ).toEqual([]);
+    expect(findSyncRequestProps('export default function sitemap(props: { params: { a: string } }) { return []; }', 'sitemap.ts')).toEqual([]);
+  });
+
+  it('走査の対象のファイル名を見分ける (robots・manifest など、引数で Promise を受けないファイルは見ない)', () => {
+    for (const base of ['route.ts', 'page.tsx', 'layout.tsx', 'opengraph-image.tsx', 'twitter-image.ts', 'icon.tsx', 'apple-icon.tsx', 'sitemap.ts']) {
+      expect(isRequestPropsFile(base), base).toBe(true);
+    }
+    for (const base of ['robots.ts', 'manifest.ts', 'opengraph-image.alt.txt', 'icons.tsx', 'sitemaps.ts']) {
+      expect(isRequestPropsFile(base), base).toBe(false);
+    }
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 本番コードの走査
 // ─────────────────────────────────────────────────────────────────────────────
 
-describe('本番コードは Next 15 の非同期の規約に従う (#1444)', () => {
+describe('本番コードは Next 15 以降 (Next 16) の非同期の規約に従う (#1444・#1621)', () => {
   const files = SCAN_ROOTS.flatMap((root) => collectProductionFiles(path.join(ROOT, root)));
 
   it('走査の対象が空でない (置き場を見失っていない)', () => {
@@ -616,12 +701,12 @@ describe('本番コードは Next 15 の非同期の規約に従う (#1444)', ()
     expect(violations).toEqual([]);
   });
 
-  it('src/app の route の handler の params と、page / layout の params / searchParams は Promise で受ける', () => {
+  it('src/app の route の handler の params と、page / layout の params / searchParams (画像のメタデータの params / id・sitemap の id) は Promise で受ける', () => {
     const violations: string[] = [];
     for (const file of files) {
       const rel = relativeOf(file);
       const base = path.basename(file);
-      if (!rel.startsWith(`${APP_DIR}/`) || !(ROUTE_FILE.test(base) || PAGE_LIKE_FILE.test(base))) continue;
+      if (!rel.startsWith(`${APP_DIR}/`) || !isRequestPropsFile(base)) continue;
       for (const prop of findSyncRequestProps(fs.readFileSync(file, 'utf8'), file)) violations.push(`${rel}: ${prop}`);
     }
     expect(violations).toEqual([]);

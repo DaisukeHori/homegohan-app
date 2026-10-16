@@ -2225,6 +2225,96 @@ export type Database = {
         }
         Relationships: []
       }
+      email_outbox: {
+        Row: {
+          attempts: number
+          created_at: string
+          dead_alerted_at: string | null
+          dead_at: string | null
+          from_email: string
+          html_body: string | null
+          id: string
+          idempotency_key: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          redact_after_send: boolean
+          reply_to: string | null
+          requeue_count: number
+          requeued_at: string | null
+          resend_message_id: string | null
+          sent_at: string | null
+          status: string
+          subject: string
+          template: string
+          text_body: string
+          to_email: string
+          updated_at: string
+          user_id: string | null
+          worker_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dead_alerted_at?: string | null
+          dead_at?: string | null
+          from_email: string
+          html_body?: string | null
+          id?: string
+          idempotency_key: string
+          last_error_code?: string | null
+          last_error_message?: string | null
+          last_status_code?: number | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          redact_after_send?: boolean
+          reply_to?: string | null
+          requeue_count?: number
+          requeued_at?: string | null
+          resend_message_id?: string | null
+          sent_at?: string | null
+          status?: string
+          subject: string
+          template: string
+          text_body: string
+          to_email: string
+          updated_at?: string
+          user_id?: string | null
+          worker_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dead_alerted_at?: string | null
+          dead_at?: string | null
+          from_email?: string
+          html_body?: string | null
+          id?: string
+          idempotency_key?: string
+          last_error_code?: string | null
+          last_error_message?: string | null
+          last_status_code?: number | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          redact_after_send?: boolean
+          reply_to?: string | null
+          requeue_count?: number
+          requeued_at?: string | null
+          resend_message_id?: string | null
+          sent_at?: string | null
+          status?: string
+          subject?: string
+          template?: string
+          text_body?: string
+          to_email?: string
+          updated_at?: string
+          user_id?: string | null
+          worker_id?: string | null
+        }
+        Relationships: []
+      }
       embedding_jobs: {
         Row: {
           completed_at: string | null
@@ -5527,6 +5617,92 @@ export type Database = {
           },
         ]
       }
+      push_outbox: {
+        Row: {
+          attempts: number
+          created_at: string
+          dead_at: string | null
+          dedupe_key: string | null
+          expo_push_token: string
+          id: string
+          kind: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          payload: Json
+          push_token_id: string
+          receipt_checked_at: string | null
+          receipt_error: string | null
+          receipt_id: string | null
+          receipt_status: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          worker_id: string | null
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          dead_at?: string | null
+          dedupe_key?: string | null
+          expo_push_token: string
+          id?: string
+          kind: string
+          last_error_code?: string | null
+          last_error_message?: string | null
+          last_status_code?: number | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          payload?: Json
+          push_token_id: string
+          receipt_checked_at?: string | null
+          receipt_error?: string | null
+          receipt_id?: string | null
+          receipt_status?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+          worker_id?: string | null
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          dead_at?: string | null
+          dedupe_key?: string | null
+          expo_push_token?: string
+          id?: string
+          kind?: string
+          last_error_code?: string | null
+          last_error_message?: string | null
+          last_status_code?: number | null
+          lease_expires_at?: string | null
+          next_attempt_at?: string
+          payload?: Json
+          push_token_id?: string
+          receipt_checked_at?: string | null
+          receipt_error?: string | null
+          receipt_id?: string | null
+          receipt_status?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "push_outbox_push_token_id_fkey"
+            columns: ["push_token_id"]
+            isOneToOne: false
+            referencedRelation: "user_push_tokens"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       recipe_collection_items: {
         Row: {
           added_at: string | null
@@ -7997,6 +8173,48 @@ export type Database = {
         Args: { p_grant_id: string; p_user_id: string }
         Returns: boolean
       }
+      claim_email_outbox: {
+        Args: {
+          p_lease_seconds?: number
+          p_limit?: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_alerted_at: string | null
+          dead_at: string | null
+          from_email: string
+          html_body: string | null
+          id: string
+          idempotency_key: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          redact_after_send: boolean
+          reply_to: string | null
+          requeue_count: number
+          requeued_at: string | null
+          resend_message_id: string | null
+          sent_at: string | null
+          status: string
+          subject: string
+          template: string
+          text_body: string
+          to_email: string
+          updated_at: string
+          user_id: string | null
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "email_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
       claim_menu_request: {
         Args: { p_worker_id: string }
         Returns: {
@@ -8036,15 +8254,105 @@ export type Database = {
         Args: { p_alert_key: string; p_cooldown_minutes?: number }
         Returns: string
       }
+      claim_push_outbox: {
+        Args: { p_lease_seconds: number; p_limit: number; p_worker_id: string }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_at: string | null
+          dedupe_key: string | null
+          expo_push_token: string
+          id: string
+          kind: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          payload: Json
+          push_token_id: string
+          receipt_checked_at: string | null
+          receipt_error: string | null
+          receipt_id: string | null
+          receipt_status: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "push_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_push_receipts: {
+        Args: {
+          p_lease_seconds: number
+          p_limit: number
+          p_min_age_seconds: number
+          p_worker_id: string
+        }
+        Returns: {
+          attempts: number
+          created_at: string
+          dead_at: string | null
+          dedupe_key: string | null
+          expo_push_token: string
+          id: string
+          kind: string
+          last_error_code: string | null
+          last_error_message: string | null
+          last_status_code: number | null
+          lease_expires_at: string | null
+          next_attempt_at: string
+          payload: Json
+          push_token_id: string
+          receipt_checked_at: string | null
+          receipt_error: string | null
+          receipt_id: string | null
+          receipt_status: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+          worker_id: string | null
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "push_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      cleanup_email_outbox: { Args: never; Returns: number }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
+      cleanup_push_outbox: {
+        Args: never
+        Returns: {
+          dead_deleted: number
+          expired: number
+          sent_deleted: number
+        }[]
+      }
       cleanup_stale_auth_login_failures: { Args: never; Returns: number }
       complete_account_deletion_record: {
         Args: { p_record_id: string }
         Returns: undefined
       }
+      complete_email_outbox: {
+        Args: { p_id: string; p_resend_message_id: string; p_worker_id: string }
+        Returns: boolean
+      }
       complete_handson_tour: { Args: never; Returns: Json }
+      complete_push_outbox: {
+        Args: { p_id: string; p_receipt_id: string; p_worker_id: string }
+        Returns: boolean
+      }
       consume_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
         Returns: Json
@@ -8213,9 +8521,56 @@ export type Database = {
         Args: { p_recipe_id?: string; p_recipe_uuid?: string }
         Returns: number
       }
+      defer_push_outbox: {
+        Args: { p_id: string; p_until: string; p_worker_id: string }
+        Returns: boolean
+      }
+      email_outbox_dead_counts: {
+        Args: { p_limit?: number }
+        Returns: {
+          dead_count: number
+          template: string
+          total_count: number
+        }[]
+      }
       enforce_membership_daily_cap: {
         Args: { p_email?: string; p_kind: string; p_scope_id: string }
         Returns: undefined
+      }
+      enqueue_push_notification: {
+        Args: {
+          p_dedupe_key?: string
+          p_kind: string
+          p_payload: Json
+          p_user_id: string
+        }
+        Returns: number
+      }
+      fail_email_outbox: {
+        Args: {
+          p_error_code: string
+          p_error_message: string
+          p_id: string
+          p_max_attempts: number
+          p_retry_after_seconds: number
+          p_retryable: boolean
+          p_status_code: number
+          p_worker_id: string
+        }
+        Returns: string
+      }
+      fail_push_outbox: {
+        Args: {
+          p_error_code: string
+          p_error_message: string
+          p_id: string
+          p_max_attempts: number
+          p_retry_after_seconds: number
+          p_retryable: boolean
+          p_status_code: number
+          p_worker_id: string
+        }
+        Returns: string
       }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
@@ -8552,6 +8907,14 @@ export type Database = {
         }
         Returns: Json
       }
+      mark_email_outbox_dead_alerted: {
+        Args: { p_alerted_at: string; p_limit?: number }
+        Returns: {
+          dead_count: number
+          template: string
+          total_count: number
+        }[]
+      }
       membership_audit_hash_email_in_metadata: {
         Args: { p_metadata: Json }
         Returns: Json
@@ -8734,6 +9097,15 @@ export type Database = {
       record_ai_usage_at: {
         Args: { p_at: string; p_feature: string; p_user_id: string }
         Returns: undefined
+      }
+      record_push_receipt: {
+        Args: {
+          p_error: string
+          p_id: string
+          p_status: string
+          p_worker_id: string
+        }
+        Returns: boolean
       }
       refund_ai_usage: {
         Args: { p_feature: string; p_usage_date: string; p_user_id: string }
@@ -9011,10 +9383,8 @@ export type Database = {
         Args: { p_email: string; p_member_id: string }
         Returns: Json
       }
-      requeue_stale_meal_image_jobs: {
-        Args: { p_now?: string }
-        Returns: Json
-      }
+      requeue_email_outbox: { Args: { p_id: string }; Returns: string }
+      requeue_stale_meal_image_jobs: { Args: { p_now?: string }; Returns: Json }
       reset_e2e_test_users: { Args: never; Returns: undefined }
       revoke_child_promotion: {
         Args: { p_member_id: string }
@@ -9312,6 +9682,10 @@ export type Database = {
           wau: number
         }[]
       }
+      unmark_email_outbox_dead_alerted: {
+        Args: { p_alerted_at: string }
+        Returns: number
+      }
       update_my_share_settings: {
         Args: {
           p_share_health: boolean
@@ -9342,10 +9716,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
-      update_org_challenge_progress: {
-        Args: { p_now?: string }
-        Returns: Json
-      }
+      update_org_challenge_progress: { Args: { p_now?: string }; Returns: Json }
       upsert_daily_meal_slot: {
         Args: {
           p_day_date: string

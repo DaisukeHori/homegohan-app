@@ -828,7 +828,7 @@ family/09 が既存コンポーネントに加える共通拡張パターン(can
 |---|---|---|
 | `<MealNewScreen>` (Web + Mobile) | `mode: 'sandbox'` + `prefilled` + `apiOptions` + `onSandboxComplete` | §03 |
 | `<V4GenerateModal>` (Web `src/components/ai-assistant/`、Mobile `apps/mobile/src/components/menu/`) | `mode: 'sandbox'` + `initialFlags` + `prefilled` + `loadingDurationMs` + `apiOptions` + `onSandboxComplete` | §04 |
-| `<BadgesPage>` (Web `src/app/(main)/badges/page.tsx`、Mobile `apps/mobile/app/badges/index.tsx`) | URL クエリ `?tutorial-mode=1&highlight=first_bite,planner,tutorial_complete` + `data-testid="badge-card-{code}"` 動的化 | §05 |
+| `<BadgesPage>` (Web `src/app/(main)/badges/page.tsx`。Mobile の `apps/mobile/app/badges/index.tsx` は 2026-10-16 に削除。#1598) | URL クエリ `?tutorial-mode=1&highlight=first_bite,planner,tutorial_complete` + `data-testid="badge-card-{code}"` 動的化 | §05 |
 
 `mode='sandbox'` は discriminated union で型分岐(family/09 §07 §6.1 参照)。
 
