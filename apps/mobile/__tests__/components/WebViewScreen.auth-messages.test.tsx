@@ -280,6 +280,9 @@ describe('WebViewScreen — mfa-verify-required (#1707 段 D。cross/12 §16.4.5
   it('mfa-verify-required で NativeMfaVerifyModal を出し、onVerified で閉じて _rb を付けた initialPath で開き直す', async () => {
     const utils = render(<WebViewScreen path="/home" />);
     await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+    // 開くときの bridge (getSessionForBridge) が呼んだ分を数えない
+    mockGetSession.mockClear();
+    mockGetUser.mockClear();
 
     await act(async () => {
       postFromWeb({ type: 'mfa-verify-required' }, VERIFY_PAGE);
