@@ -400,6 +400,13 @@ CREATE INDEX IF NOT EXISTS idx_challenge_org    ON organization_challenges(organ
 CREATE INDEX IF NOT EXISTS idx_challenge_part   ON org_challenge_participants(user_id, challenge_id);
 ```
 
+> **実装との違い (#1132 / #1688)**: 実装の表は既存の `organization_challenges` と `organization_challenge_participants` (`07-challenge.md` §15)。
+> migration `supabase/migrations/20261016240000_org_challenge_diff_privacy.sql` (#1688。設計 `org/10-challenge-diff-privacy.md` §5) で次を足した。
+> - `organization_challenges.status` を NOT NULL にした (NULL の行は先に draft にした。同 migration `:51`〜`:52`)。値の CHECK (draft / active / completed / cancelled) は変えていない。
+> - 表 `organization_challenge_aggregates` (チャレンジごとに 1 行の集計の控え。同 `:57`〜`:72`): `challenge_id` (主キー。`organization_challenges(id)` ON DELETE CASCADE)・`joined_count` (参加の延べ数。NOT NULL DEFAULT 0・0 以上)・`finalized_at`・`final_ranked_count` (0 以上)・`final_average_value`・`updated_at`。CHECK `organization_challenge_aggregates_final_shape`: 未確定なら `finalized_at` / `final_ranked_count` / `final_average_value` がすべて NULL、確定なら `finalized_at` と `final_ranked_count` が NULL でない (平均は人数 0 なら NULL)。
+> - 表 `organization_challenge_ranking_exclusions` (管理者だった印。同 `:84`〜`:91`): `challenge_id` (`organization_challenges(id)` ON DELETE CASCADE)・`user_id` (`auth.users(id)` ON DELETE CASCADE)・`marked_at`。主キー (`challenge_id`, `user_id`)。
+> - 2 つの表の RLS と、書き込むトリガーは `09-rls-policies.md` §14。
+
 #### `hr_webhook_events`
 
 ```sql
