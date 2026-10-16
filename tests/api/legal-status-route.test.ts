@@ -4,6 +4,7 @@
  * #1442: GET /api/legal/status (本人の同意の状況と、いま強制中か) のテスト
  * (設計書 docs/design/cross/13a-legal-consent-api-server.md §6.14 D・§6.9)。
  * モックは tests/api/onboarding-status-route.test.ts と同型。LEGAL_CONSENT_ENFORCE は vi.stubEnv で入れる。
+ * #1173 (設計書 cross/14 T-API4): 列に birth_date を読み、gaps を返す。18 歳未満の行だけ rpc('legal_minor_has_guardian_path') を聞く。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,7 @@ import { LegalConsentStatusSchema } from '@/lib/legal-consent-api';
 interface LegalRow {
   terms_version_accepted: string | null;
   privacy_version_accepted: string | null;
+  birth_date: string | null;
 }
 
 const state: { profile: LegalRow | null; error: { code: string; message: string } | null } = {
@@ -37,11 +39,12 @@ const mockFrom = vi.fn((table: string) => {
   };
   return builder;
 });
+const mockRpc = vi.fn();
 const mockGetSupabaseAdmin = vi.fn();
 const mockLoggerError = vi.fn();
 
 vi.mock('@/lib/supabase/server', () => ({
-  createClient: async () => ({ auth: { getUser: mockGetUser }, from: mockFrom }),
+  createClient: async () => ({ auth: { getUser: mockGetUser }, from: mockFrom, rpc: mockRpc }),
   getSupabaseAdmin: (...args: unknown[]) => mockGetSupabaseAdmin(...args),
 }));
 
@@ -58,6 +61,11 @@ import { GET } from '../../src/app/api/legal/status/route';
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
 const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
 const OLD_VERSION = 'v0-old';
+/** 成人の placeholder。#1173 で生年月日が無いと同意ゲートを通れないため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+/** #1173 の 17 歳の it で固定する時刻 (JST 2026-10-16 12:00) と、その日に 17 歳の生年月日 */
+const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+const BIRTH_DATE_17 = '2008-10-17';
 
 async function getStatusBody() {
   const res = await GET();
@@ -70,12 +78,13 @@ beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv('LEGAL_CONSENT_ENFORCE', 'on');
   mockGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
-  state.profile = { terms_version_accepted: null, privacy_version_accepted: null };
+  state.profile = { terms_version_accepted: null, privacy_version_accepted: null, birth_date: null };
   state.error = null;
 });
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.useRealTimers();
 });
 
 describe('GET /api/legal/status (#1442)', () => {
@@ -106,7 +115,7 @@ describe('GET /api/legal/status (#1442)', () => {
   });
 
   it('旧版に同意 × on → required: true、outdated は旧版の文書だけ', async () => {
-    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: OLD_VERSION };
+    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: OLD_VERSION, birth_date: ADULT_BIRTH_DATE };
 
     const body = await getStatusBody();
 
@@ -117,7 +126,7 @@ describe('GET /api/legal/status (#1442)', () => {
   });
 
   it('同意済み → required: false、accepted: true、outdated は空', async () => {
-    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY };
+    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: ADULT_BIRTH_DATE };
 
     const body = await getStatusBody();
 
@@ -187,7 +196,7 @@ describe('GET /api/legal/status (#1442)', () => {
     });
   });
 
-  it('本人のセッションのクライアントで本人の行だけを読む (service role を使わない。select の列は 2 列)', async () => {
+  it('本人のセッションのクライアントで本人の行だけを読む (service role を使わない。select の列は 3 列)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'user-42' } }, error: null });
 
     await getStatusBody();
@@ -196,8 +205,48 @@ describe('GET /api/legal/status (#1442)', () => {
     expect(mockFrom).toHaveBeenCalledTimes(1);
     expect(mockFrom).toHaveBeenCalledWith('user_profiles');
     expect(mockSelect).toHaveBeenCalledTimes(1);
-    expect(mockSelect).toHaveBeenCalledWith('terms_version_accepted, privacy_version_accepted');
+    expect(mockSelect).toHaveBeenCalledWith('terms_version_accepted, privacy_version_accepted, birth_date');
     expect(mockEq).toHaveBeenCalledTimes(1);
     expect(mockEq).toHaveBeenCalledWith('id', 'user-42');
+  });
+});
+
+describe('GET /api/legal/status の生年月日と保護者の同意とのつながり (#1173 T-API4)', () => {
+  it('版は同意済みで birth_date が無い行 → required: true・gaps: [birth_date]。rpc を呼ばない', async () => {
+    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: null };
+
+    const body = await getStatusBody();
+
+    expect(body).toMatchObject({ accepted: false, required: true, outdated: [], gaps: ['birth_date'] });
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('17 歳の行は rpc(legal_minor_has_guardian_path) を 1 回呼び、false なら required: true・gaps: [guardian_consent]、true なら required: false・gaps: []', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: BIRTH_DATE_17 };
+
+    mockRpc.mockResolvedValueOnce({ data: false, error: null });
+    const without = await getStatusBody();
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('legal_minor_has_guardian_path');
+    expect(without).toMatchObject({ accepted: false, required: true, gaps: ['guardian_consent'] });
+
+    mockRpc.mockResolvedValueOnce({ data: true, error: null });
+    const withPath = await getStatusBody();
+    expect(mockRpc).toHaveBeenCalledTimes(2);
+    expect(withPath).toMatchObject({ accepted: true, required: false, gaps: [] });
+  });
+
+  it('1990-01-01 の行と行なしでは rpc を呼ばない', async () => {
+    state.profile = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: ADULT_BIRTH_DATE };
+    const adult = await getStatusBody();
+    expect(adult.gaps).toEqual([]);
+
+    state.profile = null;
+    const none = await getStatusBody();
+    expect(none.gaps).toEqual(['terms_of_service', 'privacy_policy', 'birth_date']);
+
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 });

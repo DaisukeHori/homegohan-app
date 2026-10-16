@@ -8,7 +8,8 @@
  * 修正 (20261008200700_legal_documents_acceptance.sql):
  *   - user_profiles に同意済みの版 (terms_version_accepted / privacy_version_accepted) と同意日時 (legal_accepted_at) を足す
  *   - その 3 列は、特権列ガード (guard_user_profiles_privileged と _on_insert) で本人の直接 UPDATE / INSERT を拒否する
- *   - SECURITY DEFINER の accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent) だけが書く。
+ *   - SECURITY DEFINER の accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent, p_birth_date) だけが書く
+ *     (#1173 で生年月日 p_birth_date を足した。20261017030000_parental_consent_and_birth_date.sql)。
  *     書く行は auth.uid() 本人だけ。プロフィール行が無ければ既定値で作る。terms_acceptances に証跡を 1 文書ずつ足す
  *
  * 確認すること:
@@ -34,6 +35,7 @@
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
+import { PARENTAL_CONSENT_DOCUMENT, addDaysToDate, todayLocal } from '@homegohan/shared';
 import ws from 'ws';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -76,12 +78,14 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
 
 interface TestUser {
   id: string;
+  email: string;
   jwt: string;
 }
 
 const TS = Date.now();
 const PASSWORD = `${randomBytes(18).toString('base64url')}Aa1!`;
 const createdUserIds: string[] = [];
+const createdFamilyIds: string[] = [];
 let userSeq = 0;
 
 /** 実際の LEGAL_DOCUMENTS とは無関係な、テスト用の版 (DB は版の中身を知らない) */
@@ -105,7 +109,7 @@ async function createUser(label: string, options: { withProfile?: boolean } = {}
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
   if (signIn.error || !signIn.data.session) throw new Error(`signIn ${label}: ${signIn.error?.message}`);
-  return { id: data.user.id, jwt: signIn.data.session.access_token };
+  return { id: data.user.id, email, jwt: signIn.data.session.access_token };
 }
 
 const LEGAL_COLS = 'terms_version_accepted, privacy_version_accepted, legal_accepted_at';
@@ -155,16 +159,29 @@ function pairs(rows: AcceptanceRow[]): string[] {
   return rows.map((r) => `${r.document_type}:${r.document_version}`).sort();
 }
 
-function accept(user: TestUser, terms: string, privacy: string, extra: { ip?: string | null; ua?: string | null } = {}) {
+/** 成人の placeholder。#1173 で生年月日が無いと LEGAL_BIRTH_DATE_REQUIRED になるため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+
+function accept(
+  user: TestUser,
+  terms: string,
+  privacy: string,
+  extra: { ip?: string | null; ua?: string | null; birthDate?: string | null } = {},
+) {
   return asUser(user.jwt).rpc('accept_legal_documents', {
     p_terms_version: terms,
     p_privacy_version: privacy,
     p_ip: extra.ip === undefined ? null : extra.ip,
     p_user_agent: extra.ua === undefined ? null : extra.ua,
+    p_birth_date: extra.birthDate === undefined ? ADULT_BIRTH_DATE : extra.birthDate,
   });
 }
 
 afterAll(async () => {
+  // #1173 の家族 (子供の行・同意の行は family_groups の削除に連動して消える) を先に消す (代表者のアカウントを消す前に)
+  for (const id of createdFamilyIds) {
+    await srAdmin.from('family_groups').delete().eq('id', id);
+  }
   // terms_acceptances・user_profiles は auth.users の削除に連動して消える (ON DELETE CASCADE)
   for (const id of createdUserIds) {
     await srAdmin.auth.admin.deleteUser(id);
@@ -338,7 +355,7 @@ describe('accept_legal_documents: 同意の記録', () => {
 });
 
 describe('★他人の行は書けない', () => {
-  it('関数に他人を指す引数は無い (引数は版・IP・端末だけ)', async () => {
+  it('関数に他人を指す引数は無い (引数は版・IP・端末・生年月日だけ)', async () => {
     const rows = await pgQuery<{ args: string }>(`
       select pg_get_function_identity_arguments(p.oid) as args
       from pg_catalog.pg_proc p
@@ -346,7 +363,7 @@ describe('★他人の行は書けない', () => {
       where n.nspname = 'public' and p.proname = 'accept_legal_documents'
     `);
     expect(rows).toHaveLength(1);
-    expect(rows[0].args).toBe('p_terms_version text, p_privacy_version text, p_ip inet, p_user_agent text');
+    expect(rows[0].args).toBe('p_terms_version text, p_privacy_version text, p_ip inet, p_user_agent text, p_birth_date date');
   });
 
   it('A が呼んでも、B のプロフィールと証跡は変わらない', async () => {
@@ -576,6 +593,7 @@ describe('★同意の 3 列は、本人が直接書き換えられない (特�
         'terms_version_accepted',
         'privacy_version_accepted',
         'legal_accepted_at',
+        'birth_date', // #1173
       ]) {
         expect(def, `${column} が守られていること`).toContain(`NEW.${column}`);
       }
@@ -666,5 +684,225 @@ describe('入力の検証と権限', () => {
       secdef: true,
     });
     expect(rows[0].config).toEqual(['search_path=""']);
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// #1173 生年月日 (設計書 docs/design/cross/14-parental-consent.md §6.13 の B: T-DB1〜T-DB6・T-DB33)
+// ─────────────────────────────────────────────────────────
+
+/** JST の今日から years 年前の同じ月日 (その日が誕生日 = ちょうど years 歳)。2/29 は 2/28 に寄せる */
+function birthDateYearsAgo(years: number): string {
+  const today = todayLocal();
+  const monthDay = today.slice(4) === '-02-29' ? '-02-28' : today.slice(4);
+  return `${String(Number(today.slice(0, 4)) - years).padStart(4, '0')}${monthDay}`;
+}
+
+/** service_role でプロフィールの生年月日を読む (行が無ければ undefined) */
+async function birthDateOf(id: string): Promise<string | null | undefined> {
+  const { data, error } = await srAdmin.from('user_profiles').select('birth_date').eq('id', id).maybeSingle();
+  if (error) throw new Error(`birthDateOf: ${error.message}`);
+  return data ? (data as { birth_date: string | null }).birth_date : undefined;
+}
+
+/**
+ * 保護者 (1990-01-01 の大人) の家族に、保護者の同意つきの子供 (childBirthDate) を足し、minorEmail 宛の昇格依頼を作る。
+ * minorEmail の人にとって legal_minor_has_guardian_path() が true の状態 (S11)
+ */
+async function guardianPathFor(label: string, minorEmail: string, childBirthDate: string) {
+  const rep = await createUser(`guardian-${label}`, { withProfile: true });
+  const { error: birthError } = await srAdmin.from('user_profiles').update({ birth_date: ADULT_BIRTH_DATE }).eq('id', rep.id);
+  if (birthError) throw new Error(`rep birth ${label}: ${birthError.message}`);
+  const group = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1173 legal ${label} ${TS}`, p_plan_key: 'free' });
+  if (group.error || !group.data) throw new Error(`create_family_group ${label}: ${group.error?.message}`);
+  const familyId = (group.data as { id: string }).id;
+  createdFamilyIds.push(familyId);
+  const child = await asUser(rep.jwt).rpc('add_family_child', {
+    p_family_id: familyId,
+    p_display_name: `child-${label}`,
+    p_child_profile: {},
+    p_birth_date: childBirthDate,
+    p_consent_version: PARENTAL_CONSENT_DOCUMENT.version,
+    p_signed_name: 'テスト 保護者',
+    p_guardian_attested: true,
+  });
+  if (child.error || !child.data) throw new Error(`add_family_child ${label}: ${child.error?.message}`);
+  const memberId = (child.data as { id: string }).id;
+  const request = await asUser(rep.jwt).rpc('request_child_promotion', { p_member_id: memberId, p_email: minorEmail });
+  if (request.error || !request.data) throw new Error(`request_child_promotion ${label}: ${request.error?.message}`);
+  return { rep, familyId, memberId, requestId: (request.data as { id: string }).id };
+}
+
+describe('#1173 accept_legal_documents: 生年月日', () => {
+  // T-DB1
+  it('accept_legal_documents: 行なし + 成人の生年月日 → 行が既定値 + birth_date で作られ、証跡 2 行', async () => {
+    const user = await createUser('birth-new');
+    expect(await profileOf(user.id)).toBeNull();
+    const { data, error } = await accept(user, V1, V1, { birthDate: ADULT_BIRTH_DATE });
+    expect(error).toBeNull();
+    expect(data).toMatchObject({ terms_version_accepted: V1, privacy_version_accepted: V1, birth_date: ADULT_BIRTH_DATE });
+    expect(await profileOf(user.id)).toMatchObject({ nickname: 'Guest', age_group: 'unspecified', gender: 'unspecified' });
+    expect(await birthDateOf(user.id)).toBe(ADULT_BIRTH_DATE);
+    expect(await acceptancesOf(user.id)).toHaveLength(2);
+  });
+
+  // T-DB2
+  it('本人が user_profiles.birth_date を直接 UPDATE / INSERT すると 42501。service_role は書ける', async () => {
+    const withRow = await createUser('birth-direct-update', { withProfile: true });
+    const update = await asUser(withRow.jwt).from('user_profiles').update({ birth_date: ADULT_BIRTH_DATE }).eq('id', withRow.id);
+    expect(update.error?.code).toBe('42501');
+    expect(await birthDateOf(withRow.id)).toBeNull();
+
+    const noRow = await createUser('birth-direct-insert');
+    const insert = await asUser(noRow.jwt)
+      .from('user_profiles')
+      .insert({ id: noRow.id, nickname: 'x', age_group: '30s', gender: 'other', birth_date: ADULT_BIRTH_DATE });
+    expect(insert.error?.code).toBe('42501');
+    expect(await profileOf(noRow.id)).toBeNull();
+
+    // 生年月日を消す (NULL に戻す) のも拒否する
+    const { error: srError } = await srAdmin.from('user_profiles').update({ birth_date: ADULT_BIRTH_DATE }).eq('id', withRow.id);
+    expect(srError).toBeNull();
+    expect(await birthDateOf(withRow.id)).toBe(ADULT_BIRTH_DATE);
+    const clear = await asUser(withRow.jwt).from('user_profiles').update({ birth_date: null }).eq('id', withRow.id);
+    expect(clear.error?.code).toBe('42501');
+    expect(await birthDateOf(withRow.id)).toBe(ADULT_BIRTH_DATE);
+  });
+
+  // T-DB3
+  it('同意済み・birth_date なしの人が同じ版 + 生年月日を送ると birth_date だけ入り、legal_accepted_at と証跡の数は変わらない (S3)', async () => {
+    const user = await createUser('birth-only', { withProfile: true });
+    const stamp = '2026-01-02T03:04:05+00:00';
+    const { error: srError } = await srAdmin
+      .from('user_profiles')
+      .update({ terms_version_accepted: V1, privacy_version_accepted: V1, legal_accepted_at: stamp })
+      .eq('id', user.id);
+    expect(srError).toBeNull();
+    const { error: evidenceError } = await srAdmin.from('terms_acceptances').insert([
+      { user_id: user.id, document_type: 'terms_of_service', document_version: V1, accepted_at: stamp },
+      { user_id: user.id, document_type: 'privacy_policy', document_version: V1, accepted_at: stamp },
+    ]);
+    expect(evidenceError).toBeNull();
+    const before = await profileOf(user.id);
+
+    const { error } = await accept(user, V1, V1, { birthDate: ADULT_BIRTH_DATE });
+    expect(error).toBeNull();
+
+    const after = await profileOf(user.id);
+    expect(await birthDateOf(user.id)).toBe(ADULT_BIRTH_DATE);
+    expect(after!.legal_accepted_at).toBe(before!.legal_accepted_at);
+    expect(Date.parse(after!.legal_accepted_at!)).toBe(Date.parse(stamp));
+    expect(await acceptancesOf(user.id)).toHaveLength(2);
+  });
+
+  // T-DB4
+  it('17 歳の生年月日で呼ぶと LEGAL_MINOR_SELF_SIGNUP_REFUSED。user_profiles も terms_acceptances も作られない (S4)', async () => {
+    const user = await createUser('birth-minor');
+    const { error } = await accept(user, V1, V1, { birthDate: addDaysToDate(birthDateYearsAgo(18), 1) });
+    expect(error?.code).toBe('P0001');
+    expect(error?.message).toContain('LEGAL_MINOR_SELF_SIGNUP_REFUSED');
+    expect(await profileOf(user.id)).toBeNull();
+    expect(await acceptancesOf(user.id)).toEqual([]);
+
+    // 18 歳の誕生日の当日は通る
+    const adult = await createUser('birth-18');
+    expect((await accept(adult, V1, V1, { birthDate: birthDateYearsAgo(18) })).error).toBeNull();
+    expect(await birthDateOf(adult.id)).toBe(birthDateYearsAgo(18));
+  });
+
+  // T-DB5
+  it('自分のメール宛の pending の昇格依頼 + その子供の有効な同意があれば 17 歳でも記録される (S11)。依頼が expired / revoked、同意が revoked なら拒否', async () => {
+    const minorBirth = birthDateYearsAgo(17);
+
+    const ok = await createUser('path-ok');
+    await guardianPathFor('path-ok', ok.email, minorBirth);
+    const accepted = await accept(ok, V1, V1, { birthDate: minorBirth });
+    expect(accepted.error).toBeNull();
+    expect(await birthDateOf(ok.id)).toBe(minorBirth);
+    expect(await acceptancesOf(ok.id)).toHaveLength(2);
+
+    const expired = await createUser('path-expired');
+    const expiredPath = await guardianPathFor('path-expired', expired.email, minorBirth);
+    const { error: expireError } = await srAdmin
+      .from('family_promotion_requests')
+      .update({ expires_at: new Date(Date.now() - 60_000).toISOString() })
+      .eq('id', expiredPath.requestId);
+    expect(expireError).toBeNull();
+
+    const revoked = await createUser('path-revoked');
+    const revokedPath = await guardianPathFor('path-revoked', revoked.email, minorBirth);
+    const revoke = await asUser(revokedPath.rep.jwt).rpc('revoke_child_promotion', { p_member_id: revokedPath.memberId });
+    expect(revoke.error).toBeNull();
+
+    const consentRevoked = await createUser('path-consent-revoked');
+    const consentPath = await guardianPathFor('path-consent-revoked', consentRevoked.email, minorBirth);
+    const { error: consentError } = await srAdmin
+      .from('parental_consents')
+      .update({ revoked_at: new Date().toISOString(), revoked_reason: 'member_removed' })
+      .eq('family_member_id', consentPath.memberId);
+    expect(consentError).toBeNull();
+
+    for (const user of [expired, revoked, consentRevoked]) {
+      const { error } = await accept(user, V1, V1, { birthDate: minorBirth });
+      expect(error?.message, user.email).toContain('LEGAL_MINOR_SELF_SIGNUP_REFUSED');
+      expect(await profileOf(user.id), user.email).toBeNull();
+      expect(await acceptancesOf(user.id), user.email).toEqual([]);
+    }
+  });
+
+  // T-DB6
+  it('生年月日が行にあれば p_birth_date は無視される (別の日付を送っても変わらない)。未来・121 年前は LEGAL_BIRTH_DATE_INVALID、両方無しは LEGAL_BIRTH_DATE_REQUIRED', async () => {
+    const fixed = await createUser('birth-fixed', { withProfile: true });
+    const { error: srError } = await srAdmin.from('user_profiles').update({ birth_date: ADULT_BIRTH_DATE }).eq('id', fixed.id);
+    expect(srError).toBeNull();
+    // 行にある値が使われる (未成年の日付・未来の日付を送っても検査されず、変わらない)
+    for (const other of ['1985-05-05', birthDateYearsAgo(10), addDaysToDate(todayLocal(), 1)]) {
+      const { data, error } = await accept(fixed, V1, V1, { birthDate: other });
+      expect(error, other).toBeNull();
+      expect((data as { birth_date: string }).birth_date, other).toBe(ADULT_BIRTH_DATE);
+      expect(await birthDateOf(fixed.id), other).toBe(ADULT_BIRTH_DATE);
+    }
+
+    for (const [label, birthDate] of [
+      ['future', addDaysToDate(todayLocal(), 1)],
+      ['too-old', birthDateYearsAgo(121)],
+    ] as const) {
+      const user = await createUser(`birth-invalid-${label}`);
+      const { error } = await accept(user, V1, V1, { birthDate });
+      expect(error?.code, label).toBe('22023');
+      expect(error?.message, label).toContain('LEGAL_BIRTH_DATE_INVALID');
+      expect(await profileOf(user.id), label).toBeNull();
+      expect(await acceptancesOf(user.id), label).toEqual([]);
+    }
+    // 120 年前の同日は受け付ける (過去 120 年以内)
+    const oldest = await createUser('birth-120');
+    expect((await accept(oldest, V1, V1, { birthDate: birthDateYearsAgo(120) })).error).toBeNull();
+
+    const missing = await createUser('birth-missing');
+    const { error } = await accept(missing, V1, V1, { birthDate: null });
+    expect(error?.code).toBe('22023');
+    expect(error?.message).toContain('LEGAL_BIRTH_DATE_REQUIRED');
+    expect(await profileOf(missing.id)).toBeNull();
+    expect(await acceptancesOf(missing.id)).toEqual([]);
+  });
+
+  // T-DB33
+  it('accept_legal_documents: 12 歳の生年月日は、自分のメール宛の pending の依頼 + その子供 (15 歳) の有効な同意があっても (legal_minor_has_guardian_path() = true の状態でも) LEGAL_MINOR_SELF_SIGNUP_REFUSED で、user_profiles も terms_acceptances も作られない。13 歳の誕生日の当日の生年月日は同じ状態で記録される (S20・P4b・P5)', async () => {
+    const child15 = birthDateYearsAgo(15);
+
+    const under13 = await createUser('coppa-12');
+    await guardianPathFor('coppa-12', under13.email, child15);
+    const path = await asUser(under13.jwt).rpc('legal_minor_has_guardian_path');
+    expect(path.error).toBeNull();
+    expect(path.data).toBe(true);
+    const { error } = await accept(under13, V1, V1, { birthDate: addDaysToDate(birthDateYearsAgo(13), 1) });
+    expect(error?.message).toContain('LEGAL_MINOR_SELF_SIGNUP_REFUSED');
+    expect(await profileOf(under13.id)).toBeNull();
+    expect(await acceptancesOf(under13.id)).toEqual([]);
+
+    const just13 = await createUser('coppa-13');
+    await guardianPathFor('coppa-13', just13.email, child15);
+    expect((await accept(just13, V1, V1, { birthDate: birthDateYearsAgo(13) })).error).toBeNull();
+    expect(await birthDateOf(just13.id)).toBe(birthDateYearsAgo(13));
   });
 });

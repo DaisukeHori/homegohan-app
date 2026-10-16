@@ -51,7 +51,7 @@
 23. external_data_consents
 24. terms_acceptances
 25. gdpr_deletion_requests
-26. parental_consents  ← family/01-data-model.md で定義 (family_members FK のため family/ ドメイン適用後)
+26. parental_consents  ← 設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`) で定義 (family_members FK のため family/ ドメイン適用後)
 27. password_history
 28. failed_invite_lookups
 29. user_sessions_metadata
@@ -1106,7 +1106,7 @@ CREATE POLICY "gdpr_update" ON gdpr_deletion_requests
 
 ### 3.22 `parental_consents`
 
-> **NOTE: DDL は family/01-data-model.md に移動済み。**
+> **NOTE: `parental_consents` の DDL・RLS は設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。**
 > `parental_consents` は `family_members(id)` を FK 参照するため、
 > family/ ドメイン (02-organization-management の後) で定義する。
 > マイグレーション適用順序については §3.1 と 09-runbook.md §3.2 を参照。
@@ -1699,7 +1699,7 @@ describe('subscription_plans seed', () => {
 - `admin_audit_logs`: 既存テーブルに `target_type`, `severity`, `impersonated_by` 等を ALTER で追加
   - `impersonated_by`: なりすまし (impersonate) は提供しない (#1124)。新しく書き込む処理は無く、過去に書かれた行の履歴として列だけ残す (列を消す migration は作らない)
 - `organizations`: `coupon_redemptions` が FK 参照 — org/ ドメインの `organizations` テーブルが先に存在すること
-- `family_members`: `parental_consents` が FK 参照 — DDL は family/01-data-model.md に移動済み。family/ ドメイン適用後に作成されること
+- `family_members`: `parental_consents` が FK 参照 — DDL は設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。family/ ドメイン適用後に作成されること
 
 ## 9. 未解決事項
 

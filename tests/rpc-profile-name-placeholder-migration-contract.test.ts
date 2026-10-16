@@ -5,7 +5,9 @@
  * normalizeProfileName が同じ答えを返す、anon / authenticated が直接呼べない) は
  * tests/integration/security/rpc-profile-name-placeholder.test.ts が確かめる。
  * ここでは、番号の付け直しや後の migration の上書き、判定の文字の集合のずれで崩れやすい所を、ファイルの文面だけで確かめる。
- *   1. 3 つの RPC を最後に定義する migration が本 migration で、1 つ前はベースライン (20251126124224)
+ *   1. get_invite_details / get_promotion_details を最後に定義する migration が本 migration で、1 つ前はベースライン (20251126124224)。
+ *      create_family_group は、本 migration の定義を土台に #1173 の migration が 18 歳未満の IF を足して作り直す
+ *      (差分の契約は tests/parental-consent-migration-contract.test.ts の T-MIG5)。本 migration はその 1 つ前、ベースラインは 2 つ前
  *   2. 本 migration の 3 つの RPC の定義は、1 つ前の定義の名前の式だけを normalize_profile_name に通したもの (ほかは変えていない)
  *   3. normalize_profile_name が前後の空白として除く文字の集合が、JavaScript の String.prototype.trim (= normalizeProfileName) が
  *      除く文字の集合と同じ。仮置きの文字列が PROFILE_NAME_PLACEHOLDER と同じ。IMMUTABLE・search_path が空・SECURITY DEFINER でない
@@ -135,13 +137,23 @@ describe('#1678 SQL の RPC が仮置きの名前を返さない migration', () 
     expect(versions.size).toBe(migrationFiles.length);
   });
 
-  it.each(RPCS)('%s を最後に定義する migration が本 migration で、1 つ前はベースライン', (fn) => {
+  it.each(['get_invite_details', 'get_promotion_details'] as const)('%s を最後に定義する migration が本 migration で、1 つ前はベースライン', (fn) => {
     const definers = migrationFiles.filter((name) =>
       definesPattern(fn).test(stripLineComments(read(`${MIGRATIONS_DIR}/${name}`))),
     );
     expect(definers.length).toBeGreaterThanOrEqual(2);
     expect(definers[definers.length - 1]).toBe(ours[0]);
     expect(definers[definers.length - 2]).toBe(PREVIOUS_FILE);
+  });
+
+  it('create_family_group を最後に定義するのは #1173 の _parental_consent_and_birth_date で、その 1 つ前が本 migration、2 つ前がベースライン', () => {
+    const definers = migrationFiles.filter((name) =>
+      definesPattern('create_family_group').test(stripLineComments(read(`${MIGRATIONS_DIR}/${name}`))),
+    );
+    expect(definers.length).toBeGreaterThanOrEqual(3);
+    expect(definers[definers.length - 1]).toMatch(/_parental_consent_and_birth_date\.sql$/);
+    expect(definers[definers.length - 2]).toBe(ours[0]);
+    expect(definers[definers.length - 3]).toBe(PREVIOUS_FILE);
   });
 
   it('normalize_profile_name を定義する migration は本 migration だけ', () => {

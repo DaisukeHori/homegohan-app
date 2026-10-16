@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
+import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import {
   createFakeServiceRole,
   leadingUsers,
@@ -442,6 +443,23 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
     expect(json.error.code).toBe('NOT_AUTHENTICATED');
     expect(mocks.rpc).not.toHaveBeenCalled();
     expect(userDb.events).toEqual([]);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/org/owner-transfer/[id]/accept: 18 歳未満の本人 (#1173 T-MN4)', () => {
+  it('RPC が MINOR_ACCOUNT_NOT_ALLOWED を返したら 403 (message は MEMBERSHIP_ERROR_MESSAGES の文。固定の文にならない)。メールは送らない', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'MINOR_ACCOUNT_NOT_ALLOWED: caller user_profiles.birth_date is under 18' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(text)).toEqual({
+      error: { code: 'MINOR_ACCOUNT_NOT_ALLOWED', message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED] },
+    });
+    expect(text).not.toContain('組織オーナー権限の引き継ぎに失敗しました。');
+    expect(text).not.toContain('birth_date');
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 });

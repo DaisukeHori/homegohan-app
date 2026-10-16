@@ -179,6 +179,7 @@ beforeAll(async () => {
       p_family_id: family.familyId,
       p_display_name: name,
       p_child_profile: { age: 12 },
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     if (error || !data) throw new Error(`add_family_child ${name}: ${error?.message}`);
     return (data as { id: string }).id;
@@ -359,6 +360,7 @@ describe('#1163 子供メンバーの昇格リクエスト: POST /api/family/mem
       p_family_id: famB.familyId,
       p_display_name: 'B1',
       p_child_profile: { age: 11 },
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     if (error || !data) throw new Error(`add_family_child B1: ${error?.message}`);
     const childB1 = (data as { id: string }).id;

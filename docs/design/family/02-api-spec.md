@@ -109,6 +109,8 @@
 - `422 VALID_REQUIRED_FIELD`: バリデーション失敗
 - `409 FAM_USER_ALREADY_IN_GROUP`: 既に所属
 
+**未成年 (#1173):** `create_family_group` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (`docs/design/membership/02-flow-spec.md` §9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
+
 ---
 
 ### 4.2 `GET /api/family/groups/me` — 自分のグループ取得
@@ -427,6 +429,11 @@ UC-ORG-17 シナリオ。
 - `403 FAM_PERMISSION_DENIED`
 - `422 FAM_GROUP_FULL`: member_limit 超過
 
+**子供の生年月日と保護者の同意** (設計書 `cross/14-parental-consent.md`。実装は `POST /api/family/members/child` と RPC `add_family_child`):
+- 子供の追加では `birth_date` (`YYYY-MM-DD`) が必須。暦に無い日・未来・120 年超は `400 CHILD_BIRTH_DATE_INVALID`。
+- 18 歳未満の子供は body の `consent` (`version` / `signed_name` / `guardian_attested: true`) が要る (無い: `403 PARENTAL_CONSENT_REQUIRED`、版が今の同意書と違う: `409 PARENTAL_CONSENT_VERSION_MISMATCH`)。同意は子供の行と同じトランザクションで `parental_consents` に記録する。
+- 18 歳未満の子供の同意に署名できるのは、自分の生年月日で 18 歳以上と確かめられる大人だけ (`403 PARENTAL_CONSENT_SIGNER_NOT_ADULT`)。
+
 ---
 
 ### 5.3 `PATCH /api/family/members/{id}` — メンバー情報更新
@@ -538,6 +545,8 @@ UC-ORG-17 シナリオ。
   "trial_expires_at": "2026-06-06T20:30:00Z"
 }
 ```
+
+**年齢と保護者の同意** (設計書 `cross/14-parental-consent.md`。実装は昇格の依頼 `request_child_promotion` と承諾 `accept_child_promotion`): 18 歳未満は有効な保護者の同意が要る (`403 PARENTAL_CONSENT_REQUIRED`)。13 歳未満は昇格できない (`403 PROMOTION_UNDER_COPPA_AGE`。本人のアカウントを作らない)。
 
 ---
 
@@ -683,6 +692,8 @@ UC-ORG-17 シナリオ。
 **エラー**:
 - `409 FAM_USER_ALREADY_IN_GROUP`
 - `410 FAM_INVITE_EXPIRED`
+
+**未成年 (#1173):** `accept_family_invite` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (`docs/design/membership/02-flow-spec.md` §9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
 
 ---
 

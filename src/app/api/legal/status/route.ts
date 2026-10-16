@@ -8,10 +8,12 @@
 // この API は同意ゲートの許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) にある (未同意でも 200)。
 // 凍結中のアカウントは middleware が /api/* で 403 にする (この API は FROZEN_ALLOWED_API_PATHS には無い)。
 // 環境変数 LEGAL_CONSENT_ENFORCE は lib/legal-consent.ts の isLegalConsentEnforced だけが読む (tests/env-source-scan.test.ts)。
+// 生年月日の未入力と、保護者の同意とのつながりの無い 18 歳未満も required になる (gaps の 'birth_date' / 'guardian_consent'。#1173)。
 import { NextResponse } from 'next/server';
 import { resolveLegalConsentStatus } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/server';
 import { isLegalConsentEnforced } from '@/lib/legal-consent';
+import { withMinorGuardianStatus } from '@/lib/legal-consent-minor';
 import { LegalConsentStatusSchema } from '@/lib/legal-consent-api';
 import { internalError } from '@/lib/api/errors';
 
@@ -20,8 +22,8 @@ export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
-/** 同意ゲートが読むのと同じ 2 列 (lib/supabase/middleware.ts の PROFILE_COLUMNS_WITH_LEGAL の末尾 2 列) */
-const LEGAL_COLUMNS = 'terms_version_accepted, privacy_version_accepted';
+/** 同意ゲートが読むのと同じ 3 列 (lib/supabase/middleware.ts の PROFILE_COLUMNS_WITH_LEGAL の末尾 3 列) */
+const LEGAL_COLUMNS = 'terms_version_accepted, privacy_version_accepted, birth_date';
 
 export async function GET() {
   try {
@@ -41,7 +43,9 @@ export async function GET() {
       return internalError('GET /api/legal/status', error, { userId: user.id, table: 'user_profiles' });
     }
 
-    const status = resolveLegalConsentStatus({ accepted: profile, enforced: isLegalConsentEnforced() });
+    // 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (rpc を 1 回。失敗は素通り)
+    const gateProfile = await withMinorGuardianStatus(supabase, profile);
+    const status = resolveLegalConsentStatus({ accepted: gateProfile, enforced: isLegalConsentEnforced() });
     // 正本の形から外れた応答を返さない (外れていればこちらの不具合なので 500)
     const parsed = LegalConsentStatusSchema.safeParse(status);
     if (!parsed.success) {

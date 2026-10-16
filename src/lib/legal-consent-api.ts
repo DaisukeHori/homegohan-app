@@ -1,11 +1,12 @@
 /**
  * 同意ゲート (#1442) の API の本文の Zod スキーマ (正本)。
  * 値の定義は packages/shared/src/legal-consent-api.ts (サーバー・Web・モバイル共用) にあり、ここはその形を Zod で固定するだけ。
- * GET /api/legal/status の route が応答を作ったあとに parse し、テスト (tests/legal-consent-api-schema.test.ts・middleware の表) が
+ * GET /api/legal/status の route が応答を作ったあとに parse し (status の応答は gaps (#1173) を含む)、テスト (tests/legal-consent-api-schema.test.ts・middleware の表) が
  * middleware の 403 の本文と status の応答をこれで確かめる。zod を packages/shared に持ち込まない (モバイルのバンドルに入れない) ので、ここに置く。
  */
 import { z } from 'zod';
 import {
+  LEGAL_CONSENT_GAP_VALUES,
   LEGAL_CONSENT_REQUIRED_CODE,
   LEGAL_CONSENT_REQUIRED_MESSAGE,
   LEGAL_DOCUMENT_TYPES,
@@ -39,6 +40,7 @@ export const LegalConsentStatusSchema = z
     accepted: z.boolean(),
     required: z.boolean(),
     outdated: z.array(z.enum(LEGAL_DOCUMENT_TYPES)),
+    gaps: z.array(z.enum(LEGAL_CONSENT_GAP_VALUES)),
     current: z
       .object({
         terms_of_service: LegalConsentCurrentDocumentSchema,
@@ -56,6 +58,10 @@ export const LegalConsentStatusSchema = z
   // required は enforced と accepted から決まる値。食い違う応答を正本として通さない
   .refine((value) => value.required === (value.enforced && !value.accepted), {
     message: 'required は enforced && !accepted と一致すること',
+  })
+  // accepted は gaps が空であることと同じ (#1173)。食い違う応答を正本として通さない
+  .refine((value) => value.accepted === (value.gaps.length === 0), {
+    message: 'accepted は gaps が空であることと一致すること',
   });
 
 export type LegalConsentStatusShape = z.infer<typeof LegalConsentStatusSchema>;

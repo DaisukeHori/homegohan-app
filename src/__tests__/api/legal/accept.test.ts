@@ -9,9 +9,12 @@
  *     利用者の ID を渡す引数は無い (他人の行は書けない)
  *   - IP が読めないときは null (DB の inet 型に不正な文字列を渡さない)
  *   - DB のエラーは 500 の汎用メッセージにし、DB の生のエラー文は応答に出さない (元のエラーは構造化ログに残す。#1172)
+ *   - #1173 (設計書 cross/14 T-A1〜T-A5): body の birth_date (形は YYYY-MM-DD) を p_birth_date で渡す。暦に無い日・未来・120 年超は
+ *     400 LEGAL_BIRTH_DATE_INVALID (版の 409 の後・RPC の前)。関数の LEGAL_MINOR_SELF_SIGNUP_REFUSED は 403、
+ *     LEGAL_BIRTH_DATE_REQUIRED / INVALID は 400 (DB の生の文は出さない)
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { LEGAL_DOCUMENTS } from '@homegohan/shared';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { LEGAL_CONSENT_BIRTH_DATE_COPY, LEGAL_DOCUMENTS } from '@homegohan/shared';
 
 const mockGetUser = vi.fn();
 const mockRpc = vi.fn();
@@ -136,6 +139,7 @@ describe('POST /api/legal/accept: 入力の検証', () => {
     expect(res.status).toBe(200);
     expect(mockRpc).toHaveBeenCalledTimes(1);
     expect(Object.keys(mockRpc.mock.calls[0][1]).sort()).toEqual([
+      'p_birth_date',
       'p_ip',
       'p_privacy_version',
       'p_terms_version',
@@ -177,6 +181,7 @@ describe('POST /api/legal/accept: 同意の記録', () => {
       p_privacy_version: CURRENT.privacy_version,
       p_ip: '203.0.113.7',
       p_user_agent: 'Mozilla/5.0 (test)',
+      p_birth_date: null,
     });
     const json = await res.json();
     expect(json).toEqual({
@@ -184,6 +189,7 @@ describe('POST /api/legal/accept: 同意の記録', () => {
       terms_version_accepted: CURRENT.terms_version,
       privacy_version_accepted: CURRENT.privacy_version,
       legal_accepted_at: '2026-10-08T06:00:00.000Z',
+      birth_date: null,
     });
     expect(res.headers.get('Cache-Control')).toBe('no-store');
   });
@@ -322,4 +328,126 @@ describe('POST /api/legal/accept: 失敗', () => {
     mockGetUser.mockResolvedValue({ data: { user: USER }, error: null });
     expect((await POST(makeRequest({ terms_version: 'v0-old', privacy_version: 'v0-old' }))).headers.get('Cache-Control')).toBe('no-store');
   });
+});
+
+describe('POST /api/legal/accept: 生年月日 (#1173)', () => {
+  /** JST 2026-10-16 12:00 に固定する (未来・121 年前・17 歳の日付を固定するため) */
+  const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+  const ADULT_BIRTH_DATE = '1990-01-01';
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('T-A1: birth_date を送ると RPC に p_birth_date が渡る。送らなければ null', async () => {
+    await POST(makeRequest({ ...CURRENT, birth_date: ADULT_BIRTH_DATE }));
+    expect(mockRpc.mock.calls[0][1].p_birth_date).toBe(ADULT_BIRTH_DATE);
+
+    mockRpc.mockClear();
+    await POST(makeRequest(CURRENT));
+    expect(mockRpc.mock.calls[0][1].p_birth_date).toBeNull();
+  });
+
+  it.each([['abc'], ['2000/01/01'], ['20000101']])(
+    'T-A2: 形が YYYY-MM-DD でない birth_date (%s) は 400 LEGAL_BAD_REQUEST。RPC を呼ばない',
+    async (birthDate) => {
+      const res = await POST(makeRequest({ ...CURRENT, birth_date: birthDate }));
+      expect(res.status).toBe(400);
+      expect((await res.json()).error.code).toBe('LEGAL_BAD_REQUEST');
+      expect(mockRpc).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ['暦に無い日', '2001-02-30'],
+    ['未来', '2026-10-17'],
+    ['121 年前', '1905-10-16'],
+  ])('T-A2: %s (%s) は 400 LEGAL_BIRTH_DATE_INVALID。RPC を呼ばない', async (_name, birthDate) => {
+    const res = await POST(makeRequest({ ...CURRENT, birth_date: birthDate }));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: { code: 'LEGAL_BIRTH_DATE_INVALID', message: LEGAL_CONSENT_BIRTH_DATE_COPY.invalid },
+    });
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('T-A2: 120 年前の同日と今日は受け付けて RPC を呼ぶ', async () => {
+    for (const birthDate of ['1906-10-16', '2026-10-16']) {
+      mockRpc.mockClear();
+      const res = await POST(makeRequest({ ...CURRENT, birth_date: birthDate }));
+      expect(res.status).toBe(200);
+      expect(mockRpc.mock.calls[0][1].p_birth_date).toBe(birthDate);
+    }
+  });
+
+  it('T-A3: 応答に birth_date が入る', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        terms_version_accepted: CURRENT.terms_version,
+        privacy_version_accepted: CURRENT.privacy_version,
+        legal_accepted_at: '2026-10-08T06:00:00.000Z',
+        birth_date: ADULT_BIRTH_DATE,
+      },
+      error: null,
+    });
+
+    const res = await POST(makeRequest({ ...CURRENT, birth_date: ADULT_BIRTH_DATE }));
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).birth_date).toBe(ADULT_BIRTH_DATE);
+  });
+
+  it.each([
+    ['birth_date なし', {}],
+    ['暦に無い日', { birth_date: '2001-02-30' }],
+    ['未来', { birth_date: '2999-01-01' }],
+    ['17 歳', { birth_date: '2008-10-17' }],
+  ])('T-A4: 版が違うときは %s でも 409 LEGAL_VERSION_MISMATCH (版が先)。RPC を呼ばない', async (_name, extra) => {
+    const res = await POST(makeRequest({ terms_version: 'v0-old', privacy_version: CURRENT.privacy_version, ...extra }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('LEGAL_VERSION_MISMATCH');
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('T-A4: 版が違っても、形に合わない birth_date (2000/01/01) は 400 LEGAL_BAD_REQUEST (parse が版より先)', async () => {
+    const res = await POST(makeRequest({ terms_version: 'v0-old', privacy_version: CURRENT.privacy_version, birth_date: '2000/01/01' }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error.code).toBe('LEGAL_BAD_REQUEST');
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('T-A5: RPC が LEGAL_MINOR_SELF_SIGNUP_REFUSED を返したら 403 { error: { code } } で、DB の生の文を本文に出さない', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { code: 'P0001', message: 'LEGAL_MINOR_SELF_SIGNUP_REFUSED: raw db detail' },
+    });
+
+    const res = await POST(makeRequest({ ...CURRENT, birth_date: '2010-01-01' }));
+    const text = await res.text();
+
+    expect(res.status).toBe(403);
+    expect(JSON.parse(text)).toEqual({
+      error: { code: 'LEGAL_MINOR_SELF_SIGNUP_REFUSED', message: LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading },
+    });
+    expect(text).not.toContain('raw db detail');
+  });
+
+  it.each([['LEGAL_BIRTH_DATE_REQUIRED'], ['LEGAL_BIRTH_DATE_INVALID']])(
+    'T-A5: RPC が %s を返したら 400 の同じ code (DB の生の文は出さない)',
+    async (code) => {
+      mockRpc.mockResolvedValue({ data: null, error: { code: 'P0001', message: `${code}: raw db detail` } });
+
+      const res = await POST(makeRequest(CURRENT));
+      const text = await res.text();
+
+      expect(res.status).toBe(400);
+      expect(JSON.parse(text)).toEqual({ error: { code, message: LEGAL_CONSENT_BIRTH_DATE_COPY.invalid } });
+      expect(text).not.toContain('raw db detail');
+    },
+  );
 });
