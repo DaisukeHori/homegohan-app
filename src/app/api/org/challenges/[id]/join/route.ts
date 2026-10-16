@@ -17,7 +17,8 @@
  *   DB 側でも同じことを確かめる (PostgREST を直接叩いても外せない)。すでに参加していれば、何もせず 200 (alreadyJoined: true)。
  *
  * DELETE: 本人の参加行だけを消す (ポリシー "Users can leave challenges")。参加していなくても 200 (冪等)。
- *   やめた人の記録は、集計にも順位にも残らない。チャレンジが終了していても、やめられる。
+ *   やめた人の記録は、集計にも順位にも残らない。管理者の集計 (延べ数・確定した平均。#1688) は動かない。
+ *   チャレンジが終了していても、やめられる。
  */
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
