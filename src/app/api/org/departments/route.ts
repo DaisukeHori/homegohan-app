@@ -15,7 +15,7 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { readJsonBody } from '@/lib/http-params';
+import { normalizeUuid, readJsonBody } from '@/lib/http-params';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 const MAX_NAME_LENGTH = 100;
@@ -154,10 +154,13 @@ export async function PUT(request: NextRequest) {
     const parsed = await readJsonBody(request);
     if (!parsed.ok) return invalidJsonResponse();
     const body = (parsed.body ?? {}) as { id?: unknown; name?: unknown };
-    const id = body.id;
-    if (!id || typeof id !== 'string') {
+    const rawId = body.id;
+    if (!rawId || typeof rawId !== 'string') {
       return NextResponse.json({ error: { code: 'VALIDATION_ERROR', message: 'id は必須です' } }, { status: 400 });
     }
+    // UUID の形なら小文字にそろえてから使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の id でも
+    // 更新は自組織の部署に当たるが、人数の集計 (counts。キーは DB から読んだ小文字の department_id) の get が外れて人数が 0 になる
+    const id = normalizeUuid(rawId);
     const name = validateName(body.name);
     if (!name) return invalidNameResponse();
 
