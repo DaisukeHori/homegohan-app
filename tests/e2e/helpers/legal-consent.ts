@@ -12,16 +12,25 @@ import { expect, type Page } from "@playwright/test";
  *
  * ハイドレーション (React が画面を引き継ぐ) の前にチェックしても、引き継ぎで未チェックに戻ることがある。
  * 「押せる状態になるまでチェックをやり直す」ことで吸収する。
+ *
+ * #1173: 生年月日がまだ無い人の同意画面には生年月日の欄が出る (欄を埋めないと押せない)。欄が見えていれば成人の placeholder で埋める。
+ * 欄が無い人 (生年月日を登録済み) には何もしない。
  */
+
+/** 成人の placeholder。#1173 で生年月日が無い人は欄を埋めないと押せない */
+const ADULT_BIRTH_DATE = "1990-01-01";
+
 export async function acceptLegalConsentIfShown(page: Page): Promise<boolean> {
   if (!new URL(page.url()).pathname.startsWith("/legal-consent")) return false;
 
   const terms = page.getByRole("checkbox", { name: /利用規約の内容を確認し、同意します/ });
   const privacy = page.getByRole("checkbox", { name: /プライバシーポリシーの内容を確認し、同意します/ });
   const accept = page.getByRole("button", { name: "同意して続ける" });
+  const birthDate = page.getByLabel("生年月日", { exact: true });
 
   await terms.waitFor({ state: "visible", timeout: 45_000 });
   await expect(async () => {
+    if (await birthDate.isVisible()) await birthDate.fill(ADULT_BIRTH_DATE, { timeout: 5_000 });
     await terms.check({ timeout: 5_000 });
     await privacy.check({ timeout: 5_000 });
     await expect(accept).toBeEnabled({ timeout: 3_000 });

@@ -2,7 +2,7 @@
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { NextResponse } from 'next/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { mapPgErrorToHttp } from '@/lib/errors/membership-errors';
+import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
 import { emailFailureReasons } from '@/lib/emails/send-result';
@@ -16,6 +16,8 @@ const TRANSFER_ACCEPT_MESSAGES: Record<string, string> = {
   TRANSFER_PROPOSAL_EXPIRED: '譲渡提案の有効期限が切れています。',
   TRANSFER_NOT_PENDING: 'この譲渡提案は既に処理済みです。',
   NOT_AUTHENTICATED: '認証が必要です。',
+  // #1173: 18 歳未満の本人は組織のオーナーを引き受けない (DB の関数が先頭で断る)
+  [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
 };
 
 export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {

@@ -151,6 +151,28 @@ CREATE POLICY "family_members_delete" ON family_members
   );
 ```
 
+### 5.1 `parental_consents`
+
+正は設計書 [`cross/14-parental-consent.md`](../cross/14-parental-consent.md) §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。クライアント (`authenticated`) は SELECT だけ。書けるのは SECURITY DEFINER の関数 (`add_family_child`・取り消しのトリガー) と `service_role` だけ。
+
+```sql
+ALTER TABLE public.parental_consents ENABLE ROW LEVEL SECURITY;
+REVOKE ALL ON public.parental_consents FROM PUBLIC, anon, authenticated, service_role;
+GRANT SELECT ON public.parental_consents TO authenticated;
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.parental_consents TO service_role;
+
+-- SELECT: 署名した本人 (家族を抜けたあとも)・その家族の active な大人・運営
+CREATE POLICY parental_consents_select_signer_family_adult_or_operator ON public.parental_consents
+  FOR SELECT TO authenticated
+  USING (
+    parent_user_id = (SELECT auth.uid())
+    OR public.is_active_family_adult(family_id)
+    OR EXISTS (SELECT 1 FROM public.user_profiles up
+                WHERE up.id = auth.uid() AND up.roles && ARRAY['admin', 'super_admin']::text[])
+  );
+-- INSERT / UPDATE / DELETE のポリシーは作らない (= authenticated は書けない)
+```
+
 ---
 
 ## 6. `family_invites`

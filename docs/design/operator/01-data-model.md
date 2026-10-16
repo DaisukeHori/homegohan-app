@@ -51,7 +51,7 @@
 23. external_data_consents
 24. terms_acceptances
 25. gdpr_deletion_requests
-26. parental_consents  ← family/01-data-model.md で定義 (family_members FK のため family/ ドメイン適用後)
+26. parental_consents  ← 設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`) で定義 (family_members FK のため family/ ドメイン適用後)
 27. password_history
 28. failed_invite_lookups
 29. user_sessions_metadata
@@ -339,6 +339,8 @@ CREATE POLICY "coupon_redemptions_select" ON coupon_redemptions
 
 ### 3.7 `personal_subscriptions` — 個人課金
 
+Stripe の Subscription がある行 (`stripe_subscription_id IS NOT NULL`) は Stripe の写しで、正本は Stripe。行を書く入口は DB 関数 `billing_apply_stripe_subscription` (service_role だけが呼べる) だけ (`docs/design/billing/01-billing-core.md` §4.1・§6.4 (9))。下の DDL の Stripe の写しの列・`incomplete`・admin だけの INSERT / UPDATE のポリシーは migration `20261016210000_billing_core.sql` で入った (billing/01 §6.2)。
+
 ```sql
 CREATE TABLE personal_subscriptions (
   id                          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -348,8 +350,9 @@ CREATE TABLE personal_subscriptions (
     ON UPDATE CASCADE ON DELETE RESTRICT,
   -- ステータス
   -- past_due → grace (7日経過) → cancelled (30日経過) の段階的遷移
+  -- incomplete = Stripe の incomplete (初回の支払いが済んでいない。live ではない。billing/01 §6.2)
   status                      VARCHAR(20) NOT NULL DEFAULT 'trialing'
-    CHECK (status IN ('trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due', 'grace')),
+    CHECK (status IN ('incomplete', 'trialing', 'active', 'paused', 'cancelled', 'expired', 'past_due', 'grace')),
   -- 試用
   trial_started_at            TIMESTAMPTZ,
   trial_ends_at               TIMESTAMPTZ,
@@ -373,6 +376,12 @@ CREATE TABLE personal_subscriptions (
   stripe_customer_id          VARCHAR(255),
   stripe_subscription_id      VARCHAR(255) UNIQUE,
   stripe_price_id             VARCHAR(255),
+  -- Stripe の写し (billing/01 §6.2。書くのは billing_apply_stripe_subscription だけ)
+  stripe_synced_at            TIMESTAMPTZ,  -- Stripe から取り直した時刻 (p_fetched_at)。これより古い取り直しは適用しない。手動付与の行は NULL
+  stripe_status               VARCHAR(30),  -- Stripe の Subscription.status の素の値。status はこれを写像したもの
+  cancel_at_period_end        BOOLEAN NOT NULL DEFAULT false,  -- true なら current_period_end で解約される (status は変わらない)
+  billing_interval            VARCHAR(10)
+    CHECK (billing_interval IS NULL OR billing_interval IN ('month', 'year')),
   -- クーポン
   active_coupon_redemption_id UUID REFERENCES coupon_redemptions(id),
   -- メタ
@@ -411,31 +420,67 @@ CREATE POLICY "personal_subscriptions_select" ON personal_subscriptions
     )
   );
 
--- INSERT: 本人 (Stripe Webhook 経由 service_role) or admin
-CREATE POLICY "personal_subscriptions_insert" ON personal_subscriptions
+-- INSERT / UPDATE: admin / super_admin だけ (本人は書けない。billing/01 §6.2)。
+-- Stripe の写しは service_role (RLS を通らない) の billing_apply_stripe_subscription が書く。
+-- 本人の解約の予約・取り消しは API (POST /api/billing/subscription/cancel・/api/billing/subscription/resume) が Stripe に送り、写像が写す
+CREATE POLICY "personal_subscriptions_insert_admin" ON personal_subscriptions
   FOR INSERT WITH CHECK (
-    user_id = auth.uid()
-    OR EXISTS (
+    EXISTS (
       SELECT 1 FROM user_profiles
       WHERE id = auth.uid()
         AND ARRAY['admin','super_admin']::TEXT[] && roles
     )
   );
 
--- UPDATE: 本人 (cancel/pause) or admin/super_admin
-CREATE POLICY "personal_subscriptions_update" ON personal_subscriptions
+CREATE POLICY "personal_subscriptions_update_admin" ON personal_subscriptions
   FOR UPDATE USING (
-    user_id = auth.uid()
-    OR EXISTS (
+    EXISTS (
+      SELECT 1 FROM user_profiles
+      WHERE id = auth.uid()
+        AND ARRAY['admin','super_admin']::TEXT[] && roles
+    )
+  ) WITH CHECK (
+    EXISTS (
       SELECT 1 FROM user_profiles
       WHERE id = auth.uid()
         AND ARRAY['admin','super_admin']::TEXT[] && roles
     )
   );
+
+-- anon は書けない
+REVOKE INSERT, UPDATE, DELETE ON personal_subscriptions FROM anon;
+
+-- updated_at は UPDATE で自動で進む
+CREATE TRIGGER personal_subscriptions_set_updated_at
+  BEFORE UPDATE ON personal_subscriptions
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- DELETE: 不可 (履歴保持)
 CREATE POLICY "personal_subscriptions_no_delete" ON personal_subscriptions
   FOR DELETE USING (false);
+```
+
+### 3.7.1 `billing_customers` — 利用者と Stripe Customer の対応
+
+migration `20261016210000_billing_core.sql` で新設 (billing/01 §6.3)。1 利用者 = 1 顧客。service_role だけが読み書きする。退会では `user_id` が NULL になり、`anonymized_at` が入った行が残る (Stripe の顧客も氏名・メールアドレスを消して残す。billing/01 §11)。本人のデータの書き出しには出さない (`src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED`)。
+
+```sql
+CREATE TABLE billing_customers (
+  stripe_customer_id  VARCHAR(255) PRIMARY KEY,   -- Stripe の cus_
+  user_id             UUID UNIQUE REFERENCES auth.users(id) ON DELETE SET NULL,
+  anonymized_at       TIMESTAMPTZ,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TRIGGER billing_customers_set_updated_at
+  BEFORE UPDATE ON billing_customers
+  FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+ALTER TABLE billing_customers ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "billing_customers_no_access" ON billing_customers USING (false) WITH CHECK (false);
+REVOKE ALL ON billing_customers FROM PUBLIC, anon, authenticated;
+GRANT SELECT, INSERT, UPDATE ON billing_customers TO service_role;
 ```
 
 ### 3.8 `revenue_snapshots` — 収益日次スナップショット
@@ -556,8 +601,10 @@ ALTER TABLE user_profiles
   -- 最終ログイン日時。auth.sessions の INSERT のトリガー auth_session_created が書き、行がまだ無かった最初のログインは
   -- 行を作るときのトリガー user_profiles_fill_login_stats が入れる (cross/16 §11.3)
   ADD COLUMN IF NOT EXISTS plan_key_cached  VARCHAR(100);
-  -- personal_subscriptions の現在有効な plan_key キャッシュ (Edge Function が同期、常に最新とは限らない)
+  -- personal_subscriptions の live な行 (trialing / active / paused / past_due / grace) の plan_key の写し。無ければ NULL (= free)
 ```
+
+`plan_key_cached` の同期元は課金の写像 `billing_apply_stripe_subscription` (契約の行を書いたのと同じトランザクションで書き直す。billing/01 §6.4 (9) の 10.)。
 
 ### 3.10 `support_tickets` / `support_ticket_messages`
 
@@ -936,18 +983,24 @@ CREATE TABLE stripe_webhook_events (
     CHECK (processing_status IN ('pending','processing','completed','failed')),
   processed_at    TIMESTAMPTZ,
   error_message   TEXT,
-  received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  received_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  -- 処理の権利 (claim) を取った時刻と回数 (billing_claim_stripe_event が書く。billing/01 §6.3)
+  processing_started_at TIMESTAMPTZ,
+  attempt_count   INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX idx_stripe_webhook_status ON stripe_webhook_events(processing_status, received_at);
 
 ALTER TABLE stripe_webhook_events ENABLE ROW LEVEL SECURITY;
 
--- service_role のみアクセス (Webhook ハンドラは Edge Function 経由)
+-- service_role のみアクセス (Webhook の受け口 POST /api/webhooks/stripe は Next の route で、service_role で呼ぶ)
 CREATE POLICY "stripe_webhook_no_access_rls" ON stripe_webhook_events
   FOR ALL USING (false);
--- Edge Function は service_role で bypass
+-- 受け口 (Next の route) は service_role で呼ぶので RLS を bypass する
 ```
+
+- 冪等は DB 関数 `billing_claim_stripe_event` (`event.id` で処理の権利を取る。戻り値 `claimed` / `completed` / `in_progress`) と `billing_finish_stripe_event` で取る。受け口 `POST /api/webhooks/stripe` が呼ぶ (billing/01 §6.4・§9.6)。
+- `payload` は Stripe のイベントの最小化した写し (`id` / `type` / `created` / `livemode` と `data.object` の許可リストの項目だけ。`src/lib/billing/core.ts` の `minimizeStripeEventPayload`。billing/01 §8.1・§9.6)。氏名・メールアドレス・住所を持たない。
 
 ### 3.19 `email_delivery_logs` / `email_blacklist`
 
@@ -1053,7 +1106,7 @@ CREATE POLICY "gdpr_update" ON gdpr_deletion_requests
 
 ### 3.22 `parental_consents`
 
-> **NOTE: DDL は family/01-data-model.md に移動済み。**
+> **NOTE: `parental_consents` の DDL・RLS は設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。**
 > `parental_consents` は `family_members(id)` を FK 参照するため、
 > family/ ドメイン (02-organization-management の後) で定義する。
 > マイグレーション適用順序については §3.1 と 09-runbook.md §3.2 を参照。
@@ -1411,7 +1464,16 @@ erDiagram
     varchar plan_key FK
     varchar status
     varchar stripe_subscription_id UK
+    varchar stripe_status
+    timestamptz stripe_synced_at
+    bool cancel_at_period_end
+    varchar billing_interval
     uuid active_coupon_redemption_id FK
+  }
+  billing_customers {
+    varchar stripe_customer_id PK
+    uuid user_id FK
+    timestamptz anonymized_at
   }
   revenue_snapshots {
     date date PK
@@ -1448,6 +1510,8 @@ erDiagram
     varchar id PK
     varchar event_type
     varchar processing_status
+    timestamptz processing_started_at
+    int attempt_count
   }
 
   subscription_plans ||--o{ plan_price_history : "価格変更履歴"
@@ -1635,7 +1699,7 @@ describe('subscription_plans seed', () => {
 - `admin_audit_logs`: 既存テーブルに `target_type`, `severity`, `impersonated_by` 等を ALTER で追加
   - `impersonated_by`: なりすまし (impersonate) は提供しない (#1124)。新しく書き込む処理は無く、過去に書かれた行の履歴として列だけ残す (列を消す migration は作らない)
 - `organizations`: `coupon_redemptions` が FK 参照 — org/ ドメインの `organizations` テーブルが先に存在すること
-- `family_members`: `parental_consents` が FK 参照 — DDL は family/01-data-model.md に移動済み。family/ ドメイン適用後に作成されること
+- `family_members`: `parental_consents` が FK 参照 — DDL は設計書 `cross/14-parental-consent.md` §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。family/ ドメイン適用後に作成されること
 
 ## 9. 未解決事項
 

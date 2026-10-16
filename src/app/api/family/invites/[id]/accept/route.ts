@@ -4,7 +4,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { AcceptFamilyInviteBodySchema } from '@/schemas/membership/family-invite-action';
-import { MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(
@@ -66,6 +66,18 @@ export async function POST(
   if (error) {
     const msg = error.message ?? '';
 
+    if (msg.includes(MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED)) {
+      // #1173: 18 歳未満の本人は家族を作れない・招待から入れない (DB の関数が先頭で断る)。DB の生の文は出さない
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED,
+            message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
+          },
+        },
+        { status: 403 },
+      );
+    }
     if (msg.includes('INVITE_NOT_FOUND')) {
       return NextResponse.json(
         { error: { code: MembershipErrorCode.INVITE_NOT_FOUND, message: '招待が見つかりません' } },
