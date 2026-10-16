@@ -7,6 +7,10 @@
  * (supabase/server や db-logger など) は import しないこと。
  */
 
+/**
+ * 返信メールの結果。sent は送信待ち (email_outbox) に受け付けた (届いたかどうかは含まない。送るのは worker: #1193)。
+ * skipped は送信の設定が無く登録していない、failed は登録の時点で分かる失敗
+ */
 export type ReplyEmailStatus = 'sent' | 'skipped' | 'failed';
 
 export type ReplyEmailReason =
@@ -14,7 +18,10 @@ export type ReplyEmailReason =
   | 'not_configured'
   /** 顧客のメールアドレスを取得できなかった */
   | 'no_recipient'
-  /** メールの送信 (Resend) がエラーになった */
+  /**
+   * 送信待ちに登録できなかった、または宛先停止リスト・文面の不備で送らなかった
+   * (登録したあとの送信の失敗はここには出ない。worker の再試行・dead の通知・/super-admin/email-outbox の再送で扱う)
+   */
   | 'send_failed';
 
 export interface ReplyEmailOutcome {

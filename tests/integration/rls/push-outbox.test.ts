@@ -17,7 +17,8 @@
  *   - トリガー: 2 日以上の target_slots の行が completed / failed になったときだけ積む。中止・止まった行の印・1 日以下・
  *       target_slots の無い行には積まない。同じ依頼で 2 通作らない。登録の失敗で weekly_menu_requests の更新を止めない (R-02)
  *
- * 段 B (worker) の部品 (createOutboxStore().loadEligibility) の結合の確認は、段 B で src/lib/push/outbox-store.ts と一緒に足す。
+ * 段 B (worker) の部品: createOutboxStore().loadEligibility (src/lib/push/outbox-store.ts) が、送る条件の材料
+ * (user_profiles と notification_preferences) を実 DB から読み、notification_preferences の行が無い利用者に既定を入れる。
  *
  * claim_push_outbox / claim_push_receipts は表の全体から古い順に取るので、このテストの行は next_attempt_at / sent_at を
  * 2000 年にして先頭に来るようにし、取る件数を自分の行の数にする。行は利用者の削除 (CASCADE) で片付ける。
@@ -29,6 +30,8 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
+import { LEGAL_DOCUMENTS } from '@homegohan/shared';
+import { createOutboxStore } from '@/lib/push/outbox-store';
 
 // ---------------------------------------------------------------
 // 環境変数 / クライアント
@@ -876,5 +879,86 @@ describe('#1136 cleanup_push_outbox', () => {
     expect(await rowById(leaseLapsed.id)).toMatchObject({ status: 'dead', last_error_code: 'expired', worker_id: null });
     expect(await rowById(leased.id)).toMatchObject({ status: 'queued', worker_id: 'w-busy', last_error_code: null });
     expect(await rowById(recent.id)).toMatchObject({ status: 'queued', last_error_code: null });
+  });
+});
+
+// ================================================================
+// H. 段 B の DB の読み書き (createOutboxStore)
+// ================================================================
+describe('#1136 createOutboxStore (段 B)', () => {
+  /** 送る条件の材料だけを持つプロフィールの行を作る (名前などは既存のテストと同じ仮の値) */
+  async function upsertProfile(userId: string, extra: Record<string, unknown>) {
+    const { error } = await srAdmin
+      .from('user_profiles')
+      .upsert({ id: userId, nickname: 'rls-1136', age_group: '30s', gender: 'other', ...extra }, { onConflict: 'id' });
+    if (error) throw new Error(`user_profiles upsert: ${error.message}`);
+  }
+
+  it('createOutboxStore().loadEligibility は notification_preferences の行が無い利用者を notificationsEnabled true・quiet null で返し、行のある利用者は列の値を返す', async () => {
+    const withoutPrefs = await newUser('elig-noprefs');
+    const withPrefs = await newUser('elig-prefs');
+    const withoutProfile = await newUser('elig-noprofile');
+    const frozenAt = '2026-10-01T00:00:00.000Z';
+    const unbanAt = '2099-01-01T00:00:00.000Z';
+    await upsertProfile(withoutPrefs, {
+      terms_version_accepted: LEGAL_DOCUMENTS.terms_of_service.version,
+      privacy_version_accepted: LEGAL_DOCUMENTS.privacy_policy.version,
+    });
+    await upsertProfile(withPrefs, { frozen_at: frozenAt, unban_at: unbanAt });
+    const { error: prefsError } = await srAdmin.from('notification_preferences').insert({
+      user_id: withPrefs,
+      notifications_enabled: false,
+      quiet_hours_start: '23:00',
+      quiet_hours_end: '06:30',
+    });
+    expect(prefsError).toBeNull();
+
+    const eligibility = await createOutboxStore().loadEligibility([withoutPrefs, withPrefs, withoutProfile]);
+
+    // プロフィールの行が無い利用者は入らない (worker が profile_missing で dead にする)
+    expect([...eligibility.keys()].sort()).toEqual([withoutPrefs, withPrefs].sort());
+    expect(eligibility.get(withoutPrefs)).toEqual({
+      frozenAt: null,
+      unbanAt: null,
+      termsVersionAccepted: LEGAL_DOCUMENTS.terms_of_service.version,
+      privacyVersionAccepted: LEGAL_DOCUMENTS.privacy_policy.version,
+      notificationsEnabled: true,
+      quietHoursStart: null,
+      quietHoursEnd: null,
+    });
+    const prefs = eligibility.get(withPrefs);
+    expect(prefs).toMatchObject({
+      termsVersionAccepted: null,
+      privacyVersionAccepted: null,
+      notificationsEnabled: false,
+      quietHoursStart: '23:00:00',
+      quietHoursEnd: '06:30:00',
+    });
+    expect(Date.parse(prefs?.frozenAt ?? '')).toBe(Date.parse(frozenAt));
+    expect(Date.parse(prefs?.unbanAt ?? '')).toBe(Date.parse(unbanAt));
+    // 空の一覧では DB に問い合わせず空を返す
+    expect((await createOutboxStore().loadEligibility([])).size).toBe(0);
+  });
+
+  it('createOutboxStore の RPC の読み書き (claim → complete・cleanup の戻り・deleteToken) が migration の戻りの形と合う', async () => {
+    const userId = await newUser('store-rpc');
+    // seedQueued が端末の行を 1 つ足し、その端末宛ての行を claim の先頭に来るようにする
+    const row = await seedQueued(userId, 'store-rpc');
+    const deviceId = row.push_token_id;
+    const store = createOutboxStore();
+    const workerId = `rls-1136-store-${TS}`;
+
+    const claimed = await store.claimQueued(workerId, 1, LEASE_SECONDS);
+    expect(claimed.map((item) => item.id)).toEqual([row.id]);
+    expect(claimed[0]).toMatchObject({ user_id: userId, push_token_id: deviceId, attempts: 0 });
+    expect(await store.complete(row.id, workerId, `receipt-${TS}`)).toBe(true);
+    expect(await store.complete(row.id, workerId, `receipt-${TS}`)).toBe(false);
+
+    const cleaned = await store.cleanup();
+    expect(Number.isInteger(cleaned.expired) && Number.isInteger(cleaned.sent) && Number.isInteger(cleaned.dead)).toBe(true);
+
+    expect(await store.deleteToken(deviceId)).toBe(true);
+    expect(await store.deleteToken(deviceId)).toBe(false);
+    expect(await rowsOf(userId)).toEqual([]);
   });
 });

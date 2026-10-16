@@ -66,10 +66,10 @@ CI では GitHub Secrets に登録する。
 
 ### メール送信の結果と失敗の記録
 
-メールは `src/lib/emails/send.ts` の `sendEmail(envelope)` で送る。戻り値は `{ ok, id, attempts, error }` で、配信の失敗では例外を投げない (#1193)。
+メールは `src/lib/emails/send.ts` の `sendEmail(envelope)` で送る。`sendEmail(envelope)` は送信待ち (`email_outbox`) に登録し、送るのは worker (`/api/cron/email-outbox`)。戻り値は `{ ok, id, attempts, error }` で (`ok: true` は送信待ちに登録した。`id` は `email_outbox.id`)、失敗では例外を投げない (#1193)。
 
-- 失敗 (再試行を使い切った・400/403 など) と `RESEND_API_KEY` 未設定は、`sendEmail` が `createLogger('email')` で app_logs に残す。残すのは文面の名前 (`template`)・マスクした宛先・Resend のエラーコード・送った回数だけ。呼び出し側が戻り値を見なくても、失敗は記録される。
-- 429 / 5xx / 通信エラーだけ、500ms・1s・2s の指数バックオフで最大 3 回再試行する (合計で最大 4 回)。同じ Idempotency-Key を付けるので二重送信にならない。再試行は呼び出し側の「試行回数」には数えない。
+- 登録の時点の失敗 (文面の不備 `invalid_envelope`・宛先停止リスト `suppressed`・登録の失敗 `outbox_failed`) と `RESEND_API_KEY` 未設定は、`sendEmail` が `createLogger('email')` で app_logs に残す。送信の失敗は worker が行 (`last_error_code`) と app_logs (`cron/email-outbox`) に残す。残すのは文面の名前 (`template`)・マスクした宛先・エラーコードだけ。呼び出し側が戻り値を見なくても、失敗は記録される。
+- 再試行は worker が行う: 429 / 5xx / 通信エラーだけ、1 分 → 5 分 → 15 分 → 1 時間 → 4 時間の間隔で、最初の 1 回を含めて最大 `EMAIL_OUTBOX_MAX_ATTEMPTS` 回 (既定 6 回) 送る (docs/design/operator/10-logs-and-mail-retry.md §6.1)。行に保存した同じ Idempotency-Key を付けるので二重送信にならない。使い切った・直らない失敗は届けられなかった (dead) になり、運用メール (`OPS_ALERT_EMAIL`) で知らせ、`/super-admin/email-outbox` で再送できる。再試行は呼び出し側の「試行回数」には数えない。
 - 失敗したときに追加の処理 (送信記録の保存・画面への表示・文脈つきのログ) をする呼び出し側だけが、結果を見る。判定は `src/lib/emails/send-result.ts` の `isEmailFailure` / `emailFailureReasons` を使う。`RESEND_API_KEY` が無くて送らなかった結果は `ok: false` かつ `skipped: true` で、失敗には数えない。
 - 新しい文面 (`render*Email`) は、返す封筒に `template` (snake_case の名前) を必ず入れる (`src/__tests__/lib/emails/template-names.test.ts` が検査する)。
 - 呼び出し側のテストで `@/lib/emails/send` をモックしても、`send-result.ts` は別ファイルなので実物のまま使える。

@@ -7,9 +7,9 @@
  *   (listUsers は引数なしだと先頭 50 件しか返さず、51 人目以降を取りこぼすため使わない: #1204)。
  * - 例外は投げない。送れなかった場合も結果 (skipped / failed) で返し、構造化ログ (app_logs) に記録する。
  *   返信メッセージは保存済みなので、通知の失敗で返信そのものを失敗させない。
- * - 送信できたら email_delivery_logs に 1 行残す (service_role で INSERT。実在する列だけを使う)。
- *   skipped / failed は status の CHECK 制約 (sent / delivered / bounced / complained / opened / clicked) に
- *   入れられないため、この表には残さず app_logs にだけ残す。
+ * - 送信待ち (email_outbox) に登録できたら sent を返す。登録したあとの送信の失敗はここでは分からない
+ *   (worker が再試行し、届けられなければ dead の通知と /super-admin/email-outbox で運営が扱う:
+ *   docs/design/operator/10-logs-and-mail-retry.md §7.2)。送信の記録は email_outbox にあり、email_delivery_logs には書かない (#1193)。
  */
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -19,7 +19,7 @@ import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
 import { getSiteUrl } from '@/lib/site-config';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
 
-/** email_delivery_logs.template に入れる値 */
+/** 文面の template の名前 (email_outbox.template) */
 export const TICKET_REPLY_EMAIL_TEMPLATE = 'support_ticket_reply';
 
 /** createLogger(...).withUser(userId) が返すロガーのうち、ここで使う分 */
@@ -62,11 +62,9 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
   }
 
   // 1) 宛先 (顧客本人のメールアドレス) を auth.users から取得する
-  let admin: ReturnType<typeof getSupabaseAdmin>;
   let recipient: string | undefined;
   try {
-    admin = getSupabaseAdmin();
-    const { data, error } = await admin.auth.admin.getUserById(ticket.user_id);
+    const { data, error } = await getSupabaseAdmin().auth.admin.getUserById(ticket.user_id);
     if (error) throw error;
     recipient = data.user?.email || undefined;
   } catch (err) {
@@ -78,8 +76,9 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
     return { status: 'failed', reason: 'no_recipient' };
   }
 
-  // 2) 文面を組み立てて送る。sendEmail は配信の失敗で例外を投げず、結果 (ok / skipped / error) で返す
-  //    (失敗は sendEmail も app_logs に記録する。ここでは、どのチケットの返信かが分かる形でも残す)
+  // 2) 文面を組み立てて送信待ちに登録する。sendEmail は失敗で例外を投げず、結果 (ok / skipped / error) で返す
+  //    (失敗は sendEmail も app_logs に記録する。ここでは、どのチケットの返信かが分かる形でも残す)。
+  //    userId は退会時の伏せ字と送信待ちの画面の絞り込みに使う (email_outbox.user_id)
   let result: SendEmailResult;
   try {
     result = await sendEmail(
@@ -91,6 +90,7 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
         contact_url: `${getSiteUrl()}/contact`,
         reply_to: resolveReplyTo(logger),
       }),
+      { userId: ticket.user_id },
     );
   } catch (err) {
     // 文面の組み立てなど、想定外の例外
@@ -102,29 +102,13 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
     logger.warn('support ticket reply email skipped: email sending is not configured', logMeta);
     return { status: 'skipped', reason: 'not_configured' };
   }
+  // 封筒の不備・宛先停止リスト・送信待ちへの登録の失敗 (outbox_failed)
   if (isEmailFailure(result)) {
     logger.error('support ticket reply email: send failed', result.error, logMeta);
     return { status: 'failed', reason: 'send_failed' };
   }
-  const resendMessageId = result.id;
 
-  // 3) 送信ログを残す。supabase-js は DB のエラーを例外にせず { error } で返すため、必ず error を確認する
-  //    (旧実装は結果を見ておらず、INSERT が失敗してもログすら残らなかった)
-  try {
-    const { error } = await admin.from('email_delivery_logs').insert({
-      user_id: ticket.user_id,
-      email: recipient,
-      template: TICKET_REPLY_EMAIL_TEMPLATE,
-      resend_message_id: resendMessageId,
-      status: 'sent',
-      metadata: logMeta,
-    });
-    if (error) throw error;
-  } catch (err) {
-    // メールは送信済み。ログが残らなかったことだけを記録し、結果は sent のまま返す
-    logger.error('support ticket reply email: delivery log insert failed', err, logMeta);
-  }
-
+  // 送信待ちに受け付けた (送るのは worker。届いたかどうかは含まない: R-24)
   return { status: 'sent' };
 }
 

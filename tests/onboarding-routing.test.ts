@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import { DSR_SETTINGS_PATH, DSR_VERIFY_PATH } from "@/lib/data-subject-requests/core";
 import {
+  DATA_SUBJECT_REQUESTS_PATH,
   LEGAL_CONSENT_PATH,
+  isDataSubjectRequestsPath,
   isLegalConsentPath,
   isPolicyPath,
   resolveOnboardingRedirect,
@@ -382,5 +385,72 @@ describe("isPolicyPath", () => {
     "/home",
   ])("#1174: %s is not a policy page", (pathname) => {
     expect(isPolicyPath(pathname)).toBe(false);
+  });
+});
+
+// #1751: 本人の権利の請求 (開示・訂正・利用停止・消去) の画面と、本人確認のメールのリンクの着地。
+// 同意の画面に来るのは多くが新規登録の直後 (初期設定の前) の人で、同意の画面の案内から請求の画面へ進む。
+// ここで初期設定の差し戻しが効くと、/onboarding/welcome (強制中はさらに同意の画面) へ戻されて請求の画面に着けない。
+// 初期設定の状態に関わらず素通りさせる。設定画面 (/settings) そのものとほかの設定の画面は従来どおり差し戻す。
+describe("resolveOnboardingRedirect: 本人の権利の請求の画面 /settings/data-requests (#1751)", () => {
+  const DSR_PAGES = [DSR_SETTINGS_PATH, `${DSR_SETTINGS_PATH}/`, DSR_VERIFY_PATH];
+  type OnboardingState = { onboardingStartedAt: string | null; onboardingCompletedAt: string | null };
+  const NOT_STARTED: OnboardingState = { onboardingStartedAt: null, onboardingCompletedAt: null };
+  const IN_PROGRESS: OnboardingState = { onboardingStartedAt: "2026-03-01T00:00:00Z", onboardingCompletedAt: null };
+  const COMPLETED: OnboardingState = {
+    onboardingStartedAt: "2026-03-01T00:00:00Z",
+    onboardingCompletedAt: "2026-03-01T01:00:00Z",
+  };
+  const ONBOARDING_STATES: Array<[string, OnboardingState]> = [
+    ["初期設定が未着手", NOT_STARTED],
+    ["初期設定が途中", IN_PROGRESS],
+    ["初期設定が完了", COMPLETED],
+  ];
+  const DSR_CASES: Array<[string, string, OnboardingState]> = DSR_PAGES.flatMap((pathname) =>
+    ONBOARDING_STATES.map(([name, onboarding]): [string, string, OnboardingState] => [pathname, name, onboarding]),
+  );
+
+  it("DATA_SUBJECT_REQUESTS_PATH は core.ts の DSR_SETTINGS_PATH と同じ値で、DSR_VERIFY_PATH はその下にある", () => {
+    expect(DATA_SUBJECT_REQUESTS_PATH).toBe(DSR_SETTINGS_PATH);
+    expect(DSR_VERIFY_PATH.startsWith(`${DATA_SUBJECT_REQUESTS_PATH}/`)).toBe(true);
+  });
+
+  it.each(DSR_CASES)("%s は %s の人でも差し戻さない", (pathname, _name, onboarding) => {
+    expect(resolveOnboardingRedirect({ pathname, roles: [], ...onboarding })).toBeNull();
+  });
+
+  it.each<[string, string, OnboardingState]>([
+    ["/settings", "/onboarding/welcome", NOT_STARTED],
+    ["/settings/account", "/onboarding/welcome", NOT_STARTED],
+    ["/settings/data-requestsx", "/onboarding/welcome", NOT_STARTED],
+    ["/settings/data-requests-x", "/onboarding/welcome", NOT_STARTED],
+    ["/settings/data-request", "/onboarding/welcome", NOT_STARTED],
+    ["/settings", "/onboarding/resume", IN_PROGRESS],
+    ["/settings/data-requestsx", "/onboarding/resume", IN_PROGRESS],
+  ])("設定画面そのもの・ほかの設定の画面・似た名前 %s は従来どおり %s へ差し戻す", (pathname, expected, onboarding) => {
+    expect(resolveOnboardingRedirect({ pathname, roles: [], ...onboarding })).toBe(expected);
+  });
+});
+
+describe("isDataSubjectRequestsPath (#1751)", () => {
+  it.each([DSR_SETTINGS_PATH, `${DSR_SETTINGS_PATH}/`, DSR_VERIFY_PATH, `${DSR_VERIFY_PATH}/`])(
+    "%s は請求の画面",
+    (pathname) => {
+      expect(isDataSubjectRequestsPath(pathname)).toBe(true);
+    },
+  );
+
+  it.each([
+    "/settings",
+    "/settings/",
+    "/settings/account",
+    "/settings/data-requestsx",
+    "/settings/data-requests-x",
+    "/settings/data-request",
+    "/data-requests",
+    "/admin/data-requests",
+    "/api/account/data-requests",
+  ])("%s は請求の画面ではない", (pathname) => {
+    expect(isDataSubjectRequestsPath(pathname)).toBe(false);
   });
 });

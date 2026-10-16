@@ -1,7 +1,7 @@
 /**
  * POST /api/account/data-requests/[id]/verify - 本人確認 (メールのリンクのトークンを突き合わせて受付にする) (#1178 / #1702)
  *
- * 設計: docs/design/cross/15-data-subject-requests.md §7.2。検査の順: NULL 文字 → requireUser → id → 本文の JSON → zod → service。
+ * 設計: docs/design/cross/15-data-subject-requests.md §7.2。検査の順: NULL 文字 → authenticateDsrRequester → id → 本文の JSON → zod → service。
  * service.ts の verifyDsr が、本人の行を service_role で読み (無ければ 404) → 本人確認待ちでなければ 409 → 期限切れ 410 →
  * 不一致 400 → 状態と hash を条件にした UPDATE (0 行なら 409・メールなし) → メール 2 通 (best-effort) の順に判定する。
  * 応答期限 (日) は getDsrResponseDueDays() (環境変数 DSR_RESPONSE_DUE_DAYS)。
