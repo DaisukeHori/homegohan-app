@@ -85,6 +85,8 @@
 - `description`: 任意、0-500 文字
 - `plan_key`: `subscription_plans` に存在する family 系 plan_key
 
+**プラン**: 送った `plan_key` (`create_family_group` の `p_plan_key`) は効かない。作ったグループの `plan_key` / `member_limit` は、`family_groups` のトリガー `family_groups_billing_plan_follow_representative` が代表者の live な家族プランの契約に合わせる (契約が無ければ `free`)。トリガーは代表者の advisory `billing-user:<uuid>` を取り、課金の写像と直列になる (`docs/design/billing/01-billing-core.md` §6.4 (10)。01-data-model §4.1 の注)。
+
 **レスポンス 201**:
 ```json
 {
@@ -240,7 +242,7 @@
 2. `acquire_family_group_lock(group_id)` 取得 (ラッパー経由)
 3. パスワード再認証
 4. `family_members` で旧 owner → `admin`、新 owner → `owner`
-5. `family_groups.owner_id` 更新
+5. `family_groups.owner_id` 更新 (実 DB の列は `representative_id`)。グループの `plan_key` / `member_limit` は、`family_groups` のトリガー `family_groups_billing_plan_follow_representative` が新しい代表者の live な家族プランの契約に合わせる (新しい代表者の advisory `billing-user:<uuid>` を取り、課金の写像と直列。旧代表者の契約は旧代表者のまま。billing/01 §6.4 (10)・01-data-model §4.1 の注)
 6. 双方に通知
 7. `family_activity_log` に `owner_transferred` 記録
 
@@ -337,7 +339,7 @@ UC-ORG-17 シナリオ。
 2. パスワード再認証
 3. split_members 内に child メンバーがいる場合: 親権者の同意確認 (24h タイムアウト)
 4. 同意確定後:
-   - 新 `family_group` 作成 (`plan_key = 'free'`、新 owner を owner に)
+   - 新 `family_group` 作成 (`plan_key = 'free'`、新 owner を owner に)。作成のときに `family_groups` のトリガー `family_groups_billing_plan_follow_representative` が `plan_key` / `member_limit` を新 owner の live な家族プランの契約に合わせる (契約が無ければ `free`。billing/01 §6.4 (10))
    - 指定メンバーを `family_members.family_group_id` 更新
    - `meal_history_mode` に従い `planned_meals` 処理
 5. 全関連メンバーに通知
