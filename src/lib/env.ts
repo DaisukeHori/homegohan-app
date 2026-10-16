@@ -429,6 +429,15 @@ export const SERVER_ENV_VARS = {
     // 解釈 (範囲・不正な値の扱い) は src/lib/auth/login-failures.ts の resolveLoginFailureResetMinutes。値を読むのは route だけ
     readOnlyBy: 'src/app/api/auth/login/route.ts',
   },
+  AUTH_LOGIN_ALERT: {
+    required: false,
+    description:
+      '新しい端末・地域からのログインを本人にメールで知らせるか (#1190)。on / off (大文字・小文字は問わない)。' +
+      'off にすると、毎分の cron (GET /api/cron/login-alerts) は判定して印を付けるが、メールを送らない (障害・移行の間に止める用)',
+    whenMissing: 'on と同じ (知らせる)。on / off 以外の値も on に戻し、warn ログに変数名だけを残す',
+    // 解釈 (未設定・不正な値の扱い) は src/lib/auth/sessions/constants.ts の resolveLoginAlertMode。値を読むのは cron の route だけ
+    readOnlyBy: 'src/app/api/cron/login-alerts/route.ts',
+  },
   OPERATOR_MFA_ENFORCE_FROM: {
     required: false,
     description:
