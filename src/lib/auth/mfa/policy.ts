@@ -12,7 +12,8 @@ import { createLogger } from '@/lib/db-logger';
 /**
  * TOTP を必須にするロール (cross/01 §5.1 / 要件 §17.2)。この 4 つだけが登録できる (対象 = 必須)。
  * support / sales / content_moderator / org_admin は対象外 (任意の MFA は §27 Q-3)。
- * 写し: DB の public.operator_mfa_satisfied() の配列 (cross/12 §11.4)・apps/mobile の MOBILE_MFA_REQUIRED_ROLES・e2e の E2E_MFA_REQUIRED_ROLES。一致はそれぞれのテストが確かめる
+ * 写し: DB の public.operator_mfa_satisfied() の配列 (cross/12 §11.4)・e2e の E2E_MFA_REQUIRED_ROLES。一致はそれぞれのテストが確かめる。
+ * apps/mobile は写しを持たない (アプリの運営画面は WebView の Web の画面で、ロールの判定は Web のゲートが行う cross/12 §16)
  */
 export const MFA_REQUIRED_ROLES = ['super_admin', 'admin', 'finance', 'org_industrial_doctor'] as const satisfies ReadonlyArray<RoleName>;
 

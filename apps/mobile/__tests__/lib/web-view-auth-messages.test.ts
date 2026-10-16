@@ -73,9 +73,10 @@ beforeEach(() => {
 });
 
 describe('parseWebAuthMessage', () => {
-  it('sign-out / session-expired だけを受け付ける', () => {
+  it('sign-out / session-expired / mfa-verify-required だけを受け付ける', () => {
     expect(parseWebAuthMessage({ type: 'sign-out' })).toEqual({ type: 'sign-out' });
     expect(parseWebAuthMessage({ type: 'session-expired', extra: 'ignored' })).toEqual({ type: 'session-expired' });
+    expect(parseWebAuthMessage({ type: 'mfa-verify-required', next: '/admin' })).toEqual({ type: 'mfa-verify-required' });
   });
 
   it.each([null, undefined, 'sign-out', 42, [], {}, { type: 'download' }, { type: 'tab-navigate' }, { type: 123 }])(
@@ -215,6 +216,77 @@ describe('handleWebAuthMessage — 受け付けないメッセージ', () => {
     expect(mockGetUser).not.toHaveBeenCalled();
     expect(rebridge).not.toHaveBeenCalled();
     expect(goToWelcome).not.toHaveBeenCalled();
+  });
+});
+
+describe('handleWebAuthMessage — mfa-verify-required (#1707 段 D。cross/12 §16.4.4)', () => {
+  it('自分の Web のオリジンからの mfa-verify-required は requestMfaVerify を 1 回呼び "mfa-verify-requested" を返し、getSession / getUser / limiter に触れない', async () => {
+    const requestMfaVerify = jest.fn();
+    const tryAcquire = jest.fn(() => true);
+    const { deps, rebridge, goToWelcome } = makeDeps({ requestMfaVerify, limiter: { tryAcquire } });
+
+    const result = await handleWebAuthMessage({ type: 'mfa-verify-required' }, `${WEB_ORIGIN}/settings/security/mfa/verify?next=%2Fadmin`, deps);
+
+    expect(result).toBe('mfa-verify-requested');
+    expect(requestMfaVerify).toHaveBeenCalledTimes(1);
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(tryAcquire).not.toHaveBeenCalled();
+    expect(rebridge).not.toHaveBeenCalled();
+    expect(goToWelcome).not.toHaveBeenCalled();
+    expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
+  });
+
+  it('回数制限に達していても、確認の依頼は通す (limiter を見ない)', async () => {
+    const requestMfaVerify = jest.fn();
+    const { deps } = makeDeps({ requestMfaVerify, limiter: { tryAcquire: () => false } });
+
+    expect(await handleWebAuthMessage({ type: 'mfa-verify-required' }, PAGE, deps)).toBe('mfa-verify-requested');
+    expect(requestMfaVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['外部のページ', 'https://evil.example/phish'],
+    ['前方一致でしかないホスト', 'https://homegohan-app.vercel.app.evil.example/settings'],
+    ['送り元が不明', undefined],
+  ])('%s からの mfa-verify-required は "ignored" で requestMfaVerify を呼ばない', async (_label, sender) => {
+    const requestMfaVerify = jest.fn();
+    const { deps } = makeDeps({ requestMfaVerify });
+
+    expect(await handleWebAuthMessage({ type: 'mfa-verify-required' }, sender, deps)).toBe('ignored');
+    expect(requestMfaVerify).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+  });
+
+  it('requestMfaVerify の無い deps では "ignored"', async () => {
+    const { deps, rebridge, goToWelcome } = makeDeps();
+
+    expect(await handleWebAuthMessage({ type: 'mfa-verify-required' }, PAGE, deps)).toBe('ignored');
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockGetUser).not.toHaveBeenCalled();
+    expect(rebridge).not.toHaveBeenCalled();
+    expect(goToWelcome).not.toHaveBeenCalled();
+  });
+
+  it('ログアウトの処理中に届いても、確認の依頼は session-expired / sign-out の処理を乱さない (控えを取らない)', async () => {
+    let releaseSignOut: () => void = () => undefined;
+    mockSignOutWithCleanup.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseSignOut = () => resolve({ error: null });
+        }),
+    );
+    const requestMfaVerify = jest.fn();
+    const { deps, goToWelcome } = makeDeps({ requestMfaVerify });
+
+    const signOut = handleWebAuthMessage({ type: 'sign-out' }, PAGE, deps);
+    await Promise.resolve();
+    expect(await handleWebAuthMessage({ type: 'mfa-verify-required' }, PAGE, deps)).toBe('mfa-verify-requested');
+    releaseSignOut();
+
+    expect(await signOut).toBe('signed-out');
+    expect(mockGetSession).toHaveBeenCalledTimes(1);
+    expect(goToWelcome).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -6,12 +6,14 @@
  *   - session-expired : ネイティブのセッションを確かめたうえで、同じ画面 (タブ、タブ以外の /settings/ai-consent) を新しい bridge で開き直す
  *                       (いま開いているパス = WebViewScreen が initialPath を検証したあとの effectivePath に使い捨ての値 _rb を付けて
  *                        initialPath に入れ、WebViewScreen の「initialPath が変わったら bridge をやり直す」仕組みに乗せる)
+ *   - mfa-verify-required : ネイティブの確認画面 (NativeMfaVerifyModal) を出し、確認が済んだら閉じて、いま開いているパスを
+ *                           _rb を付けて開き直す (回数制限を通さない。#1707 段 D・docs/design/cross/12-operator-mfa.md §16.4.5)
  * ことを、実際の WebViewScreen と useWebAuthMessages をつないで確かめる。処理そのものの細かい場合分けは
  * web-view-auth-messages.test.ts で確かめている。
  */
 
 import React from 'react';
-import { render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
 const WEB_BASE_URL = 'https://homegohan-app.vercel.app';
 process.env.EXPO_PUBLIC_WEB_URL = WEB_BASE_URL;
@@ -79,6 +81,24 @@ const mockSignOutWithCleanup = jest.fn();
 jest.mock('../../src/lib/signOut', () => ({
   signOutWithCleanup: (...args: unknown[]) => mockSignOutWithCleanup(...args),
 }));
+
+// 確認画面の中身 (AAL の判定と 6 桁) は NativeMfaVerifyModal.test.tsx / MfaVerifyGate.test.tsx で確かめる。
+// ここでは WebViewScreen が出す・閉じる・確認の後に開き直すことだけを見るので、onVerified / onClose を押せる部品に差し替える
+jest.mock('../../src/components/NativeMfaVerifyModal', () => {
+  const { Pressable, Text, View } = require('react-native');
+  return {
+    NativeMfaVerifyModal: ({ onVerified, onClose }: { onVerified: () => void; onClose: () => void }) => (
+      <View testID="native-mfa-verify-modal">
+        <Pressable testID="mock-native-mfa-verified" onPress={() => onVerified()}>
+          <Text>verified</Text>
+        </Pressable>
+        <Pressable testID="native-mfa-verify-close" onPress={() => onClose()}>
+          <Text>close</Text>
+        </Pressable>
+      </View>
+    ),
+  };
+});
 
 jest.mock('../../src/theme/colors', () => ({
   colors: { accent: '#FF6B35' },
@@ -243,6 +263,108 @@ describe('WebViewScreen — session-expired (#1038 F7-05)', () => {
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(mockGetUser).not.toHaveBeenCalled();
+    expect(mockSetParams).not.toHaveBeenCalled();
+  });
+});
+
+describe('WebViewScreen — mfa-verify-required (#1707 段 D。cross/12 §16.4.5)', () => {
+  const VERIFY_PAGE = `${WEB_BASE_URL}/settings/security/mfa/verify?next=%2Fadmin`;
+
+  it('要求が無いときは確認画面を描かない', async () => {
+    const utils = render(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+
+    expect(utils.queryByTestId('native-mfa-verify-modal')).toBeNull();
+  });
+
+  it('mfa-verify-required で NativeMfaVerifyModal を出し、onVerified で閉じて _rb を付けた initialPath で開き直す', async () => {
+    const utils = render(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+    // 開くときの bridge (getSessionForBridge) が呼んだ分を数えない
+    mockGetSession.mockClear();
+    mockGetUser.mockClear();
+
+    await act(async () => {
+      postFromWeb({ type: 'mfa-verify-required' }, VERIFY_PAGE);
+    });
+    await waitFor(() => expect(utils.getByTestId('native-mfa-verify-modal')).toBeTruthy());
+    // 確認が済むまでは開き直さない (Web のセッションの確認・ログアウトもしない)
+    expect(mockSetParams).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockGetUser).not.toHaveBeenCalled();
+
+    fireEvent.press(utils.getByTestId('mock-native-mfa-verified'));
+
+    expect(utils.queryByTestId('native-mfa-verify-modal')).toBeNull();
+    expect(mockSetParams).toHaveBeenCalledTimes(1);
+    expect(mockSetParams.mock.calls[0][0].initialPath).toMatch(/^\/home\?_rb=\d+$/);
+    expect(mockSignOutWithCleanup).not.toHaveBeenCalled();
+  });
+
+  it('直前に session-expired で開き直していても、回数制限を通さずに開き直す', async () => {
+    const utils = render(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+
+    postFromWeb({ type: 'session-expired' });
+    await waitFor(() => expect(mockSetParams).toHaveBeenCalledTimes(1));
+    // 回数制限 (10 秒以上の間隔) の内なので、続けて届いた session-expired は開き直さない
+    postFromWeb({ type: 'session-expired' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(mockSetParams).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      postFromWeb({ type: 'mfa-verify-required' }, VERIFY_PAGE);
+    });
+    await waitFor(() => expect(utils.getByTestId('native-mfa-verify-modal')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('mock-native-mfa-verified'));
+
+    expect(mockSetParams).toHaveBeenCalledTimes(2);
+    expect(mockSetParams.mock.calls[1][0].initialPath).toMatch(/^\/home\?_rb=\d+$/);
+  });
+
+  it('tab-navigate などで initialPath を持っているタブでは、verify の画面の next ではなく、そのタブのいまのパスを開き直す', async () => {
+    mockRouteParams = { initialPath: '/menus/weekly?mode=app&view=day' };
+    const utils = render(<WebViewScreen path="/menus" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+
+    await act(async () => {
+      postFromWeb({ type: 'mfa-verify-required' }, VERIFY_PAGE);
+    });
+    await waitFor(() => expect(utils.getByTestId('native-mfa-verify-modal')).toBeTruthy());
+    fireEvent.press(utils.getByTestId('mock-native-mfa-verified'));
+
+    expect(mockSetParams).toHaveBeenCalledTimes(1);
+    expect(mockSetParams.mock.calls[0][0].initialPath).toMatch(/^\/menus\/weekly\?mode=app&view=day&_rb=\d+$/);
+  });
+
+  it('[閉じる] で閉じ、開き直さない', async () => {
+    const utils = render(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+
+    await act(async () => {
+      postFromWeb({ type: 'mfa-verify-required' }, VERIFY_PAGE);
+    });
+    await waitFor(() => expect(utils.getByTestId('native-mfa-verify-modal')).toBeTruthy());
+
+    fireEvent.press(utils.getByTestId('native-mfa-verify-close'));
+
+    expect(utils.queryByTestId('native-mfa-verify-modal')).toBeNull();
+    expect(mockSetParams).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['外部ページ', 'https://evil.example/phish'],
+    ['前方一致でしかないホスト', 'https://homegohan-app.vercel.app.evil.example/settings/security/mfa/verify'],
+  ])('%s からの mfa-verify-required は何も出さない', async (_label, url) => {
+    const utils = render(<WebViewScreen path="/home" />);
+    await waitFor(() => expect(mockWebViewProps.source?.uri).toBeDefined());
+
+    await act(async () => {
+      postFromWeb({ type: 'mfa-verify-required' }, url);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+
+    expect(utils.queryByTestId('native-mfa-verify-modal')).toBeNull();
     expect(mockSetParams).not.toHaveBeenCalled();
   });
 });
