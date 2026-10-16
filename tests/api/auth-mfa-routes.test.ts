@@ -207,7 +207,7 @@ beforeEach(() => {
         id: UNVERIFIED_FACTOR_ID,
         type: 'totp',
         friendly_name: 'authenticator',
-        // auth-js (2.117.3) は Supabase の応答の SVG に data URL の前置きを付けて返す (GoTrueClient._enroll)
+        // auth-js (2.105.3) は Supabase の応答の SVG に data URL の前置きを付けて返す (GoTrueClient._enroll)
         totp: { qr_code: 'data:image/svg+xml;utf-8,<svg></svg>', secret: 'JBSWY3DPEHPK3PXP', uri: 'otpauth://totp/x' },
       },
       error: null,

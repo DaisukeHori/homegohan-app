@@ -64,7 +64,8 @@ export function refreshRequests(fakeFetch: FakeSupabaseFetch) {
 /** 本物の auth-js を載せたブラウザ用クライアント。fetch だけを差し替える */
 export function createRealBrowserClient(fakeFetch: FakeSupabaseFetch) {
   return createBrowserClient(SUPABASE_URL, 'anon-key', {
-    // cookies は渡さない: @supabase/ssr はブラウザ (happy-dom) では document.cookie を読み書きする (native-bridge が張る Cookie と同じ所)
+    // @supabase/ssr 0.1.0 は options を渡すと cookies の既定値 ({}) が undefined で上書きされるので、空のまま渡す
+    cookies: {},
     isSingleton: false,
     global: { fetch: fakeFetch as unknown as typeof fetch },
   })
