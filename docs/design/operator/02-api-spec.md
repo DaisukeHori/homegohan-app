@@ -371,7 +371,7 @@ BAN 解除
   行がもう無い (持ち主が先に消した) ときは `hidden: false` / `content_found: false`。すでに隠れていた行は `hidden: true` / `content_found: true`
   で、`hidden_ids` は空
   隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
-- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
+- 画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
 - `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
@@ -1606,6 +1606,13 @@ NPS サーベイ送信 (日次 14:00 JST)
 
 ### GET /api/cron/email-outbox
 メールの送信待ちを送る worker (毎分。Vercel Cron。#1193)。処理・応答・環境変数は `10-logs-and-mail-retry.md` §6.5。
+
+**認証**: `CRON_SECRET` ヘッダー
+
+---
+
+### GET /api/cron/push-outbox
+Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#1136)。処理・応答・環境変数は `mobile/06-push-send.md` §6.6。
 
 **認証**: `CRON_SECRET` ヘッダー
 

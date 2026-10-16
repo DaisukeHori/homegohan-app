@@ -343,7 +343,7 @@ const SUPABASE_CLOUD_HOST_SUFFIX = '.supabase.co';
 export interface CspBuildInput {
   /** このリクエストの nonce (generateCspNonce の戻り値) */
   nonce: string;
-  /** next dev か (webpack の HMR が 'unsafe-eval' を要る)。呼ぶ側が process.env.NODE_ENV === 'development' を渡す */
+  /** next dev か (dev では React がデバッグ情報 (サーバーのエラーのスタックをブラウザで組み立て直すなど) に eval を使うので 'unsafe-eval' が要る。本番は要らない。Next の CSP のガイド)。呼ぶ側が process.env.NODE_ENV === 'development' を渡す */
   isDev: boolean;
   /** NEXT_PUBLIC_SUPABASE_URL (src/lib/env-required.ts の getSupabaseUrl() の値。無ければ undefined) */
   supabaseUrl: string | undefined;

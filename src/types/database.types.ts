@@ -8276,6 +8276,10 @@ export type Database = {
         }
         Returns: Json
       }
+      assert_org_invite_recipient_not_in_org: {
+        Args: { p_email: string; p_organization_id: string }
+        Returns: undefined
+      }
       auth_login_clear_failures: {
         Args: { p_email: string }
         Returns: undefined
@@ -9249,6 +9253,7 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: number
       }
+      operator_mfa_satisfied: { Args: never; Returns: boolean }
       organizations_owner_id_unchanged: {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean

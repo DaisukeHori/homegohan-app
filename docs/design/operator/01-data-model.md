@@ -1420,6 +1420,10 @@ Step 1 「目標 kcal の X%」表示は新規 helper を追加せず、既存 `
 → `docs/design/cross/12-operator-mfa.md` §11.1 が正典 (列・制約・権限・ロールバック)。SHA-256 だけを持つ service_role 専用の表 (RLS 有効・ポリシー無し)。
 migration は `supabase/migrations/20261016230000_operator_mfa_backup_codes.sql`。
 
+### 3.28 `data_subject_requests` — 開示・訂正・利用停止・消去の請求
+
+`data_subject_requests` の DDL は `cross/15-data-subject-requests.md` を canonical とする (§4.1 DDL・§4.3 RLS と列の GRANT・§8.3 状態遷移)。migration は `supabase/migrations/20261016220000_data_subject_requests.sql`。
+
 ## 4. ER 図
 
 ```mermaid
