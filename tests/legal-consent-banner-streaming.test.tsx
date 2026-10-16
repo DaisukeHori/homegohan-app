@@ -124,13 +124,16 @@ describe('LegalConsentBanner: ストリーミングで境界が後送りにな�
     expect(html).toContain(WITH_QUERY_HREF);
   });
 
-  it('帯の領域は、後送りの入れ物 (隠れた中身) の外にある: 入れ替えの前から見えている', async () => {
+  it('帯の領域は shell の中にあり、後送りの入れ物 (隠れた中身) には入らない: 入れ替えの前から見えていて、後から増えない', async () => {
     const html = await renderWithLateSearchParams();
 
     const segmentStart = html.search(OUTLINED_SEGMENT_PATTERN);
     expect(segmentStart).toBeGreaterThan(-1);
-    const bannerAt = html.indexOf(BANNER_TESTID_ATTR);
-    expect(bannerAt).toBeGreaterThan(-1);
-    expect(bannerAt).toBeLessThan(segmentStart);
+    const shell = html.slice(0, segmentStart);
+    const outlined = html.slice(segmentStart);
+    expect(countOccurrences(shell, BANNER_TESTID_ATTR)).toBe(1);
+    expect(countOccurrences(outlined, BANNER_TESTID_ATTR)).toBe(0);
+    // 後送りで届くのはクエリつきのリンクだけ
+    expect(outlined).toContain(WITH_QUERY_HREF);
   });
 });
