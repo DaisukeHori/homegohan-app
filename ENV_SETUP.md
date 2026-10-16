@@ -485,6 +485,16 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - サーバー側（middleware）だけで読みます。`NEXT_PUBLIC_` は付けません。
 - 戻し方: 環境変数を消す（または `off` にする）と、再デプロイ後にお知らせを出さなくなります。
 
+### 任意の環境変数: CSP を「報告だけ」にする（`CSP_REPORT_ONLY`）
+
+本番の Content-Security-Policy（CSP）は、`src/middleware.ts` が毎リクエスト作る nonce で Next のスクリプトだけを許し、`script-src` に `'unsafe-inline'` を持ちません（#1169。方針の正本は `src/lib/security/csp.ts`）。このスイッチは、ローンチ後に、ある画面でスクリプトが止まる報告（`app_logs` の `function_name = csp-report`。運営は `/super-admin/logs` で絞る）が集まったときの戻し方です。Vercel の環境変数に設定します。値の読み方は `LEGAL_CONSENT_ENFORCE` と同じです（`on` のときだけ有効。大文字小文字と前後の空白は区別しません）。
+
+- 未設定、または `on` 以外（既定）: 強制します（`Content-Security-Policy`）。nonce の無いインラインスクリプトは止まり、違反の報告も `/api/csp-report` に届きます。
+- `on`: `Content-Security-Policy-Report-Only` で返し、違反を止めず報告だけ届かせます。
+- 強制へ戻す条件: 直近 7 日の `csp-report` の行のうち、`blocked_uri` が `inline` / `eval` / 自オリジンのものが 0 件になったら外します（他オリジンの報告は利用者のブラウザ拡張などなので数えません）。
+- サーバー側（middleware）だけで読みます。`NEXT_PUBLIC_` は付けません。Vercel で変えた場合は、再デプロイ後に効きます。
+- CI の e2e（`.github/workflows/e2e-local.yml`・`scripts/local-ci.sh`）では設定しません（`tests/e2e/csp-nonce.spec.ts` は強制を期待します）。
+
 ### 任意の環境変数: 機能フラグの対象ユーザー数の上限（`FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT`）
 
 運営の機能フラグ画面（`/super-admin/flags`）の「対象ユーザー数」は、段階公開や条件つきのフラグについて、ユーザーを 1 人ずつ判定して数えます（#1148）。ユーザーがこの数を超えると数えず、画面では「—」になります。全員が対象で条件の無いフラグは件数だけを数えるので、この上限によらず出ます。
