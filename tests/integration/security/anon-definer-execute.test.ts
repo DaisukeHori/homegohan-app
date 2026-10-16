@@ -246,6 +246,65 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: '夜間バッチ (pg_cron、所有者 postgres) と service_role 専用。PUBLIC の EXECUTE も外す',
   },
+  // ---- #1190・#1189・#1198 ログイン履歴・セッション・パスワード履歴 (docs/design/cross/16-auth-history-sessions.md §11・§22 N-19) ----
+  // SECURITY INVOKER の cleanup_ended_user_sessions_metadata・claim_login_alerts・release_login_alert・user_profiles_fill_login_stats は
+  // この表に足さない (B は secdef が true であることを確かめる)
+  {
+    sig: 'auth_session_revoke(uuid)',
+    anon: false,
+    authenticated: true,
+    serviceRole: false,
+    why: '本人 (auth.uid()) のセッション 1 つを auth.sessions から消す RPC。ログインした本人だけが呼ぶ (cross/16 §11.4)',
+  },
+  {
+    sig: 'auth_password_check(uuid,text,text,integer)',
+    anon: false,
+    authenticated: false,
+    serviceRole: true,
+    why: '現在のパスワードの確認と過去の世代との照合。パスワードの変更・再設定の API (service_role) だけが呼ぶ (cross/16 §11.5)',
+  },
+  {
+    sig: 'expire_idle_auth_sessions()',
+    anon: false,
+    authenticated: false,
+    serviceRole: true,
+    why: '30 日更新の無いセッションを終える保守の関数。pg_cron (所有者 postgres) と service_role 専用 (cross/16 §11.6)',
+  },
+  {
+    sig: 'reconcile_user_sessions_metadata()',
+    anon: false,
+    authenticated: false,
+    serviceRole: true,
+    why: 'GoTrue 側に無いのに終わっていないログインの記録を終える保守の関数。pg_cron と service_role 専用 (cross/16 §11.6)',
+  },
+  {
+    sig: 'auth_session_created()',
+    anon: false,
+    authenticated: false,
+    serviceRole: false,
+    why: 'auth.sessions の INSERT のトリガー関数 (ログインの記録)。実行は supabase_auth_admin だけ (cross/16 §11.3)',
+  },
+  {
+    sig: 'auth_session_refreshed()',
+    anon: false,
+    authenticated: false,
+    serviceRole: false,
+    why: 'auth.sessions の refresh のトリガー関数 (last_active_at)。実行は supabase_auth_admin だけ (cross/16 §11.3)',
+  },
+  {
+    sig: 'auth_session_deleted()',
+    anon: false,
+    authenticated: false,
+    serviceRole: false,
+    why: 'auth.sessions の DELETE のトリガー関数 (ログインの終了の記録)。実行は supabase_auth_admin だけ (cross/16 §11.3)',
+  },
+  {
+    sig: 'password_history_record()',
+    anon: false,
+    authenticated: false,
+    serviceRole: false,
+    why: 'auth.users のパスワードの変更のトリガー関数 (password_history への記録)。実行は supabase_auth_admin だけ (cross/16 §11.3)',
+  },
   {
     sig: 'family_menu_visible_members()',
     anon: false,

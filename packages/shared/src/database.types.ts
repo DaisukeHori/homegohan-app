@@ -488,7 +488,6 @@ export type Database = {
           email_hash: string
           failure_count: number
           last_failed_at: string | null
-          locked_until: string | null
           updated_at: string
         }
         Insert: {
@@ -496,7 +495,6 @@ export type Database = {
           email_hash: string
           failure_count?: number
           last_failed_at?: string | null
-          locked_until?: string | null
           updated_at?: string
         }
         Update: {
@@ -504,7 +502,6 @@ export type Database = {
           email_hash?: string
           failure_count?: number
           last_failed_at?: string | null
-          locked_until?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -7651,9 +7648,21 @@ export type Database = {
       }
       user_sessions_metadata: {
         Row: {
+          alert_attempts: number
+          alert_claimed_at: string | null
+          alert_sent_at: string | null
+          alert_status: string
+          context_source: string
+          country_code: string | null
           created_at: string
+          device_family: string | null
           device_name: string | null
+          ended_reason: string | null
           ip_address: unknown
+          ip_network: unknown
+          is_new_country: boolean | null
+          is_new_device: boolean | null
+          is_new_ip: boolean | null
           last_active_at: string
           revoked_at: string | null
           session_id: string
@@ -7661,9 +7670,21 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          alert_attempts?: number
+          alert_claimed_at?: string | null
+          alert_sent_at?: string | null
+          alert_status?: string
+          context_source?: string
+          country_code?: string | null
           created_at?: string
+          device_family?: string | null
           device_name?: string | null
+          ended_reason?: string | null
           ip_address?: unknown
+          ip_network?: unknown
+          is_new_country?: boolean | null
+          is_new_device?: boolean | null
+          is_new_ip?: boolean | null
           last_active_at?: string
           revoked_at?: string | null
           session_id: string
@@ -7671,9 +7692,21 @@ export type Database = {
           user_id: string
         }
         Update: {
+          alert_attempts?: number
+          alert_claimed_at?: string | null
+          alert_sent_at?: string | null
+          alert_status?: string
+          context_source?: string
+          country_code?: string | null
           created_at?: string
+          device_family?: string | null
           device_name?: string | null
+          ended_reason?: string | null
           ip_address?: unknown
+          ip_network?: unknown
+          is_new_country?: boolean | null
+          is_new_device?: boolean | null
+          is_new_ip?: boolean | null
           last_active_at?: string
           revoked_at?: string | null
           session_id?: string
@@ -8159,11 +8192,6 @@ export type Database = {
         }
         Returns: Json
       }
-      auth_login_account_user_id: { Args: { p_email: string }; Returns: string }
-      auth_login_apply_lock: {
-        Args: { p_email: string; p_locked_until: string }
-        Returns: undefined
-      }
       auth_login_clear_failures: {
         Args: { p_email: string }
         Returns: undefined
@@ -8177,20 +8205,16 @@ export type Database = {
         Args: { p_email: string; p_reset_after_minutes: number }
         Returns: number
       }
-      auth_login_lock_status: {
-        Args: { p_email: string }
-        Returns: {
-          failure_count: number
-          locked_until: string
-        }[]
+      auth_password_check: {
+        Args: {
+          p_current_password: string
+          p_generations: number
+          p_new_password: string
+          p_user_id: string
+        }
+        Returns: string
       }
-      auth_login_record_failure: {
-        Args: { p_email: string }
-        Returns: {
-          failure_count: number
-          locked_until: string
-        }[]
-      }
+      auth_session_revoke: { Args: { p_session_id: string }; Returns: string }
       begin_account_deletion_record: {
         Args: {
           p_executor_type: string
@@ -8272,6 +8296,42 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "email_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_login_alerts: {
+        Args: {
+          p_batch_size: number
+          p_max_age_hours: number
+          p_min_age_seconds: number
+          p_reclaim_minutes: number
+        }
+        Returns: {
+          alert_attempts: number
+          alert_claimed_at: string | null
+          alert_sent_at: string | null
+          alert_status: string
+          context_source: string
+          country_code: string | null
+          created_at: string
+          device_family: string | null
+          device_name: string | null
+          ended_reason: string | null
+          ip_address: unknown
+          ip_network: unknown
+          is_new_country: boolean | null
+          is_new_device: boolean | null
+          is_new_ip: boolean | null
+          last_active_at: string
+          revoked_at: string | null
+          session_id: string
+          user_agent: string | null
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "user_sessions_metadata"
           isOneToOne: false
           isSetofReturn: true
         }
@@ -8389,6 +8449,7 @@ export type Database = {
         }
       }
       cleanup_email_outbox: { Args: never; Returns: number }
+      cleanup_ended_user_sessions_metadata: { Args: never; Returns: number }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
@@ -8607,6 +8668,7 @@ export type Database = {
         }
         Returns: number
       }
+      expire_idle_auth_sessions: { Args: never; Returns: number }
       fail_email_outbox: {
         Args: {
           p_error_code: string
@@ -9162,6 +9224,7 @@ export type Database = {
         Args: { p_organization_id: string; p_to_user_id: string }
         Returns: string
       }
+      reconcile_user_sessions_metadata: { Args: never; Returns: number }
       record_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
         Returns: undefined
@@ -9263,6 +9326,10 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      release_login_alert: {
+        Args: { p_max_attempts: number; p_session_id: string }
+        Returns: undefined
       }
       release_ops_alert: {
         Args: { p_alert_key: string; p_claimed_at: string }

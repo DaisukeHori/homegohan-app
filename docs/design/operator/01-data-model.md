@@ -58,6 +58,7 @@
 30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meals.is_sandbox + user_daily_meals.is_sandbox + badges seed + RPC 2 本
 31. operator_mfa_backup_codes (§3.27)  ← cross/12 §11.1。auth.users への FK だけで、他の運営の表に依存しない (migration 20261016230000)
 32. email_outbox (正本は 10-logs-and-mail-retry.md §5)
+33. auth_history_sessions (§3.23・§3.25 の改定)  ← cross/16 §11。user_sessions_metadata の列・auth.sessions / auth.users のトリガー・RPC・pg_cron (migration 20261016243000)
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター
@@ -552,7 +553,8 @@ re_engagement バッチ (operator/08-cron-batches.md §5.5) が参照する列�
 
 ALTER TABLE user_profiles
   ADD COLUMN IF NOT EXISTS last_login_at    TIMESTAMPTZ,
-  -- 最終ログイン日時 (auth.users.last_sign_in_at を Edge Function が同期)
+  -- 最終ログイン日時。auth.sessions の INSERT のトリガー auth_session_created が書き、行がまだ無かった最初のログインは
+  -- 行を作るときのトリガー user_profiles_fill_login_stats が入れる (cross/16 §11.3)
   ADD COLUMN IF NOT EXISTS plan_key_cached  VARCHAR(100);
   -- personal_subscriptions の現在有効な plan_key キャッシュ (Edge Function が同期、常に最新とは限らない)
 ```
@@ -1076,6 +1078,8 @@ CREATE POLICY "password_history_no_direct_access" ON password_history
   FOR ALL USING (false);
 ```
 
+書くのはトリガー `password_history_record` (`auth.users.encrypted_password` の変更。直近 10 世代まで残す)、読むのは RPC `auth_password_check` (どちらも SECURITY DEFINER)。PUBLIC・anon・authenticated の表の権限は無い (→ cross/16 §11.1・§11.3・§11.5 が正典)。
+
 ### 3.24 `failed_invite_lookups`
 
 ```sql
@@ -1118,9 +1122,14 @@ ALTER TABLE user_sessions_metadata ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "sessions_self" ON user_sessions_metadata
   FOR SELECT USING (user_id = auth.uid());
 
-CREATE POLICY "sessions_revoke_self" ON user_sessions_metadata
-  FOR UPDATE USING (user_id = auth.uid());
 ```
+
+cross/16 (ログイン履歴・セッション) の migration が次を足す (→ cross/16 §11.1・§11.4 が正典):
+
+- 列 12 本: `ip_network inet`・`country_code character(2)`・`context_source text NOT NULL DEFAULT 'auth'` (`auth` / `web` / `mobile`)・`device_family text`・`is_new_device` / `is_new_ip` / `is_new_country boolean`・`alert_status text NOT NULL DEFAULT 'done'` (`pending` / `processing` / `done`)・`alert_claimed_at timestamptz`・`alert_attempts integer NOT NULL DEFAULT 0`・`alert_sent_at timestamptz`・`ended_reason text` (`signed_out` / `revoked_by_user` / `idle_expired`)
+- CHECK 3 本: `user_sessions_metadata_context_source_check`・`user_sessions_metadata_alert_status_check`・`user_sessions_metadata_ended_reason_check`
+- 索引 2 本: `idx_sessions_alert_queue (created_at) WHERE alert_status <> 'done'`・`idx_sessions_ended (revoked_at) WHERE revoked_at IS NOT NULL`
+- 本人の UPDATE のポリシー `sessions_revoke_self` を消す。本人 (authenticated) は SELECT (`sessions_self`) だけ。anon と PUBLIC の表の権限は無い。書くのは `auth.sessions` のトリガー (`auth_session_created`・`auth_session_refreshed`・`auth_session_deleted`)・RPC (`auth_session_revoke`・`claim_login_alerts`・`release_login_alert`)・service_role だけ
 
 ### 3.26 `handson_tour` 連携 — family/09 ハンズオンチュートリアル拡張
 
