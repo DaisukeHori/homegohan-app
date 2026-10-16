@@ -9,7 +9,7 @@
  * 修正後に確かめること:
  *   - /admin: ロールに応じたカードを出す (admin: モデレーション・ユーザー管理など / super_admin: それ + super_admin コンソール /
  *     content_moderator: モデレーションだけ)。ログインしていない人・入れないロールの人は /login へ送る
- *   - サイドバー: 組織管理・お知らせ・サポートチケット・売上・経理・営業 CRM が admin / super_admin に出て、
+ *   - サイドバー: 組織管理・お知らせ・サポートチケット・開示等の請求・売上・経理・営業 CRM が admin / super_admin に出て、
  *     content_moderator には出ない。サイドバーとカードは同じ機能を案内する
  *   - リンク先の画面がある (404 にならない)。管理者を /admin へ送る転送 (middleware) の先にも画面がある
  *   - お知らせ管理・組織管理: admin / super_admin だけが開ける。content_moderator は /login へ送る
@@ -99,6 +99,8 @@ const ADMIN_ONLY_SECTIONS = [
   '/admin/finance',
   '/admin/sales',
   '/admin/announcements',
+  // #1178 個人情報の開示等の請求 (DSR_OPERATOR_ROLES = admin / super_admin。content_moderator には出さない)
+  '/admin/data-requests',
 ];
 
 /** ロールごとの、サイドバーとカードに出る機能 (ダッシュボード = /admin を除く) */
@@ -163,7 +165,7 @@ describe('/admin (運営コンソールの入口)', () => {
     const links = await cardHrefs();
     expect(links).toEqual(['/admin/moderation']);
     expect(document.body.textContent).toContain('モデレーション');
-    for (const label of ['ユーザー管理', '組織管理', 'お知らせ', 'サポートチケット', '売上・経理', '営業 CRM', 'super_admin']) {
+    for (const label of ['ユーザー管理', '組織管理', 'お知らせ', 'サポートチケット', '開示等の請求', '売上・経理', '営業 CRM', 'super_admin']) {
       expect(document.body.textContent).not.toContain(label);
     }
   });
@@ -219,13 +221,14 @@ describe('サイドバー (admin/layout.tsx)', () => {
     );
   });
 
-  it('組織管理・お知らせ・サポートチケット・売上・経理・営業 CRM のリンクを出す (admin)', async () => {
+  it('組織管理・お知らせ・サポートチケット・開示等の請求・売上・経理・営業 CRM のリンクを出す (admin)', async () => {
     login('admin');
     await sidebarHrefs();
     const labelOf = (href: string) => document.querySelector(`aside nav a[href="${href}"]`)?.textContent?.trim();
     expect(labelOf('/admin/organizations')).toBe('組織管理');
     expect(labelOf('/admin/announcements')).toBe('お知らせ');
     expect(labelOf('/admin/support')).toBe('サポートチケット');
+    expect(labelOf('/admin/data-requests')).toBe('開示等の請求');
     expect(labelOf('/admin/finance')).toBe('売上・経理');
     expect(labelOf('/admin/sales')).toBe('営業 CRM');
   });

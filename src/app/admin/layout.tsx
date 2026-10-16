@@ -14,6 +14,7 @@ export const revalidate = 0;
 import Link from 'next/link';
 import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
 import { requireRoleForPage } from '@/lib/auth/page-guard';
+import { DSR_ADMIN_PATH } from '@/lib/data-subject-requests/core';
 
 /** 認証・2FA の画面から戻る先 (区画のトップ。docs/design/cross/12-operator-mfa.md §13.4.2) */
 const ADMIN_AREA_NEXT = '/admin';
@@ -103,6 +104,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
             >
               <span>サポートチケット</span>
+            </Link>
+          )}
+
+          {/* 個人情報の開示等の請求 (#1178。運営のロールは DSR_OPERATOR_ROLES = admin / super_admin。content_moderator には出さない) */}
+          {isAdmin && (
+            <Link
+              href={DSR_ADMIN_PATH}
+              className="flex items-center gap-3 px-3 py-2 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors text-sm font-medium"
+            >
+              <span>開示等の請求</span>
             </Link>
           )}
 

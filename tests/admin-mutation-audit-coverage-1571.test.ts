@@ -42,6 +42,7 @@ const NOT_SUPPORTED_STUB: Expectation = { exempt: '501 (準備中・未対応) �
  */
 const EXPECTED: Record<string, Expectation> = {
   'src/app/api/admin/catalog/import/route.ts POST': 'audited',
+  'src/app/api/admin/data-requests/[id]/route.ts PATCH': 'audited',
   'src/app/api/admin/finance/exports/route.ts POST': 'audited',
   'src/app/api/admin/finance/refunds/route.ts POST': 'audited',
   'src/app/api/admin/inquiries/[id]/route.ts PATCH': 'audited',
