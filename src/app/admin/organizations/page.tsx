@@ -9,20 +9,12 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect } from 'next/navigation';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import OrganizationsManager from './OrganizationsManager';
 
 export default async function AdminOrganizationsPage() {
-  try {
-    await requireRole(['admin', 'super_admin']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  await requireRoleForPage(['admin', 'super_admin'], { next: '/admin/organizations' });
 
   return <OrganizationsManager />;
 }

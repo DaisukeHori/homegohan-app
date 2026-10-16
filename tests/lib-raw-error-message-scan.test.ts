@@ -62,10 +62,10 @@ const ALLOWED: Record<string, { count: number; reason: string }> = {
     count: 2,
     reason: 'AuthError / ForbiddenError の文面 (こちらが書いた固定の文) を 401 / 403 で返す。DB のエラー文ではない',
   },
-  'src/lib/emails/send.ts': {
-    count: 2,
+  'src/lib/emails/outbox.ts': {
+    count: 3,
     reason:
-      'Resend の送信の失敗 (EmailSendError の材料)。呼び出し側は isEmailFailure のとき例外にして catch で警告ログにだけ残す。DB のエラー文ではない',
+      'Resend の送信の失敗の文面 (createResendTransport の応答のエラーと例外・processEmailOutbox の transport の例外。宛先のアドレスは redactEmailAddresses でマスク済み) を EmailTransportFailure.message に入れる。値は email_outbox.last_error_message に入り、super_admin の画面に 200 文字までだけ出る。DB のエラー文ではない (DB の失敗は outbox-store.ts が固定の文の例外にする)',
   },
   'src/lib/push/expo-transport.ts': {
     count: 1,

@@ -200,6 +200,10 @@ prepare() {
     echo 'sign_in_sign_ups = 1000'
     echo 'token_refresh = 1000'
     echo 'token_verifications = 1000'
+    echo '# ローカル専用: 運営の MFA (docs/design/cross/12-operator-mfa.md) の結合テストが TOTP の登録と確認を使う。CLI の既定に依らないよう明示する'
+    echo '[auth.mfa.totp]'
+    echo 'enroll_enabled = true'
+    echo 'verify_enabled = true'
     if [ "$SLOT" -ne 0 ]; then
       slot_config
     fi

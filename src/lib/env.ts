@@ -188,6 +188,20 @@ export const SERVER_ENV_VARS = {
     whenMissing: '既定の 100 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     readOnlyBy: 'src/app/api/cron/push-outbox/route.ts',
   },
+  EMAIL_OUTBOX_MAX_ATTEMPTS: {
+    required: false,
+    description:
+      'メールの送信待ち (email_outbox) の試行の上限 (#1193)。最初の 1 回を含む回数で、これだけ失敗したら届けられなかった (dead) にする。1〜20 の整数',
+    whenMissing: '既定の 6 回を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    // 未設定・不正な値の扱い (warn のログ) を、送信待ちの cron の route 1 か所に置いている
+    readOnlyBy: 'src/app/api/cron/email-outbox/route.ts',
+  },
+  EMAIL_OUTBOX_BATCH_SIZE: {
+    required: false,
+    description: 'メールの送信待ち (email_outbox) を 1 回の cron (毎分) で取り出して送る件数の上限 (#1193)。1〜100 の整数',
+    whenMissing: '既定の 20 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/email-outbox/route.ts',
+  },
   SUPPORT_REPLY_TO: {
     required: false,
     description: 'サポート返信メールの返信先アドレス',
@@ -302,6 +316,14 @@ export const SERVER_ENV_VARS = {
       "同意が済んでいない利用者の画面の上に「同意のお願い」のお知らせを出すか (#1174)。'on' のときだけ出す。強制していない間だけ効く",
     whenMissing: 'お知らせを出さない (既定)',
     readOnlyBy: 'lib/legal-consent.ts',
+  },
+  CSP_REPORT_ONLY: {
+    required: false,
+    description:
+      "本番の CSP を『報告だけ』(Content-Security-Policy-Report-Only) にするスイッチ (#1169)。'on' のときだけ違反を止めず、/api/csp-report へ報告だけ送らせる",
+    whenMissing: '強制する (既定)。nonce の無いインラインスクリプトは止まり、報告も届く',
+    // middleware (Edge Runtime) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (on だけ) を csp.ts の isCspReportOnly に 1 つ置く
+    readOnlyBy: 'src/lib/security/csp.ts',
   },
   DSR_RESPONSE_DUE_DAYS: {
     required: false,

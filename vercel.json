@@ -9,6 +9,10 @@
       "schedule": "*/15 * * * *"
     },
     {
+      "path": "/api/cron/email-outbox",
+      "schedule": "*/1 * * * *"
+    },
+    {
       "path": "/api/cron/push-outbox",
       "schedule": "*/1 * * * *"
     }

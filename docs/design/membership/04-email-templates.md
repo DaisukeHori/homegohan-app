@@ -290,63 +290,35 @@ https://homegohan.app
 
 ---
 
-## 8. Resend 送信ラッパ
+## 8. 送信待ちへの登録 (sendEmail。#1193)
+
+`sendEmail` は Resend を呼ばず、送信待ち (`email_outbox`) に 1 行入れて返る。送るのは worker (`GET /api/cron/email-outbox`。Vercel Cron が毎分呼ぶ) だけ。
+再試行の回数と間隔 (最大 6 回・1 分 → 5 分 → 15 分 → 1 時間 → 4 時間)・届けられなかった (dead) の扱い・Idempotency-Key は `../operator/10-logs-and-mail-retry.md` §6.1・§6.2 を正とする。
 
 ```ts
-// src/lib/emails/send.ts (要点だけを抜き出した見本。正は src/lib/emails/send.ts と send-result.ts。
-// 契約は send.ts の冒頭のコメントと CLAUDE.md「メール送信の結果と失敗の記録」に従う。#1193)
-import { randomUUID } from 'crypto';
-import { createLogger } from '@/lib/db-logger';
-import { EmailSendError, type SendEmailResult } from '@/lib/emails/send-result';
-import { EmailEnvelopeSchema, type EmailEnvelope } from './envelope';
+// src/lib/emails/send.ts (要点だけを抜き出した見本。正は src/lib/emails/send.ts と send-result.ts、
+// 設計は docs/design/operator/10-logs-and-mail-retry.md §6.3。契約は send.ts の冒頭のコメントと CLAUDE.md「メール送信の結果と失敗の記録」に従う)
 
 /**
- * 配信の失敗でも例外を投げず、結果 (send-result.ts の SendEmailResult) を返す。
- *  - 送れた:           { ok: true,  id, attempts, skipped: false, error: null }
- *  - 送らなかった:     { ok: false, id: null, attempts: 0, skipped: true,  error: EmailSendError('not_configured') }
- *                      (RESEND_API_KEY が無い。開発・テスト環境、または本番の設定漏れ)
- *  - 送れなかった:     { ok: false, id: null, attempts, skipped: false, error: EmailSendError(<コード>) }
- *                      (文面の不備 = invalid_envelope・再試行を使い切った・再試行しても直らない失敗)
+ * 失敗でも例外を投げず、結果 (send-result.ts の SendEmailResult) を返す。
+ *  - 送信待ちに登録した: { ok: true,  id (= email_outbox.id), attempts: 0, skipped: false, error: null }
+ *  - 送らなかった:       { ok: false, id: null, attempts: 0, skipped: true,  error: EmailSendError('not_configured') }
+ *                        (RESEND_API_KEY が無い。開発・テスト環境、または本番の設定漏れ。行を作らない)
+ *  - 送れなかった:       { ok: false, id: null, attempts: 0, skipped: false, error: EmailSendError(<コード>) }
+ *                        (文面の不備 invalid_envelope・宛先停止リスト suppressed・登録の失敗 outbox_failed)
  * 失敗と「送らなかった」は sendEmail が app_logs (createLogger('email')) に残すので、呼び出し元は戻り値を見なくてもよい。
+ * 登録したあとの送信の失敗は worker が行 (email_outbox.last_error_code) と app_logs に残し、届けられなければ dead の通知と
+ * /super-admin/email-outbox の再送で運営が扱う。
  * 失敗に追加の処理をする呼び出し元だけが、send-result.ts の isEmailFailure / emailFailureReasons で判定する
  * (skipped: true は失敗に数えない)。
  */
 export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptions = {}): Promise<SendEmailResult> {
-  const logger = createLogger('email');
-  const { template, recipient } = describeEnvelope(envelope); // 文面の名前とマスクした宛先 (ログ用)
-
-  // Zod で送信前検証 (空件名/不正アドレス検出)。不正でも投げずに invalid_envelope の結果を返す
-  const parsed = EmailEnvelopeSchema.safeParse(envelope);
-  if (!parsed.success) {
-    const error = new EmailSendError('invalid_envelope', 'EMAIL_INVALID_ENVELOPE: …', null, 0, false);
-    logger.error('メールの内容が不正なため、送信しませんでした', error, { template, recipient, error_code: error.code, attempts: 0 });
-    return { ok: false, id: null, attempts: 0, skipped: false, error };
-  }
-
-  // API キーが無ければ送らない。投げずに、警告を app_logs に残して skipped の結果を返す。
-  // 変数名は警告のログにだけ残し、message には入れない (#1182・#1490)
-  if (!process.env.RESEND_API_KEY) {
-    logger.warn('RESEND_API_KEY が未設定のため、メールを送信しませんでした', { template, recipient });
-    const error = new EmailSendError(
-      'not_configured',
-      'EMAIL_NOT_CONFIGURED: メールの送信の設定が無いため、メールを送信しませんでした',
-      null,
-      0,
-      false,
-    );
-    return { ok: false, id: null, attempts: 0, skipped: true, error };
-  }
-
-  // 送信。Idempotency-Key を付け (再試行でも同じキー)、429 / 5xx / 通信エラーだけ 500ms → 1s → 2s で最大 3 回再試行する
-  const idempotencyKey = options.idempotencyKey ?? randomUUID();
-  // …(送信と再試行のループ。成功したら { ok: true, id, attempts, skipped: false, error: null } を返す。
-  //    失敗で抜けたときは、送った回数 attempts と最後の失敗 lastFailure (code・message・statusCode・retryable) が残る)
-
-  // 送れなかった。投げずに、app_logs に残して失敗の結果を返す。
-  // 送信先の応答の文に宛先のメールアドレスが入っていてもそのままログに出さないよう、message は redactEmailAddresses を通す (src/lib/emails/send.ts)
-  const error = new EmailSendError(lastFailure.code, `EMAIL_SEND_FAILED: ${redactEmailAddresses(lastFailure.message)}`, lastFailure.statusCode, attempts, lastFailure.retryable);
-  logger.error('メールの送信に失敗しました', error, { template, recipient, error_code: error.code, attempts });
-  return { ok: false, id: null, attempts, skipped: false, error };
+  // 1. Zod で送信前検証 (空件名/不正アドレス検出)。不正でも投げずに invalid_envelope の結果を返す
+  // 2. API キーが無ければ登録しない。警告を app_logs に残して skipped の結果を返す (変数名はログにだけ残す。#1182・#1490)
+  // 3. 宛先停止リスト (email_blacklist) を引く。載っていれば dead (suppressed) の記録を残して suppressed の結果を返す
+  //    (退会の完了メール = redactAfterSend は行を作らない)
+  // 4. email_outbox に queued で 1 行入れる (Idempotency-Key は options.idempotencyKey ?? randomUUID())。
+  //    失敗 ({ error }・行が返らない・例外) は outbox_failed の結果にする (例外を投げない)
 }
 ```
 
@@ -450,7 +422,7 @@ test('Template A renders valid envelope', () => {
 | 除名・脱退の通知 | 本書 §6 |
 | 運営の強制操作 (強制譲渡・強制解散) の通知 | 本書 §7 |
 | 子供メンバーの昇格の案内 | `src/lib/emails/membership/family-promote.ts` |
-| お問い合わせの受付、サポートチケットへの返信 | `src/app/api/contact/route.ts`、`src/app/api/admin/support/tickets/[id]/messages/route.ts` |
+| お問い合わせの受付、サポートチケットへの返信 | `src/app/api/contact/route.ts` (運営への通知の文面は `src/lib/emails/support/contact-admin-notification.ts`。#1193・`../operator/10-logs-and-mail-retry.md` §6.6)、`src/app/api/admin/support/tickets/[id]/messages/route.ts` |
 
 Supabase Auth のメール (サインアップ確認・パスワード再設定・マジックリンク) と、アカウント削除の完了メール (#1152。`src/lib/emails/account/account-deleted.ts`) も transactional として扱い、配信停止の対象にしない。
 配信停止を認めると、招待や譲渡の承諾、退会の完了の通知が届かなくなるため。

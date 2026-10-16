@@ -7,10 +7,8 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 
 interface Plan {
@@ -44,14 +42,8 @@ const TYPE_LABELS: Record<string, { label: string; color: string }> = {
 };
 
 export default async function PlansPage() {
-  try {
-    await requireRole(['super_admin']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  await requireRoleForPage(['super_admin'], { next: '/super-admin/plans' });
 
   // GET /api/super-admin/plans 経由でデータ取得
   let plans: Plan[] = [];

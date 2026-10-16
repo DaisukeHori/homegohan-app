@@ -7,10 +7,8 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { couponValidityDay, isCouponExpiredAt } from '@/lib/super-admin/coupon-validity';
 
@@ -45,14 +43,8 @@ function formatDiscount(coupon: Coupon): string {
 }
 
 export default async function CouponsPage() {
-  try {
-    await requireRole(['super_admin']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  await requireRoleForPage(['super_admin'], { next: '/super-admin/coupons' });
 
   // GET /api/super-admin/coupons 経由でデータ取得
   let coupons: Coupon[] = [];

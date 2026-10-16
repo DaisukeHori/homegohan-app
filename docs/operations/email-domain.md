@@ -38,8 +38,8 @@
 
 - 招待 (家族・組織): 招待そのものは作られ、招待リンク (`invite_url`) は API の応答にも含まれます (メールが届かなくても、招待した人がリンクを直接渡せます)。
 - お問い合わせ: 内容は DB に保存されます。管理者への通知メールだけが届きません。
-- サポートの返信: 返信メッセージは保存され、メールの結果 (`skipped` / `failed`) が管理画面に出ます。
-- 失敗の記録: Resend の断り (例: `The … domain is not verified`) は `EMAIL_SEND_FAILED: …` として呼び出し側のログ (`app_logs` または Vercel のログ) に残ります。
+- サポートの返信: 返信メッセージは保存されます。メールは送信待ちに受け付けた時点で `sent` になり、Resend の断りは管理画面には出ません (下の送信待ちの画面で扱います)。
+- 失敗の記録: メールは送信待ち (`email_outbox`。#1193) を通り、Resend の断り (例: `The … domain is not verified`) は worker (`cron/email-outbox`) が「メールを届けられませんでした (dead)」として `app_logs` に残し、行は「届けられなかった」になります。super_admin は `/super-admin/email-outbox` で見て、ドメインを検証してから再送できます (`OPS_ALERT_EMAIL` を設定していれば、届けられなかったメールの運用メールも届きます)。
 
 ---
 
@@ -202,12 +202,13 @@ EAS のビルド環境に `EXPO_PUBLIC_WEB_URL=https://homegohan.com` と `EXPO_
 
 - `node scripts/check-email-dns.mjs --from "<EMAIL_FROM の値>"` で `[FAIL]` が無い。
 - 本番のお問い合わせフォームから送ると、`ADMIN_NOTIFICATION_EMAIL` に通知が届く (送信元が `noreply@mail.homegohan.com`)。
+- 通知も送信待ち (`email_outbox`) を通り、1 分ほどで届く。届かなければ `/super-admin/email-outbox` の届けられなかった行を見る (#1193)。
 - 家族の招待を自分のアドレス宛に送ると届き、本文の問い合わせ先・署名の URL が新しい値になっている。
 - (`OPS_ALERT_EMAIL` を設定した場合) エラー急増の運用メール (件名「【ほめゴハン運用】エラーが急増しています」) が届く。しきい値 (15 分で 20 件) を超えないと送られないので、確認だけのために手で cron を叩くときは `ENV_SETUP.md` の「エラー急増の運用メール」の注意を読む。
 - 届いたメールの「メッセージのソース」(Gmail なら「メッセージのソースを表示」) で、`SPF: PASS` `DKIM: PASS` `DMARC: PASS` になっている。
 - 迷惑メールフォルダに入っていない。
 - プライバシーポリシー (`/privacy`)・お問い合わせ (`/contact`)・招待画面の問い合わせ先が `support@homegohan.com` になっている。
-- Vercel の関数ログ / `app_logs` に `EMAIL_SEND_FAILED` や `[site-config]` の警告が出ていない。
+- Vercel の関数ログ / `app_logs` に「メールを届けられませんでした (dead)」(`cron/email-outbox`)・`EMAIL_OUTBOX_FAILED` や `[site-config]` の警告が出ていない。
 
 ## 7. 元に戻すには
 
