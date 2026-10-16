@@ -631,6 +631,8 @@ Step 4: PITR 復旧が必要な場合
   □ 復旧ターゲット時刻を選択 (障害発生前の最も新しい時刻)
   □ staging で復元テスト → 本番復元
   □ RTO: 30 分 (org_pro)
+  □ PITR が無い間 (Pro でない間。cross/17 §9.2) は、論理バックアップ (R2 の書庫) から復元する
+    docs/operations/backup-restore.md §5 (ローカルで確かめる) / §6 (新しい Supabase プロジェクトへ復元)
 
 Step 5: 復旧確認
   □ ヘルスチェックで疎通確認
@@ -691,6 +693,8 @@ Step 2: PITR で巻き戻し (T-1h 相当)
 Step 3: または論理バックアップから部分復元
   □ Daily Logical Backup から対象テーブルのみ抽出
   □ pg_restore --table='{table_name}' で部分復元
+  □ PITR が無い間 (cross/17 §9.2) の論理バックアップは R2 の暗号化した書庫で、取り出し・復号・展開は
+    docs/operations/backup-restore.md §5 / §6 の手順どおり (中身は SQL ファイル = schema.sql / data.sql)
 
 Step 4: 整合性確認
   □ restore 後に data_integrity_check を手動実行
@@ -733,9 +737,9 @@ Step 2: 被害調査 (T+1h)
   □ 漏洩データの特定
 
 Step 3: Cold Backup から復元
-  □ Weekly Cold Backup (S3 Glacier) から最新の未侵害 backup を選択
-  □ SHA256 + GPG 署名を検証 (integrity check)
-  □ 新しい Supabase プロジェクトに復元
+  □ Weekly Cold Backup (R2 の weekly/。bucket lock の下) から最新の未侵害の対象物を選択
+  □ sha256sum -c <base>.sha256 で検証し、age の秘密鍵で復号 (GPG の署名は置かない。cross/17 §3.2)
+  □ 新しい Supabase プロジェクトに復元 (docs/operations/backup-restore.md §6)
   □ DNS を新プロジェクトに切替
 
 Step 4: 段階的な復旧
@@ -864,10 +868,11 @@ sequenceDiagram
   - `bulk-revoke` の冪等性 (同じ条件で 2 回実行しても副作用なし)
 - **E2E** (Staging 環境で定期実行):
   - マイグレーション手順の smoke test
-  - PITR 復元テスト (月 1 回)
+  - PITR 復元テスト (月 1 回。Pro になるまでは `skipped` で記録。cross/17 §9.2)
 
 ## 16. 既存実装との関連
 
+- `logical_backup` (DB の論理バックアップ): cross/17-backup-automation.md で GitHub Actions + R2 として決めた (秘密は同 §13・初回の設定は `docs/operations/backup-restore.md` の 2 章)
 - `hr_revoke_jobs` テーブル: 要件 §15.2 で DDL 定義
 - `gdpr_deletion_requests` テーブル: 01-data-model.md で DDL 定義。#1562 から削除の実行記録 (cross/08-legal-compliance.md §16.4)
 - `org_license_pools.auto_renew_was_force_disabled_at`: 要件 §15.4 で定義
@@ -875,7 +880,6 @@ sequenceDiagram
 ## 17. 未解決事項
 
 - 削除完了の通知: 削除完了メールは追加済み (#1152。cross/08-legal-compliance.md §16.2 の手順 6)。旧設計の「削除完了証明書 PDF」を別に出すかは未決 (出す場合の生成方法: pdf-lib / Puppeteer / Vercel Edge は Phase 2 で決定)
-- `logical_backup` cron (`pg_dump → S3`): S3 接続情報と IAM 権限の設定は本番環境構築時に確定
 - EU GDPR の 1 ヶ月以内回答 SLA: 退会は即時削除 (cooling period なし) のため、アプリからの削除で遅れは出ない。サポート経由の依頼は受付から 1 ヶ月以内に完了させる (§9.2)。EU 規制との整合性の法務確認は引き続き必要
 - 退会の実行記録: #1562 で `gdpr_deletion_requests` に残すようにした (利用者の id の HMAC・日時・理由・実行者。cross/08-legal-compliance.md §16.4)。admin_audit_logs には残さない
 - ランサムウェア対応での「新しい Supabase プロジェクト」への DNS 切替: Vercel の環境変数変更とドメイン設定変更の手順を別途ドキュメント化が必要
