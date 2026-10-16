@@ -632,3 +632,52 @@ describe('POST /api/operator/membership/family/[id]/transfer: 宛名に仮置き
     expect(sentTo(MEMBER_EMAIL)[0].text.startsWith(`${expected} 様`)).toBe(true);
   });
 });
+
+describe('POST /api/operator/membership/family/[id]/transfer: to_user_id を大文字・混在の UUID で送っても (#1793)', () => {
+  // z.string().uuid() は大文字・混在も通す。DB から読んだ uid (小文字) と本文の to_user_id を === で比べていたため、
+  // 新代表者に一般メンバー (member) 向けの本文が届いていた。受け取った直後にそろえることを固定する
+  /** 英字を 1 文字おきに大文字にする (大文字・小文字の混在) */
+  const mixedCase = (id: string) => id.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
+
+  beforeEach(() => {
+    // 本物と同じく、DB (uuid の比較) と Auth (getUserById) は大文字小文字を区別しない
+    // (ここが === のままだと、そろえ忘れは RPC の失敗になり「譲渡は通るのに通知の立場が違う」症状を再現できない)
+    mocks.rpc.mockImplementation(async (name: string, args: RpcArgs) => {
+      if (name !== RPC_NAME) throw new Error(`unexpected rpc: ${name}`);
+      return simulateRepresentativeTransfer(fake, { ...args, p_family_id: args.p_family_id.toLowerCase(), p_new_rep_id: args.p_new_rep_id.toLowerCase() });
+    });
+    const lookup = fake.auth.admin.getUserById.getMockImplementation();
+    if (!lookup) throw new Error('getUserById の実装がありません');
+    fake.auth.admin.getUserById.mockImplementation(async (id: string) => lookup(id.toLowerCase()));
+  });
+
+  it.each([
+    ['大文字', NEW_REP_ID.toUpperCase()],
+    ['大文字・小文字の混在', mixedCase(NEW_REP_ID)],
+  ])('%s: 新代表者には new_owner の本文を送り、RPC・宛先の取得にはそろえた小文字の id を渡す', async (_label, sentId) => {
+    expect(sentId).not.toBe(NEW_REP_ID); // そろえる前と後で値が違う (英字を含む) こと
+
+    const res = await call({ to_user_id: sentId, reason: REASON });
+
+    expect(res.status).toBe(200);
+    expect(mocks.rpc).toHaveBeenCalledWith(RPC_NAME, {
+      p_family_id: FAMILY_ID,
+      p_new_rep_id: NEW_REP_ID,
+      p_reason: REASON,
+    });
+
+    const rendered = vi.mocked(renderForceTransferEmail).mock.calls.map(([vars]) => vars);
+    const roleOf = (address: string) => rendered.find((vars) => vars.recipient_email === address)?.recipient_role;
+    expect(roleOf(OLD_EMAIL)).toBe('old_owner');
+    expect(roleOf(NEW_EMAIL)).toBe('new_owner');
+    expect(roleOf(MEMBER_EMAIL)).toBe('member');
+    expect(rendered).toHaveLength(3);
+    for (const vars of rendered) {
+      expect(vars).toMatchObject({ old_owner_email: OLD_EMAIL, new_owner_email: NEW_EMAIL });
+    }
+    // 宛先のアドレスは 1 人 1 回だけ引く (大文字の id と小文字の id で同じ人を二重に引かない)
+    expect(fake.auth.admin.getUserById.mock.calls.map(([id]) => id).sort()).toEqual([OLD_REP_ID, NEW_REP_ID, MEMBER_ID].sort());
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(mocks.logWarn).not.toHaveBeenCalled();
+  });
+});

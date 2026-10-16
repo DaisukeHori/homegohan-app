@@ -16,6 +16,7 @@ import { renderForceTransferEmail } from '@/lib/emails/membership/operator-force
 import { normalizeProfileName } from '@/lib/profile-name';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 import { recordAdminAudit } from '@/lib/admin/audit';
 
 export const dynamic = 'force-dynamic';
@@ -45,7 +46,11 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
         { status: 400 },
       );
     }
-    const { to_user_id, reason } = parsed.data;
+    const { reason } = parsed.data;
+    // DB・auth の id は小文字。z.string().uuid() は大文字・混在も通すので、そのままだと通知の宛先の立場の判定
+    // (uid === to_user_id。uid は DB から読んだ小文字) が外れ、新代表者に一般メンバー向けの本文が届く。
+    // 受け取った直後にそろえ、以後 (RPC・監査・宛先の取得・立場の判定・ログ) はそろえた値だけを使う (#1793)
+    const to_user_id = normalizeUuid(parsed.data.to_user_id);
 
     // 通知メール用に、RPC 実行"前"の旧代表者と家族名を控えておく (#1209)。
     // operator_force_representative_transfer は family_groups.representative_id を新代表者へ
