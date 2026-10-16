@@ -3478,6 +3478,15 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 
 段 E の実装者は、migration を書く直前に A.4 の手順で本番の指紋を取り直し、A.4 の値と一致することを確かめる (一致しなければ、動いたポリシーをこの付録に取り直してから書く = 本書の改定。Q-20)。
 
+**付録 A の取得 (2026-10-16・最大 `20261016241000`) の後にできた運営の枝のポリシー (段 E の実装で `supabase/migrations` の実体から数え直した)**: #1173 (`20261017030000_parental_consent_and_birth_date.sql`) が `parental_consents_select_signer_family_adult_or_operator` (TO authenticated。`up.roles && ARRAY['admin', 'super_admin']::text[]` の運営の枝) を新設した。A.3 の見つけ方に当たるので、§11.4 の規則で運営の枝に判定を足す (段 E の migration の 4 の後に 1 文。ロールバックは (a) の後に元の式へ戻す 1 文)。段 E の migration が触るポリシーは 56 + 1 = 57 本 (本番に当てる直前の A.4 の読み取りでは、この 1 本は A.4 の指紋の母集合に入らないので、`n` は 57・`digest` は A.2 の 56 本と一致しなくなる。A.4 の SQL に `AND policyname <> 'parental_consents_select_signer_family_adult_or_operator'` を足して 56 本の指紋を比べる)。
+
+```sql
+-- up (A.1 の後)
+ALTER POLICY parental_consents_select_signer_family_adult_or_operator ON public.parental_consents TO authenticated USING (((parent_user_id = ( SELECT auth.uid() AS uid)) OR public.is_active_family_adult(family_id) OR (EXISTS ( SELECT 1 FROM public.user_profiles up WHERE ((up.id = auth.uid()) AND ((up.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied())))))));
+-- down (A.2 の後)
+ALTER POLICY parental_consents_select_signer_family_adult_or_operator ON public.parental_consents TO authenticated USING (((parent_user_id = ( SELECT auth.uid() AS uid)) OR public.is_active_family_adult(family_id) OR (EXISTS ( SELECT 1 FROM public.user_profiles up WHERE ((up.id = auth.uid()) AND (up.roles && ARRAY['admin'::text, 'super_admin'::text]))))));
+```
+
 ### A.1 up (migration の 4。55 文 + subscription_plans の 3 文)
 
 ```sql
