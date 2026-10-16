@@ -336,6 +336,9 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 - 形が正しくない値（`https://` が無い URL、メールアドレスでない値）は無視して既定値に戻り、関数ログに警告が 1 回出ます。
 - `NEXT_PUBLIC_INVITE_BASE_URL` は以前の招待リンク専用の設定です。設定してあると `NEXT_PUBLIC_APP_URL` より優先されるので、切り替えるときは**削除**してください。
 - `SUPPORT_REPLY_TO`（任意）: サポートの返信メールの返信先。`support@` の受信箱ができたら設定します。
+- メールは送信待ち（DB の `email_outbox`。#1193）を通ります。アプリの処理は送信待ちに登録するだけで、Vercel Cron が毎分 `GET /api/cron/email-outbox` を呼んで送ります（1 分ほどで届きます）。一時的な失敗は時間をおいて再試行し（1 分 → 5 分 → 15 分 → 1 時間 → 4 時間）、使い切ったものや直らない失敗（ドメイン未検証の 403 など）は「届けられなかった」として残ります。super_admin が `/super-admin/email-outbox` で見て、原因を直してから再送できます。
+- `EMAIL_OUTBOX_MAX_ATTEMPTS`（任意）: 送信待ちの試行の上限（最初の 1 回を含む回数）。1〜20 の整数。未設定・不正な値なら既定の 6 回（不正な値は `cron/email-outbox` の warn ログに変数名だけを残す）。
+- `EMAIL_OUTBOX_BATCH_SIZE`（任意）: 1 回の cron（毎分）で送る件数の上限。1〜100 の整数。未設定・不正な値なら既定の 20 件。
 - サインアップの確認メール・パスワード再設定メールは Supabase が送ります。`EMAIL_FROM` は効かず、Supabase の Custom SMTP の設定が必要です（手順は上の文書）。
 - メールが届かなくても、招待・お問い合わせ・サポート返信の処理は成功します（失敗は `app_logs` / 関数ログに残ります）。
 - `https://homegohan-app.vercel.app` は、配布済みのアプリのビルドが WebView で開くため、古いビルドが使われなくなるまで止めない・リダイレクトしないでください。
@@ -381,8 +384,9 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 
 - 通知する条件: 直近 15 分のサーバーの `error` が **20 件を超えた**とき（21 件から）。ブラウザ・端末から届いた `error` は **100 件を超えた**とき（101 件から）に別の通知を送る。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` / `OPS_ALERT_CLIENT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
 - 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる。分数は 2 種類で同じだが、抑止は種類ごとに別々）（DB の `ops_alert_state` で覚える。キーはサーバーが `app_logs_error_spike`、ブラウザ・端末が `app_logs_client_error_spike`。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
+- **届けられなかったメール**（送信待ち `email_outbox` の dead。#1193）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます（3 つ目の通知。キーは `email_dead_letter`）。1 件からで、まだ知らせていない dead を数え、知らせた行には印を付けます（同じメールを 2 回は数えません。抑止の間に届けられなかったものは、抑止が明けた最初の回で知らせます）。宛先停止リスト・退会で送らなかったものと、運用メール自身は数えません。メールに載るのは、文面の名前（template）ごとの件数と、送信待ちの画面（`/super-admin/email-outbox`）へのリンクだけです。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
-- **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'email'` の error と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
+- **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'cron/email-outbox'` の error（届けられなかった行は `/super-admin/email-outbox` にも残る）と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
 - ブラウザ・端末から届いたログ（`POST /api/log`）は、利用者ごとに 1 分 30 回・直近 24 時間で 1000 回までしか受け付けません（超えると 429。#1493）。
 - 応答（JSON）の `status`（サーバーの判定。ブラウザ・端末の判定は `client.status`）は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
 - 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。

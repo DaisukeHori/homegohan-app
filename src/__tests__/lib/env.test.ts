@@ -416,7 +416,7 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
@@ -431,6 +431,9 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       ['CSP_REPORT_ONLY', 'src/lib/security/csp.ts'],
       // #1178 個人情報の請求の応答期限 (日)。1〜365 の整数でなければ既定の 30 日にする読み方を 1 か所に置く
       ['DSR_RESPONSE_DUE_DAYS', 'src/lib/data-subject-requests/config.ts'],
+      // #1193 メールの送信待ちの試行の上限と 1 回の件数。不正な値の扱い (既定値に戻して warn) を送信待ちの cron の route 1 か所に置く
+      ['EMAIL_OUTBOX_BATCH_SIZE', 'src/app/api/cron/email-outbox/route.ts'],
+      ['EMAIL_OUTBOX_MAX_ATTEMPTS', 'src/app/api/cron/email-outbox/route.ts'],
       // #1148 機能フラグの対象ユーザー数を 1 人ずつ数える上限。正の整数でなければ既定値にする読み方を 1 か所に置く
       ['FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT', 'src/lib/super-admin/flag-active-users.ts'],
       // #1496 機能フラグの行をメモリに覚える時間。middleware (Edge Runtime) も読むので、何も import しないファイル 1 か所で読む
@@ -489,6 +492,10 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('AI_ULTIMATE_MODE_DAILY_LIMIT');
       // @ts-expect-error ORG_CHALLENGE_SHOW_NAMES の値を読むのは src/lib/org-challenges.ts (showParticipantNames) だけ (#1132)
       getOptionalEnv('ORG_CHALLENGE_SHOW_NAMES');
+      // @ts-expect-error EMAIL_OUTBOX_MAX_ATTEMPTS の値を読むのは送信待ちの cron の route (src/app/api/cron/email-outbox/route.ts) だけ (#1193)
+      getOptionalEnv('EMAIL_OUTBOX_MAX_ATTEMPTS');
+      // @ts-expect-error EMAIL_OUTBOX_BATCH_SIZE も同じ
+      getOptionalEnv('EMAIL_OUTBOX_BATCH_SIZE');
       getOptionalEnv('RESEND_API_KEY'); // 値を読む場所が決まっていない任意の変数は渡せる
     };
     expect(typeof typeOnly).toBe('function');

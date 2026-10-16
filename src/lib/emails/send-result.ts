@@ -13,18 +13,19 @@
 export class EmailSendError extends Error {
   constructor(
     /**
-     * Resend のエラーコード (rate_limit_exceeded / validation_error / invalid_api_key など)。
-     * Resend の外で起きた失敗は network_error (通信できなかった) / invalid_response (応答に ID が無い) /
-     * invalid_envelope (内容の不備) / not_configured (RESEND_API_KEY が無い) /
-     * suppressed (宛先停止リスト email_blacklist に載っている宛先なので送らなかった。#1184)
+     * 失敗のコード。sendEmail の結果に出るのは invalid_envelope (内容の不備) / not_configured (RESEND_API_KEY が無い) /
+     * suppressed (宛先停止リスト email_blacklist に載っている宛先なので送らなかった。#1184) /
+     * outbox_failed (送信待ち email_outbox への登録の失敗。#1193)。
+     * sendEmail は Resend を呼ばない (送るのは worker) ので、Resend のエラーコード (rate_limit_exceeded / validation_error /
+     * invalid_api_key など)・network_error・invalid_response は、worker が email_outbox.last_error_code に入れる
      */
     public readonly code: string,
     message: string,
     /** Resend が返した HTTP ステータス。Resend に届かなかった (通信エラー・送らなかった) ときは null */
     public readonly statusCode: number | null,
-    /** Resend へ送った回数 (送らなかったときは 0) */
+    /** sendEmail の中で Resend へ送った回数 (常に 0。送るのは worker: docs/design/operator/10-logs-and-mail-retry.md §6) */
     public readonly attempts: number,
-    /** 再試行で直る見込みのある種類の失敗か。回数を使い切って失敗したときも true */
+    /** 再試行で直る見込みのある種類の失敗か (送信待ちへの登録の失敗 outbox_failed は true) */
     public readonly retryable: boolean,
   ) {
     super(message);
@@ -32,12 +33,12 @@ export class EmailSendError extends Error {
   }
 }
 
-/** Resend が受け付けた */
+/** 送信待ち (email_outbox) に登録した (送るのは worker。届いたかどうかは含まない) */
 export interface SendEmailSent {
   ok: true;
-  /** Resend のメール ID */
+  /** email_outbox.id (受け付けの ID) */
   id: string;
-  /** Resend へ送った回数。1 なら再試行なしで受け付けられた */
+  /** sendEmail の中で Resend へ送った回数 (常に 0。送るのは worker) */
   attempts: number;
   skipped: false;
   error: null;
@@ -53,7 +54,7 @@ export interface SendEmailSkipped {
 }
 
 /**
- * 送ろうとしたが、送れなかった (再試行を使い切った、または再試行しても直らない種類の失敗、または文面の不備、
+ * 送ろうとしたが、送れなかった (送信待ちに登録できなかった = error.code 'outbox_failed'、または文面の不備、
  * または宛先停止リストに載っている宛先 = error.code 'suppressed')
  */
 export interface SendEmailFailed {
