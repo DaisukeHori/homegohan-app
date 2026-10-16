@@ -77,13 +77,19 @@ CREATE POLICY "audit_logs_select_super_admin" ON admin_audit_logs
   );
 
 -- =========================================
--- INSERT: admin 系全ロールから可
+-- INSERT: admin 系全ロールから可 (本人の JWT。INSERT のポリシーはこの 1 本だけ。#1736)
 -- WITH CHECK で actor_id = auth.uid() を強制
--- (他の admin のログを偽装して INSERT できない)
+-- (他の admin のログを偽装して INSERT できない。actor_id を NULL にもできない)
+-- action_type の 'system.' で始まる名前は、service_role / SECURITY DEFINER が actor_id NULL で書く予約の名前なので、本人の JWT では書けない
+-- actor の表示に使う列 (actor_email_snapshot / actor_role_snapshot / impersonated_by) も本人の JWT では書けない
 -- =========================================
 CREATE POLICY "audit_logs_insert_admins" ON admin_audit_logs
-  FOR INSERT WITH CHECK (
+  FOR INSERT TO authenticated WITH CHECK (
     actor_id = auth.uid()
+    AND action_type NOT LIKE 'system.%'
+    AND actor_email_snapshot IS NULL
+    AND actor_role_snapshot IS NULL
+    AND impersonated_by IS NULL
     AND EXISTS (
       SELECT 1 FROM user_profiles
       WHERE id = auth.uid()
@@ -110,8 +116,18 @@ COMMENT ON TABLE admin_audit_logs IS
 COMMENT ON COLUMN admin_audit_logs.impersonated_by IS
   '履歴用 (#1124: impersonate は提供しない)。過去に super_admin が別ユーザーとして操作した行にだけ、super_admin の user_id が入っている';
 COMMENT ON POLICY "audit_logs_insert_admins" ON admin_audit_logs IS
-  'actor_id = auth.uid() を WITH CHECK で強制することで、他人のログを偽装できない';
+  '#1736: 本人の JWT からの INSERT は、actor_id = auth.uid()・運営の 6 ロール・action_type が system.* でない・snapshot / impersonated_by が NULL のときだけ。system.* と actor_id NULL の行は service_role / SECURITY DEFINER だけが書く';
 ```
+
+**注 (#1736)**: 本番には actor も action_type も見ない古い INSERT のポリシー "Admins can create audit logs" があったが、
+`20261016238000_admin_audit_logs_insert_actor_only.sql` で外した。書き手の分け方:
+- 本人の JWT (`createClient()`) で `recordAdminAudit()` を呼ぶ運営の route — 上のポリシーで書く。action_type は `admin.*` / `super_admin.*` など (system.* は使わない)。
+- service_role (`getSupabaseAdmin()`) — `recordMfaAudit()` (`admin.mfa.*` / `super_admin.mfa.reset`) と課金の監査 (`user.billing.*` / `system.*`)。RLS の対象外。
+- SECURITY DEFINER の関数 (`billing_apply_stripe_subscription`・pg_cron の `cleanup_handson_tour_sandbox_rows`) — actor_id NULL。RLS の対象外。
+
+system の事実 (バックアップの鮮度・DR 訓練・照合の差分など) を記録するときは、サーバー (service_role / SECURITY DEFINER) が
+actor_id NULL・action_type `system.*` で書く。読んで判断する側は action_type に加えて `actor_id IS NULL` でも絞れる
+(本人の JWT では actor_id を NULL にできず、system.* も書けない)。
 
 **注 (#1124)**: なりすまし (impersonate) は提供しない。`impersonated_by` 列は、過去に書かれた行 (`action_type = 'impersonate'` の行) の履歴として残し、
 新しく書き込む処理は無い。監査ログは UPDATE / DELETE 不可なので、過去の行 (`details.impersonation_token` を含む) もそのまま残る。
@@ -257,8 +273,8 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 - 4.1.1 と違い **fail-closed**: 記録できなかったら 500 を返し、Stripe ダッシュボードへのリンクは返さない
   (監査ログの残らない返金を作らない)。失敗は `recordAdminAudit()` が db-logger (`app_logs`) に error で残す。
 - 記録は本人のセッションの client (RLS 有効) で行い、`actor_id` には `requireRole` が返した本人の id を渡す。
-  `finance` には `audit_logs_insert_admins` だけが効き、`actor_id = auth.uid()` と運営ロールを DB 側でも強制する
-  (`admin` / `super_admin` / `support` には `actor_id` を検査しない旧ポリシー "Admins can create audit logs" も効くため、`actor_id` はアプリ側で必ず本人にする)。
+  INSERT のポリシーは `audit_logs_insert_admins` の 1 本で、`actor_id = auth.uid()` と運営ロールを DB 側でも強制する
+  (`actor_id` を検査しない旧ポリシー "Admins can create audit logs" は #1736 で外した)。
   `finance` ロールは `admin_audit_logs` を SELECT できないため、INSERT した行を読み戻してはいけない。
 - 2 名承認 (`finance.refund.approve`) と、Stripe の `charge.refunded` Webhook との突き合わせは Stripe 連携 (#1125) 側で後続。
 
