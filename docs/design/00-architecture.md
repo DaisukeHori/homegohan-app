@@ -124,7 +124,7 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
   → POST /api/family/meal-requests
     → INSERT family_meal_requests (status=pending, assignee_id=夫)
     → Realtime broadcast (subject: family_group_id)
-  → 夫 (Mobile) Push 通知 + アプリ内バッジ +1
+  → 夫 (Mobile) Push 通知 (バッジは付けない。mobile/06-push-send.md §1.2)
 夫 (Mobile)
   → 提案画面で「AI に任せる」or「自分で考える」
   → POST /api/family/meal-requests/{id}/ai-propose (AI 利用時)
@@ -264,7 +264,7 @@ apps/mobile/                       # 既存維持 + 新規追加
 │       └── invite-accept.tsx      # 新規 (homegohan://invite/org/{token})
 └── src/
     ├── lib/
-    │   ├── pushNotifications.ts   # 既存 + setBadgeCountAsync 追加
+    │   ├── pushNotifications.ts   # 既存 (setBadgeCountAsync は呼ばない。mobile/03-push-notification.md §3.5)
     │   ├── deeplink.ts            # 新規 (URL parser)
     │   └── storage.ts             # 既存 + uploadMealPhoto 追加
     └── components/web/

@@ -104,7 +104,7 @@ Mobile 専用:
 
 ```
 
-プランの選択と支払いのボタンは置かない。家族プランは代表者が `/pricing` から買う (運営者の手動付与もある)。グループのプランは代表者の契約に合わせて決まる (billing/01 §6.4 (10)・S20)。
+プランの選択と支払いのボタンは置かない。家族プランは代表者が `/pricing` から買う (運営者による手動の付与は `billing/02-manual-plan-grant.md` で設計済み・未実装)。グループのプランは代表者の契約に合わせて決まる (billing/01 §6.4 (10)・S20)。
 
 **Actions**: 「キャンセル」 「作成する」
 
@@ -650,7 +650,7 @@ CI で全家族画面の a11y スキャン。
 
 - 既存 `apps/mobile/app/family/index.tsx` は 2026-10-15 に削除した (#1598 / #1610)。招待受諾 (FAM-M02) と買い物リスト (FAM-M03) は未実装
 - `WebViewScreen.tsx` は保持 (ブリッジ共通)
-- `apps/mobile/src/lib/pushNotifications.ts` に `setBadgeCountAsync` 追加が必要 (`mobile/03-push-notification.md` と連携)
+- `apps/mobile/src/lib/pushNotifications.ts` は `setBadgeCountAsync` を呼ばない (`mobile/03-push-notification.md` §3.5。いまの送信はペイロードに `badge` を入れない: `mobile/06-push-send.md` §1.2)
 
 ## 11. ハンズオンチュートリアル画面群 (family/09 連携)
 

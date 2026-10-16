@@ -289,7 +289,7 @@ apps/mobile/
 │   │   ├── supabase.ts              # 既存
 │   │   ├── api.ts                   # 既存
 │   │   ├── deeplink.ts              # 既存 + parseInviteLink() 追加 (02-deep-link.md)
-│   │   ├── pushNotifications.ts     # 既存 + setBadgeCountAsync 追加 (03-push-notification.md)
+│   │   ├── pushNotifications.ts     # 既存 (setBadgeCountAsync は呼ばない。03-push-notification.md §3.5)
 │   │   ├── storage.ts               # 既存 + uploadMealPhoto() 追加 (04-storage-camera.md。以前の storage.ts は 2026-10-16 に削除した。#1598)
 │   │   ├── nativeBridge.ts          # 新規: Web ↔ Native 通信ハブ
 │   │   └── legal-consent.ts         # 新規: 403 LEGAL_CONSENT_REQUIRED の見分け・同意画面の扱い (13b)
@@ -589,7 +589,7 @@ Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family
 
 | 項目 | 優先度 | 担当 |
 |------|--------|------|
-| Android FCM 動作確認 (実機テスト) | 高 | `mobile/06-push-send.md` の worker (`GET /api/cron/push-outbox`) の本番投入の前に確認必須 (06 §14) |
+| Android FCM 動作確認 (実機テスト) | 高 | 送信の worker (`GET /api/cron/push-outbox`) は本番の Vercel Cron に登録済み。ただし本番に `EXPO_ACCESS_TOKEN` が入るまでは、送らずに掃除だけをする (iOS・Android とも届かない。入れるのはオーナーの作業で、#1115)。Android はこれに加えて、FCM V1 の資格情報を EAS に登録してから実機で確かめる (`mobile/06-push-send.md` §14。登録までは Android の端末だけ届かない) |
 | iOS 18 カメラ dismiss バグの根本解消 | 高 | `04-storage-camera.md` に詳細 |
 | Universal Links 対応 (Phase 2) | 低 | Apple Configurator 2 配布が続く間は不要 |
 | Biometric 認証 (Face ID / Touch ID) | 中 | `cross/01-auth-session.md` Phase 2 予定 |

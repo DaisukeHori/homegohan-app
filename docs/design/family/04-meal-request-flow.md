@@ -55,12 +55,12 @@
 2. 理由・制約入力
 3. `POST /api/family/meal-requests` with `assignee_id = 担当者UUID`
 4. `family_meal_requests` INSERT (status = 'pending')
-5. assignee に Push 通知「○○からリクエスト」+ バッジ +1
+5. assignee に Push 通知「○○からリクエスト」(バッジは付けない: §6.2)
 6. assignee がリクエスト画面を開く
 7. 「AI に提案させる」→ `ai-propose` 呼び出し or 「自分で考える」→ 手動入力
 8. `POST /api/family/meal-requests/{id}/propose`
 9. status: `pending` → `proposed`
-10. requester に Push 通知「○○から提案が届きました」+ バッジ +1
+10. requester に Push 通知「○○から提案が届きました」(バッジは付けない: §6.2)
 11. requester が確認
     - 承認: `POST .../accept` → status: `proposed` → `accepted` → `planned_meals` INSERT
     - 拒否: `POST .../reject` → status: `proposed` → `rejected` (assignee に通知)
@@ -247,7 +247,7 @@ SELECT public.enqueue_push_notification(
 
 ### 6.3 既読処理
 
-ユーザーが FAM-010 (リクエスト一覧) を表示した時点でバッジを減算。
+バッジを付けるようになったら、ユーザーが FAM-010 (リクエスト一覧) を表示した時点でバッジを減算する (いまはバッジを付けない: §6.2)。
 実装: Server Component で `GET /api/family/meal-requests?assignee_id=me` 呼び出し時に
 既読処理 API を同時実行。
 
