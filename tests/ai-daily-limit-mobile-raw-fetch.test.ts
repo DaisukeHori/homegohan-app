@@ -19,6 +19,8 @@
  *   4. (#1486) アプリの API を呼ぶ生の fetch の関数 (分類の route が null でないもの) は、すべて失敗の応答を
  *      errorOfFailedResponse か serviceUnavailableMessageOf で読む (メンテナンス中の 503 は、どの API でも返りうる。
  *      読まないと、英語の「DELETE failed: 503」や汎用の失敗の文になる)
+ *   5. (#1442) アプリの API を生の fetch で呼ぶ関数は、すべて失敗の応答を errorOfFailedResponse で読む。
+ *      serviceUnavailableMessageOf だけでは 403 LEGAL_CONSENT_REQUIRED を見分けず、同意画面へ回らない
  *
  * 限界 (見張りであって証明ではない):
  *   - 呼び先の route は人が分類する。3 はファイルに URL の終わりの部分の文字列があることしか見ないので、
@@ -274,6 +276,27 @@ describe('アプリの生の fetch と 429 AI_DAILY_LIMIT (#1149)', () => {
     const missing = fetches
       .filter((f) => appApiKeys.includes(f.key))
       .filter(({ owner }) => !owner || !STOPPED_RESPONSE_READERS.some((name) => callsFunction(owner, name)))
+      .map((f) => `${f.key} (${f.line} 行目)`);
+    expect(missing).toEqual([]);
+  });
+
+  it('5. (#1442) アプリの API を生の fetch で呼ぶ関数 (分類の route が null でなく、silentFallback でないもの) は、すべて失敗の応答を errorOfFailedResponse で読む (serviceUnavailableMessageOf だけでは 403 LEGAL_CONSENT_REQUIRED を見分けず、同意画面へ回らない)', () => {
+    const appApiKeys = Object.entries(RAW_FETCHES)
+      .filter(([, entry]) => entry.route !== null && entry.silentFallback === undefined)
+      .map(([key]) => key);
+    // 分類が空回りしていない (相談を閉じる = serviceUnavailableMessageOf を通る関数を含む)
+    expect(appApiKeys).toEqual(
+      expect.arrayContaining([
+        'src/components/ai/AIAdvisorSheet.tsx::sendMessage',
+        'src/components/ai/AIAdvisorSheet.tsx::archiveSession',
+        'app/(tabs)/settings.tsx::handleExportJson',
+        'app/(tabs)/settings.tsx::handleExportCsv',
+      ]),
+    );
+
+    const missing = fetches
+      .filter((f) => appApiKeys.includes(f.key))
+      .filter(({ owner }) => !owner || !callsFunction(owner, LIMIT_ERROR_FACTORY))
       .map((f) => `${f.key} (${f.line} 行目)`);
     expect(missing).toEqual([]);
   });

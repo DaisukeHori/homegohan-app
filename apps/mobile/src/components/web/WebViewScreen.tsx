@@ -12,6 +12,7 @@ import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webVi
 import { colors } from '../../theme/colors';
 import { supabase } from '../../lib/supabase';
 import { useWebAuthMessages } from '../../lib/webViewAuthMessages';
+import { notifyLegalConsentAccepted, parseLegalConsentMessage } from '../../lib/legal-consent';
 import {
   buildClearUserScopedWebStorageScript,
   readPendingWebViewUserScopedStorageClear,
@@ -41,6 +42,10 @@ interface Props {
   // WebView の上 (上端の安全領域の内側) に置くネイティブの部品。
   // マイページのタブの歯車 (ネイティブの設定画面への入口) に使う (#1037。設計書 01-architecture.md §3.2)
   header?: React.ReactNode;
+  // Web からのログアウト (sign-out・失効の session-expired) でネイティブもログアウトした後に呼ぶ。渡さなければ今までどおり
+  // ウェルカム画面へ (router.replace('/'))。規約の同意画面 (app/legal-consent.tsx) だけが渡し、ウェルカムへ移らずに
+  // Web の「同意しない」「登録をやめる」の後の案内を残す (#1442)
+  afterSignOut?: () => void;
 }
 
 // 各タブの「受け持つ」パスの prefix と Expo Router のタブのルートの対応は、@homegohan/shared の NATIVE_APP_TABS だけが決める
@@ -139,7 +144,7 @@ type WebViewScreenBodyProps = Props & {
   onRetry: () => void;
 };
 
-const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, header, onRetry }) => {
+const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, header, afterSignOut, onRetry }) => {
   const webViewRef = useRef<WebView>(null);
   const [uri, setUri] = useState<string | null>(null);
   // WebView を開くときに注入する前の利用者の localStorage の掃除 (#1037)。自オリジンのガード付き。掃除が要らなければ空
@@ -172,6 +177,8 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
   const [mfaVerifyRequest, setMfaVerifyRequest] = useState<{ rebridge: () => void } | null>(null);
   const handleAuthMessage = useWebAuthMessages(effectivePath, {
     onMfaVerifyRequested: (rebridge) => setMfaVerifyRequest({ rebridge }),
+    // Web からのログアウトの後の移り先。渡した画面 (規約の同意画面だけ) はウェルカムへ移らずにこれを呼ぶ (#1442)
+    afterSignOut,
   });
 
   // タブ再タップ時に WebView を初期 URL にリセットする
@@ -327,7 +334,7 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
           }}
           onMessage={(event) => {
             // window.ReactNativeWebView はどのオリジンのページにも存在する。
-            // 送信元が自アプリのオリジンでなければ、tab-navigate / download 等のメッセージは一切処理しない。
+            // 送信元が自アプリのオリジンでなければ、tab-navigate / download / legal-consent-accepted 等のメッセージは一切処理しない。
             // event.nativeEvent.url に入るもの (react-native-webview 13.13.5 のソースで確認):
             //   - iOS: メッセージを送ったフレームの request URL (WKScriptMessage.frameInfo.request)
             //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
@@ -384,6 +391,9 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
                 // Web 側でログアウトした / Web 側のセッションが切れた / Web が二段階認証の確認を頼んだ (cross/12 §16.4)。
                 // 送り元の検証と処理は useWebAuthMessages に集約している
                 handleAuthMessage(data, event.nativeEvent.url);
+              } else if (parseLegalConsentMessage(data)) {
+                // #1442: Web の同意画面 (/legal-consent) で同意が記録できた。LegalConsentProvider が clear にし、ゲートが同意画面から入口へ移す
+                notifyLegalConsentAccepted();
               }
             } catch {
               // JSON パース失敗は無視
