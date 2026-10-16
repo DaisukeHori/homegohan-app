@@ -294,10 +294,11 @@ test.describe('org 招待 — エッジケース', () => {
         await alicePage.close();
       }
     } finally {
-      await cleanupFreshUser(supabaseAdmin, alice.id);
+      // org を先に削除する (organizations.owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)
       if (orgAId) {
         await cleanup({ orgIds: [orgAId] });
       }
+      await cleanupFreshUser(supabaseAdmin, alice.id);
     }
   });
 

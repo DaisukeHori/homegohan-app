@@ -348,8 +348,10 @@ export async function upsertUserProfile(
 /**
  * organizations テーブルに test 用 fresh org を作成する。
  * service_role REST API 経由で INSERT し、新規作成された org の id を返す。
+ * owner_id は NOT NULL (#1103 項目 10 / migration 20261017040000) なので、持ち主のユーザーを必ず渡す。
+ * 持ち主のユーザーは、この組織を消してから消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。
  */
-async function createFreshOrganization(nameSuffix?: string): Promise<string> {
+async function createFreshOrganization(ownerUserId: string, nameSuffix?: string): Promise<string> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
@@ -363,7 +365,7 @@ async function createFreshOrganization(nameSuffix?: string): Promise<string> {
       Authorization: `Bearer ${serviceRoleKey}`,
       Prefer: "return=representation",
     },
-    body: JSON.stringify({ name: orgName, plan: "standard" }),
+    body: JSON.stringify({ name: orgName, plan: "standard", owner_id: ownerUserId }),
   });
 
   if (!resp.ok) {
@@ -775,7 +777,8 @@ export const test = base.extend<FreshUserFixtures>({
    * 2. organizations テーブルに fresh org を INSERT (service_role REST API)
    * 3. user_profiles に roles=['org_admin'] / organization_id / org_role='owner' / onboarding 完了 を UPSERT
    * 4. session inject
-   * 5. afterAll: admin.deleteUser (cascade) + organizations DELETE
+   * 5. afterAll: organizations DELETE → admin.deleteUser (cascade)
+   *    (組織の owner_id がこのユーザーを指す。auth.users の削除は ON DELETE RESTRICT で止まるので、組織を先に消す)
    *
    * 組織の管理者の判定 (requireOrgAdmin → isOrgAdmin。src/lib/auth/org-admin.ts) は、
    * user_profiles.organization_id が非 null かつ org_role が 'owner' / 'admin' かで確認する (roles は見ない)。
@@ -797,6 +800,7 @@ export const test = base.extend<FreshUserFixtures>({
       if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
       // organizations に fresh org を作成
       orgId = await createFreshOrganization(
+        user.id,
         `${Date.now()}-${Math.floor(Math.random() * 10000)}`,
       );
 
@@ -819,11 +823,12 @@ export const test = base.extend<FreshUserFixtures>({
         organizationId: orgId,
       });
     } finally {
-      // user を先に削除 (user_profiles.organization_id FK を解除してから org 削除)
-      await cleanupFreshUser(supabaseAdmin, user.id);
+      // org を先に削除する (organizations.owner_id → auth.users は ON DELETE RESTRICT。
+      // user_profiles.organization_id は ON DELETE SET NULL なので、組織を消してもユーザーは残る)
       if (orgId) {
         await deleteFreshOrganization(orgId);
       }
+      await cleanupFreshUser(supabaseAdmin, user.id);
     }
   },
 });

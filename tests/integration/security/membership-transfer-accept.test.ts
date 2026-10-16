@@ -21,6 +21,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -101,6 +102,7 @@ type ErrorBody = { error?: { code?: string; message?: string } };
 afterAll(async () => {
   // 組織の owner_id / 家族の representative_id は auth.users を RESTRICT で参照するため先に消す
   if (orgA) await srAdmin.from('organizations').delete().in('id', [orgA, orgB].filter(Boolean));
+  if (orgBOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgBOwnerId);
   if (familyId) await srAdmin.from('family_groups').delete().eq('id', familyId);
   for (const id of createdUserIds) {
     await srAdmin.auth.admin.deleteUser(id);
@@ -112,6 +114,8 @@ afterAll(async () => {
 // ================================================================
 let orgA = '';
 let orgB = '';
+/** 組織 B (移籍先) の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない作り物。afterAll で組織の後に消す */
+let orgBOwnerId = '';
 
 describe('#1236 accept_org_owner_transfer: 承諾時点の所属を再検証する', () => {
   let owner: TestUser;
@@ -148,9 +152,10 @@ describe('#1236 accept_org_owner_transfer: 承諾時点の所属を再検証す�
       .single();
     if (ea || !a) throw new Error(`org A: ${ea?.message}`);
     orgA = a.id as string;
+    orgBOwnerId = await createPlaceholderOrgOwner(srAdmin, '1236-org-b');
     const { data: b, error: eb } = await srAdmin
       .from('organizations')
-      .insert({ name: `#1236 Org B ${TS}` })
+      .insert({ name: `#1236 Org B ${TS}`, owner_id: orgBOwnerId })
       .select('id')
       .single();
     if (eb || !b) throw new Error(`org B: ${eb?.message}`);

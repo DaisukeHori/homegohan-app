@@ -21,6 +21,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -85,6 +86,9 @@ async function findAuthUserId(email: string): Promise<string | null> {
 }
 
 let orgA = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない作り物。テストの利用者を owner_id に入れない
+ * (検査の前提を変えない)。afterAll で組織の後に消す (owner_id → auth.users は ON DELETE RESTRICT) */
+let orgOwnerId = '';
 let owner: TestUser; // 組織 A の owner
 let member: TestUser; // 組織 A の一般メンバー
 let existing: TestUser; // どこにも所属していない既存ユーザー
@@ -93,9 +97,10 @@ const NEW_EMAIL = `sec-members-invite-new-${TS}@homegohan.test`;
 const ADMIN_CHOSEN_PASSWORD = 'Chosen-by-admin-2026!';
 
 beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, '1235-members-invite');
   const { data: org, error: orgError } = await srAdmin
     .from('organizations')
-    .insert({ name: `#1235 members invite ${TS}` })
+    .insert({ name: `#1235 members invite ${TS}`, owner_id: orgOwnerId })
     .select('id')
     .single();
   if (orgError || !org) throw new Error(`organizations: ${orgError?.message}`);
@@ -129,6 +134,8 @@ afterAll(async () => {
     await srAdmin.from('organization_invites').delete().eq('organization_id', orgA);
     await srAdmin.from('organizations').delete().eq('id', orgA);
   }
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.from('user_profiles').delete().eq('id', id);
     await srAdmin.auth.admin.deleteUser(id);

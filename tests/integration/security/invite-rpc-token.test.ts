@@ -24,6 +24,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -72,6 +73,9 @@ async function createUser(label: string): Promise<TestUser> {
 }
 
 let orgId = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない作り物。テストの利用者を owner_id に入れない
+ * (招待の承諾は「別の組織の owner_id」を IS_ORG_OWNER で止めるので、検査の前提が変わる)。afterAll で組織の後に消す */
+let orgOwnerId = '';
 let familyId = '';
 let orgOwner: TestUser;
 let orgMember: TestUser;
@@ -79,20 +83,21 @@ let familyRep: TestUser;
 let outsider: TestUser;
 
 beforeAll(async () => {
-  const { data: org, error: orgError } = await srAdmin
-    .from('organizations')
-    .insert({ name: `invite-token org ${TS}` })
-    .select('id')
-    .single();
-  if (orgError || !org) throw new Error(`organizations: ${orgError?.message}`);
-  orgId = org.id as string;
-
   [orgOwner, orgMember, familyRep, outsider] = await Promise.all([
     createUser('org-owner'),
     createUser('org-member'),
     createUser('family-rep'),
     createUser('outsider'),
   ]);
+
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, 'invite-token');
+  const { data: org, error: orgError } = await srAdmin
+    .from('organizations')
+    .insert({ name: `invite-token org ${TS}`, owner_id: orgOwnerId })
+    .select('id')
+    .single();
+  if (orgError || !org) throw new Error(`organizations: ${orgError?.message}`);
+  orgId = org.id as string;
   for (const [u, role] of [
     [orgOwner, 'owner'],
     [orgMember, 'member'],
@@ -133,6 +138,8 @@ afterAll(async () => {
       .in('id', createdUserIds);
   }
   if (orgId) await srAdmin.from('organizations').delete().eq('id', orgId);
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.from('user_profiles').delete().eq('id', id);
     await srAdmin.auth.admin.deleteUser(id);

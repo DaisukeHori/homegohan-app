@@ -75,7 +75,7 @@ type FreshOrgFixtures = {
    * - organizations に fresh org を INSERT (service_role)
    * - user_profiles に org_role='owner' / organization_id を UPSERT
    * - session inject 済みの ownerPage を返す
-   * - afterAll でユーザー + org を削除
+   * - afterAll で org → ユーザーの順に削除 (owner_id は ON DELETE RESTRICT)
    */
   freshOrgWithOwner: OrgOwnerFixtureValue;
 };
@@ -138,12 +138,13 @@ export const test = base.extend<FreshOrgFixtures>({
         console.warn('[freshOrgWithOwner] user_profiles clear 失敗:', e);
       }
 
-      await cleanupFreshUser(supabaseAdmin, owner.id).catch((e) =>
-        console.warn('[freshOrgWithOwner] cleanup user 失敗:', e),
-      );
+      // org を先に削除する (organizations.owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)
       if (orgId) {
         await cleanup({ orgIds: [orgId] });
       }
+      await cleanupFreshUser(supabaseAdmin, owner.id).catch((e) =>
+        console.warn('[freshOrgWithOwner] cleanup user 失敗:', e),
+      );
     }
   },
 });

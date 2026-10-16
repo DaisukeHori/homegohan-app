@@ -45,7 +45,7 @@ DECLARE
   -- 消してよい組織の件数の上限。2026-10-16 の本番の読み取りで、owner_id が NULL でメンバーが 0 人の組織は 4 件。
   -- これより多ければ、読み取りの後に状態が変わっているので止める
   c_max_deletions constant integer := 4;
-  -- org_license_pools の既知の列 (20260511000097_membership_org_license_pools.sql とベースラインの定義)。
+  -- org_license_pools の既知の列 (本番を写したベースライン supabase/baseline/prod_schema.sql の定義。後の migration で列は足していない)。
   -- これ以外の列 (Stripe などの外部の紐付け) が足されていて、消す組織の行に値が入っていれば止める
   c_license_pool_columns constant text[] := ARRAY[
     'organization_id', 'total_licenses', 'used_licenses', 'available_licenses', 'family_addon_seats', 'updated_at'

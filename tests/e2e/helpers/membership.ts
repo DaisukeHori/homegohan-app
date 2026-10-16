@@ -65,6 +65,7 @@ function getEnv() {
 /**
  * org を作成し、指定 userId を owner に設定して org_id を返す。
  * service_role REST API を直接使用。
+ * organizations.owner_id は NOT NULL (#1103 項目 10 / migration 20261017040000) なので INSERT に含める。
  */
 export async function createFreshOrg(options: {
   ownerUserId: string;
@@ -82,7 +83,7 @@ export async function createFreshOrg(options: {
       Authorization: `Bearer ${serviceRoleKey}`,
       Prefer: 'return=representation',
     },
-    body: JSON.stringify({ name: orgName, plan: 'standard' }),
+    body: JSON.stringify({ name: orgName, plan: 'standard', owner_id: options.ownerUserId }),
   });
 
   if (!orgResp.ok) {
@@ -360,7 +361,7 @@ export async function revokeOrgInvite(token: string): Promise<void> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * テスト後のクリーンアップ。
+ * テスト後のクリーンアップ。org → users の順に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。
  * org を削除すると CASCADE で organization_invites も消える。
  * users を削除すると CASCADE で user_profiles も消える。
  */
@@ -371,16 +372,8 @@ export async function cleanup(options: {
   const { supabaseUrl, serviceRoleKey } = getEnv();
   const adminClient = getAdminClient();
 
-  // ユーザー削除
-  for (const userId of options.userIds ?? []) {
-    try {
-      await adminClient.auth.admin.deleteUser(userId);
-    } catch (err) {
-      console.warn(`[cleanup] deleteUser 失敗 (userId: ${userId}):`, err);
-    }
-  }
-
-  // org 削除 (user 削除後に FK 制約がないので順序は問わないが user 先が安全)
+  // org を先に削除する: organizations.owner_id → auth.users は ON DELETE RESTRICT なので、持ち主のユーザーは
+  // 組織が残っていると消せない (#1103 項目 10)。user_profiles.organization_id は ON DELETE SET NULL
   for (const orgId of options.orgIds ?? []) {
     try {
       const resp = await fetch(`${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`, {
@@ -397,6 +390,15 @@ export async function cleanup(options: {
       }
     } catch (err) {
       console.warn(`[cleanup] org DELETE 例外 (orgId: ${orgId}):`, err);
+    }
+  }
+
+  // ユーザー削除 (組織を消した後)
+  for (const userId of options.userIds ?? []) {
+    try {
+      await adminClient.auth.admin.deleteUser(userId);
+    } catch (err) {
+      console.warn(`[cleanup] deleteUser 失敗 (userId: ${userId}):`, err);
     }
   }
 }

@@ -29,6 +29,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -110,6 +111,8 @@ const pendingHolders: Array<Promise<unknown>> = [];
 
 let orgA = '';
 let orgB = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない。afterAll で組織の後に消す */
+let orgOwnerId = '';
 let deptA = '';
 let owner: TestUser; // 組織 A の owner (招待を出す)
 let admin: TestUser; // 組織 A の admin (PostgREST を直接叩く)
@@ -403,9 +406,13 @@ async function firstFinalized(ids: string[]): Promise<string> {
 // ---------------------------------------------------------------------------------------------
 
 beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, '1688');
   const { data: orgs, error: orgError } = await srAdmin
     .from('organizations')
-    .insert([{ name: `#1688 Org A ${RUN}` }, { name: `#1688 Org B ${RUN}` }])
+    .insert([
+      { name: `#1688 Org A ${RUN}`, owner_id: orgOwnerId },
+      { name: `#1688 Org B ${RUN}`, owner_id: orgOwnerId },
+    ])
     .select('id, name');
   if (orgError || !orgs) throw new Error(`organizations: ${orgError?.message}`);
   orgA = orgs.find((o) => o.name.startsWith('#1688 Org A'))!.id;
@@ -462,6 +469,8 @@ afterAll(async () => {
   for (const orgId of [orgA, orgB].filter(Boolean)) {
     await srAdmin.from('organizations').delete().eq('id', orgId);
   }
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.auth.admin.deleteUser(id);
   }
@@ -1116,7 +1125,7 @@ describe('#1688 S. 利用者の権限で消せるのは draft と cancelled だ�
     // 組織の削除 (CASCADE) でも消える
     const { data: tempOrg, error: orgError } = await srAdmin
       .from('organizations')
-      .insert({ name: `#1688 Org temp ${RUN}` })
+      .insert({ name: `#1688 Org temp ${RUN}`, owner_id: orgOwnerId })
       .select('id')
       .single();
     if (orgError || !tempOrg) throw new Error(`organizations: ${orgError?.message}`);

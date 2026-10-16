@@ -37,6 +37,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { jstDaysAgo } from '../helpers/jst-days';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -165,6 +166,9 @@ async function participantCount(challengeId: string): Promise<number> {
 
 let orgA = '';
 let orgB = '';
+/** 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない作り物。テストの利用者を owner_id に入れない
+ * (検査の前提を変えない)。afterAll で組織の後に消す (owner_id → auth.users は ON DELETE RESTRICT) */
+let orgOwnerId = '';
 let deptX = ''; // 組織 A の部署
 let owner: TestUser; // 組織 A の owner
 let admin: TestUser; // 組織 A の admin
@@ -190,9 +194,13 @@ async function newChallenge(seed: ChallengeSeed = {}): Promise<string> {
 }
 
 beforeAll(async () => {
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, '1132-api');
   const { data: orgs, error: orgError } = await srAdmin
     .from('organizations')
-    .insert([{ name: `#1132 api Org A ${RUN}` }, { name: `#1132 api Org B ${RUN}` }])
+    .insert([
+      { name: `#1132 api Org A ${RUN}`, owner_id: orgOwnerId },
+      { name: `#1132 api Org B ${RUN}`, owner_id: orgOwnerId },
+    ])
     .select('id, name');
   if (orgError || !orgs) throw new Error(`organizations: ${orgError?.message}`);
   orgA = orgs.find((o) => o.name.startsWith('#1132 api Org A'))!.id;
@@ -260,6 +268,8 @@ afterAll(async () => {
   for (const orgId of [orgA, orgB].filter(Boolean)) {
     await srAdmin.from('organizations').delete().eq('id', orgId);
   }
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdUserIds) {
     await srAdmin.from('user_profiles').delete().eq('id', id);
     await srAdmin.auth.admin.deleteUser(id);
