@@ -360,10 +360,21 @@ export async function revokeOrgInvite(token: string): Promise<void> {
 // cleanup
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 後片付けの失敗の報告に添える、応答の本文の先頭の文字数 (長い HTML のエラーページでログを埋めない) */
+const CLEANUP_ERROR_BODY_PREVIEW_CHARS = 200;
+
 /**
- * テスト後のクリーンアップ。org → users の順に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。
- * org を削除すると CASCADE で organization_invites も消える。
- * users を削除すると CASCADE で user_profiles も消える。
+ * テスト後のクリーンアップ。組織 → ユーザーの順に消す。
+ *
+ * 1. 消す組織に所属している利用者 (user_profiles.organization_id が消す組織) の organization_id / org_role を NULL に戻す。
+ *    組織の DELETE は user_profiles.organization_id を ON DELETE SET NULL で外すが、org_role は残るので、
+ *    所属者が 1 人でも残っていると CHECK user_profiles_org_consistency (両方 NULL か両方あり) に反して組織の DELETE が失敗する。
+ * 2. 組織を消す (CASCADE で organization_invites なども消える)。
+ * 3. ユーザーを消す (CASCADE で user_profiles も消える)。organizations.owner_id → auth.users は ON DELETE RESTRICT
+ *    (#1103 項目 10 で owner_id は NOT NULL) なので、持ち主のユーザーは組織を消した後でないと消せない。
+ *
+ * 1・2 のどれかが失敗したら、ユーザーを消さずに例外にする (組織が残ったまま持ち主を消そうとしても RESTRICT で失敗し、
+ * 本当の原因が隠れるため)。3 の失敗もまとめて例外にする (黙ってゴミを残さない)。
  */
 export async function cleanup(options: {
   orgIds?: string[];
@@ -371,34 +382,76 @@ export async function cleanup(options: {
 }): Promise<void> {
   const { supabaseUrl, serviceRoleKey } = getEnv();
   const adminClient = getAdminClient();
+  const orgIds = options.orgIds ?? [];
+  const orgFailures: string[] = [];
 
-  // org を先に削除する: organizations.owner_id → auth.users は ON DELETE RESTRICT なので、持ち主のユーザーは
-  // 組織が残っていると消せない (#1103 項目 10)。user_profiles.organization_id は ON DELETE SET NULL
-  for (const orgId of options.orgIds ?? []) {
+  // 1. 所属を外す (組織の DELETE が CHECK user_profiles_org_consistency に反しないように)
+  if (orgIds.length > 0) {
     try {
-      const resp = await fetch(`${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`, {
-        method: 'DELETE',
-        headers: {
-          apikey: serviceRoleKey,
-          Authorization: `Bearer ${serviceRoleKey}`,
-          Prefer: 'return=minimal',
+      const resp = await fetch(
+        `${supabaseUrl}/rest/v1/user_profiles?organization_id=in.(${orgIds.join(',')})`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+            Prefer: 'return=minimal',
+          },
+          body: JSON.stringify({ organization_id: null, org_role: null }),
         },
-      });
+      );
       if (!resp.ok) {
         const text = await resp.text().catch(() => '');
-        console.warn(`[cleanup] org DELETE 失敗 (orgId: ${orgId}, status: ${resp.status}): ${text.substring(0, 200)}`);
+        orgFailures.push(
+          `user_profiles の所属の解除に失敗 (orgIds: ${orgIds.join(',')}, status: ${resp.status}): ${text.substring(0, CLEANUP_ERROR_BODY_PREVIEW_CHARS)}`,
+        );
       }
     } catch (err) {
-      console.warn(`[cleanup] org DELETE 例外 (orgId: ${orgId}):`, err);
+      orgFailures.push(`user_profiles の所属の解除で例外 (orgIds: ${orgIds.join(',')}): ${String(err)}`);
     }
   }
 
-  // ユーザー削除 (組織を消した後)
+  // 2. 組織を消す (所属の解除に失敗していたら、DELETE も CHECK で失敗するので試さない)
+  if (orgFailures.length === 0) {
+    for (const orgId of orgIds) {
+      try {
+        const resp = await fetch(`${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`, {
+          method: 'DELETE',
+          headers: {
+            apikey: serviceRoleKey,
+            Authorization: `Bearer ${serviceRoleKey}`,
+            Prefer: 'return=minimal',
+          },
+        });
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => '');
+          orgFailures.push(
+            `org DELETE 失敗 (orgId: ${orgId}, status: ${resp.status}): ${text.substring(0, CLEANUP_ERROR_BODY_PREVIEW_CHARS)}`,
+          );
+        }
+      } catch (err) {
+        orgFailures.push(`org DELETE 例外 (orgId: ${orgId}): ${String(err)}`);
+      }
+    }
+  }
+
+  // 組織が残っていれば、持ち主のユーザーは RESTRICT で消せない。ユーザーを消す前に止める
+  if (orgFailures.length > 0) {
+    throw new Error(`[cleanup] 組織の後片付けに失敗 (ユーザーは消していない): ${orgFailures.join(' / ')}`);
+  }
+
+  // 3. ユーザーを消す (組織を消した後)。deleteUser は失敗を例外ではなく error で返す
+  const userFailures: string[] = [];
   for (const userId of options.userIds ?? []) {
     try {
-      await adminClient.auth.admin.deleteUser(userId);
+      const { error } = await adminClient.auth.admin.deleteUser(userId);
+      if (error) userFailures.push(`deleteUser 失敗 (userId: ${userId}): ${error.message}`);
     } catch (err) {
-      console.warn(`[cleanup] deleteUser 失敗 (userId: ${userId}):`, err);
+      userFailures.push(`deleteUser 例外 (userId: ${userId}): ${String(err)}`);
     }
+  }
+  if (userFailures.length > 0) {
+    throw new Error(`[cleanup] ユーザーの後片付けに失敗: ${userFailures.join(' / ')}`);
   }
 }

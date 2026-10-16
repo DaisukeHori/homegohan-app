@@ -17,6 +17,7 @@ import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
 import { grantE2eAiConsent } from "../../../scripts/lib/e2e-ai-consent";
 import { acceptLegalConsentIfShown } from "../helpers/legal-consent";
+import { cleanup as cleanupOrgsAndUsers } from "../helpers/membership";
 import {
   createTestSession,
   describeTestSessionFailure,
@@ -350,6 +351,7 @@ export async function upsertUserProfile(
  * service_role REST API 経由で INSERT し、新規作成された org の id を返す。
  * owner_id は NOT NULL (#1103 項目 10 / migration 20261017040000) なので、持ち主のユーザーを必ず渡す。
  * 持ち主のユーザーは、この組織を消してから消す (organizations.owner_id → auth.users は ON DELETE RESTRICT)。
+ * 組織の後片付けは tests/e2e/helpers/membership.ts の cleanup (所属を外してから組織を消す) を使う。
  */
 async function createFreshOrganization(ownerUserId: string, nameSuffix?: string): Promise<string> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -380,33 +382,6 @@ async function createFreshOrganization(ownerUserId: string, nameSuffix?: string)
     throw new Error("[fresh-user fixture] organizations INSERT: id が返却されませんでした");
   }
   return rows[0].id;
-}
-
-/**
- * organizations テーブルから指定 ID の組織を削除する。
- */
-async function deleteFreshOrganization(orgId: string): Promise<void> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-  const resp = await fetch(
-    `${supabaseUrl}/rest/v1/organizations?id=eq.${orgId}`,
-    {
-      method: "DELETE",
-      headers: {
-        apikey: serviceRoleKey,
-        Authorization: `Bearer ${serviceRoleKey}`,
-        Prefer: "return=minimal",
-      },
-    },
-  );
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => "");
-    console.warn(
-      `[fresh-user fixture] organizations DELETE 失敗 (orgId: ${orgId}, status: ${resp.status}): ${text.substring(0, 200)}`,
-    );
-  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -777,8 +752,10 @@ export const test = base.extend<FreshUserFixtures>({
    * 2. organizations テーブルに fresh org を INSERT (service_role REST API)
    * 3. user_profiles に roles=['org_admin'] / organization_id / org_role='owner' / onboarding 完了 を UPSERT
    * 4. session inject
-   * 5. afterAll: organizations DELETE → admin.deleteUser (cascade)
-   *    (組織の owner_id がこのユーザーを指す。auth.users の削除は ON DELETE RESTRICT で止まるので、組織を先に消す)
+   * 5. afterAll: 所属を外して organizations DELETE → admin.deleteUser (cascade)
+   *    (組織の owner_id がこのユーザーを指す。auth.users の削除は ON DELETE RESTRICT で止まるので、組織を先に消す。
+   *    このユーザーは org_role='owner' で組織に所属しているので、所属を外さずに組織を消すと
+   *    CHECK user_profiles_org_consistency に反して失敗する。tests/e2e/helpers/membership.ts の cleanup が両方を受け持つ)
    *
    * 組織の管理者の判定 (requireOrgAdmin → isOrgAdmin。src/lib/auth/org-admin.ts) は、
    * user_profiles.organization_id が非 null かつ org_role が 'owner' / 'admin' かで確認する (roles は見ない)。
@@ -823,10 +800,11 @@ export const test = base.extend<FreshUserFixtures>({
         organizationId: orgId,
       });
     } finally {
-      // org を先に削除する (organizations.owner_id → auth.users は ON DELETE RESTRICT。
-      // user_profiles.organization_id は ON DELETE SET NULL なので、組織を消してもユーザーは残る)
+      // 組織を先に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)。
+      // 組織の DELETE は user_profiles.organization_id だけを ON DELETE SET NULL で外し org_role は残すので、
+      // cleanup は所属している利用者の organization_id / org_role を先に NULL に戻してから組織を消す (失敗すれば例外)
       if (orgId) {
-        await deleteFreshOrganization(orgId);
+        await cleanupOrgsAndUsers({ orgIds: [orgId] });
       }
       await cleanupFreshUser(supabaseAdmin, user.id);
     }

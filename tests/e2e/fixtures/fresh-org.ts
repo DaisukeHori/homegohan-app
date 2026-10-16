@@ -75,7 +75,7 @@ type FreshOrgFixtures = {
    * - organizations に fresh org を INSERT (service_role)
    * - user_profiles に org_role='owner' / organization_id を UPSERT
    * - session inject 済みの ownerPage を返す
-   * - afterAll で org → ユーザーの順に削除 (owner_id は ON DELETE RESTRICT)
+   * - afterAll で所属を外して org → ユーザーの順に削除 (owner_id は ON DELETE RESTRICT。tests/e2e/helpers/membership.ts の cleanup)
    */
   freshOrgWithOwner: OrgOwnerFixtureValue;
 };
@@ -115,36 +115,13 @@ export const test = base.extend<FreshOrgFixtures>({
         orgName,
       });
     } finally {
-      const { supabaseUrl, serviceRoleKey } = (() => {
-        const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-        const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-        return { supabaseUrl: url ?? '', serviceRoleKey: key ?? '' };
-      })();
-
-      // cleanup: user_profiles.organization_id を NULL にしてから user 削除
-      // (FK 制約: user_profiles.organization_id → organizations.id)
-      try {
-        await fetch(`${supabaseUrl}/rest/v1/user_profiles?id=eq.${owner.id}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            apikey: serviceRoleKey,
-            Authorization: `Bearer ${serviceRoleKey}`,
-            Prefer: 'return=minimal',
-          },
-          body: JSON.stringify({ organization_id: null, org_role: null }),
-        });
-      } catch (e) {
-        console.warn('[freshOrgWithOwner] user_profiles clear 失敗:', e);
-      }
-
-      // org を先に削除する (organizations.owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)
+      // 組織を先に消す (organizations.owner_id → auth.users は ON DELETE RESTRICT。#1103 項目 10)。
+      // cleanup() は、組織に所属している利用者 (持ち主・テストが足したメンバー) の organization_id / org_role を
+      // 先に NULL に戻してから組織を消す (CHECK user_profiles_org_consistency)。失敗すれば例外になる
       if (orgId) {
         await cleanup({ orgIds: [orgId] });
       }
-      await cleanupFreshUser(supabaseAdmin, owner.id).catch((e) =>
-        console.warn('[freshOrgWithOwner] cleanup user 失敗:', e),
-      );
+      await cleanupFreshUser(supabaseAdmin, owner.id);
     }
   },
 });
