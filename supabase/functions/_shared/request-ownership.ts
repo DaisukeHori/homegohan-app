@@ -10,6 +10,16 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/**
+ * UUID の形の文字列を小文字にそろえる。UUID の形でない値はそのまま返す (形の検査は呼び出し側の仕事)。
+ * src/lib/http-params.ts の normalizeUuid (#1707) と同じ。Edge Function は src/ を import できないため、ここに同じものを置く。
+ * Postgres の uuid 型は大文字と小文字を区別せずに比べるが、JS の `===` は区別する。JWT の利用者 id は小文字なので、
+ * body の UUID を利用者 id と比べる前にこれでそろえる (#1793)
+ */
+export function normalizeUuid(value: string): string {
+  return UUID_RE.test(value) ? value.toLowerCase() : value;
+}
+
 export type RequestOwnership =
   | { ok: true }
   | { ok: false; reason: "not_found" | "not_owner" }
