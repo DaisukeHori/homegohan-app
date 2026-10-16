@@ -55,21 +55,43 @@ function countOccurrences(html: string, needle: string): number {
   return html.split(needle).length - 1;
 }
 
-async function readAll(stream: ReadableStream<Uint8Array>, onFirstChunk?: () => void): Promise<string> {
+async function readAll(stream: ReadableStream<Uint8Array>): Promise<string> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let html = '';
-  let first = true;
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
     html += decoder.decode(value, { stream: true });
-    if (first) {
-      first = false;
-      onFirstChunk?.();
-    }
   }
   return html + decoder.decode();
+}
+
+/** MainLayout と同じく、帯を <main> の中に置いて描く (帯が描画の根にならないようにする) */
+function Page() {
+  return (
+    <main>
+      <LegalConsentBanner />
+      <div data-testid="page-content">ページの中身</div>
+    </main>
+  );
+}
+
+/**
+ * クエリの読み込みを待つ間に shell (fallback のリンク) を送り、そのあとで読めるようにして中身を後送りにさせ、流れてきた HTML 全体を返す。
+ * renderToReadableStream は shell が出来たところで返るので、その時点では fallback を描くことが決まっている
+ */
+async function renderWithLateSearchParams(): Promise<string> {
+  let resolvePending: () => void = () => {};
+  mocks.pendingSearchParams = new Promise<void>((resolve) => {
+    resolvePending = () => {
+      mocks.pendingSearchParams = null;
+      resolve();
+    };
+  });
+  const stream = await renderToReadableStream(<Page />);
+  resolvePending();
+  return readAll(stream);
 }
 
 beforeEach(() => {
@@ -80,17 +102,7 @@ beforeEach(() => {
 
 describe('LegalConsentBanner: ストリーミングで境界が後送りになっても、帯は 1 つ (#1774)', () => {
   it('★クエリの読み込みを待つ間に shell が送られ、リンクが後から届くとき: 流れてきた HTML 全体で帯は 1 つ', async () => {
-    let resolvePending: () => void = () => {};
-    mocks.pendingSearchParams = new Promise<void>((resolve) => {
-      resolvePending = () => {
-        mocks.pendingSearchParams = null;
-        resolve();
-      };
-    });
-
-    const stream = await renderToReadableStream(<LegalConsentBanner />);
-    // shell (fallback のリンク) を受け取ってから、クエリを読めるようにする → 中身は後送りで届く
-    const html = await readAll(stream, () => resolvePending());
+    const html = await renderWithLateSearchParams();
 
     // 番兵: 本当に後送りになっている (fallback のリンクと、隠れた中身のリンクが両方 HTML にある)
     expect(html).toMatch(OUTLINED_SEGMENT_PATTERN);
@@ -102,7 +114,7 @@ describe('LegalConsentBanner: ストリーミングで境界が後送りにな�
   });
 
   it('★読み込みを待たなくても、React が境界を後送りにする条件 (送り出しの大きさの上限) のとき: 帯は 1 つ', async () => {
-    const stream = await renderToReadableStream(<LegalConsentBanner />, {
+    const stream = await renderToReadableStream(<Page />, {
       progressiveChunkSize: FORCE_OUTLINE_PROGRESSIVE_CHUNK_SIZE,
     });
     const html = await readAll(stream);
@@ -113,16 +125,7 @@ describe('LegalConsentBanner: ストリーミングで境界が後送りにな�
   });
 
   it('帯の領域は、後送りの入れ物 (隠れた中身) の外にある: 入れ替えの前から見えている', async () => {
-    let resolvePending: () => void = () => {};
-    mocks.pendingSearchParams = new Promise<void>((resolve) => {
-      resolvePending = () => {
-        mocks.pendingSearchParams = null;
-        resolve();
-      };
-    });
-
-    const stream = await renderToReadableStream(<LegalConsentBanner />);
-    const html = await readAll(stream, () => resolvePending());
+    const html = await renderWithLateSearchParams();
 
     const segmentStart = html.search(OUTLINED_SEGMENT_PATTERN);
     expect(segmentStart).toBeGreaterThan(-1);
