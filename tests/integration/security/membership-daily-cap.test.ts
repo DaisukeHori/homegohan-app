@@ -1243,12 +1243,19 @@ describe('#1163 enforce_membership_daily_cap を直接呼ぶ: 認可・テナン
 // F. 既存の挙動: 認可・人数/席数の上限が、上限の判定より先に評価される
 // ================================================================
 describe('#1163 既存の挙動 (退行確認): 認可と既存の上限確認が先、24 時間の上限は最後', () => {
-  it('R-1: create_org_invite を anon で呼ぶと、従来どおり NOT_ORG_ADMIN (helper の権限エラーにならない)', async () => {
-    const org = await createOrg('reg-anon');
+  it('R-1: create_org_invite を組織の一般メンバー (owner / admin でない) が呼ぶと、従来どおり NOT_ORG_ADMIN (helper の権限エラーにならない)。anon は関数を呼べない (#1821)', async () => {
+    const org = await createOrg('reg-anon', { member: true });
     const result = await Promise.resolve(
-      anon().rpc('create_org_invite', { p_organization_id: org.orgId, p_email: target('reg-anon'), p_role: 'member' }),
+      asUser(org.member!.jwt).rpc('create_org_invite', { p_organization_id: org.orgId, p_email: target('reg-member'), p_role: 'member' }),
     );
     expectNotRateLimited(result.error, 'NOT_ORG_ADMIN');
+
+    // #1821 (20261017210000) で anon の EXECUTE を外した。関数の中の判定より前に、権限 (42501) で止まる
+    const asAnon = await Promise.resolve(
+      anon().rpc('create_org_invite', { p_organization_id: org.orgId, p_email: target('reg-anon'), p_role: 'member' }),
+    );
+    expect(asAnon.error?.code, asAnon.error?.message).toBe('42501');
+    expect(asAnon.error?.message).toBe('permission denied for function create_org_invite');
   });
 
   it('R-2: 家族の人数上限に達していて、かつ招待者の上限にも達しているとき、MEMBER_LIMIT_EXCEEDED が先に返る', async () => {

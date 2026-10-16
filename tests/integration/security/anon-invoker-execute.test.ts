@@ -294,8 +294,10 @@ const TINY_EMBEDDING = '[0.1,0.2,0.3]';
 const SEARCH_LIMIT = 3;
 /** 検索の関数に渡す類似度のしきい値 (結果の中身は見ない) */
 const SEARCH_THRESHOLD = 0.3;
-/** get_7d_checkin_averages に渡す基準日 (記録の無い利用者なので、どの日でも件数 0 の 1 行が返る) */
+/** get_7d_checkin_averages に渡す基準日。C4 はこの日の記録を 1 件だけ入れて、7 日の集計に 1 件が入ることを確かめる */
 const AVERAGES_DATE = '2026-10-17';
+/** C4 で入れる記録の運動の分数 (集計の total_training_minutes にそのまま出る) */
+const CHECKIN_TRAINING_MINUTES = 30;
 const LONG = 120_000;
 
 let userId = '';
@@ -316,7 +318,9 @@ async function createFixture(): Promise<void> {
 }
 
 async function cleanupFixture(): Promise<void> {
-  if (userId) await srAdmin.auth.admin.deleteUser(userId); // user_profiles は CASCADE
+  if (!userId) return;
+  await srAdmin.from('user_performance_checkins').delete().eq('user_id', userId);
+  await srAdmin.auth.admin.deleteUser(userId); // user_profiles は CASCADE
 }
 
 /** 外した 12 本の呼び方。PostgREST の引数名は関数の引数名と同じ */
@@ -401,15 +405,26 @@ describe('#1821 C: PostgREST を通した挙動', () => {
     }
   });
 
-  it('C4: ログインした利用者は、user_has_non_sandbox_activity と get_7d_checkin_averages を従来どおり呼べる (記録の無い利用者)', async () => {
+  it('C4: ログインした利用者は、user_has_non_sandbox_activity と get_7d_checkin_averages を従来どおり呼べる', async () => {
+    // 記録の無い利用者なので、通常の利用の記録は無い
     const activity = await asUser(userJwt).rpc('user_has_non_sandbox_activity');
     expect(activity.error, activity.error?.message).toBeNull();
     expect(activity.data).toBe(false);
 
+    // 記録が無いと集計は 0 行 (GROUP BY の結果が空)。1 件入れて、本人の JWT で集計に入ることを確かめる
+    const empty = await asUser(userJwt).rpc('get_7d_checkin_averages', { p_user_id: userId, p_date: AVERAGES_DATE });
+    expect(empty.error, empty.error?.message).toBeNull();
+    expect(empty.data).toEqual([]);
+
+    const { error: insertError } = await srAdmin
+      .from('user_performance_checkins')
+      .insert({ user_id: userId, checkin_date: AVERAGES_DATE, training_minutes: CHECKIN_TRAINING_MINUTES });
+    expect(insertError, insertError?.message).toBeNull();
+
     const averages = await asUser(userJwt).rpc('get_7d_checkin_averages', { p_user_id: userId, p_date: AVERAGES_DATE });
     expect(averages.error, averages.error?.message).toBeNull();
     expect(averages.data).toHaveLength(1);
-    expect(averages.data[0]).toMatchObject({ checkin_count: 0 });
+    expect(averages.data[0]).toMatchObject({ checkin_count: 1, total_training_minutes: CHECKIN_TRAINING_MINUTES });
   });
 
   it('C5: ログインした利用者が create_org_invite を呼ぶと、権限 (42501) ではなく関数の中の判定 (NOT_ORG_ADMIN) で止まる (EXECUTE は残っている)', async () => {
