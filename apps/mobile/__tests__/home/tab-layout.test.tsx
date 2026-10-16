@@ -308,8 +308,8 @@ describe('TabsLayout: 規約の同意の状態 (#1442)', () => {
     const { getByTestId } = render(<TabsLayout />);
     expect(getByTestId('tabs-container')).toBeTruthy();
     expect(getByTestId('ai-floating-fab')).toBeTruthy();
-    const { Tabs } = require('expo-router');
-    const names = ((Tabs as any).__screenConfigs as Array<{ name: string }>).map((c) => c.name);
+    const { Tabs } = require('expo-router') as { Tabs: { __screenConfigs: Array<{ name: string }> } };
+    const names = Tabs.__screenConfigs.map((c) => c.name);
     expect(names).toEqual(['home', 'menus', 'meals', 'comparison', 'profile', 'settings']);
   });
 
