@@ -21,27 +21,14 @@ const FALLBACK_PATHNAME = '/home';
  *   作り方は middleware の強制の経路と同じ buildLegalConsentPath (_rsc は落とす) (#1435)
  * - useSearchParams は Suspense 境界の中で読む (MainLayout の BottomNav と同じ流儀)。
  *   クエリを読めるまでの間は、パスだけを next にしたリンクを出す
+ * - Suspense 境界で包むのはリンクだけにする。お知らせの領域 (data-testid="legal-consent-banner") は境界の外に 1 つだけ置く (#1774)。
+ *   境界の中に領域ごと置くと、サーバーのストリーミングで境界が後送りになったとき (クエリの読み込みを待つとき・
+ *   React が大きめの境界を後から送るとき)、fallback の領域と、まだ隠れている中身 (<div hidden id="S:n">) の領域が
+ *   同時に DOM に入る。入れ替えるのはインラインのスクリプトで、React 19.2 はこれを少しまとめて待つので、その間は
+ *   1 ページにお知らせが 2 つある状態になる (e2e の getByTestId('legal-consent-banner') が strict mode で間欠的に落ちた)。
+ *   tests/legal-consent-banner-streaming.test.tsx が、流れてきた HTML の中で帯が 1 つであることを固定する
  */
 export function LegalConsentBanner() {
-  return (
-    <Suspense fallback={<ConsentNoticePathOnly />}>
-      <ConsentNoticeWithQuery />
-    </Suspense>
-  );
-}
-
-function ConsentNoticeWithQuery() {
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  return <ConsentNoticeView href={buildLegalConsentPath(pathname || FALLBACK_PATHNAME, searchParams?.toString() ?? '')} />;
-}
-
-function ConsentNoticePathOnly() {
-  const pathname = usePathname();
-  return <ConsentNoticeView href={buildLegalConsentPath(pathname || FALLBACK_PATHNAME, '')} />;
-}
-
-function ConsentNoticeView({ href }: { href: string }) {
   return (
     <div
       role="region"
@@ -50,9 +37,28 @@ function ConsentNoticeView({ href }: { href: string }) {
       className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-orange-100 bg-orange-50 px-4 py-2 text-xs text-gray-700"
     >
       <p>利用規約・プライバシーポリシーの内容をご確認のうえ、同意をお願いします。</p>
-      <Link href={href} className="font-bold text-orange-700 underline underline-offset-2 hover:text-orange-800">
-        確認して同意する
-      </Link>
+      <Suspense fallback={<ConsentLinkPathOnly />}>
+        <ConsentLinkWithQuery />
+      </Suspense>
     </div>
+  );
+}
+
+function ConsentLinkWithQuery() {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  return <ConsentLink href={buildLegalConsentPath(pathname || FALLBACK_PATHNAME, searchParams?.toString() ?? '')} />;
+}
+
+function ConsentLinkPathOnly() {
+  const pathname = usePathname();
+  return <ConsentLink href={buildLegalConsentPath(pathname || FALLBACK_PATHNAME, '')} />;
+}
+
+function ConsentLink({ href }: { href: string }) {
+  return (
+    <Link href={href} className="font-bold text-orange-700 underline underline-offset-2 hover:text-orange-800">
+      確認して同意する
+    </Link>
   );
 }
