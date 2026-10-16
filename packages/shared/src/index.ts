@@ -28,6 +28,7 @@ export * from './signed-photo-url';
 export * from './badge-period-awards';
 export * from './handson-tour-nickname';
 export * from './push-token-claim';
+export * from './push-notification-kinds';
 export type {
   Json,
   Database,

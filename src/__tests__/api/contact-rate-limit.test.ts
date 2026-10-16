@@ -63,7 +63,9 @@ function makeRequest(headers: Record<string, string>) {
 
 const fromIp = (ip: string) => makeRequest({ 'x-forwarded-for': ip });
 
-const fetchSpy = vi.fn();
+// #1193 管理者通知は sendEmail (送信待ちへの登録) を通る。送信そのものは send.test.ts が受け持つ
+const mockSendEmail = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/emails/send', () => ({ sendEmail: mockSendEmail }));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -72,11 +74,9 @@ beforeEach(() => {
     data: { id: 'inquiry-1', inquiry_type: 'general', email: 'user@example.com', subject: 's', message: 'm' },
     error: null,
   });
-  // 管理者通知メール (Resend) を有効にして、送られないことも確かめられるようにする
-  vi.stubEnv('RESEND_API_KEY', 're_test_key');
+  // 管理者通知メール (送信待ちへの登録) を有効にして、送られないことも確かめられるようにする
   vi.stubEnv('ADMIN_NOTIFICATION_EMAIL', 'admin@example.com');
-  fetchSpy.mockResolvedValue({ ok: true, status: 200, text: async () => '' });
-  vi.stubGlobal('fetch', fetchSpy);
+  mockSendEmail.mockResolvedValue({ ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null });
 });
 
 afterEach(() => {
@@ -140,7 +140,7 @@ describe('POST /api/contact: 上限を超えたとき (10 回/分)', () => {
       expect((await POST(fromIp(ip))).status).toBe(200);
     }
     expect(mockInsert).toHaveBeenCalledTimes(10);
-    expect(fetchSpy).toHaveBeenCalledTimes(10);
+    expect(mockSendEmail).toHaveBeenCalledTimes(10);
 
     const res = await POST(fromIp(ip));
     const json = await res.json();
@@ -155,7 +155,7 @@ describe('POST /api/contact: 上限を超えたとき (10 回/分)', () => {
     expect(res.headers.get('Retry-After')).toBe(String(json.retryAfter));
     // 429 のリクエストは保存せず、管理者へも通知しない
     expect(mockInsert).toHaveBeenCalledTimes(10);
-    expect(fetchSpy).toHaveBeenCalledTimes(10);
+    expect(mockSendEmail).toHaveBeenCalledTimes(10);
   });
 
   it('別の IP の枠は影響を受けない', async () => {
@@ -192,7 +192,7 @@ describe('POST /api/contact: 判定できないとき (fail-closed)', () => {
     expect(res.status).toBe(500);
     expect(json).toEqual({ error: 'サーバーエラーが発生しました' });
     expect(mockInsert).not.toHaveBeenCalled();
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(mockSendEmail).not.toHaveBeenCalled();
     expect(mockLogError).toHaveBeenCalledTimes(1);
     expect(mockLogError).toHaveBeenCalledWith(expect.stringContaining('fail-closed'), failure);
   });

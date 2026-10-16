@@ -5,7 +5,8 @@
  *
  * - DB は src/__tests__/lib/data-subject-requests/fake-dsr-db.ts (絞り込みを実際に適用する簡易 PostgREST)。
  *   本人のセッションの client (createClient) は 'user'、service_role の client (getSupabaseAdmin) は 'admin' として呼び分けを記録する。
- * - 認証は requireUser をモックする (AuthError → 401・ForbiddenError (凍結) → 403 の変換を見る)。
+ * - 認証は requireUserAllowingMissingProfile をモックする (AuthError → 401・ForbiddenError (凍結) → 403 の変換を見る)。
+ *   user_profiles の行が無い利用者を本物の helper で通すことは tests/api/account-data-requests-missing-profile.test.ts (#1751)。
  * - メールは notifications.ts をそのまま通し、送信 (sendEmail) と宛先の取得 (auth.admin.getUserById) をモックする。
  * - 連打の上限 (checkRateLimit) はモックする (429 の本文は本物の rateLimitExceededResponse)。
  */
@@ -27,7 +28,7 @@ import { hashDsrVerificationToken } from '@/lib/data-subject-requests/tokens';
 import { FakeDsrDb, type FakeRow } from '../../src/__tests__/lib/data-subject-requests/fake-dsr-db';
 
 const mocks = vi.hoisted(() => ({
-  requireUser: vi.fn(),
+  requireUserAllowingMissingProfile: vi.fn(),
   createClient: vi.fn(),
   getSupabaseAdmin: vi.fn(),
   checkRateLimit: vi.fn(),
@@ -35,7 +36,9 @@ const mocks = vi.hoisted(() => ({
   getUserById: vi.fn(),
 }));
 
-vi.mock('@/lib/auth/helpers', () => ({ requireUser: mocks.requireUser }));
+// 本人の確認は requester-http.ts の authenticateDsrRequester が requireUserAllowingMissingProfile で行う (#1751。行の無い利用者も通す)。
+// requireUser はモックに置かない (認証が requireUser に戻ると、モックに無い export の参照が例外になって 500 になり、この表の 401 / 403 / 200 が赤くなる)
+vi.mock('@/lib/auth/helpers', () => ({ requireUserAllowingMissingProfile: mocks.requireUserAllowingMissingProfile }));
 vi.mock('@/lib/supabase/server', () => ({ createClient: mocks.createClient, getSupabaseAdmin: mocks.getSupabaseAdmin }));
 vi.mock('@/lib/rate-limit', async () => {
   const actual = await vi.importActual<typeof import('@/lib/rate-limit')>('@/lib/rate-limit');
@@ -145,7 +148,7 @@ function filtersOf(call: { filters: Array<{ kind: string; column: string; value:
 
 beforeEach(() => {
   db = new FakeDsrDb();
-  mocks.requireUser.mockReset().mockResolvedValue({ id: ME, email: MY_EMAIL });
+  mocks.requireUserAllowingMissingProfile.mockReset().mockResolvedValue({ id: ME, email: MY_EMAIL });
   mocks.createClient.mockReset().mockImplementation(async () => db.client('user'));
   mocks.getSupabaseAdmin.mockReset().mockImplementation(() => adminClient());
   mocks.checkRateLimit.mockReset().mockResolvedValue(rateLimitResult(true));
@@ -181,7 +184,7 @@ const HANDLERS: HandlerCase[] = [
 describe('6 handler 共通: 認証と id の形式 (§7.1・§7.2)', () => {
   it.each(HANDLERS)('$name: 未ログイン (AuthError) は 401 AUTH_UNAUTHENTICATED。表に触れずメールも送らない', async ({ call }) => {
     const row = seedPending();
-    mocks.requireUser.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
+    mocks.requireUserAllowingMissingProfile.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
 
     const res = await call(String(row.id));
 
@@ -196,7 +199,7 @@ describe('6 handler 共通: 認証と id の形式 (§7.1・§7.2)', () => {
 
   it.each(HANDLERS)('$name: 凍結中 (ForbiddenError) は 403 AUTH_ACCOUNT_FROZEN。表に触れずメールも送らない', async ({ call }) => {
     const row = seedPending();
-    mocks.requireUser.mockRejectedValue(new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています'));
+    mocks.requireUserAllowingMissingProfile.mockRejectedValue(new ForbiddenError('AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています'));
 
     const res = await call(String(row.id));
 
@@ -209,7 +212,7 @@ describe('6 handler 共通: 認証と id の形式 (§7.1・§7.2)', () => {
 
   it.each(HANDLERS)('$name: 認証の確認そのものが例外 (DB の障害) なら 500 INTERNAL_ERROR (生のエラー文を出さない)', async ({ call }) => {
     const row = seedPending();
-    mocks.requireUser.mockRejectedValue(new Error('connection refused to db.internal:5432'));
+    mocks.requireUserAllowingMissingProfile.mockRejectedValue(new Error('connection refused to db.internal:5432'));
 
     const res = await call(String(row.id));
     const body = await res.json();
@@ -245,25 +248,25 @@ describe('本文を読む 2 handler (POST 作成・verify): NULL 文字は認証
     },
   ];
 
-  it.each(BODY_READERS)('$name: 未ログインでも、本文に NULL 文字があれば 400 INVALID_CHARACTER (requireUser も DB も呼ばない)', async ({ call }) => {
-    mocks.requireUser.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
+  it.each(BODY_READERS)('$name: 未ログインでも、本文に NULL 文字があれば 400 INVALID_CHARACTER (本人の確認も DB も呼ばない)', async ({ call }) => {
+    mocks.requireUserAllowingMissingProfile.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
 
     const res = await call({ request_type: 'disclosure', details: `内容${NUL}`, token: `${TOKEN}${NUL}` });
 
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({ error: NULL_CHARACTER_ERROR_MESSAGE, code: NULL_CHARACTER_ERROR_CODE });
-    expect(mocks.requireUser).not.toHaveBeenCalled();
+    expect(mocks.requireUserAllowingMissingProfile).not.toHaveBeenCalled();
     expect(mocks.createClient).not.toHaveBeenCalled();
     expect(db.calls).toHaveLength(0);
   });
 
   it.each(BODY_READERS)('$name: 未ログインで NULL 文字が無ければ 401', async ({ call }) => {
-    mocks.requireUser.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
+    mocks.requireUserAllowingMissingProfile.mockRejectedValue(new AuthError('AUTH_UNAUTHENTICATED'));
 
     const res = await call({ request_type: 'disclosure', details: '内容', token: TOKEN });
 
     expect(res.status).toBe(401);
-    expect(mocks.requireUser).toHaveBeenCalledTimes(1);
+    expect(mocks.requireUserAllowingMissingProfile).toHaveBeenCalledTimes(1);
   });
 
   it.each(BODY_READERS)('$name: 本文が JSON でなければ 400 INVALID_JSON', async ({ call }) => {
@@ -307,7 +310,7 @@ describe('GET /api/account/data-requests (一覧)', () => {
 
   it('運営ロール (admin) の本人でも、RLS 任せにせず user_id で絞る: 他人の行は応答に出ない (S-16)', async () => {
     // 運営ロールの本人のセッションには、RLS (select_operator) が全行を見せる。表に他人の行を置き、絞り込みが選ぶ行だけが返ることを見る
-    mocks.requireUser.mockResolvedValue({ id: ME, email: MY_EMAIL, app_metadata: { roles: ['admin'] } });
+    mocks.requireUserAllowingMissingProfile.mockResolvedValue({ id: ME, email: MY_EMAIL, app_metadata: { roles: ['admin'] } });
     const mine = seedVerified('received');
     db.seed({ user_id: OTHER, status: 'received', verified_at: iso(-MS_PER_DAY), due_at: iso(MS_PER_DAY) });
     db.seed({ user_id: OTHER, request_type: 'erasure' });
@@ -367,7 +370,7 @@ describe('GET /api/account/data-requests/[id] (詳細)', () => {
   });
 
   it('運営ロール (admin) の本人でも、他人の id は 404 NOT_FOUND (S-16)', async () => {
-    mocks.requireUser.mockResolvedValue({ id: ME, email: MY_EMAIL, app_metadata: { roles: ['admin'] } });
+    mocks.requireUserAllowingMissingProfile.mockResolvedValue({ id: ME, email: MY_EMAIL, app_metadata: { roles: ['admin'] } });
     const others = db.seed({ user_id: OTHER, status: 'received', verified_at: iso(-MS_PER_DAY), due_at: iso(MS_PER_DAY) });
 
     const res = await detailHandler(plainRequest(`${BASE}/${others.id}`, 'GET'), context(String(others.id)));

@@ -5,7 +5,9 @@
  * 設計: docs/design/cross/15-data-subject-requests.md §7.1・§7.2。本文の形は flat。
  * 一覧は本人のセッションの client (RLS・列の GRANT) で、必ず本人の user_id で絞って読む (service.ts の listOwnDsr)。
  * 作成は認証のあとに作る service_role の client で行う (書き込みの口はサーバーだけ。§3.1)。
- * 凍結中の呼び出しは middleware が先に 403 にする (route の requireUser の 403 は二重の守り)。
+ * 凍結中の呼び出しは middleware が先に 403 にする (route の authenticateDsrRequester の 403 は二重の守り)。
+ * 規約に未同意の利用者も、user_profiles の行がまだ無い利用者 (新規登録の直後) も請求を出せる (#1751。同意ゲートの許可リストと
+ * requester-http.ts の authenticateDsrRequester。6 route とも同じ)。
  */
 import { NextResponse } from 'next/server';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';

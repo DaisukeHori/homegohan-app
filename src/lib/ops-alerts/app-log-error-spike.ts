@@ -51,19 +51,38 @@ export const APP_LOG_ALERT_KEY = 'app_logs_error_spike';
  */
 export const APP_LOG_CLIENT_ALERT_KEY = 'app_logs_client_error_spike';
 
-/** 通知の種類。server = サーバーが書いた error、client = ブラウザ・端末から POST /api/log で届いた error */
-export type AppLogAlertScope = 'server' | 'client';
+/**
+ * エラー急増の通知の種類 (app_logs を数える 2 つ)。急増の文面 renderAppLogErrorSpikeEmail が扱うのはこの 2 つだけ。
+ * server = サーバーが書いた error、client = ブラウザ・端末から POST /api/log で届いた error
+ */
+export type AppLogErrorSpikeScope = 'server' | 'client';
+/** 運用アラートの種類。email_dead_letter は email_outbox の dead を数える (文面は renderEmailDeadLetterEmail。#1193) */
+export type AppLogAlertScope = AppLogErrorSpikeScope | 'email_dead_letter';
 
-/** 通知の種類ごとの、数える DB の関数の名前 */
-export const APP_LOG_ALERT_COUNT_RPC: Readonly<Record<AppLogAlertScope, 'app_log_error_counts' | 'app_log_client_error_counts'>> = {
+/**
+ * 届けられなかったメール (email_outbox の dead) の通知のキー (#1193)。
+ * エラー急増の 2 種類とは別のキーにして、クールダウンを共有しない
+ */
+export const EMAIL_DEAD_LETTER_ALERT_KEY = 'email_dead_letter';
+/** 届けられなかったメールは 1 件から知らせる (この件数を「超えたら」= 0)。環境変数では変えない */
+export const EMAIL_DEAD_LETTER_ALERT_THRESHOLD = 0;
+
+/**
+ * 通知の種類ごとの、数える DB の関数の名前。as const で値をリテラルの型のまま持つ
+ * (route の checkScope では APP_LOG_ALERT_COUNT_RPC[scope] (scope は AppLogErrorSpikeScope) が急増の 2 つの関数名だけになり、
+ * checkEmailDeadLetters では .email_dead_letter が 'email_outbox_dead_counts' 1 つになる。supabase.rpc の引数の型が 1 つに決まる)
+ */
+export const APP_LOG_ALERT_COUNT_RPC = {
   server: 'app_log_error_counts',
   client: 'app_log_client_error_counts',
-};
+  email_dead_letter: 'email_outbox_dead_counts',
+} as const satisfies Readonly<Record<AppLogAlertScope, string>>;
 
 /** 通知の種類ごとの、ops_alert_state のキー */
 export const APP_LOG_ALERT_KEYS: Readonly<Record<AppLogAlertScope, string>> = {
   server: APP_LOG_ALERT_KEY,
   client: APP_LOG_CLIENT_ALERT_KEY,
+  email_dead_letter: EMAIL_DEAD_LETTER_ALERT_KEY,
 };
 
 /**
@@ -218,6 +237,17 @@ export function parseErrorCountRows(data: unknown, rpcName: string = APP_LOG_ALE
       total_count: toCount(totalCount, 'total_count', rpcName),
     };
   });
+}
+
+/**
+ * email_outbox_dead_counts / mark_email_outbox_dead_alerted の行 (template / dead_count / total_count) を
+ * ErrorCountRow の形にそろえてから parseErrorCountRows に渡す (#1193)。配列でない応答はそのまま返す (parseErrorCountRows が例外にする)
+ */
+export function normalizeDeadCountRows(data: unknown): unknown {
+  if (!Array.isArray(data)) return data;
+  return data.map((row) => (row && typeof row === 'object'
+    ? { function_name: (row as Record<string, unknown>).template ?? null, error_count: (row as Record<string, unknown>).dead_count, total_count: (row as Record<string, unknown>).total_count }
+    : row));
 }
 
 // ── 集計としきい値 ────────────────────────────────────────────────────────

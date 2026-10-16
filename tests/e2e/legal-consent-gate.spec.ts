@@ -684,3 +684,42 @@ test.describe("API の同意ゲート: 強制なし (既定 / お知らせあり
     expect(await readLegalStatus(page)).toMatchObject({ enforced: false, accepted: false, required: false });
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 本人の権利の請求 (#1751): 開示・訂正・利用停止・消去の請求は、規約への同意も初期設定の完了も条件にできない。
+// 同意の画面の案内を押すのは多くが新規登録の直後の人 (user_profiles の行がまだ無い) なので、その人で通しで確かめる:
+// 同意の画面の案内 → 請求の画面 (同意ゲート・初期設定の差し戻しの対象外) → 一覧の読み込み (GET 200) → 請求 (POST 201)。
+// 強制の有無で結果は変わらないので、3 つの設定 (既定・強制あり・お知らせあり) のどれでも流す。
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe("本人の権利の請求: プロフィールの行が無い新規ユーザー (#1751)", () => {
+  test.setTimeout(180_000);
+
+  test("★未同意・初期設定の前の新規ユーザーが、同意の画面の案内から請求の画面を開き、一覧を読み、請求を出せる (行は作られない)", async ({ page }) => {
+    const user = await signInAsNewUser(page, { profile: false });
+
+    await page.goto("/legal-consent");
+    await expect(consentHeading(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await page.getByTestId("legal-consent-dsr-link").getByRole("link").click();
+    await page.waitForURL((url) => url.pathname === "/settings/data-requests", URL_CHANGE);
+
+    // 一覧の読み込み (GET /api/account/data-requests) が 200 で、まだ請求が無い。401 なら読み込みの失敗の表示になる
+    await expect(page.getByTestId("dsr-list-empty")).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expect(page.getByTestId("dsr-load-failed")).toHaveCount(0);
+
+    const created = await page.request.post("/api/account/data-requests", {
+      data: { request_type: "disclosure", details: "保有している個人情報を開示してください" },
+      headers: { "Content-Type": "application/json" },
+      maxRedirects: 0,
+    });
+    expect(created.status()).toBe(201);
+    expect(await created.json()).toMatchObject({ request: { status: "pending_verification", request_type: "disclosure" } });
+
+    const list = await page.request.get("/api/account/data-requests", { maxRedirects: 0 });
+    expect(list.status()).toBe(200);
+    const body = (await list.json()) as { requests: Array<{ request_type: string; status: string }> };
+    expect(body.requests.map((request) => [request.request_type, request.status])).toEqual([["disclosure", "pending_verification"]]);
+
+    // 請求は user_profiles の行を作らない (同意も初期設定もしていないまま)
+    expect(await readProfile(user.id)).toBeNull();
+  });
+});

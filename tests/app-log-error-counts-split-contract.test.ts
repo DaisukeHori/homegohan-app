@@ -23,6 +23,7 @@ import {
   APP_LOG_ALERT_KEYS,
   APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD,
   APP_LOG_CLIENT_ALERT_KEY,
+  EMAIL_DEAD_LETTER_ALERT_KEY,
 } from '@/lib/ops-alerts/app-log-error-spike';
 
 const ROOT = path.resolve(__dirname, '..');
@@ -116,6 +117,8 @@ describe('#1493 アプリの定数と migration の突き合わせ', () => {
     expect(APP_LOG_ALERT_COUNT_RPC).toEqual({
       server: 'app_log_error_counts',
       client: 'app_log_client_error_counts',
+      // #1193 届けられなかったメール (email_outbox の dead) を数える関数
+      email_dead_letter: 'email_outbox_dead_counts',
     });
     for (const name of Object.values(APP_LOG_ALERT_COUNT_RPC)) {
       expect(latestDefinition(name), name).not.toBeNull();
@@ -123,7 +126,13 @@ describe('#1493 アプリの定数と migration の突き合わせ', () => {
   });
 
   it('A-2: 通知のキーは種類ごとに別 (クールダウンを共有しない)。サーバーのキーは #1157 のまま', () => {
-    expect(APP_LOG_ALERT_KEYS).toEqual({ server: APP_LOG_ALERT_KEY, client: APP_LOG_CLIENT_ALERT_KEY });
+    expect(APP_LOG_ALERT_KEYS).toEqual({
+      server: APP_LOG_ALERT_KEY,
+      client: APP_LOG_CLIENT_ALERT_KEY,
+      email_dead_letter: EMAIL_DEAD_LETTER_ALERT_KEY,
+    });
+    expect(EMAIL_DEAD_LETTER_ALERT_KEY).toBe('email_dead_letter');
+    expect(new Set(Object.values(APP_LOG_ALERT_KEYS)).size).toBe(3);
     expect(APP_LOG_ALERT_KEY).toBe('app_logs_error_spike');
     expect(APP_LOG_CLIENT_ALERT_KEY).toBe('app_logs_client_error_spike');
     expect(APP_LOG_CLIENT_ALERT_KEY).not.toBe(APP_LOG_ALERT_KEY);
