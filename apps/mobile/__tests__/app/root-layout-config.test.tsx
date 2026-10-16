@@ -50,12 +50,9 @@ jest.mock('../../src/lib/pushNotifications', () => ({ ensurePushTokenRegistered:
 // 通知の受け取り口 (#1049 F7-11) は __tests__/components/NotificationRouter.test.tsx で確かめる
 jest.mock('../../src/components/NotificationRouter', () => ({ NotificationRouter: () => null }));
 jest.mock('../../src/lib/error-report', () => ({ reportBoundaryError: jest.fn() }));
-jest.mock('@expo-google-fonts/noto-sans-jp', () => ({
-  NotoSansJP_400Regular: 1,
-  NotoSansJP_500Medium: 2,
-  NotoSansJP_700Bold: 3,
-  useFonts: () => [true],
-}));
+// 字形 (Noto Sans JP) は読み込み済みとして扱う。読み込み中・失敗の扱いは __tests__/app/root-layout-fonts.test.tsx (#588)
+jest.mock('expo-font', () => ({ useFonts: () => [true, null] }));
+jest.mock('../../src/theme/fontSources', () => ({ notoSansJpFontSources: {} }));
 jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn(),
   hideAsync: jest.fn(),

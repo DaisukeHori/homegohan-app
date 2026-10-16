@@ -88,6 +88,9 @@ family / org / operator / mobile の各ドメインは本ドキュメントを�
 - **主要フォント**: Noto Sans JP (CJK 対応必須)
 - **フォールバック**: `"Noto Sans JP", "Helvetica Neue", Arial, sans-serif`
 - Next.js の `next/font/google` で最適化ロード
+- Mobile (apps/mobile): `expo-font` の `useFonts` で、同じ Noto Sans JP の Regular (400) / Medium (500) / Bold (700) を実行時に読み込む (ネイティブに埋め込まず、OTA の更新で届く。字形ごとの入口 `@expo-google-fonts/noto-sans-jp/<字形>` から読む)。読み込み中はスプラッシュを出したまま、失敗したときはシステムの字形で進める (#588)
+- Mobile の文字は共通の部品 (`apps/mobile/src/components/ui/Text.tsx` の `Text` / `TextInput`) で描く。`fontWeight` を字形に置き換える: 400 以下 → Regular・500 → Medium・600 以上 → Bold (web が 400 / 500 / 700 だけを読み込むときの CSS の字形の選び方と同じ)。Android は `fontWeight` だけでは太字の字形を選ばないため (#588)
+- Mobile でライブラリが中で描く文字 (react-navigation のタブの見出し `tabBarLabelStyle`・native-stack のヘッダの見出し `headerTitleStyle` と戻るボタンの文字 `headerBackTitleStyle`) も、`Text.tsx` の `useFontStyle` / `useFontFaceStyle` で同じ字形に置き換えて渡す (#588)
 
 ### 4.2 スケール
 

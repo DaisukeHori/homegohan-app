@@ -2,7 +2,8 @@ import { Ionicons } from "@expo/vector-icons";
 import * as Linking from "expo-linking";
 import { Link, router } from "expo-router";
 import { useState } from "react";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
+import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
 import { supabase } from "../../../src/lib/supabase";

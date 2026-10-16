@@ -18,10 +18,9 @@ import {
   Pressable,
   ScrollView,
   Switch,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../ui/Text";
 
 import { ConditionPills } from "./ConditionPills";
 import { UltimateModeToggle } from "./UltimateModeToggle";
