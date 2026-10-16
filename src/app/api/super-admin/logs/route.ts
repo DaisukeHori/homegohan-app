@@ -11,6 +11,7 @@
  * 絞り込み (すべて任意。組み合わせると AND):
  *   level / source / function_name / user_id / request_id : 完全一致
  *   from / to : created_at の範囲 (どちらも含む。ISO 8601。例: 2026-10-08T05:00:00Z)
+ *   q : message / error_message の部分一致 (大文字小文字を区別しない。1〜100 文字。#1708。索引は無い)
  * ページ送り: 新しい順に limit 件 (既定 50、最大 200)。続きがあれば meta.next_cursor が返るので、
  *   次のリクエストの cursor= にそのまま渡す (詳細は src/lib/super-admin/app-logs.ts)。
  *
@@ -20,13 +21,19 @@
  *
  * message / error_message / error_stack / metadata は保存されたまま返す。秘密情報のマスクは
  * 書き込み時に済んでいる (src/lib/db-logger.ts → supabase/functions/_shared/log-sanitizer.ts: #1171 / #1287)。
+ *
+ * 監査 (#1708。docs/design/operator/10-logs-and-mail-retry.md §10): 1 行以上返したときだけ、admin_audit_logs に
+ * super_admin.app_logs.list を 1 行残す (1 回の GET = 1 行。「さらに読み込む」も 1 行)。残すのは条件と件数だけで、
+ * ログの中身は残さない。0 件・401 / 403 / 400 / 500 / 504 は残さない。記録の失敗で応答は変えない (fail-open)。
  */
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { getSupabaseAdmin } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
+import { buildListViewDetails, recordAdminAudit } from '@/lib/admin/audit';
 import {
+  buildMessageSearchFilter,
   encodeAppLogCursor,
   olderThanCursorFilter,
   parseAppLogsQuery,
@@ -39,6 +46,13 @@ export const dynamic = 'force-dynamic';
 /** PostgreSQL の「時間切れでクエリを取り消した」エラー (statement_timeout) */
 const PG_QUERY_CANCELED = '57014';
 
+/** 構造化ログ (app_logs.function_name) と監査の記録の失敗のログに出す、この route の名前 */
+const ROUTE_NAME = 'GET /api/super-admin/logs';
+
+/** 監査ログ (admin_audit_logs) の action_type と target_type (#1708。docs/design/operator/10-logs-and-mail-retry.md §10) */
+const AUDIT_ACTION_TYPE = 'super_admin.app_logs.list';
+const AUDIT_TARGET_TYPE = 'app_log';
+
 /** ログの中身を返すので、ブラウザや途中の経路に保存させない */
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
@@ -50,7 +64,7 @@ function errorResponse(status: number, code: string, message: string, details?: 
 }
 
 export async function GET(request: NextRequest) {
-  const logger = createLogger('GET /api/super-admin/logs', generateRequestId());
+  const logger = createLogger(ROUTE_NAME, generateRequestId());
   try {
     // super_admin のみ許可 (admin も不可)。service role を使う前に必ずここを通す
     const user = await requireRole(['super_admin']);
@@ -59,7 +73,7 @@ export async function GET(request: NextRequest) {
     if (!parsed.ok) {
       return errorResponse(400, 'VALIDATION_ERROR', '入力値が不正です', parsed.details);
     }
-    const { level, source, function_name: functionName, user_id: userId, request_id: requestId, from, to, cursor, limit } =
+    const { level, source, function_name: functionName, user_id: userId, request_id: requestId, from, to, q, cursor, limit } =
       parsed.query;
 
     // app_logs の SELECT は RLS で本人の行だけ (#1171)。全体を読むには service role が要る
@@ -74,6 +88,8 @@ export async function GET(request: NextRequest) {
     if (functionName) query = query.eq('function_name', functionName);
     if (userId) query = query.eq('user_id', userId);
     if (requestId) query = query.eq('request_id', requestId);
+    // 本文の部分一致 (#1708)。値は二重引用符で囲み、ILIKE のワイルドカードもエスケープしてある (buildMessageSearchFilter)
+    if (q) query = query.or(buildMessageSearchFilter(q));
     if (from) query = query.gte('created_at', from);
     if (to) query = query.lte('created_at', to);
     // 続きのページ: 前のページの最後の行より古い行だけ (cursor は decode 済みで、形を検証してある)。
@@ -102,6 +118,7 @@ export async function GET(request: NextRequest) {
         request_id: requestId,
         from,
         to,
+        q,
         has_cursor: Boolean(cursor),
         limit,
       });
@@ -128,6 +145,36 @@ export async function GET(request: NextRequest) {
         next_cursor: hasMore && last ? encodeAppLogCursor({ created_at: last.created_at, id: last.id }) : null,
       },
     };
+
+    // 閲覧の監査 (#1708)。1 行以上返したときだけ、条件と件数を 1 行残す (ログの中身・行の ID は残さない)。
+    // INSERT は本人の権限の client (RLS audit_logs_insert_admins)。失敗しても応答は変えない (recordAdminAudit が app_logs に残す)
+    if (page.length > 0) {
+      await recordAdminAudit({
+        supabase: await createClient(),
+        actorId: user.id,
+        actionType: AUDIT_ACTION_TYPE,
+        targetId: null,
+        targetType: AUDIT_TARGET_TYPE,
+        details: buildListViewDetails(
+          {
+            level,
+            source,
+            function_name: functionName,
+            user_id: userId,
+            request_id: requestId,
+            from,
+            to,
+            q,
+            has_cursor: Boolean(cursor),
+          },
+          page.length,
+          null,
+        ),
+        request,
+        routeName: ROUTE_NAME,
+      });
+    }
+
     return NextResponse.json(body, { headers: NO_STORE });
   } catch (err) {
     if (err instanceof AuthError) {

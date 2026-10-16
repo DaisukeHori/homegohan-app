@@ -226,6 +226,41 @@ BAN 解除
 
 ---
 
+### GET /api/admin/users/{id}/login-history
+利用者のログイン履歴 (直近 20 回。#1720 段 D。canonical は `docs/design/cross/16-auth-history-sessions.md` §14.9)
+
+**権限**: `admin`, `super_admin` (`support` は 403)
+
+**レスポンス** (各行は `LoginHistoryEntrySchema` (cross/16 §12.5)。created_at の降順。`ended_at` は `revoked_at`):
+```json
+{
+  "data": {
+    "entries": [
+      {
+        "session_id": "uuid",
+        "created_at": "2026-10-15T01:00:00+00:00",
+        "last_active_at": "2026-10-15T02:00:00+00:00",
+        "device_label": "iPhone・iPad の Safari",
+        "device_name": null,
+        "ip_address": "203.0.113.7",
+        "country_code": "JP",
+        "ended_at": null,
+        "ended_reason": null,
+        "is_new_device": false,
+        "is_new_ip": false,
+        "is_new_country": false,
+        "alert_sent_at": null
+      }
+    ]
+  }
+}
+```
+
+- 行は service_role で読む。1 件以上返したときだけ `admin.user.view_login_history` を監査に 1 行 (details: `returned_count`。0 件は記録しない)
+- UUID でない id は 404 `NOT_FOUND`。401 / 403 は `{ error: { code, message } }` (`AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED`)。`Cache-Control: private, no-store`
+
+---
+
 ### GET /api/admin/users/{id}/audit-logs
 ユーザーへの操作履歴
 
@@ -336,7 +371,7 @@ BAN 解除
   行がもう無い (持ち主が先に消した) ときは `hidden: false` / `content_found: false`。すでに隠れていた行は `hidden: true` / `content_found: true`
   で、`hidden_ids` は空
   隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
-- 画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
+- 画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
 - `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
 
 ---
@@ -981,6 +1016,16 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 ### POST /api/super-admin/infra/alerts/{id}/acknowledge
 アラート確認
 
+### GET /api/super-admin/email-outbox
+メールの送信待ち (`email_outbox`) の一覧 (送信待ち / 送信済み / 届けられなかったもの。宛先はマスクし、件名・本文は返さない。#1193・#1708)。
+
+super_admin だけ。I/O・エラー・監査は `10-logs-and-mail-retry.md` §9.2・§10・§11
+
+### POST /api/super-admin/email-outbox/{id}/requeue
+届けられなかったメール (dead) を送信待ちに戻す (再送。#1193・#1708)。
+
+super_admin だけ。I/O・エラー・監査は `10-logs-and-mail-retry.md` §9.2・§10・§11
+
 ---
 
 ## 14. 営業 CRM API
@@ -1566,6 +1611,13 @@ NPS サーベイ送信 (日次 14:00 JST)
 
 ---
 
+### GET /api/cron/push-outbox
+Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#1136)。処理・応答・環境変数は `mobile/06-push-send.md` §6.6。
+
+**認証**: `CRON_SECRET` ヘッダー
+
+---
+
 ## 23. エラーコード一覧
 
 | コード | HTTP | 意味 |
@@ -1590,6 +1642,10 @@ NPS サーベイ送信 (日次 14:00 JST)
 | `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
 | `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行 |
+| `OP_EMAIL_OUTBOX_NOT_FOUND` | 404 | [NEW] 再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) の行が無い (`10-logs-and-mail-retry.md` §11) |
+| `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | 409 | [NEW] 再送できない行。`details.reason` が `not_dead` (届けられなかった行でない) か `redacted` (宛先を伏せた行) (`10-logs-and-mail-retry.md` §11) |
+| `AUTH_2FA_REQUIRED` | 403 | 二段階認証の確認が要る (必須ロールで認証アプリを登録済み・セッションが aal1)。`requireRole` が `MfaRequiredError` (`ForbiddenError` の派生) を投げ、運営の API は route の既存の 403 の code (`FORBIDDEN` / `OP_PERMISSION_DENIED` / `PERM_DENIED`) で返す (本文の message は「二段階認証の確認が必要です」)。この code を本文に出すのは自己サービスの `/api/auth/mfa/*` だけ。画面 (layout / page) は `requireRoleForPage` が MFA の画面へ回す (`cross/12-operator-mfa.md` §13.4・§19.3) |
+| `AUTH_2FA_ENROLLMENT_REQUIRED` | 403 | [NEW] 二段階認証の登録が要る (必須ロールで未登録・猶予なし・セッションが aal1)。扱いは `AUTH_2FA_REQUIRED` と同じ (`cross/12-operator-mfa.md` §19) |
 
 ## 24. テスト方針
 

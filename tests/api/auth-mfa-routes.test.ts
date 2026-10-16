@@ -515,6 +515,42 @@ describe('POST /api/auth/mfa/verify', () => {
   });
 });
 
+describe('POST /api/auth/mfa/verify: 大文字・混在の factor_id (#1793)', () => {
+  // 16 進の英字を含む id (Supabase の factor の id は小文字)。大文字・混在で送っても本人の factor として通る
+  const HEX_VERIFIED_FACTOR_ID = 'abcdef12-3456-4abc-8def-0123456789ab';
+  const HEX_UNVERIFIED_FACTOR_ID = 'fedcba98-7654-4cba-9fed-ba9876543210';
+  const mixedCase = (id: string) => id.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
+
+  it('verified な本人の factor の id を大文字で送ると 404 にならず 200 で、challengeAndVerify には小文字の id を渡す', async () => {
+    signIn({ factors: [factor(HEX_VERIFIED_FACTOR_ID, 'verified')] });
+    const result = await verify({ factor_id: HEX_VERIFIED_FACTOR_ID.toUpperCase(), code: '123456' });
+    expect(result.status).toBe(200);
+    expect(MfaVerifyResponseSchema.parse(result.body)).toEqual({ ok: true, aal: 'aal2' });
+    expect(mocks.userClient.auth.mfa.challengeAndVerify).toHaveBeenCalledTimes(1);
+    expect(mocks.userClient.auth.mfa.challengeAndVerify).toHaveBeenCalledWith({ factorId: HEX_VERIFIED_FACTOR_ID, code: '123456' });
+  });
+
+  it('unverified な本人の factor の id を大文字・小文字の混在で送ると登録として扱い (コード 10 個)、監査の factor_id は小文字', async () => {
+    signIn({ factors: [factor(HEX_UNVERIFIED_FACTOR_ID, 'unverified')] });
+    const sent = mixedCase(HEX_UNVERIFIED_FACTOR_ID);
+    expect(sent).not.toBe(HEX_UNVERIFIED_FACTOR_ID);
+    expect(sent).not.toBe(HEX_UNVERIFIED_FACTOR_ID.toUpperCase());
+    const result = await verify({ factor_id: sent, code: '654321' });
+    expect(result.status).toBe(200);
+    expect(result.body).toEqual({ ok: true, aal: 'aal2', backup_codes: TEN_CODES.map(formatBackupCode) });
+    expect(mocks.userClient.auth.mfa.challengeAndVerify).toHaveBeenCalledWith({ factorId: HEX_UNVERIFIED_FACTOR_ID, code: '654321' });
+    expect(auditCalls().map((c) => [c.action, c.details.factor_id])).toEqual([['admin.mfa.enroll', HEX_UNVERIFIED_FACTOR_ID]]);
+  });
+
+  it('他人の factor の id は大文字にしても 404 のまま (そろえても本人の factor にはならない)', async () => {
+    signIn({ factors: [factor(HEX_VERIFIED_FACTOR_ID, 'verified')] });
+    const result = await verify({ factor_id: HEX_UNVERIFIED_FACTOR_ID.toUpperCase(), code: '123456' });
+    expect(result.status).toBe(404);
+    expect(result.body.code).toBe('AUTH_2FA_NOT_ENROLLED');
+    expect(mocks.userClient.auth.mfa.challengeAndVerify).not.toHaveBeenCalled();
+  });
+});
+
 describe('POST /api/auth/mfa/recover', () => {
   it('POST /recover: 形の違うコードは DB に触れず 400 / 無いコード → 400 / verified な factor が無い → 409 / 消費できたら本人の全セッションを終え (admin.signOut の global)、全 factor を admin で消し、残りの行を消し、監査 warn (details { factors_deleted: 消した数, backup_codes_deleted: 消した行の数, failed_step: null })、next を返す / 4 回目 → 429', async () => {
     signIn({ factors: [factor(VERIFIED_FACTOR_ID, 'verified')] });

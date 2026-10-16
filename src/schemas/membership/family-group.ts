@@ -5,9 +5,10 @@ import { apiResponse } from '@/schemas/common';
 export const FamilyRoleSchema = z.enum(['representative','adult','child']);
 export const FamilyStatusSchema = z.enum(['active','dissolved']);
 
+// グループのプランは代表者の契約から DB のトリガーが決める (作成時には選べない)。
+// z.object は知らない鍵を捨てるので、plan_key を送る古い画面があっても 400 にならない (#1797 段 D)
 export const CreateFamilyGroupBodySchema = z.object({
   name: z.string().min(1).max(60),
-  plan_key: z.string().default('free'),
 });
 
 export const FamilyGroupSchema = z.object({

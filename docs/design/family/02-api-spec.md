@@ -75,17 +75,15 @@
 {
   "name": "田中家",
   "description": "我が家の食事管理",
-  "icon_url": null,
-  "plan_key": "free"
+  "icon_url": null
 }
 ```
 
 **バリデーション**:
 - `name`: 必須、1-100 文字、HTML タグ不可
 - `description`: 任意、0-500 文字
-- `plan_key`: `subscription_plans` に存在する family 系 plan_key
 
-**プラン**: 送った `plan_key` (`create_family_group` の `p_plan_key`) は効かない。作ったグループの `plan_key` / `member_limit` は、`family_groups` のトリガー `family_groups_billing_plan_follow_representative` が代表者の live な家族プランの契約に合わせる (契約が無ければ `free`)。トリガーは代表者の advisory `billing-user:<uuid>` を取り、課金の写像と直列になる (`docs/design/billing/01-billing-core.md` §6.4 (10)。01-data-model §4.1 の注)。
+**プラン**: グループのプランは代表者の契約から決まり、作成時には選べない (入力に `plan_key` があっても読まない。route は `create_family_group` を `p_name` だけで呼ぶ)。`plan_key` / `member_limit` は、`family_groups` のトリガー `family_groups_billing_plan_follow_representative` が代表者の live な家族プランの契約に合わせる (契約が無ければ `free`。手動付与の契約も同じ。billing/02 §6)。トリガーは代表者の advisory `billing-user:<uuid>` を取り、課金の写像と直列になる (`docs/design/billing/01-billing-core.md` §6.4 (10)。01-data-model §4.1 の注)。
 
 **レスポンス 201**:
 ```json
@@ -422,6 +420,7 @@ UC-ORG-17 シナリオ。
 - `role = 'child'` の場合: `user_id` は null 必須
 - `role = 'owner'` は不可 (transfer-owner で変更)
 - メンバー数 < `family_groups.member_limit`
+  - `member_limit` が下がって (家族プランの契約の終了・取り消し・期限切れ・代表者の交代) すでに上限を超えたグループでは、既存のメンバーを外さない。新しい招待の作成・承諾・子供の追加だけが止まる (billing/01 §18 の 15・billing/02 §16 の 6)
 
 **レスポンス 201**: 作成後の member オブジェクト
 
@@ -1169,12 +1168,12 @@ sequenceDiagram
   participant API as Next.js API Route
   participant DB as Supabase DB
   participant EF as Edge Function
-  participant Push as notify-push
+  participant Push as push_outbox (RPC enqueue_push_notification)
 
   Note over Client,Push: パターン③ 家族リクエストフロー
   Client->>API: POST /api/family/meal-requests { assignee_id: 夫UUID }
   API->>DB: INSERT family_meal_requests (status=pending)
-  API->>Push: notify assignee (Push通知)
+  API->>Push: enqueue_push_notification(assignee) (Push通知)
   API-->>Client: 201 { id, status: "pending" }
 
   Client->>API: POST /api/family/meal-requests/{id}/ai-propose
@@ -1185,15 +1184,17 @@ sequenceDiagram
 
   Client->>API: POST /api/family/meal-requests/{id}/propose
   API->>DB: UPDATE status=proposed
-  API->>Push: notify requester
+  API->>Push: enqueue_push_notification(requester)
   API-->>Client: 200 { status: "proposed" }
 
   Client->>API: POST /api/family/meal-requests/{id}/accept
   API->>DB: UPDATE status=accepted
   API->>DB: INSERT planned_meals (source_request_id)
-  API->>Push: notify assignee
+  API->>Push: enqueue_push_notification(assignee)
   API-->>Client: 200 { planned_meal_id }
 ```
+
+図の `Push` は送信待ちに積むだけで、Expo に送るのは worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md` §4。Edge Function `notify-push` は作らない)。家族の通知の種類は後回し (06 §3.2)。
 
 ## 13. テスト方針
 

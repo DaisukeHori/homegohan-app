@@ -22,6 +22,9 @@ const superAdminNavItems = [
 // 運用・監視。プラン管理とは見出しを分ける (アプリログはプランと関係ないため)
 const superAdminOperationsNavItems = [
   { href: '/super-admin/logs', label: 'アプリログ', icon: '📜' },
+  // 送信待ち・届けられなかったメールの一覧と再送 (#1708。docs/design/operator/10-logs-and-mail-retry.md §9.2)
+  { href: '/super-admin/email-outbox', label: 'メール送信', icon: '✉️' },
+  { href: '/super-admin/backups', label: 'バックアップ・DR', icon: '🗄️' },
 ];
 
 export default async function SuperAdminLayout({

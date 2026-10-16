@@ -10,6 +10,9 @@
  *   - 入力検証: 不正な値は 400 で、app_logs には触れない
  *   - エラー: DB の失敗は 500 (時間切れは 504)。中身は画面に出さず、原因と条件を記録する
  *   - 文面は保存されたまま返す (読み取り時には加工しない。秘密情報のマスクは書き込み時: #1171 / #1287)
+ *   - 本文の検索 q (#1708): message / error_message の部分一致 (大文字小文字を区別しない)。% _ \ " を文字どおりに探す
+ *   - 閲覧の監査 (#1708): 1 行以上返したら admin_audit_logs に super_admin.app_logs.list を 1 行 (条件と件数だけ)。
+ *     0 件・400・401・403・500 は残さない。記録に失敗しても 200 (fail-open)
  *
  * requireRole は本物 (src/lib/auth/helpers.ts) を使い、ログイン中のユーザーと user_profiles の取得だけを差し替える。
  * app_logs は、絞り込み・並べ替え・or 条件を実際に評価するフェイクに置き換える。列名は本番スキーマの app_logs
@@ -31,6 +34,10 @@ const state = vi.hoisted(() => ({
   } | null,
   adminClient: null as unknown,
   adminClientError: null as Error | null,
+  /** 本人の権限の client で admin_audit_logs に INSERT した行 (監査: #1708) */
+  auditInserts: [] as Array<Record<string, unknown>>,
+  /** admin_audit_logs の INSERT の結果 (既定は成功)。'throw' なら例外を投げる */
+  auditResult: { error: null } as { error: { message: string; code?: string } | null } | 'throw',
 }));
 const getSupabaseAdmin = vi.hoisted(() => vi.fn());
 /** createLogger(...).withUser(user.id).error の呼び出し (DB エラーの記録) */
@@ -49,6 +56,16 @@ vi.mock('@/lib/supabase/server', () => ({
     return {
       auth: { getUser, ...aal2AuthMock(getUser) },
       from: (table: string) => {
+        // 監査ログは本人の権限の client で INSERT する (RLS audit_logs_insert_admins。#1708)
+        if (table === 'admin_audit_logs') {
+          return {
+            insert: async (row: Record<string, unknown>) => {
+              if (state.auditResult === 'throw') throw new Error('audit insert crashed');
+              state.auditInserts.push(row);
+              return state.auditResult;
+            },
+          };
+        }
         if (table !== 'user_profiles') throw new Error(`本人の権限の client が ${table} に触れた`);
         const builder = {
           select: () => builder,
@@ -119,12 +136,22 @@ const OPERATORS: Record<string, (cmp: number) => boolean> = {
   gte: (cmp) => cmp >= 0,
 };
 
-/** 括弧の外にあるカンマで区切る */
+/** 括弧の外 (二重引用符の中も除く) にあるカンマで区切る。引用符の中の \ は次の 1 文字をそのまま扱う (PostgREST と同じ) */
 function splitTopLevel(text: string): string[] {
   const parts: string[] = [];
   let depth = 0;
   let current = '';
+  let inQuotes = false;
+  let escaped = false;
   for (const ch of text) {
+    if (inQuotes) {
+      current += ch;
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inQuotes = false;
+      continue;
+    }
+    if (ch === '"') inQuotes = true;
     if (ch === '(') depth += 1;
     if (ch === ')') depth -= 1;
     if (ch === ',' && depth === 0) {
@@ -141,6 +168,30 @@ function splitTopLevel(text: string): string[] {
 interface Condition {
   columns: string[];
   test: (row: Row) => boolean;
+}
+
+/** PostgREST の値: 二重引用符で囲んであれば外し、中の \x を x に戻す */
+function unquotePostgrestValue(value: string): string {
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) {
+    return value.slice(1, -1).replace(/\\([\s\S])/g, '$1');
+  }
+  return value;
+}
+
+/** ILIKE のパターン (% は任意の文字列、_ は任意の 1 文字、\ は次の 1 文字をそのまま) を、大文字小文字を区別しない正規表現にする */
+function ilikeToRegExp(pattern: string): RegExp {
+  const escapeRe = (ch: string) => ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  let source = '';
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i];
+    if (ch === '\\') {
+      i += 1;
+      source += escapeRe(pattern[i] ?? '');
+    } else if (ch === '%') source += '[\\s\\S]*';
+    else if (ch === '_') source += '[\\s\\S]';
+    else source += escapeRe(ch);
+  }
+  return new RegExp(`^${source}$`, 'i');
 }
 
 /** `col.op.value` または `and(...)` / `or(...)` の入れ子 (PostgREST の論理演算の書き方) を読む */
@@ -160,6 +211,13 @@ function parseCondition(term: string): Condition {
   const column = term.slice(0, first);
   const operator = term.slice(first + 1, second);
   const value = term.slice(second + 1);
+  if (operator === 'ilike') {
+    const re = ilikeToRegExp(unquotePostgrestValue(value));
+    return {
+      columns: [column],
+      test: (row) => typeof row[column] === 'string' && re.test(row[column] as string),
+    };
+  }
   const predicate = OPERATORS[operator];
   if (!predicate) throw new Error(`フェイク: 未対応の演算子 ${operator}`);
   return {
@@ -343,6 +401,8 @@ function indexes(json: { data: Array<{ id: string }> }): number[] {
 beforeEach(() => {
   vi.clearAllMocks();
   state.adminClientError = null;
+  state.auditInserts = [];
+  state.auditResult = { error: null };
   getSupabaseAdmin.mockImplementation(() => {
     if (state.adminClientError) throw state.adminClientError;
     return state.adminClient;
@@ -908,5 +968,174 @@ describe('GET /api/super-admin/logs: エラー', () => {
     expect(res.status).toBe(500);
     expect(json.error.code).toBe('INTERNAL_ERROR');
     expect(logError).toHaveBeenCalledWith(expect.any(String), expect.any(Error));
+  });
+});
+
+describe('GET /api/super-admin/logs: 本文の検索 q (#1708)', () => {
+  const rows = () => [
+    log(1, { message: 'request timeout after 10s', error_message: null }),
+    log(2, { message: 'ok', error_message: 'upstream TIMEOUT' }),
+    log(3, { message: 'progress 100% done', error_message: null }),
+    log(4, { message: 'progress 1000 done', error_message: null }),
+    log(5, { message: 'user_name changed', error_message: null }),
+    log(6, { message: 'username changed', error_message: null }),
+    log(7, { message: 'path C:\\tmp\\x', error_message: null }),
+    log(8, { message: 'said "hi", then (left).', error_message: null }),
+    log(9, { level: 'error', message: 'db timeout', error_message: null }),
+  ];
+
+  beforeEach(() => seed(rows()));
+
+  const orCalls = () => fake.queries[0].filter((c) => c.method === 'or').map((c) => c.args[0]);
+
+  it('q: message / error_message の部分一致 (大文字小文字を区別しない)。or の文字列を 1 つ付ける', async () => {
+    const { res, json } = await get('?q=timeout');
+
+    expect(res.status).toBe(200);
+    expect(indexes(json)).toEqual([9, 2, 1]);
+    expect(orCalls()).toEqual(['message.ilike."%timeout%",error_message.ilike."%timeout%"']);
+  });
+
+  it('q: % と _ と \\ と " は文字どおりに探す (ワイルドカードにしない・条件を分けない)', async () => {
+    expect(indexes((await get(`?q=${encodeURIComponent('100%')}`)).json)).toEqual([3]);
+    seed(rows());
+    expect(indexes((await get(`?q=${encodeURIComponent('user_name')}`)).json)).toEqual([5]);
+    seed(rows());
+    expect(indexes((await get(`?q=${encodeURIComponent('C:\\tmp')}`)).json)).toEqual([7]);
+    seed(rows());
+    expect(indexes((await get(`?q=${encodeURIComponent('"hi", then (left).')}`)).json)).toEqual([8]);
+  });
+
+  it('q はほかの絞り込みと AND', async () => {
+    const { json } = await get('?q=timeout&level=error');
+
+    expect(indexes(json)).toEqual([9]);
+  });
+
+  it('q はページ送りと組み合わせても、該当する行が 1 回ずつ出る', async () => {
+    const first = await get('?q=timeout&limit=2');
+    expect(indexes(first.json)).toEqual([9, 2]);
+    const next = await get(`?q=timeout&limit=2&cursor=${encodeURIComponent(first.json.meta.next_cursor)}`);
+    expect(indexes(next.json)).toEqual([1]);
+    expect(next.json.meta.next_cursor).toBeNull();
+  });
+
+  it.each([
+    ['101 文字', `?q=${'a'.repeat(101)}`],
+    ['制御文字 (改行)', '?q=a%0Ab'],
+    ['制御文字 (NUL)', '?q=%00'],
+  ])('q が %s なら 400 で、app_logs に触れず監査も残さない', async (_label, query) => {
+    const { res, json } = await get(query);
+
+    expect(res.status).toBe(400);
+    expect(json.error.code).toBe('VALIDATION_ERROR');
+    expect(Object.keys(json.error.details.fieldErrors)).toEqual(['q']);
+    expect(fake.queries).toHaveLength(0);
+    expect(state.auditInserts).toEqual([]);
+  });
+
+  it('DB の失敗の記録に q を残す', async () => {
+    fake.failNext({ code: '57014', message: 'canceling statement due to statement timeout' });
+
+    const { res } = await get('?q=timeout');
+
+    expect(res.status).toBe(504);
+    expect(logUserError).toHaveBeenCalledWith('アプリログの取得に失敗', expect.any(Error), expect.objectContaining({ q: 'timeout' }));
+  });
+});
+
+describe('GET /api/super-admin/logs: 閲覧の監査 (#1708)', () => {
+  beforeEach(() =>
+    seed([
+      log(1, { message: 'timeout a', user_id: USER_A }),
+      log(2, { message: 'b' }),
+      log(3, { message: 'timeout c', user_id: USER_A }),
+    ]),
+  );
+
+  it('1 行以上返したら admin_audit_logs に super_admin.app_logs.list を 1 行 (条件と件数だけ。ログの中身・行の ID は残さない)', async () => {
+    const { res } = await get(`?q=timeout&level=info&user_id=${USER_A}&limit=1`);
+
+    expect(res.status).toBe(200);
+    expect(state.auditInserts).toHaveLength(1);
+    const row = state.auditInserts[0];
+    expect(row).toMatchObject({
+      actor_id: ADMIN_ID,
+      action_type: 'super_admin.app_logs.list',
+      target_id: null,
+      target_type: 'app_log',
+      severity: 'info',
+    });
+    expect(row.details).toEqual({
+      filters: { level: 'info', user_id: USER_A, q: 'timeout', has_cursor: false },
+      returned_count: 1,
+      total: null,
+    });
+    const serialized = JSON.stringify(row);
+    expect(serialized).not.toContain('timeout c');
+    expect(serialized).not.toContain(logId(3));
+  });
+
+  it('「さらに読み込む」も 1 回の GET = 1 行 (has_cursor が true)', async () => {
+    const first = await get('?limit=2');
+    await get(`?limit=2&cursor=${encodeURIComponent(first.json.meta.next_cursor)}`);
+
+    expect(state.auditInserts).toHaveLength(2);
+    expect(state.auditInserts[0].details).toEqual({ filters: { has_cursor: false }, returned_count: 2, total: null });
+    expect(state.auditInserts[1].details).toEqual({ filters: { has_cursor: true }, returned_count: 1, total: null });
+  });
+
+  it('期間の条件も残す (from / to)', async () => {
+    await get('?from=2026-10-08T00:00:00Z&to=2026-10-09T00:00:00Z');
+
+    expect(state.auditInserts[0].details).toMatchObject({
+      filters: { from: '2026-10-08T00:00:00Z', to: '2026-10-09T00:00:00Z', has_cursor: false },
+      returned_count: 3,
+    });
+  });
+
+  it('0 件は記録しない', async () => {
+    const { res, json } = await get('?q=nothing-matches');
+
+    expect(res.status).toBe(200);
+    expect(json.data).toEqual([]);
+    expect(state.auditInserts).toEqual([]);
+  });
+
+  it('400・401・403・500・504 は記録しない', async () => {
+    expect((await get('?level=fatal')).res.status).toBe(400);
+
+    state.user = null;
+    expect((await get()).res.status).toBe(401);
+
+    asUser(['admin']);
+    expect((await get()).res.status).toBe(403);
+
+    asUser(['super_admin']);
+    fake.failNext({ code: '42P01', message: 'boom' });
+    expect((await get()).res.status).toBe(500);
+
+    fake.failNext({ code: '57014', message: 'timeout' });
+    expect((await get()).res.status).toBe(504);
+
+    expect(state.auditInserts).toEqual([]);
+  });
+
+  it('記録に失敗しても ({ error } でも例外でも) 200 で一覧を返す (fail-open)。失敗はログに残す', async () => {
+    state.auditResult = { error: { message: 'new row violates row-level security policy', code: '42501' } };
+    const failed = await get();
+    expect(failed.res.status).toBe(200);
+    expect(indexes(failed.json)).toEqual([3, 2, 1]);
+
+    state.auditResult = 'throw';
+    const crashed = await get();
+    expect(crashed.res.status).toBe(200);
+    expect(indexes(crashed.json)).toEqual([3, 2, 1]);
+
+    expect(logError).toHaveBeenCalledWith(
+      '監査ログ (admin_audit_logs) への記録に失敗しました',
+      expect.any(Error),
+      expect.objectContaining({ action_type: 'super_admin.app_logs.list' }),
+    );
   });
 });

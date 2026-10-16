@@ -56,6 +56,7 @@
 | └ Cron ジョブ | super_admin |
 | └ データエクスポート | super_admin |
 | └ インフラ監視 | super_admin |
+| └ メール送信 (`/super-admin/email-outbox`。送信待ち・届けられなかったメールの一覧と再送。`10-logs-and-mail-retry.md` §9.2。#1708) | super_admin |
 | └ 管理者管理 | super_admin |
 | └ DB 管理 | super_admin |
 | └ LLM 使用量 | super_admin |
@@ -147,6 +148,11 @@
 **管理ノートタブ**:
 - 時系列ノート一覧
 - 追加フォーム (Markdown エディタ)
+
+**ログイン履歴 (直近 20 回)** (#1720 段 D。cross/16 §17):
+- 出す条件: 実行者が admin / super_admin のとき (`GET /api/admin/users/{id}/login-history` を呼ぶ。support には節を出さず、API も呼ばない)
+- 列見出しは左から「日時」「端末」「IP」「国」「印」「通知メールを送信待ちに登録した日時」「終了」の 7 つ。日時は日本時間。端末は `device_label` に、端末名があれば「(端末名: …)」を添える。印は「新しい端末」「新しい接続元」「新しい地域」(無ければ「-」)。送信待ちに登録した日時が無い行は「なし」。終了は理由と日時 (ログイン中は「-」)
+- 0 件は「記録なし」。読み込めない (403 / 500 / 通信の失敗) ときは節の中に「ログイン履歴を読み込めませんでした」だけを出し、ページの他の節は描く
 
 **二段階認証を解除** (段 C #1707。`src/components/admin/OperatorMfaResetSection.tsx`。cross/12 §15・§15.3):
 - 出す条件: 実行者が super_admin で、対象が二段階認証の必須ロール (super_admin / admin / finance / org_industrial_doctor) のどれかを持つとき

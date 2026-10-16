@@ -68,7 +68,7 @@ v1.8 (段 B の前の改定) は、この 1 冊の中の段 B の記述 (通知�
 | `docs/design/mobile/05-auth-session.md` | §2・§3・§6 | ネイティブと WebView のセッションは同じ `auth.sessions` の 1 行 (§8 の行 8) |
 | `docs/design/operator/07-audit-monitoring.md` | §4.1.1 | 運営の閲覧の監査の形 (`admin.user.view` と同じ) |
 | `docs/operations/auth-protection.md` | §2・§3 | Supabase Auth の設定値の置き場。本書の前提 (§24) を足す |
-| `docs/design/cross/13a-legal-consent-api-server.md` (マージ済みの設計・未実装) | §6.4 の許可リスト `LEGAL_CONSENT_EXEMPT_API_PATHS` | `/api/auth` (prefix・`auth_flow`) と `/api/cron` (prefix・`no_user_session`) が許可リストにあるので、本書の `/api/auth/sessions*`・`/api/auth/login-history`・`/api/auth/password/*`・`/api/cron/login-alerts` は同意のゲートで止まらない (未同意でも端末の失効・パスワードの変更ができる)。`/api/admin/users/{id}/login-history` は 13a の扱いのまま。本書から 13a は変えない |
+| `docs/design/cross/13a-legal-consent-api-server.md` (設計・実装とも main にある。実装は #1697) | §6.4 の許可リスト `LEGAL_CONSENT_EXEMPT_API_PATHS` | `/api/auth` (prefix・`auth_flow`) と `/api/cron` (prefix・`no_user_session`) が許可リストにあるので、本書の `/api/auth/sessions*`・`/api/auth/login-history`・`/api/auth/password/*`・`/api/cron/login-alerts` は同意のゲートで止まらない (未同意でも端末の失効・パスワードの変更ができる)。`/api/admin/users/{id}/login-history` は 13a の扱いのまま。本書から 13a は変えない |
 | `docs/design/cross/12-operator-mfa.md` (段 A〜C マージ済み: #1715・#1754・#1783) | §3.1・§13.2 | `auth.getClaims` の使い方が同じ。識別子は共有しない: `src/lib/auth/mfa/assurance.ts` の `SessionClaimsSchema` (`aal` を読む) と本書の `src/lib/auth/sessions/session-claims.ts` の `SessionClaimsSchema` (`session_id`・`amr` を読む) は形が違い、寄せない (§25 Q-5)。本書の段 B 以降のファイルは `@/lib/auth/mfa/assurance` を import しない (cross/12 の走査 ⑥ §22 N-42) |
 | `docs/design/operator/10-logs-and-mail-retry.md` (#1193 / #1708。送信待ちの表と RPC・`sendEmail` の載せ替えと worker (#1760)・秘密の伏せ字 (#1785) がマージ済み) | §5.2 (RPC `complete_email_outbox` / `fail_email_outbox`)・§6.3 (`sendEmail` は登録だけ)・§6.7 (`contains_secret`)・§7.1・§7.3・§8 (dead の運用メール)・§9.2 (再送の画面と API。段 C で、origin/main には無い §3) | 本書の通知メールはこの送信待ちを通る (§13.3)。`sendEmail` の `ok: true` は「送信待ちに登録した」で、配信の成否は含まない。届けられなかった通知の扱い (運用メール・再送) は 10 の持ち物で、本書は書き戻さない (§7.1・§10.2)。段 C の前は再送の経路がアプリに無い (§10.2 #8) |
 
@@ -1930,7 +1930,7 @@ ${emailSignature()}
 | `AUTH_ACCOUNT_FROZEN` (既存) | 403 | 全部 | 既存 |
 | `AUTH_RECOVERY_SESSION_REQUIRED` (新) | 403 | reset | 「パスワードの再設定は、再設定メールのリンクから開き直してください。」 |
 | `AUTH_REAUTHENTICATION_REQUIRED` (新) | 403 | change | 「安全のため、もう一度ログインしてから変更してください。」 |
-| `PERM_DENIED` (既存) | 403 | admin API (support) | 既存 |
+| `OP_PERMISSION_DENIED` (既存) | 403 | admin API (support) | 既存 (`GET /api/admin/users/{id}` と同じ nested の本文 §14.9) |
 | `AUTH_SESSION_NOT_FOUND` (新) | 404 | sessions/{id}・current | 「その端末のログインは、すでに終了しています。」 |
 | `AUTH_SESSION_IS_CURRENT` (新) | 409 | sessions/{id} | 「いま使っている端末は、ここでは解除できません。ログアウトを使ってください。」 |
 | `AUTH_PASSWORD_NOT_SET` (新) | 409 | change だけ (`no_password`・`unsupported_hash`。再設定は返さない §11.5) | 「このアカウントはパスワードでログインしていないため、変更できません。」(`unsupported_hash` は §14.6 の 5 の文) |

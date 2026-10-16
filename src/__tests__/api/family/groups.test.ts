@@ -22,7 +22,7 @@ vi.mock('next/server', async () => {
 const { POST } = await import('@/app/api/family/groups/route');
 
 const validUser = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', email: 'mom@example.com' };
-const validBody = { name: '山田家', plan_key: 'free' };
+const validBody = { name: '山田家' };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -47,6 +47,29 @@ describe('POST /api/family/groups', () => {
 
     expect(res.status).toBe(201);
     expect(json.data.family_group).toBeDefined();
+  });
+
+  it('POST /api/family/groups calls create_family_group with p_name only (no p_plan_key) and ignores plan_key in the body', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: validUser }, error: null });
+    mockRpc.mockResolvedValue({
+      data: { id: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22', name: '山田家', plan_key: 'free', member_limit: 4 },
+      error: null,
+    });
+
+    // 古い画面・古い呼び出し元が plan_key を送ってきても 400 にならず、RPC にも渡らない (#1797 段 D)
+    const res = await POST(
+      new Request('http://localhost/api/family/groups', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: '山田家', plan_key: 'family_plus' }),
+      }),
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('create_family_group', { p_name: '山田家' });
+    const [, args] = mockRpc.mock.calls[0];
+    expect(Object.keys(args)).toEqual(['p_name']);
   });
 
   it('未認証: 401 を返す', async () => {

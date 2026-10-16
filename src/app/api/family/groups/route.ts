@@ -46,13 +46,13 @@ export async function POST(request: Request) {
     );
   }
 
-  const { name, plan_key } = parsed.data;
+  const { name } = parsed.data;
 
   // RPC: create_family_group
   // 内部で ALREADY_IN_FAMILY チェックを行う
+  // プランは渡さない: グループの plan_key / member_limit は DB のトリガーが代表者の契約に合わせて決める (#1797 段 D)
   const { data, error } = await supabase.rpc('create_family_group', {
     p_name: name,
-    p_plan_key: plan_key,
   });
 
   if (error) {
