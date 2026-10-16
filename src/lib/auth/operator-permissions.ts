@@ -4,7 +4,7 @@
  */
 
 import { createClient } from '@/lib/supabase/server';
-import { AuthError, ForbiddenError } from './errors';
+import { requireRole } from './helpers';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 権限定義
@@ -43,31 +43,12 @@ export function canOperate(roles: string[], permission: OperatorPermission): boo
 /**
  * 現在の認証ユーザーが super_admin かどうかを確認する。
  * API Route ハンドラの冒頭で呼び出す。
- * 未認証なら AuthError (401)、権限不足なら ForbiddenError (403) を throw する。
+ * requireRole(['super_admin']) に委ねる (#1176。docs/design/cross/12-operator-mfa.md §13.5): 凍結判定と AAL2 の判定が付く。
+ * 未認証なら AuthError (401)、権限不足・凍結・2FA 未完了なら ForbiddenError (派生の MfaRequiredError を含む。403) を throw する。
  */
 export async function requireSuperAdmin(): Promise<{ userId: string }> {
-  const supabase = await createClient();
-  const { data: { user }, error: authError } = await supabase.auth.getUser();
-  if (authError || !user) {
-    throw new AuthError('AUTH_UNAUTHENTICATED', '認証が必要です');
-  }
-
-  const { data: profile, error: profileError } = await supabase
-    .from('user_profiles')
-    .select('roles')
-    .eq('id', user.id)
-    .single();
-
-  if (profileError || !profile) {
-    throw new AuthError('AUTH_PROFILE_NOT_FOUND', 'プロフィールが見つかりません');
-  }
-
-  const roles: string[] = (profile.roles ?? []) as string[];
-  if (!roles.includes('super_admin')) {
-    throw new ForbiddenError('PERM_DENIED', 'super_admin 権限が必要です');
-  }
-
-  return { userId: user.id };
+  const profile = await requireRole(['super_admin']);
+  return { userId: profile.id };
 }
 
 /**

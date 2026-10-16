@@ -7,10 +7,9 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect, notFound } from 'next/navigation';
+import { notFound } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { normalizeProfileName } from '@/lib/profile-name';
 
@@ -32,17 +31,9 @@ interface UserDetailApiResponse {
 
 export default async function AdminUserFreezePage(props: PageProps) {
   const params = await props.params;
-  let actor;
-  try {
-    actor = await requireRole(['admin', 'super_admin']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
-
   const { id } = params;
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  const actor = await requireRoleForPage(['admin', 'super_admin'], { next: `/admin/users/${encodeURIComponent(id)}/freeze` });
 
   // GET /api/admin/users/{id} 経由で凍結状態取得
   const res = await adminFetch(`/api/admin/users/${id}`);

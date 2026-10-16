@@ -26,7 +26,7 @@ interface MyChallenge {
   startDate: string;
   endDate: string;
   status: string;
-  /** 参加者が最小人数に満たないときは null (API が人数を返さない) */
+  /** これまでに参加した人の延べ数 (やめても減らない)。最小人数に満たないときは null (API が人数を返さない) */
   participantCount: number | null;
   joined: boolean;
   me: { currentValue: number; rank: number | null; joinedAt: string | null } | null;
@@ -110,7 +110,7 @@ export default function ChallengesPage() {
           <ul className="list-disc pl-5 space-y-1 text-emerald-900">
             <li>参加すると、チャレンジの期間中の食事の記録から、朝食をとれた日の割合などを自動で計算します。</li>
             <li>順位が見えるのは、参加した人だけです。</li>
-            <li>会社の管理者には、参加者全体の人数と平均だけが表示されます (参加者が少ない間は、人数も平均も表示されません)。あなたの記録や順位は表示されません。</li>
+            <li>会社の管理者には、参加した人数と、チャレンジが終了したあとの平均だけが表示されます (参加した人が少ない間は表示されません)。あなたの記録や順位は表示されません。</li>
             <li>参加は、いつでもやめられます。</li>
           </ul>
         </section>

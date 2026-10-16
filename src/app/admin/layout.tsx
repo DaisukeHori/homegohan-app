@@ -11,22 +11,18 @@
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { MfaGraceBanner } from '@/components/admin/MfaGraceBanner';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { DSR_ADMIN_PATH } from '@/lib/data-subject-requests/core';
 
+/** 認証・2FA の画面から戻る先 (区画のトップ。docs/design/cross/12-operator-mfa.md §13.4.2) */
+const ADMIN_AREA_NEXT = '/admin';
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
-  let actor;
-  try {
-    actor = await requireRole(['admin', 'super_admin', 'content_moderator']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。cross/12 §13.4)
+  const actor = await requireRoleForPage(['admin', 'super_admin', 'content_moderator'], { next: ADMIN_AREA_NEXT });
+  const grace = actor.assurance?.decision === 'pass_grace' ? actor.assurance.enforce_from : null;
 
   const isSuperAdmin = actor.roles.includes('super_admin');
   const isAdmin = actor.roles.includes('admin') || isSuperAdmin;
@@ -186,6 +182,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
       {/* メインコンテンツ */}
       <div className="flex-1 flex flex-col min-w-0">
+        {/* 二段階認証の登録の猶予 (未登録の必須ロール。cross/12 §15) */}
+        {grace ? <MfaGraceBanner enforceFrom={grace} next={ADMIN_AREA_NEXT} /> : null}
         {/* ヘッダー */}
         <header className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
           <div className="text-sm text-gray-500">管理コンソール</div>
