@@ -1413,7 +1413,7 @@ origin/main (`8c682e42`) の 14 ファイルは、どれも `try { await require
 - 動的なセグメントは `encodeURIComponent` してからパスに入れる (`requireRoleForPage` は `next` 全体をもう一度 `encodeURIComponent` して query に入れる。MFA の画面は `getSafeRedirectPath` で 1 段だけ戻すので、セグメントの中の `/` や `?` がパスを壊さない)。
 - layout と page は同じ要求で並んで描かれ (Next の App Router)、先に `redirect()` した方の `next` が使われる。区画のトップ (layout の `next`) に戻るか、開こうとした画面 (page の `next`) に戻るかのどちらかで、どちらも正しい行き先として扱う。
 - `MfaGraceBanner` を描くのは layout 3 つと (support) の server layout (§13.4.1) だけ。`actor.assurance?.decision === 'pass_grace'` のとき `<MfaGraceBanner enforceFrom={actor.assurance.enforce_from} next={上の表の値} />` を置く。置き場: `admin/layout.tsx` はメインコンテンツの `<header>` の直前、super-admin と (operator) の layout は `<main>` の中の `<div className="p-8 max-w-7xl mx-auto">` の最初の子。super-admin と (operator) の layout は今 `requireRole` の戻り値を受けていないので、`const actor = await requireRoleForPage(...)` にする。
-- 確かめるテスト: §21.1 の `tests/operator-page-guard-wiring.test.tsx` (14 ファイルの値をこの表と突き合わせる)。
+- 確かめるテスト: §21.1 の `tests/operator-page-guard-wiring.test.ts` (14 ファイルの値をこの表と突き合わせる)。
 
 ### 13.5 `src/lib/auth/operator-permissions.ts` — `requireSuperAdmin` (変更・段 B)
 
