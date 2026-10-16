@@ -58,7 +58,7 @@
 30. handson_tour 関連 (§3.26)  ← family/09 連携: user_profiles 2 列追加 + meals.is_sandbox + user_daily_meals.is_sandbox + badges seed + RPC 2 本
 31. operator_mfa_backup_codes (§3.27)  ← cross/12 §11.1。auth.users への FK だけで、他の運営の表に依存しない (migration 20261016230000)
 32. email_outbox (正本は 10-logs-and-mail-retry.md §5)
-33. auth_history_sessions (§3.23・§3.25 の改定)  ← cross/16 §11。user_sessions_metadata の列・auth.sessions / auth.users のトリガー・RPC・pg_cron (migration 20261016236000)
+33. auth_history_sessions (§3.23・§3.25 の改定)  ← cross/16 §11。user_sessions_metadata の列・auth.sessions / auth.users のトリガー・RPC・pg_cron (migration 20261016243000)
 ```
 
 ### 3.2 `subscription_plans` — プラン定義マスター

@@ -116,7 +116,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | JWT (access token) の有効期間 (Authentication → Sessions) | | 既定の 1 時間以下にする。失効させた端末が PostgREST を直接呼ぶ要求は、JWT の期限まで通る (cross/16 §24) |
 | Session timebox / inactivity timeout (Authentication → Sessions) | | **使わない** (未設定のまま)。代わりに pg_cron のジョブ `cleanup-auth-sessions-and-login-history` が、30 日更新の無いセッションを終える (cross/16 §11.6) |
 | `auth.sessions` / `auth.users` のトリガー 4 本が残っているか | | 年に 1 回、SQL エディタで `SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal` を流し、`on_auth_session_created`・`on_auth_session_refreshed`・`on_auth_session_deleted`・`on_auth_user_password_changed` の 4 行があることを確かめる。Supabase 側の移行で表が作り直されると消え、ログインの記録とパスワードの履歴が止まる (ログインは止まらない) |
-| その 4 本のトリガーの消し方 | | 表の所有者 (`supabase_auth_admin`) でないと消せない。migration のロールバック (`supabase/rollbacks/20261016236000_auth_history_sessions.down.sql`) は関数の本体を空にして残す (cross/16 §11.7)。トリガーそのものを消すときは Supabase のサポートに頼む |
+| その 4 本のトリガーの消し方 | | 表の所有者 (`supabase_auth_admin`) でないと消せない。migration のロールバック (`supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`) は関数の本体を空にして残す (cross/16 §11.7)。トリガーそのものを消すときは Supabase のサポートに頼む |
 
 ### 3.3 メール送信についての注意
 

@@ -1,4 +1,4 @@
--- migration: 20261016236000_auth_history_sessions.sql
+-- migration: 20261016243000_auth_history_sessions.sql
 -- ログイン履歴・不審なログインの通知・セッションの一覧と失効・パスワードの再利用の防止 の DB (#1190・#1189・#1198。段 A。
 -- 設計の正典 docs/design/cross/16-auth-history-sessions.md §11。下の SQL は §11.1〜§11.6 の写し)
 --
@@ -12,7 +12,7 @@
 --    auth_password_check (現在のパスワードの確認と履歴の照合) (§11.4・§11.5)
 -- 5. 保守の関数 3 本と pg_cron のジョブ cleanup-auth-sessions-and-login-history (毎日 03:55 JST) (§11.6)
 --
--- 戻し方: supabase/rollbacks/20261016236000_auth_history_sessions.down.sql (auth の表のトリガー 4 本は消せないので、関数の本体を空にして残す §11.7)
+-- 戻し方: supabase/rollbacks/20261016243000_auth_history_sessions.down.sql (auth の表のトリガー 4 本は消せないので、関数の本体を空にして残す §11.7)
 -- 確かめるテスト: tests/auth-history-sessions-migration-contract.test.ts (文面)・tests/integration/security/auth-history-sessions.test.ts (実 DB)・
 --   tests/integration/security/anon-definer-execute.test.ts (EXECUTE の権限)
 
