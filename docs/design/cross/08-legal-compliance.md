@@ -820,6 +820,8 @@ $$);
      顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない (まだ何も変えていないので、やり直せる)
    - 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す: RPC prepare_account_deletion
      (メール配信ログ・問い合わせ・組織/家族の招待・家族の昇格リクエスト。pending の招待は revoked にする。失敗したら削除しない)
+     送信待ち (email_outbox。#1193・docs/design/operator/10-logs-and-mail-retry.md §5.3 の 1b・1c): 本人の行 (user_id か宛先が本人) は
+     宛先・件名・本文を伏せ、queued は dead (recipient_deleted) にする。他人宛の行は、件名・本文・返信先の中の本人のアドレスの部分だけを伏せ、状態は変えない
    - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける)
    - Storage のファイル削除: meal_photos / fridge-images / health-checkups の `<user_id>/` 以下、旧パス、
      DB の URL が指す本人のファイル (失敗したら削除しない)
@@ -838,6 +840,8 @@ $$);
 6. 削除完了メールを本人へ 1 通送る (#1152。src/lib/account-deletion-notification.ts)
    - 宛先は auth.users の登録アドレス。手順 3 の後・手順 4 の前に service_role の getUserById で控え、メモリ上だけで使う
      (app_logs・email_delivery_logs には生のアドレスを残さない。送信の失敗の記録は sendEmail がマスクした宛先で残す)
+   - 完了メールは email_outbox に redact_after_send で登録し、送れたとき (sent)・届けられなかったとき (dead) に宛先・件名・本文を伏せる。
+     宛先が停止リストに載っていれば行を作らない (#1193)
    - 送るのは手順 5 が実際に削除したときだけ。409・500・すでに消えていたユーザーのやり直し (deleteUser が 404) では送らない
    - 本文は退会日時 (日本時間) と問い合わせ先 (site-config の getSupportEmail)。送信元は site-config の getEmailFrom
    - best-effort: 送信の失敗・時間切れ (待つのは最長 5 秒) でも応答は 200 のまま。失敗は app_logs に残す (user_id を付けない)
@@ -861,6 +865,8 @@ $$);
 | Stripe の顧客・サブスクリプション | サブスクリプションは即時に解約し、顧客は氏名・メールを消す匿名化をして残す (#1562) | 実装済み (billing/01 §11)。§16.2 の手順 4 の段階 billing (`prepare` の前) と billing_recheck (`deleteUser` の直前) が、開いたままの Checkout を閉じ、終端でない契約を即時解約し、顧客を匿名化する。退会のあとに Stripe に生まれた契約は、写像の入口 (`syncSubscription`) が即時解約する (billing/01 §8.6) |
 | 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
 | 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスは、退会に関係なく生のアドレスを持たない (#1562。migration 20261016190000)。トリガーが `email` を `email_hash` (正規化したアドレスの HMAC。鍵は Vault の `pii_hmac_key`) に置き換え、既存の行も置き換えた。#1163 の 24 時間の送信上限は `email_hash` 同士で比べるので、退会しても上限は戻らない |
+| 送信待ちの宛先 (`email_outbox.to_email`) | 削除または匿名化 | 実装済み (#1193)。RPC `prepare_account_deletion` が本人の行の宛先・件名・本文を伏せ (queued は dead)、他人宛の行の件名・本文・返信先の中の本人のアドレスだけを伏せる。退会の完了メールは送れたあと・届けられなかったあとに伏せる |
+| 送信待ちの送信元 (`email_outbox.from_email`) | 伏せない | 送信元はアプリのアドレス (`EMAIL_FROM`・運用メールも同じ) で、利用者のものではない |
 | 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い (削除の実行記録)
