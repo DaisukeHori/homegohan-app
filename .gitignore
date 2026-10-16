@@ -12,6 +12,8 @@ node_modules/
 
 # testing
 /coverage
+# vitest 5 の成果物の置き場 (json / junit の reporter を出力先なしで使ったとき・添付など。#1621)
+/.vitest/
 
 # playwright
 /test-results/
