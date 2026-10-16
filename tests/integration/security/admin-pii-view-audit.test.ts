@@ -20,6 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { signInForIntegration } from '../helpers/mfa';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -40,7 +41,6 @@ function client(key: string): SupabaseClient {
 }
 
 const srAdmin = client(serviceKey);
-const anon = () => client(anonKey);
 
 interface TestUser {
   id: string;
@@ -71,10 +71,9 @@ async function createUser(label: string, roles?: string[]): Promise<TestUser> {
     if (roleError) throw new Error(`roles ${label}: ${roleError.message}`);
   }
 
-  // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
-  const signIn = await anon().auth.signInWithPassword({ email, password });
-  if (signIn.error || !signIn.data.session) throw new Error(`signIn ${label}: ${signIn.error?.message}`);
-  return { id: data.user.id, jwt: signIn.data.session.access_token };
+  // サインインは使い捨てのクライアントで行う。必須ロールなら TOTP で aal2 にする (#1176。cross/12 §22.4.1)
+  const jwt = await signInForIntegration({ email, password, roles: roles ?? [] });
+  return { id: data.user.id, jwt };
 }
 
 async function call(

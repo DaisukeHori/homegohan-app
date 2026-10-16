@@ -84,6 +84,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
         return;
       }
       if (res.status === 401) {
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- セッション切れ (401)。ページごとログインへ移り、middleware に Cookie とログインの状態を判定し直させる
         window.location.assign(
           `/login?next=${encodeURIComponent(`${LEGAL_CONSENT_PATH}?next=${encodeURIComponent(next)}`)}`,
         );

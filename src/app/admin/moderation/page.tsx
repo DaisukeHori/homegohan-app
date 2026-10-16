@@ -11,10 +11,8 @@
 
 export const dynamic = 'force-dynamic';
 
-import { redirect } from 'next/navigation';
 import Link from 'next/link';
-import { requireRole } from '@/lib/auth/helpers';
-import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { PreparingNotice } from '@/components/operator/PreparingNotice';
 
@@ -43,14 +41,8 @@ interface ModerationApiResponse {
 
 export default async function AdminModerationPage(props: PageProps) {
   const searchParams = await props.searchParams;
-  try {
-    await requireRole(['admin', 'super_admin', 'content_moderator']);
-  } catch (err) {
-    if (err instanceof AuthError || err instanceof ForbiddenError) {
-      redirect('/login');
-    }
-    throw err;
-  }
+  // 未認証 → /login?next=・2FA 未完了 → MFA の画面・ロール不足 / 凍結 → /login (#1176。docs/design/cross/12-operator-mfa.md §13.4.2)
+  await requireRoleForPage(['admin', 'super_admin', 'content_moderator'], { next: '/admin/moderation' });
 
   const status = searchParams.status ?? 'pending';
   const type = searchParams.type ?? '';

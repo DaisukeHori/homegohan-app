@@ -7,7 +7,7 @@
  *   - sanitizeWebPath: deep link の initialPath などから来るパスの検証 (open redirect / authority 注入)
  *   - withAppMode / buildWebUrl / buildBridgeUrl: URL に載るのは code と next だけでトークンは載らない
  *   - decideNavigation / decideOpenWindow / openExternalUrl: WebView を自オリジンに固定し外部は既定ブラウザへ
- *     (CSP が許す iframe = Turnstile は WebView の中で読み込む。WEB_VIEW_EMBED_ORIGINS と next.config.mjs の frame-src の突き合わせ)
+ *     (CSP が許す iframe = Turnstile は WebView の中で読み込む。WEB_VIEW_EMBED_ORIGINS と src/lib/security/csp.ts の frame-src の突き合わせ)
  *   - buildOriginGuardScript / buildNavigateScript: 注入スクリプトのオリジンガード
  *   - getSessionForBridge: access_token の残りが少ないときの事前 refresh (Web 側の下限 150 秒との関係は webViewBridge.supabase.test.ts も参照)
  *   - requestBridgeCode: Bearer 認証の POST、失敗時は null、ログにトークンを出さない
@@ -769,7 +769,7 @@ describe('decideNavigation()', () => {
     });
   });
 
-  // Web の CSP (next.config.mjs の frame-src) は Cloudflare Turnstile の iframe を許す (#1165 / #1474)。
+  // Web の CSP (src/lib/security/csp.ts の frame-src) は Cloudflare Turnstile の iframe を許す (#1165 / #1474)。
   // iOS はサブフレームの読み込みも onShouldStartLoadWithRequest に渡すので、ここで止めると
   // /login・/settings/account (パスワード変更) で Turnstile のトークンが取れず、送信できなくなる
   it('他オリジンの http(s) のサブフレーム (isTopFrame:false) は WebView の中で読み込む (外部ブラウザは開かない)', () => {
@@ -831,19 +831,20 @@ describe('decideNavigation()', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// WEB_VIEW_EMBED_ORIGINS と Web の CSP (next.config.mjs の frame-src) の突き合わせ
+// WEB_VIEW_EMBED_ORIGINS と Web の CSP (src/lib/security/csp.ts の frame-src) の突き合わせ
 //   OTA が無効なので、Web が新しい埋め込み先を CSP に足したとき、配布済みのアプリは後から直せない。
 //   CSP の frame-src に他オリジンを足したら、モバイルの WEB_VIEW_EMBED_ORIGINS にも足させる
 // ─────────────────────────────────────────────────────────────────────────────
-describe('WEB_VIEW_EMBED_ORIGINS と next.config.mjs の frame-src', () => {
-  const NEXT_CONFIG_PATH = path.resolve(__dirname, '../../../../next.config.mjs');
+describe('WEB_VIEW_EMBED_ORIGINS と src/lib/security/csp.ts の frame-src', () => {
+  const WEB_CSP_SOURCE_PATH = path.resolve(__dirname, '../../../../src/lib/security/csp.ts');
 
   function frameSrcSources(): string[] {
-    const config = fs.readFileSync(NEXT_CONFIG_PATH, 'utf8');
-    // next.config.mjs では "frame-src 'self' https://…" の 1 行 (二重引用符の文字列) で書かれている。
-    // コメントの中の「frame-src」に当たらないよう、文字列の開始の " から読む
+    const config = fs.readFileSync(WEB_CSP_SOURCE_PATH, 'utf8');
+    // src/lib/security/csp.ts では "frame-src 'self' https://…" の 1 行 (二重引用符の文字列) で書かれている。
+    // コメントの中の「frame-src」に当たらないよう、文字列の開始の " から読む (最初の一致を使う。csp.ts で当たるのは方針の行の
+    // 1 か所だけで、src/__tests__/lib/security/csp.test.ts が見張る)
     const directive = /"frame-src\s+([^"]+)"/.exec(config);
-    if (!directive) throw new Error('next.config.mjs に frame-src の指定が見つからない');
+    if (!directive) throw new Error('src/lib/security/csp.ts に frame-src の指定が見つからない');
     return directive[1].trim().split(/\s+/);
   }
 

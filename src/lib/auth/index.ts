@@ -11,9 +11,12 @@ export {
   type OrgRoleName,
   type UserProfile,
   type OrgAdminContext,
+  type RequireRoleOptions,
 } from './helpers';
 
-export { AuthError, ForbiddenError, PermError } from './errors';
+export { AuthError, ForbiddenError, PermError, MfaRequiredError, type MfaRequiredCode } from './errors';
+
+export { requireRoleForPage, MFA_PAGE_PATHS } from './page-guard';
 
 export { getSafeRedirectPath, getSafeRedirectPathOrDefault } from './safe-redirect';
 

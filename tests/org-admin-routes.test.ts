@@ -740,12 +740,124 @@ describe('組織チャレンジ (#1132): 作成・開始できるのは食事の
     expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A_STEPS)?.status).toBe('draft');
   });
 
-  it('PUT: 歩数のチャレンジでも、終了や中止にはできる (開始だけを止める)', async () => {
-    for (const status of ['completed', 'cancelled']) {
-      const res = await update({ id: CHALLENGE_A_STEPS, status });
-      expect(res.status, status).toBe(200);
-    }
-    expect(updates()).toHaveLength(2);
+  it.each(['completed', 'cancelled'])('PUT: 歩数の下書きのチャレンジでも、%s にはできる (開始だけを止める)', async (status) => {
+    const res = await update({ id: CHALLENGE_A_STEPS, status });
+
+    expect(res.status).toBe(200);
+    expect(updates()).toHaveLength(1);
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A_STEPS)?.status).toBe(status);
+  });
+
+  // #1688: 状態の遷移表 (src/lib/org-challenge-privacy.ts。DB のトリガー org_challenge_guard_update と同じ) に無い変更は 409
+  /** CHALLENGE_A の状態を、本人のセッションの DB で書き換えておく (終わった状態のチャレンジを作る) */
+  function setChallengeAStatus(status: string) {
+    sessionDb = createSchemaDb({
+      tables: {
+        ...worldTables(),
+        organization_challenges: worldTables().organization_challenges.map((c) => (c.id === CHALLENGE_A ? { ...c, status } : c)),
+      },
+    });
+  }
+
+  it.each([
+    ['completed', 'active'],
+    ['completed', 'draft'],
+    ['completed', 'cancelled'],
+    ['cancelled', 'active'],
+    ['cancelled', 'draft'],
+    ['cancelled', 'completed'],
+  ])('PUT: 現在の状態が %s で status を %s に変えると 409 CHALLENGE_STATUS_LOCKED。何も更新しない', async (from, to) => {
+    setChallengeAStatus(from);
+
+    const res = await update({ id: CHALLENGE_A, status: to, title: '改名' });
+
+    expect(res.status).toBe(409);
+    expect(await json(res)).toEqual({ error: 'このチャレンジの状態は変えられません', code: 'CHALLENGE_STATUS_LOCKED' });
+    expect(updates()).toHaveLength(0);
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A)).toMatchObject({ status: from, title: 'A の朝食チャレンジ' });
+  });
+
+  it('PUT: 開催中 → 下書きは 409 CHALLENGE_STATUS_LOCKED。何も更新しない', async () => {
+    const res = await update({ id: CHALLENGE_A, status: 'draft' });
+
+    expect(res.status).toBe(409);
+    expect((await json(res)).code).toBe('CHALLENGE_STATUS_LOCKED');
+    expect(updates()).toHaveLength(0);
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A)?.status).toBe('active');
+  });
+
+  it.each(['completed', 'cancelled'])('PUT: 開催中 → %s はできる', async (to) => {
+    const res = await update({ id: CHALLENGE_A, status: to });
+
+    expect(res.status).toBe(200);
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A)?.status).toBe(to);
+  });
+
+  it.each(['completed', 'cancelled'])('PUT: 終わった状態 (%s) でも、同じ状態の指定とタイトル・説明・報酬の更新はできる', async (status) => {
+    setChallengeAStatus(status);
+
+    const res = await update({ id: CHALLENGE_A, status, title: '改名', description: '説明', rewardDescription: '景品' });
+
+    expect(res.status).toBe(200);
+    expect(sessionDb.rows('organization_challenges').find((c) => c.id === CHALLENGE_A)).toMatchObject({
+      status,
+      title: '改名',
+      description: '説明',
+      reward_description: '景品',
+    });
+  });
+
+  it('PUT: 現在の行の読み取りは status があるときだけ 1 回 (種類の確認と統合)', async () => {
+    await update({ id: CHALLENGE_A, status: 'active' });
+    const withStatus = sessionDb.recorded('organization_challenges', 'select');
+    expect(withStatus).toHaveLength(1);
+    expect(withStatus[0].select).toBe('status, challenge_type');
+    expect(withStatus[0].eq).toContainEqual(['id', CHALLENGE_A]);
+    expect(withStatus[0].eq).toContainEqual(['organization_id', ORG_A]);
+
+    setup();
+    await update({ id: CHALLENGE_A, title: '改名' });
+    expect(sessionDb.recorded('organization_challenges', 'select')).toHaveLength(0);
+  });
+
+  /** 現在の行の読み取りは通し、UPDATE だけ DB のエラーを返す (読んでから書くまでに状態が変わった場合の再現) */
+  function failChallengeUpdate(dbError: { code: string; message: string }) {
+    const original = sessionDb.from;
+    sessionDb = {
+      ...sessionDb,
+      from: vi.fn((table: string) => {
+        const query = original(table);
+        if (table !== 'organization_challenges') return query;
+        return Object.assign(query, {
+          update: () => ({ eq: () => ({ eq: async () => ({ data: null, error: dbError }) }) }),
+        });
+      }) as unknown as SchemaDb['from'],
+    };
+  }
+
+  it.each([
+    ['CHALLENGE_STATUS_LOCKED', 'CHALLENGE_STATUS_LOCKED'],
+    ['CHALLENGE_PERIOD_LOCKED', 'CHALLENGE_PERIOD_LOCKED'],
+  ])('PUT: DB のガードの RAISE (P0001 %s) を 409 に写す', async (message, code) => {
+    failChallengeUpdate({ code: 'P0001', message });
+
+    const res = await update({ id: CHALLENGE_A, status: 'completed' });
+
+    expect(res.status).toBe(409);
+    expect(await json(res)).toEqual({ error: 'このチャレンジの状態は変えられません', code });
+    expect(mockLoggerError).not.toHaveBeenCalled();
+  });
+
+  it('PUT: ガード由来でない P0001 は従来どおり 500 (汎用メッセージ)', async () => {
+    failChallengeUpdate({ code: 'P0001', message: 'some other raise; secret=abc123' });
+
+    const res = await update({ id: CHALLENGE_A, status: 'completed' });
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: 'Internal server error' });
+    expect(text).not.toContain('abc123');
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
   });
 
   it('PUT: 他組織のチャレンジの種類は調べない・更新もしない (自組織の絞り込み)', async () => {

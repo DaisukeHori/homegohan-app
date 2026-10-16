@@ -7,9 +7,9 @@
  *   - ENABLE ROW LEVEL SECURITY・ポリシーが 1 つも無い (service_role 専用)・REVOKE (PUBLIC / anon / authenticated) と GRANT (service_role) の行
  *   - 利用者を消すと行も消える (auth.users への ON DELETE CASCADE)
  *   - down が DROP TABLE / DROP INDEX だけ
- *   - 冒頭のコメントの参照先が実在する (段 B で作る結合テストを除く。下の FORWARD_REFERENCES)
+ *   - 冒頭のコメントの参照先が実在する (まだ無いファイルは下の FORWARD_REFERENCES。段 B で結合テストを作ったので今は空)
  *   - 表の列が型の生成物 (database.types.ts) と食い違わない・アカウントの書き出しで「出さない表」に分類されている (§23 N-24)
- * 実 DB での確認は段 B の tests/integration/security/operator-mfa.test.ts (M-6)。
+ * 実 DB での確認は tests/integration/security/operator-mfa.test.ts (M-6。段 B)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,13 +23,11 @@ const MIGRATIONS_DIR = 'supabase/migrations';
 const ROLLBACKS_DIR = 'supabase/rollbacks';
 const TYPE_FILES = ['src/types/database.types.ts', 'packages/shared/src/database.types.ts'] as const;
 /**
- * 冒頭のコメントが名指しするが、段 A の時点ではまだ無いファイルと理由 (設計書 §11.1 の正典の文面のまま写したため)。
- * 段 B でファイルを作ったら、この一覧から外す (下の検査が「もう実在する」で赤になる)
+ * 冒頭のコメントが名指しするが、まだ無いファイルと理由 (設計書 §11.1 の正典の文面のまま写したため)。
+ * ファイルを作ったら、この一覧から外す (下の検査が「もう実在する」で赤になる)。
+ * 段 A では tests/integration/security/operator-mfa.test.ts が載っていたが、段 B (#1707) で作ったので外した
  */
-const FORWARD_REFERENCES: Readonly<Record<string, string>> = {
-  'tests/integration/security/operator-mfa.test.ts':
-    '実 DB の結合テストは段 B (docs/design/cross/12-operator-mfa.md §21.4・§22.1 の B の行) で作る',
-};
+const FORWARD_REFERENCES: Readonly<Record<string, string>> = {};
 
 function migrationFile(): string {
   const files = fs.readdirSync(path.join(ROOT, MIGRATIONS_DIR)).filter((f) => new RegExp(`^\\d{14}_${NAME}\\.sql$`).test(f));
@@ -118,7 +116,7 @@ describe('operator_mfa_backup_codes の migration', () => {
     ]);
   });
 
-  it('冒頭のコメントの参照先が実在する (段 B で作る結合テストは FORWARD_REFERENCES)', () => {
+  it('冒頭のコメントの参照先が実在する (まだ無いファイルは FORWARD_REFERENCES)', () => {
     const referenced = new Set(
       [...rawMigration.matchAll(/((?:supabase|tests|docs|src)\/[\w./-]+\.(?:sql|ts|md))/g)].map((m) => m[1]),
     );

@@ -13,10 +13,17 @@
  *      管理者 (owner / admin) もメンバー向けの API を使える
  *   B. 参加 / やめる: 開催中のチャレンジにだけ参加できる (下書き・終了・中止・終了日を過ぎたもの・歩数は 409。他組織は 404。
  *      別の部署向けは 403)。二重の参加は 200。参加行は進捗 0・順位なしで作られる。やめると本人の行だけ消える
- *   C. 順位表: 参加者本人にだけ返る (参加していない人・管理者には返らない)。他人の ID・ニックネームは応答に現れない
- *   D. 管理者向けの集計: 参加者が 10 人に満たない間は人数も平均も null。10 人になると出る。個人の値・ID は出ない。
- *      管理者がメンバー向けの API を呼んでも、参加者数は同じ規則で隠される。RLS で管理者も他人の参加行を読めない
- *   E. 作成の制限: 歩数・体重・カスタムは作成も開始もできない (400)
+ *   C. 順位表: 参加者本人にだけ返る (参加していない人には reason: not_joined)。#1688: 参加した管理者 (owner / admin) と、
+ *      管理者だった印のある人 (招待の承諾で管理者になって member に戻った人) にも返さない (reason: org_admin)。
+ *      やめた人の行は、ほかの参加者の順位表からその場で消える。他人の ID・ニックネームは応答に現れない
+ *   D. 管理者向けの集計 (#1688): 人数は参加した人の延べ数 (10 人未満は null)。平均は終了時に 1 回だけ確定した値で、開催中は null。
+ *      確定後に参加をやめても・メンバーを外しても変わらない。同じ種類で期間が重なるチャレンジは、先に終了した 1 本だけに平均が出る。
+ *      終了したチャレンジは開催中に戻せない (409)。個人の値・ID は出ない。
+ *      管理者がメンバー向けの API を呼んでも、参加者数は同じ値。RLS で管理者も他人の参加行を読めない
+ *   E. 作成の制限: 歩数・体重・カスタムは作成も開始もできない (400)。開催中 → 下書きは 409。終了後もタイトル・説明・報酬は更新できる
+ *
+ * 後片付け: チャレンジは it ごとに消す (afterEach)。#1688 の「同じ種類で期間が重なり先に確定したチャレンジがあれば平均を出さない」が
+ * it をまたいで効かないようにするため (このファイルのチャレンジは既定で組織 A・朝食・同じ期間)。
  *
  * 実行 (ローカル Supabase + dev サーバー。tests/integration/security/org-departments-api.test.ts と同じ):
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -27,7 +34,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { jstDaysAgo } from '../helpers/jst-days';
@@ -58,6 +65,8 @@ interface TestUser {
   id: string;
   jwt: string;
   nickname: string;
+  /** 招待の宛先 (C-6 で、同じ組織の招待を本人が承諾する) */
+  email: string;
 }
 
 const RUN = randomBytes(4).toString('hex');
@@ -78,7 +87,7 @@ async function createUser(label: string): Promise<TestUser> {
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
   if (signIn.error || !signIn.data.session) throw new Error(`signIn ${label}: ${signIn.error?.message}`);
-  return { id: data.user.id, jwt: signIn.data.session.access_token, nickname };
+  return { id: data.user.id, jwt: signIn.data.session.access_token, nickname, email };
 }
 
 /** 所属は特権列のため service_role で設定する */
@@ -220,6 +229,15 @@ beforeAll(async () => {
   await setMembership(b1.id, orgB, 'member');
 }, 120_000);
 
+afterEach(async () => {
+  // その it で作ったチャレンジを消す (参加行・集計の控え・印は CASCADE で消える。service_role の DELETE は
+  // RESTRICTIVE の削除のポリシー (authenticated だけに掛かる) を通らない)
+  if (createdChallengeIds.length > 0) {
+    await srAdmin.from('organization_challenges').delete().in('id', createdChallengeIds);
+    createdChallengeIds.length = 0;
+  }
+}, 60_000);
+
 afterAll(async () => {
   if (createdChallengeIds.length > 0) {
     // 参加行は CASCADE で消える
@@ -227,6 +245,8 @@ afterAll(async () => {
   }
   for (const orgId of [orgA, orgB].filter(Boolean)) {
     await srAdmin.from('organization_challenges').delete().eq('organization_id', orgId);
+    // C-6 の招待 (組織を消す前に消す)
+    await srAdmin.from('organization_invites').delete().eq('organization_id', orgId);
   }
   if (createdUserIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('actor_id', createdUserIds);
@@ -439,6 +459,7 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
     ranking: {
       available: boolean;
       showNames: boolean;
+      reason?: string;
       rankedCount?: number;
       entries?: Array<{ rank: number; value: number; isMe: boolean; label: string }>;
     };
@@ -477,28 +498,31 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
       expect(res.status).toBe(200);
       expect(res.body.joined).toBe(false);
       expect(res.body.me).toBeNull();
-      expect(res.body.ranking).toEqual({ available: false, showNames: false });
+      expect(res.body.ranking).toEqual({ available: false, showNames: false, reason: 'not_joined' });
       const text = JSON.stringify(res.body);
       for (const participant of [m1, m2, m3]) expect(text).not.toContain(participant.id);
       expect(text).not.toContain('"entries"');
     }
   });
 
-  it('C-3: 参加した管理者は、一般のメンバーと同じく順位表を見られる。やめると見られなくなる', async () => {
+  it('C-3: 参加した管理者 (owner / admin) には順位表を返さない。自分の記録と順位は返る。やめると not_joined', async () => {
     const challenge = await seedRanking();
-    expect((await apiCall('POST', `/api/org/challenges/${challenge}/join`, admin.jwt)).status).toBe(200);
 
-    const joined = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, admin.jwt);
-    expect(joined.body.joined).toBe(true);
-    expect(joined.body.ranking.available).toBe(true);
-    // 参加したばかりで、まだ集計されていない: 順位は無いが、順位表は見られる
-    expect(joined.body.me).toMatchObject({ currentValue: 0, rank: null });
-    expect(joined.body.ranking.entries).toHaveLength(3);
-    expect(joined.body.ranking.entries!.some((e) => e.isMe)).toBe(false);
+    for (const user of [admin, owner]) {
+      expect((await apiCall('POST', `/api/org/challenges/${challenge}/join`, user.jwt)).status).toBe(200);
 
-    expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, admin.jwt)).status).toBe(200);
-    const left = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, admin.jwt);
-    expect(left.body.ranking).toEqual({ available: false, showNames: false });
+      const joined = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, user.jwt);
+      expect(joined.status).toBe(200);
+      expect(joined.body.joined).toBe(true);
+      // 参加したばかりで、まだ集計されていない
+      expect(joined.body.me).toMatchObject({ currentValue: 0, rank: null });
+      expect(joined.body.ranking).toEqual({ available: false, showNames: false, reason: 'org_admin' });
+      expect(JSON.stringify(joined.body)).not.toContain('"entries"');
+
+      expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, user.jwt)).status).toBe(200);
+      const left = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, user.jwt);
+      expect(left.body.ranking).toEqual({ available: false, showNames: false, reason: 'not_joined' });
+    }
   });
 
   it('C-4: 一覧 (my-challenges) は、自分の参加状況だけ。他の参加者の値・順位・ID は含まない', async () => {
@@ -518,12 +542,79 @@ describe('#1132 C. 順位表は参加者本人にだけ', () => {
     for (const other of [m2, m3]) expect(text).not.toContain(other.id);
     expect(text).not.toContain('"currentValue":80');
   });
+
+  it('C-5: 順位がついた参加者の 1 人がやめると、ほかの参加者の順位表から、夜の集計を待たずにその行が消える。管理者の集計は前後で同じ', async () => {
+    const challenge = await newChallenge();
+    const ten = [m1, m2, m3, m4, m5, m6, m7, m8, m9, m10];
+    // 値は 10〜100。順位は値の大きい順
+    for (const [i, user] of ten.entries()) await seedParticipant(challenge, user, (i + 1) * 10, ten.length - i);
+
+    const adminBefore = await apiCall<{ challenges: Array<{ id: string; participantCount: number | null; aggregate: unknown }> }>(
+      'GET',
+      '/api/org/challenges',
+      owner.jwt,
+    );
+    const before = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, m1.jwt);
+    expect(before.body.ranking.rankedCount).toBe(10);
+
+    expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, m10.jwt)).status).toBe(200);
+
+    const after = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, m1.jwt);
+    expect(after.body.ranking.rankedCount).toBe(9);
+    const adminAfter = await apiCall<{ challenges: Array<{ id: string; participantCount: number | null; aggregate: unknown }> }>(
+      'GET',
+      '/api/org/challenges',
+      owner.jwt,
+    );
+    for (const view of [adminBefore, adminAfter]) {
+      const row = view.body.challenges.find((c) => c.id === challenge)!;
+      expect(row.participantCount).toBe(10);
+      expect(row.aggregate).toEqual({ minParticipants: 10, visible: false, averageValue: null }); // 開催中
+    }
+  });
+
+  it('C-6: 参加中の member が admin の招待を承諾したあと member の招待で戻ると、順位表は返らない (管理者だった印)', async () => {
+    const challenge = await seedRanking();
+    // m6 は部署なし (accept_org_invite は所属と役割を書き換え、部署を変えない)
+    expect((await apiCall('POST', `/api/org/challenges/${challenge}/join`, m6.jwt)).status).toBe(200);
+    const before = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, m6.jwt);
+    expect(before.body.ranking.available).toBe(true);
+    expect(before.body.ranking.entries).toHaveLength(3);
+
+    /** 組織 A の owner が招待を作り、m6 が本人の JWT で承諾する */
+    async function acceptInvite(role: 'admin' | 'member') {
+      const { data, error } = await asUser(owner.jwt).rpc('create_org_invite', {
+        p_organization_id: orgA,
+        p_email: m6.email,
+        p_role: role,
+      });
+      if (error || !data) throw new Error(`create_org_invite ${role}: ${error?.message}`);
+      const accepted = await asUser(m6.jwt).rpc('accept_org_invite', { p_token: (data as { token: string }).token });
+      if (accepted.error) throw new Error(`accept_org_invite ${role}: ${accepted.error.message}`);
+    }
+
+    try {
+      await acceptInvite('admin');
+      await acceptInvite('member');
+      const { data: profile } = await srAdmin.from('user_profiles').select('org_role').eq('id', m6.id).single();
+      expect(profile?.org_role).toBe('member');
+
+      const after = await apiCall<DetailBody>('GET', `/api/org/challenges/${challenge}`, m6.jwt);
+      expect(after.status).toBe(200);
+      expect(after.body.joined).toBe(true);
+      expect(after.body.me).not.toBeNull();
+      expect(after.body.ranking).toEqual({ available: false, showNames: false, reason: 'org_admin' });
+      expect(JSON.stringify(after.body)).not.toContain('"entries"');
+    } finally {
+      await setMembership(m6.id, orgA, 'member');
+    }
+  });
 });
 
 // ================================================================
 // D. 管理者向けの集計 (最小人数)
 // ================================================================
-describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない間は人数も平均も出さない', () => {
+describe('#1132 / #1600 / #1688 D. 管理者向けの集計は、参加した人の延べ数と終了時に確定した平均だけ。10 人に満たない間は出さない', () => {
   /** 集計の最小人数 (#1600 で 5 → 10 人) */
   const MIN = 10;
 
@@ -558,7 +649,7 @@ describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない�
     }
   });
 
-  it('D-2: 参加者が 10 人になると、人数と平均 (集計済みの人の平均) が出る。個人の値は出ない', async () => {
+  it('D-2: 開催中は、順位がついた人が 10 人いても平均は出さない。参加した人数 (延べ) は 10 で出る。個人の値は出ない', async () => {
     const challenge = await newChallenge();
     // 値は 10, 20, ..., 100
     for (const [i, user] of members().entries()) await seedParticipant(challenge, user, (i + 1) * 10, MIN - i);
@@ -566,44 +657,71 @@ describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない�
     const { raw, challenge: view } = await adminView(admin.jwt, challenge);
 
     expect(view.participantCount).toBe(10);
-    expect(view.aggregate.visible).toBe(true);
-    expect(view.aggregate.minParticipants).toBe(MIN);
-    expect(view.aggregate.averageValue).toBe(55); // (10 + 20 + ... + 100) / 10
+    expect(view.aggregate).toEqual({ minParticipants: MIN, visible: false, averageValue: null });
     for (const user of members()) expect(raw).not.toContain(user.id);
     expect(raw).not.toContain('"rank"');
   });
 
-  it('D-3: 参加者は 10 人いるが、集計が済んだ人が 9 人のとき、人数は出て、平均は null', async () => {
+  it('D-3: 終了時点の順位がついた人が 9 人なら、終了しても平均は null', async () => {
     const challenge = await newChallenge();
     for (const [i, user] of members().slice(0, MIN - 1).entries()) await seedParticipant(challenge, user, 50, i + 1);
     await seedParticipant(challenge, members()[MIN - 1]); // 参加したばかり (rank なし)
 
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'completed' })).status).toBe(200);
     const { challenge: view } = await adminView(owner.jwt, challenge);
 
     expect(view.participantCount).toBe(10);
     expect(view.aggregate).toEqual({ minParticipants: MIN, visible: false, averageValue: null });
   });
 
-  it('D-4: 管理者がメンバー向けの API を呼んでも、参加者数は同じ規則で隠される (制限を迂回できない)', async () => {
+  it('D-11: 終了すると終了時点の平均が出る。そのあと参加をやめても変わらない', async () => {
+    const challenge = await newChallenge();
+    for (const [i, user] of members().entries()) await seedParticipant(challenge, user, (i + 1) * 10, MIN - i);
+
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'completed' })).status).toBe(200);
+    let view = (await adminView(owner.jwt, challenge)).challenge;
+    expect(view.aggregate).toEqual({ minParticipants: MIN, visible: true, averageValue: 55 }); // (10 + 20 + ... + 100) / 10
+
+    expect((await apiCall('DELETE', `/api/org/challenges/${challenge}/join`, m1.jwt)).status).toBe(200);
+    view = (await adminView(owner.jwt, challenge)).challenge;
+    expect(view.participantCount).toBe(10);
+    expect(view.aggregate).toEqual({ minParticipants: MIN, visible: true, averageValue: 55 });
+  });
+
+  it('D-4: 管理者の一覧とメンバー向けの API (my-challenges・詳細) の参加者数は同じ値 (延べ数。10 未満は null)。メンバー向けの応答に平均の項目は無い', async () => {
     const challenge = await newChallenge();
     await seedParticipant(challenge, m1, 90, 1);
     await seedParticipant(challenge, m2, 70, 2);
 
-    const list = await apiCall<{ challenges: Array<{ id: string; participantCount: number | null }>; minParticipants: number }>(
-      'GET',
-      '/api/org/my-challenges',
-      owner.jwt,
-    );
-    const detail = await apiCall<{ participantCount: number | null; minParticipants: number }>(
-      'GET',
-      `/api/org/challenges/${challenge}`,
-      owner.jwt,
-    );
+    async function counts() {
+      const adminList = await adminView(owner.jwt, challenge);
+      const list = await apiCall<{ challenges: Array<{ id: string; participantCount: number | null }>; minParticipants: number }>(
+        'GET',
+        '/api/org/my-challenges',
+        owner.jwt,
+      );
+      const detail = await apiCall<{ participantCount: number | null; minParticipants: number }>(
+        'GET',
+        `/api/org/challenges/${challenge}`,
+        owner.jwt,
+      );
+      expect(list.body.minParticipants).toBe(MIN);
+      expect(detail.body.minParticipants).toBe(MIN);
+      // 管理者がメンバー向けの API を呼んでも、平均の項目は返らない (迂回できない)
+      for (const raw of [JSON.stringify(list.body), JSON.stringify(detail.body)]) {
+        expect(raw).not.toContain('averageValue');
+        expect(raw).not.toContain('"aggregate"');
+      }
+      return [
+        adminList.challenge.participantCount,
+        list.body.challenges.find((c) => c.id === challenge)!.participantCount,
+        detail.body.participantCount,
+      ];
+    }
 
-    expect(list.body.challenges.find((c) => c.id === challenge)!.participantCount).toBeNull();
-    expect(list.body.minParticipants).toBe(MIN);
-    expect(detail.body.participantCount).toBeNull();
-    expect(detail.body.minParticipants).toBe(MIN);
+    expect(await counts()).toEqual([null, null, null]);
+    for (const [i, user] of members().slice(2).entries()) await seedParticipant(challenge, user, 50, i + 3);
+    expect(await counts()).toEqual([MIN, MIN, MIN]);
   });
 
   it('D-5: 他組織の管理者には、この組織のチャレンジの集計は見えない', async () => {
@@ -647,6 +765,58 @@ describe('#1132 / #1600 D. 管理者向けの集計は、10 人に満たない�
       const ranking = await asUser(user.jwt).rpc('get_org_challenge_ranking', { p_challenge_id: challenge, p_user_id: user.id });
       expect(ranking.error?.code, 'get_org_challenge_ranking').toBe('42501');
     }
+  });
+
+  it('D-8: 管理者がメンバーを外しても、参加した人数も確定した平均も変わらない', async () => {
+    const challenge = await newChallenge();
+    for (const [i, user] of members().entries()) await seedParticipant(challenge, user, (i + 1) * 10, MIN - i);
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'completed' })).status).toBe(200);
+    expect((await adminView(owner.jwt, challenge)).challenge.aggregate.averageValue).toBe(55);
+
+    try {
+      // route POST /api/org/members/[user_id]/remove が呼ぶのと同じ関数 (通知メールの経路は通さない)
+      const removed = await asUser(owner.jwt).rpc('remove_org_member', { p_organization_id: orgA, p_user_id: m10.id });
+      expect(removed.error).toBeNull();
+
+      const { challenge: view } = await adminView(owner.jwt, challenge);
+      expect(view.participantCount).toBe(10);
+      expect(view.aggregate).toEqual({ minParticipants: MIN, visible: true, averageValue: 55 });
+    } finally {
+      await setMembership(m10.id, orgA, 'member');
+    }
+  });
+
+  it('D-9: 終了したチャレンジは PUT で開催中に戻せない (409 CHALLENGE_STATUS_LOCKED)。PostgREST を直接叩いても戻らない', async () => {
+    const challenge = await newChallenge();
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'completed' })).status).toBe(200);
+
+    const reopen = await apiCall<{ error: string; code: string }>('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'active' });
+    expect(reopen.status).toBe(409);
+    expect(reopen.body).toEqual({ error: 'このチャレンジの状態は変えられません', code: 'CHALLENGE_STATUS_LOCKED' });
+
+    const direct = await asUser(owner.jwt).from('organization_challenges').update({ status: 'active' }).eq('id', challenge);
+    expect(direct.error?.code).toBe('P0001');
+    expect(direct.error?.message).toContain('CHALLENGE_STATUS_LOCKED');
+    const { data } = await srAdmin.from('organization_challenges').select('status').eq('id', challenge).single();
+    expect(data?.status).toBe('completed');
+  });
+
+  it('D-10: 同じ種類で期間が重なるチャレンジを 2 本 PUT で終了すると、平均は先に終了した 1 本だけ', async () => {
+    const a = await newChallenge();
+    const b = await newChallenge();
+    for (const id of [a, b]) {
+      for (const [i, user] of members().entries()) await seedParticipant(id, user, (i + 1) * 10, MIN - i);
+    }
+
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: a, status: 'completed' })).status).toBe(200);
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: b, status: 'completed' })).status).toBe(200);
+
+    const viewA = (await adminView(owner.jwt, a)).challenge;
+    const viewB = (await adminView(owner.jwt, b)).challenge;
+    expect(viewA.participantCount).toBe(MIN);
+    expect(viewB.participantCount).toBe(MIN);
+    expect(viewA.aggregate).toEqual({ minParticipants: MIN, visible: true, averageValue: 55 });
+    expect(viewB.aggregate).toEqual({ minParticipants: MIN, visible: false, averageValue: null });
   });
 });
 
@@ -714,5 +884,35 @@ describe('#1132 E. 歩数・体重・カスタムは作成も開始もできな�
     const { data } = await srAdmin.from('organization_challenges').select('status, title').eq('id', other).single();
     expect(data?.status).toBe('draft');
     expect(data?.title).not.toBe('tampered');
+  });
+
+  it('E-5: PUT は開催中 → 下書きを 409 にし、終了後もタイトル・説明・報酬は更新できる', async () => {
+    const challenge = await newChallenge();
+
+    const back = await apiCall<{ code: string }>('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'draft' });
+    expect(back.status).toBe(409);
+    expect(back.body.code).toBe('CHALLENGE_STATUS_LOCKED');
+    const { data: afterBack } = await srAdmin.from('organization_challenges').select('status').eq('id', challenge).single();
+    expect(afterBack?.status).toBe('active');
+
+    expect((await apiCall('PUT', '/api/org/challenges', owner.jwt, { id: challenge, status: 'completed' })).status).toBe(200);
+    const edit = await apiCall('PUT', '/api/org/challenges', owner.jwt, {
+      id: challenge,
+      title: `sec-chal renamed ${RUN}`,
+      description: '終了後の説明',
+      rewardDescription: '終了後の報酬',
+    });
+    expect(edit.status).toBe(200);
+    const { data: afterEdit } = await srAdmin
+      .from('organization_challenges')
+      .select('status, title, description, reward_description')
+      .eq('id', challenge)
+      .single();
+    expect(afterEdit).toEqual({
+      status: 'completed',
+      title: `sec-chal renamed ${RUN}`,
+      description: '終了後の説明',
+      reward_description: '終了後の報酬',
+    });
   });
 });

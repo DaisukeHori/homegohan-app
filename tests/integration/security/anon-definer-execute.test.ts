@@ -246,6 +246,20 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: '夜間バッチ (pg_cron、所有者 postgres) と service_role 専用。PUBLIC の EXECUTE も外す',
   },
+  {
+    sig: 'family_menu_visible_members()',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない',
+  },
+  {
+    sig: 'family_menu_planned_meals(date,date)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない',
+  },
 ];
 
 describe('#1103 (7) B: 関数ごとの EXECUTE 権限 (決定表)', () => {

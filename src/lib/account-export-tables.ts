@@ -292,6 +292,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   admin_user_notes: '運営スタッフが書いた内部メモ',
   moderation_flags: '運営によるモデレーションの内部記録',
   membership_audit: '所属変更の監査ログ (操作した人・相手の ID を含む)',
+  organization_challenge_ranking_exclusions:
+    'チャレンジの順位表を伏せる印 (組織の管理者になった記録)。守りの内部の記録で、本人が入力したデータではない',
   gdpr_deletion_requests:
     '削除の実行記録 (#1562。退会した利用者の id の HMAC・日時・理由・実行者。利用者の id を持たず、本人が読める RLS ポリシーも無い。service_role だけが読み書きする)',
   experiment_assignments: 'A/B テストの内部割り当て',
