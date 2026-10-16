@@ -20,6 +20,7 @@ import Link from 'next/link';
 import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import type { RoleName } from '@/lib/auth/types';
+import { DSR_ADMIN_PATH, DSR_OPERATOR_ROLES } from '@/lib/data-subject-requests/core';
 
 interface ConsoleSection {
   href: string;
@@ -59,6 +60,12 @@ const SECTIONS: ReadonlyArray<ConsoleSection> = [
     label: 'サポートチケット',
     description: '問い合わせチケットの一覧と対応',
     roles: ADMIN_ROLES,
+  },
+  {
+    href: DSR_ADMIN_PATH,
+    label: '開示等の請求',
+    description: '個人情報の開示・訂正・利用停止・消去の請求の一覧と対応 (応答期限の確認を含む)',
+    roles: DSR_OPERATOR_ROLES,
   },
   {
     href: '/admin/finance',

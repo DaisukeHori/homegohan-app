@@ -21,6 +21,7 @@ export * from './account-change-errors';
 export * from './account-change-input';
 export * from './health-blood-test-reference';
 export * from './org-challenges';
+export * from './org-settings';
 export * from './weekly-menu-ultimate-mode';
 export * from './profile-name';
 export * from './signed-photo-url';
