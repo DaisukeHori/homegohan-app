@@ -19,6 +19,12 @@
  *     読み込み直す前に、ネイティブ自身のセッションが生きているかをサーバーに確かめる。失効していれば
  *     (Web のログアウトで全端末のセッションが失効した後など) 読み込み直さず、ログアウトを揃える。
  *
+ *   { type: 'mfa-verify-required' }
+ *     WebView の中の運営の MFA の確認画面 (/settings/security/mfa/verify) が、二段階認証の 6 桁の確認を頼む
+ *     (docs/design/cross/12-operator-mfa.md §16.4)。WebView の Cookie のセッションはネイティブのセッションの借り物なので、
+ *     token を発行し直す操作 (verify) は持ち主のネイティブが行う。ネイティブは確認画面 (NativeMfaVerifyModal) を出し、
+ *     自分のセッションで verify してから WebView を読み込み直す。回数制限 (limiter) にも、セッションの控えにも触れない。
+ *
  * メッセージは「自分のアプリの Web オリジンのページから」届いたものだけを処理する
  * (window.ReactNativeWebView はどのオリジンのページにも存在し、外部ページからも送れてしまうため)。
  *
@@ -47,7 +53,7 @@ import { signOutWithCleanup } from "./signOut";
 import { supabase } from "./supabase";
 import { getWebBaseUrl } from "./webBaseUrl";
 
-export type WebAuthMessage = { type: "sign-out" } | { type: "session-expired" };
+export type WebAuthMessage = { type: "sign-out" } | { type: "session-expired" } | { type: "mfa-verify-required" };
 
 export type WebAuthResult =
   /** メッセージの形式が違う、または自分の Web オリジンから届いたものではない */
@@ -59,12 +65,14 @@ export type WebAuthResult =
   /** 読み込み直しの回数制限に達しているので、何もしなかった */
   | "rate-limited"
   /** ネイティブ側も未ログインなので、何もしなかった */
-  | "no-session";
+  | "no-session"
+  /** 二段階認証の確認画面を出すよう WebViewScreen に頼んだ (cross/12 §16.4) */
+  | "mfa-verify-requested";
 
 export function parseWebAuthMessage(data: unknown): WebAuthMessage | null {
   if (!data || typeof data !== "object") return null;
   const type = (data as { type?: unknown }).type;
-  return type === "sign-out" || type === "session-expired" ? { type } : null;
+  return type === "sign-out" || type === "session-expired" || type === "mfa-verify-required" ? { type } : null;
 }
 
 /**
@@ -162,6 +170,11 @@ export type WebAuthHandlerDeps = {
   /** ログアウト後にウェルカム画面へ戻る */
   goToWelcome: () => void;
   limiter: RebridgeLimiter;
+  /**
+   * 二段階認証の確認画面を出す (cross/12 §16.4)。省略できる (既存の呼び出しの deps を変えない)。
+   * 無ければ mfa-verify-required は "ignored"
+   */
+  requestMfaVerify?: () => void;
 };
 
 /** ログアウト処理中か。5 つのタブの WebView が同時に sign-out / session-expired を送ってくるので、1 回だけ行う */
@@ -268,6 +281,14 @@ export async function handleWebAuthMessage(
   if (!message) return "ignored";
   if (!isFromWebOrigin(senderUrl)) return "ignored";
 
+  // 二段階認証の確認の依頼は、確認画面を出すよう頼むだけ。回数制限 (limiter) にも、
+  // セッションの控え (messagesInFlight / getSession / getUser) にも触れない (cross/12 §16.4.4)
+  if (message.type === "mfa-verify-required") {
+    if (!deps.requestMfaVerify) return "ignored";
+    deps.requestMfaVerify();
+    return "mfa-verify-requested";
+  }
+
   // 同時に処理するメッセージ同士で、セッションの控えを使い回す (処理中のメッセージが無くなったら捨てる)
   messagesInFlight += 1;
   try {
@@ -280,15 +301,28 @@ export async function handleWebAuthMessage(
   }
 }
 
+export type WebAuthMessagesOptions = {
+  /**
+   * Web が二段階認証の確認を頼んだ (mfa-verify-required)。rebridge は、確認が済んだあとに WebView を読み込み直す関数
+   * (いま開いているパス effectivePath に _rb を付け直す。session-expired の rebridge と同じ組み立てで、回数制限 limiter を通さない:
+   * 利用者が 6 桁を入れた後に 1 回だけ呼ぶもので、制限に当たると aal2 になったのに WebView が古いままになるため)
+   */
+  onMfaVerifyRequested?: (rebridge: () => void) => void;
+};
+
 /**
- * WebViewScreen から使う。onMessage に届いたメッセージを渡すと、sign-out / session-expired を処理する。
+ * WebViewScreen から使う。onMessage に届いたメッセージを渡すと、sign-out / session-expired / mfa-verify-required を処理する。
  *
  * @param currentPath この WebView がいま開いているパス (WebViewScreen が initialPath を検証したあとの effectivePath)。
  *   再ブリッジではこのパスに _rb を付けて開き直す。deep link や tab-navigate の initialPath を検証せずに基準にすると、
  *   WebViewScreen の検証で弾かれる値のとき _rb を付けても既定のパスに戻されて effectivePath が変わらず、読み込み直しが起きない
- * @returns (data, senderUrl) => void。sign-out / session-expired 以外のメッセージは何もしない
+ * @param options     省略できる。onMfaVerifyRequested を渡すと mfa-verify-required を受ける (cross/12 §16.4.4)
+ * @returns (data, senderUrl) => void。sign-out / session-expired / mfa-verify-required 以外のメッセージは何もしない
  */
-export function useWebAuthMessages(currentPath: string): (data: unknown, senderUrl: unknown) => void {
+export function useWebAuthMessages(
+  currentPath: string,
+  options?: WebAuthMessagesOptions,
+): (data: unknown, senderUrl: unknown) => void {
   const navigation = useNavigation();
   const router = useRouter();
 
@@ -302,17 +336,24 @@ export function useWebAuthMessages(currentPath: string): (data: unknown, senderU
   navigationRef.current = navigation;
   const routerRef = useRef(router);
   routerRef.current = router;
+  const optionsRef = useRef(options);
+  optionsRef.current = options;
 
   return useCallback((data: unknown, senderUrl: unknown) => {
+    // いま開いているパス (effectivePath) に _rb を付け直して開き直す。session-expired と mfa-verify-required で同じ組み立て
+    const rebridge = () => {
+      const nav = navigationRef.current as unknown as { setParams?: (params: Record<string, string>) => void };
+      nav.setParams?.({ initialPath: withRebridgeNonce(basePathRef.current) });
+    };
+    const onMfaVerifyRequested = optionsRef.current?.onMfaVerifyRequested;
     void handleWebAuthMessage(data, senderUrl, {
       limiter: limiterRef.current as RebridgeLimiter,
-      rebridge: () => {
-        const nav = navigationRef.current as unknown as { setParams?: (params: Record<string, string>) => void };
-        nav.setParams?.({ initialPath: withRebridgeNonce(basePathRef.current) });
-      },
+      rebridge,
       goToWelcome: () => {
         routerRef.current.replace("/");
       },
+      // 確認の後の読み込み直しは回数制限 (limiter) を通さない (WebAuthMessagesOptions の注記)
+      requestMfaVerify: onMfaVerifyRequested ? () => onMfaVerifyRequested(rebridge) : undefined,
     });
   }, []);
 }
