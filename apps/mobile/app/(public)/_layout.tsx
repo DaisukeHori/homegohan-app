@@ -2,7 +2,6 @@ import { Stack } from "expo-router";
 import type { ErrorBoundaryProps } from "expo-router";
 
 import { ErrorFallback } from "../../src/components/ErrorFallback";
-import { useFontFaceStyle } from "../../src/components/ui/Text";
 
 // この区画の画面で描画の例外が起きたとき、アプリ全体をクラッシュさせずに再試行を出す (#1207)
 export function ErrorBoundary(props: ErrorBoundaryProps) {
@@ -10,17 +9,13 @@ export function ErrorBoundary(props: ErrorBoundaryProps) {
 }
 
 /**
- * 見出しの太さ。iOS のナビゲーションバーの見出しの既定 (semibold) と同じ 600 を、Noto Sans JP の字形 (Bold) で描く。
- * タブの見出し ((tabs)/_layout.tsx の TAB_BAR_LABEL_STYLE) と同じ太さ。
+ * native-stack のヘッダは出さない (#1822)。見出し (日本語) と戻る操作は、各画面の PublicPage
+ * (src/components/PublicPage.tsx) が自前のヘッダで描く。出すと、route 名 (about など) の見出しのヘッダと
+ * 2 段になる。
+ * ヘッダを出さないので、native-stack が描く文字 (headerTitleStyle / headerBackTitleStyle) は渡さない
+ * (__tests__/theme/font-family-guard.test.ts の 5 つ目は、headerShown: false の区画にはそれを求めない)。
+ * Android の端末の戻るボタンと iOS のスワイプで戻る操作は、ヘッダの有無にかかわらず native-stack の既定で効く。
  */
-const HEADER_TITLE_WEIGHT = "600";
-
 export default function PublicLayout() {
-  // 見出しと戻るボタンの文字は native-stack が中で描くので、共通の部品と同じ字形に置き換えて渡す (#588)
-  const headerTitleStyle = useFontFaceStyle(HEADER_TITLE_WEIGHT);
-  const headerBackTitleStyle = useFontFaceStyle();
-  return <Stack screenOptions={{ headerShown: true, headerTitleStyle, headerBackTitleStyle }} />;
+  return <Stack screenOptions={{ headerShown: false }} />;
 }
-
-
-
