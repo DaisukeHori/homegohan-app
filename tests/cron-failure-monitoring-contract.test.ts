@@ -15,8 +15,8 @@
  *   8. migration が登録するジョブに、1 時間以内の間隔のものがある (cron-failure.ts の PG_CRON_STALL_MINUTES = 60 の前提)
  *   9. src/app/api/cron/*\/route.ts が createLogger / internalError に渡す名前は候補の LIKE と一致する形。vercel.json の crons のどれも走査に入る
  *  10. 台帳の source の CHECK は 'pg_cron' / 'vercel_cron' の 2 つで、候補が出す source もこの 2 つだけ
- *  11. src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES は、台帳の source の CHECK と同じ (段 B。DB の CHECK だけを変えると
- *      アプリの normalizeCronFailureRows が応答を例外にして 500 になるので、ずれをここで止める)
+ *  11. src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES は、台帳の source の CHECK と同じ (段 B。DB の CHECK にだけ出どころを
+ *      足すと、アプリの normalizeCronFailureRows がその行を例外にして 500 になるので、ずれをここで止める)
  *  12. rollback が関数 5 本と台帳の DROP を行い、pg_cron のジョブと ops_alert_state には触れない
  *
  * アプリ側の値 (CRON_FAILURE_SOURCES・CRON_FAILURE_LOOKBACK_DAYS・PG_CRON_STALL_MINUTES) はここで書き直さず、cron-failure.ts から import して突き合わせる。
@@ -292,8 +292,9 @@ describe('#1125 (B) 定期処理の失敗の監視 (段 A の migration・段 B 
   });
 
   it('src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES は、台帳 cron_failure_alerts.source の CHECK の 2 つと同じ', () => {
-    // DB の CHECK だけに出どころを足す (または消す) と、アプリの normalizeCronFailureRows が応答を例外にする (500)。
-    // 並びは問わない (どちらも集合として同じであればよい)。重複も無いこと
+    // DB の CHECK にだけ出どころを足すと、アプリの normalizeCronFailureRows がその行を例外にする (500)。
+    // アプリにだけ足すと、DB に入らない出どころを想定したままになる。どちらのずれも止める。
+    // 並びは問わない (集合として同じであればよい)。重複も無いこと
     const appSources = [...CRON_FAILURE_SOURCES].sort();
     expect(new Set(appSources).size).toBe(appSources.length);
     expect(appSources).toEqual(ledgerSourceCheckValues());
