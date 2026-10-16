@@ -20,6 +20,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { shouldRunIntegration } from '../helpers/supabase';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------------------
 // テスト実行ガード
@@ -60,16 +61,17 @@ if (!shouldRunIntegration()) {
     testUserId = authData.user.id;
 
     // user_profiles 作成 (NOT NULL: nickname, age_group, gender)
-    const { error: profileError } = await adminClient.from('user_profiles').upsert(
-      {
-        id: testUserId,
-        nickname: `SmokeUser${ts}`,
-        age_group: '30s',
-        gender: 'other',
-        roles: [],
-      },
-      { onConflict: 'id' },
-    );
+    const { error: profileError } = await retryIdempotentSetup(adminClient, 'beforeAll: user_profiles の upsert', (db) =>
+      db.from('user_profiles').upsert(
+        {
+          id: testUserId,
+          nickname: `SmokeUser${ts}`,
+          age_group: '30s',
+          gender: 'other',
+          roles: [],
+        },
+        { onConflict: 'id' },
+      ));
     if (profileError) {
       await adminClient.auth.admin.deleteUser(testUserId);
       throw new Error(`Failed to create user profile: ${profileError.message}`);

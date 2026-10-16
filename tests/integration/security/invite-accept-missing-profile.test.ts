@@ -34,6 +34,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -95,9 +96,9 @@ async function createUser(label: string, options: { withProfile?: boolean } = {}
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
   if (options.withProfile !== false) {
-    const { error: profileError } = await srAdmin
-      .from('user_profiles')
-      .upsert({ id: data.user.id, nickname: `accept-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+    const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+      db.from('user_profiles')
+        .upsert({ id: data.user.id, nickname: `accept-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
     if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   }
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
@@ -191,9 +192,9 @@ async function createOrg(label: string, totalLicenses: number): Promise<string> 
   if (error || !org) throw new Error(`organizations ${label}: ${error?.message}`);
   const orgId = org.id as string;
   createdOrgIds.push(orgId);
-  const { error: poolError } = await srAdmin
-    .from('org_license_pools')
-    .upsert({ organization_id: orgId, total_licenses: totalLicenses, used_licenses: 0 }, { onConflict: 'organization_id' });
+  const { error: poolError } = await retryIdempotentSetup(srAdmin, 'createOrg: org_license_pools の upsert', (db) =>
+    db.from('org_license_pools')
+      .upsert({ organization_id: orgId, total_licenses: totalLicenses, used_licenses: 0 }, { onConflict: 'organization_id' }));
   if (poolError) throw new Error(`org_license_pools ${label}: ${poolError.message}`);
   return orgId;
 }

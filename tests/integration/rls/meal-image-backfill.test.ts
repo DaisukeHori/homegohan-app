@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE, runMealImageBackfill } from '../../../scripts/lib/meal-image-backfill';
 import { buildMealImageIdempotencyKey, type MealImageDish } from '../../../lib/meal-image';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -102,9 +103,9 @@ beforeAll(async () => {
   });
   if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
   userId = data.user.id;
-  const { error: pErr } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: 'mib', age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: pErr } = await retryIdempotentSetup(srAdmin, 'beforeAll: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: 'mib', age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (pErr) throw new Error(`user_profiles: ${pErr.message}`);
 
   const newerDay = await insertDay(NEWER_DAY);

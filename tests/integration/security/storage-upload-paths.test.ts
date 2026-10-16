@@ -16,6 +16,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -55,9 +56,9 @@ beforeAll(async () => {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
   userId = data.user.id;
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: 'storage-path', age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'beforeAll: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: 'storage-path', age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile: ${profileError.message}`);
   const signIn = await client(anonKey).auth.signInWithPassword({ email, password });
   if (signIn.error || !signIn.data.session) throw new Error(`signIn: ${signIn.error?.message}`);

@@ -24,6 +24,7 @@ import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { FAMILY_MEMBER_NAMES_API_PATH, PROFILE_NAME_PLACEHOLDER } from '@/lib/membership/family-member-names';
 import type { FamilyMemberNamesData } from '@/schemas/membership/family-member';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -66,9 +67,9 @@ async function createUser(label: string, nickname: string): Promise<TestUser> {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await anon().auth.signInWithPassword({ email, password });

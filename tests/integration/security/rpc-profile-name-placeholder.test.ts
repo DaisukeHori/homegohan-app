@@ -27,6 +27,7 @@ import ws from 'ws';
 import { PROFILE_NAME_PLACEHOLDER, normalizeProfileName } from '../../../packages/shared/src/profile-name';
 // Edge Functions が使う写し (#1649)。正本との一致は tests/edge-profile-name-sync.test.ts が見張る。ここでは SQL とも一致することを見る
 import { normalizeProfileName as edgeNormalizeProfileName } from '../../../supabase/functions/_shared/profile-name';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -80,9 +81,9 @@ async function createUser(label: string, nickname: string | null): Promise<TestU
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
   if (nickname !== null) {
-    const { error: profileError } = await srAdmin
-      .from('user_profiles')
-      .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+    const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+      db.from('user_profiles')
+        .upsert({ id: data.user.id, nickname, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
     if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   }
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)

@@ -41,6 +41,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { enqueueMealImageJobs } from '../../../lib/meal-image-jobs';
 import { countMealImageJobsToProcess, MEAL_IMAGE_JOB_UNIQUE_VIOLATION_CODE, type MealImageJobSeed } from '../../../lib/meal-image';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -247,9 +248,9 @@ beforeAll(async () => {
   const { data, error } = await sr.auth.admin.createUser({ email: `i1561-${TS}@homegohan.test`, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
   userId = data.user.id;
-  const { error: pErr } = await sr
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: 'i1561', age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: pErr } = await retryIdempotentSetup(sr, 'beforeAll: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: 'i1561', age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (pErr) throw new Error(`user_profiles: ${pErr.message}`);
   const { data: day, error: dErr } = await sr
     .from('user_daily_meals')

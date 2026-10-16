@@ -21,6 +21,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { signInForIntegration } from '../helpers/mfa';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -59,10 +60,11 @@ async function createUser(label: string, roles?: string[]): Promise<TestUser> {
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
 
-  const { error: profileError } = await srAdmin.from('user_profiles').upsert(
-    { id: data.user.id, nickname: `${NICKNAME_PREFIX}-${label}-${TS}`, age_group: '30s', gender: 'other' },
-    { onConflict: 'id' },
-  );
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles').upsert(
+      { id: data.user.id, nickname: `${NICKNAME_PREFIX}-${label}-${TS}`, age_group: '30s', gender: 'other' },
+      { onConflict: 'id' },
+    ));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
 
   // roles は特権列ガードにより本人では変更できないため service_role で設定する

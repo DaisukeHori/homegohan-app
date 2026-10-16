@@ -30,6 +30,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数 / クライアント
@@ -138,7 +139,8 @@ async function stateRow(alertKey: string): Promise<{ alert_key: string; last_sen
 
 /** 行の last_sent_at を直接書き換えて、「前回の送信が N 分前だった」状態を作る */
 async function setLastSentAt(alertKey: string, iso: string) {
-  const { error } = await srAdmin.from('ops_alert_state').upsert({ alert_key: alertKey, last_sent_at: iso });
+  const { error } = await retryIdempotentSetup(srAdmin, 'setLastSentAt: ops_alert_state の upsert', (db) =>
+    db.from('ops_alert_state').upsert({ alert_key: alertKey, last_sent_at: iso }));
   if (error) throw new Error(`upsert ops_alert_state: ${error.message}`);
 }
 

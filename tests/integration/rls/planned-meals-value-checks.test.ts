@@ -47,6 +47,7 @@ import {
   PLANNED_MEAL_TYPES,
   type PlannedMealNutrientField,
 } from '../../../src/lib/planned-meal-validation';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -190,9 +191,9 @@ beforeAll(async () => {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
   userId = data.user.id;
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: 'meal-checks', age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'beforeAll: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: 'meal-checks', age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`user_profiles: ${profileError.message}`);
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
   if (signIn.error || !signIn.data.session) throw new Error(`signIn: ${signIn.error?.message}`);

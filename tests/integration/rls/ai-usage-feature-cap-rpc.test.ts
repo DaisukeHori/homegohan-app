@@ -26,6 +26,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -114,9 +115,9 @@ async function createUser(label: string, options: { withJwt?: boolean } = {}): P
   if (error || !data.user) throw new Error(`Failed to create auth user ${email}: ${error?.message}`);
   const userId = data.user.id;
   createdUserIds.push(userId);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: `ultimate-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: `ultimate-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   if (!options.withJwt) return { userId, jwt: null };
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });

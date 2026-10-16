@@ -32,6 +32,7 @@ import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
 import ws from 'ws';
 import { LEGAL_DOCUMENTS } from '@homegohan/shared';
 import { createOutboxStore } from '@/lib/push/outbox-store';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数 / クライアント
@@ -888,9 +889,9 @@ describe('#1136 cleanup_push_outbox', () => {
 describe('#1136 createOutboxStore (段 B)', () => {
   /** 送る条件の材料だけを持つプロフィールの行を作る (名前などは既存のテストと同じ仮の値) */
   async function upsertProfile(userId: string, extra: Record<string, unknown>) {
-    const { error } = await srAdmin
-      .from('user_profiles')
-      .upsert({ id: userId, nickname: 'rls-1136', age_group: '30s', gender: 'other', ...extra }, { onConflict: 'id' });
+    const { error } = await retryIdempotentSetup(srAdmin, 'upsertProfile: user_profiles の upsert', (db) =>
+      db.from('user_profiles')
+        .upsert({ id: userId, nickname: 'rls-1136', age_group: '30s', gender: 'other', ...extra }, { onConflict: 'id' }));
     if (error) throw new Error(`user_profiles upsert: ${error.message}`);
   }
 

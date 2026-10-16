@@ -22,6 +22,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -102,9 +103,9 @@ async function createUser(label: string): Promise<TestUser> {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: pErr } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname: `aiq-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: pErr } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: data.user.id, nickname: `aiq-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (pErr) throw new Error(`user_profiles ${label}: ${pErr.message}`);
   // サインインは使い捨ての anon クライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const { data: session, error: sErr } = await anon().auth.signInWithPassword({ email, password: PASSWORD });

@@ -28,6 +28,7 @@ import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -110,7 +111,8 @@ beforeAll(async () => {
   owner = await createTestUser('owner');
   other = await createTestUser('other');
   heavy = await createTestUser('heavy');
-  const { data, error } = await srAdmin.from('badges').select('id, code').in('code', [...BADGE_CODES]);
+  const { data, error } = await retryIdempotentSetup(srAdmin, 'beforeAll: badges の select', (db) =>
+    db.from('badges').select('id, code').in('code', [...BADGE_CODES]));
   if (error) throw new Error(`badges マスタの取得に失敗: ${error.message}`);
   for (const code of BADGE_CODES) {
     const row = (data ?? []).find((b) => b.code === code);
