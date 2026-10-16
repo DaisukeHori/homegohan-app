@@ -132,7 +132,7 @@ describe('#1102 A. subscription_plans の Stripe Price ID 列 (カタログ)', (
     expect(comments.stripe_yearly_price_id).toContain('stripe_price_id');
   });
 
-  it('RLS は有効のままで、ポリシーは 2 本 (super_admin の全操作 / 公開・非公開プランの SELECT) から増減していない', async () => {
+  it('RLS は有効のままで、ポリシーは 3 本 (super_admin の全操作 / 運営 (admin・super_admin) の SELECT / 公開・非公開プランの SELECT) から増減していない', async () => {
     const policies = await pgQuery<{ policyname: string; cmd: string }>(`
       SELECT policyname, cmd
       FROM pg_policies
@@ -141,6 +141,8 @@ describe('#1102 A. subscription_plans の Stripe Price ID 列 (カタログ)', (
     `);
     expect(policies).toEqual([
       { policyname: 'subscription_plans_mutate_super_admin', cmd: 'ALL' },
+      // #1176 段 E: 運営の枝を select_public から分けた (TO authenticated・判定の関数つき。docs/design/cross/12-operator-mfa.md §11.4・§23 N-33)
+      { policyname: 'subscription_plans_select_operator', cmd: 'SELECT' },
       { policyname: 'subscription_plans_select_public', cmd: 'SELECT' },
     ]);
 
