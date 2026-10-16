@@ -1,7 +1,7 @@
 # mobile/ サーバーからの Push 通知の送信 — 送信待ち (push_outbox)・worker・receipt (#1136)
 
-版: v1.3 (2026-10-16 A 型設計ゲート 周 3 の網羅性の反映)
-改定履歴: v1.0 2026-10-16 新設 / v1.1 2026-10-16 発火元の書き手を全数で列挙し、積む行を「2 日以上の AI の生成」に絞った (§3.2.1)。鍵が無い環境でも掃除 (24 時間で expired) を回す (R-12) / v1.2 2026-10-16 形の違う token・別の Expo プロジェクトの token が同じ要求のほかの行を巻き込まない (R-24)。失敗の通知の本文は理由を約束しない (§3.2)。番兵の追随 (§13.1) を実際の挙動に合わせた / v1.3 2026-10-16 エラー表 (§9) に時間切れと receipt の error (DeviceNotRegistered / ほか) の行を足し、receipt の `InvalidCredentials` を dead と書いていた箇所 (§1.2・§13.2・§14) を記録に直した。§1.2 のアプリのファイルの所在を `apps/mobile/src/…` に直した
+版: v1.4 (2026-10-16 #1598 に合わせた通知の行き先の改定)
+改定履歴: v1.0 2026-10-16 新設 / v1.1 2026-10-16 発火元の書き手を全数で列挙し、積む行を「2 日以上の AI の生成」に絞った (§3.2.1)。鍵が無い環境でも掃除 (24 時間で expired) を回す (R-12) / v1.2 2026-10-16 形の違う token・別の Expo プロジェクトの token が同じ要求のほかの行を巻き込まない (R-24)。失敗の通知の本文は理由を約束しない (§3.2)。番兵の追随 (§13.1) を実際の挙動に合わせた / v1.3 2026-10-16 エラー表 (§9) に時間切れと receipt の error (DeviceNotRegistered / ほか) の行を足し、receipt の `InvalidCredentials` を dead と書いていた箇所 (§1.2・§13.2・§14) を記録に直した。§1.2 のアプリのファイルの所在を `apps/mobile/src/…` に直した / v1.4 2026-10-16 #1598 でネイティブの週の画面を削除したので、献立の通知の行き先を `/menus/weekly` から献立のタブの `/menus` (`MENUS_TAB_PATH`) に改め、`resolveNotificationHref` が同じ値に解決することを番兵の行 (§13.1) に書いた (§3.2・§3.3・§4.2・§6.2・§12・§13.1・§14)。削除した画面を名指しする行に削除の注記を足した (§2・§3.2.1)
 
 ## 0. 位置づけと分冊判定
 
@@ -58,7 +58,7 @@
 - 現行 (origin/main 2026-10-16):
   - `user_push_tokens`: `id` / `user_id` (FK auth.users ON DELETE CASCADE) / `expo_push_token` / `platform` / `device_name` / `install_secret_hash` / `created_at` / `updated_at` (`packages/shared/src/database.types.ts`。初版 `20251126124224_create_meal_planner_tables.sql`、`20261016163600_user_push_tokens_install_secret.sql` が列と索引 `idx_user_push_tokens_expo_push_token` を追加)。UNIQUE (user_id, expo_push_token) はアプリの upsert (`onConflict: 'user_id,expo_push_token'`) が前提にする。RLS は本人の行だけ (`select_own_push_tokens`・`insert_own_push_tokens`・`user can manage own` など) と `service_role can read`。`expo_push_token` に形・長さの CHECK は無く、アプリ (`apps/mobile/src/lib/pushNotifications.ts` の upsert) が直接書くので、認証済みの利用者は自分の行に任意の文字列や別の Expo プロジェクトの token を書ける。形の判定 `isExpoPushToken` (`src/lib/push-tokens.ts`。上限 `MAX_EXPO_PUSH_TOKEN_LENGTH` = 256 文字) は claim / release の API だけが使う。本番の行数は 0 (2026-10-16 読み取り)。
   - 行を消す経路 (既存): アプリのログアウト (`apps/mobile/src/lib/signOut.ts`)、`POST /api/push-tokens/claim` (同じ端末の前の利用者の行)、`POST /api/push-tokens/release` (セッション無し)、退会 (FK の CASCADE)。本書は 5 つ目 (`DeviceNotRegistered`) を足す。退会の API が 401 を返したときのログアウトで行が残りうる件 (#1706) は、#1710 で直った (`signOut.ts` の `unregisterPushTokenOrRecordRelease`: 行の削除が失敗・0 件なら、端末の値を消す前に release の宛先を控え、あとの `SIGNED_OUT` の release が行を消す)。本書はこの経路を変えない。
-  - `notification_preferences`: `notifications_enabled` (NOT NULL・既定 true。`GET/PATCH /api/notification-preferences` が読み書きし、アプリの設定タブと Web の設定画面が見せる)・`quiet_hours_start` / `quiet_hours_end` (time・既定 22:00 / 07:00) と `enabled`・`morning_reminder_*`・`evening_reminder_*`・`vacation_mode` (健康記録の通知設定。`GET/PUT /api/health/notifications/preferences` が読み書きし、健康記録の設定画面 (`apps/mobile/app/health/settings.tsx`・`src/app/(main)/health/settings/page.tsx`) が「通知」・夜間の時刻・朝夕のリマインダーとして見せる。どれも送るコードは無い)。`preferences` JSONB は無い (本番も同じ)。`user_profiles` に `timezone` 列は無い。
+  - `notification_preferences`: `notifications_enabled` (NOT NULL・既定 true。`GET/PATCH /api/notification-preferences` が読み書きし、アプリの設定タブと Web の設定画面が見せる)・`quiet_hours_start` / `quiet_hours_end` (time・既定 22:00 / 07:00) と `enabled`・`morning_reminder_*`・`evening_reminder_*`・`vacation_mode` (健康記録の通知設定。`GET/PUT /api/health/notifications/preferences` が読み書きし、健康記録の設定画面 (Web の `src/app/(main)/health/settings/page.tsx`。モバイルのネイティブの `apps/mobile/app/health/settings.tsx` は、通常の操作で届かない画面として 2026-10-16 に削除した。#1598) が「通知」・夜間の時刻・朝夕のリマインダーとして見せる。どれも送るコードは無い)。`preferences` JSONB は無い (本番も同じ)。`user_profiles` に `timezone` 列は無い。
   - 献立の生成: `weekly_menu_requests` (`status` 既定 `pending`。本番の実績の値は `completed` / `failed`)。この表は献立の生成の依頼のほか、1 食・1 日の生成と作り直し・栄養分析からの 1 食の変更・手動の 1 件追加 (AI を通らない) にも使われ、`completed` / `failed` を書く経路は 8 つある (全数は §3.2.1)。`mode` は作る route が `'v4'` / `'v5'` (エンジン名) で上書きするので、依頼の種類を見分ける列にならない。見分けられるのは `target_slots` (`[{ date, meal_type 又は mealType, … }]`。作る経路のすべてが `date` を入れる) の日数と、こちらで書いた `error_message` の定型の文 (`supabase/functions/_shared/stored-failure-messages.ts`)。書き手は service_role と、SECURITY DEFINER の `claim_menu_request` (`20261007160400_claim_menu_request_lease.sql`)。
   - 同意: `user_profiles.terms_version_accepted` / `privacy_version_accepted` と `hasAcceptedCurrentLegalDocuments` (`packages/shared/src/legal-versions.ts`)。強制の判定は `lib/legal-consent.ts` の `isLegalConsentEnforced()` (環境変数 `LEGAL_CONSENT_ENFORCE` を読むのはこのファイルだけ)。凍結: `user_profiles.frozen_at` / `unban_at` と `isAccountFrozen` (`src/lib/auth/frozen.ts`)。
   - cron の骨格: `src/app/api/cron/app-log-alerts/route.ts` (`requireCronAuth`・`runtime = 'nodejs'`・`fetchCache = 'force-no-store'`・`maxDuration = 60`・`waitUntil` の延命)。`vercel.json` の `crons` は `process-menu-queue` (毎分) と `app-log-alerts` (15 分おき) の 2 本。メンテナンス中も `/api/cron` は通る (`src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath`)。同意ゲートの許可リストにも `/api/cron` (prefix) がある (`packages/shared/src/legal-consent-api.ts`)。
@@ -103,10 +103,10 @@
 
 | kind | 発火元 | 文面 (title / body) | 行き先 `data.path` | 受け取り設定 | 夜間 | ttl |
 |---|---|---|---|---|---|---|
-| `weekly_menu_completed` | `weekly_menu_requests.status` が `completed` になり、§3.2.1 の「積む」の条件を満たす (トリガー §5.3) | 「献立ができました」/「{M}月{D}日からの献立ができました。開いて確認しましょう」(`start_date` から) | `/menus/weekly` | `notifications_enabled` | `send` (自分で頼んだ結果。待っている間に届くことに意味がある) | 24 時間 |
-| `weekly_menu_failed` | 同じく `failed` になり、§3.2.1 の「積む」の条件を満たす | 「献立を作れませんでした」/「{M}月{D}日からの献立を作れませんでした」(`start_date` から。理由 (同意・1 日の上限・生成の失敗など) は書かず、理由の確認も約束しない: いまのモバイルの週の画面が `error_message` を出すのは追跡中の依頼の失敗だけで、起動時の `GET /api/ai/menu/weekly/pending` は queued / pending / processing の行しか返さないので、通知から開いても理由は出ない (§14)。上限のときは「もう一度」も当たらない) | `/menus/weekly` | 同上 | `send` | 24 時間 |
+| `weekly_menu_completed` | `weekly_menu_requests.status` が `completed` になり、§3.2.1 の「積む」の条件を満たす (トリガー §5.3) | 「献立ができました」/「{M}月{D}日からの献立ができました。開いて確認しましょう」(`start_date` から) | `/menus` (献立のタブ。タブの WebView が Web の `/menus/weekly` を出す) | `notifications_enabled` | `send` (自分で頼んだ結果。待っている間に届くことに意味がある) | 24 時間 |
+| `weekly_menu_failed` | 同じく `failed` になり、§3.2.1 の「積む」の条件を満たす | 「献立を作れませんでした」/「{M}月{D}日からの献立を作れませんでした」(`start_date` から。理由 (同意・1 日の上限・生成の失敗など) は書かず、理由の確認も約束しない: 通知から開く献立のタブの WebView (Web の週の画面 `src/app/(main)/menus/weekly/page.tsx`) が `error_message` を出すのは追跡中の依頼の失敗だけで、起動時の `GET /api/ai/menu/weekly/pending` は queued / pending / processing の行しか返さないので、通知から開いても理由は出ない (§14)。上限のときは「もう一度」も当たらない) | `/menus` | 同上 | `send` | 24 時間 |
 
-payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayloadSchema` が検証): `{ request_id: uuid, start_date: 'YYYY-MM-DD', mode: string | null }`。`data` (アプリに届く): `{ kind, path: '/menus/weekly', request_id }`。
+payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayloadSchema` が検証): `{ request_id: uuid, start_date: 'YYYY-MM-DD', mode: string | null }`。`data` (アプリに届く): `{ kind, path: '/menus', request_id }`。`/menus` は献立のタブで、タブの WebView が Web の `/menus/weekly` を今の週で出す (ネイティブの週の画面 `apps/mobile/app/menus/weekly/index.tsx` は、通常の操作で届かない画面として 2026-10-16 に削除した。#1598。`/menus/weekly` を送っても、アプリの `resolveNotificationHref` は一番近い上位の `/menus` を開く)。
 
 #### 3.2.1 発火元の書き手の全数と、積むかどうか (origin/main a6455673)
 
@@ -133,7 +133,7 @@ payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayload
 | `family_freeze_warning` / `family_frozen` (`03` §3.4) | 発火元の pg_cron (`family_freeze_grace_batch`) が未実装 (`08` §3.0) | バッチの実装 (`family_frozen` は `defer` にしない) |
 | `plan_deprecated` / `trial_ending` / `license_renewal` (`03` §3.4) | 課金のバッチはオーナーの選択「課金は無料のまま計測」で足していない (`08` §3.2) | バッチの実装 |
 | お知らせ (`announcements`) | 運営からの一斉送信 (§1.2 の対象外) | 運営の操作の設計 (監査ログ・送る相手の数え方) |
-| メールだけで知らせている利用者宛ての出来事 (`src/lib/emails/membership/`: 家族・組織の招待 / 家族の代表者・組織のオーナーの譲渡の提案と完了 / 家族の昇格 / 脱退・除名 / 運営による強制解散・強制譲渡。`support/ticket-reply`: サポートの返信) | 行き先が `NOTIFICATION_ROUTES` に無い (家族の画面はアプリに無い。組織・サポートの画面はあるが通知の行き先に載せていない)。本書はモバイルのコードを変えない | 行き先の決め方 (WebView か `NOTIFICATION_ROUTES` への追加) |
+| メールだけで知らせている利用者宛ての出来事 (`src/lib/emails/membership/`: 家族・組織の招待 / 家族の代表者・組織のオーナーの譲渡の提案と完了 / 家族の昇格 / 脱退・除名 / 運営による強制解散・強制譲渡。`support/ticket-reply`: サポートの返信) | 行き先が `NOTIFICATION_ROUTES` に無い (家族・組織・サポートの画面はアプリに無い。ネイティブの組織・サポートの画面は、通常の操作で届かない画面として 2026-10-16 に削除した。#1598)。本書はモバイルのコードを変えない | 行き先の決め方 (WebView か `NOTIFICATION_ROUTES` への追加) |
 | 健康記録のリマインダー (朝・夕。`morning_reminder_*` / `evening_reminder_*` / `vacation_mode`) | 設定画面はあるが、時刻に送るバッチ (pg_cron / Vercel Cron) が無い | 時刻ごとに積むバッチ。行き先は `/health/record` |
 | Push にしないもの: 退会の完了 (`account/account-deleted`。退会後は端末の行が無い)・運用の警報 (`ops/app-log-error-spike`。運営宛て)・Web のフォアグラウンド通知 (`local-notification.ts`。ブラウザの中だけ) | Push の宛先が無い / 利用者宛てでない | – |
 
@@ -141,8 +141,8 @@ payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayload
 
 | # | シナリオ | 期待する結果 |
 |---|---|---|
-| S-01 | アプリで 1 週間の献立を頼み、ホーム画面に戻ってアプリを閉じる。3 分後に生成が終わる | 1 分以内に「献立ができました」が届く。タップすると `/menus/weekly` が開く |
-| S-02 | キューに積んだ 3 日分の献立の生成が失敗する (順番を待つ間に AI の事業者への提供の同意を取り下げていた)。利用者はアプリを閉じている | 「{M}月{D}日からの献立を作れませんでした」が届く。タップすると今の週の `/menus/weekly` が開く (失敗の理由は出ない。通知も理由を約束しない: §3.2・§14) |
+| S-01 | アプリで 1 週間の献立を頼み、ホーム画面に戻ってアプリを閉じる。3 分後に生成が終わる | 1 分以内に「献立ができました」が届く。タップすると献立のタブ (`/menus`。WebView が Web の `/menus/weekly` を出す) が開く |
+| S-02 | キューに積んだ 3 日分の献立の生成が失敗する (順番を待つ間に AI の事業者への提供の同意を取り下げていた)。利用者はアプリを閉じている | 「{M}月{D}日からの献立を作れませんでした」が届く。タップすると献立のタブ (`/menus`) が今の週で開く (失敗の理由は出ない。通知も理由を約束しない: §3.2・§14) |
 | S-03 | Web だけを使う利用者 (端末の行が無い) の献立が完成する | `push_outbox` に行は作られない (0 件)。何も送らない |
 | S-04 | iPhone と iPad の 2 台でログインしている利用者の献立が完成する | 2 行が作られ、2 台に届く。receipt も 2 行に残る |
 | S-05 | 通知を OFF (`notifications_enabled = false`) にしている利用者の献立が完成する | 行は作られるが、worker が送らず dead (`notifications_disabled`) にする |
@@ -162,7 +162,7 @@ payload (トリガーが入れる・`render.ts` の Zod `WeeklyMenuResultPayload
 | S-19 | 1 週間の献立の生成中に、利用者が画面の「中止」を押す | 行は `failed` (`中止しました`) になるが、Push は届かない (`push_outbox` に行は作られない) |
 | S-20 | 週の献立の画面で 1 食だけ作り直す (または 1 日分を作り直す・AI 相談で 1 日分を作る) | 結果は画面に出る。Push は届かない (`target_slots` が 1 日) |
 | S-21 | 献立を手動で 1 件追加する (体験ツアーを含む) | 行は `pending` → `completed` になるが、Push は届かない (`target_slots` が無い) |
-| S-22 | 1 週間の生成が途中で止まり、20 分後に利用者が週の画面を開いて、状態の確認 (または掃除) が行を `failed` (`stale_request_timeout`) にする。別の利用者の 3 日分のキューの行は、取り直しの回数を使い切って `failed` (`attempt_limit_exceeded`) になる | 前者は Push が届かない (利用者は週の画面を開いている。モバイルの画面は、追跡中なら失敗の文を出し、開き直したときは生成中の表示を消す)。後者 (画面を離れている間の失敗) には「{M}月{D}日からの献立を作れませんでした」が届く |
+| S-22 | 1 週間の生成が途中で止まり、20 分後に利用者が週の画面を開いて、状態の確認 (または掃除) が行を `failed` (`stale_request_timeout`) にする。別の利用者の 3 日分のキューの行は、取り直しの回数を使い切って `failed` (`attempt_limit_exceeded`) になる | 前者は Push が届かない (利用者は週の画面を開いている。週の画面 (アプリでは献立のタブの WebView が出す Web の画面) は、追跡中なら失敗の文を出し、開き直したときは生成中の表示を消す)。後者 (画面を離れている間の失敗) には「{M}月{D}日からの献立を作れませんでした」が届く |
 | S-23 | 利用者がアプリの外から自分の `user_push_tokens` の行に形の違う文字列 (`ExponentPushToken[…]` の形でない) を書き、その利用者とほかの 99 人の献立が同じ分に完成する | 形の違う行は Expo に渡さずに dead (`invalid_token`)。ほかの 99 人の行は同じ回に 1 つの要求で送られ、届く。端末の行は消さない |
 | S-24 | 形は正しいが別の Expo プロジェクトの token (利用者が書いた値、または別のプロジェクトで作った古いビルドの token) の行が、ほかの 99 人の行と同じ塊に入る | Expo が要求ごと 400 (`PUSH_TOO_MANY_EXPERIENCE_IDS`) を返す → worker は塊を 1 件ずつの要求に分けて送り直す → 99 人の行は sent。原因の行だけが自分の 1 件の要求の結果 (4xx なら dead (`errors[0].code`)) になる |
 
@@ -200,8 +200,8 @@ flowchart LR
 
 | # | 走らせた経路 | 結果 (期待と一致) |
 |---|---|---|
-| S-01 | `weekly/request` が `target_slots` (7 日 × 3 食) を入れた行 → Edge Function が `buildActiveRequestUpdate` で `status = 'completed'` → トリガー (AFTER UPDATE OF status・WHEN 新旧が違い新が completed/failed) → 関数: 中止・止まりの文でない・異なる `date` が 7 ≥ 2 → `enqueue_push_notification(user_id, 'weekly_menu_completed', { request_id, start_date, mode }, 'weekly_menu_result:<id>')` → `user_push_tokens` の 1 行 → INSERT 1 行 (queued・next_attempt_at = now)。worker (≤ 60 秒後): `claim_push_outbox` → `loadEligibility` → 凍結なし・同意済み・enabled → kind `send` → `render` → `transport.send([1 件])` → ticket ok → `complete_push_outbox(id, worker, receipt_id)` → sent。15 分後の回: `claim_push_receipts` → `getReceipts` → ok → `record_push_receipt('ok')`。端末: `NotificationRouter` が `data.path = '/menus/weekly'` を `resolveNotificationHref` で解決 → 画面を開く | 一致 |
-| S-02 | `v5/generate` が 3 日分の `target_slots` で `queued` に積んだ行 → `process-menu-queue` が同意の文で `status = 'failed'` (W-4) → トリガー: 中止・止まりの文でない・3 日 ≥ 2 → kind `weekly_menu_failed` → 同じ経路で `render` が「{M}月{D}日からの献立を作れませんでした」(`start_date` から) → タップ: `/menus/weekly` が今の週で開く → `checkPending` の `GET …/weekly/pending` は failed の行を返さない (queued / pending / processing だけ) → 理由は出ない。本文は理由を約束していないので食い違わない | 一致 |
+| S-01 | `weekly/request` が `target_slots` (7 日 × 3 食) を入れた行 → Edge Function が `buildActiveRequestUpdate` で `status = 'completed'` → トリガー (AFTER UPDATE OF status・WHEN 新旧が違い新が completed/failed) → 関数: 中止・止まりの文でない・異なる `date` が 7 ≥ 2 → `enqueue_push_notification(user_id, 'weekly_menu_completed', { request_id, start_date, mode }, 'weekly_menu_result:<id>')` → `user_push_tokens` の 1 行 → INSERT 1 行 (queued・next_attempt_at = now)。worker (≤ 60 秒後): `claim_push_outbox` → `loadEligibility` → 凍結なし・同意済み・enabled → kind `send` → `render` → `transport.send([1 件])` → ticket ok → `complete_push_outbox(id, worker, receipt_id)` → sent。15 分後の回: `claim_push_receipts` → `getReceipts` → ok → `record_push_receipt('ok')`。端末: `NotificationRouter` が `data.path = '/menus'` を `resolveNotificationHref` で同じ `/menus` に解決 → 献立のタブを開く (WebView が Web の `/menus/weekly`) | 一致 |
+| S-02 | `v5/generate` が 3 日分の `target_slots` で `queued` に積んだ行 → `process-menu-queue` が同意の文で `status = 'failed'` (W-4) → トリガー: 中止・止まりの文でない・3 日 ≥ 2 → kind `weekly_menu_failed` → 同じ経路で `render` が「{M}月{D}日からの献立を作れませんでした」(`start_date` から) → タップ: 献立のタブ (`/menus`) の WebView が Web の `/menus/weekly` を今の週で開く → Web の週の画面の `checkPendingRequests`・`fetchPlan` の `GET …/weekly/pending` は failed の行を返さない (queued / pending / processing だけ) → 理由は出ない。本文は理由を約束していないので食い違わない | 一致 |
 | S-03 | トリガー → `enqueue_push_notification` → `user_push_tokens` に行が無い → INSERT 0 行 → 0 を返す。トリガーは戻り値を見ない | 一致 |
 | S-04 | 端末の行 2 つ → INSERT 2 行 (`dedupe_key` は `…:<token>` で別) → 1 要求に 2 件 → ticket 2 つを順に対応 → 2 行 sent → receipt 2 行 | 一致 |
 | S-05 | claim → `loadEligibility` の `notificationsEnabled = false` → `decideEligibility` が `notifications_disabled` → `fail_push_outbox(retryable = false)` → dead。Expo は呼ばない | 一致 (R-05) |
@@ -713,14 +713,14 @@ export interface PushNotificationKindSpec {
 
 /** 献立の結果の通知の ttl。利用者が自分で頼んだ献立の結果は、翌日まで届けば十分 */
 const MENU_RESULT_TTL_SECONDS = 24 * 60 * 60;
-/** 献立の画面 (apps/mobile/app/(tabs)/menus.tsx の下の weekly) */
-const MENU_WEEKLY_PATH = '/menus/weekly';
+/** 献立のタブ (apps/mobile/app/(tabs)/menus.tsx。タブの WebView が Web の /menus/weekly を出す) */
+const MENUS_TAB_PATH = '/menus';
 
 export const PUSH_NOTIFICATION_KIND_SPECS: Readonly<Record<PushNotificationKind, PushNotificationKindSpec>> = {
   weekly_menu_completed: {
     kind: 'weekly_menu_completed',
     label: '献立ができたとき',
-    path: MENU_WEEKLY_PATH,
+    path: MENUS_TAB_PATH,
     // 利用者が自分で頼んだ結果で、待っている間に届くことに意味がある (夜に頼んだ人は夜に受け取る)
     quietHours: 'send',
     ttlSeconds: MENU_RESULT_TTL_SECONDS,
@@ -729,7 +729,7 @@ export const PUSH_NOTIFICATION_KIND_SPECS: Readonly<Record<PushNotificationKind,
   weekly_menu_failed: {
     kind: 'weekly_menu_failed',
     label: '献立を作れなかったとき',
-    path: MENU_WEEKLY_PATH,
+    path: MENUS_TAB_PATH,
     quietHours: 'send',
     ttlSeconds: MENU_RESULT_TTL_SECONDS,
     priority: 'default',
@@ -766,7 +766,7 @@ export type WeeklyMenuResultPayload = z.infer<typeof WeeklyMenuResultPayloadSche
 const WEEKLY_MENU_COMPLETED_TITLE = '献立ができました';
 /**
  * 失敗の本文は日付だけで、理由 (同意・1 日の上限・生成の失敗など) も理由の確認も書かない。
- * 通知から開く週の画面 (apps/mobile/app/menus/weekly) が error_message を出すのは追跡中の依頼の失敗だけで、
+ * 通知から開く献立のタブの WebView (Web の週の画面 src/app/(main)/menus/weekly/page.tsx) が error_message を出すのは追跡中の依頼の失敗だけで、
  * 起動時の GET /api/ai/menu/weekly/pending は failed の行を返さないため、開いても理由は出ない (設計書 §3.2・§14)
  */
 const WEEKLY_MENU_FAILED_TITLE = '献立を作れませんでした';
@@ -1499,7 +1499,7 @@ worker の単体テストの行の token は `ExponentPushToken[…]` の形に�
 | 関数 (TS) | `isPushNotificationKind`、`renderPushMessage`、`formatMonthDay`、`resolvePushOutboxSettings`、`retryDelaySeconds`、`maskPushToken`、`chunk`、`parseClockMinutes`、`localMinutesOfDay`、`isWithinQuietHours`、`quietHoursEndMs`、`decideEligibility`、`isRequestLevelRejection`、`parseClaimedRows`、`parseReceiptRows`、`processPushOutbox`、`createExpoTransport`、`createOutboxStore` |
 | 定数 | `outbox.ts` (§6.3): `PUSH_OUTBOX_MAX_ATTEMPTS` (+ `_MIN` / `_MAX`)・`PUSH_OUTBOX_RETRY_DELAYS_SECONDS`・`PUSH_OUTBOX_BATCH_SIZE` (+ `_MIN` / `_MAX`)・`EXPO_PUSH_SEND_CHUNK_SIZE`・`EXPO_PUSH_RECEIPT_CHUNK_SIZE`・`PUSH_OUTBOX_LEASE_SECONDS`・`PUSH_OUTBOX_RUN_BUDGET_MS`・`PUSH_OUTBOX_QUEUED_MAX_AGE_MS`・`PUSH_RECEIPT_CHECK_DELAY_SECONDS`・`PUSH_RECEIPT_MAX_AGE_SECONDS`・`PUSH_QUIET_HOURS_UTC_OFFSET_MINUTES`・`PUSH_QUIET_HOURS_DEFAULT_START_MINUTES` / `_END_MINUTES`・`EXPO_DEFAULT_ANDROID_CHANNEL_ID`・`EXPO_DEVICE_NOT_REGISTERED`、`PUSH_NOTIFICATION_KINDS`、`PUSH_NOTIFICATION_KIND_SPECS`、`PUSH_OUTBOX_ERROR_CODES`、`HTTP_TOO_MANY_REQUESTS` (正は `outbox.ts`。`expo-transport.ts` は import する)、`EXPO_PUSH_SEND_URL` / `EXPO_PUSH_RECEIPTS_URL` (`expo-transport.ts`) |
 | 型 / Zod | `PushNotificationKind`、`PushQuietHoursPolicy`、`PushNotificationKindSpec`、`RenderedPushMessage` (正は `outbox.ts`。`render.ts` は import する)、`WeeklyMenuResultPayloadSchema` / `WeeklyMenuResultPayload`、`PushPriority`、`PushMessage`、`ExpoPushTicketSchema` / `ExpoPushTicket`、`ExpoPushReceiptSchema` / `ExpoPushReceipt`、`PushTransportFailure`、`PushSendOutcome`、`PushReceiptsOutcome`、`PushTransport`、`PushOutboxClaimedRowSchema` / `PushOutboxClaimedRow`、`PushOutboxReceiptRowSchema` / `PushOutboxReceiptRow`、`PushUserEligibility`、`PushKindPolicy`、`PushEligibility`、`PushOutboxFailInput`、`PushOutboxFailOutcome`、`PushOutboxStore`、`PushOutboxCleanupResult`、`PushOutboxLogger`、`PushOutboxWorkerDeps`、`PushOutboxRunOptions`、`PushOutboxRunSummary`、`PushOutboxSettingEnvName`、`PushOutboxSettingSources`、`PushOutboxSettings` |
-| export しない (ファイルの中だけ) | `render.ts`: `WEEKLY_MENU_COMPLETED_TITLE`・`WEEKLY_MENU_FAILED_TITLE` (本文は日付から作るので定数にしない)。`push-notification-kinds.ts`: `MENU_RESULT_TTL_SECONDS`・`MENU_WEEKLY_PATH`。`outbox.ts`: `MINUTES_PER_DAY`・`MS_PER_MINUTE`・`MS_PER_SECOND`・`PUSH_TOKEN_SUFFIX_CHARS`・`CLOCK_PATTERN`・`ExpoErrorDetailsSchema`・`boundedInt`・`recordFailure`・`notSent`・`removeToken`・`sendQueued`・`sendBatch`・`checkReceipts`・型 `Pending` / `RowRef`。`expo-transport.ts`: `HTTP_SERVER_ERROR_MIN`・`SendResponseSchema`・`ReceiptsResponseSchema`・`ErrorResponseSchema`・`httpFailure`・`post`。route: `ROUTE_NAME`・`LOG_FLUSH_GRACE_MS` |
+| export しない (ファイルの中だけ) | `render.ts`: `WEEKLY_MENU_COMPLETED_TITLE`・`WEEKLY_MENU_FAILED_TITLE` (本文は日付から作るので定数にしない)。`push-notification-kinds.ts`: `MENU_RESULT_TTL_SECONDS`・`MENUS_TAB_PATH`。`outbox.ts`: `MINUTES_PER_DAY`・`MS_PER_MINUTE`・`MS_PER_SECOND`・`PUSH_TOKEN_SUFFIX_CHARS`・`CLOCK_PATTERN`・`ExpoErrorDetailsSchema`・`boundedInt`・`recordFailure`・`notSent`・`removeToken`・`sendQueued`・`sendBatch`・`checkReceipts`・型 `Pending` / `RowRef`。`expo-transport.ts`: `HTTP_SERVER_ERROR_MIN`・`SendResponseSchema`・`ReceiptsResponseSchema`・`ErrorResponseSchema`・`httpFailure`・`post`。route: `ROUTE_NAME`・`LOG_FLUSH_GRACE_MS` |
 | 環境変数 | `EXPO_ACCESS_TOKEN`、`PUSH_OUTBOX_MAX_ATTEMPTS`、`PUSH_OUTBOX_BATCH_SIZE` |
 | エラーコード (行の `last_error_code`) | `account_frozen` / `consent_outdated` / `notifications_disabled` / `profile_missing` / `expired` / `invalid_token` / `unknown_kind` / `invalid_payload` / `network_error` / `invalid_response` / `expo_http_error` / `expo_ticket_error`、Expo の名前そのまま (`DeviceNotRegistered` など) |
 
@@ -1529,8 +1529,8 @@ worker の単体テストの行の token は `ExponentPushToken[…]` の形に�
 | `lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts`・`middleware-legal-consent-api.test.ts` | `src/app/api` の全 route | `/api/cron` は prefix で両方の許可リストにある | 反応しない | B |
 | `tests/jst-today-source-scan.test.ts` 規則 G | 列名リテラルの `.gte/.lt` | store は rpc と `.in` だけ | 反応しない | B |
 | `tests/data-share-not-consent.test.ts` | `data_share_enabled` | 読まない (`notifications_enabled` と quiet の 3 列だけ select) | 反応しない | B |
-| `apps/mobile/__tests__/lib/notification-route.test.ts` | `NOTIFICATION_ROUTES` | 変えない (`/menus/weekly` は既にある) | 反応しない | B |
-| `tests/design-doc-removed-mobile-screens.test.ts`・`tests/mobile-sign-out-doc-callers.test.ts` | 本書の行 | 消した画面を名指しせず、端末のログアウトの行に画面名を書かない | 反応しない | C |
+| `apps/mobile/__tests__/lib/notification-route.test.ts` | `NOTIFICATION_ROUTES` | 変えない (`/menus` は既にある) | 反応しない | B |
+| `tests/design-doc-removed-mobile-screens.test.ts`・`tests/design-doc-push-paths-resolve.test.ts`・`tests/mobile-sign-out-doc-callers.test.ts` | 本書の行 | 消した画面 (健康記録の設定・週の献立) を名指しする行は、同じ行で 2026-10-16 に削除したと書く (#1598)。通知の行き先 (`path: '/menus'`・`data.path = '/menus'`・`MENUS_TAB_PATH`) は `resolveNotificationHref` で同じ `/menus` に解決される。端末のログアウトの行に画面名を書かない | 反応しない (緑のまま) | C |
 
 ### 13.2 他の文書への追随
 
@@ -1555,7 +1555,7 @@ worker の単体テストの行の token は `ExponentPushToken[…]` の形に�
 - 届けられなかった Push を運用メールで知らせるか (本書は知らせない。`app-log-alerts` に 4 つ目の種類を足すなら、メールの送信待ちの `email_dead_letter` と同じ形)。
 - 後回しの種類 (§3.2) の着手順と、家族・組織の通知の行き先 (WebView で Web の画面を開く形) の決め方。
 - 種類ごとの受け取り設定 (`03` §3.6) を足すときの `decideEligibility` の判定と、アプリの設定画面。
-- 通知から開く週の画面は今の週を開き、依頼の週や失敗の理由へは案内しない。モバイルの週の画面 (`apps/mobile/app/menus/weekly/index.tsx`) が `error_message` を出すのは追跡中の依頼の失敗だけで、起動時の `GET /api/ai/menu/weekly/pending` は queued / pending / processing の行しか返さない。そのため失敗の通知 (§3.2) は理由を約束しない。理由を出すなら、行き先 (`data.path` に依頼の ID か週を載せる) と画面の変更が要り、本書の範囲 (モバイルのコードを変えない: §1.2) の外。
+- 通知から開く週の画面は今の週を開き、依頼の週や失敗の理由へは案内しない。通知から開く献立のタブの WebView (Web の週の画面 `src/app/(main)/menus/weekly/page.tsx`。ネイティブの週の画面 `apps/mobile/app/menus/weekly/index.tsx` は 2026-10-16 に削除した。#1598) が `error_message` を出すのは追跡中の依頼の失敗だけで、起動時の `GET /api/ai/menu/weekly/pending` は queued / pending / processing の行しか返さない。そのため失敗の通知 (§3.2) は理由を約束しない。理由を出すなら、行き先 (`data.path` に依頼の ID か週を載せる) と画面の変更が要り、本書の範囲 (モバイルのコードを変えない: §1.2) の外。
 - `MessageRateExceeded` (receipt) を再試行するか (本書は記録だけ。1 回の献立で同じ端末に 1 通なので起きにくい)。
 - 1 日分以下の生成 (AI アシスタントの 1 日の範囲・究極モードを含む) は通知しない (§3.2.1)。画面で待つ操作と長く待つ操作を、今の行の列では見分けられない。見分けるなら、行を作る route が「通知する」を記録する列を足す (作る経路は route 8 本と AI 相談の 3 か所)。
 - 健康記録の設定画面の「通知」(`notification_preferences.enabled`) を切った利用者にも、献立の結果は届く (本書は `notifications_enabled` だけを見る)。`enabled` を健康記録のリマインダーだけの切り替えとするか、Push 全体の切り替えとするか。
