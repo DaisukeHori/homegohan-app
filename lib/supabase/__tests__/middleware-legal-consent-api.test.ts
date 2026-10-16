@@ -240,6 +240,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
       { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/portal', match: 'exact', reason: 'leave_service' },
+      { path: '/api/account/data-requests', match: 'prefix', reason: 'data_subject_rights' },
       { path: '/api/push-tokens/claim', match: 'exact', reason: 'device_cleanup' },
       { path: '/api/contact', match: 'exact', reason: 'contact' },
       { path: '/api/log', match: 'exact', reason: 'telemetry' },
@@ -589,4 +590,83 @@ describe('updateSession — /api の同意ゲートの生年月日と保護者�
     expect(mockSelect).toHaveBeenCalledWith(PROFILE_COLUMNS_WITH_LEGAL);
     expect(PROFILE_COLUMNS_WITH_LEGAL.endsWith(', birth_date')).toBe(true);
   });
+});
+
+describe('updateSession — /api の同意ゲート (#1442): 本人の権利の請求 /api/account/data-requests (#1751)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const DSR_ID = '00000000-0000-4000-8000-000000000000';
+  /** src/app/api/account/data-requests 以下の 6 route (一覧・作成・詳細・本人確認・確認のメールの再送・取り下げ) */
+  const DSR_ROUTES: ReadonlyArray<readonly [string, string, string]> = [
+    ['一覧', 'GET', '/api/account/data-requests'],
+    ['作成', 'POST', '/api/account/data-requests'],
+    ['詳細', 'GET', `/api/account/data-requests/${DSR_ID}`],
+    ['本人確認', 'POST', `/api/account/data-requests/${DSR_ID}/verify`],
+    ['確認のメールの再送', 'POST', `/api/account/data-requests/${DSR_ID}/resend-verification`],
+    ['取り下げ', 'POST', `/api/account/data-requests/${DSR_ID}/withdraw`],
+  ];
+
+  it('6 route は src/app/api/account/data-requests 以下に実在する (route を足したら、この表にも足す)', () => {
+    const dsrRoutes = API_ROUTES.filter(
+      (route) => route.path === '/api/account/data-requests' || route.path.startsWith('/api/account/data-requests/'),
+    ).map((route) => route.path.split(DYNAMIC_SEGMENT_SAMPLE).join(DSR_ID));
+    expect([...new Set(dsrRoutes)].sort()).toEqual([...new Set(DSR_ROUTES.map(([, , path]) => path))].sort());
+  });
+
+  it.each(DSR_ROUTES)(
+    '%s (%s %s) は 未同意 × ENFORCE=on でも 403 LEGAL_CONSENT_REQUIRED にせず route へ通す (本来の検証 400 / 201 に進む)',
+    async (_name, method, path) => {
+      mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+      const res = await updateSession(apiRequest(path, { method }));
+
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it.each(DSR_ROUTES)('%s (%s %s) は 旧版に同意 × ENFORCE=on でも通す', async (_name, method, path) => {
+    mockMaybeSingle.mockResolvedValue(consentProfile({ terms: OLD_VERSION, privacy: CURRENT_PRIVACY }));
+
+    expect((await updateSession(apiRequest(path, { method }))).status, path).toBe(200);
+  });
+
+  it.each(DSR_ROUTES)(
+    '%s (%s %s) は user_profiles の行が無い (新規登録の直後) × ENFORCE=on でも通す (route の認証も行を要さない。tests/api/account-data-requests-missing-profile.test.ts)',
+    async (_name, method, path) => {
+      mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+      // 同じ「行なし」で、許可リストの外の /api は 403 LEGAL_CONSENT_REQUIRED (この it の 200 が素通りの設定によるものでないことの対照)
+      await expectLegalConsentRequired(await updateSession(apiRequest('/api/profile', { method: 'GET' })));
+
+      const res = await updateSession(apiRequest(path, { method }));
+
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it.each(DSR_ROUTES)(
+    '%s (%s %s) は 凍結中なら、未同意でも同意済みでも 403 AUTH_ACCOUNT_FROZEN のまま (凍結中の請求は /contact。cross/15 S-13)',
+    async (_name, method, path) => {
+      for (const accepted of [NOT_ACCEPTED, ACCEPTED_CURRENT]) {
+        mockMaybeSingle.mockResolvedValue(consentProfile(accepted, { frozen_at: FROZEN_AT }));
+
+        const res = await updateSession(apiRequest(path, { method }));
+
+        expect(res.status, path).toBe(403);
+        expect(await res.json()).toEqual({ error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } });
+      }
+      expect(isFrozenAllowedApiPath(path)).toBe(false);
+    },
+  );
+
+  it.each(['/api/account/data-requestsX', '/api/account/data-requests-x', '/api/account/data-request', '/api/account/data-requestsx/verify'])(
+    '似た名前の %s は、未同意なら 403 LEGAL_CONSENT_REQUIRED (prefix は `${path}/` 以下だけ)',
+    async (path) => {
+      mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+      await expectLegalConsentRequired(await updateSession(apiRequest(path, { method: 'POST' })));
+    },
+  );
 });

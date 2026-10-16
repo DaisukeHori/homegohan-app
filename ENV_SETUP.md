@@ -89,7 +89,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue` と `/api/cron/app-log-alerts`（どちらも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
@@ -390,6 +390,29 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 - ブラウザ・端末から届いたログ（`POST /api/log`）は、利用者ごとに 1 分 30 回・直近 24 時間で 1000 回までしか受け付けません（超えると 429。#1493）。
 - 応答（JSON）の `status`（サーバーの判定。ブラウザ・端末の判定は `client.status`）は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
 - 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。
+
+---
+
+## 🔔 Push 通知の送信（`EXPO_ACCESS_TOKEN`）
+
+アプリの端末に、サーバーから Push 通知を送ります（#1136。設計は [`docs/design/mobile/06-push-send.md`](docs/design/mobile/06-push-send.md)）。いま送るのは、2 日以上の範囲の献立の生成が終わったとき（できた / 作れなかった）の 2 種類です。生成の結果を DB のトリガーが送信待ちの表 `push_outbox` に積み、Vercel Cron が毎分 `GET /api/cron/push-outbox` を呼んで Expo Push Service に送ります。
+
+| 環境変数 | 例 | 役割 | 未設定のときの動き |
+|---|---|---|---|
+| `EXPO_ACCESS_TOKEN` | （Expo の画面で作った値） | Expo Push Service のアクセストークン（サーバー専用・秘密）。Expo に送る要求に `Authorization: Bearer` で付ける | Push 通知を送らない。cron は warn ログを 1 行残し、掃除だけをする（24 時間を超えた送信待ちの行を `expired` にし、送信済みは 7 日・届けられなかった行は 30 日で消す） |
+| `PUSH_OUTBOX_MAX_ATTEMPTS`（任意） | `5` | 試行の上限。これだけ失敗したら届けられなかった（`dead`）にする。1〜10 の整数 | 既定の 3 回（1 分・5 分・15 分の間隔で再試行）。整数でない・範囲外の値も既定値に戻し、`cron/push-outbox` の warn ログに変数名だけを残す |
+| `PUSH_OUTBOX_BATCH_SIZE`（任意） | `200` | 1 回の cron（毎分）で取り出して送る件数の上限。1〜500 の整数 | 既定の 100 件。不正な値は既定値に戻す（試行の上限と同じ） |
+
+**アクセストークンの作り方と、Enhanced push security を ON にする手順（オーナー作業）**
+
+1. [expo.dev](https://expo.dev) にログインし、アプリの Expo プロジェクトの設定で **Enhanced push security** を ON にする。ON にすると、アクセストークンを付けない送信の要求を Expo が `UNAUTHORIZED` で断る（push token を知っている第三者が通知を送れなくなる）。
+2. `expo.dev/settings/access-tokens` でアクセストークンを作る。
+3. Vercel の Project Settings > Environment Variables に `EXPO_ACCESS_TOKEN` として入れる（production / preview）。値はチャットやコマンドの履歴に残さない。ローカルで試すときは `.env.local` に入れる。
+
+- 送る直前に、凍結中・現行の規約に未同意（`LEGAL_CONSENT_ENFORCE` が on のとき）・通知を切った（`notification_preferences.notifications_enabled = false`）利用者には送らない（その行は `dead`）。メンテナンス中は何もしない。
+- `app_logs`（`/super-admin/logs` で `function_name` に `cron/push-outbox` を指定）に、処理した回の件数と、届けられなかった行の理由（種類・利用者 ID・token の末尾 4 文字）が残る。通知の文面と token の全体は残さない。
+- Android の端末へ届くには、EAS に FCM V1 の資格情報を登録する必要がある（未登録の間は Android だけ `InvalidCredentials` で届かず、iOS には届く）。
+- 認証は他の cron と同じ `CRON_SECRET`。
 
 ---
 

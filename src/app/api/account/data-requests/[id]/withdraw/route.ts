@@ -2,7 +2,7 @@
  * POST /api/account/data-requests/[id]/withdraw - 開いている請求を本人が取り下げる (#1178 / #1702)
  *
  * 設計: docs/design/cross/15-data-subject-requests.md §7.2。本文は読まない (rejectNullCharacterBody も呼ばない)。
- * 検査の順: requireUser → id → service。メールは送らない。
+ * 検査の順: authenticateDsrRequester → id → service。メールは送らない。
  * service.ts の withdrawDsr が、終わった請求なら 409 DSR_INVALID_STATE、開いている状態を条件にした UPDATE が 0 行なら
  * 409 DSR_INVALID_STATE (判定の後に運営が対応済み・却下にした記録を上書きしない) を返す。
  */

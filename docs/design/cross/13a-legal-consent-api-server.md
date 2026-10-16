@@ -42,7 +42,7 @@
 | `/api/*` の分岐は `getSession → getUser → user_profiles(roles, frozen_at, unban_at)` を読み、凍結なら 403 `{ error: { code: 'AUTH_ACCOUNT_FROZEN', message } }`、メンテナンス中なら 503 を返して `return` する。同意の判定は無い | `lib/supabase/middleware.ts:183-241` |
 | 画面の同意ゲートは凍結の後・初期設定の差し戻しの前。`legalColumnsAvailable` が false (列が無い DB) と `profileError` のときは素通り。リダイレクトは GET / HEAD だけ | `lib/supabase/middleware.ts:325-393` |
 | プロフィールの読み方 (列が無い DB の 42703 でやり直す) | `lib/supabase/middleware.ts:48-77` (`fetchMiddlewareProfile`) |
-| 判定の純関数と対象外のパス (`/api` を含む) | `lib/legal-consent.ts:78-122` |
+| 判定の純関数と対象外のパス (`/api` を含む) | `lib/legal-consent.ts:87-138` |
 | 凍結中でも通す API (完全一致 5 本: 退会・書き出しと、有料プランの解約の 3 本 (billing/01 §9.8)) | `src/lib/auth/frozen.ts:60-66` |
 | AI 同意の 403 の形 `{ error: <固定の文>, code: 'AI_CONSENT_REQUIRED' }` / 判定不能は 503 `AI_CONSENT_CHECK_FAILED` | `supabase/functions/_shared/ai-consent.ts:50-64, 216-229`、`src/lib/ai/consent-guard.ts:1-15` |
 | 同意の記録 API (版が違えば 409。Bearer と Cookie の両方で使う) | `src/app/api/legal/accept/route.ts:42-130` |
@@ -232,7 +232,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | 同意の状況を知る API | 無し (画面の HTML か、`GET /api/profile` の列) | `GET /api/legal/status` |
 | `lib/legal-consent.ts` の `EXEMPT_PREFIXES` の `/api` | 画面の判定で対象外 (コメント「各 route が自分で認可する」) | 変えない (画面の判定の対象外のまま。コメントだけ本書のゲートを指すように直す) |
 | 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う)。Web の画面に出る文は変わらない (「同意しない」のボタンは `declineAndSignOutButton` = 現行と同じ「同意しない（ログアウトする）」。押している間の文はリテラルのまま) |
-| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` の全部 (billing/01 §9.8 のあとは 5 本) | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う) |
+| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` の全部 (billing/01 §9.8 のあとは 5 本) | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う)。逆は求めない (`/api/account/data-requests` は同意の許可リストにあるが、凍結中は通さない。#1751・cross/15 S-13) |
 
 モバイルの行 (起動・改定の再同意・403 の扱い) は 13b §6.2。
 
@@ -251,7 +251,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | none / old | `/api` 許可リストを呼ぶ | 同じ | — | route へ |
 | none / old | `GET /api/legal/status` | 同じ | — | `required: enforced` |
 | none / old | Web 画面 GET / HEAD (画面の判定の対象。`isLegalConsentExemptPath` が false) | 同じ | `enforce` (off なら通す。`LEGAL_CONSENT_NOTICE=on` ならお知らせのヘッダーだけ) | `/legal-consent?next=<パス+クエリ>` へ 307 (既存。`middleware.ts:372-393`)。本書で変えない |
-| none / old | Web 画面 GET / HEAD (画面の判定の対象外: `/legal-consent`・`/terms`・`/privacy`・`/legal`・`/contact`・`/frozen`・`/auth/*`・`/handson-tour`) | 同じ | — | 通す (既存。`lib/legal-consent.ts:78-105`) |
+| none / old | Web 画面 GET / HEAD (画面の判定の対象外: `/legal-consent`・`/terms`・`/privacy`・`/legal`・`/contact`・`/settings/data-requests` (#1751)・`/frozen`・`/auth/*`・`/handson-tour`) | 同じ | — | 通す (既存。`lib/legal-consent.ts:87-121`)。`/settings/data-requests` (確認の画面を含む) は初期設定の差し戻しからも外す (`lib/onboarding-routing.ts` の `isDataSubjectRequestsPath`。初期設定の前の人も開ける。#1751) |
 | none / old | Web 画面 POST など (GET / HEAD 以外) | 同じ | — | 回さない (既存。307 で同意画面へ回しても受け取れないため)。その画面が中で呼ぶ `/api` は上の「`/api` 対象を呼ぶ」の行で 403 (S14) |
 | none / old | Web の初期設定 (`/onboarding/*` の GET) | 同じ | `enforce` | 同意画面が先 (既存。同意の判定は初期設定の差し戻しより先)。off なら初期設定の差し戻しだけ。初期設定の API (`/api/onboarding/*`) は「`/api` 対象を呼ぶ」の行で 403 (§6.4) |
 | none / old | `POST /api/legal/accept` (いまの版) | **ok** | 版が一致 | `accept_legal_documents` (行が無ければ作る)。Web: `window.location.assign(next)` で元の画面へ (既存。`LegalConsentForm.tsx:53-92`)。モバイル: `refresh()` → `clear` → 画面に戻る |
@@ -282,6 +282,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/billing/subscription` | exact | `leave_service` | 有料プランの契約の要約。凍結中も通す (billing/01 §9.8)。凍結中は同意の画面に進めないので、ここにも入れる |
 | `/api/billing/subscription/cancel` | exact | `leave_service` | 有料プランの解約の予約 (期間末)。サービスから離れる操作。凍結中も通す (billing/01 §9.8)。解約の予約は新しい版への同意を求めない |
 | `/api/billing/portal` | exact | `leave_service` | Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提。凍結中も通す (billing/01 §9.8) |
+| `/api/account/data-requests` | prefix | `data_subject_rights` | 開示・訂正・利用停止・消去の請求 (#1702・cross/15)。規約への同意を条件にできない本人の権利 (#1751)。一覧・作成・詳細・本人確認 (`[id]/verify`)・確認のメールの再送 (`[id]/resend-verification`)・取り下げ (`[id]/withdraw`) の 6 route。凍結中は通さない (`FROZEN_ALLOWED_API_PATHS` に入れない。cross/15 S-13)。呼ぶ画面 `/settings/data-requests` (確認の画面 `/settings/data-requests/verify` を含む) も画面の判定の対象外 (`lib/legal-consent.ts`) |
 | `/api/push-tokens/claim` | exact | `device_cleanup` | 通知のトークンの claim (#1636)。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。凍結中・メンテナンス中も middleware が通す (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`) のと同じ理由。凍結中・メンテナンス中は同意できないので、ここで止めると前の利用者の行が外れず、前の利用者宛ての通知がこの端末に届き続ける。release (`/api/push-tokens/release`) は載せない (セッション無しで route が端末の秘密の値で認可するので、同意の判定に来ない) |
 | `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (データの削除の依頼もここから)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route |
 | `/api/log` | exact | `telemetry` | 画面・端末の失敗の報告の受け口 (`error-report.ts` → `POST /api/log`)。利用者のデータの利用ではなく運用のログ。未同意の人の失敗も残す |
@@ -301,7 +302,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/handson-tour/*` と、ツアーが使うサンドボックスの API | Web は `/handson-tour` の画面を対象外にするが、ツアーが呼ぶほかの API (献立の追加など) は止まるので、ツアーの API だけ通しても流れは守れない。ツアーに入る前に同意している (モバイルは画面の代わりに同意画面を描き、同意後に同じ画面へ戻る) |
 | `/api/performance/sports` `/api/catalog/products` (公開・準公開のデータ) | 未ログインなら判定に来ない。ログイン済みの未同意の人は同意が先。個別の例外を作らない |
 | `/api/family/invites/[id]/reject` `/api/org/invites/[id]/reject` (認証任意) | 未ログインなら判定に来ない。ログイン済みなら Web の `/invite/*` の画面のゲートが先に同意を取る |
-| `/api/family/invites/[id]/accept` `/api/org/invites/[id]/accept` (招待を受ける) | ログイン済みの本人の操作 (route が `getUser` で確かめ、未ログインは 401。`family/invites/[id]/accept/route.ts:20`・`org/invites/[id]/accept/route.ts:17`)。受けると家族・組織とのデータの共有が始まるので、利用者のデータの利用そのもの。呼ぶ画面は Web の `/invite/[token]` (`src/app/invite/[token]/page.tsx:69` と、そこが描く `FamilyInviteAcceptModal.tsx:42`) で、`/invite` は画面の判定の対象外に無い (`lib/legal-consent.ts:78-91`) ので、ログイン済みの未同意の人は画面のゲートで先に同意画面へ回る |
+| `/api/family/invites/[id]/accept` `/api/org/invites/[id]/accept` (招待を受ける) | ログイン済みの本人の操作 (route が `getUser` で確かめ、未ログインは 401。`family/invites/[id]/accept/route.ts:20`・`org/invites/[id]/accept/route.ts:17`)。受けると家族・組織とのデータの共有が始まるので、利用者のデータの利用そのもの。呼ぶ画面は Web の `/invite/[token]` (`src/app/invite/[token]/page.tsx:69` と、そこが描く `FamilyInviteAcceptModal.tsx:42`) で、`/invite` は画面の判定の対象外に無い (`lib/legal-consent.ts:87-121`) ので、ログイン済みの未同意の人は画面のゲートで先に同意画面へ回る |
 | `/api/family/invites` `/api/org/invites` (招待の一覧・作成) と `/api/family/invites/[id]/revoke` `/api/org/invites/[id]/revoke` (取り消し) | 招待する側 (家族の代表・組織の管理者。`org` は `requireOrgAdmin`) の操作で、相手のメールアドレスなど利用者のデータを扱う。運営と同じく役割の例外を作らない。呼ぶ画面 (Web `src/app/(main)/family/members/invite/page.tsx:51, 78`・`src/app/(org)/org/invites/page.tsx:33, 67, 99`、モバイル `apps/mobile/app/(org)/org/invites.tsx:40, 59, 82` (2026-10-16 に削除した。#1598)) は、どれも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート) |
 | `/api/export/meals` (献立の CSV。Web の設定画面 `src/app/(main)/settings/page.tsx:176` とモバイルの設定タブ `apps/mobile/app/(tabs)/settings.tsx:210` が呼ぶ) | 書き出しの権利 (S7) は `/api/account/export` が受け持つ。そちらは本人の全データを出し、献立 (`user_daily_meals`・`planned_meals`) も含む (`src/lib/account-export-tables.ts:154-155`)。CSV は設定画面の便利機能で、呼ぶ画面はどちらも同意の後にしか開けない (Web は画面のゲート、モバイルは 13b のゲート)。凍結中に通す API (`FROZEN_ALLOWED_API_PATHS`) にも入っていない。許可リストの `leave_service` を、退会・書き出しの 2 本と、凍結中も通す有料プランの解約の 3 本 (billing/01 §9.8) に絞って揃える |
 
@@ -394,6 +395,7 @@ export type LegalConsentExemptApiReason =
   | 'consent_itself'
   | 'auth_flow'
   | 'leave_service'
+  | 'data_subject_rights'
   | 'contact'
   | 'telemetry'
   | 'client_status'
@@ -412,10 +414,13 @@ export interface LegalConsentExemptApiEntry {
 
 /**
  * 未同意でも止めない /api の一覧 (#1442)。ここに無い /api はすべて、LEGAL_CONSENT_ENFORCE=on のとき未同意なら 403。
- * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・連絡の窓口・運用のログ・状態の窓口・端末の後片付け・利用者のセッションを持たない経路」だけ
+ * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・本人の権利の請求 (開示・訂正・利用停止・消去)・連絡の窓口・運用のログ・
+ * 状態の窓口・端末の後片付け・利用者のセッションを持たない経路」だけ
  * (利用者のデータを読み書きする API を足さない)。一覧は tests が固定する (lib/supabase/__tests__/middleware-legal-consent-api.test.ts)。
  * 凍結中・メンテナンス中に middleware が通す /api は、すべてこの一覧にも入れる (凍結中・メンテナンス中は同意の画面に進めないので、
  * 同意ゲートで止めると、その例外が意味を失う)。これも同じテストが全 route で確かめる。
+ * 逆は求めない: この一覧にあっても、凍結中は通さないものがある (例: 本人の権利の請求 /api/account/data-requests は未同意でも通すが、
+ * 凍結中は FROZEN_ALLOWED_API_PATHS に入れず 403 AUTH_ACCOUNT_FROZEN のまま。凍結中の請求は /contact で受ける。cross/15 S-13)。
  */
 export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry[] = [
   { path: LEGAL_CONSENT_ACCEPT_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の記録そのもの。止めると同意できない' },
@@ -427,6 +432,12 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
   { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service', note: '有料プランの契約の要約。解約できる契約か・解約の予約の日付を読む (凍結中も通す)' },
   { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service', note: '有料プランの解約の予約 (期間末)。サービスから離れる操作 (凍結中も通す)' },
   { path: '/api/billing/portal', match: 'exact', reason: 'leave_service', note: 'Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提 (凍結中も通す)' },
+  {
+    path: '/api/account/data-requests',
+    match: 'prefix',
+    reason: 'data_subject_rights',
+    note: '開示・訂正・利用停止・消去の請求 (#1702)。規約への同意を条件にできない本人の権利。凍結中は通さない (cross/15 S-13)',
+  },
   {
     path: PUSH_TOKEN_CLAIM_API_PATH,
     match: 'exact',
@@ -852,7 +863,7 @@ export async function GET() {
 
 | ファイル | 直す所 |
 |---|---|
-| `lib/legal-consent.ts:84-85` | `EXEMPT_PREFIXES` の `'/api'` のコメント「API は画面ではない。各 route が自分で認可する…」→「API は画面ではない。API の同意ゲートは middleware の /api の分岐 (判定は packages/shared の resolveLegalConsentApiDecision。#1442)」 |
+| `lib/legal-consent.ts:93-94` | `EXEMPT_PREFIXES` の `'/api'` のコメント「API は画面ではない。各 route が自分で認可する…」→「API は画面ではない。API の同意ゲートは middleware の /api の分岐 (判定は packages/shared の resolveLegalConsentApiDecision。#1442)」 |
 | `src/app/api/legal/accept/route.ts:13` | 「凍結中のアカウントは middleware が /api/* で 403 にする。」の後に「同意ゲート (#1442) は、この API を許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) で通す。」 |
 
 #### 6.6.7 `src/app/legal-consent/LegalConsentForm.tsx` の差分 (文面を shared から取る)
@@ -891,7 +902,7 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 | `LEGAL_CONSENT_REQUIRED_CODE` | `'LEGAL_CONSENT_REQUIRED'` | shared | `LEGAL_` の接頭辞は accept route の既存のコードに合わせる |
 | `LEGAL_CONSENT_REQUIRED_STATUS` | `403` | shared | HTTP の状態。AI 同意と同じ (本人だが前提を満たさない) |
 | `LEGAL_CONSENT_REQUIRED_MESSAGE` | 固定の文 (6.6.1) | shared | #1172 (内部の語を出さない) |
-| `LEGAL_CONSENT_EXEMPT_API_PATHS` | §6.4 の表の行 (2026-10-16 の origin/main で 17 行) | shared | 許可リスト。テストが固定 |
+| `LEGAL_CONSENT_EXEMPT_API_PATHS` | §6.4 の表の行 (#1751 の後は 18 行) | shared | 許可リスト。テストが固定 |
 | `LEGAL_CONSENT_COPY` ほか 3 関数 | 6.6.2 | shared | 文面を 2 か所に持たない |
 | `EFFECTIVE_DATE_PATTERN` | `/^\d{4}-\d{2}-\d{2}$/` | `src/lib/legal-consent-api.ts` | `legal-versions.ts` の effectiveDate の形式 |
 | `LEGAL_COLUMNS` | `'terms_version_accepted, privacy_version_accepted, birth_date'` | status route | middleware の `PROFILE_COLUMNS_WITH_LEGAL` の末尾 3 列と同じ (`birth_date` は設計書 14) |

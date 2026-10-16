@@ -67,6 +67,10 @@ const ALLOWED: Record<string, { count: number; reason: string }> = {
     reason:
       'Resend の送信の失敗の文面 (createResendTransport の応答のエラーと例外・processEmailOutbox の transport の例外。宛先のアドレスは redactEmailAddresses でマスク済み) を EmailTransportFailure.message に入れる。値は email_outbox.last_error_message に入り、super_admin の画面に 200 文字までだけ出る。DB のエラー文ではない (DB の失敗は outbox-store.ts が固定の文の例外にする)',
   },
+  'src/lib/push/expo-transport.ts': {
+    count: 1,
+    reason: '通信エラーの文を行の last_error_message に残すだけで、応答の本文には出さない (route は summary だけを返す)',
+  },
   'src/lib/report-boundary-error.ts': {
     count: 1,
     reason: '画面 (ブラウザ) のエラー境界が、捕まえた例外をサーバーのログへ送る (logToServer) 値。応答の本文ではない',

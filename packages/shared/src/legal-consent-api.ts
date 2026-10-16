@@ -73,6 +73,7 @@ export type LegalConsentExemptApiReason =
   | 'consent_itself'
   | 'auth_flow'
   | 'leave_service'
+  | 'data_subject_rights'
   | 'contact'
   | 'telemetry'
   | 'client_status'
@@ -91,10 +92,13 @@ export interface LegalConsentExemptApiEntry {
 
 /**
  * 未同意でも止めない /api の一覧 (#1442)。ここに無い /api はすべて、LEGAL_CONSENT_ENFORCE=on のとき未同意なら 403。
- * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・連絡の窓口・運用のログ・状態の窓口・端末の後片付け・利用者のセッションを持たない経路」だけ
+ * 足すのは「同意そのもの・認証の途中・サービスから離れる操作・本人の権利の請求 (開示・訂正・利用停止・消去)・連絡の窓口・運用のログ・
+ * 状態の窓口・端末の後片付け・利用者のセッションを持たない経路」だけ
  * (利用者のデータを読み書きする API を足さない)。一覧は tests が固定する (lib/supabase/__tests__/middleware-legal-consent-api.test.ts)。
  * 凍結中・メンテナンス中に middleware が通す /api は、すべてこの一覧にも入れる (凍結中・メンテナンス中は同意の画面に進めないので、
  * 同意ゲートで止めると、その例外が意味を失う)。これも同じテストが全 route で確かめる。
+ * 逆は求めない: この一覧にあっても、凍結中は通さないものがある (例: 本人の権利の請求 /api/account/data-requests は未同意でも通すが、
+ * 凍結中は FROZEN_ALLOWED_API_PATHS に入れず 403 AUTH_ACCOUNT_FROZEN のまま。凍結中の請求は /contact で受ける。cross/15 S-13)。
  */
 export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry[] = [
   { path: LEGAL_CONSENT_ACCEPT_API_PATH, match: 'exact', reason: 'consent_itself', note: '同意の記録そのもの。止めると同意できない' },
@@ -106,6 +110,12 @@ export const LEGAL_CONSENT_EXEMPT_API_PATHS: readonly LegalConsentExemptApiEntry
   { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service', note: '有料プランの契約の要約。解約できる契約か・解約の予約の日付を読む (凍結中も通す)' },
   { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service', note: '有料プランの解約の予約 (期間末)。サービスから離れる操作 (凍結中も通す)' },
   { path: '/api/billing/portal', match: 'exact', reason: 'leave_service', note: 'Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提 (凍結中も通す)' },
+  {
+    path: '/api/account/data-requests',
+    match: 'prefix',
+    reason: 'data_subject_rights',
+    note: '開示・訂正・利用停止・消去の請求 (#1702)。規約への同意を条件にできない本人の権利。凍結中は通さない (cross/15 S-13)',
+  },
   {
     path: PUSH_TOKEN_CLAIM_API_PATH,
     match: 'exact',

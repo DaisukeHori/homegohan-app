@@ -45,7 +45,7 @@
 | `guard_family_members_privileged` が守る列 = role / family_id / user_id / status / removed_at (+ 本人以外の share_*) | `supabase/migrations/20261008090000_family_members_status_guard.sql` 末尾の関数 |
 | `user_profiles` に生年月日の列は無い (`age integer` は栄養計算用の自己申告の年齢)。同意の 3 列と特権列ガード 2 本 | `supabase/migrations/20261008200700_legal_documents_acceptance.sql:60-121` |
 | `accept_legal_documents(text, text, inet, text)` (SECURITY DEFINER・authenticated のみ・本人の行だけ・冪等) | 同 `:126-215` |
-| 同意ゲート: `resolveLegalConsent` は `hasAcceptedCurrentLegalDocuments(accepted)` で `none` を決める。初回の作成は `resolveFirstSignInDestination` が `enforce: true` で同じ判定 | `lib/legal-consent.ts:117-122, 170-179` |
+| 同意ゲート: `resolveLegalConsent` は `hasAcceptedCurrentLegalDocuments(accepted)` で `none` を決める。初回の作成は `resolveFirstSignInDestination` が `enforce: true` で同じ判定 | `lib/legal-consent.ts:133-138, 186-195` |
 | middleware が読む列 `PROFILE_COLUMNS_WITH_LEGAL` (版の 2 列) と、列が無い DB (42703) のやり直し (`fetchMiddlewareProfile`)。画面の分岐と `/api` の分岐 (13a) が同じ関数で同じ列を 1 回だけ読む。公開のパスの一覧に `/legal` | `lib/supabase/middleware.ts:45-79, 313` |
 | 同意画面 (サーバー側は `hasAcceptedCurrentLegalDocuments` で素通し) とフォーム (チェック 2 つ → `POST /api/legal/accept` → `window.location.assign(next)`、「同意しない」はログアウト)。フォームの文面は 13a (#1697) から `packages/shared` の `LEGAL_CONSENT_COPY` を import して使う (`:15-26` の import・`:44` ほか) | `src/app/legal-consent/page.tsx:42-50`、`LegalConsentForm.tsx:58-97` |
 | `POST /api/legal/accept`: body の版が現行と違えば 409、IP / UA はヘッダーから、DB のエラーは `internalError` | `src/app/api/legal/accept/route.ts:42-130` |

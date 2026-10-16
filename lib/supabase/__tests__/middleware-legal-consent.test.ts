@@ -725,3 +725,137 @@ describe('updateSession — 同意ゲートの生年月日と保護者の同意�
     expect(mockRpc).not.toHaveBeenCalled();
   });
 });
+
+describe('updateSession — 規約の再同意ゲート (#1174): 本人の権利の請求の画面 (#1751)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** 請求の画面と、本人確認のメールのリンクの着地 (src/lib/data-subject-requests/core.ts の DSR_SETTINGS_PATH / buildDsrVerifyUrl) */
+  const DSR_PAGES = [
+    '/settings/data-requests',
+    '/settings/data-requests/verify?id=00000000-0000-4000-8000-000000000000&token=sample-token',
+  ];
+
+  it.each(DSR_PAGES)('未同意 × ENFORCE=on でも、%s は同意画面へ回さずに開ける', async (path) => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    const res = await updateSession(pageRequest(path));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it.each(DSR_PAGES)('旧版に同意した人 (改定の後) も、%s は同意画面へ回さずに開ける', async (path) => {
+    mockMaybeSingle.mockResolvedValue(consentProfile({ terms: 'v0-old', privacy: CURRENT_PRIVACY }));
+
+    const res = await updateSession(pageRequest(path));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('location')).toBeNull();
+  });
+
+  it('設定画面 (/settings) そのものと、ほかの設定の画面は、従来どおり同意画面へ回す', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+    for (const path of ['/settings', '/settings/account', '/settings/data-requestsx']) {
+      const res = await updateSession(pageRequest(path));
+      expect(res.status, path).toBe(307);
+      expect(res.headers.get('location'), path).toBe(`http://localhost/legal-consent?next=${encodeURIComponent(path)}`);
+    }
+  });
+
+  it.each(DSR_PAGES)('★凍結中の人は、未同意でも同意済みでも、%s を開くと従来どおり /frozen へ回す (凍結が先。cross/15 S-13)', async (path) => {
+    for (const accepted of [NOT_ACCEPTED, ACCEPTED_CURRENT]) {
+      mockMaybeSingle.mockResolvedValue(consentProfile(accepted, { frozen_at: '2026-07-01T00:00:00.000Z' }));
+
+      const res = await updateSession(pageRequest(path));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe('http://localhost/frozen');
+    }
+  });
+});
+
+describe('updateSession — 本人の権利の請求の画面 (#1751): 初期設定の前の未同意の人 (新規登録の直後に同意の画面に来た人)', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  /** 請求の画面と、本人確認のメールのリンクの着地。同意の画面の案内 (LegalConsentForm.tsx) のリンク先 */
+  const DSR_PAGES = [
+    '/settings/data-requests',
+    '/settings/data-requests/verify?id=00000000-0000-4000-8000-000000000000&token=sample-token',
+  ];
+
+  /** 初期設定が済んでいない未同意の人。差し戻し先は未着手なら welcome、途中なら resume */
+  const INCOMPLETE_PROFILES = [
+    ['プロフィールの行がまだ無い', () => ({ data: null, error: null }), '/onboarding/welcome'],
+    ['初期設定が未着手', () => consentProfile(NOT_ACCEPTED, NOT_ONBOARDED), '/onboarding/welcome'],
+    ['初期設定が途中', () => consentProfile(NOT_ACCEPTED, { onboarding_completed_at: null }), '/onboarding/resume'],
+  ] as const;
+
+  /** ENFORCE=on (同意画面へ回す) と、強制していない既定 (未設定) の両方 */
+  const ENFORCE_VALUES = [
+    ['on', 'on'],
+    ['未設定', undefined],
+  ] as const;
+
+  const cases = ENFORCE_VALUES.flatMap(([enforceName, enforce]) =>
+    INCOMPLETE_PROFILES.flatMap(([profileName, profile]) =>
+      DSR_PAGES.map((path) => ({ enforceName, enforce, profileName, profile, path })),
+    ),
+  );
+
+  it.each(cases)(
+    '★ENFORCE=$enforceName × $profileName × 未同意: $path は同意画面にも初期設定にも回さずに開ける',
+    async ({ enforce, profile, path }) => {
+      setUp(enforce);
+      mockMaybeSingle.mockResolvedValue(profile());
+
+      const res = await updateSession(pageRequest(path));
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it.each(
+    ENFORCE_VALUES.flatMap(([enforceName, enforce]) =>
+      INCOMPLETE_PROFILES.map(([profileName, profile, onboardingTarget]) => ({
+        enforceName,
+        enforce,
+        profileName,
+        profile,
+        onboardingTarget,
+      })),
+    ),
+  )(
+    'ENFORCE=$enforceName × $profileName × 未同意: 設定画面 (/settings) とほかの設定の画面は従来どおり回す (on は同意画面、未設定は初期設定)',
+    async ({ enforce, profile, onboardingTarget }) => {
+      setUp(enforce);
+      mockMaybeSingle.mockResolvedValue(profile());
+
+      for (const path of ['/settings', '/settings/account', '/settings/data-requestsx']) {
+        const res = await updateSession(pageRequest(path));
+        expect(res.status, path).toBe(307);
+        expect(res.headers.get('location'), path).toBe(
+          enforce === 'on'
+            ? `http://localhost/legal-consent?next=${encodeURIComponent(path)}`
+            : `http://localhost${onboardingTarget}`,
+        );
+      }
+    },
+  );
+
+  it.each(DSR_PAGES)('★凍結中の人は、初期設定の前で未同意でも、%s を開くと /frozen へ回す (凍結が先。cross/15 S-13)', async (path) => {
+    for (const enforce of ['on', undefined]) {
+      setUp(enforce);
+      mockMaybeSingle.mockResolvedValue(
+        consentProfile(NOT_ACCEPTED, { ...NOT_ONBOARDED, frozen_at: '2026-07-01T00:00:00.000Z' }),
+      );
+
+      const res = await updateSession(pageRequest(path));
+
+      expect(res.status).toBe(307);
+      expect(res.headers.get('location')).toBe('http://localhost/frozen');
+    }
+  });
+});
