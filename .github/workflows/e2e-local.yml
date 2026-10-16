@@ -74,8 +74,9 @@ jobs:
       - name: Build and start the app
         env:
           # next/font/google がビルド時に Google Fonts へ取りに行かないようにする (#1330)。
-          # GitHub Actions からだと拡張子の無いフォント URL が返ることがあり、Next.js (14 / 15) の読み込み処理が
-          # TypeError で落ちてビルドが失敗していた。e2e はフォントの見た目に依存しないので、モックで代替フォント表示にする。
+          # GitHub Actions からだと拡張子の無いフォント URL が返ることがあり、ビルドが失敗していた (#1330。当時の Next 14 / 15 の
+          # webpack のビルドでは読み込み処理が TypeError で落ちた)。Next 16 の Turbopack (#1745) もビルド時に Google Fonts へ
+          # 取りに行くので、モックを続けて使う (モックは Turbopack でも効く形にしてある)。e2e はフォントの見た目に依存しないので、代替フォント表示にする。
           # 詳細は tests/e2e/fixtures/google-fonts-mock.cjs。本番 (Vercel) のビルドには関係しない。
           NEXT_FONT_GOOGLE_MOCKED_RESPONSES: ${{ github.workspace }}/tests/e2e/fixtures/google-fonts-mock.cjs
           # Turnstile (#1165): Cloudflare 公式のテスト用サイトキー (常に成功。表示あり)。NEXT_PUBLIC_* はビルド時に埋め込まれるので、
