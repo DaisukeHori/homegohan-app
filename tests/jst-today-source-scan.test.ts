@@ -657,6 +657,12 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
       '「課金は未開始のため準備中」で、この API を呼ばない。画面を作るときに jstOptionalDayRangeTimestamps で直す',
   },
   {
+    file: 'src/app/api/super-admin/email-outbox/route.ts',
+    rule: 'G',
+    count: 1,
+    reason: 'カーソル (前のページの最後の行の created_at)。暦日ではない',
+  },
+  {
     file: 'src/app/api/super-admin/infra/metrics/route.ts',
     rule: 'G',
     count: 2,

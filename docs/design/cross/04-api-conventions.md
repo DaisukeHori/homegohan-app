@@ -214,6 +214,34 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `ORG_LICENSE_POOL_EXHAUSTED` | ライセンスプール枯渇 (容量超過) | 409 |
 | `CONFLICT_LICENSE_POOL_EXHAUSTED` | 同上 (CONFLICT_ プレフィックス版、要件記述で混在) | 409 |
 
+#### CHALLENGE 系
+
+組織チャレンジ (`/api/org/challenges`・`/api/org/challenges/[id]`・`/api/org/challenges/[id]/join`。`docs/design/org/07-challenge.md` §15・`docs/design/org/10-challenge-diff-privacy.md` §11 が canonical)。接頭辞は `ORG_` ではなく `CHALLENGE_`。管理者向けの route (`src/app/api/org/challenges/route.ts`) は平たい形 `{ error, code }`、メンバー向けの route (`[id]`・`[id]/join`) は nested `{ error: { code, message } }` (`src/lib/org-challenge-api.ts` の `challengeError`)。
+
+| コード | 説明 | HTTP |
+|--------|------|------|
+| `CHALLENGE_TYPE_DISABLED` | 食事の記録から計算できない種類 (歩数・体重・カスタム) のチャレンジの作成・開始・参加 (`POST /api/org/challenges` の作成 `route.ts:163`・`PUT /api/org/challenges` の active への変更 `route.ts:284`・`POST /api/org/challenges/[id]/join` の参加 `[id]/join/route.ts:55`) | 400 (作成・開始) / 409 (参加) |
+| `CHALLENGE_STATUS_LOCKED` | **[NEW]** 状態の変更が遷移表 (draft → active / completed / cancelled、active → completed / cancelled) に無い (終わった状態から・active → draft・NULL へ)。`PUT /api/org/challenges` は今の行を読んで先に断り (`route.ts:277`)、読んでから書くまでに変わった場合は DB のトリガー `org_challenge_guard_update` の RAISE (P0001。`supabase/migrations/20261016240000_org_challenge_diff_privacy.sql:151`) を写す (`route.ts:306`〜`:308`。`mapChallengeLockError`)。PostgREST の直接の UPDATE では RAISE の文のまま 4xx。API の PUT は NULL を先に `INVALID_STATUS` (400) で断る | 409 (API) |
+| `CHALLENGE_PERIOD_LOCKED` | **[NEW]** draft 以外での `start_date` / `end_date` / `challenge_type` / `department_id` の変更と、常時の `organization_id` の変更 (DB のトリガー `org_challenge_guard_update` の RAISE。P0001。`20261016240000_org_challenge_diff_privacy.sql:157`・`:166`)。PostgREST の直接の UPDATE では RAISE の文のまま 4xx。`PUT /api/org/challenges` は止める列を書かないので実際には返らないが、返ったときは 409 に写す (`route.ts:306`〜`:308`) | 409 (API) |
+| `CHALLENGE_NOT_FOUND` | チャレンジが無い・id が uuid でない・別の組織のもの (`POST /api/org/challenges/[id]/join` `[id]/join/route.ts:36`)。`GET /api/org/challenges/[id]` (`[id]/route.ts:49`) は、active / completed でないもの・食事の記録から計算できない種類のもの・別の部署向けのものも同じ 404 にする (`[id]/route.ts:63`。`isVisibleToMember`) | 404 |
+| `CHALLENGE_NOT_ACTIVE` | 開催中 (active) でないチャレンジへの参加 (`[id]/join/route.ts:58`) | 409 |
+| `CHALLENGE_ENDED` | 終了日 (JST) を過ぎたチャレンジへの参加 (`[id]/join/route.ts:62`) | 409 |
+
+注: 状態・期間の変更を断る 2 つのコードの本文の文は同じ (`このチャレンジの状態は変えられません`。`route.ts:24` の `CHALLENGE_LOCKED_MESSAGE`)。409 は `src/lib/org-challenge-privacy.ts` の `ORG_CHALLENGE_LOCK_HTTP_STATUS`。
+
+注: 同じ route は、上の表の `CHALLENGE_` のコードのほかに、次の接頭辞の無いコードを返す。route と、route が呼ぶ共通の関数が本文の `code` に入れるものは、上の表とこの一覧で全部:
+
+- 管理者向けの route (`route.ts`。平たい形 `{ error, code }`):
+  - `INVALID_CHARACTER` (400): 本文の文字列に NULL 文字 (U+0000) がある。作成・更新の最初に断る (`route.ts:134`・`:236` の `rejectNullCharacterBody`。コードは `src/lib/api/null-character.ts` の `NULL_CHARACTER_ERROR_CODE`)
+  - `INVALID_PERIOD` (400): 作成の開始日・終了日が `YYYY-MM-DD` の形でない・開始日が終了日より後・タイトルが文字列でない (`route.ts:167`〜`:171`)
+  - `INVALID_TARGET` (400): 作成で目標値を指定したとき、数でない・種類ごとの範囲 (`ORG_CHALLENGE_TYPE_META` の `targetMin`〜`targetMax`) の外 (`route.ts:177`)
+  - `INVALID_STATUS` (400): 更新の status が DB の受け付けない値・NULL (`route.ts:256`)
+  - このほかの 4xx・5xx (未ログインの 401・管理者でないときの 403・`Invalid JSON` などの 400・500) は `code` の無い `{ error }` だけ (`route.ts:42`〜`:50` の `handleError` ほか)
+- メンバー向けの route (`[id]/route.ts`・`[id]/join/route.ts`。nested の形 `{ error: { code, message } }`):
+  - `PERM_DEPARTMENT_MISMATCH` (403): 別の部署の人向けのチャレンジへの参加 (`[id]/join/route.ts:52`)
+  - `FORBIDDEN` (403): 参加の INSERT が行レベルセキュリティに拒否された (42501。確認のあとで所属・部署・状態が変わったとき。`[id]/join/route.ts:75`)
+  - 共通の `handleMemberError` (`src/lib/org-challenge-api.ts:209`) が返す `UNAUTHORIZED` (401。未ログイン)・`FORBIDDEN` (403。組織に所属していない)・`INTERNAL_ERROR` (500)
+
 #### OP 系
 
 | コード | 説明 | HTTP |
@@ -222,6 +250,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_FEATURE_FLAG_NOT_FOUND` | 機能フラグが見つからない | 404 |
 | `OP_TICKET_NOT_FOUND` | チケットが見つからない | 404 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | サブスクリプションが既にアクティブ | 409 |
+| `OP_EMAIL_OUTBOX_NOT_FOUND` | **[NEW]** 再送するメール (送信待ちの行) が見つからない (`operator/10-logs-and-mail-retry.md` §11) | 404 |
+| `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | **[NEW]** 再送できないメール (届けられなかった行でない `not_dead`・宛先を伏せた行 `redacted`。`details.reason`。`operator/10-logs-and-mail-retry.md` §11) | 409 |
 
 #### BILL 系
 

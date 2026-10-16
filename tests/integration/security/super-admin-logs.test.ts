@@ -10,6 +10,8 @@
  *   - カーソルの or=(created_at.lt.X,and(created_at.eq.X,id.lt.Y)) が PostgREST に通り、
  *     timestamptz のマイクロ秒・同時刻の行があっても、全行が重複も欠落もなく 1 回ずつ出る
  *   - select する列がすべて実在する (存在しない列だと 42703 で 500 になる: #1306)
+ *   - 本文の検索 q (#1708): PostgREST の or=(message.ilike."%…%",error_message.ilike."%…%") が通り、大文字小文字を区別せず、
+ *     % と _ を文字どおりに探す。1 行以上返した GET は admin_audit_logs に super_admin.app_logs.list を 1 行残す (0 件は残さない)
  *   - 画面 /super-admin/logs: super_admin だけが開ける (レイアウトの権限ガード)。admin・一般ユーザー・未認証はログインへ戻される。
  *     ページが実際にコンパイルされ、サーバーで描画される
  *
@@ -24,7 +26,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { createTestUserWithRoles, cleanupTestUser, type TestUser } from '../helpers/users';
+import { createTestUserWithRoles, cleanupAuditLogs, cleanupTestUser, type TestUser } from '../helpers/users';
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 
@@ -167,6 +169,8 @@ afterAll(async () => {
   const { data: left } = await supabaseAdmin.from('app_logs').select('id').like('function_name', `${MARK_ANY}%`);
   expect(left ?? []).toEqual([]);
 
+  // 閲覧の監査 (#1708) でこのテストの super_admin が残した行を消す
+  if (superAdminUser) await cleanupAuditLogs(superAdminUser.userId);
   await Promise.all([superAdminUser, adminUser, generalUser].map((u) => (u ? cleanupTestUser(u.userId) : undefined)));
 }, 30_000);
 
@@ -314,6 +318,57 @@ describe('#1157 GET /api/super-admin/logs: 絞り込み (実 DB)', () => {
 
     expect(none).toEqual([]);
     expect(meta).toEqual({ limit: 50, has_more: false, next_cursor: null });
+  });
+});
+
+describe('#1708 GET /api/super-admin/logs: 本文の検索 q (実 PostgREST)', () => {
+  it('message の部分一致で、大文字小文字を区別しない', async () => {
+    expect((await labels(`&q=${encodeURIComponent('MESSAGE C')}`)).labels).toEqual(['c3', 'c2', 'c1']);
+  });
+
+  it('error_message にも当たる (message には無い語)', async () => {
+    expect((await labels(`&q=${encodeURIComponent('error g')}`)).labels).toEqual(['g']);
+  });
+
+  it('% と _ はワイルドカードにならない (文字どおりに探す)。カンマ・括弧・引用符を含む語でも 200', async () => {
+    expect((await labels(`&q=${encodeURIComponent('message%')}`)).labels).toEqual([]);
+    expect((await labels(`&q=${encodeURIComponent('message_a')}`)).labels).toEqual([]);
+    expect((await labels(`&q=${encodeURIComponent('a,b).c("d')}`)).labels).toEqual([]);
+  });
+
+  it('ほかの絞り込み・カーソルと組み合わせても、該当する行が 1 回ずつ出る', async () => {
+    const pages = await readAllPages(`&q=${encodeURIComponent('message c')}&level=error&limit=1`);
+    expect(pages.flat()).toEqual(['c3', 'c1']);
+  });
+});
+
+describe('#1708 GET /api/super-admin/logs: 閲覧の監査 (実 DB)', () => {
+  async function auditRows() {
+    const { data, error } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('action_type, target_id, target_type, details')
+      .eq('actor_id', superAdminUser.userId)
+      .eq('action_type', 'super_admin.app_logs.list')
+      .order('created_at', { ascending: true });
+    if (error) throw new Error(`admin_audit_logs を読めない: ${error.message}`);
+    return data ?? [];
+  }
+
+  it('1 行以上返した GET は super_admin.app_logs.list を 1 行 (条件と件数だけ)。0 件は残さない', async () => {
+    const before = (await auditRows()).length;
+
+    await labels(`&q=${encodeURIComponent('message c')}&limit=2`);
+    const afterHit = await auditRows();
+    expect(afterHit).toHaveLength(before + 1);
+    expect(afterHit.at(-1)).toMatchObject({
+      action_type: 'super_admin.app_logs.list',
+      target_id: null,
+      target_type: 'app_log',
+      details: { filters: { function_name: MARK, q: 'message c', has_cursor: false }, returned_count: 2, total: null },
+    });
+
+    await labels(`&q=${encodeURIComponent('no-such-message')}`);
+    expect(await auditRows()).toHaveLength(before + 1);
   });
 });
 

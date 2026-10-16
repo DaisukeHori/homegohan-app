@@ -131,6 +131,30 @@ export function olderThanCursorFilter(cursor: AppLogCursor): string {
 
 const INVALID_DATETIME_MESSAGE = '日時は ISO 8601 (例: 2026-10-08T05:00:00Z) で指定してください';
 
+// ── 本文の検索 (q) ────────────────────────────────────────────────────────
+
+/** 本文の検索語の長さの上限。長い語は索引の無い検索を重くするだけなので短く切る (#1708。docs/design/operator/10-logs-and-mail-retry.md §9.1) */
+export const APP_LOGS_SEARCH_MAX_CHARS = 100;
+// 制御文字 (改行・NUL など) は PostgREST の絞り込み文字列に入れない
+const CONTROL_CHARS = /[\u0000-\u001f\u007f]/;
+export const AppLogsSearchSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(APP_LOGS_SEARCH_MAX_CHARS)
+  .refine((v) => !CONTROL_CHARS.test(v), '検索語に制御文字は使えません');
+
+/**
+ * PostgREST の .or() に渡す、message / error_message の部分一致の条件を作る。
+ * 値は二重引用符で囲み (カンマ・括弧・ピリオドが条件の区切りにならない)、引用符と \ をエスケープし、
+ * ILIKE のワイルドカード (% と _) もエスケープしてから % で挟む (利用者の入力を文字どおりに探す)。
+ */
+export function buildMessageSearchFilter(q: string): string {
+  const literal = q.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+  const quoted = `"%${literal.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}%"`;
+  return `message.ilike.${quoted},error_message.ilike.${quoted}`;
+}
+
 const AppLogsFilterSchema = z
   .object({
     level: z.enum(APP_LOG_LEVELS).optional(),
@@ -140,6 +164,7 @@ const AppLogsFilterSchema = z
     request_id: z.string().max(200).optional(),
     from: z.string().refine(isValidIsoDateTime, INVALID_DATETIME_MESSAGE).optional(),
     to: z.string().refine(isValidIsoDateTime, INVALID_DATETIME_MESSAGE).optional(),
+    q: AppLogsSearchSchema.optional(),
     cursor: z
       .string()
       .max(512)
@@ -152,7 +177,7 @@ const AppLogsFilterSchema = z
   );
 
 /** 絞り込みに使うクエリパラメータ名 (limit は別に扱う) */
-const FILTER_KEYS = ['level', 'source', 'function_name', 'user_id', 'request_id', 'from', 'to', 'cursor'] as const;
+const FILTER_KEYS = ['level', 'source', 'function_name', 'user_id', 'request_id', 'from', 'to', 'q', 'cursor'] as const;
 
 export interface AppLogsQuery {
   level?: AppLogLevel;
@@ -164,6 +189,8 @@ export interface AppLogsQuery {
   from?: string;
   /** この日時以前 (含む) */
   to?: string;
+  /** message / error_message の部分一致 (大文字小文字を区別しない。#1708) */
+  q?: string;
   /** 指定すると、このカーソルより古い行を返す */
   cursor?: AppLogCursor;
   /** 1〜APP_LOGS_MAX_LIMIT */

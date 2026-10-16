@@ -181,8 +181,8 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 ログイン状態の持ち主は**ネイティブ**。WebView の Web 側は、ネイティブが張った借り物の Cookie セッションで動く。
 
 > 3 つ目のメッセージ `{ type: 'mfa-verify-required' }` (Web → ネイティブ。運営ロールの二段階認証の 6 桁の確認をネイティブの確認画面に頼む。
-> `docs/design/cross/12-operator-mfa.md` §16.4) は、Web の送る側 (`src/lib/native-auth-bridge.ts` の `requestNativeMfaVerify`) が段 A で入り、
-> ネイティブが受けるのは段 D (それまでのアプリは知らない type として捨てる)。受け取り・確認画面・読み込み直しの詳細は段 D でこの節に足す。
+> `docs/design/cross/12-operator-mfa.md` §16.4) は、Web の送る側 (`src/lib/native-auth-bridge.ts` の `requestNativeMfaVerify`) が段 A で、
+> ネイティブの受け取り・確認画面・読み込み直しが段 D で入った (段 D より前のアプリは知らない type として捨てる)。受け取りの規則は §6.2 の末尾。
 
 ### 6.1 refresh_token の持ち主はネイティブだけ (F7-05)
 
@@ -194,6 +194,7 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 - 期限が近づいたら Web が `{ type: 'session-expired' }` を送り (§6.2)、ネイティブが新しいコードで WebView を読み込み直す
 - 旧方式 (トークンを URL で渡す GET) は変えない。旧アプリは再ブリッジの仕組みを持たないため
 - 従来の動作 (実際の refresh_token を入れる) へ戻すスイッチ: 環境変数 `NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on` (Vercel は再デプロイ後に効く)
+- この作りの帰結として、WebView の借り物のセッションでは、Supabase のセッションの token を発行し直す操作 (二段階認証の 6 桁の verify・解除の後の refresh) を Web の側でしない。持ち主のネイティブが行い、WebView を読み込み直す (`docs/design/cross/12-operator-mfa.md` §16.4)
 
 **「切れる前に頼むので、Web は更新しない」は、前面で使っているときしか成り立たない。** ブラウザの supabase-js (auth-js 2.105) は、次の時点で必ず更新を試みる。
 借り物の refresh_token では更新が 400 になり、auth-js はセッションを捨てて `SIGNED_OUT` を出す。
@@ -219,8 +220,9 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 
 ```typescript
 type WebToNativeAuthMessage =
-  | { type: 'sign-out' }          // 利用者が Web でログアウトした
-  | { type: 'session-expired' };  // Web のセッションが切れた・切れそう
+  | { type: 'sign-out' }             // 利用者が Web でログアウトした
+  | { type: 'session-expired' }      // Web のセッションが切れた・切れそう
+  | { type: 'mfa-verify-required' }; // 運営の二段階認証の 6 桁の確認をネイティブに頼む (cross/12 §16.4)
 ```
 
 | 送る場所 (Web) | メッセージ |
@@ -229,6 +231,7 @@ type WebToNativeAuthMessage =
 | `NativeSessionWatcher` (認証が必要なページの共通レイアウトに常駐)。20 秒ごと・前面復帰時に確認し、セッションが無い、または (ネイティブから借りたセッションで) 有効期限までの残りが 180 秒を切った | `session-expired` |
 | `MainLayout` の `onAuthStateChange`。WebView の中で `SIGNED_OUT` になった (§6.3) | `session-expired` |
 | ログイン画面が表示されたとき (WebView でログイン画面 = セッションが無い) | `session-expired` |
+| 運営の MFA の確認画面 (`/settings/security/mfa/verify`) を WebView の中で開いたとき (`NativeAppMfaNotice` の kind=verify。描画の後に 1 回と、[確認画面を開く] を押したとき。cross/12 §16.4.3) | `mfa-verify-required` |
 
 `session-expired` は Web 側で 15 秒以内に続けて送らず、ログアウトを知らせた後は送らない。`sign-out` は 1 つのページで 1 回だけ送る。普通のブラウザでは何も送らない。
 
@@ -254,6 +257,10 @@ auth-js が端末のセッションを消す。そのあとに届く `sign-out` 
   3. 生きている (または確かめられない) なら、その画面 (タブ、タブ以外の `/settings/ai-consent`) を、いま開いているパス (`WebViewScreen` が `initialPath` を検証したあとの `effectivePath`) に使い捨ての `_rb` を付けた `initialPath` で開き直させる (= bridge をやり直す)
   4. 回数制限: タブごとに、10 秒以上の間隔、5 分で 3 回まで。ブリッジが失敗し続けても延々と繰り返さない
   5. 確かめている間に `sign-out` が始まった・済んだら、読み込み直しも二重のログアウトもしない
+- `mfa-verify-required` (cross/12 §16.4.4・§16.4.5): セッションの控え・`getSession()` / `getUser()`・回数制限のどれにも触れず、`WebViewScreen` にネイティブの確認画面 (`NativeMfaVerifyModal`) を出させる。
+  確認画面はネイティブのセッションで 6 桁を verify し (既に aal2 なら 6 桁を求めない)、済んだら閉じて、いま開いているパス (`effectivePath`) に `_rb` を付けて開き直させる
+  (`session-expired` の 3 と同じ組み立て。回数制限は通さない: 6 桁を入れた後に 1 回だけ呼ぶもので、制限に当たると aal2 になったのに WebView が古いままになるため)。
+  [閉じる] では開き直さない。登録・回復・設定はブラウザだけ (確認画面は案内を出す)
 
 ```mermaid
 sequenceDiagram
