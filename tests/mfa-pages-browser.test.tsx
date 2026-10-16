@@ -15,6 +15,8 @@ const mocks = vi.hoisted(() => ({
   startMfaEnrollment: vi.fn(),
   verifyMfaCode: vi.fn(),
   recoverWithBackupCode: vi.fn(),
+  regenerateBackupCodes: vi.fn(),
+  unenrollMfaFactor: vi.fn(),
   router: { push: vi.fn(), replace: vi.fn(), refresh: vi.fn() },
   searchParams: { value: new URLSearchParams('next=%2Fadmin') },
   supabase: {
@@ -37,6 +39,8 @@ vi.mock('@/lib/auth/mfa/client', async (importOriginal) => {
     startMfaEnrollment: mocks.startMfaEnrollment,
     verifyMfaCode: mocks.verifyMfaCode,
     recoverWithBackupCode: mocks.recoverWithBackupCode,
+    regenerateBackupCodes: mocks.regenerateBackupCodes,
+    unenrollMfaFactor: mocks.unenrollMfaFactor,
   };
 });
 
@@ -174,7 +178,15 @@ function setLocation(pathname: string, search: string) {
 }
 
 beforeEach(() => {
-  for (const fn of [mocks.getMfaStatus, mocks.startMfaEnrollment, mocks.verifyMfaCode, mocks.recoverWithBackupCode]) fn.mockReset();
+  for (const fn of [
+    mocks.getMfaStatus,
+    mocks.startMfaEnrollment,
+    mocks.verifyMfaCode,
+    mocks.recoverWithBackupCode,
+    mocks.regenerateBackupCodes,
+    mocks.unenrollMfaFactor,
+  ])
+    fn.mockReset();
   mocks.router.push.mockReset();
   mocks.router.replace.mockReset();
   mocks.router.refresh.mockReset();
@@ -422,6 +434,78 @@ describe('MFA の 4 画面 (ブラウザ)', () => {
     await submitForm(byTestId<HTMLButtonElement>('mfa-recover-submit'));
     expect(byTestId('mfa-recover-error')?.textContent).toBe(mfaErrorMessage('AUTH_2FA_NOT_ENROLLED'));
     expect(locationMock.assign).not.toHaveBeenCalled();
+  });
+});
+
+describe('状態の画面の再発行と解除 (段 B)', () => {
+  const VERIFY_FROM_STATUS = '/settings/security/mfa/verify?next=%2Fsettings%2Fsecurity%2Fmfa';
+  const SETUP_FROM_STATUS = '/settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa';
+
+  it('状態の [再発行] と [解除] は 403 AUTH_2FA_REQUIRED で /settings/security/mfa/verify?next=%2Fsettings%2Fsecurity%2Fmfa へ。[解除] の成功で /settings/security/mfa/setup?next=%2Fsettings%2Fsecurity%2Fmfa へ (応答の aal が aal1 でも aal2 でも同じ)', async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal('confirm', confirm);
+    mocks.getMfaStatus.mockResolvedValue(ok(statusOf()));
+    await render(MfaStatusPage);
+
+    mocks.regenerateBackupCodes.mockResolvedValueOnce(fail(403, 'AUTH_2FA_REQUIRED'));
+    await click(byTestId('mfa-status-regenerate'));
+    expect(mocks.router.push).toHaveBeenLastCalledWith(VERIFY_FROM_STATUS);
+
+    mocks.unenrollMfaFactor.mockResolvedValueOnce(fail(403, 'AUTH_2FA_REQUIRED'));
+    await click(byTestId('mfa-status-unenroll'));
+    expect(mocks.unenrollMfaFactor).toHaveBeenLastCalledWith(FACTOR_ID);
+    expect(mocks.router.push).toHaveBeenLastCalledWith(VERIFY_FROM_STATUS);
+
+    for (const aal of ['aal1', 'aal2'] as const) {
+      mocks.router.push.mockClear();
+      mocks.router.refresh.mockClear();
+      mocks.unenrollMfaFactor.mockResolvedValueOnce(ok({ ok: true as const, aal }));
+      await click(byTestId('mfa-status-unenroll'));
+      expect(mocks.router.push).toHaveBeenCalledWith(SETUP_FROM_STATUS);
+      expect(mocks.router.refresh).toHaveBeenCalledTimes(1);
+    }
+
+    // 再発行の成功は BackupCodesPanel に出し、「保存した」→ [続ける] で状態を呼び直す
+    mocks.getMfaStatus.mockClear();
+    mocks.regenerateBackupCodes.mockResolvedValueOnce(ok({ ok: true as const, backup_codes: CODES }));
+    await click(byTestId('mfa-status-regenerate'));
+    expect(byTestId('backup-codes-list')?.textContent).toContain(CODES[0]);
+    await click(byTestId('backup-codes-saved'));
+    await click(byTestId('backup-codes-done'));
+    expect(byTestId('backup-codes-list')).toBeNull();
+    expect(mocks.getMfaStatus).toHaveBeenCalledTimes(1);
+
+    // 確認ダイアログで取り消すと呼ばない
+    confirm.mockReturnValue(false);
+    mocks.regenerateBackupCodes.mockClear();
+    mocks.unenrollMfaFactor.mockClear();
+    await click(byTestId('mfa-status-regenerate'));
+    await click(byTestId('mfa-status-unenroll'));
+    expect(mocks.regenerateBackupCodes).not.toHaveBeenCalled();
+    expect(mocks.unenrollMfaFactor).not.toHaveBeenCalled();
+  });
+
+  it('状態の [再発行] と [解除] の 500 は mfaErrorMessage の文を出し、getMfaStatus をもう 1 回呼んで表示を出し直す (解除の 500 の後の status が未登録なら [登録する] を出す)', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    mocks.getMfaStatus.mockResolvedValueOnce(ok(statusOf({ backup_codes_remaining: 8 })));
+    await render(MfaStatusPage);
+    expect(mocks.getMfaStatus).toHaveBeenCalledTimes(1);
+
+    mocks.regenerateBackupCodes.mockResolvedValueOnce(fail(500, 'INTERNAL_ERROR'));
+    mocks.getMfaStatus.mockResolvedValueOnce(ok(statusOf({ backup_codes_remaining: 0 })));
+    await click(byTestId('mfa-status-regenerate'));
+    expect(byTestId('mfa-status-action-error')?.textContent).toBe(mfaErrorMessage('INTERNAL_ERROR'));
+    expect(mocks.getMfaStatus).toHaveBeenCalledTimes(2);
+    expect(byTestId('mfa-status-backup-codes-remaining')?.textContent).toBe('0 個');
+    expect(mocks.router.push).not.toHaveBeenCalled();
+
+    mocks.unenrollMfaFactor.mockResolvedValueOnce(fail(500, 'INTERNAL_ERROR'));
+    mocks.getMfaStatus.mockResolvedValueOnce(ok(UNENROLLED));
+    await click(byTestId('mfa-status-unenroll'));
+    expect(mocks.getMfaStatus).toHaveBeenCalledTimes(3);
+    expect(byTestId('mfa-status-action-error')?.textContent).toBe(mfaErrorMessage('INTERNAL_ERROR'));
+    expect(byTestId('mfa-status-enroll')).not.toBeNull();
+    expect(mocks.router.push).not.toHaveBeenCalled();
   });
 });
 

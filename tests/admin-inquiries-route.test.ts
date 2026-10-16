@@ -193,13 +193,14 @@ function createBuilder(client: ClientKind, table: keyof World['tables']) {
 }
 
 function createClientFake(client: ClientKind) {
+  const getUser = async () =>
+    client === 'session' && world.actor
+      ? { data: { user: { id: world.actor.id, email: `${world.actor.id}@example.com` } }, error: null }
+      : { data: { user: null }, error: { message: 'Auth session missing!' } };
   return {
-    auth: {
-      getUser: async () =>
-        client === 'session' && world.actor
-          ? { data: { user: { id: world.actor.id, email: `${world.actor.id}@example.com` } }, error: null }
-          : { data: { user: null }, error: { message: 'Auth session missing!' } },
-    },
+    // 段 B (#1176) の requireRole は getSession → getClaims を呼ぶ (docs/design/cross/12-operator-mfa.md §22.4.2・§23.1)。
+    // admin の client も同じ関数で作るが、route は admin の client の getSession / getClaims を呼ばない
+    auth: { getUser, ...aal2AuthMock(getUser) },
     from: (table: string) => {
       if (!(table in world.tables)) throw new Error(`fake: 想定していないテーブル ${table}`);
       return createBuilder(client, table as keyof World['tables']);
@@ -238,6 +239,7 @@ import {
   nextResolvedAt,
   normalizeAdminNotes,
 } from '@/lib/admin/inquiries';
+import { aal2AuthMock } from './helpers/mfa-claims';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // テストデータ

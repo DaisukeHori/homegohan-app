@@ -7,6 +7,7 @@
  *   -> route が認可の後に service_role で読むべき所を、セッションの client で読んでしまうと、
  *      他人の行が見えず、テストが失敗する
  */
+import { aal2AuthMock } from './mfa-claims';
 import type { Row, SchemaDb } from './schema-checked-db';
 
 export interface FakeUser {
@@ -14,15 +15,16 @@ export interface FakeUser {
   email?: string;
 }
 
-/** supabase-js の client のうち、route が使う部分 (auth.getUser / from / rpc) */
+/** supabase-js の client のうち、route が使う部分 (auth.getUser / getSession / getClaims / from / rpc) */
 export function makeClient(db: SchemaDb, user: FakeUser | null, rpc?: (...args: any[]) => unknown) {
+  const getUser = async () =>
+    user
+      ? { data: { user }, error: null }
+      : { data: { user: null }, error: { message: 'Auth session missing!' } };
   return {
-    auth: {
-      getUser: async () =>
-        user
-          ? { data: { user }, error: null }
-          : { data: { user: null }, error: { message: 'Auth session missing!' } },
-    },
+    // 段 B (#1176) の requireRole は必須ロールのとき getSession → getClaims を呼ぶので、aal2 の claims を返すモックを広げる
+    // (docs/design/cross/12-operator-mfa.md §22.4.2・§23.1。requireRole を通らない route には影響しない)
+    auth: { getUser, ...aal2AuthMock(getUser) },
     from: (table: string) => db.from(table),
     rpc: rpc ?? (async () => ({ data: null, error: null })),
   };
