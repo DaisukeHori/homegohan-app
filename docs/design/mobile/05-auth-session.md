@@ -400,7 +400,7 @@ WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限ら�
 ## 9. `@supabase/supabase-js` 2.117.3 と `@supabase/ssr` 0.12.7 への更新 (#1768)
 
 Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の見送り分)。本章は、2.117 で変わる auth-js の挙動のもとで借り物のセッションを捨てる合図を決め直し (§9.2〜§9.6)、ssr 0.12 の Cookie の読み書きへ移行し (§9.7・§9.8)、赤になる既存のテストを新しい挙動の意味のある assert に書き直し (§9.9)、apps/mobile の版 (§9.10) と段分け (§9.13) を決める。
-行番号は、npm の tgz を展開した `package/dist/main/` (auth-js 2.117.3・2.105.3、ssr 0.12.7) と `package/dist/index.js` (ssr 0.1.0)、リポジトリは origin/main `6f66070e` (2026-10-17) のもの。更新後の木では `node_modules/@supabase/auth-js/dist/main/` と `node_modules/@supabase/ssr/dist/main/` に同じファイルがある。
+行番号は、npm の tgz を展開した `package/dist/main/` (auth-js 2.117.3・2.105.3、ssr 0.12.7) と `package/dist/index.js` (ssr 0.1.0)、リポジトリは origin/main `312cfb04` (2026-10-17) のもの (本章の行番号と閉包の件数は `6f66070e` で引き、そこから進んだ 3 コミット (#1820・#1824・#1823) と突合した: 本章が引くファイルに差分は無く、auth の呼び出しの 335 / 316 行・import の 77 / 271 ファイルも同じ)。更新後の木では `node_modules/@supabase/auth-js/dist/main/` と `node_modules/@supabase/ssr/dist/main/` に同じファイルがある。
 
 ### 9.1 前提の実測 (file:line)
 
@@ -458,13 +458,13 @@ Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の�
 
 **ssr 0.1.0 (比較。`dist/index.js`)**: `createBrowserClient` に options を渡すと `cookies` が `undefined` で上書きされ `typeof cookies.get` で落ちるので `cookies: {}` が要った (`:133-138`)。型でも `cookies: CookieMethods` が必須 (`index.d.ts:17-21`)。Cookie の値は JSON そのまま (`combineChunks` `:86-103`)。
 
-**リポジトリ (origin/main `6f66070e`)**
+**リポジトリ (origin/main `312cfb04`)**
 
 | 事実 | 場所 |
 |---|---|
 | 版: ルートの `package.json` は `@supabase/ssr ^0.1.0`・`@supabase/supabase-js ^2.78.0`、`apps/mobile/package.json` は `@supabase/supabase-js ^2.78.0`。`package-lock.json` の実体は auth-js / supabase-js / postgrest-js / realtime-js / storage-js / functions-js が 2.105.3、ssr が 0.1.0 で、`apps/mobile/node_modules/@supabase/*` は無い (ワークスペースの 1 コピーに巻き上げ) | `package.json:37-38`・`apps/mobile/package.json:24`・`package-lock.json:5523-5607` |
 | Node: `engines.node` = `22.x`・`.nvmrc` = 22 (supabase-js 2.117.3 の `engines.node >= 22`) | `package.json:32-34` |
-| Web の Supabase の呼び出し口 (ssr): ① `lib/supabase/middleware.ts:147-184` (`get` / `set` / `remove`。`request.cookies` と `supabaseResponse.cookies` の両方に書く)・`:67` と `lib/legal-consent-minor.ts:13` の `ReturnType<typeof createServerClient>` (型だけ) ② `lib/supabase/server.ts:36-65` (`get` / `set` / `remove`。`set` / `remove` は `try` で包む) ③ `lib/supabase/client.ts:8` (`createBrowserClient(url, key)`。options 無し) ④ `src/proxy.ts:9`・`:54` (`updateSession` を呼ぶだけ) ⑤ `src/__tests__/helpers/real-auth-js.ts:65-72` (`createBrowserClient` に `cookies: {}`)。ssr の値の import (`createServerClient` / `createBrowserClient`) は製品コードでは `lib/supabase/` の 3 ファイルだけ (`git grep "@supabase/ssr" origin/main`。ほかは `vi.mock('@supabase/ssr')` のテストと型だけの import)。**`src/lib/supabase/` は origin/main に無い** (`git ls-tree origin/main src/lib/supabase` が空。Supabase のクライアントを作る口は `lib/supabase/` だけで、`src/lib/` には無い) | 左のとおり |
+| Web の Supabase の呼び出し口 (ssr): ① `lib/supabase/middleware.ts:147-184` (`get` / `set` / `remove`。`request.cookies` と `supabaseResponse.cookies` の両方に書く)・`:67` と `lib/legal-consent-minor.ts:13` の `ReturnType<typeof createServerClient>` (型だけ) ② `lib/supabase/server.ts:36-65` (`get` / `set` / `remove`。`set` / `remove` は `try` で包む) ③ `lib/supabase/client.ts:8` (`createBrowserClient(url, key)`。options 無し) ④ `src/proxy.ts:9`・`:54` (`updateSession` を呼ぶだけ) ⑤ `src/__tests__/helpers/real-auth-js.ts:65-72` (`createBrowserClient` に `cookies: {}`)。ssr の値の import (`createServerClient` / `createBrowserClient`) は製品コードでは `lib/supabase/` の 3 ファイルだけ (`git grep "@supabase/ssr" origin/main`。ほかは `vi.mock('@supabase/ssr')` のテストと型だけの import)。**`src/lib/supabase/` は origin/main に無い** (`git ls-tree origin/main src/lib/supabase` が空。Supabase のクライアントを作る口は `lib/supabase/` だけで、`src/lib/` には無い)。`src/app/api/org/members/route.ts:1` の `createServerClient` は `@/lib/supabase/server` の `createClient` の別名 (`import { createClient as createServerClient }`。この別名はこの 1 ファイルだけ) で、ssr の `createServerClient` ではない (tsconfig の `@/*` は `./src/*` → `./*` の順に解決し、`@/lib/supabase/server` は `lib/supabase/server.ts` に当たる。`:20`・`:93` の呼び出しは ② を通る) | 左のとおり |
 | Supabase の呼び出し口 (supabase-js の `createClient` を値で import。ssr を通らない) ⑥: `lib/supabase/server.ts:2`・`:20-21` (`getSupabaseAdmin`。service_role)・`src/lib/db-logger.ts:9`・`:80-81` (service_role)・`src/app/api/health/route.ts:22`・`:101-102` (anon)・`apps/mobile/src/lib/supabase.ts:3`・`:54-63`。前 3 つは `autoRefreshToken: false`・`persistSession: false` で、更新の失敗の扱い (2.117 の変化) も Cookie (ssr 0.12 の変化) も通らない。`supabase/functions/` (Deno) は `supabase/functions/deno.json:10` の `jsr:@supabase/supabase-js@2.99.1` で、npm の版とは別 (本改定で変えない)。`scripts/` の `.mjs` は手で流す運用の道具で、npm の版に従う (呼び方は変わらない) | `tests/supabase-service-role-client-scan.test.ts:71-90` の `SUPABASE_JS_CLIENT_ALLOWLIST`と同じ 3 ファイル + モバイル |
 | middleware の更新の契機: `/api` は `getSession()` (`:191`) と `getUser()` (`:220`)、画面は `getUser()` (`:291`)。更新した Cookie は `supabaseResponse` に溜め、置き換える応答へは `withSessionCookies` (`:39-44`) で引き継ぐ | `lib/supabase/middleware.ts` |
 | native-bridge: Cookie の**名前**だけを見る (`SUPABASE_AUTH_COOKIE_PATTERN` `:50`・`clearSupabaseAuthCookies` `:127-134`)。`setSession` で書く (`:141-156`) | `src/app/(auth)/auth/native-bridge/route.ts` |
@@ -480,7 +480,7 @@ Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の�
 | 2.105 の挙動を書いたコメント (apps/mobile): `webViewAuthMessages.ts:33-35`・`__tests__/lib/web-view-auth-messages.real-auth.test.ts:12-13`・`__tests__/lib/web-view-auth-messages.test.ts:472-473`・`:492`・`:540` | 左のとおり |
 | 他の設計書の版の記述: `cross/12-operator-mfa.md:97`・`:100`・`:1059`・`:1484`、`cross/16-auth-history-sessions.md:84`・`:92`。`cross/14-parental-consent.md:1325-1329` は `createServerClient` の型だけ (変わらない)。`mobile/01-architecture.md` の 90 秒 (`EXPIRY_MARGIN_MS`) の行は値が変わらない | 左のとおり |
 
-**auth の呼び出しの閉包 (製品のコードと apps/mobile。origin/main `6f66070e`)**
+**auth の呼び出しの閉包 (製品のコードと apps/mobile。origin/main `312cfb04`)**
 
 母集合は `git grep -n -E '\.auth\.[A-Za-z.]+\(' origin/main -- src lib apps/mobile packages ':!**/__tests__/**' ':!*.test.*'` の 335 行から、コメントの行 (`*`・`//`・`/*` で始まる) を除いた **316 行** (Web 272・apps/mobile 44 = `apps/mobile/src` 23 と画面 `apps/mobile/app` 21)。呼び出しの種類はこの表の行で尽きる (表に無い種類の呼び出しは無い)。「規則 U」= §9.1 の `_useSession` の行 (残り 90 秒未満で更新が失敗しても、access token が有効なら保管の token で GoTrue を呼ぶ。2.105.3 はそのエラーで終わった。サーバーが失効と答えれば 401 / 403 で、`getUser()` の 403 は `_removeSession`。どちらの版も同じ)。Web のサーバーのクライアント (`lib/supabase/server.ts`・`middleware.ts`) は要求ごとに作るので、失敗の控え (60 秒) はその要求の中でしか効かない。
 
@@ -1050,3 +1050,4 @@ it("やり直しが無いと、504 で signInWithPassword はゲートウェイ�
 - Q-3: 失効から `SIGNED_OUT` までの最大 90 秒の間、個々の画面の 401 の扱い (§8 の 5 つ目) は従来どおり。短くするなら `MainLayout` が `expires_at` を見張る案 (裁定 B) だが、見張りの `null` の送信で足りるかを本番の観察 (S-4 の読み込み直しの遅れ) で確かめてから決める。
 - Q-4: apps/mobile の本物の supabase-js を使うテスト 3 本 (§9.9 G) が 2.117 の lock 無しで順番の違いを出すか。実装の全件 (`npx jest`) で確かめ、赤ならその it の意味を保って直す。
 - Q-5: ssr 0.12 の `maxAge` 400 日 (0.1.0 は 1,000 年) で、400 日以上開かなかった利用者の Cookie がブラウザから消える時期が変わるか。ブラウザは 0.1.0 の値も 400 日で切っていた (Chrome の上限) ので、実質は変わらないと見る。
+- Q-6: 本番の access token の寿命 (GoTrue の JWT の expiry) は、本章では失効の時刻 E として扱い、値に依らない (§6.1・§7 の「1 時間」は GoTrue の既定 3,600 秒を前提にした #1038 からの記述)。本番の値は §9.8 の 3 (b) の確認 (更新が走るまでの時間) で併せて見る。
