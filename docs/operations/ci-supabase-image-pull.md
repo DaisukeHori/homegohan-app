@@ -9,6 +9,7 @@ CI のいくつかのジョブは、Supabase CLI でローカルの Supabase を
 | `scripts/supabase-local.sh start` (security-regression・e2e-local・`scripts/local-ci.sh`) | イメージの取得に失敗したら、取得元を `public.ecr.aws` → `ghcr.io` の順に替えてやり直す。どちらでも失敗したら、間を空けて (30 秒 × 周) 次の周に入る (既定 3 周) |
 | `scripts/supabase-image-fallback.sh` (Deploy Supabase Migrations の「Verify db diff (post-apply)」・Daily Consistency Check の db diff) | 同じ。周のあとの待ちは 60 秒 × 周 |
 | Deploy Supabase Functions の「Deploy all functions」(#1686) | イメージを取らない。`supabase functions deploy --use-api --import-map supabase/functions/deno.json` で、関数のまとめ (バンドル) を Supabase のサーバーにさせ、ランナーの Docker を使わない (下の「関数のデプロイ」) |
+| `scripts/backup-db.mjs` (DB Backup の `backup` ジョブ。#1129) | `supabase db dump` の 3 回と stats の `docker run` を `scripts/supabase-image-fallback.sh` で包む。復元の検査 (月曜と 1 月 1 日の restore_check) と `roundtrip-check` ジョブは `scripts/supabase-local.sh start` を使うので、上の取得元の切り替えが効く |
 
 - 取得元の切り替えには、Supabase CLI の環境変数 `SUPABASE_INTERNAL_IMAGE_REGISTRY` を使います (CLI 2.62.10 の `internal/utils/docker.go` の `GetRegistry`。`docker.io` 以外を指定すると `<取得元>/supabase/<イメージ名>:<版>` を取ります)。Supabase は同じイメージを `ghcr.io/supabase/` にも置いています (2026-10-15 に、CLI 2.62.10 と `supabase/.temp` の版で使うイメージがすべて `ghcr.io` にあることを確かめました)。
 - CLI 自身も、1 回の取得の中で 2 回やり直します (4 秒・8 秒待つ)。
@@ -34,6 +35,7 @@ CI のいくつかのジョブは、Supabase CLI でローカルの Supabase を
 | Deploy Supabase Migrations (main への push) | 同じ。赤のまま (下を参照) | 前の「Apply migrations」「Verify migration list」が success なら、本番への適用は終わっている。時間をおいて、**その時点の最新の main の run** の失敗したジョブを流し直し、db diff が緑になることを確かめる |
 | Daily Consistency Check (db-drift) | Issue に「本番のスキーマとの比較 (db diff) を、Docker イメージを取得できずに確かめられませんでした」と書く | 時間をおいて、この workflow を手で実行し直す (workflow_dispatch) |
 | Deploy Supabase Functions (main への push) | `--use-api` ではイメージを取らないので、ふつうは起きない。起きたら「Deploy all functions」で赤になり、`[image-pull-unavailable] Deploy all functions: ...` と終了コード 75 で出す (CLI が Docker でのまとめに戻ったということ)。後ろの削除・確認の手順は動かない | ワークフローの CLI の版と `--use-api` を確かめる。直したら、その時点の最新の main の run の失敗したジョブを流し直す (下の「関数のデプロイ」) |
+| DB Backup (schedule / `workflow_dispatch` の `backup` ジョブ。#1129) | 取得の段 (stats・dump・復元の検査の `supabase-local.sh start`) で取れなかったときは、reason `image_pull_unavailable` で監査行 (`backup.<層>.failed`) と Issue「【自動】DB バックアップの失敗」が残る。`roundtrip-check` ジョブ (PR / `workflow_dispatch`) は「Roundtrip (local)」で赤になる | 時間をおいて `workflow_dispatch` で取り直す (`roundtrip-check` は失敗したジョブだけを流し直す)。検査の赤ではないので、コードは直さない。手順は `docs/operations/backup-restore.md` の 10 章 |
 
 ### main の「Verify db diff (post-apply)」を赤のままにする理由
 
