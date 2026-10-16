@@ -203,7 +203,7 @@ function expectedForGated(enforce: boolean, notice: boolean): 'redirect' | 'bann
 }
 
 describe('isLegalConsentExemptPath: 本人の権利の請求の画面 (#1751)', () => {
-  it('請求の画面 (DSR_SETTINGS_PATH) と本人確認の画面 (DSR_VERIFY_PATH) は、ゲートの対象外 (lib/legal-consent.ts の文字列と core.ts の定数が一致する)', () => {
+  it('請求の画面 (DSR_SETTINGS_PATH) と本人確認の画面 (DSR_VERIFY_PATH) は、ゲートの対象外 (判定は onboarding-routing の isDataSubjectRequestsPath。その文字列と core.ts の定数の一致は tests/onboarding-routing.test.ts)', () => {
     expect(DSR_SETTINGS_PATH).toBe('/settings/data-requests');
     expect(isLegalConsentExemptPath(DSR_SETTINGS_PATH)).toBe(true);
     expect(isLegalConsentExemptPath(DSR_VERIFY_PATH)).toBe(true);
