@@ -48,7 +48,7 @@
 | 同意の記録 API (版が違えば 409。Bearer と Cookie の両方で使う) | `src/app/api/legal/accept/route.ts:42-130` |
 | 同意画面 (Web) と、同意後は `window.location.assign(next)` | `src/app/legal-consent/page.tsx`、`src/app/legal-consent/LegalConsentForm.tsx:53-92` |
 | いま有効な版・判定 | `packages/shared/src/legal-versions.ts:39-94` |
-| ミドルウェアの matcher が `/api` で外すのは `api/health$` だけ | `src/middleware.ts:44`、`tests/health-middleware-exemption.test.ts` |
+| ミドルウェアの matcher が `/api` で外すのは `api/health$` だけ | `src/proxy.ts:94`、`tests/health-middleware-exemption.test.ts` |
 | `/api` の route.ts は 202 本 | `src/app/api/**/route.ts` (一覧は本書 §6.4 の許可リスト以外が対象) |
 
 モバイルの一次情報 (入口・ルートの Stack・API クライアント・公開ページ・expo-router の版) は 13b §0.3。
@@ -288,7 +288,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/log` | exact | `telemetry` | 画面・端末の失敗の報告の受け口 (`error-report.ts` → `POST /api/log`)。利用者のデータの利用ではなく運用のログ。未同意の人の失敗も残す |
 | `/api/csp-report` | exact | `telemetry` | ブラウザが送る CSP の違反の報告の受け口 (cross/18 §9.10)。利用者のデータではなく運用のログ。未同意の人の画面の違反も残す |
 | `/api/feature-flags` | exact | `client_status` | 画面が前もって状態を知る窓口 (メンテナンス中も通す `isMaintenanceExemptPath` と同じ扱い)。未ログインでも答える |
-| `/api/health` | exact | `no_user_session` | 死活監視。matcher の外 (`src/middleware.ts:44`) なので判定に来ないが、一覧で「来ないこと」を固定する |
+| `/api/health` | exact | `no_user_session` | 死活監視。matcher の外 (`src/proxy.ts:94`) なので判定に来ないが、一覧で「来ないこと」を固定する |
 | `/api/cron` | prefix | `no_user_session` | `CRON_SECRET` (JWT ではない Bearer)。利用者のセッションが無く `getUser` は null |
 | `/api/webhooks` | prefix | `no_user_session` | 外部 (Resend) からの通知。署名で認証。利用者のセッションが無い |
 | `/api/e2e` | prefix | `test_only` | テスト基盤 (`e2e/reset-onboarding`。本番は `NODE_ENV` で 403)。e2e の共通ユーザーの初期化を同意に左右させない |
@@ -321,7 +321,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 ```ts
 /**
  * 利用規約・プライバシーポリシーの同意ゲートを /api とモバイルのネイティブの画面にも掛ける (#1442)。
- * サーバー (Edge の middleware・API Route)・Web・モバイルで同じ値と判定を使うための、純粋な定数と関数だけのファイル。
+ * サーバー (proxy (旧 middleware)・API Route)・Web・モバイルで同じ値と判定を使うための、純粋な定数と関数だけのファイル。
  * Node / Deno / RN 固有の API は使わない。副作用は無い。
  *
  *   - LEGAL_CONSENT_EXEMPT_API_PATHS / isLegalConsentExemptApiPath: 未同意でも止めない /api (理由つき)
@@ -962,7 +962,7 @@ sequenceDiagram
 2. 許可リストの各行は、実在する route (route.ts のディレクトリ) に当たる (prefix の行は 1 本以上)。消えた route が一覧に残らない。
 3. 許可リストの中身 (path・match・reason) をそのまま固定する (スナップショット)。足すときは、このテストと §6.4 の表を一緒に直す。
 4. 許可リストは、凍結・メンテナンスの判定で通る `/api` をすべて含む: 判定の関数での包含 (`FROZEN_ALLOWED_API_PATHS` + `isPushTokenClaimApiPath` は exact の行で。`isMaintenanceExemptPath` が通す route も全部) と、全 route を未同意 × ENFORCE=on × 凍結中 / メンテナンス中 (運営ではない) で `updateSession` に通して同意の 403 が 1 本も出ないこと (T-M14・T-M18〜T-M20)。
-5. `src/middleware.ts` の matcher が `/api` で外すのは `api/health$` だけ (`tests/health-middleware-exemption.test.ts` と同じ読み方)。
+5. `src/proxy.ts` の matcher が `/api` で外すのは `api/health$` だけ (`tests/health-middleware-exemption.test.ts` と同じ読み方)。
 
 **限界** (見張りが見ないもの。明記する):
 
@@ -1017,7 +1017,7 @@ sequenceDiagram
 | T-M12 | `Bearer (JWT 形式) のモバイルのセッションでも同じ判定。非 JWT の Bearer (CRON_SECRET) は判定に来ない` |
 | T-M13 | `GET / HEAD / POST / PUT / PATCH / DELETE のどのメソッドでも 403 (API は画面と違って POST も止める)` |
 | T-M14 | `許可リストは、凍結の判定で通るパス (FROZEN_ALLOWED_API_PATHS + 通知のトークンの claim) をすべて exact の行で含む` |
-| T-M15 | `src/middleware.ts の matcher が /api で外すのは api/health$ だけ` |
+| T-M15 | `src/proxy.ts の matcher が /api で外すのは api/health$ だけ` |
 | T-M16 | `/api の分岐の select は PROFILE_COLUMNS_WITH_LEGAL の 1 回だけ (クエリを増やさない)` |
 | T-M17 | `改定の後 (旧版に同意) × ENFORCE=on: 同じ人の /api/meals は 403 LEGAL_CONSENT_REQUIRED (本文の error は LEGAL_CONSENT_REQUIRED_MESSAGE)、画面の GET /home は /legal-consent?next=%2Fhome へ 307、画面の POST /home は回さない (S5・S14 の Web の流れ)` |
 | T-M18 | `許可リストは、メンテナンス中に通す /api (isMaintenanceExemptPath) をすべて含む (全 route)` |

@@ -525,7 +525,7 @@ sequenceDiagram
 
 | 資産 | 状態 | 対応 |
 |------|------|------|
-| `src/middleware.ts` (セッション同期) | 保持 | `user_sessions_metadata` 更新ロジックを追加 |
+| `src/proxy.ts` (セッション同期。#1744 で `src/middleware.ts` から改名) | 保持 | `user_sessions_metadata` 更新ロジックを追加 |
 | Supabase Auth Email+Password | 保持 | そのまま利用 |
 | `/api/auth/login`, `/api/auth/logout` 既存 | 要確認 | 本仕様に合わせてリファクタ |
 | `user_profiles.roles` 列 | 保持・拡張 | 12 ロール体系へ migration |
