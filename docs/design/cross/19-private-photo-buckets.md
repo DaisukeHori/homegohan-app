@@ -74,7 +74,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 | S-14 | 本人が退会する。`removeAccountStorage` が service_role で `<user_id>/`・旧パス・URL が指すオブジェクトを消す。バケットの公開/非公開は delete に関係しない。消したあと公開 URL は (以前の 404 ではなく) 非公開の 4xx |
 | S-15 | 運営が隠したコンテンツが 90 日を過ぎ、`purge-hidden-content` が画像を消す。service_role の remove なので非公開化で変わらない |
 | S-16 | 本番で問題が出て戻す。`.down.sql` の内容を新しい migration として流すと `public = true` に戻り、公開 URL が誰でも 200 になる (権限が広がる。名指しの承認が要る種類) |
-| S-17 | PR の CI (`security-regression.yml`) がローカル Supabase を組み立てる。ベースラインの `INSERT INTO storage.buckets … public = true` のあとに本書の migration が当たり、非公開になる。新しい結合テストと、直した 2 本の結合テストが緑 |
+| S-17 | PR の CI (`security-regression.yml`) がローカル Supabase を組み立てる。ベースラインの `INSERT INTO storage.buckets … public = true` のあとに本書の migration が当たり、非公開になる。本番に適用してベースラインを取り直した後 (§18) は、ベースラインの INSERT が `public = false` になり、本書の migration は台帳の最大以下なのでローカルには当たらない (結果は同じく非公開)。どちらの時期も、新しい結合テストと、直した 2 本の結合テストと、契約テスト (9.4) が緑 |
 | S-18 | 攻撃者が自分の行に他人の写真の公開 URL を書き込む。画面: 署名の API が `notOwned` で null (段 1)。AI: `PHOTO_NOT_READABLE` 403 (段 1)。公開 URL を直接開く: 4xx (本書で閉じる最後の穴) |
 | S-19 | main にマージされ、Vercel のデプロイと migration の適用が別々の CI で走る。どちらが先でも表示は変わらない (段 1 で画面はすでに署名付き URL だけを使う) |
 | S-20 | 本人が食事を登録する画面で写真を選ぶ。選んだ直後のプレビューは `URL.createObjectURL` の blob (ストレージの URL ではない)。`POST /api/upload` が返す `{ url }` (公開形の文字列) は `add-from-photo` に渡して保存するだけで、画面には出さない |
@@ -228,7 +228,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 | S-14 | `removeAccountStorage` → service_role の `list` / `remove` (RLS を通らない・公開/非公開に無関係) → 消える → 公開 URL は 4xx | 変わらない (以前の「消えた後は 404」が 4xx の一般形になるだけ) |
 | S-15 | `purge-hidden-content` → `objectNeedles` (`/<bucket>/<path>` の部分一致。公開形・署名形のどちらにも含まれる) → service_role の `remove` | 変わらない |
 | S-16 | `.down.sql` の内容を新しい migration で流す → `public = true` → 公開 URL 200 | 戻る (権限が広がる。§9.2 の警告) |
-| S-17 | `supabase-local.sh start` → ベースライン (`public = true` の INSERT) → `ledger_max_version` より新しい migration (本書) → `public = false` → `security-regression.yml` の `tests/integration/security` で B-1〜B-8・直した P-1 / M-3・S-4 | 緑。契約テストはパスの文字列で選ばれる (`tests/integration/security/` 配下) |
+| S-17 | 取り直しの前: `supabase-local.sh start` → ベースライン (`public = true` の INSERT) → `ledger_max_version` より新しい migration (本書) → `public = false`。取り直しの後: ベースライン (`public = false` の INSERT。`manifest.json` の `ledger_max_version` は本書の版以上) → 本書の migration は当たらない → `public = false`。どちらも `security-regression.yml` の `tests/integration/security` で B-1〜B-8・直した P-1 / M-3・S-4 | 緑。結合テストはパスの文字列で選ばれる (`tests/integration/security/` 配下)。契約テスト 9.4 の 1. の 2 本目は「版 > `ledger_max_version`」または「ベースラインで 2 つとも `public = false`」の論理和なので、取り直しの前は前者・後は後者で緑 |
 | S-18 | 他人の URL を自分の行に書く → 画面 null (段 1) / AI 403 (段 1) / 公開 URL 4xx (本書) | 3 つの経路すべて閉じる |
 | S-19 | Vercel が先: 画面は段 1 のまま (署名付き URL)。migration が先: 画面は段 1 のまま。どちらも公開 URL は画面が使っていない | 表示は途切れない (§8) |
 | S-20 | `photoPreviews` は `URL.createObjectURL(file)` (`meals/new/page.tsx:452`)。`POST /api/upload` の `{ url }` は `add-from-photo` の body に入るだけ | 画面に公開 URL を出す経路は無い |
@@ -281,6 +281,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 ### 6.3 migration
 
 - ファイル: `supabase/migrations/<番号はマージ時に確定>_private_photo_buckets.sql` (番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-16 時点 `20261016241000`) より大きい番号で確定する。`supabase/baseline/manifest.json` の `ledger_max_version` = `20261007112200` より大きければローカルにも当たる)。
+- ベースラインの取り直し (§18) の後: `prod-schema-snapshot.yml` は `ledger_max_version` を本番の台帳の最大で書く (`.github/workflows/prod-schema-snapshot.yml:135`) ので本書の版以上になり、本書の migration はローカル / CI には当たらなくなる (`scripts/supabase-local.sh:259` は版が `ledger_max_version` より大きい migration だけを足す)。代わりにベースライン (`prod_storage.sql`) の INSERT が `public = false` になるので、ローカルのバケットは同じく非公開。契約テスト (9.4) の 1. の 2 本目はこの 2 つの時期の両方で緑になる形 (論理和) にしてある。ベースラインの INSERT の形は `scripts/baseline/build_baseline.py:84-85` が `INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) VALUES ('<id>', '<name>', true|false, …)` で書く (取り直しで形は変わらない)。
 - 内容: `storage.buckets` の `meal_photos` と `fridge-images` を `public = false` にする UPDATE 1 文 (DO ブロックで、2 件とも非公開になったことを確かめ、足りなければ例外で止める)。`storage.objects` には触れない。`health-checkups` には触れない。
 - 冪等: 何度流しても同じ結果 (UPDATE は同じ値を書くだけ)。
 - 戻し: `supabase/rollbacks/<同じ番号>_private_photo_buckets.down.sql` (`public = true` に戻す。権限が広がる警告つき)。
@@ -611,8 +612,10 @@ describe('#1365 段 2: 2 つのバケットは非公開', () => {
 /**
  * #1365 段 2: 非公開化の migration と、コードの定数・戻し・段 1 の説明文の突き合わせ (DB を使わない静的な検査)
  *
- *   1. migration は 1 本だけあり、版は本番の台帳の最大 (supabase/baseline/manifest.json の ledger_max_version) より新しい
- *      (ローカル / CI のスタックに当たる)
+ *   1. migration は 1 本だけあり、ローカル / CI のスタックで 2 つのバケットが非公開になる:
+ *      版が本番の台帳の最大 (supabase/baseline/manifest.json の ledger_max_version) より新しい (= スタックに当たる)、
+ *      または、本番に適用してベースラインを取り直した後で、ベースライン (supabase/baseline/prod_storage.sql) の
+ *      INSERT が 2 つとも public = false (取り直すと ledger_max_version が本書の版以上になり、前者は偽になる)
  *   2. migration が非公開にするバケットは PHOTO_STORAGE_BUCKETS (packages/shared) とちょうど同じ。
  *      storage.objects のポリシーを作らず・消さず、health-checkups に触れない
  *   3. 戻し (supabase/rollbacks) が同じ版で存在し、同じバケットを public = true に戻す
@@ -629,6 +632,8 @@ const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = 'supabase/migrations';
 const ROLLBACKS_DIR = 'supabase/rollbacks';
 const MANIFEST = 'supabase/baseline/manifest.json';
+/** 取り直したベースラインの storage バケット設定 (scripts/baseline/build_baseline.py が生成する) */
+const BASELINE_STORAGE = 'supabase/baseline/prod_storage.sql';
 const MIGRATION_SUFFIX = '_private_photo_buckets.sql';
 const ROLLBACK_SUFFIX = '_private_photo_buckets.down.sql';
 /** migration のファイル名の先頭の版 (14 桁) */
@@ -656,6 +661,21 @@ const read = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 /** SQL の行コメント (-- から行末) を外す。コメントの中の語で検査が通らないようにする */
 const stripSqlComments = (sql: string) => sql.replace(/--[^\n]*/g, '');
 
+/** 正規表現の特殊文字を逃がす (バケット名の `-` などをそのまま比べる) */
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/**
+ * ベースラインの `INSERT INTO storage.buckets (id, name, public, …) VALUES ('<id>', '<name>', <public>, …)` の public の値。
+ * そのバケットの INSERT が無ければ undefined
+ */
+function baselinePublicOf(storageSql: string, bucket: string): string | undefined {
+  const pattern = new RegExp(
+    `INSERT\\s+INTO\\s+storage\\.buckets\\s*\\(\\s*id\\s*,\\s*name\\s*,\\s*public\\b[^)]*\\)\\s*VALUES\\s*\\(\\s*'${escapeRegExp(bucket)}'\\s*,\\s*'[^']*'\\s*,\\s*(true|false)\\b`,
+    'i',
+  );
+  return pattern.exec(storageSql)?.[1]?.toLowerCase();
+}
+
 function bucketsOf(sql: string): string[] {
   const match = BUCKETS_ARRAY_PATTERN.exec(sql);
   if (!match) return [];
@@ -678,10 +698,18 @@ describe('#1365 段 2 1. migration の有無と版', () => {
     expect(migrationFiles).toHaveLength(1);
   });
 
-  it('版は本番の台帳の最大 (ledger_max_version) より新しい', () => {
+  it('ローカル / CI で非公開になる: 版が本番の台帳の最大 (ledger_max_version) より新しい、または取り直したベースラインで 2 つとも public = false', () => {
     const manifest = JSON.parse(read(MANIFEST)) as { ledger_max_version: string };
     expect(version).toMatch(/^\d{14}$/);
-    expect(version > manifest.ledger_max_version).toBe(true);
+    // 取り直しの前: 本書の migration がスタックに当たる
+    const appliedOnLocalStack = version > manifest.ledger_max_version;
+    // 取り直しの後: ledger_max_version は本書の版以上になり、ベースラインの INSERT が非公開を持つ
+    const baselineStorage = stripSqlComments(read(BASELINE_STORAGE));
+    const baselinePrivate = expectedBuckets.every((bucket) => baselinePublicOf(baselineStorage, bucket) === 'false');
+    expect(
+      appliedOnLocalStack || baselinePrivate,
+      `版 ${version} が ledger_max_version ${manifest.ledger_max_version} 以下で、ベースラインの ${expectedBuckets.join(' / ')} も public = false でない`,
+    ).toBe(true);
   });
 });
 
@@ -862,6 +890,7 @@ export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMeal
 | FAQ | 「暗号化された安全なクラウドサーバーに保存」 | 「公開されない保存領域 … URL を知っているだけでは閲覧できず …」 |
 | `docs/operations/rls-drift-20261006.md` P-2 / P-3 | 公開バケットの記録 | 本書で非公開にしたことを追記 (§18) |
 | `supabase/baseline/prod_storage.sql`・`catalog/storage_buckets.csv` | public = t | 取り直しで f (§18) |
+| `supabase/baseline/manifest.json` の `ledger_max_version` | `20261007112200` (本書の版より古い。本書の migration がローカルに当たる) | 取り直しで本書の版以上 (本書の migration はローカルに当たらず、ベースラインの f で非公開) |
 | 環境変数・route・テーブル・列・エラーコード | – | 足さない |
 
 ### 11.3 ③状態遷移表 (状態 × 操作 → 遷移先・ガード・副作用)
@@ -876,7 +905,7 @@ export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMeal
 | 公開 / 非公開 | `signOwnedPhotoUrls` | 同じ | 本人の写真 | 署名付き URL (期限つき) |
 | 非公開 | 匿名 / 他人が公開 URL を GET | 同じ | – | 4xx |
 | 非公開 | 署名付き URL の期限が切れる | 同じ | – | Storage は 4xx。同じ URL の CDN / 最適化のキャッシュは ≤ 1 時間 |
-| 非公開 | ベースラインの取り直し | 同じ | 本番の適用の後 | `prod_storage.sql` / `storage_buckets.csv` が `f` に |
+| 非公開 | ベースラインの取り直し | 同じ | 本番の適用の後 | `prod_storage.sql` / `storage_buckets.csv` が `f` に。`manifest.json` の `ledger_max_version` が本書の版以上になり、本書の migration はローカル / CI に当たらなくなる (ローカルのバケットはベースラインの `f` で非公開のまま)。契約テスト 9.4 の 1. の 2 本目は論理和の後者で緑のまま |
 
 ---
 
@@ -918,7 +947,7 @@ sequenceDiagram
 | ファイル | it | 要件 |
 |---|---|---|
 | `tests/integration/security/photo-buckets-private.test.ts` (新) | `B-1: meal_photos と fridge-images は public = false。health-checkups も非公開のまま` / `B-2: 保存された公開 URL は、未ログインでは 4xx (今のパス・旧パス・generated/・バケット直下)` / `B-3: 他人は公開 URL でも 4xx で、署名の API の決まりでは null` / `B-4: 本人は署名付き URL で見られる (今のパス・旧パス・generated/<user_id>/・generated/<本人の献立>/)` / `B-5: 運営の審査の署名 (持ち主を確かめない) も非公開バケットで通る` / `B-6: 本人の JWT の authenticated の経路は、本人のフォルダだけ 200 (旧パスは 4xx。ポリシーは変えていない)` / `B-7: meal_photos も同じ (未ログインの公開 URL は 4xx・本人の署名付き URL は 200)` / `B-8: 署名付き URL は有効期限を過ぎると 4xx` | R-1〜R-4, R-7, R-11 |
-| `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets.sql は 1 本だけ` / `版は本番の台帳の最大 (ledger_max_version) より新しい` / `c_buckets は PHOTO_STORAGE_BUCKETS (meal_photos / fridge-images) とちょうど同じ` / `public = false にする UPDATE が 1 つあり、storage.objects のポリシーを作らず・消さず、health-checkups に触れない` / `同じ版の .down.sql があり、同じバケットを public = true に戻す` / `%s は公開バケットを前提にした語を持たない` (STAGE1_FILES の 7 本) | R-1, R-8, R-12, R-13 |
+| `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets.sql は 1 本だけ` / `ローカル / CI で非公開になる: 版が本番の台帳の最大 (ledger_max_version) より新しい、または取り直したベースラインで 2 つとも public = false` / `c_buckets は PHOTO_STORAGE_BUCKETS (meal_photos / fridge-images) とちょうど同じ` / `public = false にする UPDATE が 1 つあり、storage.objects のポリシーを作らず・消さず、health-checkups に触れない` / `同じ版の .down.sql があり、同じバケットを public = true に戻す` / `%s は公開バケットを前提にした語を持たない` (STAGE1_FILES の 7 本) | R-1, R-8, R-12, R-13 |
 | `tests/integration/security/photo-signed-urls.test.ts` (直し) | `S-4: バケットは非公開で、署名付き URL では表示でき、公開 URL では表示できない` (S-1〜S-3 は変えない) | R-13 |
 | `tests/integration/security/storage-fridge-images-rls.test.ts` (直し) | `P-1: 公開 URL では読めない (非公開バケット。#1365 段 2)` / `M-3: 公開 URL では読めない (非公開バケット。#1365 段 2)` (U-1〜U-5・L-1〜L-3・M-1・M-2 は変えない) | R-13 |
 | `tests/public-claims-guard.test.ts` (既存・変更なし) | `データの保存・第三者への提供は断定せず、プライバシーポリシーへ案内する` が段 2 の文言でも緑 | R-14 |
@@ -935,7 +964,7 @@ sequenceDiagram
 | (適用の確認) | オーケストレーターが §20 を行う | – |
 | 2. 文言と文書 | FAQ の 1 行 (9.5)・既存文書の現在形化 (§18)・ベースラインの取り直しの依頼 | `src/app/faq/page.tsx`、`docs/operations/rls-drift-20261006.md`、`docs/design/operator/02-api-spec.md`、`docs/operations/meal-image-pipeline.md`、`docs/design/family/10-family-menu-view.md`、`docs/design/cross/CLAUDE.md`、`supabase/baseline/refresh-request.txt`。任意 (§18 の期日「任意」の行): `docs/design/00-architecture.md` (`:25`)、`docs/design/mobile/04-storage-camera.md` (§3.8・§4) |
 
-段 1 の migration の番号はマージ直前に確定する (契約テストは `ledger_max_version` より新しいことだけを見るので、番号を付け替えても赤にならない)。
+段 1 の migration の番号はマージ直前に確定する (契約テストは版を「`ledger_max_version` より新しい」かどうかでしか見ないので、番号を付け替えても赤にならない)。段 2 のベースラインの取り直しの後も、契約テストは論理和の後者 (ベースラインで 2 つとも `public = false`) で緑のまま (§11.3)。
 
 ---
 
@@ -945,20 +974,20 @@ sequenceDiagram
 |---|---|
 | ファイル | `supabase/migrations/<番号>_private_photo_buckets.sql`、`supabase/rollbacks/<番号>_private_photo_buckets.down.sql`、`tests/integration/security/photo-buckets-private.test.ts`、`tests/private-photo-buckets-migration-contract.test.ts` |
 | SQL の名前 | DO ブロックの `c_buckets` (migration と戻しの両方)。例外の文 `private_photo_buckets: expected every photo bucket (…) to exist and be private` |
-| 関数 (テスト内) | `client`、`anon`、`tinyPng`、`createUser`、`put`、`plannedMealOf`、`statusOf`、`expectClientError`、`authenticatedUrl`、`bearer` (9.3)、`read`、`stripSqlComments`、`bucketsOf` (9.4) |
-| 定数 (テスト内) | `HTTP_OK`、`HTTP_CLIENT_ERROR_MIN`、`HTTP_CLIENT_ERROR_MAX`、`TEST_TTL_SECONDS`、`EXPIRY_PROBE_TTL_SECONDS`、`EXPIRY_PROBE_WAIT_MS`、`FRIDGE`、`MEAL_PHOTOS`、`HEALTH_CHECKUPS_BUCKET`、`TS`、`createdUserIds`、`uploaded`、`dailyMealIds`、`urls` (9.3)、`ROOT`、`MIGRATIONS_DIR`、`ROLLBACKS_DIR`、`MANIFEST`、`MIGRATION_SUFFIX`、`ROLLBACK_SUFFIX`、`VERSION_PATTERN`、`BUCKETS_ARRAY_PATTERN`、`SET_PRIVATE_PATTERN`、`SET_PUBLIC_PATTERN`、`UNTOUCHED_BUCKET`、`STALE_WORDS`、`STAGE1_FILES`、`migrationFiles`、`migrationFile`、`version`、`sql`、`rollbackFile`、`expectedBuckets` (9.4) |
+| 関数 (テスト内) | `client`、`anon`、`tinyPng`、`createUser`、`put`、`plannedMealOf`、`statusOf`、`expectClientError`、`authenticatedUrl`、`bearer` (9.3)、`read`、`stripSqlComments`、`escapeRegExp`、`baselinePublicOf`、`bucketsOf` (9.4) |
+| 定数 (テスト内) | `HTTP_OK`、`HTTP_CLIENT_ERROR_MIN`、`HTTP_CLIENT_ERROR_MAX`、`TEST_TTL_SECONDS`、`EXPIRY_PROBE_TTL_SECONDS`、`EXPIRY_PROBE_WAIT_MS`、`FRIDGE`、`MEAL_PHOTOS`、`HEALTH_CHECKUPS_BUCKET`、`TS`、`createdUserIds`、`uploaded`、`dailyMealIds`、`urls` (9.3)、`ROOT`、`MIGRATIONS_DIR`、`ROLLBACKS_DIR`、`MANIFEST`、`BASELINE_STORAGE`、`MIGRATION_SUFFIX`、`ROLLBACK_SUFFIX`、`VERSION_PATTERN`、`BUCKETS_ARRAY_PATTERN`、`SET_PRIVATE_PATTERN`、`SET_PUBLIC_PATTERN`、`UNTOUCHED_BUCKET`、`STALE_WORDS`、`STAGE1_FILES`、`migrationFiles`、`migrationFile`、`version`、`sql`、`rollbackFile`、`expectedBuckets` (9.4) |
 | 型 (テスト内) | `TestUser` (9.3) |
 | 製品コードの関数・定数・型・Zod | 無し |
 | route・環境変数・エラーコード・テーブル・列・RLS ポリシー・Storage のパス | 無し |
 | 変えるもの | `storage.buckets.public` の 2 行 (本番の設定)。FAQ の 1 行。コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意) |
 
-列挙の基準: §9 の正典コードで新しく宣言するモジュール直下の名前 (テストの中の名前を含む)。既存の名前 (`PHOTO_STORAGE_BUCKETS`・`signOwnedPhotoUrls` など) と it の中の局所の変数 (`targets`・`signed`・`res`) は数えない。
+列挙の基準: §9 の正典コードで新しく宣言するモジュール直下の名前 (テストの中の名前を含む)。既存の名前 (`PHOTO_STORAGE_BUCKETS`・`signOwnedPhotoUrls` など) と it の中の局所の変数 (`targets`・`signed`・`res`・`appliedOnLocalStack`・`baselinePrivate` など) は数えない。
 
 ---
 
 ## 17. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果: `fridge-images`・`meal_photos`・`PHOTO_STORAGE_BUCKETS`・`getPublicUrl`・`object/public`・`updateBucket`・`公開バケット`・`段 2`・`prod_storage`・`storage_buckets.csv`・`supabase/rollbacks`・`_private_photo_buckets`・`写真データはどこに保存`・`photo urls were not signed`・`minimumCacheTTL`・`PHOTO_SIGNED_URL_TTL_SECONDS`。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果: `fridge-images`・`meal_photos`・`PHOTO_STORAGE_BUCKETS`・`getPublicUrl`・`object/public`・`updateBucket`・`公開バケット`・`段 2`・`prod_storage`・`storage_buckets.csv`・`supabase/rollbacks`・`_private_photo_buckets`・`ledger_max_version`・`写真データはどこに保存`・`photo urls were not signed`・`minimumCacheTTL`・`PHOTO_SIGNED_URL_TTL_SECONDS`。
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
@@ -968,7 +997,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/integration/security/account-deletion.test.ts`・`tests/integration/security/purge-hidden-content.test.ts` | `getPublicUrl` | 保存形の文字列を行に入れ、service_role の remove を確かめる | 変更なし (remove は公開/非公開に無関係) | – |
 | `tests/integration/rls/family-menu-visibility.test.ts` | `object/public/fridge-images/generated/` | 文字列を `image_url` に入れ、応答に出ないことを見る | 変更なし | – |
 | `tests/integration-ci-coverage.test.ts` | `tests/integration/security` | 結合テストが CI の指定に当たる | 変更なし (新しいファイルは `tests/integration/security/` 配下) | 1 |
-| `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets`・`c_buckets`・`STALE_WORDS` | – | 新設 (9.4) | 1 |
+| `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets`・`c_buckets`・`STALE_WORDS`・`ledger_max_version`・`prod_storage` | – | 新設 (9.4)。段 2 のベースラインの取り直し (§18) で `ledger_max_version` が本書の版以上になっても、1. の 2 本目は「ベースラインで 2 つとも `public = false`」の側で緑 (取り直しの PR で直す・外すものは無い) | 1 |
+| `tests/helpers/schema-snapshot.ts` (`tests/account-export-tables.test.ts` などが使う) | `ledger_max_version` | `ledger_max_version` より新しい migration の `CREATE TABLE` / `DROP TABLE` を重ねる | 変更なし (本書の migration は public のテーブルを作らない。取り直しの後に本書の migration が重ねる対象から外れても結果は同じ) | – |
 | `tests/photo-storage-signing.test.ts`・`tests/moderation-photo-signing.test.ts`・`src/__tests__/api/storage-signed-urls.test.ts`・`src/__tests__/api/analyze-fridge-photo-owner.test.ts`・`src/__tests__/api/nutrition-photo-owner.test.ts`・`tests/signed-photo-url-resolver.test.ts`・`tests/signed-photo-image-web.test.tsx` | `fridge-images`・`meal_photos`・`object/public` | 署名の決まりの単体 (偽の client) | 変更なし (決まりを変えない) | – |
 | `tests/signed-photo-display-scan.test.ts` | `段 2 でバケットを非公開にする` | ヘッダの説明が将来形 | 9.7 のとおりコメントだけ直す (`STALE_WORDS` が見張る) | 1 |
 | `src/__tests__/api/upload-rate-limit.test.ts`・`tests/api-security-cluster.test.ts`・`tests/image-route-contracts.test.ts`・`tests/ai-rate-limit-contracts.test.ts`・`tests/process-meal-image-jobs-worker-edges.test.ts`・`tests/analyze-fridge-handler.test.ts` | `getPublicUrl`・`object/public` | 書く側の mock | 変更なし (書く側を変えない) | – |
@@ -997,7 +1027,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `docs/design/family/10-family-menu-view.md` Q-8 | 「署名の決まりを変えるとき (#1365 の段 2) に…」→ 段 2 (本書) は署名の決まりを広げなかったので、家族に画像を出すなら別の設計で決める旨 | 段 2 |
 | `docs/design/00-architecture.md:25` | バケットの名前が `meal-photos` (実在は `meal_photos`) で `org-logos` / `user-avatars` は存在しない。本書の範囲外だが、名前だけ実在に合わせる | 任意 |
 | `docs/design/mobile/04-storage-camera.md` §3.8・§4 | `meal-photos` の家族共有のポリシーと `public = false` の記述は、本書と別の構想 (未実装)。「バケットの非公開化は cross/19 で行い、家族共有のポリシーは採っていない」の注記 | 任意 |
-| `supabase/baseline/refresh-request.txt` | 本番の適用の後に日付と理由 (#1365 段 2 の `storage.buckets.public`) を書いて取り直す (`prod_storage.sql`・`catalog/storage_buckets.csv`・`manifest.json` が更新される) | 段 2 (適用の後) |
+| `supabase/baseline/refresh-request.txt` | 本番の適用の後に日付と理由 (#1365 段 2 の `storage.buckets.public`) を書いて取り直す (`prod_storage.sql`・`catalog/storage_buckets.csv`・`manifest.json` が更新される。`ledger_max_version` が本書の版以上になり、本書の migration はローカル / CI に当たらなくなるが、ベースラインの INSERT が `public = false` なので結果は同じ。契約テスト 9.4 はこの状態でも緑) | 段 2 (適用の後) |
 | `.env.example:238`・`ENV_SETUP.md` | 変更なし (`PHOTO_SIGNED_URL_TTL_SECONDS` の説明は現在形のまま正しい) | – |
 
 ---
@@ -1023,7 +1053,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 適用の直後 | 保存形の URL 1 つ (本番の `planned_meals.image_url` のどれか) を未ログインの curl で GET | 4xx (CDN の残りがあれば最長 1 時間は 200 になりうる。1 時間後に再確認) |
 | 適用の直後 | 本人でログインして `/home` と献立の画面で写真が出る (実機) | 出る (`SignedPhotoImage`) |
 | 適用の直後 | 運営の審査画面で通報された写真が出る (通報が無ければ省略) | 出る |
-| 段 2 のマージ後 | `/faq` の文言・`verify` 用のベースラインの取り直し | 9.5 の文言。`verify` の `bucket differs` が消える |
+| 段 2 のマージ後 | `/faq` の文言・`verify` 用のベースラインの取り直し | 9.5 の文言。`verify` の `bucket differs` が消える。取り直しの PR で `npx vitest run tests/private-photo-buckets-migration-contract.test.ts` が緑 (論理和の後者) |
 
 ---
 
