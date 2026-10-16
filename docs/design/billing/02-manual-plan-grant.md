@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.4 (2026-10-17) |
+| 版 | v1.6 (2026-10-17) |
 | Status | 設計ゲート審査中 (実装着手はゲート PASS 後) |
 | Issue | #1797 (運営者による手動のプラン付与の画面と API。親 #1151 の残り)。課金の核は `docs/design/billing/01-billing-core.md` (段 A〜C と追随 #1711・#1726・#1738・#1763 は main 入り) |
 | 範囲の正本 | Issue #1797 の本文とコメント・親 #1151 の要件・billing/01 §0.2 (配線の冊に回したもの) と §16.2 (期日が「配線の冊と同時」「family / org の冊」の追随の行) |
@@ -77,7 +77,7 @@
 
 | # | 事実 | 出どころ |
 |---|---|---|
-| F1 | 手動付与の route・画面は無い。`src/app/api/super-admin/` は `admins`・`audit-logs`・`coupons`・`db-stats`・`embeddings`・`experiments`・`exports`・`feature-packages`・`flags`・`infra`・`llm`・`logs`・`plans`・`settings`。`src/app/api/admin/users/[id]/` は `route.ts` (GET / PATCH)・`freeze`・`role` | `git ls-tree` |
+| F1 | 手動付与の route・画面は無い。`src/app/api/super-admin/` は `admins`・`audit-logs`・`backups`・`coupons`・`db-stats`・`email-outbox`・`embeddings`・`experiments`・`exports`・`feature-packages`・`flags`・`infra`・`llm`・`logs`・`plans`・`settings` (`users` は無い)。`src/app/api/admin/users/[id]/` は `route.ts` (GET / PATCH)・`freeze`・`login-history` (#1720 段 D)・`role` | `git ls-tree` (origin/main `b508f749` で数え直した) |
 | F2 | `personal_subscriptions` の RLS: INSERT / UPDATE は `personal_subscriptions_insert_admin` / `_update_admin` (admin / super_admin の JWT)・SELECT は本人 + admin / super_admin / finance / support・DELETE 禁止。anon は書けない | `supabase/migrations/20261016210000_billing_core.sql:49-63` |
 | F3 | **admin の JWT から直接 INSERT しても `plan_key_cached` は同期できない**: 特権列ガード `guard_user_profiles_privileged` は `current_user IN ('authenticated','anon')` の UPDATE で `plan_key_cached` の変更を 42501 にする。運営のセッションも `authenticated` ロールなので、本人の JWT では書けない。写像 (SECURITY DEFINER・所有者 postgres) だけが書ける | 同 `:502-549` |
 | F4 | 写像 `billing_apply_stripe_subscription` のロック順: advisory `billing-user:<uuid>` → `stripe-subscription:<sub>` → 契約の行 (`FOR NO KEY UPDATE`) → `family_groups` の行 → `user_profiles` の行。家族の同期は `plan_type='family'` のとき `UPDATE family_groups SET plan_key, member_limit=LEAST(COALESCE(max_members,4),20) WHERE representative_id=<利用者> AND status='active'`、終了のときは「同じ利用者に同じプランの live な行が無いとき」だけ `free` / 4 に戻す。`plan_key_cached` は live な行から `ORDER BY created_at DESC, id LIMIT 1` で再計算 | 同 `:190-420` (billing/01 §6.4 (9) の 2.・3.・10.) |
@@ -195,9 +195,9 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 
 | ID | トレース |
 |---|---|
-| S1 | 画面の節 (`current: null`・`plans` に `pro`) →「付与する」(確認ダイアログ) → `POST …/manual-plan { plan_key: 'pro', expires_on: null, reason }` → `rejectNullCharacterBody` → `requireRole(['super_admin'])` (AAL2) → `normalizeUuid(id)`・自分でない → 本文 (`manualPlanGrantBodySchema(jstToday())`) → `grantManualPlan` → 利用者あり → RPC: 引数 OK → 利用者あり → `pro` は `personal` / `public` → advisory `billing-user:<id>` → live 行なし → INSERT (`active`・`current_period_end NULL`) → `plan_type='personal'` なので家族は触らない → `plan_key_cached='pro'` → 戻り値 → route が `recordAdminAudit('admin.billing.manual_grant', warn, details: { subscription_id, plan_key: 'pro', expires_at: null, reason })` → 200 `{ data: { subscription_id, user_id, plan_key: 'pro', status: 'active', expires_at: null } }` → 節が `GET` で読み直し (`current.source='manual'`・`history` に 1 行)。利用者: `GET /api/billing/subscription` → `source: 'manual'`・`can_cancel: false`・「ご利用中」(F9)。AI の上限は `get_effective_plan` = `pro` |
+| S1 | 画面の節 (`current: null`・`plans` に `pro`) →「付与する」(確認ダイアログ) → `POST …/manual-plan { plan_key: 'pro', expires_on: null, reason }` → route の判定の順 (§9.0) の 1〜6: `rejectNullCharacterBody` → `requireRole(['super_admin'])` (AAL2) → `targetIdOf(id)` (UUID の形・小文字にそろえる) → 自分でない (`id !== normalizeUuid(actor.id)`) → `readJsonBody` → `manualPlanGrantBodySchema(jstToday())` → 7. `grantManualPlan` (自分でない (二重の守り) → `userExists` が真) → RPC: 引数 OK → 利用者あり → `pro` は `personal` / `public` → advisory `billing-user:<id>` → live 行なし → INSERT (`active`・`current_period_end NULL`) → `plan_type='personal'` なので家族は触らない → `plan_key_cached='pro'` → 戻り値 → route が `recordAdminAudit('admin.billing.manual_grant', warn, details: { subscription_id, plan_key: 'pro', expires_at: null, reason })` → 200 `{ data: { subscription_id, user_id, plan_key: 'pro', status: 'active', expires_at: null } }` → 節が `GET` で読み直し (`current.source='manual'`・`history` に 1 行)。利用者: `GET /api/billing/subscription` → `source: 'manual'`・`can_cancel: false`・「ご利用中」(F9)。AI の上限は `get_effective_plan` = `pro` |
 | S2 | 同上で `expires_on: '2026-12-31'` → スキーマの `superRefine` が `'2026-12-31' > jstToday()` を確かめる → service が `expiresAtOf('2026-12-31')` = `jstDayRangeTimestamps('2026-12-31','2026-12-31').toTimestampExclusive` = `2026-12-31T15:00:00.000Z` (= 2027-01-01 00:00 JST) → RPC (`p_expires_at > now()` を再確認) → `[DB] current_period_end = 2026-12-31T15:00:00Z`。2027-01-01 00:11 JST: ジョブ → `CALL billing_expire_manual_subscriptions()` → 期限を過ぎた利用者の一覧 (この利用者) → `billing_expire_manual_subscription_for_user(<id>)` → advisory → 期限を過ぎた live な M 行を `FOR NO KEY UPDATE` で読む (鍵の後なので最新) → UPDATE `status='expired'` → `sync_after_end` (家族は `pro` なので触らない・`plan_key_cached` は live 行なし = NULL) → 監査 `system.billing.manual_grant_expired` (actor NULL・info・details: { subscription_id, plan_key, expires_at }) → 1 を返す → COMMIT → 次の利用者。利用者は `free`。`/account/billing` は `can_purchase` |
-| S3 | 節 (`current.source='manual'`) →「取り消す」(確認) → `DELETE …/manual-plan { reason }` → 同じ門 → `revokeManualPlan` → RPC: advisory → live な M 行 (`stripe_subscription_id IS NULL`) を `FOR NO KEY UPDATE` で読む → UPDATE `status='cancelled'`・`cancelled_at=now()`・`cancel_at=NULL` → `sync_after_end` → 戻り値 `{ status_from: 'active', status_to: 'cancelled' }` → 監査 `admin.billing.manual_revoke` (warn) → 200。利用者は `free` |
+| S3 | 節 (`current.source='manual'`) →「取り消す」(確認) → `DELETE …/manual-plan { reason }` → §9.0 の 1〜6 (本文は `ManualPlanRevokeBodySchema`) → 7. `revokeManualPlan` (自分でない (二重の守り) → `userExists` が真) → RPC: advisory → live な M 行 (`stripe_subscription_id IS NULL`) を `FOR NO KEY UPDATE` で読む → UPDATE `status='cancelled'`・`cancelled_at=now()`・`cancel_at=NULL` → `sync_after_end` → 戻り値 `{ status_from: 'active', status_to: 'cancelled' }` → 監査 `admin.billing.manual_revoke` (warn) → 200。利用者は `free` |
 | S4 | `POST` → RPC: advisory → live 行あり (S 行 `active`) → `BILL_LIVE_ROW_CONFLICT` (DETAIL = その行の id) → repository が `ManualGrantRpcError` に → service が `ManualGrantError('OP_SUBSCRIPTION_ALREADY_ACTIVE')` → route 409 `{ error: { code, message: 'すでに有効な契約があります' } }`。監査なし・INSERT なし (トランザクションは失敗で戻る) |
 | S5 | S4 と同じ 409 (live な M 行)。運営は `DELETE` (S3) → `POST family_basic` (S6 の形)。監査は `manual_revoke`・`manual_grant` の 2 行 |
 | S6 | `POST family_pro` → RPC: `family_pro` は `family` / `public` → live なし → INSERT → `plan_type='family'`: `v_member_limit = LEAST(COALESCE(8,4),20) = 8` → `UPDATE family_groups SET plan_key='family_pro', member_limit=8 WHERE representative_id=<id> AND status='active' AND (plan_key IS DISTINCT FROM … OR member_limit IS DISTINCT FROM …)` → `plan_key_cached='family_pro'`。メンバーの `get_effective_plan`: 個人契約なし → 家族 `family_pro`。`DELETE` → `sync_after_end('family_pro')`: `UPDATE family_groups SET plan_key='free', member_limit=4 WHERE representative_id=<id> AND status='active' AND plan_key='family_pro' AND NOT EXISTS (同じ利用者の `family_pro` の live 行)` → 戻る |
@@ -207,9 +207,9 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 | S10 | `[DB]` S 行 `incomplete` (live でない) → `POST pro` → RPC の live の検査は `incomplete` を数えない → INSERT (M 行) → `plan_key_cached='pro'`。Stripe で支払いが完了 → 写像: 既存の S 行 → `active` に写そうとして 6. で別の live 行 (M) → `BILL_LIVE_ROW_CONFLICT` → S 行は `incomplete` のまま (billing/01 §7.3 の `incomplete → active` の行のガード)。運営が S9 と同じ処置 |
 | S11 | `POST free` → RPC の 2. で `plan_key='free'` → `BILL_PLAN_NOT_GRANTABLE` → 422。`org_standard` (`plan_type='org'`)・`family_addon` (`status='private'`)・`draft`・`deprecated`・無い `plan_key` も同じ。画面の `plans` にも出ない (repository の SELECT が `status='public'` で絞り、`isGrantablePlan` が `free` を落とす) |
 | S12 | `expires_on: '2026-10-17'` (今日) → `superRefine` が issue「有効期限は今日より後の日付を指定してください」→ 400 `OP_INVALID_INPUT` (`details` に issue)。`'2026-02-30'` は `CalendarDateSchema` が拒む → 同じ 400。RPC の `p_expires_at <= now()` は二重の守り (route のスキーマが通した直後に日付が変わった場合など) で、`BILL_MANUAL_EXPIRES_AT_PAST` → 400 `OP_INVALID_INPUT` (固定の文・`details: []`) |
-| S13 | `normalizeUuid(id) === normalizeUuid(actor.id)` → 403 `OP_SELF_MODIFY` (本文の検証・DB より前)。画面は `actor.id !== profile.id` のときだけ節を描く |
+| S13 | `POST` / `DELETE` → §9.0 の 1〜3 を通る → 4. route が `id` (`targetIdOf` が小文字にそろえた値) `=== normalizeUuid(actor.id)` を見て 403 `OP_SELF_MODIFY` (`errorJson`・`Cache-Control: no-store`)。JSON と Zod の検証 (5・6)・service・DB・監査より前なので、本文が JSON でなくても Zod に通らなくても 403 (NULL 文字の 400 `INVALID_CHARACTER` と `requireRole` の 401 / 403 だけはその前)。service の `grantManualPlan` / `revokeManualPlan` も先頭で同じ判定をする (二重の守り。route を経ずに呼ばれたときに備える。テスト 10・12)。`GET` は自分の判定をしない (読むだけ)。画面は `actor.id !== profile.id` のときだけ節を描く |
 | S14 | `requireRole(['super_admin'])`: admin → `ForbiddenError('PERM_DENIED')` → 403 `OP_PERMISSION_DENIED`。AAL1 の super_admin → `MfaRequiredError` (ForbiddenError の派生) → 同じ 403。未ログイン → `AuthError` → 401 `AUTH_UNAUTHENTICATED` |
-| S15 | `isUuid(id)` が偽 → 404 `NOT_FOUND` (DB に触れない)。UUID だが `user_profiles` に無い → service の `findUserExists` が偽 → 404。RPC の `BILL_UNKNOWN_USER` は二重の守り (同時に退会した場合) → 404 |
+| S15 | `isUuid(id)` が偽 → 404 `NOT_FOUND` (DB に触れない)。UUID だが `user_profiles` に無い → service が呼ぶ repository の `userExists` が偽 → 404。RPC の `BILL_UNKNOWN_USER` は二重の守り (同時に退会した場合) → 404 |
 | S16 | 凍結中の利用者 (`frozen_at` あり) → RPC は凍結を見ない → INSERT。利用者はログインしても `/frozen` に回る (middleware)。解除後に `get_effective_plan` が効く。凍結中も `/frozen/billing` の要約は `source: 'manual'`・解約のボタンなし (F9) |
 | S17 | `POST /api/account/delete` → `deleteAccount` の段階 `billing`: `findCustomer` なし・`listStripeBackedSubscriptions` は `stripe_subscription_id IS NOT NULL` だけ → M 行は列挙されない → Stripe を呼ばない → `deleteUser` → `personal_subscriptions` は CASCADE で消える (`personal_subscriptions_user_id_fkey` は `ON DELETE CASCADE`)。`admin_audit_logs` の行は消えない (`target_id` に外部キーは無い) |
 | S18 | `POST /api/super-admin/coupons/[id]/apply { subscription_target: 'personal', subscription_id: <M 行の id> }` → `apply_coupon` が M 行を `FOR NO KEY UPDATE` でロック (本冊の関数と行ロックで直列) → `active_coupon_redemption_id` を書く。本冊の UPDATE (取り消し・期限切れ) は `status` / `cancelled_at` / `cancel_at` だけを書く |
@@ -692,7 +692,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | 手動付与の経路 | 無い (F1)。admin / super_admin の JWT で PostgREST から `personal_subscriptions` に直接 INSERT はできる (F2) が、`plan_key_cached` と `family_groups` は同期できない (F3) | `POST /api/super-admin/users/{id}/manual-plan` → `billing_grant_manual_subscription` (行 + 家族 + `plan_key_cached` を 1 トランザクションで) |
 | 取り消し | 無い | `DELETE /api/super-admin/users/{id}/manual-plan` → `billing_revoke_manual_subscription` (`cancelled`) |
 | 期限 | 無い | `current_period_end` (翌日の JST 0 時) + 日次のジョブ `expire-manual-plan-grants` (00:11 JST。プロシージャが利用者ごとに 1 人分の関数を呼んで COMMIT) → `expired` |
-| 誰ができるか | (直接の INSERT なら admin / super_admin。AAL2 の門は無い) | super_admin だけ。`requireRole(['super_admin'])` (AAL2)。自分には 403 |
+| 誰ができるか | (直接の INSERT なら admin / super_admin。AAL2 の門は無い) | super_admin だけ。`requireRole(['super_admin'])` (AAL2)。自分への付与・取り消しは 403 `OP_SELF_MODIFY` (route が本文の検証より前に断る。§9.0 の 4) |
 | 監査 | 無い | `admin.billing.manual_grant` / `admin.billing.manual_revoke` (route・warn・IP と UA つき)・`system.billing.manual_grant_expired` (関数・info) |
 | M 行の家族グループへの反映 | グループの作成・代表者の交代のトリガーだけ (billing/01 §12「既存のグループへの反映は配線の手動付与の画面が行う」) | 付与・取り消し・期限切れの関数が、いまの代表者の active なグループを写像と同じ式で合わせる |
 | M 行の `plan_key_cached` | 誰も同期しない (billing/01 §2.2 F11 の未確定) | 付与・取り消し・期限切れの関数が同期 |
@@ -736,7 +736,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | S live | 取り消し (関数) | – | live な M 行が無い (S 行は対象外) | 409 `OP_NO_MANUAL_SUBSCRIPTION`。S21 |
 | S `incomplete` | 付与 (関数) | S `incomplete` + 新しい M `active` | `incomplete` は live でない | S10。以後 S 行が live に写ろうとすると `BILL_LIVE_ROW_CONFLICT` (billing/01 §7.3) |
 | 任意 | 付与・取り消しの API を admin / support / 未ログイン / AAL1 の super_admin が呼ぶ | 同じ | `requireRole(['super_admin'])` | 403 `OP_PERMISSION_DENIED` / 401 `AUTH_UNAUTHENTICATED`。S14 |
-| 任意 | 自分の id への付与・取り消し | 同じ | `normalizeUuid(id) === normalizeUuid(actor.id)` | 403 `OP_SELF_MODIFY`。S13 |
+| 任意 | 自分の id への付与・取り消し (`POST` / `DELETE`。`GET` は対象外で 200) | 同じ | route の §9.0 の 4 (パスの id の形の 404 の直後・JSON と Zod の検証より前): `targetIdOf(id) === normalizeUuid(actor.id)`。service の `grantManualPlan` / `revokeManualPlan` の先頭にも同じ判定 (二重の守り) | 403 `OP_SELF_MODIFY` (本文が JSON でなくても Zod に通らなくても 403)。service・DB・監査に届かない。S13 |
 | 任意 | 同時の付与 ×2 / 付与と写像 / 付与と取り消し / 付与とジョブ | advisory `billing-user:<uuid>` で直列。後の方が commit 済みの状態で上の行のどれかになる | — | S22 |
 | M `active` (期限を過ぎた・家族グループのメンバーか代表者) | 日次のジョブと、同じグループの強制解散・脱退・メンバーの削除・代表者の交代が同時 | ジョブは M `expired`。家族の操作は通常どおり | ジョブは 1 トランザクションで 1 人分の鍵と行だけを持つ (§6.4) | 40P01 にならない (どちらかが待つだけ)。テスト 57 |
 
@@ -831,7 +831,10 @@ export const MANUAL_GRANT_AUDIT_TARGET_TYPE = 'user';
 // エラー (応答の本文は固定の文。生のエラー文は入れない)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 本冊のエラーコードと HTTP ステータス。既存の名前 (NOT_FOUND / OP_INVALID_INPUT / OP_SUBSCRIPTION_ALREADY_ACTIVE / OP_SELF_MODIFY) はそのまま使い、[NEW] の 2 つは cross/04 §4.2 に追記する (§15.2) */
+/**
+ * 本冊のエラーコードと HTTP ステータス。既存の名前 (NOT_FOUND / OP_INVALID_INPUT / OP_SUBSCRIPTION_ALREADY_ACTIVE / OP_SELF_MODIFY) はそのまま使う。
+ * cross/04 §4.2 には、本冊の新しい 2 つ (OP_PLAN_NOT_GRANTABLE / OP_NO_MANUAL_SUBSCRIPTION) と、実コードが先に使っていて未記載の OP_SELF_MODIFY の 3 行を足す (§12.1・§15.2)
+ */
 export const MANUAL_GRANT_ERROR_HTTP_STATUS = {
   NOT_FOUND: 404,
   OP_INVALID_INPUT: 400,
@@ -1208,7 +1211,10 @@ export async function getManualPlanView(deps: ManualGrantDeps, userId: string): 
 export interface GrantManualPlanInput {
   /** 対象の利用者 (route が normalizeUuid した id) */
   userId: string;
-  /** 実行者 (route が normalizeUuid した id)。同じなら OP_SELF_MODIFY */
+  /**
+   * 実行者 (route が normalizeUuid した id)。同じなら OP_SELF_MODIFY。
+   * route は本文の検証の前に同じ判定で 403 を返している (§9.0 の 4) ので、ここは二重の守り (route を経ずに呼ばれたとき)
+   */
   actorId: string;
   planKey: string;
   /** JST の暦日 (スキーマが今日より後を確かめ済み)。null = 期限なし */
@@ -1217,6 +1223,7 @@ export interface GrantManualPlanInput {
 
 /** 付与。業務エラーは ManualGrantError (route が §12.1 の HTTP に写す)。それ以外の例外は 500 */
 export async function grantManualPlan(deps: ManualGrantDeps, input: GrantManualPlanInput): Promise<ManualPlanGrantResult> {
+  // 二重の守り (route の §9.0 の 4 と同じ判定)。repository に触れる前に断る
   if (input.userId === input.actorId) throw new ManualGrantError('OP_SELF_MODIFY');
   if (!(await deps.repository.userExists(input.userId))) throw new ManualGrantError('NOT_FOUND');
   const expiresAt = input.expiresOn === null ? null : expiresAtOf(input.expiresOn);
@@ -1228,12 +1235,15 @@ export async function grantManualPlan(deps: ManualGrantDeps, input: GrantManualP
 }
 
 export interface RevokeManualPlanInput {
+  /** 対象の利用者 (route が normalizeUuid した id) */
   userId: string;
+  /** 実行者 (route が normalizeUuid した id)。同じなら OP_SELF_MODIFY (GrantManualPlanInput.actorId と同じく二重の守り) */
   actorId: string;
 }
 
 /** 取り消し。live な M 行が無ければ OP_NO_MANUAL_SUBSCRIPTION */
 export async function revokeManualPlan(deps: ManualGrantDeps, input: RevokeManualPlanInput): Promise<ManualPlanRevokeResult> {
+  // 二重の守り (route の §9.0 の 4 と同じ判定)。repository に触れる前に断る
   if (input.userId === input.actorId) throw new ManualGrantError('OP_SELF_MODIFY');
   if (!(await deps.repository.userExists(input.userId))) throw new ManualGrantError('NOT_FOUND');
   try {
@@ -1370,7 +1380,10 @@ export async function revokeManualPlanRequest(userId: string, body: ManualPlanRe
  * DELETE /api/super-admin/users/{id}/manual-plan — 付与の取り消し (billing_revoke_manual_subscription)
  * 設計: docs/design/billing/02-manual-plan-grant.md §8.5・§9
  *
- * 権限: super_admin だけ (requireRole(['super_admin'])。既定の assurance = AAL2 の門。cross/12 §13.1)。自分自身は 403 OP_SELF_MODIFY。
+ * 権限: super_admin だけ (requireRole(['super_admin'])。既定の assurance = AAL2 の門。cross/12 §13.1)。
+ * 自分自身 (POST / DELETE) は 403 OP_SELF_MODIFY: パスの id の形の判定の直後、本文 (JSON・Zod) を読む前に route が断る
+ * (cross/12 の super_admin の reset と同じ順。本文が不正でも 403)。service の grantManualPlan / revokeManualPlan も同じ判定を持つ (二重の守り)。
+ * GET は読むだけなので自分の判定をしない。判定の順の正本は設計書 §9.0。
  * 本文の形は運営 API (nested): 失敗は { error: { code, message } }・成功は { data }。
  * DB は requireRole 通過後に service_role (getSupabaseAdmin) の repository で RPC を呼ぶ (#1028 の型)。
  * 監査は recordAdminAudit を user-scoped の client で (admin.billing.manual_grant / manual_revoke。severity warn。request つき。
@@ -1439,6 +1452,11 @@ function targetIdOf(rawId: string): string | null {
   return isUuid(rawId) ? normalizeUuid(rawId) : null;
 }
 
+/** 自分自身への付与・取り消し → 403 OP_SELF_MODIFY (§9.0 の 4。本文の検証・service・DB・監査より前) */
+function selfModifyFailure(): NextResponse {
+  return errorJson('OP_SELF_MODIFY', MANUAL_GRANT_ERROR_MESSAGES.OP_SELF_MODIFY, MANUAL_GRANT_ERROR_HTTP_STATUS.OP_SELF_MODIFY);
+}
+
 export async function GET(_request: Request, props: Params): Promise<NextResponse> {
   let actor;
   try {
@@ -1471,6 +1489,9 @@ export async function POST(request: Request, props: Params): Promise<NextRespons
   const { id: rawId } = await props.params;
   const id = targetIdOf(rawId);
   if (id === null) return errorJson('NOT_FOUND', MANUAL_GRANT_ERROR_MESSAGES.NOT_FOUND, MANUAL_GRANT_ERROR_HTTP_STATUS.NOT_FOUND);
+  // 自分自身は本文を読む前に断る (§9.0 の 4。大文字の自分の UUID も targetIdOf が小文字にそろえているので同じ値になる #1707)
+  const actorId = normalizeUuid(actor.id);
+  if (id === actorId) return selfModifyFailure();
   const raw = await readJsonBody(request);
   if (!raw.ok) return invalidJsonBodyResponse();
   const parsed = manualPlanGrantBodySchema(jstToday()).safeParse(raw.body);
@@ -1478,7 +1499,7 @@ export async function POST(request: Request, props: Params): Promise<NextRespons
   try {
     const result = await grantManualPlan(
       { repository: createManualGrantRepository() },
-      { userId: id, actorId: normalizeUuid(actor.id), planKey: parsed.data.plan_key, expiresOn: parsed.data.expires_on ?? null },
+      { userId: id, actorId, planKey: parsed.data.plan_key, expiresOn: parsed.data.expires_on ?? null },
     );
     // 監査は付与のあと (fail-open。失敗は app_logs)。details に本人の個人情報は入れない (理由は運営が書いた文)
     const supabase = await createClient();
@@ -1513,12 +1534,15 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
   const { id: rawId } = await props.params;
   const id = targetIdOf(rawId);
   if (id === null) return errorJson('NOT_FOUND', MANUAL_GRANT_ERROR_MESSAGES.NOT_FOUND, MANUAL_GRANT_ERROR_HTTP_STATUS.NOT_FOUND);
+  // 自分自身は本文を読む前に断る (§9.0 の 4。POST と同じ)
+  const actorId = normalizeUuid(actor.id);
+  if (id === actorId) return selfModifyFailure();
   const raw = await readJsonBody(request);
   if (!raw.ok) return invalidJsonBodyResponse();
   const parsed = ManualPlanRevokeBodySchema.safeParse(raw.body);
   if (!parsed.success) return invalidInputResponse(parsed.error.issues);
   try {
-    const result = await revokeManualPlan({ repository: createManualGrantRepository() }, { userId: id, actorId: normalizeUuid(actor.id) });
+    const result = await revokeManualPlan({ repository: createManualGrantRepository() }, { userId: id, actorId });
     const supabase = await createClient();
     await recordAdminAudit({
       supabase,
@@ -1542,6 +1566,7 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
 - `requireRole` の例外は `authFailure` が 401 / 403 にし、それ以外 (`UserProfileReadError` など) は投げ直す (Next の既定の 500。既存の super-admin の route と同じ)。`MfaRequiredError` は `ForbiddenError` の派生なので 403 `OP_PERMISSION_DENIED`。
 - `recordAdminAudit` は `request` つきのオブジェクトのリテラルで呼ぶ (`tests/admin-mutation-audit-coverage-1571.test.ts` の (b))。`admin_audit_logs` への直接の INSERT と `x-forwarded-for` の直読みは書かない (`tests/admin-view-audit-1326.test.ts` (b))。
 - `roles` の手書きの判定 (`actor.roles.includes(...)`) は書かない (`tests/role-check-source-scan.test.ts`)。
+- 自分自身の判定は 2 か所に置く: route (`POST` / `DELETE` の `selfModifyFailure`。§9.0 の 4。本文を読む前) と service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り)。route の判定を消して service だけに任せると、自分の id に不正な本文を送ったときに 403 でなく 400 になる (テスト 16 が赤になる)。`GET` には置かない (読むだけ)。
 
 ### 8.6 `src/components/admin/ManualPlanGrantSection.tsx` (画面の節)
 
@@ -1836,6 +1861,22 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 
 本文の NULL 文字 (#1657): `POST` と `DELETE` は handler の最初の 2 行で `rejectNullCharacterBody(request)` を呼ぶ (400 `{ error, code: 'INVALID_CHARACTER' }` は既存の共通の形)。`GET` は本文を読まない。
 
+### 9.0 判定の順 (route の正本。§4.2 のトレース・§7.3・§11 はこの番号を引く)
+
+どこかで止まったら、後ろは何もしない (service・DB・監査に届かない)。
+
+| # | `POST` / `DELETE` | `GET` | 止まったときの応答 |
+|---|---|---|---|
+| 1 | `rejectNullCharacterBody(request)` (handler の最初の 2 行) | — (本文を読まない) | 400 `INVALID_CHARACTER` (flat。ヘルパーの応答のまま) |
+| 2 | `requireRole(['super_admin'])` (AAL2) | 同じ | 401 `AUTH_UNAUTHENTICATED` / 403 `OP_PERMISSION_DENIED` (`authFailure`)。それ以外の例外は投げ直す (Next の既定の 500) |
+| 3 | パスの id の形 (`targetIdOf`。UUID の形なら小文字にそろえる) | 同じ | 404 `NOT_FOUND` (`errorJson`) |
+| 4 | 自分自身 (`id === normalizeUuid(actor.id)`) | — (自分の判定をしない) | 403 `OP_SELF_MODIFY` (`selfModifyFailure`)。本文の検証 (5・6) より前なので、本文が JSON でなくても Zod に通らなくても 403。cross/12 の super_admin の reset (`src/app/api/super-admin/admins/[id]/mfa/reset/route.ts`) と同じ順 |
+| 5 | `readJsonBody` | — | 400 `OP_INVALID_INPUT` (`invalidJsonBodyResponse`) |
+| 6 | Zod (`POST`: `manualPlanGrantBodySchema(jstToday())` / `DELETE`: `ManualPlanRevokeBodySchema`) | — | 400 `OP_INVALID_INPUT` (`invalidInputResponse`。`details` に issue) |
+| 7 | service (`grantManualPlan` / `revokeManualPlan`): 自分自身 (4 と同じ判定。二重の守り) → `userExists` → RPC | service (`getManualPlanView`): `userExists` → 3 本の読み取り | `ManualGrantError` → `manualGrantFailure` (§12.1 の 403 / 404 / 409 / 422 / 400)。それ以外 → 500 `internalError` |
+| 8 | 監査 `recordAdminAudit` (fail-open) | — (書かない) | 止まらない (失敗は app_logs) |
+| 9 | 200 `{ data }` | 200 `{ data: view }` | — |
+
 ### 9.1 `GET /api/super-admin/users/{id}/manual-plan` — 節の表示の内容
 
 | | |
@@ -1854,7 +1895,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 | 入力 | `{ plan_key: string, expires_on?: 'YYYY-MM-DD' \| null, reason: string }` (`manualPlanGrantBodySchema(jstToday())`。`expires_on` は JST の暦日で今日より後。`reason` は 1〜500 文字) |
 | 200 | `{ data: { subscription_id, user_id, plan_key, status: 'active', expires_at: string \| null } }` (`expires_at` は `expires_on` の翌日の JST 0 時の ISO) |
 | 400 | `OP_INVALID_INPUT` (JSON でない・Zod。`message` は最初の issue の文・`details` に全件。DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` も同じ code で固定の文。画面の節は `message` を読まず、code から画面用の文を出す。§10) / `INVALID_CHARACTER` (NULL 文字) |
-| 401 / 403 | `AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY` (自分) |
+| 401 / 403 | `AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY` (自分。§9.0 の 4 = 本文の検証より前) |
 | 404 | `NOT_FOUND` |
 | 409 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` (live な行 (S / M) がある) |
 | 422 | `OP_PLAN_NOT_GRANTABLE` |
@@ -1868,7 +1909,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 | 入力 | `{ reason: string }` (`ManualPlanRevokeBodySchema`) |
 | 200 | `{ data: { subscription_id, user_id, plan_key, status_from, status_to: 'cancelled' } }` |
 | 400 | `OP_INVALID_INPUT` / `INVALID_CHARACTER` |
-| 401 / 403 | `AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY` |
+| 401 / 403 | `AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY` (自分。§9.0 の 4 = 本文の検証より前) |
 | 404 | `NOT_FOUND` |
 | 409 | `OP_NO_MANUAL_SUBSCRIPTION` (live な M 行が無い。S 行だけ・`free`・取り消し済み) |
 | 500 | `INTERNAL_ERROR` |
@@ -1906,9 +1947,9 @@ sequenceDiagram
   participant DB as DB 関数 billing_grant_manual_subscription (service_role)
   participant AUD as admin_audit_logs
   SA->>API: { plan_key, expires_on, reason }
-  API->>API: rejectNullCharacterBody → requireRole(['super_admin']) (AAL2) → id の形と自分の判定 → Zod (今日より後)
+  API->>API: §9.0 の 1〜6: rejectNullCharacterBody → requireRole(['super_admin']) (AAL2) → id の形 (404) → 自分の判定 (403) → JSON → Zod (今日より後)
   API->>SVC: grantManualPlan({ userId, actorId, planKey, expiresOn })
-  SVC->>SVC: userExists → expiresAtOf (翌日の JST 0 時)
+  SVC->>SVC: 自分の判定 (二重の守り) → userExists → expiresAtOf (翌日の JST 0 時)
   SVC->>DB: rpc billing_grant_manual_subscription(p_user_id, p_plan_key, p_expires_at)
   DB->>DB: 利用者・プランの検査 → advisory billing-user → live 行なし (FOR NO KEY UPDATE) → INSERT (active) → family_groups → plan_key_cached
   DB-->>SVC: { subscription_id, user_id, plan_key, status, expires_at }
@@ -1932,7 +1973,7 @@ sequenceDiagram
 | `OP_INVALID_INPUT` | 400 | JSON でない (`invalidJsonBodyResponse`) / Zod (`invalidInputResponse`。`message` は最初の issue の文: `有効期限は今日より後の日付を指定してください` ほか) / DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` (`MANUAL_GRANT_ERROR_MESSAGES.OP_INVALID_INPUT`) | 入力値が不正です (既定) / 有効期限は今日より後の日付を指定してください |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireRole` (`AuthError`) | 認証が必要です |
 | `OP_PERMISSION_DENIED` | 403 | `requireRole` (`ForbiddenError`。ロール不足・凍結・`MfaRequiredError`) | 権限がありません |
-| `OP_SELF_MODIFY` [NEW: cross/04 に未記載。`POST /api/super-admin/admins/[id]/mfa/reset` が先に使っている] | 403 | service (対象 = 実行者) | 自分自身のプランは、ここでは変更できません |
+| `OP_SELF_MODIFY` [NEW: cross/04 に未記載。`POST /api/super-admin/admins/[id]/mfa/reset` が先に使っている] | 403 | route (`POST` / `DELETE` の `selfModifyFailure`。パスの id = 実行者。§9.0 の 4 = 本文の検証・service・DB より前) / service (`grantManualPlan` / `revokeManualPlan` の先頭。二重の守り。route を経たときは届かない) | 自分自身のプランは、ここでは変更できません |
 | `NOT_FOUND` | 404 | route (UUID の形でない) / service (`user_profiles` に無い) / DB 関数の `BILL_UNKNOWN_USER` | ユーザーが見つかりません |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | DB 関数の `BILL_LIVE_ROW_CONFLICT` | すでに有効な契約があります |
 | `OP_NO_MANUAL_SUBSCRIPTION` [NEW] | 409 | DB 関数の `BILL_MANUAL_ROW_NOT_FOUND` | 手動で付与した有効な契約がありません |
@@ -1971,9 +2012,9 @@ sequenceDiagram
 
 `tests/billing-manual-grant-service.test.ts` (`manual-grant-service.ts`。repository を偽物に。段 B):
 9. `it('expiresAtOf returns the next day JST 00:00 (2026-12-31 → 2026-12-31T15:00:00.000Z)')`
-10. `it('grantManualPlan: OP_SELF_MODIFY when actor equals target (before touching the repository), NOT_FOUND when the user does not exist, passes expiresAt null for no expiry and the converted timestamp otherwise')`
+10. `it('grantManualPlan: OP_SELF_MODIFY when actor equals target (before touching the repository), NOT_FOUND when the user does not exist, passes expiresAt null for no expiry and the converted timestamp otherwise')` (自分の判定は service の二重の守り。route 自身の判定 (§9.0 の 4) はテスト 16)
 11. `it('grantManualPlan maps ManualGrantRpcError codes to ManualGrantError (BILL_LIVE_ROW_CONFLICT → OP_SUBSCRIPTION_ALREADY_ACTIVE, BILL_PLAN_NOT_GRANTABLE → OP_PLAN_NOT_GRANTABLE, BILL_MANUAL_EXPIRES_AT_PAST → OP_INVALID_INPUT, BILL_UNKNOWN_USER → NOT_FOUND) and rethrows other errors')`
-12. `it('revokeManualPlan: OP_SELF_MODIFY / NOT_FOUND / BILL_MANUAL_ROW_NOT_FOUND → OP_NO_MANUAL_SUBSCRIPTION')`
+12. `it('revokeManualPlan: OP_SELF_MODIFY when actor equals target (before touching the repository) / NOT_FOUND / BILL_MANUAL_ROW_NOT_FOUND → OP_NO_MANUAL_SUBSCRIPTION')` (自分の判定はテスト 10 と同じく service の二重の守り)
 13. `it('getManualPlanView returns current, plans and history from the repository and NOT_FOUND for an unknown user')`
 14. `it('manual-grant-repository.ts has no direct insert/update/upsert on personal_subscriptions (writes go through the 2 RPCs)')` (ソース走査)
 55. `it('countPlanSubscribers counts a live manual row (stripe_subscription_id null) of the plan, so deprecating that plan is refused (S19)')` (`src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers` を `tests/helpers/fake-plan-subscribers-db.ts` の偽の client で呼ぶ。`personal_subscriptions` に `{ plan_key: 'pro', status: 'active', stripe_subscription_id: null }` の 1 行 → `personal_subscriptions: 1`。偽の client は知らない絞り込みのメソッドで例外を投げるので、`stripe_subscription_id` で絞る変更が入れば赤になる)
@@ -1983,14 +2024,14 @@ sequenceDiagram
 
 `tests/api/manual-plan-routes.test.ts` (route。`@/lib/billing/manual-grant-service` と `@/lib/billing/manual-grant-repository` をモック。`@/lib/auth/helpers` の `requireRole`・`@/lib/supabase/server`・`@/lib/admin/audit` もモック。`tests/coupons-apply-route.test.ts` と同じ形。段 B):
 15. `it('POST/DELETE/GET: 401 AUTH_UNAUTHENTICATED on AuthError and 403 OP_PERMISSION_DENIED on ForbiddenError (incl. MfaRequiredError), without creating the service_role client')`
-16. `it('POST/DELETE: 403 OP_SELF_MODIFY when the path id equals the actor id in any letter case (normalizeUuid)')`
+16. `it('POST/DELETE: the route itself answers 403 OP_SELF_MODIFY with the fixed message when the path id equals the actor id in any letter case (normalizeUuid), before reading the body (a non-JSON body and a Zod-failing body still get 403), without calling createManualGrantRepository, grantManualPlan / revokeManualPlan or recordAdminAudit; GET for the actor id is not refused')` (service はモックなので、403 を出せるのは route の §9.0 の 4 だけ。モックの `grantManualPlan` / `revokeManualPlan` は `not.toHaveBeenCalled()` を見る。`GET` は自分の id でもモックの `getManualPlanView` を呼んで 200)
 17. `it('POST/DELETE/GET: 404 NOT_FOUND for a non-UUID id before calling the service')`
 18. `it('POST: 400 OP_INVALID_INPUT for invalid JSON and for Zod failures (expires_on today → message 有効期限は今日より後の日付を指定してください; details has the issues)')`
 19. `it('POST: 200 { data } on success, calls grantManualPlan with the lower-cased id and expires_on null when omitted, and records admin.billing.manual_grant (warn, target user, details subscription_id/plan_key/expires_at/reason, request passed)')`
 20. `it('POST: maps ManualGrantError to 409 OP_SUBSCRIPTION_ALREADY_ACTIVE / 422 OP_PLAN_NOT_GRANTABLE / 400 OP_INVALID_INPUT with the fixed messages and no audit row')`
 21. `it('DELETE: 200 { data } on success and records admin.billing.manual_revoke; 409 OP_NO_MANUAL_SUBSCRIPTION without audit')`
 22. `it('GET: 200 { data: view } with Cache-Control: no-store and no audit row')`
-23. `it('responses built by the route carry Cache-Control: no-store: 200 of GET/POST/DELETE, 401/403 from authFailure, 404 for a non-UUID id, 403 OP_SELF_MODIFY / 409 / 422 / 400 from ManualGrantError')` (共通のヘルパーの応答 = 400 `INVALID_CHARACTER`・Zod / JSON の 400 `OP_INVALID_INPUT`・500 は、テスト 18・24 が status と本文を見る。このヘッダは見ない。§9 の冒頭)
+23. `it('responses built by the route carry Cache-Control: no-store: 200 of GET/POST/DELETE, 401/403 from authFailure, 404 for a non-UUID id, 403 OP_SELF_MODIFY from the route self check, 409 / 422 / 400 from ManualGrantError')` (共通のヘルパーの応答 = 400 `INVALID_CHARACTER`・Zod / JSON の 400 `OP_INVALID_INPUT`・500 は、テスト 18・24 が status と本文を見る。このヘッダは見ない。§9 の冒頭)
 24. `it('500: internalError (nested) with the fixed message when the service throws a non-ManualGrantError')`
 
 `tests/billing-manual-plan-grant-migration-contract.test.ts` (SQL の文面。DB は使わない。`tests/billing-migration-contract.test.ts` と同じ形。段 A):
@@ -2276,3 +2317,4 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | v1.3 | 2026-10-17 | 網羅性 (周 2) を反映: §7.3 に、live な行が無い利用者 (行なし / S `incomplete` / `cancelled` / `expired`) の取り消し (409 `OP_NO_MANUAL_SUBSCRIPTION`)・核の新規購入・核の解約の予約 / 取り消し (409 `BILL_NO_LIVE_SUBSCRIPTION`) の行、M `cancelled` / `expired` の核の解約の予約 / 取り消しの行、S `incomplete` の写像の行 (M なし / M `active` の 2 行) を足した (§7.1 の全パターンと 1 対 1)。§7.1 の消費経路に `admin/finance/invoices/[id]` (M 行は一致しない) を足し、`plan_key_cached` の読み手を 1 行の総称から具体の 7 行 (`feature-flags.ts`・`api/feature-flags`・`flag-active-users.ts`・`ai-chat-flag.ts`・`admin/users` の一覧・`admin/users/[id]`・本人の書き出し) に分けた。どれも本冊で変えない |
 | v1.4 | 2026-10-17 | 設計ゲート R2 の修正: ① 期限切れの日次の処理を、利用者ごとに COMMIT するプロシージャ `billing_expire_manual_subscriptions` と、1 人分の関数 `billing_expire_manual_subscription_for_user` に分けた (旧: 関数 `billing_expire_manual_subscriptions()` が全員を 1 トランザクションで処理し、前の利用者の `user_profiles` の行・advisory を持ったまま次の利用者の `family_groups` の行を待つので、強制解散・脱退・メンバーの削除・代表者の交代とデッドロックした)。§4.1 の原理 2 に「1 トランザクション 1 人」を書き、§6.4 にデッドロックの 2 つの形の表と PostgreSQL の決まり (プロシージャの COMMIT は SECURITY INVOKER・SET 句なし・最上位の CALL) を書き、ジョブの command を `CALL` に、§6.6・§7.2・§7.3・§11・§14.3・§15.1・§15.2 (operator/08・billing/01・cross/02・根の CLAUDE.md・operator/07)・§16 の 5 を合わせ、§16 の 12 を足した。テスト 26・29・30・32・43・45・48・54 を直し、56 (プロシージャの文面) と 57 (家族の操作・代表者の交代と同時に走っても 40P01 にならない) を足した。本番の pg_cron の設定 (F26) を読んだ ② 画面の通信の facade `manual-grant-client.ts` が失敗の本文の `error.message` を結果に入れていて、`tests/lib-raw-error-message-scan.test.ts` を赤にする形だった (F27)。失敗の本文から `code` だけを読む形 (`src/lib/auth/mfa/client.ts` と同じ) にし、`ManualGrantClientFailure` から `message` を外し、画面は `manualGrantErrorMessage(code)` だけを出す (`OP_INVALID_INPUT` は画面用の文 `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`)。§9.2・§10・§15.1 の行・テスト 7・36 を直し、58 (client) を足した ③ origin/main `d2aac552` と突き合わせ: `/admin/users/[id]` の page にログイン履歴の節が入った (F19 の行番号・§15.1 に `tests/admin-user-login-history-page.test.tsx` の行)。`cross/04` §4.2 の CHALLENGE 系の番兵 (§15.1 の行) |
 | v1.5 | 2026-10-17 | 網羅性 (周 3) を反映 (origin/main `f5920c6a` で行番号を確かめた): §7.1 の消費経路に `core.ts:724-741` `summarizeSubscription` (live な M 行は `source: 'manual'`・解約 / 再開のボタンなし。S3・S16 の要約の根拠)・`entitlements.ts:370` `getEffectivePlan` (TS の呼び口。`service.ts:155` が呼ぶ)・`price-impact` の route (`personal_subscriptions` を集計しないので変えない) の 3 行を足し、`apply_coupon` の行に呼び口 (`coupons/[id]/apply/route.ts:63` → `coupon.ts:129` `applyCoupon`) を書いた。`tests/e2e/membership/05-family-create-and-invite.spec.ts:125` が `plan_key: "free"` を送っているので、§15.1 の条件つきの行を確定の行に分け (この spec は段 D で `plan_key` を消す・残り 2 本は変更なし)、§14.1 段 D と §14.2 の閉じた一覧に足した。§14.3 の route の行に export `dynamic = 'force-dynamic'` (§8.5) を書いた |
+| v1.6 | 2026-10-17 | 設計ゲート R3 の修正: 自分自身の判定 (403 `OP_SELF_MODIFY`) の置き場所が、トレース (S1・S13)・§7.3・§11 (route で本文の検証より前) と正典コード §8.5 (本文の検証の後に service だけ) で食い違い、service をモックする route のテスト 16 が route の判定を見られなかった。route (`POST` / `DELETE`) がパスの id の形の判定の直後・本文 (JSON・Zod) を読む前に `selfModifyFailure` で 403 を返す形に §8.5 を直し (cross/12 の super_admin の reset と同じ順)、service の判定は二重の守りとして残した。route の判定の順を §9.0 の表に 1 か所で書き、S1・S3・S13・§7.2・§7.3・§9.2・§9.3・§11・§12.1 はその番号を引く形にそろえた。テスト 10・12 (service の二重の守り)・16 (route 自身の判定。本文が不正でも 403・service も監査も呼ばない・`GET` は断らない)・23 を直した。あわせて S15 のトレースの `findUserExists` を repository の実名 `userExists` に、§8.1 の `MANUAL_GRANT_ERROR_HTTP_STATUS` の注記を §15.2 の cross/04 の行 (3 行を足す) にそろえ、表紙の版を改定履歴の最新にそろえた。origin/main `b508f749` と突き合わせ: F1 の `src/app/api/super-admin/` の一覧に `backups`・`email-outbox` を、`src/app/api/admin/users/[id]/` に `login-history` を足した (どれも本冊の判断を変えない。`operator/08` の pg_cron のジョブは 11 つのまま) |
