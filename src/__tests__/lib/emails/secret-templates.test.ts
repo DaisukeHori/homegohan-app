@@ -27,7 +27,7 @@ const SECRET_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   family_promote: ['accept_url'], // /family/promotions/<本人同意のトークン>
 };
 
-/** 秘密なしの文面: 名前 → 使うリンクの項目 (どれも、ログインした本人・運営だけが開ける画面への固定のリンクか、秘密でない id) */
+/** 秘密なしの文面: 名前 → 使うリンクの項目 (どれも、ログインした本人・運営だけが開ける画面か、だれでも読める公開の頁への固定のリンクか、秘密でない id) */
 const PUBLIC_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   dsr_received: ['settings_url'],
   dsr_resolved: ['settings_url'],
@@ -37,6 +37,8 @@ const PUBLIC_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   ops_app_log_error_spike: ['logs_url'],
   ops_email_dead_letter: ['outbox_url'],
   member_left: ['members_url'],
+  // 保護者の同意の控え: 同意書の全文 (/legal/parental-consent・だれでも読める固定の頁) とメンバー管理画面 (ログインした本人だけ)
+  family_parental_consent_recorded: ['document_url', 'members_url'],
   // 譲渡の提案のリンクは提案の id (/org/transfer-accept/<id>・/family/transfer-accept/<id>)。承諾できるのはログインした譲渡先の本人だけで、id は秘密ではない
   org_transfer_proposed: ['accept_url'],
   family_transfer_proposed: ['accept_url'],
@@ -92,6 +94,8 @@ describe('秘密を含むメールの文面の宣言 (contains_secret・#1708)',
     expect(byTemplate.get('org_invite_new')?.declaresSecret).toBe(true);
     expect(byTemplate.get('member_left')?.linkFields).toEqual(['members_url']);
     expect(byTemplate.get('member_left')?.declaresSecret).toBe(false);
+    // 1 つの文面に項目が 2 つあっても両方を拾う (main で足された文面を表に載せ忘れると、件数・項目の検査で赤になる)
+    expect(byTemplate.get('family_parental_consent_recorded')?.linkFields).toEqual(['document_url', 'members_url']);
   });
 
   it('秘密あり・秘密なしの表は重ならない', () => {
