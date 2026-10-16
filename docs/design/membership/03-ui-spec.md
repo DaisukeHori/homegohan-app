@@ -251,6 +251,8 @@ export function FamilyViewSwitcher({
 
 state は localStorage に永続化 (`familyViewState_${familyId}`)。`useFamilyView` hook で管理。
 
+名前は `GET /api/family/members/names` の値 (無ければ「名前未設定」)。献立の中身 (選んだメンバーの献立を見る) は `docs/design/family/10-family-menu-view.md`。
+
 ### 4.3 bottom sheet
 ```
 ┌──────────────────────────────────────┐
@@ -318,6 +320,8 @@ export function PasteGroupedMealRows({ meals, members, group_id }: { meals: Meal
 2. 各グループ内は時刻昇順
 3. 個別 meal は時刻昇順で混在
 4. ビュー切替で visible_member_ids にない owner の meal は非表示 (グループ内全員が非表示なら group ごと非表示)
+
+> 実装は `docs/design/family/10-family-menu-view.md` (メンバーごとの読み取り専用の行。自分の献立は常に出す)。本節は当初設計の記録。
 
 ---
 

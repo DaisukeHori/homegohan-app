@@ -2,7 +2,7 @@
  * POST /api/account/data-requests/[id]/resend-verification - 本人確認のメールを新しいリンクで送り直す (#1178 / #1702)
  *
  * 設計: docs/design/cross/15-data-subject-requests.md §7.2。本文は読まない (rejectNullCharacterBody も呼ばない)。
- * 検査の順: requireUser → id → 連打の上限 (カテゴリ dsr) → service。
+ * 検査の順: authenticateDsrRequester → id → 連打の上限 (カテゴリ dsr) → service。
  * service.ts の resendDsrVerification が、本人確認待ちでなければ 409 DSR_INVALID_STATE、送信回数が上限なら 409 DSR_VERIFICATION_LIMIT、
  * 状態と送信回数を条件にした UPDATE が 0 行なら 409 DSR_INVALID_STATE (メールなし) を返す。期限切れかどうかは問わない。
  */

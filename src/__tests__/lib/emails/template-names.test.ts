@@ -55,7 +55,7 @@ describe('メールの文面 (render*Email) の template 名 (#1193)', () => {
     expect(new Set(all).size).toBe(all.length);
   });
 
-  it('サポートの返信メールは、送信記録 (email_delivery_logs.template) と同じ support_ticket_reply', () => {
+  it('サポートの返信メールは、送信待ちの記録 (email_outbox.template) と同じ support_ticket_reply', () => {
     const reply = renderers.find((r) => r.relative === 'support/ticket-reply.ts');
 
     expect(reply?.names).toEqual(['support_ticket_reply']);

@@ -14,6 +14,7 @@ import {
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
+  japaneseHolidaysUrl,
   type GenerationProgress,
   type LegacyDishDetail,
 } from './_state';
@@ -45,6 +46,11 @@ import { colors } from "./_components/colors";
 import { FamilyViewSwitcher } from "@/components/membership/FamilyViewSwitcher";
 import { useFamilyView } from "@/hooks/useFamilyView";
 import type { FamilyMember } from "@/schemas/membership";
+// #1584 の 1: 週間献立の家族の表示 (設計書 docs/design/family/10-family-menu-view.md §16)
+import { useFamilyMenu } from "@/hooks/useFamilyMenu";
+import { FamilyMenuMealRows, FamilyMenuDayNotes } from "@/components/membership/FamilyMenuRows";
+import { familyMenuMealsOf, partitionFamilyMenuMembers, visibleOtherMemberIdsOf } from "@/lib/membership/family-menu";
+import { applyFamilyMemberNames, fetchFamilyMemberNames } from "@/lib/membership/family-member-names";
 import { FridgeModal } from "./_components/modals/FridgeModal";
 import { AddFridgeModal } from "./_components/modals/AddFridgeModal";
 import { ShoppingModal } from "./_components/modals/ShoppingModal";
@@ -189,6 +195,9 @@ const getDishConfig = (role?: string): { label: string; color: string; bg: strin
 };
 
 // MEAL_LABELS は @homegohan/shared からインポート (MealType の型付き Record)
+
+/** 家族の献立を取る範囲の最終日 = 週の始まりの日 + 6 日 (自分の献立の /api/meal-plans と同じ 7 日の範囲。#1584 の 1) */
+const FAMILY_MENU_WEEK_LAST_DAY_OFFSET = 6;
 
 // AIが自動生成する基本の3食 (BASE_MEAL_TYPES) と追加可能な食事タイプ (EXTRA_MEAL_TYPES) は lib/slot-builder から。
 // EXTRA_MEAL_TYPES は食事の区分の正本 MEAL_ORDER から基本の 3 食を除いて作る (#1631。ここで手書きしない)
@@ -408,14 +417,14 @@ const NEXT_MONTH = 1;
 
 const holidaysCache = new Map<number, Record<string, string>>();
 
-// Fetch Japanese holidays from holidays-jp API
+// Fetch Japanese holidays from holidays-jp API (#1769: URL は CSP の connect-src と同じ定数から作る)
 const fetchJapaneseHolidays = async (year: number): Promise<Record<string, string>> => {
   if (holidaysCache.has(year)) {
     return holidaysCache.get(year)!;
   }
 
   try {
-    const response = await fetch(`https://holidays-jp.github.io/api/v1/${year}/date.json`);
+    const response = await fetch(japaneseHolidaysUrl(year));
     if (!response.ok) throw new Error('Failed to fetch holidays');
     const data = await response.json();
     holidaysCache.set(year, data);
@@ -1112,33 +1121,59 @@ export default function WeeklyMenuPage() {
   const [familyId, setFamilyId] = useState<string | null>(null);
   const { viewState, setView } = useFamilyView(familyId);
 
-  // 家族情報ロード (家族に所属している場合のみ switcher 表示)
-  useEffect(() => {
-    const loadFamilyData = async () => {
-      const supabase = createClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      setCurrentUserId(user.id);
+  // 家族情報ロード (家族に所属している場合のみ switcher 表示)。
+  // 開いたときと、切り替えの適用のときに読む (#1584 の 1・設計書 family/10 §16.1)。名前は GET /api/family/members/names の値を当てる
+  // (名前の API の失敗は空の Map = display_name のまま)。family_id が無くなっていたら一覧を空にする (家族から外れたことを反映する)
+  const loadFamilyData = useCallback(async () => {
+    const supabase = createClient();
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return;
+    setCurrentUserId(user.id);
 
-      const { data: profile } = await supabase
-        .from('user_profiles')
-        .select('family_id')
-        .eq('id', user.id)
-        .maybeSingle();
-      if (!profile?.family_id) return;
-      setFamilyId(profile.family_id);
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('family_id')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (!profile?.family_id) {
+      setFamilyId(null);
+      setFamilyMembers([]);
+      return;
+    }
+    setFamilyId(profile.family_id);
 
-      const { data: members } = await supabase
-        .from('family_members')
-        .select('id, family_id, user_id, role, display_name, relationship, tags, share_meals, share_health, share_menu, child_profile, avatar_color, status, joined_at, removed_at')
-        .eq('family_id', profile.family_id)
-        .eq('status', 'active');
-      if (members) {
-        setFamilyMembers(members as FamilyMember[]);
-      }
-    };
-    loadFamilyData();
+    const { data: members } = await supabase
+      .from('family_members')
+      .select('id, family_id, user_id, role, display_name, relationship, tags, share_meals, share_health, share_menu, child_profile, avatar_color, status, joined_at, removed_at')
+      .eq('family_id', profile.family_id)
+      .eq('status', 'active');
+    if (members) {
+      const names = await fetchFamilyMemberNames();
+      setFamilyMembers(applyFamilyMemberNames(members as FamilyMember[], names));
+    }
   }, []);
+  useEffect(() => {
+    void loadFamilyData();
+  }, [loadFamilyData]);
+
+  // 家族の献立 (#1584 の 1・設計書 family/10 §16.1)。自分以外で描くメンバー (others) が居るときだけ取る。状態は hook の中 (useState を足さない)
+  const otherIds = useMemo(
+    () => (currentUserId ? visibleOtherMemberIdsOf(viewState, familyMembers, currentUserId) : []),
+    [viewState, familyMembers, currentUserId],
+  );
+  const familyMenuStartDate = formatLocalDate(weekStart);
+  const familyMenu = useFamilyMenu({
+    startDate: familyMenuStartDate,
+    endDate: addDaysStr(familyMenuStartDate, FAMILY_MENU_WEEK_LAST_DAY_OFFSET),
+    enabled: familyId !== null && otherIds.length > 0,
+  });
+  const familyMenuPartition = partitionFamilyMenuMembers(otherIds, familyMembers, familyMenu.data);
+  /** その日・その区分の、行を描く家族の献立の数 (EXTRA の区分を描くかの判定) */
+  const familyMealsCountOf = (dayDate: string, mealType: MealType): number =>
+    familyMenuPartition.shown.reduce(
+      (count, id) => count + familyMenuMealsOf(familyMenu.data?.members.find((m) => m.member_id === id), dayDate, mealType).length,
+      0,
+    );
 
   // Form States (#1031: formDraftStore に一本化。
   // aiChatInput/addMealKey/addMealDayIndex/selectedConditions はハンドラ内でのみ読むため
@@ -5832,7 +5867,12 @@ export default function WeeklyMenuPage() {
             familyMembers={familyMembers}
             currentUserId={currentUserId}
             value={viewState}
-            onChange={setView}
+            onChange={(next) => {
+              // 適用: 表示を変え、全ての週の家族の献立の cache を捨てて取り直し、家族の一覧 (共有の印・退出した人) も読み直す (T-2・T-25)
+              setView(next);
+              familyMenu.reload();
+              void loadFamilyData();
+            }}
           />
         </div>
       )}
@@ -6059,6 +6099,15 @@ export default function WeeklyMenuPage() {
                   <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
                 );
               })}
+
+              {/* 家族の献立 (読み取り専用。#1584 の 1) */}
+              <FamilyMenuMealRows
+                mealType={type}
+                dayDate={weekDates[selectedDayIndex]?.dateStr ?? ''}
+                members={familyMembers}
+                shownIds={familyMenuPartition.shown}
+                menu={familyMenu.data}
+              />
               
               {/* AI生成中の追加カード（generatingMealステートがある場合のみ） */}
               {isGeneratingThisType && (
@@ -6092,8 +6141,10 @@ export default function WeeklyMenuPage() {
           const isPast = weekDates[selectedDayIndex]?.dateStr < todayStr;
           // この食事タイプでAI生成中かどうか（ポーリングで状態を監視）
           const isGeneratingThisType = generatingMeal?.dayIndex === selectedDayIndex && generatingMeal?.mealType === type;
+          const familyMealsCount = familyMealsCountOf(weekDates[selectedDayIndex]?.dateStr ?? '', type);
 
-          if (meals.length === 0 && !isGeneratingThisType) return null;
+          // 自分の献立も家族の献立も無い区分は描かない (#1584 の 1)
+          if (meals.length === 0 && familyMealsCount === 0 && !isGeneratingThisType) return null;
 
           return (
             <div key={type}>
@@ -6105,6 +6156,15 @@ export default function WeeklyMenuPage() {
                   <CollapsedMealCard key={meal.id} mealKey={type} meal={meal} isPast={isPast} mealIndex={idx} />
                 );
               })}
+
+              {/* 家族の献立 (読み取り専用。#1584 の 1) */}
+              <FamilyMenuMealRows
+                mealType={type}
+                dayDate={weekDates[selectedDayIndex]?.dateStr ?? ''}
+                members={familyMembers}
+                shownIds={familyMenuPartition.shown}
+                menu={familyMenu.data}
+              />
               
               {/* AI生成中の追加カード（generatingMealステートがある場合のみ） */}
               {isGeneratingThisType && (
@@ -6131,6 +6191,16 @@ export default function WeeklyMenuPage() {
             </div>
           );
         })}
+
+        {/* 家族の献立の注記 (共有していない・子供・この日は無い・読み込み中・読み込めなかった。#1584 の 1) */}
+        <FamilyMenuDayNotes
+          dayDate={weekDates[selectedDayIndex]?.dateStr ?? ''}
+          members={familyMembers}
+          partition={familyMenuPartition}
+          menu={familyMenu.data}
+          status={familyMenu.status}
+          onReload={familyMenu.reload}
+        />
 
         {/* 食事を追加ボタン */}
         <button
