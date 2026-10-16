@@ -7,6 +7,7 @@
  *   - 組織に所属していない人・プロフィールの行が無い人は ForbiddenError (403)
  *   - プロフィールを読めなかった (DB の障害) ときは、「所属していない (403)」と取り違えず、通常の例外にする
  *   - 本人の行だけを、認証で確定した本人の ID で読む
+ *   - 組織の役割 (org_role) を返す (#1688。チャレンジの順位表を管理者に見せない判定が読む)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSchemaDb, type DbError, type SchemaDb } from './helpers/schema-checked-db';
@@ -96,14 +97,24 @@ describe('requireOrgMember', () => {
     await expect(requireOrgMember()).rejects.toBeInstanceOf(ForbiddenError);
   });
 
-  it('本人の行だけを、認証で確定した本人の ID で読む (必要な 2 列だけ)', async () => {
+  it.each([
+    ['owner', OWNER],
+    ['admin', ADMIN],
+    ['member', MEMBER],
+  ])('組織の役割 (org_role) を返す。%s はそのまま (#1688。順位表を伏せる判定が読む)', async (role, actor) => {
+    setup({ actor });
+
+    expect((await requireOrgMember()).profile.org_role).toBe(role);
+  });
+
+  it('本人の行だけを、認証で確定した本人の ID で読む (必要な 3 列だけ)', async () => {
     setup({ actor: ADMIN });
 
     await requireOrgMember();
 
     const queries = sessionDb.recorded('user_profiles', 'select');
     expect(queries).toHaveLength(1);
-    expect(queries[0].select).toBe('organization_id, department_id');
+    expect(queries[0].select).toBe('organization_id, department_id, org_role');
     expect(queries[0].eq).toEqual([['id', ADMIN]]);
   });
 

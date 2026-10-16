@@ -5,7 +5,7 @@
  *
  * #1445 のオーナーの選択 (2026-10-12): 「凍結 (BAN) 中の利用者も、退会とデータの書き出しをできるようにする (凍結の画面から行ける)」。
  * 凍結の画面 (/frozen) からここへ来る。middleware (lib/supabase/middleware.ts) は /frozen 以下を凍結の差し戻しの対象外にしているので、
- * 凍結中でもこの画面は開ける。この画面が呼ぶ API は、凍結中でも止めない 2 つ (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS) だけ。
+ * 凍結中でもこの画面は開ける。この画面が呼ぶ API は、凍結中でも止めない API (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS) のうち退会と書き出しの 2 つだけ。
  * 設定画面 (src/app/(main)/settings/page.tsx) は凍結中には開けない (ほかの API を多く呼ぶ) ので、退会と書き出しだけをここに置く。
  * API の呼び方と退会のあとのログアウトの順番は、設定画面と共通 (src/lib/account-self-service.ts)。
  */
