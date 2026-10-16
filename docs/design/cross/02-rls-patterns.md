@@ -488,6 +488,8 @@ COMMIT;
 | `feature_flags` | public_read + admin_write | |
 | `support_tickets` | self_ownership + support_read | |
 
+運営ロールの MFA (cross/12 §11.4。段 E): 運営ロール (`user_profiles.roles` の super_admin / admin / finance / org_industrial_doctor) の条件の項は `(<条件> AND (SELECT public.operator_mfa_satisfied()))` にし、そのポリシーは `TO authenticated` にする。運営ロールを確かめる SECURITY DEFINER の関数は、役割の判定の直後に `IF NOT public.operator_mfa_satisfied() THEN RAISE EXCEPTION 'OPERATOR_MFA_REQUIRED'` を足す (cross/12 §11.4。`tests/integration/security/operator-mfa-db-gate.test.ts` の DB-1・DB-2 が見張る)。
+
 ---
 
 ## 9. マイグレーション: rls_hardening.sql テンプレート

@@ -139,7 +139,7 @@ R-6・R-7・R-12 (モバイルだけ) は 13b §3.1。R-8〜R-11・R-13 はサ�
 
 ```
 サーバー (段 A)
-  packages/shared/src/legal-consent-api.ts   ← 核。純関数と定数だけ (Edge・Node・RN で同じ)
+  packages/shared/src/legal-consent-api.ts   ← 核。純関数と定数だけ (Node / Deno / RN 固有の API を使わない。呼ぶのは proxy と API Route で、どちらも Node.js の runtime)
     ├ LEGAL_CONSENT_EXEMPT_API_PATHS (許可リスト・理由つき)・isLegalConsentExemptApiPath
     ├ resolveLegalConsentApiDecision({ pathname, accepted, enforce }) → 'allow' | 'deny'
     ├ LEGAL_CONSENT_REQUIRED_{CODE,STATUS,MESSAGE}・legalConsentRequiredBody()・isLegalConsentRequiredBody()

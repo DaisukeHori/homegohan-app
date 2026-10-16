@@ -583,7 +583,7 @@ Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family
 
 | 項目 | 優先度 | 担当 |
 |------|--------|------|
-| Android FCM 動作確認 (実機テスト) | 高 | `notify-push` Edge Function 実装前に確認必須 |
+| Android FCM 動作確認 (実機テスト) | 高 | `mobile/06-push-send.md` の worker (`GET /api/cron/push-outbox`) の本番投入の前に確認必須 (06 §14) |
 | iOS 18 カメラ dismiss バグの根本解消 | 高 | `04-storage-camera.md` に詳細 |
 | Universal Links 対応 (Phase 2) | 低 | Apple Configurator 2 配布が続く間は不要 |
 | Biometric 認証 (Face ID / Touch ID) | 中 | `cross/01-auth-session.md` Phase 2 予定 |
