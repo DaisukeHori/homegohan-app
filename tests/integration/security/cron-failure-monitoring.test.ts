@@ -159,6 +159,19 @@ function brief(rows: CountRow[]): Array<[string, string, number]> {
 // 準備: ジョブ・実行履歴・app_logs
 // ---------------------------------------------------------------
 const createdRunIds: string[] = [];
+
+/**
+ * 実行履歴に入れる runid。postgres ロールは cron.runid_seq (本物の実行が使う連番) を使えない (42501) ので、runid は自分で決める。
+ * 本物の連番 (1 から数える) と重ならない大きな値に、実行ごとの値 (RUN) を入れて、1 行ずつ増やす
+ */
+const RUNID_FLOOR = 9_000_000_000_000;
+const RUNID_RUN_SPAN = 1_000_000;
+const RUNID_PER_RUN = 1_000;
+let runIdCounter = 0;
+function nextRunId(): number {
+  runIdCounter += 1;
+  return RUNID_FLOOR + (Number.parseInt(RUN, 16) % RUNID_RUN_SPAN) * RUNID_PER_RUN + runIdCounter;
+}
 const createdLogIds: string[] = [];
 
 /** テスト用のジョブを登録して jobid を返す (名前に TAG・command に印) */
@@ -171,8 +184,8 @@ async function scheduleTestJob(suffix: string): Promise<{ jobid: number; name: s
 /** 実行履歴に 1 行入れる。start は DB の now() からの差 (例: "interval '1 hour'")。入れた runid を返す */
 async function insertRun(jobid: number, status: 'failed' | 'succeeded', ago: string): Promise<string> {
   const rows = await asPostgres<{ runid: string | number }>(`
-    INSERT INTO cron.job_run_details (jobid, job_pid, database, username, command, status, return_message, start_time, end_time)
-    VALUES (${jobid}, 1, current_database(), current_user, ${lit(`SELECT 1 /* ${COMMAND_MARK} */`)}, ${lit(status)}, ${lit('テスト')},
+    INSERT INTO cron.job_run_details (runid, jobid, job_pid, database, username, command, status, return_message, start_time, end_time)
+    VALUES (${nextRunId()}, ${jobid}, 1, current_database(), current_user, ${lit(`SELECT 1 /* ${COMMAND_MARK} */`)}, ${lit(status)}, ${lit('テスト')},
             now() - ${ago}, now() - ${ago})
     RETURNING runid;
   `);
@@ -543,8 +556,8 @@ describe('#1125 (B) C-1. pg_cron_last_run_at', () => {
     const job = await scheduleTestJob('j5');
     // 実行履歴のどの行よりも新しい時刻 (1 日先) の行を入れ、最新の start_time になることを見る
     const rows = await asPostgres<{ runid: string | number }>(`
-      INSERT INTO cron.job_run_details (jobid, job_pid, database, username, command, status, return_message, start_time, end_time)
-      VALUES (${job.jobid}, 1, current_database(), current_user, ${lit(`SELECT 1 /* ${COMMAND_MARK} */`)}, 'succeeded', ${lit('テスト')},
+      INSERT INTO cron.job_run_details (runid, jobid, job_pid, database, username, command, status, return_message, start_time, end_time)
+      VALUES (${nextRunId()}, ${job.jobid}, 1, current_database(), current_user, ${lit(`SELECT 1 /* ${COMMAND_MARK} */`)}, 'succeeded', ${lit('テスト')},
               now() + interval '1 day', now() + interval '1 day')
       RETURNING runid;
     `);
