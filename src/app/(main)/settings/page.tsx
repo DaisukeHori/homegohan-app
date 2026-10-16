@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { requestNotificationPermission } from "@/lib/local-notification";
@@ -13,6 +14,7 @@ import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
 import { DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from "@/lib/data-subject-requests/core";
 import { getSupportEmail } from "@/lib/site-config";
+import { BILLING_PAGE_PATH } from "@/lib/billing/core";
 import {
   ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE,
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
@@ -422,6 +424,26 @@ export default function SettingsPage() {
 
           </div>
         </div>
+
+        {/* セクション 2.6: プランとお支払い (billing/01 §10.3。Web だけ。アプリの中では購入・解約の導線を出さない §10.4) */}
+        {!isNativeApp && (
+          <div data-testid="settings-billing-section">
+            <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 pl-2">プラン</h2>
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+              <Link
+                href={BILLING_PAGE_PATH}
+                data-testid="settings-billing-link"
+                className="w-full flex items-center justify-between p-4 hover:bg-gray-50 transition-colors"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center text-orange-500" aria-hidden="true">💳</div>
+                  <span className="font-bold text-gray-700">プランとお支払い</span>
+                </div>
+                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+              </Link>
+            </div>
+          </div>
+        )}
 
         {/* セクション 3: データ・プライバシー */}
         <div>
