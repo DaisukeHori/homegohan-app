@@ -2,13 +2,12 @@
  * #1169: HTML 文字列の差し込み (dangerouslySetInnerHTML など) の contract テスト
  *
  * AI の応答のように信頼できない文字列を HTML にして dangerouslySetInnerHTML へ渡すと、入力中の <img onerror=...> が
- * そのまま実行される (CSP が 'unsafe-inline' を許しているので防げない)。修正前の AIChatBubble.tsx は、まさに
+ * そのまま実行される (nonce 方式の CSP (#1169) はインラインのイベント属性も止めるが、CSP に頼らず差し込み口で止める)。修正前の AIChatBubble.tsx は、まさに
  * エスケープなしの自前 parseMarkdown でこれをやっていた。同じ穴が増えないよう、HTML を差し込む場所を許可リストで固定する。
  *
  *   1. HTML を差し込むファイル (dangerouslySetInnerHTML / innerHTML = / outerHTML = / insertAdjacentHTML / document.write)
  *      は、下の許可リストに載っていること
  *   2. 許可リストの各ファイルの差し込み元が、理由どおりの安全な形であること
- *        - src/app/layout.tsx           : 式の埋め込みが無い固定の文字列 (ダークモードの古い設定を消すだけのスクリプト)
  *        - src/components/AIChatBubble.tsx : src/lib/markdown-lite.ts の parseMarkdown の戻り値
  *   3. parseMarkdown を、共有モジュール以外で自前定義していないこと (コピーを作らず、共有関数を使う)
  *   4. 許可リストが古くならないこと (載っているのに差し込みが無くなったファイルは、リストから消す)
@@ -163,13 +162,6 @@ const isParseMarkdownCall = (expression: ts.Expression | undefined): boolean =>
  * problems は、理由どおりの形になっていない点を返す (空なら問題なし)。
  */
 const ALLOWED_HTML_SINKS: Record<string, { reason: string; problems: (analysis: FileAnalysis) => string[] }> = {
-  'src/app/layout.tsx': {
-    reason: '利用者の入力が一切入らない固定のインラインスクリプト (旧ダークモードの localStorage キーを消すだけ)',
-    problems: (analysis) =>
-      analysis.sinks
-        .filter((sink) => !isFixedString(sink.html))
-        .map((sink) => `${sink.kind} が固定の文字列ではない (式の埋め込みがある)`),
-  },
   'src/components/AIChatBubble.tsx': {
     reason: 'AI の応答を、エスケープと URL 検査をする共有の parseMarkdown (src/lib/markdown-lite.ts) を通して描画する',
     problems: (analysis) => [

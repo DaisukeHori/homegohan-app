@@ -100,7 +100,7 @@ HR system
 
 | 依存先 | 用途 |
 |-------|------|
-| `cross/01-auth-session.md` | `requireOrgRole` / SSO / 2FA |
+| `cross/01-auth-session.md` | `requireOrgRole` / SSO / 2FA (方針。運営ロールの MFA は cross/12。`org_admin` への強制は範囲外) |
 | `cross/02-rls-patterns.md` | RLS テンプレート / advisory lock |
 | `cross/04-api-conventions.md` | エラーコード `ORG_*` / `CONFLICT_LICENSE_POOL_EXHAUSTED` |
 | `operator/01-data-model.md` | `subscription_plans.plan_key` (org_starter 〜 org_enterprise / family_addon) |

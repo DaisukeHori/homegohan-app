@@ -2,7 +2,7 @@
  * auth-turnstile.spec.ts (#1165)
  *
  * Web のログイン・新規登録・パスワード再設定 (と、#1474 で足したメール確認の再送) に出す Cloudflare Turnstile が、
- * 本物のブラウザ・本物の CSP (next.config.mjs)・本物の api.js と、Cloudflare のテスト用サイトキーで動くことを確かめる。
+ * 本物のブラウザ・本物の CSP (src/lib/security/csp.ts。middleware が毎リクエスト nonce つきで付ける)・本物の api.js と、Cloudflare のテスト用サイトキーで動くことを確かめる。
  * 単体テスト (tests/auth-turnstile-*.test.tsx) は window.turnstile の偽物を使うので、
  * CSP が api.js と iframe を止めていないか、本物のウィジェットが実際にトークンを出すかは、ここでしか確かめられない。
  *
@@ -142,7 +142,7 @@ async function expectNoCloudflareCspViolations(page: Page) {
   const cloudflare = violations.filter((v) => v.includes("challenges.cloudflare.com"));
   expect(
     cloudflare,
-    `CSP (next.config.mjs の script-src / frame-src) が Cloudflare 向けの通信を止めている: ${cloudflare.join(", ")}`,
+    `CSP (src/lib/security/csp.ts の script-src / frame-src) が Cloudflare 向けの通信を止めている: ${cloudflare.join(", ")}`,
   ).toEqual([]);
 }
 

@@ -91,7 +91,7 @@
 - `lib/supabase/middleware.ts` は凍結・メンテナンス・同意ゲートを扱い (#1689 から /api の分岐でも同意を判定する §3.3)、AAL は見ない。**本書は middleware を変えない** (§7 の裁定)。
 - 本番の `auth.mfa_factors` は 0 行。`user_profiles.roles` の保有行数は admin 9・super_admin 2・support 3・sales 3。finance・org_industrial_doctor・content_moderator は 0 行 (行単位の数。1 人が複数ロールを持つと重複する)。
 - ライブラリ: `@supabase/supabase-js` 2.105.3 (`@supabase/auth-js` 2.105.3)・`@supabase/ssr` 0.1.0・`zod` 4・Next 15.5。auth-js は `auth.getClaims(jwt?)`・`auth.mfa.{enroll, challenge, verify, challengeAndVerify, unenroll, listFactors, getAuthenticatorAssuranceLevel}`・`auth.admin.mfa.{listFactors, deleteFactor}` を持ち、`User.factors` に factor の一覧 (`status: 'verified' | 'unverified'`) が入る。JWT の claim に `aal: 'aal1' | 'aal2'` と `session_id` がある。
-- auth-js の規定 (型定義のコメント): factor を verify すると **その他のセッションはログアウトされ**、現在のセッションが `aal2` に上がる (`mfa.verify` の JSDoc「Upon verifying a factor, all other sessions are logged out and the current session's authenticator level is promoted to `aal2`」)。**これは登録の verify だけでなく、毎回の challenge の verify (ログインごとの 6 桁) でも同じ**: 登録と challenge は同じ API (`challengeAndVerify` = challenge → verify) で、Supabase は verify のたびに同じ利用者の他のセッションを終える (少なくとも aal1 のものは必ず終わる。aal2 の他のセッションが残るかに、本書は依存しない)。運営側の結果は §26.3。`admin.mfa.deleteFactor` で verified な factor を消すと **その利用者の全セッションがログアウトされる**。
+- auth-js の規定 (型定義のコメント): factor を verify すると **その他のセッションはログアウトされ**、現在のセッションが `aal2` に上がる (`mfa.verify` の JSDoc「Upon verifying a factor, all other sessions are logged out and the current session's authenticator level is promoted to `aal2`」)。**これは登録の verify だけでなく、毎回の challenge の verify (ログインごとの 6 桁) でも同じ**: 登録と challenge は同じ API (`challengeAndVerify` = challenge → verify) で、Supabase は verify のたびに同じ利用者の他のセッションを終える (少なくとも aal1 のものは必ず終わる。aal2 の他のセッションが残るかに、本書は依存しない)。運営側の結果は §26.3。`admin.mfa.deleteFactor` の JSDoc は「verified な factor を消すとその利用者の全セッションがログアウトされる」と書くが、**2026-10-16 の段 B の実測では、ローカルの GoTrue v2.183.0 の `admin.mfa.deleteFactor` は本人のセッションを終えなかった** (回復の前の aal1 のセッションが refresh も getUser も通った)。本書はこの挙動に依らない: 回復の route が `admin.auth.admin.signOut(token, 'global')` で本人の全セッションを自分で終える (§14.5)。
 
 ### 3.2 ロールと入口の対応 (実測)
 
@@ -160,7 +160,7 @@
 | S-3 | 登録済みの admin | ログイン直後 (AAL1) に `GET /api/admin/users` を直接呼ぶ | 403。本文の code は route ごとの既存の 403 の code (§19.3)。画面経由なら S-2 で先に AAL2 になる |
 | S-4 | support だけのロール | ログイン → `/admin/users` | 今までどおり (MFA は求めない。claims も読まない) |
 | S-5 | 未登録の admin (猶予中 `OPERATOR_MFA_ENFORCE_FROM` が未来) | `/admin` | 通る。画面上部に「MM/DD HH:mm までに認証アプリを登録」のバナー。日時を過ぎたら S-1 と同じ |
-| S-6 | 登録済みの admin (端末を紛失) | ログイン → verify 画面で「バックアップコードを使う」→ `/settings/security/mfa/recover` に 1 個入れる | コードが消費され、TOTP の factor と残りのコードが全部消える → Supabase が全セッションを終了 → `/login?next=/settings/security/mfa/setup` → 再ログイン → 登録 (S-1 の後半) |
+| S-6 | 登録済みの admin (端末を紛失) | ログイン → verify 画面で「バックアップコードを使う」→ `/settings/security/mfa/recover` に 1 個入れる | コードが消費され、回復の route が全セッションを終了し、TOTP の factor と残りのコードが全部消える → `/login?next=/settings/security/mfa/setup` → 再ログイン → 登録 (S-1 の後半) |
 | S-7 | バックアップコードも無い admin | 別の super_admin に依頼。super_admin は `/admin/users/{id}` の「二段階認証を解除」で理由と本人確認の方法を書いて実行 | 対象の factor とコードが消え、監査ログに `super_admin.mfa.reset` (critical)。対象は全セッション終了 → 再ログイン → 登録 |
 | S-8 | 登録済みの super_admin (AAL2) | `/settings/security/mfa` で「バックアップコードを再発行」 | 旧コードは全部無効、新しい 10 個が 1 回だけ表示。監査 `admin.mfa.backup_codes_regenerate` |
 | S-9 | 登録済みの admin (AAL2) が認証アプリを変えたい | `/settings/security/mfa` で「認証アプリを解除」→ 続けて登録 | 解除で factor とコードが消え、セッションは aal1 に戻る (refresh) → 登録画面へ → 新しい factor で登録 |
@@ -230,7 +230,7 @@
 | S-3 | `GET /api/admin/users` (Cookie, aal1) | `requireRole(['admin','super_admin','support'])` → `MfaRequiredError` (ForbiddenError の派生) → route の既存の `catch (ForbiddenError)` → 403 | 403 (code は route 既存。§19.3) |
 | S-4 | `/admin/users` | roles=[support] → required=false → `not_required` (claims を読まない) | 今までどおり |
 | S-5 | `/admin` | required → aal1 → verified 無し → `now < enforceFrom` → `pass_grace` → `actor.assurance.decision='pass_grace'` → layout が `<MfaGraceBanner enforceFrom>` を描く | 通る + バナー |
-| S-6 | verify 画面 → recover 画面 | `POST /api/auth/mfa/recover {code}` → `requireRole(REQUIRED, {assurance:'session'})` → rate limit → `admin.mfa.listFactors` (消費の前に読む。読めなければ 500 でコードを消費しない) → `consumeBackupCode` (UPDATE ... WHERE used_at IS NULL RETURNING = 1 行) → `admin.mfa.deleteFactor` ×全 factor → `deleteBackupCodes(user)` → 監査 `admin.mfa.recover` (warn。消費の後は途中で失敗しても書く §17.2) → 200 `{ ok:true, next:'/login?next=...' }`。Supabase が全セッションを終了しているので画面は `/login` へ | 再ログイン → S-1 の後半 |
+| S-6 | verify 画面 → recover 画面 | `POST /api/auth/mfa/recover {code}` → `requireRole(REQUIRED, {assurance:'session'})` → rate limit → `admin.mfa.listFactors` (消費の前に読む。読めなければ 500 でコードを消費しない) → `consumeBackupCode` (UPDATE ... WHERE used_at IS NULL RETURNING = 1 行) → `admin.auth.admin.signOut(token, 'global')` (本人の全セッションを終える) → `admin.mfa.deleteFactor` ×全 factor → `deleteBackupCodes(user)` → 監査 `admin.mfa.recover` (warn。消費の後は途中で失敗しても書く §17.2) → 200 `{ ok:true, next:'/login?next=...' }`。route が全セッションを終えているので画面は `/login` へ | 再ログイン → S-1 の後半 |
 | S-7 | `/admin/users/{id}` の解除 | `POST /api/super-admin/admins/{id}/mfa/reset {reason, identity_check, identity_confirmed}` → `requireRole(['super_admin'])` (AAL2 必須) → self なら 403 → 本文 (400) → 対象の profile を service_role で読む (無ければ 404) → 消す前の数を読む: `admin.auth.admin.mfa.listFactors({ userId: id })` (全 factor) と `countRemainingBackupCodes(admin, id)` (未使用の残数)。どちらかを読めなければ 500 で、監査も削除もしない → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` = 読んだ factor の数・`backup_codes_before` = 未使用の残数) を削除より **先に** `recordMfaAudit` で書く (`ok` が false なら 500 で何もしない) → 読んだ factor を `deleteFactor` ×n → `deleteBackupCodes` → 200 `{ data: { user_id, factors_deleted, backup_codes_deleted } }` | 対象は全セッション終了 → 再ログイン → 登録 |
 | S-8 | `/settings/security/mfa` | `POST /api/auth/mfa/backup-codes` → `requireRole(REQUIRED)` (既定 = AAL2) → `issueBackupCodes` (DELETE 全行 → INSERT 10) → 監査 (発行に失敗しても書いて 500 §17.2) → 200 `{ backup_codes: [...] }` | 1 回表示 |
 | S-9 | 同上 | `DELETE /api/auth/mfa/factors/{id}` → `requireRole(REQUIRED)` (AAL2) → id が本人の verified な TOTP factor か (`isVerifiedTotpFactorId(user, id)`。違えば 404) → `mfa.unenroll` → `deleteBackupCodes` → `auth.refreshSession()` (aal1 の token に更新。失敗しても 200 で `aal: 'aal2'` §14.4) → 監査 `admin.mfa.unenroll` (warn。unenroll の後は途中で失敗しても書く §17.2) → 200。画面は setup へ | 新しい factor で登録 |
@@ -407,8 +407,9 @@
 | (U1/U2, S1) | verify (rate limit を超えた 6 回目 / 1 時間の 21 回目) | — | 変化なし | 429 `RATE_LIMITED` + `Retry-After` (Supabase を呼ばない) |
 | (U1/U2, S1) | verify (本人のものでない `factor_id`) | rate limit 内 | 変化なし | 404 `AUTH_2FA_NOT_ENROLLED` |
 | (U1/U2, S1) の **別の** セッション (他の端末・ブラウザ) | 同じ利用者が、別のセッション (Web・モバイルのどちらでも) で verify に成功する (このセッションでの操作ではない) | — | (U2, S0) | Supabase がこのセッションを終える (§3.1)。このセッションは refresh できなくなり、次の要求か refresh の時点で再ログインになる (アプリは既存のログアウトの処理のまま。追加の処理はしない)。aal2 の別のセッションが同じく終わるかは Supabase に依り、本書は依存しない (§26.3) |
-| (U2, S1/S2) | recover (正しいバックアップコード) | 残っているコード・rate limit 内 | **(U1, S0)** | factor の一覧を読む (`admin.mfa.listFactors`。消費の前) → 1 行を消費 → 全 factor 削除 (Supabase が全セッション終了) → 残りのコード全削除 → 監査 `admin.mfa.recover` (warn。details `{ factors_deleted: 消した数, backup_codes_deleted: 消した行の数, failed_step: null }`) → 200。recover は `assurance:'session'` なので S1 / S2 で同じ |
+| (U2, S1/S2) | recover (正しいバックアップコード) | 残っているコード・rate limit 内 | **(U1, S0)** | factor の一覧を読む (`admin.mfa.listFactors`。消費の前) → 1 行を消費 → 本人の全セッションを終える (`admin.auth.admin.signOut(token, 'global')`) → 全 factor 削除 → 残りのコード全削除 → 監査 `admin.mfa.recover` (warn。details `{ factors_deleted: 消した数, backup_codes_deleted: 消した行の数, failed_step: null }`) → 200。recover は `assurance:'session'` なので S1 / S2 で同じ |
 | (U2, S1/S2) | recover (形の正しいコード)。factor の一覧 (`admin.mfa.listFactors`) を読めない・`consumeBackupCode` が投げる (DB の失敗) | rate limit 内 | 変化なし | 500 `INTERNAL_ERROR`。コードを消費せず、監査も書かない (監査の起点 = 消費の成功の前 §17.2) |
+| (U2, S1/S2) | recover (正しいバックアップコード)。消費の後に全セッションの終了 (`admin.auth.admin.signOut(token, 'global')`) が error | rate limit 内 | (U2, S1/S2) のまま (factor もコードも消さない。コードは 1 個が消費済み) | `deleteFactor` と `deleteBackupCodes` をしない → 監査 `admin.mfa.recover` (details `{ factors_deleted: 0, backup_codes_deleted: null, failed_step: 'sign_out_sessions' }`) → 500 `INTERNAL_ERROR`。U2 のままなので、別のコードでもう一度回復できる |
 | (U2, S1/S2) | recover (正しいバックアップコード)。消費の後に `deleteFactor` が失敗する | rate limit 内 | 消せた factor の分だけ変わる (verified な TOTP factor を消せていれば (U1, S0)、消せていなければ U2 のまま)。コードは 1 個が消費済み・残りのコードは消さない | 残りの `deleteFactor` と `deleteBackupCodes` をしない → 監査 `admin.mfa.recover` (details `{ factors_deleted: 消せた数, backup_codes_deleted: null, failed_step: 'delete_factor' }`) → 500 `INTERNAL_ERROR`。U2 のままなら、別のコードでもう一度回復できる。U1 になっていれば、残ったコードは回復 (409)・入口の判定のどちらにも使われず、次の登録の発行 (`issueBackupCodes`) が先に消す |
 | (U2, S1/S2) | recover (正しいバックアップコード)。factor は全部消せたが `deleteBackupCodes` が投げる | rate limit 内 | **(U1, S0)** (残りのコードの行は残る。使われないことは 1 つ上の行と同じ) | 監査 `admin.mfa.recover` (details `{ factors_deleted: 消した数, backup_codes_deleted: null, failed_step: 'delete_backup_codes' }`) → 500 `INTERNAL_ERROR` |
 | (U2, S1/S2) | recover (誤ったコード・形の違うコード・使用済み) | rate limit 内 | 変化なし | 400 `AUTH_2FA_INVALID` (形が違えば DB に触れない) |
@@ -483,7 +484,7 @@
 | (U2, 借り物の S2) | `DELETE /api/auth/mfa/factors/{id}` を直接呼ぶ | `requireRole` (aal2) を通った後 | 変化なし | 409 `AUTH_2FA_NATIVE_SESSION` (`unenroll`・`refreshSession` を呼ばない)。借り物の S1 では `requireRole` が先に 403 `AUTH_2FA_REQUIRED` |
 | (U1, 借り物の S1/S2) | `POST /api/auth/mfa/enroll` を直接呼ぶ (WebView の中の setup の画面は呼ばない §15) | 対象ロール (`{ assurance: 'session' }`。借り物かどうかを見ない §8) | (U1, 借り物の同じ S) + unverified factor | 借り物でない (U1, S1) / (U1, S2) の enroll と同じ (unverified の既存 factor を先に全部消す → 200 で QR と secret)。Web の側で token を発行し直さない。WebView の中ではこの factor の verify が 409 `AUTH_2FA_NATIVE_SESSION` (上の行) なので登録を終えられず、ネイティブの確認画面は verified な factor しか使わない (§16.3 `MfaVerifyGate`) ので、unverified のまま残る。残った factor は入口の判定に数えず (P-7)、次の enroll (ブラウザ) が先に消す (S-20) |
 | (U2, 借り物の S1/S2) | `POST /api/auth/mfa/enroll` を直接呼ぶ | — | 変化なし | 409 `AUTH_2FA_ALREADY_ENROLLED` ((U2, S1/S2) の enroll と同じ) |
-| (U2, 借り物の S1/S2) | `POST /api/auth/mfa/recover` を直接呼ぶ (正しいバックアップコード。WebView の中の recover の画面は呼ばない §15) | 残っているコード・rate limit 内 (借り物かどうかを見ない §8) | **(U1, S0)** (ネイティブのセッションも S0) | 借り物でない (U2, S1/S2) の recover と同じ (factor の一覧を読む → 1 行を消費 → 全 factor 削除 → 残りのコード全削除 → 監査 `admin.mfa.recover` (warn)。途中の失敗も、借り物でない recover の失敗の行と同じ)。factor の削除は service_role の `admin.mfa.deleteFactor` で、Web の側で token を発行し直さない。Supabase が本人の全セッションを終えるので、借り物と同じ session_id のネイティブのセッションも終わり、アプリは次の要求か refresh で既存のログアウトの処理に入る (§3.1。追加の処理はしない) |
+| (U2, 借り物の S1/S2) | `POST /api/auth/mfa/recover` を直接呼ぶ (正しいバックアップコード。WebView の中の recover の画面は呼ばない §15) | 残っているコード・rate limit 内 (借り物かどうかを見ない §8) | **(U1, S0)** (ネイティブのセッションも S0) | 借り物でない (U2, S1/S2) の recover と同じ (factor の一覧を読む → 1 行を消費 → 全 factor 削除 → 残りのコード全削除 → 監査 `admin.mfa.recover` (warn)。途中の失敗も、借り物でない recover の失敗の行と同じ)。factor の削除は service_role の `admin.mfa.deleteFactor` で、Web の側で token を発行し直さない。route が借り物の token で本人の全セッションを終える (`admin.auth.admin.signOut(token, 'global')`) ので、借り物と同じ session_id のネイティブのセッションも終わり、アプリは次の要求か refresh で既存のログアウトの処理に入る (§3.1。追加の処理はしない) |
 | (U1/U2, 借り物の S1/S2) | `POST /api/auth/mfa/recover` を直接呼ぶ (誤ったコード・形の違うコード・使用済み・U1・回数制限の超過) | — | 変化なし | 借り物でない同じ U・S の recover の行と同じ (400 `AUTH_2FA_INVALID`・U1 は 409 `AUTH_2FA_NOT_ENROLLED`・429 `RATE_LIMITED` + `Retry-After`) |
 | (U2, 借り物の S2) | `POST /api/auth/mfa/backup-codes` を直接呼ぶ (WebView の中の状態の画面は呼ばない §15) | `requireRole` (aal2) を通る (借り物かどうかを見ない §8) | (U2, 借り物の S2) | (U2, S2) の再発行と同じ (全削除 → 10 行 → 監査 `admin.mfa.backup_codes_regenerate` → 200 でコード。発行の失敗も (U2, S2) の再発行の失敗の行と同じ)。Web の側で token を発行し直さない |
 | (U2, 借り物の S1) / (U1, 借り物の S1) / (U1, 借り物の S2) | `POST /api/auth/mfa/backup-codes` を直接呼ぶ | — | 変化なし | 借り物でない同じ U・S の再発行の行と同じ (U2 の S1 は 403 `AUTH_2FA_REQUIRED`・U1 の S1 は猶予中でなければ 403 `AUTH_2FA_ENROLLMENT_REQUIRED`、猶予中なら 409 `AUTH_2FA_NOT_ENROLLED`・U1 の S2 は 409 `AUTH_2FA_NOT_ENROLLED`) |
@@ -1414,7 +1415,7 @@ export const MfaRecoverBodySchema = z.object({
 });
 export type MfaRecoverBody = z.infer<typeof MfaRecoverBodySchema>;
 
-/** 回復の後に画面が移る先 (Supabase が全セッションを終えているので、ログインからやり直して登録へ) */
+/** 回復の後に画面が移る先 (回復の route が本人の全セッションを終えているので、ログインからやり直して登録へ) */
 export const MFA_RECOVER_NEXT_PATH = '/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup';
 
 /** POST /api/auth/mfa/recover の 200 (段 A)。route は next に MFA_RECOVER_NEXT_PATH を入れる */
@@ -1426,15 +1427,16 @@ export type MfaRecoverResponse = z.infer<typeof MfaRecoverResponseSchema>;
 ```
 
 - 段: A。認可: `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })` (AAL1 で呼ぶ) (段 A では `requireRole(MFA_REQUIRED_ROLES)` と引数 1 つで呼ぶ。段 B で第 2 引数 `{ assurance: 'session' }` を足す。§0.2)。
-- 手順: 本文 (400) → `checkRateLimit(user.id, 'auth-mfa-recover')` (429) → `normalizeBackupCode` → `isWellFormedBackupCode` でなければ 400 `AUTH_2FA_INVALID` (形が違うコードは DB に触れない) → verified factor が無ければ (`findVerifiedTotpFactor(user)` が null) 409 `AUTH_2FA_NOT_ENROLLED` → `const admin = getSupabaseAdmin()` → **消費の前に** `admin.auth.admin.mfa.listFactors({ userId: user.id })` の `data.factors` を `factors` として持つ (状態・種類を問わない全 factor。`error` なら 500 で、コードを消費しない) → `consumeBackupCode(admin, user.id, normalized)` (投げれば 500・false なら 400 `AUTH_2FA_INVALID`。どちらも何も変わっていないので監査を書かない) → true ならここが監査の起点 (§17.2):
-  1. `let factorsDeleted = 0; let backupCodesDeleted: number | null = null; let failedStep: 'delete_factor' | 'delete_backup_codes' | null = null; let stepError: unknown = null;`
-  2. `factors` を順に `admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: user.id })`。`error` が出たら `failedStep = 'delete_factor'`・`stepError = error` にして、残りの factor も 3 も行わない。成功するたびに `factorsDeleted += 1`
+- 手順: 本文 (400) → `checkRateLimit(user.id, 'auth-mfa-recover')` (429) → `normalizeBackupCode` → `isWellFormedBackupCode` でなければ 400 `AUTH_2FA_INVALID` (形が違うコードは DB に触れない) → verified factor が無ければ (`findVerifiedTotpFactor(user)` が null) 409 `AUTH_2FA_NOT_ENROLLED` → 本人の token を読む (`readRequestAccessToken(supabase)`: Cookie のセッションの access_token、無ければ Bearer の JWT (`src/lib/auth/mfa/assurance.ts`。`readSessionAssurance` と同じ探し方)。無ければ 401 で、コードを消費しない) → `const admin = getSupabaseAdmin()` → **消費の前に** `admin.auth.admin.mfa.listFactors({ userId: user.id })` の `data.factors` を `factors` として持つ (状態・種類を問わない全 factor。`error` なら 500 で、コードを消費しない) → `consumeBackupCode(admin, user.id, normalized)` (投げれば 500・false なら 400 `AUTH_2FA_INVALID`。どちらも何も変わっていないので監査を書かない) → true ならここが監査の起点 (§17.2):
+  1. `let factorsDeleted = 0; let backupCodesDeleted: number | null = null; let failedStep: 'sign_out_sessions' | 'delete_factor' | 'delete_backup_codes' | null = null; let stepError: unknown = null;`
+  1a. `const { error: signOutError } = await admin.auth.admin.signOut(accessToken, 'global')` (本人の全セッション = この要求のセッション・他の端末の aal1 / aal2 を終える)。`error` なら `failedStep = 'sign_out_sessions'`・`stepError = error` にして、2 も 3 も行わない
+  2. `failedStep` が null のときだけ、`factors` を順に `admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: user.id })`。`error` が出たら `failedStep = 'delete_factor'`・`stepError = error` にして、残りの factor も 3 も行わない。成功するたびに `factorsDeleted += 1`
   3. `failedStep` が null のときだけ `try { backupCodesDeleted = await deleteBackupCodes(admin, user.id); } catch (error) { failedStep = 'delete_backup_codes'; stepError = error; }`
   4. `await recordMfaAudit({ ..., action: MFA_AUDIT_ACTIONS.recover, details: { factors_deleted: factorsDeleted, backup_codes_deleted: backupCodesDeleted, failed_step: failedStep }, ... })` (warn・fail-open。戻り値を読まない)
   5. `failedStep` が null → 200 `{ ok: true, next: MFA_RECOVER_NEXT_PATH }` (= `'/login?next=%2Fsettings%2Fsecurity%2Fmfa%2Fsetup'`)。null でなければ `internalError(ROUTE_NAME, stepError, { userId: user.id })` の 500。
 - `listFactors` を消費の前に読むのは、読み取りの失敗でコードを 1 個失わせないため (読み取りは何も変えない)。読んだ後・削除の前に本人が factor を足す余地は reset (§14.7) と同じで、足された factor は消えない (verified な factor を足すには 6 桁の verify が要る)。
 - `deleteFactor` が途中で失敗したら、コードの削除をしない: verified な TOTP factor が残っていれば本人は U2 のままで、残りのコードで回復をやり直せる (ここでコードまで消すと、端末を失くした本人が回復に使えるコードの無い U2 になる)。verified な factor を消せた後の失敗なら U1 で、残ったコードの行は回復 (409)・入口の判定のどちらにも使われず、次の登録の発行 (`issueBackupCodes`) が先に消す (§10)。
-- verified な factor を消した時点で Supabase が本人の全セッションを終了する (§3.1)。画面は成功なら応答の `next` へ移る。500 なら文を出す (セッションが終わっていれば、次の操作が 401 でログインへ回る §15.2)。
+- 全セッションの終了は route が factor の削除より **先に** 自分で行う (`admin.mfa.deleteFactor` だけでは本人のセッションが終わらない。§3.1 の 2026-10-16 の実測)。段 B のゲートは aal2 のセッションを factor の有無を見ずに通す (P-3) ので、ここで終えないと、盗まれた端末などに残る aal2 のセッションが回復の後も運営の入口を通る。先に終えるので、verified な factor が消えた時点で本人のセッションは必ず全部終わっている。終了が失敗したら factor もコードも消さない (本人は U2 のままで、残りのコードで回復をやり直せる)。画面は成功なら応答の `next` へ移る。500 なら文を出す (`sign_out_sessions` 以外の 500 ならセッションは終わっているので、次の操作が 401 でログインへ回る §15.2)。
 - 本文の NULL 文字: `rejectNullCharacterBody` を呼ばない (EXCLUDED に理由つき §23 N-28)。`normalizeBackupCode` が英数字以外 (NULL 文字を含む) を取り除き、DB に届くのは `user_id` と SHA-256 の hex だけ。監査の details も数だけ。
 - 攻撃面: パスワードを知る攻撃者がコードを総当たりする → 50 bit × 1 時間 10 回で不可能。コードを知る攻撃者 → 本人の TOTP を消して自分のを登録できる (バックアップコードの性質そのもの。監査 `admin.mfa.recover` が warn で残り (コードを消費した後は、factor・コードの削除が途中で失敗しても 1 行残る §17.2)、本人は全セッション終了で気づく)。
 
@@ -1834,7 +1836,7 @@ export function resetOperatorMfa(userId: string, body: MfaResetBody): Promise<Mf
 | 登録の 6 桁 (setup の `TotpCodeForm`) | `verifyMfaCode({ factor_id: <enroll の data.factor_id>, code })` | `data.backup_codes` が 1 個以上あれば `BackupCodesPanel` に出し、「保存した」のチェックの後の [続ける] で `router.push(next)` → `router.refresh()`。無ければ (§14.3 のコードの発行の失敗か、1 回目の verify の応答が届かず打ち直した 2 回目の verify。どちらも本人はコードを見ていない §10) `BackupCodesPanel` を出さず、`MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE` (§15.1。testID `backup-codes-not-shown`) と 2 つのボタンを出す: [二段階認証の設定へ] (testID `backup-codes-not-shown-settings`) → `router.push('/settings/security/mfa')` → `router.refresh()`・[続ける] (testID `backup-codes-not-shown-continue`) → `router.push(next)` → `router.refresh()`。状態の画面の [バックアップコードを再発行] (段 B) で受け取り直す (段 A ではまだボタンが無い §0.2)。応答が届かなかった後に打ち直さずに画面を読み込み直したときは、setup が status の `enrolled: true` で状態の画面へ回すだけで、この案内は出ない (状態の画面の再発行はいつでも使える) | `TotpCodeForm` の中に `mfaErrorMessage(code)` (400 `AUTH_2FA_INVALID`・429 `RATE_LIMITED`・通信の失敗の `MFA_CLIENT_NO_STATUS` など)。欄を空にして打ち直せるようにする |
 | 確認 `/settings/security/mfa/verify?next=` | `getMfaStatus()` (最初の描画の後に 1 回) | `data.aal === 'aal2'` → `router.replace(next)`。`data.factor` が null (= `enrolled` が false §14.1) → `router.replace('/settings/security/mfa/setup?next=' + encodeURIComponent(next))`。それ以外 → `TotpCodeForm` (`data.factor.id` を持つ) とリンク「認証アプリが使えない (バックアップコード)」→ `/settings/security/mfa/recover` | `mfaErrorMessage(code)` を出す |
 | 確認の 6 桁 (verify の `TotpCodeForm`) | `verifyMfaCode({ factor_id: <status の data.factor.id>, code })` | `router.push(next)` → `router.refresh()` | `TotpCodeForm` の中に `mfaErrorMessage(code)` |
-| 回復 `/settings/security/mfa/recover` | `recoverWithBackupCode({ code })` ([回復する] で) | `window.location.assign(getSafeRedirectPath(data.next) ?? '/login')` (Supabase が全セッションを終えているので、ページごと移る) | `mfaErrorMessage(code)` (400 `AUTH_2FA_INVALID`・409 `AUTH_2FA_NOT_ENROLLED`・429 `RATE_LIMITED` など)。500 は、コードを消費した後の factor・コードの削除の失敗のことがあり (§14.5)、verified な factor を消せていれば全セッションが終わっているので、次の操作の 401 で共通の規則どおりログインへ回る |
+| 回復 `/settings/security/mfa/recover` | `recoverWithBackupCode({ code })` ([回復する] で) | `window.location.assign(getSafeRedirectPath(data.next) ?? '/login')` (回復の route が全セッションを終えているので、ページごと移る) | `mfaErrorMessage(code)` (400 `AUTH_2FA_INVALID`・409 `AUTH_2FA_NOT_ENROLLED`・429 `RATE_LIMITED` など)。500 は、コードを消費した後の全セッションの終了・factor・コードの削除の失敗のことがあり (§14.5)、終了が済んでいれば (factor・コードの削除の失敗) 全セッションが終わっているので、次の操作の 401 で共通の規則どおりログインへ回る。終了の失敗 (`sign_out_sessions`) なら何も消えておらず、画面のまま別のコードでやり直せる |
 | 設定 `/settings` の「セキュリティ (二段階認証)」の行 (段 A) | `useInNativeWebView()` が `'browser'` になったら `getMfaStatus()` を 1 回 (`'undecided'` と `'in_app'` では呼ばず、行も出さない。MFA の設定はブラウザだけ §16) | 行を出す (押すと `router.push('/settings/security/mfa')`) | 行を出さない。401 でも画面を移らない (設定の画面は運営でない利用者も開く。§23 N-36) |
 | `OperatorMfaResetSection` (`/admin/users/{id}`。段 C) | `resetOperatorMfa(userId, { reason, identity_check, identity_confirmed: true })` (確認ダイアログの後) | 「認証アプリ `result.data.data.factors_deleted` 件・バックアップコード `result.data.data.backup_codes_deleted` 件を消しました」 | `mfaErrorMessage(code)` (401 の `UNAUTHORIZED` も文を出すだけ。運営の画面の移動は layout の `requireRoleForPage` が受け持つ。middleware の同意ゲートの 403 `LEGAL_CONSENT_REQUIRED` (§14.8.2) は表に無い code なので既定の文) |
 
@@ -2121,9 +2123,14 @@ export const MFA_AUDIT_SEVERITY: Readonly<Record<MfaAuditAction, AdminAuditSever
 /** target_type (本人・対象のどちらも利用者。varchar(30)) */
 export const MFA_AUDIT_TARGET_TYPE = 'user';
 
-/** 監査の起点の後で止まった手順の名前 (§17.2)。details の failed_step に入れる (最後まで進めば null) */
+/**
+ * 監査の起点の後で止まった手順の名前 (§17.2)。details の failed_step に入れる (最後まで進めば null)。
+ * signOutSessions は回復の「本人の全セッションを終える」(admin.signOut の scope 'global')。admin の deleteFactor だけでは
+ * セッションが終わらない (2026-10-16 のローカルの GoTrue v2.183.0 の実測) ので、回復の route が自分で終える
+ */
 export const MFA_AUDIT_FAILED_STEPS = {
   issueBackupCodes: 'issue_backup_codes',
+  signOutSessions: 'sign_out_sessions',
   deleteFactor: 'delete_factor',
   deleteBackupCodes: 'delete_backup_codes',
   refreshSession: 'refresh_session',
@@ -2153,7 +2160,7 @@ export interface MfaAuditDetailsMap {
   'admin.mfa.recover': {
     factors_deleted: number;
     backup_codes_deleted: number | null;
-    failed_step: Extract<MfaAuditFailedStep, 'delete_factor' | 'delete_backup_codes'> | null;
+    failed_step: Extract<MfaAuditFailedStep, 'sign_out_sessions' | 'delete_factor' | 'delete_backup_codes'> | null;
   };
   /** identity_check は MfaResetBodySchema で検証済みの MFA_RESET_IDENTITY_CHECKS の 1 つ (schemas.ts の段 C の定数に依らないよう string で持つ) */
   'super_admin.mfa.reset': { reason: string; identity_check: string; factors_before: number; backup_codes_before: number };
@@ -2219,10 +2226,10 @@ export async function recordMfaAudit<A extends MfaAuditAction>(input: RecordMfaA
 | enroll | `POST /api/auth/mfa/verify` (§14.3) | `wasUnverified` で `challengeAndVerify` が成功した (factor が verified になり、セッションが aal2 になり、同じ利用者の他のセッションが終わる) | `issueBackupCodes` | `'issue_backup_codes'` | どちらも 200 `{ ok: true, aal: 'aal2' }`。発行できたときだけ `backup_codes` (失敗を 500 にしない理由は §14.3) |
 | backup_codes_regenerate | `POST /api/auth/mfa/backup-codes` (§14.6) | `issueBackupCodes` を呼んだ (中で DELETE → INSERT と進み、1 回の呼び出しの中で途中まで進みうるので、呼んだ時点を起点にする) | (起点の呼び出しそのもの) | `'issue_backup_codes'` | 成功は 200 でコード・失敗は 500 |
 | unenroll | `DELETE /api/auth/mfa/factors/{id}` (§14.4) | `mfa.unenroll` が成功した (verified な factor が消えた) | `deleteBackupCodes` → `refreshSession` | `'delete_backup_codes'` / `'refresh_session'` | null は 200 `{ ok: true, aal: 'aal1' }`・`'refresh_session'` は 200 `{ ok: true, aal: 'aal2' }`・`'delete_backup_codes'` は 500 |
-| recover | `POST /api/auth/mfa/recover` (§14.5) | `consumeBackupCode` が true (コードを 1 個使った) | `deleteFactor` ×n → `deleteBackupCodes` | `'delete_factor'` / `'delete_backup_codes'` | null は 200 `{ ok: true, next }`・それ以外は 500 |
+| recover | `POST /api/auth/mfa/recover` (§14.5) | `consumeBackupCode` が true (コードを 1 個使った) | `admin.signOut(token, 'global')` (本人の全セッションを終える) → `deleteFactor` ×n → `deleteBackupCodes` | `'sign_out_sessions'` / `'delete_factor'` / `'delete_backup_codes'` | null は 200 `{ ok: true, next }`・それ以外は 500 |
 | reset | `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7) | この規則の外 (fail-closed): 監査を削除より先に書き、書けなければ何も消さない | `deleteFactor` ×n → `deleteBackupCodes` | 持たない (監査は削除の前の 1 行。削除の失敗は 500 で、監査行が「要求された事実と消す前の数」として残る) | 成功は 200・削除の失敗は 500 |
 
-- この規則が守ること: 取り消せない変更 (factor の verify・削除、コードの消費・削除) が起きたのに `admin_audit_logs` に 1 行も残らない、ということが無い (§14.5 の攻撃面の「監査 `admin.mfa.recover` で気づく」はこれに依る)。監査があるのに一部しか変わっていないときは、`failed_step` がどこで止まったかを示す。
+- この規則が守ること: 取り消せない変更 (factor の verify・削除、コードの消費・削除、回復の全セッションの終了) が起きたのに `admin_audit_logs` に 1 行も残らない、ということが無い (§14.5 の攻撃面の「監査 `admin.mfa.recover` で気づく」はこれに依る)。監査があるのに一部しか変わっていないときは、`failed_step` がどこで止まったかを示す。
 - 失敗の中身 (例外・Supabase の error) は app_logs に残す: 500 で返すものは `internalError(ROUTE_NAME, error, { userId })`、200 で返すもの (登録のコードの発行・解除の refresh) は `createLogger(ROUTE_NAME).withUser(userId).error(<固定の文>, error)`。details と応答の本文には例外の文を入れない (§23 N-5)。
 - 監査の記録そのものが失敗しても (`recordAdminAudit` の `ok: false`)、4 種の応答は変えない (fail-open。失敗は `recordAdminAudit` が app_logs に残す)。
 - route の中の `failed_step` の値は `MFA_AUDIT_FAILED_STEPS` (§17.1) から取る (§14 の手順の文字列と同じ値)。
@@ -2293,7 +2300,8 @@ sequenceDiagram
         Op->>API: POST /recover { code }
         API->>SB: admin.mfa.listFactors (消費の前に読む)
         API->>DB: UPDATE used_at WHERE hash AND used_at IS NULL (1 行。監査の起点 §17.2)
-        API->>SB: admin.mfa.deleteFactor ×n (全セッション終了)
+        API->>SB: admin.signOut(token, 'global') (本人の全セッション終了)
+        API->>SB: admin.mfa.deleteFactor ×n
         API->>DB: DELETE 残りの行
         Note over API: 監査 admin.mfa.recover を admin_audit_logs に 1 行 (消費の後は途中で止まっても書く §17.2)
         API-->>Op: { ok, next: '/login?next=…setup' }
@@ -2620,7 +2628,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `M-1: admin (aal1) は GET /api/admin/users が 403、GET /api/auth/mfa/status は 200 enrolled:false`
 - `M-2: enroll → verify (helpers/totp で 6 桁) → aal2 → GET /api/admin/users が 200、backup_codes が 10 個`
 - `M-3: 新しいログイン (aal1) は 403 → verify → 200 (ログインごとに challenge)`
-- `M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションの token は 401`
+- `M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションの token は 401 (回復に使った aal1 のセッションも、M-3 の aal2 のセッションも、refresh もできない)` (旧セッションを終えるのは回復の route の `admin.signOut` (§14.5)。`admin.mfa.deleteFactor` だけではローカルの GoTrue v2.183.0 はセッションを終えないので、route の終了が無いと赤になる。「同じコードは 2 回目 400」は、回復の後に登録し直して新しい 10 個に入れ替わった後に古いコードを送って確かめる (回復の直後は verified な factor が無く 409 が先 §14.5))
 - (C) `M-5: super_admin の reset で対象の factor と行が消え、admin_audit_logs に super_admin.mfa.reset (critical) が 1 行で、details の factors_before と backup_codes_before が、reset の前にテストが数えた対象の factor の数 (admin.mfa.listFactors) と operator_mfa_backup_codes の未使用の行の数に等しい。自分自身は 403` (reset の route は段 C で入るので、この it は段 C の PR でこのファイルに足す §22.3)
 - `M-6: operator_mfa_backup_codes は anon / authenticated から読めない (42501)`
 - `M-7: support だけのユーザーは aal1 のまま /api/support/stats が 200`
@@ -2703,7 +2711,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | S-3 | 結合 `M-1`・`M-3`・`mfa-gate.test.ts`: `requireRole: admin + aal1 + verified は AUTH_2FA_REQUIRED を投げる`・走査 `operator-mfa-entry-points-scan.test.ts` の ① (運営 route が `requireRole` を呼ぶ) |
 | S-4 | 結合 `M-7`・`mfa-gate.test.ts`: `requireRole: support だけなら getClaims を呼ばず assurance.decision = not_required`・`mfa-policy.test.ts`: `decideOperatorAssurance: 必須ロールでなければ not_required (aal は見ない)` |
 | S-5 | `mfa-gate.test.ts`: `requireRole: admin + aal1 + factor 無し + OPERATOR_MFA_ENFORCE_FROM が未来 …`・`mfa-policy.test.ts`: `decideOperatorAssurance: aal1 で無し、now < enforceFrom は pass_grace` と `… enforceFrom が null / 過去 / ちょうど now は enrollment_required`・route `auth-mfa-routes.test.ts`: `GET /status: …` (猶予中 → grace:true)・`operator-page-guard-wiring.test.ts`: `layout 3 つは MfaGraceBanner を JSX で描き …`・`support-area-guard-layout.test.tsx`: `assurance.decision が pass_grace なら MfaGraceBanner を …` |
-| S-6 | e2e `T-MFA-3`・結合 `M-4`・route `auth-mfa-routes.test.ts`: `POST /recover: 形の違うコードは …`・`POST /recover: listFactors は consumeBackupCode より先に呼び …`・`POST /recover: 消費の後に deleteFactor が error なら …`・`mfa-pages-browser.test.tsx`: `回復: 成功で応答の next …` |
+| S-6 | e2e `T-MFA-3`・結合 `M-4`・route `auth-mfa-routes.test.ts`: `POST /recover: 形の違うコードは …`・`POST /recover: listFactors は consumeBackupCode より先に呼び …`・`POST /recover: 消費の後に deleteFactor が error なら …`・`POST /recover: 全セッションを終える admin.signOut が error なら …`・`POST /recover: Cookie のセッションが無くモバイルの Bearer JWT で呼ばれたら …`・`mfa-pages-browser.test.tsx`: `回復: 成功で応答の next …` |
 | S-7 | 結合 `M-5` (C)・route `super-admin-mfa-reset-route.test.ts`: `reset: 成功は listFactors → countRemainingBackupCodes → 監査 …`・`mfa-pages-browser.test.tsx`: (C) `OperatorMfaResetSection: …`・`admin-mutation-audit-coverage-1571.test.ts` の (a) (reset の行が `EXPECTED` にある §23 N-38) |
 | S-8 | route `auth-mfa-aal2-routes.test.ts`: `POST /backup-codes: aal1 → 403 AUTH_2FA_REQUIRED / aal2 で factor 無し → 409 / 成功で旧行削除 + 10 個 + 監査 …`・`POST /backup-codes: issueBackupCodes が投げたら …`・`mfa-backup-codes.test.ts`: `issueBackupCodes は旧行を全部消してから 10 行を入れる`・`mfa-pages-browser.test.tsx`: (B) `状態の [再発行] と [解除] は …`・(B) `状態の [再発行] と [解除] の 500 は …` |
 | S-9 | route `auth-mfa-aal2-routes.test.ts`: `DELETE /factors/{id}: aal1 + verified → 403 AUTH_2FA_REQUIRED / … / 成功で unenroll → deleteBackupCodes → refreshSession → 監査 admin.mfa.unenroll …`・`DELETE /factors/{id}: mfa.unenroll の error は 500 …`・`DELETE /factors/{id}: unenroll の後に deleteBackupCodes が投げたら …`・`DELETE /factors/{id}: refreshSession が error を返したら …`・`mfa-pages-browser.test.tsx`: (B) `状態の [再発行] と [解除] は …` ([解除] の成功で setup へ)・(B) `状態の [再発行] と [解除] の 500 は …` |
@@ -3208,7 +3216,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
   - スマホのアプリにふつう (aal1) でログインしている運営が、Web の `/admin` などで 6 桁を入れると、アプリのネイティブのセッションが終わる (ネイティブのブリッジで同じセッションを使う WebView も一緒に終わる)。アプリは次の要求か refresh の時点で再ログインになる (S-25)。
   - アプリのネイティブの確認画面 (§16.4) で 6 桁を入れると、同じ人の Web のブラウザの aal1 のセッションが終わる。
   - アプリの側で防ぐ手段は無い (Supabase の verify の挙動。§7.1 で factor を Supabase に持つと裁定したことの帰結)。受け入れるかは Q-11。運用の注意として `docs/operations/auth-protection.md` の新 §11 に載せる (§24)。
-- 回復・解除 (他人による) では **全セッションを終了する**。画面はこれを前提に `/login` へ戻す。
+- 回復・解除 (他人による) では **全セッションを終了する**。画面はこれを前提に `/login` へ戻す。回復は route が factor の削除より先に `admin.auth.admin.signOut(token, 'global')` で終える (§14.5。`admin.mfa.deleteFactor` だけでは終わらない §3.1 の実測)。
 - モバイルも同じ (Bearer の token の claim)。
 - アプリの WebView の Cookie のセッションは、ネイティブのセッションの借り物 (同じ session_id)。AAL もネイティブと共通で、ネイティブの確認画面で 6 桁を入れると両方が aal2 になる (WebView の Cookie の access_token は読み込み直しで新しくなる §16.4)。WebView の中で Web の verify はしない (token を発行し直す持ち主はネイティブだけ)。
 

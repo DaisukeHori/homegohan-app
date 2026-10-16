@@ -32,9 +32,11 @@ export default function OnboardingResumePage() {
             });
           } else if (data.status === 'completed') {
             // 完了済みの場合はホームへ
+            // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- 初期設定の状態で行き先を決めるのは middleware。ページごと移り、DB のいまの状態で判定し直させる
             window.location.href = '/home';
           } else if (data.status === 'not_started') {
             // 未開始の場合はウェルカムへ
+            // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- 初期設定の状態で行き先を決めるのは middleware。ページごと移り、DB のいまの状態で判定し直させる
             window.location.href = '/onboarding/welcome';
           }
         }
@@ -52,6 +54,7 @@ export default function OnboardingResumePage() {
     try {
       const res = await fetch('/api/onboarding/status', { method: 'DELETE' });
       if (res.ok) {
+        // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- 初期設定をやり直した (DELETE) 後は、ページごと移り middleware に未開始の状態で判定し直させる
         window.location.href = '/onboarding/welcome';
       }
     } catch (error) {
@@ -95,6 +98,7 @@ export default function OnboardingResumePage() {
         setIsSkipping(false);
         return;
       }
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination -- complete の後はページごと移り、middleware に完了の状態で判定し直させる (/home ⇔ resume のループを断つ。#1045 F6-11)
       window.location.href = '/home';
     } catch (error) {
       console.error('Failed to skip onboarding:', error);
