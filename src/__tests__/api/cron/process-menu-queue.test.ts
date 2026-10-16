@@ -43,7 +43,8 @@ vi.mock('@/lib/db-logger', () => ({
   generateRequestId: () => 'req-test',
 }));
 
-const { GET } = await import('@/app/api/cron/process-menu-queue/route');
+const routeModule = await import('@/app/api/cron/process-menu-queue/route');
+const { GET } = routeModule;
 
 function makeRequest(authorization?: string) {
   return new Request('http://localhost/api/cron/process-menu-queue', {
@@ -326,5 +327,47 @@ describe('GET /api/cron/process-menu-queue: 必須の環境変数 (#1182)', () =
 
     expect(res.status).toBe(401);
     expect(mockLogError).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------
+// #1744: Edge Runtime (Next 16 で非推奨) から Node.js の runtime に移した。
+//   Node.js では maxDuration が関数の上限として効く (Edge は 25 秒以内に応答を始めないと打ち切られ、maxDuration は効かなかった)。
+//   generate-menu-v5 の呼び出しの打ち切りは、関数の上限より先に来る (打ち切ったあとに行を failed にする時間を残す)。
+// ---------------------------------------------------------------
+describe('GET /api/cron/process-menu-queue: runtime と時間の上限 (#1744)', () => {
+  /** Vercel の関数の上限 (秒) をミリ秒にする */
+  const MS_PER_SECOND = 1000;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('Node.js の runtime で動き、Edge にはしない。毎回動かし、関数の上限は 60 秒', () => {
+    expect(routeModule.runtime).toBe('nodejs');
+    expect(routeModule.dynamic).toBe('force-dynamic');
+    expect(routeModule.fetchCache).toBe('force-no-store');
+    expect(routeModule.maxDuration).toBe(60);
+  });
+
+  it('generate-menu-v5 の呼び出しは、関数の上限 (maxDuration) より短い時間で打ち切る', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    vi.stubGlobal('fetch', mockFetch);
+    mockFetch.mockImplementation(async () => new Response(JSON.stringify({ status: 'processing' }), { status: 202 }));
+    mockRpc.mockResolvedValue({
+      data: { id: 'req-1', user_id: 'user-1', status: 'processing', attempt_count: 1, current_step: 1, generated_data: {} },
+      error: null,
+    });
+
+    const res = await GET(makeRequest('Bearer my-cron-secret-value'));
+
+    expect(res.status).toBe(200);
+    expect(timeoutSpy).toHaveBeenCalledTimes(1);
+    const [timeoutMs] = timeoutSpy.mock.calls[0];
+    expect(timeoutMs).toBeGreaterThan(0);
+    expect(timeoutMs).toBeLessThan(routeModule.maxDuration * MS_PER_SECOND);
+    const [, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(init.signal).toBe(timeoutSpy.mock.results[0].value);
   });
 });

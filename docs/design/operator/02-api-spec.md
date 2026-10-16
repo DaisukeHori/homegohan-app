@@ -400,7 +400,7 @@ BAN 解除
 > | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す。切り替えは運営画面 `/super-admin/flags` | OFF |
 >
 > フラグの値はサーバーのメモリに最大 30 秒覚えるため、PATCH で切り替えてから全員に反映されるまで最大 30 秒かかる
-> (下の PATCH の「即座に」は、この遅れを除いた意味)。ミドルウェア (Edge) と API route (Node) は別々にメモリを持つ。
+> (下の PATCH の「即座に」は、この遅れを除いた意味)。proxy (`src/proxy.ts`。#1744 で middleware から改名し、Node.js の runtime で動く) と API route は、メモリを共有するとは限らない。
 
 ### GET /api/super-admin/flags
 フラグ一覧
@@ -490,7 +490,7 @@ BAN 解除
 `/signup` (新規登録) は止める。
 `/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
 `/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。
-画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/middleware.ts`) が外していて、そもそもミドルウェアが走らない。
+画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/proxy.ts`) が外していて、そもそもミドルウェアが走らない。
 拡張子で通す処理は持たないので、動的なページのパスは、末尾が `.json` や `.txt` に見えても (`/meals/abc.json` など) 止める。
 フラグを読めない・行が無いときは止めない (OFF 扱い)。
 

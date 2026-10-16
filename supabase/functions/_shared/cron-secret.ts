@@ -21,7 +21,7 @@
  * このファイルが守る制約 (崩すと Edge Functions か Next.js のどちらかが動かなくなる):
  *  - 純粋な TypeScript。import なし、Deno / Node 固有の API なし (環境変数は呼び出し側が読んで渡す)。
  *    使うのは Web 標準の crypto.subtle と TextEncoder だけなので、Deno・Vercel の Edge Runtime・Node 20 以降のどれでも動く
- *    (process-menu-queue は runtime = 'edge' で、node:crypto の timingSafeEqual は使えない)。
+ *    (Deno の Edge Functions と Next.js の cron の route (#1744 から Node.js の runtime) が同じ実装を使うため、node:crypto には頼らない)。
  *    Next.js 側は src/lib/cron-auth.ts が相対パスで import する (log-sanitizer.ts と同じ前例)。
  *  - 例外を投げるのは crypto.subtle が使えない環境だけ。呼び出し側は例外を握りつぶさず、そのまま 500 にして構わない
  *    (照合できないまま通してしまう fail open にはならない)。

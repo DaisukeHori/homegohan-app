@@ -1316,7 +1316,7 @@ return NextResponse.json({ data: { member, consent_recorded: Boolean(consent) } 
 
 #### 6.5.8 `lib/legal-consent-minor.ts` (新設。段 B。18 歳未満の本人の「保護者の同意とのつながり」を DB に聞いてゲートの入力に足す)
 
-`lib/legal-consent.ts` は副作用のない関数だけのファイル (冒頭のコメント) なので、DB に聞く処理は別ファイルに置く。middleware (Edge ランタイム) から import されるので、Node 専用の API を使わない (`@supabase/ssr` の型と shared だけ)。呼ぶのは middleware の画面の分岐 (§6.5.6 の 4) と同意画面のサーバー側 (同 5)。13a の `/api` の分岐 (§6.5.6 の 4) と `GET /api/legal/status` の route (同 19) も同じ関数を通す (§0.5)。`/auth/callback` は呼ばない (P35)。
+`lib/legal-consent.ts` は副作用のない関数だけのファイル (冒頭のコメント) なので、DB に聞く処理は別ファイルに置く。proxy (`src/proxy.ts`。#1744 で middleware から改名し、Edge ランタイムから Node.js の runtime に変わった) から import される。全リクエストで読み込むので、Node 専用の API を使わない (`@supabase/ssr` の型と shared だけ)。呼ぶのは middleware の画面の分岐 (§6.5.6 の 4) と同意画面のサーバー側 (同 5)。13a の `/api` の分岐 (§6.5.6 の 4) と `GET /api/legal/status` の route (同 19) も同じ関数を通す (§0.5)。`/auth/callback` は呼ばない (P35)。
 
 ```ts
 // tsc:skip  (新設の shared の名前 requiresParentalConsent / LegalConsentProfile と、新しい RPC の型を使うため、段 A のコミットの後に型が通る)

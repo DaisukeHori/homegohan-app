@@ -100,7 +100,7 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 
 - Issue #1169 (本文)。関連 #275 / PR #280 (`'unsafe-eval'` の削除)・#1165 (Turnstile の CSP)・#1179 (Speed Insights と CSP)・#1166 (PostHog の撤去)・#1174 / #1442 (同意ゲートと middleware の分岐)・#1148 (メンテナンス)・#1030 (凍結)・#1493 (`POST /api/log` と回数制限)・#1182 / #1434 (環境変数の規則)・#1657 (NULL 文字)。
 - `docs/design/CLAUDE.md` §4 (snake_case)・§6 (監査ログは本件に無し: 運営の操作が無い)。`cross/04` §4 (エラーコード)。`cross/13a` §6.4 (同意の許可リスト)。`cross/06` (レート制限)。`operator/10` (app_logs のビューア)。`mobile/01` §7 (WebView と `frame-src`)。
-- 一次情報 (本書が依拠するもの): Next 15 公式ガイド「Content Security Policy」(nonce は middleware で毎リクエスト作り、リクエストヘッダー `Content-Security-Policy` と `x-nonce` に載せ、応答にも同じ値を付ける。nonce を使うページは動的レンダリング必須。Next は framework script・ページのバンドル・Next 生成のインライン script / style・`nonce` prop を持つ `<Script>` に自動で付与する)。Next 15.5 の実装 `server/app-render/app-render.js` は **リクエストヘッダー** `content-security-policy` (無ければ `content-security-policy-report-only`) から `getScriptNonceFromHeader` で `script-src` (無ければ `default-src`) の `'nonce-…'` を読む。nonce に HTML のエスケープ文字 (`&` `>` `<` U+2028 U+2029) があると例外 (base64 には含まれない)。Next 16 (16.4.1。2d90460e で更新) でも読む経路は同じ (`server/route-modules/app-page/parse-request-headers.js` がリクエストヘッダー `content-security-policy` (無ければ `-report-only`) を `getScriptNonceFromHeader` に渡す)。違いは、形の崩れた nonce を例外にせず無視して nonce 無しで描画を続けること (`/^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/` に当たる最初の値を使う)。`src/middleware.ts` は Next 16 でも `middleware` の名前のまま動く (`proxy` への改名は本件の範囲外)。Cloudflare Turnstile 公式「Content Security Policy」: nonce を使わない明示の代替は `script-src https://challenges.cloudflare.com` と `frame-src https://challenges.cloudflare.com` (pre-clearance を使うなら `connect-src 'self'`)。`@vercel/speed-insights` 2.0.0 の `inject` は `document.createElement("script")` に `src` を付けて差し込み、インラインの script 要素は作らない (`window.si` は JS の代入)。
+- 一次情報 (本書が依拠するもの): Next 15 公式ガイド「Content Security Policy」(nonce は middleware で毎リクエスト作り、リクエストヘッダー `Content-Security-Policy` と `x-nonce` に載せ、応答にも同じ値を付ける。nonce を使うページは動的レンダリング必須。Next は framework script・ページのバンドル・Next 生成のインライン script / style・`nonce` prop を持つ `<Script>` に自動で付与する)。Next 15.5 の実装 `server/app-render/app-render.js` は **リクエストヘッダー** `content-security-policy` (無ければ `content-security-policy-report-only`) から `getScriptNonceFromHeader` で `script-src` (無ければ `default-src`) の `'nonce-…'` を読む。nonce に HTML のエスケープ文字 (`&` `>` `<` U+2028 U+2029) があると例外 (base64 には含まれない)。Next 16 (16.4.1。2d90460e で更新) でも読む経路は同じ (`server/route-modules/app-page/parse-request-headers.js` がリクエストヘッダー `content-security-policy` (無ければ `-report-only`) を `getScriptNonceFromHeader` に渡す)。違いは、形の崩れた nonce を例外にせず無視して nonce 無しで描画を続けること (`/^'nonce-([A-Za-z0-9+/_-]+={0,2})'$/` に当たる最初の値を使う)。`src/proxy.ts` は #1744 で Next 16 の規約どおり `src/proxy.ts` (export は `proxy`。Node.js の runtime で動く) に改名した (nonce の付け方・matcher は変えていない)。Cloudflare Turnstile 公式「Content Security Policy」: nonce を使わない明示の代替は `script-src https://challenges.cloudflare.com` と `frame-src https://challenges.cloudflare.com` (pre-clearance を使うなら `connect-src 'self'`)。`@vercel/speed-insights` 2.0.0 の `inject` は `document.createElement("script")` に `src` を付けて差し込み、インラインの script 要素は作らない (`window.si` は JS の代入)。
 
 ---
 
@@ -109,7 +109,7 @@ Issue #1169: `next.config.mjs` の CSP は `script-src 'self' 'unsafe-inline' �
 ### 3.1 構造
 
 ```
-ブラウザ                         src/middleware.ts                                   Next (App Router)                     画面・route
+ブラウザ                         src/proxy.ts                                        Next (App Router)                     画面・route
 GET /home ─────────────────▶ nonce = generateCspNonce()                                                           
                              policy = buildContentSecurityPolicy({ nonce, isDev, supabaseUrl })
                              request.headers: x-csp-nonce / Content-Security-Policy を捨てて付け直す
@@ -173,7 +173,7 @@ POST /api/csp-report ──────▶ updateSession (同意の許可リス�
 
 ### 4.1 順序 (1 リクエスト)
 
-1. `src/middleware.ts` `middleware(request)`: `attachCspToRequest(request)` — nonce を作り、方針を組み立て、`request.headers` から `x-csp-nonce`・`Content-Security-Policy`・`Content-Security-Policy-Report-Only` を捨て、`x-csp-nonce` と (強制なら `Content-Security-Policy`、報告だけなら `Content-Security-Policy-Report-Only`) を載せる。`request.headers.set` は try / catch で包まない (`x-legal-consent-pending` は「出せなくても画面は止めない」ので包んでいるが、CSP の request header が載らないと Next が nonce を付けられず、強制の方針が全ページを止める。載せられない環境なら middleware の例外として 500 で止まる方が、黙って壊れるより分かりやすい)。
+1. `src/proxy.ts` `proxy(request)`: `attachCspToRequest(request)` — nonce を作り、方針を組み立て、`request.headers` から `x-csp-nonce`・`Content-Security-Policy`・`Content-Security-Policy-Report-Only` を捨て、`x-csp-nonce` と (強制なら `Content-Security-Policy`、報告だけなら `Content-Security-Policy-Report-Only`) を載せる。`request.headers.set` は try / catch で包まない (`x-legal-consent-pending` は「出せなくても画面は止めない」ので包んでいるが、CSP の request header が載らないと Next が nonce を付けられず、強制の方針が全ページを止める。載せられない環境なら middleware の例外として 500 で止まる方が、黙って壊れるより分かりやすい)。
 2. `updateSession(request)` (既存。変えない): `NextResponse.next({ request })` を 1 度作り、分岐ごとに `redirect` / `NextResponse.json` / `maintenancePageResponse()` / `internalError()` / `withLegalConsentPendingHeader` での作り直し / `supabaseResponse` のどれかを返す。どの経路も `request` は同じオブジェクトなので、1. で載せた request header は転送される (`NextResponse.next({ request })` は作った時点の `request.headers` を `x-middleware-request-*` として Next に渡す)。
 3. `middleware` が戻った応答に `res.headers.set(ヘッダー名, 方針)` を付ける (すべての戻り値に対して。`NextResponse.next()` の応答ヘッダーは最終の応答に写される — 既存の `Cache-Control: private, no-store` と同じ経路)。
 4. `is_native_app` Cookie (既存。変えない)。
@@ -298,13 +298,13 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 
 ## 9. 正典コード (定数 / 純関数 / Zod / 型)
 
-### 9.1 `src/lib/security/csp.ts` (Edge Runtime で動く。何も import しない)
+### 9.1 `src/lib/security/csp.ts` (全リクエストの前に動く proxy から読む。何も import しない)
 
 ```ts
 // src/lib/security/csp.ts
 // #1169 本番の CSP を nonce 方式にする正典: 方針の文字列・nonce の生成・ヘッダー名・報告先。
-// middleware (Edge Runtime) から読むので、このファイルは何も import しない (zod・Node の API・@/lib/env を持ち込まない。
-// src/lib/env-required.ts と同じ理由)。環境変数を名前で読むのは CSP_REPORT_ONLY だけ (src/lib/env.ts の一覧の readOnlyBy)。
+// 全リクエストの前に動く proxy (src/proxy.ts。Next 16 で middleware から改名し、Node.js の runtime で動く。#1744) から読むので、
+// このファイルは何も import しない (zod・Node の API・@/lib/env を持ち込まない。src/lib/env-required.ts と同じ理由)。環境変数を名前で読むのは CSP_REPORT_ONLY だけ (src/lib/env.ts の一覧の readOnlyBy)。
 // 方針の正本はここだけ。next.config.mjs には Content-Security-Policy を書かない (二重に付くと nonce つきのスクリプトが止まる。
 // src/__tests__/config/next-config-headers.test.ts が見張る)。
 
@@ -312,7 +312,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 export const CSP_HEADER = 'Content-Security-Policy';
 /** 報告だけの CSP の応答ヘッダー名 (CSP_REPORT_ONLY=on のとき。違反を止めず報告だけする) */
 export const CSP_REPORT_ONLY_HEADER = 'Content-Security-Policy-Report-Only';
-/** middleware が画面 (Server Component) へ nonce を渡すリクエストヘッダー。Next 公式の x-nonce と同じ役目 */
+/** proxy が画面 (Server Component) へ nonce を渡すリクエストヘッダー。Next 公式の x-nonce と同じ役目 */
 export const CSP_NONCE_HEADER = 'x-csp-nonce';
 /** 違反の報告の受け口 (POST。src/app/api/csp-report/route.ts) */
 export const CSP_REPORT_PATH = '/api/csp-report';
@@ -372,7 +372,7 @@ export function supabaseLocalOrigins(supabaseUrl: string | undefined): SupabaseL
   }
 }
 
-/** 1 リクエストにつき 1 つの nonce (16 バイトの乱数を base64 にした 24 文字)。Edge Runtime・Node・ブラウザのどれでも動く Web Crypto で作る */
+/** 1 リクエストにつき 1 つの nonce (16 バイトの乱数を base64 にした 24 文字)。Node・Edge Runtime・ブラウザのどれでも動く Web Crypto で作る */
 export function generateCspNonce(): string {
   const bytes = new Uint8Array(CSP_NONCE_BYTES);
   crypto.getRandomValues(bytes);
@@ -726,7 +726,7 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     description:
       "本番の CSP を『報告だけ』(Content-Security-Policy-Report-Only) にするスイッチ (#1169)。'on' のときだけ違反を止めず、/api/csp-report へ報告だけ送らせる",
     whenMissing: '強制する (既定)。nonce の無いインラインスクリプトは止まり、報告も届く',
-    // middleware (Edge Runtime) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (on だけ) を csp.ts の isCspReportOnly に 1 つ置く
+    // proxy (src/proxy.ts) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (on だけ) を csp.ts の isCspReportOnly に 1 つ置く
     readOnlyBy: 'src/lib/security/csp.ts',
   },
 ```
@@ -745,10 +745,17 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
 
 `ENV_SETUP.md`: 「任意の環境変数: CSP を『報告だけ』にする (`CSP_REPORT_ONLY`)」の節を `LEGAL_CONSENT_NOTICE` の節の後に足す (上と同じ内容)。
 
-### 9.7 `src/middleware.ts` (全文)
+### 9.7 `src/proxy.ts` (全文。#1744 で `src/proxy.ts` から改名)
 
 ```ts
 // tsc:skip (新設モジュール @/lib/security/csp を import するため、独立の検査では解決できない)
+/**
+ * Next 16 の proxy (旧 middleware。#1744)。全リクエストの前に動き、CSP の nonce を付けてから updateSession
+ * (lib/supabase/middleware.ts: セッションの同期・メンテナンス・凍結・同意ゲート・認証の振り分け) に渡す。
+ * Next 16 で middleware の名前が非推奨になり proxy に変わった。proxy は Node.js の runtime だけで動く
+ * (config に runtime を書くと next build が失敗する)。そのため config には matcher だけを書く。
+ * 全リクエストで読み込まれるので、zod を持つ src/lib/env.ts には到達させない (tests/env-source-scan.test.ts)。
+ */
 import { type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 import { getSupabaseUrl } from '@/lib/env-required'
@@ -793,13 +800,14 @@ function attachCspToRequest(request: NextRequest): { headerName: string; policy:
   return { headerName, policy }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const csp = attachCspToRequest(request)
   const res = await updateSession(request)
   // どの分岐の応答 (next / redirect / 403 / 503 / 500) にも同じ方針を付ける
   res.headers.set(csp.headerName, csp.policy)
 
   // ?mode=app が付いていれば is_native_app Cookie をセット (既存。変えない)
+  // これにより SSR 初回レンダリング時に cookies() で native 判定できる
   const isAppMode = request.nextUrl.searchParams.get('mode') === 'app'
   const existingCookie = request.cookies.get('is_native_app')?.value
   if (isAppMode && existingCookie !== '1') {
@@ -815,8 +823,25 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // matcher は変えない (既存のコメントと正規表現をそのまま)
   matcher: [
+    /*
+     * Match all request paths except for the ones starting with:
+     * - _next/static (static files)
+     * - _next/image (image optimization files)
+     * - favicon.ico (favicon file)
+     * - manifest.json (PWA manifest — must not be redirected to /login)
+     * - robots.txt (crawler instructions)
+     * - sw.js / workbox-* (service worker files)
+     * - api/health (死活監視用ヘルスチェック #1181。ちょうどこのパスだけ。
+     *   Supabase のセッション処理を通さず、認証基盤の不調に引きずられないようにする。
+     *   末尾の $ があるので /api/health/* (健康記録 API) は従来どおり対象のまま)
+     * - _vercel/ (Vercel が扱うパス。Speed Insights のスクリプトと計測値の送信先 /_vercel/speed-insights/* など #1179。
+     *   アプリのページではないので、未ログインの訪問者を /login へ送ったり、オンボーディングへ差し戻したりしない。
+     *   Vercel 上で有効にした機能のパスは、Vercel がこの proxy より前に応答する (本番で確認: script.js は 200)。
+     *   なので、Vercel 上で計測を守っているのはこの除外ではない。除外が効くのは、Vercel が応答しないとき
+     *   (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき) に、/_vercel/* の応答が
+     *   ログイン画面の HTML にすり替わるのを防ぐ場面。害は無いので残す)
+     */
     '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
@@ -841,7 +866,7 @@ export const dynamic = 'force-dynamic';
 
 - 消す: `isDev`・`supabaseLocalOrigins`・`supabaseImgSrc`・`supabaseConnectSrc` と、`headers()` の `'/(.*)'` の `Content-Security-Policy` の項 (値とコメント)。
 - 残す: `X-Frame-Options`・`X-Content-Type-Options`・`X-XSS-Protection`・`Strict-Transport-Security`・`/handson-tour/sample-meal.webp` の `Cache-Control`。
-- 足す (コメント): 「CSP は `src/middleware.ts` が毎リクエスト nonce つきで付ける (`src/lib/security/csp.ts`)。ここに `Content-Security-Policy` を書くと応答に 2 つ並び、ブラウザは両方を満たすものしか通さないので nonce つきのスクリプトが止まる。`src/__tests__/config/next-config-headers.test.ts` が見張る」。
+- 足す (コメント): 「CSP は `src/proxy.ts` が毎リクエスト nonce つきで付ける (`src/lib/security/csp.ts`)。ここに `Content-Security-Policy` を書くと応答に 2 つ並び、ブラウザは両方を満たすものしか通さないので nonce つきのスクリプトが止まる。`src/__tests__/config/next-config-headers.test.ts` が見張る」。
 
 ### 9.10 `packages/shared/src/legal-consent-api.ts` への差分
 
@@ -1183,11 +1208,11 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 
 | 関数 / 定数 | 置き場 | 呼ぶ側 | 契約 |
 |---|---|---|---|
-| `buildContentSecurityPolicy(input: CspBuildInput): string` | `src/lib/security/csp.ts` | `src/middleware.ts`、テスト | 純関数。`input.nonce` が base64 でなければ throw。戻り値は `; ` 区切りの 10 ディレクティブ |
-| `generateCspNonce(): string` | 同上 | `src/middleware.ts` | 16 バイトの乱数の base64 (24 文字)。毎回違う |
+| `buildContentSecurityPolicy(input: CspBuildInput): string` | `src/lib/security/csp.ts` | `src/proxy.ts`、テスト | 純関数。`input.nonce` が base64 でなければ throw。戻り値は `; ` 区切りの 10 ディレクティブ |
+| `generateCspNonce(): string` | 同上 | `src/proxy.ts` | 16 バイトの乱数の base64 (24 文字)。毎回違う |
 | `cspDirectivesOf(policy: string): Map<string, string[]>` | 同上 | テスト・e2e | 純関数 |
-| `isCspReportOnly(value?: string): boolean` | 同上 | `src/middleware.ts` (引数なし)、テスト (引数あり) | `on` だけ true。`CSP_REPORT_ONLY` を名前で読む唯一の場所 |
-| `cspHeaderName(reportOnly: boolean): string` | 同上 | `src/middleware.ts` | `Content-Security-Policy` / `Content-Security-Policy-Report-Only` |
+| `isCspReportOnly(value?: string): boolean` | 同上 | `src/proxy.ts` (引数なし)、テスト (引数あり) | `on` だけ true。`CSP_REPORT_ONLY` を名前で読む唯一の場所 |
+| `cspHeaderName(reportOnly: boolean): string` | 同上 | `src/proxy.ts` | `Content-Security-Policy` / `Content-Security-Policy-Report-Only` |
 | `supabaseLocalOrigins(url?: string): SupabaseLocalOrigins \| null` | 同上 | `buildContentSecurityPolicy`、テスト | `next.config.mjs` から移した判定 |
 | `CSP_HEADER` / `CSP_REPORT_ONLY_HEADER` / `CSP_NONCE_HEADER` / `CSP_REPORT_PATH` / `CSP_NONCE_BYTES` / `CSP_NONCE_PATTERN` / `CSP_TURNSTILE_ORIGIN` | 同上 | middleware・テスト | 文字どおり |
 | `getCspNonce(): Promise<string \| null>` | `src/lib/security/csp-nonce.ts` | (今は無し) Server Component / route | `x-csp-nonce` を読む |
@@ -1245,7 +1270,7 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 
 | 項目 | 現行 | 設計後 |
 |---|---|---|
-| CSP の置き場 | `next.config.mjs` `headers()` の `'/(.*)'` (静的な文字列) | `src/lib/security/csp.ts` (純関数) + `src/middleware.ts` (毎リクエスト)。`next.config.mjs` には無い |
+| CSP の置き場 | `next.config.mjs` `headers()` の `'/(.*)'` (静的な文字列) | `src/lib/security/csp.ts` (純関数) + `src/proxy.ts` (毎リクエスト)。`next.config.mjs` には無い |
 | `script-src` | `'self' 'unsafe-inline' [dev: 'unsafe-eval'] *.vercel-scripts.com https://challenges.cloudflare.com` | `'self' 'nonce-<24 文字>' [dev: 'unsafe-eval'] 'report-sample' *.vercel-scripts.com https://challenges.cloudflare.com` |
 | `style-src` | `'self' 'unsafe-inline'` | 同じ (据え置き) |
 | `default-src` / `frame-src` / `img-src` / `frame-ancestors` / `font-src` / `object-src` | 現行の値 | 同じ |
@@ -1315,7 +1340,7 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 ```mermaid
 sequenceDiagram
   participant B as ブラウザ
-  participant M as src/middleware.ts
+  participant M as src/proxy.ts
   participant U as updateSession
   participant N as Next (描画)
   participant R as POST /api/csp-report
@@ -1367,7 +1392,7 @@ sequenceDiagram
 | 段 | 中身 | 触るファイル |
 |---|---|---|
 | 1. 受け口 | `csp-report.ts`・route・回数制限のカテゴリ・同意の許可リストの行・テスト 3 本・番兵 2 本の追随。方針はまだ変えない (報告は届かない) | `src/lib/security/csp-report.ts`、`src/app/api/csp-report/route.ts`、`src/lib/rate-limit.ts`、`packages/shared/src/legal-consent-api.ts`、`src/__tests__/lib/security/csp-report.test.ts`、`src/__tests__/api/csp-report-route.test.ts`、`src/__tests__/lib/rate-limit-csp-report.test.ts`、`lib/supabase/__tests__/middleware-legal-consent-api.test.ts`、`src/__tests__/api/null-character-routes.test.ts` |
-| 2. 方針 | `csp.ts`・`csp-nonce.ts`・middleware・ルート layout・`next.config.mjs`・環境変数・走査・e2e と門への登録・番兵の追随・コメントの参照先 | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/middleware.ts`、`src/app/layout.tsx`、`next.config.mjs`、`src/lib/env.ts`、`.env.example`、`ENV_SETUP.md`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts`、`scripts/local-ci.sh` (`PW_ARGS` の末尾に `tests/e2e/csp-nonce.spec.ts` の 1 語)、`.github/workflows/e2e-local.yml` (1 本目の `npx playwright test` の引数の末尾に `tests/e2e/csp-nonce.spec.ts` の 1 行)、`tests/e2e-csp-nonce-suite.test.ts`、`tests/e2e/README.md` (`:112`・`:129`。§18)、`src/__tests__/config/next-config-headers.test.ts`、`src/__tests__/config/turnstile-config.test.ts`、`tests/speed-insights-1179.test.tsx`、`tests/inner-html-contract.test.ts`、`src/__tests__/lib/env.test.ts`、`apps/mobile/__tests__/lib/webViewBridge.test.ts`、コメントだけ: `src/lib/auth/turnstile.ts`・`apps/mobile/src/lib/webViewBridge.ts`・`apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx` (`:558`)・`tests/e2e/adversarial-deep.spec.ts` (F-1 の古い説明)・`tests/e2e/auth-turnstile.spec.ts` (`:5`・`:145` の文言)・`tests/e2e/helpers/turnstile-offline.ts` (`:13`)・`tests/posthog-not-adopted-contract.test.ts` (`:11`)・`tests/markdown-lite.test.ts` (`:6`) |
+| 2. 方針 | `csp.ts`・`csp-nonce.ts`・middleware・ルート layout・`next.config.mjs`・環境変数・走査・e2e と門への登録・番兵の追随・コメントの参照先 | `src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/proxy.ts`、`src/app/layout.tsx`、`next.config.mjs`、`src/lib/env.ts`、`.env.example`、`ENV_SETUP.md`、`src/__tests__/lib/security/csp.test.ts`、`src/__tests__/lib/security/csp-nonce.test.ts`、`tests/middleware-csp.test.ts`、`tests/csp-no-inline-script.test.ts`、`tests/e2e/csp-nonce.spec.ts`、`scripts/local-ci.sh` (`PW_ARGS` の末尾に `tests/e2e/csp-nonce.spec.ts` の 1 語)、`.github/workflows/e2e-local.yml` (1 本目の `npx playwright test` の引数の末尾に `tests/e2e/csp-nonce.spec.ts` の 1 行)、`tests/e2e-csp-nonce-suite.test.ts`、`tests/e2e/README.md` (`:112`・`:129`。§18)、`src/__tests__/config/next-config-headers.test.ts`、`src/__tests__/config/turnstile-config.test.ts`、`tests/speed-insights-1179.test.tsx`、`tests/inner-html-contract.test.ts`、`src/__tests__/lib/env.test.ts`、`apps/mobile/__tests__/lib/webViewBridge.test.ts`、コメントだけ: `src/lib/auth/turnstile.ts`・`apps/mobile/src/lib/webViewBridge.ts`・`apps/mobile/src/components/web/WebViewScreen.tsx`・`apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx` (`:558`)・`tests/e2e/adversarial-deep.spec.ts` (F-1 の古い説明)・`tests/e2e/auth-turnstile.spec.ts` (`:5`・`:145` の文言)・`tests/e2e/helpers/turnstile-offline.ts` (`:13`)・`tests/posthog-not-adopted-contract.test.ts` (`:11`)・`tests/markdown-lite.test.ts` (`:6`) |
 
 段 1 を先にするのは、方針が `report-uri /api/csp-report` を指した時点で受け口が実在するようにするため (404 への報告を出さない)。
 
@@ -1414,7 +1439,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/next15-async-request-api-scan.test.ts` | `headers()`・`params` | `headers()` は await の直下 | `getCspNonce` は `(await headers()).get(...)`。route は `params` 無し (変更なし) | 2 |
 | `tests/supabase-service-role-client-scan.test.ts` | `@supabase/supabase-js` | `createClient` は一覧のファイルだけ | route は `createLogger` だけ (変更なし) | 1 |
 | `tests/jst-today-source-scan.test.ts` | `toISOString`・`_at` | 日付の書き方 | 新設コードに日付の処理は無い (変更なし) | – |
-| `tests/health-middleware-exemption.test.ts`・`tests/speed-insights-middleware-1179.test.ts`・`src/__tests__/lib/maintenance-mode.test.ts` | `from '@/middleware'`・`config.matcher` | matcher の固定 | matcher は変えない (変更なし)。`@/middleware` の import が `@/lib/security/csp` を連れてくるが副作用は無い | 2 |
+| `tests/health-middleware-exemption.test.ts`・`tests/speed-insights-middleware-1179.test.ts`・`src/__tests__/lib/maintenance-mode.test.ts` | `from '@/proxy'`・`config.matcher` | matcher の固定 | matcher は変えない (変更なし)。`@/proxy` の import が `@/lib/security/csp` を連れてくるが副作用は無い | 2 |
 | `tests/design-system-1058.test.ts` | `src/app/layout.tsx`・`<html lang="ja"`・`skip-link` | ルート layout の a11y の固定 | `<html lang="ja">`・スキップリンク・`#main-content` は残す (変更なし) | 2 |
 | `tests/posthog-not-adopted-contract.test.ts` | `next.config.mjs`・`posthog`・`next-config-headers.test.ts` | PostHog の語が無い。`:11` のコメントが「CSP (next.config.mjs の connect-src) に PostHog が無いことは next-config-headers.test.ts が検査する」と書く | 検査は変更なし (CSP を消しても PostHog は出ない)。`:11` のコメントを「CSP (`src/lib/security/csp.ts` の connect-src) に PostHog が無いことは `src/__tests__/lib/security/csp.test.ts` が検査する」に (コメントだけ) | 2 |
 | `src/__tests__/lib/maintenance-mode.test.ts:263` | `not.toContain('<script')` | メンテナンス HTML に script 無し | 変更なし (本設計の前提) | – |
@@ -1422,7 +1447,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/e2e/auth-turnstile.spec.ts` | `securitypolicyviolation`・`next.config.mjs` | Turnstile が CSP で止まらない | 変更なし (本設計の受入の一部)。ファイル頭の説明 (`:5`) と失敗の文言 (`:145`) の `next.config.mjs` を `src/lib/security/csp.ts` に (検査の中身は変えない) | 2 |
 | `tests/e2e/helpers/turnstile-offline.ts` | `next.config.mjs` | `:13` のコメントが「この文書の CSP (next.config.mjs の script-src / frame-src)」と書く | コメントの `next.config.mjs` を `src/lib/security/csp.ts` に (コメントだけ) | 2 |
 | `apps/mobile/__tests__/components/WebViewScreen.bridge.test.tsx` | `next.config.mjs の frame-src` | `:558` のコメントが「Web の CSP (next.config.mjs の frame-src)」と書く | コメントの `next.config.mjs` を `src/lib/security/csp.ts` に (コメントだけ。検査は変えない) | 2 |
-| `tests/ai-consent-enforcement.test.ts` | `src/middleware.ts` | middleware が AI へ送るコードに届かない | 変更なし (csp.ts は AI に触れない) | 2 |
+| `tests/ai-consent-enforcement.test.ts` | `src/proxy.ts` | middleware が AI へ送るコードに届かない | 変更なし (csp.ts は AI に触れない) | 2 |
 | `src/__tests__/api/log.test.ts`・`tests/api-security-cluster.test.ts` | `/api/log`・`'client-log'` | 既存の受け口 | 変更なし | – |
 | `src/__tests__/config/next-config-build-info.test.ts`・`src/__tests__/config/next-config-build-lint.test.ts`・`src/__tests__/config/next-config-client-router-cache.test.ts` | `next.config.mjs` | 3 本とも `next.config.mjs` を動的 import し、`env` (`NEXT_PUBLIC_APP_VERSION` / `NEXT_PUBLIC_BUILD_DATE`)・`eslint` の項目が無いこと (Next 16 で無くなった。#1621)・`experimental.staleTimes` を読む。`headers()` と CSP は読まない | 変更なし (§9.9 で消すのは `isDev`・`supabaseLocalOrigins`・`supabaseImgSrc`・`supabaseConnectSrc` と `headers()` の CSP の項だけで、`env`・`experimental.staleTimes`・`images` は残り、`eslint` の項目は無いまま。import は通り、値は変わらない) | 2 |
 | `tests/e2e/b11-performance.spec.ts` (`:664` の「7. next.config.mjs — 設定確認」) | `next.config.mjs` | 見出しとコメントに `next.config.mjs` の語があるが、ファイルは読まず `/home` の応答の `content-encoding` を見る。CSP は読まない | 変更なし (圧縮の設定は §9.9 で触らない) | – |
@@ -1452,7 +1477,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 区分 | 対象 |
 |---|---|
 | 保持 (変えない) | `lib/supabase/middleware.ts` (`updateSession`) の全分岐、matcher、`lib/legal-consent.ts`、`src/lib/maintenance-mode.ts`、`src/lib/auth/turnstile.ts` (コメントの参照先だけ)、`src/components/SpeedInsightsClient.tsx`、`src/lib/markdown-lite.ts`、`src/components/AIChatBubble.tsx`、styled-jsx の 2 箇所、`apps/mobile` のコード (コメントの参照先だけ。`apps/mobile/src/lib/turnstile.ts` の HTML 文字列の `<script>` / `<style>` も変えない: §6.1 I-8・§6.2 T-6)、`src/app/api/log/route.ts` |
-| 変更 | `src/middleware.ts` (CSP の付与)、`src/app/layout.tsx` (インラインスクリプトの削除・`force-dynamic`)、`next.config.mjs` (CSP の撤去)、`src/lib/rate-limit.ts` (カテゴリ)、`src/lib/env.ts` (一覧)、`packages/shared/src/legal-consent-api.ts` (行)、`.env.example`、`ENV_SETUP.md` |
+| 変更 | `src/proxy.ts` (CSP の付与)、`src/app/layout.tsx` (インラインスクリプトの削除・`force-dynamic`)、`next.config.mjs` (CSP の撤去)、`src/lib/rate-limit.ts` (カテゴリ)、`src/lib/env.ts` (一覧)、`packages/shared/src/legal-consent-api.ts` (行)、`.env.example`、`ENV_SETUP.md` |
 | 新規 | §17 |
 | 削除 | ルート layout のインラインスクリプト、`next.config.mjs` の CSP と `supabaseLocalOrigins` (csp.ts へ移す) |
 

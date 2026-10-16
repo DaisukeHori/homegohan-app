@@ -2,7 +2,7 @@
  * 18 歳未満の本人の「保護者の同意とのつながり」を DB に聞いて、同意ゲートの入力に足す (#1173)。
  *
  * lib/legal-consent.ts は副作用のない関数だけのファイルなので、DB に聞く処理はここに置く。
- * middleware (Edge ランタイム) から import されるので、Node 専用の API を使わない (@supabase/ssr の型と shared だけ)。
+ * 全リクエストの前に動く proxy (src/proxy.ts) から lib/supabase/middleware.ts 経由で import される。依存は @supabase/ssr の型と shared だけに保つ。
  * 呼ぶのは middleware の画面の分岐と /api の分岐、同意画面のサーバー側、GET /api/legal/status の route。
  * /auth/callback は呼ばない (初期設定前の新しいアカウントは、同意画面が数え直す)。
  */

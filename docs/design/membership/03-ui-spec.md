@@ -516,7 +516,7 @@ paste_group 内の食事を 1 回の操作でまとめて書き換える機能 (
 | `src/app/(main)/menus/weekly/_components/DayCard.tsx` | ~~MealRow / PasteGroupedMealRows 採用~~ (取り下げ。部品を #1135 で削除したため) |
 | `src/app/(org)/org/invites/page.tsx` | revoke / 履歴表示 / 受領状況追加 |
 | `src/app/(main)/settings/page.tsx` | 「メンバシップ設定」リンク追加 |
-| `src/middleware.ts` | `/invite/[token]` を public route に追加 (signup 前でもアクセス可) |
+| `src/proxy.ts` | `/invite/[token]` を public route に追加 (signup 前でもアクセス可) |
 | `src/lib/auth/helpers.ts` | family_id ベースの認可ヘルパー追加 |
 
 ### 12.2 新規追加箇所

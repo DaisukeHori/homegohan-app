@@ -115,7 +115,7 @@ const PHOTO_MODE_COPY: Record<PhotoMode, {
 // #1141: ?mode=<撮影の種類> で来たときは、モード選択を飛ばしてその種類の撮影ステップから始める
 // (例: 健康記録の「写真で記録」→ /meals/new?mode=weight_scale)。
 // mode クエリには撮影の種類以外の値も来る (ネイティブアプリの WebView は全 URL に mode=app を付ける。
-// src/middleware.ts / useNativeAppMode 参照)。PHOTO_MODES に無い値は無視して従来どおりモード選択から始める。
+// src/proxy.ts / useNativeAppMode 参照)。PHOTO_MODES に無い値は無視して従来どおりモード選択から始める。
 // `in` 演算子だと constructor / toString などの組み込みプロパティ名も「ある」と判定されるため、
 // PHOTO_MODES 自身のキーだけで判定する。
 const parsePhotoModeParam = (value: string | null): PhotoMode | null => (

@@ -19,7 +19,7 @@
  * ai_chat_enabled は ON、maintenance_mode は OFF、menu_generation_v5_* は ON。つまり、フラグの仕組みの不調では、
  * AI への送信もサイトも止まらない。止めるのは、運営が feature_flags の行を明示的に切り替えたときだけ。
  * 読み出しの失敗は構造化ログ (src/lib/db-logger.ts) に残す。isFeatureEnabled は例外を投げない。
- * ただし、ログの書き込みは待たずに投げっぱなし (db-logger の saveLog) なので、Edge のミドルウェアでは、応答を返したあとに
+ * ただし、ログの書き込みは待たずに投げっぱなし (db-logger の saveLog) なので、proxy (src/proxy.ts) では、応答を返したあとに
  * 書き込みが打ち切られることがある。そのときは app_logs に残らず、コンソールだけになる。
  *
  * 【メモリのキャッシュ】
@@ -310,7 +310,7 @@ export async function isFeatureEnabled(
  * 自分の API route 側のメモリを新しくするために呼ぶ。
  * 呼ぶ前に始まっていた読み出しは打ち切らない。その読み出しが古い値で終わると、その値がメモリに戻ることがある
  * (最大 FEATURE_FLAG_CACHE_TTL_MS)。
- * 他のインスタンスと、ミドルウェア (Edge ランタイム。API route (Node) とはメモリが別) は、
+ * 他のインスタンスと、proxy (src/proxy.ts。API route とメモリを共有するとは限らない) は、
  * 最大 FEATURE_FLAG_CACHE_TTL_MS 遅れて反映される。
  */
 export function invalidateFeatureFlag(key: string): void {

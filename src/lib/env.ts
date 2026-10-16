@@ -16,7 +16,7 @@
  *    このファイルは名前を一覧のキーに書くだけで、値を読んでいないことを確かめる)。
  *
  * このファイルは zod を読み込む (最小のスキーマでも minify 後に約 59 KB)。そのため、ブラウザ向けのコード
- * (lib/supabase/client.ts) と Edge Runtime のコード (middleware・runtime = 'edge' の route) からは
+ * (lib/supabase/client.ts)・全リクエストの前に動く proxy (src/proxy.ts)・毎分呼ばれる cron の route からは
  * import せず、何も import しない src/lib/env-required.ts を使う。Node.js のサーバーコードと
  * scripts/check-env.mjs (npm run check:env) はこちらを使ってよい。
  * scripts/check-env.mjs が Node.js から直接読み込めるように、このファイルは zod 以外を静的に import しない
@@ -306,7 +306,7 @@ export const SERVER_ENV_VARS = {
     description:
       "利用規約・プライバシーポリシーの再同意の強制 (#1174)。'on' のときだけ、同意が済んでいない利用者を同意画面 (/legal-consent) へ回す",
     whenMissing: '誰も同意画面へ回さない (既定)。お知らせを出すかは LEGAL_CONSENT_NOTICE で決まる',
-    // middleware (Edge Runtime) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。
+    // proxy (src/proxy.ts) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。
     // 2 つのフラグの読み方 (on だけを有効とみなす) は lib/legal-consent.ts の isLegalConsentFlagOn に 1 つだけ置く
     readOnlyBy: 'lib/legal-consent.ts',
   },
@@ -322,7 +322,7 @@ export const SERVER_ENV_VARS = {
     description:
       "本番の CSP を『報告だけ』(Content-Security-Policy-Report-Only) にするスイッチ (#1169)。'on' のときだけ違反を止めず、/api/csp-report へ報告だけ送らせる",
     whenMissing: '強制する (既定)。nonce の無いインラインスクリプトは止まり、報告も届く',
-    // middleware (Edge Runtime) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (on だけ) を csp.ts の isCspReportOnly に 1 つ置く
+    // proxy (src/proxy.ts) が読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (on だけ) を csp.ts の isCspReportOnly に 1 つ置く
     readOnlyBy: 'src/lib/security/csp.ts',
   },
   DSR_RESPONSE_DUE_DAYS: {
@@ -345,7 +345,7 @@ export const SERVER_ENV_VARS = {
     description:
       '機能フラグの行をメモリに覚える時間 (ミリ秒。正の整数を 10 進の数字だけで書く: 前後の空白を除いて先頭が 1〜9) (#1496・#1535)。運営画面で切り替えてから反映されるまでの最大の遅れ。結合テストのサーバーだけが短くする。本番では設定しない',
     whenMissing: '30,000 ms (30 秒)。10 進の数字だけで書いた正の整数でない値 (空・0・負・小数・1e3・0x7D0・+2000 など) も 30 秒',
-    // middleware (Edge Runtime) も読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (10 進の数字だけの正の整数でなければ既定値) を 1 か所に置く
+    // proxy (src/proxy.ts) も読むので、zod を持つこのファイルの getOptionalEnv は使えない。読み方 (10 進の数字だけの正の整数でなければ既定値) を 1 か所に置く
     readOnlyBy: 'src/lib/feature-flag-cache-ttl.ts',
   },
   AI_ULTIMATE_MODE_DAILY_LIMIT: {
