@@ -98,6 +98,8 @@ const REMOVED_SCREENS: readonly string[] = [
   '(super-admin)/super-admin/feature-flags.tsx',
   '(super-admin)/super-admin/index.tsx',
   '(super-admin)/super-admin/settings.tsx',
+  // billing/01 §10.4 (#1701 段 C): アプリから Web の購入のページへ誘導しないため消した
+  '(public)/pricing.tsx',
 ];
 
 /** テンプレート文字列の ${...} を置き換える印 (動的な区間 [id] にだけ一致する) */
