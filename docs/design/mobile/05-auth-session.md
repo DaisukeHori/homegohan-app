@@ -1,5 +1,13 @@
 # モバイル 認証・セッション・push token の扱い
 
+> 版: v1.1。改定履歴: v1.0 Issue #1038 (F7-04〜F7-10) の整理。v1.1 2026-10-17 Issue #1768: `@supabase/supabase-js` 2.117.3 と `@supabase/ssr` 0.12.7 への更新に合わせ、借り物のセッションを捨てる合図 (§6.1・§6.3) を auth-js 2.117 の挙動 (access token が有効なうちの先回りの更新の失敗ではセッションを捨てず `SIGNED_OUT` も出さない) で決め直し、§3・§5・§7 の auth-js の版に依る記述を現在形にし、§0 (範囲と分冊判定) と §9 (更新の設計: 要件・シナリオとトレース・構造裁定・表 3 点・Cookie の読み書きの移行・テストの直し方・apps/mobile の版・段分け・番兵と他の文書の追随表) を足した。
+
+## 0. 改定 #1768 の範囲と分冊判定 (v1.1)
+
+範囲の正本は Issue #1768 の本文 (関連: #1621・Dependabot #1590)。`@supabase/supabase-js` を 2.105.3 から 2.117.3 へ、`@supabase/ssr` を 0.1.0 から 0.12.7 へ上げるために、本書の §6.1・§6.3 の前提 (借り物のセッションを捨てる合図) を 2.117 の挙動に合わせて改め、Cookie の読み書き (ssr 0.12 の `getAll` / `setAll`) への移行・赤になる既存テストの直し方・apps/mobile の版・段分けを §9 に書く。§6.1・§6.3 は改定後の本文で、§9 は実装者が手を止めずに実装できる粒度の設計。
+
+分冊判定: **1 冊** (核と配線に分けない)。本書は改定後に約 920 行で 800 行を超え、消費先 (Web の Supabase の呼び出し口 3 ファイルと proxy・テスト・apps/mobile の `package.json`) も 3 を超える (判定のトリガーに当たる) が、変更は「依存の版を上げる」1 つの操作に閉じていて分けられない。ssr 0.12.7 は peer に `@supabase/supabase-js` `^2.114.0` を要る (npm の 0.12.7 の `peerDependencies`) ので 2 つは同時に上げる。`getAll` / `setAll` は ssr 0.1.0 に無く (0.1.0 の `dist/index.js:253-339` は `get` / `set` / `remove` だけを見る)、赤になるテストは 2.117 の挙動で初めて意味を持つので、版を上げる PR と同じ PR で直す。共有面 (`package-lock.json`・`lib/supabase/*`) に触るのはこの 1 本の PR だけ (§9.13)。
+
 ## 1. 目的・スコープ
 
 モバイルアプリの認証まわり (セッションの保管、起動時の復元、Google ログイン、WebView との状態の食い違い、push token) の設計。
@@ -85,6 +93,8 @@ Supabase のセッション (access_token と refresh_token) は、iOS Keychain 
 access_token が期限切れで、更新に通信が必要な機内モード起動では、`getSession()` が `session: null` を返す (保存済みのセッションは消えていない)。
 通信エラーのときは `getStoredSession()` で保存済みのセッションを読み、それで起動する。通信が戻れば supabase-js が更新し (`TOKEN_REFRESHED`)、差し替わる。
 サーバーが `refresh_token` を失効と答えれば `SIGNED_OUT` になるので、検証を省いても失効の取りこぼしにはならない。
+auth-js 2.117 (#1768。§9.1) では、access token がまだ有効なうちの先回りの更新 (残り 120 秒未満の tick・残り 90 秒未満の `getSession()`) が失効と答えられても、セッションを捨てず `SIGNED_OUT` も出さない (失敗を 60 秒控え、その間は同じ refresh_token で `/token` を呼ばない)。
+捨てて `SIGNED_OUT` を出すのは、access token が失効したあとの更新の失敗 (失効から最大 90 秒 = 控えの 60 秒 + tick の 30 秒の遅れ)。上の表の `SIGNED_OUT` の行 (ネイティブの経路と掃除) の中身は変わらず、届く時刻が access token の失効の後になるだけ (§9.6 の表②)。`getUser()` の `403 session_not_found` で端末のセッションを消す経路 (起動時の失効の明言・`session-expired`) は 2.117 でも同じ (§5)。
 
 - **この場合は `getUser()` による検証を省く**。`getUser()` も同じ更新をもう一度試みて、同じ理由で失敗するだけだから。
   supabase-js は更新に失敗すると約 25 秒かけてやり直す (`_initialize` と `getSession()` のそれぞれで)。実測で、期限切れ + オフラインの起動は、
@@ -141,9 +151,11 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
   | Web (WebView) からの `sign-out` / `session-expired` の反映 (`webViewAuthMessages.ts`) | **処理の最初に控えた本人のアクセストークン**。`Authorization` ヘッダーで明示する (下) |
 
 - Web (WebView) からのログアウトでは、**キャッシュ済みのセッションに頼らず、控えた値を使う**。Web の `signOut()` は全端末のセッションをサーバーで失効させ、
-  失効したあとにネイティブが `getUser()` を呼ぶと、サーバーは `403 session_not_found` を返す。auth-js (2.105) はそれを `AuthSessionMissingError` にして、
-  端末のセッションを消す (`_removeSession`)。auth-js の処理はロックで直列なので、そのあとに動く `getSession()` は `null` を返す。
-  すると、ユーザー ID が分からず削除を諦める (skipped)、または削除の通信が anon キーで送られて RLS で 0 行になる (エラーにならない)。
+  失効したあとにネイティブが `getUser()` を呼ぶと、サーバーは `403 session_not_found` を返す。auth-js はそれを `AuthSessionMissingError` にして、
+  端末のセッションを消す (`_removeSession`。2.105.3 の `dist/main/GoTrueClient.js:2506-2511` と 2.117.3 の同 `:2724-2729` で同じ)。
+  2.105 では auth-js の処理がロック (`_acquireLock` の待ち行列) で直列だったので、そのあとに動く `getSession()` は `null` を返した。2.117 はロック無しが既定 (`lock = null`。同 `:157`・`:2494-2507` の `_useSession` は直列化しない) で、
+  `getUser()` の途中に動く `getSession()` がまだ消えていないセッションを返すこともあるが、どちらの版でも「処理の最初に控える」(§6.2) は成り立つ。
+  控えが無いと、ユーザー ID が分からず削除を諦める (skipped)、または削除の通信が anon キーで送られて RLS で 0 行になる (エラーにならない)。
   詳しい順番と対策は §6.2
 - `Authorization` ヘッダーを明示すると、supabase-js は上書きしない (`fetchWithAuth` は、既にあれば付けない)。
   PostgREST は JWT の署名と期限だけを見て、セッションが失効済みかどうかは見ないので、アクセストークンの期限内なら、失効後でも RLS で本人の行を消せる
@@ -196,23 +208,28 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 - 従来の動作 (実際の refresh_token を入れる) へ戻すスイッチ: 環境変数 `NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on` (Vercel は再デプロイ後に効く)
 - この作りの帰結として、WebView の借り物のセッションでは、Supabase のセッションの token を発行し直す操作 (二段階認証の 6 桁の verify・解除の後の refresh) を Web の側でしない。持ち主のネイティブが行い、WebView を読み込み直す (`docs/design/cross/12-operator-mfa.md` §16.4)
 
-**「切れる前に頼むので、Web は更新しない」は、前面で使っているときしか成り立たない。** ブラウザの supabase-js (auth-js 2.105) は、次の時点で必ず更新を試みる。
-借り物の refresh_token では更新が 400 になり、auth-js はセッションを捨てて `SIGNED_OUT` を出す。
+**「切れる前に頼むので、Web は更新しない」は、前面で使っているときしか成り立たない。** ブラウザの supabase-js (auth-js 2.117.3。#1768 で 2.105.3 から上げた。§9.1 に file:line) は、次の時点で必ず更新を試みる。
+借り物の refresh_token では更新が 400 (`refresh_token_not_found`) になる。auth-js 2.117 はその失敗を次のとおり扱う (2.105 は、どちらの契機でも失敗した時点でセッションを捨てて `SIGNED_OUT` を出していた)。
 
-| auth-js が更新を試みる契機 | 更新を試みる残り時間 |
-|---|---|
-| 自動更新の tick (30 秒ごと。前面のときだけ) | 120 秒未満 (`floor(残り / 30 秒) <= AUTO_REFRESH_TICK_THRESHOLD (3)`) |
-| `getSession()` (Supabase への API 呼び出しのたびに走る)・バックグラウンドからの復帰 (`visibilitychange`) | 90 秒未満 (`EXPIRY_MARGIN_MS`)。復帰時は tick も直ちに走る |
+| auth-js が更新を試みる契機 | 更新を試みる残り時間 | 失敗したとき (2.117.3) |
+|---|---|---|
+| 自動更新の tick (30 秒ごと。前面のときだけ) | 120 秒未満 (`floor(残り / 30 秒) <= AUTO_REFRESH_TICK_THRESHOLD (3)`) | access token が**まだ有効**なら、セッションを残し `SIGNED_OUT` を出さない。失敗を 60 秒 (`REFRESH_FAILURE_COOLDOWN_MS`) 控え、その間は同じ refresh_token で `/token` を呼ばない。access token が**失効した後**なら、セッションを捨てて `SIGNED_OUT` を出す |
+| `getSession()` (Supabase への API 呼び出しのたびに走る)・バックグラウンドからの復帰 (`visibilitychange`) | 90 秒未満 (`EXPIRY_MARGIN_MS`)。復帰時は tick も直ちに走る | 同上。残したセッションがあれば `getSession()` はそれを返す (失効前は access token がそのまま使える)。失効後で控えが効いている間は `{ session: null, error }` を返し、保管はまだ消えていない (次の実際の更新で捨てる) |
 
-そのため 2 段構えにしている。
+`SIGNED_OUT` が出るのは、**access token が失効したあとの更新の失敗**か、利用者のログアウト (`signOut()`) だけになった。失効から `SIGNED_OUT` までは最大 90 秒 (控えの 60 秒 + 次の tick までの 30 秒。§9.4 の T-4)。
+
+そのため 2 段構えにしている (構えは #1038 と同じ。2.117 で変わるのは、1 と 2 の間の「捨てられるが使える」期間が無くなったこと)。
 
 1. **前面で使っているとき**: `NativeSessionWatcher` が、auth-js より先に再ブリッジを頼む (`REFRESH_AHEAD_SECONDS` = 180 秒)。
    20 秒ごとの確認の遅れと、ネイティブの再ブリッジにかかる時間を見込んでも、auth-js の tick (120 秒) より前に済む。
-   (以前の 120 秒は tick と同じ閾値で、tick が先に走ると (およそ 3 回に 1 回) 借り物の refresh_token で更新して失敗していた。90 秒という説明も誤りで、90 秒は `getSession()` の閾値)
-2. **先回りできないとき**: 1 時間以上バックグラウンドに置いて戻ると、その間タイマーが止まっているので、復帰した瞬間に auth-js が更新を試みる。
+   (以前の 120 秒は tick と同じ閾値で、tick が先に走ると (およそ 3 回に 1 回) 借り物の refresh_token で更新して失敗していた。90 秒という説明も誤りで、90 秒は `getSession()` の閾値)。
+   2.117 では、万一 tick が先に走っても access token が有効な間はセッションが残り、画面は動き続ける (借り物の値での `/token` の 400 が 1 回出るだけ)。180 秒は、その無駄な `/token` を避け、失効の前に読み込み直しを済ませるための値として据え置く
+2. **先回りできないとき**: 1 時間以上バックグラウンドに置いて戻ると、その間タイマーが止まっているので、復帰した瞬間に auth-js が更新を試みる (access token は失効しているので、捨てて `SIGNED_OUT`)。
    どんな閾値でも先回りできない。WebView の中の `SIGNED_OUT` は「利用者のログアウト」とは限らないので、`MainLayout` は §6.3 のとおり扱う。
+   復帰時は `NativeSessionWatcher` の `visibilitychange` も走り、`getSession()` が `null` なら `session-expired` を送る。`MainLayout` の送信と重なっても、Web 側の最小の間隔 (`SESSION_EXPIRED_MIN_INTERVAL_MS` = 15 秒) で 1 回になる
 
 閾値の関係は `src/__tests__/lib/native-session-authjs-thresholds.test.ts` が、本物の auth-js (GoTrueClient) の動きで確かめる (auth-js を上げて閾値が変わると落ちる)。
+#1768 で、同じファイルに「失敗の控えは 60 秒」「先回りの失敗ではセッションを残す」「失効後の失敗で捨てて `SIGNED_OUT`」も足す (§9.9)。
 
 ### 6.2 Web → ネイティブ のメッセージ
 
@@ -299,13 +316,14 @@ sequenceDiagram
 ### 6.3 WebView の中の SIGNED_OUT (`MainLayout`)
 
 `MainLayout` は `onAuthStateChange` の `SIGNED_OUT` で、これまで `clearUserScopedLocalStorage()` と `/login` への移動を行っていた (ほかのタブでのログアウトを伝えるため。#145)。
-WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限らない (§6.1)。ログアウト扱いにすると、ログアウトしていないのに、次のことが起きる。
+WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限らない (§6.1。auth-js 2.117 では、借り物の access token が失効したあとの更新の失敗で出る。失効の前は出ない)。ログアウト扱いにすると、ログアウトしていないのに、次のことが起きる。
 
 - user-scoped の localStorage のキーが消える。Cookie と localStorage は全タブの WebView で共有なので、開いているすべてのタブが失う。
   `v4MenuGenerating` など (献立タブがページリロード時に進行中の生成を復元する値)、`v4_range_days` / `v4_include_existing` (AI 生成の設定)、`profile_reminder_dismissed` (閉じたバナーが再び出る)
 - `/login` が一瞬出てから、ネイティブの再ブリッジで読み込み直される
 
-そこで、WebView の中 (`isInNativeWebView()`) の `SIGNED_OUT` は次のとおり扱う。
+そこで、WebView の中 (`isInNativeWebView()`) の `SIGNED_OUT` は次のとおり扱う。**借り物のセッションを捨てる合図は、2.117 でも `SIGNED_OUT` のまま** (§9.5 の裁定)。
+失効の前に auth-js がセッションを捨てなくなったぶん、合図は「失効してから最大 90 秒」に遅れて届くが、その間は `NativeSessionWatcher` が `getSession()` の `null` で `session-expired` を送る (§6.1 の 2.)。`MainLayout` のコードは変えない。
 
 1. `session-expired` を送って、再ブリッジを頼む。localStorage は消さず、`/login` へも移さない
 2. ネイティブが読み込み直すと、ページごと入れ替わるので、待ちは自然に終わる
@@ -319,7 +337,8 @@ WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限ら�
 すぐ `/login` へ移し、ページごと入れ替わるので、15 秒を待たずに終わる。
 ほかのタブからの `BroadcastChannel('auth')` の `SIGNED_OUT` (意図したログアウト) は、従来どおりすぐログアウト扱いにする。
 
-`src/__tests__/app/main-layout-signed-out.test.tsx` が、本物の auth-js (GoTrueClient) で更新を失敗させて `SIGNED_OUT` を出し、この扱いを確かめる。
+`src/__tests__/app/main-layout-signed-out.test.tsx` が、本物の auth-js (GoTrueClient) で、失効した借り物のセッションの更新を失敗させて `SIGNED_OUT` を出し、この扱いを確かめる。
+あわせて、失効の前 (残り 100 秒・60 秒) の更新の失敗では、セッションが残り、`MainLayout` が何も送らず localStorage も消さないことを確かめる (2.117 で変わった前提の固定。it の一覧は §9.9)。
 同じファイルで、実際の設定画面を `MainLayout` の中に置いてログアウトし、ネイティブに届くのが `sign-out` だけであること (`session-expired` が先に届かないこと) も確かめる。
 
 ### 6.4 WebView の Cookie の掃除 (#1612 F7-16 / #1647)
@@ -342,6 +361,8 @@ WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限ら�
 | ログアウトの `sign-out` を `signOut()` の前に送る (§6.2) | 旧アプリは未知の `type` を無視する。変化なし | この変更より前の Web (`session-expired` が先、`sign-out` が `signOut()` のあとに届く) でも、新アプリは処理の最初に控えたセッションで push token を消せる |
 | WebView の中の `SIGNED_OUT` (§6.3) | 旧アプリは `session-expired` を無視するので、`NATIVE_REBRIDGE_WAIT_MS` (15 秒) 後に従来どおり localStorage を消して `/login` へ移る。従来より最大 15 秒遅れるだけ | — |
 | `native-bridge` の Cookie の refresh_token | コード方式を使うのは新ビルドだけ (旧アプリは旧方式)。変化なし | — |
+| auth-js 2.117 への更新 (#1768。§9) | Web の借り物のセッションが失効の前に捨てられなくなるだけ。旧アプリが受けるメッセージ (`session-expired` / `sign-out`) と意味は同じ。ネイティブの auth-js は 2.105 のまま | ネイティブの自動更新で refresh_token が失効と答えたときの `SIGNED_OUT` が、access token の失効の後 (最大 90 秒後) に届く。経路と掃除は同じ (§3)。Web の借り物の扱いは旧 Web のまま |
+| Web の Cookie の書式 (ssr 0.12 の `base64-` 接頭辞。§9.7) | 旧アプリの WebView は Cookie の名前しか見ない (`sb-` の接頭辞で期限切れにする注入の JS・`Networking.clearCookies` は全部を消す §6.4)。変化なし | — (Cookie は Web が書き、ネイティブは読まない) |
 
 - Web の変更は、先に本番へ出して問題ない。旧アプリは何も変わらない
 - ただし、**コード方式のブリッジ (#1036 / #1289) を載せたビルドと、この変更のネイティブ側は、同じビルドで出す**こと。
@@ -369,4 +390,527 @@ WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限ら�
 - ログアウトのあと、同じタブの `MainLayout` が `BroadcastChannel` で `window.location.href = '/login'` と全体を読み込み直す。ページごと入れ替わるので `notifyNativeSignOut()` の記録が初期化され、
   ログイン画面が `session-expired` をもう一度送る。ネイティブ側で `ignored` (ログアウト処理中) か `no-session` (ログアウト済み) になるだけで害は無いので、そのままにしている。
   `sessionStorage` に印を残して抑える案は、印が残る期間の管理が要り、本当に再ブリッジが要るときに止めてしまう危険のほうが大きい
-- push token を DB 側で端末ごとに 1 ユーザーへ紐づけ直す (別ユーザーのログインで古い行を消す) には、サービスロールの処理が要る。サーバー側の送信 (`notify-push`) は #1136 で未実装
+- push token を DB 側で端末ごとに 1 ユーザーへ紐づけ直す (別ユーザーのログインで古い行を消す) には、サービスロールの処理が要る。サーバー側の送信は `06-push-send.md` (送信待ち `push_outbox` と worker `GET /api/cron/push-outbox`。#1136)
+- auth-js 2.117 への更新 (#1768) で残る未解決は §9.17
+
+## 9. `@supabase/supabase-js` 2.117.3 と `@supabase/ssr` 0.12.7 への更新 (#1768)
+
+Issue #1768 の本文が範囲の正本 (Dependabot #1590・仕分け #1621 の見送り分)。本章は、2.117 で変わる auth-js の挙動のもとで借り物のセッションを捨てる合図を決め直し (§9.2〜§9.6)、ssr 0.12 の Cookie の読み書きへ移行し (§9.7・§9.8)、赤になる既存のテストを新しい挙動の意味のある assert に書き直し (§9.9)、apps/mobile の版 (§9.10) と段分け (§9.13) を決める。
+行番号は、npm の tgz を展開した `package/dist/main/` (auth-js 2.117.3・2.105.3、ssr 0.12.7) と `package/dist/index.js` (ssr 0.1.0)、リポジトリは origin/main `eff674fa` (2026-10-17) のもの。更新後の木では `node_modules/@supabase/auth-js/dist/main/` と `node_modules/@supabase/ssr/dist/main/` に同じファイルがある。
+
+### 9.1 前提の実測 (file:line)
+
+**auth-js 2.117.3 (`dist/main/`)**
+
+| 事実 | 場所 |
+|---|---|
+| 定数: `AUTO_REFRESH_TICK_DURATION_MS` = 30 秒・`AUTO_REFRESH_TICK_THRESHOLD` = 3・`EXPIRY_MARGIN_MS` = 90 秒 (2.105.3 と同じ値)。**新設** `REFRESH_FAILURE_COOLDOWN_MS` = 2 tick = 60 秒 | `lib/constants.js:6`・`:9`・`:13`・`:14-21` |
+| 更新の失敗の控え `lastRefreshFailure` (refresh_token ごと。成功・他タブの `TOKEN_REFRESHED` / `SIGNED_IN`・`_removeSession` で消える) | `GoTrueClient.js:105-119`・`:282-284`・`:4430` |
+| `_callRefreshToken`: 同じ refresh_token で控えが有効 (`Date.now() < expiresAt`) なら `/token` を呼ばず控えた結果を返す | `GoTrueClient.js:4211-4216` |
+| `_callRefreshToken` の失敗 (やり直せないエラー): 保管の `expires_at * 1000 > Date.now()` なら**セッションを残す** (`_removeSession` を呼ばない)。失効後なら `_removeSession` → `SIGNED_OUT`。そのあと失敗を `REFRESH_FAILURE_COOLDOWN_MS` 控える | `GoTrueClient.js:4295-4334` (残す `:4310-4314`・捨てる `:4316`・控え `:4324-4328`) |
+| `__loadSession` (= `getSession()`): 残り 90 秒未満で更新 → 失敗しても保管が有効なら**その保管を返す**。保管が無い・失効済みなら `{ session: null, error }` | `GoTrueClient.js:2540-2547`・`:2563-2573` |
+| `_recoverAndRefresh` (初期化・復帰): 残り 90 秒未満で更新。失敗は `_debug` だけ (`console.error` も `_removeSession` もしない) | `GoTrueClient.js:4126-4145` |
+| tick: `floor(残り / 30 秒) <= 3` (= 残り 120 秒未満) で更新。ロック無しの既定では更新中の tick を飛ばす | `GoTrueClient.js:4688-4691`・`:4702-4706` |
+| `_startAutoRefresh`: 30 秒の `setInterval` と、直後の 1 回 (`setTimeout` 0) | `GoTrueClient.js:4466`・`:4487-4490` |
+| 復帰 (`visibilitychange` → visible): `_recoverAndRefresh` | `GoTrueClient.js:4752-4791` (`:4782`) |
+| `_removeSession`: 控えを消し、保管・PKCE の verifier・`-user` を消して `SIGNED_OUT` | `GoTrueClient.js:4421-4439` |
+| ロック: 既定は無し (`lock = null`。`settings.lock` を渡したときだけ)。`_useSession` は直列化しない | `GoTrueClient.js:157`・`:202-206`・`:2494-2507` |
+| `getUser()`: `403 session_not_found` (`AuthSessionMissingError`) で `_removeSession` (2.105.3 と同じ) | `GoTrueClient.js:2724-2731` (2.105.3: `:2506-2511`) |
+| `mfa.enroll`: TOTP の `qr_code` に `data:image/svg+xml;utf-8,` を前置 (2.105.3 と同じ文) | `GoTrueClient.js:4893-4895` (2.105.3: `:4368-4370`) |
+| `_updateUser`: 保管にセッションが無いと `AuthSessionMissingError` (2.105.3 と同じ) | `GoTrueClient.js:2868-2870` (2.105.3: `:2646-2648`) |
+| `_signOut`: 保管にセッション (access token) が無ければ GoTrue を呼ばず `_removeSession` だけして `{ error: null }` (2.105.3 と同じ) | `GoTrueClient.js:3427-3458` (`:3437-3456`。2.105.3: `:3182-3208`) |
+| `admin.signOut(jwt, scope)`: `POST /logout?scope=` を渡された JWT で呼ぶ (2.105.3 と同じ) | `GoTrueAdminApi.js:67-78` (両版で同じ行) |
+| `/token` の URL は `token?grant_type=refresh_token` のまま (テストの `refreshRequests` が引く語) | `GoTrueClient.js:4035` |
+| `handleError`: 本文が JSON でなく status が 500/501/502/503/504/520〜530 なら `AuthRetryableFetchError(message, status)` (message は `statusText`、空なら `'HTTP <status>'`)。JSON なら本文の `msg` / `message` | `lib/fetch.js:29-54` (`:44-48`)・`lib/errors.js:238-243` |
+| サブパスの import `@supabase/auth-js/dist/main/lib/constants` は引き続き解決する (`package.json` に `exports` が無い。`main` = `dist/main/index.js`) | `package.json:22-24` |
+| 実行環境の API: `navigator.locks` / `BroadcastChannel` / `crypto.subtle` / `structuredClone` / `TextEncoder` の参照はいずれも 2.105.3 にもあり、新しく要る API は無い (dist の grep) | — |
+
+**auth-js 2.105.3 (比較。`dist/main/`)**: `_callRefreshToken` の失敗はやり直せないエラーなら**必ず** `_removeSession` (`GoTrueClient.js:3928-3936`)、`__loadSession` は失敗を `{ session: null, error }` にする (`:2381-2384`)、`_recoverAndRefresh` は失敗を `console.error` に出して `_removeSession` (`:3859-3866`)、ロックは `navigator.locks` があればそれ・無ければ `lockNoOp` で、`_acquireLock` の待ち行列 (`pendingInLock`) が同じクライアントの処理を直列にしていた (`:140-154`・`_acquireLock` は `:2252` から)。`handleError` は 5xx を本文を読む前に `AuthRetryableFetchError(_getErrorMessage(Response), status)` にし、`Response` を `JSON.stringify` した `'{}'` が message だった (`lib/fetch.js:32-41`)。
+
+**ssr 0.12.7 (`dist/main/`)**
+
+| 事実 | 場所 |
+|---|---|
+| `createServerClient`: `cookieEncoding` の既定は `base64url`。auth の設定は `flowType: 'pkce'`・`autoRefreshToken: false`・`persistSession: true`・`skipAutoInitialize: true` (最初の `getSession()` / `getUser()` / `getClaims()` まで読まない) | `createServerClient.js:18-21`・`:32-42` |
+| `createServerClient`: `SIGNED_IN` / `TOKEN_REFRESHED` / `USER_UPDATED` / `PASSWORD_RECOVERY` / `SIGNED_OUT` / `MFA_CHALLENGE_VERIFIED` で、溜めた書き込みを `applyServerStorage` でまとめて `setAll` に渡す | `createServerClient.js:52-70` |
+| `createBrowserClient`: `cookies` を省くと (`get` も `getAll` も無い object も同じ) `document.cookie` を読み書きする。`isSingleton` の既定はブラウザなら true | `cookies.js:77-79`・`:165-169`・`createBrowserClient.js:14-18`・`:25-28` |
+| `get` / `set` / `remove` は動くが非推奨 (型は `@deprecated`)。`set` / `remove` の無い server client は書くときに `console.warn` | `cookies.js:98-145` (`:139`)・`createServerClient.d.ts:3-12` |
+| `getAll` / `setAll` の経路。`setAll` の第 2 引数は応答に付けるべきヘッダー (`Cache-Control: private, no-cache, no-store, must-revalidate, max-age=0`・`Expires: 0`・`Pragma: no-cache`。同じ server client では最初の書き込みのときだけ中身がある) | `cookies.js:146-159`・`:323-331`・`:505-509`・`types.d.ts:23-58` |
+| 読み: `base64-` で始まる値は base64url を戻して JSON として検証し、壊れていれば `console.warn` して「無い」扱い。**始まらない値 (0.1.0 が書いた JSON) はそのまま返す** | `cookies.js:45-65` |
+| 書き (server): 変わった Cookie だけを書き、古いチャンク (分割の数が減ったとき) を `maxAge: 0` で消す。書き (browser) も同じ | `cookies.js:435-509` (`:444-461`)・`:210-267` |
+| 値の書式: `base64-` + base64url(JSON)。チャンクの上限 3,180 バイト (0.1.0 と同じ) | `cookies.js:9`・`:214-217`・`utils/chunker.js:8` |
+| Cookie の既定: `path: '/'`・`sameSite: 'lax'`・`httpOnly: false`・`maxAge` 400 日 (0.1.0 は 1,000 年。ブラウザは 400 日で切る) | `utils/constants.js:4-11` (0.1.0: `dist/index.js:46-51`) |
+| 型: `CookieMethodsServer = { encode?; getAll; setAll? }`・`CookieMethodsBrowser = { encode?; getAll?; setAll? }`・`CookieOptions = Partial<SerializeOptions>` (`cookie` 1.x) | `types.d.ts:3`・`:66-89`・`:97-128` |
+| peer: `@supabase/supabase-js ^2.114.0`。依存: `cookie ^1.0.2` だけ | npm の `package.json` |
+
+**ssr 0.1.0 (比較。`dist/index.js`)**: `createBrowserClient` に options を渡すと `cookies` が `undefined` で上書きされ `typeof cookies.get` で落ちるので `cookies: {}` が要った (`:133-138`)。型でも `cookies: CookieMethods` が必須 (`index.d.ts:17-21`)。Cookie の値は JSON そのまま (`combineChunks` `:86-103`)。
+
+**リポジトリ (origin/main `eff674fa`)**
+
+| 事実 | 場所 |
+|---|---|
+| 版: ルートの `package.json` は `@supabase/ssr ^0.1.0`・`@supabase/supabase-js ^2.78.0`、`apps/mobile/package.json` は `@supabase/supabase-js ^2.78.0`。`package-lock.json` の実体は auth-js / supabase-js / postgrest-js / realtime-js / storage-js / functions-js が 2.105.3、ssr が 0.1.0 で、`apps/mobile/node_modules/@supabase/*` は無い (ワークスペースの 1 コピーに巻き上げ) | `package.json:37-38`・`apps/mobile/package.json:24`・`package-lock.json:5523-5607` |
+| Node: `engines.node` = `22.x`・`.nvmrc` = 22 (supabase-js 2.117.3 の `engines.node >= 22`) | `package.json:32-34` |
+| Web の Supabase の呼び出し口 (ssr): ① `lib/supabase/middleware.ts:147-184` (`get` / `set` / `remove`。`request.cookies` と `supabaseResponse.cookies` の両方に書く)・`:67` と `lib/legal-consent-minor.ts:13` の `ReturnType<typeof createServerClient>` (型だけ) ② `lib/supabase/server.ts:36-65` (`get` / `set` / `remove`。`set` / `remove` は `try` で包む) ③ `lib/supabase/client.ts:8` (`createBrowserClient(url, key)`。options 無し) ④ `src/proxy.ts:9`・`:54` (`updateSession` を呼ぶだけ) ⑤ `src/__tests__/helpers/real-auth-js.ts:65-72` (`createBrowserClient` に `cookies: {}`)。service_role は `lib/supabase/server.ts:19-23` の `createClient` (supabase-js) で ssr を通らない | 左のとおり |
+| middleware の更新の契機: `/api` は `getSession()` (`:191`) と `getUser()` (`:221`)、画面は `getUser()` (`:292`)。更新した Cookie は `supabaseResponse` に溜め、置き換える応答へは `withSessionCookies` (`:39-44`) で引き継ぐ | `lib/supabase/middleware.ts` |
+| native-bridge: Cookie の**名前**だけを見る (`SUPABASE_AUTH_COOKIE_PATTERN` `:50`・`clearSupabaseAuthCookies` `:127-134`)。`setSession` で書く (`:141-156`) | `src/app/(auth)/auth/native-bridge/route.ts` |
+| `MainLayout` の `SIGNED_OUT` の扱い (§6.3) と、2.105 の挙動を前提にしたコメント | `src/app/(main)/MainLayout.tsx:146-173` (`:157-167`) |
+| `NativeSessionWatcher`: `SESSION_CHECK_INTERVAL_MS` = 20 秒・`REFRESH_AHEAD_SECONDS` = 180・`getSession()` が `null` なら送る・借り物でなければ何もしない | `src/components/native-app/NativeSessionWatcher.tsx:12`・`:34`・`:58-79` |
+| `native-auth-bridge.ts`: 2.105 の閾値のコメント `:48-60`・`SESSION_EXPIRED_MIN_INTERVAL_MS` = 15 秒 `:73`・`NATIVE_REBRIDGE_WAIT_MS` = 15 秒 `:84` | `src/lib/native-auth-bridge.ts` |
+| 赤になるテスト ①: `main-layout-signed-out.test.tsx` の `it.each([100, 60])` (`:200-218`)・待ち時間 (`:220-236`)・離脱 (`:238-255`)・セッションが戻る (`:257-276`)・ふつうのブラウザ (`:361-372`) の計 6 件。どれも「残り 60〜100 秒の借り物の更新の失敗 → `SIGNED_OUT`」を前提 (`getSession()` が `null`) | `src/__tests__/app/main-layout-signed-out.test.tsx` |
+| 赤になるテスト ②: `integration-auth-transient-retry.test.ts:100-107` (`error?.message` が `'{}'`)。やり直しの判定は status だけを見る (`tests/integration/helpers/auth-transient-retry.ts:200`) ので、仕組みは変わらない | `tests/integration-auth-transient-retry.test.ts` |
+| 緑のまま (本物の auth-js): `native-session-authjs-thresholds.test.ts` (更新を**試みる**ことだけを見る)、`main-layout-signed-out` の残り 2 件 (残り 3,000 秒)、apps/mobile の `supabase-client.test.ts` (`setSession → getSession → signOut`)・`webViewBridge.supabase.test.ts` (更新が成功する経路)・`web-view-auth-messages.real-auth.test.ts` (`getUser()` の 403 → `_removeSession`。`:173` の `/token` の 400 は呼ばれない経路の備え) | 左のとおり |
+| Cookie の値を JSON として読むテスト: `tests/integration/security/native-bridge-flow.test.ts:173-188` (`readSession`)・`tests/integration/security/operator-mfa.test.ts:163-180` (`sessionFromSetCookie`。`:139-141` に「0.1.0」の注記)・`tests/e2e/fixtures/auth.ts:140-146`。JSON の Cookie を**書く**側 (`operator-mfa.test.ts:155`・`e2e/fixtures/auth.ts:232-239`・`fresh-user.ts:261-273`・`global-setup.ts:188-193`) は 0.12 でもそのまま読める | 左のとおり |
+| middleware のテストのモックが `options.cookies.set(...)` を呼ぶ: `middleware-maintenance.test.ts:225`・`:436`、`middleware-legal-consent.test.ts:113-119`、`middleware-legal-consent-api.test.ts:128-134` | `lib/supabase/__tests__/` |
+| apps/mobile: `createClient(url, anonKey, { auth: { storage: secureSessionStorage, storageKey, autoRefreshToken: true, persistSession: true, detectSessionInUrl: false } })`。OTA は無効 (`updates.enabled: false`) | `apps/mobile/src/lib/supabase.ts:54-63`・`apps/mobile/app.json:66-70` |
+| 2.105 の挙動を書いたコメント (apps/mobile): `webViewAuthMessages.ts:33-35`・`__tests__/lib/web-view-auth-messages.real-auth.test.ts:12-13`・`__tests__/lib/web-view-auth-messages.test.ts:472-473`・`:492`・`:540` | 左のとおり |
+| 他の設計書の版の記述: `cross/12-operator-mfa.md:97`・`:100`・`:1059`・`:1484`、`cross/16-auth-history-sessions.md:84`・`:92`。`cross/14-parental-consent.md:1325-1329` は `createServerClient` の型だけ (変わらない)。`mobile/01-architecture.md` の 90 秒 (`EXPIRY_MARGIN_MS`) の行は値が変わらない | 左のとおり |
+
+### 9.2 要件行列
+
+| # | 要件 | 根拠 | 本章の節 |
+|---|---|---|---|
+| R-1 | `@supabase/supabase-js` 2.117.3 と `@supabase/ssr` 0.12.7 を同時に上げる (ssr 0.12.7 の peer は supabase-js `^2.114.0`) | Issue #1768 本文 | §9.13 |
+| R-2 | 借り物のセッションを捨てる合図を、2.117 の挙動 (有効な access token のうちの先回りの更新の失敗ではセッションを捨てず `SIGNED_OUT` も出さない) のもとで決める | Issue #1768 本文「やること」1 | §9.4〜§9.6 |
+| R-3 | `MainLayout` の扱い (localStorage を消さない・`/login` へ移さない・`NATIVE_REBRIDGE_WAIT_MS` 待つ) と、`NativeSessionWatcher` の閾値 (180 秒) を変えない。変えるのはコメント | #1038 F7-05 (§6.1・§6.3) | §9.5 |
+| R-4 | ssr 0.12 の `getAll` / `setAll` へ移行する (middleware・server)。`client.ts` は変えない。`cookieEncoding` は既定 (`base64url`) | Issue #1768 本文「やること」2 | §9.7 |
+| R-5 | すでにログインしている利用者のセッション (0.1.0 が書いた JSON の Cookie・分割あり) が、更新のあとも切れない。機械検査と本番の確認の手順を持つ | Issue #1768 本文「やること」2 | §9.8 |
+| R-6 | 赤になる既存のテスト (`main-layout-signed-out` 6 件・`integration-auth-transient-retry:105`) は、期待値を緩めず、新しい挙動の意味のある assert に書き直す | Issue #1768 本文 | §9.9 |
+| R-7 | 2.117 の新しい前提 (`REFRESH_FAILURE_COOLDOWN_MS`・失効前は残す・失効後は捨てる) を本物の auth-js で固定するテストを持つ (次に auth-js を上げたとき気づく) | §6.1 の閾値テストと同じ考え | §9.9 |
+| R-8 | apps/mobile も同じ版にし、ワークスペースの 1 コピーを保つ。ネイティブモジュールは増えない | Issue #1768 本文「やること」(apps/mobile) | §9.10 |
+| R-9 | cross/12・cross/16 が依る auth-js の挙動 (`mfa.enroll` の data URL・セッションが無いときの `_updateUser` / `_signOut`・`admin.signOut`・`getUser()` の 403) が 2.117.3 でも同じことを file:line で裏づける | Issue #1768 本文・仕様の指示 | §9.1 |
+| R-10 | `any` への cast を使わない。意味のある数値は名前付き定数 (テストの期待値も auth-js の定数から導く) | 設計の絶対条件 | §9.9・§9.11 |
+| R-11 | 1 PR で上げ、lock の整合 (`npm ci` が通る) と CI の依存の検査 (Dependency review / `npm audit`) の緑をマージの門にする | `tests/local-ci-workflow-sync.test.ts:84-86` の決まり | §9.13 |
+
+### 9.3 ユーザーシナリオ (18 本)
+
+| # | 誰が | 何をする | 期待 (設計後) |
+|---|---|---|---|
+| S-1 | WebView の利用者 (前面) | 献立を見続け、借り物の access token の残りが 180 秒を切る | `NativeSessionWatcher` が `session-expired` → ネイティブが読み込み直す。auth-js は `/token` を呼ばない (従来どおり) |
+| S-2 | WebView の利用者 (前面) | 見張りの確認が遅れ、残り 119 秒で tick が先に走る | 借り物の値で `/token` → 400。**セッションは残り、画面は動き続ける** (`SIGNED_OUT` 無し・localStorage そのまま)。20 秒以内の次の確認で `session-expired` → 読み込み直し。2.105 ではここで捨てられ `/login` が一瞬出ていた |
+| S-3 | WebView の利用者 (前面) | 残り 89 秒で API を呼ぶ (`getSession()` が走る) | 更新に失敗しても `getSession()` は残したセッション (同じ access token) を返し、API は通る。控えの 60 秒は `/token` を呼ばない |
+| S-4 | WebView の利用者 | 1 時間以上バックグラウンドに置いて戻る (access token は失効) | 復帰の `_recoverAndRefresh` が `/token` → 400 → 失効後なので捨てて `SIGNED_OUT` → `MainLayout` が `session-expired` を送り、localStorage を消さずに待つ → ネイティブが読み込み直す。`NativeSessionWatcher` の復帰の確認も `null` を見て送るが、15 秒の間隔で 1 回 |
+| S-5 | S-4 の利用者 (旧アプリ) | ネイティブが `session-expired` を知らない | `NATIVE_REBRIDGE_WAIT_MS` (15 秒) 後に従来どおり localStorage を消して `/login` へ (変わらない) |
+| S-6 | S-4 の利用者 | 待っている間に別のタブが先に読み込み直され、共有の Cookie が新しくなる | `SIGNED_IN` で待ちをやめる (変わらない) |
+| S-7 | WebView の利用者 | WebView の中の画面 (凍結の画面など) でログアウトする | `notifyNativeSignOut` → `signOut()` → `broadcastSignOut`。ネイティブに届くのは `sign-out` だけ (変わらない) |
+| S-8 | WebView の利用者 | `notifyNativeSignOut` を呼ばない画面でログアウトする | `session-expired` → `sign-out` の順でも、ネイティブは控えで push token を消す (変わらない) |
+| S-9 | ふつうのブラウザの利用者 | 別の端末からの全端末ログアウトで refresh_token が失効し、残り 60 秒で先回りの更新が失敗する | セッションは残り、画面はそのまま。失効後の更新の失敗で `SIGNED_OUT` → `/login` へ (2.105 より最大 120 秒遅く、失効まで使える) |
+| S-10 | 更新の前にログインしていた利用者 (ふつうのブラウザ) | 更新 (本番デプロイ) のあとにページを開く | middleware の `getAll` が 0.1.0 の JSON の Cookie を読み、`getUser()` が通る。次の token の更新で `base64-` の値に書き直される。ログアウトされない |
+| S-11 | S-10 の利用者 | Cookie が 2 つに分割されている (`.0` / `.1`) | 同じ。分割も JSON のまま読める |
+| S-12 | S-10 の利用者 | 更新後の最初の書き直しで分割の数が変わる (JSON 2 分割 → base64 3 分割、または逆) | `applyServerStorage` が古いチャンクを `maxAge: 0` で消し、新しいチャンクを同じ応答で書く。読み手は新しい値を読む |
+| S-13 | WebView の利用者 (新 Web + 旧アプリ) | ブリッジで `/auth/native-bridge?code=` を開く | `setSession` が `base64-` の Cookie を書く。アプリは名前しか見ないので変わらない。`clearSupabaseAuthCookies` も名前で消す |
+| S-14 | ローカル Supabase の結合テスト | `Set-Cookie` からセッションを取り出す | `base64-` の値を戻す共通の読み取り (`tests/helpers/supabase-session-cookie.ts`) で、0.1.0 の JSON と 0.12 の値の両方を読む |
+| S-15 | 結合テストのプロセス | ゲートウェイが 504 を返す | やり直しは status だけを見るので変わらない。やり直しが無いときのエラーは `AuthRetryableFetchError` で message は `'HTTP 504'` (2.105 は `'{}'`) |
+| S-16 | ネイティブの利用者 (新アプリ) | Web の `signOut()` (全端末の失効) のあと、アプリの tick が先回りの更新をする | 400 → access token が有効なら残す → 失効後の更新で `SIGNED_OUT` (最大 90 秒遅れ) → AuthProvider の `SIGNED_OUT` の行の掃除と release (§3。内容は同じ) |
+| S-17 | ネイティブの利用者 (新アプリ) | Web からの `session-expired` → `getUser()` が `403 session_not_found` | `_removeSession` → `SIGNED_OUT` (2.117 でも同じ経路)。控えで push token を消す (変わらない) |
+| S-18 | 旧アプリの利用者 | 新しい Web を開く | ネイティブの auth-js は 2.105 のまま。Web の変化 (借り物を失効前に捨てない・Cookie の書式) はアプリから見えない |
+
+### 9.4 構想とトレース
+
+構想: **捨てる合図は `SIGNED_OUT` のまま、失効の前は見張り (`NativeSessionWatcher`) が受け持つ**。2.117 は「捨てたが access token はまだ使えた」区間 (失効前 120 秒) を無くし、代わりに「失効したがまだ `SIGNED_OUT` が出ていない」区間 (失効後最大 90 秒) を作る。前者は 2 段構えの 1 (見張り) が、後者は見張りの `getSession()` が `null` を返すこと (`NativeSessionWatcher.tsx:65-67`) と `MainLayout` の `SIGNED_OUT` で受ける。コードは変えず、テストと説明を 2.117 に合わせる。Cookie は `getAll` / `setAll` へ移し、書式は ssr の既定に任せる。
+
+トレース (時刻は借り物の access token の失効を E とし、auth-js の内部は §9.1 の行):
+
+- **T-1 (S-1)**: 前面。E-180 秒で見張りの `check` → `session.expires_at - now < 180` → `notifyNativeSessionExpired()` → ネイティブが `getUser()` で自分のセッションを確かめ、code を発行し WebView を開き直す (§6.2)。auth-js の tick は残り ≥ 120 秒で動かない (`:4702-4706`)。
+- **T-2 (S-2)**: 前面。見張りの最後の確認が E-181 秒 (閾値の直前) で、次の確認 (20 秒後 = E-161) より先に tick が走ることは無い (E-120 まで tick は更新しない)。見張りが止まっていた (例: タブが非活性) とき、E-119 の tick → `_callRefreshToken` → `/token` 400 → `isAuthRetryableFetchError` でない → 保管の `expires_at*1000 > now` → 残す (`:4312-4314`) → 控え (E-119 から 60 秒。`:4324-4328`)。`MainLayout` には何も届かない。E-90 の tick → `__loadSession` が `hasExpired` → `_callRefreshToken` → 控えを返す (`:4211-4216`) → `__loadSession` は保管が有効なので保管を返す (`:2563-2572`) → tick は残り 3 tick 以下なので `_callRefreshToken` → 控え。見張りの次の確認 → 残り < 180 → `session-expired` → 読み込み直し。
+- **T-3 (S-3)**: E-89 で API 呼び出し → `getSession()` → `hasExpired` (`:2540-2542`) → `/token` 400 → 残す → `__loadSession` は保管を返す → 呼び出し側は access token を付けて API を呼べる。E-60 までの `getSession()` は `/token` を呼ばない (控え)。E-59 の `getSession()` → 控えが切れている → `/token` 400 → まだ有効 → 残す → 控え (E-59 から 60 秒)。
+- **T-4 (S-4)**: バックグラウンドで E を過ぎる (タイマー停止)。復帰 → `_onVisibilityChanged` → `_recoverAndRefresh` (`:4782`) → `expiresWithMargin` → `_callRefreshToken` (控えは無いか切れている) → 400 → 保管の `expires_at*1000 > now` が偽 → `_removeSession` (`:4316`) → `SIGNED_OUT` (`:4438`) → `MainLayout` (`isInNativeWebView`) → `notifyNativeSessionExpired()` → 15 秒のタイマー → ネイティブが読み込み直し、ページが入れ替わる。同時に `_startAutoRefresh` の即時の tick と見張りの `visibilitychange` の `check` が走るが、保管は消えているので tick は何もせず、見張りは `null` を見て送ろうとして 15 秒の間隔で止まる。
+  失効から `SIGNED_OUT` までの上限: 前面に居続けた場合、E の前の最後の実際の `/token` が E-x (0 < x ≤ 60) なら控えは E-x+60 まで効き、その後の最初の tick (30 秒以内) で `/token` → 失効後 → 捨てる。よって ≤ (60 - x) + 30 < 90 秒。`SIGNED_OUT_AFTER_EXPIRY_MAX_MS` = `REFRESH_FAILURE_COOLDOWN_MS + AUTO_REFRESH_TICK_DURATION_MS` (§9.9 の it がこの上限で待つ)。
+- **T-5 (S-5)**: T-4 のあと 15 秒で `treatAsSignedOut` → `clearUserScopedLocalStorage()` → `/login`。変わらない。
+- **T-6 (S-6)**: T-4 のあと別タブの読み込み直しで Cookie が新しくなる → このタブの auth-js は `BroadcastChannel` (`:270-290`) か次の `getSession()` で新しいセッションを見る → `SIGNED_IN` / `INITIAL_SESSION` → `if (session) stopWaitingForRebridge()`。変わらない。
+- **T-7 (S-7)・T-8 (S-8)**: `signOut()` → `_signOut` → `admin.signOut` → `_removeSession` → `SIGNED_OUT`。借り物の値の有効期限は関係しない (2.117 でも同じ経路 `:3427-3458`)。`notifyNativeSignOut` 済みなら `session-expired` は送られない。変わらない。
+- **T-9 (S-9)**: 実際の refresh_token がサーバーで失効 → E-119 の tick で 400 (`refresh_token_not_found`) → 残す → E 以降の最初の実際の更新で捨てて `SIGNED_OUT` → `MainLayout` (ブラウザ) → `treatAsSignedOut`。
+- **T-10 (S-10)**: 要求の Cookie `sb-<ref>-auth-token=<JSON>` → middleware の `getAll` → `combineChunks` → `decodeChunkedCookieValue` が接頭辞無しの値をそのまま返す (`cookies.js:46-48`) → `getUser()` 通る。残り 90 秒未満なら更新 → `TOKEN_REFRESHED` → `applyServerStorage` → `base64-` の値を `setAll` へ (`:447-459`・`:487-509`) → 応答の `Set-Cookie`。
+- **T-11 (S-11)**: `.0` / `.1` を `combineChunks` がつなぐ (0.12 も `.N` の順につなぐ) → JSON → 同上。
+- **T-12 (S-12)**: `applyServerStorage` の `removeExistingCookiesForItem` が、新しいチャンクの名前に無い古い名前 (`.1` や `.2`) を `maxAge: 0` で `setAll` に渡す (`:448-457`・`:495-499`)。`middleware.ts` の `setAll` はそれを `supabaseResponse.cookies.set({ name, value: '', ...options })` で書く。
+- **T-13 (S-13)**: `handleCode` → `createClient(cookieStore)` → `setSession` → `_saveSession` → `setItem` → `applyServerStorage` は `SIGNED_IN` で走る (`createServerClient.js:52-70`) → `server.ts` の `setAll` → `store.set(...)`。アプリの注入 JS と `Networking.clearCookies` は名前 (`sb-`) か全部 (§6.4)。
+- **T-14 (S-14)**: `Set-Cookie` の `sb-*-auth-token(.N)` を番号順につなぎ → `decodeURIComponent` → `base64-` なら base64url を戻す → `JSON.parse`。
+- **T-15 (S-15)**: `gateway(504)` = 本文 `upstream error`・`statusText` 空 → `handleError` の `error.json()` が失敗 → 504 は `NETWORK_ERROR_CODES` → `AuthRetryableFetchError('HTTP 504', 504)`。`withAuthTransientRetry` は `response.status` で判定 (`auth-transient-retry.ts:200`) → やり直しは今までどおり。
+- **T-16 (S-16)**: ネイティブ (2.117)。Web の `signOut()` が全端末を失効 → アプリの tick (残り < 120 秒) → `/token` → 400 → 残す → E 以降の更新で捨てて `SIGNED_OUT` → AuthProvider の `SIGNED_OUT` の行 (§3) → 掃除と release。E までは access token で API が通る (サーバーのセッションの失効を見るのは GoTrue の `/user` と Next の `/api/*` の `getUser()` で、それらは 401 / 403 を返す。既存の 401 の扱いのまま)。
+- **T-17 (S-17)**: `takeSessionSnapshot` (控え) → `getUser()` → 403 → `AuthSessionMissingError` → `_removeSession` (`:2726-2729`) → `SIGNED_OUT` → 控えた JWT で DELETE。2.117 の lock 無しで `sign-out` 側の `getSession()` が先に走っても、控えは共有 (§6.2 の「同じ控えを使い回す」)。
+- **T-18 (S-18)**: 旧アプリの auth-js は端末に入ったまま。Web の `session-expired` / `sign-out` の意味・順番は変わらない (§6.2)。
+
+### 9.5 構造裁定 (1 回だけ)
+
+| 案 | 中身 | 判定 |
+|---|---|---|
+| A: 合図は `SIGNED_OUT` のまま。見張りの 180 秒も `MainLayout` も変えない | 2.117 の「失効前は残す」は、見張りが受け持つ区間に重なる。失効後の `SIGNED_OUT` の遅れ (≤ 90 秒) は見張りの `null` の送信で埋まる | **採用**。コードを変えず、テストと説明を直す。縁 (新しい状態・新しい定数) を増やさない |
+| B: `MainLayout` が自分で `expires_at` を見張り、失効の時点で `session-expired` を送る | 失効後の遅れ (≤ 90 秒) を無くせる | 不採用。見張り (`NativeSessionWatcher`) が同じことを既に 180 秒前からしている。`MainLayout` に 2 つ目の時計を置くと、送信の重なり (15 秒の間隔で畳むが) と 2 か所の閾値の保守が増える |
+| C: 見張りの閾値を 120 秒より下げる (2.117 なら失敗しても害が無い) | 読み込み直しの回数を減らせる | 不採用。借り物の値での `/token` の 400 が毎回 1 回出て GoTrue のログと端末のコンソールを汚す。180 秒の根拠 (読み込み直しが失効の前に終わる) は 2.117 でも同じ。閾値テストの関係 (180 > 120 > 90) も据え置く |
+| D: `cookieEncoding: 'raw'` で書式を 0.1.0 のまま保つ | 結合テストと e2e の JSON の読み取りを直さずに済む | 不採用。ssr の既定から外れ (次の版で `raw` が消えたときの保守)、本番の Cookie を JSON のまま置き続ける理由が無い。読み取り側はヘルパ 1 つで両方を読める (§9.7) |
+| E: middleware の `setAll` で `NextResponse.next({ request })` を作り直す (Supabase の Next.js の例の形) | 同じ要求の Server Component が更新後の Cookie を読める | 不採用 (この改定では)。いまの 2 か所に書く形 (`request.cookies` と同じ `supabaseResponse`) を保つのが最小の差分で、`withLegalConsentPendingHeader` (`:89-98`) との順番も変わらない。作り直す案は §9.17 Q-2 に残す |
+| F: 2 PR (Web と apps/mobile を分ける) | — | 不採用。lock は 1 つで、apps/mobile は巻き上げで同じ実体を使う (§9.10)。`package.json` の宣言だけ別 PR にする意味が無い |
+
+縁の発生源を消すより単純な構造は無いか: 合図を 1 つ (`SIGNED_OUT`) に保ち、失効前の区間を見張り 1 つに任せる A が最も単純。2.117 が消した「捨てたが使える」区間は、本書の 2 段構えがもともと避けたかった区間そのもの (S-2 の `/login` の一瞬) で、構造は簡単になる方向。
+
+### 9.6 表 3 点
+
+**① 全パターン表** (借り物 = `refresh_token` が `NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER`。E = access token の失効)
+
+| 実行環境 | 契機 | 残り | 2.105.3 | 2.117.3 | 受ける側 (設計後) |
+|---|---|---|---|---|---|
+| WebView (借り物) | tick | ≥ 120 秒 | 何もしない | 何もしない | 見張りが E-180 で `session-expired` (S-1) |
+| WebView (借り物) | tick | 120〜90 秒 | 捨てて `SIGNED_OUT` | 残す + 控え 60 秒 | 見張り (S-2)。`MainLayout` には届かない |
+| WebView (借り物) | `getSession()` (API)・復帰 | 90〜0 秒 | 捨てて `SIGNED_OUT`。`getSession()` は `null` | 残す + 控え。`getSession()` は保管を返す | 見張り (S-3)。API は通る |
+| WebView (借り物) | tick・`getSession()`・復帰 | 失効後 (控え有効) | (保管は既に無い) | `/token` を呼ばず `{ session: null, error }`。保管はまだある | 見張りが `null` で `session-expired` (S-4 の復帰の確認) |
+| WebView (借り物) | tick・`getSession()`・復帰 | 失効後 (控え切れ) | — | 捨てて `SIGNED_OUT` | `MainLayout` → `session-expired`・15 秒の待ち (S-4〜S-6) |
+| WebView | `signOut()` | 任意 | `SIGNED_OUT` | `SIGNED_OUT` | `notifyNativeSignOut` 済みなら送らない (S-7・S-8) |
+| ふつうのブラウザ (実 token) | tick・`getSession()` | 120〜0 秒 (失効と答えられた) | 捨てて `/login` | 残す → 失効後に `SIGNED_OUT` → `/login` | `MainLayout` (S-9) |
+| ふつうのブラウザ (実 token) | 更新が成功 | 120〜0 秒 | `TOKEN_REFRESHED` | 同じ (控えは消える) | — |
+| Next の middleware (借り物の Cookie) | `/api` の `getSession()`・画面の `getUser()` | 90〜0 秒 | 捨てて `SIGNED_OUT` → `applyServerStorage` が Cookie を消す応答 | 残す。Cookie は変わらない | 要求は access token で通る。見張りが先に読み込み直すのが常 |
+| Next の middleware (借り物の Cookie) | 同上 | 失効後 | Cookie を消す | 同じ (捨てて `SIGNED_OUT` → Cookie を消す応答) | 画面は `/login` へ → ログイン画面が `session-expired` (§6.2) |
+| Next の middleware (実 token の Cookie) | 同上 | 90〜0 秒 (失効と答えられた) | Cookie を消す → `/login` | 残す → 失効後に Cookie を消す | 利用者は失効まで使える |
+| ネイティブ (実 token) | tick・`getSession()` | 120〜0 秒 (失効と答えられた) | 捨てて `SIGNED_OUT` | 残す → 失効後に `SIGNED_OUT` | AuthProvider の `SIGNED_OUT` の行 (S-16) |
+| ネイティブ (実 token) | `getUser()` の 403 | 任意 | `_removeSession` → `SIGNED_OUT` | 同じ | §3・§6.2 (S-17) |
+| ネイティブ (実 token) | 起動時 `getSession()` (期限切れ + オフライン) | 失効後 | `AuthRetryableFetchError` → 保管は残り `null` | 同じ (やり直せるエラーは控えない・捨てない) | §3 の `getStoredSession()` (変わらない) |
+
+**② 状態比較表** (現行 = 2.105.3 + ssr 0.1.0 / 設計後 = 2.117.3 + ssr 0.12.7)
+
+| 項目 | 現行 | 設計後 |
+|---|---|---|
+| 借り物の先回りの更新 (失効前) の失敗 | セッションを捨てて `SIGNED_OUT`。`getSession()` は `null` | セッションを残す。`SIGNED_OUT` 無し。`getSession()` は保管を返す。失敗を 60 秒控える |
+| 借り物の失効後の更新の失敗 | (失効前に捨てている) | 捨てて `SIGNED_OUT` (失効から ≤ 90 秒) |
+| 同じ refresh_token での `/token` の回数 | 契機のたび (tick 30 秒ごと + `getSession()` のたび) | 60 秒に 1 回まで |
+| `MainLayout` の `SIGNED_OUT` の扱い | §6.3 | 同じ (コードは変えない)。コメントを 2.117 に |
+| `NativeSessionWatcher` の閾値 | 180 秒 | 同じ。コメントを 2.117 に |
+| 見張りが `null` を見る場面 | Cookie が消えた | Cookie が消えた・失効後で控えが効いている間 |
+| auth-js の lock | `navigator.locks` / `lockNoOp` + 待ち行列で直列 | 無し (`lock = null`)。更新だけ単一化 (`refreshingDeferred`) |
+| middleware / server の Cookie の API | `get` / `set` / `remove` | `getAll` / `setAll` (`setAll` の `headers` は middleware だけ応答に付ける) |
+| 書かれる Cookie の値 | JSON (チャンク 3,180 バイト) | `base64-` + base64url(JSON) (同じチャンクの上限。約 1.33 倍の長さ) |
+| 読める Cookie の値 | JSON | JSON と `base64-` の両方 |
+| Cookie の `maxAge` | 1,000 年 (ブラウザは 400 日で切る) | 400 日 |
+| `createBrowserClient` のテスト用の options | `cookies: {}` が要る | 不要 (省く) |
+| 504 (本文が JSON でない) の message | `'{}'` | `statusText` か `'HTTP 504'` |
+| `_recoverAndRefresh` の失敗のログ | `console.error` | 出ない (`_debug` だけ) |
+| `mfa.enroll` の data URL・`_updateUser` / `_signOut` のセッション無し・`admin.signOut`・`getUser()` の 403 | — | 同じ (§9.1) |
+| 版の宣言 | ルート `ssr ^0.1.0`・`supabase-js ^2.78.0`、apps/mobile `^2.78.0` | ルート `ssr ^0.12.7`・`supabase-js ^2.117.3`、apps/mobile `^2.117.3` |
+
+**③ 状態遷移表**
+
+(a) auth-js 2.117 の借り物のセッション (1 つのクライアント)
+
+| 状態 | 事象 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| 有効 (残り ≥ 90 秒。tick は ≥ 120 秒で動かない) | tick (残り < 120 秒) / `getSession()` (残り < 90 秒) / 復帰 (残り < 90 秒) | 失効前・控え中 | `/token` が 400・保管の `expires_at*1000 > now` | 控え (60 秒)。`SIGNED_OUT` 無し |
+| 失効前・控え中 | tick / `getSession()` / 復帰 | 失効前・控え中 | 控えが有効 | `/token` を呼ばない。`getSession()` は保管を返す |
+| 失効前・控え中 | 控えが切れた後の契機 (まだ失効前) | 失効前・控え中 | `/token` が 400・まだ有効 | 控えを張り直す |
+| 失効前・控え中 / 有効 | 時刻が E を過ぎる | 失効後・控え中 (控えが残っていれば) / 失効後・控え無し | — | 無し (保管はそのまま) |
+| 失効後・控え中 | tick / `getSession()` / 復帰 | 失効後・控え中 | 控えが有効 | `getSession()` は `{ session: null, error }` (保管は残る)。見張りは `null` で送る |
+| 失効後・控え無し | tick / `getSession()` / 復帰 | 捨てた | `/token` が 400・保管の `expires_at*1000 > now` が偽 | `_removeSession` → `SIGNED_OUT` |
+| 任意 | `setSession` (読み込み直し後の新しい Cookie) / 他タブの `SIGNED_IN` | 有効 | — | 控えを消す |
+| 任意 | `signOut()` | 捨てた | — | `SIGNED_OUT` |
+
+(b) `MainLayout` (WebView の中。コードは変えない)
+
+| 状態 | 事象 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| 監視中 | `SIGNED_OUT` (auth-js) | 再ブリッジ待ち | `isInNativeWebView()`・`signOutNotified` でない・15 秒の間隔 | `session-expired` を送る。タイマー 15 秒 |
+| 監視中 | `SIGNED_OUT` (auth-js) | ログアウト済み | `isInNativeWebView()` でない | localStorage を消し `/login` |
+| 監視中 / 再ブリッジ待ち | `BroadcastChannel('auth')` の `SIGNED_OUT` | ログアウト済み | — | 同上 |
+| 再ブリッジ待ち | `SIGNED_IN` / `INITIAL_SESSION` / `TOKEN_REFRESHED` (session あり) | 監視中 | — | タイマーを止める |
+| 再ブリッジ待ち | タイマー満了 | ログアウト済み | — | localStorage を消し `/login` |
+| 再ブリッジ待ち / 監視中 | unmount | 離脱 | — | 購読とタイマーを止める |
+
+2.117 で変わるのは (a) だけ。(b) の「監視中 → 再ブリッジ待ち」の事象は、失効前に来なくなり、失効後 (≤ 90 秒) か `signOut()` でだけ来る。
+
+### 9.7 Cookie の読み書き (ssr 0.12) への移行
+
+呼び出し口の母集合 (§9.1 の表の ①〜⑤) のうち変えるのは ①・②・⑤。③ `client.ts` (options 無し) と ④ `proxy.ts` (`updateSession` を呼ぶだけ) は変えない。`lib/legal-consent-minor.ts:13` の型 (`ReturnType<typeof createServerClient>`) は 0.12.7 でも同じ名前の関数の戻り値 (`SupabaseClient`) なので変えない。
+
+`cookieEncoding` は指定しない (既定の `base64url`。裁定 D)。`cookieOptions` も指定しない (既定 `path: '/'`・`sameSite: 'lax'`・`httpOnly: false`・400 日。native-bridge の `clearSupabaseAuthCookies` が `path: '/'` で消すのと一致)。
+
+**① `lib/supabase/middleware.ts:147-184` を次に置き換える** (ほかの行は変えない。`request.cookies` と `supabaseResponse.cookies` の両方に書く 2 か所の形を保つ。裁定 E)。
+
+```ts
+// tsc:skip  (@supabase/ssr 0.12.7 の型 CookieMethodsServer (getAll / setAll) を使う。依存を上げる前の木では型検査を通らないので、実装者は同じ PR で `npx tsc --noEmit` を通す)
+  const supabase = createServerClient(
+    supabaseConfig.url,
+    supabaseConfig.anonKey,
+    {
+      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
+      cookies: {
+        getAll() {
+          return request.cookies.getAll()
+        },
+        setAll(cookiesToSet, headers) {
+          // リクエストとレスポンスの両方に書く (#1768 より前の set / remove と同じ 2 か所。同じレスポンスのインスタンスに蓄積する)。
+          // 消すときは value が '' で options.maxAge が 0 (ssr が作る)。request 側は name と value だけ
+          for (const { name, value } of cookiesToSet) request.cookies.set(name, value)
+          for (const { name, value, options } of cookiesToSet) supabaseResponse.cookies.set({ name, value, ...options })
+          // Cookie を書いた応答を共有キャッシュに置かせないヘッダー (ssr が渡す。同じクライアントでは最初の書き込みのときだけ中身がある)。
+          // 画面の応答は下で Cache-Control を上書きする (private, no-store のまま)
+          for (const [headerName, headerValue] of Object.entries(headers)) supabaseResponse.headers.set(headerName, headerValue)
+        },
+      },
+    }
+  )
+```
+
+- `request.cookies.getAll()` は `{ name, value }[]` (Next の `RequestCookies`) で `GetAllCookies` に合う。`request.cookies.set(name, value)` は既存の `set` の形と同じ。
+- `supabaseResponse.cookies.set({ name, value, ...options })` は現行の `set` / `remove` (`:158-168`・`:171-181`) と同じ書き方 (`CookieOptions` = `Partial<SerializeOptions>` の展開は 0.1.0 でも同じ型で通っていた)。
+- 置き換える応答 (`maintenanceApiResponse` / 同意の 403 / リダイレクト) は `withSessionCookies` (`:39-44`) と `:431` で Cookie だけを引き継ぐ。`headers` は引き継がない (それらは `Cache-Control: private, no-store` を自分で付けるか、リダイレクトで本文が無い)。
+- `fetchMiddlewareProfile` の引数の型 (`:67`) は変えない。
+
+**② `lib/supabase/server.ts:1`・`:32-66` を次に置き換える** (`getSupabaseAdmin` は変えない)。
+
+```ts
+// tsc:skip  (同上。@supabase/ssr 0.12.7 の型が要る)
+import { createServerClient } from '@supabase/ssr'
+import { createClient as createAdminClient } from '@supabase/supabase-js'
+import { cookies, headers } from 'next/headers'
+import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required'
+
+export async function createClient(cookieStore?: Awaited<ReturnType<typeof cookies>>) {
+  const store = cookieStore ?? (await cookies())
+  const authHeader = (await headers()).get('authorization')
+
+  return createServerClient(
+    getSupabaseUrl(),
+    getSupabaseAnonKey(),
+    {
+      global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
+      cookies: {
+        getAll() {
+          return store.getAll()
+        },
+        setAll(cookiesToSet) {
+          try {
+            for (const { name, value, options } of cookiesToSet) store.set({ name, value, ...options })
+          } catch {
+            // Server Component から呼ばれたとき (応答の Cookie に書けない)。
+            // middleware (lib/supabase/middleware.ts) が同じ更新を応答に書くので無視してよい (#1768 より前の set / remove と同じ扱い)
+          }
+        },
+      },
+    }
+  )
+}
+```
+
+- `type CookieOptions` の import は使わなくなるので外す (`tests/supabase-service-role-client-scan.test.ts` は `createServerClient` の import を見るだけで、`CookieOptions` には反応しない)。
+- `setAll` の第 2 引数 (`headers`) は受け取らない。`cookies()` の API からは応答のヘッダーに触れない。route handler の応答は各 route が作る (native-bridge は `Cache-Control: no-store` を自分で付ける `route.ts:76-80`)。
+
+**⑤ `src/__tests__/helpers/real-auth-js.ts:65-72`** は `cookies: {}` と 0.1.0 の注記を外し、`isSingleton: false` と `global.fetch` だけにする (0.12.7 は `cookies` を省くと `document.cookie` を使う `cookies.js:165-169`。型も `cookies?`)。`seedBorrowedSession` (`:75-93`) は**変えない**: JSON のまま書く Cookie は「0.1.0 が書いた形」そのもので、0.12.7 がそれを読むことの検査になる (§9.8)。`'borrowed-access-token'` (`:77`) は `export const BORROWED_ACCESS_TOKEN` に出し、§9.9 のテストが「同じ access token が残る」を見る。
+
+**Cookie の値の読み取り (テスト用。新設)** — `tests/helpers/supabase-session-cookie.ts`。結合テスト 2 本と e2e の fixture が、`Set-Cookie` / Cookie の一覧から 0.1.0 の JSON と 0.12 の `base64-` の両方を読めるようにする。
+
+```ts
+/** Cookie の名前と値 (Set-Cookie を切り出したもの、または Playwright の cookies()) */
+export type NamedCookie = { name: string; value: string }
+
+/** @supabase/ssr がセッションを置く Cookie の名前 (sb-<project-ref>-auth-token と、分割時の .0 .1 ...)。native-bridge/route.ts の SUPABASE_AUTH_COOKIE_PATTERN と同じ */
+export const SUPABASE_SESSION_COOKIE_PATTERN = /^sb-.+-auth-token(?:\.\d+)?$/
+
+/** @supabase/ssr 0.12 が base64url の値に付ける接頭辞 (dist/main/cookies.js の BASE64_PREFIX)。0.1.0 が書いた JSON には付かない */
+export const SUPABASE_COOKIE_BASE64_PREFIX = 'base64-'
+
+/** 分割の番号 (sb-x-auth-token は -1、.0 は 0 ...)。つなぐ順に使う */
+function chunkIndexOf(name: string): number {
+  const dot = name.lastIndexOf('.')
+  return dot < 0 ? -1 : Number(name.slice(dot + 1))
+}
+
+/** 0.12 の値 (base64- + base64url(JSON)) は JSON に戻し、0.1.0 の値 (JSON そのまま) はそのまま返す */
+export function decodeSupabaseCookieValue(value: string): string {
+  if (!value.startsWith(SUPABASE_COOKIE_BASE64_PREFIX)) return value
+  return Buffer.from(value.slice(SUPABASE_COOKIE_BASE64_PREFIX.length), 'base64url').toString('utf8')
+}
+
+/**
+ * Cookie の一覧から sb-*-auth-token(.N) を番号順につなげ、セッションの JSON を返す。
+ * 無ければ null。壊れていれば (JSON にならない) null (例外にしない)。値は URL エンコードを戻してからつなぐ
+ */
+export function readSupabaseSessionCookie(cookies: readonly NamedCookie[]): unknown {
+  const chunks = cookies
+    .filter((cookie) => SUPABASE_SESSION_COOKIE_PATTERN.test(cookie.name) && cookie.value !== '')
+    .sort((a, b) => chunkIndexOf(a.name) - chunkIndexOf(b.name))
+  if (chunks.length === 0) return null
+  try {
+    return JSON.parse(decodeSupabaseCookieValue(chunks.map((cookie) => decodeURIComponent(cookie.value)).join('')))
+  } catch {
+    return null
+  }
+}
+```
+
+- `tests/integration/security/native-bridge-flow.test.ts:173-188` の `readSession` と `tests/integration/security/operator-mfa.test.ts:163-180` の `sessionFromSetCookie` は、自前の `JSON.parse` をこの `readSupabaseSessionCookie` に置き換える (返り値を既存の型に `as` で合わせるのは今までどおり。`any` への cast は使わない)。`operator-mfa.test.ts:139-141` の「(0.1.0)」の注記は版を書かない文にする。
+- `tests/e2e/fixtures/auth.ts:140-146` の `JSON.parse(decoded)` も `decodeSupabaseCookieValue` を通す (storageState の Cookie が 0.12 の値になるため)。
+- JSON の Cookie を**書く**側 (`operator-mfa.test.ts:155`・e2e の `addCookies`) は変えない (0.12 は JSON をそのまま読む)。
+
+### 9.8 すでにログインしている利用者のセッションが切れないことの確かめ方
+
+読める書式は 2 つ (JSON = 0.1.0 が書いたもの、`base64-` = 0.12 が書くもの) で、読み手は `decodeChunkedCookieValue` (`cookies.js:45-65`) の 1 か所。確かめ方は 3 段。
+
+1. **単体 (新設 `src/__tests__/lib/supabase-ssr-cookie-compat.test.ts`。本物の `@supabase/ssr` 0.12.7 と本物の auth-js)**: `createServerClient` に `getAll` / `setAll` の小さな保管 (Map) を渡し、(a) JSON の Cookie 1 つ (b) JSON を 2 つに分割 (`.0` / `.1`) (c) `base64-` の値、のそれぞれで `getSession()` が同じ `access_token` を返すこと、`getUser()` が偽の fetch (`createFakeSupabaseFetch`) で `user-1` を返すこと。(d) `setSession` で書くと `setAll` が `base64-` で始まる値を受け取り、(b) の古い `.1` が `maxAge: 0` で同じ呼び出しに入ること。(e) `createBrowserClient` (options 無し・jsdom) が `document.cookie` の JSON を読むこと (= `seedBorrowedSession` の形。`main-layout-signed-out` の全 it がこの経路を通る)。it の名前は §9.9。
+2. **結合 (ローカル Supabase。既存)**: `tests/integration/security/native-bridge-flow.test.ts` (ブリッジの `setSession` → `Set-Cookie` → 同じ Cookie で middleware を通す) と `operator-mfa.test.ts` (JSON の Cookie で route を呼び、`Set-Cookie` の新しい値を読む) が、§9.7 のヘルパで両方の書式を読んだうえで緑であること。`operator-mfa.test.ts:155` は JSON の Cookie を**送る**ので、「0.1.0 の Cookie を 0.12 のサーバーが読む」の結合の検査そのもの。
+3. **本番 (整合ゲート)**: デプロイの前からログインしているブラウザ (オーケストレーターの自分の利用者) で、デプロイ後に `/home` を再読み込みし、(a) ログイン画面に落ちない (b) 1 時間以内 (access token の更新の後) に DevTools の Application → Cookies で `sb-<ref>-auth-token` の値が `base64-` で始まる (c) Vercel のランタイムログに `@supabase/ssr: could not base64url-decode` / `chunked cookie decoded to invalid JSON` の warn が出ていない、を確かめる。アプリは、更新前のビルド (2.105) の WebView でブリッジ → ホームが開くこと (S-13・S-18)。
+
+### 9.9 テストの直し方 (it の一覧)
+
+期待値は緩めず、2.117 の挙動を名指しする assert に書き直す。数値は auth-js の定数から導く (`import { AUTO_REFRESH_TICK_DURATION_MS, REFRESH_FAILURE_COOLDOWN_MS } from '@supabase/auth-js/dist/main/lib/constants'`。2.105.3 には `REFRESH_FAILURE_COOLDOWN_MS` が無いので、この import は依存を上げた後でだけ通る)。
+
+**A. `src/__tests__/app/main-layout-signed-out.test.tsx`** (ヘッダーのコメント `:2-13` も 2.117 の文に直す)
+
+| # | it (新しい名前) | 中身 |
+|---|---|---|
+| A-1 | `it.each([100, 60])` 「借り物のセッション (残り %i 秒) の先回りの更新に auth-js が失敗しても、access token が有効な間はセッションを捨てず、何も送らず、user-scoped のキーも残る。失効して SIGNED_OUT が出たら、ログアウト扱いにせず session-expired を送る」 | `seedBorrowedSession(remaining)` → mount → `advance(1_000)`: `refreshRequests(fakeFetch).length >= 1`・`getSession().data.session?.access_token === BORROWED_ACCESS_TOKEN`・`sentTypes()` が `[]`・`remainingKeys()` が全部・`hrefSetter` 未呼び出し。→ `advance(remaining * 1000 - 1_000 - 1)`: まだ `sentTypes()` が `[]`。→ `advance(1 + SIGNED_OUT_AFTER_EXPIRY_MAX_MS)` (= `REFRESH_FAILURE_COOLDOWN_MS + AUTO_REFRESH_TICK_DURATION_MS`): `getSession().data.session` が `null`・`sentTypes()` が `['session-expired']`・キーは残る・`hrefSetter` 未呼び出し |
+| A-2 | 「ネイティブが読み込み直してくれないまま待ち時間を過ぎたら (古いアプリ・再ブリッジが止められたとき)、従来どおりログアウトとして /login へ移し、user-scoped のキーを消す」 | `seedBorrowedSession(ALREADY_EXPIRED_REMAINING_SECONDS)` (= -1。1 時間以上バックグラウンドに置いて戻った状態) → mount → `advance(1_000)`: `sentTypes()` が `['session-expired']`。以降は現行と同じ (`NATIVE_REBRIDGE_WAIT_MS - 1_000 - 1` で未遷移・`+1` で `/login` とキー削除) |
+| A-3 | 「待ち時間の途中でこのレイアウトから離れた…」 | 種を失効済みにするだけ。中身は現行 |
+| A-4 | 「待っている間にセッションが戻ったとき…」 | 同上 |
+| A-5〜A-7 | 設定画面にログアウトが出ない / WebView の中のログアウト / 安全網 | 変えない (残り 3,000 秒。更新は走らない) |
+| A-8 | ふつうのブラウザ: `it.each` で 2 行 — 「[残り 60 秒] 先回りの更新に失敗してもセッションは残り、/login へ移らず、キーも消えない」/「[失効済み] すぐに user-scoped のキーを消して /login へ移る。ネイティブへは何も送らない」 | 前者: `advance(1_000)` 後に `refreshRequests ≥ 1`・`getSession()` が同じ access token・`hrefSetter` 未呼び出し・キー全部。後者: 現行の assert |
+
+`console.error` の 'Invalid Refresh Token' の黙らせ (`:159-161`) は 2.117 では出なくなるが、残してよい。
+
+**B. `src/__tests__/lib/native-session-authjs-thresholds.test.ts`** (既存の it は変えない。新しい `describe('auth-js 2.117 の更新の失敗の扱い (借り物のセッション)')` を足す)
+
+| # | it | 中身 |
+|---|---|---|
+| B-1 | 「失敗の控えは 60 秒 (REFRESH_FAILURE_COOLDOWN_MS = 2 tick)」 | `REFRESH_FAILURE_COOLDOWN_MS === 2 * AUTO_REFRESH_TICK_DURATION_MS` かつ `=== 60_000` |
+| B-2 | 「先回りの更新 (残り 100 秒の tick) が失敗しても、セッションは残り (getSession が同じ access_token を返す)、SIGNED_OUT は出ない」 | `onAuthStateChange` で `SIGNED_OUT` を数える → `startClientWithSession(100)` → `refreshRequests` が 1・`getSession()` の `access_token` が `BORROWED_ACCESS_TOKEN`・`SIGNED_OUT` 0 回 |
+| B-3 | 「同じ refresh_token での更新の失敗は 60 秒控える: 控えの間の getSession() は /token を呼ばず、控えが切れた最初の契機で 1 回だけ呼び、また控える」 | タイマーを進めずに残り 89 秒で作る (既存の `getSession()` の it と同じ形。初期化の復帰処理が 1 回更新を試みる) → `getSession()` → `/token` の回数を n とする (n ≥ 1) → 続けて `getSession()` を 3 回 → n のまま (控え) → `vi.advanceTimersByTimeAsync(REFRESH_FAILURE_COOLDOWN_MS)` (この間の tick は残り 59 秒 → 控え、60 秒の境で控えが切れて実際に 1 回) → n + 1 → `getSession()` → n + 1 のまま (控えを張り直した)。`getSession()` はどの時点でも同じ access token を返す (残り 29 秒でも失効前) |
+| B-4 | 「access token が失効したあとの更新の失敗で、セッションを捨てて SIGNED_OUT を出す (失効から最大 90 秒)」 | `startClientWithSession(60)` → `advance(60_000 + REFRESH_FAILURE_COOLDOWN_MS + AUTO_REFRESH_TICK_DURATION_MS)` → `SIGNED_OUT` 1 回・`getSession()` が `null`・`/token` の回数 ≥ 2 |
+
+**C. `tests/integration-auth-transient-retry.test.ts:100-107`**
+
+```ts
+// tsc:skip  (vitest の it。相対 import は既存のファイルのもの)
+it("やり直しが無いと、504 で signInWithPassword はゲートウェイの失敗のエラーになる (AuthRetryableFetchError。本文が JSON でなく statusText も無いので message は 'HTTP 504'。落ち方の再現)", async () => {
+  const fake = scriptedFetch([gateway(504)]);
+  vi.stubGlobal("fetch", fake.fn);
+  const { data, error } = await adminClient().auth.signInWithPassword({ email: TEST_EMAIL, password: TEST_PASSWORD });
+  expect(data.session).toBeNull();
+  expect(error?.name).toBe("AuthRetryableFetchError");
+  expect(error?.message).toBe("HTTP 504");
+  expect(error?.status).toBe(504);
+});
+```
+
+ヘッダーのコメント `:8-9` の「`{}` というメッセージのエラー」は「ゲートウェイの失敗 (502 / 503 / 504) のエラー (auth-js 2.105 では message が `{}`、2.117 からは `HTTP 504`)」に直す。`describe` の名前 (`:99`) の「beforeAll の `{}`」も同じく。
+
+**D. middleware のテストのモック (4 か所)** — `options.cookies.set('sb-…', 'value', { path: '/' })` を `options.cookies.setAll([{ name: 'sb-…', value: 'value', options: { path: '/' } }], {})` に置き換える (`middleware-maintenance.test.ts:225`・`:436`、`middleware-legal-consent.test.ts:116`、`middleware-legal-consent-api.test.ts:131`)。assert (`set-cookie` に `sb-…=value` が入る) は変えない。コメント「`cookies.set` が呼ばれる」は「`cookies.setAll` が呼ばれる」に。
+
+**E. 新設 `src/__tests__/lib/supabase-ssr-cookie-compat.test.ts`** (jsdom。本物の ssr と auth-js。fetch は `createFakeSupabaseFetch`)
+
+| # | it |
+|---|---|
+| E-1 | 「ssr 0.1 が書いた JSON の Cookie (1 つ) を、getAll / setAll の createServerClient が読み、getSession が同じ access_token を返し、getUser が通る」 |
+| E-2 | 「2 つに分割された JSON の Cookie (.0 / .1) も読む」 |
+| E-3 | 「ssr 0.12 が書く base64- の Cookie も読む」 |
+| E-4 | 「セッションを書くと base64- で書き、古い分割 (.0 / .1) を同じ setAll で maxAge 0 にする」 |
+| E-5 | 「createBrowserClient (options 無し) は document.cookie の JSON の Cookie を読む (seedBorrowedSession の形)」 |
+
+**F. 新設 `tests/supabase-session-cookie-helper.test.ts`** (`tests/helpers/supabase-session-cookie.ts` の単体)
+
+| # | it |
+|---|---|
+| F-1 | 「base64- の無い値はそのまま返す」 |
+| F-2 | 「base64- の値を base64url で戻す」 |
+| F-3 | 「sb-*-auth-token(.N) を番号順につなげてから戻し、JSON にする。無ければ null・壊れていれば null」 |
+
+**G. 変えないテスト (実測で緑を確かめる)**: `native-session-authjs-thresholds` の既存の it、`native-session-watcher.test.tsx` (getSession をモック)、`tests/auth/native-bridge.test.ts` (server の createClient をモック)、`lib/supabase/__tests__` のほかの 5 本、apps/mobile の本物の supabase-js を使う 3 本 (§9.1。赤になったら、2.117 の lock 無し (§9.6 ②) による順番の違いか、`refresh_token_not_found` の扱いの違いかを切り分け、assert の意味を保って直す。期待値は緩めない)。
+
+### 9.10 apps/mobile
+
+- `apps/mobile/package.json:24` を `"@supabase/supabase-js": "^2.117.3"` にする。ルートの lock はワークスペースの 1 コピー (`apps/mobile/node_modules/@supabase/*` は無い) なので、ルートを上げた時点で apps/mobile も 2.117.3 を使う。宣言を同じ範囲にして、巻き上げが 1 つであることを宣言でも保つ (`tests/zod-single-copy-1444.test.ts` と同じ考え。supabase-js 用の番兵は作らない: 範囲が違っても npm は 1 コピーに巻き上げ、違いが出るのは apps/mobile だけが古い範囲を要求したとき)。
+- **ネイティブのビルドは要らない**: supabase-js も auth-js も JS だけで、ネイティブモジュールの追加・変更は無い (依存は `tslib` だけ)。実行環境の API も 2.105.3 と同じ (§9.1)。ただし OTA は無効 (`app.json:66-70`) なので、端末に届くのは次の EAS Build からで、この更新のためだけにビルドは出さない。
+- 端末側の挙動の変化は §9.6 ① の「ネイティブ (実 token)」の行だけ (失効と答えられたときの `SIGNED_OUT` が失効の後になる)。§3 の経路と掃除は変わらない。
+- `secureSessionStorage` (`getItem` / `setItem` / `removeItem` の非同期の保管) は 2.117 の `SupportedStorage` のまま。`lock` は渡さない (既定の無し。2.105 でも RN には `navigator.locks` が無く `lockNoOp` だった)。
+
+### 9.11 新設一覧と定数
+
+| 種類 | 名前 | 場所 | 中身 |
+|---|---|---|---|
+| ファイル | `tests/helpers/supabase-session-cookie.ts` | 新設 | §9.7 の 4 つの export |
+| ファイル | `tests/supabase-session-cookie-helper.test.ts` | 新設 | §9.9 F |
+| ファイル | `src/__tests__/lib/supabase-ssr-cookie-compat.test.ts` | 新設 | §9.9 E |
+| 定数 | `SUPABASE_SESSION_COOKIE_PATTERN` / `SUPABASE_COOKIE_BASE64_PREFIX` | `tests/helpers/supabase-session-cookie.ts` | §9.7 |
+| 定数 | `BORROWED_ACCESS_TOKEN` = `'borrowed-access-token'` | `src/__tests__/helpers/real-auth-js.ts` (export) | `seedBorrowedSession` が書く access token。A-1・A-8・B-2・E が「同じ token が残る」を見る |
+| 定数 | `ALREADY_EXPIRED_REMAINING_SECONDS` = -1 | `main-layout-signed-out.test.tsx` | 失効済みの借り物のセッションの残り (バックグラウンドから戻った状態) |
+| 定数 | `SIGNED_OUT_AFTER_EXPIRY_MAX_MS` = `REFRESH_FAILURE_COOLDOWN_MS + AUTO_REFRESH_TICK_DURATION_MS` | `main-layout-signed-out.test.tsx`・`native-session-authjs-thresholds.test.ts` | 失効から `SIGNED_OUT` までの上限 (§9.4 T-4)。auth-js の定数から導く (数字を直書きしない) |
+| 関数 | `decodeSupabaseCookieValue(value: string): string` / `readSupabaseSessionCookie(cookies: readonly NamedCookie[]): unknown` | `tests/helpers/supabase-session-cookie.ts` | §9.7 |
+
+製品コード (`src/`・`lib/`・`apps/mobile/src/`) に新しい識別子は無い。環境変数・migration・テーブル・route・エラーコードの新設も無い。
+
+### 9.12 エラー表
+
+| 事象 | 2.105.3 | 2.117.3 | 扱う場所 |
+|---|---|---|---|
+| 借り物の refresh_token で `/token` → 400 `refresh_token_not_found` (`AuthApiError`。やり直さない) | セッションを捨て `SIGNED_OUT` | access token が有効なら残す (控え 60 秒)。失効後なら捨て `SIGNED_OUT` | `MainLayout` §6.3・見張り §6.1 |
+| `/token` が 5xx・接続の失敗 (`AuthRetryableFetchError`) | 捨てない (保管は残る)。約 25 秒のやり直し | 同じ。控えもしない (`isAuthRetryableFetchError` は控えの対象外) | 見張りは `AuthRetryableFetchError` なら何もしない (`NativeSessionWatcher.tsx:62`) |
+| `/token` などが 504 で本文が JSON でない | `AuthRetryableFetchError('{}')` | `AuthRetryableFetchError` で message は `statusText` (空なら `'HTTP 504'`) | `tests/integration-auth-transient-retry.test.ts` (§9.9 C) |
+| `GET /user` → 403 `session_not_found` | `AuthSessionMissingError` → `_removeSession` | 同じ | §3・§6.2 (ネイティブ)・middleware の画面の分岐 (`/login`) |
+| `_updateUser` で保管にセッションが無い | `AuthSessionMissingError` | 同じ | cross/16 §3 (本人の access token を明示して GoTrue を呼ぶ) |
+| `_signOut` で保管にセッションが無い | GoTrue を呼ばず `{ error: null }` | 同じ | cross/16 §3 |
+| ssr: `createServerClient` に `set` / `remove` の無い `get` だけ | 動く | 書くときに `console.warn` (非推奨) | 本改定で `getAll` / `setAll` へ (§9.7)。残っていたら実装の誤り |
+| ssr: `base64-` の値が base64url / JSON として壊れている | — | `console.warn` して「無い」扱い → 未ログインとして進む | 想定外 (チャンクの書き損じ)。本番の確認 §9.8 の 3 (c) で warn が無いことを見る |
+| ssr: `createBrowserClient` に `cookies` を渡さずブラウザ以外で `setItem` | — | 例外 (`cookies.js:179-181`) | テストは jsdom (isBrowser 真) で動かす。SSR の描画では `createClient()` (`client.ts`) を呼ばない (現行どおり) |
+
+### 9.13 段分けと触るファイル
+
+**1 PR・コミットは 4 段**。段ごとのレビューは要らない (変更は 20 ファイル前後。挙動を変える製品コードは `lib/supabase/middleware.ts` と `lib/supabase/server.ts` の 2 ファイルで、ほかの製品コードはコメントだけ)。`package-lock.json` の差分は生成物で、レビューは `package.json` の宣言と lock の実体 (`node_modules/@supabase/*` の版・`apps/mobile/node_modules/@supabase` が無いこと) を数えるだけにする。
+
+| 段 | 中身 | 触るファイル |
+|---|---|---|
+| 1 依存 | `package.json` (`ssr ^0.12.7`・`supabase-js ^2.117.3`)・`apps/mobile/package.json` (`^2.117.3`)・`package-lock.json` の再生成 (`npm install --package-lock-only --ignore-scripts`。M2 では流さず、offload の行き先か CI で作る §9.17 Q-1) | `package.json`・`apps/mobile/package.json`・`package-lock.json` |
+| 2 Cookie | §9.7 の ①・②・⑤と、D のモック 4 か所、§9.7 のヘルパと結合テスト・e2e の読み取りの置き換え、F・E のテスト | `lib/supabase/middleware.ts`・`lib/supabase/server.ts`・`src/__tests__/helpers/real-auth-js.ts`・`lib/supabase/__tests__/middleware-maintenance.test.ts`・`middleware-legal-consent.test.ts`・`middleware-legal-consent-api.test.ts`・`tests/helpers/supabase-session-cookie.ts` (新)・`tests/supabase-session-cookie-helper.test.ts` (新)・`src/__tests__/lib/supabase-ssr-cookie-compat.test.ts` (新)・`tests/integration/security/native-bridge-flow.test.ts`・`tests/integration/security/operator-mfa.test.ts`・`tests/e2e/fixtures/auth.ts` |
+| 3 auth の挙動 | §9.9 の A・B・C | `src/__tests__/app/main-layout-signed-out.test.tsx`・`src/__tests__/lib/native-session-authjs-thresholds.test.ts`・`tests/integration-auth-transient-retry.test.ts` |
+| 4 説明 | 2.105 の挙動を書いたコメントを 2.117 に (製品の挙動は変えない) | `src/lib/native-auth-bridge.ts:48-60`・`src/components/native-app/NativeSessionWatcher.tsx:17-27`・`src/app/(main)/MainLayout.tsx:157-167`・`src/app/(auth)/auth/native-bridge/route.ts:29-31`・`apps/mobile/src/lib/webViewAuthMessages.ts:33-35`・`apps/mobile/__tests__/lib/web-view-auth-messages.real-auth.test.ts:12-13`・`apps/mobile/__tests__/lib/web-view-auth-messages.test.ts:472-473`・`:492`・`:540`・`tests/api/auth-mfa-routes.test.ts:215` |
+
+変えないもの (母集合の閉包): `lib/supabase/client.ts`・`src/proxy.ts`・`lib/legal-consent-minor.ts`・`src/app/(main)/MainLayout.tsx` のコード・`NativeSessionWatcher.tsx` のコードと定数・`native-auth-bridge.ts` の定数・`apps/mobile/src/lib/supabase.ts`・`secureSessionStorage.ts`・migration・環境変数・`vercel.json`・`.github/workflows/*`。
+
+検証 (実装・修正の枠。M2 では打たず offload で): `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (JSON の実数)・`cd apps/mobile && npx jest` 全件・`git diff origin/main...HEAD | grep -n 'as any'` が 0・`npm ci` が lock のまま通る・`npm ls @supabase/supabase-js @supabase/ssr @supabase/auth-js` が 2.117.3 / 0.12.7 / 2.117.3 を 1 つずつ (dedupe されていること)。マージの門: 上の緑 + CI の依存の検査 (Dependency review・`npm audit`) の緑 (`tests/local-ci-workflow-sync.test.ts:84-86`)。本番の確認は §9.8 の 3。
+
+### 9.14 既存の番兵 (契約テスト・走査テスト) の追随表
+
+本設計が足す・変える名前を grep の語にして `tests/`・`scripts/`・`lib/**/__tests__`・`src/__tests__`・`apps/mobile/__tests__` を引いた結果。
+
+| grep の語 | 反応する番兵 | 反応 | 直し方 | 段 |
+|---|---|---|---|---|
+| `cookies.set(` / `cookies.remove(` (middleware のモック) | `lib/supabase/__tests__/middleware-maintenance.test.ts:225`・`:436`、`middleware-legal-consent.test.ts:116`、`middleware-legal-consent-api.test.ts:131` | `options.cookies.set` が無くなり TypeError → `set-cookie` の assert が赤 | §9.9 D | 2 |
+| `auth-token` + `JSON.parse` | `tests/integration/security/native-bridge-flow.test.ts:173-188`・`operator-mfa.test.ts:163-180`・`tests/e2e/fixtures/auth.ts:140-146` | `base64-` の値を `JSON.parse` できず null → 赤 (結合)・期限の確認が空振り (e2e) | §9.7 のヘルパに置き換え | 2 |
+| `cookies: {}` | `src/__tests__/helpers/real-auth-js.ts:67-68` | 0.12.7 では不要 (動くが注記が古い) | 外す | 2 |
+| `dist/main/lib/constants` | `src/__tests__/lib/native-session-authjs-thresholds.test.ts:12-16` | 2.117.3 でも解決する (exports 無し)。既存の it は緑 | B を足す | 3 |
+| `refresh_token_not_found` / `grant_type=refresh_token` | `src/__tests__/helpers/real-auth-js.ts:33-37`・`:58-62`、`apps/mobile/__tests__/lib/web-view-auth-messages.real-auth.test.ts:173` | URL も応答の形も変わらない。反応しない | — | — |
+| `NATIVE_REBRIDGE_WAIT_MS` / `REFRESH_AHEAD_SECONDS` / `SESSION_CHECK_INTERVAL_MS` | `main-layout-signed-out.test.tsx`・`native-session-watcher.test.tsx`・`native-session-authjs-thresholds.test.ts` | 値を変えないので反応しない | — | — |
+| `createServerClient` / `createBrowserClient` (import の走査) | `tests/supabase-service-role-client-scan.test.ts:42-44`・`:200-203`・`tests/native-app-tabs-contract.test.ts:93` | import の名前は変わらない。反応しない | — | — |
+| `@supabase/ssr` (型だけの import) | `lib/legal-consent-minor.ts:9`・`tests/supabase-service-role-client-scan.test.ts:203` | `import type` のまま。反応しない | — | — |
+| `package-lock.json` | `tests/react-types-version-contract.test.ts`・`tests/zod-single-copy-1444.test.ts` | React・zod だけを見る。反応しない (lock の再生成で zod の実体が動いたら `zod-single-copy` が赤 → `--package-lock-only` で zod を動かさないこと) | 赤なら lock を作り直す | 1 |
+| `2.105` / `auth-js (2.105)` (コメント) | `tests/api/auth-mfa-routes.test.ts:215`・`apps/mobile/__tests__/lib/web-view-auth-messages.real-auth.test.ts:12`・`apps/mobile/src/lib/webViewAuthMessages.ts:33` | 記述だけ。テストは反応しない | 段 4 で現在形に | 4 |
+| `signOutOnDevice` / `端末からのサインアウト` (本書を走査) | `tests/mobile-sign-out-doc-callers.test.ts:46` | 本改定はその行を変えない (§3・§5 の該当行はそのまま)。反応しない | — | — |
+| 消したモバイルの画面のパスの名指し (本書を走査) | `tests/design-doc-removed-mobile-screens.test.ts` | 本改定は消した画面を名指ししない (本章が挙げるモバイルのファイルは `apps/mobile/src/` と `apps/mobile/package.json`・`app.json` だけ)。反応しない | — | — |
+| `docs/design/mobile/*push*.md` の `path:` (本書は対象外) | `tests/design-doc-push-paths-resolve.test.ts` | 対象は `*push*.md` だけ。反応しない | — | — |
+| `updateSession` / `@/lib/supabase/middleware` | `tests/next16-proxy-convention.test.ts`・`tests/health-middleware-exemption.test.ts` | 名前も呼び方も変わらない。反応しない | — | — |
+| `NEXT_PUBLIC_SUPABASE_URL` (env の走査) | `tests/env-source-scan.test.ts` | proxy の import は変わらない (ssr 0.12.7 の依存は `cookie` だけ)。反応しない | — | — |
+
+### 9.15 他の文書への追随表
+
+本書の PR (設計) は他の設計書を変えない。実装 PR も設計書を変えない (記述のみの不一致は整合ゲートで blocking にせず、オーケストレーターの docs PR で現在形化する決まり)。
+
+| 文書 | 行 | いまの記述 | 直し方 | 誰が・いつ |
+|---|---|---|---|---|
+| `docs/design/cross/12-operator-mfa.md` | `:97` | 「`@supabase/supabase-js` 2.105.3 (`@supabase/auth-js` 2.105.3)・`@supabase/ssr` 0.1.0・…・Next 15.5」 | 版を 2.117.3 / 0.12.7 に (Next は #1744 の追随と同じ扱い)。auth-js の API の列挙は同じ | オーケストレーターの docs PR (実装のマージ後) |
+| 同上 | `:100` | 「auth-js 2.105.3 の `admin.signOut(jwt, scope)`」 | 「auth-js の `admin.signOut(jwt, scope)` (2.117.3 でも同じ: `GoTrueAdminApi.js:67-78`)」 | 同上 |
+| 同上 | `:1059`・`:1484` | 「auth-js (@supabase/auth-js 2.105.3 の GoTrueClient._enroll) は … 前置」 | 「2.117.3 でも同じ (`dist/main/GoTrueClient.js:4893-4895`)」を添える。route の `toBareQrCodeSvg` は変えない | 同上 |
+| `docs/design/cross/16-auth-history-sessions.md` | `:84` | 「auth-js 2.105.3 の `_updateUser` は … `AuthSessionMissingError` … `_signOut` は … `{ error: null }`」 | 「2.117.3 でも同じ (`:2868-2870`・`:3437-3456`)」を添える | 同上 |
+| 同上 | `:92` | 「`@supabase/supabase-js` / `auth-js` 2.105.3 … `@supabase/ssr` 0.1.0 … Next 15.5」 | 版を現在形に | 同上 |
+| `docs/design/cross/14-parental-consent.md` | `:1325-1329` | `import type { createServerClient } from '@supabase/ssr'` の型 | 変わらない (0.12.7 も同じ名前・同じ戻り値)。直さない | — |
+| `docs/design/mobile/01-architecture.md` | 「90 秒 … `EXPIRY_MARGIN_MS`」の行 | 値は 2.117.3 でも 90 秒 | 直さない | — |
+| `docs/design/mobile/CLAUDE.md` | — | 版の記述は無い | 直さない | — |
+| `.github/dependabot.yml` / Dependabot #1590 | — | #1590 は本 PR のマージで閉じる (同じ版に達する) | Dependabot が自動で閉じる。閉じなければオーケストレーターが閉じる | マージ後 |
+
+### 9.16 受入 (デプロイ後整合ゲート) の項目
+
+1. 本番の `/home` を、デプロイ前からログインしているブラウザで再読み込みしてログインが続く (§9.8 の 3 (a)〜(c))。
+2. 更新前のビルド (2.105) のアプリの WebView でブリッジ → ホームが開き、1 時間以上バックグラウンドに置いて戻ると読み込み直される (S-4。`SIGNED_OUT` の遅れが見えないこと)。
+3. Vercel のランタイムログに `@supabase/ssr` の warn (非推奨の `get` / `set` / `remove`・`setAll` 無し・base64 の復号の失敗) が 0 件。
+4. `npm ls` で `@supabase/*` が 1 コピーずつ (apps/mobile に入れ子が無い)。
+5. Dependabot #1590 が閉じている。
+
+### 9.17 未解決
+
+- Q-1: `package-lock.json` の再生成をどこで流すか。M2 では `npm install` を流さない決まりなので、offload の行き先 (270k) で `npm install --package-lock-only --ignore-scripts` を流して lock を持ち帰るか、実装の枠が別の機械で作る。lock の差分が `@supabase/*` (と `cookie` 1.x) だけであることをレビューで数える。
+- Q-2: middleware の `setAll` で `NextResponse.next({ request })` を作り直す形 (Supabase の Next.js の例。同じ要求の Server Component が更新後の Cookie を読める) は、本改定では採らない (裁定 E)。要るなら別の Issue で、`withLegalConsentPendingHeader` (`:89-98`) との順番と `tests/middleware-csp.test.ts` の作り直しの前提を含めて設計する。
+- Q-3: 失効から `SIGNED_OUT` までの最大 90 秒の間、個々の画面の 401 の扱い (§8 の 5 つ目) は従来どおり。短くするなら `MainLayout` が `expires_at` を見張る案 (裁定 B) だが、見張りの `null` の送信で足りるかを本番の観察 (S-4 の読み込み直しの遅れ) で確かめてから決める。
+- Q-4: apps/mobile の本物の supabase-js を使うテスト 3 本 (§9.9 G) が 2.117 の lock 無しで順番の違いを出すか。実装の全件 (`npx jest`) で確かめ、赤ならその it の意味を保って直す。
+- Q-5: ssr 0.12 の `maxAge` 400 日 (0.1.0 は 1,000 年) で、400 日以上開かなかった利用者の Cookie がブラウザから消える時期が変わるか。ブラウザは 0.1.0 の値も 400 日で切っていた (Chrome の上限) ので、実質は変わらないと見る。
