@@ -517,9 +517,14 @@ CREATE POLICY "audit_logs_select_super_admin" ON admin_audit_logs
   );
 
 -- INSERT: admin 系全ロールから可、actor_id = auth.uid() を強制
+-- (#1736: system.* の action_type と actor の表示の列は本人の JWT では書けない。詳細は 07-audit-monitoring.md §3.2)
 CREATE POLICY "audit_logs_insert_admins" ON admin_audit_logs
-  FOR INSERT WITH CHECK (
+  FOR INSERT TO authenticated WITH CHECK (
     actor_id = auth.uid()
+    AND action_type NOT LIKE 'system.%'
+    AND actor_email_snapshot IS NULL
+    AND actor_role_snapshot IS NULL
+    AND impersonated_by IS NULL
     AND EXISTS (
       SELECT 1 FROM user_profiles
       WHERE id = auth.uid()
