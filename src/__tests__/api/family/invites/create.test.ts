@@ -603,3 +603,48 @@ describe('POST /api/family/invites: 招待メールの期限の日付は JST の
     warn.mockRestore();
   });
 });
+
+describe('POST /api/family/invites: 大文字・混在の family_id (#1793)', () => {
+  it('自分の家族の family_id を大文字で送っても 403 にならず 201 で、RPC と家族名の取得には小文字の id を渡す', async () => {
+    const res = await POST(postRequest({ family_id: familyId.toUpperCase(), email: inviteeEmail }));
+    const json = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(json.data.invite).toEqual(inviteRow);
+    expect(mockRpc).toHaveBeenCalledWith('create_family_invite', {
+      p_family_id: familyId,
+      p_email: inviteeEmail,
+      p_custom_message: null,
+    });
+    const familyGroupCalls = mockFrom.mock.calls
+      .map(([table], i) => ({ table, chain: mockFrom.mock.results[i].value as { eq: { mock: { calls: unknown[][] } } } }))
+      .filter(({ table }) => table === 'family_groups');
+    expect(familyGroupCalls).toHaveLength(1);
+    expect(familyGroupCalls[0].chain.eq.mock.calls).toEqual([['id', familyId]]);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it('大文字・小文字の混在でも同じ (英字を 1 文字おきに大文字にする)', async () => {
+    const mixed = familyId.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
+    expect(mixed).not.toBe(familyId);
+    expect(mixed).not.toBe(familyId.toUpperCase());
+
+    const res = await POST(postRequest({ family_id: mixed, email: inviteeEmail }));
+
+    expect(res.status).toBe(201);
+    expect(mockRpc).toHaveBeenCalledWith('create_family_invite', {
+      p_family_id: familyId,
+      p_email: inviteeEmail,
+      p_custom_message: null,
+    });
+  });
+
+  it('他の家族の id は大文字にしても 403 のまま (そろえても自分の家族にはならない)', async () => {
+    const res = await POST(postRequest({ family_id: otherFamilyId.toUpperCase(), email: inviteeEmail }));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error.code).toBe('NOT_FAMILY_ADULT');
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+});

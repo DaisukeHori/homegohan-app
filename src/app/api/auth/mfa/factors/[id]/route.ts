@@ -29,6 +29,7 @@ import {
 } from '@/lib/auth/mfa/route-support';
 import type { MfaUnenrollResponse } from '@/lib/auth/mfa/schemas';
 import { createLogger } from '@/lib/db-logger';
+import { normalizeUuid } from '@/lib/http-params';
 import { isNativeBridgedSession } from '@/lib/native-auth-bridge';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 
@@ -56,7 +57,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     return mfaAuthFailure(err) ?? mfaInternalError(ROUTE_NAME, err);
   }
 
-  const { id: factorId } = await params;
+  // factor の id は小文字 (Supabase の user.factors)。大文字・混在のパスの id が isVerifiedTotpFactorId の === で 404 にならないよう、
+  // 受け取った直後にそろえ、以後 (判定・unenroll・監査) はそろえた値だけを使う (#1793)
+  const factorId = normalizeUuid((await params).id);
 
   try {
     const supabase = await createClient();
