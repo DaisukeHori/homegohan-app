@@ -605,11 +605,18 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/lib/billing/account-deletion.ts` (退会の段階 `billing`) ← `listStripeBackedSubscriptions` | 読 | `stripe_subscription_id IS NOT NULL` | 変えない。M 行は列挙されず Stripe を呼ばない (S17) |
 | `src/app/api/admin/users/[id]/route.ts:93-100` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
 | `src/app/api/admin/finance/exports/route.ts:131-142` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
+| `src/app/api/admin/finance/invoices/[id]/route.ts:44-52` (運営の請求書の詳細。請求先の利用者を引く) | 読 | `stripe_subscription_id = <イベントの subscription>` の 1 行 | 変えない。M 行は `stripe_subscription_id IS NULL` なので一致せず、請求書の詳細の対象にならない (M 行には Stripe の請求書が無い) |
 | `src/app/api/admin/finance/reconciliation/route.ts:68`・`dashboard/route.ts:45-56` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
 | `src/lib/super-admin/plan-subscribers.ts` (F22) | 読 | live 5 値 | 変えない (S19) |
 | `apply_coupon` (F21) | 読・書 | 行を `FOR NO KEY UPDATE`・`active_coupon_redemption_id` | 変えない。本冊の UPDATE は `status` / `cancelled_at` / `cancel_at` だけ (S18) |
 | `src/lib/account-export-tables.ts:249-255` (本人の書き出し) | 読 | `omit` 6 列 | 変えない (列を足さない)。M 行は `status` / `current_period_end` / `cancelled_at` がそのまま出る |
-| 機能フラグ・Edge Function の AI 相談のスイッチ (`plan_key_cached`。billing/01 §7.1) | 読 | 空なら free | 本冊の関数が同期するので、付与後はプランで段階公開できる |
+| `src/lib/feature-flags.ts:217-229` (`loadUserContext`。機能フラグの判定) | 読 (`user_profiles.plan_key_cached`) | 空なら `free` | 変えない。本冊の関数が同期するので、付与後は M 行の `plan_key` でプランの段階公開が効き、取り消し・期限切れの後は `free` に戻る |
+| `src/app/api/feature-flags/route.ts:45-56` (機能フラグの一覧の判定) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
+| `src/lib/super-admin/flag-active-users.ts:73-93` (フラグの対象人数の集計) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者はそのプランの人数に入る |
+| `supabase/functions/_shared/ai-chat-flag.ts:52-108` (Edge Function の AI 相談のスイッチ) | 読 (`plan_key_cached`) | 空なら `free` (`DEFAULT_PLAN_KEY`) | 変えない。上と同じ (本冊は Edge Function を変えない) |
+| `src/app/api/admin/users/route.ts:73,178` (運営のユーザー一覧の `plan_key`。`UserListItemSchema`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。M 行の利用者は付与したプランで出る (由来は出さない。由来と期限は本冊の節 §10 だけ) |
+| `src/app/api/admin/users/[id]/route.ts:140` (運営のユーザー詳細の `plan_key`) | 読 (`plan_key_cached`) | 空なら `free` | 変えない。上と同じ |
+| `src/lib/account-export-tables.ts:142` (本人の書き出しの `user_profiles`) | 読 (`plan_key_cached`) | 列をそのまま | 変えない。M 行の `plan_key` がそのまま出る |
 | `user_profiles` の本人の UPDATE (特権列ガード) | 書 (本人) | `plan_key_cached` は 42501 | 変えない。本冊の関数は SECURITY DEFINER (所有者 postgres) なのでガードに当たらない (F3) |
 | `admin_audit_logs` の INSERT ポリシー (F16) | 書 | 本人の JWT は `system.*` を書けない | route は `admin.billing.*` を user-scoped の client で (通る)。`system.billing.manual_grant_expired` は SECURITY DEFINER の関数が書く (RLS を通らない) |
 | `tests/log-cleanup-dau-snapshot-contract.test.ts` ← `operator/08` §3.0・§3.1 (F17) | 読 (migration の `cron.schedule` の名前と数) | 11 つ | 12 つになる。`operator/08` の注記に `expire-manual-plan-grants` を足す (§15.2。段 A と同じ PR) |
@@ -641,6 +648,11 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | – (M 行なし。S 行が無いか、S 行が live でない) | 付与 `POST …/manual-plan` (関数 `billing_grant_manual_subscription`) | M `active` | super_admin (AAL2)・対象が自分でない・利用者が `auth.users` と `user_profiles` にある・プランが付与できる (`free` でなく `personal` / `family` で `public`)・期限が無いか未来 (スキーマ: 今日より後の暦日 / 関数: `> now()`)・同じ利用者に live 行 (S / M) が無い | INSERT (`starts_at` = `current_period_start` = `now()`・`current_period_end` = 期限 or NULL)・家族プランなら代表者の active なグループを `plan_key` / `member_limit` に (写像の 10. と同じ)・`plan_key_cached` = plan_key・監査 `admin.billing.manual_grant` (route・warn・details: `subscription_id`・`plan_key`・`expires_at`・`reason`) |
 | – | 同上で、同じ利用者に live 行 (S / M) がある | – (何も書かない) | — | 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE` (関数の `BILL_LIVE_ROW_CONFLICT`)。監査なし。S4・S5 |
 | – | 同上で、プランが付与できない / 利用者が無い / 期限が過去 | – | — | 422 `OP_PLAN_NOT_GRANTABLE` / 404 `NOT_FOUND` / 400 `OP_INVALID_INPUT`。監査なし。S11・S12・S15 |
+| – (live な行が無い: 行なし / S `incomplete` / S `cancelled` / S `expired`。M の履歴の行があっても同じ) | 取り消し `DELETE …/manual-plan` (関数 `billing_revoke_manual_subscription`) | – (何も書かない) | live な M 行が無い (利用者が無ければ 404 `NOT_FOUND` が先) | 409 `OP_NO_MANUAL_SUBSCRIPTION` (関数の `BILL_MANUAL_ROW_NOT_FOUND`)。監査なし。S21 |
+| – (live な行が無い: 行なし / S `incomplete` / S `cancelled` / S `expired`) | 新規購入 `POST /api/billing/checkout` (核) | billing/01 §7.3 のとおり (Checkout の完了後に写像が S 行を INSERT / 写す) | `findLiveSubscription` が null | 本冊で変えない (billing/01 §7.3) |
+| – (live な行が無い: 行なし / S `incomplete` / S `cancelled` / S `expired`) | 解約の予約 / 取り消し `POST /api/billing/subscription/cancel` / `resume` (核) | 同じ | `findLiveSubscription` が null | 409 `BILL_NO_LIVE_SUBSCRIPTION` (billing/01 §7.3。本冊で変えない) |
+| S `incomplete` (live な M 行なし) | Stripe の契約の写像 (支払いの完了など) | billing/01 §7.3 のとおり | billing/01 §7.3 の `incomplete` の行のガード | 本冊で変えない |
+| S `incomplete` + M `active` (S10 の付与の後) | Stripe の契約の写像 (S 行を live の status に写そうとする) | 同じ (S `incomplete` のまま・M `active` のまま) | 写像の 6. で別の live 行 (M) | `BILL_LIVE_ROW_CONFLICT` → イベント `failed`・500・監査 `system.stripe.event_failed`。運営の処置は S9 と同じ (M 行を取り消した後の再送で S 行が写る)。S10 |
 | M `active` | 取り消し `DELETE …/manual-plan` (関数 `billing_revoke_manual_subscription`) | M `cancelled` | super_admin (AAL2)・対象が自分でない・live な M 行がある | UPDATE `status='cancelled'`・`cancelled_at=now()`・`cancel_at=NULL`・家族プランなら、グループの `plan_key` がこのプランで同じ利用者に同じプランの live 行が無いとき `free` / 4 に戻す・`plan_key_cached` を live 行から再計算 (NULL)・監査 `admin.billing.manual_revoke` (route・warn・details: `subscription_id`・`plan_key`・`reason`) |
 | M `active` (期限あり) | 期限 (`current_period_end <= now()`) を過ぎた後の日次のジョブ (関数 `billing_expire_manual_subscriptions`) | M `expired` | `stripe_subscription_id IS NULL`・live・`current_period_end <= now()` (UPDATE の WHERE で再評価) | UPDATE `status='expired'` (`cancelled_at` は NULL のまま)・家族の戻しと `plan_key_cached` の再計算 (取り消しと同じ)・監査 `system.billing.manual_grant_expired` (関数・actor NULL・info・details: `subscription_id`・`plan_key`・`expires_at`)。S2 |
 | M `active` (期限なし) | 日次のジョブ | M `active` (同じ) | `current_period_end IS NULL` は対象外 | 何もしない |
@@ -655,6 +667,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | M `cancelled` / M `expired` | 付与 (関数) | 新しい M `active` (古い行は履歴) | 上の「–」の行と同じ | 同上 |
 | M `cancelled` / M `expired` | 取り消し (関数) | 同じ | live な M 行が無い | 409 `OP_NO_MANUAL_SUBSCRIPTION`。S21 |
 | M `cancelled` / M `expired` | 日次のジョブ・写像・核の購入 | 同じ / S 行の遷移は billing/01 §7.3 | — | 何もしない (M の履歴の行は触らない) |
+| M `cancelled` / M `expired` | 解約の予約 / 取り消し `POST /api/billing/subscription/cancel` / `resume` (核) | 同じ | `findLiveSubscription` が null (M の履歴の行は live でない) | 409 `BILL_NO_LIVE_SUBSCRIPTION` (billing/01 §7.3。本冊で変えない) |
 | S live | 付与 (関数) | – (何も書かない) | live 行あり | 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`。S4 |
 | S live | 取り消し (関数) | – | live な M 行が無い (S 行は対象外) | 409 `OP_NO_MANUAL_SUBSCRIPTION`。S21 |
 | S `incomplete` | 付与 (関数) | S `incomplete` + 新しい M `active` | `incomplete` は live でない | S10。以後 S 行が live に写ろうとすると `BILL_LIVE_ROW_CONFLICT` (billing/01 §7.3) |
@@ -2178,3 +2191,4 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | v1.0 | 2026-10-17 | 新設 (設計ゲート R1 の叩き台。4 相: 外形固定 §3 → 構想 §4 → 構造裁定 §5 → 仕上げ §6〜§15) |
 | v1.1 | 2026-10-17 | 網羅性 (周 1) を反映: S9・S10・S16・S17・S18・S19 を直接見るテスト 50〜55 と §13.4 のシナリオとテストの対応を足す・S17 の監査の行の事実 (`target_id` に外部キーは無い) を直す・§15.2 の母集合を 3 つの問い合わせと結果に書き直し、`family/*` を `family/02`・`family/03` の行に、出たが変えない文書を「変更なし」の表に・`operator/02` §23 のエラーコードの行を足す・§14.2 の docs を閉じた一覧に・§15.1 と §16 の 2 のテスト番号を billing/01 §13 の番号と明記・§8.8 に命名の約束 |
 | v1.2 | 2026-10-17 | 設計ゲート R1 の修正: ① billing/01 §16.2 の追随の行を 10 行に数え直し (F23。「配線の冊と同時」6 行・「family の冊」3 行・「family / org の冊」1 行)、行ごとの行き先 (本冊で直す 4 行・配線の残りの冊へ期日を付け替える 5 行・変えない 1 行) を R14・§0.2・§15.2 の billing/01 の行・「変更なし」の表・§16 の 11 に書いた。手動付与以外の配線を「配線の残りの冊」と呼び、呼び名をそろえた ② `Cache-Control: no-store` は route が組み立てる応答 (200 と `errorJson`) だけに付けると決め (共通のヘルパーの応答はそのまま返す。NULL 文字の 2 行は番兵が逐語を求める)、§9 の冒頭・§8.5 の注記・テスト 23 を合わせた ③ 付与できるプランを `status='public'` だけにした (`private` の `family_addon` はアドオンで billing/01 §1 が対象外)。DB 関数の 2.・`GRANTABLE_PLAN_STATUSES`・S11・F11・§7.3・§12.2・テスト 2 / 31 / 40 / 49 を合わせた |
+| v1.3 | 2026-10-17 | 網羅性 (周 2) を反映: §7.3 に、live な行が無い利用者 (行なし / S `incomplete` / `cancelled` / `expired`) の取り消し (409 `OP_NO_MANUAL_SUBSCRIPTION`)・核の新規購入・核の解約の予約 / 取り消し (409 `BILL_NO_LIVE_SUBSCRIPTION`) の行、M `cancelled` / `expired` の核の解約の予約 / 取り消しの行、S `incomplete` の写像の行 (M なし / M `active` の 2 行) を足した (§7.1 の全パターンと 1 対 1)。§7.1 の消費経路に `admin/finance/invoices/[id]` (M 行は一致しない) を足し、`plan_key_cached` の読み手を 1 行の総称から具体の 7 行 (`feature-flags.ts`・`api/feature-flags`・`flag-active-users.ts`・`ai-chat-flag.ts`・`admin/users` の一覧・`admin/users/[id]`・本人の書き出し) に分けた。どれも本冊で変えない |
