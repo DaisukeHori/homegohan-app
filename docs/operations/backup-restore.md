@@ -5,6 +5,7 @@
 - 設計の正典は `docs/design/cross/17-backup-automation.md` です。食い違ったら設計書が正です。
 - 値 (R2 の鍵・age の秘密鍵・DB の接続先) は、この手順書にも Issue にもリポジトリにも書きません。名前だけを書きます。
 - 道具の使い方は `node scripts/backup-db.mjs help` でも見られます。
+- コードブロックは、そのまま貼り付けて流せる形にしています。Mac の zsh は対話のシェルで `#` をコメントとして扱わない (既定) ので、コードの行には `#` の説明を付けず、説明は前後の文に書きます。
 
 ## 1. 全体像
 
@@ -13,7 +14,7 @@ GitHub Actions「DB Backup」(.github/workflows/db-backup.yml。毎日 02:23 JST
   本番を読んでダンプ (roles / schema / data) → 戻らないものを足す (権限・storage のポリシー・台帳・cron のジョブ・カタログ)
   → tar | zstd → age (公開鍵) で暗号化 → R2 の daily/ に 3 ファイル
   → 月曜は weekly/、1 月 1 日は annual/ にも同じ 3 ファイル
-  → 月曜と 1 月 1 日は、ローカルの Supabase に復元して数・カタログ・台帳・cron を確かめる
+  → weekly / annual を取った run (schedule なら月曜と 1 月 1 日) は、ローカルの Supabase に復元して数・カタログ・台帳・cron を確かめる
   → 結果を admin_audit_logs に backup.<層>.<結果> で残す。失敗したら Issue「【自動】DB バックアップの失敗」
 
 Vercel Cron (14:37 JST)  /api/cron/backup-freshness  … 最新の取得が 30 時間より古ければ運用メール
@@ -49,9 +50,17 @@ Vercel Cron (14:37 JST)  /api/cron/backup-freshness  … 最新の取得が 30 �
    - 取得用: Object Read & Write。作ると出る Access Key ID と Secret Access Key を、次の 4 で GitHub の secrets に入れます。
    - 復元用: Object Read only。Access Key ID と Secret Access Key をパスワードマネージャーに保管します (5 章・6 章で使います)。
    - 取得用の Read & Write のトークンは、手元に写しません。
-3. **age の鍵対**。`age-keygen -o backup.key` で作ります。
-   - 秘密鍵 (`backup.key`) は、パスワードマネージャーと、印刷した控え 1 通 (金庫) に保管します。**GitHub・Vercel・Supabase・リポジトリには置きません。**
-   - 公開鍵 (`age1…`。`age-keygen` が表示する) は、次の 4 の variable に使います。
+3. **age の鍵対**。秘密鍵のファイルは、リポジトリの外の空のディレクトリに作ります。このリポジトリは公開なので、作業ツリーに作ると `git add` で秘密鍵が公開されます。
+   ```bash
+   KEYDIR="$(mktemp -d)"
+   age-keygen -o "$KEYDIR/backup.key"
+   ```
+   - 秘密鍵 (`$KEYDIR/backup.key` の中身) は、パスワードマネージャーと、印刷した控え 1 通 (金庫) に保管します。**GitHub・Vercel・Supabase・リポジトリには置きません。**
+   - 公開鍵 (`age1…`。`age-keygen` が表示する。`age-keygen -y "$KEYDIR/backup.key"` でも出ます) は、次の 4 の variable に使います。公開してよい値なので、ファイルを消す前に控えます。
+   - パスワードマネージャーと控えに保管し、保管した中身がファイルと同じであることを確かめたら、ファイルを消します。手元に秘密鍵のファイルを残しません。
+     ```bash
+     rm -rf "$KEYDIR"
+     ```
 4. **GitHub の Actions に登録**。リポジトリの Settings → Secrets and variables → Actions で入れます。
 
    | 種類 | 名前 | 値 |
@@ -75,7 +84,7 @@ Vercel Cron (14:37 JST)  /api/cron/backup-freshness  … 最新の取得が 30 �
 
 - `/super-admin/backups` (super_admin だけ): 日次・週次・年次それぞれの最新の取得 (時刻・大きさ・R2 のキー・週次と年次は復元の検査の結果) と、日次が 30 時間以上取れていないときの「古い」のバッジ。DR 訓練の記録もここです。
 - GitHub の Issue「【自動】DB バックアップの失敗」: 取得が失敗した日に立ち、次の取得が通ると閉じます。立っているときは 10 章を見ます。
-- 運用メール (`OPS_ALERT_EMAIL`): 日次の取得が 30 時間より新しく取れていないとき、14:37 JST の確認で 1 通届きます (件名「DB バックアップが 30 時間以上取れていません」)。取得そのものが走っていない (schedule の停止・secrets の失効) ときは、Issue が立たないので、このメールとバッジが気づく手段です。
+- 運用メール (`OPS_ALERT_EMAIL`): 日次の取得が 30 時間より新しく取れていないとき、14:37 JST の確認で 1 通届きます (件名「DB バックアップが 30 時間以上取れていません」)。schedule が止まっている (run そのものが無い) ときは Issue が立たないので、このメールとバッジが気づく手段です。secrets の失効では run が失敗するので、Issue も立ちます (`link_failed` など。9 章)。
 - GitHub の schedule は、リポジトリに 60 日間動きが無いと止まることがあります。止まったら鮮度の通知で気づき、Actions の画面から有効にし直します。
 
 ## 4. 手動で取る
@@ -93,7 +102,7 @@ gh workflow run db-backup.yml -f tier=auto
 ```
 
 - **取得の run が実行中に流すときは、`tier` を `auto` にします。** 取得の run は同時に 1 本だけ (concurrency group `db-backup`) で、待っている run は新しい run に置き換えられて取り消されます。実行中に別の `tier` で流すと、待機中の schedule の run が取り消され、その日の層 (月曜の weekly など) が抜けます。`auto` なら、流した run が日付どおりの層を取ります。
-- 手動の取得も、監査行・Issue・復元の検査 (月曜と 1 月 1 日だけ) は schedule の run と同じです。
+- 手動の取得も、監査行・Issue は schedule の run と同じです。復元の検査は、weekly / annual を取った run で走ります (`auto` なら月曜と 1 月 1 日。`tier` に `weekly` / `annual` を選べば、どの曜日でも走ります)。
 
 ## 5. 復元 (ローカル)
 
@@ -115,9 +124,10 @@ R2 から書庫を取り出し、ローカルの Supabase に復元して、数�
 **流す** (リポジトリの直下 = main の checkout で。R2 のキーは `/super-admin/backups` の「R2 のキー」か、R2 の画面で選ぶ):
 
 ```bash
-node scripts/backup-db.mjs restore --key <daily|weekly|annual>/<日付>/<base>.tar.zst.age --identity-file <age の秘密鍵のパス> --slot <枠>
+node scripts/backup-db.mjs restore --key <daily|weekly|annual>/<日付>/<base>.tar.zst.age --identity-file "$KEYDIR/backup.key" --slot <枠>
 ```
 
+- `--identity-file` には、リポジトリの外の空のディレクトリ (先に `KEYDIR="$(mktemp -d)"` で作る) に、パスワードマネージャーの秘密鍵を書いたファイル `$KEYDIR/backup.key` を渡します。道具は書庫の平文を消しますが、渡した鍵のファイルは消さないので、終わったら `rm -rf "$KEYDIR"` で消します。
 - `--slot` は 0〜9 で、省くと 0 です。手元で `scripts/local-ci.sh` が使っている枠を避けます。
 - 道具は、取り出す → SHA-256 を `.sha256` と突き合わせる → 復号 → 展開 → ローカルのスタックを起こして復元 → 数・カタログ・台帳・cron の数を確かめる、の順に進みます。平文は終わると消します。
 - 成功すると「復元できました」の行に、数・`catalog_errors`・`catalog_warnings`・台帳の版の数・cron のジョブの数が出ます。見るのは次です。
@@ -137,18 +147,19 @@ npm run test:smoke -- --base-url=http://localhost:3000
 
 年次の訓練と、本番の障害のときの手順です。どの手順も、前の手順の結果を確かめてから進みます。手元のシェルには 5 章の R2 の 4 つを置いておきます。以降の作業は、手元の空のディレクトリ `$WORK` (リポジトリの外) と、リポジトリの直下 (main の checkout) を行き来します。
 
-**(1) 書庫を取り出す。** `$WORK` で、3 ファイルをそれぞれ取り、SHA-256 を確かめ、復号して展開します (中身は 1 章の 7 つ)。
+**(1) 書庫を取り出す。** `$WORK` で、3 ファイルをそれぞれ取り、SHA-256 を確かめ、復号して展開します (中身は 1 章の 7 つ)。`KEY_BASE` には、5 章と同じ R2 のキーから `.tar.zst.age` を除いたものを入れます。秘密鍵のファイルは、5 章と同じく、リポジトリの外の `$KEYDIR/backup.key` に置きます。
 
 ```bash
 WORK="$(mktemp -d)" && cd "$WORK"
-KEY_BASE='<daily|weekly|annual>/<日付>/<base>'   # 5 章と同じキーから .tar.zst.age を除いたもの
+KEY_BASE='<daily|weekly|annual>/<日付>/<base>'
 for suffix in .tar.zst.age .sha256 .manifest.json; do
   env -u AWS_SESSION_TOKEN -u AWS_PROFILE AWS_ACCESS_KEY_ID="$BACKUP_R2_ACCESS_KEY_ID" AWS_SECRET_ACCESS_KEY="$BACKUP_R2_SECRET_ACCESS_KEY" AWS_REQUEST_CHECKSUM_CALCULATION=when_required AWS_RESPONSE_CHECKSUM_VALIDATION=when_required aws s3 cp "s3://$BACKUP_R2_BUCKET/${KEY_BASE}${suffix}" . --endpoint-url "https://$BACKUP_R2_ACCOUNT_ID.r2.cloudflarestorage.com" --region auto
 done
-sha256sum -c <base>.sha256          # Mac は shasum -a 256 -c <base>.sha256
-age -d -i <age の秘密鍵のパス> <base>.tar.zst.age | zstd -d | tar -x
+sha256sum -c <base>.sha256
+age -d -i "$KEYDIR/backup.key" <base>.tar.zst.age | zstd -d | tar -x
 ```
 
+- Mac で `sha256sum` が無いときは、その行の代わりに `shasum -a 256 -c <base>.sha256` を流します。
 - `env -u …` は、手元のシェルにある別の AWS の一時鍵・プロファイルが混ざって署名が合わなくなるのを防ぎます。2 つの `…CHECKSUM…` は、aws cli 2.23 以降が付ける CRC のヘッダーを R2 が受け付けないことがあるためです (取得の workflow と同じ打ち方)。
 - `sha256sum -c` が `OK` でなければ、先へ進みません。
 
@@ -167,10 +178,10 @@ psql "$NEW_DB_URL" -X -q -v ON_ERROR_STOP=1 --single-transaction --file fixups.s
 - 2 つ目 (schema と data): 1 回の取引で、どこかで失敗すれば全体が戻ります。
 - 3 つ目 (fixups): 関数・表・列の権限と storage のポリシーを取得の時点に戻します。流さないと、Supabase の既定の権限で anon が REVOKE 済みの関数を呼べたり、storage のポリシーが無かったりします。
 
-**(4) 確かめる。** 別の空のディレクトリで、復元した DB のカタログを取り、書庫の `catalog/` と比べます。
+**(4) 確かめる。** 別の空のディレクトリで、復元した DB のカタログを取り、書庫の `catalog/` と比べます。リポジトリの直下 (main の checkout) に `cd` してから流します (`CHECKOUT` にその場所を覚えます)。
 
 ```bash
-CHECKOUT="$PWD"                      # リポジトリの直下で
+CHECKOUT="$PWD"
 RESTORED_CATALOG="$(mktemp -d)"
 (cd "$RESTORED_CATALOG" && psql "$NEW_DB_URL" -X -q -v ON_ERROR_STOP=1 --file "$CHECKOUT/scripts/baseline/snapshot_catalog.sql")
 python3 scripts/baseline/verify_baseline.py "$WORK/catalog" "$RESTORED_CATALOG"
@@ -214,6 +225,14 @@ npx --yes supabase@2.62.10 migration list --linked
 - 動作の確認: `/api/health?deep=1` が 200 を返すこと → smoke (`npm run test:smoke -- --base-url=<新しい環境の URL>`) が終了 0。
 - Storage のファイル (写真) は戻りません。
 
+**(7) 後片付け。** 年次の訓練でも本番の障害でも、(6) が終わったら、手元に展開した平文 (`$WORK` の `data.sql` などには、利用者の個人情報が入っています)・(4) で取ったカタログ・秘密鍵のファイルを消し、接続先の変数を外します。5 章の道具と同じく、平文と秘密鍵を手元に残しません。
+
+```bash
+cd "$CHECKOUT"
+rm -rf "$WORK" "$RESTORED_CATALOG" "$KEYDIR"
+unset NEW_DB_URL SUPABASE_DB_PASSWORD
+```
+
 ## 7. 復元点より後の退会
 
 復元は取得の時点の DB に戻すので、取得より後に退会した利用者は、機械では再現できません。`gdpr_deletion_requests` の記録は id の HMAC で、復元先が同じプロジェクト (Vault の `pii_hmac_key` が残る) なら照合できますが、新しいプロジェクトでは鍵がありません。影響の期間は最長 24 時間 (RPO) です。
@@ -246,7 +265,7 @@ npx --yes supabase@2.62.10 migration list --linked
 
 ## 9. 鍵の入れ替え・R2 トークンの入れ替え・secrets の失効
 
-- **age の鍵を入れ替える**: 新しい鍵対を `age-keygen` で作り (2 章の 3)、GitHub の variable `BACKUP_AGE_RECIPIENT` を新しい公開鍵に替えます。次の取得から新しい鍵で暗号化されます。**古い秘密鍵は、その鍵で暗号化した最後の対象物の保持が切れるまで捨てません** (annual は 7 年)。どの鍵で暗号化したかは、各対象物の manifest の `age_recipient` で辿れます。入れ替えの後は `workflow_dispatch` を 1 回流して、緑になることと、新しい対象物を 5 章で復号できることを確かめます。
+- **age の鍵を入れ替える**: 新しい鍵対を、2 章の 3 と同じ打ち方 (リポジトリの外の `$KEYDIR` に `age-keygen -o "$KEYDIR/backup.key"` で作り、保管したらファイルを消す) で作り、GitHub の variable `BACKUP_AGE_RECIPIENT` を新しい公開鍵に替えます。次の取得から新しい鍵で暗号化されます。**古い秘密鍵は、その鍵で暗号化した最後の対象物の保持が切れるまで捨てません** (annual は 7 年)。どの鍵で暗号化したかは、各対象物の manifest の `age_recipient` で辿れます。入れ替えの後は `workflow_dispatch` を 1 回流して、緑になることと、新しい対象物を 5 章で復号できることを確かめます。
 - **R2 のトークンを入れ替える** (期限・退職・漏れの疑い): Cloudflare で新しいトークンを作り (取得用と復元用それぞれ。このバケットだけに絞る)、GitHub の secrets `BACKUP_R2_ACCESS_KEY_ID`・`BACKUP_R2_SECRET_ACCESS_KEY` と、パスワードマネージャーの復元用を替えます。`workflow_dispatch` が緑になってから、古いトークンを Cloudflare で失効させます。トークンが漏れても、bucket lock のために保持の期間の対象物は消せず・上書きできず、age の秘密鍵が無ければ読めません。
 - **本番に繋ぐ secrets の失効** (`SUPABASE_ACCESS_TOKEN`・`SUPABASE_DB_PASSWORD`): 失効すると取得は `link_failed` で止まります。DB に繋げないので監査行は書けず、Issue が立ち、日次が 30 時間を超えると鮮度のメールが届きます。新しい値を GitHub の secrets に入れ、`workflow_dispatch` で取り直します。
 - **age の秘密鍵を失くした**: その鍵で暗号化した対象物は開けません。新しい鍵対に替え (最初の項)、直近の対象物がもう開けないことを前提に、取り直します。2 人目の保管者を置くか、控えを増やすかは、設計書 §21 の確認事項です。
@@ -260,13 +279,13 @@ npx --yes supabase@2.62.10 migration list --linked
 | `not_configured` | 取得: GitHub の secrets / variables が足りない・形が違う (Issue の `missing` に名前だけが出ます。2 章の 4)。age の公開鍵は `age1` で始まる形。`restore`: 手元のシェルの R2 の 4 つが無い (5 章) |
 | `restore` の download の `timeout` | `BACKUP_UPLOAD_TIMEOUT_MINUTES` を手元のシェルで上書きして流し直す |
 | `catalog_failed` | 本番のカタログ・台帳・cron のジョブの定義を読めなかった、または python3 が落ちた。`workflow_dispatch` で取り直す |
-| 月曜・1 月 1 日の `copy_failed` | 層のキーへの送り直しか、その大きさの確かめが失敗した。daily は残っている。翌週の月曜まで待つか、`workflow_dispatch` の `tier` で取り直す |
-| 月曜の `restore_check_failed` (カタログ・台帳の不一致) | `catalog_errors` が 0 でない = migration の本番適用と取得が重なったか、権限の補い (`fixups.sql`) が効いていない。手元で `restore` を流して `[error]` の行を見る。`supabase/migrations/` にファイルの無い版 = 台帳のずれで、`deploy-supabase-migrations.yml` が `REMOTE_ONLY` で止めるのと同じ事故。台帳とファイルのどちらが正しいかを調べてから直す。自動では直さない |
+| weekly / annual の `copy_failed` | 層のキーへの送り直しか、その大きさの確かめが失敗した。daily は残っている。翌週の月曜まで待つか、`workflow_dispatch` の `tier` で取り直す |
+| weekly / annual を取った run の `restore_check_failed` (カタログ・台帳の不一致) | `catalog_errors` が 0 でない = migration の本番適用と取得が重なったか、権限の補い (`fixups.sql`) が効いていない。手元で `restore` を流して `[error]` の行を見る。`supabase/migrations/` にファイルの無い版 = 台帳のずれで、`deploy-supabase-migrations.yml` が `REMOTE_ONLY` で止めるのと同じ事故。台帳とファイルのどちらが正しいかを調べてから直す。自動では直さない |
 | `dump_incomplete` | ダンプが最後まで取れていない。migration の本番適用と重なったときは `workflow_dispatch` で取り直す。毎日続くときは、supabase CLI の出力の形が設計書 §4.3 の表と変わっていないかを `roundtrip-check` (PR で動く往復の検査) で確かめる |
 | Issue「結果を残さずに終わった」 | run の step が時間切れ・取り消しになり、結果ファイルが無い。時間切れなら調整用の variable (`BACKUP_DUMP_TIMEOUT_MINUTES` など。2 章の 4) を上げる |
 | `restore_env_failed` | ローカルのスタックが起きない・psql / python3 が無い。ベースラインを取り直す (`supabase/baseline/README.md` の「取り直し方」) |
 | `image_pull_unavailable` | Docker イメージの取得の上限に当たった。検査の赤ではない。時間をおいて `workflow_dispatch` で取り直す (`roundtrip-check` は失敗したジョブだけを流し直す)。`docs/operations/ci-supabase-image-pull.md` |
 | `link_failed` | `SUPABASE_ACCESS_TOKEN` / `SUPABASE_DB_PASSWORD` の失効。9 章 |
 | `checksum_mismatch` / `decrypt_failed` | `.sha256` と合わない (取り出しの途中・改ざん) / 秘密鍵が違う。別の対象物 (前後の日) で試す。鍵は 9 章 |
-| 日次の「古い」のバッジ・鮮度のメール | 取得が走っていない。Actions の「DB Backup」の履歴を見る。schedule が止まっているなら Actions で有効にし直す (3 章)。secrets の失効は 9 章 |
+| 日次の「古い」のバッジ・鮮度のメール | 日次の取得が 30 時間以上成功していない。Issue「【自動】DB バックアップの失敗」が立っていれば、その reason の行を見る (secrets の失効は 9 章)。Issue が無ければ run が走っていない: Actions の「DB Backup」の履歴を見て、schedule が止まっているなら Actions で有効にし直す (3 章) |
 | R2 の古い対象物が消えない・多すぎる | Lifecycle が効いていない。取得のログの inventory の数 (層ごとの対象物の数) と、R2 の Lifecycle の設定を、`node scripts/backup-db.mjs r2-config` の出力と見比べる |

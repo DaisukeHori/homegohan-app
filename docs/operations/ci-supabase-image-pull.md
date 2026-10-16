@@ -9,7 +9,7 @@ CI のいくつかのジョブは、Supabase CLI でローカルの Supabase を
 | `scripts/supabase-local.sh start` (security-regression・e2e-local・`scripts/local-ci.sh`) | イメージの取得に失敗したら、取得元を `public.ecr.aws` → `ghcr.io` の順に替えてやり直す。どちらでも失敗したら、間を空けて (30 秒 × 周) 次の周に入る (既定 3 周) |
 | `scripts/supabase-image-fallback.sh` (Deploy Supabase Migrations の「Verify db diff (post-apply)」・Daily Consistency Check の db diff) | 同じ。周のあとの待ちは 60 秒 × 周 |
 | Deploy Supabase Functions の「Deploy all functions」(#1686) | イメージを取らない。`supabase functions deploy --use-api --import-map supabase/functions/deno.json` で、関数のまとめ (バンドル) を Supabase のサーバーにさせ、ランナーの Docker を使わない (下の「関数のデプロイ」) |
-| `scripts/backup-db.mjs` (DB Backup の `backup` ジョブ。#1129) | `supabase db dump` の 3 回と stats の `docker run` を `scripts/supabase-image-fallback.sh` で包む。復元の検査 (月曜と 1 月 1 日の restore_check) と `roundtrip-check` ジョブは `scripts/supabase-local.sh start` を使うので、上の取得元の切り替えが効く |
+| `scripts/backup-db.mjs` (DB Backup の `backup` ジョブ。#1129) | `supabase db dump` の 3 回と stats の `docker run` を `scripts/supabase-image-fallback.sh` で包む。復元の検査 (weekly / annual を取った run の restore_check。schedule なら月曜と 1 月 1 日) と `roundtrip-check` ジョブは `scripts/supabase-local.sh start` を使うので、上の取得元の切り替えが効く |
 
 - 取得元の切り替えには、Supabase CLI の環境変数 `SUPABASE_INTERNAL_IMAGE_REGISTRY` を使います (CLI 2.62.10 の `internal/utils/docker.go` の `GetRegistry`。`docker.io` 以外を指定すると `<取得元>/supabase/<イメージ名>:<版>` を取ります)。Supabase は同じイメージを `ghcr.io/supabase/` にも置いています (2026-10-15 に、CLI 2.62.10 と `supabase/.temp` の版で使うイメージがすべて `ghcr.io` にあることを確かめました)。
 - CLI 自身も、1 回の取得の中で 2 回やり直します (4 秒・8 秒待つ)。

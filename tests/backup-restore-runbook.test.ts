@@ -19,6 +19,7 @@ import {
   AWS_CHECKSUM_ENV,
   FAILURE_REASONS,
   OPTIONAL_VARIABLE_NAMES,
+  planRun,
   PSQL_SCRIPTS,
   REQUIRED_SECRET_NAMES,
   REQUIRED_VARIABLE_NAMES,
@@ -26,6 +27,7 @@ import {
   RETENTION_DAYS,
   SUPABASE_CLI_VERSION,
   SUPABASE_PROJECT_REF,
+  tiersForDate,
 } from '../scripts/lib/backup-db.mjs';
 import {
   BACKUP_STALE_AFTER_HOURS,
@@ -378,5 +380,108 @@ describe('§19 の追随 (段 D の行)', () => {
       expect(doc, `README に ${needle}`).toContain(needle);
     }
     expect(fs.existsSync(path.join(ROOT, 'scripts/baseline/build_restore_fixups.py'))).toBe(true);
+  });
+});
+
+/** 手順書の ```bash のコードブロックの中の行 (字下げの付いたブロックも) */
+function bashFenceLines(markdown: string): string[] {
+  const lines: string[] = [];
+  let inBash = false;
+  for (const line of markdown.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      inBash = !inBash && trimmed === '```bash';
+      continue;
+    }
+    if (inBash) lines.push(trimmed);
+  }
+  return lines;
+}
+
+describe('秘密鍵と平文を手元に残さない (リポジトリは公開)', () => {
+  const KEY_FILE = '"$KEYDIR/backup.key"';
+
+  it('2 章: age の秘密鍵はリポジトリの外 ($KEYDIR = mktemp -d) に作り、保管の後に $KEYDIR を消す', () => {
+    const two = chapter(2);
+    const made = two.indexOf('KEYDIR="$(mktemp -d)"');
+    const keygen = two.indexOf(`age-keygen -o ${KEY_FILE}`);
+    const removed = two.indexOf('rm -rf "$KEYDIR"');
+    expect(made, '2 章に KEYDIR="$(mktemp -d)"').toBeGreaterThanOrEqual(0);
+    expect(keygen, `2 章に age-keygen -o ${KEY_FILE}`).toBeGreaterThan(made);
+    expect(removed, '2 章で age-keygen の後に rm -rf "$KEYDIR"').toBeGreaterThan(keygen);
+  });
+
+  it('age-keygen -o の書き先は、どこでも $KEYDIR の中 (作業ツリーに裸の backup.key を書かない)', () => {
+    const keygenLines = runbook.split('\n').filter((l) => l.includes('age-keygen -o'));
+    expect(keygenLines.length, '走査が空振りしていない').toBeGreaterThan(0);
+    for (const line of keygenLines) expect(line, line).toContain(`age-keygen -o ${KEY_FILE}`);
+    expect(runbook).not.toMatch(/age-keygen -o\s+["']?backup\.key/);
+  });
+
+  it('5 章・6 章: 復号に渡す鍵のファイルは $KEYDIR の中で、5 章は使い終わったら消す', () => {
+    const five = chapter(5);
+    expect(five).toContain(`--identity-file ${KEY_FILE}`);
+    expect(five).toContain('rm -rf "$KEYDIR"');
+    expect(chapter(6)).toContain(`age -d -i ${KEY_FILE}`);
+  });
+
+  it('6 章: 終わりに $WORK (平文)・$RESTORED_CATALOG・$KEYDIR を消し、NEW_DB_URL を外す (cron のジョブと smoke の後)', () => {
+    const six = chapter(6);
+    const cleanup = six.indexOf('rm -rf "$WORK" "$RESTORED_CATALOG" "$KEYDIR"');
+    expect(cleanup, '6 章に rm -rf "$WORK" "$RESTORED_CATALOG" "$KEYDIR"').toBeGreaterThanOrEqual(0);
+    expect(cleanup).toBeGreaterThan(six.lastIndexOf('--file cron_jobs.sql'));
+    expect(cleanup).toBeGreaterThan(six.lastIndexOf('npm run test:smoke'));
+    // 消す前に $WORK の外へ出る (cron のジョブの手順は $WORK の中で終わる)
+    expect(six.lastIndexOf('cd "$CHECKOUT"')).toBeGreaterThan(six.lastIndexOf('cd "$WORK"'));
+    expect(six.lastIndexOf('cd "$CHECKOUT"')).toBeLessThan(cleanup);
+    expect(six.slice(cleanup)).toContain('unset NEW_DB_URL');
+  });
+});
+
+describe('貼り付けて流せる (Mac の対話の zsh は # をコメントとして扱わない)', () => {
+  it('```bash のコードブロックの行に # の説明が無い (行頭も行末も)', () => {
+    const lines = bashFenceLines(runbook);
+    expect(lines.length, '走査が空振りしていない').toBeGreaterThan(10);
+    const commented = lines.filter((l) => /(^|\s)#/.test(l));
+    expect(commented).toEqual([]);
+  });
+
+  it('6 章の代入の行 (KEY_BASE・CHECKOUT) は、代入だけの行になっている', () => {
+    const lines = bashFenceLines(chapter(6));
+    expect(lines).toContain("KEY_BASE='<daily|weekly|annual>/<日付>/<base>'");
+    expect(lines).toContain('CHECKOUT="$PWD"');
+    expect(lines).toContain('sha256sum -c <base>.sha256');
+  });
+});
+
+describe('Issue が立つ条件と、復元の検査が走る条件 (実コードとの突き合わせ)', () => {
+  it('3 章: Issue が立たないのは schedule の停止だけ。secrets の失効は Report (Issue) の step (if: always()) が Issue を立てる', () => {
+    const workflow = read('.github/workflows/db-backup.yml').split('\n');
+    const reportAt = workflow.findIndex((l) => l.trim() === '- name: Report (Issue)');
+    expect(reportAt, 'db-backup.yml に Report (Issue) の step').toBeGreaterThanOrEqual(0);
+    expect(workflow[reportAt + 1].trim()).toBe('if: always()');
+
+    const sentences = chapter(3).split(/[。\n]/);
+    const noIssue = sentences.filter((s) => s.includes('Issue が立たない'));
+    expect(noIssue.length, '3 章に「Issue が立たない」の文がある').toBeGreaterThan(0);
+    for (const sentence of noIssue) {
+      expect(sentence, sentence).toContain('schedule');
+      expect(sentence, sentence).not.toContain('secrets');
+    }
+    expect(chapter(3)).toContain('secrets の失効では run が失敗するので、Issue も立ちます');
+    expect(chapter(9)).toContain('`link_failed` で止まります');
+  });
+
+  it('4 章: 手動で weekly / annual を選べば、月曜・1 月 1 日でなくても復元の検査が走る (planRun の層)', () => {
+    // 2026-10-13 09:00 JST は火曜 (auto なら daily だけ)。weekly を選ぶと weekly も取る = restore_check が走る
+    const tuesday = new Date('2026-10-13T00:00:00Z');
+    expect(tiersForDate('2026-10-13')).toEqual(['daily']);
+    expect(planRun({ now: tuesday, tierOverride: 'weekly' }).tiers).toEqual(['daily', 'weekly']);
+    expect(planRun({ now: tuesday, tierOverride: 'annual' }).tiers).toEqual(['daily', 'annual']);
+    expect(chapter(4)).toContain('復元の検査は、weekly / annual を取った run で走ります');
+    for (const doc of [runbook, read('docs/operations/ci-supabase-image-pull.md')]) {
+      expect(doc).not.toContain('月曜と 1 月 1 日だけ');
+      expect(doc).not.toContain('月曜と 1 月 1 日の restore_check');
+    }
   });
 });
