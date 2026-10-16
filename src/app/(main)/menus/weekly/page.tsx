@@ -14,6 +14,7 @@ import {
   useFormDraftStore,
   convertV4ProgressToUIFormat,
   resumePendingGenerationAction,
+  japaneseHolidaysUrl,
   type GenerationProgress,
   type LegacyDishDetail,
 } from './_state';
@@ -416,14 +417,14 @@ const NEXT_MONTH = 1;
 
 const holidaysCache = new Map<number, Record<string, string>>();
 
-// Fetch Japanese holidays from holidays-jp API
+// Fetch Japanese holidays from holidays-jp API (#1769: URL は CSP の connect-src と同じ定数から作る)
 const fetchJapaneseHolidays = async (year: number): Promise<Record<string, string>> => {
   if (holidaysCache.has(year)) {
     return holidaysCache.get(year)!;
   }
 
   try {
-    const response = await fetch(`https://holidays-jp.github.io/api/v1/${year}/date.json`);
+    const response = await fetch(japaneseHolidaysUrl(year));
     if (!response.ok) throw new Error('Failed to fetch holidays');
     const data = await response.json();
     holidaysCache.set(year, data);
