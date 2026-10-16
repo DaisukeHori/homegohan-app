@@ -2,6 +2,7 @@ import { type Session, type User } from "@supabase/supabase-js";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { classifyAuthError } from "../lib/authErrors";
+import { registerDeviceName } from "../lib/device-name";
 import {
   flushPendingPushTokenReleases,
   recordPushTokenRelease,
@@ -232,6 +233,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 可能性があるので採用しない (採用すると、上の復元結果を null で上書きしてしまう)。
         // 値があるときは、検証完了を待たずにすぐ画面を出すため採用する
         if (nextSession) {
+          // この端末のログインに端末名を登録する (#1189。cross/16 §16)。待たない (失敗しても画面は変えない)
+          registerDeviceName(nextSession.access_token).catch(() => undefined);
           applySession(nextSession);
           setIsLoading(false);
         }
@@ -257,6 +260,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // release は例外を投げないが、万一投げても、サインアウトは済んでいる
           });
         return;
+      }
+      if (event === "SIGNED_IN" && nextSession) {
+        // 新しいセッション (= 新しい access token) の行に端末名を登録する (#1189。cross/16 §16)。待たない
+        registerDeviceName(nextSession.access_token).catch(() => undefined);
       }
       applySession(nextSession);
       setIsLoading(false);
