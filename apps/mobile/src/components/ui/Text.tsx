@@ -11,6 +11,7 @@ import { resolveFontStyle } from '../../theme/fonts';
  *
  * style の fontWeight (と typography のトークンの字形名) を、Noto Sans JP の Regular / Medium / Bold の字形に置き換えて描く
  * (置き換え方は src/theme/fonts.ts の resolveFontStyle)。
+ * ui/index.ts からは export しない (画面はこのファイルから直接 import する)。
  */
 
 /**
@@ -28,7 +29,7 @@ export function FontsReadyProvider({ ready, children }: { ready: boolean; childr
 }
 
 /** Noto Sans JP の字形を読み込めたかどうか */
-export function useFontsReady(): boolean {
+function useFontsReady(): boolean {
   return useContext(FontsReadyContext);
 }
 
