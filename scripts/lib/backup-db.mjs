@@ -79,6 +79,23 @@ export const CATALOG_CSV_FILES = Object.freeze([
   'catalog_policies.csv', 'catalog_functions.csv', 'catalog_tables.csv', 'storage_buckets.csv',
   'catalog_extensions.csv', 'catalog_publication.csv', 'catalog_auth_storage_triggers.csv',
 ]);
+/** auth・storage の表に付いたトリガーの CSV (CATALOG_CSV_FILES の 1 つ)。schema の dump は auth・storage のスキーマを除くので、
+ *  ここに出るアプリのトリガー (#1757 の auth.sessions の 3 本と auth.users の 1 本など) は dump を流しても戻らない (§3.3 の (6))。
+ *  補いは build_restore_fixups.py が fixups.sql に書き、突き合わせは appTriggerChecks が行う (verify_baseline.py はこの CSV を読まない) */
+export const AUTH_STORAGE_TRIGGERS_CSV = 'catalog_auth_storage_triggers.csv';
+/** AUTH_STORAGE_TRIGGERS_CSV の見出し (snapshot_catalog.sql の列の並び) */
+export const TRIGGER_CSV_COLUMNS = Object.freeze(['schema', 'table_name', 'trigger_name', 'definition']);
+/** Supabase のサービスが自分で作る内部のトリガーの関数のスキーマ。内部のトリガー (storage の 4 本: storage.protect_delete() など) は
+ *  サービス (Storage・Auth) がスタックの起動のときに自分のスキーマの関数で作るので、補わず、版の差は落とさない (警告だけ)。
+ *  アプリのトリガーは migration が作り、関数は public (など、取得する人の search_path の上) にある。pg_get_triggerdef は search_path で
+ *  見えない関数だけをスキーマつきで書き、auth・storage は postgres の search_path ("$user", public, extensions) に無いので、
+ *  内部のトリガーの関数はいつも `storage.` / `auth.` つきで出る (supabase/baseline/catalog/catalog_auth_storage_triggers.csv の 4 行)。
+ *  build_restore_fixups.py の INTERNAL_TRIGGER_FUNCTION_SCHEMAS と同じ値 (tests/backup-db.test.ts が突き合わせる) */
+export const INTERNAL_TRIGGER_FUNCTION_SCHEMAS = Object.freeze(['auth', 'storage']);
+/** pg_get_triggerdef の定義の行。1 = 実行する関数の名前 (スキーマつきか無し。引用符つきの名前もある)。`.*` は欲張りなので最後の EXECUTE を取る。
+ *  build_restore_fixups.py の TRIGGER_DEFINITION_PATTERN と同じ式 */
+export const TRIGGER_DEFINITION_PATTERN =
+  /^CREATE (?:CONSTRAINT )?TRIGGER .* EXECUTE (?:FUNCTION|PROCEDURE) ((?:"(?:[^"]|"")+"|[^".\s(]+)(?:\.(?:"(?:[^"]|"")+"|[^".\s(]+))?)\(/s;
 /** 補いの SQL を作るスクリプト (新設。build_baseline.py の 3 つの関数をつなぐ。§5.5) と、カタログを比べるスクリプト (既存。errors があれば終了 1) */
 export const RESTORE_FIXUPS_BUILDER_SCRIPT = 'scripts/baseline/build_restore_fixups.py';
 export const CATALOG_VERIFY_SCRIPT = 'scripts/baseline/verify_baseline.py';
@@ -763,6 +780,138 @@ export function cronJobsChecks(expected, cronJobsText) {
   if (names === null) return { ok: false, reason: 'restore_check_failed', expected, actual: null };
   if (names.length !== expected) return { ok: false, reason: 'restore_check_failed', expected, actual: names.length };
   return { ok: true, cron_jobs: names.length };
+}
+
+/** CSV (RFC 4180。psql の \copy … WITH (FORMAT csv) の出力) を行の配列にする。引用符の中の `,`・改行・`""` を扱う。
+ *  引用符が閉じていない・閉じた引用符の後ろが区切り (`,`・改行・終わり) でない → null。最後の改行の後の空の行は数えない */
+export function parseCsv(text) {
+  const src = String(text ?? '');
+  const rows = [];
+  let row = [];
+  let field = '';
+  let fieldStarted = false;
+  let i = 0;
+  while (i < src.length) {
+    const ch = src[i];
+    if (!fieldStarted && ch === '"') {
+      i += 1;
+      let closed = false;
+      while (i < src.length) {
+        if (src[i] === '"') {
+          if (src[i + 1] === '"') {
+            field += '"';
+            i += 2;
+            continue;
+          }
+          closed = true;
+          i += 1;
+          break;
+        }
+        field += src[i];
+        i += 1;
+      }
+      const next = src[i];
+      if (!closed || (next !== undefined && next !== ',' && next !== '\n' && next !== '\r')) return null;
+      fieldStarted = true;
+      continue;
+    }
+    if (ch === ',') {
+      row.push(field);
+      field = '';
+      fieldStarted = false;
+      i += 1;
+      continue;
+    }
+    if (ch === '\r' || ch === '\n') {
+      row.push(field);
+      rows.push(row);
+      row = [];
+      field = '';
+      fieldStarted = false;
+      i += ch === '\r' && src[i + 1] === '\n' ? 2 : 1;
+      continue;
+    }
+    field += ch;
+    fieldStarted = true;
+    i += 1;
+  }
+  if (fieldStarted || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows;
+}
+
+/** 名前の並び (`a.b` / `"a"."b"` / `b`) を、引用符を外した部分の配列にする */
+function splitQualifiedName(qualified) {
+  const parts = [];
+  const re = /"((?:[^"]|"")+)"|([^".]+)/g;
+  let m;
+  while ((m = re.exec(qualified)) !== null) parts.push(m[1] !== undefined ? unquoteIdent(m[1]) : m[2]);
+  return parts;
+}
+
+/** トリガーの定義から、実行する関数のスキーマを取る (名前にスキーマが無ければ null = 取得の時点の search_path で見えた関数)。定義の形が違えば undefined */
+export function triggerFunctionSchema(definition) {
+  const m = TRIGGER_DEFINITION_PATTERN.exec(String(definition ?? ''));
+  if (!m) return undefined;
+  const parts = splitQualifiedName(m[1]);
+  return parts.length === 2 ? parts[0] : null;
+}
+
+/** アプリのトリガーか (= 関数のスキーマが INTERNAL_TRIGGER_FUNCTION_SCHEMAS に無い)。定義の形が違えば undefined */
+export function isAppTrigger(definition) {
+  const schema = triggerFunctionSchema(definition);
+  if (schema === undefined) return undefined;
+  return schema === null || !INTERNAL_TRIGGER_FUNCTION_SCHEMAS.includes(schema);
+}
+
+/** AUTH_STORAGE_TRIGGERS_CSV の本文を読む。見出しが TRIGGER_CSV_COLUMNS で、どの行も 4 列・定義が TRIGGER_DEFINITION_PATTERN に当たり、
+ *  (schema, table_name, trigger_name) が重ならなければ行の配列 (key = `<schema>.<table>.<trigger>`・app = アプリのトリガーか)。ほかは null */
+export function parseTriggerCatalog(text) {
+  const rows = parseCsv(text);
+  if (rows === null || rows.length === 0) return null;
+  const [header, ...body] = rows;
+  if (header.length !== TRIGGER_CSV_COLUMNS.length || header.some((name, i) => name !== TRIGGER_CSV_COLUMNS[i])) return null;
+  const seen = new Set();
+  const triggers = [];
+  for (const cells of body) {
+    if (cells.length !== TRIGGER_CSV_COLUMNS.length) return null;
+    const [schema, table, name, definition] = cells;
+    const app = isAppTrigger(definition);
+    if (app === undefined) return null;
+    const key = `${schema}.${table}.${name}`;
+    if (seen.has(key)) return null;
+    seen.add(key);
+    triggers.push({ key, schema, table, name, definition, app });
+  }
+  return triggers;
+}
+
+/** 復元の検査のトリガーの突き合わせ (§4.8 の 7 の後半)。取得の時点 (catalog/) と復元した DB (restored-catalog/) の
+ *  AUTH_STORAGE_TRIGGERS_CSV を比べ、アプリのトリガーの過不足 (missing・extra) と定義の差 (differs) を restore_check_failed にする。
+ *  内部のトリガーの差 (スタックの Storage の版の差) は internal_differences に名前を返すだけで落とさない。どちらかが読めなければ失敗 */
+export function appTriggerChecks(capturedText, restoredText) {
+  const captured = parseTriggerCatalog(capturedText);
+  const restored = parseTriggerCatalog(restoredText);
+  if (captured === null || restored === null) {
+    return { ok: false, reason: 'restore_check_failed', unreadable: true, missing: [], extra: [], differs: [] };
+  }
+  const byKey = (list) => new Map(list.map((t) => [t.key, t]));
+  const want = byKey(captured.filter((t) => t.app));
+  const got = byKey(restored.filter((t) => t.app));
+  const missing = [...want.keys()].filter((key) => !got.has(key)).sort();
+  const extra = [...got.keys()].filter((key) => !want.has(key)).sort();
+  const differs = [...want.keys()].filter((key) => got.has(key) && got.get(key).definition !== want.get(key).definition).sort();
+  if (missing.length > 0 || extra.length > 0 || differs.length > 0) {
+    return { ok: false, reason: 'restore_check_failed', unreadable: false, missing, extra, differs };
+  }
+  const internalWant = byKey(captured.filter((t) => !t.app));
+  const internalGot = byKey(restored.filter((t) => !t.app));
+  const internalDifferences = [...new Set([...internalWant.keys(), ...internalGot.keys()])]
+    .filter((key) => internalWant.get(key)?.definition !== internalGot.get(key)?.definition)
+    .sort();
+  return { ok: true, app_triggers: want.size, internal_differences: internalDifferences };
 }
 
 function ledgerSummary(versions) {
@@ -1457,6 +1606,31 @@ async function verifyRestoredCatalog(ctx, { pgUrl, catalogDir, workDir, timeoutM
   return summary;
 }
 
+/** auth・storage の表のトリガーの突き合わせ (§4.8 の 7 の後半)。verifyRestoredCatalog が restored-catalog/ に書いた
+ *  AUTH_STORAGE_TRIGGERS_CSV を、取得の時点の catalog/ のものと appTriggerChecks で比べる。合わなければ restore_check_failed。
+ *  ログに出すのはトリガーの名前 (migration にある名前で、値ではない) と数だけ */
+function verifyRestoredTriggers(ctx, { catalogDir, workDir }) {
+  const checked = appTriggerChecks(
+    readTextOr(path.join(catalogDir, AUTH_STORAGE_TRIGGERS_CSV), ''),
+    readTextOr(path.join(workDir, RESTORED_CATALOG_DIR, AUTH_STORAGE_TRIGGERS_CSV), ''),
+  );
+  if (!checked.ok) {
+    if (checked.unreadable) ctx.log(`[db-backup] ${AUTH_STORAGE_TRIGGERS_CSV} が読めません`);
+    else {
+      ctx.log(
+        `[db-backup] auth・storage の表のアプリのトリガーが合いません: 無い ${checked.missing.join(', ') || '(なし)'}・` +
+          `余分 ${checked.extra.join(', ') || '(なし)'}・定義が違う ${checked.differs.join(', ') || '(なし)'}`,
+      );
+    }
+    throw new StageFailure('restore_check_failed');
+  }
+  ctx.log(`[db-backup] auth・storage の表のアプリのトリガー ${checked.app_triggers} 本が取得の時点と同じ`);
+  if (checked.internal_differences.length > 0) {
+    ctx.log(`[db-backup] 内部のトリガーの差 (スタックの版の差。落とさない): ${checked.internal_differences.join(', ')}`);
+  }
+  return checked;
+}
+
 /** cron_jobs.sql を確定させずに流す (roundtrip-local だけ。§4.8 の 8) */
 async function cronDryRun(ctx, { pgUrl, cronJobsFile, timeoutMs }) {
   await psql(ctx, 'cron_dry_run', { PG_URL: pgUrl, PSQL_FILE: cronJobsFile }, { timeoutMs });
@@ -1483,6 +1657,7 @@ async function checkRestored(ctx, { pgUrl, plainDir, catalogDir, workDir, timeou
   const summary = await verifyRestoredCatalog(ctx, { pgUrl, catalogDir, workDir, timeoutMs, fullOutput });
   partial.catalog_errors = summary.errors;
   partial.catalog_warnings = summary.warnings;
+  verifyRestoredTriggers(ctx, { catalogDir, workDir });
   const versions = parseLedgerVersions(readTextOr(path.join(plainDir, LEDGER_FILE), ''));
   if (versions === null) throw new StageFailure('restore_check_failed');
   partial.ledger_versions = versions.length;

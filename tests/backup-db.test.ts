@@ -5,8 +5,8 @@
  * #1129 / #1191 DB バックアップ (scripts/lib/backup-db.mjs) の単体テスト。設計 docs/design/cross/17-backup-automation.md §15 の段 A の行。
  *
  * 外部コマンド (supabase / docker / psql / aws / age / zstd / tar / python3) は偽の CommandRunner に差し替え、本物を呼ばない。
- * 例外は 3 つの it だけで、子プロセスを起こす (bash でライブラリの終了コードを読む・python3 で補いの SQL の golden を作る・
- * 同じ python3 の引数の誤り)。R2・age・本番の DB には触れない。
+ * 例外は子プロセスを起こす it だけ (bash でライブラリの終了コードを読む・python3 で補いの SQL の golden を作る・
+ * 同じ python3 の引数の誤り・python3 で auth の表のアプリのトリガーの補いを作る・その定義の形の誤り)。R2・age・本番の DB には触れない。
  *
  * 偽の data.sql / schema.sql は §4.3 の「ダンプの出力の形」の表と骨組みのとおりに書く (CLI 2.62.10 の実物の形。引用符つきの名前)。
  */
@@ -22,6 +22,7 @@ import {
   ARCHIVE_ENTRIES,
   ARCHIVE_SCRIPT,
   AUDIT_DETAILS_MAX_BYTES,
+  AUTH_STORAGE_TRIGGERS_CSV,
   AWS_CHECKSUM_ENV,
   BACKUP_AUDIT_ACTION_TYPES,
   BACKUP_AUDIT_RESULTS,
@@ -43,6 +44,7 @@ import {
   IMAGE_PULL_FALLBACK_SCRIPT,
   IMAGE_PULL_UNAVAILABLE_EXIT_CODE,
   INFREQUENT_ACCESS_AFTER_DAYS,
+  INTERNAL_TRIGGER_FUNCTION_SCHEMAS,
   JOB_TIMEOUT_MINUTES,
   LEDGER_VERSIONS_SQL,
   LOCAL_SLOT_DEFAULT,
@@ -70,8 +72,11 @@ import {
   STAGE_TIMEOUT_MINUTES,
   SUPABASE_CLI_VERSION,
   SUPABASE_TEMP_POOLER_URL_FILE,
+  TRIGGER_CSV_COLUMNS,
+  TRIGGER_DEFINITION_PATTERN,
   UsageError,
   ZSTD_LEVEL,
+  appTriggerChecks,
   awsCommandEnv,
   backupAuditActionType,
   buildAuditSql,
@@ -87,6 +92,7 @@ import {
   classifyFailure,
   countRoleRestoreErrors,
   cronJobsChecks,
+  isAppTrigger,
   ledgerChecks,
   managedTablesInDump,
   objectKey,
@@ -94,11 +100,13 @@ import {
   parseCatalogVerifySummary,
   parseCopyLine,
   parseCronJobsSql,
+  parseCsv,
   parseLedgerVersions,
   parseLocalDbUrl,
   parseRestoreCounts,
   parseRunReport,
   parseSchemaTableLine,
+  parseTriggerCatalog,
   planBackupIssue,
   planRun,
   r2EndpointUrl,
@@ -117,6 +125,7 @@ import {
   stageTimeoutMs,
   tiersForDate,
   toRunReport,
+  triggerFunctionSchema,
   unexpectedFailureReport,
   verifyChecksum,
   verifyDumpFiles,
@@ -182,6 +191,28 @@ const CRON_SQL = [
 ].join('\n');
 
 const LEDGER_TXT = `${REAL_VERSIONS.join('\n')}\n`;
+/** auth・storage の表のトリガーの CSV の偽物 (snapshot_catalog.sql の \copy の形)。storage の内部の 4 本は origin/main の
+ *  supabase/baseline/catalog/catalog_auth_storage_triggers.csv の行そのもの、auth の 4 本は #1757 (20261016243000) のトリガーを
+ *  pg_get_triggerdef が書く形 (関数は postgres の search_path で見えるのでスキーマ無し・WHEN は括弧が 2 重) */
+const STORAGE_INTERNAL_TRIGGER_ROWS = fs
+  .readFileSync(path.join(ROOT, 'supabase/baseline/catalog', AUTH_STORAGE_TRIGGERS_CSV), 'utf8')
+  .split('\n')
+  .slice(1)
+  .filter((line) => line !== '');
+const AUTH_APP_TRIGGERS = [
+  ['auth', 'sessions', 'on_auth_session_created', 'CREATE TRIGGER on_auth_session_created AFTER INSERT ON auth.sessions FOR EACH ROW EXECUTE FUNCTION auth_session_created()'],
+  ['auth', 'sessions', 'on_auth_session_deleted', 'CREATE TRIGGER on_auth_session_deleted AFTER DELETE ON auth.sessions FOR EACH ROW EXECUTE FUNCTION auth_session_deleted()'],
+  [
+    'auth', 'sessions', 'on_auth_session_refreshed',
+    'CREATE TRIGGER on_auth_session_refreshed AFTER UPDATE OF refreshed_at ON auth.sessions FOR EACH ROW WHEN ((old.refreshed_at IS DISTINCT FROM new.refreshed_at)) EXECUTE FUNCTION auth_session_refreshed()',
+  ],
+  ['auth', 'users', 'on_auth_user_password_changed', 'CREATE TRIGGER on_auth_user_password_changed AFTER INSERT OR UPDATE OF encrypted_password ON auth.users FOR EACH ROW EXECUTE FUNCTION password_history_record()'],
+] as const;
+function triggersCsv(rows: ReadonlyArray<readonly string[]>, internal: string[] = STORAGE_INTERNAL_TRIGGER_ROWS) {
+  const quote = (cell: string) => (/[",\n\r]/.test(cell) ? `"${cell.replace(/"/g, '""')}"` : cell);
+  return `${[TRIGGER_CSV_COLUMNS.join(','), ...rows.map((row) => row.map(quote).join(',')), ...internal].join('\n')}\n`;
+}
+const TRIGGERS_CSV = triggersCsv(AUTH_APP_TRIGGERS);
 const DUMPED = { public_tables: 2, auth_users: 1, audit_rows: 1 };
 const COUNT_STDOUT = '2|1|1\n';
 const LOCAL_DB_URL = 'postgresql://postgres:postgres@127.0.0.1:54322/postgres';
@@ -267,9 +298,12 @@ function kindOf(cmd: string, args: string[], options: RunOptions): string {
   return cmd;
 }
 
-function writeCatalog(dir: string, skip: string[] = []) {
+function writeCatalog(dir: string, skip: string[] = [], triggers: string = TRIGGERS_CSV) {
   fs.mkdirSync(dir, { recursive: true });
-  for (const name of CATALOG_CSV_FILES) if (!skip.includes(name)) fs.writeFileSync(path.join(dir, name), 'a,b\n1,2\n');
+  for (const name of CATALOG_CSV_FILES) {
+    if (skip.includes(name)) continue;
+    fs.writeFileSync(path.join(dir, name), name === AUTH_STORAGE_TRIGGERS_CSV ? triggers : 'a,b\n1,2\n');
+  }
 }
 
 /** 偽の CommandRunner。override が結果を返せばそれを使い、undefined なら既定の成功の振る舞い */
@@ -822,6 +856,153 @@ describe('catalog・台帳・cron の定義', () => {
 });
 
 // ───────────────────────────────────────────────────────────────────────────
+// auth・storage の表のアプリのトリガー (dump を流しても戻らないものの (6)。#1757 との取り込みで足した)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** 本物のカタログ (supabase/baseline/catalog) を写し、トリガーの CSV だけ差し替えた置き場を作る */
+function catalogWithTriggers(prefix: string, triggers: string) {
+  const dir = tempDir(prefix);
+  const source = path.join(ROOT, 'supabase/baseline/catalog');
+  for (const name of fs.readdirSync(source)) fs.copyFileSync(path.join(source, name), path.join(dir, name));
+  fs.writeFileSync(path.join(dir, AUTH_STORAGE_TRIGGERS_CSV), triggers);
+  return dir;
+}
+
+function buildFixups(catalogDir: string) {
+  const out = path.join(tempDir('fixups-trg-'), 'fixups.sql');
+  const r = spawnSync('python3', [RESTORE_FIXUPS_BUILDER_SCRIPT, catalogDir, 'supabase/baseline/prod_schema.sql', out], { cwd: ROOT, encoding: 'utf8' });
+  return { status: r.status, stderr: r.stderr, text: fs.existsSync(out) ? fs.readFileSync(out, 'utf8') : '' };
+}
+
+const GOLDEN_FIXUPS = () =>
+  ['prod_function_acl.sql', 'prod_table_acl.sql', 'prod_storage.sql'].map((name) => fs.readFileSync(path.join(ROOT, 'supabase/baseline', name), 'utf8')).join('');
+
+describe('auth・storage の表のアプリのトリガー', () => {
+  it('parseCsv: 引用符の中の , と改行と "" を扱い、閉じない引用符・引用符の後ろの文字は null', () => {
+    expect(parseCsv('a,b\n"x,1","say ""hi""\nnext"\n')).toEqual([['a', 'b'], ['x,1', 'say "hi"\nnext']]);
+    expect(parseCsv('a,b\r\n1,\r\n')).toEqual([['a', 'b'], ['1', '']]);
+    expect(parseCsv('a,b\n1,2')).toEqual([['a', 'b'], ['1', '2']]);
+    expect(parseCsv('')).toEqual([]);
+    expect(parseCsv('a,"b\n')).toBeNull();
+    expect(parseCsv('a,"b"c\n')).toBeNull();
+  });
+
+  it('triggerFunctionSchema / isAppTrigger: storage・auth の関数は内部、スキーマ無し・public・ほかのスキーマはアプリ、形が違えば undefined', () => {
+    expect(INTERNAL_TRIGGER_FUNCTION_SCHEMAS).toEqual(['auth', 'storage']);
+    expect(triggerFunctionSchema('CREATE TRIGGER t BEFORE DELETE ON storage.objects FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete()')).toBe('storage');
+    expect(isAppTrigger('CREATE TRIGGER t BEFORE DELETE ON storage.objects FOR EACH STATEMENT EXECUTE FUNCTION storage.protect_delete()')).toBe(false);
+    expect(isAppTrigger('CREATE TRIGGER t AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION auth.internal()')).toBe(false);
+    expect(triggerFunctionSchema(AUTH_APP_TRIGGERS[0][3])).toBeNull();
+    for (const row of AUTH_APP_TRIGGERS) expect(isAppTrigger(row[3]), row[2]).toBe(true);
+    expect(isAppTrigger('CREATE TRIGGER t AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION public.handle_new_user()')).toBe(true);
+    expect(triggerFunctionSchema('CREATE TRIGGER t AFTER INSERT ON auth.users FOR EACH ROW EXECUTE FUNCTION "My.Schema"."f()"(\'a\')')).toBe('My.Schema');
+    expect(isAppTrigger('CREATE TRIGGER t AFTER INSERT ON auth.users FOR EACH ROW EXECUTE PROCEDURE "storage".f()')).toBe(false);
+    expect(isAppTrigger('CREATE CONSTRAINT TRIGGER t AFTER INSERT ON auth.users DEFERRABLE FOR EACH ROW EXECUTE FUNCTION f()')).toBe(true);
+    // WHEN の中の文字列に EXECUTE FUNCTION があっても、最後の EXECUTE の関数を見る
+    expect(triggerFunctionSchema("CREATE TRIGGER t AFTER UPDATE ON auth.users FOR EACH ROW WHEN ((new.x = 'EXECUTE FUNCTION storage.y()')) EXECUTE FUNCTION f()")).toBeNull();
+    expect(triggerFunctionSchema('ALTER TABLE auth.users ENABLE TRIGGER t')).toBeUndefined();
+    expect(isAppTrigger('')).toBeUndefined();
+  });
+
+  it('parseTriggerCatalog: 本物のベースラインの 4 行はどれも内部・見出し / 列の数 / 定義の形 / 重なりが違えば null', () => {
+    const baseline = parseTriggerCatalog(fs.readFileSync(path.join(ROOT, 'supabase/baseline/catalog', AUTH_STORAGE_TRIGGERS_CSV), 'utf8'));
+    expect(baseline).toHaveLength(STORAGE_INTERNAL_TRIGGER_ROWS.length);
+    expect(baseline!.every((t) => !t.app && t.schema === 'storage')).toBe(true);
+    const parsed = parseTriggerCatalog(TRIGGERS_CSV)!;
+    expect(parsed.filter((t) => t.app).map((t) => t.key).sort()).toEqual(AUTH_APP_TRIGGERS.map((r) => `${r[0]}.${r[1]}.${r[2]}`).sort());
+    expect(parseTriggerCatalog('schema,table_name,trigger_name\n')).toBeNull();
+    expect(parseTriggerCatalog(`${TRIGGER_CSV_COLUMNS.join(',')}\nauth,users,t\n`)).toBeNull();
+    expect(parseTriggerCatalog(`${TRIGGER_CSV_COLUMNS.join(',')}\nauth,users,t,not a trigger\n`)).toBeNull();
+    expect(parseTriggerCatalog(`${TRIGGERS_CSV}${STORAGE_INTERNAL_TRIGGER_ROWS[0]}\n`)).toBeNull();
+    expect(parseTriggerCatalog('')).toBeNull();
+    expect(parseTriggerCatalog(`${TRIGGER_CSV_COLUMNS.join(',')}\n`)).toEqual([]);
+  });
+
+  it('appTriggerChecks: 同じなら ok (アプリ 4 本)・無い / 余分 / 定義が違う / 読めない は restore_check_failed・内部の差は落とさない', () => {
+    expect(appTriggerChecks(TRIGGERS_CSV, TRIGGERS_CSV)).toEqual({ ok: true, app_triggers: 4, internal_differences: [] });
+    const missing = appTriggerChecks(TRIGGERS_CSV, triggersCsv(AUTH_APP_TRIGGERS.slice(1)));
+    expect(missing).toEqual({ ok: false, reason: 'restore_check_failed', unreadable: false, missing: ['auth.sessions.on_auth_session_created'], extra: [], differs: [] });
+    // 取得の時点にアプリのトリガーが無く、復元した DB にだけある (ローカルの migration が作った) → 余分
+    const extra = appTriggerChecks(triggersCsv([]), TRIGGERS_CSV);
+    expect(extra).toMatchObject({ ok: false, reason: 'restore_check_failed', missing: [] });
+    expect((extra as { extra: string[] }).extra).toHaveLength(AUTH_APP_TRIGGERS.length);
+    const changed = AUTH_APP_TRIGGERS.map((r) => (r[2] === 'on_auth_user_password_changed' ? [r[0], r[1], r[2], r[3].replace('AFTER INSERT OR UPDATE', 'AFTER UPDATE')] : r));
+    expect(appTriggerChecks(TRIGGERS_CSV, triggersCsv(changed))).toMatchObject({ ok: false, differs: ['auth.users.on_auth_user_password_changed'] });
+    expect(appTriggerChecks(TRIGGERS_CSV, '')).toMatchObject({ ok: false, reason: 'restore_check_failed', unreadable: true });
+    expect(appTriggerChecks('a,b\n1,2\n', TRIGGERS_CSV)).toMatchObject({ ok: false, unreadable: true });
+    // 内部のトリガー (スタックの Storage の版の差) は名前を返すだけ
+    const internalOnly = appTriggerChecks(TRIGGERS_CSV, triggersCsv(AUTH_APP_TRIGGERS, STORAGE_INTERNAL_TRIGGER_ROWS.slice(1)));
+    expect(internalOnly).toMatchObject({ ok: true, app_triggers: 4 });
+    expect((internalOnly as { internal_differences: string[] }).internal_differences).toHaveLength(1);
+  });
+
+  it('build_restore_fixups.py: アプリのトリガーを無いときだけ作る DO を golden の後ろに足す (内部の 4 本は作らない)・無ければ golden のまま', () => {
+    const built = buildFixups(catalogWithTriggers('cat-trg-', TRIGGERS_CSV));
+    expect(built.status, built.stderr).toBe(0);
+    const golden = GOLDEN_FIXUPS();
+    expect(built.text.startsWith(golden)).toBe(true);
+    const section = built.text.slice(golden.length).split('\n').filter((line) => line !== '');
+    expect(section[0]).toMatch(/^-- /);
+    expect(section[1]).toBe("SELECT pg_catalog.set_config('search_path', 'public, extensions', false);");
+    const dos = section.slice(2);
+    expect(dos).toHaveLength(AUTH_APP_TRIGGERS.length);
+    for (const [schema, table, name, definition] of AUTH_APP_TRIGGERS) {
+      const relation = `'"${schema}"."${table}"'::pg_catalog.regclass`;
+      expect(dos).toContain(
+        `DO $restore_trigger$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t WHERE t.tgrelid = ${relation} AND t.tgname = '${name}' ` +
+          `AND NOT t.tgisinternal) THEN EXECUTE '${definition.replace(/'/g, "''")}'; END IF; END $restore_trigger$;`,
+      );
+    }
+    expect(built.text).not.toContain('protect_delete');
+    expect(built.text).not.toContain('enforce_bucket_name_length_trigger');
+    // アプリのトリガーが無いカタログ (ベースライン) は golden と同じ (既存の it と同じ。差し替えた置き場でも同じになること)
+    expect(buildFixups(catalogWithTriggers('cat-trg0-', triggersCsv([]))).text).toBe(golden);
+  });
+
+  it("build_restore_fixups.py: 引用符を含む定義は SQL の文字列で '' にする・定義の形の誤り / DO の目印 / 見出しの誤り → 1 で中身を出さない", () => {
+    const quoted = ['auth', 'users', 'trg_q', "CREATE TRIGGER trg_q AFTER UPDATE ON auth.users FOR EACH ROW WHEN ((new.role = 'x,y')) EXECUTE FUNCTION f()"];
+    const ok = buildFixups(catalogWithTriggers('cat-trgq-', triggersCsv([quoted])));
+    expect(ok.status, ok.stderr).toBe(0);
+    expect(ok.text).toContain("EXECUTE 'CREATE TRIGGER trg_q AFTER UPDATE ON auth.users FOR EACH ROW WHEN ((new.role = ''x,y'')) EXECUTE FUNCTION f()';");
+    for (const bad of [
+      triggersCsv([['auth', 'users', 'trg_bad', 'secret-definition-text']]),
+      triggersCsv([['auth', 'users', 'trg_tag', 'CREATE TRIGGER trg_tag AFTER INSERT ON auth.users FOR EACH ROW WHEN ((new.x = $restore_trigger$a$restore_trigger$)) EXECUTE FUNCTION f()']]),
+      'schema,table,trigger_name,definition\n',
+    ]) {
+      const r = buildFixups(catalogWithTriggers('cat-trgbad-', bad));
+      expect(r.status).toBe(1);
+      expect(r.stderr).toMatch(/^build_restore_fixups: \w+/);
+      expect(r.stderr).not.toContain('secret-definition-text');
+    }
+  });
+
+  it('build_restore_fixups.py と backup-db.mjs の見分け方が同じ (内部のスキーマ・定義の式・見出し)', () => {
+    const py = fs.readFileSync(path.join(ROOT, RESTORE_FIXUPS_BUILDER_SCRIPT), 'utf8');
+    expect(/^INTERNAL_TRIGGER_FUNCTION_SCHEMAS = \(([^)]*)\)$/m.exec(py)?.[1]).toBe(INTERNAL_TRIGGER_FUNCTION_SCHEMAS.map((s) => `"${s}"`).join(', '));
+    expect(/^TRIGGER_CSV_COLUMNS = \(([^)]*)\)$/m.exec(py)?.[1]).toBe(TRIGGER_CSV_COLUMNS.map((s) => `"${s}"`).join(', '));
+    expect(/^TRIGGERS_CSV = "([^"]+)"$/m.exec(py)?.[1]).toBe(AUTH_STORAGE_TRIGGERS_CSV);
+    expect(/^ {4}r'(.*)',$/m.exec(py)?.[1]).toBe(TRIGGER_DEFINITION_PATTERN.source);
+    expect(TRIGGER_DEFINITION_PATTERN.flags).toBe('s');
+    expect(/^TRIGGER_DEFINITION_PATTERN = re\.compile\($/m.test(py) && /^ {4}re\.S,$/m.test(py)).toBe(true);
+  });
+
+  it('同じ型の掃除: migration が auth・storage の表に作るトリガーは、どれも関数が auth・storage の外 (= アプリのトリガーとして補われ、比べられる)', () => {
+    const dir = path.join(ROOT, 'supabase/migrations');
+    const found: string[] = [];
+    for (const name of fs.readdirSync(dir).filter((n) => n.endsWith('.sql') && !n.endsWith('.down.sql'))) {
+      const text = fs.readFileSync(path.join(dir, name), 'utf8').replace(/--[^\n]*/g, '');
+      for (const m of text.matchAll(/CREATE (?:CONSTRAINT )?TRIGGER\s+("?[\w]+"?)\s[^;]*?\bON\s+"?(auth|storage)"?\."?\w+"?[^;]*?;/gis)) {
+        const statement = m[0].replace(/\s+/g, ' ').replace(/;$/, '');
+        found.push(`${name}:${m[1]}`);
+        expect(isAppTrigger(statement), `${name}: ${statement}`).toBe(true);
+      }
+    }
+    // #1757 の 4 本 (取り込みのときに増えた分) が見つかっていること (式が migration の書き方を取りこぼさない)
+    for (const [, , trigger] of AUTH_APP_TRIGGERS) expect(found.some((entry) => entry.endsWith(`:${trigger}`)), trigger).toBe(true);
+  });
+});
+
+// ───────────────────────────────────────────────────────────────────────────
 // 監査行・manifest・reason
 // ───────────────────────────────────────────────────────────────────────────
 
@@ -1305,6 +1486,7 @@ describe('runBackup', () => {
     for (const c of runner.calls.slice(runner.calls.findIndex((x) => x.kind === 'psql:version'), -1)) expect(c.options.timeoutMs).toBe(restoreTimeout);
     expect(logs.join('\n')).not.toContain('[warn]');
     expect(logs.join('\n')).toContain('verify_baseline: errors=0 warnings=1');
+    expect(logs.join('\n')).toContain('auth・storage の表のアプリのトリガー 4 本が取得の時点と同じ');
   });
 
   it('restore_check の失敗: fixups 1 → restore_check_failed / verify_baseline 1 → catalog_errors / 要約の行が無い / 台帳 / cron の数', async () => {
@@ -1324,6 +1506,17 @@ describe('runBackup', () => {
       },
       { override: (c) => (c.kind === 'psql:count' ? { code: 0, stdout: '2|9|1', stderrTail: '' } : undefined), reason: 'restore_check_failed' },
       { override: (c) => (c.kind === 'psql:count' ? { code: 0, stdout: 'garbage', stderrTail: '' } : undefined), reason: 'restore_check_failed' },
+      // 復元した DB に auth のアプリのトリガーが 1 本足りない (verify_baseline.py は errors=0 のまま。#1757 との取り込みの指摘)
+      {
+        override: (c) =>
+          c.kind === 'psql:restored-catalog' ? (writeCatalog(c.options.cwd as string, [], triggersCsv(AUTH_APP_TRIGGERS.slice(1))), OK) : undefined,
+        reason: 'restore_check_failed',
+      },
+      // 復元した DB のトリガーの CSV が書かれない
+      {
+        override: (c) => (c.kind === 'psql:restored-catalog' ? (writeCatalog(c.options.cwd as string, [AUTH_STORAGE_TRIGGERS_CSV]), OK) : undefined),
+        reason: 'restore_check_failed',
+      },
       { override: (c) => (c.kind === 'psql:reset' ? { code: 1, stdout: '', stderrTail: '' } : undefined), reason: 'restore_check_failed' },
       {
         override: (c) => (c.kind === 'psql:roles' ? (fs.writeFileSync(c.options.stderrFile as string, 'ERROR:  42501\n'), OK) : undefined),
@@ -1344,6 +1537,25 @@ describe('runBackup', () => {
       expect(rows.map((x) => x.action)).toEqual(['backup.daily.completed', 'backup.weekly.failed']);
       expect(rows[1].details).toMatchObject({ stage: 'restore_check', reason });
     }
+  });
+
+  it('restore_check のトリガー: 足りない名前をログに出し、監査行の weekly は failed・内部のトリガーだけの差は passed で名前をログに出す', async () => {
+    const missing = fakeRunner((c) =>
+      c.kind === 'psql:restored-catalog' ? (writeCatalog(c.options.cwd as string, [], triggersCsv(AUTH_APP_TRIGGERS.slice(1))), OK) : undefined,
+    );
+    const { deps: d1, logs: l1 } = deps(missing, { now: MONDAY });
+    const r1 = await runBackup({ tier: 'auto' }, d1);
+    expect(r1.failed).toEqual([{ tier: 'weekly', stage: 'restore_check', reason: 'restore_check_failed' }]);
+    expect(l1.join('\n')).toContain('アプリのトリガーが合いません: 無い auth.sessions.on_auth_session_created・余分 (なし)・定義が違う (なし)');
+    const internal = fakeRunner((c) =>
+      c.kind === 'psql:restored-catalog'
+        ? (writeCatalog(c.options.cwd as string, [], triggersCsv(AUTH_APP_TRIGGERS, STORAGE_INTERNAL_TRIGGER_ROWS.slice(1))), OK)
+        : undefined,
+    );
+    const { deps: d2, logs: l2 } = deps(internal, { now: MONDAY });
+    const r2 = await runBackup({ tier: 'auto' }, d2);
+    expect(r2.exitCode).toBe(0);
+    expect(l2.join('\n')).toMatch(/内部のトリガーの差 \(スタックの版の差。落とさない\): storage\./);
   });
 
   it('psql --version が 127 → restore_env_failed で supabase-local.sh start を呼ばない・python3 --version が 127 も同じ', async () => {
@@ -1693,6 +1905,12 @@ describe('restoreFromArchive', () => {
       { runner: restoreRunner((c) => (c.kind === 'psql:count' ? { code: 0, stdout: 'bad', stderrTail: '' } : undefined)), stage: 'restore_check', reason: 'restore_check_failed' },
       { runner: restoreRunner((c) => (c.kind === 'psql:count' ? { code: 0, stdout: '2|1|5', stderrTail: '' } : undefined)), stage: 'restore_check', reason: 'restore_check_failed' },
       { runner: restoreRunner((c) => (c.kind === 'python:verify' ? { code: 1, stdout: '[error] x\n[verify] errors=1 warnings=0\n', stderrTail: '' } : undefined)), stage: 'restore_check', reason: 'restore_check_failed' },
+      {
+        runner: restoreRunner((c) =>
+          c.kind === 'psql:restored-catalog' ? (writeCatalog(c.options.cwd as string, [], triggersCsv(AUTH_APP_TRIGGERS.slice(0, -1))), OK) : undefined,
+        ),
+        stage: 'restore_check', reason: 'restore_check_failed', notCalled: 'psql:audit',
+      },
     ];
     for (const { runner, stage, reason, notCalled } of cases) {
       const r = await restoreFromArchive(opts, restoreDeps(runner).deps);
