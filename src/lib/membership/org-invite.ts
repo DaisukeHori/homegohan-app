@@ -78,6 +78,8 @@ export interface OrgInviteFailureLogContext {
 const ORG_INVITE_RPC_ERROR_MESSAGES: Partial<Record<string, string>> = {
   [MembershipErrorCode.NOT_ORG_ADMIN]: '招待できるのは組織のオーナーと管理者だけです',
   [MembershipErrorCode.SEAT_LIMIT_EXCEEDED]: '組織のライセンス数の上限に達しているため、招待できません',
+  // #1799: 宛先がこの組織にすでに在籍している (持ち主を含む)。承諾で役割を書き換えさせないため、RPC が招待を作らない (409)
+  [MembershipErrorCode.ALREADY_IN_ORG]: 'このメールアドレスの人は、すでにこの組織のメンバーです',
 };
 /** 招待を作れなかったときの、コードに合う文が無いときの文 */
 const ORG_INVITE_FAILED_MESSAGE = '招待の作成に失敗しました';
