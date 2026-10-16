@@ -11,11 +11,11 @@
 // 別々に数えて別々に知らせる。件名と本文の最初の段落で、どちらの通知かを書き分ける (template の名前は同じ)。
 import type { EmailEnvelope } from '../envelope';
 import { getEmailFrom } from '@/lib/site-config';
-import { sanitizeFunctionNameForAlert, type AppLogAlertScope } from '@/lib/ops-alerts/app-log-error-spike';
+import { sanitizeFunctionNameForAlert, type AppLogErrorSpikeScope } from '@/lib/ops-alerts/app-log-error-spike';
 
 export interface AppLogErrorSpikeEmailVars {
   /** どちらの通知か。server = サーバーが書いた error、client = ブラウザ・端末から届いた error (#1493) */
-  scope: AppLogAlertScope;
+  scope: AppLogErrorSpikeScope;
   /** 宛先 (環境変数 OPS_ALERT_EMAIL) */
   to_email: string;
   /** 窓の中の error の全体の件数 */
@@ -52,7 +52,7 @@ function formatCount(n: number): string {
 }
 
 /** 通知の種類ごとの、件名の言い方と、本文の最初の段落で数えたものの説明 */
-const SCOPE_WORDING: Readonly<Record<AppLogAlertScope, { readonly subject: string; readonly counted: string; readonly note: string }>> = {
+const SCOPE_WORDING: Readonly<Record<AppLogErrorSpikeScope, { readonly subject: string; readonly counted: string; readonly note: string }>> = {
   server: {
     subject: 'エラーが急増しています',
     counted: 'サーバーのエラーログ (app_logs の level=error。ブラウザ・端末から届いたものは除く)',
