@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.2 (2026-10-17) |
+| 版 | v1.4 (2026-10-17) |
 | Status | 設計ゲート審査中 (実装着手はゲート PASS 後) |
 | Issue | #1797 (運営者による手動のプラン付与の画面と API。親 #1151 の残り)。課金の核は `docs/design/billing/01-billing-core.md` (段 A〜C と追随 #1711・#1726・#1738・#1763 は main 入り) |
 | 範囲の正本 | Issue #1797 の本文とコメント・親 #1151 の要件・billing/01 §0.2 (配線の冊に回したもの) と §16.2 (期日が「配線の冊と同時」「family / org の冊」の追随の行) |
@@ -73,7 +73,7 @@
 | `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの命名 |
 | `docs/design/CLAUDE.md` | RLS 必須・service_role は限定・監査ログ必須・snake_case |
 
-### 2.2 現行の事実 (origin/main `88b803f5`、2026-10-17)
+### 2.2 現行の事実 (origin/main `88b803f5` で採取し、`d2aac552` で突き合わせ直した。2026-10-17)
 
 | # | 事実 | 出どころ |
 |---|---|---|
@@ -95,13 +95,15 @@
 | F16 | 監査ログの本人の JWT からの INSERT は `action_type NOT LIKE 'system.%'` かつ運営の 6 ロールだけ。`system.*` と `actor_id NULL` は service_role / SECURITY DEFINER だけが書く (#1736) | `20261016238000_admin_audit_logs_insert_actor_only.sql:53-71` |
 | F17 | pg_cron のジョブの登録の書き方 (DO ブロック・`to_regclass('cron.job')` のガード・同じ名前の登録解除 → `cron.schedule('名前', '分 時 * * *', 'SELECT …;')`)。毎日のジョブは 03:10 / 03:15 / 03:20 / 03:25 / 03:45 / 03:55 / 01:30 / 00:20・00:35 JST。毎時 5 分 (`5 * * * *`) と 5 分ごと (`*/5`・`2-59/5`) のジョブもある。`operator/08` §3.0・§3.1 の注記が「migration が pg_cron に登録しているジョブは 11 つ」と名前の一覧を持ち、`tests/log-cleanup-dau-snapshot-contract.test.ts` が全 migration の `cron.schedule` の名前と数を突き合わせる | `20261010150000:216-233`・`20261016100000:160-170`・`docs/design/operator/08-cron-batches.md:15-22, 152-156` |
 | F18 | DB の型 (`src/types/database.types.ts`・`packages/shared/src/database.types.ts`) は migration の `CREATE FUNCTION` (トリガー関数を除く。EXECUTE の有無を問わない: `invoke_purge_hidden_content` も載る) を全部持つことを `tests/database-types-migrations-contract.test.ts` が求める | 同テスト・`src/types/database.types.ts:8902` |
-| F19 | `/admin/users/[id]` の page は `requireRoleForPage(['admin','super_admin','support'])` で守られ、`OperatorMfaResetSection` (client component) を `canResetMfa` のときだけ描く。節の形 (`section` + `h2` + form + `data-testid`) の先例 | `src/app/admin/users/[id]/page.tsx:60-66, 213`・`src/components/admin/OperatorMfaResetSection.tsx` |
+| F19 | `/admin/users/[id]` の page は `requireRoleForPage(['admin','super_admin','support'])` で守られ、`OperatorMfaResetSection` (client component) を `canResetMfa` のときだけ描く。節の形 (`section` + `h2` + form + `data-testid`) の先例。#1720 段 D (#1807) がログイン履歴の節 (`LoginHistorySection`。admin / super_admin) を足した。`tests/admin-user-login-history-page.test.tsx` がこの page を `renderToStaticMarkup` で描く | `src/app/admin/users/[id]/page.tsx:166, 187, 193, 317`・`src/components/admin/OperatorMfaResetSection.tsx` |
 | F20 | JST の暦日の入力は `CalendarDateSchema` (`src/lib/calendar-date-schema.ts`) で受け、timestamptz との比較は `jstDayRangeTimestamps(from, to).toTimestampExclusive` (= `to` の翌日の JST 0 時) で作る。「今日」は `jstToday()`。素の日付の文字列を timestamptz の列に渡す書き方は `tests/jst-today-source-scan.test.ts` が止める | `src/lib/jst-day-ranges.ts:43, 73-81` |
 | F21 | `apply_coupon` は `personal_subscriptions.id` を `FOR NO KEY UPDATE` でロックし `active_coupon_redemption_id` だけを書く。M 行にも使える (billing/01 §7.1) | `20261007160700_apply_coupon_rpc.sql:147-152, 260-265` |
 | F22 | `PATCH /api/super-admin/plans/[id]` の廃止は `countPlanSubscribers` が live 5 値の `personal_subscriptions` を数え、1 件でもあれば 409 `OP_PLAN_HAS_SUBSCRIBERS`。由来を問わない | `src/lib/super-admin/plan-subscribers.ts:10-13` |
 | F23 | billing/01 §16.2 で期日が本冊にかかわる行は 10 行。期日「配線の冊と同時」= 6 行: `operator/08` §3.1・§3.2 (`stripe_event_stuck_check` の注記・`grace_period_check` / `stripe_integrity_check` の注記。:3948)・`operator/02` §22 `POST /api/cron/stripe-reconcile` (:3959)・`operator/09` §4 Stripe ↔ DB Reconciliation (:3964)・`org/04` :517 重複請求防止 (`pause_collection`。:3971)・`requirements/02` :763-764 (一時停止中の個人プラン。:3973)・`requirements/03` §15.1 日次 reconciliation (:3978)。期日「family の冊」= 3 行: `POST /api/family/groups` の入力 `plan_key` (`CreateFamilyGroupBodySchema`)・作成の画面の選択欄 (`src/app/(main)/family/setup/page.tsx:15,33,95-105`) を外す (:3953) / `member_limit` が下がったときの扱い (:3954) / `family/03` のグループ作成の画面の「プラン選択」と支払いのボタン (:3982)。期日「family / org の冊 (`migrate-to-personal` を実装するとき)」= 1 行 (:3981)。本冊での扱いは R14 と §15.2 の billing/01 の行 | billing/01 `:3931-3990` (origin/main) |
 | F24 | `CreateFamilyGroupBodySchema = { name, plan_key: z.string().default('free') }`。route は `create_family_group(p_name, p_plan_key)` に渡すが、トリガー (F6) が `p_plan_key` を効かなくしている (billing/01 S20)。単体テストは `src/__tests__/api/family/groups.test.ts`。`tests/e2e/membership/05-family-create-and-invite.spec.ts` と `tests/integration/security/invite-accept-missing-profile.test.ts` も route を名指しする | `src/schemas/membership/family-group.ts:8-11`・`src/app/api/family/groups/route.ts:49-56` |
-| F25 | 本番の `personal_subscriptions` は 0 行 (billing/01 F9。2026-10-15 読み取り)。本冊は本番に問い合わせていない | billing/01 §2.2 |
+| F25 | 本番の `personal_subscriptions` は 0 行 (billing/01 F9。2026-10-15 読み取り)。本冊は本番の行を問い合わせていない (設定と版だけを F26 で読んだ) | billing/01 §2.2 |
+| F26 | 本番の DB は PostgreSQL 17.6・pg_cron 1.6.4・`cron.use_background_workers = off` (2026-10-17 に SELECT で読み取り)。`off` では pg_cron がジョブの所有者として接続し、command を 1 つの問い合わせとして送る (`CALL` の 1 文なら最上位の `CALL`)。PostgreSQL の決まり: プロシージャの中の `COMMIT` は最上位の `CALL` (トランザクションのブロックの外) から呼んだときだけ使え、`SECURITY DEFINER` のプロシージャと `SET` 句の付いたプロシージャでは使えない (2D000)。1 つの問い合わせに複数の文を並べると 1 つのトランザクションのブロックになる (結合テストの `pg/query` が `SET LOCAL ROLE postgres; select …` を通すのはこのため)。DB の型の生成 (postgres-meta) は関数を `pg_proc.prokind = 'f'` で拾うので、プロシージャは `database.types.ts` に出ない。`tests/database-types-migrations-contract.test.ts` は `CREATE [OR REPLACE] FUNCTION` だけを数える | PostgreSQL 文書「PL/pgSQL Transaction Management」「CREATE PROCEDURE」・postgres-meta `src/lib/sql/functions.sql.ts`・`tests/database-types-migrations-contract.test.ts:88-90`・`tests/integration/rls/org-challenge-progress.test.ts:400` |
+| F27 | `tests/lib-raw-error-message-scan.test.ts` は `src/lib` の全ファイルで、オブジェクトリテラルのプロパティの値に「エラーらしい名前 (`e` / `err` / `error` / … / `…Error`、または `.error` のプロパティ) の `.message` / `.details` / `.hint`」があるものを違反に数える。`??`・入れ子の中も数える。数えないのはログの呼び出しと `new XxxError(…)` / `throw` の中だけ。許可リスト `ALLOWED` に無いファイルは 0 件でなければ赤。文面が固定の文かどうかは見ない。先例 `src/lib/auth/mfa/client.ts:87-96` は失敗の本文から `code` だけを読む | 同テスト `:43, 55-78, 101-162, 223-235`・`src/lib/auth/mfa/client.ts:87-96` |
 
 ---
 
@@ -125,7 +127,7 @@
 | R12 | 権利の判定で S 行と M 行を区別しない | billing/01 §12 | 変えない (F7)。`/account/billing` は `source: 'manual'`・解約の予約なし (F9) のまま |
 | R13 | 運営の画面 | #1797 | `/admin/users/{id}` に節「手動のプラン付与」(client component)。super_admin で、対象が自分でないときだけ描く (§10) |
 | R14 | billing/01 §16.2 の「配線の冊と同時」「family の冊」「family / org の冊」の行 (F23 の 10 行) | #1797 | 本冊で直す 4 行: `operator/08` の注記 (段 A の専権 PATCH。§15.2)・family の入力の整理 (段 D。§14.1)・`family/03` の作成の画面 (段 D の専権 PATCH。§15.2)・`member_limit` が下がったときは「外さない」で確定 (§16 の 6。`family/02` §5.2 の注記は段 D)。期日を付け替える 5 行: reconcile の 3 行 (`operator/02` §22・`operator/09` §4・`requirements/03` §15.1) と組織ライセンスの一時停止の 2 行 (`org/04` :517・`requirements/02` :763-764) は、手動付与と関係が無く、直し方の中身 (reconcile の時刻・認証、どの status から止めるか) を配線の残りの冊が決めるので、期日を「配線の残りの冊と同時」にする (§15.2 の billing/01 の行・§16 の 11)。期日を変えない 1 行: `migrate-to-personal` (本冊は作らない) |
-| R15 | migration は「追加だけ」・番号はマージ時・`.down.sql` を対で | 本冊の規約 | §6.1・§6.6。関数 4 本とジョブ 1 本の新設だけ。既存の表・列・ポリシー・関数は変えない |
+| R15 | migration は「追加だけ」・番号はマージ時・`.down.sql` を対で | 本冊の規約 | §6.1・§6.6。関数 4 本・プロシージャ 1 本・ジョブ 1 本の新設だけ。既存の表・列・ポリシー・関数は変えない |
 | R16 | as any 禁止・マジックナンバー禁止 | 本冊の規約 | §8 の定数に根拠。SQL の定数は `CONSTANT` に根拠のコメント |
 
 ### 3.2 ユーザーシナリオ (22 本)
@@ -172,16 +174,17 @@
   DB 関数 (SECURITY DEFINER。EXECUTE は service_role だけ)
      billing_grant_manual_subscription   ── INSERT (M 行・active) → family_groups → user_profiles.plan_key_cached
      billing_revoke_manual_subscription  ── UPDATE (cancelled)    → billing_manual_subscription_sync_after_end
-     billing_expire_manual_subscriptions ── UPDATE (expired) ×N   → 同上 + 監査 system.billing.manual_grant_expired
-          ▲                                 (pg_cron expire-manual-plan-grants 00:11 JST)
+     billing_expire_manual_subscription_for_user ── UPDATE (expired。1 人分) → 同上 + 監査 system.billing.manual_grant_expired
+          ▲      ▲ プロシージャ billing_expire_manual_subscriptions が利用者ごとに呼んで COMMIT (1 トランザクション 1 人)
+          │      └ pg_cron expire-manual-plan-grants 00:11 JST (CALL)
           │ 同じ鍵 billing-user:<uuid>・同じロック順 (行 → family_groups → user_profiles)・同じ同期の式
   核の写像 billing_apply_stripe_subscription (billing/01 §6.4 (9)) と家族のトリガー (10)
 ```
 
 **原理 (3 つ)**:
 
-1. **M 行の正本は DB。書く入口は DB 関数 3 本だけ** (付与・取り消し・期限切れ)。route は関数を呼ぶだけで、`personal_subscriptions` に直接 INSERT / UPDATE しない。関数は 1 トランザクションで「行 + `family_groups` + `plan_key_cached`」を書くので、途中で止まっても食い違いが残らない。
-2. **核の写像と同じ鍵・同じロック順・同じ同期の式**。advisory `billing-user:<uuid>` → 契約の行 (`FOR NO KEY UPDATE`) → `family_groups` の行 → `user_profiles` の行の順 (billing/01 §6.4 (9) の 10.・家族の関数の LOCK-ORDER #1310 と同じ向き)。これで S 行と M 行が同じ不変条件 (1 利用者 1 live 行・`plan_key_cached` = live な行のプラン・active なグループのプラン = 代表者の live な家族プラン) を共有し、写像・トリガー・`apply_coupon`・配線の直接 UPDATE と直列になる。
+1. **M 行の正本は DB。書く入口は DB 関数 3 本だけ** (付与・取り消し・1 人分の期限切れ。期限切れはプロシージャ `billing_expire_manual_subscriptions` が利用者ごとに呼ぶ)。route は関数を呼ぶだけで、`personal_subscriptions` に直接 INSERT / UPDATE しない。関数は 1 トランザクションで「行 + `family_groups` + `plan_key_cached`」を書くので、途中で止まっても食い違いが残らない。
+2. **核の写像と同じ鍵・同じロック順・同じ同期の式**。advisory `billing-user:<uuid>` → 契約の行 (`FOR NO KEY UPDATE`) → `family_groups` の行 → `user_profiles` の行の順 (billing/01 §6.4 (9) の 10.・家族の関数の LOCK-ORDER #1310 と同じ向き)。これで S 行と M 行が同じ不変条件 (1 利用者 1 live 行・`plan_key_cached` = live な行のプラン・active なグループのプラン = 代表者の live な家族プラン) を共有し、写像・トリガー・`apply_coupon`・配線の直接 UPDATE と直列になる。**1 トランザクションで扱う利用者は 1 人だけ**: ある利用者の行・鍵を持ったまま、別の利用者の鍵・`family_groups` の行を取らない (持ったまま取ると、利用者をまたいで `user_profiles` の行 → `family_groups` の行の逆向きになり、家族の関数・代表者の交代とデッドロックする。§6.4)。期限切れの日次の処理は、利用者ごとに COMMIT するプロシージャにする。
 3. **監査は操作ごとに 1 行**。運営の操作 (付与・取り消し) は route が `recordAdminAudit` (actor = 運営・`ip_address` / `user_agent` つき) で書く (既存の `coupons/[id]/apply` と同じ fail-open。失敗は app_logs)。期限切れは関数が `system.*` (actor NULL) で書く (写像の `system.billing.*` と同じ流儀)。核の `BILLING_AUDIT_ACTIONS` (9 つ) は変えない。
 
 M 行の列の規則: `status='active'`・`starts_at = current_period_start = now()`・`current_period_end = 期限 (翌日の JST 0 時) または NULL`・`stripe_*` / `billing_interval` / `trial_*` / `cancel_at` / `cancel_at_period_end` は既定 (NULL / false)・`notes` は書かない (理由は監査の `details` だけに残す。F8: `notes` は本人が読める)。取り消しは `status='cancelled'`・`cancelled_at=now()`。期限切れは `status='expired'` (`cancelled_at` は NULL のまま)。`trial_started_at` を入れないので、同じプランの再購入の試用の判定 (`hasUsedTrial`) に数えない。
@@ -193,7 +196,7 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 | ID | トレース |
 |---|---|
 | S1 | 画面の節 (`current: null`・`plans` に `pro`) →「付与する」(確認ダイアログ) → `POST …/manual-plan { plan_key: 'pro', expires_on: null, reason }` → `rejectNullCharacterBody` → `requireRole(['super_admin'])` (AAL2) → `normalizeUuid(id)`・自分でない → 本文 (`manualPlanGrantBodySchema(jstToday())`) → `grantManualPlan` → 利用者あり → RPC: 引数 OK → 利用者あり → `pro` は `personal` / `public` → advisory `billing-user:<id>` → live 行なし → INSERT (`active`・`current_period_end NULL`) → `plan_type='personal'` なので家族は触らない → `plan_key_cached='pro'` → 戻り値 → route が `recordAdminAudit('admin.billing.manual_grant', warn, details: { subscription_id, plan_key: 'pro', expires_at: null, reason })` → 200 `{ data: { subscription_id, user_id, plan_key: 'pro', status: 'active', expires_at: null } }` → 節が `GET` で読み直し (`current.source='manual'`・`history` に 1 行)。利用者: `GET /api/billing/subscription` → `source: 'manual'`・`can_cancel: false`・「ご利用中」(F9)。AI の上限は `get_effective_plan` = `pro` |
-| S2 | 同上で `expires_on: '2026-12-31'` → スキーマの `superRefine` が `'2026-12-31' > jstToday()` を確かめる → service が `expiresAtOf('2026-12-31')` = `jstDayRangeTimestamps('2026-12-31','2026-12-31').toTimestampExclusive` = `2026-12-31T15:00:00.000Z` (= 2027-01-01 00:00 JST) → RPC (`p_expires_at > now()` を再確認) → `[DB] current_period_end = 2026-12-31T15:00:00Z`。2027-01-01 00:11 JST: ジョブ → `billing_expire_manual_subscriptions()` → 対象 1 行 → advisory → UPDATE `status='expired'` (WHERE で live と期限を再評価) → `sync_after_end` (家族は `pro` なので触らない・`plan_key_cached` は live 行なし = NULL) → 監査 `system.billing.manual_grant_expired` (actor NULL・info・details: { subscription_id, plan_key, expires_at }) → 1 を返す。利用者は `free`。`/account/billing` は `can_purchase` |
+| S2 | 同上で `expires_on: '2026-12-31'` → スキーマの `superRefine` が `'2026-12-31' > jstToday()` を確かめる → service が `expiresAtOf('2026-12-31')` = `jstDayRangeTimestamps('2026-12-31','2026-12-31').toTimestampExclusive` = `2026-12-31T15:00:00.000Z` (= 2027-01-01 00:00 JST) → RPC (`p_expires_at > now()` を再確認) → `[DB] current_period_end = 2026-12-31T15:00:00Z`。2027-01-01 00:11 JST: ジョブ → `CALL billing_expire_manual_subscriptions()` → 期限を過ぎた利用者の一覧 (この利用者) → `billing_expire_manual_subscription_for_user(<id>)` → advisory → 期限を過ぎた live な M 行を `FOR NO KEY UPDATE` で読む (鍵の後なので最新) → UPDATE `status='expired'` → `sync_after_end` (家族は `pro` なので触らない・`plan_key_cached` は live 行なし = NULL) → 監査 `system.billing.manual_grant_expired` (actor NULL・info・details: { subscription_id, plan_key, expires_at }) → 1 を返す → COMMIT → 次の利用者。利用者は `free`。`/account/billing` は `can_purchase` |
 | S3 | 節 (`current.source='manual'`) →「取り消す」(確認) → `DELETE …/manual-plan { reason }` → 同じ門 → `revokeManualPlan` → RPC: advisory → live な M 行 (`stripe_subscription_id IS NULL`) を `FOR NO KEY UPDATE` で読む → UPDATE `status='cancelled'`・`cancelled_at=now()`・`cancel_at=NULL` → `sync_after_end` → 戻り値 `{ status_from: 'active', status_to: 'cancelled' }` → 監査 `admin.billing.manual_revoke` (warn) → 200。利用者は `free` |
 | S4 | `POST` → RPC: advisory → live 行あり (S 行 `active`) → `BILL_LIVE_ROW_CONFLICT` (DETAIL = その行の id) → repository が `ManualGrantRpcError` に → service が `ManualGrantError('OP_SUBSCRIPTION_ALREADY_ACTIVE')` → route 409 `{ error: { code, message: 'すでに有効な契約があります' } }`。監査なし・INSERT なし (トランザクションは失敗で戻る) |
 | S5 | S4 と同じ 409 (live な M 行)。運営は `DELETE` (S3) → `POST family_basic` (S6 の形)。監査は `manual_revoke`・`manual_grant` の 2 行 |
@@ -211,9 +214,9 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 | S17 | `POST /api/account/delete` → `deleteAccount` の段階 `billing`: `findCustomer` なし・`listStripeBackedSubscriptions` は `stripe_subscription_id IS NOT NULL` だけ → M 行は列挙されない → Stripe を呼ばない → `deleteUser` → `personal_subscriptions` は CASCADE で消える (`personal_subscriptions_user_id_fkey` は `ON DELETE CASCADE`)。`admin_audit_logs` の行は消えない (`target_id` に外部キーは無い) |
 | S18 | `POST /api/super-admin/coupons/[id]/apply { subscription_target: 'personal', subscription_id: <M 行の id> }` → `apply_coupon` が M 行を `FOR NO KEY UPDATE` でロック (本冊の関数と行ロックで直列) → `active_coupon_redemption_id` を書く。本冊の UPDATE (取り消し・期限切れ) は `status` / `cancelled_at` / `cancel_at` だけを書く |
 | S19 | `PATCH /api/super-admin/plans/[id] { status: 'deprecated' }` → `countPlanSubscribers('pro')` が live 5 値の行 (M 行を含む) を数える → 1 件 → 409 `OP_PLAN_HAS_SUBSCRIBERS`。本冊は変えない |
-| S20 | migration の DO ブロック: `to_regclass('cron.job') IS NULL` → `RAISE NOTICE` → `RETURN`。関数は作られている。結合テストは `srAdmin.rpc('billing_expire_manual_subscriptions')` で期限切れを流す (テスト 43) |
+| S20 | migration の DO ブロック: `to_regclass('cron.job') IS NULL` → `RAISE NOTICE` → `RETURN`。関数とプロシージャは作られている。結合テストは `srAdmin.rpc('billing_expire_manual_subscription_for_user', { p_user_id })` で 1 人分を、`pg/query` の `CALL public.billing_expire_manual_subscriptions();` (1 文だけの要求) で全員分を流す (テスト 43) |
 | S21 | `DELETE` → RPC: advisory → `stripe_subscription_id IS NULL AND status IN (live 5 値)` の行なし → `BILL_MANUAL_ROW_NOT_FOUND` → 409 `OP_NO_MANUAL_SUBSCRIPTION` (「手動で付与した有効な契約がありません」)。S 行には触れない |
-| S22 | 付与 (T1) と写像 (T2) が同じ利用者で同時: T1 が advisory を取る → T2 は待つ → T1 が INSERT して commit → T2 は live の検査で M 行を見て `BILL_LIVE_ROW_CONFLICT` (S9)。逆の順なら T1 が 409 (S4)。付与と期限のジョブ: ジョブが advisory を取って行を `expired` にすれば、後の付与は live なしで通る (新しい M 行)。付与と取り消しの同時 2 本は、取り消しが先なら付与が通り、付与が先なら取り消しが新しい行を消す (運営が画面で確かめる前提。どちらも監査に残る) |
+| S22 | 付与 (T1) と写像 (T2) が同じ利用者で同時: T1 が advisory を取る → T2 は待つ → T1 が INSERT して commit → T2 は live の検査で M 行を見て `BILL_LIVE_ROW_CONFLICT` (S9)。逆の順なら T1 が 409 (S4)。付与と期限のジョブ: ジョブ (その利用者の 1 人分のトランザクション) が advisory を取って行を `expired` にして COMMIT すれば、後の付与は live なしで通る (新しい M 行)。ジョブが同時に持つのは 1 人分の鍵と行だけなので、家族の関数 (強制解散・脱退・メンバーの削除) と代表者の交代とも循環しない (§6.4。テスト 57)。付与と取り消しの同時 2 本は、取り消しが先なら付与が通り、付与が先なら取り消しが新しい行を消す (運営が画面で確かめる前提。どちらも監査に残る) |
 
 ---
 
@@ -223,7 +226,7 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 
 | 案 | 内容 | 利点 | 欠点 | 判定 |
 |---|---|---|---|---|
-| A (採用) | DB 関数 3 本 (SECURITY DEFINER・service_role だけ) + super_admin 専用の route 1 本 (GET / POST / DELETE) + 既存のユーザー詳細の画面の節 + 日次の pg_cron で期限切れ | 1 トランザクションで行・家族・`plan_key_cached` がそろう。写像と同じ鍵・順で直列になる。本人の JWT から呼べない。route と画面は既存の型 (coupons apply・MFA の解除の節) の写し | 関数が 4 本 (型の再生成が要る)。pg_cron のジョブが 1 本増える (`operator/08` の追随) | 採用 |
+| A (採用) | DB 関数 3 本 (SECURITY DEFINER・service_role だけ) + super_admin 専用の route 1 本 (GET / POST / DELETE) + 既存のユーザー詳細の画面の節 + 日次の pg_cron で期限切れ | 1 トランザクションで行・家族・`plan_key_cached` がそろう。写像と同じ鍵・順で直列になる。本人の JWT から呼べない。route と画面は既存の型 (coupons apply・MFA の解除の節) の写し | 関数が 4 本とプロシージャが 1 本 (関数は型の再生成が要る)。pg_cron のジョブが 1 本増える (`operator/08` の追随) | 採用 |
 | B | billing/01 §12 の文面どおり、route が運営の user-scoped の client で `personal_subscriptions` に INSERT / UPDATE する (admin の RLS) | DB に足すものが無い | **成り立たない**: `plan_key_cached` は特権列ガードが `authenticated` ロールの UPDATE を 42501 にする (F3)。`family_groups` も `trg_guard_family_groups_privileged` が `plan_key` / `member_limit` の変更を止める。写しが同期されないまま行だけできる。複数文で原子性も無い | 不採用 (billing/01 §12 の「admin の RLS で書く」は本冊で RPC に改める。§15.2) |
 | C | route が service_role の client で INSERT → `family_groups` の UPDATE → `user_profiles` の UPDATE を順に送る (TS で 3 文) | 関数を足さない | 原子性が無い (2 文目で止まると `plan_key_cached` が古いまま)。写像の advisory lock と直列にならず、同時の写像と 2 本の live 行を作りかけて部分 UNIQUE の 23505 (500) になる。ロック順の規律 (#1310) を TS 側に書くことになる | 不採用 |
 | D | 核の写像 `billing_apply_stripe_subscription` を手動の行にも使う (`stripe_subscription_id` に `manual:<uuid>` のような印を入れる) | 入口が 1 つ | 写像の契約 (正本は Stripe・`fetched_at` で単調・`stripe_status` 必須・退会の解約の列挙が `stripe_subscription_id IS NOT NULL` を Stripe の契約とみなす) を壊す。billing/01 §12「写像は触らない」に反する | 不採用 |
@@ -243,7 +246,7 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 
 §4.1 の構造を確定する。以後、構造への疑義は「裁定への差し戻し事由」として扱い、仕上げの指摘 (blocking) とは分ける。
 
-- 決めたこと: ロールは super_admin だけ (AAL2) / 書く入口は DB 関数 3 本 (+ 内部の同期 1 本) / 期限は `current_period_end` + 日次の pg_cron / 列・RLS・写像・トリガー・`get_effective_plan` は変えない / 監査は route の `recordAdminAudit` + 期限切れの `system.*` / 画面はユーザー詳細の節 / family の入力の整理は段 D。
+- 決めたこと: ロールは super_admin だけ (AAL2) / 書く入口は DB 関数 3 本 (+ 内部の同期 1 本) / 期限は `current_period_end` + 日次の pg_cron (利用者ごとに COMMIT するプロシージャ。1 トランザクション 1 人) / 列・RLS・写像・トリガー・`get_effective_plan` は変えない / 監査は route の `recordAdminAudit` + 期限切れの `system.*` / 画面はユーザー詳細の節 / family の入力の整理は段 D。
 
 ---
 
@@ -260,7 +263,7 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 
 migration の冒頭コメントには、billing/01 の migration と同じく帰属の記載 (「オーナー判断」など) を書かない。方針は「billing/02 で定めた」とだけ書く。
 
-本冊の migration は **追加だけ**: 関数 4 本 (`billing_grant_manual_subscription`・`billing_revoke_manual_subscription`・`billing_manual_subscription_sync_after_end`・`billing_expire_manual_subscriptions`) と pg_cron のジョブ 1 本 (`expire-manual-plan-grants`) の新設。表・列・制約・索引・RLS ポリシー・既存の関数・トリガーには触れない (§6.5)。既存の行の UPDATE / DELETE は関数の本体の外に書かない。
+本冊の migration は **追加だけ**: 関数 4 本 (`billing_grant_manual_subscription`・`billing_revoke_manual_subscription`・`billing_manual_subscription_sync_after_end`・`billing_expire_manual_subscription_for_user`)・プロシージャ 1 本 (`billing_expire_manual_subscriptions`) と pg_cron のジョブ 1 本 (`expire-manual-plan-grants`) の新設。表・列・制約・索引・RLS ポリシー・既存の関数・トリガーには触れない (§6.5)。既存の行の UPDATE / DELETE は関数・プロシージャの本体の外に書かない。
 
 ### 6.2 付与 `billing_grant_manual_subscription`
 
@@ -276,7 +279,7 @@ SET LOCAL lock_timeout = '10s';
 --     p_user_id: 対象の利用者 (auth.users と user_profiles の両方にあること)。
 --     p_plan_key: subscription_plans の plan_key。free でなく、plan_type が personal / family で、status が public のものだけ
 --                 (private は family_addon = アドオンで、billing/01 §1 が対象外。基本のプランとして付与すると家族グループのプランがアドオンの名前に置き換わる)。
---     p_expires_at: 有効期限 (その時刻を過ぎたら billing_expire_manual_subscriptions が expired にする)。NULL = 期限なし。now() より後であること。
+--     p_expires_at: 有効期限 (その時刻を過ぎたら日次のプロシージャ billing_expire_manual_subscriptions が expired にする)。NULL = 期限なし。now() より後であること。
 --     戻り値 (jsonb): { subscription_id, user_id, plan_key, status: 'active', expires_at }。
 --     ロックの順 (billing/01 §6.4 (9) の 2.・3.・10. と同じ): advisory billing-user:<uuid> → 契約の行 (FOR NO KEY UPDATE) → family_groups の行 → user_profiles の行。
 --     写像 billing_apply_stripe_subscription・家族のトリガー billing_family_plan_follow_representative・apply_coupon と直列になる。
@@ -377,7 +380,7 @@ COMMENT ON FUNCTION public.billing_grant_manual_subscription(uuid, text, timesta
 ```sql
 -- migration: <番号はマージ時に確定>_billing_manual_plan_grant.sql (中盤)
 
--- (2) M 行が終わった (cancelled / expired になった) あとの写しの同期。取り消し (3) と期限切れ (4) が呼ぶ内部の関数。
+-- (2) M 行が終わった (cancelled / expired になった) あとの写しの同期。取り消し (3) と 1 人分の期限切れ (4) が呼ぶ内部の関数。
 --     家族: この行のプランを持つ、いまの代表者 = p_user_id の active なグループを、同じ利用者に同じプランの live な行が無いときだけ free / 4 に戻す
 --     (写像 (9) の 10. の else と同じ式。ほかの経路 = service_role の直接の UPDATE で入ったプランは触らない)。
 --     plan_key_cached: live な行から再計算 (無ければ NULL = free)。
@@ -467,62 +470,118 @@ COMMENT ON FUNCTION public.billing_revoke_manual_subscription(uuid) IS
   'billing/02 §6.3: 運営者の手動付与の取り消し。利用者の live な手動付与の行 (stripe_subscription_id IS NULL) を cancelled にし、family_groups と plan_key_cached を合わせる。service_role だけ';
 ```
 
-### 6.4 期限切れ `billing_expire_manual_subscriptions` と pg_cron のジョブ
+### 6.4 期限切れ (利用者 1 人分の関数 `billing_expire_manual_subscription_for_user` と、利用者ごとに COMMIT するプロシージャ `billing_expire_manual_subscriptions`) と pg_cron のジョブ
+
+**1 トランザクションで扱う利用者は 1 人だけ** (§4.1 の原理 2)。期限を過ぎた行が複数の利用者にあっても、1 人分を 1 つのトランザクションで処理して COMMIT し、次の利用者に進む。全員を 1 つのトランザクションで処理すると、前の利用者 U1 の `user_profiles` の行 (と advisory `billing-user:<U1>`) を持ったまま、後の利用者 U2 の `family_groups` の行を取りに行くことになり、家族の関数の順 (`family_groups` の行 → 子の行。根の `CLAUDE.md` の「家族 (family_*) を変える関数のロック順」) と逆向きになる。具体的には次の 2 つでデッドロック (40P01) する (同じグループ G の代表者を U2、メンバーを U1 とし、`user_id` の順は U1 < U2):
+
+| 相手 | 相手が持つもの → 待つもの | 1 トランザクションのジョブが持つもの → 待つもの |
+|---|---|---|
+| 強制解散 `operator_force_dissolve_family` (`20261008090100_family_lock_order.sql:204` で `family_groups` を `FOR NO KEY UPDATE` → `:207` で `UPDATE user_profiles … WHERE family_id`)・脱退 `leave_family` (`:376`)・メンバーの削除 `remove_family_member` (`:422`) | `family_groups` の行 (G) → `user_profiles` の行 (U1) | `user_profiles` の行 (U1。U1 の周で書いた) → `family_groups` の行 (G。U2 の周の家族の同期) |
+| 代表者の交代 (U2 → U1。トリガー `billing_family_plan_follow_representative` は `family_groups` の行のあとに新しい代表者の advisory を取る。`20261016210000_billing_core.sql:451-460`) | `family_groups` の行 (G) → advisory `billing-user:<U1>` | advisory `billing-user:<U1>` (U1 の周で取った) → `family_groups` の行 (G) |
+
+利用者ごとに COMMIT すれば、ジョブが同時に持つのは 1 人分の鍵と行だけで、その順は写像・付与・取り消しと同じ (advisory → 契約の行 → `family_groups` の行 → `user_profiles` の行) になる。写像 (1 人分) が家族の関数・交代と循環しない理由 (billing_core.sql:451-460 の注記) がそのまま当てはまる。
+
+PostgreSQL の決まり (F26): プロシージャの中の `COMMIT` は、最上位の `CALL` (トランザクションのブロックの外) から呼んだときだけ使える。`SECURITY DEFINER` のプロシージャ・`SET` 句 (`SET search_path = ''` など) の付いたプロシージャは `COMMIT` できない (2D000 `invalid transaction termination`)。このため、プロシージャは `SECURITY INVOKER` (既定) で `SET` 句を付けず、本体の名前はすべて `public.` で修飾する。権限の要る処理 (行・`family_groups`・`user_profiles`・監査を書く) は、1 人分の関数 (`SECURITY DEFINER`・`SET search_path = ''`) に置く。プロシージャを呼ぶのは pg_cron (ジョブの所有者 `postgres`) と結合テスト (`postgres` の `pg/query`) だけ。PostgREST からはプロシージャを呼べない (`.rpc()` は関数だけ) ので、service_role から手で流すときは 1 人分の関数を呼ぶ。
 
 ```sql
 -- migration: <番号はマージ時に確定>_billing_manual_plan_grant.sql (後半)
 
--- (4) 期限 (current_period_end) を過ぎた live な M 行を expired にする。日次のジョブ expire-manual-plan-grants が呼ぶ。
---     戻り値: expired にした行の数。利用者ごとに advisory billing-user:<uuid> を取り、UPDATE の WHERE で live と期限を評価し直す
---     (一覧を読んでから鍵を取るまでの間に取り消された・写像が動いた行は飛ばす)。1 行ごとに監査 system.billing.manual_grant_expired
---     (actor_id NULL・target は利用者・info) を書く。全行が 1 トランザクション (途中で失敗すれば全部戻り、翌日の実行でやり直す)。
---     S 行 (Stripe の契約) には触れない (期限は Stripe が持つ)。
-CREATE OR REPLACE FUNCTION public.billing_expire_manual_subscriptions() RETURNS integer
+-- (4) 利用者 1 人分の期限切れ。期限 (current_period_end) を過ぎた live な M 行を expired にする。
+--     プロシージャ (5) が利用者ごとに呼ぶ (1 回の呼び出し = 1 つのトランザクションの中で 1 人分)。service_role からも手で呼べる。
+--     戻り値: expired にした行の数 (0 か 1。live な行は利用者ごとに最大 1 行 = 部分 UNIQUE idx_personal_subscriptions_active_per_user)。
+--     ロックの順 (付与・取り消し・写像と同じ): advisory billing-user:<uuid> → 契約の行 (FOR NO KEY UPDATE) → family_groups の行 → user_profiles の行。
+--     ほかの利用者の鍵・行は取らない (1 トランザクション 1 人。billing/02 §6.4)。
+--     鍵を取ってから行を読むので、一覧を読んだあとに取り消された・写像が動いた行は読まれない (0 を返す)。
+--     監査 system.billing.manual_grant_expired (actor_id NULL・target は利用者・info) を 1 行書く。S 行 (Stripe の契約) には触れない (期限は Stripe が持つ)。
+CREATE OR REPLACE FUNCTION public.billing_expire_manual_subscription_for_user(
+  p_user_id uuid
+) RETURNS integer
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
-  v_row   record;
-  v_count integer := 0;
+  v_row public.personal_subscriptions%ROWTYPE;
 BEGIN
-  FOR v_row IN
-    SELECT s.id, s.user_id, s.plan_key, s.current_period_end
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'billing_expire_manual_subscription_for_user: p_user_id is required' USING ERRCODE = '22023';
+  END IF;
+
+  -- 1. ロック (付与・取り消し・写像・トリガーと同じ鍵)
+  PERFORM pg_advisory_xact_lock(hashtext('billing-user:' || p_user_id::text));
+
+  -- 2. 期限を過ぎた live な M 行 (FOR NO KEY UPDATE で apply_coupon・写像と直列)
+  SELECT s.* INTO v_row
+    FROM public.personal_subscriptions AS s
+   WHERE s.user_id = p_user_id
+     AND s.stripe_subscription_id IS NULL
+     AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')
+     AND s.current_period_end IS NOT NULL
+     AND s.current_period_end <= now()
+   ORDER BY s.created_at DESC, s.id
+   LIMIT 1
+   FOR NO KEY UPDATE;
+  IF v_row.id IS NULL THEN
+    RETURN 0;
+  END IF;
+
+  -- 3. expired に (cancelled_at・active_coupon_redemption_id・notes・current_period_end は触らない)
+  UPDATE public.personal_subscriptions
+     SET status = 'expired'
+   WHERE id = v_row.id;
+
+  -- 4. 写しの同期 (family_groups → user_profiles の順)
+  PERFORM public.billing_manual_subscription_sync_after_end(p_user_id, v_row.plan_key);
+
+  -- 5. 監査 (system.* と actor_id NULL は SECURITY DEFINER だけが書ける。#1736)
+  INSERT INTO public.admin_audit_logs (actor_id, action_type, target_id, target_type, severity, details)
+  VALUES (NULL, 'system.billing.manual_grant_expired', p_user_id, 'user', 'info',
+          jsonb_build_object('subscription_id', v_row.id, 'plan_key', v_row.plan_key, 'expires_at', v_row.current_period_end));
+  RETURN 1;
+END
+$$;
+REVOKE ALL ON FUNCTION public.billing_expire_manual_subscription_for_user(uuid) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.billing_expire_manual_subscription_for_user(uuid) TO service_role;
+COMMENT ON FUNCTION public.billing_expire_manual_subscription_for_user(uuid) IS
+  'billing/02 §6.4: 利用者 1 人分の期限切れ。期限 (current_period_end) を過ぎた手動付与の行を expired にし、family_groups と plan_key_cached を合わせ、監査 system.billing.manual_grant_expired を書く。プロシージャ billing_expire_manual_subscriptions が利用者ごとに呼ぶ。service_role からも手で呼べる';
+
+-- (5) 期限切れの日次の処理。期限を過ぎた live な M 行を持つ利用者を user_id の順に並べ、1 人ずつ (4) を呼んで COMMIT する。
+--     1 トランザクションで扱う利用者は 1 人だけ (全員を 1 つのトランザクションにすると、前の利用者の user_profiles の行を持ったまま
+--     次の利用者の family_groups の行を待ち、家族の関数・代表者の交代とデッドロックする。billing/02 §6.4)。
+--     COMMIT を使うので SECURITY INVOKER (既定) で SET 句を付けない (SECURITY DEFINER / SET 句の付いたプロシージャは COMMIT できない)。
+--     本体の名前は public. で修飾する。最上位の CALL だけで呼ぶ (pg_cron のジョブ expire-manual-plan-grants・結合テスト)。
+--     途中の利用者で例外が出たら、そこで止まる (それまでの利用者は COMMIT 済み。残りは翌日の実行で処理する。失敗は cron.job_run_details に残る)。
+--     一覧は開始時に読む (処理中に期限が来た行は翌日)。EXECUTE は誰にも付けない (所有者 postgres = pg_cron だけが呼ぶ)。
+CREATE OR REPLACE PROCEDURE public.billing_expire_manual_subscriptions()
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  v_target record;
+BEGIN
+  FOR v_target IN
+    SELECT DISTINCT s.user_id
       FROM public.personal_subscriptions AS s
      WHERE s.stripe_subscription_id IS NULL
        AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')
        AND s.current_period_end IS NOT NULL
        AND s.current_period_end <= now()
-     ORDER BY s.user_id, s.id
+     ORDER BY s.user_id
   LOOP
-    PERFORM pg_advisory_xact_lock(hashtext('billing-user:' || v_row.user_id::text));
-    UPDATE public.personal_subscriptions AS s
-       SET status = 'expired'
-     WHERE s.id = v_row.id
-       AND s.stripe_subscription_id IS NULL
-       AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')
-       AND s.current_period_end <= now();
-    IF NOT FOUND THEN
-      CONTINUE;
-    END IF;
-    PERFORM public.billing_manual_subscription_sync_after_end(v_row.user_id, v_row.plan_key);
-    INSERT INTO public.admin_audit_logs (actor_id, action_type, target_id, target_type, severity, details)
-    VALUES (NULL, 'system.billing.manual_grant_expired', v_row.user_id, 'user', 'info',
-            jsonb_build_object('subscription_id', v_row.id, 'plan_key', v_row.plan_key, 'expires_at', v_row.current_period_end));
-    v_count := v_count + 1;
+    PERFORM public.billing_expire_manual_subscription_for_user(v_target.user_id);
+    COMMIT;
   END LOOP;
-  RETURN v_count;
 END
 $$;
-REVOKE ALL ON FUNCTION public.billing_expire_manual_subscriptions() FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.billing_expire_manual_subscriptions() TO service_role;
-COMMENT ON FUNCTION public.billing_expire_manual_subscriptions() IS
-  'billing/02 §6.4: 期限 (current_period_end) を過ぎた手動付与の行を expired にし、family_groups と plan_key_cached を合わせ、監査 system.billing.manual_grant_expired を書く。pg_cron のジョブ expire-manual-plan-grants (毎日 00:11 JST) が呼ぶ。service_role からも手で呼べる';
+REVOKE ALL ON PROCEDURE public.billing_expire_manual_subscriptions() FROM PUBLIC, anon, authenticated, service_role;
+COMMENT ON PROCEDURE public.billing_expire_manual_subscriptions() IS
+  'billing/02 §6.4: 期限を過ぎた手動付与の行を持つ利用者ごとに billing_expire_manual_subscription_for_user を呼んで COMMIT する (1 トランザクション 1 人)。pg_cron のジョブ expire-manual-plan-grants (毎日 00:11 JST) が CALL で呼ぶ。所有者 (postgres) だけ';
 
--- (5) pg_cron のジョブ。毎日 00:11 JST (15:11 UTC。pg_cron は UTC で解釈する。日本に夏時間は無い)。
+-- (6) pg_cron のジョブ。毎日 00:11 JST (15:11 UTC。pg_cron は UTC で解釈する。日本に夏時間は無い)。
 --     期限は JST の暦日の終わり (翌日の 0 時) なので、日付が変わった直後に流す。00:05 の毎時のジョブ (calculate-segment-stats)・
 --     00:10 / 00:12 の 5 分ごとのジョブ (requeue-stale-meal-image-jobs / process-pending-meal-image-jobs)・00:20 / 00:35 の
 --     calculate-segment-stats-finalize-retry と重ならない分にする。
+--     command は CALL の 1 文だけにする (ほかの文と並べると 1 つのトランザクションのブロックになり、プロシージャの COMMIT が 2D000 になる)。
+--     本番の pg_cron は cron.use_background_workers = off (billing/02 F26) で、ジョブの command を接続から 1 つの問い合わせとして送る = 最上位の CALL。
 --     pg_cron が無い DB (cron.job が無い) では登録を飛ばす (20261010150000 と同じ)。同じ名前のジョブがあれば外してから登録する (何度流しても 1 つ)。
 DO $$
 BEGIN
@@ -534,7 +593,7 @@ BEGIN
   PERFORM cron.schedule(
     'expire-manual-plan-grants',
     '11 15 * * *',
-    'SELECT public.billing_expire_manual_subscriptions();'
+    'CALL public.billing_expire_manual_subscriptions();'
   );
 END
 $$;
@@ -542,7 +601,7 @@ $$;
 
 ### 6.5 migration が触らないもの
 
-`personal_subscriptions` の列・CHECK・索引・RLS ポリシー (`personal_subscriptions_insert_admin` / `_update_admin` / `_select` / `_no_delete`。F2)・`billing_apply_stripe_subscription`・`billing_claim_stripe_event`・`billing_finish_stripe_event`・`billing_family_plan_follow_representative` とそのトリガー・特権列ガード 2 本・`get_effective_plan`・`apply_coupon`・`subscription_plans`・`family_groups`・`user_profiles`・`admin_audit_logs` のポリシー・`supabase/baseline/**` (凍結。billing/01 §6.5)。
+触らないもの: `personal_subscriptions` の列・CHECK・索引・RLS ポリシー (`personal_subscriptions_insert_admin` / `_update_admin` / `_select` / `_no_delete`。F2)・`billing_apply_stripe_subscription`・`billing_claim_stripe_event`・`billing_finish_stripe_event`・`billing_family_plan_follow_representative` とそのトリガー・特権列ガード 2 本・`get_effective_plan`・`apply_coupon`・`subscription_plans`・`family_groups`・`user_profiles`・`admin_audit_logs` のポリシー・`supabase/baseline/**` (凍結。billing/01 §6.5)。本冊の migration が作る PROCEDURE は §6.4 の (5) の 1 本だけで、既存のプロシージャは無い。
 
 本冊の関数が既存の表に書くのは `personal_subscriptions` (INSERT 1 行・`status` / `cancelled_at` / `cancel_at` の UPDATE)・`family_groups` (`plan_key` / `member_limit`)・`user_profiles` (`plan_key_cached`)・`admin_audit_logs` (INSERT) だけで、どれも写像 (billing/01 §6.4 (9)) がすでに書いている列。
 
@@ -551,9 +610,10 @@ $$;
 ```sql
 -- rollback: <番号はマージ時に確定>_billing_manual_plan_grant.sql
 -- 先に Web のデプロイを戻すこと (新しい Web はこの関数を呼ぶ。関数だけ消すと手動付与の API が 500 になる)。
--- 消えるもの: pg_cron のジョブ expire-manual-plan-grants・関数 4 本。
+-- 消えるもの: pg_cron のジョブ expire-manual-plan-grants・プロシージャ 1 本・関数 4 本。
 -- 残るもの: 付与済みの行 (personal_subscriptions の stripe_subscription_id IS NULL の行) と監査の行。行は消さない。
 --           戻したあとは、期限を過ぎた付与が expired にならない (運営が service_role で status を直す)。
+-- 消す順: ジョブ → プロシージャ (1 人分の関数を呼ぶ) → 呼ばれる側の関数。
 -- 本番への適用: 本番への直接 SQL は禁止 (CLAUDE.md)。この内容を新しい migration として supabase/migrations に追加し、PR → main マージ → CI で適用する。
 SET LOCAL lock_timeout = '10s';
 
@@ -566,7 +626,8 @@ BEGIN
 END
 $$;
 
-DROP FUNCTION IF EXISTS public.billing_expire_manual_subscriptions();
+DROP PROCEDURE IF EXISTS public.billing_expire_manual_subscriptions();
+DROP FUNCTION IF EXISTS public.billing_expire_manual_subscription_for_user(uuid);
 DROP FUNCTION IF EXISTS public.billing_revoke_manual_subscription(uuid);
 DROP FUNCTION IF EXISTS public.billing_grant_manual_subscription(uuid, text, timestamptz);
 DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, text);
@@ -627,7 +688,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 |---|---|---|
 | 手動付与の経路 | 無い (F1)。admin / super_admin の JWT で PostgREST から `personal_subscriptions` に直接 INSERT はできる (F2) が、`plan_key_cached` と `family_groups` は同期できない (F3) | `POST /api/super-admin/users/{id}/manual-plan` → `billing_grant_manual_subscription` (行 + 家族 + `plan_key_cached` を 1 トランザクションで) |
 | 取り消し | 無い | `DELETE /api/super-admin/users/{id}/manual-plan` → `billing_revoke_manual_subscription` (`cancelled`) |
-| 期限 | 無い | `current_period_end` (翌日の JST 0 時) + 日次のジョブ `expire-manual-plan-grants` (00:11 JST) → `expired` |
+| 期限 | 無い | `current_period_end` (翌日の JST 0 時) + 日次のジョブ `expire-manual-plan-grants` (00:11 JST。プロシージャが利用者ごとに 1 人分の関数を呼んで COMMIT) → `expired` |
 | 誰ができるか | (直接の INSERT なら admin / super_admin。AAL2 の門は無い) | super_admin だけ。`requireRole(['super_admin'])` (AAL2)。自分には 403 |
 | 監査 | 無い | `admin.billing.manual_grant` / `admin.billing.manual_revoke` (route・warn・IP と UA つき)・`system.billing.manual_grant_expired` (関数・info) |
 | M 行の家族グループへの反映 | グループの作成・代表者の交代のトリガーだけ (billing/01 §12「既存のグループへの反映は配線の手動付与の画面が行う」) | 付与・取り消し・期限切れの関数が、いまの代表者の active なグループを写像と同じ式で合わせる |
@@ -654,7 +715,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | S `incomplete` (live な M 行なし) | Stripe の契約の写像 (支払いの完了など) | billing/01 §7.3 のとおり | billing/01 §7.3 の `incomplete` の行のガード | 本冊で変えない |
 | S `incomplete` + M `active` (S10 の付与の後) | Stripe の契約の写像 (S 行を live の status に写そうとする) | 同じ (S `incomplete` のまま・M `active` のまま) | 写像の 6. で別の live 行 (M) | `BILL_LIVE_ROW_CONFLICT` → イベント `failed`・500・監査 `system.stripe.event_failed`。運営の処置は S9 と同じ (M 行を取り消した後の再送で S 行が写る)。S10 |
 | M `active` | 取り消し `DELETE …/manual-plan` (関数 `billing_revoke_manual_subscription`) | M `cancelled` | super_admin (AAL2)・対象が自分でない・live な M 行がある | UPDATE `status='cancelled'`・`cancelled_at=now()`・`cancel_at=NULL`・家族プランなら、グループの `plan_key` がこのプランで同じ利用者に同じプランの live 行が無いとき `free` / 4 に戻す・`plan_key_cached` を live 行から再計算 (NULL)・監査 `admin.billing.manual_revoke` (route・warn・details: `subscription_id`・`plan_key`・`reason`) |
-| M `active` (期限あり) | 期限 (`current_period_end <= now()`) を過ぎた後の日次のジョブ (関数 `billing_expire_manual_subscriptions`) | M `expired` | `stripe_subscription_id IS NULL`・live・`current_period_end <= now()` (UPDATE の WHERE で再評価) | UPDATE `status='expired'` (`cancelled_at` は NULL のまま)・家族の戻しと `plan_key_cached` の再計算 (取り消しと同じ)・監査 `system.billing.manual_grant_expired` (関数・actor NULL・info・details: `subscription_id`・`plan_key`・`expires_at`)。S2 |
+| M `active` (期限あり) | 期限 (`current_period_end <= now()`) を過ぎた後の日次のジョブ (プロシージャ `billing_expire_manual_subscriptions` → 利用者ごとに関数 `billing_expire_manual_subscription_for_user` → COMMIT) | M `expired` | `stripe_subscription_id IS NULL`・live・`current_period_end <= now()` (鍵を取った後の `FOR NO KEY UPDATE` の SELECT で読み直す) | UPDATE `status='expired'` (`cancelled_at` は NULL のまま)・家族の戻しと `plan_key_cached` の再計算 (取り消しと同じ)・監査 `system.billing.manual_grant_expired` (関数・actor NULL・info・details: `subscription_id`・`plan_key`・`expires_at`)。S2 |
 | M `active` (期限なし) | 日次のジョブ | M `active` (同じ) | `current_period_end IS NULL` は対象外 | 何もしない |
 | M `active` | 新規購入 `POST /api/billing/checkout` (核) | M `active` (同じ) | `findLiveSubscription` が M 行を返す | 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE` (billing/01 §7.3。顧客も Session も作らない) |
 | M `active` | 解約の予約 / 取り消し `POST /api/billing/subscription/cancel` / `resume` (核) | M `active` (同じ) | live だが `stripe_subscription_id IS NULL` | 409 `BILL_NO_LIVE_SUBSCRIPTION` (billing/01 §7.3)。`/account/billing` は解約のボタンを出さない (`can_cancel: false`) |
@@ -674,6 +735,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | 任意 | 付与・取り消しの API を admin / support / 未ログイン / AAL1 の super_admin が呼ぶ | 同じ | `requireRole(['super_admin'])` | 403 `OP_PERMISSION_DENIED` / 401 `AUTH_UNAUTHENTICATED`。S14 |
 | 任意 | 自分の id への付与・取り消し | 同じ | `normalizeUuid(id) === normalizeUuid(actor.id)` | 403 `OP_SELF_MODIFY`。S13 |
 | 任意 | 同時の付与 ×2 / 付与と写像 / 付与と取り消し / 付与とジョブ | advisory `billing-user:<uuid>` で直列。後の方が commit 済みの状態で上の行のどれかになる | — | S22 |
+| M `active` (期限を過ぎた・家族グループのメンバーか代表者) | 日次のジョブと、同じグループの強制解散・脱退・メンバーの削除・代表者の交代が同時 | ジョブは M `expired`。家族の操作は通常どおり | ジョブは 1 トランザクションで 1 人分の鍵と行だけを持つ (§6.4) | 40P01 にならない (どちらかが待つだけ)。テスト 57 |
 
 表に無い遷移を作るコードは blocking。M 行に `trialing` / `past_due` / `grace` / `paused` / `incomplete` を入れる経路は本冊に無い (組織ライセンス受領による一時停止は配線の残りの冊)。
 
@@ -744,7 +806,7 @@ export const MANUAL_GRANT_AUDIT_ACTIONS = {
   grant: 'admin.billing.manual_grant',
   /** 運営者が取り消した (actor = 運営。route が書く) */
   revoke: 'admin.billing.manual_revoke',
-  /** 期限を過ぎて expired にした (actor NULL。DB 関数 billing_expire_manual_subscriptions が書く) */
+  /** 期限を過ぎて expired にした (actor NULL。DB 関数 billing_expire_manual_subscription_for_user が書く) */
   expired: 'system.billing.manual_grant_expired',
 } as const;
 export type ManualGrantAuditAction = (typeof MANUAL_GRANT_AUDIT_ACTIONS)[keyof typeof MANUAL_GRANT_AUDIT_ACTIONS];
@@ -926,9 +988,16 @@ export function isGrantablePlan(plan: { plan_key: string; plan_type: string; sta
   );
 }
 
-/** 画面の文 (画面はエラーの本文の文面を読まず、code から引く) */
+/**
+ * 画面で 400 OP_INVALID_INPUT に出す文。画面は応答の本文の文面 (error.message) を読まず code だけを読む
+ * (src/lib/auth/mfa/client.ts と同じ。tests/lib-raw-error-message-scan.test.ts は src/lib の結果にエラーの .message を入れることを数える) ので、
+ * どの入力の誤り (有効期限・理由の長さ・JSON) にも当てはまる文にする
+ */
+export const MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE = `入力を確かめてください (有効期限は今日より後の日付、理由は ${MANUAL_GRANT_REASON_MAX_LENGTH} 文字まで)`;
+/** 画面の文 (画面はエラーの本文の文面を読まず、code から引く。OP_INVALID_INPUT だけは画面用の文に差し替える) */
 export const MANUAL_GRANT_CLIENT_MESSAGES: Readonly<Record<string, string>> = {
   ...MANUAL_GRANT_ERROR_MESSAGES,
+  OP_INVALID_INPUT: MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE,
   AUTH_UNAUTHENTICATED: 'ログインし直してください',
   OP_PERMISSION_DENIED: '権限がありません',
   INTERNAL_ERROR: '処理中にエラーが発生しました。しばらくしてからお試しください',
@@ -1207,30 +1276,34 @@ export interface ManualGrantClientFailure {
   readonly ok: false;
   /** HTTP のステータス。応答として扱えなかったときは MANUAL_GRANT_CLIENT_NO_STATUS */
   readonly status: number;
-  /** 本文の error.code。読めなければ MANUAL_GRANT_CLIENT_UNKNOWN_CODE */
+  /** 本文の error.code (nested) か code (flat)。読めなければ MANUAL_GRANT_CLIENT_UNKNOWN_CODE。画面は manualGrantErrorMessage(code) で文を引く */
   readonly code: string;
-  /** 本文の error.message (route が書く固定の文。400 OP_INVALID_INPUT では最初の issue の文)。読めなければ null */
-  readonly message: string | null;
 }
 export type ManualGrantClientResult<T> = ManualGrantClientSuccess<T> | ManualGrantClientFailure;
 
-/** 運営 API の失敗の本文 (nested) と、rejectNullCharacterBody の flat の本文 ({ error, code }) の両方から code を読む */
-const NestedErrorBodySchema = z.object({ error: z.object({ code: z.string().min(1), message: z.string().optional() }) });
-const FlatErrorBodySchema = z.object({ code: z.string().min(1), error: z.string().optional() });
+/**
+ * 運営 API の失敗の本文 (nested) と、rejectNullCharacterBody の flat の本文 ({ error, code }) の両方から code だけを読む。
+ * 本文の文面 (error.message) は読まない (src/lib/auth/mfa/client.ts:87-96 と同じ。tests/lib-raw-error-message-scan.test.ts が
+ * src/lib の結果に「エラーらしい名前の .message」を入れることを違反に数える。F27)
+ */
+const NestedErrorBodySchema = z.object({ error: z.object({ code: z.string().min(1) }) });
+const FlatErrorBodySchema = z.object({ code: z.string().min(1) });
+
+function failureCodeOf(body: unknown): string {
+  const nested = NestedErrorBodySchema.safeParse(body);
+  if (nested.success) return nested.data.error.code;
+  const flat = FlatErrorBodySchema.safeParse(body);
+  return flat.success ? flat.data.code : MANUAL_GRANT_CLIENT_UNKNOWN_CODE;
+}
 
 function failureOf(status: number, body: unknown): ManualGrantClientFailure {
-  const nested = NestedErrorBodySchema.safeParse(body);
-  if (nested.success) return { ok: false, status, code: nested.data.error.code, message: nested.data.error.message ?? null };
-  const flat = FlatErrorBodySchema.safeParse(body);
-  if (flat.success) return { ok: false, status, code: flat.data.code, message: flat.data.error ?? null };
-  return { ok: false, status, code: MANUAL_GRANT_CLIENT_UNKNOWN_CODE, message: null };
+  return { ok: false, status, code: failureCodeOf(body) };
 }
 
 const NO_RESPONSE_FAILURE: ManualGrantClientFailure = {
   ok: false,
   status: MANUAL_GRANT_CLIENT_NO_STATUS,
   code: MANUAL_GRANT_CLIENT_UNKNOWN_CODE,
-  message: null,
 };
 
 /** API を 1 回呼び、2xx の本文を schema で読む。Cookie のセッションで呼ぶ (same-origin)。応答は運営だけのものなので no-store */
@@ -1480,7 +1553,7 @@ export async function DELETE(request: Request, props: Params): Promise<NextRespo
  *   - 契約なし → 付与のフォーム (プラン・有効期限 (任意)・理由) → 確認ダイアログ → POST
  *   - 手動付与の契約あり → 取り消しのフォーム (理由) → 確認ダイアログ → DELETE
  *   - Stripe の契約あり → 「Stripe の契約があるため、手動付与はできません」(解約は利用者の操作か Stripe で)
- * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) (400 OP_INVALID_INPUT だけは本文の文) を出す。
+ * 成功は GET で読み直して表示を更新し、失敗は manualGrantErrorMessage(code) を出す (応答の本文の文面は読まない。400 OP_INVALID_INPUT は画面用の文)。
  * 通信は src/lib/billing/manual-grant-client.ts だけで行う (URL をここで組み立てない)。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
@@ -1490,7 +1563,7 @@ import {
   type ManualGrantHistoryEntry,
   type ManualPlanView,
 } from '@/lib/billing/manual-grant';
-import { fetchManualPlanView, grantManualPlanRequest, revokeManualPlanRequest, type ManualGrantClientFailure } from '@/lib/billing/manual-grant-client';
+import { fetchManualPlanView, grantManualPlanRequest, revokeManualPlanRequest } from '@/lib/billing/manual-grant-client';
 
 /** 付与の確認ダイアログの文 (§10) */
 export const GRANT_CONFIRM_MESSAGE = 'この利用者に有料プランを手動で付与します。利用者は課金なしでプランを使えるようになります。続けますか?';
@@ -1510,10 +1583,6 @@ export const MANUAL_PLAN_DISPLAY_TIME_ZONE = 'Asia/Tokyo';
 function formatDateTime(iso: string | null): string {
   return iso === null ? '期限なし' : new Date(iso).toLocaleString(MANUAL_PLAN_DISPLAY_LOCALE, { timeZone: MANUAL_PLAN_DISPLAY_TIME_ZONE });
 }
-function failureMessage(failure: ManualGrantClientFailure): string {
-  // OP_INVALID_INPUT は route が最初の issue の文 (こちらで書いた固定の文) を message に入れる。ほかは code から引く
-  return failure.code === 'OP_INVALID_INPUT' && failure.message !== null ? failure.message : manualGrantErrorMessage(failure.code);
-}
 
 export function ManualPlanGrantSection({ userId }: { userId: string }) {
   const [view, setView] = useState<ManualPlanView | null>(null);
@@ -1531,7 +1600,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
       setView(result.data);
       setLoadError(null);
     } else {
-      setLoadError(failureMessage(result));
+      setLoadError(manualGrantErrorMessage(result.code));
     }
   }, [userId]);
 
@@ -1557,7 +1626,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
       setReason('');
       await load();
     } else {
-      setError(failureMessage(result));
+      setError(manualGrantErrorMessage(result.code));
     }
     setSubmitting(false);
   };
@@ -1575,7 +1644,7 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
       setReason('');
       await load();
     } else {
-      setError(failureMessage(result));
+      setError(manualGrantErrorMessage(result.code));
     }
     setSubmitting(false);
   };
@@ -1781,7 +1850,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 |---|---|
 | 入力 | `{ plan_key: string, expires_on?: 'YYYY-MM-DD' \| null, reason: string }` (`manualPlanGrantBodySchema(jstToday())`。`expires_on` は JST の暦日で今日より後。`reason` は 1〜500 文字) |
 | 200 | `{ data: { subscription_id, user_id, plan_key, status: 'active', expires_at: string \| null } }` (`expires_at` は `expires_on` の翌日の JST 0 時の ISO) |
-| 400 | `OP_INVALID_INPUT` (JSON でない・Zod。`message` は最初の issue の文・`details` に全件。DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` も同じ code で固定の文) / `INVALID_CHARACTER` (NULL 文字) |
+| 400 | `OP_INVALID_INPUT` (JSON でない・Zod。`message` は最初の issue の文・`details` に全件。DB 関数の `BILL_MANUAL_EXPIRES_AT_PAST` も同じ code で固定の文。画面の節は `message` を読まず、code から画面用の文を出す。§10) / `INVALID_CHARACTER` (NULL 文字) |
 | 401 / 403 | `AUTH_UNAUTHENTICATED` / `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY` (自分) |
 | 404 | `NOT_FOUND` |
 | 409 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` (live な行 (S / M) がある) |
@@ -1816,7 +1885,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 | `current.source === 'manual'` | 現在の契約 (プラン・由来「手動付与」・有効期限) と取り消しのフォーム: 理由 (必須)・[取り消す] → 確認ダイアログ `REVOKE_CONFIRM_MESSAGE` → `DELETE`。成功で「<plan_key> の付与を取り消しました」と読み直し |
 | `current.source === 'stripe'` | 現在の契約 (プラン・由来「Stripe」・次回更新) と「Stripe の契約があるため、手動付与はできません (解約は利用者の操作か Stripe で行います)」。フォームは描かない |
 | `history` が 1 件以上 | 履歴 (付与 / 取り消し / 期限切れ・プラン・期限・理由・日時) |
-| 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (`OP_INVALID_INPUT` だけは本文の `message` = 最初の issue の文)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ) |
+| 失敗 | 本文の `code` から `manualGrantErrorMessage` の文 (応答の本文の `message` は読まない。`OP_INVALID_INPUT` は `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`「入力を確かめてください (有効期限は今日より後の日付、理由は 500 文字まで)」)。401 も文を出すだけ (運営の画面の移動は layout の `requireRoleForPage` が受け持つ) |
 
 - 有効期限の表示は JST の日時 (`toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })`)。「2026-12-31 まで」の付与は `2027/1/1 0:00:00` と出る (期限の意味 = その時刻の前まで使える)。日付だけに丸めると「2027/1/1」が「1 月 1 日も使える」に読めるので丸めない。
 - 既存の「現在のサブスクリプション」の節 (`active_subscription`。`next_billing_at`) はそのまま残す。
@@ -1846,7 +1915,7 @@ sequenceDiagram
   SA->>API: GET …/manual-plan (読み直し)
 ```
 
-期限切れ: `pg_cron` (`expire-manual-plan-grants`・00:11 JST) → `billing_expire_manual_subscriptions()` → 対象の行ごとに advisory → UPDATE `expired` → `sync_after_end` → `admin_audit_logs` (`system.billing.manual_grant_expired`)。
+期限切れ: `pg_cron` (`expire-manual-plan-grants`・00:11 JST) → `CALL billing_expire_manual_subscriptions()` → 期限を過ぎた利用者ごとに [`billing_expire_manual_subscription_for_user(<id>)`: advisory → 行 (`FOR NO KEY UPDATE`) → UPDATE `expired` → `sync_after_end` (`family_groups` → `user_profiles`) → `admin_audit_logs` (`system.billing.manual_grant_expired`)] → COMMIT → 次の利用者。
 
 ---
 
@@ -1894,7 +1963,7 @@ sequenceDiagram
 4. `it('ManualPlanRevokeBodySchema requires a non-blank reason within 500 chars')`
 5. `it('MANUAL_GRANT_RPC_TO_API_CODE maps the 5 DB codes to API codes whose HTTP status is in MANUAL_GRANT_ERROR_HTTP_STATUS; isManualGrantRpcCode rejects unknown strings')`
 6. `it('manualPlanPath encodes the user id and ends with /manual-plan')`
-7. `it('manualGrantErrorMessage returns the fixed message per code and the fallback for unknown codes')`
+7. `it('manualGrantErrorMessage returns the fixed message per code, MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE for OP_INVALID_INPUT, and the fallback for unknown codes')`
 8. `it('MANUAL_GRANT_AUDIT_ACTIONS are admin.billing.* for grant/revoke (warn) and system.billing.* for expired (info)')`
 
 `tests/billing-manual-grant-service.test.ts` (`manual-grant-service.ts`。repository を偽物に。段 B):
@@ -1905,6 +1974,9 @@ sequenceDiagram
 13. `it('getManualPlanView returns current, plans and history from the repository and NOT_FOUND for an unknown user')`
 14. `it('manual-grant-repository.ts has no direct insert/update/upsert on personal_subscriptions (writes go through the 2 RPCs)')` (ソース走査)
 55. `it('countPlanSubscribers counts a live manual row (stripe_subscription_id null) of the plan, so deprecating that plan is refused (S19)')` (`src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers` を `tests/helpers/fake-plan-subscribers-db.ts` の偽の client で呼ぶ。`personal_subscriptions` に `{ plan_key: 'pro', status: 'active', stripe_subscription_id: null }` の 1 行 → `personal_subscriptions: 1`。偽の client は知らない絞り込みのメソッドで例外を投げるので、`stripe_subscription_id` で絞る変更が入れば赤になる)
+
+`tests/billing-manual-grant-client.test.ts` (`manual-grant-client.ts`。`fetch` を `vi.stubGlobal` で偽物に。段 B):
+58. `it('requestManualPlanApi returns { ok: true, data } for a 2xx body matching the schema; for non-2xx it returns { ok: false, status, code } with the code from the nested body { error: { code, message } } and from the flat body { error, code } and never exposes the body message (the failure object has exactly the keys ok/status/code); UNKNOWN code for an unreadable body; NO_STATUS + UNKNOWN when fetch throws or a 2xx body does not match')`
 
 `tests/api/manual-plan-routes.test.ts` (route。`@/lib/billing/manual-grant-service` と `@/lib/billing/manual-grant-repository` をモック。`@/lib/auth/helpers` の `requireRole`・`@/lib/supabase/server`・`@/lib/admin/audit` もモック。`tests/coupons-apply-route.test.ts` と同じ形。段 B):
 15. `it('POST/DELETE/GET: 401 AUTH_UNAUTHENTICATED on AuthError and 403 OP_PERMISSION_DENIED on ForbiddenError (incl. MfaRequiredError), without creating the service_role client')`
@@ -1920,21 +1992,22 @@ sequenceDiagram
 
 `tests/billing-manual-plan-grant-migration-contract.test.ts` (SQL の文面。DB は使わない。`tests/billing-migration-contract.test.ts` と同じ形。段 A):
 25. `it('exactly one migration ends with _billing_manual_plan_grant.sql and the same-numbered rollback exists; headers name each other (-- migration: / -- rollback:)')`
-26. `it('migration creates the 4 functions as SECURITY DEFINER with search_path = "", revokes PUBLIC/anon/authenticated, grants EXECUTE to service_role for grant/revoke/expire only, and grants nothing on billing_manual_subscription_sync_after_end (service_role revoked too)')`
-27. `it('migration contains no CREATE TABLE / ALTER TABLE / CREATE POLICY / DROP POLICY / CREATE TRIGGER / CREATE INDEX (functions and the cron job only)')`
-28. `it('migration contains no UPDATE/DELETE of existing rows outside function bodies')`
-29. `it('cron job expire-manual-plan-grants is scheduled at 11 15 * * * calling billing_expire_manual_subscriptions(), guarded by to_regclass(cron.job), unscheduling the same name first')`
-30. `it('rollback unschedules the job and drops the 4 functions; it does not DELETE rows')`
+26. `it('migration creates the 4 functions as SECURITY DEFINER with search_path = "", revokes PUBLIC/anon/authenticated, grants EXECUTE to service_role for grant/revoke/expire_for_user only, and grants nothing on billing_manual_subscription_sync_after_end (service_role revoked too)')`
+27. `it('migration contains no CREATE TABLE / ALTER TABLE / CREATE POLICY / DROP POLICY / CREATE TRIGGER / CREATE INDEX (functions, the procedure and the cron job only)')`
+28. `it('migration contains no UPDATE/DELETE of existing rows outside function and procedure bodies')`
+29. `it('cron job expire-manual-plan-grants is scheduled at 11 15 * * * with the single statement CALL public.billing_expire_manual_subscriptions();, guarded by to_regclass(cron.job), unscheduling the same name first')`
+30. `it('rollback unschedules the job, drops the procedure and the 4 functions (procedure before the functions it calls); it does not DELETE rows')`
 31. `it('grant function rejects free / org / non-public (private, draft, deprecated) plans (the same table as isGrantablePlan) and raises BILL_UNKNOWN_USER, BILL_PLAN_NOT_GRANTABLE, BILL_MANUAL_EXPIRES_AT_PAST, BILL_LIVE_ROW_CONFLICT; revoke raises BILL_MANUAL_ROW_NOT_FOUND')`
-32. `it('lock order in grant/revoke/expire: advisory billing-user → personal_subscriptions (FOR NO KEY UPDATE) → family_groups → user_profiles, and the audit INSERT in expire uses system.billing.manual_grant_expired with actor_id NULL')`
+32. `it('lock order in grant/revoke/expire_for_user: advisory billing-user of p_user_id only → personal_subscriptions (FOR NO KEY UPDATE) → family_groups → user_profiles; no function loops over users; the audit INSERT in expire_for_user uses system.billing.manual_grant_expired with actor_id NULL')` (文面の順に加え、3 つの関数の本体に `FOR … IN` の利用者のループと 2 つ目の `pg_advisory_xact_lock` が無いこと。利用者をまたぐ処理はテスト 56 のプロシージャだけ)
 33. `it('migration comment does not attribute decisions (no "オーナー判断")')`
+56. `it('the procedure billing_expire_manual_subscriptions is LANGUAGE plpgsql with neither SECURITY DEFINER nor a SET clause (it COMMITs), qualifies names with public., loops over the due users ORDER BY user_id calling billing_expire_manual_subscription_for_user once per user and COMMITs right after each call, and revokes EXECUTE from PUBLIC/anon/authenticated/service_role')` (§6.4 の (5)。`SECURITY DEFINER` か `SET` 句を足すと本番で 2D000 になり、`COMMIT` を消すとデッドロックの形 (§6.4 の表) に戻る。どちらも赤にする)
 
 `tests/admin-user-manual-plan-section-wiring.test.ts` (ソース走査。段 C):
 34. `it('src/app/admin/users/[id]/page.tsx imports ManualPlanGrantSection and renders it only under isSuperAdmin && actor.id !== profile.id')`
 
 `src/__tests__/components/admin/manual-plan-grant-section.test.tsx` (`tests/mfa-pages-browser.test.tsx` の `OperatorMfaResetSection` の it と同じく `react-dom/client` + `act`。`@/lib/billing/manual-grant-client` をモック。段 C):
 35. `it('ManualPlanGrantSection: loads the view on mount; with no contract shows the grant form whose submit is disabled until a plan and a non-blank reason are set; confirm cancel does not call grantManualPlanRequest; confirm ok calls it once with expires_on null when the date is empty and reloads on success')`
-36. `it('ManualPlanGrantSection: with a manual contract shows plan/由来 手動付与/有効期限 and the revoke form; confirm ok calls revokeManualPlanRequest once; failure shows manualGrantErrorMessage(code), and OP_INVALID_INPUT shows the body message')`
+36. `it('ManualPlanGrantSection: with a manual contract shows plan/由来 手動付与/有効期限 and the revoke form; confirm ok calls revokeManualPlanRequest once; failure shows manualGrantErrorMessage(code) (OP_INVALID_INPUT → MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE)')`
 37. `it('ManualPlanGrantSection: with a stripe contract shows the note and no form; history rows show label/plan/期限/reason')`
 
 `src/__tests__/api/family/groups.test.ts` (段 D。更新):
@@ -1947,19 +2020,20 @@ sequenceDiagram
 40. `it('grant raises BILL_LIVE_ROW_CONFLICT when a live stripe-backed row or a live manual row exists, and BILL_PLAN_NOT_GRANTABLE for free / org / private (family_addon) / draft / deprecated / unknown, and BILL_UNKNOWN_USER for a missing user, and BILL_MANUAL_EXPIRES_AT_PAST for a past expiry')`
 41. `it('grant with a family plan sets the representative active group plan_key/member_limit (LEAST(max_members,20)); revoke reverts to free/4 only when no other live row has that plan; a non-representative grant touches no group')`
 42. `it('revoke sets cancelled + cancelled_at, recomputes plan_key_cached (NULL), raises BILL_MANUAL_ROW_NOT_FOUND when only a stripe-backed live row or no live row exists, and leaves active_coupon_redemption_id untouched')`
-43. `it('expire marks live manual rows with current_period_end <= now() as expired (not rows without expiry, not stripe-backed rows), syncs family/plan_key_cached, writes one system.billing.manual_grant_expired audit row per row with actor_id NULL, and returns the count')`
+43. `it('expire_for_user (srAdmin.rpc billing_expire_manual_subscription_for_user) marks the user live manual row with current_period_end <= now() as expired and returns 1 (0 for a row without expiry, a future expiry, a stripe-backed row), syncs family/plan_key_cached and writes one system.billing.manual_grant_expired audit row with actor_id NULL; CALL public.billing_expire_manual_subscriptions() sent alone through pg/query expires the due rows of two users and leaves the others')` (期限を過ぎた行は、付与のあと `pgQuery` で `current_period_end` を過去にして作る。`CALL` は 1 つの要求に 1 文だけで送る: 複数の文は 1 つのトランザクションのブロックになり、プロシージャの COMMIT が 2D000 になる。F26)
 44. `it('billing_family_plan_follow_representative picks up a manual family row on group creation and representative transfer (S7, S8)')`
-45. `it('anon / authenticated (incl. an admin JWT) cannot execute the 4 functions; service_role can execute grant/revoke/expire but not billing_manual_subscription_sync_after_end')`
+45. `it('anon / authenticated (incl. an admin JWT) cannot execute the 4 functions; service_role can execute grant/revoke/expire_for_user but not billing_manual_subscription_sync_after_end; has_function_privilege is false for anon/authenticated/service_role on the procedure billing_expire_manual_subscriptions()')`
 46. `it('get_effective_plan returns the granted plan while active and free after revoke/expire')`
 47. `it('two concurrent grants for the same user (two connections) serialize on billing-user and the second raises BILL_LIVE_ROW_CONFLICT; a grant concurrent with billing_apply_stripe_subscription yields exactly one live row')`
 50. `it('billing_apply_stripe_subscription for a user with a live manual row raises BILL_LIVE_ROW_CONFLICT and leaves the manual row and plan_key_cached unchanged (S9)')` (写像の引数は `tests/integration/rls/billing-apply-subscription-rpc.test.ts` と同じ作り方。`status: 'active'` の新しい Stripe の契約)
 51. `it('grant succeeds over an incomplete stripe-backed row; a later billing_apply_stripe_subscription that would make that row active raises BILL_LIVE_ROW_CONFLICT and the stripe row stays incomplete (S10)')`
 52. `it('grant succeeds for a frozen user (user_profiles.frozen_at set by service_role) and leaves frozen_at unchanged (S16)')`
 53. `it('deleting the auth user (srAdmin.auth.admin.deleteUser) removes the manual row by CASCADE, and an admin_audit_logs row whose target_id is that user remains with the same target_id (S17)')` (監査の行は service_role で `admin.billing.manual_grant` を 1 行入れて用意する)
-54. `it('apply_coupon on a live manual row sets active_coupon_redemption_id, and a later expire (billing_expire_manual_subscriptions) leaves it unchanged (S18)')` (クーポンと引数は `apply_coupon` の既存の結合テストと同じ作り方。取り消しの側はテスト 42)
+54. `it('apply_coupon on a live manual row sets active_coupon_redemption_id, and a later expire (billing_expire_manual_subscription_for_user) leaves it unchanged (S18)')` (クーポンと引数は `apply_coupon` の既存の結合テストと同じ作り方。取り消しの側はテスト 42)
+57. `it('CALL billing_expire_manual_subscriptions does not deadlock (40P01) with a family operation that holds the family_groups row and then touches a member user_profiles row, nor with a representative transfer to that member that holds the family_groups row and then takes billing-user of the member; both due manual rows end up expired')` (§6.4 の表の 2 つの形。道具は `tests/integration/rls/billing-apply-subscription-rpc.test.ts` の `startHolder`・`waitForLockWaiter`・`expectNoDeadlock` (`:442-507`) をこのファイルに写す (同テストのテスト 106 と同じ形)。用意: 利用者を 2 人作り、`user_id` の小さい方をメンバー U1・大きい方を代表者 U2 にする (プロシージャは `ORDER BY user_id` で U1 を先に処理する)。U2 を代表者とするグループ G を作り、U1 をそのメンバーにする (`user_profiles.family_id = G`)。U1 に `pro`・U2 に `family_basic` を付与し、`pgQuery` で両方の `current_period_end` を過去にする。(a) 解散・脱退の形: `startHolder("SELECT 1 FROM public.family_groups WHERE id = '<G>' FOR NO KEY UPDATE;", "UPDATE public.user_profiles SET updated_at = now() WHERE family_id = '<G>';")` → `sleeping` を待つ → `pgRequest('CALL public.billing_expire_manual_subscriptions();')` (1 文だけ) → `waitForLockWaiter('billing_expire_manual_subscriptions')` → 両方の結果を待つ。(b) 代表者の交代の形: 同じ用意をやり直し、`startHolder("SELECT 1 FROM public.family_groups WHERE id = '<G>' FOR NO KEY UPDATE;", "UPDATE public.family_groups SET representative_id = '<U1>' WHERE id = '<G>';")` (後半の UPDATE でトリガーが advisory `billing-user:<U1>` を取る) → 同じ手順。どちらも `expectNoDeadlock`・holder と `CALL` が ok・U1 と U2 の M 行が `expired`。修正前の形 (全員を 1 トランザクション) では、ジョブが U1 の `user_profiles` の行 / advisory を持ったまま G を待ち、holder がそれを待って 40P01 になる)
 
 `tests/integration/security/billing-manual-grant-cron.test.ts` (段 A):
-48. `it('cron.job has exactly one expire-manual-plan-grants row with schedule 11 15 * * *, command calling billing_expire_manual_subscriptions(), owned by postgres (skipped when cron.job is absent)')`
+48. `it('cron.job has exactly one expire-manual-plan-grants row with schedule 11 15 * * *, command CALL public.billing_expire_manual_subscriptions();, owned by postgres (skipped when cron.job is absent)')`
 
 `tests/integration/operator/super-admin-users-manual-plan.test.ts` (段 B。本物の認証で route を叩く。`tests/integration/operator/admin-users.test.ts` と同じ道具):
 49. `it('GET/POST/DELETE: 401 without auth, 403 for admin / support / general, 200 for super_admin (AAL2 session); GET plans contains pro/family_basic/family_pro and no free / org_* / family_addon; POST then GET shows source manual; DELETE then GET shows current null; admin_audit_logs has manual_grant and manual_revoke rows with ip_address and user_agent')`
@@ -1973,7 +2047,7 @@ sequenceDiagram
 | シナリオ | テスト |
 |---|---|
 | S1 | 19・39・46・49 |
-| S2 | 3・9・43・46・48 |
+| S2 | 3・9・43・46・48・56 |
 | S3 | 21・42・46・49 |
 | S4 | 11・20・40 |
 | S5 | 20・40 (live な M 行) |
@@ -1983,17 +2057,17 @@ sequenceDiagram
 | S9 | 50 |
 | S10 | 51 |
 | S11 | 2・20・31・40・49 |
-| S12 | 3・11・18・40 |
+| S12 | 3・11・18・40・58 |
 | S13 | 10・12・16・34 |
-| S14 | 15・49 |
+| S14 | 15・49・58 |
 | S15 | 10・13・17・40 |
 | S16 | 52 |
 | S17 | 53 |
 | S18 | 42・54 |
 | S19 | 55 |
-| S20 | 29・43・48 |
+| S20 | 29・43・48・56 |
 | S21 | 12・21・42 |
-| S22 | 32・47 |
+| S22 | 32・47・57 |
 
 ---
 
@@ -2003,8 +2077,8 @@ sequenceDiagram
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (関数 4 本・pg_cron のジョブ)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト。`operator/08` §3.0・§3.1 の注記の専権 PATCH (§15.2。番兵が赤になるので同じ PR) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` | 25〜33, 39〜48, 50〜54 |
-| B: サーバ層 | `src/lib/billing/manual-grant{,-repository,-service,-client}.ts`・route・単体と結合のテスト・番兵の追随 (`null-character-routes` の `ENTRIES` 2 行・`admin-mutation-audit-coverage-1571` の `EXPECTED` 2 行) | §8.1〜§8.5・§9 | 1〜24, 49, 55 |
+| A: DB 層 | migration + rollback (関数 4 本・プロシージャ 1 本・pg_cron のジョブ)、`database.types.ts` の再生成 (2 本)、SQL 文面の契約テスト、結合テスト。`operator/08` §3.0・§3.1 の注記の専権 PATCH (§15.2。番兵が赤になるので同じ PR) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts` | 25〜33, 39〜48, 50〜54, 56, 57 |
+| B: サーバ層 | `src/lib/billing/manual-grant{,-repository,-service,-client}.ts`・route・単体と結合のテスト・番兵の追随 (`null-character-routes` の `ENTRIES` 2 行・`admin-mutation-audit-coverage-1571` の `EXPECTED` 2 行) | §8.1〜§8.5・§9 | 1〜24, 49, 55, 58 |
 | C: 画面層 | `ManualPlanGrantSection.tsx`・page の差分 3 行・テスト。`operator/03` §6 の専権 PATCH | §8.6・§8.7・§10 | 34〜37 |
 | D: family の入力の整理 (billing/01 §16.2 の「family の冊」の行。本冊の主題と独立。単独でマージ可) | `CreateFamilyGroupBodySchema` から `plan_key` を外す (`z.object` は知らない鍵を捨てるので、送ってくる古い画面は壊れない)・`POST /api/family/groups` が `create_family_group` を `p_name` だけで呼ぶ (DB 関数の `p_plan_key DEFAULT 'free'` は変えない)・作成の画面 `src/app/(main)/family/setup/page.tsx` のプランの選択欄 (`planKey` の state・`plan_key` の送信・`:95-105` の select) を外す・`src/__tests__/api/family/groups.test.ts` の追随 | `src/schemas/membership/family-group.ts`・`src/app/api/family/groups/route.ts`・`src/app/(main)/family/setup/page.tsx`・`src/__tests__/api/family/groups.test.ts` | 38 (+ `tests/e2e/membership/05-family-create-and-invite.spec.ts` がプランの選択欄を触っていれば同じ PR で追随。origin/main では `plan_key` を送らない形なら変更なし) |
 
@@ -2017,7 +2091,7 @@ sequenceDiagram
 - `src/lib/billing/manual-grant.ts`・`manual-grant-repository.ts`・`manual-grant-service.ts`・`manual-grant-client.ts`
 - `src/app/api/super-admin/users/[id]/manual-plan/route.ts`
 - `src/components/admin/ManualPlanGrantSection.tsx`
-- テスト: `tests/billing-manual-grant.test.ts`・`tests/billing-manual-grant-service.test.ts`・`tests/api/manual-plan-routes.test.ts`・`tests/billing-manual-plan-grant-migration-contract.test.ts`・`tests/admin-user-manual-plan-section-wiring.test.ts`・`src/__tests__/components/admin/manual-plan-grant-section.test.tsx`・`tests/integration/rls/billing-manual-grant-rpc.test.ts`・`tests/integration/security/billing-manual-grant-cron.test.ts`・`tests/integration/operator/super-admin-users-manual-plan.test.ts`
+- テスト: `tests/billing-manual-grant.test.ts`・`tests/billing-manual-grant-service.test.ts`・`tests/billing-manual-grant-client.test.ts`・`tests/api/manual-plan-routes.test.ts`・`tests/billing-manual-plan-grant-migration-contract.test.ts`・`tests/admin-user-manual-plan-section-wiring.test.ts`・`src/__tests__/components/admin/manual-plan-grant-section.test.tsx`・`tests/integration/rls/billing-manual-grant-rpc.test.ts`・`tests/integration/security/billing-manual-grant-cron.test.ts`・`tests/integration/operator/super-admin-users-manual-plan.test.ts`
 
 変更:
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成。段 A)
@@ -2038,14 +2112,15 @@ sequenceDiagram
 
 | 種別 | 名前 |
 |---|---|
-| DB 関数 | `billing_grant_manual_subscription(uuid, text, timestamptz)`・`billing_revoke_manual_subscription(uuid)`・`billing_expire_manual_subscriptions()`・`billing_manual_subscription_sync_after_end(uuid, text)` |
+| DB 関数 | `billing_grant_manual_subscription(uuid, text, timestamptz)`・`billing_revoke_manual_subscription(uuid)`・`billing_expire_manual_subscription_for_user(uuid)`・`billing_manual_subscription_sync_after_end(uuid, text)` |
+| DB プロシージャ | `billing_expire_manual_subscriptions()` (利用者ごとに COMMIT。`database.types.ts` には出ない。F26) |
 | pg_cron のジョブ | `expire-manual-plan-grants` (`11 15 * * *` UTC = 00:11 JST) |
 | DB の業務エラー | `BILL_PLAN_NOT_GRANTABLE`・`BILL_MANUAL_EXPIRES_AT_PAST`・`BILL_MANUAL_ROW_NOT_FOUND` (既存の名前を再利用: `BILL_UNKNOWN_USER`・`BILL_LIVE_ROW_CONFLICT`) |
 | 監査 action_type | `admin.billing.manual_grant`・`admin.billing.manual_revoke`・`system.billing.manual_grant_expired` |
 | API のエラーコード | `OP_PLAN_NOT_GRANTABLE` (422)・`OP_NO_MANUAL_SUBSCRIPTION` (409)。既存を再利用: `OP_SUBSCRIPTION_ALREADY_ACTIVE`・`OP_SELF_MODIFY`・`OP_INVALID_INPUT`・`OP_PERMISSION_DENIED`・`AUTH_UNAUTHENTICATED`・`NOT_FOUND`・`INTERNAL_ERROR`・`INVALID_CHARACTER` |
 | route | `GET` / `POST` / `DELETE /api/super-admin/users/{id}/manual-plan` |
 | TS モジュール | `src/lib/billing/{manual-grant,manual-grant-repository,manual-grant-service,manual-grant-client}.ts`・`src/components/admin/ManualPlanGrantSection.tsx` |
-| TS の export (`manual-grant.ts`) | `MANUAL_GRANT_REASON_MAX_LENGTH`・`PLAN_KEY_MAX_LENGTH`・`MANUAL_GRANT_HISTORY_LIMIT`・`GRANTABLE_PLAN_TYPES`・`GRANTABLE_PLAN_STATUSES`・`MANUAL_GRANT_EXPIRES_ON_MESSAGE`・`MANUAL_PLAN_API_BASE_PATH`・`MANUAL_PLAN_API_SUFFIX`・`manualPlanPath`・`MANUAL_GRANT_AUDIT_ACTIONS`・`ManualGrantAuditAction`・`MANUAL_GRANT_AUDIT_ACTION_VALUES`・`MANUAL_GRANT_AUDIT_SEVERITY`・`MANUAL_GRANT_AUDIT_TARGET_TYPE`・`MANUAL_GRANT_ERROR_HTTP_STATUS`・`ManualGrantErrorCode`・`MANUAL_GRANT_ERROR_MESSAGES`・`ManualGrantError`・`MANUAL_GRANT_RPC_TO_API_CODE`・`ManualGrantRpcCode`・`isManualGrantRpcCode`・`manualPlanGrantBodySchema`・`ManualPlanGrantBody`・`ManualPlanRevokeBodySchema`・`ManualPlanRevokeBody`・`GrantablePlanViewSchema`・`GrantablePlanView`・`ManualPlanCurrentViewSchema`・`ManualPlanCurrentView`・`ManualGrantHistoryEntrySchema`・`ManualGrantHistoryEntry`・`ManualGrantAuditDetailsSchema`・`ManualPlanViewSchema`・`ManualPlanView`・`ManualPlanGrantResultSchema`・`ManualPlanGrantResult`・`ManualPlanRevokeResultSchema`・`ManualPlanRevokeResult`・`ManualPlanViewResponseSchema`・`ManualPlanGrantResponseSchema`・`ManualPlanRevokeResponseSchema`・`isGrantablePlan`・`MANUAL_GRANT_CLIENT_MESSAGES`・`MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE`・`manualGrantErrorMessage` (数は §8.1 が正) |
+| TS の export (`manual-grant.ts`) | `MANUAL_GRANT_REASON_MAX_LENGTH`・`PLAN_KEY_MAX_LENGTH`・`MANUAL_GRANT_HISTORY_LIMIT`・`GRANTABLE_PLAN_TYPES`・`GRANTABLE_PLAN_STATUSES`・`MANUAL_GRANT_EXPIRES_ON_MESSAGE`・`MANUAL_PLAN_API_BASE_PATH`・`MANUAL_PLAN_API_SUFFIX`・`manualPlanPath`・`MANUAL_GRANT_AUDIT_ACTIONS`・`ManualGrantAuditAction`・`MANUAL_GRANT_AUDIT_ACTION_VALUES`・`MANUAL_GRANT_AUDIT_SEVERITY`・`MANUAL_GRANT_AUDIT_TARGET_TYPE`・`MANUAL_GRANT_ERROR_HTTP_STATUS`・`ManualGrantErrorCode`・`MANUAL_GRANT_ERROR_MESSAGES`・`ManualGrantError`・`MANUAL_GRANT_RPC_TO_API_CODE`・`ManualGrantRpcCode`・`isManualGrantRpcCode`・`manualPlanGrantBodySchema`・`ManualPlanGrantBody`・`ManualPlanRevokeBodySchema`・`ManualPlanRevokeBody`・`GrantablePlanViewSchema`・`GrantablePlanView`・`ManualPlanCurrentViewSchema`・`ManualPlanCurrentView`・`ManualGrantHistoryEntrySchema`・`ManualGrantHistoryEntry`・`ManualGrantAuditDetailsSchema`・`ManualPlanViewSchema`・`ManualPlanView`・`ManualPlanGrantResultSchema`・`ManualPlanGrantResult`・`ManualPlanRevokeResultSchema`・`ManualPlanRevokeResult`・`ManualPlanViewResponseSchema`・`ManualPlanGrantResponseSchema`・`ManualPlanRevokeResponseSchema`・`isGrantablePlan`・`MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`・`MANUAL_GRANT_CLIENT_MESSAGES`・`MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE`・`manualGrantErrorMessage` (数は §8.1 が正) |
 | TS の export (ほか) | `ManualGrantRpcError`・`ManualGrantRepository`・`createManualGrantRepository` (repository) / `ManualGrantDeps`・`expiresAtOf`・`getManualPlanView`・`GrantManualPlanInput`・`grantManualPlan`・`RevokeManualPlanInput`・`revokeManualPlan` (service) / `MANUAL_GRANT_CLIENT_NO_STATUS`・`MANUAL_GRANT_CLIENT_UNKNOWN_CODE`・`MANUAL_GRANT_JSON_HEADERS`・`ManualGrantClientSuccess`・`ManualGrantClientFailure`・`ManualGrantClientResult`・`requestManualPlanApi`・`fetchManualPlanView`・`grantManualPlanRequest`・`revokeManualPlanRequest` (client) / `GRANT_CONFIRM_MESSAGE`・`REVOKE_CONFIRM_MESSAGE`・`MANUAL_GRANT_HISTORY_LABELS`・`MANUAL_PLAN_SOURCE_LABELS`・`MANUAL_PLAN_DISPLAY_LOCALE`・`MANUAL_PLAN_DISPLAY_TIME_ZONE`・`ManualPlanGrantSection` (component) |
 | 画面 | `/admin/users/{id}` の節「手動のプラン付与」(`data-testid="manual-plan-grant"`) |
 | page の定数 | `canGrantManualPlan` (`src/app/admin/users/[id]/page.tsx`) |
@@ -2069,10 +2144,10 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 
 | 番兵 | 反応する理由 (grep の語) | 直し方 | 段 |
 |---|---|---|---|
-| `tests/database-types-migrations-contract.test.ts` | `billing_grant_manual_subscription`・`billing_revoke_manual_subscription`・`billing_expire_manual_subscriptions`・`billing_manual_subscription_sync_after_end` (`CREATE FUNCTION` の名前が両方の型ファイルに要る。F18) | 両方の `database.types.ts` を再生成する (冒頭の手順。270k / 256 で)。`EXCLUDED_FUNCTIONS` には足さない (4 本とも型に出る) | A |
+| `tests/database-types-migrations-contract.test.ts` | `billing_grant_manual_subscription`・`billing_revoke_manual_subscription`・`billing_expire_manual_subscription_for_user`・`billing_manual_subscription_sync_after_end` (`CREATE FUNCTION` の名前が両方の型ファイルに要る。F18) | 両方の `database.types.ts` を再生成する (冒頭の手順。270k / 256 で)。`EXCLUDED_FUNCTIONS` には足さない (4 本とも型に出る)。プロシージャ `billing_expire_manual_subscriptions` は、このテストが数えず (`CREATE PROCEDURE` は正規表現に当たらない)、型の生成も拾わない (`prokind = 'f'`。F26) ので、何も足さない | A |
 | `tests/log-cleanup-dau-snapshot-contract.test.ts` + `tests/helpers/migration-cron-jobs.ts` (全 migration の `cron.schedule` の名前を数え、`operator/08` §3.0 の「migration が pg_cron に登録しているジョブは N つ」と §3.1 の注記の「の N つ」と名前の一覧を突き合わせる。F17) | `cron.schedule('expire-manual-plan-grants', …)` (文字列の直書き。helper が解ける形) | `operator/08` §3.0 の本文の数を `11 つ` → `12 つ` にし、「残りの 9 つ」の一覧と §3.1 の注記の一覧の末尾に `` `expire-manual-plan-grants` `` を足し、§3.1 の注記の「の 11 つ」→「の 12 つ」。§3.0 の箇条書きに「そのほか」の行を 1 つ足す (§15.2 の文)。本冊の migration には `UPDATE` / `DELETE` の文を関数の外に書かない。同じテストの「課金系の定期処理に触れない」は `20261010150000` の本文だけを見るので本冊の migration には当たらない。**同じ PR でないと main が赤になる** (専権 PATCH を段 A の PR に同梱) | A |
 | `tests/migration-file-version-integrity.test.ts` | 新しい migration と rollback のファイル名・1 行目の見出し・本文の `supabase/rollbacks/<名前>` の参照 | 1 行目を `-- migration: <番号>_billing_manual_plan_grant.sql` / `-- rollback: <番号>_billing_manual_plan_grant.sql` にし、本文の「戻し方」の参照を同じ名前にする (§6.1) | A |
-| `tests/integration/security/anon-definer-execute.test.ts` (A1: 許可リストに無い SECURITY DEFINER 関数に anon の EXECUTE が無い) | 新しい SECURITY DEFINER 関数 4 本 | 変更なし (どれも `REVOKE ALL … FROM PUBLIC, anon, authenticated`) | — |
+| `tests/integration/security/anon-definer-execute.test.ts` (A1: 許可リストに無い SECURITY DEFINER 関数に anon の EXECUTE が無い) | 新しい SECURITY DEFINER 関数 4 本 | 変更なし (どれも `REVOKE ALL … FROM PUBLIC, anon, authenticated`。プロシージャは SECURITY INVOKER で、EXECUTE も `PUBLIC`・`anon`・`authenticated`・`service_role` から外す) | — |
 | `tests/integration-ci-coverage.test.ts` | 新しい結合テストのパス | `tests/integration/rls/`・`tests/integration/security/`・`tests/integration/operator/` に置く (ワークフローの指定に当たる) | A・B |
 | `tests/billing-migration-contract.test.ts` (`_billing_core.sql` で終わる migration だけを読む) | 本冊の migration は `_billing_manual_plan_grant.sql` | 変更なし (名前が違うので読まれない) | — |
 | `tests/admin-mutation-audit-coverage-1571.test.ts` (`src/app/api/super-admin` の変更系の handler は `EXPECTED` に載る・`recordAdminAudit` を `request` つきのリテラルで呼ぶ。F14) | 新しい route の `POST` / `DELETE` | `EXPECTED` に `'src/app/api/super-admin/users/[id]/manual-plan/route.ts DELETE': 'audited'` と `… POST': 'audited'` の 2 行 (キーの順はファイルの並びに合わせる)。route は §8.5 のとおり `recordAdminAudit({ …, request, … })` をリテラルで呼ぶ | B |
@@ -2080,7 +2155,7 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | `tests/operator-mfa-entry-points-scan.test.ts` (① `src/app/api/super-admin` の全 handler が `requireRole` を呼ぶ・② `assurance: 'session'` は自己サービスだけ。F13) | 新しい route の 3 handler | 変更なし (3 つとも `requireRole(['super_admin'])` を既定の assurance で呼ぶ。`MIN_ROUTES_CALLING_REQUIRE_ROLE` の番兵は増える側) | — |
 | `tests/role-check-source-scan.test.ts` (`roles` の手書きの判定・`isOrgAdmin` の直接呼び出しが無い) | `src/app/api` の新しい route | 変更なし (`actor.roles` を読まない。§8.5) | — |
 | `tests/api-raw-error-message-scan.test.ts` (応答の本文に `err.message` / `error.details` を入れない) | 新しい route の本文 | 変更なし (`ManualGrantError` も code から `MANUAL_GRANT_ERROR_MESSAGES` を引く。`internalError` で 500。`invalidInputResponse` は Zod の issues で (b) の 4xx の例外) | — |
-| `tests/lib-raw-error-message-scan.test.ts` (`src/lib` のヘルパーが結果に生のエラー文を入れない) | `src/lib/billing/manual-grant-*.ts` | 変更なし (結果に `.message` を入れない。失敗は例外か `code` だけの判別共用体。client の `message` は route が書いた固定の文で、DB の文ではない) | — |
+| `tests/lib-raw-error-message-scan.test.ts` (`src/lib` のヘルパーが、オブジェクトのプロパティの値に「エラーらしい名前の `.message` / `.details` / `.hint`」を入れない。文面が固定の文かどうかは見ない。F27) | `src/lib/billing/manual-grant-*.ts` | 変更なし (`ALLOWED` に足さない)。client は失敗の本文から `code` だけを読み (`failureCodeOf`。`src/lib/auth/mfa/client.ts:87-96` と同じ)、結果 `ManualGrantClientFailure` に `message` を持たない (テスト 58)。repository の `error.message` / `error.details` は `new ManualGrantRpcError(…)` の引数の中だけ (例外の中は数えない) | — |
 | `tests/supabase-service-role-client-scan.test.ts` (service_role の client は `getSupabaseAdmin` だけ) | `manual-grant-repository.ts` | 変更なし (`getSupabaseAdmin` だけ。`@supabase/supabase-js` を import しない) | — |
 | `tests/next15-async-request-api-scan.test.ts` (`createClient()`・`params` に `await`) | 新しい route | 変更なし (`await props.params`・`await createClient()`) | — |
 | `tests/schema-checked-supabase.test.ts` / `tests/schema-checked-db.test.ts` (`.from()` / `.rpc()` の名前が型にある) | `.rpc('billing_grant_manual_subscription')`・`.rpc('billing_revoke_manual_subscription')` | 型の再生成 (段 A) で緑。段 B は段 A のマージ後 | A → B |
@@ -2093,11 +2168,13 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | `tests/integration/security/billing-personal-subscriptions-rls.test.ts` (billing/01 §13 のテスト 67〜70・88) | RLS を変えない | 変更なし | — |
 | `tests/admin-audit-logs-insert-policy-migration-contract.test.ts`・`tests/integration/rls/admin-audit-logs-insert-policy.test.ts` (#1736: 本人の JWT は `system.*` を書けない) | `system.billing.manual_grant_expired` は SECURITY DEFINER の関数が書く・`admin.billing.*` は本人の JWT (super_admin は運営の 6 ロール) | 変更なし | — |
 | `tests/rate-limit-single-implementation.test.ts` | レート制限を付けない | 変更なし | — |
+| `tests/org-challenge-error-codes-doc-contract.test.ts` (#1747。`cross/04` §4.2 の「CHALLENGE 系」の節だけを見る) | 本冊は `cross/04` §4.2 の OP 系の表に足す (§15.2) | 変更なし (CHALLENGE 系の節に触れない) | — |
 | `tests/cron-secret-contract.test.ts` | Vercel Cron を足さない (pg_cron だけ) | 変更なし | — |
 | `tests/design-doc-removed-mobile-screens.test.ts` (#1659。`docs/design/` の `.md` が消したモバイルの画面を名指しする行は「削除」を書く) | 本冊は `docs/design/` に置かれて走査される | 変更なし (本冊は一覧の画面を名指ししない) | — |
 | `tests/jst-today-source-scan.test.ts` (規則 F・G: timestamptz の列を暦日以外で絞らない・`T23:59:59` を書かない) | `manual-grant-service.ts` の `expiresAtOf` | 変更なし (`jstDayRangeTimestamps` の戻り値だけを DB に渡す。`.gte` / `.lt` で列を絞る箇所は本冊に無い) | — |
 | `src/__tests__/app/transfer-accept-fake-client.ts` (`SCHEMA_COLUMNS`。`family_groups` の列) | `family_groups` の列を足さない | 変更なし | — |
 | `tests/mfa-pages-browser.test.tsx` (`OperatorMfaResetSection`) | page の差分は component を 1 つ足すだけ | 変更なし (このテストは component を直接描く。page は描かない) | — |
+| `tests/admin-user-login-history-page.test.tsx` (#1720 段 D。`/admin/users/[id]` の page を `renderToStaticMarkup` で描き、`requireRoleForPage` と `adminFetch` を mock する。super_admin の行もある) | page の差分 (§8.7。super_admin で対象が自分でないとき節を描く) | 変更なし (節は `useEffect` で読むので、サーバーで HTML にするときは fetch しない。断言はログイン履歴の節の `data-testid` と `adminFetch` のパスに絞られている。段 C の最初に全件で緑を確かめる) | — |
 | `tests/plan-subscribers.test.ts`・`tests/helpers/fake-plan-subscribers-db.ts`・`tests/plan-deprecate-subscribers-route.test.ts` | live 5 値で数える (M 行も) | 変更なし (S19) | — |
 | `src/__tests__/api/family/groups.test.ts` (`POST /api/family/groups` の単体。RPC は偽の結果) | 段 D で `p_plan_key` を渡さなくなる | `rpc` の引数の期待を `{ p_name }` に (テスト 38)。`plan_key` を送っても 400 にならないことを足す | D |
 | `src/__tests__/app/settings/membership-no-org-guidance.test.ts`・`tests/e2e/membership/05-family-create-and-invite.spec.ts`・`tests/integration/security/invite-accept-missing-profile.test.ts` (`/api/family/groups` を名指し) | 段 D | origin/main で `plan_key` を送らない形なら変更なし (送っていれば `plan_key` の行を消すだけ。応答の形は変えない)。段 D の最初に `git grep -n plan_key origin/main -- <3 本>` で確かめる | D |
@@ -2105,7 +2182,7 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 
 ### 15.2 他の文書への追随 (専権 PATCH。本冊の設計ゲート PASS 後、実装のマージと同じ PR か直後)
 
-**母集合の作り方** (下の表と「変更なし」の表は、次の 3 つの問い合わせに出た文書を 1 本ずつ見て作った。2026-10-17 の origin/main `88b803f5` の結果。実装の各段の最初に同じ問い合わせを流し直し、どちらの表にも無い文書が出たら報告する。他の文書は専権 PATCH なので、レーンは直さない):
+**母集合の作り方** (下の表と「変更なし」の表は、次の 3 つの問い合わせに出た文書を 1 本ずつ見て作った。2026-10-17 の origin/main `88b803f5` の結果。`d2aac552` で流し直しても同じ文書が出た。実装の各段の最初に同じ問い合わせを流し直し、どちらの表にも無い文書が出たら報告する。他の文書は専権 PATCH なので、レーンは直さない):
 
 1. 本冊の主題の語: `git grep -l -i -E "手動付与|manual.?grant|personal_subscriptions_insert_admin|02-billing-wiring" origin/main -- docs '*.md' ':!docs/design/billing/02-manual-plan-grant.md'` → `docs/design/CLAUDE.md`・`billing/01`・`cross/12`・`operator/01` の 4 本。
 2. billing/01 §16.2 で期日が「配線の冊と同時」「family の冊」「family / org の冊」の行 (F23 の 10 行) の先: 本冊で直すもの = `operator/08` §3.1・§3.2・§5.7、`family/` の `POST /api/family/groups` の入力 (`family/02` §4.1)・作成の画面 (`family/03` §4.2 FAM-002)・人数の上限 (`family/02` §5.2 の「メンバー数 < `member_limit`」)。期日を付け替える・変えないもの = `operator/02` §22・`operator/09` §4・`requirements/03` §15.1 (reconcile)・`org/04` :517・`requirements/02` :763-764 (組織ライセンスの一時停止)・`family/02` §4.7・`family/07`・`org/05`・`org/04` :293 (`migrate-to-personal`)。どれも下の 2 つの表のどちらかに行がある。
@@ -2120,17 +2197,17 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 
 | 文書 | 箇所 | 直し方 | 期日 |
 |---|---|---|---|
-| `docs/design/operator/08-cron-batches.md` | §3.0 の本文 (「いま、このリポジトリの migration が pg_cron に登録しているジョブは 11 つある」「残りの 9 つ `…`」) と §3.0 の箇条書き・§3.1 の注記の最終行 | 「11 つ」→「12 つ」(§3.0 と §3.1 の注記の両方)、「残りの 9 つ」→「残りの 10 つ」で一覧の末尾に `` `expire-manual-plan-grants` `` を足す。§3.0 の箇条書きの末尾 (「過去の migration で登録されたジョブ」の前) に「そのほか、migration `<番号>_billing_manual_plan_grant.sql` (#1797) が、ジョブ `expire-manual-plan-grants` を毎日 00:11 JST (`11 15 * * *` UTC) に登録している。`SELECT public.billing_expire_manual_subscriptions();` を呼び、運営者が手動で付与した個人の契約 (`personal_subscriptions` の `stripe_subscription_id IS NULL` の行) のうち有効期限 (`current_period_end`) を過ぎた行を `expired` にし、家族グループのプランと `plan_key_cached` を合わせ、監査 `system.billing.manual_grant_expired` を書く。関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/<番号>_billing_manual_plan_grant.down.sql`。詳しくは `billing/02-manual-plan-grant.md` §6.4」を足す。§3.1 の注記の一覧 (`` `cleanup-old-app-logs`・… ``) の末尾に `` `expire-manual-plan-grants` `` を足す。「Stripe Webhook・収益スナップショット・ライセンス系のバッチは…この段では足さない」の文は変えない (同じ番兵が言い回しを見る) | 段 A と同じ PR (番兵) |
+| `docs/design/operator/08-cron-batches.md` | §3.0 の本文 (「いま、このリポジトリの migration が pg_cron に登録しているジョブは 11 つある」「残りの 9 つ `…`」) と §3.0 の箇条書き・§3.1 の注記の最終行 | 「11 つ」→「12 つ」(§3.0 と §3.1 の注記の両方)、「残りの 9 つ」→「残りの 10 つ」で一覧の末尾に `` `expire-manual-plan-grants` `` を足す。§3.0 の箇条書きの末尾 (「過去の migration で登録されたジョブ」の前) に「そのほか、migration `<番号>_billing_manual_plan_grant.sql` (#1797) が、ジョブ `expire-manual-plan-grants` を毎日 00:11 JST (`11 15 * * *` UTC) に登録している。`CALL public.billing_expire_manual_subscriptions();` を呼び (プロシージャ。期限を過ぎた利用者ごとに 1 人分の関数 `billing_expire_manual_subscription_for_user` を呼んで COMMIT する。1 トランザクションで扱う利用者は 1 人だけ)、運営者が手動で付与した個人の契約 (`personal_subscriptions` の `stripe_subscription_id IS NULL` の行) のうち有効期限 (`current_period_end`) を過ぎた行を `expired` にし、家族グループのプランと `plan_key_cached` を合わせ、監査 `system.billing.manual_grant_expired` を書く。1 人分の関数の `EXECUTE` は `service_role` だけ、プロシージャの `EXECUTE` は誰にも付けない (所有者 `postgres` = pg_cron だけ)。ロールバックは `supabase/rollbacks/<番号>_billing_manual_plan_grant.down.sql`。詳しくは `billing/02-manual-plan-grant.md` §6.4」を足す。§3.1 の注記の一覧 (`` `cleanup-old-app-logs`・… ``) の末尾に `` `expire-manual-plan-grants` `` を足す。「Stripe Webhook・収益スナップショット・ライセンス系のバッチは…この段では足さない」の文は変えない (同じ番兵が言い回しを見る) | 段 A と同じ PR (番兵) |
 | 同 (`operator/08`) | §3.1 の表の `stripe_event_stuck_check` の行と、§5.7 `grace_period_check`・§3.2 の課金系の行 (billing/01 §16.2 の「配線の冊と同時」の行) | `stripe_event_stuck_check` の行の概要に「再処理のためには不要 (処理済みでないイベントに 2xx を返さず Stripe の再送で取り直す。billing/01 §9.6)。残るのは 3 日の再送が尽きたイベントの整合 (reconcile) と一覧だけ」、§5.7 と `stripe_integrity_check` の行に「billing/01 §12 の契約 (1 文の直接 UPDATE / 写像を呼ぶ) で作る。課金の配線の残りの冊 (運用バッチ。未作成) の対象」と注記する。本冊はジョブそのものは作らない | 段 A と同じ PR |
-| `docs/design/billing/01-billing-core.md` | 表紙の Issue の行 (「配線の冊は `02-billing-wiring.md` (未作成)」)・§0.2 右列の「運営者による手動のプラン付与 … の画面と API」・§7.3 の冒頭「手動付与 (M) の行は配線の冊」・§12 の「手動付与」の行・§16.2 の期日 (F23 の 10 行) | 表紙: 「配線の冊は `02-manual-plan-grant.md` (手動付与。設計済み) と、配線の残りの冊 (§0.2 右列のうち手動付与以外: 運用バッチ・Finance 画面ほか。未作成) に分かれる。本文の『配線の冊』は、手動付与については 02、それ以外は配線の残りの冊を指す」。§0.2: 右列の手動付与の行に「→ `02-manual-plan-grant.md`」。§7.3: 「M 行の遷移は `02-manual-plan-grant.md` §7.3」。§12 の手動付与の行: 「配線の画面が admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`) で書く」を「`02-manual-plan-grant.md` の DB 関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions` (service_role だけ) で書く (admin の JWT の直接の INSERT では `plan_key_cached` と `family_groups` を同期できない: 特権列ガード)。写像は触らない。`get_effective_plan` は区別しない」に。§12 の家族の行の「既存のグループへの反映は配線の手動付与の画面が行う」を「付与・取り消し・期限切れの関数が写像と同じ式で反映する (02 §6)」に。§16.2 の期日 (行は origin/main の行番号。中身の列は変えない): ① `operator/08` の行 (:3948) を「02 (手動付与) の段 A と同じ PR (#1797)」に。② 「family の冊」の 3 行のうち、入力と選択欄の行 (:3953) と `family/03` の行 (:3982) を「02 の段 D と同じ PR」に、`member_limit` の行 (:3954) を「02 §16 の 6 で『外さない』に確定。`family/02` §5.2 の注記は 02 の段 D と同じ PR」に。③ reconcile の 3 行 (`operator/02` §22 :3959・`operator/09` §4 :3964・`requirements/03` §15.1 :3978) を「配線の残りの冊 (`stripe_integrity_check` を作るとき) と同時」に。④ 組織ライセンスの一時停止の 2 行 (`org/04` :517 の行 :3971・`requirements/02` :763-764 の行 :3973) を「配線の残りの冊 (組織ライセンス受領による一時停止を作るとき) と同時」に。⑤ `migrate-to-personal` の行 (:3981。期日「family / org の冊」) は変えない。①〜④ のあと、§16.2 に期日「配線の冊と同時」の行は残らない | 段 A と同じ PR |
+| `docs/design/billing/01-billing-core.md` | 表紙の Issue の行 (「配線の冊は `02-billing-wiring.md` (未作成)」)・§0.2 右列の「運営者による手動のプラン付与 … の画面と API」・§7.3 の冒頭「手動付与 (M) の行は配線の冊」・§12 の「手動付与」の行・§16.2 の期日 (F23 の 10 行) | 表紙: 「配線の冊は `02-manual-plan-grant.md` (手動付与。設計済み) と、配線の残りの冊 (§0.2 右列のうち手動付与以外: 運用バッチ・Finance 画面ほか。未作成) に分かれる。本文の『配線の冊』は、手動付与については 02、それ以外は配線の残りの冊を指す」。§0.2: 右列の手動付与の行に「→ `02-manual-plan-grant.md`」。§7.3: 「M 行の遷移は `02-manual-plan-grant.md` §7.3」。§12 の手動付与の行: 「配線の画面が admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`) で書く」を「`02-manual-plan-grant.md` の DB 関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscription_for_user` (service_role だけ。期限切れは日次のプロシージャ `billing_expire_manual_subscriptions` が利用者ごとに呼ぶ) で書く (admin の JWT の直接の INSERT では `plan_key_cached` と `family_groups` を同期できない: 特権列ガード)。写像は触らない。`get_effective_plan` は区別しない」に。§12 の家族の行の「既存のグループへの反映は配線の手動付与の画面が行う」を「付与・取り消し・期限切れの関数が写像と同じ式で反映する (02 §6)」に。§16.2 の期日 (行は origin/main の行番号。中身の列は変えない): ① `operator/08` の行 (:3948) を「02 (手動付与) の段 A と同じ PR (#1797)」に。② 「family の冊」の 3 行のうち、入力と選択欄の行 (:3953) と `family/03` の行 (:3982) を「02 の段 D と同じ PR」に、`member_limit` の行 (:3954) を「02 §16 の 6 で『外さない』に確定。`family/02` §5.2 の注記は 02 の段 D と同じ PR」に。③ reconcile の 3 行 (`operator/02` §22 :3959・`operator/09` §4 :3964・`requirements/03` §15.1 :3978) を「配線の残りの冊 (`stripe_integrity_check` を作るとき) と同時」に。④ 組織ライセンスの一時停止の 2 行 (`org/04` :517 の行 :3971・`requirements/02` :763-764 の行 :3973) を「配線の残りの冊 (組織ライセンス受領による一時停止を作るとき) と同時」に。⑤ `migrate-to-personal` の行 (:3981。期日「family / org の冊」) は変えない。①〜④ のあと、§16.2 に期日「配線の冊と同時」の行は残らない | 段 A と同じ PR |
 | `docs/design/CLAUDE.md` | ドメイン構成の表の `billing/` の行 (「配線 (… `02-billing-wiring.md` は未作成)」) | 「配線: `02-manual-plan-grant.md` (運営者の手動のプラン付与) と、配線の残りの冊 (運用バッチ・運営の Finance 画面ほか。未作成)」に。Issue に `#1797` を足す | 段 A と同じ PR |
 | `docs/design/cross/04-api-conventions.md` | §4.2 OP 系の表 | `OP_PLAN_NOT_GRANTABLE` (422。手動付与できないプラン。`POST /api/super-admin/users/{id}/manual-plan`)・`OP_NO_MANUAL_SUBSCRIPTION` (409。取り消す手動付与の行が無い。`DELETE …/manual-plan`)・`OP_SELF_MODIFY` (403。自分自身を対象にできない運営の操作。`POST /api/super-admin/admins/{id}/mfa/reset` と `…/manual-plan`。既存の実コードが先に使っている) の 3 行を足す | 段 B と同じ PR |
-| `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの表 | `billing-user:{uuid}` の行に「手動付与の関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions` (billing/02 §6。写像・トリガーと直列)」を足す | 段 A と同じ PR |
-| `CLAUDE.md` (リポジトリの根) | 「家族 (family_*) を変える関数のロック順 (DB)」 | 家族の行を書く関数の一覧に、手動付与の関数 3 本 (`billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions`。家族の同期は `family_groups` の行 → `user_profiles` の行の順。billing/02 §6) を足す。回帰テストにテスト 41・47 を足す | 段 A と同じ PR |
+| `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの表 | `billing-user:{uuid}` の行に「手動付与の関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscription_for_user` (billing/02 §6。写像・トリガーと直列。どれも 1 トランザクションで 1 人分の鍵だけを取る。期限切れの日次のプロシージャ `billing_expire_manual_subscriptions` は利用者ごとに COMMIT する)」を足す | 段 A と同じ PR |
+| `CLAUDE.md` (リポジトリの根) | 「家族 (family_*) を変える関数のロック順 (DB)」 | 「課金の側で家族の行を書くもの」の一覧に、手動付与の関数 3 本 (`billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscription_for_user`。家族の同期は `family_groups` の行 → `user_profiles` の行の順。1 トランザクションで扱う利用者は 1 人だけで、期限切れの日次のプロシージャ `billing_expire_manual_subscriptions` は利用者ごとに COMMIT する (全員を 1 トランザクションにすると、前の利用者の `user_profiles` の行を持ったまま次の利用者の `family_groups` の行を待ち、逆向きになる)。billing/02 §6) を足す。回帰テストに `tests/integration/rls/billing-manual-grant-rpc.test.ts` のテスト 41・47・57 (期限切れのジョブと家族の操作・代表者の交代が同時に走っても 40P01 にならない) を足す | 段 A と同じ PR |
 | `docs/design/operator/01-data-model.md` | §3.7 `personal_subscriptions` の DDL の注記 (`stripe_synced_at` の行「手動付与の行は NULL」) | 列の注記に「手動付与の行 (`stripe_subscription_id IS NULL`) は `billing/02` の DB 関数だけが書く。`current_period_end` が有効期限 (NULL = 期限なし)」を足す | 段 A と同じ PR |
 | `docs/design/operator/04-plan-management.md` | §5.1 状態遷移図の下 | 「運営者の手動付与の行 (`stripe_subscription_id IS NULL`) の遷移 (`active` → `cancelled` (取り消し) / `expired` (期限)) は `billing/02` §7.3」の注記を足す | 段 A と同じ PR |
 | `docs/design/operator/02-api-spec.md` | §4 ユーザー管理 (super_admin の節)・§23 エラーコード一覧 | §4 に `GET` / `POST` / `DELETE /api/super-admin/users/{id}/manual-plan` の 3 本 (§9 の I/O・権限 super_admin・監査) を足す。§23 に `OP_PLAN_NOT_GRANTABLE` (422。手動付与できないプラン)・`OP_NO_MANUAL_SUBSCRIPTION` (409。取り消す手動付与の行が無い) の 2 行を足す (`OP_SELF_MODIFY` が §23 に無ければ同じく 1 行) | 段 B と同じ PR |
-| `docs/design/operator/07-audit-monitoring.md` | §4.2 super_admin 系・§4.5 システム自動操作 | §4.2 に `admin.billing.manual_grant` (POST …/manual-plan。details: subscription_id / plan_key / expires_at / reason。warn)・`admin.billing.manual_revoke` (DELETE …/manual-plan。details: subscription_id / plan_key / reason。warn) の 2 行、§4.5 に `system.billing.manual_grant_expired` (DB 関数 `billing_expire_manual_subscriptions`。info。target は利用者) の 1 行を足す。§4.7 の「9 つ」はそのまま (核の一覧は変えない) | 段 B と同じ PR (§4.5 の行は段 A と同じ PR) |
+| `docs/design/operator/07-audit-monitoring.md` | §4.2 super_admin 系・§4.5 システム自動操作 | §4.2 に `admin.billing.manual_grant` (POST …/manual-plan。details: subscription_id / plan_key / expires_at / reason。warn)・`admin.billing.manual_revoke` (DELETE …/manual-plan。details: subscription_id / plan_key / reason。warn) の 2 行、§4.5 に `system.billing.manual_grant_expired` (DB 関数 `billing_expire_manual_subscription_for_user`。日次のプロシージャ `billing_expire_manual_subscriptions` が利用者ごとに呼ぶ。info。target は利用者) の 1 行を足す。§4.7 の「9 つ」はそのまま (核の一覧は変えない) | 段 B と同じ PR (§4.5 の行は段 A と同じ PR) |
 | `docs/design/operator/03-ui-spec.md` | §6 `/admin/users/{id}` (「二段階認証を解除」の節の後) | 「**手動のプラン付与** (`src/components/admin/ManualPlanGrantSection.tsx`。billing/02 §10): 出す条件 = 実行者が super_admin で対象が自分でない。契約なし → プラン・有効期限 (任意)・理由 → 確認ダイアログ → `POST /api/super-admin/users/{id}/manual-plan`。手動付与の契約あり → 理由 → 確認 → `DELETE`。Stripe の契約あり → 案内だけ。履歴 (付与 / 取り消し / 期限切れ) を直近 10 件」を足す | 段 C と同じ PR |
 | `docs/design/family/02-api-spec.md` | §4.1 `POST /api/family/groups` (リクエストの例の `"plan_key": "free"`・バリデーションの `plan_key` の行・「**プラン**:」の段落)・§5.2 `POST /api/family/members` の前提「メンバー数 < `member_limit`」の行 | §4.1: リクエストの例とバリデーションから `plan_key` を外し、「**プラン**:」の段落を「グループのプランは代表者の契約から決まり、作成時には選べない (入力に `plan_key` があっても読まない)。`plan_key` / `member_limit` は `family_groups` のトリガー `family_groups_billing_plan_follow_representative` が代表者の live な家族プランの契約に合わせる (契約が無ければ `free`。手動付与の契約も同じ。billing/02 §6)」に。§5.2: 「`member_limit` が下がって (家族プランの契約の終了・取り消し・期限切れ・代表者の交代) すでに上限を超えたグループでは、既存のメンバーを外さない。新しい招待の作成・承諾・子供の追加だけが止まる (billing/01 §18 の 15・billing/02 §16 の 6)」を足す。§13.1 の見本のテスト (`plan_key` を送る例) は変えない (送っても無害) | 段 D と同じ PR |
 | `docs/design/family/03-ui-spec.md` | §4.2 FAM-002 グループ作成の画面の「プラン選択」と「Stripe Checkout で支払い手続きへ」 | プランの選択と支払いのボタンを外し、「家族プランは代表者が `/pricing` から買う (運営者の手動付与もある)。グループのプランは代表者の契約に合わせて決まる (billing/01 §6.4 (10)・S20)」と書く (billing/01 §16.2 の family/03 の行と同じ文。段 D の画面の選択欄の削除と同時) | 段 D と同じ PR |
@@ -2174,13 +2251,14 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | 2 | `personal_subscriptions` の admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`。F2) を残すか。本冊の経路は関数だけで、このポリシーは使わない。残すと admin の JWT から PostgREST で `plan_key_cached` と同期しない行を作れる (F3) | 残す (本冊は「追加だけ」。ポリシーの削除は含めない)。消すなら別の migration (`DROP POLICY` 2 本と `.down.sql`) で、`tests/integration/security/billing-personal-subscriptions-rls.test.ts` の billing/01 §13 のテスト 68 (`it('admin can still INSERT/UPDATE; anon has no INSERT/UPDATE/DELETE privilege')`) と billing/01 §6.2 の文の追随が要る。推奨は消す側 |
 | 3 | 利用者向け `/account/billing` の M 行の表示。いまは「次回更新日: <current_period_end>」(F9・`src/app/(main)/account/billing/page.tsx:259`)。期限つきの M 行では「有効期限」が正しい見出し | 本冊の段では変えない (核の画面)。変えるなら `source === 'manual'` のとき見出しを「有効期限」に (段 C の後の小さな PR) |
 | 4 | 期限を過ぎてからジョブ (00:11 JST) までの最長 11 分、権利が残る (`get_effective_plan` は `current_period_end` を見ない。R5 で `get_effective_plan` は変えない) | 許容する (有料の権利が数分長く残るだけ)。ゼロにするなら `get_effective_plan` に `stripe_subscription_id IS NULL AND current_period_end <= now()` を除く条件を足す改定 (billing/01 R5 の例外) が要る |
-| 5 | 期限切れのジョブは全行を 1 トランザクションで処理する。1 行の失敗で全部戻る | 許容する (翌日の実行でやり直す。失敗は `cron.job_run_details`)。件数が増えたら行ごとのトランザクション (Vercel Cron か pg_cron の分割) にする |
+| 5 | 期限切れのジョブの途中で 1 人分の処理が例外になったとき (デッドロックは §6.4 で起きない形にした。残るのは想定外の DB の失敗) | 利用者ごとに COMMIT するので、それまでの利用者の期限切れは残り、例外の利用者とその後の利用者は翌日の実行で処理する (その間、権利が最長 24 時間残る)。失敗は `cron.job_run_details` に残る。例外を握りつぶして次の利用者に進む形 (`EXCEPTION` の節) は採らない (失敗がジョブの記録に残らなくなる。PL/pgSQL では `EXCEPTION` の節の中で `COMMIT` もできない) |
 | 6 | 家族の `member_limit` が下がったとき (`family_pro` 8 の付与の取り消し・期限切れで 4 に) に、すでに上限を超えているメンバーの扱い (billing/01 §18 の 15。billing/01 §16.2 の「family の冊」の行) | **外さない**で確定 (billing/01 と同じ。新しい招待の作成・承諾・子供の追加だけが既存の `MEMBER_LIMIT_EXCEEDED` で止まる。画面は `6/4 人` のように出る)。外す・通知するなら family の案件 |
 | 7 | 運営の画面の E2E (`tests/e2e/operator/02-super-admin-flow.spec.ts`) に手動付与の導線を足すか | 足さない (単体 35〜37 と結合 49 で足りる)。足すなら AAL2 のセッションの道具 (cross/12 §22) を使う |
 | 8 | 付与と同時にプランを替える (取り消し + 付与を 1 操作で) | 作らない (運営が取り消してから付与する。監査は 2 行)。要るなら関数 `billing_replace_manual_subscription` を足す |
 | 9 | M 行が live の間に Stripe 側で契約が作られたとき (S9) の運営への通知。いまは `admin_audit_logs` の `system.stripe.event_failed` だけ | 配線の残りの冊の Finance 画面で `failed` イベントを一覧にする (billing/01 §18 の 10 と同じ) |
 | 10 | 本冊の migration の番号と、`operator/08` の注記の数 (11 → 12) は、同時に走る pg_cron の案件があれば両方ずれる | マージ直前に数え直す (§15.3) |
 | 11 | billing/01 §16.2 で期日が「配線の冊と同時」だった 6 行のうち、本冊が直さない 5 行 (reconcile の 3 行・組織ライセンスの一時停止の 2 行。F23) の期日 | 「配線の残りの冊 (`stripe_integrity_check` を作るとき / 組織ライセンス受領による一時停止を作るとき) と同時」に付け替える (§15.2 の billing/01 の行の ③④)。その冊の設計は、この 5 行の直し方を自分の追随表にそのまま引き継ぐ。本冊で直さない理由: どれも手動付与と関係が無く、直し方の中身 (reconcile の時刻・認証、一時停止をどの status から行うか) がその冊の決めることだから |
+| 12 | 期限切れのプロシージャ `billing_expire_manual_subscriptions` は `COMMIT` のため `SET search_path` を付けられない (F26)。本体の名前はすべて `public.` で修飾し、権限の要る処理は `SET search_path = ''` の 1 人分の関数に置いた。Supabase の advisor (`function_search_path_mutable`) がプロシージャも数えるかは本冊で確かめていない | 数えても WARN で、テストは止まらない。段 A の適用のあと advisor に出たら、理由 (COMMIT のため) をこの行に書き足して受け入れる |
 
 ---
 
@@ -2192,3 +2270,4 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | v1.1 | 2026-10-17 | 網羅性 (周 1) を反映: S9・S10・S16・S17・S18・S19 を直接見るテスト 50〜55 と §13.4 のシナリオとテストの対応を足す・S17 の監査の行の事実 (`target_id` に外部キーは無い) を直す・§15.2 の母集合を 3 つの問い合わせと結果に書き直し、`family/*` を `family/02`・`family/03` の行に、出たが変えない文書を「変更なし」の表に・`operator/02` §23 のエラーコードの行を足す・§14.2 の docs を閉じた一覧に・§15.1 と §16 の 2 のテスト番号を billing/01 §13 の番号と明記・§8.8 に命名の約束 |
 | v1.2 | 2026-10-17 | 設計ゲート R1 の修正: ① billing/01 §16.2 の追随の行を 10 行に数え直し (F23。「配線の冊と同時」6 行・「family の冊」3 行・「family / org の冊」1 行)、行ごとの行き先 (本冊で直す 4 行・配線の残りの冊へ期日を付け替える 5 行・変えない 1 行) を R14・§0.2・§15.2 の billing/01 の行・「変更なし」の表・§16 の 11 に書いた。手動付与以外の配線を「配線の残りの冊」と呼び、呼び名をそろえた ② `Cache-Control: no-store` は route が組み立てる応答 (200 と `errorJson`) だけに付けると決め (共通のヘルパーの応答はそのまま返す。NULL 文字の 2 行は番兵が逐語を求める)、§9 の冒頭・§8.5 の注記・テスト 23 を合わせた ③ 付与できるプランを `status='public'` だけにした (`private` の `family_addon` はアドオンで billing/01 §1 が対象外)。DB 関数の 2.・`GRANTABLE_PLAN_STATUSES`・S11・F11・§7.3・§12.2・テスト 2 / 31 / 40 / 49 を合わせた |
 | v1.3 | 2026-10-17 | 網羅性 (周 2) を反映: §7.3 に、live な行が無い利用者 (行なし / S `incomplete` / `cancelled` / `expired`) の取り消し (409 `OP_NO_MANUAL_SUBSCRIPTION`)・核の新規購入・核の解約の予約 / 取り消し (409 `BILL_NO_LIVE_SUBSCRIPTION`) の行、M `cancelled` / `expired` の核の解約の予約 / 取り消しの行、S `incomplete` の写像の行 (M なし / M `active` の 2 行) を足した (§7.1 の全パターンと 1 対 1)。§7.1 の消費経路に `admin/finance/invoices/[id]` (M 行は一致しない) を足し、`plan_key_cached` の読み手を 1 行の総称から具体の 7 行 (`feature-flags.ts`・`api/feature-flags`・`flag-active-users.ts`・`ai-chat-flag.ts`・`admin/users` の一覧・`admin/users/[id]`・本人の書き出し) に分けた。どれも本冊で変えない |
+| v1.4 | 2026-10-17 | 設計ゲート R2 の修正: ① 期限切れの日次の処理を、利用者ごとに COMMIT するプロシージャ `billing_expire_manual_subscriptions` と、1 人分の関数 `billing_expire_manual_subscription_for_user` に分けた (旧: 関数 `billing_expire_manual_subscriptions()` が全員を 1 トランザクションで処理し、前の利用者の `user_profiles` の行・advisory を持ったまま次の利用者の `family_groups` の行を待つので、強制解散・脱退・メンバーの削除・代表者の交代とデッドロックした)。§4.1 の原理 2 に「1 トランザクション 1 人」を書き、§6.4 にデッドロックの 2 つの形の表と PostgreSQL の決まり (プロシージャの COMMIT は SECURITY INVOKER・SET 句なし・最上位の CALL) を書き、ジョブの command を `CALL` に、§6.6・§7.2・§7.3・§11・§14.3・§15.1・§15.2 (operator/08・billing/01・cross/02・根の CLAUDE.md・operator/07)・§16 の 5 を合わせ、§16 の 12 を足した。テスト 26・29・30・32・43・45・48・54 を直し、56 (プロシージャの文面) と 57 (家族の操作・代表者の交代と同時に走っても 40P01 にならない) を足した。本番の pg_cron の設定 (F26) を読んだ ② 画面の通信の facade `manual-grant-client.ts` が失敗の本文の `error.message` を結果に入れていて、`tests/lib-raw-error-message-scan.test.ts` を赤にする形だった (F27)。失敗の本文から `code` だけを読む形 (`src/lib/auth/mfa/client.ts` と同じ) にし、`ManualGrantClientFailure` から `message` を外し、画面は `manualGrantErrorMessage(code)` だけを出す (`OP_INVALID_INPUT` は画面用の文 `MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE`)。§9.2・§10・§15.1 の行・テスト 7・36 を直し、58 (client) を足した ③ origin/main `d2aac552` と突き合わせ: `/admin/users/[id]` の page にログイン履歴の節が入った (F19 の行番号・§15.1 に `tests/admin-user-login-history-page.test.tsx` の行)。`cross/04` §4.2 の CHALLENGE 系の番兵 (§15.1 の行) |
