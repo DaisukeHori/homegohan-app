@@ -36,6 +36,7 @@ import {
   resolveLoginFailureResetMinutes,
   type LoginFailureRpcClient,
 } from '@/lib/auth/login-failures';
+import { recordWebLoginContextFromRequest } from '@/lib/auth/sessions/web-login-context';
 import { CAPTCHA_FAILED_MESSAGE } from '@/lib/auth/turnstile';
 import {
   TURNSTILE_TOKEN_MAX_LENGTH,
@@ -194,11 +195,13 @@ export async function POST(request: NextRequest) {
         failureStore,
         resetAfterMinutes: loginFailureResetMinutes(),
         signIn: async ({ email: signInEmail, password, captchaToken }) => {
-          const { error } = await supabase.auth.signInWithPassword({
+          const { data, error } = await supabase.auth.signInWithPassword({
             email: signInEmail,
             password,
             ...(captchaToken ? { options: { captchaToken } } : {}),
           });
+          // cross/16 §13.5: トリガーが作ったログインの記録に、利用者の IP・UA・国を書く (失敗してもログインは成功のまま)
+          if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session);
           return { error: error ? { code: error.code, status: error.status, message: error.message } : null };
         },
         verifyCaptcha: (token) => verifyTurnstileToken(token, clientIp),
