@@ -13,7 +13,7 @@ import type { User } from '@supabase/supabase-js';
 import type { ZodError } from 'zod';
 import { internalError } from '@/lib/api/errors';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
-import { requireUser } from '@/lib/auth/helpers';
+import { requireUserAllowingMissingProfile } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { dsrIdSchema } from '@/lib/data-subject-requests/core';
 import type { DsrContext, DsrServiceResult } from '@/lib/data-subject-requests/service';
@@ -75,12 +75,16 @@ export function dsrRequesterInternalError(
 export type DsrRequesterAuthResult = { ok: true; user: User } | { ok: false; response: NextResponse };
 
 /**
- * requireUser() で本人を確かめる。AuthError → 401 AUTH_UNAUTHENTICATED、ForbiddenError (凍結) → 403 AUTH_ACCOUNT_FROZEN、
- * それ以外の例外 → 500 (internalError)。どれも表に触れない
+ * requireUserAllowingMissingProfile() で本人を確かめる。AuthError (未ログイン) → 401 AUTH_UNAUTHENTICATED、
+ * ForbiddenError (凍結) → 403 AUTH_ACCOUNT_FROZEN、それ以外の例外 (user_profiles の読み取りの失敗 UserProfileReadError を含む)
+ * → 500 (internalError)。どれも表に触れない。
+ * user_profiles の行が無い利用者 (新規登録の直後。行は同意・初期設定・招待の承諾で作られる) は通す (#1751):
+ * 請求は規約への同意も初期設定の完了も条件にできない本人の権利で、同意の画面の案内から来るのは多くがこの人たち。
+ * requireUser は行が無いと 401 にするので使わない。凍結は行の frozen_at なので、行が無ければ凍結は無い
  */
 export async function authenticateDsrRequester(routeName: string): Promise<DsrRequesterAuthResult> {
   try {
-    const user = await requireUser();
+    const user = await requireUserAllowingMissingProfile();
     return { ok: true, user };
   } catch (err) {
     if (err instanceof AuthError) return { ok: false, response: requesterJson({ ...DSR_UNAUTHENTICATED_BODY }, 401) };

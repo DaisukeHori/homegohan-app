@@ -18,7 +18,13 @@
  */
 import { hasAcceptedCurrentLegalDocuments, type AcceptedLegalVersions } from '@homegohan/shared';
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect';
-import { LEGAL_CONSENT_PATH, isAuthFlowPath, isLegalConsentPath, isPolicyPath } from './onboarding-routing';
+import {
+  LEGAL_CONSENT_PATH,
+  isAuthFlowPath,
+  isDataSubjectRequestsPath,
+  isLegalConsentPath,
+  isPolicyPath,
+} from './onboarding-routing';
 
 /**
  * 同意画面のパス。定義は onboarding-routing.ts にある: 初期設定の差し戻しからも、この画面を除外するため
@@ -71,9 +77,12 @@ function matchesPrefix(pathname: string, prefix: string): boolean {
 }
 
 /**
- * ゲートの対象外にする、画面のパスの先頭 (このほかに、/terms・/privacy と /auth/* と同意画面 /legal-consent は
- * onboarding-routing の isPolicyPath / isAuthFlowPath / isLegalConsentPath で対象外にする。
+ * ゲートの対象外にする、画面のパスの先頭 (このほかに、/terms・/privacy と /auth/* と同意画面 /legal-consent と
+ * 本人の権利の請求の画面 /settings/data-requests (本人確認のメールのリンクの着地 /settings/data-requests/verify を含む。#1751) は
+ * onboarding-routing の isPolicyPath / isAuthFlowPath / isLegalConsentPath / isDataSubjectRequestsPath で対象外にする。
  * 初期設定の差し戻しの除外と 1 か所の定義に揃えるため)。
+ * 請求の画面は、規約への同意を条件にできない本人の権利なので、未同意でも開ける (呼ぶ API /api/account/data-requests も、
+ * API の同意ゲートの許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS にある)。設定画面 (/settings) そのものは対象のまま。
  */
 const EXEMPT_PREFIXES = [
   // 特定商取引法に基づく表記。同意の根拠になる文面 (/terms・/privacy) と同じく、読めないと困る公開の文面
@@ -99,7 +108,14 @@ const STATIC_FILE_PATTERN = /\.(?:svg|png|jpe?g|gif|webp|avif|ico|css|js|mjs|map
  */
 export function isLegalConsentExemptPath(pathname: string): boolean {
   // 同意画面そのものは、必ず対象外にする。ここを対象にすると、同意画面が自分自身へ無限に回る
-  if (isAuthFlowPath(pathname) || isPolicyPath(pathname) || isLegalConsentPath(pathname)) return true;
+  if (
+    isAuthFlowPath(pathname) ||
+    isPolicyPath(pathname) ||
+    isLegalConsentPath(pathname) ||
+    isDataSubjectRequestsPath(pathname)
+  ) {
+    return true;
+  }
   if (EXEMPT_PREFIXES.some((prefix) => matchesPrefix(pathname, prefix))) return true;
   return STATIC_FILE_PATTERN.test(pathname);
 }

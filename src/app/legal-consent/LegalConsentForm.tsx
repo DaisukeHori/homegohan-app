@@ -7,6 +7,11 @@
 //   どちらかが未チェックの間は「同意して続ける」を押せない)
 // - 「同意して続ける」: POST /api/legal/accept で同意を記録し、元の画面 (next) へ戻る。記録は DB 関数が本人の行だけに行う
 // - 「同意しない」: ログアウトして、ご利用いただけないこと・保存データの削除の依頼先 (お問い合わせ) を案内する
+// - 開示・訂正・利用停止・消去の請求の画面 (/settings/data-requests) への案内 (#1751): 規約への同意を条件にできない本人の権利なので、
+//   未同意のまま開ける (画面の同意ゲートの対象外・API の許可リスト)。初期設定の前の人 (新規登録の直後) も開ける
+//   (初期設定の差し戻しの対象外。lib/onboarding-routing.ts の isDataSubjectRequestsPath)。この人たちには user_profiles の行がまだ無いが、
+//   請求の API の認証も行を要さない (src/lib/data-subject-requests/requester-http.ts の authenticateDsrRequester)。
+//   フォームの下と「同意しない」の後の案内の 2 か所に出す
 //
 // 文面へのリンクは同じタブで開く。アプリ (WebView) では target="_blank" のリンクが開けないことがあり、
 // 同意の根拠になる文面を読めなくなるのを避けるため。読んだあとはブラウザの「戻る」で、この画面に戻れる。
@@ -28,6 +33,7 @@ import { createClient } from '@/lib/supabase/client';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
 import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
 import { LEGAL_CONSENT_PATH } from '@/lib/legal-consent';
+import { DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from '@/lib/data-subject-requests/core';
 
 interface LegalConsentFormProps {
   /** 同意したあとに戻る先 (検証済みの同一オリジンの相対パス) */
@@ -144,6 +150,19 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
           </Link>
         </section>
 
+        <section className="space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="legal-consent-dsr-guide">
+          <h2 className="font-bold text-gray-900">{DSR_SETTINGS_ENTRY_TITLE}について</h2>
+          <p className="text-sm leading-relaxed text-gray-600">
+            ご自身の個人情報の開示・訂正・利用停止・消去の請求は、規約に同意していなくても、ログインのうえ請求の画面から出せます。
+          </p>
+          <Link
+            href={DSR_SETTINGS_PATH}
+            className="inline-block font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800"
+          >
+            請求の画面へ
+          </Link>
+        </section>
+
         <p className="text-sm text-gray-500">
           内容をご確認のうえ、ご利用を再開される場合は、もう一度
           <Link href="/login" className="font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800">
@@ -238,6 +257,16 @@ export default function LegalConsentForm({ next, isReconsent, outdated }: LegalC
           {phase === 'declining' ? 'ログアウトしています...' : LEGAL_CONSENT_COPY.declineAndSignOutButton}
         </button>
       </div>
+
+      <p className="text-sm leading-relaxed text-gray-500" data-testid="legal-consent-dsr-link">
+        規約に同意していなくても、ご自身の個人情報の開示・訂正・利用停止・消去を請求できます。
+        <Link
+          href={DSR_SETTINGS_PATH}
+          className="font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800"
+        >
+          {DSR_SETTINGS_ENTRY_TITLE}の画面へ
+        </Link>
+      </p>
     </form>
   );
 }
