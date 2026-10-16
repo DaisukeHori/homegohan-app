@@ -118,6 +118,7 @@ beforeAll(async () => {
     role: 'child',
     display_name: `child ${TS}`,
     child_profile: { birth_year: 2018 },
+    birth_date: '2018-04-01', // #1173: アカウント無しの子供の行は生年月日が必須 (CHECK family_members_child_birth_date_required)
     status: 'active',
   });
   removedMemberId = await insertMember({

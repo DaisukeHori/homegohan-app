@@ -1,9 +1,10 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
-import { getOutdatedLegalDocuments, hasAcceptedCurrentLegalDocuments } from '@homegohan/shared';
+import { getLegalConsentGaps, getOutdatedLegalDocuments, isLegalConsentComplete } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/server';
 import { LEGAL_CONSENT_PATH, resolveLegalConsentNext } from '@/lib/legal-consent';
+import { withMinorGuardianStatus } from '@/lib/legal-consent-minor';
 import LegalConsentForm from './LegalConsentForm';
 
 // #1174: 利用規約・プライバシーポリシーへの同意画面。
@@ -39,14 +40,19 @@ export default async function LegalConsentPage(props: PageProps) {
 
   const { data: profile } = await supabase
     .from('user_profiles')
-    .select('terms_version_accepted, privacy_version_accepted')
+    .select('terms_version_accepted, privacy_version_accepted, birth_date')
     .eq('id', user.id)
     .maybeSingle();
 
-  // すでに同意済みの人 (戻るボタンや古いリンクで来た) は、同意画面を見せずに戻り先へ送る
-  if (hasAcceptedCurrentLegalDocuments(profile)) {
+  // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (middleware と同じ数え直し。失敗は素通り)
+  const gateProfile = await withMinorGuardianStatus(supabase, profile);
+
+  // すでに同意ゲートを満たしている人 (戻るボタンや古いリンクで来た) は、同意画面を見せずに戻り先へ送る
+  if (isLegalConsentComplete(gateProfile)) {
     redirect(next);
   }
+
+  const gaps = getLegalConsentGaps(gateProfile);
 
   const isReconsent = Boolean(profile?.terms_version_accepted || profile?.privacy_version_accepted);
 
@@ -64,7 +70,13 @@ export default async function LegalConsentPage(props: PageProps) {
       </header>
 
       <main className="mx-auto max-w-xl p-6">
-        <LegalConsentForm next={next} isReconsent={isReconsent} outdated={getOutdatedLegalDocuments(profile)} />
+        <LegalConsentForm
+          next={next}
+          isReconsent={isReconsent}
+          outdated={getOutdatedLegalDocuments(profile)}
+          needsBirthDate={!profile?.birth_date}
+          guardianMissing={gaps.includes('guardian_consent')}
+        />
       </main>
     </div>
   );

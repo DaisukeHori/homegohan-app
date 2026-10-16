@@ -168,6 +168,7 @@ async function addChild(family: Family, name: string): Promise<string> {
     p_family_id: family.id,
     p_display_name: name,
     p_child_profile: { note: '#1309' },
+    p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
   });
   if (error || !data) throw new Error(`add_family_child ${name}: ${error?.message}`);
   return (data as { id: string }).id;
@@ -686,7 +687,7 @@ describe('#1309 修正後も、正規の経路 (RPC・service_role) は status �
 });
 
 describe('#1309 ガード関数の属性 (CREATE OR REPLACE で変わらない)', () => {
-  it('A1: ガード関数は SECURITY INVOKER・所有者 postgres のまま。トリガーは BEFORE UPDATE の行トリガーで有効', async () => {
+  it('A1: ガード関数は SECURITY INVOKER・所有者 postgres のまま。family_members のトリガーはガード (BEFORE UPDATE の行) と #1173 の同意の取り消し 2 本 (AFTER UPDATE の行・BEFORE DELETE の行) の 3 本で、どれも有効', async () => {
     // SECURITY DEFINER にすると current_user が常に postgres になり、ガードが一切効かなくなる。それを防ぐ
     const fns = await pgQuery<{ secdef: boolean; config: string[] | null; owner: string; rettype: string }>(`
       SELECT p.prosecdef AS secdef, p.proconfig AS config, pg_get_userbyid(p.proowner) AS owner,
@@ -698,6 +699,7 @@ describe('#1309 ガード関数の属性 (CREATE OR REPLACE で変わらない)'
     expect(fns[0]).toEqual({ secdef: false, config: null, owner: 'postgres', rettype: 'trigger' });
 
     // tgtype: 1 = ROW, 2 = BEFORE, 16 = UPDATE の組み合わせ (= 19)。tgenabled 'O' = 有効
+    // #1173 の同意の取り消しは、AFTER UPDATE の行トリガー (trg_family_members_revoke_parental_consent = 17) と BEFORE DELETE の行トリガー (trg_family_members_revoke_parental_consent_on_delete = 1 + 2 + 8 = 11)。family_members のトリガーはこの 3 本だけ
     const triggers = await pgQuery<{ tgname: string; tgenabled: string; tgtype: number; fn: string }>(`
       SELECT t.tgname, t.tgenabled, t.tgtype::int AS tgtype, p.proname AS fn
       FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
@@ -705,6 +707,8 @@ describe('#1309 ガード関数の属性 (CREATE OR REPLACE で変わらない)'
       ORDER BY t.tgname
     `);
     expect(triggers).toEqual([
+      { tgname: 'trg_family_members_revoke_parental_consent', tgenabled: 'O', tgtype: 17, fn: 'revoke_parental_consent_on_member_inactive' },
+      { tgname: 'trg_family_members_revoke_parental_consent_on_delete', tgenabled: 'O', tgtype: 11, fn: 'revoke_parental_consent_on_member_delete' },
       { tgname: 'trg_guard_family_members_privileged', tgenabled: 'O', tgtype: 19, fn: 'guard_family_members_privileged' },
     ]);
   });

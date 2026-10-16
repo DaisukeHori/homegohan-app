@@ -271,9 +271,10 @@ async function seedOrgAndFamily(): Promise<void> {
     insert into public.family_members (id, family_id, user_id, role) values
       (${q(rows.fmB)}, ${q(rows.fg)}, ${q(B.id)}, 'representative'),
       (${q(rows.fmS)}, ${q(rows.fg)}, ${q(S.id)}, 'adult');
-    insert into public.family_members (id, family_id, role, display_name, child_profile) values
-      (${q(rows.fmChild)}, ${q(rows.fg)}, 'child', 't11 child', '{}'::jsonb),
-      (${q(rows.fmChild2)}, ${q(rows.fg)}, 'child', 't11 child 2', '{}'::jsonb);
+    -- #1173: アカウント無しの子供の行は生年月日が必須。昇格の依頼の宛先の掃除を確かめる行で、年齢・同意は扱わないので成人の placeholder
+    insert into public.family_members (id, family_id, role, display_name, child_profile, birth_date) values
+      (${q(rows.fmChild)}, ${q(rows.fg)}, 'child', 't11 child', '{}'::jsonb, '1990-01-01'::date),
+      (${q(rows.fmChild2)}, ${q(rows.fg)}, 'child', 't11 child 2', '{}'::jsonb, '1990-01-01'::date);
     insert into public.family_invites (id, family_id, email, token, expires_at, status, invited_by) values
       (${q(rows.famInviteToS)}, ${q(rows.fg)}, ${q(S.email)}, ${q(`tok-${id()}`)}, now() + interval '7 days', 'pending', ${q(B.id)}),
       (${q(rows.famInviteToB)}, ${q(rows.fg)}, ${q(B.email)}, ${q(`tok-${id()}`)}, now() + interval '7 days', 'pending', ${q(B.id)});

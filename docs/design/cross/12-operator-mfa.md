@@ -1,9 +1,9 @@
 # 運営ロールの MFA (二段階認証) 設計 — Supabase Auth の TOTP と AAL2 の入口
 
-> 版: v1.7 (2026-10-16 段 D の縮小: ネイティブの運営の区画の削除 (#1598) の反映。段 A は #1715 (`d8e0223a`) で main にマージ済み。§3 の実測の基準は段 A のマージより前の origin/main で、マージ後の差は §3 の ⚠️ の段落 (段 A のマージの後の差)) / Issue: #1176 (`[セキュリティ] super_admin/admin/産業医ロールに必須と設計されたMFA/2FAが実装ゼロ`)
+> 版: v1.8 (2026-10-16 段 C の改定: 別の super_admin による解除が対象の全セッションを終える仕組み (§11.5・§12.6・§14.7) と、付録 A (段 E の母集合) の 56 本への取り直し。v1.7 = 段 D の縮小: ネイティブの運営の区画の削除 (#1598) の反映。段 A は #1715 (`d8e0223a`)・段 B は #1754 (`d17b7b41`) で main にマージ済み。§3 の実測の基準は段 A のマージより前の origin/main で、マージ後の差は §3 の ⚠️ の段落 (段 A のマージの後の差)) / Issue: #1176 (`[セキュリティ] super_admin/admin/産業医ロールに必須と設計されたMFA/2FAが実装ゼロ`)
 > 位置づけ: `cross/01-auth-session.md` §5 (2FA / MFA) の方針を、実装できる粒度に展開した正典。§5 と本書が食い違うときは本書が正 (§24 の追随表で §5 を本書へのポインタに改める)。
 > ローンチまでに作る (オーナーの選択 2026-10-15・選択式)。
-> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。 v1.2 2026-10-15 R2 の指摘を反映: 毎回の challenge の verify でも Supabase が同じ利用者の他の aal1 のセッションを終えることを §3.1・§10・§14.3・§16・§26.3 に明記し、シナリオ S-25・結合テスト M-9・Q-11 を足す・単体テストのモックに `getSession` と `getClaims` の両方を返す `aal2AuthMock` を定める (§22.4.2・N-13・N-14)・自前でサインインする結合テスト 5 本を `signInForIntegration` に寄せる (§22.4.1・N-16)・`resolveMfaEnforceFrom` が存在しない日時 (2026-02-30 など) と範囲外の時差を拒否する (§12.1)。 網羅性 (周 3) の反映: 前提の実測を origin/main `62eadfa4` に取り直す。#1673 (ネイティブの画面を消して WebView に一本化) で `apps/mobile/app/comparison/index.tsx` とそのテストが消え、「再計算」を呼ぶ画面が Web にもモバイルにも無くなったので、モバイルの入口を (super-admin)・(support) の 2 区画に絞り、S-23 を「API を直接呼ぶ」に改める (§3.2・§16・§20・§21.6・§22.3・§23 N-26・§25)・§22.2 に client.ts の関数・Zod スキーマ・interface・走査の関数を足す・§23 N-14 の `src/__tests__/api/org/**` を 7 本中の 5 本として除外の 2 本と理由を書く・S-13 / S-15 / S-18 / S-19 のテストを足す (§21)・運営の page を import する既存の単体テストの追随を §23 N-27 に足す。 v1.3 2026-10-15 R3 の指摘を反映: §12.1 の正典の正規表現を名前つきのグループから位置のグループに改める (tsconfig の target が ES2017 で TS1503 になるため)・アプリのホームのタブ (WebView の `/home` → middleware が admin / super_admin を `/admin` へ回す) の経路が実在するので、Q-8 の「経路は無い」を改め、WebView の中では 6 桁の確認をネイティブに頼み (ネイティブの確認画面 → WebView の読み込み直し)、登録・回復・設定はブラウザへ案内し、借り物のセッションでの verify / factor 削除を 409 `AUTH_2FA_NATIVE_SESSION` で断る (§16.4 新設・§3.2・§5 S-26〜S-28・§6.2・§7.1・§8・§9・§10・§14.3・§14.4・§15・§19・§21・§22・§23・§26・Q-8)・e2e の `injectSession` が利用者のロールを読んで自動で aal2 に上げる契約を定め (`{ assurance: 'aal1' }` で上げない)、`openUserContext` を母集合に入れる (§22.4.3・N-17)・本文を読む新しい route を `src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せ、reset の理由の NULL 文字を Zod で断る (§14.7・N-28)・ローカルの Supabase の TOTP は `supabase/config.toml` ではなく `scripts/supabase-local.sh` の組み立てに足す (verify_jwt の番兵が config.toml のほかの行を許さないため。§22.3・N-29)・単体テストのモックの `aal2AuthMock` を「同じモックの `getUser`」を受け取る形に改め、`tests/helpers/route-world.ts` の `makeClient` を直す先に入れ、N-14 を 1 本ずつの直し方の表にする (§22.4.2・N-13・N-14)。前提の実測を origin/main `8c682e42` に取り直す。 網羅性 (周 4) の反映: §10 に (U2, S2) × 運営の入口・(U1/U2, S2) × Web の `/support/*`・借り物の S2 × 運営の画面 (U2 / U1)・借り物の access_token の寿命の行を足す・§3.2 と §20 の定数の行番号 (`inquiries/[id]/route.ts:46,109`・`finance/exports/route.ts:103`・`NPS_EXPORT_ROLES` の定義 :32) を origin/main `8c682e42` の実測に直す。 v1.4 2026-10-15 R4 の指摘を反映: DB (PostgREST / RPC) を直接呼ぶ経路を範囲外にしていたのを改め、段 E (判定の関数 `public.operator_mfa_satisfied()`・SECURITY DEFINER の関数 7 本・RLS のポリシー 58 本の運営の枝・カタログの機械検査) として本書の範囲に入れる (§0.2・§0.3・§3.2・§5 S-24・S-29〜S-31・§6・§7.1・§8・§9・§10・§11.4・§13.6・§19.1・§20.1・§21.8・§22・§23 N-32〜N-35・§24・§25・§26.2・付録 A。Issue #1176 が名指しした「パスワードだけの super_admin が org / family の強制移譲・解散を行える」を DB の経路でも閉じるため)・自分の unverified な factor の `DELETE /factors/{id}` を 404 にする (verified な TOTP factor だけを解除の対象にする `isVerifiedTotpFactorId`。§10・§12.4・§14.4・§21)・`tests/e2e/helpers/totp.mjs` を段 A に移す (§22.1)・テストの道具の MFA の回数制限の扱い (ローカルの Supabase では効かないことの根拠・番兵 M-13・429 の文言) を §22.4.4 に足す・運営の layout 3 + page 11 の `next` / `forbiddenPath` / バナーの `next` をファイルごとに決める (§13.4.2。super-admin と (operator) の layout は現行の行き先を保つ)・結合テストの M-8 と M-11 の猶予の枝を外し、猶予の分岐を単体と route のテストで守る (§21.1・§21.4)。 網羅性 (周 5) の反映: §10 に借り物の S1 / S2 で enroll / recover / backup-codes / status を直接呼ぶ行を足し (借り物でないときと同じ応答。Web の側で token を発行し直さない)、§21.2 にその it を足す・§8 の消費経路と §9 にロールだけで行き先を決める経路 (`auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect`・ハンズオンツアーの `ADMIN_ROLES`) を足す・§8 の軸の列の「—」を「その行の判定がその軸を読まない」と定義し、P-4 の猶予の欄に明記する・§3.2 の `org_industrial_doctor` の列挙に `src/lib/auth/helpers.ts:124` (コメント) を足す・origin/main `5a48abc9` と突き合わせ、migration の最大の番号を `20261015170000` に直す (§3・§11.1)。 v1.5 2026-10-15 R5 の指摘を反映: super_admin の reset の手順を「対象の profile → `listFactors` → `countRemainingBackupCodes` (未使用の残数) → 監査 (fail-closed。details の `factors_before` / `backup_codes_before` をこの 2 つの読み取りで作る) → `deleteFactor` ×n → `deleteBackupCodes`」に改め、読み取りの失敗は監査を書かずに 500 にする (§6.2 S-7・§8・§10・§14.7・§14.8.2・§17・§21.2)・監査の facade `src/lib/auth/mfa/audit.ts` (`MFA_AUDIT_ACTIONS`・`MFA_AUDIT_SEVERITY`・`MfaAuditDetailsMap`・`recordMfaAudit` のシグネチャと戻り値の扱い) を §17.1 に逐語で置く・画面の通信の facade `src/lib/auth/mfa/client.ts` (`MFA_API_PATHS`・`MfaClientResult`・`requestMfaApi`・7 関数・`mfaErrorMessage`) を §15.1 に、enroll / verify / recover / backup-codes / 解除 / reset の応答の Zod を §14 に逐語で置き、画面ごとの結果の扱いを §15.2 の表に、Web の部品 (`TotpCodeForm`・`BackupCodesPanel`・`MfaGraceBanner`・`OperatorMfaResetSection`) の props と動きを §15.3 の表にする・バックアップコードの表の 4 関数の DB の失敗の扱い (例外にして route が 500) を §12.3・§13.6 で決める・結合テスト M-5 (reset) を段 C に移す (§21.4)・client と audit の単体テストと、ブラウザの画面の分岐のテストを足す (§21.1・§22)・設定画面を描く既存の単体テスト 8 本を §23 N-36 に足す。origin/main `c100ca9d`・`56189b63` と突き合わせ、migration の最大の番号を `20261015180000` に直し、#1687 で足された設計書の番兵 `tests/design-doc-removed-mobile-screens.test.ts` に合わせて、消えたモバイルの画面を名指しする行を「削除」の語で書く (§3・§3.2・§11.1・§23 N-37)。 網羅性 (周 6) の反映: §10 に aal1 のセッションのログアウトと token の refresh の行を足す・結合テストの M-9 を S-25 と §10 の「別の」セッションの行に結び、登録の verify で同じ利用者の他の aal1 のセッションが終わることを守る M-14 を足す (§21.4)・モバイルの運営の区画の `_layout` 2 つを描くテスト `operator-area-layouts.test.tsx` を足す (S-10・S-22。§21.6・§22.1)・§5 の 31 本のシナリオと守る it の対応表を §21.9 に置く。 v1.6 2026-10-16 R6 の指摘を反映: 監査の書き方の規則を §17.2 に置く (監査の起点 = 取り消せない操作が成功した後は、続く手順が失敗してもそこで止めて `failed_step` を持ち、監査を必ず 1 行書いてから応答する。起点より前の失敗は監査を書かない)。登録の verify はコードの発行に失敗しても 200 (`backup_codes` 無し) を返して監査を書き、setup の画面は `backup_codes` の無い成功 (発行の失敗・応答が届かず打ち直した) を「コードを表示できなかった」案内にする (§10・§14.3・§15.2)。回復は `listFactors` を消費の前に読み、factor・コードの削除の失敗を監査に残す (§14.5)。解除は refresh の失敗を 200 (`aal: 'aal2'`) にし、コードの削除の失敗は監査を書いて 500 (§14.4)。再発行の失敗も監査に残す (§14.6)。監査の details に `failed_step` を足し、数を `number | null` にする (§17・§17.1)。origin/main `44c471e4` と突き合わせ、#1571 の監査の見張り `tests/admin-mutation-audit-coverage-1571.test.ts` に段 C の reset の行を足すこと (§23 N-38・§22.3)・#1689 の /api の同意ゲートとの関係 (§3.3・§14.8.2・§23 N-39・§24) を書き、`lib/supabase/middleware.ts` と `src/app/api/operator/membership/family/[id]/dissolve/route.ts` の行番号を直す (§3・§3.2・§8)。 v1.7 2026-10-16 段 D の縮小: ネイティブの運営の区画 (super-admin)・(support) は、通常の操作で届かない画面として 2026-10-16 に区画ごと削除した (#1598) ので、段 D は区画のゲート (`OperatorMfaGate`・2 つの `_layout` の変更・走査 ⑩・`MOBILE_GATED_AREAS`) を作らず、アプリの WebView で開く Web の運営画面の確認 (§16.4) だけにした。シナリオ S-10・S-22・走査 ⑩・番兵 N-9 は欠番にし、番号は振り直さない (§0・§3.2・§4・§5・§6・§7・§8・§9・§10・§16・§20・§21・§22・§23・§24・§25・§26)。 網羅性 (周 1) の反映: 同じ PR で削除した組織の管理の区画 (org) を、運営の区画ではない (組織の中の役割で入り `/api/org/**` を呼ぶ) 行として §3.2 に足し、`/api/org/` を `MOBILE_OPERATOR_API_PREFIXES` に入れない理由を §20 に書く・#1598 で削除した画面のうち運営に関わるのが 2 区画だけであることを §16・§22.3・§23 N-37 に書く・R-1 の `org_industrial_doctor` がシナリオを持たない理由と守るテストを §21.9 に書き、§21.1 に it を 1 つ足す。 設計ゲート R1 の指摘を反映: 段 D に残していた、ネイティブの画面の運営の操作の見張り (走査 ⑨ と走査の定数 `MOBILE_OPERATOR_API_PREFIXES`・`MOBILE_SCAN_EXCLUSIONS`)・呼ぶ画面の無いゲート `resolveOperatorMfaGate`・ロールの写し `MOBILE_MFA_REQUIRED_ROLES` と `requiresOperatorMfa`・写しの一致のテスト `operator-mfa-mobile-roles-sync.test.ts` を外す (⑨ も欠番。番号は振り直さない)。ネイティブの確認画面の判定 `decideMobileOperatorGate` はロールを読まず AAL だけで決める (頼むのは Web のゲートで、ロールと猶予の判定は済んでいる)。アプリで運営が通る経路は WebView の Web の運営画面だけなので、猶予中の未登録の必須ロールは Web のゲートの `pass_grace` で通る (「モバイルは猶予を見ない」を改める §8・§10・§16・§24)。`src/lib/auth/mfa/policy.ts` の `MFA_REQUIRED_ROLES` の注記から `MOBILE_MFA_REQUIRED_ROLES` を外す (§12.1・§22.3。段 D) (§0・§1・§3.2・§4・§6・§7・§8・§10・§12.1・§16・§20・§21・§22・§24)。 網羅性 (周 2) の反映: origin/main `b675073e` (2026-10-16) と突き合わせ、段 A が #1715 (`d8e0223a`) でマージ済みであることを書く。§3 に `44c471e4` からの差の段落を足し、§3.1 の「MFA を参照する本番コードは 0 件」を段 A のマージ前の事実に改める・§3.2 の `requireRole(<定数>)` を 8 (7 ファイル。運営の入口 4 + 段 A の自己サービスの 4 route) に直す・§7.1 と §20 の数と当てはまりを合わせる・§0.2・§22.1・§22.3 の段 A の行に「済 (#1715)」を付け、段 A の実装が足した表に無いファイル (`src/lib/auth/mfa/route-support.ts` など) を §22.1・§22.3 に足す。段 E の母集合 (付録 A) が `44c471e4` の後の migration で動いたことを §3 と §27 Q-15 に書く (付録 A は取り直さない)。 設計ゲート R2 の指摘を反映: 実装の途中の段 B の枝 (`origin/feat/issue-1707-operator-mfa-gate`) が v1.6 の本書で書いた、v1.7 と食い違う 2 か所 (`docs/operations/auth-protection.md` §11 の「**モバイル**は猶予を見ず…モバイルの区画のゲートは段 D」の 1 行・`tests/operator-mfa-entry-points-scan.test.ts` の見出しの「段 D で ⑨⑩ を足す」) の置き換えの文と、直す PR (段 B が本書 v1.7 の後にマージするなら段 B・先なら段 D) を書く (§0.2 の段 B・段 D の行と ⚠️・§22.3・§24・§27 Q-16)。§19.3 に残っていた「モバイルの運営の区画は §16 のゲートで TOTP の入力になる」を直す。origin/main `2d90460e` と突き合わせ、#1737 (`email_outbox`)・#1743 (Next 16) が本書の数と `file:line` を変えないこと (変わるのは migration の最大の番号 `20261016234000` だけ。§3.1 の「Next 15.5」の行は段 B の枝が隣の行を改めているので変えず、§3 の段落に書く) を書く (§3)。 網羅性 (周 3) の反映: 本書と同じ設計の PR で直す `docs/design/mobile/06-push-send.md` (献立の通知の行き先を献立のタブの `/menus` に改める) の記録先を §24 の冒頭の段落に書き、06 の版と改定履歴の追随を §24 の行に足した (本文の改定は同じ PR に入るので、表にも §22.3 にも載せない)。#1598 で削除した画面を名指しする cross/16 の行は origin/main の #1740 が注記済みで、本書の PR は cross/16 を変えないことを §24 に書いた。
+> 改定履歴: v1.0 2026-10-15 初版 (設計ゲート R0)。v1.1 2026-10-15 R1 の指摘を反映: (support) 区画 (Web・モバイル) とモバイルの比較の再計算を入口に加える (§3.2・§13.4・§16)・段 A を単独で型検査とテストが通る形に切り直す (§0.2)・走査の自動の取り込みを狭め除外を理由つきで持つ (§20)・DB を直接呼ぶ経路を範囲外として明記 (§0.3・Q-9)・アカウントの書き出しの分類に新しい表を足す (§23 N-24)。網羅性 (周 2) の反映: `requireRole([...])` の数を 104 に直す・産業医の入口が 0 件であることを明記 (§3.2・§20)・§10 に enroll / verify / reset の失敗 / U0 の自己サービス / 猶予の期限の行を足す・§24 に cross/01 §3.2・operator/01 §3.1・operator/03 §31・mobile / org の CLAUDE.md の行を足す (§0.3・Q-10)。 v1.2 2026-10-15 R2 の指摘を反映: 毎回の challenge の verify でも Supabase が同じ利用者の他の aal1 のセッションを終えることを §3.1・§10・§14.3・§16・§26.3 に明記し、シナリオ S-25・結合テスト M-9・Q-11 を足す・単体テストのモックに `getSession` と `getClaims` の両方を返す `aal2AuthMock` を定める (§22.4.2・N-13・N-14)・自前でサインインする結合テスト 5 本を `signInForIntegration` に寄せる (§22.4.1・N-16)・`resolveMfaEnforceFrom` が存在しない日時 (2026-02-30 など) と範囲外の時差を拒否する (§12.1)。 網羅性 (周 3) の反映: 前提の実測を origin/main `62eadfa4` に取り直す。#1673 (ネイティブの画面を消して WebView に一本化) で `apps/mobile/app/comparison/index.tsx` とそのテストが消え、「再計算」を呼ぶ画面が Web にもモバイルにも無くなったので、モバイルの入口を (super-admin)・(support) の 2 区画に絞り、S-23 を「API を直接呼ぶ」に改める (§3.2・§16・§20・§21.6・§22.3・§23 N-26・§25)・§22.2 に client.ts の関数・Zod スキーマ・interface・走査の関数を足す・§23 N-14 の `src/__tests__/api/org/**` を 7 本中の 5 本として除外の 2 本と理由を書く・S-13 / S-15 / S-18 / S-19 のテストを足す (§21)・運営の page を import する既存の単体テストの追随を §23 N-27 に足す。 v1.3 2026-10-15 R3 の指摘を反映: §12.1 の正典の正規表現を名前つきのグループから位置のグループに改める (tsconfig の target が ES2017 で TS1503 になるため)・アプリのホームのタブ (WebView の `/home` → middleware が admin / super_admin を `/admin` へ回す) の経路が実在するので、Q-8 の「経路は無い」を改め、WebView の中では 6 桁の確認をネイティブに頼み (ネイティブの確認画面 → WebView の読み込み直し)、登録・回復・設定はブラウザへ案内し、借り物のセッションでの verify / factor 削除を 409 `AUTH_2FA_NATIVE_SESSION` で断る (§16.4 新設・§3.2・§5 S-26〜S-28・§6.2・§7.1・§8・§9・§10・§14.3・§14.4・§15・§19・§21・§22・§23・§26・Q-8)・e2e の `injectSession` が利用者のロールを読んで自動で aal2 に上げる契約を定め (`{ assurance: 'aal1' }` で上げない)、`openUserContext` を母集合に入れる (§22.4.3・N-17)・本文を読む新しい route を `src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せ、reset の理由の NULL 文字を Zod で断る (§14.7・N-28)・ローカルの Supabase の TOTP は `supabase/config.toml` ではなく `scripts/supabase-local.sh` の組み立てに足す (verify_jwt の番兵が config.toml のほかの行を許さないため。§22.3・N-29)・単体テストのモックの `aal2AuthMock` を「同じモックの `getUser`」を受け取る形に改め、`tests/helpers/route-world.ts` の `makeClient` を直す先に入れ、N-14 を 1 本ずつの直し方の表にする (§22.4.2・N-13・N-14)。前提の実測を origin/main `8c682e42` に取り直す。 網羅性 (周 4) の反映: §10 に (U2, S2) × 運営の入口・(U1/U2, S2) × Web の `/support/*`・借り物の S2 × 運営の画面 (U2 / U1)・借り物の access_token の寿命の行を足す・§3.2 と §20 の定数の行番号 (`inquiries/[id]/route.ts:46,109`・`finance/exports/route.ts:103`・`NPS_EXPORT_ROLES` の定義 :32) を origin/main `8c682e42` の実測に直す。 v1.4 2026-10-15 R4 の指摘を反映: DB (PostgREST / RPC) を直接呼ぶ経路を範囲外にしていたのを改め、段 E (判定の関数 `public.operator_mfa_satisfied()`・SECURITY DEFINER の関数 7 本・RLS のポリシー 58 本の運営の枝・カタログの機械検査) として本書の範囲に入れる (§0.2・§0.3・§3.2・§5 S-24・S-29〜S-31・§6・§7.1・§8・§9・§10・§11.4・§13.6・§19.1・§20.1・§21.8・§22・§23 N-32〜N-35・§24・§25・§26.2・付録 A。Issue #1176 が名指しした「パスワードだけの super_admin が org / family の強制移譲・解散を行える」を DB の経路でも閉じるため)・自分の unverified な factor の `DELETE /factors/{id}` を 404 にする (verified な TOTP factor だけを解除の対象にする `isVerifiedTotpFactorId`。§10・§12.4・§14.4・§21)・`tests/e2e/helpers/totp.mjs` を段 A に移す (§22.1)・テストの道具の MFA の回数制限の扱い (ローカルの Supabase では効かないことの根拠・番兵 M-13・429 の文言) を §22.4.4 に足す・運営の layout 3 + page 11 の `next` / `forbiddenPath` / バナーの `next` をファイルごとに決める (§13.4.2。super-admin と (operator) の layout は現行の行き先を保つ)・結合テストの M-8 と M-11 の猶予の枝を外し、猶予の分岐を単体と route のテストで守る (§21.1・§21.4)。 網羅性 (周 5) の反映: §10 に借り物の S1 / S2 で enroll / recover / backup-codes / status を直接呼ぶ行を足し (借り物でないときと同じ応答。Web の側で token を発行し直さない)、§21.2 にその it を足す・§8 の消費経路と §9 にロールだけで行き先を決める経路 (`auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect`・ハンズオンツアーの `ADMIN_ROLES`) を足す・§8 の軸の列の「—」を「その行の判定がその軸を読まない」と定義し、P-4 の猶予の欄に明記する・§3.2 の `org_industrial_doctor` の列挙に `src/lib/auth/helpers.ts:124` (コメント) を足す・origin/main `5a48abc9` と突き合わせ、migration の最大の番号を `20261015170000` に直す (§3・§11.1)。 v1.5 2026-10-15 R5 の指摘を反映: super_admin の reset の手順を「対象の profile → `listFactors` → `countRemainingBackupCodes` (未使用の残数) → 監査 (fail-closed。details の `factors_before` / `backup_codes_before` をこの 2 つの読み取りで作る) → `deleteFactor` ×n → `deleteBackupCodes`」に改め、読み取りの失敗は監査を書かずに 500 にする (§6.2 S-7・§8・§10・§14.7・§14.8.2・§17・§21.2)・監査の facade `src/lib/auth/mfa/audit.ts` (`MFA_AUDIT_ACTIONS`・`MFA_AUDIT_SEVERITY`・`MfaAuditDetailsMap`・`recordMfaAudit` のシグネチャと戻り値の扱い) を §17.1 に逐語で置く・画面の通信の facade `src/lib/auth/mfa/client.ts` (`MFA_API_PATHS`・`MfaClientResult`・`requestMfaApi`・7 関数・`mfaErrorMessage`) を §15.1 に、enroll / verify / recover / backup-codes / 解除 / reset の応答の Zod を §14 に逐語で置き、画面ごとの結果の扱いを §15.2 の表に、Web の部品 (`TotpCodeForm`・`BackupCodesPanel`・`MfaGraceBanner`・`OperatorMfaResetSection`) の props と動きを §15.3 の表にする・バックアップコードの表の 4 関数の DB の失敗の扱い (例外にして route が 500) を §12.3・§13.6 で決める・結合テスト M-5 (reset) を段 C に移す (§21.4)・client と audit の単体テストと、ブラウザの画面の分岐のテストを足す (§21.1・§22)・設定画面を描く既存の単体テスト 8 本を §23 N-36 に足す。origin/main `c100ca9d`・`56189b63` と突き合わせ、migration の最大の番号を `20261015180000` に直し、#1687 で足された設計書の番兵 `tests/design-doc-removed-mobile-screens.test.ts` に合わせて、消えたモバイルの画面を名指しする行を「削除」の語で書く (§3・§3.2・§11.1・§23 N-37)。 網羅性 (周 6) の反映: §10 に aal1 のセッションのログアウトと token の refresh の行を足す・結合テストの M-9 を S-25 と §10 の「別の」セッションの行に結び、登録の verify で同じ利用者の他の aal1 のセッションが終わることを守る M-14 を足す (§21.4)・モバイルの運営の区画の `_layout` 2 つを描くテスト `operator-area-layouts.test.tsx` を足す (S-10・S-22。§21.6・§22.1)・§5 の 31 本のシナリオと守る it の対応表を §21.9 に置く。 v1.6 2026-10-16 R6 の指摘を反映: 監査の書き方の規則を §17.2 に置く (監査の起点 = 取り消せない操作が成功した後は、続く手順が失敗してもそこで止めて `failed_step` を持ち、監査を必ず 1 行書いてから応答する。起点より前の失敗は監査を書かない)。登録の verify はコードの発行に失敗しても 200 (`backup_codes` 無し) を返して監査を書き、setup の画面は `backup_codes` の無い成功 (発行の失敗・応答が届かず打ち直した) を「コードを表示できなかった」案内にする (§10・§14.3・§15.2)。回復は `listFactors` を消費の前に読み、factor・コードの削除の失敗を監査に残す (§14.5)。解除は refresh の失敗を 200 (`aal: 'aal2'`) にし、コードの削除の失敗は監査を書いて 500 (§14.4)。再発行の失敗も監査に残す (§14.6)。監査の details に `failed_step` を足し、数を `number | null` にする (§17・§17.1)。origin/main `44c471e4` と突き合わせ、#1571 の監査の見張り `tests/admin-mutation-audit-coverage-1571.test.ts` に段 C の reset の行を足すこと (§23 N-38・§22.3)・#1689 の /api の同意ゲートとの関係 (§3.3・§14.8.2・§23 N-39・§24) を書き、`lib/supabase/middleware.ts` と `src/app/api/operator/membership/family/[id]/dissolve/route.ts` の行番号を直す (§3・§3.2・§8)。 v1.7 2026-10-16 段 D の縮小: ネイティブの運営の区画 (super-admin)・(support) は、通常の操作で届かない画面として 2026-10-16 に区画ごと削除した (#1598) ので、段 D は区画のゲート (`OperatorMfaGate`・2 つの `_layout` の変更・走査 ⑩・`MOBILE_GATED_AREAS`) を作らず、アプリの WebView で開く Web の運営画面の確認 (§16.4) だけにした。シナリオ S-10・S-22・走査 ⑩・番兵 N-9 は欠番にし、番号は振り直さない (§0・§3.2・§4・§5・§6・§7・§8・§9・§10・§16・§20・§21・§22・§23・§24・§25・§26)。 網羅性 (周 1) の反映: 同じ PR で削除した組織の管理の区画 (org) を、運営の区画ではない (組織の中の役割で入り `/api/org/**` を呼ぶ) 行として §3.2 に足し、`/api/org/` を `MOBILE_OPERATOR_API_PREFIXES` に入れない理由を §20 に書く・#1598 で削除した画面のうち運営に関わるのが 2 区画だけであることを §16・§22.3・§23 N-37 に書く・R-1 の `org_industrial_doctor` がシナリオを持たない理由と守るテストを §21.9 に書き、§21.1 に it を 1 つ足す。 設計ゲート R1 の指摘を反映: 段 D に残していた、ネイティブの画面の運営の操作の見張り (走査 ⑨ と走査の定数 `MOBILE_OPERATOR_API_PREFIXES`・`MOBILE_SCAN_EXCLUSIONS`)・呼ぶ画面の無いゲート `resolveOperatorMfaGate`・ロールの写し `MOBILE_MFA_REQUIRED_ROLES` と `requiresOperatorMfa`・写しの一致のテスト `operator-mfa-mobile-roles-sync.test.ts` を外す (⑨ も欠番。番号は振り直さない)。ネイティブの確認画面の判定 `decideMobileOperatorGate` はロールを読まず AAL だけで決める (頼むのは Web のゲートで、ロールと猶予の判定は済んでいる)。アプリで運営が通る経路は WebView の Web の運営画面だけなので、猶予中の未登録の必須ロールは Web のゲートの `pass_grace` で通る (「モバイルは猶予を見ない」を改める §8・§10・§16・§24)。`src/lib/auth/mfa/policy.ts` の `MFA_REQUIRED_ROLES` の注記から `MOBILE_MFA_REQUIRED_ROLES` を外す (§12.1・§22.3。段 D) (§0・§1・§3.2・§4・§6・§7・§8・§10・§12.1・§16・§20・§21・§22・§24)。 網羅性 (周 2) の反映: origin/main `b675073e` (2026-10-16) と突き合わせ、段 A が #1715 (`d8e0223a`) でマージ済みであることを書く。§3 に `44c471e4` からの差の段落を足し、§3.1 の「MFA を参照する本番コードは 0 件」を段 A のマージ前の事実に改める・§3.2 の `requireRole(<定数>)` を 8 (7 ファイル。運営の入口 4 + 段 A の自己サービスの 4 route) に直す・§7.1 と §20 の数と当てはまりを合わせる・§0.2・§22.1・§22.3 の段 A の行に「済 (#1715)」を付け、段 A の実装が足した表に無いファイル (`src/lib/auth/mfa/route-support.ts` など) を §22.1・§22.3 に足す。段 E の母集合 (付録 A) が `44c471e4` の後の migration で動いたことを §3 と §27 Q-15 に書く (付録 A は取り直さない)。 設計ゲート R2 の指摘を反映: 実装の途中の段 B の枝 (`origin/feat/issue-1707-operator-mfa-gate`) が v1.6 の本書で書いた、v1.7 と食い違う 2 か所 (`docs/operations/auth-protection.md` §11 の「**モバイル**は猶予を見ず…モバイルの区画のゲートは段 D」の 1 行・`tests/operator-mfa-entry-points-scan.test.ts` の見出しの「段 D で ⑨⑩ を足す」) の置き換えの文と、直す PR (段 B が本書 v1.7 の後にマージするなら段 B・先なら段 D) を書く (§0.2 の段 B・段 D の行と ⚠️・§22.3・§24・§27 Q-16)。§19.3 に残っていた「モバイルの運営の区画は §16 のゲートで TOTP の入力になる」を直す。origin/main `2d90460e` と突き合わせ、#1737 (`email_outbox`)・#1743 (Next 16) が本書の数と `file:line` を変えないこと (変わるのは migration の最大の番号 `20261016234000` だけ。§3.1 の「Next 15.5」の行は段 B の枝が隣の行を改めているので変えず、§3 の段落に書く) を書く (§3)。 網羅性 (周 3) の反映: 本書と同じ設計の PR で直す `docs/design/mobile/06-push-send.md` (献立の通知の行き先を献立のタブの `/menus` に改める) の記録先を §24 の冒頭の段落に書き、06 の版と改定履歴の追随を §24 の行に足した (本文の改定は同じ PR に入るので、表にも §22.3 にも載せない)。#1598 で削除した画面を名指しする cross/16 の行は origin/main の #1740 が注記済みで、本書の PR は cross/16 を変えないことを §24 に書いた。 v1.8 2026-10-16 段 C の改定 (Issue #1707 の段 C): 別の super_admin による解除 (§14.7) が、対象の TOTP とバックアップコードを消す前に対象の全セッションを終える仕組みを決めた。GoTrue の管理 API には利用者 ID で全セッションを終える経路が無い (supabase/auth の `/admin` の経路の実読 §3.2) ので、service_role だけが呼べる SECURITY DEFINER の関数 `public.operator_mfa_end_sessions(uuid)` (`DELETE FROM auth.sessions WHERE user_id = $1`。GoTrue の `/logout?scope=global` の実体と同じ 1 文) を追加だけの migration で新設し (§11.5)、facade `endUserSessions` (§12.6) を reset の route が監査の後・factor の削除の前に呼ぶ (§14.7)。回復 (段 B・main) の `admin.signOut(token, 'global')` は変えない (cross/16 §5 の S-7 / S-9 と同じ使い分け §7.1)。cross/16 (#1720・PR #1757) の `on_auth_session_deleted` との関係 (`ended_reason` は `signed_out` のまま) を §11.5・§24 に書いた。要件 R-15・シナリオ S-32〜S-36 とトレース・§7.1 の 2 論点・§8〜§10 の行・§13.6・§14.8.2・§15.2・§17・§17.2・§18.4・§20.1・§21 (route・単体・契約・結合 M-5 / M-15 / M-16・§21.9)・§22・§23 (N-4・N-32・N-34)・§24・§25・§26・Q-17〜Q-20 を足した。付録 A を本番の `pg_policies` の 2026-10-16 の読み取り (Supabase MCP の SELECT だけ) で 56 本 (53 本が TO public・3 本が TO authenticated) に取り直し、§3 の ⚠️ の 4.・§3.2・§7.1・§8・§9・§11.4・§20.1・§21.8・§22.2・§25・Q-15 の数を揃え、指紋 (md5) の表 A.4 と「本番で確かめる」手順を足した。origin/main `d17b7b41` (2026-10-16。段 B のマージ #1754 を含む) と突き合わせた (§3)。 v1.8 R1: 付録 A.3・A.4 の SQL の正規表現リテラルの引用符の誤り (`'''::text'` → `''::text'`。42601 で流れなかった) を直し、直した A.4 の SQL を本番で読み取りだけで流して期待値 (n = 56・n_public = 53・n_authenticated = 3・digest・digest_full) との一致を確かめた。 網羅性 (周 2) の反映: §10 に対象が必須ロールでない (U0) 利用者への reset の成功の行を足し、reset の全セッションの終了の失敗と factor・コードの削除の失敗の行を U2 だけでなく全 U に広げた・§21.2 に U0 の対象の reset の it を足した・§14.7 の U0 の文を手順どおりに改め (ロールの剥奪の後に残った factor とコードも消える)、§14.7 の Zod のブロックの冒頭に置き場 (`src/lib/auth/mfa/schemas.ts` §22.3) を書いた。
 
 ---
 
@@ -15,7 +15,7 @@
 |---|---|---|
 | 設計書 800 行超 | 超える (ゲートの全列挙・表 3 点・追随表を 1 冊に持つため) | 当たる |
 | 消費先レーン 3 以上 | Web の運営画面 (layout / page と (support) 区画)・Web の運営 API・自己サービスの API と画面・モバイル (アプリの WebView で開く Web の運営画面 §16.4。ネイティブの運営画面 (super-admin)・(support) は 2026-10-16 に削除した。#1598)・DB を本人の JWT で直接呼ぶ経路 (RLS のポリシーと SECURITY DEFINER の関数 §11.4) = 5 | 当たる |
-| 共有面に 2 つ以上触る | `src/lib/auth/helpers.ts` (全運営 API の認可の入口)・`src/lib/rate-limit.ts` (カテゴリ)・`src/lib/env.ts` / `.env.example` (環境変数の一覧)・`admin_audit_logs` (書くだけ。列は変えない)・RLS のポリシー 58 本と SECURITY DEFINER の関数 7 本 (段 E。運営の枝に判定を足すだけで、ほかの枝・列は変えない) | 当たる |
+| 共有面に 2 つ以上触る | `src/lib/auth/helpers.ts` (全運営 API の認可の入口)・`src/lib/rate-limit.ts` (カテゴリ)・`src/lib/env.ts` / `.env.example` (環境変数の一覧)・`admin_audit_logs` (書くだけ。列は変えない)・RLS のポリシー 56 本と SECURITY DEFINER の関数 7 本 (段 E。運営の枝に判定を足すだけで、ほかの枝・列は変えない)・`auth.sessions` (GoTrue の表。段 C の関数 `operator_mfa_end_sessions` が対象の行を消すだけで、列・索引・トリガーは触らない §11.5) | 当たる |
 
 **判定: 設計書は 1 冊、実装は 5 段 (A〜E) に分け、段ごとに別の実装 WF (別ブランチ・別ゲート・別 PR) で積む。**
 分冊 (核と配線で別の設計書) にしない理由: 核 (AAL2 の判定) は純関数 1 つと `requireRole` への 1 か所の差し込み (DB の側は判定の関数 1 つ `operator_mfa_satisfied()`) で、配線 (画面・API・モバイル・DB のポリシーと関数) はすべてその判定を消費するだけ。契約 (§11.4・§12〜§14・付録 A) を本書に逐語で置けば、各段の実装者は本書だけで手が止まらない。分けると「核のマージ待ちで配線の設計が止まる」コストが、分けない利点 (1 か所で全入口を見渡せる) を上回る。
@@ -26,9 +26,9 @@
 |---|---|---|---|
 | **A 自己サービス (AAL1 で使えるもの)** — 済: #1715 (`d8e0223a`) で main にマージした (§22.1・§22.3 の段 A の行) | バックアップコードの表 (migration)・`src/lib/auth/mfa/*` の核 (policy / backup-codes / factors / schemas / audit)・`src/lib/auth/mfa/assurance.ts` の読み取り部分 (`SessionClaimsSchema` / `bearerJwtOf` / `readSessionAssurance`。`assertOperatorAssurance` は段 B)・`/api/auth/mfa/{status, enroll, verify, recover}` の 4 route (`requireRole(MFA_REQUIRED_ROLES)` を **引数 1 つ** で呼ぶ。段 A の `requireRole` は今のまま)・`/settings/security/mfa/*` の 4 画面 (状態の画面は表示だけ。再発行と解除のボタンは段 B)・設定画面の入口・rate-limit のカテゴリ・環境変数の登録・アカウントの書き出しの分類 (§23 N-24)・アプリの WebView の中の 4 画面の扱い (`useInNativeWebView`・`NativeAppMfaNotice`・`src/lib/native-auth-bridge.ts` の `requestNativeMfaVerify` / `isNativeBridgedSession`。verify の route は借り物のセッションを 409 で断る §16.4)・本文を読む 2 route の NULL 文字の番兵の追随 (§23 N-28) | なし | 運営は **任意で** TOTP を登録・確認・回復できる。まだ何も強制しない (ゲートが無い)。再発行と解除はまだ無い (AAL2 を確かめる仕組みが段 B で入るため)。登録の直後にバックアップコードを表示できなかった運営 (コードの発行の失敗・verify の応答が届かず打ち直した §15.2) は、段 B の後に状態の画面の [バックアップコードを再発行] で受け取る (段 A は何も強制しないので、それまでも TOTP で作業は続く) |
 | **B 入口のゲート** | `MfaRequiredError`・`UserProfile.assurance?`・`requireRole(allowedRoles, options)` の AAL2 判定・`assertOperatorAssurance`・`requireSuperAdmin` の委譲・`page-guard.ts` と運営の layout / page 14 ファイルの置き換え・Web の (support) 区画の server layout の新設 (§13.4)・猶予のバナー・段 A の 4 route に `{ assurance: 'session' }` を足す・AAL2 が要る自己サービスの 2 route (`DELETE /factors/{id}`・`POST /backup-codes`) と状態の画面のボタン・機械検査 (走査テスト ①〜⑧)・テストの道具 (結合・e2e の TOTP 昇格と、単体テストの Supabase のモック §22.4。ローカルの Supabase の TOTP を `scripts/supabase-local.sh` で有効にする)。実装の途中の段 B の枝は v1.6 の本書で書いているので、本書 v1.7 のマージの後にマージするときは、v1.7 と食い違う 2 か所 (`docs/operations/auth-protection.md` §11 の 1 行・`tests/operator-mfa-entry-points-scan.test.ts` の見出し) を同じ PR で直す (下の ⚠️ の段 B の枝の段落) | A | 必須ロールの運営は、登録済みなら challenge・未登録なら登録を **強制** される (猶予の環境変数で開始日時を後ろへずらせる) |
-| **C 運営の別の人による解除** | `POST /api/super-admin/admins/{id}/mfa/reset`・`/admin/users/{id}` の解除セクション・運営の変更系の監査の見張り (`tests/admin-mutation-audit-coverage-1571.test.ts`) の表に reset の 1 行 (§23 N-38) | B | super_admin (AAL2) が他の運営の TOTP とバックアップコードを消せる (本人は再ログイン → 再登録) |
+| **C 運営の別の人による解除** | migration `<番号はマージ時に確定>_operator_mfa_end_sessions.sql` と対の `.down.sql` (§11.5: service_role だけが呼べる関数 `public.operator_mfa_end_sessions(uuid)` = `DELETE FROM auth.sessions WHERE user_id = $1`)・型の再生成 (`Functions` に 1 本 §23 N-34)・facade `src/lib/auth/mfa/sessions.ts` の `endUserSessions` (§12.6)・`POST /api/super-admin/admins/{id}/mfa/reset` (監査 → **対象の全セッションを終える** → factor → コードの順 §14.7)・`/admin/users/{id}` の解除セクション・運営の変更系の監査の見張り (`tests/admin-mutation-audit-coverage-1571.test.ts`) の表に reset の 1 行 (§23 N-38)・`anon-definer-execute.test.ts` の `EXPECTED_ACL` に 1 行 (§23 N-32)・契約テスト (§21.3)・結合 M-5 / M-15 / M-16 (§21.4)。**本番には migration を当ててからデプロイする** (reset の route が RPC を呼ぶ。先にデプロイすると解除が 500 で止まるだけで何も消えない §26.2) | B | super_admin (AAL2) が他の運営の TOTP とバックアップコードを消せる。消す前に対象の全セッション (盗まれた端末に残る aal2 を含む) を終えるので、対象は次の要求で 401 → 再ログイン → 再登録 (S-7・S-32) |
 | **D モバイル** | WebView からの確認の依頼 (`mfa-verify-required`) を受けるネイティブの確認画面 (`NativeMfaVerifyModal`) と読み込み直し (§16.4)・`src/lib/auth/mfa/policy.ts` の注記の直し (§22.3)。ネイティブの運営の区画 (super-admin)・(support) は、通常の操作で届かない画面として 2026-10-16 に区画ごと削除した (#1598) ので、区画のゲート (`OperatorMfaGate`・2 つの `_layout` の変更・走査 ⑩)・ネイティブの画面の運営の操作の見張り (走査 ⑨)・ロールの写し (`MOBILE_MFA_REQUIRED_ROLES`) は作らない (§16)。段 B が本書 v1.7 より先にマージしたときは、段 B の枝が v1.6 の文で書いた 2 か所 (`docs/operations/auth-protection.md` §11 の 1 行・`tests/operator-mfa-entry-points-scan.test.ts` の見出し) も直す (下の ⚠️ の段 B の枝の段落) | B | アプリのホームのタブ (WebView の `/admin`) は、ネイティブの確認画面で 6 桁を入れると読み込み直して開く。ロールと猶予の判定は WebView の中の Web のゲートが行う。登録はブラウザだけ |
-| **E DB を直接呼ぶ経路** | migration `<番号はマージ時に確定>_operator_mfa_db_gate.sql` と対の `.down.sql` (§11.4・付録 A): 判定の関数 `public.operator_mfa_satisfied()`・SECURITY DEFINER の関数 7 本に判定を足す・運営ロールの条件を持つ RLS のポリシー 58 本の運営の枝に判定を足して `TO authenticated` にする (`subscription_plans_select_public` だけは運営の枝を新しいポリシー `subscription_plans_select_operator` に分ける)・型の再生成・カタログの機械検査と DB の結合テスト (§20.1・§21.8)・既存の番兵の追随 (§23 N-32〜N-35) | B | PostgREST / RPC を本人の JWT で直接呼んでも、TOTP を登録済みの必須ロールの運営は、aal2 のセッションでなければ運営の権限 (運営の枝のポリシー・7 本の関数) を使えない。本人の行の枝・公開の枝は今までどおり |
+| **E DB を直接呼ぶ経路** | migration `<番号はマージ時に確定>_operator_mfa_db_gate.sql` と対の `.down.sql` (§11.4・付録 A): 判定の関数 `public.operator_mfa_satisfied()`・SECURITY DEFINER の関数 7 本に判定を足す・運営ロールの条件を持つ RLS のポリシー 56 本 (2026-10-16 の本番。付録 A) の運営の枝に判定を足して `TO authenticated` にする (`subscription_plans_select_public` だけは運営の枝を新しいポリシー `subscription_plans_select_operator` に分ける)・型の再生成・カタログの機械検査と DB の結合テスト (§20.1・§21.8)・既存の番兵の追随 (§23 N-32〜N-35) | B | PostgREST / RPC を本人の JWT で直接呼んでも、TOTP を登録済みの必須ロールの運営は、aal2 のセッションでなければ運営の権限 (運営の枝のポリシー・7 本の関数) を使えない。本人の行の枝・公開の枝は今までどおり |
 
 ⚠️ **A → B の順を崩さない**。B を先に出すと、登録の導線が無いまま強制が始まり、運営が全員入れなくなる。C・D・E は B の後にマージする (C と D は B の `requireRole` の AAL2 判定と `MfaRequiredError` を前提にする。E は、B で Web の画面が登録済みの運営を verify へ回すようになってからでないと、任意で登録した運営の aal1 のセッションで Web の運営の画面が DB の 0 行・エラーに当たる。C・D・E どうしは並行に作れる)。
 各段は単独で型検査とテストが通る: 段 A のコードは段 B の識別子 (`RequireRoleOptions`・`assertOperatorAssurance`・`MfaRequiredError`・`requireRoleForPage`) を参照しない。段 A の route テストに「aal1 → 403」の検査は無い (§21.2 の段の列)。段 E のテストは段 B のテストの道具 (`tests/integration/helpers/mfa.ts` の `promoteToAal2`) を使う (E は B の後にマージするので、E の PR の時点で道具はある)。
@@ -46,6 +46,7 @@
 - 身分証の画像の保管 (§7 の判断: 本人確認は運営が画面外で行い、確認した事実と方法だけを監査ログに残す。画像は預からない)。
 - `support` / `sales` / `content_moderator` の任意の MFA (§27 Q-3)。本書の対象ロールだけが登録できる。
 - 運営の一覧画面への 2FA の状態の表示。`operator/03-ui-spec.md` §31 (`/super-admin/admins`) の表の「2FA 状態」の列は、origin/main の画面・`/api/super-admin/admins` のどちらにも実装が無く、本書も値を供給しない (状態は本人の `/settings/security/mfa` で扱う §15)。列を実装するなら別の Issue で、一覧の API が対象ごとに factor を読む形を設計する (§24・§27 Q-10)。
+- **終えたセッションの access token (JWT) が、PostgREST を直接呼ぶ経路 (段 E) で exp まで有効なこと**。PostgREST は JWT の署名と exp だけを見て GoTrue のセッションの表 (`auth.sessions`) を見ないので、回復 (§14.5)・解除 (他人 §14.7) で `auth.sessions` の行を消した後も、残った access token は exp (Supabase の JWT の寿命の設定。既定 1 時間) まで aal2 の claim で段 E の運営の枝を通る (refresh はできない)。Web の運営の入口 (Next.js の `requireRole` の `getUser()`) は GoTrue を通るので終えた直後から 401 (S-32)。寿命を縮めるのは Supabase の設定の運用判断で、本書は決めない (§27 Q-17)。
 - **未登録の運営を DB で止めること** (§11.4)。段 E の判定 `operator_mfa_satisfied()` は、TOTP を登録済みの必須ロールの運営に aal2 を求め、**未登録の運営は通す** (Web の `pass_grace` と同じく、猶予中の運営の Web の運営 API が DB で落ちないようにするため)。猶予を過ぎた未登録の運営を DB でも止めることはしない: Supabase は verified な factor を持たない利用者に aal1 のまま factor の登録を許すので、パスワードだけを知る人は、その場で自分の TOTP を登録して aal2 になれる。DB で未登録を止めても守りは強くならない (守りが効くのは、本人が登録した後)。猶予の後は Web の運営の入口が未登録の運営を登録へ回す (`enrollment_required`) ので、運営の作業を続ける人は登録する。
 
 ---
@@ -57,6 +58,7 @@
 - 入口 = `requireRole()` (`src/lib/auth/helpers.ts`) と、それに委ねる `requireSuperAdmin()` (`src/lib/auth/operator-permissions.ts`)。Next.js のサーバーの運営の全 API (`src/app/**/route.ts`) はこの 2 つ (と、`requireRole` を呼ぶ lib の認可ヘルパー `respondNotSupported`) を通っている (§3.2 の実測) ので、**判定を入口の中に 1 か所差し込む** ことで、API の入口を 1 つも取りこぼさない。
 - 画面: Web の運営の区画は、Server Component の layout / page が `requireRoleForPage` (§13.4) を呼び、2FA が未完了なら MFA の画面へ回す。client component だけで役割を見ていた Web の (support) 区画には server layout を 1 つ足す (§13.4)。モバイルのネイティブの運営の区画 ((super-admin)・(support)) は 2026-10-16 に削除した (#1598) ので、端末の側の区画のゲートは作らない (§16)。アプリのホームのタブ (WebView で開く Web の `/admin`) は Web の画面のゲートを通り、6 桁の確認だけはネイティブの確認画面に頼む (WebView の Cookie のセッションはネイティブのセッションの借り物なので、Web の側で verify しない §16.4)。
 - DB (PostgREST / RPC) を本人の JWT で直接呼ぶ経路: 運営ロールの条件を持つ RLS のポリシーの運営の枝と、運営ロールを確かめる SECURITY DEFINER の関数が、判定の関数 `public.operator_mfa_satisfied()` (JWT の `aal` と `auth.mfa_factors` を読む) を通す (段 E §11.4)。
+- 別の super_admin による解除 (段 C): 対象の TOTP とバックアップコードを消す前に、service_role だけが呼べる SQL の関数 `public.operator_mfa_end_sessions(uuid)` で対象の全セッション (`auth.sessions` の行) を終える (§11.5・§14.7)。GoTrue の管理 API には利用者 ID で終える経路が無く (§3.2)、`admin.mfa.deleteFactor` だけでは対象のセッションが終わらない (§3.1) ため。回復 (本人) は本人の token で `admin.signOut(token, 'global')` のまま (§7.1)。
 - 入口を取りこぼしていないことは、ソース走査の contract テスト (§20) と、DB のカタログの機械検査 (§20.1) が毎回確かめる (Web の route・Web の画面・RLS のポリシー・SECURITY DEFINER の関数)。アプリの運営画面は WebView で開く Web の画面なので、Web の画面の検査に入る。ネイティブの画面には運営の操作が 0 件で (§3.2)、走査しない (§20 ⑨ の欠番の理由)。
 
 ## 2. 関連要件・正典
@@ -79,19 +81,24 @@
 1. **段 A のマージ** (#1715・`d8e0223a`): `src/lib/auth/mfa/{policy, backup-codes, factors, schemas, audit, assurance, client, route-support}.ts`・`/api/auth/mfa/{status, enroll, verify, recover}` の 4 route・`/settings/security/mfa/*` の 4 画面・部品・テスト・migration `20261016230000_operator_mfa_backup_codes.sql` (対の `supabase/rollbacks/20261016230000_operator_mfa_backup_codes.down.sql`) が main にある (§0.2・§22.1・§22.3 の段 A の行は「済」)。よって §3.1 の「MFA を参照する本番コードは 0 件」は段 A のマージの前の事実で、§3.2 の `requireRole(<定数>)` は 8 (7 ファイル) になった (4 route の `requireRole(MFA_REQUIRED_ROLES)` が増えた分。運営の入口の 4 は変わらない)。`requireRole` (`src/lib/auth/helpers.ts`) にはまだ AAL の判定が無い (段 B)。段 A の 4 route は段 B の前なので引数 1 つで呼ぶ (§0.2)。
 2. **#1598 のネイティブの画面の削除** (#1733・`1c726fbb`): §3.2 の (super-admin)・(support)・(org) の行のとおり。
 3. **行の移動**: `lib/supabase/middleware.ts` の `resolveOnboardingRedirect` の呼び出しが 422 → 431 行目・`src/lib/native-auth-bridge.ts` の `NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER` が 61 → 66 行目 (段 A が `requestNativeMfaVerify` / `isNativeBridgedSession` を足したため)。§3.2・§8 の行番号は直した。`supabase/migrations` の最大の番号は `20261016230000` (段 A の migration)。
-4. **段 E の母集合 (付録 A の 58 本) が動いた**: `supabase/migrations` の実体で数えると、#1690 (`6baa2f33`) が `gdpr_select`・`gdpr_update` を消し (表を service_role 専用にした)、#1711 (`309dae0f`) が `personal_subscriptions_insert`・`personal_subscriptions_update` を消して運営だけの `personal_subscriptions_insert_admin`・`personal_subscriptions_update_admin` を作り、#1709 (`cd4d4f17`) が運営の `data_subject_requests_select_operator` を新設した (4 本が消え 3 本が増え、57 本。本番の `pg_policies` では確かめていない)。付録 A の 58 本の `ALTER POLICY` のうち消えた 4 本はそのままでは流せない。本書の v1.7 の改定 (段 D) の範囲の外なので付録 A は取り直さず、段 E の実装の前に母集合を取り直す (§27 Q-15)。
+4. **段 E の母集合 (付録 A の 58 本) が動いた**: `supabase/migrations` の実体で数えると、#1690 (`6baa2f33`) が `gdpr_select`・`gdpr_update` を消し (表を service_role 専用にした)、#1711 (`309dae0f`) が `personal_subscriptions_insert`・`personal_subscriptions_update` を消して運営だけの `personal_subscriptions_insert_admin`・`personal_subscriptions_update_admin` を作り、#1709 (`cd4d4f17`) が運営の `data_subject_requests_select_operator` を新設した (4 本が消え 3 本が増え、57 本。本番の `pg_policies` では確かめていない)。v1.7 ではこの動きを付録 A に反映せず Q-15 に置いたが、**v1.8 で本番の `pg_policies` を読み取り (2026-10-16)、#1736 (`20261016238000`。`"Admins can create audit logs"` を消し `audit_logs_insert_admins` を作り直した) の分も含めて 56 本に取り直した** (付録 A。指紋は A.4)。
 
 設計ゲート R2 で origin/main `2d90460e` (2026-10-16) と突き合わせた: `b675073e` からの差は #1740 (#1598 で削除した画面への設計書の注記)・#1741 / #1742 (別の設計書)・#1737 (メールの送信待ち `email_outbox` の DB 層)・#1743 (Next を 15.5 から 16.4.1 へ。ESLint 9)。本書の数 (上の段落の数と 1.〜4.) と `file:line` (`lib/supabase/middleware.ts:431`・`src/lib/native-auth-bridge.ts:66`・`src/lib/auth/mfa/policy.ts:15` など) は変わらない: #1737 の新しいポリシー `email_outbox_deny_client_access` は anon / authenticated を拒むだけで運営ロールを見ず、新しい関数・再定義した `prepare_account_deletion` は service_role 専用で運営ロールを見ない (§11.4 の関数 7 本・付録 A に当たらない)。#1743 は middleware の名前を変えず (`src/middleware.ts`・`lib/supabase/middleware.ts` はそのまま)、§3.1 の「Next 15.5」は 16.4.1 になったが、本書が頼る規約 (route・page・layout の `params` を Promise で受ける §23 N-6・`next/navigation` の `redirect`) は Next 16 でも同じ。変わるのは `supabase/migrations` の最大の番号 (`20261016234000`) だけ。段 B の実装の枝との食い違いは §0.2 の ⚠️ の段 B の枝の段落。
 
+v1.8 (段 C の改定) で origin/main `d17b7b41` (2026-10-16) と突き合わせた: `2d90460e` からの差のうち本書に効くのは #1754 (段 B のマージ・`d17b7b41`) だけで、#1766 (組織チャレンジの画面)・#1767 (依存の更新) は本書の数と `file:line` に触れない。段 B のマージで `requireRole` の AAL の判定・`requireRoleForPage`・`MfaRequiredError`・走査テスト `tests/operator-mfa-entry-points-scan.test.ts`・テストの道具 (`tests/integration/helpers/mfa.ts` の `signInForIntegration` / `promoteToAal2` など) が main にあり (§0.2 の段 B の行は「済」)、§0.2 の ⚠️ の段 B の枝の段落の 2 か所は段 B が本書 v1.7 の後にマージしたので段 B の PR で直し済み (`docs/operations/auth-protection.md` §11 (313 行目〜) の箇条は v1.7 の文・走査テストの 2 行目の見出しは「⑨・⑩ は欠番」。Q-16 は解決)。回復の route は §14.5 のとおり `readRequestAccessToken` の token で `admin.auth.admin.signOut(token, 'global')` を呼ぶ (`src/app/api/auth/mfa/recover/route.ts:109,130`)。`supabase/migrations` は 205 本・最大 `20261016241000` で、本番の台帳 (`supabase_migrations.schema_migrations`) も 205 本・最大 `20261016241000` (2026-10-16 の読み取り。段 C の migration はこれより大きい番号)。段 E の母集合は本番の `pg_policies` の読み取りで 56 本になり、付録 A を取り直した (§3 の ⚠️ の 4. と Q-15 は解決)。
+
 ### 3.1 実装の現状
 
-- 段 A のマージ (#1715・`d8e0223a`) の前は、`mfa` / `totp` / `aal2` / `backup_codes` / `authenticator` / `getAuthenticatorAssuranceLevel` を参照する本番コードは 0 件だった。`b675073e` では段 A の自己サービス (`src/lib/auth/mfa/*` の 8 ファイル・`/api/auth/mfa/{status, enroll, verify, recover}` の 4 route・`/settings/security/mfa/*` の 4 画面・`src/components/auth/mfa/*`。§22.1 の段 A の行) がある。運営の入口のゲート (`requireRole` の AAL の判定・`requireRoleForPage`・`MfaRequiredError`) はまだ無い (段 B)。`docs/operations/auth-protection.md:95` は今も「このアプリは MFA を使っていない」と記す (§24 の行で直す)。
-- `requireRole(allowedRoles)` = `auth.getUser()` → `user_profiles` の `roles / organization_id / frozen_at / unban_at` → 凍結判定 → ロールの交差。AAL も factor も見ない。
-- `requireSuperAdmin()` = `auth.getUser()` → `user_profiles.roles` に `super_admin` があるかだけ。
+- 段 A のマージ (#1715・`d8e0223a`) の前は、`mfa` / `totp` / `aal2` / `backup_codes` / `authenticator` / `getAuthenticatorAssuranceLevel` を参照する本番コードは 0 件だった。`b675073e` では段 A の自己サービス (`src/lib/auth/mfa/*` の 8 ファイル・`/api/auth/mfa/{status, enroll, verify, recover}` の 4 route・`/settings/security/mfa/*` の 4 画面・`src/components/auth/mfa/*`。§22.1 の段 A の行) がある。運営の入口のゲート (`requireRole` の AAL の判定・`requireRoleForPage`・`MfaRequiredError`) は段 B (#1754・`d17b7b41`) で main に入った。段 C の reset の route・`src/lib/auth/mfa/sessions.ts`・関数 `operator_mfa_end_sessions` はまだ無い (本書 v1.8 が設計する)。
+- 段 B の前の `requireRole(allowedRoles)` = `auth.getUser()` → `user_profiles` の `roles / organization_id / frozen_at / unban_at` → 凍結判定 → ロールの交差。AAL も factor も見なかった (段 B で末尾に AAL の判定が付いた §13.1)。
+- 段 B の前の `requireSuperAdmin()` = `auth.getUser()` → `user_profiles.roles` に `super_admin` があるかだけ (段 B で `requireRole(['super_admin'])` に委ねた §13.5)。
 - `lib/supabase/middleware.ts` は凍結・メンテナンス・同意ゲートを扱い (#1689 から /api の分岐でも同意を判定する §3.3)、AAL は見ない。**本書は middleware を変えない** (§7 の裁定)。
 - 本番の `auth.mfa_factors` は 0 行。`user_profiles.roles` の保有行数は admin 9・super_admin 2・support 3・sales 3。finance・org_industrial_doctor・content_moderator は 0 行 (行単位の数。1 人が複数ロールを持つと重複する)。
 - ライブラリ: `@supabase/supabase-js` 2.105.3 (`@supabase/auth-js` 2.105.3)・`@supabase/ssr` 0.1.0・`zod` 4・Next 15.5。auth-js は `auth.getClaims(jwt?)`・`auth.mfa.{enroll, challenge, verify, challengeAndVerify, unenroll, listFactors, getAuthenticatorAssuranceLevel}`・`auth.admin.mfa.{listFactors, deleteFactor}` を持ち、`User.factors` に factor の一覧 (`status: 'verified' | 'unverified'`) が入る。JWT の claim に `aal: 'aal1' | 'aal2'` と `session_id` がある。
-- auth-js の規定 (型定義のコメント): factor を verify すると **その他のセッションはログアウトされ**、現在のセッションが `aal2` に上がる (`mfa.verify` の JSDoc「Upon verifying a factor, all other sessions are logged out and the current session's authenticator level is promoted to `aal2`」)。**これは登録の verify だけでなく、毎回の challenge の verify (ログインごとの 6 桁) でも同じ**: 登録と challenge は同じ API (`challengeAndVerify` = challenge → verify) で、Supabase は verify のたびに同じ利用者の他のセッションを終える (少なくとも aal1 のものは必ず終わる。aal2 の他のセッションが残るかに、本書は依存しない)。運営側の結果は §26.3。`admin.mfa.deleteFactor` の JSDoc は「verified な factor を消すとその利用者の全セッションがログアウトされる」と書くが、**2026-10-16 の段 B の実測では、ローカルの GoTrue v2.183.0 の `admin.mfa.deleteFactor` は本人のセッションを終えなかった** (回復の前の aal1 のセッションが refresh も getUser も通った)。本書はこの挙動に依らない: 回復の route が `admin.auth.admin.signOut(token, 'global')` で本人の全セッションを自分で終える (§14.5)。
+- auth-js の規定 (型定義のコメント): factor を verify すると **その他のセッションはログアウトされ**、現在のセッションが `aal2` に上がる (`mfa.verify` の JSDoc「Upon verifying a factor, all other sessions are logged out and the current session's authenticator level is promoted to `aal2`」)。**これは登録の verify だけでなく、毎回の challenge の verify (ログインごとの 6 桁) でも同じ**: 登録と challenge は同じ API (`challengeAndVerify` = challenge → verify) で、Supabase は verify のたびに同じ利用者の他のセッションを終える (少なくとも aal1 のものは必ず終わる。aal2 の他のセッションが残るかに、本書は依存しない)。運営側の結果は §26.3。`admin.mfa.deleteFactor` の JSDoc は「verified な factor を消すとその利用者の全セッションがログアウトされる」と書くが、**2026-10-16 の段 B の実測では、ローカルの GoTrue v2.183.0 の `admin.mfa.deleteFactor` は本人のセッションを終えなかった** (回復の前の aal1 のセッションが refresh も getUser も通った)。本書はこの挙動に依らない: 回復の route が `admin.auth.admin.signOut(token, 'global')` で本人の全セッションを自分で終える (§14.5)。別の super_admin による解除 (段 C) は対象の token を持たないので、`auth.sessions` の対象の行を消す SQL の関数で終える (§11.5・§14.7)。
+- セッションの終了の実体 (supabase/auth (GoTrue) の master・2026-10-16 の実読。`internal/api/logout.go`・`internal/models/sessions.go`): 本人の `POST /logout?scope=global` は `models.Logout(tx, userId)` = `DELETE FROM auth.sessions WHERE user_id = ?` の 1 文。`scope=others` は `LogoutAllExceptMe` (`WHERE id != ? AND user_id = ?`)、`local` は `LogoutSession` (`WHERE id = ?`)。verify は `InvalidateSessionsWithAALLessThan` (`WHERE user_id = ? AND (aal IS NULL OR aal < 'aal2')`) で同じ利用者の aal1 のセッションを消す (上の「少なくとも aal1 のものは必ず終わる」の実体)。行の無い session_id の JWT は `FindSessionByID` が `SessionNotFoundError` を返し、`/user` など認証つきの経路が `session_not_found` で断る (auth-js の `getUser()` は `user: null` と error)。PostgREST はこの表を見ない (JWT の署名と exp だけ)。
+- GoTrue の管理 API (`/auth/v1/admin/*`) に、利用者 ID でセッションを終える経路は無い (§3.2 の行)。auth-js 2.105.3 の `admin.signOut(jwt, scope)` は `/logout?scope=` を渡された JWT で呼ぶ (対象の JWT が要る)。`admin.mfa` は `listFactors` / `deleteFactor` だけ。
+- 本番 (2026-10-16 の読み取り。Supabase MCP の SELECT だけ): `auth.sessions` の所有者は `supabase_auth_admin`。`postgres` (migration が作る関数の所有者) は `auth.sessions` の SELECT / DELETE・`auth.refresh_tokens` の DELETE・`auth.mfa_factors` の SELECT を持ち、`service_role` と `authenticated` は `auth.sessions` に直接は触れない (SELECT / DELETE とも無し → 関数は SECURITY DEFINER が要る)。`auth.refresh_tokens.session_id`・`auth.mfa_amr_claims.session_id` は `auth.sessions(id)` への外部キーで `ON DELETE CASCADE`。`auth.sessions` の列は `id, user_id, created_at, updated_at, factor_id, aal, not_after, refreshed_at, user_agent, ip, tag, oauth_client_id, refresh_token_hmac_key, refresh_token_counter, scopes`。`auth.sessions` は 1,798 行・利用者のトリガーは 0 本 (cross/16 は未マージ)・verified な factor は 0 行・migration の台帳は 205 本で最大 `20261016241000`。
 
 ### 3.2 ロールと入口の対応 (実測)
 
@@ -102,11 +109,13 @@
 | lib の認可ヘルパー経由 (route は `requireRole` を直接呼ばない) | 1 関数・2 route ファイル (10 handler) | `respondNotSupported` (`src/lib/admin/not-supported.ts:36` で `requireRole(options.roles)`) を、`src/app/api/super-admin/exports/route.ts`・`src/app/api/super-admin/exports/[id]/route.ts` の GET / POST / PUT / PATCH / DELETE が同一ファイルの arrow 関数 `respond` 経由で呼ぶ (`roles: ['super_admin']`)。⚠️ `src/app/api/admin/moderation/queue/route.ts`・`moderation/[type]/[id]/route.ts` は同じファイルから `notSupportedResponse` (認可を持たない 501 の組み立て) だけを import し、認可は自分で `requireRole([...])` を呼ぶ (上の 1 行目に数える) |
 | `requireSuperAdmin()` の呼び出し | 9 | すべて `src/app/api/operator/membership/**/route.ts` |
 | `requireOrgRole()` の呼び出し | 0 | 定義だけ残っている (産業医の専用入口は現状存在しない) |
-| 産業医 (`org_industrial_doctor`) を要求する入口 | 0 | Next.js: `requireRole` の roles (配列リテラル・定数) に `org_industrial_doctor` を含む呼び出し 0 件・`requireOrgRole` 0 件・運営の layout / page も 0 件。DB: `supabase/baseline/prod_schema.sql` と `supabase/migrations/` の RLS のポリシー・関数の本体に `org_industrial_doctor` の文字列 0 件 (下の 58 本・7 本にも入っていない)。`src/` に出てくるのはロールの型 (`src/lib/auth/types.ts:15`)・ロールの一覧 (`src/lib/admin/users-schemas.ts:94`)・ハンズオンツアーの出し分けの `ADMIN_ROLES` 3 か所 (`src/app/api/handson-tour/complete/route.ts:5`・`src/lib/handson-tour/getStatus.ts:22`・`src/lib/handson-tour/sandbox-eligibility.ts:21`。運営の認可ではない)・`requireOrgRole` の JSDoc のコメント (`src/lib/auth/helpers.ts:124`。呼び出し 0 件の関数の説明で、判定のコードではない) だけ。よって R-1 で対象に入れても、今の時点で AAL2 が掛かる産業医の入口は Next.js にも DB にも無い (空集合)。対象に入れておくのは、将来 `requireRole(['org_industrial_doctor', ...])` で入口を作ったとき (§7.2 ③) に、その入口が既定でゲートを持つため。DB に産業医の条件を持つポリシー・関数を足すときは、段 E の規則 (§11.4。運営の枝に `(SELECT public.operator_mfa_satisfied())` を足し `TO authenticated` にする・関数は役割の判定の直後に判定を足す) に従う (§20.1 のカタログの検査が見張る) |
+| 産業医 (`org_industrial_doctor`) を要求する入口 | 0 | Next.js: `requireRole` の roles (配列リテラル・定数) に `org_industrial_doctor` を含む呼び出し 0 件・`requireOrgRole` 0 件・運営の layout / page も 0 件。DB: `supabase/baseline/prod_schema.sql` と `supabase/migrations/` の RLS のポリシー・関数の本体に `org_industrial_doctor` の文字列 0 件 (下の 56 本・7 本にも入っていない)。`src/` に出てくるのはロールの型 (`src/lib/auth/types.ts:15`)・ロールの一覧 (`src/lib/admin/users-schemas.ts:94`)・ハンズオンツアーの出し分けの `ADMIN_ROLES` 3 か所 (`src/app/api/handson-tour/complete/route.ts:5`・`src/lib/handson-tour/getStatus.ts:22`・`src/lib/handson-tour/sandbox-eligibility.ts:21`。運営の認可ではない)・`requireOrgRole` の JSDoc のコメント (`src/lib/auth/helpers.ts:124`。呼び出し 0 件の関数の説明で、判定のコードではない) だけ。よって R-1 で対象に入れても、今の時点で AAL2 が掛かる産業医の入口は Next.js にも DB にも無い (空集合)。対象に入れておくのは、将来 `requireRole(['org_industrial_doctor', ...])` で入口を作ったとき (§7.2 ③) に、その入口が既定でゲートを持つため。DB に産業医の条件を持つポリシー・関数を足すときは、段 E の規則 (§11.4。運営の枝に `(SELECT public.operator_mfa_satisfied())` を足し `TO authenticated` にする・関数は役割の判定の直後に判定を足す) に従う (§20.1 のカタログの検査が見張る) |
 | 運営の layout (Server Component) | 3 | `src/app/admin/layout.tsx` (admin / super_admin / content_moderator)・`src/app/super-admin/layout.tsx` (super_admin)・`src/app/(operator)/operator/membership/layout.tsx` (super_admin) |
 | layout の外で `requireRole` を直接呼ぶ page | 11 | `admin/page.tsx`・`admin/announcements`・`admin/moderation`・`admin/moderation/[type]/[id]`・`admin/organizations`・`admin/users`・`admin/users/[id]`・`admin/users/[id]/freeze`・`super-admin/coupons`・`super-admin/feature-packages`・`super-admin/plans` |
 | client component だけで役割を見る Web の運営の区画 | 1 layout・3 page | `src/app/(support)/layout.tsx` (`"use client"`。`supabase.auth.getUser` と `user_profiles.roles` に `admin` / `super_admin` / `support` があるかを見るだけで、`requireRole` を通らない)。配下は `src/app/(support)/support/page.tsx` (`GET /api/support/stats`)・`support/inquiries/page.tsx` (`/api/admin/inquiries`・`/api/admin/inquiries/{id}`)・`support/users/page.tsx` (`GET /api/admin/users`・`/api/support/users/{id}`・`/notes`) の client component。本書は `src/app/(support)/support/layout.tsx` (Server Component) を新設して守る (§13.4) |
-| DB を本人の JWT で直接呼ぶ入口 (PostgREST / RPC) | ポリシー 58・関数 7 | RLS のポリシー: `pg_policies` (public) のうち、`qual` / `with_check` に `roles` と運営ロールの文字列 (`'super_admin'::text` / `'admin'::text` / `'finance'::text` / `'org_industrial_doctor'::text`) を持つもの 58 本 (`supabase/baseline/prod_schema.sql` の `CREATE POLICY` 242 本のうち 58 本。ベースラインより後の migration は、この 58 本に触れていない。本番の `pg_policies` も同じ 58 本で、57 本が `TO public`・`tickets_insert_staff` だけが `TO authenticated`)。一覧は付録 A。組織の中の役割 (`org_role` の `'admin'::org_role_enum`) だけを見るポリシー 6 本 (`membership_audit_select_admin`・`org_license_pools_update_admin`・`org_invites_insert_admin`・`org_invites_select_admin`・`org_invites_update_admin`・`organizations_update_admin`) は運営ロールの判定ではないので入らない。関数: public の SECURITY DEFINER で `authenticated` が EXECUTE できるもののうち、本体で `user_profiles.roles` の運営ロールを確かめる 7 本 (`admin_set_user_roles`・`list_families_with_inactive_representative`・`list_orgs_with_inactive_owner`・`operator_force_dissolve_org`・`operator_force_owner_transfer` は `supabase/baseline/prod_schema.sql`、`operator_force_dissolve_family`・`operator_force_representative_transfer` は `supabase/migrations/20261008090100_family_lock_order.sql` が最新の定義)。Next.js の route がこの 7 本を呼ぶときは、本人の client (`createClient()`) で呼ぶ (例: `src/app/api/operator/membership/family/[id]/dissolve/route.ts:63-66`)。`apply_coupon` は `super_admin` の文字列を持つが `authenticated` / `anon` が EXECUTE できない (service_role 専用) ので入らない。扱いは段 E (§11.4) |
+| DB を本人の JWT で直接呼ぶ入口 (PostgREST / RPC) | ポリシー 56・関数 7 | RLS のポリシー: `pg_policies` (public) のうち、`qual` / `with_check` に `roles` と運営ロールの文字列 (`'super_admin'::text` / `'admin'::text` / `'finance'::text` / `'org_industrial_doctor'::text`) を持つもの 56 本 (2026-10-16 の本番の `pg_policies` の読み取り。53 本が `TO public`・3 本 (`audit_logs_insert_admins`・`data_subject_requests_select_operator`・`tickets_insert_staff`) が `TO authenticated`。ベースライン `supabase/baseline/prod_schema.sql` の 58 本から、#1690 (`gdpr_select`・`gdpr_update`)・#1711 (`personal_subscriptions_insert`・`personal_subscriptions_update`)・#1736 (`"Admins can create audit logs"`) が 5 本を消し、#1711 (`personal_subscriptions_insert_admin`・`personal_subscriptions_update_admin`)・#1709 (`data_subject_requests_select_operator`) が 3 本を作り、#1736 が `audit_logs_insert_admins` を作り直した。指紋は付録 A.4)。一覧は付録 A。組織の中の役割 (`org_role` の `'admin'::org_role_enum`) だけを見るポリシー 6 本 (`membership_audit_select_admin`・`org_license_pools_update_admin`・`org_invites_insert_admin`・`org_invites_select_admin`・`org_invites_update_admin`・`organizations_update_admin`) は運営ロールの判定ではないので入らない。関数: public の SECURITY DEFINER で `authenticated` が EXECUTE できるもののうち、本体で `user_profiles.roles` の運営ロールを確かめる 7 本 (`admin_set_user_roles`・`list_families_with_inactive_representative`・`list_orgs_with_inactive_owner`・`operator_force_dissolve_org`・`operator_force_owner_transfer` は `supabase/baseline/prod_schema.sql`、`operator_force_dissolve_family`・`operator_force_representative_transfer` は `supabase/migrations/20261008090100_family_lock_order.sql` が最新の定義)。Next.js の route がこの 7 本を呼ぶときは、本人の client (`createClient()`) で呼ぶ (例: `src/app/api/operator/membership/family/[id]/dissolve/route.ts:63-66`)。`apply_coupon` は `super_admin` の文字列を持つが `authenticated` / `anon` が EXECUTE できない (service_role 専用) ので入らない。扱いは段 E (§11.4) |
+| GoTrue の管理 API (`/auth/v1/admin/*`) で、利用者 ID から全セッションを終える経路 | 0 | supabase/auth (GoTrue) の master (2026-10-16 の実読) の `internal/api/api.go` の `/admin` の経路: `audit` (GET)・`users` (GET / POST)・`users/{user_id}` (GET / PUT / DELETE)・`users/{user_id}/factors` (GET)・`users/{user_id}/factors/{factor_id}` (DELETE / PUT)・`users/{user_id}/passkeys` (GET / DELETE)・`generate_link` (POST)・`sso/providers`・`oauth/clients`・`custom-providers`。sessions / logout の経路は無い。`/logout` は本人の認証つき (`requireAuthentication`) の経路だけ。段 C は、GoTrue が `/logout?scope=global` で行う 1 文 (`DELETE FROM auth.sessions WHERE user_id = ?`) を service_role だけが呼べる関数にする (§11.5) |
+| `auth.sessions` の行を消す既存の関数・トリガー (origin/main) | 0 / 0 | origin/main `d17b7b41` の `supabase/migrations`・`supabase/baseline/prod_schema.sql` に `auth.sessions` を DELETE する文は無く (読むのは `20261010150000` の DAU の集計だけ)、本番の `auth.sessions` に利用者のトリガーは 0 本 (2026-10-16 の読み取り)。cross/16 (#1720・PR #1757・未マージ) が `auth_session_revoke(uuid)` (本人の 1 セッション。SECURITY DEFINER・`search_path = ''`・`DELETE FROM auth.sessions`)・`expire_idle_auth_sessions()` (保守) で DELETE し、AFTER INSERT / UPDATE OF `refreshed_at` / DELETE のトリガー 3 本を `auth.sessions` に足す。段 C の関数との関係は §11.5 |
 | 運営向けの route.ts | 26 + 27 + 9 + 3 + 2 | `src/app/api/admin/**` 26・`src/app/api/super-admin/**` 27・`src/app/api/operator/**` 9・`src/app/api/support/**` 3・運営ロールを要求するそれ以外 2 (`src/app/api/announcements/route.ts` の管理系 handler・`src/app/api/comparison/trigger/route.ts`) |
 | 運営ロールの文字列を持つが運営の認可ではない route.ts | 2 | `src/app/(auth)/auth/callback/route.ts:143` (ログイン後の行き先を `/admin` にするかの振り分け)・`src/app/api/handson-tour/complete/route.ts:5` (`ADMIN_ROLES` でツアーの出し分け。`supabase.auth.getUser()` で止める一般の route。`requireRole` を通らない)。§20 の自動の取り込みの除外 (`AUTO_INCLUDE_EXCLUSIONS`) に理由つきで載せる |
 | モバイルの運営画面 ((super-admin)) | 0 | 以前の `apps/mobile/app/(super-admin)/super-admin/{index, admins, settings, feature-flags, database}.tsx` の 5 画面と `_layout.tsx` は、通常の操作で届かないネイティブの画面として 2026-10-16 に区画ごと削除した (#1598)。削除の前は `hasRole('super_admin')` で入り、`index.tsx` (メニューだけ) を除く 4 画面が Bearer で `/api/super-admin/{admins, settings, flags, flags/{key}, db-stats}` と `PUT /api/admin/users/{id}/role` を呼んでいた。段 D は区画のゲートを作らない (§16) |
@@ -148,10 +157,11 @@
 | R-12 | `as any` を使わない。意味のある数値は名前付き定数 (根拠つき)。運用で変えうる値は環境変数で上書きできる | 共通規律 | §12 |
 | R-13 | 既存のテストの道具 (結合・e2e・単体のモック) が、運営のセッションを AAL2 で作れる | §3.4 | §22.4 / §23 |
 | R-14 | 既存の番兵 (走査テスト) に反応するものを列挙し、直し方と段を決める | 設計ゲートの要件 | §23 |
+| R-15 | 別の super_admin による解除 (段 C) は、対象の TOTP とバックアップコードを消す前に対象の全セッションを終える (盗まれた端末などに残る対象の aal2 のセッションが、解除の後も運営の入口を通らない)。終えた後、対象の既存の access token / refresh token は運営の API で 401 になり refresh できない | Issue #1707 (段 C)。理由の事実: `admin.mfa.deleteFactor` だけでは対象のセッションが終わらない (§3.1 の 2026-10-16 の実測)・段 B の門は aal2 を factor の有無を見ずに通す (P-3)・回復 (本人) は自分の token で `admin.signOut` を呼べるが段 C は対象の token を持たない | §7.1 / §11.5 / §12.6 / §14.7 / §21.4 M-5 / §21.9 S-32 |
 
 ---
 
-## 5. ユーザーシナリオ (31 本。うち S-10・S-22 は欠番で、使うのは 29 本)
+## 5. ユーザーシナリオ (36 本。うち S-10・S-22 は欠番で、使うのは 34 本)
 
 | # | 誰が | 何をする | 期待 |
 |---|---|---|---|
@@ -161,7 +171,7 @@
 | S-4 | support だけのロール | ログイン → `/admin/users` | 今までどおり (MFA は求めない。claims も読まない) |
 | S-5 | 未登録の admin (猶予中 `OPERATOR_MFA_ENFORCE_FROM` が未来) | `/admin` | 通る。画面上部に「MM/DD HH:mm までに認証アプリを登録」のバナー。日時を過ぎたら S-1 と同じ |
 | S-6 | 登録済みの admin (端末を紛失) | ログイン → verify 画面で「バックアップコードを使う」→ `/settings/security/mfa/recover` に 1 個入れる | コードが消費され、回復の route が全セッションを終了し、TOTP の factor と残りのコードが全部消える → `/login?next=/settings/security/mfa/setup` → 再ログイン → 登録 (S-1 の後半) |
-| S-7 | バックアップコードも無い admin | 別の super_admin に依頼。super_admin は `/admin/users/{id}` の「二段階認証を解除」で理由と本人確認の方法を書いて実行 | 対象の factor とコードが消え、監査ログに `super_admin.mfa.reset` (critical)。対象は全セッション終了 → 再ログイン → 登録 |
+| S-7 | バックアップコードも無い admin | 別の super_admin に依頼。super_admin は `/admin/users/{id}` の「二段階認証を解除」で理由と本人確認の方法を書いて実行 | 監査ログに `super_admin.mfa.reset` (critical) → 対象の全セッションが終わる (route が SQL の関数 `operator_mfa_end_sessions` で `auth.sessions` の対象の行を消す。盗まれた端末に残る aal2 のセッションも) → 対象の factor とコードが消える。対象は次の要求で 401 → 再ログイン → 登録 |
 | S-8 | 登録済みの super_admin (AAL2) | `/settings/security/mfa` で「バックアップコードを再発行」 | 旧コードは全部無効、新しい 10 個が 1 回だけ表示。監査 `admin.mfa.backup_codes_regenerate` |
 | S-9 | 登録済みの admin (AAL2) が認証アプリを変えたい | `/settings/security/mfa` で「認証アプリを解除」→ 続けて登録 | 解除で factor とコードが消え、セッションは aal1 に戻る (refresh) → 登録画面へ → 新しい factor で登録 |
 | S-10 | (欠番) | — | モバイルの super_admin がネイティブの (super-admin) の区画を開く場面だった。ネイティブの運営の区画 (super-admin)・(support) は、通常の操作で届かない画面として 2026-10-16 に区画ごと削除した (#1598) ので、この場面は無い (アプリの運営画面は S-26・S-27 のホームのタブの WebView)。番号は振り直さない |
@@ -186,6 +196,11 @@
 | S-29 | 登録済みの admin (aal1 のセッション・段 E の後) | 一般の利用者として、自分の問い合わせ (`inquiries` の自分の行) を本人の JWT で PostgREST から読む | 今までどおり読める (本人の行の枝 `user_id = auth.uid()` は判定を通さない)。運営の枝 (全員の問い合わせ) だけが aal2 まで閉じる |
 | S-30 | 未登録の super_admin (猶予中・aal1・段 E の後) | Web の `/operator/membership/families/inactive` を開く (route が本人の client で `list_families_with_inactive_representative` を呼ぶ) | 通る (Web は `pass_grace`、DB の判定は未登録の枝で真 §11.4)。登録すると、次のログインからは aal2 でなければ DB の側でも止まる |
 | S-31 | 未ログインの訪問者 (anon・段 E の後) | 料金の画面が `subscription_plans` を読む | 今までどおり公開・非公開 (`status` が `public` / `private`) のプランが読める (運営の枝は `subscription_plans_select_operator` に分けて `TO authenticated` にし、`subscription_plans_select_public` には判定の関数を入れない §11.4) |
+| S-32 | 攻撃者 (対象の端末を盗み、対象の aal2 のセッションを持っている) | 別の super_admin が対象を reset (S-7) した後、盗んだ端末で `/admin` を開く・Bearer で運営の API を呼ぶ・refresh する | どれも通らない: 画面は `/login?next=`、API は 401、refresh は失敗 (GoTrue が `auth.sessions` にセッションを見つけない)。DB を直接呼ぶ経路 (段 E) だけは access token の exp まで aal2 の claim が残る (refresh はできない。§0.3・Q-17) |
+| S-33 | super_admin | reset を実行したが、対象の全セッションの終了 (RPC) が失敗した | 500。監査行は残る (要求された事実と消す前の数)。factor もコードもセッションも消えていない。対象は U2 のままで、もう一度 reset できる |
+| S-34 | 対象の運営 (スマホのアプリにログイン中) | 別の super_admin の reset の後にアプリを開く | アプリの次の要求か refresh で失効 → 既存のログアウトの処理 (S-25 と同じ) → 再ログイン → 登録はブラウザで (S-27) |
+| S-35 | super_admin | ログイン中のセッションが 0 の対象 (factor は残っている) を reset | 200 (factor とコードは消える。終えたセッションは 0 で失敗ではない)。監査は 1 行 |
+| S-36 | 攻撃者 (anon キーだけ、または運営でない / 運営の JWT) | `rpc/operator_mfa_end_sessions` を PostgREST から直接呼ぶ | 42501 (EXECUTE は service_role だけ)。誰のセッションも終わらない |
 
 ---
 
@@ -208,7 +223,8 @@
                                 │ service_role         ▼
                      ┌──────────▼──────────┐   pass / pass_grace / challenge_required / enrollment_required
                      │ operator_mfa_backup │
-                     │ _codes (SHA-256)    │   super_admin の解除 (段 C): /api/super-admin/admins/{id}/mfa/reset
+                     │ _codes (SHA-256)    │   super_admin の解除 (段 C): /api/super-admin/admins/{id}/mfa/reset → 監査 → rpc operator_mfa_end_sessions
+                     │                     │     (DELETE FROM auth.sessions WHERE user_id = 対象) → admin.mfa.deleteFactor → コード削除
                      └─────────────────────┘   モバイル (段 D): WebView から頼まれた確認を NativeMfaVerifyModal が getAuthenticatorAssuranceLevel で判定
 ```
 
@@ -219,6 +235,7 @@
 - **自己サービスの API のうち AAL1 で使うもの (status / enroll / verify / recover) は `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })`** で AAL の判定だけを外す (ロールは見る。段 A では引数 1 つで呼び、段 B で第 2 引数を足す)。この opt-out は走査テストの許可リストに載せたファイルだけに許す。
 - **モバイル** は、WebView の中の Web の運営画面から確認を頼まれたとき (§16.4)、`NativeMfaVerifyModal` が端末の Supabase client の `mfa.getAuthenticatorAssuranceLevel()` で AAL を見て、AAL1 なら TOTP を求める (`resolveSessionMfaGate`。ロールと猶予は読まない: 頼んだ Web のゲートが判定済み)。ネイティブの運営の区画 (super-admin)・(support) は 2026-10-16 に削除した (#1598) ので、区画のゲートは作らない。ネイティブの画面に運営の操作は無い (§3.2) ので、ネイティブの側のロールの判定と走査は持たない。API 側のゲートは Web と同じ `requireRole` (Bearer の claim を読む) で、ネイティブの画面が運営の API を呼んでも aal1 なら 403 になる。
 - **DB を本人の JWT で直接呼ぶ経路** (段 E) は、判定の関数 `public.operator_mfa_satisfied()` 1 つに閉じる (真 = 呼び出し元が必須ロールを持たない・JWT の `aal` が `aal2`・verified な TOTP factor が無い、のどれか)。運営ロールの条件を持つ RLS のポリシーは、その条件 (`roles` の比較) を `(<条件> AND (SELECT public.operator_mfa_satisfied()))` に置き換え、`TO authenticated` にする (本人の行・公開の枝は変えない)。運営ロールを確かめる SECURITY DEFINER の関数は、役割の判定の直後に `IF NOT public.operator_mfa_satisfied() THEN RAISE EXCEPTION 'OPERATOR_MFA_REQUIRED'` を足す。Web の運営 API は、ゲートを通った後 (aal2 か、未登録の `pass_grace`) にしか本人の client で DB に来ないので、Web の挙動は変わらない。
+- **対象のセッションの終了 (段 C)** は、SQL の関数 `public.operator_mfa_end_sessions(uuid)` 1 つに閉じる (`DELETE FROM auth.sessions WHERE user_id = $1`。GoTrue の `/logout?scope=global` の実体と同じ 1 文。EXECUTE は service_role だけ §11.5)。route は監査の後・factor の削除の前に facade `endUserSessions` (§12.6) で呼ぶ (§14.7)。関数は「誰を終えてよいか」の判定を持たず、判定は route の `requireRole(['super_admin'])`・自分でない・対象の存在の検査に閉じる。回復 (段 B) は本人の token があるので GoTrue の `admin.signOut(token, 'global')` のまま (§7.1)。どちらも Supabase の側で `auth.sessions` の行が消えることで、GoTrue が以後の `getUser()` と refresh を断る (PostgREST の直接の経路は exp まで §0.3)。
 - **アプリの WebView** (ホームのタブの `/admin` など) は Web の画面のゲート (`requireRoleForPage`) をそのまま通る。WebView の Cookie のセッションはネイティブのセッションの借り物 (§3.2) なので、Supabase のセッションの token を発行し直す操作 (verify・unenroll の後の refresh) を Web の側でしない: WebView の中の MFA の画面は 6 桁の欄を出さずにネイティブへ `{ type: 'mfa-verify-required' }` を送り、ネイティブが自分のセッションで verify してから WebView を読み込み直す。登録・回復・設定の画面は「ブラウザで」の案内だけ。サーバーも借り物のセッションでの verify / factor 削除を 409 で断る (§16.4)。
 
 ### 6.2 トレース (構造で手で走らせた結果)
@@ -231,7 +248,7 @@
 | S-4 | `/admin/users` | roles=[support] → required=false → `not_required` (claims を読まない) | 今までどおり |
 | S-5 | `/admin` | required → aal1 → verified 無し → `now < enforceFrom` → `pass_grace` → `actor.assurance.decision='pass_grace'` → layout が `<MfaGraceBanner enforceFrom>` を描く | 通る + バナー |
 | S-6 | verify 画面 → recover 画面 | `POST /api/auth/mfa/recover {code}` → `requireRole(REQUIRED, {assurance:'session'})` → rate limit → `admin.mfa.listFactors` (消費の前に読む。読めなければ 500 でコードを消費しない) → `consumeBackupCode` (UPDATE ... WHERE used_at IS NULL RETURNING = 1 行) → `admin.auth.admin.signOut(token, 'global')` (本人の全セッションを終える) → `admin.mfa.deleteFactor` ×全 factor → `deleteBackupCodes(user)` → 監査 `admin.mfa.recover` (warn。消費の後は途中で失敗しても書く §17.2) → 200 `{ ok:true, next:'/login?next=...' }`。route が全セッションを終えているので画面は `/login` へ | 再ログイン → S-1 の後半 |
-| S-7 | `/admin/users/{id}` の解除 | `POST /api/super-admin/admins/{id}/mfa/reset {reason, identity_check, identity_confirmed}` → `requireRole(['super_admin'])` (AAL2 必須) → self なら 403 → 本文 (400) → 対象の profile を service_role で読む (無ければ 404) → 消す前の数を読む: `admin.auth.admin.mfa.listFactors({ userId: id })` (全 factor) と `countRemainingBackupCodes(admin, id)` (未使用の残数)。どちらかを読めなければ 500 で、監査も削除もしない → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` = 読んだ factor の数・`backup_codes_before` = 未使用の残数) を削除より **先に** `recordMfaAudit` で書く (`ok` が false なら 500 で何もしない) → 読んだ factor を `deleteFactor` ×n → `deleteBackupCodes` → 200 `{ data: { user_id, factors_deleted, backup_codes_deleted } }` | 対象は全セッション終了 → 再ログイン → 登録 |
+| S-7 | `/admin/users/{id}` の解除 | `POST /api/super-admin/admins/{id}/mfa/reset {reason, identity_check, identity_confirmed}` → `requireRole(['super_admin'])` (AAL2 必須) → self なら 403 → 本文 (400) → 対象の profile を service_role で読む (無ければ 404) → 消す前の数を読む: `admin.auth.admin.mfa.listFactors({ userId: id })` (全 factor) と `countRemainingBackupCodes(admin, id)` (未使用の残数)。どちらかを読めなければ 500 で、監査も削除もしない → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` = 読んだ factor の数・`backup_codes_before` = 未使用の残数) を削除より **先に** `recordMfaAudit` で書く (`ok` が false なら 500 で何もしない) → **対象の全セッションを終える** `endUserSessions(sessions, id)` (§12.6 → RPC `operator_mfa_end_sessions` = `DELETE FROM auth.sessions WHERE user_id = id` §11.5。失敗なら 500 で factor もコードも消さない) → 読んだ factor を `deleteFactor` ×n → `deleteBackupCodes` → 200 `{ data: { user_id, factors_deleted, backup_codes_deleted } }` | 対象は全セッション終了 (盗まれた端末の aal2 も) → 次の要求で 401 → 再ログイン → 登録 |
 | S-8 | `/settings/security/mfa` | `POST /api/auth/mfa/backup-codes` → `requireRole(REQUIRED)` (既定 = AAL2) → `issueBackupCodes` (DELETE 全行 → INSERT 10) → 監査 (発行に失敗しても書いて 500 §17.2) → 200 `{ backup_codes: [...] }` | 1 回表示 |
 | S-9 | 同上 | `DELETE /api/auth/mfa/factors/{id}` → `requireRole(REQUIRED)` (AAL2) → id が本人の verified な TOTP factor か (`isVerifiedTotpFactorId(user, id)`。違えば 404) → `mfa.unenroll` → `deleteBackupCodes` → `auth.refreshSession()` (aal1 の token に更新。失敗しても 200 で `aal: 'aal2'` §14.4) → 監査 `admin.mfa.unenroll` (warn。unenroll の後は途中で失敗しても書く §17.2) → 200。画面は setup へ | 新しい factor で登録 |
 | S-10 | (欠番。§5) | — | — |
@@ -256,6 +273,11 @@
 | S-26 | アプリのホームのタブ (WebView `/home?mode=app`。Cookie は借り物のセッション = ネイティブと同じ session_id・aal1) | middleware → `/admin` → `admin/layout.tsx` の `requireRoleForPage` → `challenge_required` → `/settings/security/mfa/verify?next=%2Fadmin` → verify の page: `useInNativeWebView()` = `'in_app'` → `<NativeAppMfaNotice kind="verify">` が描画の後に `requestNativeMfaVerify()` (`{ type: 'mfa-verify-required' }` を postMessage) → ネイティブ `WebViewScreen` の `onMessage` → `useWebAuthMessages` の `handleWebAuthMessage` (自分の Web のオリジンか確かめる) → `requestMfaVerify` → `onMfaVerifyRequested(rebridge)` → `NativeMfaVerifyModal`: `resolveSessionMfaGate()` = `verify` → `MfaVerifyGate` → `challengeAndVerify` (ネイティブの client。ネイティブが新しい refresh_token を受け取る) → ネイティブのセッション aal2 → `onVerified` → `rebridge()` (`initialPath` に `_rb` を付けて新しいブリッジのコードを取り直す) → WebView の Cookie = aal2 の access_token → `/home` → `/admin` → `pass` | `/admin` が開く。Web の `/api/auth/mfa/verify` は呼ばれない |
 | S-27 | 同上 (未登録・猶予なし) | `requireRoleForPage` → `enrollment_required` → `/settings/security/mfa/setup?next=%2Fadmin` → setup の page: `'in_app'` → `<NativeAppMfaNotice kind="browser_only">` (enroll を呼ばない) | 案内だけ。ブラウザで登録 → S-25 でアプリのセッションが終わる → 再ログイン → S-26 |
 | S-28 | `POST /api/auth/mfa/verify` (Cookie = 借り物のセッション) | `requireRole(MFA_REQUIRED_ROLES, { assurance: 'session' })` → 本文の検証 → `supabase.auth.getSession()` の session が `isNativeBridgedSession` → 409 `AUTH_2FA_NATIVE_SESSION` (rate limit も `challengeAndVerify` も呼ばない)。`DELETE /factors/{id}` も `requireRole` の後に同じ判定で 409 (`unenroll` を呼ばない) | 409 |
+| S-32 | 盗まれた端末 (対象の aal2 のセッション A) で、reset の後に `/admin` を開く・Bearer で `GET /api/admin/users`・refresh | `requireRoleForPage` / `requireRole` → `getAuthUser` → `supabase.auth.getUser()` → GoTrue の `/user` が `auth.sessions` に A の session_id の行を見つけず `session_not_found` → auth-js は `user: null` と error → `AuthError('AUTH_UNAUTHENTICATED')` → 画面は `/login?next=%2Fadmin`・API は 401。`refreshSession` は GoTrue の `/token?grant_type=refresh_token` が refresh_token の行 (外部キーの CASCADE で消えた) を見つけず失敗。PostgREST を A の access token で直接呼ぶと、署名と exp だけの検査で通り、`operator_mfa_satisfied()` は aal2 で真 (exp まで。§0.3・Q-17) | Web の入口と API は閉じる。DB の直接の経路は exp まで |
+| S-33 | reset で `endUserSessions` が失敗 | 監査の記録 (§14.7 の 6) まで済む → RPC の `error` → `endUserSessions` が固定の文の `Error` を投げる → route の catch → `internalError` (nested) の 500 → `deleteFactor`・`deleteBackupCodes` に進まない | 何も消えない。監査行 1 行。もう一度実行できる |
+| S-34 | 対象のスマホのアプリ (ネイティブのセッション = 借り物の WebView と同じ session_id) | reset の後の次の要求・refresh: ネイティブの `getUser()` / refresh が失効 → `AuthProvider` の既存のログアウトの処理 (S-25 と同じ) → 再ログイン → ホームのタブの WebView → `/admin` → `enrollment_required` → setup の案内 (ブラウザで登録 S-27) | アプリに追加の処理はしない |
+| S-35 | ログイン中のセッションが 0 の対象に reset | 手順は S-7 と同じ。`endUserSessions` は 0 を返し (0 行の DELETE は失敗ではない) → factor・コードの削除 → 200 | 200 |
+| S-36 | `POST /rest/v1/rpc/operator_mfa_end_sessions { p_user_id }` を anon キーだけ・本人 (super_admin の aal2 を含む) の JWT で直接 | EXECUTE が service_role にしか無いので PostgREST が 42501 (関数の本体は動かない)。対象のセッションは残る | 断る |
 
 ---
 
@@ -285,11 +307,18 @@
 | | (b) WebView の中で Web の `/api/auth/mfa/verify` を呼ぶ | 不採用 | 借り物のセッションの token を Web の側で発行し直すことになり、F7-05 の「更新の持ち主はネイティブ 1 つ」に反する (ネイティブの持つ refresh_token が古くなり、ネイティブの次の更新で失敗しうる。Supabase の内部の細部には依存しない判断) |
 | | (c) アプリのモードでは admin / super_admin を `/admin` へ回さない (middleware を変える) | 不採用 | 運営のアプリのホームの表示を変える (#1122 で運営作業を Web に一本化した結果、運営のアプリのホームは `/admin`)。仕様ファイルの範囲の外の挙動の変更で、本書は middleware を変えない (§7.1 のゲートの置き場) |
 | | (d) WebView の中では MFA の画面を止めて「ブラウザで」とだけ案内する | 不採用 | 段 B の後、運営がアプリのホームで運営画面を一切使えなくなる (ネイティブの運営の区画は #1122 からアプリの中に入口が無く、2026-10-16 に区画ごと削除した。#1598) |
-| **DB を本人の JWT で直接呼ぶ経路** (R4 で足した論点。§3.2 の 58 本・7 本) | (a) 判定の関数 `operator_mfa_satisfied()` を 1 つ作り、ポリシーは運営ロールの条件の項だけを `(<条件> AND (SELECT public.operator_mfa_satisfied()))` に置き換えて `TO authenticated` にし、関数は役割の判定の直後に判定を足す | **採用** | 判定が 1 か所 (Web の `decideOperatorAssurance` と同じ規則の DB 版)。本人の行・公開の枝に触れないので、運営が一般の利用者として使う経路は変わらない。置き換えは「運営ロールの条件の項」という機械的に決まる場所だけで、58 本のどれも同じ規則で書ける (付録 A)。`TO authenticated` にするのは、anon に効くポリシーが anon の EXECUTE できない関数を呼ぶと 0 行ではなく 42501 になるため (`tests/integration/security/anon-definer-execute.test.ts` の A2 と、そのファイルの規則「ポリシーを TO authenticated にする」) |
+| **DB を本人の JWT で直接呼ぶ経路** (R4 で足した論点。§3.2 の 56 本・7 本。v1.4 の時点は 58 本) | (a) 判定の関数 `operator_mfa_satisfied()` を 1 つ作り、ポリシーは運営ロールの条件の項だけを `(<条件> AND (SELECT public.operator_mfa_satisfied()))` に置き換えて `TO authenticated` にし、関数は役割の判定の直後に判定を足す | **採用** | 判定が 1 か所 (Web の `decideOperatorAssurance` と同じ規則の DB 版)。本人の行・公開の枝に触れないので、運営が一般の利用者として使う経路は変わらない。置き換えは「運営ロールの条件の項」という機械的に決まる場所だけで、58 本のどれも同じ規則で書ける (付録 A)。`TO authenticated` にするのは、anon に効くポリシーが anon の EXECUTE できない関数を呼ぶと 0 行ではなく 42501 になるため (`tests/integration/security/anon-definer-execute.test.ts` の A2 と、そのファイルの規則「ポリシーを TO authenticated にする」) |
 | | (b) テーブルごとに RESTRICTIVE のポリシーを 1 本足す | 不採用 | RESTRICTIVE はそのテーブルの全ての許可のポリシーに AND で掛かる。登録済みの運営が aal1 のとき、本人の行の枝・公開の枝 (`subscription_plans` の公開のプランなど) まで読めなくなる |
 | | (c) PostgREST の `db_pre_request` で、必須ロールの aal1 の要求を全部断る | 不採用 | 運営が一般の利用者として使う要求 (自分の食事・問い合わせ) まで断る。アプリ (モバイル) は PostgREST を直接呼ぶので、登録済みの運営は 6 桁を入れるまでアプリの一般の画面も使えなくなる |
 | | (d) 範囲外にする (v1.3 まで) | 不採用 | Issue #1176 の本文の脅威 (パスワードだけの super_admin が org / family の強制の移譲・解散を行える) が、`authenticated` に EXECUTE のある `operator_force_*` を PostgREST から直接呼ぶ経路で残る |
 | | (e) 未登録の運営も DB で止める (猶予の日時を DB に持つ) | 不採用 | verified な factor を持たない利用者は aal1 のまま factor を登録できるので、パスワードだけを知る人はその場で aal2 になれる。止めても守りは強くならず、猶予の日時が環境変数と DB の 2 か所になる (§0.3) |
+| **別の super_admin による解除 (段 C) で、対象の全セッションを終える手段** (v1.8 で足した論点。route は対象の token を持たない) | (a) service_role だけが呼べる SECURITY DEFINER の関数 `public.operator_mfa_end_sessions(uuid)` = `DELETE FROM auth.sessions WHERE user_id = $1` (GoTrue の `/logout?scope=global` の実体 `models.Logout` と同じ 1 文。外部キーの CASCADE で `refresh_tokens`・`mfa_amr_claims` も消える) を追加だけの migration で新設し、route が RPC で呼ぶ | **採用** | GoTrue の管理 API に利用者 ID で終える経路が無い (§3.2) ので、GoTrue 自身が行う 1 文をそのまま SQL にする。本番で `postgres` が `auth.sessions` を DELETE できることを確かめた (§3.1)。cross/16 の `auth_session_revoke` (本人の 1 セッション) と同じ作り (SECURITY DEFINER・`search_path = ''`・`auth.sessions` の DELETE)。終えた後の GoTrue の挙動 (`session_not_found`・refresh の失敗) は、回復の `admin.signOut` と同じ (同じ行が消える) |
+| | (b) GoTrue の管理 API (`admin.signOut` / `/admin/users/{id}/...`) | 不可 | 利用者 ID でセッションを終える経路が無い (2026-10-16 の supabase/auth の `api.go`)。`admin.signOut(jwt, scope)` は対象の JWT が要る |
+| | (c) `admin.generateLink` (magiclink) → `verifyOtp` で対象のセッションを作り、その JWT で `admin.signOut(jwt, 'global')` | 不採用 | 運営が対象になりすましてログインする操作になる (auth の監査と cross/16 の履歴に対象のログインが 1 行増え、cross/16 の通知の判定にも載る)。対象のメールアドレスが要る。e2e の道具 (`tests/e2e/helpers/test-session.mjs`) が同じ経路を持つが、本番の route に持ち込まない |
+| | (d) `admin.updateUserById(id, { ban_duration })` で一時的に禁止する | 不採用 | 禁止は refresh を断るだけで既存の access token と `auth.sessions` の行は残り (GoTrue の版で挙動が変わりうる)、禁止の解除の時刻の管理と禁止の記録 (運営画面の凍結と紛らわしい) が要る |
+| | (e) ゲート (P-3) を変え、aal2 でも verified な factor が無ければ `enrollment_required` にする | 不採用 | 盗まれた端末の生きたセッションで、攻撃者がパスワード無しに自分の TOTP を登録して aal2 に戻れる (登録は aal1 / aal2 を問わず本人のセッションでできる)。段 E の DB の判定も aal2 で真のまま。セッションを終えることの代わりにならない |
+| **回復 (段 B・main) の `admin.signOut(token, 'global')` を (a) に揃えるか** | (a) 揃えない。回復は本人の token で GoTrue の `/logout?scope=global`、解除は service_role の RPC | **採用** | token があるときは GoTrue の API (署名を確かめた経路で、GoTrue の `auth.audit_log_entries` にログアウトが残る)、無いときだけ SQL — cross/16 §5 (S-7 の `auth_session_revoke` と S-9 の `/logout?scope=others`) と同じ使い分けで、main の段 B のコードとテスト (`tests/api/auth-mfa-routes.test.ts` の signOut の it・結合 M-4) を変えない。どちらも結果は `auth.sessions` の対象の行の DELETE で同じ (cross/16 のトリガーも同じ `signed_out`) |
+| | (b) 揃える。回復も RPC にする | 不採用 | main の回復の route・`readRequestAccessToken`・`sign_out_sessions` の意味・2 つのテストのファイルを段 C で書き換え、回復が段 C の migration の適用に依存する (migration を当てる前のデプロイで回復が 500 になる)。利点 (終える手段が 1 つ) は、2 つの手段の結果が同じ 1 文 (DELETE) であることで薄い。GoTrue に利用者 ID の経路が入ったら、そのときに両方をそれへ寄せる (Q-20) |
 
 ### 7.2 F の問い — 縁の発生源を消すより単純な構造は無いか
 
@@ -297,6 +326,7 @@
 - 残る縁は 4 つで、いずれも走査テストで閉じる (§20): ① `requireRole` を呼ばない運営 route (今は 0 件。足されたら赤) ② `{ assurance: 'session' }` の opt-out を自己サービス以外で使う (許可リスト外は赤) ③ `requireOrgRole` の新しい呼び出し (ゲートを持たないので赤。産業医の入口は `requireRole(['org_industrial_doctor', ...])` + `profile.organization_id` の絞り込みで作る) ④ Server Component を持たない Web の運営の区画 ((support) は server layout を足して閉じる。`PAGE_ROOTS` の layout が `requireRoleForPage` を呼ぶ)。ネイティブの画面の縁 (⑨ 運営の API を呼ぶ画面・⑩ 区画の `_layout`) は無い: ネイティブの運営の区画を 2026-10-16 に削除し (#1598)、ネイティブの画面に運営の操作は 0 件 (§3.2)。ネイティブの画面が Bearer で運営の API を呼んでも、API の側の `requireRole` が aal1 を 403 にする (画面の確認の案内が無いだけで、守りの穴にはならない)。
 - DB を直接呼ぶ経路の縁は 2 つで、DB のカタログの機械検査 (§20.1) で閉じる: ⑪ 運営ロールの条件を持つポリシーが判定の関数を呼ばない (足したポリシーに判定を付け忘れた) ⑫ 運営ロールを確かめる SECURITY DEFINER の関数が判定を呼ばない。
 - アプリの WebView はゲートの縁を増やさない: WebView の運営画面は Web の `requireRoleForPage` をそのまま通り、確認の手段だけがネイティブに移る (§16.4)。借り物のセッションで Web の verify を呼ぶ縁は、画面の判定 (`useInNativeWebView`) とサーバーの 409 (`isNativeBridgedSession`) の 2 段で閉じ、テスト (§21.2・§21.3) が見張る。
+- 段 C が足す縁は 1 つ: `operator_mfa_end_sessions` を service_role 以外が呼べること。migration の REVOKE / GRANT (§11.5) と、`anon-definer-execute.test.ts` の A1・`EXPECTED_ACL` の行 (§23 N-32)・結合 M-15 で閉じる。関数の本体は DELETE の 1 文で判定を持たない (持たせると「誰を終えてよいか」の判定が route と関数の 2 か所になる)。
 - 「page が `requireRole` を直接呼んで `/login` へ回す」書き方は、MFA の応答で往復するので構造的に禁止し、`requireRoleForPage` に一本化する (走査 ④)。
 
 **構造を確定する。以後の蒸し返しは裁定への差し戻し事由として別に扱う。** (v1.4 の「DB を本人の JWT で直接呼ぶ経路」の行は、R4 の指摘 (Issue #1176 の本文の脅威が DB の経路で残る) を差し戻し事由として扱い、この節に足したもの。ほかの行の裁定は変えない。)
@@ -324,6 +354,8 @@
 
 「自己サービス API」の列は、借り物でないセッション (ブラウザの Cookie・Bearer) のもの。アプリの WebView の借り物のセッションでは、`POST /verify` と `DELETE /factors/{id}` が 409 `AUTH_2FA_NATIVE_SESSION` になる (§14.3・§14.4・§16.4)。status / enroll / recover / backup-codes は借り物かどうかを見ない (WebView の中の画面がそもそも呼ばない §15)。直接呼ばれたときは、借り物でない同じ U・S の行と同じ応答になる (§10 の「借り物の S1 / S2 で enroll / recover / backup-codes を直接呼ぶ」の行。どれも Web の側で token を発行し直さないので、§16.4 の方針に触れない)。
 
+回復 (§14.5)・解除 (他人 §14.7) で終えたセッションの access token は、Web の運営の入口・自己サービス API では `requireRole` の `getUser()` が GoTrue に `session_not_found` で断られ、P-10 (未認証) と同じ応答 (401 / `/login?next=`) になる。PostgREST を直接呼ぶ経路 (段 E) だけは JWT の署名と exp しか見ないので、exp まで P-2 (aal2) の行のまま通る (§0.3・Q-17)。
+
 消費経路の網羅 (書く側・読む側・表示):
 
 | 経路 | 読む | 書く |
@@ -335,7 +367,7 @@
 | `/api/auth/mfa/backup-codes` | — | `operator_mfa_backup_codes` (全削除 → 10 行)・`admin_audit_logs` (発行に失敗しても 1 行 §17.2) |
 | `/api/auth/mfa/factors/{id}` DELETE | factors | Supabase (unenroll・refresh)・`operator_mfa_backup_codes` (全削除)・`admin_audit_logs` (unenroll の成功の後は、続く手順が失敗しても 1 行 §17.2) |
 | `/api/auth/mfa/recover` | factors (`admin.mfa.listFactors`。消費の前)・`operator_mfa_backup_codes` | 同表 (1 行を消費 → 全削除)・Supabase (admin deleteFactor ×n)・`admin_audit_logs` (消費の後は、続く手順が失敗しても 1 行 §17.2) |
-| `/api/super-admin/admins/{id}/mfa/reset` | 対象の profile・factors (`admin.mfa.listFactors`)・`operator_mfa_backup_codes` の未使用の行の数 (`countRemainingBackupCodes`)。どれも監査より前 | `admin_audit_logs` (読み取りの後・削除の前)・Supabase (admin deleteFactor ×n)・`operator_mfa_backup_codes` (使用済みを含む全削除) |
+| `/api/super-admin/admins/{id}/mfa/reset` | 対象の profile・factors (`admin.mfa.listFactors`)・`operator_mfa_backup_codes` の未使用の行の数 (`countRemainingBackupCodes`)。どれも監査より前 | `admin_audit_logs` (読み取りの後・削除の前)・`auth.sessions` (RPC `operator_mfa_end_sessions` で対象の全行を削除。監査の後・deleteFactor の前 §11.5)・Supabase (admin deleteFactor ×n)・`operator_mfa_backup_codes` (使用済みを含む全削除) |
 | 画面 `/settings/security/mfa*` | status API | 上の API 経由だけ (DB に直接触れない) |
 | 設定 `/settings` の「セキュリティ (二段階認証)」の行 | status API (ブラウザのときだけ。アプリの WebView の中では呼ばない §15.2) | — |
 | Web の (support) 区画 (`src/app/(support)/support/layout.tsx`) | `requireRoleForPage` 経由 (上の 1 行目と同じ) | — |
@@ -347,7 +379,7 @@
 | ネイティブの確認画面 (`NativeMfaVerifyModal`。WebViewScreen が出す) | `getAuthenticatorAssuranceLevel`・`listFactors` | Supabase (challengeAndVerify。ネイティブのセッション)・WebView の読み込み直し (新しいブリッジのコード) |
 | アカウントの書き出し (`src/lib/account-export-tables.ts`) | `operator_mfa_backup_codes` は出さない (`ACCOUNT_EXPORT_EXCLUDED`。§23 N-24) | 無し |
 | CSV / 書き出し (運営) | 無し | 無し |
-| PostgREST / RPC を本人の JWT で直接 (段 E) | 運営の枝のポリシー 58 本と 7 本の関数が `operator_mfa_satisfied()` で JWT の `aal` (`auth.jwt()`)・`user_profiles.roles`・`auth.mfa_factors` (verified な totp) を読む | 書き込みの許可も同じ判定に従う (運営の枝の WITH CHECK・7 本の関数の更新)。判定の関数は何も書かない |
+| PostgREST / RPC を本人の JWT で直接 (段 E) | 運営の枝のポリシー 56 本と 7 本の関数が `operator_mfa_satisfied()` で JWT の `aal` (`auth.jwt()`)・`user_profiles.roles`・`auth.mfa_factors` (verified な totp) を読む | 書き込みの許可も同じ判定に従う (運営の枝の WITH CHECK・7 本の関数の更新)。判定の関数は何も書かない |
 | Web の運営 API が本人の client (`createClient()`) で DB を読み書きする (例: `operator_force_*` の RPC・`admin_set_user_roles`) | ゲートを通った後なので、JWT は aal2 か、未登録 (`pass_grace`) の aal1。どちらも判定は真 | 今までどおり |
 
 ---
@@ -362,14 +394,15 @@
 | TOTP の登録 | 無し | `/settings/security/mfa/setup` (QR + 手入力の secret + 6 桁の確認) |
 | ログイン時の challenge | 無し | `/settings/security/mfa/verify?next=` (運営の画面に入るときに回される) |
 | バックアップコード | 無し | 10 個・`operator_mfa_backup_codes` に SHA-256・1 回で無効・AAL2 で再発行。登録の直後に表示できなかったとき (発行の失敗・応答が届かない) は、setup の画面の案内から状態の画面の再発行へ (§15.2) |
-| 紛失時 | 無し | 本人: バックアップコードで TOTP を消して登録し直す。他人: super_admin の解除 API |
+| 紛失時 | 無し | 本人: バックアップコードで TOTP を消して登録し直す。他人: super_admin の解除 API (対象の全セッションを終えてから factor とコードを消す §14.7) |
+| 回復・解除 (他人) の後の、対象の既存のセッション | — (解除の API が無い。回復は段 B で `admin.signOut(token, 'global')`) | 回復は本人の token で GoTrue の `/logout?scope=global`、解除は service_role の RPC `operator_mfa_end_sessions` (§11.5)。どちらも `auth.sessions` の対象の全行が消え、Web の運営の入口・自己サービス API は 401・refresh は失敗。PostgREST の直接の経路 (段 E) は access token の exp まで aal2 の claim が残る (§0.3・Q-17) |
 | /api の規約の同意ゲート (middleware。#1689) | 運営 API は未同意なら route の前に 403 `LEGAL_CONSENT_REQUIRED`。`/api/auth` (prefix) は止めない | 変えない。自己サービスの `/api/auth/mfa/*` は `/api/auth` の prefix に入って止まらず、reset は既存の運営 API と同じく止まる (§3.3) |
 | 監査 | 無し | 5 種の action_type (§17)。書くのは `recordMfaAudit` (§17.1) だけ。reset は削除の前に fail-closed で書く。ほかの 4 種は、監査の起点 (取り消せない操作) が成功した後は、続く手順が失敗しても必ず 1 行書いてから応答する (`failed_step` §17.2) |
 | ログイン後・`/`・`/home` の行き先 (`src/app/(auth)/auth/callback/route.ts:143`・middleware の `resolveOnboardingRedirect` = `lib/onboarding-routing.ts:78-80`) | roles に admin / super_admin があれば `/admin` (AAL を見ない) | 変えない (ロールだけで `/admin` へ振り分ける)。`/admin` に着いた後、`admin/layout.tsx` の `requireRoleForPage` が必須ロールの aal1 を MFA の画面へ回す (振り分けの側で AAL を見ないので、行き先が 2 段になる。U2 の aal1 は `/admin` → `/settings/security/mfa/verify?next=%2Fadmin`) |
 | Web の (support) 区画 | client component がロールだけ見る (admin が AAL1 で開くと、移行後は API の 403 だらけになる) | server layout の `requireRoleForPage` が、必須ロールで AAL1 なら MFA の画面へ回す。support だけの人は今までどおり。ロールの無い人は `/home` (今の client の判定と同じ行き先) |
 | モバイルのネイティブの運営の区画 ((super-admin)・(support)) | (2026-10-16 に区画ごと削除した。#1598) | 作らない (アプリの運営画面はホームのタブの WebView。下の行) |
 | アプリのホームのタブ (WebView の `/home` → `/admin`) | Web の運営画面がロールだけで開く (Cookie は借り物のセッション) | 必須ロールで AAL1 なら、WebView の中の MFA の画面がネイティブに確認を頼み、ネイティブの確認画面で 6 桁 → WebView を読み込み直して開く。未登録は Web と同じく、猶予中は通り (バナー)、猶予を過ぎると「ブラウザで登録」の案内。WebView の中から Web の verify / factor 削除を呼ぶと 409 (§16.4) |
-| DB を直接呼ぶ経路 (PostgREST / RPC) | roles だけ (運営の枝のポリシー 57 本は `TO public`) | 段 E: 運営の枝のポリシー 58 本と関数 7 本が、TOTP を登録済みの必須ロールの運営に aal2 を求める (未登録は通す §0.3)。58 本は `TO authenticated` (`subscription_plans` の公開の枝だけは `subscription_plans_select_public` に残し `TO public`。運営の枝は `subscription_plans_select_operator` に分ける) |
+| DB を直接呼ぶ経路 (PostgREST / RPC) | roles だけ (運営の枝のポリシー 56 本のうち 53 本は `TO public`・3 本は `TO authenticated`) | 段 E: 運営の枝のポリシー 56 本と関数 7 本が、TOTP を登録済みの必須ロールの運営に aal2 を求める (未登録は通す §0.3)。56 本は `TO authenticated` (`subscription_plans` の公開の枝だけは `subscription_plans_select_public` に残し `TO public`。運営の枝は `subscription_plans_select_operator` に分ける) |
 | 同じ運営の他の端末・ブラウザのセッション | 互いに影響しない | 必須ロールの運営がどこかで 6 桁を verify するたびに、他の aal1 のセッションが Supabase に終えられる (§26.3・S-25・Q-11) |
 | 移行 | — | `OPERATOR_MFA_ENFORCE_FROM` 以前は未登録でも通る (バナー)。未設定なら即時 |
 | テストの道具 | aal1 のセッション | 必須ロールなら TOTP を登録・確認して aal2 |
@@ -436,8 +469,9 @@
 | (U2, S2) | factor 削除 (本人の verified な TOTP factor でない id: 他人・存在しない・本人の unverified) | — | 変化なし | 404 `AUTH_2FA_NOT_ENROLLED` (unenroll も監査もしない) |
 | (U1, S2) | token の refresh | — | (U1, S1) または (U1, S2) | Supabase が返す token の `aal` に従う。アプリは追加の処理をしない (どちらになっても入口の判定は P-3 / P-5〜P-7 の行で決まる) |
 | (U1, S2) | ログアウト | — | (U1, S0) | — |
-| (U2, S*) | super_admin の reset (他人) | 実行者の `requireRole(['super_admin'])` が通る (実行者が `pass` = aal2、または未登録で猶予中の `pass_grace`)・自分でない・対象の `user_profiles` がある・対象の factor の一覧と未使用のコードの数を読めた・監査の記録に成功 | **(U1, S0)** | factor の一覧 (`listFactors`) と未使用のコードの数 (`countRemainingBackupCodes`) を読む → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` / `backup_codes_before` はこの 2 つ) → 読んだ全 factor を削除 (全セッション終了) → コード全削除 (使用済みを含む) |
-| (U1, S*) | super_admin の reset (他人) | 同上 | (U1, S0 または S* のまま) | factor (unverified を含む) が 0 でも 200 (削除数 0)。監査は読んだ数 (`factors_before: 0` を含む) で残る |
+| (U2, S*) | super_admin の reset (他人) | 実行者の `requireRole(['super_admin'])` が通る (実行者が `pass` = aal2、または未登録で猶予中の `pass_grace`)・自分でない・対象の `user_profiles` がある・対象の factor の一覧と未使用のコードの数を読めた・監査の記録に成功・全セッションの終了に成功 | **(U1, S0)** | factor の一覧 (`listFactors`) と未使用のコードの数 (`countRemainingBackupCodes`) を読む → 監査 `super_admin.mfa.reset` (critical。details の `factors_before` / `backup_codes_before` はこの 2 つ) → **対象の全セッションを終える** (`endUserSessions` → RPC `operator_mfa_end_sessions` が `auth.sessions` の対象の全行を消す §11.5。盗まれた端末の aal2 のセッションもここで終わる) → 読んだ全 factor を削除 → コード全削除 (使用済みを含む) → 200 (S-7) |
+| (U1, S*) | super_admin の reset (他人) | 同上 | **(U1, S0)** | factor (unverified を含む) が 0 でも、全セッションを終え (0 行でも成功)、200 (削除数 0)。監査は読んだ数 (`factors_before: 0` を含む) で残る (S-35) |
+| (U0, S*) | super_admin の reset (他人) | 同上 (route は対象のロールを見ない。対象の `user_profiles` があれば必須ロールでなくてよい) | **(U0, S0)** | 手順は U1 / U2 と同じで分岐を作らない (§14.7): 全セッションを終え (0 行でも成功)、読んだ factor を削除し (factor が 0 なら削除数 0。ロールの剥奪の後に残った factor とコード (Q-4) があればそれも消える)、コードを全削除 → 200。監査は読んだ数 (`factors_before`・`backup_codes_before`) で 1 行残る。ロールは変えない |
 | (U*, S*) | super_admin の reset | 実行者が規約に未同意 (`LEGAL_CONSENT_ENFORCE=on`。いま有効な版に同意していない) | 変化なし | route の前に middleware が 403 `LEGAL_CONSENT_REQUIRED` (平たい本文 `{ error, code }`。§3.3・#1689。既存の運営 API と同じで、本書は足さない)。route・`requireRole`・AAL の判定に来ないので、監査も削除もしない。`OperatorMfaResetSection` は `mfaErrorMessage` の既定の文を出す (§15.2) |
 | (U1/U2, S1/S2) | 自己サービス API (`/api/auth/mfa/*` の 6 route) を規約に未同意で呼ぶ (`LEGAL_CONSENT_ENFORCE=on`) | — | 同意した利用者の同じ U・S の行と同じ | middleware の同意ゲートの許可リスト (`/api/auth` の prefix) に入るので止めない (§3.3)。応答も副作用も、この表の同じ U・S・操作の行と同じ (画面からは、未同意の運営は先に `/legal-consent` へ回るので呼ばれない) |
 | (U*, S*) | super_admin の reset | 実行者が super_admin でない (ロールの交差で落ちる) | 変化なし | 403 `FORBIDDEN` (例外は `ForbiddenError` の `PERM_DENIED`。本文に `err.code` を出さない §14.8.2)。監査も削除もしない |
@@ -445,8 +479,11 @@
 | (U*, S*) | super_admin の reset (自分の id) | 実行者の `requireRole(['super_admin'])` が通る・`id === actor.id` | 変化なし | 403 `OP_SELF_MODIFY` (S-12・§6.2)。本文の検証より前に断る。監査も削除もしない |
 | (U*, S*) | super_admin の reset (他人) | 本文の形が違う (`identity_confirmed: false`・`reason` の NULL 文字を含む) / 対象の `user_profiles` が無い | 変化なし | 400 `OP_INVALID_INPUT` / 404 `NOT_FOUND`。監査も削除もしない |
 | (U*, S*) | super_admin の reset (他人) | 対象の `user_profiles` の読み取り (DB の error)・factor の一覧 (`listFactors` の error)・未使用のコードの数 (`countRemainingBackupCodes` が投げる) のどれかを読めない | 変化なし | 500 `INTERNAL_ERROR`。監査を書かず、factor もコードも消さない (§14.7) |
-| (U*, S*) | super_admin の reset (他人) | 監査 `super_admin.mfa.reset` の記録に失敗 (`ok` が false) | 変化なし | 500 `INTERNAL_ERROR`。factor もコードも消さない (§14.7) |
-| (U2, S*) | super_admin の reset (他人) | 監査は記録できたが `deleteFactor` か `deleteBackupCodes` が失敗 | 消せたところまで変わる (失敗した所で止まる) | 500 `INTERNAL_ERROR`。監査行 (要求された事実と消す前の数) は残る。失敗は `internalError` が app_logs に残す。もう一度実行すれば残りを消せる (監査はもう 1 行) |
+| (U*, S*) | super_admin の reset (他人) | 監査 `super_admin.mfa.reset` の記録に失敗 (`ok` が false) | 変化なし | 500 `INTERNAL_ERROR`。セッションも factor もコードも消さない (§14.7) |
+| (U*, S*) | super_admin の reset (他人) | 監査は記録できたが、全セッションの終了 (`endUserSessions` の RPC) が失敗 | 変化なし (セッションも factor もコードも残る) | 500 `INTERNAL_ERROR`。監査行は「要求された事実と消す前の数」として残る。失敗は `internalError` が app_logs に残す。対象は同じ U のまま (U2 なら U2) で、もう一度実行できる (S-33) |
+| (U*, S0) (全セッションは終えた後) | super_admin の reset (他人) | 全セッションは終えたが `deleteFactor` か `deleteBackupCodes` が失敗 | 消せたところまで変わる (失敗した所で止まる。セッションは終わっている) | 500 `INTERNAL_ERROR`。監査行は残る。失敗は `internalError` が app_logs に残す。もう一度実行すれば残りを消せる (監査はもう 1 行。セッションの終了は 0 行で成功する) |
+| (U*, S1/S2) の対象のセッション | 別の super_admin の reset が対象の全セッションを終えた (この操作は対象のセッションでの操作ではない) | — | (U1, S0) (factor の削除まで進めば U1。終了の後に factor の削除で止まれば (U2, S0)) | GoTrue が `auth.sessions` に行の無い session_id の JWT を `session_not_found` で断る: Web の運営の入口 (`requireRole` の `getUser()`) は 401 (画面は `/login?next=`)・自己サービスの API も 401・refresh は失敗 (S-32)。アプリは `getUser()` の失効で既存のログアウトの処理 (S-34)。PostgREST / RPC を本人の JWT で直接呼ぶ経路 (段 E) だけは、access token の exp まで aal2 の claim で運営の枝を通る (§0.3・Q-17。refresh はできない) |
+| (anon / U*, S1/S2) | `rpc/operator_mfa_end_sessions` を anon キー・本人の JWT で PostgREST から直接呼ぶ | — | 変化なし | 42501 (EXECUTE は service_role だけ §11.5。S-36) |
 | (U0, S*) | ロールの付与 (必須ロール) | super_admin | (U1, S*) | 次の入口で上の U1 の行 |
 | (U0, S1/S2) | 自己サービス API (status / enroll / verify / recover / backup-codes 再発行 / factor 削除) | — | 変化なし | 403 `PERM_DENIED` (対象ロールでない。P-1・§14.8.1。claims も factor も読まない) |
 | (U0, S1/S2) | 運営の入口 | — | 変化なし | `not_required` (claims を読まない) → ロールの交差の結果のまま (support など必須でない運営ロールは今までどおり通る・運営ロールが無ければ既存の 403 / `/login`。P-1・§3.3) |
@@ -574,7 +611,7 @@ DROP TABLE IF EXISTS public.operator_mfa_backup_codes;
 --    または JWT の aal が aal2、または verified な TOTP factor を持たない (未登録の運営は通す: 未登録の人は aal1 のまま factor を登録できるので、
 --    止めても守りは強くならない。Web の pass_grace の運営 API が本人の client で DB を呼ぶ経路も、ここで通る)。
 -- 2. 運営ロールを確かめる SECURITY DEFINER の関数 7 本に、役割の判定の直後に判定を足す (本文のほかの文は変えない)。
--- 3. 運営ロールの条件を持つ RLS のポリシー 58 本の、その条件の項だけを (<条件> AND (SELECT public.operator_mfa_satisfied())) にし、TO authenticated にする
+-- 3. 運営ロールの条件を持つ RLS のポリシー 56 本の、その条件の項だけを (<条件> AND (SELECT public.operator_mfa_satisfied())) にし、TO authenticated にする
 --    (anon に効くポリシーが anon の EXECUTE できない関数を呼ぶと、0 行ではなく 42501 になるため。tests/integration/security/anon-definer-execute.test.ts の A2)。
 --    subscription_plans_select_public だけは公開の枝を anon が使うので、運営の枝を subscription_plans_select_operator (TO authenticated) に分ける。
 -- 本人の行の枝・公開の枝・組織の役割 (org_role) の枝は変えない。既存のデータを書き換える文は無い。
@@ -647,11 +684,95 @@ COMMENT ON FUNCTION public.operator_mfa_satisfied() IS
 - 呼び出し元のエラーの扱い: Next.js の route はゲート (aal2 か未登録の `pass_grace`) を通った後にしか呼ばないので、`OPERATOR_MFA_REQUIRED` は返らない。返った場合は今の route の `rpcError` の扱い (`internalError` で 500) のまま (route は変えない)。PostgREST を直接呼んだときは HTTP 400 `{ code: 'P0001', message: 'OPERATOR_MFA_REQUIRED' }`。
 - 最新の定義は、マージ直前に origin/main で `git grep -n "FUNCTION public.<名前>\|FUNCTION \"public\".\"<名前>\"" origin/main -- supabase/` を流し、上の表より新しい定義が無いことを確かめる (あれば、その最新のものを写す)。
 
-**4. RLS のポリシー 58 本** — 付録 A の「up」の 57 文と、`subscription_plans_select_public` の分け方の 3 文を、そのまま並べる。57 文の作り方 (機械的に決まる): 本番 (= ベースライン) の `pg_policies` の `qual` / `with_check` を 1 行にした式の中で、運営ロールの条件の項 — `(<user_profiles か up>.roles && ARRAY[...])`・`(ARRAY[...] && <user_profiles か up>.roles)`・`('<ロール>'::text = ANY (<user_profiles か up>.roles))` のどれか — を `(<その項> AND (SELECT public.operator_mfa_satisfied()))` に置き換え、`TO authenticated` を付けた `ALTER POLICY`。項は 1 つの式に 1 つずつ (USING と WITH CHECK を両方持つ 4 本は、それぞれに 1 つ)。本人の行の枝 (`user_id = auth.uid()` など)・公開の枝・組織の役割の枝 (`up.org_role = ANY (...)`) は置き換えない。付録 A の 57 文は、この規則で本番の `pg_policies` から作った文字列と md5 が一致することを確かめてある (2026-10-15)。
+**4. RLS のポリシー 56 本** — 付録 A の「up」の 55 文と、`subscription_plans_select_public` の分け方の 3 文を、そのまま並べる。55 文の作り方 (機械的に決まる): 本番 (2026-10-16 の `pg_policies` の読み取り。付録 A.4 の指紋) の `pg_policies` の `qual` / `with_check` を 1 行にした式の中で、運営ロールの条件の項 — `(<user_profiles か up>.roles && ARRAY[...])`・`(ARRAY[...] && <user_profiles か up>.roles)`・`('<ロール>'::text = ANY (<user_profiles か up>.roles))` のどれか — を `(<その項> AND (SELECT public.operator_mfa_satisfied()))` に置き換え、`TO authenticated` を付けた `ALTER POLICY`。項は 1 つの式に 1 つずつ (USING と WITH CHECK を両方持つ 5 本は、それぞれに 1 つ)。本人の行の枝 (`user_id = auth.uid()` など)・公開の枝・組織の役割の枝 (`up.org_role = ANY (...)`)・`audit_logs_insert_admins` の #1736 の 4 項 (`action_type !~~ 'system.%'` など) は置き換えない。付録 A.2 の 56 文の式は 2026-10-16 の本番の `pg_policies` の式と 1 文字も違わず (A.4 の指紋 `digest_full` が一致)、A.1 の 55 文はその式にこの規則を機械的に当てたもの。
 
-ロールバック (`.down.sql`) は、先頭に同じ `SET LOCAL lock_timeout = '10s';` を置き、1〜4 を逆の順で戻す: (a) 付録 A の「down」の 58 文と `subscription_plans_select_operator` の DROP (b) 7 本の関数を上の表の「最新の定義」のまま (判定の 4 行を足さずに) `CREATE OR REPLACE` で写す (c) 最後に `DROP FUNCTION IF EXISTS public.operator_mfa_satisfied();` (ポリシーは判定の関数への依存が `pg_depend` に記録されるので、(a) の前に落とすと失敗する。7 本の関数は本文の中で呼ぶだけで依存は記録されないが、落とした関数を呼ぶ定義が残らないよう (b) を先にする)。冒頭のコメントに「本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する」を §11.1 の down と同じく書く。
+ロールバック (`.down.sql`) は、先頭に同じ `SET LOCAL lock_timeout = '10s';` を置き、1〜4 を逆の順で戻す: (a) 付録 A の「down」の 56 文と `subscription_plans_select_operator` の DROP (b) 7 本の関数を上の表の「最新の定義」のまま (判定の 4 行を足さずに) `CREATE OR REPLACE` で写す (c) 最後に `DROP FUNCTION IF EXISTS public.operator_mfa_satisfied();` (ポリシーは判定の関数への依存が `pg_depend` に記録されるので、(a) の前に落とすと失敗する。7 本の関数は本文の中で呼ぶだけで依存は記録されないが、落とした関数を呼ぶ定義が残らないよう (b) を先にする)。冒頭のコメントに「本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する」を §11.1 の down と同じく書く。
 
 型の生成物: `src/types/database.types.ts` と `packages/shared/src/database.types.ts` の `Functions` に `operator_mfa_satisfied` (`Args: never`・`Returns: boolean`) が入るよう作り直す (`tests/database-types-migrations-contract.test.ts` の「migration が作った関数 (public・トリガー関数を除く) が Functions にある」§23 N-34)。
+
+### 11.5 段 C — 別の super_admin による解除で、対象の全セッションを終える関数
+
+ファイル: `supabase/migrations/<番号はマージ時に確定>_operator_mfa_end_sessions.sql` と、ロールバック `supabase/rollbacks/<番号はマージ時に確定>_operator_mfa_end_sessions.down.sql` (番号は §11.1 と同じく、マージ直前に origin/main の `supabase/migrations` の最大 (2026-10-16 は `20261016241000`) より大きい値で確定する)。**追加だけ** (関数の新設。表・列・ポリシー・トリガーは触らない。既存のデータを書き換える文は無い)。
+
+**migration (逐語)**:
+
+```sql
+-- migration: <番号はマージ時に確定>_operator_mfa_end_sessions.sql
+-- 運営ロールの MFA (二段階認証): 別の super_admin による解除 (段 C) が、対象の全セッションを終えるための関数
+-- (#1707・#1176。docs/design/cross/12-operator-mfa.md §11.5・§14.7)
+--
+-- GoTrue の管理 API (/auth/v1/admin/*) には「利用者 ID で全セッションを終える」経路が無い (2026-10-16 の supabase/auth の api.go の実読。
+-- admin.signOut(jwt, scope) は対象の JWT が要る)。本人の /logout?scope=global の実体は models.Logout = DELETE FROM auth.sessions WHERE user_id = ?
+-- の 1 文なので、同じ 1 文を service_role だけが呼べる SECURITY DEFINER の関数にする。auth.refresh_tokens と auth.mfa_amr_claims は
+-- session_id の外部キー (ON DELETE CASCADE) で一緒に消える。行の無い session_id の JWT は GoTrue が session_not_found で断る (getUser / refresh が失敗)。
+-- auth.sessions の所有者は supabase_auth_admin。postgres (この関数の所有者) は DELETE でき、service_role と authenticated は直接は触れない
+-- (2026-10-16 の本番の has_table_privilege)。
+-- cross/16 (#1720) の AFTER DELETE のトリガー on_auth_session_deleted が入っていれば、消した行ごとに user_sessions_metadata の revoked_at と
+-- ended_reason = 'signed_out' を刻む (本関数は ended_reason を書かない。GoTrue のログアウトと同じ扱い)。
+-- 誰を終えてよいかの判定 (super_admin・自分でない・対象の存在) は route が済ませる。関数は判定を持たない。
+-- 冪等: CREATE OR REPLACE / REVOKE / GRANT は何度流しても同じ。
+-- 確かめるテスト: tests/operator-mfa-end-sessions-migration-contract.test.ts (文面)・tests/integration/security/operator-mfa.test.ts の M-5・M-15・M-16 (実 DB)・
+--   tests/integration/security/anon-definer-execute.test.ts (EXECUTE の権限)
+-- ロールバック: supabase/rollbacks/<番号はマージ時に確定>_operator_mfa_end_sessions.down.sql
+
+CREATE OR REPLACE FUNCTION public.operator_mfa_end_sessions(p_user_id uuid)
+RETURNS integer
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  v_deleted integer;
+BEGIN
+  IF p_user_id IS NULL THEN
+    RAISE EXCEPTION 'operator_mfa_end_sessions: p_user_id is required' USING ERRCODE = '22023';
+  END IF;
+  -- GoTrue の /logout?scope=global (models.Logout) と同じ 1 文。refresh_tokens・mfa_amr_claims は外部キーの ON DELETE CASCADE で消える
+  DELETE FROM auth.sessions s WHERE s.user_id = p_user_id;
+  GET DIAGNOSTICS v_deleted = ROW_COUNT;
+  RETURN v_deleted;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.operator_mfa_end_sessions(uuid) FROM PUBLIC, anon, authenticated, service_role;
+GRANT EXECUTE ON FUNCTION public.operator_mfa_end_sessions(uuid) TO service_role;
+
+COMMENT ON FUNCTION public.operator_mfa_end_sessions(uuid) IS
+  '運営ロールの MFA の解除 (別の super_admin による) が、対象の全セッション (auth.sessions の user_id の行) を消す。消した行数を返す。service_role 専用。docs/design/cross/12-operator-mfa.md §11.5';
+```
+
+- 戻り値は消した行数 (0 はセッションが無かっただけで失敗ではない S-35)。`p_user_id` が NULL なら `22023` (呼び出し側の誤り。route は検証済みの `id` を渡すので起きない)。
+- EXECUTE は `service_role` だけ (`REVOKE ALL ... FROM PUBLIC, anon, authenticated, service_role` → `GRANT ... TO service_role` は cross/16 の保守の関数と同じ形)。`anon-definer-execute.test.ts` の A1 (anon の EXECUTE が無い) と `EXPECTED_ACL` の 1 行 (§21.8 の段 C の行・§23 N-32) が見張る。PostgREST から anon / authenticated が呼ぶと 42501 (S-36)。
+- `SET search_path = ''` で、名前はすべてスキーマつき。`VOLATILE` (DELETE する)。
+- **cross/16 (#1720・PR #1757。本書の時点で未マージ) との関係**: cross/16 は `auth.sessions` に AFTER INSERT / UPDATE OF `refreshed_at` / DELETE のトリガーを足し、`on_auth_session_deleted` (`public.auth_session_deleted()`) が消えた行ごとに `user_sessions_metadata` の `revoked_at = now()`・`ended_reason = COALESCE(ended_reason, 'signed_out')` を書く (本体の失敗は握って DELETE を止めない)。`ended_reason` の CHECK は `signed_out` / `revoked_by_user` / `idle_expired` の 3 値なので、本関数は `ended_reason` を書かない (値を足すのは cross/16 の改定 §27 Q-18)。結果、解除で終えたセッションは履歴に「ログアウト」(`signed_out`) として残り、回復の `admin.signOut(token, 'global')` (GoTrue の DELETE → 同じトリガー → `signed_out`) と同じ扱いになる。cross/16 が先に main に入っても後に入っても、本関数の文と結果は変わらない (トリガーの有無で `user_sessions_metadata` の行が更新されるかだけが違う)。cross/16 の表 (§8 の行 16「MFA の verify (cross/12)」の並び) に回復・解除の行を足すのは §24。
+- **本番で確かめる手順** (migration を当てた後。読み取りだけ):
+
+```sql
+-- 期待: prosecdef = true・provolatile = 'v'・proconfig = {search_path=}・sr = true・anon = false・authed = false・public_exec = false
+SELECT p.prosecdef, p.provolatile, p.proconfig,
+       has_function_privilege('service_role', p.oid, 'EXECUTE') AS sr,
+       has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+       has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed,
+       EXISTS (SELECT 1 FROM aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) a
+                WHERE a.grantee = 0 AND a.privilege_type = 'EXECUTE') AS public_exec
+FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public' AND p.proname = 'operator_mfa_end_sessions';
+-- 期待: 2 本とも 'c' (CASCADE)
+SELECT conrelid::regclass::text, conname, confdeltype::text
+FROM pg_constraint WHERE contype = 'f' AND confrelid = 'auth.sessions'::regclass;
+```
+
+**ロールバック (`.down.sql`。逐語)**:
+
+```sql
+-- rollback: <番号はマージ時に確定>_operator_mfa_end_sessions.sql
+-- 関数を消す。戻したあとは reset の route (段 C) がセッションの終了 (§14.7 の手順 7) で 500 になり、factor もコードも消さない
+-- ので、アプリ側 (段 C) も一緒に戻す。本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する。
+DROP FUNCTION IF EXISTS public.operator_mfa_end_sessions(uuid);
+```
+
+型の生成物: `src/types/database.types.ts` と `packages/shared/src/database.types.ts` の `Functions` に `operator_mfa_end_sessions` (`Args: { p_user_id: string }`・`Returns: number`) が入るよう作り直す (`tests/database-types-migrations-contract.test.ts` の「migration が作った関数 (public・トリガー関数を除く) が Functions にある」§23 N-34。冒頭の手順)。
 
 ---
 
@@ -985,6 +1106,46 @@ export function isVerifiedTotpFactorId(user: Pick<User, 'factors'>, factorId: st
 
 `HOUR_SEC = 60 * MINUTE_SEC` を名前付き定数として足す (同ファイルの `MINUTE_SEC` / `DAY_SEC` の並び)。
 
+### 12.6 対象のセッションの終了 — `src/lib/auth/mfa/sessions.ts` (段 C)
+
+reset の route (§14.7) だけが呼ぶ。service_role の client の `rpc` だけを使い、client は route から受け取る (`getSupabaseAdmin()`。自前で作らない §23 N-4)。回復の route (§14.5) は本人の token で `admin.auth.admin.signOut(token, 'global')` を呼び、このファイルを使わない (§7.1)。
+
+```ts
+/** reset の route が呼ぶ RPC (段 C の migration が作る関数 §11.5)。sessions.ts はこの名前以外の RPC を呼ばない */
+export const OPERATOR_MFA_END_SESSIONS_RPC = 'operator_mfa_end_sessions';
+/** 投げる Error の固定の文 (PostgREST の文は cause にだけ持つ §23 N-5) */
+export const OPERATOR_MFA_END_SESSIONS_ERROR_MESSAGE = '対象のセッションの終了に失敗しました';
+
+/**
+ * service_role の client の rpc だけを使う (src/lib/auth/login-failures.ts の LoginFailureRpcClient と同じ型。テストでは偽物を渡す)。
+ * route は `const sessions: OperatorSessionRpcClient = { rpc: (fn, args) => admin.rpc(fn, args) };` で包む
+ * (admin = getSupabaseAdmin()。型の生成物に operator_mfa_end_sessions が入っているので admin.rpc の引数が合う §11.5)
+ */
+export interface OperatorSessionRpcClient {
+  rpc(
+    fn: typeof OPERATOR_MFA_END_SESSIONS_RPC,
+    args: { p_user_id: string },
+  ): PromiseLike<{ data: unknown; error: unknown }>;
+}
+
+/**
+ * 対象の全セッションを終える (auth.sessions の user_id の行を全部消す = GoTrue の /logout?scope=global と同じ結果 §11.5)。
+ * 消した行数を返す (0 はセッションが無かっただけで失敗ではない S-35)。
+ * RPC の error と、数でない戻り (型の生成物と食い違う応答) は、固定の文の Error を投げ、元の値を cause に持つ (§13.6)。
+ */
+export async function endUserSessions(admin: OperatorSessionRpcClient, userId: string): Promise<number> {
+  const { data, error } = await admin.rpc(OPERATOR_MFA_END_SESSIONS_RPC, { p_user_id: userId });
+  if (error) throw new Error(OPERATOR_MFA_END_SESSIONS_ERROR_MESSAGE, { cause: error });
+  if (typeof data !== 'number' || !Number.isInteger(data) || data < 0) {
+    throw new Error(OPERATOR_MFA_END_SESSIONS_ERROR_MESSAGE, { cause: data });
+  }
+  return data;
+}
+```
+
+- サーバー専用 (`@/lib/supabase/server` の client を受け取る)。client component から import しない (§15.1 の注意と同じ)。
+- 戻りの数は route が応答にも監査にも入れない (§14.7・Q-19)。単体テストは §21.1 の `mfa-sessions.test.ts`、名前の一致は §21.3 の契約テスト。
+
 ---
 
 ## 13. facade 契約 (公開関数のシグネチャとエラー表)
@@ -1253,7 +1414,7 @@ origin/main (`8c682e42`) の 14 ファイルは、どれも `try { await require
 - 動的なセグメントは `encodeURIComponent` してからパスに入れる (`requireRoleForPage` は `next` 全体をもう一度 `encodeURIComponent` して query に入れる。MFA の画面は `getSafeRedirectPath` で 1 段だけ戻すので、セグメントの中の `/` や `?` がパスを壊さない)。
 - layout と page は同じ要求で並んで描かれ (Next の App Router)、先に `redirect()` した方の `next` が使われる。区画のトップ (layout の `next`) に戻るか、開こうとした画面 (page の `next`) に戻るかのどちらかで、どちらも正しい行き先として扱う。
 - `MfaGraceBanner` を描くのは layout 3 つと (support) の server layout (§13.4.1) だけ。`actor.assurance?.decision === 'pass_grace'` のとき `<MfaGraceBanner enforceFrom={actor.assurance.enforce_from} next={上の表の値} />` を置く。置き場: `admin/layout.tsx` はメインコンテンツの `<header>` の直前、super-admin と (operator) の layout は `<main>` の中の `<div className="p-8 max-w-7xl mx-auto">` の最初の子。super-admin と (operator) の layout は今 `requireRole` の戻り値を受けていないので、`const actor = await requireRoleForPage(...)` にする。
-- 確かめるテスト: §21.1 の `tests/operator-page-guard-wiring.test.tsx` (14 ファイルの値をこの表と突き合わせる)。
+- 確かめるテスト: §21.1 の `tests/operator-page-guard-wiring.test.ts` (14 ファイルの値をこの表と突き合わせる)。
 
 ### 13.5 `src/lib/auth/operator-permissions.ts` — `requireSuperAdmin` (変更・段 B)
 
@@ -1281,6 +1442,7 @@ export async function requireSuperAdmin(): Promise<{ userId: string }> {
 | `requireRoleForPage` | 投げない (redirect) | | 上の例外を回す先に変える (2FA 以外の 403 は `forbiddenPath`、既定 `PAGE_FORBIDDEN_DEFAULT_PATH`)。NEXT_REDIRECT 以外の例外はそのまま投げる |
 | `readSessionAssurance` | `AuthError` | `AUTH_UNAUTHENTICATED` | token 無し・署名無効・sub 不一致 |
 | `issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes` (§12.3) | `Error` (固定の文。`cause` に PostgREST の error) | | DB の失敗のときだけ。`consumeBackupCode` の 0 行 (無い・使用済み・同時に使われた) は例外にせず false。route の扱いは §17.2 (監査の起点より前なら catch で `internalError` の 500。起点の後なら手順を止めて `failed_step` を持ち、監査を書いてから応答する) |
+| `endUserSessions` (§12.6・段 C) | `Error` (固定の文 `OPERATOR_MFA_END_SESSIONS_ERROR_MESSAGE`。`cause` に RPC の error か、数でない戻り) | | RPC の失敗・数でない戻りのときだけ。0 (セッションが無い) は例外にせず 0 を返す。reset (監査の後・fail-closed) は catch で 500 にし、factor もコードも消さない (§14.7) |
 | `recordMfaAudit` (§17.1) | 投げない | | 戻り値は `recordAdminAudit` の `RecordAdminAuditResult` のまま。記録できなければ `{ ok: false, error }` (`error` は本文に入れない §23 N-5)。`ok` を読むのは fail-closed の reset だけ |
 | `src/lib/auth/mfa/client.ts` の `requestMfaApi` と 7 関数 (§15.1) | 投げない | | 通信の失敗・4xx / 5xx・契約の形でない 2xx は `MfaClientFailure` (`{ ok: false, status, code, retryAfterSec }`)。画面は §15.2 の表で分ける |
 | `public.operator_mfa_satisfied()` (SQL・段 E) | 投げない | | `boolean`。真 = 必須ロールなし・aal2・verified な TOTP なし (§11.4) |
@@ -1461,8 +1623,11 @@ export type MfaBackupCodesResponse = z.infer<typeof MfaBackupCodesResponseSchema
 ### 14.7 `POST /api/super-admin/admins/{id}/mfa/reset` (運営の別の人による解除・段 C)
 
 ```ts
+// 置き場: このブロックの定数・Zod・型はすべて src/lib/auth/mfa/schemas.ts に段 C で足す (§22.3。§14 の Zod の置き場と同じ。route と OperatorMfaResetSection はここから import する)
 import { z } from 'zod';
 import { containsNullCharacter, NULL_CHARACTER_ERROR_MESSAGE } from '@/lib/api/null-character';
+
+// route が import する段 C の facade: endUserSessions・OperatorSessionRpcClient は '@/lib/auth/mfa/sessions' (§12.6)
 
 /** 理由の長さの上限 (監査ログの details に入る自由記述。巨大な本文で行を膨らませない) */
 export const MFA_RESET_REASON_MAX_LENGTH = 500;
@@ -1505,12 +1670,16 @@ export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
   4. `const admin = getSupabaseAdmin()`。対象の `user_profiles` を読む (無ければ 404 `NOT_FOUND`・読み取りの失敗は 500)。
   5. **消す前の数を読む (監査の details の材料)**: `admin.auth.admin.mfa.listFactors({ userId: id })` の `data.factors` を `factors` として持つ (状態・種類を問わない全 factor。`error` なら 500)。`const backupCodesBefore = await countRemainingBackupCodes(admin, id)` (未使用 = `used_at IS NULL` の行の数。DB の失敗で投げれば 500 §13.6)。**どちらの失敗でも監査を書かず、何も消さない** (まだ何もしていないので「要求された」行も残さない。失敗は `internalError` が app_logs に残す)。
   6. **監査 `super_admin.mfa.reset` (critical) を削除より先に書く**: `const audit = await recordMfaAudit({ admin, actorId: actor.id, targetUserId: id, action: MFA_AUDIT_ACTIONS.reset, details: { reason: body.reason, identity_check: body.identity_check, factors_before: factors.length, backup_codes_before: backupCodesBefore }, request, routeName: ROUTE_NAME })` (§17.1)。`audit.ok` が false なら 500 `INTERNAL_ERROR` で何も消さない (fail-closed)。
-  7. 5 で読んだ `factors` を 1 つずつ `admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: id })` (`error` が 1 つでもあれば 500)。
-  8. `const backupCodesDeleted = await deleteBackupCodes(admin, id)` (使用済みを含む全行。DB の失敗で投げれば 500)。
-  9. 200 `{ data: { user_id: id, factors_deleted: factors.length, backup_codes_deleted: backupCodesDeleted } }` (`MfaResetResponseSchema`)。
+  7. **対象の全セッションを終える (factor の削除より先)**: `const sessions: OperatorSessionRpcClient = { rpc: (fn, args) => admin.rpc(fn, args) }; try { await endUserSessions(sessions, id); } catch (error) { return internalError(ROUTE_NAME, error, { userId: actor.id, targetId: id }, { shape: 'nested' }); }` (§12.6。RPC `operator_mfa_end_sessions` が `auth.sessions` の対象の行を全部消す §11.5。失敗なら 500 で、factor もコードも消さない。6 の監査行は「要求された事実と消す前の数」として残る)。戻りの数 (終えたセッションの数) は応答にも監査にも入れない (Q-19)。
+  8. 5 で読んだ `factors` を 1 つずつ `admin.auth.admin.mfa.deleteFactor({ id: factor.id, userId: id })` (`error` が 1 つでもあれば 500)。
+  9. `const backupCodesDeleted = await deleteBackupCodes(admin, id)` (使用済みを含む全行。DB の失敗で投げれば 500)。
+  10. 200 `{ data: { user_id: id, factors_deleted: factors.length, backup_codes_deleted: backupCodesDeleted } }` (`MfaResetResponseSchema`)。
+- 7 の後 (セッションが無い) に対象が新しくログインして作ったセッションは終えない (パスワードを知っている本人のログイン。解除の目的は「古いセッションを残さない」ことで、以後のログインを止めることではない)。
 - 5 の後に対象が新しく作った factor (監査と削除の間の数 ms) は消えない。unverified なら対象が次に登録するときに enroll が先に消す (S-20)。verified な factor を作るには対象が 6 桁の verify まで済ませる必要があり、そのときは対象自身が登録し直したことになる。
-- 7・8 で失敗したら 500 (監査行は「要求された」事実と消す前の数として残る。消せたところまで変わった状態で止まる。もう一度実行すれば残りを消せる (監査はもう 1 行)。失敗は `internalError` が app_logs に残す)。
-- 対象が必須ロールでなくても (factor が無くても) 200 (削除数 0。監査は `factors_before: 0` で残る)。
+- 7 を factor の削除より先にする理由は回復 (§14.5) と同じ: 段 B のゲートは aal2 のセッションを factor の有無を見ずに通す (P-3) ので、先に終えないと、盗まれた端末などに残る対象の aal2 のセッションが解除の後も運営の入口を通る (S-32)。route は対象の token を持たないので `admin.signOut` は使えず、`auth.sessions` の対象の行を消す SQL の関数にした (§7.1・§11.5)。終えた後の対象: Web の運営の入口・自己サービスの API は `requireRole` の `getUser()` が GoTrue に `session_not_found` で断られて 401 (画面は `/login?next=`)、refresh は失敗。PostgREST を直接呼ぶ経路 (段 E) だけは access token の exp まで aal2 の claim が残る (回復と同じ。§0.3・Q-17)。
+- 7 で失敗したら 500 で何も消えていない (対象は U2 のまま。もう一度実行できる S-33)。8・9 で失敗したら 500 (セッションは終わっている。監査行は「要求された」事実と消す前の数として残る。消せたところまで変わった状態で止まる。もう一度実行すれば残りを消せる (監査はもう 1 行。セッションの終了は 0 行で成功する)。失敗は `internalError` が app_logs に残す)。
+- 7 は対象の factor が 0 でも行う (S-35。分岐を作らない。終えるセッションが無ければ 0 行で成功)。
+- 対象が必須ロールでなくても (U0) 同じ手順で 200 (route は対象のロールを見ない。§10 の (U0, S*) の行)。factor が無ければ削除数 0 で、監査は `factors_before: 0` で残る。ロールの剥奪の後に残った factor とコード (Q-4) があれば、それも消える。
 - `backup_codes_before` (未使用の残数) と `backup_codes_deleted` (使用済みを含む全行) は数え方が違うので、使用済みの行があれば一致しない (§17)。
 
 ### 14.8 エラーの対応
@@ -1553,7 +1722,7 @@ export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
 | 対象の `user_profiles` が無い | 404 | `NOT_FOUND` |
 | 別オリジン (§14 冒頭の共通) | 403 | `FORBIDDEN_ORIGIN` |
 | 実行者が規約に未同意 (`LEGAL_CONSENT_ENFORCE=on`)。route の前に middleware が返す (§3.3。既存の運営 API と同じで、route は変えない) | 403 | `LEGAL_CONSENT_REQUIRED` (本文は平たい `{ error, code }`。`src/lib/auth/mfa/client.ts` の `failureCodeOf` は平たい形を先に読むので code を取れる) |
-| 対象の profile・factor の一覧・未使用のコードの数を読めない (監査を書かず何もしない)・監査の記録に失敗 (何もしない)・factor / コードの削除に失敗 | 500 | `INTERNAL_ERROR` |
+| 対象の profile・factor の一覧・未使用のコードの数を読めない (監査を書かず何もしない)・監査の記録に失敗 (何もしない)・全セッションの終了 (RPC `operator_mfa_end_sessions`) に失敗 (監査行だけ残り、何も消さない)・factor / コードの削除に失敗 (セッションは終わっている) | 500 | `INTERNAL_ERROR` |
 
 ---
 
@@ -1838,7 +2007,7 @@ export function resetOperatorMfa(userId: string, body: MfaResetBody): Promise<Mf
 | 確認の 6 桁 (verify の `TotpCodeForm`) | `verifyMfaCode({ factor_id: <status の data.factor.id>, code })` | `router.push(next)` → `router.refresh()` | `TotpCodeForm` の中に `mfaErrorMessage(code)` |
 | 回復 `/settings/security/mfa/recover` | `recoverWithBackupCode({ code })` ([回復する] で) | `window.location.assign(getSafeRedirectPath(data.next) ?? '/login')` (回復の route が全セッションを終えているので、ページごと移る) | `mfaErrorMessage(code)` (400 `AUTH_2FA_INVALID`・409 `AUTH_2FA_NOT_ENROLLED`・429 `RATE_LIMITED` など)。500 は、コードを消費した後の全セッションの終了・factor・コードの削除の失敗のことがあり (§14.5)、終了が済んでいれば (factor・コードの削除の失敗) 全セッションが終わっているので、次の操作の 401 で共通の規則どおりログインへ回る。終了の失敗 (`sign_out_sessions`) なら何も消えておらず、画面のまま別のコードでやり直せる |
 | 設定 `/settings` の「セキュリティ (二段階認証)」の行 (段 A) | `useInNativeWebView()` が `'browser'` になったら `getMfaStatus()` を 1 回 (`'undecided'` と `'in_app'` では呼ばず、行も出さない。MFA の設定はブラウザだけ §16) | 行を出す (押すと `router.push('/settings/security/mfa')`) | 行を出さない。401 でも画面を移らない (設定の画面は運営でない利用者も開く。§23 N-36) |
-| `OperatorMfaResetSection` (`/admin/users/{id}`。段 C) | `resetOperatorMfa(userId, { reason, identity_check, identity_confirmed: true })` (確認ダイアログの後) | 「認証アプリ `result.data.data.factors_deleted` 件・バックアップコード `result.data.data.backup_codes_deleted` 件を消しました」 | `mfaErrorMessage(code)` (401 の `UNAUTHORIZED` も文を出すだけ。運営の画面の移動は layout の `requireRoleForPage` が受け持つ。middleware の同意ゲートの 403 `LEGAL_CONSENT_REQUIRED` (§14.8.2) は表に無い code なので既定の文) |
+| `OperatorMfaResetSection` (`/admin/users/{id}`。段 C) | `resetOperatorMfa(userId, { reason, identity_check, identity_confirmed: true })` (確認ダイアログの後) | 「認証アプリ `result.data.data.factors_deleted` 件・バックアップコード `result.data.data.backup_codes_deleted` 件を消しました」 | `mfaErrorMessage(code)` (500 は、監査の後のセッションの終了・factor・コードの削除の失敗のことがある §14.7。何が済んだかは監査と app_logs で見る。もう一度 [解除する] を押してよい (残りを消す)。401 の `UNAUTHORIZED` も文を出すだけ。運営の画面の移動は layout の `requireRoleForPage` が受け持つ。middleware の同意ゲートの 403 `LEGAL_CONSENT_REQUIRED` (§14.8.2) は表に無い code なので既定の文) |
 
 ### 15.3 Web の部品の props と動き
 
@@ -2090,6 +2259,8 @@ export function useWebAuthMessages(currentPath: string, options?: WebAuthMessage
 | `factors_before` | reset | 削除の前に `admin.auth.admin.mfa.listFactors({ userId: id })` が返した factor の数 (状態・種類を問わない。この後に消す数) |
 | `backup_codes_before` | reset | 削除の前の `countRemainingBackupCodes(admin, id)` (未使用 = `used_at IS NULL` の残数。使用済みの行は数えない。応答の `backup_codes_deleted` は使用済みを含む全行なので、一致しないことがある) |
 
+reset は削除の前に書く (fail-closed) ので、監査の後の手順 (全セッションの終了・factor・コードの削除) の結果は details に持たない (終えたセッションの数も入れない Q-19)。何が済んだかは応答 (200 / 500) と app_logs で見る。
+
 ### 17.1 `src/lib/auth/mfa/audit.ts` — 監査の facade (段 A。reset の action と details の型も段 A で置く)
 
 ```ts
@@ -2211,7 +2382,7 @@ export async function recordMfaAudit<A extends MfaAuditAction>(input: RecordMfaA
 | `MFA_AUDIT_ACTIONS.backupCodesRegenerate` | `POST /api/auth/mfa/backup-codes` (§14.6) | `issueBackupCodes` を終えた (成功・失敗のどちらでも) 後・応答の前 | 本人 / 本人 | 読まない |
 | `MFA_AUDIT_ACTIONS.unenroll` | `DELETE /api/auth/mfa/factors/{id}` (§14.4) | `mfa.unenroll` が成功した後の手順 (`deleteBackupCodes` → `refreshSession`) を、最後まで進めたか止めた後・応答の前 | 本人 / 本人 | 読まない |
 | `MFA_AUDIT_ACTIONS.recover` | `POST /api/auth/mfa/recover` (§14.5) | `consumeBackupCode` が true の後の手順 (`deleteFactor` ×n → `deleteBackupCodes`) を、最後まで進めたか止めた後・応答の前 | 本人 / 本人 | 読まない |
-| `MFA_AUDIT_ACTIONS.reset` | `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7) | `listFactors` と `countRemainingBackupCodes` の後・`deleteFactor` の前 | 実行した super_admin / 対象 | `ok` が false なら 500 `INTERNAL_ERROR` で何も消さない |
+| `MFA_AUDIT_ACTIONS.reset` | `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7) | `listFactors` と `countRemainingBackupCodes` の後・`endUserSessions` (対象の全セッションの終了) と `deleteFactor` の前 | 実行した super_admin / 対象 | `ok` が false なら 500 `INTERNAL_ERROR` で何も消さない |
 
 ### 17.2 監査を書く時点の規則 (監査の起点と、起点の後の失敗)
 
@@ -2227,9 +2398,9 @@ export async function recordMfaAudit<A extends MfaAuditAction>(input: RecordMfaA
 | backup_codes_regenerate | `POST /api/auth/mfa/backup-codes` (§14.6) | `issueBackupCodes` を呼んだ (中で DELETE → INSERT と進み、1 回の呼び出しの中で途中まで進みうるので、呼んだ時点を起点にする) | (起点の呼び出しそのもの) | `'issue_backup_codes'` | 成功は 200 でコード・失敗は 500 |
 | unenroll | `DELETE /api/auth/mfa/factors/{id}` (§14.4) | `mfa.unenroll` が成功した (verified な factor が消えた) | `deleteBackupCodes` → `refreshSession` | `'delete_backup_codes'` / `'refresh_session'` | null は 200 `{ ok: true, aal: 'aal1' }`・`'refresh_session'` は 200 `{ ok: true, aal: 'aal2' }`・`'delete_backup_codes'` は 500 |
 | recover | `POST /api/auth/mfa/recover` (§14.5) | `consumeBackupCode` が true (コードを 1 個使った) | `admin.signOut(token, 'global')` (本人の全セッションを終える) → `deleteFactor` ×n → `deleteBackupCodes` | `'sign_out_sessions'` / `'delete_factor'` / `'delete_backup_codes'` | null は 200 `{ ok: true, next }`・それ以外は 500 |
-| reset | `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7) | この規則の外 (fail-closed): 監査を削除より先に書き、書けなければ何も消さない | `deleteFactor` ×n → `deleteBackupCodes` | 持たない (監査は削除の前の 1 行。削除の失敗は 500 で、監査行が「要求された事実と消す前の数」として残る) | 成功は 200・削除の失敗は 500 |
+| reset | `POST /api/super-admin/admins/{id}/mfa/reset` (§14.7) | この規則の外 (fail-closed): 監査を削除より先に書き、書けなければ何も消さない | `endUserSessions` (対象の全セッションを終える §11.5・§12.6) → `deleteFactor` ×n → `deleteBackupCodes` | 持たない (監査は削除の前の 1 行。終了・削除の失敗は 500 で、監査行が「要求された事実と消す前の数」として残る) | 成功は 200・終了・削除の失敗は 500 |
 
-- この規則が守ること: 取り消せない変更 (factor の verify・削除、コードの消費・削除、回復の全セッションの終了) が起きたのに `admin_audit_logs` に 1 行も残らない、ということが無い (§14.5 の攻撃面の「監査 `admin.mfa.recover` で気づく」はこれに依る)。監査があるのに一部しか変わっていないときは、`failed_step` がどこで止まったかを示す。
+- この規則が守ること: 取り消せない変更 (factor の verify・削除、コードの消費・削除、回復・解除 (他人) の全セッションの終了) が起きたのに `admin_audit_logs` に 1 行も残らない、ということが無い (§14.5 の攻撃面の「監査 `admin.mfa.recover` で気づく」はこれに依る)。監査があるのに一部しか変わっていないときは、`failed_step` がどこで止まったかを示す。
 - 失敗の中身 (例外・Supabase の error) は app_logs に残す: 500 で返すものは `internalError(ROUTE_NAME, error, { userId })`、200 で返すもの (登録のコードの発行・解除の refresh) は `createLogger(ROUTE_NAME).withUser(userId).error(<固定の文>, error)`。details と応答の本文には例外の文を入れない (§23 N-5)。
 - 監査の記録そのものが失敗しても (`recordAdminAudit` の `ok: false`)、4 種の応答は変えない (fail-open。失敗は `recordAdminAudit` が app_logs に残す)。
 - route の中の `failed_step` の値は `MFA_AUDIT_FAILED_STEPS` (§17.1) から取る (§14 の手順の文字列と同じ値)。
@@ -2333,6 +2504,29 @@ sequenceDiagram
     WV->>Page: /home → /admin → pass
 ```
 
+### 18.4 別の super_admin による解除 (S-7・S-32。段 C)
+
+```mermaid
+sequenceDiagram
+  participant SA as super_admin (ブラウザ・aal2)
+  participant R as POST /api/super-admin/admins/{id}/mfa/reset
+  participant DB as Postgres (service_role)
+  participant GT as GoTrue (admin API)
+  participant T as 対象の端末 (盗まれた端末を含む)
+  SA->>R: { reason, identity_check, identity_confirmed: true }
+  R->>R: requireRole(['super_admin']) (AAL2)・自分でない・本文
+  R->>DB: user_profiles (対象)・countRemainingBackupCodes
+  R->>GT: admin.mfa.listFactors({ userId })
+  R->>DB: recordMfaAudit super_admin.mfa.reset (critical。fail-closed)
+  R->>DB: rpc operator_mfa_end_sessions(p_user_id) = DELETE FROM auth.sessions WHERE user_id
+  Note over DB: refresh_tokens / mfa_amr_claims は CASCADE。cross/16 のトリガーがあれば signed_out
+  R->>GT: admin.mfa.deleteFactor ×n
+  R->>DB: deleteBackupCodes
+  R-->>SA: 200 { data: { user_id, factors_deleted, backup_codes_deleted } }
+  T->>GT: 次の要求 (getUser) / refresh
+  GT-->>T: session_not_found → 401 / refresh 失敗 → 再ログイン → 登録
+```
+
 ---
 
 ## 19. エラー表 (全コード)
@@ -2351,7 +2545,7 @@ sequenceDiagram
 
 ### 19.2 既存のまま使う code
 
-`AUTH_UNAUTHENTICATED` 401・`AUTH_PROFILE_NOT_FOUND` 401・`AUTH_ACCOUNT_FROZEN` 403・`PERM_DENIED` 403・`VALIDATION_ERROR` 400・`RATE_LIMITED` 429・`FORBIDDEN_ORIGIN` 403・`INTERNAL_ERROR` 500・`OP_PERMISSION_DENIED` 403・`OP_SELF_MODIFY` 403・`OP_INVALID_INPUT` 400・`NOT_FOUND` 404・`UNAUTHORIZED` 401・`FORBIDDEN` 403 (この 2 つは nested の形の運営 API の既存の code。reset §14.8.2 と `respondNotSupported` §19.3 が返す)。ほかに、本書の route ではなく middleware の /api の同意ゲート (#1689) が route の前に返す `LEGAL_CONSENT_REQUIRED` 403 (平たい `{ error, code }`) が reset に届きうる (§3.3・§14.8.2。自己サービスの 6 route は許可リストの中で届かない)。
+`AUTH_UNAUTHENTICATED` 401・`AUTH_PROFILE_NOT_FOUND` 401・`AUTH_ACCOUNT_FROZEN` 403・`PERM_DENIED` 403・`VALIDATION_ERROR` 400・`RATE_LIMITED` 429・`FORBIDDEN_ORIGIN` 403・`INTERNAL_ERROR` 500・`OP_PERMISSION_DENIED` 403・`OP_SELF_MODIFY` 403・`OP_INVALID_INPUT` 400・`NOT_FOUND` 404・`UNAUTHORIZED` 401・`FORBIDDEN` 403 (この 2 つは nested の形の運営 API の既存の code。reset §14.8.2 と `respondNotSupported` §19.3 が返す)。ほかに、本書の route ではなく middleware の /api の同意ゲート (#1689) が route の前に返す `LEGAL_CONSENT_REQUIRED` 403 (平たい `{ error, code }`) が reset に届きうる (§3.3・§14.8.2。自己サービスの 6 route は許可リストの中で届かない)。段 C の RPC `operator_mfa_end_sessions` の失敗は `INTERNAL_ERROR` 500 で、新しい code は無い。anon / authenticated が RPC を直接呼んだときの 42501 は PostgREST の応答で、本書の route の code ではない (S-36)。
 
 ### 19.3 既存の運営 route の 403 (変えない)
 
@@ -2436,8 +2630,8 @@ const GATED_ENTRY_FUNCTIONS = ['requireRole', 'requireSuperAdmin', ...Object.key
 /** 運営ロールの条件を持つポリシーの見つけ方 (付録 A.3 と同じ)。qual / with_check をつないだ文字列に両方が当たるもの */
 const POLICY_ROLES_COLUMN_PATTERN = /\broles\b/;
 const POLICY_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_industrial_doctor)'::text/;
-/** 番兵: 2026-10-15 の母集合の数 (付録 A)。見つけ方が空振りしていないこと */
-const DB_GATED_POLICY_MIN_COUNT = 58;
+/** 番兵: 2026-10-16 の本番の母集合の数 (付録 A。58 から 56 に動いた)。見つけ方が空振りしていないこと */
+const DB_GATED_POLICY_MIN_COUNT = 56;
 /** 運営ロールを確かめる関数の見つけ方: public の SECURITY DEFINER で authenticated か anon が EXECUTE でき、本体 (prosrc) に両方が当たるもの */
 const FUNCTION_ROLES_PATTERN = /\broles\b/;
 const FUNCTION_OPERATOR_ROLE_LITERAL_PATTERN = /'(super_admin|admin|finance|org_industrial_doctor)'/;
@@ -2456,7 +2650,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | ⑪ (DB-1) | 上の見つけ方に当たる public のポリシーは、どれも式 (qual か with_check) に `operator_mfa_satisfied()` を持ち、ロールが `TO public` / `TO anon` でない (`authenticated` だけ)。当たる数が `DB_GATED_POLICY_MIN_COUNT` 以上 | 運営の枝を持つポリシーを足して判定を付け忘れた・`TO public` のまま判定を付けた (anon の問い合わせが 42501 になる) |
 | ⑫ (DB-2) | 上の見つけ方に当たる関数は、`DB_FUNCTION_SCAN_EXCLUSIONS` に載っているものを除き、本体に `operator_mfa_satisfied()` の呼び出しを持つ。当たる数 (除外を除く) が `DB_GATED_FUNCTION_MIN_COUNT` 以上。除外の各行は、関数が存在し、理由が 10 文字以上で、今も見つけ方に当たる (⑧ と同じ考え方) | 運営ロールを確かめる RPC を足して判定を付け忘れた・除外の一覧が古い |
 
-限界 (見張りであって証明ではない): 運営ロールを `roles` 以外の列や別の関数経由で確かめる書き方 (例: `public.is_admin()` のような関数をポリシーから呼ぶ) は見つけ方に当たらない。2026-10-15 の時点でそういうポリシー・関数は無い (付録 A.3 の 58 本と §11.4 の 7 本が全部)。足すときは、`roles` を直接見る形にするか、見つけ方を広げる。
+限界 (見張りであって証明ではない): 運営ロールを `roles` 以外の列や別の関数経由で確かめる書き方 (例: `public.is_admin()` のような関数をポリシーから呼ぶ) は見つけ方に当たらない。2026-10-16 の時点でそういうポリシー・関数は無い (付録 A.3 の 56 本と §11.4 の 7 本が全部)。足すときは、`roles` を直接見る形にするか、見つけ方を広げる。段 C の `operator_mfa_end_sessions(uuid)` (§11.5) は本体に `roles` も運営ロールの文字列も無いので ⑫ に当たらず、判定も呼ばない (service_role 専用で、運営の権限の判定は route の `requireRole` が済ませている §7.2)。
 
 ## 21. テスト一覧 (it 名)
 
@@ -2514,6 +2708,10 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - (B) `regenerateBackupCodes は POST /api/auth/mfa/backup-codes、unenrollMfaFactor は DELETE /api/auth/mfa/factors/<encodeURIComponent(id)> を本文なしで呼ぶ`
 - (C) `resetOperatorMfa は POST /api/super-admin/admins/<encodeURIComponent(userId)>/mfa/reset を JSON の本文で呼び、成功は data.data の 3 つの値、失敗は nested の本文の code (OP_SELF_MODIFY など)`
 - `mfaErrorMessage は §15 の文言の表の code の文を返し、表に無い code (UNKNOWN・INTERNAL_ERROR・constructor・toString を含む) は MFA_FALLBACK_ERROR_MESSAGE`
+
+`mfa-sessions.test.ts` (C。rpc を偽物で渡す)
+- `endUserSessions は rpc('operator_mfa_end_sessions', { p_user_id: userId }) を 1 回呼び、数の data (0 を含む) をそのまま返す`
+- `endUserSessions は rpc の error と、数でない data (null・文字列・負・小数) で固定の文 (OPERATOR_MFA_END_SESSIONS_ERROR_MESSAGE) の Error を投げ、cause に元の値を持つ (message に PostgREST の文を入れない §23 N-5)`
 
 `mfa-assurance.test.ts` (A。supabase を差し替え)
 - `bearerJwtOf: 3 セグメントの Bearer だけ token にする (CRON_SECRET 形式は null)`
@@ -2602,16 +2800,20 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `DELETE / POST は別オリジンを 403 FORBIDDEN_ORIGIN`
 
 `tests/super-admin-mfa-reset-route.test.ts` (C)
-- `reset: super_admin 以外 → 403 / aal1 → 403 / 自分 → 403 OP_SELF_MODIFY / 対象無し → 404 / 本文 → 400 OP_INVALID_INPUT (identity_confirmed:false も) / 監査の記録に失敗 → 500 で factor を消さない`
-- `reset: 成功は listFactors → countRemainingBackupCodes → 監査 (critical・details = { reason, identity_check, factors_before: 読んだ factor の数, backup_codes_before: 未使用の残数}) → 読んだ factor ごとに deleteFactor → deleteBackupCodes の順で、200 の data は { user_id, factors_deleted, backup_codes_deleted } (使用済みの行があれば backup_codes_before と backup_codes_deleted は違う値)`
-- `reset: listFactors の error・countRemainingBackupCodes の例外 → 500 で、監査を書かず deleteFactor も deleteBackupCodes も呼ばない`
-- `reset: deleteFactor の error → 500 で、監査は 1 行書いた後 (要求の記録は残る)`
+- `reset: super_admin 以外 → 403 / aal1 → 403 / 自分 → 403 OP_SELF_MODIFY / 対象無し → 404 / 本文 → 400 OP_INVALID_INPUT (identity_confirmed:false も) / 監査の記録に失敗 → 500 で endUserSessions も factor の削除も呼ばない`
+- `reset: 成功は listFactors → countRemainingBackupCodes → 監査 (critical・details = { reason, identity_check, factors_before: 読んだ factor の数, backup_codes_before: 未使用の残数}) → endUserSessions (rpc('operator_mfa_end_sessions', { p_user_id: 対象の id }) を 1 回) → 読んだ factor ごとに deleteFactor → deleteBackupCodes の順で、200 の data は { user_id, factors_deleted, backup_codes_deleted } (使用済みの行があれば backup_codes_before と backup_codes_deleted は違う値。終えたセッションの数は本文に無い)`
+- `reset: listFactors の error・countRemainingBackupCodes の例外 → 500 で、監査を書かず endUserSessions も deleteFactor も deleteBackupCodes も呼ばない`
+- `reset: endUserSessions が投げる (rpc の error) → 500 で、監査は 1 行書いた後、deleteFactor も deleteBackupCodes も呼ばない (本文に生のエラー文が無い。S-33)`
+- `reset: deleteFactor の error → 500 で、endUserSessions と監査は済んだ後 (要求の記録は残る)`
+- `reset: 対象の factor が 0 でも endUserSessions を呼び、200 { factors_deleted: 0 } (S-35)`
+- `reset: 対象が必須ロールでない (U0。user_profiles の roles に MFA_REQUIRED_ROLES のどれも無い) でも 403 にせず同じ手順で、endUserSessions を 1 回呼び、factor とコードが 0 なら 200 { factors_deleted: 0, backup_codes_deleted: 0 }。factor とコードが残っていれば (ロールの剥奪の後 Q-4) deleteFactor と deleteBackupCodes で消して、その数を返す (§10 の (U0, S*) の reset の行・§14.7)`
 - `reset: reason に NULL 文字 (U+0000) → 400 OP_INVALID_INPUT で、監査も factor の削除もしない (§14.7。jsonb に U+0000 を渡さない)`
 
 ### 21.3 走査・契約 (`tests/`)
 
 - `operator-mfa-entry-points-scan.test.ts` (B): §20 の ①〜⑧ (⑨・⑩ は欠番) を各 1 つの it + 合成ソースで検出 / 非検出の確認 (role-check-source-scan と同じ型)。①の合成ソースには「定数の roles で `requireRole(ROLES)`」「`const respond = () => respondNotSupported({...})` を handler が呼ぶ」「別ファイルの未登録ヘルパーへ委ねる (赤)」「API_ROOTS の外で `roles.includes('admin')` だけで判定する route (赤)」「`AUTO_INCLUDE_EXCLUSIONS` に載せたファイルは (a) で入らない」の 5 つを含める。(b) の合成ソースには「`requireRole(X_ROLES)` に渡した名前は集まり、渡していない `ORG_ADMIN_ROLES = ['owner','admin']` は集まらない」を含める。⑤の合成ソースには「ヘルパーの本体が `requireRole(roles, { assurance: 'session' })` を呼ぶ (赤)」を含める
 - `operator-mfa-backup-codes-migration-contract.test.ts` (A): migration と down の文面 — `CREATE TABLE IF NOT EXISTS public.operator_mfa_backup_codes`・UNIQUE (user_id, code_hash)・hex 64 の CHECK・部分 index・`ENABLE ROW LEVEL SECURITY`・ポリシーが 1 つも無い・REVOKE / GRANT の行・down が DROP TABLE / DROP INDEX だけ・冒頭のコメントの参照先が実在する
+- `operator-mfa-end-sessions-migration-contract.test.ts` (C。文面。`supabase/migrations/*_operator_mfa_end_sessions.sql` がちょうど 1 本あり、対の `supabase/rollbacks/<同じ名前>.down.sql` がある): `CREATE OR REPLACE FUNCTION public.operator_mfa_end_sessions(p_user_id uuid)` が `RETURNS integer`・`LANGUAGE plpgsql`・`VOLATILE`・`SECURITY DEFINER`・`SET search_path = ''` / 本体の DELETE は `DELETE FROM auth.sessions s WHERE s.user_id = p_user_id` の 1 文だけで、`UPDATE`・`INSERT`・`ended_reason`・`user_sessions_metadata` の語が無い (判定も記録も持たない §11.5) / `GET DIAGNOSTICS v_deleted = ROW_COUNT` と `RETURN v_deleted` / `REVOKE ALL ON FUNCTION public.operator_mfa_end_sessions(uuid) FROM PUBLIC, anon, authenticated, service_role` と `GRANT EXECUTE ON FUNCTION public.operator_mfa_end_sessions(uuid) TO service_role` がある / down は `DROP FUNCTION IF EXISTS public.operator_mfa_end_sessions(uuid)` だけ / `OPERATOR_MFA_END_SESSIONS_RPC` (`src/lib/auth/mfa/sessions.ts`) と関数の名前が同じ / 型の生成物 2 ファイルの `Functions` に `operator_mfa_end_sessions` (Args `p_user_id: string`・Returns `number`) がある / 冒頭のコメントの参照先が実在する (`operator-mfa-backup-codes-migration-contract.test.ts` と同じ型)
 - `totp-helper.test.ts` (A): `tests/helpers/totp.ts` と `tests/e2e/helpers/totp.mjs` が RFC 6238 Appendix B (SHA-1・秘密 "12345678901234567890"・T=59 → 6 桁 "287082"・T=1111111109 → "081804") で同じ値を出す。base32 の復号
 - `e2e-test-session.test.ts` (変更・B): `promoteTestSessionToAal2 は anon key と Bearer access_token で POST /auth/v1/factors → /factors/{id}/challenge → /factors/{id}/verify の 3 つだけを呼び、aal2 の session と factorId / secret を返す`・`promoteTestSessionToAal2 の失敗は段 (mfa-enroll / mfa-challenge / mfa-verify) とステータスを返し、鍵・トークン・secret の値を説明に含めない`・`コメントを除いたコードで /auth/v1/factors を直接呼ぶのは tests/e2e/helpers/test-session.mjs だけ`・`E2E_MFA_REQUIRED_ROLES は src/lib/auth/mfa/policy.ts の MFA_REQUIRED_ROLES と同じ集合`
 - `local-ci-slot.test.ts` (変更・B。`scripts/supabase-local.sh` が組み立てる config.toml を既に読んでいる describe に足す): `枠 0 と枠 1 以上の config.toml は [auth.mfa.totp] の enroll_enabled と verify_enabled が true (運営の MFA の結合テストの前提。cross/12 §22.3)`
@@ -2629,7 +2831,9 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `M-2: enroll → verify (helpers/totp で 6 桁) → aal2 → GET /api/admin/users が 200、backup_codes が 10 個`
 - `M-3: 新しいログイン (aal1) は 403 → verify → 200 (ログインごとに challenge)`
 - `M-4: recover: コードを 1 個使うと factor が消え (admin.mfa.listFactors が 0)、同じコードは 2 回目 400、旧セッションの token は 401 (回復に使った aal1 のセッションも、M-3 の aal2 のセッションも、refresh もできない)` (旧セッションを終えるのは回復の route の `admin.signOut` (§14.5)。`admin.mfa.deleteFactor` だけではローカルの GoTrue v2.183.0 はセッションを終えないので、route の終了が無いと赤になる。「同じコードは 2 回目 400」は、回復の後に登録し直して新しい 10 個に入れ替わった後に古いコードを送って確かめる (回復の直後は verified な factor が無く 409 が先 §14.5))
-- (C) `M-5: super_admin の reset で対象の factor と行が消え、admin_audit_logs に super_admin.mfa.reset (critical) が 1 行で、details の factors_before と backup_codes_before が、reset の前にテストが数えた対象の factor の数 (admin.mfa.listFactors) と operator_mfa_backup_codes の未使用の行の数に等しい。自分自身は 403` (reset の route は段 C で入るので、この it は段 C の PR でこのファイルに足す §22.3)
+- (C) `M-5: super_admin の reset で対象の factor と行が消え、admin_audit_logs に super_admin.mfa.reset (critical) が 1 行で、details の factors_before と backup_codes_before が、reset の前にテストが数えた対象の factor の数 (admin.mfa.listFactors) と operator_mfa_backup_codes の未使用の行の数に等しい。reset の前に作った対象の 2 つのセッション (別々の anon client でサインインした aal1 のものと、verify で aal2 にしたもの) の access token は、reset の後 GET /api/auth/mfa/status と GET /api/admin/users が 401、refresh token での refreshSession が失敗し、pgQuery で読む auth.sessions にその user_id の行が無い (S-7・S-32。route の endUserSessions が無いと赤になる: admin.mfa.deleteFactor だけではセッションが終わらない §3.1)。自分自身は 403` (reset の route は段 C で入るので、この it は段 C の PR でこのファイルに足す §22.3)
+- (C) `M-15: operator_mfa_end_sessions は anon キーと、本人の JWT (一般の利用者・super_admin の aal2) からの rpc が 42501 で、対象の auth.sessions の行は残る。service_role の rpc は対象の auth.sessions の行数 (2) を返し、呼んだ後は auth.sessions と auth.refresh_tokens (pgQuery。anon-definer-execute.test.ts と同じ口) にその user_id の行が無い (S-36・§11.5)`
+- (C) `M-16: operator_mfa_end_sessions は、サインインしていない利用者 (admin.createUser の直後) で 0 を返し error が null。p_user_id が null なら code 22023 のエラー (S-35)`
 - `M-6: operator_mfa_backup_codes は anon / authenticated から読めない (42501)`
 - `M-7: support だけのユーザーは aal1 のまま /api/support/stats が 200`
 - (M-8 は欠番。v1.3 までの「OPERATOR_MFA_ENFORCE_FROM を未来にした Next の枠」は結合テストの基盤に無いので外し、§21.1 の `mfa-gate.test.ts` の猶予の it に移した。番号は振り直さない)
@@ -2680,8 +2884,9 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 - `operator_mfa_satisfied の ARRAY[...]::text[] の要素が src/lib/auth/mfa/policy.ts の MFA_REQUIRED_ROLES と同じ集合 (import して比べる)`
 - `7 本の関数: §11.4 の表の各関数に CREATE OR REPLACE FUNCTION がちょうど 1 つあり、IF NOT public.operator_mfa_satisfied() THEN がちょうど 1 回、役割の判定のエラー (表の 4 列目の文字列) の RAISE より後・最初の PERFORM / UPDATE / RETURN QUERY / INSERT より前にある`
 - `7 本の関数: migration の CREATE OR REPLACE から判定の 4 行 (コメント 1 行 + IF 〜 END IF) を取り除いた文が、.down.sql の同じ関数の CREATE OR REPLACE と、空白をまとめたうえで一致する (判定のほかに本文を変えていない。.down.sql の 7 本は §11.4 の表の「最新の定義」の写しで、写しが最新かはマージ直前の git grep で確かめる §11.4)`
-- `ポリシー: 付録 A.1 の 57 文が migration にそのまま 1 回ずつあり (EXPECTED_DB_GATE_POLICY_STATEMENTS。付録 A.1 の文をこのテストのファイルに写した配列)、どれも TO authenticated と (SELECT public.operator_mfa_satisfied()) を含む。subscription_plans の 3 文がある`
-- `down: 付録 A.2 の 58 文と DROP POLICY IF EXISTS subscription_plans_select_operator があり、7 本の関数の CREATE OR REPLACE に operator_mfa_satisfied が出てこず、最後の文が DROP FUNCTION IF EXISTS public.operator_mfa_satisfied(); である`
+- `ポリシー: 付録 A.1 の 55 文が migration にそのまま 1 回ずつあり (EXPECTED_DB_GATE_POLICY_STATEMENTS。付録 A.1 の文をこのテストのファイルに写した配列)、どれも TO authenticated と (SELECT public.operator_mfa_satisfied()) を含む。subscription_plans の 3 文がある`
+- `down の 56 文の式 (USING / WITH CHECK) と TO の役割から、付録 A.4 と同じ形 (表|ポリシー|roles|md5(qual)|md5(with_check) を表・ポリシーのバイト順に改行でつないで md5) の指紋を作ると、付録 A.4 の digest と一致する (設計書から写した文が本番の式のままであること。DB 無し)`
+- `down: 付録 A.2 の 56 文と DROP POLICY IF EXISTS subscription_plans_select_operator があり、7 本の関数の CREATE OR REPLACE に operator_mfa_satisfied が出てこず、最後の文が DROP FUNCTION IF EXISTS public.operator_mfa_satisfied(); である`
 
 `tests/integration/security/operator-mfa-db-gate.test.ts` (E。ローカル Supabase。Next は要らない。利用者の作り方は `tests/integration/security/anon-definer-execute.test.ts` の `createUser` (service_role で作り、使い捨ての anon client でサインイン)。登録は `tests/integration/helpers/mfa.ts` の `promoteToAal2` (段 B) で行い、aal1 の token が要るときは、登録の後にもう一度 `signInWithPassword` する)
 - `DB-1 (⑪): 運営ロールの条件を持つ public のポリシーは、どれも operator_mfa_satisfied() を呼び、TO public / anon でない。数は DB_GATED_POLICY_MIN_COUNT 以上 (§20.1)`
@@ -2698,9 +2903,12 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 
 既存のテストの変更 (段 E):
 - `tests/integration/security/anon-definer-execute.test.ts`: `EXPECTED_ACL` に `{ sig: 'operator_mfa_satisfied()', anon: false, authenticated: true, serviceRole: true, why: '運営の枝のポリシー (TO authenticated) と運営の関数 7 本が呼ぶ判定。anon は呼ばない (cross/12 §11.4)' }` を足す。A1・A2 は変えずに緑 (anon の EXECUTE が無く、判定を呼ぶポリシーは TO authenticated) (§23 N-32)
+
+既存のテストの変更 (段 C):
+- `tests/integration/security/anon-definer-execute.test.ts`: `EXPECTED_ACL` に `{ sig: 'operator_mfa_end_sessions(uuid)', anon: false, authenticated: false, serviceRole: true, why: '別の super_admin による MFA の解除 (段 C) が service_role で呼び、対象の auth.sessions の行を消す。anon / authenticated は呼べない (cross/12 §11.5)' }` を足す。A1 は変えずに緑 (§23 N-32)
 - `tests/integration/rls/subscription-plans-yearly-price-id.test.ts:141-144`: 期待するポリシーの一覧に `{ policyname: 'subscription_plans_select_operator', cmd: 'SELECT' }` を足す (名前の順で 2 番目。§23 N-33)
 
-### 21.9 シナリオ ⇄ テストの対応 (§5 の 31 本。S-10・S-22 は欠番)
+### 21.9 シナリオ ⇄ テストの対応 (§5 の 36 本。S-10・S-22 は欠番)
 
 §5 のシナリオごとに、それを守る it を名指しする (it は §21.1〜21.8 の名前の頭で引く)。どのシナリオにも 1 つ以上の it がある。it の名前に S-番号を書くかは実装に任せる (この表が対応の正本)。シナリオを足したら、この表に行を足し、守る it が無ければ §21 に it を足す。
 
@@ -2712,7 +2920,7 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | S-4 | 結合 `M-7`・`mfa-gate.test.ts`: `requireRole: support だけなら getClaims を呼ばず assurance.decision = not_required`・`mfa-policy.test.ts`: `decideOperatorAssurance: 必須ロールでなければ not_required (aal は見ない)` |
 | S-5 | `mfa-gate.test.ts`: `requireRole: admin + aal1 + factor 無し + OPERATOR_MFA_ENFORCE_FROM が未来 …`・`mfa-policy.test.ts`: `decideOperatorAssurance: aal1 で無し、now < enforceFrom は pass_grace` と `… enforceFrom が null / 過去 / ちょうど now は enrollment_required`・route `auth-mfa-routes.test.ts`: `GET /status: …` (猶予中 → grace:true)・`operator-page-guard-wiring.test.ts`: `layout 3 つは MfaGraceBanner を JSX で描き …`・`support-area-guard-layout.test.tsx`: `assurance.decision が pass_grace なら MfaGraceBanner を …` |
 | S-6 | e2e `T-MFA-3`・結合 `M-4`・route `auth-mfa-routes.test.ts`: `POST /recover: 形の違うコードは …`・`POST /recover: listFactors は consumeBackupCode より先に呼び …`・`POST /recover: 消費の後に deleteFactor が error なら …`・`POST /recover: 全セッションを終える admin.signOut が error なら …`・`POST /recover: Cookie のセッションが無くモバイルの Bearer JWT で呼ばれたら …`・`mfa-pages-browser.test.tsx`: `回復: 成功で応答の next …` |
-| S-7 | 結合 `M-5` (C)・route `super-admin-mfa-reset-route.test.ts`: `reset: 成功は listFactors → countRemainingBackupCodes → 監査 …`・`mfa-pages-browser.test.tsx`: (C) `OperatorMfaResetSection: …`・`admin-mutation-audit-coverage-1571.test.ts` の (a) (reset の行が `EXPECTED` にある §23 N-38) |
+| S-7 | 結合 `M-5` (C。対象の factor・コードが消え、旧セッションの token が 401・refresh が失敗)・route `super-admin-mfa-reset-route.test.ts`: `reset: 成功は listFactors → countRemainingBackupCodes → 監査 → endUserSessions → …`・`mfa-pages-browser.test.tsx`: (C) `OperatorMfaResetSection: …`・`admin-mutation-audit-coverage-1571.test.ts` の (a) (reset の行が `EXPECTED` にある §23 N-38)・`operator-mfa-end-sessions-migration-contract.test.ts` (§21.3) |
 | S-8 | route `auth-mfa-aal2-routes.test.ts`: `POST /backup-codes: aal1 → 403 AUTH_2FA_REQUIRED / aal2 で factor 無し → 409 / 成功で旧行削除 + 10 個 + 監査 …`・`POST /backup-codes: issueBackupCodes が投げたら …`・`mfa-backup-codes.test.ts`: `issueBackupCodes は旧行を全部消してから 10 行を入れる`・`mfa-pages-browser.test.tsx`: (B) `状態の [再発行] と [解除] は …`・(B) `状態の [再発行] と [解除] の 500 は …` |
 | S-9 | route `auth-mfa-aal2-routes.test.ts`: `DELETE /factors/{id}: aal1 + verified → 403 AUTH_2FA_REQUIRED / … / 成功で unenroll → deleteBackupCodes → refreshSession → 監査 admin.mfa.unenroll …`・`DELETE /factors/{id}: mfa.unenroll の error は 500 …`・`DELETE /factors/{id}: unenroll の後に deleteBackupCodes が投げたら …`・`DELETE /factors/{id}: refreshSession が error を返したら …`・`mfa-pages-browser.test.tsx`: (B) `状態の [再発行] と [解除] は …` ([解除] の成功で setup へ)・(B) `状態の [再発行] と [解除] の 500 は …` |
 | S-10 | (欠番。§5) |
@@ -2737,6 +2945,11 @@ const DB_FUNCTION_SCAN_EXCLUSIONS: Readonly<Record<string, string>> = {
 | S-29 | 結合 `DB-8` |
 | S-30 | 結合 `DB-9`・`mfa-gate.test.ts`: `requireRole: admin + aal1 + factor 無し + OPERATOR_MFA_ENFORCE_FROM が未来 …` (Web の `pass_grace`) |
 | S-31 | 結合 `DB-11`・`operator-mfa-db-gate-migration-contract.test.ts`: `ポリシー: … subscription_plans の 3 文がある` |
+| S-32 | 結合 `M-5` (reset の後の対象の aal1 / aal2 の token が 401、refresh が失敗、`auth.sessions` に行が無い)・`mfa-sessions.test.ts`: `endUserSessions は rpc('operator_mfa_end_sessions', …`。DB の直接の経路が exp まで残ること (§0.3) は Supabase の JWT の性質で、試さない (Q-17) |
+| S-33 | route `super-admin-mfa-reset-route.test.ts`: `reset: endUserSessions が投げる (rpc の error) → 500 …`・`mfa-sessions.test.ts`: `endUserSessions は rpc の error と、数でない data …` |
+| S-34 | 結合 `M-5` (refresh token での refreshSession の失敗 = アプリの `getUser()` / refresh の失効と同じ Supabase の挙動)。アプリの側の処理は既存 (`apps/mobile/src/providers/AuthProvider.tsx` の失効の扱い。S-25 と同じ) で、本書は変えない |
+| S-35 | route `super-admin-mfa-reset-route.test.ts`: `reset: 対象の factor が 0 でも endUserSessions を呼び …`・結合 `M-16` (セッションの無い利用者で 0) |
+| S-36 | 結合 `M-15`・既存の `anon-definer-execute.test.ts` の A1 と `EXPECTED_ACL` の段 C の行 (§21.8・§23 N-32) |
 
 R-1 の 4 ロールとシナリオの対応: `super_admin` (S-1・S-7・S-8・S-12・S-23・S-24・S-30 など)・`admin` (S-2・S-3・S-5・S-6 など)・`finance` (S-13) はシナリオを持つ。`org_industrial_doctor` はシナリオを持たない: 産業医を要求する入口は Next.js にも DB にも 0 件 (§3.2) で、産業医が運営の画面・API・DB の運営の枝を使う場面が今は無いため。対象に入っていることは方針で守る: 単体 `mfa-policy.test.ts` の `MFA_REQUIRED_ROLES は super_admin / admin / finance / org_industrial_doctor の 4 つ` と `decideOperatorAssurance: org_industrial_doctor だけのロールも必須側 …`、写しの一致 (DB の判定の関数の配列 = `operator-mfa-db-gate-migration-contract.test.ts` §21.8・e2e の `E2E_MFA_REQUIRED_ROLES` = `e2e-test-session.test.ts` §21.3。モバイルは写しを持たない §16)。産業医の入口を `requireRole(['org_industrial_doctor', ...])` で足すとき (§7.2 ③) は、その入口のシナリオを §5 に、守る it をこの表に足す (入口が走査 ① の母集合に入ることは §20 の当てはまりの段落のとおり)。
 
@@ -2767,7 +2980,10 @@ R-1 の 4 ロールとシナリオの対応: `super_admin` (S-1・S-7・S-8・S-
 | B | `src/app/(support)/support/layout.tsx` | §13.4.1 |
 | B | `src/components/admin/MfaGraceBanner.tsx` | §15.3 |
 | B | テスト: `src/lib/auth/__tests__/mfa-gate.test.ts`・`page-guard.test.ts`・`tests/support-area-guard-layout.test.tsx`・`tests/operator-page-guard-wiring.test.ts`・`tests/api/auth-mfa-aal2-routes.test.ts`・`tests/operator-mfa-entry-points-scan.test.ts`・`tests/integration/security/operator-mfa.test.ts`・`tests/integration/helpers/mfa.ts`・`tests/helpers/mfa-claims.ts`・`tests/e2e/operator/03-mfa.spec.ts` | §20 / §21 / §22.4 |
+| C | `supabase/migrations/<番号はマージ時に確定>_operator_mfa_end_sessions.sql` / `supabase/rollbacks/<番号はマージ時に確定>_operator_mfa_end_sessions.down.sql` | §11.5 |
+| C | `src/lib/auth/mfa/sessions.ts` | §12.6 |
 | C | `src/app/api/super-admin/admins/[id]/mfa/reset/route.ts`・`src/components/admin/OperatorMfaResetSection.tsx`・`tests/super-admin-mfa-reset-route.test.ts` | §14.7・§15.3 |
+| C | テスト: `src/lib/auth/__tests__/mfa-sessions.test.ts`・`tests/operator-mfa-end-sessions-migration-contract.test.ts` | §21.1・§21.3 |
 | D | `apps/mobile/src/lib/mfa-gate.ts`・`apps/mobile/src/lib/operator-mfa.ts`・`apps/mobile/src/components/MfaVerifyGate.tsx`・`apps/mobile/src/components/NativeMfaVerifyModal.tsx` | §16・§16.4.5 |
 | D | テスト: `apps/mobile/__tests__/operator-mfa/mfa-gate.test.ts`・`operator-mfa.test.ts`・`MfaVerifyGate.test.tsx`・`NativeMfaVerifyModal.test.tsx` | §21.6 |
 | E | `supabase/migrations/<番号はマージ時に確定>_operator_mfa_db_gate.sql` / `supabase/rollbacks/<番号はマージ時に確定>_operator_mfa_db_gate.down.sql` | §11.4・付録 A |
@@ -2777,18 +2993,18 @@ R-1 の 4 ロールとシナリオの対応: `super_admin` (S-1・S-7・S-8・S-
 
 | 種類 | 名前 |
 |---|---|
-| 定数 | `MFA_REQUIRED_ROLES`・`OPERATOR_MFA_ENFORCE_FROM_ENV_NAME`・`BACKUP_CODE_COUNT`・`BACKUP_CODE_LENGTH`・`BACKUP_CODE_ALPHABET`・`BACKUP_CODE_INPUT_MAX_LENGTH`・`TOTP_CODE_PATTERN`・`MFA_TOTP_ISSUER`・`MFA_TOTP_FRIENDLY_NAME`・`MFA_QR_SVG_DATA_URL_PREFIX` (`src/lib/auth/mfa/factors.ts`)・`MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MFA_PAGE_PATHS`・`PAGE_FORBIDDEN_DEFAULT_PATH`・`MFA_API_PATHS`・`MFA_CLIENT_NO_STATUS`・`MFA_CLIENT_UNKNOWN_CODE`・`MFA_JSON_HEADERS`・`MFA_FALLBACK_ERROR_MESSAGE`・`MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE` (`src/lib/auth/mfa/client.ts`)・`MFA_ERROR_MESSAGES`・`NO_RESPONSE_FAILURE` (client.ts の中。export しない)・`MFA_RECOVER_NEXT_PATH` (`src/lib/auth/mfa/schemas.ts`)・`BACKUP_CODES_DOWNLOAD_FILENAME` (`src/components/auth/mfa/BackupCodesPanel.tsx`)・`MFA_RESET_IDENTITY_CHECK_LABELS` (`src/components/admin/OperatorMfaResetSection.tsx`。段 C)・`MFA_AUDIT_ACTIONS`・`MFA_AUDIT_SEVERITY`・`MFA_AUDIT_TARGET_TYPE`・`MFA_AUDIT_FAILED_STEPS` (`src/lib/auth/mfa/audit.ts`)・`HOUR_SEC` (rate-limit.ts)・`SUPPORT_AREA_ROLES`・`SUPPORT_AREA_NEXT`・`SUPPORT_AREA_FORBIDDEN_PATH` (`src/app/(support)/support/layout.tsx` の中)・`ADMIN_AREA_NEXT` (`src/app/admin/layout.tsx` の中)・`SUPER_ADMIN_AREA_NEXT`・`SUPER_ADMIN_AREA_FORBIDDEN_PATH` (`src/app/super-admin/layout.tsx` の中)・`OPERATOR_MEMBERSHIP_AREA_NEXT`・`OPERATOR_MEMBERSHIP_AREA_FORBIDDEN_PATH` (`src/app/(operator)/operator/membership/layout.tsx` の中)・`MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`・`MOBILE_TOTP_CODE_PATTERN` (モバイル)・`ENFORCE_FROM_PATTERN`・`ENFORCE_FROM_GROUP`・`OMITTED_SECOND`・`MONTH_INDEX_OFFSET` (`src/lib/auth/mfa/policy.ts` の中。export しない)・`NATIVE_APP_MFA_VERIFY_NOTICE`・`NATIVE_APP_MFA_BROWSER_ONLY_NOTICE`・`NATIVE_APP_MFA_FALLBACK_NOTICE` (`src/components/auth/mfa/NativeAppMfaNotice.tsx`)・`BACKUP_CODE_DISPLAY_GROUP`・`ALPHABET_MASK` (`src/lib/auth/mfa/backup-codes.ts` の中。export しない) |
+| 定数 | `MFA_REQUIRED_ROLES`・`OPERATOR_MFA_ENFORCE_FROM_ENV_NAME`・`BACKUP_CODE_COUNT`・`BACKUP_CODE_LENGTH`・`BACKUP_CODE_ALPHABET`・`BACKUP_CODE_INPUT_MAX_LENGTH`・`TOTP_CODE_PATTERN`・`MFA_TOTP_ISSUER`・`MFA_TOTP_FRIENDLY_NAME`・`MFA_QR_SVG_DATA_URL_PREFIX` (`src/lib/auth/mfa/factors.ts`)・`MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`OPERATOR_MFA_END_SESSIONS_RPC`・`OPERATOR_MFA_END_SESSIONS_ERROR_MESSAGE` (`src/lib/auth/mfa/sessions.ts`。段 C)・`MFA_PAGE_PATHS`・`PAGE_FORBIDDEN_DEFAULT_PATH`・`MFA_API_PATHS`・`MFA_CLIENT_NO_STATUS`・`MFA_CLIENT_UNKNOWN_CODE`・`MFA_JSON_HEADERS`・`MFA_FALLBACK_ERROR_MESSAGE`・`MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE` (`src/lib/auth/mfa/client.ts`)・`MFA_ERROR_MESSAGES`・`NO_RESPONSE_FAILURE` (client.ts の中。export しない)・`MFA_RECOVER_NEXT_PATH` (`src/lib/auth/mfa/schemas.ts`)・`BACKUP_CODES_DOWNLOAD_FILENAME` (`src/components/auth/mfa/BackupCodesPanel.tsx`)・`MFA_RESET_IDENTITY_CHECK_LABELS` (`src/components/admin/OperatorMfaResetSection.tsx`。段 C)・`MFA_AUDIT_ACTIONS`・`MFA_AUDIT_SEVERITY`・`MFA_AUDIT_TARGET_TYPE`・`MFA_AUDIT_FAILED_STEPS` (`src/lib/auth/mfa/audit.ts`)・`HOUR_SEC` (rate-limit.ts)・`SUPPORT_AREA_ROLES`・`SUPPORT_AREA_NEXT`・`SUPPORT_AREA_FORBIDDEN_PATH` (`src/app/(support)/support/layout.tsx` の中)・`ADMIN_AREA_NEXT` (`src/app/admin/layout.tsx` の中)・`SUPER_ADMIN_AREA_NEXT`・`SUPER_ADMIN_AREA_FORBIDDEN_PATH` (`src/app/super-admin/layout.tsx` の中)・`OPERATOR_MEMBERSHIP_AREA_NEXT`・`OPERATOR_MEMBERSHIP_AREA_FORBIDDEN_PATH` (`src/app/(operator)/operator/membership/layout.tsx` の中)・`MOBILE_MFA_ENROLL_ON_WEB_MESSAGE`・`MOBILE_TOTP_CODE_PATTERN` (モバイル)・`ENFORCE_FROM_PATTERN`・`ENFORCE_FROM_GROUP`・`OMITTED_SECOND`・`MONTH_INDEX_OFFSET` (`src/lib/auth/mfa/policy.ts` の中。export しない)・`NATIVE_APP_MFA_VERIFY_NOTICE`・`NATIVE_APP_MFA_BROWSER_ONLY_NOTICE`・`NATIVE_APP_MFA_FALLBACK_NOTICE` (`src/components/auth/mfa/NativeAppMfaNotice.tsx`)・`BACKUP_CODE_DISPLAY_GROUP`・`ALPHABET_MASK` (`src/lib/auth/mfa/backup-codes.ts` の中。export しない) |
 | 定数 (テストの道具) | `TOTP_STEP_SECONDS`・`TOTP_DIGITS` (`tests/helpers/totp.ts`)・`TOTP_RETRY_ONCE` (`tests/integration/helpers/mfa.ts`)・`TEST_AAL2_ACCESS_TOKEN`・`TEST_AAL2_SESSION_ID`・`TEST_CLAIMS_NO_USER_MESSAGE` (`tests/helpers/mfa-claims.ts`)・`E2E_MFA_REQUIRED_ROLES`・`E2E_TOTP_FRIENDLY_NAME`・`E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE` (`tests/e2e/helpers/test-session.mjs`)・`MFA_PROMOTION_RATE_LIMITED_MESSAGE` (`tests/integration/helpers/mfa.ts`)・`SUPABASE_MFA_BURST_LIMIT` (`tests/integration/security/operator-mfa.test.ts` の中。M-13)・`EXPECTED_PAGE_GUARDS` (`tests/operator-page-guard-wiring.test.ts` の中)・`POLICY_ROLES_COLUMN_PATTERN`・`POLICY_OPERATOR_ROLE_LITERAL_PATTERN`・`DB_GATED_POLICY_MIN_COUNT`・`FUNCTION_ROLES_PATTERN`・`FUNCTION_OPERATOR_ROLE_LITERAL_PATTERN`・`DB_GATED_FUNCTION_MIN_COUNT`・`DB_FUNCTION_SCAN_EXCLUSIONS` (`tests/integration/security/operator-mfa-db-gate.test.ts` の中 §20.1)・`EXPECTED_DB_GATE_POLICY_STATEMENTS` (`tests/operator-mfa-db-gate-migration-contract.test.ts` の中) |
 | Zod スキーマ | `SessionClaimsSchema` (`src/lib/auth/mfa/assurance.ts`。段 A)・`MfaStatusResponseSchema`・`MfaEnrollResponseSchema`・`MfaVerifyBodySchema`・`MfaVerifyResponseSchema`・`MfaRecoverBodySchema`・`MfaRecoverResponseSchema` (`src/lib/auth/mfa/schemas.ts`。段 A)・`MfaUnenrollResponseSchema`・`MfaBackupCodesResponseSchema` (段 B で schemas.ts に足す)・`MfaResetBodySchema`・`MfaResetResponseSchema` (段 C で `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS` と一緒に `src/lib/auth/mfa/schemas.ts` に足す §22.3)・`FlatErrorBodySchema`・`NestedErrorBodySchema` (`src/lib/auth/mfa/client.ts` の中。export しない) |
-| 型 | `MfaRequiredRole`・`AuthenticatorAssuranceLevel`・`MfaEnforceFromSetting`・`OperatorAssuranceDecision`・`DecideOperatorAssuranceInput`・`OperatorAssuranceResult`・`OperatorAssuranceSummary`・`SessionAssurance`・`VerifiedTotpFactor`・`RequireRoleOptions`・`RequireRoleForPageOptions`・`MfaRequiredCode`・`MfaStatusResponse`・`MfaEnrollResponse`・`MfaVerifyBody`・`MfaVerifyResponse`・`MfaRecoverBody`・`MfaRecoverResponse`・`MfaUnenrollResponse`・`MfaBackupCodesResponse`・`MfaResetBody`・`MfaResetResponse` (`src/lib/auth/mfa/schemas.ts`)・`MfaClientSuccess`・`MfaClientFailure`・`MfaClientResult` (`src/lib/auth/mfa/client.ts`)・`MfaAuditAction`・`MfaAuditFailedStep`・`MfaAuditDetailsMap`・`RecordMfaAuditInput` (`src/lib/auth/mfa/audit.ts`)・`MobileAal`・`MobileOperatorGate`・`MobileOperatorGateInput`・`TestSessionClaims`・`TestGetUser`・`TestGetClaimsResult`・`Aal2AuthMock`・`InjectSessionAssurance`・`InjectSessionOptions`・`InjectedSession` (テストの道具)・`WallClockParts` (policy.ts の中。export しない)・`InNativeWebViewState` (Web)・`WebAuthMessagesOptions` (モバイル。`apps/mobile/src/lib/webViewAuthMessages.ts`)・interface `AssertOperatorAssuranceInput` (`src/lib/auth/mfa/assurance.ts`。段 B)・interface `BackupCodeStoreClient` (`src/lib/auth/mfa/backup-codes.ts`。段 A) |
+| 型 | `MfaRequiredRole`・`AuthenticatorAssuranceLevel`・`MfaEnforceFromSetting`・`OperatorAssuranceDecision`・`DecideOperatorAssuranceInput`・`OperatorAssuranceResult`・`OperatorAssuranceSummary`・`SessionAssurance`・`VerifiedTotpFactor`・`RequireRoleOptions`・`RequireRoleForPageOptions`・`MfaRequiredCode`・`MfaStatusResponse`・`MfaEnrollResponse`・`MfaVerifyBody`・`MfaVerifyResponse`・`MfaRecoverBody`・`MfaRecoverResponse`・`MfaUnenrollResponse`・`MfaBackupCodesResponse`・`MfaResetBody`・`MfaResetResponse` (`src/lib/auth/mfa/schemas.ts`)・`MfaClientSuccess`・`MfaClientFailure`・`MfaClientResult` (`src/lib/auth/mfa/client.ts`)・`MfaAuditAction`・`MfaAuditFailedStep`・`MfaAuditDetailsMap`・`RecordMfaAuditInput` (`src/lib/auth/mfa/audit.ts`)・`MobileAal`・`MobileOperatorGate`・`MobileOperatorGateInput`・`TestSessionClaims`・`TestGetUser`・`TestGetClaimsResult`・`Aal2AuthMock`・`InjectSessionAssurance`・`InjectSessionOptions`・`InjectedSession` (テストの道具)・`WallClockParts` (policy.ts の中。export しない)・`InNativeWebViewState` (Web)・`WebAuthMessagesOptions` (モバイル。`apps/mobile/src/lib/webViewAuthMessages.ts`)・interface `AssertOperatorAssuranceInput` (`src/lib/auth/mfa/assurance.ts`。段 B)・interface `BackupCodeStoreClient` (`src/lib/auth/mfa/backup-codes.ts`。段 A)・interface `OperatorSessionRpcClient` (`src/lib/auth/mfa/sessions.ts`。段 C) |
 | クラス | `MfaRequiredError`・`OperatorMfaGateError` (モバイル) |
-| 関数 | `resolveMfaEnforceFrom`・`isExistingWallClock`・`wallClockPartsOf` (policy.ts の中。export しない)・`readMfaEnforceFromEnv`・`isMfaRequiredRoleSet`・`decideOperatorAssurance`・`generateBackupCode(s)`・`normalizeBackupCode`・`isWellFormedBackupCode`・`hashBackupCode`・`formatBackupCode`・`issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes`・`findVerifiedTotpFactor`・`listUnverifiedTotpFactorIds`・`ownsFactor`・`isVerifiedTotpFactorId`・`toBareQrCodeSvg`・`isTotp` (`src/lib/auth/mfa/factors.ts` の中。export しない)・`bearerJwtOf`・`readSessionAssurance`・`assertOperatorAssurance`・`mfaRedirectPathFor`・`requireRoleForPage`・`recordMfaAudit`・`toMobileAal`・`decideMobileOperatorGate`・`resolveSessionMfaGate` (モバイル)・`requestNativeMfaVerify`・`isNativeBridgedSession` (`src/lib/native-auth-bridge.ts`)・`useInNativeWebView` (Web の hook)・`promoteTestSessionToAal2` (e2e)・`readE2eUserRoles` (e2e。`tests/e2e/fixtures/fresh-user.ts` の中。export しない)・`promoteToAal2`・`signInForIntegration` (結合)・`generateTotp`・`decodeBase32`・`aal2Claims`・`aal2AuthMock` (テスト)・`collectRequireRoleArgumentIdentifiers` (`tests/operator-mfa-entry-points-scan.test.ts` の中の走査の関数。§20 の `ROLE_CONSTANT_NAMES` を集める) |
+| 関数 | `resolveMfaEnforceFrom`・`isExistingWallClock`・`wallClockPartsOf` (policy.ts の中。export しない)・`readMfaEnforceFromEnv`・`isMfaRequiredRoleSet`・`decideOperatorAssurance`・`generateBackupCode(s)`・`normalizeBackupCode`・`isWellFormedBackupCode`・`hashBackupCode`・`formatBackupCode`・`issueBackupCodes`・`consumeBackupCode`・`countRemainingBackupCodes`・`deleteBackupCodes`・`findVerifiedTotpFactor`・`listUnverifiedTotpFactorIds`・`ownsFactor`・`isVerifiedTotpFactorId`・`toBareQrCodeSvg`・`isTotp` (`src/lib/auth/mfa/factors.ts` の中。export しない)・`bearerJwtOf`・`readSessionAssurance`・`assertOperatorAssurance`・`mfaRedirectPathFor`・`requireRoleForPage`・`recordMfaAudit`・`endUserSessions` (`src/lib/auth/mfa/sessions.ts`。段 C)・`toMobileAal`・`decideMobileOperatorGate`・`resolveSessionMfaGate` (モバイル)・`requestNativeMfaVerify`・`isNativeBridgedSession` (`src/lib/native-auth-bridge.ts`)・`useInNativeWebView` (Web の hook)・`promoteTestSessionToAal2` (e2e)・`readE2eUserRoles` (e2e。`tests/e2e/fixtures/fresh-user.ts` の中。export しない)・`promoteToAal2`・`signInForIntegration` (結合)・`generateTotp`・`decodeBase32`・`aal2Claims`・`aal2AuthMock` (テスト)・`collectRequireRoleArgumentIdentifiers` (`tests/operator-mfa-entry-points-scan.test.ts` の中の走査の関数。§20 の `ROLE_CONSTANT_NAMES` を集める) |
 | 関数 (Web の画面の通信。`src/lib/auth/mfa/client.ts` §15.1) | `requestMfaApi`・`getMfaStatus`・`startMfaEnrollment`・`verifyMfaCode`・`recoverWithBackupCode`・`mfaErrorMessage` (段 A。`mfaErrorMessage` は §15 の文言の表)・`mfaFactorPath`・`regenerateBackupCodes`・`unenrollMfaFactor` (段 B)・`mfaResetPath`・`resetOperatorMfa` (段 C)・`failureCodeOf`・`retryAfterSecOf` (client.ts の中。export しない) |
 | React の部品 | `TotpCodeForm`・`BackupCodesPanel`・`MfaGraceBanner`・`OperatorMfaResetSection`・`NativeAppMfaNotice` (Web)・`MfaVerifyGate`・`NativeMfaVerifyModal` (モバイル)・`SupportAreaGuardLayout` (`src/app/(support)/support/layout.tsx` の既定の export) |
 | route | `GET /api/auth/mfa/status`・`POST /api/auth/mfa/enroll`・`POST /api/auth/mfa/verify`・`DELETE /api/auth/mfa/factors/{id}`・`POST /api/auth/mfa/recover`・`POST /api/auth/mfa/backup-codes`・`POST /api/super-admin/admins/{id}/mfa/reset` |
 | 画面 | `/settings/security/mfa`・`/setup`・`/verify`・`/recover` |
 | テーブル | `public.operator_mfa_backup_codes` (列 `id` `user_id` `batch_id` `code_hash` `created_at` `used_at`) |
-| DB の関数・ポリシー (段 E) | 関数 `public.operator_mfa_satisfied()` (新規)・ポリシー `subscription_plans_select_operator` (新規)・既存のポリシー 58 本と関数 7 本の変更 (§11.4・付録 A) |
+| DB の関数・ポリシー (段 C・段 E) | 段 C: 関数 `public.operator_mfa_end_sessions(uuid)` (新規。service_role 専用 §11.5)。段 E: 関数 `public.operator_mfa_satisfied()` (新規)・ポリシー `subscription_plans_select_operator` (新規)・既存のポリシー 56 本と関数 7 本の変更 (§11.4・付録 A) |
 | rate-limit カテゴリ | `'auth-mfa-verify'`・`'auth-mfa-recover'` |
 | 環境変数 | `OPERATOR_MFA_ENFORCE_FROM` |
 | エラーコード | `AUTH_2FA_ENROLLMENT_REQUIRED`・`AUTH_2FA_NOT_ENROLLED`・`AUTH_2FA_ALREADY_ENROLLED`・`AUTH_2FA_NATIVE_SESSION` (新)・`AUTH_2FA_REQUIRED`・`AUTH_2FA_INVALID` (HTTP を改める)・`OPERATOR_MFA_REQUIRED` (新。SQL の例外の message。段 E) |
@@ -2843,7 +3059,9 @@ R-1 の 4 ロールとシナリオの対応: `super_admin` (S-1・S-7・S-8・S-
 | C | `src/app/admin/users/[id]/page.tsx` | 解除セクション |
 | C | `src/lib/auth/mfa/schemas.ts` (段 A で新設) | `MFA_RESET_REASON_MAX_LENGTH`・`MFA_RESET_IDENTITY_CHECKS`・`MfaResetBodySchema`・`MfaResetBody`・`MfaResetResponseSchema`・`MfaResetResponse` を足す (§14.7。reason の NULL 文字の refine を含む) |
 | C | `src/lib/auth/mfa/client.ts` (段 A で新設) | `MFA_API_PATHS` の `superAdminAdmins` と `mfaResetPath`・`resetOperatorMfa` (§15.1。`OperatorMfaResetSection` が呼ぶ) |
-| C | `tests/integration/security/operator-mfa.test.ts` (段 B で新設) | M-5 (reset) を足す (§21.4) |
+| C | `src/types/database.types.ts`・`packages/shared/src/database.types.ts` | `Functions` に `operator_mfa_end_sessions` (再生成。§11.5・§23 N-34) |
+| C | `tests/integration/security/anon-definer-execute.test.ts` | `EXPECTED_ACL` に `operator_mfa_end_sessions(uuid)` の 1 行 (§21.8 の段 C の行・§23 N-32) |
+| C | `tests/integration/security/operator-mfa.test.ts` (段 B で新設) | M-5 (reset。旧セッションの 401 を含む)・M-15・M-16 (`operator_mfa_end_sessions`) を足す (§21.4) |
 | C | `src/lib/auth/__tests__/mfa-client.test.ts`・`tests/mfa-pages-browser.test.tsx` (段 A で新設) | §21.1 の (C) の it を足す |
 | C | `src/__tests__/api/null-character-routes.test.ts` | `EXCLUDED` に `POST super-admin/admins/[id]/mfa/reset/route.ts` の 1 行を理由つきで足す (§23 N-28) |
 | C | `tests/admin-mutation-audit-coverage-1571.test.ts` | `EXPECTED` に reset の 1 行 (`{ exempt: <理由> }`。キーと理由の文は §23 N-38 の逐語) を足す。ほかの行・走査の関数・it は変えない |
@@ -3059,7 +3277,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-1 | `tests/database-types-migrations-contract.test.ts` | `operator_mfa_backup_codes` | migration の CREATE TABLE が型ファイルに無い | ローカルで `gen types` を取り直し 2 ファイルに写す (冒頭の手順) | A |
 | N-2 | `tests/env-source-scan.test.ts`・`src/__tests__/lib/env.test.ts`・`tests/check-env-script.test.ts` | `OPERATOR_MFA_ENFORCE_FROM`・`process.env.OPERATOR_MFA_ENFORCE_FROM` | 一覧に無い変数を読む / `.env.example` に無い / readOnlyBy 以外が読む | `SERVER_ENV_VARS` に `readOnlyBy: 'src/lib/auth/mfa/policy.ts'` で登録・`.env.example` に説明つきで追加・値を読むのは policy.ts だけ | A |
 | N-3 | `tests/rate-limit-single-implementation.test.ts` | `@upstash/ratelimit` | 新 route が自前の制限を持つと赤 | `checkRateLimit(user.id, 'auth-mfa-verify')`・`checkRateLimit(user.id, 'auth-mfa-recover')` だけを使う | A/B |
-| N-4 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` (`@supabase/supabase-js`)・`SUPABASE_SERVICE_ROLE_KEY` | 自前で service_role の client を作ると赤 | `getSupabaseAdmin()` だけを使う (`src/lib/auth/mfa/backup-codes.ts` も route から受け取る) | A/B/C |
+| N-4 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` (`@supabase/supabase-js`)・`SUPABASE_SERVICE_ROLE_KEY` | 自前で service_role の client を作ると赤 | `getSupabaseAdmin()` だけを使う (`src/lib/auth/mfa/backup-codes.ts`・`src/lib/auth/mfa/sessions.ts` (段 C) も route から受け取る) | A/B/C |
 | N-5 | `tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts` | `error.message`・`internalError` | 本文に Supabase の生の文を入れると赤 | 4xx は固定の文、5xx は `internalError`。`AuthError` / `ForbiddenError` の message だけ本文に出してよい。src/lib の新しいファイルも結果のオブジェクトに `.message` / `.details` / `.hint` を入れない: `backup-codes.ts` の 4 関数は固定の文の `Error` を投げて PostgREST の error は `cause` に入れる (§12.3)・`recordMfaAudit` は `recordAdminAudit` の戻りをそのまま返す (新しいオブジェクトを作らない §17.1)・`client.ts` は本文の `code` だけを読む (§15.1)。`lib-raw-error-message-scan` の `ALLOWED` は増やさない | A/B/C |
 | N-6 | `tests/next15-async-request-api-scan.test.ts` | `createClient()`・`headers()`・`params` | await 無し / `params` が Promise でないと赤 | `await createClient()`・`(await headers()).get('authorization')`・`factors/[id]` と `admins/[id]` は `params: Promise<{ id: string }>` | A/B/C |
 | N-7 | `tests/role-check-source-scan.test.ts` | `requireRole(`・`roles?.` | route で roles を手書き判定すると赤。`usingRequireRole > 40` の番兵 | 新 route は `requireRole(MFA_REQUIRED_ROLES, …)` を呼ぶ (配列リテラルでないので ROLE_GATED_ROUTES には入れない) | A |
@@ -3087,9 +3305,9 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | N-29 | `tests/edge-function-verify-jwt.test.ts`・`src/__tests__/config/turnstile-config.test.ts`・`tests/local-ci-slot.test.ts` | `supabase/config.toml`・`scripts/supabase-local.sh`・`[auth.mfa.totp]` | `edge-function-verify-jwt` は `supabase/config.toml` に空行・行全体のコメント・`[functions.<name>]`・`verify_jwt = true / false` 以外の行が 1 行でもあれば、読み込みの時点で例外 (ファイル全体が赤)。`turnstile-config` は `scripts/supabase-local.sh` に `auth.captcha` / `GOTRUE_SECURITY_CAPTCHA` が無いことを見る。`local-ci-slot` は組み立てた config.toml の表を読む (枠 0 に `[auth]` の表が無いこと・枠 1 以上の `[auth]` の値) | `supabase/config.toml` は変えない (`edge-function-verify-jwt` は反応しない)。TOTP は `scripts/supabase-local.sh` の `prepare()` の「ローカル専用」の並びに `[auth.mfa.totp]` の 3 行を足す (§22.3)。`turnstile-config` は反応しない (CAPTCHA の語を足さない)。`local-ci-slot` の既存の検査は `[auth]` と `[auth.rate_limit]` の表を見るだけで、`[auth.mfa.totp]` は別の表なので反応しない。§21.3 の it を 1 つ足す | B |
 | N-30 | `apps/mobile/__tests__/lib/web-view-auth-messages.test.ts`・`apps/mobile/__tests__/components/WebViewScreen.auth-messages.test.tsx`・`src/__tests__/lib/native-auth-bridge.test.ts` | `parseWebAuthMessage`・`NativeAuthMessage`・`onMessage` | メッセージの type を 1 つ足す。既存の it (「sign-out / session-expired だけを受け付ける」・「知らない type や壊れた JSON は何も起こさない」・`{ type: 'download' }` などの null の列挙) は `mfa-verify-required` を使わないので緑のまま | 既存の it は変えない (it の名前「sign-out / session-expired だけを受け付ける」だけ 3 つの type に改める)。§21.7 の it を足す | A (native-auth-bridge)・D (モバイル) |
 | N-31 | `apps/mobile/__tests__/components/WebViewScreen.no-any-cast.test.ts` と、`WebViewScreen` を描く既存のテスト 6 本 (`WebViewScreen.test.tsx`・`.bridge`・`.download`・`.error-cleanup-tabs`・`.auth-messages`・`home/home.test.tsx`) | `WebViewScreen.tsx`・`webViewAuthMessages.ts` | `no-any-cast` は 2 ファイルに `as any` が無いことを見る。描くテストは `../../src/lib/supabase` を差し替え済み (6 本とも) で、`NativeMfaVerifyModal` は要求が無ければ描かれない | `as any` を書かない (§16.4.5)。描くテストは変えない (新しい import の先 `operator-mfa.ts`・`MfaVerifyGate.tsx` が読む `supabase` は差し替え済み)。`profile-tab-settings-entry.test.tsx` は `WebViewScreen` そのものを差し替えるので反応しない | D |
-| N-32 | `tests/integration/security/anon-definer-execute.test.ts` (A1・A2・B) | `operator_mfa_satisfied`・`TO public` | A1: anon が EXECUTE できる SECURITY DEFINER は許可リストの 2 本だけ。A2: anon に効くポリシーは anon の EXECUTE できない関数を呼ばない。B: 決定表 | 判定の関数は anon の EXECUTE を外す (§11.4 の REVOKE / GRANT) ので A1 は緑。判定を呼ぶポリシーは全部 `TO authenticated` にする (付録 A) ので A2 は緑 (`subscription_plans_select_public` は判定を呼ばない)。B の `EXPECTED_ACL` に 1 行足す (§21.8) | E |
+| N-32 | `tests/integration/security/anon-definer-execute.test.ts` (A1・A2・B) | `operator_mfa_satisfied`・`TO public` | A1: anon が EXECUTE できる SECURITY DEFINER は許可リストの 2 本だけ。A2: anon に効くポリシーは anon の EXECUTE できない関数を呼ばない。B: 決定表 | 段 C の `operator_mfa_end_sessions(uuid)` (§11.5) と段 E の判定の関数は、どちらも anon の EXECUTE を外す (REVOKE / GRANT) ので A1 は緑。判定を呼ぶポリシーは全部 `TO authenticated` にする (付録 A) ので A2 は緑 (`subscription_plans_select_public` は判定を呼ばない)。B の `EXPECTED_ACL` に段 C で 1 行 (`anon: false, authenticated: false, serviceRole: true`)・段 E で 1 行足す (§21.8) | C / E |
 | N-33 | `tests/integration/rls/subscription-plans-yearly-price-id.test.ts:135-144` | `pg_policies`・`subscription_plans` | subscription_plans のポリシーの一覧を `[mutate_super_admin, select_public]` の 2 本で固定している。段 E で `subscription_plans_select_operator` が増える | 期待する一覧に `{ policyname: 'subscription_plans_select_operator', cmd: 'SELECT' }` を足す (名前の順で 2 番目) | E |
-| N-34 | `tests/database-types-migrations-contract.test.ts` | `CREATE OR REPLACE FUNCTION`・`operator_mfa_satisfied` | migration が作った public の関数 (トリガー関数を除く) が型ファイルの `Functions` に無いと赤。7 本の関数の `CREATE OR REPLACE` は既に型にある | 2 つの型ファイルを作り直して `operator_mfa_satisfied` を入れる (§11.4・§22.3) | E |
+| N-34 | `tests/database-types-migrations-contract.test.ts` | `CREATE OR REPLACE FUNCTION`・`operator_mfa_satisfied` | migration が作った public の関数 (トリガー関数を除く) が型ファイルの `Functions` に無いと赤。7 本の関数の `CREATE OR REPLACE` は既に型にある | 段 C: 2 つの型ファイルを作り直して `operator_mfa_end_sessions` (Args `p_user_id`・Returns number) を入れる (§11.5)。段 E: 同じく `operator_mfa_satisfied` を入れる (§11.4・§22.3) | C / E |
 | N-35 | 運営ロールの JWT で PostgREST / RPC を直接呼ぶ既存の結合テスト (例: `tests/integration/security/family-lock-order-race.test.ts`・`org-admin-residual-cleanup.test.ts`・`tests/integration/rls/is-inactive-user-rpc.test.ts`・`tests/integration/rls/csat-nps-summary-rpc.test.ts`・`tests/integration/security/account-export-scope.test.ts`) | `rpc(`・`from(`・`super_admin`・`admin` | 段 E で運営の枝と 7 本の関数が判定を通す | 変えない: 自前で `signInWithPassword` した運営は TOTP を登録していないので判定は真 (未登録の枝)。`createTestUserWithRoles` / `signInForIntegration` で作った運営は段 B から aal2 の JWT なので真。段 E の PR で結合のスイートを全部流し、`OPERATOR_MFA_REQUIRED` と運営の枝の 0 行の失敗が残らないことを確かめる (残ったら、その it が登録済みの運営の aal1 の token で運営の枝を使っているので、aal2 の token に直し、PR の本文に書く) | E |
 | N-36 | 設定画面 `src/app/(main)/settings/page.tsx` を描く既存の単体テスト 8 本: `src/__tests__/app/main-layout-signed-out.test.tsx`・`src/__tests__/app/native-account-actions.test.ts`・`src/__tests__/app/settings/account-link.test.ts`・`src/__tests__/app/settings/data-export.test.ts`・`src/__tests__/app/settings/support-link.test.ts`・`src/__tests__/app/settings/trainer-share-removed.test.ts`・`tests/account-deletion-blocked-message.test.ts`・`tests/ai-consent-settings-entry.test.ts` (origin/main `c100ca9d` の実測。ソースを文字列で読むだけの `src/__tests__/app/faq/account-answers.test.ts`・`src/__tests__/lib/auth/logout-guidance.test.ts` は描かない) | `fetch`・`/api/auth/mfa/status` | 段 A で設定画面が、ブラウザ (`window.ReactNativeWebView` が無い) なら最初の描画の後に `getMfaStatus()` を呼ぶ (§15.2)。8 本とも `fetch` を `vi.stubGlobal` で差し替えていて、知らない URL には 500 を返すか (7 本) 例外を投げる (`data-export.test.ts` の `unexpected fetch`) | 変更なし (走らせて確認)。`requestMfaApi` は 500 も例外も `MfaClientFailure` にして投げない (§15.1) ので、入口の行は出ず画面も移らない (`main-layout-signed-out` の `hrefSetter` は呼ばれない)。`data-export` の `/api/account/export` の回数の検査は URL で絞っているので数が変わらない | A |
 | N-37 | `tests/design-doc-removed-mobile-screens.test.ts` (origin/main `56189b63`。#1687) | `apps/mobile/app/comparison/index.tsx` などの消えたモバイルの画面 (`REMOVED_MOBILE_SCREENS`) | `docs/design/` の `.md` の行が消えた画面を `apps/mobile/app/<パス>` か `app/<パス>` で名指しするなら、同じ行に「削除」か「消した」が要る (無いと赤) | 本書で消えた画面を名指しする行 (冒頭の改定履歴・§3・§3.2 の表・§16・§16.3・この行など) は「削除」の語を持つ (v1.5 で §3・§3.2 の「消え」を「削除され」に改めた)。#1598 で、消した区画を指すコードの文字列 (`MOBILE_GATED_AREAS`) と消したテストの名指しも赤になる見張りになったので、v1.7 で §20 の定数を外し、N-9 を欠番にした。#1598 で削除した画面のうち本書が名指しするのは、運営の 2 区画 (super-admin)・(support) と、運営の区画ではないことを示すために挙げる組織の管理の区画 (org) (§3.2・§16) で、どの行も「削除」の語を持つ。同じ PR #1733 で削除した他の画面 (週間献立など) は運営に関わらないので本書は名指ししない (#1673 で削除した比較の画面 `apps/mobile/app/comparison/index.tsx` は、運営の操作 (再計算) を持っていたので §3.2 で名指しする)。§24 の追随で他の文書に書く行も同じ書き方にする | 本書 |
@@ -3144,7 +3362,9 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | `docs/design/cross/CLAUDE.md` | ファイル一覧 | `12-operator-mfa.md` の行 (担当範囲: 運営ロールの MFA / AAL2 の入口。要件 03 §17.2) を足す。`01` の担当範囲の「2FA」を「2FA (方針。詳細は 12)」にする | 設計のマージと同じ PR (オーケストレーターが行う) |
 | `docs/design/operator/07-audit-monitoring.md` | §4.1 / §4.2 | §17 の 5 つの action_type を足す (details (`failed_step` を含む) と severity・fail-closed の注記・§17.2 の「監査の起点の後は途中で失敗しても 1 行書く」)。段 C で、§4 の「変更系を記録する範囲 (#1571)」の段落に、reset (`/api/super-admin/admins/{id}/mfa/reset`) は `tests/admin-mutation-audit-coverage-1571.test.ts` の表に `recordMfaAudit` 経由 (`exempt` に理由) で載ること (§23 N-38) と、自己サービスの `/api/auth/mfa/*` は走査の外でも 4 種を記録することを 1 行ずつ足す | 段 A (4 つ)・段 C (reset) |
 | `docs/design/cross/13a-legal-consent-api-server.md` | §6.4 の許可リストの表の `/api/auth` の行 (279 行目。「ログイン・Cookie の同期・ネイティブ認証ブリッジのコード」) | 説明に「運営の MFA の自己サービス (`auth/mfa/*`。cross/12 §14.1〜14.6。登録・確認・回復は認証の途中)」を足す。許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`) の値は変えない (prefix が既に覆う §3.3・§23 N-39) | 段 A |
-| `docs/design/operator/02-api-spec.md` | §3.1 認証 | 「必須ロールは AAL2 (cross/12)」の 1 行と、`POST /api/super-admin/admins/{id}/mfa/reset` の節 | 段 B / 段 C |
+| `docs/design/operator/02-api-spec.md` | §3.1 認証 | 「必須ロールは AAL2 (cross/12)」の 1 行と、`POST /api/super-admin/admins/{id}/mfa/reset` の節 (監査 → 対象の全セッションの終了 (SQL の関数 `operator_mfa_end_sessions`) → factor → コードの順と、500 のときに何が済んでいるか。cross/12 §14.7) | 段 B / 段 C |
+| `docs/design/cross/16-auth-history-sessions.md` (#1720・PR #1757。本書の時点で未マージ) | §8 の表 (行 16「MFA の verify (cross/12)」の並び)・§5 の cross/12 との関係の行 | 行を 2 つ足す: 「MFA の回復 (cross/12 §14.5): 本人の access token で `admin.signOut(token, 'global')` → DELETE × 全部 (GoTrue) → `signed_out`」「運営による MFA の解除 (cross/12 §14.7・§11.5): service_role の RPC `operator_mfa_end_sessions` → DELETE × 全部 (SQL) → トリガーが `signed_out`」。`ended_reason` の値は増やさない (CHECK は 3 値。増やすなら cross/16 の改定 Q-18) | cross/16 が main に入っている方が後の PR (段 C が後なら段 C の PR、cross/16 が後なら cross/16 の PR か後続の docs PR) |
+| `docs/operations/auth-protection.md` | §11 (313 行目〜。段 B で新設済み) | 箇条を 1 つ足す: 「別の super_admin の解除 (`/admin/users/{id}` の「二段階認証を解除」) は、対象の認証アプリとバックアップコードを消す前に、対象のすべての端末のログインを終える (SQL の関数 `operator_mfa_end_sessions`。cross/12 §11.5・§14.7)。対象はすべての端末で再ログインになる。DB (PostgREST) を直接呼ぶ経路だけは access token の期限 (Supabase の JWT の寿命の設定。既定 1 時間) まで残る (§0.3)」 | 段 C |
 | `docs/design/operator/03-ui-spec.md` | §6 ユーザー詳細 | 「二段階認証を解除」ボタン (super_admin・対象が必須ロールのとき) | 段 C |
 | `docs/design/operator/03-ui-spec.md` | §31 `/super-admin/admins` の表の「2FA 状態」列 (631 行目付近) | 本書は値を供給しない (§0.3)。列に「(未実装。cross/12 §0.3 の範囲外・§27 Q-10)」と注記する | 段 B |
 | `docs/design/operator/01-data-model.md` | §3.1 マイグレーション適用順序 (§11.0 再掲)・表の節 | 一覧の末尾に `operator_mfa_backup_codes` (cross/12 §11.1。`auth.users` への FK だけで、他の運営の表に依存しない) を足し、表の節に「→ cross/12 §11.1 が正典」のポインタの節を足す。番号は migration と同じくマージ時に確定した値を書く (docs/design/CLAUDE.md の「マイグレーション順序」の採番の衝突の注意に従う) | 段 A |
@@ -3186,7 +3406,8 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | `src/app/(auth)/auth/native-bridge/route.ts`・`lib/onboarding-routing.ts` | 保持 | 変えない (借り物のセッションの作り・運営の `/home` → `/admin` の振り分けはそのまま §7.1) |
 | `scripts/supabase-local.sh` | 変更 | ローカル専用の `[auth.mfa.totp]` (§22.3) |
 | `supabase/config.toml` | 保持 | 変えない (§23 N-29) |
-| RLS のポリシー 58 本・SECURITY DEFINER の関数 7 本 (§3.2) | 変更 (段 E) | 運営の枝に判定の関数を足す・ポリシーは `TO authenticated`・`subscription_plans_select_public` の運営の枝を `subscription_plans_select_operator` に分ける (§11.4・付録 A) |
+| `auth.sessions` (GoTrue の表。所有者 `supabase_auth_admin`) | 保持 (行を消すだけ) | 段 C の `operator_mfa_end_sessions` が対象の行を DELETE する (列・索引・トリガーは触らない。外部キーの CASCADE で `auth.refresh_tokens`・`auth.mfa_amr_claims` の行も消える。cross/16 のトリガーがあれば発火する §11.5) |
+| RLS のポリシー 56 本・SECURITY DEFINER の関数 7 本 (§3.2) | 変更 (段 E) | 運営の枝に判定の関数を足す・ポリシーは `TO authenticated`・`subscription_plans_select_public` の運営の枝を `subscription_plans_select_operator` に分ける (§11.4・付録 A) |
 | `docs/operations/auth-protection.md` の「MFA を使っていない」 | 変更 | §24 |
 
 ---
@@ -3205,7 +3426,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 2. `OPERATOR_MFA_ENFORCE_FROM` を決める (例: 1 週間後。未設定 = 段 B のデプロイで即時)。
 3. 段 B をデプロイ。猶予中の未登録の運営は、運営の画面の上にバナーが出る。登録済みの運営はこの瞬間から challenge。
 4. 期日を過ぎたら、未登録の運営は setup へ回される。期日の前に全員が登録できたら、環境変数を消す。
-5. 段 C・D (どちらも段 B の後)。**段 D は段 B の直後に出す**: 段 B から段 D までの間、アプリのホームのタブ (WebView の `/admin`) は MFA の画面の案内で止まる (段 D より前のアプリは確認画面を開けない §16.4)。モバイルの運営は、その間はブラウザを使う。段 D はアプリの新しい版で届くので、古い版のアプリでは段 D の後も案内で止まる (案内の文が「アプリを最新版に」と書く)。
+5. 段 C・D (どちらも段 B の後)。**段 C は migration (§11.5) を本番に当て、§11.5 の「本番で確かめる手順」を通してからデプロイする** (reset の route が RPC を呼ぶ。先にデプロイすると解除が手順 7 の 500 で止まるだけで、何も消えない)。**段 D は段 B の直後に出す**: 段 B から段 D までの間、アプリのホームのタブ (WebView の `/admin`) は MFA の画面の案内で止まる (段 D より前のアプリは確認画面を開けない §16.4)。モバイルの運営は、その間はブラウザを使う。段 D はアプリの新しい版で届くので、古い版のアプリでは段 D の後も案内で止まる (案内の文が「アプリを最新版に」と書く)。
 6. 段 E (段 B の後)。本番に migration を当てる前に、ローカルの Supabase で §21.8 の結合テストと結合のスイート全部が緑であることを確かめる。当てた後は、DB を本人の JWT で直接呼ぶ経路も、TOTP を登録済みの運営は aal2 でなければ運営の枝を使えない。Web の運営の画面・API はゲートの後にしか DB に来ないので、利用者から見える変化は無い (S-30)。戻すときは `.down.sql` の内容を新しい migration として出す (§11.4)。
 
 ### 26.3 セッションの AAL の扱い (R-7 の答え)
@@ -3216,7 +3437,7 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
   - スマホのアプリにふつう (aal1) でログインしている運営が、Web の `/admin` などで 6 桁を入れると、アプリのネイティブのセッションが終わる (ネイティブのブリッジで同じセッションを使う WebView も一緒に終わる)。アプリは次の要求か refresh の時点で再ログインになる (S-25)。
   - アプリのネイティブの確認画面 (§16.4) で 6 桁を入れると、同じ人の Web のブラウザの aal1 のセッションが終わる。
   - アプリの側で防ぐ手段は無い (Supabase の verify の挙動。§7.1 で factor を Supabase に持つと裁定したことの帰結)。受け入れるかは Q-11。運用の注意として `docs/operations/auth-protection.md` の新 §11 に載せる (§24)。
-- 回復・解除 (他人による) では **全セッションを終了する**。画面はこれを前提に `/login` へ戻す。回復は route が factor の削除より先に `admin.auth.admin.signOut(token, 'global')` で終える (§14.5。`admin.mfa.deleteFactor` だけでは終わらない §3.1 の実測)。
+- 回復・解除 (他人による) では **全セッションを終了する**。画面はこれを前提に `/login` へ戻す (回復)。回復は route が factor の削除より先に `admin.auth.admin.signOut(token, 'global')` で終える (§14.5。`admin.mfa.deleteFactor` だけでは終わらない §3.1 の実測)。解除 (他人) は対象の token を持たないので、route が service_role の RPC `operator_mfa_end_sessions` (`auth.sessions` の対象の行を消す。GoTrue のログアウトと同じ 1 文 §11.5) で factor の削除より先に終える (§14.7)。どちらも、終えたセッションの access token は GoTrue が `session_not_found` で断る (Web の運営の入口・自己サービス API は 401・refresh は失敗) が、PostgREST を直接呼ぶ経路 (段 E) では exp まで aal2 の claim が残る (§0.3・Q-17)。
 - モバイルも同じ (Bearer の token の claim)。
 - アプリの WebView の Cookie のセッションは、ネイティブのセッションの借り物 (同じ session_id)。AAL もネイティブと共通で、ネイティブの確認画面で 6 桁を入れると両方が aal2 になる (WebView の Cookie の access_token は読み込み直しで新しくなる §16.4)。WebView の中で Web の verify はしない (token を発行し直す持ち主はネイティブだけ)。
 
@@ -3240,28 +3461,28 @@ grep の語 = 本設計が足す・変える名前。反応するテストと直
 | Q-12 | テストの道具 (結合の `signInForIntegration`・e2e の `injectSession`) が運営ユーザーを TOTP で aal2 に上げる作りのままでよいか (§22.4)。R3 (e2e の道具の契約) と R4 (MFA の回数制限) で、道具が環境の制約に当たる指摘が 2 周続いた | このままにする (ローカルの Supabase では MFA の回数制限が効かないことを §22.4.4 で示し、M-13 で固定した)。発生源を消す構造の案: 結合・e2e の Next を `OPERATOR_MFA_ENFORCE_FROM` = 未来 で起動し、未登録の運営は Web の `pass_grace` と DB の未登録の枝で通す。昇格の道具 (`signInForIntegration`・自前でサインインする 5 本の書き換え・`injectSession` の自動の昇格) が要らなくなり、MFA の結合・e2e (M-*・T-MFA-*) だけが画面・API で登録する。代わりに、結合・e2e の運営の画面に猶予のバナーが出る・猶予なしの枝 (`enrollment_required`) は単体と route のテストだけで守る・`scripts/local-ci.sh` と CI の Next の起動に環境変数を足す。M-13 が赤になった (回数制限が効くようになった) ときは、この案に切り替える |
 | Q-13 | (v1.6) 自己サービスの 6 route (`/api/auth/mfa/*`) が、#1689 の /api の同意ゲートの許可リストの `/api/auth` (prefix・`auth_flow`) に入り、未同意の運営も API を直接呼べば登録・確認・回復・再発行・解除ができる (§3.3)。これを受け入れるか | 受け入れる (MFA は認証の一部で、利用者のデータを読み書きしない。画面からは、未同意の運営は先に画面の同意ゲートで `/legal-consent` へ回る)。止めたいなら、`LEGAL_CONSENT_EXEMPT_API_PATHS` の `/api/auth` を細かく分けるか route を `/api/auth` の外に置く別の設計になる (13a の正典の変更を伴う) |
 | Q-14 | (v1.6) 登録の verify の後にバックアップコードを表示できなかったとき (コードの発行の失敗・応答が届かず打ち直した §10・§15.2)、setup の画面は案内だけを出し、受け取り直しは状態の画面の [バックアップコードを再発行] (段 B) に任せる。段 A だけの間は再発行のボタンが無い (§0.2)。この扱いでよいか | この扱いで設計する (段 A は何も強制せず、§26.2 で段 B が続く。再発行の API を段 A に前倒しすると、AAL2 を確かめる仕組みの無い段 A で、パスワードだけの人がコードを作れてしまう)。setup の画面が自動で再発行を呼ぶ案は、段 A と段 B で画面の作りが変わり、確認の無い状態の変更を足すので採らない |
-| Q-15 | (v1.7 網羅性 (周 2)) 段 E の母集合 (付録 A の 58 本) が、`44c471e4` の後の migration で動いた (§3 の ⚠️ の段落の 4.: `gdpr_select`・`gdpr_update`・`personal_subscriptions_insert`・`personal_subscriptions_update` が消え、`personal_subscriptions_insert_admin`・`personal_subscriptions_update_admin`・`data_subject_requests_select_operator` が増えた。migration の実体で 57 本。#1736 (`20261016238000`) が `"Admins can create audit logs"` を消したので、さらに 1 本減り 56 本の見込み (付録 A の冒頭の注)。本番の `pg_policies` は未確認)。付録 A・§3.2・§11.4・§20.1 の数をいつ取り直すか | 本書の v1.7 (段 D の縮小) では取り直さない (範囲の外)。段 E の実装の前に、段 E の設計を改定して取り直す (付録 A の up / down・数の宣言・§23 N-32〜N-35)。段 E の実装者は付録 A をそのまま流さない (消えた 4 本の `ALTER POLICY` は失敗する) |
-| Q-16 | (v1.7 設計ゲート R2) 実装の途中の段 B の枝は v1.6 の本書で書いていて、v1.7 と食い違う 2 か所 (`docs/operations/auth-protection.md` §11 の「**モバイル**は猶予を見ず…」の 1 行・`tests/operator-mfa-entry-points-scan.test.ts` の見出しの「段 D で ⑨⑩ を足す」) を持つ (§0.2 の ⚠️ の段 B の枝の段落)。どの PR で直すか | 段 B が本書 v1.7 の後にマージするなら段 B の PR、先にマージしたなら段 D の PR (§22.3・§24 の行の期日)。どちらにするかはマージの順を決めるオーケストレーターが選ぶ。どちらでも、後の PR のマージの後の main に旧い文が残らないことを、その PR のレビューで確かめる |
+| Q-15 | (v1.7 網羅性 (周 2)) 段 E の母集合 (付録 A の 58 本) が、`44c471e4` の後の migration で動いた (§3 の ⚠️ の段落の 4.: `gdpr_select`・`gdpr_update`・`personal_subscriptions_insert`・`personal_subscriptions_update` が消え、`personal_subscriptions_insert_admin`・`personal_subscriptions_update_admin`・`data_subject_requests_select_operator` が増えた。migration の実体で 57 本。#1736 (`20261016238000`) が `"Admins can create audit logs"` を消したので、さらに 1 本減り 56 本の見込み (付録 A の冒頭の注)。本番の `pg_policies` は未確認)。付録 A・§3.2・§11.4・§20.1 の数をいつ取り直すか | **v1.8 で取り直した**: 付録 A は 2026-10-16 の本番の `pg_policies` の読み取りで 56 本 (A.4 の指紋)。段 E の実装者は、migration を書く直前に A.4 の手順で本番の指紋を取り直し、一致しなければ本書を改定してから書く (Q-20) |
+| Q-17 | (v1.8) 回復・解除 (他人) で `auth.sessions` の行を消しても、残った access token は PostgREST を直接呼ぶ経路 (段 E) で exp まで aal2 の claim を持つ (§0.3・S-32)。Supabase の JWT の寿命 (ダッシュボード Authentication → Sessions の access token の期限。既定 3600 秒) を縮めるか | 縮めない (本書の範囲外の運用の設定。Web の運営の入口と API は終えた直後から 401 で、残るのは段 E の経路の exp までの間だけ)。縮めるなら、運営の体感 (refresh の頻度) と合わせてオーナーが決める |
+| Q-18 | (v1.8) cross/16 の `user_sessions_metadata.ended_reason` に `mfa_reset` / `mfa_recovered` を足し、履歴で「運営による解除」「回復」を区別するか (§11.5) | 足さない (CHECK の 3 値 `signed_out` / `revoked_by_user` / `idle_expired` を増やすのは cross/16 の改定。GoTrue のログアウトと同じ `signed_out` のままで、何が起きたかは `admin_audit_logs` の `super_admin.mfa.reset` / `admin.mfa.recover` が持つ) |
+| Q-19 | (v1.8) 終えたセッションの数を reset の 200 の本文 (`MfaResetResponseSchema`) や監査の details に入れるか (§14.7・§17) | 入れない (監査は削除の前に書く fail-closed なので結果を持てない。応答の schema は 3 つの値のまま。facade は数を返すので、入れるなら本文に `sessions_ended` を足す小さな改定) |
+| Q-20 | (v1.8) 本番の `pg_policies`・`auth` の権限・台帳を Supabase MCP の SELECT で読み取り、付録 A と §3.1 の事実にした (仕様では「本番の pg_policies は読めない」前提だった)。段 E の実装の直前と、段 C の migration の後に、同じ読み取り (A.4・§11.5 の手順) をもう一度行うか。GoTrue に利用者 ID でセッションを終える管理 API が入ったら、回復と解除の両方をそれへ寄せるか | 行う (手順は本書に残した。読み取りだけで本番を変えない)。GoTrue の管理 API が入ったら、§7.1 の 2 論点を裁定し直す (両方を API に寄せ、関数を消す migration を出す) |
+| Q-16 | (v1.7 設計ゲート R2) 実装の途中の段 B の枝は v1.6 の本書で書いていて、v1.7 と食い違う 2 か所 (`docs/operations/auth-protection.md` §11 の「**モバイル**は猶予を見ず…」の 1 行・`tests/operator-mfa-entry-points-scan.test.ts` の見出しの「段 D で ⑨⑩ を足す」) を持つ (§0.2 の ⚠️ の段 B の枝の段落)。どの PR で直すか | 段 B が本書 v1.7 の後にマージするなら段 B の PR、先にマージしたなら段 D の PR (§22.3・§24 の行の期日)。どちらにするかはマージの順を決めるオーケストレーターが選ぶ。どちらでも、後の PR のマージの後の main に旧い文が残らないことを、その PR のレビューで確かめる。**v1.8 で解決**: 段 B (#1754) が v1.7 の後にマージし、2 か所とも段 B の PR で直っている (§3 の v1.8 の段落) |
 
 ---
 
-## 付録 A. 段 E の RLS のポリシー 58 本 (canonical)
+## 付録 A. 段 E の RLS のポリシー 56 本 (canonical)
 
-§11.4 の 4 と、ロールバックの (a) の全文。どちらも、本番 (= `supabase/baseline/prod_schema.sql` の取得時点。ベースラインより後の migration はこの 58 本に触れていない §3.2) の `pg_policies` の式を、空白を 1 つにまとめて 1 行にしたもの。表の名前の並び (表・ポリシーの名前の順)。1 行 = 1 文。式の中の `user_profiles`・`support_tickets`・`org_role_enum` はスキーマを書いていないが、migration の既定の search_path (`"$user", public, extensions`) で public に解決される (本番の `pg_policies` がこの形で返す式そのもの)。
+§11.4 の 4 と、ロールバックの (a) の全文。どちらも、本番の `pg_policies` の式 (2026-10-16 の読み取り。origin/main `d17b7b41` の migration 205 本 = 本番の台帳 205 本・最大 `20261016241000` の時点) を、空白を 1 つにまとめて 1 行にしたもの。表の名前の並び (表・ポリシーの名前の順。バイト順 = `COLLATE "C"`)。1 行 = 1 文。式の中の `user_profiles`・`support_tickets`・`org_role_enum` はスキーマを書いていないが、migration の既定の search_path (`"$user", public, extensions`) で public に解決される (本番の `pg_policies` がこの形で返す式そのもの)。
 
-**注 (#1736 との突き合わせ。段 E の migration を書く前に付録 A を取り直す)**: `20261016238000_admin_audit_logs_insert_actor_only.sql` (#1736) は、
-下の A.1 / A.2 の 1 本目と 3 本目に触れる。① `"Admins can create audit logs"` を DROP する (本番から消えるので、段 E の `ALTER POLICY "Admins can create audit logs"` は
-42704 で失敗する) ② `audit_logs_insert_admins` を `TO authenticated` で作り直し、WITH CHECK に `action_type NOT LIKE 'system.%'`・
-`actor_email_snapshot IS NULL`・`actor_role_snapshot IS NULL`・`impersonated_by IS NULL` を足す (下の式のまま `ALTER POLICY` すると、この 4 項が消える)。
-#1736 は 2026-10-16 に本番に入った。段 E の前に、A.3 の出し方で母集合を取り直す (`"Admins can create audit logs"` が抜ける。§3 の ⚠️ の段落の 4. (Q-15) の動きと合わせると、migration の実体で 56 本の見込み。数は本番の `pg_policies` で確かめる)。
-`audit_logs_insert_admins` は、その時点の `pg_policies` の式の運営ロールの条件の項だけを §11.4 の規則で置き換える (#1736 の 4 項は残す)。
+**v1.7 までの 58 本 (ベースライン `supabase/baseline/prod_schema.sql` の時点) との差**: #1690 (`20261016190000`) が `gdpr_select`・`gdpr_update` を消し、#1711 (`20261016210000`) が `personal_subscriptions_insert`・`personal_subscriptions_update` を消して `personal_subscriptions_insert_admin`・`personal_subscriptions_update_admin` (運営の枝だけ。本人の枝は無い) を作り、#1709 (`20261016220000`) が `data_subject_requests_select_operator` (TO authenticated。`up` の別名と `( SELECT auth.uid() AS uid)` の形) を新設し、#1736 (`20261016238000`) が `"Admins can create audit logs"` を消して `audit_logs_insert_admins` を TO authenticated で作り直した (WITH CHECK に `action_type !~~ 'system.%'`・`actor_email_snapshot IS NULL`・`actor_role_snapshot IS NULL`・`impersonated_by IS NULL` の 4 項が増えた。§11.4 の規則で置き換えるのは運営ロールの項だけで、この 4 項は残す)。58 − 5 + 3 = 56 本。53 本が `TO public`、3 本 (`audit_logs_insert_admins`・`data_subject_requests_select_operator`・`tickets_insert_staff`) が `TO authenticated`。USING と WITH CHECK を両方持つのは 5 本 (`feature_flags_super_admin_all`・`moderation_flags_admin_all`・`personal_subscriptions_update_admin`・`sport_presets_mutate_super_admin`・`subscription_plans_mutate_super_admin`)。ほかの 52 本の式は v1.7 の付録 A と 1 文字も違わない。
 
-### A.1 up (migration の 4。57 文 + subscription_plans の 3 文)
+段 E の実装者は、migration を書く直前に A.4 の手順で本番の指紋を取り直し、A.4 の値と一致することを確かめる (一致しなければ、動いたポリシーをこの付録に取り直してから書く = 本書の改定。Q-20)。
+
+### A.1 up (migration の 4。55 文 + subscription_plans の 3 文)
 
 ```sql
-ALTER POLICY "Admins can create audit logs" ON public.admin_audit_logs TO authenticated WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND ((up.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text]) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY "Admins can view audit logs" ON public.admin_audit_logs TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied()))))));
-ALTER POLICY audit_logs_insert_admins ON public.admin_audit_logs TO authenticated WITH CHECK (((actor_id = auth.uid()) AND (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text, 'support'::text, 'sales'::text, 'finance'::text, 'content_moderator'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
+ALTER POLICY audit_logs_insert_admins ON public.admin_audit_logs TO authenticated WITH CHECK (((actor_id = auth.uid()) AND (action_type !~~ 'system.%'::text) AND (actor_email_snapshot IS NULL) AND (actor_role_snapshot IS NULL) AND (impersonated_by IS NULL) AND (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text, 'support'::text, 'sales'::text, 'finance'::text, 'content_moderator'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
 ALTER POLICY audit_logs_select_super_admin ON public.admin_audit_logs TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY "Admins can manage user notes" ON public.admin_user_notes TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text]) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY "Users and admins can view ai logs" ON public.ai_content_logs TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied())))))));
@@ -3271,6 +3492,7 @@ ALTER POLICY coupons_mutate_sales_or_above ON public.coupons TO authenticated US
 ALTER POLICY coupons_select_sales_or_above ON public.coupons TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['sales'::text, 'finance'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY csat_access ON public.csat_feedbacks TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
 ALTER POLICY dau_select_admin ON public.daily_active_users TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text, 'finance'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
+ALTER POLICY data_subject_requests_select_operator ON public.data_subject_requests TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = ( SELECT auth.uid() AS uid)) AND ((ARRAY['admin'::text, 'super_admin'::text] && up.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY "Org admins can manage departments" ON public.departments TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.organization_id = departments.organization_id) AND ((up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])) OR ((up.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied())))))));
 ALTER POLICY email_blacklist_admin ON public.email_blacklist TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY email_logs_admin ON public.email_delivery_logs TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
@@ -3280,8 +3502,6 @@ ALTER POLICY experiment_assignments_select_super_admin ON public.experiment_assi
 ALTER POLICY experiments_select_super_admin ON public.experiments TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY feature_flags_super_admin_all ON public.feature_flags TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied())))))) WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY feature_packages_mutate_super_admin ON public.feature_packages TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied()))))));
-ALTER POLICY gdpr_select ON public.gdpr_deletion_requests TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
-ALTER POLICY gdpr_update ON public.gdpr_deletion_requests TO authenticated USING ((((user_id = auth.uid()) AND (executed_at IS NULL)) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied())))))));
 ALTER POLICY help_articles_manage ON public.help_articles TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text, 'support'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY infra_alerts_access ON public.infra_alerts TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY infra_select_super_admin ON public.infra_metrics TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied()))))));
@@ -3296,9 +3516,9 @@ ALTER POLICY "Org admins can manage challenges" ON public.organization_challenge
 ALTER POLICY "Org admins can manage invites" ON public.organization_invites TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_invites.organization_id) AND ((up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])) OR ((up.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied())))))));
 ALTER POLICY "Org admins can manage reports" ON public.organization_reports TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_reports.organization_id) AND ((up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])) OR ((up.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied())))))));
 ALTER POLICY organizations_delete_super_admin ON public.organizations TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (('super_admin'::text = ANY (user_profiles.roles)) AND (SELECT public.operator_mfa_satisfied()))))));
-ALTER POLICY personal_subscriptions_insert ON public.personal_subscriptions TO authenticated WITH CHECK (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
+ALTER POLICY personal_subscriptions_insert_admin ON public.personal_subscriptions TO authenticated WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY personal_subscriptions_select ON public.personal_subscriptions TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text, 'finance'::text, 'support'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
-ALTER POLICY personal_subscriptions_update ON public.personal_subscriptions TO authenticated USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))));
+ALTER POLICY personal_subscriptions_update_admin ON public.personal_subscriptions TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied())))))) WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY plan_price_history_select ON public.plan_price_history TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text, 'finance'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY "Admins can update recipe flags" ON public.recipe_flags TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied()))))));
 ALTER POLICY "Users and admins can view recipe flags" ON public.recipe_flags TO authenticated USING (((reporter_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]) AND (SELECT public.operator_mfa_satisfied())))))));
@@ -3321,14 +3541,14 @@ DROP POLICY IF EXISTS subscription_plans_select_operator ON public.subscription_
 CREATE POLICY subscription_plans_select_operator ON public.subscription_plans FOR SELECT TO authenticated USING ((EXISTS ( SELECT 1 FROM public.user_profiles WHERE ((user_profiles.id = auth.uid()) AND ((ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))));
 ```
 
-- `subscription_plans_select_public` は公開の枝 (`status` が `public` / `private`) だけにし、`TO PUBLIC` のまま (未ログインの料金の画面が読む S-31)。運営の枝 (admin / super_admin は全ての状態のプランを読める) は `subscription_plans_select_operator` に移し、判定を付けて `TO authenticated` にする。`subscription_plans_mutate_super_admin` (上の 57 文の 1 つ) は今までどおり super_admin の読み書きを持つ。
+- `subscription_plans_select_public` は公開の枝 (`status` が `public` / `private`) だけにし、`TO PUBLIC` のまま (未ログインの料金の画面が読む S-31)。運営の枝 (admin / super_admin は全ての状態のプランを読める) は `subscription_plans_select_operator` に移し、判定を付けて `TO authenticated` にする。`subscription_plans_mutate_super_admin` (上の 55 文の 1 つ) は今までどおり super_admin の読み書きを持つ。
+- 既に `TO authenticated` の 3 本 (`audit_logs_insert_admins`・`data_subject_requests_select_operator`・`tickets_insert_staff`) も同じ形で書く (`ALTER POLICY ... TO authenticated` は何度流しても同じ)。
 
-### A.2 down (ロールバックの (a)。58 文 + 1 文)
+### A.2 down (ロールバックの (a)。56 文 + 1 文)
 
 ```sql
-ALTER POLICY "Admins can create audit logs" ON public.admin_audit_logs TO PUBLIC WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text])))));
 ALTER POLICY "Admins can view audit logs" ON public.admin_audit_logs TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text])))));
-ALTER POLICY audit_logs_insert_admins ON public.admin_audit_logs TO PUBLIC WITH CHECK (((actor_id = auth.uid()) AND (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'support'::text, 'sales'::text, 'finance'::text, 'content_moderator'::text] && user_profiles.roles))))));
+ALTER POLICY audit_logs_insert_admins ON public.admin_audit_logs TO authenticated WITH CHECK (((actor_id = auth.uid()) AND (action_type !~~ 'system.%'::text) AND (actor_email_snapshot IS NULL) AND (actor_role_snapshot IS NULL) AND (impersonated_by IS NULL) AND (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'support'::text, 'sales'::text, 'finance'::text, 'content_moderator'::text] && user_profiles.roles))))));
 ALTER POLICY audit_logs_select_super_admin ON public.admin_audit_logs TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))));
 ALTER POLICY "Admins can manage user notes" ON public.admin_user_notes TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text, 'support'::text])))));
 ALTER POLICY "Users and admins can view ai logs" ON public.ai_content_logs TO PUBLIC USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))));
@@ -3338,6 +3558,7 @@ ALTER POLICY coupons_mutate_sales_or_above ON public.coupons TO PUBLIC USING ((E
 ALTER POLICY coupons_select_sales_or_above ON public.coupons TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['sales'::text, 'finance'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles)))));
 ALTER POLICY csat_access ON public.csat_feedbacks TO PUBLIC USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles))))));
 ALTER POLICY dau_select_admin ON public.daily_active_users TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'finance'::text] && user_profiles.roles)))));
+ALTER POLICY data_subject_requests_select_operator ON public.data_subject_requests TO authenticated USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = ( SELECT auth.uid() AS uid)) AND (ARRAY['admin'::text, 'super_admin'::text] && up.roles)))));
 ALTER POLICY "Org admins can manage departments" ON public.departments TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.organization_id = departments.organization_id) AND ((up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])) OR (up.roles && ARRAY['admin'::text, 'super_admin'::text]))))));
 ALTER POLICY email_blacklist_admin ON public.email_blacklist TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))));
 ALTER POLICY email_logs_admin ON public.email_delivery_logs TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['support'::text, 'admin'::text, 'super_admin'::text] && user_profiles.roles)))));
@@ -3347,8 +3568,6 @@ ALTER POLICY experiment_assignments_select_super_admin ON public.experiment_assi
 ALTER POLICY experiments_select_super_admin ON public.experiments TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))));
 ALTER POLICY feature_flags_super_admin_all ON public.feature_flags TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))) WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))));
 ALTER POLICY feature_packages_mutate_super_admin ON public.feature_packages TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))));
-ALTER POLICY gdpr_select ON public.gdpr_deletion_requests TO PUBLIC USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))));
-ALTER POLICY gdpr_update ON public.gdpr_deletion_requests TO PUBLIC USING ((((user_id = auth.uid()) AND (executed_at IS NULL)) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles)))))));
 ALTER POLICY help_articles_manage ON public.help_articles TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'support'::text] && user_profiles.roles)))));
 ALTER POLICY infra_alerts_access ON public.infra_alerts TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))));
 ALTER POLICY infra_select_super_admin ON public.infra_metrics TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))));
@@ -3363,9 +3582,9 @@ ALTER POLICY "Org admins can manage challenges" ON public.organization_challenge
 ALTER POLICY "Org admins can manage invites" ON public.organization_invites TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_invites.organization_id) AND ((up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])) OR (up.roles && ARRAY['admin'::text, 'super_admin'::text]))))));
 ALTER POLICY "Org admins can manage reports" ON public.organization_reports TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles up WHERE ((up.id = auth.uid()) AND (up.organization_id = organization_reports.organization_id) AND ((up.org_role = ANY (ARRAY['owner'::org_role_enum, 'admin'::org_role_enum])) OR (up.roles && ARRAY['admin'::text, 'super_admin'::text]))))));
 ALTER POLICY organizations_delete_super_admin ON public.organizations TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND ('super_admin'::text = ANY (user_profiles.roles))))));
-ALTER POLICY personal_subscriptions_insert ON public.personal_subscriptions TO PUBLIC WITH CHECK (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))));
+ALTER POLICY personal_subscriptions_insert_admin ON public.personal_subscriptions TO PUBLIC WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))));
 ALTER POLICY personal_subscriptions_select ON public.personal_subscriptions TO PUBLIC USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'finance'::text, 'support'::text] && user_profiles.roles))))));
-ALTER POLICY personal_subscriptions_update ON public.personal_subscriptions TO PUBLIC USING (((user_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))));
+ALTER POLICY personal_subscriptions_update_admin ON public.personal_subscriptions TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles))))) WITH CHECK ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text] && user_profiles.roles)))));
 ALTER POLICY plan_price_history_select ON public.plan_price_history TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (ARRAY['admin'::text, 'super_admin'::text, 'finance'::text] && user_profiles.roles)))));
 ALTER POLICY "Admins can update recipe flags" ON public.recipe_flags TO PUBLIC USING ((EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text])))));
 ALTER POLICY "Users and admins can view recipe flags" ON public.recipe_flags TO PUBLIC USING (((reporter_id = auth.uid()) OR (EXISTS ( SELECT 1 FROM user_profiles WHERE ((user_profiles.id = auth.uid()) AND (user_profiles.roles && ARRAY['admin'::text, 'super_admin'::text]))))));
@@ -3387,15 +3606,101 @@ ALTER POLICY "Super admins can update system settings" ON public.system_settings
 DROP POLICY IF EXISTS subscription_plans_select_operator ON public.subscription_plans;
 ```
 
-### A.3 58 本の母集合の出し方 (検査 ⑪ §20.1 と同じ条件)
+- `TO` の役割は本番の今の値に戻す (53 本は `PUBLIC`・3 本は `authenticated`)。
+
+### A.3 56 本の母集合の出し方 (検査 ⑪ §20.1 と同じ条件)
 
 ```sql
 -- public の pg_policies のうち、式に roles と運営ロールの文字列 ('super_admin' / 'admin' / 'finance' / 'org_industrial_doctor' の ::text) を持つもの。
--- 組織の役割 ('admin'::org_role_enum) だけを見るポリシーは ::text でないので当たらない。2026-10-15 の本番で 58 本 (57 本が TO public)
+-- 組織の役割 ('admin'::org_role_enum) だけを見るポリシーは ::text でないので当たらない。2026-10-16 の本番で 56 本 (53 本が TO public・3 本が TO authenticated)
 SELECT tablename, policyname, cmd, roles
 FROM pg_policies
 WHERE schemaname = 'public'
   AND (coalesce(qual, '') || ' ' || coalesce(with_check, '')) ~ '\mroles\M'
   AND (coalesce(qual, '') || ' ' || coalesce(with_check, '')) ~ '''(super_admin|admin|finance|org_industrial_doctor)''::text'
-ORDER BY tablename, policyname;
+ORDER BY tablename COLLATE "C", policyname COLLATE "C";
 ```
+
+### A.4 本番の指紋 (2026-10-16) と「本番で確かめる」手順
+
+A.2 の 56 文の式 (空白を 1 つにまとめたもの) と `TO` の役割から作った指紋。段 E の migration を書く直前と、本番に当てる直前に、本番で下の SQL を読み取りだけで流し、`n` / `n_public` / `n_authenticated` / `digest` / `digest_full` が一致することを確かめる (一致しなければ母集合が動いている。動いたポリシーを A.1 / A.2 に取り直してから書く)。契約テスト (§21.8) は、設計書から写した A.2 の文から同じ `digest` を DB 無しで作って比べる。
+
+```sql
+-- 期待: n = 56・n_public = 53・n_authenticated = 3・digest = c5c09b156d8a3c552d9c139ec66d9f99・digest_full = 7a5d88795aeff336494a5e066bf9ca1c
+WITH p AS (
+  SELECT tablename, policyname, roles::text AS roles,
+         regexp_replace(coalesce(qual, ''), '\s+', ' ', 'g') AS qual,
+         regexp_replace(coalesce(with_check, ''), '\s+', ' ', 'g') AS with_check
+  FROM pg_policies
+  WHERE schemaname = 'public'
+    AND (coalesce(qual, '') || ' ' || coalesce(with_check, '')) ~ '\mroles\M'
+    AND (coalesce(qual, '') || ' ' || coalesce(with_check, '')) ~ '''(super_admin|admin|finance|org_industrial_doctor)''::text'
+)
+SELECT count(*) AS n,
+       count(*) FILTER (WHERE roles = '{public}') AS n_public,
+       count(*) FILTER (WHERE roles = '{authenticated}') AS n_authenticated,
+       md5(string_agg(tablename || '|' || policyname || '|' || roles || '|' || md5(qual) || '|' || md5(with_check), E'\n' ORDER BY tablename COLLATE "C", policyname COLLATE "C")) AS digest,
+       md5(string_agg(tablename || '|' || policyname || '|' || roles || '|' || qual || '|' || with_check, E'\n' ORDER BY tablename COLLATE "C", policyname COLLATE "C")) AS digest_full
+FROM p;
+```
+
+1 本ずつの指紋 (`md5('')` = `d41d8cd98f00b204e9800998ecf8427e` は、その側の式が無いこと):
+
+| 表 | ポリシー | roles | md5(qual) | md5(with_check) |
+|---|---|---|---|---|
+| admin_audit_logs | Admins can view audit logs | {public} | `6c43c35d2fc01960d6f8feb23f4b10f8` | `d41d8cd98f00b204e9800998ecf8427e` |
+| admin_audit_logs | audit_logs_insert_admins | {authenticated} | `d41d8cd98f00b204e9800998ecf8427e` | `fc94196fc17a7addc1b342774fbfb968` |
+| admin_audit_logs | audit_logs_select_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| admin_user_notes | Admins can manage user notes | {public} | `83b00d1a7b70758b093a6e934148dce9` | `d41d8cd98f00b204e9800998ecf8427e` |
+| ai_content_logs | Users and admins can view ai logs | {public} | `f2fd5075e1dc4503135570a14803bece` | `d41d8cd98f00b204e9800998ecf8427e` |
+| announcements | Admins can manage announcements | {public} | `6c43c35d2fc01960d6f8feb23f4b10f8` | `d41d8cd98f00b204e9800998ecf8427e` |
+| coupon_redemptions | coupon_redemptions_select | {public} | `856cfb9fe4280300c949364c45969326` | `d41d8cd98f00b204e9800998ecf8427e` |
+| coupons | coupons_mutate_sales_or_above | {public} | `0b9d70073e5592474d86f859419c122f` | `d41d8cd98f00b204e9800998ecf8427e` |
+| coupons | coupons_select_sales_or_above | {public} | `0b2b14a3045faf70c6e39e95db9f6f8f` | `d41d8cd98f00b204e9800998ecf8427e` |
+| csat_feedbacks | csat_access | {public} | `a86e2293beecf5e3a02508b03619edba` | `d41d8cd98f00b204e9800998ecf8427e` |
+| daily_active_users | dau_select_admin | {public} | `d96919adaf470cd01972da3fe788cf80` | `d41d8cd98f00b204e9800998ecf8427e` |
+| data_subject_requests | data_subject_requests_select_operator | {authenticated} | `6d63fe2a5c4a39eee3a7ef8eb3a5ed16` | `d41d8cd98f00b204e9800998ecf8427e` |
+| departments | Org admins can manage departments | {public} | `5d5727c675bbd11a363684777cb43ba5` | `d41d8cd98f00b204e9800998ecf8427e` |
+| email_blacklist | email_blacklist_admin | {public} | `cd5207c5db4b44751a1cebce103eaf59` | `d41d8cd98f00b204e9800998ecf8427e` |
+| email_delivery_logs | email_logs_admin | {public} | `932a0aca609d8bb6b80321bea78ff32d` | `d41d8cd98f00b204e9800998ecf8427e` |
+| embedding_jobs | Super admin can view | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| experiment_assignments | experiment_assignments_delete_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| experiment_assignments | experiment_assignments_select_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| experiments | experiments_select_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| feature_flags | feature_flags_super_admin_all | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `6567097f0a3587bf98f47dcb52ae4603` |
+| feature_packages | feature_packages_mutate_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| help_articles | help_articles_manage | {public} | `0dd4f3159e4a36c6a4a71a7f7bfdc779` | `d41d8cd98f00b204e9800998ecf8427e` |
+| infra_alerts | infra_alerts_access | {public} | `cd5207c5db4b44751a1cebce103eaf59` | `d41d8cd98f00b204e9800998ecf8427e` |
+| infra_metrics | infra_select_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| inquiries | Admins can update inquiries | {public} | `83b00d1a7b70758b093a6e934148dce9` | `d41d8cd98f00b204e9800998ecf8427e` |
+| inquiries | Admins can view all inquiries | {public} | `c9f823022c8dc807c5ef375f34a12d7e` | `d41d8cd98f00b204e9800998ecf8427e` |
+| llm_usage_logs | llm_usage_logs_select_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| membership_audit | membership_audit_select_operator | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| moderation_flags | moderation_flags_admin_all | {public} | `cd5207c5db4b44751a1cebce103eaf59` | `cd5207c5db4b44751a1cebce103eaf59` |
+| nps_surveys | nps_select_admin | {public} | `0dd4f3159e4a36c6a4a71a7f7bfdc779` | `d41d8cd98f00b204e9800998ecf8427e` |
+| org_daily_stats | Org admins can view own stats | {public} | `e30544bb1ac816e4df0833c3676b252e` | `d41d8cd98f00b204e9800998ecf8427e` |
+| organization_challenges | Org admins can manage challenges | {public} | `0367fef75464ade18f55c4061ae64aad` | `d41d8cd98f00b204e9800998ecf8427e` |
+| organization_invites | Org admins can manage invites | {public} | `bf6e15d4fc52bc9cfb04409fd6e875b8` | `d41d8cd98f00b204e9800998ecf8427e` |
+| organization_reports | Org admins can manage reports | {public} | `5f71c50503595271e5c963ce076c00da` | `d41d8cd98f00b204e9800998ecf8427e` |
+| organizations | organizations_delete_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |
+| personal_subscriptions | personal_subscriptions_insert_admin | {public} | `d41d8cd98f00b204e9800998ecf8427e` | `cd5207c5db4b44751a1cebce103eaf59` |
+| personal_subscriptions | personal_subscriptions_select | {public} | `5eb460eaf1b94959caad20ff12033d57` | `d41d8cd98f00b204e9800998ecf8427e` |
+| personal_subscriptions | personal_subscriptions_update_admin | {public} | `cd5207c5db4b44751a1cebce103eaf59` | `cd5207c5db4b44751a1cebce103eaf59` |
+| plan_price_history | plan_price_history_select | {public} | `d96919adaf470cd01972da3fe788cf80` | `d41d8cd98f00b204e9800998ecf8427e` |
+| recipe_flags | Admins can update recipe flags | {public} | `6c43c35d2fc01960d6f8feb23f4b10f8` | `d41d8cd98f00b204e9800998ecf8427e` |
+| recipe_flags | Users and admins can view recipe flags | {public} | `f66f82484da295f25fbed173292769a7` | `d41d8cd98f00b204e9800998ecf8427e` |
+| referral_rewards | referral_rewards_select | {public} | `7638077083170f53d19d5f7a0f61c2ab` | `d41d8cd98f00b204e9800998ecf8427e` |
+| revenue_snapshots | revenue_snapshots_select | {public} | `cd064255902a4383bcd9579feb336d9d` | `d41d8cd98f00b204e9800998ecf8427e` |
+| sales_lead_activities | sales_activities_access | {public} | `0b9d70073e5592474d86f859419c122f` | `d41d8cd98f00b204e9800998ecf8427e` |
+| sales_leads | sales_leads_access | {public} | `0b9d70073e5592474d86f859419c122f` | `d41d8cd98f00b204e9800998ecf8427e` |
+| sport_presets | sport_presets_mutate_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `6567097f0a3587bf98f47dcb52ae4603` |
+| subscription_plans | subscription_plans_mutate_super_admin | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `6567097f0a3587bf98f47dcb52ae4603` |
+| subscription_plans | subscription_plans_select_public | {public} | `e0aa85926e62ad980b9a468a7ed27b70` | `d41d8cd98f00b204e9800998ecf8427e` |
+| support_ticket_messages | ticket_messages_insert | {public} | `d41d8cd98f00b204e9800998ecf8427e` | `b15ac3a01a4050b267059dabed1abbb5` |
+| support_ticket_messages | ticket_messages_select | {public} | `a50d68ff763f93d25a8348e280bdd6e4` | `d41d8cd98f00b204e9800998ecf8427e` |
+| support_tickets | tickets_insert_staff | {authenticated} | `d41d8cd98f00b204e9800998ecf8427e` | `932a0aca609d8bb6b80321bea78ff32d` |
+| support_tickets | tickets_select | {public} | `a86e2293beecf5e3a02508b03619edba` | `d41d8cd98f00b204e9800998ecf8427e` |
+| support_tickets | tickets_update_support | {public} | `932a0aca609d8bb6b80321bea78ff32d` | `d41d8cd98f00b204e9800998ecf8427e` |
+| system_daily_stats | Admins can view system stats | {public} | `6c43c35d2fc01960d6f8feb23f4b10f8` | `d41d8cd98f00b204e9800998ecf8427e` |
+| system_settings | Admins can view system settings | {public} | `6c43c35d2fc01960d6f8feb23f4b10f8` | `d41d8cd98f00b204e9800998ecf8427e` |
+| system_settings | Super admins can update system settings | {public} | `6567097f0a3587bf98f47dcb52ae4603` | `d41d8cd98f00b204e9800998ecf8427e` |

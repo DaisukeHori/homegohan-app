@@ -205,6 +205,7 @@ async function addChild(rep: TestUser, familyId: string, name: string): Promise<
     p_family_id: familyId,
     p_display_name: name,
     p_child_profile: { age: 8 },
+    p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
   });
   if (error || !data) throw new Error(`add_family_child: ${error?.message}`);
   return (data as { id: string }).id;
@@ -330,6 +331,7 @@ async function addChildViaApi(rep: TestUser, familyId: string, name: string): Pr
     p_family_id: familyId,
     p_display_name: name,
     p_child_profile: { note: '#1310' },
+    p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
   });
   return toOutcome(error);
 }
@@ -464,7 +466,7 @@ function holdFamilyLockThenDelete(rep: TestUser, familyId: string, holdSeconds =
 const acceptSql = (token: string) => `public.accept_family_invite('${token}')`;
 const dissolveSql = (familyId: string) => `public.operator_force_dissolve_family('${familyId}'::uuid, '#1310 hold')`;
 const addChildSql = (familyId: string, name: string) =>
-  `public.add_family_child('${familyId}'::uuid, '${name}', '{"note":"#1310"}'::jsonb)`;
+  `public.add_family_child('${familyId}'::uuid, '${name}', '{"note":"#1310"}'::jsonb, '1990-01-01'::date)`;
 const transferAcceptSql = (proposalId: string) => `public.accept_family_representative_transfer('${proposalId}'::uuid)`;
 
 /** 後片付けは 10 件ずつ並列に行う (作る行が多いので、1 件ずつだと長くかかる) */
@@ -1118,6 +1120,7 @@ describe('#1310 通常の流れ (順番に呼ぶ) は従来どおり動く', () 
       p_family_id: familyId,
       p_display_name: 'r1-child',
       p_child_profile: { age: 9 },
+      p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
     });
     expect(child.error).toBeNull();
     const request = await api(d).rpc('request_child_promotion', {

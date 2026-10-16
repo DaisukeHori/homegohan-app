@@ -102,7 +102,7 @@
 | R-3 | 断らない API は理由つきの許可リストで固定し、テストが一覧を固定する | 仕様 1 | T-SH3, T-M2, T-M3, T-M14, T-M18 |
 | R-4 | 判定の置き場所は漏れが出ない形 (route ごとに呼び忘れない) | 仕様 1 | T-M1 (全 route の表) |
 | R-5 | 漏れを見張るテスト (全 route の表と実コードの照合) を含め、見張りの限界を明記する | 仕様 1 | §6.13 |
-| R-8 | 改定 (版が上がった) の再同意は、既存の版の判定 (`hasAcceptedCurrentLegalDocuments`) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-M17, E2E-A6, T-P3 |
+| R-8 | 改定 (版が上がった) の再同意は、同意ゲートの判定 (`isLegalConsentComplete`。版 + 生年月日 + 18 歳未満なら保護者の同意とのつながり。設計書 14 §6.5.2) に合わせる。API も モバイルも同じ | 仕様 3 | T-M4, T-M17, E2E-A6, T-P3 |
 | R-9 | `ENFORCE` が off のとき・同意の状態を読めないとき (DB 障害) の挙動を理由つきで決める | 仕様 4 | §6.11, T-M5〜T-M8 |
 | R-10 | 既存のテスト・e2e への影響を洗い、結合テストで 403 の専用コードを確かめる | 仕様 5 | §6.14, §6.18 |
 | R-11 | Zod のスキーマ (403 の本文)・ヘルパーの関数のシグネチャ・エラー表・状態遷移表を書く | 仕様 成果物 | §6.1〜§6.8 |
@@ -153,16 +153,16 @@ R-6・R-7・R-12 (モバイルだけ) は 13b §3.1。R-8〜R-11・R-13 はサ�
 
 判定の規則 (サーバー・モバイル共通):
 
-- **同意済み** = `hasAcceptedCurrentLegalDocuments(user_profiles の 2 列)` (旧版・NULL・行なしは未同意)。改定 = 版の値が変わること。これは `#1174` の既存の判定そのもの。
+- **同意済み** = `isLegalConsentComplete(user_profiles の行)` = `getLegalConsentGaps` が空 (旧版・NULL・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満は未同意。設計書 14 §6.5.2)。判定に渡す行は、middleware の `/api` の分岐と status の route で `withMinorGuardianStatus` (`lib/legal-consent-minor.ts`。設計書 14 §6.5.8) に通す。改定 = 版の値が変わること。
 - **強制中** = `isLegalConsentEnforced()` (`LEGAL_CONSENT_ENFORCE=on`)。off なら API は allow・status は `required: false`。
-- **API の判定** = `enforce && !exempt(pathname) && !accepted` → deny (403)。
-- **モバイルの判定** = `session && !exempt(pathname) && status.required` → 同意画面。`required = enforced && !accepted` はサーバーが計算する (モバイルはフラグを読めないので、必ずサーバーに聞く)。
+- **API の判定** = `enforce && !exempt(pathname) && !isLegalConsentComplete(accepted)` → deny (403)。
+- **モバイルの判定** = `session && !exempt(pathname) && status.required` → 同意画面。`required = enforced && !accepted` (`accepted` = `gaps` が空) はサーバーが計算する (モバイルはフラグを読めないので、必ずサーバーに聞く)。
 
 ### 4.2 トレース (全シナリオを構造で手で走らせる)
 
 | ID | 走らせた結果 |
 |---|---|
-| S5 | 版を上げてデプロイ → アプリの次の `getApi().get('/api/health/records')` → middleware: `hasAcceptedCurrentLegalDocuments` が false → 403 `LEGAL_CONSENT_REQUIRED` → `withFriendlyErrors` が `legalConsentRequiredErrorOf(e)` で見分け、`notifyLegalConsentRequired()` → provider が state を `required` にして `refresh()` → Gate が**いま表示中の画面の代わりに**同意画面 (Stack はそのまま) → 再同意 → `clear` → さっきの画面がそのまま描かれる (Stack の状態を捨てていないので「戻る」も残る)。画面側の catch は `LegalConsentRequiredError` (message = 固定の文) を受けるが、`Alert` を出す画面でも出るのは固定の文だけ |
+| S5 | 版を上げてデプロイ → アプリの次の `getApi().get('/api/health/records')` → middleware: `isLegalConsentComplete` が false → 403 `LEGAL_CONSENT_REQUIRED` → `withFriendlyErrors` が `legalConsentRequiredErrorOf(e)` で見分け、`notifyLegalConsentRequired()` → provider が state を `required` にして `refresh()` → Gate が**いま表示中の画面の代わりに**同意画面 (Stack はそのまま) → 再同意 → `clear` → さっきの画面がそのまま描かれる (Stack の状態を捨てていないので「戻る」も残る)。画面側の catch は `LegalConsentRequiredError` (message = 固定の文) を受けるが、`Alert` を出す画面でも出るのは固定の文だけ |
 | S6 | curl `Authorization: Bearer <JWT>` → middleware は JWT 形式の Bearer を転送 (`middleware.ts:129-130`) → `getUser` → 本人 → `fetchMiddlewareProfile` → 未同意 → `resolveLegalConsentApiDecision` deny → 403 `{ error, code }` + `Cache-Control: private, no-store`。route には届かない |
 | S7 | `/api/account/delete` `/api/account/export` は許可リスト (`leave_service`) → allow → route へ (凍結中もこの 2 本は通る。凍結中に通る API は、課金の 3 本を含めて `FROZEN_ALLOWED_API_PATHS` の 5 本) |
 | S8 | `isLegalConsentEnforced()` false → `resolveLegalConsentApiDecision` は最初の分岐で allow → 既存の挙動。status は `enforced: false, required: false` → モバイルは `clear` |
@@ -329,7 +329,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
  *   - LEGAL_CONSENT_REQUIRED_*: 止めたときの 403 (平たい { error, code }。#1154 の AI 同意と同じ形)
  *   - resolveLegalConsentStatus / isLegalConsentStatus: GET /api/legal/status の応答 (サーバーが作り、モバイルが読む)
  *
- * 同意済みかどうかの判定そのもの (hasAcceptedCurrentLegalDocuments) は legal-versions.ts にあり、ここはそれを呼ぶだけ。
+ * 同意ゲートを通れるかの判定 (isLegalConsentComplete / getLegalConsentGaps。版 + 生年月日 + 18 歳未満なら保護者の同意とのつながり。#1173) は parental-consent.ts にあり、ここはそれを呼ぶだけ。
  *
  * ⚠ 実装ファイルでは下の import を './legal-versions' からの相対 import にする (packages/shared の中から自分のパッケージ名で
  *   import しない。Metro / Jest は exports の "." しか解決しない)。設計書の独立の型検査 (ルートの tsconfig の paths) で
@@ -339,10 +339,15 @@ import {
   LEGAL_DOCUMENTS,
   LEGAL_DOCUMENT_TYPES,
   getOutdatedLegalDocuments,
-  hasAcceptedCurrentLegalDocuments,
-  type AcceptedLegalVersions,
   type LegalDocumentType,
 } from '@homegohan/shared/legal-versions';
+import {
+  LEGAL_CONSENT_GAP_VALUES,
+  getLegalConsentGaps,
+  isLegalConsentComplete,
+  type LegalConsentGap,
+  type LegalConsentProfile,
+} from '@homegohan/shared/parental-consent';
 import { PUSH_TOKEN_CLAIM_API_PATH } from '@homegohan/shared/push-token-claim';
 
 /** 本人の同意の状況を返す API (本書で新設) */
@@ -464,23 +469,28 @@ export type LegalConsentApiDecision = 'allow' | 'deny';
 export interface ResolveLegalConsentApiInput {
   /** リクエストの path (クエリを含まない) */
   pathname: string;
-  /** user_profiles の行の同意済みの版。行が無いときは null / undefined (= 未同意) */
-  accepted: AcceptedLegalVersions | null | undefined;
+  /**
+   * user_profiles の行の同意済みの版と生年月日。18 歳未満なら withMinorGuardianStatus が入れた minor_guardian_ok を含む。
+   * 行が無いときは null / undefined (= 未同意)
+   */
+  accepted: LegalConsentProfile | null | undefined;
   /** LEGAL_CONSENT_ENFORCE=on か (lib/legal-consent.ts の isLegalConsentEnforced の結果) */
   enforce: boolean;
+  /** JST の今日 (YYYY-MM-DD)。省くと todayLocal()。テストが日を固定するため */
+  today?: string;
 }
 
 /**
  * middleware の /api の分岐が呼ぶ判定。凍結・メンテナンスの判定の後に呼ぶ (順は middleware が決める)。
  *   - 強制していない (enforce = false) → allow (既存の挙動のまま)
  *   - 許可リストのパス → allow
- *   - それ以外で、いま有効な版に同意していない (未同意・旧版・行なし) → deny (403 LEGAL_CONSENT_REQUIRED)
+ *   - それ以外で、同意ゲートを満たしていない (未同意・旧版・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満) → deny (403 LEGAL_CONSENT_REQUIRED)
  * 役割 (admin / super_admin) による例外は作らない (規約はスタッフにも適用される)。
  */
 export function resolveLegalConsentApiDecision(input: ResolveLegalConsentApiInput): LegalConsentApiDecision {
   if (!input.enforce) return 'allow';
   if (isLegalConsentExemptApiPath(input.pathname)) return 'allow';
-  return hasAcceptedCurrentLegalDocuments(input.accepted) ? 'allow' : 'deny';
+  return isLegalConsentComplete(input.accepted, input.today) ? 'allow' : 'deny';
 }
 
 /** いま有効な文書の版と施行日 (status の応答。snake_case) */
@@ -499,12 +509,17 @@ export interface LegalConsentAcceptedVersions {
 export interface LegalConsentStatus {
   /** LEGAL_CONSENT_ENFORCE=on か */
   enforced: boolean;
-  /** いま有効な版に (両方) 同意済みか */
+  /** 同意ゲートを満たしているか (= gaps が空。#1173 から版だけでなく生年月日と、18 歳未満なら保護者の同意とのつながりも含む) */
   accepted: boolean;
   /** 同意画面を出す必要があるか = enforced && !accepted。アプリのゲートはこの値だけを見る */
   required: boolean;
   /** いま有効な版に同意していない文書 (未同意・旧版) */
   outdated: LegalDocumentType[];
+  /**
+   * 同意画面で埋めるもの (getLegalConsentGaps の答え。順は 文書 → 'birth_date' → 'guardian_consent')。
+   * アプリは 'birth_date' で生年月日の欄を、'guardian_consent' で退会の案内を出す
+   */
+  gaps: LegalConsentGap[];
   /** いま有効な版と施行日。同意画面はこの値を表示し、同意の記録 (POST /api/legal/accept) にもこの版を送る (端末のバンドルの定数は使わない) */
   current: Record<LegalDocumentType, LegalConsentCurrentDocument>;
   /** 本人の同意済みの版 (NULL = 未同意) */
@@ -512,19 +527,23 @@ export interface LegalConsentStatus {
 }
 
 export interface ResolveLegalConsentStatusInput {
-  accepted: AcceptedLegalVersions | null | undefined;
+  accepted: LegalConsentProfile | null | undefined;
   enforced: boolean;
+  /** JST の今日 (YYYY-MM-DD)。省くと todayLocal()。テストが日を固定するため */
+  today?: string;
 }
 
-/** status route が呼ぶ。判定は resolveLegalConsentApiDecision と同じ関数 (hasAccepted…) に基づく */
+/** status route が呼ぶ。判定は resolveLegalConsentApiDecision と同じ述語 (isLegalConsentComplete = gaps が空) に基づく */
 export function resolveLegalConsentStatus(input: ResolveLegalConsentStatusInput): LegalConsentStatus {
   const outdated = getOutdatedLegalDocuments(input.accepted);
-  const accepted = outdated.length === 0;
+  const gaps = getLegalConsentGaps(input.accepted, input.today);
+  const accepted = gaps.length === 0;
   return {
     enforced: input.enforced,
     accepted,
     required: input.enforced && !accepted,
     outdated,
+    gaps,
     current: {
       terms_of_service: {
         version: LEGAL_DOCUMENTS.terms_of_service.version,
@@ -559,6 +578,8 @@ export function isLegalConsentStatus(body: unknown): body is LegalConsentStatus 
   if (typeof b.enforced !== 'boolean' || typeof b.accepted !== 'boolean' || typeof b.required !== 'boolean') return false;
   const documentTypes: readonly string[] = LEGAL_DOCUMENT_TYPES;
   if (!Array.isArray(b.outdated) || !b.outdated.every((v) => typeof v === 'string' && documentTypes.includes(v))) return false;
+  const gapValues: readonly string[] = LEGAL_CONSENT_GAP_VALUES;
+  if (!Array.isArray(b.gaps) || !b.gaps.every((v) => typeof v === 'string' && gapValues.includes(v))) return false;
   const current = b.current;
   if (!current || typeof current !== 'object') return false;
   if (!LEGAL_DOCUMENT_TYPES.every((type) => isCurrentDocument((current as Record<string, unknown>)[type]))) return false;
@@ -632,6 +653,7 @@ export function legalConsentVersionLine(version: string, effectiveDateLabel: str
  */
 import { z } from 'zod';
 import {
+  LEGAL_CONSENT_GAP_VALUES,
   LEGAL_CONSENT_REQUIRED_CODE,
   LEGAL_CONSENT_REQUIRED_MESSAGE,
   LEGAL_DOCUMENT_TYPES,
@@ -665,6 +687,7 @@ export const LegalConsentStatusSchema = z
     accepted: z.boolean(),
     required: z.boolean(),
     outdated: z.array(z.enum(LEGAL_DOCUMENT_TYPES)),
+    gaps: z.array(z.enum(LEGAL_CONSENT_GAP_VALUES)),
     current: z
       .object({
         terms_of_service: LegalConsentCurrentDocumentSchema,
@@ -682,6 +705,10 @@ export const LegalConsentStatusSchema = z
   // required は enforced と accepted から決まる値。食い違う応答を正本として通さない
   .refine((value) => value.required === (value.enforced && !value.accepted), {
     message: 'required は enforced && !accepted と一致すること',
+  })
+  // accepted は gaps が空であることと同じ (#1173)。食い違う応答を正本として通さない
+  .refine((value) => value.accepted === (value.gaps.length === 0), {
+    message: 'accepted は gaps が空であることと一致すること',
   });
 
 export type LegalConsentStatusShape = z.infer<typeof LegalConsentStatusSchema>;
@@ -692,6 +719,7 @@ export type LegalConsentStatusShape = z.infer<typeof LegalConsentStatusSchema>;
 ```ts
 // tsc:skip — 既存ファイルへの差分 (新設の shared の export を import する)。行は origin/main 2026-10-15 の lib/supabase/middleware.ts
 // --- import に足す (19 行目の '@/lib/legal-consent' の import の後) ---
+import { withMinorGuardianStatus } from '@/lib/legal-consent-minor'
 import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalConsentApiDecision } from '@homegohan/shared'
 
 // --- 183 行目からの if (isApiRoute) ブロックを、次の形に直す (凍結・メンテナンスの判定と応答の中身は変えない) ---
@@ -747,7 +775,8 @@ import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalCo
     if (apiUserId && apiProfileReadable && apiLegalColumnsAvailable) {
       const legalDecision = resolveLegalConsentApiDecision({
         pathname: request.nextUrl.pathname,
-        accepted: apiProfile,
+        // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (rpc を 1 回。失敗は素通り)
+        accepted: await withMinorGuardianStatus(supabase, apiProfile),
         enforce: isLegalConsentEnforced(),
       })
       if (legalDecision === 'deny') {
@@ -785,6 +814,7 @@ import { NextResponse } from 'next/server';
 import { resolveLegalConsentStatus } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/server';
 import { isLegalConsentEnforced } from '@/lib/legal-consent';
+import { withMinorGuardianStatus } from '@/lib/legal-consent-minor';
 import { LegalConsentStatusSchema } from '@/lib/legal-consent-api';
 import { internalError } from '@/lib/api/errors';
 
@@ -793,8 +823,8 @@ export const dynamic = 'force-dynamic';
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
-/** 同意ゲートが読むのと同じ 2 列 (lib/supabase/middleware.ts の PROFILE_COLUMNS_WITH_LEGAL の末尾 2 列) */
-const LEGAL_COLUMNS = 'terms_version_accepted, privacy_version_accepted';
+/** 同意ゲートが読むのと同じ 3 列 (lib/supabase/middleware.ts の PROFILE_COLUMNS_WITH_LEGAL の末尾 3 列) */
+const LEGAL_COLUMNS = 'terms_version_accepted, privacy_version_accepted, birth_date';
 
 export async function GET() {
   try {
@@ -814,7 +844,9 @@ export async function GET() {
       return internalError('GET /api/legal/status', error, { userId: user.id, table: 'user_profiles' });
     }
 
-    const status = resolveLegalConsentStatus({ accepted: profile, enforced: isLegalConsentEnforced() });
+    // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (設計書 14 §6.5.8)
+    const gateProfile = await withMinorGuardianStatus(supabase, profile);
+    const status = resolveLegalConsentStatus({ accepted: gateProfile, enforced: isLegalConsentEnforced() });
     // 正本の形から外れた応答を返さない (外れていればこちらの不具合なので 500)
     const parsed = LegalConsentStatusSchema.safeParse(status);
     if (!parsed.success) {
@@ -873,7 +905,7 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 | `LEGAL_CONSENT_EXEMPT_API_PATHS` | §6.4 の表の行 (#1751 の後は 18 行) | shared | 許可リスト。テストが固定 |
 | `LEGAL_CONSENT_COPY` ほか 3 関数 | 6.6.2 | shared | 文面を 2 か所に持たない |
 | `EFFECTIVE_DATE_PATTERN` | `/^\d{4}-\d{2}-\d{2}$/` | `src/lib/legal-consent-api.ts` | `legal-versions.ts` の effectiveDate の形式 |
-| `LEGAL_COLUMNS` | `'terms_version_accepted, privacy_version_accepted'` | status route | middleware の `PROFILE_COLUMNS_WITH_LEGAL` の末尾 2 列と同じ |
+| `LEGAL_COLUMNS` | `'terms_version_accepted, privacy_version_accepted, birth_date'` | status route | middleware の `PROFILE_COLUMNS_WITH_LEGAL` の末尾 3 列と同じ (`birth_date` は設計書 14) |
 
 モバイルの定数 (`MOBILE_LEGAL_CONSENT_EXEMPT_PATHS`・`VERSION_MISMATCH_STATUS`・`LEGAL_CONSENT_ALERT_TITLE`) は 13b §6.7。
 
@@ -883,7 +915,7 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 
 | 状況 | 経路 | status | 本文 | 形 | ヘッダー |
 |---|---|---|---|---|---|
-| 未同意・旧版・行なし (ENFORCE=on、許可リスト外) | middleware `/api` | 403 | `{ error: LEGAL_CONSENT_REQUIRED_MESSAGE, code: 'LEGAL_CONSENT_REQUIRED' }` | 平たい (AI 同意と同じ) | `Cache-Control: private, no-store` |
+| 未同意・旧版・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満 (ENFORCE=on、許可リスト外) | middleware `/api` | 403 | `{ error: LEGAL_CONSENT_REQUIRED_MESSAGE, code: 'LEGAL_CONSENT_REQUIRED' }` | 平たい (AI 同意と同じ) | `Cache-Control: private, no-store` |
 | 凍結 (`FROZEN_ALLOWED_API_PATHS` の 5 本以外) | middleware `/api` | 403 | `{ error: { code: 'AUTH_ACCOUNT_FROZEN', message } }` | 入れ子 (既存) | 同上 |
 | メンテナンス中 (運営以外) | middleware `/api` | 503 | `{ error, code: 'MAINTENANCE_MODE', retryAfter }` | 平たい (既存) | `Retry-After` |
 | 未ログイン | `GET /api/legal/status` | 401 | `{ error: '認証が必要です', code: 'AUTH_UNAUTHENTICATED' }` | 平たい | `no-store` |
@@ -902,11 +934,11 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 |---|---|
 | 認証 | 本人 (Cookie / Bearer)。`supabase.auth.getUser()` |
 | 入力 | 無し (クエリ・本文を受け取らない) |
-| 200 | `LegalConsentStatus` (6.6.1)。`Cache-Control: no-store` |
+| 200 | `LegalConsentStatus` (6.6.1。キーは `enforced`・`accepted` (= `gaps` が空)・`required`・`outdated`・`gaps` (`LegalConsentGap[]`。`'birth_date'` / `'guardian_consent'` を含みうる。設計書 14)・`current`・`accepted_versions`)。`Cache-Control: no-store` |
 | 401 / 500 | §6.8 |
 | 同意ゲート | 許可リスト (`consent_itself`) |
 | 凍結 | middleware が 403 (`FROZEN_ALLOWED_API_PATHS` には入れない) |
-| 読む列 | `user_profiles.terms_version_accepted, privacy_version_accepted` (本人の行。RLS) |
+| 読む列 | `user_profiles.terms_version_accepted, privacy_version_accepted, birth_date` (本人の行。RLS)。18 歳未満なら `withMinorGuardianStatus` が保護者の同意とのつながりを DB に聞く (設計書 14 §6.5.8) |
 | 監査ログ | 無し (読むだけ) |
 
 #### `POST /api/legal/accept` (既存。変更なし)
@@ -949,7 +981,7 @@ sequenceDiagram
 
 ### 6.12 改定 (版が上がる) の扱い (R-8)
 
-- 判定は `hasAcceptedCurrentLegalDocuments` の 1 つ (旧版 = 未同意)。API もモバイルも、Web の画面と同じ関数で決まる。
+- 判定は `isLegalConsentComplete` の 1 つ (= `getLegalConsentGaps` が空。旧版・NULL・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満が未同意。cross/14)。API もモバイルも、Web の画面と同じ関数で決まる。
 - Web: 既存どおり、次の画面の取得で `/legal-consent` へ。画面の中の API は 403 (本文の固定の文が出る)。
 - 版を変えない文面の直しは、今までどおり再同意を求めない (`legal-versions.ts:11`)。
 - モバイル: 13b §6.12。
@@ -1037,7 +1069,7 @@ sequenceDiagram
 | T-R6 | `行が無い新規登録者 → accepted: false` |
 | T-R7 | `user_profiles の読み取りが失敗したら 500 (internalError の固定の文。DB の文は本文に出ない)` |
 | T-R8 | `応答は LegalConsentStatusSchema を通り、Cache-Control は no-store。版と施行日は LEGAL_DOCUMENTS の値` |
-| T-R9 | `本人のセッションのクライアントで本人の行だけを読む (service role を使わない。select の列は 2 列)` |
+| T-R9 | `本人のセッションのクライアントで本人の行だけを読む (service role を使わない。select の列は 3 列)` |
 
 **E. Web の文面 `tests/legal-consent-copy.test.ts`**
 
@@ -1112,7 +1144,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `'roles, frozen_at, unban_at'` (`/api` の分岐の select) | `lib/supabase/__tests__/middleware-legal-consent.test.ts:395-408` の it `★API (%s) は、未同意でも回さない。API の分岐は user_profiles の凍結の列とロール (メンテナンスモードの判定 #1148) だけを読み、同意済みの版の列は読まない` | **書き換える**: 「API の分岐は画面と同じ列 (`PROFILE_COLUMNS_WITH_LEGAL`) を 1 回読む。強制 on で未同意なら `/api/pantry` は 403 `LEGAL_CONSENT_REQUIRED`、`/api/legal/accept` `/api/account/export` は許可リストで 200」に。ファイル冒頭の説明 (15 行目「/api/* … の素通り」) も直す | A |
 | `apiRequest(` + `fail-open` | `lib/supabase/__tests__/middleware.test.ts:147-153` (`user_profiles 取得がエラーの場合は fail-open でブロックしない (#348 と同様の方針)`) ほか `/api` の分岐の凍結のテスト 9 本 | **確認のみ** (期待は変わらない。`fetchMiddlewareProfile` 経由でも `mockMaybeSingle` の返り値をそのまま読む。`ENFORCE` を stub していないので判定は off)。壊れたら `setUp` で `vi.stubEnv('LEGAL_CONSENT_ENFORCE', undefined)` を足す | A |
 | `apiRequest('/api/pantry')` | `lib/supabase/__tests__/middleware-maintenance.test.ts` の API の行 | 確認のみ (同上。メンテナンスの判定は同意より先) | A |
-| `PROFILE_COLUMNS_WITH_LEGAL` の文字列 | `lib/supabase/__tests__/middleware-legal-consent.test.ts:626-637` (`列があるときの select は、同意済みの版の 2 列を含む 1 回だけ`) | 確認のみ (画面の分岐は変えない) | A |
+| `PROFILE_COLUMNS_WITH_LEGAL` の文字列 | `lib/supabase/__tests__/middleware-legal-consent.test.ts:657-667` (`列があるときの select は、同意済みの版と生年月日の 3 列を含む 1 回だけ (追加のクエリを増やさない)`) | 確認のみ (画面の分岐は変えない) | A |
 | `'/api/legal/accept'` `'/api/account/export'` (画面の判定の対象外) | `tests/legal-consent-gate.test.ts:58-59` (`EXEMPT_PATHS`) | 確認のみ (`isLegalConsentExemptPath` は変えない。`/api` は画面の判定では対象外のまま) | A |
 | `FROZEN_ALLOWED_API_PATHS` | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | 確認のみ (本冊は一覧を変えない。のちに billing/01 §9.8 が有料プランの解約の 3 本を足し、本冊の許可リストとスナップショット (T-M3) にも同じ 3 本が入った。T-M14 は一覧を import して包含を見るので、本数に依存しない)。新しい T-M14 が同意の許可リストとの包含を足す (通知のトークンの claim (#1636) も含めて。T-M18〜T-M20 がメンテナンスの例外と全 route の挙動で同じ包含を確かめる) | A |
 | `api/health$` (matcher) | `tests/health-middleware-exemption.test.ts` | 確認のみ。T-M15 が同じ読み方で再確認 | A |

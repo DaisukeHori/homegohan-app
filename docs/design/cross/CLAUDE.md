@@ -6,7 +6,7 @@
 
 | ファイル | 担当範囲 | 要件参照 |
 |---------|--------|---------|
-| `01-auth-session.md` | 認証 / セッション / 2FA / SSO / 子供同意 | 03 §17 |
+| `01-auth-session.md` | 認証 / セッション / 2FA / SSO (§12 の子供同意は `14-parental-consent.md` へ移した) | 03 §17 |
 | `02-rls-patterns.md` | RLS 共通パターン / 楽観的ロック / advisory lock | 全要件 |
 | `03-design-system.md` | デザイントークン / コンポーネント基底 / ダークモード | 03 §21 |
 | `04-api-conventions.md` | API パス規約 / エラーコード / pagination / バージョニング | 03 §19 |

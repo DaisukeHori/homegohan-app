@@ -75,6 +75,7 @@ beforeAll(async () => {
     p_family_id: familyId,
     p_display_name: 'placeholder child',
     p_child_profile: {},
+    p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
   });
   if (childError || !child) throw new Error(`add_family_child: ${childError?.message}`);
   childMemberId = (child as { id: string }).id;

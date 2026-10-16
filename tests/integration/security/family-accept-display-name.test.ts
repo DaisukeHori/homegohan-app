@@ -135,6 +135,7 @@ async function promoteChild(
     p_family_id: familyId,
     p_display_name: childName,
     p_child_profile: { age: 12 },
+    p_birth_date: '1990-01-01', // #1173: 成人の placeholder (18 歳以上なので保護者の同意は要らない)
   });
   if (child.error || !child.data) throw new Error(`add_family_child ${label}: ${child.error?.message}`);
   const childId = (child.data as { id: string }).id;
