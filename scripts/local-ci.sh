@@ -81,6 +81,8 @@
 #   SUPABASE_IMAGE_REGISTRIES / SUPABASE_IMAGE_PULL_ROUNDS / SUPABASE_INTERNAL_IMAGE_REGISTRY
 #                                  ローカル Supabase の起動でイメージの取得に失敗したときに試す取得元の順・周回の上限・固定する取得元
 #                                  (scripts/lib/supabase-image-pull.sh。#1523。docs/operations/ci-supabase-image-pull.md)
+#   LOCAL_CI_DEV_READY_TRIES       integration の next dev が /login に 500 未満を返すかを確かめる回数 (既定 DEV_READY_TRIES_DEFAULT。
+#                                  間隔は WAIT_INTERVAL_SEC)。1 以上の整数。すべて 500 以上 (か応答なし) なら「dev サーバの起動の失敗」で止める (#1792)
 #   LOCAL_CI_PLAYWRIGHT_WITH_DEPS  1 にすると playwright install に --with-deps を付ける (Linux で OS の依存も入れる。root 権限が要る)
 #   LOCAL_CI_TOOLS                 gitleaks の配布物 (tar.gz) を置いておく場所 (既定: ${XDG_CACHE_HOME:-$HOME/.cache}/homegohan-local-ci)。
 #                                  毎回 SHA-256 を確かめ、合わなければ取り直す
@@ -120,10 +122,20 @@ readonly START_WAIT_TRIES=60
 readonly WAIT_INTERVAL_SEC=2
 # security-regression.yml の事前コンパイルの curl --max-time 120
 readonly PRECOMPILE_MAX_TIME_SEC=120
+# integration の next dev が「ページを返せる」(/login が 500 未満) かを確かめる回数の既定 (× WAIT_INTERVAL_SEC。LOCAL_CI_DEV_READY_TRIES で上書き)。
+# wait_app が /login の応答を待ったあとなので、正常なら 1 回目で通る。初回のコンパイルの途中で一時的に 500 が返ることを見込んで
+# 30 秒 (15 × 2 秒) までやり直し、それでも 500 以上しか返らなければ「dev サーバの起動の失敗」(#1792: Turbopack の next dev が
+# next/font/google の解決に失敗して全応答が 500 になった) として結合テストを流さずに止める
+readonly DEV_READY_TRIES_DEFAULT=15
+# その確かめの 1 回の問い合わせの上限 (秒)。/login は wait_app の時点でコンパイル済みなので、事前コンパイルの上限 (PRECOMPILE_MAX_TIME_SEC) より短くてよい
+readonly DEV_READY_PROBE_MAX_TIME_SEC=30
 # サーバーを止めたあと、プロセスが消えるのを待つ回数 (× WAIT_INTERVAL_SEC)。過ぎたら SIGKILL
 readonly STOP_WAIT_TRIES=15
 # 結果の表に出すログの末尾の行数 (赤のときの手がかり)
 readonly LOG_TAIL_LINES=40
+# dev サーバの起動の失敗のときに書き出す next dev のログの冒頭の行数 (#1792 ではフォントの解決の失敗がログの冒頭に出ていた。
+# 赤の段の手がかりとして finish がこのファイルの末尾 LOG_TAIL_LINES 行を出すので、それと同じ数にしてファイル全体が出るようにする)
+readonly DEV_LOG_HEAD_LINES="$LOG_TAIL_LINES"
 # 枠の空きを待つ上限の既定 (90 分)。Workflow が外側のロック (Docker を使う作業を 1 本ずつにする) を待つ上限と同じにしてある
 readonly SLOT_WAIT_SECONDS_DEFAULT=5400
 # 枠の空きを確かめる間隔
@@ -146,6 +158,9 @@ readonly BYTES_PER_MIB=1048576
 # 枠の値 (project_id・Supabase と Next のポート) を決める関数 (local_ci_slot_valid / local_ci_slot_apply)
 # shellcheck source=lib/local-ci-slot.sh
 . "$(dirname "$0")/lib/local-ci-slot.sh"
+# next dev が「ページを返せる」かを確かめる関数 (local_ci_dev_ready。#1792)
+# shellcheck source=lib/local-ci-dev-ready.sh
+. "$(dirname "$0")/lib/local-ci-dev-ready.sh"
 PLAYWRIGHT_WITH_DEPS="${LOCAL_CI_PLAYWRIGHT_WITH_DEPS:-0}"
 
 # security.yml の gitleaks ジョブと同じ版の gitleaks。版を上げるときは security.yml と同時に上げる
@@ -504,6 +519,22 @@ wait_app() {
     sleep "$WAIT_INTERVAL_SEC"
   done
   curl -s -o /dev/null -w 'GET /login -> %{http_code}\n' "$APP_ORIGIN/login" >>"$log" 2>&1
+}
+
+# check_dev_ready <サーバーのログ>: APP_ORIGIN/login が「ページを返せる」(500 未満) かを DEV_READY_TRIES 回まで確かめる (#1792)。
+# 返せなければ、ログの冒頭 (DEV_LOG_HEAD_LINES 行) を DEV_READY_HEAD_LOG に書き、その中身を表示して偽を返す。
+# 最後のステータスは DEV_READY_LAST_STATUS に入れる (応答なしは 000)
+DEV_READY_LAST_STATUS=""
+DEV_READY_HEAD_LOG=""
+check_dev_ready() {
+  local log="$1" rc=0
+  DEV_READY_HEAD_LOG="${log%.log}-head.log"
+  DEV_READY_LAST_STATUS=$(local_ci_dev_ready "$APP_ORIGIN/login" "$DEV_READY_TRIES" "$WAIT_INTERVAL_SEC" "$DEV_READY_PROBE_MAX_TIME_SEC" "$DEV_LOG_HEAD_LINES" "$log" "$DEV_READY_HEAD_LOG") || rc=$?
+  printf 'GET /login (ページを返せるかの確かめ) -> %s\n' "$DEV_READY_LAST_STATUS" >>"$log"
+  [ "$rc" -eq 0 ] && return 0
+  say "dev サーバの起動の失敗: $APP_ORIGIN/login が 500 以上 (か応答なし) しか返さない。next dev のログ ($log) の冒頭:"
+  sed 's/^/  | /' "$DEV_READY_HEAD_LOG" >&2
+  return 1
 }
 
 # server_gone <pid> <サーバーのログ>: サーバーが途中で終了していたら真
@@ -1310,12 +1341,21 @@ stage_integration() {
   fi
 
   # Next dev サーバ (yml と同じく /login が応答するまで待つ)
+  # NEXT_FONT_GOOGLE_MOCKED_RESPONSES: next dev も e2e のビルドと同じ Google Fonts のモックで、フォントを外へ取りに行かせない (#1792。
+  # Turbopack の next dev はフォントの取得・解決に失敗すると全ページを 500 にする)。security-regression.yml の next dev と同じ
   log="$ART/integration-next-dev.log"
   say "integration: next dev を起動します"
-  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup env FEATURE_FLAG_CACHE_TTL_MS="$INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS" npm run dev ) >"$log" 2>&1 &
+  ( ci_env && cd "$WT" && export PORT="$APP_PORT" && exec nohup env FEATURE_FLAG_CACHE_TTL_MS="$INTEGRATION_FEATURE_FLAG_CACHE_TTL_MS" NEXT_FONT_GOOGLE_MOCKED_RESPONSES="$WT/tests/e2e/fixtures/google-fonts-mock.cjs" npm run dev ) >"$log" 2>&1 &
   SERVER_PID=$!
   if ! wait_app "$DEV_WAIT_TRIES" "$log"; then
     record integration:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "next dev が $APP_ORIGIN/login に応答しない" "$log")"
+    stop_server
+    stop_supabase
+    return 0
+  fi
+  # 応答はしても 500 しか返さない dev サーバ (#1792) で結合テストを流さない。ページを返せなければ、ログの冒頭を書き出して止める
+  if ! check_dev_ready "$log"; then
+    record integration:setup RED - - - - - "$(($(now) - t0))" "$(tail_hint "dev サーバの起動の失敗: next dev が $APP_ORIGIN/login に $DEV_READY_TRIES 回とも 500 以上 (か応答なし。最後は $DEV_READY_LAST_STATUS) を返した。原因は next dev のログの冒頭 (全体は $log)" "$DEV_READY_HEAD_LOG")"
     stop_server
     stop_supabase
     return 0
@@ -1651,6 +1691,9 @@ SLOT_MEMORY_MIB="${LOCAL_CI_SLOT_MEMORY_MIB:-$SLOT_MEMORY_MIB_DEFAULT}"
 for v in "$SLOT_WAIT_SECONDS" "$SLOT_MEMORY_MIB"; do
   [[ "$v" =~ ^[0-9]+$ ]] || { say "LOCAL_CI_SLOT_WAIT_SECONDS / LOCAL_CI_SLOT_MEMORY_MIB は 0 以上の整数: $v"; exit "$EXIT_USAGE"; }
 done
+DEV_READY_TRIES="${LOCAL_CI_DEV_READY_TRIES:-$DEV_READY_TRIES_DEFAULT}"
+[[ "$DEV_READY_TRIES" =~ ^[0-9]+$ ]] && [ "$((10#$DEV_READY_TRIES))" -ge 1 ] || { say "LOCAL_CI_DEV_READY_TRIES は 1 以上の整数: $DEV_READY_TRIES"; exit "$EXIT_USAGE"; }
+DEV_READY_TRIES=$((10#$DEV_READY_TRIES))
 LEGACY_LOCK="${LOCAL_CI_LEGACY_LOCK:-}"
 
 for c in git node npm curl; do
