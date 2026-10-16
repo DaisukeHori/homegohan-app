@@ -6,7 +6,7 @@
  * GET /api/super-admin/logs を呼んで、API ルート・Edge Function・ブラウザが記録したログを新しい順に表示する。
  * 読み取り専用。権限は layout.tsx (requireRoleForPage(['super_admin'], ...)) と API の両方で見ている。
  *
- * - 絞り込み: レベル / 発生元 / 関数名 / ユーザー ID / リクエスト ID / 期間。入力したあと「絞り込む」で反映する
+ * - 絞り込み: レベル / 発生元 / 関数名 / ユーザー ID / リクエスト ID / 期間 / 本文 (部分一致。#1708)。入力したあと「絞り込む」で反映する
  *   (1 文字ごとに検索を走らせない)。行の詳細にある「この値で絞り込む」で、その行の値をそのまま条件にできる。
  * - ページ送り: 「さらに読み込む」で、API が返したカーソルを渡して続きを足す (ページ番号は使わない)。
  * - 期間の入力は日本時間として扱い、表示も日本時間にそろえる (見ている人の端末の時差に左右されない)。
@@ -34,6 +34,9 @@ const LEVEL_STYLES: Record<string, string> = {
   error: 'bg-red-100 text-red-700',
 };
 
+/** 本文の検索語の長さの上限 (API の APP_LOGS_SEARCH_MAX_CHARS と同じ。値を import すると zod が bundle に入るので写す) */
+const SEARCH_MAX_CHARS = 100;
+
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const INPUT_CLASS =
@@ -54,6 +57,8 @@ interface Filters {
   /** <input type="datetime-local"> の値 (YYYY-MM-DDTHH:mm)。日本時間 */
   from: string;
   to: string;
+  /** 本文 (message / error_message) の部分一致 (#1708) */
+  q: string;
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -64,6 +69,7 @@ const EMPTY_FILTERS: Filters = {
   requestId: '',
   from: '',
   to: '',
+  q: '',
 };
 
 /**
@@ -102,6 +108,7 @@ function buildQuery(filters: Filters, cursor: string | null): string {
   const to = filters.to ? localToIso(filters.to, true) : null;
   if (from) params.set('from', from);
   if (to) params.set('to', to);
+  if (filters.q.trim()) params.set('q', filters.q.trim());
   if (cursor) params.set('cursor', cursor);
   params.set('limit', String(PAGE_SIZE));
   return params.toString();
@@ -437,6 +444,17 @@ export default function AppLogsPage() {
               type="datetime-local"
               value={draft.to}
               onChange={(e) => setField({ to: e.target.value })}
+              className={INPUT_CLASS}
+            />
+          </Field>
+          <Field id="log-q" label="本文 (部分一致)">
+            <input
+              id="log-q"
+              type="text"
+              value={draft.q}
+              onChange={(e) => setField({ q: e.target.value })}
+              maxLength={SEARCH_MAX_CHARS}
+              placeholder="例: timeout"
               className={INPUT_CLASS}
             />
           </Field>
