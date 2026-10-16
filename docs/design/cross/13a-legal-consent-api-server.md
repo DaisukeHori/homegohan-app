@@ -970,7 +970,7 @@ sequenceDiagram
 
 ### 6.12 改定 (版が上がる) の扱い (R-8)
 
-- 判定は `hasAcceptedCurrentLegalDocuments` の 1 つ (旧版 = 未同意)。API もモバイルも、Web の画面と同じ関数で決まる。
+- 判定は `isLegalConsentComplete` の 1 つ (= `getLegalConsentGaps` が空。旧版・NULL・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満が未同意。cross/14)。API もモバイルも、Web の画面と同じ関数で決まる。
 - Web: 既存どおり、次の画面の取得で `/legal-consent` へ。画面の中の API は 403 (本文の固定の文が出る)。
 - 版を変えない文面の直しは、今までどおり再同意を求めない (`legal-versions.ts:11`)。
 - モバイル: 13b §6.12。
@@ -1058,7 +1058,7 @@ sequenceDiagram
 | T-R6 | `行が無い新規登録者 → accepted: false` |
 | T-R7 | `user_profiles の読み取りが失敗したら 500 (internalError の固定の文。DB の文は本文に出ない)` |
 | T-R8 | `応答は LegalConsentStatusSchema を通り、Cache-Control は no-store。版と施行日は LEGAL_DOCUMENTS の値` |
-| T-R9 | `本人のセッションのクライアントで本人の行だけを読む (service role を使わない。select の列は 2 列)` |
+| T-R9 | `本人のセッションのクライアントで本人の行だけを読む (service role を使わない。select の列は 3 列)` |
 
 **E. Web の文面 `tests/legal-consent-copy.test.ts`**
 
@@ -1133,7 +1133,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 | `'roles, frozen_at, unban_at'` (`/api` の分岐の select) | `lib/supabase/__tests__/middleware-legal-consent.test.ts:395-408` の it `★API (%s) は、未同意でも回さない。API の分岐は user_profiles の凍結の列とロール (メンテナンスモードの判定 #1148) だけを読み、同意済みの版の列は読まない` | **書き換える**: 「API の分岐は画面と同じ列 (`PROFILE_COLUMNS_WITH_LEGAL`) を 1 回読む。強制 on で未同意なら `/api/pantry` は 403 `LEGAL_CONSENT_REQUIRED`、`/api/legal/accept` `/api/account/export` は許可リストで 200」に。ファイル冒頭の説明 (15 行目「/api/* … の素通り」) も直す | A |
 | `apiRequest(` + `fail-open` | `lib/supabase/__tests__/middleware.test.ts:147-153` (`user_profiles 取得がエラーの場合は fail-open でブロックしない (#348 と同様の方針)`) ほか `/api` の分岐の凍結のテスト 9 本 | **確認のみ** (期待は変わらない。`fetchMiddlewareProfile` 経由でも `mockMaybeSingle` の返り値をそのまま読む。`ENFORCE` を stub していないので判定は off)。壊れたら `setUp` で `vi.stubEnv('LEGAL_CONSENT_ENFORCE', undefined)` を足す | A |
 | `apiRequest('/api/pantry')` | `lib/supabase/__tests__/middleware-maintenance.test.ts` の API の行 | 確認のみ (同上。メンテナンスの判定は同意より先) | A |
-| `PROFILE_COLUMNS_WITH_LEGAL` の文字列 | `lib/supabase/__tests__/middleware-legal-consent.test.ts:626-637` (`列があるときの select は、同意済みの版の 2 列を含む 1 回だけ`) | 確認のみ (画面の分岐は変えない) | A |
+| `PROFILE_COLUMNS_WITH_LEGAL` の文字列 | `lib/supabase/__tests__/middleware-legal-consent.test.ts:657-667` (`列があるときの select は、同意済みの版と生年月日の 3 列を含む 1 回だけ (追加のクエリを増やさない)`) | 確認のみ (画面の分岐は変えない) | A |
 | `'/api/legal/accept'` `'/api/account/export'` (画面の判定の対象外) | `tests/legal-consent-gate.test.ts:58-59` (`EXEMPT_PATHS`) | 確認のみ (`isLegalConsentExemptPath` は変えない。`/api` は画面の判定では対象外のまま) | A |
 | `FROZEN_ALLOWED_API_PATHS` | `lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | 確認のみ (本冊は一覧を変えない。のちに billing/01 §9.8 が有料プランの解約の 3 本を足し、本冊の許可リストとスナップショット (T-M3) にも同じ 3 本が入った。T-M14 は一覧を import して包含を見るので、本数に依存しない)。新しい T-M14 が同意の許可リストとの包含を足す (通知のトークンの claim (#1636) も含めて。T-M18〜T-M20 がメンテナンスの例外と全 route の挙動で同じ包含を確かめる) | A |
 | `api/health$` (matcher) | `tests/health-middleware-exemption.test.ts` | 確認のみ。T-M15 が同じ読み方で再確認 | A |

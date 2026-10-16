@@ -53,7 +53,7 @@
 8.  experiments / assignments
 9.  consent 系 (cookie_consents / terms_acceptances 等)
 10. gdpr_deletion_requests
-11. parental_consents  ← family/01-data-model.md で定義 (family/ ドメイン適用後)
+11. parental_consents  ← cross/14-parental-consent.md §6.4 の 4 で定義 (migration 20261016242000)
 12. password_history
 13. user_sessions_metadata
 14. pg_cron setup (08-cron-batches.md 参照)
