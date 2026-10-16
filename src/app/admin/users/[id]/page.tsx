@@ -15,6 +15,9 @@ import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { isMfaRequiredRoleSet } from '@/lib/auth/mfa/policy';
 import { OperatorMfaResetSection } from '@/components/admin/OperatorMfaResetSection';
+import { z } from 'zod';
+import { LoginHistoryResponseSchema, type LoginHistoryEntry } from '@/lib/auth/sessions/schemas';
+import { LOGIN_HISTORY_PAGE_SIZE } from '@/lib/auth/sessions/constants';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -54,6 +57,108 @@ interface UserDetailApiResponse {
   data: UserDetailProfile;
 }
 
+/**
+ * ログイン履歴の節 (#1720 段 D。docs/design/cross/16-auth-history-sessions.md §17)。
+ * API (GET /api/admin/users/{id}/login-history §14.9) を呼べるのは admin / super_admin だけ (support には節を出さず、呼びもしない)。
+ */
+const LOGIN_HISTORY_ROLES: ReadonlySet<string> = new Set(['admin', 'super_admin']);
+/** 運営 API の成功の本文 (nested) */
+const AdminLoginHistoryApiResponseSchema = z.object({ data: LoginHistoryResponseSchema });
+/** 列見出し (左から。§17 の逐語。alert_sent_at の列は「通知メール」とだけ書くと配信済みに読めるため「送信待ちに登録した」を入れる) */
+const LOGIN_HISTORY_COLUMNS = ['日時', '端末', 'IP', '国', '印', '通知メールを送信待ちに登録した日時', '終了'] as const;
+/** サーバーのコンポーネントで描くので、timeZone を書かないと実行環境 (UTC) の時刻になる (§17) */
+const LOGIN_HISTORY_DATE_OPTIONS: Intl.DateTimeFormatOptions = { timeZone: 'Asia/Tokyo' };
+const LOGIN_HISTORY_LOAD_ERROR = 'ログイン履歴を読み込めませんでした';
+/** 終了の理由の言葉 (user_sessions_metadata.ended_reason) */
+const ENDED_REASON_LABEL: Record<NonNullable<LoginHistoryEntry['ended_reason']>, string> = {
+  signed_out: 'ログアウト',
+  revoked_by_user: '本人が端末の一覧から解除',
+  idle_expired: '使われずに期限切れ',
+};
+
+type LoginHistoryLoad = { ok: true; entries: LoginHistoryEntry[] } | { ok: false };
+
+/** 応答が ok でない (403 / 500)・形が違う・通信の失敗は ok: false (節に読み込めなかった旨だけを出し、ページの他の節は描く) */
+async function loadLoginHistory(userId: string): Promise<LoginHistoryLoad> {
+  try {
+    const res = await adminFetch(`/api/admin/users/${encodeURIComponent(userId)}/login-history`);
+    if (!res.ok) return { ok: false };
+    const parsed = AdminLoginHistoryApiResponseSchema.safeParse(await res.json());
+    return parsed.success ? { ok: true, entries: parsed.data.data.entries } : { ok: false };
+  } catch {
+    return { ok: false };
+  }
+}
+
+function formatLoginHistoryDate(value: string): string {
+  return new Date(value).toLocaleString('ja-JP', LOGIN_HISTORY_DATE_OPTIONS);
+}
+
+/** 印 (worker の判定の結果)。判定の前 (null) と、どれも当たらないときは「-」 */
+function loginHistoryMarks(entry: LoginHistoryEntry): string[] {
+  const marks: string[] = [];
+  if (entry.is_new_device) marks.push('新しい端末');
+  if (entry.is_new_ip) marks.push('新しい接続元');
+  if (entry.is_new_country) marks.push('新しい地域');
+  return marks;
+}
+
+function LoginHistorySection({ load }: { load: LoginHistoryLoad }) {
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 mb-6" data-testid="admin-user-login-history">
+      <h2 className="text-lg font-semibold text-gray-800 mb-4">ログイン履歴 (直近 {LOGIN_HISTORY_PAGE_SIZE} 回)</h2>
+      {!load.ok ? (
+        <p className="text-sm text-red-600" data-testid="admin-user-login-history-error">
+          {LOGIN_HISTORY_LOAD_ERROR}
+        </p>
+      ) : load.entries.length === 0 ? (
+        <p className="text-sm text-gray-500" data-testid="admin-user-login-history-empty">
+          記録なし
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-gray-500 border-b border-gray-100">
+                {LOGIN_HISTORY_COLUMNS.map((column) => (
+                  <th key={column} className="py-2 pr-3 font-medium whitespace-nowrap">
+                    {column}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {load.entries.map((entry) => {
+                const marks = loginHistoryMarks(entry);
+                return (
+                  <tr key={entry.session_id} className="border-b border-gray-50 align-top">
+                    <td className="py-2 pr-3 whitespace-nowrap">{formatLoginHistoryDate(entry.created_at)}</td>
+                    <td className="py-2 pr-3">
+                      {entry.device_label}
+                      {entry.device_name ? ` (端末名: ${entry.device_name})` : ''}
+                    </td>
+                    <td className="py-2 pr-3 font-mono text-xs">{entry.ip_address ?? '-'}</td>
+                    <td className="py-2 pr-3">{entry.country_code ?? '-'}</td>
+                    <td className="py-2 pr-3">{marks.length > 0 ? marks.join('・') : '-'}</td>
+                    <td className="py-2 pr-3 whitespace-nowrap">
+                      {entry.alert_sent_at ? formatLoginHistoryDate(entry.alert_sent_at) : 'なし'}
+                    </td>
+                    <td className="py-2 pr-3">
+                      {entry.ended_at
+                        ? `${entry.ended_reason ? ENDED_REASON_LABEL[entry.ended_reason] : '終了'} (${formatLoginHistoryDate(entry.ended_at)})`
+                        : '-'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default async function AdminUserDetailPage(props: PageProps) {
   const params = await props.params;
   const { id } = params;
@@ -86,6 +191,8 @@ export default async function AdminUserDetailPage(props: PageProps) {
   // 二段階認証の解除 (段 C): 実行者が super_admin で、対象が MFA_REQUIRED_ROLES のどれかを持つときだけ出す
   // (docs/design/cross/12-operator-mfa.md §15・§15.3。API は対象のロールを見ないが、画面は必須ロールの運営にだけ出す)
   const canResetMfa = isSuperAdmin && Array.isArray(profile.roles) && isMfaRequiredRoleSet(profile.roles);
+  // ログイン履歴 (段 D §17): admin / super_admin のときだけ API を呼ぶ (support は API も 403 なので呼ばず、節も出さない)
+  const loginHistory = actor.roles.some((role) => LOGIN_HISTORY_ROLES.has(role)) ? await loadLoginHistory(profile.id) : null;
 
   return (
     <div className="max-w-4xl">
@@ -233,6 +340,8 @@ export default async function AdminUserDetailPage(props: PageProps) {
           </dl>
         </div>
       )}
+
+      {loginHistory && <LoginHistorySection load={loginHistory} />}
 
       {/* 監査ログ (super_admin のみ) */}
       {isSuperAdmin && auditLogs.length > 0 && (
