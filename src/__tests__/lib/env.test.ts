@@ -451,7 +451,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       // #1493 ブラウザ・端末から届いた error の急増の通知のしきい値 (サーバーとは別に数える)
       ['OPS_ALERT_CLIENT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
-      ['OPS_ALERT_EMAIL', 'src/app/api/cron/app-log-alerts/route.ts'],
+      // #1129 宛先の読み口は DB バックアップの鮮度の cron (backup-freshness) と共有する
+      ['OPS_ALERT_EMAIL', 'src/lib/ops-alerts/recipient.ts'],
       ['OPS_ALERT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
       // #1132 組織チャレンジの順位表に参加者の表示名を出すか。1 / true / on / yes だけを有効とみなす読み方を 1 か所に置く
       ['ORG_CHALLENGE_SHOW_NAMES', 'src/lib/org-challenges.ts'],
@@ -483,9 +484,9 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('LEGAL_CONSENT_NOTICE');
       // @ts-expect-error OPERATOR_MFA_ENFORCE_FROM の値を読むのは src/lib/auth/mfa/policy.ts の readMfaEnforceFromEnv だけ
       getOptionalEnv('OPERATOR_MFA_ENFORCE_FROM');
-      // @ts-expect-error OPS_ALERT_EMAIL の値を読むのは cron の route (src/app/api/cron/app-log-alerts/route.ts) だけ
+      // @ts-expect-error OPS_ALERT_EMAIL の値を読むのは運用メールの宛先の読み口 (src/lib/ops-alerts/recipient.ts。#1129) だけ
       getOptionalEnv('OPS_ALERT_EMAIL');
-      // @ts-expect-error OPS_ALERT_ERROR_THRESHOLD も同じ
+      // @ts-expect-error OPS_ALERT_ERROR_THRESHOLD の値を読むのは cron の route (src/app/api/cron/app-log-alerts/route.ts) だけ
       getOptionalEnv('OPS_ALERT_ERROR_THRESHOLD');
       // @ts-expect-error OPS_ALERT_COOLDOWN_MINUTES も同じ
       getOptionalEnv('OPS_ALERT_COOLDOWN_MINUTES');

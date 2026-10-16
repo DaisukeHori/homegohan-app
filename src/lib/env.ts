@@ -142,10 +142,11 @@ export const SERVER_ENV_VARS = {
   OPS_ALERT_EMAIL: {
     required: false,
     description:
-      'エラー急増の運用メールの宛先 (#1157)。app_logs のサーバーの error が 15 分で 20 件を超えたら (ブラウザ・端末から届いた error は別に数えて 100 件。#1493)、GET /api/cron/app-log-alerts がこのアドレス 1 つへ知らせる',
-    whenMissing: 'エラーが急増しても通知しない (cron は動くが、info ログを 1 行残すだけ)',
-    // 未設定・形の誤りのときの扱い (info / warn のログと応答の status) を、cron の route 1 か所に置いている
-    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+      'エラー急増の運用メールの宛先 (#1157)。app_logs のサーバーの error が 15 分で 20 件を超えたら (ブラウザ・端末から届いた error は別に数えて 100 件。#1493)、GET /api/cron/app-log-alerts がこのアドレス 1 つへ知らせる。DB バックアップが 30 時間より新しく取れていないことの通知 (GET /api/cron/backup-freshness。日 1 回。#1129) も同じ宛先',
+    whenMissing: 'エラーが急増しても、DB バックアップが古くなっても通知しない (cron は動くが、info ログを 1 行残すだけ)',
+    // 未設定・形の誤りの判定を、2 つの cron (app-log-alerts・backup-freshness。#1129) が共有する読み口 1 か所に置いている
+    // (info / warn のログと応答の status は各 cron の route)
+    readOnlyBy: 'src/lib/ops-alerts/recipient.ts',
   },
   OPS_ALERT_ERROR_THRESHOLD: {
     required: false,
