@@ -110,6 +110,13 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | パスワードの最小文字数 | | アプリ側の確認は 8 文字以上・英字と数字を含む (`src/lib/auth/validate-password.ts`) |
 | パスワードに必須の文字の種類 | | |
 | メールアドレスの確認 (Confirm email) | | 有効だと、登録後にメールのリンクを押すまでログインできない |
+| Secure password change (`secure_password_change`。Authentication → Providers → Email) | | **OFF のまま**にする。ON だと、作成から 24 時間を過ぎたセッションのパスワードの変更に再認証 (メールのコード) が要り、アプリの画面はそれを扱わない (`docs/design/cross/16-auth-history-sessions.md` §24) |
+| GoTrue の DB の暗号化 (`GOTRUE_SECURITY_DB_ENCRYPTION_*`) | | **OFF のまま**にする。ON にすると `auth.users.encrypted_password` が暗号文になり、過去のパスワードとの照合 (RPC `auth_password_check`。bcrypt を比べる) ができない (cross/16 §3) |
+| `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` (パスワードの変更に現在のパスワードを求める) | | 既定は OFF。OFF の間は、access token を盗んだ人が GoTrue の `PUT /auth/v1/user` を直接呼ぶと、現在のパスワード無しで変えられる (アプリの照合も通らない。cross/16 S-33)。ON にするかは cross/16 §25 Q-18 の結論に従う (ON にできるのは、パスワードの変更の API (cross/16 段 C) が入った後) |
+| JWT (access token) の有効期間 (Authentication → Sessions) | | 既定の 1 時間以下にする。失効させた端末が PostgREST を直接呼ぶ要求は、JWT の期限まで通る (cross/16 §24) |
+| Session timebox / inactivity timeout (Authentication → Sessions) | | **使わない** (未設定のまま)。代わりに pg_cron のジョブ `cleanup-auth-sessions-and-login-history` が、30 日更新の無いセッションを終える (cross/16 §11.6) |
+| `auth.sessions` / `auth.users` のトリガー 4 本が残っているか | | 年に 1 回、SQL エディタで `SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal` を流し、`on_auth_session_created`・`on_auth_session_refreshed`・`on_auth_session_deleted`・`on_auth_user_password_changed` の 4 行があることを確かめる。Supabase 側の移行で表が作り直されると消え、ログインの記録とパスワードの履歴が止まる (ログインは止まらない) |
+| その 4 本のトリガーの消し方 | | 表の所有者 (`supabase_auth_admin`) でないと消せない。migration のロールバック (`supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`) は関数の本体を空にして残す (cross/16 §11.7)。トリガーそのものを消すときは Supabase のサポートに頼む |
 
 ### 3.3 メール送信についての注意
 
