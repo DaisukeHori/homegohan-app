@@ -1045,7 +1045,13 @@ describe('GET /api/super-admin/logs: 本文の検索 q (#1708)', () => {
 });
 
 describe('GET /api/super-admin/logs: 閲覧の監査 (#1708)', () => {
-  beforeEach(() => seed([log(1, { message: 'timeout a' }), log(2, { message: 'b' }), log(3, { message: 'timeout c' })]));
+  beforeEach(() =>
+    seed([
+      log(1, { message: 'timeout a', user_id: USER_A }),
+      log(2, { message: 'b' }),
+      log(3, { message: 'timeout c', user_id: USER_A }),
+    ]),
+  );
 
   it('1 行以上返したら admin_audit_logs に super_admin.app_logs.list を 1 行 (条件と件数だけ。ログの中身・行の ID は残さない)', async () => {
     const { res } = await get(`?q=timeout&level=info&user_id=${USER_A}&limit=1`);
