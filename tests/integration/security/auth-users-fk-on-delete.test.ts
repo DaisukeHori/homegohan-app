@@ -249,6 +249,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'user_badge_period_awards.user_id': 'CASCADE',
   // operator/10 §5.1 (20261016234000): メールの送信待ちは運用の記録として残し、利用者への紐づけだけ外す (宛先は退会の伏せ字で消す)
   'email_outbox.user_id': 'SET NULL',
+  // mobile/06 §5.1 (20261016237000): Push 通知の送信待ちは本人の端末宛ての運用の記録なので、本人と一緒に消す (S-12)
+  'push_outbox.user_id': 'CASCADE',
 };
 
 let fks: AuthUsersFk[];
@@ -322,11 +324,12 @@ describe('#1175 D. 外部キーの動作', () => {
     expect(listed).toEqual(inCatalog);
   });
 
-  it('決めた動作の一覧は #1562 で外した gdpr_deletion_requests.user_id を含まない。billing/01・cross/15・cross/12 で足した列の動作は決めたとおり', () => {
+  it('決めた動作の一覧は #1562 で外した gdpr_deletion_requests.user_id を含まない。billing/01・cross/15・cross/12・mobile/06 で足した列の動作は決めたとおり', () => {
     expect(Object.keys(EXPECTED_ACTIONS)).not.toContain('gdpr_deletion_requests.user_id');
     expect(EXPECTED_ACTIONS['billing_customers.user_id']).toBe('SET NULL');
     expect(EXPECTED_ACTIONS['data_subject_requests.user_id']).toBe('SET NULL');
     expect(EXPECTED_ACTIONS['operator_mfa_backup_codes.user_id']).toBe('CASCADE');
+    expect(EXPECTED_ACTIONS['push_outbox.user_id']).toBe('CASCADE');
   });
 
   for (const [key, expected] of Object.entries(EXPECTED_ACTIONS)) {
