@@ -2018,7 +2018,7 @@ ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS preferences JSONB
 
 **確認事項**:
 - 既存稼働: iOS のみ Apple Configurator 2 + TestFlight (`hori@hori.tech` アカウント)
-- Android: 未確認 → `mobile/06-push-send.md` の worker (`GET /api/cron/push-outbox`) の本番投入の前に確認が必要
+- Android: 未確認 → 送信の worker (`GET /api/cron/push-outbox`。`docs/design/mobile/06-push-send.md`) は本番で動いている。Android の端末に届くかは、FCM の資格情報を EAS に登録してから確かめる (オーナーの作業。下の「新規 EAS Secret 設定」の Android の行・`mobile/06-push-send.md` §14。未登録の間は Android の端末だけ届かない)
 - Expo Push Token は両 OS 対応するが、内部的には APNs / FCM へ振り分け
 
 **新規 EAS Secret 設定**:
