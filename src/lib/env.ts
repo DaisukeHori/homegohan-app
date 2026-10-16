@@ -167,6 +167,27 @@ export const SERVER_ENV_VARS = {
     whenMissing: '既定の 60 分を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
   },
+  EXPO_ACCESS_TOKEN: {
+    required: false,
+    description:
+      'Expo Push Service のアクセストークン (#1136)。GET /api/cron/push-outbox が Expo に通知を送るときに Authorization: Bearer で付ける。' +
+      'Expo プロジェクトの Enhanced push security を ON にしたうえで、expo.dev/settings/access-tokens で作る',
+    whenMissing: 'Push 通知を送らない (cron は warn ログを 1 行残し、掃除だけをする: 24 時間を超えた送信待ちの行を expired にし、送信済みは 7 日・届けられなかった行は 30 日で消す)',
+    // 未設定の扱い (warn のログと応答の status) を、送信待ちの cron の route 1 か所に置いている
+    readOnlyBy: 'src/app/api/cron/push-outbox/route.ts',
+  },
+  PUSH_OUTBOX_MAX_ATTEMPTS: {
+    required: false,
+    description: 'Push 通知の送信待ち (push_outbox) の試行の上限 (#1136)。これだけ失敗したら届けられなかった (dead) にする。1〜10 の整数',
+    whenMissing: '既定の 3 回を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/push-outbox/route.ts',
+  },
+  PUSH_OUTBOX_BATCH_SIZE: {
+    required: false,
+    description: 'Push 通知の送信待ち (push_outbox) を 1 回の cron (毎分) で取り出して送る件数の上限 (#1136)。1〜500 の整数',
+    whenMissing: '既定の 100 件を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/push-outbox/route.ts',
+  },
   EMAIL_OUTBOX_MAX_ATTEMPTS: {
     required: false,
     description:
