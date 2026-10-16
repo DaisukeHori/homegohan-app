@@ -54,7 +54,7 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
 │  Next.js (Vercel)    │    │  Mobile (Expo)        │
 │  - App Router        │    │  - WebView Hybrid     │
 │  - Server Actions    │    │  - Expo Push          │
-│  - Edge Middleware   │    │  - Image Picker       │
+│  - Proxy (Node.js)   │    │  - Image Picker       │
 └───────────┬──────────┘    └───────────┬──────────┘
             │                            │
             │  REST + Server Actions     │
@@ -218,7 +218,7 @@ src/
 │   ├── a11y/                      # アクセシビリティ helpers
 │   ├── ratelimit/                 # Upstash Ratelimit ラッパー (新規)
 │   └── cache/                     # Upstash Redis キャッシュラッパー (新規)
-├── middleware.ts                  # セッション同期 (既存)
+├── proxy.ts                       # セッション同期 (既存) + CSP の nonce (#1169)。#1744 で middleware.ts から改名
 └── types/
     ├── supabase.ts                # 自動生成 (新規、既存 database.ts は migrate)
     └── domain/                    # ドメイン型定義

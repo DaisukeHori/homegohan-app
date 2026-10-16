@@ -8,6 +8,7 @@ import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
 import { renderFamilyInviteNewEmail } from '@/lib/emails/membership/family-invite-new';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
+import { renderFamilyParentalConsentRecordedEmail } from '@/lib/emails/membership/family-parental-consent-recorded';
 import { renderFamilyTransferCompletedEmail } from '@/lib/emails/membership/family-transfer-completed';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
 import { renderMemberLeftEmail } from '@/lib/emails/membership/member-left';
@@ -79,6 +80,22 @@ const TEMPLATES: TemplateCase[] = [
         requester_name: '山田花子',
         accept_url: 'https://app.example.test/family/promotions/abc',
         expires_at: '2026-10-21T02:00:00.000Z',
+      }),
+    mentionsSupport: true,
+  },
+  {
+    // #1173: 保護者の同意の控え (署名した本人宛)
+    file: 'membership/family-parental-consent-recorded',
+    name: 'family-parental-consent-recorded',
+    render: () =>
+      renderFamilyParentalConsentRecordedEmail({
+        email_address: 'hanako@example.com',
+        family_name: '山田家',
+        child_display_name: 'たろう',
+        consent_version: 'v2026.1',
+        signed_at: '2026-10-15T01:00:00.000Z',
+        document_url: 'https://app.example.test/legal/parental-consent',
+        members_url: 'https://app.example.test/family/members',
       }),
     mentionsSupport: true,
   },
@@ -315,9 +332,11 @@ describe('メールの文面: ソースにドメイン・送信元・問い合�
         .readdirSync(path.join(EMAILS_DIR, 'membership'))
         .filter((f) => f.endsWith('.ts') && !['templates.ts', 'scope-label.ts'].includes(f))
         .map((f) => `membership/${f.replace(/\.ts$/, '')}`),
+      // #1193 contact-admin-notification.ts は運営 (ADMIN_NOTIFICATION_EMAIL) への通知で、利用者向けの文面ではない
+      // (ops/* の運用メールと同じく署名・問い合わせ先を載せない。送信元は getEmailFrom で決める)
       ...fs
         .readdirSync(path.join(EMAILS_DIR, 'support'))
-        .filter((f) => f.endsWith('.ts'))
+        .filter((f) => f.endsWith('.ts') && f !== 'contact-admin-notification.ts')
         .map((f) => `support/${f.replace(/\.ts$/, '')}`),
       // #1178 format.ts は文面の部品 (日時の表示) で、メールの文面ではない
       ...fs

@@ -12,6 +12,7 @@ export * from './design-tokens';
 export * from './legal-versions';
 export * from './legal-consent-api';
 export * from './legal-consent-copy';
+export * from './parental-consent';
 export * from './service-unavailable';
 export * from './user-scoped-storage';
 export * from './native-app-tabs';
@@ -28,6 +29,7 @@ export * from './signed-photo-url';
 export * from './badge-period-awards';
 export * from './handson-tour-nickname';
 export * from './push-token-claim';
+export * from './push-notification-kinds';
 export type {
   Json,
   Database,

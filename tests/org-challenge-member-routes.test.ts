@@ -14,8 +14,10 @@
  *     service_role の DB 関数には、認可で確定した組織 ID・本人の ID だけを渡す。
  *  3. 参加: 開催中で、使える種類で、終了日 (JST) を過ぎていないチャレンジだけ。本人の権限 (service_role ではない) で、
  *     チャレンジ ID と本人の ID だけを INSERT する。二重の参加は 200 (alreadyJoined)、RLS の拒否は 403。
- *  4. 順位表: 参加者本人にだけ。参加していない人には DB の関数も呼ばない。表示名は環境変数 ORG_CHALLENGE_SHOW_NAMES が
+ *  4. 順位表: 参加者本人にだけ。参加していない人には DB の関数も呼ばない (reason: 'not_joined')。表示名は環境変数 ORG_CHALLENGE_SHOW_NAMES が
  *     有効なときだけ (未設定は「あなた」「参加者」)。他人の ID は応答のどこにも現れない。
+ *     #1688: 参加していても、組織の管理者 (owner / admin) と、このチャレンジに管理者だった印のある人には返さない (reason: 'org_admin')。
+ *     印は service_role で、チャレンジ ID と本人の ID で絞って読む。読めなければ 500。
  *  5. 参加者数は、最小人数に満たないとき null (管理者もメンバーとして呼べるので、管理者向けの API と同じ規則)。
  *  6. 500 の本文は汎用メッセージだけ。DB の生のエラー文は db-logger にだけ残す (#1172)。
  *
@@ -48,7 +50,8 @@ const mockAdminRpc = vi.fn();
 const mockGetSupabaseAdmin = vi.fn();
 let sessionUser: FakeUser | null = null;
 let sessionDb: SchemaDb;
-const adminDb = createSchemaDb({ tables: {} });
+// service_role の表 (印の表など)。queries は作ったときから溜まり vi.clearAllMocks() でも消えないので、it ごとに作り直す (beforeEach)
+let adminDb: SchemaDb = createSchemaDb({ tables: {} });
 
 vi.mock('@/lib/supabase/server', () => ({
   // createClient() は async (Next 15 では cookies() が Promise のため)。モックも Promise を返し、await を忘れた呼び出しはここで落ちるようにする
@@ -189,6 +192,7 @@ const RANKING_ROWS = [
 ];
 
 beforeEach(() => {
+  adminDb = createSchemaDb({ tables: {} });
   vi.clearAllMocks();
   mockGetSupabaseAdmin.mockImplementation(() => makeClient(adminDb, null, mockAdminRpc));
   mockAdminRpc.mockImplementation(async (name: string) => {
@@ -458,7 +462,7 @@ describe('GET /api/org/challenges/[id]', () => {
     expect(body.challenge).toMatchObject({ id: C_BREAKFAST, title: '朝食チャレンジ', challengeType: 'breakfast_rate' });
     expect(body.joined).toBe(false);
     expect(body.me).toBeNull();
-    expect(body.ranking).toEqual({ available: false, showNames: false });
+    expect(body.ranking).toEqual({ available: false, showNames: false, reason: 'not_joined' });
     expect(mockAdminRpc.mock.calls.map((c) => c[0])).toEqual(['get_org_challenge_aggregates']);
     expect(JSON.stringify(body)).not.toContain('"entries"');
   });
@@ -534,16 +538,111 @@ describe('GET /api/org/challenges/[id]', () => {
 
     const body = await json(await get(C_BREAKFAST));
 
-    expect(body.ranking).toEqual({ available: false, showNames: true });
+    expect(body.ranking).toEqual({ available: false, showNames: true, reason: 'not_joined' });
   });
 
-  it('参加している管理者は、一般のメンバーと同じく順位表を見られる', async () => {
+  it('参加している管理者 (owner / admin) には順位表を返さず reason: org_admin。順位表の DB 関数を呼ばず、印の表も読まない。me は返す', async () => {
     setup({ actor: ADMIN_A });
     const res = await get(C_VEG);
     const body = await json(res);
 
+    expect(res.status).toBe(200);
     expect(body.joined).toBe(true);
+    expect(body.me).toEqual({ currentValue: 0, rank: null, joinedAt: '2026-10-06T00:00:00Z' });
+    expect(body.ranking).toEqual({ available: false, showNames: false, reason: 'org_admin' });
+    expect(mockAdminRpc.mock.calls.map((c) => c[0])).toEqual(['get_org_challenge_aggregates']);
+    expect(adminDb.recorded('organization_challenge_ranking_exclusions')).toHaveLength(0);
+    expect(JSON.stringify(body)).not.toContain('"entries"');
+  });
+
+  it('参加している owner にも順位表を返さない (reason: org_admin)', async () => {
+    sessionDb = createSchemaDb({
+      tables: {
+        user_profiles: worldTables().user_profiles.filter((p) => p.id === OWNER_A),
+        organization_challenges: worldTables().organization_challenges.filter((c) => c.organization_id === ORG_A),
+        organization_challenge_participants: [
+          { id: 'p9', challenge_id: C_BREAKFAST, user_id: OWNER_A, current_value: 40, rank: 3, joined_at: '2026-10-04T00:00:00Z' },
+        ],
+      },
+    });
+    sessionUser = { id: OWNER_A, email: 'actor@example.com' };
+
+    const body = await json(await get(C_BREAKFAST));
+
+    expect(body.joined).toBe(true);
+    expect(body.me).toEqual({ currentValue: 40, rank: 3, joinedAt: '2026-10-04T00:00:00Z' });
+    expect(body.ranking).toEqual({ available: false, showNames: false, reason: 'org_admin' });
+    expect(mockAdminRpc.mock.calls.map((c) => c[0])).not.toContain('get_org_challenge_ranking');
+    expect(adminDb.recorded('organization_challenge_ranking_exclusions')).toHaveLength(0);
+  });
+
+  it('member でも、このチャレンジに管理者だった印がある人には reason: org_admin。順位表の DB 関数を呼ばない', async () => {
+    adminDb = createSchemaDb({
+      tables: {
+        organization_challenge_ranking_exclusions: [
+          { challenge_id: C_BREAKFAST, user_id: MEMBER_A1, marked_at: '2026-10-03T00:00:00Z' },
+        ],
+      },
+    });
+
+    const body = await json(await get(C_BREAKFAST));
+
+    expect(body.joined).toBe(true);
+    expect(body.me).toEqual({ currentValue: 50, rank: 2, joinedAt: '2026-10-02T00:00:00Z' });
+    expect(body.ranking).toEqual({ available: false, showNames: false, reason: 'org_admin' });
+    expect(mockAdminRpc.mock.calls.map((c) => c[0])).not.toContain('get_org_challenge_ranking');
+    expect(JSON.stringify(body)).not.toContain('"entries"');
+  });
+
+  it('別のチャレンジの印や、別の人の印では伏せない (印はチャレンジ ID と本人の ID の組)', async () => {
+    adminDb = createSchemaDb({
+      tables: {
+        organization_challenge_ranking_exclusions: [
+          { challenge_id: C_VEG, user_id: MEMBER_A1, marked_at: '2026-10-03T00:00:00Z' },
+          { challenge_id: C_BREAKFAST, user_id: MEMBER_A2, marked_at: '2026-10-03T00:00:00Z' },
+        ],
+      },
+    });
+
+    const body = await json(await get(C_BREAKFAST));
+
     expect(body.ranking.available).toBe(true);
+    expect(mockAdminRpc.mock.calls.map((c) => c[0])).toContain('get_org_challenge_ranking');
+  });
+
+  it('印は service_role のクライアントで、チャレンジ ID と本人の ID で絞って読む (本人のセッションの DB からは読まない)', async () => {
+    await get(C_BREAKFAST);
+
+    const reads = adminDb.recorded('organization_challenge_ranking_exclusions', 'select');
+    expect(reads).toHaveLength(1);
+    expect(reads[0].eq).toContainEqual(['challenge_id', C_BREAKFAST]);
+    expect(reads[0].eq).toContainEqual(['user_id', MEMBER_A1]);
+    expect(sessionDb.recorded('organization_challenge_ranking_exclusions')).toHaveLength(0);
+  });
+
+  it('参加していない人には印を読まない (reason: not_joined)', async () => {
+    setup({ actor: MEMBER_A3 });
+
+    await get(C_BREAKFAST);
+
+    expect(adminDb.recorded('organization_challenge_ranking_exclusions')).toHaveLength(0);
+  });
+
+  it('500: 印の表を読めないときは汎用メッセージだけ。順位表を返さない', async () => {
+    adminDb = createSchemaDb({
+      tables: {},
+      errors: { organization_challenge_ranking_exclusions: { code: 'XX000', message: 'boom; secret=abc123' } },
+    });
+
+    const res = await get(C_BREAKFAST);
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({ error: { code: 'INTERNAL_ERROR', message: 'Internal server error' } });
+    expect(text).not.toContain('abc123');
+    expect(mockLoggerError).toHaveBeenCalledTimes(1);
+    expect(mockLoggerError.mock.calls[0][0]).toBe('GET /api/org/challenges/[id]');
+    expect(mockAdminRpc.mock.calls.map((c) => c[0])).not.toContain('get_org_challenge_ranking');
   });
 
   it('順位表は上位と本人の行だけ。全員の人数より少ない行数のとき truncated = true', async () => {

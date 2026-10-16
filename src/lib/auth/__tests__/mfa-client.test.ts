@@ -1,6 +1,6 @@
 /**
- * #1176 運営ロールの MFA の画面の通信の facade のテスト (段 A)。docs/design/cross/12-operator-mfa.md §15.1・§21.1 (mfa-client.test.ts)
- * fetch を vi.stubGlobal で差し替える。段 B・C の関数の it はその段で足す。
+ * #1176 運営ロールの MFA の画面の通信の facade のテスト (段 A・段 B)。docs/design/cross/12-operator-mfa.md §15.1・§21.1 (mfa-client.test.ts)
+ * fetch を vi.stubGlobal で差し替える。段 C の関数の it はその段で足す。
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -10,9 +10,12 @@ import {
   MFA_FALLBACK_ERROR_MESSAGE,
   getMfaStatus,
   mfaErrorMessage,
+  mfaFactorPath,
   recoverWithBackupCode,
+  regenerateBackupCodes,
   requestMfaApi,
   startMfaEnrollment,
+  unenrollMfaFactor,
   verifyMfaCode,
 } from '@/lib/auth/mfa/client';
 import { MfaRecoverResponseSchema } from '@/lib/auth/mfa/schemas';
@@ -126,6 +129,9 @@ describe('段 A の 4 関数', () => {
       enroll: '/api/auth/mfa/enroll',
       verify: '/api/auth/mfa/verify',
       recover: '/api/auth/mfa/recover',
+      // 段 B (§14.4・§14.6)
+      backupCodes: '/api/auth/mfa/backup-codes',
+      factors: '/api/auth/mfa/factors',
     });
     const calls = fetchMock.mock.calls.map((call) => {
       const [path, init] = call as [string, RequestInit];
@@ -164,6 +170,35 @@ describe('段 A の 4 関数', () => {
     await expect(getMfaStatus()).resolves.toEqual({ ok: true, data: status });
     fetchMock.mockResolvedValueOnce(jsonResponse({ ...status, backup_codes_remaining: -1 }, 200));
     await expect(getMfaStatus()).resolves.toEqual(NO_RESPONSE);
+  });
+});
+
+describe('段 B の 2 関数', () => {
+  it('regenerateBackupCodes は POST /api/auth/mfa/backup-codes、unenrollMfaFactor は DELETE /api/auth/mfa/factors/<encodeURIComponent(id)> を本文なしで呼ぶ', async () => {
+    fetchMock.mockImplementation(async () => jsonResponse({}, 500));
+    const oddId = 'factor/../x?y';
+    await regenerateBackupCodes();
+    await unenrollMfaFactor(oddId);
+    const calls = fetchMock.mock.calls.map((call) => {
+      const [path, init] = call as [string, RequestInit];
+      return { path, method: init.method, headers: init.headers, body: init.body };
+    });
+    expect(calls).toEqual([
+      { path: '/api/auth/mfa/backup-codes', method: 'POST', headers: undefined, body: undefined },
+      { path: `/api/auth/mfa/factors/${encodeURIComponent(oddId)}`, method: 'DELETE', headers: undefined, body: undefined },
+    ]);
+    expect(mfaFactorPath('abc')).toBe('/api/auth/mfa/factors/abc');
+  });
+
+  it('regenerateBackupCodes / unenrollMfaFactor は 200 の本文を MfaBackupCodesResponseSchema / MfaUnenrollResponseSchema で読み、形が違えば失敗にする', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, backup_codes: ['ABCDE-FGHJK'] }, 200));
+    await expect(regenerateBackupCodes()).resolves.toEqual({ ok: true, data: { ok: true, backup_codes: ['ABCDE-FGHJK'] } });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, aal: 'aal2' }, 200));
+    await expect(unenrollMfaFactor('f-1')).resolves.toEqual({ ok: true, data: { ok: true, aal: 'aal2' } });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ ok: true, aal: 'aal3' }, 200));
+    await expect(unenrollMfaFactor('f-1')).resolves.toMatchObject({ ok: false, status: MFA_CLIENT_NO_STATUS });
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'x', code: 'AUTH_2FA_REQUIRED' }, 403));
+    await expect(regenerateBackupCodes()).resolves.toMatchObject({ ok: false, status: 403, code: 'AUTH_2FA_REQUIRED' });
   });
 });
 

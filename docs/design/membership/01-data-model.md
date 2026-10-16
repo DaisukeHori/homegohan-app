@@ -1155,7 +1155,8 @@ CREATE TABLE membership_audit (
     'representative_transfer_proposed','representative_transferred',
     'operator_force_owner_transfer','operator_force_representative_transfer',
     'operator_force_dissolve',
-    'paste_executed'
+    'paste_executed',
+    'parental_consent_recorded','parental_consent_revoked'  -- 設計書 cross/14-parental-consent.md (migration 20261017030000)
   )),
   actor_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,  -- NULL = system / operator
   target_user_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,

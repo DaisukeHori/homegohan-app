@@ -8,11 +8,18 @@ async function loadNextConfig() {
   return mod.default;
 }
 
-async function getSecurityHeaders(config: any) {
+/** next.config.mjs の headers() の 1 群 (source と headers) */
+interface HeaderGroup {
+  source: string;
+  headers: Array<{ key: string; value: string }>;
+}
+
+/** headers() の群と、全パス ('/(.*)') に当てる群 (CSP は #1169 で middleware へ移したので、ここでは探さない) */
+async function getSecurityHeaders(config: { headers: () => Promise<HeaderGroup[]> }) {
   const headerGroups = await config.headers();
-  const securityGroup = headerGroups.find((g: any) => g.source === '/(.*)');
-  const csp = securityGroup.headers.find((h: any) => h.key === 'Content-Security-Policy').value as string;
-  return { headerGroups, csp };
+  const securityGroup = headerGroups.find((group) => group.source === '/(.*)');
+  if (securityGroup === undefined) throw new Error("next.config.mjs の headers() に '/(.*)' の群が無い");
+  return { headerGroups, securityGroup };
 }
 
 describe('next.config.mjs headers (#1044)', () => {
@@ -20,79 +27,44 @@ describe('next.config.mjs headers (#1044)', () => {
     vi.unstubAllEnvs();
   });
 
-  // #1166: 利用状況の計測 (PostHog) はやめた。CSP が PostHog への送信を許していると、
-  // 後から SDK を入れ直したときに黙って送信できてしまうので、許可の復活を止める。
-  it('#1166: connect-src に PostHog のホストを含まない', async () => {
+  // #1169: CSP は src/proxy.ts が毎リクエスト nonce つきで付ける (src/lib/security/csp.ts)。
+  // headers() にも書くと応答に 2 つ並び、ブラウザは両方を満たすものしか通さないので、nonce の無い方が nonce つきのスクリプトを止める。
+  // 方針の中身 (#1166 PostHog・F6-09 の許可済みドメイン・Supabase の origin) の検査は src/__tests__/lib/security/csp.test.ts にある
+  it('headers() に Content-Security-Policy が無い (CSP は middleware が付ける。二重に付けない)', async () => {
     const config = await loadNextConfig();
-    const { csp } = await getSecurityHeaders(config);
+    const { headerGroups } = await getSecurityHeaders(config);
 
-    expect(csp).toContain('connect-src');
-    expect(csp.toLowerCase()).not.toContain('posthog');
+    for (const group of headerGroups) {
+      const keys = group.headers.map((header) => header.key.toLowerCase());
+      expect(keys, group.source).not.toContain('content-security-policy');
+      expect(keys, group.source).not.toContain('content-security-policy-report-only');
+    }
   });
 
-  it('#1166: NEXT_PUBLIC_POSTHOG_HOST が環境に残っていても、そのホストを CSP に出さない', async () => {
-    vi.stubEnv('NEXT_PUBLIC_POSTHOG_HOST', 'https://eu.i.posthog.com');
+  it('X-Frame-Options・X-Content-Type-Options・X-XSS-Protection・HSTS は残る', async () => {
     const config = await loadNextConfig();
-    const { csp } = await getSecurityHeaders(config);
+    const { securityGroup } = await getSecurityHeaders(config);
+    const valueOf = (key: string) => securityGroup.headers.find((header) => header.key === key)?.value;
 
-    expect(csp).not.toContain('eu.i.posthog.com');
-    expect(csp.toLowerCase()).not.toContain('posthog');
-  });
-
-  it('F6-09: 既存の許可済みドメイン (supabase/vercel) は壊れていない', async () => {
-    const config = await loadNextConfig();
-    const { csp } = await getSecurityHeaders(config);
-
-    expect(csp).toContain('*.supabase.co');
-    expect(csp).toContain('*.vercel.app');
-    expect(csp).toContain("wss://*.supabase.co");
-    expect(csp).toContain("script-src 'self' 'unsafe-inline'");
-    expect(csp).toContain('*.vercel-scripts.com');
-    expect(csp).toContain("style-src 'self' 'unsafe-inline'");
-    expect(csp).toContain('img-src');
-    expect(csp).toContain('images.unsplash.com');
-    expect(csp).toContain("font-src 'self'");
-  });
-
-  it('本番の Supabase (*.supabase.co) では CSP に個別の origin を加えない', async () => {
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'https://flmeolcfutuwwbjmzyoz.supabase.co');
-    const config = await loadNextConfig();
-    const { csp } = await getSecurityHeaders(config);
-
-    expect(csp).toContain(
-      "img-src 'self' data: blob: *.supabase.co images.unsplash.com;",
-    );
-    expect(csp).toContain(
-      "connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co;",
-    );
-  });
-
-  it('ローカルの Supabase (http://127.0.0.1:54321) は connect-src (http / ws) と img-src に加える', async () => {
-    vi.stubEnv('NEXT_PUBLIC_SUPABASE_URL', 'http://127.0.0.1:54321');
-    const config = await loadNextConfig();
-    const { csp } = await getSecurityHeaders(config);
-
-    const connectSrc = csp.split('; ').find((d) => d.startsWith('connect-src')) ?? '';
-    const imgSrc = csp.split('; ').find((d) => d.startsWith('img-src')) ?? '';
-    expect(connectSrc).toContain('http://127.0.0.1:54321');
-    expect(connectSrc).toContain('ws://127.0.0.1:54321');
-    expect(imgSrc).toContain('http://127.0.0.1:54321');
+    expect(valueOf('X-Frame-Options')).toBe('DENY');
+    expect(valueOf('X-Content-Type-Options')).toBe('nosniff');
+    expect(valueOf('X-XSS-Protection')).toBe('1; mode=block');
+    expect(valueOf('Strict-Transport-Security')).toBe('max-age=63072000; includeSubDomains; preload');
   });
 
   it('F6-08: 長期キャッシュ設定は静的アセット (sample-meal.webp) のみを対象にする', async () => {
     const config = await loadNextConfig();
     const { headerGroups } = await getSecurityHeaders(config);
 
-    const cacheRule = headerGroups.find((g: any) =>
-      g.headers.some((h: any) => h.key === 'Cache-Control'),
-    );
+    const cacheRule = headerGroups.find((group) => group.headers.some((header) => header.key === 'Cache-Control'));
+    if (cacheRule === undefined) throw new Error('Cache-Control の群が無い');
 
     expect(cacheRule.source).toBe('/handson-tour/sample-meal.webp');
     // ワイルドカードパターンでないこと (認証必須ページにマッチしないことの確認)
     expect(cacheRule.source).not.toBe('/handson-tour/(.*)');
     expect(cacheRule.source).not.toMatch(/\(.*\)/);
 
-    const cacheControl = cacheRule.headers.find((h: any) => h.key === 'Cache-Control').value;
+    const cacheControl = cacheRule.headers.find((header) => header.key === 'Cache-Control')?.value;
     expect(cacheControl).toContain('immutable');
   });
 });

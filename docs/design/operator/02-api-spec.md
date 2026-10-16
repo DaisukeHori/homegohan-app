@@ -32,6 +32,8 @@ const user = await requireRole(['admin', 'super_admin', 'finance']);
 const user = await requireRole(['admin', 'super_admin', 'sales']);
 ```
 
+必須ロール (super_admin / admin / finance / org_industrial_doctor) の利用者には、`requireRole` が AAL2 (認証アプリの 6 桁を入れたセッション) を求める (`cross/12-operator-mfa.md` §13.1)。aal1 のセッションは `MfaRequiredError` (`ForbiddenError` の派生。code `AUTH_2FA_REQUIRED` / `AUTH_2FA_ENROLLMENT_REQUIRED`) で、route の既存の `catch (ForbiddenError)` が 403 を返す (cross/12 §19.3)。画面 (layout / page) は `requireRoleForPage` (`src/lib/auth/page-guard.ts`) を呼び、2FA が未完了なら MFA の画面へ回す (cross/12 §13.4)。
+
 ### 3.2 レスポンス形式
 
 成功:
@@ -398,7 +400,7 @@ BAN 解除
 > | `maintenance_mode` | ON のとき、ミドルウェアが admin / super_admin 以外にメンテナンス中の画面 (API は 503 `MAINTENANCE_MODE`) を出す。切り替えは運営画面 `/super-admin/flags` | OFF |
 >
 > フラグの値はサーバーのメモリに最大 30 秒覚えるため、PATCH で切り替えてから全員に反映されるまで最大 30 秒かかる
-> (下の PATCH の「即座に」は、この遅れを除いた意味)。ミドルウェア (Edge) と API route (Node) は別々にメモリを持つ。
+> (下の PATCH の「即座に」は、この遅れを除いた意味)。proxy (`src/proxy.ts`。#1744 で middleware から改名し、Node.js の runtime で動く) と API route は、メモリを共有するとは限らない。
 
 ### GET /api/super-admin/flags
 フラグ一覧
@@ -488,7 +490,7 @@ BAN 解除
 `/signup` (新規登録) は止める。
 `/legal`・`/contact` を通すのはメンテナンスの判定だけで、ほかの差し戻し (初期設定の途中の人を `/onboarding/*` へ、凍結中の人を
 `/frozen` へ。凍結中でも `/contact` は通る) はメンテナンス中でないときと同じに掛かり、差し戻した先はメンテナンス中の画面になる。
-画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/middleware.ts`) が外していて、そもそもミドルウェアが走らない。
+画像・manifest・robots・サービスワーカーなどの静的ファイルは、ミドルウェアの `matcher` (`src/proxy.ts`) が外していて、そもそもミドルウェアが走らない。
 拡張子で通す処理は持たないので、動的なページのパスは、末尾が `.json` や `.txt` に見えても (`/meals/abc.json` など) 止める。
 フラグを読めない・行が無いときは止めない (OFF 扱い)。
 
@@ -731,9 +733,9 @@ Stripe ダッシュボードのリンクを返す。記録できなかったと�
 
 - `body` は前後の空白 (全角スペース・改行・タブを含む) を除いて 1 文字以上であること。空白だけの本文は 400 (`VALIDATION_ERROR`) で、保存もメールもしない。保存される本文も前後の空白を除いたもの。
 - 顧客向けメッセージ (`is_internal=false`) は、チケットの顧客本人へメールで知らせる (顧客がチケットを閲覧できる画面は無く、このメールが唯一の通知経路)。内部メモ (`is_internal=true`) はメールにせず、`email` も含めない。
-- `email.status` は `sent` (送信済み) / `skipped` (メール送信の設定が無く未送信) / `failed` (宛先を取得できない、または送信エラー)。`sent` 以外は `email.reason` (`not_configured` / `no_recipient` / `send_failed`) も返す。
+- `email.status` は `sent` (送信待ちに受け付けた。送るのは worker) / `skipped` (メール送信の設定が無く未送信) / `failed` (宛先を取得できない、または送信待ちに登録できない・宛先停止リスト・文面の不備)。登録したあとの送信の失敗は `email` に出ず、届けられなければ dead の通知と `/super-admin/email-outbox` で運営が扱う (`10-logs-and-mail-retry.md` §6.6・§7.2)。`sent` 以外は `email.reason` (`not_configured` / `no_recipient` / `send_failed`) も返す。
 - メールが送れなくてもメッセージは保存済みなので、ステータスは 201 のまま。失敗は `app_logs` に記録する。
-- 宛先は `auth.admin.getUserById(ticket.user_id)` で取得し、送信できたら `email_delivery_logs` (`template = 'support_ticket_reply'`) に残す。返信先は環境変数 `SUPPORT_REPLY_TO` (任意)。
+- 宛先は `auth.admin.getUserById(ticket.user_id)` で取得し、`sendEmail` で送信待ち (`email_outbox`・`template = 'support_ticket_reply'`) に登録する (`email_delivery_logs` には書かない。#1193)。返信先は環境変数 `SUPPORT_REPLY_TO` (任意)。
 
 ---
 
@@ -1516,6 +1518,13 @@ NPS サーベイ送信 (日次 14:00 JST)
 ライセンス更新リマインダー (日次 10:00 JST)
 
 **処理**: 30/14/7 日前の `org_license_pools` に対し、`org_admin` へ更新通知
+
+---
+
+### GET /api/cron/email-outbox
+メールの送信待ちを送る worker (毎分。Vercel Cron。#1193)。処理・応答・環境変数は `10-logs-and-mail-retry.md` §6.5。
+
+**認証**: `CRON_SECRET` ヘッダー
 
 ---
 

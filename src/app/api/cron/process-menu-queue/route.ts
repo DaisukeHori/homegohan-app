@@ -6,7 +6,7 @@ import {
   aiConsentDeniedStoredMessageOfResponse,
   checkUserAiConsent,
 } from '@/lib/ai/consent-guard';
-// runtime = 'edge' のルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
+// 毎分呼ばれるルートなので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182。tests/env-source-scan.test.ts)
 import { getSupabaseServiceConfig } from '@/lib/env-required';
 // service_role のクライアントは canonical の getSupabaseAdmin で作る (#1162)。lib/supabase/server.ts は next/headers と
 // @supabase/ssr も import するが、環境変数は env-required の getter だけで読み、zod を持つ @/lib/env は import しない
@@ -14,8 +14,20 @@ import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { internalError } from '@/lib/api/errors';
 import { weeklyMenuRequestStoredErrorMessage } from '@/lib/weekly-menu-request-error';
 
-export const runtime = 'edge';
+// Node.js の runtime で動かす (#1744)。Next 16 で Edge Runtime は非推奨になり、runtime = 'edge' は next build が警告を出す。
+// Vercel の Edge Runtime は 25 秒以内に応答を始めないと打ち切られ、maxDuration は効かなかった。Node.js では maxDuration が効くので、
+// 下の generate-menu-v5 の呼び出しの打ち切り (V5_FETCH_TIMEOUT_MS) は、関数の上限 (maxDuration) より先に来る
+export const runtime = 'nodejs';
+// Edge のときと同じく毎回動かす (ビルド時に応答を作り置きしない・fetch の応答を使い回さない)。既定に頼らず明示する (app-log-alerts と同じ)
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
 export const maxDuration = 60; // Vercel Pro: 60s OK
+
+/**
+ * generate-menu-v5 の呼び出しを打ち切るまでの時間 (ミリ秒)。Edge Function は 202 をすぐ返してバックグラウンドで進めるので、
+ * これより待つことは無い。関数の上限 (maxDuration = 60 秒) より短くして、打ち切ったあとに行を failed にする時間を残す
+ */
+const V5_FETCH_TIMEOUT_MS = 50_000;
 
 export async function GET(req: Request) {
   // CRON 認証 (Vercel Cron の Authorization header をチェック)。
@@ -99,7 +111,7 @@ export async function GET(req: Request) {
       body: JSON.stringify(payload),
       // Edge Function は 202 をすぐ返してバックグラウンドで進める。50 秒で応答が無ければ abort し、下の catch で failed にする。
       // (生成の途中でワーカーが止まった場合の取り直しは、claim_menu_request のリース切れ判定が担う)
-      signal: AbortSignal.timeout(50_000),
+      signal: AbortSignal.timeout(V5_FETCH_TIMEOUT_MS),
     });
 
     if (!v5Res.ok) {

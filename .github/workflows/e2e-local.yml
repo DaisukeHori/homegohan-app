@@ -97,6 +97,7 @@ jobs:
       # ログイン画面へ飛ばされず読めること (#1174) を、PR のコードの本番ビルドで確かめる。
       # auth-turnstile は、Turnstile のウィジェットが本物のブラウザ・本物の CSP で動くことを確かめる (#1165)。
       # family/01・operator/01・operator/02 は、主要ペルソナ (家族・admin・super_admin) の happy path (#856)。
+      # family/02 は、週間献立の家族の表示 (家族の献立を読み取り専用で見る・共有をオフにすると消える) (#1584)。
       # ユーザーは test ごとに、.env.local (上の手順が書く) の SUPABASE_SERVICE_ROLE_KEY でローカルの DB に作る (鍵が無ければ skip せず失敗する)。
       # tour/01〜07 は、ハンズオンツアー (初回の使い方ガイド) の判定 API と Step 0〜4・スキップ・やり直し (#846)。ユーザーは同じく test ごとに作る。
       # w5-3-menu-gen-adversarial と wave2-f2-queue-reliability は、週の献立の生成 (キュー・進捗・失敗の表示) の画面と API の嫌がらせ (#1622)。
@@ -122,6 +123,7 @@ jobs:
           tests/e2e/ai-consent-first-use.spec.ts
           tests/e2e/legal-consent-gate.spec.ts
           tests/e2e/family/01-invite-accept-share.spec.ts
+          tests/e2e/family/02-family-menu-view.spec.ts
           tests/e2e/operator/01-admin-flow.spec.ts
           tests/e2e/operator/02-super-admin-flow.spec.ts
           tests/e2e/tour/01-eligibility.spec.ts
@@ -133,6 +135,7 @@ jobs:
           tests/e2e/tour/07-skip-and-replay.spec.ts
           tests/e2e/w5-3-menu-gen-adversarial.spec.ts
           tests/e2e/wave2-f2-queue-reliability.spec.ts
+          tests/e2e/csp-nonce.spec.ts
 
       # 規約・プライバシーポリシーの再同意ゲート (#1174) の「強制あり」(LEGAL_CONSENT_ENFORCE=on) の挙動は、
       # 同じビルドを on でもう 1 つ別のポート (3001) に起動して確かめる (環境変数はサーバーの起動時に読まれる)。

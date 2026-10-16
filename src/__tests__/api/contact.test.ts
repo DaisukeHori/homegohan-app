@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
+import type { EmailEnvelope } from '@/lib/emails/envelope';
+import { EmailSendError } from '@/lib/emails/send-result';
 
 const mockGetUser = vi.fn();
 const mockSingle = vi.fn();
@@ -9,6 +11,10 @@ const mockInsert = vi.fn(() => ({ select: mockSelectAfterInsert }));
 const mockOrder = vi.fn();
 const mockEq = vi.fn(() => ({ order: mockOrder }));
 const mockSelect = vi.fn((_columns?: string) => ({ eq: mockEq }));
+
+// #1193 お問い合わせの管理者通知は sendEmail (送信待ちへの登録) を通る。送信そのものは send.test.ts が受け持つ
+const mockSendEmail = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/emails/send', () => ({ sendEmail: mockSendEmail }));
 
 vi.mock('@/lib/supabase/server', () => ({
   createClient: vi.fn().mockResolvedValue({
@@ -45,6 +51,7 @@ beforeEach(() => {
     error: null,
   });
   mockOrder.mockResolvedValue({ data: [], error: null });
+  mockSendEmail.mockResolvedValue({ ok: true, id: 'outbox-id-1', attempts: 0, skipped: false, error: null });
 });
 
 afterEach(() => {
@@ -103,16 +110,19 @@ describe('POST /api/contact (#1044 F6-19)', () => {
   });
 });
 
-// #1194 管理者への通知メールの送信元は、ほかのメールと同じく src/lib/site-config.ts (EMAIL_FROM) で決まる
+// #1194 管理者への通知メールの送信元は、ほかのメールと同じく src/lib/site-config.ts (EMAIL_FROM) で決まる。
+// #1193 通知は Resend を直接呼ばず、sendEmail で送信待ち (email_outbox) に登録する (送るのは worker)。
+// 本文の送信者はマスクし、全体はサポートの画面 (/support/inquiries) で見る (docs/design/operator/10-logs-and-mail-retry.md §6.6)
 describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)', () => {
   // 上のテストと同じ IP だと 1 分あたりの上限 (10 回) に近づくため、別の IP から送る
   const NOTIFY_TEST_IP = '203.0.113.99';
   const fetchSpy = vi.fn();
 
   beforeEach(() => {
-    vi.stubEnv('RESEND_API_KEY', 're_test_key');
     vi.stubEnv('ADMIN_NOTIFICATION_EMAIL', 'admin@example.com');
+    vi.stubEnv('NEXT_PUBLIC_APP_URL', 'https://app.example.test');
     fetchSpy.mockReset();
+    // Resend の API を直接呼ばないことを確かめるための見張り (呼ばれても成功を返す)
     fetchSpy.mockResolvedValue({ ok: true, status: 200, text: async () => '' });
     vi.stubGlobal('fetch', fetchSpy);
   });
@@ -121,8 +131,8 @@ describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)'
     vi.unstubAllGlobals();
   });
 
-  /** Resend へ送られたリクエストの本文 */
-  const sentBody = () => JSON.parse(fetchSpy.mock.calls[0][1].body as string) as { from: string; to: string[] };
+  /** sendEmail に渡した封筒 */
+  const sentEnvelope = () => mockSendEmail.mock.calls[0][0] as EmailEnvelope;
 
   it('EMAIL_FROM があれば、それを送信元にする', async () => {
     vi.stubEnv('EMAIL_FROM', 'ほめゴハン <noreply@mail.example.test>');
@@ -130,10 +140,9 @@ describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)'
     const res = await POST(makeRequest(validBody, NOTIFY_TEST_IP));
 
     expect(res.status).toBe(200);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toBe('https://api.resend.com/emails');
-    expect(sentBody().from).toBe('ほめゴハン <noreply@mail.example.test>');
-    expect(sentBody().to).toEqual(['admin@example.com']);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+    expect(sentEnvelope().from).toBe('ほめゴハン <noreply@mail.example.test>');
+    expect(sentEnvelope().to).toBe('admin@example.com');
   });
 
   it('EMAIL_FROM が未設定なら、従来と同じ既定の送信元 (DEFAULT_EMAIL_FROM)', async () => {
@@ -141,16 +150,18 @@ describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)'
 
     await POST(makeRequest(validBody, NOTIFY_TEST_IP));
 
-    expect(sentBody().from).toBe(DEFAULT_EMAIL_FROM);
+    expect(sentEnvelope().from).toBe(DEFAULT_EMAIL_FROM);
   });
 
-  it('Resend が送信を断っても (送信元のドメインが未検証など)、問い合わせの受け付けは成功のまま', async () => {
-    fetchSpy.mockResolvedValue({
+  it('送信待ちへの登録が失敗しても (sendEmail が ok:false の outbox_failed)、問い合わせの受け付けは成功のまま。warn を残す', async () => {
+    mockSendEmail.mockResolvedValue({
       ok: false,
-      status: 403,
-      text: async () => '{"message":"The example.test domain is not verified."}',
+      id: null,
+      attempts: 0,
+      skipped: false,
+      error: new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした', null, 0, true),
     });
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
     const res = await POST(makeRequest(validBody, NOTIFY_TEST_IP));
     const json = await res.json();
@@ -158,9 +169,44 @@ describe('POST /api/contact: 管理者への通知メールの送信元 (#1194)'
     expect(res.status).toBe(200);
     expect(json.success).toBe(true);
     expect(mockInsert).toHaveBeenCalledTimes(1);
-    // 失敗は握りつぶさず、ログに残す
-    expect(consoleError).toHaveBeenCalledWith('Admin notification failed:', 403, expect.stringContaining('not verified'));
-    consoleError.mockRestore();
+    // 失敗は握りつぶさず、ログに残す (どの問い合わせか・コードだけ)
+    expect(consoleWarn.mock.calls.some(([first]) => String(first).includes('お問い合わせの通知メールを送信待ちに登録できませんでした'))).toBe(true);
+    consoleWarn.mockRestore();
+  });
+
+  it('通知は template contact_admin_notification で、本文の送信者はマスクする (user@example.com を含まず u***@example.com を含む)。サポートの画面の URL (/support/inquiries) が単独の行', async () => {
+    await POST(makeRequest(validBody, NOTIFY_TEST_IP));
+
+    const envelope = sentEnvelope();
+    expect(envelope.template).toBe('contact_admin_notification');
+    expect(envelope.subject).toBe('[お問い合わせ] s');
+    expect(envelope.text).not.toContain('user@example.com');
+    expect(envelope.text).toContain('u***@example.com');
+    expect(envelope.text.split('\n')).toContain('https://app.example.test/support/inquiries');
+    // userId は渡さない (行に本人のアドレスが無いので伏せる対象が無い)
+    expect(mockSendEmail.mock.calls[0]).toHaveLength(1);
+  });
+
+  it('ADMIN_NOTIFICATION_EMAIL が未設定なら sendEmail を呼ばずに 200', async () => {
+    vi.stubEnv('ADMIN_NOTIFICATION_EMAIL', '');
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const res = await POST(makeRequest(validBody, NOTIFY_TEST_IP));
+
+    expect(res.status).toBe(200);
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    expect(consoleWarn.mock.calls.some(([first]) => String(first).includes('ADMIN_NOTIFICATION_EMAIL が未設定'))).toBe(true);
+    consoleWarn.mockRestore();
+  });
+
+  it('Resend の API (fetch) を直接呼ばない', async () => {
+    vi.stubEnv('RESEND_API_KEY', 're_test_key');
+
+    await POST(makeRequest(validBody, NOTIFY_TEST_IP));
+
+    expect(fetchSpy.mock.calls.every(([url]) => !String(url).includes('api.resend.com'))).toBe(true);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
   });
 });
 

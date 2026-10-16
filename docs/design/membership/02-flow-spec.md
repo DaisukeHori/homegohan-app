@@ -176,6 +176,8 @@ server → rpc('accept_org_owner_transfer', { p_proposal_id })
 | [NEW] `TRANSFER_ACCEPTOR_NOT_IN_ORG` | 403 | 承諾時点で組織のメンバーでない |
 | `TRANSFER_NOT_PENDING` | 409 | 同時に承諾が競合し、既に処理済み |
 
+**未成年 (#1173):** `accept_org_owner_transfer` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
+
 ---
 
 ## 6. family 家族グループ作成
@@ -191,6 +193,8 @@ server → rpc('create_family_group', { p_name, p_plan_key })
        → 監査ログ
        → 201 { data: { family_group } }
 ```
+
+**未成年 (#1173):** `create_family_group` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
 
 ---
 
@@ -223,6 +227,8 @@ server → rpc('accept_family_invite', { p_token, p_share_meals, p_share_health,
          空・空白だけ・仮置きの 'Guest'・プロフィール行が無い人は NULL。#1584・20261015170000)
        → 監査ログ
 ```
+
+**未成年 (#1173):** `accept_family_invite` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
 
 ---
 
@@ -276,6 +282,8 @@ POST /api/family/promotions/{token}/reject → rpc('reject_child_promotion')
 org owner 譲渡と同パターン。`propose_family_representative_transfer` / `accept_family_representative_transfer`。代表は他の adult にしか譲渡できない (child は不可)。提案時に宛先へ提案メール、承諾後に旧代表者と新代表者へ完了メールを送る (§5 と同じ。宛先のメールアドレスは `auth.users` から引く。04 §5)。
 
 **承諾時の不変条件 (#1237):** 承諾 RPC は承諾時点で、承諾者がその家族の `status = 'active'` かつ `role IN ('representative', 'adult')` のメンバーであることを再検証し、満たさなければ何も変更せずに [NEW] `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (403) を返す (脱退・除名済みのユーザーが古い提案で代表者になり、家族グループを DELETE CASCADE できてしまうのを防ぐ)。二重承諾の防止とその他のエラーコードは §5 と同じ。
+
+**未成年 (#1173):** `accept_family_representative_transfer` は、本人の `user_profiles.birth_date` が 18 歳未満なら `MINOR_ACCOUNT_NOT_ALLOWED` (403。設計書 `cross/14-parental-consent.md` §6.4 の 12)。18 歳未満の本人が家族に入るのは昇格 (§9) だけで、家族の代表者・組織のオーナーは引き受けない (保護者の同意とのつながりが切れたときの退会を 409 で塞がない)。
 
 ---
 

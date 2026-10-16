@@ -11,9 +11,12 @@
  * 版の値そのものは検査しない (オーナーが書き換える)。LEGAL_DOCUMENTS から取った「現行の版」と、
  * それとは別の値の「古い版」の組み合わせで確かめる。
  * middleware 全体を通した確認は lib/supabase/__tests__/middleware.test.ts。
+ * #1173 (設計書 cross/14): 「現行の版に同意済み」は生年月日 (birth_date) もある成人の行。生年月日の無い行も未同意と同じく回す。
+ * 保護者の同意書の公開ページ /legal/parental-consent はゲートの対象外 (T-LP2)。
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LEGAL_DOCUMENTS } from '@homegohan/shared';
+import { DSR_SETTINGS_PATH, DSR_VERIFY_PATH } from '@/lib/data-subject-requests/core';
 import {
   LEGAL_CONSENT_PATH,
   buildLegalConsentNext,
@@ -31,7 +34,10 @@ const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
 const OLD = 'v0-old';
 
 const ACCEPTED = {
-  current: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY },
+  // 成人の placeholder の生年月日つき (#1173 で生年月日が無いと同意画面へ回すため)
+  current: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: '1990-01-01' },
+  // #1173: 版は同意済みで、生年月日だけが無い
+  noBirthDate: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: null },
   none: { terms_version_accepted: null, privacy_version_accepted: null },
   noRow: null,
   columnsMissing: {},
@@ -49,6 +55,8 @@ const EXEMPT_PATHS = [
   '/privacy/',
   '/legal',
   '/legal/',
+  // #1173: 保護者の同意書の公開ページ (T-LP2)
+  '/legal/parental-consent',
   '/legal-consent',
   '/legal-consent/',
   '/auth/callback',
@@ -60,6 +68,10 @@ const EXEMPT_PATHS = [
   '/contact',
   '/contact/',
   '/frozen',
+  // 本人の権利の請求の画面と、本人確認のメールのリンクの着地 (#1751)
+  '/settings/data-requests',
+  '/settings/data-requests/',
+  '/settings/data-requests/verify',
   '/handson-tour',
   '/handson-tour/photo',
   '/_next/static/chunks/main.js',
@@ -77,6 +89,9 @@ const GATED_PATHS = [
   '/meals/new',
   '/profile',
   '/settings',
+  // 設定画面のほかの画面は対象のまま (#1751 で外すのは請求の画面だけ)
+  '/settings/account',
+  '/settings/ai-consent',
   '/health/settings',
   '/onboarding/welcome',
   '/onboarding/questions',
@@ -106,6 +121,9 @@ const LOOK_ALIKE_PATHS = [
   '/api-docs',
   '/handson-tourx',
   '/_nextx',
+  '/settings/data-requestsx',
+  '/settings/data-requests-x',
+  '/settings/data-request',
 ];
 
 const FLAG_ON_VALUES = ['on', 'ON', 'On', ' on ', 'on\n'];
@@ -191,6 +209,22 @@ function expectedForGated(enforce: boolean, notice: boolean): 'redirect' | 'bann
   return notice ? 'banner' : 'none';
 }
 
+describe('isLegalConsentExemptPath: 本人の権利の請求の画面 (#1751)', () => {
+  it('請求の画面 (DSR_SETTINGS_PATH) と本人確認の画面 (DSR_VERIFY_PATH) は、ゲートの対象外 (判定は onboarding-routing の isDataSubjectRequestsPath。その文字列と core.ts の定数の一致は tests/onboarding-routing.test.ts)', () => {
+    expect(DSR_SETTINGS_PATH).toBe('/settings/data-requests');
+    expect(isLegalConsentExemptPath(DSR_SETTINGS_PATH)).toBe(true);
+    expect(isLegalConsentExemptPath(DSR_VERIFY_PATH)).toBe(true);
+  });
+
+  it('強制 (enforce) でも、未同意・旧版の人を請求の画面から同意画面へ回さない。設定画面 (/settings) は回す', () => {
+    for (const accepted of [ACCEPTED.none, ACCEPTED.noRow, ACCEPTED.termsOld, ACCEPTED.onlyTerms]) {
+      expect(resolveLegalConsent({ pathname: DSR_SETTINGS_PATH, accepted, enforce: true, notice: false })).toBe('none');
+      expect(resolveLegalConsent({ pathname: DSR_VERIFY_PATH, accepted, enforce: true, notice: false })).toBe('none');
+      expect(resolveLegalConsent({ pathname: '/settings', accepted, enforce: true, notice: false })).toBe('redirect');
+    }
+  });
+});
+
 describe('resolveLegalConsent: 同意済みの版 × パス × フラグ', () => {
   describe.each([
     [true, true],
@@ -210,6 +244,7 @@ describe('resolveLegalConsent: 同意済みの版 × パス × フラグ', () =>
       ['プライバシーポリシーだけ古い版', ACCEPTED.privacyOld],
       ['両方古い版', ACCEPTED.bothOld],
       ['利用規約だけ同意 (プライバシーポリシーが未同意)', ACCEPTED.onlyTerms],
+      ['版は同意済みで生年月日が無い (#1173)', ACCEPTED.noBirthDate],
     ])('%s', (_name, accepted) => {
       it.each(EXEMPT_PATHS)('対象外の %s では何もしない', (pathname) => {
         expect(resolveLegalConsent({ pathname, accepted, enforce, notice })).toBe('none');
@@ -282,5 +317,14 @@ describe('resolveLegalConsentNext: 同意後の戻り先', () => {
   it('同意画面に似ているだけのパスは、そのまま使う', () => {
     expect(resolveLegalConsentNext('/legal-consentx')).toBe('/legal-consentx');
     expect(resolveLegalConsentNext('/apix')).toBe('/apix');
+  });
+});
+
+describe('#1173 T-LP2: 保護者の同意書の公開ページ', () => {
+  it('/legal/parental-consent は同意ゲートの対象外 (isLegalConsentExemptPath)', () => {
+    expect(isLegalConsentExemptPath('/legal/parental-consent')).toBe(true);
+    expect(
+      resolveLegalConsent({ pathname: '/legal/parental-consent', accepted: ACCEPTED.noBirthDate, enforce: true, notice: false }),
+    ).toBe('none');
   });
 });

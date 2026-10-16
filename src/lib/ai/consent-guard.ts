@@ -9,7 +9,7 @@
  *   - 判定の読み取りに失敗した: 503 { error, code: 'AI_CONSENT_CHECK_FAILED' } (送らない。fail-closed)
  * 本文は固定の文 (#1172: 変数名・DB のエラー文は出さない)。
  *
- * このファイルは next/headers や node: の API を使わない (runtime = 'edge' の cron からも使うため)。
+ * このファイルは next/headers や node: の API を使わない (リクエストの外で動く cron の route からも使うため)。
  * 一覧 (どの経路がどこで止めるか) と、未同意なら送らないことの実際の route での確かめは tests/ai-consent-enforcement.test.ts と
  * tests/ai-consent-enforcement-routes.test.ts にある。
  */

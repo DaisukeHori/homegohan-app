@@ -17,7 +17,15 @@ import { config as dotenvConfig } from "dotenv";
 import { generateTestPassword } from "../helpers/credentials";
 import { grantE2eAiConsent } from "../../../scripts/lib/e2e-ai-consent";
 import { acceptLegalConsentIfShown } from "../helpers/legal-consent";
-import { createTestSession, describeTestSessionFailure, type TestSessionResult } from "../helpers/test-session.mjs";
+import {
+  createTestSession,
+  describeTestSessionFailure,
+  E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE,
+  E2E_MFA_RATE_LIMITED_STATUS,
+  E2E_MFA_REQUIRED_ROLES,
+  promoteTestSessionToAal2,
+  type TestSessionResult,
+} from "../helpers/test-session.mjs";
 
 // Node.js 20 は native WebSocket を持たないため ws パッケージを明示的に指定。
 // Supabase Realtime クライアントが WebSocket を必要とするが admin API のみ使うため
@@ -124,16 +132,73 @@ export async function cleanupFreshUser(
   }
 }
 
+/** 'auto' (既定) = 利用者の roles に必須ロールがあれば aal2 に上げる。'aal1' = 上げない (MFA の画面そのものを試す spec 用) */
+export type InjectSessionAssurance = "auto" | "aal1";
+
+export interface InjectSessionOptions {
+  readonly assurance?: InjectSessionAssurance;
+}
+
+export interface InjectedSession {
+  readonly userId: string;
+  readonly aal: "aal1" | "aal2";
+  /** aal2 に上げたときの TOTP の秘密 (tests/e2e/helpers/totp.mjs の generateTotp に渡す)。上げなければ null */
+  readonly totpSecret: string | null;
+}
+
+/** セッションの user のうち、ここで読むもの (id と factors) */
+interface SessionUserFactors {
+  id?: unknown;
+  factors?: ReadonlyArray<{ factor_type?: unknown; status?: unknown }> | null;
+}
+
+function sessionUserOf(session: Record<string, unknown>): SessionUserFactors {
+  const user = session.user;
+  return typeof user === "object" && user !== null ? (user as SessionUserFactors) : {};
+}
+
+/**
+ * service_role の PostgREST で `user_profiles?id=eq.<id>&select=roles` を読む (行が無ければ [])。upsertUserProfile と同じ鍵・同じ失敗の扱い
+ */
+async function readE2eUserRoles(userId: string): Promise<string[]> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+  const resp = await fetch(
+    `${supabaseUrl}/rest/v1/user_profiles?id=eq.${encodeURIComponent(userId)}&select=roles`,
+    {
+      headers: {
+        apikey: serviceRoleKey,
+        Authorization: `Bearer ${serviceRoleKey}`,
+      },
+    },
+  );
+  if (!resp.ok) {
+    throw new Error(`[fresh-user fixture] user_profiles の roles を読めません: HTTP ${resp.status}`);
+  }
+  const rows: unknown = await resp.json();
+  if (!Array.isArray(rows) || rows.length === 0) return [];
+  const roles: unknown = (rows[0] as { roles?: unknown }).roles;
+  return Array.isArray(roles) ? roles.filter((role): role is string => typeof role === "string") : [];
+}
+
 /**
  * テスト用のセッションを作り (#1547: パスワードのログインは使わない。helpers/test-session.mjs)、
  * Cookie を Playwright コンテキストに注入する。
  * @supabase/ssr は Cookie ベース認証を使用するため localStorage 注入では機能しない。
  * 429 (rate limit) の場合は最大 SESSION_CREATE_MAX_RETRIES 回、間隔を伸ばしながらリトライする。
+ *
+ * #1176 (docs/design/cross/12-operator-mfa.md §22.4.3): 段 B から、必須ロールの運営の画面・API は aal2 のセッションだけを通す。
+ * options.assurance が 'aal1' でなければ、利用者の user_profiles.roles を読み、必須ロール (E2E_MFA_REQUIRED_ROLES) と交われば
+ * promoteTestSessionToAal2 で TOTP を登録・確認して aal2 にしてから Cookie に書く (呼び出し側を変えずに、母集合を 1 か所で閉じる)。
+ * roles は injectSession を呼ぶ前に書いておくこと。verify は同じ利用者の他の aal1 のセッションを終えるので、自動の昇格は
+ * 1 利用者につき 1 回 (最初のセッション) だけ。TOTP を登録済みの利用者の 2 つ目のセッションは例外にする
+ * (その spec は { assurance: 'aal1' } で入れ、画面で 6 桁を入れる)。
  */
 export async function injectSession(
   page: Page,
   email: string,
-): Promise<void> {
+  options: InjectSessionOptions = {},
+): Promise<InjectedSession> {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!supabaseUrl) {
     throw new Error("[fresh-user fixture] NEXT_PUBLIC_SUPABASE_URL が未設定です。");
@@ -160,7 +225,36 @@ export async function injectSession(
     );
   }
 
-  const session = result.session;
+  let session = result.session;
+  const sessionUser = sessionUserOf(session);
+  const userId = typeof sessionUser.id === "string" ? sessionUser.id : "";
+  let aal: InjectedSession["aal"] = "aal1";
+  let totpSecret: string | null = null;
+
+  if (options.assurance !== "aal1") {
+    if (!userId) throw new Error(`[fresh-user fixture] セッションに利用者の id がありません: ${email}`);
+    const roles = await readE2eUserRoles(userId);
+    const requiresMfa = roles.some((role) => (E2E_MFA_REQUIRED_ROLES as ReadonlyArray<string>).includes(role));
+    if (requiresMfa) {
+      const hasVerifiedTotp = (sessionUser.factors ?? []).some(
+        (factor) => factor.factor_type === "totp" && factor.status === "verified",
+      );
+      if (hasVerifiedTotp) {
+        throw new Error(
+          `[fresh-user fixture] ${email} は TOTP を登録済みのため、2 つ目のセッションは自動で aal2 に上げられません。` +
+            "{ assurance: 'aal1' } で入れ、画面で 6 桁を入れてください (docs/design/cross/12-operator-mfa.md §22.4.3)",
+        );
+      }
+      const promoted = await promoteTestSessionToAal2(session);
+      if (!promoted.ok) {
+        const prefix = promoted.status === E2E_MFA_RATE_LIMITED_STATUS ? `${E2E_MFA_PROMOTION_RATE_LIMITED_MESSAGE} ` : "";
+        throw new Error(`${prefix}[fresh-user fixture] aal2 への昇格に失敗 (${email}): ${describeTestSessionFailure(promoted)}`);
+      }
+      session = promoted.session;
+      aal = "aal2";
+      totpSecret = promoted.secret;
+    }
+  }
 
   const supabaseRef = new URL(supabaseUrl).hostname.split(".")[0];
   const cookieName = `sb-${supabaseRef}-auth-token`;
@@ -187,6 +281,8 @@ export async function injectSession(
       sameSite: "Lax",
     },
   ]);
+
+  return { userId, aal, totpSecret };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

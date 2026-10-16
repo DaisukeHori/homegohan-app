@@ -205,6 +205,10 @@ npx vitest run --config vitest.integration.config.ts tests/integration/rls tests
 - テストは自分で作ったデータを後片付けしますが、途中で中断するとローカル DB にデータが残ることがあります。そのときは `bash scripts/supabase-local.sh reset` で戻します。
 - CI では `.github/workflows/security-regression.yml` が同じ手順で `tests/integration/rls`・`tests/integration/security`・`tests/integration/handson-tour`・`tests/integration/operator` (運営コンソール API。`admin-*` / `auth-boundary` / `super-admin-*`) を実行します。
   実行するファイルは vitest に渡すパスの文字列 (部分一致) で選んでいるため、新しい結合テストを足すときは、ファイル名を既存の指定に合わせてください。どの指定にも当たらないファイルは CI で動かないので、`tests/integration-ci-coverage.test.ts` が検出して落ちます。
+- 運営ロールの MFA (`docs/design/cross/12-operator-mfa.md`): 必須ロール (super_admin / admin / finance / org_industrial_doctor) の運営の API は、認証アプリ (TOTP) の 6 桁を入れたセッション (aal2) でなければ 403 になります。
+  - ローカルの Supabase では TOTP が有効です (`scripts/supabase-local.sh` が組み立てる config.toml の `[auth.mfa.totp]`)。`supabase/config.toml` には書きません (`tests/edge-function-verify-jwt.test.ts` の番兵が、`[functions.<name>]` と `verify_jwt` 以外の行を許さないため)。
+  - 6 桁は `tests/helpers/totp.ts` の `generateTotp(secret)` で作ります。
+  - 運営ロールの JWT は `tests/integration/helpers/mfa.ts` の `signInForIntegration` (または、それを呼ぶ `createTestUserWithRoles`) で作ります。必須ロールなら自動で TOTP を登録・確認して aal2 にします。自前で `signInWithPassword` すると aal1 のままで、運営の API が 403 になります。
 - 失敗が既知の不具合によるテストは `it.fails` で書いてあります (`[既知の不具合]` と題名に付く)。不具合を直したら、そのテストの `.fails` を外してください。
 
 ### Playwright — E2E テスト (Web)

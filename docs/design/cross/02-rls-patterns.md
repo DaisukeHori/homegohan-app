@@ -57,7 +57,7 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 
 ```sql
 -- テンプレート: self_ownership
--- 用途: user_sessions_metadata, password_history, notification_preferences 等
+-- 用途: notification_preferences 等
 
 CREATE POLICY "{table}_self_read"
   ON {table_name} FOR SELECT
@@ -335,7 +335,9 @@ RETURNING *;
 | ライセンス一括割当 | `hashtext('license_pool:' || pool_id::TEXT)` |
 | 家族グループ owner 移譲 | `hashtext('family-group:' || group_id::TEXT)` |
 | 退職時 family 凍結 | `hashtext('family-group:' || group_id::TEXT)` |
-| Stripe webhook 二重処理防止 | `hashtext('stripe:' || event_id::TEXT)` |
+| Stripe webhook 二重処理防止 | 使わない。`stripe_webhook_events` の行の claim (`billing_claim_stripe_event`。`docs/design/billing/01-billing-core.md` §6.4・§9.6) に置き換えた (旧: `hashtext('stripe:' || event_id::TEXT)`) |
+| 課金の写像 `billing_apply_stripe_subscription` (利用者ごとに直列)・`family_groups` の作成と代表者の交代のトリガー `family_groups_billing_plan_follow_representative` (新しい代表者の鍵。写像と直列) | `hashtext('billing-user:' || user_id::TEXT)` (billing/01 §6.4 (9)・(10)) |
+| 課金の写像 `billing_apply_stripe_subscription` (同じ Stripe の契約の写しを直列に) | `hashtext('stripe-subscription:' || stripe_subscription_id)` (`sub_…`。billing/01 §6.4 (9)) |
 
 **命名規則**: `{ドメイン}-{エンティティ}:{UUID}` 形式（ハイフン区切り）
 
@@ -509,15 +511,13 @@ CREATE POLICY "subscription_plans_public_read"
 -- ============================================================
 ALTER TABLE user_sessions_metadata ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY "sessions_self_select"
+CREATE POLICY "sessions_self"
   ON user_sessions_metadata FOR SELECT
-  USING (auth.uid() = user_id);
+  USING (user_id = auth.uid());
 
-CREATE POLICY "sessions_self_update"
-  ON user_sessions_metadata FOR UPDATE
-  USING (auth.uid() = user_id);
-
--- INSERT は Edge Function (service_role) のみ
+-- UPDATE のポリシーは無い (sessions_revoke_self は cross/16 の migration が消した)
+-- 書くのは auth.sessions のトリガー・RPC auth_session_revoke / claim_login_alerts / release_login_alert・service_role だけ
+-- (cross/16 §11.1・§11.3・§11.4)
 
 -- ============================================================
 -- 3. admin_audit_logs (immutable)
@@ -557,7 +557,8 @@ CREATE POLICY "password_history_no_direct_access"
   ON password_history FOR ALL
   USING (false);
 
--- service_role のみアクセス可 (パスワード変更 Edge Function 経由)
+-- 書くのはトリガー password_history_record、読むのは RPC auth_password_check (どちらも SECURITY DEFINER。
+-- cross/16 §11.3・§11.5)。PUBLIC・anon・authenticated の表の権限は無い
 
 COMMIT;
 ```

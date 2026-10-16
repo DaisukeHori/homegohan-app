@@ -12,11 +12,13 @@
  *   3. 許可リストの中身を固定する
  *   4. 許可リストは、凍結中・メンテナンス中に middleware が通す /api (FROZEN_ALLOWED_API_PATHS・通知のトークンの claim (#1636)・
  *      isMaintenanceExemptPath) をすべて含む (判定の関数での包含と、全 route を middleware に通したときに同意の 403 が出ないこと)
- *   5. src/middleware.ts の matcher が /api で外すのは api/health$ だけ
+ *   5. src/proxy.ts の matcher が /api で外すのは api/health$ だけ
  * 限界 (見ないもの): アプリが Supabase を直接読む経路・Edge Functions を直接呼ぶ経路・/api の外の route handler・
  *   route の中の分岐 (動的な区間は固定の値で置き換える)・本番の LEGAL_CONSENT_ENFORCE の実値 (§6.13 の限界の表)。
  *
  * 画面の同意ゲート (#1174) は middleware-legal-consent.test.ts。モックはそれと同型。
+ * #1173 (設計書 cross/14 T-API5): 生年月日の未入力・保護者の同意とのつながりの無い 18 歳未満も 403。
+ *   18 歳未満のときだけ rpc('legal_minor_has_guardian_path') を 1 回聞く (失敗は素通り)。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -43,6 +45,7 @@ const mockGetSession = vi.fn();
 const mockGetUser = vi.fn();
 const mockMaybeSingle = vi.fn();
 const mockSelect = vi.fn();
+const mockRpc = vi.fn();
 const mockCreateServerClient = vi.fn();
 
 mockCreateServerClient.mockImplementation(() => ({
@@ -60,6 +63,7 @@ mockCreateServerClient.mockImplementation(() => ({
       };
     },
   }),
+  rpc: mockRpc,
 }));
 
 vi.mock('@supabase/ssr', () => ({
@@ -73,11 +77,11 @@ vi.mock('@/lib/feature-flags', () => ({
 }));
 
 import { updateSession } from '../middleware';
-import { config } from '@/middleware';
+import { config } from '@/proxy';
 import { stubSupabasePublicEnv } from './supabase-public-env';
 
 const PROFILE_COLUMNS_WITH_LEGAL =
-  'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted';
+  'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at, terms_version_accepted, privacy_version_accepted, birth_date';
 const PROFILE_COLUMNS_WITHOUT_LEGAL = 'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at';
 
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
@@ -87,6 +91,11 @@ const FROZEN_AT = '2026-07-01T00:00:00.000Z';
 
 const ACCEPTED_CURRENT = { terms: CURRENT_TERMS, privacy: CURRENT_PRIVACY };
 const NOT_ACCEPTED = { terms: null, privacy: null };
+/** 成人の placeholder。#1173 で生年月日が無いと同意画面 / 403 になるため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+/** #1173 の 17 歳の it で固定する時刻 (JST 2026-10-16 12:00) と、その日に 17 歳の生年月日 */
+const FIXED_NOW = new Date('2026-10-16T03:00:00.000Z');
+const BIRTH_DATE_17 = '2008-10-17';
 
 /** 動的な区間 ([id] など) を置き換える固定の値 (middleware は path だけで決めるので、値は何でもよい) */
 const DYNAMIC_SEGMENT_SAMPLE = 'sample-id';
@@ -108,7 +117,7 @@ function consentProfile(
       unban_at: null,
       ...(accepted === 'columns-missing'
         ? {}
-        : { terms_version_accepted: accepted.terms, privacy_version_accepted: accepted.privacy }),
+        : { terms_version_accepted: accepted.terms, privacy_version_accepted: accepted.privacy, birth_date: ADULT_BIRTH_DATE }),
       ...overrides,
     },
     error: null,
@@ -231,6 +240,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
       { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/portal', match: 'exact', reason: 'leave_service' },
+      { path: '/api/account/data-requests', match: 'prefix', reason: 'data_subject_rights' },
       { path: '/api/push-tokens/claim', match: 'exact', reason: 'device_cleanup' },
       { path: '/api/contact', match: 'exact', reason: 'contact' },
       { path: '/api/log', match: 'exact', reason: 'telemetry' },
@@ -318,7 +328,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
     }
   });
 
-  it('src/middleware.ts の matcher が /api で外すのは api/health$ だけ', () => {
+  it('src/proxy.ts の matcher が /api で外すのは api/health$ だけ', () => {
     expect(runsMiddleware('/api/health')).toBe(false);
     const skipped = API_ROUTES.filter((route) => !runsMiddleware(route.path)).map((route) => route.path);
     expect(skipped).toEqual(['/api/health']);
@@ -529,4 +539,134 @@ describe('updateSession — /api の同意ゲート (#1442): 403 の形・順序
     expect(post.status).toBe(200);
     expect(post.headers.get('location')).toBeNull();
   });
+});
+
+describe('updateSession — /api の同意ゲートの生年月日と保護者の同意とのつながり (#1173 T-API5)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.useRealTimers();
+  });
+
+  it('版は同意済みで birth_date が無い人の /api/meals は 403 LEGAL_CONSENT_REQUIRED (本文は legalConsentRequiredBody() のまま)。許可リストのパスは通る', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: null }));
+
+    const res = await updateSession(apiRequest('/api/meals'));
+    await expectLegalConsentRequired(res);
+
+    for (const path of ['/api/legal/accept', '/api/legal/status', '/api/account/delete']) {
+      const exempt = await updateSession(apiRequest(path, { method: 'POST' }));
+      expect(await isLegalConsentDenied(exempt), path).toBe(false);
+    }
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+
+  it('17 歳の人は rpc(legal_minor_has_guardian_path) が false なら 403、true なら 200、エラーなら 200 (素通り)', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FIXED_NOW);
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT, { birth_date: BIRTH_DATE_17 }));
+
+    mockRpc.mockResolvedValueOnce({ data: false, error: null });
+    await expectLegalConsentRequired(await updateSession(apiRequest('/api/meals')));
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('legal_minor_has_guardian_path');
+
+    mockRpc.mockResolvedValueOnce({ data: true, error: null });
+    expect((await updateSession(apiRequest('/api/meals'))).status).toBe(200);
+
+    mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'boom' } });
+    expect((await updateSession(apiRequest('/api/meals'))).status).toBe(200);
+    expect(mockRpc).toHaveBeenCalledTimes(3);
+  });
+
+  it('1990-01-01 の人は rpc を呼ばずに通す。/api の分岐の select は PROFILE_COLUMNS_WITH_LEGAL (birth_date を含む) の 1 回だけ', async () => {
+    mockMaybeSingle.mockResolvedValue(consentProfile(ACCEPTED_CURRENT));
+
+    const res = await updateSession(apiRequest('/api/meals'));
+
+    expect(res.status).toBe(200);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(mockSelect).toHaveBeenCalledWith(PROFILE_COLUMNS_WITH_LEGAL);
+    expect(PROFILE_COLUMNS_WITH_LEGAL.endsWith(', birth_date')).toBe(true);
+  });
+});
+
+describe('updateSession — /api の同意ゲート (#1442): 本人の権利の請求 /api/account/data-requests (#1751)', () => {
+  beforeEach(() => setUp('on'));
+  afterEach(() => vi.unstubAllEnvs());
+
+  const DSR_ID = '00000000-0000-4000-8000-000000000000';
+  /** src/app/api/account/data-requests 以下の 6 route (一覧・作成・詳細・本人確認・確認のメールの再送・取り下げ) */
+  const DSR_ROUTES: ReadonlyArray<readonly [string, string, string]> = [
+    ['一覧', 'GET', '/api/account/data-requests'],
+    ['作成', 'POST', '/api/account/data-requests'],
+    ['詳細', 'GET', `/api/account/data-requests/${DSR_ID}`],
+    ['本人確認', 'POST', `/api/account/data-requests/${DSR_ID}/verify`],
+    ['確認のメールの再送', 'POST', `/api/account/data-requests/${DSR_ID}/resend-verification`],
+    ['取り下げ', 'POST', `/api/account/data-requests/${DSR_ID}/withdraw`],
+  ];
+
+  it('6 route は src/app/api/account/data-requests 以下に実在する (route を足したら、この表にも足す)', () => {
+    const dsrRoutes = API_ROUTES.filter(
+      (route) => route.path === '/api/account/data-requests' || route.path.startsWith('/api/account/data-requests/'),
+    ).map((route) => route.path.split(DYNAMIC_SEGMENT_SAMPLE).join(DSR_ID));
+    expect([...new Set(dsrRoutes)].sort()).toEqual([...new Set(DSR_ROUTES.map(([, , path]) => path))].sort());
+  });
+
+  it.each(DSR_ROUTES)(
+    '%s (%s %s) は 未同意 × ENFORCE=on でも 403 LEGAL_CONSENT_REQUIRED にせず route へ通す (本来の検証 400 / 201 に進む)',
+    async (_name, method, path) => {
+      mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+      const res = await updateSession(apiRequest(path, { method }));
+
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it.each(DSR_ROUTES)('%s (%s %s) は 旧版に同意 × ENFORCE=on でも通す', async (_name, method, path) => {
+    mockMaybeSingle.mockResolvedValue(consentProfile({ terms: OLD_VERSION, privacy: CURRENT_PRIVACY }));
+
+    expect((await updateSession(apiRequest(path, { method }))).status, path).toBe(200);
+  });
+
+  it.each(DSR_ROUTES)(
+    '%s (%s %s) は user_profiles の行が無い (新規登録の直後) × ENFORCE=on でも通す (route の認証も行を要さない。tests/api/account-data-requests-missing-profile.test.ts)',
+    async (_name, method, path) => {
+      mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+      // 同じ「行なし」で、許可リストの外の /api は 403 LEGAL_CONSENT_REQUIRED (この it の 200 が素通りの設定によるものでないことの対照)
+      await expectLegalConsentRequired(await updateSession(apiRequest('/api/profile', { method: 'GET' })));
+
+      const res = await updateSession(apiRequest(path, { method }));
+
+      expect(res.status, path).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    },
+  );
+
+  it.each(DSR_ROUTES)(
+    '%s (%s %s) は 凍結中なら、未同意でも同意済みでも 403 AUTH_ACCOUNT_FROZEN のまま (凍結中の請求は /contact。cross/15 S-13)',
+    async (_name, method, path) => {
+      for (const accepted of [NOT_ACCEPTED, ACCEPTED_CURRENT]) {
+        mockMaybeSingle.mockResolvedValue(consentProfile(accepted, { frozen_at: FROZEN_AT }));
+
+        const res = await updateSession(apiRequest(path, { method }));
+
+        expect(res.status, path).toBe(403);
+        expect(await res.json()).toEqual({ error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } });
+      }
+      expect(isFrozenAllowedApiPath(path)).toBe(false);
+    },
+  );
+
+  it.each(['/api/account/data-requestsX', '/api/account/data-requests-x', '/api/account/data-request', '/api/account/data-requestsx/verify'])(
+    '似た名前の %s は、未同意なら 403 LEGAL_CONSENT_REQUIRED (prefix は `${path}/` 以下だけ)',
+    async (path) => {
+      mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED));
+
+      await expectLegalConsentRequired(await updateSession(apiRequest(path, { method: 'POST' })));
+    },
+  );
 });

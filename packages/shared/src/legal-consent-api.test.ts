@@ -17,16 +17,26 @@ import {
   resolveLegalConsentStatus,
 } from './legal-consent-api';
 import { LEGAL_DOCUMENTS, type AcceptedLegalVersions } from './legal-versions';
+import { getLegalConsentGaps, type LegalConsentProfile } from './parental-consent';
 
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
 const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
 /** いま有効な版と必ず違う値 (旧版の代わり) */
 const OLD_VERSION = 'v0-old';
 
-const ACCEPTED_CURRENT: AcceptedLegalVersions = {
+/** 成人の placeholder。#1173 で生年月日が無いと同意ゲートを通れないため */
+const ADULT_BIRTH_DATE = '1990-01-01';
+
+const ACCEPTED_CURRENT: LegalConsentProfile = {
   terms_version_accepted: CURRENT_TERMS,
   privacy_version_accepted: CURRENT_PRIVACY,
+  birth_date: ADULT_BIRTH_DATE,
 };
+
+/** #1173 のテストで固定する JST の今日 (today の引数で渡す) */
+const FIXED_TODAY = '2026-10-16';
+/** FIXED_TODAY に 17 歳 (明日 18 歳になる) */
+const BIRTH_DATE_17 = '2008-10-17';
 
 /** 未同意の形 (行なし / NULL / 片方だけ / 旧版) */
 const NOT_ACCEPTED_CASES: ReadonlyArray<[string, AcceptedLegalVersions | null | undefined]> = [
@@ -49,6 +59,9 @@ const EXEMPT_SAMPLES = [
   '/api/auth/native-bridge/code',
   '/api/account/delete',
   '/api/account/export',
+  // 本人の権利の請求 (#1751。prefix)
+  '/api/account/data-requests',
+  '/api/account/data-requests/00000000-0000-4000-8000-000000000000/verify',
   '/api/billing/subscription',
   '/api/billing/subscription/cancel',
   '/api/billing/portal',
@@ -76,6 +89,10 @@ const NOT_EXEMPT_SAMPLES = [
   '/api/legal/status/x',
   '/api/account/delete-xxx',
   '/api/account/export/x',
+  // 本人の権利の請求の似た名前 (prefix は `${path}/` 以下だけ)
+  '/api/account/data-requestsx',
+  '/api/account/data-requests-x',
+  '/api/account/data-request',
   // 有料プラン: 凍結中も通す 3 本だけ。購入・解約の取り消し・似た名前は止める
   '/api/billing/checkout',
   '/api/billing/checkout/preview',
@@ -161,6 +178,7 @@ describe('resolveLegalConsentStatus (T-SH5)', () => {
       accepted: false,
       required: true,
       outdated: ['terms_of_service', 'privacy_policy'],
+      gaps: ['terms_of_service', 'privacy_policy', 'birth_date'],
       current: expectedCurrent,
       accepted_versions: { terms_version: null, privacy_version: null },
     });
@@ -175,6 +193,7 @@ describe('resolveLegalConsentStatus (T-SH5)', () => {
       accepted: false,
       required: true,
       outdated: ['terms_of_service'],
+      gaps: ['terms_of_service', 'birth_date'],
       current: expectedCurrent,
       accepted_versions: { terms_version: OLD_VERSION, privacy_version: CURRENT_PRIVACY },
     });
@@ -184,6 +203,7 @@ describe('resolveLegalConsentStatus (T-SH5)', () => {
       accepted: true,
       required: false,
       outdated: [],
+      gaps: [],
       current: expectedCurrent,
       accepted_versions: { terms_version: CURRENT_TERMS, privacy_version: CURRENT_PRIVACY },
     });
@@ -201,6 +221,87 @@ describe('resolveLegalConsentStatus (T-SH5)', () => {
         const status = resolveLegalConsentStatus({ accepted, enforced });
         expect(status.required).toBe(enforced && !status.accepted);
       }
+    }
+  });
+});
+
+describe('#1173 生年月日と保護者の同意とのつながり (T-API1・T-API2)', () => {
+  it('T-API1 resolveLegalConsentApiDecision: 版が一致し birth_date が無い profile と、17 歳で minor_guardian_ok が true でない profile は deny、17 歳で minor_guardian_ok = true と 1990-01-01 は allow。enforce = false と許可リストのパスは birth_date が無くても allow', () => {
+    const versions = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY };
+    const decide = (accepted: LegalConsentProfile, pathname = '/api/meals', enforce = true) =>
+      resolveLegalConsentApiDecision({ pathname, accepted, enforce, today: FIXED_TODAY });
+
+    expect(decide({ ...versions })).toBe('deny');
+    expect(decide({ ...versions, birth_date: null })).toBe('deny');
+    expect(decide({ ...versions, birth_date: BIRTH_DATE_17, minor_guardian_ok: false })).toBe('deny');
+    expect(decide({ ...versions, birth_date: BIRTH_DATE_17, minor_guardian_ok: null })).toBe('deny');
+    expect(decide({ ...versions, birth_date: BIRTH_DATE_17 })).toBe('deny');
+    expect(decide({ ...versions, birth_date: BIRTH_DATE_17, minor_guardian_ok: true })).toBe('allow');
+    expect(decide({ ...versions, birth_date: ADULT_BIRTH_DATE })).toBe('allow');
+
+    // 強制していない・許可リストのパスは、生年月日が無くても止めない
+    expect(decide({ ...versions, birth_date: null }, '/api/meals', false)).toBe('allow');
+    for (const pathname of ['/api/legal/accept', '/api/legal/status', '/api/account/delete']) {
+      expect(decide({ ...versions, birth_date: null }, pathname)).toBe('allow');
+    }
+  });
+
+  it('T-API1 resolveLegalConsentApiDecision: today を渡すとその日で年齢を数える (誕生日の前日は 17 歳で deny、当日は 18 歳で allow)', () => {
+    const accepted: LegalConsentProfile = { ...ACCEPTED_CURRENT, birth_date: BIRTH_DATE_17 };
+    expect(resolveLegalConsentApiDecision({ pathname: '/api/meals', accepted, enforce: true, today: FIXED_TODAY })).toBe('deny');
+    expect(resolveLegalConsentApiDecision({ pathname: '/api/meals', accepted, enforce: true, today: '2026-10-17' })).toBe('allow');
+  });
+
+  it('T-API2 resolveLegalConsentStatus: gaps は getLegalConsentGaps と同じ答えで、accepted は gaps が空のときだけ true、required = enforced && !accepted', () => {
+    const versions = { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY };
+    const noBirth = resolveLegalConsentStatus({ accepted: { ...versions, birth_date: null }, enforced: true, today: FIXED_TODAY });
+    expect(noBirth).toMatchObject({ accepted: false, required: true, outdated: [], gaps: ['birth_date'] });
+
+    const minorWithout = resolveLegalConsentStatus({
+      accepted: { ...versions, birth_date: BIRTH_DATE_17, minor_guardian_ok: false },
+      enforced: true,
+      today: FIXED_TODAY,
+    });
+    expect(minorWithout).toMatchObject({ accepted: false, required: true, outdated: [], gaps: ['guardian_consent'] });
+
+    const minorWith = resolveLegalConsentStatus({
+      accepted: { ...versions, birth_date: BIRTH_DATE_17, minor_guardian_ok: true },
+      enforced: true,
+      today: FIXED_TODAY,
+    });
+    expect(minorWith).toMatchObject({ accepted: true, required: false, gaps: [] });
+
+    const adult = resolveLegalConsentStatus({ accepted: ACCEPTED_CURRENT, enforced: true, today: FIXED_TODAY });
+    expect(adult).toMatchObject({ accepted: true, required: false, gaps: [] });
+
+    const profiles: Array<LegalConsentProfile | null> = [
+      null,
+      { ...versions, birth_date: null },
+      { ...versions, birth_date: BIRTH_DATE_17, minor_guardian_ok: false },
+      { terms_version_accepted: OLD_VERSION, privacy_version_accepted: CURRENT_PRIVACY, birth_date: ADULT_BIRTH_DATE },
+      ACCEPTED_CURRENT,
+    ];
+    for (const accepted of profiles) {
+      for (const enforced of [true, false]) {
+        const status = resolveLegalConsentStatus({ accepted, enforced, today: FIXED_TODAY });
+        expect(status.gaps).toEqual(getLegalConsentGaps(accepted, FIXED_TODAY));
+        expect(status.accepted).toBe(status.gaps.length === 0);
+        expect(status.required).toBe(enforced && !status.accepted);
+      }
+    }
+  });
+
+  it('T-API2 isLegalConsentStatus: resolveLegalConsentStatus の結果を通し、gaps の欠け・配列でない・知らない値 (birthday) を通さない', () => {
+    const valid = resolveLegalConsentStatus({
+      accepted: { terms_version_accepted: CURRENT_TERMS, privacy_version_accepted: CURRENT_PRIVACY, birth_date: null },
+      enforced: true,
+      today: FIXED_TODAY,
+    });
+    expect(isLegalConsentStatus(valid)).toBe(true);
+    expect(isLegalConsentStatus({ ...valid, gaps: ['guardian_consent'] })).toBe(true);
+    const withoutGaps = Object.fromEntries(Object.entries(valid).filter(([key]) => key !== 'gaps'));
+    for (const body of [withoutGaps, { ...valid, gaps: 'birth_date' }, { ...valid, gaps: ['birthday'] }, { ...valid, gaps: [1] }]) {
+      expect(isLegalConsentStatus(body), JSON.stringify(body)).toBe(false);
     }
   });
 });
@@ -247,5 +348,44 @@ describe('legalConsentRequiredBody (T-SH7)', () => {
     for (const word of ['user_profiles', 'terms_version', 'supabase', 'sql']) {
       expect(body.error.toLowerCase()).not.toContain(word);
     }
+  });
+});
+
+/** 本人の権利の請求 (#1751) の route (src/app/api/account/data-requests 以下)。動的な区間 ([id]) は固定の値に置き換える */
+const DSR_SAMPLE_ID = '00000000-0000-4000-8000-000000000000';
+const DSR_ROUTES: ReadonlyArray<readonly [string, string]> = [
+  ['一覧 (GET)', '/api/account/data-requests'],
+  ['作成 (POST)', '/api/account/data-requests'],
+  ['詳細 (GET)', `/api/account/data-requests/${DSR_SAMPLE_ID}`],
+  ['本人確認 (POST verify)', `/api/account/data-requests/${DSR_SAMPLE_ID}/verify`],
+  ['確認のメールの再送 (POST resend-verification)', `/api/account/data-requests/${DSR_SAMPLE_ID}/resend-verification`],
+  ['取り下げ (POST withdraw)', `/api/account/data-requests/${DSR_SAMPLE_ID}/withdraw`],
+];
+
+describe('本人の権利の請求 /api/account/data-requests (#1751): 未同意でも止めない', () => {
+  it('許可リストに prefix の 1 行として入り、理由の種類は data_subject_rights', () => {
+    const entries = LEGAL_CONSENT_EXEMPT_API_PATHS.filter((entry) => entry.reason === 'data_subject_rights');
+    expect(entries.map(({ path, match, reason }) => ({ path, match, reason }))).toEqual([
+      { path: '/api/account/data-requests', match: 'prefix', reason: 'data_subject_rights' },
+    ]);
+    expect(entries[0].note).toContain('凍結中は通さない');
+  });
+
+  it.each(DSR_ROUTES)('%s の %s は、未同意 (行なし・NULL・片方だけ・旧版) × enforce でも allow', (_name, pathname) => {
+    for (const [, accepted] of NOT_ACCEPTED_CASES) {
+      expect(resolveLegalConsentApiDecision({ pathname, accepted, enforce: true }), pathname).toBe('allow');
+    }
+  });
+
+  it.each([
+    '/api/account/data-requestsx',
+    '/api/account/data-requests-x',
+    '/api/account/data-requestsX/verify',
+    '/api/account/data-request',
+    '/api/account/data-request/x',
+    '/api/admin/data-requests',
+    '/api/admin/data-requests/x',
+  ])('似た名前・運営の API の %s は、未同意なら deny', (pathname) => {
+    expect(resolveLegalConsentApiDecision({ pathname, accepted: null, enforce: true })).toBe('deny');
   });
 });

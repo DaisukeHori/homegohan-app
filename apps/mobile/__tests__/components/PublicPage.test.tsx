@@ -86,9 +86,9 @@ describe('PublicPage の「Web版を開く」(#1049 F7-19)', () => {
   it('EXPO_PUBLIC_WEB_URL が無ければ既定の Web を開く (API のオリジンを流用しない)', () => {
     process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
 
-    const url = openedUrlOf('/pricing');
+    const url = openedUrlOf('/about');
 
-    expect(url).toBe(`${DEFAULT_WEB_URL}/pricing`);
+    expect(url).toBe(`${DEFAULT_WEB_URL}/about`);
     expect(url).not.toContain('api.example.com');
   });
 
@@ -120,7 +120,6 @@ describe('app/(public) の画面は、すべて PublicPage を通る (#1049 F7-1
     expect(screens).toEqual([
       // company / contact / faq / guide / legal / news は、どこからも開かれない画面として消した (#1598)
       'about.tsx',
-      'pricing.tsx',
       'privacy.tsx',
       'terms.tsx',
     ]);

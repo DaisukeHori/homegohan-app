@@ -57,14 +57,9 @@ sequenceDiagram
         Next-->>Client: AUTH_INVALID_CREDENTIALS
     end
     Supabase-->>Next: session (access_token, refresh_token)
-    Next->>Next: INSERT user_sessions_metadata
-    Note over Next: 2FA が必須ロールの場合
-    alt MFA required
-        Next-->>Client: AUTH_2FA_REQUIRED
-        Client->>Next: POST /api/auth/mfa/verify (code)
-        Next->>Supabase: challengeAndVerify
-        Supabase-->>Next: verified
-    end
+    Note over Supabase: auth.sessions の INSERT のトリガーが user_sessions_metadata に記録 (cross/16 §11.3)
+    Next->>Supabase: ログインの文脈 (IP・UA・国) を記録 (cross/16 §13.5)
+    Note over Next: login は MFA の分岐を持たない。運営の入口で AAL2 を求める (cross/12 §18.2)
     Next-->>Client: Set-Cookie (Secure; HttpOnly; SameSite=Lax)
     Next-->>Client: 200 OK (user profile)
 ```
@@ -134,41 +129,9 @@ export async function POST(req: Request) {
 
 ## 5. 2FA / MFA
 
-### 5.1 ロール別必須状態
-
-| ロール | 2FA 状態 |
-|--------|---------|
-| `super_admin` | **必須** (TOTP + バックアップコード) |
-| `admin` / `finance` | **必須** (TOTP) |
-| `org_admin` | 推奨 (Enterprise プランで強制化可) |
-| `org_industrial_doctor` | **必須** (健康データ扱い) |
-| その他 | オプション |
-
-### 5.2 TOTP 実装
-
-- Supabase Auth MFA factor (`supabase.auth.mfa.enroll()`) を利用
-- TOTP のみ Phase 1 対応。WebAuthn は Phase 2
-- バックアップコード: 10 個生成、SHA-256 ハッシュで保存、使用済みは即無効化
-- 紛失時リカバリ: super_admin による手動解除 + `admin_audit_logs` 記録 + 本人確認 (身分証アップロード)
-
-### 5.3 MFA 強制フロー
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Next
-    participant Supabase
-
-    Client->>Next: POST /api/auth/login (email/pw)
-    Next->>Supabase: signInWithPassword
-    Supabase-->>Next: {session, user}
-    Next->>Next: requiresMFA(user.role) = true
-    Next-->>Client: 200 + {mfa_required: true, challenge_id: "..."}
-    Client->>Next: POST /api/auth/mfa/verify {challenge_id, code}
-    Next->>Supabase: mfa.challengeAndVerify
-    Supabase-->>Next: verified
-    Next-->>Client: Set-Cookie (full session)
-```
+→ **`cross/12-operator-mfa.md` が正典** (運営ロールの TOTP と AAL2 の入口・バックアップコード・紛失時の回復と解除・猶予の環境変数・モバイルとアプリの WebView・DB を直接呼ぶ経路)。
+対象 (必須) は super_admin / admin / finance / org_industrial_doctor (cross/12 §12.1 の `MFA_REQUIRED_ROLES`)。`org_admin` への強制と、そのほかのロールの任意の MFA は範囲外 (cross/12 §0.3・§27 Q-3)。
+login (`POST /api/auth/login`) は MFA を見ない。必須ロールの運営は、運営の画面・API の入口 (`requireRole`) で、aal1 のセッションなら 6 桁の確認 (`/settings/security/mfa/verify?next=`) か登録 (`/settings/security/mfa/setup?next=`) へ回される (cross/12 §18)。
 
 ---
 
@@ -329,35 +292,11 @@ API・ヘルパー・エラー型・管理画面の表示をすべて削除し�
 
 ## 12. 子供アカウント保護 (COPPA / 日本)
 
-### 12.1 年齢区分と制限
+未成年の年齢確認と保護者の同意は、設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) に移した (同意の記録の表・RPC・同意ゲート・画面はそちら。実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。要点:
 
-| 年齢 | 根拠法 | 要件 |
-|------|-------|------|
-| 13 歳未満 | 米国 COPPA | 保護者電子署名同意必須 |
-| 18 歳未満 | 日本 個人情報保護法 | 保護者同意必須 |
-
-- 子供アカウント自体は `auth.users` を持たない (`family_members.user_id IS NULL`)
-- `family_members.birth_date` で年齢計算
-- 13 歳未満には Push 通知送信不可
-- `parental_consents` テーブルに同意記録 (§13 DDL 参照)
-
-### 12.2 保護者同意フロー
-
-```mermaid
-sequenceDiagram
-    actor Parent
-    participant Client
-    participant Next
-
-    Parent->>Client: 子供の家族メンバー登録 (birth_date 入力)
-    Client->>Next: POST /api/family/members {birth_date: ...}
-    Next->>Next: calcAge(birth_date) < 18
-    Next-->>Client: {consent_required: true, consent_version: "v2026.1"}
-    Parent->>Client: 同意文書読み + 電子署名
-    Client->>Next: POST /api/family/members/consent {member_id, signature}
-    Next->>Next: INSERT parental_consents
-    Next-->>Client: 201 Created
-```
+- 生年月日は同意画面 (`/legal-consent`) で聞く。本人の生年月日は `user_profiles.birth_date` に 1 回だけ記録し、保護者の同意とのつながり (昇格の経路) が無い 18 歳未満の自己登録と、13 歳未満の自己登録は断る (`LEGAL_MINOR_SELF_SIGNUP_REFUSED`)。
+- 保護者の同意は子供の追加と同時に記録する (`add_family_child` が子供の行と同じトランザクションで `parental_consents` に署名を 1 行入れる)。別の同意の API は無い。
+- 同意の取り消しは、子供を家族から外すこと (トリガーが `revoked_at` を入れる)。
 
 ---
 
@@ -367,14 +306,17 @@ sequenceDiagram
 
 <!-- DDL/RLS は operator/01-data-model.md §3.23 を参照 (canonical)。本ドキュメントは設計方針のみ記述 -->
 
+→ 記録のトリガー・照合の RPC は cross/16 §11 が正典 (`password_history_record`・`auth_password_check`)。
+
 ### 13.2 parental_consents
 
-// parental_consents の DDL は family/01-data-model.md §4.13 を参照
-// RLS ポリシーも family/01-data-model.md §4.13 に集約
+DDL・RLS は設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) §6.4 の 4 (実体は migration `20261017030000_parental_consent_and_birth_date.sql`)。
 
 ### 13.3 user_sessions_metadata
 
 <!-- DDL は operator/01-data-model.md §3.25 を参照 (canonical) -->
+
+→ 列・トリガー・RPC・保守のジョブは cross/16 §11 が正典 (記録は `auth.sessions` のトリガー)。
 
 ### 13.4 failed_invite_lookups
 
@@ -554,7 +496,7 @@ sequenceDiagram
 |---------|------|------|
 | Unit | `requireRole`, `requireOrgRole`, `resolveOrganizationId`, HIBP チェック | Vitest |
 | Integration | ログイン失敗の回数 (何回失敗してもロックしない・時間で戻る)、セッション同時 5 端末上限 | Vitest + Supabase Local |
-| E2E | 正常ログイン → MFA → ダッシュボード到達、パスワードリセット全フロー | Playwright |
+| E2E | 正常ログイン → (必須ロールの運営は MFA の画面。cross/12 §21.5) → ダッシュボード到達、パスワードリセット全フロー | Playwright |
 | Security | CAPTCHA バイパス試行、enumeration 対策、Cookie 属性 | Playwright + 手動 |
 
 ---
@@ -563,7 +505,7 @@ sequenceDiagram
 
 | 資産 | 状態 | 対応 |
 |------|------|------|
-| `src/middleware.ts` (セッション同期) | 保持 | `user_sessions_metadata` 更新ロジックを追加 |
+| `src/proxy.ts` (セッション同期。#1744 で `src/middleware.ts` から改名) | 保持 | `user_sessions_metadata` 更新ロジックを追加 |
 | Supabase Auth Email+Password | 保持 | そのまま利用 |
 | `/api/auth/login`, `/api/auth/logout` 既存 | 要確認 | 本仕様に合わせてリファクタ |
 | `user_profiles.roles` 列 | 保持・拡張 | 12 ロール体系へ migration |

@@ -18,8 +18,9 @@ import {
   isLegalConsentNoticeEnabled,
   resolveLegalConsent,
 } from '@/lib/legal-consent'
+import { withMinorGuardianStatus } from '@/lib/legal-consent-minor'
 import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalConsentApiDecision } from '@homegohan/shared'
-// Edge Runtime (middleware) で動くので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
+// 全リクエストの前に動く proxy (src/proxy.ts) から呼ばれるので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabasePublicConfig } from '@/lib/env-required'
 import { internalError } from '@/lib/api/errors'
 
@@ -48,7 +49,8 @@ function withSessionCookies(from: NextResponse, to: NextResponse): NextResponse 
 // その間も profileError 扱いにすると、全員の凍結判定とオンボーディングの差し戻しが一斉に止まってしまう (#348 の fail-open)。
 // そこで、同意済みの版の列を除いた select でやり直し、同意ゲートだけを素通りさせる。
 const PROFILE_COLUMNS = 'roles, onboarding_started_at, onboarding_completed_at, frozen_at, unban_at'
-const PROFILE_COLUMNS_WITH_LEGAL = `${PROFILE_COLUMNS}, terms_version_accepted, privacy_version_accepted`
+// #1173: 生年月日 (birth_date) も同じ select で読む (同意ゲートが「生年月日がある」と「18 歳未満なら保護者の同意とのつながり」も見るため)
+const PROFILE_COLUMNS_WITH_LEGAL = `${PROFILE_COLUMNS}, terms_version_accepted, privacy_version_accepted, birth_date`
 const PG_UNDEFINED_COLUMN = '42703'
 
 interface MiddlewareProfile {
@@ -59,6 +61,7 @@ interface MiddlewareProfile {
   unban_at?: string | null
   terms_version_accepted?: string | null
   privacy_version_accepted?: string | null
+  birth_date?: string | null
 }
 
 async function fetchMiddlewareProfile(supabase: ReturnType<typeof createServerClient>, userId: string) {
@@ -198,11 +201,14 @@ export async function updateSession(request: NextRequest) {
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
     // #1148: メンテナンスモードの判定にも、ここで読んだユーザー ID とロールを使う (運営ロールは通す)
     // #1442: 同意ゲートも、ここで読んだ同じプロフィールの行で判定する (クエリは増やさない)。
-    //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED)。
-    //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・問い合わせ・ログ・
+    //   順は 凍結 (403 AUTH_ACCOUNT_FROZEN) → メンテナンス (503) → 同意 (403 LEGAL_CONSENT_REQUIRED。
+    //   生年月日の未入力・保護者の同意とのつながりの無い 18 歳未満も (#1173))。
+    //   止めないのは packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS (同意そのもの・認証の途中・退会と書き出し・
+    //   本人の権利の請求 (開示・訂正・利用停止・消去。#1751)・問い合わせ・ログ・
     //   状態の窓口・端末の後片付け (通知のトークンの claim。#1636)・利用者のセッションを持たない経路) だけ。役割による例外は無い。
     //   凍結・メンテナンスの判定で通したパスは、すべてこの一覧にもある (無いと凍結中・メンテナンス中に同意できず必ず 403 になる。
-    //   lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で見張る)。
+    //   lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で見張る)。逆は求めない
+    //   (本人の権利の請求は未同意でも通すが、凍結中は上の凍結の分岐が 403 AUTH_ACCOUNT_FROZEN で止める)。
     //   プロフィールを読めなかったとき (profileError) と同意の列が無い DB (legalColumnsAvailable = false) は、凍結と同じく素通り (#348 の fail-open)。
     //   画面の分岐と同じ fetchMiddlewareProfile を使い、列が無い DB では列を除いた select でやり直す。
     let apiUserId: string | undefined
@@ -259,7 +265,8 @@ export async function updateSession(request: NextRequest) {
     if (apiUserId && apiProfileReadable && apiLegalColumnsAvailable) {
       const legalDecision = resolveLegalConsentApiDecision({
         pathname: request.nextUrl.pathname,
-        accepted: apiProfile,
+        // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (rpc を 1 回。失敗は素通り)
+        accepted: await withMinorGuardianStatus(supabase, apiProfile),
         enforce: isLegalConsentEnforced(),
       })
       if (legalDecision === 'deny') {
@@ -401,14 +408,15 @@ export async function updateSession(request: NextRequest) {
       //   - LEGAL_CONSENT_NOTICE=on のとき (強制していない間): 通す。画面の上に「同意のお願い」のお知らせを出すだけ
       //   - どちらも on でない (既定): 何もしない。お知らせも出さず、誰も止めない
       // /api/* はこの分岐の手前 (上の isApiRoute) で返っているので対象外 (API の同意ゲートは上の /api の分岐。#1442)。ほかの対象外 (規約・同意画面・認証の途中・
-      // 問い合わせ・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
+      // 問い合わせ・本人の権利の請求の画面 (#1751)・凍結・ハンズオンツアー・静的ファイル) は lib/legal-consent.ts の isLegalConsentExemptPath。
       // リダイレクトは画面の取得 (GET / HEAD) にだけ掛ける (POST を 307 で同意画面へ回しても、受け取れず失敗するだけのため)。
       // オンボーディングの差し戻し (下) より先に見る: 同意の前に初期設定 (健康情報の入力) へ進ませない。
       // 同意済みの版の列がまだ無い DB (legalColumnsAvailable = false) では素通りさせる。
       if (legalColumnsAvailable) {
         const legalDecision = resolveLegalConsent({
           pathname: request.nextUrl.pathname,
-          accepted: profile,
+          // #1173: 18 歳未満のときだけ、保護者の同意とのつながりを DB に聞く (rpc を 1 回。失敗は素通り)
+          accepted: await withMinorGuardianStatus(supabase, profile),
           enforce: isLegalConsentEnforced(),
           notice: isLegalConsentNoticeEnabled(),
         })

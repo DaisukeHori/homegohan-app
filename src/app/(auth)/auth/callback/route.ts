@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { cookies } from 'next/headers'
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect'
 import { resolveFirstSignInDestination } from '@/lib/legal-consent'
+import { recordWebLoginContextFromRequest } from '@/lib/auth/sessions/web-login-context'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -61,6 +62,7 @@ export async function GET(request: Request) {
     try {
       const { data, error } = await supabase.auth.exchangeCodeForSession(code)
       authSuccess = !error
+      if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
       if (error) {
         console.error('[auth/callback] Code exchange error:', error.message, error)
       } else {
@@ -79,6 +81,7 @@ export async function GET(request: Request) {
         type: type as 'signup' | 'email' | 'recovery' | 'invite',
       })
       authSuccess = !error
+      if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
       if (error) {
         console.error('[auth/callback] Email verification error:', error.message, error)
       } else {
@@ -99,6 +102,7 @@ export async function GET(request: Request) {
         type: type as 'signup' | 'email' | 'recovery' | 'invite',
       })
       authSuccess = !error
+      if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
       if (error) {
         console.error('[auth/callback] PKCE token verification error:', error.message, error)
       } else {
@@ -124,7 +128,8 @@ export async function GET(request: Request) {
     // maybeSingle() を使用（行がない場合もエラーにならない）
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('roles, nickname, onboarding_started_at, onboarding_completed_at, terms_version_accepted, privacy_version_accepted')
+      // #1173: birth_date も読む (resolveFirstSignInDestination が生年月日の有無も見るため。保護者の同意とのつながりは聞かない = 同意画面が数え直す)
+      .select('roles, nickname, onboarding_started_at, onboarding_completed_at, terms_version_accepted, privacy_version_accepted, birth_date')
       .eq('id', user.id)
       .maybeSingle()
 

@@ -13,14 +13,25 @@ import {
   isOrgChallengeType,
 } from '@/lib/org-challenges';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import {
+  ORG_CHALLENGE_LOCK_ERROR_CODES,
+  ORG_CHALLENGE_LOCK_HTTP_STATUS,
+  isOrgChallengeStatusTransitionAllowed,
+  mapChallengeLockError,
+} from '@/lib/org-challenge-privacy';
+
+/** 状態・期間の変更を断るときの文 (#1688。CHALLENGE_STATUS_LOCKED / CHALLENGE_PERIOD_LOCKED で同じ文) */
+const CHALLENGE_LOCKED_MESSAGE = 'このチャレンジの状態は変えられません';
 
 // 権限: 所属組織の org_role が owner / admin (#1235)。判定は共通の requireOrgAdmin() (#1161)
 //
 // #1132: 管理者に見せるのは集計 (参加者数と平均) だけ。参加者個人の進み具合・順位は返さない (#1132 の方針)。
 //   - 集計は DB の関数 get_org_challenge_aggregates で数える。参加者の行は本人にしか読めない (RLS) ため、認可のあとに service_role で呼ぶ
 //   - 最小人数 (DB の関数が決める。10 人。#1600) に満たない間は、値を返さない。少人数だと、誰が参加しているか・誰の値かを推測されやすいため
-//       参加者が最小人数に満たない: participantCount = null
-//       集計が済んだ参加者が最小人数に満たない: aggregate.averageValue = null (aggregate.visible = false)
+//       参加した人 (延べ) が最小人数に満たない: participantCount = null
+//       終了時点の順位がついた参加者が最小人数に満たない、または終了していない: aggregate.averageValue = null (aggregate.visible = false)
+//   - #1688: 参加者数は参加した人の延べ数 (やめても・組織から外れても減らない)。平均は終了時に 1 回だけ確定した値で、
+//     同じ種類で期間が重なるチャレンジの中では先に確定した 1 本だけに出す (集計の差分から 1 人の値を逆算させない)
 //   - 作成できるのは、食事の記録から計算できる種類 (breakfast_rate / veg_score / cooking_rate) だけ。
 //     歩数・体重・カスタムは、健康データの同意の仕組みができるまで作成も開始もできない
 
@@ -245,16 +256,30 @@ export async function PUT(request: Request) {
       return NextResponse.json({ error: 'Invalid status', code: 'INVALID_STATUS' }, { status: 400 });
     }
 
-    // #1132: 開始 (active) にできるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタムは、同意の仕組みができるまで止める
-    if (updates.status === 'active') {
+    // #1688: 状態を変えるときは、現在の行 (状態・種類) を 1 回だけ読み、遷移表 (src/lib/org-challenge-privacy.ts) に無い変更を
+    // 409 で断る (終わった状態からは変えない・開催中を下書きに戻さない)。DB のトリガー org_challenge_guard_update も同じ表で止める。
+    // 行が無い (他組織・存在しない) ときは、既存どおり更新 0 行で 200
+    if (updates.status !== undefined) {
       const { data: current, error: currentError } = await supabase
         .from('organization_challenges')
-        .select('challenge_type')
+        .select('status, challenge_type')
         .eq('id', id)
         .eq('organization_id', profile.organization_id)
         .maybeSingle();
       if (currentError) throw currentError;
-      if (current && !isOrgChallengeType((current as { challenge_type: string }).challenge_type)) {
+      const currentRow = current as { status: string | null; challenge_type: string } | null;
+      if (
+        currentRow &&
+        isOrgChallengeStatus(currentRow.status) &&
+        !isOrgChallengeStatusTransitionAllowed(currentRow.status, updates.status)
+      ) {
+        return NextResponse.json(
+          { error: CHALLENGE_LOCKED_MESSAGE, code: ORG_CHALLENGE_LOCK_ERROR_CODES.status },
+          { status: ORG_CHALLENGE_LOCK_HTTP_STATUS },
+        );
+      }
+      // #1132: 開始 (active) にできるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタムは、同意の仕組みができるまで止める
+      if (updates.status === 'active' && currentRow && !isOrgChallengeType(currentRow.challenge_type)) {
         return NextResponse.json(
           { error: 'この種類のチャレンジは、まだ開始できません', code: 'CHALLENGE_TYPE_DISABLED' },
           { status: 400 },
@@ -276,7 +301,14 @@ export async function PUT(request: Request) {
       .eq('id', id)
       .eq('organization_id', profile.organization_id);
 
-    if (error) throw error;
+    if (error) {
+      // 読んでから書くまでに状態が変わった場合など、DB のガードの RAISE (P0001 CHALLENGE_STATUS_LOCKED / CHALLENGE_PERIOD_LOCKED) は 409 に写す
+      const locked = mapChallengeLockError(error);
+      if (locked) {
+        return NextResponse.json({ error: CHALLENGE_LOCKED_MESSAGE, code: locked.code }, { status: locked.status });
+      }
+      throw error;
+    }
 
     return NextResponse.json({ success: true });
 

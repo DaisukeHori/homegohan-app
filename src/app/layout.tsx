@@ -4,6 +4,10 @@ import { SpeedInsightsClient } from "@/components/SpeedInsightsClient";
 import { getSiteUrl } from "@/lib/site-config";
 import "./globals.css";
 
+// #1169: CSP の nonce は毎リクエスト違うので、全ページを動的に描画する (静的化した HTML には nonce が入らず、Next の
+// インラインスクリプトが止まる)。ルートの layout に書くと配下の全ルートが動的になる (docs/design/cross/18-csp-nonce.md §5)
+export const dynamic = 'force-dynamic';
+
 // サイトの URL (canonical・OGP の基点)。NEXT_PUBLIC_APP_URL、未設定なら既定値 (src/lib/site-config.ts, #1194)
 const siteUrl = getSiteUrl();
 
@@ -118,22 +122,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ja" className={`${notoSans.variable} ${notoSerif.variable}`}>
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                try {
-                  // ダークモード設定を削除
-                  localStorage.removeItem('darkMode');
-                  // html要素からdarkクラスを削除
-                  document.documentElement.classList.remove('dark');
-                } catch (e) {}
-              })();
-            `,
-          }}
-        />
-      </head>
       <body className="font-sans antialiased">
         {/* グローバル a11y 基盤 (#1058): キーボード操作でナビゲーションを飛ばして本文へ移動 */}
         <a href="#main-content" className="skip-link">
@@ -148,7 +136,7 @@ export default function RootLayout({
           計測値には URL が載る。URL には招待先のメールアドレスと招待トークンが入るページがあるので、
           <SpeedInsights /> を直に置かず、送る前に URL を直す SpeedInsightsClient を使う (docs/design/operator/07-audit-monitoring.md §7.3)。
           スクリプトも計測値の送信先も同じオリジンのパス (既定は /_vercel/speed-insights/*、Vercel がビルドに設定を渡すときはその固有のパス)。
-          そのため CSP (next.config.mjs) は script-src / connect-src の 'self' で足り、変更していない。
+          そのため CSP (src/lib/security/csp.ts) は script-src / connect-src の 'self' で足り、変更していない。
           読み込み先と 'self' は tests/speed-insights-1179.test.tsx が検査する (実際の送信先はデプロイ後に確認する)。
         */}
         <SpeedInsightsClient />

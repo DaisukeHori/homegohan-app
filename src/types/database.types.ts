@@ -488,7 +488,6 @@ export type Database = {
           email_hash: string
           failure_count: number
           last_failed_at: string | null
-          locked_until: string | null
           updated_at: string
         }
         Insert: {
@@ -496,7 +495,6 @@ export type Database = {
           email_hash: string
           failure_count?: number
           last_failed_at?: string | null
-          locked_until?: string | null
           updated_at?: string
         }
         Update: {
@@ -504,7 +502,6 @@ export type Database = {
           email_hash?: string
           failure_count?: number
           last_failed_at?: string | null
-          locked_until?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -2669,6 +2666,7 @@ export type Database = {
       family_members: {
         Row: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -2686,6 +2684,7 @@ export type Database = {
         }
         Insert: {
           avatar_color?: string
+          birth_date?: string | null
           child_profile?: Json | null
           display_name?: string | null
           family_id: string
@@ -2703,6 +2702,7 @@ export type Database = {
         }
         Update: {
           avatar_color?: string
+          birth_date?: string | null
           child_profile?: Json | null
           display_name?: string | null
           family_id?: string
@@ -4827,6 +4827,41 @@ export type Database = {
           },
         ]
       }
+      organization_challenge_aggregates: {
+        Row: {
+          challenge_id: string
+          final_average_value: number | null
+          final_ranked_count: number | null
+          finalized_at: string | null
+          joined_count: number
+          updated_at: string
+        }
+        Insert: {
+          challenge_id: string
+          final_average_value?: number | null
+          final_ranked_count?: number | null
+          finalized_at?: string | null
+          joined_count?: number
+          updated_at?: string
+        }
+        Update: {
+          challenge_id?: string
+          final_average_value?: number | null
+          final_ranked_count?: number | null
+          finalized_at?: string | null
+          joined_count?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_challenge_aggregates_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: true
+            referencedRelation: "organization_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_challenge_participants: {
         Row: {
           challenge_id: string | null
@@ -4862,6 +4897,32 @@ export type Database = {
           },
         ]
       }
+      organization_challenge_ranking_exclusions: {
+        Row: {
+          challenge_id: string
+          marked_at: string
+          user_id: string
+        }
+        Insert: {
+          challenge_id: string
+          marked_at?: string
+          user_id: string
+        }
+        Update: {
+          challenge_id?: string
+          marked_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_challenge_ranking_exclusions_challenge_id_fkey"
+            columns: ["challenge_id"]
+            isOneToOne: false
+            referencedRelation: "organization_challenges"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organization_challenges: {
         Row: {
           challenge_type: string
@@ -4874,7 +4935,7 @@ export type Database = {
           organization_id: string | null
           reward_description: string | null
           start_date: string
-          status: string | null
+          status: string
           target_unit: string | null
           target_value: number | null
           title: string
@@ -4890,7 +4951,7 @@ export type Database = {
           organization_id?: string | null
           reward_description?: string | null
           start_date: string
-          status?: string | null
+          status?: string
           target_unit?: string | null
           target_value?: number | null
           title: string
@@ -4906,7 +4967,7 @@ export type Database = {
           organization_id?: string | null
           reward_description?: string | null
           start_date?: string
-          status?: string | null
+          status?: string
           target_unit?: string | null
           target_value?: number | null
           title?: string
@@ -5178,6 +5239,72 @@ export type Database = {
           user_id?: string
         }
         Relationships: []
+      }
+      parental_consents: {
+        Row: {
+          child_age_at_signing: number
+          child_birth_date: string
+          consent_version: string
+          family_id: string
+          family_member_id: string | null
+          guardian_attested: boolean
+          id: string
+          ip_address: unknown
+          parent_user_id: string | null
+          revoked_at: string | null
+          revoked_reason: string | null
+          signed_at: string
+          signed_name: string
+          user_agent: string | null
+        }
+        Insert: {
+          child_age_at_signing: number
+          child_birth_date: string
+          consent_version: string
+          family_id: string
+          family_member_id?: string | null
+          guardian_attested: boolean
+          id?: string
+          ip_address?: unknown
+          parent_user_id?: string | null
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          signed_at?: string
+          signed_name: string
+          user_agent?: string | null
+        }
+        Update: {
+          child_age_at_signing?: number
+          child_birth_date?: string
+          consent_version?: string
+          family_id?: string
+          family_member_id?: string | null
+          guardian_attested?: boolean
+          id?: string
+          ip_address?: unknown
+          parent_user_id?: string | null
+          revoked_at?: string | null
+          revoked_reason?: string | null
+          signed_at?: string
+          signed_name?: string
+          user_agent?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parental_consents_family_id_fkey"
+            columns: ["family_id"]
+            isOneToOne: false
+            referencedRelation: "family_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "parental_consents_family_member_id_fkey"
+            columns: ["family_member_id"]
+            isOneToOne: false
+            referencedRelation: "family_members"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       password_history: {
         Row: {
@@ -7065,6 +7192,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -7203,6 +7331,7 @@ export type Database = {
           banned_at?: string | null
           banned_reason?: string | null
           basal_body_temp?: number | null
+          birth_date?: string | null
           body_fat_percentage?: number | null
           bowel_movement?: string | null
           business_trip_frequency?: string | null
@@ -7341,6 +7470,7 @@ export type Database = {
           banned_at?: string | null
           banned_reason?: string | null
           basal_body_temp?: number | null
+          birth_date?: string | null
           body_fat_percentage?: number | null
           bowel_movement?: string | null
           business_trip_frequency?: string | null
@@ -7590,9 +7720,21 @@ export type Database = {
       }
       user_sessions_metadata: {
         Row: {
+          alert_attempts: number
+          alert_claimed_at: string | null
+          alert_sent_at: string | null
+          alert_status: string
+          context_source: string
+          country_code: string | null
           created_at: string
+          device_family: string | null
           device_name: string | null
+          ended_reason: string | null
           ip_address: unknown
+          ip_network: unknown
+          is_new_country: boolean | null
+          is_new_device: boolean | null
+          is_new_ip: boolean | null
           last_active_at: string
           revoked_at: string | null
           session_id: string
@@ -7600,9 +7742,21 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          alert_attempts?: number
+          alert_claimed_at?: string | null
+          alert_sent_at?: string | null
+          alert_status?: string
+          context_source?: string
+          country_code?: string | null
           created_at?: string
+          device_family?: string | null
           device_name?: string | null
+          ended_reason?: string | null
           ip_address?: unknown
+          ip_network?: unknown
+          is_new_country?: boolean | null
+          is_new_device?: boolean | null
+          is_new_ip?: boolean | null
           last_active_at?: string
           revoked_at?: string | null
           session_id: string
@@ -7610,9 +7764,21 @@ export type Database = {
           user_id: string
         }
         Update: {
+          alert_attempts?: number
+          alert_claimed_at?: string | null
+          alert_sent_at?: string | null
+          alert_status?: string
+          context_source?: string
+          country_code?: string | null
           created_at?: string
+          device_family?: string | null
           device_name?: string | null
+          ended_reason?: string | null
           ip_address?: unknown
+          ip_network?: unknown
+          is_new_country?: boolean | null
+          is_new_device?: boolean | null
+          is_new_ip?: boolean | null
           last_active_at?: string
           revoked_at?: string | null
           session_id?: string
@@ -7769,6 +7935,7 @@ export type Database = {
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -7800,6 +7967,7 @@ export type Database = {
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -7844,6 +8012,7 @@ export type Database = {
       }
       accept_legal_documents: {
         Args: {
+          p_birth_date?: string
           p_ip?: unknown
           p_privacy_version: string
           p_terms_version: string
@@ -7861,6 +8030,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -8027,12 +8197,19 @@ export type Database = {
       }
       add_family_child: {
         Args: {
+          p_birth_date: string
           p_child_profile: Json
+          p_consent_version?: string
           p_display_name: string
           p_family_id: string
+          p_guardian_attested?: boolean
+          p_ip?: unknown
+          p_signed_name?: string
+          p_user_agent?: string
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -8073,6 +8250,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      age_years_jst: { Args: { p_birth_date: string }; Returns: number }
       app_log_client_error_counts: {
         Args: { p_limit?: number; p_window_minutes?: number }
         Returns: {
@@ -8098,11 +8276,6 @@ export type Database = {
         }
         Returns: Json
       }
-      auth_login_account_user_id: { Args: { p_email: string }; Returns: string }
-      auth_login_apply_lock: {
-        Args: { p_email: string; p_locked_until: string }
-        Returns: undefined
-      }
       auth_login_clear_failures: {
         Args: { p_email: string }
         Returns: undefined
@@ -8116,20 +8289,16 @@ export type Database = {
         Args: { p_email: string; p_reset_after_minutes: number }
         Returns: number
       }
-      auth_login_lock_status: {
-        Args: { p_email: string }
-        Returns: {
-          failure_count: number
-          locked_until: string
-        }[]
+      auth_password_check: {
+        Args: {
+          p_current_password: string
+          p_generations: number
+          p_new_password: string
+          p_user_id: string
+        }
+        Returns: string
       }
-      auth_login_record_failure: {
-        Args: { p_email: string }
-        Returns: {
-          failure_count: number
-          locked_until: string
-        }[]
-      }
+      auth_session_revoke: { Args: { p_session_id: string }; Returns: string }
       begin_account_deletion_record: {
         Args: {
           p_executor_type: string
@@ -8165,6 +8334,7 @@ export type Database = {
         Args: { p_at: string }
         Returns: Json[]
       }
+      caller_is_minor_jst: { Args: never; Returns: boolean }
       can_view_user_meals: {
         Args: { p_target_user_id: string }
         Returns: boolean
@@ -8211,6 +8381,42 @@ export type Database = {
         SetofOptions: {
           from: "*"
           to: "email_outbox"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      claim_login_alerts: {
+        Args: {
+          p_batch_size: number
+          p_max_age_hours: number
+          p_min_age_seconds: number
+          p_reclaim_minutes: number
+        }
+        Returns: {
+          alert_attempts: number
+          alert_claimed_at: string | null
+          alert_sent_at: string | null
+          alert_status: string
+          context_source: string
+          country_code: string | null
+          created_at: string
+          device_family: string | null
+          device_name: string | null
+          ended_reason: string | null
+          ip_address: unknown
+          ip_network: unknown
+          is_new_country: boolean | null
+          is_new_device: boolean | null
+          is_new_ip: boolean | null
+          last_active_at: string
+          revoked_at: string | null
+          session_id: string
+          user_agent: string | null
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "user_sessions_metadata"
           isOneToOne: false
           isSetofReturn: true
         }
@@ -8328,6 +8534,7 @@ export type Database = {
         }
       }
       cleanup_email_outbox: { Args: never; Returns: number }
+      cleanup_ended_user_sessions_metadata: { Args: never; Returns: number }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
       cleanup_handson_tour_sandbox_rows: { Args: never; Returns: Json }
       cleanup_old_logs: { Args: never; Returns: undefined }
@@ -8546,6 +8753,7 @@ export type Database = {
         }
         Returns: number
       }
+      expire_idle_auth_sessions: { Args: never; Returns: number }
       fail_email_outbox: {
         Args: {
           p_error_code: string
@@ -8571,6 +8779,17 @@ export type Database = {
           p_worker_id: string
         }
         Returns: string
+      }
+      family_menu_planned_meals: {
+        Args: { p_end_date: string; p_start_date: string }
+        Returns: Json
+      }
+      family_menu_visible_members: {
+        Args: never
+        Returns: {
+          member_id: string
+          user_id: string
+        }[]
       }
       get_7d_checkin_averages: {
         Args: { p_date?: string; p_user_id: string }
@@ -8704,6 +8923,7 @@ export type Database = {
         Args: never
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -8736,6 +8956,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -8873,6 +9094,7 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      legal_minor_has_guardian_path: { Args: never; Returns: boolean }
       list_families_with_inactive_representative: {
         Args: never
         Returns: {
@@ -9027,6 +9249,10 @@ export type Database = {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean
       }
+      parental_consent_active: {
+        Args: { p_member_id: string }
+        Returns: boolean
+      }
       paste_meal_to_family: {
         Args: { p_source_meal_id: string; p_target_user_ids: string[] }
         Returns: string
@@ -9060,6 +9286,7 @@ export type Database = {
         Args: { p_email: string; p_member_id: string }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -9090,6 +9317,7 @@ export type Database = {
         Args: { p_organization_id: string; p_to_user_id: string }
         Returns: string
       }
+      reconcile_user_sessions_metadata: { Args: never; Returns: number }
       record_ai_usage: {
         Args: { p_feature: string; p_user_id: string }
         Returns: undefined
@@ -9188,6 +9416,10 @@ export type Database = {
           isSetofReturn: false
         }
       }
+      release_login_alert: {
+        Args: { p_max_attempts: number; p_session_id: string }
+        Returns: undefined
+      }
       release_ops_alert: {
         Args: { p_alert_key: string; p_claimed_at: string }
         Returns: boolean
@@ -9200,6 +9432,7 @@ export type Database = {
         Args: { p_family_id: string; p_member_id: string }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string
@@ -9232,6 +9465,7 @@ export type Database = {
           banned_at: string | null
           banned_reason: string | null
           basal_body_temp: number | null
+          birth_date: string | null
           body_fat_percentage: number | null
           bowel_movement: string | null
           business_trip_frequency: string | null
@@ -9694,6 +9928,7 @@ export type Database = {
         }
         Returns: {
           avatar_color: string
+          birth_date: string | null
           child_profile: Json | null
           display_name: string | null
           family_id: string

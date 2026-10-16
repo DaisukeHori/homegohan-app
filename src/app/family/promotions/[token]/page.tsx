@@ -10,6 +10,7 @@
 // (lib/supabase/middleware.ts の publicPaths と lib/onboarding-routing.ts で除外済み)。
 import { useState, useEffect, useId } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { PARENTAL_CONSENT_COPY } from '@homegohan/shared';
 import FocusTrap from 'focus-trap-react';
 import { createClient } from '@/lib/supabase/client';
 import { clearUserScopedLocalStorage, broadcastSignOut } from '@/lib/user-storage';
@@ -146,6 +147,11 @@ export default function FamilyPromotionConsentPage() {
         return 'このメンバー枠は現在利用できません。ご家族にご確認ください。';
       case 'CONFLICT_RETRY':
         return '他の操作と競合しました。数秒おいてもう一度お試しください。';
+      // #1173: 保護者の同意が無い 13〜17 歳の子供 / 13 歳未満の子供の昇格
+      case 'PARENTAL_CONSENT_REQUIRED':
+        return PARENTAL_CONSENT_COPY.promotionConsentMissing;
+      case 'PROMOTION_UNDER_COPPA_AGE':
+        return PARENTAL_CONSENT_COPY.promotionUnderCoppaAge;
       default:
         return fallback ?? '処理に失敗しました';
     }

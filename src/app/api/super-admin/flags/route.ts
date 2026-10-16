@@ -158,7 +158,7 @@ export async function POST(request: NextRequest) {
     });
 
     // #1148: この API を処理したインスタンスの、API route 側が覚えている「行が無い」状態を忘れる。
-    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    // 他のインスタンスと proxy (src/proxy.ts。API route とメモリを共有するとは限らない) には、最大 30 秒で反映される
     invalidateFeatureFlag(key);
 
     return NextResponse.json({ data: created }, { status: 201 });

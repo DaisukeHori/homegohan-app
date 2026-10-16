@@ -242,6 +242,9 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
   { table: 'terms_acceptances', scope: self('user_id') },
   { table: 'cookie_consents', scope: self('user_id') },
   { table: 'external_data_consents', scope: self('user_id') },
+  // 保護者の同意 (#1173)。署名した本人 (parent_user_id) の行だけ。署名の氏名・日時・版・IP・UA は本人の個人データ
+  // (terms_acceptances と同じ)。子供の生年月日の写し (child_birth_date) は本人が入力した値。家族の他の大人が署名した行は出さない
+  { table: 'parental_consents', scope: self('parent_user_id'), orderBy: ['signed_at', 'id'] },
   {
     table: 'personal_subscriptions',
     scope: self('user_id'),
@@ -292,6 +295,8 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   admin_user_notes: '運営スタッフが書いた内部メモ',
   moderation_flags: '運営によるモデレーションの内部記録',
   membership_audit: '所属変更の監査ログ (操作した人・相手の ID を含む)',
+  organization_challenge_ranking_exclusions:
+    'チャレンジの順位表を伏せる印 (組織の管理者になった記録)。守りの内部の記録で、本人が入力したデータではない',
   gdpr_deletion_requests:
     '削除の実行記録 (#1562。退会した利用者の id の HMAC・日時・理由・実行者。利用者の id を持たず、本人が読める RLS ポリシーも無い。service_role だけが読み書きする)',
   experiment_assignments: 'A/B テストの内部割り当て',

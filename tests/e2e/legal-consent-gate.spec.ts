@@ -26,6 +26,10 @@
  *   フラグに関わらず同意画面へ回す (lib/legal-consent.ts の resolveFirstSignInDestination)。
  *   お知らせのリンクの戻り先は、middleware の強制の経路と同じく、いまのクエリも残す。
  *
+ * #1173: 同意ゲートは生年月日 (user_profiles.birth_date) も見る。プロフィールを作る人には成人の placeholder の生年月日を入れ
+ *   (同意画面に生年月日の欄が出ない)、行の無い新規ユーザーの同意画面では欄を埋める (acceptOnConsentPage)。
+ *   18 歳未満の自己登録は断られ、「登録をやめる」でアカウントが消える (E2E-1)。
+ *
  * テストユーザーは admin API で作り、終わったら削除する (user_profiles・terms_acceptances も連動して消える)。
  * 既存の共通ユーザー (e2e-user-01〜) は使わない: 同意済みかどうかを、テストごとに自分で決めたいため。
  */
@@ -36,6 +40,7 @@ import { acceptLegalConsentIfShown } from "./helpers/legal-consent";
 import { serveTurnstileOffline } from "./helpers/turnstile-offline";
 import { generateTestPassword } from "./helpers/credentials";
 import { LEGAL_DOCUMENTS } from "../../packages/shared/src/legal-versions";
+import { todayLocal } from "../../packages/shared/src/date-utils";
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ws = require("ws") as typeof WebSocket;
@@ -47,6 +52,22 @@ const ENFORCED = process.env.LEGAL_CONSENT_ENFORCE?.trim().toLowerCase() === "on
 const NOTICE = process.env.LEGAL_CONSENT_NOTICE?.trim().toLowerCase() === "on";
 const CURRENT_TERMS = LEGAL_DOCUMENTS.terms_of_service.version;
 const CURRENT_PRIVACY = LEGAL_DOCUMENTS.privacy_policy.version;
+/** 成人の placeholder。#1173 で生年月日が無いと同意画面に回されるため */
+const ADULT_BIRTH_DATE = "1990-01-01";
+/** 2 月 29 日の生まれを平年に写すときの日 (2 月 28 日) */
+const LEAP_DAY_FALLBACK = "02-28";
+
+/**
+ * JST の今日に age 歳になる生年月日 (今日の年から age を引いた年の同じ月日)。
+ * 今日が 2 月 29 日で、その年が閏年でなければ 2 月 28 日にする (Date の toISOString は使わない)
+ */
+function birthDateForAge(age: number): string {
+  const [year, month, day] = todayLocal().split("-");
+  const birthYear = Number(year) - age;
+  const isLeapYear = (birthYear % 4 === 0 && birthYear % 100 !== 0) || birthYear % 400 === 0;
+  const monthDay = month === "02" && day === "29" && !isLeapYear ? LEAP_DAY_FALLBACK : `${month}-${day}`;
+  return `${String(birthYear).padStart(4, "0")}-${monthDay}`;
+}
 
 /** dev サーバーの初回コンパイルを待てるよう、画面遷移直後のアサーションだけ長めにする */
 const NAVIGATION_TIMEOUT = 45_000;
@@ -84,6 +105,8 @@ interface ProfileOptions {
   profile: boolean;
   /** プロフィールがあるとき、同意済みの版 (service_role が直接入れる)。省略は未同意 */
   legal?: LegalState;
+  /** プロフィールがあるとき、user_profiles.birth_date (service_role が直接入れる)。省略は ADULT_BIRTH_DATE、null は未入力 (#1173) */
+  birthDate?: string | null;
 }
 
 const admin = getAdminClient();
@@ -108,6 +131,7 @@ async function signInAsNewUser(page: Page, options: ProfileOptions) {
       terms_version_accepted: options.legal?.terms ?? null,
       privacy_version_accepted: options.legal?.privacy ?? null,
       legal_accepted_at: options.legal?.terms || options.legal?.privacy ? now : null,
+      birth_date: options.birthDate === undefined ? ADULT_BIRTH_DATE : options.birthDate,
     });
     if (error) throw new Error(`user_profiles INSERT 失敗: ${error.message}`);
   }
@@ -119,11 +143,16 @@ async function signInAsNewUser(page: Page, options: ProfileOptions) {
 async function readProfile(userId: string) {
   const { data, error } = await admin
     .from("user_profiles")
-    .select("terms_version_accepted, privacy_version_accepted, legal_accepted_at")
+    .select("terms_version_accepted, privacy_version_accepted, legal_accepted_at, birth_date")
     .eq("id", userId)
     .maybeSingle();
   if (error) throw new Error(`user_profiles SELECT 失敗: ${error.message}`);
-  return data as { terms_version_accepted: string | null; privacy_version_accepted: string | null; legal_accepted_at: string | null } | null;
+  return data as {
+    terms_version_accepted: string | null;
+    privacy_version_accepted: string | null;
+    legal_accepted_at: string | null;
+    birth_date: string | null;
+  } | null;
 }
 
 async function readAcceptances(userId: string) {
@@ -164,7 +193,18 @@ const consentHeading = (page: Page) => page.getByRole("heading", { level: 1, nam
 const termsCheckbox = (page: Page) => page.getByRole("checkbox", { name: /利用規約の内容を確認し、同意します/ });
 const privacyCheckbox = (page: Page) => page.getByRole("checkbox", { name: /プライバシーポリシーの内容を確認し、同意します/ });
 const acceptButton = (page: Page) => page.getByRole("button", { name: "同意して続ける" });
+const birthDateField = (page: Page) => page.getByLabel("生年月日", { exact: true });
 const banner = (page: Page) => page.getByTestId("legal-consent-banner");
+/**
+ * 帯は 1 ページに 1 つ (#1774)。page.goto は読み込みの終わり (load) まで待つので、その時点の DOM を、待たずに (再試行せずに) 数える。
+ * このときはサーバーが送った HTML が全部 DOM に入っていて、React が後送りの中身 (<div hidden id="S:n">) を入れ替える前のことがある。
+ * 以前は、ここで帯が 2 つ (fallback と、隠れた中身) あり、getByTestId が strict mode で間欠的に落ちていた
+ */
+async function expectSingleBannerAfterLoad(page: Page) {
+  expect(await banner(page).count(), "読み込みの終わりの時点で、帯はちょうど 1 つ").toBe(1);
+  await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+  await expect(banner(page)).toHaveCount(1);
+}
 
 /**
  * 同意画面で 2 つのチェックを入れて「同意して続ける」を押す。
@@ -178,6 +218,8 @@ async function acceptOnConsentPage(page: Page) {
   await expect(privacyCheckbox(page)).toHaveAttribute("aria-required", "true");
   await waitForHydration(page, 'input[type="checkbox"]');
   await expect(async () => {
+    // #1173: 生年月日の無い人 (行の無い新規ユーザー) には欄が出る。欄を埋めないと押せない
+    if (await birthDateField(page).isVisible()) await birthDateField(page).fill(ADULT_BIRTH_DATE, { timeout: 5_000 });
     await termsCheckbox(page).uncheck({ timeout: 5_000 });
     await privacyCheckbox(page).uncheck({ timeout: 5_000 });
     await expect(acceptButton(page)).toBeDisabled({ timeout: 2_000 });
@@ -481,6 +523,53 @@ test.describe("再同意ゲート: 強制あり (LEGAL_CONSENT_ENFORCE=on) (#117
     await page.goto("/legal-consent?next=%2Fhome");
     await expect(page).toHaveURL(/\/login\?next=/, { timeout: NAVIGATION_TIMEOUT });
   });
+
+  test("[強制あり] 新規ユーザーが同意画面で 15 歳の生年月日を入れると断られ、「登録をやめる」でアカウントが消える (#1173 E2E-1・S4)", async ({ page }) => {
+    const user = await signInAsNewUser(page, { profile: false });
+
+    await page.goto("/home");
+    await expect(page).toHaveURL(/\/legal-consent\?next=%2Fhome$/, { timeout: NAVIGATION_TIMEOUT });
+    await expect(consentHeading(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await waitForHydration(page, 'input[type="checkbox"]');
+    await expect(async () => {
+      await birthDateField(page).fill(birthDateForAge(15), { timeout: 5_000 });
+      await termsCheckbox(page).check({ timeout: 5_000 });
+      await privacyCheckbox(page).check({ timeout: 5_000 });
+      await expect(acceptButton(page)).toBeEnabled({ timeout: 5_000 });
+    }).toPass({ timeout: HYDRATION_TIMEOUT });
+    await acceptButton(page).click();
+
+    await expect(page.getByRole("heading", { level: 1, name: "18歳未満の方はご自身では登録できません" })).toBeVisible({
+      timeout: NAVIGATION_TIMEOUT,
+    });
+    // 断ったときは何も記録しない
+    expect(await readProfile(user.id)).toBeNull();
+
+    await page.getByRole("button", { name: "登録をやめる（アカウントを削除する）" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "登録をやめました" })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+
+    const { data, error } = await admin.auth.admin.getUserById(user.id);
+    expect(data.user).toBeNull();
+    expect(error).not.toBeNull();
+  });
+
+  test("[強制あり] 新規ユーザーの同意画面には生年月日の欄が出て、共通の helper acceptLegalConsentIfShown が 1990-01-01 で埋めて同意し、初期設定へ進む (#1173 E2E-3・S1)", async ({ page }) => {
+    const user = await signInAsNewUser(page, { profile: false });
+
+    await page.goto("/home");
+    await expect(page).toHaveURL(/\/legal-consent\?next=%2Fhome$/, { timeout: NAVIGATION_TIMEOUT });
+    await expect(birthDateField(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+
+    expect(await acceptLegalConsentIfShown(page)).toBe(true);
+    await page.waitForURL((url) => url.pathname.startsWith("/onboarding"), URL_CHANGE);
+
+    const profile = await readProfile(user.id);
+    expect(profile).toMatchObject({
+      terms_version_accepted: CURRENT_TERMS,
+      privacy_version_accepted: CURRENT_PRIVACY,
+      birth_date: ADULT_BIRTH_DATE,
+    });
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -533,7 +622,7 @@ test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONS
     const user = await signInAsNewUser(page, { profile: true });
 
     await page.goto("/home");
-    await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expectSingleBannerAfterLoad(page);
     expect(new URL(page.url()).pathname).toBe("/home");
 
     // お知らせは画面の流れの中にある (固定表示でボトムナビ・ヘッダー・モーダルに重ならない)
@@ -556,7 +645,7 @@ test.describe("再同意ゲート: 強制なし・お知らせあり (LEGAL_CONS
     await signInAsNewUser(page, { profile: true });
 
     await page.goto("/home?from=e2e");
-    await expect(banner(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expectSingleBannerAfterLoad(page);
     await expect(banner(page).getByRole("link", { name: "確認して同意する" })).toHaveAttribute(
       "href",
       "/legal-consent?next=%2Fhome%3Ffrom%3De2e",
@@ -672,5 +761,44 @@ test.describe("API の同意ゲート: 強制なし (既定 / お知らせあり
     const profile = await page.request.get("/api/profile", { maxRedirects: 0 });
     expect(profile.status()).toBe(200);
     expect(await readLegalStatus(page)).toMatchObject({ enforced: false, accepted: false, required: false });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 本人の権利の請求 (#1751): 開示・訂正・利用停止・消去の請求は、規約への同意も初期設定の完了も条件にできない。
+// 同意の画面の案内を押すのは多くが新規登録の直後の人 (user_profiles の行がまだ無い) なので、その人で通しで確かめる:
+// 同意の画面の案内 → 請求の画面 (同意ゲート・初期設定の差し戻しの対象外) → 一覧の読み込み (GET 200) → 請求 (POST 201)。
+// 強制の有無で結果は変わらないので、3 つの設定 (既定・強制あり・お知らせあり) のどれでも流す。
+// ─────────────────────────────────────────────────────────────────────────────
+test.describe("本人の権利の請求: プロフィールの行が無い新規ユーザー (#1751)", () => {
+  test.setTimeout(180_000);
+
+  test("★未同意・初期設定の前の新規ユーザーが、同意の画面の案内から請求の画面を開き、一覧を読み、請求を出せる (行は作られない)", async ({ page }) => {
+    const user = await signInAsNewUser(page, { profile: false });
+
+    await page.goto("/legal-consent");
+    await expect(consentHeading(page)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await page.getByTestId("legal-consent-dsr-link").getByRole("link").click();
+    await page.waitForURL((url) => url.pathname === "/settings/data-requests", URL_CHANGE);
+
+    // 一覧の読み込み (GET /api/account/data-requests) が 200 で、まだ請求が無い。401 なら読み込みの失敗の表示になる
+    await expect(page.getByTestId("dsr-list-empty")).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expect(page.getByTestId("dsr-load-failed")).toHaveCount(0);
+
+    const created = await page.request.post("/api/account/data-requests", {
+      data: { request_type: "disclosure", details: "保有している個人情報を開示してください" },
+      headers: { "Content-Type": "application/json" },
+      maxRedirects: 0,
+    });
+    expect(created.status()).toBe(201);
+    expect(await created.json()).toMatchObject({ request: { status: "pending_verification", request_type: "disclosure" } });
+
+    const list = await page.request.get("/api/account/data-requests", { maxRedirects: 0 });
+    expect(list.status()).toBe(200);
+    const body = (await list.json()) as { requests: Array<{ request_type: string; status: string }> };
+    expect(body.requests.map((request) => [request.request_type, request.status])).toEqual([["disclosure", "pending_verification"]]);
+
+    // 請求は user_profiles の行を作らない (同意も初期設定もしていないまま)
+    expect(await readProfile(user.id)).toBeNull();
   });
 });

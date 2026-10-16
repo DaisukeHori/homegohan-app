@@ -386,15 +386,15 @@ CREATE POLICY "terms_no_delete"
 | 部品 | 場所 | 役割 |
 |---|---|---|
 | いま有効な版・施行日 | `packages/shared/src/legal-versions.ts` の `LEGAL_DOCUMENTS` | `{ terms_of_service, privacy_policy }` それぞれの `{ version, effectiveDate }`。`/terms`・`/privacy` の版・施行日の表示、同意の記録、ゲートが同じ値を見る。内容が変わる改定は `version` を上げる (上げると全員に再同意を求める)。版の形式は英数字・`.`・`_`・`-` の 1〜20 文字 (`terms_acceptances.document_version` が varchar(20) のため) |
-| 同意済みの版 | `user_profiles.terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at` | NULL = 未同意。特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象で、本人は直接書き換えられない |
-| 同意の記録 | DB 関数 `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent)` (SECURITY DEFINER、authenticated のみ) | `auth.uid()` 本人の行だけを書く。`user_profiles` の 3 列を更新し (行が無ければ既定値で作る)、`terms_acceptances` に文書ごとに 1 行足す (同じ版は重複して足さない)。UPDATE / DELETE は RLS で禁止のまま |
+| 同意済みの版 | `user_profiles.terms_version_accepted` / `privacy_version_accepted` / `legal_accepted_at`、生年月日 `user_profiles.birth_date` (設計書 14) | NULL = 未同意 (生年月日は未入力)。特権列ガード (`guard_user_profiles_privileged` と `_on_insert`) の対象で、本人は直接書き換えられない (生年月日を書くのは `accept_legal_documents` (1 回だけ) と、昇格の承諾 `accept_child_promotion` (子供の行の値を写す)) |
+| 同意の記録 | DB 関数 `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent, p_birth_date)` (SECURITY DEFINER、authenticated のみ) | `auth.uid()` 本人の行だけを書く。`user_profiles` の 3 列を更新し (行が無ければ既定値で作る)、生年月日が未記録なら `p_birth_date` を 1 回だけ記録し (13 歳未満と、保護者の同意とのつながりが無い 18 歳未満の自己登録は何も書かずに `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。設計書 14)、`terms_acceptances` に文書ごとに 1 行足す (同じ版は重複して足さない)。UPDATE / DELETE は RLS で禁止のまま |
 | 記録の API | `POST /api/legal/accept` | body の版がいま有効な版と一致するときだけ関数を呼ぶ (違えば 409)。IP・user_agent は、body ではなくサーバーが受け取ったリクエストから取る |
-| ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 同意済みの版が `LEGAL_DOCUMENTS` と違う、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク。戻り先は強制と同じ `buildLegalConsentPath` で作り、いまのクエリも残す) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す。`/api/*` は middleware の `/api` の分岐で判定する (許可リストは `packages/shared/src/legal-consent-api.ts`。`LEGAL_CONSENT_ENFORCE=on` で未同意なら 403 `LEGAL_CONSENT_REQUIRED`。設計書 13a) |
-| 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、データ削除の依頼先 (お問い合わせ) を案内する |
+| ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 判定は `isLegalConsentComplete` (`packages/shared/src/parental-consent.ts`。版 + 生年月日 + 18 歳未満なら保護者の同意とのつながり。設計書 14。つながりは `lib/legal-consent-minor.ts` の `withMinorGuardianStatus` が DB に聞いて入れる)。これを満たさない、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク。戻り先は強制と同じ `buildLegalConsentPath` で作り、いまのクエリも残す) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す。`/api/*` は middleware の `/api` の分岐で判定する (許可リストは `packages/shared/src/legal-consent-api.ts`。`LEGAL_CONSENT_ENFORCE=on` で `isLegalConsentComplete` を満たさなければ 403 `LEGAL_CONSENT_REQUIRED`。設計書 13a・14) |
+| 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、データ削除の依頼先 (お問い合わせ) を案内する。生年月日 (無いときだけ。文は `LEGAL_CONSENT_BIRTH_DATE_COPY`)・未成年の案内 (`LEGAL_MINOR_SELF_SIGNUP_REFUSED` のとき)・保護者の同意とのつながりが無い 18 歳未満の案内も出す (設計書 14)。フォームの下と「同意しない」の後の案内に、同意せずに開示・訂正・利用停止・消去を請求できる画面 (`/settings/data-requests`) へのリンクを出す (#1751) |
 | サインアップ | `src/app/(auth)/signup/page.tsx` | 「続行することで同意したものとみなされます」をやめ、必須チェックボックスにした (チェックするまで Google 登録も登録ボタンも押せない)。このチェックは同意の記録を残さない。記録が残るのは同意画面で同意したときだけ。登録後は、`/auth/callback` が初期設定を始めていない未同意の人を `LEGAL_CONSENT_ENFORCE` の値に関わらず同意画面へ回す (下の「初回の作成」の行。#1435) |
 | 初回の作成 | `src/app/(auth)/auth/callback/route.ts` (判定は `lib/legal-consent.ts` の `resolveFirstSignInDestination`) | 初期設定を始めていない (プロフィールの行が無い、または `onboarding_started_at` / `onboarding_completed_at` がどちらも NULL) のに、いま有効な版に同意していない人を、`LEGAL_CONSENT_ENFORCE` の値に関わらず `/legal-consent?next=<本来の遷移先>` へ回す。サインアップ画面の Google 登録・メール確認と、ログイン画面の「Googleで続ける」で初めて入った人 (サインアップ画面のチェックを通らない) が、どれもここを通る。ログイン画面には、初めての人には同意の画面が出ることを、規約・プライバシーポリシーへのリンクつきで出す (みなし同意の文面は出さない)。回さないもの: 管理者・プロフィールを読めなかったとき・遷移先がゲートの対象外のパス (`/auth/*` など)。初期設定を始めたあとの人を止めるかは、これまでどおりゲートの強制で決まる |
 
-画面の判定の対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル (`/api/*` は画面の判定では対象外で、API は 13a のゲートが判定する)。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
+画面の判定の対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/settings/data-requests` (開示・訂正・利用停止・消去の請求の画面と確認の画面。初期設定の差し戻しからも外す。#1751) `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル (`/api/*` は画面の判定では対象外で、API は 13a のゲートが判定する)。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
 
 **重要変更時の対応**:
 - 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。`LEGAL_DOCUMENTS` の値を書き換えて出す
@@ -405,7 +405,7 @@ CREATE POLICY "terms_no_delete"
 - 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う
 
 **既知の残課題**:
-- `terms_acceptances` の本人による直接 INSERT (RLS `terms_self_insert`) は開いたまま。直接入れた行は端末情報を偽れるので、証跡として確かなのは `accept_legal_documents` が書いた行。閉じるのは、未成年・AI の同意 (`parental_consent` / `external_data_provision`) の書き込みが関数経由になってから
+- `terms_acceptances` の本人による直接 INSERT (RLS `terms_self_insert`) は開いたまま。直接入れた行は端末情報を偽れるので、証跡として確かなのは `accept_legal_documents` が書いた行。保護者の同意は `parental_consents` (関数経由) に記録する (設計書 14)。`terms_acceptances` の `parental_consent` は使わない。`terms_self_insert` を閉じる条件は、AI の同意 (`external_data_provision`) の書き込みが関数経由になることだけが残る
 - アプリ (Expo) のネイティブのサインアップ画面には、まだ同意のチェックが無い (ゲートは WebView 側で効く)
 
 ---
@@ -820,6 +820,8 @@ $$);
      顧客も契約の行も無ければ Stripe を呼ばない。失敗したら削除しない (まだ何も変えていないので、やり直せる)
    - 生のメールアドレスを残す記録を伏せ、本人の非公開レシピを消す: RPC prepare_account_deletion
      (メール配信ログ・問い合わせ・組織/家族の招待・家族の昇格リクエスト。pending の招待は revoked にする。失敗したら削除しない)
+     送信待ち (email_outbox。#1193・docs/design/operator/10-logs-and-mail-retry.md §5.3 の 1b・1c): 本人の行 (user_id か宛先が本人) は
+     宛先・件名・本文を伏せ、queued は dead (recipient_deleted) にする。他人宛の行は、件名・本文・返信先の中の本人のアドレスの部分だけを伏せ、状態は変えない
    - ライセンス席の解放: RPC release_user_membership (失敗しても削除は続ける)
    - Storage のファイル削除: meal_photos / fridge-images / health-checkups の `<user_id>/` 以下、旧パス、
      DB の URL が指す本人のファイル (失敗したら削除しない)
@@ -838,6 +840,8 @@ $$);
 6. 削除完了メールを本人へ 1 通送る (#1152。src/lib/account-deletion-notification.ts)
    - 宛先は auth.users の登録アドレス。手順 3 の後・手順 4 の前に service_role の getUserById で控え、メモリ上だけで使う
      (app_logs・email_delivery_logs には生のアドレスを残さない。送信の失敗の記録は sendEmail がマスクした宛先で残す)
+   - 完了メールは email_outbox に redact_after_send で登録し、送れたとき (sent)・届けられなかったとき (dead) に宛先・件名・本文を伏せる。
+     宛先が停止リストに載っていれば行を作らない (#1193)
    - 送るのは手順 5 が実際に削除したときだけ。409・500・すでに消えていたユーザーのやり直し (deleteUser が 404) では送らない
    - 本文は退会日時 (日本時間) と問い合わせ先 (site-config の getSupportEmail)。送信元は site-config の getEmailFrom
    - best-effort: 送信の失敗・時間切れ (待つのは最長 5 秒) でも応答は 200 のまま。失敗は app_logs に残す (user_id を付けない)
@@ -861,6 +865,8 @@ $$);
 | Stripe の顧客・サブスクリプション | サブスクリプションは即時に解約し、顧客は氏名・メールを消す匿名化をして残す (#1562) | 実装済み (billing/01 §11)。§16.2 の手順 4 の段階 billing (`prepare` の前) と billing_recheck (`deleteUser` の直前) が、開いたままの Checkout を閉じ、終端でない契約を即時解約し、顧客を匿名化する。退会のあとに Stripe に生まれた契約は、写像の入口 (`syncSubscription`) が即時解約する (billing/01 §8.6) |
 | 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
 | 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスは、退会に関係なく生のアドレスを持たない (#1562。migration 20261016190000)。トリガーが `email` を `email_hash` (正規化したアドレスの HMAC。鍵は Vault の `pii_hmac_key`) に置き換え、既存の行も置き換えた。#1163 の 24 時間の送信上限は `email_hash` 同士で比べるので、退会しても上限は戻らない |
+| 送信待ちの宛先 (`email_outbox.to_email`) | 削除または匿名化 | 実装済み (#1193)。RPC `prepare_account_deletion` が本人の行の宛先・件名・本文を伏せ (queued は dead)、他人宛の行の件名・本文・返信先の中の本人のアドレスだけを伏せる。退会の完了メールは送れたあと・届けられなかったあとに伏せる |
+| 送信待ちの送信元 (`email_outbox.from_email`) | 伏せない | 送信元はアプリのアドレス (`EMAIL_FROM`・運用メールも同じ) で、利用者のものではない |
 | 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
 
 ### 16.4 `gdpr_deletion_requests` テーブルの扱い (削除の実行記録)

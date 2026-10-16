@@ -3,7 +3,9 @@
  *
  * parseMarkdown の結果は dangerouslySetInnerHTML にそのまま渡される。修正前は入力をエスケープしていなかったため、
  * AI の応答 (プロンプトインジェクションで混ざった文字列を含む) の中の <img onerror=...> や <script> が
- * そのまま HTML として実行され、CSP も 'unsafe-inline' を許しているので防げなかった。ここでは
+ * そのまま HTML として実行され、CSP も 'unsafe-inline' を許しているので防げなかった
+ * (#1169 の nonce 方式で script-src から 'unsafe-inline' を外したので、今は CSP もインラインのスクリプトとイベント属性を止める。
+ * ただしこのテストは CSP に頼らずエスケープを確かめる)。ここでは
  *
  *   - 入力中の HTML が HTML として解釈されず、書いた文字がそのまま表示される
  *   - リンクは http(s) / mailto だけで、javascript: / data: などは (大文字小文字・空白・エンティティを混ぜても) 文字のまま

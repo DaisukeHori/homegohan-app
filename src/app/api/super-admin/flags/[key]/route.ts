@@ -77,7 +77,7 @@ export async function PATCH(request: NextRequest, props: Params) {
     });
 
     // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
-    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    // 他のインスタンスと proxy (src/proxy.ts。API route とメモリを共有するとは限らない) には、最大 30 秒で反映される
     invalidateFeatureFlag(flagKey);
 
     return NextResponse.json({ data: updated });
@@ -142,7 +142,7 @@ export async function DELETE(request: NextRequest, props: Params) {
     });
 
     // #1148: この API を処理したインスタンスの、API route 側のフラグのメモリを新しくする。
-    // 他のインスタンスとミドルウェア (Edge。メモリは別) には、最大 30 秒で反映される
+    // 他のインスタンスと proxy (src/proxy.ts。API route とメモリを共有するとは限らない) には、最大 30 秒で反映される
     invalidateFeatureFlag(flagKey);
 
     return NextResponse.json({ data: { key: flagKey, deleted: true } });
