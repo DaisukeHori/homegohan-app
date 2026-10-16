@@ -1930,7 +1930,7 @@ ${emailSignature()}
 | `AUTH_ACCOUNT_FROZEN` (既存) | 403 | 全部 | 既存 |
 | `AUTH_RECOVERY_SESSION_REQUIRED` (新) | 403 | reset | 「パスワードの再設定は、再設定メールのリンクから開き直してください。」 |
 | `AUTH_REAUTHENTICATION_REQUIRED` (新) | 403 | change | 「安全のため、もう一度ログインしてから変更してください。」 |
-| `PERM_DENIED` (既存) | 403 | admin API (support) | 既存 |
+| `OP_PERMISSION_DENIED` (既存) | 403 | admin API (support) | 既存 (`GET /api/admin/users/{id}` と同じ nested の本文 §14.9) |
 | `AUTH_SESSION_NOT_FOUND` (新) | 404 | sessions/{id}・current | 「その端末のログインは、すでに終了しています。」 |
 | `AUTH_SESSION_IS_CURRENT` (新) | 409 | sessions/{id} | 「いま使っている端末は、ここでは解除できません。ログアウトを使ってください。」 |
 | `AUTH_PASSWORD_NOT_SET` (新) | 409 | change だけ (`no_password`・`unsupported_hash`。再設定は返さない §11.5) | 「このアカウントはパスワードでログインしていないため、変更できません。」(`unsupported_hash` は §14.6 の 5 の文) |
