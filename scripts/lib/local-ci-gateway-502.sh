@@ -3,9 +3,11 @@
 # ローカル Supabase の入口 (Kong) のログから、502 を返した要求の数とその理由を数える (scripts/local-ci.sh が source する。#1779)
 # =====================================================================
 # 背景 (#1779): 結合テストの準備の INSERT・UPDATE・RPC・/pg/query が、Kong の 502 (An invalid response was received from the
-# upstream server) で間欠的に落ちていた。原因は、Kong が使い回していた奥 (PostgREST) への接続を PostgREST が先に閉じ、
-# その接続で送った POST・PATCH が「upstream prematurely closed connection」になること。scripts/supabase-local.sh が起動したあとに
-# Kong の使い回しを止める (tune_kong_keepalive) ようにした。
+# upstream server) で間欠的に落ちていた。Kong の error.log は「upstream prematurely closed connection」(PostgREST が応答の前に
+# 接続を閉じた) で、nginx は POST・PATCH を送り直さない。PostgREST が閉じた接続を Kong が使い回して送ったという型と見て、
+# scripts/supabase-local.sh が起動したあとに Kong の使い回しを止める (tune_kong_keepalive) ようにした。PostgREST が閉じた引き金は
+# 再現していない (最有力は、HEAD に応答したあと接続をすぐ閉じる動き)。確かめた事実は supabase-local.sh の
+# KONG_UPSTREAM_KEEPALIVE_POOL_SIZE の前のコメントにまとめた。
 # 再発の見張りとして、結合テストの段の終わりに Kong のログ (docker logs。access.log が標準出力・error.log が標準エラー) を読み、
 # 502 の件数と、error.log の奥とのやりとりの失敗の文言ごとの件数を出す。テストが緑でも (準備のやり直しで救われていても) 数える。
 #

@@ -5,13 +5,14 @@
  * #1779 結合テストの準備の INSERT・UPDATE・RPC・/pg/query (どれも POST か PATCH) が、ローカル Supabase の入口の Kong の 502
  * (An invalid response was received from the upstream server) で間欠的に落ちていた。
  *
- * 原因 (2026-10-17 に d256 で確かめた事実):
+ * 2026-10-17 に d256 で確かめた事実 (詳しくは scripts/supabase-local.sh の KONG_UPSTREAM_KEEPALIVE_POOL_SIZE の前のコメント):
  *   - CLI 2.62.10 の Kong 2.8.1 は、Kong の既定のまま奥への接続を使い回す (upstream_keepalive_pool_size = 60・idle 60 秒)
- *   - PostgREST は、使われていない接続を Kong の 60 秒より前に閉じることがある (測ったときは最後の要求から約 58 秒。Kong の側に
- *     TIME_WAIT が残らなかった = PostgREST が先に閉じた)
- *   - 閉じるのと Kong がその接続で次の要求を送るのが重なると、Kong の error.log に
- *     「upstream prematurely closed connection while reading response header from upstream」が出て 502 になる。
- *     nginx は POST・PATCH を別の接続で送り直さないので、落ちるのは状態を変える要求だけ
+ *   - 502 の 1 件の Kong の error.log は「upstream prematurely closed connection while reading response header from upstream」
+ *     = PostgREST が応答の前に接続を閉じた。nginx は POST・PATCH を別の接続で送り直さないので、落ちるのは状態を変える要求だけ
+ *   - そのとき PostgREST は起動から 28 秒・最初の /rest/v1 の要求から 8 秒で、使われていない接続の時間切れではない。
+ *     PostgREST 13.0.5 は HEAD に応答したあと接続をすぐ閉じ、落ちた POST の 5 ms 前に HEAD が応答を返し終えていた
+ *     (最有力の引き金。Kong 経由では再現していない)
+ * 引き金が何であれ「PostgREST が閉じた接続を Kong が使い回して送る」型は、使い回しを止めれば起きない。
  *
  * 直し方: scripts/supabase-local.sh は、start のあと (と、db reset で Kong を再起動したあと) に、Kong のコンテナの中で
  * `kong reload` を KONG_UPSTREAM_KEEPALIVE_POOL_SIZE=0 (使い回さない) で打ち、Kong が書き出した設定 (.kong_env) に値が入ったかを

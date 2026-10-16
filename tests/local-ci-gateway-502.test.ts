@@ -3,8 +3,9 @@
  * tests/local-ci-gateway-502.test.ts
  *
  * #1779 結合テストの準備の INSERT・UPDATE・RPC・/pg/query が、入口の Kong の 502 (An invalid response was received from the
- * upstream server) で間欠的に落ちていた。原因 (Kong が使い回す奥への接続を PostgREST が先に閉じる) は scripts/supabase-local.sh の
- * tune_kong_keepalive で消した (tests/supabase-local-kong-keepalive.test.ts)。ここでは再発の見張りを固定する。
+ * upstream server) で間欠的に落ちていた。型 (PostgREST が閉じた接続を Kong が使い回して POST・PATCH を送る) は
+ * scripts/supabase-local.sh の tune_kong_keepalive で消した (tests/supabase-local-kong-keepalive.test.ts。PostgREST が閉じた引き金は
+ * 再現していない)。ここでは再発の見張りを固定する。
  *
  *   1. scripts/lib/local-ci-gateway-502.sh: Kong のログ (access.log と error.log が混ざったもの) から、状態が 502 の要求の数と、
  *      error.log の奥とのやりとりの失敗の文言ごとの件数を出す

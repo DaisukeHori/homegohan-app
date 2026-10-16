@@ -119,17 +119,28 @@ STOP_RETRY_WAIT_UNIT="$((10#$STOP_RETRY_WAIT_UNIT))"
 # 入口の Kong の、奥への接続の使い回し (#1779)。
 # CLI 2.62.10 の Kong (public.ecr.aws/supabase/kong:2.8.1) は Kong の既定のまま、奥 (PostgREST など) への接続を使い回す
 # (upstream_keepalive_pool_size = 60・upstream_keepalive_idle_timeout = 60 秒。2026-10-17 に d256 でコンテナの .kong_env を読んで確認)。
-# ところが PostgREST は、使われていない接続を Kong の 60 秒より前に閉じることがある (2026-10-17 に d256 で、要求を 6 本ずつ
-# 同時に送ってから 2 秒ごとに Kong の中の netstat を見た。PostgREST への 6 本は最後の要求から約 58 秒で、Kong の側に TIME_WAIT を
-# 残さずに消えた = PostgREST が先に閉じた。Auth・Storage・pg-meta への 6 本ずつは、同じころ Kong の側が TIME_WAIT になった = Kong が閉じた)。
-# PostgREST が閉じるのと、Kong がその接続で次の要求を送るのが重なると、Kong の error.log に
-# 「upstream prematurely closed connection while reading response header from upstream」が出て、呼び出し側には 502
-# (An invalid response was received from the upstream server。エラーの code は無い) が返る。
-# nginx は送り直しても安全な要求 (GET・HEAD など) だけを別の接続で送り直し、POST・PATCH は送り直さないので、
-# 結合テストでは準備の INSERT・UPDATE・RPC・/pg/query (どれも POST か PATCH) だけが落ちていた。
-# (2026-10-17 の d256 の結合テスト 1 回 (Kong への要求 28,388 件) で 502 が 1 件 (POST /rest/v1/rpc/...)。その 1 件の error.log が
-#  上の文言で、同じ時刻の PostgREST のログには再起動・スキーマの読み直し・接続の失敗のどれも無く、コンテナの die / oom も無かった)
+# 確かめた事実 (どれも 2026-10-17 に d256 で):
+#   - 結合テスト 1 回 (Kong への要求 28,388 件) で 502 が 1 件 (POST /rest/v1/rpc/create_org_invite)。Kong の error.log は
+#     「upstream prematurely closed connection while reading response header from upstream」= PostgREST がその要求に応答する前に
+#     接続を閉じた。同じ時刻の PostgREST のログには再起動・スキーマの読み直し・接続の失敗のどれも無く、コンテナの die / oom も無かった。
+#     呼び出し側には 502 (An invalid response was received from the upstream server。エラーの code は無い) が返る
+#   - nginx は送り直しても安全な要求 (GET・HEAD など) だけを別の接続で送り直し、POST・PATCH は送り直さない。そのため結合テストでは
+#     準備の INSERT・UPDATE・RPC・/pg/query (どれも POST か PATCH) だけが落ちていた
+#   - PostgREST 13.0.5 は HEAD に応答したあと、その接続をすぐ閉じる (直接つないで HEAD → 0.5 秒待つ → GET を送ると、0.5 秒の時点で
+#     こちら側が CLOSE_WAIT で、2 本目に応答が無い。5 回とも。GET → GET は 5 回とも ESTABLISHED のまま 2 本とも応答した。
+#     HEAD の応答には Content-Length が無い)。nginx の proxy は HEAD の応答を本文なしとして扱い、その接続を使い回しの候補に戻す
+#     (nginx のソースの読み。ここは測っていない)
+#   - Kong の access.log では、落ちた POST の 5 ms 前に HEAD /rest/v1/membership_audit (件数だけを数える select の head: true) が
+#     応答を返し終えていた。PostgREST が起動してから 28 秒・最初の /rest/v1 の要求から 8 秒しか経っておらず (使い回された接続は
+#     古くても約 8 秒)、使われていない接続の時間切れではない
+# 落ちた POST が、HEAD のあと PostgREST が閉じた接続を Kong が使い回したものだという見立ては、上の事実とつじつまが合うが、
+# 再現はしていない (Kong 経由で同じ接続に HEAD → POST を続けて 300 回送っても 502 は 0 件。Kong が閉じた接続を候補から外すのが、
+# ほとんどの場合は次の要求より早いと見られる)。ほかに、使われていない PostgREST への接続が約 58 秒で PostgREST の側から消えた
+# のも 1 度見ている (要求を 6 本ずつ同時に送ってから 2 秒ごとに Kong の中の netstat を見た。57 秒の時点ではあり、59 秒の時点では
+# Kong の側に TIME_WAIT を残さずに消えていた)。こちらは Kong の 60 秒の時間切れと重なる別の競合になりうる。
+# どちらの引き金でも「奥が閉じた接続を Kong が使い回して POST を送る」という型は同じで、使い回しを止めればこの型ごと起きない。
 # ローカルでは使い回しの得がほとんど無い (同じ Docker のネットワークの中の TCP 接続) ので、起動したあとに使い回しを止める。
+# CLI を上げるときもこの止め方を保つ (tune_kong_keepalive は .kong_env の値を確かめ、入らなければ start を失敗にする)。
 # 0 = 使い回さない (要求ごとに新しい接続を開き、使い終わったら閉じる)。Kong の既定の 60 を入れると CLI のままの動きに戻る
 readonly KONG_UPSTREAM_KEEPALIVE_POOL_SIZE_DEFAULT=0
 KONG_UPSTREAM_KEEPALIVE_POOL_SIZE="${SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE:-$KONG_UPSTREAM_KEEPALIVE_POOL_SIZE_DEFAULT}"
