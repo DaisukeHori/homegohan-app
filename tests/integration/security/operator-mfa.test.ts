@@ -1,6 +1,6 @@
 /**
- * #1176 運営ロールの MFA (AAL2 の入口) を、ローカルの Supabase + Next で確かめる (段 B)。
- * docs/design/cross/12-operator-mfa.md §21.4 (M-1〜M-4・M-6・M-7・M-9〜M-14。M-5 は段 C・M-8 は欠番)
+ * #1176 運営ロールの MFA (AAL2 の入口) を、ローカルの Supabase + Next で確かめる (段 B・段 C)。
+ * docs/design/cross/12-operator-mfa.md §21.4 (M-1〜M-7・M-9〜M-16。M-5・M-15・M-16 は段 C (#1707)・M-8 は欠番)
  *
  * 結合テストが叩く Next は 1 つで、OPERATOR_MFA_ENFORCE_FROM を設定しない (= 猶予なし・即時)。猶予の枝 (pass_grace) は
  * 単体の mfa-gate.test.ts と route の auth-mfa-routes.test.ts で守る。
@@ -42,6 +42,14 @@ const HTTP_BAD_REQUEST = 400;
 const HTTP_TOO_MANY_REQUESTS = 429;
 /** PostgreSQL の権限なし */
 const PG_INSUFFICIENT_PRIVILEGE = '42501';
+/** PostgreSQL の引数の誤り (operator_mfa_end_sessions に NULL を渡したとき。cross/12 §11.5) */
+const PG_INVALID_PARAMETER_VALUE = '22023';
+/** 認証が切れた・無いセッションの HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
+/** M-5・M-15 で対象が持つセッションの数 (別々の anon client でサインインした 2 つ) */
+const TARGET_SESSION_COUNT = 2;
+/** 段 C の reset の本文 (cross/12 §14.7) */
+const MFA_RESET_BODY = { reason: '結合テスト: 端末の紛失 (ビデオ通話で本人を確認)', identity_check: 'video_call', identity_confirmed: true };
 
 const TS = Date.now();
 const createdUserIds: string[] = [];
@@ -55,6 +63,31 @@ function client(key: string, accessToken?: string): SupabaseClient {
 }
 
 const srAdmin = client(serviceKey);
+
+/** ローカルスタックの postgres-meta で SQL を読む (auth.sessions・auth.refresh_tokens の行数の確認だけ。anon-definer-execute.test.ts と同じ口) */
+async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
+  const res = await fetch(`${url}/pg/query`, {
+    method: 'POST',
+    headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`pg/query ${res.status}: ${JSON.stringify(body)}`);
+  return body as T[];
+}
+
+/** UUID の形 (pgQuery の SQL に埋める利用者の id を確かめる) */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/** auth.sessions と auth.refresh_tokens の、その利用者の行の数 */
+async function countAuthSessionRows(userId: string): Promise<{ sessions: number; refreshTokens: number }> {
+  if (!UUID_PATTERN.test(userId)) throw new Error(`UUID でない: ${userId}`);
+  const [row] = await pgQuery<{ sessions: number; refresh_tokens: number }>(
+    `SELECT (SELECT count(*)::int FROM auth.sessions WHERE user_id = '${userId}'::uuid) AS sessions,
+            (SELECT count(*)::int FROM auth.refresh_tokens WHERE user_id = '${userId}') AS refresh_tokens`,
+  );
+  return { sessions: row.sessions, refreshTokens: row.refresh_tokens };
+}
 
 interface TestUser {
   id: string;
@@ -335,5 +368,123 @@ describe('運営の MFA の入口 (#1176 cross/12 §21.4)', () => {
     }
     expect(statuses.filter((status) => status === HTTP_TOO_MANY_REQUESTS)).toEqual([]);
     expect(statuses).toEqual([]);
+  });
+});
+
+describe('別の super_admin による解除 (段 C #1707 cross/12 §14.7・§11.5)', () => {
+  let superAdmin: { userId: string; jwt: string };
+
+  async function ensureSuperAdmin() {
+    if (superAdmin) return superAdmin;
+    const created = await createTestUserWithRoles({ email: `sec-operator-mfa-c-sa-${TS}@homegohan.test`, roles: ['super_admin'] });
+    createdUserIds.push(created.userId);
+    superAdmin = { userId: created.userId, jwt: created.jwt };
+    return superAdmin;
+  }
+
+  it('M-5: super_admin の reset で対象の factor と行が消え、admin_audit_logs に super_admin.mfa.reset (critical) が 1 行で、details の factors_before と backup_codes_before が、reset の前にテストが数えた対象の factor の数 (admin.mfa.listFactors) と operator_mfa_backup_codes の未使用の行の数に等しい。reset の前に作った対象の 2 つのセッション (別々の anon client でサインインした aal1 のものと、verify で aal2 にしたもの) の access token は、reset の後 GET /api/auth/mfa/status と GET /api/admin/users が 401、refresh token での refreshSession が失敗し、pgQuery で読む auth.sessions にその user_id の行が無い (S-7・S-32)。自分自身は 403', async () => {
+    const actor = await ensureSuperAdmin();
+    const target = await createUser('m5-admin', ['admin']);
+    // 対象は自己サービスで登録する (バックアップコードの行を作る)。1 個使って、未使用と使用済みの行の両方がある状態にする
+    const enrolled = await enrollViaApp((await signIn(target)).session);
+    const { data: oneCode } = await srAdmin.from('operator_mfa_backup_codes').select('id').eq('user_id', target.id).limit(1).single();
+    expect(oneCode?.id).toBeTruthy();
+    const markUsed = await srAdmin.from('operator_mfa_backup_codes').update({ used_at: new Date().toISOString() }).eq('id', oneCode!.id);
+    expect(markUsed.error).toBeNull();
+
+    // verify で aal2 にしたセッション (verify は同じ利用者の他の aal1 のセッションを終えるので、aal1 のセッションはこの後に作る S-25)
+    const forAal2 = await signIn(target);
+    const { aal2 } = await verifyViaApp(forAal2.session, enrolled.factorId, enrolled.secret);
+    const aal1 = (await signIn(target)).session;
+    // reset の前: どちらのセッションも生きている (reset の後に 401 になることの対照)
+    expect((await apiCall('GET', '/api/admin/users', aal2.access_token)).status).toBe(200);
+    expect((await apiCall('GET', '/api/auth/mfa/status', aal1.access_token)).status).toBe(200);
+
+    const { data: listedBefore } = await srAdmin.auth.admin.mfa.listFactors({ userId: target.id });
+    const factorsBefore = listedBefore?.factors.length ?? -1;
+    expect(factorsBefore).toBeGreaterThan(0);
+    const unused = await srAdmin
+      .from('operator_mfa_backup_codes')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', target.id)
+      .is('used_at', null);
+    const unusedBefore = unused.count ?? -1;
+    expect(unusedBefore).toBe(EXPECTED_BACKUP_CODE_COUNT - 1);
+
+    // 自分自身は 403 OP_SELF_MODIFY
+    const self = await apiCall<{ error?: { code?: string } }>('POST', `/api/super-admin/admins/${actor.userId}/mfa/reset`, actor.jwt, MFA_RESET_BODY);
+    expect(self.status).toBe(403);
+    expect(self.body.error?.code).toBe('OP_SELF_MODIFY');
+
+    const result = await apiCall<{ data?: Record<string, unknown> }>('POST', `/api/super-admin/admins/${target.id}/mfa/reset`, actor.jwt, MFA_RESET_BODY);
+    expect(result.status, JSON.stringify(result.body)).toBe(200);
+    expect(result.body.data).toEqual({ user_id: target.id, factors_deleted: factorsBefore, backup_codes_deleted: EXPECTED_BACKUP_CODE_COUNT });
+
+    const { data: listedAfter } = await srAdmin.auth.admin.mfa.listFactors({ userId: target.id });
+    expect(listedAfter?.factors ?? []).toHaveLength(0);
+    const remaining = await srAdmin.from('operator_mfa_backup_codes').select('id', { count: 'exact', head: true }).eq('user_id', target.id);
+    expect(remaining.count).toBe(0);
+
+    const { data: audits, error: auditError } = await srAdmin
+      .from('admin_audit_logs')
+      .select('actor_id, action_type, severity, details')
+      .eq('target_id', target.id)
+      .eq('action_type', 'super_admin.mfa.reset');
+    expect(auditError).toBeNull();
+    expect(audits).toHaveLength(1);
+    expect(audits?.[0]).toMatchObject({
+      actor_id: actor.userId,
+      severity: 'critical',
+      details: {
+        reason: MFA_RESET_BODY.reason,
+        identity_check: 'video_call',
+        factors_before: factorsBefore,
+        backup_codes_before: unusedBefore,
+      },
+    });
+
+    // 対象の全セッションが終わっている (route の endUserSessions が無いと赤: admin.mfa.deleteFactor だけではセッションが終わらない §3.1)
+    for (const [label, old] of [
+      ['aal1', aal1],
+      ['aal2', aal2],
+    ] as const) {
+      expect((await apiCall('GET', '/api/auth/mfa/status', old.access_token)).status, label).toBe(HTTP_UNAUTHORIZED);
+      expect((await apiCall('GET', '/api/admin/users', old.access_token)).status, label).toBe(HTTP_UNAUTHORIZED);
+      const { error: refreshError } = await client(anonKey).auth.refreshSession({ refresh_token: old.refresh_token });
+      expect(refreshError, label).not.toBeNull();
+    }
+    expect((await countAuthSessionRows(target.id)).sessions).toBe(0);
+  });
+
+  it('M-15: operator_mfa_end_sessions は anon キーと、本人の JWT (一般の利用者・super_admin の aal2) からの rpc が 42501 で、対象の auth.sessions の行は残る。service_role の rpc は対象の auth.sessions の行数 (2) を返し、呼んだ後は auth.sessions と auth.refresh_tokens にその user_id の行が無い (S-36・§11.5)', async () => {
+    const actor = await ensureSuperAdmin();
+    const target = await createUser('m15-user', ['user']);
+    const first = await signIn(target);
+    await signIn(target);
+    expect(await countAuthSessionRows(target.id)).toEqual({ sessions: TARGET_SESSION_COUNT, refreshTokens: TARGET_SESSION_COUNT });
+
+    for (const [label, caller] of [
+      ['anon', client(anonKey)],
+      ['一般の利用者 (本人)', client(anonKey, first.session.access_token)],
+      ['super_admin の aal2', client(anonKey, actor.jwt)],
+    ] as const) {
+      const { error } = await caller.rpc('operator_mfa_end_sessions', { p_user_id: target.id });
+      expect(error?.code, label).toBe(PG_INSUFFICIENT_PRIVILEGE);
+    }
+    expect((await countAuthSessionRows(target.id)).sessions).toBe(TARGET_SESSION_COUNT);
+
+    const { data, error } = await srAdmin.rpc('operator_mfa_end_sessions', { p_user_id: target.id });
+    expect(error).toBeNull();
+    expect(data).toBe(TARGET_SESSION_COUNT);
+    expect(await countAuthSessionRows(target.id)).toEqual({ sessions: 0, refreshTokens: 0 });
+  });
+
+  it('M-16: operator_mfa_end_sessions は、サインインしていない利用者 (admin.createUser の直後) で 0 を返し error が null。p_user_id が null なら code 22023 のエラー (S-35)', async () => {
+    const target = await createUser('m16-user', ['admin']);
+    const { data, error } = await srAdmin.rpc('operator_mfa_end_sessions', { p_user_id: target.id });
+    expect(error).toBeNull();
+    expect(data).toBe(0);
+    const nullCall = await srAdmin.rpc('operator_mfa_end_sessions', { p_user_id: null });
+    expect(nullCall.error?.code).toBe(PG_INVALID_PARAMETER_VALUE);
   });
 });

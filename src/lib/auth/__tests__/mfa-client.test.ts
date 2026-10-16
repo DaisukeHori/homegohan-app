@@ -134,6 +134,8 @@ describe('段 A の 4 関数', () => {
       // 段 B (§14.4・§14.6)
       backupCodes: '/api/auth/mfa/backup-codes',
       factors: '/api/auth/mfa/factors',
+      // 段 C (§14.7)
+      superAdminAdmins: '/api/super-admin/admins',
     });
     const calls = fetchMock.mock.calls.map((call) => {
       const [path, init] = call as [string, RequestInit];
