@@ -895,6 +895,8 @@ $$);
 
 運営 (super_admin) が本人に代わって削除する画面・API は未実装。サポートから依頼を受けたときの扱いは operator/09-runbook.md §9.2 を参照。
 
+個人情報の消去の請求 (`data_subject_requests` の `request_type = 'erasure'`。cross/15-data-subject-requests.md) との関係は cross/15 §4.4 を canonical とする: 消去の請求の完了は本人の退会 (§16 の即時削除) で行い、請求の行は退会後も `user_id` が NULL になって残る。代理削除を実装したら、消去の請求の運営側の完了操作として接続する (cross/15 §21)。
+
 ---
 
 ## 17. テスト方針
@@ -930,5 +932,6 @@ $$);
 | 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱い | 済 (billing/01 §11) | 段階 billing / billing_recheck で即時解約と顧客の匿名化を行う (§16.2 の手順 4・§16.3) |
 | 削除の実行記録 (誰がいつ消したか) を何で残すか | 済 (#1562) | `gdpr_deletion_requests` に個人を特定できない形で残す (§16.4) |
 | `gdpr_deletion_requests` テーブルの廃止・用途変更 | 済 (#1562) | 削除の実行記録に当てた (§16.4) |
+| 運営による代理削除と、消去の請求 (cross/15) の運営側の完了操作 | TODO | 代理削除 (§16.5) を実装するときに接続する (cross/15 §4.4・§21) |
 | CloudSign API 連携の詳細設計 (法人電子締結) | TODO | operator/05-stripe-integration.md で定義 |
 | 旧バージョン利用規約の `docs/legal/archive/` 保管場所設定 | TODO | 初版リリース前 |

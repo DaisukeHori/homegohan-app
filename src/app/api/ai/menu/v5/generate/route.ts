@@ -21,6 +21,7 @@ import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RA
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { internalError } from '@/lib/api/errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { normalizeUuid } from '@/lib/http-params';
 
 // 受け付ける食事の区分 (5 値)。値と並びの正本は @homegohan/shared の MEAL_ORDER (#1631。手書きしない)
 const VALID_MEAL_TYPES: readonly MealType[] = MEAL_ORDER;
@@ -71,13 +72,17 @@ function validateTargetSlots(slots: unknown): { valid: boolean; slots: TargetSlo
       }
     }
 
-    const key = (typeof plannedMealId === 'string' ? plannedMealId : null) || `${date}:${mealType}`;
+    // UUID の形なら小文字にそろえてから使う (#1790)。Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の plannedMealId でも
+    // planned_meals の .in('id', ...) は自分の食事に当たるが、DB から読んだ id (小文字) との突き合わせ (foundIds / byId) が外れて
+    // plannedMealId が消され、既存の食事を置き換えない生成になる。同じ食事を大文字小文字だけ変えて 2 回送る重複もここで弾く
+    const normalizedPlannedMealId = typeof plannedMealId === 'string' ? normalizeUuid(plannedMealId) : undefined;
+    const key = normalizedPlannedMealId || `${date}:${mealType}`;
     if (seenKeys.has(key)) {
       return { valid: false, slots: [], error: `Duplicate slot at ${date}/${mealType}` };
     }
     seenKeys.add(key);
 
-    validated.push({ date, mealType, plannedMealId: typeof plannedMealId === 'string' ? plannedMealId : undefined });
+    validated.push({ date, mealType, plannedMealId: normalizedPlannedMealId });
   }
 
   // 日付の幅 (最も早い日〜最も遅い日) は、画面 (Web・モバイルの「期間を指定」) と同じ MENU_GENERATION_RANGE_MAX_DAYS 日まで (#1482)。
