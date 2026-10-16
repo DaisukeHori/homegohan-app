@@ -170,7 +170,7 @@
 1. ユーザーが Web/Mobile の「家族管理」メニューを開く
 2. 「家族グループを作成」ボタンをタップ
 3. グループ名 (例: 「田中家」)、説明 (任意) を入力
-4. プラン選択 (`free` 4 人まで / `family_basic` 4 人まで月額 1,480 円 / `family_pro` 8 人まで月額 2,480 円。詳細は 03 §7.2.7 公式 plan_key リスト)
+4. プランは選ばない (グループのプランは代表者の契約で決まる。家族プランは代表者が `/pricing` から買う。`docs/design/billing/01-billing-core.md` S20)。プランごとの人数の上限は `free` 4 人 / `family_basic` 4 人 / `family_pro` 8 人 (詳細は 03 §7.2.7 公式 plan_key リスト)
 5. 「作成」ボタン → API `POST /api/family/groups`
 6. 作成完了画面に「家族メンバーを招待しよう!」のフォロー UI
 
@@ -377,7 +377,7 @@
 - グループ名 (必須、1-100 文字)
 - 説明 (任意、500 文字以内)
 - アイコン画像 (任意、デフォルトは家族アイコン)
-- プラン選択 (無料 / 家族プラン)
+- プランは選ばない (グループのプランは代表者の契約で決まる。家族プランは代表者が `/pricing` から買う。`docs/design/billing/01-billing-core.md` S20)
 
 **編集**
 - オーナーのみ
@@ -1653,7 +1653,7 @@ CREATE POLICY family_meal_requests_no_insert_when_frozen ON family_meal_requests
 
 #### 9.1.2 `/family/create`
 - グループ名・説明・アイコン入力フォーム
-- プラン選択 (無料 / 有料)
+- プランは選ばない (グループのプランは代表者の契約で決まる。家族プランは代表者が `/pricing` から買う。`docs/design/billing/01-billing-core.md` S20)
 - 「作成」ボタン → 完了後 `/family/{id}` にリダイレクト
 
 #### 9.1.3 `/family/{id}` (グループ詳細)
@@ -2018,7 +2018,7 @@ ALTER TABLE notification_preferences ADD COLUMN IF NOT EXISTS preferences JSONB
 
 **確認事項**:
 - 既存稼働: iOS のみ Apple Configurator 2 + TestFlight (`hori@hori.tech` アカウント)
-- Android: 未確認 → `notify-push` Edge Function 実装前に確認必要
+- Android: 未確認 → `mobile/06-push-send.md` の worker (`GET /api/cron/push-outbox`) の本番投入の前に確認が必要
 - Expo Push Token は両 OS 対応するが、内部的には APNs / FCM へ振り分け
 
 **新規 EAS Secret 設定**:
