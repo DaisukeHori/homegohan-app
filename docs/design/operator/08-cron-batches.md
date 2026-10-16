@@ -141,17 +141,14 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | ジョブ名 | スケジュール | 概要 |
 |---------|-----------|------|
 | `license_expire_batch` | daily 02:00 UTC | ライセンス期限切れ処理 |
-| `family_freeze_grace_batch` | daily 03:00 UTC | 家族グループ凍結猶予チェック |
-| `family_archive_purge_batch` | daily 04:00 UTC | 解散グループの物理削除 (90 日後) |
-| `meal_request_expire_batch` | hourly :00 | 期限切れ食事リクエスト処理 |
-| `data_integrity_check` | daily 03:30 UTC | データ整合性確認 |
 | `license_used_count_reconcile` | monthly 01 04:00 UTC | ライセンス使用数照合 |
 | `infra_metrics_cleanup` | daily 05:00 UTC | 30 日超の infra_metrics 削除 |
 | `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出 |
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 | `update-org-challenge-progress` | daily 18:10 UTC (03:10 JST) | 組織チャレンジの進み具合 (current_value) と順位 (rank) を食事の記録から計算し、終了日 (JST) を過ぎたチャレンジを completed にする (`update_org_challenge_progress()`。#1132。詳細は `org/07-challenge.md` §15)。completed にする UPDATE で平均が確定する (トリガー `trg_org_challenge_finalize`。migration `20261016240000_org_challenge_diff_privacy.sql:227`〜`:231`。#1688) |
 
-> **2026-10-16 時点の状態**: 上の 10 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 9 本は、どれも migration で登録していない (§4 の関数 7 本は本番に無い)。
+> **2026-10-16 時点の状態**: 上の 6 本のうち `update-org-challenge-progress` (#1132。migration `20261014100100_org_challenge_progress.sql`) のほかの 5 本は、どれも migration で登録していない (§4 の関数 3 本は本番に無い)。
+> `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 本は、operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (operator/11 §5.4。保存期間の確認の後)。
 > `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
 > `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` の 11 つ (§3.0)。
@@ -193,22 +190,6 @@ GRANT USAGE ON SCHEMA cron TO postgres;
 -- ジョブ登録
 SELECT cron.schedule('license_expire_batch', '0 2 * * *', $$
   SELECT process_license_expire();
-$$);
-
-SELECT cron.schedule('family_freeze_grace_batch', '0 3 * * *', $$
-  SELECT process_family_freeze_grace_to_archive();
-$$);
-
-SELECT cron.schedule('family_archive_purge_batch', '0 4 * * *', $$
-  SELECT process_family_archive_purge();
-$$);
-
-SELECT cron.schedule('meal_request_expire_batch', '0 * * * *', $$
-  SELECT process_meal_request_expire();
-$$);
-
-SELECT cron.schedule('data_integrity_check', '30 3 * * *', $$
-  SELECT run_data_integrity_check();
 $$);
 
 SELECT cron.schedule('license_used_count_reconcile', '0 4 1 * *', $$
@@ -286,154 +267,19 @@ $$ LANGUAGE plpgsql;
 
 ### 4.3 `family_freeze_grace_batch` — 家族グループ凍結猶予チェック
 
-```sql
-CREATE OR REPLACE FUNCTION process_family_freeze_grace_to_archive()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  archived_count INT := 0;
-  _group RECORD;
-BEGIN
-  -- 凍結猶予 (freeze_grace_until) が切れた family_groups を archived に変更 (frozen → archived 遷移のみ)
-  FOR _group IN
-    SELECT id, owner_id FROM family_groups
-    WHERE status = 'frozen'
-      AND freeze_grace_until IS NOT NULL
-      AND freeze_grace_until <= NOW()
-  LOOP
-    UPDATE family_groups
-    SET status = 'archived', archived_at = NOW()
-    WHERE id = _group.id;
-
-    archived_count := archived_count + 1;
-
-    -- org/05-offboarding-flow.md §8 から統合: owner の個人プラン確認 → auto-migrate
-    -- カード登録済なら個人プランへ自動移行 (source_org_assignment_id を NULL に)
-    -- カード未登録なら Free に降格
-    -- 通知を pg_notify 経由で送信 (Edge Function が受信してメール/Push を送る)
-    PERFORM pg_notify(
-      'family_group_archived',
-      jsonb_build_object(
-        'group_id', _group.id,
-        'owner_id', _group.owner_id,
-        'reason',   'freeze_grace_expired'
-      )::TEXT
-    );
-  END LOOP;
-
-  RAISE NOTICE 'family_freeze_grace_batch: % groups archived', archived_count;
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `family_freeze_grace_batch` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。
 
 ### 4.4 `family_archive_purge_batch` — 解散グループの物理削除 (90 日後)
 
--- 責務の分離:
--- - process_family_freeze_grace_to_archive (org/05): frozen → archived 遷移のみ
--- - process_family_archive_purge (本関数): archived から 90 日後の物理削除のみ
-
-```sql
-CREATE OR REPLACE FUNCTION process_family_archive_purge()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  purge_count INT;
-BEGIN
-  -- archived_at から 90 日経過した family_groups を物理削除 (frozen → archived 遷移は行わない)
-  -- CASCADE で関連テーブルも削除される
-  DELETE FROM family_groups
-  WHERE status = 'archived'
-    AND archived_at <= NOW() - INTERVAL '90 days';
-
-  GET DIAGNOSTICS purge_count = ROW_COUNT;
-  RAISE NOTICE 'family_archive_purge_batch: % groups purged', purge_count;
-
-  -- 監査ログ (service_role で挿入)
-  INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-  VALUES (
-    '00000000-0000-0000-0000-000000000000',  -- SYSTEM_USER_ID
-    'system.family.archive_purge',
-    'info',
-    jsonb_build_object('purge_count', purge_count, 'executed_at', NOW())
-  );
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `family_archive_purge_batch` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。解散した家族の物理削除は、pg_cron のジョブ `purge-dissolved-family-groups` として operator/11 §5.4 で設計した (解散から 90 日を過ぎた行を消す。保存期間と消す範囲の確認の後に着手する)。
 
 ### 4.5 `meal_request_expire_batch` — 期限切れ食事リクエスト
 
-```sql
-CREATE OR REPLACE FUNCTION process_meal_request_expire()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-BEGIN
-  UPDATE family_meal_requests
-  SET status = 'expired'
-  WHERE status IN ('pending', 'proposed')
-    AND expires_at IS NOT NULL
-    AND expires_at <= NOW();
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `meal_request_expire_batch` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。
 
 ### 4.6 `data_integrity_check` — データ整合性確認
 
-```sql
-CREATE OR REPLACE FUNCTION run_data_integrity_check()
-RETURNS void
-SECURITY DEFINER
-SET search_path = public
-AS $$
-DECLARE
-  orphan_count INT;
-BEGIN
-  -- 1. personal_subscriptions で plan_key が存在しないレコードをチェック
-  SELECT COUNT(*) INTO orphan_count
-  FROM personal_subscriptions ps
-  WHERE NOT EXISTS (
-    SELECT 1 FROM subscription_plans sp WHERE sp.plan_key = ps.plan_key
-  );
-
-  IF orphan_count > 0 THEN
-    INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-    VALUES (
-      '00000000-0000-0000-0000-000000000000',
-      'system.integrity.orphan_subscriptions',
-      'critical',
-      jsonb_build_object('count', orphan_count)
-    );
-    -- pg_notify で Slack 通知 (trigger 経由)
-  END IF;
-
-  -- 2. active な personal_subscriptions の重複チェック
-  SELECT COUNT(*) INTO orphan_count
-  FROM (
-    SELECT user_id, COUNT(*) cnt
-    FROM personal_subscriptions
-    WHERE status IN ('trialing', 'active', 'paused', 'past_due')
-    GROUP BY user_id HAVING COUNT(*) > 1
-  ) dups;
-
-  IF orphan_count > 0 THEN
-    INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-    VALUES (
-      '00000000-0000-0000-0000-000000000000',
-      'system.integrity.duplicate_active_subscriptions',
-      'critical',
-      jsonb_build_object('dup_user_count', orphan_count)
-    );
-  END IF;
-
-  RAISE NOTICE 'data_integrity_check completed at %', NOW();
-END;
-$$ LANGUAGE plpgsql;
-```
+この節の `data_integrity_check` はoperator/11 §2.2 の仕分けで 08 の計画から外した (発生源が無い・制約が守る。コードは残さない)。
 
 ### 4.7 `license_used_count_reconcile` — ライセンス使用数月次照合
 
