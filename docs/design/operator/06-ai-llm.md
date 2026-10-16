@@ -430,7 +430,7 @@ supabase/functions/
 | `analyze-health-checkup` | Gemini 2.0 Flash | JWT | ✓ | 健診 PDF→数値 OCR |
 | `analyze-weight-scale` | Gemini 2.0 Flash Lite | JWT | ✓ | 体重計 OCR |
 | `stripe-price-sync` | - | Service Role | - | Stripe Price 同期 |
-| `notify-push` | - | Service Role | - | Expo Push 一斉送信 |
+| `notify-push` | - | - | - | 作らない (`mobile/06-push-send.md`。Push 通知の送信は Next の worker `GET /api/cron/push-outbox` で、AI を使わない) |
 | `notify-email` | - | Service Role | - | Resend 一斉送信 |
 | `scan-file` | - | Service Role | - | ClamAV ウイルススキャン |
 
