@@ -41,6 +41,8 @@ const NON_AI_HOSTS: Record<string, string> = {
   'api.stripe.com': '決済 (Stripe)',
   'dashboard.stripe.com': '決済 (Stripe) の管理画面へのリンク',
   'api.resend.com': 'メールの送信 (Resend)',
+  'exp.host':
+    'Push 通知の送信 (Expo Push Service。#1136)。送るのは端末の token・固定の文面・画面のパス・依頼 ID だけで、利用者のデータは送らない',
   'challenges.cloudflare.com':
     'ボット対策 (Cloudflare Turnstile。#1165)。画面のウィジェットの api.js と、サーバーでのトークンの確認 (siteverify)。送るのはトークンと IP アドレスだけで、利用者のデータは送らない',
   'eu.i.posthog.com': '利用状況の計測の残り (#1166 で外した設定の値)',

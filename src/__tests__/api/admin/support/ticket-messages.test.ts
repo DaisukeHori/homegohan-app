@@ -271,20 +271,13 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
     expect(everything).not.toContain('返金トラブル');
   });
 
-  it('送信ログ (email_delivery_logs) を実在する列で service role から残す', async () => {
+  it('送信ログ (email_delivery_logs) は書かない。sendEmail に userId (チケットの user_id) を渡す', async () => {
     await postExternal();
 
-    expect(mockAdminInsert).toHaveBeenCalledTimes(1);
-    expect(mockAdminInsert).toHaveBeenCalledWith('email_delivery_logs', {
-      user_id: CUSTOMER_ID,
-      email: CUSTOMER_EMAIL,
-      template: 'support_ticket_reply',
-      resend_message_id: 're_abc123',
-      status: 'sent',
-      metadata: { ticket_id: TICKET_ID, message_id: MESSAGE_ID },
-    });
-    // ユーザー権限のクライアント (INSERT ポリシーが無い) では書かない
+    // #1193 送信の記録は送信待ち (email_outbox。sendEmail が登録する) にあり、email_delivery_logs には書かない
+    expect(mockAdminInsert).not.toHaveBeenCalled();
     expect(userDb.calls.some((c) => c.table === 'email_delivery_logs')).toBe(false);
+    expect(mockSendEmail.mock.calls[0][1]).toEqual({ userId: CUSTOMER_ID });
   });
 
   it('SUPPORT_REPLY_TO があれば reply_to に付ける', async () => {
@@ -408,22 +401,6 @@ describe('POST /api/admin/support/tickets/[id]/messages: 顧客向けの返信 (
       expect(json.email).toEqual({ status: 'failed', reason: 'no_recipient' });
       expect(mockSendEmail).not.toHaveBeenCalled();
       expect(mockLogError).toHaveBeenCalledTimes(1);
-    });
-
-    it('送信ログの INSERT が失敗しても (supabase-js は { error } を返す) 201 + email.status=sent。失敗を記録する', async () => {
-      mockAdminInsert.mockResolvedValue({ error: { message: 'permission denied', code: '42501' } });
-
-      const res = await postExternal();
-      const json = await res.json();
-
-      expect(res.status).toBe(201);
-      expect(json.email).toEqual({ status: 'sent' });
-      expect(mockSendEmail).toHaveBeenCalledTimes(1);
-      expect(mockLogError).toHaveBeenCalledWith(
-        expect.stringContaining('delivery log insert failed'),
-        expect.anything(),
-        { ticket_id: TICKET_ID, message_id: MESSAGE_ID },
-      );
     });
 
     it('メールが送れなくても初回応答 (first_response_at) の記録は残る', async () => {

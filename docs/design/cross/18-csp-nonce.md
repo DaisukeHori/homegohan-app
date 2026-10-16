@@ -3,6 +3,7 @@
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-16 | 新設 (Issue #1169 の設計ゲート・A 型 4 相) |
+| v1.1 | 2026-10-16 | #1769 の追随: connect-src に祝日の API のオリジン (`HOLIDAYS_API_ORIGIN` = `https://holidays-jp.github.io`) を足す (§9.1・§12.2) |
 
 要件の正本は Issue #1169 の本文 (コメント 0 件)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/18 (cross/ の既存は 01〜09・12・13a・14・15。16 は同じ時期の別の設計 (ログイン履歴・セッション #1190)、17 はバックアップの設計が使う)。
@@ -327,6 +328,13 @@ export const CSP_NONCE_PATTERN = /^[A-Za-z0-9+\/]+={0,2}$/;
  * コメントでも二重引用符で囲んだ frame-src の例を書かない。src/__tests__/lib/security/csp.test.ts が 1 か所だけであることを見張る)
  */
 export const CSP_TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+/**
+ * 日本の祝日の一覧 (公開情報) を返す API のオリジン (#1769)。週間献立 (/menus/weekly) がブラウザから
+ * `${HOLIDAYS_API_ORIGIN}/api/v1/<年>/date.json` を fetch するので、connect-src に足す。
+ * 取得の URL は src/app/(main)/menus/weekly/_state/japaneseHolidays.ts がこの定数から組み立てる (2 か所の値がずれないように)。
+ * 送るのは年だけで、利用者のデータは送らない (tests/ai-consent-provider-inventory.test.ts の NON_AI_HOSTS)
+ */
+export const HOLIDAYS_API_ORIGIN = 'https://holidays-jp.github.io';
 /** CSP_REPORT_ONLY を有効とみなす唯一の値 (lib/legal-consent.ts の LEGAL_CONSENT_FLAG_ON と同じ読み方) */
 const CSP_REPORT_ONLY_FLAG_ON = 'on';
 /** Supabase のクラウド (本番) のホストの末尾。これ以外 (ローカルの Supabase) のときだけ origin を方針に足す */
@@ -394,8 +402,8 @@ export function buildContentSecurityPolicy(input: CspBuildInput): string {
     "frame-src 'self' https://challenges.cloudflare.com",
     "style-src 'self' 'unsafe-inline'",
     `img-src 'self' data: blob: *.supabase.co images.unsplash.com${supabaseImgSrc}`,
-    // #1166: PostHog の送信先は許可しない
-    `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co${supabaseConnectSrc}`,
+    // #1166: PostHog の送信先は許可しない。#1769: 週間献立の祝日の取得 (HOLIDAYS_API_ORIGIN)
+    `connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co ${HOLIDAYS_API_ORIGIN}${supabaseConnectSrc}`,
     "frame-ancestors 'none'",
     "font-src 'self'",
     "object-src 'none'",
@@ -1240,7 +1248,8 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 | CSP の置き場 | `next.config.mjs` `headers()` の `'/(.*)'` (静的な文字列) | `src/lib/security/csp.ts` (純関数) + `src/middleware.ts` (毎リクエスト)。`next.config.mjs` には無い |
 | `script-src` | `'self' 'unsafe-inline' [dev: 'unsafe-eval'] *.vercel-scripts.com https://challenges.cloudflare.com` | `'self' 'nonce-<24 文字>' [dev: 'unsafe-eval'] 'report-sample' *.vercel-scripts.com https://challenges.cloudflare.com` |
 | `style-src` | `'self' 'unsafe-inline'` | 同じ (据え置き) |
-| `default-src` / `frame-src` / `img-src` / `connect-src` / `frame-ancestors` / `font-src` / `object-src` | 現行の値 | 同じ |
+| `default-src` / `frame-src` / `img-src` / `frame-ancestors` / `font-src` / `object-src` | 現行の値 | 同じ |
+| `connect-src` | `'self' *.supabase.co *.vercel.app wss://*.supabase.co` (+ ローカルの Supabase の origin) | `https://holidays-jp.github.io` (`HOLIDAYS_API_ORIGIN`) を足す (#1769。週間献立の祝日の取得がブラウザに止められていた)。ほかの許可先は同じ |
 | 報告 | 無し | `report-uri /api/csp-report` → `app_logs` (warn / `csp-report`) |
 | 報告だけ (report-only) | 無し | `CSP_REPORT_ONLY=on` でヘッダー名が変わる |
 | CSP が付く応答 | `headers()` が当たる全応答 (matcher の外も) | middleware の全応答 (matcher の外には付かない: §22 Q-4) |

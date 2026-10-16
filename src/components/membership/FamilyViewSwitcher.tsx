@@ -8,6 +8,7 @@ import React, { useState, useCallback } from 'react';
 import { ChevronDown, X, Users, User } from 'lucide-react';
 import type { FamilyMember } from '@/schemas/membership';
 import type { FamilyViewState, FamilyViewPreset } from '@/hooks/useFamilyView';
+import { FAMILY_MEMBER_NAME_FALLBACK } from '@/lib/membership/family-member-names';
 
 // アバター色パレット (設計書 §11.1)
 const AVATAR_COLORS = [
@@ -37,14 +38,22 @@ const PRESET_LABELS: Record<FamilyViewPreset, string> = {
   custom: 'カスタム',
 };
 
-function getMemberColor(index: number, avatarColor?: string): string {
+/**
+ * アバターの色 (avatar_color があればそれ、無ければ active な一覧の中の順で AVATAR_COLORS を回す)。
+ * 家族の献立の行 (FamilyMenuRows) も同じ決め方で描く (docs/design/family/10-family-menu-view.md §16.2)
+ */
+export function getMemberColor(index: number, avatarColor?: string): string {
   if (avatarColor) return avatarColor;
   return AVATAR_COLORS[index % AVATAR_COLORS.length];
 }
 
-function getMemberDisplayName(member: FamilyMember): string {
+/**
+ * 画面に出す名前。display_name は page.tsx が applyFamilyMemberNames で GET /api/family/members/names の名前を当てたもの
+ * (部品は API を呼ばない)。無ければ家族の 4 画面と同じ「名前未設定」(docs/design/family/10-family-menu-view.md §16.3)
+ */
+export function getMemberDisplayName(member: Pick<FamilyMember, 'display_name'>): string {
   if (member.display_name) return member.display_name;
-  return 'メンバー';
+  return FAMILY_MEMBER_NAME_FALLBACK;
 }
 
 export function FamilyViewSwitcher({
@@ -270,6 +279,9 @@ export function FamilyViewSwitcher({
                       )}
                       {member.role === 'child' && (
                         <span className="ml-1 text-xs text-gray-400">(子供)</span>
+                      )}
+                      {member.share_menu === false && (
+                        <span className="ml-1 text-xs text-gray-400">(献立は非公開)</span>
                       )}
                     </span>
                     {/* チェックボックス */}

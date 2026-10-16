@@ -1,10 +1,14 @@
 import { createLogger } from '@/lib/db-logger';
 import { checkRateLimit, rateLimitExceededResponse, type RateLimitResult } from '@/lib/rate-limit';
-import { getEmailFrom } from '@/lib/site-config';
+import { getSiteUrl } from '@/lib/site-config';
 import { createClient } from '@/lib/supabase/server';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { sendEmail } from '@/lib/emails/send';
+import { isEmailFailure } from '@/lib/emails/send-result';
+import { maskEmailAddress } from '@/lib/emails/outbox';
+import { renderContactAdminNotificationEmail } from '@/lib/emails/support/contact-admin-notification';
 
 // #1044 (F6-19): 入力を Zod で厳密検証する
 const contactInquirySchema = z.object({
@@ -20,6 +24,15 @@ const contactInquirySchema = z.object({
 const INQUIRY_SAFE_COLUMNS =
   'id, inquiry_type, subject, message, status, created_at, updated_at, resolved_at';
 
+/** サポートの画面のお問い合わせの一覧 (src/app/(support)/support/inquiries/page.tsx) のパス */
+const SUPPORT_INQUIRIES_PATH = '/support/inquiries';
+
+/**
+ * 運営 (ADMIN_NOTIFICATION_EMAIL) へお問い合わせが届いたことを知らせる (#1193)。
+ * Resend を直接呼ばず、sendEmail で送信待ち (email_outbox) に登録する (送るのは worker: 記録・再試行・dead の通知・再送が効く)。
+ * 問い合わせた人のメールアドレスは本文にマスクした形だけを載せ、全体はサポートの画面 (/support/inquiries) で見る
+ * (docs/design/operator/10-logs-and-mail-retry.md §6.6)。
+ */
 async function sendAdminNotification(inquiry: {
   id: string;
   inquiry_type: string;
@@ -27,46 +40,27 @@ async function sendAdminNotification(inquiry: {
   subject: string;
   message: string;
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
+  const logger = createLogger('contact');
   const adminEmail = process.env.ADMIN_NOTIFICATION_EMAIL;
-
-  if (!apiKey || !adminEmail) {
-    console.error('Admin notification skipped: RESEND_API_KEY or ADMIN_NOTIFICATION_EMAIL not set');
+  if (!adminEmail) {
+    // 問い合わせは保存済み。通知の宛先が無いことだけを残す (変数名はログにだけ書く)
+    logger.warn('ADMIN_NOTIFICATION_EMAIL が未設定のため、お問い合わせの通知メールを送りません', { inquiry_id: inquiry.id });
     return;
   }
-
-  try {
-    const res = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        // 送信元は EMAIL_FROM (未設定なら既定値)。ほかのメールと同じく src/lib/site-config.ts で決める (#1194)
-        from: getEmailFrom(),
-        to: [adminEmail],
-        subject: `[お問い合わせ] ${inquiry.subject}`,
-        text: [
-          '新しいお問い合わせが届きました。',
-          '',
-          `ID: ${inquiry.id}`,
-          `種別: ${inquiry.inquiry_type}`,
-          `送信者: ${inquiry.email}`,
-          `件名: ${inquiry.subject}`,
-          '',
-          '--- 内容 ---',
-          inquiry.message,
-        ].join('\n'),
-      }),
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error('Admin notification failed:', res.status, body);
-    }
-  } catch (err) {
-    console.error('Admin notification error:', err);
+  // sendEmail は例外を投げない (R-01)。鍵が無いとき (skipped) は sendEmail が warn を残す
+  const result = await sendEmail(
+    renderContactAdminNotificationEmail({
+      to_email: adminEmail,
+      inquiry_id: inquiry.id,
+      inquiry_type: inquiry.inquiry_type,
+      sender_masked: maskEmailAddress(inquiry.email),
+      subject: inquiry.subject,
+      message: inquiry.message,
+      inquiries_url: `${getSiteUrl()}${SUPPORT_INQUIRIES_PATH}`,
+    }),
+  );
+  if (isEmailFailure(result)) {
+    logger.warn('お問い合わせの通知メールを送信待ちに登録できませんでした', { inquiry_id: inquiry.id, error_code: result.error.code });
   }
 }
 
