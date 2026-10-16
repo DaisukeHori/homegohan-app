@@ -254,6 +254,8 @@ beforeAll(async () => {
     role: 'child',
     display_name: `F-child-${TS}`,
     child_profile: { birth_year: 2018 },
+    // #1173 (cross/14): アカウントの無い子供の行は生年月日が必須 (family_members_child_birth_date_required)
+    birth_date: '2018-04-01',
     status: 'active',
   });
   promoChildOffId = await insertMember({
@@ -262,6 +264,8 @@ beforeAll(async () => {
     role: 'child',
     display_name: `F-promo-off-${TS}`,
     child_profile: { birth_year: 2012 },
+    // #1173 (cross/14): アカウントの無い子供の行は生年月日が必須 (family_members_child_birth_date_required)
+    birth_date: '2012-04-01',
     status: 'active',
   });
   promoChildOnId = await insertMember({
@@ -270,6 +274,8 @@ beforeAll(async () => {
     role: 'child',
     display_name: `F-promo-on-${TS}`,
     child_profile: { birth_year: 2012 },
+    // #1173 (cross/14): アカウントの無い子供の行は生年月日が必須 (family_members_child_birth_date_required)
+    birth_date: '2012-04-01',
     status: 'active',
   });
   removedMemberId = await insertMember({
