@@ -5,7 +5,8 @@
  * RLS で拒まれる・正当な INSERT は通る) は、tests/integration/rls/org-challenge-progress.test.ts (H)・
  * tests/integration/rls/challenge-participants-org-scope.test.ts (#1600 INSERT)・tests/integration/security/org-challenges-api.test.ts (D)
  * が確かめる。ここでは、番号の付け直しや写し間違いで崩れやすい所を、ファイルの文面だけで確かめる。
- *   1. get_org_challenge_aggregates を最後に定義する migration が本 migration で、1 つ前は #1132 の migration
+ *   1. get_org_challenge_aggregates を本 migration の 1 つ前に定義したのは #1132 の migration で、本 migration の次に定義するのは
+ *      #1688 の *_org_challenge_diff_privacy.sql (集計を控えの表から返す形に作り直した) で、それ以外に無い
  *   2. 本 migration の定義は、1 つ前の定義の写しで、変えたのは最小人数 (5 → 10) だけ。権限 (service_role だけ) も流し直す
  *   3. 参加の INSERT ポリシー「Users can join challenges」を最後に作るのが本 migration で、元の条件 (本人・自分の組織・進捗 0・順位なし) と、
  *      API と同じ条件 (開催中・使える種類・終了日 (JST)・部署の限定) を持つ
@@ -24,6 +25,8 @@ const BASELINE = 'supabase/baseline/prod_schema.sql';
 const STEM_SUFFIX = '_org_challenge_min10_join_policy';
 /** 本 migration の 1 つ前に get_org_challenge_aggregates を定義した migration の名前の末尾 (#1132)。ロールバックの戻す先 */
 const PREVIOUS_STEM_SUFFIX = '_org_challenge_progress';
+/** 本 migration の次に get_org_challenge_aggregates を定義した migration の名前の末尾 (#1688。集計を控えの表から返す) */
+const NEXT_STEM_SUFFIX = '_org_challenge_diff_privacy';
 const FUNCTION_NAME = 'get_org_challenge_aggregates';
 const POLICY_NAME = 'Users can join challenges';
 /** #1600 の前の最小人数 (#1132) と、#1600 の最小人数 (要件書 §6.4 の匿名化集計の最低人数) */
@@ -78,9 +81,13 @@ const filesMatching = (pattern: RegExp): string[] =>
   migrationFiles().filter((f) => pattern.test(stripComments(read(`${MIGRATIONS_DIR}/${f}`))));
 
 describe('#1600 migration: get_org_challenge_aggregates の最小人数だけを 10 人にする', () => {
-  it('get_org_challenge_aggregates を最後に定義するのは本 migration で、1 つ前は #1132 の migration', () => {
+  it('get_org_challenge_aggregates を本 migration の次に定義するのは *_org_challenge_diff_privacy.sql (#1688) で、それ以外に無い。1 つ前は #1132 の migration', () => {
     const defining = filesMatching(definesFunction);
-    expect(defining.slice(-2)).toEqual([`${stemOf(PREVIOUS_STEM_SUFFIX)}.sql`, `${stemOf(STEM_SUFFIX)}.sql`]);
+    expect(defining.slice(-3)).toEqual([
+      `${stemOf(PREVIOUS_STEM_SUFFIX)}.sql`,
+      `${stemOf(STEM_SUFFIX)}.sql`,
+      `${stemOf(NEXT_STEM_SUFFIX)}.sql`,
+    ]);
   });
 
   it('本 migration の定義は、1 つ前の定義の写しで、最小人数 (cfg.min_participants) だけを 5 → 10 にした', () => {

@@ -22,13 +22,19 @@ export interface OrgMemberContext {
     organization_id: string;
     /** 所属している部署。部署を限定したチャレンジに参加できるかの判定に使う。未所属なら null */
     department_id: string | null;
+    /**
+     * 組織の役割 (DB の org_role_enum: owner / admin / member)。未設定なら null。
+     * チャレンジの順位表を伏せる判定 (src/lib/org-challenge-privacy.ts の canViewChallengeRanking) が文字列で受ける (#1688)。
+     * 認可の層からチャレンジの lib を import しないため、型は string のまま
+     */
+    org_role: string | null;
   };
 }
 
 /**
  * ログイン中のユーザーが、いずれかの組織に所属していることを確認する。
  *
- * @returns 認証済みユーザーと、その所属組織・部署
+ * @returns 認証済みユーザーと、その所属組織・部署・組織の役割
  * @throws AuthError      (401 相当) - 未認証の場合
  * @throws ForbiddenError (403 相当) - 組織に所属していない場合 (プロフィールが無い場合を含む)
  * @throws Error                     - プロフィールを読めなかった場合 (DB の障害。呼び出し側の catch で 500 にして記録する)
@@ -45,7 +51,7 @@ export async function requireOrgMember(): Promise<OrgMemberContext> {
 
   const { data, error } = await supabase
     .from('user_profiles')
-    .select('organization_id, department_id')
+    .select('organization_id, department_id, org_role')
     .eq('id', user.id)
     .maybeSingle();
   if (error) {
@@ -53,7 +59,11 @@ export async function requireOrgMember(): Promise<OrgMemberContext> {
     throw new Error(`user_profiles の取得に失敗しました: ${error.message}`);
   }
 
-  const profile = data as { organization_id?: string | null; department_id?: string | null } | null;
+  const profile = data as {
+    organization_id?: string | null;
+    department_id?: string | null;
+    org_role?: string | null;
+  } | null;
   if (!profile?.organization_id) {
     throw new ForbiddenError('PERM_NOT_ORG_MEMBER', '組織に所属していません');
   }
@@ -63,6 +73,7 @@ export async function requireOrgMember(): Promise<OrgMemberContext> {
     profile: {
       organization_id: profile.organization_id,
       department_id: profile.department_id ?? null,
+      org_role: profile.org_role ?? null,
     },
   };
 }
