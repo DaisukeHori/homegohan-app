@@ -313,6 +313,8 @@ const CRON_ENTRYPOINTS: Record<string, string> = {
   'vercel:/api/cron/process-menu-queue': 'キューに積まれた献立生成を実行する (積む時点で記録済み。キューは利用者から書けない: AI_QUEUE_TABLES / #1465)',
   // #1157 本番のエラーの急増 (app_logs の件数) を運用メールで知らせる。import は cron の認証・ログ・Supabase・メールだけ
   'vercel:/api/cron/app-log-alerts': 'アプリのエラーの急増を運用メールで知らせる (AI を使わない)',
+  // #1136 Push 通知の送信待ち (push_outbox) を Expo に送る worker。import は cron の認証・ログ・Supabase・Expo への fetch だけ
+  'vercel:/api/cron/push-outbox': 'Push 通知の送信待ちを Expo に送る (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
   // #1538 運営が隠してから 90 日を過ぎた食事・レシピと画像を消す。import は認証・ログ・Supabase と完全削除の本体だけ
   'pg_cron:purge-hidden-content': '運営が隠したコンテンツの完全削除 (AI を使わない)',

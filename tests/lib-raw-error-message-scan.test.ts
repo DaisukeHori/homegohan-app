@@ -67,6 +67,10 @@ const ALLOWED: Record<string, { count: number; reason: string }> = {
     reason:
       'Resend の送信の失敗 (EmailSendError の材料)。呼び出し側は isEmailFailure のとき例外にして catch で警告ログにだけ残す。DB のエラー文ではない',
   },
+  'src/lib/push/expo-transport.ts': {
+    count: 1,
+    reason: '通信エラーの文を行の last_error_message に残すだけで、応答の本文には出さない (route は summary だけを返す)',
+  },
   'src/lib/report-boundary-error.ts': {
     count: 1,
     reason: '画面 (ブラウザ) のエラー境界が、捕まえた例外をサーバーのログへ送る (logToServer) 値。応答の本文ではない',

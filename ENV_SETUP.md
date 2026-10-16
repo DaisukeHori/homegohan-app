@@ -389,6 +389,29 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 
 ---
 
+## 🔔 Push 通知の送信（`EXPO_ACCESS_TOKEN`）
+
+アプリの端末に、サーバーから Push 通知を送ります（#1136。設計は [`docs/design/mobile/06-push-send.md`](docs/design/mobile/06-push-send.md)）。いま送るのは、2 日以上の範囲の献立の生成が終わったとき（できた / 作れなかった）の 2 種類です。生成の結果を DB のトリガーが送信待ちの表 `push_outbox` に積み、Vercel Cron が毎分 `GET /api/cron/push-outbox` を呼んで Expo Push Service に送ります。
+
+| 環境変数 | 例 | 役割 | 未設定のときの動き |
+|---|---|---|---|
+| `EXPO_ACCESS_TOKEN` | （Expo の画面で作った値） | Expo Push Service のアクセストークン（サーバー専用・秘密）。Expo に送る要求に `Authorization: Bearer` で付ける | Push 通知を送らない。cron は warn ログを 1 行残し、掃除だけをする（24 時間を超えた送信待ちの行を `expired` にし、送信済みは 7 日・届けられなかった行は 30 日で消す） |
+| `PUSH_OUTBOX_MAX_ATTEMPTS`（任意） | `5` | 試行の上限。これだけ失敗したら届けられなかった（`dead`）にする。1〜10 の整数 | 既定の 3 回（1 分・5 分・15 分の間隔で再試行）。整数でない・範囲外の値も既定値に戻し、`cron/push-outbox` の warn ログに変数名だけを残す |
+| `PUSH_OUTBOX_BATCH_SIZE`（任意） | `200` | 1 回の cron（毎分）で取り出して送る件数の上限。1〜500 の整数 | 既定の 100 件。不正な値は既定値に戻す（試行の上限と同じ） |
+
+**アクセストークンの作り方と、Enhanced push security を ON にする手順（オーナー作業）**
+
+1. [expo.dev](https://expo.dev) にログインし、アプリの Expo プロジェクトの設定で **Enhanced push security** を ON にする。ON にすると、アクセストークンを付けない送信の要求を Expo が `UNAUTHORIZED` で断る（push token を知っている第三者が通知を送れなくなる）。
+2. `expo.dev/settings/access-tokens` でアクセストークンを作る。
+3. Vercel の Project Settings > Environment Variables に `EXPO_ACCESS_TOKEN` として入れる（production / preview）。値はチャットやコマンドの履歴に残さない。ローカルで試すときは `.env.local` に入れる。
+
+- 送る直前に、凍結中・現行の規約に未同意（`LEGAL_CONSENT_ENFORCE` が on のとき）・通知を切った（`notification_preferences.notifications_enabled = false`）利用者には送らない（その行は `dead`）。メンテナンス中は何もしない。
+- `app_logs`（`/super-admin/logs` で `function_name` に `cron/push-outbox` を指定）に、処理した回の件数と、届けられなかった行の理由（種類・利用者 ID・token の末尾 4 文字）が残る。通知の文面と token の全体は残さない。
+- Android の端末へ届くには、EAS に FCM V1 の資格情報を登録する必要がある（未登録の間は Android だけ `InvalidCredentials` で届かず、iOS には届く）。
+- 認証は他の cron と同じ `CRON_SECRET`。
+
+---
+
 ## 📱 モバイル（Expo）での環境変数
 
 Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込まれます（=秘密情報は入れない）。
