@@ -123,19 +123,19 @@ function makeHarness(input: HarnessInput = {}) {
   const clock = { now: input.now ?? NOON_JST };
   const users = input.users ?? new Map([[USER_ID, makeUser()]]);
   const store = {
-    claimQueued: vi.fn(async () => input.rows ?? []),
-    loadEligibility: vi.fn(async () => users),
-    complete: vi.fn(async () => true),
-    fail: vi.fn(async (failInput: PushOutboxFailInput) => {
+    claimQueued: vi.fn<PushOutboxStore['claimQueued']>(async () => input.rows ?? []),
+    loadEligibility: vi.fn<PushOutboxStore['loadEligibility']>(async () => users),
+    complete: vi.fn<PushOutboxStore['complete']>(async () => true),
+    fail: vi.fn<PushOutboxStore['fail']>(async (failInput: PushOutboxFailInput) => {
       const row = (input.rows ?? []).find((candidate) => candidate.id === failInput.id);
       const attempts = (row?.attempts ?? 0) + 1;
       return !failInput.retryable || attempts >= failInput.maxAttempts ? 'dead' : 'requeued';
     }),
-    defer: vi.fn(async () => true),
-    claimReceipts: vi.fn(async () => input.receiptRows ?? []),
-    recordReceipt: vi.fn(async () => true),
-    deleteToken: vi.fn(async () => true),
-    cleanup: vi.fn(async () => input.cleanup ?? { expired: 0, sent: 0, dead: 0 }),
+    defer: vi.fn<PushOutboxStore['defer']>(async () => true),
+    claimReceipts: vi.fn<PushOutboxStore['claimReceipts']>(async () => input.receiptRows ?? []),
+    recordReceipt: vi.fn<PushOutboxStore['recordReceipt']>(async () => true),
+    deleteToken: vi.fn<PushOutboxStore['deleteToken']>(async () => true),
+    cleanup: vi.fn<PushOutboxStore['cleanup']>(async () => input.cleanup ?? { expired: 0, sent: 0, dead: 0 }),
   } satisfies PushOutboxStore;
   const send = vi.fn(input.send ?? (async (messages: readonly PushMessage[]) => ({ ok: true as const, tickets: okTickets(messages) })));
   const getReceipts = vi.fn(input.getReceipts ?? (async () => ({ ok: true as const, receipts: {} })));
