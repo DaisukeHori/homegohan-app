@@ -2,13 +2,13 @@
 
 | | |
 |---|---|
-| 版 | v1.1 (2026-10-17) |
+| 版 | v1.2 (2026-10-17) |
 | Status | 設計ゲート審査中 (実装着手はゲート PASS 後) |
 | Issue | #1797 (運営者による手動のプラン付与の画面と API。親 #1151 の残り)。課金の核は `docs/design/billing/01-billing-core.md` (段 A〜C と追随 #1711・#1726・#1738・#1763 は main 入り) |
 | 範囲の正本 | Issue #1797 の本文とコメント・親 #1151 の要件・billing/01 §0.2 (配線の冊に回したもの) と §16.2 (期日が「配線の冊と同時」「family / org の冊」の追随の行) |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
 
-課金の核 (billing/01) は「利用者が Stripe で買う」経路だけを作り、運営者が手で付与する経路 (`stripe_subscription_id IS NULL` の行 = **M 行**) の画面と API は配線の冊に回した (billing/01 §0.2)。本冊はその配線の最初の冊で、手動付与・取り消し・期限・監査と、billing/01 §16.2 で期日が「配線の冊と同時」「family / org の冊」になっていた追随の行を扱う。運用バッチ 20 本と Finance 画面の実データ化は本冊の対象外 (§0.2)。
+課金の核 (billing/01) は「利用者が Stripe で買う」経路だけを作り、運営者が手で付与する経路 (`stripe_subscription_id IS NULL` の行 = **M 行**) の画面と API は配線の冊に回した (billing/01 §0.2)。本冊はその配線の最初の冊で、手動付与・取り消し・期限・監査を作り、billing/01 §16.2 で期日が「配線の冊と同時」「family の冊」「family / org の冊」になっていた追随の行 (10 行。F23) の行き先 (本冊で直す・配線の残りの冊に期日を付け替える・期日を変えない) を決める。billing/01 §0.2 右列のうち手動付与以外 (運用バッチ 20 本・Finance 画面の実データ化ほか) は本冊の対象外で、本冊ではまとめて「**配線の残りの冊**」(未作成) と呼ぶ (§0.2)。
 
 ---
 
@@ -30,15 +30,15 @@
 
 | 本冊 | 対象外 (別の冊) |
 |---|---|
-| 運営者 (super_admin) が利用者に有料プラン (`personal` / `family` の `public` / `private` のプラン) を手で付与する API と画面 | 運用バッチ 20 本 (`grace_period_check`・`revenue_snapshot`・`stripe_integrity_check` (reconcile)・`stripe_event_stuck_check`・ライセンス系ほか。billing/01 §0.2 右列) |
+| 運営者 (super_admin) が利用者に有料プラン (`personal` / `family` の `public` のプラン = `pro`・`family_basic`・`family_pro`。`private` のアドオン `family_addon` は billing/01 §1 と同じく対象外) を手で付与する API と画面 | 運用バッチ 20 本 (`grace_period_check`・`revenue_snapshot`・`stripe_integrity_check` (reconcile)・`stripe_event_stuck_check`・ライセンス系ほか。billing/01 §0.2 右列) |
 | 付与の取り消し (M 行を `cancelled` に) | 運営の Finance 画面 (`/admin/finance/*`) の実データ化 |
 | 期限 (任意。JST の暦日の終わり) と、期限を過ぎた M 行を `expired` にする日次のジョブ | ブランドのメール・チャージバック・組織ライセンス受領による一時停止 (`paused`)・請求書番号・モバイル画面の契約状態の表示 |
 | M 行と Stripe の契約 (S 行) が重なったときの扱い (§7.3) | 契約中のプランの移行 (billing/01 §18 の 16) |
 | M 行と家族グループ・組織のプランとの関係 (§6・§7.3) | 利用者向け画面 `/account/billing` の M 行の文言 (「次回更新日」の見出しのまま。§16 の 3) |
 | 監査 (`admin.billing.manual_grant` / `admin.billing.manual_revoke` / `system.billing.manual_grant_expired`) | |
-| billing/01 §16.2 の追随のうち期日が「配線の冊と同時」の行 (`operator/08` の注記) と「family の冊」の行 (段 D と §16 の 6) | |
+| billing/01 §16.2 の追随の行 (F23 の 10 行) の行き先: 「配線の冊と同時」の `operator/08` の注記 (段 A)・「family の冊」の 3 行 (段 D と §16 の 6)・残りの行の期日の付け替え (§15.2 の billing/01 の行) | 「配線の冊と同時」のうち reconcile の 3 行 (`operator/02` §22・`operator/09` §4・`requirements/03` §15.1) と組織ライセンスの一時停止の 2 行 (`org/04` :517・`requirements/02` :763-764) の書き換えそのもの (配線の残りの冊)。「family / org の冊」の `migrate-to-personal` の 1 行 (それを実装する冊。期日を変えない) |
 
-- 課金の運用バッチと Finance 画面の冊は未作成 (billing/01 の表紙の `02-billing-wiring.md` は、本冊 (手動付与) と、その冊に分かれる。追随は §15.2)。
+- **配線の残りの冊** = billing/01 §0.2 右列のうち手動付与以外のすべて (運用バッチ 20 本・Finance 画面の実データ化・ブランドのメール・チャージバック・`grace` の 402・組織ライセンス受領による一時停止・請求書番号・モバイル画面の契約状態)。未作成。billing/01 の表紙の `02-billing-wiring.md` は、本冊 (手動付与) とこの冊に分かれる。billing/01 の本文の「配線の冊」は、手動付与については本冊、それ以外は配線の残りの冊を指す (billing/01 の表紙にそう書く。§15.2)。
 - 前提 (#1125 のコメントに記録されている選択): **オーナーの選択 (#1125 のコメント): 課金は無料のまま計測 (Stripe の本番の設定はオーナー作業 #1113)**。本冊はこの前提の下で、Stripe を呼ばない経路 (手動付与) だけを作る。本冊の API と関数は Stripe を 1 回も呼ばない。
 
 ### 0.3 読み方
@@ -87,7 +87,7 @@
 | F8 | `personal_subscriptions` の列: `id`・`user_id`・`plan_key`・`status` (8 値)・`trial_started_at`・`trial_ends_at`・`trial_source`・`paused_at`・`paused_until`・`pause_reason`・`starts_at`・`current_period_start`・`current_period_end`・`cancel_at`・`cancelled_at`・`past_due_since`・`grace_started_at`・`stripe_customer_id`・`stripe_subscription_id`・`stripe_price_id`・`active_coupon_redemption_id`・`notes`・`created_at`・`updated_at`・`stripe_synced_at`・`stripe_status`・`cancel_at_period_end`・`billing_interval`。期限 (終了日) を表す専用の列は無い。`notes` は本人の SELECT ポリシーで読める (本人のデータの書き出しからは `omit` で外しているが、PostgREST の直接の SELECT では読める) | baseline `:5787-5816`・billing_core `:13-17`・`src/lib/account-export-tables.ts:249-255` |
 | F9 | `src/lib/billing/core.ts`: `LIVE_SUBSCRIPTION_STATUSES`・`SUBSCRIPTION_STATUSES`・`FREE_PLAN_KEY`・`PURCHASABLE_PLAN_TYPES = ['personal','family']`・`summarizeSubscription` は M 行に `source: 'manual'`・`can_cancel: false`・`can_resume: false` を返す。`BILLING_AUDIT_ACTIONS` は 9 つで手動付与の名前は無い。`BillingRepository.findLiveSubscription` は由来を問わず live 行を返す | 同ファイル `:85-99, 159-170, 724-749, 859-` |
 | F10 | `findLiveSubscription` が行を返せば `POST /api/billing/checkout` は 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`。解約の予約・取り消しは M 行なら 409 `BILL_NO_LIVE_SUBSCRIPTION` (「手動付与の解約は配線の画面」) | `src/lib/billing/service.ts:86-92, 156-176` |
-| F11 | `subscription_plans`: `plan_type` CHECK (`personal` / `family` / `org`)・`status` CHECK (`draft` / `public` / `private` / `deprecated`)・`max_members`・`display_order`。本番は `free` 0 円 / `pro` / `family_basic` (`max_members` 4) / `family_pro` (8) / `family_addon` private / `org_*` (billing/01 F8) | baseline `:6437-6463` |
+| F11 | `subscription_plans`: `plan_type` CHECK (`personal` / `family` / `org`)・`status` CHECK (`draft` / `public` / `private` / `deprecated`)・`max_members`・`display_order`。本番は `free` 0 円 / `pro` / `family_basic` (`max_members` 4) / `family_pro` (8) / `family_addon` private / `org_*` (billing/01 F8)。`family_addon` は `plan_type='family'`・`status='private'`・`max_members` NULL・`feature_packages` `'{}'`・月 280 円のアドオンで、billing/01 §1 が「対象外 (別の冊)」にしている。`private` のプランは `family_addon` だけ | baseline `:6437-6463`・`20251126124224_create_meal_planner_tables.sql:14169`・billing/01 :55 |
 | F12 | 既存の運営の変更系の型: super_admin 専用は `POST /api/super-admin/coupons/[id]/apply` (`requireRole(['super_admin'])` → `getSupabaseAdmin()` で RPC → `recordAdminAudit` を user-scoped の client で・severity `warn`)。admin + super_admin は `POST /api/admin/users/[id]/freeze` (永久 BAN だけ super_admin)。401 は `AUTH_UNAUTHENTICATED`・403 は `OP_PERMISSION_DENIED`・404 は `NOT_FOUND`「ユーザーが見つかりません」 | 各 route |
 | F13 | `requireRole(roles)` は既定で AAL2 を求める (`MFA_REQUIRED_ROLES = super_admin / admin / finance / org_industrial_doctor`。support は対象外)。`src/app/api/{admin,super-admin,support,operator}` の全 handler が `requireRole` / `requireSuperAdmin` / `respondNotSupported` を呼ぶことを `tests/operator-mfa-entry-points-scan.test.ts` が見張る | `src/lib/auth/helpers.ts:154-180`・`src/lib/auth/mfa/policy.ts:17` |
 | F14 | 変更系 (POST / PUT / PATCH / DELETE) の handler は `tests/admin-mutation-audit-coverage-1571.test.ts` の `EXPECTED` に載り、`recordAdminAudit` を `request` つきのリテラルで呼ぶ。`admin_audit_logs` へ直接 INSERT する route・`x-forwarded-for` を直読みする route は `tests/admin-view-audit-1326.test.ts` (b) で 0 件 | 各テスト |
@@ -99,7 +99,7 @@
 | F20 | JST の暦日の入力は `CalendarDateSchema` (`src/lib/calendar-date-schema.ts`) で受け、timestamptz との比較は `jstDayRangeTimestamps(from, to).toTimestampExclusive` (= `to` の翌日の JST 0 時) で作る。「今日」は `jstToday()`。素の日付の文字列を timestamptz の列に渡す書き方は `tests/jst-today-source-scan.test.ts` が止める | `src/lib/jst-day-ranges.ts:43, 73-81` |
 | F21 | `apply_coupon` は `personal_subscriptions.id` を `FOR NO KEY UPDATE` でロックし `active_coupon_redemption_id` だけを書く。M 行にも使える (billing/01 §7.1) | `20261007160700_apply_coupon_rpc.sql:147-152, 260-265` |
 | F22 | `PATCH /api/super-admin/plans/[id]` の廃止は `countPlanSubscribers` が live 5 値の `personal_subscriptions` を数え、1 件でもあれば 409 `OP_PLAN_HAS_SUBSCRIBERS`。由来を問わない | `src/lib/super-admin/plan-subscribers.ts:10-13` |
-| F23 | billing/01 §16.2 で期日が「配線の冊と同時」の行は `operator/08` §3.1 (`stripe_event_stuck_check` の注記・`grace_period_check` / `stripe_integrity_check` の注記) の 1 行。「family の冊」の行は 2 つ: `POST /api/family/groups` の入力 `plan_key` (`CreateFamilyGroupBodySchema`)・作成の画面の選択欄 (`src/app/(main)/family/setup/page.tsx:15,33,95-105`) を外す / `member_limit` が下がったときの扱い | billing/01 `:3931-3990` |
+| F23 | billing/01 §16.2 で期日が本冊にかかわる行は 10 行。期日「配線の冊と同時」= 6 行: `operator/08` §3.1・§3.2 (`stripe_event_stuck_check` の注記・`grace_period_check` / `stripe_integrity_check` の注記。:3948)・`operator/02` §22 `POST /api/cron/stripe-reconcile` (:3959)・`operator/09` §4 Stripe ↔ DB Reconciliation (:3964)・`org/04` :517 重複請求防止 (`pause_collection`。:3971)・`requirements/02` :763-764 (一時停止中の個人プラン。:3973)・`requirements/03` §15.1 日次 reconciliation (:3978)。期日「family の冊」= 3 行: `POST /api/family/groups` の入力 `plan_key` (`CreateFamilyGroupBodySchema`)・作成の画面の選択欄 (`src/app/(main)/family/setup/page.tsx:15,33,95-105`) を外す (:3953) / `member_limit` が下がったときの扱い (:3954) / `family/03` のグループ作成の画面の「プラン選択」と支払いのボタン (:3982)。期日「family / org の冊 (`migrate-to-personal` を実装するとき)」= 1 行 (:3981)。本冊での扱いは R14 と §15.2 の billing/01 の行 | billing/01 `:3931-3990` (origin/main) |
 | F24 | `CreateFamilyGroupBodySchema = { name, plan_key: z.string().default('free') }`。route は `create_family_group(p_name, p_plan_key)` に渡すが、トリガー (F6) が `p_plan_key` を効かなくしている (billing/01 S20)。単体テストは `src/__tests__/api/family/groups.test.ts`。`tests/e2e/membership/05-family-create-and-invite.spec.ts` と `tests/integration/security/invite-accept-missing-profile.test.ts` も route を名指しする | `src/schemas/membership/family-group.ts:8-11`・`src/app/api/family/groups/route.ts:49-56` |
 | F25 | 本番の `personal_subscriptions` は 0 行 (billing/01 F9。2026-10-15 読み取り)。本冊は本番に問い合わせていない | billing/01 §2.2 |
 
@@ -124,7 +124,7 @@
 | R11 | 核の写像・`get_effective_plan`・RLS・トリガーを変えない | billing/01 R5・§12 | 変えない。本冊の関数は写像と同じ鍵 (`billing-user:<uuid>`)・同じロック順・同じ同期の式を使う (§4.1) |
 | R12 | 権利の判定で S 行と M 行を区別しない | billing/01 §12 | 変えない (F7)。`/account/billing` は `source: 'manual'`・解約の予約なし (F9) のまま |
 | R13 | 運営の画面 | #1797 | `/admin/users/{id}` に節「手動のプラン付与」(client component)。super_admin で、対象が自分でないときだけ描く (§10) |
-| R14 | billing/01 §16.2 の「配線の冊と同時」「family の冊」の行 | #1797 | `operator/08` の注記は段 A の専権 PATCH (§15.2)。family の入力の整理は段 D (§14.1)。`member_limit` が下がったときの扱いは「外さない」で確定 (§16 の 6) |
+| R14 | billing/01 §16.2 の「配線の冊と同時」「family の冊」「family / org の冊」の行 (F23 の 10 行) | #1797 | 本冊で直す 4 行: `operator/08` の注記 (段 A の専権 PATCH。§15.2)・family の入力の整理 (段 D。§14.1)・`family/03` の作成の画面 (段 D の専権 PATCH。§15.2)・`member_limit` が下がったときは「外さない」で確定 (§16 の 6。`family/02` §5.2 の注記は段 D)。期日を付け替える 5 行: reconcile の 3 行 (`operator/02` §22・`operator/09` §4・`requirements/03` §15.1) と組織ライセンスの一時停止の 2 行 (`org/04` :517・`requirements/02` :763-764) は、手動付与と関係が無く、直し方の中身 (reconcile の時刻・認証、どの status から止めるか) を配線の残りの冊が決めるので、期日を「配線の残りの冊と同時」にする (§15.2 の billing/01 の行・§16 の 11)。期日を変えない 1 行: `migrate-to-personal` (本冊は作らない) |
 | R15 | migration は「追加だけ」・番号はマージ時・`.down.sql` を対で | 本冊の規約 | §6.1・§6.6。関数 4 本とジョブ 1 本の新設だけ。既存の表・列・ポリシー・関数は変えない |
 | R16 | as any 禁止・マジックナンバー禁止 | 本冊の規約 | §8 の定数に根拠。SQL の定数は `CONSTANT` に根拠のコメント |
 
@@ -142,7 +142,7 @@
 | S8 | 代表者の交代: `family_basic` の M 行を持つ代表者 A が B に代表者を譲る → トリガーがグループを B の契約に合わせる (B に家族プランが無ければ `free` / 4)。A の M 行はそのまま A の個人の権利 |
 | S9 | M 行が live の間に Stripe 側で契約が作られた (運営が Dashboard で作った・利用者が核の 409 の前に通した 2 本目など): 写像が `BILL_LIVE_ROW_CONFLICT` でイベントを `failed` にし、監査 `system.stripe.event_failed` が残る。運営は M 行を取り消す (次の再送で写る) か、Stripe の契約を解約する |
 | S10 | `incomplete` の S 行 (live でない) がある利用者への付与: 付与できる。その後 Stripe 側で支払いが完了しても、写像は `BILL_LIVE_ROW_CONFLICT` で S 行を `incomplete` のまま止める (billing/01 §7.3 の `incomplete` の行のガード) |
-| S11 | 付与できないプラン: `free`・`org_standard`・`draft` のプラン・`deprecated` のプラン・存在しない `plan_key` → 422 `OP_PLAN_NOT_GRANTABLE`。`private` のプラン (`family_addon` など `plan_type` が `personal` / `family` のもの) は付与できる |
+| S11 | 付与できないプラン: `free`・`org_standard`・`private` のプラン (`family_addon`。アドオンで、billing/01 §1 が対象外)・`draft` のプラン・`deprecated` のプラン・存在しない `plan_key` → 422 `OP_PLAN_NOT_GRANTABLE`。付与できるのは `public` の `personal` / `family` のプラン (`pro`・`family_basic`・`family_pro`) だけ |
 | S12 | 期限の誤り: 有効期限に今日・過去の日・存在しない日 (2026-02-30) を入れる → 400 `OP_INVALID_INPUT` (DB には触れない) |
 | S13 | 自分への付与: super_admin が自分の利用者 ID に付与しようとする (API を直接呼ぶ) → 403 `OP_SELF_MODIFY`。画面は自分の詳細では節を描かない |
 | S14 | 権限: admin / support が API を呼ぶ → 403 `OP_PERMISSION_DENIED`。super_admin でも AAL1 のセッション → 403 (`MfaRequiredError` は `ForbiddenError` の派生)。未ログイン → 401 |
@@ -200,9 +200,9 @@ M 行の列の規則: `status='active'`・`starts_at = current_period_start = no
 | S6 | `POST family_pro` → RPC: `family_pro` は `family` / `public` → live なし → INSERT → `plan_type='family'`: `v_member_limit = LEAST(COALESCE(8,4),20) = 8` → `UPDATE family_groups SET plan_key='family_pro', member_limit=8 WHERE representative_id=<id> AND status='active' AND (plan_key IS DISTINCT FROM … OR member_limit IS DISTINCT FROM …)` → `plan_key_cached='family_pro'`。メンバーの `get_effective_plan`: 個人契約なし → 家族 `family_pro`。`DELETE` → `sync_after_end('family_pro')`: `UPDATE family_groups SET plan_key='free', member_limit=4 WHERE representative_id=<id> AND status='active' AND plan_key='family_pro' AND NOT EXISTS (同じ利用者の `family_pro` の live 行)` → 戻る |
 | S7 | `POST family_basic` (グループ無し) → INSERT → 家族の UPDATE は 0 行 → `plan_key_cached='family_basic'`。後日 `POST /api/family/groups` → `create_family_group` の INSERT → BEFORE INSERT のトリガー (F6) が代表者の live 行 (M 行。`plan_type='family'`) を読み `NEW.plan_key='family_basic'`・`member_limit=4` |
 | S8 | 交代 (`accept_family_representative_transfer` / `operator_force_representative_transfer`) → BEFORE UPDATE OF `representative_id` のトリガー → advisory `billing-user:<B>` → B の live な家族プランの行 (S でも M でも) があればそれ・無ければ旧代表者 A に同じ `plan_key` の live 行があるので `free` / 4 (billing/01 S18 と同じ)。A の M 行は変わらない。A が後で取り消せば `sync_after_end` の家族の UPDATE は `representative_id = A` のグループ 0 行 (すでに B のもの) |
-| S9 | `[DB]` M 行 `active` → Stripe が `customer.subscription.created` → 受け口 → 取り直し → 写像: 利用者を解決 → advisory (本冊の関数と同じ鍵。付与の途中なら待つ) → 既存の S 行なし → live に写るので 6. で `BILL_LIVE_ROW_CONFLICT` (DETAIL = M 行の id) → イベント `failed`・500・監査 `system.stripe.event_failed` (billing/01 §9.6)。運営は Finance (未作成) か `admin_audit_logs` で気づく → (a) M 行を取り消す → Stripe の再送で写像が通る (S 行 INSERT) / (b) Stripe の契約を解約・返金 → 届く `deleted` は終端・非 live なので `cancelled` の S 行を INSERT (billing/01 §7.3 の「–」の 3 行目) |
+| S9 | `[DB]` M 行 `active` → Stripe が `customer.subscription.created` → 受け口 → 取り直し → 写像: 利用者を解決 → advisory (本冊の関数と同じ鍵。付与の途中なら待つ) → 既存の S 行なし → live に写るので 6. で `BILL_LIVE_ROW_CONFLICT` (DETAIL = M 行の id) → イベント `failed`・500・監査 `system.stripe.event_failed` (billing/01 §9.6)。運営は Finance 画面 (配線の残りの冊) か `admin_audit_logs` で気づく → (a) M 行を取り消す → Stripe の再送で写像が通る (S 行 INSERT) / (b) Stripe の契約を解約・返金 → 届く `deleted` は終端・非 live なので `cancelled` の S 行を INSERT (billing/01 §7.3 の「–」の 3 行目) |
 | S10 | `[DB]` S 行 `incomplete` (live でない) → `POST pro` → RPC の live の検査は `incomplete` を数えない → INSERT (M 行) → `plan_key_cached='pro'`。Stripe で支払いが完了 → 写像: 既存の S 行 → `active` に写そうとして 6. で別の live 行 (M) → `BILL_LIVE_ROW_CONFLICT` → S 行は `incomplete` のまま (billing/01 §7.3 の `incomplete → active` の行のガード)。運営が S9 と同じ処置 |
-| S11 | `POST free` → RPC の 2. で `plan_key='free'` → `BILL_PLAN_NOT_GRANTABLE` → 422。`org_standard` (`plan_type='org'`)・`draft`・`deprecated`・無い `plan_key` も同じ。`family_addon` (`private`・`personal` か `family`) は通る (画面の `plans` にも出る) |
+| S11 | `POST free` → RPC の 2. で `plan_key='free'` → `BILL_PLAN_NOT_GRANTABLE` → 422。`org_standard` (`plan_type='org'`)・`family_addon` (`status='private'`)・`draft`・`deprecated`・無い `plan_key` も同じ。画面の `plans` にも出ない (repository の SELECT が `status='public'` で絞り、`isGrantablePlan` が `free` を落とす) |
 | S12 | `expires_on: '2026-10-17'` (今日) → `superRefine` が issue「有効期限は今日より後の日付を指定してください」→ 400 `OP_INVALID_INPUT` (`details` に issue)。`'2026-02-30'` は `CalendarDateSchema` が拒む → 同じ 400。RPC の `p_expires_at <= now()` は二重の守り (route のスキーマが通した直後に日付が変わった場合など) で、`BILL_MANUAL_EXPIRES_AT_PAST` → 400 `OP_INVALID_INPUT` (固定の文・`details: []`) |
 | S13 | `normalizeUuid(id) === normalizeUuid(actor.id)` → 403 `OP_SELF_MODIFY` (本文の検証・DB より前)。画面は `actor.id !== profile.id` のときだけ節を描く |
 | S14 | `requireRole(['super_admin'])`: admin → `ForbiddenError('PERM_DENIED')` → 403 `OP_PERMISSION_DENIED`。AAL1 の super_admin → `MfaRequiredError` (ForbiddenError の派生) → 同じ 403。未ログイン → `AuthError` → 401 `AUTH_UNAUTHENTICATED` |
@@ -274,7 +274,8 @@ SET LOCAL lock_timeout = '10s';
 
 -- (1) 手動付与 (M 行 = stripe_subscription_id IS NULL の行を 1 行 INSERT する)。
 --     p_user_id: 対象の利用者 (auth.users と user_profiles の両方にあること)。
---     p_plan_key: subscription_plans の plan_key。free でなく、plan_type が personal / family で、status が public / private のものだけ。
+--     p_plan_key: subscription_plans の plan_key。free でなく、plan_type が personal / family で、status が public のものだけ
+--                 (private は family_addon = アドオンで、billing/01 §1 が対象外。基本のプランとして付与すると家族グループのプランがアドオンの名前に置き換わる)。
 --     p_expires_at: 有効期限 (その時刻を過ぎたら billing_expire_manual_subscriptions が expired にする)。NULL = 期限なし。now() より後であること。
 --     戻り値 (jsonb): { subscription_id, user_id, plan_key, status: 'active', expires_at }。
 --     ロックの順 (billing/01 §6.4 (9) の 2.・3.・10. と同じ): advisory billing-user:<uuid> → 契約の行 (FOR NO KEY UPDATE) → family_groups の行 → user_profiles の行。
@@ -313,12 +314,12 @@ BEGIN
     RAISE EXCEPTION 'BILL_UNKNOWN_USER' USING ERRCODE = 'P0001', DETAIL = p_user_id::text;
   END IF;
 
-  -- 2. プラン (free・org・draft・deprecated は付与できない。billing/02 §8.1 isGrantablePlan と同じ条件)
+  -- 2. プラン (free・org・private (family_addon)・draft・deprecated は付与できない。billing/02 §8.1 isGrantablePlan と同じ条件)
   SELECT p.* INTO v_plan FROM public.subscription_plans AS p WHERE p.plan_key = p_plan_key;
   IF v_plan.id IS NULL
      OR v_plan.plan_key = 'free'
      OR v_plan.plan_type NOT IN ('personal', 'family')
-     OR v_plan.status NOT IN ('public', 'private') THEN
+     OR v_plan.status <> 'public' THEN
     RAISE EXCEPTION 'BILL_PLAN_NOT_GRANTABLE' USING ERRCODE = 'P0001', DETAIL = p_plan_key;
   END IF;
 
@@ -577,7 +578,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 
 ### 7.1 全パターン表 (行の由来 × status × 消費経路)
 
-行の由来: **M** = 手動付与 (`stripe_subscription_id IS NULL`。本冊の関数が書く。写像は触らない) / **S** = Stripe-backed (写像が書く。billing/01 §7.1) / **–** = 行が無い。M 行が本冊で取る status は `active` / `cancelled` / `expired` の 3 つだけ (`trialing` / `past_due` / `grace` / `paused` / `incomplete` の M 行は本冊の経路からは生まれない。配線の一時停止 (`paused`) は本冊の対象外で、もし service_role の直接 UPDATE で入っても live として同じ扱い)。
+行の由来: **M** = 手動付与 (`stripe_subscription_id IS NULL`。本冊の関数が書く。写像は触らない) / **S** = Stripe-backed (写像が書く。billing/01 §7.1) / **–** = 行が無い。M 行が本冊で取る status は `active` / `cancelled` / `expired` の 3 つだけ (`trialing` / `past_due` / `grace` / `paused` / `incomplete` の M 行は本冊の経路からは生まれない。組織ライセンス受領による一時停止 (`paused`) は本冊の対象外 (配線の残りの冊) で、もし service_role の直接 UPDATE で入っても live として同じ扱い)。
 
 | 利用者の行 | live | 権利 (`get_effective_plan`) | `plan_key_cached` | 付与 `POST` | 取り消し `DELETE` | 期限のジョブ | 新規購入 `POST /api/billing/checkout` (核) | 解約の予約 `/cancel` (核) | 写像 (Stripe の契約が届いた) | `apply_coupon` | `countPlanSubscribers` |
 |---|---|---|---|---|---|---|---|---|---|---|---|
@@ -604,7 +605,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | `src/lib/billing/account-deletion.ts` (退会の段階 `billing`) ← `listStripeBackedSubscriptions` | 読 | `stripe_subscription_id IS NOT NULL` | 変えない。M 行は列挙されず Stripe を呼ばない (S17) |
 | `src/app/api/admin/users/[id]/route.ts:93-100` (運営のユーザー詳細の `active_subscription`) | 読 | session client・live 5 値の最新 1 行の `plan_key, status, current_period_end` | 変えない。M 行は `next_billing_at = current_period_end` (= 期限か NULL) として出る。画面 `/admin/users/[id]` の「現在のサブスクリプション」の節はそのまま。本冊の節 (§10) が由来と期限を別に出す |
 | `src/app/api/admin/finance/exports/route.ts:131-142` (`subscriptions` の CSV) | 読 | 9 列・status で絞らない | 変えない。M 行も出る (`stripe_*` は列に無い) |
-| `src/app/api/admin/finance/reconciliation/route.ts:68`・`dashboard/route.ts:45-56` | 読 | live 4 値 / 集計 | 変えない (実データ化は対象外の冊) |
+| `src/app/api/admin/finance/reconciliation/route.ts:68`・`dashboard/route.ts:45-56` | 読 | live 4 値 / 集計 | 変えない (実データ化は配線の残りの冊) |
 | `src/lib/super-admin/plan-subscribers.ts` (F22) | 読 | live 5 値 | 変えない (S19) |
 | `apply_coupon` (F21) | 読・書 | 行を `FOR NO KEY UPDATE`・`active_coupon_redemption_id` | 変えない。本冊の UPDATE は `status` / `cancelled_at` / `cancel_at` だけ (S18) |
 | `src/lib/account-export-tables.ts:249-255` (本人の書き出し) | 読 | `omit` 6 列 | 変えない (列を足さない)。M 行は `status` / `current_period_end` / `cancelled_at` がそのまま出る |
@@ -637,7 +638,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 
 | 現在 | 操作 / イベント (入口) | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
-| – (M 行なし。S 行が無いか、S 行が live でない) | 付与 `POST …/manual-plan` (関数 `billing_grant_manual_subscription`) | M `active` | super_admin (AAL2)・対象が自分でない・利用者が `auth.users` と `user_profiles` にある・プランが付与できる (`free` でなく `personal` / `family` で `public` / `private`)・期限が無いか未来 (スキーマ: 今日より後の暦日 / 関数: `> now()`)・同じ利用者に live 行 (S / M) が無い | INSERT (`starts_at` = `current_period_start` = `now()`・`current_period_end` = 期限 or NULL)・家族プランなら代表者の active なグループを `plan_key` / `member_limit` に (写像の 10. と同じ)・`plan_key_cached` = plan_key・監査 `admin.billing.manual_grant` (route・warn・details: `subscription_id`・`plan_key`・`expires_at`・`reason`) |
+| – (M 行なし。S 行が無いか、S 行が live でない) | 付与 `POST …/manual-plan` (関数 `billing_grant_manual_subscription`) | M `active` | super_admin (AAL2)・対象が自分でない・利用者が `auth.users` と `user_profiles` にある・プランが付与できる (`free` でなく `personal` / `family` で `public`)・期限が無いか未来 (スキーマ: 今日より後の暦日 / 関数: `> now()`)・同じ利用者に live 行 (S / M) が無い | INSERT (`starts_at` = `current_period_start` = `now()`・`current_period_end` = 期限 or NULL)・家族プランなら代表者の active なグループを `plan_key` / `member_limit` に (写像の 10. と同じ)・`plan_key_cached` = plan_key・監査 `admin.billing.manual_grant` (route・warn・details: `subscription_id`・`plan_key`・`expires_at`・`reason`) |
 | – | 同上で、同じ利用者に live 行 (S / M) がある | – (何も書かない) | — | 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE` (関数の `BILL_LIVE_ROW_CONFLICT`)。監査なし。S4・S5 |
 | – | 同上で、プランが付与できない / 利用者が無い / 期限が過去 | – | — | 422 `OP_PLAN_NOT_GRANTABLE` / 404 `NOT_FOUND` / 400 `OP_INVALID_INPUT`。監査なし。S11・S12・S15 |
 | M `active` | 取り消し `DELETE …/manual-plan` (関数 `billing_revoke_manual_subscription`) | M `cancelled` | super_admin (AAL2)・対象が自分でない・live な M 行がある | UPDATE `status='cancelled'`・`cancelled_at=now()`・`cancel_at=NULL`・家族プランなら、グループの `plan_key` がこのプランで同じ利用者に同じプランの live 行が無いとき `free` / 4 に戻す・`plan_key_cached` を live 行から再計算 (NULL)・監査 `admin.billing.manual_revoke` (route・warn・details: `subscription_id`・`plan_key`・`reason`) |
@@ -661,7 +662,7 @@ DROP FUNCTION IF EXISTS public.billing_manual_subscription_sync_after_end(uuid, 
 | 任意 | 自分の id への付与・取り消し | 同じ | `normalizeUuid(id) === normalizeUuid(actor.id)` | 403 `OP_SELF_MODIFY`。S13 |
 | 任意 | 同時の付与 ×2 / 付与と写像 / 付与と取り消し / 付与とジョブ | advisory `billing-user:<uuid>` で直列。後の方が commit 済みの状態で上の行のどれかになる | — | S22 |
 
-表に無い遷移を作るコードは blocking。M 行に `trialing` / `past_due` / `grace` / `paused` / `incomplete` を入れる経路は本冊に無い (配線の一時停止は対象外の冊)。
+表に無い遷移を作るコードは blocking。M 行に `trialing` / `past_due` / `grace` / `paused` / `incomplete` を入れる経路は本冊に無い (組織ライセンス受領による一時停止は配線の残りの冊)。
 
 ---
 
@@ -705,8 +706,13 @@ export const PLAN_KEY_MAX_LENGTH = 100;
 export const MANUAL_GRANT_HISTORY_LIMIT = 10;
 /** 手動付与できるプランの種類 (subscription_plans.plan_type)。org は組織ライセンスの仕組みで、個人の契約の行に入れない (core.ts の PURCHASABLE_PLAN_TYPES と同じ 2 種) */
 export const GRANTABLE_PLAN_TYPES = ['personal', 'family'] as const;
-/** 手動付与できるプランの status。draft (未完成) と deprecated (廃止。契約者が 0 でないと廃止できない規則の逆向きを作らない) には付与しない */
-export const GRANTABLE_PLAN_STATUSES = ['public', 'private'] as const;
+/**
+ * 手動付与できるプランの status。public だけ (billing/01 §1 が扱うプラン pro / family_basic / family_pro と同じ集合)。
+ * private のプランは family_addon (家族の席のアドオン。feature_packages が空・max_members NULL) だけで、billing/01 §1 が対象外にしている。
+ * 基本のプランとして付与すると、家族グループのプランがアドオンの名前に置き換わり、家族プランの権利も付かない。
+ * draft (未完成) と deprecated (廃止。契約者が 0 でないと廃止できない規則の逆向きを作らない) にも付与しない
+ */
+export const GRANTABLE_PLAN_STATUSES = ['public'] as const;
 /** スキーマの検証に失敗したときの文 (有効期限は JST の暦日で、今日より後だけを受ける) */
 export const MANUAL_GRANT_EXPIRES_ON_MESSAGE = '有効期限は今日より後の日付を指定してください';
 /** 運営 API の URL (route と client が同じ文字列を使う) */
@@ -969,7 +975,7 @@ const HISTORY_COLUMNS = 'id, action_type, actor_id, created_at, details';
 export interface ManualGrantRepository {
   /** 対象の利用者が user_profiles にあるか (無ければ route は 404) */
   userExists(userId: string): Promise<boolean>;
-  /** 付与できるプラン (free でなく personal / family で public / private)。display_order 順 */
+  /** 付与できるプラン (free でなく personal / family で public)。display_order 順 */
   listGrantablePlans(): Promise<GrantablePlanView[]>;
   /** live な行 (S でも M でも。利用者ごとに最大 1 行) */
   findLiveSubscription(userId: string): Promise<ManualPlanCurrentView | null>;
@@ -1314,7 +1320,11 @@ const ROUTE_DELETE = 'DELETE /api/super-admin/users/[id]/manual-plan';
 const HTTP_OK = 200;
 const HTTP_UNAUTHORIZED = 401;
 const HTTP_FORBIDDEN = 403;
-/** 運営の画面だけが読む応答 (共有キャッシュに残さない) */
+/**
+ * 運営の画面だけが読む応答 (共有キャッシュに残さない)。route が自分で組み立てる応答 (errorJson と 200) にだけ付ける。
+ * 共通のヘルパーの応答 (rejectNullCharacterBody の 400・invalidInputResponse / invalidJsonBodyResponse の 400・internalError の 500) は、
+ * ヘルパーが作ったまま返す (本文は固定の文と Zod の issue だけ。NULL 文字の 2 行は null-character-routes.test.ts が逐語を求めるので包めない。§9 の冒頭)
+ */
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
 type Params = { params: Promise<{ id: string }> };
@@ -1726,7 +1736,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 - `manual-grant.ts` は I/O を持たない。import は `zod`・`@/lib/billing/core`・`@/lib/calendar-date-schema` だけ (テスト 1)。`fetch` / `process.env` / Supabase を import したら blocking。
 - `personal_subscriptions` に直接 `insert(` / `update(` を書く TS は本冊に無い (書くのは DB 関数だけ。テスト 14 が repository のソースを見る)。
 - route は `service` の 3 関数だけを呼ぶ。`repository` の生成 (`createManualGrantRepository()`) は route が行う (service は `getSupabaseAdmin` を import しない)。
-- `isGrantablePlan` の条件と DB 関数の 2. の条件 (free でなく・`personal` / `family`・`public` / `private`) は同じ (テスト 2 とテスト 31 が両側で同じ表を持つ)。
+- `isGrantablePlan` の条件と DB 関数の 2. の条件 (free でなく・`personal` / `family`・`public`) は同じ (テスト 2 とテスト 31 が両側で同じ表を持つ)。
 - 期限の変換は `expiresAtOf` (= `jstDayRangeTimestamps(d, d).toTimestampExclusive`) だけ。日付の文字列を timestamptz に直に渡さない (`tests/jst-today-source-scan.test.ts`)。
 - 監査の `details` に利用者の個人情報 (メール・氏名) を入れない。入れるのは `subscription_id`・`plan_key`・`expires_at`・`reason` だけ。
 - 命名: Zod のスキーマの定数は PascalCase (`ManualPlanRevokeBodySchema`・`GrantablePlanViewSchema` など。既存の `CreateFamilyGroupBodySchema` と同じ)。今日の日付を受けてスキーマを作る関数だけは関数なので camelCase (`manualPlanGrantBodySchema(today)`)。
@@ -1735,7 +1745,7 @@ const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
 
 ## 9. API 仕様
 
-共通: 認証・認可は `requireRole(['super_admin'])` (既定の AAL2 の門。cross/12 §13.1)。本文は JSON。応答は運営 API の形 `{ data: … }` / `{ error: { code, message } }` (`cross/04` §5.2)。すべて `Cache-Control: no-store`。レート制限は付けない (super_admin の変更系の既存の route と同じ。§5.2)。500 は `internalError` (nested)。route は `src/lib/billing/manual-grant-service.ts` だけを呼び、`src/lib/billing/manual-grant.ts` の Zod で入力を検証する。`export const dynamic = 'force-dynamic'`。
+共通: 認証・認可は `requireRole(['super_admin'])` (既定の AAL2 の門。cross/12 §13.1)。本文は JSON。応答は運営 API の形 `{ data: … }` / `{ error: { code, message } }` (`cross/04` §5.2)。route が自分で組み立てる応答 (200 と `errorJson` の 400 / 401 / 403 / 404 / 409 / 422) は `Cache-Control: no-store`。共通のヘルパーが返す応答 (`rejectNullCharacterBody` の 400 `INVALID_CHARACTER`・`invalidInputResponse` / `invalidJsonBodyResponse` の 400 `OP_INVALID_INPUT`・`internalError` の 500) は、ヘルパーが作ったままで返し、ヘッダを足さない (本文は固定の文と Zod の issue だけで、利用者のデータを含まない。NULL 文字の 2 行は `src/__tests__/api/null-character-routes.test.ts` が `if (nullCharacterRejection) return nullCharacterRejection;` の逐語を求めるので包めない。ヘルパーは §14.2 で触らない)。`requireRole` が投げ直す想定外の例外 (`UserProfileReadError` など) は Next の既定の 500 で、これもヘッダは無い。レート制限は付けない (super_admin の変更系の既存の route と同じ。§5.2)。500 は `internalError` (nested)。route は `src/lib/billing/manual-grant-service.ts` だけを呼び、`src/lib/billing/manual-grant.ts` の Zod で入力を検証する。`export const dynamic = 'force-dynamic'`。
 
 パスの `{id}` は利用者の `user_profiles.id` (UUID)。UUID の形でなければ 404 `NOT_FOUND` (DB に触れない)。UUID の形なら小文字にそろえてから使う (#1707。自分の判定・DB・監査)。
 
@@ -1851,7 +1861,7 @@ sequenceDiagram
 | コード | DETAIL | 意味 | API |
 |---|---|---|---|
 | `BILL_UNKNOWN_USER` | user id | `auth.users` か `user_profiles` に無い (route の 404 の後に退会した場合など) | 404 `NOT_FOUND` |
-| `BILL_PLAN_NOT_GRANTABLE` | plan_key | 無い / `free` / `plan_type` が `org` / `status` が `draft` か `deprecated` | 422 `OP_PLAN_NOT_GRANTABLE` |
+| `BILL_PLAN_NOT_GRANTABLE` | plan_key | 無い / `free` / `plan_type` が `org` / `status` が `public` でない (`private` = `family_addon`・`draft`・`deprecated`) | 422 `OP_PLAN_NOT_GRANTABLE` |
 | `BILL_MANUAL_EXPIRES_AT_PAST` | expires_at | `p_expires_at <= now()` (スキーマの後に日付が変わった場合など) | 400 `OP_INVALID_INPUT` |
 | `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に live 行 (S / M) がある (billing/01 §13.3 と同じ名前) | 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE` |
 | `BILL_MANUAL_ROW_NOT_FOUND` | user id | live な M 行が無い | 409 `OP_NO_MANUAL_SUBSCRIPTION` |
@@ -1866,7 +1876,7 @@ sequenceDiagram
 
 `tests/billing-manual-grant.test.ts` (`src/lib/billing/manual-grant.ts`。段 B):
 1. `it('manual-grant.ts imports nothing but zod, @/lib/billing/core and @/lib/calendar-date-schema')` (ソース走査: `import … from` の指定子がこの 3 つだけ。動的 import・`require`・`fetch`・`process.env` が無い。`tests/billing-core.test.ts` のテスト 16 と同じ形)
-2. `it('isGrantablePlan accepts personal/family plans that are public/private and rejects free, org, draft, deprecated')` (DB 関数の 2. と同じ表をリテラルで持つ)
+2. `it('isGrantablePlan accepts personal/family plans that are public and rejects free, org, private (family_addon), draft, deprecated')` (DB 関数の 2. と同じ表をリテラルで持つ。`{ plan_key: 'family_addon', plan_type: 'family', status: 'private' }` の行を含む)
 3. `it('manualPlanGrantBodySchema rejects expires_on on or before today, non-calendar dates (2026-02-30) and accepts null/omitted and a future date; trims reason and enforces 1..500')`
 4. `it('ManualPlanRevokeBodySchema requires a non-blank reason within 500 chars')`
 5. `it('MANUAL_GRANT_RPC_TO_API_CODE maps the 5 DB codes to API codes whose HTTP status is in MANUAL_GRANT_ERROR_HTTP_STATUS; isManualGrantRpcCode rejects unknown strings')`
@@ -1892,7 +1902,7 @@ sequenceDiagram
 20. `it('POST: maps ManualGrantError to 409 OP_SUBSCRIPTION_ALREADY_ACTIVE / 422 OP_PLAN_NOT_GRANTABLE / 400 OP_INVALID_INPUT with the fixed messages and no audit row')`
 21. `it('DELETE: 200 { data } on success and records admin.billing.manual_revoke; 409 OP_NO_MANUAL_SUBSCRIPTION without audit')`
 22. `it('GET: 200 { data: view } with Cache-Control: no-store and no audit row')`
-23. `it('every response of the 3 handlers carries Cache-Control: no-store')`
+23. `it('responses built by the route carry Cache-Control: no-store: 200 of GET/POST/DELETE, 401/403 from authFailure, 404 for a non-UUID id, 403 OP_SELF_MODIFY / 409 / 422 / 400 from ManualGrantError')` (共通のヘルパーの応答 = 400 `INVALID_CHARACTER`・Zod / JSON の 400 `OP_INVALID_INPUT`・500 は、テスト 18・24 が status と本文を見る。このヘッダは見ない。§9 の冒頭)
 24. `it('500: internalError (nested) with the fixed message when the service throws a non-ManualGrantError')`
 
 `tests/billing-manual-plan-grant-migration-contract.test.ts` (SQL の文面。DB は使わない。`tests/billing-migration-contract.test.ts` と同じ形。段 A):
@@ -1902,7 +1912,7 @@ sequenceDiagram
 28. `it('migration contains no UPDATE/DELETE of existing rows outside function bodies')`
 29. `it('cron job expire-manual-plan-grants is scheduled at 11 15 * * * calling billing_expire_manual_subscriptions(), guarded by to_regclass(cron.job), unscheduling the same name first')`
 30. `it('rollback unschedules the job and drops the 4 functions; it does not DELETE rows')`
-31. `it('grant function rejects free / org / draft / deprecated (the same table as isGrantablePlan) and raises BILL_UNKNOWN_USER, BILL_PLAN_NOT_GRANTABLE, BILL_MANUAL_EXPIRES_AT_PAST, BILL_LIVE_ROW_CONFLICT; revoke raises BILL_MANUAL_ROW_NOT_FOUND')`
+31. `it('grant function rejects free / org / non-public (private, draft, deprecated) plans (the same table as isGrantablePlan) and raises BILL_UNKNOWN_USER, BILL_PLAN_NOT_GRANTABLE, BILL_MANUAL_EXPIRES_AT_PAST, BILL_LIVE_ROW_CONFLICT; revoke raises BILL_MANUAL_ROW_NOT_FOUND')`
 32. `it('lock order in grant/revoke/expire: advisory billing-user → personal_subscriptions (FOR NO KEY UPDATE) → family_groups → user_profiles, and the audit INSERT in expire uses system.billing.manual_grant_expired with actor_id NULL')`
 33. `it('migration comment does not attribute decisions (no "オーナー判断")')`
 
@@ -1921,7 +1931,7 @@ sequenceDiagram
 
 `tests/integration/rls/billing-manual-grant-rpc.test.ts` (段 A。`src/lib/billing/*` を import しない。`srAdmin` (service_role) で RPC を呼ぶ):
 39. `it('grant inserts an active row with stripe_subscription_id NULL, starts_at/current_period_start now, current_period_end = p_expires_at (or NULL) and sets plan_key_cached')`
-40. `it('grant raises BILL_LIVE_ROW_CONFLICT when a live stripe-backed row or a live manual row exists, and BILL_PLAN_NOT_GRANTABLE for free / org / draft / deprecated / unknown, and BILL_UNKNOWN_USER for a missing user, and BILL_MANUAL_EXPIRES_AT_PAST for a past expiry')`
+40. `it('grant raises BILL_LIVE_ROW_CONFLICT when a live stripe-backed row or a live manual row exists, and BILL_PLAN_NOT_GRANTABLE for free / org / private (family_addon) / draft / deprecated / unknown, and BILL_UNKNOWN_USER for a missing user, and BILL_MANUAL_EXPIRES_AT_PAST for a past expiry')`
 41. `it('grant with a family plan sets the representative active group plan_key/member_limit (LEAST(max_members,20)); revoke reverts to free/4 only when no other live row has that plan; a non-representative grant touches no group')`
 42. `it('revoke sets cancelled + cancelled_at, recomputes plan_key_cached (NULL), raises BILL_MANUAL_ROW_NOT_FOUND when only a stripe-backed live row or no live row exists, and leaves active_coupon_redemption_id untouched')`
 43. `it('expire marks live manual rows with current_period_end <= now() as expired (not rows without expiry, not stripe-backed rows), syncs family/plan_key_cached, writes one system.billing.manual_grant_expired audit row per row with actor_id NULL, and returns the count')`
@@ -1939,7 +1949,7 @@ sequenceDiagram
 48. `it('cron.job has exactly one expire-manual-plan-grants row with schedule 11 15 * * *, command calling billing_expire_manual_subscriptions(), owned by postgres (skipped when cron.job is absent)')`
 
 `tests/integration/operator/super-admin-users-manual-plan.test.ts` (段 B。本物の認証で route を叩く。`tests/integration/operator/admin-users.test.ts` と同じ道具):
-49. `it('GET/POST/DELETE: 401 without auth, 403 for admin / support / general, 200 for super_admin (AAL2 session); POST then GET shows source manual; DELETE then GET shows current null; admin_audit_logs has manual_grant and manual_revoke rows with ip_address and user_agent')`
+49. `it('GET/POST/DELETE: 401 without auth, 403 for admin / support / general, 200 for super_admin (AAL2 session); GET plans contains pro/family_basic/family_pro and no free / org_* / family_addon; POST then GET shows source manual; DELETE then GET shows current null; admin_audit_logs has manual_grant and manual_revoke rows with ip_address and user_agent')`
 
 ### 13.3 E2E
 
@@ -1959,7 +1969,7 @@ sequenceDiagram
 | S8 | 44 |
 | S9 | 50 |
 | S10 | 51 |
-| S11 | 2・20・31・40 |
+| S11 | 2・20・31・40・49 |
 | S12 | 3・11・18・40 |
 | S13 | 10・12・16・34 |
 | S14 | 15・49 |
@@ -2085,7 +2095,7 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 **母集合の作り方** (下の表と「変更なし」の表は、次の 3 つの問い合わせに出た文書を 1 本ずつ見て作った。2026-10-17 の origin/main `88b803f5` の結果。実装の各段の最初に同じ問い合わせを流し直し、どちらの表にも無い文書が出たら報告する。他の文書は専権 PATCH なので、レーンは直さない):
 
 1. 本冊の主題の語: `git grep -l -i -E "手動付与|manual.?grant|personal_subscriptions_insert_admin|02-billing-wiring" origin/main -- docs '*.md' ':!docs/design/billing/02-manual-plan-grant.md'` → `docs/design/CLAUDE.md`・`billing/01`・`cross/12`・`operator/01` の 4 本。
-2. billing/01 §16.2 で期日が「配線の冊と同時」「family の冊」の行の先 (F23): `operator/08` §3.1・§5.7、`family/` の `POST /api/family/groups` の入力 (`family/02` §4.1)・作成の画面 (`family/03` §4.2 FAM-002)・人数の上限 (`family/02` §5.2 の「メンバー数 < `member_limit`」) の 3 本。
+2. billing/01 §16.2 で期日が「配線の冊と同時」「family の冊」「family / org の冊」の行 (F23 の 10 行) の先: 本冊で直すもの = `operator/08` §3.1・§3.2・§5.7、`family/` の `POST /api/family/groups` の入力 (`family/02` §4.1)・作成の画面 (`family/03` §4.2 FAM-002)・人数の上限 (`family/02` §5.2 の「メンバー数 < `member_limit`」)。期日を付け替える・変えないもの = `operator/02` §22・`operator/09` §4・`requirements/03` §15.1 (reconcile)・`org/04` :517・`requirements/02` :763-764 (組織ライセンスの一時停止)・`family/02` §4.7・`family/07`・`org/05`・`org/04` :293 (`migrate-to-personal`)。どれも下の 2 つの表のどちらかに行がある。
 3. 本冊が足す名前を、同じ種類の既存の名前が載っている一覧に載せるための問い合わせ (種類ごとに 1 本。`git grep -l -E "<語>" origin/main -- docs CLAUDE.md`):
    - pg_cron のジョブ (語 `pg_cron に登録`) → `operator/08`・`cross/16`・`operator/10`
    - API のエラーコード (語 `OP_PLAN_HAS_SUBSCRIBERS|OP_SUBSCRIPTION_ALREADY_ACTIVE`) → `billing/01`・`cross/04`・`operator/01`・`operator/02`
@@ -2098,9 +2108,9 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | 文書 | 箇所 | 直し方 | 期日 |
 |---|---|---|---|
 | `docs/design/operator/08-cron-batches.md` | §3.0 の本文 (「いま、このリポジトリの migration が pg_cron に登録しているジョブは 11 つある」「残りの 9 つ `…`」) と §3.0 の箇条書き・§3.1 の注記の最終行 | 「11 つ」→「12 つ」(§3.0 と §3.1 の注記の両方)、「残りの 9 つ」→「残りの 10 つ」で一覧の末尾に `` `expire-manual-plan-grants` `` を足す。§3.0 の箇条書きの末尾 (「過去の migration で登録されたジョブ」の前) に「そのほか、migration `<番号>_billing_manual_plan_grant.sql` (#1797) が、ジョブ `expire-manual-plan-grants` を毎日 00:11 JST (`11 15 * * *` UTC) に登録している。`SELECT public.billing_expire_manual_subscriptions();` を呼び、運営者が手動で付与した個人の契約 (`personal_subscriptions` の `stripe_subscription_id IS NULL` の行) のうち有効期限 (`current_period_end`) を過ぎた行を `expired` にし、家族グループのプランと `plan_key_cached` を合わせ、監査 `system.billing.manual_grant_expired` を書く。関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/<番号>_billing_manual_plan_grant.down.sql`。詳しくは `billing/02-manual-plan-grant.md` §6.4」を足す。§3.1 の注記の一覧 (`` `cleanup-old-app-logs`・… ``) の末尾に `` `expire-manual-plan-grants` `` を足す。「Stripe Webhook・収益スナップショット・ライセンス系のバッチは…この段では足さない」の文は変えない (同じ番兵が言い回しを見る) | 段 A と同じ PR (番兵) |
-| 同 (`operator/08`) | §3.1 の表の `stripe_event_stuck_check` の行と、§5.7 `grace_period_check`・§3.2 の課金系の行 (billing/01 §16.2 の「配線の冊と同時」の行) | `stripe_event_stuck_check` の行の概要に「再処理のためには不要 (処理済みでないイベントに 2xx を返さず Stripe の再送で取り直す。billing/01 §9.6)。残るのは 3 日の再送が尽きたイベントの整合 (reconcile) と一覧だけ」、§5.7 と `stripe_integrity_check` の行に「billing/01 §12 の契約 (1 文の直接 UPDATE / 写像を呼ぶ) で作る。課金の運用バッチの冊 (未作成) の対象」と注記する。本冊はジョブそのものは作らない | 段 A と同じ PR |
-| `docs/design/billing/01-billing-core.md` | 表紙の Issue の行 (「配線の冊は `02-billing-wiring.md` (未作成)」)・§0.2 右列の「運営者による手動のプラン付与 … の画面と API」・§7.3 の冒頭「手動付与 (M) の行は配線の冊」・§12 の「手動付与」の行・§16.2 の「配線の冊と同時」「family の冊」の行の期日 | 表紙: 「配線の冊は `02-manual-plan-grant.md` (手動付与。設計済み) と、課金の運用バッチと Finance 画面の冊 (未作成) に分かれる」。§0.2: 右列の手動付与の行に「→ `02-manual-plan-grant.md`」。§7.3: 「M 行の遷移は `02-manual-plan-grant.md` §7.3」。§12 の手動付与の行: 「配線の画面が admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`) で書く」を「`02-manual-plan-grant.md` の DB 関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions` (service_role だけ) で書く (admin の JWT の直接の INSERT では `plan_key_cached` と `family_groups` を同期できない: 特権列ガード)。写像は触らない。`get_effective_plan` は区別しない」に。§12 の家族の行の「既存のグループへの反映は配線の手動付与の画面が行う」を「付与・取り消し・期限切れの関数が写像と同じ式で反映する (02 §6)」に。§16.2 の `operator/08` の行の期日を「02 (手動付与) の段 A と同じ PR (#1797)」に、family の 2 行の期日を「02 の段 D (入力の整理) / 02 §16 の 6 (外さないで確定)」に | 段 A と同じ PR |
-| `docs/design/CLAUDE.md` | ドメイン構成の表の `billing/` の行 (「配線 (… `02-billing-wiring.md` は未作成)」) | 「配線: `02-manual-plan-grant.md` (運営者の手動のプラン付与) と、運用バッチ・運営の Finance 画面の冊 (未作成)」に。Issue に `#1797` を足す | 段 A と同じ PR |
+| 同 (`operator/08`) | §3.1 の表の `stripe_event_stuck_check` の行と、§5.7 `grace_period_check`・§3.2 の課金系の行 (billing/01 §16.2 の「配線の冊と同時」の行) | `stripe_event_stuck_check` の行の概要に「再処理のためには不要 (処理済みでないイベントに 2xx を返さず Stripe の再送で取り直す。billing/01 §9.6)。残るのは 3 日の再送が尽きたイベントの整合 (reconcile) と一覧だけ」、§5.7 と `stripe_integrity_check` の行に「billing/01 §12 の契約 (1 文の直接 UPDATE / 写像を呼ぶ) で作る。課金の配線の残りの冊 (運用バッチ。未作成) の対象」と注記する。本冊はジョブそのものは作らない | 段 A と同じ PR |
+| `docs/design/billing/01-billing-core.md` | 表紙の Issue の行 (「配線の冊は `02-billing-wiring.md` (未作成)」)・§0.2 右列の「運営者による手動のプラン付与 … の画面と API」・§7.3 の冒頭「手動付与 (M) の行は配線の冊」・§12 の「手動付与」の行・§16.2 の期日 (F23 の 10 行) | 表紙: 「配線の冊は `02-manual-plan-grant.md` (手動付与。設計済み) と、配線の残りの冊 (§0.2 右列のうち手動付与以外: 運用バッチ・Finance 画面ほか。未作成) に分かれる。本文の『配線の冊』は、手動付与については 02、それ以外は配線の残りの冊を指す」。§0.2: 右列の手動付与の行に「→ `02-manual-plan-grant.md`」。§7.3: 「M 行の遷移は `02-manual-plan-grant.md` §7.3」。§12 の手動付与の行: 「配線の画面が admin の RLS (`personal_subscriptions_insert_admin` / `_update_admin`) で書く」を「`02-manual-plan-grant.md` の DB 関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions` (service_role だけ) で書く (admin の JWT の直接の INSERT では `plan_key_cached` と `family_groups` を同期できない: 特権列ガード)。写像は触らない。`get_effective_plan` は区別しない」に。§12 の家族の行の「既存のグループへの反映は配線の手動付与の画面が行う」を「付与・取り消し・期限切れの関数が写像と同じ式で反映する (02 §6)」に。§16.2 の期日 (行は origin/main の行番号。中身の列は変えない): ① `operator/08` の行 (:3948) を「02 (手動付与) の段 A と同じ PR (#1797)」に。② 「family の冊」の 3 行のうち、入力と選択欄の行 (:3953) と `family/03` の行 (:3982) を「02 の段 D と同じ PR」に、`member_limit` の行 (:3954) を「02 §16 の 6 で『外さない』に確定。`family/02` §5.2 の注記は 02 の段 D と同じ PR」に。③ reconcile の 3 行 (`operator/02` §22 :3959・`operator/09` §4 :3964・`requirements/03` §15.1 :3978) を「配線の残りの冊 (`stripe_integrity_check` を作るとき) と同時」に。④ 組織ライセンスの一時停止の 2 行 (`org/04` :517 の行 :3971・`requirements/02` :763-764 の行 :3973) を「配線の残りの冊 (組織ライセンス受領による一時停止を作るとき) と同時」に。⑤ `migrate-to-personal` の行 (:3981。期日「family / org の冊」) は変えない。①〜④ のあと、§16.2 に期日「配線の冊と同時」の行は残らない | 段 A と同じ PR |
+| `docs/design/CLAUDE.md` | ドメイン構成の表の `billing/` の行 (「配線 (… `02-billing-wiring.md` は未作成)」) | 「配線: `02-manual-plan-grant.md` (運営者の手動のプラン付与) と、配線の残りの冊 (運用バッチ・運営の Finance 画面ほか。未作成)」に。Issue に `#1797` を足す | 段 A と同じ PR |
 | `docs/design/cross/04-api-conventions.md` | §4.2 OP 系の表 | `OP_PLAN_NOT_GRANTABLE` (422。手動付与できないプラン。`POST /api/super-admin/users/{id}/manual-plan`)・`OP_NO_MANUAL_SUBSCRIPTION` (409。取り消す手動付与の行が無い。`DELETE …/manual-plan`)・`OP_SELF_MODIFY` (403。自分自身を対象にできない運営の操作。`POST /api/super-admin/admins/{id}/mfa/reset` と `…/manual-plan`。既存の実コードが先に使っている) の 3 行を足す | 段 B と同じ PR |
 | `docs/design/cross/02-rls-patterns.md` | §6.2 ロックキーの表 | `billing-user:{uuid}` の行に「手動付与の関数 `billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions` (billing/02 §6。写像・トリガーと直列)」を足す | 段 A と同じ PR |
 | `CLAUDE.md` (リポジトリの根) | 「家族 (family_*) を変える関数のロック順 (DB)」 | 家族の行を書く関数の一覧に、手動付与の関数 3 本 (`billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscriptions`。家族の同期は `family_groups` の行 → `user_profiles` の行の順。billing/02 §6) を足す。回帰テストにテスト 41・47 を足す | 段 A と同じ PR |
@@ -2119,6 +2129,9 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 |---|---|---|
 | `docs/design/cross/12-operator-mfa.md` | 1・3 (`/admin/users/{id}` の節) | `personal_subscriptions_insert_admin` は AAL2 の門の対象のポリシーの棚卸しの行で、本冊はポリシーを変えない (§16 の 2)。`OperatorMfaResetSection` は節の形の先例として読むだけで、MFA の節は変えない |
 | `docs/design/cross/16-auth-history-sessions.md`・`docs/design/operator/10-logs-and-mail-retry.md` | 3 (pg_cron・運営の route) | どちらも自分の案件の追随表・route の形の先例として `operator/08` やクーポンの route を名指しするだけ (過去の記録)。pg_cron の数の正本は `operator/08` |
+| `docs/design/operator/02-api-spec.md` §22 `POST /api/cron/stripe-reconcile`・`docs/design/operator/09-runbook.md` §4 Stripe ↔ DB Reconciliation・`docs/requirements/03-operator-admin.md` §15.1 日次 reconciliation | 2 (billing/01 §16.2 の「配線の冊と同時」の reconcile の 3 行) | reconcile (`stripe_integrity_check`) は配線の残りの冊が作り、時刻・認証もその冊が決める (billing/01 の行の直し方が「時刻は配線の冊が決める」と書いている)。手動付与と関係が無い。billing/01 §16.2 の期日を「配線の残りの冊と同時」に付け替える (上の billing/01 の行の ③)。本冊の M 行は reconcile の対象 (Stripe-backed な行) に入らない (`stripe_subscription_id IS NULL`) |
+| `docs/design/org/04-license-management.md` :517・`docs/requirements/02-organization-management.md` :763-764 | 2 (billing/01 §16.2 の「配線の冊と同時」の一時停止の 2 行) | 組織ライセンス受領による一時停止 (`paused`) は本冊の対象外 (§0.2) で、どの status から止めるかは配線の残りの冊が決める (billing/01 §12 の一時停止の行)。billing/01 §16.2 の期日を「配線の残りの冊と同時」に付け替える (上の billing/01 の行の ④) |
+| `docs/design/family/02-api-spec.md` §4.7・`docs/design/family/07-lifecycle.md` :397-418・`docs/design/org/05-offboarding-flow.md` の `migrate-to-personal` の節・`docs/design/org/04-license-management.md` :293 | 2 (billing/01 §16.2 の「family / org の冊」の行) | 本冊は `migrate-to-personal` を作らない。billing/01 §16.2 のその行の期日 (「family / org の冊 (`migrate-to-personal` を実装するとき)」) は変えない (上の billing/01 の行の ⑤)。そのときの購入は Checkout (S 行) で、本冊の M 行とは 1 利用者 1 live 行の不変条件で排他になる (§7.3) |
 | `docs/design/operator/01-data-model.md` §6 | 3 (エラーコード) | 「`personal_subscriptions` の active 重複 → 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`」は M 行の重複にもそのまま当たる。§3.7 の注記は上の表の行 |
 | `docs/design/operator/05-stripe-integration.md` | 3 (監査) | `system.stripe.event_failed` は写像の失敗の記録で、本冊は写像を変えない (S9 は既存の動き) |
 | `docs/design/family/01-data-model.md`・`docs/design/family/02-api-spec.md` §4.6 (オーナー譲渡)・§4.10 (グループ分割) の `billing-user:` の文 | 3 (ロックの鍵) | 家族のトリガーは変えない (F6)。M 行にもそのまま効くことは本冊 §4.2 S7・S8 (`family/02` §4.1 の段落は上の表の行で直す) |
@@ -2152,8 +2165,9 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 | 6 | 家族の `member_limit` が下がったとき (`family_pro` 8 の付与の取り消し・期限切れで 4 に) に、すでに上限を超えているメンバーの扱い (billing/01 §18 の 15。billing/01 §16.2 の「family の冊」の行) | **外さない**で確定 (billing/01 と同じ。新しい招待の作成・承諾・子供の追加だけが既存の `MEMBER_LIMIT_EXCEEDED` で止まる。画面は `6/4 人` のように出る)。外す・通知するなら family の案件 |
 | 7 | 運営の画面の E2E (`tests/e2e/operator/02-super-admin-flow.spec.ts`) に手動付与の導線を足すか | 足さない (単体 35〜37 と結合 49 で足りる)。足すなら AAL2 のセッションの道具 (cross/12 §22) を使う |
 | 8 | 付与と同時にプランを替える (取り消し + 付与を 1 操作で) | 作らない (運営が取り消してから付与する。監査は 2 行)。要るなら関数 `billing_replace_manual_subscription` を足す |
-| 9 | M 行が live の間に Stripe 側で契約が作られたとき (S9) の運営への通知。いまは `admin_audit_logs` の `system.stripe.event_failed` だけ | Finance 画面 (未作成の冊) で `failed` イベントを一覧にする (billing/01 §18 の 10 と同じ) |
+| 9 | M 行が live の間に Stripe 側で契約が作られたとき (S9) の運営への通知。いまは `admin_audit_logs` の `system.stripe.event_failed` だけ | 配線の残りの冊の Finance 画面で `failed` イベントを一覧にする (billing/01 §18 の 10 と同じ) |
 | 10 | 本冊の migration の番号と、`operator/08` の注記の数 (11 → 12) は、同時に走る pg_cron の案件があれば両方ずれる | マージ直前に数え直す (§15.3) |
+| 11 | billing/01 §16.2 で期日が「配線の冊と同時」だった 6 行のうち、本冊が直さない 5 行 (reconcile の 3 行・組織ライセンスの一時停止の 2 行。F23) の期日 | 「配線の残りの冊 (`stripe_integrity_check` を作るとき / 組織ライセンス受領による一時停止を作るとき) と同時」に付け替える (§15.2 の billing/01 の行の ③④)。その冊の設計は、この 5 行の直し方を自分の追随表にそのまま引き継ぐ。本冊で直さない理由: どれも手動付与と関係が無く、直し方の中身 (reconcile の時刻・認証、一時停止をどの status から行うか) がその冊の決めることだから |
 
 ---
 
@@ -2163,3 +2177,4 @@ grep の語 = 本冊が足す・変える名前。段 = §14.1。
 |---|---|---|
 | v1.0 | 2026-10-17 | 新設 (設計ゲート R1 の叩き台。4 相: 外形固定 §3 → 構想 §4 → 構造裁定 §5 → 仕上げ §6〜§15) |
 | v1.1 | 2026-10-17 | 網羅性 (周 1) を反映: S9・S10・S16・S17・S18・S19 を直接見るテスト 50〜55 と §13.4 のシナリオとテストの対応を足す・S17 の監査の行の事実 (`target_id` に外部キーは無い) を直す・§15.2 の母集合を 3 つの問い合わせと結果に書き直し、`family/*` を `family/02`・`family/03` の行に、出たが変えない文書を「変更なし」の表に・`operator/02` §23 のエラーコードの行を足す・§14.2 の docs を閉じた一覧に・§15.1 と §16 の 2 のテスト番号を billing/01 §13 の番号と明記・§8.8 に命名の約束 |
+| v1.2 | 2026-10-17 | 設計ゲート R1 の修正: ① billing/01 §16.2 の追随の行を 10 行に数え直し (F23。「配線の冊と同時」6 行・「family の冊」3 行・「family / org の冊」1 行)、行ごとの行き先 (本冊で直す 4 行・配線の残りの冊へ期日を付け替える 5 行・変えない 1 行) を R14・§0.2・§15.2 の billing/01 の行・「変更なし」の表・§16 の 11 に書いた。手動付与以外の配線を「配線の残りの冊」と呼び、呼び名をそろえた ② `Cache-Control: no-store` は route が組み立てる応答 (200 と `errorJson`) だけに付けると決め (共通のヘルパーの応答はそのまま返す。NULL 文字の 2 行は番兵が逐語を求める)、§9 の冒頭・§8.5 の注記・テスト 23 を合わせた ③ 付与できるプランを `status='public'` だけにした (`private` の `family_addon` はアドオンで billing/01 §1 が対象外)。DB 関数の 2.・`GRANTABLE_PLAN_STATUSES`・S11・F11・§7.3・§12.2・テスト 2 / 31 / 40 / 49 を合わせた |
