@@ -31,6 +31,7 @@ import ws from 'ws';
 import { AWARDABLE_BADGE_CODES } from '../../../src/lib/badges/awardable';
 import { apiCall } from '../helpers/api';
 import { jstDaysAgo } from '../helpers/jst-days';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -79,9 +80,9 @@ async function createUser(label: string): Promise<TestUser> {
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname: `badges-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: data.user.id, nickname: `badges-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   // サインインは使い捨てのクライアントで行う (srAdmin でサインインすると service_role でなくなる)
   const signIn = await client(anonKey).auth.signInWithPassword({ email, password });
@@ -205,7 +206,8 @@ const DAY_MEALS: MealSeed[] = [
 ];
 
 beforeAll(async () => {
-  const { data: master, error } = await srAdmin.from('badges').select('code').in('code', RULE_BADGES);
+  const { data: master, error } = await retryIdempotentSetup(srAdmin, 'beforeAll: badges の select', (db) =>
+    db.from('badges').select('code').in('code', RULE_BADGES));
   if (error) throw new Error(`badges マスタの取得に失敗: ${error.message}`);
   const missing = RULE_BADGES.filter((code) => !(master ?? []).some((b) => b.code === code));
   if (missing.length > 0) {
@@ -251,7 +253,8 @@ beforeAll(async () => {
   ], { sandbox: false });
 
   // #1314: 付与処理の無いバッジ early_bird を、別の経路で獲得済みにしておく
-  const { data: earlyBird, error: earlyBirdError } = await srAdmin.from('badges').select('id').eq('code', EARLY_BIRD_CODE).single();
+  const { data: earlyBird, error: earlyBirdError } = await retryIdempotentSetup(srAdmin, 'beforeAll: badges の select', (db) =>
+    db.from('badges').select('id').eq('code', EARLY_BIRD_CODE).single());
   if (earlyBirdError || !earlyBird) throw new Error(`badges ${EARLY_BIRD_CODE}: ${earlyBirdError?.message}`);
   const { error: grantError } = await srAdmin
     .from('user_badges')

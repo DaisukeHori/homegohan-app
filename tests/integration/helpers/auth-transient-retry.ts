@@ -27,8 +27,18 @@
  * 全体の上限は vitest.integration.config.ts のフック・テストの時間切れ。
  */
 
-/** やり直す状態 (ゲートウェイの失敗。auth-js の NETWORK_ERROR_CODES のうち、ローカルの Kong が返しうるもの) */
-export const AUTH_TRANSIENT_STATUSES: readonly number[] = [502, 503, 504];
+import {
+  DEFAULT_GATEWAY_RETRY_ATTEMPTS,
+  DEFAULT_GATEWAY_RETRY_BASE_DELAY_MS,
+  GATEWAY_RETRY_MAX_DELAY_MS,
+  GATEWAY_TRANSIENT_STATUSES,
+  defaultGatewayRetrySleep,
+  gatewayRetryDelayMs,
+  positiveIntFromEnv,
+} from './gateway-transient';
+
+/** やり直す状態 (ゲートウェイの失敗。auth-js の NETWORK_ERROR_CODES のうち、ローカルの Kong が返しうるもの)。準備の REST のやり直し (#1779) と同じ値 */
+export const AUTH_TRANSIENT_STATUSES: readonly number[] = GATEWAY_TRANSIENT_STATUSES;
 
 export const AUTH_RETRY_ATTEMPTS_ENV = 'INTEGRATION_AUTH_RETRY_ATTEMPTS';
 export const AUTH_RETRY_BASE_DELAY_ENV = 'INTEGRATION_AUTH_RETRY_BASE_DELAY_MS';
@@ -37,14 +47,13 @@ export const AUTH_RETRY_BASE_DELAY_ENV = 'INTEGRATION_AUTH_RETRY_BASE_DELAY_MS';
  * 1 回の呼び出しで送る回数の既定 (1 回目 + やり直し 4 回)。間隔は 2・4・8・16 秒で、待つのは合わせて 30 秒。
  * 2026-10-11 の途切れは 2 分ほどの間に断続的で、その間も認証を使うほかのファイルは通っていたので、30 秒あれば次の応答を拾える見込み。
  * 1 回ごとにゲートウェイの時間切れ (60 秒) まで待たされる最悪のときは、フックの時間切れ (既定 120 秒) が先に来て赤になる。
+ * 値は準備の REST のやり直し (#1779) と共通 (helpers/gateway-transient.ts)
  */
-export const DEFAULT_AUTH_RETRY_ATTEMPTS = 5;
+export const DEFAULT_AUTH_RETRY_ATTEMPTS = DEFAULT_GATEWAY_RETRY_ATTEMPTS;
 /** 最初のやり直しまでの間隔 (ミリ秒)。以後は倍にしていく */
-export const DEFAULT_AUTH_RETRY_BASE_DELAY_MS = 2_000;
+export const DEFAULT_AUTH_RETRY_BASE_DELAY_MS = DEFAULT_GATEWAY_RETRY_BASE_DELAY_MS;
 /** 間隔の上限 (ミリ秒)。倍にしていっても、1 回の待ちがフックの時間切れの多くを食わないようにする */
-export const AUTH_RETRY_MAX_DELAY_MS = 16_000;
-/** 間隔を倍にしていく底 */
-const AUTH_RETRY_BACKOFF_FACTOR = 2;
+export const AUTH_RETRY_MAX_DELAY_MS = GATEWAY_RETRY_MAX_DELAY_MS;
 /** 422 (email_exists) のあとに作られたユーザーを探すときに一覧で読む件数 (メールの部分一致で絞るので、1 ページで足りる) */
 const RECOVER_LOOKUP_PER_PAGE = 50;
 /** 作成のやり直しが 422 になったときの、GoTrue の「同じメールのユーザーがいる」のエラーコード */
@@ -67,16 +76,8 @@ export type AuthRetryOptions = {
 
 type FetchFn = (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 
-/** 環境変数の正の整数。無い・空なら既定。整数でなければ設定の誤りとして止める (黙って既定に戻さない) */
-export function positiveIntFromEnv(env: Record<string, string | undefined>, name: string, fallback: number): number {
-  const raw = env[name];
-  if (raw === undefined || raw.trim() === '') return fallback;
-  const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`${name} は正の整数にしてください: ${raw}`);
-  }
-  return value;
-}
+/** 環境変数の正の整数 (helpers/gateway-transient.ts のもの。ここから読んでいるテストのために出し直す) */
+export { positiveIntFromEnv };
 
 /** 環境変数からやり直しの設定を作る。Supabase の URL が無ければ null (やり直しを入れない) */
 export function authRetryOptionsFromEnv(env: Record<string, string | undefined>): AuthRetryOptions | null {
@@ -91,7 +92,7 @@ export function authRetryOptionsFromEnv(env: Record<string, string | undefined>)
 
 /** n 回目のやり直しの前に待つ時間 (n は 1 から) */
 export function authRetryDelayMs(baseDelayMs: number, retryIndex: number): number {
-  return Math.min(baseDelayMs * AUTH_RETRY_BACKOFF_FACTOR ** (retryIndex - 1), AUTH_RETRY_MAX_DELAY_MS);
+  return gatewayRetryDelayMs(baseDelayMs, retryIndex);
 }
 
 function urlOf(input: RequestInfo | URL): string | null {
@@ -111,10 +112,6 @@ async function discardBody(response: Response): Promise<void> {
   } catch {
     // 読み捨てに失敗しても、やり直しには関係しない
   }
-}
-
-function defaultSleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 /** 作成の要求の本文からメールを取る (無ければ null) */
@@ -173,7 +170,7 @@ async function findCreatedUser(baseFetch: FetchFn, url: string, init: RequestIni
 
 /** 認証の URL への要求だけ、一時的な失敗をやり直す fetch を返す (それ以外の要求はそのまま baseFetch に渡す) */
 export function withAuthTransientRetry(baseFetch: FetchFn, options: AuthRetryOptions): FetchFn {
-  const sleep = options.sleep ?? defaultSleep;
+  const sleep = options.sleep ?? defaultGatewayRetrySleep;
   const warn = options.warn ?? ((message: string) => console.warn(message));
   const createUsersUrl = `${options.authBaseUrl}admin/users`;
 

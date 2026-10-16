@@ -50,6 +50,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -116,9 +117,9 @@ async function createUser(label: string, extra: Record<string, unknown> = {}): P
   const { data, error } = await sr.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
   createdUserIds.push(data.user.id);
-  const { error: profileError } = await sr
-    .from('user_profiles')
-    .upsert({ id: data.user.id, nickname: `it1306-${label}`, age_group: '30s', gender: 'other', ...extra }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(sr, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: data.user.id, nickname: `it1306-${label}`, age_group: '30s', gender: 'other', ...extra }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   return data.user.id;
 }
@@ -232,11 +233,11 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
     metricIds.total = await ensureMetric('total_meals', '総食事数');
     recordRateMetricId = await ensureMetric('weekly_record_rate', '週の記録率');
     // 既存の指標が非アクティブだと処理されない。このテストが依存する 6 つはアクティブであること
-    const { data: actives } = await sr
-      .from('metric_definitions')
-      .select('id')
-      .in('id', [...Object.values(metricIds), recordRateMetricId])
-      .eq('is_active', true);
+    const { data: actives } = await retryIdempotentSetup(sr, 'beforeAll: metric_definitions の select', (db) =>
+      db.from('metric_definitions')
+        .select('id')
+        .in('id', [...Object.values(metricIds), recordRateMetricId])
+        .eq('is_active', true));
     expect((actives ?? []).length).toBe(6);
 
     // このテストのユーザーだけが持つ perf_modes の値で絞るセグメント (5 人未満の統計は作られないので、ちょうど 5 人)
@@ -346,7 +347,8 @@ describe('calculate-segment-stats: 実スキーマで指標・統計・ランキ
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(new Date('2026-10-08T03:00:00Z'));
       inProgressResponse = await callSegmentStats({ periodType: 'weekly' });
-      const { data: badges, error: badgesError } = await sr.from('user_badges').select('user_id, badge_id').in('user_id', [...userIds, ...zeroUserIds]);
+      const { data: badges, error: badgesError } = await retryIdempotentSetup(sr, 'beforeAll: user_badges の select', (db) =>
+        db.from('user_badges').select('user_id, badge_id').in('user_id', [...userIds, ...zeroUserIds]));
       if (badgesError) throw new Error(`user_badges (毎時の回のあと): ${badgesError.message}`);
       badgesAfterInProgress = badges ?? [];
 

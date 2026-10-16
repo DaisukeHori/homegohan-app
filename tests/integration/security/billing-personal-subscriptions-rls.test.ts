@@ -23,6 +23,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -87,9 +88,9 @@ async function createAuthUser(label: string): Promise<TestUser> {
 /** プロフィールつきのユーザー (roles は service_role で入れる) */
 async function createUser(label: string, roles?: string[]): Promise<TestUser> {
   const user = await createAuthUser(label);
-  const { error } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: user.id, ...base, ...(roles ? { roles } : {}) }, { onConflict: 'id' });
+  const { error } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: user.id, ...base, ...(roles ? { roles } : {}) }, { onConflict: 'id' }));
   if (error) throw new Error(`profile ${label}: ${error.message}`);
   return user;
 }

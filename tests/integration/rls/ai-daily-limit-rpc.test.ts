@@ -39,6 +39,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -122,9 +123,9 @@ async function createUser(label: string, options: { withJwt?: boolean } = {}): P
   if (error || !data.user) throw new Error(`Failed to create auth user ${email}: ${error?.message}`);
   const userId = data.user.id;
   createdUserIds.push(userId);
-  const { error: profileError } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: `limit-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: `limit-${label}`, age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
   if (!options.withJwt) return { userId, jwt: null };
   const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
@@ -174,14 +175,15 @@ async function setPlanLimit(dailyLimit: number | null | 'none'): Promise<void> {
     if (error) throw new Error(`ai_daily_limits delete: ${error.message}`);
     return;
   }
-  const { error } = await srAdmin
-    .from('ai_daily_limits')
-    .upsert({ plan_key: PLAN_FOR_LIMITS, daily_limit: dailyLimit, updated_at: new Date().toISOString() }, { onConflict: 'plan_key' });
+  const { error } = await retryIdempotentSetup(srAdmin, 'setPlanLimit: ai_daily_limits の upsert', (db) =>
+    db.from('ai_daily_limits')
+      .upsert({ plan_key: PLAN_FOR_LIMITS, daily_limit: dailyLimit, updated_at: new Date().toISOString() }, { onConflict: 'plan_key' }));
   if (error) throw new Error(`ai_daily_limits upsert: ${error.message}`);
 }
 
 beforeAll(async () => {
-  const { data, error } = await srAdmin.from('ai_daily_limits').select('plan_key, daily_limit').eq('plan_key', PLAN_FOR_LIMITS).maybeSingle();
+  const { data, error } = await retryIdempotentSetup(srAdmin, 'beforeAll: ai_daily_limits の select', (db) =>
+    db.from('ai_daily_limits').select('plan_key, daily_limit').eq('plan_key', PLAN_FOR_LIMITS).maybeSingle());
   if (error) throw new Error(`ai_daily_limits: ${error.message}`);
   originalPlanRow = data;
 });
@@ -488,7 +490,8 @@ async function setCap(feature: string, dailyCap: number | 'none'): Promise<void>
   const result =
     dailyCap === 'none'
       ? await srAdmin.from('ai_unmetered_daily_caps').delete().eq('feature', feature)
-      : await srAdmin.from('ai_unmetered_daily_caps').upsert({ feature, daily_cap: dailyCap, updated_at: new Date().toISOString() }, { onConflict: 'feature' });
+      : await retryIdempotentSetup(srAdmin, 'setCap: ai_unmetered_daily_caps の upsert', (db) =>
+        db.from('ai_unmetered_daily_caps').upsert({ feature, daily_cap: dailyCap, updated_at: new Date().toISOString() }, { onConflict: 'feature' }));
   if (result.error) throw new Error(`ai_unmetered_daily_caps ${feature}: ${result.error.message}`);
 }
 

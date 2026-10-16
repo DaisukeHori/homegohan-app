@@ -23,6 +23,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 // ---------------------------------------------------------------
 // 環境変数
@@ -112,7 +113,8 @@ beforeAll(async () => {
   owner = await createTestUser('owner');
   other = await createTestUser('other');
 
-  const { data, error } = await srAdmin.from('badges').select('id, code').in('code', [...BADGE_CODES]);
+  const { data, error } = await retryIdempotentSetup(srAdmin, 'beforeAll: badges の select', (db) =>
+    db.from('badges').select('id, code').in('code', [...BADGE_CODES]));
   if (error) throw new Error(`badges マスタの取得に失敗: ${error.message}`);
   for (const code of BADGE_CODES) {
     const row = (data ?? []).find((b) => b.code === code);
@@ -281,10 +283,11 @@ describe('#1215 user_badges: service role の upsert (route.ts と同じ形)', (
 describe('#1215 user_badges: 読み取りは本人の行だけ。更新・削除はできない', () => {
   beforeAll(async () => {
     // 前のテストの結果に依存しないよう、owner に 3 行を用意する (既にあれば何もしない)
-    const { error } = await srAdmin.from('user_badges').upsert(
-      BADGE_CODES.map((code) => ({ user_id: owner.userId, badge_id: badgeIds[code] })),
-      { onConflict: 'user_id,badge_id', ignoreDuplicates: true },
-    );
+    const { error } = await retryIdempotentSetup(srAdmin, 'beforeAll: user_badges の upsert', (db) =>
+      db.from('user_badges').upsert(
+        BADGE_CODES.map((code) => ({ user_id: owner.userId, badge_id: badgeIds[code] })),
+        { onConflict: 'user_id,badge_id', ignoreDuplicates: true },
+      ));
     if (error) throw new Error(`owner の user_badges を用意できません: ${error.message}`);
   });
 

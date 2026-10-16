@@ -33,6 +33,7 @@ import {
   expectError,
   latestAuditLog,
 } from '../helpers/admin-test-utils';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const TS = Date.now();
 const pool = new TestUserPool(TS, 'findt');
@@ -121,14 +122,15 @@ beforeAll(async () => {
   if (npsError) throw new Error(`seed nps_surveys failed: ${npsError.message}`);
 
   // 収益スナップショット (PK = date。前回の取り残しがあっても上書きする)
-  const { error: snapshotError } = await supabaseAdmin.from('revenue_snapshots').upsert(
-    [
-      { date: SNAPSHOT_BEFORE, total_mrr_jpy: 111111, total_arr_jpy: 1333332, new_signups: 1, cancellations: 0 },
-      { date: SNAPSHOT_DATE, total_mrr_jpy: 123456, total_arr_jpy: 1481472, new_signups: 7, cancellations: 2 },
-      { date: SNAPSHOT_AFTER, total_mrr_jpy: 222222, total_arr_jpy: 2666664, new_signups: 3, cancellations: 1 },
-    ],
-    { onConflict: 'date' },
-  );
+  const { error: snapshotError } = await retryIdempotentSetup(supabaseAdmin, 'beforeAll: revenue_snapshots の upsert', (db) =>
+    db.from('revenue_snapshots').upsert(
+      [
+        { date: SNAPSHOT_BEFORE, total_mrr_jpy: 111111, total_arr_jpy: 1333332, new_signups: 1, cancellations: 0 },
+        { date: SNAPSHOT_DATE, total_mrr_jpy: 123456, total_arr_jpy: 1481472, new_signups: 7, cancellations: 2 },
+        { date: SNAPSHOT_AFTER, total_mrr_jpy: 222222, total_arr_jpy: 2666664, new_signups: 3, cancellations: 1 },
+      ],
+      { onConflict: 'date' },
+    ));
   if (snapshotError) throw new Error(`seed revenue_snapshots failed: ${snapshotError.message}`);
 
   // 整合性チェックの不一致ログ (cron が書く system.stripe.reconcile_discrepancy 相当)

@@ -36,6 +36,7 @@ import {
   type MealImageDish,
   type MealImageJobSeed,
 } from '../../../lib/meal-image';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -88,9 +89,9 @@ beforeAll(async () => {
   });
   if (error || !data.user) throw new Error(`createUser: ${error?.message}`);
   userId = data.user.id;
-  const { error: pErr } = await srAdmin
-    .from('user_profiles')
-    .upsert({ id: userId, nickname: 'mij', age_group: '30s', gender: 'other' }, { onConflict: 'id' });
+  const { error: pErr } = await retryIdempotentSetup(srAdmin, 'beforeAll: user_profiles の upsert', (db) =>
+    db.from('user_profiles')
+      .upsert({ id: userId, nickname: 'mij', age_group: '30s', gender: 'other' }, { onConflict: 'id' }));
   if (pErr) throw new Error(`user_profiles: ${pErr.message}`);
   const { data: day, error: dErr } = await srAdmin
     .from('user_daily_meals')
