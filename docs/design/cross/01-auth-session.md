@@ -57,7 +57,8 @@ sequenceDiagram
         Next-->>Client: AUTH_INVALID_CREDENTIALS
     end
     Supabase-->>Next: session (access_token, refresh_token)
-    Next->>Next: INSERT user_sessions_metadata
+    Note over Supabase: auth.sessions の INSERT のトリガーが user_sessions_metadata に記録 (cross/16 §11.3)
+    Next->>Supabase: ログインの文脈 (IP・UA・国) を記録 (cross/16 §13.5)
     Note over Next: login は MFA の分岐を持たない。運営の入口で AAL2 を求める (cross/12 §18.2)
     Next-->>Client: Set-Cookie (Secure; HttpOnly; SameSite=Lax)
     Next-->>Client: 200 OK (user profile)
@@ -305,6 +306,8 @@ API・ヘルパー・エラー型・管理画面の表示をすべて削除し�
 
 <!-- DDL/RLS は operator/01-data-model.md §3.23 を参照 (canonical)。本ドキュメントは設計方針のみ記述 -->
 
+→ 記録のトリガー・照合の RPC は cross/16 §11 が正典 (`password_history_record`・`auth_password_check`)。
+
 ### 13.2 parental_consents
 
 DDL・RLS は設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md) §6.4 の 4 (実体は migration `20261016242000_parental_consent_and_birth_date.sql`)。
@@ -312,6 +315,8 @@ DDL・RLS は設計書 [`cross/14-parental-consent.md`](./14-parental-consent.md
 ### 13.3 user_sessions_metadata
 
 <!-- DDL は operator/01-data-model.md §3.25 を参照 (canonical) -->
+
+→ 列・トリガー・RPC・保守のジョブは cross/16 §11 が正典 (記録は `auth.sessions` のトリガー)。
 
 ### 13.4 failed_invite_lookups
 

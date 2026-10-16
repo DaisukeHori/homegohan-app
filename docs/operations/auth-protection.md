@@ -67,7 +67,7 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 - 記録の保持期間: 記録の行は、最後の失敗 (`last_failed_at`。無ければ `updated_at`) から **8 日** が経つと、毎日 03:45 JST の pg_cron のジョブ `cleanup-stale-login-failures-and-grant-claims` が消す (`supabase/migrations/20261011070000_schedule_login_failure_and_grant_claim_cleanup.sql`、#1492)。8 日は、回数を 0 に戻すまでの時間の上限 (10080 分 = 7 日) より 1 日長いので、数えている途中の行は消さない (上限より古い行は、どの設定でも回数の判定に使われない)。
 - ロックをしないので、ロック中の応答 (423)・ロックの残り時間の案内・ロックの通知のメール (本人・運営)・ロックを外す API は無い。
 - **ボットの確認が働かないもの**: モバイルのアプリのログイン (アプリはまだ Supabase を直接呼ぶ)、Supabase の Auth API を直接呼ぶ攻撃 (URL と anon key は公開されている)、Google ログイン。直接呼ぶ攻撃は、Supabase の CAPTCHA (§6 手順 5) とレート制限 (§3.1) で止める。
-- DB には、ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) が残っている。アプリからは呼ばない。消すかどうかは別に決める (関数・列の削除になるため)。
+- ロックがあったころの列 (`auth_login_failures.locked_until`) と関数 (`auth_login_lock_status`・`auth_login_record_failure`・`auth_login_apply_lock`・`auth_login_account_user_id`) は、DB から消してある (`supabase/migrations/20261017010000_drop_auth_login_lock_objects.sql`、#1542)。
 
 ---
 
@@ -110,6 +110,13 @@ Web のログイン画面は、ブラウザから Supabase を直接呼ばず、
 | パスワードの最小文字数 | | アプリ側の確認は 8 文字以上・英字と数字を含む (`src/lib/auth/validate-password.ts`) |
 | パスワードに必須の文字の種類 | | |
 | メールアドレスの確認 (Confirm email) | | 有効だと、登録後にメールのリンクを押すまでログインできない |
+| Secure password change (`secure_password_change`。Authentication → Providers → Email) | | **OFF のまま**にする。ON だと、作成から 24 時間を過ぎたセッションのパスワードの変更に再認証 (メールのコード) が要り、アプリの画面はそれを扱わない (`docs/design/cross/16-auth-history-sessions.md` §24) |
+| GoTrue の DB の暗号化 (`GOTRUE_SECURITY_DB_ENCRYPTION_*`) | | **OFF のまま**にする。ON にすると `auth.users.encrypted_password` が暗号文になり、過去のパスワードとの照合 (RPC `auth_password_check`。bcrypt を比べる) ができない (cross/16 §3) |
+| `UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD` (パスワードの変更に現在のパスワードを求める) | | 既定は OFF。OFF の間は、access token を盗んだ人が GoTrue の `PUT /auth/v1/user` を直接呼ぶと、現在のパスワード無しで変えられる (アプリの照合も通らない。cross/16 S-33)。ON にするかは cross/16 §25 Q-18 の結論に従う (ON にできるのは、パスワードの変更の API (cross/16 段 C) が入った後) |
+| JWT (access token) の有効期間 (Authentication → Sessions) | | 既定の 1 時間以下にする。失効させた端末が PostgREST を直接呼ぶ要求は、JWT の期限まで通る (cross/16 §24) |
+| Session timebox / inactivity timeout (Authentication → Sessions) | | **使わない** (未設定のまま)。代わりに pg_cron のジョブ `cleanup-auth-sessions-and-login-history` が、30 日更新の無いセッションを終える (cross/16 §11.6) |
+| `auth.sessions` / `auth.users` のトリガー 4 本が残っているか | | 年に 1 回、SQL エディタで `SELECT tgname FROM pg_trigger WHERE tgrelid IN ('auth.sessions'::regclass, 'auth.users'::regclass) AND NOT tgisinternal` を流し、`on_auth_session_created`・`on_auth_session_refreshed`・`on_auth_session_deleted`・`on_auth_user_password_changed` の 4 行があることを確かめる。Supabase 側の移行で表が作り直されると消え、ログインの記録とパスワードの履歴が止まる (ログインは止まらない) |
+| その 4 本のトリガーの消し方 | | 表の所有者 (`supabase_auth_admin`) でないと消せない。migration のロールバック (`supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`) は関数の本体を空にして残す (cross/16 §11.7)。トリガーそのものを消すときは Supabase のサポートに頼む |
 
 ### 3.3 メール送信についての注意
 
