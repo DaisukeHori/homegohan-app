@@ -548,7 +548,8 @@ const ROLLED_BACK_MARKER = 'MG_ROLLED_BACK';
 /**
  * postgres-meta の 1 回の要求で DO ブロックを流し、ブロックが観測した値 (jsonb) を例外の文で持ち帰る。
  * ブロックは最後に RAISE EXCEPTION '<ROLLED_BACK_MARKER> %', <jsonb>::text; で終わるので、中の INSERT・付与・取り消しは
- * すべてロールバックされ、並行する結合テストには見えない (一時的な public の family プランを公開プランの一覧に出さない)。
+ * すべてロールバックされる。一時的な public の family プランは一度もコミットされないので、途中で落ちて afterAll の掃除が
+ * 走らなくても、公開プランの一覧を見るほかの結合テストに残らない。
  * 印の無い失敗 (途中の例外。例: member_limit の CHECK の 23514) は、その文のまま投げる
  */
 async function observeRolledBack(declarations: string, statements: string): Promise<Record<string, unknown>> {
@@ -804,7 +805,7 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
 
     // member_limit = LEAST(COALESCE(max_members, 4), 20): 上限を超える max_members は 20 に丸め、max_members の無いプランは 4。
     // seed の family プラン (4・8) では丸めも既定も効かないので、max_members が 25 と NULL の public な family プランを作って付与する。
-    // 公開プランの一覧を見るほかの結合テストに見せないよう、プランの作成から付与・取り消しまでを 1 つの DO ブロックで流してロールバックする
+    // 公開プランの一覧を見るほかの結合テストに残さないよう、プランの作成から付与・取り消しまでを 1 つの DO ブロックで流してロールバックする
     const capRep = await createUser('family-cap');
     const capFamily = await insertFamily(capRep.id);
     const overCapPlan = `it_mg_family_over_cap_${++seq}_${TS}`;
