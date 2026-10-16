@@ -2,6 +2,7 @@
  * #1165 ログインの連続失敗の記録の結合テスト (ローカルの Supabase の DB と Auth だけを使う。Next の開発サーバーは要らない)
  *   - supabase/migrations/20261010130000_auth_login_failures.sql (テーブル・ハッシュ・記録の消去)
  *   - supabase/migrations/20261010160000_auth_login_failure_window.sql (時間で戻る数え方)
+ *   - supabase/migrations/20261017010000_drop_auth_login_lock_objects.sql (ロックのための関数 4 本と列 locked_until の削除。#1542)
  *
  * ログインに続けて失敗しても、アカウントはロックしない (docs/operations/auth-protection.md §1)。
  * 回数は、ボットの確認を求めるかどうかにだけ使う。
@@ -9,11 +10,13 @@
  *
  * 確かめること:
  *   L-1: 権限。anon / authenticated はテーブルを読めず、関数をどれも呼べない (42501)。service_role は呼べる
- *        (使わなくなったロックの関数も残っているので、権限が開いていないことを確かめ続ける)
  *   L-2: 回数の加算は、同時に呼んでも数え漏れない (INSERT ... ON CONFLICT の 1 文)。大文字・前後の空白は同じアドレス
  *   L-3: 時間で戻る。最後の失敗から指定の分数が経っていれば、回数は 0・次の失敗は 1 から。経っていなければ数え続ける。
  *        分数が 1 未満・NULL なら 22023
  *   L-4: メールアドレスそのものは残さない (email_hash は SHA-256 の 16 進 64 文字で、アドレスの文字列を含まない)。記録を消すと 0
+ *   L-5: ロックのための関数 4 本と列 locked_until が DB に無い (service_role で呼んでも PGRST202・列を読むと 42703)。
+ *        ロールバックで 20261010130000 と同じ定義・権限 (anon / authenticated は呼べない) に戻り、migration を流し直すと
+ *        また消える。どちらも 2 回流しても同じ結果。引き続き使う関数とテーブルの行は、どちらを流しても残る
  *   L-6: 本物の Supabase Auth と組み合わせた流れ (src/lib/auth/guarded-login.ts):
  *        25 回のパスワード違いでもロックしない (毎回パスワードを確かめる) → 正しいパスワードで入れる → 回数は 0
  *
@@ -22,6 +25,8 @@
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/auth-login-lock.test.ts
  */
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
@@ -71,12 +76,29 @@ const FUNCTIONS: Array<{ name: string; args: Record<string, unknown> }> = [
   { name: 'auth_login_failure_count', args: { p_email: 'x@example.com', p_reset_after_minutes: RESET_MINUTES } },
   { name: 'auth_login_count_failure', args: { p_email: 'x@example.com', p_reset_after_minutes: RESET_MINUTES } },
   { name: 'auth_login_clear_failures', args: { p_email: 'x@example.com' } },
-  // 使わなくなったロックの関数 (DB には残っている)
-  { name: 'auth_login_lock_status', args: { p_email: 'x@example.com' } },
-  { name: 'auth_login_record_failure', args: { p_email: 'x@example.com' } },
-  { name: 'auth_login_apply_lock', args: { p_email: 'x@example.com', p_locked_until: new Date().toISOString() } },
-  { name: 'auth_login_account_user_id', args: { p_email: 'x@example.com' } },
 ];
+
+/** #1542 で DB から消した、ロックのための関数 (引数の型は 20261010130000 の定義) */
+const DROPPED_FUNCTIONS: Array<{ name: string; signature: string; args: Record<string, unknown> }> = [
+  { name: 'auth_login_lock_status', signature: 'auth_login_lock_status(text)', args: { p_email: 'x@example.com' } },
+  { name: 'auth_login_record_failure', signature: 'auth_login_record_failure(text)', args: { p_email: 'x@example.com' } },
+  {
+    name: 'auth_login_apply_lock',
+    signature: 'auth_login_apply_lock(text, timestamptz)',
+    args: { p_email: 'x@example.com', p_locked_until: new Date().toISOString() },
+  },
+  { name: 'auth_login_account_user_id', signature: 'auth_login_account_user_id(text)', args: { p_email: 'x@example.com' } },
+];
+/** #1542 で DB から消した列 */
+const DROPPED_COLUMN = 'locked_until';
+const DROP_MIGRATION_STEM = '20261017010000_drop_auth_login_lock_objects';
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const DROP_MIGRATION_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/migrations/${DROP_MIGRATION_STEM}.sql`), 'utf8');
+const DROP_ROLLBACK_SQL = fs.readFileSync(path.join(REPO_ROOT, `supabase/rollbacks/${DROP_MIGRATION_STEM}.down.sql`), 'utf8');
+/** PostgREST が「関数が無い」ときに返す code */
+const POSTGREST_FUNCTION_NOT_FOUND = 'PGRST202';
+/** PostgreSQL の undefined_column */
+const UNDEFINED_COLUMN = '42703';
 
 const createdUserIds: string[] = [];
 const usedEmails: string[] = [];
@@ -252,5 +274,140 @@ describe('L-6 本物の Supabase Auth と組み合わせた流れ (ロックし�
       failureCount: 0,
       captchaRequired: false,
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────
+// L-5 ロックのための関数と列の削除 (#1542)
+// ─────────────────────────────────────────────────────────
+
+/** ローカルスタックの postgres-meta で SQL を流す (確認と migration / ロールバックの実行にだけ使う。本番には接続しない) */
+async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]> {
+  const res = await fetch(`${url}/pg/query`, {
+    method: 'POST',
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  });
+  const body = await res.json();
+  if (!res.ok) throw new Error(`pg/query ${res.status}: ${JSON.stringify(body)}`);
+  return body as T[];
+}
+
+/** 本番の migration と同じ postgres ロールで流す (このリクエストの中だけ) */
+function asPostgres<T = Record<string, unknown>>(sql: string): Promise<T[]> {
+  return pgQuery<T>(`SET LOCAL ROLE postgres;\n${sql}`);
+}
+
+/** SQL の文字列リテラルにする (テストが決めた固定の文字列だけを渡す) */
+function lit(value: string): string {
+  return `'${value.replace(/'/g, "''")}'`;
+}
+
+interface LockObjectsState {
+  /** 存在する関数 (引数の型までの形) */
+  functions: string[];
+  /** 列 locked_until があるか */
+  hasColumn: boolean;
+}
+
+/** 消した関数 4 本と列が、いま DB にあるか */
+async function lockObjectsState(): Promise<LockObjectsState> {
+  const functionRows = await pgQuery<{ signature: string; present: boolean }>(`
+    SELECT x.signature, to_regprocedure('public.' || x.signature) IS NOT NULL AS present
+      FROM (VALUES ${DROPPED_FUNCTIONS.map((f) => `(${lit(f.signature)})`).join(', ')}) AS x(signature);
+  `);
+  const columnRows = await pgQuery<{ present: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'auth_login_failures' AND column_name = ${lit(DROPPED_COLUMN)}
+    ) AS present;
+  `);
+  return {
+    functions: functionRows
+      .filter((r) => r.present)
+      .map((r) => r.signature)
+      .sort(),
+    hasColumn: columnRows[0]?.present === true,
+  };
+}
+
+const ALL_DROPPED_SIGNATURES = DROPPED_FUNCTIONS.map((f) => f.signature).sort();
+
+/** 引き続き使う関数がどれもあり、テーブルの行が残っているか (失敗の記録を 1 件作ってから流して確かめる) */
+async function keptObjectsAreIntact(email: string, expectedCount: number): Promise<void> {
+  const rows = await pgQuery<{ present: boolean }>(`
+    SELECT bool_and(to_regprocedure('public.' || x.signature) IS NOT NULL) AS present
+      FROM (VALUES ('auth_login_email_hash(text)'), ('auth_login_clear_failures(text)'),
+                   ('auth_login_failure_count(text, integer)'), ('auth_login_count_failure(text, integer)'),
+                   ('cleanup_stale_auth_login_failures()')) AS x(signature);
+  `);
+  expect(rows[0]?.present).toBe(true);
+  const counted = await pgQuery<{ n: number }>(
+    `SELECT public.auth_login_failure_count(${lit(email)}, ${RESET_MINUTES}) AS n;`,
+  );
+  expect(counted[0]?.n).toBe(expectedCount);
+}
+
+describe('L-5 ロックのための関数と列は DB に無い (#1542)', () => {
+  afterAll(async () => {
+    // 途中で落ちても、ロールバックした状態のまま残さない (migration は何度流しても同じ結果)
+    await asPostgres(DROP_MIGRATION_SQL);
+  });
+
+  it('関数 4 本と列 locked_until が無い', async () => {
+    expect(await lockObjectsState()).toEqual({ functions: [], hasColumn: false });
+  });
+
+  it.each(DROPPED_FUNCTIONS)('service_role で $name を呼んでも、関数が無い (PGRST202)', async ({ name, args }) => {
+    const { error } = await srAdmin.rpc(name, args);
+    expect(error?.code, `${name} がまだ呼べる`).toBe(POSTGREST_FUNCTION_NOT_FOUND);
+  });
+
+  it('service_role で列 locked_until を読むと、列が無い (42703)', async () => {
+    const { error } = await srAdmin.from('auth_login_failures').select(DROPPED_COLUMN).limit(1);
+    expect(error?.code).toBe(UNDEFINED_COLUMN);
+  });
+
+  it('ロールバックで 20261010130000 の定義と権限に戻り、migration を流し直すとまた消える (どちらも 2 回流しても同じ)。引き続き使うものは残る', async () => {
+    const email = emailFor('drop-rollback');
+    await countFailure(email);
+    await countFailure(email);
+
+    for (let i = 0; i < 2; i += 1) await asPostgres(DROP_ROLLBACK_SQL);
+    expect(await lockObjectsState()).toEqual({ functions: ALL_DROPPED_SIGNATURES, hasColumn: true });
+    await keptObjectsAreIntact(email, 2);
+
+    // 戻した関数の属性と権限: account_user_id だけが SECURITY DEFINER。どれも service_role だけが実行できる
+    const attributes = await pgQuery<{ signature: string; definer: boolean; anon: boolean; authed: boolean; sr: boolean }>(`
+      SELECT x.signature,
+             p.prosecdef AS definer,
+             has_function_privilege('anon', p.oid, 'EXECUTE') AS anon,
+             has_function_privilege('authenticated', p.oid, 'EXECUTE') AS authed,
+             has_function_privilege('service_role', p.oid, 'EXECUTE') AS sr
+        FROM (VALUES ${DROPPED_FUNCTIONS.map((f) => `(${lit(f.signature)})`).join(', ')}) AS x(signature)
+        JOIN pg_proc AS p ON p.oid = to_regprocedure('public.' || x.signature)
+    `);
+    expect([...attributes].sort((a, b) => (a.signature < b.signature ? -1 : 1))).toEqual(
+      ALL_DROPPED_SIGNATURES.map((signature) => ({
+        signature,
+        definer: signature.startsWith('auth_login_account_user_id('),
+        anon: false,
+        authed: false,
+        sr: true,
+      })),
+    );
+    // 戻した列は NULL (ロックなし) で、戻した関数で読める
+    const status = await pgQuery<{ failure_count: number; locked_until: string | null }>(
+      `SELECT * FROM public.auth_login_lock_status(${lit(email)});`,
+    );
+    expect(status).toEqual([{ failure_count: 2, locked_until: null }]);
+
+    for (let i = 0; i < 2; i += 1) await asPostgres(DROP_MIGRATION_SQL);
+    expect(await lockObjectsState()).toEqual({ functions: [], hasColumn: false });
+    await keptObjectsAreIntact(email, 2);
   });
 });

@@ -488,7 +488,6 @@ export type Database = {
           email_hash: string
           failure_count: number
           last_failed_at: string | null
-          locked_until: string | null
           updated_at: string
         }
         Insert: {
@@ -496,7 +495,6 @@ export type Database = {
           email_hash: string
           failure_count?: number
           last_failed_at?: string | null
-          locked_until?: string | null
           updated_at?: string
         }
         Update: {
@@ -504,7 +502,6 @@ export type Database = {
           email_hash?: string
           failure_count?: number
           last_failed_at?: string | null
-          locked_until?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -8098,11 +8095,6 @@ export type Database = {
         }
         Returns: Json
       }
-      auth_login_account_user_id: { Args: { p_email: string }; Returns: string }
-      auth_login_apply_lock: {
-        Args: { p_email: string; p_locked_until: string }
-        Returns: undefined
-      }
       auth_login_clear_failures: {
         Args: { p_email: string }
         Returns: undefined
@@ -8115,20 +8107,6 @@ export type Database = {
       auth_login_failure_count: {
         Args: { p_email: string; p_reset_after_minutes: number }
         Returns: number
-      }
-      auth_login_lock_status: {
-        Args: { p_email: string }
-        Returns: {
-          failure_count: number
-          locked_until: string
-        }[]
-      }
-      auth_login_record_failure: {
-        Args: { p_email: string }
-        Returns: {
-          failure_count: number
-          locked_until: string
-        }[]
       }
       begin_account_deletion_record: {
         Args: {
