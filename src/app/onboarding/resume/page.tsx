@@ -66,7 +66,7 @@ export default function OnboardingResumePage() {
   };
 
   // #1045 (F6-11): 「あとで設定する」は素の /home Link だったため、
-  // onboarding_completed_at が未設定のまま middleware (src/middleware.ts →
+  // onboarding_completed_at が未設定のまま middleware (src/proxy.ts →
   // lib/supabase/middleware.ts の updateSession → lib/onboarding-routing.ts の
   // resolveOnboardingRedirect) が status=in_progress の /home アクセスを
   // /onboarding/resume へ差し戻し、永久ループになっていた。

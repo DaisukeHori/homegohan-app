@@ -17,7 +17,8 @@
  * 生年月日の未入力と、保護者の同意とのつながりが無い 18 歳未満も同意画面へ回す (#1173。判定は packages/shared の
  * isLegalConsentComplete。つながりは呼ぶ側が lib/legal-consent-minor.ts の withMinorGuardianStatus で DB に聞いて入れる)。
  *
- * ここは副作用のない関数だけを置く (Edge ランタイムの middleware から import されるので、Node 専用の API は使わない)。
+ * ここは副作用のない関数だけを置く。ブラウザで動くコンポーネント (LegalConsentForm・LegalConsentBanner) も import するので、
+ * Node 専用の API は使わない (全リクエストの前に動く proxy (src/proxy.ts) も lib/supabase/middleware.ts 経由で読む)。
  */
 import { isLegalConsentComplete, type LegalConsentProfile } from '@homegohan/shared';
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect';

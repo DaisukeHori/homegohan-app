@@ -1,7 +1,7 @@
 // src/lib/security/csp.ts
 // #1169 本番の CSP を nonce 方式にする正典: 方針の文字列・nonce の生成・ヘッダー名・報告先。
-// middleware (Edge Runtime) から読むので、このファイルは何も import しない (zod・Node の API・@/lib/env を持ち込まない。
-// src/lib/env-required.ts と同じ理由)。環境変数を名前で読むのは CSP_REPORT_ONLY だけ (src/lib/env.ts の一覧の readOnlyBy)。
+// 全リクエストの前に動く proxy (src/proxy.ts。Next 16 で middleware から改名し、Node.js の runtime で動く。#1744) から読むので、
+// このファイルは何も import しない (zod・Node の API・@/lib/env を持ち込まない。src/lib/env-required.ts と同じ理由)。環境変数を名前で読むのは CSP_REPORT_ONLY だけ (src/lib/env.ts の一覧の readOnlyBy)。
 // 方針の正本はここだけ。next.config.mjs には Content-Security-Policy を書かない (二重に付くと nonce つきのスクリプトが止まる。
 // src/__tests__/config/next-config-headers.test.ts が見張る)。
 
@@ -9,7 +9,7 @@
 export const CSP_HEADER = 'Content-Security-Policy';
 /** 報告だけの CSP の応答ヘッダー名 (CSP_REPORT_ONLY=on のとき。違反を止めず報告だけする) */
 export const CSP_REPORT_ONLY_HEADER = 'Content-Security-Policy-Report-Only';
-/** middleware が画面 (Server Component) へ nonce を渡すリクエストヘッダー。Next 公式の x-nonce と同じ役目 */
+/** proxy が画面 (Server Component) へ nonce を渡すリクエストヘッダー。Next 公式の x-nonce と同じ役目 */
 export const CSP_NONCE_HEADER = 'x-csp-nonce';
 /** 違反の報告の受け口 (POST。src/app/api/csp-report/route.ts) */
 export const CSP_REPORT_PATH = '/api/csp-report';
@@ -69,7 +69,7 @@ export function supabaseLocalOrigins(supabaseUrl: string | undefined): SupabaseL
   }
 }
 
-/** 1 リクエストにつき 1 つの nonce (16 バイトの乱数を base64 にした 24 文字)。Edge Runtime・Node・ブラウザのどれでも動く Web Crypto で作る */
+/** 1 リクエストにつき 1 つの nonce (16 バイトの乱数を base64 にした 24 文字)。Node・Edge Runtime・ブラウザのどれでも動く Web Crypto で作る */
 export function generateCspNonce(): string {
   const bytes = new Uint8Array(CSP_NONCE_BYTES);
   crypto.getRandomValues(bytes);

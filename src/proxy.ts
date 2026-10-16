@@ -1,3 +1,10 @@
+/**
+ * Next 16 の proxy (旧 middleware。#1744)。全リクエストの前に動き、CSP の nonce を付けてから updateSession
+ * (lib/supabase/middleware.ts: セッションの同期・メンテナンス・凍結・同意ゲート・認証の振り分け) に渡す。
+ * Next 16 で middleware の名前が非推奨になり proxy に変わった。proxy は Node.js の runtime だけで動く
+ * (config に runtime を書くと next build が失敗する)。そのため config には matcher だけを書く。
+ * 全リクエストで読み込まれるので、zod を持つ src/lib/env.ts には到達させない (tests/env-source-scan.test.ts)。
+ */
 import { type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
 import { getSupabaseUrl } from '@/lib/env-required'
@@ -42,7 +49,7 @@ function attachCspToRequest(request: NextRequest): { headerName: string; policy:
   return { headerName, policy }
 }
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const csp = attachCspToRequest(request)
   const res = await updateSession(request)
   // どの分岐の応答 (next / redirect / 403 / 503 / 500) にも同じ方針を付ける
@@ -79,11 +86,10 @@ export const config = {
      *   末尾の $ があるので /api/health/* (健康記録 API) は従来どおり対象のまま)
      * - _vercel/ (Vercel が扱うパス。Speed Insights のスクリプトと計測値の送信先 /_vercel/speed-insights/* など #1179。
      *   アプリのページではないので、未ログインの訪問者を /login へ送ったり、オンボーディングへ差し戻したりしない。
-     *   Vercel 上で有効にした機能のパスは、Vercel がこのミドルウェアより前に応答する (本番で確認: script.js は 200)。
+     *   Vercel 上で有効にした機能のパスは、Vercel がこの proxy より前に応答する (本番で確認: script.js は 200)。
      *   なので、Vercel 上で計測を守っているのはこの除外ではない。除外が効くのは、Vercel が応答しないとき
      *   (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき) に、/_vercel/* の応答が
      *   ログイン画面の HTML にすり替わるのを防ぐ場面。害は無いので残す)
-     * Feel free to modify this pattern to include more paths.
      */
     '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],

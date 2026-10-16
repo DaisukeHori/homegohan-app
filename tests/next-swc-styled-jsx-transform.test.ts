@@ -2,8 +2,10 @@
 /**
  * tests/next-swc-styled-jsx-transform.test.ts
  *
- * `<style jsx>` (styled-jsx) を持つファイルが、Next の SWC の変換で止まらないことを確かめる (#1444。#1621 で Next 16 に上げたあとも、
- * next build は webpack (--webpack) で動かしているので、webpack のローダーと同じ SWC の設定で確かめる)。
+ * `<style jsx>` (styled-jsx) を持つファイルが、Next の SWC の変換で止まらないことを確かめる (#1444・#1621)。
+ * #1745 で next build / next dev は Turbopack に移った。Turbopack の変換は Rust の中で走り、vitest からは呼べないので、
+ * Next に入っている SWC (同じ styled-jsx の変換を持つ) を、webpack のローダーと同じ層の設定で呼んで確かめる。
+ * Turbopack で実際に変換が止まらないことは、e2e のビルド (npm run build) と結合テストの next dev が確かめる。
  *
  * Next 15.5.27 の SWC は、`<style jsx global>` がある src/components/AIChatBubble.tsx で、変数に入れたコンポーネント
  * (`const Icon = actionInfo?.icon || Sparkles; <Icon />`) を JSX で描く形に当たると、SSR 向けとブラウザ向けの変換が

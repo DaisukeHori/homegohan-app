@@ -13,6 +13,8 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
+import { isMfaRequiredRoleSet } from '@/lib/auth/mfa/policy';
+import { OperatorMfaResetSection } from '@/components/admin/OperatorMfaResetSection';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -81,6 +83,9 @@ export default async function AdminUserDetailPage(props: PageProps) {
   const isAdmin = actor.roles.includes('admin') || isSuperAdmin;
   // メールアドレスを見られるのは admin / super_admin だけ (support には API も null を返す)
   const canSeeEmail = canViewUserEmail(actor.roles);
+  // 二段階認証の解除 (段 C): 実行者が super_admin で、対象が MFA_REQUIRED_ROLES のどれかを持つときだけ出す
+  // (docs/design/cross/12-operator-mfa.md §15・§15.3。API は対象のロールを見ないが、画面は必須ロールの運営にだけ出す)
+  const canResetMfa = isSuperAdmin && Array.isArray(profile.roles) && isMfaRequiredRoleSet(profile.roles);
 
   return (
     <div className="max-w-4xl">
@@ -201,6 +206,8 @@ export default async function AdminUserDetailPage(props: PageProps) {
           </div>
         )}
       </div>
+
+      {canResetMfa && <OperatorMfaResetSection userId={profile.id} />}
 
       {/* サブスクリプション情報 */}
       {activeSubscription && (

@@ -188,6 +188,10 @@ admin.mfa.unenroll                  - 認証アプリの解除 (DELETE /api/auth
                                       (severity: warn。details: factor_id / backup_codes_deleted / failed_step)
 admin.mfa.recover                   - バックアップコードによる回復 (POST /api/auth/mfa/recover。TOTP とコードを全部消す。#1176)
                                       (severity: warn。details: factors_deleted / backup_codes_deleted / failed_step)
+super_admin.mfa.reset               - 別の super_admin による運営の二段階認証の解除 (POST /api/super-admin/admins/{id}/mfa/reset。段 C。#1707)
+                                      (severity: critical。actor = 実行した super_admin・target = 対象 (target_type 'user')。
+                                      details: reason / identity_check / factors_before / backup_codes_before。fail-closed: 削除より先に書き、
+                                      書けなければ何もしない。後の手順 (全セッションの終了・factor・コードの削除) の結果は details に持たない)
 ```
 
 運営ロールの二段階認証の 4 種 (`admin.mfa.*`。`docs/design/cross/12-operator-mfa.md` §17・§17.2) の記録のルール:
@@ -241,6 +245,8 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 `src/app/api/{admin,super-admin,support,operator}` の変更系の handler と、記録の有無 (記録しないものは理由) の表を
 `tests/admin-mutation-audit-coverage-1571.test.ts` が持ち、実コードと突き合わせる (handler が増えたら表に足す)。
 同じテストが、`recordAdminAudit()` の呼び出しがすべて `request` を渡していることも見る。
+- 運営の二段階認証の解除 (`POST /api/super-admin/admins/{id}/mfa/reset`。cross/12 §14.7) は、`super_admin.mfa.reset` を `recordMfaAudit()` (`src/lib/auth/mfa/audit.ts`) の中の `recordAdminAudit()` で書くので、表には `exempt` に理由を書いて載せる (別のファイルの関数なので、走査では audited と判定できない。cross/12 §23 N-38)。
+- 自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外にあるが、4 種 (`admin.mfa.*`) を記録する (上の 4.1 の記録のルール)。
 
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
@@ -560,7 +566,7 @@ logger.error('payment_failed を処理できなかった', error, {
   `'self'` で足り、CSP は変えていない。読み込み先と `'self'` は `tests/speed-insights-1179.test.tsx` が検査する (設定が無いときの既定値と、設定が渡ったときの両方)。
   実際の送信先は検査できないので、デプロイ後に、ブラウザの開発者ツールで `script[data-sdkn]` の `src` と計測値の送信先を見て、
   未ログインでも 2xx になること、コンソールに CSP 違反が出ていないことを確かめる。
-- 認証ミドルウェア: `src/middleware.ts` の matcher は `/_vercel/` 以下を対象から外してある (`tests/speed-insights-middleware-1179.test.ts`)。
+- 認証ミドルウェア: `src/proxy.ts` の matcher は `/_vercel/` 以下を対象から外してある (`tests/speed-insights-middleware-1179.test.ts`)。
   Vercel 上で有効にした機能のパスは、上のとおり Vercel がミドルウェアより前に応答するので、この除外が Vercel 上の計測を守っているわけではない。
   効くのは、Vercel が応答しないとき (有効にしていない機能、存在しないパス、`next start` で Vercel の外に置いたとき) に、
   `/_vercel/*` の応答が `/login` の HTML にすり替わるのを防ぐ場面。害は無いので残している。

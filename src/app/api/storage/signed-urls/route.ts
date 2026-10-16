@@ -68,7 +68,7 @@ export async function POST(request: Request) {
     // 持ち主の確認は signOwnedPhotoUrls が、認証で確かめた user.id で行う
     const result = await signOwnedPhotoUrls(getSupabaseAdmin(), user.id, urls, expiresInSeconds);
     if (result.signFailures > 0 || result.notOwned > 0) {
-      // 段 2 (バケットの非公開化) の前に、表示できなくなる写真がどれだけあるかを追えるよう、数だけ残す (URL は残さない)
+      // 表示できなかった写真 (本人の写真でない・ファイルが無い) がどれだけあるかを追えるよう、数だけ残す (URL は残さない)
       createLogger(ROUTE_NAME, generateRequestId())
         .withUser(user.id)
         .warn('photo urls were not signed', {

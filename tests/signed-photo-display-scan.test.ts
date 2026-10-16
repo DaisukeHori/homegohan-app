@@ -2,8 +2,8 @@
 /**
  * #1365 段 1: 保存された写真の URL を、署名付き URL を通さずに画面へ出していないかのソース走査
  *
- * 食事写真・冷蔵庫写真 (meal_photos / fridge-images) は、段 2 でバケットを非公開にする。DB に保存された公開 URL を
- * そのまま <Image src> / <img src> / <Image source={{ uri }}> に渡すと、非公開にした時点で表示できなくなる (今は誰でも見られる)。
+ * 食事写真・冷蔵庫写真 (meal_photos / fridge-images) のバケットは非公開 (段 2)。DB に保存された公開 URL と同じ形の文字列を
+ * そのまま <Image src> / <img src> / <Image source={{ uri }}> に渡すと表示できない。
  * 画面は SignedPhotoImage (Web: src/components/photo/SignedPhotoImage.tsx。モバイルの apps/mobile/src/components/photo/SignedPhotoImage.tsx は #1598 で消した。
  * 使っていた食事の詳細・週の献立のネイティブの画面と一緒に消した。アプリの写真は WebView の Web の画面が出す)
  * を使い、サーバーが本人の写真だと確かめて署名した URL を表示する。

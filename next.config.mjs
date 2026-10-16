@@ -67,7 +67,7 @@ const nextConfig = {
         ],
       },
       {
-        // #1169: CSP は src/middleware.ts が毎リクエスト nonce つきで付ける (src/lib/security/csp.ts)。
+        // #1169: CSP は src/proxy.ts が毎リクエスト nonce つきで付ける (src/lib/security/csp.ts)。
         // ここに Content-Security-Policy を書くと応答に 2 つ並び、ブラウザは両方を満たすものしか通さないので
         // nonce つきのスクリプトが止まる。src/__tests__/config/next-config-headers.test.ts が見張る
         source: '/(.*)',

@@ -11,7 +11,7 @@
  * サーバー専用のもの (next/headers・@/lib/supabase/server・node:crypto を持つ backup-codes.ts・@/lib/auth/helpers を持つ page-guard.ts) を import しない。
  *
  * 段 A は status / enroll / verify / recover の 4 つ。段 B で MFA_API_PATHS の backupCodes・factors と mfaFactorPath・
- * regenerateBackupCodes・unenrollMfaFactor を足した。段 C で superAdminAdmins と mfaResetPath・resetOperatorMfa を足す (§22.3)。
+ * regenerateBackupCodes・unenrollMfaFactor を足した。段 C で superAdminAdmins と mfaResetPath・resetOperatorMfa を足した (§22.3)。
  * MFA_ERROR_MESSAGES は reset の code の行も段 A から持つ。
  */
 import { z } from 'zod';
@@ -19,6 +19,7 @@ import {
   MfaBackupCodesResponseSchema,
   MfaEnrollResponseSchema,
   MfaRecoverResponseSchema,
+  MfaResetResponseSchema,
   MfaStatusResponseSchema,
   MfaUnenrollResponseSchema,
   MfaVerifyResponseSchema,
@@ -26,6 +27,8 @@ import {
   type MfaEnrollResponse,
   type MfaRecoverBody,
   type MfaRecoverResponse,
+  type MfaResetBody,
+  type MfaResetResponse,
   type MfaStatusResponse,
   type MfaUnenrollResponse,
   type MfaVerifyBody,
@@ -42,11 +45,18 @@ export const MFA_API_PATHS = {
   backupCodes: '/api/auth/mfa/backup-codes',
   /** 段 B (§14.4)。DELETE の URL は mfaFactorPath(id) */
   factors: '/api/auth/mfa/factors',
+  /** 段 C (§14.7)。POST の URL は mfaResetPath(userId) */
+  superAdminAdmins: '/api/super-admin/admins',
 } as const;
 
 /** DELETE /api/auth/mfa/factors/{id} の URL (段 B) */
 export function mfaFactorPath(factorId: string): string {
   return `${MFA_API_PATHS.factors}/${encodeURIComponent(factorId)}`;
+}
+
+/** POST /api/super-admin/admins/{id}/mfa/reset の URL (段 C) */
+export function mfaResetPath(userId: string): string {
+  return `${MFA_API_PATHS.superAdminAdmins}/${encodeURIComponent(userId)}/mfa/reset`;
 }
 
 /** HTTP の応答として扱えなかった (fetch が例外を投げた・2xx なのに本文が §14 の形でない) ときの status。HTTP のステータスに 0 は無い */
@@ -195,4 +205,13 @@ export function regenerateBackupCodes(): Promise<MfaClientResult<MfaBackupCodesR
 /** DELETE /api/auth/mfa/factors/{id} (§14.4。段 B)。本文なし */
 export function unenrollMfaFactor(factorId: string): Promise<MfaClientResult<MfaUnenrollResponse>> {
   return requestMfaApi<MfaUnenrollResponse>(mfaFactorPath(factorId), { method: 'DELETE' }, MfaUnenrollResponseSchema);
+}
+
+/** POST /api/super-admin/admins/{id}/mfa/reset (§14.7。段 C。OperatorMfaResetSection が呼ぶ) */
+export function resetOperatorMfa(userId: string, body: MfaResetBody): Promise<MfaClientResult<MfaResetResponse>> {
+  return requestMfaApi<MfaResetResponse>(
+    mfaResetPath(userId),
+    { method: 'POST', headers: MFA_JSON_HEADERS, body: JSON.stringify(body) },
+    MfaResetResponseSchema,
+  );
 }

@@ -2,13 +2,13 @@
  * #1176 運営ロールの MFA の画面 (ブラウザ) の動き。docs/design/cross/12-operator-mfa.md §15.2 の表・§15.3・§21.1 (mfa-pages-browser.test.tsx)
  *
  * @/lib/auth/mfa/client の通信の関数 (getMfaStatus など) だけを vi.fn にし、mfaErrorMessage・MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE・定数は本物を使う。
- * window.ReactNativeWebView の無いブラウザで描く。段 B・C の it はその段で足す。
+ * window.ReactNativeWebView の無いブラウザで描く。段 B・C の it は (B)・(C) の describe に置く。
  */
 import { StrictMode, act, createElement, type ComponentType, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MfaClientResult } from '@/lib/auth/mfa/client';
-import type { MfaEnrollResponse, MfaStatusResponse, MfaVerifyResponse } from '@/lib/auth/mfa/schemas';
+import type { MfaEnrollResponse, MfaResetResponse, MfaStatusResponse, MfaVerifyResponse } from '@/lib/auth/mfa/schemas';
 
 const mocks = vi.hoisted(() => ({
   getMfaStatus: vi.fn(),
@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   recoverWithBackupCode: vi.fn(),
   regenerateBackupCodes: vi.fn(),
   unenrollMfaFactor: vi.fn(),
+  resetOperatorMfa: vi.fn(),
   router: { push: vi.fn(), replace: vi.fn(), refresh: vi.fn() },
   searchParams: { value: new URLSearchParams('next=%2Fadmin') },
   supabase: {
@@ -41,6 +42,7 @@ vi.mock('@/lib/auth/mfa/client', async (importOriginal) => {
     recoverWithBackupCode: mocks.recoverWithBackupCode,
     regenerateBackupCodes: mocks.regenerateBackupCodes,
     unenrollMfaFactor: mocks.unenrollMfaFactor,
+    resetOperatorMfa: mocks.resetOperatorMfa,
   };
 });
 
@@ -84,6 +86,7 @@ const { default: MfaRecoverPage } = await import('@/app/(main)/settings/security
 const { default: SettingsPage } = await import('@/app/(main)/settings/page');
 const { TotpCodeForm } = await import('@/components/auth/mfa/TotpCodeForm');
 const { BackupCodesPanel, BACKUP_CODES_DOWNLOAD_FILENAME } = await import('@/components/auth/mfa/BackupCodesPanel');
+const { OperatorMfaResetSection, MFA_RESET_IDENTITY_CHECK_LABELS } = await import('@/components/admin/OperatorMfaResetSection');
 const { MFA_BACKUP_CODES_NOT_SHOWN_MESSAGE, MFA_CLIENT_NO_STATUS, MFA_CLIENT_UNKNOWN_CODE, mfaErrorMessage } = await import(
   '@/lib/auth/mfa/client'
 );
@@ -164,6 +167,16 @@ async function typeInto(input: HTMLInputElement | null, value: string) {
   });
 }
 
+/** React の制御された textarea / select に値を入れる (textarea は input、select は change で onChange を起こす) */
+async function setFieldValue(field: HTMLTextAreaElement | HTMLSelectElement | null, value: string) {
+  expect(field).not.toBeNull();
+  await act(async () => {
+    const proto = field instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLTextAreaElement.prototype;
+    Object.getOwnPropertyDescriptor(proto, 'value')?.set?.call(field, value);
+    field?.dispatchEvent(new Event(field instanceof HTMLSelectElement ? 'change' : 'input', { bubbles: true }));
+  });
+}
+
 async function submitForm(button: HTMLButtonElement | null) {
   expect(button).not.toBeNull();
   await act(async () => {
@@ -185,6 +198,7 @@ beforeEach(() => {
     mocks.recoverWithBackupCode,
     mocks.regenerateBackupCodes,
     mocks.unenrollMfaFactor,
+    mocks.resetOperatorMfa,
   ])
     fn.mockReset();
   mocks.router.push.mockReset();
@@ -580,6 +594,100 @@ describe('部品', () => {
     await click(byTestId('backup-codes-done'));
     expect(onDone).toHaveBeenCalledTimes(1);
     expect(BACKUP_CODES_DOWNLOAD_FILENAME).toBe('homegohan-mfa-backup-codes.txt');
+  });
+});
+
+describe('二段階認証の解除 (段 C)', () => {
+  const TARGET_USER_ID = '88888888-8888-4888-8888-888888888888';
+  const REASON = '端末の紛失。ビデオ通話で本人を確認した';
+
+  it('OperatorMfaResetSection: 理由・本人確認の方法・チェックがそろうまで [解除する] が押せず、window.confirm の後に resetOperatorMfa を 1 回呼び、成功で消した数を、失敗で mfaErrorMessage(code) を出す (confirm で取り消すと呼ばない)', async () => {
+    const confirmMock = vi.fn(() => false);
+    vi.stubGlobal('confirm', confirmMock);
+    await act(async () => {
+      root.render(createElement(OperatorMfaResetSection, { userId: TARGET_USER_ID }));
+    });
+    const submit = () => byTestId<HTMLButtonElement>('operator-mfa-reset-submit');
+    const reason = () => byTestId<HTMLTextAreaElement>('operator-mfa-reset-reason');
+    const identityCheck = () => byTestId<HTMLSelectElement>('operator-mfa-reset-identity-check');
+
+    expect(container.querySelector('h2')?.textContent).toBe('二段階認証を解除');
+    expect(reason()?.maxLength).toBe(500);
+    expect(Array.from(identityCheck()?.options ?? []).slice(1).map((o) => [o.value, o.textContent])).toEqual([
+      ['video_call', 'ビデオ通話で確認'],
+      ['in_person', '対面で確認'],
+      ['id_document_shown', '身分証を見せてもらい確認 (画像は預からない)'],
+      ['other', 'その他'],
+    ]);
+    expect(MFA_RESET_IDENTITY_CHECK_LABELS.other).toBe('その他');
+
+    // 3 つがそろうまで押せない (空白だけの理由も押せない)
+    expect(submit()?.disabled).toBe(true);
+    await setFieldValue(reason(), '   ');
+    await setFieldValue(identityCheck(), 'video_call');
+    await click(byTestId('operator-mfa-reset-identity-confirmed'));
+    expect(submit()?.disabled).toBe(true);
+    await setFieldValue(reason(), REASON);
+    expect(submit()?.disabled).toBe(false);
+    await setFieldValue(identityCheck(), '');
+    expect(submit()?.disabled).toBe(true);
+    await setFieldValue(identityCheck(), 'video_call');
+    await click(byTestId('operator-mfa-reset-identity-confirmed'));
+    expect(submit()?.disabled).toBe(true);
+    await click(byTestId('operator-mfa-reset-identity-confirmed'));
+    expect(submit()?.disabled).toBe(false);
+
+    // confirm で取り消すと呼ばない
+    await submitForm(submit());
+    expect(confirmMock).toHaveBeenCalledWith(
+      'この利用者の認証アプリとバックアップコードを消します。対象はすべての端末でログアウトされます。続けますか?',
+    );
+    expect(mocks.resetOperatorMfa).not.toHaveBeenCalled();
+
+    // OK で 1 回呼び、送信中は 2 回目を送らない
+    confirmMock.mockReturnValue(true);
+    let resolveReset: (value: MfaClientResult<MfaResetResponse>) => void = () => undefined;
+    mocks.resetOperatorMfa.mockImplementationOnce(
+      () =>
+        new Promise<MfaClientResult<MfaResetResponse>>((resolve) => {
+          resolveReset = resolve;
+        }),
+    );
+    await act(async () => {
+      submit()?.form?.requestSubmit(submit());
+    });
+    expect(submit()?.disabled).toBe(true);
+    await act(async () => {
+      submit()?.form?.requestSubmit(submit());
+    });
+    expect(mocks.resetOperatorMfa).toHaveBeenCalledTimes(1);
+    expect(mocks.resetOperatorMfa).toHaveBeenCalledWith(TARGET_USER_ID, {
+      reason: REASON,
+      identity_check: 'video_call',
+      identity_confirmed: true,
+    });
+    await act(async () => {
+      resolveReset(ok<MfaResetResponse>({ data: { user_id: TARGET_USER_ID, factors_deleted: 1, backup_codes_deleted: 7 } }));
+    });
+    await flush();
+    expect(byTestId('operator-mfa-reset-result')?.textContent).toBe('認証アプリ 1 件・バックアップコード 7 件を消しました');
+    expect(byTestId('operator-mfa-reset-error')).toBeNull();
+
+    // 失敗は mfaErrorMessage(code) (403 OP_SELF_MODIFY・401 UNAUTHORIZED・500 の既定の文)。401 でも画面を移らない
+    for (const [status, code] of [
+      [403, 'OP_SELF_MODIFY'],
+      [401, 'UNAUTHORIZED'],
+      [500, 'INTERNAL_ERROR'],
+    ] as const) {
+      mocks.resetOperatorMfa.mockResolvedValueOnce(fail(status, code));
+      await submitForm(submit());
+      expect(byTestId('operator-mfa-reset-error')?.textContent, code).toBe(mfaErrorMessage(code));
+      expect(byTestId('operator-mfa-reset-result'), code).toBeNull();
+    }
+    expect(mfaErrorMessage('INTERNAL_ERROR')).toBe('処理中にエラーが発生しました。しばらくしてからお試しください。');
+    expect(locationMock.assign).not.toHaveBeenCalled();
+    expect(mocks.router.push).not.toHaveBeenCalled();
+    expect(mocks.resetOperatorMfa).toHaveBeenCalledTimes(4);
   });
 });
 
