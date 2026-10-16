@@ -102,6 +102,12 @@ import { MfaResetResponseSchema } from '@/lib/auth/mfa/schemas';
 const ORIGIN = 'http://localhost:3000';
 const ACTOR_ID = '11111111-1111-4111-8111-111111111111';
 const TARGET_ID = '22222222-2222-4222-8222-222222222222';
+/** 16 進の英字を含む実行者の id (#1707。ACTOR_ID は数字だけで大文字にしても変わらないので、大文字の自分の判定はこちらで見る) */
+const HEX_ACTOR_ID = 'fedcba98-7654-4fed-8cba-9876543210fe';
+const HEX_ACTOR_ID_MIXED = 'FEDcba98-7654-4FeD-8cBA-9876543210Fe';
+/** 16 進の英字を含む対象の id (小文字が DB・auth の形。大文字は利用者がパスに入れうる形) #1707 */
+const TARGET_ID_LOWER = 'abcdef12-3456-4abc-8def-0123456789ab';
+const TARGET_ID_UPPER = TARGET_ID_LOWER.toUpperCase();
 const ACTOR_FACTOR_ID = '55555555-5555-4555-8555-555555555555';
 const TARGET_FACTOR_ID = '66666666-6666-4666-8666-666666666666';
 const TARGET_UNVERIFIED_FACTOR_ID = '77777777-7777-4777-8777-777777777777';
@@ -119,11 +125,12 @@ function factor(id: string, status: 'verified' | 'unverified') {
 }
 
 /** 実行者のセッション (既定 = 登録済みの super_admin の aal2) */
-function signIn(options: { roles?: string[]; aal?: 'aal1' | 'aal2' } = {}) {
-  mocks.state.authUser = { id: ACTOR_ID, email: 'actor@example.com', factors: [factor(ACTOR_FACTOR_ID, 'verified')] };
+function signIn(options: { roles?: string[]; aal?: 'aal1' | 'aal2'; actorId?: string } = {}) {
+  const actorId = options.actorId ?? ACTOR_ID;
+  mocks.state.authUser = { id: actorId, email: 'actor@example.com', factors: [factor(ACTOR_FACTOR_ID, 'verified')] };
   mocks.state.profile = { roles: options.roles ?? ['super_admin'], organization_id: null, frozen_at: null, unban_at: null };
   mocks.state.session = { access_token: 'header.payload.signature', refresh_token: 'real-refresh-token' };
-  mocks.state.claims = { sub: ACTOR_ID, aal: options.aal ?? 'aal2', session_id: 'session-1' };
+  mocks.state.claims = { sub: actorId, aal: options.aal ?? 'aal2', session_id: 'session-1' };
 }
 
 function request(body: unknown, headers: Record<string, string> = {}): NextRequest {
@@ -286,6 +293,52 @@ describe('POST /api/super-admin/admins/{id}/mfa/reset (§14.7)', () => {
     expect(res.status).toBe(403);
     expect((res.body.error as { code: string }).code).toBe('FORBIDDEN_ORIGIN');
     expect(mocks.recordMfaAudit).not.toHaveBeenCalled();
+  });
+
+  it('reset: 自分の UUID を大文字 (と大文字小文字の混在) にしても 403 OP_SELF_MODIFY で、対象の読み取りも監査も RPC も削除もしない (#1707。Postgres の uuid 比較は大文字小文字を区別しない)', async () => {
+    // auth.getUser() の id は小文字 (HEX_ACTOR_ID)。パスにはその大文字・混在の形を入れる
+    signIn({ actorId: HEX_ACTOR_ID });
+    for (const selfId of [HEX_ACTOR_ID.toUpperCase(), HEX_ACTOR_ID_MIXED]) {
+      expect(selfId).not.toBe(HEX_ACTOR_ID);
+      expect(selfId.toLowerCase()).toBe(HEX_ACTOR_ID);
+      // 本文の検証より前に断る (本文が正しくても壊れていても OP_SELF_MODIFY)
+      for (const body of [VALID_BODY, 'not json']) {
+        const res = await reset({ id: selfId, body });
+        expect(res.status, `${selfId} ${JSON.stringify(body)}`).toBe(403);
+        expect(res.body).toEqual({ error: { code: 'OP_SELF_MODIFY', message: expect.any(String) } });
+      }
+    }
+    expect(mocks.adminClient.from).not.toHaveBeenCalled();
+    expect(mocks.adminClient.auth.admin.mfa.listFactors).not.toHaveBeenCalled();
+    expect(mocks.countRemainingBackupCodes).not.toHaveBeenCalled();
+    expectNothingChanged();
+  });
+
+  it('reset: 対象の UUID が大文字なら小文字にそろえた 1 つの値で、user_profiles の読み取り・listFactors・countRemainingBackupCodes・監査の targetUserId・endUserSessions の RPC・deleteFactor・deleteBackupCodes・応答の user_id を扱う (#1707)', async () => {
+    const res = await reset({ id: TARGET_ID_UPPER });
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ data: { user_id: TARGET_ID_LOWER, factors_deleted: 2, backup_codes_deleted: DELETED_CODES } });
+    expect(mocks.targetSelect).toHaveBeenCalledWith('user_profiles', 'id', 'id', TARGET_ID_LOWER);
+    expect(mocks.adminClient.auth.admin.mfa.listFactors).toHaveBeenCalledWith({ userId: TARGET_ID_LOWER });
+    expect(mocks.countRemainingBackupCodes).toHaveBeenCalledWith(mocks.adminClient, TARGET_ID_LOWER);
+    expect(auditCalls()).toEqual([expect.objectContaining({ actorId: ACTOR_ID, targetUserId: TARGET_ID_LOWER })]);
+    expect(mocks.adminClient.rpc).toHaveBeenCalledWith('operator_mfa_end_sessions', { p_user_id: TARGET_ID_LOWER });
+    expect(mocks.adminClient.auth.admin.mfa.deleteFactor.mock.calls.map(([arg]) => arg)).toEqual([
+      { id: TARGET_FACTOR_ID, userId: TARGET_ID_LOWER },
+      { id: TARGET_UNVERIFIED_FACTOR_ID, userId: TARGET_ID_LOWER },
+    ]);
+    expect(mocks.deleteBackupCodes).toHaveBeenCalledWith(mocks.adminClient, TARGET_ID_LOWER);
+    // 大文字の値はどこにも渡らない
+    expect(JSON.stringify([
+      mocks.targetSelect.mock.calls,
+      mocks.adminClient.auth.admin.mfa.listFactors.mock.calls,
+      mocks.countRemainingBackupCodes.mock.calls.map(([, id]) => id),
+      auditCalls().map((call) => call.targetUserId),
+      mocks.adminClient.rpc.mock.calls,
+      mocks.adminClient.auth.admin.mfa.deleteFactor.mock.calls,
+      mocks.deleteBackupCodes.mock.calls.map(([, id]) => id),
+      res.body,
+    ])).not.toContain(TARGET_ID_UPPER);
   });
 
   it("reset: 成功は listFactors → countRemainingBackupCodes → 監査 (critical・details = { reason, identity_check, factors_before: 読んだ factor の数, backup_codes_before: 未使用の残数}) → endUserSessions (rpc('operator_mfa_end_sessions', { p_user_id: 対象の id }) を 1 回) → 読んだ factor ごとに deleteFactor → deleteBackupCodes の順で、200 の data は { user_id, factors_deleted, backup_codes_deleted } (使用済みの行があれば backup_codes_before と backup_codes_deleted は違う値。終えたセッションの数は本文に無い)", async () => {

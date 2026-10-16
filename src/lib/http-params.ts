@@ -38,6 +38,17 @@ export function isUuid(value: unknown): value is string {
   return typeof value === 'string' && UUID_PATTERN.test(value);
 }
 
+/**
+ * UUID の形の文字列を小文字にそろえる (#1707)。UUID の形でない値はそのまま返す (形の検査は呼び出し側の仕事)。
+ *
+ * Postgres の uuid 型は大文字と小文字を区別せずに比べるが、JS の `===` は区別する。auth.getUser() の id は小文字なので、
+ * パスの id を実行者の id と比べる前 (自分を対象にできない操作の判定) と、DB・監査に渡す前にこれでそろえる。
+ * そろえないと、大文字にした自分の UUID が自分の判定をすり抜け、DB では自分の行に当たる。
+ */
+export function normalizeUuid(value: string): string {
+  return isUuid(value) ? value.toLowerCase() : value;
+}
+
 /** パスパラメータの id が UUID の形式でないときの 400 の本文の文とコード (#1478) */
 export const INVALID_ID_PARAM_MESSAGE = 'id の形式が正しくありません';
 export const INVALID_ID_PARAM_CODE = 'VALIDATION_ERROR';
