@@ -276,6 +276,11 @@ describe('billing/02 段 A: 付与の入口の検査と業務エラー', () => {
 
     const revoke = squash(bodyOf(definition(migration, 'FUNCTION', 'billing_revoke_manual_subscription')));
     expect(raises(revoke)).toEqual(['BILL_MANUAL_ROW_NOT_FOUND|P0001|p_user_id::text']);
+    // 取り消し・1 人分の期限切れも、引数の不足は 22023 (振る舞いは結合テスト 42・43 が見る)
+    expect(revoke).toContain("IF p_user_id IS NULL THEN RAISE EXCEPTION 'billing_revoke_manual_subscription: p_user_id is required' USING ERRCODE = '22023';");
+    expect(squash(bodyOf(definition(migration, 'FUNCTION', 'billing_expire_manual_subscription_for_user')))).toContain(
+      "IF p_user_id IS NULL THEN RAISE EXCEPTION 'billing_expire_manual_subscription_for_user: p_user_id is required' USING ERRCODE = '22023';",
+    );
     // 取り消し・期限切れは由来が M の live な行だけ (S 行に触れない)
     expect(revoke).toContain('s.stripe_subscription_id IS NULL');
     expect(squash(bodyOf(definition(migration, 'FUNCTION', 'billing_expire_manual_subscription_for_user')))).toContain(
@@ -333,6 +338,43 @@ describe('billing/02 段 A: ロックの順', () => {
     expect(sync.indexOf('UPDATE public.family_groups')).toBeGreaterThan(-1);
     expect(sync.indexOf('UPDATE public.user_profiles')).toBeGreaterThan(sync.indexOf('UPDATE public.family_groups'));
     expect(sync).not.toContain('pg_advisory_xact_lock');
+
+    // 書き込みは対象の利用者 1 人分だけ: 関数ごとの UPDATE の全部を文面で並べる (これ以外の UPDATE は無い)。どれも WHERE で対象を名指しする
+    // (契約の行 = 鍵の後で読んだ行の id・family_groups = p_user_id が代表者のグループ・user_profiles = p_user_id の行)。
+    // plan_key_cached の式の SELECT も p_user_id の live な行だけから選ぶ (写像 (9) の 10. と同じ式)。
+    // WHERE を外すと全員の行が書き換わる。振る舞いは結合テスト 41 (ほかの利用者の断言)・39 (非 live な後の行) が見る。ここは文面の崩れを先に捕まえる
+    const PLAN_KEY_CACHED_UPDATE =
+      "UPDATE public.user_profiles AS p SET plan_key_cached = ( SELECT s.plan_key FROM public.personal_subscriptions AS s WHERE s.user_id = p_user_id AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace') ORDER BY s.created_at DESC, s.id LIMIT 1) WHERE p.id = p_user_id";
+    const UPDATES_BY_FUNCTION: Record<(typeof FUNCTIONS)[number]['name'], string[]> = {
+      billing_grant_manual_subscription: [
+        "UPDATE public.family_groups AS g SET plan_key = p_plan_key, member_limit = v_member_limit WHERE g.representative_id = p_user_id AND g.status = 'active' AND (g.plan_key IS DISTINCT FROM p_plan_key OR g.member_limit IS DISTINCT FROM v_member_limit)",
+        PLAN_KEY_CACHED_UPDATE,
+      ],
+      billing_manual_subscription_sync_after_end: [
+        "UPDATE public.family_groups AS g SET plan_key = 'free', member_limit = c_default_member_limit WHERE g.representative_id = p_user_id AND g.status = 'active' AND g.plan_key = p_plan_key AND NOT EXISTS ( SELECT 1 FROM public.personal_subscriptions AS s WHERE s.user_id = p_user_id AND s.plan_key = p_plan_key AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace'))",
+        PLAN_KEY_CACHED_UPDATE,
+      ],
+      billing_revoke_manual_subscription: [
+        "UPDATE public.personal_subscriptions SET status = 'cancelled', cancelled_at = now(), cancel_at = NULL WHERE id = v_row.id",
+      ],
+      billing_expire_manual_subscription_for_user: ["UPDATE public.personal_subscriptions SET status = 'expired' WHERE id = v_row.id"],
+    };
+    /** 本体の UPDATE 文 (`UPDATE public.` から `;` の手前まで)。FOR NO KEY UPDATE は `UPDATE public.` で始まらないので拾わない */
+    const updatesOf = (body: string): string[] =>
+      body.split(';').flatMap((piece) => {
+        const position = piece.indexOf('UPDATE public.');
+        return position < 0 ? [] : [squash(piece.slice(position))];
+      });
+    for (const { name } of FUNCTIONS) {
+      expect(updatesOf(squash(bodyOf(definition(migration, 'FUNCTION', name)))), name).toEqual(UPDATES_BY_FUNCTION[name]);
+    }
+    // 番兵: 切り出しが空振りしていない (WHERE の無い UPDATE を足すと、上の一覧と食い違う)
+    expect(updatesOf('BEGIN UPDATE public.t SET a = 1; SELECT 1 FOR NO KEY UPDATE; UPDATE public.u SET b = 2 WHERE c = 3; END')).toEqual([
+      'UPDATE public.t SET a = 1',
+      'UPDATE public.u SET b = 2 WHERE c = 3',
+    ]);
+    // プロシージャは行を書かない (1 人分の関数を呼ぶだけ)
+    expect(updatesOf(squash(bodyOf(definition(migration, 'PROCEDURE', PROCEDURE))))).toEqual([]);
 
     // 期限切れの監査: system.* と actor_id NULL (SECURITY DEFINER だけが書ける。#1736)
     const expire = squash(bodyOf(definition(migration, 'FUNCTION', 'billing_expire_manual_subscription_for_user')));

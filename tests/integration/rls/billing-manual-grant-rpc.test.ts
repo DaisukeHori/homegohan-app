@@ -248,6 +248,20 @@ async function makeDue(userId: string): Promise<void> {
   );
 }
 
+/** makeCreatedLater が created_at を先へ動かす日数 (付与のトランザクションの now() より必ず後になる幅) */
+const LATER_CREATED_DAYS = FUTURE_DAYS;
+
+/**
+ * 契約の行の created_at を先の時刻に書き換える。plan_key_cached の式 (§6.2 の 7.・§6.3 = 写像 (9) の 10. と同じ) は
+ * ORDER BY s.created_at DESC で 1 行を選ぶ。created_at は行を作ったトランザクションの now() (= 開始の時刻) なので、
+ * 付与が鍵を待つ間に、後から始まったトランザクションが先にコミットした行は、付与の行より created_at が後になる。その並びをこれで作る
+ */
+async function makeCreatedLater(rowId: string): Promise<void> {
+  await pgQuery(
+    `UPDATE public.personal_subscriptions SET created_at = now() + interval '${LATER_CREATED_DAYS} day' WHERE id = '${rowId}'::uuid;`,
+  );
+}
+
 // ---------------------------------------------------------------------------------------------
 // 写像 (billing_apply_stripe_subscription。S 行を作る)
 // ---------------------------------------------------------------------------------------------
@@ -386,6 +400,59 @@ async function auditsOf(userId: string, like: string): Promise<AuditRow[]> {
     .order('created_at', { ascending: true });
   if (error) throw new Error(`admin_audit_logs: ${error.message}`);
   return (data ?? []) as AuditRow[];
+}
+
+// ---------------------------------------------------------------------------------------------
+// ほかの利用者 (付与・取り消し・期限切れの対象でない人)
+// ---------------------------------------------------------------------------------------------
+
+/** ほかの利用者の live な S 行のプラン (対象に付与する最初のプラン family_pro と違う値にして、全員の書き換えを見分ける) */
+const OTHER_USER_PLAN = 'family_basic';
+
+/**
+ * 付与・取り消し・期限切れの書き込みが、対象の利用者 1 人分に絞られていることを見るための 2 人。
+ *   idle: 契約の行が無い (plan_key_cached は NULL)
+ *   subscriber: live な S 行 (OTHER_USER_PLAN) を持つ (plan_key_cached は OTHER_USER_PLAN)。その行の created_at は先の時刻 (makeCreatedLater)
+ */
+interface OtherUsers {
+  idle: TestUser;
+  subscriber: TestUser;
+  subscriberRowId: string;
+}
+
+/**
+ * ほかの利用者が、用意したときのまま (plan_key_cached・契約の行) であることを見る。
+ * 外す変異と、この断言で見分けるもの:
+ *   user_profiles の UPDATE の WHERE p.id = p_user_id (付与・同期) → 全員の plan_key_cached が対象と同じ値に書き換わる
+ *     (付与では idle が NULL でなくなり、取り消し・期限切れの同期では subscriber が OTHER_USER_PLAN でなくなる)
+ *   契約の行の UPDATE の WHERE id = v_row.id (取り消し・1 人分の期限切れ) → 全員の行が cancelled / expired になる (subscriber の S 行)
+ */
+async function expectOtherUsersUntouched(others: OtherUsers, label: string): Promise<void> {
+  expect(await planKeyCached(others.idle.id), `${label}: idle の plan_key_cached`).toBeNull();
+  expect(await rowsOf(others.idle.id), `${label}: idle の契約の行`).toEqual([]);
+  expect(await planKeyCached(others.subscriber.id), `${label}: subscriber の plan_key_cached`).toBe(OTHER_USER_PLAN);
+  expect(await mustRowById(others.subscriberRowId), `${label}: subscriber の S 行`).toMatchObject({
+    user_id: others.subscriber.id,
+    plan_key: OTHER_USER_PLAN,
+    status: 'active',
+    cancelled_at: null,
+  });
+}
+
+/**
+ * ほかの利用者を用意する。subscriber の S 行の created_at を先の時刻にしておくと、plan_key_cached の式の SELECT から
+ * s.user_id = p_user_id を外す変異では、どの利用者のキャッシュもこの行のプラン (OTHER_USER_PLAN) になる (いちばん新しい live な行)
+ */
+async function prepareOtherUsers(label: string): Promise<OtherUsers> {
+  const idle = await createUser(`${label}-idle`);
+  const subscriber = await createUser(`${label}-subscriber`);
+  await apply({ sub: nextSub(), customer: nextCustomer(), status: 'active', userId: subscriber.id, planKey: OTHER_USER_PLAN });
+  const [row, ...rest] = await liveRowsOf(subscriber.id);
+  expect(rest).toEqual([]);
+  await makeCreatedLater(row.id);
+  const others: OtherUsers = { idle, subscriber, subscriberRowId: row.id };
+  await expectOtherUsersUntouched(others, `${label}: 用意`);
+  return others;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -692,6 +759,18 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     expect(noExpiryRow).toMatchObject({ status: 'active', stripe_subscription_id: null, current_period_end: null });
     expect(await planKeyCached(noExpiry.id)).toBe('pro');
 
+    // plan_key_cached は、この利用者の live な行だけから決める (§6.2 の 7.)。同じ利用者の非 live な行 (incomplete の S 行) の
+    // created_at が付与の行より後のとき (makeCreatedLater の注記の並び)、live の条件を外すとキャッシュがその行のプラン (family_basic) になる
+    const laterIncomplete = await createUser('grant-later-incomplete');
+    await apply({ sub: nextSub(), customer: nextCustomer(), status: 'incomplete', userId: laterIncomplete.id, planKey: 'family_basic' });
+    const [incompleteRow, ...moreRows] = await rowsOf(laterIncomplete.id);
+    expect(moreRows).toEqual([]);
+    expect(incompleteRow.status).toBe('incomplete');
+    expect(await planKeyCached(laterIncomplete.id)).toBeNull();
+    await makeCreatedLater(incompleteRow.id);
+    await grant(laterIncomplete.id, 'pro');
+    expect(await planKeyCached(laterIncomplete.id)).toBe('pro');
+
     // 引数の不足は 22023 (業務エラーではない)。利用者・プラン (NULL と空文字) のどれが欠けても同じで、行は書かれない。
     // 入口の検査を外すと、NULL は後の業務エラーの DETAIL が NULL になって 22004、空文字は BILL_PLAN_NOT_GRANTABLE (P0001) になるので、
     // コードで区別できる
@@ -784,17 +863,26 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
 
   // 41
   it('grant with a family plan sets the representative active group plan_key/member_limit (LEAST(max_members,20)); revoke reverts to free/4 only when no other live row has that plan; a non-representative grant touches no group; a group of the user whose status is dissolved (set by service_role) keeps its plan_key/member_limit through grant and revoke', async () => {
+    // 付与・取り消し・期限切れの書き込みは対象の利用者 1 人分だけ (§6.2 の 7.・§6.3・§6.4。写像 (9) の 10. と同じ式)。
+    // ほかの利用者 2 人 (契約なし・live な S 行あり) を先に用意し、このテストの付与・取り消し・期限切れの後で、用意したときのままであることを見る。
+    // 鍵や行のロックは利用者 1 人分しか取らないので、全員の行を書き換えると、ほかの利用者の処理と直列にならないまま他人の権利を変える
+    const others = await prepareOtherUsers('family-others');
+
     // 代表者: family_pro (max_members 8) → グループは family_pro / 8。取り消しで free / 4
     const rep = await createUser('family-rep');
     const familyId = await insertFamily(rep.id);
     expect(await mustFamily(familyId)).toMatchObject({ plan_key: 'free', member_limit: 4 });
     await grant(rep.id, 'family_pro');
     expect(await mustFamily(familyId)).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
+    // キャッシュは rep の live な行から決まる (subscriber の S 行のほうが created_at は後でも、そのプランにならない)
     expect(await planKeyCached(rep.id)).toBe('family_pro');
+    await expectOtherUsersUntouched(others, '付与の後');
     const revoked = await tryRevoke(rep.id);
     expect(revoked.error).toBeNull();
     expect(await mustFamily(familyId)).toMatchObject({ plan_key: 'free', member_limit: 4 });
+    // 取り消しの同期も rep の live な行だけから決める (ほかの利用者の live な行があっても NULL)
     expect(await planKeyCached(rep.id)).toBeNull();
+    await expectOtherUsersUntouched(others, '取り消しの後');
 
     // family_basic (max_members 4) → 4。ほかの経路で入ったプランは取り消しで触らない
     await grant(rep.id, 'family_basic');
@@ -856,6 +944,9 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     await makeDue(personalRep.id);
     expect(await expireForUser(personalRep.id)).toBe(1);
     expect(await mustFamily(personalFamily)).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+    // 1 人分の期限切れも、ほかの利用者の行・キャッシュに触れない (契約の行の UPDATE は鍵の後で読んだ 1 行だけ・同期は personalRep だけ)
+    expect(await planKeyCached(personalRep.id)).toBeNull();
+    await expectOtherUsersUntouched(others, '期限切れの後');
     // 取り消し・期限切れの同期も家族プランのときだけ (§6.3)。グループが free のままだと、同期の条件 (plan_type = 'family') を外しても
     // g.plan_key = 'pro' の行が無く結果が変わらない。ほかの経路 (service_role) でグループを pro / 4 にしておき、条件が効いていることを見る
     const { error: personalPlanError } = await srAdmin
@@ -959,6 +1050,9 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     // (rep のグループ = ほかの経路で入ったプラン・keeper のグループ = keeper の live な行) にも触れない
     expect(await mustFamily(familyId)).toMatchObject({ status: 'active', plan_key: 'family_pro', member_limit: 8 });
     expect(await mustFamily(keeperFamily)).toMatchObject({ status: 'active', plan_key: 'family_pro', member_limit: 8 });
+
+    // このテストの付与・取り消し・期限切れ・内部の同期の直接の呼び出しをすべて通った後も、ほかの利用者は用意したときのまま
+    await expectOtherUsersUntouched(others, '最後');
   });
 });
 
@@ -1003,6 +1097,12 @@ describe('billing/02 §6.3・§6.4: 取り消しと期限切れ', () => {
     // 行が無い利用者
     const none = await createUser('revoke-none');
     expect((await tryRevoke(none.id)).error).toMatchObject({ code: 'P0001', message: 'BILL_MANUAL_ROW_NOT_FOUND' });
+
+    // 引数の不足は 22023 (業務エラーではない)。入口の検査を外すと、鍵 (hashtext(NULL)) も行も無いまま BILL_MANUAL_ROW_NOT_FOUND の
+    // DETAIL が NULL になって 22004 になるので、コードで区別できる
+    const missing = await srAdmin.rpc('billing_revoke_manual_subscription', { p_user_id: null });
+    expect(missing.data).toBeNull();
+    expect(missing.error?.code).toBe('22023');
   });
 
   // 43
@@ -1043,6 +1143,11 @@ describe('billing/02 §6.3・§6.4: 取り消しと期限切れ', () => {
     expect(await expireForUser(stripeUser.id)).toBe(0);
     expect((await liveRowsOf(stripeUser.id))[0]).toMatchObject({ status: 'active' });
     expect(await auditsOf(stripeUser.id, 'system.billing.manual_grant_expired')).toEqual([]);
+
+    // 引数の不足は 22023 (業務エラーではない)。入口の検査を外すと、鍵 (hashtext(NULL)) も行も無いまま 0 を返す (エラーにならない)
+    const missing = await srAdmin.rpc('billing_expire_manual_subscription_for_user', { p_user_id: null });
+    expect(missing.data).toBeNull();
+    expect(missing.error?.code).toBe('22023');
 
     // CALL (1 つの要求に 1 文だけ): 期限を過ぎた 2 人を expired にし、ほかは残す
     const dueA = await createUser('call-due-a');
