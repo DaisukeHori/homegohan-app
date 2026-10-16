@@ -481,3 +481,48 @@ describe('POST /api/org/owner-transfer/propose: 管理者クライアントは c
     warn.mockRestore();
   });
 });
+
+describe('POST /api/org/owner-transfer/propose: 大文字・混在の UUID (#1793)', () => {
+  it('本人のオーナーの組織の organization_id を大文字で送っても 403 にならず 200 で、RPC・宛先の取得・組織名の取得には小文字の id を渡す', async () => {
+    const res = await POST(postRequest({ organization_id: orgId.toUpperCase(), to_user_id: toUserId.toUpperCase() }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.proposal_id).toBe(proposalId);
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('propose_org_owner_transfer', {
+      p_organization_id: orgId,
+      p_to_user_id: toUserId,
+    });
+    expect(mockGetUserById).toHaveBeenCalledWith(toUserId);
+    const eqArgs = mockFrom.mock.results.flatMap((r) => (r.value as { eq: { mock: { calls: unknown[][] } } }).eq.mock.calls);
+    expect(eqArgs).toContainEqual(['id', orgId]);
+    expect(eqArgs).toContainEqual(['id', toUserId]);
+    expect(eqArgs.flat()).not.toContain(orgId.toUpperCase());
+    expect(eqArgs.flat()).not.toContain(toUserId.toUpperCase());
+  });
+
+  it('大文字・小文字の混在でも同じ (organization_id の英字を 1 文字おきに大文字にする)', async () => {
+    const mixed = orgId.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
+    expect(mixed).not.toBe(orgId);
+    expect(mixed).not.toBe(orgId.toUpperCase());
+
+    const res = await POST(postRequest({ organization_id: mixed, to_user_id: toUserId }));
+
+    expect(res.status).toBe(200);
+    expect(mockRpc).toHaveBeenCalledWith('propose_org_owner_transfer', {
+      p_organization_id: orgId,
+      p_to_user_id: toUserId,
+    });
+  });
+
+  it('他の組織の id は大文字にしても 403 のまま (そろえても自分の組織にはならない)', async () => {
+    const otherOrgId = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
+    const res = await POST(postRequest({ organization_id: otherOrgId.toUpperCase(), to_user_id: toUserId }));
+    const json = await res.json();
+
+    expect(res.status).toBe(403);
+    expect(json.error.code).toBe('INSUFFICIENT_PERMISSION');
+    expect(mockRpc).not.toHaveBeenCalled();
+  });
+});

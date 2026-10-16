@@ -407,6 +407,81 @@ describe('組織の絞り込み: 呼び出した人の organization_id だけを
     expect(inserted.values).toEqual({ name: '新部署', organization_id: ORG_A });
   });
 
+  // #1790・#1793: 人数の Map (fetchMemberCounts) の鍵は DB の小文字の department_id。本文の id を大文字・混在のまま使うと、
+  // 更新は DB (uuid の比較は大文字小文字を区別しない) で通るのに人数の照合が外れ、memberCount が 0 で返っていた
+  // (#1790 が足した「大文字の id」のケースは、下の it.each の「大文字」が同じ確かめ (200・id/name/memberCount・更新された行) を含む)
+  describe('departments PUT: 部署の id を大文字・混在で送っても、更新する部署と返す人数がずれない (#1790・#1793)', () => {
+    // 16 進の英字を含む id (DB の id は小文字)。所属は ADMIN_A と MEMBER_A の 2 人
+    const DEPT_HEX = 'abcdef12-3456-4abc-8def-0123456789ab';
+    /** 英字を 1 文字おきに大文字にする (大文字・小文字の混在) */
+    const mixedCase = (id: string) => id.replace(/[a-f]/g, (c, i: number) => (i % 2 === 0 ? c.toUpperCase() : c));
+
+    function worldWithHexDepartment(): Record<string, Row[]> {
+      const tables = worldTables();
+      tables.departments.push({
+        id: DEPT_HEX, organization_id: ORG_A, name: 'A の企画部', parent_id: null, manager_id: null, display_order: 2, created_at: '2026-02-03T00:00:00Z',
+      });
+      tables.user_profiles = tables.user_profiles.map((row) =>
+        row.id === ADMIN_A || row.id === MEMBER_A ? { ...row, department_id: DEPT_HEX } : row,
+      );
+      return tables;
+    }
+
+    /**
+     * 本物の Postgres と同じく、departments の id の比較だけ大文字小文字を区別しない DB にする
+     * (ここが === のままだと、そろえ忘れは 404 になり「更新は通るのに人数が 0」の症状を再現できない)。route が渡した値は控える
+     */
+    function compareDepartmentIdLikePostgres(): unknown[] {
+      const passedIds: unknown[] = [];
+      const original = sessionDb.from;
+      sessionDb = {
+        ...sessionDb,
+        from: vi.fn((table: string) => {
+          const query = original(table);
+          if (table !== 'departments') return query;
+          const eq = query.eq.bind(query);
+          query.eq = (column: string, value: unknown) => {
+            if (column !== 'id') return eq(column, value);
+            passedIds.push(value);
+            return eq(column, typeof value === 'string' ? value.toLowerCase() : value);
+          };
+          return query;
+        }) as unknown as SchemaDb['from'],
+      };
+      return passedIds;
+    }
+
+    beforeEach(() => {
+      sessionUser = { id: OWNER_A, email: 'actor@example.com' };
+      sessionDb = createSchemaDb({ tables: worldWithHexDepartment() });
+      adminDb = createSchemaDb({ tables: worldWithHexDepartment() });
+    });
+
+    it.each([
+      ['大文字', DEPT_HEX.toUpperCase()],
+      ['大文字・小文字の混在', mixedCase(DEPT_HEX)],
+    ])('%s: 更新でき、memberCount は所属している実際の人数 (2 人)。DB にはそろえた小文字の id を渡す', async (_label, sentId) => {
+      expect(sentId).not.toBe(DEPT_HEX); // そろえる前と後で値が違う (英字を含む) こと
+      expect(sentId.toLowerCase()).toBe(DEPT_HEX); // 小文字にそろえると DB の id になる
+      const passedIds = compareDepartmentIdLikePostgres();
+
+      const res = await departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { id: sentId, name: '改名' }) as never);
+      const body = await json(res);
+
+      expect(res.status).toBe(200);
+      expect(body.department).toMatchObject({ id: DEPT_HEX, name: '改名', memberCount: 2 });
+      expect(passedIds).toEqual([DEPT_HEX]);
+      expect(sessionDb.rows('departments').find((d) => d.id === DEPT_HEX)?.name).toBe('改名');
+    });
+
+    it('小文字で送ったときも同じ人数 (そろえても今までの結果は変わらない)', async () => {
+      const res = await departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { id: DEPT_HEX, name: '改名' }) as never);
+
+      expect(res.status).toBe(200);
+      expect((await json(res)).department.memberCount).toBe(2);
+    });
+  });
+
   it('members GET: 自組織のメンバーだけを返し、読む列は限定されている', async () => {
     const body = await json(await members.GET(new Request(url('/api/org/members'))));
 
@@ -1016,27 +1091,5 @@ describe('壊れた JSON は 500 ではなく 400', () => {
     expect(res.status).toBe(400);
     expect(await json(res)).toEqual({ error: 'Invalid JSON' });
     expect(mockLoggerError).not.toHaveBeenCalled();
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 大文字の部署 id (#1790)
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('departments PUT: 大文字の id でも、更新する部署と返す人数がずれない (#1790)', () => {
-  // Postgres の uuid は大文字小文字を区別せずに比べるので、大文字の id でも更新は自組織の部署に当たる。
-  // route は id を小文字にそろえてから更新と人数の集計 (キーは DB から読んだ小文字の department_id) に使う
-  it('id が大文字: 自組織の部署を更新し、人数は実際の所属人数 (0 にしない)', async () => {
-    // DEPT_A の 16 進の英字 (末尾の d) を大文字にした値
-    const id = DEPT_A.toUpperCase();
-    expect(id).not.toBe(DEPT_A);
-    expect(id.toLowerCase()).toBe(DEPT_A);
-
-    const res = await departments.PUT(jsonRequest(url('/api/org/departments'), 'PUT', { id, name: '改名' }) as never);
-    const body = await json(res);
-
-    expect(res.status).toBe(200);
-    expect(body.department).toMatchObject({ id: DEPT_A, name: '改名', memberCount: 2 });
-    expect(sessionDb.rows('departments').find((d) => d.id === DEPT_A)?.name).toBe('改名');
   });
 });

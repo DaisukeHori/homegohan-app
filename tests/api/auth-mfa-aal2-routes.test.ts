@@ -217,6 +217,18 @@ beforeEach(() => {
 });
 
 describe('DELETE /api/auth/mfa/factors/{id} (§14.4)', () => {
+  it('DELETE /factors/{id}: 本人の verified な factor の id をパスに大文字で入れても 404 にならず解除でき、unenroll と監査には小文字の id を渡す (#1793)', async () => {
+    // 16 進の英字を含む id (Supabase の factor の id は小文字)
+    const hexFactorId = 'abcdef12-3456-4abc-8def-0123456789ab';
+    signIn({ aal: 'aal2', factors: [factor(hexFactorId, 'verified')] });
+    const ok = await unenroll(hexFactorId.toUpperCase());
+    expect(ok.status).toBe(200);
+    expect(ok.body).toEqual({ ok: true, aal: 'aal1' });
+    expect(mocks.order).toEqual([`unenroll:${hexFactorId}`, 'deleteBackupCodes', 'refreshSession', 'audit']);
+    expect(auditCalls()).toHaveLength(1);
+    expect(auditCalls()[0].details).toMatchObject({ factor_id: hexFactorId });
+  });
+
   it("DELETE /factors/{id}: aal1 + verified → 403 AUTH_2FA_REQUIRED / aal1 + 未登録 + 猶予なし → 403 AUTH_2FA_ENROLLMENT_REQUIRED / 本人でない → 404 / 成功で unenroll → deleteBackupCodes → refreshSession → 監査 admin.mfa.unenroll (details { factor_id, backup_codes_deleted: 消した行の数, failed_step: null }) → 200 { ok: true, aal: 'aal1' }", async () => {
     signIn({ aal: 'aal1', factors: [VERIFIED()] });
     const challenge = await unenroll();
