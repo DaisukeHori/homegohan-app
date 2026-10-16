@@ -48,6 +48,7 @@ const mocks = vi.hoisted(() => ({
   signOut: vi.fn(),
   clearUserScopedLocalStorage: vi.fn(),
   notifyNativeSignOut: vi.fn(),
+  notifyNativeLegalConsentAccepted: vi.fn(),
   broadcastSignOut: vi.fn(),
   rpc: vi.fn(),
   deleteOwnAccount: vi.fn(),
@@ -91,6 +92,12 @@ vi.mock('@/lib/native-auth-bridge', () => ({
   notifyNativeSignOut: () => {
     mocks.callOrder.push('notifyNativeSignOut');
     mocks.notifyNativeSignOut();
+    return true;
+  },
+  // #1442: 同意を記録できたら、アプリ (WebView) の同意画面の route を閉じてもらう合図
+  notifyNativeLegalConsentAccepted: () => {
+    mocks.callOrder.push('notifyNativeLegalConsentAccepted');
+    mocks.notifyNativeLegalConsentAccepted();
     return true;
   },
 }));
@@ -374,6 +381,38 @@ describe('/legal-consent フォーム (クライアント側)', () => {
     expect(locationMock.assign).toHaveBeenCalledWith('/menus/weekly?date=2026-10-08');
     // 遷移するまで二重に押せない
     expect(submitButton().disabled).toBe(true);
+  });
+
+  it('★(#1442) 同意を記録できたら、アプリへの合図 notifyNativeLegalConsentAccepted を window.location.assign(next) より先に 1 回だけ送る', async () => {
+    locationMock.assign.mockImplementation(() => {
+      mocks.callOrder.push('location.assign');
+    });
+    await renderForm({ next: '/menus/weekly' });
+    await checkBoth();
+    await submit();
+
+    expect(mocks.notifyNativeLegalConsentAccepted).toHaveBeenCalledTimes(1);
+    expect(locationMock.assign).toHaveBeenCalledWith('/menus/weekly');
+    expect(mocks.callOrder.filter((name) => name === 'notifyNativeLegalConsentAccepted' || name === 'location.assign')).toEqual([
+      'notifyNativeLegalConsentAccepted',
+      'location.assign',
+    ]);
+  });
+
+  it.each([
+    ['401', 401, { error: { code: 'AUTH_UNAUTHENTICATED' } }],
+    ['403 LEGAL_MINOR_SELF_SIGNUP_REFUSED', 403, { error: { code: 'LEGAL_MINOR_SELF_SIGNUP_REFUSED' } }],
+    ['400', 400, { error: { code: 'LEGAL_ACCEPT_FAILED' } }],
+    ['409', 409, { error: { code: 'LEGAL_VERSION_MISMATCH' } }],
+    ['500', 500, { error: { code: 'LEGAL_ACCEPT_FAILED' } }],
+  ])('(#1442) 同意を記録できなかったとき (%s) は、アプリへの合図を送らない', async (_label, status, body) => {
+    fetchMock.mockResolvedValue(jsonResponse(body, status));
+    await renderForm();
+    await checkBoth();
+    await submit();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.notifyNativeLegalConsentAccepted).not.toHaveBeenCalled();
   });
 
   it('送信中は押せず、二重に送らない', async () => {
