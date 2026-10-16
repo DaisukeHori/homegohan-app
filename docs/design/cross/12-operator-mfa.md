@@ -1662,10 +1662,10 @@ export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;
 
 - 本文の形は運営 API (nested): `{ error: { code, message, details? } }` / `{ data: {...} }`。
 - 本文の NULL 文字: `rejectNullCharacterBody` を呼ばない (`src/__tests__/api/null-character-routes.test.ts` の EXCLUDED に理由つきで載せる §23 N-28。入口で呼ぶと「最初の文」の規則で `requireRole` と自分の id の判定より前に本文を読むことになり、下の手順の順序と食い違うため)。`reason` の NULL 文字は `MfaResetBodySchema` の refine が 400 `OP_INVALID_INPUT` にする (`src/app/api/admin/finance/refunds/route.ts` の理由の扱いと同じ型)。`identity_check` は列挙、`identity_confirmed` は `true` だけで、ほかの文字列は DB に届かない。
-- 段: C (段 B の後にマージ)。認可: `requireRole(['super_admin'])` (AAL2)。`id === actor.id` → 403 `OP_SELF_MODIFY`。
+- 段: C (段 B の後にマージ)。認可: `requireRole(['super_admin'])` (AAL2)。`id === actor.id` → 403 `OP_SELF_MODIFY` (パスの `id` は UUID の形なら `normalizeUuid` (`src/lib/http-params.ts`) で小文字にそろえてから比べ、以後の手順もそろえた値だけを使う。#1707)。
 - 手順 (この順。どこかで止まったら後ろは何もしない。応答の code は §14.8.2):
   1. `isCrossOrigin` なら 403 `FORBIDDEN_ORIGIN` (§14 冒頭の共通)。
-  2. `const actor = await requireRole(['super_admin'])` (AAL2)。`id === actor.id` なら 403 `OP_SELF_MODIFY`。
+  2. `const actor = await requireRole(['super_admin'])` (AAL2)。`const id = normalizeUuid(rawId)` (UUID の形なら小文字。Postgres の uuid 比較は大文字小文字を区別しないので、大文字にした自分の UUID が判定をすり抜けないように。#1707)。`id === normalizeUuid(actor.id)` なら 403 `OP_SELF_MODIFY`。手順 4〜10 の `id` (DB・`listFactors`・監査の `targetUserId`・`endUserSessions`・`deleteFactor`・`deleteBackupCodes`・応答の `user_id`) はすべてこの値。
   3. 本文 (400 `OP_INVALID_INPUT`。`readJsonBody` と `src/lib/super-admin/validation-errors.ts` の形)。
   4. `const admin = getSupabaseAdmin()`。対象の `user_profiles` を読む (無ければ 404 `NOT_FOUND`・読み取りの失敗は 500)。`id` が UUID の形でなければ、該当する利用者はいないので DB に問い合わせずに 404 `NOT_FOUND` (PostgREST の uuid の型の誤りを 500 にしない)。
   5. **消す前の数を読む (監査の details の材料)**: `admin.auth.admin.mfa.listFactors({ userId: id })` の `data.factors` を `factors` として持つ (状態・種類を問わない全 factor。`error` なら 500)。`const backupCodesBefore = await countRemainingBackupCodes(admin, id)` (未使用 = `used_at IS NULL` の行の数。DB の失敗で投げれば 500 §13.6)。**どちらの失敗でも監査を書かず、何も消さない** (まだ何もしていないので「要求された」行も残さない。失敗は `internalError` が app_logs に残す)。
