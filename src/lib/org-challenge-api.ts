@@ -85,13 +85,16 @@ export function isVisibleToMember(row: ChallengeRow, member: { department_id: st
 
 export interface ChallengeAggregate {
   /**
-   * 今も組織のメンバーである参加者の人数。参加者が最小人数に満たないときは null
+   * 参加した人の延べ数 (参加のたびに +1。やめても・組織から外れても減らない。#1688)。最小人数に満たないときは null
    * (少人数だと誰が参加しているかを推測されやすいため。DB の関数が決める)
    */
   participantCount: number | null;
   /** 値を出すのに必要な最小人数 (DB の関数が決める) */
   minParticipants: number;
-  /** 集計が済んだ参加者の平均。集計が済んだ人が最小人数に満たないときは null */
+  /**
+   * 終了時に確定した平均 (#1688)。開催中・確定時点の順位がついた人が最小人数に満たない・同じ種類で期間が重なり
+   * 先に平均を出したチャレンジがあるときは null
+   */
   averageValue: number | null;
 }
 
