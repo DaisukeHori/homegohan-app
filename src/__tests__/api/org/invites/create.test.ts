@@ -487,6 +487,20 @@ describe('POST /api/org/invites: RPC の生のエラー文を本文に出さな�
       error: { code: 'SEAT_LIMIT_EXCEEDED', message: '組織のライセンス数の上限に達しているため、招待できません' },
     });
   });
+
+  it('#1799: 宛先がこの組織の在籍者 (RPC が ALREADY_IN_ORG) なら 409 と固定の文を返し、招待メールを送らない', async () => {
+    mockRpc.mockImplementation(async () => ({ data: null, error: { message: `ALREADY_IN_ORG ${SENTINEL}`, code: 'P0001' } }));
+
+    const res = await POST(postRequest({ email: inviteeEmail }));
+    const raw = await res.text();
+
+    expect(res.status).toBe(409);
+    expect(raw).not.toContain(SENTINEL);
+    expect(JSON.parse(raw)).toEqual({
+      error: { code: 'ALREADY_IN_ORG', message: 'このメールアドレスの人は、すでにこの組織のメンバーです' },
+    });
+    expect(mockSendEmail).not.toHaveBeenCalled();
+  });
 });
 
 describe('POST /api/org/invites: メール送信の失敗 (#1193)', () => {

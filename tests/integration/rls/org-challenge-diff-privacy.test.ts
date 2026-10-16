@@ -724,7 +724,7 @@ describe('#1688 G・H・T・U. 状態の遷移表と、開始後の期間・種�
 // I. 順位表を管理者と管理者だった人に見せない
 // ================================================================
 describe('#1688 I. 順位表は組織の管理者と、管理者だった印のある人には 0 行', () => {
-  it('I [S-8・S-20]: owner / admin には 0 行。member には従来どおり。member が admin の招待を承諾すると印が付き 0 行、member の招待で戻っても 0 行', async () => {
+  it('I [S-8・S-20]: owner / admin には 0 行。member には従来どおり。同じ組織の招待では役割を変えられない (#1799)。member が admin に上がると印が付き 0 行、member に戻っても 0 行', async () => {
     const challenge = await createChallenge();
     await joinRanked(challenge, [...m.slice(0, 3), owner, admin, y1]);
 
@@ -736,11 +736,19 @@ describe('#1688 I. 順位表は組織の管理者と、管理者だった印の�
     expect(await rankingRows(challenge, y1.id)).toBeGreaterThan(0);
 
     try {
-      await acceptInvite(y1, 'admin');
+      // #1799: 同じ組織の在籍者には招待を作れない (承諾で org_role を招待の役割に上書きする経路は閉じた)。役割も印も変わらない
+      await expect(acceptInvite(y1, 'admin')).rejects.toThrow(/ALREADY_IN_ORG/);
+      const { data: unchanged } = await srAdmin.from('user_profiles').select('org_role').eq('id', y1.id).single();
+      expect(unchanged?.org_role).toBe('member');
+      expect(await exclusionCount(y1.id, challenge)).toBe(0);
+      expect(await rankingRows(challenge, y1.id)).toBeGreaterThan(0);
+
+      // 役割の往復は、残る経路 (所有者の譲渡・運営の操作と同じ service_role の UPDATE) で確かめる
+      await setMembership(y1.id, orgA, 'admin');
       expect(await exclusionCount(y1.id, challenge)).toBe(1);
       expect(await rankingRows(challenge, y1.id)).toBe(0);
 
-      await acceptInvite(y1, 'member');
+      await setMembership(y1.id, orgA, 'member');
       const { data: profile } = await srAdmin.from('user_profiles').select('org_role').eq('id', y1.id).single();
       expect(profile?.org_role).toBe('member');
       expect(await rankingRows(challenge, y1.id)).toBe(0);
