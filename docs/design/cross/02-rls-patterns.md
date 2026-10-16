@@ -335,7 +335,9 @@ RETURNING *;
 | ライセンス一括割当 | `hashtext('license_pool:' || pool_id::TEXT)` |
 | 家族グループ owner 移譲 | `hashtext('family-group:' || group_id::TEXT)` |
 | 退職時 family 凍結 | `hashtext('family-group:' || group_id::TEXT)` |
-| Stripe webhook 二重処理防止 | `hashtext('stripe:' || event_id::TEXT)` |
+| Stripe webhook 二重処理防止 | 使わない。`stripe_webhook_events` の行の claim (`billing_claim_stripe_event`。`docs/design/billing/01-billing-core.md` §6.4・§9.6) に置き換えた (旧: `hashtext('stripe:' || event_id::TEXT)`) |
+| 課金の写像 `billing_apply_stripe_subscription` (利用者ごとに直列)・`family_groups` の作成と代表者の交代のトリガー `family_groups_billing_plan_follow_representative` (新しい代表者の鍵。写像と直列) | `hashtext('billing-user:' || user_id::TEXT)` (billing/01 §6.4 (9)・(10)) |
+| 課金の写像 `billing_apply_stripe_subscription` (同じ Stripe の契約の写しを直列に) | `hashtext('stripe-subscription:' || stripe_subscription_id)` (`sub_…`。billing/01 §6.4 (9)) |
 
 **命名規則**: `{ドメイン}-{エンティティ}:{UUID}` 形式（ハイフン区切り）
 

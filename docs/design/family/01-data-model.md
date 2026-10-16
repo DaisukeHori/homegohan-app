@@ -76,6 +76,12 @@ CREATE TABLE family_groups (
 -- weekly_menu_day:    'monday'         (共有献立の開始曜日)
 ```
 
+**`plan_key` / `member_limit` の書き手 (課金。`docs/design/billing/01-billing-core.md`)**:
+- 代表者 (実 DB の列は `representative_id`) の個人契約 (`personal_subscriptions` の行で、プランが `plan_type='family'`) から、課金の写像 `billing_apply_stripe_subscription` が同期する (billing/01 §6.4 (9) の 10.。`status = 'active'` のグループだけ)。
+- グループの作成と代表者の交代では、`family_groups` のトリガー `family_groups_billing_plan_follow_representative` (`BEFORE INSERT OR UPDATE OF representative_id`。関数 `billing_family_plan_follow_representative`) が代表者の契約に合わせる。トリガーは新しい代表者の advisory `billing-user:<uuid>` を取り、写像と直列になる (billing/01 §6.4 (10))。
+- 作成で代表者に live な家族プランの契約が無ければ `plan_key = 'free'`。`create_family_group` の `p_plan_key` は効かない。
+- 代表者の交代で、旧代表者の契約は旧代表者のまま残る (グループのプランが旧代表者の契約から来ていたら、グループは `free` / 4 に戻る)。live な家族プランの間に交代を止めるかは family の課題 (billing/01 §18 の 13)。
+
 ### 4.2 `family_members`
 
 ```sql

@@ -30,6 +30,7 @@
     ├── plan_price_history
     ├── coupons / coupon_redemptions  ← organization_id FK は DEFERRABLE INITIALLY DEFERRED (organizations より先に作成)
     ├── personal_subscriptions
+    ├── billing_customers         ← 利用者と Stripe Customer の対応 (billing/01 §6.3。FK: auth.users ON DELETE SET NULL)
     └── revenue_snapshots
 
 2.  02-organization-management (組織系)
