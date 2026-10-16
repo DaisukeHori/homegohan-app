@@ -403,6 +403,23 @@ export default function SettingsPage() {
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
              </button>
 
+             {/* ログイン中の端末の一覧と失効・最近のログイン (#1189・#1190。docs/design/cross/16-auth-history-sessions.md §15) */}
+             <button
+               type="button"
+               data-testid="settings-sessions-link"
+               onClick={() => router.push('/settings/security/sessions')}
+               className="w-full flex items-center justify-between p-4 border-t border-gray-50 hover:bg-gray-50 transition-colors"
+             >
+               <div className="flex items-center gap-3">
+                 <div className="w-8 h-8 rounded-lg bg-sky-50 flex items-center justify-center text-sky-600" aria-hidden="true">💻</div>
+                 <div className="text-left">
+                   <span className="font-bold text-gray-700">ログイン中の端末・ログイン履歴</span>
+                   <p className="text-xs text-gray-400">見覚えの無い端末のログアウト</p>
+                 </div>
+               </div>
+               <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>
+             </button>
+
              {/* 運営ロールの二段階認証 (#1176)。ブラウザで GET /api/auth/mfa/status が 200 のときだけ出す */}
              {showMfaEntry ? (
                <button

@@ -106,6 +106,19 @@ describe('#1187 設定画面: 「アカウント」セクション', () => {
     expect(mocks.push).toHaveBeenCalledWith('/settings/account');
   });
 
+  it('設定の『アカウント』に data-testid="settings-sessions-link" があり /settings/security/sessions を指す', () => {
+    // #1189・#1190 (docs/design/cross/16-auth-history-sessions.md §15・§20.4)
+    const link = container.querySelector<HTMLButtonElement>('[data-testid="settings-sessions-link"]');
+    expect(link).not.toBeNull();
+    expect(link?.textContent).toContain('ログイン中の端末・ログイン履歴');
+
+    act(() => {
+      link!.click();
+    });
+    expect(mocks.push).toHaveBeenCalledTimes(1);
+    expect(mocks.push).toHaveBeenCalledWith('/settings/security/sessions');
+  });
+
   it('アカウントの削除は、従来どおり一番下の「危険ゾーン」にある (FAQ の削除手順)', () => {
     const headings = sectionHeadings();
     expect(headings[headings.length - 1]).toBe('危険ゾーン');

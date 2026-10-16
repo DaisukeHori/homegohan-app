@@ -3,6 +3,7 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EmailEnvelopeSchema, type EmailEnvelope } from '@/lib/emails/envelope';
 import { renderAccountDeletedEmail } from '@/lib/emails/account/account-deleted';
+import { renderLoginNewDeviceEmail } from '@/lib/emails/account/login-new-device';
 import type { InviteEmailVars } from '@/lib/emails/membership/templates';
 import { renderFamilyInviteEmail } from '@/lib/emails/membership/family-invite';
 import { renderFamilyInviteExistingEmail } from '@/lib/emails/membership/family-invite-existing';
@@ -64,6 +65,19 @@ const TEMPLATES: TemplateCase[] = [
     file: 'account/account-deleted',
     name: 'account-deleted',
     render: () => renderAccountDeletedEmail({ to_email: 'taro@example.com', deleted_at: new Date('2026-10-09T15:05:00.000Z') }),
+    mentionsSupport: true,
+  },
+  {
+    file: 'account/login-new-device',
+    name: 'login-new-device',
+    render: () =>
+      renderLoginNewDeviceEmail({
+        to_email: 'taro@example.com',
+        logged_in_at: new Date('2026-10-15T01:00:00.000Z'),
+        device_label: 'Windows の Chrome',
+        ip_address: '203.0.113.10',
+        country_code: 'JP',
+      }),
     mentionsSupport: true,
   },
   { file: 'membership/family-invite', name: 'family-invite', render: () => renderFamilyInviteEmail(inviteVars), mentionsSupport: true },
