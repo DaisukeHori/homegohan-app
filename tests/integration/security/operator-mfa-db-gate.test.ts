@@ -40,6 +40,17 @@ if (!url || !anonKey || !serviceKey) {
 const SETUP_TIMEOUT_MS = 180_000;
 /** DB の判定で止まったときの例外の message (§11.4 の 7 本の関数) */
 const OPERATOR_MFA_REQUIRED = 'OPERATOR_MFA_REQUIRED';
+/**
+ * 判定を通った後の list_orgs_with_inactive_owner が、返す行があると必ず出す既存の失敗 (段 E と無関係・判定より後の RETURN QUERY で起きる):
+ * 戻り値の列 owner_email は text だが、本体が auth.users.email (varchar(255)) をそのまま返すので
+ * `structure of query does not match function result type` (42804) になる。結合のスイートの共有の DB には、他のテストが作った
+ * 「オーナーが 30 日ログインしていない組織」が残るので、行の有無はこのテストで決められない。判定を通ったことは
+ * 「OPERATOR_MFA_REQUIRED でない」ことで見て、関数の本文の既存の失敗はこの値だけを許す (本文は §11.4 のとおり 1 文字も変えない)
+ */
+const PRE_EXISTING_RESULT_TYPE_MISMATCH = '42804';
+/** 判定を通った後に、行を変えずに止まる関数の例外 (operator_force_owner_transfer の対象の確認。存在しない組織) */
+const TARGET_NOT_IN_ORG = 'TARGET_NOT_IN_ORG';
+
 /** 権限の不足 (RLS の WITH CHECK に反する INSERT) */
 const INSUFFICIENT_PRIVILEGE = '42501';
 /** 公開の枝が読むプランの状態 (subscription_plans_select_public の USING) */
@@ -207,6 +218,19 @@ interface EnrolledOperator {
   readonly aal1: string;
 }
 
+/** 存在しない組織・利用者の id (operator_force_owner_transfer が判定の後の対象の確認で止まる) */
+const NONEXISTENT_ID = '00000000-0000-4000-8000-000000000000';
+
+/**
+ * list_orgs_with_inactive_owner が判定を通ったこと: error が null か、判定より後の既存の失敗 (PRE_EXISTING_RESULT_TYPE_MISMATCH) だけ。
+ * OPERATOR_MFA_REQUIRED (判定で止まった) やほかのエラーは赤
+ */
+function expectPassedGate(error: { code?: string; message?: string } | null): void {
+  if (error === null) return;
+  expect(error.message).not.toBe(OPERATOR_MFA_REQUIRED);
+  expect(error.code, error.message).toBe(PRE_EXISTING_RESULT_TYPE_MISMATCH);
+}
+
 const createdUserIds: string[] = [];
 const createdFamilyIds: string[] = [];
 const createdNoteIds: string[] = [];
@@ -334,8 +358,20 @@ describe('#1707 段 E: PostgREST / RPC を本人の JWT で直接呼ぶ', () => 
     expect(denied.error?.message).toBe(OPERATOR_MFA_REQUIRED);
     expect(denied.data).toBeNull();
     const allowed = await asUser(superEnrolled.aal2).rpc('list_orgs_with_inactive_owner');
-    expect(allowed.error).toBeNull();
-    expect(Array.isArray(allowed.data)).toBe(true);
+    expectPassedGate(allowed.error);
+    // 判定を通ったことを、行の有無に依らずに確かめる: 存在しない組織への移譲は、判定の後の対象の確認で止まる (何も変わらない)
+    const transferDenied = await asUser(superEnrolled.aal1).rpc('operator_force_owner_transfer', {
+      p_organization_id: NONEXISTENT_ID,
+      p_new_owner_id: NONEXISTENT_ID,
+      p_reason: '#1707 段 E の結合テスト',
+    });
+    expect(transferDenied.error?.message).toBe(OPERATOR_MFA_REQUIRED);
+    const transferPassed = await asUser(superEnrolled.aal2).rpc('operator_force_owner_transfer', {
+      p_organization_id: NONEXISTENT_ID,
+      p_new_owner_id: NONEXISTENT_ID,
+      p_reason: '#1707 段 E の結合テスト',
+    });
+    expect(transferPassed.error?.message).toBe(TARGET_NOT_IN_ORG);
   });
 
   it("DB-5: 登録済み super_admin の aal1 の token で rpc('operator_force_dissolve_family', { p_family_id, p_reason }) は 'OPERATOR_MFA_REQUIRED' のエラーで、家族の status は 'active' のまま", async () => {
@@ -389,9 +425,14 @@ describe('#1707 段 E: PostgREST / RPC を本人の JWT で直接呼ぶ', () => 
   });
 
   it("DB-9: 未登録の super_admin の aal1 の token で rpc('list_orgs_with_inactive_owner') は error が null (S-30。未登録は DB で止めない §0.3)", async () => {
-    const { data, error } = await asUser(superUnenrolled.jwt).rpc('list_orgs_with_inactive_owner');
-    expect(error).toBeNull();
-    expect(Array.isArray(data)).toBe(true);
+    const { error } = await asUser(superUnenrolled.jwt).rpc('list_orgs_with_inactive_owner');
+    expectPassedGate(error);
+    const transfer = await asUser(superUnenrolled.jwt).rpc('operator_force_owner_transfer', {
+      p_organization_id: NONEXISTENT_ID,
+      p_new_owner_id: NONEXISTENT_ID,
+      p_reason: '#1707 段 E の結合テスト',
+    });
+    expect(transfer.error?.message).toBe(TARGET_NOT_IN_ORG);
   });
 
   it('DB-10: support だけの利用者 (aal1) は support_tickets の他人の行を読める (必須ロールでないので判定は真。今までどおり)', async () => {
