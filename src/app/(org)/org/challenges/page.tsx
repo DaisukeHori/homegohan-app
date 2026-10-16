@@ -14,7 +14,10 @@ import {
 } from "@/lib/org-challenges";
 
 // #1132: 管理者に見せるのは集計 (参加者数と平均) だけ。参加者一人ひとりの進み具合・順位は、誰にも見せない (参加者どうしを除く)。
-// 少人数から個人が分かってしまわないよう、参加者が最小人数に満たない間は参加者数を、集計が済んだ参加者が最小人数に満たない間は平均を出さない。
+// 少人数から個人が分かってしまわないよう、参加した人 (延べ) が最小人数に満たない間は参加者数を出さない。
+// #1688: 2 つの集計の差から、やめた人・組織を離れた人の値を逆算させないよう、参加者数は延べ数 (やめても減らない) にし、
+// 平均はチャレンジが終了したときに 1 回だけ確定した値だけを出す (開催中は出さない。終了時点の参加者が最小人数に満たないときと、
+// 同じ種類で期間が重なるチャレンジの平均をすでに出しているときも出さない)。どちらの理由で出ないかは API が返さない。
 interface Challenge {
   id: string;
   title: string;
@@ -26,8 +29,9 @@ interface Challenge {
   endDate: string;
   rewardDescription: string | null;
   status: string;
-  /** 参加者が最小人数に満たないときは null (API が返さない) */
+  /** これまでに参加した人の延べ数。最小人数に満たないときは null (API が返さない) */
   participantCount: number | null;
+  /** averageValue は終了時に確定した平均。開催中・出さない理由があるときは visible = false */
   aggregate?: {
     minParticipants: number;
     visible: boolean;
@@ -80,6 +84,44 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
     // 本文が JSON でない
   }
   return fallback;
+}
+
+/**
+ * 平均の欄。平均は終了時に確定した値だけを出す (#1688)。
+ *   - 終了 (completed) で API が出してよいとしたとき: 確定した平均
+ *   - 終了で出さないとき: 「表示なし」(終了時点の参加者が最小人数に満たないか、重なるチャレンジの平均をすでに出している)
+ *   - 下書き・開催中: 「終了後に表示」(API が平均を返しても、終了前の値としては出さない)
+ */
+function AverageCell({ challenge }: { challenge: Challenge }) {
+  const minParticipants = challenge.aggregate?.minParticipants || ORG_CHALLENGE_MIN_PARTICIPANTS;
+  if (challenge.status === "completed" && challenge.aggregate?.visible) {
+    return (
+      <>
+        <p className="text-2xl font-bold text-emerald-600">
+          {formatOrgChallengeValue(challenge.challengeType, challenge.aggregate.averageValue)}
+        </p>
+        <p className="text-xs text-gray-500">参加者の平均 (終了時点)</p>
+      </>
+    );
+  }
+  if (challenge.status === "completed") {
+    return (
+      <>
+        <p className="text-lg font-bold text-gray-400">表示なし</p>
+        <p className="text-xs text-gray-500 max-w-[9rem]">
+          終了時点の参加者が{minParticipants}人未満か、同じ種類で期間が重なるチャレンジの平均をすでに表示しているため、平均は表示しません
+        </p>
+      </>
+    );
+  }
+  return (
+    <>
+      <p className="text-lg font-bold text-gray-400">終了後に表示</p>
+      <p className="text-xs text-gray-500 max-w-[9rem]">
+        チャレンジが終了すると、終了時点の参加者 ({minParticipants}人以上) の平均を表示します
+      </p>
+    </>
+  );
 }
 
 export default function OrgChallengesPage() {
@@ -203,7 +245,7 @@ export default function OrgChallengesPage() {
         <p className="font-medium">参加は社員の自由です。管理者に見えるのは、チャレンジごとの集計 (参加者数と平均) だけです。</p>
         <p className="text-blue-800">
           一人ひとりの記録・順位は、管理者にも表示されません。順位は、参加した社員どうしにだけ表示されます。
-          参加者が{ORG_CHALLENGE_MIN_PARTICIPANTS}人以上になるまでは参加者数を、集計が済んだ参加者が{ORG_CHALLENGE_MIN_PARTICIPANTS}人以上になるまでは平均を表示しません (少人数だと、誰が参加しているか・誰の値かが分かってしまうのを防ぐためです)。
+          参加者数は、これまでに参加した人の数で、やめた人や組織を離れた人を引きません。{ORG_CHALLENGE_MIN_PARTICIPANTS}人以上になるまでは表示しません。平均は、チャレンジが終了したあとに、終了時点の参加者が{ORG_CHALLENGE_MIN_PARTICIPANTS}人以上のときだけ表示します (開催中は表示しません)。同じ種類で期間が重なるチャレンジは、先に終了したものの平均だけを表示します (少人数だと、誰が参加しているか・誰の値かが分かってしまうのを防ぐためです)。
         </p>
       </div>
 
@@ -362,25 +404,12 @@ export default function OrgChallengesPage() {
                   ) : (
                     <p className="text-2xl font-bold text-blue-600">{challenge.participantCount}</p>
                   )}
-                  <p className="text-xs text-gray-500">参加者</p>
+                  <p className="text-xs text-gray-500">参加した人</p>
                 </div>
-                {isOrgChallengeType(challenge.challengeType) && (
+                {/* 中止したチャレンジは平均を確定しないので、平均の欄を出さない */}
+                {isOrgChallengeType(challenge.challengeType) && challenge.status !== "cancelled" && (
                   <div className="text-center min-w-[7rem]">
-                    {challenge.aggregate?.visible ? (
-                      <>
-                        <p className="text-2xl font-bold text-emerald-600">
-                          {formatOrgChallengeValue(challenge.challengeType, challenge.aggregate.averageValue)}
-                        </p>
-                        <p className="text-xs text-gray-500">参加者の平均</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-lg font-bold text-gray-400">集計中</p>
-                        <p className="text-xs text-gray-500 max-w-[9rem]">
-                          集計が済んだ参加者が{challenge.aggregate?.minParticipants || ORG_CHALLENGE_MIN_PARTICIPANTS}人以上になると、平均を表示します
-                        </p>
-                      </>
-                    )}
+                    <AverageCell challenge={challenge} />
                   </div>
                 )}
                 {challenge.status === "draft" && (
