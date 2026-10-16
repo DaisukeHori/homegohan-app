@@ -250,6 +250,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_FEATURE_FLAG_NOT_FOUND` | 機能フラグが見つからない | 404 |
 | `OP_TICKET_NOT_FOUND` | チケットが見つからない | 404 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | サブスクリプションが既にアクティブ | 409 |
+| `OP_EMAIL_OUTBOX_NOT_FOUND` | **[NEW]** 再送するメール (送信待ちの行) が見つからない (`operator/10-logs-and-mail-retry.md` §11) | 404 |
+| `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | **[NEW]** 再送できないメール (届けられなかった行でない `not_dead`・宛先を伏せた行 `redacted`。`details.reason`。`operator/10-logs-and-mail-retry.md` §11) | 409 |
 
 #### BILL 系
 

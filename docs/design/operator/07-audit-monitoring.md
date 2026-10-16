@@ -226,6 +226,7 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 admin.dsr.list                      - 個人情報の請求の一覧 (GET /api/admin/data-requests)。1 件以上返したとき・1 検索 = 1 行 (#1178)
 admin.dsr.view                      - 個人情報の請求の詳細 (内容・本人への応答・内部メモ・請求者のメールアドレス) の閲覧 (GET /api/admin/data-requests/{id}) (#1178)
 admin.dsr.update                    - 個人情報の請求の対応 (状態・本人への応答・内部メモ。PATCH /api/admin/data-requests/{id})。200 のたびに (変更が無くても)。対応済み・対応できずにしたときは severity warn (#1178)
+super_admin.app_logs.list           - アプリログの一覧・本文の検索 (GET /api/super-admin/logs) (#1708)
 ```
 
 個人情報の請求 (`admin.dsr.*`。canonical は `docs/design/cross/15-data-subject-requests.md` §11): 対象は請求した本人 (`target_type = 'user'`)。
@@ -238,6 +239,13 @@ admin.dsr.update                    - 個人情報の請求の対応 (状態・�
 - `target_id` は null、`target_type` は返した行の種類 (`user` / `support_ticket` / `sales_lead`)。
   クーポン適用履歴は 1 つのクーポンの履歴なので、`target_id` = クーポンの id、`target_type = 'coupon'`。
 - 0 件のときは記録しない (下の記録のルールと同じ)。
+- `super_admin.app_logs.list` (#1708。`10-logs-and-mail-retry.md` §10): `target_id` は null、`target_type = 'app_log'`。
+  `filters` は `level` / `source` / `function_name` / `user_id` / `request_id` / `from` / `to` / `q` (本文の検索語) / `has_cursor`。
+  「さらに読み込む」も 1 回の GET = 1 行。0 件・401 / 403 / 400 / 500 / 504 は記録しない。fail-open。
+- メールの送信待ちの一覧 (`GET /api/super-admin/email-outbox`) は記録しない (宛先はマスク済みで、件名・本文を返さない)。
+  再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) は変更系として `super_admin.email_outbox.requeue` を記録する
+  (再送できたときだけ。対象は行の `user_id` (`target_type = 'user'`)、無ければ行の id (`target_type = 'email_outbox'`)。
+  `details` は `outbox_id` / `template` / `previous_status`。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
 
 詳細の対象 (#1326):
 - `admin.moderation.view`: 対象はコンテンツの持ち主 (`target_type = 'user'`)。持ち主が分からないときは通報の id
@@ -630,10 +638,11 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 |-----|------|
 | 画面 | `/super-admin/logs` (左メニュー「運用 > アプリログ」)。読み取り専用 |
 | API | `GET /api/super-admin/logs`。権限は super_admin のみ (admin も不可)。`app_logs` の RLS は本人の行だけ読める (#1171) ため、`requireRole` を通したあとで service role の client を使う |
-| 絞り込み | `level` / `source` / `function_name` / `user_id` / `request_id` (いずれも完全一致) と `from` / `to` (ISO 8601、両端を含む) |
+| 絞り込み | `level` / `source` / `function_name` / `user_id` / `request_id` (いずれも完全一致) と `from` / `to` (ISO 8601、両端を含む)、`q` (`message` / `error_message` の部分一致・大文字小文字を区別しない・1〜100 文字・制御文字は 400。`%` `_` は文字どおりに探す。索引は無く、時間切れは 504。#1708・`10-logs-and-mail-retry.md` §9.1) |
 | ページ送り | 新しい順 (`created_at`、同時刻は `id`)。`limit` は既定 50・最大 200。応答の `meta.next_cursor` を次回の `cursor` に渡す (OFFSET は使わない) |
 | 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
-| 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
+| 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` と本文 (`q`) には索引が無く、単独で探すと全行を順に調べる |
+| 監査 | 1 行以上返した GET ごとに `super_admin.app_logs.list` を 1 行 (条件と件数だけ。§4.1.1。#1708) |
 
 この画面と API は読み取り専用で、通知は含まない。しきい値を超えたときの通知は、別の仕組み (§8.3) が行う。Sentry は採用しない (§7)。
 
@@ -1135,6 +1144,6 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - 監査ログの 1 年後コールドストレージ移行: S3 Glacier への転送ジョブは別途実装 (Phase 3)
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
-- エラー急増の自動通知 (§8.1 の旧案の 1 行目): `app_logs` の集計とメールで実装した (§8.3。#1157)。残る作業はオーナーのもの: `OPS_ALERT_EMAIL` の決定と設定、本番のメール送信の有効化 (Resend の送信ドメインの検証。`docs/operations/email-domain.md`)
+- エラー急増の自動通知 (§8.1 の旧案の 1 行目): `app_logs` の集計とメールで実装した (§8.3。#1157)。ログの本文の検索と閲覧の監査 (§8.2・§4.1.1)、届けられなかったメールの通知 (§8.3) と送信待ちの画面 `/super-admin/email-outbox` での再送 (#1193・#1708。`10-logs-and-mail-retry.md`) も実装した。残る作業はオーナーのもの: `OPS_ALERT_EMAIL` の決定と設定、本番のメール送信の有効化 (Resend の送信ドメインの検証。`docs/operations/email-domain.md`)
 - Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案の残り): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
 - Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示 (§7.3): 記載が要るかは弁護士の確認 (T30) を待って決める。本番はすでに有効とみられ、デプロイした時点から送られる。送る URL からは `?` 以降・`#` 以降・招待トークンを消してある (`beforeSend`)。デプロイ後に、実際の送信内容で確かめる (#1179)

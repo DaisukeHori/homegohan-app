@@ -15,7 +15,7 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { APP_LOG_LEVELS } from '@/lib/super-admin/app-logs';
+import { APP_LOG_LEVELS, APP_LOGS_SEARCH_MAX_CHARS } from '@/lib/super-admin/app-logs';
 
 const { default: AppLogsPage } = await import('@/app/super-admin/logs/page');
 
@@ -204,6 +204,35 @@ describe('運用ログ画面: 絞り込み', () => {
     expect(params.has('cursor')).toBe(false);
     expect(params.has('from')).toBe(false);
     expect(params.has('to')).toBe(false);
+  });
+
+  it('本文の欄に入力して絞り込むと q を付ける (前後の空白は除く。空なら付けない)。ラベルがあり、長さの上限は API と同じ', async () => {
+    expect(container.querySelector('label[for="log-q"]')?.textContent).toBe('本文 (部分一致)');
+    expect((container.querySelector('#log-q') as HTMLInputElement).maxLength).toBe(APP_LOGS_SEARCH_MAX_CHARS);
+
+    await type('log-q', '  timeout  ');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await click(button('絞り込む'));
+
+    expect(lastRequest().get('q')).toBe('timeout');
+
+    await type('log-q', '   ');
+    await click(button('絞り込む'));
+    expect(lastRequest().has('q')).toBe(false);
+  });
+
+  it('本文の条件は「さらに読み込む」にも引き継ぎ、「条件をクリア」で消える', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(page([entry(2)], 'cursor-q')));
+    await type('log-q', 'timeout');
+    await click(button('絞り込む'));
+
+    await click(button('さらに読み込む'));
+    expect(lastRequest().get('q')).toBe('timeout');
+    expect(lastRequest().get('cursor')).toBe('cursor-q');
+
+    await click(button('条件をクリア'));
+    expect(valueOf('log-q')).toBe('');
+    expect(lastRequest().has('q')).toBe(false);
   });
 
   it('期間は日本時間で入力し、UTC の ISO 8601 にして渡す。終了はその分の終わりまで含める', async () => {
@@ -603,7 +632,7 @@ describe('運用ログ画面: 操作性', () => {
   });
 
   it('入力欄にはラベルが付いている (スクリーンリーダー向け)', async () => {
-    for (const id of ['log-level', 'log-source', 'log-function-name', 'log-user-id', 'log-request-id', 'log-from', 'log-to']) {
+    for (const id of ['log-level', 'log-source', 'log-function-name', 'log-user-id', 'log-request-id', 'log-from', 'log-to', 'log-q']) {
       expect(container.querySelector(`label[for="${id}"]`), `${id} のラベル`).not.toBeNull();
     }
     expect(container.querySelector('table caption')?.textContent).toContain('アプリログの一覧');

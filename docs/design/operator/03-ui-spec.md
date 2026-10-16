@@ -56,6 +56,7 @@
 | └ Cron ジョブ | super_admin |
 | └ データエクスポート | super_admin |
 | └ インフラ監視 | super_admin |
+| └ メール送信 (`/super-admin/email-outbox`。送信待ち・届けられなかったメールの一覧と再送。`10-logs-and-mail-retry.md` §9.2。#1708) | super_admin |
 | └ 管理者管理 | super_admin |
 | └ DB 管理 | super_admin |
 | └ LLM 使用量 | super_admin |
