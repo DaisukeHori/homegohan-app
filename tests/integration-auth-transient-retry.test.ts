@@ -6,7 +6,7 @@
  * (tests/integration/helpers/auth-transient-retry.ts) の単体テスト。
  *
  * 回帰: 2026-10-11 の local-ci.sh の実走で、integration:security の 2 ファイルの beforeAll が、admin.createUser と
- * signInWithPassword の `{}` というメッセージのエラー (ゲートウェイの 502 / 503 / 504) で落ちた。
+ * signInWithPassword のゲートウェイの失敗 (502 / 503 / 504) のエラー (auth-js 2.105 では message が `{}`、2.117 からは `HTTP 504`) で落ちた。
  * ここでは本物の supabase-js を、一時的な失敗を挟む偽の fetch の上で動かし、やり直しで作成・サインインが通ること、
  * やり直さない範囲 (アプリへの要求・認証の判定の 4xx・やり尽くしたとき) は今までどおり失敗が見えることを確かめる。
  */
@@ -96,13 +96,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("本物の supabase-js で: 2026-10-11 の落ち方 (beforeAll の `{}`)", () => {
-  it("やり直しが無いと、504 で signInWithPassword は `{}` のエラーになる (落ち方の再現)", async () => {
+describe("本物の supabase-js で: 2026-10-11 の落ち方 (beforeAll のゲートウェイの失敗)", () => {
+  it("やり直しが無いと、504 で signInWithPassword はゲートウェイの失敗のエラーになる (AuthRetryableFetchError。本文が JSON でなく statusText も無いので message は 'HTTP 504'。落ち方の再現)", async () => {
     const fake = scriptedFetch([gateway(504)]);
     vi.stubGlobal("fetch", fake.fn);
     const { data, error } = await adminClient().auth.signInWithPassword({ email: TEST_EMAIL, password: TEST_PASSWORD });
     expect(data.session).toBeNull();
-    expect(error?.message).toBe("{}");
+    expect(error?.name).toBe("AuthRetryableFetchError");
+    expect(error?.message).toBe("HTTP 504");
     expect(error?.status).toBe(504);
   });
 
