@@ -4,9 +4,10 @@
  * route は返す値をこの型で作り、画面の通信の facade (src/lib/auth/mfa/client.ts §15.1) が 2xx の本文をこれで読む。
  * client component からも import されるので、zod (と、段 C で使う @/lib/api/null-character) 以外を import しない
  * (node:crypto を持つ backup-codes.ts も import しない。バックアップコードの個数 BACKUP_CODE_COUNT は応答の Zod では見ず、route の単体テストで見る)。
- * 段 B で MfaUnenrollResponseSchema / MfaBackupCodesResponseSchema、段 C で MfaResetBodySchema / MfaResetResponseSchema などを足す (§22.3)。
+ * 段 B で MfaUnenrollResponseSchema / MfaBackupCodesResponseSchema、段 C で MfaResetBodySchema / MfaResetResponseSchema などを足した (§22.3)。
  */
 import { z } from 'zod';
+import { containsNullCharacter, NULL_CHARACTER_ERROR_MESSAGE } from '@/lib/api/null-character';
 
 // ── GET /api/auth/mfa/status (§14.1) ─────────────────────────────────────────
 
@@ -96,3 +97,36 @@ export const MfaBackupCodesResponseSchema = z.object({
   backup_codes: z.array(z.string().min(1)),
 });
 export type MfaBackupCodesResponse = z.infer<typeof MfaBackupCodesResponseSchema>;
+
+// ── POST /api/super-admin/admins/{id}/mfa/reset (§14.7。段 C) ────────────────
+// route (src/app/api/super-admin/admins/[id]/mfa/reset/route.ts) と OperatorMfaResetSection はここから import する
+
+/** 理由の長さの上限 (監査ログの details に入る自由記述。巨大な本文で行を膨らませない) */
+export const MFA_RESET_REASON_MAX_LENGTH = 500;
+
+/** 本人確認の方法。画像は預からない (§0.3)。運営が画面外で確認した方法を 1 つ選ぶ */
+export const MFA_RESET_IDENTITY_CHECKS = ['video_call', 'in_person', 'id_document_shown', 'other'] as const;
+
+export const MfaResetBodySchema = z.object({
+  /** 監査ログの details (jsonb) に入る。jsonb は U+0000 を受け付けず、監査は fail-closed なので、NULL 文字は 400 で断る (§23 N-28) */
+  reason: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MFA_RESET_REASON_MAX_LENGTH)
+    .refine((value) => !containsNullCharacter(value), { message: NULL_CHARACTER_ERROR_MESSAGE }),
+  identity_check: z.enum(MFA_RESET_IDENTITY_CHECKS),
+  /** 確認を行ったことの明示 (false は受け付けない) */
+  identity_confirmed: z.literal(true),
+});
+export type MfaResetBody = z.infer<typeof MfaResetBodySchema>;
+
+/** POST /api/super-admin/admins/{id}/mfa/reset の 200 (段 C。運営 API の nested の形) */
+export const MfaResetResponseSchema = z.object({
+  data: z.object({
+    user_id: z.string().min(1),
+    factors_deleted: z.number().int().nonnegative(),
+    backup_codes_deleted: z.number().int().nonnegative(),
+  }),
+});
+export type MfaResetResponse = z.infer<typeof MfaResetResponseSchema>;

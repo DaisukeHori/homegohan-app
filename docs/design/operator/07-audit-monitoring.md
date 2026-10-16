@@ -188,6 +188,10 @@ admin.mfa.unenroll                  - 認証アプリの解除 (DELETE /api/auth
                                       (severity: warn。details: factor_id / backup_codes_deleted / failed_step)
 admin.mfa.recover                   - バックアップコードによる回復 (POST /api/auth/mfa/recover。TOTP とコードを全部消す。#1176)
                                       (severity: warn。details: factors_deleted / backup_codes_deleted / failed_step)
+super_admin.mfa.reset               - 別の super_admin による運営の二段階認証の解除 (POST /api/super-admin/admins/{id}/mfa/reset。段 C。#1707)
+                                      (severity: critical。actor = 実行した super_admin・target = 対象 (target_type 'user')。
+                                      details: reason / identity_check / factors_before / backup_codes_before。fail-closed: 削除より先に書き、
+                                      書けなければ何もしない。後の手順 (全セッションの終了・factor・コードの削除) の結果は details に持たない)
 ```
 
 運営ロールの二段階認証の 4 種 (`admin.mfa.*`。`docs/design/cross/12-operator-mfa.md` §17・§17.2) の記録のルール:
@@ -241,6 +245,8 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 `src/app/api/{admin,super-admin,support,operator}` の変更系の handler と、記録の有無 (記録しないものは理由) の表を
 `tests/admin-mutation-audit-coverage-1571.test.ts` が持ち、実コードと突き合わせる (handler が増えたら表に足す)。
 同じテストが、`recordAdminAudit()` の呼び出しがすべて `request` を渡していることも見る。
+- 運営の二段階認証の解除 (`POST /api/super-admin/admins/{id}/mfa/reset`。cross/12 §14.7) は、`super_admin.mfa.reset` を `recordMfaAudit()` (`src/lib/auth/mfa/audit.ts`) の中の `recordAdminAudit()` で書くので、表には `exempt` に理由を書いて載せる (別のファイルの関数なので、走査では audited と判定できない。cross/12 §23 N-38)。
+- 自己サービスの `/api/auth/mfa/*` は走査の 4 つのディレクトリの外にあるが、4 種 (`admin.mfa.*`) を記録する (上の 4.1 の記録のルール)。
 
 記録のルール:
 - `target_id` は **情報を見られた本人 (ユーザー)** の id、`target_type` は `'user'`。チケットの閲覧も、チケットではなくチケットを作ったユーザーを対象にする。
