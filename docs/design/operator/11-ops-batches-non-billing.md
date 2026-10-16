@@ -1,7 +1,7 @@
 # operator/ 課金と関係のない運用バッチの残り (#1125 の B) — 棚卸しと、ジョブの失敗の監視・解散した家族の物理削除の設計
 
-版: v1.2 (2026-10-17・A 型設計ゲートの修正 R1)
-改定履歴: v1.0 2026-10-17 新設 (Issue #1125 の 2026-10-10 のコメントの (B) の設計ゲート・A 型 4 相) / v1.1 2026-10-17 網羅性の反映 (Vercel Cron の母集合を 5 本に・`backup-freshness` を実装済みとして扱う・表 3 点とシナリオの行の追加・追随表と段分けの対応の明記) / v1.2 2026-10-17 修正 R1 (実行履歴の掃除を段 A から切り出して段 D (Q-3 の確認の後) に・同意の記録を持つグループだけが残る回は監査ログを書かないことを S-15・Q-2・表にそろえる (P-27)・`src/__tests__/lib/env.test.ts` を追随表に・`app-log-alerts.test.ts` の追随を逐語に (§14.1)・route の RPC の数の事実を 7 本に訂正)
+版: v1.3 (2026-10-17・A 型設計ゲートの網羅性の反映 周 2)
+改定履歴: v1.0 2026-10-17 新設 (Issue #1125 の 2026-10-10 のコメントの (B) の設計ゲート・A 型 4 相) / v1.1 2026-10-17 網羅性の反映 (Vercel Cron の母集合を 5 本に・`backup-freshness` を実装済みとして扱う・表 3 点とシナリオの行の追加・追随表と段分けの対応の明記) / v1.2 2026-10-17 修正 R1 (実行履歴の掃除を段 A から切り出して段 D (Q-3 の確認の後) に・同意の記録を持つグループだけが残る回は監査ログを書かないことを S-15・Q-2・表にそろえる (P-27)・`src/__tests__/lib/env.test.ts` を追随表に・`app-log-alerts.test.ts` の追随を逐語に (§14.1)・route の RPC の数の事実を 7 本に訂正) / v1.3 2026-10-17 網羅性の反映 周 2 (D-1 の「作る 2 件」の列挙を B-9・B-2 にそろえる・cron_failure の文面の作成・送信の例外の行 P-28・権利の遷移表に `claim_ops_alert` の error の行・テストの追加 (CF-12〜CF-16・ST-9・ST-10・ORD-2・K-2・結合 B-5〜B-7) と表の行・シナリオとテストの対応表 (§11.4)・番兵 `tests/email-send-throttle-contract.test.ts` の行・追随表に cross/14 と operator/10 §8.1 の行・変えないものに `src/lib/backups/core.ts`)
 
 要件の正本は Issue #1125 の本文と、2026-10-10 のコメントの (B)。(A) の課金のもの (Stripe の Webhook・収益のスナップショット・ライセンス系の pg_cron・`stripe_event_stuck_check`・課金系の Vercel Cron) は、オーナーの選択「課金は無料のまま計測」により #1125 の残りとして本書の範囲の外に置く (08 §3.0 の言い回しのまま)。本書は (B) の 9 項目を「いまの事実」で仕分け、作るものを Sonnet 5.5 の実装者が手を止めずに実装できる粒度まで展開する。
 
@@ -19,7 +19,7 @@
 
 | # | 決めること | 本書の決定 (要約) | 詳細 |
 |---|---|---|---|
-| D-1 | (B) の 9 項目の仕分け (作る / 不要 = 08 から外す / 済み = 08 を現在形に / 選択肢のみ) | §2.2 の表。作る = ジョブの失敗の監視 (pg_cron の失敗・Vercel Cron の route の失敗・pg_cron の停止) と、その土台の実行履歴の保持と、解散した家族のグループの物理削除の 2 件。不要 = `family_freeze_grace_batch`・`meal_request_expire_batch`・`data_integrity_check`・`hr_revoke_jobs_processor` の 4 件。済み = `logical_backup`。選択肢のみ = `re_engagement_email`・`nps_survey_sender` | §2.2 §8 |
+| D-1 | (B) の 9 項目の仕分け (作る / 不要 = 08 から外す / 済み = 08 を現在形に / 選択肢のみ) | §2.2 の表。作る = B-9 ジョブの失敗の監視 (pg_cron の失敗・Vercel Cron の route の失敗・pg_cron の停止。その土台の実行履歴の保持 (段 D) を含む) と、B-2 解散した家族のグループの物理削除の 2 件 (9 項目の数え方。実装の単位は §0.2 の 3 件 = 失敗の監視・実行履歴の掃除・解散した家族の物理削除)。不要 = `family_freeze_grace_batch`・`meal_request_expire_batch`・`data_integrity_check`・`hr_revoke_jobs_processor` の 4 件。済み = `logical_backup`。選択肢のみ = `re_engagement_email`・`nps_survey_sender` | §2.2 §8 |
 | D-2 | ジョブの失敗をどう知るか | 既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・`OPS_ALERT_EMAIL`・`claim_ops_alert`) に **4 つ目の種類 `cron_failure`** (pg_cron の失敗した実行 + Vercel Cron の route の 500) と **5 つ目の種類 `pg_cron_stalled`** (pg_cron が一定時間 1 つも動いていない) を足す。失敗は「まだ知らせていないもの」を数え、知らせた失敗を台帳 `cron_failure_alerts` に記録する (10 §8 の `dead_alerted_at` と同じ考え方。窓で数えない) | §4 §5 §6 |
 | D-3 | 実行履歴 (`cron.job_run_details`) の保持 | Supabase は自動では消さない (本番で 2026-05-01 からの行が残っている)。pg_cron のジョブ `cleanup-cron-run-history` (毎日 03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。既存の行を消すので、段 A から切り出した段 D に置き、Q-3 の確認の後にだけ着手する | §5.3 §12 |
 | D-4 | 解散した家族のグループ (`family_groups.status = 'dissolved'`) の物理削除 | 08 §4.4 の `family_archive_purge_batch` は `archived` 状態を前提にするが、実装の状態は `active` / `dissolved` だけ。解散から 90 日 (保存期間) を過ぎた行を、pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで物理削除する (`purge_dissolved_family_groups(p_dry_run)`)。保護者の同意の記録 (`parental_consents`) を持つグループは消さずに数だけ報告する。消す範囲と保存期間はオーナーの確認点 (§0.4) | §5.4 |
@@ -1219,6 +1219,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | P-5 | cron_failure | 候補 n ≥ 1 | t | m 行 | `ok: false` (suppressed / invalid_envelope) | 印も権利も返さない → `send_failed`。warn |
 | P-6 | cron_failure | 候補 n ≥ 1 | t | m 行 | `ok: false` (not_configured / outbox_failed ほか) | unmark(t) → release(t) → `send_skipped` / `send_failed`。warn |
 | P-7 | cron_failure | 候補 n ≥ 1 | t | mark の error / 形の誤り / 例外 | — | unmark(t) → release(t) → 500 |
+| P-28 | cron_failure | 候補 n ≥ 1 | t | mark で m ≥ 1 行 | 文面の作成 (`renderCronFailureEmail`)・`sendEmail` が例外 | unmark(t) → release(t) → 500 (§6.2 の `try` の中で起きるので `notice.kind = 'failed'` の道。P-24 の cron_failure 版) |
 | P-8 | cron_failure | 数える RPC (`cron_failure_counts`) の error / 形の誤り | — | — | — | 500 (権利も取らない) |
 | P-9 | pg_cron_stalled | `cron_available = false` または `active_jobs = 0` | — | — | — | `below_threshold` (total 0) |
 | P-10 | pg_cron_stalled | 最新の実行から ≤ しきい値 | — | — | — | `below_threshold` (total 分数) |
@@ -1233,11 +1234,11 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | P-19 | purge | dry run | — | — | — | 候補と skipped を数えるだけ。何も消さない・書かない |
 | P-20 | purge | 同意の記録を持つグループがあり、ほかに候補が 1 件以上ある (dry run でない) | — | — | — | 同意の記録を持つものは消さない。候補を消し (P-17 / P-18)、その回の監査ログの `skipped_with_consents_count` と戻り値に残した数が載る |
 | P-21 | cron_failure | 候補 n ≥ 1 | `claim_ops_alert` の error | — | — | 500 (印は付けていない・権利は取れていないので、返すものは無い)。前の 3 種類の通知は済んでいる (S-19 と同じ形) |
-| P-22 | cron_failure | P-6 / P-7 の道 | t | `unmark(t)` の error / 例外 (m 行が残る) | — | warn ログ 1 行 (`scope`・`pg_code` / `error_name` だけ) → `release(t)` は続ける → 応答は P-6 / P-7 のまま。台帳に残った m 件は次の通知に入らない (知らせられないまま残る。warn ログの文がそれを書く。段 D の後は 30 日で掃除される) |
+| P-22 | cron_failure | P-6 / P-7 / P-28 の道 | t | `unmark(t)` の error / 例外 (m 行が残る) | — | warn ログ 1 行 (`scope`・`pg_code` / `error_name` だけ) → `release(t)` は続ける → 応答は P-6 / P-7 / P-28 のまま。台帳に残った m 件は次の通知に入らない (知らせられないまま残る。warn ログの文がそれを書く。段 D の後は 30 日で掃除される) |
 | P-23 | pg_cron_stalled | > しきい値 | `claim_ops_alert` の error | — | — | 500 (返すものは無い) |
 | P-24 | pg_cron_stalled | > しきい値 | t | — | 文面の作成・`sendEmail` が例外 | release(t) → 500 |
 | P-25 | purge | DELETE が DB の error (`23503` = `RESTRICT` の参照など) | — | — | — | 関数が例外。取引ごと巻き戻る (1 件も消えない・監査ログも書かない)。ジョブの実行は `failed` → 次の `app-log-alerts` の回の cron_failure が知らせる (S-21) |
-| P-26 | 共通 (cron_failure / pg_cron_stalled) | P-4・P-6・P-7・P-13・P-22・P-24 の道 | t | — | — | `release(t)` の error / 例外は warn ログ 1 行だけ (既存の `releaseClaim`)。応答は変えない。権利はクールダウンが明けるまで残る (次の通知が最大でクールダウンの分だけ遅れる) |
+| P-26 | 共通 (cron_failure / pg_cron_stalled) | P-4・P-6・P-7・P-13・P-22・P-24・P-28 の道 | t | — | — | `release(t)` の error / 例外は warn ログ 1 行だけ (既存の `releaseClaim`)。応答は変えない。権利はクールダウンが明けるまで残る (次の通知が最大でクールダウンの分だけ遅れる) |
 | P-27 | purge | 候補 0・skipped ≥ 1 (同意の記録を持つグループだけが 90 日を過ぎている。dry run でない) | — | — | — | 0 件。何も消さず、監査ログも書かない (何も変わらない回。P-16 と同じ)。戻り値の `skipped_with_consents_count` = skipped (S-15) |
 
 **印と権利の返し方** (§6.2 の `checkCronFailures` / `checkPgCronStalled` が従う正本。返すときは必ず「印 (unmark) → 権利 (release)」の順。印は cron_failure にだけある):
@@ -1247,7 +1248,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | 数える / 読む / 権利の RPC が error・形の誤り | — (付けていない) | — (取っていない) | 500 | P-8 P-14 P-21 P-23 |
 | 権利が NULL (抑止の間) | — | — | `deduped` | P-2 P-11 |
 | `mark` が 0 行 | — (0 行) | 返す | `below_threshold` | P-4 |
-| `mark` の error・形の誤り・例外、文面の作成・`sendEmail` の例外 | 外す (cron_failure) | 返す | 500 | P-7 P-24 |
+| `mark` の error・形の誤り・例外、文面の作成・`sendEmail` の例外 | 外す (cron_failure) | 返す | 500 | P-7 P-24 P-28 |
 | `sendEmail` が `ok: true` | 外さない | 返さない | `sent` | P-3 P-12 |
 | `sendEmail` が `ok: false` で、コードが `NON_RELEASING_SEND_ERROR_CODES` (`suppressed` / `invalid_envelope`) | 外さない | 返さない | `send_failed` | P-5 P-13 |
 | `sendEmail` が `ok: false` で、それ以外のコード (`not_configured` / `outbox_failed` ほか) | 外す (cron_failure) | 返す | `send_skipped` (`skipped` のとき) / `send_failed` | P-6 P-13 |
@@ -1291,6 +1292,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | 状態 | 操作 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
 | 行なし | `claim_ops_alert` | 行あり (last_sent_at = t) | — | 送る |
+| 行なし / 行あり (t0) | `claim_ops_alert` が error | 同じ | — | 500 (本文は汎用)。cron_failure は台帳に印を付けず、pg_cron_stalled は送らない。返すものは無い (P-21・P-23)。次の回で取り直す |
 | 行あり (t0) | `claim_ops_alert` | 同じ | now − t0 < cooldown | NULL (deduped) |
 | 行あり (t0) | `claim_ops_alert` | 行あり (t) | now − t0 ≥ cooldown | 送る |
 | 行あり (t) | `release_ops_alert(t)` | 行なし | 送れなかった | 次の回で取り直せる |
@@ -1342,6 +1344,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | `cron_failure_counts` / `mark_…` の `p_limit` が 1〜100 の外 | DB | SQLSTATE `22023` | 呼び出し側の誤り。route は常に `APP_LOG_ALERT_MAX_FUNCTIONS` (10) を渡す |
 | `mark_…` / `unmark_…` の `p_alerted_at` が NULL | DB | `22023` | 同上 |
 | 数える RPC / 権利の RPC / 印の RPC が error | route | 500 `{ error: INTERNAL_ERROR_MESSAGE, code: 'INTERNAL_ERROR' }` (`internalError`。詳細は `app_logs`) | 印の失敗は印と権利を返してから 500 (P-7)。次の回でやり直す |
+| 文面の作成・`sendEmail` が例外 | route | 500 (同上) | cron_failure は印と権利を返してから (P-28)、pg_cron_stalled は権利を返してから (P-24) |
 | RPC の応答の形が想定外 (source が 2 つ以外・件数が整数でない・`cron_available` が真偽値でない) | route | 500 | 黙って 0 件にしない (P-8・P-14) |
 | `sendEmail` が `ok: false` | route | 200 `send_skipped` / `send_failed` | `suppressed` / `invalid_envelope` 以外は印と権利を返す (P-5・P-6) |
 | `OPS_ALERT_EMAIL` 未設定 / 形が不正 | route | 200 `disabled` / `invalid_config` | 何もしない (既存どおり) |
@@ -1422,6 +1425,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 
 `src/__tests__/lib/ops-alerts/cron-failure.test.ts` (新設):
 - `it('K-1: 定数: しきい値 0・停止 60 分 (10〜1440)・見る範囲 7 日')`
+- `it('K-2: 権利のキーは互いに独立: APP_LOG_ALERT_KEYS の 5 つの値と src/lib/backups/core.ts の BACKUP_STALE_ALERT_KEY (backup_stale) はすべて異なる (S-20)')`
 - `it('N-1: normalizeCronFailureRows は source/job_name を function_name にそろえ、件数をそのまま渡す')`
 - `it('N-2: source が pg_cron / vercel_cron 以外なら例外 (黙って別の名前にしない)')`
 - `it('N-3: 配列でない応答はそのまま返す (parseErrorCountRows が例外にする)')`
@@ -1453,19 +1457,27 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 - `it('CF-5: 送れなかった (outbox_failed) ときは unmark → release の順で返し、send_failed')`
 - `it('CF-6: suppressed / invalid_envelope のときは unmark も release もしない')`
 - `it('CF-7: mark の RPC が error なら unmark → release のあと 500')`
-- `it('CF-8: 応答の source が想定外なら 500 (黙って 0 件にしない)')`
+- `it('CF-8: mark の応答の source が想定外 (形の誤り) なら unmark → release のあと 500 (黙って 0 件にしない。P-7)')`
 - `it('CF-9: メールと応答とログに、処理の名前と件数だけが出る (command・本文・ユーザー ID は出ない)')`
 - `it('CF-10: claim_ops_alert が error なら 500。mark も unmark も release も呼ばない (P-21)')`
 - `it('CF-11: 送れなかったときに unmark が error を返しても、warn を 1 行残して release を呼び、応答は send_failed のまま (P-22)')`
+- `it('CF-12: cron_failure_counts が error、または応答の形が誤り (failed_count が整数でない・source が想定外) なら 500。claim_ops_alert (キー cron_failure) も mark も sendEmail (ops_cron_failure) も呼ばない (P-8)')`
+- `it('CF-13: 権利と印を取ったあとで文面の作成または sendEmail が例外を投げたら、unmark → release の順で返してから 500 (P-28)')`
+- `it('CF-14: cron_failure_counts に渡す引数は { p_limit: 10 } だけ (窓・時刻を渡さない。回の隙間の失敗も次の回で数える: S-04・R-03)')`
+- `it('CF-15: 送れなかった (outbox_failed) ときに release_ops_alert が error を返しても、warn を 1 行残し、応答は send_failed のまま (P-26)')`
+- `it('CF-16: OPS_ALERT_EMAIL が未設定・形が不正の回は、失敗が有る場面 (cronFailureCounts に 1 件・pgCronLastRun が 61 分前) でも cron_failure_counts も pg_cron_last_run_at も呼ばず disabled / invalid_config (DB に触れない。S-05・P-15。既存の C-1・C-3・E-8 の expectNothingTouched / mocks.rpc の確かめ方と同じ)')`
 - `it('ST-1: pg_cron_last_run_at が 61 分前なら権利 (キー pg_cron_stalled) を取り ops_pg_cron_stalled を送る。応答の total は分数')`
 - `it('ST-2: 60 分ちょうどは送らない')`
 - `it('ST-3: cron_available = false / active_jobs = 0 は below_threshold で権利を取らない')`
 - `it('ST-4: 履歴が無い (last_run_at null) のに有効なジョブがあれば送る')`
-- `it('ST-5: 送れなかったときは権利を返す')`
+- `it('ST-5: 送れなかったとき、outbox_failed / not_configured は権利を返し、suppressed / invalid_envelope は返さない (P-13)')`
 - `it('ST-6: OPS_ALERT_PG_CRON_STALL_MINUTES でしきい値を変える。不正な値は既定に戻して warn')`
 - `it('ST-7: 停止の回で claim_ops_alert が error なら 500 で、release を呼ばない (P-23)')`
 - `it('ST-8: 停止の回で sendEmail が例外なら release を呼んでから 500 (P-24)')`
+- `it('ST-9: pg_cron_last_run_at が error、または応答の形が誤り (cron_available が真偽値でない) なら 500。claim_ops_alert (キー pg_cron_stalled) も sendEmail (ops_pg_cron_stalled) も呼ばない (P-14)')`
+- `it('ST-10: 61 分前で止まっていても、権利が NULL (抑止の間) なら deduped。sendEmail も release も呼ばない。権利はクールダウン (既定 60 分) で取る (止まっている間は 60 分ごとに 1 通: S-07・P-11)')`
 - `it('ORD-1: server → client → email_dead_letter → cron_failure → pg_cron_stalled の順で、後ろの 500 は前の通知を止めない')`
+- `it('ORD-2: server の急増を送ったあと cron_failure_counts が error なら 500。server の sendEmail は 1 回呼ばれたまま (取り消さない)、client と email_dead_letter の数える RPC は呼ばれ、pg_cron_last_run_at と claim_ops_alert (キー cron_failure / pg_cron_stalled) は呼ばない (S-19・P-8)')`
 - 既存のテストの追随 (O-1 の RPC の一覧を 7 本に・応答の `toEqual` 20 か所に 2 キー・`rpc` の個別の上書き 3 件 (D-3・D-4・F-6) と呼び出しの順の期待 2 件 (D-4・T-3)) は §14.1 の逐語どおり
 
 ### 11.3 結合 (ローカル Supabase)
@@ -1476,6 +1488,9 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 - `it('B-2: mark は候補の全部を台帳に書き、書けた件数を返す。2 回目は 0 行')`
 - `it('B-3: unmark は同じ alerted_at の行だけを消す')`
 - `it('B-4: 登録解除されたジョブの失敗は jobid:<n> の名前になる')`
+- `it('B-5: route の名前の 3 つの形の 500 の行 (cron/app-log-alerts = 自分・cron/backup-freshness・GET /api/cron/process-menu-queue) はどれも候補に入る (S-18・S-20)')`
+- `it('B-6: 窓を持たない: 台帳に無い失敗は 1 分前・1 日前・6 日 23 時間前のどれも候補に入り、7 日 1 分前は入らない (S-04・S-10)')`
+- `it('B-7: pg_cron の無い DB では、cron_failure_candidates は Vercel Cron の分だけを返し、pg_cron_last_run_at は (false, 0, NULL) を返す (R-13・S-08)。本物の pg_cron と本物の関数・台帳には触れず、段 A の migration のコピーで cron. を public.t1125_absent_ に、関数 5 本と台帳の名前 (public.cron_failure_candidates・public.cron_failure_counts・public.mark_cron_failures_alerted・public.unmark_cron_failures_alerted・public.pg_cron_last_run_at・public.cron_failure_alerts) を、それぞれ public.t1125_nocron_ を頭に付けた名前に置き換えて (語の境界つきの正規表現。6 つとも置き換え、置き換えたあとのコピーに元の 6 つの名前が残らないことを先に確かめる) 流し (tests/integration/security/log-cleanup-and-dau-snapshot.test.ts の H と同じ置き換えの書き方)、置き換えた関数を確かめ、終わりに置き換えた関数 5 本と表を DROP する')`
 - `it('C-1: pg_cron_last_run_at は cron_available true・有効なジョブ数・最新の start_time を返す')`
 - `it('F-1: rollback で関数 5 本と台帳が消え、もう一度 migration を流すと戻る')`
 
@@ -1496,6 +1511,41 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 - `it('C-2: ジョブ purge-dissolved-family-groups が 1 つ登録されている')`
 - `it('C-3: family_groups を参照する外部キーは 5 本 (invites / members / promotion_requests / parental_consents = CASCADE、user_profiles = SET NULL)。増えたらこの表と §5.4.2 を直す')`
 
+### 11.4 表の行・シナリオとテストの対応
+
+§7.1 の行 (P-1〜P-28) と §3.2 のシナリオ (S-01〜S-21) を、どの it が確かめるか。「単体」は `src/__tests__/api/cron/app-log-alerts.test.ts` (CF- / ST- / ORD- と既存の C- / F-)、「結合 A」は `tests/integration/security/cron-failure-monitoring.test.ts`、「結合 C」は `tests/integration/security/purge-dissolved-family-groups.test.ts`、「結合 D」は `tests/integration/security/cron-run-history-cleanup.test.ts`、「契約 C」は `tests/purge-dissolved-family-groups-contract.test.ts`。
+
+| 行 | it | 行 | it |
+|---|---|---|---|
+| P-1 | 単体 CF-1 | P-15 | 単体 CF-16 (既存の C-1・C-3・E-8) |
+| P-2 | 単体 CF-3 | P-16 | 結合 C A-2 (0 件の回は書かない) |
+| P-3 | 単体 CF-2 | P-17 | 結合 C A-1・A-2 |
+| P-4 | 単体 CF-4 | P-18 | 結合 C A-3 |
+| P-5 | 単体 CF-6 | P-19 | 結合 C B-1・契約 C「dry run は DELETE も INSERT もしない」 |
+| P-6 | 単体 CF-5 | P-20 | 結合 C A-4 |
+| P-7 | 単体 CF-7・CF-8 | P-21 | 単体 CF-10 |
+| P-8 | 単体 CF-12・ORD-2 | P-22 | 単体 CF-11 |
+| P-9 | 単体 ST-3 | P-23 | 単体 ST-7 |
+| P-10 | 単体 ST-2 | P-24 | 単体 ST-8 |
+| P-11 | 単体 ST-10 | P-25 | 結合 C A-5 |
+| P-12 | 単体 ST-1・ST-4 | P-26 | 単体 CF-15 (既存の F-5・F-6 は server の分) |
+| P-13 | 単体 ST-5 | P-27 | 結合 C A-4 |
+| P-14 | 単体 ST-9 | P-28 | 単体 CF-13 |
+
+| シナリオ | it | シナリオ | it |
+|---|---|---|---|
+| S-01 | 単体 CF-2・結合 A B-1・B-2 | S-12 | 結合 C B-1 |
+| S-02 | 単体 CF-2・CF-3・結合 A B-2 | S-13 | 結合 C A-3 |
+| S-03 | 結合 A B-1 (dead の文の行は数えない) | S-14 | 結合 C A-1 |
+| S-04 | 単体 CF-14・結合 A B-6 | S-15 | 結合 C A-4 |
+| S-05 | 単体 CF-16 | S-16 | 結合 A B-4 |
+| S-06 | 単体 CF-5 | S-17 | 結合 A B-1 (client の行は数えない) |
+| S-07 | 単体 ST-1・ST-10・ST-2 | S-18 | 結合 A B-5 |
+| S-08 | 結合 A B-7・単体 ST-3 | S-19 | 単体 ORD-2 |
+| S-09 | 結合 D B-1 | S-20 | 結合 A B-5・単体 K-2 (`src/__tests__/lib/ops-alerts/cron-failure.test.ts`) |
+| S-10 | 結合 A B-1・B-6 | S-21 | 結合 C A-5 |
+| S-11 | 結合 C A-1・A-2 | | |
+
 ---
 
 ## 12. 段分け
@@ -1503,11 +1553,11 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | 段 | 中身 | §15 の行 (他の文書の追随) | 前提 | マージの単位 |
 |---|---|---|---|---|
 | A: 失敗の監視の DB | migration `<番号>_cron_failure_monitoring.sql` + down (台帳・関数 5 本。ジョブは登録しない)・`database.types.ts` 2 か所・契約テスト・結合テスト (§11 の `tests/cron-failure-monitoring-contract.test.ts`・`tests/integration/security/cron-failure-monitoring.test.ts`)・08 の外す計画の行 (ジョブの数は変わらないので、番兵の数の注記は触らない) | 行 3 (段 A の分)・4 | 無し | 単独でマージしてよい (アプリは変わらない) |
-| B: 失敗の監視のアプリ | `app-log-error-spike.ts` の追記・`cron-failure.ts`・文面 2 本・route・`env.ts`・`.env.example`・`ENV_SETUP.md`・単体テスト (§11.2 の新設 3 ファイルと既存 2 ファイルへの追記)・既存テストの追随 (§14 の段 B の行と §14.1。`src/__tests__/lib/env.test.ts`・`src/__tests__/api/cron/app-log-alerts.test.ts` を含む) | 行 5・6・7・8 (段 B の分)・10・12・13 (段 B の分)・14・15・17・18 | 段 A のマージ | 段 A の後 |
-| C: 解散した家族の物理削除 | migration `<番号>_purge_dissolved_family_groups.sql` + down・`database.types.ts`・契約テスト・結合テスト (§11 の `tests/purge-dissolved-family-groups-contract.test.ts`・`tests/integration/security/purge-dissolved-family-groups.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 C の分)・3 (段 C の分)・8 (段 C の分)・9・13 (段 C の分)・16 | **Q-1・Q-2 の確認**。段 A・段 D と独立 (台帳に触れない) | 確認の後。別の PR |
+| B: 失敗の監視のアプリ | `app-log-error-spike.ts` の追記・`cron-failure.ts`・文面 2 本・route・`env.ts`・`.env.example`・`ENV_SETUP.md`・単体テスト (§11.2 の新設 3 ファイルと既存 2 ファイルへの追記)・既存テストの追随 (§14 の段 B の行と §14.1。`src/__tests__/lib/env.test.ts`・`src/__tests__/api/cron/app-log-alerts.test.ts` を含む) | 行 5・6・7・8 (段 B の分)・10・12・13 (段 B の分)・14・15・17・18・21 | 段 A のマージ | 段 A の後 |
+| C: 解散した家族の物理削除 | migration `<番号>_purge_dissolved_family_groups.sql` + down・`database.types.ts`・契約テスト・結合テスト (§11 の `tests/purge-dissolved-family-groups-contract.test.ts`・`tests/integration/security/purge-dissolved-family-groups.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 C の分)・3 (段 C の分)・8 (段 C の分)・9・13 (段 C の分)・16・20 | **Q-1・Q-2 の確認**。段 A・段 D と独立 (台帳に触れない) | 確認の後。別の PR |
 | D: 実行履歴の掃除 | migration `<番号>_cleanup_cron_run_history.sql` + down (関数 `cleanup_cron_run_history` 1 本・ジョブ `cleanup-cron-run-history`)・`database.types.ts` 2 か所・契約テスト・結合テスト (§11 の `tests/cron-run-history-cleanup-contract.test.ts`・`tests/integration/security/cron-run-history-cleanup.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 D の分)・2・3 (段 D の分)・8 (段 D の分) | **Q-3 の確認**と段 A のマージ (台帳の古い行も消すため)。段 B・段 C と独立 | 確認の後。別の PR |
 
-§15 の行 11・19 は「変えない」。段 A・段 C・段 D の migration は、マージ直前に origin/main の `supabase/migrations` の最大より大きい番号で確定する。本番へ当てる時期:
+§15 の行 11・19 は「変えない」。行 20 は段 C、行 21 は段 B。段 A・段 C・段 D の migration は、マージ直前に origin/main の `supabase/migrations` の最大より大きい番号で確定する。本番へ当てる時期:
 - 段 A: 追加だけの migration (表・関数の新設。ジョブを登録せず、既存の行を変えない・消さない。§11.1 の契約テストが固定) なので、マージの前に本番へ当ててよい。
 - 段 C・段 D: 既存の行を消すジョブを登録する (段 C は解散から 90 日を過ぎたグループ、段 D は 30 日より古い実行履歴。段 D は当てた後の最初の 03:35 JST の実行で、2026-05-01 からの既存の行のうち 30 日より古いものを消す)。それぞれ Q-1・Q-2 / Q-3 の確認の前には、着手も本番への適用もしない。確認の後も、マージの前に本番へ当ててよいのは確認された保存期間のときだけ (違う期間に決まったら、`c_retention` を直してから当てる)。
 - 段 C と段 D の順は問わない。08 §3.0・§3.1 の数は、その PR をマージする時点の origin/main の migration が登録するジョブの数 (11 + 先に入った段 C / D の数 + 1) にする (§14 の規則 9 の行)。
@@ -1534,7 +1584,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | migration | `<番号>_cron_failure_monitoring.sql` / `.down.sql` (A)・`<番号>_purge_dissolved_family_groups.sql` / `.down.sql` (C)・`<番号>_cleanup_cron_run_history.sql` / `.down.sql` (D) | A / C / D |
 | テスト | §11 の新設 9 ファイル (契約 3: `tests/cron-failure-monitoring-contract.test.ts` (A)・`tests/purge-dissolved-family-groups-contract.test.ts` (C)・`tests/cron-run-history-cleanup-contract.test.ts` (D) / 単体 3: `src/__tests__/lib/ops-alerts/cron-failure.test.ts`・`src/__tests__/lib/emails/ops/cron-failure.test.ts`・`src/__tests__/lib/emails/ops/pg-cron-stalled.test.ts` (B) / 結合 3: `tests/integration/security/cron-failure-monitoring.test.ts` (A)・`tests/integration/security/purge-dissolved-family-groups.test.ts` (C)・`tests/integration/security/cron-run-history-cleanup.test.ts` (D)) | A / B / C / D |
 
-変えるもの (既存): `src/lib/ops-alerts/app-log-error-spike.ts` (型・定数・設定)・`src/app/api/cron/app-log-alerts/route.ts`・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` (§15 の行 14)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・§14 と §14.1 のテスト (`src/__tests__/lib/env.test.ts`・`src/__tests__/api/cron/app-log-alerts.test.ts` を含む)。設計書 (§15 の行のとおり): `docs/design/operator/08-cron-batches.md` (行 1〜8)・`docs/design/operator/07-audit-monitoring.md` §4.5・§8.3 (行 9・10)・`docs/design/operator/09-runbook.md` §5.1・§5.2 (行 12・13)・`docs/design/00-architecture.md` §4.3 (行 15)・`docs/design/family/07-lifecycle.md` §3.3 と `docs/design/org/05-offboarding-flow.md` §7.3・§8 (行 16)・`docs/design/mobile/06-push-send.md` §3.2 (行 17)・`docs/design/operator/02-api-spec.md` (行 18)。`vercel.json`・`src/lib/api/errors.ts`・`src/lib/ops-alerts/recipient.ts`・`src/app/api/cron/backup-freshness/route.ts`・`docs/design/cross/17-backup-automation.md` は変えない。
+変えるもの (既存): `src/lib/ops-alerts/app-log-error-spike.ts` (型・定数・設定)・`src/app/api/cron/app-log-alerts/route.ts`・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` (§15 の行 14)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・§14 と §14.1 のテスト (`src/__tests__/lib/env.test.ts`・`src/__tests__/api/cron/app-log-alerts.test.ts` を含む)。設計書 (§15 の行のとおり): `docs/design/operator/08-cron-batches.md` (行 1〜8)・`docs/design/operator/07-audit-monitoring.md` §4.5・§8.3 (行 9・10)・`docs/design/operator/09-runbook.md` §5.1・§5.2 (行 12・13)・`docs/design/00-architecture.md` §4.3 (行 15)・`docs/design/family/07-lifecycle.md` §3.3 と `docs/design/org/05-offboarding-flow.md` §7.3・§8 (行 16)・`docs/design/mobile/06-push-send.md` §3.2 (行 17)・`docs/design/operator/02-api-spec.md` (行 18)・`docs/design/cross/14-parental-consent.md` §0.3・§6.1・§6.3 (行 20)・`docs/design/operator/10-logs-and-mail-retry.md` §8.1 (行 21)。`vercel.json`・`src/lib/api/errors.ts`・`src/lib/ops-alerts/recipient.ts`・`src/app/api/cron/backup-freshness/route.ts`・`src/lib/backups/core.ts` (権利のキー `BACKUP_STALE_ALERT_KEY = 'backup_stale'` を持つ。新しいキー `cron_failure`・`pg_cron_stalled` はこれと重ならない: §11.2 の K-2)・`docs/design/cross/17-backup-automation.md` は変えない。
 
 ---
 
@@ -1562,6 +1612,7 @@ grep の語で見つかる既存のテストと、その直し方。段は §12�
 | `tests/env-setup-cron-secret-crons.test.ts` | `CRON_SECRET`・`vercel.json` | `ENV_SETUP.md` の `CRON_SECRET` の行の path = `vercel.json` | `vercel.json` を変えないので反応しない | — |
 | `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 追随表の逐語の書き換えの行 | §15 の行 7 (07 §8.3 の表に行を足す) は逐語の書き換えではないので載せない | — |
 | `tests/admin-mutation-audit-coverage-1571.test.ts` ほか `admin_audit_logs` の番兵 | `action_type` | 運営の操作 (admin.*) の網羅 | `system.*` は対象外。反応しない | — |
+| `tests/email-send-throttle-contract.test.ts` | `EXEMPT_EMAIL_SENDERS`・`MAIL_TRIGGERING_RPCS`・`sendEmail(` | `src` 全体 (`src/lib/emails` を除く) の `sendEmail` の呼び出し元は invite-throttle の判定か理由つきの除外リストを要求し、`MAIL_TRIGGERING_RPCS` (招待など 5 本) は判定を通すファイルからだけ呼ぶ | 反応しない。`src/app/api/cron/app-log-alerts/route.ts` はすでに除外リストにあり (理由 = 宛先は `OPS_ALERT_EMAIL` の固定・`requireCronAuth` を通った Vercel Cron だけ・`claim_ops_alert` で権利を取った 1 回だけ・利用者の情報を載せない)、新しい 2 種類も同じ宛先・同じ権利の仕組みで送るので理由の文は変えない。新しい文面 2 本は `src/lib/emails/ops/` (走査の対象外) に置く。新しい RPC 4 本は `MAIL_TRIGGERING_RPCS` に入れない (メールを送る RPC ではない) | — |
 
 ### 14.1 `src/__tests__/api/cron/app-log-alerts.test.ts` の追随 (段 B・逐語)
 
@@ -1641,7 +1692,7 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 
 (5) 呼び出しの順を `toEqual` で固定している 2 件の期待値の末尾に、`'cron_failure_counts', 'pg_cron_last_run_at'` を足す: D-4 (`['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts', 'email_outbox_dead_counts', 'cron_failure_counts', 'pg_cron_last_run_at']`)・T-3 (`'sendEmail:ops_email_dead_letter'` の次に 2 つ)。T-5・T-7 の `deadLetterCalls()` は `email_outbox` を含む名前と email_dead_letter のキーの権利だけを拾うので変えない。
 
-(6) 足す it (CF- / ST- / ORD-1。§11.2) は、(1) の場面の項目 (`cronFailureCounts` ほか) を `setScenario({ … })` で上書きして書く。
+(6) 足す it (CF- / ST- / ORD-1・ORD-2。§11.2) は、(1) の場面の項目 (`cronFailureCounts` ほか) を `setScenario({ … })` で上書きして書く。
 
 ---
 
@@ -1670,6 +1721,8 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 | 17 | `docs/design/mobile/06-push-send.md` §3.2 | `family_freeze_warning` / `family_frozen` の行の理由を「発火元の pg_cron が未実装 (`08` §3.0)」から「凍結の機能そのものが未実装 (operator/11 §2.2)」に | B |
 | 18 | `docs/design/operator/02-api-spec.md` | `POST /api/cron/re-engagement-email`・`POST /api/cron/nps-survey-sender` の節に「(選択待ち。operator/11 §8)」を足す | B |
 | 19 | `docs/design/cross/17-backup-automation.md` | 変えない (鮮度の cron は cross/17 が正)。本書 §0.5 で参照するだけ | — |
+| 20 | `docs/design/cross/14-parental-consent.md` §0.3・§6.1・§6.3 | 家族の行が消える経路の主体として「代表者のポリシー `family_groups_delete_representative`・service_role」だけを挙げている 3 か所 (§0.3 の表の「家族グループの削除」の行・①全パターン表の P24b・③状態遷移表の「任意 \| 家族の行の DELETE」の行) に、「pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)」を足す。「アプリの route に家族の行の DELETE は無い」と、R-7 の「家族の行の削除と一緒に消える」は事実のまま (変えない) | C |
+| 21 | `docs/design/operator/10-logs-and-mail-retry.md` §8.1 | 表の「キー / クールダウン」の行の「3 種類で同じ値・抑止は別々」と「宛先」の行の「未設定なら 3 種類とも何もしない」の 2 か所に、「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled` を含めて 5 種類。operator/11 §4〜§6)」を足す。10 §8 は email_dead_letter の正本のまま (4 つ目・5 つ目の正本は本書と 07 §8.3 (行 10)) | B |
 
 ---
 
