@@ -1,5 +1,6 @@
 // src/schemas/membership/family-member.ts
 import { z } from 'zod';
+import { BIRTH_DATE_PATTERN, PARENTAL_CONSENT_VERSION_PATTERN, SIGNED_NAME_MAX_LENGTH } from '@homegohan/shared';
 import { apiResponse } from '@/schemas/common';
 import { FamilyRoleSchema } from './family-group';
 
@@ -23,10 +24,41 @@ export const FamilyMemberSchema = z.object({
   removed_at: z.string().datetime().nullable(),
 });
 
-export const AddFamilyChildBodySchema = z.object({
-  family_id: z.string().uuid(),
-  display_name: z.string().min(1).max(60),
-  child_profile: z.record(z.string(), z.unknown()),
+/** 保護者の同意 (子供が 18 歳未満のとき必須。18 歳以上のときは無視する) (#1173) */
+export const ParentalConsentInputSchema = z
+  .object({
+    version: z.string().regex(PARENTAL_CONSENT_VERSION_PATTERN),
+    signed_name: z.string().trim().min(1).max(SIGNED_NAME_MAX_LENGTH),
+    guardian_attested: z.literal(true),
+  })
+  .strict();
+
+/** 子供の呼び名の上限。現行の AddFamilyChildBodySchema の .max(60) と同じ値 (変えない)。名前を付けて置き換える */
+export const CHILD_DISPLAY_NAME_MAX_LENGTH = 60;
+
+export const AddFamilyChildBodySchema = z
+  .object({
+    family_id: z.string().uuid(),
+    display_name: z.string().min(1).max(CHILD_DISPLAY_NAME_MAX_LENGTH),
+    child_profile: z.record(z.string(), z.unknown()).default({}),
+    birth_date: z.string().regex(BIRTH_DATE_PATTERN), // 暦として正しいか・未来・120 年超は route が validateBirthDate で見る
+    consent: ParentalConsentInputSchema.optional(),
+  })
+  .strict();
+export type ParentalConsentInput = z.infer<typeof ParentalConsentInputSchema>;
+
+/** POST /api/family/members/child の 201 の data */
+export const AddFamilyChildResponseDataSchema = z.object({
+  member: z
+    .object({
+      id: z.string().uuid(),
+      family_id: z.string().uuid(),
+      role: z.literal('child'),
+      display_name: z.string().nullable(),
+      birth_date: z.string(),
+    })
+    .passthrough(),
+  consent_recorded: z.boolean(),
 });
 
 export const PromoteChildBodySchema = z.object({

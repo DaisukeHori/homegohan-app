@@ -128,7 +128,8 @@ export async function GET(request: Request) {
     // maybeSingle() を使用（行がない場合もエラーにならない）
     const { data: profile, error: profileError } = await supabase
       .from('user_profiles')
-      .select('roles, nickname, onboarding_started_at, onboarding_completed_at, terms_version_accepted, privacy_version_accepted')
+      // #1173: birth_date も読む (resolveFirstSignInDestination が生年月日の有無も見るため。保護者の同意とのつながりは聞かない = 同意画面が数え直す)
+      .select('roles, nickname, onboarding_started_at, onboarding_completed_at, terms_version_accepted, privacy_version_accepted, birth_date')
       .eq('id', user.id)
       .maybeSingle()
 

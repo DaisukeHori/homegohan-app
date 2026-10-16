@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { CreateFamilyGroupBodySchema } from '@/schemas/membership/family-group';
-import { MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
@@ -57,6 +57,18 @@ export async function POST(request: Request) {
 
   if (error) {
     // Supabase RPC エラーコードをマッピング
+    if (error.message?.includes(MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED)) {
+      // #1173: 18 歳未満の本人は家族を作れない・招待から入れない (DB の関数が先頭で断る)。DB の生の文は出さない
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED,
+            message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
+          },
+        },
+        { status: 403 },
+      );
+    }
     if (error.message?.includes('ALREADY_IN_FAMILY')) {
       return NextResponse.json(
         { error: { code: MembershipErrorCode.ALREADY_IN_FAMILY, message: '既に家族グループに所属しています' } },

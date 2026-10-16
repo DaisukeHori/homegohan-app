@@ -54,7 +54,10 @@ const FROZEN_AT = '2026-07-01T00:00:00.000Z';
 /** 一時 BAN の解除予定を今から前後にずらす長さ */
 const ONE_DAY_MS = 24 * 60 * 60 * 1000;
 
-/** 止まらない値のプロフィール (凍結なし・運営でない・今の版に同意済み)。軸ごとに上書きする */
+/** 同意ゲート (#1173) の「完了」に要る生年月日 (成人)。middleware-legal-consent-api.test.ts と同じ値 */
+const ADULT_BIRTH_DATE = '1990-01-01';
+
+/** 止まらない値のプロフィール (凍結なし・運営でない・今の版に同意済み・成人の生年月日あり)。軸ごとに上書きする */
 function profile(overrides: Record<string, unknown> = {}) {
   return {
     data: {
@@ -65,6 +68,7 @@ function profile(overrides: Record<string, unknown> = {}) {
       unban_at: null,
       terms_version_accepted: CURRENT_TERMS,
       privacy_version_accepted: CURRENT_PRIVACY,
+      birth_date: ADULT_BIRTH_DATE,
       ...overrides,
     },
     error: null,
