@@ -2,6 +2,7 @@
  * GET /api/org/settings — 組織設定取得
  * PUT /api/org/settings — 組織設定更新
  * 権限: 所属組織の org_role が owner / admin (自組織のみ、#1235)。判定は共通の requireOrgAdmin() (#1161)
+ * 受け取るキー・返す列は src/lib/org-settings-api.ts (組織の設定の画面が送るキーを全部受け取る。#1735)
  *
  * E2E: w5-13-new-features-adversarial A-1, A-4, A-7
  */
@@ -11,17 +12,14 @@ import { createClient } from '@/lib/supabase/server';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { requireOrgAdmin } from '@/lib/auth/helpers';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
-import { z } from 'zod';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import {
+  ORG_SETTINGS_SELECT_COLUMNS,
+  OrgSettingsUpdateSchema,
+  toOrgSettingsUpdateRow,
+} from '@/lib/org-settings-api';
 
 export const dynamic = 'force-dynamic';
-
-const OrgSettingsUpdateSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  plan: z.enum(['standard', 'premium', 'enterprise']).optional(),
-}).refine((d) => Object.keys(d).length > 0, {
-  message: '更新するフィールドを少なくとも1つ指定してください',
-});
 
 /**
  * 500 の本文は汎用メッセージだけにする (#1172: 生のエラー文を返さない)。
@@ -58,7 +56,7 @@ export async function GET() {
     const supabase = await createClient();
     const { data: org, error: orgError } = await supabase
       .from('organizations')
-      .select('id, name, plan, created_at, updated_at')
+      .select(ORG_SETTINGS_SELECT_COLUMNS)
       .eq('id', profile.organization_id)
       .single();
 
@@ -100,14 +98,14 @@ export async function PUT(request: Request) {
       );
     }
 
-    const updates = parseResult.data;
+    const updates = toOrgSettingsUpdateRow(parseResult.data);
 
     const supabase = await createClient();
     const { data: org, error: updateError } = await supabase
       .from('organizations')
-      .update({ ...updates, updated_at: new Date().toISOString() } as Record<string, unknown>)
+      .update({ ...updates, updated_at: new Date().toISOString() })
       .eq('id', profile.organization_id)
-      .select('id, name, plan, created_at, updated_at')
+      .select(ORG_SETTINGS_SELECT_COLUMNS)
       .single();
 
     if (updateError || !org) {
