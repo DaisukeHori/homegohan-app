@@ -10,6 +10,7 @@ import {
   SESSION_EXPIRED_MIN_INTERVAL_MS,
   isInNativeWebView,
   isNativeBridgedSession,
+  notifyNativeLegalConsentAccepted,
   notifyNativeSessionExpired,
   notifyNativeSignOut,
   requestNativeMfaVerify,
@@ -164,6 +165,40 @@ describe('requestNativeMfaVerify', () => {
     )
     expect(() => requestNativeMfaVerify()).not.toThrow()
     expect(requestNativeMfaVerify()).toBe(false)
+  })
+})
+
+// #1442 同意画面 (/legal-consent) が、同意を記録できたことをネイティブに知らせる (docs/design/cross/13b-legal-consent-mobile.md §6.6.16・T-W1)
+describe('notifyNativeLegalConsentAccepted', () => {
+  it('notifyNativeLegalConsentAccepted: { type: "legal-consent-accepted" } を JSON 文字列でネイティブに送り true / 普通のブラウザでは何も送らず false / postMessage が例外を投げても例外にしない', () => {
+    expect(notifyNativeLegalConsentAccepted()).toBe(false)
+
+    const postMessage = installBridge()
+    expect(notifyNativeLegalConsentAccepted()).toBe(true)
+    expect(postMessage).toHaveBeenCalledTimes(1)
+    const sent = postMessage.mock.calls[0][0]
+    expect(typeof sent).toBe('string')
+    expect(JSON.parse(sent)).toEqual({ type: 'legal-consent-accepted' })
+
+    // 回数は絞らない (記録できた 1 回だけ送るので)
+    expect(notifyNativeLegalConsentAccepted()).toBe(true)
+    expect(postMessage).toHaveBeenCalledTimes(2)
+
+    installBridge(
+      vi.fn(() => {
+        throw new Error('bridge closed')
+      }),
+    )
+    expect(() => notifyNativeLegalConsentAccepted()).not.toThrow()
+    expect(notifyNativeLegalConsentAccepted()).toBe(false)
+  })
+
+  it('sign-out を送った後でも送る (ログアウト通知済みの印に左右されない)', () => {
+    const postMessage = installBridge()
+    expect(notifyNativeSignOut()).toBe(true)
+    expect(notifyNativeLegalConsentAccepted()).toBe(true)
+    expect(postMessage).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(postMessage.mock.calls[1][0])).toEqual({ type: 'legal-consent-accepted' })
   })
 })
 
