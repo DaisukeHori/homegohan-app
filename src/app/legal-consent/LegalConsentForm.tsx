@@ -38,7 +38,7 @@ import {
 } from '@homegohan/shared';
 import { createClient } from '@/lib/supabase/client';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
-import { notifyNativeSignOut } from '@/lib/native-auth-bridge';
+import { notifyNativeLegalConsentAccepted, notifyNativeSignOut } from '@/lib/native-auth-bridge';
 import { LEGAL_CONSENT_PATH } from '@/lib/legal-consent';
 import {
   ACCOUNT_DELETE_FAILED_MESSAGE,
@@ -93,7 +93,7 @@ async function readErrorCode(res: Response): Promise<string | null> {
   return typeof code === 'string' ? code : null;
 }
 
-// 文面は packages/shared の LEGAL_CONSENT_COPY (アプリのネイティブの同意画面と共用。#1442)
+// 文面は packages/shared の LEGAL_CONSENT_COPY (アプリもこの画面を WebView で開く。#1442 / 設計書 cross/13b)
 const GENERIC_ERROR = LEGAL_CONSENT_COPY.acceptFailed;
 
 export default function LegalConsentForm({ next, isReconsent, outdated, needsBirthDate, guardianMissing }: LegalConsentFormProps) {
@@ -136,6 +136,8 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
       });
 
       if (res.ok) {
+        // アプリ (WebView) なら、同意画面の route を閉じてもらう (#1442。普通のブラウザでは何もしない)。次の読み込み直しより先に送る
+        notifyNativeLegalConsentAccepted();
         // 画面遷移ではなく読み込み直しで戻る: middleware の判定とサーバー側の画面を、同意後の状態で最初から作らせる
         window.location.assign(next);
         return;

@@ -15,7 +15,7 @@ import React from 'react';
 import { fireEvent, render } from '@testing-library/react-native';
 
 jest.mock('expo-router', () => ({
-  router: { back: jest.fn(), push: jest.fn() },
+  router: { back: jest.fn(), push: jest.fn(), replace: jest.fn(), canGoBack: jest.fn() },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -27,12 +27,16 @@ jest.mock('expo-linking', () => ({
 }));
 
 import * as Linking from 'expo-linking';
+import { router } from 'expo-router';
 
 import { PublicPage } from '../../src/components/PublicPage';
 import { getPrivacyUrl, getTermsUrl } from '../../src/lib/siteConfig';
 import { DEFAULT_WEB_URL } from '../../src/lib/webBaseUrl';
 
 const mockOpenURL = Linking.openURL as jest.Mock;
+const mockBack = router.back as jest.Mock;
+const mockReplace = router.replace as jest.Mock;
+const mockCanGoBack = router.canGoBack as jest.Mock;
 
 const ENV_NAMES = ['EXPO_PUBLIC_WEB_URL', 'EXPO_PUBLIC_API_BASE_URL'] as const;
 const PUBLIC_DIR = path.resolve(__dirname, '../../app/(public)');
@@ -107,6 +111,39 @@ describe('PublicPage の「Web版を開く」(#1049 F7-19)', () => {
     const source = fs.readFileSync(path.resolve(__dirname, '../../src/components/PublicPage.tsx'), 'utf8');
     expect(source).not.toMatch(/process\.env|getApiBaseUrl/);
     expect(source).toMatch(/import \{ webPageUrl \} from "\.\.\/lib\/siteConfig"/);
+  });
+});
+
+describe('PublicPage の自前のヘッダ (#1822)', () => {
+  // app/(public)/_layout.tsx は native-stack のヘッダを出さない (__tests__/app/navigator-font-styles.test.tsx)。
+  // 見出しと戻る操作は、この自前のヘッダだけが受け持つ。
+
+  beforeEach(() => {
+    mockBack.mockClear();
+    mockReplace.mockClear();
+    mockCanGoBack.mockReset();
+  });
+
+  it('日本語の見出しを描く', () => {
+    const view = render(<PublicPage title="利用規約" />);
+    expect(view.getByText('利用規約')).toBeTruthy();
+  });
+
+  it('戻れる履歴があれば、戻るで 1 つ前の画面へ戻る (入口へは移らない)', () => {
+    mockCanGoBack.mockReturnValue(true);
+    const view = render(<PublicPage title="利用規約" />);
+    fireEvent.press(view.getByLabelText('戻る'));
+    expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockReplace).not.toHaveBeenCalled();
+  });
+
+  it('戻れる履歴が無ければ (直接開いた・リンクから開いた)、戻るで入口 (/) へ移る (行き止まりにしない)', () => {
+    mockCanGoBack.mockReturnValue(false);
+    const view = render(<PublicPage title="利用規約" />);
+    fireEvent.press(view.getByLabelText('戻る'));
+    expect(mockReplace).toHaveBeenCalledTimes(1);
+    expect(mockReplace).toHaveBeenCalledWith('/');
+    expect(mockBack).not.toHaveBeenCalled();
   });
 });
 

@@ -208,7 +208,8 @@ describe('navigator (Stack / Tabs) がライブラリの描く文字に字形を
     );
     expect(found).toEqual(
       expect.arrayContaining([
-        { file: 'app/(public)/_layout.tsx', navigator: 'Stack', headerShown: true },
+        // 公開ページはヘッダを出さない (PublicPage が自前のヘッダを描く。出すとヘッダが 2 段になる #1822)
+        { file: 'app/(public)/_layout.tsx', navigator: 'Stack', headerShown: false },
         { file: 'app/(tabs)/_layout.tsx', navigator: 'Tabs', headerShown: false },
         { file: 'app/_layout.tsx', navigator: 'Stack', headerShown: false },
       ]),
