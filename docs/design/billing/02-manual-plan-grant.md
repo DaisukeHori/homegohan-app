@@ -708,7 +708,7 @@ export const MANUAL_GRANT_HISTORY_LIMIT = 10;
 export const GRANTABLE_PLAN_TYPES = ['personal', 'family'] as const;
 /**
  * 手動付与できるプランの status。public だけ (billing/01 §1 が扱うプラン pro / family_basic / family_pro と同じ集合)。
- * private のプランは family_addon (家族の席のアドオン。feature_packages が空・max_members NULL) だけで、billing/01 §1 が対象外にしている。
+ * private のプランは family_addon (アドオン。feature_packages が空・max_members NULL・月 280 円) だけで、billing/01 §1 が対象外にしている。
  * 基本のプランとして付与すると、家族グループのプランがアドオンの名前に置き換わり、家族プランの権利も付かない。
  * draft (未完成) と deprecated (廃止。契約者が 0 でないと廃止できない規則の逆向きを作らない) にも付与しない
  */
