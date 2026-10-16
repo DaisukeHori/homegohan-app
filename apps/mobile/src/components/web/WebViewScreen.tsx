@@ -5,6 +5,7 @@ import { WebView } from 'react-native-webview';
 import { useNavigation, useRouter, useLocalSearchParams } from 'expo-router';
 import { NATIVE_APP_TABS, findNativeAppTabByPathPrefix } from '@homegohan/shared';
 import { WebViewErrorView } from './WebViewErrorView';
+import { NativeMfaVerifyModal } from '../NativeMfaVerifyModal';
 import { useResetInitialPathOnBlur } from './useResetInitialPathOnBlur';
 import { useWebViewHttpFailure } from './useWebViewHttpFailure';
 import { getDownloadFailureNotice, handleWebViewDownload } from '../../lib/webViewDownload';
@@ -164,7 +165,14 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
   // Web 側のログアウト・セッション失効の通知 (sign-out / session-expired) をネイティブに反映する (#1038 F7-04 / F7-05)。
   // 再 bridge は、いま開いているパス (検証済みの effectivePath) に _rb を付けて開き直す。
   // 検証で弾かれる initialPath を基準にすると、_rb を付けても path に戻されて effectivePath が変わらず、読み込み直しが起きない
-  const handleAuthMessage = useWebAuthMessages(effectivePath);
+  // 二段階認証の確認の依頼 (mfa-verify-required。docs/design/cross/12-operator-mfa.md §16.4.5) を受けたら、
+  // ネイティブの確認画面 (NativeMfaVerifyModal) を出す。rebridge は確認が済んだ後に WebView を読み込み直す関数
+  // (いま開いているパス effectivePath に _rb を付け直す。回数制限を通さない)。
+  // 関数をそのまま state に入れない (setState(fn) は更新関数として呼ばれる) ので object で包む
+  const [mfaVerifyRequest, setMfaVerifyRequest] = useState<{ rebridge: () => void } | null>(null);
+  const handleAuthMessage = useWebAuthMessages(effectivePath, {
+    onMfaVerifyRequested: (rebridge) => setMfaVerifyRequest({ rebridge }),
+  });
 
   // タブ再タップ時に WebView を初期 URL にリセットする
   // tabPress は同じタブを再タップした際にも発火するため useFocusEffect より確実
@@ -368,8 +376,13 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
                   const notice = getDownloadFailureNotice(result);
                   if (notice) Alert.alert(notice.title, notice.message);
                 });
-              } else if (data.type === 'sign-out' || data.type === 'session-expired') {
-                // Web 側でログアウトした / Web 側のセッションが切れた。送り元の検証と処理は useWebAuthMessages に集約している
+              } else if (
+                data.type === 'sign-out' ||
+                data.type === 'session-expired' ||
+                data.type === 'mfa-verify-required'
+              ) {
+                // Web 側でログアウトした / Web 側のセッションが切れた / Web が二段階認証の確認を頼んだ (cross/12 §16.4)。
+                // 送り元の検証と処理は useWebAuthMessages に集約している
                 handleAuthMessage(data, event.nativeEvent.url);
               }
             } catch {
@@ -393,6 +406,17 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
         />
         {httpFailure.statusCode !== null ? (
           <WebViewErrorView failure={{ kind: 'server', statusCode: httpFailure.statusCode }} onRetry={onRetry} />
+        ) : null}
+        {/* 二段階認証の確認 (cross/12 §16.4.5)。要求が無いときは何も描かない。確認が済んだら閉じて、いまのパスを開き直す */}
+        {mfaVerifyRequest ? (
+          <NativeMfaVerifyModal
+            onClose={() => setMfaVerifyRequest(null)}
+            onVerified={() => {
+              const { rebridge } = mfaVerifyRequest;
+              setMfaVerifyRequest(null);
+              rebridge();
+            }}
+          />
         ) : null}
       </View>
     </SafeAreaView>
