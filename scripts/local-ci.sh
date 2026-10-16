@@ -40,6 +40,8 @@
 #
 # 判定は終了コードだけでなく、各ツールの JSON (失敗件数・収集ファイル数) で行う。
 # 収集されるはずのファイル (vitest list / jest --listTests / playwright --list) と結果のファイルが食い違えば赤。
+# integration は、段の終わりにローカル Supabase の入口 (Kong) のログで 502 を数え、1 件でもあれば integration:gateway を赤にする
+# (#1779。テストが緑でも数える。CI の yml には無い、ローカル CI だけの見張り。gateway_check)。
 #
 # 環境変数 (どれも任意):
 #   LOCAL_CI_WORKDIR               作業用 worktree の親 (既定: ${TMPDIR:-/tmp}/homegohan-local-ci)
@@ -78,6 +80,9 @@
 #   SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS / SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT
 #                                  ローカル Supabase の停止が、同じ dockerd の別の枠の prune と重なって失敗したときに打ち直す回数の上限と
 #                                  待ち時間の単位秒 (scripts/supabase-local.sh の stop_with_retry。#1616)
+#   SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE
+#                                  ローカル Supabase の起動のあとに、入口の Kong が奥への接続を使い回す数を入れ直す値 (既定 0 = 使い回さない。
+#                                  scripts/supabase-local.sh の tune_kong_keepalive。#1779)
 #   SUPABASE_IMAGE_REGISTRIES / SUPABASE_IMAGE_PULL_ROUNDS / SUPABASE_INTERNAL_IMAGE_REGISTRY
 #                                  ローカル Supabase の起動でイメージの取得に失敗したときに試す取得元の順・周回の上限・固定する取得元
 #                                  (scripts/lib/supabase-image-pull.sh。#1523。docs/operations/ci-supabase-image-pull.md)
@@ -161,6 +166,9 @@ readonly BYTES_PER_MIB=1048576
 # next dev が「ページを返せる」かを確かめる関数 (local_ci_dev_ready。#1792)
 # shellcheck source=lib/local-ci-dev-ready.sh
 . "$(dirname "$0")/lib/local-ci-dev-ready.sh"
+# 入口の Kong のログから 502 の件数と理由を数える関数 (local_ci_gateway_502。#1779)
+# shellcheck source=lib/local-ci-gateway-502.sh
+. "$(dirname "$0")/lib/local-ci-gateway-502.sh"
 PLAYWRIGHT_WITH_DEPS="${LOCAL_CI_PLAYWRIGHT_WITH_DEPS:-0}"
 
 # security.yml の gitleaks ジョブと同じ版の gitleaks。版を上げるときは security.yml と同時に上げる
@@ -201,7 +209,7 @@ PW_CONSENT_ARGS=(--trace off tests/e2e/legal-consent-gate.spec.ts)
 # UNIT_SLOT_TEST_TIMEOUT_MS は unit の段の tests/local-ci-slot*.test.ts と tests/mobile-easignore-bundle-inputs.test.ts の時間切れの上書き (tests/helpers/local-ci-slot-test-timeout.ts)。
 # UNIT_HEAVY_TEST_TIMEOUT_MS / UNIT_HEAVY_HOOK_TIMEOUT_MS は unit の段の重いファイルの時間切れの上書き (tests/helpers/heavy-unit-test-timeout.ts)。
 # UNIT_TEST_FILE_BUDGET_MS は unit の段のあとで一覧にする 1 ファイルの時間の予算の上書き (scripts/test-speed-ratchet.mjs)
-readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT SUPABASE_IMAGE_REGISTRIES SUPABASE_IMAGE_PULL_ROUNDS SUPABASE_INTERNAL_IMAGE_REGISTRY INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS INTEGRATION_SETUP_RETRY_ATTEMPTS INTEGRATION_SETUP_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
+readonly ENV_ALLOWLIST="PATH HOME USER LOGNAME SHELL TMPDIR TERM XDG_CACHE_HOME XDG_CONFIG_HOME DOCKER_HOST DOCKER_CONTEXT DOCKER_CONFIG PLAYWRIGHT_BROWSERS_PATH HTTP_PROXY HTTPS_PROXY NO_PROXY http_proxy https_proxy no_proxy SUPABASE_CLI SUPABASE_LOCAL_EXCLUDE SUPABASE_LOCAL_REALTIME_VERSION SUPABASE_LOCAL_RETRY_WAIT_UNIT SUPABASE_LOCAL_STOP_RETRY_ATTEMPTS SUPABASE_LOCAL_STOP_RETRY_WAIT_UNIT SUPABASE_LOCAL_KONG_UPSTREAM_KEEPALIVE_POOL_SIZE SUPABASE_IMAGE_REGISTRIES SUPABASE_IMAGE_PULL_ROUNDS SUPABASE_INTERNAL_IMAGE_REGISTRY INTEGRATION_TEST_TIMEOUT_MS INTEGRATION_HOOK_TIMEOUT_MS INTEGRATION_AUTH_RETRY_ATTEMPTS INTEGRATION_AUTH_RETRY_BASE_DELAY_MS INTEGRATION_SETUP_RETRY_ATTEMPTS INTEGRATION_SETUP_RETRY_BASE_DELAY_MS MOBILE_JEST_TEST_TIMEOUT_MS MOBILE_JEST_ASYNC_UTIL_TIMEOUT_MS UNIT_SLOT_TEST_TIMEOUT_MS UNIT_HEAVY_TEST_TIMEOUT_MS UNIT_HEAVY_HOOK_TIMEOUT_MS UNIT_TEST_FILE_BUDGET_MS"
 # 段の中だけで追加で持ち込む変数名 (e2e のパスワード)
 ENV_EXTRA=""
 # 枠を取ったあとに持ち込む変数名 (apply_slot が決める。supabase-local.sh が読む枠と、結合テストが叩くアプリの URL)
@@ -504,6 +512,30 @@ stop_supabase() {
   fi
   if ! clear_own_stack; then
     record "$stage:teardown" RED - - - - - 0 "$(tail_hint "止めたあとも枠 $SLOT の project_id ($SLOT_PROJECT_ID) のコンテナ / ボリュームが残っている ($OWN_STACK_NOTE)" "${SUPA_LOG:-なし}")"
+  fi
+}
+
+# gateway_check <段>: その段で起動したローカル Supabase の入口 (Kong) のログを $ART/<段>-kong.log に残し、
+# Kong が返した 502 の件数と理由を <段>:gateway の行にする (#1779)。0 件なら緑、1 件でもあれば赤。
+# テストが緑でも数える (準備のやり直し (tests/integration/helpers/setup-transient-retry.ts) で救われた 502 も、入口の不具合が
+# 戻ってきた印なので見逃さない)。ローカル Supabase を止める前 (コンテナが残っているうち) に呼ぶ。
+# CI の yml には無い見張り (ローカル CI だけの行。CI の検査の中身は変えない)
+gateway_check() {
+  local stage="$1" kong_log line count reasons
+  kong_log="$ART/$stage-kong.log"
+  if ! docker logs "supabase_kong_$SLOT_PROJECT_ID" >"$kong_log" 2>&1; then
+    record "$stage:gateway" RED - - - - - 0 "$(tail_hint "Kong のログを読めない (docker logs supabase_kong_$SLOT_PROJECT_ID が失敗)" "$kong_log")"
+    return 0
+  fi
+  if ! line="$(local_ci_gateway_502 "$kong_log")"; then
+    record "$stage:gateway" RED - - - - - 0 "$(tail_hint "Kong のログを数えられない" "$kong_log")"
+    return 0
+  fi
+  IFS=$'\t' read -r count reasons <<<"$line"
+  if [ "$count" = 0 ]; then
+    record "$stage:gateway" GREEN - 0 - - - 0 "Kong の 502: 0 件 (ログ: $kong_log)"
+  else
+    record "$stage:gateway" RED - "$count" - - - 0 "Kong の 502: $count 件 (理由: $reasons。ログ: $kong_log。#1779)"
   fi
 }
 
@@ -1384,6 +1416,9 @@ stage_integration() {
   rc=$?
   line=$(parse vitest "$ART/integration-operator.json" "$ART/integration-operator-list.json" "$rc")
   record_parsed integration:operator "$(($(now) - t0))" "$line"
+
+  # 2 本のあいだに入口の Kong が返した 502 を数える (#1779。止める前に読む)
+  gateway_check integration
 
   stop_server
   stop_supabase
