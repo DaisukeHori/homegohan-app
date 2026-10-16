@@ -13,6 +13,8 @@ export function renderOrgInviteExistingEmail(vars: InviteEmailVars): EmailEnvelo
 
   return {
     template: 'org_invite_existing',
+    // 招待のリンク (invite_url = /invite/<token>) に招待のトークンが入る。送れた・届けられなかったあとに送信待ちの行の宛先・件名・本文を伏せる (#1708)
+    contains_secret: true,
     to: vars.email_address,
     from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.scope_name} からメンバー招待が届きました`,

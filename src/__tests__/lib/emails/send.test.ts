@@ -3,6 +3,7 @@ import { EmailEnvelopeSchema, maskEmailAddress, sendEmail, type EmailEnvelope } 
 import { maskEmailAddress as maskEmailAddressInOutbox } from '@/lib/emails/outbox';
 import { EmailSendError, isEmailFailure } from '@/lib/emails/send-result';
 import { DEFAULT_EMAIL_FROM } from '@/lib/site-config';
+import { SECRET_EMAIL_SAMPLES, SECRET_SAMPLE_TOKEN } from '../../../../tests/helpers/secret-email-samples';
 
 // #1193 sendEmail は送信待ち (email_outbox) に登録するだけ (Resend は呼ばない。送るのは worker: outbox.test.ts)。
 // 設計: docs/design/operator/10-logs-and-mail-retry.md §6.3・§12。
@@ -199,6 +200,31 @@ describe('sendEmail: 登録 (送信待ち email_outbox)', () => {
       redact_after_send: true,
     });
   });
+
+  it('contains_secret の封筒は、redactAfterSend を渡さなくても、false を渡しても redact_after_send を立てて登録する (#1708)', async () => {
+    await sendAndSettle({ ...validEnvelope, contains_secret: true });
+    await sendAndSettle({ ...validEnvelope, contains_secret: true }, { redactAfterSend: false });
+    await sendAndSettle(validEnvelope, { redactAfterSend: false });
+
+    expect(mocks.outboxInserts.map((row) => row.redact_after_send)).toEqual([true, true, false]);
+  });
+
+  it.each(SECRET_EMAIL_SAMPLES.map((sample) => [sample.template, sample] as const))(
+    '秘密を含む文面 %s は、呼び出し元が何も渡さなくても redact_after_send を立てて登録する (#1708)',
+    async (template, sample) => {
+      const result = await sendAndSettle(sample.render(RECIPIENT));
+
+      expect(result.ok).toBe(true);
+      expect(mocks.outboxInserts).toHaveLength(1);
+      expect(mocks.outboxInserts[0]).toMatchObject({ template, redact_after_send: true, status: 'queued' });
+      // 送るまでは本文が要るので、登録の時点ではトークンが入っている (伏せるのは送れた・dead のとき: DB の complete / fail)
+      expect(String(mocks.outboxInserts[0].text_body)).toContain(SECRET_SAMPLE_TOKEN);
+      // 行に contains_secret の列は無い (封筒の宣言は redact_after_send に写すだけ)
+      expect(mocks.outboxInserts[0]).not.toHaveProperty('contains_secret');
+      // ログにトークンを残さない
+      expect(loggedText()).not.toContain(SECRET_SAMPLE_TOKEN);
+    },
+  );
 
   it('別々の sendEmail 呼び出しには別の Idempotency-Key を使う (同じ内容のメールを別々に送る正当なケースを止めない)', async () => {
     await sendAndSettle();
@@ -455,6 +481,18 @@ describe('sendEmail: 宛先停止リスト (email_blacklist。#1184)', () => {
     const result = await sendAndSettle(validEnvelope, { redactAfterSend: true });
 
     expect(result.error?.code).toBe('suppressed');
+    expect(mocks.outboxInserts).toEqual([]);
+    expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
+  });
+
+  it('秘密を含む文面 (contains_secret) の登録で宛先が停止リストに載っていれば、行を作らずに suppressed を返す (トークン入りの本文を dead の行に残さない。#1708)', async () => {
+    mocks.lookupEmailSuppression.mockResolvedValue({ status: 'suppressed', reason: 'bounce' });
+
+    for (const sample of SECRET_EMAIL_SAMPLES) {
+      const result = await sendAndSettle(sample.render(RECIPIENT));
+      expect(result.error?.code).toBe('suppressed');
+    }
+
     expect(mocks.outboxInserts).toEqual([]);
     expect(mocks.getSupabaseAdmin).not.toHaveBeenCalled();
   });

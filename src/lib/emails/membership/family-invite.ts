@@ -13,6 +13,8 @@ export function renderFamilyInviteEmail(vars: InviteEmailVars): EmailEnvelope {
 
   return {
     template: 'family_invite',
+    // 招待のリンク (invite_url = /invite/<token>) に招待のトークンが入る。送れた・届けられなかったあとに送信待ちの行の宛先・件名・本文を伏せる (#1708)
+    contains_secret: true,
     to: vars.email_address,
     from: getEmailFrom(),
     subject: `[ほめゴハン] ${vars.inviter_name} 様からご家族グループへの招待`,

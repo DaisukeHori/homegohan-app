@@ -9330,6 +9330,10 @@ export type Database = {
         Args: { p_at: string; p_feature: string; p_user_id: string }
         Returns: undefined
       }
+      record_backup_audit: {
+        Args: { p_action_type: string; p_details: Json }
+        Returns: string
+      }
       record_push_receipt: {
         Args: {
           p_error: string

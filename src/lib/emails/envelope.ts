@@ -19,5 +19,11 @@ export const EmailEnvelopeSchema = z.object({
   // 文面を作る render*Email 関数が必ず入れる (形式は src/__tests__/lib/emails/template-names.test.ts が検査する)。
   // ログの印にすぎないので、ここでは長さなどを検証しない (名前の不備でメールが止まらないように)
   template: z.string().optional(),
+  // 件名・本文に秘密 (招待・本人確認・本人同意のトークンを含むリンクなど、受け取った人だけが使えるもの) を含む文面は true を入れる (#1708)。
+  // sendEmail はこれを見て送信待ちの行に redact_after_send を立てる。送れたとき (sent) と、届けられずに dead になったときに
+  // 宛先・件名・本文が伏せられ、生のトークンが email_outbox に 7 日 (sent)・30 日 (dead) 残らない (cross/15 §3.1 の「生のトークンは保存しない」)。
+  // 宣言は文面を作る render*Email 関数が入れる (呼び出し元ごとの付け忘れを構造で防ぐ。
+  // 宣言の漏れは src/__tests__/lib/emails/secret-templates.test.ts の走査が赤くする)。false は書かない (秘密が無い文面は省く)。Resend には送らない
+  contains_secret: z.literal(true).optional(),
 });
 export type EmailEnvelope = z.infer<typeof EmailEnvelopeSchema>;
