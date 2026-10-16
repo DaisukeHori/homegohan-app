@@ -5,11 +5,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { EmailEnvelope } from '@/lib/emails/envelope';
+import type { SendEmailOptions } from '@/lib/emails/send';
 import { EmailSendError, type SendEmailResult } from '@/lib/emails/send-result';
 import { DSR_ADMIN_PATH, DSR_SETTINGS_PATH, type DsrNotificationRow } from '@/lib/data-subject-requests/core';
 import type { DsrLogger } from '@/lib/data-subject-requests/service';
 
-const sendEmailMock = vi.hoisted(() => vi.fn<(envelope: EmailEnvelope) => Promise<SendEmailResult>>());
+const sendEmailMock = vi.hoisted(() => vi.fn<(envelope: EmailEnvelope, options?: SendEmailOptions) => Promise<SendEmailResult>>());
 vi.mock('@/lib/emails/send', () => ({ sendEmail: sendEmailMock }));
 
 import {
@@ -104,6 +105,8 @@ describe('本人向け 3 通 (本人確認・受付・完了)', () => {
     const envelope = sendEmailMock.mock.calls[0][0];
     expect(envelope.to).toBe(EMAIL);
     expect(envelope.template).toBe(template);
+    // 誰についてのメールか (email_outbox.user_id) に請求した本人を入れる (退会の伏せ字が user_id でも行を見つけられる。#1708)
+    expect(sendEmailMock.mock.calls[0][1]).toStrictEqual({ userId: USER_ID });
     expect(logs.warn).not.toHaveBeenCalled();
   });
 
@@ -320,6 +323,8 @@ describe('運営への知らせ', () => {
     expect(envelope.text).toContain(`${SITE}${DSR_ADMIN_PATH}/${ID}`);
     expect(envelope.text).not.toContain(USER_ID);
     expect(envelope.text).not.toContain(EMAIL);
+    // 運営宛は本人の行ではないので userId を渡さない (渡すと、本人の退会で運営宛の行が伏せられ dead になる)
+    expect(sendEmailMock.mock.calls[0][1]).toStrictEqual({});
     expect(logs.warn).not.toHaveBeenCalled();
   });
 

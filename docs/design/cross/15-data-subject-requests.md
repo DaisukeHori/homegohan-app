@@ -1077,7 +1077,7 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 
 ## 10. 通知のメール
 
-実装は `src/lib/emails/dsr/*.ts` (render*Email。封筒は EmailEnvelope、署名は emailSignature、送信元は getEmailFrom) と `src/lib/data-subject-requests/notifications.ts` (sendEmail を呼ぶ唯一のファイル)。本文に請求の内容 (details) や応答 (response_note) は載せない (メールは転送・盗み見されうる。応答は設定画面で読む)。宛先は auth.users の登録アドレス (service_role の getUserById。ログ・DB には残さない)。
+実装は `src/lib/emails/dsr/*.ts` (render*Email。封筒は EmailEnvelope、署名は emailSignature、送信元は getEmailFrom) と `src/lib/data-subject-requests/notifications.ts` (sendEmail を呼ぶ唯一のファイル)。本文に請求の内容 (details) や応答 (response_note) は載せない (メールは転送・盗み見されうる。応答は設定画面で読む)。宛先は auth.users の登録アドレス (service_role の getUserById。ログには残さない。送信待ち (email_outbox) の行には送るまで宛先と本文が入る: operator/10 §6)。
 
 | template | 宛先 | 件名 | 本文の要点 |
 |---|---|---|---|
@@ -1087,6 +1087,8 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 | `dsr_resolved` | 本人 | 【ほめゴハン】個人情報の請求への対応が完了しました | 種類・受付番号・結果 (対応済み / 対応できず)・設定画面で応答を読む案内・「設定画面を開けない場合はお問い合わせください」(getSupportEmail。凍結中の本人は設定画面に入れないため。S-13) |
 
 - すべて best-effort。送れなくても API は成功を返す (sendEmail が app_logs にマスクした宛先で失敗を残す)。
+- `dsr_verification` は件名・本文に秘密 (確認リンクの生のトークン) を含む文面として、封筒に `contains_secret: true` を入れる (operator/10 §6.7)。`sendEmail` が `redact_after_send` を立て、送れたとき・届けられずに dead になったときに送信待ちの行の宛先・件名・本文が伏せられる (§3.1 の「生のトークンは保存しない」を送信待ちの行でも守る。送るまでの queued の間だけは本文にある)。伏せた行は運営の画面から再送できないので、届かなかったときは本人が「確認メールを再送」で新しいリンクを受け取る。
+- 本人向け 3 通 (`dsr_verification` / `dsr_received` / `dsr_resolved`) は `sendEmail` に `userId` (請求した本人) を渡す。退会の伏せ字 (`prepare_account_deletion` の段 1b) が、登録アドレスを変えたあとでも user_id で行を見つけられるように。運営向けの `dsr_operator_notice` は渡さない (本人の行ではなく、渡すと本人の退会で運営宛の行が伏せられ dead になる)。
 - 送信回数の制限 (invite-throttle) を通さない理由 (tests/email-send-throttle-contract.test.ts の EXEMPT_EMAIL_SENDERS に書く): 宛先は本人の登録アドレスか運営の固定アドレスで、利用者は宛先を指定できない。本人向けの送信は 1 請求あたり最大 DSR_VERIFICATION_MAX_SENDS + 2 通で、create / resend にはレート制限 (カテゴリ dsr) がある。
 - 日時の表示は Asia/Tokyo (account-deleted.ts の DISPLAY_TIME_ZONE と同じ書き方)。
 

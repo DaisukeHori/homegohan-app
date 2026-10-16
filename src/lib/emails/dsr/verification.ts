@@ -24,6 +24,8 @@ export interface DsrVerificationEmailVars {
 export function renderDsrVerificationEmail(vars: DsrVerificationEmailVars): EmailEnvelope {
   return {
     template: 'dsr_verification',
+    // 本人確認のリンク (verify_url) に生のトークンが入る (DB には sha256 だけを置く約束: cross/15 §3.1)。送れた・届けられなかったあとに送信待ちの行の宛先・件名・本文を伏せる (#1708)
+    contains_secret: true,
     to: vars.to_email,
     from: getEmailFrom(),
     subject: '【ほめゴハン】個人情報の請求の本人確認のお願い',

@@ -12,6 +12,9 @@
  *   その判定 (isEmailFailure / emailFailureReasons) は send-result.ts にある。
  * - 失敗の記録: createLogger('email') で app_logs に残す。残すのは文面の名前 (template)・マスクした宛先・エラーコードだけ。
  *   宛先のメールアドレス・件名・本文は残さない (表 email_outbox の中だけにある)。
+ * - 秘密を含む文面 (招待・本人確認・本人同意のトークンを含むリンク。封筒の contains_secret が true。#1708) は、
+ *   行の redact_after_send を立てて登録する。送れたとき (sent) と届けられずに dead になったときに、DB の RPC
+ *   (complete_email_outbox / fail_email_outbox) が宛先・件名・本文を伏せる。宣言は文面 (render*Email) の側にあり、呼び出し元は何も渡さなくてよい。
  * - 再試行: worker が行う。一時的な失敗 (429 / 5xx / 通信エラー) は時間をおいて最大 EMAIL_OUTBOX_MAX_ATTEMPTS 回
  *   (既定 6 回。間隔 1 分 → 5 分 → 15 分 → 1 時間 → 4 時間) 送り、使い切ったら届けられなかった (dead) として残す。
  *   400 / 401 / 403 / 422 などは何度送っても直らないので、1 回目で dead にする (src/lib/emails/outbox.ts)。
@@ -59,7 +62,10 @@ export interface SendEmailOptions {
   idempotencyKey?: string;
   /** 誰についてのメールか (email_outbox.user_id)。退会時の伏せ字と画面の絞り込みに使う。分かる呼び出し元だけ渡す */
   userId?: string;
-  /** 送れたとき・届けられずに dead になったときに宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない (退会の完了メール)。既定 false */
+  /**
+   * 送れたとき・届けられずに dead になったときに宛先・件名・本文を伏せ、登録時に停止リストに当たったら行を作らない (退会の完了メール)。既定 false。
+   * 封筒の contains_secret が true (件名・本文に秘密を含む文面。#1708) なら、ここを渡さなくても同じく伏せる (false を渡しても伏せる)
+   */
   redactAfterSend?: boolean;
 }
 
@@ -113,7 +119,8 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
   }
 
   // 3. 停止リスト。載っていれば dead の行を残し (best-effort)、現行と同じ suppressed の失敗を返す。引けなければ登録して worker に任せる。
-  //    redactAfterSend (退会の完了メール) の行は残さない: 宛先を伏せる経路 (complete / fail) を通らず、退会した本人の生のアドレスが残るため (R-10)
+  //    redact_after_send の行 (退会の完了メール・秘密を含む文面) は残さない: 宛先・件名・本文を伏せる経路 (complete / fail) を通らず、
+  //    退会した本人の生のアドレス (R-10) や本文の生のトークン (#1708) が残るため
   const suppression = await lookupEmailSuppression(v.to);
   const row = {
     template: v.template?.slice(0, OUTBOX_TEMPLATE_MAX_LENGTH) || UNKNOWN_EMAIL_TEMPLATE,
@@ -125,7 +132,8 @@ export async function sendEmail(envelope: EmailEnvelope, options: SendEmailOptio
     html_body: v.html ?? null,
     user_id: options.userId ?? null,
     idempotency_key: options.idempotencyKey ?? randomUUID(),
-    redact_after_send: options.redactAfterSend ?? false,
+    // 秘密を含む文面 (contains_secret) は、呼び出し元が redactAfterSend を渡し忘れても伏せる (#1708)
+    redact_after_send: options.redactAfterSend === true || v.contains_secret === true,
   };
   if (suppression.status === 'suppressed') {
     logger.warn('宛先停止リストに載っている宛先のため、メールを送信しませんでした', {
