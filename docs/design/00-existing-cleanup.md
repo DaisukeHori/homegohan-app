@@ -156,7 +156,7 @@ apps/mobile/                    # WebView + ネイティブ機能、再利用
 ```
 supabase auth (auth.users, auth.identities)  # 既存維持
 src/lib/supabase/                              # クライアント設定
-src/middleware.ts                              # セッション同期
+src/proxy.ts                                   # セッション同期 (#1744 で src/middleware.ts から改名)
 ```
 
 ## 削除手順

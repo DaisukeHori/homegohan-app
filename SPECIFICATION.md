@@ -2300,14 +2300,14 @@ const SEASONAL_EVENTS: SeasonalEvent[] = [
 
 - **メール/パスワード認証**: Supabase Auth
 - **Google OAuth**: Supabase Auth + Google Provider
-- **セッション管理**: Supabase SSR + Next.js Middleware
+- **セッション管理**: Supabase SSR + Next.js の proxy (Next 16 で middleware から改名。Node.js の runtime で動く。#1744)
 
-### 9.2 ミドルウェア
+### 9.2 ミドルウェア (proxy)
 
-**ファイル:** `middleware.ts`
+**ファイル:** `src/proxy.ts` (要約。実物は CSP の nonce も付ける)
 
 ```typescript
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   return await updateSession(request);
 }
 

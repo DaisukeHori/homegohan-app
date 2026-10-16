@@ -256,12 +256,12 @@ export const ratelimiters = {
 ```
 
 ```typescript
-// src/middleware.ts (Edge Middleware でレート制限)
+// src/proxy.ts (proxy でレート制限。#1744 で src/middleware.ts から改名し、Node.js の runtime で動く)
 import { ratelimiters } from '@/lib/ratelimit';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const ip = request.ip ?? request.headers.get('x-forwarded-for') ?? 'unknown';
   const path = request.nextUrl.pathname;
 

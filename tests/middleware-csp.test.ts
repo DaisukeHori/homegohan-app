@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * #1169: src/middleware.ts が、どの分岐の応答にも nonce つきの CSP を付け、同じ方針をリクエストヘッダーにも載せて
+ * #1169: src/proxy.ts が、どの分岐の応答にも nonce つきの CSP を付け、同じ方針をリクエストヘッダーにも載せて
  * Next (と画面の getCspNonce) へ渡すことの検査 (docs/design/cross/18-csp-nonce.md §4・§12.1・§15)。
  *
  * updateSession (lib/supabase/middleware.ts) はモックにし、既存の分岐が返す応答の形 (next / redirect / 403 JSON / 503 HTML / 500、
@@ -22,7 +22,7 @@ type UpdateSessionBranch =
 const { session } = vi.hoisted(() => ({
   session: {
     branch: 'next' as UpdateSessionBranch,
-    /** updateSession が呼ばれた時点のリクエストヘッダー (middleware が載せた値) */
+    /** updateSession が呼ばれた時点のリクエストヘッダー (proxy が載せた値) */
     seenHeaders: null as Headers | null,
   },
 }));
@@ -70,7 +70,7 @@ vi.mock('@/lib/supabase/middleware', () => ({
   },
 }));
 
-const { middleware } = await import('@/middleware');
+const { proxy } = await import('@/proxy');
 const { CSP_HEADER, CSP_NONCE_HEADER, CSP_REPORT_ONLY_HEADER, cspDirectivesOf } = await import('@/lib/security/csp');
 
 function request(path: string, headers: Record<string, string> = {}): NextRequest {
@@ -102,9 +102,9 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe('src/middleware.ts の CSP (#1169)', () => {
+describe('src/proxy.ts の CSP (#1169)', () => {
   it('応答に Content-Security-Policy が付き、script-src の nonce が request header の x-csp-nonce と同じ', async () => {
-    const response = await middleware(request('/home'));
+    const response = await proxy(request('/home'));
     const policy = response.headers.get(CSP_HEADER);
     const nonce = nonceOf(policy);
 
@@ -115,7 +115,7 @@ describe('src/middleware.ts の CSP (#1169)', () => {
   });
 
   it('request header の content-security-policy にも同じ方針が載る (Next が読む経路)', async () => {
-    const response = await middleware(request('/'));
+    const response = await proxy(request('/'));
     const policy = response.headers.get(CSP_HEADER);
 
     expect(session.seenHeaders?.get(CSP_HEADER)).toBe(policy);
@@ -132,7 +132,7 @@ describe('src/middleware.ts の CSP (#1169)', () => {
     ['internal-error', STATUS_INTERNAL_ERROR],
   ] as const)('updateSession が redirect / 403 JSON / 503 HTML / 500 を返しても CSP が付く (%s)', async (branch, status) => {
     session.branch = branch;
-    const response = await middleware(request('/home'));
+    const response = await proxy(request('/home'));
 
     expect(response.status).toBe(status);
     const nonce = nonceOf(response.headers.get(CSP_HEADER));
@@ -141,7 +141,7 @@ describe('src/middleware.ts の CSP (#1169)', () => {
 
   it('updateSession が NextResponse.next({ request }) を作り直しても (x-legal-consent-pending を足す経路) request header の nonce は変わらない', async () => {
     session.branch = 'consent-pending';
-    const response = await middleware(request('/home'));
+    const response = await proxy(request('/home'));
     const nonce = nonceOf(response.headers.get(CSP_HEADER));
 
     expect(forwardedRequestHeader(response, LEGAL_CONSENT_PENDING_HEADER)).toBe('1');
@@ -150,16 +150,16 @@ describe('src/middleware.ts の CSP (#1169)', () => {
   });
 
   it('2 回の要求で nonce が違う', async () => {
-    const first = nonceOf((await middleware(request('/'))).headers.get(CSP_HEADER));
-    const second = nonceOf((await middleware(request('/'))).headers.get(CSP_HEADER));
+    const first = nonceOf((await proxy(request('/'))).headers.get(CSP_HEADER));
+    const second = nonceOf((await proxy(request('/'))).headers.get(CSP_HEADER));
 
     expect(first).toBeDefined();
     expect(second).toBeDefined();
     expect(first).not.toBe(second);
   });
 
-  it('クライアントが送った x-csp-nonce・content-security-policy・content-security-policy-report-only は捨てられ、middleware の値だけが残る', async () => {
-    const response = await middleware(
+  it('クライアントが送った x-csp-nonce・content-security-policy・content-security-policy-report-only は捨てられ、proxy の値だけが残る', async () => {
+    const response = await proxy(
       request('/', {
         [CSP_NONCE_HEADER]: 'evil',
         'content-security-policy': "script-src 'nonce-evil'",
@@ -180,7 +180,7 @@ describe('src/middleware.ts の CSP (#1169)', () => {
 
   it('CSP_REPORT_ONLY=on なら応答と request header の名前が Content-Security-Policy-Report-Only になり、Content-Security-Policy は付かない', async () => {
     vi.stubEnv('CSP_REPORT_ONLY', 'on');
-    const response = await middleware(request('/', { 'content-security-policy': "script-src 'nonce-evil'" }));
+    const response = await proxy(request('/', { 'content-security-policy': "script-src 'nonce-evil'" }));
     const policy = response.headers.get(CSP_REPORT_ONLY_HEADER);
     const nonce = nonceOf(policy);
 
@@ -193,23 +193,23 @@ describe('src/middleware.ts の CSP (#1169)', () => {
 
   it("NODE_ENV=development なら 'unsafe-eval' が付く", async () => {
     vi.stubEnv('NODE_ENV', 'development');
-    const devPolicy = (await middleware(request('/'))).headers.get(CSP_HEADER) ?? '';
+    const devPolicy = (await proxy(request('/'))).headers.get(CSP_HEADER) ?? '';
     vi.stubEnv('NODE_ENV', 'production');
-    const prodPolicy = (await middleware(request('/'))).headers.get(CSP_HEADER) ?? '';
+    const prodPolicy = (await proxy(request('/'))).headers.get(CSP_HEADER) ?? '';
 
     expect(cspDirectivesOf(devPolicy).get('script-src')).toContain("'unsafe-eval'");
     expect(cspDirectivesOf(prodPolicy).get('script-src')).not.toContain("'unsafe-eval'");
   });
 
   it('?mode=app の is_native_app Cookie は今までどおり付く', async () => {
-    const appMode = await middleware(request('/home?mode=app'));
+    const appMode = await proxy(request('/home?mode=app'));
     expect(appMode.cookies.get('is_native_app')?.value).toBe('1');
     expect(appMode.headers.get(CSP_HEADER)).not.toBeNull();
 
-    const alreadySet = await middleware(request('/home?mode=app', { cookie: 'is_native_app=1' }));
+    const alreadySet = await proxy(request('/home?mode=app', { cookie: 'is_native_app=1' }));
     expect(alreadySet.cookies.get('is_native_app')).toBeUndefined();
 
-    const browser = await middleware(request('/home'));
+    const browser = await proxy(request('/home'));
     expect(browser.cookies.get('is_native_app')).toBeUndefined();
   });
 });

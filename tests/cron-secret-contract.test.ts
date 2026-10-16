@@ -188,7 +188,7 @@ describe("Next.js の cron シークレット (#1196)", () => {
     expect(otherUses, "値を読むのは src/lib/cron-auth.ts だけ。env.ts には名前を一覧のキーとして書く").toEqual([]);
   });
 
-  it("CC-5: src/lib/cron-auth.ts は共通の checkCronSecret を使い、node:crypto には頼らない (Edge Runtime のルートからも呼ぶ)", () => {
+  it("CC-5: src/lib/cron-auth.ts は共通の checkCronSecret を使い、node:crypto には頼らない (照合は Edge Functions と共通の 1 つの実装)", () => {
     const text = readText(NEXT_CRON_AUTH_FILE);
     expect(text).toMatch(/from\s+'\.\.\/\.\.\/supabase\/functions\/_shared\/cron-secret'/);
     expect(callsTo(parse(NEXT_CRON_AUTH_FILE), "checkCronSecret").length).toBe(1);

@@ -150,7 +150,7 @@ describe('判定の本体: decideAiConsent / runAiConsentCheck', () => {
 // ─────────────────────────────────────────────
 
 /**
- * route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・middleware) で、AI に届くものの全数と理由。
+ * route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・proxy) で、AI に届くものの全数と理由。
  * ここに無いのに AI に届くファイルができたら、一覧に載っていない入口 (サーバーアクションなど) の疑い
  */
 const NON_ROUTE_FILES_REACHING_AI: Record<string, string> = {};
@@ -189,10 +189,10 @@ describe('送る経路の一覧 (棚卸し)', () => {
     expect(reachesAi(login, new Set([path.join(ROOT, 'src/lib/env.ts')]))).toBe(false);
   });
 
-  it('route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・middleware) は、AI へ送るコードに届かない', () => {
+  it('route ハンドラ以外のファイル (ページ・レイアウト・サーバーアクション・proxy) は、AI へ送るコードに届かない', () => {
     const others = [
       ...listFiles(path.join(ROOT, 'src/app'), (name) => /\.(ts|tsx)$/.test(name) && !/^route\.tsx?$/.test(name)),
-      ...['src/middleware.ts', 'middleware.ts'].map((file) => path.join(ROOT, file)).filter((file) => fs.existsSync(file)),
+      ...['src/proxy.ts', 'proxy.ts'].map((file) => path.join(ROOT, file)).filter((file) => fs.existsSync(file)),
     ]
       .filter((file) => reachesAi(file))
       .map(rel)

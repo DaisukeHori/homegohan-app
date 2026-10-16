@@ -508,7 +508,7 @@ test("E-2: /menus/weekly に再訪した際に isGenerating が残留しない",
 /**
  * F-1: Production の response headers に Content-Security-Policy が存在すること。
  *
- * CSP は src/middleware.ts が毎リクエスト nonce つきで付ける (方針の正本は src/lib/security/csp.ts。#1169)。
+ * CSP は src/proxy.ts が毎リクエスト nonce つきで付ける (方針の正本は src/lib/security/csp.ts。#1169)。
  * Vercel のデフォルトでは CSP は付与されないので、無ければ XSS への備えが無い。
  */
 test("F-1: / のレスポンスに Content-Security-Policy header が存在する", async ({
@@ -519,7 +519,7 @@ test("F-1: / のレスポンスに Content-Security-Policy header が存在す�
   if (!csp) {
     throw new Error(
       "Content-Security-Policy header が存在しない。\n" +
-      "src/middleware.ts が src/lib/security/csp.ts の方針を付けているか確かめる。\n" +
+      "src/proxy.ts が src/lib/security/csp.ts の方針を付けているか確かめる。\n" +
       "XSS 攻撃に対して無防備な状態。",
     );
   }

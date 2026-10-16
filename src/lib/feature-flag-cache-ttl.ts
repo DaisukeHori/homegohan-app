@@ -10,7 +10,7 @@
  * 正の整数として読むのは、前後の空白を除いた値が 10 進の数字だけ (先頭は 1〜9) のときだけ。
  * Number() が受け付ける '1e3'・'0x7D0'・'2000.0'・'+2000' のような表記は、正の整数のミリ秒の書き方ではないので既定値にする (#1535)。
  *
- * middleware (Edge Runtime) からも読むので、何も import しない (zod を持つ src/lib/env.ts に到達させない)。
+ * 全リクエストの前に動く proxy (src/proxy.ts) からも読むので、何も import しない (zod を持つ src/lib/env.ts に到達させない)。
  * この変数を読むのはこのファイルだけ (src/lib/env.ts の一覧の readOnlyBy)。
  */
 

@@ -566,7 +566,7 @@ logger.error('payment_failed を処理できなかった', error, {
   `'self'` で足り、CSP は変えていない。読み込み先と `'self'` は `tests/speed-insights-1179.test.tsx` が検査する (設定が無いときの既定値と、設定が渡ったときの両方)。
   実際の送信先は検査できないので、デプロイ後に、ブラウザの開発者ツールで `script[data-sdkn]` の `src` と計測値の送信先を見て、
   未ログインでも 2xx になること、コンソールに CSP 違反が出ていないことを確かめる。
-- 認証ミドルウェア: `src/middleware.ts` の matcher は `/_vercel/` 以下を対象から外してある (`tests/speed-insights-middleware-1179.test.ts`)。
+- 認証ミドルウェア: `src/proxy.ts` の matcher は `/_vercel/` 以下を対象から外してある (`tests/speed-insights-middleware-1179.test.ts`)。
   Vercel 上で有効にした機能のパスは、上のとおり Vercel がミドルウェアより前に応答するので、この除外が Vercel 上の計測を守っているわけではない。
   効くのは、Vercel が応答しないとき (有効にしていない機能、存在しないパス、`next start` で Vercel の外に置いたとき) に、
   `/_vercel/*` の応答が `/login` の HTML にすり替わるのを防ぐ場面。害は無いので残している。

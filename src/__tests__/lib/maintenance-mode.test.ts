@@ -11,11 +11,11 @@ const mockIsFeatureEnabled = vi.fn(async (_key: string, _userId?: string, _optio
 vi.mock('@/lib/feature-flags', () => ({
   isFeatureEnabled: (key: string, userId?: string, options?: unknown) => mockIsFeatureEnabled(key, userId, options),
 }));
-// @/middleware を import するだけなので、Supabase のクライアントは作らせない
+// @/proxy を import するだけなので、Supabase のクライアントは作らせない
 vi.mock('@supabase/ssr', () => ({ createServerClient: vi.fn() }));
 
 import { serviceUnavailableMessageOfBody } from '@homegohan/shared';
-import { config } from '@/middleware';
+import { config } from '@/proxy';
 import {
   MAINTENANCE_FLAG_TIMEOUT_MS,
   MAINTENANCE_MESSAGE,
