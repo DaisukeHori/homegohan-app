@@ -11,10 +11,6 @@
  *   - 同じ食事を大文字小文字だけ変えて 2 回送ると、DB に触れる前に重複として 400
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
-
-// route を丸ごと読み込むので、負荷の高い機械で vitest の既定の時間切れを超えうる (根拠と上書きは tests/helpers/heavy-unit-test-timeout.ts)
-applyHeavyUnitTestTimeout();
 
 const h = vi.hoisted(() => ({
   getUser: vi.fn(),
