@@ -8,10 +8,9 @@ import {
   ScrollView,
   StyleSheet,
   Switch,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { Card, SectionHeader } from "../../../src/components/ui";
 import { getApi } from "../../../src/lib/api";

@@ -13,7 +13,8 @@
 //    (Supabase の 2 つは lib/supabase.ts も) が端末のログ (console.error) に残すので、調べる人はそちらで分かる。
 //  - 利用者が直せる問題ではない (ビルドを作り直す必要がある) ので、再試行のボタンは出さない。
 
-import { Text, View } from "react-native";
+import { View } from "react-native";
+import { Text } from "./ui/Text";
 
 import { colors, radius, spacing } from "../theme";
 

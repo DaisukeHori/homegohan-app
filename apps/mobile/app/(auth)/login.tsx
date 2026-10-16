@@ -4,7 +4,8 @@ import { Link, router, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 import { useState, useEffect } from "react";
-import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, TextInput, View } from "react-native";
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
+import { Text, TextInput } from "../../src/components/ui/Text";
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";

@@ -4,7 +4,8 @@
 // CONFETTI_PARTICLE_COUNT=300, CONFETTI_DURATION_MS=3000
 
 import React, { useEffect, useMemo } from 'react';
-import { Dimensions, StyleSheet, Text, View } from 'react-native';
+import { Dimensions, StyleSheet, View } from 'react-native';
+import { Text } from '../components/ui/Text';
 import Animated, {
   Easing,
   useAnimatedStyle,

@@ -7,10 +7,9 @@ import {
   Modal,
   Pressable,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../ui/Text";
 
 import { colors, radius, shadows, spacing } from "../../theme";
 import { useV4MenuGeneration } from "../../hooks/useV4MenuGeneration";

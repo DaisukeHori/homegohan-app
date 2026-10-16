@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Text } from "../../src/components/ui/Text";
 import { normalizeProfileName } from "@homegohan/shared";
 
 import { Card, ProgressBar } from "../../src/components/ui";
