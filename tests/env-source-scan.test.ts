@@ -9,7 +9,7 @@
  *   1. 本番コードに `process.env.X!` / `process.env['X']!` を書かない (欠けていれば getter が MissingEnvError を投げる。message は固定の文で、変数名はサーバーのログに残る)
  *   2. env-required.ts は何も import しない / env.ts の静的な import は zod だけ
  *      (ブラウザ・Edge に zod を持ち込まない。scripts/check-env.mjs が Node.js から直接読めるようにする)
- *   3. ブラウザ向け (lib/supabase/client.ts) と Edge Runtime (middleware・cron route) のコードは env.ts に到達しない
+ *   3. ブラウザ向け (lib/supabase/client.ts)・全リクエストの前に動く proxy (src/proxy.ts)・毎分動く cron route のコードは env.ts に到達しない
  *   4. 一覧の全変数が .env.example に書かれている / check:env の導線がそろっている
  *   5. 必須の変数名を、例外 (new XxxError(...) / throw) や応答 (NextResponse.json / Response.json / new Response) の
  *      文字列に書かない。書くと 500 の本文に変数名が出うる (#1172)。以前 account/delete が自前の取り出しで
@@ -561,7 +561,7 @@ describe('env-required.ts と env.ts の依存 (#1182)', () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. ブラウザ・Edge のコードが env.ts (zod) に到達しない
+// 3. ブラウザ・proxy・cron route のコードが env.ts (zod) に到達しない
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** 他のファイルへの import を、リポジトリの中のファイルに解決する (node_modules などは null) */
@@ -611,14 +611,16 @@ function importChain(seen: Map<string, string | null>, target: string): string {
   return chain.join(' -> ');
 }
 
-describe('ブラウザ・Edge Runtime のコードは zod を持つ src/lib/env.ts に到達しない (#1182)', () => {
+describe('ブラウザ・proxy・cron route のコードは zod を持つ src/lib/env.ts に到達しない (#1182)', () => {
   // zod は最小のスキーマでも minify 後に約 59 KB (gzip 約 16 KB)。ブラウザ向けのバンドルは全ページの JS に、
-  // Edge のバンドルは middleware の全リクエストに効く。必須の変数は何も import しない env-required.ts から取り出す
+  // proxy のバンドルは全リクエストの前に読み込まれる。必須の変数は何も import しない env-required.ts から取り出す。
+  // #1744 で middleware (Edge Runtime) を proxy (Node.js runtime) に、cron route を Edge から Node.js に移したが、
+  // 全リクエスト・毎分の呼び出しで読み込むコードを軽く保つため、到達しないことは変えずに見張る
   const ENTRIES = [
     { file: 'lib/supabase/client.ts', why: 'ブラウザの Supabase クライアント (ほぼ全ページの JS に入る)' },
-    { file: 'lib/supabase/middleware.ts', why: 'src/middleware.ts が呼ぶ Edge Runtime のコード' },
-    { file: 'src/middleware.ts', why: 'Edge Runtime の middleware' },
-    { file: 'src/app/api/cron/process-menu-queue/route.ts', why: "export const runtime = 'edge' の route" },
+    { file: 'lib/supabase/middleware.ts', why: 'src/proxy.ts が呼ぶ、全リクエストの前に動くコード' },
+    { file: 'src/proxy.ts', why: '全リクエストの前に動く proxy (Next 16。旧 middleware)' },
+    { file: 'src/app/api/cron/process-menu-queue/route.ts', why: 'Vercel Cron が毎分呼ぶ route' },
   ];
   const ENV_FILE = path.join(ROOT, 'src/lib/env.ts');
 

@@ -12,7 +12,7 @@
  *   3. 許可リストの中身を固定する
  *   4. 許可リストは、凍結中・メンテナンス中に middleware が通す /api (FROZEN_ALLOWED_API_PATHS・通知のトークンの claim (#1636)・
  *      isMaintenanceExemptPath) をすべて含む (判定の関数での包含と、全 route を middleware に通したときに同意の 403 が出ないこと)
- *   5. src/middleware.ts の matcher が /api で外すのは api/health$ だけ
+ *   5. src/proxy.ts の matcher が /api で外すのは api/health$ だけ
  * 限界 (見ないもの): アプリが Supabase を直接読む経路・Edge Functions を直接呼ぶ経路・/api の外の route handler・
  *   route の中の分岐 (動的な区間は固定の値で置き換える)・本番の LEGAL_CONSENT_ENFORCE の実値 (§6.13 の限界の表)。
  *
@@ -73,7 +73,7 @@ vi.mock('@/lib/feature-flags', () => ({
 }));
 
 import { updateSession } from '../middleware';
-import { config } from '@/middleware';
+import { config } from '@/proxy';
 import { stubSupabasePublicEnv } from './supabase-public-env';
 
 const PROFILE_COLUMNS_WITH_LEGAL =
@@ -318,7 +318,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
     }
   });
 
-  it('src/middleware.ts の matcher が /api で外すのは api/health$ だけ', () => {
+  it('src/proxy.ts の matcher が /api で外すのは api/health$ だけ', () => {
     expect(runsMiddleware('/api/health')).toBe(false);
     const skipped = API_ROUTES.filter((route) => !runsMiddleware(route.path)).map((route) => route.path);
     expect(skipped).toEqual(['/api/health']);

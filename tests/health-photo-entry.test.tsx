@@ -294,7 +294,7 @@ describe('#1141 B: /meals/new は ?mode= の指定でモード選択を飛ばす
     expect(text()).toContain('体重計や体組成計のディスプレイを撮影してください');
   });
 
-  // mode=app はネイティブアプリの WebView が全 URL に付ける値 (src/middleware.ts / useNativeAppMode)。
+  // mode=app はネイティブアプリの WebView が全 URL に付ける値 (src/proxy.ts / useNativeAppMode)。
   // constructor / toString / __proto__ は、オブジェクトの `in` 判定だと「ある」と誤判定される値。
   it.each([
     ['app', 'ネイティブアプリの WebView が付ける mode=app'],
