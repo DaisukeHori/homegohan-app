@@ -139,7 +139,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Upload failed' }, { status: 500 });
     }
 
-    // 公開URLを取得
+    // 保存形 (公開 URL と同じ形の識別子。バケットは非公開なので、そのままでは読めない。表示は署名付き URL)
     const { data: { publicUrl } } = supabase.storage
       .from('fridge-images')
       .getPublicUrl(fileName);

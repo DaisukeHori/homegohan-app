@@ -4,8 +4,7 @@
  *   S-1: 本人の写真 (本人のフォルダ・旧パス meals/<本人>/・本人の献立の generated/) には署名し、その URL で画像を取れる
  *   S-2: 他人の写真 (他人のフォルダ・他人の献立の generated/) には署名しない
  *   S-3: 無いファイルは null
- *   S-4: バケットを非公開にしても (段 2)、署名付き URL では表示でき、公開 URL では表示できない。
- *        このテストの中だけで fridge-images を非公開にし、終わったら公開に戻す (結合テストはファイルもテストも 1 本ずつ流れる)
+ *   S-4: バケットは migration で非公開 (段 2)。公開 URL では読めず、署名付き URL では読めることを見る
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/photo-signed-urls.test.ts
@@ -94,8 +93,6 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // S-4 が途中で落ちても、公開に戻しておく (ほかの結合テストは公開バケットを前提にしている)
-  await srAdmin.storage.updateBucket(BUCKET, { public: true });
   if (uploadedPaths.length > 0) await srAdmin.storage.from(BUCKET).remove(uploadedPaths);
   if (dailyMealIds.length > 0) {
     await srAdmin.from('planned_meals').delete().in('daily_meal_id', dailyMealIds);
@@ -135,16 +132,9 @@ describe('signOwnedPhotoUrls (実物の Storage)', () => {
     expect(result.signFailures).toBe(1);
   });
 
-  it('S-4: バケットを非公開にしても署名付き URL では表示でき、公開 URL では表示できない', async () => {
-    const { error } = await srAdmin.storage.updateBucket(BUCKET, { public: false });
-    expect(error).toBeNull();
-    try {
-      const { signedUrls } = await signOwnedPhotoUrls(srAdmin, me, [urls.own], TEST_TTL_SECONDS);
-      expect((await fetch(signedUrls[urls.own]!)).status).toBe(HTTP_OK);
-      expect((await fetch(urls.own)).status).not.toBe(HTTP_OK);
-    } finally {
-      await srAdmin.storage.updateBucket(BUCKET, { public: true });
-    }
-    expect((await fetch(urls.own)).status).toBe(HTTP_OK);
+  it('S-4: バケットは非公開で、署名付き URL では表示でき、公開 URL では表示できない', async () => {
+    const { signedUrls } = await signOwnedPhotoUrls(srAdmin, me, [urls.own], TEST_TTL_SECONDS);
+    expect((await fetch(signedUrls[urls.own]!)).status).toBe(HTTP_OK);
+    expect((await fetch(urls.own)).status).not.toBe(HTTP_OK);
   });
 });

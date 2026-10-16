@@ -151,6 +151,7 @@ export async function POST(request: Request) {
       return internalError('POST /api/ai/image/generate', uploadError, { userId: user.id });
     }
 
+    // 保存形 (公開 URL と同じ形の識別子。バケットは非公開なので、そのままでは読めない。表示は署名付き URL)
     const { data: { publicUrl } } = supabase.storage
       .from(bucketName)
       .getPublicUrl(fileName);
