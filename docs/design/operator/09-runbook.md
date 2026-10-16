@@ -201,6 +201,16 @@ curl -X POST https://homegohan.app/api/cron/trial-ending-reminder \
   -H "Authorization: Bearer ${CRON_SECRET}"
 ```
 
+### 5.4 届けられなかったメールの再送 (#1193・#1708)
+
+運用メール「届けられなかったメールがあります」が届いたとき、またはメールが届かないという問い合わせがあったとき。
+
+1. super_admin でログインし、`/super-admin/email-outbox` (左メニュー「運用 > メール送信」) を開く (既定で「届けられなかった」行を新しい順に出す)
+2. 行の「失敗」(`last_error_code`・HTTP の状態・文面) で原因を見る。送信元ドメインが未検証 (`validation_error` / 403) なら `docs/operations/email-domain.md`、鍵の誤り (`invalid_api_key` / 401) なら `RESEND_API_KEY` を先に直す
+3. 原因を直したら、行の [再送] を押す (確認のダイアログは無い。1 行ずつ。一括の再送は無い)。行は「送信待ち」になり、次の送信の処理 (1 分ごと) で送られる。操作は監査ログ (`super_admin.email_outbox.requeue`) に残る
+4. 宛先を伏せた行 (退会した人宛・招待などの秘密を含む文面の送信後) は再送できない。作成から 7 日を超えた行は再送しても `expired` で届かない。どちらも、招待などを画面から出し直す
+5. 運用メール自身 (template が `ops_` で始まる) が届けられなかった場合は通知が来ないので、`OPS_ALERT_EMAIL` の宛先と停止リストをこの画面で確かめる (`10-logs-and-mail-retry.md` §8.3)
+
 ---
 
 ## 6. deprecated プラン ロールバック手順
