@@ -34,6 +34,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -183,10 +184,21 @@ async function familyInviteToken(rep: TestUser, familyId: string, email: string)
   return token;
 }
 
+/**
+ * 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)。どの組織のメンバーでもない作り物で、最初に組織を作るときに 1 人だけ作る。
+ * テストの利用者を owner_id に入れない (招待の承諾は「別の組織の owner_id」を IS_ORG_OWNER で止めるので、検査の前提が変わる)。
+ * afterAll で組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+ */
+let orgOwnerId: string | null = null;
+async function placeholderOrgOwner(): Promise<string> {
+  orgOwnerId ??= await createPlaceholderOrgOwner(srAdmin, '1273');
+  return orgOwnerId;
+}
+
 async function createOrg(label: string, totalLicenses: number): Promise<string> {
   const { data: org, error } = await srAdmin
     .from('organizations')
-    .insert({ name: `#1273 ${label} ${TS}` })
+    .insert({ name: `#1273 ${label} ${TS}`, owner_id: await placeholderOrgOwner() })
     .select('id')
     .single();
   if (error || !org) throw new Error(`organizations ${label}: ${error?.message}`);
@@ -294,6 +306,8 @@ afterAll(async () => {
     await srAdmin.from('org_license_pools').delete().eq('organization_id', id);
     await srAdmin.from('organizations').delete().eq('id', id);
   }
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   for (const id of createdFamilyIds) {
     await srAdmin.from('membership_audit').delete().eq('scope_id', id);
     await srAdmin.from('family_groups').delete().eq('id', id); // family_members / family_invites は CASCADE

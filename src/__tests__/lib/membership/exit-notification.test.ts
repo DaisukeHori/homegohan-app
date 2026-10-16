@@ -89,7 +89,7 @@ describe('read*Notice: 所属先の情報を読む (RPC の前に呼ぶ)', () =>
     expect(log.warn).not.toHaveBeenCalled();
   });
 
-  it('組織: オーナーが未設定 (owner_id が NULL) なら、名前だけ返し、通知先は無し。警告は出さない', async () => {
+  it('組織: owner_id が NULL で読めた (列は NOT NULL なので通常は起きない・防御) なら、名前だけ返し、通知先は無し。警告は出さない', async () => {
     const supabase = clientReturning({ data: { name: '株式会社ほめゴハン', owner_id: null }, error: null });
 
     await expect(readOrganizationNotice(supabase, ORG_ID, logger())).resolves.toEqual({

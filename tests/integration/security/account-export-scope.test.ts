@@ -20,6 +20,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
+import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { ACCOUNT_EXPORT_TABLES } from '@/lib/account-export-tables';
 import { generateAccountExport, type AccountExportSupabase } from '@/lib/account-export';
 
@@ -285,6 +286,9 @@ interface ExportJson {
   summary: { complete: boolean; row_counts: Record<string, number>; truncated_tables: unknown[]; skipped_tables: unknown[] };
 }
 
+/** 組織の持ち主 (どの組織のメンバーでもない)。afterAll で組織の後に消す */
+let orgOwnerId = '';
+
 beforeAll(async () => {
   [A, B, STAFF, LIMITED, PAGER] = await Promise.all([
     createUser('A'),
@@ -295,7 +299,9 @@ beforeAll(async () => {
   ]);
 
   // 共有の行 (組織 + チャレンジ / 家族 / クーポン / お知らせ)
-  const org = await insert('organizations', { name: `ORG-${RUN}` });
+  // 組織の持ち主 (owner_id は NOT NULL。#1103 項目 10) は、書き出しの対象の A / B と別のユーザーにする
+  orgOwnerId = await createPlaceholderOrgOwner(srAdmin, 'export-scope');
+  const org = await insert('organizations', { name: `ORG-${RUN}`, owner_id: orgOwnerId });
   created.organizationId = org.id;
   for (const u of [A, B]) {
     await must(
@@ -424,6 +430,8 @@ afterAll(async () => {
     await srAdmin.auth.admin.deleteUser(id);
   }
   if (created.organizationId) await srAdmin.from('organizations').delete().eq('id', created.organizationId);
+  // 持ち主は組織を消した後に消す (owner_id → auth.users は ON DELETE RESTRICT)
+  if (orgOwnerId) await deletePlaceholderOrgOwner(srAdmin, orgOwnerId);
   // ユーザー削除のあとに書き込まれたルートのログ (user_id が NULL になったもの) も消す
   await srAdmin
     .from('app_logs')
