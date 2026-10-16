@@ -358,7 +358,7 @@ Web (段 B1)
 | あり | required | 同意画面 | 何もしない (開いている) |
 | あり | required | 対象 | `router.push('/legal-consent')`。`openedRef` を立てる |
 | あり | loading / clear / unknown | 同意画面 | `router.back()` (戻れなければ `router.replace('/')`)。`openedRef` を外す |
-| あり | loading / clear / unknown | それ以外 | 何もしない |
+| あり | loading / clear / unknown | それ以外 | 遷移しない。`openedRef` を外す (このあとのふつうのログアウトでは畳まない) |
 
 同意画面の route が `beforeRemove` を止めるのは、`required` の間の「戻る」の操作 (`GO_BACK` / `POP` / `POP_TO_TOP`。`LEGAL_CONSENT_SCREEN_BACK_ACTION_TYPES`) だけ (6.6.11)。別の画面へ移る操作は止めない (止めると、ログアウトの `replace('/')` やツアーを抜ける `replace('/home')` が取り消され、利用者が同意画面から出られなくなる)。移った先が対象のパスなら、Gate が pathname の変化でもう一度同意画面を開く。`required` でなくなった後は Gate の `back()` で閉じる。プログラムの遷移 (Redirect・通知) で同意画面の下や上に別の画面が積まれても、同意画面に戻って来たときに同じ規則で閉じるので、古い同意画面が残らない。
 
@@ -725,8 +725,9 @@ export function LegalConsentGate() {
         }
         return;
       }
+      // required でない: ゲートが開いた同意画面はもう要らない (同意が済んだ・取り直しで required でなくなった)
+      openedRef.current = false;
       if (onConsentScreen) {
-        openedRef.current = false;
         if (router.canGoBack()) router.back();
         else router.replace("/");
       }
@@ -1067,7 +1068,7 @@ ENFORCE が off・#1435・middleware で読めない・列が無い DB の行は
 | T-G1 | `components/legal-consent-gate.test.tsx` | `session あり & required & 対象のパス (/ /home /onboarding/welcome /health/blood-tests /handson-tour /settings) なら router.push('/legal-consent') を 1 回呼ぶ (同じ pathname の再描画で重ねて呼ばない)` |
 | T-G2 | 同 | `対象外のパス (/login /signup /auth/reset-password /about /privacy /terms /legal-consent) は required でも push しない` |
 | T-G3 | 同 | `同意画面 (/legal-consent) にいて clear / unknown なら router.back() (canGoBack が false なら router.replace('/'))` |
-| T-G4 | 同 | `session が無ければ push しない。ゲートが同意画面を開いた後に session が無くなったら、pathname が入口 (/) に移っていても router.dismissAll() (canDismiss が true のとき) と router.replace('/') をこの順に 1 回ずつ呼び、back() は呼ばない。開いていなければ (ふつうのログアウト) 何もしない` |
+| T-G4 | 同 | `session が無ければ push しない。ゲートが同意画面を開いた後に session が無くなったら、pathname が入口 (/) に移っていても router.dismissAll() (canDismiss が true のとき) と router.replace('/') をこの順に 1 回ずつ呼び、back() は呼ばない。開いていない・同意で閉じた後・state が required でなくなった後 (ふつうのログアウト) は何もしない` |
 | T-G5 | 同 | `loading / unknown / clear で対象のパスにいても push しない` |
 | T-G6 | 同 | `ナビゲーターの準備 (useRootNavigationState の key) が済むまでは何もせず、済んだら判定する。router が例外を投げても落ちない` |
 | T-SC1 | `app/legal-consent-screen.test.tsx` | `WebViewScreen を path='/legal-consent'・testID='webview-legal-consent' で描く` |
@@ -1138,7 +1139,7 @@ grep の語 = 本設計が足す・変える・移すものの名前。反応す
 |---|---|---|---|
 | `native-auth-bridge` (`NativeAuthMessage`・新しい export) | `src/__tests__/lib/native-auth-bridge.test.ts` (3 つの type の送信を固定)、`tests/legal-consent-page.test.tsx:90-93` (`@/lib/native-auth-bridge` を `notifyNativeSignOut` だけのモックに差し替えている)、`src/__tests__/app/login-native-notify.test.tsx`・`main-layout-signed-out.test.tsx`・`frozen-page-logout.test.tsx`・`src/__tests__/components/native-session-watcher.test.tsx`・`tests/api/auth-mfa-*.test.ts` (同じモジュールをモック) | **直す**: `legal-consent-page.test.tsx` のモックに `notifyNativeLegalConsentAccepted: vi.fn()` を足す (足さないと、同意を記録できた分岐で「関数ではない」で赤になる)。T-W1・T-W2 を足す。ほかのモックは form を描かないので変えない (確認のみ) | B1 |
 | `LegalConsentForm.tsx` の文面 | `tests/legal-consent-copy.test.ts:62-87` (T-C1: 文字列リテラル・JSX のテキストが `LEGAL_CONSENT_COPY` の値を含まない)、`tests/e2e/legal-consent-gate.spec.ts`、`tests/native-sign-out-order-source-scan.test.ts` (`notifyNativeSignOut` → `signOut` → `broadcastSignOut` の並び) | 確認のみ: 足すのは関数の呼び出し 1 行 (リテラル無し)。sign-out の並びは触らない。走査は `notifyNativeLegalConsentAccepted` を数えない (語が違う) | B1 |
-| `apps/mobile/app/_layout.tsx` (Provider の並び・`Stack.Screen`) | `apps/mobile/__tests__/app/root-layout-config.test.tsx:17-27, 31-40, 49-51` (expo-router の `Stack` と Provider のモック)、`tests/ai-consent-mobile-modal-nesting.test.ts:386-500` (`Stack.Screen` の `presentation` を読む。指定なし = card)、`tests/eslint-next16-config.test.ts:40`、`tests/posthog-not-adopted-contract.test.ts:185` | **直す**: `root-layout-config.test.tsx` に `LegalConsentProvider` のモック (`({ children }) => children`、`useLegalConsent: () => ({ state: 'clear', status: null, refresh })`) と `LegalConsentGate` のモック (`() => null`) を足し、expo-router のモックに `usePathname`・`useRootNavigationState`・`router.push/back/replace/canGoBack` を足す (T-RL1)。`options={{ gestureEnabled: false }}` は `presentation` もスプレッドも持たないので modal の検査は card と読む (確認のみ) | B2 |
+| `apps/mobile/app/_layout.tsx` (Provider の並び・`Stack.Screen`) | `apps/mobile/__tests__/app/root-layout-config.test.tsx:17-27, 31-40, 49-51` (expo-router の `Stack` と Provider のモック)、`tests/ai-consent-mobile-modal-nesting.test.ts:386-500` (`Stack.Screen` の `presentation` を読む。指定なし = card)、`tests/eslint-next16-config.test.ts:40`、`tests/posthog-not-adopted-contract.test.ts:185` | **直す**: `root-layout-config.test.tsx` に `LegalConsentProvider` のモック (`({ children }) => children`、`useLegalConsent: () => ({ state: 'clear', status: null, refresh })`) と `LegalConsentGate` のモック (`() => null`) を足す (T-RL1)。Gate と `NotificationRouter` (`:51`) はモックなので、expo-router のモック (`:17-27`) は変えない。`options={{ gestureEnabled: false }}` は `presentation` もスプレッドも持たないので modal の検査は card と読む (確認のみ) | B2 |
 | `apps/mobile/app/index.tsx` | 直接のテストは無い (`apps/mobile/__tests__/settings/logout.test.tsx:174` はコメントで触れるだけ) | **足す** (T-IDX1) | B2 |
 | `apps/mobile/app/(tabs)/_layout.tsx` | `apps/mobile/__tests__/home/tab-layout.test.tsx:52-70, 205-210` (`useAuth` / `useProfile` のモック。`Tabs.Screen` 6 本) | **直す**: `useLegalConsent` のモックを足す (既定 `clear`)。T-TL1 を足す。6 本の宣言は変えない | B2 |
 | `NotificationRouter.tsx` | `apps/mobile/__tests__/components/NotificationRouter.test.tsx:33-43` (expo-router のモックは `router.push` だけ。`useAuth` / `useProfile` のモック) | **直す**: `useLegalConsent` のモックを足す (既定 `clear`)。expo-router のモックに `usePathname: () => mockPathname` を足す (既定 `'/home'`。入口 `'/'` や同意画面を既定にすると既存の it が保留で赤になる)。T-NR1・T-NR2 を足す | B2 |
