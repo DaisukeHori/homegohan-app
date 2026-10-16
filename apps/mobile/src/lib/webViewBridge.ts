@@ -334,7 +334,7 @@ export interface NavigationRequestLike {
    * iOS (react-native-webview 13.13.5 の apple/RNCWebViewImpl.m) はサブフレームの読み込みも渡し、実際のフレームを報告する。
    * Android (shouldOverrideUrlLoading) は request.isForMainFrame() を渡さず、isTopFrame を載せない
    * (デバッグ時の代替経路では常に true を載せる)。そのため Android では、他オリジンの iframe の読み込みや
-   * iframe 内での遷移が届いた場合、どれもトップフレーム扱いになる。Web の CSP (next.config.mjs の frame-src) が
+   * iframe 内での遷移が届いた場合、どれもトップフレーム扱いになる。Web の CSP (src/lib/security/csp.ts の frame-src) が
    * 許す埋め込み先 (WEB_VIEW_EMBED_ORIGINS = Turnstile) は、この区別に頼らず許可する (decideNavigation を参照)。
    * Android の WebView が iframe の読み込みをこの判定に渡すかどうかは端末で確かめていない。
    * Turnstile のある画面 (/login、/settings/account のパスワード変更) を Android 実機で確認すること。
@@ -349,14 +349,14 @@ export interface NavigationDecision {
 }
 
 /**
- * Web の CSP (next.config.mjs の frame-src) が iframe での表示を許している、自オリジン以外の埋め込み先。
+ * Web の CSP (src/lib/security/csp.ts の frame-src) が iframe での表示を許している、自オリジン以外の埋め込み先。
  * 今は Cloudflare Turnstile (ログイン・新規登録・パスワード再設定・設定のパスワード変更の bot 対策) のウィジェットだけ。
  * Android は遷移がどのフレームのものかを報告しない (NavigationRequestLike の isTopFrame を参照) ので、
  * ここにある https のオリジンは、フレームを問わず WebView の中で読み込む (既定ブラウザへ回さない)。
  * Web がこのオリジンのページをトップフレームで開くことは無く、開いても WebView にはトークンが無いので漏れるものは無い。
  *
- * next.config.mjs の frame-src に他オリジンを足したら、ここにも足す (__tests__/lib/webViewBridge.test.ts が
- * next.config.mjs と突き合わせる)。OTA が無効なので、配布済みのアプリの値は後から直せない。
+ * src/lib/security/csp.ts の frame-src に他オリジンを足したら、ここにも足す (__tests__/lib/webViewBridge.test.ts が
+ * src/lib/security/csp.ts と突き合わせる)。OTA が無効なので、配布済みのアプリの値は後から直せない。
  */
 export const WEB_VIEW_EMBED_ORIGINS: readonly string[] = ['https://challenges.cloudflare.com'];
 

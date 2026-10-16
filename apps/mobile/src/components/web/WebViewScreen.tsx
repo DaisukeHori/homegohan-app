@@ -325,7 +325,7 @@ const WebViewScreenBody: React.FC<WebViewScreenBodyProps> = ({ path, testID, hea
             //   - Android: WebMessageListener に対応した WebView では、送ったフレームのオリジン。
             //     非対応の古い WebView (fallback の JavascriptInterface) ではトップフレームの URL (getUrl())
             // 最後のケースでは、自オリジンのページの中の他オリジンの iframe からのメッセージもこのゲートを通る。
-            // Web の CSP (next.config.mjs の frame-src) が許す他オリジンの iframe は Cloudflare Turnstile だけ
+            // Web の CSP (src/lib/security/csp.ts の frame-src) が許す他オリジンの iframe は Cloudflare Turnstile だけ
             // (/login、/settings/account のパスワード変更など。webViewBridge.ts の WEB_VIEW_EMBED_ORIGINS)。
             // この経路ではゲートが境界にならないので、Turnstile の iframe からのメッセージを止めるものは、下の各処理の中身の検証だけになる
             // (tab-navigate はタブの prefix と sanitizeInitialPath、download は webViewDownload.ts の送信元・ファイル名・サイズ)。

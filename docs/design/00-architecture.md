@@ -218,7 +218,7 @@ src/
 │   ├── a11y/                      # アクセシビリティ helpers
 │   ├── ratelimit/                 # Upstash Ratelimit ラッパー (新規)
 │   └── cache/                     # Upstash Redis キャッシュラッパー (新規)
-├── middleware.ts                  # セッション同期 (既存)
+├── middleware.ts                  # セッション同期 (既存) + CSP の nonce (#1169)
 └── types/
     ├── supabase.ts                # 自動生成 (新規、既存 database.ts は migrate)
     └── domain/                    # ドメイン型定義

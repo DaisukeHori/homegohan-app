@@ -16,7 +16,8 @@
 
 /**
  * Cloudflare の api.js。`render=explicit` は「自動では描画せず、こちらから turnstile.render() を呼ぶ」指定。
- * このホストは next.config.mjs の CSP (script-src / frame-src) にも書いてある。変えるときは両方を直す。
+ * このホストは src/lib/security/csp.ts の CSP (CSP_TURNSTILE_ORIGIN と frame-src の行) にも書いてある。変えるときは両方を直す
+ * (src/__tests__/lib/security/csp.test.ts と src/__tests__/config/turnstile-config.test.ts が突き合わせる)。
  */
 export const TURNSTILE_SCRIPT_SRC = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
 

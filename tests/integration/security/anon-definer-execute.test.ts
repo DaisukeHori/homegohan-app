@@ -304,6 +304,19 @@ const EXPECTED_ACL: Array<{
     authenticated: false,
     serviceRole: false,
     why: 'auth.users のパスワードの変更のトリガー関数 (password_history への記録)。実行は supabase_auth_admin だけ (cross/16 §11.3)',
+  {
+    sig: 'family_menu_visible_members()',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない',
+  },
+  {
+    sig: 'family_menu_planned_meals(date,date)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: 'GET /api/family/menu が利用者のクライアントで呼ぶ。anon は呼べない',
   },
 ];
 
