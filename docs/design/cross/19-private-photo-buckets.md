@@ -83,11 +83,11 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 
 | 目安 | 本設計 | 判定 |
 |---|---|---|
-| 設計書 800 行超 | 超える (約 1,040 行。正典コードと表が大半) | 当たる |
+| 設計書 800 行超 | 超える (約 1,090 行。正典コードと表が大半) | 当たる |
 | 消費先レーン 3 以上 | migration + 戻し / 結合テスト 3 本 / 契約テスト / FAQ・コメント / 文書の追随 の 5 面 | 当たる |
 | 共有面 2 つ以上 | `storage.buckets` (1 面)。`storage.objects` のポリシー・共有の定数・台帳・契約は変えない | 当たらない |
 
-**結論: 1 冊で書く (核と配線に分けない)。** 理由: 製品コードの変更は migration の UPDATE 1 文 (+ 戻し) と FAQ の 1 行だけで、関数・型・route・ポリシー・テーブルを足さない。残りはテストと文言の追随で、互いに独立している。実装 WF は 2 段 (§15) に分け、段ごとに 2 枚レビューを閉じる。
+**結論: 1 冊で書く (核と配線に分けない)。** 理由: 製品コードの変更は migration の UPDATE 1 文 (+ 戻し) と FAQ の 1 行だけで、関数・型・route・ポリシー・テーブルを足さない。残りはテストと文言の追随で、互いに独立している。実装 WF は 2 つの実装段 (実装段 A・B。§15) に分け、実装段ごとに 2 枚レビューを閉じる。
 
 ### 0.5 用語
 
@@ -100,6 +100,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 | authenticated の経路 | `…/object/authenticated/<bucket>/<path>` に利用者の JWT を付けて読む経路。`storage.objects` の SELECT ポリシーに従う。アプリは使わない |
 | 段 1 | PR #1681。画面と AI と運営の読み出しを署名付き URL にした |
 | 段 2 | 本書。バケットを非公開にする |
+| 実装段 A / 実装段 B | 本書 (段 2) を実装する WF の中の 2 つの段 (§15)。A = 非公開化 (migration・戻し・テスト・コメント)、B = 文言と文書 (FAQ・既存文書・ベースラインの取り直しの依頼)。「段 1 / 段 2」(#1365 の段) とは別の語で、混ぜない |
 
 ---
 
@@ -156,16 +157,17 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 | W-6 | 利用者が書ける列: `PATCH /api/meals/[id]` (`image_url`)・`POST /api/meals`・`POST /api/meal-plans/meals`・`POST /api/recipes` (`imageUrl`)・`consultation-action-executor.ts:785`・`add-from-photo`・`pantry/from-photo` (`fridge_snapshots`) | `src/app/api/meals/[id]/route.ts:153-197` ほか §3.2 | 書く | 変えない。他人の URL を書いても段 1 の持ち主の確認で表示されず、本書で公開 URL も閉じる (S-18) |
 | R-1 | Web の画面の表示: `SignedPhotoImage` (7 か所: `home/page.tsx:835, 1111`・`meals/[id]/page.tsx:274`・`ImageGenerateModal.tsx:121`・`ManualEditModal.tsx:310`・`RecipeModal.tsx:197`・`menus/weekly/request/page.tsx:205`) → `useSignedPhotoUrl` → `POST /api/storage/signed-urls` → `signOwnedPhotoUrls` (service_role) | `src/components/photo/SignedPhotoImage.tsx`・`src/hooks/useSignedPhotoUrl.ts`・`src/app/api/storage/signed-urls/route.ts:64-80` | 読む | 変えない。`tests/signed-photo-display-scan.test.ts` が素の `<Image>` / `<img>` への直渡しを止めている |
 | R-2 | AI の読み出し: `POST /api/ai/analyze-fridge` (`:58-63`)・`POST /api/ai/nutrition` (`:120-128`) → `resolvePhotoUrlForOwnerRead` → 署名付き URL で `fetchImageAsBase64` / LLM の `image_url` | `src/app/api/ai/analyze-fridge/route.ts`・`src/app/api/ai/nutrition/route.ts` | 読む | 変えない |
-| R-3 | 運営の審査: `fetchModerationList` / `fetchModerationSingle` の `content_url` を `withSignedModerationContentUrls` → `signPhotoUrlsForAuthorizedViewer` | `src/lib/admin/moderation-backend.ts:104-130` | 読む | 変えない (service_role の署名は非公開バケットでも通る。B-5 で確かめる) |
+| R-3 | 運営の審査: `fetchModerationList` / `fetchModerationSingle` の `content_url` を `withSignedModerationContentUrls` → `signPhotoUrlsForAuthorizedViewer` (呼び手は `src/app/api/admin/moderation/queue/route.ts:114`・`src/app/api/admin/moderation/[type]/[id]/route.ts:184`・`src/app/api/admin/moderation/route.ts:75-76`)。描画: 一覧 `src/app/admin/moderation/page.tsx:171` と詳細 `src/app/admin/moderation/[type]/[id]/page.tsx:175` が、API の返した `content_url` (署名済み) を素の `<img src>` に入れる | `src/lib/admin/moderation-backend.ts:104-130` | 読む | 変えない (service_role の署名は非公開バケットでも通る。B-5 で確かめる)。素の `<img>` の 2 ファイルは `tests/signed-photo-display-scan.test.ts:32-35` の許可表に「API がサーバーで署名してから返す」の理由つきで載っている |
 | R-4 | 家族の献立: `family_menu_planned_meals` は `image_url` を返さない | `supabase/migrations/20261016241000_family_menu_view_functions.sql:13-15, 65`・`src/components/membership/FamilyMenuRows.tsx:8` | 読まない | 変えない (family/10 Q-8 のとおり広げない) |
 | R-5 | 退会の掃除・完全削除: service_role の `remove` | `src/lib/account-deletion-storage.ts:118-135, 309-340`・`supabase/functions/_shared/hidden-content-purge.ts:180-195` | 消す | 変えない (delete はバケットの公開/非公開に関係しない) |
 | R-6 | Edge Function `analyze-fridge` (`imageUrl` をそのまま xAI に渡す) | `supabase/functions/analyze-fridge/index.ts:50-91` | 読む (上流が) | 変えない。リポジトリに呼び手が無い (`functions/v1/analyze-fridge` の grep 0 件。モバイルの経路は #1598 で消えた)。保存形の URL を渡されれば上流の取得が失敗するが、Web は R-2 を使う。整理は §21 Q-5 |
 | R-7 | モバイル (`apps/mobile`): `getPublicUrl`・`/object/public` の組み立て 0 件。`useHomeData.ts:54, 60, 133, 390-409` が `planned_meals.image_url` を select するが、描画する `Image` は無い (`tests/signed-photo-display-scan.test.ts` の対象で 0 件) | `apps/mobile/src/hooks/useHomeData.ts` | 読まない | 変えない。写真を出す画面は WebView の Web の画面 (R-1) |
 | R-8 | メール (`src/lib/emails`)・OG 画像 (`src/app/layout.tsx:65, 76` は静的 `/og-image.png`)・共有の画面 | grep 0 件 | 無し | 無し (写真の URL をメールや OG に載せる経路は無い) |
 | R-9 | 書き出し (`src/lib/account-export-tables.ts:164` ほか) | JSON に保存形の文字列をそのまま出す | 文字列を出す | 変えない。写真のファイルは書き出しに入っていない (段 1 以前から)。文字列は非公開化の後は開けない識別子 (§21 Q-3) |
+| R-11 | 健康診断の詳細の画面: `checkup.image_url` を素の `<img src>` に入れる | `src/app/(main)/health/checkups/[id]/CheckupDetailClient.tsx:453-461` | 読む (別バケット) | 変えない。`health-checkups` バケット (もとから非公開・本書の対象外) 向けで、`health_checkups.image_url` を保存するコードは未実装 (本番の非 NULL 0 行。§3.2)。`tests/signed-photo-display-scan.test.ts:36-37` の許可表に「#1365 の 2 つのバケットの対象外」の理由つきで載っている |
 | R-10 | `tests/` の結合テスト: `storage-fridge-images-rls` P-1 / M-3 が公開 URL の 200 を期待、`photo-signed-urls` S-4 がテストの中でバケットを切り替え、`afterAll` で `public: true` に戻す | §17 | テスト | 本書で直す (R-13・§9.6) |
 
-経路の閉包: `getPublicUrl` の呼び出しは W-1〜W-5 の 5 ファイル 6 か所だけ (`src` `apps` `packages` `supabase/functions` の grep)。`/storage/v1/` の文字列の組み立ては `packages/shared/src/signed-photo-url.ts` と `supabase/functions/_shared/storage-object-url.ts` の解釈 (読む側) だけ。`createSignedUrl(s)` は `src/lib/photo-storage-signing.ts:127` だけ。`storage.from(...)` の残りは `remove` (R-5・`health/checkups/[id]/route.ts:147`・`process-meal-image-jobs/index.ts:464`) で、読み出しではない。
+経路の閉包: `getPublicUrl` の呼び出しは W-1〜W-5 の 5 ファイル 6 か所だけ (`src` `apps` `packages` `supabase/functions` の grep)。`/storage/v1/` の文字列の組み立ては `packages/shared/src/signed-photo-url.ts` と `supabase/functions/_shared/storage-object-url.ts` の解釈 (読む側) だけ。`createSignedUrl(s)` は `src/lib/photo-storage-signing.ts:127` だけ。`storage.from(...)` の残りは `remove` (R-5・`health/checkups/[id]/route.ts:147`・`process-meal-image-jobs/index.ts:464`) で、読み出しではない。DB の写真の列を素の `<img>` / `<Image>` の `src` に入れる画面は `tests/signed-photo-display-scan.test.ts` の許可表の 3 ファイル (R-3 の 2 つ・R-11) だけで、ほかは `SignedPhotoImage` (R-1)。
 
 ---
 
@@ -262,6 +264,7 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 | 他人 (ログイン) | 公開 URL | 4xx | 4xx | `public = false` |
 | 他人 (ログイン) | `authenticated` の経路 / `list` | 本人のフォルダ以外は 4xx / 0 件 | 4xx / 0 件 | `fridge_images_select_own_folder` (変えない)・`meal_photos` にポリシー無し |
 | 他人 (ログイン) | `POST /api/storage/signed-urls` | null (`notOwned`) | null | 段 1 の持ち主の確認 |
+| 本人 | 公開 URL (JWT を付けても) | 4xx | 4xx | `public = false`。公開の経路は認証を見ない (B-4 で確かめる)。画面は使わない (R-1) |
 | 本人 | `POST /api/storage/signed-urls` → 署名付き URL | 200 (今のパス・旧パス・`generated/<user_id>/`・`generated/<本人の献立>/`) | 200 (`<user_id>/…`) | service_role の署名 (RLS を通らない) |
 | 本人 | `authenticated` の経路 (JWT) | `<user_id>/…` は 200、旧パスは 4xx | 4xx | ポリシーは本人のフォルダだけ。アプリは使わない (B-6 で記録) |
 | 本人 | upload (JWT) | `<user_id>/…` だけ可 | 不可 | INSERT ポリシー (変えない) |
@@ -311,11 +314,11 @@ Issue #1365: Supabase Storage の `meal_photos` (食事写真) と `fridge-image
 | 順 | 何を | なぜ表示が途切れないか |
 |---|---|---|
 | 済 | 段 1 (PR #1681): 画面・AI・運営の読み出しを署名付き URL にした | 公開 URL を読む経路がアプリに残っていない (§3.3 の閉包) |
-| 段 1 (本書) | migration + 戻し + 契約テスト + 結合テスト (新 1・直し 2) + コメントの現在形化 を 1 つの PR で | ローカル CI は migration を当ててからテストを流すので、直した結合テストと新しい結合テストは同じ PR で緑になる。本番では、マージ後の migration の適用で公開 URL が 4xx になるが、画面はそれを使っていない (S-19) |
+| 実装段 A (本書) | migration + 戻し + 契約テスト + 結合テスト (新 1・直し 2) + コメントの現在形化 を 1 つの PR で | ローカル CI は migration を当ててからテストを流すので、直した結合テストと新しい結合テストは同じ PR で緑になる。本番では、マージ後の migration の適用で公開 URL が 4xx になるが、画面はそれを使っていない (S-19) |
 | 適用の確認 | オーケストレーターが本番の `storage.buckets` を SELECT し、公開 URL が 4xx・本人の画面に写真が出ることを確かめる (§20) | – |
-| 段 2 (本書) | FAQ の 1 行 + 既存文書の現在形化 + ベースラインの取り直しの依頼 | 文言は本番の事実 (`public = false`) を確かめてから出す |
+| 実装段 B (本書) | FAQ の 1 行 + 既存文書の現在形化 + ベースラインの取り直しの依頼 | 文言は本番の事実 (`public = false`) を確かめてから出す |
 
-段 1 を 1 つの PR にする理由: migration だけを先に出すと、既存の結合テスト (`storage-fridge-images-rls` P-1 / M-3・`photo-signed-urls` S-4 の `afterAll`) が CI で赤になる。テストだけを先に出すと、公開バケットのローカル CI で赤になる。両方が同じ PR に無いと CI が通らない。
+実装段 A を 1 つの PR にする理由: migration だけを先に出すと、既存の結合テスト (`storage-fridge-images-rls` P-1 / M-3・`photo-signed-urls` S-4 の `afterAll`) が CI で赤になる。テストだけを先に出すと、公開バケットのローカル CI で赤になる。両方が同じ PR に無いと CI が通らない。
 
 ---
 
@@ -399,7 +402,7 @@ $$;
  *   B-1: 2 つのバケットは public = false (health-checkups も非公開のまま)
  *   B-2: 保存された公開 URL は、未ログインでは 4xx (今のパス・旧パス meals/<user_id>/・generated/<献立>/・バケット直下のどれでも)
  *   B-3: 他人は、公開 URL でも 4xx。署名の API の決まり (signOwnedPhotoUrls) では null
- *   B-4: 本人は署名付き URL で見られる (中身も一致)
+ *   B-4: 本人は署名付き URL で見られる (中身も一致)。公開 URL は本人の JWT を付けても 4xx
  *   B-5: 運営の審査の署名 (持ち主を確かめない signPhotoUrlsForAuthorizedViewer) も非公開バケットで通る
  *   B-6: 本人の JWT で authenticated の経路を直接読むと、本人のフォルダは 200・旧パスは 4xx (storage.objects の SELECT ポリシーは変えていない。アプリはこの経路を使わない)
  *   B-7: meal_photos も同じ (未ログインの公開 URL は 4xx・署名付き URL は 200)
@@ -567,10 +570,11 @@ describe('#1365 段 2: 2 つのバケットは非公開', () => {
     expect(notOwned).toBe(3);
   });
 
-  it('B-4: 本人は署名付き URL で見られる (今のパス・旧パス・generated/<user_id>/・generated/<本人の献立>/)', async () => {
+  it('B-4: 本人は署名付き URL で見られる (今のパス・旧パス・generated/<user_id>/・generated/<本人の献立>/)。公開 URL は本人の JWT でも 4xx', async () => {
     const targets = [urls.own, urls.legacy, urls.legacyGenerated, urls.ownGenerated];
     const { signedUrls } = await signOwnedPhotoUrls(srAdmin, me.id, targets, TEST_TTL_SECONDS);
     for (const target of targets) {
+      expectClientError(await statusOf(target, bearer(me.jwt)));
       const signed = signedUrls[target];
       expect(signed, target).toEqual(expect.stringContaining('/storage/v1/object/sign/'));
       const res = await fetch(signed!);
@@ -747,7 +751,7 @@ describe('#1365 段 2 4. 段 1 の説明文', () => {
 });
 ```
 
-### 9.5 `src/app/faq/page.tsx` の 1 行 (段 2)
+### 9.5 `src/app/faq/page.tsx` の 1 行 (実装段 B)
 
 ```ts
 // tsc:skip
@@ -760,7 +764,7 @@ describe('#1365 段 2 4. 段 1 の説明文', () => {
 - `tests/public-claims-guard.test.ts:130-132` の禁止語 (「第三者がアクセスすることはできません」など) を使わない。同 `:407-412` の「プライバシーポリシーへ案内する」は残す。
 - 運営の審査 (R-3) と同意のある AI の解析 (R-2) は「ご本人のために」の外にあるが、それらはプライバシーポリシーの範囲なので文に書かない (案内の文で足りる)。
 
-### 9.6 既存の結合テスト 2 本の直し (段 1)
+### 9.6 既存の結合テスト 2 本の直し (実装段 A)
 
 ```ts
 // tsc:skip
@@ -793,11 +797,11 @@ it('M-3: 公開 URL では読めない (非公開バケット。#1365 段 2)', a
 
 P-1 / M-3 の `200` はファイルの既存の書き方 (`expect(res.status).toBe(200)`) に合わせた。新しい定数を足すなら `HTTP_OK` の名前で (9.3 と同じ)。
 
-### 9.7 段 1 のコードのコメントの現在形化 (段 1。挙動は変えない)
+### 9.7 段 1 のコードのコメントの現在形化 (実装段 A。挙動は変えない)
 
 | ファイル | 行 | 変更後 |
 |---|---|---|
-| `src/lib/photo-storage-signing.ts` | `:4` 「2 つのバケットはまだ公開のまま (段 2 で非公開にする)。DB には公開 URL の文字列が保存されている (書き換えない)。」 | 「2 つのバケットは非公開 (段 2。migration `<番号>_private_photo_buckets.sql`)。DB には公開 URL と同じ形の文字列 (保存形。オブジェクトを指す識別子で、そのままでは読めない) が保存されている (書き換えない)。」 |
+| `src/lib/photo-storage-signing.ts` | `:4` 「2 つのバケットはまだ公開のまま (段 2 で非公開にする)。DB には公開 URL の文字列が保存されている (書き換えない)。」 | 「2 つのバケットは非公開 (段 2。migration `…_private_photo_buckets.sql`。番号の付け替えで古くならないよう、番号は書かない)。DB には公開 URL と同じ形の文字列 (保存形。オブジェクトを指す識別子で、そのままでは読めない) が保存されている (書き換えない)。」 |
 | `packages/shared/src/signed-photo-url.ts` | `:6-9` 「2 つのバケット … はまだ公開 (public) のまま。… (書き換えない。段 2 で扱う)。… 段 2 でバケットを非公開にしても、表示の経路は変わらない。」 | 「2 つのバケットは非公開 (段 2)。DB には公開 URL と同じ形の文字列 (保存形) が保存されている (書き換えない。そのままでは読めない識別子)。画面は … 署名した URL を表示する。」 |
 | 同 | `:14` 「署名付き URL で表示する (= 段 2 で非公開にする) バケット」 | 「署名付き URL で表示する (非公開の) バケット」 |
 | `src/app/api/storage/signed-urls/route.ts` | `:71` 「段 2 (バケットの非公開化) の前に、表示できなくなる写真がどれだけあるかを追えるよう、数だけ残す」 | 「表示できなかった写真 (本人の写真でない・ファイルが無い) がどれだけあるかを追えるよう、数だけ残す」 |
@@ -853,23 +857,25 @@ export function isOwnedObjectPath(path: string, userId: string, ownedPlannedMeal
 |---|---|---|---|---|
 | 匿名 | 公開 URL | 200 | 4xx | B-2・P-1・M-3 |
 | 匿名 | authenticated の経路 | 4xx | 4xx | B-6 |
-| 匿名 | list | 0 件 | 0 件 | L-3 (既存) |
+| 匿名 | list | 0 件 | 0 件 | `tests/integration/security/storage-fridge-images-rls.test.ts` L-3 (既存) |
 | 他人 (JWT) | 公開 URL | 200 | 4xx | B-3 |
 | 他人 (JWT) | authenticated の経路 (本人のフォルダ) | 4xx | 4xx | B-6 |
-| 他人 (JWT) | 署名の API | null | null | B-3・`storage-signed-urls.test.ts` (既存) |
-| 匿名 | 署名の API (`POST /api/storage/signed-urls`) | 401 (署名しない) | 401 (署名しない) | `storage-signed-urls.test.ts` の `未ログインは 401 で、署名しない` (既存) |
+| 他人 (JWT) | 署名の API | null | null | B-3・`src/__tests__/api/storage-signed-urls.test.ts` の `本人の写真にだけ署名し、他人の写真は null を返す` (既存) |
+| 匿名 | 署名の API (`POST /api/storage/signed-urls`) | 401 (署名しない) | 401 (署名しない) | `src/__tests__/api/storage-signed-urls.test.ts` の `未ログインは 401 で、署名しない` (既存) |
+| 本人 (JWT) | 公開 URL | 200 | 4xx | B-4 (公開 URL は本人の JWT でも 4xx) |
 | 本人 (JWT) | authenticated の経路 `<user_id>/…` | 200 | 200 | B-6 |
 | 本人 (JWT) | authenticated の経路 旧パス | 4xx | 4xx | B-6 |
-| 本人 | 署名付き URL (今のパス・旧パス・`generated/<user_id>/`・`generated/<献立>/`) | 200 | 200 | B-4・S-1 (既存) |
+| 本人 | 署名付き URL (今のパス・旧パス・`generated/<user_id>/`・`generated/<献立>/`) | 200 | 200 | B-4・`tests/integration/security/photo-signed-urls.test.ts` S-1 (既存) |
 | 本人 | 署名付き URL (期限切れ) | 4xx | 4xx | B-8 |
 | 本人 | `meal_photos` の署名付き URL | 200 | 200 | B-7 |
-| 運営 | 審査 API の署名付き URL | 200 | 200 | B-5・`moderation-photo-signing.test.ts` (既存) |
-| AI (サーバー) | `resolvePhotoUrlForOwnerRead` | 署名付き URL | 署名付き URL | `analyze-fridge-photo-owner.test.ts`・`nutrition-photo-owner.test.ts` (既存) |
+| 運営 | 審査 API の署名付き URL | 200 | 200 | B-5・`tests/moderation-photo-signing.test.ts` (既存) |
+| AI (サーバー) | `resolvePhotoUrlForOwnerRead` (本人の写真) | 署名付き URL | 署名付き URL | `src/__tests__/api/analyze-fridge-photo-owner.test.ts` の `本人の写真は、署名した URL で読む (公開 URL では取りに行かない)`・`src/__tests__/api/nutrition-photo-owner.test.ts` (既存) |
+| AI (サーバー) | `resolvePhotoUrlForOwnerRead` (他人の写真) | 403 `PHOTO_NOT_READABLE` (読まない・AI に渡さない) | 403 `PHOTO_NOT_READABLE` | `src/__tests__/api/analyze-fridge-photo-owner.test.ts` の `他人の写真の URL は 403 で、読まない・AI に渡さない・回数も数えない`・`src/__tests__/api/nutrition-photo-owner.test.ts` の `他人の写真の URL は 403 PHOTO_NOT_READABLE で、署名しない・AI に渡さない・回数も数えない・保存しない` (既存。§12・S-18) |
 | 上流 (xAI) | Edge Function `analyze-fridge` が渡した保存形の URL を直接 GET (§3.3 R-6) | 200 | 4xx (上流の取得が失敗する) | – (リポジトリに呼び手が無い。公開 URL の 4xx は B-2 と同じ。整理は §21 Q-5) |
-| 家族 | 家族の献立 | 経路なし | 経路なし | `family-menu-visibility` S-20 (既存) |
+| 家族 | 家族の献立 | 経路なし | 経路なし | `tests/integration/rls/family-menu-visibility.test.ts:441` の `family_menu_planned_meals が返す jsonb の配列の各要素の鍵は 12 個だけ (… image_url が無い …)` (既存) |
 | 組織 | – | 経路なし | 経路なし | – (組織の画面に写真は無い。§6.1) |
-| 本人 (JWT) | upload `<user_id>/…` / 他人のフォルダ / 旧パス / `meal_photos` | 可 / 不可 / 不可 / 不可 | 同じ | U-1〜U-5・M-1 (既存) |
-| service_role | list / remove / upload | 可 | 可 | `account-deletion` (既存)・B-4 の準備 |
+| 本人 (JWT) | upload `<user_id>/…` / 他人のフォルダ / 旧パス / `meal_photos` | 可 / 不可 / 不可 / 不可 | 同じ | `tests/integration/security/storage-fridge-images-rls.test.ts` U-1〜U-5・M-1 (既存) |
+| service_role | list / remove / upload | 可 | 可 | `tests/integration/security/account-deletion.test.ts`・`tests/integration/security/account-delete-route.test.ts` (既存)・B-4 の準備 |
 
 ### 11.2 ②状態比較表 (現行 vs 設計後)
 
@@ -946,7 +952,7 @@ sequenceDiagram
 
 | ファイル | it | 要件 |
 |---|---|---|
-| `tests/integration/security/photo-buckets-private.test.ts` (新) | `B-1: meal_photos と fridge-images は public = false。health-checkups も非公開のまま` / `B-2: 保存された公開 URL は、未ログインでは 4xx (今のパス・旧パス・generated/・バケット直下)` / `B-3: 他人は公開 URL でも 4xx で、署名の API の決まりでは null` / `B-4: 本人は署名付き URL で見られる (今のパス・旧パス・generated/<user_id>/・generated/<本人の献立>/)` / `B-5: 運営の審査の署名 (持ち主を確かめない) も非公開バケットで通る` / `B-6: 本人の JWT の authenticated の経路は、本人のフォルダだけ 200 (旧パスは 4xx。ポリシーは変えていない)` / `B-7: meal_photos も同じ (未ログインの公開 URL は 4xx・本人の署名付き URL は 200)` / `B-8: 署名付き URL は有効期限を過ぎると 4xx` | R-1〜R-4, R-7, R-11 |
+| `tests/integration/security/photo-buckets-private.test.ts` (新) | `B-1: meal_photos と fridge-images は public = false。health-checkups も非公開のまま` / `B-2: 保存された公開 URL は、未ログインでは 4xx (今のパス・旧パス・generated/・バケット直下)` / `B-3: 他人は公開 URL でも 4xx で、署名の API の決まりでは null` / `B-4: 本人は署名付き URL で見られる (今のパス・旧パス・generated/<user_id>/・generated/<本人の献立>/)。公開 URL は本人の JWT でも 4xx` / `B-5: 運営の審査の署名 (持ち主を確かめない) も非公開バケットで通る` / `B-6: 本人の JWT の authenticated の経路は、本人のフォルダだけ 200 (旧パスは 4xx。ポリシーは変えていない)` / `B-7: meal_photos も同じ (未ログインの公開 URL は 4xx・本人の署名付き URL は 200)` / `B-8: 署名付き URL は有効期限を過ぎると 4xx` | R-1〜R-4, R-7, R-11 |
 | `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets.sql は 1 本だけ` / `ローカル / CI で非公開になる: 版が本番の台帳の最大 (ledger_max_version) より新しい、または取り直したベースラインで 2 つとも public = false` / `c_buckets は PHOTO_STORAGE_BUCKETS (meal_photos / fridge-images) とちょうど同じ` / `public = false にする UPDATE が 1 つあり、storage.objects のポリシーを作らず・消さず、health-checkups に触れない` / `同じ版の .down.sql があり、同じバケットを public = true に戻す` / `%s は公開バケットを前提にした語を持たない` (STAGE1_FILES の 7 本) | R-1, R-8, R-12, R-13 |
 | `tests/integration/security/photo-signed-urls.test.ts` (直し) | `S-4: バケットは非公開で、署名付き URL では表示でき、公開 URL では表示できない` (S-1〜S-3 は変えない) | R-13 |
 | `tests/integration/security/storage-fridge-images-rls.test.ts` (直し) | `P-1: 公開 URL では読めない (非公開バケット。#1365 段 2)` / `M-3: 公開 URL では読めない (非公開バケット。#1365 段 2)` (U-1〜U-5・L-1〜L-3・M-1・M-2 は変えない) | R-13 |
@@ -956,15 +962,19 @@ sequenceDiagram
 
 ---
 
-## 15. 段分け (実装 WF は 1 本・同じ worktree。段ごとに 2 枚レビューを閉じる)
+## 15. 段分け (実装 WF は 1 本・同じ worktree。実装段ごとに 2 枚レビューを閉じる)
 
-| 段 | 中身 | 触るファイル |
+「段 1 / 段 2」は #1365 の段 (§0.5)。ここでの段は実装 WF の中の実装段 A / B。
+
+| 実装段 | 中身 | 触るファイル |
 |---|---|---|
-| 1. 非公開化 | migration + 戻し + 契約テスト + 結合テスト (新 1・直し 2) + 段 1 のコメントの現在形化 (9.7 の必須 5 ファイル。書く側 3 ファイルは任意) | `supabase/migrations/<番号>_private_photo_buckets.sql`、`supabase/rollbacks/<番号>_private_photo_buckets.down.sql`、`tests/private-photo-buckets-migration-contract.test.ts`、`tests/integration/security/photo-buckets-private.test.ts`、`tests/integration/security/photo-signed-urls.test.ts`、`tests/integration/security/storage-fridge-images-rls.test.ts`、`src/lib/photo-storage-signing.ts`、`packages/shared/src/signed-photo-url.ts`、`src/app/api/storage/signed-urls/route.ts`、`src/lib/admin/moderation-backend.ts`、`tests/signed-photo-display-scan.test.ts` |
+| A. 非公開化 | migration + 戻し + 契約テスト + 結合テスト (新 1・直し 2) + 段 1 のコメントの現在形化 (9.7 の必須 5 ファイル。書く側 3 ファイルは任意) | `supabase/migrations/<番号>_private_photo_buckets.sql`、`supabase/rollbacks/<番号>_private_photo_buckets.down.sql`、`tests/private-photo-buckets-migration-contract.test.ts`、`tests/integration/security/photo-buckets-private.test.ts`、`tests/integration/security/photo-signed-urls.test.ts`、`tests/integration/security/storage-fridge-images-rls.test.ts`、`src/lib/photo-storage-signing.ts`、`packages/shared/src/signed-photo-url.ts`、`src/app/api/storage/signed-urls/route.ts`、`src/lib/admin/moderation-backend.ts`、`tests/signed-photo-display-scan.test.ts` |
 | (適用の確認) | オーケストレーターが §20 を行う | – |
-| 2. 文言と文書 | FAQ の 1 行 (9.5)・既存文書の現在形化 (§18)・ベースラインの取り直しの依頼 | `src/app/faq/page.tsx`、`docs/operations/rls-drift-20261006.md`、`docs/design/operator/02-api-spec.md`、`docs/operations/meal-image-pipeline.md`、`docs/design/family/10-family-menu-view.md`、`docs/design/cross/CLAUDE.md`、`supabase/baseline/refresh-request.txt`。任意 (§18 の期日「任意」の行): `docs/design/00-architecture.md` (`:25`)、`docs/design/mobile/04-storage-camera.md` (§3.8・§4) |
+| B. 文言と文書 | FAQ の 1 行 (9.5)・既存文書の現在形化 (§18 の期日「実装段 B」の 5 行)・ベースラインの取り直しの依頼 | `src/app/faq/page.tsx`、`docs/operations/rls-drift-20261006.md`、`docs/design/operator/02-api-spec.md`、`docs/operations/meal-image-pipeline.md`、`docs/design/family/10-family-menu-view.md`、`supabase/baseline/refresh-request.txt`。任意 (§18 の期日「任意」の行): `docs/design/00-architecture.md` (`:25`)、`docs/design/mobile/04-storage-camera.md` (§3.8・§4) |
 
-段 1 の migration の番号はマージ直前に確定する (契約テストは版を「`ledger_max_version` より新しい」かどうかでしか見ないので、番号を付け替えても赤にならない)。段 2 のベースラインの取り直しの後も、契約テストは論理和の後者 (ベースラインで 2 つとも `public = false`) で緑のまま (§11.3)。
+`docs/design/cross/CLAUDE.md` のファイル一覧の行は実装段に含めない (§18 の 1 行目: 本冊の設計 PR と同日に、オーケストレーターの docs PR で足す)。
+
+実装段 A の migration の番号はマージ直前に確定する (契約テストは版を「`ledger_max_version` より新しい」かどうかでしか見ないので、番号を付け替えても赤にならない。付け替えでそろえる箇所は §17 の `migration-file-version-integrity` の行)。実装段 B の後のベースラインの取り直しの後も、契約テストは論理和の後者 (ベースラインで 2 つとも `public = false`) で緑のまま (§11.3)。
 
 ---
 
@@ -975,59 +985,65 @@ sequenceDiagram
 | ファイル | `supabase/migrations/<番号>_private_photo_buckets.sql`、`supabase/rollbacks/<番号>_private_photo_buckets.down.sql`、`tests/integration/security/photo-buckets-private.test.ts`、`tests/private-photo-buckets-migration-contract.test.ts` |
 | SQL の名前 | DO ブロックの `c_buckets` (migration と戻しの両方)。例外の文 `private_photo_buckets: expected every photo bucket (…) to exist and be private` |
 | 関数 (テスト内) | `client`、`anon`、`tinyPng`、`createUser`、`put`、`plannedMealOf`、`statusOf`、`expectClientError`、`authenticatedUrl`、`bearer` (9.3)、`read`、`stripSqlComments`、`escapeRegExp`、`baselinePublicOf`、`bucketsOf` (9.4) |
-| 定数 (テスト内) | `HTTP_OK`、`HTTP_CLIENT_ERROR_MIN`、`HTTP_CLIENT_ERROR_MAX`、`TEST_TTL_SECONDS`、`EXPIRY_PROBE_TTL_SECONDS`、`EXPIRY_PROBE_WAIT_MS`、`FRIDGE`、`MEAL_PHOTOS`、`HEALTH_CHECKUPS_BUCKET`、`TS`、`createdUserIds`、`uploaded`、`dailyMealIds`、`urls` (9.3)、`ROOT`、`MIGRATIONS_DIR`、`ROLLBACKS_DIR`、`MANIFEST`、`BASELINE_STORAGE`、`MIGRATION_SUFFIX`、`ROLLBACK_SUFFIX`、`VERSION_PATTERN`、`BUCKETS_ARRAY_PATTERN`、`SET_PRIVATE_PATTERN`、`SET_PUBLIC_PATTERN`、`UNTOUCHED_BUCKET`、`STALE_WORDS`、`STAGE1_FILES`、`migrationFiles`、`migrationFile`、`version`、`sql`、`rollbackFile`、`expectedBuckets` (9.4) |
+| 定数・変数 (テスト内) | `url`、`anonKey`、`serviceKey`、`srAdmin`、`HTTP_OK`、`HTTP_CLIENT_ERROR_MIN`、`HTTP_CLIENT_ERROR_MAX`、`TEST_TTL_SECONDS`、`EXPIRY_PROBE_TTL_SECONDS`、`EXPIRY_PROBE_WAIT_MS`、`FRIDGE`、`MEAL_PHOTOS`、`HEALTH_CHECKUPS_BUCKET`、`TS`、`createdUserIds`、`uploaded`、`dailyMealIds`、`me`、`other`、`myMealId`、`urls` (9.3)、`ROOT`、`MIGRATIONS_DIR`、`ROLLBACKS_DIR`、`MANIFEST`、`BASELINE_STORAGE`、`MIGRATION_SUFFIX`、`ROLLBACK_SUFFIX`、`VERSION_PATTERN`、`BUCKETS_ARRAY_PATTERN`、`SET_PRIVATE_PATTERN`、`SET_PUBLIC_PATTERN`、`UNTOUCHED_BUCKET`、`STALE_WORDS`、`STAGE1_FILES`、`migrationFiles`、`migrationFile`、`version`、`sql`、`rollbackFile`、`expectedBuckets` (9.4) |
 | 型 (テスト内) | `TestUser` (9.3) |
 | 製品コードの関数・定数・型・Zod | 無し |
 | route・環境変数・エラーコード・テーブル・列・RLS ポリシー・Storage のパス | 無し |
-| 変えるもの | `storage.buckets.public` の 2 行 (本番の設定)。FAQ の 1 行。コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意) |
+| 変えるもの | `storage.buckets.public` の 2 行 (本番の設定)。結合テスト 2 本 (9.6: `tests/integration/security/photo-signed-urls.test.ts`・`tests/integration/security/storage-fridge-images-rls.test.ts`)。コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)。FAQ の 1 行 (9.5)。文書 (§18): 実装段 B の 5 件 (`docs/operations/rls-drift-20261006.md`・`docs/design/operator/02-api-spec.md`・`docs/operations/meal-image-pipeline.md`・`docs/design/family/10-family-menu-view.md`・`supabase/baseline/refresh-request.txt`)・任意 2 件 (`docs/design/00-architecture.md`・`docs/design/mobile/04-storage-camera.md`)・オーケストレーターの docs PR 1 件 (`docs/design/cross/CLAUDE.md`) |
 
-列挙の基準: §9 の正典コードで新しく宣言するモジュール直下の名前 (テストの中の名前を含む)。既存の名前 (`PHOTO_STORAGE_BUCKETS`・`signOwnedPhotoUrls` など) と it の中の局所の変数 (`targets`・`signed`・`res`・`appliedOnLocalStack`・`baselinePrivate` など) は数えない。
+列挙の基準: §9 の正典コードで新しく宣言するモジュール直下の名前 (テストの中の名前を含む。`const` と `let` の両方)。既存の名前 (`PHOTO_STORAGE_BUCKETS`・`signOwnedPhotoUrls` など) と it の中の局所の変数 (`targets`・`signed`・`res`・`appliedOnLocalStack`・`baselinePrivate` など) は数えない。
 
 ---
 
 ## 17. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果: `fridge-images`・`meal_photos`・`PHOTO_STORAGE_BUCKETS`・`getPublicUrl`・`object/public`・`updateBucket`・`公開バケット`・`段 2`・`prod_storage`・`storage_buckets.csv`・`supabase/rollbacks`・`_private_photo_buckets`・`ledger_max_version`・`写真データはどこに保存`・`photo urls were not signed`・`minimumCacheTTL`・`PHOTO_SIGNED_URL_TTL_SECONDS`。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果: `fridge-images`・`meal_photos`・`PHOTO_STORAGE_BUCKETS`・`getPublicUrl`・`object/public`・`updateBucket`・`公開バケット`・`段 2`・`prod_storage`・`storage_buckets.csv`・`supabase/rollbacks`・`_private_photo_buckets`・`ledger_max_version`・`supabase\/rollbacks` (正規表現の中で逃がした形)・`-- migration:` / `-- rollback:` (1 行目の見出し)・`写真データはどこに保存`・`photo urls were not signed`・`minimumCacheTTL`・`PHOTO_SIGNED_URL_TTL_SECONDS`。
 
-| 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
+| 番兵 | grep の語 (反応するもの) | いま | 直し方 | 実装段 |
 |---|---|---|---|---|
-| `tests/integration/security/photo-signed-urls.test.ts` | `updateBucket`・`public: true`・`公開バケット` | S-4 がテストの中で `fridge-images` を非公開にして戻す。`afterAll` が `public: true` に戻す (= 本書の後は、このテストが流れるたびにローカルのバケットを公開に戻してしまう) | 9.6 のとおり: `updateBucket` を全部消し、S-4 は非公開を前提に | 1 |
-| `tests/integration/security/storage-fridge-images-rls.test.ts` | `公開バケットのまま`・`getPublicUrl`・`toBe(200)` | P-1 / M-3 が公開 URL の 200 を期待 | 9.6 のとおり 4xx (not 200) に。ヘッダと describe 名も | 1 |
+| `tests/integration/security/photo-signed-urls.test.ts` | `updateBucket`・`public: true`・`公開バケット` | S-4 がテストの中で `fridge-images` を非公開にして戻す。`afterAll` が `public: true` に戻す (= 本書の後は、このテストが流れるたびにローカルのバケットを公開に戻してしまう) | 9.6 のとおり: `updateBucket` を全部消し、S-4 は非公開を前提に | A |
+| `tests/integration/security/storage-fridge-images-rls.test.ts` | `公開バケットのまま`・`getPublicUrl`・`toBe(200)` | P-1 / M-3 が公開 URL の 200 を期待 | 9.6 のとおり 4xx (not 200) に。ヘッダと describe 名も | A |
 | `tests/integration/security/storage-upload-paths.test.ts` | `object/public/fridge-images/` | P-1 が `POST /api/upload` の `url` に `/storage/v1/object/public/fridge-images/` を期待 | 変更なし (保存形は公開 URL と同じ文字列のまま。§5) | – |
 | `tests/integration/security/account-deletion.test.ts`・`tests/integration/security/purge-hidden-content.test.ts` | `getPublicUrl` | 保存形の文字列を行に入れ、service_role の remove を確かめる | 変更なし (remove は公開/非公開に無関係) | – |
+| `tests/integration/security/account-delete-route.test.ts` | `fridge-images` (`:109`・`:130`・`:145` の `from('fridge-images')`) | service_role で `<member>/route-…png` を upload・`list` で有無を見る・`remove` で片付ける | 変更なし (service_role の upload / list / remove は RLS を通らず、公開/非公開に無関係。公開 URL を読まない) | – |
 | `tests/integration/rls/family-menu-visibility.test.ts` | `object/public/fridge-images/generated/` | 文字列を `image_url` に入れ、応答に出ないことを見る | 変更なし | – |
-| `tests/integration-ci-coverage.test.ts` | `tests/integration/security` | 結合テストが CI の指定に当たる | 変更なし (新しいファイルは `tests/integration/security/` 配下) | 1 |
-| `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets`・`c_buckets`・`STALE_WORDS`・`ledger_max_version`・`prod_storage` | – | 新設 (9.4)。段 2 のベースラインの取り直し (§18) で `ledger_max_version` が本書の版以上になっても、1. の 2 本目は「ベースラインで 2 つとも `public = false`」の側で緑 (取り直しの PR で直す・外すものは無い) | 1 |
+| `tests/integration-ci-coverage.test.ts` | `tests/integration/security` | 結合テストが CI の指定に当たる | 変更なし (新しいファイルは `tests/integration/security/` 配下) | A |
+| `tests/private-photo-buckets-migration-contract.test.ts` (新) | `_private_photo_buckets`・`c_buckets`・`STALE_WORDS`・`ledger_max_version`・`prod_storage` | – | 新設 (9.4)。実装段 B の後のベースラインの取り直し (§18) で `ledger_max_version` が本書の版以上になっても、1. の 2 本目は「ベースラインで 2 つとも `public = false`」の側で緑 (取り直しの PR で直す・外すものは無い) | A |
 | `tests/helpers/schema-snapshot.ts` (`tests/account-export-tables.test.ts` などが使う) | `ledger_max_version` | `ledger_max_version` より新しい migration の `CREATE TABLE` / `DROP TABLE` を重ねる | 変更なし (本書の migration は public のテーブルを作らない。取り直しの後に本書の migration が重ねる対象から外れても結果は同じ) | – |
 | `tests/photo-storage-signing.test.ts`・`tests/moderation-photo-signing.test.ts`・`src/__tests__/api/storage-signed-urls.test.ts`・`src/__tests__/api/analyze-fridge-photo-owner.test.ts`・`src/__tests__/api/nutrition-photo-owner.test.ts`・`tests/signed-photo-url-resolver.test.ts`・`tests/signed-photo-image-web.test.tsx` | `fridge-images`・`meal_photos`・`object/public` | 署名の決まりの単体 (偽の client) | 変更なし (決まりを変えない) | – |
-| `tests/signed-photo-display-scan.test.ts` | `段 2 でバケットを非公開にする` | ヘッダの説明が将来形 | 9.7 のとおりコメントだけ直す (`STALE_WORDS` が見張る) | 1 |
-| `src/__tests__/api/upload-rate-limit.test.ts`・`tests/api-security-cluster.test.ts`・`tests/image-route-contracts.test.ts`・`tests/ai-rate-limit-contracts.test.ts`・`tests/process-meal-image-jobs-worker-edges.test.ts`・`tests/analyze-fridge-handler.test.ts` | `getPublicUrl`・`object/public` | 書く側の mock | 変更なし (書く側を変えない) | – |
-| `src/__tests__/api/family/menu.test.ts`・`tests/meal-cover-ownership.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/process-meal-image-jobs-write-race.test.ts`・`tests/hidden-content-purge.test.ts`・`tests/account-deletion-storage.test.ts` | `fridge-images/generated/`・`object/public` | 文字列のフィクスチャ | 変更なし | – |
+| `tests/signed-photo-display-scan.test.ts` | `段 2 でバケットを非公開にする` | ヘッダの説明が将来形 | 9.7 のとおりコメントだけ直す (`STALE_WORDS` が見張る) | A |
+| `src/__tests__/api/upload-rate-limit.test.ts`・`tests/api-security-cluster.test.ts`・`tests/image-route-contracts.test.ts`・`tests/ai-rate-limit-contracts.test.ts`・`tests/process-meal-image-jobs-worker-edges.test.ts`・`tests/analyze-fridge-handler.test.ts`・`tests/analyze-fridge-validation.test.ts`・`tests/ai-consent-enforcement-edge.test.ts`・`tests/ai-consent-enforcement-routes.test.ts` | `getPublicUrl`・`object/public` | 書く側の mock (`ai-consent-enforcement-routes.test.ts:215`・`ai-consent-enforcement-edge.test.ts:326` の `getPublicUrl`) と、公開形の文字列を入力に使う検査 (`analyze-fridge-handler.test.ts:98, 146`・`analyze-fridge-validation.test.ts:12, 111`・`ai-consent-enforcement-edge.test.ts:381`。Edge Function `analyze-fridge` の入力の形の検査で、実物の Storage を読まない) | 変更なし (書く側も Edge Function `analyze-fridge` も変えない。§3.3 R-6) | – |
+| `tests/gemini-json.test.ts` | `object/public` (`:106-108`) | `fetchImageAsBase64` に公開形の URL を渡し、資格情報と断片を落とした URL で fetch すること (fetch は mock) を見る | 変更なし (URL の正規化の単体で、実物の Storage を読まない) | – |
+| `src/__tests__/api/family/menu.test.ts`・`tests/meal-cover-ownership.test.ts`・`tests/meal-image-skip-routes.test.ts`・`tests/process-meal-image-jobs-write-race.test.ts`・`tests/hidden-content-purge.test.ts`・`tests/account-deletion-storage.test.ts`・`tests/account-deletion.test.ts` | `fridge-images/generated/`・`object/public`・`fridge-images` / `meal_photos` (`account-deletion.test.ts:112, 254, 261, 263` は偽の Storage のバケット名の走査と呼び出し順) | 文字列のフィクスチャ・偽の Storage | 変更なし (バケット名と remove の順序を変えない) | – |
 | `src/__tests__/config/next-config-images.test.ts` | `minimumCacheTTL`・`PHOTO_SIGNED_URL_MIN_TTL_SECONDS` | 60 秒 ≤ 署名の期限の下限 | 変更なし (期限も `next.config.mjs` も変えない) | – |
 | `src/__tests__/lib/env.test.ts`・`tests/env-source-scan.test.ts` | `PHOTO_SIGNED_URL_TTL_SECONDS` | `readOnlyBy` の一覧 | 変更なし (環境変数を足さない) | – |
-| `tests/database-types-migrations-contract.test.ts` | `CREATE TABLE`・`CREATE FUNCTION` | migration の public のテーブル・関数と型の突き合わせ | 変更なし (本書の migration は `storage.buckets` の UPDATE だけで、`CREATE` を持たない) | 1 |
+| `tests/migration-file-version-integrity.test.ts` | `supabase\/rollbacks` (`ROLLBACK_REFERENCE`)・`-- migration:` / `-- rollback:` (`MIGRATION_HEADER` / `ROLLBACK_HEADER`) | 全 migration について: ファイル名が `<14 桁>_<名>.sql`・版が重ならない・1 行目の `-- migration: <名前>` がファイル名と一致・本文が案内する `supabase/rollbacks/<名前>` が実在・戻し口の 1 行目の `-- rollback: <名前>` が同じ名前の migration を指す | 変更なし。9.1 / 9.2 はこの形 (1 行目の見出し・本文の戻しの案内 1 つ・戻し口の見出し) で書いてある。実装者は番号を確定・付け替えるとき、ファイル名 2 つ (migration と `.down.sql`)・1 行目の見出し 2 つ・migration の本文の `supabase/rollbacks/<番号>_private_photo_buckets.down.sql` の 1 か所をそろえる (9.7 のコメントは番号を書かない。§18 の `rls-drift` の注記は実装段 B で確定した番号を書く) | A |
+| `tests/database-types-migrations-contract.test.ts` | `CREATE TABLE`・`CREATE FUNCTION` | migration の public のテーブル・関数と型の突き合わせ | 変更なし (本書の migration は `storage.buckets` の UPDATE だけで、`CREATE` を持たない) | A |
 | `tests/edge-function-verify-jwt.test.ts` | `supabase/rollbacks` | `:373` のコメントで戻しの置き場を説明 | 変更なし | – |
 | `src/__tests__/api/null-character-routes.test.ts` | `storage/signed-urls/route.ts` | 本文を読む handler の表 | 変更なし (route を足さない) | – |
-| `tests/public-claims-guard.test.ts` | `写真データはどこに保存されますか？`・`第三者がアクセスすることはできません` | FAQ の行に「プライバシーポリシー」があり、禁止語が無い | 変更なし。9.5 の文言はこの 2 つを満たす (実装者は段 2 で `npx vitest run tests/public-claims-guard.test.ts` を流す) | 2 |
+| `tests/public-claims-guard.test.ts` | `写真データはどこに保存されますか？`・`第三者がアクセスすることはできません` | FAQ の行に「プライバシーポリシー」があり、禁止語が無い | 変更なし。9.5 の文言はこの 2 つを満たす (実装者は実装段 B で `npx vitest run tests/public-claims-guard.test.ts` を流す) | B |
 | `src/__tests__/app/faq/account-answers.test.ts` | `faq/page` | アカウントまわりの回答だけを見る | 変更なし | – |
-| `scripts/baseline/verify_baseline.py` (スクリプト。CI では流れない) | `storage_buckets.csv`・`bucket … differs` | 本番カタログとローカルのバケットを比較 | 本番の適用の後、ベースラインを取り直すまで `verify` は `bucket fridge-images differs` を出す (手動のときだけ)。§18 の取り直しで解消 | 2 |
+| `scripts/supabase-local.sh` (ローカル / CI のスタックを組み立てる) | `ledger_max_version` (`:121` の `baseline_version` が `manifest.json` から読む・`:184` が 14 桁を確かめる)・`prod_storage.sql` (`:238` がベースラインに連結する) | `:259` で版が `ledger_max_version` より大きい migration だけをベースラインの後に足す | 変更なし (§6.3 の「取り直しの前はローカルに当たり、後は当たらずベースラインの `public = false` で非公開」はこの動きに依拠する) | – |
+| `scripts/baseline/build_baseline.py` (ベースラインの取り直し) | `storage_buckets.csv` (`:73` が読む)・`prod_storage.sql` (`:263` が書く)・`ledger_max_version` (`:290`) | `:84-85` が `INSERT INTO storage.buckets (id, name, public, file_size_limit, allowed_mime_types) VALUES (…)` の形で書く | 変更なし (9.4 の `baselinePublicOf` はこの形を読む。取り直しで形は変わらない) | – |
+| `scripts/baseline/squash_migrations.py` (#1116 の統合) | `prod_storage.sql` (`:37`)・`ledger_max_version` (`:53`) | 台帳の最大以下の migration を 1 本に統合し、残りをプレースホルダにする | 変更なし。統合は 1 回限りでやり直さない (`supabase/baseline/README.md:24`) ので、本書の migration のファイル (と契約テスト 9.4 の 1. の「1 本だけ」・`migration-file-version-integrity` の戻し口の対) は取り直しの後も残る | – |
+| `scripts/baseline/verify_baseline.py` (スクリプト。CI では流れない) | `storage_buckets.csv`・`bucket … differs` | 本番カタログとローカルのバケットを比較 | 本番の適用の後、ベースラインを取り直すまで `verify` は `bucket fridge-images differs` を出す (手動のときだけ)。§18 の取り直しで解消 | B |
 | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:13959-13961` (ベースラインの写し) | `public = true` の INSERT | ベースライン (#1116) | 変更なし (本書の migration が後から UPDATE する。統合はやり直さない: `supabase/baseline/README.md`) | – |
-| `tests/test-speed-ratchet.test.ts` (記録のみ) | – | 1 ファイル 5 秒の予算 (単体) | 契約テストはファイルを読むだけ。結合テストの B-8 は 3 秒待つが結合の予算 (120 秒) の中 | 1 |
+| `tests/test-speed-ratchet.test.ts` (記録のみ) | – | 1 ファイル 5 秒の予算 (単体) | 契約テストはファイルを読むだけ。結合テストの B-8 は 3 秒待つが結合の予算 (120 秒) の中 | A |
 
 ---
 
-## 18. 他の文書への追随表 (本設計では編集しない。段 2 の PR で足す)
+## 18. 他の文書への追随表 (本設計では編集しない。期日の列のとおり、実装段 B の PR かオーケストレーターの docs PR で足す)
 
 | 文書 | 直すこと | 期日 |
 |---|---|---|
 | `docs/design/cross/CLAUDE.md` ファイル一覧 | `19-private-photo-buckets.md` の行 (担当範囲: 食事写真・冷蔵庫写真のバケットの非公開化 (段 2)・誰が何を読めるかの表・署名付き URL の寿命。要件参照: #1365) を `18-csp-nonce.md` の次に足す。「16・17 は並行して設計中の冊が使う」の文は実在 (16・17 とも main にある) に合わせる | 本冊の設計 PR と同日 (設計書は本冊だけを編集するので、オーケストレーターの docs PR) |
-| `docs/operations/rls-drift-20261006.md` §3.1 P-2 / P-3 | 「推奨」の列の後に「2026-10 時点: P-3〜P-6 のポリシーは `20261007073232` で本人のフォルダに限定し、バケットは #1365 段 2 (`<番号>_private_photo_buckets.sql`) で非公開にした」の注記 | 段 2 |
-| `docs/design/operator/02-api-spec.md:334` | 「画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う」→「画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)」 | 段 2 |
-| `docs/operations/meal-image-pipeline.md:28` | 「Storage の `fridge-images`（公開バケット）」→「Storage の `fridge-images`（非公開バケット。表示は署名付き URL。#1365）」 | 段 2 |
-| `docs/design/family/10-family-menu-view.md` Q-8 | 「署名の決まりを変えるとき (#1365 の段 2) に…」→ 段 2 (本書) は署名の決まりを広げなかったので、家族に画像を出すなら別の設計で決める旨 | 段 2 |
+| `docs/operations/rls-drift-20261006.md` §3.1 P-2 / P-3 | 「推奨」の列の後に「2026-10 時点: P-3〜P-6 のポリシーは `20261007073232` で本人のフォルダに限定し、バケットは #1365 段 2 (`<番号>_private_photo_buckets.sql`) で非公開にした」の注記 | 実装段 B |
+| `docs/design/operator/02-api-spec.md:334` | 「画像ファイル (`photo_url` / `image_url`) そのものは隠さない (公開バケットの URL は、隠す前に見た人なら取得できる)。画像を非公開にすることは #1365 で扱う」→「画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)」 | 実装段 B |
+| `docs/operations/meal-image-pipeline.md:28` | 「Storage の `fridge-images`（公開バケット）」→「Storage の `fridge-images`（非公開バケット。表示は署名付き URL。#1365）」 | 実装段 B |
+| `docs/design/family/10-family-menu-view.md` Q-8 | 「署名の決まりを変えるとき (#1365 の段 2) に…」→ 段 2 (本書) は署名の決まりを広げなかったので、家族に画像を出すなら別の設計で決める旨 | 実装段 B |
 | `docs/design/00-architecture.md:25` | バケットの名前が `meal-photos` (実在は `meal_photos`) で `org-logos` / `user-avatars` は存在しない。本書の範囲外だが、名前だけ実在に合わせる | 任意 |
 | `docs/design/mobile/04-storage-camera.md` §3.8・§4 | `meal-photos` の家族共有のポリシーと `public = false` の記述は、本書と別の構想 (未実装)。「バケットの非公開化は cross/19 で行い、家族共有のポリシーは採っていない」の注記 | 任意 |
-| `supabase/baseline/refresh-request.txt` | 本番の適用の後に日付と理由 (#1365 段 2 の `storage.buckets.public`) を書いて取り直す (`prod_storage.sql`・`catalog/storage_buckets.csv`・`manifest.json` が更新される。`ledger_max_version` が本書の版以上になり、本書の migration はローカル / CI に当たらなくなるが、ベースラインの INSERT が `public = false` なので結果は同じ。契約テスト 9.4 はこの状態でも緑) | 段 2 (適用の後) |
+| `supabase/baseline/refresh-request.txt` | 本番の適用の後に日付と理由 (#1365 段 2 の `storage.buckets.public`) を書いて取り直す (`prod_storage.sql`・`catalog/storage_buckets.csv`・`manifest.json` が更新される。`ledger_max_version` が本書の版以上になり、本書の migration はローカル / CI に当たらなくなるが、ベースラインの INSERT が `public = false` なので結果は同じ。契約テスト 9.4 はこの状態でも緑) | 実装段 B (適用の後) |
 | `.env.example:238`・`ENV_SETUP.md` | 変更なし (`PHOTO_SIGNED_URL_TTL_SECONDS` の説明は現在形のまま正しい) | – |
 
 ---
@@ -1037,7 +1053,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 区分 | 対象 |
 |---|---|
 | 保持 (変えない) | 段 1 の全部 (`packages/shared/src/signed-photo-url.ts`・`src/lib/photo-storage-signing.ts`・`src/app/api/storage/signed-urls/route.ts`・`src/components/photo/SignedPhotoImage.tsx`・`src/hooks/useSignedPhotoUrl.ts`・`src/lib/signed-photo-url-client.ts`・AI の route 2 本・`moderation-backend.ts`)、書く側 5 か所 (W-1〜W-5)、`storage.objects` のポリシー 5 本、`supabase/functions/_shared/storage-object-url.ts`・`hidden-content-purge.ts`・`src/lib/account-deletion-storage.ts`、`next.config.mjs` の `images`、環境変数 |
-| 変更 | `storage.buckets.public` (migration)、FAQ の 1 行、コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)、結合テスト 2 本 |
+| 変更 | `storage.buckets.public` (migration)、結合テスト 2 本 (9.6: `photo-signed-urls.test.ts`・`storage-fridge-images-rls.test.ts`)、コメント 5 ファイル (9.7 の必須。書く側 3 ファイルは任意)、FAQ の 1 行 (9.5)、文書 (§18。実装段 B の 5 件・任意 2 件・オーケストレーターの docs PR の `docs/design/cross/CLAUDE.md` 1 件。§16 の「変えるもの」と同じ) |
 | 新規 | migration + 戻し、結合テスト 1 本、契約テスト 1 本 |
 | 削除 | 無し (`photo-signed-urls.test.ts` の `updateBucket` の呼び出しは消す) |
 
@@ -1047,13 +1063,13 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 時点 | 確認 | 期待 |
 |---|---|---|
-| 段 1 のマージ前 | ローカル CI (`security-regression`) が緑。`npx vitest run tests/private-photo-buckets-migration-contract.test.ts` が緑 | B-1〜B-8・P-1・M-3・S-4 が非公開で通る |
-| 段 1 のマージ前 (参考) | `app_logs` の `function_name = POST /api/storage/signed-urls`・message `photo urls were not signed` の直近 7 日の件数 | 非公開化で新たに表示できなくなる写真は無い (段 1 で null のものはすでに表示されていない) |
+| 実装段 A のマージ前 | ローカル CI (`security-regression`) が緑。`npx vitest run tests/private-photo-buckets-migration-contract.test.ts` が緑 | B-1〜B-8・P-1・M-3・S-4 が非公開で通る |
+| 実装段 A のマージ前 (参考) | `app_logs` の `function_name = POST /api/storage/signed-urls`・message `photo urls were not signed` の直近 7 日の件数 | 非公開化で新たに表示できなくなる写真は無い (段 1 で null のものはすでに表示されていない) |
 | 適用の直後 | `SELECT id, public FROM storage.buckets ORDER BY id` (読み取り) | `fridge-images` f・`health-checkups` f・`meal_photos` f |
 | 適用の直後 | 保存形の URL 1 つ (本番の `planned_meals.image_url` のどれか) を未ログインの curl で GET | 4xx (CDN の残りがあれば最長 1 時間は 200 になりうる。1 時間後に再確認) |
 | 適用の直後 | 本人でログインして `/home` と献立の画面で写真が出る (実機) | 出る (`SignedPhotoImage`) |
 | 適用の直後 | 運営の審査画面で通報された写真が出る (通報が無ければ省略) | 出る |
-| 段 2 のマージ後 | `/faq` の文言・`verify` 用のベースラインの取り直し | 9.5 の文言。`verify` の `bucket differs` が消える。取り直しの PR で `npx vitest run tests/private-photo-buckets-migration-contract.test.ts` が緑 (論理和の後者) |
+| 実装段 B のマージ後 | `/faq` の文言・`verify` 用のベースラインの取り直し | 9.5 の文言。`verify` の `bucket differs` が消える。取り直しの PR で `npx vitest run tests/private-photo-buckets-migration-contract.test.ts` が緑 (論理和の後者) |
 
 ---
 
@@ -1062,7 +1078,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | # | 問い | 既定 |
 |---|---|---|
 | Q-1 | 本番の利用者数: `auth.users` は 195 行 (2026-10-16 の SELECT)。前提の「65 人」と数え方が違う可能性がある (凍結・退会待ち・テストの行などを含むか未確認) | 設計に影響しない (件数で分岐する決定が無い)。報告の数の整合はオーケストレーターが確かめる |
-| Q-2 | `storage.buckets.public` の UPDATE は「追加だけ」(承認不要) か「名指し承認」か。利用者の行は書き換えず、削除・型変更でもないが、本番の設定の変更ではある | 本書は分類を決めない。段 1 のマージの前にオーケストレーターが判断する。戻しは権限が広がるので名指し承認 (9.2) |
+| Q-2 | `storage.buckets.public` の UPDATE は「追加だけ」(承認不要) か「名指し承認」か。利用者の行は書き換えず、削除・型変更でもないが、本番の設定の変更ではある | 本書は分類を決めない。実装段 A のマージの前にオーケストレーターが判断する。戻しは権限が広がるので名指し承認 (9.2) |
 | Q-3 | 書き出し (`account-export-tables.ts`) の JSON に入る保存形の文字列は、非公開化の後は開けない識別子になる。写真のファイルを書き出しに含めるか (段 1 以前から含まれていない) | 変えない (本書の範囲外。開示の請求 cross/15 の側で決める) |
 | Q-4 | `fridge-images` / `meal_photos` の `file_size_limit`・`allowed_mime_types` (NULL)。`health-checkups` と同じ制限を付けるか | 付けない (発明しない。`POST /api/upload` が 10 MB と magic bytes を見ている。付けるなら別の Issue) |
 | Q-5 | Edge Function `analyze-fridge` (`imageUrl` を xAI にそのまま渡す) はリポジトリに呼び手が無い。消すか、Web の route と同じ持ち主の確認を入れるか | 触らない (本書の範囲外。デプロイ済みの関数の整理は別の Issue) |
