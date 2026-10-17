@@ -131,8 +131,9 @@ export default function TabsLayout() {
             tabBarButtonTestID: "tab-profile",
           }}
         />
-        {/* タブバーに表示しないが(tabs)グループ内に必要なファイル */}
-        <Tabs.Screen name="settings" options={{ href: null }} />
+        {/* 設定の画面 (マイページの歯車から開く)。(tabs) の中に置き、タブバーには出さない: ボタンを描かず (tabBarButton が null)、枠も取らない (display: none)。
+            href: null は使わない (expo-router 58 では route を届かなくし、最初のタブへ戻す。expo-router 5 の href: null はこの 2 つへの展開だった。#1591) */}
+        <Tabs.Screen name="settings" options={{ tabBarButton: () => null, tabBarItemStyle: { display: "none" } }} />
       </Tabs>
       <AIFloatingFab />
     </View>

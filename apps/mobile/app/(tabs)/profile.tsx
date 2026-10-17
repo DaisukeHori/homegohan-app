@@ -7,7 +7,7 @@ import { colors } from '../../src/theme';
 
 /**
  * ネイティブの設定画面 (ログアウト・通知の設定・退会) のルート。
- * 設定画面は (tabs) の中の、タブバーに出さない画面 (_layout.tsx の href: null)。
+ * 設定画面は (tabs) の中の、タブバーに出さない画面 (_layout.tsx の tabBarButton: () => null と tabBarItemStyle の display: none。#1591)。
  */
 const NATIVE_SETTINGS_ROUTE = '/(tabs)/settings';
 

@@ -119,7 +119,7 @@ export default function RootLayout() {
                   <Stack.Screen name="(public)" />
                   <Stack.Screen name="(auth)" />
                   <Stack.Screen name="(tabs)" />
-                  {/* #1442: 同意画面。iOS のスワイプで閉じさせない (ほかの取り除く操作は画面の beforeRemove が扱う) */}
+                  {/* #1442: 同意画面。iOS のスワイプで閉じさせない (ほかの取り除く操作は画面の usePreventRemove が止める) */}
                   <Stack.Screen name="legal-consent" options={{ gestureEnabled: false }} />
                   {/* #1861: 凍結中の画面 (Web の /frozen の WebView)。iOS のスワイプで閉じさせない (ほかの操作で外れても AccountFrozenGate が畳み直す) */}
                   <Stack.Screen name="frozen" options={{ gestureEnabled: false }} />

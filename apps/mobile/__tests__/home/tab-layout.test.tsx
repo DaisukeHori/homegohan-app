@@ -289,10 +289,12 @@ describe('TabsLayout: タブ構成', () => {
     expect(getByText('person')).toBeTruthy();
   });
 
-  it('settings タブは href: null (タブバー非表示)', () => {
+  it('settings は隠しタブ: href を持たず、tabBarButton は何も描かず (null)、tabBarItemStyle は display: none (expo-router 58 の href: null は route を届かなくするため。#1591)', () => {
     const configs = renderAndGetConfigs();
     const settings = configs.find((c) => c.name === 'settings');
-    expect(settings?.options?.href).toBeNull();
+    expect(Object.keys(settings?.options ?? {}).sort()).toEqual(['tabBarButton', 'tabBarItemStyle']);
+    expect(settings?.options?.tabBarButton({})).toBeNull();
+    expect(settings?.options?.tabBarItemStyle).toEqual({ display: 'none' });
   });
 });
 

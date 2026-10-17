@@ -1,5 +1,5 @@
-import { router, useNavigation } from "expo-router";
-import { useCallback, useEffect, useRef } from "react";
+import { router, usePreventRemove } from "expo-router";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { View } from "react-native";
 
 import { Button } from "../src/components/ui";
@@ -8,7 +8,7 @@ import {
   ENTRY_SCREEN_PATH,
   LEGAL_CONSENT_SCREEN_PATH,
   legalConsentScreenModeOf,
-  legalConsentScreenRemovalDecision,
+  legalConsentScreenPreventsRemoval,
   legalConsentScreenSawRequired,
 } from "../src/lib/legal-consent";
 import { supabase } from "../src/lib/supabase";
@@ -27,9 +27,10 @@ const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
  * Web の画面は、同意を記録できたら { type: 'legal-consent-accepted' } を、「同意しない」「登録をやめる」では { type: 'sign-out' } を
  * ネイティブへ送る (WebViewScreen の onMessage が受ける)。
  * 扱い (LegalConsentScreenMode。src/lib/legal-consent.ts) ごとの振る舞い:
- *   awaiting-consent   ゲートの畳み直し (RESET) のほかの取り除く操作 (ログインの直後の routeAfterSignIn の replace など) を止める。
+ *   awaiting-consent   取り除く操作 (ログインの直後の routeAfterSignIn の replace など) を全部止める (ゲートの畳み直しは同意画面の route を
+ *                      key ごと再利用するので、取り除かれない)。
  *                      iOS のスワイプは app/_layout.tsx の gestureEnabled: false。Android の戻るボタンは、この画面が Stack の
- *                      唯一の route なので OS に渡る (アプリが背面へ。beforeRemove は流れない)
+ *                      唯一の route なので OS に渡る (アプリが背面へ。usePreventRemove の止めには当たらない)
  *   signed-out-notice  Web からの sign-out でネイティブもログアウトした後。ウェルカムへ移らず (WebViewScreen の afterSignOut)、
  *                      Web の案内 (削除の依頼先・請求の画面・「登録をやめました」) を残し、WebView の上に「閉じる」を出す。
  *                      取り除く操作は全部止め、「閉じる」でだけ入口へ移る
@@ -37,10 +38,8 @@ const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
  *                      auth の読み込みが済んだところで自分で閉じる
  * 自分で閉じるとき (close) は、下に画面があれば (deep link で上に開かれた) その画面へ戻り、無ければ (ゲートが畳んだ同意画面は
  * Stack の唯一の route) 入口へ移る。入口はウェルカムを出す (未ログイン)。
- * modeRef は描画のたびに今の扱いに合わせる (router の操作は次の描画の後に流れるので、beforeRemove はその時点の扱いを見る)。
  */
 export default function LegalConsentScreen() {
-  const navigation = useNavigation();
   const { session, isLoading: authLoading } = useAuth();
   const { state } = useLegalConsent();
   const signedIn = session !== null;
@@ -48,25 +47,24 @@ export default function LegalConsentScreen() {
   const sawRequiredRef = useRef(false);
   sawRequiredRef.current = legalConsentScreenSawRequired(sawRequiredRef.current, signedIn, state);
   const mode = legalConsentScreenModeOf(signedIn, state, sawRequiredRef.current);
-  const modeRef = useRef(mode);
-  modeRef.current = mode;
-  /** この画面が自分で閉じる途中 (「閉じる」・ログアウトに失敗したとき・未ログインで開かれたとき)。以後の取り除く操作は止めない */
+  /** この画面が自分で閉じる途中 (「閉じる」・ログアウトに失敗したとき・未ログインで開かれたとき)。ref は effect の同期の判定に、state は hook の引数に使う。以後の取り除く操作は止めない */
   const closingRef = useRef(false);
+  const [closing, setClosing] = useState(false);
+
+  // 取り除く操作 (GO_BACK・POP・POP_TO_TOP・REPLACE・NAVIGATE・同意画面を含まない RESET) を止める。止めた操作は捨てる (repeat は呼ばない)。
+  // awaiting-consent で止めた置き換えの行き先は、同意の後に入口が profile から決め直す (cross/13b S1 の (B))
+  const disablePrevention = usePreventRemove(legalConsentScreenPreventsRemoval(mode, closing), () => {});
 
   const close = useCallback(() => {
     closingRef.current = true;
+    // 次の描画で usePreventRemove の第 1 引数を false にそろえる (hook は、解いたのに引数が true のままだと警告する)
+    setClosing(true);
+    // いま積む遷移を止めない
+    disablePrevention();
     // 下に画面があれば (deep link で上に開かれた同意画面) その画面へ戻る。無ければ (ゲートが畳んだ同意画面) 入口へ
     if (router.canGoBack()) router.back();
     else router.replace(ENTRY_SCREEN_PATH);
-  }, []);
-
-  useEffect(() => {
-    return navigation.addListener("beforeRemove", (event) => {
-      if (closingRef.current) return;
-      if (legalConsentScreenRemovalDecision(modeRef.current, event.data.action.type) === "allow") return;
-      event.preventDefault();
-    });
-  }, [navigation]);
+  }, [disablePrevention]);
 
   // 未ログインのまま開かれた同意画面 (deep link。扱いは free): auth の読み込みが済んだら閉じる (下の画面へ戻るか、入口 (ウェルカム) へ)
   useEffect(() => {
