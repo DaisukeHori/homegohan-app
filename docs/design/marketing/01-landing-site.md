@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.1 (2026-10-18。R1 の指摘 10 件を反映) |
+| 版 | v1.2 (2026-10-18。R2 の網羅性の漏れを反映) |
 | Status | 設計ゲート審査中 (R2)。実装は §17 の段分け (段 0 → 1 → 2 を 1 本の WF・1 本の PR) で進める。未着手 |
 | Issue | #1867 (サービスの本サイト (homegohan.com) を作り直す) の本文とコメント (2026-10-18 の 2 件) |
 | 範囲の正本 | Issue #1867 の本文とコメント。本書はその上で決めた範囲 (紹介ページ 1 本 = `/`) と設計。Issue と食い違ったら本書が正 |
@@ -61,15 +61,15 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 
 | # | 誰が | 何を | 期待する結果 |
 |---|---|---|---|
-| S-1 | 未ログインの人 (PC・Chrome) | 検索結果から `/` を開き、下まで読んで「無料で始める」を押す | 1 秒台でヒーローの見出しが出る。スクロールに合わせて各セクションが現れ、デモを試せ、`/signup` に着く |
-| S-2 | 未ログインの人 (スマートフォン・Safari) | `/` を開き、片手でスクロールする | 横スクロールが出ない。開いた直後 (ヒーローの途中) は固定の「無料で始める」は出ず、ヒーローを過ぎると下に出る。ピンチで拡大できる。文字は 16 px 以上 |
+| S-1 | 未ログインの人 (PC・Chrome) | 検索結果から `/` を開き、下まで読んで「無料で始める」を押す | ヒーローの見出しは HTML に入っていて JS を待たずに出る (最大の描画 = LCP はヒーローの中で、予算 2.5 s 以内。社内の狙いは 2.0 s: §10.1)。スクロールに合わせて各セクションが現れ (下まで読むと隠れたままのセクションが無い)、デモを試せ、`/signup` に着く |
+| S-2 | 未ログインの人 (スマートフォン・Safari) | `/` を開き、片手でスクロールする | 横スクロールが出ない。開いた直後 (ヒーローの途中) は固定の「無料で始める」は出ず、ヒーローを過ぎると下に出る。ピンチで拡大できる。本文は 16 px 以上で、注記・ナビ・ボタン・写真の名前などの小さい文字も 14 px (`--a11y-min-font-size`) を下回らない (§5.2) |
 | S-3 | キーボードだけで操作する人 | Tab で順に移動し、Enter / Space で操作する | スキップリンク → ヘッダー → ヒーローの CTA → 画面の切り替えを止める操作 → デモの写真 → FAQ の順に、見えるフォーカスで移動できる。画面の切り替えは Space で止まる。FAQ は Enter で開閉 |
 | S-4 | スクリーンリーダーの利用者 | ランドマークと見出しで移動する | `header` / `nav` / `main` / `footer` と、h1 が 1 つ・h2 がセクションごとにある。画像に意味のある代替テキスト。デモの結果は `aria-live="polite"` で読み上げる |
 | S-5 | 動きを減らす設定 (`prefers-reduced-motion: reduce`) の人 | `/` を開く | フェード・スライド・自動で切り替わる画面・背景の視差・進捗の演出が無く、最終の状態がすぐ出る (デモの結果の出入りも含む)。内容は同じ |
 | S-6 | 未ログインの人 | デモで写真を選ぶ → 待つ → 結果を読む → 別の写真を選ぶ | 選択 → 「分析中」(1.4 秒) → 結果 (スコア・コメント・推定の数値・「サンプル」の注記) → 別の写真で同じ流れ。待っている間の再選択は無視する |
 | S-7 | ログイン済みの人 | `/` を開く | 既存どおり proxy が `/home` (運営ロールは `/admin`、初期設定が済んでいなければ初期設定) へ送る。紹介ページは描かれない |
 | S-8 | モバイル App の WebView (`is_native_app` Cookie あり・未ログイン) | サインアウト後などに `/` に着く | 紹介ページがそのまま出る (App のストアへの導線は無い: §4.8)。「無料で始める」は `/signup` へ行く |
-| S-9 | 検索エンジンと SNS のクローラー | `/` を取得する | 動的に描いた HTML に h1・description・canonical・OGP (layout が出す)・JSON-LD (Organization・WebSite) がある。JS 無しでも全文が読める |
+| S-9 | 検索エンジンと SNS のクローラー | `/` を取得する | 動的に描いた HTML に h1・description・canonical・OGP (殻の `publicPageMetadata('/')` が出す。画像は `/opengraph-image` と `/twitter-image`: §12)・JSON-LD (Organization・WebSite) がある。JS 無しでも全文が読める |
 | S-10 | 遅い回線 (3G 相当) の人 | `/` を開く | 見出しと本文が先に出る (フォントは `swap`)。画像は遅延で読み、置き場の大きさは先に確保されている (CLS 無し)。外部 CDN への要求は無い |
 | S-11 | `animation-timeline` に未対応のブラウザ (Firefox) の人 | `/` を開く | スクロール連動の装飾だけが無く、ほかは同じ (IntersectionObserver の現れ方は動く) |
 | S-12 | 本番の CSP の下のブラウザ | `/` を開き、デモを操作する | `securitypolicyviolation` が 0 件。アプリが書くインラインのスクリプトは JSON-LD (`SiteStructuredData`) の 1 本 (nonce つき) だけ |
@@ -286,7 +286,7 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 | # | トレース |
 |---|---|
 | S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` (既存の殻) が `getCspNonce()` → `SiteStructuredData` (既存) + `LandingPage` を描く (データ取得なし) → HTML (全文) → ブラウザ: 見出しがフォールバックのフォントで描かれ LCP 確定 → `Reveal` が IO でセクションを順に表示 → `#demo` で写真を選ぶ (S-6) → 「無料で始める」(`Link href="/signup"`) → `/signup` |
-| S-2 | 375 px: `<meta name="viewport">` は `maximum-scale=5, user-scalable=yes` (殻の `viewport`。§9.5) でピンチの拡大ができる。`.lp` は `max-width: 100%`・`overflow-x: clip`。bento は 1 列。ヒーローの画面は見出しの下に 1 列 (ヒーローは画面より高い)。`MobileStickyCta` は初めは隠れたまま (`visible = false`)。IO がヒーローの番兵 (`#hero-end`) を見て、番兵が交差していないうえに `boundingClientRect.top < 0` (画面の上へ出た) のときだけ `is-visible` → 下から `--lp-dur` (320 ms) で出る。開いた直後は番兵が画面の下にあり (`top > 0`)、隠れたまま。上へ戻って番兵が画面に入るか下へ出たら隠れる (§13.3)。本文は `clamp(1rem, …)` で 16 px 以上 |
+| S-2 | 375 px: `<meta name="viewport">` は `maximum-scale=5, user-scalable=yes` (殻の `viewport`。§9.5) でピンチの拡大ができる。`.lp` は `max-width: 100%`・`overflow-x: clip`。bento は 1 列。ヒーローの画面は見出しの下に 1 列 (ヒーローは画面より高い)。`MobileStickyCta` は初めは隠れたまま (`visible = false`)。IO がヒーローの番兵 (`#hero-end`) を見て、番兵が交差していないうえに `boundingClientRect.top < 0` (画面の上へ出た) のときだけ `is-visible` → 下から `--lp-dur` (320 ms) で出る。開いた直後は番兵が画面の下にあり (`top > 0`)、隠れたまま。上へ戻って番兵が画面に入るか下へ出たら隠れる (§13.3)。本文は `1rem` (16 px)・一文 (lead) は `clamp(1.0625rem, …)` で 17 px 以上、注記・ナビ・ボタン・デモの写真の名前は `0.875rem` (14 px。下限) (§5.2。E-19 が確かめる) |
 | S-3 | Tab: スキップリンク (layout) → マーク (`/`) → ナビ 4 つ → ログイン → 無料で始める → ヒーローの CTA 2 つ → 画面の切り替えを止める (`input type="checkbox"`。Space で入れると `:has(:checked)` で画面の連続と点が止まる。フォーカスが入った間も `:focus-within` で止まる) → デモの写真 3 つ (`button aria-pressed`) → 機能のカード (リンク無し・フォーカスしない) → FAQ の `button aria-expanded` → Enter で開閉 → フッターのリンク。`:focus-visible` は globals.css の 2 トーンのリング |
 | S-4 | ランドマーク: `header` → `nav aria-label="サイトの案内"` → `main` (`LandingPage` が描く。layout の `#main-content` は `div` でランドマークではない: `src/app/layout.tsx:126`) → `section aria-labelledby` ×8 → `footer`。h1 は 1 つ (ヒーロー)。デモの結果は `div role="status" aria-live="polite"` に入り、選ぶたびに「分析中」「結果: …」を読み上げる。画像の alt は `landing-copy.ts` の `alt` (実際の画面は `guide-content.ts` の `imageAlt` と同じ文) |
 | S-5 | `prefers-reduced-motion: reduce`: globals.css が時間で動く CSS の動きを 0.01 ms にする。`marketing.css` の reduce のブロック (§9.1) が、遅れ (`animation-delay` / `transition-delay`) を 0 に、背景の円の視差 (`animation-timeline: scroll()`) を `animation: none` に、ヒーローの画面の連続を止めて最後の 1 枚 (`comment.png`) だけにし、止める操作 (checkbox) を隠す → 現れ方・切り替え・進捗の演出は一瞬で最終状態。JS: `useReducedMotion()` が true → デモの待ち時間を `0` に。デモの島は `MotionConfig reducedMotion="user"` と `transition={{ duration: 0 }}` で、分析中のカードの退場も結果の登場も時間 0 (フェードもスライドも無し)。内容は同じ |
@@ -539,6 +539,9 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | 本文 | Noto Sans JP | `1rem` (16 px) | 400 / 1.75 |
 | 注記 | Noto Sans JP | `0.875rem` (14 px。`--a11y-min-font-size` と同じ下限) | 400 / 1.6 |
 | eyebrow・ナビ・ボタン | Noto Sans JP | `0.875rem`〜`1rem` | 500〜700 / 1 / ボタンは `0.01em` |
+| デモの写真の名前 (写真の上の帯) | Noto Sans JP | `0.875rem` (`text-sm`。14 px) | 500 / 1.375 (`leading-snug`。長い名前は 2 行に折り返す) |
+
+文字の大きさの下限は 14 px (`0.875rem`。globals.css の `--a11y-min-font-size`)。紹介ページの中で文字を持つ要素は、どれもこれを下回らない (`text-xs` (12 px) などは使わない)。本文の段落は 16 px (`1rem`) 以上。E-19 が 375 px で computed の値を確かめる。
 
 和文の見出しは Serif、UI と本文は Sans。見出しは `text-wrap: balance`、本文は `text-wrap: pretty` (未対応ブラウザでは無視される)。日本語の折り返しは `overflow-wrap: anywhere` を `.lp` に付け、長い URL やメールアドレスで横にはみ出さないようにする。
 
@@ -1546,7 +1549,7 @@ export function DemoSection() {
                   style={{ borderColor: selected === sample.id ? 'var(--lp-accent-ink)' : 'var(--lp-line)' }}
                 >
                   <Image src={sample.photo.src} alt={sample.photo.alt} width={DEMO_PHOTO_PX} height={DEMO_PHOTO_PX} sizes="(max-width: 768px) 30vw, 160px" className="h-full w-full object-cover" />
-                  <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2 text-left text-xs font-medium text-white">{sample.name}</span>
+                  <span className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/60 to-transparent p-2 text-left text-sm font-medium leading-snug text-white">{sample.name}</span>
                 </button>
               ))}
             </div>
@@ -1807,6 +1810,12 @@ const CLS_BUDGET = Number(process.env.LANDING_CLS_BUDGET ?? 0.1);
 const JS_TRANSFER_BUDGET_BYTES = Number(process.env.LANDING_JS_BUDGET_BYTES ?? 170 * 1024);
 /** dev サーバの初回コンパイルを待てるよう、画面遷移直後の可視性アサーションだけ長めにする */
 const NAVIGATION_TIMEOUT = 30_000;
+/** 文字の大きさの下限 (px)。src/app/globals.css の --a11y-min-font-size (14px) と同じ値 (§5.2。E-19) */
+const A11Y_MIN_FONT_PX = 14;
+/** 本文の段落の大きさ (px)。§5.2 の本文 1rem (E-19) */
+const BODY_FONT_PX = 16;
+/** 1.4.4 の 200 % 拡大に相当する幅 (px)。1280 px の画面を 200 % に拡大したときの CSS の幅 (§11。E-6) */
+const ZOOM_200_WIDTH_PX = 640;
 // … test は §16 の一覧のとおり。securitypolicyviolation は page.addInitScript で window に積み、最後に 0 件を確かめる
 ```
 
@@ -1867,7 +1876,7 @@ const NAVIGATION_TIMEOUT = 30_000;
 | 1.1.1 非テキストコンテンツ | すべての `Image` に `alt`。実際の画面は `guide-content.ts` の `imageAlt` と同じ文。マークは `alt=""`。アイコンは `aria-hidden` | unit (alt の突き合わせ)・e2e (`img` に `alt` 属性がある) |
 | 1.3.1 情報と関係性 | `header` / `nav` / `main` (`LandingPage` が描く。layout の `#main-content` は `div`) / `section aria-labelledby` / `footer`。h1 1 つ → h2 がセクションごと → h3 がカード。FAQ は `button aria-expanded` + `region`。デモの写真は `group` + `aria-pressed` | e2e (ランドマークと見出しの順) |
 | 1.4.3 コントラスト (最低限) | §5.1 の表 (すべて 4.5:1 以上。大きい文字のグラデーションは 4.18:1 以上) | unit (トークンの値から相対輝度で計算) |
-| 1.4.4 テキストのサイズ変更 | `rem` と `clamp` だけ。200 % に拡大しても横にはみ出さない (`overflow-wrap: anywhere`)。ピンチの拡大を止めない: 殻の `viewport` が layout の `maximumScale: 1`・`userScalable: false` を `/` だけ上書きする (§9.5) | U-19 (`viewport` の値)・E-18 (描かれた `<meta name="viewport">` に `user-scalable=no` が無く、`maximum-scale` が 5 以上)・e2e (ズーム 200 % 相当の幅 640 px で `scrollWidth <= clientWidth`)・整合ゲートの Lighthouse (`meta-viewport` の監査) |
+| 1.4.4 テキストのサイズ変更 | `rem` と `clamp` だけ。200 % に拡大しても横にはみ出さない (`overflow-wrap: anywhere`)。ピンチの拡大を止めない: 殻の `viewport` が layout の `maximumScale: 1`・`userScalable: false` を `/` だけ上書きする (§9.5) | U-19 (`viewport` の値)・E-18 (描かれた `<meta name="viewport">` に `user-scalable=no` が無く、`maximum-scale` が 5 以上)・E-6 (ズーム 200 % 相当の幅 640 px (`ZOOM_200_WIDTH_PX`) で `scrollWidth <= clientWidth`)・整合ゲートの Lighthouse (`meta-viewport` の監査) |
 | 1.4.10 リフロー | 320 px で横スクロール無し。bento は 1 列 | e2e (320 px と 375 px) |
 | 1.4.11 非テキストのコントラスト | ボタンの輪郭・写真の選択枠は `--lp-accent-ink` (白と 4.97:1)。フォーカスのリングは globals.css の 2 トーン | 目視 (整合ゲート) |
 | 1.4.12 テキストの間隔 | 行間 1.75・段落の間隔は `margin` で。固定の高さを持つ文字の箱を作らない | 目視 |
@@ -1920,9 +1929,14 @@ const NAVIGATION_TIMEOUT = 30_000;
 | 未ログイン | 768〜1023 (タブレット) | あり | 標準 | 任意 | ヘッダーは高さ 80 px でナビのアンカー 4 つとログインが見える (`md` 以上)。ヒーローは 1 列 (12 列の 7 : 5 は `lg` 以上なので、見出しと CTA の下に画面の連続)。使い方は `lg` 未満なので端末を各手順の上に置く (sticky 無し)。デモは 2 列 (左に写真の選択・右に結果。`md:grid-cols-2`)。機能の bento は 2 列。固定 CTA 無し (`@media (min-width: 768px)` で `display: none`)。視差 (M-4) は `animation-timeline` の対応しだい |
 | 未ログイン | < 768 | あり | 標準 | 任意 | 1 列。ナビのアンカーは非表示 (ログインは `sm` 以上)。使い方は端末を各手順の上に。ヒーローを過ぎると固定 CTA |
 | 未ログイン | 任意 | あり | reduce | 任意 | 動き無し (一瞬で最終状態。遅れも 0)。画面の連続は 3 枚目だけで、止める操作は出ない。背景の視差は無し。デモの待ち 0 ms・出入りも時間 0 |
-| 未ログイン | 任意 | 無し | 任意 | 任意 | 全文と画像 (HTML)。`Reveal` は隠さない。ヘッダーは透明のまま。画面の連続は CSS で動き、止める操作 (checkbox + `:has()`) も動く。デモは押しても変わらない (ボタンは描かれる)。FAQ は閉じたまま (中身は DOM にある)。固定 CTA は出ない (島が動かないので初めの隠れた形のまま) |
+| 未ログイン | ≥ 1024 | 無し | 標準 | 任意 | 全文と画像 (HTML)。並び (ヒーローの 7 : 5・bento・デモの 2 列) は ≥ 1024 × JS ありの行と同じ (CSS だけで決まる)。島が動かないので次のとおり (下の JS 無しの行に共通): `Reveal` は隠さない (`data-js` が付かず `opacity: 1`)。ヘッダーは透明のまま。画面の連続は CSS で動き、止める操作 (checkbox + `:has()`) も動く。使い方の端末は `sticky` で固定されるが、中の画面は 1 枚目のまま切り替わらない (`activeIndex` は SSR の 0)。デモは押しても変わらない (ボタンは描かれ、空のときの文が出る)。FAQ は閉じたまま (中身は DOM にあり、クローラーは読める)。固定 CTA は出ない (初めの隠れた形のまま)。視差 (M-4) は CSS なので `animation-timeline` の対応しだいで動く |
+| 未ログイン | 768〜1023 | 無し | 標準 | 任意 | 並びは 768〜1023 × JS ありの行と同じ (ナビのアンカーとログインが見える・ヒーローは 1 列・端末は各手順の上・デモは 2 列・bento は 2 列)。島の扱いは ≥ 1024 × JS 無しの行と同じ。固定 CTA はこの幅ではもともと `display: none` |
+| 未ログイン | < 768 | 無し | 標準 | 任意 | 並びは < 768 × JS ありの行と同じ (1 列)。島の扱いは ≥ 1024 × JS 無しの行と同じ。ヒーローを過ぎても固定 CTA は出ない (IO が動かない。登録の導線は、上に `sticky` で残るヘッダーの「無料で始める」(全幅で表示) と、ヒーローと最終 CTA のリンク。デモの結果の下のリンクは JS 無しでは出ない) |
+| 未ログイン | 任意 | 無し | reduce | 任意 | 幅ごとの並びと島の扱いは同じ幅の JS 無し × 標準の行と同じ。加えて `marketing.css` の reduce のブロック (CSS の `@media`。JS 不要) が効く: 画面の連続は 3 枚目だけで、止める操作は出ない。背景の視差は無し。ヒーローの文字の立ち上がり (M-2) も一瞬 |
 | ログイン済み | 任意 | 任意 | 任意 | 任意 | proxy が `/home` / `/admin` / 初期設定へ送る (描かれない) |
-| 未ログイン・WebView (`is_native_app`) | < 768 | あり | 任意 | 任意 | 未ログインのスマートフォンと同じ (ストアの札は無い) |
+| 未ログイン・WebView (`is_native_app`) | 任意 | あり | 標準 | 任意 | 同じ幅の未ログイン × JS あり × 標準の行と同じ (紹介ページは `is_native_app` の Cookie を読まないので、幅・動きの設定・`animation-timeline` の組み合わせごとの結果は WebView でない場合と変わらない。ストアの札は全員に無い)。App はスマートフォンが主なので、ふつうは < 768 の行 |
+| 未ログイン・WebView (`is_native_app`) | 任意 | あり | reduce | 任意 | 同じ幅の未ログイン × JS あり × reduce の行と同じ (OS の「視差効果を減らす」/「アニメーションを削除」は WebView の `prefers-reduced-motion` にも届く) |
+| 未ログイン・WebView (`is_native_app`) | – | 無し | – | – | 起きない (App の WebView は `javaScriptEnabled={true}` 固定: `apps/mobile/src/components/web/WebViewScreen.tsx:300`)。仮に JS が止まっても、同じ幅の JS 無しの行と同じ |
 | クローラー | – | 無し | – | – | JS 無しの行と同じ HTML + JSON-LD |
 | 未ログイン・メンテナンス中 | 任意 | – | – | – | メンテナンスの画面 (既存。紹介ページは描かれない) |
 
@@ -1956,11 +1970,13 @@ const NAVIGATION_TIMEOUT = 30_000;
 | 状態 | 操作 | 遷移先 | ガード | 副作用 (`DemoSection`) |
 |---|---|---|---|---|
 | idle | select(id) | analyzing(id) | – | `setTimeout(finish(id), DEMO_ANALYZING_MS or 0)`。`aria-live` に「AI が見ています…」 |
+| idle | finish(any) | idle (変化なし。同じ state を返す) | `phase !== 'analyzing'` | 無し。ふつうは起きない (タイマーはアンマウントで消し、`reset` を送る部品も無い) が、古いタイマーが届いても無視する |
 | analyzing(id) | select(any) | analyzing(id) (変化なし) | – | 無し (ボタンは `disabled`) |
 | analyzing(id) | finish(id) | result(id) | 同じ id | `aria-live` に結果 |
 | analyzing(id) | finish(other) | analyzing(id) (変化なし) | 違う id (古いタイマー) | 無し |
 | result(id) | select(id2) | analyzing(id2) | – | 前のタイマーを消して新しいタイマー |
-| any | reset | idle | – | – |
+| result(id) | finish(any) | result(id) (変化なし。同じ state を返す) | `phase !== 'analyzing'` | 無し (結果を出したタイマーは使い終わっている。古いタイマーが届いても無視する) |
+| any | reset | idle | – | – (`DemoSection` は `reset` を送らない。reducer の契約として持つ) |
 | any | アンマウント | – | – | タイマーを消す |
 
 **ヘッダー (M-1)**
@@ -1977,6 +1993,9 @@ const NAVIGATION_TIMEOUT = 30_000;
 | server (`opacity 1`・`data-js` 無し) | マウント | hidden (`data-js=1`・`is-in` 無し) | IO がある |
 | server | マウント | visible | IO が無い (`inView` を true に) |
 | hidden | 20 % が見えた | visible (`is-in`) | 1 回だけ (`unobserve`) |
+| visible | スクロール (見えなくなる・また見える) | visible (変化なし) | `once: true` なので監視は終わっている |
+
+`prefers-reduced-motion: reduce` でも状態と遷移は上の表と同じ (`Reveal` は OS の設定を読まない)。違うのは見え方の時間だけ: マウント (server → hidden) と 20 % が見えた (hidden → visible) の `transition` は、globals.css が時間を 0.01 ms に、`marketing.css` の reduce のブロックが遅れ (`--lp-reveal-delay`) を 0 にするので、一瞬で最終状態になる (§13.1 の reduce の行・M-5)。JS 無しは `data-js` が付かないので、この表の server のまま (隠れない)。
 
 **使い方 (`StorySteps`)**
 
@@ -2008,6 +2027,9 @@ const NAVIGATION_TIMEOUT = 30_000;
 | paused (一時) | ホバーが外れる / フォーカスが外へ出る | playing | 止める操作が入っていない | 続ける |
 | paused (一時) | ホバーが外れる / フォーカスが外へ出る | paused (保持) | 止める操作が入っている | 変化なし |
 | playing / paused | OS の設定を reduce に変える | static | – | `@media` が効き、3 枚目だけ |
+| static | ホバーする / フォーカスが入る | static (変化なし) | – | `animation: none` なので `animation-play-state` は効かない。止める操作は `display: none` で、Tab でも入らない |
+| static | OS の設定を no-preference に戻す | playing | 止める操作が入っていない (checkbox は reduce の間 `display: none` で操作できないので、reduce にする前の `checked` が残る) | `@media` が外れて `animation-name` が戻り、keyframes は最初 (1 枚目) から始まる。止める操作がまた見える |
+| static | OS の設定を no-preference に戻す | paused (保持) | 止める操作が入っている (reduce にする前に入れていた) | 1 枚目で止まった形で戻る。止める操作を外すと playing |
 
 **固定 CTA**
 
@@ -2016,6 +2038,7 @@ const NAVIGATION_TIMEOUT = 30_000;
 | (初期・SSR と最初の描画) | – | hidden (`translateY(100%)`・`aria-hidden`・`inert`) | 常に (`useState(false)`) |
 | hidden | IO の通知: 番兵が交差していない | visible | `boundingClientRect.top < 0` (番兵が画面の上へ出た = ヒーローを過ぎた) |
 | hidden | IO の通知: 番兵が交差していない | hidden (変化なし) | `boundingClientRect.top >= 0` (番兵はまだ画面の下 = ヒーローの途中。ヒーローが画面より高いスマートフォンの開いた直後) |
+| hidden | IO の通知: 番兵が交差した (ヒーローの終わりが画面の中にある) | hidden (変化なし) | – (`setVisible(false)` は同じ値なので再描画もしない) |
 | visible | IO の通知: 番兵が交差した (上へ戻った) | hidden | – |
 | visible | IO の通知: 番兵が交差していない・`top >= 0` (上へ飛んで番兵が画面の下へ出た) | hidden | – |
 | any | IO が無い・番兵が無い | hidden (変化なし) | ヘッダーの CTA が常にある |
@@ -2077,7 +2100,7 @@ sequenceDiagram
 | U-8 | `文字と下地の組み合わせ (§5.1 の表) はすべて WCAG AA のコントラスト (通常 4.5:1・見出しのグラデーションの両端は 3:1) を満たす (marketing.css の値から相対輝度で計算)` |
 | U-9 | `landing-copy.ts のソースに絵文字 (Unicode の Extended_Pictographic) が無い` |
 | U-10 | `src/components/marketing/ の import は許可した接頭辞 (react・next/・lucide-react・framer-motion・zod・@/lib/site-config・@/app/guide/guide-content・@/components/handson-tour/useReducedMotion・@/components/marketing/・相対) だけ (Supabase・環境変数・アプリの状態に触れない)` |
-| U-11 | `demoReducer: idle --select--> analyzing / analyzing --select--> 変化なし / analyzing --finish(同じ id)--> result / analyzing --finish(違う id)--> 変化なし / result --select--> analyzing / any --reset--> idle (§13.3 の表の全行)` |
+| U-11 | `demoReducer: idle --select--> analyzing / idle --finish--> 変化なし / analyzing --select--> 変化なし / analyzing --finish(同じ id)--> result / analyzing --finish(違う id)--> 変化なし / result --select--> analyzing / result --finish--> 変化なし / any (idle・analyzing・result) --reset--> idle (§13.3 の表の全行。「変化なし」は同じ参照を返すことを toBe で見る)` |
 | U-12 | `構造化データは SiteStructuredData の 1 本だけ: src/components/marketing/ のソースに application/ld+json・dangerouslySetInnerHTML・<script が無く、LandingPage を描画した HTML にも <script が無い` |
 | U-13 | `src/app/LandingPageView.tsx は無く、src/app/page.tsx は @/components/marketing/LandingPage の LandingPage と @/components/seo/SiteStructuredData と @/components/marketing/landing-copy の LANDING_VIEWPORT_MAXIMUM_SCALE を import し、./LandingPageView を import しない (ソースの構文木で確かめる)` |
 | U-14 | `LandingPage を描画した HTML に h1 が 1 つ・section が 8 つ (hero how demo features badges trust faq cta) の順にあり、footer の中に 利用規約 と プライバシーポリシー のリンク (href /terms・/privacy) がある` |
@@ -2105,24 +2128,25 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 
 | # | test |
 |---|---|
-| E-1 | `/ を開くと、h1「食べることを、もっと誇らしく。」と 8 つのセクションが順に見え、ログインのフォーム (#email) は無い` |
+| E-1 | `/ を開くと、h1「食べることを、もっと誇らしく。」と 8 つのセクションが順に見え、ログインのフォーム (#email) は無い。下まで少しずつスクロールしたあと、どの .lp-reveal にも is-in が付き、computed の opacity が 1 (隠れたままのセクションが無い)` |
 | E-2 | `ヘッダーの「無料で始める」とヒーローの「無料で始める」は /signup を指し、「デモを試す」は #demo へスクロールする` |
-| E-3 | `デモ: 写真を押すと role=status に「AI が見ています…」が出て、1.4 秒後に「AI からのコメント」とサンプルの注記が出る。待っている間は写真のボタンが disabled` |
+| E-3 | `デモ: 写真を押すと role=status に「AI が見ています…」が出て、1.4 秒後に「AI からのコメント」とサンプルの注記と、/signup を指す「自分の食事で試す」のリンクが出る。待っている間は写真のボタンが disabled。結果のあと別の写真を押すと、もう一度「AI が見ています…」を経て、その写真の結果に替わる` |
 | E-4 | `FAQ: ボタンは aria-expanded を持ち、Enter で開き (aria-expanded=true・region が見える)、もう一度 Enter で閉じる` |
 | E-5 | `375 px: 横スクロールが無く (scrollWidth <= clientWidth)、開いた直後 (scrollY 0。ヒーローの番兵は画面の下) は固定 CTA に is-visible が無く aria-hidden=true で、#hero-end を画面の上へ過ぎるまでスクロールすると is-visible が付いて /signup を指し、上へ戻すと外れる` |
-| E-6 | `320 px: 横スクロールが無い` |
+| E-6 | `320 px と ZOOM_200_WIDTH_PX (640 px。1280 px を 200 % に拡大した幅) で横スクロールが無い (scrollWidth <= clientWidth)` |
 | E-7 | `reduced-motion: ヒーローの画面の連続と .lp-blob の animation-name が none で、3 枚目が見え、止める操作は見えず、デモの写真を押すと結果 ([data-demo-panel=result]) が待ち無しで出て、現れた最初のフレーム (requestAnimationFrame) で computed の opacity が 1・transform が none で、document.getAnimations() に running が無い` |
 | E-8 | `img はすべて alt 属性を持ち、button はすべて見える名前を持ち、見出しは h1 → h2 → h3 の順を飛ばさない` |
 | E-9 | `CTA とナビのリンクは 24×24 px 以上で、フォーカスすると outline が none でない。FAQ のボタンにフォーカスしても固定 CTA と重ならない` |
-| E-10 | `LCP が予算 (LANDING_LCP_BUDGET_MS、既定 2500) 以内、CLS が予算 (LANDING_CLS_BUDGET、既定 0.1) 以内` |
+| E-10 | `LCP が予算 (LANDING_LCP_BUDGET_MS、既定 2500) 以内で、LCP の要素が #hero の中 (見出しか 1 枚目の画面) にあり、CLS が予算 (LANDING_CLS_BUDGET、既定 0.1) 以内` |
 | E-11 | `/ で読む script の転送量の合計が予算 (LANDING_JS_BUDGET_BYTES、既定 170 KB) 以内で、外部のオリジンへの要求が無い (同一オリジンと /_vercel/ を除く)` |
 | E-12 | `securitypolicyviolation が 0 件 (デモの操作を含む)` |
 | E-13 | `JSON-LD の script が 1 つあり、type は application/ld+json、中身は @graph に Organization と WebSite` |
-| E-14 | `見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを tests/e2e/.evidence/landing/ に保存する (比較はしない。整合ゲートで目視)` |
+| E-14 | `見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを tests/e2e/.evidence/landing/ に保存する (比較はしない。整合ゲートで目視)` (記録のみ。どのシナリオの期待も機械では判定しない: §16.6 の 3 列目・§24 Q-4) |
 | E-15 | `1280 px のキーボード操作: Tab を押すたびに、スキップリンク (#main-content) → マーク (/) → ナビ 4 つ (#features #how #badges #faq) → ログイン (/login) → ヘッダーの無料で始める (/signup) → ヒーローの無料で始める (/signup) → デモを試す (#demo) → 画面の切り替えを止める (checkbox) の順にフォーカスが移り、どれも outline が none でない` |
 | E-16 | `アプリの WebView (is_native_app=1 の Cookie・未ログイン) で / を開くと、未ログインの / と同じ h1 とセクションが出て、アプリのストアへのリンク (apps.apple.com・play.google.com) が無く、ヒーローの無料で始めるは /signup を指す` |
 | E-17 | `ヒーローの画面の切り替え: checkbox「画面の切り替えを止める」に Space を押すと checked になり、.lp-hero-slide と .lp-hero-dots span の animation-play-state が paused になり、フォーカスを外しマウスを外しても paused のまま。もう一度 Space で外し、フォーカスとマウスを外すと running に戻る。checkbox の矩形は 24×24 px 以上` |
 | E-18 | `/ の <meta name="viewport"> の content に user-scalable=no が無く、maximum-scale が 5 以上 (ピンチで拡大できる)。/login の viewport は変わっていない (maximum-scale=1 のまま)` |
+| E-19 | `375 px: .lp の中で文字を直接持つ要素 (見える文字のテキストノードを子に持つもの。aria-hidden と非表示の固定 CTA を除く) の computed の font-size はすべて A11Y_MIN_FONT_PX (14 px) 以上で、main の段落 (p で、class に lp-note も text-sm も持たないもの) はすべて BODY_FONT_PX (16 px) 以上。デモの結果を出した状態でも同じ` |
 
 E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差)。dev サーバ (`next dev`) では LCP が本番より遅いので、`local-ci.sh` の e2e 段 (本番ビルド) で測る。見た目の画素の比較 (`toHaveScreenshot`) は、フォントの代替 (e2e のビルドは Google Fonts を読まない) が機械ごとに違って揺れるので採らない (§24 Q-4)。
 
@@ -2142,25 +2166,29 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | `:428-431` の it `画面の本体 (LandingPageView.tsx) はクライアントコンポーネントのまま、殻 (page.tsx) は Server Component` | `isClientModule('src/app/LandingPageView.tsx')` が true・`isClientModule('src/app/page.tsx')` が false | it 名を `紹介ページの本体 (src/components/marketing/LandingPage.tsx) と殻 (page.tsx) はどちらも Server Component (client は島だけ)` に替え、`isClientModule('src/components/marketing/LandingPage.tsx')` と `isClientModule('src/app/page.tsx')` が両方 false を見る |
 | `:252` の `expect(metadata.description).toBe(SITE_DESCRIPTION)`・`:373` の JSON-LD の `description: SITE_DESCRIPTION` | 定数を参照 | 変更なし (`SITE_DESCRIPTION` の文を替えても、定数どうしの比較なので赤にならない) |
 | `:148` (`/` のメタ情報を持つファイルは `src/app/page.tsx`) | 殻が `publicPageMetadata('/')` を呼ぶ | 変更なし (殻を残す) |
+| `:174-186` の it `PUBLIC_PAGE_PATHS は重複が無く、全部に title と description があり、title と description はページごとに違う` | `PUBLIC_PAGE_SEO['/'].description` (= `SITE_DESCRIPTION`) がほかの公開ページの description と違い、空でない | 変更なし (§9.5 の新しい文は空でなく、ほかの 11 本の description のどれとも同じでない) |
+| `:222-237` の it.each `%s: canonical と og:url が自分のパスを指し、…` と `:239-247` の it.each `%s: 子で openGraph / twitter を書くと file convention の画像が消えるので、画像の URL を明示している` (どちらも `/` を含む) | `/` の `description`・`openGraph.description` が `PUBLIC_PAGE_SEO['/'].description` と同じ。`openGraph.images` / `twitter.images` が `/opengraph-image` / `/twitter-image` | 変更なし (OGP は殻の `publicPageMetadata('/')` が出す。S-9 の OGP はこの 2 本が見る) |
 
 ### 16.6 シナリオ (§0.3) とテストの対応
 
-| # | 確かめるテスト |
-|---|---|
-| S-1 | E-1・E-2・E-3・E-10 |
-| S-2 | E-5・E-6・E-18・U-14・U-19 |
-| S-3 | E-15 (Tab の順)・E-17 (画面の切り替えを Space で止める)・E-4 (FAQ の Enter)・E-9 (フォーカスの見え方) |
-| S-4 | E-8・U-14・E-3 (`role=status`) |
-| S-5 | E-7・U-20 (reduce のブロックの中身) |
-| S-6 | U-11・E-3 |
-| S-7 | U-17 (`/` の振り分けの値)・既存 `lib/supabase/__tests__/middleware.test.ts` (`updateSession` が `resolveOnboardingRedirect` を通る経路。`:295`・`:362` 付近)・既存 e2e `tests/e2e/fixtures-smoke/fresh-user-smoke.spec.ts` (初期設定がまだの人が `/` → `/onboarding`) |
-| S-8 | E-16 |
-| S-9 | U-14 (JS 無しの HTML に全文)・E-13 (JSON-LD)・既存 `tests/seo-public-pages-1867.test.tsx` (メタ情報・JSON-LD の中身) |
-| S-10 | E-10・E-11・U-4 |
-| S-11 | U-18 (Chromium しか無い e2e では未対応のブラウザを再現できないので、未対応でも内容が変わらない作りを静的に確かめる) |
-| S-12 | E-12・既存 `tests/e2e/csp-nonce.spec.ts:136-158` |
-| S-13 | `tests/public-claims-guard.test.ts` (§16.2)・U-2・U-20 |
-| S-14 | E-10・E-11・E-12・E-8・E-18 + 整合ゲートの Lighthouse (§10.3。Accessibility 100 は E-18 の拡大の許可が前提) |
+3 列目は、機械のテストでは判定しない期待 (見た目・実機の操作感・本番の計測)。整合ゲートが目視・Lighthouse・実機で確かめる。E-14 のスクリーンショットは記録だけで比較しないので (§16.3・§24 Q-4)、どのシナリオの期待も E-14 では判定しない。
+
+| # | 確かめるテスト | 機械では判定しない期待 (整合ゲート) |
+|---|---|---|
+| S-1 | E-1 (8 つのセクション・下までスクロールして隠れたままのセクションが無い)・E-2 (`/signup`)・E-3 (デモ)・E-10 (LCP の予算と、LCP の要素がヒーローの中)・U-14 (h1 が HTML にある = JS を待たない) | 現れ方の動きの質 (時間・緩急) は E-14 の記録と整合ゲートの目視。本番の LCP の p75 は Speed Insights (§10.3 の 3) |
+| S-2 | E-5 (横スクロール無し・固定 CTA の出る時)・E-6 (320 px)・E-18 (ピンチの拡大)・E-19 (本文 16 px 以上・小さい文字も 14 px 以上)・U-14・U-19 | Safari の実機での片手のスクロールの感触と、1 列の並びの見た目 (E-14 の 375 px の記録を目視) |
+| S-3 | E-15 (Tab の順)・E-17 (画面の切り替えを Space で止める)・E-4 (FAQ の Enter)・E-9 (フォーカスの見え方) | – |
+| S-4 | E-8・U-14・E-3 (`role=status`) | スクリーンリーダー (VoiceOver) での読み上げの聞こえ方 |
+| S-5 | E-7・U-20 (reduce のブロックの中身) | – |
+| S-6 | U-11 (遷移の全行)・E-3 (分析中 → 結果 → 結果の下の CTA が `/signup` → 別の写真で同じ流れ・待つ間は disabled) | – |
+| S-7 | U-17 (`/` の振り分けの値)・既存 `lib/supabase/__tests__/middleware.test.ts` (`updateSession` が `resolveOnboardingRedirect` を通る経路。`:295`・`:362` 付近)・既存 e2e `tests/e2e/fixtures-smoke/fresh-user-smoke.spec.ts` (初期設定がまだの人が `/` → `/onboarding`) | – |
+| S-8 | E-16 | App の実機の WebView での見え方 |
+| S-9 | U-14 (JS 無しの HTML に全文)・U-15 (殻の `metadata` が `publicPageMetadata('/')` と同じ)・E-13 (JSON-LD)・既存 `tests/seo-public-pages-1867.test.tsx` (`:222-237` の canonical・og:url・description・og:description、`:239-247` の OGP / Twitter の画像、`:356-405` の JSON-LD の中身。どれも `/` を含む: §16.5) | SNS のカードの実際の見え方 (共有のデバッガーで目視) |
+| S-10 | E-10・E-11・U-4 | 3G 相当の回線での体感 (Lighthouse の mobile の throttling が代わりの計測: §10.3) |
+| S-11 | U-18 (Chromium しか無い e2e では未対応のブラウザを再現できないので、未対応でも内容が変わらない作りを静的に確かめる) | Firefox の実機で装飾以外が同じこと |
+| S-12 | E-12・既存 `tests/e2e/csp-nonce.spec.ts:136-158` | – |
+| S-13 | `tests/public-claims-guard.test.ts` (§16.2)・U-2・U-20 | – |
+| S-14 | E-10・E-11・E-12・E-8・E-18・E-19 | Lighthouse の 4 項目 (§10.3。Accessibility 100 は E-18 の拡大の許可が前提) |
 
 ---
 
@@ -2186,7 +2214,7 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | ファイル (テスト) | `tests/landing-page-1867.test.ts`、`tests/e2e/landing-page.spec.ts`、`tests/e2e-landing-suite.test.ts` |
 | ファイル (設計) | `docs/design/marketing/01-landing-site.md`、`docs/design/marketing/prototype/index.html` |
 | 関数 | `landingClaims`、`landingImagePaths`、`missingClaimIds`、`demoReducer`、`selectedSampleId`、`useInViewOnce`、(部品内) `riseStyle`、`LandingPage`、`SiteHeader`、`HeroSection`、`HowItWorksSection`、`StorySteps`、`DemoSection`、`FeaturesSection`、`BadgesSection`、`TrustSection`、`FaqSection`、`FinalCtaSection`、`SiteFooter`、`MobileStickyCta`、`Reveal`、`PhoneFrame`、`CtaLink` (JSON-LD の関数・部品は新設しない: 段 1 の `buildSiteJsonLd`・`serializeJsonLd`・`SiteStructuredData` を使う) |
-| 定数 | `LANDING_COPY`、`LANDING_SITE_NAME`、`LANDING_IMAGE_PATH_PATTERN`、`EVIDENCE_PATH_PATTERN`、`DEMO_ANALYZING_MS`、`DEMO_ANALYZING_MS_REDUCED`、`DEMO_MOTION_DURATION_S`、`DEMO_MOTION_EASE`、`DEMO_RESULT_OFFSET_PX`、`LANDING_VIEWPORT_MAXIMUM_SCALE`、`HEADER_SCROLLED_PX`、`REVEAL_THRESHOLD`、`REVEAL_STAGGER_MS`、`REVEAL_STAGGER_MAX`、`STORY_ROOT_MARGIN`、`COPYRIGHT_YEAR`、`SIGNUP_HREF`、`DEMO_ANCHOR`、`DEMO_INITIAL_STATE`、(部品内) `HEADER_MARK_PX`、`DEMO_PHOTO_PX`、`DEMO_TRANSITION`、`INSTANT_TRANSITION`、`NUTRITION_KEYS`、`GUIDE_SCREEN_WIDTH_PX`、`GUIDE_SCREEN_HEIGHT_PX`、`ASSURANCE_ICON_PX`、`HERO_END_ID`、(殻) `viewport` (`src/app/page.tsx` の export)、(テスト内) `TOKEN_TO_BRAND`、`UNSUBSTANTIATED_WORDS`、`ALLOWED_IMPORT_PREFIXES`、`MARKETING_CSS`、`BADGES_MIGRATION`、`LCP_BUDGET_MS`、`CLS_BUDGET`、`JS_TRANSFER_BUDGET_BYTES`、`LANDING_SPEC` |
+| 定数 | `LANDING_COPY`、`LANDING_SITE_NAME`、`LANDING_IMAGE_PATH_PATTERN`、`EVIDENCE_PATH_PATTERN`、`DEMO_ANALYZING_MS`、`DEMO_ANALYZING_MS_REDUCED`、`DEMO_MOTION_DURATION_S`、`DEMO_MOTION_EASE`、`DEMO_RESULT_OFFSET_PX`、`LANDING_VIEWPORT_MAXIMUM_SCALE`、`HEADER_SCROLLED_PX`、`REVEAL_THRESHOLD`、`REVEAL_STAGGER_MS`、`REVEAL_STAGGER_MAX`、`STORY_ROOT_MARGIN`、`COPYRIGHT_YEAR`、`SIGNUP_HREF`、`DEMO_ANCHOR`、`DEMO_INITIAL_STATE`、(部品内) `HEADER_MARK_PX`、`DEMO_PHOTO_PX`、`DEMO_TRANSITION`、`INSTANT_TRANSITION`、`NUTRITION_KEYS`、`GUIDE_SCREEN_WIDTH_PX`、`GUIDE_SCREEN_HEIGHT_PX`、`ASSURANCE_ICON_PX`、`HERO_END_ID`、(殻) `viewport` (`src/app/page.tsx` の export)、(テスト内) `TOKEN_TO_BRAND`、`UNSUBSTANTIATED_WORDS`、`ALLOWED_IMPORT_PREFIXES`、`MARKETING_CSS`、`BADGES_MIGRATION`、`LCP_BUDGET_MS`、`CLS_BUDGET`、`JS_TRANSFER_BUDGET_BYTES`、`NAVIGATION_TIMEOUT`、`A11Y_MIN_FONT_PX`、`BODY_FONT_PX`、`ZOOM_200_WIDTH_PX`、`LANDING_SPEC` |
 | 型 / Zod | `LandingImageSchema`、`LandingLinkSchema`、`LandingClaimSchema`、`DemoSampleSchema`、`FeatureCardSchema`、`BadgeCardSchema`、`FaqItemSchema`、`TrustItemSchema`、`StepSchema`、`LandingCopySchema`、`LandingCopy`、`LandingClaim`、`DemoSample`、`DemoSampleId`、`FeatureCard`、`BadgeCard`、`DemoSampleKey`、`DemoState`、`DemoEvent`、`UseInViewOnceOptions`、`RevealProps` |
 | CSS のクラス / 変数 | `.lp` と `--lp-*` (§9.1)、`.lp-container` `.lp-section` `.lp-lead` `.lp-note` `.lp-headline-accent` `.lp-cta` (`--primary` `--secondary` `--on-dark` `--compact`) `.lp-header` `.lp-reveal` `.lp-hero-rise` `.lp-hero-media` `.lp-hero-slides` `.lp-hero-slide` `.lp-hero-dots` `.lp-hero-pause` `.lp-blob` (`--1` `--2`) `.lp-phone` `.lp-phone-screen` `.lp-demo-progress` `.lp-demo-spin` `.lp-demo-nutri` `.lp-faq-panel` `.lp-faq-chevron` `.lp-sticky-cta`、変数 `--lp-stagger`、keyframes `lp-rise` `lp-slide-1〜3` `lp-dot-1〜3` `lp-drift` `lp-progress` `lp-spin` |
 | DOM の id / 属性 | id: `hero` `hero-title` `hero-end` `how` `demo` `demo-title` `features` `badges` `trust` `faq` `cta` `faq-button-N` `faq-panel-N`。属性: `data-demo-panel` (`analyzing` `result` `empty`。E-7 が見る) |
@@ -2206,7 +2234,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
 | `tests/public-claims-guard.test.ts` | `LandingPageView`・`LandingPage`・`q: "データは安全ですか？"`・`%以上の精度`・`10万人` | 描画は `@/app/LandingPageView` の default (`:65`)。`PUBLIC_PAGES` の 1 行目は `src/app/LandingPageView.tsx` (`:78`)。FAQ の行は `src/app/LandingPageView.tsx` から読む (`:397`) | §9.7・§16.2 (import を `@/components/marketing/LandingPage` の `LandingPage` に・`PUBLIC_PAGES` の `file` を `src/components/marketing/LandingPage.tsx` に・`PUBLIC_SOURCE_FILES` (`landing-copy.ts`・`src/lib/seo/public-pages.ts`・`(auth)/layout.tsx`)・`FORBIDDEN` 2 語・FAQ の行は `landing-copy.ts`) | 0, 1 |
-| `tests/seo-public-pages-1867.test.tsx` | `src/app/page.tsx`・`LandingPageView`・`SITE_DESCRIPTION`・`SiteStructuredData`・`isClientModule` | `:407-426` が殻の `default` を await して描き (JSON-LD の nonce・事業者名・URL・canonical `/`)、本体は `vi.doMock('@/app/LandingPageView')` (`:413`・`:424`)。`:428-431` が `isClientModule('src/app/LandingPageView.tsx')` が true・`isClientModule('src/app/page.tsx')` が false を見る | §16.5 (モックの先を `@/components/marketing/LandingPage` (名前つき export) に・`:428-431` の it を `LandingPage.tsx` と `page.tsx` がどちらも Server Component を見る形に)。`SITE_DESCRIPTION` を参照する `:252`・`:373` は変更なし | 1 |
+| `tests/seo-public-pages-1867.test.tsx` | `src/app/page.tsx`・`LandingPageView`・`SITE_DESCRIPTION`・`SiteStructuredData`・`isClientModule` | `:407-426` が殻の `default` を await して描き (JSON-LD の nonce・事業者名・URL・canonical `/`)、本体は `vi.doMock('@/app/LandingPageView')` (`:413`・`:424`)。`:428-431` が `isClientModule('src/app/LandingPageView.tsx')` が true・`isClientModule('src/app/page.tsx')` が false を見る | §16.5 (モックの先を `@/components/marketing/LandingPage` (名前つき export) に・`:428-431` の it を `LandingPage.tsx` と `page.tsx` がどちらも Server Component を見る形に)。`SITE_DESCRIPTION` を参照する `:252`・`:373` と、description がページごとに違うことを見る `:174-186` は変更なし (新しい文はほかの 11 本と違う) | 1 |
 | `tests/eslint-next16-config.test.ts` | `src/app/page.tsx` | `WEB_FILES = ['src/app/page.tsx', 'next.config.mjs']` (`:39`) で、そのパスの ESLint の設定 (`calculateConfigForFile`) を確かめる | 変更なし (殻 `src/app/page.tsx` を残す。パスが消えると設定の計算の対象が無くなるので、殻を消さないことが条件) | – |
 | `tests/csp-no-inline-script.test.ts` | `<script`・`ALLOWED_INLINE_SCRIPTS` | 許可リストは `src/components/seo/SiteStructuredData.tsx` の 1 件 (`jsx`・`count: 1`。`:67-76`) | 変更なし (§9.11。紹介ページの部品は `<script` を書かない) | – |
 | `tests/inner-html-contract.test.ts` | `dangerouslySetInnerHTML`・`ALLOWED_HTML_SINKS` | `AIChatBubble.tsx` と `src/components/seo/SiteStructuredData.tsx` (`:181`) の 2 件 | 変更なし (§9.11。紹介ページの部品は HTML を差し込まない) | – |
@@ -2238,6 +2266,17 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/zod-single-copy-1444.test.ts`・`tests/zod-jitless-client.test.ts` | `from 'zod'` | zod の写しは 1 つ・client で jit を使わない | `landing-copy.ts` は `import { z } from 'zod'` (既存と同じ入口)。client の部品からも読まれるが、スキーマは定義だけで `.parse` はテストでしか呼ばない | 1 |
 | `apps/mobile/__tests__/**` | – | – | 変更なし (モバイルは触らない) | – |
 
+**`SITE_DESCRIPTION` の値の消費者** (§9.5 で値を 1 つ直すと同時に効く場所。origin/main の `git grep -n SITE_DESCRIPTION` の全件から、定義 `src/lib/seo/public-pages.ts:36-37` とテストを除いたもの)。どれも定数を参照し、文字を直接書いていないので、ソースは変えない。
+
+| 消費者 | 使い方 | 値を直した後に変わるもの | 見張るテスト | 段 |
+|---|---|---|---|---|
+| `src/lib/seo/public-pages.ts:93` | `PUBLIC_PAGE_SEO['/'].description` → `publicPageMetadata('/')` の `description`・`openGraph.description` | `/` の `<meta name="description">` と `og:description` | `tests/seo-public-pages-1867.test.tsx` `:174-186` (ページごとに違う・空でない)・`:222-237` (`/` を含む it.each)・`:249-253` (トップの description)・U-15 (§9.5 の文と同じ・50〜160 文字・「次世代」を含まない) | 1 |
+| `src/app/layout.tsx:32` | ルートの layout の `metadata.description` | 自分の description を持たない画面 (`/login`・`/signup`・`/home` などアプリの画面) の `<meta name="description">`。公開ページは `publicPageMetadata` で上書きするので変わらない | 値を固定するテストは無い (定数の参照だけ)。U-15 が値そのものを見る | 1 |
+| `src/app/layout.tsx:59` | ルートの layout の `metadata.openGraph.description` | 同じく、自分の `openGraph` を持たない画面の `og:description` | 同上 | 1 |
+| `src/lib/seo/json-ld.ts:51` | `buildSiteJsonLd` の WebSite の `description` | `/` の JSON-LD (`SiteStructuredData`) の WebSite の説明 | `tests/seo-public-pages-1867.test.tsx` `:356-382` (`toEqual` で `description: SITE_DESCRIPTION`)・E-13 (JSON-LD がある) | 1 |
+
+アプリの画面の description も「いまは無料で使えます」を含む文になる。紹介ページと同じ主張 (根拠は §4.9 の `free-now`) なので、それでよい。有料プランの販売を始めるときは、この 4 か所に同時に効く 1 つの値を、`landing-copy.ts` の `ASSURANCES` と同じ PR で直す (§9.5)。
+
 ---
 
 ## 20. 他の文書への追随表 (本設計では編集しない。マージと同日の docs PR で足す)
@@ -2249,6 +2288,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `docs/design/cross/18-csp-nonce.md` §9.11 付近 (許可リストの説明。origin/main `be462ab4` の `:898`・`:963-971`) | 段 1 (#1874) が「`SiteStructuredData.tsx` の 1 本。nonce は `src/app/page.tsx` が読んで渡す」と現在形で書き済み。本冊は殻と `SiteStructuredData` を残すので、直すことは無い (確認だけ) | – |
 | `docs/design/billing/01-billing-core.md` (origin/main `be462ab4` の `:3849`。`/pricing` を指す箇所の一覧の行) | `src/app/LandingPageView.tsx:586` (トップのフッターの「料金プラン」) を、`src/components/marketing/landing-copy.ts` のフッターの `料金プラン` → `/pricing` (§4.7) を指す記述に直す (`LandingPageView.tsx` を消すため、指し先が無くなる) | 本冊の実装 PR のマージと同日 |
 | `docs/design/cross/03-design-system.md` §16 | 絵文字の禁止の例として「紹介ページも lucide のみ」を 1 行 (任意) | 任意 |
+| `SITE_DESCRIPTION` の文 (§9.5) を書き写した文書 | 無し (origin/main の `docs/` を `SITE_DESCRIPTION`・`次世代` で引いて 0 件。値の消費者はソースだけで、§19 の末尾の表に全件を載せた。確認だけ) | – |
 | `docs/design/cross/06-perf-cache.md` §3.1 | FID の行を INP (≤ 200 ms) に置き換える (web.dev の 2024-03-12 の置き換え) | 任意 (本冊の §10 が先に INP を使う) |
 | `docs/design/cross/05-i18n-a11y.md` | ルートの layout (`src/app/layout.tsx:103-112`) がピンチの拡大を止めていること (`maximumScale: 1`・`userScalable: false`。WCAG 1.4.4 と Lighthouse の `meta-viewport` に当たる) と、`/` だけを殻の `viewport` で外したこと (本冊 §9.5) を 1 行で記録する。アプリの画面の扱いは §24 Q-10 | 本冊の実装 PR のマージと同日 |
 | Issue #1867 | 段 1 (検索の穴埋め) は #1874 で先に着地し、本冊はその部品 (`publicPageMetadata('/')`・`SiteStructuredData`) を流用して本体だけを差し替えること・`SITE_DESCRIPTION` の文を直すこと (§9.5) をコメントで記録 | 実装 WF の投入時 (オーケストレーター) |
@@ -2291,6 +2331,9 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 未対応ブラウザの扱い | U-18 | `animation-timeline` の宣言が `@supports` の外にある・部品のコードが `animation-timeline` に頼る |
 | 日付 | U-16・`tests/jst-today-source-scan.test.ts` | `new Date` で年を作る |
 | 拡大 | U-19・E-18 | `/` の viewport が拡大を止める (`userScalable: false`・`maximumScale` < 5) |
+| 文字の大きさ | E-19 | 375 px で、文字を持つ要素が 14 px (`A11Y_MIN_FONT_PX`) を下回る・本文の段落が 16 px (`BODY_FONT_PX`) を下回る |
+| 隠れたままのセクション | E-1 | 下までスクロールしても `is-in` の付かない `.lp-reveal` が残る (IO の取りこぼしで文が見えない) |
+| 200 % の拡大のリフロー | E-6 | 320 px か 640 px (`ZOOM_200_WIDTH_PX`) で横スクロールが出る |
 | 根拠の無い断定と、動きを減らす設定 | U-20・E-7 | 画面の文に `UNSUBSTANTIATED_WORDS` の語。reduce のブロックから視差の停止か遅れの 0 が抜ける。reduce でデモの結果が動いて現れる |
 | 画面の連続の停止 | E-17 | 止める操作で `paused` にならない・外して戻らない |
 | 固定 CTA の出る時 | E-5 | 開いた直後に出る・過ぎても出ない |
@@ -2309,6 +2352,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 - フォントは、端末にあれば Noto Serif JP / Noto Sans JP、無ければ代替 (serif / sans-serif)。
 - 試作はオーナーが見た目と動きを確かめるためのもの。実装は本書の正典 (§9) に従い、試作のコードは写さない (試作は Tailwind も `next/image` も使っていない)。
 - 試作には `docs/` の表の検査 (`tests/docs-table-column-count.test.ts`) は掛からない (`.md` だけが対象)。
+- 文字の大きさは試作から写さない: 試作は、端末の枠の中の簡単な絵 (本物の画面の代わり)・写真の名前・バッジの説明・固定 CTA の注記などに 14 px 未満の大きさを使っている。実装は §5.2 の下限 (14 px。本文は 16 px) に従い、E-19 が確かめる (実装の端末の枠の中は本物の画面の画像なので、文字の要素ではない)。
 
 ---
 
