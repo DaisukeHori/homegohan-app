@@ -3,6 +3,7 @@ import { createHttpClient, type HttpClient, type HttpRequestOptions } from "@hom
 import { aiDailyLimitErrorOf } from "./ai-daily-limit";
 import { NETWORK_ERROR_MESSAGES } from "./api-error";
 import { MobileConfigError, resolveApiBaseUrl } from "./env";
+import { legalConsentRequiredErrorOf } from "./legal-consent";
 import { serviceUnavailableErrorOf } from "./service-unavailable";
 import { supabase } from "./supabase";
 
@@ -65,6 +66,8 @@ function withRequestPolicy(method: string, path: string, init?: HttpRequestOptio
  *   - 「今日の AI の利用回数の上限に達しました」(429 AI_DAILY_LIMIT。#1149): AiDailyLimitError (src/lib/ai-daily-limit.ts)
  *   - AI 相談の緊急停止・メンテナンス中 (503 AI_CHAT_DISABLED / MAINTENANCE_MODE。#1457)・同意の状況を読めなかった
  *     (503 AI_CONSENT_CHECK_FAILED。#1486): ServiceUnavailableError (src/lib/service-unavailable.ts)
+ *   - 403 LEGAL_CONSENT_REQUIRED (規約への同意が必要。#1442): LegalConsentRequiredError (src/lib/legal-consent.ts)。
+ *     置き換えるときに LegalConsentProvider へ知らせ、ゲートがルートの Stack を同意画面 1 つに畳む
  * ほかのエラーはそのまま投げる。
  * getApi() を通らない生の fetch には効かない。そちらは失敗の応答から errorOfFailedResponse (src/lib/failed-response.ts。
  * 同じ 2 つの判定) で Error を作る。
@@ -73,7 +76,7 @@ export async function withFriendlyErrors<T>(request: Promise<T>): Promise<T> {
   try {
     return await request;
   } catch (error) {
-    throw aiDailyLimitErrorOf(error) ?? serviceUnavailableErrorOf(error) ?? error;
+    throw aiDailyLimitErrorOf(error) ?? serviceUnavailableErrorOf(error) ?? legalConsentRequiredErrorOf(error) ?? error;
   }
 }
 

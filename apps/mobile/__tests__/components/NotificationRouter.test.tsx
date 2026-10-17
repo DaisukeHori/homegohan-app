@@ -31,8 +31,11 @@ jest.mock('expo-notifications', () => ({
 }));
 
 const mockPush = jest.fn();
+// 既定の pathname は '/home' (入口 '/' や同意画面を既定にすると、既存の it が保留で赤になる。#1442)
+let mockPathname = '/home';
 jest.mock('expo-router', () => ({
   router: { push: (...args: unknown[]) => mockPush(...args) },
+  usePathname: () => mockPathname,
 }));
 
 type AuthState = { session: { user: { id: string } } | null; isLoading: boolean };
@@ -41,6 +44,11 @@ let mockAuth: AuthState;
 let mockProfile: ProfileState;
 jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }));
 jest.mock('../../src/providers/ProfileProvider', () => ({ useProfile: () => mockProfile }));
+// 規約の同意の状態 (#1442)。既定 clear
+let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'clear';
+jest.mock('../../src/providers/LegalConsentProvider', () => ({
+  useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
+}));
 
 import { NotificationRouter } from '../../src/components/NotificationRouter';
 
@@ -73,6 +81,8 @@ beforeEach(() => {
   mockClearLast.mockResolvedValue(undefined);
   mockAuth = SIGNED_IN;
   mockProfile = ONBOARDED;
+  mockLegalState = 'clear';
+  mockPathname = '/home';
 });
 
 describe('NotificationRouter — フォアグラウンドの通知の表示と解除 (#1049 F7-11)', () => {
@@ -222,5 +232,55 @@ describe('NotificationRouter — 遷移してよい状態になってから遷�
     await tap(responseOf('n-9', { path: '/comparison' }));
 
     expect(mockPush).not.toHaveBeenCalled();
+  });
+});
+
+describe('NotificationRouter — 規約の同意の状態 (#1442)', () => {
+  it('T-NR1: 同意の状態が loading / required の間は行き先を保留し、clear になったら router.push する (unknown も移る)', async () => {
+    mockLegalState = 'loading';
+    mockGetLast.mockResolvedValue(responseOf('n-l-1', { path: '/health/blood-tests' }));
+    const view = render(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockLegalState = 'required';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockLegalState = 'clear';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith('/health/blood-tests');
+  });
+
+  it('T-NR1: unknown でも行き先へ移る', async () => {
+    mockLegalState = 'unknown';
+    render(<NotificationRouter />);
+    await flush();
+
+    await tap(responseOf('n-l-2', { path: '/comparison' }));
+
+    expect(mockPush).toHaveBeenCalledWith('/comparison');
+  });
+
+  it("T-NR2: clear でも pathname が /legal-consent か入口 (/) の間は行き先を保留し、pathname が /home に変わった描画で 1 回 router.push する", async () => {
+    mockPathname = '/legal-consent';
+    mockGetLast.mockResolvedValue(responseOf('n-l-3', { path: '/health/blood-tests' }));
+    const view = render(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockPathname = '/';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockPathname = '/home';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith('/health/blood-tests');
   });
 });

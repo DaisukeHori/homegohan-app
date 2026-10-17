@@ -56,10 +56,12 @@
 | └ Cron ジョブ | super_admin |
 | └ データエクスポート | super_admin |
 | └ インフラ監視 | super_admin |
+| └ メール送信 (`/super-admin/email-outbox`。送信待ち・届けられなかったメールの一覧と再送。`10-logs-and-mail-retry.md` §9.2。#1708) | super_admin |
 | └ 管理者管理 | super_admin |
 | └ DB 管理 | super_admin |
 | └ LLM 使用量 | super_admin |
 | └ システム設定 | super_admin |
+| └ バックアップ・DR (`/super-admin/backups`。取得の状態と DR 訓練の記録。`cross/17-backup-automation.md` §7.4。#1129・#1191) | super_admin |
 
 ---
 
@@ -474,6 +476,8 @@ Step 3: スケジュール
 - Supabase DB: クエリ時間 + 接続数
 - LLM APIs: 各モデルの応答時間
 
+**バックアップ・DR**: サイドバーの「バックアップ・DR」(`/super-admin/backups`。`cross/17-backup-automation.md` §7.4) から開く。取得の状態と DR 訓練の記録の画面はここ 1 か所
+
 ---
 
 ## 23. `/super-admin/plans` — プラン定義・販売管理 ⭐
@@ -655,7 +659,7 @@ Step 3: スケジュール
 
 **スロークエリ**: `pg_stat_statements` 上位 20 件
 
-**バックアップ状態**: PITR 最終バックアップ日時 / Logical Backup 最終実行
+**バックアップ状態**: この画面では出さず、`/super-admin/backups` (`cross/17-backup-automation.md` §7.4) へのリンクを置く (取得・訓練の記録の正は `admin_audit_logs` の `backup.*` / `dr.test.*` で、状態を出す画面は 1 か所)
 
 ---
 

@@ -70,6 +70,20 @@ const ASSURANCE_IMPORT_ALLOWED_PREFIX = 'src/app/api/auth/mfa/';
 /** (support) 区画の server layout (⑦) */
 const SUPPORT_AREA_GUARD_LAYOUT = 'src/app/(support)/support/layout.tsx';
 
+/**
+ * 名指しの入口 (⑦): 運用ログの閲覧とメールの送信待ちの画面・API (#1708。docs/design/operator/10-logs-and-mail-retry.md §9)。
+ * route は母集合 (API_ROOTS) に、画面は PAGE_ROOTS (layout の requireRoleForPage が守る区画) に入っていることを確かめる
+ * (置き場所を動かして走査から外れたら赤)。ゲートを呼んでいるかは ①・④ が見る
+ */
+const NAMED_OPERATOR_ROUTES_1708 = [
+  'src/app/api/super-admin/logs/route.ts',
+  'src/app/api/super-admin/email-outbox/route.ts',
+  'src/app/api/super-admin/email-outbox/[id]/requeue/route.ts',
+];
+const NAMED_OPERATOR_PAGES_1708 = ['src/app/super-admin/logs/page.tsx', 'src/app/super-admin/email-outbox/page.tsx'];
+/** 名指しの画面を守る layout (requireRoleForPage を呼ぶ。④) */
+const SUPER_ADMIN_AREA_GUARD_LAYOUT = 'src/app/super-admin/layout.tsx';
+
 /** ⑦ の番兵の下限 (2026-10-15 の実測の数より下に置く。走査が空振りしていないことだけを見る) */
 const MIN_OPERATOR_ROUTE_FILES = 60;
 const MIN_PAGE_FILES = 20;
@@ -405,6 +419,14 @@ describe('運営の MFA の入口 (#1176 cross/12 §20): src のソース', () =
     );
     expect(viaHelper.length).toBeGreaterThanOrEqual(MIN_ROUTES_VIA_GATED_HELPER);
     expect(layoutFiles).toContain(SUPPORT_AREA_GUARD_LAYOUT);
+    // 名指しの入口 (#1708): route は母集合に入り、画面は super-admin の layout (requireRoleForPage) の下にある
+    for (const file of NAMED_OPERATOR_ROUTES_1708) expect(operatorRoutes, `${file} が走査の母集合に無い`).toContain(file);
+    for (const file of NAMED_OPERATOR_PAGES_1708) {
+      expect(pageAndLayoutFiles, `${file} が PAGE_ROOTS の走査に無い`).toContain(file);
+      expect(file.startsWith(`${path.posix.dirname(SUPER_ADMIN_AREA_GUARD_LAYOUT)}/`)).toBe(true);
+    }
+    expect(layoutFiles).toContain(SUPER_ADMIN_AREA_GUARD_LAYOUT);
+    expect(analyzeFile(SUPER_ADMIN_AREA_GUARD_LAYOUT).calls.some((c) => c.name === PAGE_GUARD_FUNCTION)).toBe(true);
   });
 
   it('⑧ AUTO_INCLUDE_EXCLUSIONS の各行は、ファイルがあり、理由が 10 文字以上で、今も (a) に当たり、(c) に当たらない', () => {

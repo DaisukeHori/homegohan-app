@@ -11,6 +11,8 @@ import { describe, expect, it } from 'vitest';
 import {
   APP_LOGS_DEFAULT_LIMIT,
   APP_LOGS_MAX_LIMIT,
+  APP_LOGS_SEARCH_MAX_CHARS,
+  buildMessageSearchFilter,
   decodeAppLogCursor,
   encodeAppLogCursor,
   isValidIsoDateTime,
@@ -183,9 +185,50 @@ describe('parseAppLogsQuery', () => {
   });
 
   it('知らないパラメータは無視する', () => {
-    expect(parseAppLogsQuery(params('page=2&per_page=10&sort=asc&q=x'))).toEqual({
+    expect(parseAppLogsQuery(params('page=2&per_page=10&sort=asc&foo=x'))).toEqual({
       ok: true,
       query: { limit: 50, cursor: undefined },
+    });
+  });
+
+  it("q: 前後の空白を除いて検索語にする (q=%20timeout%20 → 'timeout')。空文字・空白だけは指定なし (結果に q が無い)", () => {
+    expect(parseAppLogsQuery(params('q=%20timeout%20'))).toEqual({
+      ok: true,
+      query: { q: 'timeout', limit: 50, cursor: undefined },
+    });
+    for (const raw of ['q=', 'q=%20%20', 'q=%09']) {
+      const result = parseAppLogsQuery(params(raw));
+      expect(result.ok, raw).toBe(true);
+      if (result.ok) expect('q' in result.query, raw).toBe(false);
+    }
+  });
+
+  it('q: 100 文字は通り、101 文字は ok:false で fieldErrors に q', () => {
+    expect(APP_LOGS_SEARCH_MAX_CHARS).toBe(100);
+    const ok = parseAppLogsQuery(params(`q=${'a'.repeat(APP_LOGS_SEARCH_MAX_CHARS)}`));
+    expect(ok.ok && ok.query.q).toBe('a'.repeat(APP_LOGS_SEARCH_MAX_CHARS));
+
+    const tooLong = parseAppLogsQuery(params(`q=${'a'.repeat(APP_LOGS_SEARCH_MAX_CHARS + 1)}`));
+    expect(tooLong.ok).toBe(false);
+    if (!tooLong.ok) expect(Object.keys(tooLong.details.fieldErrors)).toEqual(['q']);
+  });
+
+  it.each([
+    ['改行 %0A', 'a%0Ab'],
+    ['NUL %00', 'a%00b'],
+    ['DEL %7F', 'a%7Fb'],
+    ['NUL だけ', '%00'],
+  ])('q: 制御文字 (%s) を中に含めば ok:false で fieldErrors に q', (_label, raw) => {
+    const result = parseAppLogsQuery(params(`q=${raw}`));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(Object.keys(result.details.fieldErrors)).toEqual(['q']);
+  });
+
+  it("q はほかの絞り込みと一緒に返る (level=error&q=x → { level: 'error', q: 'x', limit: 50, cursor: undefined })", () => {
+    expect(parseAppLogsQuery(params('level=error&q=x'))).toEqual({
+      ok: true,
+      query: { level: 'error', q: 'x', limit: 50, cursor: undefined },
     });
   });
 
@@ -252,5 +295,27 @@ describe('parseAppLogsQuery', () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.details.fieldErrors.from).toHaveLength(1);
+  });
+});
+
+describe('buildMessageSearchFilter', () => {
+  it(`message と error_message の ilike を , でつないだ or の条件を返す ('timeout' → message.ilike."%timeout%",error_message.ilike."%timeout%")`, () => {
+    expect(buildMessageSearchFilter('timeout')).toBe('message.ilike."%timeout%",error_message.ilike."%timeout%"');
+  });
+
+  it('% と _ と \\ はワイルドカードにならないようにエスケープし、" はエスケープして引用符の中に閉じる (カンマ・括弧・ピリオドを含む語でも条件が分かれない)', () => {
+    // ILIKE のエスケープ (\% \_ \\) を、さらに PostgREST の引用符の中のエスケープ (\ → \\) で包む
+    expect(buildMessageSearchFilter('100%')).toBe('message.ilike."%100\\\\%%",error_message.ilike."%100\\\\%%"');
+    expect(buildMessageSearchFilter('a_b')).toBe('message.ilike."%a\\\\_b%",error_message.ilike."%a\\\\_b%"');
+    expect(buildMessageSearchFilter('C:\\x')).toBe(
+      'message.ilike."%C:\\\\\\\\x%",error_message.ilike."%C:\\\\\\\\x%"',
+    );
+    expect(buildMessageSearchFilter('say "hi"')).toBe('message.ilike."%say \\"hi\\"%",error_message.ilike."%say \\"hi\\"%"');
+
+    // 記号を含む語でも、引用符の外のカンマは 1 つだけ (条件は 2 つのまま)。引用符の中のカンマ・括弧・ピリオドは値の一部
+    const filter = buildMessageSearchFilter('a,b).c(d');
+    expect(filter).toBe('message.ilike."%a,b).c(d%",error_message.ilike."%a,b).c(d%"');
+    const outsideQuotes = filter.replace(/"(?:[^"\\]|\\.)*"/g, '""');
+    expect(outsideQuotes).toBe('message.ilike."",error_message.ilike.""');
   });
 });

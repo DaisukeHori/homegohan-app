@@ -29,8 +29,14 @@
  * ネイティブへのメッセージ。
  * mfa-verify-required (#1176。docs/design/cross/12-operator-mfa.md §16.4): WebView の中の MFA の確認画面が、ネイティブの確認画面を開くよう頼む。
  * 受けるのはアプリの段 D (旧バージョンのアプリは知らない type を捨てるので、先に Web だけ出しても壊れない)
+ * legal-consent-accepted (#1442。docs/design/cross/13b-legal-consent-mobile.md §6.6.16): WebView の中の同意画面 (/legal-consent) が、同意を記録できたことを知らせる。
+ * 受けるのはアプリの段 B2 (旧バージョンのアプリは知らない type を捨てるので、先に Web だけ出しても壊れない)
  */
-export type NativeAuthMessage = { type: 'sign-out' } | { type: 'session-expired' } | { type: 'mfa-verify-required' }
+export type NativeAuthMessage =
+  | { type: 'sign-out' }
+  | { type: 'session-expired' }
+  | { type: 'mfa-verify-required' }
+  | { type: 'legal-consent-accepted' }
 
 /**
  * Web 側のセッション (Cookie) に入れる refresh_token の代わりの値 (#1038 F7-05)。
@@ -151,6 +157,17 @@ export function notifyNativeSessionExpired(now: number = Date.now()): boolean {
 export function requestNativeMfaVerify(): boolean {
   const bridge = getBridge()
   return bridge ? post(bridge, { type: 'mfa-verify-required' }) : false
+}
+
+/**
+ * WebView の中の同意画面 (/legal-consent) が、利用規約・プライバシーポリシーへの同意を記録できた (POST /api/legal/accept が 200) ことを
+ * ネイティブに知らせる (#1442。apps/mobile/src/lib/legal-consent.ts の LEGAL_CONSENT_ACCEPTED_MESSAGE_TYPE と同じ値)。
+ * ネイティブは同意画面の route を閉じ、入口から振り分け直す。送ったら true。普通のブラウザ (window.ReactNativeWebView が無い) では何もせず false。
+ * 旧バージョンのアプリは知らない type を捨てるので、Web だけ先に出しても壊れない (先頭の説明)。回数は絞らない (記録できた 1 回だけ送る)
+ */
+export function notifyNativeLegalConsentAccepted(): boolean {
+  const bridge = getBridge()
+  return bridge ? post(bridge, { type: 'legal-consent-accepted' }) : false
 }
 
 /** Cookie のセッションが、native-bridge が張った借り物 (refresh_token が使えない値) か。サーバーの route が使う (cross/12 §14.3・§14.4) */

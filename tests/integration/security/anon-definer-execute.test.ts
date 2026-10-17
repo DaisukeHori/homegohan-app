@@ -328,6 +328,14 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: '別の super_admin による MFA の解除 (段 C) が service_role で呼び、対象の auth.sessions の行を消す。anon / authenticated は呼べない (cross/12 §11.5)',
   },
+  // ---- #1707 運営ロールの MFA: DB を直接呼ぶ経路の判定 (段 E。docs/design/cross/12-operator-mfa.md §11.4・§23 N-32) ----
+  {
+    sig: 'operator_mfa_satisfied()',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: '運営の枝のポリシー (TO authenticated) と運営の関数 7 本が呼ぶ判定。anon は呼ばない (cross/12 §11.4)',
+  },
 ];
 
 describe('#1103 (7) B: 関数ごとの EXECUTE 権限 (決定表)', () => {

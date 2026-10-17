@@ -122,7 +122,7 @@ test.describe("family 作成 + 招待 + 承諾 (β-1, β-2)", () => {
     // 既存 family があるユーザが再度 POST すると ALREADY_IN_FAMILY エラーになる
     const result = await apiFetch(ownerPage, "/api/family/groups", {
       method: "POST",
-      body: { name: "テスト家族2", plan_key: "free" },
+      body: { name: "テスト家族2" },
     });
 
     // 既存 family あり → ALREADY_IN_FAMILY (409 or 400) or 成功 (201)

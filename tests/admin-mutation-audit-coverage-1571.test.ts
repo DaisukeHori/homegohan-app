@@ -72,6 +72,7 @@ const EXPECTED: Record<string, Expectation> = {
   'src/app/api/super-admin/coupons/[id]/route.ts DELETE': 'audited',
   'src/app/api/super-admin/coupons/[id]/route.ts PATCH': 'audited',
   'src/app/api/super-admin/coupons/route.ts POST': 'audited',
+  'src/app/api/super-admin/email-outbox/[id]/requeue/route.ts POST': 'audited',
   'src/app/api/super-admin/embeddings/regenerate/route.ts POST': 'audited',
   'src/app/api/super-admin/experiments/[id]/route.ts DELETE': 'audited',
   'src/app/api/super-admin/experiments/[id]/route.ts PATCH': 'audited',

@@ -10,7 +10,8 @@
 
 import { isSessionExpiredAuthError, PASSWORD_HINT_TEXT } from "@homegohan/shared";
 import { useEffect, useRef, useState } from "react";
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Linking, Pressable, StyleSheet, View } from "react-native";
+import { Text } from "../ui/Text";
 
 import { changePassword, requestEmailChange } from "../../lib/account-credentials";
 import { getSupportMailtoUrl } from "../../lib/siteConfig";

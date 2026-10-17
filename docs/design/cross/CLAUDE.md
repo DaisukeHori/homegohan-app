@@ -17,6 +17,7 @@
 | `09-testing.md` | テスト戦略統合 (Unit/Integration/E2E、CI/CD、モック、E2E シナリオ網羅) | 03 §16.4 §22.3 + 100-scenarios.md |
 | `12-operator-mfa.md` | 運営ロールの MFA (TOTP・AAL2 の入口・バックアップコード・解除) | #1176 |
 | `13a-legal-consent-api-server.md` | 規約の同意ゲートを `/api` に掛ける (middleware の `/api` の分岐・許可リスト・`GET /api/legal/status`・`packages/shared` の判定と文面) | 08 §7.2 |
+| `13b-legal-consent-mobile.md` | 規約の同意ゲートをモバイルのネイティブの画面にも掛ける (ルートのゲートが、同意が要る間はアプリの画面を Web の `/legal-consent` の WebView の route 1 つに畳む・`legal-consent-accepted` の合図) | 13a |
 | `14-parental-consent.md` | 未成年の年齢確認と保護者の同意 (生年月日・`parental_consents`・同意ゲートの判定) | #1173 |
 | `15-data-subject-requests.md` | 開示・訂正・利用停止の請求の受付 (表・本人と運営の経路・応答期限) | #1178 |
 | `16-auth-history-sessions.md` | ログイン履歴・不審ログインの通知・セッションの一覧と失効・パスワードの再利用の防止 | #1190 #1189 #1198 |

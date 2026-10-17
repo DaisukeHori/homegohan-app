@@ -36,6 +36,11 @@ const PUBLIC_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   contact_admin_notification: ['inquiries_url'],
   ops_app_log_error_spike: ['logs_url'],
   ops_email_dead_letter: ['outbox_url'],
+  // #1125 (B) 定期処理の失敗・pg_cron の停止の運用メール。リンクは運用ログ画面 (super_admin だけが開ける固定の URL)
+  ops_cron_failure: ['logs_url'],
+  ops_pg_cron_stalled: ['logs_url'],
+  // #1129 DB バックアップの鮮度の運用メール。リンクは運営のバックアップ・DR の画面 (super_admin だけが開ける固定の URL) で、文面の中で組み立てる
+  ops_backup_stale: [],
   member_left: ['members_url'],
   // 保護者の同意の控え: 同意書の全文 (/legal/parental-consent・だれでも読める固定の頁) とメンバー管理画面 (ログインした本人だけ)
   family_parental_consent_recorded: ['document_url', 'members_url'],

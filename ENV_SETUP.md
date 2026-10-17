@@ -89,7 +89,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
@@ -371,7 +371,7 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 
 ## 🚨 エラー急増の運用メール（`OPS_ALERT_EMAIL`）
 
-アプリのエラーログ（`app_logs` の `level = 'error'`）が急に増えたときに、運用の担当者へ 1 通だけメールで知らせます（#1157）。Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼び、直近 15 分の件数を数えます。
+アプリのエラーログ（`app_logs` の `level = 'error'`）が急に増えたときに、運用の担当者へ 1 通だけメールで知らせます（#1157）。Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼び、直近 15 分の件数を数えます。同じ宛先に、DB バックアップが 30 時間より新しく取れていないことの通知も届きます (`GET /api/cron/backup-freshness`。日 1 回、14:37 JST。#1129)
 
 数えるものは 2 種類あり、別々に知らせます（#1493）。サーバーが書いた `error`（`source` が `client` 以外）と、ブラウザ・端末から `POST /api/log` で届いた `error`（`source = 'client'`）です。`/api/log` はログインしていれば誰でも書けるので、まとめて数えると、利用者が `error` を書くだけでサーバーの障害の通知を鳴らしたり、その 60 分の抑止で本物の障害の通知を止めたりできてしまうためです。2 種類の通知は抑止も別々です。
 
@@ -381,10 +381,13 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 | `OPS_ALERT_ERROR_THRESHOLD`（任意） | `50` | サーバーの `error` のしきい値。直近 15 分のサーバーの `error` が**この件数を超えたら**通知する。1〜100000 の整数 | 既定の 20 件。整数でない・範囲外の値も既定値に戻し、`cron/app-log-alerts` の warn ログに変数名だけを残す |
 | `OPS_ALERT_CLIENT_ERROR_THRESHOLD`（任意） | `300` | ブラウザ・端末から届いた `error` のしきい値（#1493）。直近 15 分のその `error` が**この件数を超えたら**、サーバーとは別の通知を送る。1〜100000 の整数 | 既定の 100 件。不正な値は既定値に戻す（サーバーのしきい値と同じ） |
 | `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
+| `OPS_ALERT_PG_CRON_STALL_MINUTES`（任意） | `120` | pg_cron の停止のしきい値（#1125 の B）。有効なジョブがあるのに、最新の実行から**この分数を超えて**1 つも動いていなければ通知する。10〜1440 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
 
 - 通知する条件: 直近 15 分のサーバーの `error` が **20 件を超えた**とき（21 件から）。ブラウザ・端末から届いた `error` は **100 件を超えた**とき（101 件から）に別の通知を送る。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` / `OPS_ALERT_CLIENT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
 - 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる。分数は 2 種類で同じだが、抑止は種類ごとに別々）（DB の `ops_alert_state` で覚える。キーはサーバーが `app_logs_error_spike`、ブラウザ・端末が `app_logs_client_error_spike`。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
 - **届けられなかったメール**（送信待ち `email_outbox` の dead。#1193）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます（3 つ目の通知。キーは `email_dead_letter`）。1 件からで、まだ知らせていない dead を数え、知らせた行には印を付けます（同じメールを 2 回は数えません。抑止の間に届けられなかったものは、抑止が明けた最初の回で知らせます）。宛先停止リスト・退会で送らなかったものと、運用メール自身は数えません。メールに載るのは、文面の名前（template）ごとの件数と、送信待ちの画面（`/super-admin/email-outbox`）へのリンクだけです。
+- **定期処理の失敗**（4 つ目の通知。キーは `cron_failure`。#1125 の B）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます。対象は、pg_cron のジョブの失敗した実行（`cron.job_run_details` の `status = 'failed'`）と、Vercel Cron の route が 500 を返した回（`app_logs` の固定文の error）です。1 件から、直近 7 日のうちまだ知らせていないものを数え、知らせた失敗は台帳 `cron_failure_alerts` に記録します（同じ失敗を 2 回は数えません。抑止の間に起きたものは、抑止が明けた最初の回で知らせます）。ブラウザ・端末が書いた行（`source = 'client'`）は数えません。メールに載るのは、`pg_cron/<ジョブ名>`・`vercel_cron/<route 名>` ごとの件数と運用ログ画面へのリンクだけです。
+- **pg_cron の停止**（5 つ目の通知。キーは `pg_cron_stalled`。#1125 の B）も同じ宛先に知らせます。有効なジョブがあるのに、最新の実行から `OPS_ALERT_PG_CRON_STALL_MINUTES`（既定 60 分）を超えて 1 つも動いていないときです。止まったままなら、抑止（既定 60 分）ごとに 1 通届きます。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
 - **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'cron/email-outbox'` の error（届けられなかった行は `/super-admin/email-outbox` にも残る）と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
 - ブラウザ・端末から届いたログ（`POST /api/log`）は、利用者ごとに 1 分 30 回・直近 24 時間で 1000 回までしか受け付けません（超えると 429。#1493）。
@@ -504,7 +507,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - `on`: 同意が済むまで、画面を開くと同意画面（`/legal-consent`）へ回します。同意すると元の画面に戻ります。`/api/*` は 403（`{ error, code: 'LEGAL_CONSENT_REQUIRED' }`）で止めます（同意そのもの・認証・退会と書き出し・問い合わせ・ログなどの許可リストを除く。一覧は `packages/shared/src/legal-consent-api.ts` の `LEGAL_CONSENT_EXEMPT_API_PATHS`。#1442）。画面で次は回しません: 利用規約（`/terms`）、プライバシーポリシー（`/privacy`）、特定商取引法の表記（`/legal`）、問い合わせ（`/contact`）、凍結の案内（`/frozen`）、認証の途中の画面（`/auth/*`。アプリの認証ブリッジを含む）、ハンズオンツアー（`/handson-tour`）。
 - 同意しない人は、同意画面の「同意しない」でログアウトでき、データの削除は問い合わせフォームから依頼する案内が出ます。
 - 強制を始める前に決めること（オーナー）: ①版番号と施行日と同意文言（弁護士の確認。いまの値は仮置き）②強制を始める日。③始める前に、お知らせだけの期間（`LEGAL_CONSENT_NOTICE=on`）を置くかどうか。
-- 本番は 2026-10-10 に `on` にしました（オーナー判断。版と施行日は仮置きのまま、お知らせだけの期間は置いていません）。`/api/*` は middleware の `/api` の分岐で止めます（403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`。#1442・設計書 `docs/design/cross/13a-legal-consent-api-server.md`）。モバイルのネイティブの画面はゲートを通りません（#1442）。
+- 本番は 2026-10-10 に `on` にしました（オーナー判断。版と施行日は仮置きのまま、お知らせだけの期間は置いていません）。`/api/*` は middleware の `/api` の分岐で止めます（403 `LEGAL_CONSENT_REQUIRED`。許可リストは `packages/shared/src/legal-consent-api.ts`。#1442・設計書 `docs/design/cross/13a-legal-consent-api-server.md`）。アプリも起動時と `/api` の 403 で同意画面（Web と同じ画面）を出します（#1442・設計書 13b）。
 - 改定のたびにやること: `LEGAL_DOCUMENTS` の `version` と `effectiveDate` を書き換えて出す。版が変わると、同意済みの人も含めて、全員に再同意を求めます（版を変えずに文面だけ直すと、再同意は求めません）。
 - 戻し方: 環境変数を消す（または `off` にする）と、再デプロイ後に既存の利用者を同意画面へ回さなくなります。初めてサインインした新規の人は、`/auth/callback` が引き続き同意画面へ回します（#1435）。記録済みの同意は残ります。
 
@@ -775,6 +778,24 @@ migration auto-deploy のため以下の Repository secrets が必要:
   Project Settings → Database → Connection string で取得
 
 設定場所: GitHub リポジトリ → Settings → Secrets and variables → Actions → New repository secret
+
+### DB バックアップ（`.github/workflows/db-backup.yml`。#1129 / #1191）
+
+毎日の DB の論理バックアップ（本番を暗号化して Cloudflare R2 に置く）には、次の secrets と variables が要ります。**どれも無いうちは、取得は `not_configured` で止まり（DB の中身を取り出す前に止まります）、Issue「【自動】DB バックアップの失敗」が立ちます。** 登録の順番（R2 のバケット・API トークン・age の鍵対 → 登録 → 最初の実行）と値の作り方は `docs/operations/backup-restore.md` の 2 章です。値はここにも Issue にも書きません。
+
+| 種類 | 名前 | 中身 |
+|---|---|---|
+| secret | `BACKUP_R2_ACCESS_KEY_ID` | R2 の API トークン「Object Read & Write」（このバケットだけに絞る）の Access Key ID |
+| secret | `BACKUP_R2_SECRET_ACCESS_KEY` | 同じトークンの Secret Access Key |
+| variable | `BACKUP_R2_ACCOUNT_ID` | Cloudflare のアカウント ID（公開してよい） |
+| variable | `BACKUP_R2_BUCKET` | R2 のバケット名（既定の名前は `homegohan-db-backups`） |
+| variable | `BACKUP_AGE_RECIPIENT` | age の公開鍵（`age1…`）。秘密鍵は GitHub・Vercel・Supabase・リポジトリに置かない |
+
+- 任意の調整用の variable が 4 つあります。DB が育って時間切れになったときだけ入れます（無ければ既定）。形が違う値は黙って既定に戻さず `not_configured` で止まります: `BACKUP_DUMP_TIMEOUT_MINUTES`・`BACKUP_UPLOAD_TIMEOUT_MINUTES`・`BACKUP_RESTORE_CHECK_TIMEOUT_MINUTES`・`BACKUP_ZSTD_LEVEL`。
+- 本番に繋ぐ `SUPABASE_ACCESS_TOKEN`・`SUPABASE_DB_PASSWORD`（上の migration auto-deploy と同じ secrets）はそのまま使います。
+- GitHub が自動で入れるもの（`GITHUB_TOKEN`・`GITHUB_REPOSITORY`・`GITHUB_RUN_ID`・`GITHUB_RUN_ATTEMPT`・`GITHUB_SHA`・`RUNNER_TEMP`）は設定しません。
+- **復元**（`node scripts/backup-db.mjs restore`）は、オーナーの手元のシェルに R2 の 4 つ（`BACKUP_R2_ACCOUNT_ID`・`BACKUP_R2_BUCKET`・`BACKUP_R2_ACCESS_KEY_ID`・`BACKUP_R2_SECRET_ACCESS_KEY`）を置いて流します。前の 2 つは上の variable と同じ値で、後ろの 2 つのキーは**復元用の読み取り専用（Object Read only）のトークン**のものです（取得用の Read & Write のキーは手元に写さない）。値は書かず、パスワードマネージャーから取ります（`docs/operations/backup-restore.md` の 5 章）。
+- 新しい Supabase プロジェクトへ復元するときの接続先 `NEW_DB_URL` は、`docs/operations/backup-restore.md` の 6 章でオーナーの手元のシェルにだけ置く変数です。パスワードを含む秘密なので、GitHub・Vercel には置きません。
 
 ---
 

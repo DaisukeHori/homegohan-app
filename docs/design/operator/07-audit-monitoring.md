@@ -226,6 +226,7 @@ super_admin.coupon.view_redemptions - クーポン適用履歴の閲覧 (GET /ap
 admin.dsr.list                      - 個人情報の請求の一覧 (GET /api/admin/data-requests)。1 件以上返したとき・1 検索 = 1 行 (#1178)
 admin.dsr.view                      - 個人情報の請求の詳細 (内容・本人への応答・内部メモ・請求者のメールアドレス) の閲覧 (GET /api/admin/data-requests/{id}) (#1178)
 admin.dsr.update                    - 個人情報の請求の対応 (状態・本人への応答・内部メモ。PATCH /api/admin/data-requests/{id})。200 のたびに (変更が無くても)。対応済み・対応できずにしたときは severity warn (#1178)
+super_admin.app_logs.list           - アプリログの一覧・本文の検索 (GET /api/super-admin/logs) (#1708)
 ```
 
 個人情報の請求 (`admin.dsr.*`。canonical は `docs/design/cross/15-data-subject-requests.md` §11): 対象は請求した本人 (`target_type = 'user'`)。
@@ -238,6 +239,13 @@ admin.dsr.update                    - 個人情報の請求の対応 (状態・�
 - `target_id` は null、`target_type` は返した行の種類 (`user` / `support_ticket` / `sales_lead`)。
   クーポン適用履歴は 1 つのクーポンの履歴なので、`target_id` = クーポンの id、`target_type = 'coupon'`。
 - 0 件のときは記録しない (下の記録のルールと同じ)。
+- `super_admin.app_logs.list` (#1708。`10-logs-and-mail-retry.md` §10): `target_id` は null、`target_type = 'app_log'`。
+  `filters` は `level` / `source` / `function_name` / `user_id` / `request_id` / `from` / `to` / `q` (本文の検索語) / `has_cursor`。
+  「さらに読み込む」も 1 回の GET = 1 行。0 件・401 / 403 / 400 / 500 / 504 は記録しない。fail-open。
+- メールの送信待ちの一覧 (`GET /api/super-admin/email-outbox`) は記録しない (宛先はマスク済みで、件名・本文を返さない)。
+  再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) は変更系として `super_admin.email_outbox.requeue` を記録する
+  (再送できたときだけ。対象は行の `user_id` (`target_type = 'user'`)、無ければ行の id (`target_type = 'email_outbox'`)。
+  `details` は `outbox_id` / `template` / `previous_status`。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
 
 詳細の対象 (#1326):
 - `admin.moderation.view`: 対象はコンテンツの持ち主 (`target_type = 'user'`)。持ち主が分からないときは通報の id
@@ -329,6 +337,11 @@ super_admin.organization.transfer_admin - org_admin 緊急転送
 super_admin.gdpr_delete.execute     - GDPR 削除実行
 super_admin.llm_quota.override      - LLM クォータ手動変更
 super_admin.setting.change          - システム設定変更
+super_admin.embeddings.regenerate   - 埋め込みの再生成 (POST /api/super-admin/embeddings/regenerate) (#1571)
+super_admin.organization.dissolve   - 組織の緊急解散 (severity=critical) (#1571)
+super_admin.family.dissolve         - 家族グループの緊急解散 (severity=critical) (#1571)
+super_admin.family.transfer_representative - 家族の代表者の緊急譲渡 (severity=warn) (#1571)
+super_admin.email_outbox.requeue    - 届けられなかったメール (dead) の再送 (POST /api/super-admin/email-outbox/{id}/requeue。§4.1.1) (#1708)
 ```
 
 ### 4.3 finance 系操作
@@ -366,6 +379,16 @@ system.plan.auto_expire             - プラン自動期限切れ
 system.gdpr_delete.batch            - GDPR 削除バッチ実行
 system.ban.auto                     - 自動 BAN (不正検知)
 ```
+
+### 4.5a バックアップと DR 訓練の操作 (cross/17-backup-automation.md §10)
+
+| action_type | 誰が | 書き方 | severity | target_type |
+|---|---|---|---|---|
+| `backup.daily.completed` / `backup.weekly.completed` / `backup.annual.completed` | GitHub Actions (actor 無し) | `record_backup_audit` (所有者 `postgres` だけが呼べる) | info | `database_backup` |
+| `backup.daily.failed` / `backup.weekly.failed` / `backup.annual.failed` | 同上 | 同上 | warn | 同上 |
+| `dr.test.monthly.pitr` / `dr.test.quarterly.restore` / `dr.test.annual.drill` | super_admin | `recordAdminAudit` (本人の client。`actor_id = auth.uid()`) | success → info、failed / skipped → warn | `dr_test` |
+
+読む側 (`/super-admin/backups`・`/api/cron/backup-freshness`) は action_type だけで信じず、書いた経路の印で絞る。取得の行は actor_id が NULL かつ target_type が `database_backup`、訓練の行は target_type が `dr_test` かつ actor が今の super_admin (cross/17 §7.1・§10)。`admin_audit_logs` の INSERT のポリシーが action_type を見ない既存の欠陥は Issue #1736 で直す。
 
 ### 4.6 監査ログ INSERT ヘルパー
 
@@ -453,6 +476,7 @@ user.billing.cancel_revoked         - 解約の予約を取り消した (POST /a
 ```sql
 -- 1 年経過した admin_audit_logs を Cold Storage 用テーブルに移動
 -- 実際の S3 転送は Vercel Cron が担当
+-- (未実装の計画。DB の論理バックアップは cross/17 の GitHub Actions → R2 で、このアーカイブの転送は担わない。7 年アーカイブは別の設計。cross/17 §1・§21)
 SELECT cron.schedule(
   'audit-log-archive',
   '0 3 1 * *',  -- 毎月1日 03:00 UTC
@@ -630,10 +654,11 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 |-----|------|
 | 画面 | `/super-admin/logs` (左メニュー「運用 > アプリログ」)。読み取り専用 |
 | API | `GET /api/super-admin/logs`。権限は super_admin のみ (admin も不可)。`app_logs` の RLS は本人の行だけ読める (#1171) ため、`requireRole` を通したあとで service role の client を使う |
-| 絞り込み | `level` / `source` / `function_name` / `user_id` / `request_id` (いずれも完全一致) と `from` / `to` (ISO 8601、両端を含む) |
+| 絞り込み | `level` / `source` / `function_name` / `user_id` / `request_id` (いずれも完全一致) と `from` / `to` (ISO 8601、両端を含む)、`q` (`message` / `error_message` の部分一致・大文字小文字を区別しない・1〜100 文字・制御文字は 400。`%` `_` は文字どおりに探す。索引は無く、時間切れは 504。#1708・`10-logs-and-mail-retry.md` §9.1) |
 | ページ送り | 新しい順 (`created_at`、同時刻は `id`)。`limit` は既定 50・最大 200。応答の `meta.next_cursor` を次回の `cursor` に渡す (OFFSET は使わない) |
 | 表示 | 文面は保存されたまま表示する。秘密情報のマスクは書き込み時 (`supabase/functions/_shared/log-sanitizer.ts`: #1171 / #1287) |
-| 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` には索引が無く、単独で探すと全行を順に調べる |
+| 索引 | `created_at` / `level` / `function_name` / `source` / `user_id`。`request_id` と本文 (`q`) には索引が無く、単独で探すと全行を順に調べる |
+| 監査 | 1 行以上返した GET ごとに `super_admin.app_logs.list` を 1 行 (条件と件数だけ。§4.1.1。#1708) |
 
 この画面と API は読み取り専用で、通知は含まない。しきい値を超えたときの通知は、別の仕組み (§8.3) が行う。Sentry は採用しない (§7)。
 
@@ -651,10 +676,11 @@ Better Stack は採用しない (上記)。代わりに、`app_logs` (db-logger 
 | 重複の抑止 | 同じアラートは **60 分は送り直さない** (環境変数 `OPS_ALERT_COOLDOWN_MINUTES` (1〜10080 分。`claim_ops_alert` が受け付ける範囲) で上書きできる。不正な値はしきい値と同じ扱い)。表 `ops_alert_state (alert_key PK, last_sent_at)` (service_role のみ) に覚える。「送ってよいか」は `claim_ops_alert` が 1 つの `INSERT ... ON CONFLICT DO UPDATE ... WHERE` で原子的に決める (Vercel Cron は同じ回をまれに 2 回呼ぶ。読んでから書くと 2 通出る)。キーは固定で、サーバーの通知が `app_logs_error_spike`、ブラウザ・端末の通知が `app_logs_client_error_spike` (#1493。キーが別なので、片方を送っても、もう片方のクールダウンは始まらない。分数は同じ値を使う)。関数名など動的な値は入れない |
 | 送れなかったとき | メールは届くことに依存しない。`sendEmail` は送信待ち (`email_outbox`) に登録するだけで、送るのは worker (`GET /api/cron/email-outbox`。#1193・`10-logs-and-mail-retry.md` §6)。送信の設定が未完了 (`RESEND_API_KEY` なし)・送信待ちへの登録の失敗 (`outbox_failed`)・例外のときは、`release_ops_alert` で取った権利を返し (「送った」と記録したままにしない)、15 分後の次の回でもう一度試す。**権利を返す条件** (#1577 の 8・`10-logs-and-mail-retry.md` §8.3): `sendEmail` の結果のコードが `suppressed` (宛先が停止リスト) か `invalid_envelope` (文面の不備) のときだけは返さない (送り直しても同じ結果で、15 分ごとの繰り返しになるため。60 分の抑止が効き、suppressed は dead の行が送信待ちの画面に残る)。それ以外の `ok: false` は返す。失敗は `sendEmail` が `app_logs` に error で残し (宛先はマスク)、cron も件数と関数名を warn で残す。応答は 200 のまま (`status: send_failed` / `send_skipped`) |
 | 届けられなかったメール (3 つ目の種類。#1193) | 送信待ち (`email_outbox`) の dead を 1 件から知らせる (`10-logs-and-mail-retry.md` §8)。server → client のあとに判定する。**窓は持たない**: DB の `email_outbox_dead_counts(上位 10)` が、まだ知らせていない (`dead_alerted_at` が NULL の) dead を template ごとに数える (宛先停止 `suppressed`・退会 `recipient_deleted`・運用メール自身 (template が `ops_` で始まる) は数えない)。1 件以上なら、キー `email_dead_letter` で権利 (`claim_ops_alert`。クールダウンは `OPS_ALERT_COOLDOWN_MINUTES`) を取り、`mark_email_outbox_dead_alerted(取った時刻)` でその行に印 (`dead_alerted_at`) を付け、**印を付けた行の件数**で 1 通送る (文面は `src/lib/emails/ops/email-dead-letter.ts`。template `ops_email_dead_letter`。template ごとの件数と `/super-admin/email-outbox` へのリンクだけを載せる)。権利が取れない回 (抑止の間) は印を付けないので、その間に dead になった行は抑止が明けた最初の回で知らせる。送れずに権利を返すときは、`unmark_email_outbox_dead_alerted(取った時刻)` で印も外してから権利を返す (次の回で数え直す)。返さないコード (`suppressed` / `invalid_envelope`) では印も外さない。応答には `email_dead_letter: { status, total, threshold }` を足す (しきい値は 0 = 1 件から。環境変数では変えない) |
+| 定期処理の失敗と pg_cron の停止 (4 つ目・5 つ目の種類。#1125 の B) | pg_cron の失敗した実行と Vercel Cron の route の 500 を 1 件から、pg_cron の停止を知らせる (`operator/11-ops-batches-non-billing.md` §4〜§6)。email_dead_letter のあとに cron_failure → pg_cron_stalled の順で判定する (後ろの失敗は前の通知を止めない)。**cron_failure**: DB の `cron_failure_counts(上位 10)` が、直近 7 日の失敗のうち台帳 `cron_failure_alerts` に無いもの (`cron.job_run_details` の `status = 'failed'` と、`app_logs` の cron の route の `internalError` の行。`source = 'client'` は除く) を `pg_cron/<ジョブ名>` / `vercel_cron/<route 名>` ごとに数える (窓は持たない)。1 件以上なら、キー `cron_failure` で権利 (`claim_ops_alert`) を取り、`mark_cron_failures_alerted(取った時刻)` で台帳に書いて、書けた件数で 1 通送る (文面は `src/lib/emails/ops/cron-failure.ts`。template `ops_cron_failure`)。送れずに権利を返すときは `unmark_cron_failures_alerted(取った時刻)` で台帳の行も消す。応答は `cron_failure: { status, total, threshold }` (しきい値は 0)。**pg_cron_stalled**: DB の `pg_cron_last_run_at()` が返す最新の実行の時刻が、環境変数 `OPS_ALERT_PG_CRON_STALL_MINUTES` (10〜1440 分。既定 60) を超えて古く、有効なジョブがあるとき、キー `pg_cron_stalled` の権利を取って 1 通送る (文面は `src/lib/emails/ops/pg-cron-stalled.ts`。template `ops_pg_cron_stalled`。台帳は使わない)。応答は `pg_cron_stalled: { status, total (分数), threshold (分) }` |
 | 載せる内容 | 件数・関数名 (多い順に最大 10 件、残りは合計)・`/super-admin/logs` へのリンク・検知した時刻 (日本時間)。**ユーザー ID・メールアドレス・ログの本文は載せない** (送信先の Resend は米国の事業者)。関数名も、UUID・メールアドレス・トークンの書式はマスクし、80 文字までにしてから載せる |
-| 実装 | `src/app/api/cron/app-log-alerts/route.ts` (届けられなかったメールは `checkEmailDeadLetters`)、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/emails/ops/app-log-error-spike.ts` (文面。件名と最初の段落でサーバー / ブラウザ・端末を書き分ける)、`src/lib/emails/ops/email-dead-letter.ts` (届けられなかったメールの文面。#1193)、migration `20261010123500_ops_alert_state.sql`・`20261011080000_app_log_error_counts_split_client.sql`・`20261016234000_email_outbox.sql` (#1193) |
+| 実装 | `src/app/api/cron/app-log-alerts/route.ts` (届けられなかったメールは `checkEmailDeadLetters`・定期処理の失敗は `checkCronFailures`・pg_cron の停止は `checkPgCronStalled`)、`src/lib/ops-alerts/app-log-error-spike.ts` (判定・整形)、`src/lib/ops-alerts/cron-failure.ts` (定期処理の失敗と停止の判定。#1125 の B)、`src/lib/emails/ops/app-log-error-spike.ts` (文面。件名と最初の段落でサーバー / ブラウザ・端末を書き分ける)、`src/lib/emails/ops/email-dead-letter.ts` (届けられなかったメールの文面。#1193)、`src/lib/emails/ops/cron-failure.ts`・`src/lib/emails/ops/pg-cron-stalled.ts` (定期処理の失敗・pg_cron の停止の文面。#1125 の B)、migration `20261017220000_cron_failure_monitoring.sql` (台帳と関数 5 本。#1125 の B)・`20261010123500_ops_alert_state.sql`・`20261011080000_app_log_error_counts_split_client.sql`・`20261016234000_email_outbox.sql` (#1193) |
 | `/api/log` の回数制限 | ログイン済みなら誰でも `source='client'` の行を書けるので、利用者ごとに 1 分 30 回・直近 24 時間 1000 回まで (#1493。`src/lib/rate-limit.ts` の `client-log`、key = 認証で確定した `user.id`)。超えたら 429 で、保存しない。送り手 (Web の `logToServer`、端末の `error-report.ts`・`push-issue-log.ts`) はどれも失敗を握りつぶすので、画面やサインアウトは止まらない |
-| テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき・サーバーとブラウザ/端末を別に数える・届けられなかったメール (T-1〜T-11。#1193))、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ。`source='client'` の error はサーバーの数え方に入らない)、`tests/app-log-error-counts-split-contract.test.ts`、`src/__tests__/api/log.test.ts` (回数制限の境界) |
+| テスト | `src/__tests__/api/cron/app-log-alerts.test.ts` (401・しきい値・重複の抑止・メールの内容・送れなかったとき・サーバーとブラウザ/端末を別に数える・届けられなかったメール (T-1〜T-11。#1193)・定期処理の失敗と pg_cron の停止 (CF-1〜CF-16・ST-1〜ST-10・ORD-1〜ORD-2。#1125 の B))、`src/__tests__/lib/ops-alerts/`、`src/__tests__/lib/emails/ops/`、`tests/integration/rls/ops-alert-state.test.ts` (DB の関数。同時に呼んでも権利を取れるのは 1 本だけ。`source='client'` の error はサーバーの数え方に入らない)、`tests/app-log-error-counts-split-contract.test.ts`、`src/__tests__/api/log.test.ts` (回数制限の境界) |
 
 限界:
 
@@ -1135,6 +1161,6 @@ cross/08-legal-compliance §13 に従い、`cookie_consents` テーブルで「�
 - 監査ログの 1 年後コールドストレージ移行: S3 Glacier への転送ジョブは別途実装 (Phase 3)
 - PagerDuty 連携 (要件 §5.10.2 の将来): 現在は Slack のみ対応。PagerDuty は組織 Enterprise 契約時に検討
 - `audit_logs_archive` テーブルへの移動でインデックスが再作成されるため、large scale 時のパフォーマンス確認が必要
-- エラー急増の自動通知 (§8.1 の旧案の 1 行目): `app_logs` の集計とメールで実装した (§8.3。#1157)。残る作業はオーナーのもの: `OPS_ALERT_EMAIL` の決定と設定、本番のメール送信の有効化 (Resend の送信ドメインの検証。`docs/operations/email-domain.md`)
+- エラー急増の自動通知 (§8.1 の旧案の 1 行目): `app_logs` の集計とメールで実装した (§8.3。#1157)。ログの本文の検索と閲覧の監査 (§8.2・§4.1.1)、届けられなかったメールの通知 (§8.3) と送信待ちの画面 `/super-admin/email-outbox` での再送 (#1193・#1708。`10-logs-and-mail-retry.md`) も実装した。残る作業はオーナーのもの: `OPS_ALERT_EMAIL` の決定と設定、本番のメール送信の有効化 (Resend の送信ドメインの検証。`docs/operations/email-domain.md`)
 - Stripe webhook の遅延・pg_cron の失敗・API p95 悪化の自動通知 (§8.1 の旧案の残り): Better Stack を採用しないため未実装。`app_logs` の集計で代替するか、自動通知を持たない運用にするかを決める (#1179)
 - Speed Insights の計測データ (ページの URL を含む) を Vercel へ送ることの表示 (§7.3): 記載が要るかは弁護士の確認 (T30) を待って決める。本番はすでに有効とみられ、デプロイした時点から送られる。送る URL からは `?` 以降・`#` 以降・招待トークンを消してある (`beforeSend`)。デプロイ後に、実際の送信内容で確かめる (#1179)

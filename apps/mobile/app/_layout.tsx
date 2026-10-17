@@ -1,9 +1,4 @@
-import {
-  NotoSansJP_400Regular,
-  NotoSansJP_500Medium,
-  NotoSansJP_700Bold,
-  useFonts,
-} from '@expo-google-fonts/noto-sans-jp';
+import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { Stack } from "expo-router";
 import type { ErrorBoundaryProps } from "expo-router";
@@ -13,16 +8,21 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 
 import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
+import { FontsReadyProvider } from "../src/components/ui/Text";
+import { LegalConsentGate } from "../src/components/legal/LegalConsentGate";
 import { NotificationRouter } from "../src/components/NotificationRouter";
 import { MobileConfigError, resolveRequiredMobileEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
+import { LegalConsentProvider } from "../src/providers/LegalConsentProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
+import { notoSansJpFontSources } from "../src/theme/fontSources";
 
 // E2E テスト中に LogBox の自動ポップアップがタップを横取りして失敗するため抑制する
 // (console.error は引き続き Metro ログに出力される)
 LogBox.ignoreAllLogs();
 
+// 字形 (Noto Sans JP) の読み込みが終わるまで、スプラッシュを出したままにする (#588)
 SplashScreen.preventAutoHideAsync();
 
 // 画面の描画中に起きた例外を受ける、ルートの境界 (#1207)。
@@ -57,11 +57,10 @@ function PushTokenRegistrar() {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
-    NotoSansJP_400Regular,
-    NotoSansJP_500Medium,
-    NotoSansJP_700Bold,
-  });
+  // Noto Sans JP の Regular / Medium / Bold を実行時に読み込む (#588)。ネイティブに埋め込まないので OTA の更新で届く
+  const [fontsLoaded, fontError] = useFonts(notoSansJpFontSources);
+  // 読み込みが終わった (失敗を含む)。失敗したときは、システムの字形のまま進める (スプラッシュで止めない)
+  const fontsSettled = fontsLoaded || fontError !== null;
 
   // 必須の環境変数 (EXPO_PUBLIC_SUPABASE_* と EXPO_PUBLIC_API_BASE_URL。#1182 / #1434) がそろっているか
   const requiredEnv = resolveRequiredMobileEnv();
@@ -77,33 +76,55 @@ export default function RootLayout() {
   }, [missingEnvMessage]);
 
   useEffect(() => {
-    if (fontsLoaded) {
+    if (!fontError) return;
+    // 字形が無くても画面は使えるので、端末のログに残すだけにする
+    console.warn(`[mobile] Noto Sans JP の読み込みに失敗したため、システムの字形で表示します: ${fontError.message}`);
+  }, [fontError]);
+
+  useEffect(() => {
+    if (fontsSettled) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded]);
+  }, [fontsSettled]);
 
-  if (!fontsLoaded) return null;
+  // 読み込み中はスプラッシュを出したまま、何も描かない
+  if (!fontsSettled) return null;
 
   // 必須の環境変数が入っていないビルドは、Provider を立ち上げずに設定エラーの画面を出す (#1182)。
   // Supabase を使う Provider が動くと、存在しない接続先に向かって失敗し続け、原因が分からないため。
   // EXPO_PUBLIC_API_BASE_URL が無いと、API を呼ぶ画面 (getApiBaseUrl()) が例外で落ちるので、これもゲートに入れる (#1434)
-  if (!requiredEnv.ok) return <ConfigErrorScreen missing={requiredEnv.missing} />;
+  if (!requiredEnv.ok) {
+    return (
+      <FontsReadyProvider ready={fontsLoaded}>
+        <ConfigErrorScreen missing={requiredEnv.missing} />
+      </FontsReadyProvider>
+    );
+  }
 
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <ProfileProvider>
-          <PushTokenRegistrar />
-          {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
-          <NotificationRouter />
-          <Stack screenOptions={{ headerShown: false }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="(public)" />
-            <Stack.Screen name="(auth)" />
-            <Stack.Screen name="(tabs)" />
-          </Stack>
-        </ProfileProvider>
-      </AuthProvider>
-    </SafeAreaProvider>
+    <FontsReadyProvider ready={fontsLoaded}>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <LegalConsentProvider>
+            <ProfileProvider>
+              <PushTokenRegistrar />
+              {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
+              <NotificationRouter />
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="(public)" />
+                <Stack.Screen name="(auth)" />
+                <Stack.Screen name="(tabs)" />
+                {/* #1442: 同意画面。iOS のスワイプで閉じさせない (ほかの取り除く操作は画面の beforeRemove が扱う) */}
+                <Stack.Screen name="legal-consent" options={{ gestureEnabled: false }} />
+              </Stack>
+              {/* #1442: 同意が要る間は、Stack を同意画面 (Web の /legal-consent の WebView) 1 つに畳む。描くものは無い。
+                  Stack の後ろに置く (同じ描画の effect では Stack の navigator が先にそろう) */}
+              <LegalConsentGate />
+            </ProfileProvider>
+          </LegalConsentProvider>
+        </AuthProvider>
+      </SafeAreaProvider>
+    </FontsReadyProvider>
   );
 }

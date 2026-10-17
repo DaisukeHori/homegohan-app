@@ -68,6 +68,17 @@ jest.mock('../../src/providers/ProfileProvider', () => ({
   useProfile: () => mockProfileState,
 }));
 
+// ── useLegalConsent のモック (#1442。既定 clear。T-TL1 でテストから変える) ──────────
+let mockLegalConsent: { state: 'loading' | 'clear' | 'required' | 'unknown'; status: null; refresh: () => Promise<void> } = {
+  state: 'clear',
+  status: null,
+  refresh: async () => {},
+};
+
+jest.mock('../../src/providers/LegalConsentProvider', () => ({
+  useLegalConsent: () => mockLegalConsent,
+}));
+
 // ── @expo/vector-icons のモック ───────────────────────────────────────────────
 jest.mock('@expo/vector-icons', () => ({
   Ionicons: ({ name, size, color, testID }: any) => {
@@ -144,6 +155,7 @@ beforeEach(() => {
     isLoading: false,
     profile: { onboardingCompletedAt: '2024-01-01', onboardingStartedAt: null },
   };
+  mockLegalConsent = { state: 'clear', status: null, refresh: async () => {} };
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,5 +285,43 @@ describe('TabsLayout: タブ構成', () => {
     const configs = renderAndGetConfigs();
     const settings = configs.find((c) => c.name === 'settings');
     expect(settings?.options?.href).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. 規約の同意の状態 (#1442 T-TL1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('TabsLayout: 規約の同意の状態 (#1442)', () => {
+  it.each(['loading', 'required'] as const)(
+    '同意の状態が %s ならスピナーで、Tabs も AI の FAB (testID ai-floating-fab) も描かない',
+    (state) => {
+      mockLegalConsent = { state, status: null, refresh: async () => {} };
+      const { queryByTestId } = render(<TabsLayout />);
+      expect(queryByTestId('tabs-container')).toBeNull();
+      expect(queryByTestId('ai-floating-fab')).toBeNull();
+    },
+  );
+
+  it.each(['clear', 'unknown'] as const)('同意の状態が %s なら Tabs (6 本) と FAB を描く', (state) => {
+    mockLegalConsent = { state, status: null, refresh: async () => {} };
+    const { getByTestId } = render(<TabsLayout />);
+    expect(getByTestId('tabs-container')).toBeTruthy();
+    expect(getByTestId('ai-floating-fab')).toBeTruthy();
+    const { Tabs } = require('expo-router') as { Tabs: { __screenConfigs: Array<{ name: string }> } };
+    const names = Tabs.__screenConfigs.map((c) => c.name);
+    expect(names).toEqual(['home', 'menus', 'meals', 'comparison', 'profile', 'settings']);
+  });
+
+  it('clear で描いた後に required へ変わると、Tabs と FAB が外れる (シートの Modal ごと外れる。S27)', () => {
+    mockLegalConsent = { state: 'clear', status: null, refresh: async () => {} };
+    const view = render(<TabsLayout />);
+    expect(view.getByTestId('tabs-container')).toBeTruthy();
+    expect(view.getByTestId('ai-floating-fab')).toBeTruthy();
+
+    mockLegalConsent = { state: 'required', status: null, refresh: async () => {} };
+    view.rerender(<TabsLayout />);
+    expect(view.queryByTestId('tabs-container')).toBeNull();
+    expect(view.queryByTestId('ai-floating-fab')).toBeNull();
   });
 });

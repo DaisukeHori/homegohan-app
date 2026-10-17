@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
-import { ActivityIndicator, Pressable, Text, ViewStyle } from 'react-native';
+import { ActivityIndicator, Pressable, ViewStyle } from 'react-native';
+import { Text } from './Text';
 import { colors, radius } from '../../theme';
 
 type ButtonVariant = 'primary' | 'secondary' | 'destructive' | 'ghost' | 'outline';

@@ -55,12 +55,12 @@
 2. 理由・制約入力
 3. `POST /api/family/meal-requests` with `assignee_id = 担当者UUID`
 4. `family_meal_requests` INSERT (status = 'pending')
-5. assignee に Push 通知「○○からリクエスト」+ バッジ +1
+5. assignee に Push 通知「○○からリクエスト」(バッジは付けない: §6.2)
 6. assignee がリクエスト画面を開く
 7. 「AI に提案させる」→ `ai-propose` 呼び出し or 「自分で考える」→ 手動入力
 8. `POST /api/family/meal-requests/{id}/propose`
 9. status: `pending` → `proposed`
-10. requester に Push 通知「○○から提案が届きました」+ バッジ +1
+10. requester に Push 通知「○○から提案が届きました」(バッジは付けない: §6.2)
 11. requester が確認
     - 承認: `POST .../accept` → status: `proposed` → `accepted` → `planned_meals` INSERT
     - 拒否: `POST .../reject` → status: `proposed` → `rejected` (assignee に通知)
@@ -229,26 +229,25 @@ async function getFamilyBadgeCount(userId: string): Promise<number> {
 
 ### 6.2 iOS / Android バッジ
 
-Push 通知ペイロードの `badge` フィールドに上記計算値を載せる。
+Push 通知の送信は `mobile/06-push-send.md` の送信待ち (`push_outbox`) と worker (`GET /api/cron/push-outbox`) が受け持つ (Edge Function `notify-push` は作らない)。
+発火元は送信待ちに積むだけで、Expo を直接呼ばない。家族の通知の種類は後回し (`mobile/06-push-send.md` §3.2) で、足すときは種類を
+`PUSH_NOTIFICATION_KINDS` と文面 (`src/lib/push/render.ts`) に足し、発火元が RPC `enqueue_push_notification` を呼ぶ:
 
-```typescript
-// Edge Function: notify-push
-const badge = await getFamilyBadgeCount(targetUserId);
-await expo.sendPushNotificationsAsync([{
-  to: pushToken,
-  title: '献立リクエストが届きました',
-  body: '美咲からの依頼を確認してください',
-  badge,                      // ← アイコンバッジ数
-  data: {
-    type: 'family.meal_request.received',
-    request_id: requestId,
-  }
-}]);
+```sql
+-- 発火元 (service_role の API・トリガー・バッチ)。種類と payload の形は種類を足すときに決める (mobile/06 §3.2)
+SELECT public.enqueue_push_notification(
+  p_user_id    => '<受け取る利用者の id>',
+  p_kind       => '<足した種類>',
+  p_payload    => '{"request_id": "<依頼の id>"}'::jsonb,
+  p_dedupe_key => '<同じ出来事で 2 通送らないための鍵>'
+);
 ```
+
+いまの送信はペイロードに `badge` を入れない (`mobile/06-push-send.md` §1.2。数え方の元の `family_meal_requests` が実装に無い)。
 
 ### 6.3 既読処理
 
-ユーザーが FAM-010 (リクエスト一覧) を表示した時点でバッジを減算。
+バッジを付けるようになったら、ユーザーが FAM-010 (リクエスト一覧) を表示した時点でバッジを減算する (いまはバッジを付けない: §6.2)。
 実装: Server Component で `GET /api/family/meal-requests?assignee_id=me` 呼び出し時に
 既読処理 API を同時実行。
 
@@ -373,11 +372,11 @@ sequenceDiagram
   participant DB as Supabase DB
   participant EF as Edge Function
   participant H as 夫 (Mobile)
-  participant Push as Expo Push
+  participant Push as push_outbox (RPC enqueue_push_notification)
 
   W->>API: POST /api/family/meal-requests { assignee_id: 夫UUID }
   API->>DB: INSERT family_meal_requests (status=pending)
-  API->>Push: notify 夫 { badge: 1 }
+  API->>Push: enqueue_push_notification(夫)
   API-->>W: 201 { id, status: "pending" }
 
   H->>API: GET /api/family/meal-requests?assignee_id=me
@@ -394,15 +393,17 @@ sequenceDiagram
 
   H->>API: POST /api/family/meal-requests/{id}/propose
   API->>DB: UPDATE status=proposed, proposed_at=NOW()
-  API->>Push: notify 妻 { badge: 1 }
+  API->>Push: enqueue_push_notification(妻)
   API-->>H: 200 { status: "proposed" }
 
   W->>API: POST /api/family/meal-requests/{id}/accept
   API->>DB: UPDATE status=accepted, responded_at=NOW()
   API->>DB: INSERT planned_meals { source_request_id=id }
-  API->>Push: notify 夫 { badge: 0 }
+  API->>Push: enqueue_push_notification(夫)
   API-->>W: 200 { planned_meal_id }
 ```
+
+図の `Push` は送信待ちに積むだけで、Expo に送るのは worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md` §4)。ペイロードに `badge` は入れない (06 §1.2)。家族の通知の種類は後回し (06 §3.2)。
 
 ### 9.2 expired バッチ
 
@@ -410,13 +411,15 @@ sequenceDiagram
 sequenceDiagram
   participant Cron as pg_cron (毎時 0 分)
   participant DB as Supabase DB
-  participant EF as notify-push
+  participant Push as push_outbox (RPC enqueue_push_notification)
 
   Cron->>DB: UPDATE family_meal_requests SET status='expired' WHERE expires_at < NOW()
   DB-->>Cron: 更新件数 N
   Cron->>DB: INSERT family_activity_log × N
-  Cron->>EF: notify requester × N (期限切れ通知)
+  Cron->>Push: enqueue_push_notification(requester) × N (期限切れ通知)
 ```
+
+送るのは worker `GET /api/cron/push-outbox` (`mobile/06-push-send.md` §4)。期限切れの通知の種類は後回し (06 §3.2)。
 
 ---
 

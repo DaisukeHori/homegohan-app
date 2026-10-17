@@ -13,6 +13,7 @@
 import {
   AI_CHAT_DISABLED_CODE,
   AI_CHAT_DISABLED_MESSAGE,
+  LEGAL_CONSENT_REQUIRED_MESSAGE,
   MAINTENANCE_API_CODE,
   MAINTENANCE_MESSAGE,
 } from '@homegohan/shared';
@@ -43,6 +44,11 @@ import {
   stoppedByServerAlertTitleOf,
 } from '../../src/lib/failed-response';
 import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
+import {
+  LegalConsentRequiredError,
+  resetLegalConsentListenersForTests,
+  subscribeLegalConsentEvents,
+} from '../../src/lib/legal-consent';
 
 /** サーバーとは違う文を入れた本文。画面に出す文は本文の文字列ではなく、code (と limit) から決めた固定の文であることを確かめる */
 const SERVER_TEXT = 'サーバーが返した別の文';
@@ -173,5 +179,45 @@ describe('getApi() — 全メソッドが、上限と緊急停止・メンテナ
     const original = new Error(`HTTP 403 Forbidden: ${JSON.stringify({ error: 'x', code: 'AI_CONSENT_REQUIRED' })}`);
     mockClient.post.mockRejectedValue(original);
     await expect(call('post')).rejects.toBe(original);
+  });
+});
+
+describe('errorOfFailedResponse — 規約への同意が必要 (403 LEGAL_CONSENT_REQUIRED。#1442 T-FR1)', () => {
+  afterEach(() => resetLegalConsentListenersForTests());
+
+  it('403 LEGAL_CONSENT_REQUIRED は LegalConsentRequiredError。isStoppedByServerError が true で見出しは「同意が必要です」。購読者に required を知らせる', () => {
+    const events: string[] = [];
+    subscribeLegalConsentEvents((event) => events.push(event));
+    const body = JSON.stringify({ error: SERVER_TEXT, code: 'LEGAL_CONSENT_REQUIRED' });
+
+    const error = errorOfFailedResponse(403, body);
+
+    expect(error).toBeInstanceOf(LegalConsentRequiredError);
+    expect(error.message).toBe(LEGAL_CONSENT_REQUIRED_MESSAGE);
+    expect(error.message).not.toContain('HTTP');
+    expect(isStoppedByServerError(error)).toBe(true);
+    if (isStoppedByServerError(error)) expect(stoppedByServerAlertTitleOf(error)).toBe('同意が必要です');
+    expect(events).toEqual(['required']);
+  });
+
+  it('AI 同意の 403 は今までどおり HTTP 403: … のままで、知らせない。JSON でない本文も見分けない', () => {
+    const events: string[] = [];
+    subscribeLegalConsentEvents((event) => events.push(event));
+    const consentBody = JSON.stringify({ error: 'x', code: 'AI_CONSENT_REQUIRED' });
+
+    const consent = errorOfFailedResponse(403, consentBody);
+    expect(consent.message).toBe(`HTTP 403: ${consentBody}`);
+    expect(isStoppedByServerError(consent)).toBe(false);
+
+    const notJson = errorOfFailedResponse(403, 'forbidden');
+    expect(notJson.message).toBe('HTTP 403: forbidden');
+    expect(events).toEqual([]);
+  });
+
+  it('503 の応答では知らせない (503 の判定だけ)', () => {
+    const events: string[] = [];
+    subscribeLegalConsentEvents((event) => events.push(event));
+    errorOfFailedResponse(HTTP_SERVICE_UNAVAILABLE, MAINTENANCE_BODY);
+    expect(events).toEqual([]);
   });
 });

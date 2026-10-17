@@ -32,6 +32,7 @@ server  → 認可: caller.org_role IN ('owner','admin')
         → SUPABASE: SELECT seat_limit/used_seats from org_license_pools
         → IF seats full → 400 SEAT_LIMIT_EXCEEDED
         → SUPABASE.rpc('create_org_invite', { ... }) → invite row
+        → 宛先がこの組織の在籍者・持ち主なら 409 ALREADY_IN_ORG (RPC 内。招待を作らない・既存の pending も取り消さない。#1799)
         → 既存 pending 招待は revoked 化 (RPC 内)
         → SUPABASE.admin.listUsers({ filter: `email.eq.${email}` })
         → IF 既存 → invite_url = `${BASE_URL}/invite/${token}`, template = 'A'
@@ -65,6 +66,11 @@ server  → SUPABASE.rpc('accept_org_invite', { token })
 
 ### 1.3 Error path
 ```
+[Alice] [承諾する] - だが既に同じ組織に所属 (持ち主を含む。#1799)
+  → server: ALREADY_IN_ORG エラー (org_role は変えない。招待は pending のまま・席数も監査ログも変わらない)
+  → UI: 「既に組織に所属しています。」
+  → 不要な招待は /api/org/invites/{token}/reject で拒否できる
+
 [Alice] [承諾する] - だが既に他組織所属
   → server: ALREADY_IN_ORG エラー
   → UI: 「あなたは現在 orgA に所属しています。orgB に移動しますか?」
@@ -185,8 +191,8 @@ server → rpc('accept_org_owner_transfer', { p_proposal_id })
 ```
 [user=Mom] /family/setup → [家族グループを作る] → 名前入力「山田家」
 POST /api/family/groups
-       body: { name: '山田家', plan_key: 'free' }
-server → rpc('create_family_group', { p_name, p_plan_key })
+       body: { name: '山田家' }
+server → rpc('create_family_group', { p_name })   ※ プランは渡さない (p_plan_key は既定の 'free'。グループのプランは代表者の契約から DB のトリガーが決める: billing/01 S20)
        → 整合性: caller が既に他 family にいたら ALREADY_IN_FAMILY
        → family_groups INSERT, family_members INSERT (representative)
        → user_profiles.family_id = new
@@ -373,7 +379,7 @@ server → caller の family_members 行を UPDATE
 | leave_org | (none) | user_profiles | authenticated | POST /api/org/leave |
 | propose_org_owner_transfer | org_id, to_user_id | UUID (proposal_id) | authenticated | POST /api/org/owner-transfer/propose |
 | accept_org_owner_transfer | proposal_id | organizations | authenticated | POST /api/org/owner-transfer/{id}/accept |
-| create_family_group | name, plan_key | family_groups | authenticated | POST /api/family/groups |
+| create_family_group | name, plan_key (既定 'free'。POST /api/family/groups は name だけを渡す) | family_groups | authenticated | POST /api/family/groups |
 | create_family_invite | family_id, email, custom_message | family_invites | authenticated | POST /api/family/invites |
 | accept_family_invite | token, share_meals, share_health, share_menu | family_members | authenticated | POST /api/family/invites/{token}/accept |
 | reject_family_invite | token | family_invites | anon/authenticated | POST /api/family/invites/{token}/reject |

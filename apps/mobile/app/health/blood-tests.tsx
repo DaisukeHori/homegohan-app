@@ -9,10 +9,9 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../../src/components/ui/Text";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { formatLocalDate, todayLocal } from "@homegohan/shared";
 

@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActivityIndicator, Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Text, TextInput } from "../../src/components/ui/Text";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { Card, LoadingState } from "../../src/components/ui";

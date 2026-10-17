@@ -17,6 +17,10 @@
       "schedule": "*/1 * * * *"
     },
     {
+      "path": "/api/cron/backup-freshness",
+      "schedule": "37 5 * * *"
+    },
+    {
       "path": "/api/cron/login-alerts",
       "schedule": "*/1 * * * *"
     }

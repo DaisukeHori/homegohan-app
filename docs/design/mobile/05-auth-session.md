@@ -233,7 +233,8 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 type WebToNativeAuthMessage =
   | { type: 'sign-out' }             // 利用者が Web でログアウトした
   | { type: 'session-expired' }      // Web のセッションが切れた・切れそう
-  | { type: 'mfa-verify-required' }; // 運営の二段階認証の 6 桁の確認をネイティブに頼む (cross/12 §16.4)
+  | { type: 'mfa-verify-required' }  // 運営の二段階認証の 6 桁の確認をネイティブに頼む (cross/12 §16.4)
+  | { type: 'legal-consent-accepted' }; // 規約の同意を記録できた (cross/13b)。ログアウトの合図ではない
 ```
 
 | 送る場所 (Web) | メッセージ |
@@ -243,6 +244,7 @@ type WebToNativeAuthMessage =
 | `MainLayout` の `onAuthStateChange`。WebView の中で `SIGNED_OUT` になった (§6.3) | `session-expired` |
 | ログイン画面が表示されたとき (WebView でログイン画面 = セッションが無い) | `session-expired` |
 | 運営の MFA の確認画面 (`/settings/security/mfa/verify`) を WebView の中で開いたとき (`NativeAppMfaNotice` の kind=verify。描画の後に 1 回と、[確認画面を開く] を押したとき。cross/12 §16.4.3) | `mfa-verify-required` |
+| Web の同意画面 (`LegalConsentForm`) が同意を記録できた直後 (`POST /api/legal/accept` が 200。`window.location.assign(next)` の前)。ネイティブの受け手は `WebViewScreen` の `onMessage` で、`useWebAuthMessages` を通らない。ネイティブはゲートが同意画面から入口へ移す (cross/13b) | `legal-consent-accepted` |
 
 `session-expired` は Web 側で 15 秒以内に続けて送らず、ログアウトを知らせた後は送らない。`sign-out` は 1 つのページで 1 回だけ送る。普通のブラウザでは何も送らない。
 
@@ -261,7 +263,7 @@ auth-js が端末のセッションを消す。そのあとに届く `sign-out` 
   (メッセージごとに `getSession()` を呼ぶと、先に動いている `session-expired` の `getUser()` が端末のセッションを消したあとで、`null` を受け取る)。
   控えは、処理中のメッセージが無くなったとき、またはログアウトが済んだときに捨てる (次のログインの別ユーザーに使わない)。
   ログアウトでは、この控えを `signOutWithCleanup(userId, { accessToken })` に渡し、push token の削除を本人の JWT で認可する (§5)
-- `sign-out`: 共通のログアウト (§5) を行い、ウェルカム画面へ戻る。5 つのタブが同時に送ってきても 1 回だけ行う
+- `sign-out`: 共通のログアウト (§5) を行い、ウェルカム画面へ戻る。5 つのタブが同時に送ってきても 1 回だけ行う。規約の同意画面 (`app/legal-consent.tsx`) だけは `WebViewScreen` の `afterSignOut` でウェルカムへ移らず、Web の「同意しない」「登録をやめる」の後の案内を残して「閉じる」を出す (13b)
 - `session-expired`:
   1. ネイティブも未ログインなら何もしない (上の控えが無い)。この控えは、次の `getUser()` より**前**に取る
   2. ネイティブのセッションをサーバーで確かめる。失効していれば (Web のログアウトで全端末のセッションが失効した後など)、読み込み直さず、控えた値でログアウトを揃える
@@ -380,4 +382,4 @@ WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限ら�
 - ログアウトのあと、同じタブの `MainLayout` が `BroadcastChannel` で `window.location.href = '/login'` と全体を読み込み直す。ページごと入れ替わるので `notifyNativeSignOut()` の記録が初期化され、
   ログイン画面が `session-expired` をもう一度送る。ネイティブ側で `ignored` (ログアウト処理中) か `no-session` (ログアウト済み) になるだけで害は無いので、そのままにしている。
   `sessionStorage` に印を残して抑える案は、印が残る期間の管理が要り、本当に再ブリッジが要るときに止めてしまう危険のほうが大きい
-- push token を DB 側で端末ごとに 1 ユーザーへ紐づけ直す (別ユーザーのログインで古い行を消す) には、サービスロールの処理が要る。サーバー側の送信 (`notify-push`) は #1136 で未実装
+- push token を DB 側で端末ごとに 1 ユーザーへ紐づけ直す (別ユーザーのログインで古い行を消す) には、サービスロールの処理が要る。サーバー側の送信は `06-push-send.md` (送信待ち `push_outbox` と worker `GET /api/cron/push-outbox`。#1136)

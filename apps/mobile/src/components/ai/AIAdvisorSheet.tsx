@@ -20,10 +20,9 @@ import {
   SafeAreaView,
   ScrollView,
   StyleSheet,
-  Text,
-  TextInput,
   View,
 } from "react-native";
+import { Text, TextInput } from "../ui/Text";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
 import {
@@ -43,6 +42,7 @@ import { colors, radius, shadows, spacing } from "../../theme";
 import { AIDayMenuModal } from "./AIDayMenuModal";
 import { aiSummarySkippedNote, isAiConsentRequiredError, promptAiConsentRequired } from "../../lib/ai-consent";
 import { errorOfFailedResponse, isStoppedByServerError, stoppedByServerAlertTitleOf } from "../../lib/failed-response";
+import { isLegalConsentRequiredError } from "../../lib/legal-consent";
 import { SERVICE_UNAVAILABLE_ALERT_TITLE, serviceUnavailableMessageOf } from "../../lib/service-unavailable";
 
 // ============================================================
@@ -374,6 +374,15 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
         await fetchSessions();
       } else {
         const err = await res.json().catch(() => ({}));
+        // 規約・プライバシーポリシーへの同意が必要 (403 LEGAL_CONSENT_REQUIRED。#1442): errorOfFailedResponse が LegalConsentProvider に
+        // 知らせ (ゲートが同意画面だけにする)、固定の文の例外を返す。本文は JSON で読んだ後なので文字列に戻して渡す
+        // (`HTTP <状態>: <本文>` の Error を自分で作らない。tests/mobile-service-unavailable-raw-fetch.test.ts)。
+        // 503 (緊急停止・メンテナンス中など) とそれ以外の失敗は、下の今の分岐のまま
+        const failure = errorOfFailedResponse(res.status, JSON.stringify(err));
+        if (isLegalConsentRequiredError(failure)) {
+          Alert.alert(stoppedByServerAlertTitleOf(failure), failure.message);
+          return;
+        }
         // AI 相談の緊急停止中・メンテナンス中 (#1457)・同意の状況を読めなかった 503 (#1486): 本文の文字列ではなく、
         // code から決めた固定の文を出す (#1486 より前のサーバーは、メンテナンス中の本文の error がオブジェクトだった)
         const unavailableMessage = serviceUnavailableMessageOf(res.status, err);

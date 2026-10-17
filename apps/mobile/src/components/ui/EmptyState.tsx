@@ -1,5 +1,6 @@
 import { ReactNode } from 'react';
-import { Text, View, ViewStyle } from 'react-native';
+import { View, ViewStyle } from 'react-native';
+import { Text } from './Text';
 import { colors, spacing } from '../../theme';
 import { Button } from './Button';
 

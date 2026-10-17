@@ -1344,6 +1344,30 @@ export type Database = {
           },
         ]
       }
+      cron_failure_alerts: {
+        Row: {
+          alerted_at: string
+          failed_at: string
+          item_id: string
+          job_name: string
+          source: string
+        }
+        Insert: {
+          alerted_at: string
+          failed_at: string
+          item_id: string
+          job_name: string
+          source: string
+        }
+        Update: {
+          alerted_at?: string
+          failed_at?: string
+          item_id?: string
+          job_name?: string
+          source?: string
+        }
+        Relationships: []
+      }
       daily_active_users: {
         Row: {
           computed_at: string
@@ -8276,6 +8300,10 @@ export type Database = {
         }
         Returns: Json
       }
+      assert_org_invite_recipient_not_in_org: {
+        Args: { p_email: string; p_organization_id: string }
+        Returns: undefined
+      }
       auth_login_clear_failures: {
         Args: { p_email: string }
         Returns: undefined
@@ -8322,9 +8350,25 @@ export type Database = {
         }
         Returns: string
       }
+      billing_expire_manual_subscription_for_user: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
       billing_finish_stripe_event: {
         Args: { p_error?: string; p_event_id: string; p_ok: boolean }
         Returns: undefined
+      }
+      billing_grant_manual_subscription: {
+        Args: { p_expires_at?: string; p_plan_key: string; p_user_id: string }
+        Returns: Json
+      }
+      billing_manual_subscription_sync_after_end: {
+        Args: { p_plan_key: string; p_user_id: string }
+        Returns: undefined
+      }
+      billing_revoke_manual_subscription: {
+        Args: { p_user_id: string }
+        Returns: Json
       }
       calculate_segment_stats_finalize_retry_bodies: {
         Args: { p_at: string }
@@ -8683,6 +8727,24 @@ export type Database = {
           isOneToOne: true
           isSetofReturn: false
         }
+      }
+      cron_failure_candidates: {
+        Args: never
+        Returns: {
+          failed_at: string
+          item_id: string
+          job_name: string
+          source: string
+        }[]
+      }
+      cron_failure_counts: {
+        Args: { p_limit?: number }
+        Returns: {
+          failed_count: number
+          job_name: string
+          source: string
+          total_count: number
+        }[]
       }
       decline_family_representative_transfer: {
         Args: { p_proposal_id: string }
@@ -9129,6 +9191,15 @@ export type Database = {
         }
         Returns: Json
       }
+      mark_cron_failures_alerted: {
+        Args: { p_alerted_at: string; p_limit?: number }
+        Returns: {
+          failed_count: number
+          job_name: string
+          source: string
+          total_count: number
+        }[]
+      }
       mark_email_outbox_dead_alerted: {
         Args: { p_alerted_at: string; p_limit?: number }
         Returns: {
@@ -9249,6 +9320,7 @@ export type Database = {
         Args: { p_user_id: string }
         Returns: number
       }
+      operator_mfa_satisfied: { Args: never; Returns: boolean }
       organizations_owner_id_unchanged: {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean
@@ -9260,6 +9332,14 @@ export type Database = {
       paste_meal_to_family: {
         Args: { p_source_meal_id: string; p_target_user_ids: string[] }
         Returns: string
+      }
+      pg_cron_last_run_at: {
+        Args: never
+        Returns: {
+          active_jobs: number
+          cron_available: boolean
+          last_run_at: string
+        }[]
       }
       pii_hmac_hex: {
         Args: { p_domain: string; p_value: string }
@@ -9923,6 +10003,10 @@ export type Database = {
           snapshot_date: string
           wau: number
         }[]
+      }
+      unmark_cron_failures_alerted: {
+        Args: { p_alerted_at: string }
+        Returns: number
       }
       unmark_email_outbox_dead_alerted: {
         Args: { p_alerted_at: string }

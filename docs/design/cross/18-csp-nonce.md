@@ -5,7 +5,7 @@
 | v1.0 | 2026-10-16 | 新設 (Issue #1169 の設計ゲート・A 型 4 相) |
 | v1.1 | 2026-10-16 | #1769 の追随: connect-src に祝日の API のオリジン (`HOLIDAYS_API_ORIGIN` = `https://holidays-jp.github.io`) を足す (§9.1・§12.2) |
 
-要件の正本は Issue #1169 の本文 (コメント 0 件)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
+要件の正本は Issue #1169 の本文 (コメントは閉じたときの記録の 1 件で、要件を足していない)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名は cross/18 (cross/ の既存は 01〜09・12・13a・14・15。16 は同じ時期の別の設計 (ログイン履歴・セッション #1190)、17 はバックアップの設計が使う)。
 
 前提 (本書が従う条件): ローンチ前で利用者ゼロ (正しい形で作る)。本番の DB に触らない。
@@ -343,7 +343,7 @@ const SUPABASE_CLOUD_HOST_SUFFIX = '.supabase.co';
 export interface CspBuildInput {
   /** このリクエストの nonce (generateCspNonce の戻り値) */
   nonce: string;
-  /** next dev か (webpack の HMR が 'unsafe-eval' を要る)。呼ぶ側が process.env.NODE_ENV === 'development' を渡す */
+  /** next dev か (dev では React がデバッグ情報 (サーバーのエラーのスタックをブラウザで組み立て直すなど) に eval を使うので 'unsafe-eval' が要る。本番は要らない。Next の CSP のガイド)。呼ぶ側が process.env.NODE_ENV === 'development' を渡す */
   isDev: boolean;
   /** NEXT_PUBLIC_SUPABASE_URL (src/lib/env-required.ts の getSupabaseUrl() の値。無ければ undefined) */
   supabaseUrl: string | undefined;
