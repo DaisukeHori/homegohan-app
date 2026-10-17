@@ -72,7 +72,8 @@ export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
  * WebView を本人のセッションにするには、このコードが要る (無いと WebView はログイン画面になり、/frozen・/frozen/account にたどり着けない)。
  * そのため、FROZEN_ALLOWED_API_PATHS (本人がサービスから離れるための操作) とは別に、middleware の凍結の分岐で止めない。
  * コードで WebView に移るのは、端末がすでに持っている本人のセッションだけで、凍結中の Web のセッションは
- * middleware が画面を /frozen へ差し戻し、/api を FROZEN_ALLOWED_API_PATHS 以外 403 で止める (Web でログインしたときと同じ扱い)。
+ * middleware が画面を /frozen へ差し戻し、/api を凍結中も通す API (FROZEN_ALLOWED_API_PATHS と、通知のトークンの claim・このコード・
+ * お問い合わせの送信 (isFrozenContactSubmitRequest。#1871)) 以外 403 で止める (Web でログインしたときと同じ扱い)。
  * 一覧は tests (lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts) で固定している。
  */
 export const NATIVE_BRIDGE_CODE_API_PATH = '/api/auth/native-bridge/code';

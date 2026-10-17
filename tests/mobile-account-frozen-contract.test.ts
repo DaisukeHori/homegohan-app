@@ -24,9 +24,12 @@ import {
 } from '@homegohan/shared';
 import { AccountFrozenError, FROZEN_PROBE_API_PATH, FROZEN_SCREEN_PATH } from '../apps/mobile/src/lib/account-frozen';
 import {
+  CONTACT_API_PATH,
+  CONTACT_SUBMIT_METHOD,
   FROZEN_ALLOWED_API_PATHS,
   NATIVE_BRIDGE_CODE_API_PATH,
   isFrozenAllowedApiPath,
+  isFrozenContactSubmitRequest,
   isNativeBridgeCodeApiPath,
 } from '../src/lib/auth/frozen';
 import { PUSH_TOKEN_CLAIM_API_PATH, isPushTokenClaimApiPath } from '../src/lib/push-tokens';
@@ -61,14 +64,23 @@ describe('アプリの凍結の画面と Web の凍結の画面の契約 (#1861)
   });
 });
 
+/** 判定の API を呼びうるメソッド (アプリは GET で呼ぶ。どのメソッドでも凍結中に通らないことを見る) */
+const PROBE_METHODS_TO_CHECK = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const;
+
 describe('凍結の判定の API の契約 (#1861)', () => {
-  it('FROZEN_PROBE_API_PATH は、凍結中も通す API (FROZEN_ALLOWED_API_PATHS・claim・ブリッジのコード) のどれにも入っていない', () => {
+  it('FROZEN_PROBE_API_PATH は、凍結中も通す API (FROZEN_ALLOWED_API_PATHS・claim・ブリッジのコード・お問い合わせの送信) のどれにも入っていない', () => {
     expect(isFrozenAllowedApiPath(FROZEN_PROBE_API_PATH)).toBe(false);
     expect(FROZEN_ALLOWED_API_PATHS).not.toContain(FROZEN_PROBE_API_PATH);
     expect(isPushTokenClaimApiPath(FROZEN_PROBE_API_PATH)).toBe(false);
     expect(FROZEN_PROBE_API_PATH).not.toBe(PUSH_TOKEN_CLAIM_API_PATH);
     expect(isNativeBridgeCodeApiPath(FROZEN_PROBE_API_PATH)).toBe(false);
     expect(FROZEN_PROBE_API_PATH).not.toBe(NATIVE_BRIDGE_CODE_API_PATH);
+    // #1871: お問い合わせの送信 (POST /api/contact) はメソッドまで見て通す。判定の API はどのメソッドでも当たらない
+    expect(isFrozenContactSubmitRequest(CONTACT_SUBMIT_METHOD, CONTACT_API_PATH)).toBe(true);
+    for (const method of PROBE_METHODS_TO_CHECK) {
+      expect(isFrozenContactSubmitRequest(method, FROZEN_PROBE_API_PATH), method).toBe(false);
+    }
+    expect(FROZEN_PROBE_API_PATH).not.toBe(CONTACT_API_PATH);
   });
 
   it('FROZEN_PROBE_API_PATH は実在する route で、規約の同意ゲートの対象外 (未同意でも凍結していなければ 2xx)', () => {

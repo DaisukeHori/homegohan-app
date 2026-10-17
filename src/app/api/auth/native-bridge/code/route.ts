@@ -13,7 +13,9 @@
 //   - 凍結中のアカウントにも発行する (#1861)。モバイルの凍結の画面 (Web の /frozen を WebView で開く) を本人のセッションで開くため
 //     (発行しないと WebView がログイン画面になり、凍結中でも許している退会・書き出し (#1445) にたどり着けない)。
 //     コードで WebView に移るのは端末がすでに持っている本人のセッションだけで、凍結中の Web のセッションは middleware が
-//     画面を /frozen へ差し戻し、/api を FROZEN_ALLOWED_API_PATHS 以外 403 で止める (Web でログインしたときと同じ)。
+//     画面を /frozen へ差し戻し、/api を凍結中も通す API (FROZEN_ALLOWED_API_PATHS と、通知のトークンの claim・このコード・
+//     お問い合わせの送信 (POST /api/contact。src/lib/auth/frozen.ts の isFrozenContactSubmitRequest。#1871)) 以外 403 で止める
+//     (Web でログインしたときと同じ)。
 //     middleware の凍結の分岐もこのパスを止めない (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)。
 //   - アクセストークンの有効期限までの残りが短いときは発行しない。コードの引き換えで期限切れだと
 //     setSession がリフレッシュトークンをローテーションし、ネイティブ側の保持分が使用済みになってしまう。

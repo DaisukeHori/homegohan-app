@@ -4,7 +4,8 @@
  * サーバー (lib/supabase/middleware.ts の /api の分岐) は、凍結中の利用者の /api を、凍結中も呼べる API
  * (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS = 退会・書き出し・有料プランの解約の 5 本と、それとは別に判定する
  * 通知のトークンの claim (src/lib/push-tokens.ts の isPushTokenClaimApiPath)・ネイティブ認証ブリッジのコード
- * (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)) を除いて 403 AUTH_ACCOUNT_FROZEN で止める。本文と状態は packages/shared の account-frozen.ts。
+ * (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)・お問い合わせの送信 (POST /api/contact。src/lib/auth/frozen.ts の
+ * isFrozenContactSubmitRequest。#1871)) を除いて 403 AUTH_ACCOUNT_FROZEN で止める。本文と状態は packages/shared の account-frozen.ts。
  * このファイルは、
  *   - その 403 を見分け、固定の文の例外 (AccountFrozenError) に置き換える。getApi() (src/lib/api.ts の withFriendlyErrors) と
  *     生の fetch (src/lib/failed-response.ts の errorOfFailedResponse) の両方がここを通る
@@ -43,7 +44,7 @@ export const FROZEN_SCREEN_ROUTE_NAME = "frozen";
  * 凍結しているかを確かめる API。凍結中は middleware が 403 AUTH_ACCOUNT_FROZEN で止める (凍結中も呼べる API の一覧に無い) ので、
  * 応答が 2xx なら凍結していない。規約の同意の状況を返す既存の API で、本文は使わない (サインイン中の利用者なら誰でも 200。
  * 規約の同意ゲートの対象外なので、未同意でも 403 LEGAL_CONSENT_REQUIRED にならない)。
- * 凍結中も通す API (FROZEN_ALLOWED_API_PATHS・claim・ブリッジのコード) のどれにも入っていないこと (入ると判定が常に clear になり、
+ * 凍結中も通す API (FROZEN_ALLOWED_API_PATHS・claim・ブリッジのコード・お問い合わせの送信) のどれにも入っていないこと (入ると判定が常に clear になり、
  * 凍結の画面へ移らなくなる) は tests/mobile-account-frozen-contract.test.ts が見張る
  */
 export const FROZEN_PROBE_API_PATH = LEGAL_CONSENT_STATUS_API_PATH;
