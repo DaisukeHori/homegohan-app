@@ -14,7 +14,14 @@
  * 許すのは、既定値の定数そのものと、既定値を固定するテストだけ (ALLOWED_FILES)。
  * さらに、製品のソース (テストを除く .ts / .tsx / .js などを、コメントを除いてから読む) には、homegohan.com を含めた
  * 3 つのドメインのどれも書かれていないことを確かめる (PRODUCT_ALLOWED_FILES の既定値の定数を除く)。
- * 本番のドメインはまだ決まっていないので、製品のコードがドメインを知っているのは既定値の定数だけにしておく。
+ * 本番のドメインは homegohan.com に決まっているが、DNS と Resend の検証が済むまでは環境変数で切り替えない。
+ * 切り替えをコードの変更なしで済ませるため、製品のコードがドメインを知っているのは既定値の定数だけにしておく。
+ * #1573 で見張りを src/ と apps/mobile/ の外へ広げた (OGP の画像・Edge Function・開発用の道具・設定例の文書):
+ *   - Edge Function (supabase/functions) の製品のソースも、コメントを除いて 3 つのドメインを書かない
+ *   - public/・scripts/・supabase/functions/ とリポジトリ直下の文書 (.env.example・ENV_SETUP.md など) には、
+ *     存在しない homegohan.app / homegohan.jp を、サブドメイン付きやドメイン名だけの形でも書かない
+ *   - 上の文書と、src/・apps/mobile/ の文書 (README・env.example など) には、サイトの URL を https://homegohan.com で書かない
+ *     (homegohan.com はサイトを移すまで別のサービスを指している。切り替えの値は docs/operations/email-domain.md に書く)
  * 落ちたときは、ドメインを書かずに getSiteUrl() / getEmailFrom() / getSupportEmail() (Web) か
  * getSupportEmail() / getTermsUrl() / getPrivacyUrl() (モバイル) を呼ぶ。テストの期待値には、定数 (DEFAULT_*) か
  * example.test のような例示用のドメインを使う。
@@ -109,7 +116,7 @@ describe('送信元・問い合わせ先・サイトの URL は 1 か所 (#1194)
 
 /**
  * 製品のソース (テストを除く) で、コメントを除いたあとに書かれていてはいけないドメイン。
- * 上の FORBIDDEN より広く、本番の候補の homegohan.com も含める (本番のドメインは未定のため、製品のコードには書かない)。
+ * 上の FORBIDDEN より広く、本番のドメインの homegohan.com も含める (切り替えは DNS と Resend の検証のあとに環境変数で行うので、製品のコードには書かない)。
  * 'com.homegohan.app' (アプリの識別子) は対象外。'homegohan-app.vercel.app' はドメインが違うので当たらない。
  */
 const PRODUCT_FORBIDDEN = /(?<!\bcom\.)\bhomegohan\.(?:app|jp|com)\b/i;
@@ -199,11 +206,19 @@ function collectProductFiles(dir: string): string[] {
   return files;
 }
 
+/**
+ * 製品のソースとして読むフォルダ。Web と モバイルに加えて、Edge Function (Deno) も製品のコード (#1573。
+ * 以前は CORS の既定値に、DNS に存在しない旧ドメインが残っていた)
+ */
+const PRODUCT_SCAN_ROOTS = [...SCAN_ROOTS, 'supabase/functions'];
+
 const productHitsByFile = new Map<string, Array<{ line: number; text: string }>>();
 let productFileCount = 0;
-for (const scanRoot of SCAN_ROOTS) {
+const productFiles = new Set<string>();
+for (const scanRoot of PRODUCT_SCAN_ROOTS) {
   for (const file of collectProductFiles(path.join(ROOT, scanRoot))) {
     productFileCount += 1;
+    productFiles.add(path.relative(ROOT, file).split(path.sep).join('/'));
     const hits = findProductForbidden(file, fs.readFileSync(file, 'utf8'));
     if (hits.length > 0) productHitsByFile.set(path.relative(ROOT, file).split(path.sep).join('/'), hits);
   }
@@ -219,6 +234,11 @@ describe('製品のソースは、コメントを除くと既定値の定数の�
     expect(productHitsByFile.get('apps/mobile/src/lib/siteConfig.ts')?.map((hit) => hit.text)).toEqual([
       "export const DEFAULT_SUPPORT_EMAIL = 'support@homegohan.app';",
     ]);
+  });
+
+  it('走査が機能している: Edge Function の CORS の既定値 (supabase/functions/_shared/cors.ts) も製品のソースとして読む (#1573)', () => {
+    expect(productFiles.has('supabase/functions/_shared/cors.ts')).toBe(true);
+    expect(productFiles.has('supabase/functions/generate-hint/index.ts')).toBe(true);
   });
 
   it('homegohan.app / homegohan.jp / homegohan.com を、既定値の定数のほかに書かない', () => {
@@ -239,6 +259,188 @@ describe('製品のソースは、コメントを除くと既定値の定数の�
     expect(settings).toMatch(/import\s*\{[^}]*\bgetSupportEmail\b[^}]*\}\s*from\s*["']@\/lib\/site-config["']/);
     expect(settings).toContain('href={`mailto:${getSupportEmail()}`}');
     expect(settings).not.toMatch(/mailto:[^`$]/);
+  });
+});
+
+/**
+ * #1573: src/ と apps/mobile/ の外に残っていたドメインの直書きを見張る。
+ * どれも環境変数を読めない (画像の中の文字・設定例・説明) か、site-config を読めない (Edge Function・開発用の道具) ので、
+ * ドメインを切り替えても古いまま残る。以前ここに、OGP の画像の文字 homegohan.app・CORS の既定値と、その説明の
+ * https://homegohan.app・smoke の例の staging.homegohan.app・カタログの調査の User-Agent が残っていた。
+ */
+const EXTRA_SCAN_ROOTS = ['public', 'scripts', 'supabase/functions'];
+/** リポジトリ直下の、設定例と説明の文書 */
+const EXTRA_SCAN_FILES = ['.env.example', 'ENV_SETUP.md', 'README.md', 'SECURITY.md'];
+/** EXTRA_SCAN_ROOTS で読むファイル (テキスト)。シェル・Python・SQL の道具も読む */
+const EXTRA_TEXT_FILE = /(?:\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|mdx|ya?ml|html|css|txt|svg|sh|py|sql|toml|webmanifest)|env\.example)$/i;
+
+/**
+ * 存在しない旧ドメイン (DNS に無い)。メールアドレス・URL に限らず、サブドメイン付き (staging.…) やドメイン名だけ (画像の文字) も当てる。
+ * 'com.homegohan.app' (アプリの識別子) と 'homegohan-app.vercel.app' (実際の URL) は当たらない。
+ */
+const STALE_DOMAIN = /(?<!\bcom\.)\bhomegohan\.(?:app|jp)\b/i;
+
+/**
+ * サイトの URL を homegohan.com で書いたもの。homegohan.com は、サイトを移すまで別のサービスを指しているので、
+ * 設定例 (EXPO_PUBLIC_API_BASE_URL など) や説明に書くと、そのとおりに設定した人のアプリが別のサービスに繋がる。
+ * メールアドレス (support@homegohan.com・noreply@mail.homegohan.com) とドメイン名だけの言及は対象外。
+ */
+const SITE_URL_ON_COM = /https?:\/\/(?:www\.)?homegohan\.com\b/i;
+
+/**
+ * SITE_URL_ON_COM を書いてよい行 (切り替えるときの値だと読めるもの)。ファイルごとに、その行が満たす形。
+ * ENV_SETUP.md の表は「例」の列が切り替えるときの値で、同じ行の既定値の列に、いま動いている URL を書いている。
+ */
+const SITE_URL_ON_COM_ALLOWED_LINES: Record<string, RegExp> = {
+  'ENV_SETUP.md': /^\| `NEXT_PUBLIC_APP_URL` \| `https:\/\/homegohan\.com` \|.*`https:\/\/homegohan-app\.vercel\.app`/,
+};
+
+/** src/ と apps/mobile/ の、製品のソースでない設定例と説明の文書 (README・env.example など) */
+const DOC_FILE = /(?:\.(?:md|mdx|txt|ya?ml)|env\.example)$/i;
+
+function collectExtraFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name)) files.push(...collectExtraFiles(full));
+    } else if (entry.isFile() && EXTRA_TEXT_FILE.test(entry.name)) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+function collectDocFiles(dir: string): string[] {
+  const files: string[] = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (!SKIP_DIRS.has(entry.name) && !TEST_DIRS.has(entry.name)) files.push(...collectDocFiles(full));
+    } else if (entry.isFile() && DOC_FILE.test(entry.name)) {
+      files.push(full);
+    }
+  }
+  return files;
+}
+
+/** 本文から、正規表現に当たる行 (1 始まりの行番号と、その行) */
+function findLines(content: string, pattern: RegExp): Array<{ line: number; text: string }> {
+  const hits: Array<{ line: number; text: string }> = [];
+  content.split('\n').forEach((text, index) => {
+    if (pattern.test(text)) hits.push({ line: index + 1, text: text.trim().slice(0, 160) });
+  });
+  return hits;
+}
+
+const toRelative = (file: string) => path.relative(ROOT, file).split(path.sep).join('/');
+
+/** 旧ドメインを見張るファイル (相対パス) */
+const extraFiles = [
+  ...EXTRA_SCAN_ROOTS.flatMap((root) => collectExtraFiles(path.join(ROOT, root)).map(toRelative)),
+  ...EXTRA_SCAN_FILES.filter((file) => fs.existsSync(path.join(ROOT, file))),
+];
+/** homegohan.com のサイトの URL を見張るファイル (相対パス)。上に、src/ と apps/mobile/ の文書を足す */
+const siteUrlFiles = [...extraFiles, ...SCAN_ROOTS.flatMap((root) => collectDocFiles(path.join(ROOT, root)).map(toRelative))];
+
+const staleHits = extraFiles.flatMap((file) => findLines(read(file), STALE_DOMAIN).map((hit) => ({ file, ...hit })));
+const siteUrlHits = siteUrlFiles.flatMap((file) => findLines(read(file), SITE_URL_ON_COM).map((hit) => ({ file, ...hit })));
+
+/** #1573 で直したファイル。見張りの中にあることを確かめる */
+const FIXED_IN_1573 = [
+  'public/og-image.svg',
+  'supabase/functions/_shared/cors.ts',
+  'supabase/functions/README.md',
+  'scripts/smoke.mjs',
+  'scripts/lib/smoke.mjs',
+  'scripts/catalog/audit-source-structure.mjs',
+  '.env.example',
+  'ENV_SETUP.md',
+  'apps/mobile/env.example',
+  'apps/mobile/README.md',
+];
+
+describe('src/ と apps/mobile/ の外のドメインの直書き (#1573)', () => {
+  it('走査が機能している: #1573 で直したファイルがすべて見張りの中にあり、書いてよい行を検出できる', () => {
+    expect(extraFiles.length).toBeGreaterThan(100);
+    for (const file of FIXED_IN_1573) {
+      expect(extraFiles.includes(file) || siteUrlFiles.includes(file), `${file} が見張りの外にある`).toBe(true);
+    }
+    expect(siteUrlFiles).toEqual(expect.arrayContaining(['apps/mobile/env.example', 'apps/mobile/README.md']));
+    // 書いてよい行 (ENV_SETUP.md の切り替えの例) を検出できる = homegohan.com の走査が空振りしていない
+    expect(siteUrlHits.filter((hit) => hit.file === 'ENV_SETUP.md')).toHaveLength(1);
+  });
+
+  it('public/・scripts/・supabase/functions/ とリポジトリ直下の文書に、存在しない homegohan.app / homegohan.jp を書かない', () => {
+    const offenders = staleHits.map((hit) => `${hit.file}:${hit.line}  ${hit.text}`);
+    expect(
+      offenders,
+      'homegohan.app / homegohan.jp は DNS に存在しない。サイトの URL はいま動いている URL (src/lib/site-config.ts の DEFAULT_SITE_URL) か、' +
+        '環境変数 (NEXT_PUBLIC_APP_URL など) から読む。例には example.test のような例示用のドメインを使う:\n' +
+        offenders.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('設定例と説明に、サイトの URL を https://homegohan.com で書かない (切り替えの手順の文書を除く)', () => {
+    const offenders = siteUrlHits
+      .filter((hit) => !(SITE_URL_ON_COM_ALLOWED_LINES[hit.file]?.test(hit.text) ?? false))
+      .map((hit) => `${hit.file}:${hit.line}  ${hit.text}`);
+    expect(
+      offenders,
+      'homegohan.com は、サイトを移すまで別のサービスを指している。設定例はいま動いている URL (https://homegohan-app.vercel.app) にし、' +
+        '切り替えるときの値は docs/operations/email-domain.md に書く:\n' +
+        offenders.join('\n'),
+    ).toEqual([]);
+  });
+
+  it('判定: 旧ドメインはサブドメイン付き・ドメイン名だけでも当て、アプリの識別子と実際の URL は当てない', () => {
+    for (const text of [
+      '<text x="1100" y="590">homegohan.app</text>',
+      'npm run test:smoke -- --base-url=https://staging.homegohan.app',
+      '"User-Agent": "Mozilla/5.0 (compatible; X/1.0; +https://homegohan.app)"',
+      'ALLOWED_ORIGINS=https://homegohan.app,https://homegohan-app.vercel.app',
+      'mailto:support@homegohan.jp',
+    ]) {
+      expect(findLines(text, STALE_DOMAIN), text).toHaveLength(1);
+    }
+    for (const text of [
+      'bundleIdentifier: "com.homegohan.app"',
+      'https://homegohan-app.vercel.app',
+      'support@homegohan.com',
+      'https://staging.example.test',
+    ]) {
+      expect(findLines(text, STALE_DOMAIN), text).toEqual([]);
+    }
+  });
+
+  it('判定: homegohan.com のサイトの URL を当て、メールアドレスは当てない', () => {
+    for (const text of [
+      'EXPO_PUBLIC_API_BASE_URL=https://homegohan.com',
+      'export EXPO_PUBLIC_API_BASE_URL="https://homegohan.com"',
+      '`https://homegohan.com/api/*` が失敗する',
+      'http://www.homegohan.com',
+    ]) {
+      expect(findLines(text, SITE_URL_ON_COM), text).toHaveLength(1);
+    }
+    for (const text of [
+      'NEXT_PUBLIC_SUPPORT_EMAIL=support@homegohan.com',
+      'EMAIL_FROM="ほめゴハン <noreply@mail.homegohan.com>"',
+      '`homegohan.com` へ切り替えるときは',
+      'https://homegohan-app.vercel.app',
+    ]) {
+      expect(findLines(text, SITE_URL_ON_COM), text).toEqual([]);
+    }
+  });
+
+  it('書いてよい行は、ENV_SETUP.md の表の NEXT_PUBLIC_APP_URL の行 (切り替えの例と、いまの既定値を並べた行) だけ', () => {
+    const allowed = SITE_URL_ON_COM_ALLOWED_LINES['ENV_SETUP.md'];
+    expect(
+      allowed.test(
+        '| `NEXT_PUBLIC_APP_URL` | `https://homegohan.com` | サイトの URL | `https://homegohan-app.vercel.app`（いま動いているサイト） |',
+      ),
+    ).toBe(true);
+    expect(allowed.test('- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）の基点（例: `https://homegohan.com`）')).toBe(false);
+    expect(allowed.test('| `NEXT_PUBLIC_APP_URL` | `https://homegohan.com` | サイトの URL | (既定値の記載なし) |')).toBe(false);
   });
 });
 
@@ -293,6 +495,7 @@ describe('設定の説明が、コードの環境変数名と合っている', (
       'SUPPORT_REPLY_TO',
       'EXPO_PUBLIC_SUPPORT_EMAIL',
       'EXPO_PUBLIC_WEB_URL',
+      'EXPO_PUBLIC_API_BASE_URL',
       'ALLOWED_ORIGINS',
     ]) {
       expect(doc, `docs/operations/email-domain.md に ${name} の説明が無い`).toContain(name);

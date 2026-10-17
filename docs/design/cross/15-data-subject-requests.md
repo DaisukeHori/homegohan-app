@@ -399,13 +399,15 @@ const MS_PER_DAY = HOURS_PER_DAY * MS_PER_HOUR;
 export const DSR_OPERATOR_ROLES = ['admin', 'super_admin'] as const;
 export type DsrOperatorRole = (typeof DSR_OPERATOR_ROLES)[number];
 
-export const DSR_SETTINGS_PATH = '/settings/data-requests';
+// 請求の画面のパスと設定画面の入口の見出し・説明の文は、アプリ (apps/mobile) と共用するため
+// @homegohan/shared (packages/shared/src/data-subject-requests.ts) に置き、ここから再び export する (#1812)。
+// 値: DSR_SETTINGS_PATH = '/settings/data-requests'、DSR_SETTINGS_ENTRY_TITLE = '開示・訂正・利用停止の請求'、
+//     DSR_SETTINGS_ENTRY_DESCRIPTION = '個人情報の開示・訂正・利用停止・消去を請求する'
+export { DSR_SETTINGS_PATH, DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_ENTRY_DESCRIPTION } from '@homegohan/shared';
 export const DSR_VERIFY_PATH = '/settings/data-requests/verify';
 export const DSR_ADMIN_PATH = '/admin/data-requests';
 export const DSR_ACCOUNT_API_PATH = '/api/account/data-requests';
 export const DSR_ADMIN_API_PATH = '/api/admin/data-requests';
-/** 設定画面の入口の見出し */
-export const DSR_SETTINGS_ENTRY_TITLE = '開示・訂正・利用停止の請求';
 /** レート制限のカテゴリ (src/lib/rate-limit.ts の RateLimitCategory に足す) */
 export const DSR_RATE_LIMIT_CATEGORY = 'dsr' as const;
 /** 監査ログの action_type (operator/07 §4.1.1 の命名) */
@@ -1056,13 +1058,13 @@ export function sendDsrResolvedEmail(admin: DsrAdminClient, row: DsrNotification
 
 | 画面 | パス / ファイル | 中身 |
 |---|---|---|
-| 設定の入口 | `src/app/(main)/settings/page.tsx` セクション 3「データとプライバシー」の AI 同意の項目の次に 1 項目足す | ボタン (data-testid `settings-data-requests-link`) 見出し `DSR_SETTINGS_ENTRY_TITLE`、説明「個人情報の開示・訂正・利用停止・消去を請求する」。`router.push(DSR_SETTINGS_PATH)` |
+| 設定の入口 | `src/app/(main)/settings/page.tsx` セクション 3「データとプライバシー」の AI 同意の項目の次に 1 項目足す | ボタン (data-testid `settings-data-requests-link`) 見出し `DSR_SETTINGS_ENTRY_TITLE`、説明 `DSR_SETTINGS_ENTRY_DESCRIPTION` (「個人情報の開示・訂正・利用停止・消去を請求する」)。`router.push(DSR_SETTINGS_PATH)` |
 | 請求の一覧と新規 | `src/app/(main)/settings/data-requests/page.tsx` ("use client") | 上: 新規の form (種類 4 択のラジオ・内容 textarea 2000 字・送信)。種類の説明 (開示: 「自分で書き出す」(設定の「データをエクスポート」) の案内つき / 消去: 「アカウントの削除は設定画面からすぐにできます」の案内つき)。下: 自分の請求の一覧 (GET)。各行: 受付番号 (shortDsrId)・種類・状態 (DSR_STATUS_LABELS)・期限 (due_at)・作成日。本人確認待ちは「確認メールを再送」(POST resend) と期限切れの表示 (verification_expired)。開いている請求には「取り下げ」(確認ダイアログ → POST withdraw)。fulfilled / rejected は応答 (response_note) を本文で表示 |
 | 本人確認 | `src/app/(main)/settings/data-requests/verify/page.tsx` ("use client"。`useSearchParams` は Suspense 境界の中で呼ぶ: MainLayout.tsx:37 と同じ) | `?id=&token=` を読み、開いた時点で POST verify を 1 回呼ぶ。結果: 200 →「受け付けました。応答の期限は {due_at (JST)} です」+ 一覧へのリンク / 410 →「リンクの期限が切れています」+ 一覧 (再送) へのリンク / 400・404・409 →「このリンクは使えません」+ 一覧へのリンク。ログインしていなければ (main) の既存の仕組みで /login へ移る (その後、メールのリンクをもう一度開く案内をメール本文に書く) |
 
 - 文言は固定 (API の `error` 文字列を画面に出してよい: どれもこちらで書いた文)。429 は `Retry-After` から分の文を作る (accountExportRateLimitedMessage と同じ形の `dsrRateLimitedMessage` を core.ts ではなく画面側の helper `src/lib/data-subject-requests/client-messages.ts` に置く)。
   シグネチャと文: `export function dsrRateLimitedMessage(retryAfterSec: number | null): string`。retryAfterSec が正の数なら `Math.ceil(retryAfterSec / SECONDS_PER_MINUTE)` で「N分ほど」、null・0 以下なら「しばらく」を wait にして `短い時間に請求の送信を繰り返したため、一時的に実行できません。${wait}待ってからもう一度お試しください。` を返す (src/lib/account-self-service.ts:66 の accountExportRateLimitedMessage と同じ式。`SECONDS_PER_MINUTE = 60` はファイル内の名前付き定数)。
-- モバイルアプリ (WebView) の中でも同じ画面が開く。ネイティブの設定画面からのリンクは §19。
+- モバイルアプリ (WebView) の中でも同じ画面が開く。ネイティブの設定のアカウントの画面 (`apps/mobile/app/settings/account.tsx`) に項目 (testID `account-data-requests-row`。見出し `DSR_SETTINGS_ENTRY_TITLE`・説明 `DSR_SETTINGS_ENTRY_DESCRIPTION`) があり、押すとこの画面を WebView で開く画面 (`apps/mobile/app/settings/data-requests.tsx`。`WebViewScreen` に `DSR_SETTINGS_PATH` を渡す。AI の同意の画面 `app/settings/ai-consent.tsx` と同じ開き方) へ移る (#1812)。値は Web と同じ `@homegohan/shared` のもの (`tests/data-subject-requests-mobile-contract.test.ts`・`apps/mobile/__tests__/settings/data-requests-entry.test.tsx`)。
 - 規約・プライバシーポリシーに未同意の利用者 (改定の後にまだ同意していない人を含む) も、この導線で請求を出せる (#1751)。規約への同意を条件にできない本人の権利のため。`/api/account/data-requests` の 6 route は API の同意ゲートの許可リスト (cross/13a §6.4。reason `data_subject_rights`・prefix) にあり、`/settings/data-requests` と `/settings/data-requests/verify` は画面の同意ゲートの対象外 (`lib/legal-consent.ts`。cross/08)。同意の画面 (`/legal-consent`) のフォームの下と「同意しない」の後の案内から、この画面へのリンクを出す。凍結中は不可のまま (凍結の判定が同意の判定より先。S-13)。初期設定を終えていない人 (新規登録の直後に同意の画面に来た人) も開ける: この 2 画面は初期設定の差し戻しの対象外 (`lib/onboarding-routing.ts` の `isDataSubjectRequestsPath`。同意ゲートの対象外の判定も同じ関数を使う)。この人たちには `user_profiles` の行がまだ無いので、6 route の認証は行を要さない (§7.1 の `requireUserAllowingMissingProfile`。行が無いと 401 にする `requireUser` は使わない)。設定画面 (`/settings`) そのものは同意の後に開く
 
 ### 9.2 運営 (/admin)
@@ -1294,7 +1296,7 @@ grep の語は、本設計が足す・変える名前 (tests/ と src/__tests__/
 | `docs/design/operator/03-ui-spec.md` §3.2 | サイドバーの行「開示等の請求 (表示ロール: admin, super_admin)」 | 実装のマージと同日 |
 | `docs/design/operator/09-runbook.md` | 新しい節「開示・訂正・利用停止・消去の請求の対応」(一覧の見方・種類ごとの手段 §9.2 (利用停止に凍結を使わない理由を含む)・期限・退会済みの扱い・請求者が凍結中 (利用者詳細で確かめる) のときは応答を設定画面で読めないので、サポート窓口のメールでも応答を送る) | 実装のマージと同日 |
 | `docs/design/cross/08-legal-compliance.md` §16.5 / §19 | 消去の請求と代理削除の関係 (本設計 §4.4) への参照 | 実装のマージと同日 |
-| `docs/design/mobile/*` と `apps/mobile/app/settings/account.tsx` | ネイティブの設定からこの Web 画面 (`DSR_SETTINGS_PATH`) へのリンク | 後続 (別 Issue) |
+| `docs/design/mobile/*` と `apps/mobile/app/settings/account.tsx` | ネイティブの設定からこの Web 画面 (`DSR_SETTINGS_PATH`) へのリンク | #1812 で実装済み |
 | `src/app/privacy/page.tsx` 第6条 / `src/app/contact/page.tsx` | 請求の導線 (設定画面) への案内文 | 後続 (§21 の法務判断の後) |
 | `.env.example` / `src/lib/env.ts` | `DSR_RESPONSE_DUE_DAYS` (§12。実装の段 A が行う) | 段 A |
 

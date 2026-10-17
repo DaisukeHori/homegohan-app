@@ -23,6 +23,7 @@ import path from "node:path";
 import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resolveHeavyUnitTimeouts } from "./helpers/heavy-unit-test-timeout";
+import { DEFAULT_SITE_URL } from "@/lib/site-config";
 
 import {
   DEFAULT_ALLOWED_ORIGINS,
@@ -52,6 +53,12 @@ afterEach(() => {
 
 const ENDPOINT = "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/example";
 
+/**
+ * 既定で許可する自社のオリジン = いまアプリが動いている URL (src/lib/site-config.ts の DEFAULT_SITE_URL と同じ)。
+ * homegohan.app は DNS に存在せず、homegohan.com はまだ別のサービスを指しているので、既定では許可しない (#1573)
+ */
+const OWN_ORIGIN = "https://homegohan-app.vercel.app";
+
 function requestFrom(origin?: string): Request {
   return new Request(ENDPOINT, {
     method: "POST",
@@ -60,12 +67,21 @@ function requestFrom(origin?: string): Request {
 }
 
 describe("getCorsHeaders: 許可したオリジンにだけ CORS ヘッダーを返す (#1167)", () => {
-  it("CORS-1: 既定の許可オリジンは自社の 2 つだけ", () => {
-    expect([...DEFAULT_ALLOWED_ORIGINS]).toEqual(["https://homegohan.app", "https://homegohan-app.vercel.app"]);
-    expect(getAllowedOrigins()).toEqual(["https://homegohan.app", "https://homegohan-app.vercel.app"]);
+  it("CORS-1: 既定の許可オリジンは、いま動いている自社のサイトだけ", () => {
+    expect([...DEFAULT_ALLOWED_ORIGINS]).toEqual([OWN_ORIGIN]);
+    expect(getAllowedOrigins()).toEqual([OWN_ORIGIN]);
+    // Edge Function (Deno) は site-config を読めないので値を写している。サイトの URL の既定値とずれないようにする
+    expect(OWN_ORIGIN).toBe(DEFAULT_SITE_URL);
   });
 
-  it.each(["https://homegohan.app", "https://homegohan-app.vercel.app"])(
+  it.each([
+    ["DNS に存在しない旧ドメイン", "https://homegohan.app"],
+    ["いまは別のサービスを指しているドメイン (サイトを移したら ALLOWED_ORIGINS で足す)", "https://homegohan.com"],
+  ])("CORS-1b: 既定では %s (%s) を許可しない (#1573)", (_label, origin) => {
+    expect(getCorsHeaders(requestFrom(origin))["Access-Control-Allow-Origin"]).toBeUndefined();
+  });
+
+  it.each([OWN_ORIGIN])(
     "CORS-2: 許可したオリジン (%s) には、そのオリジンをそのまま返す",
     (origin) => {
       const headers = getCorsHeaders(requestFrom(origin));
@@ -91,21 +107,21 @@ describe("getCorsHeaders: 許可したオリジンにだけ CORS ヘッダーを
   });
 
   it.each([
-    ["サブドメインを足したもの", "https://evil.homegohan.app"],
-    ["ドメインの後ろに足したもの", "https://homegohan.app.evil.com"],
-    ["スキームが違う", "http://homegohan.app"],
-    ["ポートが違う", "https://homegohan.app:8443"],
-    ["末尾にスラッシュ", "https://homegohan.app/"],
-    ["大文字 (ブラウザは小文字で送る)", "HTTPS://HOMEGOHAN.APP"],
+    ["サブドメインを足したもの", "https://evil.homegohan-app.vercel.app"],
+    ["ドメインの後ろに足したもの", "https://homegohan-app.vercel.app.evil.com"],
+    ["スキームが違う", "http://homegohan-app.vercel.app"],
+    ["ポートが違う", "https://homegohan-app.vercel.app:8443"],
+    ["末尾にスラッシュ", "https://homegohan-app.vercel.app/"],
+    ["大文字 (ブラウザは小文字で送る)", "HTTPS://HOMEGOHAN-APP.VERCEL.APP"],
     ["別のベンダーのドメイン", "https://homegohan-app.vercel.app.evil.com"],
-    ["許可オリジンを含む別の URL", "https://evil.example.com/?https://homegohan.app"],
+    ["許可オリジンを含む別の URL", "https://evil.example.com/?https://homegohan-app.vercel.app"],
     ["空文字", ""],
   ])("CORS-6: 完全一致しないオリジンは許可しない (%s: %s)", (_label, origin) => {
     expect(getCorsHeaders(requestFrom(origin))["Access-Control-Allow-Origin"]).toBeUndefined();
   });
 
   it("CORS-7: どの入力でも Access-Control-Allow-Origin が '*' になることは無い", () => {
-    const origins = [undefined, "null", "*", "https://evil.example.com", "https://homegohan.app"];
+    const origins = [undefined, "null", "*", "https://evil.example.com", OWN_ORIGIN];
     for (const origin of origins) {
       expect(getCorsHeaders(requestFrom(origin))["Access-Control-Allow-Origin"]).not.toBe("*");
     }
@@ -124,11 +140,11 @@ describe("ALLOWED_ORIGINS (環境変数)", () => {
       "https://app.example.com",
     );
     // 置き換わるので、既定の自社オリジンは許可されなくなる
-    expect(getCorsHeaders(requestFrom("https://homegohan.app"))["Access-Control-Allow-Origin"]).toBeUndefined();
+    expect(getCorsHeaders(requestFrom(OWN_ORIGIN))["Access-Control-Allow-Origin"]).toBeUndefined();
   });
 
   it("CORS-9: ローカル開発用に localhost を足せる", () => {
-    env.ALLOWED_ORIGINS = "https://homegohan.app,http://localhost:3000";
+    env.ALLOWED_ORIGINS = `${OWN_ORIGIN},http://localhost:3000`;
     expect(getCorsHeaders(requestFrom("http://localhost:3000"))["Access-Control-Allow-Origin"]).toBe(
       "http://localhost:3000",
     );
@@ -176,9 +192,7 @@ describe("ALLOWED_ORIGINS (環境変数)", () => {
     vi.unstubAllGlobals();
     expect(typeof (globalThis as { Deno?: unknown }).Deno).toBe("undefined");
     expect(getAllowedOrigins()).toEqual([...DEFAULT_ALLOWED_ORIGINS]);
-    expect(getCorsHeaders(requestFrom("https://homegohan.app"))["Access-Control-Allow-Origin"]).toBe(
-      "https://homegohan.app",
-    );
+    expect(getCorsHeaders(requestFrom(OWN_ORIGIN))["Access-Control-Allow-Origin"]).toBe(OWN_ORIGIN);
   });
 });
 
@@ -190,11 +204,11 @@ describe("withCors: 認証ヘルパーが返した 401 などに CORS ヘッダ�
     });
 
   it("CORS-13: 許可したオリジンなら、状態・本文・既存のヘッダーを保ったまま CORS ヘッダーを付ける", async () => {
-    const res = withCors(unauthorized(), requestFrom("https://homegohan.app"));
+    const res = withCors(unauthorized(), requestFrom(OWN_ORIGIN));
     expect(res.status).toBe(401);
     expect(await res.json()).toEqual({ error: "Unauthorized" });
     expect(res.headers.get("Content-Type")).toBe("application/json");
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("https://homegohan.app");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(OWN_ORIGIN);
     expect(res.headers.get("Access-Control-Allow-Headers")).toContain("authorization");
     expect(res.headers.get("Vary")).toBe("Origin");
   });
@@ -212,17 +226,17 @@ describe("withCors: 認証ヘルパーが返した 401 などに CORS ヘッダ�
 
   it("CORS-15: 既存の Vary を消さずに Origin を足す。すでに Origin があれば重ねない", () => {
     const withVary = new Response("x", { headers: { Vary: "Accept-Encoding" } });
-    expect(withCors(withVary, requestFrom("https://homegohan.app")).headers.get("Vary")).toBe(
+    expect(withCors(withVary, requestFrom(OWN_ORIGIN)).headers.get("Vary")).toBe(
       "Accept-Encoding, Origin",
     );
 
     const alreadyOrigin = new Response("x", { headers: { Vary: "Accept-Encoding, Origin" } });
-    expect(withCors(alreadyOrigin, requestFrom("https://homegohan.app")).headers.get("Vary")).toBe(
+    expect(withCors(alreadyOrigin, requestFrom(OWN_ORIGIN)).headers.get("Vary")).toBe(
       "Accept-Encoding, Origin",
     );
 
     const star = new Response("x", { headers: { Vary: "*" } });
-    expect(withCors(star, requestFrom("https://homegohan.app")).headers.get("Vary")).toBe("*");
+    expect(withCors(star, requestFrom(OWN_ORIGIN)).headers.get("Vary")).toBe("*");
   });
 });
 

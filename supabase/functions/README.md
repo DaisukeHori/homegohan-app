@@ -279,7 +279,7 @@ Deno.serve(async (req) => {
 CORS はブラウザだけが強制する仕組みです。Next.js の API ルートや cron など、サーバーからの呼び出しには影響しません。
 
 - 利用者の JWT で認証する関数は、`_shared/cors.ts` の `getCorsHeaders(req)` を使います。リクエストの `Origin` が許可リストに完全一致したときだけ `Access-Control-Allow-Origin` を返し、どの応答にも `Vary: Origin` を付けます。`*`（全オリジン許可）は使いません。
-- 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは `https://homegohan.app` と `https://homegohan-app.vercel.app` です。設定すると既定値は置き換わります。
+- 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは、いまアプリが動いている `https://homegohan-app.vercel.app` だけです（`_shared/cors.ts` の `DEFAULT_ALLOWED_ORIGINS`）。設定すると既定値は置き換わります。サイトを `homegohan.com` に移したら、そのオリジンを足します（`docs/operations/email-domain.md`）。
 - バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`process-meal-image-jobs`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
 - ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
@@ -314,7 +314,7 @@ supabase functions serve <function-name>
 Supabase Dashboard → Edge Functions → 対象関数 → Settings で設定。
 
 主な環境変数：
-- `ALLOWED_ORIGINS` - CORS で許可するオリジン（カンマ区切り、スキーム付き・末尾スラッシュなし）。未設定時は `https://homegohan.app,https://homegohan-app.vercel.app`。`*` と `null` は無視される
+- `ALLOWED_ORIGINS` - CORS で許可するオリジン（カンマ区切り、スキーム付き・末尾スラッシュなし）。未設定時は `https://homegohan-app.vercel.app`。`*` と `null` は無視される
 - `OPENAI_API_KEY` - OpenAI API キー（LLM補助処理用）
 - `FIRECRAWL_BASE_URL` - Firecrawl API のベース URL。未指定時は `https://api.firecrawl.dev/v2`
 - `FIRECRAWL_API_KEY` - Firecrawl Cloud または Bearer 保護された self-host 用キー
