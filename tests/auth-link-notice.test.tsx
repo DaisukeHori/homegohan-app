@@ -267,5 +267,28 @@ describe('/auth/link-notice の画面 (#1574)', () => {
   it('ハッシュにエラーがあれば、ログイン画面へエラーつきで移る', async () => {
     await renderAt('?next=%2Fhome', '#error=access_denied&error_description=Email+link+is+invalid');
     expect(mocks.replace).toHaveBeenCalledWith('/login?error=Email+link+is+invalid');
+    expect(container.querySelector('[data-testid="link-notice-email-change-awaiting-other"]')).toBeNull();
+  });
+
+  it('知らない知らせ (HTML を含む) は画面に出さず、知らせを出さないまま next へ移る', async () => {
+    const hostile = '<img src=x onerror=alert(1)>Email confirmed';
+    await renderAt('?next=%2Fhome', `#${new URLSearchParams({ message: hostile }).toString()}`);
+    expect(mocks.replace).toHaveBeenCalledWith('/home');
+    expect(container.querySelector('[data-testid="link-notice-email-change-awaiting-other"]')).toBeNull();
+    expect(container.querySelector('img')).toBeNull();
+    expect(container.textContent).not.toContain('Email confirmed');
+    expect(container.innerHTML).not.toContain('onerror');
+  });
+
+  it('1 通目の知らせに別の文字が混ざっていても、出すのは決まった文だけ (message の値はそのまま出さない)', async () => {
+    const tampered = `${SINGLE_CONFIRMATION} <b>injected</b>`;
+    await renderAt('?next=%2Fhome', `#${new URLSearchParams({ message: tampered }).toString()}`);
+    const notice = container.querySelector('[data-testid="link-notice-email-change-awaiting-other"]');
+    expect(notice).not.toBeNull();
+    expect(notice?.querySelector('[role="status"]')?.textContent).toBe(EMAIL_CHANGE_AWAITING_OTHER_NOTICE);
+    expect(container.querySelector('b')).toBeNull();
+    expect(container.textContent).not.toContain('injected');
+    expect(container.textContent).not.toContain(SINGLE_CONFIRMATION);
+    expect(mocks.replace).not.toHaveBeenCalled();
   });
 });
