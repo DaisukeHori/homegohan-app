@@ -4,6 +4,11 @@ import { cookies } from 'next/headers'
 import { getSafeRedirectPath } from '@/lib/auth/safe-redirect'
 import { resolveFirstSignInDestination } from '@/lib/legal-consent'
 import { recordWebLoginContextFromRequest } from '@/lib/auth/sessions/web-login-context'
+import { isEmailChangeAwaitingOtherMessage } from '@homegohan/shared'
+import { buildLinkNoticePath, LINK_NOTICE_EMAIL_CHANGE_AWAITING_OTHER } from '@/lib/auth/link-notice'
+
+/** メールアドレス変更の確認リンクの OTP の種類 (メールの雛形が token_hash の形のときに届く。#1574) */
+const EMAIL_CHANGE_OTP_TYPE = 'email_change'
 
 export async function GET(request: Request) {
   const requestUrl = new URL(request.url)
@@ -55,6 +60,12 @@ export async function GET(request: Request) {
 
   const supabase = await createClient()
   let authSuccess = false
+  // #1574: メールアドレス変更の確認の 1 通目を受け付けた (もう一方のアドレスのリンクを待っている) とサーバーで分かったか。
+  // GoTrue のソースでは、PKCE のリンクのとき、ハッシュと同じ知らせをクエリの message にも付ける (packages/shared の email-change-link.ts)
+  let emailChangeAwaitingOther = isEmailChangeAwaitingOtherMessage(requestUrl.searchParams.get('message'))
+  // 認証の情報 (code・token_hash・token) を何も運んでこなかったか。このときはハッシュに知らせ・エラーが付いていることがあるが、
+  // サーバーには届かないので、ブラウザで読む画面 (/auth/link-notice) を通す
+  let noAuthParams = false
 
   // OAuth/PKCE コールバック（code パラメータ）
   if (code) {
@@ -82,6 +93,9 @@ export async function GET(request: Request) {
       })
       authSuccess = !error
       if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
+      // #1574: メールアドレス変更の 1 通目は、確認は通るがセッションを返さない (GoTrue のソースでは、知らせの文だけを返す)。
+      // 2 通目 (変更の完了) ではセッションが返る
+      if (!error && type === EMAIL_CHANGE_OTP_TYPE && !data.session) emailChangeAwaitingOther = true
       if (error) {
         console.error('[auth/callback] Email verification error:', error.message, error)
       } else {
@@ -103,6 +117,8 @@ export async function GET(request: Request) {
       })
       authSuccess = !error
       if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
+      // #1574: token_hash の経路と同じ (メールアドレス変更の 1 通目はセッションを返さない)
+      if (!error && type === EMAIL_CHANGE_OTP_TYPE && !data.session) emailChangeAwaitingOther = true
       if (error) {
         console.error('[auth/callback] PKCE token verification error:', error.message, error)
       } else {
@@ -113,6 +129,7 @@ export async function GET(request: Request) {
     }
   } else {
     console.log('[auth/callback] No auth params found, checking for existing session')
+    noAuthParams = true
   }
 
   // authSuccessでなくても、既存セッションがあるかチェック
@@ -186,6 +203,15 @@ export async function GET(request: Request) {
     // 認証も失敗し、既存ユーザーもいない場合
     console.log('[auth/callback] No user and auth failed, redirecting to login')
     next = '/login'
+  }
+
+  // #1574: 1 通目だと分かったとき・認証の情報が無かったときは、本来の遷移先 (next) を渡して /auth/link-notice を通す。
+  // Location にハッシュを付けないので、ブラウザは元の URL のハッシュ (#message=... など) を引き継ぎ、あちらで読める。
+  // 知らせが無ければ、あちらはそのまま next へ移る
+  if (emailChangeAwaitingOther || noAuthParams) {
+    const noticePath = buildLinkNoticePath(next, emailChangeAwaitingOther ? LINK_NOTICE_EMAIL_CHANGE_AWAITING_OTHER : undefined)
+    console.log('[auth/callback] Final redirect via link notice:', { next, emailChangeAwaitingOther })
+    return NextResponse.redirect(new URL(noticePath, requestUrl.origin))
   }
 
   console.log('[auth/callback] Final redirect:', next)
