@@ -197,7 +197,7 @@ describe('#1125 (B) 実行履歴の掃除 (段 D) のソース走査', () => {
     const doc = fs.readFileSync(DOC_PATH, 'utf-8');
     expect(doc).toContain(`\`${JOB_NAME}\``);
     expect(doc).toContain(MIGRATION_FILE);
-    expect(doc).toContain(`\`${SIGNATURE.replace('()', '')}`);
+    expect(doc).toContain(SIGNATURE);
     // 「Supabase が自動でクリアする」は事実と違う (自動では消えない)。古い記述が残っていない
     expect(doc).not.toMatch(/job_run_details` は Supabase が自動でクリアする/);
   });
