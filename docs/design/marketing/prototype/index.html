@@ -7,7 +7,7 @@
 <meta name="description" content="写真を撮るだけで、AI が料理を認識して栄養を推定し、その記録をほめてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。">
 <style>
 /* ────────────────────────────────────────────────────────────────
-   静的な試作: docs/design/marketing/01-landing-site.md v1.6
+   静的な試作: docs/design/marketing/01-landing-site.md v1.7
    見た目の参考で、正典ではない (設計書 §9 の冒頭・§23)。文言と色は設計書と同じ。
    写真と実際の画面の枠は「何が入るか」の説明。外部の CDN・フォント・画像は読まない。
    動き (animation・transition) と、動きのための初期の見え方は、すべて末尾の
@@ -154,10 +154,13 @@ body { margin: 0; }
 .lp .lp-result { min-height: 16rem; }
 .lp .lp-result-score { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-radius: 1rem; background: var(--lp-green-tint); box-shadow: inset 0 0 0 1px var(--lp-green); }
 .lp .lp-result-score strong { font-size: 2rem; color: var(--lp-green-ink); line-height: 1; }
-.lp .lp-nutri { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; margin-top: 0.5rem; text-align: center; }
-.lp .lp-nutri div { background: var(--lp-bg-tint); border-radius: 0.75rem; padding: 0.5rem 0.25rem; }
-.lp .lp-nutri dt { font-size: 0.875rem; color: var(--lp-ink-soft); }
-.lp .lp-nutri dd { margin: 0; font-weight: 700; font-size: 0.875rem; }
+/* 推定の栄養は、幅によらず 5 行の並び (設計書 §8.3 の DemoSection)。列に分けない (5 列だと狭い幅で「タンパク質」が途中で折れる) */
+.lp .lp-nutri { margin: 0.5rem 0 0; padding: 0.75rem 1rem; border-radius: 0.75rem; background: var(--lp-bg-tint); }
+.lp .lp-nutri div { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; padding-block: 0.375rem; }
+.lp .lp-nutri div + div { border-top: 1px solid var(--lp-line); }
+.lp .lp-nutri dt { font-size: 0.875rem; color: var(--lp-ink-soft); white-space: nowrap; }
+.lp .lp-nutri dd { margin: 0; font-weight: 700; font-size: 1rem; color: var(--lp-ink); white-space: nowrap; }
+.lp .lp-nutri dd small { font-size: 0.875rem; font-weight: 500; margin-left: 0.25rem; }
 .lp .lp-score-note { margin-top: 0.5rem; }
 @keyframes lp-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
 .lp .lp-demo-track { height: 0.375rem; border-radius: 9999px; background: var(--lp-bg-tint); overflow: hidden; margin-top: 1rem; }
@@ -180,13 +183,15 @@ body { margin: 0; }
 .lp .lp-icon svg { width: 1.25rem; height: 1.25rem; }
 
 /* バッジ (M-10) */
-.lp .lp-badges { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
-@media (min-width: 640px) { .lp .lp-badges { grid-template-columns: repeat(3, 1fr); } }
-@media (min-width: 1024px) { .lp .lp-badges { grid-template-columns: repeat(6, 1fr); } }
-.lp .lp-badge-card { text-align: center; padding: 1.25rem 0.75rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); }
-.lp .lp-badge-ring { width: 3.5rem; height: 3.5rem; margin: 0 auto 0.75rem; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, #FFF3C4, var(--lp-gold)); color: var(--lp-ink); box-shadow: inset 0 0 0 3px #fff, 0 0 0 1px var(--lp-line); }
+/* バッジ 4 つ (設計書 §8.3 の BadgesSection)。640 px 未満は 1 列 (輪の右に名前と説明)・640〜1023 px は 2 列・1024 px 以上は 4 列。名前はどの幅でも 1 行 */
+.lp .lp-badges { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+@media (min-width: 640px) { .lp .lp-badges { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1024px) { .lp .lp-badges { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.lp .lp-badge-card { display: flex; align-items: center; gap: 1rem; text-align: left; padding: 1.25rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); }
+@media (min-width: 640px) { .lp .lp-badge-card { flex-direction: column; text-align: center; } }
+.lp .lp-badge-ring { flex: none; width: 3rem; height: 3rem; margin: 0; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, #FFF3C4, var(--lp-gold)); color: var(--lp-ink); box-shadow: inset 0 0 0 3px #fff, 0 0 0 1px var(--lp-line); }
 .lp .lp-badge-ring svg { width: 1.5rem; height: 1.5rem; }
-.lp .lp-badge-card h3 { font-size: 0.9375rem; }
+.lp .lp-badge-card h3 { font-size: 1.125rem; white-space: nowrap; }
 .lp .lp-badge-card p { font-size: 0.875rem; color: var(--lp-ink-soft); margin-top: 0.25rem; line-height: 1.5; }
 @keyframes lp-pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
 
@@ -257,7 +262,7 @@ body { margin: 0; }
 </style>
 </head>
 <body>
-<div class="proto-note">静的な試作 (見た目の参考。正典は設計書) — <code>docs/design/marketing/01-landing-site.md</code> v1.6。文言と色は設計書と同じ。斜線の枠は、写真と実際の画面の置き場 (何が入るかを書いてあります)。</div>
+<div class="proto-note">静的な試作 (見た目の参考。正典は設計書) — <code>docs/design/marketing/01-landing-site.md</code> v1.7。文言と色は設計書と同じ。斜線の枠は、写真と実際の画面の置き場 (何が入るかを書いてあります)。</div>
 <div class="lp">
 
 <!-- ヘッダー -->
@@ -302,10 +307,10 @@ body { margin: 0; }
     <div class="lp-hero-media lp-hero-rise" style="--lp-i:1">
       <div class="lp-hero-stack">
         <div class="lp-phone lp-hero-phone--left"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">食事を記録</div><div class="screen-body"><div class="screen-photo">食事の写真</div><div class="screen-btn">この写真で記録する</div><div class="screen-ph">実際の画面: <code>/guide/camera.png</code><br>(食事の写真を選んだ撮影の画面)</div></div></div></div></div>
-        <div class="lp-phone lp-hero-phone--right"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:80%;background:var(--lp-green)"></i></span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code><br>(食事の写真の解析結果の画面。数値は本物の画面の画像が出す)</div></div></div></div></div>
-        <div class="lp-phone lp-hero-phone--front"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-bubble">焼きサーモン、いんげんとミニトマトの記録がしっかりできていて素晴らしいです。夕食を丁寧に残せていて、とても良い流れです。</div><div class="screen-bubble" style="background:var(--lp-green-tint)">栄養メモ <span class="screen-track" style="display:block;margin-top:.375rem"><i style="width:70%;background:var(--lp-green)"></i></span></div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント。前の中央の 1 枚。本番はこの画像だけ preload)</div></div></div></div></div>
+        <div class="lp-phone lp-hero-phone--right"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:80%;background:var(--lp-green)"></i></span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code><br>(食事の写真の解析結果の画面。段 0 で撮り直す。数値は画像が出す)</div></div></div></div></div>
+        <div class="lp-phone lp-hero-phone--front"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-bubble">鶏の唐揚げ、ごはんの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです</div><div class="screen-bubble" style="background:var(--lp-green-tint)">栄養メモ <span class="screen-track" style="display:block;margin-top:.375rem"><i style="width:70%;background:var(--lp-green)"></i></span></div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント。段 0 で、アプリの定型の記録コメント・定型の栄養メモ・アプリの式のスコアで撮り直す: 設計書 §7.1。前の中央の 1 枚。本番はこの画像だけ preload)</div></div></div></div></div>
       </div>
-      <p class="lp-note lp-caption">実際のアプリの画面です</p>
+      <p class="lp-note lp-caption">実際のアプリの画面です。表示している記録と数値は、撮影用の見本です。</p>
     </div>
   </div>
 </section>
@@ -328,10 +333,11 @@ body { margin: 0; }
         <div class="lp-step-text"><span class="lp-step-num" aria-hidden="true">2</span><h3>AI が見る</h3><p>AI が料理を認識して、カロリー・タンパク質・野菜のバランスを推定します。数値はあくまで推定です。</p></div>
       </li>
       <li class="lp-reveal">
-        <div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-bubble">焼きサーモン、いんげんとミニトマトの記録がしっかりできていて素晴らしいです。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント)</div></div></div></div></div>
+        <div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-bubble">鶏の唐揚げ、ごはんの記録がしっかりできていて素晴らしいです。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント)</div></div></div></div></div>
         <div class="lp-step-text"><span class="lp-step-num" aria-hidden="true">3</span><h3>褒められる</h3><p>食事の記録の画面に、記録をほめるひと言が出ます。献立の振り返りでは、AI が良いところを見つけて言葉にします。</p></div>
       </li>
     </ol>
+    <p class="lp-note lp-caption">実際のアプリの画面です。表示している記録と数値は、撮影用の見本です。</p>
   </div>
 </section>
 
@@ -373,11 +379,12 @@ body { margin: 0; }
       <li class="lp-feature is-large lp-reveal"><div class="lp-feature-media"><div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-ph screen-ph--top">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント)</div></div></div></div></div></div><div><h3>ほめるひと言</h3><p class="lp-feature-body">食事の記録の画面では、写真で記録すると、ほめるひと言と「栄養メモ」が出ます。献立の振り返りでは、AI が良いところを見つけて言葉にします。</p></div></li>
       <li class="lp-feature is-medium lp-reveal"><div class="lp-feature-media"><div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">献立表</div><div class="screen-body"><div class="screen-ph screen-ph--top">実際の画面: <code>/guide/menu-result.png</code><br>(1 週間分の献立が入った献立表)</div></div></div></div></div></div><div><h3>1週間の献立を AI が提案</h3><p class="lp-feature-body">「今日なに作ろう」を、AI 献立アシスタントが引き受けます。冷蔵庫優先・時短中心・和食多めなどの条件も選べます。</p></div></li>
       <li class="lp-feature is-medium lp-reveal"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg></div><div><h3>買い物リスト</h3><p class="lp-feature-body">献立から買い物リストを作ります。スーパーで迷いません。</p></div></li>
-      <li class="lp-feature is-medium lp-reveal"><div class="lp-feature-media"><div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">体重の推移</div><div class="screen-body"><div class="screen-ph screen-ph--top">実際の画面: <code>/guide/trend.png</code><br>(体重の推移のグラフ)</div></div></div></div></div></div><div><h3>体重と健康の記録</h3><p class="lp-feature-body">体重は体重計の写真からも記録できます。推移はグラフで。健康診断の結果も写真から取り込めます。</p></div></li>
-      <li class="lp-feature is-medium lp-reveal"><div class="lp-feature-media"><div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">トロフィールーム</div><div class="screen-body"><div class="screen-ph screen-ph--top">実際の画面: <code>/guide/badge-collection.png</code><br>(トロフィールームのバッジの一覧)</div></div></div></div></div></div><div><h3>バッジを集める</h3><p class="lp-feature-body">記録を続けると、バッジが増えていきます。</p></div></li>
+      <li class="lp-feature is-medium lp-reveal"><div class="lp-feature-media"><div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">健康記録</div><div class="screen-body"><div class="screen-ph screen-ph--top">実際の画面: <code>/guide/weight.png</code><br>(体重を入力する画面)</div></div></div></div></div></div><div><h3>体重と健康の記録</h3><p class="lp-feature-body">体重は体重計の写真からも記録できます。推移はグラフで。健康診断の結果も写真から取り込めます。</p></div></li>
+      <li class="lp-feature is-medium lp-reveal"><div class="lp-feature-media"><div class="lp-phone"><div class="lp-phone-screen"><div class="screen"><div class="screen-bar">トロフィールーム</div><div class="screen-body"><div class="screen-ph screen-ph--top">実際の画面: <code>/guide/badge-collection.png</code><br>(トロフィールームのバッジの一覧)</div></div></div></div></div></div><div><h3>バッジを集める</h3><p class="lp-feature-body">食べた食事を「完了」にしていくと、バッジが増えていきます。</p></div></li>
       <li class="lp-feature is-small lp-reveal"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 10h14M9 6v2M9 14v3"/></svg></div><div><h3>冷蔵庫の写真から食材を読み取り</h3><p class="lp-feature-body">冷蔵庫を撮ると、食材を読み取って献立の材料にします。</p></div></li>
       <li class="lp-feature is-small lp-reveal"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div><h3>家族で使える</h3><p class="lp-feature-body">家族を招待して、献立を一緒に見たり、記録を共有したりできます。</p></div></li>
     </ul>
+    <p class="lp-note lp-caption">実際のアプリの画面です。表示している記録と数値は、撮影用の見本です。</p>
   </div>
 </section>
 
@@ -386,15 +393,13 @@ body { margin: 0; }
   <div class="lp-container">
     <div class="lp-section-head lp-reveal">
       <h2 id="badges-title">集めたくなる、あなたの勲章。</h2>
-      <p class="lp-lead">記録を続けるほど、バッジが増えていきます。</p>
+      <p class="lp-lead">食べた食事を「完了」にした回数や、続けた日数で、バッジが増えていきます。</p>
     </div>
     <ul class="lp-badges lp-reveal">
-      <li class="lp-badge-card" style="--lp-i:0"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/></svg></div><h3>はじめの一歩</h3><p>はじめて食事を記録しました。新しい習慣の第一歩です！</p></li>
-      <li class="lp-badge-card" style="--lp-i:1"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></div><h3>三日坊主卒業</h3><p>3日連続で記録しました。三日坊主は卒業です。</p></li>
-      <li class="lp-badge-card" style="--lp-i:2"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg></div><h3>週間チャンピオン</h3><p>1週間連続で記録しました。素晴らしい継続力です！</p></li>
-      <li class="lp-badge-card" style="--lp-i:3"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></div><h3>カメラマン</h3><p>写真を10枚撮影しました。食卓のアルバムができてきました。</p></li>
-      <li class="lp-badge-card" style="--lp-i:4"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M9 16l2 2 4-4"/></svg></div><h3>計画上手</h3><p>1週間の献立を作成しました。計画的な食生活の始まりです。</p></li>
-      <li class="lp-badge-card" style="--lp-i:5"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div><h3>使い方マスター</h3><p>はじめての使い方ガイドを完走しました。</p></li>
+      <li class="lp-badge-card" style="--lp-i:0"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/></svg></div><div><h3>はじめの一歩</h3><p>はじめて食事を「完了」にすると付きます。</p></div></li>
+      <li class="lp-badge-card" style="--lp-i:1"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></div><div><h3>三日坊主卒業</h3><p>3日続けて、食事を「完了」にすると付きます。</p></div></li>
+      <li class="lp-badge-card" style="--lp-i:2"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg></div><div><h3>週間チャンピオン</h3><p>1週間続けて、食事を「完了」にすると付きます。</p></div></li>
+      <li class="lp-badge-card" style="--lp-i:3"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div><div><h3>使い方マスター</h3><p>アプリの中の使い方の案内を、最後まで終えると付きます。</p></div></li>
     </ul>
   </div>
 </section>
@@ -491,7 +496,7 @@ body { margin: 0; }
     'pesto-pasta': { name: 'バジルのパスタ', dishNames: ['バジルソースのパスタ'], mealTypeLabel: '昼食', nutrition: { kcal: 610, proteinG: 17, carbsG: 74, fatG: 26, fiberG: 3 } }
   };
   // 表示の順 (設計書 §9.1 の DEMO_NUTRITION_KEYS)・名前・単位
-  var NUTRI = [['kcal', 'カロリー', ' kcal'], ['proteinG', 'タンパク質', ' g'], ['carbsG', '炭水化物', ' g'], ['fatG', '脂質', ' g'], ['fiberG', '食物繊維', ' g']];
+  var NUTRI = [['kcal', 'カロリー', 'kcal'], ['proteinG', 'タンパク質', 'g'], ['carbsG', '炭水化物', 'g'], ['fatG', '脂質', 'g'], ['fiberG', '食物繊維', 'g']];
   var SCORE_NOTE = 'スコアは、アプリと同じ計算で、タンパク質・食物繊維・カロリーの推定から出しています。';
   var FAQS = [
     ['本当に無料で使えますか？', 'はい。現在ご提供している機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、すべて無料でお使いいただけます。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。'],
@@ -551,7 +556,7 @@ body { margin: 0; }
       result.innerHTML = '<div class="lp-fade-in"><p style="font-weight:700"><span class="lp-spin" aria-hidden="true"></span>AI が見ています…</p><p class="lp-note">料理を認識して、栄養を推定しています</p><div class="lp-demo-track"><div class="lp-demo-progress" style="--lp-demo-ms:' + ms + 'ms"></div></div></div>';
     } else {
       var s = SAMPLES[state.sampleId];
-      var nutri = NUTRI.map(function (k, i) { return '<div style="--lp-i:' + i + '"><dt>' + k[1] + '</dt><dd>' + s.nutrition[k[0]] + k[2] + '</dd></div>'; }).join('');
+      var nutri = NUTRI.map(function (k, i) { return '<div style="--lp-i:' + i + '"><dt>' + k[1] + '</dt><dd>' + s.nutrition[k[0]] + '<small>' + k[2] + '</small></dd></div>'; }).join('');
       result.innerHTML = '<div class="lp-fade-in"><div class="lp-result-score"><strong>' + demoScore(s.nutrition) + '</strong><span style="font-weight:700">' + s.name + '</span></div><p class="lp-note lp-score-note">' + SCORE_NOTE + '</p><h3 style="margin-top:1rem">記録コメント</h3><p style="margin-top:.5rem">' + demoPraiseComment(s) + '</p><h3 style="margin-top:1rem">推定の栄養</h3><dl class="lp-nutri">' + nutri + '</dl><a class="lp-cta lp-cta--primary" href="#signup" style="margin-top:1.5rem">自分の食事で試す</a></div>';
     }
   }
