@@ -1,4 +1,4 @@
--- rollback: 20261017200000_billing_manual_plan_grant.sql
+-- rollback: 20261017230000_billing_manual_plan_grant.sql
 -- 先に Web のデプロイを戻すこと (新しい Web はこの関数を呼ぶ。関数だけ消すと手動付与の API が 500 になる)。
 -- 消えるもの: pg_cron のジョブ expire-manual-plan-grants・プロシージャ 1 本・関数 4 本。
 -- 残るもの: 付与済みの行 (personal_subscriptions の stripe_subscription_id IS NULL の行) と監査の行。行は消さない。

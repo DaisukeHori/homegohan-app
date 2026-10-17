@@ -1,7 +1,7 @@
--- migration: 20261017200000_billing_manual_plan_grant.sql
+-- migration: 20261017230000_billing_manual_plan_grant.sql
 -- billing/02 (手動のプラン付与): 運営者が利用者に有料プランを手で付与・取り消す DB 関数と、期限を過ぎた付与を expired にする日次のジョブ。
 -- 本番の personal_subscriptions は 0 行 (billing/01 §2.2 F9)。既存の行の書き換え (UPDATE / DELETE) は関数の本体の外に無い。
--- 戻し方: supabase/rollbacks/20261017200000_billing_manual_plan_grant.down.sql
+-- 戻し方: supabase/rollbacks/20261017230000_billing_manual_plan_grant.down.sql
 
 SET LOCAL lock_timeout = '10s';
 
