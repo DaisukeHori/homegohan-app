@@ -490,7 +490,7 @@ OrgSettingsPage
 | D1 組織契約購入 | `/org/licenses/purchase` + Stripe Checkout |
 | D2 Stripe Checkout 月額決済 | `/org/billing` + Stripe |
 | D3 100 人 CSV 一括招待 | `/org/invites/bulk` |
-| D4 Email バウンス検出 | `POST /api/webhooks/resend` → invite.status=failed 表示 |
+| D4 Email バウンス検出 | `POST /api/webhooks/resend` → 宛先停止リスト (`email_blacklist`) に入れ、以後その宛先へは送らない (#1184 で実装)。招待を「送れなかった」と表示するのは**未実装 (将来)**: `organization_invites.status` に `failed` は無く、招待は `pending` のまま (#1577 の 6) |
 | D5 ライセンス 50 人個別割当 | `/org/licenses` + BulkAssign |
 | D6 家族プラン同梱 30 名配布 | `/org/family-addon` → bulk distribute |
 | D7 退職 HR Webhook 自動 revoke | `POST /api/webhooks/hr` → pg_cron 自動処理 |

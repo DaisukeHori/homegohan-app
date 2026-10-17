@@ -38,7 +38,7 @@
 sequenceDiagram
     actor User
     participant Client
-    participant Next as Next.js Edge
+    participant Next as Next.js (proxy・Node.js runtime)
     participant Supabase as Supabase Auth
     participant Redis as Upstash Redis
 
@@ -95,35 +95,13 @@ Set-Cookie: sb-refresh-token=...; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Ag
 
 ### 4.3 同時ログイン上限
 
-最大 **5 端末** まで。超過時は最古のセッション (`last_active_at` が最も古い) を強制無効化。
+上限は設けない。一覧・個別失効・30 日の自動終了 (cross/16)。
 
-ユーザーは `/account/sessions` でセッション一覧を確認し、個別・全端末ログアウトが可能。
+ユーザーは Web の `/settings/security/sessions`・アプリの `settings/sessions` でログイン中の端末を一覧し、1 つずつ・または他の端末をすべてログアウトできる (`GET /api/auth/sessions`・`DELETE /api/auth/sessions/{id}`・`POST /api/auth/sessions/revoke-others`。cross/16 §14.1〜14.3・§15・§16)。
 
 ### 4.4 ログアウト時の Cookie 完全削除
 
-```typescript
-// /api/auth/logout
-export async function POST(req: Request) {
-  const response = NextResponse.json({ ok: true });
-  const cookieNames = ['sb-access-token', 'sb-refresh-token'];
-  cookieNames.forEach(name => {
-    response.cookies.set(name, '', {
-      maxAge: 0,
-      path: '/',
-      secure: true,
-      httpOnly: true,
-      sameSite: 'lax',
-    });
-  });
-  // Supabase Auth sign out
-  await supabaseAdmin.auth.admin.signOut(sessionId);
-  // user_sessions_metadata を revoke
-  await db.from('user_sessions_metadata')
-    .update({ revoked_at: new Date().toISOString() })
-    .eq('session_id', sessionId);
-  return response;
-}
-```
+個別の失効は RPC `auth_session_revoke` (cross/16 §11.4)。ログアウトは今までどおり `signOut()`。
 
 ---
 
@@ -225,12 +203,11 @@ export async function checkPasswordBreached(password: string): Promise<boolean> 
 2. Resend 経由でリセットリンク送信 (token = 32 byte random, 1 時間有効)
 3. GET /api/auth/password-reset/confirm?token={token}
    → token 検証 (使用済み即無効化)
-4. POST /api/auth/password-reset/set {token, new_password}
-   → HIBP チェック
-   → password_history 照合 (直近 N 個)
-   → Supabase Auth パスワード更新
-   → 全セッション revoke (リセット後は再ログイン強制)
-   → admin_audit_logs 記録
+4. POST /api/auth/password/reset {new_password}  (cross/16-auth-history-sessions.md §14.7。再設定メールのリンク / コードで作ったセッション = amr に 60 分以内の recovery / otp があるものだけが呼べる)
+   → password_history 照合 (直近 N 世代。RPC auth_password_check。cross/16 §11.5)
+   → Supabase Auth パスワード更新 (GoTrue の PUT /auth/v1/user を本人の access token で。他の端末のセッションは GoTrue が同じトランザクションで消す)
+   → 全セッション revoke (リセット後は再ログイン強制。ページが signOut({ scope: 'global' }) を呼ぶ)
+   → 照合と再設定の認可が効くのはこの API の経路だけ。GoTrue の PUT /auth/v1/user を直接呼ぶ経路は通らない (cross/16 §24・S-33。履歴の記録はトリガーでどの経路でも残る)
 ```
 
 ### 9.2 レート制限実装
@@ -264,6 +241,18 @@ export const passwordResetByIP = new Ratelimit({
 4. 組織所属者の場合: HR Webhook へ変更通知 (organizations.hr_webhook_enabled=true 時)
 5. admin_audit_logs 記録
 ```
+
+### 10.1 両方の確認が要る設定 (Secure email change) の 1 通目 (#1187・#1574)
+
+Supabase の「Secure email change」が有効だと、確認メールは現在と新しいメールアドレスの両方に届き、両方のリンクを開くと変更が終わる。
+1 通目のリンクを開くと、Supabase Auth (GoTrue) はセッションの代わりに知らせ (`message` = "Confirmation link accepted. Please proceed to confirm link sent to the other email") だけを戻り先に付ける (戻り先 URL のハッシュ。GoTrue のソースでは PKCE のリンクのときクエリにも)。メールの雛形が token_hash の形なら、`verifyOtp({ type: 'email_change' })` がエラーもセッションも返さない。
+
+| 経路 | 1 通目の受け取り方 | 出すもの |
+|------|------------------|---------|
+| Web (`emailRedirectTo` = `/auth/callback`) | `/auth/callback` はサーバーで動きハッシュを読めないので、認証の情報 (code・token_hash・token) が無いとき・1 通目と分かったとき (クエリの `message`・email_change でセッションなし) は、本来の遷移先を `next` に入れて `/auth/link-notice` へ移す。Location にハッシュを付けないので、ブラウザが元のハッシュを引き継ぎ、`/auth/link-notice` がブラウザで読む (`src/lib/auth/link-notice.ts`) | 「もう一方のメールアドレスに届いた確認メールのリンクも開いて」+「続ける」(next へ)。知らせが無ければそのまま next へ、ハッシュのエラーはログイン画面へ |
+| モバイル (`homegohan://auth/verify`) | `apps/mobile/src/lib/authLink.ts` がハッシュの `message` を読む (`awaiting_other_confirmation`) | 同じ文。「アプリへ戻る」 |
+
+1 通目の判定 (`isEmailChangeAwaitingOtherMessage`) と文 (`EMAIL_CHANGE_AWAITING_OTHER_NOTICE`) は Web とモバイルで共通 (`packages/shared/src/email-change-link.ts`)。クエリの `message`・token_hash の 1 通目でセッションが返らないことは GoTrue のソースに基づく。ローカルの Supabase では Secure email change が効いておらず 1 通目を再現できないため、結合テストでは固定していない (本番の設定の確認は #1574 のオーナー作業)。
 
 ---
 
@@ -495,7 +484,7 @@ sequenceDiagram
 | テスト種別 | 対象 | ツール |
 |---------|------|------|
 | Unit | `requireRole`, `requireOrgRole`, `resolveOrganizationId`, HIBP チェック | Vitest |
-| Integration | ログイン失敗の回数 (何回失敗してもロックしない・時間で戻る)、セッション同時 5 端末上限 | Vitest + Supabase Local |
+| Integration | ログイン失敗の回数 (何回失敗してもロックしない・時間で戻る)、ログインの記録・セッションの失効・通知の取り置き (`tests/integration/security/auth-history-sessions.test.ts`。cross/16 §20.3) | Vitest + Supabase Local |
 | E2E | 正常ログイン → (必須ロールの運営は MFA の画面。cross/12 §21.5) → ダッシュボード到達、パスワードリセット全フロー | Playwright |
 | Security | CAPTCHA バイパス試行、enumeration 対策、Cookie 属性 | Playwright + 手動 |
 
@@ -505,7 +494,6 @@ sequenceDiagram
 
 | 資産 | 状態 | 対応 |
 |------|------|------|
-| `src/proxy.ts` (セッション同期。#1744 で `src/middleware.ts` から改名) | 保持 | `user_sessions_metadata` 更新ロジックを追加 |
 | Supabase Auth Email+Password | 保持 | そのまま利用 |
 | `/api/auth/login`, `/api/auth/logout` 既存 | 要確認 | 本仕様に合わせてリファクタ |
 | `user_profiles.roles` 列 | 保持・拡張 | 12 ロール体系へ migration |

@@ -8,13 +8,13 @@
 |------|-----|
 | Project ID | `flmeolcfutuwwbjmzyoz` |
 | URL | `https://flmeolcfutuwwbjmzyoz.supabase.co` |
-| ANON_KEY | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU` |
+| ANON_KEY | `<SUPABASE_ANON_KEY>` (値は Supabase のダッシュボードの API の設定か、環境変数 `NEXT_PUBLIC_SUPABASE_ANON_KEY` から取る。公開用のキーだが、リポジトリには直書きしない) |
 
 ### Functions呼び出し例
 
 ```bash
 curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-name>" \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU" \
+  -H "Authorization: Bearer <SUPABASE_ANON_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"key": "value"}'
 ```
@@ -93,6 +93,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 |---|---|---|---|---|
 | `calculate-segment-stats` | pg_cron のジョブ `calculate-segment-stats`（`public.invoke_calculate_segment_stats()`）/ `POST /api/comparison/trigger` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole` | `false` |
 | `purge-hidden-content` | pg_cron のジョブ `purge-hidden-content`（`public.invoke_purge_hidden_content()`） | Vault の `app_cron_secret`（JWT でない） | `requireServiceRole` | `false` |
+| `cron-secret-probe` | `GET /api/cron/app-log-alerts` → `public.send_cron_secret_probe()`（15 分おきの cron の共有シークレットの確認。#1560） | Vault の `app_cron_secret`（JWT でない） | `requireServiceRole` | `false` |
 | `process-meal-image-jobs` | pg_cron のジョブ `process-pending-meal-image-jobs`（`public.invoke_process_meal_image_jobs()`。待ちのジョブを 5 分ごとに拾う。#1561）/ 料理画像のジョブを積んだ入口（`lib/meal-image-jobs.ts`・`_shared/meal-image-jobs.ts` の `triggerMealImageJobProcessing`。献立の生成・料理の保存・積み直しの道具） | Vault の `app_cron_secret`（JWT でない）/ service role key | service role key の完全一致（`Authorization: Bearer` か `apikey`）、または `requireServiceRole` | `false` |
 | `import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog` | pg_cron（`public.invoke_catalog_import()`）/ `POST /api/admin/catalog/import` | Vault の `app_cron_secret`（JWT でない）/ service role key | `requireServiceRole`（`_shared/catalog/import-runner.ts`） | `false` |
 | `import-convenience-catalog` | リポジトリ内に無い（上と同じ取り込み処理） | — | `requireServiceRole`（同上） | `false` |
@@ -120,6 +121,7 @@ pg_cron やサーバーの内部から、利用者の JWT でない Bearer（秘
 | `aggregate-org-stats` | 組織統計集約。**停止中**（オーナー判断 #1325）。認証（`requireServiceRole`）のあと、何もせず HTTP 410（`DISABLED`）を返すだけで、集計処理は削除済み。デプロイ先から関数を消さないよう、ディレクトリは残している。呼び出し元（画面のボタン・API ルート）も無い。本番に呼び出す `pg_cron` のジョブが残っていれば、migration `20261008130000_stop_aggregate_org_stats_cron.sql` が登録解除する |
 | `calculate-segment-stats` | セグメント統計計算 (比較ランキング)。pg_cron のジョブ `calculate-segment-stats` が 1 時間ごと (毎時 5 分) に daily / weekly / monthly を呼ぶ。期間が切り替わった直後の回 (JST 0 時台) は、本文 `previousPeriod: true` で直前の期間も集計し直す。比較のバッジを判定するのは、この直前の期間の回だけ (毎時の今の期間の回と手動はランキングの更新だけ。#1491)。指標 `total_meals` の件数は DB の関数 `count_meals_per_user` で数える。ハンズオンのお試しの記録 (`is_sandbox` が true。#1500) と同じく、運営が隠した食事 (`meals.hidden_at` が入った行) も、`meals` から数える指標 (記録率の日数と `total_meals`) に入れない (#1445)。間隔の変え方は `ENV_SETUP.md` の「比較ランキングの集計の間隔」。手動は `POST /api/comparison/trigger` (super_admin だけ)。#1406 |
 | `purge-hidden-content` | 運営が隠した食事・レシピ (`hidden_at` が入った行) のうち、隠してから 90 日を過ぎた行と、その画像のファイルを完全に消す (#1538)。pg_cron のジョブ `purge-hidden-content` が毎日 03:25 JST に呼ぶ。画像は、行の持ち主のフォルダにあり、ほかの行が使っていないものだけを Storage API で消す。本体は `_shared/hidden-content-purge.ts`。本文は読まず、期限は実行した時刻から決める |
+| `cron-secret-probe` | cron の共有シークレット（Edge Function secrets の `CRON_SECRET` と Vault の `app_cron_secret`）が食い違っていないかを確かめる、照合の結果だけを返す関数（#1560）。`GET /api/cron/app-log-alerts` が 15 分おきに DB の `public.send_cron_secret_probe()` から、pg_cron と同じく Vault の `app_cron_secret` を Bearer に付けて呼び、次の回に応答を読んで判定する。先頭で `requireServiceRole`（ほかのバッチ関数と同じ 401 / 503）を通ったら、どの値と一致したか（`matched`）・`CRON_SECRET_PREVIOUS` が設定されているか・別名 `SERVICE_ROLE_SECRET` を使っているかの 4 キーの JSON だけを返す。本文は読まない・DB に触らない・秘密の値もダイジェストも返さない |
 | `backfill-ingredient-embeddings` | 材料埋め込みバックフィル |
 | `regenerate-embeddings` | 埋め込み再生成 |
 | `regenerate-shopping-list-v2` | 買い物リスト再生成 v2 |
@@ -279,8 +281,8 @@ Deno.serve(async (req) => {
 CORS はブラウザだけが強制する仕組みです。Next.js の API ルートや cron など、サーバーからの呼び出しには影響しません。
 
 - 利用者の JWT で認証する関数は、`_shared/cors.ts` の `getCorsHeaders(req)` を使います。リクエストの `Origin` が許可リストに完全一致したときだけ `Access-Control-Allow-Origin` を返し、どの応答にも `Vary: Origin` を付けます。`*`（全オリジン許可）は使いません。
-- 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは `https://homegohan.app` と `https://homegohan-app.vercel.app` です。設定すると既定値は置き換わります。
-- バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`process-meal-image-jobs`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
+- 許可するオリジンは、環境変数 `ALLOWED_ORIGINS`（カンマ区切り）で決めます。未設定のときは、いまアプリが動いている `https://homegohan-app.vercel.app` だけです（`_shared/cors.ts` の `DEFAULT_ALLOWED_ORIGINS`）。設定すると既定値は置き換わります。サイトを `homegohan.com` に移したら、そのオリジンを足します（`docs/operations/email-domain.md`）。
+- バッチ専用の関数（service role key や `CRON_SECRET` で認証する関数）は、ブラウザから呼ばれないので CORS を付けません。`aggregate-org-stats`、`calculate-segment-stats`、`process-meal-image-jobs`、`cron-secret-probe`、`regenerate-embeddings`、`stripe-price-sync`、`backfill-ingredient-embeddings`、`create-derived-recipe`、`import-*-catalog` が該当します。
 - ブラウザから Edge Function を直接呼ばないでください。権限の確認が要る処理は、Next.js の API ルートで確認してから、サーバーから Edge Function を呼びます（例: 管理者用のコンビニカタログ取り込みは `POST /api/admin/catalog/import` を経由します）。
 - モバイルアプリの WebView が読み込むのは Web アプリ自身（`EXPO_PUBLIC_WEB_URL`）のページなので、そこから呼ぶときの `Origin` も Web アプリのオリジンです。ネイティブ側の `fetch` は `Origin` を付けません。
 - 新しい関数を足すときは、`tests/edge-function-cors.test.ts` が、`Access-Control-Allow-Origin: *`（ワイルドカード）を書き込んでいないか、CORS ヘッダーを `_shared/cors.ts` 以外に直書きしていないか、バッチ専用の関数に CORS を付けていないかを検査します。`requireServiceRole` を使う関数を足したら同じテストの `BATCH_ONLY_SOURCES` に、`_shared/cors.ts` を使う関数を足したら `USER_FACING_SOURCES` に、一覧として足してください。
@@ -314,7 +316,7 @@ supabase functions serve <function-name>
 Supabase Dashboard → Edge Functions → 対象関数 → Settings で設定。
 
 主な環境変数：
-- `ALLOWED_ORIGINS` - CORS で許可するオリジン（カンマ区切り、スキーム付き・末尾スラッシュなし）。未設定時は `https://homegohan.app,https://homegohan-app.vercel.app`。`*` と `null` は無視される
+- `ALLOWED_ORIGINS` - CORS で許可するオリジン（カンマ区切り、スキーム付き・末尾スラッシュなし）。未設定時は `https://homegohan-app.vercel.app`。`*` と `null` は無視される
 - `OPENAI_API_KEY` - OpenAI API キー（LLM補助処理用）
 - `FIRECRAWL_BASE_URL` - Firecrawl API のベース URL。未指定時は `https://api.firecrawl.dev/v2`
 - `FIRECRAWL_API_KEY` - Firecrawl Cloud または Bearer 保護された self-host 用キー

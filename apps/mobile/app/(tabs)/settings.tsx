@@ -435,6 +435,15 @@ export default function SettingsTab() {
               subtitle="パスワード・メールアドレスの変更、アカウント削除"
               testID="settings-account-row"
               onPress={() => router.push("/settings/account")}
+            />
+            {/* ログイン中の端末の一覧と失効・最近のログイン (#1189・#1190。cross/16 §16) */}
+            <SettingRow
+              icon="💻"
+              iconBg="#F0F9FF"
+              title="ログイン中の端末"
+              subtitle="見覚えの無い端末のログアウト・最近のログイン"
+              testID="settings-sessions-row"
+              onPress={() => router.push("/settings/sessions")}
               last
             />
           </View>

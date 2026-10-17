@@ -2,6 +2,7 @@ import { type Session, type User } from "@supabase/supabase-js";
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { classifyAuthError } from "../lib/authErrors";
+import { registerDeviceName } from "../lib/device-name";
 import {
   flushPendingPushTokenReleases,
   recordPushTokenRelease,
@@ -37,7 +38,7 @@ const AuthContext = createContext<AuthState | null>(null);
  *
  * | 経路 | 掃除を呼ぶ所 | 掃除する利用者の ID | サインアウトとの順 |
  * |---|---|---|---|
- * | 設定のログアウト (退会の API が 401 を返したときのアカウントの画面のログアウトも同じ signOutOnDevice。#1562)、退会のあと、パスワード再設定のあと (reset-password.tsx の signOutWithCleanup)、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 (パスワード再設定のあとは updateUser() が返した利用者、Web からのときは、処理の最初に控えた利用者) | push token の行の削除 (退会のあとは無し。削除が失敗・0 件なら、掃除が値を消す前に release の宛先を控える。#1706。通信はしない) → 掃除 → signOut。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走り、控えた宛先があれば release が消す |
+ * | 設定のログアウト (退会の API が 401 を返したときのアカウントの画面のログアウトも同じ signOutOnDevice。#1562)、退会のあと、パスワード再設定のあと (reset-password.tsx の signOutWithCleanup)、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 (パスワード再設定のあとは呼ぶ前のセッションの利用者 (#1720 段 C)、Web からのときは、処理の最初に控えた利用者) | push token の行の削除 (退会のあとは無し。削除が失敗・0 件なら、掃除が値を消す前に release の宛先を控える。#1706。通信はしない) → 掃除 → signOut。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走り、控えた宛先があれば release が消す |
  * | 上の行の signOut が、通信の失敗 (オフラインなど)・5xx で { error } を返した | signOut.ts (signOut の前の掃除だけ。(a) では SIGNED_OUT の行の掃除もそのあと走る) | 上の行と同じ | signOut の前の掃除のあとは、保管庫の access token の状態で 2 つの枝に分かれる。(a) access token が有効 (残り 90 秒未満で更新に失敗していても、失効の前なら有効): サーバーへのログアウトまで届いて失敗し、supabase-js (auth-js 2.117) は保管庫のセッションを消して SIGNED_OUT を出す (scope others を除く) ので、成功のときと同じく SIGNED_OUT の行の掃除と release が走る。(b) access token が失効していて、更新もできない (更新が接続の失敗・5xx で終わった、または失敗の控えの 60 秒の間): signOut はサーバーへのログアウトを呼ばずに { error } を返し、保管庫のセッションは残り、SIGNED_OUT も届かない (SIGNED_OUT の行の掃除と release は走らない)。設定のログアウトと退会のあと (signOutOnDevice・signOutAfterAccountDeletion) は、どちらの枝でも (と signOut が例外を投げたときも)、保管庫のセッションを端末だけで消し (clearStoredSessionLocally)、clearSession で画面の状態を消す (lastKnownUserIdRef は残る。下の clearSession の注)。(b) と例外では、これが後始末の本体で、(a) では supabase-js の消去と重なる (二重でも害は無い)。サーバーのセッションは、設定のログアウト (signOutOnDevice) では、サーバーへのログアウトが届かなければ失効しないまま残る。退会のあと (signOutAfterAccountDeletion) は、サーバーでの削除が済んでから呼ぶ (settings/account.tsx) ので、サーバーのセッションは auth.users の削除 (auth.admin.deleteUser) と一緒に既に消えている。パスワード再設定のあとと Web からの sign-out (signOutWithCleanup) は端末だけで消す処理を持たないので、(a) では SIGNED_OUT で未ログインになるが、(b) では保管庫のセッションと画面の状態が残る (ログイン中のまま。パスワード再設定のあとは、ログイン画面へ移っても (auth)/_layout.tsx がセッションを見てホームへ戻す)。push token の行を消しに行く経路 (signOutOnDevice・signOutWithCleanup) は、その削除が通信の失敗で済まなければ、掃除が値を消す前に release の宛先を控えてある (#1706)。(a) では SIGNED_OUT の release が控えを消しに行き、(b) では起動時に未ログインと決まったとき (flushPendingPushTokenReleases) か次の SIGNED_OUT で消す。パスワード再設定のあとと Web からの sign-out が (b) でログイン中のまま残ったときは、控えはその利用者の次の登録 (claim の成功) で外れるか、次のサインアウトで消す。退会のあとは行を消しに行かず、行は auth.users の削除と一緒に消えている (ON DELETE CASCADE) |
  * | Web からの session-expired で、getUser() が失効を見つけた (webViewAuthMessages.ts) | 先に SIGNED_OUT の行、続いて signOut.ts | SIGNED_OUT の行は直前に分かっていたセッションの利用者、signOut.ts は getUser() の前に控えた利用者 (同じ利用者) | getUser() が端末のセッションを消して SIGNED_OUT が届く → SIGNED_OUT の行の掃除 (push token の値は残す。次の削除と前後してよい) → push token の行の削除 (残した値を読む。SIGNED_OUT の release が先に消していて 0 件なら宛先を控える。#1706。release は 0 件で控えから外れるだけ) → 掃除 (値もここで消える) → signOut |
  * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | push token の行の release の宛先を控える (#1636。通信はしない) → 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除と release (控えた宛先) が走る |
@@ -237,6 +238,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 可能性があるので採用しない (採用すると、上の復元結果を null で上書きしてしまう)。
         // 値があるときは、検証完了を待たずにすぐ画面を出すため採用する
         if (nextSession) {
+          // この端末のログインに端末名を登録する (#1189。cross/16 §16)。待たない (失敗しても画面は変えない)
+          registerDeviceName(nextSession.access_token).catch(() => undefined);
           applySession(nextSession);
           setIsLoading(false);
         }
@@ -262,6 +265,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // release は例外を投げないが、万一投げても、サインアウトは済んでいる
           });
         return;
+      }
+      if (event === "SIGNED_IN" && nextSession) {
+        // 新しいセッション (= 新しい access token) の行に端末名を登録する (#1189。cross/16 §16)。待たない
+        registerDeviceName(nextSession.access_token).catch(() => undefined);
       }
       applySession(nextSession);
       setIsLoading(false);

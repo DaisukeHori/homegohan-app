@@ -1,7 +1,8 @@
 /**
  * ログイン中のパスワード変更・メールアドレス変更 (#1187) の、送信前の入力の検証 (Web とモバイルで同じ規則・同じ文言)
  *
- * 画面 (Web: src/app/(main)/settings/account/page.tsx・モバイル: apps/mobile/app/settings/account.tsx) は、
+ * 画面 (Web: src/app/(main)/settings/account/page.tsx・モバイル: apps/mobile/app/settings/account.tsx に載る
+ * apps/mobile/src/components/settings/AccountCredentialsSection.tsx が、apps/mobile/src/lib/account-credentials.ts を通して呼ぶ) は、
  * ここで弾けるものは Supabase のどの API も呼ばずに止める。
  */
 

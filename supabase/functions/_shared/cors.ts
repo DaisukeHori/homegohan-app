@@ -6,7 +6,7 @@
  * 許可するオリジンを自社のものだけに絞る。
  *
  * - 許可するオリジンは環境変数 ALLOWED_ORIGINS (カンマ区切り) で決める。
- *     例: ALLOWED_ORIGINS=https://homegohan.app,https://homegohan-app.vercel.app
+ *     例: ALLOWED_ORIGINS=https://homegohan-app.vercel.app,http://localhost:3000
  *   未設定 (空文字を含む) のときは DEFAULT_ALLOWED_ORIGINS を使う。設定したときは既定値を置き換える。
  *   スキーム付き・末尾スラッシュなしで書く。'*' と 'null' は無視する (ワイルドカードにも、出所が分からないページにもできない)。
  * - リクエストの Origin が許可リストに完全一致したときだけ、Access-Control-Allow-* を返す。
@@ -28,11 +28,14 @@
  *   });
  */
 
-/** ALLOWED_ORIGINS が未設定のときに許可する、自社の Web アプリのオリジン */
-export const DEFAULT_ALLOWED_ORIGINS: readonly string[] = [
-  "https://homegohan.app",
-  "https://homegohan-app.vercel.app",
-];
+/**
+ * ALLOWED_ORIGINS が未設定のときに許可する、自社の Web アプリのオリジン。
+ * いまアプリが実際に動いている URL だけ (Web の src/lib/site-config.ts の DEFAULT_SITE_URL と同じ値。
+ * Edge Function は Deno で動き、site-config を読めないので値を写している。一致は tests/edge-function-cors.test.ts が検査する)。
+ * 以前は DNS に存在しない旧ドメインも入っていた (#1573)。サイトを新しいドメインへ移したら、
+ * そのオリジンを ALLOWED_ORIGINS に足す (docs/operations/email-domain.md)。
+ */
+export const DEFAULT_ALLOWED_ORIGINS: readonly string[] = ["https://homegohan-app.vercel.app"];
 
 const ALLOW_HEADERS = "authorization, x-client-info, apikey, content-type";
 const ALLOW_METHODS = "POST, OPTIONS";

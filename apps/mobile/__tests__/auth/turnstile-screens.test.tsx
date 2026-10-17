@@ -323,7 +323,7 @@ describe('新規登録 (signup.tsx)', () => {
       fireEvent.press(screen.getByTestId('signup-button'));
 
       await waitFor(() =>
-        expect(Alert.alert).toHaveBeenCalledWith('入力エラー', 'パスワードは8文字以上にしてください。'),
+        expect(Alert.alert).toHaveBeenCalledWith('入力エラー', 'パスワードは8文字以上で入力してください'),
       );
       expect(mockSignUp).not.toHaveBeenCalled();
       expect(mockMounts).toBe(1); // WebView は作り直していない

@@ -89,8 +89,8 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
-| Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`cron-secret-probe`（cron の共有シークレットの確認。#1560）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
 つまり、**値を合わせないと動かないのは「Edge Function secrets の `CRON_SECRET`」と「Vault の `app_cron_secret`」の 2 つだけ**です。Vercel の `CRON_SECRET` は独立しています。
@@ -329,8 +329,8 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 | 環境変数 | 例 | 役割 | 未設定のときの既定値 |
 |---|---|---|---|
 | `NEXT_PUBLIC_APP_URL` | `https://homegohan.com` | サイトの URL。メールの中のリンク・招待や譲渡の URL・ページの OGP / canonical・`robots.txt` の基点 | `https://homegohan-app.vercel.app`（いま動いているサイト） |
-| `EMAIL_FROM` | `ほめゴハン <noreply@mail.homegohan.com>` | メールの送信元。Resend で検証済みのドメインにする | 従来の送信元（`noreply@homegohan.app`。このドメインは検証できないので、本番ではメールが届かない） |
-| `NEXT_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 問い合わせ先。メールの文面・お問い合わせ画面・プライバシーポリシー・招待画面に出る | 従来のアドレス（`support@homegohan.app`） |
+| `EMAIL_FROM` | `ほめゴハン <noreply@mail.homegohan.com>` | メールの送信元。Resend で検証済みのドメインにする | `src/lib/site-config.ts` の `DEFAULT_EMAIL_FROM`（従来の送信元。そのドメインは DNS に無く検証できないので、本番ではメールが届かない） |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 問い合わせ先。メールの文面・お問い合わせ画面・プライバシーポリシー・招待画面に出る | `src/lib/site-config.ts` の `DEFAULT_SUPPORT_EMAIL`（従来のアドレス。同じドメインなので届かない） |
 
 - `NEXT_PUBLIC_` で始まる値は**ビルド時に埋め込まれる**ので、Vercel で変えたら再デプロイしてください。
 - 形が正しくない値（`https://` が無い URL、メールアドレスでない値）は無視して既定値に戻り、関数ログに警告が 1 回出ます。
@@ -346,7 +346,7 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 
 ### 届かない宛先・苦情の宛先へ送らない（`RESEND_WEBHOOK_SECRET`。#1184）
 
-Resend から「届かなかった（ハードバウンス）」「迷惑メールと報告された（苦情）」の知らせを Webhook で受け、その宛先を宛先停止リスト（DB の `email_blacklist`）に入れます。アプリのメール（招待・譲渡・退会の知らせ・サポート返信・運用メールなど。`src/lib/emails/send.ts` の `sendEmail` を通るもの）は、送る前にこのリストを引き、載っている宛先へは送りません（`app_logs` の `function_name = 'email'` に「宛先停止リストに載っている宛先のため、メールを送信しませんでした」の warn が残ります。宛先はマスクされます）。
+Resend から「届かなかった（ハードバウンス）」「迷惑メールと報告された（苦情）」の知らせを Webhook で受け、その宛先を宛先停止リスト（DB の `email_blacklist`）に入れます。アプリのメール（招待・譲渡・退会の知らせ・サポート返信・運用メールなど。`src/lib/emails/send.ts` の `sendEmail` を通るもの）は、送る前にこのリストを引き、載っている宛先へは送りません（`app_logs` の `function_name = 'email'` に「宛先停止リストに載っている宛先のため、メールを送信しませんでした」の warn が残ります。宛先はマスクされます）。送信待ちに登録したあとで停止リストに載った宛先（登録時にリストを引けずに、確かめないまま登録した行も）は、worker（`GET /api/cron/email-outbox`）が送る直前に引いて止め、その行を届けられなかった（dead）にします。このときは warn ではなく、`function_name = 'cron/email-outbox'` に「メールを届けられませんでした (dead)」の error が残ります（エラー急増の通知の数に入ります。届けられなかったメールの通知の数には入りません）。
 
 | 環境変数 | 値の例 | 用途 | 未設定のとき |
 |---|---|---|---|
@@ -426,7 +426,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 ### 必須（モバイル）
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
-- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）の基点（例: `https://homegohan.com`）。献立・買い物リスト・AI などの画面が呼ぶ（#1434 で必須に分類した。無いと、その画面が `[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL` の例外で落ちていた）
+- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）の基点（例: いまアプリが動いている `https://homegohan-app.vercel.app`。`homegohan.com` は、サイトを移すまで別のサービスを指しているので使わない）。献立・買い物リスト・AI などの画面が呼ぶ（#1434 で必須に分類した。無いと、その画面が `[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL` の例外で落ちていた）
 
 この 3 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。一覧は `apps/mobile/src/lib/env.ts` の `REQUIRED_MOBILE_ENV_NAMES` です。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。空・空白だけの値も、未設定として扱います。
 
@@ -483,12 +483,18 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 - ビルド時に埋め込まれるので、変えたら再デプロイ（モバイルは新しいビルド）が要ります。
 - Web に入れただけでは、Supabase の Auth API を直接呼ぶ攻撃は止まりません。Supabase 側で CAPTCHA を有効にする時期と手順、現在の設定値の記録は [docs/operations/auth-protection.md](docs/operations/auth-protection.md) を参照してください（有効にするのは、モバイルの新しいビルドを配って古いビルドが使われなくなってから）。
 
+### 任意の環境変数: 新しい端末からのログインの通知（`AUTH_LOGIN_ALERT`、#1190）
+
+- `AUTH_LOGIN_ALERT`（任意・サーバー専用。Vercel の環境変数）- 新しい端末・地域からのログインを、本人の登録メールアドレスに知らせるか。`on` / `off`。未設定なら `on`。`on` / `off` 以外の値も `on` に戻し、warn ログに変数名だけを残します。
+- `off` にすると、毎分の cron（`GET /api/cron/login-alerts`）は判定して印（新しい端末・地域）を付けますが、メールを送りません。障害や移行の間に止める用です。止めていた間に判定したログインのメールは、`on` に戻しても送りません。
+- メールが実際に届くには、送信元ドメインの検証が要ります（`RESEND_API_KEY` / `EMAIL_FROM`。[docs/operations/email-domain.md](docs/operations/email-domain.md)）。
+
 ### 任意の環境変数: Edge Function の CORS（`ALLOWED_ORIGINS`）
 
 これは Vercel の環境変数ではなく、**Supabase の Edge Function の Secret** です（Supabase Dashboard → Edge Functions → Secrets、または `supabase secrets set ALLOWED_ORIGINS=...`）。
 
 - 用途: ブラウザから Edge Function を直接呼ぶときに、呼び出し元として認めるサイトのオリジン（カンマ区切り。`https://` から書き、末尾に `/` を付けない）。
-- 未設定なら `https://homegohan.app` と `https://homegohan-app.vercel.app` だけを認めます。設定すると、この 2 つの代わりに、設定した値だけを認めます。`*` と `null` は書いても無視されます。
+- 未設定なら、いまアプリが動いている `https://homegohan-app.vercel.app` だけを認めます。設定すると、これの代わりに、設定した値だけを認めます（サイトを `homegohan.com` に移したら、そのオリジンを足してください。手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。`*` と `null` は書いても無視されます。
 - 普段は設定不要です。このアプリのブラウザやモバイルアプリが Edge Function を直接呼ぶ処理は無く、Next.js の API ルートがサーバーから呼んでいます（サーバーからの呼び出しは CORS の対象外です）。自社の別ドメインのページから直接呼ぶ処理を足すときだけ設定してください。
 - バッチ専用の関数（`aggregate-org-stats` など）には、この設定に関係なく CORS を付けません。
 

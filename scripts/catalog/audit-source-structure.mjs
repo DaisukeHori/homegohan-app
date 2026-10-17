@@ -4,6 +4,12 @@ import process from "node:process";
 import { sourceAuditConfig } from "./source-audit-config.mjs";
 
 const DEFAULT_FIRECRAWL_BASE_URL = "https://api.firecrawl.dev/v2";
+/**
+ * User-Agent に載せる連絡先 (このサイトの URL)。環境変数 NEXT_PUBLIC_APP_URL、無ければいまアプリが動いている URL
+ * (src/lib/site-config.ts の DEFAULT_SITE_URL と同じ値)。以前は DNS に存在しない旧ドメインを書いていた (#1573)
+ */
+const DEFAULT_CONTACT_SITE_URL = "https://homegohan-app.vercel.app";
+const CONTACT_SITE_URL = process.env.NEXT_PUBLIC_APP_URL?.trim() || DEFAULT_CONTACT_SITE_URL;
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
@@ -258,7 +264,7 @@ async function fetchHtmlUrlCandidates(url) {
   const res = await fetch(url, {
     signal: AbortSignal.timeout(15000),
     headers: {
-      "User-Agent": "Mozilla/5.0 (compatible; HomegohanCatalogAudit/1.0; +https://homegohan.app)",
+      "User-Agent": `Mozilla/5.0 (compatible; HomegohanCatalogAudit/1.0; +${CONTACT_SITE_URL})`,
     },
   });
   if (!res.ok) {

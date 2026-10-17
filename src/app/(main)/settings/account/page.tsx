@@ -6,14 +6,9 @@
 // 以前は、変更できる経路が「パスワードを忘れた方」のリセットメールしか無かった
 // (FAQ は「設定画面の『アカウント』から変更できます」と案内していたが、その画面が無かった)。
 //
-// - パスワード変更: 現在のパスワードで再認証 (signInWithPassword) → updateUser({ password }) →
-//   signOut({ scope: 'others' }) で、この端末以外のログインを解除する。
-//   再設定 (/auth/reset-password, #1188) は「全端末をログアウトして入り直す」が、ここは操作中の端末を残すので 'others'。
-//   Supabase の secure_password_change (supabase/config.toml の [auth.email]。未指定で、既定値は false = ローカルで確認) が
-//   有効でも、直前の signInWithPassword で作った新しいセッションは「直近にログインした」扱いなので、追加の確認は要らない。
-//   #1474: Supabase の CAPTCHA を有効にすると、トークンの無い signInWithPassword は断られるので、本人確認にも
-//   ログイン画面と同じ Turnstile の部品でトークンを付ける (サイトキーが未設定なら無効で、今までどおり)。
-//   updateUser・signOut は CAPTCHA の対象外。
+// - パスワード変更: POST /api/auth/password/change (cross/16 §14.6)。現在のパスワードの確認と履歴の照合 (直近 N 世代と同じパスワードは 422) は
+//   サーバーが DB で行い、GoTrue の PUT /user を本人の access token で呼ぶ。GoTrue が更新と同じトランザクションで他の端末のセッションを消すので、
+//   200 なら他の端末は必ず消えている (この端末のセッションは入れ替えない = 再認証のサインインをしないので Turnstile も使わない)。
 // - メールアドレス変更: updateUser({ email }, { emailRedirectTo }) で確認メールを送る。
 //   Supabase の「Secure email change」(supabase/config.toml の [auth.email] double_confirm_changes。
 //   このリポジトリの config.toml は未指定で、CLI の既定値 true が使われる) が有効だと、新しいアドレスと
@@ -31,14 +26,14 @@ import { normalizeEmailChangeInput, validatePasswordChangeInput } from "@homegoh
 import { PASSWORD_HINT_TEXT } from "@/lib/auth/validate-password";
 import {
   describeEmailChangeError,
-  describePasswordChangeError,
+  describePasswordChangeApiError,
   isSessionExpiredAuthError,
 } from "@/lib/auth/account-errors";
-import { describeForgotCurrentPasswordNote, describeOthersNotSignedOutNote } from "@/lib/auth/logout-guidance";
+import { changePassword } from "@/lib/auth/password/client";
+import { describeForgotCurrentPasswordNote } from "@/lib/auth/logout-guidance";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAccountActionsPlacement, type AccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { PasswordInput } from "@/components/auth/PasswordInput";
-import { TurnstileWidget, useTurnstile } from "@/components/auth/TurnstileWidget";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
@@ -53,6 +48,11 @@ type LoadState =
 const FIELD_CLASS = "h-12 rounded-xl border-gray-200 focus-visible:ring-[#E07A5F]/30";
 const PRIMARY_BUTTON_CLASS =
   "w-full py-3 rounded-xl font-bold text-white bg-[#E07A5F] hover:bg-[#D16A4F] disabled:opacity-50 disabled:cursor-not-allowed transition-colors";
+
+/** 401 (ログインが切れた) のときの文。ログイン画面への案内 */
+const SIGNED_OUT_PASSWORD_MESSAGE = "ログインの有効期限が切れました。ログインし直してから、もう一度お試しください。";
+/** 未認証の HTTP ステータス */
+const HTTP_UNAUTHORIZED = 401;
 
 function providerLabel(provider: string | null): string {
   if (provider === "google") return "Google";
@@ -73,12 +73,8 @@ function ErrorBanner({ message }: { message: string }) {
 // パスワードの変更
 // ---------------------------------------------------------------------------
 function PasswordChangeSection({
-  supabase,
-  email,
   accountActionsPlacement,
 }: {
-  supabase: SupabaseBrowserClient;
-  email: string;
   /** ログアウトをどこで出すか。案内の「ログアウト」の指し先を、アプリの中とブラウザで分ける (#1552。lib/auth/logout-guidance.ts) */
   accountActionsPlacement: AccountActionsPlacement;
 }) {
@@ -88,80 +84,44 @@ function PasswordChangeSection({
   const [submitting, setSubmitting] = useState(false);
   const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // 変更できたとき。othersSignedOut: 他の端末のログアウトまで確認できたか
-  const [result, setResult] = useState<{ othersSignedOut: boolean } | null>(null);
-  // #1474: 本人確認 (signInWithPassword) に付ける、ボットではないことの確認のトークン
-  const captcha = useTurnstile();
+  // 変更できたか (送信の始めに false、200 で true)。200 なら、GoTrue が更新と同じトランザクションで他の端末を消している (cross/16 §13.7)
+  const [result, setResult] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (submittingRef.current) return;
-    setResult(null);
+    setResult(false);
 
-    // 入力の検証。ここで弾けるものは、どの API も呼ばずに止める (規則と文言はモバイルと共通。packages/shared)
+    // 入力の検証。ここで弾けるものは、API を呼ばずに止める (規則と文言はモバイルと共通。packages/shared)
     const inputError = validatePasswordChangeInput({ currentPassword, newPassword, confirmPassword });
     if (inputError) {
       setError(inputError);
       return;
     }
 
-    // #1474: トークンは 1 回しか使えないので、入力の検証を通ったあと、送信の直前に 1 回だけ取り出す
-    // (取り出した時点で、ウィジェットが次のトークンを取り直す)。Turnstile が有効なのにトークンが無いとき
-    // (Enter キーなどでボタンを通らずに送られた場合) は送らない
-    const captchaToken = captcha.takeToken();
-    if (captcha.enabled && !captchaToken) {
-      setError("ボットではないことの確認が終わるまで、少しお待ちください。");
-      return;
-    }
-
     setError(null);
     submittingRef.current = true;
     setSubmitting(true);
-    let step: "reauth" | "update" = "reauth";
     try {
-      // 1) 現在のパスワードで本人確認 (ログイン済みの端末が使われていても、パスワードを知っている人だけが変えられる)。
-      //    この呼び出しで、この端末のセッションは新しいものに入れ替わる。
-      //    Turnstile が無効のときは options を付けない (今までのリクエストと同じ)
-      const { error: reauthError } = await supabase.auth.signInWithPassword({
-        email,
-        password: currentPassword,
-        ...(captchaToken ? { options: { captchaToken } } : {}),
-      });
-      if (reauthError) {
-        console.error("[settings/account] re-authentication failed:", reauthError.code ?? reauthError.status);
-        setError(describePasswordChangeError(reauthError, "reauth"));
+      // 現在のパスワードの確認・履歴の照合・更新はサーバーが行う (POST /api/auth/password/change)
+      const outcome = await changePassword({ current_password: currentPassword, new_password: newPassword });
+      if (!outcome.ok) {
+        // パスワード・本文は出さない。コードだけを残す
+        console.error("[settings/account] password change failed:", outcome.error.code, outcome.status);
+        setError(
+          outcome.status === HTTP_UNAUTHORIZED
+            ? SIGNED_OUT_PASSWORD_MESSAGE
+            : describePasswordChangeApiError(outcome.error.code, outcome.error.message),
+        );
         return;
       }
-
-      // 2) 新しいパスワードへ更新
-      step = "update";
-      const { error: updateError } = await supabase.auth.updateUser({ password: newPassword });
-      if (updateError) {
-        console.error("[settings/account] password update failed:", updateError.code ?? updateError.status);
-        setError(describePasswordChangeError(updateError, "update"));
-        return;
-      }
-
-      // 3) この端末以外のログインを解除する。
-      //    scope: 'others' は今のセッションを残す。操作中の端末は使い続けるので、ユーザー別データの削除
-      //    (clearUserScopedLocalStorage) も他タブへのサインアウト通知 (broadcastSignOut) も行わない。
-      //    パスワードはもう変わっているので、ここが失敗してもエラー画面には戻さず、注意書きを添えて成功を伝える。
-      let othersSignedOut = true;
-      try {
-        const { error: signOutError } = await supabase.auth.signOut({ scope: "others" });
-        if (signOutError) throw signOutError;
-      } catch (signOutErr) {
-        console.error("[settings/account] sign out of other sessions failed:", signOutErr);
-        othersSignedOut = false;
-      }
-
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setResult({ othersSignedOut });
+      setResult(true);
     } catch (err) {
-      console.error("[settings/account] password change failed unexpectedly:", err);
-      setError(describePasswordChangeError(err, step));
+      console.error("[settings/account] password change failed unexpectedly:", err instanceof Error ? err.name : "unknown");
+      setError(describePasswordChangeApiError(null, null));
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -192,15 +152,9 @@ function PasswordChangeSection({
           <CheckCircle2 size={18} className="shrink-0 mt-0.5" aria-hidden="true" />
           <div className="text-sm space-y-1">
             <p className="font-bold">パスワードを変更しました。</p>
-            {result.othersSignedOut ? (
-              <p>
-                セキュリティのため、この端末以外のログインはすべて解除しました。他の端末では、新しいパスワードでログインし直してください。
-              </p>
-            ) : (
-              <p data-testid="password-change-others-not-signed-out-note">
-                {describeOthersNotSignedOutNote(accountActionsPlacement)}
-              </p>
-            )}
+            <p>
+              セキュリティのため、この端末以外のログインはすべて解除しました。他の端末では、新しいパスワードでログインし直してください。
+            </p>
           </div>
         </div>
       )}
@@ -252,11 +206,9 @@ function PasswordChangeSection({
           />
         </div>
 
-        <TurnstileWidget {...captcha.widgetProps} action="password-change" />
-
         {error && <ErrorBanner message={error} />}
 
-        <button type="submit" disabled={submitting || !captcha.ready} className={PRIMARY_BUTTON_CLASS}>
+        <button type="submit" disabled={submitting} className={PRIMARY_BUTTON_CLASS}>
           {submitting ? "変更中…" : "パスワードを変更する"}
         </button>
       </form>
@@ -548,11 +500,7 @@ export default function AccountSettingsPage() {
 
             {canEditCredentials ? (
               <>
-                <PasswordChangeSection
-                  supabase={supabase}
-                  email={load.email}
-                  accountActionsPlacement={accountActionsPlacement}
-                />
+                <PasswordChangeSection accountActionsPlacement={accountActionsPlacement} />
                 <EmailChangeSection supabase={supabase} currentEmail={load.email} />
               </>
             ) : (

@@ -286,7 +286,7 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   password_history: 'パスワードのハッシュ (認証情報)',
   operator_mfa_backup_codes: '二段階認証のバックアップコードのハッシュ (認証情報)',
   user_push_tokens: '端末のプッシュ通知トークン (認証情報に準ずる)',
-  user_sessions_metadata: 'ログインセッションの識別子・端末情報 (セキュリティ情報)',
+  user_sessions_metadata: 'ログインの記録 (IP・端末・不審の印)。本人には設定の『ログイン中の端末』と『最近のログイン』で見せる',
   native_bridge_codes: 'モバイル WebView 認証ブリッジのワンタイムコード (アクセス / リフレッシュトークンを含む。有効 60 秒・使うと消える)',
   family_invites: '招待トークンと、他人のメールアドレスを含む',
   family_promotion_requests: '本人同意用のトークンと、他人のメールアドレスを含む',
