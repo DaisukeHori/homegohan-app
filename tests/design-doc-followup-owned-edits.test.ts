@@ -56,6 +56,12 @@ const OWNED_EDITS: readonly OwnedEdit[] = [
     target: 'CLAUDE.md',
     pattern: /「([^」]*)」[^「]*「([^」]*)」/,
   },
+  {
+    // operator/12 §15.1: 10 §8.1 の 2 か所 (キー / クールダウン・宛先) の同じ文。オーケストレーターの docs PR が持つ
+    owner: 'docs/design/operator/12-cron-secret-drift-monitor.md',
+    target: 'docs/design/operator/10-logs-and-mail-retry.md',
+    pattern: /「([^」]*)」→「([^」]*)」/,
+  },
 ];
 
 function read(rel: string): string {

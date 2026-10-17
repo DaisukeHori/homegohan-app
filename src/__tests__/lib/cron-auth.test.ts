@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { MockInstance } from 'vitest';
-import { requireCronAuth } from '@/lib/cron-auth';
+import { describeCronSecretRotationState, requireCronAuth } from '@/lib/cron-auth';
 
 // #1196: /api/cron/* の認証 (Authorization: Bearer <CRON_SECRET>) を 1 か所に集め、
 // シークレットを入れ替えている間は CRON_SECRET_PREVIOUS (旧い値) も受け付ける。
@@ -116,5 +116,41 @@ describe('requireCronAuth (#1196)', () => {
   it('CA-10: Next.js 側は SERVICE_ROLE_SECRET を使わない (Edge Functions 側だけの別名)', async () => {
     vi.stubEnv('SERVICE_ROLE_SECRET', NEW_SECRET);
     await expectJson(await requireCronAuth(makeRequest(`Bearer ${NEW_SECRET}`)), 503, { error: 'cron_disabled' });
+  });
+});
+
+describe('describeCronSecretRotationState (#1560)', () => {
+  it('RS-1: describeCronSecretRotationState: CRON_SECRET_PREVIOUS が無い・空文字なら { previous_configured: false, previous_same_as_current: false }', () => {
+    vi.stubEnv('CRON_SECRET', NEW_SECRET);
+    expect(describeCronSecretRotationState()).toEqual({ previous_configured: false, previous_same_as_current: false });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', '');
+    expect(describeCronSecretRotationState()).toEqual({ previous_configured: false, previous_same_as_current: false });
+    // CRON_SECRET も空文字・未設定でも、空文字どうしを「同じ」とは数えない
+    vi.stubEnv('CRON_SECRET', undefined);
+    expect(describeCronSecretRotationState()).toEqual({ previous_configured: false, previous_same_as_current: false });
+  });
+
+  it('RS-2: 設定されていて現行と違えば { true, false }、同じなら { true, true }', () => {
+    vi.stubEnv('CRON_SECRET', NEW_SECRET);
+    vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET);
+    expect(describeCronSecretRotationState()).toEqual({ previous_configured: true, previous_same_as_current: false });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', NEW_SECRET);
+    expect(describeCronSecretRotationState()).toEqual({ previous_configured: true, previous_same_as_current: true });
+    // 現行が無くて旧い値だけある: 設定はされているが、現行と同じではない
+    vi.stubEnv('CRON_SECRET', undefined);
+    expect(describeCronSecretRotationState()).toEqual({ previous_configured: true, previous_same_as_current: false });
+  });
+
+  it('RS-3: 戻り値に値を含めない (JSON.stringify に CRON_SECRET / CRON_SECRET_PREVIOUS の値が現れない)', () => {
+    vi.stubEnv('CRON_SECRET', NEW_SECRET);
+    vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET);
+    const text = JSON.stringify(describeCronSecretRotationState());
+    expect(text).not.toContain(NEW_SECRET);
+    expect(text).not.toContain(OLD_SECRET);
+    vi.stubEnv('CRON_SECRET_PREVIOUS', NEW_SECRET);
+    const sameText = JSON.stringify(describeCronSecretRotationState());
+    expect(sameText).not.toContain(NEW_SECRET);
+    // 戻り値のキーは真偽値 2 つだけ
+    expect(Object.keys(describeCronSecretRotationState()).sort()).toEqual(['previous_configured', 'previous_same_as_current']);
   });
 });

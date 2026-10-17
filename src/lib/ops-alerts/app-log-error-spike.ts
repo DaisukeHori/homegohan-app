@@ -36,6 +36,14 @@
 
 import { maskSecretsInText } from '../../../supabase/functions/_shared/log-sanitizer';
 import { PG_CRON_STALL_MINUTES, PG_CRON_STALL_MINUTES_MAX, PG_CRON_STALL_MINUTES_MIN } from './cron-failure';
+import {
+  CRON_SECRET_DRIFT_ALERT_KEY,
+  CRON_SECRET_PROBE_RESULTS_RPC,
+  CRON_SECRET_ROTATION_ALERT_KEY,
+  CRON_SECRET_ROTATION_COOLDOWN_MINUTES,
+  CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MAX,
+  CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MIN,
+} from './cron-secret-drift';
 
 // ── 定数 ──────────────────────────────────────────────────────────────────
 
@@ -59,9 +67,16 @@ export const APP_LOG_CLIENT_ALERT_KEY = 'app_logs_client_error_spike';
 export type AppLogErrorSpikeScope = 'server' | 'client';
 /**
  * 運用アラートの種類。email_dead_letter は email_outbox の dead を数える (文面は renderEmailDeadLetterEmail。#1193)。
- * cron_failure は定期処理の失敗、pg_cron_stalled は pg_cron の停止 (#1125 の B。文面は src/lib/emails/ops/cron-failure.ts・pg-cron-stalled.ts)
+ * cron_failure は定期処理の失敗、pg_cron_stalled は pg_cron の停止 (#1125 の B。文面は src/lib/emails/ops/cron-failure.ts・pg-cron-stalled.ts)。
+ * cron_secret_drift はずれ (fail)、cron_secret_rotation は入れ替えの途中・残り (warn) (#1560。文面は src/lib/emails/ops/cron-secret-drift.ts)
  */
-export type AppLogAlertScope = AppLogErrorSpikeScope | 'email_dead_letter' | 'cron_failure' | 'pg_cron_stalled';
+export type AppLogAlertScope =
+  | AppLogErrorSpikeScope
+  | 'email_dead_letter'
+  | 'cron_failure'
+  | 'pg_cron_stalled'
+  | 'cron_secret_drift'
+  | 'cron_secret_rotation';
 
 /**
  * 届けられなかったメール (email_outbox の dead) の通知のキー (#1193)。
@@ -89,6 +104,9 @@ export const APP_LOG_ALERT_COUNT_RPC = {
   email_dead_letter: 'email_outbox_dead_counts',
   cron_failure: 'cron_failure_counts',
   pg_cron_stalled: 'pg_cron_last_run_at',
+  // #1560 2 つの種類は同じ 1 本の RPC (確認の結果) から判定する
+  cron_secret_drift: CRON_SECRET_PROBE_RESULTS_RPC,
+  cron_secret_rotation: CRON_SECRET_PROBE_RESULTS_RPC,
 } as const satisfies Readonly<Record<AppLogAlertScope, string>>;
 
 /** 通知の種類ごとの、ops_alert_state のキー */
@@ -98,6 +116,8 @@ export const APP_LOG_ALERT_KEYS: Readonly<Record<AppLogAlertScope, string>> = {
   email_dead_letter: EMAIL_DEAD_LETTER_ALERT_KEY,
   cron_failure: CRON_FAILURE_ALERT_KEY,
   pg_cron_stalled: PG_CRON_STALLED_ALERT_KEY,
+  cron_secret_drift: CRON_SECRET_DRIFT_ALERT_KEY,
+  cron_secret_rotation: CRON_SECRET_ROTATION_ALERT_KEY,
 };
 
 /**
@@ -324,7 +344,8 @@ export type AppLogAlertSettingEnvName =
   | 'OPS_ALERT_ERROR_THRESHOLD'
   | 'OPS_ALERT_CLIENT_ERROR_THRESHOLD'
   | 'OPS_ALERT_COOLDOWN_MINUTES'
-  | 'OPS_ALERT_PG_CRON_STALL_MINUTES';
+  | 'OPS_ALERT_PG_CRON_STALL_MINUTES'
+  | 'OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES';
 
 /** 環境変数から読んだ、上書きの元の文字列 (未設定は undefined) */
 export interface AppLogAlertSettingSources {
@@ -334,6 +355,8 @@ export interface AppLogAlertSettingSources {
   readonly cooldownMinutes: string | undefined;
   /** OPS_ALERT_PG_CRON_STALL_MINUTES (#1125 の B) */
   readonly pgCronStallMinutes: string | undefined;
+  /** OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES (#1560) */
+  readonly cronSecretRotationCooldownMinutes: string | undefined;
 }
 
 export interface AppLogAlertSettings {
@@ -345,6 +368,8 @@ export interface AppLogAlertSettings {
   readonly cooldownMinutes: number;
   /** pg_cron が止まっていると判定する、最新の実行からの分数 (この分数を超えたら通知する。#1125 の B) */
   readonly pgCronStallMinutes: number;
+  /** 入れ替えの途中・残り (cron_secret_rotation) の通知を送り直さない時間 (分。#1560) */
+  readonly cronSecretRotationCooldownMinutes: number;
   /** 値が不正で、既定値に戻した環境変数の名前 (ログで知らせる用。値そのものは返さない) */
   readonly ignored: readonly AppLogAlertSettingEnvName[];
 }
@@ -372,7 +397,7 @@ function resolveIntegerSetting(
 
 /**
  * しきい値とクールダウンを決める。環境変数 OPS_ALERT_ERROR_THRESHOLD / OPS_ALERT_CLIENT_ERROR_THRESHOLD /
- * OPS_ALERT_COOLDOWN_MINUTES / OPS_ALERT_PG_CRON_STALL_MINUTES (#1125 の B) があればそれを使い、無ければ既定値
+ * OPS_ALERT_COOLDOWN_MINUTES / OPS_ALERT_PG_CRON_STALL_MINUTES (#1125 の B) / OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES (#1560) があればそれを使い、無ければ既定値
  * (APP_LOG_ALERT_ERROR_THRESHOLD / APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD / APP_LOG_ALERT_COOLDOWN_MINUTES)。
  * 窓 (APP_LOG_ALERT_WINDOW_MINUTES) は vercel.json の間隔と結びついているので、ここでは変えない。
  */
@@ -401,16 +426,24 @@ export function resolveAppLogAlertSettings(sources: AppLogAlertSettingSources): 
     PG_CRON_STALL_MINUTES_MIN,
     PG_CRON_STALL_MINUTES_MAX,
   );
+  const rotation = resolveIntegerSetting(
+    sources.cronSecretRotationCooldownMinutes,
+    CRON_SECRET_ROTATION_COOLDOWN_MINUTES,
+    CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MIN,
+    CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MAX,
+  );
   const ignored: AppLogAlertSettingEnvName[] = [];
   if (threshold.ignored) ignored.push('OPS_ALERT_ERROR_THRESHOLD');
   if (clientThreshold.ignored) ignored.push('OPS_ALERT_CLIENT_ERROR_THRESHOLD');
   if (cooldown.ignored) ignored.push('OPS_ALERT_COOLDOWN_MINUTES');
   if (stall.ignored) ignored.push('OPS_ALERT_PG_CRON_STALL_MINUTES');
+  if (rotation.ignored) ignored.push('OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES');
   return {
     errorThreshold: threshold.value,
     clientErrorThreshold: clientThreshold.value,
     cooldownMinutes: cooldown.value,
     pgCronStallMinutes: stall.value,
+    cronSecretRotationCooldownMinutes: rotation.value,
     ignored,
   };
 }
