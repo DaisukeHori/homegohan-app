@@ -19,13 +19,18 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EMAIL_CHANGE_AWAITING_OTHER_NOTICE } from '@homegohan/shared';
 
-const mocks = vi.hoisted(() => ({
-  exchangeCodeForSession: vi.fn(),
-  verifyOtp: vi.fn(),
-  getUser: vi.fn(),
-  maybeSingle: vi.fn(),
-  replace: vi.fn(),
-}));
+const mocks = vi.hoisted(() => {
+  const replace = vi.fn();
+  return {
+    exchangeCodeForSession: vi.fn(),
+    verifyOtp: vi.fn(),
+    getUser: vi.fn(),
+    maybeSingle: vi.fn(),
+    replace,
+    // Next の useRouter は描画のたびに同じものを返す (毎回新しいものを返すと、router に依存する effect が回り続ける)
+    router: { replace },
+  };
+});
 
 vi.mock('next/headers', () => ({
   cookies: async () => ({ getAll: () => [] }),
@@ -50,7 +55,7 @@ vi.mock('@/lib/auth/sessions/web-login-context', () => ({
 }));
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: mocks.replace }),
+  useRouter: () => mocks.router,
 }));
 
 vi.mock('next/link', async () => {
