@@ -2,7 +2,7 @@
 /**
  * デプロイ後 / DR 復元後の smoke test (#1181)。
  *
- *   npm run test:smoke -- --base-url=https://staging.homegohan.app
+ *   npm run test:smoke -- --base-url=https://staging.example.test
  *
  * 確認項目・オプションは --help を参照。本体は scripts/lib/smoke.mjs
  * (単体テストから使えるよう分けてある。この入口は常に main() を実行する)。

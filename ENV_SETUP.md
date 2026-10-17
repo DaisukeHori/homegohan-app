@@ -329,8 +329,8 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 | 環境変数 | 例 | 役割 | 未設定のときの既定値 |
 |---|---|---|---|
 | `NEXT_PUBLIC_APP_URL` | `https://homegohan.com` | サイトの URL。メールの中のリンク・招待や譲渡の URL・ページの OGP / canonical・`robots.txt` の基点 | `https://homegohan-app.vercel.app`（いま動いているサイト） |
-| `EMAIL_FROM` | `ほめゴハン <noreply@mail.homegohan.com>` | メールの送信元。Resend で検証済みのドメインにする | 従来の送信元（`noreply@homegohan.app`。このドメインは検証できないので、本番ではメールが届かない） |
-| `NEXT_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 問い合わせ先。メールの文面・お問い合わせ画面・プライバシーポリシー・招待画面に出る | 従来のアドレス（`support@homegohan.app`） |
+| `EMAIL_FROM` | `ほめゴハン <noreply@mail.homegohan.com>` | メールの送信元。Resend で検証済みのドメインにする | `src/lib/site-config.ts` の `DEFAULT_EMAIL_FROM`（従来の送信元。そのドメインは DNS に無く検証できないので、本番ではメールが届かない） |
+| `NEXT_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 問い合わせ先。メールの文面・お問い合わせ画面・プライバシーポリシー・招待画面に出る | `src/lib/site-config.ts` の `DEFAULT_SUPPORT_EMAIL`（従来のアドレス。同じドメインなので届かない） |
 
 - `NEXT_PUBLIC_` で始まる値は**ビルド時に埋め込まれる**ので、Vercel で変えたら再デプロイしてください。
 - 形が正しくない値（`https://` が無い URL、メールアドレスでない値）は無視して既定値に戻り、関数ログに警告が 1 回出ます。
@@ -426,7 +426,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 ### 必須（モバイル）
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
-- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）の基点（例: `https://homegohan.com`）。献立・買い物リスト・AI などの画面が呼ぶ（#1434 で必須に分類した。無いと、その画面が `[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL` の例外で落ちていた）
+- `EXPO_PUBLIC_API_BASE_URL` - Next.js API（BFF）の基点（例: いまアプリが動いている `https://homegohan-app.vercel.app`。`homegohan.com` は、サイトを移すまで別のサービスを指しているので使わない）。献立・買い物リスト・AI などの画面が呼ぶ（#1434 で必須に分類した。無いと、その画面が `[mobile] Missing env: EXPO_PUBLIC_API_BASE_URL` の例外で落ちていた）
 
 この 3 つはビルドのときに埋め込まれます（EAS Build なら、EAS の環境変数に登録しておく）。一覧は `apps/mobile/src/lib/env.ts` の `REQUIRED_MOBILE_ENV_NAMES` です。入っていないビルドは、次のように動きます（#1182。以前は `https://placeholder.supabase.co` という存在しない接続先でクライアントを作り、ログインなどが原因の分かりにくいエラーで失敗し続けていました）。空・空白だけの値も、未設定として扱います。
 
@@ -488,7 +488,7 @@ Expoでは `EXPO_PUBLIC_` で始まる変数がクライアントに埋め込ま
 これは Vercel の環境変数ではなく、**Supabase の Edge Function の Secret** です（Supabase Dashboard → Edge Functions → Secrets、または `supabase secrets set ALLOWED_ORIGINS=...`）。
 
 - 用途: ブラウザから Edge Function を直接呼ぶときに、呼び出し元として認めるサイトのオリジン（カンマ区切り。`https://` から書き、末尾に `/` を付けない）。
-- 未設定なら `https://homegohan.app` と `https://homegohan-app.vercel.app` だけを認めます。設定すると、この 2 つの代わりに、設定した値だけを認めます。`*` と `null` は書いても無視されます。
+- 未設定なら、いまアプリが動いている `https://homegohan-app.vercel.app` だけを認めます。設定すると、これの代わりに、設定した値だけを認めます（サイトを `homegohan.com` に移したら、そのオリジンを足してください。手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。`*` と `null` は書いても無視されます。
 - 普段は設定不要です。このアプリのブラウザやモバイルアプリが Edge Function を直接呼ぶ処理は無く、Next.js の API ルートがサーバーから呼んでいます（サーバーからの呼び出しは CORS の対象外です）。自社の別ドメインのページから直接呼ぶ処理を足すときだけ設定してください。
 - バッチ専用の関数（`aggregate-org-stats` など）には、この設定に関係なく CORS を付けません。
 
