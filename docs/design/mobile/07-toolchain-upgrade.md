@@ -115,7 +115,7 @@
 
 | 面 | 事実 |
 |---|---|
-| `expo-file-system` | `app/(tabs)/settings.tsx` と `src/lib/webViewDownload.ts` が `import * as FileSystem from "expo-file-system"` で旧 API (`cacheDirectory` / `documentDirectory` / `writeAsStringAsync` / `makeDirectoryAsync` / `readDirectoryAsync` / `getInfoAsync` / `deleteAsync` / `EncodingType`) を使う。Jest のテスト 10 ファイルが `jest.mock('expo-file-system', …)`。そのうち 3 ファイルはテスト自身も `import * as FileSystem from 'expo-file-system'` で mock の関数を取り出す (`__tests__/components/WebViewScreen.bridge.test.tsx:91`・`WebViewScreen.download.test.tsx:84`・`__tests__/lib/webViewDownload.test.ts:36`)。テストの `require('expo-file-system')`・`jest.requireActual('expo-file-system')` は 0 件。ルートの vitest の `tests/webview-download-export-limit-contract.test.ts:26` が `vi.mock('expo-file-system', () => ({}))` で `webViewDownload.ts` を読む |
+| `expo-file-system` | `app/(tabs)/settings.tsx` と `src/lib/webViewDownload.ts` が `import * as FileSystem from "expo-file-system"` で旧 API (`cacheDirectory` / `documentDirectory` / `writeAsStringAsync` / `makeDirectoryAsync` / `readDirectoryAsync` / `getInfoAsync` / `deleteAsync` / `EncodingType`) を使う。Jest のテスト 11 ファイルが `jest.mock('expo-file-system', …)` (origin/main `307ae1cf` で足された `settings/sessions-entry.test.tsx` を含む)。そのうち 3 ファイルはテスト自身も `import * as FileSystem from 'expo-file-system'` で mock の関数を取り出す (`__tests__/components/WebViewScreen.bridge.test.tsx:91`・`WebViewScreen.download.test.tsx:84`・`__tests__/lib/webViewDownload.test.ts:36`)。テストの `require('expo-file-system')`・`jest.requireActual('expo-file-system')` は 0 件。ルートの vitest の `tests/webview-download-export-limit-contract.test.ts:26` が `vi.mock('expo-file-system', () => ({}))` で `webViewDownload.ts` を読む |
 | `as any` | `app/` `src/` に 28 行 (31 か所)・9 ファイル: `(auth)/login.tsx`・`index.tsx`・`onboarding/questions.tsx`・`profile/nutrition-targets.tsx`・`health/blood-tests.tsx` (253・264 行)・`AIAdvisorSheet.tsx`・`V4GenerateModal.tsx`・`useHomeData.ts`・`ProfileProvider.tsx` |
 | `react-native` の `SafeAreaView` | `app/handson-tour/index.tsx`・`app/handson-tour/graduate.tsx`・`src/components/ai/AIAdvisorSheet.tsx` の 3 ファイル (ほかは `react-native-safe-area-context` の `SafeAreaView`) |
 | `expo-router` | `Stack` / `Tabs` / `Link` / `Redirect` / `router` / `useRouter` / `useNavigation` / `useLocalSearchParams` / `usePathname` / `useSegments` / `useRootNavigationState` / `useNavigationContainerRef`。`(tabs)/_layout.tsx` が `<Tabs.Screen name="settings" options={{ href: null }} />`、`(tabs)/profile.tsx` が `router.push('/(tabs)/settings')`。`app/legal-consent.tsx` が `navigation.addListener("beforeRemove", …)` + `preventDefault()`。`src/components/legal/LegalConsentGate.tsx` が `navigationRef.reset({ index: 0, routes: [{ name: 'legal-consent' }] })`。`navigation.addListener('tabPress' / 'blur')`・`getParent`・`getState`・`isFocused`・`setParams` |
@@ -237,7 +237,7 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 4. **Jest は 30.5 + jest-expo 58 + `@react-native/jest-preset` 0.88**。`@react-native/jest-preset` が持つ Jest 29 の依存 (`babel-jest` / `jest-environment-node`) はルートの `overrides` で 30 にそろえ、jest 29 の経路を lockfile から消す (§6.2)。jest-expo 58 自身は `babel-jest` と環境を自分の Jest 30 の依存から `require.resolve` するので、実行時は overrides の有無に依らず Jest 30 で動く。
 5. **RNTL は 13.3.3 のまま、`react-test-renderer` を 19.3.0 (React と同じ版) に固定**。RNTL 14 は別案件 (§0.2)。
 6. **expo-router 58 への追随は 2 か所だけ**: 設定の画面は `(tabs)` の中の隠しタブのまま、`(tabs)/_layout.tsx` の `href: null` (58 では届かない route になる) を `tabBarButton: () => null` と `tabBarItemStyle: { display: "none" }` に書き換える (expo-router 5 が `href: null` を中で展開していた形と同じ。§9.10) / 同意画面の止めを `usePreventRemove` に、ゲートの畳み直しを完全な state (持ち主の navigator の `key` / `routeNames` / `routeKeySeq` / `type` を写し `stale: false`。同意画面の route があれば `key` ごと再利用) の RESET の action を持ち主に宛てて `dispatch` する形にする。
-7. **API の置き換えは 3 種**: `expo-file-system` → `expo-file-system/legacy` (2 ファイル + mock 10 ファイル) / `react-native` の `SafeAreaView` → `react-native-safe-area-context` (3 ファイル) / `mediaTypes` の `as any` を外す (2 か所)。
+7. **API の置き換えは 3 種**: `expo-file-system` → `expo-file-system/legacy` (2 ファイル + mock 11 ファイル) / `react-native` の `SafeAreaView` → `react-native-safe-area-context` (3 ファイル) / `mediaTypes` の `as any` を外す (2 か所)。
 8. **`runtimeVersion` は fingerprint の方針をトップレベルに置き、更新は無効のまま**。番兵が固定する (§11・§9.7)。
 9. **使っていない依存 3 つを消す** (`@react-native-community/slider`・`expo-haptics`・`expo-image-manipulator`。slider はテストに残った mock も消す)。`react-native-url-polyfill` は使っているので残す (版も変えない)。`@expo/vector-icons` (expo 58 が依存しなくなった) と `react-native-worklets` (Reanimated 4 の peer) と `@react-native/jest-preset` を新しく宣言する。
 10. **段 A (依存と設定・API の置き換え) → 段 B (expo-router 58 への追随) → 段 C (番兵・README)** を 1 本の WF で直列に積み、マージは最後に 1 回。設計正典の追随 (`mobile/01`・`mobile/CLAUDE.md`・`cross/13b`・`00-architecture`・ルート `CLAUDE.md`) はオーケストレーターの専権 PATCH (§15.2)。
@@ -493,7 +493,7 @@ grep の語はパッケージ名。母集合は `apps/mobile` (`__tests__` と `
 | T-6 | Reanimated 4 のコンポーネントを描くテストが、worklets のネイティブモジュールを要る | C-10 | C-10 の mock と `setUpTests()`。描くテスト: `__tests__/app/handson-tour-photo-save.test.tsx`・`handson-tour-menu-bubble.test.tsx`・`handson-tour-hard-back-step2-3.test.tsx`・`handson-tour-layout-login.test.tsx`・`__tests__/components/TourBubble.testid.test.tsx` (TourOverlay / Confetti 経由)。mock で足りなければ、Reanimated の手引きの `jest.useFakeTimers()` をそのテストの `beforeEach` に足す (アニメーションの完了を待つ test だけ) | A | V-3 |
 | T-7 | `react-test-renderer` が React と違う版 (いま 19.2.5 / 19.0.0) | §6.1 | `19.3.0` の固定で React と一致。`jest.config.js` の `^react-test-renderer$` の固定先 (ルートの `node_modules`) は変えない (§10.1 の 2 段でルートに巻き上がる。V-1 と番兵 (§9.7) で確かめる) | A | V-1・V-3 |
 | T-8 | `@testing-library/jest-native` 5.4.3 (非推奨) | RNTL 13.3.3 の組み込み matcher で代替できるが、`jest.setup.js` の `extend-expect` を外すと `toHaveTextContent` 等の登録の経路が変わる | 変えない (本冊の範囲外。RNTL 14 の案件で一緒に外す) | – | V-3 |
-| T-9 | `expo-file-system` の mock の指定子と、テスト自身の import | A-1 | A-1 のとおり Jest の 10 ファイル (うち 3 本は `import * as FileSystem from 'expo-file-system'` も `/legacy` に) とルートの vitest の 1 ファイル (`tests/webview-download-export-limit-contract.test.ts`)。§9.7 の番兵が `__tests__` の指定子も見る | A | V-3・V-7 |
+| T-9 | `expo-file-system` の mock の指定子と、テスト自身の import | A-1 | A-1 のとおり Jest の 11 ファイル (うち 3 本は `import * as FileSystem from 'expo-file-system'` も `/legacy` に) とルートの vitest の 1 ファイル (`tests/webview-download-export-limit-contract.test.ts`)。§9.7 の番兵が `__tests__` の指定子も見る | A | V-3・V-7 |
 | T-10 | 隠しタブの書き方の変更に伴うテスト (`tab-layout.test.tsx` の「settings タブは href: null」の it) と、実物の expo-router 58 の `processScreens` と `useVisibleTabsWithRedirect` に通すテストの新設 | B-1 | §13.2・§9.12 のとおり (mock の `Tabs.Screen` が集めた options の形と、実物の `processScreens` が `hidden` を付けず、実物の `useVisibleTabsWithRedirect` が設定の画面を一覧に残して最初のタブへ戻さないことで見る。mock だけで緑になることを防ぐ) | B | V-2・V-3 |
 | T-11 | 同意画面・ゲートのテスト (`beforeRemove` の mock・`reset` の期待) | B-2 | §13.2 のとおり (ゲートの期待は `navigationRef.dispatch` に渡す完全な state の action。実物の expo-router 58 の `StackRouter` に action を通す it を足し、mock だけで緑になることを防ぐ) | B | V-3 |
 
@@ -936,7 +936,7 @@ export function collapseStackAction(owner: StackOwnerState, routeName: string): 
 
 **実物の router での確認** (設計の時点。expo-router 58.0.23 の `build/react-navigation/routers/index.js` の `StackRouter` の `getStateForAction` に、ルートの Stack の形の state `{ key: 'navigator:root', routeKeySeq: 3, index: 1, type: 'stack', stale: false, routeNames: ['index', '(tabs)', 'legal-consent', 'settings/account'], routes: [index, (tabs), settings/account] }` を渡した): いまの部分の state (`{ type: 'RESET', payload: { index: 0, routes: [{ name: 'legal-consent' }] } }`) は警告を 1 回出して受け付けない (Unhandled)。上の `collapseStackAction` の形 (key の無い route) は受け付け、`routes` が `[{ name: 'legal-consent', key: 'legal-consent:3' }]`・`routeKeySeq` が 4 になる。同意画面の route (`legal-consent:3`) を持つ state に key ありの形を渡すと、その key のまま `[legal-consent]` になる。§13.2 の T-ML12 がこの 3 つをテストにする。
 
-コメントの直し: 既存の「`@react-navigation の CommonActions.reset`」「`beforeRemove`」の語を、`usePreventRemove` / `navigationRef.dispatch` の現在形に (設計書 13b の行は §15.2)。
+コメントの直し: 既存の「`@react-navigation の CommonActions.reset`」「`beforeRemove`」「`navigationRef.reset`」の語を、`usePreventRemove` / `navigationRef.dispatch` (完全な state の RESET) の現在形に。origin/main で当たる所は、13 行 (ファイルの冒頭の説明の「取り除く操作 (beforeRemove) を通すか止めるか」→「取り除く操作を止めるか (usePreventRemove)」)・36 行 (`LEGAL_CONSENT_SCREEN_ROUTE_NAME` の説明の「(navigationRef.reset)」→「(navigationRef.dispatch。完全な state の RESET)」)・193 行 (`RESET_ACTION_TYPE` の説明。上のブロックの文に替える)・225 行 (`LegalConsentScreenRemovalDecision` の説明。型と一緒に消す) の 4 か所 (設計書 13b の行は §15.2)。
 
 ### 9.5 `apps/mobile/app/legal-consent.tsx` の差分 (説明用)
 
@@ -947,7 +947,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 // … ほかの import は同じ。useNavigation は使わない
 
 export default function LegalConsentScreen() {
-  // … session / state / mode の計算は同じ (sawRequiredRef・modeRef も同じ)
+  // … session / state / mode の計算は同じ (sawRequiredRef も同じ。modeRef は消す)
   /** この画面が自分で閉じる途中 (「閉じる」・ログアウトに失敗したとき・未ログインで開かれたとき)。ref は effect の同期の判定に、state は hook の引数に使う */
   const closingRef = useRef(false);
   const [closing, setClosing] = useState(false);
@@ -969,6 +969,19 @@ export default function LegalConsentScreen() {
 
   // 未ログインのまま開かれた同意画面・afterSignOut・描画 (header の「閉じる」) は同じ。beforeRemove の effect は消す
 }
+```
+
+ほかの差分: `const navigation = useNavigation();` (43 行) と、`beforeRemove` の受け手だけが読んでいた `modeRef` (51〜52 行) を消す (`usePreventRemove` は描画のたびの `mode` を引数に取るので、ref は要らない)。`legalConsentScreenRemovalDecision` の import (11 行) を `legalConsentScreenPreventsRemoval` に替える。ファイルの冒頭の説明のコメントは、30 行の「ゲートの畳み直し (RESET) のほかの取り除く操作 (…) を止める」を「取り除く操作 (ログインの直後の routeAfterSignIn の replace など) を全部止める (ゲートの畳み直しは同意画面の route を key ごと再利用するので、取り除かれない)」に、32 行の「(アプリが背面へ。beforeRemove は流れない)」を「(アプリが背面へ。usePreventRemove の止めには当たらない)」に、40 行 (modeRef の説明) を消す。
+
+```tsx
+// tsc:skip (消す行の確かめ。origin/main の 63〜69 行。段 A の V-2 が許す型エラーはこの範囲)
+  useEffect(() => {
+    return navigation.addListener("beforeRemove", (event) => {
+      if (closingRef.current) return;
+      if (legalConsentScreenRemovalDecision(modeRef.current, event.data.action.type) === "allow") return;
+      event.preventDefault();
+    });
+  }, [navigation]);
 ```
 
 ### 9.6 `apps/mobile/src/components/legal/LegalConsentGate.tsx` の差分 (説明用)
@@ -1629,7 +1642,7 @@ npm install --package-lock-only --ignore-scripts || {
 
 | 段 | 内容 | 検証 |
 |---|---|---|
-| A | 依存と設定: `apps/mobile/package.json` (§6.1)・ルート `package.json` の `overrides` (§6.2)・`package-lock.json` (§10.1 の 2 段)・`app.json` (§9.1)・`eas.json` (C-5)・`jest.config.js` (§9.2)・`jest.setup.js` (§9.3)・`jest.env.setup.js` / `metro.config.js` / `tsconfig.json` / `dependabot.yml` のコメント (C-7・C-8・C-11・C-13)。消す依存のテストの後始末: `home.test.tsx` の slider の mock (§6.3)。API の置き換え: A-1 (import 2 + Jest の mock 10 + ルートの vitest の mock 1)・A-2 (3)・A-3 (2)・A-8 (V-2 で出た分)・T-4 (V-3 で出た分) | V-0〜V-10 |
+| A | 依存と設定: `apps/mobile/package.json` (§6.1)・ルート `package.json` の `overrides` (§6.2)・`package-lock.json` (§10.1 の 2 段)・`app.json` (§9.1)・`eas.json` (C-5)・`jest.config.js` (§9.2)・`jest.setup.js` (§9.3)・`jest.env.setup.js` / `metro.config.js` / `tsconfig.json` / `dependabot.yml` のコメント (C-7・C-8・C-11・C-13)。消す依存のテストの後始末: `home.test.tsx` の slider の mock (§6.3)。API の置き換え: A-1 (import 2 + Jest の mock 11 + ルートの vitest の mock 1)・A-2 (3)・A-3 (2)・A-8 (V-2 で出た分)・T-4 (V-3 で出た分) | V-0〜V-10 |
 | B | expo-router 58 への追随: B-1 (`(tabs)/_layout.tsx` の隠しタブの書き方 (§9.10) と `(tabs)/profile.tsx` のコメント 1 行 + `tab-layout.test.tsx` の it 1 つ + 新設の `home/tabs-hidden-route.test.ts` (§9.12))・B-2 (同意画面・ゲート・`legal-consent.ts` + テスト 3 本・`app/_layout.tsx` のコメント 1 行。段 A の V-2 が許した `app/legal-consent.tsx` の型エラーもここで消える) | V-2・V-3・V-7 |
 | C | 番兵と README: `tests/mobile-toolchain-contract.test.ts` (§9.7)・`apps/mobile/README.md` の「実機 (Expo Go)」の節に 1 文 (SDK 58 の Expo Go は公開待ち・push 通知は Expo Go で例外になる (SDK 55) ので preview のビルドで確かめる) | V-3・V-7 |
 
