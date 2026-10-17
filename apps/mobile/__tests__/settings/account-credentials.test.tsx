@@ -1,15 +1,15 @@
 /**
  * account-credentials.test.tsx
- * 設定 → アカウント管理 の「パスワードを変更」「メールアドレスを変更」(apps/mobile/src/components/settings/AccountCredentialsSection.tsx) の RNTL テスト (#1187)
+ * 設定 → アカウント管理 の「パスワードを変更」「メールアドレスを変更」(apps/mobile/src/components/settings/AccountCredentialsSection.tsx) の RNTL テスト (#1187・#1720 段 C)
  *
  *  1. メールアドレスとパスワードでログインしている人には、2 つのフォームを出す
  *  2. Google でログインしている人にはフォームを出さず、案内だけを出す
- *  3. パスワード変更: 再認証 → 更新 → この端末以外のログアウト を呼び、成功を表示して入力を消す
- *  4. パスワード変更: 現在のパスワードが違えば、更新を呼ばずに理由を表示する
+ *  3. パスワード変更: パスワードの変更の API を 1 回呼び、成功を表示して入力を消す (再認証・updateUser・signOut は呼ばない)
+ *  4. パスワード変更: 現在のパスワードが違えば (400)、理由を表示して入力は残す
  *  5. メール変更: 確認メールを送り、送り先と「両方の確認」の案内を表示する
  *  6. ログイン情報を読み込めないときは、もう一度読み込める
  *
- * 変更の処理 (src/lib/account-credentials.ts) は実物を通し、その先の supabase をモックにする。
+ * 変更の処理 (src/lib/account-credentials.ts) は実物を通し、その先の supabase と API (getApi) をモックにする。
  */
 
 import React from 'react';
@@ -19,6 +19,7 @@ const mockGetUser = jest.fn();
 const mockSignInWithPassword = jest.fn();
 const mockUpdateUser = jest.fn();
 const mockSignOut = jest.fn();
+const mockApiPost = jest.fn();
 let mockCallOrder: string[] = [];
 
 jest.mock('../../src/lib/supabase', () => ({
@@ -39,6 +40,15 @@ jest.mock('../../src/lib/supabase', () => ({
       },
     },
   },
+}));
+
+jest.mock('../../src/lib/api', () => ({
+  getApi: () => ({
+    post: (...args: unknown[]) => {
+      mockCallOrder.push('api.post');
+      return mockApiPost(...args);
+    },
+  }),
 }));
 
 jest.mock('expo-linking', () => ({
@@ -65,6 +75,7 @@ beforeEach(() => {
   mockSignInWithPassword.mockResolvedValue({ data: { session: {} }, error: null });
   mockUpdateUser.mockResolvedValue({ data: { user: {} }, error: null });
   mockSignOut.mockResolvedValue({ error: null });
+  mockApiPost.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -128,7 +139,7 @@ describe('AccountCredentialsSection — 表示の出し分け', () => {
 });
 
 describe('AccountCredentialsSection — パスワードの変更', () => {
-  it('3. 再認証 → 更新 → この端末以外のログアウト を呼び、成功を表示して入力を消す', async () => {
+  it('3. パスワードの変更の API を 1 回呼び、成功を表示して入力を消す', async () => {
     render(<AccountCredentialsSection />);
     await screen.findByTestId('account-password-section');
 
@@ -136,33 +147,36 @@ describe('AccountCredentialsSection — パスワードの変更', () => {
     fireEvent.press(screen.getByTestId('account-password-submit'));
 
     expect(await screen.findByTestId('password-change-success')).toBeTruthy();
-    expect(mockCallOrder).toEqual(['signInWithPassword', 'updateUser', 'signOut']);
-    expect(mockSignInWithPassword).toHaveBeenCalledWith({ email: EMAIL, password: 'oldPass123' });
-    expect(mockUpdateUser).toHaveBeenCalledWith({ password: 'newPass456' });
-    expect(mockSignOut).toHaveBeenCalledWith({ scope: 'others' });
-    expect(screen.getByText(/この端末以外のログインはすべて解除しました/)).toBeTruthy();
+    expect(mockCallOrder).toEqual(['api.post']);
+    expect(mockApiPost).toHaveBeenCalledWith('/api/auth/password/change', {
+      current_password: 'oldPass123',
+      new_password: 'newPass456',
+    });
+    // 再認証・updateUser・signOut は使わない (他の端末の失効は GoTrue が更新と同じトランザクションで行う)
+    expect(mockSignInWithPassword).not.toHaveBeenCalled();
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+    expect(mockSignOut).not.toHaveBeenCalled();
+    // 成功の帯は常に「この端末以外のログインはすべて解除しました」(確認できなかった枝は無い)
+    expect(
+      screen.getByText(
+        'セキュリティのため、この端末以外のログインはすべて解除しました。他の端末では、新しいパスワードでログインし直してください。',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/確認できませんでした/)).toBeNull();
     expect(screen.getByTestId('account-current-password').props.value).toBe('');
     expect(screen.getByTestId('account-new-password').props.value).toBe('');
     expect(screen.getByTestId('account-confirm-password').props.value).toBe('');
   });
 
-  it('他の端末のログアウトを確認できなかったときは、成功に注意書きを添える', async () => {
-    mockSignOut.mockResolvedValue({ error: { name: 'AuthRetryableFetchError', status: 0, message: 'Network request failed' } });
-    render(<AccountCredentialsSection />);
-    await screen.findByTestId('account-password-section');
-
-    fillPasswordForm('oldPass123', 'newPass456', 'newPass456');
-    fireEvent.press(screen.getByTestId('account-password-submit'));
-
-    expect(await screen.findByTestId('password-change-success')).toBeTruthy();
-    expect(screen.getByText(/他の端末のログアウトを確認できませんでした/)).toBeTruthy();
-  });
-
-  it('4. 現在のパスワードが違えば、更新を呼ばずに理由を表示し、入力は残す', async () => {
-    mockSignInWithPassword.mockResolvedValue({
-      data: { session: null },
-      error: { name: 'AuthApiError', status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' },
-    });
+  it('4. 現在のパスワードが違えば (400)、理由を表示し、入力は残す', async () => {
+    mockApiPost.mockRejectedValue(
+      new Error(
+        `HTTP 400 Bad Request: ${JSON.stringify({
+          error: '現在のパスワードが正しくありません。',
+          code: 'AUTH_CURRENT_PASSWORD_MISMATCH',
+        })}`,
+      ),
+    );
     render(<AccountCredentialsSection />);
     await screen.findByTestId('account-password-section');
 
@@ -176,19 +190,19 @@ describe('AccountCredentialsSection — パスワードの変更', () => {
     expect(screen.getByTestId('account-new-password').props.value).toBe('newPass456');
   });
 
-  it('連打しても、再認証は 1 回しか呼ばない', async () => {
-    let resolveReauth: (value: unknown) => void = () => {};
-    mockSignInWithPassword.mockReturnValue(new Promise((resolve) => { resolveReauth = resolve; }));
+  it('連打しても、API は 1 回しか呼ばない', async () => {
+    let resolveApi: (value: unknown) => void = () => {};
+    mockApiPost.mockReturnValue(new Promise((resolve) => { resolveApi = resolve; }));
     render(<AccountCredentialsSection />);
     await screen.findByTestId('account-password-section');
 
     fillPasswordForm('oldPass123', 'newPass456', 'newPass456');
     fireEvent.press(screen.getByTestId('account-password-submit'));
     fireEvent.press(screen.getByTestId('account-password-submit'));
-    resolveReauth({ data: { session: {} }, error: null });
+    resolveApi({ ok: true });
 
     expect(await screen.findByTestId('password-change-success')).toBeTruthy();
-    expect(mockSignInWithPassword).toHaveBeenCalledTimes(1);
+    expect(mockApiPost).toHaveBeenCalledTimes(1);
   });
 
   it('「パスワードを表示する」で、伏せた入力を見えるようにする', async () => {
