@@ -350,6 +350,8 @@ stateDiagram-v2
   cancelled --> active : 30 日 cooling period 内に復帰
 ```
 
+運営者の手動付与の行 (`stripe_subscription_id IS NULL`) の遷移 (`active` → `cancelled` (取り消し) / `expired` (期限)) は `billing/02` §7.3。
+
 ### 5.2 試用期間 (trial_days) フロー (§5.15.6.5)
 
 > **billing/01 との対応**: 試用は Stripe Checkout の `trial_period_days` で作る (`docs/design/billing/01-billing-core.md` §5.2・§9.1)。
