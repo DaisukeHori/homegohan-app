@@ -165,10 +165,10 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 
 | 作り方 | 結果 |
 |---|---|
-| origin/main の lockfile に、§6.1 の `package.json` を当てて 1 回で作り直す (素 → ERESOLVE → `--legacy-peer-deps` → 素) | `react-native`・`expo`・`expo-router`・`jest`・`jest-expo`・`metro`・`react-test-renderer`・`react-native-reanimated` が `apps/mobile/node_modules` に入れ子になり、`@react-native/jest-preset`・`@testing-library/react-native`・`react-native-worklets`・`lucide-react-native` はルートに残る。古い木 (SDK 53 の `expo-*`・`react-native` 0.79) を頼る辺が残ったまま新しい版を置くため、npm がルートに置けず入れ子にする。`@react-native/jest-preset` の `jest-preset.js` は Node の `require.resolve('react-native')` を自分の場所 (ルート) から引くので、この形では jest-expo の preset の読み込みで止まる (`The React Native Jest preset that jest-expo relies on has moved to a separate package`) |
+| origin/main の lockfile に、§6.1 の `package.json` を当てて 1 回で作り直す (素 → ERESOLVE → `--legacy-peer-deps` → 素) | `react-native`・`expo`・`expo-router`・`jest`・`jest-expo`・`metro`・`react-test-renderer`・`react-native-reanimated` が `apps/mobile/node_modules` に入れ子になり、`@react-native/jest-preset`・`@testing-library/react-native`・`react-native-worklets`・`lucide-react-native` はルートに残る。(下の 2 段で、先に SDK 53 の古い木 (`expo-*`・`react-native` 0.79 ほか) を消すとルートに巻き上がるので、古い木が残ったまま新しい版を置くことが原因と見ている。npm の配置の判断の内部までは確かめていない。)`@react-native/jest-preset` の `jest-preset.js` は Node の `require.resolve('react-native')` を自分の場所 (ルート) から引くので、この形では jest-expo の preset の読み込みで止まる (`The React Native Jest preset that jest-expo relies on has moved to a separate package`) |
 | §10.1 の 2 段 (先に版を変える依存を宣言から外して古い木を消し、次に §6.1 を当てる) | `apps/mobile/node_modules` の入れ子は `react` 19.3.0 と `@types/react` 19.3.0 の 2 つだけ。ほかのツールチェーン (`react-native` 0.88.0・`@react-native/jest-preset` 0.88.0・`react-test-renderer` 19.3.0・`jest` 30.5.2・`jest-expo` 58.0.11・`expo` 58.0.14・`metro` 0.87.1・`babel-jest` 30.5.2・`typescript` 5.9.3) はルート。ルートの `react` / `react-dom` は 19.2.8 のまま。ルートの `package.json` が宣言する依存 (Web) の解決は 1 つも変わらない。`node_modules/@react-native/jest-preset/node_modules/babel-jest` は無い (overrides で 30 にそろい巻き上がる)。`npm ci --dry-run` が通る |
 
-2 段の形は、いまの main と同じ置き場 (ルートに `react-native`、モバイルの `react` だけ入れ子) で、`metro.config.js` の `resolveRequest`・jest の `moduleNameMapper` の `react` の行・tsconfig の `paths.react` がそのまま効く。`react-native` 0.88.0 の peer `react ^19.3.0` は、ルートの `react` 19.2.8 からは満たされない (npm の peer の検査では不整合) が、Node の解決で `react-native` が読む `react` は、Metro では `resolveRequest`、Jest では `moduleNameMapper` の `^react$` がモバイルの 19.3.0 に差し替える。いまの main も `react-native` (ルート) が読む `react` をこの 2 つで差し替えて動いている。
+2 段の形は、いまの main と同じ考え方の置き場 (ルートに `react-native`、モバイルの `apps/mobile/node_modules` には React とその型の入れ子) で、`metro.config.js` の `resolveRequest`・jest の `moduleNameMapper` の `react` の行・tsconfig の `paths.react` がそのまま効く。`react-native` 0.88.0 の peer `react ^19.3.0` は、ルートの `react` 19.2.8 からは満たされない (npm の peer の検査では不整合) が、Node の解決で `react-native` が読む `react` は、Metro では `resolveRequest`、Jest では `moduleNameMapper` の `^react$` がモバイルの 19.3.0 に差し替える。いまの main も `react-native` (ルート) が読む `react` をこの 2 つで差し替えて動いている。
 
 ---
 
@@ -1517,7 +1517,7 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 |---|---|---|---|
 | `package-lock.json` | 作り直す (§10.1) | Web の依存の更新 (Dependabot の minor/patch のまとめ・`@supabase/*`) | 本冊のマージの前に main の lockfile を取り込んで §10.1 をやり直す (衝突の手解消はしない) |
 | ルート `package.json` の `overrides` | 2 つ足す | Web の `overrides` を足す案件 | 同上 |
-| `apps/mobile/app/(tabs)/_layout.tsx`・`profile.tsx` | B-1 | cross/16 の段 B (設定の画面に「ログイン中の端末」の行)・mobile の画面の案件 | cross/16 の段 B は本冊の後 (§15.2 の行で `settings/index.tsx` を指す) |
+| `apps/mobile/app/(tabs)/settings.tsx` (→ `app/settings/index.tsx`)・`apps/mobile/app/(tabs)/_layout.tsx`・`profile.tsx` | B-1 | cross/16 の段 B (設定の画面に「ログイン中の端末」の行)・mobile の画面の案件 | cross/16 の段 B は本冊の後 (§15.2 の行で `settings/index.tsx` を指す) |
 | `apps/mobile/app/legal-consent.tsx`・`LegalConsentGate.tsx`・`legal-consent.ts`・`app/_layout.tsx` (コメント 1 行) | B-2 | 13b の後続 | 本冊が先 |
 
 ---
