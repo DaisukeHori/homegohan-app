@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.2 (2026-10-18。R2 の網羅性の漏れを反映) |
-| Status | 設計ゲート審査中 (R2)。実装は §17 の段分け (段 0 → 1 → 2 を 1 本の WF・1 本の PR) で進める。未着手 |
+| 版 | v1.3 (2026-10-18。設計ゲート R2 の指摘を反映) |
+| Status | 設計ゲート審査中 (R3)。実装は §17 の段分け (段 0 → 1 → 2 を 1 本の WF・1 本の PR) で進める。未着手 |
 | Issue | #1867 (サービスの本サイト (homegohan.com) を作り直す) の本文とコメント (2026-10-18 の 2 件) |
 | 範囲の正本 | Issue #1867 の本文とコメント。本書はその上で決めた範囲 (紹介ページ 1 本 = `/`) と設計。Issue と食い違ったら本書が正 |
 | 成果物 | 本書と、静的な試作 `docs/design/marketing/prototype/index.html` (§23) |
@@ -62,11 +62,11 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | # | 誰が | 何を | 期待する結果 |
 |---|---|---|---|
 | S-1 | 未ログインの人 (PC・Chrome) | 検索結果から `/` を開き、下まで読んで「無料で始める」を押す | ヒーローの見出しは HTML に入っていて JS を待たずに出る (最大の描画 = LCP はヒーローの中で、予算 2.5 s 以内。社内の狙いは 2.0 s: §10.1)。スクロールに合わせて各セクションが現れ (下まで読むと隠れたままのセクションが無い)、デモを試せ、`/signup` に着く |
-| S-2 | 未ログインの人 (スマートフォン・Safari) | `/` を開き、片手でスクロールする | 横スクロールが出ない。開いた直後 (ヒーローの途中) は固定の「無料で始める」は出ず、ヒーローを過ぎると下に出る。ピンチで拡大できる。本文は 16 px 以上で、注記・ナビ・ボタン・写真の名前などの小さい文字も 14 px (`--a11y-min-font-size`) を下回らない (§5.2) |
+| S-2 | 未ログインの人 (スマートフォン・Safari) | `/` を開き、片手でスクロールする | 横スクロールが出ない。開いた直後 (ヒーローの途中) は固定の「無料で始める」は出ず、ヒーローを過ぎると下に出る (ページの中のリンクで一気に移ったときも同じ。先頭へ一気に戻ると消える)。ピンチで拡大できる。本文は 16 px 以上で、注記・ナビ・ボタン・写真の名前などの小さい文字も 14 px (`--a11y-min-font-size`) を下回らない (§5.2) |
 | S-3 | キーボードだけで操作する人 | Tab で順に移動し、Enter / Space で操作する | スキップリンク → ヘッダー → ヒーローの CTA → 画面の切り替えを止める操作 → デモの写真 → FAQ の順に、見えるフォーカスで移動できる。画面の切り替えは Space で止まる。FAQ は Enter で開閉 |
 | S-4 | スクリーンリーダーの利用者 | ランドマークと見出しで移動する | `header` / `nav` / `main` / `footer` と、h1 が 1 つ・h2 がセクションごとにある。画像に意味のある代替テキスト。デモの結果は `aria-live="polite"` で読み上げる |
 | S-5 | 動きを減らす設定 (`prefers-reduced-motion: reduce`) の人 | `/` を開く | フェード・スライド・自動で切り替わる画面・背景の視差・進捗の演出が無く、最終の状態がすぐ出る (デモの結果の出入りも含む)。内容は同じ |
-| S-6 | 未ログインの人 | デモで写真を選ぶ → 待つ → 結果を読む → 別の写真を選ぶ | 選択 → 「分析中」(1.4 秒) → 結果 (スコア・コメント・推定の数値・「サンプル」の注記) → 別の写真で同じ流れ。待っている間の再選択は無視する |
+| S-6 | 未ログインの人 | デモで写真を選ぶ → 待つ → 結果を読む → 別の写真を選ぶ | 選択 → 「分析中」(1.4 秒) → 結果 (スコア・記録コメント・推定の数値・「サンプル」の注記) → 別の写真で同じ流れ。待っている間の再選択は無視する |
 | S-7 | ログイン済みの人 | `/` を開く | 既存どおり proxy が `/home` (運営ロールは `/admin`、初期設定が済んでいなければ初期設定) へ送る。紹介ページは描かれない |
 | S-8 | モバイル App の WebView (`is_native_app` Cookie あり・未ログイン) | サインアウト後などに `/` に着く | 紹介ページがそのまま出る (App のストアへの導線は無い: §4.8)。「無料で始める」は `/signup` へ行く |
 | S-9 | 検索エンジンと SNS のクローラー | `/` を取得する | 動的に描いた HTML に h1・description・canonical・OGP (殻の `publicPageMetadata('/')` が出す。画像は `/opengraph-image` と `/twitter-image`: §12)・JSON-LD (Organization・WebSite) がある。JS 無しでも全文が読める |
@@ -92,7 +92,8 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 - **島 (client の島)**: `'use client'` の部品。状態 (スクロール・選択・開閉) を持つものだけを島にし、文章と画像は Server Component で描く。
 - **主張 (claim)**: アプリの機能や条件について紹介ページが言うこと。`landing-copy.ts` で `evidence` (リポジトリの中の実在のパス) を持つ。
 - **実際の画面**: `public/guide/*.png` (Issue #1852 で撮った、本物のアプリの画面写真 15 枚。540×1080)。
-- **サンプル**: デモの結果 (スコア・コメント・数値)。AI は呼ばず、`landing-copy.ts` に書いた固定の値を出す。画面に「サンプル」と明記する。
+- **サンプル**: デモの結果 (スコア・記録コメント・数値)。AI は呼ばず、`landing-copy.ts` に書いた固定の値 (記録コメントは、その値からアプリの定型の文と同じ形で作る文) を出す。画面に「サンプル」と明記する。
+- **記録コメント**: 写真の記録の画面に出る、記録をほめるひと言 (`src/app/(main)/meals/new/page.tsx:1506-1520`)。アプリの定型の文で、AI が認識した料理の名前と食事の区分だけが変わる (§4.2 の根拠)。
 
 ---
 
@@ -154,7 +155,7 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | 絵文字を多用 (`✨` `📸` `🤖` `🎉` `🏆` ほか) | 全体 | 使わない (design-system §16: lucide のみ) |
 | フッターの SNS は `href="#"` のプレースホルダー 3 件 | `:574-576` | 置かない (公開の SNS の先が無い。`landing-copy.ts` の `socialLinks` は空の配列。§4.8) |
 | `motion.button` を `Link` の中に置く (a の中に button。無効な入れ子) | `:177-181` `:206-210` | `Link` 1 つにボタンの見た目を当てる (§8) |
-| モバイルの固定 CTA は `scrollY > 400` で出す | `:619` | ヒーローの番兵 (sentinel) を IntersectionObserver で見る (§6.2 M-8) |
+| モバイルの固定 CTA は `scrollY > 400` で出す | `:619` | ヒーローの箱 (`section#hero`) を IntersectionObserver で見る (§6.2 M-8) |
 
 ### 2.3 ブランドと画像の資産
 
@@ -195,8 +196,8 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 
 | 法令 | 条文 | 紹介ページへの当てはめ |
 |---|---|---|
-| 景品表示法 第 5 条第 1 号 (優良誤認) | 「実際のものよりも著しく優良であると示す」表示の禁止。第 7 条第 2 項 (措置命令) は、根拠の資料の提出を求められて出せなければ、その表示を第 5 条第 1 号に該当する表示と「みなす」。第 8 条第 3 項 (課徴金) は「推定する」(消費者庁「優良誤認表示とは」の頁) | 機能の主張はすべて実コードに根拠を持つ (`evidence`)。「〜で痩せる」「最高の」「完全」「最新の AI」のような、根拠を出せない形容を書かない。認識の精度・速さを数字で約束しない |
-| 健康増進法 第 65 条第 1 項 (虚偽誇大表示の禁止) | 食品として販売に供する物の健康保持増進効果等について「著しく事実に相違する」「著しく人を誤認させる」表示の禁止 (神奈川県・宮城県の資料)。消費者庁「健康食品に関する景品表示法及び健康増進法上の留意事項について」(2016 年制定。2022-12-05 の改定は二次資料で言及) は「〇〇だけで△kg 痩せる」「医者に行かずとも治る」型を虚偽・誇大の例に挙げる | アプリは食品ではないが、サンプルのコメントや豆知識で食品の効能 (「免疫力アップ」「美肌」「吸収率が 3 倍」「医者いらず」) を書かない。AI のコメントのサンプルは、彩り・組み合わせ・そろい方 (主食・主菜・副菜) だけを褒める |
+| 景品表示法 第 5 条第 1 号 (優良誤認) | 「実際のものよりも著しく優良であると示す」表示の禁止。第 7 条第 2 項 (措置命令) は、根拠の資料の提出を求められて出せなければ、その表示を第 5 条第 1 号に該当する表示と「みなす」。第 8 条第 3 項 (課徴金) は「推定する」(消費者庁「優良誤認表示とは」の頁) | 機能の主張はすべて実コードに根拠を持つ (`evidence`)。写真の記録の「記録コメント」は定型の文 (`supabase/functions/_shared/nutrition-pipeline.ts` の `buildTemplatePraiseAndTip`。料理の名前と食事の区分だけが変わる) なので、写真の記録について「AI が食事を見て良いところを見つける」とは書かず、デモのサンプルも定型の文の形にする (§4.4・§4.9 の `praise`)。「〜で痩せる」「最高の」「完全」「最新の AI」のような、根拠を出せない形容を書かない。認識の精度・速さを数字で約束しない |
+| 健康増進法 第 65 条第 1 項 (虚偽誇大表示の禁止) | 食品として販売に供する物の健康保持増進効果等について「著しく事実に相違する」「著しく人を誤認させる」表示の禁止 (神奈川県・宮城県の資料)。消費者庁「健康食品に関する景品表示法及び健康増進法上の留意事項について」(2016 年制定。2022-12-05 の改定は二次資料で言及) は「〇〇だけで△kg 痩せる」「医者に行かずとも治る」型を虚偽・誇大の例に挙げる | アプリは食品ではないが、サンプルのコメントや豆知識で食品の効能 (「免疫力アップ」「美肌」「吸収率が 3 倍」「医者いらず」) を書かない。デモのサンプルの記録コメントは、アプリの定型の文と同じ形 (料理の名前の記録をほめる文。§4.4) にし、料理の中身や効能を褒めない |
 | 薬機法 第 66 条第 1 項 (誇大広告等) | 「何人も、医薬品 … の名称、製造方法、効能、効果又は性能に関して、明示的であると暗示的であるとを問わず、虚偽又は誇大な記事を広告し、記述し、又は流布してはならない」(東京都保健医療局の抜粋)。第 68 条は承認前の医薬品等の広告の禁止 | アプリが病気を治す・防ぐ・診断すると読める表現 (「血圧が下がる」「健康診断の数値が…」) を書かない。「医療目的での使用はお控えください」の免責を最終 CTA と FAQ に置く (`docs/design/cross/08-legal-compliance.md` の医療免責の方針) |
 | ステルスマーケティング (景品表示法の指定告示・2023-10-01) | 事業者の表示であることを隠した第三者の声の表示を不当表示とする (二次資料) | 利用者の声・口コミ・評価は一切載せない (利用者ゼロ) |
 
@@ -223,14 +224,14 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | 1 | ヘッダー (`header`) | いつでも登録とログインへ行ける | マーク + 「ほめゴハン」・ナビ (機能・使い方・バッジ・よくある質問)・ログイン・無料で始める | 無料で始める → `/signup` |
 | 2 | ヒーロー (`hero`) | 3 秒で「写真を撮ると褒められる」が分かる | 見出し・一文・CTA 2 つ・安心の 3 点・実際の画面の連続 (撮る → 見る → 褒められる) と、その切り替えを止める操作 | 無料で始める → `/signup`・デモを試す → `#demo` |
 | 3 | 使い方 (`how`) | 手順が 3 つしかないことを見せる | 固定した端末の画面が、スクロールに合わせて 3 枚切り替わる。各手順に短い説明 | (なし) |
-| 4 | デモ (`demo`) | 「褒められる」を自分の手で体験する | サンプルの写真 3 枚から選ぶ → 分析中 → 結果 (スコア・コメント・推定の数値)。「サンプル」の注記 | 自分の食事で試す → `/signup` |
+| 4 | デモ (`demo`) | 「褒められる」を自分の手で体験する | サンプルの写真 3 枚から選ぶ → 分析中 → 結果 (スコア・記録コメント (アプリの定型の文と同じ形)・推定の数値)。「サンプル」の注記 | 自分の食事で試す → `/signup` |
 | 5 | 機能 (`features`) | 写真の記録のほかに何ができるかを一覧で | 大 2 + 中 4 + 小 2 のカード (実際の画面つき)。各カードの主張に根拠 | (なし) |
 | 6 | バッジ (`badges`) | 続ける仕掛けがあることを見せる | 実在し、付与の処理があるバッジ 6 つ (DB の名前と説明) | (なし) |
 | 7 | 安心 (`trust`) | 正直さで信頼を作る (実績の代わり) | 無料・データ・AI の限界・退会と書き出しの 4 点 | (なし) |
 | 8 | よくある質問 (`faq`) | 迷いを解く | 6 件のアコーディオン + お問い合わせへのリンク | お問い合わせフォームへ → `/contact` |
 | 9 | 最終 CTA (`cta`) | 読み終えた人の背中を押す | 見出し・一文・CTA・安心の 3 点・医療の免責 | 無料で始める → `/signup` |
 | 10 | フッター (`footer`) | 法務と公開ページへの導線 | サービス・サポート・法的情報の 3 列と著作権 | (リンク) |
-| 11 | モバイルの固定 CTA (`sticky-cta`) | スマートフォンで、いつでも登録へ | ヒーローを過ぎたら (ヒーローの番兵が画面の上へ出たら) 下から出る。開いた直後は出ない | 無料で始める → `/signup` |
+| 11 | モバイルの固定 CTA (`sticky-cta`) | スマートフォンで、いつでも登録へ | ヒーローを過ぎたら (ヒーローの箱 `#hero` が画面の上へ出きったら) 下から出る。開いた直後は出ない | 無料で始める → `/signup` |
 
 **部品の構造 (Server Component の骨格 + client の島)**
 
@@ -256,7 +257,7 @@ src/components/marketing/
     FaqSection.tsx                       島: アコーディオン
     FinalCtaSection.tsx                  Server
     SiteFooter.tsx                       Server
-    MobileStickyCta.tsx                  島: ヒーローの番兵を IntersectionObserver で見る (番兵が画面の上へ出たら出す)
+    MobileStickyCta.tsx                  島: ヒーローの箱 (#hero) を IntersectionObserver で見る (画面の上へ出きったら出す)
   primitives/                            5 本
     Reveal.tsx                           島: 現れ方 (IntersectionObserver・1 回だけ)
     PhoneFrame.tsx                       Server: 端末の枠 (CSS だけ)
@@ -286,10 +287,10 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 | # | トレース |
 |---|---|
 | S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` (既存の殻) が `getCspNonce()` → `SiteStructuredData` (既存) + `LandingPage` を描く (データ取得なし) → HTML (全文) → ブラウザ: 見出しがフォールバックのフォントで描かれ LCP 確定 → `Reveal` が IO でセクションを順に表示 → `#demo` で写真を選ぶ (S-6) → 「無料で始める」(`Link href="/signup"`) → `/signup` |
-| S-2 | 375 px: `<meta name="viewport">` は `maximum-scale=5, user-scalable=yes` (殻の `viewport`。§9.5) でピンチの拡大ができる。`.lp` は `max-width: 100%`・`overflow-x: clip`。bento は 1 列。ヒーローの画面は見出しの下に 1 列 (ヒーローは画面より高い)。`MobileStickyCta` は初めは隠れたまま (`visible = false`)。IO がヒーローの番兵 (`#hero-end`) を見て、番兵が交差していないうえに `boundingClientRect.top < 0` (画面の上へ出た) のときだけ `is-visible` → 下から `--lp-dur` (320 ms) で出る。開いた直後は番兵が画面の下にあり (`top > 0`)、隠れたまま。上へ戻って番兵が画面に入るか下へ出たら隠れる (§13.3)。本文は `1rem` (16 px)・一文 (lead) は `clamp(1.0625rem, …)` で 17 px 以上、注記・ナビ・ボタン・デモの写真の名前は `0.875rem` (14 px。下限) (§5.2。E-19 が確かめる) |
+| S-2 | 375 px: `<meta name="viewport">` は `maximum-scale=5, user-scalable=yes` (殻の `viewport`。§9.5) でピンチの拡大ができる。`.lp` は `max-width: 100%`・`overflow-x: clip`。bento は 1 列。ヒーローの画面は見出しの下に 1 列 (ヒーローは画面より高い)。`MobileStickyCta` は初めは隠れたまま (`visible = false`)。IO がヒーローの箱 (`section#hero`。ページの先頭にある) を見て、箱が交差していないうえに `boundingClientRect.bottom < 0` (箱の全体が画面の上へ出た) のときだけ `is-visible` → 下から `--lp-dur` (320 ms) で出る。開いた直後は箱が画面と交差しているので隠れたまま。ヒーローは先頭にあるので、ヒーローの外へ出る移動と先頭へ戻る移動は、少しずつのスクロールでも、`#demo` などのリンクや先頭への一気の移動でも、必ず箱の交差の有無を変え、IO の通知が来る (§13.3)。本文は `1rem` (16 px)・一文 (lead) は `clamp(1.0625rem, …)` で 17 px 以上、注記・ナビ・ボタン・デモの写真の名前は `0.875rem` (14 px。下限) (§5.2。E-19 が確かめる) |
 | S-3 | Tab: スキップリンク (layout) → マーク (`/`) → ナビ 4 つ → ログイン → 無料で始める → ヒーローの CTA 2 つ → 画面の切り替えを止める (`input type="checkbox"`。Space で入れると `:has(:checked)` で画面の連続と点が止まる。フォーカスが入った間も `:focus-within` で止まる) → デモの写真 3 つ (`button aria-pressed`) → 機能のカード (リンク無し・フォーカスしない) → FAQ の `button aria-expanded` → Enter で開閉 → フッターのリンク。`:focus-visible` は globals.css の 2 トーンのリング |
 | S-4 | ランドマーク: `header` → `nav aria-label="サイトの案内"` → `main` (`LandingPage` が描く。layout の `#main-content` は `div` でランドマークではない: `src/app/layout.tsx:126`) → `section aria-labelledby` ×8 → `footer`。h1 は 1 つ (ヒーロー)。デモの結果は `div role="status" aria-live="polite"` に入り、選ぶたびに「分析中」「結果: …」を読み上げる。画像の alt は `landing-copy.ts` の `alt` (実際の画面は `guide-content.ts` の `imageAlt` と同じ文) |
-| S-5 | `prefers-reduced-motion: reduce`: globals.css が時間で動く CSS の動きを 0.01 ms にする。`marketing.css` の reduce のブロック (§9.1) が、遅れ (`animation-delay` / `transition-delay`) を 0 に、背景の円の視差 (`animation-timeline: scroll()`) を `animation: none` に、ヒーローの画面の連続を止めて最後の 1 枚 (`comment.png`) だけにし、止める操作 (checkbox) を隠す → 現れ方・切り替え・進捗の演出は一瞬で最終状態。JS: `useReducedMotion()` が true → デモの待ち時間を `0` に。デモの島は `MotionConfig reducedMotion="user"` と `transition={{ duration: 0 }}` で、分析中のカードの退場も結果の登場も時間 0 (フェードもスライドも無し)。内容は同じ |
+| S-5 | `prefers-reduced-motion: reduce`: globals.css が時間で動く CSS の動きを 0.01 ms にする。`marketing.css` の reduce のブロック (§9.1) が、遅れ (`animation-delay` / `transition-delay`) を 0 に、背景の円の視差 (`animation-timeline: scroll()`) を `animation: none` にし、ヒーローの画面の連続は最後の 1 枚 (`comment.png`) だけを出し、止める操作 (checkbox) を隠す。画面と点の `animation-name` は `@media (prefers-reduced-motion: no-preference)` の中でだけ付けるので、reduce では computed の `animation-name` が `none` になる → 現れ方・切り替え・進捗の演出は一瞬で最終状態。JS: `useReducedMotion()` が true → デモの待ち時間を `0` に。デモの島は `MotionConfig reducedMotion="user"` と `transition={{ duration: 0 }}` で、分析中のカードの退場も結果の登場も時間 0 (フェードもスライドも無し)。内容は同じ |
 | S-6 | 状態 `idle` → 写真 A を押す → `analyzing` (選んだ id・開始時刻) → 1,400 ms 後 `result` → 結果を描く (`aria-live`) → 写真 B を押す → `analyzing` → … 。`analyzing` の間に押しても無視 (§13.3)。結果の下の CTA は `/signup` |
 | S-7 | ログイン済みで `GET /` → `updateSession` が `resolveOnboardingRedirect({ pathname: '/' })` → `/home` (運営ロールは `/admin`) へ 307。`page.tsx` は呼ばれない。本冊は何も変えない |
 | S-8 | WebView で `GET /` (`is_native_app=1`・未ログイン) → S-1 と同じ HTML。ストアの札は無い (`storeLinks` が空)。「無料で始める」→ `/signup` (WebView でも開ける既存の画面) |
@@ -321,7 +322,7 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 |---|---|
 | 上の小さな見出し (eyebrow) | `褒めて伸ばす、AI 食事記録アプリ` |
 | h1 | `食べることを、もっと誇らしく。` (改行: `食べることを、` / `もっと誇らしく。`) |
-| 一文 | `写真を撮るだけ。AI があなたの食事を見て、良いところを見つけて褒めます。栄養のことは、ひと言のメモで添えます。` |
+| 一文 | `写真を撮るだけ。AI が料理を認識して、栄養を推定します。記録するたびに、ほめるひと言と、栄養のひと言メモが添えられます。` |
 | 主 CTA | `無料で始める` → `/signup` |
 | 副 CTA | `デモを試す` → `#demo` |
 | 安心の 3 点 | `いまは無料で使えます` / `クレジットカード不要` / `いつでも退会できます` |
@@ -329,7 +330,7 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 | 画面の注記 | `実際のアプリの画面です` |
 | 画面の切り替えを止める操作 (checkbox のラベル) | `画面の切り替えを止める` |
 
-根拠: 「写真を撮るだけ」= `src/app/api/ai/analyze-meal-photo/route.ts` (写真を受けて解析の関数を呼ぶ)・`src/app/(main)/meals/new/page.tsx`。「良いところを見つけて褒めます」= 写真の記録では `supabase/functions/_shared/nutrition-pipeline.ts` の `buildTemplatePraiseAndTip` が AI の認識した料理の名前で `praiseComment` を作り、`supabase/functions/analyze-meal-photo/index.ts:253` が記録に保存し、`src/app/(main)/meals/new/page.tsx:1506-1520` が「記録コメント」として出す。献立の栄養の振り返りでは `src/app/api/ai/nutrition/feedback/route.ts:94` の指示 (「良い点を見つけて褒める。…批判は含めない」) で AI が `praiseComment` を書く (`src/app/(main)/menus/weekly/page.tsx` が呼ぶ)。「栄養のことは、ひと言のメモで」= 同じ `buildTemplatePraiseAndTip` の `nutritionTip` を `src/app/(main)/meals/new/page.tsx:1538-1543` が「栄養メモ」として出す。改善の提案 (`advice`・`nutritionTip`) があるので、「ダメ出しはしない」のような断定は書かない (§4.9 の U-20)。「いまは無料」= `src/app/pricing/PricingPageView.tsx` の `有料プランは準備中です（販売開始前）`。「クレジットカード不要」= 新規登録 (`src/app/(auth)/signup/`) に決済が無い (`src/lib/billing/` の Checkout は購入の導線でだけ使う)。「いつでも退会できます」= `src/app/api/account/` (退会の API。`tests/account-delete-route.test.ts`)。
+根拠: 「写真を撮るだけ」= `src/app/api/ai/analyze-meal-photo/route.ts` (写真を受けて解析の関数を呼ぶ)・`src/app/(main)/meals/new/page.tsx`。「AI が料理を認識して、栄養を推定します」= 同じ 2 つ (`photo-analyze`)。「記録するたびに、ほめるひと言」= `supabase/functions/_shared/nutrition-pipeline.ts` の `buildTemplatePraiseAndTip` (`:749-779`。パイプラインの「Step 5: テンプレート文言生成」(`:1045-1053`) が必ず呼ぶ) が、AI が認識した料理の名前 (先頭の 2 つ) と食事の区分で定型の文 `<料理の名前>の記録がしっかりできていて素晴らしいです。<朝食 / 昼食 / 夕食 …>を丁寧に残せていて、とても良い流れです✨` を `praiseComment` に作り、`supabase/functions/analyze-meal-photo/index.ts:253` が記録に保存し、`src/app/(main)/meals/new/page.tsx:1506-1520` が「記録コメント」として出す。この文は記録できたことをほめる定型の文で、料理の中身 (彩り・組み合わせ・量) を見て良いところを判断する文ではない。だから紹介ページは、写真の記録について「AI が食事を見て良いところを見つける」とは書かず、「記録するたびに、ほめるひと言」とだけ書く (§4.9 の `praise`)。AI が良いところを見つけて褒めるのは、献立の栄養の振り返り (`src/app/api/ai/nutrition/feedback/route.ts:94` の指示「良い点を見つけて褒める。…批判は含めない」で AI が `praiseComment` を書く。`src/app/(main)/menus/weekly/page.tsx` が呼ぶ) で、紹介ページはこれを「献立の振り返りでは」と場面を書いて言う (§4.3 の 3・§4.5)。「栄養のひと言メモ」= 同じ `buildTemplatePraiseAndTip` の `nutritionTip` (定型の 3 つの文から、推定のタンパク質と食物繊維で 1 つを選ぶ) を `src/app/(main)/meals/new/page.tsx:1538-1543` が「栄養メモ」として出す。改善の提案 (`advice`・`nutritionTip`) があるので、「ダメ出しはしない」のような断定は書かない (§4.9 の U-20)。「いまは無料」= `src/app/pricing/PricingPageView.tsx` の `有料プランは準備中です（販売開始前）`。「クレジットカード不要」= 新規登録 (`src/app/(auth)/signup/`) に決済が無い (`src/lib/billing/` の Checkout は購入の導線でだけ使う)。「いつでも退会できます」= `src/app/api/account/` (退会の API。`tests/account-delete-route.test.ts`)。
 
 ### 4.3 使い方 (3 ステップ)
 
@@ -339,9 +340,9 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 | 一文 | `難しい設定はありません。今日から始められます。` |
 | 1 | 見出し `写真を撮る` / 本文 `食事の写真を撮るか、選ぶだけ。カロリーの入力も、食材の選択もいりません。` / 画面 `/guide/camera.png` |
 | 2 | 見出し `AI が見る` / 本文 `AI が料理を認識して、カロリー・タンパク質・野菜のバランスを推定します。数値はあくまで推定です。` / 画面 `/guide/analyze.png` |
-| 3 | 見出し `褒められる` / 本文 `記録の画面に、AI からのほめるひと言が添えられます。献立の振り返りでも、良いところを見つけて言葉にします。` / 画面 `/guide/comment.png` |
+| 3 | 見出し `褒められる` / 本文 `記録の画面に、記録をほめるひと言が添えられます。献立の振り返りでは、AI が良いところを見つけて言葉にします。` / 画面 `/guide/comment.png` |
 
-根拠: 1・2 は `src/app/api/ai/analyze-meal-photo/route.ts`・`src/app/(main)/meals/new/page.tsx` (`photo-analyze`)。3 は §4.2 の「褒めます」と同じ (`praise`)。流れは `src/app/guide/guide-content.ts` の `record` の章 (画面の文言) と同じ。
+根拠: 1・2 は `src/app/api/ai/analyze-meal-photo/route.ts`・`src/app/(main)/meals/new/page.tsx` (`photo-analyze`)。3 は §4.2 の「記録するたびに、ほめるひと言」と、献立の振り返りの AI のほめる文 (`praise`) と同じ根拠。流れは `src/app/guide/guide-content.ts` の `record` の章 (画面の文言) と同じ。
 
 ### 4.4 デモ
 
@@ -349,24 +350,27 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 |---|---|
 | 小さな見出し | `試してみる` |
 | h2 | `褒められるって、こういうこと。` |
-| 一文 | `写真を 1 枚選ぶと、AI のコメントのサンプルが出ます。` |
+| 一文 | `写真を 1 枚選ぶと、記録の画面に出る内容のサンプルが出ます。` |
 | 写真の見出し | `食事の写真を選ぶ` |
 | 待っている間 | `AI が見ています…` / 副文 `料理を認識して、栄養を推定しています` |
-| 結果の見出し | `AI からのコメント` |
+| 結果の見出し | `記録コメント` (アプリの記録の画面の見出しと同じ語: `src/app/(main)/meals/new/page.tsx:1514`) |
 | 数値の見出し | `推定の栄養` (列: `カロリー` `タンパク質` `脂質` `炭水化物` `野菜スコア`) |
-| 注記 (常に表示) | `表示はサンプルです。実際の結果は写真によって変わり、数値は推定です。` |
+| 注記 (常に表示) | `表示はサンプルです。実際のアプリでは、写真から AI が認識した料理の名前が入り、数値は推定です。` |
 | 結果の下の CTA | `自分の食事で試す` → `/signup` |
-| 空のとき | `写真を選ぶと、ここにコメントが出ます。` |
+| 空のとき | `写真を選ぶと、ここに記録コメントが出ます。` |
 
-サンプル 3 件 (`landing-copy.ts` の `demoSamples`。写真は §7.2):
+サンプル 3 件 (`landing-copy.ts` の `demoSamples`。写真は §7.2)。記録コメントは `landing-copy.ts` に文として持たず、料理の名前 (`dishNames`) と食事の区分 (`mealTypeLabel`) から `demoPraiseComment` (§9.2) が、アプリの定型の文 (§4.2 の根拠: `buildTemplatePraiseAndTip`) と同じ形で作る:
 
-| id | 写真 (alt) | 名前 | スコア | コメント | 推定 (kcal / P / F / C / 野菜) |
-|---|---|---|---|---|---|
-| `salad-bowl` | `/marketing/photos/salad-bowl.webp` (`葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル`) | `彩り野菜のサラダボウル` | 92 | `彩りがきれいなサラダボウルですね。葉野菜にアボカドとトマト、豆まで加わって、ひと皿で何種類もの野菜がとれています。` | 380 / 12 g / 22 g / 28 g / 95 |
-| `salmon-plate` | `/marketing/photos/salmon-plate.webp` (`焼いたサーモンといんげんとミニトマトを盛り合わせたプレート`) | `サーモンのプレート` | 90 | `焼いたサーモンに、いんげんとミニトマト。主菜と野菜がひと皿にそろって、彩りもきれいです。` | 480 / 30 g / 20 g / 40 g / 85 |
-| `pesto-pasta` | `/marketing/photos/pesto-pasta.webp` (`バジルソースのファルファッレとミニトマトと葉野菜`) | `バジルのパスタ` | 84 | `バジルの緑にミニトマトの赤が映えて、彩りのきれいなパスタですね。葉野菜も添えられていて、ひと皿で野菜もとれています。` | 610 / 17 g / 26 g / 74 g / 55 |
+| id | 写真 (alt) | 名前 (写真の帯と結果の見出し) | 料理の名前 (`dishNames`) | 食事の区分 (`mealTypeLabel`) | スコア | 記録コメント (`demoPraiseComment` の結果) | 推定 (kcal / P / F / C / 野菜) |
+|---|---|---|---|---|---|---|---|
+| `salad-bowl` | `/marketing/photos/salad-bowl.webp` (`葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル`) | `サラダボウル` | `サラダボウル` | `昼食` | 92 | `サラダボウルの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです。` | 380 / 12 g / 22 g / 28 g / 95 |
+| `salmon-plate` | `/marketing/photos/salmon-plate.webp` (`焼いたサーモンといんげんとミニトマトを盛り合わせたプレート`) | `サーモンのプレート` | `焼きサーモン`、`いんげんとミニトマト` | `夕食` | 90 | `焼きサーモン、いんげんとミニトマトの記録がしっかりできていて素晴らしいです。夕食を丁寧に残せていて、とても良い流れです。` | 480 / 30 g / 20 g / 40 g / 85 |
+| `pesto-pasta` | `/marketing/photos/pesto-pasta.webp` (`バジルソースのファルファッレとミニトマトと葉野菜`) | `バジルのパスタ` | `バジルソースのパスタ` | `昼食` | 84 | `バジルソースのパスタの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです。` | 610 / 17 g / 26 g / 74 g / 55 |
 
-コメントは、彩り・組み合わせ・そろい方だけを褒める (食品の効能を言わない: §2.5)。数値は「推定」と明記したサンプルで、実際の API の値ではない。名前・alt・コメントは、写真に**実際に写っているもの**だけで書く (写っていない料理を褒めない。§7.2 の「写っているもの」の列と、置いた写真を目で見て突き合わせる)。
+- 記録コメントは、アプリの定型の文と同じ句 (`の記録`・`がしっかりできていて素晴らしいです。`・`を丁寧に残せていて、とても良い流れです`) だけで作る。料理の名前は先頭の 2 つまでを `、` でつなぐ (アプリの `slice(0, 2).join('、')` と同じ)。アプリの文の末尾の絵文字 (`✨`) は、紹介ページは絵文字を使わない (§4 の表記・U-9) ので `。` に替える。違いはこの 1 文字だけ。アプリの定型の文が変わったら U-21 が赤になり、`demoPraiseComment` を同じ PR で直す。
+- 料理の中身 (彩り・組み合わせ・量) を褒める文は書かない。写真の記録の記録コメントは料理の中身を見ないので、書くとアプリにできないことを見せることになる (§2.5 の景品表示法の当てはめ)。食品の効能も言わない。
+- スコアは、アプリの記録の画面に出る `overallScore` (`buildTemplatePraiseAndTip` が 70〜95 に収める。`src/app/(main)/meals/new/page.tsx:1494`) と同じ範囲 (`DEMO_SCORE_MIN`〜`DEMO_SCORE_MAX`) の値にする。数値は「推定」と明記したサンプルで、実際の API の値ではない。
+- 名前・alt・料理の名前は、写真に**実際に写っているもの**だけで書く (写っていない料理を書かない。§7.2 の「写っているもの」の列と、置いた写真を目で見て突き合わせる)。
 
 ### 4.5 機能とバッジ
 
@@ -375,7 +379,7 @@ h2 `写真の記録だけじゃない。` / 一文 `献立から買い物、体�
 | 大きさ | 見出し | 本文 | 画面 | 根拠 (`evidence`) |
 |---|---|---|---|---|
 | 大 | `写真で記録` | `撮るだけで、AI が料理を認識して栄養を推定します。面倒な入力はいりません。` | `/guide/analyze.png` | `src/app/api/ai/analyze-meal-photo/route.ts`・`src/app/(main)/meals/new/page.tsx` |
-| 大 | `AI が褒める` | `まず、良いところを言葉にします。栄養のことは「栄養メモ」でひと言だけ。` | `/guide/comment.png` | `supabase/functions/_shared/nutrition-pipeline.ts`・`supabase/functions/analyze-meal-photo/index.ts`・`src/app/(main)/meals/new/page.tsx`・`src/app/api/ai/nutrition/feedback/route.ts`・`src/app/(main)/menus/weekly/page.tsx` (`praise` と `nutrition-tip`。「まず」= 記録の画面で「記録コメント」(`:1506`) が「栄養メモ」(`:1538`) より上に出る) |
+| 大 | `ほめるひと言` | `記録するたびに、ほめるひと言が添えられます。献立の振り返りでは、AI が良いところを見つけて言葉にします。栄養のことは「栄養メモ」でひと言だけ。` | `/guide/comment.png` | `supabase/functions/_shared/nutrition-pipeline.ts`・`supabase/functions/analyze-meal-photo/index.ts`・`src/app/(main)/meals/new/page.tsx`・`src/app/api/ai/nutrition/feedback/route.ts`・`src/app/(main)/menus/weekly/page.tsx` (`praise` と `nutrition-tip`。記録の画面では「記録コメント」(`:1506`) の下に「栄養メモ」(`:1538`) が出る) |
 | 中 | `1週間の献立を AI が提案` | `「今日なに作ろう」を、AI 献立アシスタントが引き受けます。冷蔵庫優先・時短中心・和食多めなどの条件も選べます。` | `/guide/menu-result.png` | `src/app/(main)/menus/weekly/page.tsx`・`src/app/api/ai/menu/weekly/request/route.ts`・`src/components/ai-assistant/V4GenerateModal.tsx` |
 | 中 | `買い物リスト` | `献立から買い物リストを作ります。スーパーで迷いません。` | (アイコンのみ) | `src/app/api/shopping-list/`・`tests/regenerate-shopping-list-request-ownership.test.ts` |
 | 中 | `体重と健康の記録` | `体重は体重計の写真からも記録できます。推移はグラフで。健康診断の結果も写真から取り込めます。` | `/guide/trend.png` | `src/app/api/ai/analyze-weight-scale/route.ts`・`src/app/api/ai/analyze-health-checkup/route.ts`・`src/app/api/health/checkups/route.ts`・`src/app/(main)/health/` |
@@ -413,7 +417,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 
 | q | a |
 |---|---|
-| `本当に無料で使えますか？` | `はい。現在ご提供している機能は、写真の記録、AI のコメント、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。` |
+| `本当に無料で使えますか？` | `はい。現在ご提供している機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。` |
 | `どんな写真を撮ればいいですか？` | `食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で撮ると、料理を認識しやすくなります。` |
 | `データは安全ですか？` | `データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。` |
 | `家族で使えますか？` | `はい。家族を招待して、献立を一緒に見たり、記録を共有したりできます。` |
@@ -426,13 +430,13 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 
 ### 4.7 最終 CTA とフッター
 
-最終 CTA (暖かい濃色の面): h2 `明日の食事が、楽しみになる。` / 一文 `まずは 3 日、写真を撮ってみてください。記録するたびに、AI のひと言が添えられます。` / CTA `無料で始める` → `/signup` / 安心の 3 点 (§4.2 と同じ) / 免責 (小さく) `AI の分析は推定値です。医療上の判断には使わず、気になることは医師にご相談ください。`
+最終 CTA (暖かい濃色の面): h2 `明日の食事が、楽しみになる。` / 一文 `まずは 3 日、写真を撮ってみてください。記録するたびに、ほめるひと言が添えられます。` / CTA `無料で始める` → `/signup` / 安心の 3 点 (§4.2 と同じ) / 免責 (小さく) `AI の分析は推定値です。医療上の判断には使わず、気になることは医師にご相談ください。`
 
 フッター:
 
 | 列 | 行 |
 |---|---|
-| (左) | マーク + `ほめゴハン` / `写真を撮るだけで、AI が食事の良いところを見つけて褒める、食事記録アプリ。` |
+| (左) | マーク + `ほめゴハン` / `写真を撮るだけで、AI が料理を認識して、記録をほめてくれる食事記録アプリ。` |
 | `サービス` | `サービスについて` → `/about` / `新規登録` → `/signup` / `ログイン` → `/login` / `料金プラン` → `/pricing` |
 | `サポート` | `使い方ガイド` → `/guide` / `お問い合わせ` → `/contact` / `よくある質問` → `/faq` / `お知らせ` → `/news` |
 | `法的情報` | `利用規約` → `/terms` / `プライバシーポリシー` → `/privacy` / `特定商取引法に基づく表記` → `/legal` / `運営会社` → `/company` |
@@ -448,11 +452,12 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 
 ### 4.9 主張の一覧と根拠 (機械で確かめる)
 
-`landing-copy.ts` の `claims` に、紹介ページが言う機能・条件の主張を 1 行ずつ置き、`evidence` にリポジトリの実在のパスを持たせる。機械で確かめるのは次の 3 つ (§16.1・§22):
+`landing-copy.ts` の `claims` に、紹介ページが言う機能・条件の主張を 1 行ずつ置き、`evidence` にリポジトリの実在のパスを持たせる。機械で確かめるのは次の 4 つ (§16.1・§22):
 
 - (a) `evidence` のパスが実在する (U-2)。
 - (b) 機能のカードの `claimId` が `claims` にある (U-3)。
 - (c) 画面に出る文 (`LANDING_COPY` のすべての文字列) に、根拠を出せない断定・最上級・効能の語 (`UNSUBSTANTIATED_WORDS`。§9.8) が無い (U-20)。
+- (d) デモの記録コメント (`demoPraiseComment`) が、アプリの定型の文 (`buildTemplatePraiseAndTip`) と同じ句と食事の区分の語だけで作られ、スコアがアプリと同じ範囲にある (U-21)。
 
 「画面の文と主張の中身が合っているか」と「`evidence` のファイルが本当にその振る舞いを実装しているか」は機械では確かめられないので、下の表の「画面の文」「根拠の中身」の列を、実装ゲートのレビューで `evidence` のファイルと突き合わせる (根拠の中身は関数・行で書く)。
 
@@ -461,8 +466,8 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | id | 主張 (`text`) | 画面の文 (§4) | `evidence` | 根拠の中身 (レビューで突き合わせる) |
 |---|---|---|---|---|
 | `photo-analyze` | 写真を撮るだけで AI が料理を認識して栄養を推定する | ヒーローの一文の前半・使い方 1・2・機能「写真で記録」・`SITE_DESCRIPTION` | `src/app/api/ai/analyze-meal-photo/route.ts`, `src/app/(main)/meals/new/page.tsx` | 写真を受けて解析の関数 (`analyze-meal-photo`) を呼ぶ API と、写真を選んで解析結果 (料理・栄養) を出す記録の画面 |
-| `praise` | AI が食事の良いところを見つけて褒めるひと言を出す (写真の記録では AI が認識した料理の名前で記録をほめる「記録コメント」、献立の振り返りでは AI が良い点を褒める `praiseComment`) | ヒーローの一文・使い方 3・機能「AI が褒める」・最終 CTA の一文・`SITE_DESCRIPTION` | `supabase/functions/_shared/nutrition-pipeline.ts`, `supabase/functions/analyze-meal-photo/index.ts`, `src/app/(main)/meals/new/page.tsx`, `src/app/api/ai/nutrition/feedback/route.ts`, `src/app/(main)/menus/weekly/page.tsx` | `buildTemplatePraiseAndTip` が `praiseComment` を作る → `analyze-meal-photo/index.ts:253` が `description` に保存 → `meals/new/page.tsx:1506-1520` が「記録コメント」で出す。`nutrition/feedback/route.ts:94` の指示「良い点を見つけて褒める。…批判は含めない」・`menus/weekly/page.tsx:2577` が呼ぶ |
-| `nutrition-tip` | 記録の画面に、栄養のひと言のメモ (「栄養メモ」) を添える | ヒーローの一文の後半・機能「AI が褒める」 | `supabase/functions/_shared/nutrition-pipeline.ts`, `src/app/(main)/meals/new/page.tsx` | `buildTemplatePraiseAndTip` の `nutritionTip` → `meals/new/page.tsx:1538-1543` の「栄養メモ:」 |
+| `praise` | 記録するたびに、ほめるひと言を添える (写真の記録では、AI が認識した料理の名前と食事の区分で記録をほめる定型の「記録コメント」。献立の振り返りでは、AI が良い点を見つけて褒める `praiseComment`) | ヒーローの一文・使い方 3・デモの記録コメント・機能「ほめるひと言」・最終 CTA の一文・フッターの一文・`SITE_DESCRIPTION` | `supabase/functions/_shared/nutrition-pipeline.ts`, `supabase/functions/analyze-meal-photo/index.ts`, `src/app/(main)/meals/new/page.tsx`, `src/app/api/ai/nutrition/feedback/route.ts`, `src/app/(main)/menus/weekly/page.tsx` | `buildTemplatePraiseAndTip` (`:749-779`) が定型の文で `praiseComment` を作る (料理の名前と食事の区分だけが変わる。料理の中身は見ない) → `analyze-meal-photo/index.ts:253` が `description` に保存 → `meals/new/page.tsx:1506-1520` が「記録コメント」で出す。`nutrition/feedback/route.ts:94` の指示「良い点を見つけて褒める。…批判は含めない」・`menus/weekly/page.tsx:2577` が呼ぶ。画面の文は、写真の記録について「AI が食事を見て良いところを見つける」と書かない (書くのは献立の振り返りの場面だけ)。デモの記録コメントは定型の文の句と同じか (U-21) |
+| `nutrition-tip` | 記録の画面に、栄養のひと言のメモ (「栄養メモ」) を添える | ヒーローの一文の後半・機能「ほめるひと言」 | `supabase/functions/_shared/nutrition-pipeline.ts`, `src/app/(main)/meals/new/page.tsx` | `buildTemplatePraiseAndTip` の `nutritionTip` → `meals/new/page.tsx:1538-1543` の「栄養メモ:」 |
 | `weekly-menu` | 1週間の献立を AI が提案する (条件: 冷蔵庫優先・時短中心・和食多め) | 機能「1週間の献立を AI が提案」・FAQ「本当に無料」の「献立の提案」 | `src/app/(main)/menus/weekly/page.tsx`, `src/app/api/ai/menu/weekly/request/route.ts`, `src/components/ai-assistant/V4GenerateModal.tsx` | 週の献立の画面・生成の依頼の API・条件を選ぶモーダル (条件の名前は `guide-content.ts` の `menu` の章と同じ) |
 | `shopping-list` | 献立から買い物リストを作る | 機能「買い物リスト」 | `src/app/api/shopping-list/`, `tests/regenerate-shopping-list-request-ownership.test.ts` | 買い物リストの API (`route.ts`・`regenerate`・`add-recipe`) |
 | `health-records` | 体重 (体重計の写真から) と健康診断の結果 (写真から) を記録し、推移をグラフで見る | 機能「体重と健康の記録」・FAQ「本当に無料」の「健康の記録」 | `src/app/api/ai/analyze-weight-scale/route.ts`, `src/app/api/ai/analyze-health-checkup/route.ts`, `src/app/api/health/checkups/route.ts`, `src/app/(main)/health/` | 体重計の写真の解析・健康診断の写真の解析・健康診断の記録の API・健康の画面 (`graphs` ほか) |
@@ -591,12 +596,12 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 |---|---|---|---|---|---|---|
 | M-1 | ヘッダー | 読み進めている | `scrollY > 24` | 背景 `rgba(250,249,247,.85)` + `backdrop-filter: blur(12px)` + 下の罫線 | `--lp-dur-fast` | 同じ (色の変化だけなので許す) |
 | M-2 | ヒーローの文字 | 順に読ませる | 読み込み | eyebrow → h1 → 一文 → CTA → 安心の順に `translateY(12px)` + `opacity 0 → 1`、60 ms ずつ遅らせる | `--lp-dur` / `--lp-ease` | 一瞬で最終状態 |
-| M-3 | ヒーローの画面の連続 | 撮る → 見る → 褒められる、の流れ | 読み込み後、自動。止める操作 (checkbox)・ホバー・中のフォーカスで止まる | 3 枚を `opacity` で順に切り替える CSS keyframes (1 枚 2.8 s・切り替え 0.6 s・周期 8.4 s)。下に 3 つの点 (`.lp-hero-dots`・`aria-hidden`) が同じ周期で現在の枚を示す | `--lp-dur-slow` | 動かさず、3 枚目 (`comment.png`) だけを出す (`marketing.css` の reduce のブロックで keyframes を外し、最後の枚と 3 つ目の点を表示)。止める操作は隠す |
+| M-3 | ヒーローの画面の連続 | 撮る → 見る → 褒められる、の流れ | 読み込み後、自動。止める操作 (checkbox)・ホバー・中のフォーカスで止まる | 3 枚を `opacity` で順に切り替える CSS keyframes (1 枚 2.8 s・切り替え 0.6 s・周期 8.4 s)。下に 3 つの点 (`.lp-hero-dots`・`aria-hidden`) が同じ周期で現在の枚を示す | `--lp-dur-slow` | 動かさず、3 枚目 (`comment.png`) だけを出す (画面と点の keyframes (`animation-name`) は `@media (prefers-reduced-motion: no-preference)` の中でだけ付くので reduce では付かず、reduce のブロックが最後の枚と 3 つ目の点を表示)。止める操作は隠す |
 | M-4 | 背景の円 2 つ | 奥行き (装飾) | スクロール | `animation-timeline: scroll()` で `translateY(0 → -80px)`。`@supports` で囲む | 線形 | 無し (`marketing.css` の reduce のブロックで `.lp-blob { animation: none }`。globals.css の 0.01 ms はスクロール連動を止めないので、明示して外す。未対応のブラウザも無し) |
 | M-5 | 各セクション (`Reveal`) | 読み進めるリズム | 画面に 20 % 入ったとき (IO・1 回だけ) | `translateY(16px)` + `opacity 0 → 1`。カードの列は子を 40 ms ずつ遅らせる (最大 6 つ) | `--lp-dur` / `--lp-ease` | 一瞬で最終状態。`Reveal` は初期状態で `opacity: 1` のまま (JS が無くても見える: §6.3) |
 | M-6 | 使い方 (`StorySteps`) | 3 つの手順が 1 つの画面の流れだと分かる | 右の手順がビューポートの中央を通るとき (IO・`rootMargin: -40% 0px -40% 0px`) | 左の端末の枠を `position: sticky` で固定し、中の画面を `opacity` で切り替える。手順の番号の輪に色が付く | `--lp-dur-slow` | 切り替えは一瞬。固定は残す (動きではない) |
 | M-7 | デモ | AI が「見ている」時間 | 写真を押す | 写真に輪郭 (`--lp-accent-ink`) → 待ちのカード (framer-motion で `opacity` の出入り) に進捗の棒 (CSS `scaleX 0 → 1` を 1,400 ms)・回る輪 (CSS `.lp-demo-spin`) → 結果のカードが framer-motion で `translateY(8px)` + `opacity` で現れ、数値の 5 つが CSS で 40 ms ずつ遅れて出る (`.lp-demo-nutri`) | 待ち 1,400 ms (`DEMO_ANALYZING_MS`) / 出入り `DEMO_MOTION_DURATION_S` (= `--lp-dur`)・`DEMO_MOTION_EASE` (= `--lp-ease`) | 待ち時間 0 (`useReducedMotion()` で `DEMO_ANALYZING_MS_REDUCED = 0`)。framer-motion は `MotionConfig reducedMotion="user"` + `transition={{ duration: 0 }}` で出入りも 0 (フェード・スライド無し)。数値の遅れと回る輪は reduce のブロックで外す。結果は一瞬で出る |
-| M-8 | モバイルの固定 CTA | 登録はいつでもできる | ヒーローの番兵 (`#hero-end`) が画面の**上へ**出たとき (IO の `!isIntersecting && boundingClientRect.top < 0`)。初めは隠れている (番兵がまだ下にある間も隠れたまま) | `translateY(100%) → 0` | `--lp-dur` / `--lp-ease` | 一瞬で出る |
+| M-8 | モバイルの固定 CTA | 登録はいつでもできる | ヒーローの箱 (`section#hero`。ページの先頭) の全体が画面の**上へ**出たとき (IO の `!isIntersecting && boundingClientRect.bottom < 0`)。少しずつのスクロールでも、ページの中のリンクでの一気の移動でも同じ。初めは隠れている (ヒーローが画面にある間は隠れたまま) | `translateY(100%) → 0` | `--lp-dur` / `--lp-ease` | 一瞬で出る |
 | M-9 | FAQ | 開閉 | ボタン | `grid-template-rows: 0fr → 1fr` (高さを測らない) + 矢印の回転 180° | `--lp-dur` | 一瞬 |
 | M-10 | ボタン | 押せる | `:hover` / `:active` | `translateY(-1px)` + 影を濃く / `scale(.98)` | `--lp-dur-fast` | 無し |
 | M-11 | バッジ | 増えていく楽しさ | `Reveal` の中 | `scale(.92) → 1` + `opacity`、6 つを 40 ms ずつ | `--lp-dur` | 一瞬 |
@@ -628,7 +633,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 |---|---|---|
 | ヒーロー 1 枚目・使い方 1 | `camera.png` | `食事の写真を選んだ撮影の画面` |
 | ヒーロー 2 枚目・使い方 2・機能「写真で記録」 | `analyze.png` | `食事の写真の解析結果の画面` |
-| ヒーロー 3 枚目・使い方 3・機能「AI が褒める」 | `comment.png` | `解析結果の記録コメント` |
+| ヒーロー 3 枚目・使い方 3・機能「ほめるひと言」 | `comment.png` | `解析結果の記録コメント` |
 | 機能「1週間の献立」 | `menu-result.png` | `1 週間分の献立が入った献立表` |
 | 機能「体重と健康の記録」 | `trend.png` | `体重の推移のグラフ` |
 | 機能「バッジ」 | `badge-collection.png` | `トロフィールームのバッジの一覧` |
@@ -648,7 +653,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 1. **オーナーが撮った、または撮ってもらった食事の写真** (権利が自社にある。本番の紹介ページに最もふさわしい)。
 2. それまでの間に合わせとして、Unsplash License (商用利用可・帰属不要・再配布は改変して用途に組み込む形なら可) の写真を、現行のトップが指している 3 枚 (`photo-1512621776951-a57141f2eefd` → `salad-bowl.webp`・`photo-1547592180-85f173990554` → `salmon-plate.webp`・`photo-1473093295043-cdd812d0e601` → `pesto-pasta.webp`) から `?w=800&h=800&fit=crop&fm=webp&q=75` で取得し、ファイルに落として置く。`CREDITS.md` に写真の ID・作者・License・**写っているもの** (上の表の列の文) を書く。
    - 現行のトップ (`src/app/LandingPageView.tsx:51` ほか) はこの 2 枚目を「和風定食」、3 枚目を「トマト」の料理として載せていたが、実物は上の表のとおり (サーモンのプレートと、バジルソースのパスタ。本書の設計の段で 3 枚を取得して目で確かめた)。現行の名前は引き継がない。
-   - 置いた写真を**目で見て**、上の表の「写っているもの」と、§4.4 の名前・alt・コメントに写っていない料理が無いことを確かめる (実装者が取得した時点で、整合ゲートの検証者がもう一度)。違ったら、写真を差し替えるのではなく、手を止めてオーケストレーターに返す (§4.4 の文言は写真と対で決めるため)。機械の検査 (U-4) はファイルの実在と重さしか見ないので、この目視が写真の中身の唯一の確認になる。
+   - 置いた写真を**目で見て**、上の表の「写っているもの」と、§4.4 の名前・alt・料理の名前 (`dishNames`) に写っていない料理が無いことを確かめる (実装者が取得した時点で、整合ゲートの検証者がもう一度)。違ったら、写真を差し替えるのではなく、手を止めてオーケストレーターに返す (§4.4 の文言は写真と対で決めるため)。機械の検査 (U-4) はファイルの実在と重さしか見ないので、この目視が写真の中身の唯一の確認になる。
 3. 紹介ページは `images.unsplash.com` を実行時に読まない (外部の要求ゼロ)。`next.config.mjs` の `remotePatterns` と CSP の `img-src` は、ほかの画面が使っているので変えない。
 
 写真の権利は §24 Q-1 (オーナーの確認)。
@@ -674,17 +679,17 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | `src/components/marketing/demo-state.ts` | 純関数 | デモの状態機械 `demoReducer`・`DEMO_INITIAL_STATE`・`selectedSampleId` (§9.3)。React に依存しない | – |
 | `src/components/marketing/marketing.css` | CSS | `.lp` のトークン・タイポグラフィ・動き (§9.1) | – |
 | `src/components/marketing/sections/SiteHeader.tsx` | 島 | スクロールで背景 (M-1) | `scrolled: boolean` |
-| `src/components/marketing/sections/HeroSection.tsx` | Server | 見出し・CTA・画面の連続 (CSS)・止める操作 (checkbox + CSS の `:has()`)・番兵 `#hero-end` (§9.6) | 無し (止める状態は checkbox の `checked`。JS の state ではない) |
+| `src/components/marketing/sections/HeroSection.tsx` | Server | 見出し・CTA・画面の連続 (CSS)・止める操作 (checkbox + CSS の `:has()`)。`section#hero` は固定 CTA が見る箱 (§9.6) | 無し (止める状態は checkbox の `checked`。JS の state ではない) |
 | `src/components/marketing/sections/HowItWorksSection.tsx` | Server | 3 ステップの骨格。中に `StorySteps` | 無し |
 | `src/components/marketing/sections/StorySteps.tsx` | 島 | 固定した端末と手順の切り替え (M-6) | `activeIndex: 0〜2` |
 | `src/components/marketing/sections/DemoSection.tsx` | 島 | デモの状態機械 (§9.3)・framer-motion | `DemoState` |
 | `src/components/marketing/sections/FeaturesSection.tsx` | Server | bento のカード | 無し |
 | `src/components/marketing/sections/BadgesSection.tsx` | Server | バッジ 6 つ | 無し |
-| `src/components/marketing/sections/TrustSection.tsx` | Server | 安心の 4 点 | 無し |
+| `src/components/marketing/sections/TrustSection.tsx` | Server | 安心の 4 点。リンク (`プライバシーポリシーを読む`) は `inline-flex min-h-6 items-center` (24 px。§11 の 2.5.8) | 無し |
 | `src/components/marketing/sections/FaqSection.tsx` | 島 | アコーディオン | `openIndex: number \| null` |
 | `src/components/marketing/sections/FinalCtaSection.tsx` | Server | 最終 CTA | 無し |
-| `src/components/marketing/sections/SiteFooter.tsx` | Server | フッター | 無し |
-| `src/components/marketing/sections/MobileStickyCta.tsx` | 島 | ヒーローの番兵が画面の上へ出たかを見る (M-8。IO を直接使う: §9.6) | `visible: boolean` (初めは `false`) |
+| `src/components/marketing/sections/SiteFooter.tsx` | Server | フッター。`<footer className="lp-footer …">` (下の余白は `marketing.css` の `.lp-footer` が持つ。Tailwind の `pb-*` を付けない)。リンクは `inline-flex min-h-6 items-center` (24 px。§11 の 2.5.8) | 無し |
+| `src/components/marketing/sections/MobileStickyCta.tsx` | 島 | ヒーローの箱 (`#hero`) が画面の上へ出きったかを見る (M-8。IO を直接使う: §9.6) | `visible: boolean` (初めは `false`) |
 | `src/components/marketing/primitives/Reveal.tsx` | 島 | 現れ方 (M-5) | `inView: boolean` |
 | `src/components/marketing/primitives/PhoneFrame.tsx` | Server | 端末の枠 | 無し |
 | `src/components/marketing/primitives/CtaLink.tsx` | Server | `Link` にボタンの見た目 | 無し |
@@ -786,6 +791,15 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 .lp .lp-container { max-width: var(--lp-max-width); margin-inline: auto; padding-inline: var(--lp-gutter); }
 .lp .lp-section { padding-block: var(--lp-section-y); }
 
+/* フォーカスの非遮蔽 (WCAG 2.4.11)。固定ヘッダー (高さ 4〜5rem) と固定 CTA (768 px 未満) の下に、フォーカスした要素やリンク先の見出しが入らないよう、
+   ページのスクロールの箱 (html) に余白を取る。scroll-padding はスクロールの箱に付ける性質で、アンカーへの移動にも、Tab / Shift+Tab のフォーカスの移動にも効く
+   (要素の scroll-margin はその要素へのスクロールにしか効かないので使わない)。html に付けるのは紹介ページ (.lp を持つページ) のときだけ */
+html:has(.lp) { scroll-padding-top: 6rem; }
+@media (max-width: 767.98px) { html:has(.lp) { scroll-padding-bottom: 6rem; } }
+/* フッターの末尾が固定 CTA (768 px 未満) の下に隠れないよう、固定 CTA の高さ (約 4.5rem) より多く空ける */
+.lp .lp-footer { padding-bottom: 3rem; }
+@media (max-width: 767.98px) { .lp .lp-footer { padding-bottom: calc(6rem + env(safe-area-inset-bottom)); } }
+
 /* CTA (M-10)。文字は白 on --lp-ink / --lp-accent-ink、濃色の面では --lp-dark on --lp-accent-soft */
 .lp .lp-cta {
   display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem;
@@ -796,6 +810,8 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 .lp .lp-cta--primary { background: var(--lp-ink); color: #FFFFFF; box-shadow: 0 10px 24px -12px rgba(45, 45, 45, 0.6); }
 .lp .lp-cta--secondary { background: var(--lp-surface); color: var(--lp-ink); border: 1px solid var(--lp-line); }
 .lp .lp-cta--on-dark { background: var(--lp-accent-soft); color: var(--lp-dark); }
+/* ヘッダーの CTA。押せる高さは 44 px (2.5.8 の 24 px を満たす。ナビのリンクと同じ高さ) */
+.lp .lp-cta--compact { min-height: 2.75rem; padding: 0.5rem 1.125rem; font-size: 0.875rem; }
 .lp .lp-cta:hover { transform: translateY(-1px); }
 .lp .lp-cta:active { transform: scale(0.98); }
 
@@ -817,9 +833,6 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 @keyframes lp-slide-2 { 0%, 31% { opacity: 0; } 38%, 64% { opacity: 1; } 71%, 100% { opacity: 0; } }
 @keyframes lp-slide-3 { 0%, 64% { opacity: 0; } 71%, 93% { opacity: 1; } 100% { opacity: 0; } }
 .lp .lp-hero-slide { position: absolute; inset: 0; opacity: 0; animation-duration: 8.4s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
-.lp .lp-hero-slide:nth-child(1) { animation-name: lp-slide-1; }
-.lp .lp-hero-slide:nth-child(2) { animation-name: lp-slide-2; }
-.lp .lp-hero-slide:nth-child(3) { animation-name: lp-slide-3; }
 .lp .lp-hero-slides { position: relative; height: 100%; }
 /* 今の枚を示す点 (同じ 8.4 s の周期) */
 @keyframes lp-dot-1 { 0%, 31% { background: var(--lp-accent-ink); } 38%, 100% { background: var(--lp-line); } }
@@ -827,16 +840,24 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 @keyframes lp-dot-3 { 0%, 64% { background: var(--lp-line); } 71%, 93% { background: var(--lp-accent-ink); } 100% { background: var(--lp-line); } }
 .lp .lp-hero-dots { display: flex; justify-content: center; gap: 0.375rem; margin-top: 0.75rem; }
 .lp .lp-hero-dots span { width: 0.375rem; height: 0.375rem; border-radius: 9999px; background: var(--lp-line); animation-duration: 8.4s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
-.lp .lp-hero-dots span:nth-child(1) { animation-name: lp-dot-1; }
-.lp .lp-hero-dots span:nth-child(2) { animation-name: lp-dot-2; }
-.lp .lp-hero-dots span:nth-child(3) { animation-name: lp-dot-3; }
+/* 画面と点に keyframes を付けるのは、動きを減らす設定でないときだけ。:nth-child の規則は詳細度が高く (0,3,0)、
+   reduce のブロックに .lp .lp-hero-slide { animation: none } (0,2,0) を書いても上書きできないので、reduce では最初から付けない
+   (reduce では computed の animation-name が none になる。E-7) */
+@media (prefers-reduced-motion: no-preference) {
+  .lp .lp-hero-slide:nth-child(1) { animation-name: lp-slide-1; }
+  .lp .lp-hero-slide:nth-child(2) { animation-name: lp-slide-2; }
+  .lp .lp-hero-slide:nth-child(3) { animation-name: lp-slide-3; }
+  .lp .lp-hero-dots span:nth-child(1) { animation-name: lp-dot-1; }
+  .lp .lp-hero-dots span:nth-child(2) { animation-name: lp-dot-2; }
+  .lp .lp-hero-dots span:nth-child(3) { animation-name: lp-dot-3; }
+}
 /* 止める (WCAG 2.2.2)。止める操作 (checkbox) が入っている間・ホバー中・中にフォーカスがある間は、画面と点を止める。JS は使わない */
 .lp .lp-hero-media:has(.lp-hero-pause input:checked) :is(.lp-hero-slide, .lp-hero-dots span),
 .lp .lp-hero-media:hover :is(.lp-hero-slide, .lp-hero-dots span),
 .lp .lp-hero-media:focus-within :is(.lp-hero-slide, .lp-hero-dots span) { animation-play-state: paused; }
-/* 止める操作。見えるラベルつきの checkbox。押せる高さは 44 px (2.5.8 の 24 px を満たす) */
+/* 止める操作。見えるラベルつきの checkbox。ラベルの押せる高さは 44 px、checkbox 自体も 24 px 四方 (2.5.8 の 24 px を満たす。E-17) */
 .lp .lp-hero-pause { display: inline-flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; font-size: 0.875rem; color: var(--lp-ink-soft); cursor: pointer; }
-.lp .lp-hero-pause input { width: 1.25rem; height: 1.25rem; accent-color: var(--lp-accent-ink); }
+.lp .lp-hero-pause input { width: 1.5rem; height: 1.5rem; margin: 0; accent-color: var(--lp-accent-ink); }
 
 /* 背景の円の視差 (M-4)。対応ブラウザだけ */
 .lp .lp-blob { position: absolute; border-radius: 9999px; filter: blur(80px); opacity: 0.55; pointer-events: none; }
@@ -872,12 +893,12 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 @media (min-width: 768px) { .lp .lp-sticky-cta { display: none; } }
 
 /* 動きを減らす設定 (S-5・§6.1・§6.2)。globals.css (時間を 0.01 ms に) が止めないものを、ここで止める:
-   遅れ (delay)・スクロール連動 (時間でなく進みで動くので、時間を縮めても動く)・自動の画面の連続。
-   ファイルの最後に置く (同じ詳細度の .lp .lp-blob の animation を上書きするため) */
+   遅れ (delay)・スクロール連動 (時間でなく進みで動くので、時間を縮めても動く)・自動の画面の連続 (keyframes は上の no-preference の中だけで付く) の最後の 1 枚の表示。
+   ファイルの最後に置く (同じ詳細度 (0,2,0) の .lp .lp-blob と .lp .lp-demo-spin の animation を、後に書いた方が勝つ順で上書きするため) */
 @media (prefers-reduced-motion: reduce) {
   .lp *, .lp *::before, .lp *::after { animation-delay: 0s !important; transition-delay: 0s !important; }
   .lp .lp-blob { animation: none; }
-  .lp .lp-hero-slide, .lp .lp-hero-dots span, .lp .lp-demo-spin { animation: none; }
+  .lp .lp-demo-spin { animation: none; }
   .lp .lp-hero-slide:nth-child(3) { opacity: 1; }
   .lp .lp-hero-dots span:nth-child(3) { background: var(--lp-accent-ink); }
   .lp .lp-hero-pause { display: none; }
@@ -915,14 +936,34 @@ export const LandingClaimSchema = z.object({
   evidence: z.array(EvidencePathSchema).min(1),
 });
 
-/** デモのサンプル (AI は呼ばない。数値は推定のサンプル) */
+// ─── デモの記録コメント (アプリの定型の文と同じ形。docs/design/marketing/01-landing-site.md §4.4) ───
+/** 記録コメントの句。supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip の定型の文と同じ (U-21 がソースと突き合わせる) */
+export const DEMO_PRAISE_DISH_SUFFIX = 'の記録';
+export const DEMO_PRAISE_RECORD_PHRASE = 'がしっかりできていて素晴らしいです。';
+export const DEMO_PRAISE_MEAL_PHRASE = 'を丁寧に残せていて、とても良い流れです';
+/** 記録コメントの文の終わり。アプリは絵文字で終わるが、紹介ページは絵文字を使わない (U-9) ので句点にする */
+export const DEMO_PRAISE_END = '。';
+/** 記録コメントに入れる料理の名前の数の上限 (アプリの buildTemplatePraiseAndTip の slice(0, 2) と同じ) */
+export const DEMO_PRAISE_MAX_DISHES = 2;
+/** 料理の名前をつなぐ文字 (アプリの join('、') と同じ) */
+export const DEMO_PRAISE_DISH_SEPARATOR = '、';
+/** デモのスコアの範囲。アプリの記録の画面に出る overallScore は buildTemplatePraiseAndTip が 70〜95 に収める (U-21 がソースと突き合わせる) */
+export const DEMO_SCORE_MIN = 70;
+export const DEMO_SCORE_MAX = 95;
+/** 食事の区分の語。アプリの toMealTypeLabel (nutrition-pipeline.ts) が返す語のうち、デモで使うもの */
+export const DEMO_MEAL_TYPE_LABELS = ['朝食', '昼食', '夕食'] as const;
+
+/** デモのサンプル (AI は呼ばない。数値は推定のサンプル。記録コメントは demoPraiseComment が作る) */
 export const DemoSampleSchema = z.object({
   id: z.enum(['salad-bowl', 'salmon-plate', 'pesto-pasta']),
+  /** 写真の帯と結果の見出しに出す名前 */
   name: z.string().min(1),
   photo: LandingImageSchema,
-  /** 0〜100 のスコア (アプリの AI スコアと同じ範囲) */
-  score: z.number().int().min(0).max(100),
-  comment: z.string().min(1),
+  /** アプリの記録の画面のスコア (overallScore) と同じ範囲 */
+  score: z.number().int().min(DEMO_SCORE_MIN).max(DEMO_SCORE_MAX),
+  /** AI が認識した料理の名前のサンプル (写真に写っているものだけ。先頭から DEMO_PRAISE_MAX_DISHES 個まで) */
+  dishNames: z.array(z.string().min(1)).min(1).max(DEMO_PRAISE_MAX_DISHES),
+  mealTypeLabel: z.enum(DEMO_MEAL_TYPE_LABELS),
   nutrition: z.object({
     kcal: z.number().int().min(0),
     proteinG: z.number().int().min(0),
@@ -1050,7 +1091,7 @@ export const LANDING_COPY = {
   hero: {
     eyebrow: '褒めて伸ばす、AI 食事記録アプリ',
     headlineLines: ['食べることを、', 'もっと誇らしく。'],
-    lead: '写真を撮るだけ。AI があなたの食事を見て、良いところを見つけて褒めます。栄養のことは、ひと言のメモで添えます。',
+    lead: '写真を撮るだけ。AI が料理を認識して、栄養を推定します。記録するたびに、ほめるひと言と、栄養のひと言メモが添えられます。',
     primaryCta: PRIMARY_CTA,
     secondaryCta: { label: 'デモを試す', href: DEMO_ANCHOR },
     assurances: ASSURANCES,
@@ -1068,29 +1109,30 @@ export const LANDING_COPY = {
     steps: [
       { title: '写真を撮る', body: '食事の写真を撮るか、選ぶだけ。カロリーの入力も、食材の選択もいりません。', image: { src: '/guide/camera.png', alt: '食事の写真を選んだ撮影の画面' } },
       { title: 'AI が見る', body: 'AI が料理を認識して、カロリー・タンパク質・野菜のバランスを推定します。数値はあくまで推定です。', image: { src: '/guide/analyze.png', alt: '食事の写真の解析結果の画面' } },
-      { title: '褒められる', body: '記録の画面に、AI からのほめるひと言が添えられます。献立の振り返りでも、良いところを見つけて言葉にします。', image: { src: '/guide/comment.png', alt: '解析結果の記録コメント' } },
+      { title: '褒められる', body: '記録の画面に、記録をほめるひと言が添えられます。献立の振り返りでは、AI が良いところを見つけて言葉にします。', image: { src: '/guide/comment.png', alt: '解析結果の記録コメント' } },
     ],
   },
   demo: {
     eyebrow: '試してみる',
     title: '褒められるって、こういうこと。',
-    lead: '写真を 1 枚選ぶと、AI のコメントのサンプルが出ます。',
+    lead: '写真を 1 枚選ぶと、記録の画面に出る内容のサンプルが出ます。',
     pickerTitle: '食事の写真を選ぶ',
     analyzingTitle: 'AI が見ています…',
     analyzingBody: '料理を認識して、栄養を推定しています',
-    resultTitle: 'AI からのコメント',
+    resultTitle: '記録コメント',
     nutritionTitle: '推定の栄養',
     nutritionLabels: { kcal: 'カロリー', proteinG: 'タンパク質', fatG: '脂質', carbsG: '炭水化物', vegScore: '野菜スコア' },
-    sampleNotice: '表示はサンプルです。実際の結果は写真によって変わり、数値は推定です。',
-    emptyBody: '写真を選ぶと、ここにコメントが出ます。',
+    sampleNotice: '表示はサンプルです。実際のアプリでは、写真から AI が認識した料理の名前が入り、数値は推定です。',
+    emptyBody: '写真を選ぶと、ここに記録コメントが出ます。',
     cta: { label: '自分の食事で試す', href: SIGNUP_HREF },
     samples: [
       {
         id: 'salad-bowl',
-        name: '彩り野菜のサラダボウル',
+        name: 'サラダボウル',
         photo: { src: '/marketing/photos/salad-bowl.webp', alt: '葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル' },
         score: 92,
-        comment: '彩りがきれいなサラダボウルですね。葉野菜にアボカドとトマト、豆まで加わって、ひと皿で何種類もの野菜がとれています。',
+        dishNames: ['サラダボウル'],
+        mealTypeLabel: '昼食',
         nutrition: { kcal: 380, proteinG: 12, fatG: 22, carbsG: 28, vegScore: 95 },
       },
       {
@@ -1098,7 +1140,8 @@ export const LANDING_COPY = {
         name: 'サーモンのプレート',
         photo: { src: '/marketing/photos/salmon-plate.webp', alt: '焼いたサーモンといんげんとミニトマトを盛り合わせたプレート' },
         score: 90,
-        comment: '焼いたサーモンに、いんげんとミニトマト。主菜と野菜がひと皿にそろって、彩りもきれいです。',
+        dishNames: ['焼きサーモン', 'いんげんとミニトマト'],
+        mealTypeLabel: '夕食',
         nutrition: { kcal: 480, proteinG: 30, fatG: 20, carbsG: 40, vegScore: 85 },
       },
       {
@@ -1106,7 +1149,8 @@ export const LANDING_COPY = {
         name: 'バジルのパスタ',
         photo: { src: '/marketing/photos/pesto-pasta.webp', alt: 'バジルソースのファルファッレとミニトマトと葉野菜' },
         score: 84,
-        comment: 'バジルの緑にミニトマトの赤が映えて、彩りのきれいなパスタですね。葉野菜も添えられていて、ひと皿で野菜もとれています。',
+        dishNames: ['バジルソースのパスタ'],
+        mealTypeLabel: '昼食',
         nutrition: { kcal: 610, proteinG: 17, fatG: 26, carbsG: 74, vegScore: 55 },
       },
     ],
@@ -1116,7 +1160,7 @@ export const LANDING_COPY = {
     lead: '献立から買い物、体重や健康診断の記録まで。ひとつのアプリでそろいます。',
     cards: [
       { id: 'photo', size: 'large', title: '写真で記録', body: '撮るだけで、AI が料理を認識して栄養を推定します。面倒な入力はいりません。', image: { src: '/guide/analyze.png', alt: '食事の写真の解析結果の画面' }, claimId: 'photo-analyze' },
-      { id: 'praise', size: 'large', title: 'AI が褒める', body: 'まず、良いところを言葉にします。栄養のことは「栄養メモ」でひと言だけ。', image: { src: '/guide/comment.png', alt: '解析結果の記録コメント' }, claimId: 'praise' },
+      { id: 'praise', size: 'large', title: 'ほめるひと言', body: '記録するたびに、ほめるひと言が添えられます。献立の振り返りでは、AI が良いところを見つけて言葉にします。栄養のことは「栄養メモ」でひと言だけ。', image: { src: '/guide/comment.png', alt: '解析結果の記録コメント' }, claimId: 'praise' },
       { id: 'menu', size: 'medium', title: '1週間の献立を AI が提案', body: '「今日なに作ろう」を、AI 献立アシスタントが引き受けます。冷蔵庫優先・時短中心・和食多めなどの条件も選べます。', image: { src: '/guide/menu-result.png', alt: '1 週間分の献立が入った献立表' }, claimId: 'weekly-menu' },
       { id: 'shopping', size: 'medium', title: '買い物リスト', body: '献立から買い物リストを作ります。スーパーで迷いません。', image: null, claimId: 'shopping-list' },
       { id: 'health', size: 'medium', title: '体重と健康の記録', body: '体重は体重計の写真からも記録できます。推移はグラフで。健康診断の結果も写真から取り込めます。', image: { src: '/guide/trend.png', alt: '体重の推移のグラフ' }, claimId: 'health-records' },
@@ -1150,7 +1194,7 @@ export const LANDING_COPY = {
     title: 'よくある質問',
     lead: '気になることがあれば、ここで。',
     items: [
-      { q: '本当に無料で使えますか？', a: 'はい。現在ご提供している機能は、写真の記録、AI のコメント、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。' },
+      { q: '本当に無料で使えますか？', a: 'はい。現在ご提供している機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。' },
       { q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で撮ると、料理を認識しやすくなります。' },
       // データの取り扱いの最終的な文言は、プライバシーポリシーの見直しと合わせて決める。それまでは断定せず、プライバシーポリシーへ案内する (tests/public-claims-guard.test.ts がこの行を見る)
       { q: "データは安全ですか？", a: 'データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。' },
@@ -1163,13 +1207,13 @@ export const LANDING_COPY = {
   },
   finalCta: {
     title: '明日の食事が、楽しみになる。',
-    lead: 'まずは 3 日、写真を撮ってみてください。記録するたびに、AI のひと言が添えられます。',
+    lead: 'まずは 3 日、写真を撮ってみてください。記録するたびに、ほめるひと言が添えられます。',
     cta: PRIMARY_CTA,
     assurances: ASSURANCES,
     disclaimer: 'AI の分析は推定値です。医療上の判断には使わず、気になることは医師にご相談ください。',
   },
   footer: {
-    tagline: `写真を撮るだけで、AI が食事の良いところを見つけて褒める、食事記録アプリ。`,
+    tagline: '写真を撮るだけで、AI が料理を認識して、記録をほめてくれる食事記録アプリ。',
     columns: [
       { title: 'サービス', links: [{ label: 'サービスについて', href: '/about' }, { label: '新規登録', href: SIGNUP_HREF }, { label: 'ログイン', href: '/login' }, { label: '料金プラン', href: '/pricing' }] },
       { title: 'サポート', links: [{ label: '使い方ガイド', href: '/guide' }, { label: 'お問い合わせ', href: '/contact' }, { label: 'よくある質問', href: '/faq' }, { label: 'お知らせ', href: '/news' }] },
@@ -1182,7 +1226,7 @@ export const LANDING_COPY = {
   stickyCta: { cta: PRIMARY_CTA, note: 'クレジットカード不要' },
   claims: [
     { id: 'photo-analyze', text: '写真を撮るだけで AI が料理を認識して栄養を推定する', evidence: ['src/app/api/ai/analyze-meal-photo/route.ts', 'src/app/(main)/meals/new/page.tsx'] },
-    { id: 'praise', text: 'AI が食事の良いところを見つけて褒めるひと言を出す (写真の記録では記録コメント、献立の振り返りでは praiseComment)', evidence: ['supabase/functions/_shared/nutrition-pipeline.ts', 'supabase/functions/analyze-meal-photo/index.ts', 'src/app/(main)/meals/new/page.tsx', 'src/app/api/ai/nutrition/feedback/route.ts', 'src/app/(main)/menus/weekly/page.tsx'] },
+    { id: 'praise', text: '記録するたびに、ほめるひと言を添える (写真の記録では料理の名前で記録をほめる定型の記録コメント、献立の振り返りでは AI が良い点を見つけて褒める praiseComment)', evidence: ['supabase/functions/_shared/nutrition-pipeline.ts', 'supabase/functions/analyze-meal-photo/index.ts', 'src/app/(main)/meals/new/page.tsx', 'src/app/api/ai/nutrition/feedback/route.ts', 'src/app/(main)/menus/weekly/page.tsx'] },
     { id: 'nutrition-tip', text: '記録の画面に、栄養のひと言のメモ (栄養メモ) を添える', evidence: ['supabase/functions/_shared/nutrition-pipeline.ts', 'src/app/(main)/meals/new/page.tsx'] },
     { id: 'weekly-menu', text: '1週間の献立を AI が提案する (条件: 冷蔵庫優先・時短中心・和食多め)', evidence: ['src/app/(main)/menus/weekly/page.tsx', 'src/app/api/ai/menu/weekly/request/route.ts', 'src/components/ai-assistant/V4GenerateModal.tsx'] },
     { id: 'shopping-list', text: '献立から買い物リストを作る', evidence: ['src/app/api/shopping-list/', 'tests/regenerate-shopping-list-request-ownership.test.ts'] },
@@ -1215,6 +1259,16 @@ export function landingImagePaths(copy: LandingCopy = LANDING_COPY): string[] {
     ...copy.features.cards.flatMap((card) => (card.image ? [card.image.src] : [])),
   ];
   return [...new Set(paths)];
+}
+
+/**
+ * デモの記録コメント。アプリの定型の文 (nutrition-pipeline.ts の buildTemplatePraiseAndTip) と同じ形:
+ *   <料理の名前 (先頭 2 つを、でつなぐ)>の記録がしっかりできていて素晴らしいです。<食事の区分>を丁寧に残せていて、とても良い流れです。
+ * 違いは文の終わりだけ (アプリは絵文字・紹介ページは句点)。料理の中身を褒める文は作らない (§4.4)
+ */
+export function demoPraiseComment(sample: Pick<DemoSample, 'dishNames' | 'mealTypeLabel'>): string {
+  const dishes = sample.dishNames.slice(0, DEMO_PRAISE_MAX_DISHES).join(DEMO_PRAISE_DISH_SEPARATOR);
+  return `${dishes}${DEMO_PRAISE_DISH_SUFFIX}${DEMO_PRAISE_RECORD_PHRASE}${sample.mealTypeLabel}${DEMO_PRAISE_MEAL_PHRASE}${DEMO_PRAISE_END}`;
 }
 
 /** 機能のカードが指す主張の id が claims にあるか (無いものを返す。空なら整合) */
@@ -1289,7 +1343,7 @@ export interface UseInViewOnceOptions {
   /** IntersectionObserver の rootMargin。使い方の手順は STORY_ROOT_MARGIN */
   rootMargin?: string;
   /** true なら一度 true になったあと監視をやめる (現れ方)。false なら出入りを追う (使い方の手順)。
-   *  固定 CTA は「まだ下にある」と「上へ過ぎた」を分ける必要があるので、この hook を使わず IO を直接使う (§9.6 MobileStickyCta) */
+   *  固定 CTA はこの hook を使わず IO を直接使う (§9.6 MobileStickyCta。inView の初期値 false を「ヒーローを過ぎた」と読むと、最初の通知の前に出てしまうため) */
   once?: boolean;
 }
 
@@ -1384,7 +1438,7 @@ export default async function HomePage() {
 // tsc:skip (既存ファイルの 1 定数の値の差し替え。全文は origin/main の src/lib/seo/public-pages.ts)
 /** サイト全体の説明 (トップの description。ルートの layout の description と openGraph.description も同じ文) */
 export const SITE_DESCRIPTION =
-  '写真を撮るだけで、AI が食事の良いところを見つけて褒めてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。';
+  '写真を撮るだけで、AI が料理を認識して栄養を推定し、記録するたびにほめてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。';
 ```
 
 - 現行の文 (`写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。あなたの食生活をサポートする次世代の食事管理アプリ。`) の「次世代の」は根拠を出せない形容 (§2.5 の景品表示法の当てはめ) なので外し、紹介ページの本文 (§4.2・§4.5) と同じ主張 (根拠は §4.9 の `photo-analyze`・`praise`・`weekly-menu`・`shopping-list`・`health-records`・`free-now`) にそろえる。
@@ -1466,12 +1520,12 @@ export function SiteHeader() {
         <nav aria-label="サイトの案内" className="hidden md:block">
           <ul className="flex items-center gap-6 text-sm font-medium">
             {header.nav.map((link) => (
-              <li key={link.href}><a href={link.href} className="hover:underline">{link.label}</a></li>
+              <li key={link.href}><a href={link.href} className="inline-flex min-h-11 items-center hover:underline">{link.label}</a></li>
             ))}
           </ul>
         </nav>
         <div className="flex items-center gap-2 md:gap-4">
-          <Link href={header.login.href} className="hidden text-sm font-medium sm:block">{header.login.label}</Link>
+          <Link href={header.login.href} className="hidden min-h-11 items-center text-sm font-medium sm:inline-flex">{header.login.label}</Link>
           <CtaLink href={header.cta.href} variant="primary" className="lp-cta--compact">{header.cta.label}</CtaLink>
         </div>
       </div>
@@ -1494,6 +1548,7 @@ import {
   DEMO_MOTION_EASE,
   DEMO_RESULT_OFFSET_PX,
   LANDING_COPY,
+  demoPraiseComment,
   type DemoSample,
 } from '@/components/marketing/landing-copy';
 import { DEMO_INITIAL_STATE, demoReducer, selectedSampleId } from '@/components/marketing/demo-state';
@@ -1576,7 +1631,7 @@ export function DemoSection() {
                         <span className="font-bold">{result.name}</span>
                       </div>
                       <h3 className="mt-4">{demo.resultTitle}</h3>
-                      <p className="mt-2">{result.comment}</p>
+                      <p className="mt-2">{demoPraiseComment(result)}</p>
                       <h3 className="mt-4">{demo.nutritionTitle}</h3>
                       <dl className="lp-demo-nutri mt-2 grid grid-cols-5 gap-2 text-center">
                         {NUTRITION_KEYS.map((key, index) => (
@@ -1626,6 +1681,7 @@ function riseStyle(index: number): CSSProperties {
 
 export function HeroSection() {
   const { hero } = LANDING_COPY;
+  // id="hero" は固定 CTA (MobileStickyCta) が IntersectionObserver で見る箱。LandingPage は main の最初にこの section を置く (M-8)
   return (
     <section id="hero" aria-labelledby="hero-title" className="lp-section relative overflow-hidden">
       <div className="lp-blob lp-blob--1" aria-hidden="true" />
@@ -1667,8 +1723,6 @@ export function HeroSection() {
           </div>
         </div>
       </div>
-      {/* ヒーローの番兵 (固定 CTA が見る。M-8)。ヒーローの最後の要素 */}
-      <span id="hero-end" aria-hidden="true" className="block h-px" />
     </section>
   );
 }
@@ -1682,25 +1736,27 @@ import { useEffect, useState } from 'react';
 import { LANDING_COPY } from '@/components/marketing/landing-copy';
 import { CtaLink } from '@/components/marketing/primitives/CtaLink';
 
-/** ヒーローの番兵 (HeroSection の末尾の span) の id */
-const HERO_END_ID = 'hero-end';
+/** ヒーローの箱 (HeroSection の section) の id。ページの先頭にある */
+const HERO_SECTION_ID = 'hero';
 
 export function MobileStickyCta() {
   // 初めは隠す。SSR の HTML と最初の描画も隠れた形 (開いた直後のヒーローの途中で出さない: S-2・§13.3)
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    const sentinel = document.getElementById(HERO_END_ID);
-    // 番兵か IntersectionObserver が無ければ出さない (ヘッダーの「無料で始める」が常にある)
-    if (!sentinel || typeof IntersectionObserver === 'undefined') return;
+    const hero = document.getElementById(HERO_SECTION_ID);
+    // ヒーローか IntersectionObserver が無ければ出さない (ヘッダーの「無料で始める」が常にある)
+    if (!hero || typeof IntersectionObserver === 'undefined') return;
     const observer = new IntersectionObserver((entries) => {
       for (const entry of entries) {
-        // 交差していないだけでは「まだ下にある (ヒーローが画面より高いスマートフォンの開いた直後)」と「上へ過ぎた」を区別できない。
-        // 番兵の上端が画面の上 (top < 0) にあるときだけ出す
-        setVisible(!entry.isIntersecting && entry.boundingClientRect.top < 0);
+        // ヒーローの箱全体を見る。箱はページの先頭にあるので、ヒーローの外へ出る移動と先頭へ戻る移動は、
+        // 少しずつのスクロールでも、ページの中のリンク (#demo など) や先頭への一気の移動でも、必ず交差の有無を変えて通知が来る
+        // (1 px の番兵だと、番兵を飛び越える一気の移動では交差の有無が変わらず、通知が来ない)。
+        // 箱の下端が画面の上 (bottom < 0) にあるときだけ出す (observe の直後の最初の通知で、開いた位置の状態も決まる)
+        setVisible(!entry.isIntersecting && entry.boundingClientRect.bottom < 0);
       }
     });
-    observer.observe(sentinel);
+    observer.observe(hero);
     return () => observer.disconnect();
   }, []);
 
@@ -1722,7 +1778,7 @@ export function MobileStickyCta() {
 |---|---|---|
 | `FaqSection` | `openIndex: number \| null`。`button` の `onClick` で同じ index なら閉じる | `h3 > button` (`aria-expanded`・`aria-controls="faq-panel-N"`・`id="faq-button-N"`) と `div.lp-faq-panel` (`id="faq-panel-N"`・`role="region"`・`aria-labelledby="faq-button-N"`・`hidden` は使わず `grid-template-rows` で閉じる。閉じている間は中身を `inert` にして Tab で入らないようにする) |
 | `StorySteps` | `activeIndex: 0〜2`。手順ごとに `useInViewOnce({ rootMargin: STORY_ROOT_MARGIN, once: false })` を持ち、`inView` になった手順を active にする | 左 (lg 以上) に `PhoneFrame` を `position: sticky; top: 6rem`。中に 3 枚の画面を重ね、`activeIndex` の枚だけ `opacity: 1`。右に手順の `ol`。`lg` 未満 (タブレットを含む) は端末を各手順の上に置く (sticky 無し) |
-| `MobileStickyCta` | `visible: boolean` (初めは `false`) = ヒーローの番兵 `#hero-end` が `!isIntersecting && boundingClientRect.top < 0` (上の正典。`useInViewOnce` は使わない: 位置を返さないので「まだ下」と「上へ過ぎた」を区別できない) | `div.lp-sticky-cta` (`aria-hidden={!visible}`・`inert={!visible}`) |
+| `MobileStickyCta` | `visible: boolean` (初めは `false`) = ヒーローの箱 `section#hero` が `!isIntersecting && boundingClientRect.bottom < 0` (上の正典。`useInViewOnce` は使わない: 初期値 `false` を「過ぎた」と読むと最初の通知の前に出てしまう) | `div.lp-sticky-cta` (`aria-hidden={!visible}`・`inert={!visible}`) |
 
 ### 9.7 `tests/public-claims-guard.test.ts` への差分 (見張りの拡張)
 
@@ -1774,7 +1830,21 @@ import { describe, expect, it } from 'vitest';
 import { BRAND_COLORS } from '@/lib/brand-image';
 import { GUIDES } from '@/app/guide/guide-content';
 import { AWARDABLE_BADGE_CODES } from '@/lib/badges/awardable';
-import { LANDING_COPY, LandingCopySchema, landingClaims, landingImagePaths, missingClaimIds } from '@/components/marketing/landing-copy';
+import {
+  DEMO_MEAL_TYPE_LABELS,
+  DEMO_PRAISE_DISH_SUFFIX,
+  DEMO_PRAISE_MAX_DISHES,
+  DEMO_PRAISE_MEAL_PHRASE,
+  DEMO_PRAISE_RECORD_PHRASE,
+  DEMO_SCORE_MAX,
+  DEMO_SCORE_MIN,
+  LANDING_COPY,
+  LandingCopySchema,
+  demoPraiseComment,
+  landingClaims,
+  landingImagePaths,
+  missingClaimIds,
+} from '@/components/marketing/landing-copy';
 import { DEMO_INITIAL_STATE, demoReducer } from '@/components/marketing/demo-state';
 import { SITE_DESCRIPTION, publicPageMetadata } from '@/lib/seo/public-pages';
 import { resolveOnboardingRedirect } from '../lib/onboarding-routing';
@@ -1782,6 +1852,14 @@ import { resolveOnboardingRedirect } from '../lib/onboarding-routing';
 const ROOT = path.resolve(__dirname, '..');
 const MARKETING_CSS = 'src/components/marketing/marketing.css';
 const BADGES_MIGRATION = 'supabase/migrations/20251126124224_create_meal_planner_tables.sql';
+/** 写真の記録の記録コメントとスコアの定型を持つファイル (U-21 がデモの記録コメントとスコアの範囲を突き合わせる) */
+const NUTRITION_PIPELINE = 'supabase/functions/_shared/nutrition-pipeline.ts';
+/** §4.4 の表の記録コメント (demoPraiseComment の期待値。id → 文) */
+const EXPECTED_DEMO_PRAISE: Record<string, string> = {
+  'salad-bowl': 'サラダボウルの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです。',
+  'salmon-plate': '焼きサーモン、いんげんとミニトマトの記録がしっかりできていて素晴らしいです。夕食を丁寧に残せていて、とても良い流れです。',
+  'pesto-pasta': 'バジルソースのパスタの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです。',
+};
 /** marketing.css の変数 → BRAND_COLORS の鍵 */
 const TOKEN_TO_BRAND: Record<string, keyof typeof BRAND_COLORS> = {
   '--lp-bg': 'background', '--lp-bg-tint': 'backgroundGradientEnd', '--lp-surface': 'white', '--lp-ink': 'text',
@@ -1887,9 +1965,9 @@ const ZOOM_200_WIDTH_PX = 640;
 | 2.4.2 ページタイトル | layout の既定の title | 既存 (`tests/og-image-1845.test.tsx`) |
 | 2.4.6 見出しとラベル | 見出しは内容を表す (§4) | 目視 |
 | 2.4.7 フォーカスの可視化 | globals.css の `:focus-visible` (2 トーンのリング) | e2e (CTA にフォーカスしたとき `outline-style` が `none` でない) |
-| 2.4.11 フォーカスの非遮蔽 (最低限) (2.2 で新設) | 固定ヘッダー (64〜80 px) と固定 CTA がフォーカスした要素を隠さないよう、`scroll-padding-top: 6rem` と `scroll-padding-bottom: 6rem` を `html` ではなく `.lp` の祖先に当てられないので、アンカーのリンク先の `section` に `scroll-margin-top: 6rem` を付ける。固定 CTA は高さ 4.5 rem で、末尾のフッターに `padding-bottom` を足す | e2e (FAQ のボタンにフォーカスしたとき、ボタンの矩形が固定 CTA と重ならない) |
+| 2.4.11 フォーカスの非遮蔽 (最低限) (2.2 で新設) | 固定ヘッダー (64〜80 px) と固定 CTA (768 px 未満) がフォーカスした要素を隠さないよう、`marketing.css` が `html:has(.lp)` に `scroll-padding-top: 6rem` (と 768 px 未満で `scroll-padding-bottom: 6rem`) を付ける (§9.1)。`scroll-padding` はスクロールの箱 (`html`) の性質なので、アンカーへの移動と、Tab / Shift+Tab でフォーカスした要素を見える所へ動かすスクロールの両方に効く (要素の `scroll-margin` はその要素へのスクロールにしか効かず、フォーカスしたボタンやリンクには効かないので使わない)。`:has()` が無いブラウザでは余白が付かない (内容は同じ)。末尾のフッターは 768 px 未満で `padding-bottom` を固定 CTA より大きく取る (`.lp-footer`) | E-9 (1280 px: 画面の上へ出た FAQ のボタンに Shift+Tab で戻ると、ボタンの矩形がヘッダーの矩形と重ならない。375 px: 画面の下にある FAQ のボタンに Tab で進むと、ボタンの矩形が固定 CTA の矩形と重ならない) |
 | 2.5.3 ラベルの名前 | ボタンの見た目の文字と `aria-label` を食い違わせない (`aria-label` は使わない) | e2e (`button` に見える名前がある。`tests/e2e/b12-a11y-i18n.spec.ts` A-04 が既に見る) |
-| 2.5.8 ターゲットのサイズ (最低限) (2.2 で新設) | ボタンとリンクは 24×24 px 以上 (CTA は 48 px 以上・ナビは 44 px の高さ) | e2e (`getBoundingClientRect` が 24 以上) |
+| 2.5.8 ターゲットのサイズ (最低限) (2.2 で新設) | 文の中に無いボタンとリンクは 24×24 px 以上。大きさは正典で決める: CTA は `min-height: 3rem` (48 px)・ヘッダーの CTA (`.lp-cta--compact`) とナビのリンクとログインは `min-height: 2.75rem` (44 px。ナビとログインは `inline-flex min-h-11 items-center`: §9.6 の `SiteHeader`)・止める操作の checkbox は 1.5rem 四方 (24 px) でラベルは 44 px (§9.1)・フッターと安心のリンクは `inline-flex min-h-6 items-center` (24 px: §8.1)・デモの写真と FAQ のボタンは 24 px を十分に超える。FAQ の末尾の「お問い合わせフォームへ」は文の中のリンク (2.5.8 の例外) | E-9 (CTA・ナビ・ログイン・フッターのリンクの `getBoundingClientRect` が 24 以上)・E-17 (checkbox が 24 以上) |
 | 3.1.1 ページの言語 | `html lang="ja"` (layout) | 既存 |
 | 3.2.3 一貫したナビゲーション | ヘッダーとフッターの順は固定 | – |
 | 4.1.2 名前、役割、値 | `aria-pressed`・`aria-expanded`・`aria-controls`・`role="status" aria-live="polite"` | e2e |
@@ -1946,10 +2024,10 @@ const ZOOM_200_WIDTH_PX = 640;
 |---|---|---|
 | 構造 | 殻 `src/app/page.tsx` (27 行・Server) + 本体 `src/app/LandingPageView.tsx` (`'use client'` 1 ファイル・629 行)。状態 6 つ。`scroll` で全体を再描画 | 殻はそのまま + 本体 `src/components/marketing/LandingPage.tsx` (Server Component の骨格) + 島 6 つ (状態 1 つずつ)。文言は `landing-copy.ts`。`LandingPageView.tsx` は削除 |
 | セクション | ヒーロー / AI デモ / 3 ステップ / 機能 8 / 1 日の流れ / バッジ 12 / FAQ 6 / 最終 CTA / フッター / 固定 CTA | ヘッダー / ヒーロー (実際の画面の連続) / 使い方 3 (固定した端末) / デモ / 機能 8 (大 2・中 4・小 2) / バッジ 6 / 安心 4 / FAQ 6 / 最終 CTA / フッター / 固定 CTA |
-| 主張 | 根拠の無いもの多数 (§2.2)。「週次レポート」「50 種類以上のバッジ」「30 秒で登録」「完全サポート」 | 14 件の主張すべてに `evidence` と根拠の中身 (§4.9)。数字の約束・断定・最上級は無い (U-20)。無料は「いまは無料・有料プランは準備中」 |
+| 主張 | 根拠の無いもの多数 (§2.2)。「週次レポート」「50 種類以上のバッジ」「30 秒で登録」「完全サポート」。デモの AI コメントが料理の中身を褒める (実際の写真の記録の記録コメントは定型の文) | 14 件の主張すべてに `evidence` と根拠の中身 (§4.9)。数字の約束・断定・最上級は無い (U-20)。無料は「いまは無料・有料プランは準備中」。写真の記録のほめるひと言は「記録をほめる」とだけ言い、デモはアプリの定型の文と同じ形 (U-21) |
 | 健康の効能 | 「免疫力アップ」「美肌効果」「吸収率が 3 倍」「医者いらず」「ダイエットパートナー」 | 無し。免責 (医療目的に使わない) を 2 か所に |
 | 実績の表示 | トップには無い。ログイン画面に「10,000+ ユーザーが実践中」 | トップ無し。ログイン画面の表示も削除 (段 0)。見張りに `10,000+` `ユーザーが実践中` を追加 |
-| 画像 | Unsplash の外部 URL 7 件 (実行時に読む)。実際の画面は無い。デモの写真の名前と中身が食い違う (「和風定食」の写真はサーモンのプレート) | 実際の画面 6 枚 (`public/guide`)。写真 3 枚は自前 (`public/marketing/photos`)。名前・alt・コメントは写っているものに合わせる (§7.2)。外部の要求 0 |
+| 画像 | Unsplash の外部 URL 7 件 (実行時に読む)。実際の画面は無い。デモの写真の名前と中身が食い違う (「和風定食」の写真はサーモンのプレート) | 実際の画面 6 枚 (`public/guide`)。写真 3 枚は自前 (`public/marketing/photos`)。名前・alt・料理の名前は写っているものに合わせる (§7.2)。デモの記録コメントはアプリの定型の文と同じ形 (`demoPraiseComment`。料理の中身を褒めない: §4.4)。外部の要求 0 |
 | 色 | `colors` 定数 19 個 (ブランドと不一致)。白 on `#E07A5F` のボタン (2.95:1) | `.lp` のトークン (ブランドと一致・テストで突き合わせ)。白文字は `#2D2D2D` / `#B8502F` の上 (4.97:1 以上) |
 | 絵文字 | 多数 | 無し (lucide のみ) |
 | フォント | Sans のみ | 見出し Serif・本文 Sans (既存の 2 書体) |
@@ -2026,23 +2104,28 @@ const ZOOM_200_WIDTH_PX = 640;
 | playing | ホバーする / 中の要素 (止める操作) にフォーカスが入る | paused (一時) | – | `:hover` / `:focus-within` で `paused` |
 | paused (一時) | ホバーが外れる / フォーカスが外へ出る | playing | 止める操作が入っていない | 続ける |
 | paused (一時) | ホバーが外れる / フォーカスが外へ出る | paused (保持) | 止める操作が入っている | 変化なし |
-| playing / paused | OS の設定を reduce に変える | static | – | `@media` が効き、3 枚目だけ |
-| static | ホバーする / フォーカスが入る | static (変化なし) | – | `animation: none` なので `animation-play-state` は効かない。止める操作は `display: none` で、Tab でも入らない |
-| static | OS の設定を no-preference に戻す | playing | 止める操作が入っていない (checkbox は reduce の間 `display: none` で操作できないので、reduce にする前の `checked` が残る) | `@media` が外れて `animation-name` が戻り、keyframes は最初 (1 枚目) から始まる。止める操作がまた見える |
+| playing / paused | OS の設定を reduce に変える | static | – | `no-preference` の `@media` が外れて `animation-name` が `none` になり、reduce のブロックで 3 枚目だけ |
+| static | ホバーする / フォーカスが入る | static (変化なし) | – | `animation-name` が `none` (keyframes は `no-preference` の中でだけ付く) なので `animation-play-state` は効かない。止める操作は `display: none` で、Tab でも入らない |
+| static | OS の設定を no-preference に戻す | playing | 止める操作が入っていない (checkbox は reduce の間 `display: none` で操作できないので、reduce にする前の `checked` が残る) | `no-preference` の `@media` が効いて `animation-name` が付き、keyframes は最初 (1 枚目) から始まる。止める操作がまた見える |
 | static | OS の設定を no-preference に戻す | paused (保持) | 止める操作が入っている (reduce にする前に入れていた) | 1 枚目で止まった形で戻る。止める操作を外すと playing |
 
-**固定 CTA**
+**固定 CTA** (見る箱はヒーローの `section#hero`。ページの先頭にあるので、箱が画面と交差しないときは「箱の全体が画面の上にある」か「まだ IO の最初の通知が来ていない」のどちらか)
 
 | 状態 | 操作 | 遷移先 | ガード |
 |---|---|---|---|
 | (初期・SSR と最初の描画) | – | hidden (`translateY(100%)`・`aria-hidden`・`inert`) | 常に (`useState(false)`) |
-| hidden | IO の通知: 番兵が交差していない | visible | `boundingClientRect.top < 0` (番兵が画面の上へ出た = ヒーローを過ぎた) |
-| hidden | IO の通知: 番兵が交差していない | hidden (変化なし) | `boundingClientRect.top >= 0` (番兵はまだ画面の下 = ヒーローの途中。ヒーローが画面より高いスマートフォンの開いた直後) |
-| hidden | IO の通知: 番兵が交差した (ヒーローの終わりが画面の中にある) | hidden (変化なし) | – (`setVisible(false)` は同じ値なので再描画もしない) |
-| visible | IO の通知: 番兵が交差した (上へ戻った) | hidden | – |
-| visible | IO の通知: 番兵が交差していない・`top >= 0` (上へ飛んで番兵が画面の下へ出た) | hidden | – |
-| any | IO が無い・番兵が無い | hidden (変化なし) | ヘッダーの CTA が常にある |
+| hidden | IO の最初の通知 (observe の直後。開いた位置で決まる) | hidden (変化なし) | 箱が交差している (先頭から開いた・ヒーローの途中) |
+| hidden | IO の最初の通知 | visible | 箱が交差していない・`bottom < 0` (`/#faq` のようにヒーローより下の位置で開いた・再読み込みでスクロールの位置が戻った) |
+| hidden | 少しずつ下へスクロールし、箱の下端が画面の上へ出る | visible | 通知: 交差していない・`bottom < 0` |
+| hidden | ページの中のリンク (`#demo` `#features` など) で一気に下へ移る | visible | 通知: 交差していない・`bottom < 0` (箱は交差から非交差に変わるので、飛び越えても通知が来る) |
+| hidden | 箱の中でスクロールする (ヒーローが画面にあるまま) | hidden (変化なし) | 通知は来ない (交差のまま) |
+| visible | 少しずつ上へスクロールし、箱の下端が画面に入る | hidden | 通知: 交差した |
+| visible | 先頭へ一気に戻る (`window.scrollTo(0, 0)`・キーボードの Home など。ヘッダーのマーク `/` で先頭に戻ったときも同じ) | hidden | 通知: 交差した (非交差から交差に変わる) |
+| visible | ヒーローより下どうしで移る (スクロール・ページの中のリンク) | visible (変化なし) | 通知は来ない (非交差のまま。箱は上にあり続ける) |
+| any | IO が無い・箱が無い | hidden (変化なし) | ヘッダーの CTA が常にある |
 | any | 幅 ≥ 768 px | (非表示) | `display: none` (状態は持つが見えない) |
+
+`bottom < 0` の条件は、箱がページの先頭にある限り「交差していない」と同じ意味で、念のための確認 (箱を先頭以外へ動かす変更をしたら、この表とあわせて見直す)。
 
 ---
 
@@ -2054,7 +2137,7 @@ const ZOOM_200_WIDTH_PX = 640;
 |---|---|---|
 | `getCspNonce()` が `null` (proxy の外・ビルド時) | JSON-LD (`SiteStructuredData`) に nonce が付かない | JSON-LD は実行されないので、CSP に止められず問題にならない。`nonce` 属性は出ない (既存の挙動。`tests/seo-public-pages-1867.test.tsx` が確かめる) |
 | 画像のファイルが無い | 404 | `tests/metadata-public-paths-1845.test.ts` と `tests/landing-page-1867.test.ts` がマージ前に赤にする |
-| `IntersectionObserver` が無い | 現れ方が動かない・固定 CTA の番兵を見られない | `useInViewOnce` が true を返し、隠さない。固定 CTA は出さない (ヘッダーの CTA が常にある。§13.3) |
+| `IntersectionObserver` が無い | 現れ方が動かない・固定 CTA がヒーローの箱を見られない | `useInViewOnce` が true を返し、隠さない。固定 CTA は出さない (ヘッダーの CTA が常にある。§13.3) |
 | `matchMedia` が無い (古い環境) | `useReducedMotion` が例外 | 既存の hook の挙動のまま (`window.matchMedia` は 2012 年以降の全ブラウザにある。テストの jsdom には `matchMedia` を足す) |
 | `setTimeout` の途中でアンマウント | タイマーが残る | `useEffect` の後始末で消す |
 | 主張の根拠のパスが無い・FORBIDDEN の語がある | – | unit テストが赤 (§22) |
@@ -2109,7 +2192,8 @@ sequenceDiagram
 | U-17 | `ログイン済みの人は / で紹介ページを見ない: resolveOnboardingRedirect の pathname '/' は、初期設定が済んだ人 → /home・途中の人 → /onboarding/resume・まだの人 → /onboarding/welcome・運営ロール (admin / super_admin) → /admin を返し、null を返す組み合わせが無い` |
 | U-18 | `animation-timeline が無いブラウザでも内容は同じ: marketing.css の animation-timeline / scroll-timeline / view-timeline の宣言はすべて @supports (animation-timeline: scroll()) の中にあり、src/components/marketing/ の .ts / .tsx に animation-timeline の語が無い (現れ方と使い方の切り替えは IntersectionObserver だけで動く)` |
 | U-19 | `page.tsx の viewport は maximumScale が LANDING_VIEWPORT_MAXIMUM_SCALE (5 以上) で userScalable が true (ルートの layout の拡大の禁止を / だけ外す。layout の viewport は変えていない)` |
-| U-20 | `LANDING_COPY のすべての文字列 (claims を含む) に UNSUBSTANTIATED_WORDS の語が無く、marketing.css の prefers-reduced-motion: reduce のブロックに .lp-blob の animation: none と animation-delay: 0s がある` |
+| U-20 | `LANDING_COPY のすべての文字列 (claims を含む) に UNSUBSTANTIATED_WORDS の語が無く、marketing.css の prefers-reduced-motion: reduce のブロックに .lp-blob の animation: none と animation-delay: 0s があり、.lp-hero-slide と .lp-hero-dots span の animation-name は prefers-reduced-motion: no-preference のブロックの中にだけある` |
+| U-21 | `デモの記録コメントはアプリの定型の文と同じ形: 各サンプルの demoPraiseComment が EXPECTED_DEMO_PRAISE の文と同じで、NUTRITION_PIPELINE のソースに DEMO_PRAISE_DISH_SUFFIX・DEMO_PRAISE_RECORD_PHRASE・DEMO_PRAISE_MEAL_PHRASE・DEMO_MEAL_TYPE_LABELS の各語 ('朝食' のように引用符つき)・slice(0, DEMO_PRAISE_MAX_DISHES)・join('、')・Math.max(DEMO_SCORE_MIN, Math.min(DEMO_SCORE_MAX, があり、各サンプルの score は DEMO_SCORE_MIN 以上 DEMO_SCORE_MAX 以下` |
 
 U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読まれない (`metadata` は定数) が、殻が import する `LandingPage` の島 (framer-motion など) は node の環境で読み込みだけ行われる (描画はしない)。U-17 は `lib/onboarding-routing.ts` の純関数を直接呼ぶ (proxy の中の呼び出しは `lib/supabase/__tests__/middleware.test.ts` が既に見る)。
 
@@ -2130,13 +2214,13 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 |---|---|
 | E-1 | `/ を開くと、h1「食べることを、もっと誇らしく。」と 8 つのセクションが順に見え、ログインのフォーム (#email) は無い。下まで少しずつスクロールしたあと、どの .lp-reveal にも is-in が付き、computed の opacity が 1 (隠れたままのセクションが無い)` |
 | E-2 | `ヘッダーの「無料で始める」とヒーローの「無料で始める」は /signup を指し、「デモを試す」は #demo へスクロールする` |
-| E-3 | `デモ: 写真を押すと role=status に「AI が見ています…」が出て、1.4 秒後に「AI からのコメント」とサンプルの注記と、/signup を指す「自分の食事で試す」のリンクが出る。待っている間は写真のボタンが disabled。結果のあと別の写真を押すと、もう一度「AI が見ています…」を経て、その写真の結果に替わる` |
+| E-3 | `デモ: 写真を押すと role=status に「AI が見ています…」が出て、1.4 秒後に「記録コメント」の見出しとその写真の記録コメント (demoPraiseComment の文) とサンプルの注記と、/signup を指す「自分の食事で試す」のリンクが出る。待っている間は写真のボタンが disabled。結果のあと別の写真を押すと、もう一度「AI が見ています…」を経て、その写真の結果に替わる` |
 | E-4 | `FAQ: ボタンは aria-expanded を持ち、Enter で開き (aria-expanded=true・region が見える)、もう一度 Enter で閉じる` |
-| E-5 | `375 px: 横スクロールが無く (scrollWidth <= clientWidth)、開いた直後 (scrollY 0。ヒーローの番兵は画面の下) は固定 CTA に is-visible が無く aria-hidden=true で、#hero-end を画面の上へ過ぎるまでスクロールすると is-visible が付いて /signup を指し、上へ戻すと外れる` |
+| E-5 | `375 px: 横スクロールが無く (scrollWidth <= clientWidth)、開いた直後 (scrollY 0。ヒーローが画面にある) は固定 CTA に is-visible が無く aria-hidden=true で、section#hero の下端を画面の上へ過ぎるまで少しずつ (mouse.wheel で) スクロールすると is-visible が付いて /signup を指し、少しずつ上へ戻すと外れる。続けて、先頭から「デモを試す」(#demo へ一気に移る) を押すと is-visible が付き、window.scrollTo(0, 0) で先頭へ一気に戻すと外れる。/#faq を直接開いたときは、最初から is-visible が付く` |
 | E-6 | `320 px と ZOOM_200_WIDTH_PX (640 px。1280 px を 200 % に拡大した幅) で横スクロールが無い (scrollWidth <= clientWidth)` |
 | E-7 | `reduced-motion: ヒーローの画面の連続と .lp-blob の animation-name が none で、3 枚目が見え、止める操作は見えず、デモの写真を押すと結果 ([data-demo-panel=result]) が待ち無しで出て、現れた最初のフレーム (requestAnimationFrame) で computed の opacity が 1・transform が none で、document.getAnimations() に running が無い` |
 | E-8 | `img はすべて alt 属性を持ち、button はすべて見える名前を持ち、見出しは h1 → h2 → h3 の順を飛ばさない` |
-| E-9 | `CTA とナビのリンクは 24×24 px 以上で、フォーカスすると outline が none でない。FAQ のボタンにフォーカスしても固定 CTA と重ならない` |
+| E-9 | `CTA・ナビのリンク・ログイン・フッターのリンク・安心のリンクは 24×24 px 以上 (ナビとログインとヘッダーの CTA は高さ 44 px 以上) で、フォーカスすると outline が none でない。1280 px: FAQ の 1 つ目のボタンの下端が画面の上端より上になる位置へ window.scrollTo で移り、2 つ目のボタンに focus() してから Shift+Tab で 1 つ目のボタンへ戻ると、1 つ目のボタンの矩形の上端がヘッダー (.lp-header) の矩形の下端以上。375 px: 固定 CTA が出ている状態で、FAQ の 1 つ目のボタンの上端が画面の下端より下になる位置へ window.scrollTo で移り、安心の「プライバシーポリシーを読む」に focus() してから Tab で FAQ の 1 つ目のボタンへ進むと、ボタンの矩形が固定 CTA (.lp-sticky-cta) の矩形と重ならない` |
 | E-10 | `LCP が予算 (LANDING_LCP_BUDGET_MS、既定 2500) 以内で、LCP の要素が #hero の中 (見出しか 1 枚目の画面) にあり、CLS が予算 (LANDING_CLS_BUDGET、既定 0.1) 以内` |
 | E-11 | `/ で読む script の転送量の合計が予算 (LANDING_JS_BUDGET_BYTES、既定 170 KB) 以内で、外部のオリジンへの要求が無い (同一オリジンと /_vercel/ を除く)` |
 | E-12 | `securitypolicyviolation が 0 件 (デモの操作を含む)` |
@@ -2180,14 +2264,14 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | S-3 | E-15 (Tab の順)・E-17 (画面の切り替えを Space で止める)・E-4 (FAQ の Enter)・E-9 (フォーカスの見え方) | – |
 | S-4 | E-8・U-14・E-3 (`role=status`) | スクリーンリーダー (VoiceOver) での読み上げの聞こえ方 |
 | S-5 | E-7・U-20 (reduce のブロックの中身) | – |
-| S-6 | U-11 (遷移の全行)・E-3 (分析中 → 結果 → 結果の下の CTA が `/signup` → 別の写真で同じ流れ・待つ間は disabled) | – |
+| S-6 | U-11 (遷移の全行)・U-21 (記録コメントがアプリの定型の文と同じ形)・E-3 (分析中 → 結果 → 結果の下の CTA が `/signup` → 別の写真で同じ流れ・待つ間は disabled) | – |
 | S-7 | U-17 (`/` の振り分けの値)・既存 `lib/supabase/__tests__/middleware.test.ts` (`updateSession` が `resolveOnboardingRedirect` を通る経路。`:295`・`:362` 付近)・既存 e2e `tests/e2e/fixtures-smoke/fresh-user-smoke.spec.ts` (初期設定がまだの人が `/` → `/onboarding`) | – |
 | S-8 | E-16 | App の実機の WebView での見え方 |
 | S-9 | U-14 (JS 無しの HTML に全文)・U-15 (殻の `metadata` が `publicPageMetadata('/')` と同じ)・E-13 (JSON-LD)・既存 `tests/seo-public-pages-1867.test.tsx` (`:222-237` の canonical・og:url・description・og:description、`:239-247` の OGP / Twitter の画像、`:356-405` の JSON-LD の中身。どれも `/` を含む: §16.5) | SNS のカードの実際の見え方 (共有のデバッガーで目視) |
 | S-10 | E-10・E-11・U-4 | 3G 相当の回線での体感 (Lighthouse の mobile の throttling が代わりの計測: §10.3) |
 | S-11 | U-18 (Chromium しか無い e2e では未対応のブラウザを再現できないので、未対応でも内容が変わらない作りを静的に確かめる) | Firefox の実機で装飾以外が同じこと |
 | S-12 | E-12・既存 `tests/e2e/csp-nonce.spec.ts:136-158` | – |
-| S-13 | `tests/public-claims-guard.test.ts` (§16.2)・U-2・U-20 | – |
+| S-13 | `tests/public-claims-guard.test.ts` (§16.2)・U-2・U-20・U-21 | – |
 | S-14 | E-10・E-11・E-12・E-8・E-18・E-19 | Lighthouse の 4 項目 (§10.3。Accessibility 100 は E-18 の拡大の許可が前提) |
 
 ---
@@ -2213,23 +2297,23 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | ファイル (資産) | `public/marketing/photos/salad-bowl.webp`、`salmon-plate.webp`、`pesto-pasta.webp`、`CREDITS.md` |
 | ファイル (テスト) | `tests/landing-page-1867.test.ts`、`tests/e2e/landing-page.spec.ts`、`tests/e2e-landing-suite.test.ts` |
 | ファイル (設計) | `docs/design/marketing/01-landing-site.md`、`docs/design/marketing/prototype/index.html` |
-| 関数 | `landingClaims`、`landingImagePaths`、`missingClaimIds`、`demoReducer`、`selectedSampleId`、`useInViewOnce`、(部品内) `riseStyle`、`LandingPage`、`SiteHeader`、`HeroSection`、`HowItWorksSection`、`StorySteps`、`DemoSection`、`FeaturesSection`、`BadgesSection`、`TrustSection`、`FaqSection`、`FinalCtaSection`、`SiteFooter`、`MobileStickyCta`、`Reveal`、`PhoneFrame`、`CtaLink` (JSON-LD の関数・部品は新設しない: 段 1 の `buildSiteJsonLd`・`serializeJsonLd`・`SiteStructuredData` を使う) |
-| 定数 | `LANDING_COPY`、`LANDING_SITE_NAME`、`LANDING_IMAGE_PATH_PATTERN`、`EVIDENCE_PATH_PATTERN`、`DEMO_ANALYZING_MS`、`DEMO_ANALYZING_MS_REDUCED`、`DEMO_MOTION_DURATION_S`、`DEMO_MOTION_EASE`、`DEMO_RESULT_OFFSET_PX`、`LANDING_VIEWPORT_MAXIMUM_SCALE`、`HEADER_SCROLLED_PX`、`REVEAL_THRESHOLD`、`REVEAL_STAGGER_MS`、`REVEAL_STAGGER_MAX`、`STORY_ROOT_MARGIN`、`COPYRIGHT_YEAR`、`SIGNUP_HREF`、`DEMO_ANCHOR`、`DEMO_INITIAL_STATE`、(部品内) `HEADER_MARK_PX`、`DEMO_PHOTO_PX`、`DEMO_TRANSITION`、`INSTANT_TRANSITION`、`NUTRITION_KEYS`、`GUIDE_SCREEN_WIDTH_PX`、`GUIDE_SCREEN_HEIGHT_PX`、`ASSURANCE_ICON_PX`、`HERO_END_ID`、(殻) `viewport` (`src/app/page.tsx` の export)、(テスト内) `TOKEN_TO_BRAND`、`UNSUBSTANTIATED_WORDS`、`ALLOWED_IMPORT_PREFIXES`、`MARKETING_CSS`、`BADGES_MIGRATION`、`LCP_BUDGET_MS`、`CLS_BUDGET`、`JS_TRANSFER_BUDGET_BYTES`、`NAVIGATION_TIMEOUT`、`A11Y_MIN_FONT_PX`、`BODY_FONT_PX`、`ZOOM_200_WIDTH_PX`、`LANDING_SPEC` |
+| 関数 | `landingClaims`、`landingImagePaths`、`missingClaimIds`、`demoPraiseComment`、`demoReducer`、`selectedSampleId`、`useInViewOnce`、(部品内) `riseStyle`、`LandingPage`、`SiteHeader`、`HeroSection`、`HowItWorksSection`、`StorySteps`、`DemoSection`、`FeaturesSection`、`BadgesSection`、`TrustSection`、`FaqSection`、`FinalCtaSection`、`SiteFooter`、`MobileStickyCta`、`Reveal`、`PhoneFrame`、`CtaLink` (JSON-LD の関数・部品は新設しない: 段 1 の `buildSiteJsonLd`・`serializeJsonLd`・`SiteStructuredData` を使う) |
+| 定数 | `LANDING_COPY`、`LANDING_SITE_NAME`、`LANDING_IMAGE_PATH_PATTERN`、`EVIDENCE_PATH_PATTERN`、`DEMO_ANALYZING_MS`、`DEMO_ANALYZING_MS_REDUCED`、`DEMO_MOTION_DURATION_S`、`DEMO_MOTION_EASE`、`DEMO_RESULT_OFFSET_PX`、`LANDING_VIEWPORT_MAXIMUM_SCALE`、`HEADER_SCROLLED_PX`、`REVEAL_THRESHOLD`、`REVEAL_STAGGER_MS`、`REVEAL_STAGGER_MAX`、`STORY_ROOT_MARGIN`、`COPYRIGHT_YEAR`、`SIGNUP_HREF`、`DEMO_ANCHOR`、`DEMO_PRAISE_DISH_SUFFIX`、`DEMO_PRAISE_RECORD_PHRASE`、`DEMO_PRAISE_MEAL_PHRASE`、`DEMO_PRAISE_END`、`DEMO_PRAISE_MAX_DISHES`、`DEMO_PRAISE_DISH_SEPARATOR`、`DEMO_SCORE_MIN`、`DEMO_SCORE_MAX`、`DEMO_MEAL_TYPE_LABELS`、`DEMO_INITIAL_STATE`、(部品内) `HEADER_MARK_PX`、`DEMO_PHOTO_PX`、`DEMO_TRANSITION`、`INSTANT_TRANSITION`、`NUTRITION_KEYS`、`GUIDE_SCREEN_WIDTH_PX`、`GUIDE_SCREEN_HEIGHT_PX`、`ASSURANCE_ICON_PX`、`HERO_SECTION_ID`、(殻) `viewport` (`src/app/page.tsx` の export)、(テスト内) `TOKEN_TO_BRAND`、`UNSUBSTANTIATED_WORDS`、`ALLOWED_IMPORT_PREFIXES`、`MARKETING_CSS`、`BADGES_MIGRATION`、`NUTRITION_PIPELINE`、`EXPECTED_DEMO_PRAISE`、`LCP_BUDGET_MS`、`CLS_BUDGET`、`JS_TRANSFER_BUDGET_BYTES`、`NAVIGATION_TIMEOUT`、`A11Y_MIN_FONT_PX`、`BODY_FONT_PX`、`ZOOM_200_WIDTH_PX`、`LANDING_SPEC` |
 | 型 / Zod | `LandingImageSchema`、`LandingLinkSchema`、`LandingClaimSchema`、`DemoSampleSchema`、`FeatureCardSchema`、`BadgeCardSchema`、`FaqItemSchema`、`TrustItemSchema`、`StepSchema`、`LandingCopySchema`、`LandingCopy`、`LandingClaim`、`DemoSample`、`DemoSampleId`、`FeatureCard`、`BadgeCard`、`DemoSampleKey`、`DemoState`、`DemoEvent`、`UseInViewOnceOptions`、`RevealProps` |
-| CSS のクラス / 変数 | `.lp` と `--lp-*` (§9.1)、`.lp-container` `.lp-section` `.lp-lead` `.lp-note` `.lp-headline-accent` `.lp-cta` (`--primary` `--secondary` `--on-dark` `--compact`) `.lp-header` `.lp-reveal` `.lp-hero-rise` `.lp-hero-media` `.lp-hero-slides` `.lp-hero-slide` `.lp-hero-dots` `.lp-hero-pause` `.lp-blob` (`--1` `--2`) `.lp-phone` `.lp-phone-screen` `.lp-demo-progress` `.lp-demo-spin` `.lp-demo-nutri` `.lp-faq-panel` `.lp-faq-chevron` `.lp-sticky-cta`、変数 `--lp-stagger`、keyframes `lp-rise` `lp-slide-1〜3` `lp-dot-1〜3` `lp-drift` `lp-progress` `lp-spin` |
-| DOM の id / 属性 | id: `hero` `hero-title` `hero-end` `how` `demo` `demo-title` `features` `badges` `trust` `faq` `cta` `faq-button-N` `faq-panel-N`。属性: `data-demo-panel` (`analyzing` `result` `empty`。E-7 が見る) |
+| CSS のクラス / 変数 | `.lp` と `--lp-*` (§9.1)、`.lp-container` `.lp-section` `.lp-lead` `.lp-note` `.lp-headline-accent` `.lp-cta` (`--primary` `--secondary` `--on-dark` `--compact`) `.lp-header` `.lp-reveal` `.lp-hero-rise` `.lp-hero-media` `.lp-hero-slides` `.lp-hero-slide` `.lp-hero-dots` `.lp-hero-pause` `.lp-blob` (`--1` `--2`) `.lp-phone` `.lp-phone-screen` `.lp-demo-progress` `.lp-demo-spin` `.lp-demo-nutri` `.lp-faq-panel` `.lp-faq-chevron` `.lp-sticky-cta` `.lp-footer`、ページの箱の規則 `html:has(.lp)` (`scroll-padding`。§9.1)、変数 `--lp-stagger`、keyframes `lp-rise` `lp-slide-1〜3` `lp-dot-1〜3` `lp-drift` `lp-progress` `lp-spin` |
+| DOM の id / 属性 | id: `hero` (固定 CTA が見る箱を兼ねる) `hero-title` `how` `demo` `demo-title` `features` `badges` `trust` `faq` `cta` `faq-button-N` `faq-panel-N`。属性: `data-demo-panel` (`analyzing` `result` `empty`。E-7 が見る) |
 | 環境変数 | 無し (e2e の予算の上書き `LANDING_LCP_BUDGET_MS` `LANDING_CLS_BUDGET` `LANDING_JS_BUDGET_BYTES` はテストの実行時だけ読む。`src/lib/env.ts` の一覧には足さない: アプリは読まない) |
 | 許可リストの行 | 無し (`ALLOWED_INLINE_SCRIPTS`・`ALLOWED_HTML_SINKS` は段 1 の `SiteStructuredData.tsx` の 1 件ずつのまま。§9.11) |
 | 消すもの | `src/app/LandingPageView.tsx` (ファイルごと。現行の本体の全部: `colors`・`sampleMeals`・`features`・`badges`・`faqs`・`useCountUp`・`LandingPage` の本体)、`src/app/page.tsx` の `import LandingPageView from './LandingPageView'` と `<LandingPageView />` と、先頭のコメントの「画面の本体は LandingPageView.tsx」「画面の文言・動きは LandingPageView.tsx のまま変えていない」(§9.5 の全文で置き換える)、`src/app/(auth)/layout.tsx:42-52` の実績の表示 |
 | route・テーブル・列・RLS・Storage・エラーコード | 無し |
 
-列挙の基準: §9 と §8 で新しく宣言する、モジュール直下の名前 (export の有無を問わない)。関数の中の局所の関数・変数 (`update` `onScroll` `select` `progressStyle` `observer` `sentinel`) は数えない。Zod スキーマの鍵を足したもの: `hero.pauseLabel`。
+列挙の基準: §9 と §8 で新しく宣言する、モジュール直下の名前 (export の有無を問わない)。関数の中の局所の関数・変数 (`update` `onScroll` `select` `progressStyle` `observer` `sentinel`) は数えない。Zod スキーマの鍵: `hero.pauseLabel`、デモのサンプルの `dishNames` と `mealTypeLabel` (サンプルに文として持っていた `comment` は持たず、`demoPraiseComment` で作る)。
 
 ---
 
 ## 19. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4`。#1874 で殻と本体に分かれた後)。e2e は `tests/e2e/` の `goto("/")` (と ``goto(`${BASE_URL}/`)``) を引いた 13 本 (`tests/e2e/.exploration/` の探索用は門にも定期の実行にも入らないので数えない)。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4`。#1874 で殻と本体に分かれた後)。e2e は `tests/e2e/` の `goto("/")` (と ``goto(`${BASE_URL}/`)``) を引いた 13 本 (`tests/e2e/.exploration/` の探索用は門にも定期の実行にも入らないので数えない)。origin/main `cf6393c3` (2026-10-18) で突き合わせ直した: `be462ab4` からの変更のうち本表に関わるのは `tests/faq-guide-wording-1859.test.ts` と `src/app/faq/page.tsx` (#1876) だけで、下の行の扱いは変わらない (ほかの番兵と、本書が行番号で指す `tests/public-claims-guard.test.ts`・`tests/seo-public-pages-1867.test.tsx`・`src/app/page.tsx`・`src/app/LandingPageView.tsx`・`supabase/functions/_shared/nutrition-pipeline.ts`・`src/app/(main)/meals/new/page.tsx` は変わっていない)。
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
@@ -2240,7 +2324,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/inner-html-contract.test.ts` | `dangerouslySetInnerHTML`・`ALLOWED_HTML_SINKS` | `AIChatBubble.tsx` と `src/components/seo/SiteStructuredData.tsx` (`:181`) の 2 件 | 変更なし (§9.11。紹介ページの部品は HTML を差し込まない) | – |
 | `tests/metadata-public-paths-1845.test.ts` | `/guide/`・`/marketing/photos/`・`.webp`・`<Image src=` | src の中のルートからの画像のパスは public に実在し matcher の外 | 写真 3 枚を `public/marketing/photos/` に置く。`.webp` は matcher の除外 (`webp`) に当たる。`<Image src="/icon.svg">` は既存のファイル | 1 |
 | `tests/guide-images-1852.test.ts` | `/guide/*.png`・`literalGuideImagePaths` | `src/app/guide` の中だけを走査 | 変更なし (紹介ページの `/guide/*.png` は `src/components/marketing/` にあるので対象外。実在は 1845 と U-4 が見る) | – |
-| `tests/faq-guide-wording-1859.test.ts` | `AI献立アシスタント`・`冷蔵庫優先`・`時短中心`・`和食多め`・`SCREEN_SOURCE_DIRS` (`src/components` を含む) | FAQ とガイドが「」で挙げる名前が画面のソースにある | 変更なし (`landing-copy.ts` は画面のソース側。「今日なに作ろう」の「」は FAQ / ガイドではないので検査されない) | – |
+| `tests/faq-guide-wording-1859.test.ts` | `AI献立アシスタント`・`冷蔵庫優先`・`時短中心`・`和食多め`・`SCREEN_SOURCE_DIRS` (`src/components` を含む) | FAQ とガイドが「」で挙げる名前が画面のソースにある | 変更なし (`landing-copy.ts` は画面のソース側。「今日なに作ろう」「栄養メモ」の「」は FAQ / ガイドではないので検査されない。#1876 で FAQ の献立の基準・データの削除・書き出しの検査が増えたが、走査の向き (FAQ とガイドの語を画面のソースで探す) は同じ) | – |
 | `tests/site-config-guard.test.ts` | `homegohan.` | src の全ファイルにドメインを書かない | 変更なし (`landing-copy.ts`・JSON-LD はドメインを書かず `getSiteUrl()`。U-10 の import の範囲と合わせる) | 1 |
 | `tests/design-system-1058.test.ts` | `src/app/layout.tsx`・`globals.css` | layout と globals.css の a11y の固定 | 変更なし (どちらも触らない) | – |
 | `src/__tests__/app/route-uniqueness.test.ts` | `page.tsx` | `/` の page は 1 つ | 変更なし (`src/app/page.tsx` の殻を残し、中身を 1 つ替えるだけ。`LandingPageView.tsx` は page ではない) | 1 |
@@ -2331,12 +2415,14 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 未対応ブラウザの扱い | U-18 | `animation-timeline` の宣言が `@supports` の外にある・部品のコードが `animation-timeline` に頼る |
 | 日付 | U-16・`tests/jst-today-source-scan.test.ts` | `new Date` で年を作る |
 | 拡大 | U-19・E-18 | `/` の viewport が拡大を止める (`userScalable: false`・`maximumScale` < 5) |
+| ターゲットの大きさとフォーカスの非遮蔽 | E-9・E-17 | ナビ・ログイン・CTA・フッターと安心のリンク・checkbox が 24 px 未満。フォーカスした FAQ のボタンが固定ヘッダーか固定 CTA と重なる |
 | 文字の大きさ | E-19 | 375 px で、文字を持つ要素が 14 px (`A11Y_MIN_FONT_PX`) を下回る・本文の段落が 16 px (`BODY_FONT_PX`) を下回る |
 | 隠れたままのセクション | E-1 | 下までスクロールしても `is-in` の付かない `.lp-reveal` が残る (IO の取りこぼしで文が見えない) |
 | 200 % の拡大のリフロー | E-6 | 320 px か 640 px (`ZOOM_200_WIDTH_PX`) で横スクロールが出る |
-| 根拠の無い断定と、動きを減らす設定 | U-20・E-7 | 画面の文に `UNSUBSTANTIATED_WORDS` の語。reduce のブロックから視差の停止か遅れの 0 が抜ける。reduce でデモの結果が動いて現れる |
+| 根拠の無い断定と、動きを減らす設定 | U-20・E-7 | 画面の文に `UNSUBSTANTIATED_WORDS` の語。reduce のブロックから視差の停止か遅れの 0 が抜ける。画面と点の `animation-name` が `no-preference` のブロックの外にある (reduce で `none` にならない)。reduce でデモの結果が動いて現れる |
+| デモの記録コメントの正直さ | U-21 | `demoPraiseComment` の文がアプリの定型の文 (`buildTemplatePraiseAndTip`) の句・食事の区分の語と違う。アプリの定型の文が変わった。サンプルのスコアがアプリの範囲 (70〜95) の外 |
 | 画面の連続の停止 | E-17 | 止める操作で `paused` にならない・外して戻らない |
-| 固定 CTA の出る時 | E-5 | 開いた直後に出る・過ぎても出ない |
+| 固定 CTA の出る時 | E-5 | 開いた直後に出る・少しずつ過ぎても、ページの中のリンクで一気に過ぎても出ない・先頭へ一気に戻っても消えない |
 | 速さ | E-10・E-11 | LCP / CLS / JS の転送量 / 外部の要求が予算超え |
 | CSP | E-12 | `securitypolicyviolation` が 1 件以上 |
 | a11y | E-4〜E-9 | §11 の表の各行 |
@@ -2347,7 +2433,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 ## 23. 静的な試作 (`docs/design/marketing/prototype/index.html`)
 
 - 1 ファイルの HTML。CSS と JS を中に含む。外部の CDN・フォント・画像を読まない (ブラウザで開くだけで見られる)。
-- 文言と色は本書 (§4・§5.1) と同じ。デモの動き (§6.2 M-7)・現れ方 (M-5)・固定した端末 (M-6)・ヘッダー (M-1)・FAQ (M-9)・固定 CTA (M-8。番兵が画面の上へ出たときだけ出す)・画面の連続を止める操作 (M-3。checkbox + `:has()`)・`reduced-motion` の切り替え (遅れ 0・視差なし・止める操作を隠す) を、同じ時間と緩急で再現する。
+- 文言と色は本書 (§4・§5.1) と同じ。デモの動き (§6.2 M-7)・現れ方 (M-5)・固定した端末 (M-6)・ヘッダー (M-1)・FAQ (M-9)・固定 CTA (M-8。ヒーローの箱 `#hero` の全体が画面の上へ出たときだけ出す。ページの中のリンクで一気に移ったときも同じ)・画面の連続を止める操作 (M-3。checkbox + `:has()`)・`reduced-motion` の切り替え (遅れ 0・視差なし・止める操作を隠す) を、同じ時間と緩急で再現する。
 - **写真と実際の画面の代わりの置き場**には、何が入るかを書いた枠を置く (例: `実際の画面: /guide/camera.png (食事の写真を選んだ撮影の画面)`)。端末の枠の中は、本物の画面に似せた簡単な絵 (CSS) で、切り替えの動きが分かるようにする。
 - フォントは、端末にあれば Noto Serif JP / Noto Sans JP、無ければ代替 (serif / sans-serif)。
 - 試作はオーナーが見た目と動きを確かめるためのもの。実装は本書の正典 (§9) に従い、試作のコードは写さない (試作は Tailwind も `next/image` も使っていない)。
@@ -2360,13 +2446,14 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | # | 事項 | 既定 |
 |---|---|---|
-| Q-1 | デモの食事の写真 3 枚の権利: オーナーが撮った写真を使えるか。それまで Unsplash License の写真をファイルに落として使ってよいか (§7.2) | 間に合わせに Unsplash License の 3 枚 (現行のトップと同じ ID。名前・alt・コメントは写っているもの (サラダボウル・サーモンのプレート・バジルのパスタ) に合わせ直した) を自前のファイルで置き、`CREDITS.md` に書く。オーナーの写真が届いたら、写真に合わせて §4.4 のサンプルの文も直す |
+| Q-1 | デモの食事の写真 3 枚の権利: オーナーが撮った写真を使えるか。それまで Unsplash License の写真をファイルに落として使ってよいか (§7.2) | 間に合わせに Unsplash License の 3 枚 (現行のトップと同じ ID。名前・alt・料理の名前は写っているもの (サラダボウル・サーモンのプレート・バジルのパスタ) に合わせ直した) を自前のファイルで置き、`CREDITS.md` に書く。オーナーの写真が届いたら、写真に合わせて §4.4 のサンプルの名前・alt・料理の名前も直す (記録コメントは `demoPraiseComment` が作り直す) |
 | Q-2 | `@axe-core/playwright` の導入 (devDependency。a11y の自動検査を axe に任せる) | 入れない (依存の追加は別の判断)。構造の検査は Playwright の素の API (§11)。整合ゲートは Lighthouse の Accessibility で確かめる |
 | Q-3 | アプリのストア (App Store / Google Play) の URL。公開されたら紹介ページに札を置くか | 置かない (`storeLinks: []`)。URL が決まったら `landing-copy.ts` に足し、フッターとヒーローの下に札を出す (札の画像は各ストアの公式の素材) |
 | Q-4 | 見た目の回帰 (画素の比較)。`toHaveScreenshot` は e2e のビルドのフォントの代替が機械ごとに違って揺れる | 比較せず記録だけ (E-14)。フォントを同梱した安定した環境 (CI の固定のコンテナ) ができたら比較に切り替える |
 | Q-5 | ダークモード (§5.6)。アプリ本体がライトだけの間は紹介ページもライトだけ | ライトだけ。足すときは `.lp` の `@media (prefers-color-scheme: dark)` にトークンを 1 組足す (値は design-system §7 の Phase 2 と同時に決める) |
 | Q-6 | ほかの公開ページ (`/about` `/faq` ほか) のヘッダー・フッターを `SiteHeader` / `SiteFooter` に揃える | 本冊の範囲外。揃えるなら別の B 型 (公開ページごとの `colors` 定数の撤去と同時) |
 | Q-7 | 変換の計測 (CTA の押下数)。PostHog は採らない (#1166)。Vercel Web Analytics は未採用 | 計測しない。Speed Insights (速度) だけ。要るなら別の判断 (計測の道具の採用は CSP と同意の設計に関わる) |
-| Q-8 | 1 日の流れ (朝・昼・おやつ・夜の例) のセクション (現行にある) | 置かない (使い方の 3 ステップと重なり、サンプルのコメントが増えるほど効能の表現の管理が増える)。欲しければ `landing-copy.ts` にデータを足して `HowItWorksSection` の下に 1 セクション足す |
+| Q-8 | 1 日の流れ (朝・昼・おやつ・夜の例) のセクション (現行にある) | 置かない (使い方の 3 ステップと重なり、サンプルの文が増えるほど効能の表現の管理が増える)。欲しければ `landing-copy.ts` にデータを足して `HowItWorksSection` の下に 1 セクション足す |
 | Q-9 | 「いつでも退会できます」「JSON で書き出せます」は、退会・書き出しの API がある事実から書く。画面の導線 (設定 → 退会) の名前が変わったら文言も直す | `claims` の `evidence` が実在する限り保つ。画面の名前は書かない (「設定から」とだけ) |
 | Q-10 | ルートの layout の拡大の禁止 (`maximumScale: 1`・`userScalable: false`) を、アプリの画面 (`/login` 以降) でも外すか (WCAG 1.4.4。入力欄で iOS が勝手に拡大するのを避けるための設定と思われるが、理由の記録はリポジトリに見つからない) | 本冊は `/` だけ外す (R-12 の範囲)。アプリ側は別の判断 |
+| Q-11 | 公開の FAQ (`src/app/faq/page.tsx` の「AIのコメントはどうやって生成されますか？」) は「食事の栄養バランス、食材の組み合わせ、過去の記録などを総合的に分析し、良いところを見つけてコメントを生成しています」と答えるが、写真の記録の記録コメントは定型の文 (`buildTemplatePraiseAndTip`。§4.2 の根拠) で、この答えと食い違う (origin/main `cf6393c3` で確認) | 本冊の範囲外 (`/faq` は作り直さない: §1)。紹介ページの文は定型の文に合わせ (§4.4・§4.9)、`/faq` の答えの見直しは別の案件 (公開の主張の見直し) で決める。それまで紹介ページの FAQ にはこの質問を載せない |

@@ -4,16 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ほめゴハン | AIで食事管理をもっと簡単に (静的な試作)</title>
-<meta name="description" content="写真を撮るだけで、AI が食事の良いところを見つけて褒めてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。">
+<meta name="description" content="写真を撮るだけで、AI が料理を認識して栄養を推定し、記録するたびにほめてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。">
 <style>
 /* ────────────────────────────────────────────────────────────────
-   静的な試作: docs/design/marketing/01-landing-site.md v1.1
+   静的な試作: docs/design/marketing/01-landing-site.md v1.3
    文言と色は設計書と同じ。写真と実際の画面の枠は「何が入るか」の説明。
    外部の CDN・フォント・画像は読まない。
    ──────────────────────────────────────────────────────────────── */
 :root { color-scheme: light; }
 * { box-sizing: border-box; }
-html { scroll-behavior: smooth; }
+/* フォーカスの非遮蔽 (設計書 §9.1・§11 の 2.4.11)。アンカーへの移動にも Tab のフォーカスの移動にも効く。スクロールは本番と同じく瞬時 (smooth にしない) */
+html:has(.lp) { scroll-padding-top: 6rem; }
+@media (max-width: 767.98px) { html:has(.lp) { scroll-padding-bottom: 6rem; } }
 body { margin: 0; }
 
 .lp {
@@ -43,7 +45,7 @@ body { margin: 0; }
 .lp .lp-eyebrow { font-size: 0.875rem; font-weight: 700; color: var(--lp-accent-ink); letter-spacing: 0.02em; }
 .lp .lp-headline-accent { background: linear-gradient(100deg, var(--lp-accent-ink), #C4573C); -webkit-background-clip: text; background-clip: text; color: transparent; }
 .lp .lp-container { max-width: var(--lp-max-width); margin-inline: auto; padding-inline: var(--lp-gutter); }
-.lp .lp-section { padding-block: var(--lp-section-y); scroll-margin-top: 6rem; }
+.lp .lp-section { padding-block: var(--lp-section-y); }
 .lp .lp-section-head { max-width: 40rem; margin-bottom: 2.5rem; }
 .lp .lp-section-head h2 { margin-bottom: 0.75rem; }
 .lp .lp-tint { background: var(--lp-bg-tint); }
@@ -58,7 +60,7 @@ body { margin: 0; }
 .lp .lp-cta--primary { background: var(--lp-ink); color: #FFFFFF; box-shadow: 0 10px 24px -12px rgba(45,45,45,.6); }
 .lp .lp-cta--secondary { background: var(--lp-surface); color: var(--lp-ink); border: 1px solid var(--lp-line); }
 .lp .lp-cta--on-dark { background: var(--lp-accent-soft); color: var(--lp-dark); }
-.lp .lp-cta--compact { min-height: 2.5rem; padding: 0.5rem 1.125rem; font-size: 0.875rem; }
+.lp .lp-cta--compact { min-height: 2.75rem; padding: 0.5rem 1.125rem; font-size: 0.875rem; }
 .lp .lp-cta:hover { transform: translateY(-1px); }
 .lp .lp-cta:active { transform: scale(0.98); }
 .lp :focus-visible { outline: 2px solid var(--lp-ink); outline-offset: 2px; box-shadow: 0 0 0 6px #FFFFFF; }
@@ -74,11 +76,11 @@ body { margin: 0; }
 .lp .lp-nav { display: none; }
 @media (min-width: 768px) { .lp .lp-nav { display: block; } }
 .lp .lp-nav ul { display: flex; gap: 1.5rem; font-size: 0.875rem; font-weight: 500; }
-.lp .lp-nav a { text-decoration: none; padding: 0.75rem 0; display: inline-block; }
+.lp .lp-nav a { text-decoration: none; display: inline-flex; align-items: center; min-height: 2.75rem; }
 .lp .lp-nav a:hover { text-decoration: underline; }
 .lp .lp-header-right { display: flex; align-items: center; gap: 0.5rem; }
-.lp .lp-login { display: none; font-size: 0.875rem; font-weight: 500; text-decoration: none; padding: 0.5rem 0.75rem; }
-@media (min-width: 640px) { .lp .lp-login { display: inline-block; } }
+.lp .lp-login { display: none; align-items: center; min-height: 2.75rem; font-size: 0.875rem; font-weight: 500; text-decoration: none; padding: 0 0.75rem; }
+@media (min-width: 640px) { .lp .lp-login { display: inline-flex; } }
 
 /* ヒーロー */
 .lp .lp-hero { position: relative; padding-block: clamp(2.5rem, 8vw, 6rem) var(--lp-section-y); overflow: clip; }
@@ -107,22 +109,25 @@ body { margin: 0; }
 @keyframes lp-slide-2 { 0%, 31% { opacity: 0; } 38%, 64% { opacity: 1; } 71%, 100% { opacity: 0; } }
 @keyframes lp-slide-3 { 0%, 64% { opacity: 0; } 71%, 93% { opacity: 1; } 100% { opacity: 0; } }
 .lp .lp-hero-slide { position: absolute; inset: 0; opacity: 0; animation-duration: 8.4s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
-.lp .lp-hero-slide:nth-child(1) { animation-name: lp-slide-1; }
-.lp .lp-hero-slide:nth-child(2) { animation-name: lp-slide-2; }
-.lp .lp-hero-slide:nth-child(3) { animation-name: lp-slide-3; }
 /* 止める (WCAG 2.2.2)。止める操作 (checkbox) が入っている間・ホバー中・中にフォーカスがある間 (設計書 §9.1) */
 .lp .lp-hero-media:has(.lp-hero-pause input:checked) :is(.lp-hero-slide, .lp-dots span),
 .lp .lp-hero-media:hover :is(.lp-hero-slide, .lp-dots span),
 .lp .lp-hero-media:focus-within :is(.lp-hero-slide, .lp-dots span) { animation-play-state: paused; }
 .lp .lp-hero-pause-row { text-align: center; }
 .lp .lp-hero-pause { display: inline-flex; align-items: center; gap: 0.5rem; min-height: 2.75rem; font-size: 0.875rem; color: var(--lp-ink-soft); cursor: pointer; }
-.lp .lp-hero-pause input { width: 1.25rem; height: 1.25rem; accent-color: var(--lp-accent-ink); }
+.lp .lp-hero-pause input { width: 1.5rem; height: 1.5rem; margin: 0; accent-color: var(--lp-accent-ink); }
 .lp .lp-dots { display: flex; justify-content: center; gap: 0.375rem; margin-top: 0.75rem; }
 .lp .lp-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--lp-line); animation-duration: 8.4s; animation-iteration-count: infinite; animation-timing-function: ease-in-out; }
 @keyframes lp-dot-1 { 0%, 31% { background: var(--lp-accent-ink); } 38%, 100% { background: var(--lp-line); } }
 @keyframes lp-dot-2 { 0%, 31% { background: var(--lp-line); } 38%, 64% { background: var(--lp-accent-ink); } 71%, 100% { background: var(--lp-line); } }
 @keyframes lp-dot-3 { 0%, 64% { background: var(--lp-line); } 71%, 93% { background: var(--lp-accent-ink); } 100% { background: var(--lp-line); } }
-.lp .lp-dots span:nth-child(1) { animation-name: lp-dot-1; } .lp .lp-dots span:nth-child(2) { animation-name: lp-dot-2; } .lp .lp-dots span:nth-child(3) { animation-name: lp-dot-3; }
+/* keyframes を付けるのは動きを減らす設定でないときだけ (:nth-child の規則は詳細度が高く、reduce の animation: none では上書きできないため。設計書 §9.1) */
+@media (prefers-reduced-motion: no-preference) {
+  .lp .lp-hero-slide:nth-child(1) { animation-name: lp-slide-1; }
+  .lp .lp-hero-slide:nth-child(2) { animation-name: lp-slide-2; }
+  .lp .lp-hero-slide:nth-child(3) { animation-name: lp-slide-3; }
+  .lp .lp-dots span:nth-child(1) { animation-name: lp-dot-1; } .lp .lp-dots span:nth-child(2) { animation-name: lp-dot-2; } .lp .lp-dots span:nth-child(3) { animation-name: lp-dot-3; }
+}
 .lp .lp-caption { text-align: center; margin-top: 0.5rem; }
 
 /* 画面の絵 (試作用。本物は public/guide の PNG) */
@@ -244,13 +249,13 @@ body { margin: 0; }
 .lp .lp-final .lp-disclaimer { color: var(--lp-on-dark-muted); font-size: 0.8125rem; margin-top: 2rem; }
 
 /* フッター */
-.lp .lp-footer { background: var(--lp-surface); border-top: 1px solid var(--lp-line); padding: 3rem 0 calc(3rem + 4.5rem); }
+.lp .lp-footer { background: var(--lp-surface); border-top: 1px solid var(--lp-line); padding: 3rem 0 calc(6rem + env(safe-area-inset-bottom)); }
 @media (min-width: 768px) { .lp .lp-footer { padding-bottom: 3rem; } }
 .lp .lp-footer-grid { display: grid; gap: 2rem; }
 @media (min-width: 768px) { .lp .lp-footer-grid { grid-template-columns: 2fr 1fr 1fr 1fr; } }
 .lp .lp-footer h3 { font-size: 0.9375rem; margin-bottom: 0.75rem; }
 .lp .lp-footer li { font-size: 0.875rem; margin-bottom: 0.5rem; }
-.lp .lp-footer li a { text-decoration: none; color: var(--lp-ink-soft); display: inline-block; padding: 0.25rem 0; }
+.lp .lp-footer li a { text-decoration: none; color: var(--lp-ink-soft); display: inline-flex; align-items: center; min-height: 1.5rem; }
 .lp .lp-footer li a:hover { text-decoration: underline; }
 .lp .lp-footer-bottom { border-top: 1px solid var(--lp-line); margin-top: 2rem; padding-top: 1.5rem; font-size: 0.8125rem; color: var(--lp-ink-soft); }
 
@@ -264,10 +269,7 @@ body { margin: 0; }
 /* 動きを減らす設定 (globals.css と同じ扱い + 画面の連続は 3 枚目だけ) */
 @media (prefers-reduced-motion: reduce) {
   .lp *, .lp *::before, .lp *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
-  html { scroll-behavior: auto; }
-  .lp .lp-hero-slide { animation: none; }
   .lp .lp-hero-slide:nth-child(3) { opacity: 1; }
-  .lp .lp-dots span { animation: none; }
   .lp .lp-dots span:nth-child(3) { background: var(--lp-accent-ink); }
   /* globals.css が止めないもの: 遅れ・スクロール連動 (設計書 §9.1 の reduce のブロック) */
   .lp *, .lp *::before, .lp *::after { animation-delay: 0s !important; transition-delay: 0s !important; }
@@ -279,7 +281,7 @@ body { margin: 0; }
 </style>
 </head>
 <body>
-<div class="proto-note">静的な試作 — <code>docs/design/marketing/01-landing-site.md</code> v1.1。文言と色は設計書と同じ。斜線の枠は、写真と実際の画面の置き場 (何が入るかを書いてあります)。</div>
+<div class="proto-note">静的な試作 — <code>docs/design/marketing/01-landing-site.md</code> v1.3。文言と色は設計書と同じ。斜線の枠は、写真と実際の画面の置き場 (何が入るかを書いてあります)。</div>
 <div class="lp">
 
 <!-- ヘッダー -->
@@ -311,7 +313,7 @@ body { margin: 0; }
     <div class="lp-hero-copy">
       <p class="lp-eyebrow lp-hero-rise" style="--lp-i:0">褒めて伸ばす、AI 食事記録アプリ</p>
       <h1 id="hero-title" class="lp-hero-rise" style="--lp-i:1">食べることを、<br><span class="lp-headline-accent">もっと誇らしく。</span></h1>
-      <p class="lp-lead lp-hero-rise" style="--lp-i:2">写真を撮るだけ。AI があなたの食事を見て、良いところを見つけて褒めます。栄養のことは、ひと言のメモで添えます。</p>
+      <p class="lp-lead lp-hero-rise" style="--lp-i:2">写真を撮るだけ。AI が料理を認識して、栄養を推定します。記録するたびに、ほめるひと言と、栄養のひと言メモが添えられます。</p>
       <div class="lp-hero-ctas lp-hero-rise" style="--lp-i:3">
         <a class="lp-cta lp-cta--primary" href="#signup">無料で始める</a>
         <a class="lp-cta lp-cta--secondary" href="#demo">デモを試す</a>
@@ -327,8 +329,8 @@ body { margin: 0; }
         <div class="lp-phone-screen">
           <div class="lp-hero-slides">
             <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">食事を記録</div><div class="screen-body"><div class="screen-photo">食事の写真</div><div class="screen-btn">この写真で記録する</div><div class="screen-ph">実際の画面: <code>/guide/camera.png</code><br>(食事の写真を選んだ撮影の画面)</div></div></div></div>
-            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span><span>380 kcal</span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span><span>12 g</span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:95%;background:var(--lp-green)"></i></span><span>95</span></div><div class="screen-row"><span class="screen-score">92</span><span>バランスの良い一食です</span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code><br>(食事の写真の解析結果の画面)</div></div></div></div>
-            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">AI からのコメント</div><div class="screen-body"><div class="screen-bubble">彩りがきれいなサラダボウルですね。葉野菜にアボカドとトマトが加わって、ひと皿で何種類もの野菜がとれています。</div><div class="screen-bubble" style="background:#EDF5ED">主食・主菜・副菜のそろえ方が上手です。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント)</div></div></div></div>
+            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span><span>380 kcal</span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span><span>12 g</span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:95%;background:var(--lp-green)"></i></span><span>95</span></div><div class="screen-row"><span class="screen-score">92</span><span>素晴らしい！</span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code><br>(食事の写真の解析結果の画面)</div></div></div></div>
+            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-bubble">サラダボウルの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです。</div><div class="screen-bubble" style="background:#EDF5ED">栄養メモ: 食事を記録して振り返ること自体が、バランス改善の近道です。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント)</div></div></div></div>
           </div>
         </div>
       </div>
@@ -337,7 +339,6 @@ body { margin: 0; }
       <div class="lp-hero-pause-row"><label class="lp-hero-pause"><input type="checkbox">画面の切り替えを止める</label></div>
     </div>
   </div>
-  <span id="hero-end" aria-hidden="true"></span>
 </section>
 
 <!-- 使い方 -->
@@ -353,7 +354,7 @@ body { margin: 0; }
           <div class="lp-phone"><div class="lp-phone-screen" id="story-screens">
             <div class="screen is-active"><div class="screen-bar">食事を記録</div><div class="screen-body"><div class="screen-photo">食事の写真</div><div class="screen-btn">この写真で記録する</div><div class="screen-ph">実際の画面: <code>/guide/camera.png</code></div></div></div>
             <div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span><span>380 kcal</span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span><span>12 g</span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:95%;background:var(--lp-green)"></i></span><span>95</span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code></div></div></div>
-            <div class="screen"><div class="screen-bar">AI からのコメント</div><div class="screen-body"><div class="screen-bubble">彩りがきれいなサラダボウルですね。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code></div></div></div>
+            <div class="screen"><div class="screen-bar">記録コメント</div><div class="screen-body"><div class="screen-bubble">サラダボウルの記録がしっかりできていて素晴らしいです。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code></div></div></div>
           </div></div>
         </div>
       </div>
@@ -373,7 +374,7 @@ body { margin: 0; }
         <li class="lp-step" data-step="2">
           <div style="width:100%">
             <div class="lp-step-mobile-phone"><div class="ph" style="aspect-ratio:4/3;border-radius:1rem">実際の画面: <code>/guide/comment.png</code>（解析結果の記録コメント）</div></div>
-            <div class="lp-step-card lp-reveal"><span class="lp-step-num" aria-hidden="true">3</span><div><h3>褒められる</h3><p class="lp-note" style="margin-top:.5rem;font-size:1rem">記録の画面に、AI からのほめるひと言が添えられます。献立の振り返りでも、良いところを見つけて言葉にします。</p></div></div>
+            <div class="lp-step-card lp-reveal"><span class="lp-step-num" aria-hidden="true">3</span><div><h3>褒められる</h3><p class="lp-note" style="margin-top:.5rem;font-size:1rem">記録の画面に、記録をほめるひと言が添えられます。献立の振り返りでは、AI が良いところを見つけて言葉にします。</p></div></div>
           </div>
         </li>
       </ol>
@@ -387,20 +388,20 @@ body { margin: 0; }
     <div class="lp-section-head lp-reveal">
       <p class="lp-eyebrow">試してみる</p>
       <h2 id="demo-title">褒められるって、こういうこと。</h2>
-      <p class="lp-lead">写真を 1 枚選ぶと、AI のコメントのサンプルが出ます。</p>
+      <p class="lp-lead">写真を 1 枚選ぶと、記録の画面に出る内容のサンプルが出ます。</p>
     </div>
     <div class="lp-demo-grid lp-reveal">
       <div class="lp-card">
         <h3>食事の写真を選ぶ</h3>
         <div class="lp-picker" role="group" aria-label="食事の写真を選ぶ" id="demo-picker">
-          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salad-bowl"><span class="ph">写真: <code>/marketing/photos/salad-bowl.webp</code><br>(葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル)</span><span class="lp-photo-name">彩り野菜のサラダボウル</span></button>
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salad-bowl"><span class="ph">写真: <code>/marketing/photos/salad-bowl.webp</code><br>(葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル)</span><span class="lp-photo-name">サラダボウル</span></button>
           <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salmon-plate"><span class="ph">写真: <code>/marketing/photos/salmon-plate.webp</code><br>(焼いたサーモンといんげんとミニトマトを盛り合わせたプレート)</span><span class="lp-photo-name">サーモンのプレート</span></button>
           <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="pesto-pasta"><span class="ph">写真: <code>/marketing/photos/pesto-pasta.webp</code><br>(バジルソースのファルファッレとミニトマトと葉野菜)</span><span class="lp-photo-name">バジルのパスタ</span></button>
         </div>
-        <p class="lp-note" style="margin-top:1rem">表示はサンプルです。実際の結果は写真によって変わり、数値は推定です。</p>
+        <p class="lp-note" style="margin-top:1rem">表示はサンプルです。実際のアプリでは、写真から AI が認識した料理の名前が入り、数値は推定です。</p>
       </div>
       <div class="lp-card lp-result" role="status" aria-live="polite" id="demo-result">
-        <p class="lp-note">写真を選ぶと、ここにコメントが出ます。</p>
+        <p class="lp-note">写真を選ぶと、ここに記録コメントが出ます。</p>
       </div>
     </div>
   </div>
@@ -415,7 +416,7 @@ body { margin: 0; }
     </div>
     <div class="lp-bento lp-reveal" data-stagger>
       <article class="lp-feature is-large"><div class="ph">実際の画面: <code>/guide/analyze.png</code>（食事の写真の解析結果の画面）</div><h3>写真で記録</h3><p class="lp-note" style="font-size:.9375rem">撮るだけで、AI が料理を認識して栄養を推定します。面倒な入力はいりません。</p></article>
-      <article class="lp-feature is-large"><div class="ph">実際の画面: <code>/guide/comment.png</code>（解析結果の記録コメント）</div><h3>AI が褒める</h3><p class="lp-note" style="font-size:.9375rem">まず、良いところを言葉にします。栄養のことは「栄養メモ」でひと言だけ。</p></article>
+      <article class="lp-feature is-large"><div class="ph">実際の画面: <code>/guide/comment.png</code>（解析結果の記録コメント）</div><h3>ほめるひと言</h3><p class="lp-note" style="font-size:.9375rem">記録するたびに、ほめるひと言が添えられます。献立の振り返りでは、AI が良いところを見つけて言葉にします。栄養のことは「栄養メモ」でひと言だけ。</p></article>
       <article class="lp-feature is-medium"><div class="ph">実際の画面: <code>/guide/menu-result.png</code>（1 週間分の献立が入った献立表）</div><h3>1週間の献立を AI が提案</h3><p class="lp-note" style="font-size:.9375rem">「今日なに作ろう」を、AI 献立アシスタントが引き受けます。冷蔵庫優先・時短中心・和食多めなどの条件も選べます。</p></article>
       <article class="lp-feature is-medium"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg></div><h3>買い物リスト</h3><p class="lp-note" style="font-size:.9375rem">献立から買い物リストを作ります。スーパーで迷いません。</p></article>
       <article class="lp-feature is-medium"><div class="ph">実際の画面: <code>/guide/trend.png</code>（体重の推移のグラフ）</div><h3>体重と健康の記録</h3><p class="lp-note" style="font-size:.9375rem">体重は体重計の写真からも記録できます。推移はグラフで。健康診断の結果も写真から取り込めます。</p></article>
@@ -450,7 +451,7 @@ body { margin: 0; }
     <div class="lp-section-head lp-reveal"><h2 id="trust-title">正直に、お伝えします。</h2></div>
     <div class="lp-trust lp-reveal" data-stagger>
       <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>いまは無料で使えます</h3><p>現在ご提供している機能は、すべて無料です。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。</p></div>
-      <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>データの取り扱い</h3><p>写真や記録の保存と第三者への提供については、プライバシーポリシーをご確認ください。</p><a href="#privacy">プライバシーポリシーを読む</a></div>
+      <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>データの取り扱い</h3><p>写真や記録の保存と第三者への提供については、プライバシーポリシーをご確認ください。</p><a href="#privacy" style="display:inline-flex;align-items:center;min-height:1.5rem">プライバシーポリシーを読む</a></div>
       <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg></div><h3>AI の分析は推定です</h3><p>料理や撮影の条件によって、実際の値と異なることがあります。医療目的での使用はお控えください。</p></div>
       <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"/></svg></div><h3>退会と書き出し</h3><p>設定からいつでも退会できます。記録したデータは JSON 形式で書き出せます。</p></div>
     </div>
@@ -473,7 +474,7 @@ body { margin: 0; }
 <section class="lp-section lp-final" id="cta" aria-labelledby="cta-title">
   <div class="lp-container lp-reveal">
     <h2 id="cta-title">明日の食事が、楽しみになる。</h2>
-    <p class="lp-lead">まずは 3 日、写真を撮ってみてください。記録するたびに、AI のひと言が添えられます。</p>
+    <p class="lp-lead">まずは 3 日、写真を撮ってみてください。記録するたびに、ほめるひと言が添えられます。</p>
     <a class="lp-cta lp-cta--on-dark" href="#signup">無料で始める</a>
     <ul class="lp-assurances">
       <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>いまは無料で使えます</li>
@@ -492,7 +493,7 @@ body { margin: 0; }
     <div class="lp-footer-grid">
       <div>
         <a class="lp-brand" href="#top"><span class="lp-mark" aria-hidden="true"></span><span>ほめゴハン</span></a>
-        <p class="lp-note" style="margin-top:.75rem;max-width:22rem">写真を撮るだけで、AI が食事の良いところを見つけて褒める、食事記録アプリ。</p>
+        <p class="lp-note" style="margin-top:.75rem;max-width:22rem">写真を撮るだけで、AI が料理を認識して、記録をほめてくれる食事記録アプリ。</p>
       </div>
       <div><h3>サービス</h3><ul><li><a href="#about">サービスについて</a></li><li><a href="#signup">新規登録</a></li><li><a href="#login">ログイン</a></li><li><a href="#pricing">料金プラン</a></li></ul></div>
       <div><h3>サポート</h3><ul><li><a href="#guide">使い方ガイド</a></li><li><a href="#contact">お問い合わせ</a></li><li><a href="#faq">よくある質問</a></li><li><a href="#news">お知らせ</a></li></ul></div>
@@ -523,14 +524,19 @@ body { margin: 0; }
   var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
 
   // ── 文言 (設計書 §4.4・§4.6 と同じ) ──
+  // 記録コメントは、アプリの定型の文と同じ形で作る (設計書 §9.2 の demoPraiseComment。料理の中身は褒めない)
+  var DEMO_PRAISE_MAX_DISHES = 2;
+  function demoPraiseComment(s) {
+    return s.dishNames.slice(0, DEMO_PRAISE_MAX_DISHES).join('、') + 'の記録' + 'がしっかりできていて素晴らしいです。' + s.mealTypeLabel + 'を丁寧に残せていて、とても良い流れです' + '。';
+  }
   var SAMPLES = {
-    'salad-bowl': { name: '彩り野菜のサラダボウル', score: 92, comment: '彩りがきれいなサラダボウルですね。葉野菜にアボカドとトマト、豆まで加わって、ひと皿で何種類もの野菜がとれています。', n: [380, 12, 22, 28, 95] },
-    'salmon-plate': { name: 'サーモンのプレート', score: 90, comment: '焼いたサーモンに、いんげんとミニトマト。主菜と野菜がひと皿にそろって、彩りもきれいです。', n: [480, 30, 20, 40, 85] },
-    'pesto-pasta': { name: 'バジルのパスタ', score: 84, comment: 'バジルの緑にミニトマトの赤が映えて、彩りのきれいなパスタですね。葉野菜も添えられていて、ひと皿で野菜もとれています。', n: [610, 17, 26, 74, 55] }
+    'salad-bowl': { name: 'サラダボウル', score: 92, dishNames: ['サラダボウル'], mealTypeLabel: '昼食', n: [380, 12, 22, 28, 95] },
+    'salmon-plate': { name: 'サーモンのプレート', score: 90, dishNames: ['焼きサーモン', 'いんげんとミニトマト'], mealTypeLabel: '夕食', n: [480, 30, 20, 40, 85] },
+    'pesto-pasta': { name: 'バジルのパスタ', score: 84, dishNames: ['バジルソースのパスタ'], mealTypeLabel: '昼食', n: [610, 17, 26, 74, 55] }
   };
   var NUTRI = [['カロリー', ' kcal'], ['タンパク質', ' g'], ['脂質', ' g'], ['炭水化物', ' g'], ['野菜スコア', '']];
   var FAQS = [
-    ['本当に無料で使えますか？', 'はい。現在ご提供している機能は、写真の記録、AI のコメント、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。'],
+    ['本当に無料で使えますか？', 'はい。現在ご提供している機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。'],
     ['どんな写真を撮ればいいですか？', '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で撮ると、料理を認識しやすくなります。'],
     ['データは安全ですか？', 'データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。'],
     ['家族で使えますか？', 'はい。家族を招待して、献立を一緒に見たり、記録を共有したりできます。'],
@@ -594,14 +600,14 @@ body { margin: 0; }
       b.disabled = state.phase === 'analyzing';
     });
     if (state.phase === 'idle') {
-      result.innerHTML = '<p class="lp-note">写真を選ぶと、ここにコメントが出ます。</p>';
+      result.innerHTML = '<p class="lp-note">写真を選ぶと、ここに記録コメントが出ます。</p>';
     } else if (state.phase === 'analyzing') {
       var ms = reduced.matches ? DEMO_ANALYZING_MS_REDUCED : DEMO_ANALYZING_MS;
       result.innerHTML = '<div class="lp-fade-in"><p style="font-weight:700"><span class="lp-spin" aria-hidden="true"></span>AI が見ています…</p><p class="lp-note">料理を認識して、栄養を推定しています</p><div class="lp-demo-track"><div class="lp-demo-progress" style="--lp-demo-ms:' + ms + 'ms"></div></div></div>';
     } else {
       var s = SAMPLES[state.sampleId];
       var nutri = s.n.map(function (v, i) { return '<div style="--lp-i:' + i + '"><dt>' + NUTRI[i][0] + '</dt><dd>' + v + NUTRI[i][1] + '</dd></div>'; }).join('');
-      result.innerHTML = '<div class="lp-fade-in"><div class="lp-result-score"><strong>' + s.score + '</strong><span style="font-weight:700">' + s.name + '</span></div><h3 style="margin-top:1rem">AI からのコメント</h3><p style="margin-top:.5rem">' + s.comment + '</p><h3 style="margin-top:1rem">推定の栄養</h3><dl class="lp-nutri">' + nutri + '</dl><a class="lp-cta lp-cta--primary" href="#signup" style="margin-top:1.5rem">自分の食事で試す</a></div>';
+      result.innerHTML = '<div class="lp-fade-in"><div class="lp-result-score"><strong>' + s.score + '</strong><span style="font-weight:700">' + s.name + '</span></div><h3 style="margin-top:1rem">記録コメント</h3><p style="margin-top:.5rem">' + demoPraiseComment(s) + '</p><h3 style="margin-top:1rem">推定の栄養</h3><dl class="lp-nutri">' + nutri + '</dl><a class="lp-cta lp-cta--primary" href="#signup" style="margin-top:1.5rem">自分の食事で試す</a></div>';
     }
   }
   picker.addEventListener('click', function (ev) {
@@ -636,19 +642,20 @@ body { margin: 0; }
     });
   });
 
-  // ── 固定 CTA (M-8): ヒーローの番兵が画面から出たら出す ──
+  // ── 固定 CTA (M-8): ヒーローの箱 (#hero。ページの先頭) の全体が画面の上へ出たら出す。
+  //    箱全体を見るので、#demo などのリンクで一気に移っても、先頭へ一気に戻っても、交差の有無が変わって通知が来る ──
   var sticky = document.getElementById('sticky-cta');
-  var heroEnd = document.getElementById('hero-end');
+  var heroBox = document.getElementById('hero');
   if ('IntersectionObserver' in window) {
     var ctaIo = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
-        var visible = !e.isIntersecting && e.boundingClientRect.top < 0;
+        var visible = !e.isIntersecting && e.boundingClientRect.bottom < 0;
         sticky.classList.toggle('is-visible', visible);
         sticky.setAttribute('aria-hidden', String(!visible));
         if (visible) sticky.removeAttribute('inert'); else sticky.setAttribute('inert', '');
       });
     }, { threshold: 0 });
-    ctaIo.observe(heroEnd);
+    ctaIo.observe(heroBox);
   }
 })();
 </script>
