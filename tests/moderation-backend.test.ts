@@ -519,4 +519,67 @@ describe('moderation-backend', () => {
       await expect(countModeration(supabase as never, 'recipe', 'pending')).rejects.toBeTruthy();
     });
   });
+  describe('#1538 hidden_at (隠れているかを返す)', () => {
+    it('#1538 food: meals.hidden_at を hidden_at として返す (無ければ null)。select は meals(user_id, photo_url, hidden_at)', async () => {
+      const supabase = createFakeSupabase({
+        moderation_flags: [
+          {
+            data: [
+              {
+                id: 'flag-hidden',
+                status: 'rejected',
+                meal_id: 'meal-1',
+                created_at: '2026-01-01T00:00:00Z',
+                meals: { user_id: 'owner-1', photo_url: null, hidden_at: '2026-10-01T00:00:00+00:00' },
+              },
+              {
+                id: 'flag-shown',
+                status: 'pending',
+                meal_id: 'meal-2',
+                created_at: '2026-01-02T00:00:00Z',
+                meals: { user_id: 'owner-2', photo_url: null, hidden_at: null },
+              },
+              {
+                id: 'flag-no-meal',
+                status: 'pending',
+                meal_id: null,
+                created_at: '2026-01-03T00:00:00Z',
+                meals: null,
+              },
+            ],
+            error: null,
+          },
+        ],
+      });
+
+      const items = await fetchModerationList(supabase as never, 'food', 'rejected', 50);
+
+      expect(items.map((item) => item.hidden_at)).toEqual(['2026-10-01T00:00:00+00:00', null, null]);
+      const builder = supabase.from.mock.results[0]!.value as { select: ReturnType<typeof vi.fn> };
+      expect(builder.select).toHaveBeenCalledWith('*, meals(user_id, photo_url, hidden_at)');
+    });
+
+    it('#1538 recipe: recipes.hidden_at を hidden_at として返す。select は recipes(user_id, image_url, hidden_at)', async () => {
+      const supabase = createFakeSupabase({
+        recipe_flags: [
+          {
+            data: {
+              id: 'rflag-1',
+              status: 'rejected',
+              recipe_id: 'recipe-1',
+              created_at: '2026-01-01T00:00:00Z',
+              recipes: { user_id: 'owner-1', image_url: null, hidden_at: '2026-10-02T03:04:05+00:00' },
+            },
+            error: null,
+          },
+        ],
+      });
+
+      const item = await fetchModerationSingle(supabase as never, 'recipe', 'rflag-1');
+
+      expect(item?.hidden_at).toBe('2026-10-02T03:04:05+00:00');
+      const builder = supabase.from.mock.results[0]!.value as { select: ReturnType<typeof vi.fn> };
+      expect(builder.select).toHaveBeenCalledWith('*, recipes(user_id, image_url, hidden_at)');
+    });
+  });
 });

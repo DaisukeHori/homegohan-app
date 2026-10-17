@@ -27,6 +27,12 @@ type OwnedEdit = {
 
 const OWNED_EDITS: readonly OwnedEdit[] = [
   {
+    // operator/13 §17.1: 02 §5 の delete_* の説明の 1 行。オーケストレーターの docs PR が持つ
+    owner: 'docs/design/operator/13-hidden-content-restore.md',
+    target: 'docs/design/operator/02-api-spec.md',
+    pattern: /「(`approve` \/ `escalate` は何も隠さない[^」]*)」→「([^」]*)」/,
+  },
+  {
     // cross/16 v1.8 (#1798) §23: 段 B の追随。§21.3 の段 B の行・§0.2 の段 B の行も同じ書き換えを指す
     owner: 'docs/design/cross/16-auth-history-sessions.md',
     target: 'docs/design/cross/01-auth-session.md',
