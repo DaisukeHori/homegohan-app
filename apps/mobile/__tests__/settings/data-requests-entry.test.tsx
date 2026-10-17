@@ -119,24 +119,13 @@ describe('アカウントの画面 — 開示・訂正・利用停止の請求�
   it('退会のボタンより上 (危険な操作の前) に並ぶ', () => {
     render(<AccountSettingsPage />);
 
-    const ids: string[] = [];
-    const walk = (node: ReturnType<typeof screen.toJSON>): void => {
-      if (!node) return;
-      if (Array.isArray(node)) {
-        node.forEach(walk);
-        return;
-      }
-      const testID = node.props?.testID;
-      if (typeof testID === 'string') ids.push(testID);
-      (node.children ?? []).forEach((child) => {
-        if (typeof child !== 'string') walk(child);
-      });
-    };
-    walk(screen.toJSON());
-
-    expect(ids).toContain('account-data-requests-row');
-    expect(ids).toContain('account-delete-button');
-    expect(ids.indexOf('account-data-requests-row')).toBeLessThan(ids.indexOf('account-delete-button'));
+    // 描いた木を JSON にした文字列は、木の上から順 (画面の上から順) に並ぶ
+    const rendered = JSON.stringify(screen.toJSON());
+    const rowAt = rendered.indexOf('"testID":"account-data-requests-row"');
+    const deleteAt = rendered.indexOf('"testID":"account-delete-button"');
+    expect(rowAt).toBeGreaterThanOrEqual(0);
+    expect(deleteAt).toBeGreaterThanOrEqual(0);
+    expect(rowAt).toBeLessThan(deleteAt);
   });
 });
 
