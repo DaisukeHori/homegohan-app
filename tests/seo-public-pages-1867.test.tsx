@@ -374,13 +374,13 @@ describe('#1867 トップの構造化データ (JSON-LD)', () => {
   });
 
   it('serializeJsonLd は script 要素を閉じる文字を \\uXXXX にし、JSON として読むと元の値に戻る', () => {
-    const tricky = { name: '</script><script>alert(1)</script> &   ' };
+    const tricky = { name: '</script><script>alert(1)</script> & \u2028\u2029' };
     const serialized = serializeJsonLd(tricky);
     expect(serialized).not.toContain('<');
     expect(serialized).not.toContain('>');
     expect(serialized).not.toContain('&');
-    expect(serialized).not.toContain(' ');
-    expect(serialized).not.toContain(' ');
+    expect(serialized).not.toContain('\u2028');
+    expect(serialized).not.toContain('\u2029');
     expect(JSON.parse(serialized)).toEqual(tricky);
     const site = buildSiteJsonLd(EXAMPLE_SITE_URL);
     expect(JSON.parse(serializeJsonLd(site))).toEqual(site);
