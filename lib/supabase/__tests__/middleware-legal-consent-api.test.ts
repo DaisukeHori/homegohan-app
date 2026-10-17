@@ -124,11 +124,11 @@ function consentProfile(
   };
 }
 
-/** getUser() がトークンを更新したとき (createServerClient の cookies.set が呼ばれる) を再現する */
+/** getUser() がトークンを更新したとき (createServerClient の cookies.setAll が呼ばれる) を再現する */
 function mockGetUserRefreshingToken() {
   mockGetUser.mockImplementation(async () => {
     const options = mockCreateServerClient.mock.calls.at(-1)?.[2];
-    options.cookies.set('sb-test-auth-token', 'refreshed-token', { path: '/' });
+    options.cookies.setAll([{ name: 'sb-test-auth-token', value: 'refreshed-token', options: { path: '/' } }], {});
     return { data: { user: { id: 'user-1' } }, error: null };
   });
 }

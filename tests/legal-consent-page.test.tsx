@@ -568,7 +568,7 @@ describe('/legal-consent フォーム (クライアント側)', () => {
       expect(declineButton().disabled).toBe(false);
     });
 
-    it('★supabase-js が例外でなく { error } を返したとき (通信失敗。セッションは残る) も、「ログアウトしました」と案内せず、エラーを出す', async () => {
+    it('★supabase-js が例外でなく { error } を返したとき (通信失敗。サーバーのセッションは残る) も、「ログアウトしました」と案内せず、エラーを出す', async () => {
       mocks.signOut.mockResolvedValue({ error: { message: 'Failed to fetch', name: 'AuthRetryableFetchError', status: 0 } });
       await renderForm();
 
