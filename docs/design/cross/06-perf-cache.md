@@ -204,7 +204,7 @@ export async function invalidateUserPlanCache(userId: string): Promise<void> {
 | `POST /api/webhooks/stripe` | - (署名検証のみ。billing/01 §9.6) | - | - |
 | `POST /api/billing/*` (`checkout`・`checkout/sync`・`portal`・`subscription/cancel`・`subscription/resume`) | - | 10/min/user (`src/lib/rate-limit.ts` のカテゴリ `billing`。billing/01 §8.7・§9) | - |
 | `POST /api/csp-report` | 30/min/IP・300/日/IP (`src/lib/rate-limit.ts` のカテゴリ `csp-report`。cross/18 §9.5) | - | - |
-| `POST /api/v1/webhooks/resend` | - (署名検証のみ) | - | - |
+| `POST /api/webhooks/resend` | - (署名検証のみ) | - | - |
 | AI Edge Functions (knowledge-gpt 等) | - | プラン依存 (03 §5.5.3) | 制限なし |
 | デフォルト (その他全 API) | 30/min/IP | 120/min | 1200/min |
 
