@@ -5,7 +5,7 @@
 | v1.0 | 2026-10-15 | 新設 (Issue #1178 の設計ゲート・A 型 4 相) |
 | v1.1 | 2026-10-15 | 審査 R1 の反映: 本人の読める列を列の GRANT で絞る (admin_notes・hash)・運営の詳細は service_role で読む・利用停止の手段から凍結を外す・取り下げ / 再送 / 確認の UPDATE に状態の条件・既存の番兵 3 本を追随表へ・facade の型 |
 
-要件の正本は Issue #1178 の本文 (コメント 0 件)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
+要件の正本は Issue #1178 の本文 (コメントは閉じたときの記録の 1 件で、要件を足していない)。本書はその上で決めた範囲と設計で、Issue と食い違ったら本書が正。
 ファイル名 (cross/15) は設計ゲートの指定による (cross/ の既存は 01〜09 と 13a)。
 
 ---
@@ -312,13 +312,13 @@ DROP TABLE IF EXISTS public.data_subject_requests;
 
 | 操作 | anon | authenticated (本人) | authenticated (admin / super_admin) | service_role |
 |---|---|---|---|---|
-| SELECT | 不可 (権限なし) | 自分の行の 15 列 (`data_subject_requests_select_self` + 列の GRANT)。`admin_notes`・`verification_token_hash` は 42501 | 全行の 15 列 (`data_subject_requests_select_operator` + 列の GRANT)。`admin_notes`・`verification_token_hash` は 42501 | 全列 (BYPASSRLS。運営の詳細・更新はこの経路で `DSR_ADMIN_COLUMNS` を読む) |
+| SELECT | 不可 (権限なし) | 自分の行の 15 列 (`data_subject_requests_select_self` + 列の GRANT)。`admin_notes`・`verification_token_hash` は 42501 | 全行の 15 列 (`data_subject_requests_select_operator` + 列の GRANT。運営ロールの項は運営の MFA の判定 `operator_mfa_satisfied()` つき: TOTP を登録済みの本人は aal2 のセッションのときだけ。cross/12 §11.4・付録 A。migration `20261017130000_operator_mfa_db_gate.sql`)。`admin_notes`・`verification_token_hash` は 42501 | 全列 (BYPASSRLS。運営の詳細・更新はこの経路で `DSR_ADMIN_COLUMNS` を読む) |
 | INSERT / UPDATE | 不可 | 不可 (ポリシーも権限も無い) | 不可 | 可 (route が認証・認可のあとに `getSupabaseAdmin()` で行う) |
 | DELETE | 不可 | 不可 | 不可 | 不可 (権限を付けない) |
 
 列の GRANT のため、authenticated の `select=*` は 42501 になる。authenticated で読むコード (本人の一覧・詳細・運営の一覧・account-export) は必ず列を明示する (`DSR_OWN_COLUMNS` / `DSR_ADMIN_LIST_COLUMNS`。どちらも 15 列の中)。`DSR_ADMIN_COLUMNS` (`admin_notes` を含む) は service_role の client でしか読まない。
 
-authenticated の admin / super_admin は 2 本の SELECT ポリシーの OR で全行が見えるので、本人の画面のための読み取り (本人の一覧・詳細・account-export) は、どの client でも `user_id` で絞る (§7.2。account-export は `scope: self('user_id')` が絞る)。RLS は「user ロールが他人の行を読めない」守りで、本人の API の絞り込みの代わりにはならない。
+authenticated の admin / super_admin は 2 本の SELECT ポリシーの OR で全行が見える (TOTP を登録済みの本人は aal2 のセッションのとき。上の表) ので、本人の画面のための読み取り (本人の一覧・詳細・account-export) は、どの client でも `user_id` で絞る (§7.2。account-export は `scope: self('user_id')` が絞る)。RLS は「user ロールが他人の行を読めない」守りで、本人の API の絞り込みの代わりにはならない。
 
 ### 4.4 既存の書き出し・退会との関係 (R-10)
 

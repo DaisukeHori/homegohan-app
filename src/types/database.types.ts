@@ -8350,9 +8350,25 @@ export type Database = {
         }
         Returns: string
       }
+      billing_expire_manual_subscription_for_user: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
       billing_finish_stripe_event: {
         Args: { p_error?: string; p_event_id: string; p_ok: boolean }
         Returns: undefined
+      }
+      billing_grant_manual_subscription: {
+        Args: { p_expires_at?: string; p_plan_key: string; p_user_id: string }
+        Returns: Json
+      }
+      billing_manual_subscription_sync_after_end: {
+        Args: { p_plan_key: string; p_user_id: string }
+        Returns: undefined
+      }
+      billing_revoke_manual_subscription: {
+        Args: { p_user_id: string }
+        Returns: Json
       }
       calculate_segment_stats_finalize_retry_bodies: {
         Args: { p_at: string }

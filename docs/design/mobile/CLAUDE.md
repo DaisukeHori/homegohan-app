@@ -111,7 +111,7 @@ React Native + Expo SDK 53 によるモバイルアプリ:
 
 ### 修正
 - `_layout.tsx` に `Linking.addEventListener` 追加 (要件 §15.1)
-- `pushNotifications.ts` に `setBadgeCountAsync` 追加 (要件 §15.3)
+- `pushNotifications.ts` は `setBadgeCountAsync` を呼ばない (バッジはペイロードの `badge` を OS が付ける。いまの送信は `badge` を入れない: `03-push-notification.md` §3.5・`06-push-send.md` §1.2)
 - `storage.ts` に `uploadMealPhoto(file, familyGroupId?)` 追加 (要件 §15.2)
 - `(tabs)/settings.tsx` に通知種別 on/off UI 追加 (要件 §15.4)
 

@@ -504,7 +504,7 @@ appId: com.homegohan.app
 
 | 項目 | 優先度 | 担当 |
 |------|--------|------|
-| Android FCM Server Key の取得・EAS Secret 登録 | 高 | `06-push-send.md` の worker の本番投入の前に必要 (06 §14) |
+| Android FCM Server Key の取得・EAS Secret 登録 | 高 | 送信の worker (`GET /api/cron/push-outbox`) は本番の Vercel Cron に登録済み。ただし本番に `EXPO_ACCESS_TOKEN` が入るまでは、送らずに掃除だけをする (iOS・Android とも届かない。入れるのはオーナーの作業で、#1115)。Android はこれに加えて、FCM V1 の資格情報を EAS に登録してから実機で確かめる (`mobile/06-push-send.md` §14。登録までは Android の端末だけ届かない) |
 | ~~`pending_push_notifications` の pg_cron 送信バッチ (Quiet Hours 遅延送信)~~ | – | 解消済み: 表もバッチも作らない。夜間の延期は `push_outbox.next_attempt_at` で、毎分の worker が送る (06 §6.3) |
 | iOS の Rich Push (通知に画像表示) | 低 | Phase 2 |
 | Push 通知アクション (通知センターから直接「承認」ボタン) | 低 | iOS `categoryIdentifier` + Action Buttons で実装可能、Phase 2 |
