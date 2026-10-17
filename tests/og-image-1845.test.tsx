@@ -42,6 +42,19 @@ vi.mock('next/font/google', () => ({
 }));
 vi.mock('@vercel/speed-insights/next', () => ({ SpeedInsights: () => null }));
 
+// ImageResponse は本物のまま描かせ、渡された options (大きさ・フォント) だけを控える
+const { imageResponseOptions } = vi.hoisted(() => ({ imageResponseOptions: [] as Array<Record<string, unknown>> }));
+vi.mock('next/og', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('next/og')>();
+  class RecordingImageResponse extends actual.ImageResponse {
+    constructor(...args: ConstructorParameters<typeof actual.ImageResponse>) {
+      super(...args);
+      imageResponseOptions.push({ ...(args[1] ?? {}) });
+    }
+  }
+  return { ...actual, ImageResponse: RecordingImageResponse };
+});
+
 const require = createRequire(import.meta.url);
 const ROOT = path.resolve(__dirname, '..');
 
@@ -166,17 +179,46 @@ describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)',
   );
 
   it(
-    'フォントを取れたときと取れないときで、描いた中身が変わる (取ったフォントが描画に渡っている)',
+    '取れたフォントは太さごとに描画へ渡し、1 つも取れなければ fonts を渡さない (next/og の既定のフォントを外さない)',
     async () => {
-      const withFont = await readPng(await renderOgImage(fakeGoogleFontsFetch()));
-      const withoutFont = await readPng(
+      imageResponseOptions.length = 0;
+      await readPng(await renderOgImage(fakeGoogleFontsFetch()));
+      const withFont = imageResponseOptions.at(-1) as { fonts?: Array<{ name: string; weight: number; style: string; data: ArrayBuffer }> };
+      expect(withFont.fonts?.map(({ name, weight, style }) => ({ name, weight, style }))).toEqual(
+        expect.arrayContaining([
+          { name: OG_FONT_FAMILY, weight: 700, style: 'normal' },
+          { name: OG_FONT_FAMILY, weight: 400, style: 'normal' },
+        ]),
+      );
+      expect(withFont.fonts).toHaveLength(2);
+      expect(withFont.fonts?.every(({ data }) => data.byteLength > 0)).toBe(true);
+      expect(withFont).toMatchObject({ width: 1200, height: 630 });
+
+      await readPng(
         await renderOgImage(
           vi.fn(async () => {
             throw new TypeError('fetch failed');
           }),
         ),
       );
-      expect(withFont.bytes.equals(withoutFont.bytes)).toBe(false);
+      const withoutFont = imageResponseOptions.at(-1) as Record<string, unknown>;
+      expect('fonts' in withoutFont).toBe(false);
+      expect(withoutFont).toMatchObject({ width: 1200, height: 630 });
+    },
+    RENDER_TIMEOUT_MS,
+  );
+
+  it(
+    '片方の太さだけ取れたときは、取れた分だけ渡す',
+    async () => {
+      imageResponseOptions.length = 0;
+      const base = fakeGoogleFontsFetch();
+      const boldFails = vi.fn(async (input: RequestInfo | URL) =>
+        String(input).includes('wght@700') ? new Response('error', { status: 500 }) : base(input),
+      );
+      await readPng(await renderOgImage(boldFails));
+      const options = imageResponseOptions.at(-1) as { fonts?: Array<{ weight: number }> };
+      expect(options.fonts?.map(({ weight }) => weight)).toEqual([400]);
     },
     RENDER_TIMEOUT_MS,
   );
