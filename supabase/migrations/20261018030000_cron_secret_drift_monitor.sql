@@ -107,6 +107,7 @@ END $$;
 
 -- (2) 確認の結果。見る範囲 (p_lookback_minutes) の記録に net._http_response を要求 ID で突き合わせ、判定に要る項目だけを新しい順に返す。
 --     応答の本文は matched / previous_configured / alias_used / error / code の 5 項目だけを、各 64 字までで返す。headers と error_msg の本文は返さない。
+--     応答の無い行は、answered が false で、応答に由来する項目 (http_status / timed_out / has_error / 本文の 5 項目) はすべて NULL (「エラーなし」とは区別する)。
 CREATE OR REPLACE FUNCTION public.cron_secret_probe_results(p_lookback_minutes INTEGER DEFAULT 60, p_limit INTEGER DEFAULT 8)
 RETURNS TABLE (
   probe_id BIGINT, requested_at TIMESTAMPTZ, send_state TEXT, answered BOOLEAN,
@@ -134,7 +135,7 @@ BEGIN
     RETURN QUERY
     SELECT p.id, p.requested_at, p.send_state,
            (r.id IS NOT NULL),
-           r.status_code, r.timed_out, (r.error_msg IS NOT NULL),
+           r.status_code, r.timed_out, CASE WHEN r.id IS NOT NULL THEN (r.error_msg IS NOT NULL) END,
            pg_catalog.left(b.body ->> 'matched', c_body_field_max_length),
            CASE WHEN pg_catalog.jsonb_typeof(b.body -> 'previous_configured') = 'boolean' THEN (b.body ->> 'previous_configured')::boolean END,
            CASE WHEN pg_catalog.jsonb_typeof(b.body -> 'alias_used') = 'boolean' THEN (b.body ->> 'alias_used')::boolean END,

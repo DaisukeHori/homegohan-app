@@ -439,7 +439,7 @@ describe("cron の共有シークレットの確認 (#1560) — 段 B の契約 
     // headers は読まない。error_msg は IS NOT NULL の真偽だけ
     expect(body).not.toMatch(/\br\.headers\b/);
     const errorMsgUses = [...body.matchAll(/\br\.error_msg\b[^,\n]*/g)].map((match) => match[0].trim());
-    expect(errorMsgUses).toEqual(["r.error_msg IS NOT NULL)"]);
+    expect(errorMsgUses).toEqual(["r.error_msg IS NOT NULL) END"]);
   });
 
   it("CT-8: 引数の範囲と、アプリの定数が範囲の中。タイムアウト < 猶予、保持 > 見る範囲", () => {
