@@ -4,6 +4,7 @@ import type { ErrorBoundaryProps } from "expo-router";
 import { ActivityIndicator, Platform, View } from "react-native";
 
 import { colors } from "../../src/theme";
+import { useAccountFrozen } from "../../src/providers/AccountFrozenProvider";
 import { useAuth } from "../../src/providers/AuthProvider";
 import { useLegalConsent } from "../../src/providers/LegalConsentProvider";
 import { useProfile } from "../../src/providers/ProfileProvider";
@@ -25,6 +26,7 @@ export default function TabsLayout() {
   const { session, isLoading } = useAuth();
   const { isLoading: profileLoading, profile } = useProfile();
   const { state: legalConsentState } = useLegalConsent();
+  const { state: frozenState } = useAccountFrozen();
   // タブの見出しは react-navigation が中で Text を描くので、共通の部品と同じ字形に置き換えて渡す (#588)
   const tabBarLabelStyle = useFontStyle(TAB_BAR_LABEL_STYLE);
 
@@ -32,7 +34,15 @@ export default function TabsLayout() {
 
   // #1442: 同意の状態が分かるまで・同意が要る間は、タブ (WebView) と AI の FAB を描かない。
   // 描くと WebView の中で Web の同意画面が別に開く
-  if (isLoading || profileLoading || legalConsentState === "loading" || legalConsentState === "required") {
+  // #1861: 凍結の状態が分かるまで・凍結中も描かない (AccountFrozenGate が凍結の画面 1 つに畳む。描くとタブの API が凍結の 403 で失敗し続ける)
+  if (
+    isLoading ||
+    profileLoading ||
+    legalConsentState === "loading" ||
+    legalConsentState === "required" ||
+    frozenState === "loading" ||
+    frozenState === "frozen"
+  ) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
         <ActivityIndicator size="large" color={colors.accent} />

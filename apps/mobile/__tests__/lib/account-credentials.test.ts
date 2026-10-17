@@ -11,6 +11,7 @@
  */
 
 import { HttpNetworkError } from '@homegohan/core';
+import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 const mockSignInWithPassword = jest.fn();
 const mockUpdateUser = jest.fn();
@@ -182,12 +183,26 @@ describe('changePassword — 入力の検証 (API を呼ばずに止める。規
     [{ ...VALID_INPUT, newPassword: 'short1', confirmPassword: 'short1' }, 'パスワードは8文字以上で入力してください'],
     [{ ...VALID_INPUT, newPassword: 'onlyletters', confirmPassword: 'onlyletters' }, 'パスワードには数字を含めてください'],
     [{ ...VALID_INPUT, newPassword: 'oldPass123', confirmPassword: 'oldPass123' }, '新しいパスワードは、現在のパスワードと違うものにしてください'],
+    // #1864: GoTrue (bcrypt) が断る 72 バイト超。日本語は 1 文字 3 バイトなので 26 文字で超える
+    [{ ...VALID_INPUT, newPassword: `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`, confirmPassword: `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}` }, PASSWORD_TOO_LONG_MESSAGE],
+    [{ ...VALID_INPUT, newPassword: `a1${'あ'.repeat(24)}`, confirmPassword: `a1${'あ'.repeat(24)}` }, PASSWORD_TOO_LONG_MESSAGE],
   ])('%j → %s', async (input, message) => {
     const result = await changePassword(EMAIL, input);
 
     expect(result).toEqual({ ok: false, message });
     expect(mockCallOrder).toEqual([]);
     expect(mockApiPost).not.toHaveBeenCalled();
+  });
+
+  it('#1864 現在のパスワードが 72 バイトを超えていても止めず、そのまま API に送る (既存の利用者を締め出さない)', async () => {
+    const longCurrent = `oldPass1${'y'.repeat(PASSWORD_MAX_BYTES)}`;
+    const result = await changePassword(EMAIL, { ...VALID_INPUT, currentPassword: longCurrent });
+
+    expect(result).toEqual({ ok: true });
+    expect(mockApiPost).toHaveBeenCalledWith('/api/auth/password/change', {
+      current_password: longCurrent,
+      new_password: VALID_INPUT.newPassword,
+    });
   });
 });
 

@@ -62,6 +62,14 @@ jest.mock('../../src/providers/ProfileProvider', () => ({
     profile: { onboardingCompletedAt: '2024-01-01', onboardingStartedAt: null },
   }),
 }));
+// #1861: 凍結の状態 (既定 clear。凍結のテストで変える)
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
+}));
+beforeEach(() => {
+  mockFrozenState = 'clear';
+});
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }),
 }));

@@ -38,6 +38,25 @@ const mockLegalConsentContext = require('react').createContext(false);
 const mockLegalConsentProviderInsideAuth: boolean[] = [];
 const mockProfileProviderInsideLegalConsent: boolean[] = [];
 const mockLegalConsentGateRendered = jest.fn();
+// #1861: AccountFrozenProvider は AuthProvider の中・LegalConsentProvider の外 (同意のゲートが凍結の状態を読む)
+const mockAccountFrozenContext = require('react').createContext(false);
+const mockAccountFrozenProviderInsideAuth: boolean[] = [];
+const mockLegalConsentProviderInsideAccountFrozen: boolean[] = [];
+const mockAccountFrozenGateRendered = jest.fn();
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  AccountFrozenProvider: ({ children }: { children: React.ReactNode }) => {
+    const React = require('react');
+    mockAccountFrozenProviderInsideAuth.push(React.useContext(mockAuthContext));
+    return React.createElement(mockAccountFrozenContext.Provider, { value: true }, children);
+  },
+  useAccountFrozen: () => ({ state: 'clear', refresh: jest.fn() }),
+}));
+jest.mock('../../src/components/AccountFrozenGate', () => ({
+  AccountFrozenGate: () => {
+    mockAccountFrozenGateRendered();
+    return null;
+  },
+}));
 jest.mock('../../src/providers/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => {
     mockAuthProviderRendered();
@@ -50,6 +69,7 @@ jest.mock('../../src/providers/LegalConsentProvider', () => ({
   LegalConsentProvider: ({ children }: { children: React.ReactNode }) => {
     const React = require('react');
     mockLegalConsentProviderInsideAuth.push(React.useContext(mockAuthContext));
+    mockLegalConsentProviderInsideAccountFrozen.push(React.useContext(mockAccountFrozenContext));
     return React.createElement(mockLegalConsentContext.Provider, { value: true }, children);
   },
   useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }),
@@ -106,6 +126,8 @@ beforeEach(() => {
   mockStackScreens.length = 0;
   mockLegalConsentProviderInsideAuth.length = 0;
   mockProfileProviderInsideLegalConsent.length = 0;
+  mockAccountFrozenProviderInsideAuth.length = 0;
+  mockLegalConsentProviderInsideAccountFrozen.length = 0;
   for (const name of ENV_NAMES) ORIGINAL_ENV[name] = process.env[name];
 });
 
@@ -244,5 +266,29 @@ describe('RootLayout — 規約の同意のゲート (#1442 T-RL1)', () => {
       expect(props.options).toEqual({ gestureEnabled: false });
     }
     expect(LEGAL_CONSENT_SCREEN_ROUTE_NAME).toBe('legal-consent');
+  });
+});
+
+describe('RootLayout — アカウントの凍結のゲート (#1861)', () => {
+  it('AccountFrozenProvider が AuthProvider の中・LegalConsentProvider の外にあり、AccountFrozenGate が描かれ、Stack.Screen "frozen" が gestureEnabled: false で宣言されていて、その name が FROZEN_SCREEN_ROUTE_NAME と同じ', () => {
+    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-value';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
+
+    renderRootLayout();
+
+    expect(mockAccountFrozenProviderInsideAuth.length).toBeGreaterThan(0);
+    expect(mockAccountFrozenProviderInsideAuth.every((inside) => inside === true)).toBe(true);
+    expect(mockLegalConsentProviderInsideAccountFrozen.length).toBeGreaterThan(0);
+    expect(mockLegalConsentProviderInsideAccountFrozen.every((inside) => inside === true)).toBe(true);
+    expect(mockAccountFrozenGateRendered).toHaveBeenCalled();
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { FROZEN_SCREEN_ROUTE_NAME } = require('../../src/lib/account-frozen');
+    const frozenScreens = mockStackScreens.filter((props) => props.name === FROZEN_SCREEN_ROUTE_NAME);
+    expect(frozenScreens.length).toBeGreaterThan(0);
+    for (const props of frozenScreens) {
+      expect(props.options).toEqual({ gestureEnabled: false });
+    }
+    expect(FROZEN_SCREEN_ROUTE_NAME).toBe('frozen');
   });
 });

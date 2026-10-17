@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { LogBox } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 
+import { AccountFrozenGate } from "../src/components/AccountFrozenGate";
 import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
 import { FontsReadyProvider } from "../src/components/ui/Text";
@@ -13,6 +14,7 @@ import { LegalConsentGate } from "../src/components/legal/LegalConsentGate";
 import { NotificationRouter } from "../src/components/NotificationRouter";
 import { MobileConfigError, resolveRequiredMobileEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
+import { AccountFrozenProvider } from "../src/providers/AccountFrozenProvider";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
 import { LegalConsentProvider } from "../src/providers/LegalConsentProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
@@ -105,24 +107,31 @@ export default function RootLayout() {
     <FontsReadyProvider ready={fontsLoaded}>
       <SafeAreaProvider>
         <AuthProvider>
-          <LegalConsentProvider>
-            <ProfileProvider>
-              <PushTokenRegistrar />
-              {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
-              <NotificationRouter />
-              <Stack screenOptions={{ headerShown: false }}>
-                <Stack.Screen name="index" />
-                <Stack.Screen name="(public)" />
-                <Stack.Screen name="(auth)" />
-                <Stack.Screen name="(tabs)" />
-                {/* #1442: 同意画面。iOS のスワイプで閉じさせない (ほかの取り除く操作は画面の beforeRemove が扱う) */}
-                <Stack.Screen name="legal-consent" options={{ gestureEnabled: false }} />
-              </Stack>
-              {/* #1442: 同意が要る間は、Stack を同意画面 (Web の /legal-consent の WebView) 1 つに畳む。描くものは無い。
-                  Stack の後ろに置く (同じ描画の effect では Stack の navigator が先にそろう) */}
-              <LegalConsentGate />
-            </ProfileProvider>
-          </LegalConsentProvider>
+          {/* #1861: 凍結の状態。規約の同意のゲートが「凍結中は畳まない」ために読むので、LegalConsentProvider の外側に置く */}
+          <AccountFrozenProvider>
+            <LegalConsentProvider>
+              <ProfileProvider>
+                <PushTokenRegistrar />
+                {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
+                <NotificationRouter />
+                <Stack screenOptions={{ headerShown: false }}>
+                  <Stack.Screen name="index" />
+                  <Stack.Screen name="(public)" />
+                  <Stack.Screen name="(auth)" />
+                  <Stack.Screen name="(tabs)" />
+                  {/* #1442: 同意画面。iOS のスワイプで閉じさせない (ほかの取り除く操作は画面の beforeRemove が扱う) */}
+                  <Stack.Screen name="legal-consent" options={{ gestureEnabled: false }} />
+                  {/* #1861: 凍結中の画面 (Web の /frozen の WebView)。iOS のスワイプで閉じさせない (ほかの操作で外れても AccountFrozenGate が畳み直す) */}
+                  <Stack.Screen name="frozen" options={{ gestureEnabled: false }} />
+                </Stack>
+                {/* #1861: 凍結中は、Stack を凍結の画面 1 つに畳む。描くものは無い。同意のゲートより先に置く (凍結が先。凍結中は同意のゲートが畳まない) */}
+                <AccountFrozenGate />
+                {/* #1442: 同意が要る間は、Stack を同意画面 (Web の /legal-consent の WebView) 1 つに畳む。描くものは無い。
+                    Stack の後ろに置く (同じ描画の effect では Stack の navigator が先にそろう) */}
+                <LegalConsentGate />
+              </ProfileProvider>
+            </LegalConsentProvider>
+          </AccountFrozenProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </FontsReadyProvider>
