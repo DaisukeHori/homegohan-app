@@ -21,6 +21,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   APPLE_TOUCH_ICON_SIZE,
@@ -51,6 +52,13 @@ const PNG_WIDTH_OFFSET = 16;
 const PNG_HEIGHT_OFFSET = 20;
 /** 1 枚の描画 (wasm の初期化を含む) を待つ上限。描画は数秒かかることがある */
 const RENDER_TIMEOUT_MS = 60_000;
+
+/** ソースからコメントを除いた本文 (説明のコメントに出てくる語を、コードとして数えないため) */
+function codeWithoutComments(relativePath: string): string {
+  const source = fs.readFileSync(path.join(ROOT, relativePath), 'utf8');
+  const sourceFile = ts.createSourceFile(relativePath, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TSX);
+  return ts.createPrinter({ removeComments: true }).printFile(sourceFile);
+}
 
 type PngInfo = { status: number; contentType: string | null; width: number; height: number; bytes: Buffer };
 
@@ -228,7 +236,9 @@ describe('#1845 layout の metadata と画像の食い違い', () => {
     expect(metadata.twitter && 'images' in metadata.twitter).toBe(false);
     // file convention の画像は metadataBase を前に付けた絶対 URL になる (metadataBase が無いと Next が警告して localhost にする)
     expect(metadata.metadataBase).toBeInstanceOf(URL);
-    expect(fs.readFileSync(path.join(ROOT, 'src/app/layout.tsx'), 'utf8')).not.toContain('/og-image.png');
+    const layoutCode = codeWithoutComments('src/app/layout.tsx');
+    expect(layoutCode).toContain('metadataBase'); // コメントを除いた本文を読めている
+    expect(layoutCode).not.toContain('/og-image.png');
   });
 
   it('icons.apple の大きさは apple-touch-icon.png の route が返す大きさと同じ', async () => {
@@ -269,7 +279,7 @@ describe('#1845 画像にドメインを書かない (#1573 の方針)', () => {
 
   it('画像を作るファイルは、サイトの URL (getSiteUrl) を読まない', () => {
     for (const file of ['src/lib/brand-image.tsx', 'src/app/opengraph-image.tsx', 'src/app/twitter-image.tsx']) {
-      expect(fs.readFileSync(path.join(ROOT, file), 'utf8')).not.toMatch(/getSiteUrl|DEFAULT_SITE_URL|NEXT_PUBLIC_APP_URL/);
+      expect(codeWithoutComments(file)).not.toMatch(/getSiteUrl|DEFAULT_SITE_URL|NEXT_PUBLIC_APP_URL/);
     }
   });
 
