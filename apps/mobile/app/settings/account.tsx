@@ -1,12 +1,13 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useRef, useState } from "react";
-import { Alert, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
 import { Text } from "../../src/components/ui/Text";
 
 import { AccountCredentialsSection } from "../../src/components/settings/AccountCredentialsSection";
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { accountDeletionErrorOf } from "../../src/lib/account-deletion-error";
+import { DSR_SCREEN_ROUTE, DSR_SETTINGS_ENTRY_DESCRIPTION, DSR_SETTINGS_ENTRY_TITLE } from "../../src/lib/data-subject-requests";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { signOutAfterAccountDeletion, signOutOnDevice } from "../../src/lib/signOut";
@@ -23,6 +24,8 @@ const ACCOUNT_DELETE_UNAUTHORIZED_TITLE = "ログインが必要です";
 /** 削除は済んだが、端末のログアウトに失敗したときの文 */
 const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
   "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
+/** 請求の項目の右の矢印の大きさ (説明の文 (13) より少し大きくして、押せる行だと分かるようにする) */
+const DATA_REQUESTS_CHEVRON_SIZE = 18;
 
 export default function AccountSettingsPage() {
   const { clearSession } = useAuth();
@@ -105,6 +108,26 @@ export default function AccountSettingsPage() {
       {/* #1187: ログイン情報・パスワードの変更・メールアドレスの変更 (Web の設定 → アカウントと同じ構成) */}
       <AccountCredentialsSection />
 
+      {/* #1812: 個人情報の開示・訂正・利用停止・消去の請求。Web の請求の画面 (DSR_SETTINGS_PATH) を WebView で開く画面
+          (app/settings/data-requests.tsx) へ移る。見出しと説明の文は Web の設定の項目と同じ (@homegohan/shared。
+          設計 docs/design/cross/15-data-subject-requests.md §9・§19) */}
+      <Card style={{ gap: spacing.sm }}>
+        <SectionHeader title="データとプライバシー" />
+        <Pressable
+          testID="account-data-requests-row"
+          accessibilityRole="button"
+          accessibilityLabel={DSR_SETTINGS_ENTRY_TITLE}
+          onPress={() => router.push(DSR_SCREEN_ROUTE)}
+          style={styles.linkRow}
+        >
+          <View style={styles.linkTexts}>
+            <Text style={styles.linkTitle}>{DSR_SETTINGS_ENTRY_TITLE}</Text>
+            <Text style={styles.linkDescription}>{DSR_SETTINGS_ENTRY_DESCRIPTION}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={DATA_REQUESTS_CHEVRON_SIZE} color={colors.textMuted} />
+        </Pressable>
+      </Card>
+
       <Card variant="error" style={{ gap: spacing.md }}>
         <SectionHeader
           title="危険な操作"
@@ -147,5 +170,24 @@ const styles = StyleSheet.create({
     color: colors.textLight,
     fontSize: 14,
     fontWeight: "600",
+  },
+  linkRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+  },
+  linkTexts: {
+    flex: 1,
+    gap: spacing.xs,
+  },
+  linkTitle: {
+    color: colors.text,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  linkDescription: {
+    color: colors.textLight,
+    fontSize: 13,
   },
 });
