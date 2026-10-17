@@ -609,7 +609,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | M-5 | 各セクション (`Reveal`) | 読み進めるリズム | 画面に 20 % 入ったとき (IO・1 回だけ) | `translateY(16px)` + `opacity 0 → 1`。カードの列は子を 40 ms ずつ遅らせる (最大 6 つ) | `--lp-dur` / `--lp-ease` | 隠さない (隠す規則も `transition` も no-preference の中だけ。`is-in` は付くが見え方は変わらない)。JS が無くても見える (§6.3) |
 | M-6 | 使い方 (`StorySteps`) | 3 つの手順が 1 つの画面の流れだと分かる | 右の手順がビューポートの中央を通るとき (IO・`rootMargin: -40% 0px -40% 0px`) | 左の端末の枠を `position: sticky` で固定し、中の画面を `opacity` で切り替える。手順の番号の輪に色が付く | `--lp-dur-slow` | 切り替えは一瞬 (`transition` は no-preference の中だけ)。固定は残す (動きではない) |
 | M-7 | デモ | AI が「見ている」時間 | 写真を押す | 写真に輪郭 (`--lp-accent-ink`) → 待ちのカード (framer-motion で `opacity` の出入り) に進捗の棒 (CSS `scaleX 0 → 1` を 1,400 ms)・回る輪 (CSS `.lp-demo-spin`) → 結果のカードが framer-motion で `translateY(8px)` + `opacity` で現れ、数値の 5 つが CSS で 40 ms ずつ遅れて出る (`.lp-demo-nutri`) | 待ち 1,400 ms (`DEMO_ANALYZING_MS`) / 出入り `DEMO_MOTION_DURATION_S` (= `--lp-dur`)・`DEMO_MOTION_EASE` (= `--lp-ease`) | 待ち時間 0 (`useReducedMotion()` で `DEMO_ANALYZING_MS_REDUCED = 0`)。framer-motion は `MotionConfig reducedMotion="user"` + `transition={{ duration: 0 }}` で退場も 0、各パネルは `initial={false}` で最初の描画から最後の見え方 (フェード・スライド無し)。進捗の棒・回る輪・数値の現れ方は CSS の `animation` が no-preference の中だけなので、reduce では動かない (棒は満ちた形・輪は止まった形・数値は最初から見える)。結果は一瞬で出る |
-| M-8 | モバイルの固定 CTA | 登録はいつでもできる | ヒーローの箱 (`section#hero`。ページの先頭) の全体が画面の**上へ**出たとき (IO の `!isIntersecting && boundingClientRect.bottom < 0`)。少しずつのスクロールでも、ページの中のリンクでの一気の移動でも同じ。初めは隠れている (ヒーローが画面にある間は隠れたまま) | `translateY(100%) → 0` | `--lp-dur` / `--lp-ease` | 一瞬で出る (`transition` は no-preference の中だけ) |
+| M-8 | モバイルの固定 CTA | 登録はいつでもできる | ヒーローの箱 (`section#hero`。ページの先頭) の全体が画面の**上へ**出たとき (IO の `!isIntersecting && boundingClientRect.bottom < 0`)。少しずつのスクロールでも、ページの中のリンクでの一気の移動でも同じ。初めは隠れている (ヒーローが画面にある間は隠れたまま)。中にフォーカスがある間は、ヒーローに戻っても隠さず、フォーカスが外へ出たときに隠す (§13.3) | `translateY(100%) → 0` | `--lp-dur` / `--lp-ease` | 一瞬で出る (`transition` は no-preference の中だけ) |
 | M-9 | FAQ | 開閉 | ボタン | `grid-template-rows: 0fr → 1fr` (高さを測らない) + 矢印の回転 180° | `--lp-dur` | 一瞬 (`transition` は no-preference の中だけ) |
 | M-10 | ボタン | 押せる | `:hover` / `:active` | `translateY(-1px)` / `scale(.98)` | `--lp-dur-fast` | 無し (`:hover` / `:active` の `transform` も `transition` も no-preference の中だけ) |
 | M-11 | バッジ | 増えていく楽しさ | `Reveal` が `is-in` を付けたとき | 各カード (`.lp-badge-card`) が `scale(.92) → 1` + `opacity 0 → 1`、6 つを 40 ms ずつ (`--lp-i`) | `--lp-dur` / `--lp-ease` | 動き無し (`animation` は no-preference の中だけ) |
@@ -697,7 +697,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | `src/components/marketing/sections/FaqSection.tsx` | 島 | アコーディオン。`<section id="faq" className="lp-section lp-band">` (帯: §5.3)。末尾の「お問い合わせフォームへ」は文の中のリンクなので `underline underline-offset-4` で下線を付け、色は `--lp-accent-ink` (色だけで区別しない: §11 の 1.4.1) | `openIndex: number \| null` |
 | `src/components/marketing/sections/FinalCtaSection.tsx` | Server | 最終 CTA | 無し |
 | `src/components/marketing/sections/SiteFooter.tsx` | Server | フッター。`<footer className="lp-footer …">` (下の余白は `marketing.css` の `.lp-footer` が持つ。Tailwind の `pb-*` を付けない)。リンクは `inline-flex min-h-6 items-center` (24 px。§11 の 2.5.8) | 無し |
-| `src/components/marketing/sections/MobileStickyCta.tsx` | 島 | ヒーローの箱 (`#hero`) が画面の上へ出きったかを見る (M-8。IO を直接使う: §9.6) | `visible: boolean` (初めは `false`) |
+| `src/components/marketing/sections/MobileStickyCta.tsx` | 島 | ヒーローの箱 (`#hero`) が画面の上へ出きったかを見る (M-8。IO を直接使う: §9.6)。中にフォーカスがある間は隠さない | `visible: boolean` (初めは `false`。隠すのを待つ印は ref で、state ではない) |
 | `src/components/marketing/primitives/Reveal.tsx` | 島 | 現れ方 (M-5) | `inView: boolean` |
 | `src/components/marketing/primitives/PhoneFrame.tsx` | Server | 端末の枠 | 無し |
 | `src/components/marketing/primitives/CtaLink.tsx` | Server | `Link` にボタンの見た目 | 無し |
@@ -1787,7 +1787,7 @@ export function HeroSection() {
 // tsc:skip (新設モジュールを import するため、独立の検査では解決できない)
 // src/components/marketing/sections/MobileStickyCta.tsx — モバイルの固定 CTA (M-8)。ヒーローを過ぎたら出す
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type FocusEvent } from 'react';
 import { LANDING_COPY } from '@/components/marketing/landing-copy';
 import { CtaLink } from '@/components/marketing/primitives/CtaLink';
 
@@ -1797,6 +1797,11 @@ const HERO_SECTION_ID = 'hero';
 export function MobileStickyCta() {
   // 初めは隠す。SSR の HTML と最初の描画も隠れた形 (開いた直後のヒーローの途中で出さない: S-2・§13.3)
   const [visible, setVisible] = useState(false);
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  // 中にフォーカスがある間に隠すと、inert でフォーカスが body に戻り、見えるフォーカスと読み上げの位置が消える (2.4.3・2.4.7。
+  // 200 % に拡大した PC で、固定 CTA のリンクにフォーカスしたまま Home キーで先頭へ戻ったときなど)。
+  // そのときは隠すのを、フォーカスが外へ出るまで待つ (再描画の要らない印なので state でなく ref)
+  const hideOnBlur = useRef(false);
 
   useEffect(() => {
     const hero = document.getElementById(HERO_SECTION_ID);
@@ -1808,17 +1813,30 @@ export function MobileStickyCta() {
         // 少しずつのスクロールでも、ページの中のリンク (#demo など) や先頭への一気の移動でも、必ず交差の有無を変えて通知が来る
         // (1 px の番兵だと、番兵を飛び越える一気の移動では交差の有無が変わらず、通知が来ない)。
         // 箱の下端が画面の上 (bottom < 0) にあるときだけ出す (observe の直後の最初の通知で、開いた位置の状態も決まる)
-        setVisible(!entry.isIntersecting && entry.boundingClientRect.bottom < 0);
+        const next = !entry.isIntersecting && entry.boundingClientRect.bottom < 0;
+        if (!next && boxRef.current?.contains(document.activeElement)) {
+          hideOnBlur.current = true;
+          continue;
+        }
+        hideOnBlur.current = false;
+        setVisible(next);
       }
     });
     observer.observe(hero);
     return () => observer.disconnect();
   }, []);
 
+  /** 隠すのを待っている間に、フォーカスが固定 CTA の外へ出たら隠す (中の別の要素へ移っただけなら待ち続ける) */
+  const onBlur = (event: FocusEvent<HTMLDivElement>) => {
+    if (!hideOnBlur.current || event.currentTarget.contains(event.relatedTarget)) return;
+    hideOnBlur.current = false;
+    setVisible(false);
+  };
+
   const { stickyCta } = LANDING_COPY;
   // 中身 (ボタン 1 つ + 注記 1 行) の高さは marketing.css の --lp-sticky-cta-h (7rem) 以下に収める。中身を足したら --lp-sticky-cta-h を計算し直す (E-9)
   return (
-    <div className={`lp-sticky-cta ${visible ? 'is-visible' : ''}`} aria-hidden={!visible} inert={!visible}>
+    <div ref={boxRef} className={`lp-sticky-cta ${visible ? 'is-visible' : ''}`} aria-hidden={!visible} inert={!visible} onBlur={onBlur}>
       <CtaLink href={stickyCta.cta.href} variant="primary" className="w-full">{stickyCta.cta.label}</CtaLink>
       <p className="lp-note mt-1.5 text-center">{stickyCta.note}</p>
     </div>
@@ -1834,7 +1852,7 @@ export function MobileStickyCta() {
 |---|---|---|
 | `FaqSection` | `openIndex: number \| null`。`button` の `onClick` で同じ index なら閉じる | `section#faq.lp-section.lp-band` の中に、`h3 > button` (`aria-expanded`・`aria-controls="faq-panel-N"`・`id="faq-button-N"`。矢印は `ChevronDown` に `className="lp-faq-chevron"` と開いている間 `is-open`) と `div.lp-faq-panel` (`id="faq-panel-N"`・`role="region"`・`aria-labelledby="faq-button-N"`・開いている間 `is-open`・`hidden` は使わず `grid-template-rows` で閉じる。閉じている間は中身を `inert` にして Tab で入らないようにする)。末尾の `contactLead` + リンク `contact` (`underline underline-offset-4`・色 `--lp-accent-ink`) |
 | `StorySteps` | `activeIndex: 0〜2`。手順ごとに `useInViewOnce({ rootMargin: STORY_ROOT_MARGIN, once: false })` を持ち、`inView` になった手順を active にする | 左 (lg 以上) に `PhoneFrame` を `position: sticky; top: 6rem`。中に 3 枚の画面 (`div.lp-story-screen`) を重ね、`activeIndex` の枚に `is-active` (`opacity: 1`。切り替えの `transition` は marketing.css の no-preference の中)。右に手順の `ol` (各 `li.lp-story-step`。`activeIndex` の手順に `is-active`。番号は `span.lp-step-num` (`aria-hidden="true"`)。§9.1)。`lg` 未満 (タブレットを含む) は端末を各手順の上に置く (sticky 無し・画面は 1 枚ずつ `.lp-story-screen` を使わずに置く) |
-| `MobileStickyCta` | `visible: boolean` (初めは `false`) = ヒーローの箱 `section#hero` が `!isIntersecting && boundingClientRect.bottom < 0` (上の正典。`useInViewOnce` は使わない: 初期値 `false` を「過ぎた」と読むと最初の通知の前に出てしまう) | `div.lp-sticky-cta` (`aria-hidden={!visible}`・`inert={!visible}`) |
+| `MobileStickyCta` | `visible: boolean` (初めは `false`) = ヒーローの箱 `section#hero` が `!isIntersecting && boundingClientRect.bottom < 0` (上の正典。`useInViewOnce` は使わない: 初期値 `false` を「過ぎた」と読むと最初の通知の前に出てしまう)。中にフォーカスがある間は隠さず、隠すのを待つ印 (`hideOnBlur`。ref) を立て、フォーカスが外へ出たときに隠す | `div.lp-sticky-cta` (`aria-hidden={!visible}`・`inert={!visible}`・`onBlur`) |
 
 ### 9.7 `tests/public-claims-guard.test.ts` への差分 (見張りの拡張)
 
@@ -2118,7 +2136,7 @@ async function axeViolations(page: Page): Promise<{ id: string; targets: string[
 | 2.4.1 ブロックスキップ | layout のスキップリンク (`#main-content`) | 既存 (`tests/design-system-1058.test.ts`) |
 | 2.4.2 ページタイトル | layout の既定の title | 既存 (`tests/og-image-1845.test.tsx`) |
 | 2.4.6 見出しとラベル | 見出しは内容を表す (§4) | 目視 |
-| 2.4.7 フォーカスの可視化 | globals.css の `:focus-visible` (2 トーンのリング)。押したボタンを `disabled` にしない (デモの写真のボタンは分析中も `aria-disabled="true"` だけ。`disabled` にすると Chromium と WebKit はフォーカスを `body` に戻し、リングと読み上げの位置が消える: 2.4.3 にも当たる) | E-9・E-15 (`outline-style` が `none` でない)・E-3 (写真のボタンを押した後も `document.activeElement` がそのボタン) |
+| 2.4.7 フォーカスの可視化 | globals.css の `:focus-visible` (2 トーンのリング)。フォーカスのある要素を `disabled` や `inert` にしない (デモの写真のボタンは分析中も `aria-disabled="true"` だけ。固定 CTA は中にフォーカスがある間は隠さない。`disabled` や `inert` にすると Chromium と WebKit はフォーカスを `body` に戻し、リングと読み上げの位置が消える: 2.4.3 にも当たる) | E-9・E-15 (`outline-style` が `none` でない)・E-3 (写真のボタンを押した後も `document.activeElement` がそのボタン)・E-5 (固定 CTA にフォーカスしたまま先頭へ戻っても隠れない) |
 | 2.4.11 フォーカスの非遮蔽 (最低限) (2.2 で新設) | 固定ヘッダー (64〜80 px) と固定 CTA (768 px 未満) がフォーカスした要素を隠さないよう、`marketing.css` が `html:has(.lp)` に `scroll-padding-top: 6rem` (と 768 px 未満で `scroll-padding-bottom: calc(var(--lp-sticky-cta-h) + env(safe-area-inset-bottom))`。`--lp-sticky-cta-h` = 7rem は固定 CTA の中身の高さ 6.525rem に余裕を足した値) を付ける (§9.1)。`scroll-padding` はスクロールの箱 (`html`) の性質なので、アンカーへの移動と、Tab / Shift+Tab でフォーカスした要素を見える所へ動かすスクロールの両方に効く (要素の `scroll-margin` はその要素へのスクロールにしか効かず、フォーカスしたボタンやリンクには効かないので使わない)。`:has()` が無いブラウザでは余白が付かない (内容は同じ)。末尾のフッターは 768 px 未満で `padding-bottom` を同じ `--lp-sticky-cta-h` だけ取る (`.lp-footer`) | E-9 (1280 px: 画面の上へ出た FAQ のボタンに Shift+Tab で戻ると、ボタンの矩形がヘッダーの矩形と重ならない。375 px: 固定 CTA の高さが `html` の computed の `scroll-padding-bottom` 以下で、画面の下にある FAQ のボタンに Tab で進むと、ボタンの矩形が固定 CTA の矩形と重ならず、ページの末尾でフッターの著作権の行が固定 CTA と重ならない) |
 | 2.5.3 ラベルの名前 | ボタンの見た目の文字と `aria-label` を食い違わせない (`aria-label` は使わない) | e2e (`button` に見える名前がある。`tests/e2e/b12-a11y-i18n.spec.ts` A-04 が既に見る) |
 | 2.5.8 ターゲットのサイズ (最低限) (2.2 で新設) | 文の中に無いボタンとリンクは 24×24 px 以上。大きさは正典で決める: CTA は `min-height: 3rem` (48 px)・ヘッダーの CTA (`.lp-cta--compact`) とナビのリンクとログインは `min-height: 2.75rem` (44 px。ナビとログインは `inline-flex min-h-11 items-center`: §9.6 の `SiteHeader`)・止める操作の checkbox は 1.5rem 四方 (24 px) でラベルは 44 px (§9.1)・フッターと安心のリンクは `inline-flex min-h-6 items-center` (24 px: §8.1)・デモの写真と FAQ のボタンは 24 px を十分に超える。FAQ の末尾の「お問い合わせフォームへ」は文の中のリンク (2.5.8 の例外) | E-9 (CTA・ナビ・ログイン・フッターのリンクの `getBoundingClientRect` が 24 以上)・E-17 (checkbox が 24 以上) |
@@ -2274,7 +2292,10 @@ async function axeViolations(page: Page): Promise<{ id: string; targets: string[
 | hidden | ページの中のリンク (`#demo` `#features` など) で一気に下へ移る | visible | 通知: 交差していない・`bottom < 0` (箱は交差から非交差に変わるので、飛び越えても通知が来る) |
 | hidden | 箱の中でスクロールする (ヒーローが画面にあるまま) | hidden (変化なし) | 通知は来ない (交差のまま) |
 | visible | 少しずつ上へスクロールし、箱の下端が画面に入る | hidden | 通知: 交差した |
-| visible | 先頭へ一気に戻る (`window.scrollTo(0, 0)`・キーボードの Home など。ヘッダーのマーク `/` で先頭に戻ったときも同じ) | hidden | 通知: 交差した (非交差から交差に変わる) |
+| visible | 先頭へ一気に戻る (`window.scrollTo(0, 0)`・キーボードの Home など。ヘッダーのマーク `/` で先頭に戻ったときも同じ) | hidden | 通知: 交差した (非交差から交差に変わる)・固定 CTA の中にフォーカスが無い |
+| visible | 固定 CTA の中 (「無料で始める」) にフォーカスがあるまま、先頭へ戻る (Home など) か、少しずつ上へ戻って箱の下端が画面に入る | visible (隠すのを待つ。`hideOnBlur` を立てる) | 通知: 交差した・固定 CTA の中にフォーカスがある (隠すと `inert` でフォーカスが `body` に戻るため) |
+| visible (隠すのを待つ) | フォーカスが固定 CTA の外へ出る (画面の上の部分の要素をクリック・タップ、Shift+Tab など) | hidden (移った先へのスクロールでヒーローを過ぎれば、その通知でまた visible) | `hideOnBlur` が立っている・移った先が固定 CTA の外 |
+| visible (隠すのを待つ) | 下へ移って、箱の下端がまた画面の上へ出る | visible (待つのをやめる。`hideOnBlur` を消す) | 通知: 交差していない・`bottom < 0` |
 | visible | ヒーローより下どうしで移る (スクロール・ページの中のリンク) | visible (変化なし) | 通知は来ない (非交差のまま。箱は上にあり続ける) |
 | any | IO が無い・箱が無い | hidden (変化なし) | ヘッダーの CTA が常にある |
 | any | 幅 ≥ 768 px | (非表示) | `display: none` (状態は持つが見えない) |
@@ -2370,7 +2391,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 | E-2 | `ヘッダーの「無料で始める」とヒーローの「無料で始める」は /signup を指し、「デモを試す」は #demo へスクロールする` |
 | E-3 | `デモ: 写真のボタンに focus() して Enter を押すと role=status に「AI が見ています…」が出て、1.4 秒後に「記録コメント」の見出しとその写真の記録コメント (demoPraiseComment の文) とサンプルの注記と、/signup を指す「自分の食事で試す」のリンクが出る。待っている間は写真のボタンが 3 つとも aria-disabled="true" で disabled 属性は無く、別の写真を押しても role=status の中身と aria-pressed は変わらない。分析中も結果が出た後も document.activeElement は押したボタンのままで、その outline-style は none でない。結果のあと別の写真を押すと、もう一度「AI が見ています…」を経て、その写真の結果に替わる` |
 | E-4 | `FAQ: ボタンは aria-expanded を持ち、Enter で開き (aria-expanded=true・region が見える)、もう一度 Enter で閉じる` |
-| E-5 | `375 px: 横スクロールが無く (scrollWidth <= clientWidth)、開いた直後 (scrollY 0。ヒーローが画面にある) は固定 CTA に is-visible が無く aria-hidden=true で、section#hero の下端を画面の上へ過ぎるまで少しずつ (mouse.wheel で) スクロールすると is-visible が付いて /signup を指し、少しずつ上へ戻すと外れる。続けて、先頭から「デモを試す」(#demo へ一気に移る) を押すと is-visible が付き、window.scrollTo(0, 0) で先頭へ一気に戻すと外れる。/#faq を直接開いたときは、最初から is-visible が付く` |
+| E-5 | `375 px: 横スクロールが無く (scrollWidth <= clientWidth)、開いた直後 (scrollY 0。ヒーローが画面にある) は固定 CTA に is-visible が無く aria-hidden=true で、section#hero の下端を画面の上へ過ぎるまで少しずつ (mouse.wheel で) スクロールすると is-visible が付いて /signup を指し、少しずつ上へ戻すと外れる。続けて、先頭から「デモを試す」(#demo へ一気に移る) を押すと is-visible が付き、window.scrollTo(0, 0) で先頭へ一気に戻すと外れる。/#faq を直接開いたときは、最初から is-visible が付く。固定 CTA の「無料で始める」に focus() したまま window.scrollTo(0, 0) で先頭へ戻ると、is-visible は外れず document.activeElement はそのリンクのままで、続けてヘッダーのマーク (/) に focus() してフォーカスを外へ出すと (先頭にいるのでスクロールは起きない) is-visible が外れて aria-hidden=true になる` |
 | E-6 | `320 px と ZOOM_200_WIDTH_PX (640 px。1280 px を 200 % に拡大した幅) で横スクロールが無い (scrollWidth <= clientWidth)` |
 | E-7 | `reduced-motion (reducedMotion: 'reduce'): ヒーローの画面の連続・.lp-blob・.lp-hero-rise の computed の animation-name が none で、3 枚目が見え、止める操作は見えず、.lp-reveal はスクロールの前から opacity 1。デモの写真を押すと結果 ([data-demo-panel=result]) が待ち無しで出て、waitForSelector の直後の requestAnimationFrame の中で、結果のカードと .lp-demo-nutri の 5 つの子の computed の opacity が 1・transform が none で、結果のカードの getAnimations({ subtree: true }) に playState が running のものが無い` |
 | E-8 | `img はすべて alt 属性を持ち、button はすべて見える名前を持ち、見出しは h1 → h2 → h3 の順を飛ばさない` |
@@ -2583,7 +2604,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 根拠の無い断定と、動きを減らす設定 | U-15・U-20・E-7 | 画面の文か `SITE_DESCRIPTION` に `UNSUBSTANTIATED_WORDS` の語か、「写真で」の無い「記録するたびに」(`UNSCOPED_PRAISE_PATTERN`)。`marketing.css` の動きの宣言 (`animation*`・`transition*`) が `no-preference` のブロックの外にある。`prefers-reduced-motion: reduce` のブロックがある。部品の `className` に Tailwind の動きのクラスがある。reduce でデモの結果のカードの中に `running` の Animation がある・動いて現れる |
 | デモの記録コメントの正直さ | U-21 | `demoPraiseComment` の文がアプリの定型の文 (`buildTemplatePraiseAndTip`) の句・食事の区分の語と違う。アプリの定型の文が変わった。サンプルのスコアがアプリの範囲 (70〜95) の外 |
 | 画面の連続の停止 | E-17 | 止める操作で `paused` にならない・外して戻らない |
-| 固定 CTA の出る時 | E-5 | 開いた直後に出る・少しずつ過ぎても、ページの中のリンクで一気に過ぎても出ない・先頭へ一気に戻っても消えない |
+| 固定 CTA の出る時 | E-5 | 開いた直後に出る・少しずつ過ぎても、ページの中のリンクで一気に過ぎても出ない・先頭へ一気に戻っても消えない・中にフォーカスがあるのに隠れる (フォーカスが失われる)・フォーカスが外へ出ても隠れない |
 | 速さ | E-10・E-11 | LCP / CLS / JS の転送量 / 外部の要求が予算超え |
 | CSP | E-12 | `securitypolicyviolation` が 1 件以上 |
 | a11y | E-3〜E-9・E-20 | §11 の表の各行。axe (`AXE_WCAG_TAGS`) の違反が 1 件以上。デモの写真を押した後にフォーカスがそのボタンから外れる |

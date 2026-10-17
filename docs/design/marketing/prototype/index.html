@@ -663,13 +663,25 @@ body { margin: 0; }
   //    箱全体を見るので、#demo などのリンクで一気に移っても、先頭へ一気に戻っても、交差の有無が変わって通知が来る ──
   var sticky = document.getElementById('sticky-cta');
   var heroBox = document.getElementById('hero');
+  // 中にフォーカスがある間は隠さない (inert にするとフォーカスが body に戻るため)。隠すのは、フォーカスが外へ出たとき (設計書 §13.3)
+  var hideOnBlur = false;
+  function setSticky(visible) {
+    sticky.classList.toggle('is-visible', visible);
+    sticky.setAttribute('aria-hidden', String(!visible));
+    if (visible) sticky.removeAttribute('inert'); else sticky.setAttribute('inert', '');
+  }
+  sticky.addEventListener('focusout', function (ev) {
+    if (!hideOnBlur || sticky.contains(ev.relatedTarget)) return;
+    hideOnBlur = false;
+    setSticky(false);
+  });
   if ('IntersectionObserver' in window) {
     var ctaIo = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
         var visible = !e.isIntersecting && e.boundingClientRect.bottom < 0;
-        sticky.classList.toggle('is-visible', visible);
-        sticky.setAttribute('aria-hidden', String(!visible));
-        if (visible) sticky.removeAttribute('inert'); else sticky.setAttribute('inert', '');
+        if (!visible && sticky.contains(document.activeElement)) { hideOnBlur = true; return; }
+        hideOnBlur = false;
+        setSticky(visible);
       });
     }, { threshold: 0 });
     ctaIo.observe(heroBox);
