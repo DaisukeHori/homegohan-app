@@ -24,7 +24,7 @@ const ACCOUNT_DELETE_UNAUTHORIZED_TITLE = "ログインが必要です";
 /** 削除は済んだが、端末のログアウトに失敗したときの文 */
 const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
   "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
-/** 請求の項目の右の矢印の大きさ (説明の文 (13) より少し大きくして、押せる行だと分かるようにする) */
+/** 請求の項目の右の矢印の大きさ (退会のボタンのアイコンと同じ大きさにそろえる) */
 const DATA_REQUESTS_CHEVRON_SIZE = 18;
 
 export default function AccountSettingsPage() {
@@ -121,8 +121,8 @@ export default function AccountSettingsPage() {
           style={styles.linkRow}
         >
           <View style={styles.linkTexts}>
-            <Text style={styles.linkTitle}>{DSR_SETTINGS_ENTRY_TITLE}</Text>
-            <Text style={styles.linkDescription}>{DSR_SETTINGS_ENTRY_DESCRIPTION}</Text>
+            <Text style={[typography.bodyBold, styles.linkTitle]}>{DSR_SETTINGS_ENTRY_TITLE}</Text>
+            <Text style={[typography.small, styles.linkDescription]}>{DSR_SETTINGS_ENTRY_DESCRIPTION}</Text>
           </View>
           <Ionicons name="chevron-forward" size={DATA_REQUESTS_CHEVRON_SIZE} color={colors.textMuted} />
         </Pressable>
@@ -183,11 +183,8 @@ const styles = StyleSheet.create({
   },
   linkTitle: {
     color: colors.text,
-    fontSize: 15,
-    fontWeight: "700",
   },
   linkDescription: {
     color: colors.textLight,
-    fontSize: 13,
   },
 });
