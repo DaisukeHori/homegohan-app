@@ -72,6 +72,13 @@ describe('apps/mobile/env.example (#1049 F7-19)', () => {
     expect(assignments).toEqual([`EXPO_PUBLIC_WEB_URL=${DEFAULT_WEB_URL}`]);
   });
 
+  it('EXPO_PUBLIC_API_BASE_URL の例は、いまアプリが動いている Web の URL (既定の Web と同じ。#1573)', () => {
+    // 以前は https://homegohan.com と書いていたが、homegohan.com はサイトを移すまで別のサービスを指している
+    const example = fs.readFileSync(path.join(MOBILE_ROOT, 'env.example'), 'utf8');
+    const assignments = example.match(/^EXPO_PUBLIC_API_BASE_URL=.*$/gm) ?? [];
+    expect(assignments).toEqual([`EXPO_PUBLIC_API_BASE_URL=${DEFAULT_WEB_URL}`]);
+  });
+
   it('同じ変数を 2 回代入しない (後の行が前の行を黙って上書きする)', () => {
     const example = fs.readFileSync(path.join(MOBILE_ROOT, 'env.example'), 'utf8');
     const names = [...example.matchAll(/^(EXPO_PUBLIC_[A-Z0-9_]+)=/gm)].map((match) => match[1]);

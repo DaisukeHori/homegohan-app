@@ -14,7 +14,8 @@
  * | getEmailFrom()     | EMAIL_FROM                  | DEFAULT_EMAIL_FROM = ほめゴハン <noreply@homegohan.app>      | ほめゴハン <noreply@mail.homegohan.com> |
  * | getSupportEmail()  | NEXT_PUBLIC_SUPPORT_EMAIL   | DEFAULT_SUPPORT_EMAIL = support@homegohan.app                | support@homegohan.com                   |
  *
- * 右端の列は設定の書き方の例で、本番のドメインはまだ決まっていない (決まったら環境変数に入れる)。
+ * 右端の列は切り替えるときの値。本番のドメインは homegohan.com (送信は mail.homegohan.com) に決まっているが、
+ * DNS と Resend の検証が済むまでは環境変数で切り替えない (先に切り替えると、メールが届かず、リンクが別のサービスへ飛ぶ)。
  * 既定値は、環境変数を設定していない今の本番がそのまま使っている値にしてある (値は変えていない)。
  * 既定値の表の値と下の定数がずれないことは tests/site-config-guard.test.ts が検査する。
  * homegohan.com への切り替え (Resend の送信ドメインの検証・DNS の登録・support@ の受信箱の用意のあと) は、
