@@ -100,7 +100,7 @@ function mealDbRow(overrides: Json = {}): Json {
 
 type Queue = Array<{ data?: unknown; error?: unknown }>;
 
-function useFakes(adminQueues: Record<string, Queue>, auditResult: { error?: unknown } = { error: null }) {
+function seedFakes(adminQueues: Record<string, Queue>, auditResult: { error?: unknown } = { error: null }) {
   adminFake = createFakeSupabase(adminQueues);
   userFake = createFakeSupabase({ admin_audit_logs: [{ data: null, error: auditResult.error ?? null }] });
 }
@@ -138,7 +138,7 @@ beforeEach(() => {
   mockRequireRole.mockResolvedValue(adminActor);
   mockGetSupabaseAdmin.mockImplementation(() => adminFake);
   mockCreateClient.mockImplementation(() => Promise.resolve(userFake));
-  useFakes({});
+  seedFakes({});
 });
 
 describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4)', () => {
@@ -183,7 +183,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
       expect(json.error.details.fieldErrors.restore_note?.length).toBeGreaterThan(0);
     }
     // 5000 字ちょうどと前後の空白は通る (本文の検証を通って、先の通報の読み取りまで進む)
-    useFakes({ moderation_flags: [{ data: null, error: null }] });
+    seedFakes({ moderation_flags: [{ data: null, error: null }] });
     const edge = await call('food', 'flag-1', restoreRequest({ restore_note: `  ${'あ'.repeat(5000)}  ` }));
     expect(edge.status).toBe(404);
   });
@@ -198,12 +198,12 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
   });
 
   it('RT-2: 通報が無ければ 404。通報の読み取りが失敗したら 500 (404 に丸めない)。どちらも何も更新せず監査ログも残さない', async () => {
-    useFakes({ moderation_flags: [{ data: null, error: null }] });
+    seedFakes({ moderation_flags: [{ data: null, error: null }] });
     const notFound = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(notFound.status).toBe(404);
     expect(((await notFound.json()) as { error: { code: string } }).error.code).toBe('NOT_FOUND');
 
-    useFakes({ moderation_flags: [{ data: null, error: { message: SENTINEL } }] });
+    seedFakes({ moderation_flags: [{ data: null, error: { message: SENTINEL } }] });
     const failed = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(failed.status).toBe(500);
     const text = JSON.stringify(await failed.json());
@@ -215,13 +215,13 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
   });
 
   it('RT-3: 通報の content_id が null なら 410 OP_CONTENT_GONE。行が無ければ 410。何も更新せず監査ログも残さない', async () => {
-    useFakes({ moderation_flags: [{ data: foodFlagRow({ meal_id: null, meals: null }), error: null }] });
+    seedFakes({ moderation_flags: [{ data: foodFlagRow({ meal_id: null, meals: null }), error: null }] });
     const noContent = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(noContent.status).toBe(410);
     expect(((await noContent.json()) as { error: { code: string } }).error.code).toBe('OP_CONTENT_GONE');
     expect(tablesCalled(adminFake)).toEqual(['moderation_flags']);
 
-    useFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: null, error: null }] });
+    seedFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: null, error: null }] });
     const gone = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(gone.status).toBe(410);
     expect(((await gone.json()) as { error: { code: string } }).error.code).toBe('OP_CONTENT_GONE');
@@ -231,7 +231,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
   });
 
   it('RT-4: 行が隠れていなければ 409 OP_CONTENT_NOT_HIDDEN。隠してから 90 日なら 409 OP_CONTENT_RESTORE_WINDOW_EXPIRED (data.hidden_at)。何も更新せず監査ログも残さない', async () => {
-    useFakes({
+    seedFakes({
       moderation_flags: [{ data: foodFlagRow(), error: null }],
       meals: [{ data: mealDbRow({ hidden_at: null, hidden_by: null, hidden_reason: null }), error: null }],
     });
@@ -244,7 +244,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
     expect(auditCount()).toBe(0);
 
     const ninety = new Date(Date.now() - 90 * MS_PER_DAY).toISOString();
-    useFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: mealDbRow({ hidden_at: ninety }), error: null }] });
+    seedFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: mealDbRow({ hidden_at: ninety }), error: null }] });
     const expired = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(expired.status).toBe(409);
     const expiredJson = (await expired.json()) as { error: { code: string; message: string }; data: Json };
@@ -259,7 +259,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 入口 (RT-1〜RT-4
 
 describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7, RT-12, RT-13, RT-17)', () => {
   it('RT-5: food (複製なし): 通報 → 行の順で更新し、200。監査ログは admin.moderation.restore・info・target_type moderation_item:food・details。本人の client で書き、request を渡す', async () => {
-    useFakes(plainFoodQueues());
+    seedFakes(plainFoodQueues());
 
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: `  ${NOTE}  ` }));
 
@@ -307,7 +307,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
   });
 
   it('RT-6: food (複製あり): 同じ paste_group_id で通報された行の hidden_at 以後の行を gte で読み、同じ時刻の行をまとめて 1 文で更新する。approved_flag_ids に複製の通報も入る。別の時刻 t2 の同じ中身の行 (S-24) は先に別の 1 文で戻り、restored_ids と target_ids に入る', async () => {
-    useFakes({
+    seedFakes({
       moderation_flags: [
         { data: foodFlagRow(), error: null },
         { data: [{ id: 'flag-1' }, { id: 'flag-2' }, { id: 'flag-3' }], error: null },
@@ -349,7 +349,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
   });
 
   it('RT-7: recipe: recipe_flags は reviewed_by / reviewed_at で approved (resolution_note を書かない)。meals には触らない', async () => {
-    useFakes({
+    seedFakes({
       recipe_flags: [{ data: recipeFlagRow(), error: null }, { data: [{ id: 'rflag-1' }], error: null }],
       recipes: [
         { data: { id: 'recipe-1', user_id: 'owner-y', hidden_at: RECENT, hidden_by: 'moderator-0', hidden_reason: 'moderation:delete_only' }, error: null },
@@ -371,14 +371,14 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
 
   it('RT-12: content_moderator でも 200 (隠す操作と同じ 3 ロール)。super_admin 限定の分岐は無い', async () => {
     mockRequireRole.mockResolvedValue(moderatorActor);
-    useFakes(plainFoodQueues());
+    seedFakes(plainFoodQueues());
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(res.status).toBe(200);
     expect(auditRow().actor_id).toBe('mod-1');
   });
 
   it('RT-13: user_profiles (BAN) には触らない', async () => {
-    useFakes(plainFoodQueues());
+    seedFakes(plainFoodQueues());
     await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     const tables = [...tablesCalled(adminFake), ...tablesCalled(userFake)];
     expect(tables).not.toContain('user_profiles');
@@ -386,7 +386,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
   });
 
   it('RT-17: recipe で持ち主 (recipes.user_id) が null の行 (S-23) も 200。recipe_flags は approved。監査ログの content_user_id は null', async () => {
-    useFakes({
+    seedFakes({
       recipe_flags: [
         { data: recipeFlagRow({ recipes: { user_id: null, image_url: null, hidden_at: RECENT } }), error: null },
         { data: [{ id: 'rflag-1' }], error: null },
@@ -406,7 +406,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 戻す (RT-5〜RT-7
 
 describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9, RT-11, RT-14〜RT-16)', () => {
   it('RT-8: 通報の更新が失敗したら 500 INTERNAL_ERROR (固定の文)。行は更新しない。監査ログは warn・status_saved false・status_error に元のエラー文。応答の本文に生のエラー文を出さない', async () => {
-    useFakes(plainFoodQueues({ flags: [{ data: null, error: { message: SENTINEL } }] }));
+    seedFakes(plainFoodQueues({ flags: [{ data: null, error: { message: SENTINEL } }] }));
 
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
 
@@ -424,7 +424,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   });
 
   it('RT-9: 行の更新が失敗したら 500 OP_CONTENT_RESTORE_FAILED (固定の文・data.approved_flag_ids)。監査ログは warn・status_saved true・restored false・restore_error・target_ids・restored_ids (先に書いた組の行。無ければ空)。構造化ログに step: rows', async () => {
-    useFakes(plainFoodQueues({ meal: [{ data: mealDbRow(), error: null }, { data: null, error: { message: SENTINEL } }] }));
+    seedFakes(plainFoodQueues({ meal: [{ data: mealDbRow(), error: null }, { data: null, error: { message: SENTINEL } }] }));
 
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
 
@@ -444,7 +444,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   });
 
   it('RT-9: 通報された行の組が失敗したときは、先に書いた (b) の組の行が restored_ids に残る', async () => {
-    useFakes({
+    seedFakes({
       moderation_flags: [{ data: foodFlagRow(), error: null }, { data: [{ id: 'flag-1' }], error: null }],
       meals: [
         { data: mealDbRow({ paste_group_id: 'group-1' }), error: null },
@@ -461,14 +461,14 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   });
 
   it('RT-11: 監査ログの INSERT に失敗しても 200 (fail-open)', async () => {
-    useFakes(plainFoodQueues(), { error: { message: 'audit down' } });
+    seedFakes(plainFoodQueues(), { error: { message: 'audit down' } });
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(res.status).toBe(200);
     expect(buildersFor(userFake, 'admin_audit_logs')).toHaveLength(1);
   });
 
   it('RT-14: 行の読み取りが失敗したら (P-8) 500 INTERNAL_ERROR「コンテンツの状態を読み取れませんでした。…」(data を付けない)。通報も行も更新しない。監査ログは warn・status_saved false・status_error null・restored false・restore_error に元のエラー文・hidden_at_before null。構造化ログに step: read', async () => {
-    useFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: null, error: { message: SENTINEL } }] });
+    seedFakes({ moderation_flags: [{ data: foodFlagRow(), error: null }], meals: [{ data: null, error: { message: SENTINEL } }] });
 
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
 
@@ -489,7 +489,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   });
 
   it('RT-15: food (複製あり) で同じまとまりの読み取りが失敗したら (P-15) 500 INTERNAL_ERROR (RT-14 と同じ文・data なし)。通報も行も更新しない。監査ログは warn・status_saved false・restore_error・hidden_at_before は読んだ行の値。構造化ログに step: read', async () => {
-    useFakes({
+    seedFakes({
       moderation_flags: [{ data: foodFlagRow(), error: null }],
       meals: [{ data: mealDbRow({ paste_group_id: 'group-1' }), error: null }, { data: null, error: { message: SENTINEL } }],
     });
@@ -507,7 +507,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 失敗 (RT-8, RT-9,
   });
 
   it('RT-16: 行の更新が 0 行で、読み直しが失敗したら (P-22) 500 OP_CONTENT_RESTORE_FAILED (固定の文・data.approved_flag_ids)。監査ログは warn・status_saved true・restored false・restore_error。構造化ログに step: reread', async () => {
-    useFakes(plainFoodQueues({ meal: [{ data: mealDbRow(), error: null }, { data: [], error: null }, { data: null, error: { message: SENTINEL } }] }));
+    seedFakes(plainFoodQueues({ meal: [{ data: mealDbRow(), error: null }, { data: [], error: null }, { data: null, error: { message: SENTINEL } }] }));
 
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
 
@@ -544,7 +544,7 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 0 行 (raced) (RT-1
       { name: 'restorable', reread: mealDbRow({ hidden_at: LATER }), status: 409, code: 'CONFLICT_STALE_DATA', error: 'raced: the content row was hidden again by another operation' },
     ];
     for (const c of cases) {
-      useFakes(racedQueues(c.reread));
+      seedFakes(racedQueues(c.reread));
       const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
       const json = (await res.json()) as { error: { code: string }; data?: Json };
       expect(res.status, c.name).toBe(c.status);
@@ -558,20 +558,20 @@ describe('POST /api/admin/moderation/[type]/[id]/restore — 0 行 (raced) (RT-1
   });
 
   it('RT-18: 通報の更新が 0 件 (approved_flag_ids が空) で、通報された行の更新も 0 行・ほかの組も 0 行なら、409 / 410 を返し監査ログを残さない (何も書いていない: §6.6)', async () => {
-    useFakes(racedQueues(mealDbRow({ hidden_at: null, hidden_by: null, hidden_reason: null }), []));
+    seedFakes(racedQueues(mealDbRow({ hidden_at: null, hidden_by: null, hidden_reason: null }), []));
     const res = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe('OP_CONTENT_NOT_HIDDEN');
     expect(auditCount()).toBe(0);
 
-    useFakes(racedQueues(null, []));
+    seedFakes(racedQueues(null, []));
     const gone = await call('food', 'flag-1', restoreRequest({ restore_note: NOTE }));
     expect(gone.status).toBe(410);
     expect(auditCount()).toBe(0);
   });
 
   it('RT-18: ほかの組の行だけ戻っていれば (restored_ids が空でない) warn で残す', async () => {
-    useFakes({
+    seedFakes({
       moderation_flags: [{ data: foodFlagRow(), error: null }, { data: [], error: null }],
       meals: [
         { data: mealDbRow({ paste_group_id: 'group-1' }), error: null },
