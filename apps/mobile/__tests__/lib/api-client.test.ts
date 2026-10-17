@@ -263,3 +263,70 @@ describe('getApi() — 時間のかかる API (AI を呼ぶ API など) の待�
     await expect(api.get('/api/pantry')).resolves.toEqual({ items: [1] });
   });
 });
+
+describe('getApi() — 規約への同意が必要 (403 LEGAL_CONSENT_REQUIRED。#1442 T-API1)', () => {
+  const ORIGINAL_ENV = process.env;
+
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV, EXPO_PUBLIC_API_BASE_URL: 'https://api.example.com' };
+  });
+
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  it('withFriendlyErrors: 403 LEGAL_CONSENT_REQUIRED は LegalConsentRequiredError に置き換わり、購読者に required を知らせる', async () => {
+    let error: unknown;
+    const events: string[] = [];
+    await new Promise<void>((resolve) => {
+      jest.isolateModules(() => {
+        const { createHttpClient } = require('@homegohan/core');
+        const { getApi } = require('../../src/lib/api');
+        const legal = require('../../src/lib/legal-consent');
+        const { LEGAL_CONSENT_REQUIRED_MESSAGE } = require('@homegohan/shared');
+        legal.subscribeLegalConsentEvents((event: string) => events.push(event));
+        const api = getApi();
+        const client = (createHttpClient as jest.Mock).mock.results[0].value;
+        const body = JSON.stringify({ error: LEGAL_CONSENT_REQUIRED_MESSAGE, code: 'LEGAL_CONSENT_REQUIRED' });
+        client.post.mockRejectedValue(new Error(`HTTP 403 Forbidden: ${body}`));
+        void api
+          .post('/api/health/blood-tests', {})
+          .catch((e: unknown) => {
+            error = e;
+          })
+          .then(() => {
+            expect(error).toBeInstanceOf(legal.LegalConsentRequiredError);
+            expect((error as Error).message).toBe(LEGAL_CONSENT_REQUIRED_MESSAGE);
+            resolve();
+          });
+      });
+    });
+    expect(events).toEqual(['required']);
+  });
+
+  it('AI 同意の 403 (AI_CONSENT_REQUIRED) は今までどおり、同じ例外をそのまま投げ、知らせない', async () => {
+    const events: string[] = [];
+    let original: Error | null = null;
+    let thrown: unknown;
+    await new Promise<void>((resolve) => {
+      jest.isolateModules(() => {
+        const { createHttpClient } = require('@homegohan/core');
+        const { getApi } = require('../../src/lib/api');
+        const legal = require('../../src/lib/legal-consent');
+        legal.subscribeLegalConsentEvents((event: string) => events.push(event));
+        const api = getApi();
+        const client = (createHttpClient as jest.Mock).mock.results[0].value;
+        original = new Error(`HTTP 403 Forbidden: ${JSON.stringify({ error: 'x', code: 'AI_CONSENT_REQUIRED' })}`);
+        client.get.mockRejectedValue(original);
+        void api
+          .get('/api/ai/x')
+          .catch((e: unknown) => {
+            thrown = e;
+          })
+          .then(() => resolve());
+      });
+    });
+    expect(thrown).toBe(original);
+    expect(events).toEqual([]);
+  });
+});

@@ -14,29 +14,58 @@ import React from 'react';
 import { render } from '@testing-library/react-native';
 
 // ── expo-router モック (layout を読み込むのに必要な最小限) ───────────────────
+// Stack は子を描き、Stack.Screen は受けた props を記録する (#1442 T-RL1: 同意画面の route の宣言を確かめる)
+const mockStackScreens: Array<Record<string, unknown>> = [];
 jest.mock('expo-router', () => {
   const React = require('react');
   const { View } = require('react-native');
-  function Stack() {
-    return React.createElement(View, { testID: 'stack' });
+  function Stack({ children }: { children?: React.ReactNode }) {
+    return React.createElement(View, { testID: 'stack' }, children);
   }
-  Stack.Screen = function StackScreen() {
+  Stack.Screen = function StackScreen(props: Record<string, unknown>) {
+    mockStackScreens.push(props);
     return null;
   };
   return { Stack, router: { replace: jest.fn() } };
 });
 
 // ── Provider のモック。描画されたかどうかを数える ────────────────────────────
+// Provider の入れ子 (#1442 T-RL1) は React の context で確かめる: AuthProvider は子を mockAuthContext の値 true で包み、
+// LegalConsentProvider はそれを読んで記録してから子を mockLegalConsentContext の値 true で包み、ProfileProvider はそれを記録する
 const mockAuthProviderRendered = jest.fn();
+const mockAuthContext = require('react').createContext(false);
+const mockLegalConsentContext = require('react').createContext(false);
+const mockLegalConsentProviderInsideAuth: boolean[] = [];
+const mockProfileProviderInsideLegalConsent: boolean[] = [];
+const mockLegalConsentGateRendered = jest.fn();
 jest.mock('../../src/providers/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => {
     mockAuthProviderRendered();
-    return children;
+    const React = require('react');
+    return React.createElement(mockAuthContext.Provider, { value: true }, children);
   },
   useAuth: () => ({ session: null, user: null, isLoading: false }),
 }));
+jest.mock('../../src/providers/LegalConsentProvider', () => ({
+  LegalConsentProvider: ({ children }: { children: React.ReactNode }) => {
+    const React = require('react');
+    mockLegalConsentProviderInsideAuth.push(React.useContext(mockAuthContext));
+    return React.createElement(mockLegalConsentContext.Provider, { value: true }, children);
+  },
+  useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }),
+}));
+jest.mock('../../src/components/legal/LegalConsentGate', () => ({
+  LegalConsentGate: () => {
+    mockLegalConsentGateRendered();
+    return null;
+  },
+}));
 jest.mock('../../src/providers/ProfileProvider', () => ({
-  ProfileProvider: ({ children }: { children: React.ReactNode }) => children,
+  ProfileProvider: ({ children }: { children: React.ReactNode }) => {
+    const React = require('react');
+    mockProfileProviderInsideLegalConsent.push(React.useContext(mockLegalConsentContext));
+    return children;
+  },
 }));
 // PostHog の Provider を消す変更が入っても、このテストが「モジュールが無い」で壊れないよう virtual にしている
 jest.mock(
@@ -74,6 +103,9 @@ function renderRootLayout() {
 
 beforeEach(() => {
   jest.clearAllMocks();
+  mockStackScreens.length = 0;
+  mockLegalConsentProviderInsideAuth.length = 0;
+  mockProfileProviderInsideLegalConsent.length = 0;
   for (const name of ENV_NAMES) ORIGINAL_ENV[name] = process.env[name];
 });
 
@@ -185,5 +217,32 @@ describe('RootLayout — 必須の環境変数 (#1182)', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+});
+
+describe('RootLayout — 規約の同意のゲート (#1442 T-RL1)', () => {
+  it('LegalConsentProvider が AuthProvider の中・ProfileProvider の外にあり、LegalConsentGate が描かれ、Stack.Screen "legal-consent" が gestureEnabled: false で宣言されていて、その name が LEGAL_CONSENT_SCREEN_ROUTE_NAME と同じ', () => {
+    process.env.EXPO_PUBLIC_SUPABASE_URL = 'https://abcdefgh.supabase.co';
+    process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = 'anon-key-value';
+    process.env.EXPO_PUBLIC_API_BASE_URL = 'https://api.example.com';
+
+    renderRootLayout();
+
+    // LegalConsentProvider は AuthProvider の中、ProfileProvider は LegalConsentProvider の中
+    expect(mockLegalConsentProviderInsideAuth.length).toBeGreaterThan(0);
+    expect(mockLegalConsentProviderInsideAuth.every((inside) => inside === true)).toBe(true);
+    expect(mockProfileProviderInsideLegalConsent.length).toBeGreaterThan(0);
+    expect(mockProfileProviderInsideLegalConsent.every((inside) => inside === true)).toBe(true);
+    // ゲートが描かれる
+    expect(mockLegalConsentGateRendered).toHaveBeenCalled();
+    // 同意画面の route の宣言
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { LEGAL_CONSENT_SCREEN_ROUTE_NAME } = require('../../src/lib/legal-consent');
+    const consentScreens = mockStackScreens.filter((props) => props.name === 'legal-consent');
+    expect(consentScreens.length).toBeGreaterThan(0);
+    for (const props of consentScreens) {
+      expect(props.options).toEqual({ gestureEnabled: false });
+    }
+    expect(LEGAL_CONSENT_SCREEN_ROUTE_NAME).toBe('legal-consent');
   });
 });

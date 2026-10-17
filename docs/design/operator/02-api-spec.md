@@ -1026,6 +1026,16 @@ super_admin だけ。I/O・エラー・監査は `10-logs-and-mail-retry.md` §9
 
 super_admin だけ。I/O・エラー・監査は `10-logs-and-mail-retry.md` §9.2・§10・§11
 
+### GET /api/super-admin/backups
+DB バックアップの取得の状態と DR 訓練の記録の読み取り (層ごとの最新・鮮度・取得と訓練の一覧。#1129・#1191)。
+
+super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md` §7.1 を canonical とする (行は action_type だけで信じず、書いた経路の印で絞る)
+
+### POST /api/super-admin/backups/dr-tests
+DR 訓練の結果を `dr.test.<種類>` で記録 (#1191)。
+
+super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md` §7.2 を canonical とする (本文は同 §5.3 の `drTestRecordBodySchema`。記録できなければ 500 を返し、201 は返さない)
+
 ---
 
 ## 14. 営業 CRM API

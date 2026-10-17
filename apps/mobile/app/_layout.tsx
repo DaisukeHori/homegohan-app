@@ -9,10 +9,12 @@ import { SafeAreaProvider } from "react-native-safe-area-context";
 import { ConfigErrorScreen } from "../src/components/ConfigErrorScreen";
 import { ErrorFallback } from "../src/components/ErrorFallback";
 import { FontsReadyProvider } from "../src/components/ui/Text";
+import { LegalConsentGate } from "../src/components/legal/LegalConsentGate";
 import { NotificationRouter } from "../src/components/NotificationRouter";
 import { MobileConfigError, resolveRequiredMobileEnv } from "../src/lib/env";
 import { ensurePushTokenRegistered } from "../src/lib/pushNotifications";
 import { AuthProvider, useAuth } from "../src/providers/AuthProvider";
+import { LegalConsentProvider } from "../src/providers/LegalConsentProvider";
 import { ProfileProvider } from "../src/providers/ProfileProvider";
 import { notoSansJpFontSources } from "../src/theme/fontSources";
 
@@ -103,17 +105,24 @@ export default function RootLayout() {
     <FontsReadyProvider ready={fontsLoaded}>
       <SafeAreaProvider>
         <AuthProvider>
-          <ProfileProvider>
-            <PushTokenRegistrar />
-            {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
-            <NotificationRouter />
-            <Stack screenOptions={{ headerShown: false }}>
-              <Stack.Screen name="index" />
-              <Stack.Screen name="(public)" />
-              <Stack.Screen name="(auth)" />
-              <Stack.Screen name="(tabs)" />
-            </Stack>
-          </ProfileProvider>
+          <LegalConsentProvider>
+            <ProfileProvider>
+              <PushTokenRegistrar />
+              {/* フォアグラウンドの通知の表示と、通知のタップでの遷移 (#1049 F7-11)。外されたら解除する */}
+              <NotificationRouter />
+              <Stack screenOptions={{ headerShown: false }}>
+                <Stack.Screen name="index" />
+                <Stack.Screen name="(public)" />
+                <Stack.Screen name="(auth)" />
+                <Stack.Screen name="(tabs)" />
+                {/* #1442: 同意画面。iOS のスワイプで閉じさせない (ほかの取り除く操作は画面の beforeRemove が扱う) */}
+                <Stack.Screen name="legal-consent" options={{ gestureEnabled: false }} />
+              </Stack>
+              {/* #1442: 同意が要る間は、Stack を同意画面 (Web の /legal-consent の WebView) 1 つに畳む。描くものは無い。
+                  Stack の後ろに置く (同じ描画の effect では Stack の navigator が先にそろう) */}
+              <LegalConsentGate />
+            </ProfileProvider>
+          </LegalConsentProvider>
         </AuthProvider>
       </SafeAreaProvider>
     </FontsReadyProvider>
