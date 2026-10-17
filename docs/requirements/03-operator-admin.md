@@ -2908,7 +2908,10 @@ UI 上の必須表示箇所:
 - `email.bounced` のうち `bounce.type` が `Permanent` (ハードバウンス) は、**1 回で**宛先停止リスト (`email_blacklist`、理由 `bounce`) に入れる。`Temporary` などのソフトバウンスは何もしない (`src/lib/emails/resend-webhook-event.ts` の `classifyResendEvent`)
 - `email.complained` は宛先停止リストに入れる (理由 `complaint`)。それ以外の種類 (`email.sent` / `delivered` / `opened` / `clicked` など) は何もせず 200 を返す
 - 宛先は小文字にそろえて入れ、既に載っている宛先はそのまま (最初の理由と時刻が残る。冪等。`src/lib/emails/suppression.ts` の `addToEmailBlacklist`)。外すのは運営が SQL で行う (`ENV_SETUP.md` の #1184 の節)
-- 停止リストに載っている宛先へは送らない (`sendEmail` の登録時と、worker の送信の直前の両方。`src/lib/emails/send.ts`・`src/lib/emails/outbox.ts`)。送らなかった記録は `app_logs` の warn (`function_name = 'email'`) と、送信待ち `email_outbox` の dead の行 (`last_error_code = 'suppressed'`) に残る。運用メールの「届けられなかったメール」の通知の数には入れない (`docs/design/operator/10-logs-and-mail-retry.md` §8)
+- 停止リストに載っている宛先へは送らない (`sendEmail` の登録時と、worker の送信の直前の両方。`src/lib/emails/send.ts`・`src/lib/emails/outbox.ts`)。送らなかった記録は、どちらで当たったかで違う (`docs/design/operator/10-logs-and-mail-retry.md` §7.3):
+  - `sendEmail` の登録時に当たったとき: `app_logs` の warn (`function_name = 'email'`) と、送信待ち `email_outbox` の dead の行 (`last_error_code = 'suppressed'`)。`redact_after_send` の登録 (退会の完了メール・秘密を含む文面) は行を作らない (warn だけ)
+  - worker が送る直前に当たったとき (登録のあとで停止リストに載った宛先): `fail_email_outbox` でその行を dead (`last_error_code = 'suppressed'`) にし、`app_logs` に error (`function_name = 'cron/email-outbox'`、「メールを届けられませんでした (dead)」) を残す。error なので、エラー急増の通知 (`cron/app-log-alerts`) の数には入る
+  - どちらの dead の行も、運用メールの「届けられなかったメール」の通知の数には入れない (同 §8)
 - `email_delivery_logs` には書かない (送信の記録は `email_outbox`。#1193 以降、`email_delivery_logs` は残すが書かない: `docs/design/operator/01-data-model.md` §3.19)
 - **実装しない (将来の検討)**: 「Hard bounce 3 回で停止」の回数の数え上げ、停止した宛先への送信を Slack に知らせること、`delivered` / `opened` / `clicked` で配信の状態を記録・更新すること
 
