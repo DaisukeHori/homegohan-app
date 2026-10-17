@@ -39,6 +39,8 @@ export default defineConfig({
     deviceScaleFactor: SHOOT_DEVICE_SCALE_FACTOR,
     locale: "ja-JP",
     timezoneId: "Asia/Tokyo",
+    // 日付の入力欄などブラウザ自身が描く部分も日本語の書式 (2026/10/17) にする (locale だけでは Chromium の表示の言語は変わらない)
+    launchOptions: { args: ["--lang=ja-JP"], env: { ...process.env, LANG: "ja_JP.UTF-8", LANGUAGE: "ja" } },
     trace: "off",
     screenshot: "only-on-failure",
     video: "off",
