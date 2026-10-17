@@ -20,6 +20,11 @@ import {
   type ErrorCountRow,
 } from '@/lib/ops-alerts/app-log-error-spike';
 import { PG_CRON_STALL_MINUTES, PG_CRON_STALL_MINUTES_MAX, PG_CRON_STALL_MINUTES_MIN } from '@/lib/ops-alerts/cron-failure';
+import {
+  CRON_SECRET_ROTATION_COOLDOWN_MINUTES,
+  CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MAX,
+  CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MIN,
+} from '@/lib/ops-alerts/cron-secret-drift';
 
 // #1157 本番エラーの急増を運用メールに知らせる: しきい値の判定と、メールに載せる内容の整え方 (純粋な関数)。
 // DB・メール送信は route のテスト (src/__tests__/api/cron/app-log-alerts.test.ts) で確かめる。
@@ -297,28 +302,30 @@ describe('parseErrorCountRows (#1157)', () => {
 });
 
 describe('resolveAppLogAlertSettings (#1157)', () => {
-  const none = { errorThreshold: undefined, clientErrorThreshold: undefined, cooldownMinutes: undefined, pgCronStallMinutes: undefined };
+  const none = { errorThreshold: undefined, clientErrorThreshold: undefined, cooldownMinutes: undefined, pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined };
 
   it('R-1: 未設定なら既定値 (20 件・60 分)。無視した変数は無い', () => {
-    expect(resolveAppLogAlertSettings(none)).toEqual({ errorThreshold: 20, clientErrorThreshold: 100, cooldownMinutes: 60, pgCronStallMinutes: 60, ignored: [] });
+    expect(resolveAppLogAlertSettings(none)).toEqual({ errorThreshold: 20, clientErrorThreshold: 100, cooldownMinutes: 60, pgCronStallMinutes: 60, cronSecretRotationCooldownMinutes: 1440, ignored: [] });
   });
 
   it('R-2: 空・空白だけも未設定と同じ', () => {
-    expect(resolveAppLogAlertSettings({ errorThreshold: '', clientErrorThreshold: undefined, cooldownMinutes: ' \t ', pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '', clientErrorThreshold: undefined, cooldownMinutes: ' \t ', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 20,
       clientErrorThreshold: 100,
       cooldownMinutes: 60,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: [],
     });
   });
 
   it('R-3: 10 進の整数なら、前後の空白を除いて使う', () => {
-    expect(resolveAppLogAlertSettings({ errorThreshold: ' 50 ', clientErrorThreshold: undefined, cooldownMinutes: '120', pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: ' 50 ', clientErrorThreshold: undefined, cooldownMinutes: '120', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 50,
       clientErrorThreshold: 100,
       cooldownMinutes: 120,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: [],
     });
   });
@@ -329,18 +336,20 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
     // claim_ops_alert が受け付ける範囲 (1 分〜7 日) と同じ
     expect(APP_LOG_ALERT_COOLDOWN_MINUTES_MIN).toBe(1);
     expect(APP_LOG_ALERT_COOLDOWN_MINUTES_MAX).toBe(10080);
-    expect(resolveAppLogAlertSettings({ errorThreshold: '1', clientErrorThreshold: undefined, cooldownMinutes: '1', pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '1', clientErrorThreshold: undefined, cooldownMinutes: '1', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 1,
       clientErrorThreshold: 100,
       cooldownMinutes: 1,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: [],
     });
-    expect(resolveAppLogAlertSettings({ errorThreshold: '100000', clientErrorThreshold: undefined, cooldownMinutes: '10080', pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '100000', clientErrorThreshold: undefined, cooldownMinutes: '10080', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 100_000,
       clientErrorThreshold: 100,
       cooldownMinutes: 10080,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: [],
     });
   });
@@ -359,29 +368,32 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
       ['9999999999999999', '9999999999999999'],
     ];
     for (const [threshold, cooldown] of cases) {
-      expect(resolveAppLogAlertSettings({ errorThreshold: threshold, clientErrorThreshold: undefined, cooldownMinutes: cooldown, pgCronStallMinutes: undefined }), threshold).toEqual({
+      expect(resolveAppLogAlertSettings({ errorThreshold: threshold, clientErrorThreshold: undefined, cooldownMinutes: cooldown, pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined }), threshold).toEqual({
         errorThreshold: 20,
         clientErrorThreshold: 100,
         cooldownMinutes: 60,
         pgCronStallMinutes: 60,
+        cronSecretRotationCooldownMinutes: 1440,
         ignored: ['OPS_ALERT_ERROR_THRESHOLD', 'OPS_ALERT_COOLDOWN_MINUTES'],
       });
     }
   });
 
   it('R-6: 片方だけ不正なら、その片方だけを既定値に戻す', () => {
-    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', clientErrorThreshold: undefined, cooldownMinutes: '30', pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', clientErrorThreshold: undefined, cooldownMinutes: '30', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 20,
       clientErrorThreshold: 100,
       cooldownMinutes: 30,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: ['OPS_ALERT_ERROR_THRESHOLD'],
     });
-    expect(resolveAppLogAlertSettings({ errorThreshold: '40', clientErrorThreshold: undefined, cooldownMinutes: '0', pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '40', clientErrorThreshold: undefined, cooldownMinutes: '0', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 40,
       clientErrorThreshold: 100,
       cooldownMinutes: 60,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: ['OPS_ALERT_COOLDOWN_MINUTES'],
     });
   });
@@ -398,11 +410,12 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
     expect(APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD).toBe(100);
     // サーバーより高い (クライアントの error は端末の都合の失敗も混ざり、1 つの不具合でも画面の数だけ届くため)
     expect(APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD).toBeGreaterThan(APP_LOG_ALERT_ERROR_THRESHOLD);
-    expect(resolveAppLogAlertSettings({ errorThreshold: '30', clientErrorThreshold: ' 250 ', cooldownMinutes: undefined, pgCronStallMinutes: undefined })).toEqual({
+    expect(resolveAppLogAlertSettings({ errorThreshold: '30', clientErrorThreshold: ' 250 ', cooldownMinutes: undefined, pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined })).toEqual({
       errorThreshold: 30,
       clientErrorThreshold: 250,
       cooldownMinutes: 60,
       pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: [],
     });
     // 範囲の端 (1〜100000) は受け付ける
@@ -412,16 +425,17 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
 
   it('R-9 (#1493): クライアントのしきい値だけが不正なら、それだけを既定値 (100) に戻し、その変数の名前を ignored に入れる', () => {
     for (const bad of ['0', '100001', '-1', '2.5', 'abc', '1e3']) {
-      expect(resolveAppLogAlertSettings({ errorThreshold: '30', clientErrorThreshold: bad, cooldownMinutes: '90', pgCronStallMinutes: undefined }), bad).toEqual({
+      expect(resolveAppLogAlertSettings({ errorThreshold: '30', clientErrorThreshold: bad, cooldownMinutes: '90', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined }), bad).toEqual({
         errorThreshold: 30,
         clientErrorThreshold: 100,
         cooldownMinutes: 90,
         pgCronStallMinutes: 60,
+        cronSecretRotationCooldownMinutes: 1440,
         ignored: ['OPS_ALERT_CLIENT_ERROR_THRESHOLD'],
       });
     }
     // 3 つとも不正なら、3 つとも名前が並ぶ
-    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', clientErrorThreshold: 'y', cooldownMinutes: 'z', pgCronStallMinutes: undefined }).ignored).toEqual([
+    expect(resolveAppLogAlertSettings({ errorThreshold: 'x', clientErrorThreshold: 'y', cooldownMinutes: 'z', pgCronStallMinutes: undefined, cronSecretRotationCooldownMinutes: undefined }).ignored).toEqual([
       'OPS_ALERT_ERROR_THRESHOLD',
       'OPS_ALERT_CLIENT_ERROR_THRESHOLD',
       'OPS_ALERT_COOLDOWN_MINUTES',
@@ -435,6 +449,7 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
       clientErrorThreshold: 100,
       cooldownMinutes: 60,
       pgCronStallMinutes: 120,
+      cronSecretRotationCooldownMinutes: 1440,
       ignored: [],
     });
     // 範囲の端 (10〜1440) は受け付ける
@@ -449,6 +464,7 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
         clientErrorThreshold: 100,
         cooldownMinutes: 60,
         pgCronStallMinutes: 60,
+        cronSecretRotationCooldownMinutes: 1440,
         ignored: ['OPS_ALERT_PG_CRON_STALL_MINUTES'],
       });
     }
@@ -457,5 +473,35 @@ describe('resolveAppLogAlertSettings (#1157)', () => {
     // 既定値そのものが受け付ける範囲に収まっている
     expect(PG_CRON_STALL_MINUTES).toBeGreaterThanOrEqual(PG_CRON_STALL_MINUTES_MIN);
     expect(PG_CRON_STALL_MINUTES).toBeLessThanOrEqual(PG_CRON_STALL_MINUTES_MAX);
+  });
+  it('R-10 (#1560): OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES で rotation の抑止を変える。範囲外 (1439・10081・整数でない) は既定の 1440 に戻し ignored に入れる。2880 は受ける', () => {
+    expect(CRON_SECRET_ROTATION_COOLDOWN_MINUTES).toBe(1440);
+    expect(CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MIN).toBe(1440);
+    expect(CRON_SECRET_ROTATION_COOLDOWN_MINUTES_MAX).toBe(10080);
+    expect(resolveAppLogAlertSettings({ ...none, cronSecretRotationCooldownMinutes: ' 2880 ' })).toEqual({
+      errorThreshold: 20,
+      clientErrorThreshold: 100,
+      cooldownMinutes: 60,
+      pgCronStallMinutes: 60,
+      cronSecretRotationCooldownMinutes: 2880,
+      ignored: [],
+    });
+    // 範囲の端 (1440〜10080) は受け付ける。ずれ (FAIL) の抑止 (cooldownMinutes) は変わらない
+    expect(resolveAppLogAlertSettings({ ...none, cronSecretRotationCooldownMinutes: '1440' }).cronSecretRotationCooldownMinutes).toBe(1440);
+    expect(resolveAppLogAlertSettings({ ...none, cronSecretRotationCooldownMinutes: '10080' }).cronSecretRotationCooldownMinutes).toBe(10080);
+    // 範囲外・整数でない値は既定値に戻し、その変数の名前だけを ignored に入れる (ほかの変数は影響しない)
+    for (const bad of ['1439', '10081', '0', '-5', '2.5', '1e4', 'abc', '1440分']) {
+      expect(resolveAppLogAlertSettings({ ...none, cronSecretRotationCooldownMinutes: bad }), bad).toEqual({
+        errorThreshold: 20,
+        clientErrorThreshold: 100,
+        cooldownMinutes: 60,
+        pgCronStallMinutes: 60,
+        cronSecretRotationCooldownMinutes: 1440,
+        ignored: ['OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES'],
+      });
+    }
+    // 空・未設定は既定値で、無視した変数には数えない
+    expect(resolveAppLogAlertSettings({ ...none, cronSecretRotationCooldownMinutes: '  ' }).ignored).toEqual([]);
+    expect(resolveAppLogAlertSettings({ ...none, cooldownMinutes: '30' }).cronSecretRotationCooldownMinutes).toBe(1440);
   });
 });
