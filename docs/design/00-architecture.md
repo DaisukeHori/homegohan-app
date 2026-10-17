@@ -14,7 +14,7 @@ PR #797 要件定義 (01/02/03 + 100-scenarios.md) に基づく実装基本設�
 - **Build**: Vercel (hnd1 / Tokyo)
 
 ### Frontend (Mobile)
-- **Framework**: React Native (Expo SDK 53)
+- **Framework**: React Native (Expo SDK 58)
 - **Architecture**: WebView Hybrid (主要画面は Web 側を WebView 内で表示、ネイティブ機能は薄いブリッジ)
 - **Distribution**: Apple Configurator 2 (開発)、TestFlight (β) → App Store (本番)
 - **Push**: Expo Push Notifications
