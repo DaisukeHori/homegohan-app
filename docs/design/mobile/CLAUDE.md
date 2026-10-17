@@ -12,10 +12,11 @@
 | `04-storage-camera.md` | meal-photos バケット / native ImagePicker / EXIF 削除 | 01 §15.2 |
 | `05-auth-session.md` | セッションの保管 (SecureStore) / 起動時の復元 / Google ログイン / push token / WebView とネイティブのログアウト・セッション失効の同期 | #1038 |
 | `06-push-send.md` | サーバーからの Push 通知の送信: 送信待ち `push_outbox` / worker `GET /api/cron/push-outbox` / receipt / 種類の一覧 (`PUSH_NOTIFICATION_KINDS`) | 01 §15.3-4・#1136 |
+| `07-toolchain-upgrade.md` | ツールチェーンの更新 (Expo SDK 58 / RN 0.88 / Jest 30)・`runtimeVersion` の方針・設定の画面 (隠しタブ) の隠し方・同意画面の止め (`usePreventRemove`) | #1591 |
 
 ## ドメインの役割
 
-React Native + Expo SDK 53 によるモバイルアプリ:
+React Native + Expo SDK 58 によるモバイルアプリ:
 - **WebView ハイブリッド**: 主要画面は Web 側 (`src/app/`) を WebView で表示
 - **ネイティブ機能**: Push 通知 / カメラ / ディープリンク / Biometric 認証
 - **配布**: Apple Configurator 2 (開発) → TestFlight (β) → App Store (本番)
@@ -24,7 +25,7 @@ React Native + Expo SDK 53 によるモバイルアプリ:
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Mobile App (React Native + Expo SDK 53)        │
+│  Mobile App (React Native + Expo SDK 58)        │
 │  ├── app/                                        │
 │  │   ├── _layout.tsx (Linking handler)         │
 │  │   ├── (tabs)/ ネイティブタブ                │

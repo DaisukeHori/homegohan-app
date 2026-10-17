@@ -1877,5 +1877,5 @@ const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 - **検知の遅れは最大 30 分** (Q-4)。ずれの直後の 1 時間おきのジョブ (`calculate-segment-stats`) は、通知より先に 401 で止まることがある。
 - **確認は Vault の値を本番の Edge Function へ 15 分ごとに送る** (1 日 96 回)。pg_cron の実際の呼び出しと同じ経路・同じ露出で、pg_net の待ち行列に Authorization ヘッダーが載るのは送られるまでの数秒。
 - **`cron-secret-probe` は、正しい秘密を持つ呼び出しにだけ `previous_configured` / `alias_used` を返す**。秘密を持たない呼び出しには既存の関数と同じ 401 しか返さない。
-- **`net._http_response` の保持 (既定 6 時間) より長く route が止まる**と、再開後の最初の回は `no-probe-yet` から始め直す。
+- **見る範囲 (60 分。`src/lib/ops-alerts/cron-secret-drift.ts` の `CRON_SECRET_PROBE_LOOKBACK_MINUTES`) より長く route が止まる**と、見る範囲に確認の行が無いので、再開後の最初の回は `no-probe-yet` から始め直す (`net._http_response` の保持 (既定 6 時間) より短い範囲しか見ないため)。
 - **本物のジョブの応答 (`SERVER_CONFIG_MISSING` の 503 など) は見ない** (§4.2 の案 A)。pg_net の応答の失敗一般の監視は別の候補。

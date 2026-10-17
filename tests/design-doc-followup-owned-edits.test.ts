@@ -62,6 +62,19 @@ const OWNED_EDITS: readonly OwnedEdit[] = [
     target: 'docs/design/operator/10-logs-and-mail-retry.md',
     pattern: /「([^」]*)」→「([^」]*)」/,
   },
+  {
+    // mobile/07 §15.2: 01 §3.1 の表のルーティングの行。オーケストレーターの専権 PATCH が持つ
+    // (§15.2 の「同上」の行と「ルート `CLAUDE.md`」の行は 1 列目が対象のパスで始まらないので、この見張りでは拾えない)
+    owner: 'docs/design/mobile/07-toolchain-upgrade.md',
+    target: 'docs/design/mobile/01-architecture.md',
+    pattern: /「(Expo Router v4)」 \| `SDK 58`・`(Expo Router 58)` に/,
+  },
+  {
+    // mobile/07 §15.2: 00-architecture の 17 行。オーケストレーターの専権 PATCH が持つ
+    owner: 'docs/design/mobile/07-toolchain-upgrade.md',
+    target: 'docs/design/00-architecture.md',
+    pattern: /「React Native \((Expo SDK 53)\)」 \| `(Expo SDK 58)` に/,
+  },
 ];
 
 function read(rel: string): string {

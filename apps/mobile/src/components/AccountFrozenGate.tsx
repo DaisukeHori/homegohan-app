@@ -36,7 +36,7 @@ export function AccountFrozenGate() {
   const navigationReady = Boolean(useRootNavigationState()?.key);
   /** ナビゲーションのコンテナ (expo-router の store.navigationRef。同じ object を返し続ける) */
   const navigationRef = useNavigationContainerRef();
-  /** このゲートが reset で畳んだ凍結の画面が、いまの Stack にある (凍結が解けて閉じる・ログアウトの後に前面でなくなったら外す) */
+  /** このゲートが RESET で畳んだ凍結の画面が、いまの Stack にある (凍結が解けて閉じる・ログアウトの後に前面でなくなったら外す) */
   const openedRef = useRef(false);
   /** 凍結の画面を閉じる操作 (入口への replace か、下の画面への back) を積んだ (流れて前面が凍結の画面でなくなるまで、もう一度積まない) */
   const closingRef = useRef(false);
