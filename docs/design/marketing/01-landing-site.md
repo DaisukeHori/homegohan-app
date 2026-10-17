@@ -834,6 +834,8 @@ M-4 (背景の円の視差) と M-6 (使い方の固定した端末の切り替�
 
 ### 8.1 ファイルと役割
 
+この表は、部品と、部品が載る殻・データ・撮影の資産だけを挙げる。段 0〜2 で変わる既存のファイルの全部 (母集合) は §21 の「変更」の行 (この表に無い `src/app/(auth)/layout.tsx`・`scripts/local-ci.sh`・`.github/workflows/e2e-local.yml`・`package.json`・`package-lock.json`・`tests/public-claims-guard.test.ts`・`tests/seo-public-pages-1867.test.tsx` を含む)、新しく作るファイルの全部は §18 にある。
+
 | ファイル | 種別 | 役割 | 状態 |
 |---|---|---|---|
 | `src/app/page.tsx` (既存の殻・変更) | Server (async) | `metadata = publicPageMetadata('/')` (既存)・`viewport` (新設)・`getCspNonce()`・`<SiteStructuredData siteUrl nonce>` (既存) + `<LandingPage />` (§9.3) | 無し |
@@ -1683,7 +1685,7 @@ origin/main `01d62462` の現状: トップの描画は `const { default: Landin
 | SNS のリンク | `href="#"` 3 件 | 無し (`socialLinks: []`) |
 | メタ情報 | 殻の `publicPageMetadata('/')` (title・description = `SITE_DESCRIPTION`・canonical `/`・OGP)。JSON-LD は `SiteStructuredData` (段 1・`be462ab4`) | 同じ部品を流用 (変えない)。`SITE_DESCRIPTION` の文だけを直す (「次世代の」を外し、根拠のある主張にそろえる。§9.4) |
 | 見張り | `public-claims-guard` (ソースと描画。トップは `LandingPageView.tsx`)・`seo-public-pages-1867` (殻のメタ情報と JSON-LD) | `public-claims-guard` の読む先を `LandingPage.tsx`・`landing-copy.ts` に替え・`seo-public-pages-1867` のモックを `LandingPage` に替え + `landing-page-1867` (根拠の実在・主張の表・トークン・alt・バッジ・コントラスト・import の範囲・画像の重さ・見本の式・撮影の見本の値と撮り直し・画面の注記) + e2e (構造・a11y・予算・CSP) |
-| e2e の門 | `/` を開く spec は 13 本 (§19 の e2e の行)。門 (`e2e-local.yml` と `PW_ARGS`) に入るのは `public-policy-pages` (フッターのリンク)・`csp-nonce` (`/` の nonce と CSP 違反 0)・`w5-3-menu-gen-adversarial` (ログイン済みで `/` → 転送) の 3 本 | 同 + `landing-page.spec.ts` を門に追加 |
+| e2e の門 | `/` をブラウザで開く spec は 13 本 (数え方: origin/main の `tests/e2e/` で `goto("/")` と BASE_URL つきの同じ形 `` goto(`${BASE_URL}/`) `` を引いた 14 本から、`tests/e2e/.exploration/` の探索用 1 本 (`weekly-explore.spec.ts`。ログイン済みの別タブで `/` を開き `/home` へ送られるだけで、門にも PR の MVP スイートにも入らない) を除く)。ほかに `request.get("/")` で応答のヘッダー (CSP) だけを見る spec が 2 本 (`bug-140-145-security-auth`・`adversarial-deep`)。この 15 本が §19 の e2e の行。門 (`e2e-local.yml` と `PW_ARGS`) に入るのは `public-policy-pages` (フッターのリンク)・`csp-nonce` (`/` の nonce と CSP 違反 0)・`w5-3-menu-gen-adversarial` (ログイン済みで `/` → 転送) の 3 本 | 同 + `landing-page.spec.ts` を門に追加 |
 
 ### 13.3 ③状態遷移表
 
@@ -1956,7 +1958,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 
 ## 19. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4` で採取し、`cf6393c3` と `01d62462` と `e5ce8e65` (2026-10-18。R5 の反映の時点の origin/main。`01d62462` からの 1 コミット (#1885) が本書の指すファイルで変えたのは `lib/supabase/middleware.ts` のコメント 2 行の文言だけで、行番号は変わらない) と `e66cacf5` (2026-10-18。R6 の反映の時点の origin/main。`e5ce8e65` からの 1 コミット (#1886) が本書の指すファイルで変えたのは、`lib/supabase/middleware.ts` のコメント 1 行の文言 (行番号は変わらない) と `src/lib/maintenance-mode.ts` (Resend の Webhook を止めない。`isMaintenanceExemptPath` が `:87-110` に移った。`/` を止めないパスに足してはいない。§2.4 は直し済み)) で突き合わせ直した。`be462ab4` からの変更のうち本書が指すファイルは、`tests/faq-guide-wording-1859.test.ts` と `src/app/faq/page.tsx` (#1876)・`lib/supabase/middleware.ts` (#1875。§2.4 の行番号は直し済み)・`tests/jst-today-source-scan.test.ts`・`src/lib/env.ts`・`docs/design/cross/08-legal-compliance.md`・`docs/design/billing/01-billing-core.md` で、どれも本書が頼る中身は変わらない)。e2e は `tests/e2e/` の `goto("/")` (と BASE_URL つきの同じ形) を引いた 13 本 (`tests/e2e/.exploration/` の探索用は門にも定期の実行にも入らないので数えない)。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4` で採取し、`cf6393c3` と `01d62462` と `e5ce8e65` (2026-10-18。R5 の反映の時点の origin/main。`01d62462` からの 1 コミット (#1885) が本書の指すファイルで変えたのは `lib/supabase/middleware.ts` のコメント 2 行の文言だけで、行番号は変わらない) と `e66cacf5` (2026-10-18。R6 の反映の時点の origin/main。`e5ce8e65` からの 1 コミット (#1886) が本書の指すファイルで変えたのは、`lib/supabase/middleware.ts` のコメント 1 行の文言 (行番号は変わらない) と `src/lib/maintenance-mode.ts` (Resend の Webhook を止めない。`isMaintenanceExemptPath` が `:87-110` に移った。`/` を止めないパスに足してはいない。§2.4 は直し済み)) で突き合わせ直した。`be462ab4` からの変更のうち本書が指すファイルは、`tests/faq-guide-wording-1859.test.ts` と `src/app/faq/page.tsx` (#1876)・`lib/supabase/middleware.ts` (#1875。§2.4 の行番号は直し済み)・`tests/jst-today-source-scan.test.ts`・`src/lib/env.ts`・`docs/design/cross/08-legal-compliance.md`・`docs/design/billing/01-billing-core.md` で、どれも本書が頼る中身は変わらない)。e2e は `tests/e2e/` の `goto("/")` (と BASE_URL つきの同じ形) を引いた 14 本から `tests/e2e/.exploration/` の探索用 1 本 (`weekly-explore.spec.ts`。ログイン済みで `/` を開き `/home` へ送られるだけ。門 (`PW_ARGS`) にも PR の MVP スイートにも入らない) を除いた 13 本と、`request.get("/")` で `/` の応答のヘッダーだけを見る 2 本 (`bug-140-145-security-auth`・`adversarial-deep`) の計 15 本 (§13.2 の e2e の門の行と同じ数え方)。
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
