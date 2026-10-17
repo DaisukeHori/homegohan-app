@@ -74,11 +74,11 @@ describe('Edge の緊急停止の値は、Next.js / packages/shared と同じ', 
   });
 
   it('止めたときの応答は Next.js の aiChatDisabledResponse と同じ本文・ヘッダー (CORS のヘッダーも付ける)', async () => {
-    const res = aiChatDisabledEdgeResponse({ 'Access-Control-Allow-Origin': 'https://homegohan.app' });
+    const res = aiChatDisabledEdgeResponse({ 'Access-Control-Allow-Origin': 'https://homegohan-app.vercel.app' });
     expect(res.status).toBe(503);
     expect(res.headers.get('Retry-After')).toBe('60');
     expect(res.headers.get('Cache-Control')).toBe('private, no-store');
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://homegohan.app');
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://homegohan-app.vercel.app');
     await expect(res.json()).resolves.toEqual({
       error: SHARED_AI_CHAT_DISABLED_MESSAGE,
       code: SHARED_AI_CHAT_DISABLED_CODE,
@@ -264,7 +264,8 @@ vi.mock('../supabase/functions/_shared/ai-usage.ts', async (importOriginal) => (
 
 type Handler = (req: Request) => Promise<Response>;
 let handler: Handler | null = null;
-const ORIGIN = 'https://homegohan.app';
+// 既定で許可する自社のオリジン (supabase/functions/_shared/cors.ts の DEFAULT_ALLOWED_ORIGINS。#1573 で DNS に無い旧ドメインを外した)
+const ORIGIN = 'https://homegohan-app.vercel.app';
 
 const ENV: Record<string, string> = {
   SUPABASE_URL: 'https://project.supabase.test',

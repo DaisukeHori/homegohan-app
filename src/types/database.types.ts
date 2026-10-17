@@ -8577,6 +8577,13 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      cleanup_cron_run_history: {
+        Args: never
+        Returns: {
+          alerts_deleted: number
+          run_details_deleted: number
+        }[]
+      }
       cleanup_email_outbox: { Args: never; Returns: number }
       cleanup_ended_user_sessions_metadata: { Args: never; Returns: number }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
@@ -9400,6 +9407,15 @@ export type Database = {
       propose_org_owner_transfer: {
         Args: { p_organization_id: string; p_to_user_id: string }
         Returns: string
+      }
+      purge_dissolved_family_groups: {
+        Args: { p_dry_run?: boolean }
+        Returns: {
+          dry_run: boolean
+          purge_count: number
+          remaining_count: number
+          skipped_with_consents_count: number
+        }[]
       }
       reconcile_user_sessions_metadata: { Args: never; Returns: number }
       record_ai_usage: {

@@ -222,7 +222,7 @@ describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', 
   it('この呼び出しで更新されたセッションの Cookie を、メンテナンス中の応答にも載せる (更新トークンを失わない)', async () => {
     mockGetUser.mockImplementation(async () => {
       const config = mockCreateServerClient.mock.calls[0][2];
-      config.cookies.set('sb-refreshed-token', 'new-value', { path: '/' });
+      config.cookies.setAll([{ name: 'sb-refreshed-token', value: 'new-value', options: { path: '/' } }], {});
       return { data: { user: { id: 'user-1' } }, error: null };
     });
     mockMaybeSingle.mockResolvedValue(profile());
@@ -433,7 +433,7 @@ describe('updateSession — メンテナンスモード: ページ (#1148)', () 
   it('この呼び出しで更新されたセッションの Cookie を、メンテナンス中の画面にも載せる', async () => {
     mockGetUser.mockImplementation(async () => {
       const config = mockCreateServerClient.mock.calls[0][2];
-      config.cookies.set('sb-refreshed-token', 'new-value', { path: '/' });
+      config.cookies.setAll([{ name: 'sb-refreshed-token', value: 'new-value', options: { path: '/' } }], {});
       return { data: { user: { id: 'user-1' } }, error: null };
     });
     mockMaybeSingle.mockResolvedValue(profile());

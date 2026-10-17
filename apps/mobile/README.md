@@ -22,7 +22,7 @@ npm install
 ```bash
 export EXPO_PUBLIC_SUPABASE_URL="https://xxx.supabase.co"
 export EXPO_PUBLIC_SUPABASE_ANON_KEY="xxx"
-export EXPO_PUBLIC_API_BASE_URL="https://homegohan.com"
+export EXPO_PUBLIC_API_BASE_URL="https://homegohan-app.vercel.app"
 export EXPO_PUBLIC_APP_ENV="development"
 ```
 
@@ -32,7 +32,7 @@ export EXPO_PUBLIC_APP_ENV="development"
 ```env
 EXPO_PUBLIC_SUPABASE_URL=...
 EXPO_PUBLIC_SUPABASE_ANON_KEY=...
-EXPO_PUBLIC_API_BASE_URL=https://homegohan.com
+EXPO_PUBLIC_API_BASE_URL=https://homegohan-app.vercel.app
 EXPO_PUBLIC_APP_ENV=development
 ```
 
@@ -65,7 +65,7 @@ npm run mobile:android
    - 比較・マイページのタブ（WebView）と、マイページの歯車の先の設定（栄養目標・健康診断の血液検査・使い方ガイドなど）
    - 買い物リスト・冷蔵庫・レシピ・家族・健康記録・バッジ・お気に入り・運営の画面（組織・サポート・スーパー管理）は、アプリのネイティブの画面としては無い（通常の操作で届かなかったので消した。#1598。Web の画面で確認する）
 
-※ 本番バックエンドに繋ぐ場合は `EXPO_PUBLIC_API_BASE_URL=https://homegohan.com` でOKですが、**本番データを汚さないテスト用アカウント**の利用を推奨します。
+※ 本番バックエンドに繋ぐ場合は `EXPO_PUBLIC_API_BASE_URL=https://homegohan-app.vercel.app`（いまアプリが動いている Web。`homegohan.com` はサイトを移すまで別のサービスを指しているので使わない）でOKですが、**本番データを汚さないテスト用アカウント**の利用を推奨します。
 
 ### B) iOS Simulator / Android Emulator で確認
 - iOS: `npm run mobile:ios`
@@ -80,7 +80,7 @@ npm run web
 ```
 
 注意:
-- ブラウザ都合で **CORS** により `https://homegohan.com/api/*` が失敗する場合があります（その場合は実機/Simulator推奨）
+- ブラウザ都合で **CORS** により `https://homegohan-app.vercel.app/api/*` が失敗する場合があります（その場合は実機/Simulator推奨）
 - カメラ/Push通知などは Web では制約があります
 
 ### D) 事前チェック（CI向け）

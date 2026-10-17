@@ -4,9 +4,10 @@
  *
  * なぜ要るか: 2026-10-11 に M2 で負荷が高いときに scripts/local-ci.sh を回すと、integration:security の 2 ファイル
  * (tests/integration/rls/segment-tables-require-login.test.ts と shopping-list-requests-owner-update.test.ts) の beforeAll で、
- * admin.createUser と signInWithPassword が `{}` というメッセージのエラーで落ちた (1,707 件のテストは全部通った)。
- * auth-js は 502 / 503 / 504 を AuthRetryableFetchError にし、そのメッセージに Response を JSON にしたもの (`{}`) を入れる
- * (node_modules/@supabase/auth-js/dist/main/lib/fetch.js の handleError)。つまり認証そのものの判定ではなく、
+ * admin.createUser と signInWithPassword がゲートウェイの失敗 (502 / 503 / 504) のエラーで落ちた (auth-js 2.105 ではそのメッセージが `{}`、
+ * 2.117 からは statusText か `HTTP <status>`。1,707 件のテストは全部通った)。
+ * auth-js は 502 / 503 / 504 を AuthRetryableFetchError にする (本文が JSON でなければ message は statusText、空なら `HTTP <status>`。
+ * node_modules/@supabase/auth-js/dist/main/lib/fetch.js の handleError)。つまり認証そのものの判定ではなく、
  * ゲートウェイが GoTrue から応答を得られなかった。同じ 2 分ほどの間に認証を使うほかのファイルは通っていて、途切れは断続的だった。
  * テストの assert とは関係のない基盤の揺れなので、テストのプロセスの fetch でだけやり直す (アプリの判定には触れない)。
  *
