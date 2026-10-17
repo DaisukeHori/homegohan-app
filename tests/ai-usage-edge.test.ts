@@ -103,9 +103,9 @@ describe('consumeEdgeAiUsage: ユーザーの JWT で直接呼ばれたときに
 
     if (result.allowed) throw new Error('unreachable');
     const now = Date.UTC(2026, 9, 11, 14, 0, 0); // JST 23:00
-    const res = aiDailyLimitEdgeResponse(result, { 'Access-Control-Allow-Origin': 'https://homegohan.app' }, now);
+    const res = aiDailyLimitEdgeResponse(result, { 'Access-Control-Allow-Origin': 'https://homegohan-app.vercel.app' }, now);
     expect(res.status).toBe(429);
-    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://homegohan.app');
+    expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://homegohan-app.vercel.app');
     expect(res.headers.get('Retry-After')).toBe('3600');
     expect(res.headers.get('Content-Type')).toBe('application/json');
     expect(await res.json()).toEqual({ error: aiDailyLimitMessage(10), code: 'AI_DAILY_LIMIT', limit: 10, retryAfter: 3600 });

@@ -16,6 +16,7 @@ export * from './parental-consent';
 export * from './service-unavailable';
 export * from './user-scoped-storage';
 export * from './native-app-tabs';
+export * from './data-subject-requests';
 export * from './password-policy';
 export * from './auth-captcha';
 export * from './account-change-errors';

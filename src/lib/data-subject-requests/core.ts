@@ -62,13 +62,15 @@ const MS_PER_DAY = HOURS_PER_DAY * MS_PER_HOUR;
 export const DSR_OPERATOR_ROLES = ['admin', 'super_admin'] as const;
 export type DsrOperatorRole = (typeof DSR_OPERATOR_ROLES)[number];
 
-export const DSR_SETTINGS_PATH = '/settings/data-requests';
+/**
+ * 請求の画面のパスと、設定画面の入口の見出し・説明の文は、アプリ (apps/mobile) と共用するため @homegohan/shared に置く (#1812)。
+ * Web の各画面・メールは今までどおりここから読む (値は packages/shared/src/data-subject-requests.ts が正)
+ */
+export { DSR_SETTINGS_PATH, DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_ENTRY_DESCRIPTION } from '@homegohan/shared';
 export const DSR_VERIFY_PATH = '/settings/data-requests/verify';
 export const DSR_ADMIN_PATH = '/admin/data-requests';
 export const DSR_ACCOUNT_API_PATH = '/api/account/data-requests';
 export const DSR_ADMIN_API_PATH = '/api/admin/data-requests';
-/** 設定画面の入口の見出し */
-export const DSR_SETTINGS_ENTRY_TITLE = '開示・訂正・利用停止の請求';
 /** レート制限のカテゴリ (src/lib/rate-limit.ts の RateLimitCategory に足す) */
 export const DSR_RATE_LIMIT_CATEGORY = 'dsr' as const;
 /** 監査ログの action_type (operator/07 §4.1.1 の命名) */

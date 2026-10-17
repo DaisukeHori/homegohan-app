@@ -1,3 +1,5 @@
+import { DSR_SETTINGS_PATH } from "@homegohan/shared";
+
 type OnboardingStatus = "not_started" | "in_progress" | "completed";
 
 type OnboardingRedirectInput = {
@@ -75,10 +77,11 @@ export function isLegalConsentPath(pathname: string): boolean {
 // 同意ゲート (lib/legal-consent.ts の isLegalConsentExemptPath) と初期設定の差し戻し (下の resolveOnboardingRedirect) の
 // 両方から外す。同意の画面に来るのは多くが新規登録の直後 (初期設定の前) の人で、ここで差し戻すと、同意の画面の
 // 請求の画面への案内を押しても /onboarding/welcome (強制中はさらに同意の画面) へ戻されて、請求の画面に着けない。
-// 値は src/lib/data-subject-requests/core.ts の DSR_SETTINGS_PATH と同じ (middleware から zod を含む core.ts を
-// 読み込まないよう文字列で書く。一致は tests/onboarding-routing.test.ts が確かめる)。
+// 値は @homegohan/shared の DSR_SETTINGS_PATH (src/lib/data-subject-requests/core.ts が再び export する値と同じもの。#1812)。
+// middleware から zod を含む core.ts を読み込まないよう、core.ts ではなく @homegohan/shared から読む
+// (一致は tests/onboarding-routing.test.ts が確かめる)。
 // 設定画面 (/settings) そのものとほかの設定の画面は外さない。凍結中は凍結の差し戻し (/frozen) が先に効くので開けない (cross/15 S-13)。
-export const DATA_SUBJECT_REQUESTS_PATH = "/settings/data-requests";
+export const DATA_SUBJECT_REQUESTS_PATH = DSR_SETTINGS_PATH;
 
 export function isDataSubjectRequestsPath(pathname: string): boolean {
   return pathname === DATA_SUBJECT_REQUESTS_PATH || pathname.startsWith(`${DATA_SUBJECT_REQUESTS_PATH}/`);
