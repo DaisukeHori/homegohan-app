@@ -144,7 +144,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `CONFLICT_OPTIMISTIC_LOCK` | 楽観的ロック失敗 (競合) | 412 |
 | `CONFLICT_PRECONDITION_REQUIRED` | `If-Unmodified-Since` ヘッダ必須 | 428 |
 | `CONFLICT_STALE_DATA` | WHERE 条件不一致 (0 行更新) | 409 |
-| `CONFLICT_LICENSE_POOL_EXHAUSTED` | ライセンス残席不足 | 409 |
+| `CONFLICT_LICENSE_POOL_EXHAUSTED` | ライセンス残席不足 (ORG 系の `ORG_LICENSE_POOL_EXHAUSTED` と同じ意味。要件の記述で 2 つの名前が混在) | 409 |
 | `CONFLICT_DUPLICATE_EMAIL` | メールアドレス重複 | 409 |
 | `CONFLICT_DUPLICATE_INVITE` | 既存招待が有効 | 409 |
 | `CONFLICT_FAMILY_MEMBER_LIMIT` | 家族メンバー上限 | 409 |
@@ -219,7 +219,6 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `ORG_LICENSE_ALREADY_REVOKED` | ライセンスは既に取り消されている | 410 |
 | `ORG_LICENSE_POOL_EXPIRED` | ライセンスプールが期限切れ | 410 |
 | `ORG_LICENSE_POOL_EXHAUSTED` | ライセンスプール枯渇 (容量超過) | 409 |
-| `CONFLICT_LICENSE_POOL_EXHAUSTED` | 同上 (CONFLICT_ プレフィックス版、要件記述で混在) | 409 |
 
 #### CHALLENGE 系
 
