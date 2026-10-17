@@ -331,7 +331,7 @@ Web の 5 つの画面 (`src/app/handson-tour/{page,photo,menu,badges,graduate}/
   aria-describedby="tour-step0-subtitle"
   data-testid="tour-step-0"
 >
-  <img src="/icon.png" alt="" aria-hidden="true" /> {/* 装飾 */}
+  <Image src={APP_ICON_192_PATH} alt="" aria-hidden="true" width={96} height={96} /> {/* 装飾。APP_ICON_192_PATH = '/icon-192.png' (src/lib/brand-asset-paths.ts。src/app/icon-192.png/route.ts が返す PNG。#1853: 以前の /icon.png は public/ に無く 404) */}
   <h1 id="tour-step0-title" data-testid="tour-step-0-title">
     {nickname} さん、ようこそ!
   </h1>

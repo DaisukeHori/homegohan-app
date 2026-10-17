@@ -52,6 +52,9 @@ Mobile はそれを `WebViewScreen` コンポーネント経由で表示する�
 設定画面はタブバーに出さない (`app/(tabs)/_layout.tsx` の `href: null`)。入口は、マイページのタブ (WebView) の上に置いた歯車
 (`app/(tabs)/profile.tsx`、testID `profile-settings-button`。`WebViewScreen` の `header` に渡す) (#1037)。
 ログアウト・通知の設定・退会 (`app/settings/account.tsx`) はここから行う。
+アカウントの画面 (`app/settings/account.tsx`) には、個人情報の開示・訂正・利用停止・消去の請求の項目 (testID `account-data-requests-row`) も置く。
+押すと Web の請求の画面 (`DSR_SETTINGS_PATH` = `/settings/data-requests`) を WebView で開く画面 (`app/settings/data-requests.tsx`) へ移る
+(パス・見出し・説明の文は Web と同じ `@homegohan/shared` の値。cross/15 §9.1・§19。#1812)。
 
 アプリの中で開いた Web の設定画面 (`/settings`) とマイページ (`/profile`) は、ログアウトと退会を出さず、ネイティブの設定画面に一本化する。
 「アプリの中か」は既にある判定 (`useNativeAppMode` と `window.ReactNativeWebView`) のどちらかで決め、描画が終わるまでは出さない側に倒す
@@ -72,7 +75,7 @@ Web の設定画面にしか無い項目 (パスワード・メールアドレ�
    他オリジンの http(s) の**サブフレーム** (iframe) は WebView の中で読み込む。どの iframe を読めるかは Web の CSP (`src/lib/security/csp.ts` の `frame-src`。`src/proxy.ts` が毎リクエスト付ける #1169) が決め、WebView にはページから参照できるトークンが無いため。今 `frame-src` が許す他オリジンは Cloudflare Turnstile (`https://challenges.cloudflare.com`) だけで、`/login` や設定のパスワード変更 (`/settings/account`) がこれを使う (止めるとトークンが取れず送信できない)。
    Android はどのフレームの遷移かを報告しない (`isTopFrame` が無い) ので、`frame-src` の他オリジンの一覧 (`WEB_VIEW_EMBED_ORIGINS`) はフレームを問わず WebView の中で読み込む。`frame-src` に他オリジンを足したら `WEB_VIEW_EMBED_ORIGINS` にも足す (Jest が `src/lib/security/csp.ts` と突き合わせる。OTA が無効なので配布済みのアプリは後から直せない)。Android の WebView が iframe の読み込みをこの判定に渡すかは、Turnstile のある画面を Android 実機で確かめる
 8. **`initialPath` の検証**: deep link (`homegohan://home?initialPath=...`) からも指定できるため、単一の `/` で始まる同一オリジンのパスで、かつどれかのタブの prefix (`NATIVE_APP_TABS` の `pathPrefix` = `/menus` `/meals` `/comparison` `/profile` `/home`) か、その画面自身の `path` のパス部分の配下のものだけを受け付ける。`//evil.example` や、攻撃者の code で被害者を攻撃者のアカウントにログインさせる `/auth/native-bridge?code=...` (login CSRF)、`/menus/../auth/...` のようにドットセグメントで prefix の外へ抜けるものは、その画面の既定パス (`path`) へ戻す。tab-navigate が渡す `fullPath` は必ずどれかのタブの prefix に一致するので、正規の経路は塞がない。
-   画面自身の `path` を入れるのは、タブ以外の画面 (`/settings/ai-consent`) でも `session-expired` の再ブリッジ (`initialPath` に使い捨ての `_rb` を付けて開き直す。05-auth-session.md §6.2) を効かせるため。`path` はコードに書かれた値なので、受け付ける範囲はタブの prefix と同じ強さで限られる。再ブリッジは、この検証を通ったあとのパス (`effectivePath`) に `_rb` を付ける (検証で弾かれた `initialPath` を基準にすると、`_rb` を付けても既定パスに戻されて読み込み直しが起きない)
+   画面自身の `path` を入れるのは、タブ以外の画面 (`/settings/ai-consent`・`/settings/data-requests`) でも `session-expired` の再ブリッジ (`initialPath` に使い捨ての `_rb` を付けて開き直す。05-auth-session.md §6.2) を効かせるため。`path` はコードに書かれた値なので、受け付ける範囲はタブの prefix と同じ強さで限られる。再ブリッジは、この検証を通ったあとのパス (`effectivePath`) に `_rb` を付ける (検証で弾かれた `initialPath` を基準にすると、`_rb` を付けても既定パスに戻されて読み込み直しが起きない)
 9. **ネイティブの部品の差し込み**: `header` に渡した部品を WebView の上 (上端の安全領域の内側) に置く (マイページの歯車。#1037)
 10. **読み込みの失敗の案内と再読み込み** (#1612 F7-15): 読み込みそのものの失敗 (オフライン・DNS・接続・時間切れなど) は `renderError` で、サーバーの 5xx は `onHttpError` で受け、WebView の部分 (header を除く) を覆う日本語の案内と「再読み込み」を出す (`src/components/web/WebViewErrorView.tsx`)。4xx は Web のページが案内を出すので何もしない。503 も重ねない: Web はメンテナンス中に専用の画面 (再読み込み・運営の方のログインの導線つき。`src/lib/maintenance-mode.ts` の `maintenancePageResponse`) を 503 で返し、`onHttpError` には本文が渡らないので、503 を「エラー」と断定して覆うとメンテナンス中が「エラー」と伝わる (`shouldCoverHttpStatus`)。5xx の案内は、5xx を受けなかった読み込みの `onLoadEnd` か `onError` で消す (`onLoadStart` は Android で `onHttpError` より後に来るので使わない。iOS のページの中の移動の `onLoadEnd` は数えない。`src/components/web/useWebViewHttpFailure.ts`)。「再読み込み」は `reload()` ではなく、WebView を作り直して bridge の code の発行からやり直す (code は一度しか使えない)
 11. **タブを離れたときの `initialPath` の消去** (#1612 F7-15): タブ同士の移動で離れたタブの route の `initialPath` を `setParams` で消す (`src/components/web/useResetInitialPathOnBlur.ts`)。残ったままだと、同じ `initialPath` を渡し直しても値が変わらず読み込み直さない。タブの上にネイティブの画面を重ねたとき (タブを持つ親の画面が手前でない) と、タブ以外の WebViewScreen では消さない
@@ -170,7 +173,7 @@ refresh_token をローテーションしてしまわないようにするため
 - 端末の `getSession()` は残り 90 秒を切るまで更新しないので、bridge の時点の access_token の残りは 90〜3600 秒になる。90〜150 秒の区間は、事前に更新しないと Web 側が必ず 401 にする。
   閾値を Web 側の下限より低くすると、その差の区間に開いたタブが、code を取れずに未ログインの直接 URL になる (例: 閾値が 120 秒なら、残り 120〜150 秒 = 1 時間のうち 30 秒)
 - 閾値を 210 秒にしたことで、`refreshSession` が走るのは 1 時間のうち約 3% のタブ表示 (残り 90〜210 秒) になる
-- 更新に失敗したときは、残りが 150 秒以上なら現在のトークンで code を発行してもらい、足りなければ code 発行を呼ばずに直接 URL を表示する (Web 側が必ず 401 にする POST を省く)
+- 更新に失敗したときは、残りが 150 秒以上なら現在のトークンで code を発行してもらい、足りなければ code 発行を呼ばずに直接 URL を表示する (Web 側が必ず 401 にする POST を省く)。auth-js 2.117 では、60 秒以内に同じ refresh_token の更新が失敗していると、`refreshSession` は `/token` を呼ばずに控えた失敗を返すので、これも「更新に失敗した」に入る (`docs/design/mobile/05-auth-session.md` §9.6 ① の bridge の行・S-24)
 - Web 側の 150 秒と、モバイル側の `BRIDGE_SERVER_MIN_TOKEN_TTL_SEC` は必ず同じ値に保つ。OTA が無効なので、配布済みのアプリの値は後から直せない
 - 端末の時計が実時間より 1 分前後以上遅れていると、余裕を使い切って 401 になり得る (そのときは直接 URL に倒れる)
 
@@ -281,8 +284,8 @@ apps/mobile/
 │
 ├── src/
 │   ├── components/
-│   │   └── web/
-│   │       └── WebViewScreen.tsx    # 既存 (メンテナンス)
+│   │   ├── web/
+│   │   │   └── WebViewScreen.tsx    # 既存 (メンテナンス)
 │   │   └── legal/
 │   │       └── LegalConsentGate.tsx # 新規: 同意が要る間、スタックを同意画面 1 つに畳む (13b)
 │   ├── lib/
@@ -343,20 +346,15 @@ preview      → internal distribution + iOS .ipa (Apple Configurator 2) + Andro
 production   → App Store submission + Android .aab
 ```
 
-`eas.json` の既存設定で対応済み。新規追加が必要な環境変数:
+`eas.json` の既存設定で対応済み。使う環境変数 (どれも既存):
 
 | 変数 | プロファイル | 用途 |
 |------|-----------|------|
-| `EXPO_FCM_SERVER_KEY` | preview / production | Android FCM サーバーキー (新規) |
 | `EXPO_PUBLIC_EAS_PROJECT_ID` | preview / production | Expo Push Token 取得 (既存) |
 | `EXPO_PUBLIC_WEB_URL` | 全プロファイル | WebView ベース URL (既存)。`http://` は開発ビルド (`__DEV__`) か localhost / 10.0.2.2 等の開発用ホストだけ。本番ビルドで `http://` を設定しても、refresh_token を平文で送らないよう既定の https オリジンに戻る |
 | `EXPO_PUBLIC_SUPABASE_URL` | 全プロファイル | Supabase URL (既存) |
 
-**EAS Secret 登録コマンド** (iOS APNs キーは登録済み):
-```bash
-# Android FCM Server Key (新規)
-eas secret:create --scope project --name EXPO_FCM_SERVER_KEY --value "YOUR_FCM_SERVER_KEY"
-```
+Android の FCM は、FCM V1 の資格情報 (Google のサービスアカウントキー) を EAS に登録する (環境変数・EAS Secret ではない。旧い FCM サーバーキーは使わない)。登録はオーナーの作業で、未登録の間は Android の端末だけ届かない (`mobile/06-push-send.md` §14)。 iOS の APNs キーは登録済み。
 
 ### 7.3 配布フロー
 

@@ -189,11 +189,11 @@ POST /api/csp-report ──────▶ updateSession (同意の許可リス�
 | `NextResponse.json` 403 (凍結・同意) / `maintenanceApiResponse()` 503 | 付く | 不要 |
 | `maintenancePageResponse()` 503 HTML | 付く (`<style>` は `style-src 'unsafe-inline'` で有効) | 不要 (Next は描画しない) |
 | `internalError()` 500 (必須の環境変数が無い) | 付く | 不要 |
-| matcher の外 (`_next/static`・`_next/image`・`_vercel/`・`favicon.ico`・`manifest.json`・`robots.txt`・`sw.js`・`workbox-`・`api/health`・画像拡張子) | 付かない (文書ではない。画像拡張子の存在しないパスの 404 HTML だけが残存: §22 Q-4) | – |
+| matcher の外 (`_next/static`・`_next/image`・`_vercel/`・`favicon.ico`・`manifest.json`・`robots.txt`・`sw.js`・`workbox-`・`api/health`・`opengraph-image`・`twitter-image`・画像拡張子) | 付かない (文書ではない。画像拡張子の存在しないパスの 404 HTML だけが残存: §22 Q-4) | – |
 
 ### 4.3 matcher
 
-変えない。Next 公式はプリフェッチ (`next-router-prefetch` / `purpose: prefetch`) の除外を勧めるが、プリフェッチの応答 (RSC) も `updateSession` を通すのが既存の挙動で、nonce の生成は乱数 16 バイトで無視できる。`tests/health-middleware-exemption.test.ts`・`tests/speed-insights-middleware-1179.test.ts`・`lib/supabase/__tests__/middleware-legal-consent-api.test.ts` の「`/api` で外すのは `api/health$` だけ」はそのまま緑。
+変えない (本書の時点)。後から #1845 で、OGP / Twitter Card の画像の file convention の URL (`/opengraph-image`・`/twitter-image`。ちょうどこのパスだけ) を除外に足した (未ログインのクローラーを `/login` へ送らないため。画像は文書ではないので CSP は要らない。`tests/metadata-public-paths-1845.test.ts` が固定する)。Next 公式はプリフェッチ (`next-router-prefetch` / `purpose: prefetch`) の除外を勧めるが、プリフェッチの応答 (RSC) も `updateSession` を通すのが既存の挙動で、nonce の生成は乱数 16 バイトで無視できる。`tests/health-middleware-exemption.test.ts`・`tests/speed-insights-middleware-1179.test.ts`・`lib/supabase/__tests__/middleware-legal-consent-api.test.ts` の「`/api` で外すのは `api/health$` だけ」はそのまま緑。
 
 ## 5. 静的ページの動的化 (R-5)
 
@@ -207,7 +207,7 @@ Next は nonce をリクエスト時の描画で付ける。ビルド時に静�
 
 ### 5.3 動的になるページ (現状、祖先の layout にも自身にも動的のマーカーが無いもの。ファイル内のマーカーの機械分類で、ビルドの実測ではない)
 
-`src/app/page.tsx` (LP)・`about`・`company`・`contact`・`faq`・`guide`・`legal`・`news`・`pricing`・`privacy`・`terms`・`(auth)/{login,signup,auth/forgot-password,auth/reset-password,auth/verify}`・`frozen/{page,account,billing}`・`invite/[token]`・`family/promotions/[token]`・`onboarding/{page,complete,questions,resume,welcome}`・`(operator)/operator/membership/{audit,families/inactive,orgs/inactive,families/[id]/transfer,orgs/[id]/transfer}`・`super-admin/{page,audit-logs,coupons/[id],coupons/new,experiments/*,exports/*,feature-packages/[id],feature-packages/new,flags,flags/new,infra/*,llm/*,logs,plans/[id],plans/[id]/price-change,plans/new}`・`(org)/org/{page,challenges,dashboard,departments,invites,members,settings,settings/owner-transfer,transfer-accept/[proposal_id]}`・`(support)/support/{page,inquiries,users}`・`not-found` (`/_not-found`)。マーカーを持つのは、自身に `export const dynamic = 'force-dynamic'` がある `legal-consent`・`super-admin/{coupons,feature-packages,plans}` の一覧、祖先の `handson-tour/layout.tsx` が `cookies()` を読む `handson-tour/*`、祖先の layout が動的 (`export const dynamic = 'force-dynamic'`) の `(main)`・`admin` 配下だけ。`(auth)/*`・`frozen/*`・`invite/[token]`・`family/promotions/[token]`・`onboarding/questions` は `'use client'` のページで、`(auth)/layout.tsx`・`onboarding/layout.tsx` もマーカーを持たず、`frozen/`・`invite/`・`family/promotions/` には layout が無い (`useSearchParams` を使うページもあるが、下のとおりクライアントのフックは数えない) ので、上の「動的になる」側に入る。`(org)/layout.tsx`・`(support)/layout.tsx` は `'use client'` で動的のマーカーを持たないので、配下の page は自身のマーカーで分けた (どれも持たない: `useParams` / `useSearchParams` はクライアントのフックで、ファイル内のマーカーには数えない。`(org)/org/page.tsx` は `redirect('/org/dashboard')` だけの Server Component)。`generateStaticParams`・`revalidate = N`・`force-static` の指定は `src/app` に無い (grep 0 件) ので衝突しない。
+`src/app/page.tsx` (LP)・`about`・`company`・`contact`・`faq`・`guide`・`legal`・`news`・`pricing`・`privacy`・`terms`・`(auth)/{login,signup,auth/forgot-password,auth/reset-password,auth/verify,auth/link-notice}`・`frozen/{page,account,billing}`・`invite/[token]`・`family/promotions/[token]`・`onboarding/{page,complete,questions,resume,welcome}`・`(operator)/operator/membership/{audit,families/inactive,orgs/inactive,families/[id]/transfer,orgs/[id]/transfer}`・`super-admin/{page,audit-logs,coupons/[id],coupons/new,experiments/*,exports/*,feature-packages/[id],feature-packages/new,flags,flags/new,infra/*,llm/*,logs,plans/[id],plans/[id]/price-change,plans/new}`・`(org)/org/{page,challenges,dashboard,departments,invites,members,settings,settings/owner-transfer,transfer-accept/[proposal_id]}`・`(support)/support/{page,inquiries,users}`・`not-found` (`/_not-found`)。マーカーを持つのは、自身に `export const dynamic = 'force-dynamic'` がある `legal-consent`・`super-admin/{coupons,feature-packages,plans}` の一覧、祖先の `handson-tour/layout.tsx` が `cookies()` を読む `handson-tour/*`、祖先の layout が動的 (`export const dynamic = 'force-dynamic'`) の `(main)`・`admin` 配下だけ。`(auth)/*`・`frozen/*`・`invite/[token]`・`family/promotions/[token]`・`onboarding/questions` は `'use client'` のページで、`(auth)/layout.tsx`・`onboarding/layout.tsx` もマーカーを持たず、`frozen/`・`invite/`・`family/promotions/` には layout が無い (`useSearchParams` を使うページもあるが、下のとおりクライアントのフックは数えない) ので、上の「動的になる」側に入る。`(org)/layout.tsx`・`(support)/layout.tsx` は `'use client'` で動的のマーカーを持たないので、配下の page は自身のマーカーで分けた (どれも持たない: `useParams` / `useSearchParams` はクライアントのフックで、ファイル内のマーカーには数えない。`(org)/org/page.tsx` は `redirect('/org/dashboard')` だけの Server Component)。`generateStaticParams`・`revalidate = N`・`force-static` の指定は `src/app` に無い (grep 0 件) ので衝突しない。
 
 ### 5.4 影響と扱い
 
@@ -841,8 +841,11 @@ export const config = {
      *   なので、Vercel 上で計測を守っているのはこの除外ではない。除外が効くのは、Vercel が応答しないとき
      *   (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき) に、/_vercel/* の応答が
      *   ログイン画面の HTML にすり替わるのを防ぐ場面。害は無いので残す)
+     * - opengraph-image / twitter-image (OGP / Twitter Card の画像 #1845。src/app/opengraph-image.tsx・twitter-image.tsx。
+     *   ちょうどこのパスだけ。拡張子の無いパスなので下の画像の拡張子の除外に当たらない。SNS のクローラーは未ログインなので、
+     *   通すと /login へ送られ、画像の代わりにログイン画面の HTML が返る。画像は文書ではないので CSP も要らない)
      */
-    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|opengraph-image$|twitter-image$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
 ```
@@ -1255,7 +1258,7 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 | P-10 | `POST /api/csp-report` | 対象 | `next` (同意の許可リスト。凍結 403 / メンテ 503 は既存どおり) | あり | – | – |
 | P-11 | route handler の HTML (`/auth/native-bridge` の 426) | 対象 | `NextResponse.next` | あり (応答ヘッダーの写し) | – | – (`<style>` のみ) |
 | P-12 | `updateSession` の 500 (必須の環境変数が無い) | 対象 | `internalError()` | あり | – | – |
-| P-13 | matcher の外 (`_next/static` `_next/image` `_vercel/` `favicon.ico` `manifest.json` `robots.txt` `sw.js` `workbox-` `api/health` 画像拡張子) | 外 | – | なし | – | – |
+| P-13 | matcher の外 (`_next/static` `_next/image` `_vercel/` `favicon.ico` `manifest.json` `robots.txt` `sw.js` `workbox-` `api/health` `opengraph-image` `twitter-image` 画像拡張子) | 外 | – | なし | – | – |
 | P-14 | 画像拡張子の存在しないパス (`/x.png`) の 404 HTML (画像拡張子でないパスは P-21) | 外 | – | なし (残存。§22 Q-4) | – | 無し (方針も無いので止まらない) |
 | P-15 | `CSP_REPORT_ONLY=on` × P-1〜P-12・P-18〜P-22 | 対象 | 同上 | `Content-Security-Policy-Report-Only` | request も同じ名前 (Next は `-report-only` からも読む) | あり |
 | P-16 | `next dev` × P-1〜P-12・P-18〜P-22 | 対象 | 同上 | あり + `'unsafe-eval'` | あり | あり |

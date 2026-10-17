@@ -254,6 +254,7 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
 - パスワード再認証必須
 - `status = 'archived'` に変更 (dissolved は archived に統一)
 - さらに 90 日後に物理削除 (pg_cron)
+- (実装は `dissolved` のまま 90 日で物理削除: operator/11 §5.4)
 
 ### 7.4 advisory lock の実装
 
@@ -271,6 +272,7 @@ await supabase.rpc('acquire_family_group_lock', {
 
 cron 登録および `process_family_freeze_grace_to_archive()` 関数の実装は
 **operator/08-cron-batches.md §4.3** に集約されています。
+(2026-10-17 時点: 08 から外した。凍結の遷移を作る冊で `frozen` の列とバッチを一緒に設計する。operator/11 Q-4)
 
 以下の処理は operator/08 の canonical 実装に統合済みです:
 - frozen → archived 遷移

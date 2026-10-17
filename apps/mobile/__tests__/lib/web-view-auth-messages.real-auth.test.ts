@@ -9,8 +9,8 @@
  *     1. Web の signOut() (全端末のセッションを失効) の途中で SIGNED_OUT が出ると、Web は先に session-expired を送り、
  *        そのあとで sign-out を送る (Web の設定・マイページのログアウトの順番)
  *     2. ネイティブは session-expired で getUser() を呼ぶ。サーバーは 403 session_not_found を返し、
- *        auth-js (2.105) はそれを AuthSessionMissingError にして、端末のセッションを消す (_removeSession)
- *     3. auth-js のロックで処理が直列になるため、並行して動く sign-out 側の getSession() は null を受け取る。
+ *        auth-js はそれを AuthSessionMissingError にして、端末のセッションを消す (_removeSession)
+ *     3. 消したあとに動く sign-out 側の getSession() は (保管が空なので) null を受け取る。
  *        ユーザー ID が分からず削除を諦める (skipped)、または削除の通信が anon キーで送られて RLS で 0 行になる
  *        (エラーにならないので「削除できた」ことになる)
  *   そこで、処理の最初にセッション (ユーザー ID とアクセストークン) を控え、失効と分かったあとでも

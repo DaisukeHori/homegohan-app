@@ -5,6 +5,8 @@ import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
 import Image from 'next/image';
 import { createClient } from '@/lib/supabase/client';
+// アプリのアイコンの PNG (#1853。以前の /icon.png は public/ に無く本番で 404 だった)
+import { APP_ICON_192_PATH } from '@/lib/brand-asset-paths';
 // 呼びかけに出す名前は Web・モバイル共通の規則 (仮置きの 'Guest'・空は 'あなた'、30 文字超は切る。設計書 02-step0-welcome.md §7.2・#1649)
 import { HANDSON_TOUR_NICKNAME_FALLBACK, handsonTourNickname } from '@homegohan/shared';
 import { TourProgress } from '@/components/handson-tour/TourProgress';
@@ -134,7 +136,7 @@ export default function HandsonTourWelcomePage() {
       >
         <div className="mt-4 mb-8">
           <Image
-            src="/icon.png"
+            src={APP_ICON_192_PATH}
             alt=""
             aria-hidden="true"
             width={96}

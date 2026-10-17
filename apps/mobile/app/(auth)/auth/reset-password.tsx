@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import { Link, router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
+import { validatePassword } from "@homegohan/shared";
 import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
@@ -75,8 +76,10 @@ export default function ResetPasswordPage() {
       Alert.alert("入力エラー", "新しいパスワードを入力してください。");
       return;
     }
-    if (password.length < 8) {
-      Alert.alert("入力エラー", "パスワードは8文字以上にしてください。");
+    // 規則 (長さ・英字・数字) と文言は、新規登録・設定画面・Web と共通 (packages/shared の password-policy.ts。#1574)
+    const pwdError = validatePassword(password);
+    if (pwdError) {
+      Alert.alert("入力エラー", pwdError);
       return;
     }
     if (password !== confirm) {

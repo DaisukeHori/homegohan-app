@@ -13,7 +13,7 @@ import { LEGAL_DOCUMENT_TYPES, getOutdatedLegalDocuments, type AcceptedLegalVers
 export const ADULT_AGE_YEARS = 18;
 /**
  * 13 歳未満は米国 COPPA の区分 (要件 03 §17.10)。本人のアカウントは作らない (DB の accept_legal_documents と昇格 2 本が
- * 同じ境の `< 13` で断る)。Push 通知を送らない (送信側はこの述語で除外する。13 歳未満の本人のアカウントは無いので保険)
+ * 同じ境の `< 13` で断る)。Push の送信側 (`src/lib/push/outbox.ts` の `decideEligibility`) は年齢を見ない (13 歳未満の本人のアカウントが無いので、除外は足していない。設計 cross/14 §8 の 9)
  */
 export const COPPA_AGE_YEARS = 13;
 /** 生年月日は過去 120 年以内 (要件 01 行 1720) */
@@ -69,7 +69,7 @@ export function requiresParentalConsent(birthDate: string, today: string): boole
   return age !== null && age >= 0 && age < ADULT_AGE_YEARS;
 }
 
-/** 13 歳未満 (COPPA)。子供の同意の記録の区分。Push の送信側はこの述語が true の利用者を除外する */
+/** 13 歳未満 (COPPA)。子供の同意の記録の区分。Push の送信側はこの述語を使わない (年齢を見ない。設計 cross/14 §8 の 9) */
 export function isUnderCoppaAge(birthDate: string, today: string): boolean {
   const age = calculateAgeYears(birthDate, today);
   return age !== null && age >= 0 && age < COPPA_AGE_YEARS;

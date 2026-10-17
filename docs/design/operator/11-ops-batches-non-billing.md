@@ -1,14 +1,14 @@
 # operator/ 課金と関係のない運用バッチの残り (#1125 の B) — 棚卸しと、ジョブの失敗の監視・解散した家族の物理削除の設計
 
 版: v1.3 (2026-10-17・A 型設計ゲートの網羅性の反映 周 2)
-Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2 枚が PASS)。段 A・B は着手できる。段 C・D は §0.4 の Q-1〜Q-3 の確認の後に着手する
+Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2 枚が PASS)。§0.4 の Q-1〜Q-3 はオーナーの確認 (2026-10-17) で仮の決定のとおりに決まった。段 A (#1828)・段 B (#1835)・段 C (#1842)・段 D (#1847) は main に入っている
 改定履歴: v1.0 2026-10-17 新設 (Issue #1125 の 2026-10-10 のコメントの (B) の設計ゲート・A 型 4 相) / v1.1 2026-10-17 網羅性の反映 (Vercel Cron の母集合を 5 本に・`backup-freshness` を実装済みとして扱う・表 3 点とシナリオの行の追加・追随表と段分けの対応の明記) / v1.2 2026-10-17 修正 R1 (実行履歴の掃除を段 A から切り出して段 D (Q-3 の確認の後) に・同意の記録を持つグループだけが残る回は監査ログを書かないことを S-15・Q-2・表にそろえる (P-27)・`src/__tests__/lib/env.test.ts` を追随表に・`app-log-alerts.test.ts` の追随を逐語に (§14.1)・route の RPC の数の事実を 7 本に訂正) / v1.3 2026-10-17 網羅性の反映 周 2 (D-1 の「作る 2 件」の列挙を B-9・B-2 にそろえる・cron_failure の文面の作成・送信の例外の行 P-28・権利の遷移表に `claim_ops_alert` の error の行・テストの追加 (CF-12〜CF-16・ST-9・ST-10・ORD-2・K-2・結合 B-5〜B-7) と表の行・シナリオとテストの対応表 (§11.4)・番兵 `tests/email-send-throttle-contract.test.ts` の行・追随表に cross/14 と operator/10 §8.1 の行・変えないものに `src/lib/backups/core.ts`)
 
 要件の正本は Issue #1125 の本文と、2026-10-10 のコメントの (B)。(A) の課金のもの (Stripe の Webhook・収益のスナップショット・ライセンス系の pg_cron・`stripe_event_stuck_check`・課金系の Vercel Cron) は、オーナーの選択「課金は無料のまま計測」により #1125 の残りとして本書の範囲の外に置く (08 §3.0 の言い回しのまま)。本書は (B) の 9 項目を「いまの事実」で仕分け、作るものを Sonnet 5.5 の実装者が手を止めずに実装できる粒度まで展開する。
 
 本書の前提 (範囲と方針):
-- 利用者へのメールを新しく送り始めるもの (`re_engagement_email`・`nps_survey_sender`) は業務の判断になる。本書は選択肢と推奨を書くだけにし、実装の段には入れない (§8)。
-- データを消すもの (解散した家族のグループの物理削除・pg_cron の実行履歴の掃除) は、消す範囲と保存期間を、オーナーが確かめる点として §0.4 に挙げる (Q-1・Q-2・Q-3)。どちらも、確認の前には本番に当てない。解散した家族の物理削除は §12 の段 C、実行履歴の掃除は §12 の段 D に分け、どちらも確認の後にだけ着手する。失敗の監視 (段 A・段 B) は既存の行を消さないので、確認を待たない。
+- 利用者へのメールを新しく送り始めるもの (`re_engagement_email`・`nps_survey_sender`) は業務の判断になる。本書は選択肢と推奨を書くだけにし、実装の段には入れない (§8。当面は送らないに決まった: Q-5)。
+- データを消すもの (解散した家族のグループの物理削除・pg_cron の実行履歴の掃除) は、消す範囲と保存期間を、オーナーが確かめる点として §0.4 に挙げる (Q-1・Q-2・Q-3)。3 つともオーナーの確認 (2026-10-17) で仮の決定のとおりに決まった。マージの前に本番へ当ててよいのは、確認された保存期間のときだけである。解散した家族の物理削除は §12 の段 C、実行履歴の掃除は §12 の段 D に分ける。失敗の監視 (段 A・段 B) は既存の行を消さないので、確認とは関係なく着手した。段 A〜D はどれも main に入っている。
 - ローンチ前で利用者ゼロ (正しい形で作る)。本番の DB には触らない (設計ゲートでは読むだけ)。
 - 規約は `docs/design/CLAUDE.md` (章構成・snake_case・RLS 厳格化・監査ログ必須) と `operator/CLAUDE.md`。cron の正本は `08-cron-batches.md` (本書は 08 の改定を §15 の追随表で指定する)。運用アラートの正本は `07-audit-monitoring.md` §8.3 と `10-logs-and-mail-retry.md` §8。
 
@@ -20,16 +20,16 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 
 | # | 決めること | 本書の決定 (要約) | 詳細 |
 |---|---|---|---|
-| D-1 | (B) の 9 項目の仕分け (作る / 不要 = 08 から外す / 済み = 08 を現在形に / 選択肢のみ) | §2.2 の表。作る = B-9 ジョブの失敗の監視 (pg_cron の失敗・Vercel Cron の route の失敗・pg_cron の停止。その土台の実行履歴の保持 (段 D) を含む) と、B-2 解散した家族のグループの物理削除の 2 件 (9 項目の数え方。実装の単位は §0.2 の 3 件 = 失敗の監視・実行履歴の掃除・解散した家族の物理削除)。不要 = `family_freeze_grace_batch`・`meal_request_expire_batch`・`data_integrity_check`・`hr_revoke_jobs_processor` の 4 件。済み = `logical_backup`。選択肢のみ = `re_engagement_email`・`nps_survey_sender` | §2.2 §8 |
+| D-1 | (B) の 9 項目の仕分け (作る / 不要 = 08 から外す / 済み = 08 を現在形に / 当面は送らない) | §2.2 の表。作る = B-9 ジョブの失敗の監視 (pg_cron の失敗・Vercel Cron の route の失敗・pg_cron の停止。その土台の実行履歴の保持 (段 D) を含む) と、B-2 解散した家族のグループの物理削除の 2 件 (9 項目の数え方。実装の単位は §0.2 の 3 件 = 失敗の監視・実行履歴の掃除・解散した家族の物理削除)。不要 = `family_freeze_grace_batch`・`meal_request_expire_batch`・`data_integrity_check`・`hr_revoke_jobs_processor` の 4 件。済み = `logical_backup`。当面は送らない (Q-5) = `re_engagement_email`・`nps_survey_sender` | §2.2 §8 |
 | D-2 | ジョブの失敗をどう知るか | 既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・`OPS_ALERT_EMAIL`・`claim_ops_alert`) に **4 つ目の種類 `cron_failure`** (pg_cron の失敗した実行 + Vercel Cron の route の 500) と **5 つ目の種類 `pg_cron_stalled`** (pg_cron が一定時間 1 つも動いていない) を足す。失敗は「まだ知らせていないもの」を数え、知らせた失敗を台帳 `cron_failure_alerts` に記録する (10 §8 の `dead_alerted_at` と同じ考え方。窓で数えない) | §4 §5 §6 |
-| D-3 | 実行履歴 (`cron.job_run_details`) の保持 | Supabase は自動では消さない (本番で 2026-05-01 からの行が残っている)。pg_cron のジョブ `cleanup-cron-run-history` (毎日 03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。既存の行を消すので、段 A から切り出した段 D に置き、Q-3 の確認の後にだけ着手する | §5.3 §12 |
+| D-3 | 実行履歴 (`cron.job_run_details`) の保持 | Supabase は自動では消さない (本番で 2026-05-01 からの行が残っている)。pg_cron のジョブ `cleanup-cron-run-history` (毎日 03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。既存の行を消すので、段 A から切り出した段 D に置いた (Q-3 はオーナーの確認 (2026-10-17) で確定) | §5.3 §12 |
 | D-4 | 解散した家族のグループ (`family_groups.status = 'dissolved'`) の物理削除 | 08 §4.4 の `family_archive_purge_batch` は `archived` 状態を前提にするが、実装の状態は `active` / `dissolved` だけ。解散から 90 日 (保存期間) を過ぎた行を、pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで物理削除する (`purge_dissolved_family_groups(p_dry_run)`)。保護者の同意の記録 (`parental_consents`) を持つグループは消さずに数だけ報告する。消す範囲と保存期間はオーナーの確認点 (§0.4) | §5.4 |
 | D-5 | 凍結 (`frozen`) 系・食事リクエスト・HR 連携のバッチ | 発生源 (ライセンスの失効 = (A)・HR の Webhook・`family_meal_requests`) がどれも main に無く、バッチだけ先に作ると「何も対象の無い処理」になる。08 の「いま」の計画から外し、発生源を作る冊に同梱する (08 の記述の外し方は §15) | §2.2 §15 |
-| D-6 | 利用者へ送るメール 2 本 | 選択肢と推奨 (§8)。実装しない。08 からは「選択待ち」として外す | §8 |
+| D-6 | 利用者へ送るメール 2 本 | 2 本とも当面は送らない (オーナーの選択 (2026-10-17)。§8)。実装しない。08 からは「当面は送らない」として外す | §8 |
 
 ### 0.2 分冊判定
 
-目安 3 つ (800 行超・消費先 3 以上・共有面 2 つ以上) のうち、「800 行超」と「共有面 2 つ以上」(運用アラートの route と定数・`admin_audit_logs` の action_type の一覧・08 §3.0 の状態の注記・env の一覧) に当たる。それでも **1 冊にする**。理由: (a) 作るものは「失敗の監視 (台帳 1 表 + RPC 5 本 + route の 2 種類 + 文面 2 本)」「実行履歴の掃除 (関数 1 本 + ジョブ 1 本)」「解散した家族の物理削除 (関数 1 本 + ジョブ 1 本)」の 3 件で、互いに契約を共有しない (結ぶのは 08 §3.0 の数の注記と、掃除が台帳の古い行も消すことだけ)。(b) 棚卸し (§2.2) と選択肢 (§8) は表と文だけで、実装の契約を持たない。(c) 実装 WF は §12 の 4 段 (A: 失敗の監視の DB / B: 失敗の監視のアプリ / C: 解散した家族の物理削除の DB / D: 実行履歴の掃除の DB) に分け、段ごとに 2 枚のレビューを閉じる。データを消す段 C と段 D は、§0.4 の確認 (段 C は Q-1・Q-2、段 D は Q-3) の後にだけ着手する (それぞれ別の Issue・別の PR でよい)。収束しなければ段 C・段 D を別冊に切り出す (核は段 A + B)。
+目安 3 つ (800 行超・消費先 3 以上・共有面 2 つ以上) のうち、「800 行超」と「共有面 2 つ以上」(運用アラートの route と定数・`admin_audit_logs` の action_type の一覧・08 §3.0 の状態の注記・env の一覧) に当たる。それでも **1 冊にする**。理由: (a) 作るものは「失敗の監視 (台帳 1 表 + RPC 5 本 + route の 2 種類 + 文面 2 本)」「実行履歴の掃除 (関数 1 本 + ジョブ 1 本)」「解散した家族の物理削除 (関数 1 本 + ジョブ 1 本)」の 3 件で、互いに契約を共有しない (結ぶのは 08 §3.0 の数の注記と、掃除が台帳の古い行も消すことだけ)。(b) 棚卸し (§2.2) と選択肢 (§8) は表と文だけで、実装の契約を持たない。(c) 実装 WF は §12 の 4 段 (A: 失敗の監視の DB / B: 失敗の監視のアプリ / C: 解散した家族の物理削除の DB / D: 実行履歴の掃除の DB) に分け、段ごとに 2 枚のレビューを閉じる。データを消す段 C と段 D は、§0.4 の確認 (段 C は Q-1・Q-2、段 D は Q-3。オーナーの確認 2026-10-17 で決まった) のとおりに実装する (それぞれ別の Issue・別の PR でよい)。収束しなければ段 C・段 D を別冊に切り出す (核は段 A + B)。
 
 ### 0.3 用語
 
@@ -48,9 +48,9 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 |---|---|---|---|
 | Q-1 | 解散した家族のグループを物理削除してよいか・保存期間は 90 日でよいか | 消す。90 日 (org/05 §7.3 の「90 日後に物理削除」・隠したコンテンツの 90 日と同じ) | `purge_dissolved_family_groups` の `c_retention`・08 §3.0 の行・§12 の段 C の着手 |
 | Q-2 | 消える範囲 (§5.4.2 の表: `family_groups` と、外部キーの CASCADE で `family_members`・`family_invites`・`family_promotion_requests`・`parental_consents`) でよいか。とくに `parental_consents` (保護者の同意の記録) | 同意の記録を持つグループは**消さず**に残す。残した数は関数の戻り値 `skipped_with_consents_count` に出る (dry run の `purge_dissolved_family_groups(true)` でいつでも確かめられる)。同じ回にほかのグループを消したときは、その回の監査ログの `skipped_with_consents_count` にも載る。残すものだけで消すものが無い回は、何も変わらないので監査ログを書かない (P-27)。同意の記録まで消してよいなら、候補の条件から `parental_consents` の除外を外す | §5.4.1 の `NOT EXISTS (parental_consents)`・§7.1 の行 P-20・P-27 |
-| Q-3 | pg_cron の実行履歴 (`cron.job_run_details`) を 30 日で消してよいか | 消す (30 日。`app_logs` と同じ。失敗の監視が見る範囲 7 日より長い) | `cleanup_cron_run_history` の `c_retention`・§12 の段 D の着手 |
+| Q-3 | pg_cron の実行履歴 (`cron.job_run_details`) を 30 日で消してよいか | 消す (30 日。`app_logs` と同じ。失敗の監視が見る範囲 7 日より長い)。オーナーの確認 (2026-10-17) で確定した | `cleanup_cron_run_history` の `c_retention`・§12 の段 D |
 | Q-4 | 家族の凍結 (`frozen` → `archived`) の機能を今後も作るか (本書は 08 の「いま」の計画から外すだけで、family/07 §3・org/05 §8 の設計は残す) | 作るときは、発生源 (ライセンスの失効 (A) または HR 連携) の冊で `frozen` の列と遷移とバッチを一緒に設計する | 08 §3.1・§4.3 (本書 §15)・family/07 §3.3・org/05 §8 |
-| Q-5 | `re_engagement_email`・`nps_survey_sender` を送り始めるか (§8 の選択肢) | 送らない (当面)。08 から外し、送るなら別の設計ゲート | §8・08 §3.2・§5.5・operator/02 の `POST /api/cron/re-engagement-email`・`POST /api/cron/nps-survey-sender` の 2 節 (§15 の行 18) |
+| Q-5 | `re_engagement_email`・`nps_survey_sender` を送り始めるか (§8 の選択肢) | 決まった (オーナーの選択 (2026-10-17)): 当面は送らない。08 から外し、送り始めるなら別の設計ゲート | §8・08 §3.2・§5.5・operator/02 の `POST /api/cron/re-engagement-email`・`POST /api/cron/nps-survey-sender` の 2 節 (§15 の行 18) |
 
 ### 0.5 Issue 本文との食い違い (本書を正とする)
 
@@ -115,11 +115,11 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 | B-2 | `family_archive_purge_batch` (pg_cron。08 §4.4) | `archived` は無いが、`dissolved` + `dissolved_at` はある。消す処理は無い | 入っていない | 合っていない (`archived`・`SYSTEM_USER_ID`・Slack) | **作る** (名前を `purge-dissolved-family-groups` に変え、`dissolved` を対象にする。段 C・Q-1・Q-2) | §5.4 |
 | B-3 | `meal_request_expire_batch` (pg_cron。08 §4.5) | 無い (`family_meal_requests` が無い) | 入っていない | 合っていない | **不要** (family/04 の実装の冊に同梱) | §15 |
 | B-4 | `data_integrity_check` (pg_cron。08 §4.6) | 検査 1 (孤立した `plan_key`) は外部キー `personal_subscriptions_plan_key_fkey` が、検査 2 (有効な契約の重複) は一意部分索引 `idx_personal_subscriptions_active_per_user` が構造的に防ぐ | 制約として入っている | 合っていない (制約で防げるものを検査する計画) | **不要** (制約が守る。Stripe との照合は (A) の `stripe_integrity_check` / billing/01 §12) | §15 |
-| B-5 | `re_engagement_email` (Vercel Cron。08 §3.2・§5.5) | 送る処理・文面・配信停止が無い。`last_login_at` は当てにならない | 入っていない | 合っていない | **選択肢のみ** (Q-5) | §8 |
-| B-6 | `nps_survey_sender` (Vercel Cron。08 §3.2) | 表と集計の画面はあるが、送る処理・回答の画面が無い | 入っていない (表は #1012 系) | 合っていない | **選択肢のみ** (Q-5) | §8 |
+| B-5 | `re_engagement_email` (Vercel Cron。08 §3.2・§5.5) | 送る処理・文面・配信停止が無い。`last_login_at` は当てにならない | 入っていない | 合っていない | **当面は送らない** (Q-5) | §8 |
+| B-6 | `nps_survey_sender` (Vercel Cron。08 §3.2) | 表と集計の画面はあるが、送る処理・回答の画面が無い | 入っていない (表は #1012 系) | 合っていない | **当面は送らない** (Q-5) | §8 |
 | B-7 | `hr_revoke_jobs_processor` (Vercel Cron。08 §3.2・§5.6) | 無い (HR の Webhook も表も無い) | 入っていない | 合っていない | **不要** (org/02 §14 の HR 連携の冊に同梱) | §15 |
 | B-8 | `logical_backup` (Vercel Cron。08 §3.2・§5.1) | GitHub Actions `db-backup.yml` と `record_backup_audit` が main にある。鮮度の cron `/api/cron/backup-freshness` も main にある (route と `vercel.json` の登録。08 §3.2 の `backup_freshness` は「実装済み: #1129」) | **入った** (cross/17・#1765 段 A。鮮度の cron は段 C・#1813) | 一部だけ合っている (§3.2 の概要には GitHub Actions の注記が足されたが、ジョブ名の列は「実装済み」になっておらず、§5.1 の `vercel.json` の例に `/api/cron/logical-backup` が残る) | **済み** (08 を現在形にする) | §15 |
-| B-9 | ジョブの失敗の監視 (08 §6) | 無い。失敗は `cron.job_run_details` に残るだけ | 部分的に重なる (`app-log-alerts` は `app_logs` の error の急増と届けられなかったメールだけ。cross/17 の鮮度の cron `backup-freshness` はバックアップの取得が止まったことだけで、ジョブの失敗一般は見ない) | 合っていない (Slack・Sentry・6 時間ごとの pg_cron) | **作る** (既存の運用アラートの 4 つ目・5 つ目の種類: 段 A・B。実行履歴の保持: 段 D・Q-3 の確認の後) | §4〜§7 |
+| B-9 | ジョブの失敗の監視 (08 §6) | 無い。失敗は `cron.job_run_details` に残るだけ | 部分的に重なる (`app-log-alerts` は `app_logs` の error の急増と届けられなかったメールだけ。cross/17 の鮮度の cron `backup-freshness` はバックアップの取得が止まったことだけで、ジョブの失敗一般は見ない) | 合っていない (Slack・Sentry・6 時間ごとの pg_cron) | **作る** (既存の運用アラートの 4 つ目・5 つ目の種類: 段 A・B。実行履歴の保持: 段 D) | §4〜§7 |
 
 ---
 
@@ -138,7 +138,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 | R-07 | pg_cron が止まっている (有効なジョブがあるのに一定時間 1 つも動いていない) ことも知らせる。しきい値は環境変数で変えられる | 08 §6 の趣旨・cross/17 S-9 (静かな停止) | §4 §5.2 §6.1 |
 | R-08 | `OPS_ALERT_EMAIL` 未設定なら何もしない。送れなかったときは権利 (と台帳の印) を返し、次の回でもう一度試す。宛先停止・文面の不備のときは返さない | 07 §8.3・10 §8.3 | §6.2 |
 | R-09 | DB の失敗 (数える・権利・印) は 500 (本文は汎用)。前の種類の通知は後ろの失敗で止まらない (server → client → email_dead_letter → cron_failure → pg_cron_stalled) | #1172・10 §8.1 | §6.2 §7.1 (P-8・P-21) |
-| R-10 | `cron.job_run_details` と台帳は 30 日で消す。消す前に失敗を数え終えている (見る範囲 7 日 < 30 日)。既存の行を消すので Q-3 の確認の後 (段 D) | §0.5・Q-3 | §5.3 §12 |
+| R-10 | `cron.job_run_details` と台帳は 30 日で消す。消す前に失敗を数え終えている (見る範囲 7 日 < 30 日)。既存の行を消すので段 A から切り出した段 D に置いた (保存期間は Q-3 で決まった) | §0.5・Q-3 | §5.3 §12 |
 | R-11 | DB の関数は `search_path = ''`・参照は完全修飾・`EXECUTE` は `service_role` だけ (掃除と候補の関数は所有者 `postgres` だけ)。`cron` スキーマを読む関数は `SECURITY DEFINER` (所有者 postgres) で、引数は上限つきの整数と時刻だけ | CLAUDE.md RLS・`20261010123500` の権限の考え方・anon-definer-execute | §5.1 §5.2 |
 | R-12 | 台帳は RLS 有効・anon / authenticated / service_role に直接の権限を付けない (入口は RPC だけ) | `ops_alert_state` の形 | §5.1 |
 | R-13 | pg_cron の無い DB (ローカルの一部・CI) では、pg_cron の部分を飛ばして動く (関数は作れ、呼べば Vercel Cron の分だけ返す。停止は判定しない) | `20261010150000` の `to_regclass('cron.job')` の守り | §5.2 |
@@ -162,7 +162,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 | S-06 | 失敗を検知して権利を取ったが、送信待ちへの登録が失敗した (`outbox_failed`) | 台帳の印を外し (`unmark_cron_failures_alerted`)、権利を返し (`release_ops_alert`)、応答 `send_failed`。15 分後の回で同じ失敗をもう一度知らせる |
 | S-07 | DB の再起動で pg_cron の worker が 2 時間止まる (有効なジョブ 17 本) | 最新の実行から 60 分を超えた最初の回で「pg_cron のジョブが 60 分以上動いていません」を 1 通。止まっている間は抑止 (60 分) ごとに 1 通。復旧して実行が再開すれば何も送らない (失敗の行は無いので `cron_failure` も鳴らない) |
 | S-08 | ローカル・CI の DB に pg_cron が無い | `cron_failure_candidates()` は Vercel Cron の分だけ返す。`pg_cron_last_run_at()` は `cron_available = false` を返し、停止は判定しない (応答 `below_threshold`) |
-| S-09 | 時間がたつ (段 D を本番に当てた後) | `cleanup-cron-run-history` (03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。失敗の監視は直近 7 日しか見ないので、消す前に数え終えている。段 D の前 (Q-3 の確認の前) は何も消えず、実行履歴と台帳は増えるだけ (失敗の監視は 7 日しか見ないので、動きは変わらない) |
+| S-09 | 時間がたつ (段 D を本番に当てた後) | `cleanup-cron-run-history` (03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。失敗の監視は直近 7 日しか見ないので、消す前に数え終えている。段 D の前は何も消えず、実行履歴と台帳は増えるだけ (失敗の監視は 7 日しか見ないので、動きは変わらない) |
 | S-10 | 段 A の migration を本番に当てた時点で、20 日前の失敗が 1 件ある | 知らせない (見る範囲 7 日)。7 日以内の失敗があれば、最初の回でまとめて 1 通 (台帳が空なので、どれも「まだ知らせていない」) |
 | S-11 | 2026-07-01 に解散した家族 (メンバー 3 人・招待 1 件・同意の記録なし) が 2026-09-30 (91 日目) を迎える | 03:40 JST の `purge-dissolved-family-groups` が `family_groups` の行を消し、CASCADE で `family_members` 3 行・`family_invites` 1 行が消える。`admin_audit_logs` に `system.family.dissolved_purge` (purge_count 1) が 1 行。メンバーの食事の記録・`membership_audit` は残る |
 | S-12 | super_admin が本番に当てる前に件数を確かめる | SQL エディタで `SELECT * FROM public.purge_dissolved_family_groups(true);` → `purge_count` (消すはずの件数)・`skipped_with_consents_count`・`dry_run = true`。何も消えず、監査ログも書かない |
@@ -193,7 +193,7 @@ flowchart LR
   A -->|sendEmail ops_cron_failure| E[email_outbox → OPS_ALERT_EMAIL]
   A -->|pg_cron_last_run_at| D
   A -->|claim_ops_alert pg_cron_stalled → sendEmail ops_pg_cron_stalled| E
-  K[pg_cron cleanup-cron-run-history 03:35 JST<br/>段 D・Q-3 の確認の後] -->|cleanup_cron_run_history 30 日| D
+  K[pg_cron cleanup-cron-run-history 03:35 JST<br/>段 D] -->|cleanup_cron_run_history 30 日| D
   K --> T
   P[pg_cron purge-dissolved-family-groups 03:40 JST] -->|purge_dissolved_family_groups false| F[(family_groups dissolved 90 日超)]
   P -->|system.family.dissolved_purge| AU[(admin_audit_logs)]
@@ -208,8 +208,8 @@ flowchart LR
 | `mark_cron_failures_alerted(p_alerted_at, p_limit)` | 候補の全部を台帳に書き (印 = 権利の時刻)、書けた行の件数を同じ形で返す | §5.2 (3) |
 | `unmark_cron_failures_alerted(p_alerted_at)` | 印 = p_alerted_at の台帳の行を消す (送れなかったときの持ち越し) | §5.2 (4) |
 | `pg_cron_last_run_at()` | `cron` スキーマの有無・有効なジョブ数・最新の実行の時刻を返す | §5.2 (5) |
-| `cleanup_cron_run_history()` | 30 日より古い実行履歴と台帳の行を消す (pg_cron が毎日呼ぶ) | migration 段 D (§5.3。Q-3 の確認の後) |
-| `purge_dissolved_family_groups(p_dry_run)` | 解散から 90 日を過ぎたグループを 500 件まで消し、消した回だけ監査ログを書く。dry run は件数だけ | migration 段 C (§5.4。Q-1・Q-2 の確認の後) |
+| `cleanup_cron_run_history()` | 30 日より古い実行履歴と台帳の行を消す (pg_cron が毎日呼ぶ) | migration 段 D (§5.3) |
+| `purge_dissolved_family_groups(p_dry_run)` | 解散から 90 日を過ぎたグループを 500 件まで消し、消した回だけ監査ログを書く。dry run は件数だけ | migration 段 C (§5.4。Q-1・Q-2 は確認済み) |
 | route の `checkCronFailures` / `checkPgCronStalled` | 数える → しきい値 → 権利 → 印 (失敗だけ) → 送る。送れなければ印と権利を返す (返す条件の正本は §7.1 の「印と権利の返し方」) | §6.2 |
 | 文面 `renderCronFailureEmail` / `renderPgCronStalledEmail` | 名前と件数・確かめる場所・自動送信の注記 | §6.3 |
 
@@ -443,9 +443,9 @@ GRANT EXECUTE ON FUNCTION public.pg_cron_last_run_at() TO service_role;
 
 段 A の down.sql (`<番号>_cron_failure_monitoring.down.sql`。1 行目は `-- rollback: <migration のファイル名>`): 関数 5 本 ((1)〜(5)) の `DROP FUNCTION IF EXISTS` (引数の型つき) → `DROP TABLE IF EXISTS public.cron_failure_alerts` (知らせた記録は戻らない)。pg_cron のジョブには触れない (段 A は登録しない)。`ops_alert_state` の `cron_failure` / `pg_cron_stalled` の行は消さない (次の `claim_ops_alert` で上書きされるだけ)。段 D が当たっている DB では、段 D の down.sql を先に流す (段 D の関数が台帳を参照するため。§5.3)。
 
-### 5.3 実行履歴の掃除 (段 D。Q-3 の確認の後)
+### 5.3 実行履歴の掃除 (段 D。Q-3 はオーナーの確認 (2026-10-17) で確定)
 
-既存の行 (2026-05-01 からの実行履歴) を消すので、段 A から切り出し、Q-3 の確認の後にだけ着手する (§0.4・§12)。前提は段 A のマージ (台帳 `cron_failure_alerts` の古い行も消すため)。
+既存の行 (2026-05-01 からの実行履歴) を消すので、段 A から切り出した (§0.4・§12。Q-3 はオーナーの確認 (2026-10-17) で確定)。前提は段 A のマージ (済み) (台帳 `cron_failure_alerts` の古い行も消すため)。
 
 ```sql
 -- migration: <番号はマージ時に確定>_cleanup_cron_run_history.sql
@@ -487,7 +487,7 @@ pg_cron のジョブ (登録の書き方は `20261010150000` と同じ: `to_regc
 
 段 D の down.sql (`<番号>_cleanup_cron_run_history.down.sql`。1 行目は `-- rollback: <migration のファイル名>`): ジョブ `cleanup-cron-run-history` の登録解除 (`cron.job` が無ければ何もしない) → `DROP FUNCTION IF EXISTS public.cleanup_cron_run_history()`。台帳と `cron.job_run_details` の行には触れない (消した実行履歴と台帳の行は戻らない。冒頭に明記)。
 
-### 5.4 解散した家族のグループの物理削除 (段 C。Q-1・Q-2 の確認の後)
+### 5.4 解散した家族のグループの物理削除 (段 C。Q-1・Q-2 は確認済み)
 
 #### 5.4.1 関数
 
@@ -585,7 +585,7 @@ down.sql: ジョブの登録解除 → `DROP FUNCTION IF EXISTS public.purge_dis
 
 - 1 行目 `-- migration: <ファイル名>`、2 行目 `-- 戻し方: supabase/rollbacks/<ファイル名>.down.sql` (`tests/migration-file-version-integrity.test.ts`)。
 - ジョブの登録は `DO $$ … $$` で、`to_regclass('cron.job') IS NULL` なら `RETURN`、`cron.job` の `jobname = '<名前>' OR command ~* '[[:<:]]<関数名>[[:>:]]'` を `cron.unschedule(jobid)` してから `cron.schedule('<名前>', '<UTC>', 'SELECT public.<関数>(…);')`。名前は文字列の直書き (`tests/helpers/migration-cron-jobs.ts` が数える)。NOTICE に `command` を載せない。
-- 段 A は既存の行を変えない・消さない (表と関数の新設だけ。ジョブも登録しない)。既存の行を消すのは、ジョブを登録する段 C (解散から 90 日を過ぎたグループ) と段 D (30 日より古い実行履歴) だけで、どちらもオーナーの確認 (段 C は Q-1・Q-2、段 D は Q-3) の後にだけ着手する。
+- 段 A は既存の行を変えない・消さない (表と関数の新設だけ。ジョブも登録しない)。既存の行を消すのは、ジョブを登録する段 C (解散から 90 日を過ぎたグループ) と段 D (30 日より古い実行履歴) だけで、どちらもオーナーの確認 (2026-10-17。段 C は Q-1・Q-2、段 D は Q-3) で決まった範囲と保存期間のとおりに消す。
 - `database.types.ts` (2 か所) に表 `cron_failure_alerts` と関数 5 本 (段 A)・`purge_dissolved_family_groups` (段 C)・`cleanup_cron_run_history` (段 D) を足す (型の作り直し方は `tests/database-types-migrations-contract.test.ts` の冒頭)。
 
 ---
@@ -1262,14 +1262,14 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | pg_cron のジョブの失敗 | `cron.job_run_details` に残るだけ。通知なし | 15 分以内に `OPS_ALERT_EMAIL` へ (`ops_cron_failure`)。知らせた失敗は台帳に記録 |
 | Vercel Cron の route の 500 | `app_logs` に error 1 行。急増 (21 件超) にならなければ通知なし | 1 件から同じ通知で知らせる |
 | pg_cron の停止 | 分からない | 最新の実行から 60 分 (環境変数で可変) を超えたら通知 (`ops_pg_cron_stalled`) |
-| `cron.job_run_details` の保持 | 無制限 (2026-05-01 からの行) | 段 A・B の後も無制限のまま。段 D (Q-3 の確認の後) から 30 日 (`cleanup-cron-run-history`・03:35 JST) |
+| `cron.job_run_details` の保持 | 無制限 (2026-05-01 からの行) | 段 A・B の後も無制限のまま。段 D から 30 日 (`cleanup-cron-run-history`・03:35 JST) |
 | 運用アラートの種類 | 3 (server / client / email_dead_letter) | 5 (+ cron_failure / pg_cron_stalled)。応答に 2 キー追加 |
 | `app-log-alerts` の DB への入口 (RPC) | 7 本 (§2.1)。テスト O-1 が既定の場面で固定するのは 5 本 | 11 本 (+ `cron_failure_counts`・`mark_cron_failures_alerted`・`unmark_cron_failures_alerted`・`pg_cron_last_run_at`)。O-1 の既定の場面で呼ばれるのは 7 本 (+ `cron_failure_counts`・`pg_cron_last_run_at`。mark / unmark は失敗が 1 件以上ある回だけ呼ばれる。既存の `mark_email_outbox_dead_alerted` / `unmark_…` と同じ扱い。§14.1) |
 | 環境変数 | `OPS_ALERT_*` 4 つ | 5 つ (+ `OPS_ALERT_PG_CRON_STALL_MINUTES`) |
 | 解散した家族のグループ | 永久に残る | 解散から 90 日で物理削除 (同意の記録を持つものは残す)。監査ログ `system.family.dissolved_purge` |
-| migration が登録する pg_cron のジョブ | 11 本 | 段 A・B は増やさない。段 C と段 D がそれぞれ 1 本足す (先にマージした方で 12 本、両方で 13 本。順は問わない) |
+| migration が登録する pg_cron のジョブ | 11 本 | 段 A・B は増やさない。段 C と段 D がそれぞれ 1 本足す (#1797 の `expire-manual-plan-grants` も入り、段 D のマージの時点で 14 本) |
 | 08 §3.1 の計画の行 (`family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check`) | 計画として残る | 外す (本書 §15 の指示) |
-| 08 §3.2 の計画の行 (`re_engagement_email`・`nps_survey_sender`・`hr_revoke_jobs_processor`・`logical_backup`) | 計画として残る | `logical_backup` は実装済み (cross/17) に、ほかの 3 本は「選択待ち / 発生源の冊」に |
+| 08 §3.2 の計画の行 (`re_engagement_email`・`nps_survey_sender`・`hr_revoke_jobs_processor`・`logical_backup`) | 計画として残る | `logical_backup` は実装済み (cross/17) に、ほかの 3 本は「当面は送らない / 発生源の冊」に |
 | 08 §6 | Slack・Sentry・6 時間ごとの pg_cron | 本書 §4〜§6 への参照に置き換え |
 
 ### 7.3 ③状態遷移表
@@ -1314,6 +1314,8 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 
 ## 8. 利用者へ送るメール 2 本 — 選択肢と推奨 (実装しない)
 
+決まったこと: 2 本とも (a) 当面は送らない (オーナーの選択 (2026-10-17))。下の表は送り始めるときの候補として残す。
+
 ### 8.1 `re_engagement_email` (08 §5.5: 7 / 14 / 30 日ログインなし・無料以外のプランに段階的メール)
 
 事実: 送る処理も文面も無い。対象を決める元データ `user_profiles.last_login_at` は 65 人中 4 人しか値が無く、`plan_key_cached` も「常に最新とは限らない」。アプリの活動の信頼できる元データは `auth.sessions` / `auth.users.last_sign_in_at` (08 §3.0.1 の DAU と同じ)。マーケティングのメールには配信停止の仕組み (特定電子メール法のオプトアウト) が要るが、`sendEmail` にその経路は無い (10 §1.2 で対象外)。有料プランは課金を始めていない (A)。
@@ -1334,7 +1336,7 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 | (b) アプリ内で聞く | メールでなく、登録 30 日・前回から 90 日の条件を満たす利用者に、アプリ内のカード (0〜10 とコメント) を出し、`nps_surveys` に本人が書く | 条件の判定 (RPC)・カードの画面・`sent_at` の意味の決め直し (表示した時刻) | 送るときの第一候補。メールも cron も要らず、`nps_insert_self` がそのまま使える |
 | (c) メールで送る | 08 §3.2 のとおり (リンク先の回答画面が要る) | 回答画面・トークン・配信停止・文面 | 最後の候補 |
 
-どちらも、選ぶのは業務の判断。選ばれるまで 08 の行は「選択待ち」とし、実装の段 (§12) には入れない。
+どちらも (a) 当面は送らない に決まった (Q-5)。08 の行は「当面は送らない」とし、実装の段 (§12) には入れない。送り始めるなら、(b)・(c) を候補に別の設計ゲートを立てる。
 
 ---
 
@@ -1555,13 +1557,13 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 |---|---|---|---|---|
 | A: 失敗の監視の DB | migration `<番号>_cron_failure_monitoring.sql` + down (台帳・関数 5 本。ジョブは登録しない)・`database.types.ts` 2 か所・契約テスト・結合テスト (§11 の `tests/cron-failure-monitoring-contract.test.ts`・`tests/integration/security/cron-failure-monitoring.test.ts`)・08 の外す計画の行 (ジョブの数は変わらないので、番兵の数の注記は触らない) | 行 3 (段 A の分)・4 | 無し | 単独でマージしてよい (アプリは変わらない) |
 | B: 失敗の監視のアプリ | `app-log-error-spike.ts` の追記・`cron-failure.ts`・文面 2 本・route・`env.ts`・`.env.example`・`ENV_SETUP.md`・単体テスト (§11.2 の新設 3 ファイルと既存 2 ファイルへの追記)・既存テストの追随 (§14 の段 B の行と §14.1。`src/__tests__/lib/env.test.ts`・`src/__tests__/api/cron/app-log-alerts.test.ts` を含む) | 行 5・6・7・8 (段 B の分)・10・12・13 (段 B の分)・14・15・17・18・21 | 段 A のマージ | 段 A の後 |
-| C: 解散した家族の物理削除 | migration `<番号>_purge_dissolved_family_groups.sql` + down・`database.types.ts`・契約テスト・結合テスト (§11 の `tests/purge-dissolved-family-groups-contract.test.ts`・`tests/integration/security/purge-dissolved-family-groups.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 C の分)・3 (段 C の分)・8 (段 C の分)・9・13 (段 C の分)・16・20 | **Q-1・Q-2 の確認**。段 A・段 D と独立 (台帳に触れない) | 確認の後。別の PR |
-| D: 実行履歴の掃除 | migration `<番号>_cleanup_cron_run_history.sql` + down (関数 `cleanup_cron_run_history` 1 本・ジョブ `cleanup-cron-run-history`)・`database.types.ts` 2 か所・契約テスト・結合テスト (§11 の `tests/cron-run-history-cleanup-contract.test.ts`・`tests/integration/security/cron-run-history-cleanup.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 D の分)・2・3 (段 D の分)・8 (段 D の分) | **Q-3 の確認**と段 A のマージ (台帳の古い行も消すため)。段 B・段 C と独立 | 確認の後。別の PR |
+| C: 解散した家族の物理削除 | migration `<番号>_purge_dissolved_family_groups.sql` + down・`database.types.ts`・契約テスト・結合テスト (§11 の `tests/purge-dissolved-family-groups-contract.test.ts`・`tests/integration/security/purge-dissolved-family-groups.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 C の分)・3 (段 C の分)・8 (段 C の分)・9・13 (段 C の分)・16・20 | Q-1・Q-2 の確認 (済み)。段 A・段 D と独立 (台帳に触れない) | 別の PR |
+| D: 実行履歴の掃除 | migration `<番号>_cleanup_cron_run_history.sql` + down (関数 `cleanup_cron_run_history` 1 本・ジョブ `cleanup-cron-run-history`)・`database.types.ts` 2 か所・契約テスト・結合テスト (§11 の `tests/cron-run-history-cleanup-contract.test.ts`・`tests/integration/security/cron-run-history-cleanup.test.ts`)。番兵 (規則 9) が同じ PR で赤になるため、08 §3.0・§3.1 の数と名前も同じ PR で直す | 行 1 (段 D の分)・2・3 (段 D の分)・8 (段 D の分) | Q-3 の確認 (済み: オーナーの確認 (2026-10-17)) と段 A のマージ (済み。台帳の古い行も消すため)。段 B・段 C と独立 | 別の PR |
 
 §15 の行 11・19 は「変えない」。行 20 は段 C、行 21 は段 B。段 A・段 C・段 D の migration は、マージ直前に origin/main の `supabase/migrations` の最大より大きい番号で確定する。本番へ当てる時期:
 - 段 A: 追加だけの migration (表・関数の新設。ジョブを登録せず、既存の行を変えない・消さない。§11.1 の契約テストが固定) なので、マージの前に本番へ当ててよい。
-- 段 C・段 D: 既存の行を消すジョブを登録する (段 C は解散から 90 日を過ぎたグループ、段 D は 30 日より古い実行履歴。段 D は当てた後の最初の 03:35 JST の実行で、2026-05-01 からの既存の行のうち 30 日より古いものを消す)。それぞれ Q-1・Q-2 / Q-3 の確認の前には、着手も本番への適用もしない。確認の後も、マージの前に本番へ当ててよいのは確認された保存期間のときだけ (違う期間に決まったら、`c_retention` を直してから当てる)。
-- 段 C と段 D の順は問わない。08 §3.0・§3.1 の数は、その PR をマージする時点の origin/main の migration が登録するジョブの数 (11 + 先に入った段 C / D の数 + 1) にする (§14 の規則 9 の行)。
+- 段 C・段 D: 既存の行を消すジョブを登録する (段 C は解散から 90 日を過ぎたグループ、段 D は 30 日より古い実行履歴。段 D は当てた後の最初の 03:35 JST の実行で、2026-05-01 からの既存の行のうち 30 日より古いものを消す)。Q-1・Q-2 / Q-3 の確認 (オーナーの確認 2026-10-17) は済んでいる。マージの前に本番へ当ててよいのは確認された保存期間のときだけ (違う期間に決まったら、`c_retention` を直してから当てる)。
+- 段 C と段 D の順は問わない。08 §3.0・§3.1 の数は、その PR をマージする時点の origin/main の migration が登録するジョブの実数にする (§14 の規則 9 の行。番兵が実数と突き合わせる)。
 
 ---
 
@@ -1595,7 +1597,7 @@ grep の語で見つかる既存のテストと、その直し方。段は §12�
 
 | 番兵 | grep の語 | 反応する理由 | 直し方 | 段 |
 |---|---|---|---|---|
-| `tests/log-cleanup-dau-snapshot-contract.test.ts` 規則 9 | `migration が pg_cron に登録しているジョブは`・`migration が pg_cron に登録しているのは` | migration のジョブ数 (11 → 段 C・段 D で 1 本ずつ増える) と 08 §3.0・§3.1 の注記の数・名前を突き合わせる | 段 C・段 D の PR で、08 §3.0 の「11 つ」と §3.1 の注記の「の 11 つ」を、その PR のマージの時点の数 (先に入った方で 12、後の方で 13) に、§3.0 と §3.1 の注記 (`> ` の行) に `purge-dissolved-family-groups` (段 C)・`cleanup-cron-run-history` (段 D) をバッククォートで足す。段 A・B はジョブを足さないので触らない。`#1125` を含む行に「作らない / 決めた / 新しい判断 / オーナー判断」を書かない | C / D |
+| `tests/log-cleanup-dau-snapshot-contract.test.ts` 規則 9 | `migration が pg_cron に登録しているジョブは`・`migration が pg_cron に登録しているのは` | migration のジョブの実数と 08 §3.0・§3.1 の注記の数・名前を突き合わせる | 段 C・段 D の PR で、08 §3.0 の「11 つ」と §3.1 の注記の「の 11 つ」を、その PR のマージの時点の実数 (段 C は 13、段 D は 14 だった) に、§3.0 と §3.1 の注記 (`> ` の行) に `purge-dissolved-family-groups` (段 C)・`cleanup-cron-run-history` (段 D) をバッククォートで足す。段 A・B はジョブを足さないので触らない。`#1125` を含む行に「作らない / 決めた / 新しい判断 / オーナー判断」を書かない | C / D |
 | 同上 (§3.2 の注記) | `この表のほかの`・`実装済み` | §3.2 の表の行数 − `実装済み` を含む行数 = 注記の N | `logical_backup` の行に「(実装済み: cross/17・#1765 段 A)」を書いたら N を 11 → 10 にする。行を消したら消した分だけ N を減らす (§15 の行 5) | B |
 | `tests/helpers/migration-cron-jobs.ts`・`tests/migration-cron-job-names.test.ts` | `cron.schedule(` | ジョブ名が解けない書き方 (式・連結) を赤にする | ジョブ名は文字列の直書き | C / D |
 | `tests/email-outbox-migration-contract.test.ts`・`tests/login-failure-grant-claim-cleanup-contract.test.ts`・`tests/auth-history-sessions-migration-contract.test.ts` | `08-cron-batches` | 08 の既存の文字列 (`cleanup-email-outbox`・`20261016234000_email_outbox.sql` など) と数を見る | 08 の既存の行を消さない (足すだけ)。数は上の行のとおり | 08 を直す段すべて (A / B / C / D) |
@@ -1703,11 +1705,11 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 
 | # | 文書 | 直すこと | 段 |
 |---|---|---|---|
-| 1 | `operator/08-cron-batches.md` §3.0 | 「migration が pg_cron に登録しているジョブは 11 つ」を、その PR のマージの時点の数 (段 C・段 D の先に入った方で 12、後の方で 13) に。「残りの 9 つ」の列挙 (数も同じく増やす) に `purge-dissolved-family-groups` (段 C) / `cleanup-cron-run-history` (段 D) を足し、「そのほか」の箇条書きに各ジョブの行 (時刻・command・内容・関数の権限・ロールバック・migration の名前・本書 §5.4 / §5.3 への参照) を足す | C / D |
+| 1 | `operator/08-cron-batches.md` §3.0 | 「migration が pg_cron に登録しているジョブは 11 つ」を、その PR のマージの時点の実数 (段 C は 13、段 D は 14 だった) に。「残りの 9 つ」の列挙 (数も同じく増やす) に `purge-dissolved-family-groups` (段 C) / `cleanup-cron-run-history` (段 D) を足し、「そのほか」の箇条書きに各ジョブの行 (時刻・command・内容・関数の権限・ロールバック・migration の名前・本書 §5.4 / §5.3 への参照) を足す | C / D |
 | 2 | 08 §3.0 (末尾の段落) | `cron.job_run_details` の保持 (30 日。`cleanup-cron-run-history`。本書 §5.3) と、失敗の監視が見る範囲 7 日 (本書 §4) への参照を 1 段落足す | D |
-| 3 | 08 §3.1 の表と注記 | (段 A) `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 行を表から外し、注記 (`> `) に「この 4 本は operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (operator/11 §5.4。保存期間の確認の後)」を 1 行足す。(段 C・段 D) 注記の「migration が pg_cron に登録しているのは … の 11 つ」を行 1 と同じ数に更新し、名前を足す | A / C / D |
+| 3 | 08 §3.1 の表と注記 | (段 A) `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 行を表から外し、注記 (`> `) に「この 4 本は operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (operator/11 §5.4。保存期間はオーナーの確認 (2026-10-17) で決まった)」を 1 行足す。(段 C・段 D) 注記の「migration が pg_cron に登録しているのは … の 11 つ」を行 1 と同じ数に更新し、名前を足す | A / C / D |
 | 4 | 08 §4.1・§4.3・§4.4・§4.5・§4.6 | §4.1 の `cron.schedule` の例から 4 本を消す。§4.3〜§4.6 の本文を「operator/11 §2.2 の仕分けで外した。解散した家族の物理削除は operator/11 §5.4」の 1 段落に置き換える (コードは残さない) | A |
-| 5 | 08 §3.2 の表と注記 | `logical_backup` の行 (origin/main では概要に GitHub Actions の注記が足され、ジョブ名の列は計画のまま) を「`logical_backup` (実装済み: cross/17・#1765 段 A) \| daily 02:23 \| GitHub Actions の `db-backup.yml` が取って R2 に置く (Vercel Cron としては置かない)。鮮度は `backup_freshness` の行 (cross/17 §7.3)」に。`backup_freshness` (実装済み: #1129) の行と、注記の「`vercel.json` に登録されている Vercel Cron は … の 5 本」はそのまま。`re_engagement_email`・`nps_survey_sender` の行の概要に「(選択待ち: operator/11 §8)」、`hr_revoke_jobs_processor` の行に「(HR 連携の冊に同梱: operator/11 §2.2)」を足す。注記の「この表のほかの 11 本」を 10 本に | B |
+| 5 | 08 §3.2 の表と注記 | `logical_backup` の行 (origin/main では概要に GitHub Actions の注記が足され、ジョブ名の列は計画のまま) を「`logical_backup` (実装済み: cross/17・#1765 段 A) \| daily 02:23 \| GitHub Actions の `db-backup.yml` が取って R2 に置く (Vercel Cron としては置かない)。鮮度は `backup_freshness` の行 (cross/17 §7.3)」に。`backup_freshness` (実装済み: #1129) の行と、注記の「`vercel.json` に登録されている Vercel Cron は … の 5 本」はそのまま。`re_engagement_email`・`nps_survey_sender` の行の概要に「(当面は送らない: operator/11 §8)」、`hr_revoke_jobs_processor` の行に「(HR 連携の冊に同梱: operator/11 §2.2)」を足す。注記の「この表のほかの 11 本」を 10 本に | B |
 | 6 | 08 §5.1・§5.5・§5.6 | §5.1 の `vercel.json` の例から `/api/cron/logical-backup` と `/api/cron/hr-revoke-processor` と `/api/cron/re-engagement-email` と `/api/cron/nps-survey-sender` を消し、「例 (計画)。いまの `vercel.json` は §3.0」の注記。§5.5・§5.6 の本文を operator/11 §8 / §2.2 への参照に置き換える | B |
 | 7 | 08 §6 | 「6. 監視・失敗時アラート」の本文を、本書 §4〜§6 の要約 (4 つ目・5 つ目の種類・台帳・停止・環境変数) と参照に置き換える (Slack・Sentry・`check_cron_failures`・`withCronMonitoring` を消す) | B |
 | 8 | 08 §9・§10・§11・§12 | §9 の行を「pg_cron / Vercel Cron 全般 → 運用メール (operator/11 §4)」「`family_archive_purge_batch`」→「`purge-dissolved-family-groups`: dry run と 1 回 500 件の上限」に。§9 の `hr_revoke_jobs_processor` の行 (個別リトライ 5 回 → dead_letter) は「未実装 (HR 連携の冊に同梱: operator/11 §2.2)」に (リトライの方針は HR 連携の冊が決める)。§9 の `stripe_integrity_check` の行は (A) なので残す。§10 の Integration から `process_family_freeze_grace_to_archive` を消し、本書 §11.3 を参照。§11 の `hr_revoke_jobs` の行を「未実装 (org/02 §14)」に。§12 の「`family_archive_purge_batch` の dry-run」を「`purge_dissolved_family_groups(true)` (operator/11 §5.4)」に、「`cron.job_run_details` は Supabase が自動でクリアする」を「自動では消えない。`cleanup-cron-run-history` が 30 日で消す (operator/11 §5.3)」に (この文は段 D。段 B・C の PR では触らない)。§12 の課金系の文 (`revenue_snapshot` …) は残す | B / C / D |
@@ -1720,7 +1722,7 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 | 15 | `docs/design/00-architecture.md` §4.3 | 「UC-ORG-17 退職時 family owner 凍結」の末尾に「(2026-10-17 時点: HR Webhook・hr_revoke_jobs・frozen 状態は未実装。operator/11 §2.2)」を 1 行足す | B |
 | 16 | `docs/design/family/07-lifecycle.md` §3.3・`org/05-offboarding-flow.md` §8 | 「08 §4.3 を参照」の行に「(2026-10-17 時点: 08 から外した。凍結の遷移を作る冊で `frozen` の列とバッチを一緒に設計する。operator/11 Q-4)」を足す。§7.3 の「dissolved は archived に統一 → 90 日後に物理削除」に「(実装は `dissolved` のまま 90 日で物理削除: operator/11 §5.4)」を足す | C |
 | 17 | `docs/design/mobile/06-push-send.md` §3.2 | `family_freeze_warning` / `family_frozen` の行の理由を「発火元の pg_cron が未実装 (`08` §3.0)」から「凍結の機能そのものが未実装 (operator/11 §2.2)」に | B |
-| 18 | `docs/design/operator/02-api-spec.md` | `POST /api/cron/re-engagement-email`・`POST /api/cron/nps-survey-sender` の節に「(選択待ち。operator/11 §8)」を足す | B |
+| 18 | `docs/design/operator/02-api-spec.md` | `POST /api/cron/re-engagement-email`・`POST /api/cron/nps-survey-sender` の節に「(当面は送らない。operator/11 §8)」を足す | B |
 | 19 | `docs/design/cross/17-backup-automation.md` | 変えない (鮮度の cron は cross/17 が正)。本書 §0.5 で参照するだけ | — |
 | 20 | `docs/design/cross/14-parental-consent.md` §0.3・§6.1・§6.3 | 家族の行が消える経路の主体として「代表者のポリシー `family_groups_delete_representative`・service_role」だけを挙げている 3 か所 (§0.3 の表の「家族グループの削除」の行・①全パターン表の P24b・③状態遷移表の「任意 \| 家族の行の DELETE」の行) に、「pg_cron の `purge-dissolved-family-groups` (operator/11 §5.4。解散から 90 日を過ぎ、同意の記録 (`parental_consents`) を持たない家族だけを消す。同意の記録を持つ家族は消さないので、この経路で同意の行は消えない)」を足す。「アプリの route に家族の行の DELETE は無い」と、R-7 の「家族の行の削除と一緒に消える」は事実のまま (変えない) | C |
 | 21 | `docs/design/operator/10-logs-and-mail-retry.md` §8.1 | 表の「キー / クールダウン」の行の「3 種類で同じ値・抑止は別々」と「宛先」の行の「未設定なら 3 種類とも何もしない」の 2 か所に、「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled` を含めて 5 種類。operator/11 §4〜§6)」を足す。10 §8 は email_dead_letter の正本のまま (4 つ目・5 つ目の正本は本書と 07 §8.3 (行 10)) | B |
@@ -1729,7 +1731,7 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 
 ## 16. 未解決事項
 
-- Q-1〜Q-5 (§0.4)。段 C は Q-1・Q-2 の確認の後、段 D は Q-3 の確認の後。段 D が入るまでは、実行履歴 (`cron.job_run_details`) と台帳 (`cron_failure_alerts`) は消えずに増える (失敗の監視は 7 日の範囲しか見ないので、動きは変わらない)。
+- Q-4 (§0.4)。Q-1〜Q-3 はオーナーの確認 (2026-10-17) で決まり、Q-5 はオーナーの選択 (2026-10-17) で決まった。
 - `cron.job_run_details` に `running` のまま残る行 (worker が途中で落ちた) は失敗に数えない (status が `failed` にならない)。pg_cron の停止の検知 (最新の `start_time`) で間接的に分かるだけ。必要なら「`running` が 1 時間を超えた行」を候補に足す (本書では足さない)。
 - 本番の GoTrue / pg_cron の更新で `cron.job_run_details` の列が変わる可能性は低いが、`status` の値 (`succeeded` / `failed` ほか) は pg_cron の版に依る。1.6.4 で確認。
 - 07 §6.1 (大量 BAN の検知) と §6.2 (`critical` の `pg_notify`) は Slack 前提の計画のまま。本書の範囲外。

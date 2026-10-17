@@ -67,13 +67,15 @@
 |---|---|---|
 | `EXPO_PUBLIC_SUPPORT_EMAIL` | `support@homegohan.com` | 設定画面・プロフィール画面の「お問い合わせ」の宛先 |
 | `EXPO_PUBLIC_WEB_URL` | `https://homegohan.com` | WebView が開くサイトの URL。設定画面の「利用規約」「プライバシーポリシー」も同じ URL の `/terms` `/privacy` を開く。**サイトを homegohan.com に移した後にだけ設定する** (§4 の手順 6) |
+| `EXPO_PUBLIC_API_BASE_URL` (既存・必須) | `https://homegohan.com` | 献立・AI などの画面が呼ぶ Next.js の API の基点。いまは `https://homegohan-app.vercel.app` (`apps/mobile/env.example`)。**`EXPO_PUBLIC_WEB_URL` と同じく、サイトを移した後にだけ変える** (§4 の手順 6) |
 
-どちらも、設定したあと**アプリをビルドし直して**配布するまで反映されません。
+どれも、設定したあと**アプリをビルドし直して**配布するまで反映されません。
 
 ### Supabase の Edge Function (任意)
 
-`ALLOWED_ORIGINS` (Edge Function の Secret): ブラウザから Edge Function を直接呼ぶ処理は今はありません。呼ぶ処理を足すときだけ、
-`https://homegohan.com,https://homegohan-app.vercel.app` のようにサイトの URL を足します (詳細は `ENV_SETUP.md`)。
+`ALLOWED_ORIGINS` (Edge Function の Secret): ブラウザから Edge Function を直接呼ぶ処理は今はありません。未設定のときに許可するのは、
+いま動いている `https://homegohan-app.vercel.app` だけです (`supabase/functions/_shared/cors.ts` の既定値)。呼ぶ処理を足すときだけ、
+サイトを移したあとに `https://homegohan.com,https://homegohan-app.vercel.app` のようにサイトの URL を足します (詳細は `ENV_SETUP.md`)。
 
 ---
 
@@ -178,11 +180,11 @@ Supabase が最初から持っている送信は、本番で使うには送信�
    - Site URL = `https://homegohan.com`
    - Redirect URLs に `https://homegohan.com/**` を**追加**する。`https://homegohan-app.vercel.app/**` と `homegohan://**` (モバイルアプリ) は**残す**。アプリのログイン・パスワード再設定は、そのとき開いているサイト (`window.location.origin`) へ戻る作りで、古いアドレスから来る人もいるため。
 5. Google Cloud Console → OAuth クライアントの「承認済みの JavaScript 生成元」に `https://homegohan.com` を追加する。「承認済みのリダイレクト URI」は Supabase のコールバック (`https://<プロジェクト>.supabase.co/auth/v1/callback`) のままで変更しない。
-6. リポジトリ直下の `SECURITY.md` にある、お問い合わせフォームの URL (`https://homegohan-app.vercel.app/contact`。日本語の手順と英語の要約の 2 か所) を、新しいサイトの URL に書き換える (PR を出す)。`SECURITY.md` は環境変数を読めない文書で、`tests/site-config-guard.test.ts` も `src/` と `apps/mobile/` しか見ないので、手で直さないと古い URL が残る。専用の連絡用メールアドレス (`support@homegohan.com` など) を使えるようになったときも、`SECURITY.md` の「報告のしかた」を書き換える。
+6. リポジトリ直下の `SECURITY.md` にある、お問い合わせフォームの URL (`https://homegohan-app.vercel.app/contact`。日本語の手順と英語の要約の 2 か所) を、新しいサイトの URL に書き換える (PR を出す)。`SECURITY.md` は環境変数を読めない文書で、いま動いている URL を書くこと自体は正しいので、`tests/site-config-guard.test.ts` は止めない。手で直さないと古い URL が残る。専用の連絡用メールアドレス (`support@homegohan.com` など) を使えるようになったときも、`SECURITY.md` の「報告のしかた」を書き換える。
 
 ### 手順 6: モバイルアプリ (B。サイトを移した後)
 
-EAS のビルド環境に `EXPO_PUBLIC_WEB_URL=https://homegohan.com` と `EXPO_PUBLIC_SUPPORT_EMAIL=support@homegohan.com` を設定して、新しいビルドを出す。
+EAS のビルド環境に `EXPO_PUBLIC_WEB_URL=https://homegohan.com`・`EXPO_PUBLIC_API_BASE_URL=https://homegohan.com`・`EXPO_PUBLIC_SUPPORT_EMAIL=support@homegohan.com` を設定して、新しいビルドを出す。
 サイトを移さない (A だけの) 場合は `EXPO_PUBLIC_SUPPORT_EMAIL` だけを設定します。
 
 ---
@@ -230,8 +232,8 @@ DNS のレコード (Resend・DMARC) は残しておいてかまいません。
 
 ## 9. この手順の範囲外 (別の Issue)
 
-- 送信失敗のリトライ・失敗の保存 (#1193)
-- Resend のバウンス・苦情の受信と、送信の抑制 (#1184)
+- 送信失敗のリトライ・失敗の保存 (#1193。実装済み: 送信待ち `email_outbox` と worker。`docs/design/operator/10-logs-and-mail-retry.md`)
+- Resend のバウンス・苦情の受信と、送信の抑制 (#1184。実装済み。Webhook の登録と `RESEND_WEBHOOK_SECRET` の設定は `ENV_SETUP.md` の #1184 の節)
 - 運営会社・特定商取引法の事業者情報 (#1155)
 
 ---
@@ -240,7 +242,11 @@ DNS のレコード (Resend・DMARC) は残しておいてかまいません。
 
 - Web: `src/lib/site-config.ts` の `getSiteUrl()` / `getEmailFrom()` / `getSupportEmail()` だけがドメインを決める。メールの共通部品は `src/lib/emails/common.ts` (署名) と `src/lib/emails/envelope.ts` (メールの形。送信元の既定値を含む)。招待・譲渡のリンクは `src/lib/membership/urls.ts`。
 - モバイル: `apps/mobile/src/lib/siteConfig.ts` (問い合わせ先・利用規約・プライバシーポリシー)。WebView のオリジンは従来どおり `apps/mobile/src/lib/webBaseUrl.ts`。
-- `tests/site-config-guard.test.ts` が、`src/` と `apps/mobile/` に `@homegohan.app` `@homegohan.jp` `https://homegohan.app` が直接書かれていないことを検査する。許すのは既定値の定数と、それを固定するテストだけ。
-  - 例外が 1 つ残っている: `src/app/(main)/settings/page.tsx` (PR #1079 が設定画面を別ファイルに移す。移した先で `getSupportEmail()` にして、テストの `PENDING_FILES` から外す)。
-- 検査の外にあるもの: リポジトリ直下の `SECURITY.md` は、お問い合わせフォームの URL (`https://homegohan-app.vercel.app/contact`) を直接書いている (環境変数を読めない文書のため)。サイトの URL を切り替える (手順 5) ときは、手で書き換える。
+- `tests/site-config-guard.test.ts` が、ドメインの直書きを次のように検査する (#1194・#1568・#1573)。例外として残しているファイルは無い (以前の `PENDING_FILES` の設定画面は #1568 で `getSupportEmail()` にした)。
+  - `src/` と `apps/mobile/` に `@homegohan.app` `@homegohan.jp` `https://homegohan.app` が直接書かれていない。許すのは既定値の定数と、それを固定するテストだけ。
+  - 製品のソース (`src/`・`apps/mobile/`・`supabase/functions/` の、テストを除くコード) には、コメントを除くと、既定値の定数のほかに `homegohan.app` `homegohan.jp` `homegohan.com` のどれも書かれていない。
+  - `public/` (OGP の画像など)・`scripts/`・`supabase/functions/` とリポジトリ直下の文書 (`.env.example`・`ENV_SETUP.md`・`README.md`・`SECURITY.md`) に、存在しない `homegohan.app` `homegohan.jp` が (サブドメイン付きやドメイン名だけの形でも) 書かれていない。
+  - 上の文書と、`src/`・`apps/mobile/` の文書 (README・`env.example` など) に、サイトの URL が `https://homegohan.com` で書かれていない (サイトを移すまで別のサービスを指しているため。許すのは `ENV_SETUP.md` の表の、切り替えの例の 1 行だけ)。切り替えの値は、この文書に書く。
+- Edge Function の CORS の既定値 (`supabase/functions/_shared/cors.ts` の `DEFAULT_ALLOWED_ORIGINS`) は、Deno で動き `site-config` を読めないので、サイトの URL の既定値を写している。一致は `tests/edge-function-cors.test.ts` が検査する。
+- 検査が止めないもの: リポジトリ直下の `SECURITY.md` は、お問い合わせフォームの URL (`https://homegohan-app.vercel.app/contact`) を直接書いている (環境変数を読めない文書のため。いま動いている URL なので検査は止めない)。サイトの URL を切り替える (手順 5) ときは、手で書き換える。
 - 設計書 (`docs/design/membership/04-email-templates.md` など) の `homegohan.app` は設計時の値で、実装の正は上記のコードと環境変数です。

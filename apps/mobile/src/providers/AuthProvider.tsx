@@ -19,11 +19,13 @@ type AuthState = {
   /**
    * ネットワークに依存せず in-memory の session を即座に破棄する。
    *
-   * Round-4 レビュー指摘 (#1037): `supabase.auth.signOut()` はネットワークエラー等で
-   * 失敗すると `SIGNED_OUT` イベントを発火せず、`onAuthStateChange` 経由の自動クリアが
-   * 効かないことがある。アカウント削除後の後片付けのように、サーバー側の状態は既に
-   * 確定しているケースでこれを呼び、`app/index.tsx` が古い session を見てホームタブへ
-   * 戻すフラッシュを防ぐ。
+   * Round-4 レビュー指摘 (#1037): `supabase.auth.signOut()` は、access token が失効していて更新もできない
+   * (オフライン・5xx・失敗の控えの間) と、サーバーへのログアウトを呼ばずに `{ error }` を返すだけで、保管も残り
+   * `SIGNED_OUT` イベントも発火せず、`onAuthStateChange` 経由の自動クリアが効かない
+   * (このとき `clearSession` が画面の状態を消す本体)。access token が有効なうちなら、サーバーへのログアウトが失敗しても
+   * supabase-js が保管を消して `SIGNED_OUT` を出す (auth-js 2.117。#1768)。
+   * アカウント削除後の後片付けのように、サーバー側の状態は既に確定しているケースでこれを呼び、
+   * `app/index.tsx` が古い session を見てホームタブへ戻すフラッシュを防ぐ。
    */
   clearSession: () => void;
 };
@@ -37,7 +39,7 @@ const AuthContext = createContext<AuthState | null>(null);
  * | 経路 | 掃除を呼ぶ所 | 掃除する利用者の ID | サインアウトとの順 |
  * |---|---|---|---|
  * | 設定のログアウト (退会の API が 401 を返したときのアカウントの画面のログアウトも同じ signOutOnDevice。#1562)、退会のあと、パスワード再設定のあと (reset-password.tsx の signOutWithCleanup)、Web からの sign-out (signOut.ts) | signOut.ts | 画面が持つ利用者 (パスワード再設定のあとは呼ぶ前のセッションの利用者 (#1720 段 C)、Web からのときは、処理の最初に控えた利用者) | push token の行の削除 (退会のあとは無し。削除が失敗・0 件なら、掃除が値を消す前に release の宛先を控える。#1706。通信はしない) → 掃除 → signOut。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除がもう一度走り、控えた宛先があれば release が消す |
- * | 上の行の signOut が、通信の失敗 (オフラインなど) で { error } を返した | signOut.ts (signOut の前の掃除だけ) | 上の行と同じ | supabase-js は保管庫のセッションを消さず、SIGNED_OUT も届かないので、SIGNED_OUT の行の掃除は走らない。設定のログアウトと退会のあと (signOutOnDevice・signOutAfterAccountDeletion) は、保管庫のセッションを端末だけで消し (clearStoredSessionLocally)、clearSession で画面の状態を消す (lastKnownUserIdRef は残る。下の clearSession の注)。サーバーのセッションは、設定のログアウト (signOutOnDevice) では、サーバーへのログアウトが届かなければ失効しないまま残る。退会のあと (signOutAfterAccountDeletion) は、サーバーでの削除が済んでから呼ぶ (settings/account.tsx) ので、サーバーのセッションは auth.users の削除 (auth.admin.deleteUser) と一緒に既に消えている。パスワード再設定のあとと Web からの sign-out (signOutWithCleanup) は端末だけで消す処理を持たず、保管庫のセッションと画面の状態が残る (ログイン中のまま。パスワード再設定のあとは、ログイン画面へ移っても (auth)/_layout.tsx がセッションを見てホームへ戻す)。push token の行を消しに行く経路 (signOutOnDevice・signOutWithCleanup) は、その削除が通信の失敗で済まなければ、掃除が値を消す前に release の宛先を控えてある (#1706)。SIGNED_OUT が届かないので、起動時に未ログインと決まったとき (flushPendingPushTokenReleases) か次の SIGNED_OUT で消す。パスワード再設定のあとと Web からの sign-out はログイン中のまま残るので、控えはその利用者の次の登録 (claim の成功) で外れるか、次のサインアウトで消す。退会のあとは行を消しに行かず、行は auth.users の削除と一緒に消えている (ON DELETE CASCADE) |
+ * | 上の行の signOut が、通信の失敗 (オフラインなど)・5xx で { error } を返した | signOut.ts (signOut の前の掃除だけ。(a) では SIGNED_OUT の行の掃除もそのあと走る) | 上の行と同じ | signOut の前の掃除のあとは、保管庫の access token の状態で 2 つの枝に分かれる。(a) access token が有効 (残り 90 秒未満で更新に失敗していても、失効の前なら有効): サーバーへのログアウトまで届いて失敗し、supabase-js (auth-js 2.117) は保管庫のセッションを消して SIGNED_OUT を出す (scope others を除く) ので、成功のときと同じく SIGNED_OUT の行の掃除と release が走る。(b) access token が失効していて、更新もできない (更新が接続の失敗・5xx で終わった、または失敗の控えの 60 秒の間): signOut はサーバーへのログアウトを呼ばずに { error } を返し、保管庫のセッションは残り、SIGNED_OUT も届かない (SIGNED_OUT の行の掃除と release は走らない)。設定のログアウトと退会のあと (signOutOnDevice・signOutAfterAccountDeletion) は、どちらの枝でも (と signOut が例外を投げたときも)、保管庫のセッションを端末だけで消し (clearStoredSessionLocally)、clearSession で画面の状態を消す (lastKnownUserIdRef は残る。下の clearSession の注)。(b) と例外では、これが後始末の本体で、(a) では supabase-js の消去と重なる (二重でも害は無い)。サーバーのセッションは、設定のログアウト (signOutOnDevice) では、サーバーへのログアウトが届かなければ失効しないまま残る。退会のあと (signOutAfterAccountDeletion) は、サーバーでの削除が済んでから呼ぶ (settings/account.tsx) ので、サーバーのセッションは auth.users の削除 (auth.admin.deleteUser) と一緒に既に消えている。パスワード再設定のあとと Web からの sign-out (signOutWithCleanup) は端末だけで消す処理を持たないので、(a) では SIGNED_OUT で未ログインになるが、(b) では保管庫のセッションと画面の状態が残る (ログイン中のまま。パスワード再設定のあとは、ログイン画面へ移っても (auth)/_layout.tsx がセッションを見てホームへ戻す)。push token の行を消しに行く経路 (signOutOnDevice・signOutWithCleanup) は、その削除が通信の失敗で済まなければ、掃除が値を消す前に release の宛先を控えてある (#1706)。(a) では SIGNED_OUT の release が控えを消しに行き、(b) では起動時に未ログインと決まったとき (flushPendingPushTokenReleases) か次の SIGNED_OUT で消す。パスワード再設定のあとと Web からの sign-out が (b) でログイン中のまま残ったときは、控えはその利用者の次の登録 (claim の成功) で外れるか、次のサインアウトで消す。退会のあとは行を消しに行かず、行は auth.users の削除と一緒に消えている (ON DELETE CASCADE) |
  * | Web からの session-expired で、getUser() が失効を見つけた (webViewAuthMessages.ts) | 先に SIGNED_OUT の行、続いて signOut.ts | SIGNED_OUT の行は直前に分かっていたセッションの利用者、signOut.ts は getUser() の前に控えた利用者 (同じ利用者) | getUser() が端末のセッションを消して SIGNED_OUT が届く → SIGNED_OUT の行の掃除 (push token の値は残す。次の削除と前後してよい) → push token の行の削除 (残した値を読む。SIGNED_OUT の release が先に消していて 0 件なら宛先を控える。#1706。release は 0 件で控えから外れるだけ) → 掃除 (値もここで消える) → signOut |
  * | 起動時、サーバーが失効と明言した (getUser() が invalid) | restoreSession | 保存済みのセッションの利用者 | push token の行の release の宛先を控える (#1636。通信はしない) → 掃除 → signOut({ scope: "local" })。そのあと届く SIGNED_OUT で、SIGNED_OUT の行の掃除と release (控えた宛先) が走る |
  * | 起動時、保存済みのセッションが無い (getSession() が null。refresh_token の失効・保管庫を読めない・一度もログインしていない) | restoreSession | 直前に分かっていたセッションの利用者。ふつうは分からず null (利用者別のキーを接頭辞で全員分消す) | supabase-js が既に消している。掃除の前に、端末に残っている push token の値を全部 release の宛先として控える (#1636。利用者が分からないので全部。通信はしない。下の注) → 掃除 → 控えた宛先の release を始める (待たない)。掃除が済んでから未ログインの画面を出す。ただし端末の Cookie の置き場の掃除は始めるだけで待たない (下の注) |
@@ -147,12 +149,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!cachedSession && error && classifyAuthError(error) === "transient") {
           // access_token が期限切れで、更新しようとして通信に失敗した場合、getSession() は session: null を返す。
           // ただし保存済みのセッション (refresh_token) は消えていないので、それを信頼して画面を出す。
-          // 通信が戻れば supabase-js が自動で更新し (TOKEN_REFRESHED)、下の onAuthStateChange で差し替わる
+          // 通信が戻ると supabase-js が更新し (TOKEN_REFRESHED)、下の onAuthStateChange で差し替わる。auth-js 2.117 は
+          // やり直せる失敗も 60 秒控えるので、更新は最後の失敗から 60 秒が過ぎた最初の契機 (30 秒ごとの tick か getSession()) まで待つ
+          // (通信が戻ってから最大約 90 秒。その間 getSession() は控えた失敗 (session: null) を返す)
           // (サーバーが refresh_token を失効と答えれば SIGNED_OUT になるので、失効の取りこぼしにはならない)。
           //
-          // サーバーでの検証 (下の getUser()) は省く。getUser() も同じ更新をもう一度試み、同じ理由で失敗する。
+          // サーバーでの検証 (下の getUser()) は省く。getUser() も同じ更新を試み、同じ理由で失敗する (控えた失敗をすぐ受け取る)。
           // supabase-js は更新に失敗すると約 25 秒かけてやり直すので、検証を続けると、
-          // 読み込み中の表示がその分 (約 50 秒) さらに長くなる (実測で、getSession() と getUser() を合わせて約 100 秒)。
+          // 読み込み中の表示がその分さらに長くなる (2.105 の実測で、getSession() と getUser() を合わせて約 100 秒。
+          // 2.117 は初期化の失敗を控え、getSession() は控えた失敗をすぐ返すので、約 25 秒で済む)。
           const stored = await getStoredSession();
           if (!isMounted) return;
           if (!stored) {

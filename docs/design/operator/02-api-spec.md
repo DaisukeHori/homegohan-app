@@ -277,6 +277,47 @@ BAN 解除
 
 ---
 
+### GET /api/super-admin/users/{id}/manual-plan
+手動のプラン付与の節の表示の内容 (今の契約・付与できるプラン・付与の履歴 10 件)。設計: `billing/02-manual-plan-grant.md` §9.1
+
+**権限**: `super_admin` のみ (AAL2)。個人情報を返さないので監査は書かない
+
+**レスポンス 200**: `{ "data": { "current": { subscription_id, plan_key, status, source: "stripe" | "manual", starts_at, expires_at } | null, "plans": [{ plan_key, display_name, plan_type, max_members }], "history": [{ id, action_type, actor_id, created_at, plan_key, expires_at, reason }] } }`
+
+**エラー**: 401 `AUTH_UNAUTHENTICATED` / 403 `OP_PERMISSION_DENIED` / 404 `NOT_FOUND` (UUID の形でない・利用者がいない)
+
+---
+
+### POST /api/super-admin/users/{id}/manual-plan
+運営者による手動のプラン付与。Stripe は呼ばない。設計: `billing/02-manual-plan-grant.md` §9.2
+
+**権限**: `super_admin` のみ (AAL2)。自分自身は 403 `OP_SELF_MODIFY` (本文の検証より前)
+
+**リクエスト**: `{ "plan_key": "pro", "expires_on": "2026-12-31" | null, "reason": "..." }` (`expires_on` は JST の暦日で今日より後。省略 / null = 期限なし。`reason` は 1〜500 文字)
+
+**レスポンス 200**: `{ "data": { subscription_id, user_id, plan_key, status: "active", expires_at } }`
+
+**エラー**: 400 `OP_INVALID_INPUT` / `INVALID_CHARACTER`・401・403 `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY`・404 `NOT_FOUND`・409 `OP_SUBSCRIPTION_ALREADY_ACTIVE` (live な契約がある)・422 `OP_PLAN_NOT_GRANTABLE`
+
+**監査**: `admin.billing.manual_grant` (warn。details: subscription_id / plan_key / expires_at / reason)
+
+---
+
+### DELETE /api/super-admin/users/{id}/manual-plan
+手動付与の取り消し (行を `cancelled` に)。設計: `billing/02-manual-plan-grant.md` §9.3
+
+**権限**: `super_admin` のみ (AAL2)。自分自身は 403 `OP_SELF_MODIFY`
+
+**リクエスト**: `{ "reason": "..." }` (1〜500 文字)
+
+**レスポンス 200**: `{ "data": { subscription_id, user_id, plan_key, status_from, status_to: "cancelled" } }`
+
+**エラー**: 400 `OP_INVALID_INPUT` / `INVALID_CHARACTER`・401・403 `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY`・404 `NOT_FOUND`・409 `OP_NO_MANUAL_SUBSCRIPTION` (手動で付与した live な契約が無い)
+
+**監査**: `admin.billing.manual_revoke` (warn。details: subscription_id / plan_key / reason)
+
+---
+
 ### POST /api/admin/users/{id}/impersonate — 提供しない (#1124)
 なりすまし (impersonate)。**提供しない** (オーナー判断 2026-10-08)。旧設計の `POST /api/super-admin/impersonate/{userId}` も作らない。
 
@@ -1544,16 +1585,28 @@ Stripe Webhook 受信 (idempotent)
 ---
 
 ### POST /api/webhooks/resend
-Resend Webhook 受信 (メール配信ステータス更新)
+Resend Webhook 受信 (ハードバウンス・苦情の宛先を宛先停止リストに入れる。#1184。記述は実装に合わせた: #1577 の 5)
 
-**処理フロー**:
+**処理フロー** (`src/app/api/webhooks/resend/route.ts`):
 ```
-1. Resend-Signature 検証
-2. event.type に応じて:
-   email.bounced → email_blacklist に追加 + email_delivery_logs 更新
-   email.complained → email_blacklist に追加
-   email.delivered / opened / clicked → email_delivery_logs 更新
+1. 本文の大きさ (256 KB まで。超えたら 413) → 署名 (svix-id / svix-timestamp / svix-signature) を RESEND_WEBHOOK_SECRET で検証
+   (秘密が未設定なら 503・合わなければ 401。src/lib/webhook/verify.ts) → JSON と形の検証 (読めなければ 400)
+2. event.type に応じて (src/lib/emails/resend-webhook-event.ts の classifyResendEvent):
+   email.bounced で bounce.type が Permanent (ハードバウンス) → 1 回で email_blacklist に追加 (reason 'bounce')
+   email.bounced のそれ以外 (Temporary などのソフトバウンス) → 何もしない (200)
+   email.complained → email_blacklist に追加 (reason 'complaint')
+   それ以外 (email.sent / delivered / opened / clicked など) → 何もしない (200)
+3. 追加は小文字にそろえた宛先で ON CONFLICT DO NOTHING (冪等。最初の理由と時刻が残る。src/lib/emails/suppression.ts)。
+   書き込みの失敗は 500 (Resend が送り直す)。成功は app_logs に info (宛先はマスク)
 ```
+
+- 停止リストに載っている宛先へは `sendEmail` (登録時) と worker (送信の直前) が送らない。送らなかった記録は、どちらで当たったかで違う (`10-logs-and-mail-retry.md` §7.3):
+  - `sendEmail` の登録時: `app_logs` の warn (`function_name = 'email'`) と、`email_outbox` の dead の行 (`last_error_code = 'suppressed'`)。`redact_after_send` の登録 (退会の完了メール・秘密を含む文面) は行を作らない (warn だけ)。
+  - worker の送信の直前 (登録のあとで停止リストに載った宛先と、登録時に停止リストを引けずに確かめないまま登録した行): `fail_email_outbox` でその行を dead (`last_error_code = 'suppressed'`) にし、`app_logs` に error (`function_name = 'cron/email-outbox'`、「メールを届けられませんでした (dead)」)。error なので、エラー急増の通知の数には入る。
+  - どちらの dead の行も、届けられなかったメールの通知 (`10-logs-and-mail-retry.md` §8) の数には入れない。
+- `email_delivery_logs` には書かない (§3.19 の表は残すが書かない。#1193)。
+- **実装しない (将来の検討)**: Hard bounce の回数の数え上げ (3 回で停止など)、停止した宛先への送信の Slack への通知、`delivered` / `opened` / `clicked` の配信の状態の記録 (`email_delivery_logs` / `email_outbox` のどちらにも書かない)。
+- メンテナンス中は、この Webhook も 503 になる (`src/lib/maintenance-mode.ts` の止めない対象に入っていない。扱いは #1577 の 4 で決める)。
 
 ---
 
@@ -1592,7 +1645,7 @@ deprecated プラン通知 (日次 11:00 JST)
 ---
 
 ### POST /api/cron/re-engagement-email
-再エンゲージメントメール (日次 13:00 JST)
+再エンゲージメントメール (日次 13:00 JST)。当面は送らない (operator/11 §8)。route は無い
 
 **処理**:
 1. 7/14/30 日間ログインなし かつ `plan_key != 'free'` のユーザー
@@ -1601,7 +1654,7 @@ deprecated プラン通知 (日次 11:00 JST)
 ---
 
 ### POST /api/cron/nps-survey-sender
-NPS サーベイ送信 (日次 14:00 JST)
+NPS サーベイ送信 (日次 14:00 JST)。当面は送らない (operator/11 §8)。route は無い
 
 **処理**: 登録 30 日経過 + 前回 NPS から 90 日経過のユーザーに送信
 
@@ -1645,6 +1698,9 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_PLAN_DEPRECATED` | 422 | deprecated プランへの新規加入不可 |
 | `OP_COUPON_ALREADY_ACTIVE` | 409 | 1 契約に対し有効クーポンが既に存在 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | active/trialing が既に存在 |
+| `OP_PLAN_NOT_GRANTABLE` | 422 | [NEW] 手動付与できないプラン (`POST /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
+| `OP_NO_MANUAL_SUBSCRIPTION` | 409 | [NEW] 取り消す手動付与の行が無い (`DELETE /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
+| `OP_SELF_MODIFY` | 403 | [NEW] 自分自身を対象にできない運営の操作 (`POST /api/super-admin/admins/{id}/mfa/reset`・`POST` / `DELETE /api/super-admin/users/{id}/manual-plan`) |
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |

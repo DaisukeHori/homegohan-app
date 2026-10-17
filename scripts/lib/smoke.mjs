@@ -44,7 +44,7 @@ const AUTH_STEP_LABELS = {
 export const USAGE = `デプロイ後 / DR 復元後の smoke test (#1181)
 
 使い方:
-  npm run test:smoke -- --base-url=https://staging.homegohan.app
+  npm run test:smoke -- --base-url=https://staging.example.test
   PLAYWRIGHT_BASE_URL=https://homegohan-app.vercel.app npm run test:smoke
   npm run test:smoke        (既定: ${DEFAULT_BASE_URL}。ローカルの dev サーバ)
 
@@ -116,7 +116,7 @@ export function parseArgs(argv, env = process.env) {
     } else if (arg === '--base-url') {
       const next = argv[i + 1];
       if (next === undefined || next.startsWith('-')) {
-        throw new UsageError('--base-url には URL を指定してください (例: --base-url=https://staging.homegohan.app)');
+        throw new UsageError('--base-url には URL を指定してください (例: --base-url=https://staging.example.test)');
       }
       baseUrlRaw = next;
       i++;

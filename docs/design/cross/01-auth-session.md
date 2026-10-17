@@ -243,6 +243,18 @@ export const passwordResetByIP = new Ratelimit({
 5. admin_audit_logs 記録
 ```
 
+### 10.1 両方の確認が要る設定 (Secure email change) の 1 通目 (#1187・#1574)
+
+Supabase の「Secure email change」が有効だと、確認メールは現在と新しいメールアドレスの両方に届き、両方のリンクを開くと変更が終わる。
+1 通目のリンクを開くと、Supabase Auth (GoTrue) はセッションの代わりに知らせ (`message` = "Confirmation link accepted. Please proceed to confirm link sent to the other email") だけを戻り先に付ける (戻り先 URL のハッシュ。GoTrue のソースでは PKCE のリンクのときクエリにも)。メールの雛形が token_hash の形なら、`verifyOtp({ type: 'email_change' })` がエラーもセッションも返さない。
+
+| 経路 | 1 通目の受け取り方 | 出すもの |
+|------|------------------|---------|
+| Web (`emailRedirectTo` = `/auth/callback`) | `/auth/callback` はサーバーで動きハッシュを読めないので、認証の情報 (code・token_hash・token) が無いとき・1 通目と分かったとき (クエリの `message`・email_change でセッションなし) は、本来の遷移先を `next` に入れて `/auth/link-notice` へ移す。Location にハッシュを付けないので、ブラウザが元のハッシュを引き継ぎ、`/auth/link-notice` がブラウザで読む (`src/lib/auth/link-notice.ts`) | 「もう一方のメールアドレスに届いた確認メールのリンクも開いて」+「続ける」(next へ)。知らせが無ければそのまま next へ、ハッシュのエラーはログイン画面へ |
+| モバイル (`homegohan://auth/verify`) | `apps/mobile/src/lib/authLink.ts` がハッシュの `message` を読む (`awaiting_other_confirmation`) | 同じ文。「アプリへ戻る」 |
+
+1 通目の判定 (`isEmailChangeAwaitingOtherMessage`) と文 (`EMAIL_CHANGE_AWAITING_OTHER_NOTICE`) は Web とモバイルで共通 (`packages/shared/src/email-change-link.ts`)。クエリの `message`・token_hash の 1 通目でセッションが返らないことは GoTrue のソースに基づく。ローカルの Supabase では Secure email change が効いておらず 1 通目を再現できないため、結合テストでは固定していない (本番の設定の確認は #1574 のオーナー作業)。
+
 ---
 
 ## 11. impersonation (なりすまし支援) — 提供しない (#1124)

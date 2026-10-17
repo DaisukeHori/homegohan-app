@@ -12,7 +12,7 @@ import { requestNotificationPermission } from "@/lib/local-notification";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { useAccountActionsPlacement } from "@/hooks/useAccountActionsPlacement";
 import { AI_CONSENT_SETTINGS_ENTRY_TITLE, AI_CONSENT_SETTINGS_PATH } from "@/lib/ai/consent-config";
-import { DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from "@/lib/data-subject-requests/core";
+import { DSR_SETTINGS_ENTRY_DESCRIPTION, DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from "@/lib/data-subject-requests/core";
 import { getSupportEmail } from "@/lib/site-config";
 import { BILLING_PAGE_PATH } from "@/lib/billing/core";
 import {
@@ -527,7 +527,7 @@ export default function SettingsPage() {
                  <div className="w-8 h-8 rounded-lg bg-slate-50 flex items-center justify-center text-slate-500" aria-hidden="true">📨</div>
                  <div className="text-left">
                    <span className="font-bold text-gray-700">{DSR_SETTINGS_ENTRY_TITLE}</span>
-                   <p className="text-xs text-gray-400">個人情報の開示・訂正・利用停止・消去を請求する</p>
+                   <p className="text-xs text-gray-400">{DSR_SETTINGS_ENTRY_DESCRIPTION}</p>
                  </div>
                </div>
                <svg className="w-5 h-5 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" /></svg>

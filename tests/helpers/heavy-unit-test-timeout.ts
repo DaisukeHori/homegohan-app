@@ -42,6 +42,9 @@
  * #1779 で足したもの: tests/local-ci-gateway-502.test.ts と tests/supabase-local-kong-keepalive.test.ts は、同じ型 (テストの中で、
  *   local-ci の Kong の 502 の数え方と、supabase-local.sh の Kong の入れ直しを bash で動かす)。
  *
+ * #1845 で足したもの: tests/og-image-1845.test.tsx は、同じ型 (テストの中で、OGP の画像とアイコンの route を丸ごと読み込み、
+ *   next/og (wasm) で PNG を描く)。
+ *
  * 時間切れが効くのは遅いときだけで、速く終わるテストの所要は変わらない (止まったテストを見切るまでが長くなるだけ)。
  * 期待値・待つ条件は変えないので、検査は緩まない。全体の既定 (vitest.config.ts) は変えず、一覧のファイルだけに効かせる
  * (各ファイルの先頭で applyHeavyUnitTestTimeout() を呼んで vi.setConfig する。時間切れはテスト・フックを登録したときの
@@ -98,6 +101,7 @@ export const HEAVY_UNIT_TEST_FILES: readonly string[] = [
   "tests/local-ci-workflow-sync.test.ts",
   "tests/markdown-lite.test.ts",
   "tests/nutrition-analysis-sugar-target.test.ts",
+  "tests/og-image-1845.test.tsx",
   "tests/recipes-route.test.ts",
   "tests/route-error-boundaries.test.tsx",
   "tests/security-workflow.test.ts",

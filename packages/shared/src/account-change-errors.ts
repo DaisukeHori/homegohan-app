@@ -2,7 +2,8 @@
  * ログイン中のパスワード変更・メールアドレス変更 (#1187) で、Supabase Auth が返したエラーを
  * 利用者向けの日本語に直す。
  *
- * 画面 (Web: src/app/(main)/settings/account/page.tsx・モバイル: apps/mobile/app/settings/account.tsx) は、
+ * 画面 (Web: src/app/(main)/settings/account/page.tsx・モバイル: apps/mobile/app/settings/account.tsx に載る
+ * apps/mobile/src/components/settings/AccountCredentialsSection.tsx が、apps/mobile/src/lib/account-credentials.ts を通して呼ぶ) は、
  * エラーの中身をそのまま出さずにこの関数を通す。Web とモバイルで同じ文言にするため、置き場を packages/shared にしている
  * (Web の src/lib/auth/account-errors.ts は、ここを読み直すだけの入口)。
  * GoTrue のメッセージは英語で、`For security purposes, you can only request this after 52 seconds.` のように

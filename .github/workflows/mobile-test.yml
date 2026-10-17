@@ -4,6 +4,15 @@ on:
     paths:
       - 'apps/mobile/**'
       - 'packages/core/**'
+      # モバイルが読む apps/mobile の外のコード。それだけを変える PR でもモバイルの jest を回す (#1574)。
+      # packages/shared はパスワードの規則・アカウント変更の文言など、handson-tour-shared は体験ツアー、
+      # supabase/functions/_shared は AI の同意・1 日の上限の文など (Web・Edge Functions と共用)、
+      # lib/slot-builder.ts は献立の生成の枠の組み立て (Web と共用)。
+      # 抜けは tests/mobile-test-workflow-paths.test.ts がモバイルの依存と import から数えて調べる
+      - 'packages/shared/**'
+      - 'packages/handson-tour-shared/**'
+      - 'supabase/functions/_shared/**'
+      - 'lib/slot-builder.ts'
       - '.github/workflows/mobile-test.yml'
 
 jobs:

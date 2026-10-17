@@ -5,6 +5,8 @@
  * Covers (#1720 段 C: 更新は supabase.auth.updateUser ではなく POST /api/auth/password/reset。cross/16 §14.7・§16):
  *  1. パスワードが一致しないとき API を呼ばない
  *  2. パスワードが 8 文字未満のときエラーを出し、API を呼ばない
+ *  2b. (#1574) 英字だけ・数字だけのパスワードも止め、API も updateUser も呼ばない (規則と文言は packages/shared の validatePassword と共通。
+ *      以前は長さしか見ておらず、`12345678` のような弱いパスワードでも更新を呼んでいた)
  *  3. 正常時に POST /api/auth/password/reset に { new_password } を送り、updateUser を呼ばない
  *  4. (#1038 F7-10) 更新後のサインアウトは、呼ぶ前のセッションの利用者 ID を共通のログアウト処理 (signOutWithCleanup) に渡す
  *     (supabase.auth.signOut() を直接呼ぶと、この端末の push token が user_push_tokens に残る)
@@ -114,11 +116,32 @@ describe('ResetPasswordPage', () => {
     await waitFor(() => {
       expect(Alert.alert).toHaveBeenCalledWith(
         '入力エラー',
-        'パスワードは8文字以上にしてください。'
+        'パスワードは8文字以上で入力してください'
       );
     });
     expect(mockApiPost).not.toHaveBeenCalled();
     expect(mockUpdateUser).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['数字だけ', '12345678', 'パスワードには英字を含めてください'],
+    ['英字だけ', 'abcdefgh', 'パスワードには数字を含めてください'],
+  ])('2b. %s (8 文字以上) のパスワードは、新規登録・Web と同じ文言で止め、API も updateUser も呼ばない (#1574)', async (_label, weak, message) => {
+    const { getByPlaceholderText, getByText } = render(<ResetPasswordPage />);
+    await waitFor(() => {
+      expect(mockGetSession).toHaveBeenCalled();
+    });
+
+    fireEvent.changeText(getByPlaceholderText('8文字以上'), weak);
+    fireEvent.changeText(getByPlaceholderText('もう一度入力'), weak);
+    fireEvent.press(getByText('パスワードを更新'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('入力エラー', message);
+    });
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
   });
 
   it('3. 正常なパスワード入力で POST /api/auth/password/reset に { new_password } を送り、updateUser を呼ばない', async () => {
