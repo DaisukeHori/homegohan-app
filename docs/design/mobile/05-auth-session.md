@@ -219,7 +219,7 @@ iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthS
 - `/auth/native-bridge?code=...` (`handleCode`) は、Web の Cookie セッションに access_token だけを実際の値で入れ、refresh_token には使えない値
   (`NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER`) を入れる。Web は自分で更新できない
 - 期限が近づいたら Web が `{ type: 'session-expired' }` を送り (§6.2)、ネイティブが新しいコードで WebView を読み込み直す
-- 旧方式 (トークンを URL で渡す GET) は変えない。旧アプリは再ブリッジの仕組みを持たないため
+- 旧方式 (トークンを URL で渡す GET) は変えない。旧アプリは再ブリッジの仕組みを持たないため。なお旧方式は、期限 `LEGACY_SUNSET_AT` (`src/lib/auth/native-bridge-code.ts`。2026-10-18 00:00 JST) を過ぎたので、いまは受け付けずに 426 (アプリの更新を促すページ) を返す (#1036)
 - 従来の動作 (実際の refresh_token を入れる) へ戻すスイッチ: 環境変数 `NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on` (Vercel は再デプロイ後に効く)
 - この作りの帰結として、WebView の借り物のセッションでは、Supabase のセッションの token を発行し直す操作 (二段階認証の 6 桁の verify・解除の後の refresh) を Web の側でしない。持ち主のネイティブが行い、WebView を読み込み直す (`docs/design/cross/12-operator-mfa.md` §16.4)
 
@@ -383,7 +383,7 @@ WebView の中では、`SIGNED_OUT` は利用者のログアウトとは限ら�
 | `sign-out` / `session-expired` の送信 | 旧アプリは未知の `type` を無視する。変化なし | メッセージが来ないだけ。ネイティブの処理は何も起きない |
 | ログアウトの `sign-out` を `signOut()` の前に送る (§6.2) | 旧アプリは未知の `type` を無視する。変化なし | この変更より前の Web (`session-expired` が先、`sign-out` が `signOut()` のあとに届く) でも、新アプリは処理の最初に控えたセッションで push token を消せる |
 | WebView の中の `SIGNED_OUT` (§6.3) | 旧アプリは `session-expired` を無視するので、`NATIVE_REBRIDGE_WAIT_MS` (15 秒) 後に従来どおり localStorage を消して `/login` へ移る。従来より最大 15 秒遅れるだけ | — |
-| `native-bridge` の Cookie の refresh_token | コード方式を使うのは新ビルドだけ (旧アプリは旧方式)。変化なし | — |
+| `native-bridge` の Cookie の refresh_token | コード方式を使うのは新ビルドだけ (旧アプリは旧方式。旧方式は 2026-10-18 00:00 JST の期限を過ぎて 426 を返すので、旧アプリの WebView はブリッジできず、アプリの更新を促すページになる。#1036)。変化なし | — |
 | auth-js 2.117 への更新 (#1768。§9) | Web の借り物のセッションが失効の前に捨てられなくなるだけ。旧アプリが受けるメッセージ (`session-expired` / `sign-out`) と意味は同じ。ネイティブの auth-js は 2.105 のまま | ネイティブの自動更新で refresh_token が失効と答えたときの `SIGNED_OUT` が、access token の失効の後 (最大 90 秒後) に届く。経路と掃除は同じ (§3)。access token が期限切れの間に通信が失敗すると、通信が戻ってから更新まで最大約 90 秒かかる (控えの 60 秒 + tick。§3)。その間 (最大約 90 秒) は、まだ開いていないタブの bridge が通らず WebView が Web のログイン画面になり、WebView からの `session-expired` もネイティブが何もしない (S-23・S-24。裁定 G)。期限切れ + オフラインの起動の読み込み中は約 25 秒に縮む。access token が有効なうちのログアウトは、`/logout` が失敗しても `SIGNED_OUT` で未ログインになる (失効していて更新もできないときは従来どおり端末での消去。§3 の `{ error }` の行)。規約の同意画面からの Web の `sign-out` も同じで、成功のときと同じく「閉じる」を出す (S-29)。Web の借り物の扱いは旧 Web のまま |
 | Web の Cookie の書式 (ssr 0.12 に `cookieEncoding: 'raw'` を明示。§9.7) | 書く値は 0.1.0 と同じ JSON。旧アプリの WebView は Cookie の名前しか見ない (`sb-` の接頭辞で期限切れにする注入の JS・`Networking.clearCookies` は全部を消す §6.4)。変化なし | — (Cookie は Web が書き、ネイティブは読まない) |
 | 旧バンドル (デプロイの前に開いたブラウザのタブ・WebView のページ。ssr 0.1.0 + auth-js 2.105.3) と、Vercel を旧版に戻したとき (#1768) | 新しいサーバー・新しいバンドルが書く Cookie は JSON なので、旧バンドルも旧サーバーも読める。ログアウトされない (S-25・S-26)。ssr の既定の `base64url` で書くと、旧バンドルが Cookie を消して `SIGNED_OUT` を出すので、本改定では書かない (§9.5 の裁定 D) | — |

@@ -66,6 +66,23 @@ export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
 ]);
 
 /**
+ * ネイティブ認証ブリッジのワンタイムコードの発行 (POST。src/app/api/auth/native-bridge/code/route.ts)。凍結中でも呼べる (#1861)。
+ *
+ * モバイルのネイティブアプリ (apps/mobile) は、凍結中の利用者を凍結の画面 (Web の /frozen を WebView で開く。apps/mobile/app/frozen.tsx) へ移す。
+ * WebView を本人のセッションにするには、このコードが要る (無いと WebView はログイン画面になり、/frozen・/frozen/account にたどり着けない)。
+ * そのため、FROZEN_ALLOWED_API_PATHS (本人がサービスから離れるための操作) とは別に、middleware の凍結の分岐で止めない。
+ * コードで WebView に移るのは、端末がすでに持っている本人のセッションだけで、凍結中の Web のセッションは
+ * middleware が画面を /frozen へ差し戻し、/api を FROZEN_ALLOWED_API_PATHS 以外 403 で止める (Web でログインしたときと同じ扱い)。
+ * 一覧は tests (lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts) で固定している。
+ */
+export const NATIVE_BRIDGE_CODE_API_PATH = '/api/auth/native-bridge/code';
+
+/** ネイティブ認証ブリッジのコードの発行の API のパスか (#1861)。完全一致で判定する (isFrozenAllowedApiPath と同じ理由) */
+export function isNativeBridgeCodeApiPath(pathname: string): boolean {
+  return pathname === NATIVE_BRIDGE_CODE_API_PATH;
+}
+
+/**
  * 凍結中の利用者でも呼べる API のパスか (#1445)。完全一致で判定する
  * (前方一致にすると /api/account/delete-xxx のような、後から足した別の API まで凍結中に通ってしまうため)。
  */

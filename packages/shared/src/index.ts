@@ -14,6 +14,7 @@ export * from './legal-consent-api';
 export * from './legal-consent-copy';
 export * from './parental-consent';
 export * from './service-unavailable';
+export * from './account-frozen';
 export * from './user-scoped-storage';
 export * from './native-app-tabs';
 export * from './data-subject-requests';

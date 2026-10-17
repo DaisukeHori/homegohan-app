@@ -6,6 +6,7 @@ import {
   LEGAL_CONSENT_SCREEN_ROUTE_NAME,
   isMobileLegalConsentExemptPath,
 } from "../../lib/legal-consent";
+import { useAccountFrozen } from "../../providers/AccountFrozenProvider";
 import { useAuth } from "../../providers/AuthProvider";
 import { useLegalConsent } from "../../providers/LegalConsentProvider";
 import { useProfile } from "../../providers/ProfileProvider";
@@ -27,6 +28,8 @@ import { useProfile } from "../../providers/ProfileProvider";
  * 前面は pathname でなく、effect の時点の今のナビゲーションの state (navigationRef.getCurrentRoute()) で見る
  * (pathname は 1 描画遅れることがあり、タブの区画が外れると別のタブのパスに変わる。reset の後の前面は、次の描画の後の
  * この effect から見える)。
+ * アカウントが凍結中 (#1861。useAccountFrozen の state が frozen) の間は何もしない。凍結のゲート (src/components/AccountFrozenGate.tsx) が
+ * Stack を凍結の画面 1 つに畳む (凍結が先。Web の middleware も 凍結 → 同意 の順に判定する)。凍結が解けたら、同意の判定に戻る。
  * ナビゲーターの準備 (useRootNavigationState の key) が済むまでは何もしない。
  * router.replace / router.back は expo-router の routingQueue に積まれ、次の描画の後に流れる。積んだ操作が流れて前面が同意画面で
  * なくなるまで、closingRef で重ねて積まない。
@@ -34,6 +37,7 @@ import { useProfile } from "../../providers/ProfileProvider";
 export function LegalConsentGate() {
   const { session } = useAuth();
   const { state } = useLegalConsent();
+  const { state: frozenState } = useAccountFrozen();
   const { refresh: refreshProfile } = useProfile();
   const pathname = usePathname();
   const navigationReady = Boolean(useRootNavigationState()?.key);
@@ -46,6 +50,8 @@ export function LegalConsentGate() {
 
   useEffect(() => {
     if (!navigationReady) return;
+    // #1861: 凍結中は凍結のゲートに任せる (同意画面へ畳むと、凍結の画面と畳み合う)
+    if (frozenState === "frozen") return;
     try {
       const onConsentScreen = navigationRef.getCurrentRoute()?.name === LEGAL_CONSENT_SCREEN_ROUTE_NAME;
       if (!onConsentScreen) closingRef.current = false;
@@ -87,7 +93,7 @@ export function LegalConsentGate() {
       // 遷移の失敗でアプリを落とさない (NotificationRouter と同じ)。pathname か state か session が変わればもう一度試みる
       console.warn("[LegalConsentGate] navigation failed", error);
     }
-  }, [navigationReady, navigationRef, session, state, pathname, refreshProfile]);
+  }, [navigationReady, navigationRef, session, state, frozenState, pathname, refreshProfile]);
 
   return null;
 }
