@@ -80,8 +80,8 @@ export const APP_ENTRY_PUBLIC_PATHS = [
 /** 公開ページ 1 枚のメタ情報 */
 interface PublicPageSeo {
   /**
-   * ページの名前。ルートの layout の title.template (`%s | ほめゴハン`) が後ろにサービス名を付ける。
-   * null はトップ (template を使わず SITE_DEFAULT_TITLE をそのまま出す)。
+   * ページの名前。publicPageFullTitle が後ろにサービス名を付ける (ルートの layout の title.template と同じ形)。
+   * null はトップ (SITE_DEFAULT_TITLE をそのまま出す)。
    */
   title: string | null;
   /** 検索結果・SNS のカードに出る説明 (ページの中身の要約。ページの文言そのものは変えない) */
@@ -137,7 +137,12 @@ export const PUBLIC_PAGE_SEO: Readonly<Record<PublicPagePath, PublicPageSeo>> = 
   },
 };
 
-/** ページの title がブラウザ・検索結果に出る形 (ルートの layout の title.template と同じ組み立て) */
+/**
+ * ページの title がブラウザ・検索結果に出る形 (ルートの layout の title.template と同じ組み立て)。
+ * メタ情報には title.absolute で渡す。Next の title.template は「いちばん近い親の segment の template」だけを使い、
+ * 親の layout が文字列の title (例: /legal の layout) を持つと、その配下のページ (/legal/parental-consent) には
+ * サービス名が付かなくなるため (本番ビルドで確かめた)。
+ */
 export function publicPageFullTitle(pagePath: PublicPagePath): string {
   const { title } = PUBLIC_PAGE_SEO[pagePath];
   return title === null ? SITE_DEFAULT_TITLE : `${title} | ${SITE_NAME}`;
@@ -162,7 +167,7 @@ export function publicPageMetadata(pagePath: PublicPagePath): Metadata {
     type: OG_IMAGE_CONTENT_TYPE,
   };
   return {
-    title: isTop ? { absolute: SITE_DEFAULT_TITLE } : title,
+    title: { absolute: fullTitle },
     description,
     alternates: { canonical: pagePath },
     openGraph: {

@@ -252,10 +252,18 @@ describe('#1867 公開ページごとの canonical・og:url・title・descriptio
     expect(metadata.description).toBe(SITE_DESCRIPTION);
   });
 
-  it('トップ以外は title にページの名前だけを渡し、ルートの layout の title.template がサービス名を付ける', async () => {
+  it.each(PUBLIC_PAGE_PATHS)(
+    '%s: title は absolute でサービス名まで付けて渡す (親の layout の title が文字列だと template が配下に効かないため)',
+    (pagePath) => {
+      expect(publicPageMetadata(pagePath).title).toEqual({ absolute: publicPageFullTitle(pagePath) });
+    },
+  );
+
+  it('サービス名の付け方は、ルートの layout の title.template と同じ', async () => {
     const { metadata: rootMetadata } = await import('@/app/layout');
     expect(rootMetadata.title).toEqual({ default: SITE_DEFAULT_TITLE, template: `%s | ${SITE_NAME}` });
-    expect(publicPageMetadata('/faq').title).toBe('よくある質問');
+    expect(publicPageFullTitle('/faq')).toBe(`%s | ${SITE_NAME}`.replace('%s', 'よくある質問'));
+    expect(publicPageFullTitle('/legal/parental-consent')).toBe(`保護者の同意書 | ${SITE_NAME}`);
   });
 
   it('ルートの layout は canonical と og:url を持たない (全ページに「/」を引き継がせない)', async () => {
