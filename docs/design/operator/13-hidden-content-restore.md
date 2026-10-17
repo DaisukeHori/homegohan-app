@@ -332,7 +332,7 @@ export const MODERATION_FLAG_CONTENT_COLUMN_OF = {
 /**
  * コンテンツの行から読む列。paste_group_id・photo_url・memo は meals にしか無い。
  * 型は string にしておく (文字列のリテラルのままだと、supabase-js の select の型の解析が長い列の並びで ParserError になる。
- * 行の形は RawHiddenContentRow で受けて列ごとに確かめる)
+ * 行の形は unknown として受けて列ごとに確かめる: readHiddenContentRow)
  */
 const HIDDEN_CONTENT_COLUMNS_OF: Readonly<Record<ModerationBackedType, string>> = {
   food: 'id, user_id, hidden_at, hidden_by, hidden_reason, paste_group_id, photo_url, memo',
@@ -431,24 +431,19 @@ export function judgeHiddenContentRestorability(row: HiddenContentRow | null, no
     : { kind: 'window_expired', row: hidden };
 }
 
-/** PostgREST が返す行 (列を文字列で組み立てた select なので、形の分からない値として受けて列ごとに確かめる) */
-interface RawHiddenContentRow {
-  id: string;
-  user_id?: string | null;
-  hidden_at?: string | null;
-  hidden_by?: string | null;
-  hidden_reason?: string | null;
-  paste_group_id?: string | null;
-  photo_url?: string | null;
-  memo?: string | null;
+/**
+ * PostgREST が返す 1 行。列を文字列で組み立てた select なので、supabase-js の型は行の形を表さない (GenericStringError)。
+ * 形の分からない値 (unknown) として受けて、列ごとに確かめる
+ */
+type UnknownRow = Readonly<Record<string, unknown>>;
+
+function isUnknownRow(value: unknown): value is UnknownRow {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-/** PostgREST が返す、同じまとまりの行 */
-interface RawPasteGroupRow {
-  id: string;
-  hidden_at?: string | null;
-  photo_url?: string | null;
-  memo?: string | null;
+/** 列の値が文字列ならその値、それ以外 (null・列が無い) なら null */
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
 }
 
 /** 通報が指すコンテンツ本体の行を読む。無ければ null。DB エラーは例外 */
@@ -463,17 +458,20 @@ export async function readHiddenContentRow(
     .eq('id', contentId)
     .maybeSingle();
   if (error) throw error;
-  if (!data) return null;
-  const raw = data as RawHiddenContentRow;
+  const raw: unknown = data;
+  if (raw === null) return null;
+  if (!isUnknownRow(raw) || typeof raw.id !== 'string') {
+    throw new Error('readHiddenContentRow: unexpected row shape');
+  }
   return {
     id: raw.id,
-    user_id: raw.user_id ?? null,
-    hidden_at: raw.hidden_at ?? null,
-    hidden_by: raw.hidden_by ?? null,
-    hidden_reason: raw.hidden_reason ?? null,
-    paste_group_id: raw.paste_group_id ?? null,
-    photo_url: raw.photo_url ?? null,
-    memo: raw.memo ?? null,
+    user_id: stringOrNull(raw.user_id),
+    hidden_at: stringOrNull(raw.hidden_at),
+    hidden_by: stringOrNull(raw.hidden_by),
+    hidden_reason: stringOrNull(raw.hidden_reason),
+    paste_group_id: stringOrNull(raw.paste_group_id),
+    photo_url: stringOrNull(raw.photo_url),
+    memo: stringOrNull(raw.memo),
   };
 }
 
@@ -499,15 +497,14 @@ export async function listRowsHiddenTogether(
     .eq('paste_group_id', row.paste_group_id)
     .gte('hidden_at', row.hidden_at);
   if (error) throw error;
-  const others = ((data ?? []) as RawPasteGroupRow[])
-    .filter((r) => r.id !== row.id)
-    .flatMap((r): HiddenContentTarget[] => {
-      if (typeof r.hidden_at !== 'string') return [];
-      const content: MealContentFields = { photo_url: r.photo_url ?? null, memo: r.memo ?? null };
-      return isSameInstant(r.hidden_at, row.hidden_at) || hasSameMealContent(content, row)
-        ? [{ id: r.id, hidden_at: r.hidden_at }]
-        : [];
-    });
+  const rows: unknown = data ?? [];
+  const others = (Array.isArray(rows) ? rows : []).flatMap((r: unknown): HiddenContentTarget[] => {
+    if (!isUnknownRow(r) || typeof r.id !== 'string' || r.id === row.id) return [];
+    const hiddenAt = stringOrNull(r.hidden_at);
+    if (hiddenAt === null) return [];
+    const content: MealContentFields = { photo_url: stringOrNull(r.photo_url), memo: stringOrNull(r.memo) };
+    return isSameInstant(hiddenAt, row.hidden_at) || hasSameMealContent(content, row) ? [{ id: r.id, hidden_at: hiddenAt }] : [];
+  });
   return [self, ...others];
 }
 
@@ -1624,7 +1621,7 @@ export default function ModerationRestoreForm({
 - `it('U-2: isWithinHiddenContentRestoreWindow: 89 日ちょうどは true、89 日 + 1 ms は false、1 分前は true')`
 - `it('U-3: isWithinHiddenContentRestoreWindow: 日時として読めない hidden_at は例外')`
 - `it('U-4: judgeHiddenContentRestorability: null → gone / hidden_at null → not_hidden (row を返す) / 89 日以内 → restorable (row.hidden_at が string) / 89 日超 → window_expired')`
-- `it('U-5: readHiddenContentRow: food は paste_group_id・photo_url・memo を含む列で、recipe は含まない列で読む (recipe の 3 つは null)。無ければ null。足りない列は null に。user_id が null の行 (退会で外れた公開レシピ: S-23) は user_id を null のまま返す。DB エラーは例外')`
+- `it('U-5: readHiddenContentRow: food は paste_group_id・photo_url・memo を含む列で、recipe は含まない列で読む (recipe の 3 つは null)。無ければ null。足りない列・文字列でない値は null に。id が文字列でない行は例外。user_id が null の行 (退会で外れた公開レシピ: S-23) は user_id を null のまま返す。DB エラーは例外')`
 - `it('U-6: listRowsHiddenTogether: recipe は [{ id, hidden_at }] だけ (読まない)。food で paste_group_id が null も同じ。food で paste_group_id があれば meals を select(id, hidden_at, photo_url, memo)・eq(paste_group_id)・gte(hidden_at, 通報された行の hidden_at) で読み、hidden_at が同じ時刻の行 (中身が違っても: S-03) と、写真とメモが通報された行と同じ行 (S-24) を返す。中身が違い時刻も違う行 (S-04)・hidden_at が null の行は返さない。通報された行を先頭に必ず含め、その hidden_at は読んだ値のまま。DB エラーは例外')`
 - `it('U-13: groupTargetsByHiddenAt: hidden_at の時刻ごとに組にし、通報された行の組 (同じ時刻の行を含む) を最後に置く。書き方の違う同じ時刻 (Z と +00:00) は同じ組。通報された行だけなら 1 組')`
 - `it('U-7: approveRejectedFlagsOfContent: food は moderation_flags を status approved / resolved_by / resolved_at / resolution_note で、in(meal_id, 対象)・eq(status, rejected) で更新し、id を返す。recipe は recipe_flags を reviewed_by / reviewed_at で (resolution_note を書かない)。0 行は空配列。DB エラーは例外')`
@@ -1776,7 +1773,7 @@ export default function ModerationRestoreForm({
 | 関数 (新設ファイル・export 10) | `hasSameMealContent`・`hiddenContentRestoreCutoff`・`isWithinHiddenContentRestoreWindow`・`judgeHiddenContentRestorability`・`readHiddenContentRow`・`listRowsHiddenTogether`・`groupTargetsByHiddenAt`・`approveRejectedFlagsOfContent`・`restoreHiddenContentRows`・`restoreModeratedContent` | A |
 | クラス (新設ファイル) | `HiddenContentRestoreStepError` | A |
 | 型 (新設ファイル・export 12) | `HiddenContentRestoreAdmin`・`HiddenContentRow`・`HiddenContentRowHidden`・`HiddenContentTarget`・`HiddenContentRestoreBatch`・`MealContentFields`・`HiddenContentRestorability`・`ApproveRejectedFlagsParams`・`HiddenContentRestoreStep`・`HiddenContentRestoreProgress`・`RestoreModeratedContentParams`・`HiddenContentRestoreOutcome` | A |
-| 内部の名前 (新設ファイル・export しない) | `MS_PER_DAY`・`HIDDEN_CONTENT_COLUMNS_OF`・`PASTE_GROUP_ROW_COLUMNS`・`isSameInstant`・`RawHiddenContentRow`・`RawPasteGroupRow` | A |
+| 内部の名前 (新設ファイル・export しない) | `MS_PER_DAY`・`HIDDEN_CONTENT_COLUMNS_OF`・`PASTE_GROUP_ROW_COLUMNS`・`isSameInstant`・`UnknownRow`・`isUnknownRow`・`stringOrNull` | A |
 | 定数 (既存ファイル `moderation-schemas.ts`) | `MODERATION_NOTE_MIN_LENGTH`・`MODERATION_NOTE_MAX_LENGTH`・`ModerationRestoreBodySchema`・型 `ModerationRestoreBody`・`MODERATION_RESTORE_AUDIT_ACTION`。`ModerationItemSchema.hidden_at` | A |
 | 項目 (既存ファイル `moderation-backend.ts`) | `NormalizedModerationItem.hidden_at`。embed の `hidden_at` (4 か所) | A |
 | route | `src/app/api/admin/moderation/[type]/[id]/restore/route.ts` (`POST`)。内部の `ROUTE_NAME`・`describeError`・`errorResponse`・`restorabilityErrorResponse`・`RACED_RESTORE_ERROR`・`insertAuditLog` | A |
