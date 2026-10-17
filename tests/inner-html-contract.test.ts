@@ -151,6 +151,13 @@ for (const scanRoot of SCAN_ROOTS) {
 const isFixedString = (expression: ts.Expression | undefined): boolean =>
   expression !== undefined && (ts.isNoSubstitutionTemplateLiteral(expression) || ts.isStringLiteral(expression));
 
+/** serializeJsonLd(...) の呼び出し (src/lib/seo/json-ld.ts。< > & と U+2028 / U+2029 を \\uXXXX にした JSON の文字列。#1867) */
+const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =>
+  expression !== undefined &&
+  ts.isCallExpression(expression) &&
+  ts.isIdentifier(expression.expression) &&
+  expression.expression.text === 'serializeJsonLd';
+
 const isParseMarkdownCall = (expression: ts.Expression | undefined): boolean =>
   expression !== undefined &&
   ts.isCallExpression(expression) &&
@@ -170,6 +177,15 @@ const ALLOWED_HTML_SINKS: Record<string, { reason: string; problems: (analysis: 
         .map((sink) => `${sink.kind} の中身が parseMarkdown(...) の戻り値ではない`),
       ...(analysis.importsSharedParseMarkdown ? [] : [`parseMarkdown を ${SHARED_MODULE} から import していない`]),
     ],
+  },
+  'src/components/seo/SiteStructuredData.tsx': {
+    reason:
+      'トップの構造化データ (JSON-LD。#1867) を <script type="application/ld+json"> に入れる。中身は利用者の入力を含まない固定の値 ' +
+      '(事業者名・サービス名・サイトの URL) で、script 要素を閉じる文字を消す serializeJsonLd (src/lib/seo/json-ld.ts) を通す',
+    problems: (analysis) =>
+      analysis.sinks
+        .filter((sink) => !isSerializeJsonLdCall(sink.html))
+        .map((sink) => `${sink.kind} の中身が serializeJsonLd(...) の戻り値ではない`),
   },
 };
 
