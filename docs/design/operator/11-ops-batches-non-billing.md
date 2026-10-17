@@ -1597,7 +1597,7 @@ grep の語で見つかる既存のテストと、その直し方。段は §12�
 
 | 番兵 | grep の語 | 反応する理由 | 直し方 | 段 |
 |---|---|---|---|---|
-| `tests/log-cleanup-dau-snapshot-contract.test.ts` 規則 9 | `migration が pg_cron に登録しているジョブは`・`migration が pg_cron に登録しているのは` | migration のジョブの実数と 08 §3.0・§3.1 の注記の数・名前を突き合わせる | 段 C・段 D の PR で、08 §3.0 の「11 つ」と §3.1 の注記の「の 11 つ」を、その PR のマージの時点の実数 (段 C は 12、段 D は 14 だった) に、§3.0 と §3.1 の注記 (`> ` の行) に `purge-dissolved-family-groups` (段 C)・`cleanup-cron-run-history` (段 D) をバッククォートで足す。段 A・B はジョブを足さないので触らない。`#1125` を含む行に「作らない / 決めた / 新しい判断 / オーナー判断」を書かない | C / D |
+| `tests/log-cleanup-dau-snapshot-contract.test.ts` 規則 9 | `migration が pg_cron に登録しているジョブは`・`migration が pg_cron に登録しているのは` | migration のジョブの実数と 08 §3.0・§3.1 の注記の数・名前を突き合わせる | 段 C・段 D の PR で、08 §3.0 の「11 つ」と §3.1 の注記の「の 11 つ」を、その PR のマージの時点の実数 (段 C は 13、段 D は 14 だった) に、§3.0 と §3.1 の注記 (`> ` の行) に `purge-dissolved-family-groups` (段 C)・`cleanup-cron-run-history` (段 D) をバッククォートで足す。段 A・B はジョブを足さないので触らない。`#1125` を含む行に「作らない / 決めた / 新しい判断 / オーナー判断」を書かない | C / D |
 | 同上 (§3.2 の注記) | `この表のほかの`・`実装済み` | §3.2 の表の行数 − `実装済み` を含む行数 = 注記の N | `logical_backup` の行に「(実装済み: cross/17・#1765 段 A)」を書いたら N を 11 → 10 にする。行を消したら消した分だけ N を減らす (§15 の行 5) | B |
 | `tests/helpers/migration-cron-jobs.ts`・`tests/migration-cron-job-names.test.ts` | `cron.schedule(` | ジョブ名が解けない書き方 (式・連結) を赤にする | ジョブ名は文字列の直書き | C / D |
 | `tests/email-outbox-migration-contract.test.ts`・`tests/login-failure-grant-claim-cleanup-contract.test.ts`・`tests/auth-history-sessions-migration-contract.test.ts` | `08-cron-batches` | 08 の既存の文字列 (`cleanup-email-outbox`・`20261016234000_email_outbox.sql` など) と数を見る | 08 の既存の行を消さない (足すだけ)。数は上の行のとおり | 08 を直す段すべて (A / B / C / D) |
@@ -1705,7 +1705,7 @@ const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 
 
 | # | 文書 | 直すこと | 段 |
 |---|---|---|---|
-| 1 | `operator/08-cron-batches.md` §3.0 | 「migration が pg_cron に登録しているジョブは 11 つ」を、その PR のマージの時点の実数 (段 C は 12、段 D は 14 だった) に。「残りの 9 つ」の列挙 (数も同じく増やす) に `purge-dissolved-family-groups` (段 C) / `cleanup-cron-run-history` (段 D) を足し、「そのほか」の箇条書きに各ジョブの行 (時刻・command・内容・関数の権限・ロールバック・migration の名前・本書 §5.4 / §5.3 への参照) を足す | C / D |
+| 1 | `operator/08-cron-batches.md` §3.0 | 「migration が pg_cron に登録しているジョブは 11 つ」を、その PR のマージの時点の実数 (段 C は 13、段 D は 14 だった) に。「残りの 9 つ」の列挙 (数も同じく増やす) に `purge-dissolved-family-groups` (段 C) / `cleanup-cron-run-history` (段 D) を足し、「そのほか」の箇条書きに各ジョブの行 (時刻・command・内容・関数の権限・ロールバック・migration の名前・本書 §5.4 / §5.3 への参照) を足す | C / D |
 | 2 | 08 §3.0 (末尾の段落) | `cron.job_run_details` の保持 (30 日。`cleanup-cron-run-history`。本書 §5.3) と、失敗の監視が見る範囲 7 日 (本書 §4) への参照を 1 段落足す | D |
 | 3 | 08 §3.1 の表と注記 | (段 A) `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 行を表から外し、注記 (`> `) に「この 4 本は operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (operator/11 §5.4。保存期間はオーナーの確認 (2026-10-17) で決まった)」を 1 行足す。(段 C・段 D) 注記の「migration が pg_cron に登録しているのは … の 11 つ」を行 1 と同じ数に更新し、名前を足す | A / C / D |
 | 4 | 08 §4.1・§4.3・§4.4・§4.5・§4.6 | §4.1 の `cron.schedule` の例から 4 本を消す。§4.3〜§4.6 の本文を「operator/11 §2.2 の仕分けで外した。解散した家族の物理削除は operator/11 §5.4」の 1 段落に置き換える (コードは残さない) | A |
