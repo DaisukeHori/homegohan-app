@@ -115,7 +115,14 @@ function fakeGoogleFontsFetch() {
 
 describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)', () => {
   beforeEach(() => {
-    // next/og は描けない文字のフォントを自分でも取りに行き、失敗すると console.error を出す (描画は続く)
+    // next/og は描けない文字のフォントを global の fetch で自分でも取りに行き、失敗すると console.error を出す (描画は続く)。
+    // テストから本物のネットワークへ出ないよう、既定では global の fetch を失敗させる (差し替えるテストはその中で上書きする)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('テストではネットワークに出ない');
+      }),
+    );
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => {
