@@ -1,6 +1,6 @@
 /**
  * #1125 (B) 定期処理の失敗の監視 (migration 20261017220000_cron_failure_monitoring.sql・設計 operator/11 §5.1・§5.2・§11.1) の
- * ソース走査 contract テスト (DB には接続しない)。段 A の範囲。
+ * ソース走査 contract テスト (DB には接続しない)。段 A (migration) と、段 B のアプリの定数 (src/lib/ops-alerts/cron-failure.ts) との突き合わせ。
  *
  * 実際の動き (数え方・印の付け外し・権限・rollback) は tests/integration/security/cron-failure-monitoring.test.ts で確かめる。
  * ここでは、DB を立てなくても通常のテストで止められる「書き方の取り決め」を固定する。
@@ -10,20 +10,22 @@
  *   3. 関数 5 本はどれも SECURITY DEFINER・search_path 空・参照が完全修飾・動的 SQL なし
  *   4. EXECUTE: counts / mark / unmark / pg_cron_last_run_at は service_role だけ。candidates は誰にも付けない (完全形の REVOKE)
  *   5. 台帳は RLS 有効・全拒否ポリシー・どのロールにも表の権限を付けない
- *   6. 候補は source <> client・level = error・cron の route 名の形だけを数え、見る範囲は 7 日
+ *   6. 候補は source <> client・level = error・cron の route 名の形だけを数え、見る範囲は 7 日 (= cron-failure.ts の CRON_FAILURE_LOOKBACK_DAYS)
  *   7. 段 A は cron.schedule を呼ばず、UPDATE を含まず、DELETE は台帳への 1 か所 (unmark) だけ
- *   8. migration が登録するジョブに、1 時間以内の間隔のものがある (PG_CRON_STALL_MINUTES = 60 の前提)
+ *   8. migration が登録するジョブに、1 時間以内の間隔のものがある (cron-failure.ts の PG_CRON_STALL_MINUTES = 60 の前提)
  *   9. src/app/api/cron/*\/route.ts が createLogger / internalError に渡す名前は候補の LIKE と一致する形。vercel.json の crons のどれも走査に入る
  *  10. 台帳の source の CHECK は 'pg_cron' / 'vercel_cron' の 2 つで、候補が出す source もこの 2 つだけ
- *  11. rollback が関数 5 本と台帳の DROP を行い、pg_cron のジョブと ops_alert_state には触れない
+ *  11. src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES は、台帳の source の CHECK と同じ (段 B。DB の CHECK にだけ出どころを
+ *      足すと、アプリの normalizeCronFailureRows がその行を例外にして 500 になるので、ずれをここで止める)
+ *  12. rollback が関数 5 本と台帳の DROP を行い、pg_cron のジョブと ops_alert_state には触れない
  *
- * 設計 §11.1 の「src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES が台帳の CHECK と同じ」は、そのファイルを足す段 B で
- * このファイルに足す (段 A の時点では木に無い。10. は台帳側の 2 つの固定だけを見る)。
+ * アプリ側の値 (CRON_FAILURE_SOURCES・CRON_FAILURE_LOOKBACK_DAYS・PG_CRON_STALL_MINUTES) はここで書き直さず、cron-failure.ts から import して突き合わせる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { collectMigrationCronJobs, splitCallArguments, stripSqlComments } from './helpers/migration-cron-jobs';
+import { CRON_FAILURE_LOOKBACK_DAYS, CRON_FAILURE_SOURCES, PG_CRON_STALL_MINUTES } from '../src/lib/ops-alerts/cron-failure';
 
 const ROOT = path.resolve(__dirname, '..');
 const VERSION = '20261017220000';
@@ -52,13 +54,18 @@ const SERVICE_ROLE_FUNCTIONS = FUNCTION_NAMES.filter((name) => name !== 'cron_fa
 /** REVOKE で外すロール (完全形。Supabase の自動の GRANT と PostgreSQL の PUBLIC を両方外す) */
 const REVOKED_ROLES = 'PUBLIC, anon, authenticated, service_role';
 const TABLE = 'public.cron_failure_alerts';
-/** pg_cron の停止を判定する分数 (設計 §10 の PG_CRON_STALL_MINUTES の既定値。段 B が定数にする)。これ以下の間隔のジョブが 1 本はあること */
-const PG_CRON_STALL_MINUTES = 60;
 
 const migration = fs.readFileSync(MIGRATION_PATH, 'utf-8');
 const rollback = fs.readFileSync(ROLLBACK_PATH, 'utf-8');
 const code = stripSqlComments(migration);
 const rollbackCode = stripSqlComments(rollback);
+
+/** 台帳 cron_failure_alerts の source の CHECK が許す値 (並べ替え済み) */
+function ledgerSourceCheckValues(): string[] {
+  const check = /source\s+TEXT\s+NOT NULL CHECK \(source IN \(([^)]*)\)\)/.exec(code);
+  expect(check, '台帳の source の CHECK が無い').not.toBeNull();
+  return [...(check as RegExpExecArray)[1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
+}
 
 /** CREATE OR REPLACE FUNCTION public.<name>( から、本体の終わりの `END $$;` (または最後の `$$;`) まで */
 function functionSource(name: FunctionName): { header: string; body: string; whole: string } {
@@ -85,7 +92,7 @@ function cteNames(body: string): Set<string> {
   return names;
 }
 
-describe('#1125 (B) 定期処理の失敗の監視 (段 A) のソース走査', () => {
+describe('#1125 (B) 定期処理の失敗の監視 (段 A の migration・段 B の定数との突き合わせ) のソース走査', () => {
   it('migration と rollback が同じ名前で対になっていて、1・2 行目の見出しと案内が正しい', () => {
     expect(fs.existsSync(MIGRATION_PATH)).toBe(true);
     expect(fs.existsSync(ROLLBACK_PATH)).toBe(true);
@@ -166,7 +173,9 @@ describe('#1125 (B) 定期処理の失敗の監視 (段 A) のソース走査', 
 
   it('候補は source <> client・level = error・cron の route 名の形だけを数え、見る範囲は 7 日', () => {
     const { body } = functionSource('cron_failure_candidates');
-    expect(body).toMatch(/c_lookback\s+CONSTANT\s+pg_catalog\.interval\s*:=\s*interval '7 days'/);
+    expect(CRON_FAILURE_LOOKBACK_DAYS).toBe(7);
+    // 文面に書く日数 (cron-failure.ts の CRON_FAILURE_LOOKBACK_DAYS) と、DB が数える範囲 (c_lookback) が同じ
+    expect(body).toMatch(new RegExp(`c_lookback\\s+CONSTANT\\s+pg_catalog\\.interval\\s*:=\\s*interval '${CRON_FAILURE_LOOKBACK_DAYS} days'`));
     // Vercel Cron の分は 2 つの枝 (pg_cron がある DB / 無い DB) の両方に同じ条件で書く
     expect(body.match(/l\.level = 'error'/g) ?? []).toHaveLength(2);
     expect(body.match(/l\.source <> 'client'/g) ?? []).toHaveLength(2);
@@ -202,6 +211,8 @@ describe('#1125 (B) 定期処理の失敗の監視 (段 A) のソース走査', 
   });
 
   it('migration が登録するジョブに、1 時間以内の間隔のもの (5 分おき・毎時) がある (PG_CRON_STALL_MINUTES = 60 の前提)', () => {
+    // しきい値はアプリの既定値そのもの (cron-failure.ts から import)。60 を変えたらこの前提も見直す
+    expect(PG_CRON_STALL_MINUTES).toBe(60);
     const jobs = collectMigrationCronJobs(MIGRATIONS_DIR);
     expect(jobs.unresolved, 'ジョブの名前が解けない呼び出し').toEqual([]);
     expect(jobs.names.length).toBeGreaterThan(0);
@@ -273,13 +284,22 @@ describe('#1125 (B) 定期処理の失敗の監視 (段 A) のソース走査', 
   });
 
   it("台帳の source の CHECK は 'pg_cron' / 'vercel_cron' の 2 つで、候補が出す source もこの 2 つだけ", () => {
-    const check = /source\s+TEXT\s+NOT NULL CHECK \(source IN \(([^)]*)\)\)/.exec(code);
-    expect(check, '台帳の source の CHECK が無い').not.toBeNull();
-    const allowed = [...(check as RegExpExecArray)[1].matchAll(/'([^']+)'/g)].map((match) => match[1]).sort();
+    const allowed = ledgerSourceCheckValues();
     expect(allowed).toEqual(['pg_cron', 'vercel_cron']);
     const { body } = functionSource('cron_failure_candidates');
     const emitted = [...new Set([...body.matchAll(/'([a-z_]+_cron|pg_cron)'::text/g)].map((match) => match[1]))].sort();
     expect(emitted).toEqual(allowed);
+  });
+
+  it('src/lib/ops-alerts/cron-failure.ts の CRON_FAILURE_SOURCES は、台帳 cron_failure_alerts.source の CHECK の 2 つと同じ', () => {
+    // DB の CHECK にだけ出どころを足すと、アプリの normalizeCronFailureRows がその行を例外にする (500)。
+    // アプリにだけ足すと、DB に入らない出どころを想定したままになる。どちらのずれも止める。
+    // 並びは問わない (集合として同じであればよい)。重複も無いこと
+    const appSources = [...CRON_FAILURE_SOURCES].sort();
+    expect(new Set(appSources).size).toBe(appSources.length);
+    expect(appSources).toEqual(ledgerSourceCheckValues());
+    // 読み取りが壊れて空のまま一致しない番兵
+    expect(appSources.length).toBeGreaterThan(0);
   });
 
   it('rollback が関数 5 本の DROP・台帳の DROP を行い、pg_cron のジョブと ops_alert_state には触れない', () => {

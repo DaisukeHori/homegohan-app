@@ -168,6 +168,13 @@ export const SERVER_ENV_VARS = {
     whenMissing: '既定の 60 分を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
   },
+  OPS_ALERT_PG_CRON_STALL_MINUTES: {
+    required: false,
+    description:
+      'pg_cron の停止の運用メールのしきい値 (#1125 の B)。有効なジョブがあるのに、最新の実行からこの分数を超えて 1 つも動いていなければ、GET /api/cron/app-log-alerts が OPS_ALERT_EMAIL へ知らせる。10〜1440 の整数',
+    whenMissing: '既定の 60 分を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+  },
   EXPO_ACCESS_TOKEN: {
     required: false,
     description:

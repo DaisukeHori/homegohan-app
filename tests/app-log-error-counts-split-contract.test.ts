@@ -23,7 +23,9 @@ import {
   APP_LOG_ALERT_KEYS,
   APP_LOG_CLIENT_ALERT_ERROR_THRESHOLD,
   APP_LOG_CLIENT_ALERT_KEY,
+  CRON_FAILURE_ALERT_KEY,
   EMAIL_DEAD_LETTER_ALERT_KEY,
+  PG_CRON_STALLED_ALERT_KEY,
 } from '@/lib/ops-alerts/app-log-error-spike';
 
 const ROOT = path.resolve(__dirname, '..');
@@ -119,6 +121,9 @@ describe('#1493 アプリの定数と migration の突き合わせ', () => {
       client: 'app_log_client_error_counts',
       // #1193 届けられなかったメール (email_outbox の dead) を数える関数
       email_dead_letter: 'email_outbox_dead_counts',
+      // #1125 (B) 定期処理の失敗を数える関数と、pg_cron の最新の実行を読む関数 (段 A の migration が作る)
+      cron_failure: 'cron_failure_counts',
+      pg_cron_stalled: 'pg_cron_last_run_at',
     });
     for (const name of Object.values(APP_LOG_ALERT_COUNT_RPC)) {
       expect(latestDefinition(name), name).not.toBeNull();
@@ -130,9 +135,13 @@ describe('#1493 アプリの定数と migration の突き合わせ', () => {
       server: APP_LOG_ALERT_KEY,
       client: APP_LOG_CLIENT_ALERT_KEY,
       email_dead_letter: EMAIL_DEAD_LETTER_ALERT_KEY,
+      cron_failure: CRON_FAILURE_ALERT_KEY,
+      pg_cron_stalled: PG_CRON_STALLED_ALERT_KEY,
     });
     expect(EMAIL_DEAD_LETTER_ALERT_KEY).toBe('email_dead_letter');
-    expect(new Set(Object.values(APP_LOG_ALERT_KEYS)).size).toBe(3);
+    expect(CRON_FAILURE_ALERT_KEY).toBe('cron_failure');
+    expect(PG_CRON_STALLED_ALERT_KEY).toBe('pg_cron_stalled');
+    expect(new Set(Object.values(APP_LOG_ALERT_KEYS)).size).toBe(5);
     expect(APP_LOG_ALERT_KEY).toBe('app_logs_error_spike');
     expect(APP_LOG_CLIENT_ALERT_KEY).toBe('app_logs_client_error_spike');
     expect(APP_LOG_CLIENT_ALERT_KEY).not.toBe(APP_LOG_ALERT_KEY);
