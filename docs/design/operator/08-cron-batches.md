@@ -145,7 +145,7 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `license_expire_batch` | daily 02:00 UTC | ライセンス期限切れ処理 |
 | `license_used_count_reconcile` | monthly 01 04:00 UTC | ライセンス使用数照合 |
 | `infra_metrics_cleanup` | daily 05:00 UTC | 30 日超の infra_metrics 削除 |
-| `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出 |
+| `stripe_event_stuck_check` | daily 05:00 UTC | Stripe webhook の processing 状態スタック検出。再処理のためには不要 (処理済みでないイベントに 2xx を返さず Stripe の再送で取り直す。billing/01 §9.6)。残るのは 3 日の再送が尽きたイベントの整合 (reconcile) と一覧だけ |
 | `failed_invite_lookups_cleanup` | daily 05:30 UTC | 7 日超の failed_invite_lookups 削除 |
 | `update-org-challenge-progress` | daily 18:10 UTC (03:10 JST) | 組織チャレンジの進み具合 (current_value) と順位 (rank) を食事の記録から計算し、終了日 (JST) を過ぎたチャレンジを completed にする (`update_org_challenge_progress()`。#1132。詳細は `org/07-challenge.md` §15)。completed にする UPDATE で平均が確定する (トリガー `trg_org_challenge_finalize`。migration `20261016240000_org_challenge_diff_privacy.sql:227`〜`:231`。#1688) |
 
@@ -162,7 +162,7 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `trial_ending_reminder` | daily 09:00 | 試用終了リマインダー |
 | `license_renewal_reminder` | daily 10:00 | ライセンス更新リマインダー |
 | `deprecate_plan_notice` | daily 11:00 | deprecated プラン移行通知 |
-| `stripe_integrity_check` | daily 12:00 | Stripe reconciliation |
+| `stripe_integrity_check` | daily 12:00 | Stripe reconciliation。billing/01 §12 の契約 (1 文の直接 UPDATE / 写像を呼ぶ) で作る。課金の配線の残りの冊 (運用バッチ。未作成) の対象 |
 | `re_engagement_email` | daily 13:00 | 再エンゲージメントメール (選択待ち: operator/11 §8) |
 | `nps_survey_sender` | daily 14:00 | NPS サーベイ送信 (選択待ち: operator/11 §8) |
 | `hr_revoke_jobs_processor` | hourly :30 | HR revoke ジョブ処理 (HR 連携の冊に同梱: operator/11 §2.2) |
@@ -467,6 +467,8 @@ export async function POST(request: Request) {
 この節の `hr_revoke_jobs_processor` は、operator/11 §2.2 の仕分けで 08 の「いま」の計画から外した (HR の Webhook・`hr_revoke_jobs` が main に無く、バッチだけ先に作ると対象の無い処理になる。HR 連携の冊 (org/02 §14) に同梱する。コードは残さない)。
 
 ### 5.7 `grace_period_check` (09:30 JST)
+
+billing/01 §12 の契約 (1 文の直接 UPDATE / 写像を呼ぶ) で作る。課金の配線の残りの冊 (運用バッチ。未作成) の対象。
 
 ```typescript
 // === Stage 1: past_due (支払失敗) から 7 日経過 → status='grace' (機能制限開始) ===
