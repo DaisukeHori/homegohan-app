@@ -430,7 +430,7 @@ describe('#1141 E: 使い方ガイドの「写真で記録」が、実際の入�
   const read = (relativePath: string) => fs.readFileSync(path.join(process.cwd(), relativePath), 'utf8');
 
   it('ガイドが案内する入口の名前が、健康画面のクイックアクションに実在する', () => {
-    const guide = read('src/app/guide/page.tsx');
+    const guide = read('src/app/guide/guide-content.ts');
     const healthPage = read('src/app/(main)/health/page.tsx');
 
     expect(guide).toContain('健康画面の「写真で記録」');
@@ -438,7 +438,7 @@ describe('#1141 E: 使い方ガイドの「写真で記録」が、実際の入�
   });
 
   it('AI の読み取りは確認してから記録する、と案内している (確認なしの「自動認識」とは言わない)', () => {
-    const guide = read('src/app/guide/page.tsx');
+    const guide = read('src/app/guide/guide-content.ts');
 
     expect(guide).toContain('内容を確認してから記録できます');
     expect(guide).not.toContain('自動認識');
