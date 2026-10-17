@@ -2291,7 +2291,7 @@ async function axeViolations(page: Page): Promise<{ id: string; targets: string[
 | hidden | 少しずつ下へスクロールし、箱の下端が画面の上へ出る | visible | 通知: 交差していない・`bottom < 0` |
 | hidden | ページの中のリンク (`#demo` `#features` など) で一気に下へ移る | visible | 通知: 交差していない・`bottom < 0` (箱は交差から非交差に変わるので、飛び越えても通知が来る) |
 | hidden | 箱の中でスクロールする (ヒーローが画面にあるまま) | hidden (変化なし) | 通知は来ない (交差のまま) |
-| visible | 少しずつ上へスクロールし、箱の下端が画面に入る | hidden | 通知: 交差した |
+| visible | 少しずつ上へスクロールし、箱の下端が画面に入る | hidden | 通知: 交差した・固定 CTA の中にフォーカスが無い |
 | visible | 先頭へ一気に戻る (`window.scrollTo(0, 0)`・キーボードの Home など。ヘッダーのマーク `/` で先頭に戻ったときも同じ) | hidden | 通知: 交差した (非交差から交差に変わる)・固定 CTA の中にフォーカスが無い |
 | visible | 固定 CTA の中 (「無料で始める」) にフォーカスがあるまま、先頭へ戻る (Home など) か、少しずつ上へ戻って箱の下端が画面に入る | visible (隠すのを待つ。`hideOnBlur` を立てる) | 通知: 交差した・固定 CTA の中にフォーカスがある (隠すと `inert` でフォーカスが `body` に戻るため) |
 | visible (隠すのを待つ) | フォーカスが固定 CTA の外へ出る (画面の上の部分の要素をクリック・タップ、Shift+Tab など) | hidden (移った先へのスクロールでヒーローを過ぎれば、その通知でまた visible) | `hideOnBlur` が立っている・移った先が固定 CTA の外 |
@@ -2389,7 +2389,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 |---|---|
 | E-1 | `/ を開くと、h1「食べることを、もっと誇らしく。」と 8 つのセクションが順に見え、ログインのフォーム (#email) は無い。下まで少しずつスクロールしたあと、どの .lp-reveal にも is-in が付き、computed の opacity が 1 (隠れたままのセクションが無い)` |
 | E-2 | `ヘッダーの「無料で始める」とヒーローの「無料で始める」は /signup を指し、「デモを試す」は #demo へスクロールする` |
-| E-3 | `デモ: 写真のボタンに focus() して Enter を押すと role=status に「AI が見ています…」が出て、1.4 秒後に「記録コメント」の見出しとその写真の記録コメント (demoPraiseComment の文) とサンプルの注記と、/signup を指す「自分の食事で試す」のリンクが出る。待っている間は写真のボタンが 3 つとも aria-disabled="true" で disabled 属性は無く、別の写真を押しても role=status の中身と aria-pressed は変わらない。分析中も結果が出た後も document.activeElement は押したボタンのままで、その outline-style は none でない。結果のあと別の写真を押すと、もう一度「AI が見ています…」を経て、その写真の結果に替わる` |
+| E-3 | `デモ: (1) 写真 A のボタンに focus() して Enter を押すと、role=status に「AI が見ています…」が出て、写真のボタンは 3 つとも aria-disabled="true" で disabled 属性は無く、document.activeElement は A のままで、その outline-style は none でない。(2) 1.4 秒後に「記録コメント」の見出し・A の記録コメント (demoPraiseComment の文)・サンプルの注記・/signup を指す「自分の食事で試す」のリンクが出て、写真のボタンは aria-disabled="false" に戻り、document.activeElement は A のまま。(3) 続けて写真 B を押すと、もう一度「AI が見ています…」を経て B の結果に替わり、B の分析中に写真 C を押しても role=status の中身と aria-pressed (B だけが true) は変わらない` |
 | E-4 | `FAQ: ボタンは aria-expanded を持ち、Enter で開き (aria-expanded=true・region が見える)、もう一度 Enter で閉じる` |
 | E-5 | `375 px: 横スクロールが無く (scrollWidth <= clientWidth)、開いた直後 (scrollY 0。ヒーローが画面にある) は固定 CTA に is-visible が無く aria-hidden=true で、section#hero の下端を画面の上へ過ぎるまで少しずつ (mouse.wheel で) スクロールすると is-visible が付いて /signup を指し、少しずつ上へ戻すと外れる。続けて、先頭から「デモを試す」(#demo へ一気に移る) を押すと is-visible が付き、window.scrollTo(0, 0) で先頭へ一気に戻すと外れる。/#faq を直接開いたときは、最初から is-visible が付く。固定 CTA の「無料で始める」に focus() したまま window.scrollTo(0, 0) で先頭へ戻ると、is-visible は外れず document.activeElement はそのリンクのままで、続けてヘッダーのマーク (/) に focus() してフォーカスを外へ出すと (先頭にいるのでスクロールは起きない) is-visible が外れて aria-hidden=true になる` |
 | E-6 | `320 px と ZOOM_200_WIDTH_PX (640 px。1280 px を 200 % に拡大した幅) で横スクロールが無い (scrollWidth <= clientWidth)` |
