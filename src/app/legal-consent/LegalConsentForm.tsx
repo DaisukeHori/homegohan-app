@@ -183,7 +183,9 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
       // アプリの中で「同意しない」を押したとき、Web だけでなくアプリ側のログインも外す。
       // 順番は notifyNativeSignOut -> signOut -> broadcastSignOut (tests/native-sign-out-order-source-scan.test.ts が検査する)
       notifyNativeSignOut();
-      // supabase-js の signOut は、通信に失敗しても例外を投げず { error } を返し、その間はセッションが残る。
+      // supabase-js の signOut は、通信に失敗しても例外を投げず { error } を返し、サーバーのセッションは失効しないまま残る
+      // (access token が有効なうちなら、この端末の Cookie のセッションは supabase-js が消して SIGNED_OUT を出す。
+      // 失効していて更新もできないときは Cookie のセッションも残る)。
       // 「ログアウトしました」と案内してしまわないよう、返ってきた error も失敗として扱う
       const { error: signOutError } = await createClient().auth.signOut();
       if (signOutError) throw signOutError;

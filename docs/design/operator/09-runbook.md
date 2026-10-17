@@ -196,6 +196,9 @@ ORDER BY start_time DESC;
 ```sql
 -- 例: cleanup-old-app-logs の関数を手動実行
 SELECT public.cleanup_old_logs();
+
+-- 例: purge-dissolved-family-groups の乾いた実行 (dry run。件数だけ返し、何も消さない)
+SELECT * FROM public.purge_dissolved_family_groups(true);
 ```
 
 ### 5.3 Vercel Cron の手動実行

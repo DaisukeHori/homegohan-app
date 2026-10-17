@@ -393,7 +393,7 @@ export type UnregisterPushTokenOptions = {
    *
    * 渡さなければ、supabase-js が「いまのセッション」のトークンを付ける。それではログアウトの途中で足りなくなる。
    * Web からの sign-out / session-expired を処理している間に、getUser() が 403 session_not_found を受けると、
-   * auth-js (2.105) は AuthSessionMissingError にして端末のセッションを消す (_removeSession)。
+   * auth-js は AuthSessionMissingError にして端末のセッションを消す (_removeSession)。
    * そのあとに削除の通信を出すと、セッションが無いので anon キーが付き、RLS で 0 行になる (エラーにならない)。
    * Authorization ヘッダーを明示すれば、supabase-js はそれを上書きしない (fetchWithAuth は、既にあれば付けない)。
    * PostgREST は JWT の署名と期限だけを見て、セッションが失効済みかどうかは見ないので、期限内なら本人の行を消せる。
