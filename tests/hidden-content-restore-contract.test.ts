@@ -11,7 +11,8 @@
  *   CT-6 戻す部品が hidden_at を書く UPDATE は 1 つで、3 列を null にするだけ
  *   CT-7 戻す部品と route は環境変数を読まない
  *   CT-8 写真とメモの比べ方は隠す側と同じ式
- * CT-3 (画面の文字数の写し) は段 B で足す。
+ *   CT-3 画面の理由の長さの写しが schemas と同じ (段 B)
+ * CT-7 は段 B で、対象に画面の部品 (ModerationRestoreForm.tsx) を足した。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -25,11 +26,16 @@ import {
   HIDDEN_CONTENT_RESTORE_WINDOW_DAYS,
   HIDDEN_CONTENT_RETENTION_DAYS,
 } from '@/lib/admin/hidden-content-restore';
-import { MODERATION_RESTORE_AUDIT_ACTION } from '@/lib/admin/moderation-schemas';
+import {
+  MODERATION_NOTE_MAX_LENGTH,
+  MODERATION_NOTE_MIN_LENGTH,
+  MODERATION_RESTORE_AUDIT_ACTION,
+} from '@/lib/admin/moderation-schemas';
 
 const ROOT = path.resolve(__dirname, '..');
 const LIB_FILE = 'src/lib/admin/hidden-content-restore.ts';
 const RESTORE_ROUTE_FILE = 'src/app/api/admin/moderation/[type]/[id]/restore/route.ts';
+const RESTORE_FORM_FILE = 'src/components/operator/moderation/ModerationRestoreForm.tsx';
 const HIDE_ROUTE_FILE = 'src/app/api/admin/moderation/[type]/[id]/route.ts';
 const BACKEND_FILE = 'src/lib/admin/moderation-backend.ts';
 
@@ -66,7 +72,7 @@ function returnExpressionOf(source: string, name: string): string {
   return match[1].replace(/\s+/g, '');
 }
 
-describe('#1538 隠したコンテンツを戻す操作の契約 (段 A)', () => {
+describe('#1538 隠したコンテンツを戻す操作の契約 (段 A・段 B)', () => {
   it('CT-1: src の写し HIDDEN_CONTENT_RETENTION_DAYS は、Edge の正本 (supabase/functions/_shared/hidden-content-purge.ts) と同じ 90', () => {
     expect(HIDDEN_CONTENT_RETENTION_DAYS).toBe(EDGE_RETENTION_DAYS);
     expect(HIDDEN_CONTENT_RETENTION_DAYS).toBe(90);
@@ -77,6 +83,18 @@ describe('#1538 隠したコンテンツを戻す操作の契約 (段 A)', () =>
     expect(HIDDEN_CONTENT_RESTORE_WINDOW_DAYS).toBe(EDGE_RETENTION_DAYS - HIDDEN_CONTENT_RESTORE_MARGIN_DAYS);
     expect(HIDDEN_CONTENT_RESTORE_WINDOW_DAYS).toBe(89);
     expect(HIDDEN_CONTENT_RESTORE_MARGIN_DAYS * MS_PER_DAY).toBeGreaterThan(HIDDEN_CONTENT_PURGE_MAX_DURATION_MS);
+  });
+
+  it('CT-3: 画面の NOTE_MIN_LENGTH / NOTE_MAX_LENGTH (ModerationRestoreForm.tsx のソース) は schemas の MODERATION_NOTE_MIN_LENGTH / MODERATION_NOTE_MAX_LENGTH と同じ', () => {
+    const code = stripComments(read(RESTORE_FORM_FILE));
+    const min = code.match(/const NOTE_MIN_LENGTH\s*=\s*(\d+);/);
+    const max = code.match(/const NOTE_MAX_LENGTH\s*=\s*(\d+);/);
+    expect(min, 'NOTE_MIN_LENGTH の定義が無い').not.toBeNull();
+    expect(max, 'NOTE_MAX_LENGTH の定義が無い').not.toBeNull();
+    expect(Number(min?.[1])).toBe(MODERATION_NOTE_MIN_LENGTH);
+    expect(Number(max?.[1])).toBe(MODERATION_NOTE_MAX_LENGTH);
+    // client に schemas (zod) を読み込まない
+    expect(code).not.toContain('moderation-schemas');
   });
 
   it('CT-4: restore の route の requireRole のロールは、隠す route (POST / PUT /api/admin/moderation/[type]/[id]) と同じ 3 つ', () => {
@@ -105,8 +123,8 @@ describe('#1538 隠したコンテンツを戻す操作の契約 (段 A)', () =>
     expect(body).toBe('hidden_at:null,hidden_by:null,hidden_reason:null');
   });
 
-  it('CT-7: hidden-content-restore.ts と restore の route は process.env を読まない (環境変数を足さない: R-17)', () => {
-    for (const file of [LIB_FILE, RESTORE_ROUTE_FILE]) {
+  it('CT-7: hidden-content-restore.ts と restore の route と画面の部品 (ModerationRestoreForm.tsx) は process.env を読まない (環境変数を足さない: R-17)', () => {
+    for (const file of [LIB_FILE, RESTORE_ROUTE_FILE, RESTORE_FORM_FILE]) {
       expect(stripComments(read(file)), file).not.toContain('process.env');
     }
   });

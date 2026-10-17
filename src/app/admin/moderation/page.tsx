@@ -28,6 +28,8 @@ interface ModerationItem {
   user_id: string;
   status: string;
   created_at: string;
+  /** コンテンツを隠した日時 (ISO)。隠れていなければ null (#1538) */
+  hidden_at: string | null;
 }
 
 interface ModerationApiResponse {
@@ -199,6 +201,12 @@ export default async function AdminModerationPage(props: PageProps) {
                     >
                       {item.status}
                     </span>
+                    {/* #1538: コンテンツが運営の判定で隠れている通報 (status に関わらず) */}
+                    {item.hidden_at && (
+                      <span className="ml-1 inline-block bg-gray-100 text-gray-700 text-xs px-2 py-0.5 rounded font-medium">
+                        非表示中
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-gray-500 text-xs">
                     {new Date(item.created_at).toLocaleString('ja-JP')}
