@@ -1,5 +1,7 @@
 {
-  "extends": "expo/tsconfig.base",
+  // expo 58 は package.json に exports を持ち、`expo/tsconfig.base` (拡張子なし) を解決できない (`./*.json` の入口だけが tsconfig.base.json に当たる)。
+  // tsc は拡張子なしでも読めるが、ルートの vitest (Vite 8 の tsconfig の読み込み) は apps/mobile のソースを読むテストで「Tsconfig not found」になる。拡張子を付ける (#1591)
+  "extends": "expo/tsconfig.base.json",
   "compilerOptions": {
     "strict": true,
     "paths": {
