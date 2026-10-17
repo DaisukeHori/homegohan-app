@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.4 (2026-10-18) |
+| 版 | v1.5 (2026-10-18) |
 | Status | 設計ゲート審査中 (R4)。実装は §14.1 の段分け (段 A → B → C を 1 本の WF・1 本の PR) で進める。未着手 |
 | Issue | #1591 (モバイルのツールチェーン (expo・react-native・metro・jest) のメジャー更新 — npm audit の high の残りの原因。#1444 から分割)。載せる先のネイティブのビルドは #1115 (協調リリース) |
 | 範囲の正本 | Issue #1591 の本文とコメント。本書はその上で決めた上げ先・壊れる所・直し方・検証・段分け・オーナー作業との境目 |
@@ -70,7 +70,9 @@
 | `docs/design/mobile/05-auth-session.md` | 設定画面の `signOutOnDevice` (ファイル名は書いていない)。番兵 `tests/mobile-sign-out-doc-callers.test.ts` が画面のファイル (`app/(tabs)/settings.tsx`) を持つ。置き場を変えないので、どちらも変わらない |
 | Dependabot PR #1589 (postcss・expo・next) / #1590 (minor/patch のまとめ) | どちらも閉 (10/14・10/16)。#1590 の `@supabase/ssr` は #1768 (PR #1841) で別に上げた。本冊で扱う残りは無い |
 
-### 2.2 現行の事実 (origin/main `904f9e8f` で採取し、`1d69d88b` で採り直した。`307ae1cf` (cross/16 の段 B・PR #1838) の差分 (設定の画面の行 1 つ・Jest のテスト 3 本) を取り込んだ。2026-10-17。`9dd73f23` (2026-10-18) で突き合わせた: その間の `apps/mobile` の変更は認証の 4 ファイル (`(auth)/auth/reset-password.tsx`・`AccountCredentialsSection.tsx`・`src/lib/account-credentials.ts`・`AuthProvider.tsx`) と既存のテスト 3 本で、本冊が触るファイル・Jest のテストの数 (115)・`render(` の数 (62)・依存の宣言と lockfile は変わらない)
+### 2.2 現行の事実 (origin/main `904f9e8f` で採取し、`1d69d88b` で採り直した。`307ae1cf` (cross/16 の段 B・PR #1838) の差分 (設定の画面の行 1 つ・Jest のテスト 3 本) を取り込んだ。2026-10-17。`9dd73f23` (2026-10-18) で突き合わせた: その間の `apps/mobile` の変更は認証の 4 ファイル (`(auth)/auth/reset-password.tsx`・`AccountCredentialsSection.tsx`・`src/lib/account-credentials.ts`・`AuthProvider.tsx`) と既存のテスト 3 本で、本冊が触るファイル・Jest のテストの数 (115)・`render(` の数 (62)・依存の宣言と lockfile は変わらない。`0ca17773` (2026-10-18) でも突き合わせた: `9dd73f23` からの 2 commit (#1862・#1863) は `apps/mobile` を 1 つも変えず、ルートの `package.json`・`package-lock.json` も変えない)
+
+**数の基準 (この章と §8・§13・§14・§15 の数はすべて origin/main のもの)**: Jest のテストの数 (115)・`expo-file-system` の `jest.mock` を持つテスト (11)・`render(` のファイル (62) は、`git ls-tree -r origin/main` / `git grep … origin/main` で数えた。本冊の設計の枝 (`design/issue-1591-mobile-toolchain`) は `904f9e8f` から切ったので、枝の上の `apps/mobile` は main より古い (`904f9e8f..9dd73f23` の `apps/mobile` の差は 29 ファイル。上の 3 回の取り込みの和で、`data-requests-entry`・`sessions-entry`・`sessions`・`device-name` の 4 本のテストを含む。枝の上で数えると Jest は 111 本・mock は 10 本になる)。設計の枝は本冊 1 ファイルしか変えないので、枝の古さは実装に届かない: 実装の worktree は設計の枝からでなく、投入の時点の origin/main から切る (§14.1)。
 
 **版 (`apps/mobile/package.json` の宣言 → `package-lock.json` の解決)**
 
@@ -1500,7 +1502,7 @@ T-TB2 と T-TB4 は、58 の `href: null` の挙動 (本冊が `href: null` を�
 | V-4 | npm audit (根の集合) | §9.8 (`npm audit --json` と `--omit=dev --json` の 2 回) | `roots` = braces・node-forge の 2 行。`jestFamily` 空。image-size・postcss 無し | A |
 | V-5 | `packages/core` | `mobile:core` の行 | GREEN (変わらない) | A |
 | V-6 | Expo の版の突き合わせ | `cd apps/mobile && npx expo install --check` | ずれ 0 件 (「Dependencies are up to date」) | A |
-| V-7 | ルートの vitest 全件 (番兵) | `unit:vitest` の行 | GREEN。`tests/react-types-version-contract.test.ts`・`zod-single-copy-1444`・`mobile-easignore-bundle-inputs`・`native-app-tabs-contract`・`mobile-sign-out-doc-callers`・`ai-consent-settings-entry`・`data-share-not-consent`・`jst-today-source-scan`・`ai-daily-limit-mobile-raw-fetch`・`mobile-removed-files-references`・`security-workflow`・`local-ci-workflow-sync`・`webview-download-export-limit-contract`・`legal-consent-mobile-contract`・`handson-tour-files-structure-doc`・`maestro-flow-testids`・`src/__tests__/app/faq/account-answers.test.ts` と新設の `mobile-toolchain-contract` が緑 | A・B・C |
+| V-7 | ルートの vitest 全件 (番兵) | `unit:vitest` の行 | GREEN。`tests/react-types-version-contract.test.ts`・`zod-single-copy-1444`・`mobile-easignore-bundle-inputs`・`native-app-tabs-contract`・`mobile-sign-out-doc-callers`・`ai-consent-settings-entry`・`data-share-not-consent`・`jst-today-source-scan`・`ai-daily-limit-mobile-raw-fetch`・`mobile-removed-files-references`・`security-workflow`・`local-ci-workflow-sync`・`webview-download-export-limit-contract`・`legal-consent-mobile-contract`・`handson-tour-files-structure-doc`・`maestro-flow-testids`・`faq-guide-wording-1859`・`src/__tests__/app/faq/account-answers.test.ts` と新設の `mobile-toolchain-contract` が緑 | A・B・C |
 | V-8 | `runtimeVersion` の解決 | `cd apps/mobile && npx expo-updates runtimeversion:resolve --platform ios` (ネットワーク不要。`@expo/fingerprint` で計算) | 文字列 (fingerprint のハッシュ) が返り、`1.0.0` でない。PR の本文に写す | A |
 | V-9 | expo-doctor | `cd apps/mobile && npx expo-doctor@latest` (ネットワークが要る) | 全項目が通る。通らない項目は、名前・文面・理由を PR の本文に写し (例: Expo Go の SDK 58 が未公開)、設定の誤り (スキーマ・依存の重複) は 0 件 | A |
 | V-10 | ローカルの型検査 (ルート) | `unit:vitest` の前に local-ci が流す `tsc` (ルート) | 変わらない (モバイルのファイルはルートの tsconfig の対象外) | A |
@@ -1640,6 +1642,8 @@ npm install --package-lock-only --ignore-scripts || {
 
 ### 14.1 段分け (1 本の B 型 WF。段ごとに 2 枚レビュー。マージは段 C の後に 1 回)
 
+実装の worktree は、本冊が main に入った後の origin/main から新しく切る (本冊の設計の枝から切らない。設計の枝の rebase / merge は実装 WF の仕事でない)。段 A の最初に、§2.2 の数 (Jest のテスト 115・`expo-file-system` の `jest.mock` 11・`render(` 62) を worktree の HEAD で数え直す (`git ls-tree -r --name-only HEAD apps/mobile/__tests__ | grep -cE '\.test\.(ts|tsx|js)$'`・`git grep -l "jest.mock(['\"]expo-file-system['\"]" HEAD -- apps/mobile/__tests__ | wc -l`)。数が違ったら、増えたテストを §7.1 の A-1 と §15.1 の grep の語に当てて母集合に足すか判定し、PR の本文に写す (V-3 と同じ扱い)。
+
 | 段 | 内容 | 検証 |
 |---|---|---|
 | A | 依存と設定: `apps/mobile/package.json` (§6.1)・ルート `package.json` の `overrides` (§6.2)・`package-lock.json` (§10.1 の 2 段)・`app.json` (§9.1)・`eas.json` (C-5)・`jest.config.js` (§9.2)・`jest.setup.js` (§9.3)・`jest.env.setup.js` / `metro.config.js` / `tsconfig.json` / `dependabot.yml` のコメント (C-7・C-8・C-11・C-13)。消す依存のテストの後始末: `home.test.tsx` の slider の mock (§6.3)。API の置き換え: A-1 (import 2 + Jest の mock 11 + ルートの vitest の mock 1)・A-2 (3)・A-3 (2)・A-8 (V-2 で出た分)・T-4 (V-3 で出た分) | V-0〜V-10 |
@@ -1686,7 +1690,7 @@ npm install --package-lock-only --ignore-scripts || {
 
 ### 15.1 既存の番兵 (契約テスト・走査テスト) の追随
 
-grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__/` を引いた結果 (origin/main 904f9e8f。1d69d88b で引き直し、9dd73f23 で `(tabs)/settings`・`href: null`・`tabBarButton`・`(tabs)/_layout` の語を引き直した)。「反応」は本冊の変更に反応する番兵、「直し方」は実装の段。
+grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__/` を引いた結果 (origin/main 904f9e8f。1d69d88b で引き直し、9dd73f23 で `(tabs)/settings`・`href: null`・`tabBarButton`・`(tabs)/_layout` の語を引き直した。0ca17773 で、`9dd73f23` から足された・変わったテスト 6 本 (`tests/cron-secret-drift-monitor-contract`・`cron-secret-probe-edge`・`cron-secret`・`edge-function-cors`・`faq-guide-wording-1859`・`security-workflow`) に `apps/mobile`・`expo`・`react-native`・`metro`・`jest`・`dependabot`・`package-lock`・`overrides`・`(tabs)`・`legal-consent`・`app.json`・`eas.json` の語を引き直した。反応したのは `faq-guide-wording-1859` (下の行) と、行がある `security-workflow` (#1863 の差分は `.gitleaks.toml` の検査だけ) の 2 本)。「反応」は本冊の変更に反応する番兵、「直し方」は実装の段。
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
@@ -1711,6 +1715,7 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 | `apps/mobile/__tests__/theme/font-family-guard.test.ts` | `app.json` の `plugins` | `expo-font` の plugin が無い (配列の要素 `[name, opts]` も読む) | 変えない (`expo-splash-screen` の要素が増えるだけ) | A |
 | `apps/mobile/__tests__/app/error-boundaries.test.tsx` | `app/**/_layout.tsx` の `ErrorBoundary` | layout の一覧 | 変えない (layout は増減しない) | B |
 | `apps/mobile/__tests__/app/root-layout-config.test.tsx` | `app/_layout`・`gestureEnabled`・`legal-consent` | `Stack.Screen "legal-consent"` の `options` が `{ gestureEnabled: false }` | 変えない (B-2 で `app/_layout.tsx` は 118 行のコメントだけ変え、`options` は同じ) | B |
+| `tests/faq-guide-wording-1859.test.ts` | `apps/mobile/app`・`apps/mobile/src` (`SCREEN_SOURCE_DIRS`。コメントを除いた画面のソースに、FAQ とガイドが「」で挙げる名前があること) | 画面のソースの文言 | 変えない (本冊は画面の文言を足しも消しもしない。A-1・A-2・A-3 は import と引数、B-1 は options、B-2 は同意の畳み直しの処理だけを変える) | – |
 | `apps/mobile/__tests__/lib/env-example.test.ts`・`jest-timeouts.test.ts` | `env.example`・`jest.timeouts.js` | – | 変えない | – |
 
 ### 15.2 他の文書への追随 (専権 PATCH。本冊の設計ゲート PASS 後、実装のマージと同じ PR か直後。実装レーンは触らない)
@@ -1795,6 +1800,7 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 | 版 | 日付 | 変更 |
 |---|---|---|
 | v1.0 | 2026-10-17 | 初版 (A 型・4 相。origin/main 904f9e8f の事実・npm registry と Expo / React Native / Jest / Reanimated の公式の文書から) |
+| v1.5 | 2026-10-18 | 網羅性の反映 (周 4): §2.2 に origin/main `0ca17773` との突き合わせと「数の基準」(数は origin/main のもの・設計の枝の古さは実装に届かない) を足した・§14.1 に実装の worktree を origin/main から切ることと段 A の最初の数え直しの手順・§15.1 を `0ca17773` で引き直し `tests/faq-guide-wording-1859.test.ts` の行を足した (§10 の V-7 にも) |
 | v1.4 | 2026-10-18 | 設計ゲート R3 の指摘の反映: 設定の画面を `(tabs)` の中の隠しタブのまま置き、`href: null` を expo-router 5 の展開と同じ `tabBarButton: () => null` と `tabBarItemStyle: { display: "none" }` にする形に構造を替えた (§5.1 の G。v1.1〜v1.3 の移設 (H) と、その部品 (session の止め・設定の画面の遷移 4 つの直し・`ENTRY_SCREEN_ROUTE_NAME`・`session-guard.test.tsx`・設定のパスの番兵と設計書の追随) を消した。§3・§4.2・§7.1 の B-1・§8.2・§8.3 (c)・§9.4・§9.10・§13〜§17)・実物の expo-router 58 の `processScreens` と `useVisibleTabsWithRedirect` に通す `home/tabs-hidden-route.test.ts` (§9.12)・段 A の V-2 で `app/legal-consent.tsx` の `beforeRemove` の effect の型エラーだけを許す (B-2 が消す。§10・§12 の E-17)・§12 の E-18 / E-19・origin/main `9dd73f23` との突き合わせ |
 | v1.3 | 2026-10-17 | 網羅性の反映 (周 3): §15.2 に `mobile/03`・`mobile/04` (変えない)・`mobile/05` の 115 行・`00-architecture`・`cross/05`・`family/09` の 3 冊の行・§15.1 に `tests/handson-tour-files-structure-doc.test.ts` (段 B で赤になる番兵)・§17 の 12。origin/main `307ae1cf` (cross/16 の段 B・PR #1838) の取り込み: 設定の画面の「ログイン中の端末」の行 (`/settings/sessions`)・`sessions-entry.test.tsx` (A-1 の mock・移設の import。§13.2・§14.2)・Jest のテストの数 (115 → 段 B 以降 116)・`render(` の数 (62)・§15.3 の cross/16 の段 B の順 |
 | v1.2 | 2026-10-17 | 設計ゲート R2 の指摘の反映: 設定の画面から出る遷移を、ルートの Stack に設定の画面や 2 つ目の `(tabs)` を残さない形に (「プロフィール」= `router.dismissTo`・「使い方ガイド」= `router.replace`・ログアウトと session の切れ = 入口 1 つに畳む完全な state の RESET。§9.10・§8.3 (c) の表を実物の expo-router 58 の行き先の決め方で書き直し)・畳む関数を route の名前の汎用の名前に (`collapseStackAction` ほか)・`ENTRY_SCREEN_ROUTE_NAME`・`expo-file-system` を import するテスト 3 本の import も `/legacy` に・番兵が `__tests__` の指定子も見る・シナリオ S20〜S22・§17 の 10 (既存の 2 つ目の `(tabs)`) と 11 (構造の代案) |
