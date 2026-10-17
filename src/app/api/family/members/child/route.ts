@@ -19,7 +19,7 @@ import { extractClientIp } from '@/lib/admin/audit';
 import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { sendEmail } from '@/lib/emails/send';
-import { isEmailFailure } from '@/lib/emails/send-result';
+import { isEmailFailure, logEmailFailures } from '@/lib/emails/send-result';
 import { renderFamilyParentalConsentRecordedEmail } from '@/lib/emails/membership/family-parental-consent-recorded';
 import { buildFamilyMembersUrl } from '@/lib/membership/urls';
 import { getSiteUrl } from '@/lib/site-config';
@@ -151,8 +151,9 @@ export async function POST(request: Request) {
       const sent = await sendEmail(envelope);
       if (isEmailFailure(sent)) throw sent.error;
     } catch (emailErr) {
-      // 控えのメールの失敗は追加を失敗にしない (同意の記録は DB で完了している)
-      logger.withUser(user.id).error('parental consent email send failed', emailErr, {
+      // 控えのメールの失敗は追加を失敗にしない (同意の記録は DB で完了している)。
+      // 宛先停止リストで止めた (suppressed) ときは意図した動きなので warn、ほかの失敗は error (#1577 の 7)
+      logEmailFailures(logger.withUser(user.id), 'parental consent email send failed', [emailErr], {
         member_id: member.id,
         consent_id: consent.id,
       });

@@ -7,7 +7,7 @@ import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-e
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { buildFamilyTransferAcceptUrl } from '@/lib/membership/urls';
 import { sendEmail } from '@/lib/emails/send';
-import { isEmailFailure } from '@/lib/emails/send-result';
+import { isEmailFailure, logEmailFailures } from '@/lib/emails/send-result';
 import { renderFamilyTransferProposedEmail } from '@/lib/emails/membership/family-transfer-proposed';
 import { normalizeProfileName } from '@/lib/profile-name';
 import {
@@ -118,7 +118,8 @@ export async function POST(request: Request) {
       if (isEmailFailure(sent)) throw sent.error;
     }
   } catch (emailErr) {
-    logger.withUser(user.id).error('譲渡提案メールの送信に失敗しました (提案は作成済み)', emailErr, {
+    // 宛先停止リストで止めた (suppressed) ときは意図した動きなので warn、ほかの失敗は error (#1577 の 7)
+    logEmailFailures(logger.withUser(user.id), '譲渡提案メールの送信に失敗しました (提案は作成済み)', [emailErr], {
       family_id: parsed.family_id,
       to_user_id: parsed.to_user_id,
     });

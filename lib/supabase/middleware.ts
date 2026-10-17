@@ -253,7 +253,7 @@ export async function updateSession(request: NextRequest) {
     }
 
     // #1148: メンテナンスモード (feature_flags の maintenance_mode)。運営ロール (admin / super_admin) 以外の API 呼び出しを
-    // 503 で止める。止めないパスは isMaintenanceExemptPath (死活監視・cron・認証・フラグの取得)。
+    // 503 で止める。止めないパスは isMaintenanceExemptPath (死活監視・cron・認証・フラグの取得・Resend の Webhook (#1577 の 4))。
     // フラグが読めないとき・行が無いときは止めない (isMaintenanceFlagOn は例外を投げず、OFF として答える)。
     // ロールを確かめられなかった (プロフィールを読めなかった) ときは、運営かどうか分からないので、運営ではない人として扱う
     if (!maintenanceExempt && !isOperatorRoles(apiRoles) && (await isMaintenanceFlagOn(apiUserId, apiRoles))) {

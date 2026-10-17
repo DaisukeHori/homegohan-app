@@ -7,7 +7,7 @@
  *   - API:    503 の JSON { error: <固定の文>, code: 'MAINTENANCE_MODE', retryAfter } (#1486 で AI 相談の緊急停止と同じ平らな形に)
  * 止めないもの: 運営ロール / ログイン・認証 (/login・/auth/*) / 利用規約・プライバシーポリシー /
  *   特定商取引法に基づく表記・お問い合わせの画面 (/legal・/contact。#1486。API は止める) /
- *   死活監視 (/api/health)・cron・認証 API・フラグの取得 (/api/feature-flags) / /_next
+ *   死活監視 (/api/health)・cron・認証 API・フラグの取得 (/api/feature-flags)・Resend の Webhook (/api/webhooks/resend。#1577 の 4) / /_next
  *   (画像などの静的ファイルは、ミドルウェアの matcher が外していて、ここには届かない。拡張子で通す処理は無い)
  * フラグの読み出しの失敗は fail-open (止めない)。
  */
@@ -175,6 +175,8 @@ describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', 
     '/api/auth/session-sync',
     '/api/auth/native-bridge/code',
     '/api/feature-flags',
+    // #1577 の 4: Resend の Webhook の受け口 (署名で認証する機械からの呼び出し)
+    '/api/webhooks/resend',
   ])('%s はメンテナンス中でも止めない (フラグも読まない)', async (path) => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
@@ -191,11 +193,36 @@ describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', 
     '/api/cronx/job',
     '/api/feature-flags/extra',
     '/api/feature-flagsx',
+    // #1577 の 4: Resend の Webhook は完全一致だけ通す
+    '/api/webhooks/resend/',
+    '/api/webhooks/resendx',
+    '/api/webhooks/resend/extra',
   ])('%s のような似たパスは止める (前方一致の取りこぼし防止)', async (path) => {
     mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
 
     const res = await updateSession(apiRequest(path));
     expect(res.status).toBe(503);
+  });
+
+  it.each(['/api/webhooks/stripe', '/api/webhooks'])(
+    '#1577 の 4: Resend の Webhook を通しても、ほかの Webhook (%s) はメンテナンス中は 503 のまま',
+    async (path) => {
+      mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+      const res = await updateSession(new NextRequest(new URL(`http://localhost${path}`), { method: 'POST' }));
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.code).toBe('MAINTENANCE_MODE');
+    },
+  );
+
+  it('#1577 の 4: Resend の Webhook は POST (Resend からの届き方) でもメンテナンス中に止めない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const res = await updateSession(new NextRequest(new URL('http://localhost/api/webhooks/resend'), { method: 'POST' }));
+
+    expect(res.status).toBe(200);
+    expect(mockIsFeatureEnabled).not.toHaveBeenCalled();
   });
 
   it.each(['/api/contact', '/api/legal/accept'])(

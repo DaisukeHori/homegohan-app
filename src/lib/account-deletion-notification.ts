@@ -19,7 +19,7 @@
  *   (送るのは deleteUser が実際に削除した 1 回だけ)。
  */
 import { sendEmail, maskEmailAddress } from '@/lib/emails/send';
-import { isEmailFailure } from '@/lib/emails/send-result';
+import { isEmailFailure, logEmailFailures } from '@/lib/emails/send-result';
 import { renderAccountDeletedEmail } from '@/lib/emails/account/account-deleted';
 
 /** 完了メールの文面の名前 (ログ用。renderAccountDeletedEmail の template と同じ) */
@@ -149,9 +149,10 @@ export async function notifyAccountDeleted(params: {
       // userId は渡さない (削除の後で、email_outbox.user_id は auth.users への外部キーのため)
       const sent = await sendEmail(renderAccountDeletedEmail({ to_email: toEmail, deleted_at: deletedAt }), { redactAfterSend: true });
       // sendEmail のエラー文は宛先をマスク済み。失敗の詳細は sendEmail も app_logs に残すが、
-      // ここでは退会のどの request_id の完了メールかが分かる形でも残す
+      // ここでは退会のどの request_id の完了メールかが分かる形でも残す。
+      // 宛先停止リストで止めた (suppressed) ときは意図した動きなので warn、ほかの失敗は error (#1577 の 7)
       if (isEmailFailure(sent)) {
-        log.error(failureMessage, sent.error, { ...metadata, error_code: sent.error.code, attempts: sent.attempts });
+        logEmailFailures(log, failureMessage, [sent.error], { ...metadata, error_code: sent.error.code, attempts: sent.attempts });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

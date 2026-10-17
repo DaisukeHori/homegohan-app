@@ -314,6 +314,52 @@ describe('POST /api/operator/membership/org/[id]/dissolve: 通知メールの宛
     });
   });
 
+  it('宛先停止リストで止めた (suppressed) 宛先だけなら、意図した動きなので error ではなく warn を残す (#1577 の 7)', async () => {
+    const suppressedError = new EmailSendError(
+      'suppressed',
+      'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした',
+      null,
+      0,
+      false,
+    );
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === ADMIN_EMAIL) return { ok: false, id: null, attempts: 0, skipped: false, error: suppressedError };
+      return { ok: true, id: 'email-ok', attempts: 0, skipped: false, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(3);
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(mocks.logWarn).toHaveBeenCalledWith(expect.any(String), {
+      organization_id: ORG_ID,
+      failed_count: 1,
+      error_code: 'suppressed',
+    });
+    expect(JSON.stringify(mocks.logWarn.mock.calls)).not.toContain('@example.com');
+  });
+
+  it('suppressed とほかの失敗が混ざったら、error のまま。渡す理由は suppressed でない方 (#1577 の 7)', async () => {
+    const suppressedError = new EmailSendError('suppressed', 'EMAIL_SUPPRESSED', null, 0, false);
+    const resultError = new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED', null, 0, true);
+    mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
+      if (envelope.to === OWNER_EMAIL) return { ok: false, id: null, attempts: 0, skipped: false, error: suppressedError };
+      if (envelope.to === ADMIN_EMAIL) return { ok: false, id: null, attempts: 0, skipped: false, error: resultError };
+      return { ok: true, id: 'email-ok', attempts: 0, skipped: false, error: null };
+    });
+
+    const res = await call();
+
+    expect(res.status).toBe(200);
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError).toHaveBeenCalledWith(expect.any(String), resultError, {
+      organization_id: ORG_ID,
+      failed_count: 2,
+    });
+    expect(mocks.logWarn).not.toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ error_code: 'suppressed' }));
+  });
+
   it('RESEND_API_KEY が無くて送らなかった (skipped) 宛先は、失敗に数えず、エラーログも残さない (#1193)', async () => {
     const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
     mocks.sendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });

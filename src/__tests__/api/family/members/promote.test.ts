@@ -492,6 +492,23 @@ describe('POST /api/family/members/[member_id]/promote', () => {
     expect(JSON.stringify(mockLogError.mock.calls)).not.toContain(promotionToken);
   });
 
+  it('宛先停止リストで止めた (suppressed) ときは意図した動きなので、error ではなく warn を残して 200 を返す (#1577 の 7)', async () => {
+    const suppressedError = new EmailSendError('suppressed', 'EMAIL_SUPPRESSED', null, 0, false);
+    mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: false, error: suppressedError });
+    mockRpc.mockResolvedValue({ data: rpcResult, error: null });
+
+    const res = await POST(postRequest({ email: childEmail }), makeParams(memberId));
+
+    expect(res.status).toBe(200);
+    expect(mockLogError).not.toHaveBeenCalled();
+    expect(mockLogWarn).toHaveBeenCalledWith('promotion request email send failed', {
+      member_id: memberId,
+      request_id: rpcResult.id,
+      error_code: 'suppressed',
+    });
+    expect(JSON.stringify(mockLogWarn.mock.calls)).not.toContain(promotionToken);
+  });
+
   it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、エラーログを残さず 200 を返す (#1193)', async () => {
     const skippedError = new EmailSendError('not_configured', 'EMAIL_NOT_CONFIGURED: RESEND_API_KEY が未設定', null, 0, false);
     mockSendEmail.mockResolvedValue({ ok: false, id: null, attempts: 0, skipped: true, error: skippedError });
