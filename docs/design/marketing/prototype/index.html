@@ -1,0 +1,644 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ほめゴハン | AIで食事管理をもっと簡単に (静的な試作)</title>
+<meta name="description" content="写真を撮るだけで、AI が食事の良いところを見つけて褒めてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。">
+<style>
+/* ────────────────────────────────────────────────────────────────
+   静的な試作: docs/design/marketing/01-landing-site.md v1.0
+   文言と色は設計書と同じ。写真と実際の画面の枠は「何が入るか」の説明。
+   外部の CDN・フォント・画像は読まない。
+   ──────────────────────────────────────────────────────────────── */
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; }
+
+.lp {
+  --lp-bg: #FAF9F7; --lp-bg-tint: #FDF0ED; --lp-surface: #FFFFFF;
+  --lp-ink: #2D2D2D; --lp-ink-soft: #5F5F5F;
+  --lp-accent: #E07A5F; --lp-accent-soft: #FF9B7A; --lp-accent-ink: #B8502F;
+  --lp-green: #6B9B6B; --lp-green-ink: #3F6E3F; --lp-blue: #5B8BC7; --lp-blue-ink: #2F5F9E;
+  --lp-gold: #FFD700; --lp-dark: #1F1A17; --lp-on-dark: #FFFFFF; --lp-on-dark-soft: #EDE4DD; --lp-on-dark-muted: #B9ADA5;
+  --lp-line: #E8E2DC;
+  --lp-dur-fast: 160ms; --lp-dur: 320ms; --lp-dur-slow: 700ms; --lp-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --lp-radius-card: 1.25rem; --lp-radius-phone: 2.25rem;
+  --lp-shadow-card: 0 1px 2px rgba(45,45,45,.04), 0 12px 32px -12px rgba(45,45,45,.12);
+  --lp-shadow-phone: 0 30px 60px -20px rgba(45,45,45,.28);
+  --lp-max-width: 72rem; --lp-gutter: clamp(1rem, 4vw, 2.5rem); --lp-section-y: clamp(4rem, 10vw, 8rem);
+  background: var(--lp-bg); color: var(--lp-ink);
+  font-family: "Noto Sans JP", system-ui, -apple-system, "Hiragino Sans", sans-serif;
+  line-height: 1.75; overflow-x: clip; overflow-wrap: anywhere;
+}
+.lp h1, .lp h2 { font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
+.lp h1 { font-size: clamp(2.25rem, 1.2rem + 4.2vw, 4.5rem); line-height: 1.15; }
+.lp h2 { font-size: clamp(1.75rem, 1.1rem + 2.4vw, 3rem); line-height: 1.2; letter-spacing: -0.005em; }
+.lp h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.4; margin: 0; }
+.lp p { margin: 0; text-wrap: pretty; }
+.lp a { color: inherit; }
+.lp .lp-lead { font-size: clamp(1.0625rem, 0.95rem + 0.5vw, 1.25rem); line-height: 1.75; color: var(--lp-ink-soft); max-width: 40rem; }
+.lp .lp-note { font-size: 0.875rem; line-height: 1.6; color: var(--lp-ink-soft); }
+.lp .lp-eyebrow { font-size: 0.875rem; font-weight: 700; color: var(--lp-accent-ink); letter-spacing: 0.02em; }
+.lp .lp-headline-accent { background: linear-gradient(100deg, var(--lp-accent-ink), #C4573C); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lp .lp-container { max-width: var(--lp-max-width); margin-inline: auto; padding-inline: var(--lp-gutter); }
+.lp .lp-section { padding-block: var(--lp-section-y); scroll-margin-top: 6rem; }
+.lp .lp-section-head { max-width: 40rem; margin-bottom: 2.5rem; }
+.lp .lp-section-head h2 { margin-bottom: 0.75rem; }
+.lp .lp-tint { background: var(--lp-bg-tint); }
+.lp ul, .lp ol { margin: 0; padding: 0; list-style: none; }
+
+/* 試作の注記 */
+.proto-note { background: var(--lp-dark); color: var(--lp-on-dark-soft); font-size: 0.8125rem; padding: 0.5rem var(--lp-gutter); text-align: center; }
+.proto-note code { color: var(--lp-accent-soft); }
+
+/* CTA */
+.lp .lp-cta { display: inline-flex; align-items: center; justify-content: center; gap: 0.5rem; min-height: 3rem; padding: 0.875rem 1.75rem; border-radius: 9999px; font-weight: 700; letter-spacing: 0.01em; text-decoration: none; border: 0; cursor: pointer; font: inherit; font-weight: 700; transition: transform var(--lp-dur-fast) var(--lp-ease), box-shadow var(--lp-dur-fast) var(--lp-ease); }
+.lp .lp-cta--primary { background: var(--lp-ink); color: #FFFFFF; box-shadow: 0 10px 24px -12px rgba(45,45,45,.6); }
+.lp .lp-cta--secondary { background: var(--lp-surface); color: var(--lp-ink); border: 1px solid var(--lp-line); }
+.lp .lp-cta--on-dark { background: var(--lp-accent-soft); color: var(--lp-dark); }
+.lp .lp-cta--compact { min-height: 2.5rem; padding: 0.5rem 1.125rem; font-size: 0.875rem; }
+.lp .lp-cta:hover { transform: translateY(-1px); }
+.lp .lp-cta:active { transform: scale(0.98); }
+.lp :focus-visible { outline: 2px solid var(--lp-ink); outline-offset: 2px; box-shadow: 0 0 0 6px #FFFFFF; }
+
+/* ヘッダー (M-1) */
+.lp .lp-header { position: sticky; top: 0; z-index: 40; transition: background-color var(--lp-dur-fast), box-shadow var(--lp-dur-fast); }
+.lp .lp-header.is-scrolled { background: rgba(250,249,247,.85); backdrop-filter: blur(12px); box-shadow: inset 0 -1px 0 var(--lp-line); }
+.lp .lp-header-inner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; height: 4rem; }
+@media (min-width: 768px) { .lp .lp-header-inner { height: 5rem; } }
+.lp .lp-brand { display: inline-flex; align-items: center; gap: 0.5rem; font-weight: 700; text-decoration: none; }
+.lp .lp-mark { width: 32px; height: 32px; border-radius: 50%; background: linear-gradient(135deg, var(--lp-accent), var(--lp-accent-soft)); position: relative; }
+.lp .lp-mark::after { content: ""; position: absolute; left: 7px; right: 7px; bottom: 8px; height: 9px; border-radius: 0 0 9px 9px; background: #fff; }
+.lp .lp-nav { display: none; }
+@media (min-width: 768px) { .lp .lp-nav { display: block; } }
+.lp .lp-nav ul { display: flex; gap: 1.5rem; font-size: 0.875rem; font-weight: 500; }
+.lp .lp-nav a { text-decoration: none; padding: 0.75rem 0; display: inline-block; }
+.lp .lp-nav a:hover { text-decoration: underline; }
+.lp .lp-header-right { display: flex; align-items: center; gap: 0.5rem; }
+.lp .lp-login { display: none; font-size: 0.875rem; font-weight: 500; text-decoration: none; padding: 0.5rem 0.75rem; }
+@media (min-width: 640px) { .lp .lp-login { display: inline-block; } }
+
+/* ヒーロー */
+.lp .lp-hero { position: relative; padding-block: clamp(2.5rem, 8vw, 6rem) var(--lp-section-y); overflow: clip; }
+.lp .lp-blob { position: absolute; border-radius: 9999px; filter: blur(80px); opacity: .55; pointer-events: none; }
+.lp .lp-blob--1 { width: 36rem; height: 36rem; background: var(--lp-bg-tint); top: -12rem; left: -10rem; }
+.lp .lp-blob--2 { width: 28rem; height: 28rem; background: #E8EEF4; top: 20%; right: -12rem; }
+@supports (animation-timeline: scroll()) {
+  @keyframes lp-drift { to { transform: translateY(-80px); } }
+  .lp .lp-blob { animation: lp-drift linear both; animation-timeline: scroll(); }
+}
+.lp .lp-hero-grid { position: relative; display: grid; gap: 3rem; align-items: center; }
+@media (min-width: 1024px) { .lp .lp-hero-grid { grid-template-columns: 7fr 5fr; gap: 4rem; } }
+.lp .lp-hero-copy > * + * { margin-top: 1.25rem; }
+.lp .lp-hero-ctas { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+.lp .lp-assurances { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; font-size: 0.875rem; color: var(--lp-ink-soft); }
+.lp .lp-assurances li { display: inline-flex; align-items: center; gap: 0.375rem; }
+.lp .lp-check { width: 1rem; height: 1rem; color: var(--lp-green-ink); }
+@keyframes lp-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.lp .lp-hero-rise { animation: lp-rise var(--lp-dur) var(--lp-ease) both; animation-delay: calc(var(--lp-i, 0) * 60ms); }
+
+/* 端末の枠 */
+.lp .lp-phone { position: relative; aspect-ratio: 540 / 1080; width: min(100%, 300px); margin-inline: auto; border-radius: var(--lp-radius-phone); background: var(--lp-ink); padding: 0.5rem; box-shadow: var(--lp-shadow-phone); }
+.lp .lp-phone-screen { position: relative; height: 100%; overflow: hidden; border-radius: calc(var(--lp-radius-phone) - 0.5rem); background: var(--lp-surface); }
+.lp .lp-hero-slides { position: relative; height: 100%; }
+@keyframes lp-slide-1 { 0%, 31% { opacity: 1; } 38%, 93% { opacity: 0; } 100% { opacity: 1; } }
+@keyframes lp-slide-2 { 0%, 31% { opacity: 0; } 38%, 64% { opacity: 1; } 71%, 100% { opacity: 0; } }
+@keyframes lp-slide-3 { 0%, 64% { opacity: 0; } 71%, 93% { opacity: 1; } 100% { opacity: 0; } }
+.lp .lp-hero-slide { position: absolute; inset: 0; opacity: 0; animation-duration: 8.4s; animation-timing-function: ease-in-out; animation-iteration-count: infinite; }
+.lp .lp-hero-slide:nth-child(1) { animation-name: lp-slide-1; }
+.lp .lp-hero-slide:nth-child(2) { animation-name: lp-slide-2; }
+.lp .lp-hero-slide:nth-child(3) { animation-name: lp-slide-3; }
+.lp .lp-hero-slides:hover .lp-hero-slide, .lp .lp-hero-slides:focus-within .lp-hero-slide { animation-play-state: paused; }
+.lp .lp-dots { display: flex; justify-content: center; gap: 0.375rem; margin-top: 0.75rem; }
+.lp .lp-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--lp-line); animation-duration: 8.4s; animation-iteration-count: infinite; animation-timing-function: ease-in-out; }
+@keyframes lp-dot-1 { 0%, 31% { background: var(--lp-accent-ink); } 38%, 100% { background: var(--lp-line); } }
+@keyframes lp-dot-2 { 0%, 31% { background: var(--lp-line); } 38%, 64% { background: var(--lp-accent-ink); } 71%, 100% { background: var(--lp-line); } }
+@keyframes lp-dot-3 { 0%, 64% { background: var(--lp-line); } 71%, 93% { background: var(--lp-accent-ink); } 100% { background: var(--lp-line); } }
+.lp .lp-dots span:nth-child(1) { animation-name: lp-dot-1; } .lp .lp-dots span:nth-child(2) { animation-name: lp-dot-2; } .lp .lp-dots span:nth-child(3) { animation-name: lp-dot-3; }
+.lp .lp-caption { text-align: center; margin-top: 0.5rem; }
+
+/* 画面の絵 (試作用。本物は public/guide の PNG) */
+.lp .screen { position: absolute; inset: 0; display: flex; flex-direction: column; font-size: 0.6875rem; color: var(--lp-ink); }
+.lp .screen-bar { height: 2.5rem; display: flex; align-items: center; justify-content: center; font-weight: 700; border-bottom: 1px solid var(--lp-line); font-size: 0.75rem; }
+.lp .screen-body { flex: 1; padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.lp .screen-photo { flex: 1; border-radius: 0.75rem; background: linear-gradient(135deg, #F2C9B8, #E07A5F 60%, #B8502F); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; text-align: center; padding: 0.5rem; }
+.lp .screen-btn { height: 2.25rem; border-radius: 9999px; background: var(--lp-ink); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; }
+.lp .screen-row { display: flex; justify-content: space-between; align-items: center; gap: 0.5rem; }
+.lp .screen-track { flex: 1; height: 0.5rem; border-radius: 9999px; background: var(--lp-bg-tint); overflow: hidden; }
+.lp .screen-track i { display: block; height: 100%; background: var(--lp-accent); }
+.lp .screen-score { font-size: 1.75rem; font-weight: 700; color: var(--lp-green-ink); line-height: 1; }
+.lp .screen-bubble { background: var(--lp-bg-tint); border-radius: 1rem 1rem 1rem 0.25rem; padding: 0.625rem; line-height: 1.5; }
+.lp .screen-ph { margin-top: auto; font-size: 0.625rem; color: var(--lp-ink-soft); border: 1px dashed var(--lp-line); border-radius: 0.5rem; padding: 0.375rem; line-height: 1.4; }
+
+/* 置き場の枠 (写真の代わり) */
+.lp .ph { border: 1px dashed #C9BDB3; background: repeating-linear-gradient(135deg, #FFF 0 10px, #FDF0ED 10px 20px); color: var(--lp-ink-soft); font-size: 0.75rem; line-height: 1.5; display: flex; align-items: center; justify-content: center; text-align: center; padding: 0.75rem; }
+.lp .ph code { font-size: 0.6875rem; }
+
+/* 現れ方 (M-5) */
+.lp .lp-reveal { opacity: 1; transform: none; }
+.lp .lp-reveal[data-js="1"]:not(.is-in) { opacity: 0; transform: translateY(16px); }
+.lp .lp-reveal[data-js="1"] { transition: opacity var(--lp-dur) var(--lp-ease), transform var(--lp-dur) var(--lp-ease); transition-delay: var(--lp-reveal-delay, 0ms); }
+
+/* 使い方 (M-6) */
+.lp .lp-story { display: grid; gap: 2rem; }
+@media (min-width: 1024px) { .lp .lp-story { grid-template-columns: 5fr 7fr; gap: 4rem; align-items: start; } .lp .lp-story-phone { position: sticky; top: 6rem; } }
+.lp .lp-story-phone .screen { opacity: 0; transition: opacity var(--lp-dur-slow) var(--lp-ease); }
+.lp .lp-story-phone .screen.is-active { opacity: 1; }
+.lp .lp-steps { display: grid; gap: 1.5rem; }
+@media (min-width: 1024px) { .lp .lp-steps { gap: 0; } .lp .lp-step { min-height: 60vh; display: flex; align-items: center; } }
+.lp .lp-step-card { display: grid; grid-template-columns: auto 1fr; gap: 1rem; padding: 1.5rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); border: 1px solid transparent; transition: border-color var(--lp-dur) var(--lp-ease); }
+.lp .lp-step.is-active .lp-step-card { border-color: var(--lp-accent); }
+.lp .lp-step-num { width: 2.5rem; height: 2.5rem; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: var(--lp-accent-ink); background: var(--lp-bg-tint); border: 2px solid var(--lp-line); transition: background-color var(--lp-dur), color var(--lp-dur), border-color var(--lp-dur); }
+.lp .lp-step.is-active .lp-step-num { background: var(--lp-accent-ink); color: #fff; border-color: var(--lp-accent-ink); }
+.lp .lp-step-mobile-phone { display: block; margin-bottom: 1rem; }
+@media (min-width: 1024px) { .lp .lp-step-mobile-phone { display: none; } .lp .lp-story-phone-wrap { display: block; } }
+.lp .lp-story-phone-wrap { display: none; }
+
+/* デモ (M-7) */
+.lp .lp-demo-grid { display: grid; gap: 1.5rem; }
+@media (min-width: 768px) { .lp .lp-demo-grid { grid-template-columns: 1fr 1fr; } }
+.lp .lp-card { border-radius: var(--lp-radius-card); background: var(--lp-surface); padding: 1.5rem; box-shadow: var(--lp-shadow-card); }
+.lp .lp-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-top: 1rem; }
+.lp .lp-photo-btn { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 1rem; border: 2px solid var(--lp-line); padding: 0; background: none; cursor: pointer; font: inherit; color: inherit; transition: border-color var(--lp-dur-fast), transform var(--lp-dur-fast) var(--lp-ease); }
+.lp .lp-photo-btn[aria-pressed="true"] { border-color: var(--lp-accent-ink); }
+.lp .lp-photo-btn:hover { transform: translateY(-2px); }
+.lp .lp-photo-btn:disabled { cursor: default; }
+.lp .lp-photo-btn .ph { position: absolute; inset: 0; }
+.lp .lp-photo-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.5rem; font-size: 0.75rem; font-weight: 500; color: #fff; background: linear-gradient(to top, rgba(0,0,0,.6), transparent); text-align: left; }
+.lp .lp-result { min-height: 16rem; }
+.lp .lp-result-score { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-radius: 1rem; background: #EDF5ED; }
+.lp .lp-result-score strong { font-size: 2rem; color: var(--lp-green-ink); line-height: 1; }
+.lp .lp-nutri { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0.5rem; margin-top: 0.5rem; text-align: center; }
+.lp .lp-nutri div { background: var(--lp-bg-tint); border-radius: 0.75rem; padding: 0.5rem 0.25rem; }
+.lp .lp-nutri dt { font-size: 0.6875rem; color: var(--lp-ink-soft); }
+.lp .lp-nutri dd { margin: 0; font-weight: 700; font-size: 0.875rem; }
+@keyframes lp-progress { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.lp .lp-demo-track { height: 0.375rem; border-radius: 9999px; background: var(--lp-bg-tint); overflow: hidden; margin-top: 1rem; }
+.lp .lp-demo-progress { height: 100%; transform-origin: left; animation: lp-progress var(--lp-demo-ms, 1400ms) linear both; background: var(--lp-accent); }
+@keyframes lp-spin { to { transform: rotate(360deg); } }
+.lp .lp-spin { display: inline-block; width: 1.125rem; height: 1.125rem; border-radius: 50%; border: 2px solid var(--lp-bg-tint); border-top-color: var(--lp-accent-ink); animation: lp-spin 1s linear infinite; vertical-align: -0.2em; margin-right: 0.5rem; }
+.lp .lp-fade-in { animation: lp-rise var(--lp-dur) var(--lp-ease) both; }
+.lp .lp-nutri div { animation: lp-rise var(--lp-dur) var(--lp-ease) both; animation-delay: calc(var(--lp-i, 0) * 40ms); }
+
+/* 機能 (bento) */
+.lp .lp-bento { display: grid; gap: 1rem; }
+@media (min-width: 768px) { .lp .lp-bento { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { .lp .lp-bento { grid-template-columns: repeat(12, 1fr); } .lp .lp-bento .is-large { grid-column: span 6; } .lp .lp-bento .is-medium { grid-column: span 3; } .lp .lp-bento .is-small { grid-column: span 6; } }
+.lp .lp-feature { display: flex; flex-direction: column; gap: 0.75rem; padding: 1.5rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); }
+.lp .lp-feature .ph { aspect-ratio: 4 / 3; border-radius: 1rem; }
+.lp .lp-feature.is-large .ph { aspect-ratio: 16 / 10; }
+.lp .lp-icon { width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; display: grid; place-items: center; background: var(--lp-bg-tint); color: var(--lp-accent-ink); }
+.lp .lp-icon svg { width: 1.25rem; height: 1.25rem; }
+.lp .lp-feature.is-small { flex-direction: row; align-items: flex-start; }
+
+/* バッジ (M-11) */
+.lp .lp-badges { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1rem; }
+@media (min-width: 640px) { .lp .lp-badges { grid-template-columns: repeat(3, 1fr); } }
+@media (min-width: 1024px) { .lp .lp-badges { grid-template-columns: repeat(6, 1fr); } }
+.lp .lp-badge { text-align: center; padding: 1.25rem 0.75rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); }
+.lp .lp-badge-ring { width: 3.5rem; height: 3.5rem; margin: 0 auto 0.75rem; border-radius: 50%; display: grid; place-items: center; background: radial-gradient(circle at 30% 30%, #FFF3C4, var(--lp-gold)); color: var(--lp-ink); box-shadow: inset 0 0 0 3px #fff, 0 0 0 1px var(--lp-line); }
+.lp .lp-badge-ring svg { width: 1.5rem; height: 1.5rem; }
+.lp .lp-badge h3 { font-size: 0.9375rem; }
+.lp .lp-badge p { font-size: 0.75rem; color: var(--lp-ink-soft); margin-top: 0.25rem; line-height: 1.5; }
+.lp .lp-reveal.is-in .lp-badge { animation: lp-pop var(--lp-dur) var(--lp-ease) both; animation-delay: var(--lp-reveal-delay, 0ms); }
+@keyframes lp-pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* 安心 */
+.lp .lp-trust { display: grid; gap: 1rem; }
+@media (min-width: 768px) { .lp .lp-trust { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1024px) { .lp .lp-trust { grid-template-columns: repeat(4, 1fr); } }
+.lp .lp-trust-item { padding: 1.5rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); }
+.lp .lp-trust-item h3 { margin: 0.75rem 0 0.5rem; }
+.lp .lp-trust-item p { font-size: 0.9375rem; color: var(--lp-ink-soft); }
+.lp .lp-trust-item a { color: var(--lp-accent-ink); font-weight: 700; font-size: 0.875rem; display: inline-block; margin-top: 0.75rem; }
+
+/* FAQ (M-9) */
+.lp .lp-faq { max-width: 48rem; }
+.lp .lp-faq-item { border: 1px solid var(--lp-line); border-radius: 1rem; background: var(--lp-surface); margin-bottom: 0.75rem; }
+.lp .lp-faq-btn { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 1.125rem 1.25rem; background: none; border: 0; font: inherit; font-weight: 700; color: inherit; text-align: left; cursor: pointer; border-radius: 1rem; min-height: 3rem; }
+.lp .lp-faq-chevron { flex: none; width: 1.25rem; height: 1.25rem; transition: transform var(--lp-dur) var(--lp-ease); color: var(--lp-ink-soft); }
+.lp .lp-faq-chevron.is-open { transform: rotate(180deg); }
+.lp .lp-faq-panel { display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--lp-dur) var(--lp-ease); }
+.lp .lp-faq-panel.is-open { grid-template-rows: 1fr; }
+.lp .lp-faq-panel > div { overflow: hidden; }
+.lp .lp-faq-panel p { padding: 0 1.25rem 1.125rem; color: var(--lp-ink-soft); font-size: 0.9375rem; }
+.lp .lp-faq-contact { margin-top: 1.5rem; }
+.lp .lp-faq-contact a { color: var(--lp-accent-ink); font-weight: 700; }
+
+/* 最終 CTA */
+.lp .lp-final { background: var(--lp-dark); color: var(--lp-on-dark); position: relative; overflow: clip; }
+.lp .lp-final::before { content: ""; position: absolute; inset: 0; background: radial-gradient(60rem 30rem at 50% 120%, rgba(255,155,122,.25), transparent 70%); pointer-events: none; }
+.lp .lp-final .lp-container { position: relative; text-align: center; max-width: 48rem; }
+.lp .lp-final h2 { color: var(--lp-on-dark); }
+.lp .lp-final .lp-lead { color: var(--lp-on-dark-soft); margin: 1rem auto 1.75rem; }
+.lp .lp-final .lp-assurances { justify-content: center; color: var(--lp-on-dark-soft); margin-top: 1.5rem; }
+.lp .lp-final .lp-check { color: var(--lp-accent-soft); }
+.lp .lp-final .lp-disclaimer { color: var(--lp-on-dark-muted); font-size: 0.8125rem; margin-top: 2rem; }
+
+/* フッター */
+.lp .lp-footer { background: var(--lp-surface); border-top: 1px solid var(--lp-line); padding: 3rem 0 calc(3rem + 4.5rem); }
+@media (min-width: 768px) { .lp .lp-footer { padding-bottom: 3rem; } }
+.lp .lp-footer-grid { display: grid; gap: 2rem; }
+@media (min-width: 768px) { .lp .lp-footer-grid { grid-template-columns: 2fr 1fr 1fr 1fr; } }
+.lp .lp-footer h3 { font-size: 0.9375rem; margin-bottom: 0.75rem; }
+.lp .lp-footer li { font-size: 0.875rem; margin-bottom: 0.5rem; }
+.lp .lp-footer li a { text-decoration: none; color: var(--lp-ink-soft); display: inline-block; padding: 0.25rem 0; }
+.lp .lp-footer li a:hover { text-decoration: underline; }
+.lp .lp-footer-bottom { border-top: 1px solid var(--lp-line); margin-top: 2rem; padding-top: 1.5rem; font-size: 0.8125rem; color: var(--lp-ink-soft); }
+
+/* 固定 CTA (M-8) */
+.lp .lp-sticky-cta { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; padding: 0.75rem var(--lp-gutter) calc(0.75rem + env(safe-area-inset-bottom)); background: rgba(255,255,255,.96); backdrop-filter: blur(12px); box-shadow: 0 -8px 24px -12px rgba(45,45,45,.25); transform: translateY(100%); transition: transform var(--lp-dur) var(--lp-ease); text-align: center; }
+.lp .lp-sticky-cta.is-visible { transform: none; }
+.lp .lp-sticky-cta .lp-cta { width: 100%; }
+.lp .lp-sticky-cta .lp-note { margin-top: 0.375rem; font-size: 0.75rem; }
+@media (min-width: 768px) { .lp .lp-sticky-cta { display: none; } }
+
+/* 動きを減らす設定 (globals.css と同じ扱い + 画面の連続は 3 枚目だけ) */
+@media (prefers-reduced-motion: reduce) {
+  .lp *, .lp *::before, .lp *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  html { scroll-behavior: auto; }
+  .lp .lp-hero-slide { animation: none; }
+  .lp .lp-hero-slide:nth-child(3) { opacity: 1; }
+  .lp .lp-dots span { animation: none; }
+  .lp .lp-dots span:nth-child(3) { background: var(--lp-accent-ink); }
+}
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body>
+<div class="proto-note">静的な試作 — <code>docs/design/marketing/01-landing-site.md</code> v1.0。文言と色は設計書と同じ。斜線の枠は、写真と実際の画面の置き場 (何が入るかを書いてあります)。</div>
+<div class="lp">
+
+<!-- ヘッダー -->
+<header class="lp-header" id="site-header">
+  <div class="lp-container lp-header-inner">
+    <a class="lp-brand" href="#top"><span class="lp-mark" aria-hidden="true"></span><span>ほめゴハン</span></a>
+    <nav class="lp-nav" aria-label="サイトの案内">
+      <ul>
+        <li><a href="#features">機能</a></li>
+        <li><a href="#how">使い方</a></li>
+        <li><a href="#badges">バッジ</a></li>
+        <li><a href="#faq">よくある質問</a></li>
+      </ul>
+    </nav>
+    <div class="lp-header-right">
+      <a class="lp-login" href="#login">ログイン</a>
+      <a class="lp-cta lp-cta--primary lp-cta--compact" href="#signup">無料で始める</a>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ヒーロー -->
+<section class="lp-hero" id="hero" aria-labelledby="hero-title">
+  <div class="lp-blob lp-blob--1" aria-hidden="true"></div>
+  <div class="lp-blob lp-blob--2" aria-hidden="true"></div>
+  <div class="lp-container lp-hero-grid">
+    <div class="lp-hero-copy">
+      <p class="lp-eyebrow lp-hero-rise" style="--lp-i:0">褒めて伸ばす、AI 食事記録アプリ</p>
+      <h1 id="hero-title" class="lp-hero-rise" style="--lp-i:1">食べることを、<br><span class="lp-headline-accent">もっと誇らしく。</span></h1>
+      <p class="lp-lead lp-hero-rise" style="--lp-i:2">写真を撮るだけ。AI があなたの食事を見て、良いところを見つけて褒めます。ダメ出しはしません。だから、続きます。</p>
+      <div class="lp-hero-ctas lp-hero-rise" style="--lp-i:3">
+        <a class="lp-cta lp-cta--primary" href="#signup">無料で始める</a>
+        <a class="lp-cta lp-cta--secondary" href="#demo">デモを試す</a>
+      </div>
+      <ul class="lp-assurances lp-hero-rise" style="--lp-i:4">
+        <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>いまは無料で使えます</li>
+        <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>クレジットカード不要</li>
+        <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>いつでも退会できます</li>
+      </ul>
+    </div>
+    <div>
+      <div class="lp-phone">
+        <div class="lp-phone-screen">
+          <div class="lp-hero-slides">
+            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">食事を記録</div><div class="screen-body"><div class="screen-photo">食事の写真</div><div class="screen-btn">この写真で記録する</div><div class="screen-ph">実際の画面: <code>/guide/camera.png</code><br>(食事の写真を選んだ撮影の画面)</div></div></div></div>
+            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span><span>380 kcal</span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span><span>12 g</span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:95%;background:var(--lp-green)"></i></span><span>95</span></div><div class="screen-row"><span class="screen-score">92</span><span>バランスの良い一食です</span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code><br>(食事の写真の解析結果の画面)</div></div></div></div>
+            <div class="lp-hero-slide"><div class="screen"><div class="screen-bar">AI からのコメント</div><div class="screen-body"><div class="screen-bubble">彩りがきれいなサラダボウルですね。葉野菜にアボカドとトマトが加わって、ひと皿で何種類もの野菜がとれています。</div><div class="screen-bubble" style="background:#EDF5ED">主食・主菜・副菜のそろえ方が上手です。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code><br>(解析結果の記録コメント)</div></div></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="lp-dots" aria-hidden="true"><span></span><span></span><span></span></div>
+      <p class="lp-note lp-caption">実際のアプリの画面です</p>
+    </div>
+  </div>
+  <span id="hero-end" aria-hidden="true"></span>
+</section>
+
+<!-- 使い方 -->
+<section class="lp-section" id="how" aria-labelledby="how-title">
+  <div class="lp-container">
+    <div class="lp-section-head lp-reveal">
+      <h2 id="how-title">使い方は、3 つだけ。</h2>
+      <p class="lp-lead">難しい設定はありません。今日から始められます。</p>
+    </div>
+    <div class="lp-story">
+      <div class="lp-story-phone-wrap">
+        <div class="lp-story-phone">
+          <div class="lp-phone"><div class="lp-phone-screen" id="story-screens">
+            <div class="screen is-active"><div class="screen-bar">食事を記録</div><div class="screen-body"><div class="screen-photo">食事の写真</div><div class="screen-btn">この写真で記録する</div><div class="screen-ph">実際の画面: <code>/guide/camera.png</code></div></div></div>
+            <div class="screen"><div class="screen-bar">AI の解析結果</div><div class="screen-body"><div class="screen-row"><span>カロリー</span><span class="screen-track"><i style="width:62%"></i></span><span>380 kcal</span></div><div class="screen-row"><span>タンパク質</span><span class="screen-track"><i style="width:40%"></i></span><span>12 g</span></div><div class="screen-row"><span>野菜</span><span class="screen-track"><i style="width:95%;background:var(--lp-green)"></i></span><span>95</span></div><div class="screen-ph">実際の画面: <code>/guide/analyze.png</code></div></div></div>
+            <div class="screen"><div class="screen-bar">AI からのコメント</div><div class="screen-body"><div class="screen-bubble">彩りがきれいなサラダボウルですね。</div><div class="screen-ph">実際の画面: <code>/guide/comment.png</code></div></div></div>
+          </div></div>
+        </div>
+      </div>
+      <ol class="lp-steps" id="story-steps">
+        <li class="lp-step is-active" data-step="0">
+          <div style="width:100%">
+            <div class="lp-step-mobile-phone"><div class="ph" style="aspect-ratio:4/3;border-radius:1rem">実際の画面: <code>/guide/camera.png</code>（食事の写真を選んだ撮影の画面）</div></div>
+            <div class="lp-step-card lp-reveal"><span class="lp-step-num" aria-hidden="true">1</span><div><h3>写真を撮る</h3><p class="lp-note" style="margin-top:.5rem;font-size:1rem">食事の写真を撮るか、選ぶだけ。カロリーの入力も、食材の選択もいりません。</p></div></div>
+          </div>
+        </li>
+        <li class="lp-step" data-step="1">
+          <div style="width:100%">
+            <div class="lp-step-mobile-phone"><div class="ph" style="aspect-ratio:4/3;border-radius:1rem">実際の画面: <code>/guide/analyze.png</code>（食事の写真の解析結果の画面）</div></div>
+            <div class="lp-step-card lp-reveal"><span class="lp-step-num" aria-hidden="true">2</span><div><h3>AI が見る</h3><p class="lp-note" style="margin-top:.5rem;font-size:1rem">AI が料理を認識して、カロリー・タンパク質・野菜のバランスを推定します。数値はあくまで推定です。</p></div></div>
+          </div>
+        </li>
+        <li class="lp-step" data-step="2">
+          <div style="width:100%">
+            <div class="lp-step-mobile-phone"><div class="ph" style="aspect-ratio:4/3;border-radius:1rem">実際の画面: <code>/guide/comment.png</code>（解析結果の記録コメント）</div></div>
+            <div class="lp-step-card lp-reveal"><span class="lp-step-num" aria-hidden="true">3</span><div><h3>褒められる</h3><p class="lp-note" style="margin-top:.5rem;font-size:1rem">「彩りがきれい」「主食・主菜・副菜がそろっている」。AI が良いところを見つけて、言葉にします。</p></div></div>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- デモ -->
+<section class="lp-section lp-tint" id="demo" aria-labelledby="demo-title">
+  <div class="lp-container">
+    <div class="lp-section-head lp-reveal">
+      <p class="lp-eyebrow">試してみる</p>
+      <h2 id="demo-title">褒められるって、こういうこと。</h2>
+      <p class="lp-lead">写真を 1 枚選ぶと、AI のコメントのサンプルが出ます。</p>
+    </div>
+    <div class="lp-demo-grid lp-reveal">
+      <div class="lp-card">
+        <h3>食事の写真を選ぶ</h3>
+        <div class="lp-picker" role="group" aria-label="食事の写真を選ぶ" id="demo-picker">
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salad-bowl"><span class="ph">写真: <code>/marketing/photos/salad-bowl.webp</code><br>(野菜とアボカドとトマトのサラダボウル)</span><span class="lp-photo-name">彩り野菜のサラダボウル</span></button>
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="grilled-fish-set"><span class="ph">写真: <code>/marketing/photos/grilled-fish-set.webp</code><br>(焼き魚とご飯とみそ汁の定食)</span><span class="lp-photo-name">焼き魚の定食</span></button>
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="tomato-pasta"><span class="ph">写真: <code>/marketing/photos/tomato-pasta.webp</code><br>(トマトソースのパスタ)</span><span class="lp-photo-name">トマトのパスタ</span></button>
+        </div>
+        <p class="lp-note" style="margin-top:1rem">表示はサンプルです。実際の結果は写真によって変わり、数値は推定です。</p>
+      </div>
+      <div class="lp-card lp-result" role="status" aria-live="polite" id="demo-result">
+        <p class="lp-note">写真を選ぶと、ここにコメントが出ます。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 機能 -->
+<section class="lp-section" id="features" aria-labelledby="features-title">
+  <div class="lp-container">
+    <div class="lp-section-head lp-reveal">
+      <h2 id="features-title">写真の記録だけじゃない。</h2>
+      <p class="lp-lead">献立から買い物、体重や健康診断の記録まで。ひとつのアプリでそろいます。</p>
+    </div>
+    <div class="lp-bento lp-reveal" data-stagger>
+      <article class="lp-feature is-large"><div class="ph">実際の画面: <code>/guide/analyze.png</code>（食事の写真の解析結果の画面）</div><h3>写真で記録</h3><p class="lp-note" style="font-size:.9375rem">撮るだけで、AI が料理を認識して栄養を推定します。面倒な入力はいりません。</p></article>
+      <article class="lp-feature is-large"><div class="ph">実際の画面: <code>/guide/comment.png</code>（解析結果の記録コメント）</div><h3>AI が褒める</h3><p class="lp-note" style="font-size:.9375rem">ダメ出しではなく、良いところを言葉にします。続けるための、いちばんの仕掛けです。</p></article>
+      <article class="lp-feature is-medium"><div class="ph">実際の画面: <code>/guide/menu-result.png</code>（1 週間分の献立が入った献立表）</div><h3>1週間の献立を AI が提案</h3><p class="lp-note" style="font-size:.9375rem">「今日なに作ろう」を、AI 献立アシスタントが引き受けます。冷蔵庫優先・時短中心・和食多めなどの条件も選べます。</p></article>
+      <article class="lp-feature is-medium"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="21" r="1"/><circle cx="19" cy="21" r="1"/><path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12"/></svg></div><h3>買い物リスト</h3><p class="lp-note" style="font-size:.9375rem">献立から買い物リストを作ります。スーパーで迷いません。</p></article>
+      <article class="lp-feature is-medium"><div class="ph">実際の画面: <code>/guide/trend.png</code>（体重の推移のグラフ）</div><h3>体重と健康の記録</h3><p class="lp-note" style="font-size:.9375rem">体重は体重計の写真からも記録できます。推移はグラフで。健康診断の結果も写真から取り込めます。</p></article>
+      <article class="lp-feature is-medium"><div class="ph">実際の画面: <code>/guide/badge-collection.png</code>（トロフィールームのバッジの一覧）</div><h3>バッジを集める</h3><p class="lp-note" style="font-size:.9375rem">記録を続けると、バッジが増えていきます。</p></article>
+      <article class="lp-feature is-small"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 10h14M9 6v2M9 14v3"/></svg></div><div><h3>冷蔵庫の写真から食材を読み取り</h3><p class="lp-note" style="font-size:.9375rem;margin-top:.25rem">冷蔵庫を撮ると、食材を読み取って献立の材料にします。</p></div></article>
+      <article class="lp-feature is-small"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></div><div><h3>家族で使える</h3><p class="lp-note" style="font-size:.9375rem;margin-top:.25rem">家族を招待して、献立を一緒に見たり、記録を共有したりできます。</p></div></article>
+    </div>
+  </div>
+</section>
+
+<!-- バッジ -->
+<section class="lp-section lp-tint" id="badges" aria-labelledby="badges-title">
+  <div class="lp-container">
+    <div class="lp-section-head lp-reveal">
+      <h2 id="badges-title">集めたくなる、あなたの勲章。</h2>
+      <p class="lp-lead">記録を続けるほど、バッジが増えていきます。</p>
+    </div>
+    <ul class="lp-badges lp-reveal" data-stagger>
+      <li class="lp-badge" style="--lp-reveal-delay:0ms"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/></svg></div><h3>はじめの一歩</h3><p>はじめて食事を記録しました。新しい習慣の第一歩です！</p></li>
+      <li class="lp-badge" style="--lp-reveal-delay:40ms"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/></svg></div><h3>三日坊主卒業</h3><p>3日連続で記録しました。三日坊主は卒業です。</p></li>
+      <li class="lp-badge" style="--lp-reveal-delay:80ms"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6M18 9h1.5a2.5 2.5 0 0 0 0-5H18M4 22h16M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg></div><h3>週間チャンピオン</h3><p>1週間連続で記録しました。素晴らしい継続力です！</p></li>
+      <li class="lp-badge" style="--lp-reveal-delay:120ms"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg></div><h3>カメラマン</h3><p>写真を10枚撮影しました。食卓のアルバムができてきました。</p></li>
+      <li class="lp-badge" style="--lp-reveal-delay:160ms"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2v4M16 2v4"/><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M3 10h18M9 16l2 2 4-4"/></svg></div><h3>計画上手</h3><p>1週間の献立を作成しました。計画的な食生活の始まりです。</p></li>
+      <li class="lp-badge" style="--lp-reveal-delay:200ms"><div class="lp-badge-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10v6M2 10l10-5 10 5-10 5z"/><path d="M6 12v5c3 3 9 3 12 0v-5"/></svg></div><h3>使い方マスター</h3><p>はじめての使い方ガイドを完走しました。</p></li>
+    </ul>
+  </div>
+</section>
+
+<!-- 安心 -->
+<section class="lp-section" id="trust" aria-labelledby="trust-title">
+  <div class="lp-container">
+    <div class="lp-section-head lp-reveal"><h2 id="trust-title">正直に、お伝えします。</h2></div>
+    <div class="lp-trust lp-reveal" data-stagger>
+      <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>いまは無料で使えます</h3><p>現在ご提供している機能は、すべて無料です。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。</p></div>
+      <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></div><h3>データの取り扱い</h3><p>写真や記録の保存と第三者への提供については、プライバシーポリシーをご確認ください。</p><a href="#privacy">プライバシーポリシーを読む</a></div>
+      <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2v2M5 2v2M5 3H4a2 2 0 0 0-2 2v4a6 6 0 0 0 12 0V5a2 2 0 0 0-2-2h-1"/><path d="M8 15a6 6 0 0 0 12 0v-3"/><circle cx="20" cy="10" r="2"/></svg></div><h3>AI の分析は推定です</h3><p>料理や撮影の条件によって、実際の値と異なることがあります。医療目的での使用はお控えください。</p></div>
+      <div class="lp-trust-item"><div class="lp-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M10 12a1 1 0 0 0-1 1v1a1 1 0 0 1-1 1 1 1 0 0 1 1 1v1a1 1 0 0 0 1 1M14 18a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1 1 1 0 0 1-1-1v-1a1 1 0 0 0-1-1"/></svg></div><h3>退会と書き出し</h3><p>設定からいつでも退会できます。記録したデータは JSON 形式で書き出せます。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- FAQ -->
+<section class="lp-section lp-tint" id="faq" aria-labelledby="faq-title">
+  <div class="lp-container">
+    <div class="lp-section-head lp-reveal">
+      <h2 id="faq-title">よくある質問</h2>
+      <p class="lp-lead">気になることがあれば、ここで。</p>
+    </div>
+    <div class="lp-faq lp-reveal" id="faq-list"></div>
+    <p class="lp-note lp-faq-contact lp-reveal">ほかに質問がある場合は <a href="#contact">お問い合わせフォームへ</a></p>
+  </div>
+</section>
+
+<!-- 最終 CTA -->
+<section class="lp-section lp-final" id="cta" aria-labelledby="cta-title">
+  <div class="lp-container lp-reveal">
+    <h2 id="cta-title">明日の食事が、楽しみになる。</h2>
+    <p class="lp-lead">まずは 3 日、写真を撮ってみてください。褒められる食事の記録が、続く記録になります。</p>
+    <a class="lp-cta lp-cta--on-dark" href="#signup">無料で始める</a>
+    <ul class="lp-assurances">
+      <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>いまは無料で使えます</li>
+      <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>クレジットカード不要</li>
+      <li><svg class="lp-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>いつでも退会できます</li>
+    </ul>
+    <p class="lp-disclaimer">AI の分析は推定値です。医療上の判断には使わず、気になることは医師にご相談ください。</p>
+  </div>
+</section>
+
+</main>
+
+<!-- フッター -->
+<footer class="lp-footer">
+  <div class="lp-container">
+    <div class="lp-footer-grid">
+      <div>
+        <a class="lp-brand" href="#top"><span class="lp-mark" aria-hidden="true"></span><span>ほめゴハン</span></a>
+        <p class="lp-note" style="margin-top:.75rem;max-width:22rem">写真を撮るだけで、AI が食事の良いところを見つけて褒める、食事記録アプリ。</p>
+      </div>
+      <div><h3>サービス</h3><ul><li><a href="#about">サービスについて</a></li><li><a href="#signup">新規登録</a></li><li><a href="#login">ログイン</a></li><li><a href="#pricing">料金プラン</a></li></ul></div>
+      <div><h3>サポート</h3><ul><li><a href="#guide">使い方ガイド</a></li><li><a href="#contact">お問い合わせ</a></li><li><a href="#faq">よくある質問</a></li><li><a href="#news">お知らせ</a></li></ul></div>
+      <div><h3>法的情報</h3><ul><li><a href="#terms">利用規約</a></li><li><a href="#privacy">プライバシーポリシー</a></li><li><a href="#legal">特定商取引法に基づく表記</a></li><li><a href="#company">運営会社</a></li></ul></div>
+    </div>
+    <div class="lp-footer-bottom">© 2026 ほめゴハン</div>
+  </div>
+</footer>
+
+<!-- 固定 CTA (スマートフォン) -->
+<div class="lp-sticky-cta" id="sticky-cta" aria-hidden="true" inert>
+  <a class="lp-cta lp-cta--primary" href="#signup">無料で始める</a>
+  <p class="lp-note">クレジットカード不要</p>
+</div>
+
+</div>
+<script>
+(function () {
+  'use strict';
+  // ── 定数 (設計書 §9.2 と同じ値) ──
+  var DEMO_ANALYZING_MS = 1400;
+  var DEMO_ANALYZING_MS_REDUCED = 0;
+  var HEADER_SCROLLED_PX = 24;
+  var REVEAL_THRESHOLD = 0.2;
+  var REVEAL_STAGGER_MS = 40;
+  var REVEAL_STAGGER_MAX = 6;
+  var STORY_ROOT_MARGIN = '-40% 0px -40% 0px';
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+  // ── 文言 (設計書 §4.4・§4.6 と同じ) ──
+  var SAMPLES = {
+    'salad-bowl': { name: '彩り野菜のサラダボウル', score: 92, comment: '彩りがきれいなサラダボウルですね。葉野菜にアボカドとトマトが加わって、ひと皿で何種類もの野菜がとれています。', n: [380, 12, 22, 28, 95] },
+    'grilled-fish-set': { name: '焼き魚の定食', score: 90, comment: '焼き魚にご飯とみそ汁、小鉢まで。主食・主菜・副菜がそろった、お手本のような一食です。', n: [520, 28, 18, 45, 80] },
+    'tomato-pasta': { name: 'トマトのパスタ', score: 84, comment: 'トマトソースとオリーブオイルの組み合わせがいいですね。サラダを添えると、もっと褒めどころが増えますよ。', n: [620, 18, 24, 72, 60] }
+  };
+  var NUTRI = [['カロリー', ' kcal'], ['タンパク質', ' g'], ['脂質', ' g'], ['炭水化物', ' g'], ['野菜スコア', '']];
+  var FAQS = [
+    ['本当に無料で使えますか？', 'はい。現在ご提供している機能は、写真の記録、AI のコメント、献立の提案、健康の記録など、すべて無料でお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。'],
+    ['どんな写真を撮ればいいですか？', '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で撮ると、料理を認識しやすくなります。'],
+    ['データは安全ですか？', 'データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。'],
+    ['家族で使えますか？', 'はい。家族を招待して、献立を一緒に見たり、記録を共有したりできます。'],
+    ['AI の分析は正確ですか？', 'AI による分析はあくまで推定値で、料理や撮影条件によっては実際の値と異なる場合があります。医療目的での使用はお控えください。日々の食生活の参考としてお使いください。'],
+    ['退会やデータの削除はできますか？', 'はい。設定からいつでも退会できます。記録したデータは、退会の前に JSON 形式で書き出せます。']
+  ];
+
+  // ── ヘッダー (M-1): passive + rAF ──
+  var header = document.getElementById('site-header');
+  var frame = 0;
+  function updateHeader() { frame = 0; header.classList.toggle('is-scrolled', window.scrollY > HEADER_SCROLLED_PX); }
+  window.addEventListener('scroll', function () { if (!frame) frame = requestAnimationFrame(updateHeader); }, { passive: true });
+  updateHeader();
+
+  // ── 現れ方 (M-5): data-js を付けてから隠し、IO で is-in ──
+  var reveals = document.querySelectorAll('.lp-reveal');
+  if ('IntersectionObserver' in window) {
+    reveals.forEach(function (el) { el.setAttribute('data-js', '1'); });
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('is-in'); io.unobserve(e.target); } });
+    }, { threshold: REVEAL_THRESHOLD });
+    reveals.forEach(function (el) { io.observe(el); });
+  }
+  document.querySelectorAll('[data-stagger]').forEach(function (grid) {
+    Array.prototype.forEach.call(grid.children, function (child, i) {
+      child.style.setProperty('--lp-reveal-delay', Math.min(i, REVEAL_STAGGER_MAX) * REVEAL_STAGGER_MS + 'ms');
+    });
+  });
+
+  // ── 使い方 (M-6): 中央の帯に入った手順を active に ──
+  var steps = document.querySelectorAll('#story-steps .lp-step');
+  var screens = document.querySelectorAll('#story-screens .screen');
+  function activate(i) {
+    steps.forEach(function (s, k) { s.classList.toggle('is-active', k === i); });
+    screens.forEach(function (s, k) { s.classList.toggle('is-active', k === i); });
+  }
+  if ('IntersectionObserver' in window) {
+    var storyIo = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { if (e.isIntersecting) activate(Number(e.target.getAttribute('data-step'))); });
+    }, { rootMargin: STORY_ROOT_MARGIN, threshold: 0 });
+    steps.forEach(function (s) { storyIo.observe(s); });
+  }
+
+  // ── デモ (M-7): §9.3 の状態機械 ──
+  var state = { phase: 'idle' };
+  var timer = null;
+  function reducer(s, ev) {
+    switch (ev.type) {
+      case 'select': if (s.phase === 'analyzing') return s; return { phase: 'analyzing', sampleId: ev.sampleId };
+      case 'finish': if (s.phase !== 'analyzing' || s.sampleId !== ev.sampleId) return s; return { phase: 'result', sampleId: s.sampleId };
+      case 'reset': return { phase: 'idle' };
+    }
+    return s;
+  }
+  var picker = document.getElementById('demo-picker');
+  var result = document.getElementById('demo-result');
+  function render() {
+    var selected = state.phase === 'idle' ? null : state.sampleId;
+    picker.querySelectorAll('.lp-photo-btn').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.getAttribute('data-sample') === selected));
+      b.disabled = state.phase === 'analyzing';
+    });
+    if (state.phase === 'idle') {
+      result.innerHTML = '<p class="lp-note">写真を選ぶと、ここにコメントが出ます。</p>';
+    } else if (state.phase === 'analyzing') {
+      var ms = reduced.matches ? DEMO_ANALYZING_MS_REDUCED : DEMO_ANALYZING_MS;
+      result.innerHTML = '<div class="lp-fade-in"><p style="font-weight:700"><span class="lp-spin" aria-hidden="true"></span>AI が見ています…</p><p class="lp-note">料理を認識して、栄養を推定しています</p><div class="lp-demo-track"><div class="lp-demo-progress" style="--lp-demo-ms:' + ms + 'ms"></div></div></div>';
+    } else {
+      var s = SAMPLES[state.sampleId];
+      var nutri = s.n.map(function (v, i) { return '<div style="--lp-i:' + i + '"><dt>' + NUTRI[i][0] + '</dt><dd>' + v + NUTRI[i][1] + '</dd></div>'; }).join('');
+      result.innerHTML = '<div class="lp-fade-in"><div class="lp-result-score"><strong>' + s.score + '</strong><span style="font-weight:700">' + s.name + '</span></div><h3 style="margin-top:1rem">AI からのコメント</h3><p style="margin-top:.5rem">' + s.comment + '</p><h3 style="margin-top:1rem">推定の栄養</h3><dl class="lp-nutri">' + nutri + '</dl><a class="lp-cta lp-cta--primary" href="#signup" style="margin-top:1.5rem">自分の食事で試す</a></div>';
+    }
+  }
+  picker.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.lp-photo-btn');
+    if (!btn || state.phase === 'analyzing') return;
+    var id = btn.getAttribute('data-sample');
+    state = reducer(state, { type: 'select', sampleId: id });
+    render();
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(function () { state = reducer(state, { type: 'finish', sampleId: id }); render(); }, reduced.matches ? DEMO_ANALYZING_MS_REDUCED : DEMO_ANALYZING_MS);
+  });
+  render();
+
+  // ── FAQ (M-9) ──
+  var faqList = document.getElementById('faq-list');
+  var openIndex = null;
+  faqList.innerHTML = FAQS.map(function (f, i) {
+    return '<div class="lp-faq-item"><h3><button type="button" class="lp-faq-btn" id="faq-button-' + i + '" aria-expanded="false" aria-controls="faq-panel-' + i + '" data-i="' + i + '"><span>' + f[0] + '</span><svg class="lp-faq-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button></h3><div class="lp-faq-panel" id="faq-panel-' + i + '" role="region" aria-labelledby="faq-button-' + i + '"><div inert><p>' + f[1] + '</p></div></div></div>';
+  }).join('');
+  faqList.addEventListener('click', function (ev) {
+    var btn = ev.target.closest('.lp-faq-btn');
+    if (!btn) return;
+    var i = Number(btn.getAttribute('data-i'));
+    openIndex = openIndex === i ? null : i;
+    faqList.querySelectorAll('.lp-faq-btn').forEach(function (b, k) {
+      var open = k === openIndex;
+      b.setAttribute('aria-expanded', String(open));
+      b.querySelector('.lp-faq-chevron').classList.toggle('is-open', open);
+      var panel = document.getElementById('faq-panel-' + k);
+      panel.classList.toggle('is-open', open);
+      if (open) panel.firstElementChild.removeAttribute('inert'); else panel.firstElementChild.setAttribute('inert', '');
+    });
+  });
+
+  // ── 固定 CTA (M-8): ヒーローの番兵が画面から出たら出す ──
+  var sticky = document.getElementById('sticky-cta');
+  var heroEnd = document.getElementById('hero-end');
+  if ('IntersectionObserver' in window) {
+    var ctaIo = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var visible = !e.isIntersecting && e.boundingClientRect.top < 0;
+        sticky.classList.toggle('is-visible', visible);
+        sticky.setAttribute('aria-hidden', String(!visible));
+        if (visible) sticky.removeAttribute('inert'); else sticky.setAttribute('inert', '');
+      });
+    }, { threshold: 0 });
+    ctaIo.observe(heroEnd);
+  }
+})();
+</script>
+</body>
+</html>
