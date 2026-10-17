@@ -128,7 +128,7 @@ async function screenApiGetsFrozen403() {
 beforeEach(() => {
   jest.clearAllMocks();
   // 前のテストで使い切らなかった mockResolvedValueOnce などを残さない
-  mockProbe.mockDispatch();
+  mockProbe.mockReset();
   resetAccountFrozenListenersForTests();
   mockPathname = '/home';
   mockCurrentRoute = { name: 'home' };
