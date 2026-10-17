@@ -18,8 +18,8 @@ import { useProfile } from "../providers/ProfileProvider";
  *   - サインイン中で、前面が凍結の画面で frozen でない (clear / unknown。凍結が解けた) →
  *     プロフィールを読み直し、入口へ (router.replace('/'))。入口が profile から初期設定かホームへ振り分け直す。
  *     凍結の画面の下に画面がある (deep link で上に開かれた) なら、その画面へ戻る (router.back)
- *   - session が無い: 何もしない。凍結の画面の WebView からログアウト・退会したときは、凍結の画面が入口 (ウェルカム) へ移す
- *     (app/frozen.tsx の afterSignOut)
+ *   - session が無い: 何もしない。凍結の画面の WebView からログアウト・退会したときは、WebViewScreen の既定どおり入口 (ウェルカム) へ移る
+ *     (app/frozen.tsx は afterSignOut を渡さない)
  * 前面は pathname でなく、effect の時点の今のナビゲーションの state (navigationRef.getCurrentRoute()) で見る (LegalConsentGate と同じ理由)。
  * ナビゲーターの準備 (useRootNavigationState の key) が済むまでは何もしない。
  * router.replace / router.back は expo-router の routingQueue に積まれ、次の描画の後に流れる。積んだ操作が流れて前面が凍結の画面で

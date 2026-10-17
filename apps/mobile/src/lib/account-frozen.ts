@@ -2,8 +2,9 @@
  * アカウントの凍結 (BAN) (#1861): アプリ側の共通の部品 (純粋な関数と定数だけ。RN の API は使わない)。
  *
  * サーバー (lib/supabase/middleware.ts の /api の分岐) は、凍結中の利用者の /api を、凍結中も呼べる API
- * (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS = 退会・書き出し・有料プランの解約と、通知のトークンの claim・
- * ネイティブ認証ブリッジのコード) を除いて 403 AUTH_ACCOUNT_FROZEN で止める。本文と状態は packages/shared の account-frozen.ts。
+ * (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS = 退会・書き出し・有料プランの解約の 5 本と、それとは別に判定する
+ * 通知のトークンの claim (src/lib/push-tokens.ts の isPushTokenClaimApiPath)・ネイティブ認証ブリッジのコード
+ * (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)) を除いて 403 AUTH_ACCOUNT_FROZEN で止める。本文と状態は packages/shared の account-frozen.ts。
  * このファイルは、
  *   - その 403 を見分け、固定の文の例外 (AccountFrozenError) に置き換える。getApi() (src/lib/api.ts の withFriendlyErrors) と
  *     生の fetch (src/lib/failed-response.ts の errorOfFailedResponse) の両方がここを通る
@@ -42,7 +43,8 @@ export const FROZEN_SCREEN_ROUTE_NAME = "frozen";
  * 凍結しているかを確かめる API。凍結中は middleware が 403 AUTH_ACCOUNT_FROZEN で止める (凍結中も呼べる API の一覧に無い) ので、
  * 応答が 2xx なら凍結していない。規約の同意の状況を返す既存の API で、本文は使わない (サインイン中の利用者なら誰でも 200。
  * 規約の同意ゲートの対象外なので、未同意でも 403 LEGAL_CONSENT_REQUIRED にならない)。
- * 凍結中も呼べる API の一覧に入っていないことは tests/mobile-account-frozen-contract.test.ts が見張る
+ * 凍結中も通す API (FROZEN_ALLOWED_API_PATHS・claim・ブリッジのコード) のどれにも入っていないこと (入ると判定が常に clear になり、
+ * 凍結の画面へ移らなくなる) は tests/mobile-account-frozen-contract.test.ts が見張る
  */
 export const FROZEN_PROBE_API_PATH = LEGAL_CONSENT_STATUS_API_PATH;
 
@@ -152,16 +154,17 @@ export function accountFrozenStateOf(userId: string | null, entry: AccountFrozen
  *   ok      2xx → clear (凍結が解けた後の取り直しでも、ここで clear に戻る)
  *   frozen  403 AUTH_ACCOUNT_FROZEN → frozen
  *   failed  それ以外の失敗 → 今の利用者の記録があれば保ち (frozen を保つ)、無ければ (loading だった) unknown
+ * 今の利用者の記録が同じ状態なら、その記録をそのまま返す (知らせが続けて届いても、描画を増やさない)
  */
 export function accountFrozenEntryAfterProbe(
   prev: AccountFrozenEntry | null,
   userId: string,
   result: "ok" | "frozen" | "failed",
 ): AccountFrozenEntry {
-  if (result === "ok") return { userId, state: "clear" };
-  if (result === "frozen") return { userId, state: "frozen" };
-  if (prev !== null && prev.userId === userId) return prev;
-  return { userId, state: "unknown" };
+  const current = prev !== null && prev.userId === userId ? prev : null;
+  if (result === "failed") return current ?? { userId, state: "unknown" };
+  const state = result === "ok" ? "clear" : "frozen";
+  return current !== null && current.state === state ? current : { userId, state };
 }
 
 /**

@@ -186,7 +186,8 @@ export async function updateSession(request: NextRequest) {
     // (meal-plans/pantry/recipes/health 等)、frozen_at を一切検査しないまま
     // 素通りしていた。ページナビゲーションと同様にここで凍結判定を行い、
     // 凍結中のアカウントは全 API 呼び出しを 403 で拒否する
-    // (#1445: 凍結中も呼べる API (FROZEN_ALLOWED_API_PATHS。退会・書き出しと、有料プランの解約の 3 本。billing/01 §9.8) は除く。一覧は src/lib/auth/frozen.ts)。
+    // (#1445: 凍結中も呼べる API (FROZEN_ALLOWED_API_PATHS。退会・書き出しと、有料プランの解約の 3 本。billing/01 §9.8) は除く。一覧は src/lib/auth/frozen.ts。
+    //  ほかに、通知のトークンの claim (#1636) とネイティブ認証ブリッジのコード (#1861) も除く。理由は下の凍結の分岐)。
     // 認証・プロフィール取得自体に失敗した場合は各 route 側のチェックに委ねる
     // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
