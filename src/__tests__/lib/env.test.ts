@@ -453,6 +453,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       // #1493 ブラウザ・端末から届いた error の急増の通知のしきい値 (サーバーとは別に数える)
       ['OPS_ALERT_CLIENT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
       ['OPS_ALERT_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
+      // #1560 cron の共有シークレットの入れ替えの途中の通知の抑止。不正な値の扱い (既定値に戻して warn) を cron の route 1 か所に置く
+      ['OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
       // #1129 宛先の読み口は DB バックアップの鮮度の cron (backup-freshness) と共有する
       ['OPS_ALERT_EMAIL', 'src/lib/ops-alerts/recipient.ts'],
       ['OPS_ALERT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
@@ -498,6 +500,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD');
       // @ts-expect-error OPS_ALERT_PG_CRON_STALL_MINUTES も同じ (#1125 の B)
       getOptionalEnv('OPS_ALERT_PG_CRON_STALL_MINUTES');
+      // @ts-expect-error OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES も同じ (#1560)
+      getOptionalEnv('OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES');
       // @ts-expect-error AUTH_LOGIN_FAILURE_RESET_MINUTES の値を読むのはログインの route (src/app/api/auth/login/route.ts) だけ
       getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
       // @ts-expect-error AUTH_LOGIN_ALERT の値を読むのは cron の route (src/app/api/cron/login-alerts/route.ts) だけ (#1190)
