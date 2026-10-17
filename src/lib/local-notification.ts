@@ -10,11 +10,14 @@
  *   showLocalNotification({ title: '献立生成完了', body: '今日の献立が揃いました！' });
  */
 
+import { APP_ICON_192_PATH } from '@/lib/brand-asset-paths';
+
 /**
  * 通知のアイコンの既定値。src/app/icon-192.png/route.ts が返す PNG (#1845。以前は存在しない /icon-192x192.png を指していた)。
+ * パスは src/lib/brand-asset-paths.ts の APP_ICON_192_PATH (#1853。ハンズオンツアーの画面と同じ定数)。
  * 指す先が実在することは tests/metadata-public-paths-1845.test.ts が検査する。
  */
-export const DEFAULT_NOTIFICATION_ICON = '/icon-192.png';
+export const DEFAULT_NOTIFICATION_ICON = APP_ICON_192_PATH;
 
 /** 献立の生成が終わった通知を、自動で閉じるまでの時間 (ミリ秒) */
 const MENU_GENERATED_AUTO_CLOSE_MS = 8_000;

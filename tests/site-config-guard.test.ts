@@ -347,8 +347,8 @@ const staleHits = extraFiles.flatMap((file) => findLines(read(file), STALE_DOMAI
 const siteUrlHits = siteUrlFiles.flatMap((file) => findLines(read(file), SITE_URL_ON_COM).map((hit) => ({ file, ...hit })));
 
 /** #1573 で直したファイル。見張りの中にあることを確かめる */
+// public/ の OGP の画像の SVG も #1573 で直したが、どこからも参照されなくなったので #1853 で消した (一覧から外した)
 const FIXED_IN_1573 = [
-  'public/og-image.svg',
   'supabase/functions/_shared/cors.ts',
   'supabase/functions/README.md',
   'scripts/smoke.mjs',
