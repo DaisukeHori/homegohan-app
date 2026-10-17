@@ -1,21 +1,22 @@
 /**
  * account-credentials.test.ts
- * apps/mobile/src/lib/account-credentials.ts のテスト (#1187)
+ * apps/mobile/src/lib/account-credentials.ts のテスト (#1187・#1720 段 C)
  *
  * ログイン中のパスワード変更・メールアドレス変更。Web (src/app/(main)/settings/account/page.tsx) と同じ流れであること:
- *   パスワード: 現在のパスワードで再認証 → updateUser({ password }) → signOut({ scope: 'others' })
+ *   パスワード: POST /api/auth/password/change を 1 回呼ぶ (Bearer だけ。cross/16 §16)。再認証 (signInWithPassword)・updateUser・signOut は呼ばない
  *   メール    : updateUser({ email }, { emailRedirectTo: アプリのメール確認の画面 })
  *
- * エラーの形 (name / status / code / message) は、Web のテスト (src/lib/auth/__tests__/account-errors.test.ts) と同じく、
- * ローカルの Supabase Auth (GoTrue v2.183.0) が実際に返した値。
+ * メールの変更のエラーの形 (name / status / code / message) は、Web のテスト (src/lib/auth/__tests__/account-errors.test.ts) と同じく、
+ * ローカルの Supabase Auth (GoTrue v2.183.0) が実際に返した値。パスワードの変更の失敗は API の応答の本文 (cross/16 §19 の固定の文)。
  */
 
-import { CAPTCHA_FAILED_MESSAGE } from '@homegohan/shared';
+import { HttpNetworkError } from '@homegohan/core';
 
 const mockSignInWithPassword = jest.fn();
 const mockUpdateUser = jest.fn();
 const mockSignOut = jest.fn();
-// 呼ばれた順番 (再認証 → 更新 → 他の端末のログアウト)
+const mockApiPost = jest.fn();
+// 呼ばれた順番
 let mockCallOrder: string[] = [];
 
 jest.mock('../../src/lib/supabase', () => ({
@@ -37,6 +38,16 @@ jest.mock('../../src/lib/supabase', () => ({
   },
 }));
 
+// getApi().post の偽物。本物の HTTP の失敗は `HTTP <status> <statusText>: <本文の JSON>` の Error (@homegohan/core の createHttpClient)
+jest.mock('../../src/lib/api', () => ({
+  getApi: () => ({
+    post: (...args: unknown[]) => {
+      mockCallOrder.push('api.post');
+      return mockApiPost(...args);
+    },
+  }),
+}));
+
 jest.mock('expo-linking', () => ({
   createURL: (path: string) => `homegohan://${path.replace(/^\//, '')}`,
 }));
@@ -50,8 +61,6 @@ import {
 const EMAIL = 'user@example.com';
 const VALID_INPUT = { currentPassword: 'oldPass123', newPassword: 'newPass456', confirmPassword: 'newPass456' };
 
-const invalidCredentials = { name: 'AuthApiError', status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' };
-const weakPassword = { name: 'AuthWeakPasswordError', status: 422, code: 'weak_password', message: 'weak', reasons: ['pwned'] };
 const emailExists = {
   name: 'AuthApiError',
   status: 422,
@@ -59,13 +68,17 @@ const emailExists = {
   message: 'A user with this email address has already been registered',
 };
 
+/** createHttpClient が投げる HTTP の失敗の Error (本文は route の flat の形 { error, code }) */
+function httpError(status: number, statusText: string, code: string, error: string): Error {
+  return new Error(`HTTP ${status} ${statusText}: ${JSON.stringify({ error, code })}`);
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockCallOrder = [];
   jest.spyOn(console, 'error').mockImplementation(() => {});
-  mockSignInWithPassword.mockResolvedValue({ data: { session: {} }, error: null });
   mockUpdateUser.mockResolvedValue({ data: { user: {} }, error: null });
-  mockSignOut.mockResolvedValue({ error: null });
+  mockApiPost.mockResolvedValue({ ok: true });
 });
 
 afterEach(() => {
@@ -73,38 +86,32 @@ afterEach(() => {
 });
 
 describe('changePassword — 成功', () => {
-  it('現在のパスワードで再認証 → 新しいパスワードへ更新 → この端末以外をログアウト、の順に呼ぶ', async () => {
+  it('POST /api/auth/password/change を 1 回呼び、Supabase の signInWithPassword / updateUser / signOut を呼ばない', async () => {
     const result = await changePassword(EMAIL, VALID_INPUT);
 
-    expect(result).toEqual({ ok: true, othersSignedOut: true });
-    expect(mockCallOrder).toEqual(['signInWithPassword', 'updateUser', 'signOut']);
-    expect(mockSignInWithPassword).toHaveBeenCalledWith({ email: EMAIL, password: 'oldPass123' });
-    expect(mockUpdateUser).toHaveBeenCalledWith({ password: 'newPass456' });
-    // 'others': 操作中の端末のセッションは残す (全端末の 'global' や、この端末だけの 'local' ではない)
-    expect(mockSignOut).toHaveBeenCalledWith({ scope: 'others' });
+    expect(result).toEqual({ ok: true });
+    expect(mockCallOrder).toEqual(['api.post']);
+    expect(mockApiPost).toHaveBeenCalledTimes(1);
+    expect(mockApiPost).toHaveBeenCalledWith('/api/auth/password/change', {
+      current_password: 'oldPass123',
+      new_password: 'newPass456',
+    });
+    expect(mockSignInWithPassword).not.toHaveBeenCalled();
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+    expect(mockSignOut).not.toHaveBeenCalled();
   });
 
-  it('他の端末のログアウトがエラーを返しても、パスワードは変わっているので成功にし、確認できなかったことを返す', async () => {
-    mockSignOut.mockResolvedValue({ error: { name: 'AuthRetryableFetchError', status: 0, message: 'Network request failed' } });
-
+  it('成功は { ok: true } だけ (othersSignedOut を持たない)', async () => {
     const result = await changePassword(EMAIL, VALID_INPUT);
-
-    expect(result).toEqual({ ok: true, othersSignedOut: false });
-    expect(mockUpdateUser).toHaveBeenCalledTimes(1);
-  });
-
-  it('他の端末のログアウトが例外を投げても、成功にし、確認できなかったことを返す', async () => {
-    mockSignOut.mockRejectedValue(new TypeError('Network request failed'));
-
-    const result = await changePassword(EMAIL, VALID_INPUT);
-
-    expect(result).toEqual({ ok: true, othersSignedOut: false });
+    expect(Object.keys(result)).toEqual(['ok']);
   });
 });
 
-describe('changePassword — 再認証の失敗', () => {
-  it('現在のパスワードが違う: 「現在のパスワードが正しくありません。」を返し、更新もログアウトも呼ばない', async () => {
-    mockSignInWithPassword.mockResolvedValue({ data: { session: null }, error: invalidCredentials });
+describe('changePassword — API の失敗', () => {
+  it('400 AUTH_CURRENT_PASSWORD_MISMATCH: 本文の「現在のパスワードが正しくありません。」を返す', async () => {
+    mockApiPost.mockRejectedValue(
+      httpError(400, 'Bad Request', 'AUTH_CURRENT_PASSWORD_MISMATCH', '現在のパスワードが正しくありません。'),
+    );
 
     const result = await changePassword(EMAIL, VALID_INPUT);
 
@@ -113,52 +120,57 @@ describe('changePassword — 再認証の失敗', () => {
     expect(mockSignOut).not.toHaveBeenCalled();
   });
 
-  it('CAPTCHA に断られた: パスワード違いと取り違えず、ボットの確認の文言を返す', async () => {
-    mockSignInWithPassword.mockResolvedValue({
-      data: { session: null },
-      error: { name: 'AuthApiError', status: 400, code: 'captcha_failed', message: 'captcha verification process failed' },
-    });
+  it('422 VALID_PASSWORD_HISTORY: 本文の「最近使ったパスワードは使えません」を返す', async () => {
+    mockApiPost.mockRejectedValue(
+      httpError(422, 'Unprocessable Entity', 'VALID_PASSWORD_HISTORY', '最近使ったパスワードは使えません。別のパスワードにしてください。'),
+    );
 
     const result = await changePassword(EMAIL, VALID_INPUT);
 
-    expect(result).toEqual({ ok: false, message: CAPTCHA_FAILED_MESSAGE });
-    expect(mockUpdateUser).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false, message: '最近使ったパスワードは使えません。別のパスワードにしてください。' });
   });
 
-  it('再認証で通信が例外になった: 通信の失敗の文言を返し、更新しない', async () => {
-    mockSignInWithPassword.mockRejectedValue(new TypeError('Network request failed'));
+  it('403 AUTH_REAUTHENTICATION_REQUIRED: 本文の「もう一度ログインしてから」を返す', async () => {
+    mockApiPost.mockRejectedValue(
+      httpError(403, 'Forbidden', 'AUTH_REAUTHENTICATION_REQUIRED', '安全のため、もう一度ログインしてから変更してください。'),
+    );
 
     const result = await changePassword(EMAIL, VALID_INPUT);
 
-    expect(result).toEqual({
-      ok: false,
-      message: '通信に失敗しました。ネットワークの状態を確認して、もう一度お試しください。',
-    });
-    expect(mockUpdateUser).not.toHaveBeenCalled();
-    expect(mockSignOut).not.toHaveBeenCalled();
+    expect(result).toEqual({ ok: false, message: '安全のため、もう一度ログインしてから変更してください。' });
   });
-});
 
-describe('changePassword — 更新の失敗', () => {
-  it('流出したことのあるパスワード: 理由を返し、他の端末のログアウトは呼ばない', async () => {
-    mockUpdateUser.mockResolvedValue({ data: { user: null }, error: weakPassword });
+  it('圏外 (HttpNetworkError): 通信の文言を返す', async () => {
+    mockApiPost.mockRejectedValue(new HttpNetworkError('offline', 'raw offline'));
 
     const result = await changePassword(EMAIL, VALID_INPUT);
 
     expect(result).toEqual({
       ok: false,
-      message: 'このパスワードは過去に流出したことが確認されています。別のパスワードにしてください。',
+      message: '通信できません。インターネットへの接続を確認して、もう一度お試しください。',
     });
-    expect(mockSignOut).not.toHaveBeenCalled();
   });
 
-  it('更新で例外になった: 更新の段の文言で返す (再認証の文言にしない)', async () => {
-    mockUpdateUser.mockRejectedValue({ name: 'AuthApiError', status: 500, message: 'boom' });
+  it('失敗の中身を取り出せない (message も本文も無い): 共通の失敗の文言を返す', async () => {
+    mockApiPost.mockRejectedValue({});
 
     const result = await changePassword(EMAIL, VALID_INPUT);
 
     expect(result).toEqual({ ok: false, message: 'パスワードを変更できませんでした。時間をおいて、もう一度お試しください。' });
-    expect(mockSignOut).not.toHaveBeenCalled();
+  });
+
+  it('失敗のログにパスワード・本文を出さない (エラーの名前だけ)', async () => {
+    const consoleError = jest.spyOn(console, 'error').mockImplementation(() => {});
+    mockApiPost.mockRejectedValue(
+      httpError(400, 'Bad Request', 'AUTH_CURRENT_PASSWORD_MISMATCH', '現在のパスワードが正しくありません。'),
+    );
+
+    await changePassword(EMAIL, VALID_INPUT);
+
+    const logged = JSON.stringify(consoleError.mock.calls);
+    expect(consoleError).toHaveBeenCalled();
+    expect(logged).not.toContain('oldPass123');
+    expect(logged).not.toContain('newPass456');
   });
 });
 
@@ -175,6 +187,7 @@ describe('changePassword — 入力の検証 (API を呼ばずに止める。規
 
     expect(result).toEqual({ ok: false, message });
     expect(mockCallOrder).toEqual([]);
+    expect(mockApiPost).not.toHaveBeenCalled();
   });
 });
 

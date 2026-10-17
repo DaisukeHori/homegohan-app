@@ -21,22 +21,6 @@ export const WEB_FORGOT_PASSWORD_LINK_LABEL = "忘れた場合";
 export const NATIVE_FORGOT_PASSWORD_LINK_LABEL = "パスワードを忘れた？";
 
 /**
- * パスワードは変わったが、他の端末のログアウト (signOut({ scope: 'others' })) を確認できなかったときの注意書き。
- */
-export function describeOthersNotSignedOutNote(placement: AccountActionsPlacement): string {
-  const lead = "ただし、他の端末のログアウトを確認できませんでした。";
-  const tail = "新しいパスワードでログインし直してください。";
-  switch (placement) {
-    case "web":
-      return `${lead}心配な場合は、設定の「ログアウト」でこの端末もログアウトして、${tail}`;
-    case "native":
-      return `${lead}心配な場合は、${NATIVE_SETTINGS_ENTRY_LABEL} の「ログアウト」でこの端末もログアウトして、${tail}`;
-    case "undecided":
-      return `${lead}心配な場合は、この端末もいったんログアウトして、${tail}`;
-  }
-}
-
-/**
  * 現在のパスワードを思い出せない人への案内 (パスワード変更の欄の下に常に出す)。
  */
 export function describeForgotCurrentPasswordNote(placement: AccountActionsPlacement): string {

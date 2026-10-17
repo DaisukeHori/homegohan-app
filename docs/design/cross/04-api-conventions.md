@@ -105,6 +105,10 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `AUTH_SESSION_REVOKED` | セッション無効化済み | 401 |
 | `AUTH_SESSION_NOT_FOUND` | **[NEW]** 指定した端末のログイン (セッション) が無い・終わっている・本人のものでない (`DELETE /api/auth/sessions/{id}`・`PATCH /api/auth/sessions/current`。`cross/16-auth-history-sessions.md` §19) | 404 |
 | `AUTH_SESSION_IS_CURRENT` | **[NEW]** いま使っている端末のセッションを一覧から失効させようとした (ログアウトを使う。`cross/16-auth-history-sessions.md` §19) | 409 |
+| `AUTH_CURRENT_PASSWORD_MISMATCH` | **[NEW]** パスワードの変更で、現在のパスワードが違う (`POST /api/auth/password/change`。`cross/16-auth-history-sessions.md` §19) | 400 |
+| `AUTH_RECOVERY_SESSION_REQUIRED` | **[NEW]** パスワードの再設定を、再設定メールのリンク / コードで作ったセッション (amr に 60 分以内の recovery / otp) 以外から呼んだ (`POST /api/auth/password/reset`。`cross/16-auth-history-sessions.md` §14.7・§19) | 403 |
+| `AUTH_REAUTHENTICATION_REQUIRED` | **[NEW]** GoTrue が再認証 (nonce) を求めた (`secure_password_change` が ON のとき。`POST /api/auth/password/change`・`/reset`。`cross/16-auth-history-sessions.md` §19) | 403 |
+| `AUTH_PASSWORD_NOT_SET` | **[NEW]** パスワードでログインしていない (Google / Apple だけ) か、比べられない形のパスワードで、変更できない (`POST /api/auth/password/change` だけ。再設定は返さない。`cross/16-auth-history-sessions.md` §11.5・§19) | 409 |
 | `AUTH_ACCOUNT_LOCKED` | **使わない (#1165)**: ログインに続けて失敗してもアカウントはロックしない (01-auth-session.md §8)。欠番。別の意味に再利用しない | - |
 | `AUTH_PROFILE_NOT_FOUND` | user_profiles が見つからない | 403 |
 | `AUTH_IMPERSONATION_DENIED` | **廃止 (#1124)**: impersonate は提供しないため使わない (欠番。別の意味に再利用しない) | - |
@@ -128,6 +132,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `VALID_PASSWORD_TOO_SHORT` | パスワード最小長未満 | 422 |
 | `VALID_PASSWORD_BREACHED` | HIBP で漏洩確認済み | 422 |
 | `VALID_PASSWORD_HISTORY` | 過去に使用済みパスワード | 422 |
+| `VALID_PASSWORD_WEAK` | **[NEW]** パスワードが規則 (8 文字以上・英字と数字を含む。`validatePassword`) を満たさない、または GoTrue が弱いと判断した (`POST /api/auth/password/change`・`/reset`。`cross/16-auth-history-sessions.md` §19) | 422 |
 | `VALID_FILE_TOO_LARGE` | ファイルサイズ超過 | 422 |
 | `VALID_FILE_TYPE` | 許可されていないファイル形式 | 422 |
 | `VALID_CURSOR_INVALID` | cursor パラメータ不正 | 422 |

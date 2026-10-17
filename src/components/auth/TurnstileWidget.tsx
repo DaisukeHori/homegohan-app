@@ -41,9 +41,10 @@ export interface TurnstileWidgetHandle {
 export interface TurnstileWidgetProps {
   /**
    * Cloudflare の管理画面の集計で、どの画面の確認かを見分けるための名前 (英数字・_・- のみ、32 文字まで)。
-   * resend-confirmation: メール確認の再送 (/auth/verify)。password-change: 設定のパスワード変更の本人確認 (#1474)
+   * resend-confirmation: メール確認の再送 (/auth/verify)。
+   * (設定のパスワード変更の本人確認 password-change は、#1720 段 C でパスワードの変更が API 経由になり再認証のサインインが無くなったので外した)
    */
-  action: 'login' | 'signup' | 'password-reset' | 'resend-confirmation' | 'password-change';
+  action: 'login' | 'signup' | 'password-reset' | 'resend-confirmation';
   /** トークンが取れたら文字列。期限切れ・失敗・やり直し・取り外しのときは null */
   onTokenChange: (token: string | null) => void;
 }
