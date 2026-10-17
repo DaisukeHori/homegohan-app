@@ -32,9 +32,10 @@ import {
  *   従来の動作 (実際の refresh_token を入れる) へ戻すスイッチ: 環境変数 NATIVE_BRIDGE_SHARE_REFRESH_TOKEN=on
  *
  * 【旧方式】トークンを URL クエリで渡す (access_token / refresh_token)
- *   URL がアクセスログに残り、有効なトークンが漏れるため廃止する。ただし旧アプリが動かなくなるのを避けるため、
- *   LEGACY_SUNSET_AT (src/lib/auth/native-bridge-code.ts) まで、または環境変数 NATIVE_BRIDGE_LEGACY_GET=off に
- *   するまで受け付ける。使われるたびに警告ログを残す。閉じた後は 426 (アプリの更新を促すページ) を返す。
+ *   URL がアクセスログに残り、有効なトークンが漏れるため廃止する。受け付けるのは LEGACY_SUNSET_AT
+ *   (src/lib/auth/native-bridge-code.ts) の前で、環境変数 NATIVE_BRIDGE_LEGACY_GET=off でないときだけ。
+ *   LEGACY_SUNSET_AT は 2026-10-18 00:00 JST で過ぎているため、いまは常に閉じていて 426 (アプリの更新を促すページ) を返す。
+ *   期限で止める枝はそのまま残している (この枝を消すかは別の判断)。受け付けた場合は、使われるたびに警告ログを残す。
  *
  * どの応答も Cache-Control: no-store / Referrer-Policy: no-referrer。
  * is_native_app Cookie はセッションを作れたときだけ設定する。

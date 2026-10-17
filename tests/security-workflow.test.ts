@@ -628,7 +628,7 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
     // エラー急増の通知の cron のテスト (src/__tests__/api/cron/app-log-alerts.test.ts) の Cron の認証値のダミー (#1157)
     'dummy-cron-secret-0123456789abcdef',
-    // cron の共有シークレットの確認の Edge Function のテスト (tests/cron-secret-probe-edge.test.ts) の、ひとつ前の Cron の認証値のダミー (#1560)
+    // ひとつ前の Cron の認証値のダミー (tests/cron-secret-probe-edge.test.ts の PREVIOUS_SECRET。#1560)
     'dummy-previous-cron-secret-fedcba9876543210',
   ])('確かめたダミーの値は除外する: %s', (value) => {
     expect(allowed(value)).toBe(true);
@@ -653,9 +653,12 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     // RFC 6238 のテスト用の秘密に 1 文字足した値・最後の 1 文字を変えた値 (ほかの base32 の TOTP の秘密は通さない)
     'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQA',
     'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJR',
-    // Cron の認証値のダミーは完全一致だけ除外する。前後に足した値・最後の 1 文字を変えた値・同じ形の別の値は通さない (#1560)
-    'dummy-previous-cron-secret-fedcba9876543210X',
+    // ひとつ前の Cron の認証値のダミーの、前後に足した値・最後の 1 文字を変えた値 (ほかの Cron の認証値は通さない)
     'x-dummy-previous-cron-secret-fedcba9876543210',
+    'dummy-previous-cron-secret-fedcba98765432100',
+    'dummy-previous-cron-secret-fedcba9876543211',
+    // 末尾に 1 文字足した値・途中の 1 文字を変えた値・同じ形の今の Cron の認証値のダミーも通さない (#1560)
+    'dummy-previous-cron-secret-fedcba9876543210X',
     'dummy-previous-cron-secret-fedcba987654321X',
     'dummy-current-cron-secret-0123456789abcdef',
   ])('少しでも違う値や、ランダムに見える値は除外しない: %s', (value) => {

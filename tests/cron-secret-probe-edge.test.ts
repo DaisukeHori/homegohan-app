@@ -17,6 +17,10 @@ type Handler = (req: Request) => Promise<Response>;
 vi.mock('@supabase/supabase-js', () => ({ createClient: vi.fn() }));
 
 const CURRENT_SECRET = 'dummy-current-cron-secret-0123456789abcdef';
+/**
+ * ひとつ前の Cron の認証値のダミー。gitleaks の generic-api-key が拾うので、.gitleaks.toml の除外に値を完全一致で載せている
+ * (tests/security-workflow.test.ts が除外を確かめる)。値を変えるときは、除外とそのテストも同時に直す
+ */
 const PREVIOUS_SECRET = 'dummy-previous-cron-secret-fedcba9876543210';
 const ENDPOINT = 'https://example.supabase.co/functions/v1/cron-secret-probe';
 
