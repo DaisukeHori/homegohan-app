@@ -1,5 +1,7 @@
 /**
  * #1797 手動のプラン付与 段 C: 画面の節 ManualPlanGrantSection のブラウザの動き (billing/02 §8.6・§10・テスト 35〜37)
+ * テスト 35〜37 の後ろの 3 本は、§10 の「有効期限 (任意)」のセル・付与の失敗・読み込みの失敗の行を画面を通して見る追加の it
+ * (期限つきの付与が無期限で送られる・失敗の文が出ない・成功後の入力が残る、の変異を落とすため)。
  *
  * @/lib/billing/manual-grant-client の通信の 3 関数だけを vi.fn にし、manualGrantErrorMessage・定数は本物を使う。
  * tests/mfa-pages-browser.test.tsx の OperatorMfaResetSection の it と同じく react-dom/client + act。
@@ -50,6 +52,9 @@ const HISTORY_ID_REVOKE = '22222222-2222-4222-8222-222222222222';
 const HISTORY_ID_EXPIRED = '22222222-2222-4222-8222-222222222223';
 const ACTOR_ID = '33333333-3333-4333-8333-333333333333';
 const REASON = '社内検証のため 3 か月だけ付与する';
+const REVOKE_REASON = '検証の終了';
+/** 付与のフォームの有効期限の欄に入れる日付 (その日の終わり = EXPIRES_AT_ISO) */
+const EXPIRES_ON = '2026-12-31';
 /** 2026-12-31 の終わり (JST) = 2026-12-31T15:00:00.000Z。画面は JST で「2027/1/1 0:00:00」と出す */
 const EXPIRES_AT_ISO = '2026-12-31T15:00:00.000Z';
 const EXPIRES_AT_DISPLAY = '2027/1/1 0:00:00';
@@ -225,6 +230,9 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     expect(byTestId('manual-plan-grant-current')).not.toBeNull();
     expect(byTestId('manual-plan-grant-submit')).toBeNull();
     expect(byTestId('manual-plan-revoke-submit')).not.toBeNull();
+    // 理由の state は付与と取り消しのフォームで共有しているので、付与の成功で空に戻す (付与の理由を取り消しの理由に持ち越さない)
+    expect(byTestId<HTMLTextAreaElement>('manual-plan-revoke-reason')?.value).toBe('');
+    expect(byTestId('manual-plan-revoke-submit')?.hasAttribute('disabled')).toBe(true);
   });
 
   it('ManualPlanGrantSection: with a manual contract shows plan/由来 手動付与/有効期限 and the revoke form; confirm ok calls revokeManualPlanRequest once; failure shows manualGrantErrorMessage(code) (OP_INVALID_INPUT → MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE)', async () => {
@@ -287,6 +295,11 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(2);
     expect(byTestId('manual-plan-grant-current')).toBeNull();
     expect(byTestId('manual-plan-grant-submit')).not.toBeNull();
+    // 取り消しの成功で理由を空に戻す (取り消しの理由を付与の理由に持ち越さない)。プラン・期限も空
+    expect(byTestId<HTMLTextAreaElement>('manual-plan-grant-reason')?.value).toBe('');
+    expect(byTestId<HTMLSelectElement>('manual-plan-grant-plan')?.value).toBe('');
+    expect(byTestId<HTMLInputElement>('manual-plan-grant-expires-on')?.value).toBe('');
+    expect(byTestId<HTMLButtonElement>('manual-plan-grant-submit')?.disabled).toBe(true);
 
     // 失敗は manualGrantErrorMessage(code) の文。応答の本文の文面は読まない (client は code だけを返す)。読み直さず、結果の文は消える
     mocks.fetchManualPlanView.mockResolvedValueOnce(ok(manualView));
@@ -312,7 +325,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
       expect(reason()?.value, code).toBe(REASON);
     }
     expect(mocks.revokeManualPlanRequest).toHaveBeenCalledTimes(5);
-    // 付与の失敗の表示も同じ文 (OP_INVALID_INPUT は画面用の文であって API の文面ではない)
+    // OP_INVALID_INPUT は画面用の文であって API の文面ではない (付与の失敗の表示は下の「付与の失敗」の it が画面を通して見る)
     expect(MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE).toBe(manualGrantErrorMessage('OP_INVALID_INPUT'));
   });
 
@@ -396,5 +409,225 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     expect(text(rows[2])).toContain(REASON);
     expect(text(rows[2])).toContain(`期限: ${EXPIRES_AT_DISPLAY}`);
     expect(text(rows[2])).toContain('2026/10/1 12:00:00');
+  });
+
+  it('ManualPlanGrantSection: a grant with an expiry date sends expires_on as the date and shows the JST end time; after grant then revoke the grant form comes back with plan/expiry/reason all empty', async () => {
+    const grantedWithExpiry: ManualPlanGrantResult = {
+      subscription_id: SUBSCRIPTION_ID,
+      user_id: TARGET_USER_ID,
+      plan_key: 'family_plus',
+      status: 'active',
+      expires_at: EXPIRES_AT_ISO,
+    };
+    const manualWithExpiry = viewOf({
+      current: {
+        subscription_id: SUBSCRIPTION_ID,
+        plan_key: 'family_plus',
+        status: 'active',
+        source: 'manual',
+        starts_at: '2026-10-17T00:00:00.000Z',
+        expires_at: EXPIRES_AT_ISO,
+      },
+    });
+    const revoked: ManualPlanRevokeResult = {
+      subscription_id: SUBSCRIPTION_ID,
+      user_id: TARGET_USER_ID,
+      plan_key: 'family_plus',
+      status_from: 'active',
+      status_to: 'cancelled',
+    };
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(viewOf()));
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await renderSection();
+
+    // 期限を入れて付与する: expires_on は入れた日付そのもの (null にしない)
+    await setFieldValue(byTestId<HTMLSelectElement>('manual-plan-grant-plan'), 'family_plus');
+    await setFieldValue(byTestId<HTMLInputElement>('manual-plan-grant-expires-on'), EXPIRES_ON);
+    await setFieldValue(byTestId<HTMLTextAreaElement>('manual-plan-grant-reason'), REASON);
+    mocks.grantManualPlanRequest.mockResolvedValueOnce(ok(grantedWithExpiry));
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(manualWithExpiry));
+    await submitForm(byTestId<HTMLButtonElement>('manual-plan-grant-submit'));
+    expect(mocks.grantManualPlanRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.grantManualPlanRequest).toHaveBeenCalledWith(TARGET_USER_ID, { plan_key: 'family_plus', expires_on: EXPIRES_ON, reason: REASON });
+    // 成功の文の期限は応答の expires_at を JST の日時で出す (日付に丸めない)
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`family_plus を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
+    expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(2);
+    expect(Array.from(byTestId('manual-plan-grant-current')?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual([
+      'family_plus',
+      '手動付与',
+      EXPIRES_AT_DISPLAY,
+    ]);
+    expect(byTestId<HTMLTextAreaElement>('manual-plan-revoke-reason')?.value).toBe('');
+
+    // 取り消して契約なしに戻すと、付与のフォームは前の付与の入力 (プラン・期限・理由) を持ち越さない
+    await setFieldValue(byTestId<HTMLTextAreaElement>('manual-plan-revoke-reason'), REVOKE_REASON);
+    mocks.revokeManualPlanRequest.mockResolvedValueOnce(ok(revoked));
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(viewOf()));
+    await submitForm(byTestId<HTMLButtonElement>('manual-plan-revoke-submit'));
+    expect(mocks.revokeManualPlanRequest).toHaveBeenCalledWith(TARGET_USER_ID, { reason: REVOKE_REASON });
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe('family_plus の付与を取り消しました');
+    expect(byTestId<HTMLSelectElement>('manual-plan-grant-plan')?.value).toBe('');
+    expect(byTestId<HTMLInputElement>('manual-plan-grant-expires-on')?.value).toBe('');
+    expect(byTestId<HTMLTextAreaElement>('manual-plan-grant-reason')?.value).toBe('');
+    expect(byTestId<HTMLButtonElement>('manual-plan-grant-submit')?.disabled).toBe(true);
+  });
+
+  it('ManualPlanGrantSection: a failed grant shows manualGrantErrorMessage(code), clears the previous result, does not reload and keeps plan/expiry/reason; the next successful grant clears the error', async () => {
+    const manualView = viewOf({
+      current: {
+        subscription_id: SUBSCRIPTION_ID,
+        plan_key: 'pro',
+        status: 'active',
+        source: 'manual',
+        starts_at: '2026-10-17T00:00:00.000Z',
+        expires_at: null,
+      },
+    });
+    const revoked: ManualPlanRevokeResult = {
+      subscription_id: SUBSCRIPTION_ID,
+      user_id: TARGET_USER_ID,
+      plan_key: 'pro',
+      status_from: 'active',
+      status_to: 'cancelled',
+    };
+    const granted: ManualPlanGrantResult = {
+      subscription_id: SUBSCRIPTION_ID,
+      user_id: TARGET_USER_ID,
+      plan_key: 'pro',
+      status: 'active',
+      expires_at: EXPIRES_AT_ISO,
+    };
+    const afterGrant = viewOf({
+      current: {
+        subscription_id: SUBSCRIPTION_ID,
+        plan_key: 'pro',
+        status: 'active',
+        source: 'manual',
+        starts_at: '2026-10-17T00:00:00.000Z',
+        expires_at: EXPIRES_AT_ISO,
+      },
+    });
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(manualView));
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await renderSection();
+
+    // 先に取り消しを成功させ、結果の文が出ている付与のフォームにする (付与の送信が前の結果の文を消すことを見るため)
+    await setFieldValue(byTestId<HTMLTextAreaElement>('manual-plan-revoke-reason'), REVOKE_REASON);
+    mocks.revokeManualPlanRequest.mockResolvedValueOnce(ok(revoked));
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(viewOf()));
+    await submitForm(byTestId<HTMLButtonElement>('manual-plan-revoke-submit'));
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe('pro の付与を取り消しました');
+
+    const plan = () => byTestId<HTMLSelectElement>('manual-plan-grant-plan');
+    const expiresOn = () => byTestId<HTMLInputElement>('manual-plan-grant-expires-on');
+    const reason = () => byTestId<HTMLTextAreaElement>('manual-plan-grant-reason');
+    const submit = () => byTestId<HTMLButtonElement>('manual-plan-grant-submit');
+    await setFieldValue(plan(), 'pro');
+    await setFieldValue(expiresOn(), EXPIRES_ON);
+    await setFieldValue(reason(), REASON);
+    for (const [status, code, expected] of [
+      [409, 'OP_SUBSCRIPTION_ALREADY_ACTIVE', 'すでに有効な契約があります'],
+      [422, 'OP_PLAN_NOT_GRANTABLE', 'このプランは手動で付与できません'],
+      [400, 'OP_INVALID_INPUT', MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE],
+      [404, 'NOT_FOUND', 'ユーザーが見つかりません'],
+      [500, 'SOMETHING_UNKNOWN', MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE],
+    ] as const) {
+      mocks.grantManualPlanRequest.mockResolvedValueOnce(fail(status, code));
+      const fetchCallsBefore = mocks.fetchManualPlanView.mock.calls.length;
+      await submitForm(submit());
+      expect(mocks.grantManualPlanRequest, code).toHaveBeenLastCalledWith(TARGET_USER_ID, { plan_key: 'pro', expires_on: EXPIRES_ON, reason: REASON });
+      expect(byTestId('manual-plan-grant-error')?.textContent, code).toBe(expected);
+      expect(byTestId('manual-plan-grant-result'), code).toBeNull();
+      // 失敗では読み直さず、入力は残り、もう一度押せる
+      expect(mocks.fetchManualPlanView.mock.calls.length, code).toBe(fetchCallsBefore);
+      expect(plan()?.value, code).toBe('pro');
+      expect(expiresOn()?.value, code).toBe(EXPIRES_ON);
+      expect(reason()?.value, code).toBe(REASON);
+      expect(submit()?.disabled, code).toBe(false);
+      expect(submit()?.textContent, code).toBe('付与する');
+    }
+    expect(mocks.grantManualPlanRequest).toHaveBeenCalledTimes(5);
+
+    // 次の送信が成功すると、前の失敗の文は消える
+    mocks.grantManualPlanRequest.mockResolvedValueOnce(ok(granted));
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(afterGrant));
+    await submitForm(submit());
+    expect(byTestId('manual-plan-grant-error')).toBeNull();
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
+  });
+
+  it('ManualPlanGrantSection: a failed load shows manualGrantErrorMessage(code) and no form/current/history; a failed reload after a grant keeps the result and the next successful reload clears the load error', async () => {
+    // 開いたときの読み込みの失敗: 文だけを出し、フォーム・現在の契約・履歴は描かない
+    for (const [status, code, expected] of [
+      [500, 'SOMETHING_UNKNOWN', MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE],
+      [401, 'AUTH_UNAUTHENTICATED', 'ログインし直してください'],
+      [403, 'OP_SELF_MODIFY', '自分自身のプランは、ここでは変更できません'],
+    ] as const) {
+      mocks.fetchManualPlanView.mockResolvedValueOnce(fail(status, code));
+      await act(async () => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      await renderSection();
+      const loadError = byTestId('manual-plan-grant-load-error');
+      expect(loadError?.textContent, code).toBe(expected);
+      expect(loadError?.getAttribute('role'), code).toBe('alert');
+      expect(container.querySelector('form'), code).toBeNull();
+      expect(byTestId('manual-plan-grant-current'), code).toBeNull();
+      expect(byTestId('manual-plan-grant-history'), code).toBeNull();
+      expect(byTestId('manual-plan-grant-stripe-note'), code).toBeNull();
+    }
+    expect(MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE).toBe(manualGrantErrorMessage('SOMETHING_UNKNOWN'));
+    expect(mocks.grantManualPlanRequest).not.toHaveBeenCalled();
+    expect(mocks.revokeManualPlanRequest).not.toHaveBeenCalled();
+
+    // 付与の後の読み直しが失敗: 結果の文は残り、読み込みの失敗の文を足す。次に読み直しが成功すると読み込みの失敗の文は消える
+    mocks.fetchManualPlanView.mockReset();
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(viewOf()));
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderSection();
+    expect(byTestId('manual-plan-grant-load-error')).toBeNull();
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    const granted: ManualPlanGrantResult = {
+      subscription_id: SUBSCRIPTION_ID,
+      user_id: TARGET_USER_ID,
+      plan_key: 'pro',
+      status: 'active',
+      expires_at: null,
+    };
+    await setFieldValue(byTestId<HTMLSelectElement>('manual-plan-grant-plan'), 'pro');
+    await setFieldValue(byTestId<HTMLTextAreaElement>('manual-plan-grant-reason'), REASON);
+    mocks.grantManualPlanRequest.mockResolvedValueOnce(ok(granted));
+    mocks.fetchManualPlanView.mockResolvedValueOnce(fail(500, 'INTERNAL_ERROR'));
+    await submitForm(byTestId<HTMLButtonElement>('manual-plan-grant-submit'));
+    expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(2);
+    expect(byTestId('manual-plan-grant-load-error')?.textContent).toBe('処理中にエラーが発生しました。しばらくしてからお試しください');
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${NO_EXPIRY_DISPLAY})`);
+
+    // 読み直しに失敗した間は前の表示 (契約なし) のまま。もう一度送って読み直しが成功すると、読み込みの失敗の文は消える
+    await setFieldValue(byTestId<HTMLSelectElement>('manual-plan-grant-plan'), 'pro');
+    await setFieldValue(byTestId<HTMLTextAreaElement>('manual-plan-grant-reason'), REASON);
+    mocks.grantManualPlanRequest.mockResolvedValueOnce(ok(granted));
+    mocks.fetchManualPlanView.mockResolvedValueOnce(
+      ok(
+        viewOf({
+          current: {
+            subscription_id: SUBSCRIPTION_ID,
+            plan_key: 'pro',
+            status: 'active',
+            source: 'manual',
+            starts_at: '2026-10-17T00:00:00.000Z',
+            expires_at: null,
+          },
+        }),
+      ),
+    );
+    await submitForm(byTestId<HTMLButtonElement>('manual-plan-grant-submit'));
+    expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(3);
+    expect(byTestId('manual-plan-grant-load-error')).toBeNull();
+    expect(byTestId('manual-plan-grant-current')).not.toBeNull();
   });
 });
