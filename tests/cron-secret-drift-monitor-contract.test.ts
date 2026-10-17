@@ -7,6 +7,11 @@
  *   CT-12: supabase/config.toml に [functions.cron-secret-probe] verify_jwt = false がある (段 A)
  *   CT-13: supabase/functions/cron-secret-probe/index.ts は環境変数・本文・DB・ダイジェストに触れず、
  *          200 の本文の JSON のキーは ok / matched / previous_configured / alias_used の 4 つだけ (段 A)
+ *   CT-14 〜 CT-17: アプリ側 (段 C。下の「段 C の契約」)
+ *          CT-14: 401 / 503 の本文の error の文と matched の 3 値が _shared/auth.ts と同じ
+ *          CT-15: 判定・文面・route はダイジェストを計算しない
+ *          CT-16: 所見の表の title / action は文字列の直書き (${ を含まない)・21 件 (fail 13 / warn 5 / info 3)
+ *          CT-17: describeCronSecretRotationState は値を返さない (真偽値 2 つ)
  *
  * CT-13 は TypeScript の構文木で確かめる (コメントや文字列の一部には反応しない)。
  */
@@ -570,5 +575,201 @@ describe("cron の共有シークレットの確認 (#1560) — 段 B の契約 
     expect(isNull).toBeGreaterThan(notFound);
     expect(isEmpty).toBeGreaterThan(isNull);
     expect(body).toMatch(/ELSE\s*v_state := 'sent';/);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 段 C: アプリ (CT-14〜CT-17。構文木で確かめる。コメントや文字列の一部には反応しない)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const AUTH_SOURCE = "supabase/functions/_shared/auth.ts";
+const APP_EMAIL_SOURCE = "src/lib/emails/ops/cron-secret-drift.ts";
+const APP_ROUTE_SOURCE = "src/app/api/cron/app-log-alerts/route.ts";
+const CRON_AUTH_SOURCE = "src/lib/cron-auth.ts";
+
+/** 設計 §11.1 CT-16: 所見の表の件数 (level ごと) */
+const EXPECTED_FINDING_COUNTS = { fail: 13, warn: 5, info: 3 } as const;
+
+/** 名前のとおりの関数宣言を 1 つ探す */
+function findFunction(sourceFile: ts.SourceFile, name: string): ts.FunctionDeclaration {
+  let found: ts.FunctionDeclaration | null = null;
+  walk(sourceFile, (node) => {
+    if (ts.isFunctionDeclaration(node) && node.name?.text === name) found = node;
+  });
+  expect(found, `${sourceFile.fileName} に function ${name} がある`).not.toBeNull();
+  return found as unknown as ts.FunctionDeclaration;
+}
+
+/** `as const satisfies …` などの包みを外して、中のオブジェクトの直書きを返す */
+function unwrapObjectLiteral(expression: ts.Expression): ts.ObjectLiteralExpression {
+  let current: ts.Expression = expression;
+  while (ts.isAsExpression(current) || ts.isSatisfiesExpression(current) || ts.isParenthesizedExpression(current)) {
+    current = current.expression;
+  }
+  expect(ts.isObjectLiteralExpression(current), "オブジェクトの直書き").toBe(true);
+  return current as ts.ObjectLiteralExpression;
+}
+
+function propertyName(property: ts.ObjectLiteralElementLike): string {
+  expect(ts.isPropertyAssignment(property), "キーは name: value の形").toBe(true);
+  const name = (property as ts.PropertyAssignment).name;
+  expect(ts.isIdentifier(name) || ts.isStringLiteral(name), "キーは識別子か文字列").toBe(true);
+  return (name as ts.Identifier | ts.StringLiteral).text;
+}
+
+/** 文字列の直書き (テンプレートリテラルは ${ を含まないものだけ) の値。それ以外は null */
+function literalText(expression: ts.Expression): string | null {
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return expression.text;
+  return null;
+}
+
+describe("cron の共有シークレットの確認 (#1560) — 段 C の契約 (アプリ)", () => {
+  it("CT-14: EDGE_UNAUTHORIZED_BODY_ERROR / EDGE_NOT_CONFIGURED_BODY_ERROR は _shared/auth.ts の 401 / 503 の本文の error と同じ文。CRON_SECRET_PROBE_MATCHES は ServiceRoleAuthDescription の matched の 3 値と同じ", async () => {
+    const { CRON_SECRET_PROBE_MATCHES, EDGE_NOT_CONFIGURED_BODY_ERROR, EDGE_UNAUTHORIZED_BODY_ERROR } = await import("@/lib/ops-alerts/cron-secret-drift");
+    const authFile = parse(AUTH_SOURCE);
+
+    // requireServiceRole が返す new Response(JSON.stringify({ error: "…" }), { status: N, … }) の、状態コード → error の文
+    const fn = findFunction(authFile, "requireServiceRole");
+    const errorByStatus = new Map<number, string>();
+    walk(fn, (node) => {
+      if (!ts.isNewExpression(node) || dottedName(node.expression) !== "Response") return;
+      const [bodyArg, initArg] = node.arguments ?? [];
+      if (!bodyArg || !initArg || !ts.isCallExpression(bodyArg) || dottedName(bodyArg.expression) !== "JSON.stringify") return;
+      if (!ts.isObjectLiteralExpression(initArg)) return;
+      const statusProp = initArg.properties.find((p) => ts.isPropertyAssignment(p) && propertyName(p) === "status") as ts.PropertyAssignment | undefined;
+      const [jsonArg] = bodyArg.arguments;
+      if (!statusProp || !ts.isNumericLiteral(statusProp.initializer) || !jsonArg || !ts.isObjectLiteralExpression(jsonArg)) return;
+      const errorProp = jsonArg.properties.find((p) => ts.isPropertyAssignment(p) && propertyName(p) === "error") as ts.PropertyAssignment | undefined;
+      const text = errorProp ? literalText(errorProp.initializer) : null;
+      if (text !== null) errorByStatus.set(Number(statusProp.initializer.text), text);
+    });
+    expect([...errorByStatus.keys()].sort(), "requireServiceRole の失敗の応答は 401 と 503 の 2 つ").toEqual([401, 503]);
+    expect(EDGE_UNAUTHORIZED_BODY_ERROR).toBe(errorByStatus.get(401));
+    expect(EDGE_NOT_CONFIGURED_BODY_ERROR).toBe(errorByStatus.get(503));
+
+    // ServiceRoleAuthDescription の ok: true の側の matched の文字列リテラルの型
+    let matchedLiterals: string[] | null = null;
+    walk(authFile, (node) => {
+      if (!ts.isTypeAliasDeclaration(node) || node.name.text !== "ServiceRoleAuthDescription") return;
+      walk(node, (inner) => {
+        if (!ts.isPropertySignature(inner) || !inner.type || !ts.isIdentifier(inner.name) || inner.name.text !== "matched") return;
+        const members = ts.isUnionTypeNode(inner.type) ? inner.type.types : [inner.type];
+        matchedLiterals = members.flatMap((member) => (ts.isLiteralTypeNode(member) && ts.isStringLiteral(member.literal) ? [member.literal.text] : []));
+      });
+    });
+    expect(matchedLiterals, "ServiceRoleAuthDescription に matched の型がある").not.toBeNull();
+    expect([...(matchedLiterals as unknown as string[])].sort()).toEqual([...CRON_SECRET_PROBE_MATCHES].sort());
+  });
+
+  it("CT-15: cron-secret-drift.ts (判定・文面) と route は createHash / crypto.subtle / digest( を含まない (ダイジェストを計算しない)", () => {
+    for (const source of [APP_DRIFT_SOURCE, APP_EMAIL_SOURCE, APP_ROUTE_SOURCE]) {
+      const sourceFile = parse(source);
+      const violations: string[] = [];
+      walk(sourceFile, (node) => {
+        const where = locationOf(sourceFile, node);
+        if (ts.isIdentifier(node) && DIGEST_IDENTIFIERS.has(node.text)) violations.push(`${where}: ${node.text}`);
+        if (ts.isPropertyAccessExpression(node)) {
+          const name = dottedName(node);
+          if (name !== null && /(^|\.)crypto\.subtle(\.|$)/.test(name)) violations.push(`${where}: ${name}`);
+          if (node.name.text === "subtle") violations.push(`${where}: .subtle`);
+          if (node.name.text === "digest") violations.push(`${where}: .digest`);
+        }
+        if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "digest") violations.push(`${where}: digest(`);
+        if (ts.isImportDeclaration(node) && ts.isStringLiteral(node.moduleSpecifier) && /(^|[:/])crypto$/.test(node.moduleSpecifier.text)) {
+          violations.push(`${where}: import ${node.moduleSpecifier.text}`);
+        }
+      });
+      expect(violations, source).toEqual([]);
+      // 走査が空振りしていないこと: 空のファイルでない
+      expect(readText(source).length, source).toBeGreaterThan(0);
+    }
+  });
+
+  it("CT-16: CRON_SECRET_FINDING_CATALOG の title と action は文字列リテラルで、${ を含まない (実行時の値を埋め込まない)。fail 13・warn 5・info 3 の 21 件", () => {
+    const sourceFile = parse(APP_DRIFT_SOURCE);
+    let catalog: ts.ObjectLiteralExpression | null = null;
+    walk(sourceFile, (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === "CRON_SECRET_FINDING_CATALOG" && node.initializer) {
+        catalog = unwrapObjectLiteral(node.initializer);
+      }
+    });
+    expect(catalog, "CRON_SECRET_FINDING_CATALOG がある").not.toBeNull();
+
+    const counts: Record<string, number> = { fail: 0, warn: 0, info: 0 };
+    const violations: string[] = [];
+    let total = 0;
+    for (const entry of (catalog as unknown as ts.ObjectLiteralExpression).properties) {
+      const id = propertyName(entry);
+      const value = unwrapObjectLiteral((entry as ts.PropertyAssignment).initializer);
+      const fields = new Map<string, ts.Expression>();
+      for (const field of value.properties) fields.set(propertyName(field), (field as ts.PropertyAssignment).initializer);
+      expect([...fields.keys()].sort(), `${id} のキー`).toEqual(["action", "level", "title"]);
+      total += 1;
+      for (const key of ["title", "action"] as const) {
+        const expression = fields.get(key) as ts.Expression;
+        const text = literalText(expression);
+        if (text === null) violations.push(`${locationOf(sourceFile, expression)}: ${id}.${key} は文字列の直書きではない`);
+        else if (text.length === 0) violations.push(`${id}.${key} が空`);
+        if (expression.getText(sourceFile).includes("${")) violations.push(`${locationOf(sourceFile, expression)}: ${id}.${key} に \${ がある`);
+      }
+      const level = literalText(fields.get("level") as ts.Expression);
+      if (level !== null && level in counts) counts[level] += 1;
+      else violations.push(`${id}.level が fail / warn / info の直書きではない`);
+    }
+    expect(violations).toEqual([]);
+    expect(total).toBe(EXPECTED_FINDING_COUNTS.fail + EXPECTED_FINDING_COUNTS.warn + EXPECTED_FINDING_COUNTS.info);
+    expect(counts).toEqual(EXPECTED_FINDING_COUNTS);
+  });
+
+  it("CT-17: src/lib/cron-auth.ts の describeCronSecretRotationState は CRON_SECRET / CRON_SECRET_PREVIOUS の値を返さない (戻り値の型は真偽値 2 つ。return の中で process.env を直接返す形が無い)", () => {
+    const sourceFile = parse(CRON_AUTH_SOURCE);
+
+    // 戻り値の型 CronSecretRotationState は boolean 2 つだけ
+    let memberTypes: Record<string, string> | null = null;
+    walk(sourceFile, (node) => {
+      if (!ts.isInterfaceDeclaration(node) || node.name.text !== "CronSecretRotationState") return;
+      memberTypes = {};
+      for (const member of node.members) {
+        expect(ts.isPropertySignature(member) && ts.isIdentifier(member.name), "メンバーは name: type の形").toBe(true);
+        const signature = member as ts.PropertySignature;
+        (memberTypes as Record<string, string>)[(signature.name as ts.Identifier).text] = signature.type?.getText(sourceFile) ?? "";
+      }
+    });
+    expect(memberTypes, "CronSecretRotationState がある").not.toBeNull();
+    expect(memberTypes).toEqual({ previous_configured: "boolean", previous_same_as_current: "boolean" });
+
+    const fn = findFunction(sourceFile, "describeCronSecretRotationState");
+    expect(fn.type?.getText(sourceFile)).toBe("CronSecretRotationState");
+
+    // return はオブジェクトの直書き 1 つで、キーは 2 つ。値の式は、環境変数の文字列をそのまま持たない
+    const returns: ts.ReturnStatement[] = [];
+    walk(fn, (node) => {
+      if (ts.isReturnStatement(node)) returns.push(node);
+    });
+    expect(returns, "return はちょうど 1 つ").toHaveLength(1);
+    const returned = returns[0].expression;
+    expect(returned && ts.isObjectLiteralExpression(returned), "return はオブジェクトの直書き").toBe(true);
+    const properties = (returned as ts.ObjectLiteralExpression).properties;
+    expect(properties.map(propertyName).sort()).toEqual(["previous_configured", "previous_same_as_current"]);
+
+    // 環境変数を持つ変数 (process.env を代入した変数)
+    const envHolders = new Set<string>();
+    walk(fn, (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && /process\.env\./.test(node.initializer.getText(sourceFile))) {
+        envHolders.add(node.name.text);
+      }
+    });
+    expect([...envHolders].sort()).toEqual(["current", "previous"]);
+    for (const property of properties) {
+      const initializer = (property as ts.PropertyAssignment).initializer;
+      const text = initializer.getText(sourceFile);
+      expect(text, `${propertyName(property)} の値`).not.toMatch(/process\.env/);
+      // 環境変数を持つ変数をそのまま返さない (=== の比較か、真偽値の変数だけ)
+      expect(ts.isIdentifier(initializer) && envHolders.has(initializer.text), `${propertyName(property)} は環境変数の値そのものではない`).toBe(false);
+    }
+    // 値の比較は === (真偽値になる)。値を返す三項・|| ・?? の形にしない
+    const sameProperty = properties.find((p) => propertyName(p) === "previous_same_as_current") as ts.PropertyAssignment;
+    expect(sameProperty.initializer.getText(sourceFile)).toMatch(/===/);
+    expect(sameProperty.initializer.getText(sourceFile)).not.toMatch(/\?\?|\|\||\?\s/);
   });
 });
