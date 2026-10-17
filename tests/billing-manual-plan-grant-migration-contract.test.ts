@@ -10,7 +10,7 @@
  *   28. 関数・プロシージャの本体の外に、既存の行の UPDATE / DELETE / INSERT が無い
  *   29. cron のジョブ expire-manual-plan-grants の登録の形
  *   30. ロールバックはジョブ → プロシージャ → 関数の順に消し、行は消さない
- *   31. 付与の関数の入口の検査 (付与できないプラン・業務エラー 5 種)
+ *   31. 付与の関数の入口の検査 (付与できないプラン・業務エラー 5 種)・取り消し / 期限切れが読む行・migration の中の live の一覧 (どれも 5 値)
  *   32. ロックの順 (advisory → 契約の行 → family_groups → user_profiles。利用者は 1 人だけ)
  *   33. 冒頭のコメントに判断の帰属を書かない
  *   56. プロシージャは SECURITY INVOKER・SET 句なし・利用者ごとに COMMIT する
@@ -97,6 +97,24 @@ const LOCKING_FUNCTIONS = [
 ] as const;
 
 const ADVISORY_LOCK = "PERFORM pg_advisory_xact_lock(hashtext('billing-user:' || p_user_id::text));";
+
+/** live の 5 値の一覧 (部分 UNIQUE idx_personal_subscriptions_active_per_user と同じ集合・同じ順。billing/02 §6 の正典コードの書き方) */
+const LIVE_STATUS_LIST = "('trialing', 'active', 'paused', 'past_due', 'grace')";
+
+/**
+ * 定義ごとの `status IN (…)` の数 (付与 = 衝突の検査・plan_key_cached の式 / 同期 = 家族を戻さない条件の NOT EXISTS・plan_key_cached の式 /
+ * 取り消し・1 人分の期限切れ = 対象の行の SELECT / プロシージャ = 期限を過ぎた利用者の一覧)
+ */
+const STATUS_LISTS_BY_DEFINITION = [
+  { kind: 'FUNCTION', name: 'billing_grant_manual_subscription', count: 2 },
+  { kind: 'FUNCTION', name: 'billing_manual_subscription_sync_after_end', count: 2 },
+  { kind: 'FUNCTION', name: 'billing_revoke_manual_subscription', count: 1 },
+  { kind: 'FUNCTION', name: 'billing_expire_manual_subscription_for_user', count: 1 },
+  { kind: 'PROCEDURE', name: PROCEDURE, count: 1 },
+] as const;
+
+/** 本文の `status IN (…)` の一覧を、書かれた順に `(…)` の形で並べる */
+const statusListsOf = (sql: string): string[] => [...sql.matchAll(/\bstatus IN (\([^)]*\))/g)].map((m) => m[1]);
 
 describe('billing/02 段 A: migration とロールバックのファイル', () => {
   // 25
@@ -286,6 +304,30 @@ describe('billing/02 段 A: 付与の入口の検査と業務エラー', () => {
     expect(squash(bodyOf(definition(migration, 'FUNCTION', 'billing_expire_manual_subscription_for_user')))).toContain(
       's.stripe_subscription_id IS NULL',
     );
+    // 取り消し・1 人分の期限切れが鍵の後で読む行: 利用者の M 行のうち live の 5 値のどれか (§7.1: active 以外の M 行も、service_role の
+    // 直接の UPDATE で入れば live として同じ扱い)。SELECT の文を丸ごと並べる (一覧から 1 値を抜く・active だけにする崩れもここで赤になる)。
+    // 振る舞いは結合テスト 42・43 が 5 値それぞれで見る (取り消せる・expired になる・同期が通る)。ここは文面の崩れを先に捕まえる
+    const ROW_SELECT_HEAD = 'SELECT s.* INTO v_row FROM public.personal_subscriptions AS s WHERE s.user_id = p_user_id AND s.stripe_subscription_id IS NULL';
+    const ROW_SELECT_TAIL = 'ORDER BY s.created_at DESC, s.id LIMIT 1 FOR NO KEY UPDATE;';
+    expect(revoke).toContain(`${ROW_SELECT_HEAD} AND s.status IN ${LIVE_STATUS_LIST} ${ROW_SELECT_TAIL}`);
+    expect(squash(bodyOf(definition(migration, 'FUNCTION', 'billing_expire_manual_subscription_for_user')))).toContain(
+      `${ROW_SELECT_HEAD} AND s.status IN ${LIVE_STATUS_LIST} AND s.current_period_end IS NOT NULL AND s.current_period_end <= now() ${ROW_SELECT_TAIL}`,
+    );
+
+    // migration の中の `status IN (…)` は、どれも live の 5 値 (この順)。定義ごとの数も決まっている (1 値を抜く・active だけにする・
+    // 条件ごと消す崩れを、どの定義でも赤にする)。家族を戻さない条件・plan_key_cached の式の一覧は、利用者ごとに live な行が最大 1 行なので
+    // 公開の経路の結合テストの結果には出にくい — ここで守る
+    for (const { kind, name, count } of STATUS_LISTS_BY_DEFINITION) {
+      expect(statusListsOf(squash(bodyOf(definition(migration, kind, name)))), name).toEqual(Array<string>(count).fill(LIVE_STATUS_LIST));
+    }
+    // 本体の外に一覧は無い (定義ごとの数の和が migration の全体の数)
+    const total = STATUS_LISTS_BY_DEFINITION.reduce((sum, { count }) => sum + count, 0);
+    expect(statusListsOf(squash(migration))).toEqual(Array<string>(total).fill(LIVE_STATUS_LIST));
+    // 番兵: 一覧の切り出しが空振りしていない (1 値を抜いた一覧・active だけの一覧は live の 5 値と食い違う)
+    expect(statusListsOf("WHERE s.status IN ('trialing', 'active', 'past_due', 'grace') AND s.status IN ('active')")).toEqual([
+      "('trialing', 'active', 'past_due', 'grace')",
+      "('active')",
+    ]);
   });
 });
 
@@ -422,8 +464,10 @@ describe('billing/02 段 A: 期限切れのプロシージャ', () => {
       /FOR v_target IN SELECT DISTINCT s\.user_id FROM public\.personal_subscriptions AS s WHERE .* ORDER BY s\.user_id LOOP/,
     );
     expect(body).toContain('s.stripe_subscription_id IS NULL');
-    // live な行だけ (1 人分の関数も鍵の後で同じ条件を見直すので、外しても DB の上の結果は変わらず、毎日の呼び出しが増えるだけ — 文面で守る)
-    expect(body).toContain("AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace')");
+    // live な行だけ。条件ごと外しても、1 人分の関数が鍵の後で同じ条件を見直すので DB の上の結果は変わらず、毎日の呼び出しが増えるだけ
+    // (結合テストの結果に出ない — 文面で守る)。一覧から 1 値を抜くと、その status の期限を過ぎた M 行がジョブから呼ばれずに残る
+    // (結合テスト 43 が active 以外の 4 値の M 行を CALL で見る。一覧そのものはテスト 31 が live の 5 値と突き合わせる)
+    expect(body).toContain(`AND s.status IN ${LIVE_STATUS_LIST}`);
     expect(body).toContain('s.current_period_end IS NOT NULL AND s.current_period_end <= now()');
     expect(body).toContain('PERFORM public.billing_expire_manual_subscription_for_user(v_target.user_id); COMMIT; END LOOP;');
     expect(body.split('COMMIT').length - 1).toBe(1);

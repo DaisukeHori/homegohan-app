@@ -240,11 +240,37 @@ async function expireForUser(userId: string): Promise<number> {
   return data;
 }
 
-/** 期限を過ぎた状態にする (関数は p_expires_at が過去の付与を拒むので、付与のあとに postgres で current_period_end を書き換える) */
+/** live の 5 値 (部分 UNIQUE idx_personal_subscriptions_active_per_user と同じ集合。利用者ごとに live な行は最大 1 行) */
+const LIVE_STATUSES = ['trialing', 'active', 'paused', 'past_due', 'grace'];
+/**
+ * live のうち active 以外の 4 値。M 行は本冊の経路では active でしか生まれないが、service_role の直接の UPDATE で入っても
+ * live として同じ扱い (§7.1)。付与・取り消し・期限切れの関数が status を一覧で見るので、4 値それぞれの行を setLiveStatus で用意して見る
+ */
+const NON_ACTIVE_LIVE_STATUSES = LIVE_STATUSES.filter((status) => status !== 'active');
+/** SQL の IN (…) に書く live の一覧 */
+const LIVE_STATUSES_SQL = LIVE_STATUSES.map((status) => `'${status}'`).join(', ');
+
+/**
+ * 期限を過ぎた状態にする (関数は p_expires_at が過去の付与を拒むので、付与のあとに postgres で current_period_end を書き換える)。
+ * 対象はその利用者の live な M 行 (setLiveStatus で active 以外の live にした行も含む)
+ */
 async function makeDue(userId: string): Promise<void> {
   await pgQuery(
     `UPDATE public.personal_subscriptions SET current_period_end = now() - interval '${PAST_HOURS} hour'
-      WHERE user_id = '${userId}'::uuid AND status = 'active' AND stripe_subscription_id IS NULL;`,
+      WHERE user_id = '${userId}'::uuid AND status IN (${LIVE_STATUSES_SQL}) AND stripe_subscription_id IS NULL;`,
+  );
+}
+
+/**
+ * 契約の行の status を postgres で live の別の値に書き換える (写像・本冊の関数の経路では作れない組み合わせを用意する)。
+ * paused は paused_until が要る (ps_paused_until_required)
+ */
+async function setLiveStatus(rowId: string, status: string): Promise<void> {
+  await pgQuery(
+    `UPDATE public.personal_subscriptions
+        SET status = '${status}',
+            paused_until = CASE WHEN '${status}' = 'paused' THEN now() + interval '${FUTURE_DAYS} day' ELSE paused_until END
+      WHERE id = '${rowId}'::uuid;`,
   );
 }
 
@@ -367,7 +393,6 @@ async function mustRowById(id: string): Promise<SubscriptionRow> {
   return data as SubscriptionRow;
 }
 
-const LIVE_STATUSES = ['trialing', 'active', 'paused', 'past_due', 'grace'];
 const liveRowsOf = async (userId: string): Promise<SubscriptionRow[]> => (await rowsOf(userId)).filter((r) => LIVE_STATUSES.includes(r.status));
 
 async function planKeyCached(userId: string): Promise<string | null> {
@@ -803,14 +828,10 @@ describe('billing/02 §6.2: 付与 billing_grant_manual_subscription', () => {
     expect(await rowsOf(stripeUser.id)).toHaveLength(1);
     // live の 5 値 (trialing / active / paused / past_due / grace。部分 UNIQUE idx_personal_subscriptions_active_per_user と同じ集合) の
     // どれでも衝突する。どれかが衝突の検査から抜けると、業務エラーとして名指しされず、INSERT が部分 UNIQUE の違反 (23505) になる。
-    // active 以外は、同じ S 行の status を postgres で書き換えて用意する (paused は paused_until が要る = ps_paused_until_required)
-    for (const status of ['trialing', 'paused', 'past_due', 'grace'] as const) {
-      await pgQuery(
-        `UPDATE public.personal_subscriptions
-            SET status = '${status}',
-                paused_until = CASE WHEN '${status}' = 'paused' THEN now() + interval '${FUTURE_DAYS} day' ELSE paused_until END
-          WHERE id = '${stripeRow.id}'::uuid;`,
-      );
+    // active 以外は、同じ S 行の status を postgres で書き換えて用意する (setLiveStatus。paused は paused_until も入れる)
+    for (const status of NON_ACTIVE_LIVE_STATUSES) {
+      await setLiveStatus(stripeRow.id, status);
+      expect((await mustRowById(stripeRow.id)).status, status).toBe(status);
       const onLive = await tryGrant(stripeUser.id, 'family_basic');
       expect(onLive.data, status).toBeNull();
       expect(onLive.error, status).toMatchObject({ code: 'P0001', message: 'BILL_LIVE_ROW_CONFLICT', details: stripeRow.id });
@@ -1105,6 +1126,35 @@ describe('billing/02 §6.3・§6.4: 取り消しと期限切れ', () => {
     const missing = await srAdmin.rpc('billing_revoke_manual_subscription', { p_user_id: null });
     expect(missing.data).toBeNull();
     expect(missing.error?.code).toBe('22023');
+
+    // live の 5 値のどれの M 行も取り消せる (§7.1: active 以外の M 行は本冊の経路では生まれないが、service_role の直接の UPDATE で
+    // 入っても live として同じ扱い。組織ライセンス受領による一時停止 (paused) は配線の残りの冊が扱う)。取り消しの SELECT の一覧から
+    // どれかの値が抜けると、その M 行は BILL_MANUAL_ROW_NOT_FOUND で取り消せないまま live に残り、付与の衝突 (BILL_LIVE_ROW_CONFLICT) を出し続ける。
+    // 家族プランで付与し、取り消しの同期 (グループを free / 4・plan_key_cached を NULL) まで通ったことを、4 値それぞれで見る (active は上で見た)
+    for (const status of NON_ACTIVE_LIVE_STATUSES) {
+      const statusUser = await createUser(`revoke-${status}`);
+      const statusFamily = await insertFamily(statusUser.id);
+      const statusGrant = await grant(statusUser.id, 'family_pro');
+      await setLiveStatus(statusGrant.subscription_id, status);
+      expect(await mustRowById(statusGrant.subscription_id), status).toMatchObject({ status, stripe_subscription_id: null });
+      expect(await mustFamily(statusFamily), status).toMatchObject({ plan_key: 'family_pro', member_limit: 8 });
+      expect(await planKeyCached(statusUser.id), status).toBe('family_pro');
+      const statusRevoked = await tryRevoke(statusUser.id);
+      expect(statusRevoked.error, status).toBeNull();
+      expect(statusRevoked.data, status).toEqual({
+        subscription_id: statusGrant.subscription_id,
+        user_id: statusUser.id,
+        plan_key: 'family_pro',
+        status_from: status,
+        status_to: 'cancelled',
+      });
+      const statusRow = await mustRowById(statusGrant.subscription_id);
+      expect(statusRow.status, status).toBe('cancelled');
+      expect(statusRow.cancelled_at, status).not.toBeNull();
+      expect(await liveRowsOf(statusUser.id), status).toEqual([]);
+      expect(await mustFamily(statusFamily), status).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+      expect(await planKeyCached(statusUser.id), status).toBeNull();
+    }
   });
 
   // 43
@@ -1151,6 +1201,28 @@ describe('billing/02 §6.3・§6.4: 取り消しと期限切れ', () => {
     expect(missing.data).toBeNull();
     expect(missing.error?.code).toBe('22023');
 
+    // live の 5 値のどれの M 行も、期限を過ぎていれば expired にする (§7.1。取り消しと同じ理由)。1 人分の関数の SELECT の一覧から
+    // どれかの値が抜けると、その status の M 行は期限を過ぎても live のまま残り、権利・家族のプラン・plan_key_cached が戻らない。
+    // 家族プランで付与し、同期 (free / 4・NULL) と監査まで、4 値それぞれで見る (active は上で見た)
+    for (const status of NON_ACTIVE_LIVE_STATUSES) {
+      const statusUser = await createUser(`expire-${status}`);
+      const statusFamily = await insertFamily(statusUser.id);
+      const statusGrant = await grant(statusUser.id, 'family_pro', futureExpiry());
+      await setLiveStatus(statusGrant.subscription_id, status);
+      expect(await mustRowById(statusGrant.subscription_id), status).toMatchObject({ status, stripe_subscription_id: null });
+      // 期限がまだ先なら 0
+      expect(await expireForUser(statusUser.id), status).toBe(0);
+      await makeDue(statusUser.id);
+      expect(await expireForUser(statusUser.id), status).toBe(1);
+      expect(await mustRowById(statusGrant.subscription_id), status).toMatchObject({ status: 'expired', cancelled_at: null });
+      expect(await liveRowsOf(statusUser.id), status).toEqual([]);
+      expect(await mustFamily(statusFamily), status).toMatchObject({ status: 'active', plan_key: 'free', member_limit: 4 });
+      expect(await planKeyCached(statusUser.id), status).toBeNull();
+      const statusAudits = await auditsOf(statusUser.id, 'system.billing.manual_grant_expired');
+      expect(statusAudits, status).toHaveLength(1);
+      expect(statusAudits[0].details, status).toMatchObject({ subscription_id: statusGrant.subscription_id, plan_key: 'family_pro' });
+    }
+
     // CALL (1 つの要求に 1 文だけ): 期限を過ぎた 2 人を expired にし、ほかは残す
     const dueA = await createUser('call-due-a');
     const dueB = await createUser('call-due-b');
@@ -1162,6 +1234,17 @@ describe('billing/02 §6.3・§6.4: 取り消しと期限切れ', () => {
     const grantForever = await grant(forever.id, 'pro');
     await makeDue(dueA.id);
     await makeDue(dueB.id);
+    // プロシージャの一覧も live の 5 値のどれの M 行も拾う。一覧からどれかの値が抜けると、その status の M 行は 1 人分の関数なら
+    // expired にできる行でも、毎日のジョブから呼ばれないまま残る。active 以外の 4 値の期限を過ぎた M 行を 1 人ずつ、同じ CALL で見る
+    const callDueByStatus: Array<{ status: string; userId: string; subscriptionId: string }> = [];
+    for (const status of NON_ACTIVE_LIVE_STATUSES) {
+      const statusUser = await createUser(`call-due-${status}`);
+      const statusGrant = await grant(statusUser.id, 'pro', futureExpiry());
+      await setLiveStatus(statusGrant.subscription_id, status);
+      await makeDue(statusUser.id);
+      expect(await mustRowById(statusGrant.subscription_id), status).toMatchObject({ status, stripe_subscription_id: null });
+      callDueByStatus.push({ status, userId: statusUser.id, subscriptionId: statusGrant.subscription_id });
+    }
     const called = await pgRequest('CALL public.billing_expire_manual_subscriptions();');
     expect(called.ok, JSON.stringify(called.body)).toBe(true);
     expect((await mustRowById(grantA.subscription_id)).status).toBe('expired');
@@ -1174,6 +1257,11 @@ describe('billing/02 §6.3・§6.4: 取り消しと期限切れ', () => {
     expect(await auditsOf(dueA.id, 'system.billing.manual_grant_expired')).toHaveLength(1);
     expect(await auditsOf(dueB.id, 'system.billing.manual_grant_expired')).toHaveLength(1);
     expect(await auditsOf(notDue.id, 'system.billing.manual_grant_expired')).toEqual([]);
+    for (const { status, userId, subscriptionId } of callDueByStatus) {
+      expect((await mustRowById(subscriptionId)).status, status).toBe('expired');
+      expect(await planKeyCached(userId), status).toBeNull();
+      expect(await auditsOf(userId, 'system.billing.manual_grant_expired'), status).toHaveLength(1);
+    }
   });
 
   // 54
