@@ -2,6 +2,8 @@
  * #1797 手動のプラン付与 段 C: 画面の節 ManualPlanGrantSection のブラウザの動き (billing/02 §8.6・§10・テスト 35〜37)
  * テスト 35〜37 の後ろの 3 本は、§10 の「有効期限 (任意)」のセル・付与の失敗・読み込みの失敗の行を画面を通して見る追加の it
  * (期限つきの付与が無期限で送られる・失敗の文が出ない・成功後の入力が残る、の変異を落とすため)。
+ * 送信の状態の守り (送信中は押せない・二重送信を送らない・送信の開始で前の結果の文と失敗の文を消す) は付与と取り消しの両方で見る
+ * (付与は最初の it と「付与の失敗」の it、取り消しは 2 本目の it)。
  *
  * @/lib/billing/manual-grant-client の通信の 3 関数だけを vi.fn にし、manualGrantErrorMessage・定数は本物を使う。
  * tests/mfa-pages-browser.test.tsx の OperatorMfaResetSection の it と同じく react-dom/client + act。
@@ -235,7 +237,7 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     expect(byTestId('manual-plan-revoke-submit')?.hasAttribute('disabled')).toBe(true);
   });
 
-  it('ManualPlanGrantSection: with a manual contract shows plan/由来 手動付与/有効期限 and the revoke form; confirm ok calls revokeManualPlanRequest once; failure shows manualGrantErrorMessage(code) (OP_INVALID_INPUT → MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE)', async () => {
+  it('ManualPlanGrantSection: with a manual contract shows plan/由来 手動付与/有効期限 and the revoke form; confirm ok calls revokeManualPlanRequest once; failure shows manualGrantErrorMessage(code) (OP_INVALID_INPUT → MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE), clears the previous result and keeps the reason; while revoking the button is disabled and a second submit is ignored; the next successful revoke clears the error', async () => {
     const manualView = viewOf({
       current: {
         subscription_id: SUBSCRIPTION_ID,
@@ -301,13 +303,28 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     expect(byTestId<HTMLInputElement>('manual-plan-grant-expires-on')?.value).toBe('');
     expect(byTestId<HTMLButtonElement>('manual-plan-grant-submit')?.disabled).toBe(true);
 
-    // 失敗は manualGrantErrorMessage(code) の文。応答の本文の文面は読まない (client は code だけを返す)。読み直さず、結果の文は消える
+    // 付与を成功させて、結果の文 (付与しました) が出ている取り消しのフォームにする。
+    // 再マウントすると結果の文が最初から無く、取り消しの送信が前の結果の文を消すか (handleRevoke の setMessage(null)) を見られないため、画面の操作でこの状態を作る
+    const grantedAgain: ManualPlanGrantResult = {
+      subscription_id: SUBSCRIPTION_ID,
+      user_id: TARGET_USER_ID,
+      plan_key: 'pro',
+      status: 'active',
+      expires_at: EXPIRES_AT_ISO,
+    };
+    await setFieldValue(byTestId<HTMLSelectElement>('manual-plan-grant-plan'), 'pro');
+    await setFieldValue(byTestId<HTMLInputElement>('manual-plan-grant-expires-on'), EXPIRES_ON);
+    await setFieldValue(byTestId<HTMLTextAreaElement>('manual-plan-grant-reason'), REASON);
+    mocks.grantManualPlanRequest.mockResolvedValueOnce(ok(grantedAgain));
     mocks.fetchManualPlanView.mockResolvedValueOnce(ok(manualView));
-    await act(async () => {
-      root.unmount();
-    });
-    root = createRoot(container);
-    await renderSection();
+    await submitForm(byTestId<HTMLButtonElement>('manual-plan-grant-submit'));
+    expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(3);
+    expect(submit()).not.toBeNull();
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe(`pro を付与しました (有効期限: ${EXPIRES_AT_DISPLAY})`);
+    expect(byTestId('manual-plan-grant-error')).toBeNull();
+
+    // 失敗は manualGrantErrorMessage(code) の文。応答の本文の文面は読まない (client は code だけを返す)。
+    // 読み直さず、前の結果の文 (1 回目は上の「付与しました」) は消えてエラーの文だけが出る
     for (const [status, code, expected] of [
       [400, 'OP_INVALID_INPUT', MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE],
       [409, 'OP_NO_MANUAL_SUBSCRIPTION', manualGrantErrorMessage('OP_NO_MANUAL_SUBSCRIPTION')],
@@ -320,13 +337,50 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
       await submitForm(submit());
       expect(byTestId('manual-plan-grant-error')?.textContent, code).toBe(expected);
       expect(byTestId('manual-plan-grant-result'), code).toBeNull();
-      // 失敗では読み直さず、入力した理由は残る
+      // 失敗では読み直さず、入力した理由は残り、もう一度押せる
       expect(mocks.fetchManualPlanView.mock.calls.length, code).toBe(fetchCallsBefore);
       expect(reason()?.value, code).toBe(REASON);
+      expect(submit()?.disabled, code).toBe(false);
+      expect(submit()?.textContent, code).toBe('取り消す');
     }
     expect(mocks.revokeManualPlanRequest).toHaveBeenCalledTimes(5);
     // OP_INVALID_INPUT は画面用の文であって API の文面ではない (付与の失敗の表示は下の「付与の失敗」の it が画面を通して見る)
     expect(MANUAL_GRANT_CLIENT_INVALID_INPUT_MESSAGE).toBe(manualGrantErrorMessage('OP_INVALID_INPUT'));
+
+    // 失敗の文が出ている状態から取り消しを送る: 送信を始めた時点で前の失敗の文を消し、送信中は押せず (取り消し中…)、2 回目を送らない
+    let resolveRevoke: (value: ManualGrantClientResult<ManualPlanRevokeResult>) => void = () => undefined;
+    mocks.revokeManualPlanRequest.mockImplementationOnce(
+      () =>
+        new Promise<ManualGrantClientResult<ManualPlanRevokeResult>>((resolve) => {
+          resolveRevoke = resolve;
+        }),
+    );
+    mocks.fetchManualPlanView.mockResolvedValueOnce(ok(viewOf()));
+    expect(byTestId('manual-plan-grant-error')?.textContent).toBe(MANUAL_GRANT_CLIENT_FALLBACK_MESSAGE);
+    await act(async () => {
+      submit()?.form?.requestSubmit(submit());
+    });
+    expect(submit()?.disabled).toBe(true);
+    expect(submit()?.textContent).toBe('取り消し中…');
+    expect(byTestId('manual-plan-grant-error')).toBeNull();
+    expect(byTestId('manual-plan-grant-result')).toBeNull();
+    await act(async () => {
+      submit()?.form?.requestSubmit(submit());
+    });
+    expect(mocks.revokeManualPlanRequest).toHaveBeenCalledTimes(6);
+    expect(mocks.revokeManualPlanRequest).toHaveBeenLastCalledWith(TARGET_USER_ID, { reason: REASON });
+
+    // 成功: 失敗の文は消えたまま結果の文を出し、読み直して付与のフォームに戻る
+    await act(async () => {
+      resolveRevoke(ok(revoked));
+    });
+    await flush();
+    expect(byTestId('manual-plan-grant-error')).toBeNull();
+    expect(byTestId('manual-plan-grant-result')?.textContent).toBe('pro の付与を取り消しました');
+    expect(mocks.fetchManualPlanView).toHaveBeenCalledTimes(4);
+    expect(byTestId('manual-plan-grant-current')).toBeNull();
+    expect(byTestId('manual-plan-revoke-submit')).toBeNull();
+    expect(byTestId('manual-plan-grant-submit')).not.toBeNull();
   });
 
   it('ManualPlanGrantSection: with a stripe contract shows the note and no form; history rows show label/plan/期限/reason', async () => {
