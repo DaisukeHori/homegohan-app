@@ -254,16 +254,18 @@ describe('MOBILE_FROZEN_EXEMPT_PATHS', () => {
     }
     for (const exempt of MOBILE_FROZEN_EXEMPT_PATHS) {
       if (exempt === FROZEN_SCREEN_PATH) continue;
-      expect(screens.some((screen) => screen === exempt || screen.startsWith(`${exempt}/`)), exempt).toBe(true);
+      // jest の expect は第 2 引数 (失敗時の文) を取らないので、どのパスかを値に含めて比べる
+      const matched = screens.some((screen) => screen === exempt || screen.startsWith(`${exempt}/`));
+      expect({ exempt, matched }).toEqual({ exempt, matched: true });
     }
   });
 
   it('前方一致だけの紛らわしいパス・規約の同意画面・タブは対象 (対象外にしない)', () => {
     for (const pathname of ['/loginx', '/frozenx', '/legal-consent', '/home', '/', '/onboarding/welcome', '/settings']) {
-      expect(isMobileFrozenExemptPath(pathname), pathname).toBe(false);
+      expect({ pathname, exempt: isMobileFrozenExemptPath(pathname) }).toEqual({ pathname, exempt: false });
     }
     for (const pathname of ['/login', '/auth/verify', '/frozen', '/terms']) {
-      expect(isMobileFrozenExemptPath(pathname), pathname).toBe(true);
+      expect({ pathname, exempt: isMobileFrozenExemptPath(pathname) }).toEqual({ pathname, exempt: true });
     }
   });
 });
