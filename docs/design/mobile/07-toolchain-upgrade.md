@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.1 (2026-10-17) |
-| Status | 設計ゲート審査中 (R2)。実装は §14.1 の段分け (段 A → B → C を 1 本の WF・1 本の PR) で進める。未着手 |
+| 版 | v1.2 (2026-10-17) |
+| Status | 設計ゲート審査中 (R3)。実装は §14.1 の段分け (段 A → B → C を 1 本の WF・1 本の PR) で進める。未着手 |
 | Issue | #1591 (モバイルのツールチェーン (expo・react-native・metro・jest) のメジャー更新 — npm audit の high の残りの原因。#1444 から分割)。載せる先のネイティブのビルドは #1115 (協調リリース) |
 | 範囲の正本 | Issue #1591 の本文とコメント。本書はその上で決めた上げ先・壊れる所・直し方・検証・段分け・オーナー作業との境目 |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする (設計ゲートを省くなら Opus 5.5) |
@@ -115,7 +115,7 @@
 
 | 面 | 事実 |
 |---|---|
-| `expo-file-system` | `app/(tabs)/settings.tsx` と `src/lib/webViewDownload.ts` が `import * as FileSystem from "expo-file-system"` で旧 API (`cacheDirectory` / `documentDirectory` / `writeAsStringAsync` / `makeDirectoryAsync` / `readDirectoryAsync` / `getInfoAsync` / `deleteAsync` / `EncodingType`) を使う。Jest のテスト 10 ファイルが `jest.mock('expo-file-system', …)`。ルートの vitest の `tests/webview-download-export-limit-contract.test.ts:26` が `vi.mock('expo-file-system', () => ({}))` で `webViewDownload.ts` を読む |
+| `expo-file-system` | `app/(tabs)/settings.tsx` と `src/lib/webViewDownload.ts` が `import * as FileSystem from "expo-file-system"` で旧 API (`cacheDirectory` / `documentDirectory` / `writeAsStringAsync` / `makeDirectoryAsync` / `readDirectoryAsync` / `getInfoAsync` / `deleteAsync` / `EncodingType`) を使う。Jest のテスト 10 ファイルが `jest.mock('expo-file-system', …)`。そのうち 3 ファイルはテスト自身も `import * as FileSystem from 'expo-file-system'` で mock の関数を取り出す (`__tests__/components/WebViewScreen.bridge.test.tsx:91`・`WebViewScreen.download.test.tsx:84`・`__tests__/lib/webViewDownload.test.ts:36`)。テストの `require('expo-file-system')`・`jest.requireActual('expo-file-system')` は 0 件。ルートの vitest の `tests/webview-download-export-limit-contract.test.ts:26` が `vi.mock('expo-file-system', () => ({}))` で `webViewDownload.ts` を読む |
 | `as any` | `app/` `src/` に 28 行 (31 か所)・9 ファイル: `(auth)/login.tsx`・`index.tsx`・`onboarding/questions.tsx`・`profile/nutrition-targets.tsx`・`health/blood-tests.tsx` (253・264 行)・`AIAdvisorSheet.tsx`・`V4GenerateModal.tsx`・`useHomeData.ts`・`ProfileProvider.tsx` |
 | `react-native` の `SafeAreaView` | `app/handson-tour/index.tsx`・`app/handson-tour/graduate.tsx`・`src/components/ai/AIAdvisorSheet.tsx` の 3 ファイル (ほかは `react-native-safe-area-context` の `SafeAreaView`) |
 | `expo-router` | `Stack` / `Tabs` / `Link` / `Redirect` / `router` / `useRouter` / `useNavigation` / `useLocalSearchParams` / `usePathname` / `useSegments` / `useRootNavigationState` / `useNavigationContainerRef`。`(tabs)/_layout.tsx` が `<Tabs.Screen name="settings" options={{ href: null }} />`、`(tabs)/profile.tsx` が `router.push('/(tabs)/settings')`。`app/legal-consent.tsx` が `navigation.addListener("beforeRemove", …)` + `preventDefault()`。`src/components/legal/LegalConsentGate.tsx` が `navigationRef.reset({ index: 0, routes: [{ name: 'legal-consent' }] })`。`navigation.addListener('tabPress' / 'blur')`・`getParent`・`getState`・`isFocused`・`setParams` |
@@ -126,6 +126,8 @@
 | `@react-navigation/*` の直接 import | 無し (コメントに 1 か所) |
 | `(tabs)` の layout の止め | `app/(tabs)/_layout.tsx` は、`(tabs)` の下の画面 (設定を含む) すべてに 3 つの止めを掛ける: 31 行 `if (!session) return <Redirect href="/" />`・35 行 同意の状態が `loading` / `required` の間はスピナー・46〜48 行 初期設定が済んでいなければ初期設定へ。ルートの Stack の画面 (`app/settings/account.tsx` など) には掛からない (`app/settings/_layout.tsx` は無い) |
 | 設定の画面の `user` | `app/(tabs)/settings.tsx` は `useAuth()` の `user` (= `session?.user ?? null`) を読み、`user` が無いと 67 行 (`fetchSettings`) と 133 行 (`handleWeekStartDayChange`) で何もせず戻る |
+| 設定の画面の遷移 | `app/(tabs)/settings.tsx` (origin/main `c2b96d41`): 251 行 `handleLogout` の `router.replace("/")`・324 行「プロフィール」の `router.push("/(tabs)/profile")`・332 / 340 / 375 / 437 行の `router.push` (`/health/blood-tests`・`/profile/nutrition-targets`・`AI_CONSENT_SCREEN_PATH`・`/settings/account`)・393 行「使い方ガイドをもう一度見る」の `router.push("/handson-tour?force=1")`。ツアーの終わりは `router.replace('/home')` (`app/handson-tour/graduate.tsx:167`・`index.tsx:122`・`_layout.tsx:49`・`src/handson-tour/useLeaveTour.ts:61`)。`app/settings/account.tsx` の 82・102 行が `router.replace("/")`。`src/components/NotificationRouter.tsx:112` は行き先へ `router.push`。ルートの Stack の画面は getId を持たない (`app/_layout.tsx` の 114〜119 行) |
+| ルートの `ErrorBoundary` | `app/_layout.tsx:34` はルートの境界 (「再試行」だけ)。`(tabs)` の境界は「ホームへ戻る」(`homeHref="/"`) も出す |
 
 **Jest のテスト** (`apps/mobile/__tests__`: 112 ファイル。904f9e8f の後に `settings/data-requests-entry.test.tsx` が足された)
 
@@ -192,10 +194,10 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | R-12 | 既存の番兵 (契約テスト・走査テスト) の追随を全列挙する | 設計の完成条件 | §15.1 |
 | R-13 | 上げた後の React とレンダラーの版のずれを番兵で止める | ルート CLAUDE.md「完全に同じ版でないと動かない」 | §9.7 |
 | R-14 | Node の最低版 (SDK 58: `^22.13.0 \|\| ^24.3.0 \|\| ^26`) を満たす | SDK 58 の要件 | §6.4 |
-| R-15 | 設定の画面を `(tabs)` の外へ移しても、session が切れたら入口へ移る (いまは `(tabs)` の layout の `Redirect` が受け持つ止めを失わない) | B-1 の移設で失うもの (§2.2) | §7.1 の B-1・§9.10・§8.3 (c) |
+| R-15 | 設定の画面を `(tabs)` の外へ移しても、session が切れたら入口へ移る (いまは `(tabs)` の layout の `Redirect` が受け持つ止めを失わない)。設定の画面から出る遷移 (プロフィールの行・使い方ガイドの行・ログアウト・session の切れ) が、ルートの Stack に設定の画面や 2 つ目の `(tabs)` を残さない (いまの並びと同じか、より短い) | B-1 の移設で失うもの・変わるもの (§2.2・§9.10) | §7.1 の B-1・§9.10・§8.3 (c) |
 | R-16 | lockfile の置き場を決め、作り直しの手順で変わらないようにする (Jest の preset と mapper がルートの `react-native` を前提にする) | §2.4 の実測 | §10.1・§9.11・§9.7 |
 
-### 3.2 ユーザーシナリオ (19 本)
+### 3.2 ユーザーシナリオ (22 本)
 
 「利用者」はアプリの利用者、「実装者」は本冊の実装、「オーナー」は EAS のビルドと提出をする人。
 
@@ -219,7 +221,10 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | S16 | 前面で Push 通知が届く。`setNotificationHandler` が `shouldShowBanner: true` を返すので表示される (SDK 58 の既定も表示)。通知をタップすると `NotificationRouter` が `getLastNotificationResponseAsync` / `clearLastNotificationResponseAsync` で行き先へ移す |
 | S17 | Dependabot が `react-native` のパッチ更新 (例 0.88.1) の PR を出す。`tests/mobile-toolchain-contract.test.ts` が、`react-native` と `react` が `expo/bundledNativeModules.json` の版と一致しないので赤にし、SDK ごとの組で上げるよう促す |
 | S18 | 実装者が `npx expo install --check` と `npx expo-doctor@latest` を流す。`--check` は「Dependencies are up to date」(ずれ 0 件)、expo-doctor は app.json のスキーマ (SDK 58 に無い `splash` を消し、`assetBundlePatterns` を消した) と依存の重複を通る |
-| S19 | 利用者が設定の画面を開いている間に session が切れる (トークンの更新の失敗・ログアウト)。設定の画面の止めが入口 (`/`) へ移し、入口が未ログインの行き先へ振り分ける |
+| S19 | 利用者が設定の画面 (かその上のアカウントの画面など) を開いている間に session が切れる (トークンの更新の失敗・アカウントの画面の 401 の後片付け・退会)。設定の画面がルートの Stack を入口 1 つに畳み、入口が未ログインの行き先へ振り分ける。下に `(tabs)` も設定の画面も残らない |
+| S20 | 利用者が設定の画面の「プロフィール」を押す。マイページのタブ (WebView) が前面になり、Stack に設定の画面も 2 つ目の `(tabs)` も残らない (いまの、`(tabs)` の中でマイページのタブへ切り替わるのと同じ並び) |
+| S21 | 利用者が設定の画面でログアウトし、続けて同じ端末でログインし直す。ログアウトで入口だけになり、ログインの後はタブ 1 組 (`(tabs)` が 1 つ) だけになる |
+| S22 | 利用者が設定の画面の「使い方ガイドをもう一度見る」を押し、ツアーを最後まで (か途中で抜けて) 終える。Stack はいまと同じ [(tabs), ツアー] で、終わった後に設定の画面は残らない |
 
 ---
 
@@ -232,7 +237,7 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 3. **React は入れ子のまま** (ルート 19.2.8 / モバイル 19.3.0)。`metro.config.js` の `resolveRequest` と jest の `moduleNameMapper` の `react` / `react-test-renderer` の行は残し、コメントを現在形にする。jest の `moduleNameMapper` の `react-native` の 2 行は消し、`@react-native/jest-preset` と jest-expo の preset の別名 (`react-native/setup-env` などの exports だけの入口を含む) に任せる (§5.2・§7.2 の C-9)。
 4. **Jest は 30.5 + jest-expo 58 + `@react-native/jest-preset` 0.88**。`@react-native/jest-preset` が持つ Jest 29 の依存 (`babel-jest` / `jest-environment-node`) はルートの `overrides` で 30 にそろえ、jest 29 の経路を lockfile から消す (§6.2)。jest-expo 58 自身は `babel-jest` と環境を自分の Jest 30 の依存から `require.resolve` するので、実行時は overrides の有無に依らず Jest 30 で動く。
 5. **RNTL は 13.3.3 のまま、`react-test-renderer` を 19.3.0 (React と同じ版) に固定**。RNTL 14 は別案件 (§0.2)。
-6. **expo-router 58 への追随は 2 か所だけ**: 設定の画面を `(tabs)` の外 (`app/settings/index.tsx`) へ移し、`(tabs)` の layout から外れる session の止めを画面に持たせる / 同意画面の止めを `usePreventRemove` に、ゲートの畳み直しを完全な state (持ち主の navigator の `key` / `routeNames` / `routeKeySeq` / `type` を写し `stale: false`。同意画面の route があれば `key` ごと再利用) の RESET の action を持ち主に宛てて `dispatch` する形にする。
+6. **expo-router 58 への追随は 2 か所だけ**: 設定の画面を `(tabs)` の外 (`app/settings/index.tsx`) へ移し、`(tabs)` の layout から外れる session の止めを画面に持たせ、設定の画面から `(tabs)` や入口へ向かう遷移 (プロフィールの行・使い方ガイドの行・ログアウト・session の切れ) を、ルートの Stack に設定の画面や 2 つ目の `(tabs)` を残さない形にする (§9.10) / 同意画面の止めを `usePreventRemove` に、ゲートの畳み直しを完全な state (持ち主の navigator の `key` / `routeNames` / `routeKeySeq` / `type` を写し `stale: false`。同意画面の route があれば `key` ごと再利用) の RESET の action を持ち主に宛てて `dispatch` する形にする。
 7. **API の置き換えは 3 種**: `expo-file-system` → `expo-file-system/legacy` (2 ファイル + mock 10 ファイル) / `react-native` の `SafeAreaView` → `react-native-safe-area-context` (3 ファイル) / `mediaTypes` の `as any` を外す (2 か所)。
 8. **`runtimeVersion` は fingerprint の方針をトップレベルに置き、更新は無効のまま**。番兵が固定する (§11・§9.7)。
 9. **使っていない依存 3 つを消す** (`@react-native-community/slider`・`expo-haptics`・`expo-image-manipulator`。slider はテストに残った mock も消す)。`react-native-url-polyfill` は使っているので残す (版も変えない)。`@expo/vector-icons` (expo 58 が依存しなくなった) と `react-native-worklets` (Reanimated 4 の peer) と `@react-native/jest-preset` を新しく宣言する。
@@ -249,8 +254,8 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | S5 | `npm audit --json` の `vulnerabilities` を走査 → `via` にオブジェクトを持つ項目 = `braces` と `node-forge` だけ → `image-size`・`postcss` の項目が無い → 名前が `jest` / `@jest/` / `babel-jest` / `create-jest` / `expect` / `jest-expo` で始まる high が無い → 合格 (§10 の V-4)。high の総数 (§2.3 の実測で 22。`--omit=dev` で 19。経路は §2.3 の一覧) は PR の本文に写す |
 | S6 | `app.json` の `runtimeVersion: { "policy": "fingerprint" }` → EAS が `@expo/fingerprint` (expo 58 の依存) でネイティブに効く依存と設定のハッシュを計算し、ビルドの runtime version にする。`expo.version` の変更はハッシュに入らない (SDK 58) |
 | S7 | SDK 53 のビルド: `updates.enabled: false` のため `Updates.isEnabled` は false で埋め込みの JS だけを読む。`checkAutomatically: NEVER` のため起動時の確認もしない。更新を公開する操作 (`eas update`) は本冊に無い (R-8)。将来 `enabled: true` にしても、SDK 58 のビルドの fingerprint と `1.0.0` は一致しない |
-| S8 | `(tabs)/profile.tsx` の `NATIVE_SETTINGS_ROUTE = '/settings'` → `router.push('/settings')` → ファイルの route `app/settings/index.tsx` (route の名前 `settings/index`) がルートの Stack に積まれる (ルートの `Stack` は `headerShown: false`。画面は自前の見出しと `useSafeAreaInsets`) → `user` があるので止め (§9.10) は描かれず、設定の行が出る → 行の `router.push('/settings/account')` などは変わらない → 戻ると `(tabs)` が前面に戻り、マイページのタブ (WebView) はそのまま |
-| S9 | state が `required`・前面が `(tabs)`・pathname `/home` → ゲート: `findNavigatorOwningRoute(navigationRef.getRootState(), 'legal-consent')` が前面の枝を降り、`routeNames` に `legal-consent` を持つ navigator (ルートの Stack。`key` は `navigator:root`) の state を取る → `legalConsentCollapseAction` が `{ type: 'RESET', target: 'navigator:root', payload: { key: 'navigator:root', index: 0, routeKeySeq: <持ち主の値>, routeNames: <持ち主の値の写し>, type: 'stack', stale: false, routes: [{ name: 'legal-consent' }] } }` を作る (同意画面の route が無いので名前だけ) → `navigationRef.dispatch(…)` (58 では commit の後に流れる) → expo-router 58 の `BaseRouter` の RESET: `routes` の名前が `routeNames` にあり、`stale === false` で `routeNames` が持ち主と同じ集合 → 受け付け、key の無い route に `legal-consent:<連番>` を付ける (§9.4 の後の実測) → Stack が [同意画面] → `openedRef` を立てる。`routeAfterSignIn` の `router.replace('/onboarding/welcome')` が後から流れると、同意画面の `usePreventRemove(true)` が REPLACE を止める (callback は `repeat` を呼ばず捨てる) |
+| S8 | `(tabs)/profile.tsx` の `NATIVE_SETTINGS_ROUTE = '/settings'` → `router.push('/settings')` → ファイルの route `app/settings/index.tsx` (route の名前 `settings/index`) がルートの Stack に積まれる (ルートの `Stack` は `headerShown: false`。画面は自前の見出しと `useSafeAreaInsets`) → `user` があるので描画の止め (§9.10) は `null` を返さず、effect も何もしない。設定の行が出る → 行の `router.push('/settings/account')` などは変わらない (「プロフィール」と「使い方ガイド」の行は S20・S22) → 戻ると `(tabs)` が前面に戻り、マイページのタブ (WebView) はそのまま |
+| S9 | state が `required`・前面が `(tabs)`・pathname `/home` → ゲート: `findNavigatorOwningRoute(navigationRef.getRootState(), 'legal-consent')` が前面の枝を降り、`routeNames` に `legal-consent` を持つ navigator (ルートの Stack。`key` は `navigator:root`) の state を取る → `collapseStackAction` が `{ type: 'RESET', target: 'navigator:root', payload: { key: 'navigator:root', index: 0, routeKeySeq: <持ち主の値>, routeNames: <持ち主の値の写し>, type: 'stack', stale: false, routes: [{ name: 'legal-consent' }] } }` を作る (同意画面の route が無いので名前だけ) → `navigationRef.dispatch(…)` (58 では commit の後に流れる) → expo-router 58 の `BaseRouter` の RESET: `routes` の名前が `routeNames` にあり、`stale === false` で `routeNames` が持ち主と同じ集合 → 受け付け、key の無い route に `legal-consent:<連番>` を付ける (§9.4 の後の実測) → Stack が [同意画面] → `openedRef` を立てる。`routeAfterSignIn` の `router.replace('/onboarding/welcome')` が後から流れると、同意画面の `usePreventRemove(true)` が REPLACE を止める (callback は `repeat` を呼ばず捨てる) |
 | S10 | Stack の route が 1 つなので `canGoBack()` は false → コンテナは `BackHandler` で OS に渡す → アプリが背面へ。`usePreventRemove` は呼ばれない (取り除く操作が無い)。iOS は `gestureEnabled: false` |
 | S11 | `clear` → 同意画面: `legalConsentScreenPreventsRemoval('free', false)` = false → ゲート: 前面が同意画面で `clear` → `refreshProfile()` → `canGoBack()` false → `router.replace('/')` → REPLACE は止められず [入口] → 入口が profile から振り分ける |
 | S12 | session 無し・`sawRequired` → `signed-out-notice` → `usePreventRemove(true)`。「閉じる」: `closingRef` を立て、`setClosing(true)` (次の描画で `preventRemove` が false)、返り値の `disablePrevention()` を呼び、`router.canGoBack()` ? `back()` : `replace('/')` → 止められずに入口へ |
@@ -260,7 +265,10 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | S16 | `expo-notifications` 58: `setNotificationHandler` / `getLastNotificationResponseAsync` / `clearLastNotificationResponseAsync` / `addNotificationResponseReceivedListener` はいずれも SDK 58 の API 一覧にあり非推奨でない (`shouldShowAlert` だけ非推奨で、使っていない)。前面の通知は handler が返す `shouldShowBanner: true` で出る |
 | S17 | Dependabot の PR は `apps/mobile/package.json` の `react-native` を `0.88.1` に、lockfile も変える → `tests/mobile-toolchain-contract.test.ts`: `react-native` の宣言 ≠ `node_modules/expo/bundledNativeModules.json` の `react-native` (`0.88.0`) → 赤 → PR のマージはできず、SDK の更新 (expo も一緒) で上げる |
 | S18 | `npx expo install --check` は `bundledNativeModules.json` と `package.json` を突き合わせる → 全部一致 (§6.1 は逐語なので) → `npx expo-doctor@latest` は app.json をスキーマで検査 (SDK 58 のスキーマに `splash` は無い・`assetBundlePatterns` は非推奨) → どちらも消してあるので通る。重複するネイティブモジュールの警告は、入れ子が `react` / `@types/react` (JS) だけなので出ない |
-| S19 | 設定の画面が前面 ([(tabs), settings/index]) で、`AuthProvider` が session を失う (`onAuthStateChange` の SIGNED_OUT・`clearSession`) → `useAuth().user` が null → 設定の画面が `<Redirect href={ENTRY_SCREEN_PATH} />` を描く → expo-router 58 の `Redirect` は前面の画面の `useFocusEffect` で `router.replace('/')` を呼ぶ (設定の画面は前面なので呼ばれる。下の `(tabs)` の layout の `Redirect` は前面でないので呼ばれない) → [入口] → 入口が未ログインの行き先へ。ログアウトの押下 (`handleLogout`) では、`clearSession` の後の描画の `Redirect` と押下の `router.replace('/')` が両方 `/` へ移す (いまの `(tabs)` の layout の `Redirect` と同じ重なりで、行き先は同じ) |
+| S19 | 設定の画面が Stack にある ([(tabs), settings/index] か [(tabs), settings/index, settings/account])。`AuthProvider` が session を失う (`onAuthStateChange` の SIGNED_OUT・`clearSession`) → `useAuth().user` が null → 設定の画面の effect (`useEffect`。前面でなくても流れる) が `leaveToEntry()` → `findNavigatorOwningRoute(navigationRef.getRootState(), 'index')` がルートの Stack (`routeNames` に `index`) を返す → `collapseStackAction(owner, 'index')` = `{ type: 'RESET', target: 'navigator:root', payload: { key, index: 0, routeKeySeq, routeNames, type: 'stack', stale: false, routes: [{ name: 'index' }] } }` → `navigationRef.dispatch` → BaseRouter の RESET が受け付け、`index` に key を付ける → [入口] (設定の画面と `(tabs)` は外れる。`(tabs)` の layout の `Redirect` は前面にならないまま外れるので流れない) → 入口が未ログインの行き先へ。設定の画面は描画で `null` を返す (行を描かない)。`leftToEntryRef` で 2 回目は呼ばない。アカウントの画面の `router.replace("/")` が後から流れても、入口を入口に置き換えるだけ |
+| S20 | 「プロフィール」の行の `router.dismissTo("/(tabs)/profile")` → expo-router 58 の `resolveNavigationDestination` は前面 (settings/index) と行き先 `(tabs)` の名前が違うのでルートの Stack に宛てた POP_TO を作り、子の state (マイページのタブ) を付ける → StackRouter の POP_TO が前面から下へ `(tabs)` を探し、見つけた所まで戻して子の state を付ける → [(tabs) (マイページ)]。`router.push` のままだと、PUSH は getId の無い `(tabs)` を新しく作り [(tabs), settings, (tabs)新] |
+| S21 | ログアウト: `handleLogout` → `signOutOnDevice` (`clearSession` を含む) → 描画の後の effect が `leaveToEntry()` (S19 と同じ RESET) → [入口]。`handleLogout` の続きの `leaveToEntry()` は `leftToEntryRef` で何もしない。ログイン: 入口の `<Redirect href="/(tabs)/home" />` → ルートの REPLACE で入口が `(tabs)` に置き換わる → [(tabs)] (1 組)。`router.replace("/")` のままだと、ログアウトで [(tabs), 入口]、ログインで [(tabs), (tabs)新] (`(tabs)` の layout は session が戻ると古い方もタブを描き直すので、WebView 5 つと FAB が 2 組) |
+| S22 | 「使い方ガイドをもう一度見る」の行の `router.replace("/handson-tour?force=1")` → 前面の settings/index を handson-tour に置き換える → [(tabs), handson-tour] (`force=1` で `entrySource = 'settings_force'`)。ツアーの終わりの `router.replace('/home')` → 前面の handson-tour を `(tabs)` に置き換える → [(tabs), (tabs)新] (いまと同じ。§17 の 10)。`router.push` のままだと [(tabs), settings, handson-tour] → [(tabs), settings, (tabs)新] |
 
 ---
 
@@ -285,7 +293,7 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | lockfile の置き場が作り直しの手順で変わる (§2.4。1 回で作ると `react-native` ほかが入れ子になり、ルートの `@react-native/jest-preset` から `react-native` が見えない) | 置き場を npm に指示する仕組み (nohoist) は npm に無い。手順 (2 段) で古い木を先に消せば、いまの main と同じ置き場になる | 手順で固定する (§10.1)。作った後は V-1 の検査 (§9.11) で、マージ後は番兵 (§9.7) で置き場を見張る。lockfile を手で直さない |
 | jest 29 の経路 (`@react-native/jest-preset` の依存) | `overrides` で 30 にそろえれば lockfile から消える (実行時は jest-expo が自分の 30 を使うので挙動は変わらない) | 消す (§6.2) |
 | 根の advisory (braces・node-forge) | 上流に修正版が無い。`metro-file-map` と `@expo/cli` を使わない構造は Expo を使わない構造 | 消せない。残ることを合否の外に置き (§10 の V-4)、修正版が出たら Dependabot のパッチ更新で入る |
-| `(tabs)` の中の隠しタブ (settings) | `href: null` が 58 で「届かない route」になった。隠しタブという構造そのものを消し、普通の Stack の画面にする | 消す (§7.1 の B-1)。残る縁は `NATIVE_SETTINGS_ROUTE` の値 1 つ |
+| `(tabs)` の中の隠しタブ (settings) | `href: null` が 58 で「届かない route」になった。隠しタブという構造そのものを消し、普通の Stack の画面にする | 消す (§7.1 の B-1)。残る縁は `NATIVE_SETTINGS_ROUTE` の値と、設定の画面がルートの Stack の画面になったことで変わる遷移 4 つの直し (§9.10。いまの並びにそろえる) |
 | 同意画面の「RESET だけ通す」規則 (13b) | ゲートの `reset` が同意画面の route を `key` ごと再利用すれば、同意画面は取り除かれず、RESET を通す規則そのものが要らない | 消す (§7.1 の B-2)。残る縁は「取り除く操作は全部止める / 自分で閉じるときだけ解く」の 1 つ |
 
 ### 5.3 確定した構造
@@ -432,7 +440,7 @@ grep の語はパッケージ名。母集合は `apps/mobile` (`__tests__` と `
 
 | # | 壊れる所 | 事実 (出典) | 直し方 | 触るファイル | 段 | 検証 |
 |---|---|---|---|---|---|---|
-| A-1 | `expo-file-system` の既定の export が新しい API (`File` / `Directory`) になり、旧 API は `expo-file-system/legacy` | SDK 54 changelog (expo-file-system 19.0.0「Make the modern filesystem API the default, move previous one to `expo-file-system/legacy`」)。58.0.9 の exports に `./legacy` がある。jest-expo 55.0.7 の mock も `/legacy` を向く | import を `"expo-file-system/legacy"` にする (使う関数は変えない)。テストの `jest.mock('expo-file-system', …)` を `jest.mock('expo-file-system/legacy', …)` にする (mock の中身は変えない) | `app/settings/index.tsx` (段 B で移す前は `app/(tabs)/settings.tsx`)・`src/lib/webViewDownload.ts`・`__tests__/settings/ai-consent-entry.test.tsx`・`profile-row.test.tsx`・`logout.test.tsx`・`__tests__/components/WebViewScreen.error-cleanup-tabs.test.tsx`・`WebViewScreen.download.test.tsx`・`WebViewScreen.legal-consent.test.tsx`・`WebViewScreen.auth-messages.test.tsx`・`WebViewScreen.test.tsx`・`WebViewScreen.bridge.test.tsx`・`__tests__/lib/webViewDownload.test.ts` (Jest の 10 本)。ルートの vitest の `tests/webview-download-export-limit-contract.test.ts` の 26 行 `vi.mock('expo-file-system', () => ({}))` を `vi.mock('expo-file-system/legacy', () => ({}))` に (このテストは `webViewDownload.ts` を読む。mock の指定子が合わないと本物のネイティブモジュールを読みに行って落ちる) | A | V-2・V-3・V-7 |
+| A-1 | `expo-file-system` の既定の export が新しい API (`File` / `Directory`) になり、旧 API は `expo-file-system/legacy` | SDK 54 changelog (expo-file-system 19.0.0「Make the modern filesystem API the default, move previous one to `expo-file-system/legacy`」)。58.0.9 の exports に `./legacy` がある。jest-expo 55.0.7 の mock も `/legacy` を向く | import を `"expo-file-system/legacy"` にする (使う関数は変えない)。テストの `jest.mock('expo-file-system', …)` を `jest.mock('expo-file-system/legacy', …)` にする (mock の中身は変えない)。テスト自身が `import * as FileSystem from 'expo-file-system'` で mock の関数を取り出す 3 本 (`WebViewScreen.bridge.test.tsx:91`・`WebViewScreen.download.test.tsx:84`・`webViewDownload.test.ts:36`) は、その import も `'expo-file-system/legacy'` にする (変えないと、テストの `FileSystem` は SDK 58 の既定の入口 (`Paths` / `File` / `Directory` だけ) になり、`FileSystem.writeAsStringAsync as jest.Mock` などが mock でなくなって落ちる。mock の関数の取り出し方と期待は変えない) | `app/settings/index.tsx` (段 B で移す前は `app/(tabs)/settings.tsx`)・`src/lib/webViewDownload.ts`・`__tests__/settings/ai-consent-entry.test.tsx`・`profile-row.test.tsx`・`logout.test.tsx`・`__tests__/components/WebViewScreen.error-cleanup-tabs.test.tsx`・`WebViewScreen.download.test.tsx`・`WebViewScreen.legal-consent.test.tsx`・`WebViewScreen.auth-messages.test.tsx`・`WebViewScreen.test.tsx`・`WebViewScreen.bridge.test.tsx`・`__tests__/lib/webViewDownload.test.ts` (Jest の 10 本)。ルートの vitest の `tests/webview-download-export-limit-contract.test.ts` の 26 行 `vi.mock('expo-file-system', () => ({}))` を `vi.mock('expo-file-system/legacy', () => ({}))` に (このテストは `webViewDownload.ts` を読む。mock の指定子が合わないと本物のネイティブモジュールを読みに行って落ちる) | A | V-2・V-3・V-7 |
 | A-2 | `react-native` の `SafeAreaView` は非推奨 (SDK 54 / RN 0.81)。Android 16 の edge-to-edge が強制 (SDK 54) で、`react-native` の `SafeAreaView` は Android で何もしないので文字が status bar の下に潜る | SDK 54 changelog「React Native `<SafeAreaView>`: Deprecated. Use `react-native-safe-area-context` instead」「Android edge-to-edge: Enabled on all Android apps and cannot be disabled」 | `import { SafeAreaView } from 'react-native'` の行から `SafeAreaView` を外し、`import { SafeAreaView } from 'react-native-safe-area-context'` を足す。`edges` は付けない (既定の上下左右 = `react-native` 版の iOS の挙動と同じ)。style はそのまま | `app/handson-tour/index.tsx`・`app/handson-tour/graduate.tsx`・`src/components/ai/AIAdvisorSheet.tsx` (AIAdvisorSheet を描くテストの `react-native-safe-area-context` の mock 3 つ (`__tests__/ai/service-unavailable.test.tsx`・`advisor-sheet-legal-consent.test.tsx`・`stopped-by-server-raw-fetch.test.tsx`) は `SafeAreaView` を持っているので変えない。handson-tour の index / graduate を描くテストは無い) | A | V-2・V-3・実機 (§16 の M-6) |
 | A-3 | `expo-image-picker` の `mediaTypes` は `MediaType \| MediaType[]` (`'images'` …) で型が付く | SDK 52 以降の型。58.0.10 でも同じ | `mediaTypes: ["images"] as any` の `as any` を外す (2 か所)。型が通らなければ `ImagePicker.MediaType` の配列として書く (`["images"] satisfies ImagePicker.MediaType[]`)。`as any` は残さない | `app/health/blood-tests.tsx` (253 行・264 行) | A | V-2 |
 | A-4 | `@expo/vector-icons` を `expo` が依存しなくなった | SDK 56 changelog「`expo` no longer depends on `@expo/vector-icons`. If you use it, add it to `package.json` yourself」 | `dependencies` に `"@expo/vector-icons": "^15.0.2"` を足す (§6.1)。コードは変えない。`@react-native-vector-icons/*` への移行 (SDK 56 の非推奨) はしない | `apps/mobile/package.json` | A | V-1・V-2・V-3 |
@@ -441,8 +449,8 @@ grep の語はパッケージ名。母集合は `apps/mobile` (`__tests__` と `
 | A-7 | `expo-updates` 58: `maxUpdatesToKeep` / `enableBsdiffPatchSupport` (既定 true) が増えた | SDK 56・58 changelog | 変えない (更新は無効のまま。§11) | – | – | V-8 |
 | A-8 | React Native 0.87 の Strict TypeScript API が既定 (深い import・`NativeMethods`・`Touchable`・`*Properties` 型が消える。ref の型が `ViewInstance` 等に) | RN 0.87 / 0.88 の告知。SDK 58 changelog「opt-out は 0.88 まで」 | opt-out (`customConditions` に `react-native-legacy-deep-imports`) は使わない。深い import は 0 件なので、V-2 で新しく出た型エラーを個別に直す (ref の型なら `React.ElementRef<typeof X>` を `XInstance` に) | V-2 で出たファイルだけ | A | V-2 |
 | A-9 | `expo-router` 58: `useNavigation` が navigator の外で例外。`navigation.dispatch` は commit 後に流れる (`dispatchSync` が即時)。モジュールの `router` は最初の描画の前に例外 | SDK 57→58 の移行手引き | 変えない。`useNavigation` を使う 4 か所 (`app/legal-consent.tsx` (B-2 で外す)・`src/lib/webViewAuthMessages.ts`・`src/components/web/WebViewScreen.tsx`・`useResetInitialPathOnBlur.ts`) はすべて route の中。`router.*` は effect と押下の中だけ | – | – | V-3・実機 (M-1〜M-3) |
-| B-1 | `expo-router` 58: JS の Tabs で `href: null` は「タブを隠し、その route を届かない (initial tab へ redirect) にする」 | expo-router 58.0.0 changelog「Make `href: null` hide JS tabs and make their routes unreachable, redirecting navigation to the initial tab」。移行手引きの Tabs の例は「宣言した画面だけを出す」 | 設定の画面を `(tabs)` の外へ移す: `git mv "apps/mobile/app/(tabs)/settings.tsx" apps/mobile/app/settings/index.tsx` (相対 import の深さは同じで変えない)。`(tabs)/_layout.tsx` の `<Tabs.Screen name="settings" options={{ href: null }} />` と前のコメント行を消す。`(tabs)/profile.tsx` の `NATIVE_SETTINGS_ROUTE` を `'/settings'` に。設定の画面はルートの Stack (`headerShown: false`) に積まれ、`(tabs)` の layout の外になる。失うものと受け手: ① session の止め (`(tabs)/_layout.tsx:31`) → 画面に `if (!user) return <Redirect href={ENTRY_SCREEN_PATH} />` を足す (§9.10。前面の画面の `Redirect` だけが効くので、下の `(tabs)` の止めは設定が前面の間は効かない) ② 同意の状態のスピナー (35 行) → `LegalConsentGate` が `/settings` を対象のパスとして Stack を畳む (`/settings/account` と同じ。§8.3 (c)) ③ 初期設定への振り分け (46〜48 行) → 設定へは初期設定が済んだ後のマイページの歯車からしか来ないので要らない ④ `AIFloatingFab` → 設定の画面の上には出なくなる (タブの画面では今までどおり出る。M-2 で見え方を確かめる) ⑤ `(tabs)` の ErrorBoundary → ルートの ErrorBoundary が受ける | `app/settings/index.tsx` (移設 + 止め)・`app/(tabs)/_layout.tsx`・`app/(tabs)/profile.tsx` + §13.2 のテストと §15.1 の番兵の行 | B | V-3・V-7・実機 (M-2) |
-| B-2 | `expo-router` 58: `beforeRemove` は止められない (`usePreventRemove` に)。`CommonActions.reset` は完全な state が要る。`resetRoot` は消えた | expo-router 58.0.0 changelog「Make `beforeRemove` non-preventable and add `removePrevented` event」「Export `usePreventRemove` from `expo-router`」「Require complete state in `CommonActions.reset`」。58.0.23 の `build/react-navigation/routers/BaseRouter.js` の RESET: `nextState.stale === false` のときだけ受け付け (`routeNames` が持ち主と同じ集合であること・key の無い route には key を付ける)、それ以外は `console.warn('The RESET action payload must contain a complete navigation state … Include key, index, routeNames, routeKeySeq, and stale: false')` を出して受け付けない (Unhandled。ルートまで上がって捨てられる) | 同意画面: `navigation.addListener("beforeRemove", …)` を `usePreventRemove(legalConsentScreenPreventsRemoval(mode, closing), () => {})` に (止めた操作は捨てる。`repeat` は呼ばない)。自分で閉じるとき (`close`) は `setClosing(true)` + 返り値の `disablePrevention()` を呼んでから遷移。ゲート: `navigationRef.getRootState()` から `legal-consent` を `routeNames` に持つ navigator を探し (`findNavigatorOwningRoute`。`key`・`routeNames`・`routeKeySeq` がそろわなければ null)、その `key` / `routeNames` / `routeKeySeq` / `type` を写し `stale: false` を付けた完全な state の RESET の action (`legalConsentCollapseAction`。`target` は持ち主の `key`) を `navigationRef.dispatch` に渡す。同意画面の route が既にあれば `key` ごと再利用する (同じ key は同じ画面なので取り除かれず、止めにも当たらない)。`navigationRef.reset(state)` は使わない (型が `PartialState \| NavigationState` で、`stale: false` と key の無い route の組を表せない。`dispatch` の引数の型 `NavigationAction` は `{ type: string; payload?: object; target?: string }` で、この action がそのまま入る)。`legalConsentScreenRemovalDecision` と `LegalConsentScreenRemovalDecision` は消す。`RESET_ACTION_TYPE` は残し、action の `type` に使う (§9.4) | `app/legal-consent.tsx`・`src/components/legal/LegalConsentGate.tsx`・`src/lib/legal-consent.ts` + テスト 3 本 (§13.2)・`app/_layout.tsx` (118 行のコメント 1 行だけ。§9.6 の後の注記) | B | V-3・実機 (M-3) |
+| B-1 | `expo-router` 58: JS の Tabs で `href: null` は「タブを隠し、その route を届かない (initial tab へ redirect) にする」 | expo-router 58.0.0 changelog「Make `href: null` hide JS tabs and make their routes unreachable, redirecting navigation to the initial tab」。移行手引きの Tabs の例は「宣言した画面だけを出す」 | 設定の画面を `(tabs)` の外へ移す: `git mv "apps/mobile/app/(tabs)/settings.tsx" apps/mobile/app/settings/index.tsx` (相対 import の深さは同じで変えない)。`(tabs)/_layout.tsx` の `<Tabs.Screen name="settings" options={{ href: null }} />` と前のコメント行を消す。`(tabs)/profile.tsx` の `NATIVE_SETTINGS_ROUTE` を `'/settings'` に。設定の画面はルートの Stack (`headerShown: false`) に積まれ、`(tabs)` の layout の外になる。失うものと受け手: ① session の止め (`(tabs)/_layout.tsx:31`) → 画面に「`user` が無くなったらルートの Stack を入口 1 つに畳む effect」と描画の `if (!user) return null` を足す (§9.10。`Redirect` は前面の画面のものだけが流れ、しかも前面の route だけを置き換えるので [(tabs), 入口] が残る。effect と完全な state の RESET で、前面に依らず [入口] にする) ② 同意の状態のスピナー (35 行) → `LegalConsentGate` が `/settings` を対象のパスとして Stack を畳む (`/settings/account` と同じ。§8.3 (c)) ③ 初期設定への振り分け (46〜48 行) → 設定へは初期設定が済んだ後のマイページの歯車からしか来ないので要らない ④ `AIFloatingFab` → 設定の画面の上には出なくなる (タブの画面では今までどおり出る。M-2 で見え方を確かめる) ⑤ `(tabs)` の ErrorBoundary → ルートの ErrorBoundary が受ける (「再試行」だけ。アカウント・血液検査と同じ) ⑥ 設定の画面から `(tabs)` や入口へ向かう遷移が、ルートの Stack への新しい route の push / 設定の画面だけの置き換えに変わる → §9.10 の表の 4 つを直す (「プロフィール」の行 = `router.dismissTo("/(tabs)/profile")`・「使い方ガイドをもう一度見る」の行 = `router.replace("/handson-tour?force=1")`・ログアウトと session の切れ = 入口 1 つに畳む完全な state の RESET (`leaveToEntry()`。§9.4 の `collapseStackAction` と `ENTRY_SCREEN_ROUTE_NAME`))。通知のタップ (`NotificationRouter`) は変えない (§8.3 (c)・§17 の 10) | `app/settings/index.tsx` (移設 + 止め)・`app/(tabs)/_layout.tsx`・`app/(tabs)/profile.tsx` + §13.2 のテストと §15.1 の番兵の行 | B | V-3・V-7・実機 (M-2) |
+| B-2 | `expo-router` 58: `beforeRemove` は止められない (`usePreventRemove` に)。`CommonActions.reset` は完全な state が要る。`resetRoot` は消えた | expo-router 58.0.0 changelog「Make `beforeRemove` non-preventable and add `removePrevented` event」「Export `usePreventRemove` from `expo-router`」「Require complete state in `CommonActions.reset`」。58.0.23 の `build/react-navigation/routers/BaseRouter.js` の RESET: `nextState.stale === false` のときだけ受け付け (`routeNames` が持ち主と同じ集合であること・key の無い route には key を付ける)、それ以外は `console.warn('The RESET action payload must contain a complete navigation state … Include key, index, routeNames, routeKeySeq, and stale: false')` を出して受け付けない (Unhandled。ルートまで上がって捨てられる) | 同意画面: `navigation.addListener("beforeRemove", …)` を `usePreventRemove(legalConsentScreenPreventsRemoval(mode, closing), () => {})` に (止めた操作は捨てる。`repeat` は呼ばない)。自分で閉じるとき (`close`) は `setClosing(true)` + 返り値の `disablePrevention()` を呼んでから遷移。ゲート: `navigationRef.getRootState()` から `legal-consent` を `routeNames` に持つ navigator を探し (`findNavigatorOwningRoute`。`key`・`routeNames`・`routeKeySeq` がそろわなければ null)、その `key` / `routeNames` / `routeKeySeq` / `type` を写し `stale: false` を付けた完全な state の RESET の action (`collapseStackAction`。`target` は持ち主の `key`) を `navigationRef.dispatch` に渡す。同意画面の route が既にあれば `key` ごと再利用する (同じ key は同じ画面なので取り除かれず、止めにも当たらない)。`navigationRef.reset(state)` は使わない (型が `PartialState \| NavigationState` で、`stale: false` と key の無い route の組を表せない。`dispatch` の引数の型 `NavigationAction` は `{ type: string; payload?: object; target?: string }` で、この action がそのまま入る)。`legalConsentScreenRemovalDecision` と `LegalConsentScreenRemovalDecision` は消す。`RESET_ACTION_TYPE` は残し、action の `type` に使う (§9.4) | `app/legal-consent.tsx`・`src/components/legal/LegalConsentGate.tsx`・`src/lib/legal-consent.ts` + テスト 3 本 (§13.2)・`app/_layout.tsx` (118 行のコメント 1 行だけ。§9.6 の後の注記) | B | V-3・実機 (M-3) |
 | B-3 | `expo-router` 58: `Stack` / `Screen` の `initialRouteName` / `initialParams` / `redirect` / `navigationKey`・`freezeOnBlur` が消えた。`onReady` / `ready` が消えた。`screen` / `params` / `initial` の入れ子の指定は普通の params に | 移行手引き | 該当なし (どれも使っていない: grep 0 件)。`useRootNavigationState()?.key` で準備を見るのは残る | – | – | V-3 |
 | B-4 | `expo-router` 56: `@react-navigation/*` の直接 import が動かない | SDK 56 changelog | 該当なし (直接 import は 0 件。`legal-consent.ts` のコメントの「`@react-navigation の CommonActions.reset`」は B-2 で書き換える) | – | – | – |
 | B-5 | `expo-router` 58: `web.output` の既定が server (Web 出力) | SDK 58 changelog | 該当なし (`expo export` で Web を出さない。`expo start --web` は開発の補助) | – | – | – |
@@ -479,8 +487,8 @@ grep の語はパッケージ名。母集合は `apps/mobile` (`__tests__` と `
 | T-6 | Reanimated 4 のコンポーネントを描くテストが、worklets のネイティブモジュールを要る | C-10 | C-10 の mock と `setUpTests()`。描くテスト: `__tests__/app/handson-tour-photo-save.test.tsx`・`handson-tour-menu-bubble.test.tsx`・`handson-tour-hard-back-step2-3.test.tsx`・`handson-tour-layout-login.test.tsx`・`__tests__/components/TourBubble.testid.test.tsx` (TourOverlay / Confetti 経由)。mock で足りなければ、Reanimated の手引きの `jest.useFakeTimers()` をそのテストの `beforeEach` に足す (アニメーションの完了を待つ test だけ) | A | V-3 |
 | T-7 | `react-test-renderer` が React と違う版 (いま 19.2.5 / 19.0.0) | §6.1 | `19.3.0` の固定で React と一致。`jest.config.js` の `^react-test-renderer$` の固定先 (ルートの `node_modules`) は変えない (§10.1 の 2 段でルートに巻き上がる。V-1 と番兵 (§9.7) で確かめる) | A | V-1・V-3 |
 | T-8 | `@testing-library/jest-native` 5.4.3 (非推奨) | RNTL 13.3.3 の組み込み matcher で代替できるが、`jest.setup.js` の `extend-expect` を外すと `toHaveTextContent` 等の登録の経路が変わる | 変えない (本冊の範囲外。RNTL 14 の案件で一緒に外す) | – | V-3 |
-| T-9 | `expo-file-system` の mock の指定子 | A-1 | A-1 のとおり Jest の 10 ファイルとルートの vitest の 1 ファイル (`tests/webview-download-export-limit-contract.test.ts`) | A | V-3・V-7 |
-| T-10 | 設定の画面の移設に伴うテスト (`import SettingsTab from '../../app/(tabs)/settings'` ×3・`'/(tabs)/settings'` の期待・タブの名前の一覧 `[..., 'settings']` の期待 ×2 と `href: null` の test・`(tabs)/settings.tsx` が在ることの期待・パスの一覧・Web 側の FAQ のテストが読むパス) と、設定の画面の session の止めの新しいテスト | B-1 | §13.2 と §15.1 の行のとおり | B | V-3・V-7 |
+| T-9 | `expo-file-system` の mock の指定子と、テスト自身の import | A-1 | A-1 のとおり Jest の 10 ファイル (うち 3 本は `import * as FileSystem from 'expo-file-system'` も `/legacy` に) とルートの vitest の 1 ファイル (`tests/webview-download-export-limit-contract.test.ts`)。§9.7 の番兵が `__tests__` の指定子も見る | A | V-3・V-7 |
+| T-10 | 設定の画面の移設に伴うテスト (`import SettingsTab from '../../app/(tabs)/settings'` ×3・`'/(tabs)/settings'` の期待・タブの名前の一覧 `[..., 'settings']` の期待 ×2 と `href: null` の test・`(tabs)/settings.tsx` が在ることの期待・パスの一覧・Web 側の FAQ のテストが読むパス)・設定の画面の遷移の直し (§9.10) に伴う期待 (ログアウトの `replace:/` → RESET の action・「プロフィール」の行の `push` → `dismissTo`) と、設定の画面の session の止めと遷移の新しいテスト | B-1 | §13.2 と §15.1 の行のとおり | B | V-3・V-7 |
 | T-11 | 同意画面・ゲートのテスト (`beforeRemove` の mock・`reset` の期待) | B-2 | §13.2 のとおり (ゲートの期待は `navigationRef.dispatch` に渡す完全な state の action。実物の expo-router 58 の `StackRouter` に action を通す it を足し、mock だけで緑になることを防ぐ) | B | V-3 |
 
 ### 7.4 ネイティブの挙動 (オーナーが実機で確かめる。コードでは直さない)
@@ -554,8 +562,8 @@ SDK 54: `expo-av` (未使用)・`react-native-edge-to-edge` の plugin (未使�
 | OTA | 無効 (`enabled: false`・`NEVER`) | 同じ (番兵で固定) |
 | 設定の画面 | `app/(tabs)/settings.tsx` (隠しタブ・`href: null`)・`router.push('/(tabs)/settings')` | `app/settings/index.tsx` (ルートの Stack)・`router.push('/settings')` |
 | 同意画面の止め | `beforeRemove` + `preventDefault` (RESET だけ通す) | `usePreventRemove` (全部止める。自分で閉じるときだけ解く) |
-| ゲートの畳み直し | `navigationRef.reset({ index: 0, routes: [{ name: 'legal-consent' }] })` (部分の state。expo-router 58 では受け付けられない) | `navigationRef.dispatch(legalConsentCollapseAction(owner, 'legal-consent'))` (完全な state: `key`・`index: 0`・`routeKeySeq`・`routeNames`・`type`・`stale: false`。`target` は持ち主の key。同意画面の route があれば `key` ごと再利用) |
-| `expo-file-system` | 既定の入口 (旧 API) | `/legacy` の入口 (同じ関数) |
+| ゲートの畳み直し | `navigationRef.reset({ index: 0, routes: [{ name: 'legal-consent' }] })` (部分の state。expo-router 58 では受け付けられない) | `navigationRef.dispatch(collapseStackAction(owner, 'legal-consent'))` (完全な state: `key`・`index: 0`・`routeKeySeq`・`routeNames`・`type`・`stale: false`。`target` は持ち主の key。同意画面の route があれば `key` ごと再利用) |
+| `expo-file-system` | 既定の入口 (旧 API) | `/legacy` の入口 (同じ関数)。Jest のテストの `jest.mock` 10 本と、mock の関数を取り出す import 3 本も `/legacy` |
 | `SafeAreaView` (3 ファイル) | `react-native` (Android で無効) | `react-native-safe-area-context` |
 | `as any` (apps/mobile の `app/` `src/`) | 28 行 (31 か所)・9 ファイル | 26 行 (29 か所)・8 ファイル (`blood-tests.tsx` の 2 行だけ外す。ほかの 8 ファイルは本冊が触らない) |
 | `app.json` の `splash` / `assetBundlePatterns` | あり | 無し (`expo-splash-screen` の plugin へ / 削除) |
@@ -567,7 +575,10 @@ SDK 54: `expo-av` (未使用)・`react-native-edge-to-edge` の plugin (未使�
 | `jest.config.js` の `moduleNameMapper` | `react` ×2・`react-native` ×2・`react-test-renderer` ×2・`@homegohan/shared`・`react-native-webview` | `react-native` ×2 を消す (preset の別名に任せる) |
 | mobile tsc のエラー | 6 件 | 6 件 (同じ file:line。新規 0) |
 | Jest のテストファイル | 112 | 113 (新規 1: `__tests__/settings/session-guard.test.tsx`。移設・名前の変更は無し) |
-| 設定の画面の session の止め | `(tabs)` の layout の `Redirect` | 設定の画面 (`app/settings/index.tsx`) の `Redirect` (§9.10) |
+| 設定の画面の session の止め | `(tabs)` の layout の `Redirect` (`(tabs)` が前面のときだけ流れる) | 設定の画面 (`app/settings/index.tsx`) の effect がルートの Stack を入口 1 つに畳む (完全な state の RESET。前面でなくても流れる) と、描画の `if (!user) return null` (§9.10) |
+| 設定の画面から出る遷移 | ログアウト `router.replace("/")` → [入口]・「プロフィール」 `router.push("/(tabs)/profile")` → タブの切り替え・「使い方ガイド」 `router.push("/handson-tour?force=1")` → [(tabs), handson-tour] | ログアウト `leaveToEntry()` → [入口]・「プロフィール」 `router.dismissTo("/(tabs)/profile")` → [(tabs) (マイページ)]・「使い方ガイド」 `router.replace("/handson-tour?force=1")` → [(tabs), handson-tour] (並びはいまと同じ。§8.3 (c)) |
+| 設定の画面が前面の通知のタップ | `(tabs)` の中のタブの切り替え | ルートの Stack に `(tabs)` を 2 つ目として push (ルートの Stack のほかの画面と同じ。§17 の 10) |
+| 設定の画面の描画の例外 | `(tabs)` の境界 (「再試行」と「ホームへ戻る」) | ルートの境界 (「再試行」だけ) |
 | ルートの vitest の番兵 | `tests/react-types-version-contract.test.ts` ほか | + `tests/mobile-toolchain-contract.test.ts` |
 
 ### 8.3 状態遷移表
@@ -597,14 +608,21 @@ SDK 54: `expo-av` (未使用)・`react-native-edge-to-edge` の plugin (未使�
 
 **(c) 設定の画面 (状態 = ルートの Stack)**
 
-| 状態 | 操作 | 遷移先 | ガード | 副作用 |
+「いま」の列は移設の前 (設定の画面は `(tabs)` の中の隠しタブ)。遷移先の書き方は §9.10 のとおり、ルートの Stack の route の並び (`(tabs)新` は新しい key の 2 つ目の `(tabs)`)。expo-router 58 の行き先の決め方 (前面の route と名前が合うときだけ下の navigator へ降りる) と StackRouter の PUSH / REPLACE / POP_TO / RESET の扱いは §9.10 の冒頭。
+
+| 状態 | 操作 | 遷移先 | ガード | 副作用 (いま との差) |
 |---|---|---|---|---|
-| [(tabs) (マイページ)] | 歯車 (`router.push('/settings')`) | [(tabs), settings] | session あり (タブの layout の `Redirect` は変わらない) | 設定の画面がルートの Stack に積まれる。`AIFloatingFab` は出ない |
-| [(tabs), settings] | 戻る (iOS スワイプ / Android 戻る) | [(tabs)] | – | マイページのタブに戻る |
-| [(tabs), settings] | 行 (`/settings/account` / `/health/blood-tests` / `/profile/nutrition-targets` / AI の同意 / `/handson-tour?force=1`) | [(tabs), settings, その画面] | – | 今までと同じ (`router.push`) |
-| [(tabs), settings] | ログアウト (`router.replace("/")`) | [入口] | – | 今までと同じ |
-| [(tabs), settings] | 通知のタップ (`NotificationRouter`) | 行き先 | `NOTIFICATION_ROUTES` (設定は含まない) | 今までと同じ |
-| [(tabs), settings] | session が無くなる (トークンの更新の失敗・`clearSession`・SIGNED_OUT) | [入口] | 設定の画面の `if (!user) return <Redirect href={ENTRY_SCREEN_PATH} />` (§9.10。いまは `(tabs)` の layout の `Redirect` が受け持つ。移設の後は `(tabs)` が前面でないので、その `Redirect` は効かない) | 入口が未ログインの行き先へ振り分ける |
+| [(tabs) (マイページ)] | 歯車 (`router.push('/settings')`) | [(tabs), settings] | session あり (タブの layout の `Redirect` は変わらない) | 設定の画面がルートの Stack に積まれる。`AIFloatingFab` とタブバーは出ない (いまは `(tabs)` の中なので出る) |
+| [(tabs), settings] | 戻る (iOS スワイプ / Android 戻る) | [(tabs)] | – | マイページのタブに戻る (いまと同じ見え方) |
+| [(tabs), settings] | 「プロフィール」の行 (`router.dismissTo("/(tabs)/profile")`) | [(tabs) (マイページ)] | Stack に `(tabs)` がある (無ければ設定の画面を `(tabs)` に置き換える) | いまと同じ (マイページのタブ)。`router.push` のままだと [(tabs), settings, (tabs)新] になる (§9.10 の 1) |
+| [(tabs), settings] | 行 (`/settings/account` / `/health/blood-tests` / `/profile/nutrition-targets` / AI の同意) | [(tabs), settings, その画面] | – | `router.push` のまま。戻ると設定の画面 (いまと同じ) |
+| [(tabs), settings] | 「使い方ガイドをもう一度見る」の行 (`router.replace("/handson-tour?force=1")`) | [(tabs), handson-tour] | – | いまと同じ並び。ツアーの最初の画面から戻ると マイページのタブ (いまは `(tabs)` の中の設定の画面)。`router.push` のままだと [(tabs), settings, handson-tour] になり、ツアーの終わりで設定の画面が間に残る (§9.10 の 2) |
+| [(tabs), handson-tour] | ツアーの終わり・抜ける (`router.replace('/home')`。graduate.tsx:167・index.tsx:122・useLeaveTour.ts:61・_layout.tsx:49) | [(tabs), (tabs)新] | – | いまと同じ (既存の挙動。expo-router 5 も前面の handson-tour をルートの REPLACE で `(tabs)` に置き換える。本冊は変えない。§17 の 10) |
+| [(tabs), settings] | ログアウト (`handleLogout` → `leaveToEntry()`) | [入口] | `findNavigatorOwningRoute` が持ち主 (ルートの Stack) を返す。返さなければ `router.replace('/')` | いまと同じ [入口]。`router.replace("/")` のままだと [(tabs), 入口] になり、次のログインで [(tabs), (tabs)新] (§9.10 の 3)。入口 1 つに畳む完全な state の RESET を `navigationRef.dispatch` |
+| [(tabs), settings, 上の画面] | session が無くなる (トークンの更新の失敗・`clearSession`・SIGNED_OUT。アカウントの画面の退会・401 の後片付けを含む) | [入口] | 設定の画面の effect (`user` が無くなったら `leaveToEntry()`。前面でなくても流れる) | いまは `(tabs)` の layout の `Redirect` が受け持ち、`(tabs)` が前面のときだけ流れる (いま、アカウントの画面が前面なら、アカウントの画面の `router.replace("/")` で [(tabs), 入口] になる)。移設の後は設定の画面が Stack にあれば前面に依らず [入口] |
+| [(tabs), settings, account] | アカウントの画面の `router.replace("/")` (82・102 行。変えない) | [入口] | 上の行の effect が、`clearSession` の後に入口 1 つに畳む | アカウントの画面の `replace` が先に流れれば [(tabs), settings, 入口] を経て、effect の RESET で [入口]。後に流れれば [入口] の入口を入口に置き換える (入口が 1 回描き直される) |
+| [(tabs), settings] | 通知のタップ (`NotificationRouter` の `router.push(行き先)`。変えない) | タブの行き先なら [(tabs), settings, (tabs)新] / `/health/blood-tests` なら [(tabs), settings, blood-tests] | `NOTIFICATION_ROUTES` (設定は含まない) | **変わる** (いまは `(tabs)` の中でタブの切り替え)。ルートの Stack のほかの画面 (アカウント・血液検査・栄養目標・AI の同意) が前面のときの、いまの挙動と同じになる。通知の積み方の直しは設定の画面に限らないので本冊では変えない (§17 の 10) |
+| [(tabs), settings] | 描画の例外 | ルートの境界の「再試行」 | – | いまは `(tabs)` の境界 (「ホームへ戻る」あり)。移設の後はルートの境界 (「再試行」だけ。アカウント・血液検査と同じ。`app/_layout.tsx` の `ErrorBoundary`) |
 | [(tabs), settings] | 同意の状態が `required` になる | [同意画面] | `LegalConsentGate` (`/settings` は対象のパス。§8.3 (d)) | いまは `(tabs)` の layout がスピナーに替わり、ゲートも畳む。移設の後はゲートが畳むだけ (`/settings/account` と同じ) |
 | 初期設定が済んでいない | 設定の画面に来る経路 | – | 歯車はマイページ (`(tabs)` の中 = 初期設定の振り分けの後) にしか無い | 止めは要らない |
 
@@ -613,7 +631,7 @@ SDK 54: `expo-av` (未使用)・`react-native-edge-to-edge` の plugin (未使�
 
 | 状態 | 操作・イベント | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
-| session あり・`required`・前面が対象のパス (同意画面でも対象外のパスでもない) | effect | [同意画面] (ルートの Stack) | `findNavigatorOwningRoute` が持ち主 (key・routeNames・routeKeySeq あり・stale でない) を返す | `navigationRef.dispatch(legalConsentCollapseAction(…))`。`openedRef = true`・`closingRef = false` |
+| session あり・`required`・前面が対象のパス (同意画面でも対象外のパスでもない) | effect | [同意画面] (ルートの Stack) | `findNavigatorOwningRoute` が持ち主 (key・routeNames・routeKeySeq あり・stale でない) を返す | `navigationRef.dispatch(collapseStackAction(…))`。`openedRef = true`・`closingRef = false` |
 | 同上 | effect | 同じ (何もしない) | 持ち主が null (`routeNames` に `legal-consent` を持つ navigator が無い・`key` / `routeKeySeq` が無い・stale) | `console.warn("[LegalConsentGate] root stack is not ready; retry on next render")`。`openedRef` は立てない (次の描画でまた試す) |
 | session あり・`required`・前面が同意画面・`openedRef` なし (deep link で開いた・下に残っていた) | effect | [同意画面] (同じ route の key) | 持ち主の state に同意画面の route がある | key を再利用した RESET の action を dispatch。同意画面は取り除かれない |
 | session あり・`required`・前面が同意画面・`openedRef` あり | effect | 同じ | – | 何もしない |
@@ -789,19 +807,30 @@ jest.spyOn(require('react-native').Alert, 'alert').mockImplementation(() => {});
 
 ### 9.4 `apps/mobile/src/lib/legal-consent.ts` の差分 (正典。純)
 
-消すもの: `LegalConsentScreenRemovalDecision` 型・`legalConsentScreenRemovalDecision`。残すもの: `RESET_ACTION_TYPE` (いまの `const RESET_ACTION_TYPE = "RESET";`。export しないまま、action の `type` に使う。説明のコメントは下のブロックの文に替える)。足すもの: 次のブロックの `legalConsentScreenPreventsRemoval`・`NavigatorStateLike`・`LegalConsentOwnerState`・`LegalConsentCollapsedState`・`LegalConsentCollapseAction`・`findNavigatorOwningRoute`・`legalConsentCollapsedState`・`legalConsentCollapseAction` と、ファイルの中だけの `LEGAL_CONSENT_COLLAPSED_INDEX`・`LegalConsentCollapsedBase`。`LegalConsentScreenMode` と `RESET_ACTION_TYPE` は同じファイルの既存のもの (ブロックは独立に検査するため再掲している)。このファイルは純のまま (expo-router を import しない。ルートの vitest の `tests/legal-consent-mobile-contract.test.ts` がこのファイルを読む)。
+消すもの: `LegalConsentScreenRemovalDecision` 型・`legalConsentScreenRemovalDecision`。残すもの: `RESET_ACTION_TYPE` (いまの `const RESET_ACTION_TYPE = "RESET";`。export しないまま、action の `type` に使う。説明のコメントは下のブロックの文に替える)。足すもの: 次のブロックの `legalConsentScreenPreventsRemoval`・`NavigatorStateLike`・`StackOwnerState`・`CollapsedStackState`・`CollapseStackAction`・`findNavigatorOwningRoute`・`collapsedStackState`・`collapseStackAction`・`ENTRY_SCREEN_ROUTE_NAME` と、ファイルの中だけの `COLLAPSED_STACK_INDEX`・`CollapsedStackBase`。`LegalConsentScreenMode`・`RESET_ACTION_TYPE`・`ENTRY_SCREEN_PATH` (いまの `export const ENTRY_SCREEN_PATH = "/";`。51 行) は同じファイルの既存のもの (ブロックは独立に検査するため再掲している)。`ENTRY_SCREEN_ROUTE_NAME` は `ENTRY_SCREEN_PATH` の直後に置く。このファイルは純のまま (expo-router を import しない。ルートの vitest の `tests/legal-consent-mobile-contract.test.ts` がこのファイルを読む)。
+
+畳む関数 (`findNavigatorOwningRoute`・`collapsedStackState`・`collapseStackAction`) は route の名前を引数に取る汎用の形で、使う所は 2 つ: ゲートが同意画面 1 つに畳む (B-2・§9.6) / 設定の画面が、ログアウトと session の切れで入口 1 つに畳む (B-1・§9.10)。どちらも「ルートの Stack を完全な state の RESET で 1 つの route にする」同じ操作なので、同じ関数を使う。
 
 ```ts
 /** 同意画面の route の扱い (既存の型。src/lib/legal-consent.ts に定義済み) */
 export type LegalConsentScreenMode = "awaiting-consent" | "signed-out-notice" | "free";
 
+/** 入口の画面 (app/index.tsx) のパス (既存の定数。src/lib/legal-consent.ts に定義済み) */
+export const ENTRY_SCREEN_PATH = "/";
+
 /**
- * ゲートが navigationRef.dispatch に渡す action の type (既存の定数。expo-router 58 の CommonActions.reset が作る action と同じ値)
+ * 入口の画面 (app/index.tsx) の route の名前 (ルートの Stack が持つファイルの route。app/_layout.tsx の <Stack.Screen name="index" />)。
+ * 設定の画面が、ログアウトと session の切れでルートの Stack を入口 1 つに畳むのに使う (#1591)
+ */
+export const ENTRY_SCREEN_ROUTE_NAME = "index";
+
+/**
+ * navigationRef.dispatch に渡す action の type (既存の定数。expo-router 58 の CommonActions.reset が作る action と同じ値)
  */
 const RESET_ACTION_TYPE = "RESET";
 
-/** 畳んだ state の前面の route の位置。route は同意画面の 1 つだけなので、その位置 (先頭) */
-const LEGAL_CONSENT_COLLAPSED_INDEX = 0;
+/** 畳んだ state の前面の route の位置。route は 1 つだけなので、その位置 (先頭) */
+const COLLAPSED_STACK_INDEX = 0;
 
 /**
  * 同意画面の route を取り除く操作を止めるか (expo-router の usePreventRemove の第 1 引数)。
@@ -830,8 +859,8 @@ export type NavigatorStateLike = {
   readonly routes: ReadonlyArray<{ readonly key?: string; readonly name: string; readonly state?: NavigatorStateLike }>;
 };
 
-/** 同意画面の route の持ち主の navigator の state (完全な state を作るのに要る key・routeNames・routeKeySeq がそろったもの) */
-export type LegalConsentOwnerState = NavigatorStateLike & {
+/** 畳む先の route の持ち主の navigator の state (完全な state を作るのに要る key・routeNames・routeKeySeq がそろったもの) */
+export type StackOwnerState = NavigatorStateLike & {
   readonly key: string;
   readonly routeNames: readonly string[];
   readonly routeKeySeq: number;
@@ -842,9 +871,9 @@ export type LegalConsentOwnerState = NavigatorStateLike & {
  * BaseRouter は stale === false のときだけ受け付け、routeNames が持ち主と同じ集合であることを確かめる
  * (それ以外は「Include key, index, routeNames, routeKeySeq, and stale: false」の警告を出して捨てる)
  */
-type LegalConsentCollapsedBase = {
+type CollapsedStackBase = {
   readonly key: string;
-  readonly index: typeof LEGAL_CONSENT_COLLAPSED_INDEX;
+  readonly index: typeof COLLAPSED_STACK_INDEX;
   readonly routeKeySeq: number;
   readonly routeNames: string[];
   readonly type?: string;
@@ -852,28 +881,29 @@ type LegalConsentCollapsedBase = {
 };
 
 /**
- * 同意画面 1 つに畳んだ完全な state。同意画面の route が既にあれば key ごと、無ければ名前だけ
+ * route 1 つ (同意画面か入口) に畳んだ完全な state。その route が既にあれば key ごと、無ければ名前だけ
  * (key の無い route には、expo-router の RESET が持ち主の key と routeKeySeq から key を付ける)
  */
-export type LegalConsentCollapsedState =
-  | (LegalConsentCollapsedBase & { readonly routes: [{ readonly name: string; readonly key: string }] })
-  | (LegalConsentCollapsedBase & { readonly routes: [{ readonly name: string }] });
+export type CollapsedStackState =
+  | (CollapsedStackBase & { readonly routes: [{ readonly name: string; readonly key: string }] })
+  | (CollapsedStackBase & { readonly routes: [{ readonly name: string }] });
 
 /**
- * ゲートが navigationRef.dispatch に渡す RESET の action。target は持ち主の navigator の key
+ * navigationRef.dispatch に渡す RESET の action (ゲートと設定の画面)。target は持ち主の navigator の key
  * (expo-router 58 は target の navigator だけに action を渡す。target が無いと前面の navigator から親へ順に試す)
  */
-export type LegalConsentCollapseAction = {
+export type CollapseStackAction = {
   readonly type: typeof RESET_ACTION_TYPE;
   readonly target: string;
-  readonly payload: LegalConsentCollapsedState;
+  readonly payload: CollapsedStackState;
 };
 
 /**
  * routeNames に routeName を持つ (= その route の持ち主の) navigator の state を、ルートから前面の枝を降りて探す。
- * 持ち主が無い・rehydrate 前 (stale・key や routeKeySeq が無い) なら null (ゲートは何もせず、次の描画で試す)
+ * 持ち主が無い・rehydrate 前 (stale・key や routeKeySeq が無い)・root が無い (コンテナの準備の前) なら null
+ * (ゲートは何もせず次の描画で試す。設定の画面は router.replace(ENTRY_SCREEN_PATH) に戻る)
  */
-export function findNavigatorOwningRoute(root: NavigatorStateLike, routeName: string): LegalConsentOwnerState | null {
+export function findNavigatorOwningRoute(root: NavigatorStateLike | undefined, routeName: string): StackOwnerState | null {
   let current: NavigatorStateLike | undefined = root;
   while (current !== undefined) {
     if (current.routeNames?.includes(routeName)) {
@@ -888,14 +918,14 @@ export function findNavigatorOwningRoute(root: NavigatorStateLike, routeName: st
 }
 
 /**
- * 持ち主の navigator の state を、同意画面 1 つに畳んだ完全な state にする。
- * 同意画面の route が既にあればその key を再利用する (同じ key は同じ画面。取り除かれず、usePreventRemove の止めにも当たらない)
+ * 持ち主の navigator の state を、routeName の route 1 つに畳んだ完全な state にする。
+ * その route が既にあればその key を再利用する (同じ key は同じ画面。取り除かれず、同意画面なら usePreventRemove の止めにも当たらない)
  */
-export function legalConsentCollapsedState(owner: LegalConsentOwnerState, routeName: string): LegalConsentCollapsedState {
+export function collapsedStackState(owner: StackOwnerState, routeName: string): CollapsedStackState {
   const existingKey = owner.routes.find((route) => route.name === routeName)?.key;
-  const base: LegalConsentCollapsedBase = {
+  const base: CollapsedStackBase = {
     key: owner.key,
-    index: LEGAL_CONSENT_COLLAPSED_INDEX,
+    index: COLLAPSED_STACK_INDEX,
     routeKeySeq: owner.routeKeySeq,
     routeNames: [...owner.routeNames],
     stale: false,
@@ -906,13 +936,13 @@ export function legalConsentCollapsedState(owner: LegalConsentOwnerState, routeN
     : { ...base, routes: [{ name: routeName, key: existingKey }] };
 }
 
-/** 持ち主の navigator に宛てた、同意画面 1 つに畳む RESET の action */
-export function legalConsentCollapseAction(owner: LegalConsentOwnerState, routeName: string): LegalConsentCollapseAction {
-  return { type: RESET_ACTION_TYPE, target: owner.key, payload: legalConsentCollapsedState(owner, routeName) };
+/** 持ち主の navigator に宛てた、routeName の route 1 つに畳む RESET の action */
+export function collapseStackAction(owner: StackOwnerState, routeName: string): CollapseStackAction {
+  return { type: RESET_ACTION_TYPE, target: owner.key, payload: collapsedStackState(owner, routeName) };
 }
 ```
 
-**実物の router での確認** (設計の時点。expo-router 58.0.23 の `build/react-navigation/routers/index.js` の `StackRouter` に、ルートの Stack の形の state `{ key: 'navigator:root', routeKeySeq: 3, index: 1, type: 'stack', stale: false, routeNames: ['index', '(tabs)', 'legal-consent', 'settings/index'], routes: [index, (tabs), settings/index] }` を渡した): いまの部分の state (`{ type: 'RESET', payload: { index: 0, routes: [{ name: 'legal-consent' }] } }`) は警告を出して受け付けない。上の `legalConsentCollapseAction` の形 (key の無い route) は受け付け、`routes` が `[{ name: 'legal-consent', key: 'legal-consent:3' }]`・`routeKeySeq` が 4 になる。同意画面の route (`legal-consent:3`) を持つ state に key ありの形を渡すと、その key のまま `[legal-consent]` になる。§13.2 の T-ML12 がこの確認をテストにする。
+**実物の router での確認** (設計の時点。expo-router 58.0.23 の `build/react-navigation/routers/index.js` の `StackRouter` に、ルートの Stack の形の state `{ key: 'navigator:root', routeKeySeq: 3, index: 1, type: 'stack', stale: false, routeNames: ['index', '(tabs)', 'legal-consent', 'settings/index'], routes: [index, (tabs), settings/index] }` を渡した): いまの部分の state (`{ type: 'RESET', payload: { index: 0, routes: [{ name: 'legal-consent' }] } }`) は警告を出して受け付けない。上の `collapseStackAction` の形 (key の無い route) は受け付け、`routes` が `[{ name: 'legal-consent', key: 'legal-consent:3' }]`・`routeKeySeq` が 4 になる。同意画面の route (`legal-consent:3`) を持つ state に key ありの形を渡すと、その key のまま `[legal-consent]` になる。入口に畳む形 (`collapseStackAction(owner, 'index')`。`index` は `routeNames` にあり、いまの `routes` に無いので key の無い route) は、上の key の無い同意画面の形と同じ RESET の経路を通る (設計の時点で実物に通したのは同意画面の形だけ)。§13.2 の T-ML12 が、同意画面の 3 つと入口の 1 つをテストにする。
 
 コメントの直し: 既存の「`@react-navigation の CommonActions.reset`」「`beforeRemove`」の語を、`usePreventRemove` / `navigationRef.dispatch` の現在形に (設計書 13b の行は §15.2)。
 
@@ -951,7 +981,7 @@ export default function LegalConsentScreen() {
 
 ### 9.6 `apps/mobile/src/components/legal/LegalConsentGate.tsx` の差分 (説明用)
 
-いまの effect の `state === "required"` の分岐の終わりの 1 か所 (`navigationRef.reset({ index: 0, routes: [{ name: LEGAL_CONSENT_SCREEN_ROUTE_NAME }] })` から `return;` まで。前面が同意画面で `openedRef` が無いときと、前面が対象のパスのときの両方がここを通る) を次にする。import は `ENTRY_SCREEN_PATH`・`LEGAL_CONSENT_SCREEN_ROUTE_NAME`・`isMobileLegalConsentExemptPath` に `findNavigatorOwningRoute`・`legalConsentCollapseAction` を足す。冒頭の説明のコメントの「`navigationRef.reset`」は「`navigationRef.dispatch` (完全な state の RESET)」に直す。
+いまの effect の `state === "required"` の分岐の終わりの 1 か所 (`navigationRef.reset({ index: 0, routes: [{ name: LEGAL_CONSENT_SCREEN_ROUTE_NAME }] })` から `return;` まで。前面が同意画面で `openedRef` が無いときと、前面が対象のパスのときの両方がここを通る) を次にする。import は `ENTRY_SCREEN_PATH`・`LEGAL_CONSENT_SCREEN_ROUTE_NAME`・`isMobileLegalConsentExemptPath` に `findNavigatorOwningRoute`・`collapseStackAction` を足す。冒頭の説明のコメントの「`navigationRef.reset`」は「`navigationRef.dispatch` (完全な state の RESET)」に直す。
 
 ```tsx
 // tsc:skip (expo-router 58 の NavigationContainerRef の型が要る)
@@ -960,7 +990,7 @@ import {
   LEGAL_CONSENT_SCREEN_ROUTE_NAME,
   findNavigatorOwningRoute,
   isMobileLegalConsentExemptPath,
-  legalConsentCollapseAction,
+  collapseStackAction,
 } from "../../lib/legal-consent";
 
 // effect の中の、state === "required" の分岐の終わり:
@@ -972,13 +1002,13 @@ if (owner === null) {
 }
 // expo-router 58 の RESET は完全な state (key・index・routeNames・routeKeySeq・stale: false) だけを受け付ける。
 // 持ち主の navigator に宛てる。58 では dispatch は commit の後に流れる。同意画面の route が既にあれば key ごと再利用し、取り除かない
-navigationRef.dispatch(legalConsentCollapseAction(owner, LEGAL_CONSENT_SCREEN_ROUTE_NAME));
+navigationRef.dispatch(collapseStackAction(owner, LEGAL_CONSENT_SCREEN_ROUTE_NAME));
 openedRef.current = true;
 closingRef.current = false;
 return;
 ```
 
-`getRootState(): NavigationState` と `dispatch(action: NavigationAction): void` は expo-router 58 の `NavigationContainerRef` にある (`build/react-navigation/core/types.d.ts`。`NavigationAction` は `Readonly<{ type: string; payload?: object; source?: string; target?: string }>`)。`NavigationState` は `NavigatorStateLike` に代入できる (`routes[].state` の `PartialState` も同じ部分型に入る)。`LegalConsentCollapseAction` は `NavigationAction` に代入できる。`navigationRef.reset(state)` (`state: PartialState<NavigationState> | NavigationState`) は使わない: `PartialState` は `stale?: true` で、`NavigationState` は route の `key` が必須なので、`stale: false` と key の無い route の組をどちらの型でも表せない。`as` で型を合わせない。
+`getRootState(): NavigationState` と `dispatch(action: NavigationAction): void` は expo-router 58 の `NavigationContainerRef` にある (`build/react-navigation/core/types.d.ts`。`NavigationAction` は `Readonly<{ type: string; payload?: object; source?: string; target?: string }>`)。`NavigationState` は `NavigatorStateLike` に代入できる (`routes[].state` の `PartialState` も同じ部分型に入る)。`CollapseStackAction` は `NavigationAction` に代入できる。`navigationRef.reset(state)` (`state: PartialState<NavigationState> | NavigationState`) は使わない: `PartialState` は `stale?: true` で、`NavigationState` は route の `key` が必須なので、`stale: false` と key の無い route の組をどちらの型でも表せない。`as` で型を合わせない。
 
 `apps/mobile/app/_layout.tsx` (118 行) のコメントも B-2 で現在形にする (コードは変えない。`gestureEnabled: false` は残し、`__tests__/app/root-layout-config.test.tsx` の期待もそのまま):
 
@@ -1008,7 +1038,8 @@ return;
  *      lockfile を 1 回で作り直すと react-native ほかが入れ子になり、Jest が preset の読み込みで止まる。docs/design/mobile/07 §2.4)
  *   4. app.json の runtimeVersion は fingerprint の方針 (トップレベルだけ) で、更新は無効のまま
  *      (OTA を使う設計が通ったら、その設計がこの 2 行の期待を書き換える)
- *   5. expo-file-system は /legacy の入口だけを読む (新旧の API を混ぜない)
+ *   5. expo-file-system は /legacy の入口だけを読む (新旧の API を混ぜない)。アプリのソースに加えて Jest のテストの
+ *      jest.mock と import も見る (テストが既定の入口から mock の関数を取り出すと、SDK 58 では mock でない本物の入口になって落ちる)
  *   6. 使っていないので消した依存が、import の無いまま戻っていない
  * 落ちたら: SDK の更新としてまとめて上げる (docs/design/mobile/07-toolchain-upgrade.md §6)。片方だけ上げない。
  */
@@ -1037,10 +1068,11 @@ const HOISTED_TOOLCHAIN = ['react-native', '@react-native/jest-preset', 'react-t
 const MOBILE_NESTED_ALLOWED = ['@types/react', 'react'] as const;
 /** lockfile の packages のキーで、apps/mobile の入れ子の接頭辞 */
 const MOBILE_NESTED_PREFIX = `${MOBILE_DIR}/node_modules/`;
-/** アプリのソース (テストと mock を除く) */
-const MOBILE_SOURCE_DIRS = [`${MOBILE_DIR}/app`, `${MOBILE_DIR}/src`];
+/** expo-file-system の指定子を見るディレクトリ (アプリのソースと Jest のテスト) */
+const FILE_SYSTEM_SCAN_DIRS = [`${MOBILE_DIR}/app`, `${MOBILE_DIR}/src`, `${MOBILE_DIR}/__tests__`];
 const SOURCE_FILE = /\.(ts|tsx)$/;
-const FILE_SYSTEM_IMPORT = /from\s+['"]expo-file-system(\/[^'"]*)?['"]/g;
+/** import の from・require・jest.mock の第 1 引数にある expo-file-system の指定子 (第 1 グループは /legacy などの下の入口) */
+const FILE_SYSTEM_SPECIFIER = /(?:from\s+|require\(\s*|jest\.mock\(\s*)['"]expo-file-system(\/[^'"]*)?['"]/g;
 const FILE_SYSTEM_LEGACY_SUBPATH = '/legacy';
 
 interface PackageJson {
@@ -1155,12 +1187,12 @@ describe('#1591 OTA の設定 (app.json)', () => {
 });
 
 describe('#1591 expo-file-system は /legacy の入口だけを読む', () => {
-  it('app/ と src/ の import の指定子はすべて expo-file-system/legacy', () => {
+  it('app/・src/・__tests__ の import・require・jest.mock の指定子はすべて expo-file-system/legacy', () => {
     const offenders: string[] = [];
     let imports = 0;
-    for (const file of MOBILE_SOURCE_DIRS.flatMap(listSourceFiles)) {
+    for (const file of FILE_SYSTEM_SCAN_DIRS.flatMap(listSourceFiles)) {
       const text = readText(file);
-      const pattern = new RegExp(FILE_SYSTEM_IMPORT.source, 'g');
+      const pattern = new RegExp(FILE_SYSTEM_SPECIFIER.source, 'g');
       let match: RegExpExecArray | null = pattern.exec(text);
       while (match !== null) {
         imports += 1;
@@ -1197,18 +1229,54 @@ console.log(JSON.stringify({ totals: report.metadata.vulnerabilities, roots, jes
 - `package-lock.json` は手で編集しない。作り直しの手順 (§10.1) だけ。
 - 設計正典 (`docs/design/**`・ルート `CLAUDE.md`) は実装レーンが書き換えない (§15.2 は専権 PATCH)。
 
-### 9.10 `apps/mobile/app/settings/index.tsx` の session の止め (説明用。B-1)
+### 9.10 `apps/mobile/app/settings/index.tsx` の遷移の直し (説明用。B-1)
 
-`git mv` の後、画面の関数 (`export default function SettingsTab()`) の最後の `return (` の直前に次の 1 行を足す (hooks はすべてその前にあるので、hooks の順は変わらない)。`useAuth()` の分割代入は `const { user, clearSession } = useAuth();` のまま (`user` は `session?.user ?? null`)。import は `import { Redirect, router } from "expo-router";` (いまは `router` だけ) と、`import { ENTRY_SCREEN_PATH } from "../../src/lib/legal-consent";` を足す。
+設定の画面がルートの Stack の画面になると、expo-router 58 は「前面の route (設定の画面) と行き先の route の名前が違う」所で行き先を決める (`build/global-state/resolveNavigationDestination.js`。前面の route と名前が合うときだけ下の navigator へ降りる)。このため、設定の画面から `(tabs)` や入口へ向かう遷移は、いまの「`(tabs)` の中のタブの切り替え / ルートの `(tabs)` の置き換え」でなく、ルートの Stack への新しい route の push / 設定の画面だけの置き換えになる (StackRouter の PUSH は getId の無い route をいつも新しく作り、REPLACE は前面の route だけを置き換える。`build/react-navigation/routers/StackRouter.js`)。設定の画面の遷移 4 つを次のとおり直す (§8.3 (c) の表と同じ)。
+
+| # | 遷移 | いま (`(tabs)` の中) | 直さないと (ルートの Stack) | 直し方 | 直した後 |
+|---|---|---|---|---|---|
+| 1 | 「プロフィール」の行 (324 行) `router.push("/(tabs)/profile")` | `(tabs)` の中でマイページのタブへ切り替え ([(tabs)]) | `(tabs)` を 2 つ目として push ([(tabs), settings, (tabs)新]。タブの WebView 5 つと FAB が 2 組・戻ると設定) | `router.dismissTo("/(tabs)/profile")` (POP_TO。Stack にある `(tabs)` まで戻り、その中をマイページのタブにする。`(tabs)` が無ければ設定の画面を `(tabs)` に置き換える) | [(tabs) (マイページ)] |
+| 2 | 「使い方ガイドをもう一度見る」の行 (393 行) `router.push("/handson-tour?force=1")` | [(tabs), handson-tour] (ツアーの終わりの `router.replace('/home')` で [(tabs), (tabs)新]。既存の挙動。§17 の 10) | [(tabs), settings, handson-tour] → 終わりで [(tabs), settings, (tabs)新] (設定の画面が間に残る) | `router.replace("/handson-tour?force=1")` (設定の画面をツアーに置き換え、Stack をいまと同じ [(tabs), handson-tour] にする。`force=1` の params は同じ) | [(tabs), handson-tour] → 終わりで [(tabs), (tabs)新] (いまと同じ)。ツアーの最初の画面から戻ると、設定でなくマイページのタブ (いまは設定の画面) |
+| 3 | ログアウト (`handleLogout` の 251 行 `router.replace("/")`) | ルートの `(tabs)` を入口に置き換え ([入口]) | 設定の画面だけを入口に置き換え ([(tabs), 入口]。次のログインで入口の `<Redirect href="/(tabs)/home" />` が入口だけを置き換え、古い `(tabs)` の上に新しい `(tabs)` が積まれる) | 下の `leaveToEntry()` (ルートの Stack を入口 1 つに畳む完全な state の RESET) | [入口] |
+| 4 | session が無くなる (トークンの更新の失敗・`clearSession`・SIGNED_OUT) | `(tabs)` の layout の `<Redirect href="/" />` が `(tabs)` を入口に置き換え ([入口]) | `(tabs)` の layout の `Redirect` は前面でないので流れず、設定の画面が残る | 下の effect (`user` が無くなったら `leaveToEntry()`)。設定の画面が Stack のどこにあっても流れる (前面でなくても。`useFocusEffect` でなく `useEffect`) ので、設定の上のアカウントの画面などが前面でも入口 1 つに畳む | [入口] |
+
+`git mv` の後、画面の関数 (`export default function SettingsTab()`) に次を足す。`useAuth()` の分割代入は `const { user, clearSession } = useAuth();` のまま (`user` は `session?.user ?? null`)。
+
+- import: `import { router, useNavigationContainerRef } from "expo-router";` (いまは `router` だけ)・`import React, { useCallback, useEffect, useRef, useState } from "react";` (いまは `useEffect, useState`)・`import { ENTRY_SCREEN_PATH, ENTRY_SCREEN_ROUTE_NAME, collapseStackAction, findNavigatorOwningRoute } from "../../src/lib/legal-consent";`
+- `const { user, clearSession } = useAuth();` の直後に、下のブロックの「hooks」の部分を足す (ほかの hooks より前。`handleLogout` から呼ぶため)。
+- 最後の `return (` の直前に、下のブロックの「描画の止め」の 1 行を足す (hooks はすべてその前にあるので、hooks の順は変わらない)。
+- `handleLogout` の `router.replace("/");` を `leaveToEntry();` に。直前のコメント 3 行は残し、「消さずに "/" へ移ると」の文はそのまま (入口がホームへ戻す理由の説明)。
+- 「プロフィール」の行の `onPress={() => router.push("/(tabs)/profile")}` を `onPress={() => router.dismissTo("/(tabs)/profile")}` に。直前のコメントの最後に 1 行足す: `// 設定の画面はルートの Stack の画面なので、push だと (tabs) が 2 つ目として積まれる。Stack にある (tabs) まで戻ってマイページのタブにする (#1591)`。
+- 「使い方ガイドをもう一度見る」の行の `onPress={() => router.push("/handson-tour?force=1")}` を `onPress={() => router.replace("/handson-tour?force=1")}` に。行の上にコメント 1 行: `{/* 設定の画面をツアーに置き換える (Stack を [(tabs), ツアー] にし、ツアーの終わりの replace('/home') の下に設定を残さない。#1591) */}`。
 
 ```tsx
-// tsc:skip (JSX と expo-router 58 の Redirect の型が要る)
-  // ルートの Stack の画面なので、(tabs) の layout の止め (session が無ければ入口へ) は前面のこの画面には効かない。
-  // session が切れたら (トークンの更新の失敗・ログアウト) 入口へ移す。前面の画面の Redirect は useFocusEffect で router.replace を呼ぶ (#1591)
-  if (!user) return <Redirect href={ENTRY_SCREEN_PATH} />;
+// tsc:skip (JSX と expo-router 58 の useNavigationContainerRef の型が要る)
+  // ── hooks (useAuth の直後) ──
+  // ルートの Stack の画面なので、(tabs) の layout の止め (session が無ければ入口へ) はこの画面には効かない。
+  // ログアウトと session の切れでは、ルートの Stack を入口 1 つに畳む (設定の画面と、その下の (tabs) を残さない。#1591)
+  const navigationRef = useNavigationContainerRef();
+  /** 入口へ畳んだか。ログアウトの押下と session の切れの effect の両方から呼ばれるので、1 回にそろえる */
+  const leftToEntryRef = useRef(false);
+  const leaveToEntry = useCallback(() => {
+    if (leftToEntryRef.current) return;
+    leftToEntryRef.current = true;
+    const owner = findNavigatorOwningRoute(navigationRef.getRootState(), ENTRY_SCREEN_ROUTE_NAME);
+    if (owner === null) {
+      // ルートの Stack の state がそろっていない (コンテナの準備の前)。いままでの置き換えで入口へ
+      router.replace(ENTRY_SCREEN_PATH);
+      return;
+    }
+    navigationRef.dispatch(collapseStackAction(owner, ENTRY_SCREEN_ROUTE_NAME));
+  }, [navigationRef]);
+  useEffect(() => {
+    if (!user) leaveToEntry();
+  }, [user, leaveToEntry]);
+
+  // ── 描画の止め (最後の return の直前) ──
+  if (!user) return null;
 ```
 
-ほかの行 (行の一覧・押下の処理・`handleLogout` の `router.replace("/")`) は変えない。
+ほかの行 (行の一覧・ほかの行の押下 (`/settings/account`・`/health/blood-tests`・`/profile/nutrition-targets`・AI の同意) の `router.push`・書き出し・週の始まり) は変えない。これらは [(tabs), settings, その画面] に積まれ、戻ると設定の画面 (いまの [(tabs), その画面] から戻ると `(tabs)` の中の設定の画面、と同じ)。`apps/mobile/app/settings/account.tsx` の `router.replace("/")` (82・102 行) も変えない: 設定の画面がその下にあるので、`clearSession` の後に設定の画面の effect が Stack を入口 1 つに畳む (アカウントの画面の `replace` が先に流れても後に流れても、最後は入口だけが残る。§8.3 (c))。
 
 ### 9.11 V-1 の lockfile の形の検査 (段 A の検証。実装者はそのまま流す)
 
@@ -1370,21 +1438,23 @@ npm install --package-lock-only --ignore-scripts || {
   - `runtimeVersion はトップレベルの { policy: 'fingerprint' } だけ (ios / android の直書きは無い)`
   - `更新は無効のまま (enabled: false・checkAutomatically: NEVER)。OTA を使う設計が通るまで変えない`
 - `#1591 expo-file-system は /legacy の入口だけを読む`
-  - `app/ と src/ の import の指定子はすべて expo-file-system/legacy`
+  - `app/・src/・__tests__ の import・require・jest.mock の指定子はすべて expo-file-system/legacy`
 
 ### 13.2 変える既存のテストと、足すテスト
 
 | ファイル | 変更 | 段 |
 |---|---|---|
-| `apps/mobile/__tests__/lib/legal-consent.test.ts` | `legalConsentScreenRemovalDecision (T-ML6)` の describe を消し、`legalConsentScreenPreventsRemoval (T-ML6)` に: `awaiting-consent と signed-out-notice は止める (true)`・`free は止めない`・`closing なら扱いに関わらず止めない`。describe `findNavigatorOwningRoute / legalConsentCollapsedState / legalConsentCollapseAction (T-ML11)` を足す: `routeNames に legal-consent を持つ navigator を前面の枝で見つける (ルート直下・1 段下)`・`持ち主が無い・stale・key 無し・routeKeySeq 無しなら null`・`同意画面の route があれば key ごと再利用し、無ければ名前だけ。key・type・routeNames・routeKeySeq を写し、stale: false を付ける`・`action は type RESET・target は持ち主の key・payload は畳んだ state`。describe `expo-router 58 の StackRouter に通す (T-ML12)` を足す (`import { StackRouter, isActionHandled } from 'expo-router/build/react-navigation/routers/index'`。state は §9.4 の後の「実物の router での確認」の形。第 3 引数は `{ routeNames, routeGetIdList: {} }`): `同意画面の route が無い state に畳む action を通すと、受け付けて routes が [legal-consent] (key は router が付ける) になる`・`同意画面の route がある state に畳む action を通すと、その key のまま routes が [legal-consent] になる`・`stale: false を外した payload は受け付けない (Unhandled。この番兵が実物の router の条件を見ていることの確かめ)` (この it は `jest.spyOn(console, 'warn').mockImplementation(() => {})` で router の警告を黙らせ、呼ばれたことも確かめる) | B |
+| `apps/mobile/__tests__/lib/legal-consent.test.ts` | `legalConsentScreenRemovalDecision (T-ML6)` の describe を消し、`legalConsentScreenPreventsRemoval (T-ML6)` に: `awaiting-consent と signed-out-notice は止める (true)`・`free は止めない`・`closing なら扱いに関わらず止めない`。describe `findNavigatorOwningRoute / collapsedStackState / collapseStackAction (T-ML11)` を足す: `routeNames に legal-consent を持つ navigator を前面の枝で見つける (ルート直下・1 段下)`・`持ち主が無い・stale・key 無し・routeKeySeq 無し・root が undefined なら null`・`同意画面の route があれば key ごと再利用し、無ければ名前だけ。key・type・routeNames・routeKeySeq を写し、stale: false を付ける`・`action は type RESET・target は持ち主の key・payload は畳んだ state`。describe `expo-router 58 の StackRouter に通す (T-ML12)` を足す (`import { StackRouter, isActionHandled } from 'expo-router/build/react-navigation/routers/index'`。state は §9.4 の後の「実物の router での確認」の形。第 3 引数は `{ routeNames, routeGetIdList: {} }`): `同意画面の route が無い state に畳む action を通すと、受け付けて routes が [legal-consent] (key は router が付ける) になる`・`同意画面の route がある state に畳む action を通すと、その key のまま routes が [legal-consent] になる`・`入口に畳む action (collapseStackAction(owner, ENTRY_SCREEN_ROUTE_NAME)。state の routes は [(tabs), settings/index]) を通すと、受け付けて routes が [index] (key は router が付ける) になる`・`stale: false を外した payload は受け付けない (Unhandled。この番兵が実物の router の条件を見ていることの確かめ)` (この it は `jest.spyOn(console, 'warn').mockImplementation(() => {})` で router の警告を黙らせ、呼ばれたことも確かめる) | B |
 | `apps/mobile/__tests__/app/legal-consent-screen.test.tsx` | `expo-router` の mock に `usePreventRemove: (prevent, cb) => { 記録して mockDisablePrevention を返す }` を足し、`useNavigation` の mock と `removeAttempt` を消す。T-SC2 の it 名: `サインイン中で required の間は、usePreventRemove に true を渡す (取り除く操作を全部止める)`・`clear になったら false を渡す`・`beforeRemove の受け手は外れるときに解除する` を消す。T-SC3: `その間は usePreventRemove に true を渡し、押すと disablePrevention を呼んでから router.replace("/") を 1 回呼ぶ (router.canGoBack が false のとき)`・`router.canGoBack が true なら disablePrevention を呼んでから router.back を 1 回呼ぶ`。未ログインで開いた・afterSignOut の it は同じ | B |
 | `apps/mobile/__tests__/components/legal-consent-gate.test.tsx` | `mockNavigationRef` の `reset` を `dispatch: (...args: unknown[]) => mockDispatch(...args)` に替え (`mockReset` は `mockDispatch` に改名)、`getRootState: () => mockRootState` を足す。既定の `mockRootState` は `{ key: 'navigator:root', routeKeySeq: 3, index: 1, type: 'stack', stale: false, routeNames: ['index', '(public)', '(auth)', '(tabs)', 'legal-consent', 'settings/index'], routes: [{ key: 'index:0', name: 'index' }, { key: '(tabs):1', name: '(tabs)' }] }`。`CONSENT_RESET` を `CONSENT_RESET_ACTION = { type: 'RESET', target: 'navigator:root', payload: { key: 'navigator:root', index: 0, routeKeySeq: 3, routeNames: <既定の mockRootState の routeNames>, type: 'stack', stale: false, routes: [{ name: 'legal-consent' }] } }` に替え、T-G1 / T-G8 の `toHaveBeenCalledWith` をこれに。T-G7 (deep link で開いた同意画面) は `mockRootState` の `routes` に `{ key: 'legal-consent:2', name: 'legal-consent' }` を足し、`index: 2`、期待の `routes` を `[{ name: 'legal-consent', key: 'legal-consent:2' }]` に。T-G6 の「reset / replace が例外を投げても落ちない」は `mockDispatch` に例外を投げさせる。ほかの it の名前 (「reset を 1 回呼ぶ」の reset は RESET の action を指す) と、呼ばない期待 (T-G2 / T-G4 / T-G5) は名前の変数だけ `mockDispatch` に。足す it: `T-G9: 前面が対象の画面で、同意画面の route が Stack の下に残っている (ログアウトの前から) なら、その key を再利用した RESET の action を dispatch する`・`T-G10: ルートの Stack の state がそろっていない (routeNames に legal-consent が無い・routeKeySeq が無い) なら dispatch せず警告を残し、次の描画でそろっていれば 1 回 dispatch する` | B |
 | `apps/mobile/__tests__/home/tab-layout.test.tsx` | 3 か所。① 217 行の it `Tabs.Screen が 6 本宣言されている (5 visible + settings)。消したお気に入り・健康の画面は無い (#1598)` を `Tabs.Screen が 5 本宣言されている (タブバーに出る 5 本だけ。設定はルートの Stack の画面)。消したお気に入り・健康の画面は無い (#1598)` に、220 行の期待を `['home', 'menus', 'meals', 'comparison', 'profile']` に (下の 2 つの `not.toContain` はそのまま) ② 284 行の it `settings タブは href: null (タブバー非表示)` を `settings は (tabs) の画面に無い (Tabs.Screen の name に 'settings' が無い)` に (期待は `configs.find((c) => c.name === 'settings')` が `undefined`) ③ 306 行の it `同意の状態が %s なら Tabs (6 本) と FAB を描く` を `同意の状態が %s なら Tabs (5 本) と FAB を描く` に、313 行の期待を `['home', 'menus', 'meals', 'comparison', 'profile']` に | B |
 | `apps/mobile/__tests__/app/route-targets-exist.test.ts` | 254 行の「残した画面」の一覧の `path.join('(tabs)', 'settings.tsx')` を `path.join('settings', 'index.tsx')` に (it の名前は変えない) | B |
 | `apps/mobile/__tests__/app/profile-tab-settings-entry.test.tsx` | 期待を `'/settings'` に。it 名の `(/(tabs)/settings)` を `(/settings)` に。冒頭のコメントも | B |
-| `apps/mobile/__tests__/settings/logout.test.tsx`・`profile-row.test.tsx`・`ai-consent-entry.test.tsx` | `import SettingsTab from '../../app/settings/index'`。`jest.mock('expo-file-system/legacy', …)`。describe 名の「設定タブ」は「設定の画面」に。冒頭のコメントのパスも (3 ファイル) | A (mock) / B (import) |
-| `apps/mobile/__tests__/settings/session-guard.test.tsx` (新規) | `profile-row.test.tsx` の mock 一式を写し、次だけ変える: `useAuth` は `() => ({ user: mockUser, clearSession: jest.fn() })` (`let mockUser: { id: string } \| null`)。`expo-router` の mock に `Redirect: ({ href }: { href: string }) => { mockRedirect(href); return null; }` を足す。it: `T-SG1: user が無い (session が切れた) と、設定の画面は Redirect で入口 ("/") へ移り、設定の行を描かない` (`mockRedirect` が `'/'` で 1 回・`queryByTestId('settings-screen')` が null)・`T-SG2: user があれば Redirect を描かず、設定の画面を描く` (`mockRedirect` が 0 回・`getByTestId('settings-screen')`) | B |
-| `apps/mobile/__tests__/components/WebViewScreen.*.test.tsx` (6 本)・`__tests__/lib/webViewDownload.test.ts` | `jest.mock('expo-file-system/legacy', …)` | A |
+| `apps/mobile/__tests__/settings/logout.test.tsx`・`profile-row.test.tsx`・`ai-consent-entry.test.tsx` | 3 ファイル共通: `import SettingsTab from '../../app/settings/index'`。`jest.mock('expo-file-system/legacy', …)`。`expo-router` の mock に `useNavigationContainerRef` を足す (設定の画面が描画のたびに呼ぶ。足さないと `useNavigationContainerRef is not a function` で落ちる)。`profile-row` と `ai-consent-entry` は `useNavigationContainerRef: () => ({ getRootState: jest.fn(), dispatch: jest.fn() })` (`user` があるので使われない)。describe 名の「設定タブ」は「設定の画面」に。冒頭のコメントのパスも | A (mock) / B (import・mock の足し) |
+| `apps/mobile/__tests__/settings/logout.test.tsx` (続き) | `mockNavigationDispatch = jest.fn()`・`mockRootState` (下の session-guard と同じ値) を足し、`useNavigationContainerRef: () => ({ getRootState: () => mockRootState, dispatch: (...args: unknown[]) => mockNavigationDispatch(...args) })`。`beforeEach` で `mockNavigationDispatch` に、`callOrder` へ `dispatch:${action.type}:${action.payload.routes[0].name}` を足す実装を入れる (`mockRouterReplace` の `replace:${path}` と同じやり方)。期待の `'replace:/'` (143・193・212 行の 3 か所) を `'dispatch:RESET:index'` に。`confirmLogout` (123 行) の `await waitFor(() => expect(mockRouterReplace).toHaveBeenCalledWith('/'))` を `await waitFor(() => expect(mockNavigationDispatch).toHaveBeenCalledTimes(1))` に。「キャンセルしたときは何も実行しない」に `expect(mockNavigationDispatch).not.toHaveBeenCalled()` を足す。足す it: `ログアウトすると、ルートの Stack を入口 1 つに畳む RESET の action (ENTRY_RESET_ACTION) を 1 回 dispatch し、router.replace は呼ばない` (`ENTRY_RESET_ACTION` は下の session-guard と同じ値)・`「使い方ガイドをもう一度見る」を押すと、設定の画面をツアー (/handson-tour?force=1) に置き換える (router.replace を 1 回。router.push は呼ばない)` (testID `settings-restart-handson-tour`。describe「マイページの歯車から開いたときに届く操作」の中) | B |
+| `apps/mobile/__tests__/settings/profile-row.test.tsx` (続き) | `expo-router` の mock の `router` に `dismissTo: (...args: unknown[]) => mockRouterDismissTo(...args)` を足す。95 行の it を `押すと、Stack にあるマイページのタブ (/(tabs)/profile。WebView) まで戻る (router.dismissTo。push だと (tabs) が 2 つ目として積まれる)` に、期待を `expect(mockRouterDismissTo).toHaveBeenCalledWith(PROFILE_TAB_ROUTE)` と `expect(mockRouterPush).not.toHaveBeenCalled()` に (102 行の it は変えない) | B |
+| `apps/mobile/__tests__/settings/session-guard.test.tsx` (新規) | `profile-row.test.tsx` の mock 一式 (§13.2 で直した後のもの) を写し、次だけ変える: `useAuth` は `() => ({ user: mockUser, clearSession: jest.fn() })` (`let mockUser: { id: string } \| null`。`beforeEach` で `{ id: 'uid-settings' }` に戻す)。`expo-router` の mock は `router: { push: jest.fn(), replace: (...args: unknown[]) => mockRouterReplace(...args), dismissTo: jest.fn() }` と `useNavigationContainerRef: () => ({ getRootState: () => mockRootState, dispatch: (...args: unknown[]) => mockNavigationDispatch(...args) })`。`let mockRootState: NavigatorStateLike \| undefined` の既定 (`beforeEach` で戻す) は `{ key: 'navigator:root', routeKeySeq: 2, index: 1, type: 'stack', stale: false, routeNames: ['index', '(public)', '(auth)', '(tabs)', 'legal-consent', 'settings/index', 'settings/account'], routes: [{ key: '(tabs):0', name: '(tabs)' }, { key: 'settings/index:1', name: 'settings/index' }] }`。`ENTRY_RESET_ACTION = { type: 'RESET', target: 'navigator:root', payload: { key: 'navigator:root', index: 0, routeKeySeq: 2, routeNames: <既定の mockRootState の routeNames>, type: 'stack', stale: false, routes: [{ name: 'index' }] } }`。it: `T-SG1: user が無い (session が切れた) と、ルートの Stack を入口 1 つに畳む RESET の action を 1 回 dispatch し、設定の行を描かない` (`mockNavigationDispatch` が `ENTRY_RESET_ACTION` で 1 回・`mockRouterReplace` が 0 回・`queryByTestId('settings-screen')` が null)・`T-SG2: user があれば dispatch せず、設定の画面を描く` (`mockNavigationDispatch` が 0 回・`getByTestId('settings-screen')`)・`T-SG3: 描いた後に user が無くなると 1 回だけ dispatch する (もう一度描き直しても 2 回目は無い)` (`mockUser = null` → `rerender` → 1 回 → `rerender` → 1 回のまま)・`T-SG4: ルートの Stack の state がそろっていない (getRootState が undefined) なら、router.replace("/") で入口へ移る` (`mockRootState = undefined`・`mockUser = null` → `mockRouterReplace` が `'/'` で 1 回・`mockNavigationDispatch` が 0 回) | B |
+| `apps/mobile/__tests__/components/WebViewScreen.*.test.tsx` (6 本)・`__tests__/lib/webViewDownload.test.ts` | `jest.mock('expo-file-system/legacy', …)`。うち `WebViewScreen.bridge.test.tsx` (91 行)・`WebViewScreen.download.test.tsx` (84 行)・`webViewDownload.test.ts` (36 行) は `import * as FileSystem from 'expo-file-system';` も `import * as FileSystem from 'expo-file-system/legacy';` に (A-1。mock の関数の取り出し方 (`FileSystem.writeAsStringAsync as jest.Mock` など) と期待は変えない) | A |
 | `apps/mobile/__tests__/home/home.test.tsx` | 51〜58 行の `@react-native-community/slider` の mock (見出しのコメントを含む) とその直後の空行を消す (§6.3)。ほかは変えない | A |
 | `apps/mobile/__tests__/lib/date-basis-jst.test.tsx` | 45 行の `'app/(tabs)/settings.tsx'` を `'app/settings/index.tsx'` に、49 行の `path.join('app', '(tabs)', 'settings.tsx')` を `path.join('app', 'settings', 'index.tsx')` に | B |
 | `tests/webview-download-export-limit-contract.test.ts` (ルートの vitest) | 26 行の `vi.mock('expo-file-system', () => ({}))` を `vi.mock('expo-file-system/legacy', () => ({}))` に (A-1) | A |
@@ -1407,7 +1477,10 @@ npm install --package-lock-only --ignore-scripts || {
 | S16 | `components/NotificationRouter.test.tsx`・`lib/push-notifications.test.ts`・M-4 |
 | S17 | `tests/mobile-toolchain-contract` (版の組) |
 | S18 | V-6・V-9 |
-| S19 | `settings/session-guard` (T-SG1)・M-2 |
+| S19 | `settings/session-guard` (T-SG1・T-SG3・T-SG4)・`legal-consent.test.ts` (T-ML12 の入口の it = 実物の `StackRouter`)・M-2 |
+| S20 | `settings/profile-row` (`router.dismissTo` の期待)・`route-targets-exist` (`dismissTo` の行き先も走査)・M-2 |
+| S21 | `settings/logout` (`dispatch:RESET:index`・`ENTRY_RESET_ACTION`)・`legal-consent.test.ts` (T-ML12 の入口の it)・M-2 |
+| S22 | `settings/logout` (「使い方ガイドをもう一度見る」の it)・`route-targets-exist`・M-2 |
 
 ---
 
@@ -1418,7 +1491,7 @@ npm install --package-lock-only --ignore-scripts || {
 | 段 | 内容 | 検証 |
 |---|---|---|
 | A | 依存と設定: `apps/mobile/package.json` (§6.1)・ルート `package.json` の `overrides` (§6.2)・`package-lock.json` (§10.1 の 2 段)・`app.json` (§9.1)・`eas.json` (C-5)・`jest.config.js` (§9.2)・`jest.setup.js` (§9.3)・`jest.env.setup.js` / `metro.config.js` / `tsconfig.json` / `dependabot.yml` のコメント (C-7・C-8・C-11・C-13)。消す依存のテストの後始末: `home.test.tsx` の slider の mock (§6.3)。API の置き換え: A-1 (import 2 + Jest の mock 10 + ルートの vitest の mock 1)・A-2 (3)・A-3 (2)・A-8 (V-2 で出た分)・T-4 (V-3 で出た分) | V-0〜V-10 |
-| B | expo-router 58 への追随: B-1 (設定の画面の移設と session の止め (§9.10) + §13.2 の B のテスト + 新設の `session-guard.test.tsx` + §15.1 の B の番兵の行)・B-2 (同意画面・ゲート・`legal-consent.ts` + テスト 3 本・`app/_layout.tsx` のコメント 1 行) | V-2・V-3・V-7 |
+| B | expo-router 58 への追随: B-1 (設定の画面の移設と、session の止め・設定の画面から出る遷移 4 つの直し (§9.10) + §13.2 の B のテスト + 新設の `session-guard.test.tsx` + §15.1 の B の番兵の行)・B-2 (同意画面・ゲート・`legal-consent.ts` + テスト 3 本・`app/_layout.tsx` のコメント 1 行) | V-2・V-3・V-7 |
 | C | 番兵と README: `tests/mobile-toolchain-contract.test.ts` (§9.7)・`apps/mobile/README.md` の「実機 (Expo Go)」の節に 1 文 (SDK 58 の Expo Go は公開待ち・push 通知は Expo Go で例外になる (SDK 55) ので preview のビルドで確かめる) | V-3・V-7 |
 
 ### 14.2 触るファイルの母集合 (閉じた一覧。これ以外を触ったら blocking)
@@ -1438,20 +1511,22 @@ npm install --package-lock-only --ignore-scripts || {
 | ファイル (新規) | `tests/mobile-toolchain-contract.test.ts` | §9.7 |
 | ファイル (新規) | `apps/mobile/__tests__/settings/session-guard.test.tsx` | §13.2 |
 | 関数 | `legalConsentScreenPreventsRemoval(mode, closing): boolean` | `apps/mobile/src/lib/legal-consent.ts` (§9.4) |
-| 関数 | `findNavigatorOwningRoute(root, routeName): LegalConsentOwnerState \| null` | 同上 |
-| 関数 | `legalConsentCollapsedState(owner, routeName): LegalConsentCollapsedState` | 同上 |
-| 関数 | `legalConsentCollapseAction(owner, routeName): LegalConsentCollapseAction` | 同上 |
-| 型 | `NavigatorStateLike`・`LegalConsentOwnerState`・`LegalConsentCollapsedState`・`LegalConsentCollapseAction` (export)・`LegalConsentCollapsedBase` (ファイルの中だけ) | 同上 |
-| 定数 | `LEGAL_CONSENT_COLLAPSED_INDEX = 0` (ファイルの中だけ) | 同上 |
+| 関数 | `findNavigatorOwningRoute(root, routeName): StackOwnerState \| null` (`root` は `NavigatorStateLike \| undefined`) | 同上 |
+| 関数 | `collapsedStackState(owner, routeName): CollapsedStackState` | 同上 |
+| 関数 | `collapseStackAction(owner, routeName): CollapseStackAction` | 同上 |
+| 型 | `NavigatorStateLike`・`StackOwnerState`・`CollapsedStackState`・`CollapseStackAction` (export)・`CollapsedStackBase` (ファイルの中だけ) | 同上 |
+| 定数 | `COLLAPSED_STACK_INDEX = 0` (ファイルの中だけ)・`ENTRY_SCREEN_ROUTE_NAME = "index"` (export) | 同上 |
 | 残す識別子 | `RESET_ACTION_TYPE` (既存。export しない。action の `type` に使う) | 同上 |
 | 消す識別子 | `LegalConsentScreenRemovalDecision`・`legalConsentScreenRemovalDecision` | 同上 |
 | 定数の値 | `NATIVE_SETTINGS_ROUTE = '/settings'` (旧 `'/(tabs)/settings'`) | `apps/mobile/app/(tabs)/profile.tsx` |
-| 画面の止め | `if (!user) return <Redirect href={ENTRY_SCREEN_PATH} />` | `apps/mobile/app/settings/index.tsx` (§9.10) |
+| 画面の中の識別子 | `navigationRef` (`useNavigationContainerRef()`)・`leftToEntryRef`・`leaveToEntry()`・`user` が無くなったら `leaveToEntry()` を呼ぶ effect・描画の止め `if (!user) return null` | `apps/mobile/app/settings/index.tsx` (§9.10) |
+| 遷移の書き換え | 「プロフィール」の行 `router.dismissTo("/(tabs)/profile")`・「使い方ガイドをもう一度見る」の行 `router.replace("/handson-tour?force=1")`・`handleLogout` の `leaveToEntry()` | 同上 |
 | 設定 | `expo.runtimeVersion = { policy: 'fingerprint' }`・`plugins` の `expo-splash-screen` | `apps/mobile/app.json` |
 | 設定 | `overrides["@react-native/jest-preset"]` | ルート `package.json` |
 | 依存 (新規) | `@expo/vector-icons`・`react-native-worklets`・`@react-native/jest-preset` | `apps/mobile/package.json` |
 | 依存 (削除) | `@react-native-community/slider`・`expo-haptics`・`expo-image-manipulator` | 同上 |
-| テストの定数 | `JEST_MAJOR`・`RUNTIME_VERSION_POLICY`・`BUNDLED_PINNED`・`REMOVED_UNUSED`・`HOISTED_TOOLCHAIN`・`MOBILE_NESTED_ALLOWED`・`MOBILE_NESTED_PREFIX` | `tests/mobile-toolchain-contract.test.ts` |
+| テストの定数 | `JEST_MAJOR`・`RUNTIME_VERSION_POLICY`・`BUNDLED_PINNED`・`REMOVED_UNUSED`・`HOISTED_TOOLCHAIN`・`MOBILE_NESTED_ALLOWED`・`MOBILE_NESTED_PREFIX`・`FILE_SYSTEM_SCAN_DIRS`・`FILE_SYSTEM_SPECIFIER` | `tests/mobile-toolchain-contract.test.ts` |
+| テストの定数 (Jest) | `mockRootState`・`ENTRY_RESET_ACTION`・`mockNavigationDispatch` | `apps/mobile/__tests__/settings/session-guard.test.tsx` と `logout.test.tsx` (§13.2) |
 | 検証の手順 (コミットしない) | §9.8 の根の advisory の数え方・§9.11 の V-1 の検査・§10.1 の 2 段の作り直しのスクリプト | 実装者が一時の場所で流す |
 
 ---
@@ -1483,7 +1558,7 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 | `tests/local-ci-workflow-sync.test.ts` | `mobile-test.yml`・`stage_mobile` | yml と sh の同期 | 変えない (どちらも触らない) | – |
 | `tests/types-supabase-local-1631.test.ts` | `apps/mobile/package.json` の `scripts` | `gen types` の有無 | 変えない (scripts は同じ) | A |
 | `tests/posthog-not-adopted-contract.test.ts` | `apps/mobile/package.json` | posthog の依存が無い | 変えない | A |
-| `apps/mobile/__tests__/app/route-targets-exist.test.ts` | `app/` の画面と `router.push` の行き先・「残した画面」の一覧 | `/settings` → `app/settings/index.tsx` は解決する。ただし 254 行の「残した画面」の一覧が `path.join('(tabs)', 'settings.tsx')` の存在を期待している | 254 行を `path.join('settings', 'index.tsx')` に (§13.2) | B |
+| `apps/mobile/__tests__/app/route-targets-exist.test.ts` | `app/` の画面と `router.push` / `replace` / `navigate` / `dismissTo` の行き先・「残した画面」の一覧 | `/settings` → `app/settings/index.tsx` は解決する。§9.10 の `router.dismissTo("/(tabs)/profile")` と `router.replace("/handson-tour?force=1")` も走査の対象で、行き先は `push` のときと同じ画面に解決する。ただし 254 行の「残した画面」の一覧が `path.join('(tabs)', 'settings.tsx')` の存在を期待している | 254 行を `path.join('settings', 'index.tsx')` に (§13.2) | B |
 | `apps/mobile/__tests__/theme/font-family-guard.test.ts` | `app.json` の `plugins` | `expo-font` の plugin が無い (配列の要素 `[name, opts]` も読む) | 変えない (`expo-splash-screen` の要素が増えるだけ) | A |
 | `apps/mobile/__tests__/app/error-boundaries.test.tsx` | `app/**/_layout.tsx` の `ErrorBoundary` | layout の一覧 | 変えない (layout は増減しない) | B |
 | `apps/mobile/__tests__/app/root-layout-config.test.tsx` | `app/_layout`・`gestureEnabled`・`legal-consent` | `Stack.Screen "legal-consent"` の `options` が `{ gestureEnabled: false }` | 変えない (B-2 で `app/_layout.tsx` は 118 行のコメントだけ変え、`options` は同じ) | B |
@@ -1501,7 +1576,7 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 | 同上 | 279 行付近のファイルの木の `settings.tsx  # ネイティブ設定画面 (OS API 使用。タブバーには出さない: href: null)` と、530 行付近の表の「`apps/mobile/app/(tabs)/settings.tsx` 等の settings 画面」 | 木は `settings/index.tsx` を `app/settings/` の下に (`(tabs)` の下から外す)。表のパスは `apps/mobile/app/settings/index.tsx` に |
 | 同上 | §7.1 の app.json の抜粋 | `runtimeVersion: { policy: 'fingerprint' }` と `plugins` の `expo-splash-screen` を足す |
 | 同上 | §13 の「OTA Update (expo-updates) \| 低 \| `enabled: false` のまま。大型変更時に検討」 | 「`enabled: false` のまま。`runtimeVersion` は fingerprint (mobile/07 §11)。番兵 `tests/mobile-toolchain-contract.test.ts`」に |
-| `docs/design/cross/13b-legal-consent-mobile.md` | §0.3 の表の `beforeRemove` の行 (77 行付近)・`reset` の行 (74 行付近)・§6.6.8 / 6.6.11 (339・366・419〜430 行付近の「RESET だけ通す」の規則)・232〜233 行のファイルの説明・461・641〜688 行の `legal-consent.ts` の抜粋・808〜846 行の `LegalConsentGate.tsx` の抜粋・1062 行の `app/_layout.tsx` の抜粋のコメント (「ほかの取り除く操作は画面の beforeRemove が扱う」) | expo-router 58 の形に (本冊 §7.1 の B-2・§8.3 (b)・§9.4〜9.6): 「`beforeRemove` で止める」→「`usePreventRemove` で止める (全部)」、「RESET だけ通す」→「ゲートの `reset` は同意画面の route を key ごと再利用するので同意画面を取り除かない」、「`reset` は `routingQueue` を通らずその場で届く」→「58 では `dispatch` は commit の後に流れる」、`navigationRef.reset({ index: 0, routes: [...] })` → `navigationRef.dispatch(legalConsentCollapseAction(owner, …))` (完全な state: `key`・`index`・`routeNames`・`routeKeySeq`・`stale: false`。`target` は持ち主の key)、1062 行の抜粋のコメントは本冊 §9.6 の後の注記の「後」の文に。§0.3 の node_modules の行番号 (7.17.2) は当時の記録として残し、冒頭に「expo-router 5 (SDK 53) 時点の事実。58 は mobile/07」と 1 文 |
+| `docs/design/cross/13b-legal-consent-mobile.md` | §0.3 の表の `beforeRemove` の行 (77 行付近)・`reset` の行 (74 行付近)・§6.6.8 / 6.6.11 (339・366・419〜430 行付近の「RESET だけ通す」の規則)・232〜233 行のファイルの説明・461・641〜688 行の `legal-consent.ts` の抜粋・808〜846 行の `LegalConsentGate.tsx` の抜粋・1062 行の `app/_layout.tsx` の抜粋のコメント (「ほかの取り除く操作は画面の beforeRemove が扱う」) | expo-router 58 の形に (本冊 §7.1 の B-2・§8.3 (b)・§9.4〜9.6): 「`beforeRemove` で止める」→「`usePreventRemove` で止める (全部)」、「RESET だけ通す」→「ゲートの `reset` は同意画面の route を key ごと再利用するので同意画面を取り除かない」、「`reset` は `routingQueue` を通らずその場で届く」→「58 では `dispatch` は commit の後に流れる」、`navigationRef.reset({ index: 0, routes: [...] })` → `navigationRef.dispatch(collapseStackAction(owner, …))` (完全な state: `key`・`index`・`routeNames`・`routeKeySeq`・`stale: false`。`target` は持ち主の key)、1062 行の抜粋のコメントは本冊 §9.6 の後の注記の「後」の文に。§0.3 の node_modules の行番号 (7.17.2) は当時の記録として残し、冒頭に「expo-router 5 (SDK 53) 時点の事実。58 は mobile/07」と 1 文 |
 | `docs/design/cross/16-auth-history-sessions.md` | 1862・1990・2050・2082・2128 行付近の `app/(tabs)/settings.tsx` / `(tabs)/settings.tsx` (5 か所) | `app/settings/index.tsx` に |
 | ルート `CLAUDE.md` | 198 行付近「モバイルの `apps/mobile` は Expo 53 + React 19.0 で … (モバイルの更新は #1591)」 | 「Expo 58 + React 19.3 (#1591 で 53 から上げた)」に |
 | 同上 | 207 行付近「モバイルは自前の `@types/react ~19.0.10` を …」 | `~19.3.0` に |
@@ -1540,7 +1615,7 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 |---|---|---|---|
 | M-0 | EAS のビルドのページの Runtime version | `1.0.0` でない (fingerprint のハッシュ)。iOS と Android で違ってよい | §11 |
 | M-1 | 起動 → ログイン → 5 つのタブ (WebView) → AI のシート | 全部開く。白い画面・クラッシュが無い | N-2・N-3 (scene・Hermes V1・Metro の ESM) |
-| M-2 | マイページの歯車 → 設定 → 戻る。設定 → アカウント → 戻る。設定 → ログアウト | 設定が開き、戻るとマイページ。タブバーと AI の FAB は設定の画面では出ない。ログアウトで入口へ移る (session が切れたときの移動は Jest の T-SG1 が受け持つ。実機で session を切る操作は再現しにくい) | B-1 |
+| M-2 | マイページの歯車 → 設定 → 戻る。設定 → アカウント → 戻る。設定 → プロフィール。設定 → 使い方ガイドをもう一度見る → ツアーを抜ける。設定 → ログアウト → ログイン | 設定が開き、戻るとマイページ。タブバーと AI の FAB は設定の画面では出ない。プロフィールでマイページのタブになり、そこで戻るを押しても設定の画面に戻らない。ツアーを抜けるとホームのタブ。ログアウトで入口へ移り、ログインの後に戻るを繰り返しても、もう一組のタブや設定の画面が出てこない (session が切れたときの移動は Jest の T-SG1・T-SG3 が受け持つ。実機で session を切る操作は再現しにくい) | B-1 |
 | M-3 | 同意が要るアカウントでログイン (#1442 の 5 項目: 同意画面 1 枚・ほかの戻る操作が止まる・iOS はスワイプで戻れず Android の戻るは OS へ・同意の後は入口から振り分け・「同意しない」の後の案内と「閉じる」) | #1115 のコメントの期待どおり | B-2 |
 | M-4 | Push 通知 (前面で受ける・タップで行き先へ) | 前面でバナーが出る。タップで行き先の画面 | A-6 (#1722 の前提の `EXPO_ACCESS_TOKEN` 等は #1115) |
 | M-5 | deep link (`homegohan://…`) をアプリ未起動で開く | 行き先の画面が開く | N-2 (scene の URL の受け渡し) |
@@ -1561,6 +1636,8 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 7. **同意画面の畳み直しの実機の挙動**: 完全な state の RESET の action が router に受け付けられることは T-ML12 が実物の `StackRouter` で確かめる。`usePreventRemove` との組と、`dispatch` が commit の後に流れる順は単体テストでは mock 越しにしか見えない。M-3 (#1442 の 5 項目) が実機の確認で、落ちた場合は 13b と本冊の両方を見直す (構造の裁定への差し戻し事由)。
 8. **lockfile の 2 段の作り直しが npm の版で変わる可能性**: §10.1 の手順は、設計の時点の npm (10 系) の解決で `V-1 OK` になった。offload の行き先の npm の版で結果が違えば E-15 で止まる。手順を変えるときは本冊の §10.1 と §9.11 を一緒に直す (専権)。
 9. **追随表の見張り**: `tests/design-doc-followup-owned-edits.test.ts` は「追随表に逐語の書き換えの行を足したら `OWNED_EDITS` にも足す」と決めている。本冊 §15.2 の逐語の行を `OWNED_EDITS` に足すか (足すなら、専権 PATCH と同じ PR) はオーケストレーターが決める。
+10. **ルートの Stack の画面から `(tabs)` へ向かう push / replace が `(tabs)` を 2 つ目として積む (既存の挙動)**: expo-router は前面の route と行き先の名前が違う所で行き先を決め、ルートの Stack の `(tabs)` は getId を持たないので、ルートの Stack の画面 (アカウント・血液検査・栄養目標・AI の同意・ハンズオンツアー) が前面のときの `(tabs)` への push / replace は新しい `(tabs)` を作る。expo-router 5 (いま) でも同じで (`build/global-state/routing.js` の `getNavigateAction` が、名前の違う所の navigator に PUSH / REPLACE を宛てる)、通知のタップ (`NotificationRouter` の `router.push`)・ツアーの終わり (`router.replace('/home')`)・アカウントの画面の `router.replace("/")` の後のログインで起きる。移設の後は、設定の画面が前面のときの通知のタップもこの仲間になる (§8.3 (c))。本冊は、設定の画面の中の遷移 4 つ (§9.10) だけを、いまの並びにそろえる。通知のタップとツアーの終わりを `router.dismissTo` (Stack にある `(tabs)` まで戻る) にするなどの直しは、設定の画面に限らないので別 Issue (起票はオーケストレーター)。
+11. **構造の代案 (設定の画面の移設の波及を元から消す)**: 設定の画面の移設の波及の指摘が、R1 (session の止め) と R2 (遷移 4 つ・通知のタップ) と続いた。発生源は「設定の画面が `(tabs)` の外 (ルートの Stack) に出る」こと。代案は、設定の画面をマイページのタブの中の Stack に置く形 (`app/(tabs)/profile/_layout.tsx` の Stack に `index` (いまの `(tabs)/profile.tsx`) と `settings`。歯車は `router.push('/profile/settings')`)。設定の画面が `(tabs)` の中に残るので、`(tabs)` の layout の止め・タブバーと FAB・`(tabs)` の境界・通知のタップ・ログアウトの置き換えがいまと同じになり、§9.10 の直しと `ENTRY_SCREEN_ROUTE_NAME` が要らなくなる。代わりに、`(tabs)/profile.tsx` の移設 (`(tabs)/profile/index.tsx`)・タブの画面の一覧の番兵 (`tests/native-app-tabs-contract.test.ts`・`tab-layout.test.tsx` ほか) の追随・パス `/profile/settings` がルートの `app/profile/nutrition-targets.tsx` と同じ `profile` の区間で解決されることの実物の確認・タブの中の Stack に WebView の画面 (マイページ) を置くことの実機の確認が要る。§5.3 で確定した構造の変更になるので、採るかはオーケストレーターが構造の裁定として決める (本冊は §9.10 の局所の直しで閉じている)。
 
 ---
 
@@ -1569,4 +1646,5 @@ grep の語で `tests/`・`scripts/`・`src/__tests__/`・`apps/mobile/__tests__
 | 版 | 日付 | 変更 |
 |---|---|---|
 | v1.0 | 2026-10-17 | 初版 (A 型・4 相。origin/main 904f9e8f の事実・npm registry と Expo / React Native / Jest / Reanimated の公式の文書から) |
+| v1.2 | 2026-10-17 | 設計ゲート R2 の指摘の反映: 設定の画面から出る遷移を、ルートの Stack に設定の画面や 2 つ目の `(tabs)` を残さない形に (「プロフィール」= `router.dismissTo`・「使い方ガイド」= `router.replace`・ログアウトと session の切れ = 入口 1 つに畳む完全な state の RESET。§9.10・§8.3 (c) の表を実物の expo-router 58 の行き先の決め方で書き直し)・畳む関数を route の名前の汎用の名前に (`collapseStackAction` ほか)・`ENTRY_SCREEN_ROUTE_NAME`・`expo-file-system` を import するテスト 3 本の import も `/legacy` に・番兵が `__tests__` の指定子も見る・シナリオ S20〜S22・§17 の 10 (既存の 2 つ目の `(tabs)`) と 11 (構造の代案) |
 | v1.1 | 2026-10-17 | 設計ゲート R1 の指摘の反映: ゲートの畳み直しを完全な state (`stale: false`・`routeKeySeq`) の RESET の action の `dispatch` に・jest の `react-native` の mapper を消す・lockfile を 2 段で作り直し置き場を V-1 と番兵で固定・`react-native-url-polyfill` を残す・設定の画面に session の止め・追随の漏れ (vitest の mock・タブの it 2 つ・残した画面の一覧・FAQ のテスト)・`as any` の数の訂正 |
