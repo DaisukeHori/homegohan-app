@@ -4,7 +4,10 @@
  * Supabase の「Secure email change」が有効だと、現在と新しいメールアドレスの両方に確認メールが届く。
  * 1 通目のリンクを開くと、Supabase Auth (GoTrue) はセッションの代わりに、知らせ (message) だけを戻り先に付ける:
  *   "Confirmation link accepted. Please proceed to confirm link sent to the other email"
- * 付く場所は戻り先 URL のハッシュ (#message=...)。PKCE のリンクでは、クエリ (?message=...) にも同じものが付く。
+ * 付く場所は戻り先 URL のハッシュ (#message=...)。GoTrue のソースでは、PKCE のリンクのときクエリ (?message=...) にも
+ * 同じものを付けるので、Web はクエリに付いた場合も同じに扱う。
+ * (ローカルの Supabase は Secure email change が効いておらず 1 通目を再現できないため、この挙動は結合テストでは固定していない。
+ * 本番の設定の確認は #1574 のオーナー作業)
  *   - Web: /auth/callback (src/app/(auth)/auth/callback/route.ts) はハッシュを読めないので、
  *     /auth/link-notice (src/app/(auth)/auth/link-notice/page.tsx) がブラウザで読んで知らせを出す
  *   - モバイル: homegohan://auth/verify#message=... を apps/mobile/src/lib/authLink.ts が読み、

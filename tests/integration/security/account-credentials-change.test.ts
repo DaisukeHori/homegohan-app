@@ -17,12 +17,6 @@
  *   A-4: updateUser({ email }) は、確認が済むまでメールアドレスを変えない (email はそのまま、new_email に入る)。
  *        確認前は、これまでのメールアドレスでログインできて、新しいメールアドレスでは入れない
  *   A-5: すでに使われているメールアドレスへの updateUser({ email }) は 422 email_exists
- *   A-6 (#1574): 両方の確認が要る設定 (Secure email change) で、1 通目 (現在のアドレス) の確認リンクを開くと、
- *        GoTrue はセッションの代わりに知らせ (message) だけを、戻り先のハッシュに付けて戻す (クエリには付けない)。
- *        サーバーの /auth/callback には届かないので、Web は /auth/link-notice でハッシュを読む
- *        (src/app/(auth)/auth/callback/route.ts・src/lib/auth/link-notice.ts。判定は packages/shared の email-change-link.ts)
- *   A-7 (#1574): メールの雛形が token_hash の形のとき、1 通目の verifyOtp({ type: 'email_change' }) は
- *        エラーもセッションも返さない (/auth/callback はこれで 1 通目と見分ける)。メールアドレスはまだ変わらない
  *
  * 判定が通信エラーやレート制限などで偶然「失効」に見えないよう、失効は GoTrue が返す具体的なエラー
  * (session_not_found / refresh_token_not_found) で判定し、それ以外のエラーはテストを落とす。
@@ -35,7 +29,6 @@
 
 import { createClient, isAuthSessionMissingError, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, describe, expect, it } from 'vitest';
-import { isEmailChangeAwaitingOtherMessage } from '@homegohan/shared';
 import ws from 'ws';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -254,62 +247,5 @@ describe('#1187 ログイン中のメールアドレス変更 (GoTrue)', () => {
     const { data: server } = await srAdmin.auth.admin.getUserById(user.id);
     expect(server.user?.email).toBe(user.email);
     expect(server.user?.new_email).toBeFalsy();
-  });
-});
-
-describe('#1574 メールアドレス変更の確認の 1 通目 (GoTrue)', () => {
-  /** 確認リンクを開いたときの、GoTrue のリダイレクトの状態コード (どちらでもブラウザは Location へ移る) */
-  const REDIRECT_STATUSES = [302, 303];
-
-  /** 1 通目 (現在のアドレス宛て) の確認リンクを、管理者の API で作る (メールは送らない) */
-  async function currentAddressLink(user: TestUser, label: string) {
-    const newEmail = `sec-1574-${label}-new-${TS}@homegohan.test`;
-    const { data, error } = await srAdmin.auth.admin.generateLink({
-      type: 'email_change_current',
-      email: user.email,
-      newEmail,
-      options: { redirectTo: EMAIL_REDIRECT_TO },
-    });
-    expect(error).toBeNull();
-    if (!data.properties) throw new Error(`generateLink ${label}: ${error?.message}`);
-    return data.properties;
-  }
-
-  async function expectEmailUnchanged(user: TestUser) {
-    const { data: server, error } = await srAdmin.auth.admin.getUserById(user.id);
-    expect(error).toBeNull();
-    expect(server.user?.email).toBe(user.email);
-  }
-
-  it('A-6: 1 通目の確認リンクは、セッションの代わりに知らせだけを戻り先のハッシュに付けて戻す (クエリには付けない)', async () => {
-    const user = await createUser('a6');
-    const link = await currentAddressLink(user, 'a6');
-
-    // ブラウザが開くのと同じ GoTrue の /verify を、リダイレクトを追わずに開く (接続先はこのテストの Supabase の URL)
-    const actionLink = new URL(link.action_link);
-    const res = await fetch(new URL(`${actionLink.pathname}${actionLink.search}`, url), { redirect: 'manual' });
-    expect(REDIRECT_STATUSES).toContain(res.status);
-    const location = new URL(res.headers.get('location')!);
-
-    expect(`${location.origin}${location.pathname}`).toBe(EMAIL_REDIRECT_TO);
-    expect(location.searchParams.has('message')).toBe(false);
-    expect(location.searchParams.has('code')).toBe(false);
-    const fragment = new URLSearchParams(location.hash.replace(/^#/, ''));
-    expect(isEmailChangeAwaitingOtherMessage(fragment.get('message'))).toBe(true);
-    expect(fragment.has('access_token')).toBe(false);
-    await expectEmailUnchanged(user);
-  });
-
-  it('A-7: token_hash の形の 1 通目の verifyOtp({ type: "email_change" }) は、エラーもセッションも返さない', async () => {
-    const user = await createUser('a7');
-    const link = await currentAddressLink(user, 'a7');
-
-    const { data, error } = await client(anonKey).auth.verifyOtp({
-      token_hash: link.hashed_token,
-      type: 'email_change',
-    });
-    expect(error).toBeNull();
-    expect(data.session).toBeNull();
-    await expectEmailUnchanged(user);
   });
 });

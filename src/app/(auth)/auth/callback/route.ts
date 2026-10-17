@@ -61,7 +61,7 @@ export async function GET(request: Request) {
   const supabase = await createClient()
   let authSuccess = false
   // #1574: メールアドレス変更の確認の 1 通目を受け付けた (もう一方のアドレスのリンクを待っている) とサーバーで分かったか。
-  // PKCE のリンクでは、GoTrue がハッシュと同じ知らせをクエリの message にも付ける
+  // GoTrue のソースでは、PKCE のリンクのとき、ハッシュと同じ知らせをクエリの message にも付ける (packages/shared の email-change-link.ts)
   let emailChangeAwaitingOther = isEmailChangeAwaitingOtherMessage(requestUrl.searchParams.get('message'))
   // 認証の情報 (code・token_hash・token) を何も運んでこなかったか。このときはハッシュに知らせ・エラーが付いていることがあるが、
   // サーバーには届かないので、ブラウザで読む画面 (/auth/link-notice) を通す
@@ -93,7 +93,7 @@ export async function GET(request: Request) {
       })
       authSuccess = !error
       if (!error) await recordWebLoginContextFromRequest(supabase.auth, request.headers, data.session)
-      // #1574: メールアドレス変更の 1 通目は、確認は通るがセッションを返さない (GoTrue は知らせの文だけを返す)。
+      // #1574: メールアドレス変更の 1 通目は、確認は通るがセッションを返さない (GoTrue のソースでは、知らせの文だけを返す)。
       // 2 通目 (変更の完了) ではセッションが返る
       if (!error && type === EMAIL_CHANGE_OTP_TYPE && !data.session) emailChangeAwaitingOther = true
       if (error) {

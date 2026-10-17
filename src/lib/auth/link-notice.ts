@@ -9,8 +9,8 @@
  *   - 認証の情報 (code・token_hash・token) が何も無いとき: 本来の遷移先を next に入れて、/auth/link-notice へ移す。
  *     リダイレクトの Location にハッシュを付けなければ、ブラウザは元の URL のハッシュを引き継ぐ
  *     (RFC 9110 §10.2.2) ので、/auth/link-notice (src/app/(auth)/auth/link-notice/page.tsx) がハッシュを読める
- *   - サーバーで 1 通目だと分かったとき (PKCE のリンクでクエリにも message が付いた・token_hash の形のリンクで
- *     確認は通ったがセッションが返らなかった): notice を付けて、同じく /auth/link-notice へ移す
+ *   - サーバーで 1 通目だと分かったとき (クエリにも message が付いた (GoTrue のソースでは PKCE のリンクのとき)・
+ *     token_hash / token の形の email_change で確認は通ったがセッションが返らなかった): notice を付けて、同じく /auth/link-notice へ移す
  * /auth/link-notice は resolveLinkNotice で行き先を決める。知らせが無ければ、そのまま本来の遷移先へ移る。
  */
 

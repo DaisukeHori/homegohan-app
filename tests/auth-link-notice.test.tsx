@@ -8,7 +8,7 @@
  * 確かめること:
  *   - /auth/callback: 認証の情報 (code・token_hash・token) が無いときは、本来の遷移先を next に入れて /auth/link-notice へ移す
  *     (Location にハッシュを付けない = ブラウザが元のハッシュを引き継ぐ)
- *   - /auth/callback: PKCE のリンクでクエリにも message が付いたとき・token_hash / token の形の email_change で
+ *   - /auth/callback: クエリにも message が付いたとき (GoTrue のソースでは PKCE のリンク)・token_hash / token の形の email_change で
  *     セッションが返らなかったときは、notice=email_change_awaiting_other を付ける
  *   - /auth/callback: 2 通目 (セッションが返る) や、ほかの種類の確認は、今までどおり遷移先へ直接移る
  *   - resolveLinkNotice (src/lib/auth/link-notice.ts) の表 (知らせ・エラー・どちらでもない・next の検証)
@@ -130,7 +130,7 @@ describe('/auth/callback: 認証リンクの知らせを /auth/link-notice へ�
     expect(await callback('')).toBe(noticePath('/login'));
   });
 
-  it('★PKCE のリンクでクエリにも message が付いた 1 通目は、notice を付ける', async () => {
+  it('★クエリにも message が付いた 1 通目 (GoTrue のソースでは PKCE のリンク) は、notice を付ける', async () => {
     expect(await callback(`?${SINGLE_CONFIRMATION_ENCODED}`)).toBe(
       noticePath('/home', LINK_NOTICE_EMAIL_CHANGE_AWAITING_OTHER),
     );
