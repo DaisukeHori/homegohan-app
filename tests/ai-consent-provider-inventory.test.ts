@@ -54,6 +54,7 @@ const NON_AI_HOSTS: Record<string, string> = {
   'supabase.com': 'Supabase の説明ページへのリンク',
   'vercel.com': 'Vercel の説明ページへのリンク',
   'www.w3.org': 'SVG の名前空間',
+  'schema.org': '構造化データ (JSON-LD) の語彙の名前 (@context。#1867。src/lib/seo/json-ld.ts)。送信先ではない',
   'fonts.googleapis.com':
     'OGP の画像のフォント (Noto Sans JP) の CSS (#1845。src/lib/og-font.ts)。ビルドのときに、画像に載せる固定の文字だけを送る。利用者のデータは送らない',
   'fonts.gstatic.com': 'OGP の画像のフォントの本体 (#1845。上の CSS が指す Google のフォントの置き場)。利用者のデータは送らない',
