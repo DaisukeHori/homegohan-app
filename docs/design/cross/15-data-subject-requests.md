@@ -152,7 +152,7 @@ Issue 本文との食い違い (本書を正とする): Issue の「該当箇所
 | S-10 | 種類 suspension。運営は内容から止める利用の範囲を確かめ、止めた内容・本人が設定で止められる項目・全体を止めたいときの退会を response_note に書いて fulfilled → dsr_resolved → 本人は凍結されていないので /settings/data-requests に入れ、GET own detail で response_note を読む。本モジュールは凍結を呼ばず、運営画面の案内も凍結を手段に挙げない (凍結すると middleware が /settings を /frozen へ回し、/api/account/data-requests も 403 になって応答を読めなくなる) |
 | S-11 | 種類 erasure。本人が POST /api/account/delete → auth.users 削除 → FK ON DELETE SET NULL で user_id = NULL。運営の詳細は requester = null (退会済み) を出す。運営は fulfilled にする。dsr_resolved は宛先が無いので送らない (ログに残すだけ) |
 | S-12 | due_at < now かつ status ∈ {received, in_progress} → `isDsrOverdue` = true。GET /api/admin/data-requests?overdue=1 で絞れ、一覧は期限超過を赤で出す。本人の一覧・詳細にも due_at を出す |
-| S-13 | middleware が /settings を凍結中の利用者に開かせず (/frozen へ回す)、/api/account/data-requests も 403 AUTH_ACCOUNT_FROZEN (FROZEN_ALLOWED_API_PATHS は退会・書き出しと、有料プランの解約の 3 本 (billing/01 §9.8) の計 5 本で、data-requests は含まない)。/frozen の案内と /contact (凍結中も開ける) のサポート窓口のまま。本設計は FROZEN_ALLOWED_API_PATHS に足さない。請求の後に凍結された本人には、dsr_resolved の本文の「設定画面を開けない場合はお問い合わせ」の案内 (§10) と、運営がサポート窓口のメールで応答を送る運用 (§19 の runbook・§21) で届ける |
+| S-13 | middleware が /settings を凍結中の利用者に開かせず (/frozen へ回す)、/api/account/data-requests も 403 AUTH_ACCOUNT_FROZEN (FROZEN_ALLOWED_API_PATHS は退会・書き出しと、有料プランの解約の 3 本 (billing/01 §9.8) の計 5 本で、data-requests は含まない)。/frozen の案内と /contact (凍結中も開け、送信 (POST /api/contact) も凍結中に通る。#1871・cross/08 §16.2) のサポート窓口のまま。本設計は FROZEN_ALLOWED_API_PATHS に足さない。請求の後に凍結された本人には、dsr_resolved の本文の「設定画面を開けない場合はお問い合わせ」の案内 (§10) と、運営がサポート窓口のメールで応答を送る運用 (§19 の runbook・§21) で届ける |
 | S-14 | ログイン方法に依存する分岐が無い (verify は token と user_id の一致だけ)。OAuth の利用者もメールのリンクを開いて確認できる |
 | S-15 | POST create の最初で rejectNullCharacterBody → 400 INVALID_CHARACTER。details が 2,001 字 → zod max → 400 VALIDATION_ERROR。DB の CHECK (char_length ≤ 2000) は二重の守り |
 | S-16 | GET own list: 本人のセッションの client で `.select(DSR_OWN_COLUMNS).eq('user_id', userId)` → RLS は select_operator で全行を許すが、`.eq('user_id', userId)` が自分の行だけに絞る → 200 (自分の行だけ)。GET own detail に他人の id: `.eq('id', id).eq('user_id', userId).maybeSingle()` が null → 404 NOT_FOUND。どちらも運営の API を通らないので監査は残さないが、他人の行を返さないので監査の要る閲覧が起きない (§7.2) |
@@ -1323,7 +1323,7 @@ grep の語は、本設計が足す・変える名前 (tests/ と src/__tests__/
 | 項目 | 本設計の既定 | 確認したいこと |
 |---|---|---|
 | 応答期限の日数 | `DSR_RESPONSE_DUE_DAYS` 既定 30 日 (§12) | 法務として何日を掲げるか (環境変数で変えられる) |
-| 凍結 (BAN) 中の利用者の請求 | 受け付けない。凍結の画面から行ける /contact のサポート窓口で受ける (S-13) | 凍結中でも設定画面なしで請求を出せる経路 (FROZEN_ALLOWED_API_PATHS への追加 + /frozen の画面) を作るか。FROZEN_ALLOWED_API_PATHS は「本人がサービスから離れるための操作だけ」の方針 (src/lib/auth/frozen.ts) なので、足すならその方針の変更になる |
+| 凍結 (BAN) 中の利用者の請求 | 受け付けない。凍結の画面から行ける /contact のサポート窓口で受ける (S-13。凍結中も送信できる。#1871) | 凍結中でも設定画面なしで請求を出せる経路 (FROZEN_ALLOWED_API_PATHS への追加 + /frozen の画面) を作るか。FROZEN_ALLOWED_API_PATHS は「本人がサービスから離れるための操作だけ」の方針 (src/lib/auth/frozen.ts) なので、足すならその方針の変更になる |
 | 請求の後に (規約違反などで) 凍結された本人への応答 | 設定画面では読めない。dsr_resolved の本文のお問い合わせの案内と、運営がサポート窓口のメールで応答を送る運用 (runbook。§19) で届ける。利用停止の手段として凍結は使わない (§9.2) | 凍結中でも自分の請求の一覧・詳細 (GET の 2 本) を読めるようにするか (上と同じく frozen.ts の方針の変更) |
 | 消去の請求の運営側の完了操作 | 本人の退会で完了 (S-11)。運営による代理の退会 (cross/08 §16.5) は未実装のまま | 代理の退会を実装するか。するなら #1562 の削除の実行記録 (`gdpr_deletion_requests`) に合わせて別の設計 |
 | 運営のロール | admin / super_admin (§3.2) | support も対応できるようにするか (そのときは登録メールアドレスの閲覧 (EMAIL_VIEWER_ROLES) も合わせて判断) |
