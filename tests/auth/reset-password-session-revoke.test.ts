@@ -101,6 +101,7 @@ vi.mock('framer-motion', async () => {
 });
 
 import ResetPasswordPage from '@/app/(auth)/auth/reset-password/page';
+import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 // ── 描画と操作のヘルパー ───────────────────────────────────────────────────────
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -379,6 +380,19 @@ describe('#1188 入力の検証エラー', () => {
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(mocks.clearUserScopedLocalStorage).not.toHaveBeenCalled();
     expect(mocks.broadcastSignOut).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['半角 73 文字', `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`],
+    ['日本語を含む 26 文字 (74 バイト)', `a1${'あ'.repeat(24)}`],
+  ])('#1864 72 バイトを超えるパスワード (%s) なら、長すぎるの文言を出し、どの API も呼ばない', async (_label, tooLong) => {
+    await renderPage();
+    await fillAndSubmit(tooLong, tooLong);
+
+    expect(text()).toContain(PASSWORD_TOO_LONG_MESSAGE);
+    expect(mocks.fetch).not.toHaveBeenCalled();
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+    expect(mocks.signOut).not.toHaveBeenCalled();
   });
 
   it('弱いパスワード (数字だけ) なら、どの API も呼ばない', async () => {
