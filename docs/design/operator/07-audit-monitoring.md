@@ -342,6 +342,8 @@ super_admin.organization.dissolve   - 組織の緊急解散 (severity=critical) 
 super_admin.family.dissolve         - 家族グループの緊急解散 (severity=critical) (#1571)
 super_admin.family.transfer_representative - 家族の代表者の緊急譲渡 (severity=warn) (#1571)
 super_admin.email_outbox.requeue    - 届けられなかったメール (dead) の再送 (POST /api/super-admin/email-outbox/{id}/requeue。§4.1.1) (#1708)
+admin.billing.manual_grant          - 運営者による手動のプラン付与 (POST /api/super-admin/users/{id}/manual-plan。severity=warn。details: subscription_id / plan_key / expires_at / reason。billing/02) (#1797)
+admin.billing.manual_revoke         - 手動付与の取り消し (DELETE /api/super-admin/users/{id}/manual-plan。severity=warn。details: subscription_id / plan_key / reason。billing/02) (#1797)
 ```
 
 ### 4.3 finance 系操作
