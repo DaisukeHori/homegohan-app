@@ -359,7 +359,8 @@ vi.mock('../supabase/functions/_shared/ai-usage.ts', async (importOriginal) => (
 
 type Handler = (req: Request) => Promise<Response>;
 const handlers: Record<string, Handler> = {};
-const ORIGIN = 'https://homegohan.app';
+// 既定で許可する自社のオリジン (supabase/functions/_shared/cors.ts の DEFAULT_ALLOWED_ORIGINS。#1573 で DNS に無い旧ドメインを外した)
+const ORIGIN = 'https://homegohan-app.vercel.app';
 
 const userRequest = (name: string, body: BodyInit, contentType: string | null = 'application/json') =>
   new Request(`http://localhost/functions/v1/${name}`, {
