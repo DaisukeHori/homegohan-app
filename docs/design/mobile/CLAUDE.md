@@ -124,7 +124,7 @@ React Native + Expo SDK 53 によるモバイルアプリ:
 ## EAS Build 設定
 
 - iOS: APNs キー (.p8) は EAS Secret 登録済み
-- Android: FCM Server Key を `EXPO_FCM_SERVER_KEY` として EAS Secret に追加 (新規、要件 §15.7)
+- Android: FCM V1 の資格情報 (Google のサービスアカウントキー) を EAS に登録する (未登録・オーナーの作業。要件 §15.7・`06-push-send.md` §14)
 - ビルドコマンド: `eas build --platform ios --profile preview --local`
 - 配布: Apple Configurator 2 → TestFlight (β) → App Store (本番)
 

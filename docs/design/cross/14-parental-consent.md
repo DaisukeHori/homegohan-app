@@ -103,7 +103,7 @@
   13a の設計書 (`docs/design/cross/13a-legal-consent-api-server.md`) の記述の直しは §6.18 の 13a の行 (オーケストレーター)。
 - 13b はネイティブの同意画面を作らず、Web の `/legal-consent` を WebView で開く (設計書 13b §5.2)。生年月日の欄・403 `LEGAL_MINOR_SELF_SIGNUP_REFUSED` の案内 (§6.9)・`guardian_missing` の案内と「登録をやめる」は Web の画面がそのまま効き、13b 側の追随は無い。アプリのゲートが見る `required` は本冊の後も `enforced && !accepted` のままで、`accepted` が `gaps` の空と一致する (§6.8) ので、13b は `required` を見るだけで生年月日の未入力と保護者の同意とのつながりの無い 18 歳未満も同意画面 (WebView) へ回せる。本冊はこの API の形 (§6.8) だけを決める。
 - モバイルのネイティブの画面には、13b の実装の着地 (ルートのゲート) で同意ゲートが掛かる。`/api` は 13a の分岐が本冊の述語で止める (アプリの API 呼び出しも 403 `LEGAL_CONSENT_REQUIRED` になる)。生年月日の未入力と「保護者の同意とのつながりが無い」の案内は、アプリでも Web の同意画面 (WebView) が出す (§8 の 10)。13b の設計書 (`docs/design/cross/13b-legal-consent-mobile.md`) は main にあり、§6.18 の 13b の行 (担当・期日はそこ) を写す契約は無い。
-- 13b とはマージ順に依存しない: 本冊が先なら 13b が本冊の実コード (`gaps`・`LEGAL_CONSENT_BIRTH_DATE_COPY`) に合わせる。13b が先でも、`required` の意味は変わらないので 13b の画面は本冊のマージで生年月日の欄を出す追随だけが要る (§6.18 の 13b の行)。
+- 13b とのマージ順: 本冊 (PR #1758) と 13b の実装 (段 B1 = PR #1830・段 B2 = PR #1833) はどちらも main に着地済み。13b はネイティブの同意画面を作らず Web の同意画面を WebView で開くので、生年月日の欄も Web の同意画面が出し、13b 側の追随は無い (§6.18 の 13b の行)。
 
 ---
 
@@ -912,7 +912,7 @@ import {
 export const ADULT_AGE_YEARS = 18;
 /**
  * 13 歳未満は米国 COPPA の区分 (要件 03 §17.10)。本人のアカウントは作らない (DB の accept_legal_documents と昇格 2 本が
- * 同じ境の `< 13` で断る)。Push 通知を送らない (送信側はこの述語で除外する。13 歳未満の本人のアカウントは無いので保険)
+ * 同じ境の `< 13` で断る)。Push の送信側 (`src/lib/push/outbox.ts` の `decideEligibility`) は年齢を見ない (13 歳未満の本人のアカウントが無いので、除外は足していない。設計 cross/14 §8 の 9)
  */
 export const COPPA_AGE_YEARS = 13;
 /** 生年月日は過去 120 年以内 (要件 01 行 1720) */
@@ -968,7 +968,7 @@ export function requiresParentalConsent(birthDate: string, today: string): boole
   return age !== null && age >= 0 && age < ADULT_AGE_YEARS;
 }
 
-/** 13 歳未満 (COPPA)。子供の同意の記録の区分。Push の送信側はこの述語が true の利用者を除外する */
+/** 13 歳未満 (COPPA)。子供の同意の記録の区分。Push の送信側はこの述語を使わない (年齢を見ない。設計 cross/14 §8 の 9) */
 export function isUnderCoppaAge(birthDate: string, today: string): boolean {
   const age = calculateAgeYears(birthDate, today);
   return age !== null && age >= 0 && age < COPPA_AGE_YEARS;
@@ -1827,7 +1827,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 7. **`user_profiles.age` との二重化**: 栄養計算は `age` のまま。`birth_date` から導出に寄せるかは別 Issue。
 8. **`cross/04` の `FAM_PARENTAL_CONSENT_REQUIRED`**: 実コードの語彙 (接頭辞なし) に合わせる注記を §6.18 で足す。接頭辞つきに統一するなら家族の API 全体の改名になるので別冊。
 9. **Push の送信側**: `mobile/06-push-send.md` の worker (`src/lib/push/outbox.ts` の `decideEligibility`) は年齢を見ない (13 歳未満を除外しない)。本冊では 13 歳未満の本人のアカウントは作られない (14) ので、除外は保険。足すなら `decideEligibility` に `isUnderCoppaAge(user_profiles.birth_date)` の条件を足す。
-10. **13b との着地順** (§0.5)。13a は実装まで着地済みで、本冊の段 B が `/api` の分岐と `GET /api/legal/status` を本冊の述語に差し替える (`/api` は本冊のマージで止まる)。13b はどちらが先でも後の冊が合わせる。13b の実装が着地すると、モバイルのネイティブの画面にも同意ゲートが掛かり、生年月日の未入力・保護者の同意とのつながりが無い 18 歳未満の案内はアプリでも Web の同意画面 (WebView) が出す (それまでは、アプリのネイティブの画面からの API 呼び出しは 403 `LEGAL_CONSENT_REQUIRED` で止まる)。
+10. **13b との着地順** (§0.5)。13a・本冊 (PR #1758)・13b の実装 (段 B1 = PR #1830・段 B2 = PR #1833) はすべて main に着地済み。本冊の段 B が `/api` の分岐と `GET /api/legal/status` を本冊の述語に差し替えている。モバイルのネイティブの画面にも 13b の同意ゲートが掛かり、生年月日の未入力・保護者の同意とのつながりが無い 18 歳未満の案内はアプリでも Web の同意画面 (WebView) が出す。
 11. **同意の有効期限**: 本冊は期限を設けない (子供を外すまで有効。§6.2 の「同意の有効期限」・P31)。定期の再同意 (例: 一定年数ごと・13 歳になったとき) を求めるなら、3 と同じく `parental_consent_active` に条件を足す設計 (同意待ちの状態が復活する) が要るので、別冊。要否はオーナーの確認。
 12. **署名者の範囲 (要件との違い)**: 要件 03 §17.10 は 13 歳未満の同意の署名者を「親 (家族 owner)」と書く。本冊は、家族の大人 (代表者または大人の役割) のうち自分の `user_profiles.birth_date` で 18 歳以上と確かめられる人なら署名できる形にした (§6.4 の 9・P12〜P14b)。理由: 代表者が親権者とは限らない (祖父母が代表者で、親が大人のメンバーのことがある)。親権者であることは署名の「私はこのお子さまの親権者または法定保護者です」の確認で本人に宣言させる。18 歳未満 (昇格した本人) と生年月日の無い人は署名できない。代表者だけに絞るなら、§6.4 の 9 の署名者の検査に `v_caller_role = 'representative'` の条件を足すだけ (エラーの code は同じ)。どちらにするかはオーナーの確認。
 13. **保護者の同意とのつながりが切れた 18 歳未満の本人のアカウント**: 本冊は同意ゲートで止め、退会の道だけを出す (アカウントと記録は残り、保護者が家族に追加し直して依頼し直すか、18 歳になれば使える。§6.3 (a))。一定期間後に自動で退会させる・記録を消す運用にするかは、5 と同じくオーナーの確認。
