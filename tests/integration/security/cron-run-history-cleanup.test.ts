@@ -90,6 +90,9 @@ function lit(value: string): string {
   return `'${value.replace(/'/g, "''")}'`;
 }
 
+/** B-2 で、cron の無いコピーが消さずに残した古い実行履歴の runid。D-1 の最後に、戻した本物の関数が消す */
+let copyLeftoverRun = '';
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** migration を流した直後は、PostgREST が関数を見つけられない (PGRST202) ことがある。その場合だけ、最大 10 秒待ってやり直す */
@@ -324,6 +327,7 @@ describe('#1125 (B) 段 D B. 消す範囲', () => {
 
     const job = await scheduleTestJob('j2');
     const oldRun = await insertRun(job.jobid, "interval '31 days'", "interval '31 days'");
+    copyLeftoverRun = oldRun;
     const ledgerOld = await insertLedger('copy-old', "interval '31 days'");
     const ledgerNew = await insertLedger('copy-new', "interval '1 hour'");
     const jobsBefore = await asPostgres<{ n: number }>(`SELECT count(*)::int AS n FROM cron.job;`);
@@ -416,6 +420,10 @@ describe('#1125 (B) 段 D D. rollback', () => {
     const job = await jobsNamed(JOB_NAME);
     expect(job).toHaveLength(1);
     expect(job[0]).toMatchObject({ schedule: JOB_SCHEDULE, command: JOB_COMMAND, active: true });
-    expect(await callCleanup()).toEqual({ run_details_deleted: 0, alerts_deleted: 0 });
+    // 戻した本物の関数は、B-2 のコピーが残した古い実行履歴 1 行だけを消す (台帳に古い行は残っていない)
+    expect(copyLeftoverRun).not.toBe('');
+    expect(await survivingRuns()).toContain(copyLeftoverRun);
+    expect(await callCleanup()).toEqual({ run_details_deleted: 1, alerts_deleted: 0 });
+    expect(await survivingRuns()).not.toContain(copyLeftoverRun);
   });
 });
