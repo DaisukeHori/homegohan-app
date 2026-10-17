@@ -55,6 +55,53 @@ export async function requireAuth(req: Request): Promise<AuthOk | Response> {
 // サービスロール認証（CRON_SECRET）
 // -------------------------------------------------------
 
+/** requireServiceRole の照合の結果 (Response にする前の形)。cron-secret-probe が応答に載せる */
+export type ServiceRoleAuthDescription =
+  | {
+      ok: true;
+      /** どの値と一致したか。service_role_key = service role key の完全一致 / current = CRON_SECRET (無ければ SERVICE_ROLE_SECRET) / previous = CRON_SECRET_PREVIOUS */
+      matched: "service_role_key" | "current" | "previous";
+      /** CRON_SECRET が未設定で、別名の SERVICE_ROLE_SECRET を現行として使っているか (?? の規則: CRON_SECRET が空文字なら別名には切り替わらない) */
+      alias_used: boolean;
+      /** CRON_SECRET_PREVIOUS が設定されている (空文字でない) か */
+      previous_configured: boolean;
+    }
+  | { ok: false; reason: "not_configured" | "unauthorized" };
+
+/**
+ * requireServiceRole と同じ規則で照合し、結果だけを返す (Response を作らない・ログを出さない)。
+ * 値は返さない (戻り値は一致した種類と真偽値だけ)。
+ * checkCronSecret を呼ぶのはこの関数だけ (requireServiceRole はこの関数の結果を Response に変える)。
+ */
+export async function describeServiceRoleAuth(req: Request): Promise<ServiceRoleAuthDescription> {
+  const authHeader = req.headers.get("authorization");
+
+  // "Bearer <token>" の <token> だけを取り出す (Bearer の綴りの大文字小文字と、前後の空白は許す)
+  const bearerToken = /^Bearer\s+(.+?)\s*$/i.exec(authHeader ?? "")?.[1] ?? "";
+  const serviceRoleKeys = [
+    Deno.env.get("SERVICE_ROLE_JWT"),
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+  ].filter((key): key is string => !!key);
+  const cronSecret = Deno.env.get("CRON_SECRET");
+  const aliasSecret = Deno.env.get("SERVICE_ROLE_SECRET");
+  const previousSecret = Deno.env.get("CRON_SECRET_PREVIOUS");
+  const alias_used = cronSecret === undefined && aliasSecret !== undefined;
+  const previous_configured = typeof previousSecret === "string" && previousSecret.length > 0;
+
+  if (bearerToken && serviceRoleKeys.includes(bearerToken)) {
+    return { ok: true, matched: "service_role_key", alias_used, previous_configured };
+  }
+
+  const result = await checkCronSecret(authHeader, {
+    current: cronSecret ?? aliasSecret,
+    previous: previousSecret,
+  });
+  if (result.ok) {
+    return { ok: true, matched: result.matched, alias_used, previous_configured };
+  }
+  return { ok: false, reason: result.reason };
+}
+
 /**
  * Authorization: Bearer <secret> を CRON_SECRET と比較する
  * (CRON_SECRET が未設定のときだけ、別名の SERVICE_ROLE_SECRET を代わりに使う)。
@@ -81,25 +128,9 @@ export async function requireAuth(req: Request): Promise<AuthOk | Response> {
  * if (authErr) return authErr;
  */
 export async function requireServiceRole(req: Request): Promise<Response | null> {
-  const authHeader = req.headers.get("authorization");
-
-  // "Bearer <token>" の <token> だけを取り出す (Bearer の綴りの大文字小文字と、前後の空白は許す)
-  const bearerToken = /^Bearer\s+(.+?)\s*$/i.exec(authHeader ?? "")?.[1] ?? "";
-  const serviceRoleKeys = [
-    Deno.env.get("SERVICE_ROLE_JWT"),
-    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
-  ].filter((key): key is string => !!key);
-  if (bearerToken && serviceRoleKeys.includes(bearerToken)) {
-    return null;
-  }
-
-  const result = await checkCronSecret(authHeader, {
-    current: Deno.env.get("CRON_SECRET") ?? Deno.env.get("SERVICE_ROLE_SECRET"),
-    previous: Deno.env.get("CRON_SECRET_PREVIOUS"),
-  });
-
-  if (result.ok) {
-    if (result.matched === "previous") {
+  const auth = await describeServiceRoleAuth(req);
+  if (auth.ok) {
+    if (auth.matched === "previous") {
       // 送信側 (Vault の app_cron_secret など) がまだ旧い値を使っている。
       // このログが出なくなったことを確かめてから CRON_SECRET_PREVIOUS を外す (秘密の値そのものは出さない)
       console.warn(
@@ -109,7 +140,7 @@ export async function requireServiceRole(req: Request): Promise<Response | null>
     return null;
   }
 
-  if (result.reason === "not_configured") {
+  if (auth.reason === "not_configured") {
     return new Response(
       JSON.stringify({ error: "Service not configured" }),
       { status: 503, headers: { "Content-Type": "application/json" } },

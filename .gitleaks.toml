@@ -47,6 +47,9 @@ regexes = [
 #                                      (src/__tests__/lib/data-subject-requests/core.test.ts。64 桁の小文字 16 進を通す確認 #1702)
 #   GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ   RFC 6238 Appendix B の公開のテスト用の秘密 ("12345678901234567890" の base32)。
 #                                      テストの道具の TOTP のテスト (tests/totp-helper.test.ts) が使う (#1707)
+#   dummy-previous-cron-secret-fedcba9876543210
+#                                      cron の共有シークレットの確認のテスト (tests/cron-secret-probe-edge.test.ts) の、
+#                                      ひとつ前の Cron の認証値 (CRON_SECRET_PREVIOUS) のダミー (#1560)
 [[allowlists]]
 description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
 targetRules = ["generic-api-key"]
@@ -63,4 +66,5 @@ regexes = [
   '''^3f9a1c0be77d4c2a9b1e5d6f7a8b9c0d$''',
   '''^dummy-cron-secret-0123456789abcdef$''',
   '''^GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ$''',
+  '''^dummy-previous-cron-secret-fedcba9876543210$''',
 ]
