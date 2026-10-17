@@ -283,7 +283,7 @@ function scanAllImageSources(): ImageRef[] {
   });
 }
 
-/** 使い方ガイド (src/app/guide/page.tsx) の手順の画像 15 枚。public/guide/ にまだ無い */
+/** 使い方ガイド (src/app/guide/guide-content.ts) の手順の画像 15 枚。#1852 で public/guide/ に置いた */
 const GUIDE_IMAGE_NAMES = [
   'signup',
   'profile',
@@ -306,12 +306,10 @@ const GUIDE_IMAGE_NAMES = [
  * 実在しないが、今は止めないパスと理由。画像を置いて実在するようになったら、一覧から外す
  * (下の「既知の例外の一覧は今も実在せず、今もコードが指している」が外し忘れを赤にする)。
  */
-const KNOWN_MISSING_IMAGE_PATHS: ReadonlyMap<string, string> = new Map(
-  GUIDE_IMAGE_NAMES.map((name) => [
-    `/guide/${name}.png`,
-    '#1852 で扱う: 使い方ガイドの手順の画像。#1852 で public/guide/ に画像を置くときに、この一覧から外す',
-  ]),
-);
+// #1852 で使い方ガイドの画像 15 枚を public/guide/ に置いたので、いまは空 (15 枚は tests/guide-images-1852.test.ts も固定する)。
+const KNOWN_MISSING_IMAGE_PATHS: ReadonlyMap<string, string> = new Map<string, string>();
+
+const GUIDE_IMAGE_PATHS = GUIDE_IMAGE_NAMES.map((name) => `/guide/${name}.png`);
 
 const describeRef = ({ file, line, urlPath }: ImageRef) => `${file}:${line}  ${urlPath}`;
 
@@ -321,7 +319,7 @@ describe('#1853 画面のコードが指す、ルートからの静的な画像�
   it('走査が空振りしていない (layout のアイコン・アプリのアイコンの定数・使い方ガイドの画像を拾う)', () => {
     const paths = refs.map(({ urlPath }) => urlPath);
     expect(paths).toEqual(
-      expect.arrayContaining(['/favicon.ico', '/icon.svg', '/apple-touch-icon.png', APP_ICON_192_PATH, ...KNOWN_MISSING_IMAGE_PATHS.keys()]),
+      expect.arrayContaining(['/favicon.ico', '/icon.svg', '/apple-touch-icon.png', APP_ICON_192_PATH, ...GUIDE_IMAGE_PATHS]),
     );
     expect(refs.some(({ file }) => file === 'src/lib/brand-asset-paths.ts')).toBe(true);
   });
