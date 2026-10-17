@@ -379,6 +379,7 @@ system.stripe.reconcile_discrepancy - reconcile 不一致検出
 system.plan.auto_expire             - プラン自動期限切れ
 system.gdpr_delete.batch            - GDPR 削除バッチ実行
 system.ban.auto                     - 自動 BAN (不正検知)
+system.family.dissolved_purge       - 解散から 90 日を過ぎた家族のグループの物理削除 (pg_cron purge-dissolved-family-groups。target_type='cron_job'・actor NULL。operator/11 §5.4)
 ```
 
 ### 4.5a バックアップと DR 訓練の操作 (cross/17-backup-automation.md §10)

@@ -1,7 +1,8 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
+import { createServerClient } from '@supabase/ssr'
 import { createClient as createAdminClient } from '@supabase/supabase-js'
 import { cookies, headers } from 'next/headers'
 import { getSupabaseAnonKey, getSupabaseServiceRoleKey, getSupabaseUrl } from '@/lib/env-required'
+import { SUPABASE_COOKIE_ENCODING } from '@/lib/supabase/cookie-encoding'
 
 /**
  * service_role キーで動作する Supabase クライアントを返す。
@@ -38,26 +39,17 @@ export async function createClient(cookieStore?: Awaited<ReturnType<typeof cooki
     getSupabaseAnonKey(),
     {
       global: authHeader ? { headers: { Authorization: authHeader } } : undefined,
+      cookieEncoding: SUPABASE_COOKIE_ENCODING,
       cookies: {
-        get(name: string) {
-          return store.get(name)?.value
+        getAll() {
+          return store.getAll()
         },
-        set(name: string, value: string, options: CookieOptions) {
+        setAll(cookiesToSet) {
           try {
-            store.set({ name, value, ...options })
+            for (const { name, value, options } of cookiesToSet) store.set({ name, value, ...options })
           } catch {
-            // The `set` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
-          }
-        },
-        remove(name: string, options: CookieOptions) {
-          try {
-            store.set({ name, value: '', ...options })
-          } catch {
-            // The `delete` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
+            // Server Component から呼ばれたとき (応答の Cookie に書けない)。
+            // middleware (lib/supabase/middleware.ts) が同じ更新を応答に書くので無視してよい (#1768 より前の set / remove と同じ扱い)
           }
         },
       },

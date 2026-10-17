@@ -31,9 +31,9 @@
  *
  * ## ログアウトで push token を消すために、処理の最初にセッションを控える (#1038 F7-10)
  * 利用者が Web でログアウトすると、Web の signOut() は全端末のセッションをサーバーで失効させる。
- * 失効したあとにネイティブが auth-js (2.105) で getUser() を呼ぶと、サーバーは 403 session_not_found を返し、
+ * 失効したあとにネイティブが auth-js で getUser() を呼ぶと、サーバーは 403 session_not_found を返し、
  * auth-js はそれを AuthSessionMissingError にして、端末のセッションを消す (_removeSession)。
- * auth-js の処理はロックで直列になるので、そのあとに動く getSession() は null を返し、
+ * 消したあとに動く getSession() は (保管が空なので) null を返し、
  *   - ユーザー ID が分からず、push token の削除を諦める (skipped)
  *   - 削除の通信が anon キーで送られ、RLS で 0 行になる (エラーにならない)
  * のどちらかになって、この端末の user_push_tokens の行が残ってしまう。

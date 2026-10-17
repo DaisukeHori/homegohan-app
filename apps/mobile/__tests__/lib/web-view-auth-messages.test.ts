@@ -470,7 +470,7 @@ describe('handleWebAuthMessage — session-expired (#1038 F7-05)', () => {
 // ログアウトで push token を消すための、セッションの控え (#1038 F7-10 のレビュー指摘)
 //
 // 本物の auth-js では、サーバーが失効と答えた getUser() が端末のセッションを消す (_removeSession)。
-// auth-js の処理はロックで直列なので、そのあとの getSession() は null を返す。
+// そのあとの getSession() は (保管が空なので) null を返す。
 // そこで、メッセージの処理の最初に { userId, accessToken } を控え、getUser() の前後・並行する他のメッセージでも同じ値を使う。
 // (本物の supabase-js での確認は web-view-auth-messages.real-auth.test.ts)
 // ─────────────────────────────────────────────────────────────────────────────

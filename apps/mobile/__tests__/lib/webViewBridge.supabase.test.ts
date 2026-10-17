@@ -16,6 +16,7 @@
  * supabase-js の更新条件が変わった (ライブラリの更新) ときも、このテストが気付かせる。
  */
 
+import { AUTO_REFRESH_TICK_DURATION_MS, REFRESH_FAILURE_COOLDOWN_MS } from '@supabase/auth-js/dist/main/lib/constants';
 import { createClient } from '@supabase/supabase-js';
 
 import {
@@ -52,6 +53,17 @@ function webIssuesCode(accessToken: string, arrivalSec: number): boolean {
   return jwtExp(accessToken) - arrivalSec >= WEB_MIN_ACCESS_TOKEN_REMAINING_SEC;
 }
 
+/** 本文が JSON でない 503。auth-js の handleError が AuthRetryableFetchError にする (lib/fetch.js) */
+const TRANSIENT_GATEWAY_STATUS = 503;
+const GATEWAY_FAILURE_BODY = 'upstream error';
+/** 失効済みの access token の残り (秒)。src/__tests__/helpers/real-auth-js.ts の ALREADY_EXPIRED_REMAINING_SECONDS と同じ意味 (jest から vitest のヘルパは読まない) */
+const ALREADY_EXPIRED_REMAINING_SEC = -1;
+/** auth-js がやり直せる失敗をやり直す時間の上限 (_refreshAccessToken は次の待ちが tick を越えるところでやめる)。偽の時計をこれだけ進めてやり直しを流しきる */
+const RETRY_WINDOW_MS = AUTO_REFRESH_TICK_DURATION_MS;
+const MS_PER_SECOND = 1000;
+/** H-2: 1 回目の呼び出しの残りを、やり直しを流しきった後でも下限 (150 秒) より多くする余裕 (秒) */
+const REMAINING_HEADROOM_SEC = 10;
+
 const USER = {
   id: 'user-1',
   aud: 'authenticated',
@@ -68,8 +80,16 @@ const USER = {
  * @param clockBehindSec 端末の時計が実時間より遅れている秒数。
  *   端末は expires_at を自分の時計と比べるので、遅れた分だけ「残りが多い」と見積もる。
  *   端末の時計は実時間のままにして、expires_at をその分だけ先に置くことで再現する。
+ * @param isGatewayDown 真の間は refresh のエンドポイントが、本文が JSON でない 503 (auth-js が AuthRetryableFetchError にする) を返す
+ * @param autoRefreshToken createClient の auth.autoRefreshToken。既定の false はいまの値。true は端末の apps/mobile/src/lib/supabase.ts と同じで、
+ *   初期化の更新 (_recoverAndRefresh) が失効済みのセッションの更新を試みる
  */
-function makeDeviceAuth(remainingSec: number, clockBehindSec = 0) {
+function makeDeviceAuth(
+  remainingSec: number,
+  clockBehindSec = 0,
+  isGatewayDown: () => boolean = () => false,
+  autoRefreshToken = false,
+) {
   const exp = nowSec() + remainingSec;
   const stored = {
     access_token: makeJwt(exp),
@@ -91,6 +111,7 @@ function makeDeviceAuth(remainingSec: number, clockBehindSec = 0) {
   };
   // refresh のエンドポイント。新しい access_token は 1 時間有効
   const fetchMock = jest.fn(async () => {
+    if (isGatewayDown()) return new Response(GATEWAY_FAILURE_BODY, { status: TRANSIENT_GATEWAY_STATUS });
     const newExp = nowSec() + 3600;
     return new Response(
       JSON.stringify({
@@ -108,7 +129,7 @@ function makeDeviceAuth(remainingSec: number, clockBehindSec = 0) {
     auth: {
       storage,
       storageKey: 'sb-test-auth-token',
-      autoRefreshToken: false,
+      autoRefreshToken,
       persistSession: true,
       detectSessionInUrl: false,
     },
@@ -180,5 +201,95 @@ describe('getSessionForBridge() と Web 側の下限 (本物の supabase-js)', (
     expect(BRIDGE_SERVER_MIN_TOKEN_TTL_SEC).toBe(WEB_MIN_ACCESS_TOKEN_REMAINING_SEC);
     // 余裕は通信時間 (最大 BRIDGE_REQUEST_TIMEOUT_MS) より大きい
     expect(BRIDGE_MIN_TOKEN_TTL_SEC - BRIDGE_SERVER_MIN_TOKEN_TTL_SEC).toBeGreaterThan(BRIDGE_REQUEST_TIMEOUT_MS / 1000);
+  });
+});
+
+describe('auth-js 2.117 の失敗の控えのもとでの getSessionForBridge (本物の supabase-js)', () => {
+  // auth-js のやり直しの sleep は setTimeout、控えの期限は Date.now()。どちらも偽の時計で進める。
+  // nextTick・setImmediate・queueMicrotask は偽物にしない (Response の本文の読み取りなどが使う)
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask'] });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  it('H-1: access token が失効し、更新がやり直せる失敗 (503) で終わったあとは、失敗の控え (REFRESH_FAILURE_COOLDOWN_MS) の間に通信が戻っても /token を呼ばずに null を返し (直接の URL へ倒れる)、控えが切れたあとは更新して bridge のセッションを返す', async () => {
+    let gatewayDown = true;
+    const { auth, fetchMock } = makeDeviceAuth(ALREADY_EXPIRED_REMAINING_SEC, 0, () => gatewayDown);
+
+    const first = getSessionForBridge(auth);
+    await jest.advanceTimersByTimeAsync(RETRY_WINDOW_MS); // やり直しを流しきる
+    expect(await first).toBeNull();
+    const attempts = fetchMock.mock.calls.length;
+    expect(attempts).toBeGreaterThanOrEqual(1);
+
+    // 通信が戻っても、控えの間は /token を呼ばない
+    gatewayDown = false;
+    expect(await getSessionForBridge(auth)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(attempts);
+
+    // ネイティブの session-expired の受け取りの控え (readSessionSnapshot) が読むのと同じ値: session は null で、控えた失敗が返る。
+    // null の控えが no-session になることは web-view-auth-messages.real-auth.test.ts が見ている
+    const { data, error } = await auth.getSession();
+    expect(data.session).toBeNull();
+    expect(error?.name).toBe('AuthRetryableFetchError');
+    expect(fetchMock).toHaveBeenCalledTimes(attempts);
+
+    // 控えが切れたあとは更新して、bridge のセッションを返す
+    await jest.advanceTimersByTimeAsync(REFRESH_FAILURE_COOLDOWN_MS);
+    const refreshed = await getSessionForBridge(auth);
+    expect(refreshed?.refresh_token).toBe('RT-new');
+    expect(fetchMock).toHaveBeenCalledTimes(attempts + 1);
+  });
+
+  it('H-2: 残りが 150 秒 (Web 側の下限) 未満のとき、60 秒以内に同じ refresh_token の更新がやり直せる失敗で終わっていると、通信が戻っていても refreshSession は /token を呼ばず、getSessionForBridge は null を返す', async () => {
+    const remainingAtStart = BRIDGE_SERVER_MIN_TOKEN_TTL_SEC + RETRY_WINDOW_MS / MS_PER_SECOND + REMAINING_HEADROOM_SEC;
+    // 前提: 1 回目は更新を試みる残り (210 秒未満) で、2 回目の呼び出しが控えの中に収まる
+    expect(remainingAtStart).toBeLessThan(BRIDGE_MIN_TOKEN_TTL_SEC);
+    expect(RETRY_WINDOW_MS + (REMAINING_HEADROOM_SEC + 1) * MS_PER_SECOND).toBeLessThan(REFRESH_FAILURE_COOLDOWN_MS);
+    let gatewayDown = true;
+    const { auth, fetchMock, originalAccessToken } = makeDeviceAuth(remainingAtStart, 0, () => gatewayDown);
+
+    const first = getSessionForBridge(auth);
+    await jest.advanceTimersByTimeAsync(RETRY_WINDOW_MS);
+    // 更新は失敗したが、残りが下限以上なのでいまの token を返す
+    expect((await first)?.access_token).toBe(originalAccessToken);
+    const attempts = fetchMock.mock.calls.length;
+    expect(attempts).toBeGreaterThanOrEqual(1);
+
+    // 通信が戻り、残りが下限を 1 秒割る
+    gatewayDown = false;
+    await jest.advanceTimersByTimeAsync((REMAINING_HEADROOM_SEC + 1) * MS_PER_SECOND);
+
+    expect(await getSessionForBridge(auth)).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(attempts);
+  });
+
+  it('H-3: access token が失効したまま通信の無い状態で起動すると、初期化の更新のやり直し (1 回ぶん) のあとの getSession() は /token を呼び直さず、控えた失敗 (session null・AuthRetryableFetchError) をすぐ返す', async () => {
+    // 作った時点で初期化が失効済みのセッションの更新を始める
+    const { auth, fetchMock } = makeDeviceAuth(ALREADY_EXPIRED_REMAINING_SEC, 0, () => true, true);
+    let settled = false;
+    const first = auth.getSession().then((result) => {
+      settled = true;
+      return result;
+    });
+
+    await jest.advanceTimersByTimeAsync(RETRY_WINDOW_MS); // 初期化のやり直しを 1 回ぶん流しきる
+    // やり直しが 1 回ぶんで返る (控えが無い 2.105.3 では getSession() がもう 1 回ぶんやり直すので、ここではまだ返らない)
+    expect(settled).toBe(true);
+    const { data, error } = await first;
+    expect(data.session).toBeNull();
+    expect(error?.name).toBe('AuthRetryableFetchError');
+    const attempts = fetchMock.mock.calls.length;
+    expect(attempts).toBeGreaterThanOrEqual(1);
+
+    // 時計を進めずにもう一度 getSession() しても、/token は呼ばれず同じ失敗が返る
+    const again = await auth.getSession();
+    expect(again.error?.name).toBe('AuthRetryableFetchError');
+    expect(fetchMock).toHaveBeenCalledTimes(attempts);
+
+    // autoRefreshToken: true が張った tick を止める
+    await auth.stopAutoRefresh();
   });
 });
