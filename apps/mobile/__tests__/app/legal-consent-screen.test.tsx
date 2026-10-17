@@ -228,7 +228,7 @@ describe('同意画面の route — ログアウトの後の案内 (T-SC3)', () 
     expect(mockBack).not.toHaveBeenCalled();
   });
 
-  it('afterSignOut: session が残っていれば router.replace("/") を呼ぶ (ネイティブのログアウトが通信の失敗で済まなかったとき)', async () => {
+  it('afterSignOut: session が残っていれば router.replace("/") を呼ぶ (サインアウトの途中の例外などで、端末にセッションが残ったとき)', async () => {
     render(<LegalConsentScreen />);
     const afterSignOut = latestProps().afterSignOut as () => void;
 

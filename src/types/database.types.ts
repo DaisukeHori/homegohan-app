@@ -9401,6 +9401,15 @@ export type Database = {
         Args: { p_organization_id: string; p_to_user_id: string }
         Returns: string
       }
+      purge_dissolved_family_groups: {
+        Args: { p_dry_run?: boolean }
+        Returns: {
+          dry_run: boolean
+          purge_count: number
+          remaining_count: number
+          skipped_with_consents_count: number
+        }[]
+      }
       reconcile_user_sessions_metadata: { Args: never; Returns: number }
       record_ai_usage: {
         Args: { p_feature: string; p_user_id: string }

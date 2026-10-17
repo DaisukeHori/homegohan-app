@@ -87,10 +87,13 @@ async function unregisterPushTokenOrRecordRelease(
 /**
  * サインアウトし、失敗したら端末だけでセッションを忘れる。例外は投げない。
  *
- * supabase.auth.signOut() は、サーバーへのログアウトの呼び出しが通信の失敗などで失敗すると、
- * 例外を投げずに { error } を返し、保管庫のセッションを消さないまま終わる (@supabase/auth-js の _signOut)。
- * そのとき SIGNED_OUT も届かないので、AuthProvider はセッションを持ったままになり、"/" へ移ると入口 (app/index.tsx) が
- * ホームへ戻してしまう。そこで、エラーが返った・例外が投げられたときは
+ * supabase.auth.signOut() は、例外を投げずに { error } を返して終わることがある (@supabase/auth-js の _signOut)。2 つの枝がある。
+ *   - access token が失効していて更新もできない (オフライン・5xx・失敗の控えの間): サーバーへのログアウトを呼ばずに { error } を返し、
+ *     保管庫のセッションを消さず、SIGNED_OUT も届かない。AuthProvider はセッションを持ったままになり、"/" へ移ると
+ *     入口 (app/index.tsx) がホームへ戻してしまう。この関数の端末での消去が後始末の本体
+ *   - access token が有効なうち: サーバーへのログアウトが通信の失敗などで失敗しても、supabase-js が保管庫のセッションを消して
+ *     SIGNED_OUT を出す (auth-js 2.117。#1768)。端末での消去は重なるが害は無い (無いキーの removeItem と null への setSession)
+ * そこで、エラーが返った・例外が投げられたときは
  *   1. 保管庫のセッションを端末だけで消す (clearStoredSessionLocally)
  *   2. AuthProvider の画面の状態を消す (clearSession)
  * 戻り値の error はサインアウトの失敗 (端末のセッションと画面の状態は消してある)。
@@ -171,7 +174,7 @@ export async function signOutAfterAccountDeletion(
 
 /**
  * 保管庫 (secureSessionStorage) のセッションを、サーバーに問い合わせずに消す。
- * supabase.auth.signOut() は scope: "local" でもサーバーへのログアウトを呼び、それが失敗すると消さないため、保管庫を直接消す。
+ * supabase.auth.signOut() は scope: "local" でも、access token が失効していて更新もできないと、サーバーへのログアウトに届かずに { error } を返して消さないため、保管庫を直接消す。
  * PKCE の code-verifier (supabase-js が `<保存キー>-code-verifier` に置く) も一緒に消す。
  * 保管庫の削除に失敗しても、このプロセスの間は消えたものとして扱われる (secureSessionStorage の removeItem)。例外は投げない。
  */
