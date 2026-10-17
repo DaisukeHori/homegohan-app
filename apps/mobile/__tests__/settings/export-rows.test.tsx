@@ -2,8 +2,8 @@
  * export-rows.test.tsx
  * RNTL tests for apps/mobile/app/(tabs)/settings.tsx — 「データとプライバシー」の書き出しの 2 行 (#1870)
  *
- * CSV の書き出し (/api/export/meals) が返すのは献立 (planned_meals) なのに、副題と共有のダイアログの題が
- * 「食事記録」になっていた。Web の設定の「献立をCSVエクスポート」と同じく「献立」と呼ぶ。
+ * CSV の書き出し (/api/export/meals) が返すのは献立 (planned_meals。記録した食事 = is_completed の行だけでなく、予定の献立も含む) なのに、
+ * 副題と共有のダイアログの題が「食事記録」になっていた。Web の設定の「献立をCSVエクスポート」と同じく「献立」と呼ぶ。
  * JSON の書き出し (/api/account/export) は本人のデータを出すが、認証情報や運営の内部の記録は出さない
  * (src/lib/account-export-tables.ts の ACCOUNT_EXPORT_EXCLUDED) ので、「全データ」とは書かず「ご自身のデータ」と書く。
  * FAQ (src/app/faq/page.tsx の「データをエクスポートできますか？」) は、この行の名前と中身を案内している。

@@ -12,6 +12,7 @@
  *       文の中の「Web版では」「モバイルアプリでは」で、その後ろの名前がどちらの画面のものかを決める。決まりは platformOfQuotedNames)
  *   3. FAQ とガイドが挙げる献立の条件の名前が、条件の選択肢 (V4 のモーダル) に実在すること
  *   4. (#1870) FAQ が挙げる献立の提案の基準が、献立の生成の実コードで使われていること
+ *   5. (#1870) FAQ のデータの削除の手順が、請求の画面で送信に要る項目 (請求の種類・請求の内容) をすべて案内していること
  *
  * 画面の文言を変えたら、FAQ (src/app/faq/page.tsx) とガイド (src/app/guide/guide-content.ts) も見直す。
  */
@@ -76,7 +77,7 @@ const PLATFORM_NAMED_IN_FAQ: { q: string; web: string[]; mobile: string[] }[] = 
   },
   {
     q: 'データを削除できますか？',
-    web: ['データとプライバシー', '開示・訂正・利用停止の請求'],
+    web: ['データとプライバシー', '開示・訂正・利用停止の請求', '請求の内容'],
     mobile: ['アカウント', 'アカウント管理', '開示・訂正・利用停止の請求'],
   },
   { q: 'パスワードを忘れました', web: ['忘れた場合'], mobile: ['パスワードを忘れた？'] },
@@ -99,10 +100,24 @@ const MENU_CRITERIA_EVIDENCE: { inAnswer: string; file: string; needle: string }
   { inAnswer: '冷蔵庫の食材', file: 'supabase/functions/generate-menu-v5/index.ts', needle: '.from("pantry_items")' },
   { inAnswer: '前後の日の献立', file: 'supabase/functions/generate-menu-v4/index.ts', needle: 'selectRecentMenusForVariety({' },
   { inAnswer: '前後の日の献立', file: 'supabase/functions/generate-menu-v5/index.ts', needle: 'selectRecentMenusForVariety({' },
+  // 記録した食事は planned_meals の is_completed = true の行 (写真からの記録も planned_meals に入る)。前後の日の献立を読むときに一緒に読む
+  { inAnswer: '記録した食事', file: 'supabase/functions/generate-menu-v4/index.ts', needle: 'status: meal.is_completed ? "completed"' },
+  { inAnswer: '記録した食事', file: 'supabase/functions/generate-menu-v5/index.ts', needle: 'status: meal.is_completed ? "completed"' },
 ];
-/** 献立の提案の基準として書いてはいけない言い回し (生成が読むのは前後の日の献立で、食事記録ではない。#1870) */
-const FORBIDDEN_MENU_CRITERIA = ['食事記録'];
 const MENU_CRITERIA_QUESTION = '献立提案はどういう基準で作られますか？';
+
+/** 消去などを請求する Web の画面 (FAQ「データを削除できますか？」が手順を案内する画面) */
+const DSR_FORM_FILE = 'src/app/(main)/settings/data-requests/page.tsx';
+const DATA_DELETION_QUESTION = 'データを削除できますか？';
+/**
+ * 請求の画面で、送信ボタンを押せるようになるまでに入れる項目 (#1870)。
+ * name は画面の見出し (legend / label)、guard は送信できるかの式 (canSubmit) にあるその項目の条件。
+ * FAQ の手順がどれかを書き落とすと、手順どおりに操作してもボタンが押せないまま止まる
+ */
+const DSR_FORM_REQUIRED_INPUTS: { name: string; guard: string }[] = [
+  { name: '請求の種類', guard: 'requestType !== null' },
+  { name: '請求の内容', guard: 'detailsLength > 0' },
+];
 
 /** 献立の話の中で書いてはいけない条件 (条件の選択肢に無い) */
 const FORBIDDEN_MENU_CONDITIONS = ['予算', '調理時間'];
@@ -353,8 +368,20 @@ describe('#1859 FAQ とガイドの言葉が今の画面と合っている', () 
       expect(criteria?.a, `FAQ の献立の提案の基準に「${inAnswer}」が無い`).toContain(inAnswer);
       expect(stripComments(readSource(file)), `${file} に ${needle} が無い (FAQ の「${inAnswer}」の根拠)`).toContain(needle);
     }
-    for (const phrase of FORBIDDEN_MENU_CRITERIA) {
-      expect(criteria?.a, `FAQ の献立の提案の基準に「${phrase}」がある (生成が読むのは前後の日の献立)`).not.toContain(phrase);
+  });
+
+  it('FAQ のデータの削除の手順は、請求の画面で送信に要る項目 (請求の種類・請求の内容) をすべて案内する (#1870)', () => {
+    const deletion = faqEntries.find((entry) => entry.q === DATA_DELETION_QUESTION);
+    expect(deletion, `${FAQ_FILE} に「${DATA_DELETION_QUESTION}」が無い`).toBeDefined();
+    const form = stripComments(readSource(DSR_FORM_FILE));
+    const canSubmit = form.match(/const canSubmit\s*=([^;]+);/)?.[1];
+    expect(canSubmit, `${DSR_FORM_FILE} に const canSubmit = ...; が無い`).toBeDefined();
+    for (const { name, guard } of DSR_FORM_REQUIRED_INPUTS) {
+      // 画面の側: その項目が見出しとしてあり、送信の条件に入っている (画面が変わったら FAQ の手順も見直す)
+      expect(form, `${DSR_FORM_FILE} に見出し「${name}」が無い`).toContain(name);
+      expect(canSubmit, `${DSR_FORM_FILE} の canSubmit に「${name}」の条件 ${guard} が無い`).toContain(guard);
+      // FAQ の側: 手順にその項目がある
+      expect(deletion?.a, `FAQ「${DATA_DELETION_QUESTION}」の手順に「${name}」が無い (送信ボタンが押せないまま止まる)`).toContain(name);
     }
   });
 
