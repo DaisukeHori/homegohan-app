@@ -18,7 +18,7 @@
 
 前提 (本書が従う条件): ローンチ前で利用者ゼロ。利用者数・利用者の声・受賞・メディア掲載などの実績を作らない。本番・コードは設計の段では変えない。
 
-本冊は、`src/app/page.tsx` (629 行・`'use client'` の 1 ファイル) の紹介ページを、**Server Component の骨格 + 小さな client の島 + CSS 主体の動き** という構造で設計から作り直す (§3)。見た目と動きの質 (§5・§6)、速さ (§10)、アクセシビリティ (§11)、検索 (§12)、主張の正確さ (§4.9・§2.5) を同時に満たし、主張の根拠は `landing-copy.ts` の `evidence` (リポジトリのパス) として機械で確かめる (§9.2・§22)。
+本冊は、`/` の紹介ページ (いまは Server Component の殻 `src/app/page.tsx` (27 行。メタ情報と JSON-LD) と、画面の本体 `src/app/LandingPageView.tsx` (629 行・`'use client'` の 1 ファイル)) を、**Server Component の骨格 + 小さな client の島 + CSS 主体の動き** という構造で設計から作り直す (§3)。見た目と動きの質 (§5・§6)、速さ (§10)、アクセシビリティ (§11)、検索 (§12)、主張の正確さ (§4.9・§2.5) を同時に満たし、主張の根拠は `landing-copy.ts` の `evidence` (リポジトリのパス) として機械で確かめる (§9.2・§22)。
 
 ---
 
@@ -26,7 +26,7 @@
 
 ### 0.1 発注と決めること
 
-Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物と基準を決めている: 設計書 `docs/design/marketing/01-landing-site.md` と静的な試作 `docs/design/marketing/prototype/index.html`。同時に満たす基準は、見た目と動きの質・速さ (Core Web Vitals)・アクセシビリティ (WCAG 2.2 AA)・検索・主張の正確さ (法令・利用者数などの実績を作らない)。置き場所 (今のアプリに同居・パスで分ける) は変わらず、検索まわりの穴埋め (Issue #1867 の「進め方」の段 1: canonical・sitemap・ページごとの title / description・vercel.app の重複) は別の B 型として、そのまま進む。
+Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物と基準を決めている: 設計書 `docs/design/marketing/01-landing-site.md` と静的な試作 `docs/design/marketing/prototype/index.html`。同時に満たす基準は、見た目と動きの質・速さ (Core Web Vitals)・アクセシビリティ (WCAG 2.2 AA)・検索・主張の正確さ (法令・利用者数などの実績を作らない)。置き場所 (今のアプリに同居・パスで分ける) は変わらず、検索まわりの穴埋め (Issue #1867 の「進め方」の段 1: canonical・sitemap・ページごとの title / description・vercel.app の重複) は別の B 型として先に main に着地した (#1874・`be462ab4`。`src/lib/seo/public-pages.ts` の `publicPageMetadata`・`src/components/seo/SiteStructuredData.tsx`・`src/app/sitemap.ts`)。本冊はその部品をそのまま使い、作り直さない (§12)。
 
 本書で決めること (列挙):
 
@@ -47,7 +47,7 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | R-2 | 見た人が「これは本物だ」と感じる、リッチでモダンな紹介ページ。国内外の最高水準の LP と並べて見劣りしない | オーナーの指示 (2026-10-18)・Issue #1867 コメント 2 件目 | §3, §5, §6, §23 |
 | R-3 | 速さ: Core Web Vitals の「良い」(LCP ≤ 2.5 s・INP ≤ 200 ms・CLS ≤ 0.1 を p75 で) と Lighthouse Performance ≥ 90 | Issue #1867 コメント 2 件目・`docs/design/CLAUDE.md` E・`docs/design/cross/06-perf-cache.md` §3.1 | §10 |
 | R-4 | アクセシビリティ: WCAG 2.2 AA (コントラスト・キーボード・見出し・代替テキスト・動きの抑制・ターゲットの大きさ) | Issue #1867 コメント 2 件目・`docs/design/cross/05-i18n-a11y.md` | §11 |
-| R-5 | 検索: ページの title / description / canonical・構造化データ・見出しの階層。段 1 (sitemap・全ページの canonical) と矛盾しない | Issue #1867 コメント 1 件目「進め方 1」・2 件目 | §12 |
+| R-5 | 検索: ページの title / description / canonical・構造化データ・見出しの階層。段 1 (main に着地済み: `publicPageMetadata`・`SiteStructuredData`・sitemap・全ページの canonical) の部品をそのまま使い、二重にしない | Issue #1867 コメント 1 件目「進め方 1」・2 件目 | §12 |
 | R-6 | 主張の正確さ: 利用者数・利用者の声・受賞・メディア掲載・未確定の価格を書かない。健康上の効果を断定しない (薬機法・景品表示法・健康増進法)。機能の主張はすべて実コードに根拠を持つ | Issue #1867 コメント 2 件目・`tests/public-claims-guard.test.ts` | §2.5, §4.9, §9.2, §22 |
 | R-7 | 本番の CSP (nonce 方式・外部 CDN のスクリプト不可・`font-src 'self'`) と、ルート layout の `force-dynamic` (全ページ動的) の下で動く | `src/lib/security/csp.ts`・`src/app/layout.tsx:10`・`docs/design/cross/18-csp-nonce.md` §5 | §2.4, §3.2, §10 |
 | R-8 | 既存の見張り (公開の主張・インラインスクリプト・HTML の差し込み・画像の実在・e2e の門) を赤にせず、新しい主張の見張りを足す | `tests/` の各番兵 (§19) | §19, §22 |
@@ -70,7 +70,7 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | S-9 | 検索エンジンと SNS のクローラー | `/` を取得する | 動的に描いた HTML に h1・description・canonical・OGP (layout が出す)・JSON-LD (Organization・WebSite) がある。JS 無しでも全文が読める |
 | S-10 | 遅い回線 (3G 相当) の人 | `/` を開く | 見出しと本文が先に出る (フォントは `swap`)。画像は遅延で読み、置き場の大きさは先に確保されている (CLS 無し)。外部 CDN への要求は無い |
 | S-11 | `animation-timeline` に未対応のブラウザ (Firefox) の人 | `/` を開く | スクロール連動の装飾だけが無く、ほかは同じ (IntersectionObserver の現れ方は動く) |
-| S-12 | 本番の CSP の下のブラウザ | `/` を開き、デモを操作する | `securitypolicyviolation` が 0 件。インラインのスクリプトは JSON-LD の 1 本 (nonce つき) だけ |
+| S-12 | 本番の CSP の下のブラウザ | `/` を開き、デモを操作する | `securitypolicyviolation` が 0 件。アプリが書くインラインのスクリプトは JSON-LD (`SiteStructuredData`) の 1 本 (nonce つき) だけ |
 | S-13 | 文言を直す開発者 | `landing-copy.ts` に「10万人が利用」と書く | `tests/public-claims-guard.test.ts` がソース走査と描画の両方で赤にする。`evidence` に無いパスを書いても赤 |
 | S-14 | 整合ゲートの検証者 | 本番ビルドで Lighthouse と e2e を流す | Performance ≥ 90・LCP / CLS が予算内・JS の転送量が予算内・CSP 違反 0・axe の違反 0 (§10・§16) |
 
@@ -79,10 +79,10 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | 目安 | 本冊 | 判定 |
 |---|---|---|
 | 設計書 800 行超 | 超える (文言の全文・表 3 点・正典コード・トレースを 1 冊に持つため) | 該当 |
-| 消費先レーン 3 以上 | ページ (`src/app/page.tsx`)・部品 (`src/components/marketing/`)・公開の資産 (`public/marketing/`)・単体の番兵 (`tests/`)・e2e の門 (`scripts/local-ci.sh`・`.github/workflows/e2e-local.yml`) = 5 | 該当 |
-| 共有面 2 つ以上 | `tests/public-claims-guard.test.ts` (公開ページ共通の見張り)・e2e の門の一覧 (yml と `PW_ARGS`)・`src/app/(auth)/layout.tsx` (段 0) | 該当 |
+| 消費先レーン 3 以上 | ページ (`src/app/page.tsx` の殻の中身の差し替えと `src/app/LandingPageView.tsx` の削除)・部品 (`src/components/marketing/`)・公開の資産 (`public/marketing/`)・単体の番兵 (`tests/`)・e2e の門 (`scripts/local-ci.sh`・`.github/workflows/e2e-local.yml`) = 5 | 該当 |
+| 共有面 2 つ以上 | `tests/public-claims-guard.test.ts` (公開ページ共通の見張り)・e2e の門の一覧 (yml と `PW_ARGS`)・`src/app/(auth)/layout.tsx` (段 0)・`src/lib/seo/public-pages.ts` (公開ページのメタ情報の正本。`SITE_DESCRIPTION` の値)・`tests/seo-public-pages-1867.test.tsx` (トップの殻の検査) | 該当 |
 
-判定: **設計は 1 冊 (本書) のまま、実装は 1 本の B 型 WF の中で 3 段 (段 0: 実績の表示の掃除と見張りの拡張 / 段 1: 紹介ページの本体 / 段 2: e2e と門) に分け、段ごとに 2 枚レビューを挟み、マージは最後に 1 回**。理由: 核 (文言と部品) と配線 (ページ) を分けても、どちらも `src/app/page.tsx` の差し替えまで利用者には届かず、核だけをマージすると、使われない部品が main に乗る。共有面は 3 つとも小さな差分 (見張りの一覧に行を足す・一覧の末尾に 1 語足す・1 行消す) で、別の冊にすると参照する「マージ済みの核」が無い。段 0 は独立して意味がある (ローンチ前に実績の表示を消す) ので最初に置く。
+判定: **設計は 1 冊 (本書) のまま、実装は 1 本の B 型 WF の中で 3 段 (段 0: 実績の表示の掃除と見張りの拡張 / 段 1: 紹介ページの本体 / 段 2: e2e と門) に分け、段ごとに 2 枚レビューを挟み、マージは最後に 1 回**。理由: 核 (文言と部品) と配線 (ページ) を分けても、どちらも `src/app/page.tsx` の差し替えまで利用者には届かず、核だけをマージすると、使われない部品が main に乗る。共有面は 5 つとも小さな差分 (見張りの一覧に行を足す・読む先を変える・一覧の末尾に 1 語足す・1 行消す・定数の文を 1 つ直す) で、別の冊にすると参照する「マージ済みの核」が無い。段 0 は独立して意味がある (ローンチ前に実績の表示を消す) ので最初に置く。
 
 ### 0.5 用語
 
@@ -106,7 +106,7 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 |---|---|
 | `/` の紹介ページ (ヘッダー・フッターを含む) | `/about` `/faq` `/guide` `/pricing` `/news` `/company` `/legal` `/contact` の作り直し (ヘッダー・フッターを共通化する案は §24 Q-6) |
 | `src/app/(auth)/layout.tsx` の実績の表示の削除 (段 0。1 行の削除と見張り) | ログイン・新規登録の画面の作り直し |
-| ページの description・canonical・JSON-LD (R-5) | sitemap・全ページの canonical・vercel.app の重複 (Issue #1867 の段 1 の B 型) |
+| `/` のメタ情報と JSON-LD は段 1 の部品 (`publicPageMetadata('/')`・`SiteStructuredData`) をそのまま使う。直すのは `SITE_DESCRIPTION` の文 1 つ (R-5・§12) | 段 1 の部品の作り直し・sitemap・全ページの canonical (段 1 で着地済み)・vercel.app の重複 (Issue #1867 の段 1 の残り) |
 | 画像の置き場と調達の手順 (§7) | 新しいイラストの制作 (作らない: §7.3) |
 | 動きの設計と実装 (CSS・IntersectionObserver・デモだけ framer-motion) | 3D (Three.js など) の導入 (§3.2 で退ける) |
 | アクセシビリティの自動検査 (構造の検査・コントラストの機械計算) | `@axe-core/playwright` の導入 (依存の追加。§24 Q-2) |
@@ -132,19 +132,23 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | Issue #1852 / `src/app/guide/guide-content.ts` | 実際の画面の画像 15 枚と、その撮り直しの手順 (`scripts/guide-screenshots/run.sh`) |
 | Issue #1845 / `src/lib/brand-image.tsx` | ブランドの色 `BRAND_COLORS`・OGP の画像 (layout が出す。本冊は変えない) |
 | Issue #1314 / `src/lib/badges/awardable.ts` | 付与の処理があるバッジの一覧 (紹介ページに出すバッジはこの中から選ぶ: §4.5) |
+| Issue #1867 段 1 (PR #1874・`be462ab4`) | 公開ページのメタ情報の正本 `src/lib/seo/public-pages.ts` (`publicPageMetadata`・`SITE_DESCRIPTION`・`PUBLIC_PAGE_PATHS`)・構造化データ `src/components/seo/SiteStructuredData.tsx` と `src/lib/seo/json-ld.ts` (`buildSiteJsonLd`・`serializeJsonLd`)・`src/app/sitemap.ts`。トップを殻 (`src/app/page.tsx`) と本体 (`src/app/LandingPageView.tsx`) に分けた。本冊はこの部品を使い、本体だけを差し替える (§9.5・§12) |
 
-### 2.2 現行のトップ (`src/app/page.tsx`・origin/main `835fbe7c`・2026-10-18 に採取)
+### 2.2 現行のトップ (殻 `src/app/page.tsx` と本体 `src/app/LandingPageView.tsx`・origin/main `be462ab4`・2026-10-18 に採取)
+
+#1874 (`be462ab4`) で、トップは殻と本体に分かれた。本体 `src/app/LandingPageView.tsx` は、それより前の `src/app/page.tsx` (`835fbe7c`) と 1 行も違わない (同じ 629 行を移しただけ。`git diff 835fbe7c:src/app/page.tsx be462ab4:src/app/LandingPageView.tsx` が空) ので、下の表の行番号は `LandingPageView.tsx` の行番号として読む。
 
 | 事実 | 場所 | 本冊での扱い |
 |---|---|---|
-| `'use client'` の 1 ファイル (629 行)。状態 6 つ (`selectedMeal` `isAnalyzing` `analysisComplete` `expandedFaq` `activeFeature` `scrollY`)。`scroll` イベントで `scrollY` を state に入れ、全体を再描画する | `:129-141` | 捨てる (§3.2 B)。ヘッダーの状態だけを島にする |
+| 殻 `src/app/page.tsx` (27 行・Server Component・async)。`export const metadata = publicPageMetadata('/')` (`:17`)。本体は `getCspNonce()` を読み、`<SiteStructuredData siteUrl={getSiteUrl()} nonce={nonce} />` と `<LandingPageView />` を描く (`:19-27`) | `src/app/page.tsx:17-27` | 殻の形はそのまま。`<LandingPageView />` を `<LandingPage />` (`src/components/marketing/LandingPage.tsx`) に替えるだけ (§9.5) |
+| 本体 `src/app/LandingPageView.tsx` は `'use client'` の 1 ファイル (629 行)。状態 6 つ (`selectedMeal` `isAnalyzing` `analysisComplete` `expandedFaq` `activeFeature` `scrollY`)。`scroll` イベントで `scrollY` を state に入れ、全体を再描画する | `:129-141` | 捨てる (§3.2 B)。ヘッダーの状態だけを島にする |
 | 色は `colors` 定数にハードコード (primary `#E07A5F`・secondary `#3D5A80`・text `#1A1A1A` ほか 19 個)。`BRAND_COLORS` (text `#2D2D2D`・textLight `#6B6B6B`) と一致しない | `:16-36`・`src/lib/brand-image.tsx:27-38` | トークンを `BRAND_COLORS` の値に合わせ、`tests/landing-page-1867.test.ts` で突き合わせる (§5.1・§22) |
 | 白文字 on `#E07A5F` のボタン (コントラスト 2.95:1。AA の 4.5:1 も、大きい文字の 3:1 も満たさない) | `:207` `:366` `:537` `:621` | 白文字の下地は `#2D2D2D` か `#B8502F` にする (§5.1) |
 | 食事のサンプル画像は `images.unsplash.com` の外部 URL 3 件 + 1 日の流れ 4 件 (`?w=400` `?w=300`) | `:42` `:51` `:60` `:409-412` | 自前の写真に置き換える (§7.2)。本番の紹介ページから外部の画像の要求を無くす |
 | 未検証の効能・断定: 「吸収率が3倍」`:63`・「医者いらず」「免疫力アップ」`:56`・「森のバター」「美肌効果」`:47`・「ダイエット中の方にも最適」`:410`・「あなたのダイエットパートナー」`:532`・「30秒で登録完了」`:208` `:543` `:625`・「1分で使い始められる」`:218`・「完全無料」`:216`・「8つの機能で、あなたの食生活を完全サポート」`:379`・「他にも50種類以上のバッジ」`:467` | 同左 | 全部捨てる。新しい文言は §4 (根拠つき) |
 | 機能 8 件のうち「週次レポート」の実装は見つからない (`src/app/api` に該当なし)。「オフラインでも写真の撮影と保存ができる」(FAQ `:102`) の根拠も見つからない | `:76` `:102` | 書かない (§4.4・§4.6) |
 | バッジ 12 件 (「朝食マスター」「7日連続」「野菜マニア」…) は、`badges` テーブルの行 (`supabase/migrations/20251126124224_create_meal_planner_tables.sql:14030` 付近の 38 行) に無い名前 | `:81-93` | 実在し、付与の処理があるバッジだけを、DB の名前と説明で出す (§4.5) |
-| FAQ 6 件のうち「本当に無料」「データは安全」「AI の分析は正確」は見張りの対象 (`tests/public-claims-guard.test.ts:338-356`) | `:96-103` | 3 件の文言は据え置き (表現を整えるだけ)。「オフライン」は根拠が無いので別の質問に替える (§4.6) |
+| FAQ 6 件のうち「本当に無料」「データは安全」「AI の分析は正確」は見張りの対象 (`tests/public-claims-guard.test.ts:395-424`。本体の読み先は `:397` の `src/app/LandingPageView.tsx`) | `:96-103` | 3 件の文言は据え置き (表現を整えるだけ)。「オフライン」は根拠が無いので別の質問に替える (§4.6) |
 | 絵文字を多用 (`✨` `📸` `🤖` `🎉` `🏆` ほか) | 全体 | 使わない (design-system §16: lucide のみ) |
 | フッターの SNS は `href="#"` のプレースホルダー 3 件 | `:574-576` | 置かない (公開の SNS の先が無い。`landing-copy.ts` の `socialLinks` は空の配列。§4.8) |
 | `motion.button` を `Link` の中に置く (a の中に button。無効な入れ子) | `:177-181` `:206-210` | `Link` 1 つにボタンの見た目を当てる (§8) |
@@ -167,7 +171,7 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 |---|---|---|
 | 全ページ動的 | `src/app/layout.tsx:10` の `export const dynamic = 'force-dynamic'` (#1169)。`docs/design/cross/18-csp-nonce.md` §5.1 「静的化した HTML には nonce が入らず、Next のインラインスクリプトが止まる」。Next 公式の CSP のガイド (2026-03-20 更新) も「nonce を使うページは動的に描画しなければならない」「PPR は nonce 方式の CSP と両立しない」と書く | 紹介ページも動的のまま (§3.2 C)。速さはサーバーの描画を軽く保つことで出す: データ取得ゼロ・`headers()` は JSON-LD の nonce の 1 回だけ・島は小さく (§10) |
 | CSP | `src/lib/security/csp.ts:237-252`: `script-src 'self' 'nonce-…' 'report-sample' *.vercel-scripts.com https://challenges.cloudflare.com` (外部 CDN のスクリプト不可)・`style-src 'self' 'unsafe-inline'` (inline style 可)・`img-src 'self' data: blob: *.supabase.co images.unsplash.com`・`font-src 'self'`・`connect-src 'self' *.supabase.co *.vercel.app wss://*.supabase.co https://holidays-jp.github.io` | ライブラリは bundle に同梱 (framer-motion は依存にある)。フォントは `next/font` の自前配信のまま。画像は `public/` に置く。CSP は変えない |
-| proxy の matcher | `src/proxy.ts:375`: `_next/static` `_next/image` `_vercel/` `favicon.ico` `manifest.json` `robots.txt` `sw.js` `workbox-` `api/health$` `opengraph-image$` `twitter-image$` と画像の拡張子 (`svg png jpg jpeg gif webp`) を除く | `public/marketing/**/*.webp` と `public/guide/*.png` は matcher の外 (未ログインでも読める)。`tests/metadata-public-paths-1845.test.ts` が実在と matcher の外を確かめる |
+| proxy の matcher | `src/proxy.ts:99`: `_next/static` `_next/image` `_vercel/` `favicon.ico` `manifest.json` `robots.txt` `sitemap.xml$` (段 1 で追加) `sw.js` `workbox-` `api/health$` `opengraph-image$` `twitter-image$` と画像の拡張子 (`svg png jpg jpeg gif webp`) を除く | `public/marketing/**/*.webp` と `public/guide/*.png` は matcher の外 (未ログインでも読める)。`tests/metadata-public-paths-1845.test.ts` が実在と matcher の外を確かめる |
 | 未ログインの振り分け | `lib/supabase/middleware.ts:305-328` の `publicPaths` に `'/'` がある (未ログインで開ける)。ログイン済みは `lib/onboarding-routing.ts:90-113` の `resolveOnboardingRedirect` が `/` を `/home` (運営ロールは `/admin`・初期設定が未完なら `/onboarding/welcome` か `/onboarding/resume`) へ送る | 紹介ページはログイン済みの状態を考えない (S-7)。ヘッダーの右は常に「ログイン」と「無料で始める」 |
 | メンテナンスモード | `src/lib/maintenance-mode.ts:77-85` の `isMaintenanceExemptPath` に `/` は無い。未ログインで `/` を開くとメンテナンスの画面 (`lib/supabase/middleware.ts:333-336`) | 既存どおり (変えない) |
 | フォント | `src/app/layout.tsx:15-25`: `next/font/google` の Noto Sans JP (400 / 500 / 700・`--font-sans`) と Noto Serif JP (400 / 700・`--font-serif`)。`subsets: ["latin"]` だが、Google Fonts の CSS が持つ unicode-range の分割 (日本語の字形は分割ファイル) を `next/font` がすべて自前に取り込み、ブラウザは使う分割だけを読む。e2e のビルドは `tests/e2e/fixtures/google-fonts-mock.cjs` で Google へ取りに行かない | 新しいフォントは足さない。見出しは Noto Serif JP (既に読んでいる)・本文は Noto Sans JP (§5.2)。`google-fonts-mock.cjs` の `FONT_REQUESTS` は変えない (`tests/e2e-google-fonts-mock.test.ts` が layout と突き合わせる) |
@@ -175,12 +179,12 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 | Tailwind v4 | `src/app/globals.css` が `@import "tailwindcss"` と `@theme inline` (`--color-accent: #FF8A65` など、design-system §3.1 とは別の値)。`tailwind.config` は無い | 紹介ページのトークンは `src/components/marketing/marketing.css` の `.lp` の中の CSS 変数に閉じ (既存の `--accent` と衝突しない)。Tailwind のユーティリティは余白・配置に使い、色は変数で指す (§5.1) |
 | `reduced-motion` | `src/app/globals.css:871-880` が全要素の `animation-duration` / `transition-duration` を 0.01 ms に、`scroll-behavior` を `auto` にする。`src/components/handson-tour/useReducedMotion.ts` が JS 側の判定 | CSS の動きは globals.css が自動で止める。JS の動き (デモの待ち時間・自動の切り替え) は `useReducedMotion` で止める (§6.4) |
 | 動きの道具 | CSS の `animation-timeline` は Chrome / Edge 115 以降・Safari 26 以降で動き、Firefox はフラグの後ろ (2026 年の Interop の目標)。MDN は「Baseline ではない」と記す | スクロール連動の装飾だけに使い、`@supports (animation-timeline: scroll())` で囲む (§6.3)。現れ方は IntersectionObserver (全ブラウザ) |
-| モバイルの WebView | `apps/mobile/src/lib/webViewBridge.ts:35` の既定の行き先は `/home?mode=app`。`?mode=app` で `is_native_app` Cookie (`src/proxy.ts:338-347`)。`/` を開く経路は通常無い | 紹介ページは Cookie を読まない (S-8)。ストアへの導線は無い (§4.8) |
-| 計測 | Vercel Speed Insights (`src/components/SpeedInsightsClient.tsx`・`src/app/layout.tsx:139`) が全ページで Web Vitals を送る。Lighthouse CI の実体は無い | 実測は Speed Insights (field) と、整合ゲートの Lighthouse (lab) (§10.3) |
+| モバイルの WebView | `apps/mobile/src/lib/webViewBridge.ts:35` の既定の行き先は `/home?mode=app`。`?mode=app` で `is_native_app` Cookie (`src/proxy.ts:58-67`)。`/` を開く経路は通常無い | 紹介ページは Cookie を読まない (S-8)。ストアへの導線は無い (§4.8) |
+| 計測 | Vercel Speed Insights (`src/components/SpeedInsightsClient.tsx`・`src/app/layout.tsx:138`) が全ページで Web Vitals を送る。Lighthouse CI の実体は無い | 実測は Speed Insights (field) と、整合ゲートの Lighthouse (lab) (§10.3) |
 
 ### 2.5 公開の主張の制約
 
-**見張りのテスト** `tests/public-claims-guard.test.ts` (#1155): `PUBLIC_PAGES` (`src/app/page.tsx` ほか 7 本) のソースと描画の両方を `FORBIDDEN` (ダミーの事業者情報・架空の資金調達・`10万人`・`App Store評価`・`1,234,567`・`98.7`・`継続率`・`食の分析実績`・`最長連続記録`・`90%以上の精度`・`Forbes` ほかのメディア名・`メディア掲載`・`リアルな声`・`変化のストーリー`・`血圧-15mmHg`・`-4.2kg`・`自炊率0%→70%`・`野菜摂取量2倍`・`体調スコア+30%`・`¥980` ほかの価格・`永久無料`・`第三者に共有されることはありません` ほかの断定) で検査する。トップの FAQ の `q: "データは安全ですか？"` の行に `プライバシーポリシー` があること、`/\d+%以上の精度/` が無いことも見る。`PAID_PLAN_PENDING_NOTICE = '有料プランは準備中です（販売開始前）'`。
+**見張りのテスト** `tests/public-claims-guard.test.ts` (#1155): `PUBLIC_PAGES` (トップの本体 `src/app/LandingPageView.tsx` (`:78`。描画は `@/app/LandingPageView` の default を `:65` で読む) ほか 6 本の計 7 本) のソースと描画の両方を `FORBIDDEN` (ダミーの事業者情報・架空の資金調達・`10万人`・`App Store評価`・`1,234,567`・`98.7`・`継続率`・`食の分析実績`・`最長連続記録`・`90%以上の精度`・`Forbes` ほかのメディア名・`メディア掲載`・`リアルな声`・`変化のストーリー`・`血圧-15mmHg`・`-4.2kg`・`自炊率0%→70%`・`野菜摂取量2倍`・`体調スコア+30%`・`¥980` ほかの価格・`永久無料`・`第三者に共有されることはありません` ほかの断定) で検査する。トップの FAQ の `q: "データは安全ですか？"` の行に `プライバシーポリシー` があること、`/\d+%以上の精度/` が無いことも見る。`PAID_PLAN_PENDING_NOTICE = '有料プランは準備中です（販売開始前）'`。
 
 **ログイン画面に残る実績の表示**: `src/app/(auth)/layout.tsx:51` に「10,000+ ユーザーが実践中」と、アバターのプレースホルダー (`:44-50`)。`FORBIDDEN` の `10万人` には当たらず、`(auth)/layout.tsx` は `PUBLIC_PAGES` に無いので、見張りをすり抜けている (段 0 で消し、見張りに足す: §4.10・§17)。
 
@@ -228,16 +232,21 @@ Issue #1867 の 2026-10-18 のコメント (2 件目) が、本冊の成果物�
 **部品の構造 (Server Component の骨格 + client の島)**
 
 ```
-src/app/page.tsx                         Server Component (async)。metadata・JSON-LD (nonce)・<LandingPage />
+src/app/page.tsx                         既存の殻 (Server Component・async。#1874)。metadata = publicPageMetadata('/')・
+                                         <SiteStructuredData nonce> (既存)・<LandingPage /> (本冊で <LandingPageView /> から替える)
+src/app/LandingPageView.tsx              削除 (現行の本体。§18 消すもの)
+src/components/seo/SiteStructuredData.tsx 既存 (変えない)。JSON-LD (Organization・WebSite) の唯一の出し口
 src/components/marketing/
-  LandingPage.tsx                        Server Component。セクションを順に並べる (状態を持たない)
+  LandingPage.tsx                        Server Component。.lp の箱の中に SiteHeader → <main> (セクション 8 つ) → SiteFooter → MobileStickyCta (状態を持たない)
   landing-copy.ts                        文言・画像・主張の根拠・サンプル (唯一の正本。§9.2)
+  demo-state.ts                          デモの状態機械 (demoReducer。純関数。§9.3)
   marketing.css                          .lp のトークン・タイポグラフィ・動き (§5.1・§6.3)
-  sections/
+  sections/                              12 本
     SiteHeader.tsx                       島: スクロールで背景が付く
     HeroSection.tsx                      Server。画面の連続は CSS の keyframes (JS 無し)
-    HowItWorksSection.tsx                Server + 島 StorySteps (固定した端末の切り替え)
-    DemoSection.tsx                      島: デモの状態機械 (§9.3)。framer-motion はここだけ
+    HowItWorksSection.tsx                Server。3 ステップの骨格。中に StorySteps を置く
+    StorySteps.tsx                       島: 固定した端末と手順の切り替え (M-6)
+    DemoSection.tsx                      島: デモの状態機械 (§9.3) を使う。framer-motion はここだけ
     FeaturesSection.tsx                  Server (bento のカード)
     BadgesSection.tsx                    Server
     TrustSection.tsx                     Server
@@ -245,15 +254,16 @@ src/components/marketing/
     FinalCtaSection.tsx                  Server
     SiteFooter.tsx                       Server
     MobileStickyCta.tsx                  島: ヒーローの番兵を IntersectionObserver で見る
-  primitives/
+  primitives/                            5 本
     Reveal.tsx                           島: 現れ方 (IntersectionObserver・1 回だけ)
     PhoneFrame.tsx                       Server: 端末の枠 (CSS だけ)
     CtaLink.tsx                          Server: Link にボタンの見た目
     useInViewOnce.ts                     島の中で使う hook (§9.4)
     useReducedMotion.ts                  既存 src/components/handson-tour/useReducedMotion.ts を再 export
-  LandingJsonLd.tsx                      Server: <script type="application/ld+json" nonce=…>
 public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 ```
+
+`src/components/marketing/` の新設は 21 本 (直下 4 本: `LandingPage.tsx`・`landing-copy.ts`・`demo-state.ts`・`marketing.css` + `sections/` 12 本 + `primitives/` 5 本。§8.1・§17・§18 の列挙と同じ)。JSON-LD の部品は新設しない (段 1 の `SiteStructuredData` をそのまま使う。§12)。
 
 島の数は 6 (SiteHeader・StorySteps・DemoSection・FaqSection・MobileStickyCta・Reveal)。文章と画像は Server Component で描くので、JS が無くても全文が HTML にある (S-9)。
 
@@ -272,18 +282,18 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 
 | # | トレース |
 |---|---|
-| S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` が `getCspNonce()` → `LandingJsonLd` + `LandingPage` を描く (データ取得なし) → HTML (全文) → ブラウザ: 見出しがフォールバックのフォントで描かれ LCP 確定 → `Reveal` が IO でセクションを順に表示 → `#demo` で写真を選ぶ (S-6) → 「無料で始める」(`Link href="/signup"`) → `/signup` |
+| S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` (既存の殻) が `getCspNonce()` → `SiteStructuredData` (既存) + `LandingPage` を描く (データ取得なし) → HTML (全文) → ブラウザ: 見出しがフォールバックのフォントで描かれ LCP 確定 → `Reveal` が IO でセクションを順に表示 → `#demo` で写真を選ぶ (S-6) → 「無料で始める」(`Link href="/signup"`) → `/signup` |
 | S-2 | 375 px: `.lp` は `max-width: 100%`・`overflow-x: clip`。bento は 1 列。ヒーローの画面は見出しの下に 1 列。`MobileStickyCta` の IO がヒーローの番兵 (`#hero-end`) を見て、画面から出たら `is-visible` → 下から 240 ms で出る。本文は `clamp(1rem, …)` で 16 px 以上 |
 | S-3 | Tab: スキップリンク (layout) → マーク (`/`) → ナビ 4 つ → ログイン → 無料で始める → ヒーローの CTA 2 つ → デモの写真 3 つ (`button aria-pressed`) → 機能のカード (リンク無し・フォーカスしない) → FAQ の `button aria-expanded` → Enter で開閉 → フッターのリンク。`:focus-visible` は globals.css の 2 トーンのリング |
-| S-4 | ランドマーク: `header` → `nav aria-label="サイトの案内"` → `main#main-content` (layout) → `section aria-labelledby` ×8 → `footer`。h1 は 1 つ (ヒーロー)。デモの結果は `div role="status" aria-live="polite"` に入り、選ぶたびに「分析中」「結果: …」を読み上げる。画像の alt は `landing-copy.ts` の `alt` (実際の画面は `guide-content.ts` の `imageAlt` と同じ文) |
+| S-4 | ランドマーク: `header` → `nav aria-label="サイトの案内"` → `main` (`LandingPage` が描く。layout の `#main-content` は `div` でランドマークではない: `src/app/layout.tsx:126`) → `section aria-labelledby` ×8 → `footer`。h1 は 1 つ (ヒーロー)。デモの結果は `div role="status" aria-live="polite"` に入り、選ぶたびに「分析中」「結果: …」を読み上げる。画像の alt は `landing-copy.ts` の `alt` (実際の画面は `guide-content.ts` の `imageAlt` と同じ文) |
 | S-5 | `prefers-reduced-motion: reduce`: globals.css が CSS の動きを 0.01 ms にする → 現れ方・切り替え・進捗の演出は一瞬で最終状態。JS: `useReducedMotion()` が true → デモの待ち時間を `0` に、ヒーローの画面の連続は CSS の `@media` で最後の 1 枚 (`comment.png`) だけを出す。内容は同じ |
 | S-6 | 状態 `idle` → 写真 A を押す → `analyzing` (選んだ id・開始時刻) → 1,400 ms 後 `result` → 結果を描く (`aria-live`) → 写真 B を押す → `analyzing` → … 。`analyzing` の間に押しても無視 (§13.3)。結果の下の CTA は `/signup` |
 | S-7 | ログイン済みで `GET /` → `updateSession` が `resolveOnboardingRedirect({ pathname: '/' })` → `/home` (運営ロールは `/admin`) へ 307。`page.tsx` は呼ばれない。本冊は何も変えない |
 | S-8 | WebView で `GET /` (`is_native_app=1`・未ログイン) → S-1 と同じ HTML。ストアの札は無い (`storeLinks` が空)。「無料で始める」→ `/signup` (WebView でも開ける既存の画面) |
-| S-9 | クローラー: 同じ HTML。`<title>` は layout の既定 (`ほめゴハン | AIで食事管理をもっと簡単に`)、`<meta name="description">` は `page.tsx` の `metadata.description`、`<link rel="canonical" href="<siteUrl>/">`、OGP は layout (`opengraph-image`)、JSON-LD (nonce つき・`Organization` と `WebSite`)。JS 無しで全文 |
+| S-9 | クローラー: 同じ HTML。メタ情報は殻の `publicPageMetadata('/')` (段 1): `<title>` は `SITE_DEFAULT_TITLE` (`ほめゴハン | AIで食事管理をもっと簡単に`・absolute)、`<meta name="description">` と OGP の description は `SITE_DESCRIPTION` (本冊で文を直す: §12)、`<link rel="canonical" href="<siteUrl>/">`・`og:url`、OGP / Twitter の画像は `/opengraph-image` / `/twitter-image` を明示。JSON-LD は `SiteStructuredData` (nonce つき・`Organization` と `WebSite`)。JS 無しで全文 |
 | S-10 | 3G: HTML (約 40 KB gz) → CSS → フォントは `swap` で後から → 画像は `next/image` の `sizes` と `loading="lazy"` (ヒーローの 1 枚目だけ `priority`)。枠は `aspect-ratio: 540 / 1080` で先に確保 → CLS 0。外部への要求は Speed Insights の同一オリジンのパスだけ |
 | S-11 | Firefox: `@supports (animation-timeline: scroll())` が偽 → 背景の装飾の視差だけ無し。`Reveal` と `StorySteps` は IO (対応) で動く |
-| S-12 | 本番 CSP: インラインの `<script>` は JSON-LD だけで nonce つき。`style` 属性は `'unsafe-inline'` で可。画像は `self`。framer-motion は bundle。`securitypolicyviolation` 0 件 (e2e で確認) |
+| S-12 | 本番 CSP: アプリが書くインラインの `<script>` は `SiteStructuredData` の JSON-LD だけで nonce つき (Next 自身のインラインスクリプトも proxy の nonce を持つ)。`style` 属性は `'unsafe-inline'` で可。画像は `self`。framer-motion は bundle。`securitypolicyviolation` 0 件 (e2e で確認) |
 | S-13 | `landing-copy.ts` に `10万人が利用` → `public-claims-guard` のソース走査 (`PUBLIC_SOURCE_FILES` に `landing-copy.ts`) が赤、描画の走査も赤。`evidence: ['src/app/api/weekly-report/route.ts']` (実在しない) → `tests/landing-page-1867.test.ts` の「根拠のパスが実在する」が赤 |
 | S-14 | 本番ビルド (`next build && next start`) → `npx lighthouse http://localhost:3000/ --preset=desktop` と mobile → Performance ≥ 90 を確認 → e2e `tests/e2e/landing-page.spec.ts` (LCP / CLS・JS の転送量・CSP 違反 0・構造) → Speed Insights で p75 を確認 (デプロイ後) |
 
@@ -637,11 +647,14 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 
 | ファイル | 種別 | 役割 | 状態 |
 |---|---|---|---|
-| `src/app/page.tsx` | Server (async) | `metadata` (description・canonical)・`getCspNonce()`・`<LandingJsonLd nonce>` + `<LandingPage />` | 無し |
-| `src/components/marketing/LandingPage.tsx` | Server | `landing-copy.ts` を読み、セクションを順に描く | 無し |
+| `src/app/page.tsx` (既存の殻・変更) | Server (async) | `metadata = publicPageMetadata('/')` (既存)・`getCspNonce()`・`<SiteStructuredData siteUrl nonce>` (既存) + `<LandingPage />` (§9.5) | 無し |
+| `src/app/LandingPageView.tsx` (既存・削除) | – | 現行の本体。ファイルごと消す (§18) | – |
+| `src/components/seo/SiteStructuredData.tsx` (既存・変えない) | Server | JSON-LD の `<script type="application/ld+json">` (nonce つき)。紹介ページの部品からは出さない (二重にしない) | 無し |
+| `src/lib/seo/public-pages.ts` (既存・値だけ変更) | データ | `SITE_DESCRIPTION` の文 (§9.5)。ほかの定数・関数は変えない | – |
+| `src/components/marketing/LandingPage.tsx` | Server | `landing-copy.ts` を読み、`div.lp` の中に `SiteHeader` → `main` (セクション 8 つ: hero how demo features badges trust faq cta) → `SiteFooter` → `MobileStickyCta` の順に描く (`main` のランドマークは本部品が持つ。layout の `#main-content` は `div`) | 無し |
 | `src/components/marketing/landing-copy.ts` | データ | 文言・画像・主張・サンプル・定数 (§9.2) | 無し |
+| `src/components/marketing/demo-state.ts` | 純関数 | デモの状態機械 `demoReducer`・`DEMO_INITIAL_STATE`・`selectedSampleId` (§9.3)。React に依存しない | – |
 | `src/components/marketing/marketing.css` | CSS | `.lp` のトークン・タイポグラフィ・動き (§9.1) | – |
-| `src/components/marketing/LandingJsonLd.tsx` | Server | JSON-LD の `<script>` (nonce つき) | 無し |
 | `src/components/marketing/sections/SiteHeader.tsx` | 島 | スクロールで背景 (M-1) | `scrolled: boolean` |
 | `src/components/marketing/sections/HeroSection.tsx` | Server | 見出し・CTA・画面の連続 (CSS) | 無し |
 | `src/components/marketing/sections/HowItWorksSection.tsx` | Server | 3 ステップの骨格。中に `StorySteps` | 無し |
@@ -666,8 +679,9 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 
 | 名前 | シグネチャ | 呼ぶ側 |
 |---|---|---|
-| `LandingPage` | `(): JSX.Element` (props 無し。`LANDING_COPY` を読む) | `src/app/page.tsx`・`tests/public-claims-guard.test.ts` |
-| `LandingJsonLd` | `({ nonce }: { nonce: string \| null }): JSX.Element` | `src/app/page.tsx` |
+| `LandingPage` | `(): JSX.Element` (props 無し。`LANDING_COPY` を読む。名前つきの export) | `src/app/page.tsx`・`tests/public-claims-guard.test.ts`・`tests/landing-page-1867.test.ts`・`tests/seo-public-pages-1867.test.tsx` (モック) |
+| `SiteStructuredData` (既存・変えない) | `({ siteUrl, nonce }: { siteUrl: string; nonce: string \| null }): JSX.Element` | `src/app/page.tsx` |
+| `publicPageMetadata` (既存・変えない) | `(pagePath: PublicPagePath): Metadata` | `src/app/page.tsx` (`'/'`) |
 | `LANDING_COPY` | `LandingCopy` (§9.2。`as const` の定数) | `LandingPage`・各セクション・テスト |
 | `landingClaims()` | `(): readonly LandingClaim[]` (`LANDING_COPY.claims`) | テスト |
 | `landingImagePaths()` | `(copy?: LandingCopy): string[]` (ページが指す `public/` の画像のパス。重複なし) | テスト (実在の確認) |
@@ -887,7 +901,6 @@ export const TrustItemSchema = z.object({ title: z.string().min(1), body: z.stri
 export const StepSchema = z.object({ title: z.string().min(1), body: z.string().min(1), image: LandingImageSchema });
 
 export const LandingCopySchema = z.object({
-  meta: z.object({ description: z.string().min(50).max(160) }),
   header: z.object({ nav: z.array(LandingLinkSchema).length(4), login: LandingLinkSchema, cta: LandingLinkSchema }),
   hero: z.object({
     eyebrow: z.string().min(1),
@@ -962,10 +975,6 @@ const ASSURANCES: [string, string, string] = ['いまは無料で使えます', 
 const PRIMARY_CTA = { label: '無料で始める', href: SIGNUP_HREF };
 
 export const LANDING_COPY = {
-  meta: {
-    description:
-      '写真を撮るだけで、AI が食事の良いところを見つけて褒めてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。',
-  },
   header: {
     nav: [
       { label: '機能', href: '#features' },
@@ -1125,7 +1134,7 @@ export const LANDING_COPY = {
   ],
 } satisfies LandingCopy;
 
-/** サービスの名前 (ヘッダー・フッター・JSON-LD)。直接書かず site-config から */
+/** サービスの名前 (ヘッダー・フッター)。直接書かず site-config から (JSON-LD は SiteStructuredData が site-config から直接読む) */
 export const LANDING_SITE_NAME = SITE_NAME;
 
 /** 主張の一覧 (テストと、主張を数える場所から読む) */
@@ -1254,71 +1263,58 @@ export function useInViewOnce<T extends Element>(options: UseInViewOnceOptions =
 }
 ```
 
-### 9.5 `src/app/page.tsx` と `LandingJsonLd.tsx`
+### 9.5 `src/app/page.tsx` (既存の殻の中身を 1 つ替える) と `SITE_DESCRIPTION` の文
+
+殻は #1874 (Issue #1867 段 1) で作られた形をそのまま使う。メタ情報 (`publicPageMetadata('/')`) と構造化データ (`SiteStructuredData`) は段 1 の部品で、本冊は作り直さない (二重にしない)。変えるのは、描く本体を `LandingPageView` から `LandingPage` に替えることと、先頭の説明のコメントだけ。下が実装後の全文 (origin/main `be462ab4` の `src/app/page.tsx` を土台にした):
 
 ```tsx
-// tsc:skip (新設モジュール @/components/marketing/* を import するため、独立の検査では解決できない)
-// src/app/page.tsx — 紹介ページ (/)。Server Component。データ取得は無い。nonce は JSON-LD のためだけに読む
+// tsc:skip (新設モジュール @/components/marketing/LandingPage を import するため、独立の検査では解決できない)
+/**
+ * トップ (/。紹介ページ)。画面の本体は src/components/marketing/LandingPage.tsx (Server Component + 小さな client の島)。
+ *
+ * 殻が持つのは次の 2 つだけ (#1867 段 1 の部品。docs/design/marketing/01-landing-site.md §12):
+ *   - トップのメタ情報 (canonical・og:url が「/」。src/lib/seo/public-pages.ts)
+ *   - 構造化データ (JSON-LD の Organization と WebSite。src/components/seo/SiteStructuredData.tsx)
+ * 文言・画像・動きは src/components/marketing/ (文言の正本は landing-copy.ts)。データ取得は無い。
+ */
 import type { Metadata } from 'next';
-import { getCspNonce } from '@/lib/security/csp-nonce';
-import { LandingJsonLd } from '@/components/marketing/LandingJsonLd';
+import { SiteStructuredData } from '@/components/seo/SiteStructuredData';
 import { LandingPage } from '@/components/marketing/LandingPage';
-import { LANDING_COPY } from '@/components/marketing/landing-copy';
+import { publicPageMetadata } from '@/lib/seo/public-pages';
+import { getCspNonce } from '@/lib/security/csp-nonce';
+import { getSiteUrl } from '@/lib/site-config';
 
-// title は layout の既定 (`${SITE_NAME} | ${SITE_TAGLINE}`。tests/og-image-1845.test.tsx が固定する) を使う。ここでは上書きしない。
-// description と canonical はこのページの値。段 1 (Issue #1867 の検索の穴埋め) が全ページの canonical を直しても、/ の値は同じ
-export const metadata: Metadata = {
-  description: LANDING_COPY.meta.description,
-  alternates: { canonical: '/' },
-  openGraph: { description: LANDING_COPY.meta.description },
-  twitter: { description: LANDING_COPY.meta.description },
-};
+export const metadata: Metadata = publicPageMetadata('/');
 
-export default async function Page() {
+export default async function HomePage() {
   const nonce = await getCspNonce();
   return (
     <>
-      <LandingJsonLd nonce={nonce} />
+      <SiteStructuredData siteUrl={getSiteUrl()} nonce={nonce} />
       <LandingPage />
     </>
   );
 }
 ```
 
-```tsx
-// tsc:skip (新設モジュール @/components/marketing/landing-copy を import するため、独立の検査では解決できない)
-// src/components/marketing/LandingJsonLd.tsx — 構造化データ (Organization と WebSite)。
-// <script type="application/ld+json"> は実行されないが、tests/csp-no-inline-script.test.ts は <script> の要素を数えるので
-// nonce を渡し、ALLOWED_INLINE_SCRIPTS に 1 件で載せる (docs/design/marketing/01 §19)。
-// React は <script> の子の文字列もエスケープする (JSON が壊れる) ので dangerouslySetInnerHTML で入れる。
-// 中身は定数の JSON.stringify で、利用者の入力は入らない。'<' は < にして、文字列の中の </script> で閉じられないようにする
-// (tests/inner-html-contract.test.ts の ALLOWED_HTML_SINKS に理由と形を載せる)。
-import { getSiteUrl } from '@/lib/site-config';
-import { LANDING_SITE_NAME } from '@/components/marketing/landing-copy';
+- 関数の名前 (`HomePage`)・`metadata` の式・`SiteStructuredData` の渡し方は現行のまま (`tests/seo-public-pages-1867.test.tsx:407-426` が `default` を await して描き、`metadata.alternates.canonical` が `'/'` であることを見る)。
+- `src/app/LandingPageView.tsx` はファイルごと消す (§18)。殻の import から `./LandingPageView` が消える。
+- `title` は `publicPageMetadata('/')` が `{ absolute: SITE_DEFAULT_TITLE }` で渡す (layout の `title.default` と同じ文字。`tests/og-image-1845.test.tsx` と `tests/seo-public-pages-1867.test.tsx` が固定する)。本冊は title を足さない・変えない。
+- 構造化データの中身 (`buildSiteJsonLd`。Organization の `name` は事業者名 `BUSINESS_NAME`・WebSite の `name` はサービス名 `SITE_NAME`・`description` は `SITE_DESCRIPTION`) も変えない。価格 (`offers`)・評価 (`aggregateRating`)・利用者数は入っていない (`tests/seo-public-pages-1867.test.tsx` の `toEqual` が全体を固定しているので、足すと赤になる)。
 
-/** JSON-LD の中の '<' を < にする (HTML の中で </script> として読まれないようにする) */
-export function serializeJsonLd(value: unknown): string {
-  return JSON.stringify(value).replace(/</g, '\\u003c');
-}
+**`SITE_DESCRIPTION` の文を直す** (`src/lib/seo/public-pages.ts:36-37`。値だけ。名前・型・使う場所は変えない):
 
-/** 構造化データ (schema.org)。価格・評価・利用者数は入れない (販売開始前・実績ゼロ) */
-export function landingJsonLd(siteUrl: string, siteName: string): Record<string, unknown> {
-  return {
-    '@context': 'https://schema.org',
-    '@graph': [
-      { '@type': 'Organization', '@id': `${siteUrl}/#organization`, name: siteName, url: `${siteUrl}/`, logo: `${siteUrl}/icon-512.png` },
-      { '@type': 'WebSite', '@id': `${siteUrl}/#website`, name: siteName, url: `${siteUrl}/`, inLanguage: 'ja', publisher: { '@id': `${siteUrl}/#organization` } },
-    ],
-  };
-}
-
-export function LandingJsonLd({ nonce }: { nonce: string | null }) {
-  const json = serializeJsonLd(landingJsonLd(getSiteUrl(), LANDING_SITE_NAME));
-  return <script type="application/ld+json" nonce={nonce ?? undefined} dangerouslySetInnerHTML={{ __html: json }} />;
-}
+```ts
+// tsc:skip (既存ファイルの 1 定数の値の差し替え。全文は origin/main の src/lib/seo/public-pages.ts)
+/** サイト全体の説明 (トップの description。ルートの layout の description と openGraph.description も同じ文) */
+export const SITE_DESCRIPTION =
+  '写真を撮るだけで、AI が食事の良いところを見つけて褒めてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。';
 ```
 
-`nonce={nonce ?? undefined}` は、走査テストの「`nonce={式}`」の規則を満たす (値が `undefined` のときは属性が出ない。proxy の外 = ビルド時には nonce が無いが、JSON-LD は実行されないので CSP に止められない)。
+- 現行の文 (`写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。あなたの食生活をサポートする次世代の食事管理アプリ。`) の「次世代の」は根拠を出せない形容 (§2.5 の景品表示法の当てはめ) なので外し、紹介ページの本文 (§4.2・§4.5) と同じ主張 (根拠は §4.9 の `photo-analyze`・`praise`・`weekly-menu`・`shopping-list`・`health-records`・`free-now`) にそろえる。
+- この 1 つの値が、`/` の `description`・`og:description` (`publicPageMetadata('/')`)・ルートの layout の `description` と `openGraph.description` (`src/app/layout.tsx:32`・`:59`)・JSON-LD の WebSite の `description` (`src/lib/seo/json-ld.ts:51`) に同時に効く (どれも定数を参照し、文字を直接書いていない)。テストは定数を参照するので、文を替えても赤にならない (`tests/seo-public-pages-1867.test.tsx:252`・`:373`)。
+- 長さは 50〜160 文字 (U-15 が確かめる)。`SITE_TWITTER_DESCRIPTION` (`:40`) は変えない (「次世代」などの形容が無い)。
+- 有料プランの販売を始めるときは、「いまは無料で使えます」を `landing-copy.ts` の `ASSURANCES` と同じ PR で直す (`docs/design/billing/01-billing-core.md` §18 項目 14 の文言の扱いと同じ時期)。
 
 ### 9.6 島の部品
 
@@ -1522,18 +1518,23 @@ export function DemoSection() {
 | 島 | 状態と更新 | 描画 |
 |---|---|---|
 | `FaqSection` | `openIndex: number \| null`。`button` の `onClick` で同じ index なら閉じる | `h3 > button` (`aria-expanded`・`aria-controls="faq-panel-N"`・`id="faq-button-N"`) と `div.lp-faq-panel` (`id="faq-panel-N"`・`role="region"`・`aria-labelledby="faq-button-N"`・`hidden` は使わず `grid-template-rows` で閉じる。閉じている間は中身を `inert` にして Tab で入らないようにする) |
-| `StorySteps` | `activeIndex: 0〜2`。手順ごとに `useInViewOnce({ rootMargin: STORY_ROOT_MARGIN, once: false })` を持ち、`inView` になった手順を active にする | 左 (lg 以上) に `PhoneFrame` を `position: sticky; top: 6rem`。中に 3 枚の画面を重ね、`activeIndex` の枚だけ `opacity: 1`。右に手順の `ol`。`md` 未満は端末を各手順の上に置く (sticky 無し) |
+| `StorySteps` | `activeIndex: 0〜2`。手順ごとに `useInViewOnce({ rootMargin: STORY_ROOT_MARGIN, once: false })` を持ち、`inView` になった手順を active にする | 左 (lg 以上) に `PhoneFrame` を `position: sticky; top: 6rem`。中に 3 枚の画面を重ね、`activeIndex` の枚だけ `opacity: 1`。右に手順の `ol`。`lg` 未満 (タブレットを含む) は端末を各手順の上に置く (sticky 無し) |
 | `MobileStickyCta` | `visible: boolean` = ヒーローの番兵 `#hero-end` (HeroSection の末尾の `span aria-hidden`) が `useInViewOnce({ once: false })` で `inView === false` | `div.lp-sticky-cta` (`aria-hidden={!visible}`・`inert` を visible でないとき付ける) |
 
 ### 9.7 `tests/public-claims-guard.test.ts` への差分 (見張りの拡張)
 
+origin/main `be462ab4` の現状: トップの描画は `const { default: LandingPage } = await import('@/app/LandingPageView');` (`:65`)・`PUBLIC_PAGES` の 1 行目は `{ file: 'src/app/LandingPageView.tsx', Page: LandingPage }` (`:78`)・FAQ の検査は `const landing = readSource('src/app/LandingPageView.tsx');` (`:397`)。`LandingPageView.tsx` を消すので、3 か所とも読む先を変える。
+
 ```ts
 // tsc:skip (既存のテストへの差分。全文は実装で)
-// 1. 描画は LandingPage (Server Component。同期) で行う。page.tsx は async (nonce を読む) なので createElement(Page) では描けない
+// 1. 描画は LandingPage (Server Component。同期・名前つき export) で行う。page.tsx は async (nonce を読む) なので createElement(Page) では描けない
+//    (現行 :63-65 のコメントと import を置き換える)
+// トップは Server Component の殻 (src/app/page.tsx。メタ情報と JSON-LD) と、紹介ページの本体 (src/components/marketing/LandingPage.tsx) に分かれている。
+// 文言を持つのは本体と landing-copy.ts なので、本体を描いて読み、文言のファイルはソースも読む
 const { LandingPage } = await import('@/components/marketing/LandingPage');
 
 const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
-  { file: 'src/app/page.tsx', Page: LandingPage },
+  { file: 'src/components/marketing/LandingPage.tsx', Page: LandingPage }, // 現行 :78 の 'src/app/LandingPageView.tsx' を置き換える
   // …ほかは変えない
 ];
 
@@ -1541,7 +1542,7 @@ const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
 const PUBLIC_SOURCE_FILES: string[] = [
   ...PUBLIC_PAGES.map(({ file }) => file),
   'src/components/marketing/landing-copy.ts',
-  'src/components/marketing/LandingJsonLd.tsx',
+  'src/lib/seo/public-pages.ts', // SITE_DESCRIPTION (検索結果と SNS のカードに出る説明) と公開ページごとの説明
   'src/app/(auth)/layout.tsx',
 ];
 
@@ -1552,7 +1553,7 @@ const PUBLIC_SOURCE_FILES: string[] = [
 // 4. ソース走査の it.each は PUBLIC_SOURCE_FILES を回す
 //   it.each(PUBLIC_SOURCE_FILES)('%s', (file) => { expect(findForbidden(readSource(file))).toEqual([]); });
 
-// 5. トップの FAQ の行は landing-copy.ts から読む
+// 5. トップの FAQ の行は landing-copy.ts から読む (現行 :397 の 'src/app/LandingPageView.tsx' を置き換える)
 //   const landing = readSource('src/components/marketing/landing-copy.ts');
 //   (q: "データは安全ですか？" の行に プライバシーポリシー・/\d+%以上の精度/ が無い、はそのまま)
 ```
@@ -1572,7 +1573,8 @@ import { GUIDES } from '@/app/guide/guide-content';
 import { AWARDABLE_BADGE_CODES } from '@/lib/badges/awardable';
 import { LANDING_COPY, LandingCopySchema, landingClaims, landingImagePaths, missingClaimIds } from '@/components/marketing/landing-copy';
 import { DEMO_INITIAL_STATE, demoReducer } from '@/components/marketing/demo-state';
-import { landingJsonLd, serializeJsonLd } from '@/components/marketing/LandingJsonLd';
+import { SITE_DESCRIPTION, publicPageMetadata } from '@/lib/seo/public-pages';
+import { resolveOnboardingRedirect } from '../lib/onboarding-routing';
 
 const ROOT = path.resolve(__dirname, '..');
 const MARKETING_CSS = 'src/components/marketing/marketing.css';
@@ -1609,40 +1611,12 @@ const NAVIGATION_TIMEOUT = 30_000;
 
 `tests/e2e-csp-nonce-suite.test.ts` と同じ作りで、`tests/e2e/landing-page.spec.ts` が実在し、`e2e-local.yml` の 1 本目の `npx playwright test` の引数と `scripts/local-ci.sh` の `PW_ARGS` の両方に入っていることを見る (定数名 `LANDING_SPEC`)。
 
-### 9.11 既存の許可リストに足す項目 (逐語)
+### 9.11 既存の許可リスト (足す項目は無い)
 
-`tests/csp-no-inline-script.test.ts` の `ALLOWED_INLINE_SCRIPTS`:
+`tests/csp-no-inline-script.test.ts` の `ALLOWED_INLINE_SCRIPTS` (`:67-76`) と `tests/inner-html-contract.test.ts` の `ALLOWED_HTML_SINKS` (`:181-189`) には、段 1 (#1874) が `src/components/seo/SiteStructuredData.tsx` の 1 件 (JSX の `<script>`・`count: 1`・中身は `serializeJsonLd(...)` の戻り値) を載せ済み。本冊は JSON-LD を `SiteStructuredData` に任せ、新しい `<script>`・`dangerouslySetInnerHTML` を書かないので、どちらの許可リストも変えない。
 
-```ts
-// tsc:skip (既存のテストへの差分)
-export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [
-  {
-    file: 'src/components/marketing/LandingJsonLd.tsx',
-    kind: 'jsx',
-    count: 1,
-    reason:
-      '構造化データ (JSON-LD) は <script type="application/ld+json"> でしか書けない。中身は定数の JSON.stringify で実行はされない。nonce は getCspNonce() の値 (docs/design/marketing/01-landing-site.md §9.5)',
-  },
-];
-```
-
-`tests/inner-html-contract.test.ts` の `ALLOWED_HTML_SINKS`:
-
-```ts
-// tsc:skip (既存のテストへの差分)
-const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =>
-  expression !== undefined && ts.isIdentifier(expression) && expression.text === 'json';
-
-'src/components/marketing/LandingJsonLd.tsx': {
-  reason: 'JSON-LD (構造化データ) を <script type="application/ld+json"> に入れる。中身は定数を serializeJsonLd (JSON.stringify + < のエスケープ) した文字列で、利用者の入力は入らない',
-  problems: (analysis) => [
-    ...analysis.sinks.filter((sink) => sink.kind !== 'dangerouslySetInnerHTML' || !isSerializeJsonLdCall(sink.html)).map(() => '差し込みの中身が serializeJsonLd の戻り値 (変数 json) ではない'),
-    ...(analysis.sinks.length === 1 ? [] : ['差し込みは 1 か所だけ']),
-  ],
-},
-```
-
-(`json` という名前の変数が `serializeJsonLd(...)` の戻り値であることは、`LandingJsonLd.tsx` のソースに `const json = serializeJsonLd(` が 1 回あることを `tests/landing-page-1867.test.ts` で確かめる。)
+- 新設ファイル (`src/components/marketing/**`) に `<script` の文字列・`next/script`・`dangerouslySetInnerHTML`・`innerHTML` を書かない (コメントにも書かない。`INLINE_SCRIPT_QUICK_FILTER` で構文木にされる)。書くと、2 本の走査テストが「許可リストに無い検出」として赤にする。
+- `ALLOWED_INLINE_SCRIPTS` の `reason` の文中の「`src/app/page.tsx` が読んで渡す」は、殻を残すので事実のまま (変えない)。
 
 ---
 
@@ -1688,7 +1662,7 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 | 達成基準 | 本冊の対応 | 確かめ方 |
 |---|---|---|
 | 1.1.1 非テキストコンテンツ | すべての `Image` に `alt`。実際の画面は `guide-content.ts` の `imageAlt` と同じ文。マークは `alt=""`。アイコンは `aria-hidden` | unit (alt の突き合わせ)・e2e (`img` に `alt` 属性がある) |
-| 1.3.1 情報と関係性 | `header` / `nav` / `main` (layout) / `section aria-labelledby` / `footer`。h1 1 つ → h2 がセクションごと → h3 がカード。FAQ は `button aria-expanded` + `region`。デモの写真は `group` + `aria-pressed` | e2e (ランドマークと見出しの順) |
+| 1.3.1 情報と関係性 | `header` / `nav` / `main` (`LandingPage` が描く。layout の `#main-content` は `div`) / `section aria-labelledby` / `footer`。h1 1 つ → h2 がセクションごと → h3 がカード。FAQ は `button aria-expanded` + `region`。デモの写真は `group` + `aria-pressed` | e2e (ランドマークと見出しの順) |
 | 1.4.3 コントラスト (最低限) | §5.1 の表 (すべて 4.5:1 以上。大きい文字のグラデーションは 4.18:1 以上) | unit (トークンの値から相対輝度で計算) |
 | 1.4.4 テキストのサイズ変更 | `rem` と `clamp` だけ。200 % に拡大しても横にはみ出さない (`overflow-wrap: anywhere`) | e2e (ズーム 200 % 相当の幅 640 px で `scrollWidth <= clientWidth`) |
 | 1.4.10 リフロー | 320 px で横スクロール無し。bento は 1 列 | e2e (320 px と 375 px) |
@@ -1715,17 +1689,20 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 
 ## 12. 検索の設計 (R-5。Issue #1867 の段 1 と整合)
 
-| 項目 | 本冊 | 段 1 (別の B 型) との関係 |
+段 1 (#1874・`be462ab4`) は main に着地済み。ルートの layout の `canonical: '/'` と `og:url` は段 1 で外され (`src/app/layout.tsx:54-56` のコメント)、公開ページは `src/lib/seo/public-pages.ts` の `publicPageMetadata(パス)` で自分のパスの canonical・og:url・title・description・OGP を持つ。トップの殻 (`src/app/page.tsx:17`) は既に `publicPageMetadata('/')` を使い、`SiteStructuredData` で JSON-LD を出している。本冊は**この 2 つを流用し、置き換えない** (メタ情報の直書き・紹介ページ専用の JSON-LD の部品は作らない。2 か所に同じ値を持つと食い違いの発生源になるため)。紹介ページ側で変えるのは `SITE_DESCRIPTION` の文 1 つだけ (§9.5)。
+
+| 項目 | 本冊 (実装後の `/`) | 出どころ |
 |---|---|---|
-| `<title>` | layout の既定 `ほめゴハン | AIで食事管理をもっと簡単に` (`page.tsx` で上書きしない) | 段 1 が公開ページごとの title を付けても、`/` は既定のまま |
-| `<meta name="description">` | `LANDING_COPY.meta.description` (50〜160 文字。`page.tsx` の `metadata.description`。OGP / Twitter の description も同じ文) | `/` の description は本冊が持つ。段 1 は `/` を触らない |
-| canonical | `page.tsx` の `alternates.canonical: '/'` (`metadataBase` = `getSiteUrl()`) | 段 1 が layout の `canonical: '/'` を外しても、`/` は自分の値を持つ |
-| OGP / Twitter Card の画像 | layout の `opengraph-image` / `twitter-image` (変えない) | – |
-| 構造化データ | `LandingJsonLd` (`Organization`・`WebSite`。価格・評価・利用者数は入れない) | 段 1 の sitemap とは独立 |
-| 見出し | h1 1 つ (ヒーロー)。h2 はセクション。本文に機能の名前 (写真・献立・買い物リスト・体重・健康診断・バッジ・家族) | – |
-| 内部リンク | フッターから公開ページ 12 本へ。ヘッダーからアンカー 4 つ | – |
-| robots | layout の `robots: index, follow` (変えない)。`src/app/robots.ts` も変えない | 段 1 が sitemap を作る |
-| 動的描画 | 全ページ動的のまま (クローラーは HTML を受け取る。JS 不要で全文) | – |
+| `<title>` | `ほめゴハン | AIで食事管理をもっと簡単に` (`SITE_DEFAULT_TITLE`。`publicPageMetadata('/')` が `title.absolute` で渡す。layout の `title.default` と同じ文字) | 段 1 の部品 (変えない) |
+| `<meta name="description">` | `SITE_DESCRIPTION` (§9.5 で文を直す。50〜160 文字)。`og:description` も同じ。`twitter:description` は `SITE_TWITTER_DESCRIPTION` (変えない) | `src/lib/seo/public-pages.ts` (値だけ本冊で変える) |
+| canonical・`og:url` | `/` (相対。`metadataBase` = `getSiteUrl()` = `NEXT_PUBLIC_APP_URL` が前に付く) | 段 1 の部品 (変えない) |
+| OGP / Twitter Card の画像 | `/opengraph-image` / `/twitter-image` を明示 (子で openGraph を書くと file convention の画像が消えるため。`src/lib/brand-asset-paths.ts`) | 段 1 の部品 (変えない) |
+| 構造化データ | `SiteStructuredData` の 1 本 (`buildSiteJsonLd`: Organization (`name` = `BUSINESS_NAME`・`logo` = `/icon-512.png`) と WebSite (`name` = `SITE_NAME`・`description` = `SITE_DESCRIPTION`・`inLanguage: 'ja'`)。価格・評価・利用者数は入れない)。`src/components/marketing/` は JSON-LD を出さない (U-12) | 段 1 の部品 (変えない) |
+| 見出し | h1 1 つ (ヒーロー)。h2 はセクション。本文に機能の名前 (写真・献立・買い物リスト・体重・健康診断・バッジ・家族) | 本冊 |
+| 内部リンク | フッターから公開ページ 12 本へ。ヘッダーからアンカー 4 つ | 本冊 |
+| sitemap | `src/app/sitemap.ts` (`PUBLIC_PAGE_PATHS` の 12 本。`/` を含む)。本冊は変えない | 段 1 の部品 (変えない) |
+| robots | layout の `robots: index, follow` と `src/app/robots.ts` (変えない) | 既存 |
+| 動的描画 | 全ページ動的のまま (クローラーは HTML を受け取る。JS 不要で全文) | 既存 |
 
 ---
 
@@ -1737,6 +1714,7 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 |---|---|---|---|---|---|
 | 未ログイン | ≥ 1024 | あり | 標準 | 対応 | 全セクション。ヒーローは 7 : 5 の 2 列。使い方は固定した端末 + 手順。現れ方・視差・自動の画面の連続あり。固定 CTA 無し |
 | 未ログイン | ≥ 1024 | あり | 標準 | 未対応 (Firefox) | 同上。視差 (M-4) だけ無し |
+| 未ログイン | 768〜1023 (タブレット) | あり | 標準 | 任意 | ヘッダーは高さ 80 px でナビのアンカー 4 つとログインが見える (`md` 以上)。ヒーローは 1 列 (12 列の 7 : 5 は `lg` 以上なので、見出しと CTA の下に画面の連続)。使い方は `lg` 未満なので端末を各手順の上に置く (sticky 無し)。デモは 2 列 (左に写真の選択・右に結果。`md:grid-cols-2`)。機能の bento は 2 列。固定 CTA 無し (`@media (min-width: 768px)` で `display: none`)。視差 (M-4) は `animation-timeline` の対応しだい |
 | 未ログイン | < 768 | あり | 標準 | 任意 | 1 列。ナビのアンカーは非表示 (ログインは `sm` 以上)。使い方は端末を各手順の上に。ヒーローを過ぎると固定 CTA |
 | 未ログイン | 任意 | あり | reduce | 任意 | 動き無し (一瞬で最終状態)。画面の連続は 3 枚目だけ。デモの待ち 0 ms |
 | 未ログイン | 任意 | 無し | 任意 | 任意 | 全文と画像 (HTML)。`Reveal` は隠さない。ヘッダーは透明のまま。デモは押しても変わらない (ボタンは描かれる)。FAQ は閉じたまま (中身は DOM にある) |
@@ -1747,9 +1725,9 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 
 ### 13.2 ②状態比較表 (現行 vs 設計後)
 
-| 観点 | 現行 (`src/app/page.tsx`) | 設計後 |
+| 観点 | 現行 (殻 `src/app/page.tsx` + 本体 `src/app/LandingPageView.tsx`。`be462ab4`) | 設計後 |
 |---|---|---|
-| 構造 | `'use client'` 1 ファイル (629 行)。状態 6 つ。`scroll` で全体を再描画 | Server Component の骨格 + 島 6 つ (状態 1 つずつ)。文言は `landing-copy.ts` |
+| 構造 | 殻 `src/app/page.tsx` (27 行・Server) + 本体 `src/app/LandingPageView.tsx` (`'use client'` 1 ファイル・629 行)。状態 6 つ。`scroll` で全体を再描画 | 殻はそのまま + 本体 `src/components/marketing/LandingPage.tsx` (Server Component の骨格) + 島 6 つ (状態 1 つずつ)。文言は `landing-copy.ts`。`LandingPageView.tsx` は削除 |
 | セクション | ヒーロー / AI デモ / 3 ステップ / 機能 8 / 1 日の流れ / バッジ 12 / FAQ 6 / 最終 CTA / フッター / 固定 CTA | ヘッダー / ヒーロー (実際の画面の連続) / 使い方 3 (固定した端末) / デモ / 機能 8 (大 2・中 4・小 2) / バッジ 6 / 安心 4 / FAQ 6 / 最終 CTA / フッター / 固定 CTA |
 | 主張 | 根拠の無いもの多数 (§2.2)。「週次レポート」「50 種類以上のバッジ」「30 秒で登録」「完全サポート」 | 13 件の主張すべてに `evidence`。数字の約束は無い。無料は「いまは無料・有料プランは準備中」 |
 | 健康の効能 | 「免疫力アップ」「美肌効果」「吸収率が 3 倍」「医者いらず」「ダイエットパートナー」 | 無し。免責 (医療目的に使わない) を 2 か所に |
@@ -1762,9 +1740,9 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 | `reduced-motion` | globals.css の CSS 側だけ。`setTimeout` の 1,800 ms は止まらない | CSS 側 + JS 側 (`useReducedMotion`)。待ち 0 ms・画面の連続は静止 |
 | a の中に button | あり (`Link > motion.button`) | 無し (`CtaLink` = `Link` にボタンの見た目) |
 | SNS のリンク | `href="#"` 3 件 | 無し (`socialLinks: []`) |
-| メタ情報 | layout の既定だけ。canonical は layout の `/` | `page.tsx` に description・canonical・OGP の description。JSON-LD |
-| 見張り | `public-claims-guard` (ソースと描画) | 同 + `landing-page-1867` (根拠の実在・トークン・alt・バッジ・コントラスト・import の範囲・画像の重さ) + e2e (構造・a11y・予算・CSP) |
-| e2e の門 | `/` を開く spec は `public-policy-pages` (フッターのリンク) と `b12` (A-01・A-04) | 同 + `landing-page.spec.ts` を門に追加 |
+| メタ情報 | 殻の `publicPageMetadata('/')` (title・description = `SITE_DESCRIPTION`・canonical `/`・OGP)。JSON-LD は `SiteStructuredData` (段 1・`be462ab4`) | 同じ部品を流用 (変えない)。`SITE_DESCRIPTION` の文だけを直す (「次世代の」を外し、根拠のある主張にそろえる。§9.5) |
+| 見張り | `public-claims-guard` (ソースと描画。トップは `LandingPageView.tsx`)・`seo-public-pages-1867` (殻のメタ情報と JSON-LD) | `public-claims-guard` の読む先を `LandingPage.tsx`・`landing-copy.ts` に替え・`seo-public-pages-1867` のモックを `LandingPage` に替え + `landing-page-1867` (根拠の実在・トークン・alt・バッジ・コントラスト・import の範囲・画像の重さ) + e2e (構造・a11y・予算・CSP) |
+| e2e の門 | `/` を開く spec は 13 本 (§19 の e2e の行)。門 (`e2e-local.yml` と `PW_ARGS`) に入るのは `public-policy-pages` (フッターのリンク)・`csp-nonce` (`/` の nonce と CSP 違反 0)・`w5-3-menu-gen-adversarial` (ログイン済みで `/` → 転送) の 3 本 | 同 + `landing-page.spec.ts` を門に追加 |
 
 ### 13.3 ③状態遷移表
 
@@ -1827,7 +1805,7 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 
 | 場面 | 起きること | 扱い |
 |---|---|---|
-| `getCspNonce()` が `null` (proxy の外・ビルド時) | JSON-LD に nonce が付かない | JSON-LD は実行されないので、CSP に止められず問題にならない。`nonce` 属性は出ない |
+| `getCspNonce()` が `null` (proxy の外・ビルド時) | JSON-LD (`SiteStructuredData`) に nonce が付かない | JSON-LD は実行されないので、CSP に止められず問題にならない。`nonce` 属性は出ない (既存の挙動。`tests/seo-public-pages-1867.test.tsx` が確かめる) |
 | 画像のファイルが無い | 404 | `tests/metadata-public-paths-1845.test.ts` と `tests/landing-page-1867.test.ts` がマージ前に赤にする |
 | `IntersectionObserver` が無い | 現れ方が動かない | `useInViewOnce` が true を返し、隠さない |
 | `matchMedia` が無い (古い環境) | `useReducedMotion` が例外 | 既存の hook の挙動のまま (`window.matchMedia` は 2012 年以降の全ブラウザにある。テストの jsdom には `matchMedia` を足す) |
@@ -1843,13 +1821,13 @@ const isSerializeJsonLdCall = (expression: ts.Expression | undefined): boolean =
 sequenceDiagram
     participant B as ブラウザ (未ログイン)
     participant P as proxy (nonce + updateSession)
-    participant S as src/app/page.tsx (Server)
+    participant S as src/app/page.tsx (既存の殻・Server)
     participant I as 島 (client)
 
     B->>P: GET /
     P->>P: nonce を作り CSP を付ける。'/' は publicPaths。ログイン済みなら /home へ 307
     P->>S: 描画
-    S->>S: getCspNonce() → LandingJsonLd(nonce) + LandingPage() (データ取得なし)
+    S->>S: getCspNonce() → SiteStructuredData(siteUrl, nonce) + LandingPage() (データ取得なし)
     S-->>B: HTML (全文・画像の枠つき) + CSS + JS の塊 (島)
     B->>B: フォールバックのフォントで見出しを描く → LCP。next/font が Noto を差し替える
     B->>I: 島をマウント (Reveal は data-js=1 を付けてから IO で is-in)
@@ -1876,11 +1854,15 @@ sequenceDiagram
 | U-9 | `landing-copy.ts のソースに絵文字 (Unicode の Extended_Pictographic) が無い` |
 | U-10 | `src/components/marketing/ の import は許可した接頭辞 (react・next/・lucide-react・framer-motion・zod・@/lib/site-config・@/app/guide/guide-content・@/components/handson-tour/useReducedMotion・@/components/marketing/・相対) だけ (Supabase・環境変数・アプリの状態に触れない)` |
 | U-11 | `demoReducer: idle --select--> analyzing / analyzing --select--> 変化なし / analyzing --finish(同じ id)--> result / analyzing --finish(違う id)--> 変化なし / result --select--> analyzing / any --reset--> idle (§13.3 の表の全行)` |
-| U-12 | `landingJsonLd は Organization と WebSite だけを持ち、価格 (offers)・評価 (aggregateRating)・利用者数を含まない。serializeJsonLd は < を < にする` |
-| U-13 | `LandingJsonLd.tsx のソースに const json = serializeJsonLd( が 1 回あり、dangerouslySetInnerHTML の __html は json` |
+| U-12 | `構造化データは SiteStructuredData の 1 本だけ: src/components/marketing/ のソースに application/ld+json・dangerouslySetInnerHTML・<script が無く、LandingPage を描画した HTML にも <script が無い` |
+| U-13 | `src/app/LandingPageView.tsx は無く、src/app/page.tsx は @/components/marketing/LandingPage の LandingPage と @/components/seo/SiteStructuredData を import し、./LandingPageView を import しない (ソースの構文木で確かめる)` |
 | U-14 | `LandingPage を描画した HTML に h1 が 1 つ・section が 8 つ (hero how demo features badges trust faq cta) の順にあり、footer の中に 利用規約 と プライバシーポリシー のリンク (href /terms・/privacy) がある` |
-| U-15 | `page.tsx の metadata.description は LANDING_COPY.meta.description と同じで、title を上書きしない (metadata に title が無い)` |
+| U-15 | `page.tsx の metadata は publicPageMetadata('/') と同じ値で、SITE_DESCRIPTION は 50〜160 文字・「次世代」を含まず、§9.5 の文と同じ` |
 | U-16 | `footer の著作権の年は COPYRIGHT_YEAR で、Date を使って年を作っていない (landing-copy.ts と SiteFooter.tsx に new Date が無い)` |
+| U-17 | `ログイン済みの人は / で紹介ページを見ない: resolveOnboardingRedirect の pathname '/' は、初期設定が済んだ人 → /home・途中の人 → /onboarding/resume・まだの人 → /onboarding/welcome・運営ロール (admin / super_admin) → /admin を返し、null を返す組み合わせが無い` |
+| U-18 | `animation-timeline が無いブラウザでも内容は同じ: marketing.css の animation-timeline / scroll-timeline / view-timeline の宣言はすべて @supports (animation-timeline: scroll()) の中にあり、src/components/marketing/ の .ts / .tsx に animation-timeline の語が無い (現れ方と使い方の切り替えは IntersectionObserver だけで動く)` |
+
+U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読まれない (`metadata` は定数) が、殻が import する `LandingPage` の島 (framer-motion など) は node の環境で読み込みだけ行われる (描画はしない)。U-17 は `lib/onboarding-routing.ts` の純関数を直接呼ぶ (proxy の中の呼び出しは `lib/supabase/__tests__/middleware.test.ts` が既に見る)。
 
 描画 (U-14) は `renderToStaticMarkup(createElement(LandingPage))` で、`next/link`・`next/image` は `tests/public-claims-guard.test.ts` と同じモック。`window.matchMedia` は `vi.stubGlobal` で足す (島は SSR では `useEffect` を走らせないので不要だが、保険)。
 
@@ -1888,10 +1870,10 @@ sequenceDiagram
 
 | 変更 | 効く it |
 |---|---|
-| `PUBLIC_PAGES` の `/` の `Page` を `LandingPage` に | `#1155 公開ページを描画した結果にも … が無い` |
-| `PUBLIC_SOURCE_FILES` に `landing-copy.ts`・`LandingJsonLd.tsx`・`src/app/(auth)/layout.tsx` | `#1155 公開ページのソースに … が無い` (`it.each` の対象が 3 本増える) |
+| 描画の import を `@/app/LandingPageView` の default (`:65`) から `@/components/marketing/LandingPage` の `LandingPage` に。`PUBLIC_PAGES` の 1 行目 (`:78`) の `file` を `src/components/marketing/LandingPage.tsx` に | `#1155 公開ページを描画した結果にも … が無い` |
+| `PUBLIC_SOURCE_FILES` に `landing-copy.ts`・`src/lib/seo/public-pages.ts`・`src/app/(auth)/layout.tsx` | `#1155 公開ページのソースに … が無い` (`it.each` の対象が 3 本増える) |
 | `FORBIDDEN` に `10,000+`・`ユーザーが実践中` | 同上 (段 0 の削除の前は `(auth)/layout.tsx` で赤) |
-| FAQ の `landing` を `landing-copy.ts` から読む | `データの保存・第三者への提供は断定せず…`・`AI の認識精度を数字で約束しない` |
+| FAQ の `landing` を `src/app/LandingPageView.tsx` (`:397`) から `src/components/marketing/landing-copy.ts` に | `データの保存・第三者への提供は断定せず…`・`AI の認識精度を数字で約束しない` |
 
 ### 16.3 `tests/e2e/landing-page.spec.ts` (新設・未ログイン)
 
@@ -1911,6 +1893,8 @@ sequenceDiagram
 | E-12 | `securitypolicyviolation が 0 件 (デモの操作を含む)` |
 | E-13 | `JSON-LD の script が 1 つあり、type は application/ld+json、中身は @graph に Organization と WebSite` |
 | E-14 | `見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを tests/e2e/.evidence/landing/ に保存する (比較はしない。整合ゲートで目視)` |
+| E-15 | `1280 px のキーボード操作: Tab を押すたびに、スキップリンク (#main-content) → マーク (/) → ナビ 4 つ (#features #how #badges #faq) → ログイン (/login) → ヘッダーの無料で始める (/signup) → ヒーローの無料で始める (/signup) → デモを試す (#demo) の順にフォーカスが移り、どれも outline が none でない` |
+| E-16 | `アプリの WebView (is_native_app=1 の Cookie・未ログイン) で / を開くと、未ログインの / と同じ h1 とセクションが出て、アプリのストアへのリンク (apps.apple.com・play.google.com) が無く、ヒーローの無料で始めるは /signup を指す` |
 
 E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差)。dev サーバ (`next dev`) では LCP が本番より遅いので、`local-ci.sh` の e2e 段 (本番ビルド) で測る。見た目の画素の比較 (`toHaveScreenshot`) は、フォントの代替 (e2e のビルドは Google Fonts を読まない) が機械ごとに違って揺れるので採らない (§24 Q-4)。
 
@@ -1922,6 +1906,34 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | `tests/e2e/landing-page.spec.ts: e2e-local.yml の Playwright の実行に入っている` |
 | `tests/e2e/landing-page.spec.ts: scripts/local-ci.sh の PW_ARGS に入っている` |
 
+### 16.5 `tests/seo-public-pages-1867.test.tsx` (既存の追随。段 1 のテスト)
+
+| 場所 (origin/main `be462ab4`) | いま | 直し方 |
+|---|---|---|
+| `:407-426` の it `トップ (src/app/page.tsx) は、このリクエストの nonce と NEXT_PUBLIC_APP_URL で JSON-LD を出し、画面の本体を続けて描く` | `vi.doMock('@/app/LandingPageView', () => ({ default: () => createElement('main', { id: 'landing' }) }))` (`:413`) と `vi.doUnmock('@/app/LandingPageView')` (`:424`) | モックの先を `@/components/marketing/LandingPage` に、形を名前つき export に替える: `vi.doMock('@/components/marketing/LandingPage', () => ({ LandingPage: () => createElement('main', { id: 'landing' }) }))`・`vi.doUnmock('@/components/marketing/LandingPage')`。it 名と期待値 (`nonce` つきの JSON-LD・事業者名・URL・`<main id="landing"></main>`・canonical `/`) は変えない |
+| `:428-431` の it `画面の本体 (LandingPageView.tsx) はクライアントコンポーネントのまま、殻 (page.tsx) は Server Component` | `isClientModule('src/app/LandingPageView.tsx')` が true・`isClientModule('src/app/page.tsx')` が false | it 名を `紹介ページの本体 (src/components/marketing/LandingPage.tsx) と殻 (page.tsx) はどちらも Server Component (client は島だけ)` に替え、`isClientModule('src/components/marketing/LandingPage.tsx')` と `isClientModule('src/app/page.tsx')` が両方 false を見る |
+| `:252` の `expect(metadata.description).toBe(SITE_DESCRIPTION)`・`:373` の JSON-LD の `description: SITE_DESCRIPTION` | 定数を参照 | 変更なし (`SITE_DESCRIPTION` の文を替えても、定数どうしの比較なので赤にならない) |
+| `:148` (`/` のメタ情報を持つファイルは `src/app/page.tsx`) | 殻が `publicPageMetadata('/')` を呼ぶ | 変更なし (殻を残す) |
+
+### 16.6 シナリオ (§0.3) とテストの対応
+
+| # | 確かめるテスト |
+|---|---|
+| S-1 | E-1・E-2・E-3・E-10 |
+| S-2 | E-5・E-6・U-14 |
+| S-3 | E-15 (Tab の順)・E-4 (FAQ の Enter)・E-9 (フォーカスの見え方) |
+| S-4 | E-8・U-14・E-3 (`role=status`) |
+| S-5 | E-7 |
+| S-6 | U-11・E-3 |
+| S-7 | U-17 (`/` の振り分けの値)・既存 `lib/supabase/__tests__/middleware.test.ts` (`updateSession` が `resolveOnboardingRedirect` を通る経路。`:295`・`:362` 付近)・既存 e2e `tests/e2e/fixtures-smoke/fresh-user-smoke.spec.ts` (初期設定がまだの人が `/` → `/onboarding`) |
+| S-8 | E-16 |
+| S-9 | U-14 (JS 無しの HTML に全文)・E-13 (JSON-LD)・既存 `tests/seo-public-pages-1867.test.tsx` (メタ情報・JSON-LD の中身) |
+| S-10 | E-10・E-11・U-4 |
+| S-11 | U-18 (Chromium しか無い e2e では未対応のブラウザを再現できないので、未対応でも内容が変わらない作りを静的に確かめる) |
+| S-12 | E-12・既存 `tests/e2e/csp-nonce.spec.ts:136-158` |
+| S-13 | `tests/public-claims-guard.test.ts` (§16.2)・U-2 |
+| S-14 | E-10・E-11・E-12・E-8 + 整合ゲートの Lighthouse (§10.3) |
+
 ---
 
 ## 17. 段分け (実装 WF は 1 本・同じ worktree。段ごとに 2 枚レビューを閉じる)
@@ -1929,10 +1941,10 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | 段 | 中身 | 触るファイル |
 |---|---|---|
 | 0. 実績の表示の掃除 | `(auth)/layout.tsx` の「10,000+ ユーザーが実践中」とアバターのプレースホルダーを消す。`public-claims-guard` に `FORBIDDEN` 2 語と `PUBLIC_SOURCE_FILES` (まず `(auth)/layout.tsx` だけ) | `src/app/(auth)/layout.tsx`、`tests/public-claims-guard.test.ts` |
-| 1. 紹介ページの本体 | `landing-copy.ts`・`demo-state.ts`・`marketing.css`・`LandingPage.tsx`・`LandingJsonLd.tsx`・sections 11 本・primitives 5 本・`page.tsx` の差し替え・写真 3 枚と `CREDITS.md`・許可リスト 2 件・`public-claims-guard` の残り・`tests/landing-page-1867.test.ts` | `src/app/page.tsx`、`src/components/marketing/**` (21 本)、`public/marketing/photos/{salad-bowl,grilled-fish-set,tomato-pasta}.webp`、`public/marketing/photos/CREDITS.md`、`tests/csp-no-inline-script.test.ts`、`tests/inner-html-contract.test.ts`、`tests/public-claims-guard.test.ts`、`tests/landing-page-1867.test.ts` |
+| 1. 紹介ページの本体 | `landing-copy.ts`・`demo-state.ts`・`marketing.css`・`LandingPage.tsx`・sections 12 本・primitives 5 本・殻 `page.tsx` の本体の差し替え (§9.5)・`LandingPageView.tsx` の削除・`SITE_DESCRIPTION` の文 (§9.5)・写真 3 枚と `CREDITS.md`・`public-claims-guard` の残り (読む先を `LandingPage.tsx`・`landing-copy.ts` に)・`seo-public-pages-1867` のモックの先 (§16.5)・`tests/landing-page-1867.test.ts`。許可リスト (`csp-no-inline-script`・`inner-html-contract`) は変えない (§9.11) | `src/app/page.tsx` (変更)、`src/app/LandingPageView.tsx` (削除)、`src/lib/seo/public-pages.ts` (値 1 つ)、`src/components/marketing/**` (21 本)、`public/marketing/photos/{salad-bowl,grilled-fish-set,tomato-pasta}.webp`、`public/marketing/photos/CREDITS.md`、`tests/public-claims-guard.test.ts`、`tests/seo-public-pages-1867.test.tsx`、`tests/landing-page-1867.test.ts` |
 | 2. e2e と門 | `landing-page.spec.ts`・門への登録 (yml と `PW_ARGS` の末尾に同じ 1 語)・番兵 | `tests/e2e/landing-page.spec.ts`、`.github/workflows/e2e-local.yml` (1 本目の `npx playwright test` の引数の末尾に `tests/e2e/landing-page.spec.ts` の 1 行)、`scripts/local-ci.sh` (`PW_ARGS` の末尾に同じ 1 語)、`tests/e2e-landing-suite.test.ts` |
 
-段 0 を先にするのは、実績の表示を消すのに紹介ページの完成を待たせないため。段 1 は 30 ファイルほどだが、`sections/` と `primitives/` は互いに独立で、`landing-copy.ts` の型に従うだけなので 1 段で積む (レビューは §19 の表と §16 の it で確かめる)。
+段 0 を先にするのは、実績の表示を消すのに紹介ページの完成を待たせないため。段 1 は 31 ファイル (製品の変更 2・削除 1・新設 21、資産の新設 4、テスト 3 (変更 2・新設 1)) だが、`sections/` と `primitives/` は互いに独立で、`landing-copy.ts` の型に従うだけなので 1 段で積む (レビューは §19 の表と §16 の it で確かめる)。`LandingPageView.tsx` の削除と、それを読む 2 本のテスト (`public-claims-guard`・`seo-public-pages-1867`) の読む先の変更は、同じ段の同じコミットで行う (片方だけだと import が解決できず赤)。
 
 ---
 
@@ -1941,18 +1953,18 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 | 種類 | 名前 |
 |---|---|
 | ディレクトリ | `src/components/marketing/`、`src/components/marketing/sections/`、`src/components/marketing/primitives/`、`public/marketing/photos/`、`docs/design/marketing/`、`docs/design/marketing/prototype/` |
-| ファイル (製品) | `src/components/marketing/landing-copy.ts`、`demo-state.ts`、`marketing.css`、`LandingPage.tsx`、`LandingJsonLd.tsx`、`sections/SiteHeader.tsx`、`sections/HeroSection.tsx`、`sections/HowItWorksSection.tsx`、`sections/StorySteps.tsx`、`sections/DemoSection.tsx`、`sections/FeaturesSection.tsx`、`sections/BadgesSection.tsx`、`sections/TrustSection.tsx`、`sections/FaqSection.tsx`、`sections/FinalCtaSection.tsx`、`sections/SiteFooter.tsx`、`sections/MobileStickyCta.tsx`、`primitives/Reveal.tsx`、`primitives/PhoneFrame.tsx`、`primitives/CtaLink.tsx`、`primitives/useInViewOnce.ts`、`primitives/useReducedMotion.ts` |
+| ファイル (製品・21 本) | `src/components/marketing/landing-copy.ts`、`demo-state.ts`、`marketing.css`、`LandingPage.tsx`、`sections/SiteHeader.tsx`、`sections/HeroSection.tsx`、`sections/HowItWorksSection.tsx`、`sections/StorySteps.tsx`、`sections/DemoSection.tsx`、`sections/FeaturesSection.tsx`、`sections/BadgesSection.tsx`、`sections/TrustSection.tsx`、`sections/FaqSection.tsx`、`sections/FinalCtaSection.tsx`、`sections/SiteFooter.tsx`、`sections/MobileStickyCta.tsx`、`primitives/Reveal.tsx`、`primitives/PhoneFrame.tsx`、`primitives/CtaLink.tsx`、`primitives/useInViewOnce.ts`、`primitives/useReducedMotion.ts` |
 | ファイル (資産) | `public/marketing/photos/salad-bowl.webp`、`grilled-fish-set.webp`、`tomato-pasta.webp`、`CREDITS.md` |
 | ファイル (テスト) | `tests/landing-page-1867.test.ts`、`tests/e2e/landing-page.spec.ts`、`tests/e2e-landing-suite.test.ts` |
 | ファイル (設計) | `docs/design/marketing/01-landing-site.md`、`docs/design/marketing/prototype/index.html` |
-| 関数 | `landingClaims`、`landingImagePaths`、`missingClaimIds`、`demoReducer`、`selectedSampleId`、`useInViewOnce`、`serializeJsonLd`、`landingJsonLd`、`LandingJsonLd`、`LandingPage`、`SiteHeader`、`HeroSection`、`HowItWorksSection`、`StorySteps`、`DemoSection`、`FeaturesSection`、`BadgesSection`、`TrustSection`、`FaqSection`、`FinalCtaSection`、`SiteFooter`、`MobileStickyCta`、`Reveal`、`PhoneFrame`、`CtaLink`、(テスト内) `isSerializeJsonLdCall` |
+| 関数 | `landingClaims`、`landingImagePaths`、`missingClaimIds`、`demoReducer`、`selectedSampleId`、`useInViewOnce`、`LandingPage`、`SiteHeader`、`HeroSection`、`HowItWorksSection`、`StorySteps`、`DemoSection`、`FeaturesSection`、`BadgesSection`、`TrustSection`、`FaqSection`、`FinalCtaSection`、`SiteFooter`、`MobileStickyCta`、`Reveal`、`PhoneFrame`、`CtaLink` (JSON-LD の関数・部品は新設しない: 段 1 の `buildSiteJsonLd`・`serializeJsonLd`・`SiteStructuredData` を使う) |
 | 定数 | `LANDING_COPY`、`LANDING_SITE_NAME`、`LANDING_IMAGE_PATH_PATTERN`、`EVIDENCE_PATH_PATTERN`、`DEMO_ANALYZING_MS`、`DEMO_ANALYZING_MS_REDUCED`、`HEADER_SCROLLED_PX`、`REVEAL_THRESHOLD`、`REVEAL_STAGGER_MS`、`REVEAL_STAGGER_MAX`、`STORY_ROOT_MARGIN`、`COPYRIGHT_YEAR`、`SIGNUP_HREF`、`DEMO_ANCHOR`、`DEMO_INITIAL_STATE`、(部品内) `HEADER_MARK_PX`、`DEMO_PHOTO_PX`、(テスト内) `TOKEN_TO_BRAND`、`ALLOWED_IMPORT_PREFIXES`、`MARKETING_CSS`、`BADGES_MIGRATION`、`LCP_BUDGET_MS`、`CLS_BUDGET`、`JS_TRANSFER_BUDGET_BYTES`、`LANDING_SPEC` |
 | 型 / Zod | `LandingImageSchema`、`LandingLinkSchema`、`LandingClaimSchema`、`DemoSampleSchema`、`FeatureCardSchema`、`BadgeCardSchema`、`FaqItemSchema`、`TrustItemSchema`、`StepSchema`、`LandingCopySchema`、`LandingCopy`、`LandingClaim`、`DemoSample`、`DemoSampleId`、`FeatureCard`、`BadgeCard`、`DemoSampleKey`、`DemoState`、`DemoEvent`、`UseInViewOnceOptions`、`RevealProps` |
 | CSS のクラス / 変数 | `.lp` と `--lp-*` (§9.1)、`.lp-container` `.lp-section` `.lp-lead` `.lp-note` `.lp-headline-accent` `.lp-cta` (`--primary` `--secondary` `--on-dark` `--compact`) `.lp-header` `.lp-reveal` `.lp-hero-rise` `.lp-hero-slides` `.lp-hero-slide` `.lp-blob` `.lp-phone` `.lp-phone-screen` `.lp-demo-progress` `.lp-faq-panel` `.lp-faq-chevron` `.lp-sticky-cta` |
 | DOM の id | `hero` `hero-end` `how` `demo` `demo-title` `features` `badges` `trust` `faq` `cta` `faq-button-N` `faq-panel-N` |
 | 環境変数 | 無し (e2e の予算の上書き `LANDING_LCP_BUDGET_MS` `LANDING_CLS_BUDGET` `LANDING_JS_BUDGET_BYTES` はテストの実行時だけ読む。`src/lib/env.ts` の一覧には足さない: アプリは読まない) |
-| 許可リストの行 | `ALLOWED_INLINE_SCRIPTS` に `LandingJsonLd.tsx` (jsx・1)、`ALLOWED_HTML_SINKS` に `LandingJsonLd.tsx` |
-| 消すもの | `src/app/page.tsx` の現行の全部 (`colors`・`sampleMeals`・`features`・`badges`・`faqs`・`useCountUp`・`LandingPage` の本体)、`src/app/(auth)/layout.tsx:40-51` の実績の表示 |
+| 許可リストの行 | 無し (`ALLOWED_INLINE_SCRIPTS`・`ALLOWED_HTML_SINKS` は段 1 の `SiteStructuredData.tsx` の 1 件ずつのまま。§9.11) |
+| 消すもの | `src/app/LandingPageView.tsx` (ファイルごと。現行の本体の全部: `colors`・`sampleMeals`・`features`・`badges`・`faqs`・`useCountUp`・`LandingPage` の本体)、`src/app/page.tsx` の `import LandingPageView from './LandingPageView'` と `<LandingPageView />` と、先頭のコメントの「画面の本体は LandingPageView.tsx」「画面の文言・動きは LandingPageView.tsx のまま変えていない」(§9.5 の全文で置き換える)、`src/app/(auth)/layout.tsx:40-51` の実績の表示 |
 | route・テーブル・列・RLS・Storage・エラーコード | 無し |
 
 列挙の基準: §9 と §8 で新しく宣言する、モジュール直下の名前 (export の有無を問わない)。関数の中の局所の関数 (`update` `onScroll` `select`) は数えない。
@@ -1961,33 +1973,40 @@ E-10・E-11 の予算は環境変数で上書きできる (計測機の性能差
 
 ## 19. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `835fbe7c`)。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4`。#1874 で殻と本体に分かれた後)。e2e は `tests/e2e/` の `goto("/")` (と ``goto(`${BASE_URL}/`)``) を引いた 13 本 (`tests/e2e/.exploration/` の探索用は門にも定期の実行にも入らないので数えない)。
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
-| `tests/public-claims-guard.test.ts` | `src/app/page.tsx`・`LandingPage`・`q: "データは安全ですか？"`・`%以上の精度`・`10万人` | `PUBLIC_PAGES` の `/` は `@/app/page` の default を描く。FAQ の行は `src/app/page.tsx` から読む | §9.7・§16.2 (`LandingPage` を描く・`PUBLIC_SOURCE_FILES`・`FORBIDDEN` 2 語・FAQ の行は `landing-copy.ts`) | 0, 1 |
-| `tests/csp-no-inline-script.test.ts` | `<script`・`ALLOWED_INLINE_SCRIPTS` | 許可リストは空 (検出 0 件) | §9.11 の 1 件を足す (`count: 1`・`nonce={nonce ?? undefined}`) | 1 |
-| `tests/inner-html-contract.test.ts` | `dangerouslySetInnerHTML`・`ALLOWED_HTML_SINKS` | `AIChatBubble.tsx` だけ | §9.11 の 1 件を足す (差し込みは変数 `json` だけ・1 か所) | 1 |
+| `tests/public-claims-guard.test.ts` | `LandingPageView`・`LandingPage`・`q: "データは安全ですか？"`・`%以上の精度`・`10万人` | 描画は `@/app/LandingPageView` の default (`:65`)。`PUBLIC_PAGES` の 1 行目は `src/app/LandingPageView.tsx` (`:78`)。FAQ の行は `src/app/LandingPageView.tsx` から読む (`:397`) | §9.7・§16.2 (import を `@/components/marketing/LandingPage` の `LandingPage` に・`PUBLIC_PAGES` の `file` を `src/components/marketing/LandingPage.tsx` に・`PUBLIC_SOURCE_FILES` (`landing-copy.ts`・`src/lib/seo/public-pages.ts`・`(auth)/layout.tsx`)・`FORBIDDEN` 2 語・FAQ の行は `landing-copy.ts`) | 0, 1 |
+| `tests/seo-public-pages-1867.test.tsx` | `src/app/page.tsx`・`LandingPageView`・`SITE_DESCRIPTION`・`SiteStructuredData`・`isClientModule` | `:407-426` が殻の `default` を await して描き (JSON-LD の nonce・事業者名・URL・canonical `/`)、本体は `vi.doMock('@/app/LandingPageView')` (`:413`・`:424`)。`:428-431` が `isClientModule('src/app/LandingPageView.tsx')` が true・`isClientModule('src/app/page.tsx')` が false を見る | §16.5 (モックの先を `@/components/marketing/LandingPage` (名前つき export) に・`:428-431` の it を `LandingPage.tsx` と `page.tsx` がどちらも Server Component を見る形に)。`SITE_DESCRIPTION` を参照する `:252`・`:373` は変更なし | 1 |
+| `tests/eslint-next16-config.test.ts` | `src/app/page.tsx` | `WEB_FILES = ['src/app/page.tsx', 'next.config.mjs']` (`:39`) で、そのパスの ESLint の設定 (`calculateConfigForFile`) を確かめる | 変更なし (殻 `src/app/page.tsx` を残す。パスが消えると設定の計算の対象が無くなるので、殻を消さないことが条件) | – |
+| `tests/csp-no-inline-script.test.ts` | `<script`・`ALLOWED_INLINE_SCRIPTS` | 許可リストは `src/components/seo/SiteStructuredData.tsx` の 1 件 (`jsx`・`count: 1`。`:67-76`) | 変更なし (§9.11。紹介ページの部品は `<script` を書かない) | – |
+| `tests/inner-html-contract.test.ts` | `dangerouslySetInnerHTML`・`ALLOWED_HTML_SINKS` | `AIChatBubble.tsx` と `src/components/seo/SiteStructuredData.tsx` (`:181`) の 2 件 | 変更なし (§9.11。紹介ページの部品は HTML を差し込まない) | – |
 | `tests/metadata-public-paths-1845.test.ts` | `/guide/`・`/marketing/photos/`・`.webp`・`<Image src=` | src の中のルートからの画像のパスは public に実在し matcher の外 | 写真 3 枚を `public/marketing/photos/` に置く。`.webp` は matcher の除外 (`webp`) に当たる。`<Image src="/icon.svg">` は既存のファイル | 1 |
 | `tests/guide-images-1852.test.ts` | `/guide/*.png`・`literalGuideImagePaths` | `src/app/guide` の中だけを走査 | 変更なし (紹介ページの `/guide/*.png` は `src/components/marketing/` にあるので対象外。実在は 1845 と U-4 が見る) | – |
 | `tests/faq-guide-wording-1859.test.ts` | `AI献立アシスタント`・`冷蔵庫優先`・`時短中心`・`和食多め`・`SCREEN_SOURCE_DIRS` (`src/components` を含む) | FAQ とガイドが「」で挙げる名前が画面のソースにある | 変更なし (`landing-copy.ts` は画面のソース側。「今日なに作ろう」の「」は FAQ / ガイドではないので検査されない) | – |
 | `tests/site-config-guard.test.ts` | `homegohan.` | src の全ファイルにドメインを書かない | 変更なし (`landing-copy.ts`・JSON-LD はドメインを書かず `getSiteUrl()`。U-10 の import の範囲と合わせる) | 1 |
 | `tests/design-system-1058.test.ts` | `src/app/layout.tsx`・`globals.css` | layout と globals.css の a11y の固定 | 変更なし (どちらも触らない) | – |
-| `src/__tests__/app/route-uniqueness.test.ts` | `page.tsx` | `/` の page は 1 つ | 変更なし (`src/app/page.tsx` を差し替えるだけ) | 1 |
-| `tests/og-image-1845.test.tsx` | `title.default`・`SITE_TAGLINE` | layout の title は `${SITE_NAME} | ${SITE_TAGLINE}` | 変更なし (`page.tsx` は `title` を書かない。U-15) | 1 |
+| `src/__tests__/app/route-uniqueness.test.ts` | `page.tsx` | `/` の page は 1 つ | 変更なし (`src/app/page.tsx` の殻を残し、中身を 1 つ替えるだけ。`LandingPageView.tsx` は page ではない) | 1 |
+| `tests/og-image-1845.test.tsx` | `title.default`・`SITE_TAGLINE` | layout の title は `${SITE_NAME} | ${SITE_TAGLINE}` | 変更なし (`/` の title は `publicPageMetadata('/')` の `SITE_DEFAULT_TITLE` (同じ文字) のまま。U-15) | 1 |
 | `tests/speed-insights-1179.test.tsx`・`tests/metadata-public-paths-1845.test.ts` | `next/font/google` の `vi.mock` | layout を import するテストは font をモック | 変更なし (`LandingPage` は layout を import しない) | – |
 | `tests/jst-today-source-scan.test.ts` | `toISOString`・`new Date` | 日付の書き方 | 新設コードに日付の処理は無い (`COPYRIGHT_YEAR` は定数。U-16) | – |
-| `tests/e2e/public-policy-pages.spec.ts` | `footer`・`利用規約`・`プライバシーポリシー`・`page.goto("/")` | LP のフッターのリンクから /terms /privacy へ | 変更なし (フッターのリンクの名前と `footer` 要素を保つ。U-14 が先に見る) | 1 |
-| `tests/e2e/b12-a11y-i18n.spec.ts` | `page.goto("/")`・`html[lang]`・`button` の名前 | `/` の `lang=ja` と、ボタンに名前 | 変更なし (ボタンはすべて文字つき。E-8 が重ねて見る) | 1 |
+| `tests/e2e/public-policy-pages.spec.ts` (門) | `footer`・`利用規約`・`プライバシーポリシー`・`page.goto("/")` (`:70`) | LP のフッターのリンクから /terms /privacy へ | 変更なし (フッターのリンクの名前と `footer` 要素を保つ。U-14 が先に見る) | 1 |
+| `tests/e2e/csp-nonce.spec.ts` (門) | `page.goto("/")` (`:142`) | `/` の src の無い `<script>` が 1 本以上あり (`topNonces.length > 0`)、すべて応答の CSP の nonce と同じで、`securitypolicyviolation` が 0 件 | 変更なし (JSON-LD と Next 自身のインラインスクリプトが nonce を持つ。紹介ページの島は CSP に触れない。E-12 が操作を含めて重ねて見る) | 1 |
+| `tests/e2e/smoke.spec.ts` | `page.goto("/")` (`:5`) | `/` の応答が 400 未満で、title が空でない | 変更なし (title は `SITE_DEFAULT_TITLE`) | 1 |
+| `tests/e2e/b10-unexplored-areas.spec.ts` | `page.goto("/")` (`:286`・`:302`・`:316`)・`a[href="/pricing"]`・`a[href="/faq"]`・`a[href="/legal"]`・`networkidle` | 未ログインの `/` のフッターに `/pricing`・`/faq`・`/legal` のリンクがあり、押すと着く (無ければ skip) | 変更なし (フッター §4.7 に 3 つともある。紹介ページは常時の通信をしないので `networkidle` に達する) | 1 |
+| `tests/e2e/b12-a11y-i18n.spec.ts` | `page.goto("/")` (`:44`・`:89`・`:624`)・`html[lang]`・`button` の名前・`img` の alt | `/` の `lang=ja` (A-01)、ボタンに名前 (A-04: `aria-label`・`aria-labelledby`・`innerText`・`title` のどれか)、画像に alt (A-19) | 変更なし (ボタンはすべて文字つき。画像はすべて alt を持つ (装飾のマークは `alt=""`)。E-8 が重ねて見る) | 1 |
+| `tests/e2e/w5-3-menu-gen-adversarial.spec.ts` (門)・`tests/e2e/bug-01-15-19-queue-flow.spec.ts`・`tests/e2e/bug-294-catalog-uuid-validation.spec.ts`・`tests/e2e/fixtures-smoke/fresh-user-smoke.spec.ts` | `authedPage.goto("/")`・`tourPendingUser.goto("/")`・`onboardingPendingUser.goto("/")` | ログイン済みで `/` を開く (proxy が `/home`・初期設定へ送る。fresh-user-smoke は `/onboarding` に着くことを見る) | 変更なし (ログイン済みの振り分けは変えない。S-7・U-17) | – |
+| `tests/e2e/w5-12-admin-adversarial.spec.ts`・`tests/e2e/w5-13-new-features-adversarial.spec.ts`・`tests/e2e/wave5-w56-settings-account-profile-adversarial.spec.ts`・`tests/e2e/health/checkups-crud.spec.ts` | `page.goto("/")` / ``goto(`${BASE_URL}/`)`` | 同じオリジンのページを 1 枚開いてから、`fetch` で API の 401 を確かめる (`/` の中身は見ない。wave5-w56 の `:1056` はログイン後に開く) | 変更なし (`/` が 200 で開けば足りる) | – |
 | `tests/e2e/bug-140-145-security-auth.spec.ts`・`tests/e2e/adversarial-deep.spec.ts` | `content-security-policy`・`frame-ancestors`・`/` | `/` の応答に CSP | 変更なし (proxy が付ける) | – |
 | `tests/local-ci-workflow-sync.test.ts` | `PW_ARGS`・`npx playwright test`・`e2e-local.yml` | yml と `PW_ARGS` が同じ並び | 両方の末尾に `tests/e2e/landing-page.spec.ts` の同じ 1 語 (片方だけだと赤) | 2 |
 | `tests/e2e-csp-nonce-suite.test.ts`・`tests/e2e-menu-queue-suite.test.ts`・`tests/e2e-tour-contract.test.ts` | `PW_ARGS`・`e2e-local.yml` | 自分の spec が両方にある (`toContain`) | 変更なし (末尾に足すだけ) | 2 |
 | `tests/e2e-api-paths.test.ts` | `"/api/`・`SPEC_FILES` | 一覧の spec が叩く `/api/...` が実在 | 変更なし (新 spec は `/api/` を書かないので `SPEC_FILES` に足さない) | – |
 | `src/__tests__/config/e2e-auth-page-wait.test.ts` | `goto(…/login`・`networkidle` | ログイン系の画面のあと `networkidle` を待たない | 変更なし (新 spec は `/login` を開かない) | – |
 | `tests/test-speed-ratchet.test.ts` (記録のみ) | – | 1 ファイル 5 秒 | 新設の unit は `LandingPage` の描画 1 回と小さなファイルの読み取りだけ (5 秒に収まる)。migration の走査は `badges` の `INSERT` 行だけを正規表現で拾う | 1 |
-| `tests/next15-async-request-api-scan.test.ts` | `headers()` | `headers()` は await の直下 | 変更なし (`getCspNonce` は既存。`page.tsx` は `await getCspNonce()`) | 1 |
+| `tests/next15-async-request-api-scan.test.ts` | `headers()` | `headers()` は await の直下 | 変更なし (`getCspNonce` は既存。殻の `await getCspNonce()` もそのまま) | – |
 | `tests/docs-table-column-count.test.ts` | `docs/**/*.md` の表 | 表の列の数 | 本書と `prototype/` (html は対象外) の表は列の数をそろえる (設計の段で確認済み) | – |
-| `tests/csp-no-inline-script.test.ts` の `INLINE_SCRIPT_QUICK_FILTER` | `<script` を含む src のファイル | – | `LandingJsonLd.tsx` 以外の新設ファイルに `<script` の文字列を書かない (コメントにも書かない: 構文木では反応しないが、quick filter で構文木にされる) | 1 |
+| `tests/csp-no-inline-script.test.ts` の `INLINE_SCRIPT_QUICK_FILTER` | `<script` を含む src のファイル | – | 新設ファイル (`src/components/marketing/**`) に `<script` の文字列を書かない (コメントにも書かない: 構文木では反応しないが、quick filter で構文木にされる。U-12 が重ねて見る) | 1 |
 | `tests/zod-single-copy-1444.test.ts`・`tests/zod-jitless-client.test.ts` | `from 'zod'` | zod の写しは 1 つ・client で jit を使わない | `landing-copy.ts` は `import { z } from 'zod'` (既存と同じ入口)。client の部品からも読まれるが、スキーマは定義だけで `.parse` はテストでしか呼ばない | 1 |
 | `apps/mobile/__tests__/**` | – | – | 変更なし (モバイルは触らない) | – |
 
@@ -1999,10 +2018,11 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 |---|---|---|
 | `docs/design/CLAUDE.md` のドメイン構成の表 | `marketing/` の行を足す (担当範囲: 未ログインの人向けの紹介ページ (`/`)・公開ページの見た目。要件参照: Issue #1867) | 本冊の設計 PR のマージと同日 |
 | `docs/design/marketing/CLAUDE.md` (新設) | ドメインの指針: ファイル一覧 (01)・文言は `landing-copy.ts` が正本で主張には `evidence`・実績の数字を作らない・絵文字を使わない・CSP と全ページ動的の前提・更新は月に数回 | 同上 |
-| `docs/design/cross/18-csp-nonce.md` §6.1 (インラインスクリプト 0 本) | 「紹介ページの JSON-LD の 1 本 (nonce つき。`tests/csp-no-inline-script.test.ts` の許可リストに 1 件) がある」と現在形に直す | 段 1 のマージと同日 |
+| `docs/design/cross/18-csp-nonce.md` §9.11 付近 (許可リストの説明。origin/main `be462ab4` の `:898`・`:963-971`) | 段 1 (#1874) が「`SiteStructuredData.tsx` の 1 本。nonce は `src/app/page.tsx` が読んで渡す」と現在形で書き済み。本冊は殻と `SiteStructuredData` を残すので、直すことは無い (確認だけ) | – |
+| `docs/design/billing/01-billing-core.md` (origin/main `be462ab4` の `:3849`。`/pricing` を指す箇所の一覧の行) | `src/app/LandingPageView.tsx:586` (トップのフッターの「料金プラン」) を、`src/components/marketing/landing-copy.ts` のフッターの `料金プラン` → `/pricing` (§4.7) を指す記述に直す (`LandingPageView.tsx` を消すため、指し先が無くなる) | 本冊の実装 PR のマージと同日 |
 | `docs/design/cross/03-design-system.md` §16 | 絵文字の禁止の例として「紹介ページも lucide のみ」を 1 行 (任意) | 任意 |
 | `docs/design/cross/06-perf-cache.md` §3.1 | FID の行を INP (≤ 200 ms) に置き換える (web.dev の 2024-03-12 の置き換え) | 任意 (本冊の §10 が先に INP を使う) |
-| Issue #1867 | 段 1 (検索の穴埋め) の B 型と本冊の実装 WF の順 (段 1 が先でも後でも衝突しない: `/` の description・canonical は本冊が持つ) をコメントで記録 | 実装 WF の投入時 (オーケストレーター) |
+| Issue #1867 | 段 1 (検索の穴埋め) は #1874 で先に着地し、本冊はその部品 (`publicPageMetadata('/')`・`SiteStructuredData`) を流用して本体だけを差し替えること・`SITE_DESCRIPTION` の文を直すこと (§9.5) をコメントで記録 | 実装 WF の投入時 (オーケストレーター) |
 
 ---
 
@@ -2010,10 +2030,10 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 区分 | 対象 |
 |---|---|
-| 保持 (変えない) | `src/app/layout.tsx` (title・OGP・`force-dynamic`・フォント・スキップリンク)、`src/proxy.ts`、`lib/supabase/middleware.ts`、`src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/lib/site-config.ts`、`src/lib/brand-image.tsx`、`src/app/guide/guide-content.ts`、`public/guide/*.png`、`public/icon.svg`、`src/app/robots.ts`、`src/app/globals.css`、`next.config.mjs`、`src/components/handson-tour/useReducedMotion.ts`、ほかの公開ページ (`/about` ほか)、`apps/mobile` |
-| 変更 | `src/app/page.tsx` (全面差し替え)、`src/app/(auth)/layout.tsx` (実績の表示の削除)、`tests/public-claims-guard.test.ts`、`tests/csp-no-inline-script.test.ts` (許可リスト 1 件)、`tests/inner-html-contract.test.ts` (許可リスト 1 件)、`scripts/local-ci.sh` (`PW_ARGS` の末尾 1 語)、`.github/workflows/e2e-local.yml` (1 行) |
+| 保持 (変えない) | `src/app/layout.tsx` (title・OGP・`force-dynamic`・フォント・スキップリンク)、`src/proxy.ts`、`lib/supabase/middleware.ts`、`src/lib/security/csp.ts`、`src/lib/security/csp-nonce.ts`、`src/lib/site-config.ts`、`src/lib/brand-image.tsx`、`src/app/guide/guide-content.ts`、`public/guide/*.png`、`public/icon.svg`、`src/app/robots.ts`、`src/app/sitemap.ts`、`src/components/seo/SiteStructuredData.tsx`、`src/lib/seo/json-ld.ts`、`src/lib/brand-asset-paths.ts`、`src/lib/seo/public-pages.ts` の `SITE_DESCRIPTION` 以外 (`publicPageMetadata`・`PUBLIC_PAGE_PATHS`・`PUBLIC_PAGE_SEO` の形・`SITE_TWITTER_DESCRIPTION` ほか)、`tests/csp-no-inline-script.test.ts`、`tests/inner-html-contract.test.ts`、`tests/eslint-next16-config.test.ts`、`src/app/globals.css`、`next.config.mjs`、`src/components/handson-tour/useReducedMotion.ts`、ほかの公開ページ (`/about` ほか)、`apps/mobile` |
+| 変更 | `src/app/page.tsx` (殻の形は保ち、`<LandingPageView />` を `<LandingPage />` に替える・先頭のコメント。§9.5)、`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` の値 1 つ。§9.5)、`src/app/(auth)/layout.tsx` (実績の表示の削除)、`tests/public-claims-guard.test.ts` (§9.7)、`tests/seo-public-pages-1867.test.tsx` (モックの先と it 1 本。§16.5)、`scripts/local-ci.sh` (`PW_ARGS` の末尾 1 語)、`.github/workflows/e2e-local.yml` (1 行) |
 | 新規 | §18 |
-| 削除 | `src/app/page.tsx` の現行の本体 (`useCountUp` を含む)、`(auth)/layout.tsx` の実績の表示 |
+| 削除 | `src/app/LandingPageView.tsx` (現行の本体の全部。`useCountUp` を含む)、`src/app/page.tsx` の `LandingPageView` の import と描画、`(auth)/layout.tsx` の実績の表示 |
 
 ---
 
@@ -2021,7 +2041,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 検査 | どこで | 赤になる条件 |
 |---|---|---|
-| 公開の主張 (FORBIDDEN) がソースにも描画にも無い | `tests/public-claims-guard.test.ts` | `landing-copy.ts`・`LandingJsonLd.tsx`・`(auth)/layout.tsx`・`page.tsx` のソース、または `LandingPage` の描画に FORBIDDEN の語 (`10,000+`・`ユーザーが実践中` を含む) |
+| 公開の主張 (FORBIDDEN) がソースにも描画にも無い | `tests/public-claims-guard.test.ts` | `LandingPage.tsx`・`landing-copy.ts`・`src/lib/seo/public-pages.ts`・`(auth)/layout.tsx` のソース、または `LandingPage` の描画に FORBIDDEN の語 (`10,000+`・`ユーザーが実践中` を含む) |
 | 主張に根拠がある | `tests/landing-page-1867.test.ts` U-2・U-3 | `evidence` のパスが実在しない。カードの `claimId` が `claims` に無い |
 | 文言の形 | U-1 | `LandingCopySchema.parse` が失敗 (長さ・パスの形・リンクの形・件数) |
 | 画像の実在と重さ | U-4・`tests/metadata-public-paths-1845.test.ts` | `public/` に無い。写真が 120 KB 超。ガイドの画像が 540×1080 でない |
@@ -2032,11 +2052,14 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 絵文字 | U-9 | `landing-copy.ts` に Extended_Pictographic |
 | 依存の範囲 | U-10 | `src/components/marketing/` が許可外のモジュール (Supabase・`@/lib/env`・`next/headers` など) を import |
 | デモの遷移 | U-11 | §13.3 の表と違う遷移 |
-| 構造化データの中身 | U-12・E-13 | `offers`・`aggregateRating` がある。`<` がエスケープされない |
-| HTML の差し込み | `tests/inner-html-contract.test.ts` | `LandingJsonLd.tsx` 以外で差し込む。差し込みが `json` 以外 |
-| インラインスクリプト | `tests/csp-no-inline-script.test.ts` | `LandingJsonLd.tsx` の 1 件以外。nonce が式でない |
+| 構造化データの中身 | 既存 `tests/seo-public-pages-1867.test.tsx` (`buildSiteJsonLd` の `toEqual`)・U-12・E-13 | JSON-LD が段 1 の形と違う (`offers`・`aggregateRating` を足しても赤)。紹介ページの部品が 2 本目の JSON-LD を出す |
+| 殻と本体 | U-13・§16.5 | `LandingPageView.tsx` が残る・殻が `LandingPage` と `SiteStructuredData` を描かない・本体が `'use client'` になる |
+| HTML の差し込み | `tests/inner-html-contract.test.ts`・U-12 | `SiteStructuredData.tsx` と `AIChatBubble.tsx` 以外で差し込む |
+| インラインスクリプト | `tests/csp-no-inline-script.test.ts`・U-12 | `SiteStructuredData.tsx` の 1 件以外。nonce が式でない |
 | ページの骨格 | U-14・E-1 | h1 が 1 つでない。セクションの順が違う。フッターの法務リンクが無い |
-| メタ情報 | U-15 | description が copy と違う。title を上書きしている |
+| メタ情報 | U-15・既存 `tests/seo-public-pages-1867.test.tsx` | `/` の metadata が `publicPageMetadata('/')` と違う。`SITE_DESCRIPTION` が §9.5 の文と違う・長さが外れる・「次世代」を含む |
+| ログイン済みの振り分け | U-17 | `/` の振り分け先が変わる・`null` (紹介ページを描く) を返す組み合わせができる |
+| 未対応ブラウザの扱い | U-18 | `animation-timeline` の宣言が `@supports` の外にある・部品のコードが `animation-timeline` に頼る |
 | 日付 | U-16・`tests/jst-today-source-scan.test.ts` | `new Date` で年を作る |
 | 速さ | E-10・E-11 | LCP / CLS / JS の転送量 / 外部の要求が予算超え |
 | CSP | E-12 | `securitypolicyviolation` が 1 件以上 |
