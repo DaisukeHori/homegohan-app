@@ -2,7 +2,7 @@ import { router, useNavigationContainerRef, usePathname, useRootNavigationState 
 import { useEffect, useRef } from "react";
 
 import { FROZEN_SCREEN_ROUTE_NAME, isMobileFrozenExemptPath } from "../lib/account-frozen";
-import { ENTRY_SCREEN_PATH } from "../lib/legal-consent";
+import { ENTRY_SCREEN_PATH, collapseStackAction, findNavigatorOwningRoute, routeNameOf } from "../lib/legal-consent";
 import { useAccountFrozen } from "../providers/AccountFrozenProvider";
 import { useAuth } from "../providers/AuthProvider";
 import { useProfile } from "../providers/ProfileProvider";
@@ -11,7 +11,10 @@ import { useProfile } from "../providers/ProfileProvider";
  * アカウントの凍結 (BAN) のゲート (#1861)。ルートの layout (app/_layout.tsx) が Provider の内側・Stack の後ろに 1 つだけ置く。描くものは無い。
  * 規約の同意のゲート (src/components/legal/LegalConsentGate.tsx) と同じ形で、凍結が先 (凍結中は同意のゲートが畳まない)。
  *   - サインイン中で frozen、いまの画面が対象 (対象外のパスでも凍結の画面でもない) → ルートの Stack を凍結の画面 1 つに畳む
- *     (navigationRef.reset。凍結の画面の下に画面を残さない。開いていた画面は一緒に外れる)。
+ *     (navigationRef.dispatch。完全な state の RESET。規約の同意のゲートと同じ部品 (findNavigatorOwningRoute・collapseStackAction) を使う。
+ *     凍結の画面の下に画面を残さない。開いていた画面は一緒に外れる。凍結の画面の route が既にあれば key ごと再利用し、取り除かない)。
+ *     同意待ちの同意画面 (app/legal-consent.tsx) も一緒に外れる (同意画面は凍結中は usePreventRemove で止めない。止めていると
+ *     expo-router 58 がこの RESET ごと捨てる。legalConsentScreenPreventsRemoval の accountFrozen)。
  *     前面が、このゲートが畳んだ凍結の画面 (openedRef) なら何もしない。前面が凍結の画面でも、このゲートが畳んでいない
  *     (deep link で開いた) なら畳み直す。凍結の画面の上に別の画面が積まれた・置き換えられた (通知のタップなど) ときも、
  *     前面が凍結の画面でなくなるので畳み直す
@@ -41,7 +44,7 @@ export function AccountFrozenGate() {
   useEffect(() => {
     if (!navigationReady) return;
     try {
-      const onFrozenScreen = navigationRef.getCurrentRoute()?.name === FROZEN_SCREEN_ROUTE_NAME;
+      const onFrozenScreen = routeNameOf(navigationRef.getCurrentRoute()) === FROZEN_SCREEN_ROUTE_NAME;
       if (!onFrozenScreen) closingRef.current = false;
 
       if (!session) {
@@ -55,8 +58,16 @@ export function AccountFrozenGate() {
         if (onFrozenScreen && openedRef.current) return;
         // 対象外のパス (認証の途中・公開ページ) はそのまま使わせる
         if (!onFrozenScreen && isMobileFrozenExemptPath(pathname)) return;
-        // ルートの Stack を凍結の画面 1 つに畳む (畳み直す)。index: 0 は「最初の route を前面にする」の意味の慣用の値
-        navigationRef.reset({ index: 0, routes: [{ name: FROZEN_SCREEN_ROUTE_NAME }] });
+        // ルートの Stack を凍結の画面 1 つに畳む (畳み直す)
+        const owner = findNavigatorOwningRoute(navigationRef.getRootState(), FROZEN_SCREEN_ROUTE_NAME);
+        if (owner === null) {
+          // ルートの Stack の state がまだそろっていない。openedRef を立てず、次の描画 (pathname か state が変わる) で試す
+          console.warn("[AccountFrozenGate] root stack is not ready; retry on next render");
+          return;
+        }
+        // expo-router 58 の RESET は完全な state (key・index・routeNames・routeKeySeq・stale: false) だけを受け付ける (部分の state は捨てられ、
+        // スピナーのまま止まる)。持ち主の navigator に宛てる。凍結の画面の route が既にあれば key ごと再利用し、取り除かない
+        navigationRef.dispatch(collapseStackAction(owner, FROZEN_SCREEN_ROUTE_NAME));
         openedRef.current = true;
         closingRef.current = false;
         return;

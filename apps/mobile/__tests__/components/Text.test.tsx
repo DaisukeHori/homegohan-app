@@ -8,7 +8,7 @@
 
 import React, { createRef } from 'react';
 import { StyleSheet, Text as RNText, TextInput as RNTextInput } from 'react-native';
-import type { TextStyle } from 'react-native';
+import type { TextInputInstance, TextInstance, TextStyle } from 'react-native';
 import { fireEvent, render, screen } from '@testing-library/react-native';
 
 import { FontsReadyProvider, Text, TextInput } from '../../src/components/ui/Text';
@@ -102,8 +102,8 @@ describe('Text — 読み込みに失敗・Provider の外 (システムの字�
 
 describe('Text / TextInput — react-native の部品と同じに使える', () => {
   it('ref は react-native の部品 (TextInput は focus できる)', () => {
-    const inputRef = createRef<RNTextInput>();
-    const textRef = createRef<RNText>();
+    const inputRef = createRef<TextInputInstance>();
+    const textRef = createRef<TextInstance>();
     render(
       <FontsReadyProvider ready>
         <TextInput ref={inputRef} testID="input" />

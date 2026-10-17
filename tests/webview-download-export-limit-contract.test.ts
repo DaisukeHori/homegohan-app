@@ -23,7 +23,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 // webViewDownload.ts は Expo のネイティブモジュールを import するが、このテストで使うのは定数と、
 // ファイル名・MIME タイプを決める純粋関数だけ。ネイティブモジュールは読み込まない
-vi.mock('expo-file-system', () => ({}));
+vi.mock('expo-file-system/legacy', () => ({}));
 vi.mock('expo-sharing', () => ({}));
 
 import { buildExportFilename, DEFAULT_EXPORT_LIMITS } from '@/lib/account-export';

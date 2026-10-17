@@ -250,7 +250,7 @@ export default function BloodTestsPage() {
         picked = await ImagePicker.launchCameraAsync({
           base64: true,
           quality: 0.85,
-          mediaTypes: ["images"] as any,
+          mediaTypes: ["images"],
         });
       } else {
         const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -261,7 +261,7 @@ export default function BloodTestsPage() {
         picked = await ImagePicker.launchImageLibraryAsync({
           base64: true,
           quality: 0.85,
-          mediaTypes: ["images"] as any,
+          mediaTypes: ["images"],
         });
       }
 

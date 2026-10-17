@@ -99,7 +99,7 @@ jest.mock('../../src/components/ui', () => {
 import BloodTestsPage from '../../app/health/blood-tests';
 
 const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(
-  (_title: string, _msg?: string, buttons?: any[]) => {
+  (_title: string | null | undefined, _msg?: string | null, buttons?: unknown) => {
     // 自動的に最初のボタン("写真を選択")を呼ぶわけではない。
     // テスト内から手動でトリガーする。
     void buttons; // suppress lint

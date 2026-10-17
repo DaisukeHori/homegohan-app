@@ -1,7 +1,7 @@
 import { Children, createContext, forwardRef, isValidElement, useContext } from 'react';
 import type { ReactNode } from 'react';
 import { StyleSheet, Text as RNText, TextInput as RNTextInput } from 'react-native';
-import type { StyleProp, TextInputProps, TextProps, TextStyle } from 'react-native';
+import type { StyleProp, TextInputInstance, TextInputProps, TextInstance, TextProps, TextStyle } from 'react-native';
 
 import { resolveFontStyle } from '../../theme/fonts';
 
@@ -51,14 +51,15 @@ export type FontFaceStyle = Pick<TextStyle, 'fontFamily' | 'fontWeight'>;
  */
 export function useFontFaceStyle(fontWeight?: TextStyle['fontWeight']): FontFaceStyle {
   const resolved: TextStyle = StyleSheet.flatten(useFontStyle(fontWeight === undefined ? {} : { fontWeight })) ?? {};
-  const faceStyle: FontFaceStyle = {};
-  if (resolved.fontFamily !== undefined) faceStyle.fontFamily = resolved.fontFamily;
-  if (resolved.fontWeight !== undefined) faceStyle.fontWeight = resolved.fontWeight;
-  return faceStyle;
+  // react-native 0.88 の TextStyle は読み取り専用なので、代入でなく展開で組む
+  return {
+    ...(resolved.fontFamily === undefined ? {} : { fontFamily: resolved.fontFamily }),
+    ...(resolved.fontWeight === undefined ? {} : { fontWeight: resolved.fontWeight }),
+  };
 }
 
 /** react-native の Text と同じ props。字形だけを Noto Sans JP に置き換える */
-export const Text = forwardRef<RNText, TextProps>(function Text({ style, children, ...props }, ref) {
+export const Text = forwardRef<TextInstance, TextProps>(function Text({ style, children, ...props }, ref) {
   const fontsReady = useFontsReady();
   const inheritFromParent = useContext(InsideTextContext);
   const resolved = resolveFontStyle(style, { fontsReady, inheritFromParent });
@@ -71,13 +72,13 @@ export const Text = forwardRef<RNText, TextProps>(function Text({ style, childre
     </RNText>
   );
 });
-// ref の型 (useRef<Text>) を react-native と同じに書けるようにする
-export type Text = RNText;
+// ref の型 (useRef<Text>) を react-native と同じに書けるようにする (react-native 0.88 の Text は関数なので、実体の型は TextInstance)
+export type Text = TextInstance;
 
 /** react-native の TextInput と同じ props。字形だけを Noto Sans JP に置き換える (入力した文字と placeholder の両方) */
-export const TextInput = forwardRef<RNTextInput, TextInputProps>(function TextInput({ style, ...props }, ref) {
+export const TextInput = forwardRef<TextInputInstance, TextInputProps>(function TextInput({ style, ...props }, ref) {
   const resolved = useFontStyle(style);
   return <RNTextInput ref={ref} {...props} style={resolved} />;
 });
-// ref の型 (useRef<TextInput>) を react-native と同じに書けるようにする
-export type TextInput = RNTextInput;
+// ref の型 (useRef<TextInput>) を react-native と同じに書けるようにする (react-native 0.88 の TextInput は関数なので、実体の型は TextInputInstance)
+export type TextInput = TextInputInstance;

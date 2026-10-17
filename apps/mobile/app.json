@@ -12,14 +12,9 @@
       "web"
     ],
     "icon": "./assets/icon.png",
-    "splash": {
-      "image": "./assets/splash-ios.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#FFF7ED"
+    "runtimeVersion": {
+      "policy": "fingerprint"
     },
-    "assetBundlePatterns": [
-      "**/*"
-    ],
     "ios": {
       "bundleIdentifier": "com.homegohan.app",
       "infoPlist": {
@@ -30,7 +25,6 @@
         "NSPhotoLibraryAddUsageDescription": "解析結果の保存のために写真ライブラリへ追加する場合があります。"
       },
       "icon": "./assets/icon-ios.png",
-      "runtimeVersion": "1.0.0",
       "config": {
         "usesNonExemptEncryption": false
       }
@@ -48,13 +42,21 @@
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#E07A5F"
-      },
-      "runtimeVersion": "1.0.0"
+      }
     },
     "plugins": [
       "expo-router",
       "expo-image-picker",
-      "expo-notifications"
+      "expo-notifications",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-ios.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#FFF7ED",
+          "enableFullScreenImage_legacy": true
+        }
+      ]
     ],
     "extra": {
       "eas": {

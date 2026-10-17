@@ -55,7 +55,7 @@ jest.mock('react-native-webview', () => ({
 
 // ── expo-file-system / expo-sharing モック ────────────────────────────────────
 // documentDirectory と cacheDirectory を別の値にして、どちらに書いたかを区別できるようにする
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   __esModule: true,
   documentDirectory: 'file:///data/app/Documents/',
   cacheDirectory: 'file:///data/app/Library/Caches/',
@@ -81,7 +81,7 @@ jest.mock('../../src/lib/supabase', () => ({
   },
 }));
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { supabase as mockSupabase } from '../../src/lib/supabase';
 

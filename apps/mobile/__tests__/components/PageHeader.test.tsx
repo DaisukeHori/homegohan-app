@@ -30,6 +30,12 @@ beforeEach(() => {
   mockBack.mockClear();
 });
 
+/**
+ * 戻るボタン (PageHeader の Pressable。hitSlop が 12) を探す props。
+ * react-native 0.88 の Pressable は memo(関数) で、react-test-renderer の type では見つからない (UNSAFE_*ByType(Pressable) は常に空になる) ため、props で探す
+ */
+const BACK_BUTTON_PROPS = { hitSlop: 12 };
+
 describe('PageHeader', () => {
   it('title テキストをレンダリングする', () => {
     const { getByText } = render(<PageHeader title="テストページ" />);
@@ -47,20 +53,16 @@ describe('PageHeader', () => {
   });
 
   it('showBack=true (デフォルト) のとき戻るボタンが存在し、タップで router.back() が呼ばれる', () => {
-    const { UNSAFE_getAllByType } = render(<PageHeader title="タイトル" />);
-    // Pressable が複数ある可能性があるので最初の Pressable をタップ
-    const { Pressable } = require('react-native');
-    const pressables = UNSAFE_getAllByType(Pressable);
-    // 最初の Pressable が戻るボタン
-    fireEvent.press(pressables[0]);
+    const { UNSAFE_getAllByProps } = render(<PageHeader title="タイトル" />);
+    // 戻るボタン (外側の Pressable と、その中の View の両方が hitSlop を持つので、最初 = 外側をタップ)
+    const backButtons = UNSAFE_getAllByProps(BACK_BUTTON_PROPS);
+    fireEvent.press(backButtons[0]);
     expect(mockBack).toHaveBeenCalledTimes(1);
   });
 
   it('showBack=false のとき戻るボタンが表示されない', () => {
-    const { UNSAFE_queryAllByType } = render(<PageHeader title="タイトル" showBack={false} />);
-    const { Pressable } = require('react-native');
-    const pressables = UNSAFE_queryAllByType(Pressable);
-    expect(pressables).toHaveLength(0);
+    const { UNSAFE_queryAllByProps } = render(<PageHeader title="タイトル" showBack={false} />);
+    expect(UNSAFE_queryAllByProps(BACK_BUTTON_PROPS)).toHaveLength(0);
   });
 
   it('right スロットがレンダリングされる', () => {

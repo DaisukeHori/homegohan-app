@@ -76,7 +76,11 @@
   },
   "overrides": {
     "react-native": {
-      "@types/react": "~19.0.10"
+      "@types/react": "~19.3.0"
+    },
+    "@react-native/jest-preset": {
+      "babel-jest": "~30.5.2",
+      "jest-environment-node": "~30.5.2"
     }
   }
 }

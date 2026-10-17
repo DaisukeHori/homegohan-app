@@ -62,7 +62,7 @@ jest.mock('expo-notifications', () => ({
 }));
 
 const mockWriteAsStringAsync = jest.fn();
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/tmp/',
   writeAsStringAsync: (...args: unknown[]) => mockWriteAsStringAsync(...args),
   EncodingType: { UTF8: 'utf8' },

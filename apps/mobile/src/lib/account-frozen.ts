@@ -35,7 +35,7 @@ export const FROZEN_SCREEN_PATH = "/frozen";
 /**
  * 凍結の画面の route の名前 (ルートの Stack の中の名前。app/frozen.tsx のファイル名で、app/_layout.tsx の
  * <Stack.Screen name="frozen" /> と同じ値)。AccountFrozenGate が、前面が凍結の画面かを見るのと、
- * ルートの Stack を凍結の画面 1 つに畳む (navigationRef.reset) のに使う
+ * ルートの Stack を凍結の画面 1 つに畳む (navigationRef.dispatch。完全な state の RESET) のに使う
  */
 export const FROZEN_SCREEN_ROUTE_NAME = "frozen";
 

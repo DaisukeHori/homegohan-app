@@ -2,7 +2,8 @@
  * legal-consent-screen.test.tsx — apps/mobile/app/legal-consent.tsx (#1442 設計書 cross/13b §6.6.11。T-SC1〜T-SC3)
  *
  * 同意画面の route = Web の /legal-consent を WebViewScreen で開く画面。
- *   awaiting-consent   ゲートの畳み直し (RESET) のほかの取り除く操作を beforeRemove で止める
+ *   awaiting-consent   取り除く操作を usePreventRemove で全部止める (同意のゲートの畳み直しは同意画面の route を key ごと再利用するので、取り除かれない)。
+ *                      凍結中 (#1861) は止めない (凍結のゲートの畳み直しは同意画面の route を取り除く。実物の止めの層に通すのは legal-consent-frozen-collapse.test.tsx)
  *   signed-out-notice  ログアウトの後。Web の案内を残し、上に「閉じる」を出す。取り除く操作は全部止める
  *   free               何も止めない。未ログインのまま開かれたら自分で閉じる
  */
@@ -12,21 +13,20 @@ import React from 'react';
 const mockReplace = jest.fn();
 const mockBack = jest.fn();
 const mockCanGoBack = jest.fn(() => false);
-type BeforeRemoveHandler = (event: { data: { action: { type: string } }; preventDefault: () => void }) => void;
-const mockBeforeRemoveHandlers: BeforeRemoveHandler[] = [];
-const mockUnsubscribeBeforeRemove = jest.fn();
+/** usePreventRemove に渡された (prevent, callback) の記録。描画のたびに積む */
+const mockPreventCalls: Array<{ prevent: boolean; callback: (...args: unknown[]) => unknown }> = [];
+/** usePreventRemove が返す disablePrevention */
+const mockDisablePrevention = jest.fn();
 jest.mock('expo-router', () => ({
   router: {
     replace: (...args: unknown[]) => mockReplace(...args),
     back: (...args: unknown[]) => mockBack(...args),
     canGoBack: () => mockCanGoBack(),
   },
-  useNavigation: () => ({
-    addListener: (name: string, handler: BeforeRemoveHandler) => {
-      if (name === 'beforeRemove') mockBeforeRemoveHandlers.push(handler);
-      return mockUnsubscribeBeforeRemove;
-    },
-  }),
+  usePreventRemove: (prevent: boolean, callback: (...args: unknown[]) => unknown) => {
+    mockPreventCalls.push({ prevent, callback });
+    return mockDisablePrevention;
+  },
 }));
 
 const mockGetSession = jest.fn();
@@ -41,6 +41,11 @@ jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }
 let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'required';
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
+}));
+
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
 }));
 
 // WebViewScreen は受けた props を記録し、header だけを描く
@@ -61,17 +66,9 @@ import LegalConsentScreen from '../../app/legal-consent';
 const SIGNED_IN: AuthState = { session: { user: { id: 'user-1' } }, isLoading: false };
 const SIGNED_OUT: AuthState = { session: null, isLoading: false };
 
-/** 取り除く操作を流し、止められたか (preventDefault が呼ばれたか) を返す。受け手が複数あれば 1 つでも止めたら止まる */
-function removeAttempt(type: string): boolean {
-  let prevented = false;
-  const event = {
-    data: { action: { type } },
-    preventDefault: () => {
-      prevented = true;
-    },
-  };
-  for (const handler of mockBeforeRemoveHandlers) handler(event);
-  return prevented;
+/** 直近の描画で usePreventRemove の第 1 引数に渡された値 (true = 取り除く操作を全部止める) */
+function preventsRemoval(): boolean | undefined {
+  return mockPreventCalls[mockPreventCalls.length - 1]?.prevent;
 }
 
 function latestProps(): Record<string, unknown> {
@@ -87,10 +84,11 @@ async function flush() {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockBeforeRemoveHandlers.length = 0;
+  mockPreventCalls.length = 0;
   mockWebViewProps.length = 0;
   mockAuth = SIGNED_IN;
   mockLegalState = 'required';
+  mockFrozenState = 'clear';
   mockCanGoBack.mockReturnValue(false);
   mockGetSession.mockResolvedValue({ data: { session: null } });
 });
@@ -107,13 +105,12 @@ describe('同意画面の route — 描くもの (T-SC1)', () => {
 });
 
 describe('同意画面の route — 同意を待つ間 (T-SC2)', () => {
-  it('サインイン中で required の間は、beforeRemove の GO_BACK・POP・POP_TO_TOP・REPLACE・NAVIGATE を止め、RESET は止めない', () => {
+  it('サインイン中で required の間は、usePreventRemove に true を渡す (取り除く操作を全部止める)。止めた操作は捨てる (callback は何もしない)', () => {
     render(<LegalConsentScreen />);
 
-    for (const type of ['GO_BACK', 'POP', 'POP_TO_TOP', 'REPLACE', 'NAVIGATE']) {
-      expect(removeAttempt(type)).toBe(true);
-    }
-    expect(removeAttempt('RESET')).toBe(false);
+    expect(preventsRemoval()).toBe(true);
+    const last = mockPreventCalls[mockPreventCalls.length - 1];
+    expect(last?.callback()).toBeUndefined();
   });
 
   it('「閉じる」(testID legal-consent-close) は出さず、router.replace も呼ばない', () => {
@@ -124,23 +121,54 @@ describe('同意画面の route — 同意を待つ間 (T-SC2)', () => {
     expect(mockBack).not.toHaveBeenCalled();
   });
 
-  it('clear になったら何も止めない', () => {
+  it('clear になったら usePreventRemove に false を渡す (何も止めない)', () => {
     const view = render(<LegalConsentScreen />);
-    expect(removeAttempt('REPLACE')).toBe(true);
+    expect(preventsRemoval()).toBe(true);
 
     mockLegalState = 'clear';
     view.rerender(<LegalConsentScreen />);
 
-    for (const type of ['GO_BACK', 'POP', 'POP_TO_TOP', 'REPLACE', 'NAVIGATE', 'RESET']) {
-      expect(removeAttempt(type)).toBe(false);
-    }
+    expect(preventsRemoval()).toBe(false);
     expect(view.queryByTestId('legal-consent-close')).toBeNull();
   });
 
-  it('beforeRemove の受け手は外れるときに解除する', () => {
+  it('サインイン中で required でも、凍結中 (frozen) は usePreventRemove に false を渡す (凍結のゲートの RESET を止めない。#1861)。自分では閉じない', () => {
+    mockFrozenState = 'frozen';
     const view = render(<LegalConsentScreen />);
-    view.unmount();
-    expect(mockUnsubscribeBeforeRemove).toHaveBeenCalled();
+
+    expect(preventsRemoval()).toBe(false);
+    // 凍結の画面へ移すのは凍結のゲート。同意画面は自分で閉じない (止めを解く操作も遷移も積まない)
+    expect(mockDisablePrevention).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(view.queryByTestId('legal-consent-close')).toBeNull();
+  });
+
+  it.each(['loading', 'clear', 'unknown'] as const)(
+    '凍結の状態が %s なら、required の間は usePreventRemove に true を渡す (止めを解くのは frozen だけ)',
+    (frozenState) => {
+      mockFrozenState = frozenState;
+      render(<LegalConsentScreen />);
+
+      expect(preventsRemoval()).toBe(true);
+    },
+  );
+
+  it('凍結中に false を渡した後、凍結が解ける (clear) と、required の間はまた true を渡す', () => {
+    mockFrozenState = 'frozen';
+    const view = render(<LegalConsentScreen />);
+    expect(preventsRemoval()).toBe(false);
+
+    mockFrozenState = 'clear';
+    view.rerender(<LegalConsentScreen />);
+
+    expect(preventsRemoval()).toBe(true);
+  });
+
+  it('描画の間に disablePrevention を呼ばない (押下・自分で閉じるときだけ)', () => {
+    const view = render(<LegalConsentScreen />);
+    view.rerender(<LegalConsentScreen />);
+    expect(mockDisablePrevention).not.toHaveBeenCalled();
   });
 });
 
@@ -157,27 +185,26 @@ describe('同意画面の route — ログアウトの後の案内 (T-SC3)', () 
     expect(view.getByText('閉じる')).toBeTruthy();
   });
 
-  it('その間の beforeRemove は RESET を含めて全部止め、押すと router.replace("/") を 1 回呼ぶ (router.canGoBack が false のとき)', () => {
+  it('その間は usePreventRemove に true を渡し、押すと disablePrevention を呼んでから router.replace("/") を 1 回呼ぶ (router.canGoBack が false のとき)', () => {
     const view = render(<LegalConsentScreen />);
     mockAuth = SIGNED_OUT;
     mockLegalState = 'clear';
     view.rerender(<LegalConsentScreen />);
-
-    for (const type of ['RESET', 'GO_BACK', 'POP', 'POP_TO_TOP', 'REPLACE', 'NAVIGATE']) {
-      expect(removeAttempt(type)).toBe(true);
-    }
+    expect(preventsRemoval()).toBe(true);
 
     fireEvent.press(view.getByTestId('legal-consent-close'));
 
+    expect(mockDisablePrevention).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledWith('/');
     expect(mockBack).not.toHaveBeenCalled();
-    // 「閉じる」の後は止めない
-    expect(removeAttempt('REPLACE')).toBe(false);
-    expect(removeAttempt('RESET')).toBe(false);
+    // 止めを解いてから遷移を積む (積む遷移が止められない)
+    expect(mockDisablePrevention.mock.invocationCallOrder[0]).toBeLessThan(mockReplace.mock.invocationCallOrder[0] ?? 0);
+    // 「閉じる」の後は止めない (次の描画の引数が false)
+    expect(preventsRemoval()).toBe(false);
   });
 
-  it('router.canGoBack が true なら router.back を 1 回呼ぶ', () => {
+  it('router.canGoBack が true なら disablePrevention を呼んでから router.back を 1 回呼ぶ', () => {
     mockCanGoBack.mockReturnValue(true);
     const view = render(<LegalConsentScreen />);
     mockAuth = SIGNED_OUT;
@@ -186,7 +213,9 @@ describe('同意画面の route — ログアウトの後の案内 (T-SC3)', () 
 
     fireEvent.press(view.getByTestId('legal-consent-close'));
 
+    expect(mockDisablePrevention).toHaveBeenCalledTimes(1);
     expect(mockBack).toHaveBeenCalledTimes(1);
+    expect(mockDisablePrevention.mock.invocationCallOrder[0]).toBeLessThan(mockBack.mock.invocationCallOrder[0] ?? 0);
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
@@ -196,8 +225,9 @@ describe('同意画面の route — ログアウトの後の案内 (T-SC3)', () 
     const { queryByTestId } = render(<LegalConsentScreen />);
 
     expect(queryByTestId('legal-consent-close')).toBeNull();
-    expect(removeAttempt('REPLACE')).toBe(false);
-    expect(removeAttempt('GO_BACK')).toBe(false);
+    // 扱いは free なので何も止めない (自分で閉じる途中の描画も false)
+    expect(preventsRemoval()).toBe(false);
+    expect(mockDisablePrevention).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledWith('/');
   });

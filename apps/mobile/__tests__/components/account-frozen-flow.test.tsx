@@ -3,8 +3,8 @@
  *
  * 部品ごとのテスト (providers/account-frozen-provider.test.tsx・components/account-frozen-gate.test.tsx) は、相手をモックで差し込む。
  * ここでは本物の Provider と本物のゲートをつなぎ、画面の API の 403 AUTH_ACCOUNT_FROZEN (getApi の withFriendlyErrors が置き換える経路) から、
- *   - 凍結の画面へ移る (ルートの Stack を凍結の画面 1 つに畳む reset が 1 回)
- *   - 続けて 403 が届いても二重に移らない (reset は 1 回のまま)
+ *   - 凍結の画面へ移る (ルートの Stack を凍結の画面 1 つに畳む RESET の action の dispatch が 1 回)
+ *   - 続けて 403 が届いても二重に移らない (dispatch は 1 回のまま)
  *   - 起動時 (セッションの復元の直後) に凍結なら、ホームを描かずに凍結の画面へ移る
  *   - 解除後 (判定の API が 403 でなくなった) に前面へ戻ると、プロフィールを読み直して入口へ戻る
  * ことを確かめる。expo-router と認証・プロフィールの Provider だけをモックにする。
@@ -17,12 +17,27 @@ import { accountFrozenBody } from '@homegohan/shared';
 
 const mockReplace = jest.fn();
 const mockBack = jest.fn();
-const mockReset = jest.fn();
+const mockDispatch = jest.fn();
 let mockPathname = '/home';
 let mockCurrentRoute: { name: string } | undefined = { name: 'home' };
+/** ルートの Stack の state (expo-router 58 の NavigationState の形。ゲートが完全な state の RESET を作る元) */
+const ROOT_ROUTE_NAMES = ['index', '(tabs)', 'frozen', 'legal-consent'];
+const mockRootState = {
+  key: 'navigator:root',
+  routeKeySeq: 2,
+  index: 1,
+  type: 'stack',
+  stale: false,
+  routeNames: ROOT_ROUTE_NAMES,
+  routes: [
+    { key: 'index:0', name: 'index' },
+    { key: '(tabs):1', name: '(tabs)' },
+  ],
+};
 const mockNavigationRef = {
   getCurrentRoute: () => mockCurrentRoute,
-  reset: (...args: unknown[]) => mockReset(...args),
+  getRootState: () => mockRootState,
+  dispatch: (...args: unknown[]) => mockDispatch(...args),
 };
 jest.mock('expo-router', () => ({
   router: {
@@ -60,7 +75,20 @@ import { FROZEN_PROBE_API_PATH, resetAccountFrozenListenersForTests } from '../.
 import { withFriendlyErrors } from '../../src/lib/api';
 import { AccountFrozenProvider } from '../../src/providers/AccountFrozenProvider';
 
-const FROZEN_RESET = { index: 0, routes: [{ name: 'frozen' }] };
+/** 凍結のゲートが dispatch する、完全な state の RESET の action (凍結の画面の route はまだ無い) */
+const FROZEN_RESET_ACTION = {
+  type: 'RESET',
+  target: 'navigator:root',
+  payload: {
+    key: 'navigator:root',
+    index: 0,
+    routeKeySeq: 2,
+    routeNames: ROOT_ROUTE_NAMES,
+    type: 'stack',
+    stale: false,
+    routes: [{ name: 'frozen' }],
+  },
+};
 /** サーバー (middleware) が凍結中の /api に返す 403 を、createHttpClient が投げる Error の形にしたもの */
 const frozenHttpError = () => new Error(`HTTP 403 Forbidden: ${JSON.stringify(accountFrozenBody())}`);
 
@@ -122,14 +150,14 @@ describe('凍結の流れ (Provider + ゲート)', () => {
     const view = mount();
     await flush();
     expect(mockProbe).toHaveBeenCalledWith(FROZEN_PROBE_API_PATH);
-    expect(mockReset).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
 
     await screenApiGetsFrozen403();
 
-    expect(mockReset).toHaveBeenCalledTimes(1);
-    expect(mockReset).toHaveBeenCalledWith(FROZEN_RESET);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledWith(FROZEN_RESET_ACTION);
 
-    // reset が流れて前面が凍結の画面になった
+    // RESET が流れて前面が凍結の画面になった
     mockCurrentRoute = { name: 'frozen' };
     mockPathname = '/frozen';
     rerender(view);
@@ -138,7 +166,7 @@ describe('凍結の流れ (Provider + ゲート)', () => {
     await screenApiGetsFrozen403();
     rerender(view);
 
-    expect(mockReset).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
     expect(mockReplace).not.toHaveBeenCalled();
     // 403 の知らせで判定の API を呼び直さない (判定の API も凍結中は 403 のため)
     expect(mockProbe).toHaveBeenCalledTimes(1);
@@ -150,7 +178,7 @@ describe('凍結の流れ (Provider + ゲート)', () => {
     mount();
     await flush();
     // loading の間は畳まない・入口へも移さない
-    expect(mockReset).not.toHaveBeenCalled();
+    expect(mockDispatch).not.toHaveBeenCalled();
     expect(mockReplace).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -158,8 +186,8 @@ describe('凍結の流れ (Provider + ゲート)', () => {
     });
     await flush();
 
-    expect(mockReset).toHaveBeenCalledTimes(1);
-    expect(mockReset).toHaveBeenCalledWith(FROZEN_RESET);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledWith(FROZEN_RESET_ACTION);
     expect(mockReplace).not.toHaveBeenCalled();
   });
 
@@ -167,7 +195,7 @@ describe('凍結の流れ (Provider + ゲート)', () => {
     mockProbe.mockRejectedValueOnce(frozenHttpError());
     const view = mount();
     await flush();
-    expect(mockReset).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
     mockCurrentRoute = { name: 'frozen' };
     mockPathname = '/frozen';
     rerender(view);
@@ -192,13 +220,13 @@ describe('凍結の流れ (Provider + ゲート)', () => {
     expect(mockRefreshProfile).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledTimes(1);
     expect(mockReplace).toHaveBeenCalledWith('/');
-    expect(mockReset).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
 
     // 入口へ移った後は、もう何もしない (二重に戻らない)
     mockCurrentRoute = { name: 'index' };
     mockPathname = '/';
     rerender(view);
     expect(mockReplace).toHaveBeenCalledTimes(1);
-    expect(mockReset).toHaveBeenCalledTimes(1);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
   });
 });

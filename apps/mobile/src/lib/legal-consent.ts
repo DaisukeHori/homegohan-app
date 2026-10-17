@@ -10,7 +10,7 @@
  *     Web の同意画面がネイティブへ送るメッセージの type
  *   - ゲートの対象外のパス (認証の途中・公開ページ・同意画面そのもの。Web の isLegalConsentExemptPath と同じ基準)
  *   - 同意の状態の型と、利用者ごとの記録から状態を決める純粋な関数 (LegalConsentProvider が使う)
- *   - 同意画面の route の扱い (同意を待つ / ログアウトの後の案内 / それ以外) と、取り除く操作 (beforeRemove) を通すか止めるか
+ *   - 同意画面の route の扱い (同意を待つ / ログアウトの後の案内 / それ以外) と、取り除く操作を止めるか (usePreventRemove)
  *   - 同意の後に自分から画面を移す部品 (NotificationRouter) が待つ条件
  *
  * AI 同意 (src/lib/ai-consent.ts) と違い、各画面に呼び出しを足さない。止められたらゲートが同意画面だけにするので、
@@ -33,9 +33,18 @@ export const LEGAL_CONSENT_SCREEN_PATH = "/legal-consent";
  * 同意画面の route の名前 (ルートの Stack の中の名前。app/legal-consent.tsx のファイル名で、app/_layout.tsx の
  * <Stack.Screen name="legal-consent" /> と同じ値。__tests__/app/root-layout-config.test.tsx が固定する)。
  * LegalConsentGate が、今のナビゲーションの state の前面 (navigationRef.getCurrentRoute()) が同意画面かを見るのと、
- * ルートの Stack を同意画面 1 つに畳む (navigationRef.reset) のに使う
+ * ルートの Stack を同意画面 1 つに畳む (navigationRef.dispatch。完全な state の RESET) のに使う
  */
 export const LEGAL_CONSENT_SCREEN_ROUTE_NAME = "legal-consent";
+
+/**
+ * navigationRef.getCurrentRoute() が返す route から名前を読む (前面の route の名前。route が無ければ undefined)。
+ * expo-router 58 の navigationRef は型付きの route の名前の一覧が空で、getCurrentRoute() の戻り値の型が never になり、
+ * その場で ?.name と書くと型エラーになる。引数を名前だけの構造の型にして受ける (LegalConsentGate・AccountFrozenGate が使う)
+ */
+export function routeNameOf(route: { readonly name: string } | undefined): string | undefined {
+  return route?.name;
+}
 
 /**
  * Web の同意画面 (src/app/legal-consent/LegalConsentForm.tsx) が、同意を記録できた直後にネイティブへ送るメッセージの type
@@ -190,14 +199,17 @@ export function legalConsentEntryAfterEvent(
 }
 
 /**
- * navigationRef.reset() の action の type (@react-navigation の CommonActions.reset)。
- * LegalConsentGate がルートの Stack を同意画面 1 つに畳む (畳み直す) 操作で、同意を待つ同意画面はこれだけを通す
+ * navigationRef.dispatch に渡す action の type (expo-router 58 の CommonActions.reset が作る action と同じ値)。
+ * LegalConsentGate がルートの Stack を同意画面 1 つに畳む (畳み直す) 操作の action の type に使う
  */
 const RESET_ACTION_TYPE = "RESET";
 
+/** 畳んだ state の前面の route の位置。route は 1 つだけなので、その位置 (先頭) */
+const COLLAPSED_STACK_INDEX = 0;
+
 /**
  * 同意画面の route (app/legal-consent.tsx) の今の扱い。
- *   awaiting-consent   サインイン中で同意が要る (required)。ゲートの畳み直し (RESET) のほかの取り除く操作を止める
+ *   awaiting-consent   サインイン中で同意が要る (required)。取り除く操作を全部止める (ゲートの畳み直しは同意画面の route を key ごと再利用するので、取り除かれない)
  *   signed-out-notice  同意を待っていた間にログアウトした (Web の「同意しない」「登録をやめる」の後)。Web の案内 (削除の依頼先・
  *                      請求の画面・「登録をやめました」) を出したまま残し、「閉じる」で入口へ移る。取り除く操作は全部止める
  *   free               それ以外 (同意が済んだ・required でない・未ログインのまま開いた)。何も止めない (ゲートか同意画面自身が入口へ移す)
@@ -222,24 +234,120 @@ export function legalConsentScreenModeOf(
   return sawRequired ? "signed-out-notice" : "free";
 }
 
-/** 同意画面の route を取り除く操作 (beforeRemove) をどうするか。allow = 通す / block = 止める (preventDefault) */
-export type LegalConsentScreenRemovalDecision = "allow" | "block";
+/**
+ * 同意画面の route を取り除く操作を止めるか (expo-router の usePreventRemove の第 1 引数)。
+ *   awaiting-consent   同意が要る間は全部止める (ログインの直後の routeAfterSignIn の REPLACE など)。
+ *                      同意のゲートの畳み直し (RESET) は同意画面の route を key ごと再利用するので、同意画面は取り除かれず、ここには来ない
+ *   signed-out-notice  ログアウトの後の案内。全部止める (「閉じる」でだけ閉じる)
+ *   free               何も止めない
+ * closing = 同意画面が自分で閉じる途中 (「閉じる」・未ログインで開かれたとき・afterSignOut)。止めない
+ * accountFrozen = アカウントが凍結中 (useAccountFrozen の state が frozen。#1861)。止めない (凍結が先)。
+ *   凍結のゲートの畳み直し (RESET。ルートの Stack を凍結の画面 1 つに) は同意画面の route を取り除く。expo-router 58 は、取り除かれる route の
+ *   1 つでも止めていれば RESET ごと捨てるので、止めたままだと凍結中の利用者が同意画面に残る
+ */
+export function legalConsentScreenPreventsRemoval(
+  mode: LegalConsentScreenMode,
+  closing: boolean,
+  accountFrozen: boolean,
+): boolean {
+  if (closing || accountFrozen) return false;
+  return mode !== "free";
+}
 
 /**
- * awaiting-consent: ゲートの畳み直し (RESET) だけを通す。ほかの操作 (GO_BACK・POP・POP_TO_TOP・REPLACE・NAVIGATE など。
- *   例: ログインの直後の routeAfterSignIn の router.replace) は止める (同意画面を前面に残す。止めた置き換えの行き先は、
- *   同意の後に入口が profile から決め直す)。
- * signed-out-notice: 全部止める (案内を残す。ゲートは session 無しでは畳まない)。
- *   同意画面が自分で入口へ移るとき (「閉じる」など) は、この判定の前に通す (app/legal-consent.tsx の closingRef)。
- * free: 何も止めない
+ * ナビゲーターの state のうち、畳むのに読む欄 (expo-router 58 の NavigationState / PartialState の部分型。
+ * 入れ子の navigator の state は routes[].state。rehydrate 前の state は stale: true で key・routeKeySeq を持たないことがある)
  */
-export function legalConsentScreenRemovalDecision(
-  mode: LegalConsentScreenMode,
-  actionType: string,
-): LegalConsentScreenRemovalDecision {
-  if (mode === "awaiting-consent") return actionType === RESET_ACTION_TYPE ? "allow" : "block";
-  if (mode === "signed-out-notice") return "block";
-  return "allow";
+export type NavigatorStateLike = {
+  readonly key?: string;
+  readonly index?: number;
+  readonly type?: string;
+  readonly routeNames?: readonly string[];
+  readonly routeKeySeq?: number;
+  readonly stale?: boolean;
+  readonly routes: ReadonlyArray<{ readonly key?: string; readonly name: string; readonly state?: NavigatorStateLike }>;
+};
+
+/** 畳む先の route の持ち主の navigator の state (完全な state を作るのに要る key・routeNames・routeKeySeq がそろったもの) */
+export type StackOwnerState = NavigatorStateLike & {
+  readonly key: string;
+  readonly routeNames: readonly string[];
+  readonly routeKeySeq: number;
+};
+
+/**
+ * expo-router 58 の RESET が受け付ける完全な state の共通の欄。
+ * BaseRouter は stale === false のときだけ受け付け、routeNames が持ち主と同じ集合であることを確かめる
+ * (それ以外は「Include key, index, routeNames, routeKeySeq, and stale: false」の警告を出して捨てる)
+ */
+type CollapsedStackBase = {
+  readonly key: string;
+  readonly index: typeof COLLAPSED_STACK_INDEX;
+  readonly routeKeySeq: number;
+  readonly routeNames: string[];
+  readonly type?: string;
+  readonly stale: false;
+};
+
+/**
+ * route 1 つ (同意画面) に畳んだ完全な state。その route が既にあれば key ごと、無ければ名前だけ
+ * (key の無い route には、expo-router の RESET が持ち主の key と routeKeySeq から key を付ける)
+ */
+export type CollapsedStackState =
+  | (CollapsedStackBase & { readonly routes: [{ readonly name: string; readonly key: string }] })
+  | (CollapsedStackBase & { readonly routes: [{ readonly name: string }] });
+
+/**
+ * navigationRef.dispatch に渡す RESET の action (ゲートが使う)。target は持ち主の navigator の key
+ * (expo-router 58 は target の navigator だけに action を渡す。target が無いと前面の navigator から親へ順に試す)
+ */
+export type CollapseStackAction = {
+  readonly type: typeof RESET_ACTION_TYPE;
+  readonly target: string;
+  readonly payload: CollapsedStackState;
+};
+
+/**
+ * routeNames に routeName を持つ (= その route の持ち主の) navigator の state を、ルートから前面の枝を降りて探す。
+ * 持ち主が無い・rehydrate 前 (stale・key や routeKeySeq が無い)・root が無い (コンテナの準備の前) なら null
+ * (ゲートは何もせず次の描画で試す)
+ */
+export function findNavigatorOwningRoute(root: NavigatorStateLike | undefined, routeName: string): StackOwnerState | null {
+  let current: NavigatorStateLike | undefined = root;
+  while (current !== undefined) {
+    if (current.routeNames?.includes(routeName)) {
+      const { key, routeNames, routeKeySeq } = current;
+      if (current.stale === true || key === undefined || routeNames === undefined || routeKeySeq === undefined) return null;
+      return { ...current, key, routeNames, routeKeySeq };
+    }
+    const focusedIndex: number = current.index ?? 0;
+    current = current.routes[focusedIndex]?.state;
+  }
+  return null;
+}
+
+/**
+ * 持ち主の navigator の state を、routeName の route 1 つに畳んだ完全な state にする。
+ * その route が既にあればその key を再利用する (同じ key は同じ画面。取り除かれず、同意画面なら usePreventRemove の止めにも当たらない)
+ */
+export function collapsedStackState(owner: StackOwnerState, routeName: string): CollapsedStackState {
+  const existingKey = owner.routes.find((route) => route.name === routeName)?.key;
+  const base: CollapsedStackBase = {
+    key: owner.key,
+    index: COLLAPSED_STACK_INDEX,
+    routeKeySeq: owner.routeKeySeq,
+    routeNames: [...owner.routeNames],
+    stale: false,
+    ...(owner.type === undefined ? {} : { type: owner.type }),
+  };
+  return existingKey === undefined
+    ? { ...base, routes: [{ name: routeName }] }
+    : { ...base, routes: [{ name: routeName, key: existingKey }] };
+}
+
+/** 持ち主の navigator に宛てた、routeName の route 1 つに畳む RESET の action */
+export function collapseStackAction(owner: StackOwnerState, routeName: string): CollapseStackAction {
+  return { type: RESET_ACTION_TYPE, target: owner.key, payload: collapsedStackState(owner, routeName) };
 }
 
 /**
