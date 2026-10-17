@@ -205,6 +205,13 @@ describe('sendTicketReplyEmail: 送信待ちに登録できない場合 (返信�
     });
 
     await expect(run()).resolves.toEqual({ status: 'failed', reason: 'send_failed' });
+    // #1577 の 7: 宛先停止リスト (意図した停止) はログを warn、文面の不備は error のまま
+    if (code === 'suppressed') {
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('send failed'), { ...logMeta, error_code: 'suppressed' });
+    } else {
+      expect(logger.error).toHaveBeenCalledWith(expect.stringContaining('send failed'), expect.any(EmailSendError), logMeta);
+    }
   });
 
   it('文面の組み立てなどで sendEmail が例外を投げても、failed / send_failed を返し記録する', async () => {

@@ -18,6 +18,9 @@
  *     /signup (新規登録) は止める
  *   - 死活監視 /api/health、cron (/api/cron/*)、認証 API (/api/auth/*)、画面が前もって状態を知るための窓口 /api/feature-flags
  *     (いま呼んでいる画面は無い。画面は、この 503 の応答の code で止められたことを知る。#1457)
+ *   - Resend の Webhook の受け口 (POST /api/webhooks/resend。#1577 の 4)。cron と同じ「機械から機械」で、利用者からの書き込みではない。
+ *     止めると Resend (Svix) は送り直すが、メンテナンスが長い (約 1 日を超える) と知らせを失うか、Svix が宛先を無効にする恐れがあるため。
+ *     完全一致の 1 本だけ (RESEND_WEBHOOK_API_PATH)。ほかの Webhook (/api/webhooks/stripe など) と /api/webhooks の下のほかのパスは止める
  *   - 通知のトークンの claim (POST /api/push-tokens/claim。#1636)。利用者の操作ではなく端末の後片付け (同じ端末の前の利用者の
  *     行を外す) で、止めると前の利用者宛ての通知がこの端末に届き続けるため。claim の 1 本だけ (src/lib/push-tokens.ts の
  *     isPushTokenClaimApiPath。release など、ほかの /api/push-tokens/* は止める)
@@ -71,6 +74,13 @@ function isSameOrUnder(pathname: string, prefix: string): boolean {
 export const MAINTENANCE_PUBLIC_INFO_PATHS = ['/legal', '/contact'] as const;
 
 /**
+ * メンテナンス中でも止めない Webhook の受け口 (#1577 の 4)。Resend の bounce・苦情の知らせ (src/app/api/webhooks/resend/route.ts)。
+ * 署名 (RESEND_WEBHOOK_SECRET) で認証する機械からの呼び出しで、利用者のセッションを持たない。完全一致だけを通す
+ * (末尾の `/`・下のパス・似た名前は止める)。Stripe の Webhook (/api/webhooks/stripe) は billing/01 の取り決めどおり止める
+ */
+export const RESEND_WEBHOOK_API_PATH = '/api/webhooks/resend';
+
+/**
  * メンテナンス中でも止めないパスか。
  * pathname は URL の path 部分 (クエリを含まない)。
  */
@@ -90,6 +100,7 @@ export function isMaintenanceExemptPath(pathname: string): boolean {
       isSameOrUnder(pathname, '/api/auth') ||
       isSameOrUnder(pathname, '/api/cron') ||
       pathname === '/api/feature-flags' ||
+      pathname === RESEND_WEBHOOK_API_PATH ||
       isPushTokenClaimApiPath(pathname)
     );
   }

@@ -21,6 +21,7 @@ import {
   MAINTENANCE_MESSAGE,
   MAINTENANCE_RETRY_AFTER_SECONDS,
   isMaintenanceExemptPath,
+  RESEND_WEBHOOK_API_PATH,
   isMaintenanceFlagOn,
   isOperatorRoles,
   maintenanceApiResponse,
@@ -79,6 +80,8 @@ describe('isMaintenanceExemptPath', () => {
     '/api/feature-flags',
     // #1636: 通知のトークンの claim (端末の後片付け)。この 1 本だけ
     '/api/push-tokens/claim',
+    // #1577 の 4: Resend の Webhook の受け口 (機械から機械)。この 1 本だけ
+    '/api/webhooks/resend',
   ])('%s はメンテナンス中でも通す', (path) => {
     expect(isMaintenanceExemptPath(path)).toBe(true);
   });
@@ -123,8 +126,21 @@ describe('isMaintenanceExemptPath', () => {
     '/api/push-tokens/claim/extra',
     '/api/push-tokens/release',
     '/API/push-tokens/claim',
+    // #1577 の 4: Resend の Webhook の 1 本だけを通す。似たパス・下のパス・ほかの Webhook (Stripe) は止める
+    '/api/webhooks',
+    '/api/webhooks/',
+    '/api/webhooks/resend/',
+    '/api/webhooks/resendx',
+    '/api/webhooks/resend/extra',
+    '/api/webhooks/stripe',
+    '/api/webhooks/stripe/',
+    '/API/webhooks/resend',
   ])('%s は止める', (path) => {
     expect(isMaintenanceExemptPath(path)).toBe(false);
+  });
+
+  it('#1577 の 4: 止めない Webhook の受け口の定数は、Resend の Webhook の route のパスと一致する', () => {
+    expect(RESEND_WEBHOOK_API_PATH).toBe('/api/webhooks/resend');
   });
 
   it('API のパスは、静的ファイルの拡張子を付けても通さない (動的な API ルートを通り抜けさせない)', () => {

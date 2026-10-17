@@ -7,7 +7,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { sendEmail } from '@/lib/emails/send';
-import { isEmailFailure } from '@/lib/emails/send-result';
+import { isEmailFailure, logEmailFailures } from '@/lib/emails/send-result';
 import { renderFamilyPromoteEmail } from '@/lib/emails/membership/family-promote';
 import { buildFamilyPromotionUrl } from '@/lib/membership/urls';
 import { normalizeProfileName } from '@/lib/profile-name';
@@ -140,8 +140,9 @@ export async function POST(
     // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗も下の catch で、リクエストとの対応が分かる形で記録する
     if (isEmailFailure(sent)) throw sent.error;
   } catch (emailErr) {
-    // メール失敗はリクエスト作成自体を失敗にしない (再送 = 再リクエストで可能)
-    logger.withUser(user.id).error('promotion request email send failed', emailErr, {
+    // メール失敗はリクエスト作成自体を失敗にしない (再送 = 再リクエストで可能)。
+    // 宛先停止リストで止めた (suppressed) ときは意図した動きなので warn、ほかの失敗は error (#1577 の 7)
+    logEmailFailures(logger.withUser(user.id), 'promotion request email send failed', [emailErr], {
       member_id,
       request_id: req.id,
     });

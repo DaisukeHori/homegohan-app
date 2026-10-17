@@ -23,7 +23,7 @@
 // メンバーになるには本人の同意 (招待の承諾) が要る。
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
-import { isEmailFailure } from '@/lib/emails/send-result';
+import { isEmailFailure, logEmailFailures } from '@/lib/emails/send-result';
 import { renderMemberLeftEmail } from '@/lib/emails/membership/member-left';
 import { renderMemberRemovedEmail } from '@/lib/emails/membership/member-removed';
 import type { MembershipScope } from '@/lib/emails/membership/scope-label';
@@ -264,8 +264,9 @@ async function deliver(args: {
       if (!toEmail) return;
       const sent = await sendEmail(build(toEmail));
       // sendEmail は配信の失敗で例外を投げず、結果で返す。失敗の詳細は sendEmail も app_logs に記録するが、
-      // ここでは「どの所属先の・誰への通知か」が分かる形でも残す (RESEND_API_KEY が無くて送らなかった場合は失敗に数えない)
-      if (isEmailFailure(sent)) log.error(failureMessage, sent.error, metadata);
+      // ここでは「どの所属先の・誰への通知か」が分かる形でも残す (RESEND_API_KEY が無くて送らなかった場合は失敗に数えない)。
+      // 宛先停止リストで止めた (suppressed) ときは意図した動きなので warn、ほかの失敗は error (#1577 の 7)
+      if (isEmailFailure(sent)) logEmailFailures(log, failureMessage, [sent.error], metadata);
     } catch (err) {
       log.error(failureMessage, err, metadata);
     }

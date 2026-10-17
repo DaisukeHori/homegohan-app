@@ -89,3 +89,44 @@ export function emailFailureReasons(settled: ReadonlyArray<PromiseSettledResult<
   }
   return reasons;
 }
+
+/**
+ * 宛先停止リスト (email_blacklist) に載っている宛先なので送らなかったときの error.code (#1184)。
+ * sendEmail が返す値は src/lib/emails/outbox.ts の EMAIL_OUTBOX_ERROR_CODES.suppressed (このファイルは Resend を読み込む outbox.ts を
+ * import しないので、同じ値をここにも置く。食い違わないことは src/__tests__/lib/emails/send-result.test.ts が見る)
+ */
+export const EMAIL_SUPPRESSED_ERROR_CODE = 'suppressed';
+
+/** 送れなかった理由が、宛先停止リストで止めた (意図した停止) ものか。sendEmail の結果の error (EmailSendError) で code が suppressed のときだけ真 */
+export function isEmailSuppressedReason(reason: unknown): boolean {
+  return reason instanceof EmailSendError && reason.code === EMAIL_SUPPRESSED_ERROR_CODE;
+}
+
+/** 送れなかった理由を残すログの出力先 (createLogger(...)・その withUser(...)・通知の部品が受け取るロガーのどれも満たす) */
+export interface EmailFailureLogger {
+  warn(message: string, metadata?: Record<string, unknown>): void;
+  error(message: string, error?: unknown, metadata?: Record<string, unknown>): void;
+}
+
+/**
+ * 送れなかった理由 (sendEmail の結果の error・想定外の例外) をログに残す。#1577 の 7
+ * - 理由がすべて宛先停止リスト (suppressed) なら warn。止めた宛先へ送らないのは意図した動きで、error にすると
+ *   エラー急増の通知 (GET /api/cron/app-log-alerts が app_logs の error を数える) の数に入るため。
+ *   warn は error を受け取らないので、metadata に error_code (suppressed) を入れる
+ * - ほかの理由が 1 つでもあれば、今までどおり error。渡す error は、suppressed でない最初の理由
+ * reasons が空なら何も残さない。
+ */
+export function logEmailFailures(
+  log: EmailFailureLogger,
+  message: string,
+  reasons: readonly unknown[],
+  metadata: Record<string, unknown> = {},
+): void {
+  if (reasons.length === 0) return;
+  const unexpectedIndex = reasons.findIndex((reason) => !isEmailSuppressedReason(reason));
+  if (unexpectedIndex < 0) {
+    log.warn(message, { ...metadata, error_code: EMAIL_SUPPRESSED_ERROR_CODE });
+    return;
+  }
+  log.error(message, reasons[unexpectedIndex], metadata);
+}

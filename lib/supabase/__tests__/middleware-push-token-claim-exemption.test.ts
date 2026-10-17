@@ -87,9 +87,18 @@ function apiRoutePaths(): string[] {
   return paths.sort();
 }
 
-/** もともと (#1636 より前から) メンテナンス中でも止めない API (src/lib/maintenance-mode.ts の isMaintenanceExemptPath) */
+/**
+ * claim のほかにメンテナンス中でも止めない API (src/lib/maintenance-mode.ts の isMaintenanceExemptPath)。
+ * #1636 より前からのものと、Resend の Webhook の受け口 (#1577 の 4。完全一致の 1 本)
+ */
 function isPreexistingMaintenanceExemptApi(path: string): boolean {
-  return path === '/api/health' || path.startsWith('/api/auth/') || path.startsWith('/api/cron/') || path === '/api/feature-flags';
+  return (
+    path === '/api/health' ||
+    path.startsWith('/api/auth/') ||
+    path.startsWith('/api/cron/') ||
+    path === '/api/feature-flags' ||
+    path === '/api/webhooks/resend'
+  );
 }
 
 async function passes(path: string, expectedBlockStatus: number): Promise<boolean> {
