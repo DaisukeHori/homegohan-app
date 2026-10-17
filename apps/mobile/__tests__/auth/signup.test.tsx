@@ -5,6 +5,7 @@
  * Covers:
  *  1. email が空のとき API を呼ばずエラーを出す
  *  2. password 強度バリデーション — 8 文字未満でエラー
+ *  2b. (#1574) 英字だけ・数字だけも止める。規則と文言は packages/shared の validatePassword と共通
  *  3. identities.length === 0 の silent-success を検知してアラートを出す
  */
 
@@ -97,8 +98,24 @@ describe('SignupScreen', () => {
     await waitFor(() => {
       expect(Alert.alert).toHaveBeenCalledWith(
         '入力エラー',
-        'パスワードは8文字以上にしてください。'
+        'パスワードは8文字以上で入力してください'
       );
+    });
+    expect(mockSignUp).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['数字だけ', '12345678', 'パスワードには英字を含めてください'],
+    ['英字だけ', 'abcdefgh', 'パスワードには数字を含めてください'],
+  ])('2b. %s (8 文字以上) のパスワードは、再設定・Web と同じ文言で止める (#1574)', async (_label, weak, message) => {
+    const { getByPlaceholderText, getByText } = render(<SignupScreen />);
+
+    fireEvent.changeText(getByPlaceholderText('email@example.com'), 'test@example.com');
+    fireEvent.changeText(getByPlaceholderText('8文字以上・英字と数字を含む'), weak);
+    fireEvent.press(getByText('アカウント作成'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('入力エラー', message);
     });
     expect(mockSignUp).not.toHaveBeenCalled();
   });
