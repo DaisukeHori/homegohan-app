@@ -186,6 +186,8 @@ const ENTRIES: Entry[] = [
   { file: 'super-admin/plans/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/super-admin/plans/[id]/route')).PATCH },
   { file: 'super-admin/plans/route.ts', method: 'POST', load: async () => (await import('@/app/api/super-admin/plans/route')).POST },
   { file: 'super-admin/settings/route.ts', method: 'PUT', load: async () => (await import('@/app/api/super-admin/settings/route')).PUT },
+  { file: 'super-admin/users/[id]/manual-plan/route.ts', method: 'DELETE', load: async () => (await import('@/app/api/super-admin/users/[id]/manual-plan/route')).DELETE },
+  { file: 'super-admin/users/[id]/manual-plan/route.ts', method: 'POST', load: async () => (await import('@/app/api/super-admin/users/[id]/manual-plan/route')).POST },
   { file: 'support/users/[id]/notes/route.ts', method: 'POST', load: async () => (await import('@/app/api/support/users/[id]/notes/route')).POST },
 ];
 
