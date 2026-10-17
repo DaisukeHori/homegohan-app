@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.3 (2026-10-17) |
-| Status | 設計ゲート審査中 (R3)。実装は §14.1 の段分け (段 A → B → C を 1 本の WF・1 本の PR) で進める。未着手 |
+| 版 | v1.4 (2026-10-17) |
+| Status | 設計ゲート審査中 (R4)。実装は §14.1 の段分け (段 A → B → C を 1 本の WF・1 本の PR) で進める。未着手 |
 | Issue | #1591 (モバイルのツールチェーン (expo・react-native・metro・jest) のメジャー更新 — npm audit の high の残りの原因。#1444 から分割)。載せる先のネイティブのビルドは #1115 (協調リリース) |
 | 範囲の正本 | Issue #1591 の本文とコメント。本書はその上で決めた上げ先・壊れる所・直し方・検証・段分け・オーナー作業との境目 |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする (設計ゲートを省くなら Opus 5.5) |
@@ -22,7 +22,7 @@
 |---|---|---|
 | 設計書 800 行超 | 超える (壊れる所の表・正典の設定ファイル・表 3 点・トレースを 1 冊に持つため) | 該当 |
 | 消費先レーン 3 以上 | 依存の宣言 (`package.json` ×2・`package-lock.json`)・アプリの設定 (`app.json` / `eas.json` / Metro / Babel / tsconfig)・Jest の基盤・アプリのコード (expo-router 58 への追随 2 か所・API の置き換え 3 か所)・番兵のテスト = 5 | 該当 |
-| 共有面 2 つ以上 | ルートの `package.json` の `overrides`・`package-lock.json` (Web と共有)・`.github/dependabot.yml` のコメント・設計正典 (`mobile/01`・`mobile/03`・`mobile/05`・`mobile/CLAUDE.md`・`cross/05`・`cross/13b`・`cross/16`・`00-architecture`・`family/09`・ルート `CLAUDE.md`。§15.2) | 該当 |
+| 共有面 2 つ以上 | ルートの `package.json` の `overrides`・`package-lock.json` (Web と共有)・`.github/dependabot.yml` のコメント・設計正典 (`mobile/01`・`mobile/CLAUDE.md`・`cross/13b`・`00-architecture`・ルート `CLAUDE.md`。§15.2) | 該当 |
 
 判定: **設計は 1 冊 (本書) のまま、実装は 1 本の B 型 WF の中で 3 段 (A: 依存と設定 / B: expo-router 58 への追随 / C: 番兵と README) に分け、段ごとに 2 枚レビューを挟み、マージは最後に 1 回**。理由: どの段も同じネイティブのビルド (#1115) に載るまで利用者には届かず、段 A だけをマージすると、設定の画面に届かない (§7.1 の B-1) ・同意画面の止めが効かない (B-2) 状態の main ができる。核と配線に分けても、分かれた冊が参照する「マージ済みの核」が無い (全部が同じ `package-lock.json` の 1 回の作り直しに依る) ので、分けても行数も周回も減らない。
 
@@ -66,8 +66,8 @@
 | Issue #1115 (開) | 協調リリースのトラッカー。本冊の実装はここに載せる。2026-10-16/17 のコメントに、実機で確かめる項目 (#1722 Push・#588 字形・#1822 公開ページのヘッダ・#1442 同意ゲート) が積んである |
 | `docs/design/mobile/01-architecture.md` | 技術スタック (SDK 53 と書いてある)・§3.2 の設定画面の置き場 (`app/(tabs)/settings.tsx`・`href: null`)・§13 の OTA の行 |
 | `docs/design/cross/13b-legal-consent-mobile.md` | 同意ゲート。`beforeRemove` と `navigationRef.reset` の規則 (§0.3・§6.6.8〜6.6.11) が expo-router 58 で変わる (§7.1 の B-2) |
-| `docs/design/cross/16-auth-history-sessions.md` | `app/(tabs)/settings.tsx` を名指しする追随の行 (5 か所。§15.2) |
-| `docs/design/mobile/05-auth-session.md` | 設定画面の `signOutOnDevice` (ファイル名は書いていない)。番兵 `tests/mobile-sign-out-doc-callers.test.ts` が画面のファイルを持つ |
+| `docs/design/cross/16-auth-history-sessions.md` | `app/(tabs)/settings.tsx` を名指しする (5 か所)。本冊は設定の画面の置き場を変えない (§7.1 の B-1) ので、追随は無い |
+| `docs/design/mobile/05-auth-session.md` | 設定画面の `signOutOnDevice` (ファイル名は書いていない)。番兵 `tests/mobile-sign-out-doc-callers.test.ts` が画面のファイル (`app/(tabs)/settings.tsx`) を持つ。置き場を変えないので、どちらも変わらない |
 | Dependabot PR #1589 (postcss・expo・next) / #1590 (minor/patch のまとめ) | どちらも閉 (10/14・10/16)。#1590 の `@supabase/ssr` は #1768 (PR #1841) で別に上げた。本冊で扱う残りは無い |
 
 ### 2.2 現行の事実 (origin/main `904f9e8f` で採取し、`1d69d88b` で採り直した。`307ae1cf` (cross/16 の段 B・PR #1838) の差分 (設定の画面の行 1 つ・Jest のテスト 3 本) を取り込んだ。2026-10-17)
@@ -125,8 +125,8 @@
 | React Native 0.87 以降で消える・型が変わるもの | `InteractionManager`・`Touchable`・`NativeMethods`・`ImageBackground`・`StatusBar` の `backgroundColor` / `translucent`・`Modal` の `animated`・`react-native/Libraries/*` の深い import: **どれも使っていない** (0 件) |
 | `@react-navigation/*` の直接 import | 無し (コメントに 1 か所) |
 | `(tabs)` の layout の止め | `app/(tabs)/_layout.tsx` は、`(tabs)` の下の画面 (設定を含む) すべてに 3 つの止めを掛ける: 31 行 `if (!session) return <Redirect href="/" />`・35 行 同意の状態が `loading` / `required` の間はスピナー・46〜48 行 初期設定が済んでいなければ初期設定へ。ルートの Stack の画面 (`app/settings/account.tsx` など) には掛からない (`app/settings/_layout.tsx` は無い) |
-| 設定の画面の `user` | `app/(tabs)/settings.tsx` は `useAuth()` の `user` (= `session?.user ?? null`) を読み、`user` が無いと 67 行 (`fetchSettings`) と 133 行 (`handleWeekStartDayChange`) で何もせず戻る |
-| 設定の画面の遷移 | `app/(tabs)/settings.tsx` (origin/main `c2b96d41`): 251 行 `handleLogout` の `router.replace("/")`・324 行「プロフィール」の `router.push("/(tabs)/profile")`・332 / 340 / 375 / 437 行の `router.push` (`/health/blood-tests`・`/profile/nutrition-targets`・`AI_CONSENT_SCREEN_PATH`・`/settings/account`)・393 行「使い方ガイドをもう一度見る」の `router.push("/handson-tour?force=1")`。origin/main `307ae1cf` (cross/16 の段 B) で 446 行に「ログイン中の端末」の `router.push("/settings/sessions")` が足された (行き先 `app/settings/sessions.tsx` はルートの Stack の画面。`/settings/account` と同じ扱い)。ツアーの終わりは `router.replace('/home')` (`app/handson-tour/graduate.tsx:167`・`index.tsx:122`・`_layout.tsx:49`・`src/handson-tour/useLeaveTour.ts:61`)。`app/settings/account.tsx` の 82・102 行が `router.replace("/")`。`src/components/NotificationRouter.tsx:112` は行き先へ `router.push`。ルートの Stack の画面は getId を持たない (`app/_layout.tsx` の 114〜119 行) |
+| 隠しタブ (設定の画面) | `app/(tabs)/_layout.tsx:119` が `<Tabs.Screen name="settings" options={{ href: null }} />`。expo-router 5.1.11 の `build/layouts/TabsClient.js:24-39` は `href: null` を `tabBarItemStyle: { display: 'none' }` と、`null` を返す `tabBarButton` に展開する (route は `(tabs)` の state に残り、マイページの歯車の `router.push('/(tabs)/settings')` で届く。タブバーにはボタンも枠も出ない) |
+| 設定の画面の遷移 | `app/(tabs)/settings.tsx` (origin/main `307ae1cf`): 251 行 `handleLogout` の `router.replace("/")`・324 行「プロフィール」の `router.push("/(tabs)/profile")`・332 / 340 / 375 / 393 / 437 / 446 行の `router.push` (`/health/blood-tests`・`/profile/nutrition-targets`・`AI_CONSENT_SCREEN_PATH`・`/handson-tour?force=1`・`/settings/account`・`/settings/sessions`)。どれも、ルートの Stack の前面が `(tabs)` であること (設定の画面が `(tabs)` の中にあること) を前提に書かれている。ルートの Stack の画面は getId を持たない (`app/_layout.tsx` の 114〜119 行) |
 | ルートの `ErrorBoundary` | `app/_layout.tsx:34` はルートの境界 (「再試行」だけ)。`(tabs)` の境界は「ホームへ戻る」(`homeHref="/"`) も出す |
 
 **Jest のテスト** (`apps/mobile/__tests__`: 115 ファイル (origin/main `307ae1cf`)。904f9e8f の後に `settings/data-requests-entry.test.tsx` が、1d69d88b の後に cross/16 の段 B の `settings/sessions-entry.test.tsx`・`settings/sessions.test.tsx`・`lib/device-name.test.ts` が足された)
