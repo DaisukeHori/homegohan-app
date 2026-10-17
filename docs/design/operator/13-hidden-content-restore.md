@@ -329,11 +329,15 @@ export const MODERATION_FLAG_CONTENT_COLUMN_OF = {
   recipe: 'recipe_id',
 } as const satisfies Record<ModerationBackedType, 'meal_id' | 'recipe_id'>;
 
-/** コンテンツの行から読む列。paste_group_id・photo_url・memo は meals にしか無い */
-const HIDDEN_CONTENT_COLUMNS_OF = {
+/**
+ * コンテンツの行から読む列。paste_group_id・photo_url・memo は meals にしか無い。
+ * 型は string にしておく (文字列のリテラルのままだと、supabase-js の select の型の解析が長い列の並びで ParserError になる。
+ * 行の形は RawHiddenContentRow で受けて列ごとに確かめる)
+ */
+const HIDDEN_CONTENT_COLUMNS_OF: Readonly<Record<ModerationBackedType, string>> = {
   food: 'id, user_id, hidden_at, hidden_by, hidden_reason, paste_group_id, photo_url, memo',
   recipe: 'id, user_id, hidden_at, hidden_by, hidden_reason',
-} as const satisfies Record<ModerationBackedType, string>;
+};
 
 /** 同じまとまり (paste_group_id) の行から読む列。戻す対象を決める (listRowsHiddenTogether) */
 const PASTE_GROUP_ROW_COLUMNS = 'id, hidden_at, photo_url, memo';
