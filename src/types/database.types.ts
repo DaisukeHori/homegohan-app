@@ -8577,6 +8577,13 @@ export type Database = {
           isSetofReturn: true
         }
       }
+      cleanup_cron_run_history: {
+        Args: never
+        Returns: {
+          alerts_deleted: number
+          run_details_deleted: number
+        }[]
+      }
       cleanup_email_outbox: { Args: never; Returns: number }
       cleanup_ended_user_sessions_metadata: { Args: never; Returns: number }
       cleanup_expired_ai_usage_grant_claims: { Args: never; Returns: number }
