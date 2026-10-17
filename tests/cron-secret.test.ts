@@ -9,7 +9,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 
-import { requireServiceRole } from "../supabase/functions/_shared/auth.ts";
+import { describeServiceRoleAuth, requireServiceRole } from "../supabase/functions/_shared/auth.ts";
 import {
   checkCronSecret,
   timingSafeEqualBytes,
@@ -316,6 +316,237 @@ describe("requireServiceRole (#1196)", () => {
       await expectResponse(await requireServiceRole(request(`bearer ${secret}`)), 401, "Unauthorized");
       await expectResponse(await requireServiceRole(request(secret)), 401, "Unauthorized");
       await expectResponse(await requireServiceRole(request(`Bearer  ${secret}`)), 401, "Unauthorized");
+    }
+  });
+});
+
+// ─────────────────────────────────────────────
+// describeServiceRoleAuth (#1560。設計 docs/design/operator/12-cron-secret-drift-monitor.md §6.1)
+// ─────────────────────────────────────────────
+
+type DescribeEnvName = EnvName | "SERVICE_ROLE_JWT" | "SUPABASE_SERVICE_ROLE_KEY";
+
+describe("describeServiceRoleAuth (#1560)", () => {
+  const SERVICE_ROLE_KEY = "dummy-service-role-key-aaaaaaaaaaaaaaaa";
+  let env: Partial<Record<DescribeEnvName, string>>;
+  let warn: MockInstance<typeof console.warn>;
+  let log: MockInstance<typeof console.log>;
+
+  beforeEach(() => {
+    env = {};
+    vi.stubGlobal("Deno", { env: { get: (name: string) => env[name as DescribeEnvName] } });
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    log = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    log.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  function request(authorization?: string): Request {
+    return new Request("http://localhost/functions/v1/cron-secret-probe", {
+      method: "POST",
+      headers: authorization === undefined ? {} : { authorization },
+    });
+  }
+
+  it("DS-1: 現行の値なら { ok: true, matched: \"current\", alias_used: false, previous_configured: false }", async () => {
+    env.CRON_SECRET = NEW_SECRET;
+    await expect(describeServiceRoleAuth(request(bearer(NEW_SECRET)))).resolves.toEqual({
+      ok: true,
+      matched: "current",
+      alias_used: false,
+      previous_configured: false,
+    });
+  });
+
+  it("DS-2: CRON_SECRET_PREVIOUS で一致すれば matched \"previous\"・previous_configured true", async () => {
+    env.CRON_SECRET = NEW_SECRET;
+    env.CRON_SECRET_PREVIOUS = OLD_SECRET;
+    await expect(describeServiceRoleAuth(request(bearer(OLD_SECRET)))).resolves.toEqual({
+      ok: true,
+      matched: "previous",
+      alias_used: false,
+      previous_configured: true,
+    });
+  });
+
+  it("DS-3: 現行で一致しても CRON_SECRET_PREVIOUS が設定されていれば previous_configured true。空文字の CRON_SECRET_PREVIOUS は false", async () => {
+    env.CRON_SECRET = NEW_SECRET;
+    env.CRON_SECRET_PREVIOUS = OLD_SECRET;
+    await expect(describeServiceRoleAuth(request(bearer(NEW_SECRET)))).resolves.toEqual({
+      ok: true,
+      matched: "current",
+      alias_used: false,
+      previous_configured: true,
+    });
+
+    env.CRON_SECRET_PREVIOUS = "";
+    await expect(describeServiceRoleAuth(request(bearer(NEW_SECRET)))).resolves.toEqual({
+      ok: true,
+      matched: "current",
+      alias_used: false,
+      previous_configured: false,
+    });
+  });
+
+  it("DS-4: CRON_SECRET が無く SERVICE_ROLE_SECRET で一致すれば alias_used true。CRON_SECRET が空文字なら別名に切り替わらず not_configured (alias_used は問わない)", async () => {
+    env.SERVICE_ROLE_SECRET = NEW_SECRET;
+    await expect(describeServiceRoleAuth(request(bearer(NEW_SECRET)))).resolves.toEqual({
+      ok: true,
+      matched: "current",
+      alias_used: true,
+      previous_configured: false,
+    });
+
+    // CRON_SECRET があれば別名は使わない (alias_used false。別名の値では通らない)
+    env.CRON_SECRET = OLD_SECRET;
+    await expect(describeServiceRoleAuth(request(bearer(NEW_SECRET)))).resolves.toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+    await expect(describeServiceRoleAuth(request(bearer(OLD_SECRET)))).resolves.toEqual({
+      ok: true,
+      matched: "current",
+      alias_used: false,
+      previous_configured: false,
+    });
+
+    // CRON_SECRET が空文字: ?? は空文字を未設定とみなさないので別名に切り替わらず、not_configured
+    env.CRON_SECRET = "";
+    const result = await describeServiceRoleAuth(request(bearer(NEW_SECRET)));
+    expect(result).toEqual({ ok: false, reason: "not_configured" });
+  });
+
+  it("DS-5: service role key (SERVICE_ROLE_JWT / SUPABASE_SERVICE_ROLE_KEY) の完全一致なら matched \"service_role_key\" (CRON_SECRET が設定されていても)", async () => {
+    env.CRON_SECRET = NEW_SECRET;
+    env.CRON_SECRET_PREVIOUS = OLD_SECRET;
+
+    env.SERVICE_ROLE_JWT = SERVICE_ROLE_KEY;
+    await expect(describeServiceRoleAuth(request(bearer(SERVICE_ROLE_KEY)))).resolves.toEqual({
+      ok: true,
+      matched: "service_role_key",
+      alias_used: false,
+      previous_configured: true,
+    });
+
+    delete env.SERVICE_ROLE_JWT;
+    env.SUPABASE_SERVICE_ROLE_KEY = SERVICE_ROLE_KEY;
+    await expect(describeServiceRoleAuth(request(bearer(SERVICE_ROLE_KEY)))).resolves.toEqual({
+      ok: true,
+      matched: "service_role_key",
+      alias_used: false,
+      previous_configured: true,
+    });
+
+    // Bearer を付けずに鍵だけを送ったものは通さない
+    await expect(describeServiceRoleAuth(request(SERVICE_ROLE_KEY))).resolves.toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+  });
+
+  it("DS-6: どれとも一致しなければ { ok: false, reason: \"unauthorized\" }。現行が無ければ not_configured", async () => {
+    env.CRON_SECRET = NEW_SECRET;
+    env.CRON_SECRET_PREVIOUS = OLD_SECRET;
+    await expect(describeServiceRoleAuth(request(bearer("wrong")))).resolves.toEqual({
+      ok: false,
+      reason: "unauthorized",
+    });
+    await expect(describeServiceRoleAuth(request())).resolves.toEqual({ ok: false, reason: "unauthorized" });
+
+    env = { CRON_SECRET_PREVIOUS: OLD_SECRET };
+    await expect(describeServiceRoleAuth(request(bearer(OLD_SECRET)))).resolves.toEqual({
+      ok: false,
+      reason: "not_configured",
+    });
+    env = {};
+    await expect(describeServiceRoleAuth(request(bearer(NEW_SECRET)))).resolves.toEqual({
+      ok: false,
+      reason: "not_configured",
+    });
+  });
+
+  it("DS-7: 戻り値に秘密の値を含めない (JSON.stringify した結果に、どの秘密も現れない)", async () => {
+    env.CRON_SECRET = NEW_SECRET;
+    env.CRON_SECRET_PREVIOUS = OLD_SECRET;
+    env.SERVICE_ROLE_SECRET = "dummy-alias-secret-1111111111111111";
+    env.SERVICE_ROLE_JWT = SERVICE_ROLE_KEY;
+    const secrets = [NEW_SECRET, OLD_SECRET, env.SERVICE_ROLE_SECRET, SERVICE_ROLE_KEY];
+    const headers = [bearer(NEW_SECRET), bearer(OLD_SECRET), bearer(SERVICE_ROLE_KEY), bearer("wrong"), undefined];
+    for (const header of headers) {
+      const text = JSON.stringify(await describeServiceRoleAuth(request(header)));
+      for (const secret of secrets) {
+        expect(text, String(header)).not.toContain(secret);
+      }
+    }
+    // ログも出さない (Response を作らず、console に何も書かない)
+    expect(warn).not.toHaveBeenCalled();
+    expect(log).not.toHaveBeenCalled();
+  });
+
+  it("DS-8: requireServiceRole の振る舞い (RS-1〜RS-11) は変わらない: 載せ替え前の判定 (checkCronSecret を直接使う) と、同じ入力で同じ Response・同じ warn", async () => {
+    const envCases: Array<Partial<Record<DescribeEnvName, string>>> = [
+      {},
+      { CRON_SECRET: NEW_SECRET },
+      { CRON_SECRET: NEW_SECRET, CRON_SECRET_PREVIOUS: OLD_SECRET },
+      { CRON_SECRET: NEW_SECRET, CRON_SECRET_PREVIOUS: "" },
+      { CRON_SECRET: "", SERVICE_ROLE_SECRET: NEW_SECRET },
+      { CRON_SECRET_PREVIOUS: OLD_SECRET },
+      { SERVICE_ROLE_SECRET: NEW_SECRET, CRON_SECRET_PREVIOUS: OLD_SECRET },
+      { CRON_SECRET: OLD_SECRET, SERVICE_ROLE_SECRET: NEW_SECRET },
+      { CRON_SECRET: NEW_SECRET, SERVICE_ROLE_JWT: SERVICE_ROLE_KEY },
+      { CRON_SECRET: NEW_SECRET, SUPABASE_SERVICE_ROLE_KEY: SERVICE_ROLE_KEY },
+    ];
+    const headerCases: Array<string | undefined> = [
+      undefined,
+      "",
+      "Bearer ",
+      bearer(NEW_SECRET),
+      bearer(OLD_SECRET),
+      bearer(SERVICE_ROLE_KEY),
+      bearer("wrong"),
+      `bearer ${NEW_SECRET}`,
+      `Bearer  ${NEW_SECRET}`,
+      NEW_SECRET,
+    ];
+
+    // 載せ替え前の requireServiceRole と同じ規則 (期待値を作るための写し)
+    async function expected(
+      envCase: Partial<Record<DescribeEnvName, string>>,
+      header: string | undefined,
+    ): Promise<{ status: number | null; error: string | null; warned: boolean }> {
+      const token = /^Bearer\s+(.+?)\s*$/i.exec(header ?? "")?.[1] ?? "";
+      const keys = [envCase.SERVICE_ROLE_JWT, envCase.SUPABASE_SERVICE_ROLE_KEY].filter((key): key is string => !!key);
+      if (token && keys.includes(token)) return { status: null, error: null, warned: false };
+      const result = await checkCronSecret(header, {
+        current: envCase.CRON_SECRET ?? envCase.SERVICE_ROLE_SECRET,
+        previous: envCase.CRON_SECRET_PREVIOUS,
+      });
+      if (result.ok) return { status: null, error: null, warned: result.matched === "previous" };
+      return result.reason === "not_configured"
+        ? { status: 503, error: "Service not configured", warned: false }
+        : { status: 401, error: "Unauthorized", warned: false };
+    }
+
+    for (const envCase of envCases) {
+      for (const header of headerCases) {
+        env = envCase;
+        warn.mockClear();
+        const want = await expected(envCase, header);
+        const res = await requireServiceRole(request(header));
+        const label = `${JSON.stringify(Object.keys(envCase))} / ${String(header)?.slice(0, 12)}`;
+        if (want.status === null) {
+          expect(res, label).toBeNull();
+        } else {
+          expect(res?.status, label).toBe(want.status);
+          expect(res?.headers.get("Content-Type"), label).toBe("application/json");
+          await expect(res!.json(), label).resolves.toEqual({ error: want.error });
+        }
+        expect(warn.mock.calls.length, label).toBe(want.warned ? 1 : 0);
+      }
     }
   });
 });

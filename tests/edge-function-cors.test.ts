@@ -262,6 +262,8 @@ const BATCH_ONLY_SOURCES = [
   "supabase/functions/create-derived-recipe/index.ts",
   // 料理画像のジョブの処理。service role key か、pg_cron の CRON_SECRET (requireServiceRole) で呼ぶ (#1561)
   "supabase/functions/process-meal-image-jobs/index.ts",
+  // cron の共有シークレットの確認。GET /api/cron/app-log-alerts が DB (send_cron_secret_probe) から Vault の app_cron_secret で呼ぶ (#1560)
+  "supabase/functions/cron-secret-probe/index.ts",
   // import-*-catalog (6 関数) の共通ハンドラ
   "supabase/functions/_shared/catalog/import-runner.ts",
   "supabase/functions/import-convenience-catalog/index.ts",
