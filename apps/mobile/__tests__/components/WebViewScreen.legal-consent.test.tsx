@@ -50,7 +50,7 @@ jest.mock('react-native-webview', () => ({
   },
 }));
 
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   documentDirectory: '/tmp/',
   writeAsStringAsync: jest.fn(),
   EncodingType: { UTF8: 'utf8' },

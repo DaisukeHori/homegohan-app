@@ -16,10 +16,10 @@ config.resolver.nodeModulesPaths = [
 config.resolver.disableHierarchicalLookup = false;
 
 // Force single React 19 instance across the entire bundle.
-// apps/mobile/node_modules/react = 19.0.0 (correct for this app)
-// workspace root node_modules/react = 18.3.1 (hoisted for web packages)
-// Without this, expo-router (loaded from workspace root) imports react 18.3.1
-// while app code uses react 19.0.0, causing "Cannot read property 'S' of undefined".
+// apps/mobile/node_modules/react = 19.3.0 (correct for this app: the same version as the renderer in react-native 0.88)
+// workspace root node_modules/react = 19.2.x (hoisted for web packages)
+// Without this, expo-router (loaded from workspace root) imports react 19.2.x
+// while app code uses react 19.3.0, causing "Cannot read property 'S' of undefined".
 const mobileNodeModules = path.resolve(projectRoot, "node_modules");
 const REACT_PREFIXES = ["react", "react-dom", "react/", "react-dom/"];
 config.resolver.resolveRequest = (context, moduleName, platform) => {

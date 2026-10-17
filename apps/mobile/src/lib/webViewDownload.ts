@@ -20,7 +20,7 @@
  * Web 側で書き出せる形式を増やすときは、ALLOWED_EXTENSIONS と docs/design/mobile/01-architecture.md の
  * 「download メッセージの制約」を合わせて直すこと。
  */
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 import { getWebBaseUrl } from './webBaseUrl';

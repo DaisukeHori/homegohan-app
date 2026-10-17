@@ -15,16 +15,17 @@ module.exports = {
   // 1 件のテストの時間切れ。負荷の高い機械で Jest の既定の 5 秒を超えて落ちるため延ばす (jest.timeouts.js)
   testTimeout: resolveMobileJestTimeouts(process.env).testTimeout,
   modulePaths: [mobileNodeModules, worktreeNodeModules],
-  transformIgnorePatterns: [
-    'node_modules/(?!((jest-)?react-native|@react-native(-community)?|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|sentry-expo|native-base|react-native-svg))',
-  ],
+  // transformIgnorePatterns は書かない。jest-expo の既定 (react-native* / @react-native* / expo* / @expo* / @expo-google-fonts /
+  // react-navigation / standard-navigation などを変換し、react-native-reanimated/plugin と @react-native/babel-preset は変換しない)
+  // に任せる。自前の一覧を持つと、expo-router の新しい依存 (standard-navigation など) が一覧から漏れて SyntaxError になる (#1591)。
   // react 系モジュールを apps/mobile/node_modules から優先解決し、
-  // モノレポルートの react@18 が react-test-renderer 経由で漏れ込むのを防ぐ。
+  // モノレポルートの react (Web 用の 19.2 系) が react-test-renderer 経由で漏れ込むのを防ぐ。
+  // react-native は書かない。@react-native/jest-preset と jest-expo の preset が、exports だけの入口
+  // (react-native/setup-env・react-private-interface・asset-registry・unstable-internals-do-not-use) を含めて
+  // 絶対パスで写す。ここに総称の行を書くと、preset の個別の行より先に当たって無いパスへ写す (#1591)。
   moduleNameMapper: {
     '^react$': path.join(mobileNodeModules, 'react'),
     '^react/(.*)$': path.join(mobileNodeModules, 'react', '$1'),
-    '^react-native$': path.join(worktreeNodeModules, 'react-native'),
-    '^react-native/(.*)$': path.join(worktreeNodeModules, 'react-native', '$1'),
     '^react-test-renderer$': path.join(worktreeNodeModules, 'react-test-renderer'),
     '^react-test-renderer/(.*)$': path.join(worktreeNodeModules, 'react-test-renderer', '$1'),
     // tsconfig.json の paths と同じく、このリポジトリの packages/shared を直接読む (#1197)。

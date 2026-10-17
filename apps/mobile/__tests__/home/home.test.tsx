@@ -48,15 +48,6 @@ jest.mock('react-native-svg', () => {
   };
 });
 
-// ── @react-native-community/slider のモック ───────────────────────────────────
-jest.mock('@react-native-community/slider', () => {
-  const { View } = require('react-native');
-  function SliderMock({ testID }: { testID?: string }) {
-    return <View testID={testID ?? 'slider'} />;
-  }
-  return SliderMock;
-});
-
 // ── react-native-safe-area-context のモック ───────────────────────────────────
 jest.mock('react-native-safe-area-context', () => {
   const React = require('react');

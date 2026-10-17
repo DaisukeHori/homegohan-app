@@ -56,7 +56,7 @@ jest.mock('react-native-webview', () => ({
 }));
 
 // download の保存は webViewDownload.ts (#1159) が cacheDirectory の専用フォルダに書く
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: '/tmp/cache/',
   documentDirectory: '/tmp/',
   writeAsStringAsync: jest.fn(() => Promise.resolve()),
@@ -88,7 +88,7 @@ jest.mock('../../src/theme/colors', () => ({
   colors: { accent: '#FF6B35' },
 }));
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { WebViewScreen } from '../../src/components/web/WebViewScreen';
 
 // ─────────────────────────────────────────────────────────────────────────────

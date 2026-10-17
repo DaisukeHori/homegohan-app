@@ -70,7 +70,7 @@ jest.mock('react-native-webview', () => {
   };
 });
 
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   cacheDirectory: '/tmp/cache/',
   documentDirectory: '/tmp/',
   writeAsStringAsync: jest.fn(() => Promise.resolve()),

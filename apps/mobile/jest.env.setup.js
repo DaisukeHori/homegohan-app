@@ -1,6 +1,7 @@
 // Skip RNTL peer deps version check
-// This is needed because the monorepo root has react@18 (for Next.js) while
-// apps/mobile uses react@19. The check incorrectly picks up the root version.
+// This is needed because the monorepo root has react 19.2.x (for Next.js) while
+// apps/mobile uses react 19.3.0 (the renderer bundled with react-native 0.88).
+// The check incorrectly picks up the root version.
 process.env.RNTL_SKIP_DEPS_CHECK = '1';
 
 // src/lib/supabase.ts は、EXPO_PUBLIC_SUPABASE_URL / EXPO_PUBLIC_SUPABASE_ANON_KEY が無いと、開発モード
@@ -10,7 +11,7 @@ process.env.RNTL_SKIP_DEPS_CHECK = '1';
 process.env.EXPO_PUBLIC_SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://test-project.supabase.co';
 process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || 'test-anon-key';
 
-// Node 20 には native WebSocket がないため ws polyfill を注入する。
+// Node 22 には native WebSocket があるので、通常この分岐は通らない (無い環境のための無害な保険として残す)。
 // @supabase/realtime-js が WebSocket を要求するテスト suite で必要。
 if (typeof global.WebSocket === 'undefined') {
   global.WebSocket = require('ws');

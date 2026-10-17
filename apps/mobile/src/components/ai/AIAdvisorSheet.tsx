@@ -17,11 +17,11 @@ import {
   Modal,
   Platform,
   Pressable,
-  SafeAreaView,
   ScrollView,
   StyleSheet,
   View,
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import { Text, TextInput } from "../ui/Text";
 
 import { getApi, getApiBaseUrl } from "../../lib/api";
