@@ -55,6 +55,26 @@ const SOURCE_FILE = /\.(ts|tsx)$/;
 /** import の from・require・jest.mock の第 1 引数にある expo-file-system の指定子 (第 1 グループは /legacy などの下の入口) */
 const FILE_SYSTEM_SPECIFIER = /(?:from\s+|require\(\s*|jest\.mock\(\s*)['"]expo-file-system(\/[^'"]*)?['"]/g;
 const FILE_SYSTEM_LEGACY_SUBPATH = '/legacy';
+/** FILE_SYSTEM_SPECIFIER が拾う形の見本。subpath は第 1 グループ (下の入口。既定の入口は undefined) */
+interface FileSystemSpecifierSample {
+  label: string;
+  sample: string;
+  subpath: string | undefined;
+}
+/**
+ * 走査の it は「既定の入口が 0 件」しか確かめないので、正規表現の 3 つの選択肢 (`from`・`require(`・`jest.mock(`) の
+ * どれかが欠けても、違反を見逃したまま緑になる。見本で拾う力を固定する。jest.mock の見本は、後から足された Jest のテストが
+ * mock の指定子を既定の入口のまま書いた形 (__tests__/settings/export-rows.test.tsx。#1876)
+ */
+const FILE_SYSTEM_SPECIFIER_SAMPLES: readonly FileSystemSpecifierSample[] = [
+  { label: '既定の入口の import', sample: "import * as FileSystem from 'expo-file-system';", subpath: undefined },
+  { label: '/legacy の import', sample: 'import * as FileSystem from "expo-file-system/legacy";', subpath: FILE_SYSTEM_LEGACY_SUBPATH },
+  { label: '/legacy でない下の入口の import', sample: "import { File } from 'expo-file-system/next';", subpath: '/next' },
+  { label: '既定の入口の require', sample: "const FileSystem = require('expo-file-system');", subpath: undefined },
+  { label: '既定の入口の jest.mock', sample: "jest.mock('expo-file-system', () => ({", subpath: undefined },
+  { label: '改行をはさんだ既定の入口の jest.mock', sample: "jest.mock(\n  'expo-file-system',\n  () => ({}),\n);", subpath: undefined },
+  { label: '/legacy の jest.mock', sample: "jest.mock('expo-file-system/legacy', () => ({", subpath: FILE_SYSTEM_LEGACY_SUBPATH },
+];
 /**
  * expo install --check から外す依存 (apps/mobile/package.json の expo.install.exclude)。typescript だけ:
  * SDK 58 の --check は Expo の API の relatedPackages (typescript ~6.0.3) とも突き合わせるが、ルートと同じ 5.9.3 に据え置く
@@ -192,6 +212,12 @@ describe('#1591 expo-file-system は /legacy の入口だけを読む', () => {
     }
     expect(imports, '走査が空振りしていない (expo-file-system を読むファイルがある)').toBeGreaterThan(0);
     expect(offenders).toEqual([]);
+  });
+
+  it.each(FILE_SYSTEM_SPECIFIER_SAMPLES)('指定子の正規表現は $label を拾い、下の入口を読み分ける', ({ sample, subpath }) => {
+    const match = new RegExp(FILE_SYSTEM_SPECIFIER.source, 'g').exec(sample);
+    expect(match, `拾えていない: ${sample}`).not.toBeNull();
+    expect(match?.[1]).toBe(subpath);
   });
 });
 
