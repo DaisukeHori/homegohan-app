@@ -242,8 +242,8 @@ describe('#1187 FAQ が案内している画面の言葉は、アプリに実在
     expect(read('apps/mobile/app/settings/account.tsx')).toContain('アカウント削除');
   });
 
-  it('モバイルのアカウント管理: 「パスワードを変更」「メールアドレスを変更」の項目があり、実際に Supabase で変更する', () => {
-    // 画面 (account.tsx) が項目の部品を描き、部品が見出しと入力欄を持ち、変更の処理が updateUser を呼ぶ
+  it('モバイルのアカウント管理: 「パスワードを変更」「メールアドレスを変更」の項目があり、パスワードは API (/api/auth/password/change) で、メールアドレスは Supabase で変更する', () => {
+    // 画面 (account.tsx) が項目の部品を描き、部品が見出しと入力欄を持ち、変更の処理がパスワードは API を、メールアドレスは updateUser を呼ぶ
     expect(read('apps/mobile/app/settings/account.tsx')).toContain('<AccountCredentialsSection />');
     const section = read('apps/mobile/src/components/settings/AccountCredentialsSection.tsx');
     expect(section).toContain('title="パスワードを変更"');
@@ -251,8 +251,8 @@ describe('#1187 FAQ が案内している画面の言葉は、アプリに実在
     expect(section).toContain('現在のパスワード');
     expect(section).toContain('新しいメールアドレス');
     const credentials = read('apps/mobile/src/lib/account-credentials.ts');
-    expect(credentials).toContain('updateUser({ password: input.newPassword })');
+    // パスワードの変更は API 経由 (#1720 段 C。cross/16 §16)。引用符の種類に依らないよう path だけを見る
+    expect(credentials).toContain('/api/auth/password/change');
     expect(credentials).toContain('{ email: input.email }');
-    expect(credentials).toContain('signOut({ scope: "others" })');
   });
 });

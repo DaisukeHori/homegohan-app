@@ -51,14 +51,14 @@ function PasswordChangeCard({ email }: { email: string }) {
   // state の反映を待たずに効く、連打での二重送信の防止
   const submittingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
-  // 変更できたとき。othersSignedOut: 他の端末のログアウトまで確認できたか
-  const [result, setResult] = useState<{ othersSignedOut: boolean } | null>(null);
+  // 変更できたか (送信の始めに false、成功で true)。成功なら GoTrue が更新と同じトランザクションで他の端末を消している (cross/16 §13.7)
+  const [result, setResult] = useState(false);
 
   async function onSubmit() {
     if (submittingRef.current) return;
     submittingRef.current = true;
     setSubmitting(true);
-    setResult(null);
+    setResult(false);
     setError(null);
     try {
       const outcome = await changePassword(email, { currentPassword, newPassword, confirmPassword });
@@ -69,7 +69,7 @@ function PasswordChangeCard({ email }: { email: string }) {
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
-      setResult({ othersSignedOut: outcome.othersSignedOut });
+      setResult(true);
     } finally {
       submittingRef.current = false;
       setSubmitting(false);
@@ -85,9 +85,7 @@ function PasswordChangeCard({ email }: { email: string }) {
         <View testID="password-change-success" style={[styles.banner, { backgroundColor: colors.successLight }]}>
           <Text style={[styles.bannerTitle, { color: colors.successText }]}>パスワードを変更しました。</Text>
           <Text style={[styles.bannerText, { color: colors.successText }]}>
-            {result.othersSignedOut
-              ? "セキュリティのため、この端末以外のログインはすべて解除しました。他の端末では、新しいパスワードでログインし直してください。"
-              : "ただし、他の端末のログアウトを確認できませんでした。心配な場合は、設定の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。"}
+            セキュリティのため、この端末以外のログインはすべて解除しました。他の端末では、新しいパスワードでログインし直してください。
           </Text>
         </View>
       ) : null}

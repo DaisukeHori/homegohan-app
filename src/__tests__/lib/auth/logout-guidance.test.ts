@@ -12,7 +12,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   describeForgotCurrentPasswordNote,
-  describeOthersNotSignedOutNote,
   NATIVE_FORGOT_PASSWORD_LINK_LABEL,
   NATIVE_SETTINGS_ENTRY_LABEL,
   WEB_FORGOT_PASSWORD_LINK_LABEL,
@@ -63,33 +62,6 @@ function testIdsInsideWebBranch(source: string, testId: string): boolean[] {
   visit(sourceFile);
   return results;
 }
-
-describe('#1552 他の端末のログアウトを確認できなかったときの注意書き', () => {
-  it('ブラウザでは、Web の設定の「ログアウト」を指す (以前と同じ文)', () => {
-    expect(describeOthersNotSignedOutNote('web')).toBe(
-      'ただし、他の端末のログアウトを確認できませんでした。心配な場合は、設定の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。',
-    );
-  });
-
-  it('アプリの中では、Web の設定の「ログアウト」を指さず、マイページの右上の歯車 (設定) の「ログアウト」を指す', () => {
-    const note = describeOthersNotSignedOutNote('native');
-    expect(note).toContain(`${NATIVE_SETTINGS_ENTRY_LABEL} の「ログアウト」`);
-    expect(note).not.toContain('設定の「ログアウト」');
-  });
-
-  it('判定前は、場所を言わない (Web の設定も歯車も指さない)', () => {
-    const note = describeOthersNotSignedOutNote('undecided');
-    expect(note).not.toContain('「ログアウト」');
-    expect(note).not.toContain('歯車');
-    expect(note).toContain('この端末もいったんログアウトして');
-  });
-
-  it.each(PLACEMENTS)('%s: どの場合も、他の端末を確認できなかったことと、ログインし直すことを伝える', (placement) => {
-    const note = describeOthersNotSignedOutNote(placement);
-    expect(note.startsWith('ただし、他の端末のログアウトを確認できませんでした。')).toBe(true);
-    expect(note.endsWith('新しいパスワードでログインし直してください。')).toBe(true);
-  });
-});
 
 describe('#1552 現在のパスワードを思い出せない人への案内', () => {
   it('ブラウザでは、Web のログイン画面の「忘れた場合」を指す (以前と同じ文)', () => {
@@ -146,7 +118,8 @@ describe('#1552 案内が指す言葉が、実在する画面の言葉と一致�
 
   it('アカウント画面は、案内の文を直書きせず、この出し分けを使う', () => {
     const account = read('src/app/(main)/settings/account/page.tsx');
-    expect(account).toContain('describeOthersNotSignedOutNote(accountActionsPlacement)');
+    // 他の端末のログアウトは GoTrue が更新と同じトランザクションで行う (cross/16 §13.7) ので、確認できなかったときの注意書きは無い
+    expect(account).not.toContain('describeOthersNotSignedOutNote');
     expect(account).toContain('describeForgotCurrentPasswordNote(accountActionsPlacement)');
     expect(account).toContain('useAccountActionsPlacement(isNativeApp)');
     expect(account).not.toContain('設定の「ログアウト」');
