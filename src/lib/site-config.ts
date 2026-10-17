@@ -44,6 +44,15 @@ export const DEFAULT_EMAIL_FROM = 'ほめゴハン <noreply@homegohan.app>';
 /** 問い合わせ先 (サポート窓口) のメールアドレスの既定値 */
 export const DEFAULT_SUPPORT_EMAIL = 'support@homegohan.app';
 
+/**
+ * サービスの名前と、一言の説明 (#1845)。ページのメタ情報 (src/app/layout.tsx の title) と、
+ * OGP / Twitter Card の画像 (src/lib/brand-image.tsx) が同じ文字を使う。
+ * layout の title.default が `${SITE_NAME} | ${SITE_TAGLINE}` のままであることは tests/og-image-1845.test.tsx が検査する。
+ * ドメインではないので、環境変数での切り替えはしない。
+ */
+export const SITE_NAME = 'ほめゴハン';
+export const SITE_TAGLINE = 'AIで食事管理をもっと簡単に';
+
 /** 空白・< > @ を含まない、ごく簡易なメールアドレスの形 (厳密な検証は送信側の zod が行う) */
 const EMAIL_ADDRESS = String.raw`[^\s<>@"]+@[^\s<>@"]+\.[^\s<>@"]+`;
 const EMAIL_ADDRESS_PATTERN = new RegExp(`^${EMAIL_ADDRESS}$`);
