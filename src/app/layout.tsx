@@ -60,20 +60,15 @@ export const metadata: Metadata = {
     siteName: "ほめゴハン",
     locale: "ja_JP",
     type: "website",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "ほめゴハン - AIで食事管理をもっと簡単に",
-      },
-    ],
+    // 画像 (og:image) は書かない。src/app/opengraph-image.tsx (Next の file convention) が PNG を作り、Next が
+    // og:image / og:image:width / height / type / alt を metadataBase を前に付けた絶対 URL で入れる (#1845。
+    // 以前は public/ に無い /og-image.png を指していて、本番で 404 だった)。
   },
   twitter: {
     card: "summary_large_image",
     title: "ほめゴハン | AIで食事管理をもっと簡単に",
     description: "写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。",
-    images: ["/og-image.png"],
+    // 画像 (twitter:image) は src/app/twitter-image.tsx (Next の file convention) が入れる (#1845)
   },
   robots: {
     index: true,
@@ -91,6 +86,7 @@ export const metadata: Metadata = {
       { url: "/favicon.ico", sizes: "any" },
       { url: "/icon.svg", type: "image/svg+xml" },
     ],
+    // /apple-touch-icon.png は src/app/apple-touch-icon.png/route.ts が PNG を返す (#1845。以前は public/ に無く 404)
     apple: [
       { url: "/apple-touch-icon.png", sizes: "180x180" },
     ],

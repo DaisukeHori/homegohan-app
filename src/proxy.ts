@@ -90,7 +90,10 @@ export const config = {
      *   なので、Vercel 上で計測を守っているのはこの除外ではない。除外が効くのは、Vercel が応答しないとき
      *   (有効にしていない機能、存在しないパス、next start で Vercel の外に置いたとき) に、/_vercel/* の応答が
      *   ログイン画面の HTML にすり替わるのを防ぐ場面。害は無いので残す)
+     * - opengraph-image / twitter-image (OGP / Twitter Card の画像 #1845。src/app/opengraph-image.tsx・twitter-image.tsx。
+     *   ちょうどこのパスだけ。拡張子の無いパスなので下の画像の拡張子の除外に当たらない。SNS のクローラーは未ログインなので、
+     *   通すと /login へ送られ、画像の代わりにログイン画面の HTML が返る。画像は文書ではないので CSP も要らない)
      */
-    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|opengraph-image$|twitter-image$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
