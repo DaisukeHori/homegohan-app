@@ -377,7 +377,7 @@ CREATE TABLE personal_subscriptions (
   stripe_subscription_id      VARCHAR(255) UNIQUE,
   stripe_price_id             VARCHAR(255),
   -- Stripe の写し (billing/01 §6.2。書くのは billing_apply_stripe_subscription だけ)
-  stripe_synced_at            TIMESTAMPTZ,  -- Stripe から取り直した時刻 (p_fetched_at)。これより古い取り直しは適用しない。手動付与の行は NULL
+  stripe_synced_at            TIMESTAMPTZ,  -- Stripe から取り直した時刻 (p_fetched_at)。これより古い取り直しは適用しない。手動付与の行は NULL。手動付与の行 (`stripe_subscription_id IS NULL`) は `billing/02` の DB 関数だけが書く。`current_period_end` が有効期限 (NULL = 期限なし)
   stripe_status               VARCHAR(30),  -- Stripe の Subscription.status の素の値。status はこれを写像したもの
   cancel_at_period_end        BOOLEAN NOT NULL DEFAULT false,  -- true なら current_period_end で解約される (status は変わらない)
   billing_interval            VARCHAR(10)
