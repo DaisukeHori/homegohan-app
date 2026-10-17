@@ -314,11 +314,11 @@ describe('AuthProvider — 起動時のセッション復元', () => {
       expect(mockSignOut).not.toHaveBeenCalled();
     });
 
-    it('その場合、サーバーでの検証 (getUser()) は省く: getUser() も同じ更新をやり直して同じ理由で失敗し、読み込み中の表示を約 50 秒延ばすだけ', async () => {
+    it('その場合、サーバーでの検証 (getUser()) は省く: getUser() も同じ更新を試みて同じ理由で失敗し (2.117 は控えた失敗をすぐ受け取る)、読み込み中の表示を延ばすだけ', async () => {
       const stored = makeSession('user-1', 'stored-access');
       mockGetSession.mockResolvedValue({ data: { session: null }, error: retryableFetchError() });
       mockGetStoredSession.mockResolvedValue(stored);
-      // 呼ばれたら、実機では約 50 秒かかる。呼ばれないことが大事なので、呼ばれたら解決しない Promise にして、画面が止まることで検出する
+      // 呼ばれたら、実機では読み込み中の表示が延びる (2.105 のビルドでは約 50 秒)。呼ばれないことが大事なので、呼ばれたら解決しない Promise にして、画面が止まることで検出する
       mockGetUser.mockReturnValue(new Promise(() => {}));
 
       const api = renderProvider();
