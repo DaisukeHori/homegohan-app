@@ -343,8 +343,8 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 
 | 経路 | 解析の頼み方 | ほめるひと言 (`praiseComment`) | 栄養のひと言メモ (`nutritionTip`) |
 |---|---|---|---|
-| 食事の記録の画面 (`src/app/(main)/meals/new/page.tsx`。§0.5) | `POST /api/ai/analyze-meal-photo` を `mealId` 無しで呼ぶ (`:552`) → 解析の関数が同期で解析して結果を返し (`supabase/functions/analyze-meal-photo/index.ts:83-119`)、API がそのまま返す (`src/app/api/ai/analyze-meal-photo/route.ts:155-158`) | 結果の画面の「記録コメント」に出る (`:586`・`:1506-1520`) | 結果の画面の「栄養メモ」に出る (`:587`・`:1538-1543`) |
-| 献立表の「写真から入力」(`src/app/(main)/menus/weekly/page.tsx:4323` の `analyzePhotoWithAI`。モーダルの題は `src/app/(main)/menus/weekly/_components/modals/PhotoEditModal.tsx:91`) | 同じ API を献立の 1 食の `mealId` つきで呼ぶ (`:4355`) → API は「裏で解析を始めた」とだけ返し (`route.ts:127-133`)、解析の関数が裏で解析して `planned_meals.description` に `praiseComment` だけを保存する (`index.ts:247-264`) | 記録のときの画面には出ない (成功したらモーダルを閉じて献立を読み直すだけ: `weekly/page.tsx:4366-4388`)。保存した文は、後で食事の詳細の画面の説明の行に出る (`src/app/(main)/meals/[id]/page.tsx:343-345`) | 保存されず、どこにも出ない (`nutritionTip` を読むのは `meals/new/page.tsx:381`・`:587`・`:1539-1543` だけ。`menus/weekly/page.tsx` の `nutritionTip` (`:740`・`:2625`) は献立の振り返り (`/api/ai/nutrition/feedback`) の別の値) |
+| 食事の記録の画面 (`src/app/(main)/meals/new/page.tsx`。§0.5) | `POST /api/ai/analyze-meal-photo` を `mealId` 無しで呼ぶ (`:552`) → 解析の関数が同期で解析して結果を返し (`supabase/functions/analyze-meal-photo/index.ts:83-119`)、API が結果に料理の候補 (`catalogMatches`) を足して返す (`src/app/api/ai/analyze-meal-photo/route.ts:155-158`) | 結果の画面の「記録コメント」に出る (`:586`・`:1506-1520`) | 結果の画面の「栄養メモ」に出る (`:587`・`:1538-1543`) |
+| 献立表の「写真から入力」(`src/app/(main)/menus/weekly/page.tsx:4323` の `analyzePhotoWithAI`。モーダルの題は `src/app/(main)/menus/weekly/_components/modals/PhotoEditModal.tsx:91`) | 同じ API を献立の 1 食の `mealId` つきで呼ぶ (`:4355`) → API は「裏で解析を始めた」とだけ返し (`route.ts:127-133`)、解析の関数が裏で解析して `planned_meals.description` に `praiseComment` だけを保存する (`index.ts:247-264`) | 記録のときの画面には出ない (成功したらモーダルを閉じて献立を読み直すだけ: `weekly/page.tsx:4366-4388`)。保存した文は、後で食事の詳細の画面の説明の行に出る (`src/app/(main)/meals/[id]/page.tsx:343-345`) | 保存されず、どこにも出ない (写真の解析の `nutritionTip` を読むのは `meals/new/page.tsx` の `:381`・`:587`・`:1539-1543` だけ。献立表の画面とその部品 (`menus/weekly/page.tsx:740`・`:2625`、`menus/weekly/_components/modals/NutritionDetailModal.tsx`・`StatsModal.tsx`) の `nutritionTip` は、献立の振り返り (`/api/ai/nutrition/feedback`) が返す別の値) |
 | 食事の詳細の画面の「食べた！」(`src/app/(main)/meals/[id]/page.tsx:185` の `toggleCompletion`。写真を使わない) | `PATCH /api/meals/:id` で `is_completed` を true にするだけ | 作らない | 作らない |
 
 だから紹介ページは「たびに」(毎回の約束) を、食事の記録の画面に限って言う (「食事の記録の画面では、写真で記録するたびに」)。「写真で記録するたびに」だけでは、献立表の「写真から入力」でも毎回出ると読めて事実と違う (2 つ目の経路は栄養メモを出さず、ほめるひと言も記録のときの画面には出さない)。3 つ目の「食べた！」の完了もアプリ自身が「記録」と数える (`src/app/api/badges/route.ts` が `planned_meals.is_completed` を数えて `first_bite` (「はじめて食事を記録しました」) を付ける) ので、「記録するたびに」とも書かない。U-20 の `UNSCOPED_PRAISE_PATTERN` が、同じ文の中で「食事の記録の画面では」を前に置かない「たびに」を赤にする (§9.8)。使い方の練習 (ハンズオンツアー。`src/app/handson-tour/photo/page.tsx`) の写真の画面は、ここで言う食事の記録の画面に含めない。
@@ -654,7 +654,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 
 `Reveal` の作り: サーバーの HTML では `class="lp-reveal"` を付けるだけで `opacity: 1` (JS が無くても見える)。島がマウントしたら `data-js="1"` を付け、CSS は no-preference の中の `.lp-reveal[data-js="1"]:not(.is-in) { opacity: 0; transform: translateY(16px) }` で隠し、IO で `is-in` を付ける。JS が動く前に隠さないので、JS 無し・遅い回線でも文章は消えない (S-10)。reduce では隠す規則が無いので、`data-js` が付いても見えたまま。
 
-判定は要素の高さに依らない形にする: `useInViewOnce` は IntersectionObserver を `threshold: 0` (1 px でも交差したら通知) で作り、どこまで入ったら現すかは `rootMargin` (現れ方は画面の下の 10 % を除く・使い方は中央の 20 % の帯) で決める。`threshold` を 0.2 のような割合にすると、交差の割合 (`intersectionRatio` = 交差の面積 ÷ 要素の面積) は「画面の高さ ÷ 要素の高さ」を超えないので、画面の高さの 5 倍より高い要素 (375 px の 1 列で並べた機能の一覧・200 % に拡大した画面・横向きのスマートフォン) は、どれだけスクロールしても通知の条件に届かず、隠れたままになる。だから `useInViewOnce` は `threshold` を引数に取らない (§9.4。U-22 が確かめる)。現れ方の下の 10 % は、ページの末尾の要素も必ず入る幅 (末尾の `.lp-reveal` (最終 CTA の中身) の下には、セクションの下の余白 (`--lp-section-y`。64 px 以上) とフッター (リンクの列と著作権の行) があり、ページの末尾までスクロールすると、合わせた高さが画面の高さの 10 % より大きい)。
+判定は要素の高さに依らない形にする: `useInViewOnce` は IntersectionObserver を `threshold: 0` (1 px でも交差したら通知) で作り、どこまで入ったら現すかは `rootMargin` (現れ方は画面の下の 10 % を除く・使い方は中央の 20 % の帯) で決める。`threshold` を 0.2 のような割合にすると、交差の割合 (`intersectionRatio` = 交差の面積 ÷ 要素の面積) は「画面の高さ ÷ 要素の高さ」を超えないので、画面の高さの 5 倍より高い要素 (例えば 375 px で 1 列に並べた機能の一覧を 1 つの箱で包んだもの (約 2,500 px)。200 % に拡大した画面や横向きのスマートフォンでは、画面の高さが 360〜375 px まで縮むので、もっと低い箱でも当たる) は、どれだけスクロールしても通知の条件に届かず、隠れたままになる。だから `useInViewOnce` は `threshold` を引数に取らない (§9.4。U-22 が確かめる)。現れ方の下の 10 % は、ページの末尾の要素も必ず入る幅 (末尾の `.lp-reveal` (最終 CTA の中身) の下には、セクションの下の余白 (`--lp-section-y`。64 px 以上) とフッター (リンクの列と著作権の行) があり、ページの末尾までスクロールすると、合わせた高さが画面の高さの 10 % より大きい)。
 
 ### 6.4 `useReducedMotion`
 
@@ -667,7 +667,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | セクション | `Reveal` で包むもの (`index`) | 包まないもの |
 |---|---|---|
 | ヒーロー (`HeroSection`) | 無し (M-2・M-3 の立ち上がりで出す) | 全部 |
-| 使い方 (`HowItWorksSection`・`StorySteps`) | 見出しの塊 (h2 と一文。`index` 0)・手順のカード (`.lp-step-card`) を 1 枚ずつ (`index` 0〜2) | 固定した端末 (`position: sticky` の箱を `transform` で動かさない) |
+| 使い方 (`HowItWorksSection`・`StorySteps`) | 見出しの塊 (h2 と一文。`index` 0)・手順のカード (番号・見出し・本文の塊。`li.lp-story-step` の中) を 1 枚ずつ (`index` 0〜2) | 固定した端末 (`position: sticky` の箱を `transform` で動かさない) |
 | デモ (`DemoSection`) | 見出しの塊 (小さな見出し・h2・一文。`index` 0)・写真を選ぶカードと結果のカードを 1 枚ずつ (`index` 0・1) | – |
 | 機能 (`FeaturesSection`) | 見出しの塊 (`index` 0)・カード 8 枚を 1 枚ずつ (`Reveal as="li"`。`index` 0〜7。遅れは最大 6 つぶん) | – |
 | バッジ (`BadgesSection`) | 見出しの塊 (`index` 0)・カードの列 (`ul`) を 1 つ (M-10 の各カードの立ち上がりは、この箱の `is-in` をきっかけに CSS が 40 ms ずつずらす) | – |
@@ -743,7 +743,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | `src/components/marketing/sections/FinalCtaSection.tsx` | Server | 最終 CTA | 無し |
 | `src/components/marketing/sections/SiteFooter.tsx` | Server | フッター。`<footer className="lp-footer …">` (下の余白は `marketing.css` の `.lp-footer` が持つ。Tailwind の `pb-*` を付けない)。リンクは `inline-flex min-h-6 items-center` (24 px。§11 の 2.5.8) | 無し |
 | `src/components/marketing/primitives/Reveal.tsx` | 島 | 現れ方 (M-5。包むものは §6.5) | `inView: boolean` |
-| `src/components/marketing/primitives/PhoneFrame.tsx` | Server | 端末の枠 | 無し |
+| `src/components/marketing/primitives/PhoneFrame.tsx` | Server | 端末の枠 (§9.6 の正典)。実際の画面の元の大きさの定数 `GUIDE_SCREEN_WIDTH_PX`・`GUIDE_SCREEN_HEIGHT_PX` を export (ヒーロー・使い方・機能が `next/image` に渡す) | 無し |
 | `src/components/marketing/primitives/CtaLink.tsx` | Server | `Link` にボタンの見た目 | 無し |
 | `src/components/marketing/primitives/useInViewOnce.ts` | hook | IO で 1 回だけ true、または出入りを追う (§9.4。`Reveal` と `StorySteps` が使う) | – |
 | `src/components/marketing/primitives/useReducedMotion.ts` | hook | 既存の再 export (§6.4) | – |
@@ -764,7 +764,7 @@ FAQ: h2 `よくある質問` / 一文 `気になることがあれば、ここ�
 | `demoReducer` | `(state: DemoState, event: DemoEvent): DemoState` (§9.3) | `DemoSection`・テスト |
 | `Reveal` | `({ children, index?, className?, as? }: RevealProps): JSX.Element` (§9.6。`index` は列の中で何番目か) | セクション・`StorySteps`・`DemoSection`・`FaqSection` |
 | `CtaLink` | `({ href, variant: 'primary' \| 'secondary' \| 'on-dark', children, ... }): JSX.Element` | セクション |
-| `PhoneFrame` | `({ children, className? }): JSX.Element` | ヒーロー・使い方・機能 |
+| `PhoneFrame` | `({ children, className? }: PhoneFrameProps): JSX.Element` (§9.6。幅は置き場所の CSS が決める) | ヒーロー・使い方・機能 |
 | `useInViewOnce` | `(options?: UseInViewOnceOptions): { ref, inView }` (§9.4。`threshold` は取らない: 判定はいつも `threshold: 0`) | `Reveal`・`StorySteps` |
 | `HeroSection` | `(): JSX.Element` (props 無し。§9.6) | `LandingPage` |
 
@@ -1919,7 +1919,7 @@ export function FeaturesSection() {
 | 島 | 状態と更新 | 描画 |
 |---|---|---|
 | `FaqSection` | `openIndex: number \| null`。`button` の `onClick` で同じ index なら閉じる | `section#faq.lp-section.lp-band` の中に、`h3 > button` (`aria-expanded`・`aria-controls="faq-panel-N"`・`id="faq-button-N"`。矢印は `ChevronDown` に `className="lp-faq-chevron"` と開いている間 `is-open`) と `div.lp-faq-panel` (`id="faq-panel-N"`・`role="region"`・`aria-labelledby="faq-button-N"`・開いている間 `is-open`・`hidden` は使わず `grid-template-rows` で閉じる。閉じている間は中身を `inert` にして Tab で入らないようにする)。末尾の `contactLead` + リンク `contact` (`underline underline-offset-4`・色 `--lp-accent-ink`) |
-| `StorySteps` | `activeIndex: 0〜2`。手順ごとに `useInViewOnce({ rootMargin: STORY_ROOT_MARGIN, once: false })` を持ち、`inView` になった手順を active にする | 左 (lg 以上) に `PhoneFrame` を `position: sticky; top: 6rem`。中に 3 枚の画面 (`div.lp-story-screen`) を重ね、`activeIndex` の枚に `is-active` (`opacity: 1`。切り替えの `transition` は marketing.css の no-preference の中)。右に手順の `ol` (各 `li.lp-story-step`。`activeIndex` の手順に `is-active`。番号は `span.lp-step-num` (`aria-hidden="true"`)。§9.1)。各手順のカード (`.lp-step-card`) は `Reveal` で包む (`index` は手順の番号 0〜2。`li` 自体は包まない: `li` は `useInViewOnce` で中央の帯を見る箱。§6.5)。画像は `PhoneFrame` の `GUIDE_SCREEN_WIDTH_PX` × `GUIDE_SCREEN_HEIGHT_PX` と `sizes="(max-width: 768px) 70vw, 320px"` (§5.4 の表)。`lg` 未満 (タブレットを含む) は端末を各手順の上に置く (sticky 無し・画面は 1 枚ずつ `.lp-story-screen` を使わずに置く) |
+| `StorySteps` | `activeIndex: 0〜2`。手順ごとに `useInViewOnce({ rootMargin: STORY_ROOT_MARGIN, once: false })` を持ち、`inView` になった手順を active にする | 左 (lg 以上) に `PhoneFrame` を `position: sticky; top: 6rem`。中に 3 枚の画面 (`div.lp-story-screen`) を重ね、`activeIndex` の枚に `is-active` (`opacity: 1`。切り替えの `transition` は marketing.css の no-preference の中)。右に手順の `ol` (各 `li.lp-story-step`。`activeIndex` の手順に `is-active`。番号は `span.lp-step-num` (`aria-hidden="true"`)。§9.1)。各手順のカード (番号・見出し・本文の塊) は `li` の中で `Reveal` で包む (`index` は手順の番号 0〜2。`li` 自体は包まない: `li` は `useInViewOnce` で中央の帯を見る箱。§6.5)。画像は `PhoneFrame` の `GUIDE_SCREEN_WIDTH_PX` × `GUIDE_SCREEN_HEIGHT_PX` と `sizes="(max-width: 768px) 70vw, 320px"` (§5.4 の表)。`lg` 未満 (タブレットを含む) は端末を各手順の上に置く (sticky 無し・画面は 1 枚ずつ `.lp-story-screen` を使わずに置く) |
 
 ### 9.7 `tests/public-claims-guard.test.ts` への差分 (見張りの拡張)
 
