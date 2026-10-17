@@ -69,3 +69,8 @@ verify_jwt = false
 # pg_cron のジョブ purge-hidden-content (public.invoke_purge_hidden_content)。運営が隠したコンテンツの完全削除 (#1538)
 [functions.purge-hidden-content]
 verify_jwt = false
+
+# GET /api/cron/app-log-alerts が public.send_cron_secret_probe() から Vault の app_cron_secret (JWT でない) で呼ぶ、
+# cron の共有シークレットの確認 (#1560。docs/design/operator/12-cron-secret-drift-monitor.md)
+[functions.cron-secret-probe]
+verify_jwt = false

@@ -6,13 +6,14 @@
  *  1. email が空のとき API を呼ばずエラーを出す
  *  2. password 強度バリデーション — 8 文字未満でエラー
  *  2b. (#1574) 英字だけ・数字だけも止める。規則と文言は packages/shared の validatePassword と共通
+ *  2c. (#1864) 72 バイト (GoTrue の bcrypt の上限) を超えるパスワードも止める
  *  3. identities.length === 0 の silent-success を検知してアラートを出す
  */
 
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
-import { SIGNUP_MINOR_NOTICE } from '@homegohan/shared';
+import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE, SIGNUP_MINOR_NOTICE } from '@homegohan/shared';
 
 // ---- Mocks ----
 
@@ -116,6 +117,22 @@ describe('SignupScreen', () => {
 
     await waitFor(() => {
       expect(Alert.alert).toHaveBeenCalledWith('入力エラー', message);
+    });
+    expect(mockSignUp).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['半角 73 文字', `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`],
+    ['日本語を含む 26 文字 (74 バイト)', `a1${'あ'.repeat(24)}`],
+  ])('2c. 72 バイトを超えるパスワード (%s) は、Web と同じ「長すぎる」の文言で止め、signUp を呼ばない (#1864)', async (_label, tooLong) => {
+    const { getByPlaceholderText, getByText } = render(<SignupScreen />);
+
+    fireEvent.changeText(getByPlaceholderText('email@example.com'), 'test@example.com');
+    fireEvent.changeText(getByPlaceholderText('8文字以上・英字と数字を含む'), tooLong);
+    fireEvent.press(getByText('アカウント作成'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('入力エラー', PASSWORD_TOO_LONG_MESSAGE);
     });
     expect(mockSignUp).not.toHaveBeenCalled();
   });

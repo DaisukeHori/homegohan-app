@@ -15,7 +15,8 @@
  *   - 旧方式 (トークンを URL で渡す GET) は旧アプリ向けに期限つきで残す。期限後は 426。
  *
  * 期待する挙動:
- *   - コード発行は Bearer JWT 必須 (Cookie だけの認証は 401)。body が不正なら 400。凍結アカウントは 403
+ *   - コード発行は Bearer JWT 必須 (Cookie だけの認証は 401)。body が不正なら 400。凍結中のアカウントにも発行する
+ *     (#1861: モバイルの凍結の画面 = Web の /frozen の WebView を本人のセッションで開くため。ほかの /api は凍結中なら 403 のまま)
  *   - 発行したコードで /auth/native-bridge を開くと Cookie セッションができ (sb-* と is_native_app)、
  *     next へ 307。Location にもレスポンス本文にもトークンが無い。Cache-Control は no-store
  *   - 同じコードの 2 回目は /login へ。同じ WebView が既に Cookie セッションを持っていても next へ続けず、その sb-* を消す
@@ -63,9 +64,10 @@ if (baseHost !== 'localhost' && baseHost !== '127.0.0.1') {
 
 /**
  * 旧方式 (トークンを URL で渡す GET) の受け付け期限。src/lib/auth/native-bridge-code.ts の LEGACY_SUNSET_AT と同じ値に保つ
- * (オーナーの確認待ちの仮置き。変えたらここも変える)。期限後は 426 になるのが正しい挙動。
+ * (変えたらここも変える。同じ値であることは src/__tests__/lib/auth/native-bridge-code.test.ts が確かめる)。
+ * 2026-10-18 00:00 JST に前倒しして過ぎているので、いまは常に 426 になるのが正しい挙動 (S-14 の旧方式の行はスキップされる)。
  */
-const LEGACY_SUNSET_AT = '2026-12-31T00:00:00+09:00';
+const LEGACY_SUNSET_AT = '2026-10-18T00:00:00+09:00';
 const legacyStillAllowed = Date.now() < Date.parse(LEGACY_SUNSET_AT);
 
 function client(key: string): SupabaseClient {
@@ -294,7 +296,7 @@ describe('#1036 POST /api/auth/native-bridge/code', () => {
     expect(leaked.data ?? []).toEqual([]);
   });
 
-  it('S-4: 凍結中のアカウントには発行しない (403 AUTH_ACCOUNT_FROZEN)', async () => {
+  it('S-4: 凍結中のアカウントにも発行する (#1861)。同じ Bearer でも、ほかの /api は 403 AUTH_ACCOUNT_FROZEN のまま', async () => {
     const frozen = await createUser('frozen');
     const { error } = await srAdmin
       .from('user_profiles')
@@ -303,11 +305,16 @@ describe('#1036 POST /api/auth/native-bridge/code', () => {
     expect(error).toBeNull();
 
     const res = await issueCode(frozen);
-    expect(res.status).toBe(403);
-    expect(res.body.error?.code).toBe('AUTH_ACCOUNT_FROZEN');
+    expect(res.status).toBe(200);
+    expect(res.body.code).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const rows = await srAdmin.from('native_bridge_codes').select('code_hash').eq('user_id', frozen.id);
-    expect(rows.data ?? []).toEqual([]);
+    expect(rows.data ?? []).toEqual([{ code_hash: sha256Hex(res.body.code!) }]);
+
+    // コードの発行だけを通す。凍結中のほかの /api は middleware が今までどおり止める
+    const other = await apiCall<CodeResponse>('GET', '/api/legal/status', frozen.accessToken);
+    expect(other.status).toBe(403);
+    expect(other.body.error?.code).toBe('AUTH_ACCOUNT_FROZEN');
   });
 });
 

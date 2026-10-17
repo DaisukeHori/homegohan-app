@@ -24,6 +24,14 @@ let mockProfile: ProfileState;
 let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'clear';
 jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }));
 jest.mock('../../src/providers/ProfileProvider', () => ({ useProfile: () => mockProfile }));
+// #1861: 凍結の状態 (既定 clear。凍結のテストで変える)
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
+}));
+beforeEach(() => {
+  mockFrozenState = 'clear';
+});
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
 }));
@@ -90,5 +98,37 @@ describe('入口 (app/index.tsx) — 規約の同意の状態 (#1442 T-IDX1)', (
     mockProfile = { profile: null, isLoading: true };
     const second = render(<Index />);
     expect(second.getByTestId('welcome-loading')).toBeTruthy();
+  });
+});
+
+describe('入口 (app/index.tsx) — アカウントの凍結の状態 (#1861)', () => {
+  it.each(['loading', 'frozen'] as const)(
+    'session あり: 凍結の状態が %s ならスピナー (ホームへ振り分けない。AccountFrozenGate が凍結の画面へ畳む)',
+    (state) => {
+      mockFrozenState = state;
+      const { getByTestId, queryByTestId } = render(<Index />);
+
+      expect(getByTestId('welcome-loading')).toBeTruthy();
+      expect(queryByTestId('redirect-/(tabs)/home')).toBeNull();
+      expect(queryByTestId('redirect-/onboarding')).toBeNull();
+    },
+  );
+
+  it.each(['clear', 'unknown'] as const)('session あり: 凍結の状態が %s なら今までどおり home へ Redirect', (state) => {
+    mockFrozenState = state;
+    const { getByTestId } = render(<Index />);
+
+    expect(getByTestId('redirect-/(tabs)/home')).toBeTruthy();
+  });
+
+  it('session 無しはウェルカム (凍結の状態によらない)', () => {
+    mockAuth = SIGNED_OUT;
+    mockProfile = { profile: null, isLoading: false };
+    for (const state of ['loading', 'clear', 'frozen', 'unknown'] as const) {
+      mockFrozenState = state;
+      const { getByTestId, unmount } = render(<Index />);
+      expect(getByTestId('welcome-screen')).toBeTruthy();
+      unmount();
+    }
   });
 });

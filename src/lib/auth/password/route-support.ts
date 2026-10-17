@@ -108,7 +108,11 @@ export function passwordRecoverySessionRequired(): NextResponse {
   return passwordError('AUTH_RECOVERY_SESSION_REQUIRED', HTTP_FORBIDDEN);
 }
 
-/** 入力の検証の共通: 新しいパスワードの規則 (packages/shared の validatePassword)。違えば 422 VALID_PASSWORD_WEAK、満たせば null */
+/**
+ * 入力の検証の共通: 新しいパスワードの規則 (packages/shared の validatePassword。長さ・英字・数字と、GoTrue (bcrypt) の 72 バイトの上限 #1864)。
+ * 違えば 422 VALID_PASSWORD_WEAK (理由の文言つき)、満たせば null。72 バイト超を GoTrue まで送ると 400 validation_failed が返り、
+ * performPasswordChange が upstream-error (500) にしてしまうので、ここで先に止める
+ */
 export function rejectWeakPassword(newPassword: string): NextResponse | null {
   const reason = validatePassword(newPassword);
   return reason === null ? null : passwordWeakFromRule(reason);

@@ -9,6 +9,8 @@
  *   - それ以外の /api は、似たパス (前方一致・末尾の / ・別の /api/account/*) も含めて 403 のまま
  *   - 凍結中でも、退会と書き出しの画面 (/frozen/account) は開け、設定画面 (/settings) は /frozen へ差し戻される
  * を確かめる。
+ * #1861: ネイティブ認証ブリッジのコードの発行 (NATIVE_BRIDGE_CODE_API_PATH) も、FROZEN_ALLOWED_API_PATHS とは別の判定
+ * (isNativeBridgeCodeApiPath) で凍結中に止めない (モバイルの凍結の画面 = Web の /frozen の WebView を本人のセッションで開くため)。
  */
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -39,7 +41,9 @@ import {
   BILLING_PORTAL_API_PATH,
   BILLING_SUBSCRIPTION_API_PATH,
   FROZEN_ALLOWED_API_PATHS,
+  NATIVE_BRIDGE_CODE_API_PATH,
   isFrozenAllowedApiPath,
+  isNativeBridgeCodeApiPath,
 } from '@/lib/auth/frozen';
 import { stubSupabasePublicEnv } from './supabase-public-env';
 
@@ -196,4 +200,49 @@ describe('updateSession (#1445): 凍結中の利用者の画面', () => {
     expect(res.status).toBe(307);
     expect(new URL(res.headers.get('location')!).pathname).toBe('/frozen');
   });
+});
+
+describe('#1861: ネイティブ認証ブリッジのコードの発行は、凍結中でも止めない', () => {
+  it('パスは /api/auth/native-bridge/code の 1 本で、route が実在する。FROZEN_ALLOWED_API_PATHS には入れない (別の判定)', () => {
+    expect(NATIVE_BRIDGE_CODE_API_PATH).toBe('/api/auth/native-bridge/code');
+    expect(existsSync(join(process.cwd(), 'src/app', NATIVE_BRIDGE_CODE_API_PATH, 'route.ts'))).toBe(true);
+    expect(FROZEN_ALLOWED_API_PATHS).not.toContain(NATIVE_BRIDGE_CODE_API_PATH);
+    expect(isNativeBridgeCodeApiPath(NATIVE_BRIDGE_CODE_API_PATH)).toBe(true);
+  });
+
+  it('完全一致で判定する (似たパスは当たらない)', () => {
+    for (const path of [
+      '/api/auth/native-bridge',
+      '/api/auth/native-bridge/code/',
+      '/api/auth/native-bridge/codex',
+      '/api/auth/native-bridge/code/extra',
+      '/api/auth/login',
+      '/api/auth/session-sync',
+      '/api/Auth/native-bridge/code',
+    ]) {
+      expect(isNativeBridgeCodeApiPath(path), path).toBe(false);
+    }
+  });
+
+  it('凍結中の Bearer のセッションでも、POST /api/auth/native-bridge/code は route へ通す (凍結は判定した上で通す)', async () => {
+    const res = await updateSession(
+      request(NATIVE_BRIDGE_CODE_API_PATH, { method: 'POST', headers: { authorization: 'Bearer aaa.bbb.ccc' } }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-middleware-next')).toBe('1');
+    expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['/api/auth/native-bridge/code/', '/api/auth/native-bridge/codex', '/api/auth/session-sync', '/api/legal/status'])(
+    '%s は凍結中なら今までどおり 403 AUTH_ACCOUNT_FROZEN (ブリッジの例外は 1 本だけ)',
+    async (path) => {
+      const res = await updateSession(request(path, { method: 'POST', headers: { authorization: 'Bearer aaa.bbb.ccc' } }));
+
+      expect(res.status).toBe(403);
+      expect(await res.json()).toEqual({
+        error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' },
+      });
+    },
+  );
 });

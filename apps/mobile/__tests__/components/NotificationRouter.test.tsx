@@ -46,6 +46,14 @@ jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }
 jest.mock('../../src/providers/ProfileProvider', () => ({ useProfile: () => mockProfile }));
 // 規約の同意の状態 (#1442)。既定 clear
 let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'clear';
+// #1861: 凍結の状態 (既定 clear。凍結のテストで変える)
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
+}));
+beforeEach(() => {
+  mockFrozenState = 'clear';
+});
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
 }));
@@ -282,5 +290,43 @@ describe('NotificationRouter — 規約の同意の状態 (#1442)', () => {
     await flush();
     expect(mockPush).toHaveBeenCalledTimes(1);
     expect(mockPush).toHaveBeenCalledWith('/health/blood-tests');
+  });
+});
+
+describe('NotificationRouter — アカウントの凍結の状態 (#1861)', () => {
+  it('凍結の状態が loading / frozen の間・前面が凍結の画面 (/frozen) の間は行き先を保留し、凍結が解けて /home に戻ったら 1 回 router.push する', async () => {
+    mockFrozenState = 'loading';
+    mockGetLast.mockResolvedValue(responseOf('n-f-1', { path: '/health/blood-tests' }));
+    const view = render(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockFrozenState = 'frozen';
+    mockPathname = '/frozen';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    // 凍結が解けた直後 (ゲートの router.replace('/') がまだ流れていない): 前面が凍結の画面なので待つ
+    mockFrozenState = 'clear';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).not.toHaveBeenCalled();
+
+    mockPathname = '/home';
+    view.rerender(<NotificationRouter />);
+    await flush();
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith('/health/blood-tests');
+  });
+
+  it('unknown (確かめられなかった) なら止めずに行き先へ移る', async () => {
+    mockFrozenState = 'unknown';
+    render(<NotificationRouter />);
+    await flush();
+
+    await tap(responseOf('n-f-2', { path: '/comparison' }));
+
+    expect(mockPush).toHaveBeenCalledWith('/comparison');
   });
 });
