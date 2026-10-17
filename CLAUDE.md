@@ -268,6 +268,7 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 課金の側で家族の行を書くもの:
 - 課金の写像 `billing_apply_stripe_subscription`: 家族プランの同期で `family_groups` の行を UPDATE してから `user_profiles` の行を UPDATE する (`docs/design/billing/01-billing-core.md` §6.4 (9) の 10.)。
 - `family_groups` のトリガー `family_groups_billing_plan_follow_representative` (関数 `billing_family_plan_follow_representative`): グループの作成と代表者の交代で advisory `billing-user:<新しい代表者>` を取る (代表者の交代では家族の行のロックのあと。作成では INSERT の BEFORE トリガーの中。billing/01 §6.4 (10))。
+- 手動付与の関数 3 本 (`billing_grant_manual_subscription` / `billing_revoke_manual_subscription` / `billing_expire_manual_subscription_for_user`): 家族の同期は `family_groups` の行 → `user_profiles` の行の順。1 トランザクションで扱う利用者は 1 人だけで、期限切れの日次のプロシージャ `billing_expire_manual_subscriptions` は利用者ごとに COMMIT する (全員を 1 トランザクションにすると、前の利用者の `user_profiles` の行を持ったまま次の利用者の `family_groups` の行を待ち、逆向きになる)。`docs/design/billing/02-manual-plan-grant.md` §6。
 
 順番がそろっていないと、運営の強制解散・家族の削除と同時に走ったときに、解散済みの家族に active のメンバーが残る / デッドロック (40P01) する。
 
@@ -275,7 +276,7 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 - 新しく足す家族の行のロックは `FOR NO KEY UPDATE` にする (`add_family_child` だけは #1213 のまま `FOR UPDATE`)。`FOR UPDATE` だと、子の行を先に持つ関数が最後に取る外部キーの確認 (`FOR KEY SHARE`) が待たされ、逆向きに待ち合ってデッドロックする。
 - 課金の写像を変えるときも、家族の行を `user_profiles` より先に取る。
 - 子の行を先に取って、あとで家族の行を外部キーの確認で取る関数 (`create_family_invite` の再招待 / `request_child_promotion`) は、まだ家族の行を先に取らない。代表者の DELETE と同時に走ると、まれにどちらかがデッドロックで失敗する (既知。やり直せば通る)。
-- 回帰テスト: `tests/integration/security/family-lock-order-race.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts` のテスト 106 (写像と運営の強制解散・代表者の家族の削除が同時に走っても 40P01 にならない)
+- 回帰テスト: `tests/integration/security/family-lock-order-race.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts` のテスト 106 (写像と運営の強制解散・代表者の家族の削除が同時に走っても 40P01 にならない)・`tests/integration/rls/billing-manual-grant-rpc.test.ts` のテスト 41・47・57 (期限切れのジョブと家族の操作・代表者の交代が同時に走っても 40P01 にならない)
 
 ---
 
