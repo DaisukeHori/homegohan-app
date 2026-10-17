@@ -53,6 +53,9 @@ jest.mock('../../src/providers/AuthProvider', () => ({
 jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
 
 // パスワード・メールアドレスの変更の部品 (#1187) は account-credentials.test.tsx が確かめる。ここでは請求の項目だけを見る
 jest.mock('../../src/components/settings/AccountCredentialsSection', () => ({
