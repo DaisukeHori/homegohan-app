@@ -167,6 +167,7 @@ admin.notification.campaign_send    - 通知キャンペーン送信 (記録な�
 admin.moderation.<action>           - モデレーションの判定 (POST / PUT /api/admin/moderation/{type}/{id})。<action> は
                                       approve / delete_only / delete_and_warn / delete_and_temp_ban / delete_and_perm_ban / escalate
                                       (src/lib/admin/moderation-schemas.ts の ModerationActions。旧名 admin.moderation.resolve)
+admin.moderation.restore            - 隠したコンテンツを戻す (POST /api/admin/moderation/{type}/{id}/restore) (#1538)
 admin.announcement.create           - お知らせ作成 (POST /api/announcements は記録していない。#1571 の範囲の外)
 admin.announcement.delete           - お知らせ削除 (記録なし)
 admin.support.ticket.create         - チケット作成 (POST /api/admin/support/tickets)
@@ -246,6 +247,8 @@ super_admin.app_logs.list           - アプリログの一覧・本文の検索
   再送 (`POST /api/super-admin/email-outbox/{id}/requeue`) は変更系として `super_admin.email_outbox.requeue` を記録する
   (再送できたときだけ。対象は行の `user_id` (`target_type = 'user'`)、無ければ行の id (`target_type = 'email_outbox'`)。
   `details` は `outbox_id` / `template` / `previous_status`。404 / 409 / 500 は記録しない。fail-open。#1708・`10-logs-and-mail-retry.md` §10)。
+
+- `admin.moderation.restore`: 対象は通報 (`target_type = 'moderation_item:<type>'`)。`details`: `moderation_type` / `flag_id` / `content_id` / `content_user_id` / `restore_note` / `hidden_at_before` / `hidden_by_before` / `hidden_reason_before` / `target_ids` / `restored_ids` / `restored` / `restore_error` / `approved_flag_ids` / `status_saved` / `status_error` / `restore_window_days`。状態を変えた操作と DB の失敗で 1 行。成功 info・失敗と書いたあとの 0 行は warn。何も書かずに断った 409 / 410 は記録しない。
 
 詳細の対象 (#1326):
 - `admin.moderation.view`: 対象はコンテンツの持ち主 (`target_type = 'user'`)。持ち主が分からないときは通報の id

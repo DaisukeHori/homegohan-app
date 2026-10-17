@@ -80,7 +80,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `EXT_` | 外部サービスエラー | 502, 503 |
 | `FAM_` | 家族管理ドメイン固有 | 400, 422 |
 | `ORG_` | 組織管理ドメイン固有 | 400, 422 |
-| `OP_` | 運営管理ドメイン固有 | 400, 422 |
+| `OP_` | 運営管理ドメイン固有 | 400, 403, 404, 409, 410, 422, 500 |
 | `BILL_` | 課金の自己サービス (購入・解約の予約・Billing Portal。`docs/design/billing/01-billing-core.md` §13.1) | 400, 403, 404, 409, 422 |
 | `DSR_` | 個人情報の請求 (開示・訂正・利用停止・消去。`docs/design/cross/15-data-subject-requests.md` §13) | 400, 409, 410, 422 |
 | `SYS_` | システム内部エラー | 500 |
@@ -261,6 +261,11 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_SELF_MODIFY` | **[NEW]** 自分自身を対象にできない運営の操作 (`POST /api/super-admin/admins/{id}/mfa/reset` と `POST` / `DELETE /api/super-admin/users/{id}/manual-plan`。実コードが先に使っていた。`cross/12-operator-mfa.md`・`billing/02-manual-plan-grant.md` §12.1) | 403 |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | **[NEW]** 再送するメール (送信待ちの行) が見つからない (`operator/10-logs-and-mail-retry.md` §11) | 404 |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | **[NEW]** 再送できないメール (届けられなかった行でない `not_dead`・宛先を伏せた行 `redacted`。`details.reason`。`operator/10-logs-and-mail-retry.md` §11) | 409 |
+| `OP_CONTENT_HIDE_FAILED` | **[NEW]** 通報されたコンテンツを隠せなかった。判定を保存せず BAN もしない (`POST` / `PUT /api/admin/moderation/{type}/{id}`。`operator/02-api-spec.md` §5) | 500 |
+| `OP_CONTENT_GONE` | **[NEW]** 戻す対象のコンテンツが無い (通報に紐づかない・持ち主が消した・完全削除された) (`POST /api/admin/moderation/{type}/{id}/restore`。`operator/13-hidden-content-restore.md` §11) | 410 |
+| `OP_CONTENT_NOT_HIDDEN` | **[NEW]** 戻す対象がすでに表示されている | 409 |
+| `OP_CONTENT_RESTORE_WINDOW_EXPIRED` | **[NEW]** 隠してから 89 日を過ぎて戻せない (保管期間 90 日の完全削除を待つ) | 409 |
+| `OP_CONTENT_RESTORE_FAILED` | **[NEW]** 通報は承認済みにしたが行を戻せなかった。やり直せる | 500 |
 
 #### BILL 系
 
