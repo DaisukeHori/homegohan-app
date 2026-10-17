@@ -454,6 +454,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       // #1129 宛先の読み口は DB バックアップの鮮度の cron (backup-freshness) と共有する
       ['OPS_ALERT_EMAIL', 'src/lib/ops-alerts/recipient.ts'],
       ['OPS_ALERT_ERROR_THRESHOLD', 'src/app/api/cron/app-log-alerts/route.ts'],
+      // #1125 (B) pg_cron の停止の通知のしきい値。不正な値の扱い (既定値に戻して warn) を cron の route 1 か所に置く
+      ['OPS_ALERT_PG_CRON_STALL_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],
       // #1132 組織チャレンジの順位表に参加者の表示名を出すか。1 / true / on / yes だけを有効とみなす読み方を 1 か所に置く
       ['ORG_CHALLENGE_SHOW_NAMES', 'src/lib/org-challenges.ts'],
       // #1365 食事写真・冷蔵庫写真の署名付き URL の有効期限。範囲の中の整数でなければ既定値にする読み方を 1 か所に置く
@@ -492,6 +494,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('OPS_ALERT_COOLDOWN_MINUTES');
       // @ts-expect-error OPS_ALERT_CLIENT_ERROR_THRESHOLD も同じ (#1493)
       getOptionalEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD');
+      // @ts-expect-error OPS_ALERT_PG_CRON_STALL_MINUTES も同じ (#1125 の B)
+      getOptionalEnv('OPS_ALERT_PG_CRON_STALL_MINUTES');
       // @ts-expect-error AUTH_LOGIN_FAILURE_RESET_MINUTES の値を読むのはログインの route (src/app/api/auth/login/route.ts) だけ
       getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
       // @ts-expect-error AI_ULTIMATE_MODE_DAILY_LIMIT の値を読むのは src/lib/plan/entitlements.ts (consumeAiUsage) だけ (#1142)

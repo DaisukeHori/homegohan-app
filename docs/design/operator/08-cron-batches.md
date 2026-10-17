@@ -12,11 +12,11 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ## 3. ジョブ一覧
 
-### 3.0 実装状況 (2026-10-16 更新)
+### 3.0 実装状況 (2026-10-17 更新)
 
 §3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (§3.2 の `backup_freshness`。#1129) の 5 本である。
 Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
-いま、このリポジトリの migration が pg_cron に登録しているジョブは 11 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 9 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` は、下の箇条書きの「そのほか」に書く。
+いま、このリポジトリの migration が pg_cron に登録しているジョブは 12 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 10 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history`・`expire-manual-plan-grants` は、下の箇条書きの「そのほか」に書く。
 
 | ジョブ名 | 実行時刻 | 実行する SQL | 内容 |
 |---------|---------|-------------|------|
@@ -38,6 +38,7 @@ Stripe Webhook・収益スナップショット・ライセンス系のバッチ
 - そのほか、migration `20261016100000_purge_hidden_content.sql` (#1538) が、ジョブ `purge-hidden-content` を毎日 03:25 JST (`25 18 * * *` UTC) に登録している。運営が隠した (`hidden_at` が入った) 食事 (`meals`)・レシピ (`recipes`) のうち、隠してから 90 日 (オーナーの選択 2026-10-15) を過ぎた行と、その画像のファイルを完全に消す。画像は SQL では消せない (`storage.objects` の `protect_objects_delete` トリガー) ので、`public.invoke_purge_hidden_content()` が `calculate-segment-stats` と同じ秘密 (Vault の `app_cron_secret`) を付けて Edge Function `purge-hidden-content` を `net.http_post` で呼び、その中で「画像を Storage API で消す → 行を消す」を行う (本体は `supabase/functions/_shared/hidden-content-purge.ts`)。画像は、行の持ち主のフォルダにあり、ほかの行が使っていないもの (`public.hidden_content_purge_referenced_needles` で確かめる) だけを消す。1 回の実行は 300 秒で切り上げ、残りは翌日に消す。通報 (`moderation_flags` / `recipe_flags`) は外部キーの CASCADE で一緒に消え、運営の判断の記録は `admin_audit_logs` に残る (02-api-spec.md の `delete_*` の意味)。呼び出しの関数の `EXECUTE` は所有者 (`postgres`) だけ、画像の確認の関数は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016100000_purge_hidden_content.down.sql`。詳しくはその migration の冒頭のコメント。
 - そのほか、migration `20261016234000_email_outbox.sql` (#1193) が、ジョブ `cleanup-email-outbox` を毎日 03:20 JST (`20 18 * * *` UTC) に登録している。`SELECT public.cleanup_email_outbox();` を呼び、`email_outbox` の sent を 7 日・dead を 30 日で消す (queued は消さない)。関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016234000_email_outbox.down.sql`。詳しくは `10-logs-and-mail-retry.md` §5
 - そのほか、migration `20261016243000_auth_history_sessions.sql` (#1190) が、ジョブ `cleanup-auth-sessions-and-login-history` を毎日 03:55 JST (`55 18 * * *` UTC) に登録している。`SELECT public.expire_idle_auth_sessions(), public.reconcile_user_sessions_metadata(), public.cleanup_ended_user_sessions_metadata();` を呼び、30 日更新の無いセッションを終え (`expire_idle_auth_sessions()`)、GoTrue 側に無いのに終わっていないログインの記録を終え (`reconcile_user_sessions_metadata()`)、終わってから 90 日を過ぎたログインの記録を消す (`cleanup_ended_user_sessions_metadata()`)。3 つの関数の `EXECUTE` は `service_role` だけ。ロールバックは `supabase/rollbacks/20261016243000_auth_history_sessions.down.sql`。詳しくは cross/16 §11.6。
+- そのほか、migration `20261017230000_billing_manual_plan_grant.sql` (#1797) が、ジョブ `expire-manual-plan-grants` を毎日 00:11 JST (`11 15 * * *` UTC) に登録している。`CALL public.billing_expire_manual_subscriptions();` を呼び (プロシージャ。期限を過ぎた利用者ごとに 1 人分の関数 `billing_expire_manual_subscription_for_user` を呼んで COMMIT する。1 トランザクションで扱う利用者は 1 人だけ)、運営者が手動で付与した個人の契約 (`personal_subscriptions` の `stripe_subscription_id IS NULL` の行) のうち有効期限 (`current_period_end`) を過ぎた行を `expired` にし、家族グループのプランと `plan_key_cached` を合わせ、監査 `system.billing.manual_grant_expired` を書く。1 人分の関数の `EXECUTE` は `service_role` だけ、プロシージャの `EXECUTE` は誰にも付けない (所有者 `postgres` = pg_cron だけ)。ロールバックは `supabase/rollbacks/20261017230000_billing_manual_plan_grant.down.sql`。詳しくは `billing/02-manual-plan-grant.md` §6.4。
 - 過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある。これらは #1116 でベースラインに統合され、いまの migration には登録の SQL が無い。本番で動いているかは `cron.job` で確認する。この 6 本も含め、本番の `cron.job` の定義は DB バックアップの書庫の `cron_jobs.sql` に入り、新しいプロジェクトへの復元で戻す (cross/17 §4.3・`docs/operations/backup-restore.md` §6)。
 
 #### 3.0.1 `snapshot-daily-active-users` — アクティブ利用者 (DAU / WAU / MAU) の数え方
@@ -151,7 +152,7 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 > `family_freeze_grace_batch`・`family_archive_purge_batch`・`meal_request_expire_batch`・`data_integrity_check` の 4 本は、operator/11 §2.2 で 08 の計画から外した (発生源が無い・制約が守る)。解散した家族の物理削除は `purge-dissolved-family-groups` (operator/11 §5.4。保存期間の確認の後)。
 > `infra_metrics_cleanup` と `failed_invite_lookups_cleanup` は、それぞれの表に書き込む処理がまだ無く (表が常に空)、消す対象が無いため、この段では足さない。
 > `stripe_event_stuck_check` (Stripe Webhook) と、ライセンス系の `license_expire_batch`・`license_used_count_reconcile` は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
-> migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history` の 11 つ (§3.0)。
+> migration が pg_cron に登録しているのは、この表の `update-org-challenge-progress` と、この表に無い `cleanup-old-app-logs`・`snapshot-daily-active-users`・`calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history`・`expire-manual-plan-grants` の 12 つ (§3.0)。
 
 ### 3.2 Vercel Cron ジョブ (HTTP)
 
@@ -161,17 +162,17 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `license_renewal_reminder` | daily 10:00 | ライセンス更新リマインダー |
 | `deprecate_plan_notice` | daily 11:00 | deprecated プラン移行通知 |
 | `stripe_integrity_check` | daily 12:00 | Stripe reconciliation |
-| `re_engagement_email` | daily 13:00 | 再エンゲージメントメール |
-| `nps_survey_sender` | daily 14:00 | NPS サーベイ送信 |
-| `hr_revoke_jobs_processor` | hourly :30 | HR revoke ジョブ処理 |
+| `re_engagement_email` | daily 13:00 | 再エンゲージメントメール (選択待ち: operator/11 §8) |
+| `nps_survey_sender` | daily 14:00 | NPS サーベイ送信 (選択待ち: operator/11 §8) |
+| `hr_revoke_jobs_processor` | hourly :30 | HR revoke ジョブ処理 (HR 連携の冊に同梱: operator/11 §2.2) |
 | `grace_period_check` | daily 09:30 | 支払失敗グレースペリオドチェック |
 | `revenue_snapshot` | daily 01:00 | 日次収益スナップショット生成 |
 | `dau_snapshot` | daily 01:30 | DAU/WAU/MAU スナップショット |
-| `logical_backup` | daily 02:00 | pg_dump → S3。Vercel Cron としては置かず、GitHub Actions の `db-backup.yml` (02:23 JST) が取って R2 に置く (cross/17) |
+| `logical_backup` (実装済み: cross/17・#1765 段 A) | daily 02:23 | GitHub Actions の `db-backup.yml` が取って R2 に置く (Vercel Cron としては置かない)。鮮度は下の `backup_freshness` の行 (cross/17 §7.3) |
 | `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
 | `backup_freshness` (実装済み: #1129) | daily 14:37 | 最新の `backup.daily.completed` が 30 時間より古ければ `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/backup-freshness`。設計は cross/17 §7.3) |
 
-> **2026-10-16 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (この表の `backup_freshness`。#1129) の 5 本。この表のほかの 11 本は、Vercel Cron としては実装されていない (`logical_backup` は GitHub Actions で取る。cross/17)。
+> **2026-10-17 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (この表の `backup_freshness`。#1129) の 5 本。この表のほかの 10 本は、Vercel Cron としては実装されていない (`logical_backup` は GitHub Actions で取る。cross/17)。
 > 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > `dau_snapshot` は、Vercel Cron ではなく pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。時刻は同じ 01:30 JST。
 > それ以外の行は未実装のまま (作るときは別の PR)。
@@ -323,7 +324,7 @@ $$ LANGUAGE plpgsql;
 
 ## 5. Vercel Cron ジョブ詳細
 
-> **2026-10-16 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (cross/17 §7.3) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
+> **2026-10-17 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (cross/17 §7.3) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
 > `revenue_snapshot` (§5.8) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。
 
 ### 5.1 vercel.json 設定
@@ -335,18 +336,16 @@ $$ LANGUAGE plpgsql;
     { "path": "/api/cron/license-renewal-reminder", "schedule": "0 1 * * *" },
     { "path": "/api/cron/deprecate-plan-notice",    "schedule": "0 2 * * *" },
     { "path": "/api/cron/stripe-reconcile",         "schedule": "0 3 * * *" },
-    { "path": "/api/cron/re-engagement-email",      "schedule": "0 4 * * *" },
-    { "path": "/api/cron/nps-survey-sender",        "schedule": "0 5 * * *" },
     { "path": "/api/cron/grace-period-check",       "schedule": "30 0 * * *" },
     { "path": "/api/cron/revenue-snapshot",         "schedule": "0 16 * * *" },
-    { "path": "/api/cron/dau-snapshot",             "schedule": "30 16 * * *" },
-    { "path": "/api/cron/logical-backup",           "schedule": "0 17 * * *" },
-    { "path": "/api/cron/hr-revoke-processor",      "schedule": "30 * * * *"  }
+    { "path": "/api/cron/dau-snapshot",             "schedule": "30 16 * * *" }
   ]
 }
 ```
 
 *UTC → JST: UTC+9 で変換。例: `0 0 * * *` UTC = 09:00 JST*
+
+上の JSON は設計時の計画の例である (いまの `vercel.json` は §3.0)。`/api/cron/logical-backup` (GitHub Actions で取る。cross/17)・`/api/cron/hr-revoke-processor` (HR 連携の冊に同梱。operator/11 §2.2)・`/api/cron/re-engagement-email`・`/api/cron/nps-survey-sender` (選択待ち。operator/11 §8) は、例から外した。
 
 ### 5.2 共通認証
 
@@ -460,66 +459,11 @@ export async function POST(request: Request) {
 
 ### 5.5 `re_engagement_email` (13:00 JST)
 
-```typescript
-// 7/14/30 日間ログインなし かつ plan_key != 'free' のユーザーに段階的メール
-const targets = await supabase
-  .from('user_profiles')
-  .select('id, last_login_at, plan_key_cached')
-  .neq('plan_key_cached', 'free')
-  .lte('last_login_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
-  .gte('last_login_at', new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString());
-
-for (const user of targets ?? []) {
-  const daysSinceLogin = Math.floor(
-    (Date.now() - new Date(user.last_login_at).getTime()) / (1000 * 60 * 60 * 24)
-  );
-
-  // 7 日目・14 日目・30 日目のみ送信
-  if (![7, 14, 30].includes(daysSinceLogin)) continue;
-
-  const template = daysSinceLogin === 30 ? 're_engagement_offer' : 're_engagement_reminder';
-  await sendEmail({ to: user.id, template, params: { days_since_login: daysSinceLogin } });
-}
-```
+この節の `re_engagement_email` は、利用者へ新しくメールを送り始めるかどうかの選択待ちである (operator/11 §8.1 に選択肢と推奨を書いた。送らない場合は 08 から外す。送るなら別の設計ゲート。コードは残さない)。
 
 ### 5.6 `hr_revoke_jobs_processor` (hourly :30)
 
-```typescript
-// HR Webhook で追加されたジョブを処理 (毎時 30 分)
-const { data: pendingJobs } = await supabase
-  .from('hr_revoke_jobs')
-  .select('*')
-  .in('status', ['pending'])
-  .lte('next_attempt_at', new Date().toISOString())
-  .order('next_attempt_at', { ascending: true })
-  .limit(100);
-
-for (const job of pendingJobs ?? []) {
-  try {
-    await processHrRevokeJob(job);
-    await supabase.from('hr_revoke_jobs').update({ status: 'done' }).eq('id', job.id);
-  } catch (err: unknown) {
-    const newAttempts = job.attempts + 1;
-    if (newAttempts >= 5) {
-      // デッドレター
-      await supabase.from('hr_revoke_jobs').update({
-        status: 'dead_letter',
-        last_error: String(err),
-      }).eq('id', job.id);
-      await notifySlack({ channel: '#hr-alerts', message: `HR revoke job dead letter: ${job.id}` });
-    } else {
-      // 指数バックオフで再スケジュール (pending に戻して next_attempt_at をセット)
-      const nextSchedule = new Date(Date.now() + Math.pow(2, newAttempts) * 60 * 1000);
-      await supabase.from('hr_revoke_jobs').update({
-        status: 'pending',
-        attempts: newAttempts,
-        last_error: String(err),
-        next_attempt_at: nextSchedule.toISOString(),
-      }).eq('id', job.id);
-    }
-  }
-}
-```
+この節の `hr_revoke_jobs_processor` は、operator/11 §2.2 の仕分けで 08 の「いま」の計画から外した (HR の Webhook・`hr_revoke_jobs` が main に無く、バッチだけ先に作ると対象の無い処理になる。HR 連携の冊 (org/02 §14) に同梱する。コードは残さない)。
 
 ### 5.7 `grace_period_check` (09:30 JST)
 
@@ -583,60 +527,18 @@ await supabase.from('revenue_snapshots').upsert({
 
 ## 6. 監視・失敗時アラート
 
+定期処理の失敗の監視は、既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・宛先 `OPS_ALERT_EMAIL`・抑止 `claim_ops_alert`。07-audit-monitoring.md §8.3) に、4 つ目の種類 `cron_failure` と 5 つ目の種類 `pg_cron_stalled` を足して行う (正本は operator/11 §4〜§6)。Slack・Sentry は採用していない (07 §1.1・#1179) ので、`check_cron_failures` (6 時間ごとの pg_cron) と `withCronMonitoring` (ラッパー) は作らない。
+
 ### 6.1 pg_cron 失敗監視
 
-```sql
--- 別の pg_cron ジョブで失敗を監視
-SELECT cron.schedule(
-  'check_cron_failures',
-  '0 */6 * * *',  -- 6時間毎
-  $$
-  INSERT INTO admin_audit_logs (actor_id, action_type, severity, details)
-  SELECT
-    '00000000-0000-0000-0000-000000000000',
-    'system.cron.failure_detected',
-    'warn',
-    jsonb_build_object(
-      'job_name', jobid::TEXT,
-      'failed_count',
-      COUNT(*) FILTER (WHERE status = 'failed' AND start_time > NOW() - INTERVAL '24h')
-    )
-  FROM cron.job_run_details
-  WHERE status = 'failed'
-    AND start_time > NOW() - INTERVAL '24h'
-  GROUP BY jobid
-  HAVING COUNT(*) >= 3;
-  -- 3 回以上失敗した場合に audit log + pg_notify でアラート
-  $$
-);
-```
+- 対象: `cron.job_run_details` の `status = 'failed'` の行 (1 実行 = 1 件)。直近 7 日のうち、まだ知らせていないものを 1 件から数える (DB の `cron_failure_counts`)。知らせた失敗は台帳 `cron_failure_alerts` に記録し、同じ失敗を 2 回知らせない (窓で数えない。operator/11 §4.2)。
+- 通知: 運用メール (template `ops_cron_failure`)。載せるのは `pg_cron/<ジョブ名>` ごとの件数と運用ログ画面へのリンクだけ (`command` / `return_message` は載せない)。
+- 停止: 有効なジョブがあるのに、最新の実行から `OPS_ALERT_PG_CRON_STALL_MINUTES` (既定 60 分) を超えて 1 つも動いていなければ、5 つ目の種類 `pg_cron_stalled` (template `ops_pg_cron_stalled`) で知らせる。止まったままなら、抑止 (既定 60 分) ごとに 1 通。
 
 ### 6.2 Vercel Cron 失敗監視
 
-各 cron handler で `try-catch` して失敗時に Slack 通知:
-
-```typescript
-// src/app/api/cron/_wrapper.ts
-export function withCronMonitoring(jobName: string, handler: CronHandler): CronHandler {
-  return async (request: Request) => {
-    const startTime = Date.now();
-    try {
-      const result = await handler(request);
-      logger.info(`cron.${jobName}.success`, { duration_ms: Date.now() - startTime });
-      return result;
-    } catch (err: unknown) {
-      logger.error(`cron.${jobName}.failed`, { error: String(err), duration_ms: Date.now() - startTime });
-      await notifySlack({
-        channel: '#cron-alerts',
-        message: `🚨 Cron失敗: ${jobName}\n\`\`\`${String(err)}\`\`\``,
-      });
-      // Sentry にも送信
-      Sentry.captureException(err, { tags: { cron_job: jobName } });
-      return new Response('Error', { status: 500 });
-    }
-  };
-}
-```
+- 対象: cron の route が 500 を返した回。`internalError` (`src/lib/api/errors.ts`) が `app_logs` に固定の文で残す `error` の行のうち、`function_name` が cron の route の名前 (`cron/<名前>` または `<METHOD> /api/cron/<名前>`) のもの。`source = 'client'` の行 (利用者が `POST /api/log` で書ける) と、届けられなかったメールの 1 通ごとの `error` は数えない。
+- 通知: 同じ運用メール (`vercel_cron/<route 名>` ごとの件数)。`vercel.json` の 5 本 (`backup-freshness` を含む) と `app-log-alerts` 自身の 500 が対象になる。
 
 ---
 
@@ -735,9 +637,9 @@ sequenceDiagram
 
 | ジョブ | 失敗時の対処 |
 |-------|-----------|
-| pg_cron 全般 | `cron.job_run_details` に記録 → 監視 cron が 3 回失敗を検知 → Slack アラート |
-| Vercel Cron 全般 | `withCronMonitoring` ラッパーで Slack + Sentry に送信 |
-| `hr_revoke_jobs_processor` | 個別ジョブ単位でリトライ (指数バックオフ 5 回) → dead_letter |
+| pg_cron 全般 | `cron.job_run_details` に記録 → `app-log-alerts` の回 (15 分おき) が 1 件から検知 → 運用メール (operator/11 §4)。止まったときは `pg_cron_stalled` |
+| Vercel Cron 全般 | route が 500 を返すと `internalError` が `app_logs` に error を残す → `app-log-alerts` の回が 1 件から検知 → 運用メール (operator/11 §4) |
+| `hr_revoke_jobs_processor` | 未実装 (HR 連携の冊に同梱: operator/11 §2.2)。リトライの方針は HR 連携の冊が決める |
 | `stripe_integrity_check` | 不一致検出 → 自動修復しない → Slack + 監査ログ |
 | `family_archive_purge_batch` | dry-run モードを持つ (purge_count > 100 の場合は Slack 確認を要求) |
 
@@ -749,7 +651,7 @@ sequenceDiagram
   - `grace_period_check` の 7 日判定
 - **Integration** (Supabase Local):
   - `process_license_expire()` の動作確認
-  - `process_family_freeze_grace_to_archive()` のステータス遷移
+  - 失敗の監視の DB の関数 (台帳・候補・数え方・pg_cron の停止。operator/11 §11.3)
   - `reconcile_license_used_count()` の used_licenses 同期確認
 - **E2E** (Playwright):
   - `/super-admin/cron-jobs` で手動実行 → 監査ログに記録されることを確認
@@ -758,7 +660,7 @@ sequenceDiagram
 
 - `pg_cron setup.sql`: `00-architecture.md §6` で言及済み、本ドキュメントが詳細を定義
 - Vercel Cron: `vercel.json` に crons を追加
-- `hr_revoke_jobs`: 要件 §15.2 で DDL 定義済み
+- `hr_revoke_jobs`: 未実装 (org/02 §14)
 
 ## 12. 未解決事項
 
