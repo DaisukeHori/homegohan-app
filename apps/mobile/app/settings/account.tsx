@@ -87,7 +87,8 @@ export default function AccountSettingsPage() {
 
     // ここから先は、サーバーでの削除は済んでいる。もう一度試しても削除の API は失敗するだけなので、
     // 端末の後片付けに失敗しても、削除の失敗とは別の文で知らせて、ログイン画面へ進める。
-    // サインアウトが失敗すると SIGNED_OUT が届かず、AuthProvider がセッションを持ったままになる。
+    // access token が失効していて更新もできないとき (とサインアウトが例外を投げたとき) は SIGNED_OUT が届かず、
+    // AuthProvider がセッションを持ったままになる (access token が有効なうちの失敗では、supabase-js が保管庫を消して SIGNED_OUT を出す)。
     // そのまま "/" へ移ると、入口 (app/index.tsx) がホームへ戻してしまうので、signOutAfterAccountDeletion が
     // 保管庫のセッションを端末だけで消し、clearSession で画面の状態も消す (設定画面のログアウトと同じ共通処理。signOut.ts)。
     const { error } = await signOutAfterAccountDeletion(user?.id ?? null, { clearSession });

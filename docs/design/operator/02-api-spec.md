@@ -277,6 +277,47 @@ BAN 解除
 
 ---
 
+### GET /api/super-admin/users/{id}/manual-plan
+手動のプラン付与の節の表示の内容 (今の契約・付与できるプラン・付与の履歴 10 件)。設計: `billing/02-manual-plan-grant.md` §9.1
+
+**権限**: `super_admin` のみ (AAL2)。個人情報を返さないので監査は書かない
+
+**レスポンス 200**: `{ "data": { "current": { subscription_id, plan_key, status, source: "stripe" | "manual", starts_at, expires_at } | null, "plans": [{ plan_key, display_name, plan_type, max_members }], "history": [{ id, action_type, actor_id, created_at, plan_key, expires_at, reason }] } }`
+
+**エラー**: 401 `AUTH_UNAUTHENTICATED` / 403 `OP_PERMISSION_DENIED` / 404 `NOT_FOUND` (UUID の形でない・利用者がいない)
+
+---
+
+### POST /api/super-admin/users/{id}/manual-plan
+運営者による手動のプラン付与。Stripe は呼ばない。設計: `billing/02-manual-plan-grant.md` §9.2
+
+**権限**: `super_admin` のみ (AAL2)。自分自身は 403 `OP_SELF_MODIFY` (本文の検証より前)
+
+**リクエスト**: `{ "plan_key": "pro", "expires_on": "2026-12-31" | null, "reason": "..." }` (`expires_on` は JST の暦日で今日より後。省略 / null = 期限なし。`reason` は 1〜500 文字)
+
+**レスポンス 200**: `{ "data": { subscription_id, user_id, plan_key, status: "active", expires_at } }`
+
+**エラー**: 400 `OP_INVALID_INPUT` / `INVALID_CHARACTER`・401・403 `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY`・404 `NOT_FOUND`・409 `OP_SUBSCRIPTION_ALREADY_ACTIVE` (live な契約がある)・422 `OP_PLAN_NOT_GRANTABLE`
+
+**監査**: `admin.billing.manual_grant` (warn。details: subscription_id / plan_key / expires_at / reason)
+
+---
+
+### DELETE /api/super-admin/users/{id}/manual-plan
+手動付与の取り消し (行を `cancelled` に)。設計: `billing/02-manual-plan-grant.md` §9.3
+
+**権限**: `super_admin` のみ (AAL2)。自分自身は 403 `OP_SELF_MODIFY`
+
+**リクエスト**: `{ "reason": "..." }` (1〜500 文字)
+
+**レスポンス 200**: `{ "data": { subscription_id, user_id, plan_key, status_from, status_to: "cancelled" } }`
+
+**エラー**: 400 `OP_INVALID_INPUT` / `INVALID_CHARACTER`・401・403 `OP_PERMISSION_DENIED` / `OP_SELF_MODIFY`・404 `NOT_FOUND`・409 `OP_NO_MANUAL_SUBSCRIPTION` (手動で付与した live な契約が無い)
+
+**監査**: `admin.billing.manual_revoke` (warn。details: subscription_id / plan_key / reason)
+
+---
+
 ### POST /api/admin/users/{id}/impersonate — 提供しない (#1124)
 なりすまし (impersonate)。**提供しない** (オーナー判断 2026-10-08)。旧設計の `POST /api/super-admin/impersonate/{userId}` も作らない。
 
@@ -1645,6 +1686,9 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_PLAN_DEPRECATED` | 422 | deprecated プランへの新規加入不可 |
 | `OP_COUPON_ALREADY_ACTIVE` | 409 | 1 契約に対し有効クーポンが既に存在 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | 409 | active/trialing が既に存在 |
+| `OP_PLAN_NOT_GRANTABLE` | 422 | [NEW] 手動付与できないプラン (`POST /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
+| `OP_NO_MANUAL_SUBSCRIPTION` | 409 | [NEW] 取り消す手動付与の行が無い (`DELETE /api/super-admin/users/{id}/manual-plan`。billing/02 §12.1) |
+| `OP_SELF_MODIFY` | 403 | [NEW] 自分自身を対象にできない運営の操作 (`POST /api/super-admin/admins/{id}/mfa/reset`・`POST` / `DELETE /api/super-admin/users/{id}/manual-plan`) |
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |

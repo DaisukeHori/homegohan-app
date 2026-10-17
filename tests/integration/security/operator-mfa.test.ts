@@ -136,7 +136,7 @@ async function verifyWithSupabase(userClient: SupabaseClient, factorId: string, 
   throw new Error('challengeAndVerify が 2 回とも失敗しました');
 }
 
-/** @supabase/ssr (0.1.0) の Cookie の名前 (sb-<URL のホスト名の最初の段>-auth-token) */
+/** @supabase/ssr の Cookie の名前 (sb-<URL のホスト名の最初の段>-auth-token) */
 function sessionCookieName(): string {
   return `sb-${new URL(url).hostname.split('.')[0]}-auth-token`;
 }

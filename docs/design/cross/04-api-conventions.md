@@ -252,6 +252,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `OP_FEATURE_FLAG_NOT_FOUND` | 機能フラグが見つからない | 404 |
 | `OP_TICKET_NOT_FOUND` | チケットが見つからない | 404 |
 | `OP_SUBSCRIPTION_ALREADY_ACTIVE` | サブスクリプションが既にアクティブ | 409 |
+| `OP_PLAN_NOT_GRANTABLE` | **[NEW]** 手動付与できないプラン (`free`・`org`・`private` のアドオン・`draft`・`deprecated`・存在しない `plan_key`。`POST /api/super-admin/users/{id}/manual-plan`。`billing/02-manual-plan-grant.md` §12.1) | 422 |
+| `OP_NO_MANUAL_SUBSCRIPTION` | **[NEW]** 取り消す手動付与の行が無い (Stripe の契約だけ・契約なし・取り消し済み。`DELETE /api/super-admin/users/{id}/manual-plan`。`billing/02-manual-plan-grant.md` §12.1) | 409 |
+| `OP_SELF_MODIFY` | **[NEW]** 自分自身を対象にできない運営の操作 (`POST /api/super-admin/admins/{id}/mfa/reset` と `POST` / `DELETE /api/super-admin/users/{id}/manual-plan`。実コードが先に使っていた。`cross/12-operator-mfa.md`・`billing/02-manual-plan-grant.md` §12.1) | 403 |
 | `OP_EMAIL_OUTBOX_NOT_FOUND` | **[NEW]** 再送するメール (送信待ちの行) が見つからない (`operator/10-logs-and-mail-retry.md` §11) | 404 |
 | `OP_EMAIL_OUTBOX_NOT_REQUEUEABLE` | **[NEW]** 再送できないメール (届けられなかった行でない `not_dead`・宛先を伏せた行 `redacted`。`details.reason`。`operator/10-logs-and-mail-retry.md` §11) | 409 |
 

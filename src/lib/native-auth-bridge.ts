@@ -51,8 +51,9 @@ export type NativeAuthMessage =
  *   - access_token の有効期間 (既定 1 時間) の間は、Web はそのまま使える
  *   - ネイティブの refresh_token は、DB の行 (60 秒) と、コードを発行するリクエストの body 以外には出ない。
  *     Web のページが読める Cookie (HttpOnly でない) にも載らない
- *   - 期限が近づくと、ブラウザの supabase-js (auth-js) は refresh_token で更新しようとして必ず失敗し、
- *     セッションを捨てて SIGNED_OUT を出す。auth-js が更新を試みるのは次の時点 (@supabase/auth-js 2.105)
+ *   - 期限が近づくと、ブラウザの supabase-js (auth-js) は refresh_token で更新しようとして必ず失敗する。
+ *     access token がまだ有効なうちの失敗ではセッションを残し (SIGNED_OUT も出さず、失敗を 60 秒控える)、
+ *     失効した後の失敗でセッションを捨てて SIGNED_OUT を出す (@supabase/auth-js 2.117)。auth-js が更新を試みるのは次の時点
  *       自動更新の tick (30 秒ごと)                       : 残りが 120 秒未満 ((AUTO_REFRESH_TICK_THRESHOLD + 1) × 30 秒)
  *       getSession() (Supabase への API 呼び出しのたびに) : 残りが 90 秒未満 (EXPIRY_MARGIN_MS)
  *       バックグラウンドからの復帰 (visibilitychange)     : 残りが 90 秒未満。このとき tick も直ちに走る
@@ -61,7 +62,8 @@ export type NativeAuthMessage =
  *          (REFRESH_AHEAD_SECONDS = 180 秒。auth-js の 120 秒より十分に前)、ネイティブが新しいコードで読み込み直す。
  *          auth-js は更新を試みる前に済む
  *       2. 先回りできないとき (1 時間以上バックグラウンドに置いて戻った場合。タイマーも止まっているので、
- *          復帰した瞬間に auth-js が更新を試みる): MainLayout が、WebView の中での SIGNED_OUT を「ログアウト」ではなく
+ *          復帰した瞬間に auth-js が更新を試みる。access token は失効しているので、その失敗で SIGNED_OUT になる):
+ *          MainLayout が、WebView の中での SIGNED_OUT を「ログアウト」ではなく
  *          「借り物のセッションを失った」ものとして扱う。localStorage を消さず、/login へも移さず、
  *          session-expired を送って再ブリッジを待つ (NATIVE_REBRIDGE_WAIT_MS)。
  *          利用者が意図したログアウトは、各画面が signOut の前に自分で localStorage を消し、broadcastSignOut() で sign-out を送る
