@@ -40,7 +40,7 @@ body { margin: 0; }
 .lp h1, .lp h2 { font-family: "Noto Serif JP", "Hiragino Mincho ProN", serif; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; margin: 0; }
 .lp h1 { font-size: clamp(2.25rem, 1.2rem + 4.2vw, 4.5rem); line-height: 1.15; }
 .lp h2 { font-size: clamp(1.75rem, 1.1rem + 2.4vw, 3rem); line-height: 1.2; letter-spacing: -0.005em; }
-.lp h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.4; margin: 0; }
+.lp h3 { font-size: 1.125rem; font-weight: 700; line-height: 1.4; margin: 0; text-wrap: balance; }
 .lp p { margin: 0; text-wrap: pretty; }
 .lp a { color: inherit; }
 .lp .lp-lead { font-size: clamp(1.0625rem, 0.95rem + 0.5vw, 1.25rem); line-height: 1.75; color: var(--lp-ink-soft); max-width: 40rem; }
@@ -143,14 +143,15 @@ body { margin: 0; }
 .lp .lp-demo-grid { display: grid; gap: 1.5rem; }
 @media (min-width: 768px) { .lp .lp-demo-grid { grid-template-columns: 1fr 1fr; } }
 .lp .lp-card { border-radius: var(--lp-radius-card); background: var(--lp-surface); padding: 1.5rem; box-shadow: var(--lp-shadow-card); }
-.lp .lp-picker { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; margin-top: 1rem; }
+.lp .lp-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.5rem; margin-top: 1rem; }
+@media (min-width: 640px) { .lp .lp-picker { gap: 0.75rem; } }
 .lp .lp-photo-btn { position: relative; aspect-ratio: 1; overflow: hidden; border-radius: 1rem; border: 2px solid var(--lp-line); padding: 0; background: none; cursor: pointer; font: inherit; color: inherit; }
 .lp .lp-photo-btn[aria-pressed="true"] { border-color: var(--lp-accent-ink); }
 /* 分析中も disabled にしない (押したボタンのフォーカスを保つ。設計書 §13.3) */
 .lp .lp-photo-btn[aria-disabled="true"] { cursor: progress; }
 .lp .lp-photo-btn .ph { position: absolute; inset: 0; }
-/* 写真の上の名前は、黒 70 % の帯の上の白文字 (写真の色によらず 8.45:1 以上。設計書 §5.1・§5.4) */
-.lp .lp-photo-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.5rem; font-size: 0.875rem; font-weight: 500; line-height: 1.375; color: #fff; background: rgba(0,0,0,.7); text-align: left; }
+/* 写真の上の名前は、黒 70 % の帯の上の白文字 (写真の色によらず 8.45:1 以上。設計書 §5.1・§5.4)。名前は 4 字までで、320 px でも 1 行 (設計書 §8.3) */
+.lp .lp-photo-name { position: absolute; left: 0; right: 0; bottom: 0; padding: 0.375rem 0.25rem; white-space: nowrap; font-size: 0.875rem; font-weight: 500; line-height: 1.375; color: #fff; background: rgba(0,0,0,.7); text-align: left; }
 .lp .lp-result { min-height: 16rem; }
 .lp .lp-result-score { display: flex; align-items: center; gap: 1rem; padding: 1rem; border-radius: 1rem; background: var(--lp-green-tint); box-shadow: inset 0 0 0 1px var(--lp-green); }
 .lp .lp-result-score strong { font-size: 2rem; color: var(--lp-green-ink); line-height: 1; }
@@ -196,9 +197,11 @@ body { margin: 0; }
 @keyframes lp-pop { from { transform: scale(.92); opacity: 0; } to { transform: none; opacity: 1; } }
 
 /* 安心 */
+/* 安心: 768 px 未満は 1 列・768〜1279 px は 2 列・1280 px 以上は 4 列 (見出しが 1 行に収まる幅。設計書 §8.3) */
 .lp .lp-trust { display: grid; gap: 1rem; }
-@media (min-width: 768px) { .lp .lp-trust { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 1024px) { .lp .lp-trust { grid-template-columns: repeat(4, 1fr); } }
+@media (min-width: 768px) { .lp .lp-trust { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (min-width: 1280px) { .lp .lp-trust { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.lp .lp-trust-item h3 { white-space: nowrap; }
 .lp .lp-trust-item { padding: 1.5rem; border-radius: var(--lp-radius-card); background: var(--lp-surface); box-shadow: var(--lp-shadow-card); }
 .lp .lp-trust-item h3 { margin: 0.75rem 0 0.5rem; }
 .lp .lp-trust-item p { font-size: 1rem; color: var(--lp-ink-soft); }
@@ -229,8 +232,11 @@ body { margin: 0; }
 
 /* フッター */
 .lp .lp-footer { background: var(--lp-surface); border-top: 1px solid var(--lp-line); padding: 3rem 0; }
+/* フッター: 768 px 未満は 1 列・768〜1023 px は上にマークと一文、下にリンクの 3 列・1024 px 以上は 4 列 (リンクの列は 12rem 以上。設計書 §8.3) */
 .lp .lp-footer-grid { display: grid; gap: 2rem; }
-@media (min-width: 768px) { .lp .lp-footer-grid { grid-template-columns: 2fr 1fr 1fr 1fr; } }
+@media (min-width: 768px) { .lp .lp-footer-grid { grid-template-columns: repeat(3, minmax(12rem, 1fr)); } .lp .lp-footer-grid > :first-child { grid-column: 1 / -1; } }
+@media (min-width: 1024px) { .lp .lp-footer-grid { grid-template-columns: minmax(0, 1fr) repeat(3, minmax(12rem, 12rem)); } .lp .lp-footer-grid > :first-child { grid-column: auto; } }
+.lp .lp-footer li a { white-space: nowrap; }
 .lp .lp-footer h3 { font-size: 0.9375rem; margin-bottom: 0.75rem; }
 .lp .lp-footer li { font-size: 0.875rem; margin-bottom: 0.5rem; }
 .lp .lp-footer li a { text-decoration: none; color: var(--lp-ink-soft); display: inline-flex; align-items: center; min-height: 1.5rem; }
@@ -353,9 +359,9 @@ body { margin: 0; }
       <div class="lp-card lp-reveal">
         <h3>食事の写真を選ぶ</h3>
         <div class="lp-picker" role="group" aria-label="食事の写真を選ぶ" id="demo-picker">
-          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salad-bowl"><span class="ph">写真: <code>/marketing/photos/salad-bowl.webp</code><br>(葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル)</span><span class="lp-photo-name">サラダボウル</span></button>
-          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salmon-plate"><span class="ph">写真: <code>/marketing/photos/salmon-plate.webp</code><br>(焼いたサーモンといんげんとミニトマトを盛り合わせたプレート)</span><span class="lp-photo-name">サーモンのプレート</span></button>
-          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="pesto-pasta"><span class="ph">写真: <code>/marketing/photos/pesto-pasta.webp</code><br>(バジルソースのファルファッレとミニトマトと葉野菜)</span><span class="lp-photo-name">バジルのパスタ</span></button>
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salad-bowl"><span class="ph">写真: <code>/marketing/photos/salad-bowl.webp</code><br>(葉野菜とアボカドとミニトマトとひよこ豆のサラダボウル)</span><span class="lp-photo-name">サラダ</span></button>
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="salmon-plate"><span class="ph">写真: <code>/marketing/photos/salmon-plate.webp</code><br>(焼いたサーモンといんげんとミニトマトを盛り合わせたプレート)</span><span class="lp-photo-name">サーモン</span></button>
+          <button type="button" class="lp-photo-btn" aria-pressed="false" data-sample="pesto-pasta"><span class="ph">写真: <code>/marketing/photos/pesto-pasta.webp</code><br>(バジルソースのファルファッレとミニトマトと葉野菜)</span><span class="lp-photo-name">パスタ</span></button>
         </div>
         <p class="lp-note" style="margin-top:1rem">表示はサンプルです。実際のアプリでは、写真から AI が認識した料理の名前が入り、数値は推定です。</p>
       </div>
@@ -491,9 +497,9 @@ body { margin: 0; }
     return Math.max(70, Math.min(95, Math.round(70 + proteinScore + fiberScore + caloriesScore)));
   }
   var SAMPLES = {
-    'salad-bowl': { name: 'サラダボウル', dishNames: ['サラダボウル'], mealTypeLabel: '昼食', nutrition: { kcal: 380, proteinG: 12, carbsG: 28, fatG: 22, fiberG: 10 } },
-    'salmon-plate': { name: 'サーモンのプレート', dishNames: ['焼きサーモン', 'いんげんとミニトマト'], mealTypeLabel: '夕食', nutrition: { kcal: 480, proteinG: 30, carbsG: 40, fatG: 20, fiberG: 4 } },
-    'pesto-pasta': { name: 'バジルのパスタ', dishNames: ['バジルソースのパスタ'], mealTypeLabel: '昼食', nutrition: { kcal: 610, proteinG: 17, carbsG: 74, fatG: 26, fiberG: 3 } }
+    'salad-bowl': { name: 'サラダ', dishNames: ['サラダボウル'], mealTypeLabel: '昼食', nutrition: { kcal: 380, proteinG: 12, carbsG: 28, fatG: 22, fiberG: 10 } },
+    'salmon-plate': { name: 'サーモン', dishNames: ['焼きサーモン', 'いんげんとミニトマト'], mealTypeLabel: '夕食', nutrition: { kcal: 480, proteinG: 30, carbsG: 40, fatG: 20, fiberG: 4 } },
+    'pesto-pasta': { name: 'パスタ', dishNames: ['バジルソースのパスタ'], mealTypeLabel: '昼食', nutrition: { kcal: 610, proteinG: 17, carbsG: 74, fatG: 26, fiberG: 3 } }
   };
   // 表示の順 (設計書 §9.1 の DEMO_NUTRITION_KEYS)・名前・単位
   var NUTRI = [['kcal', 'カロリー', 'kcal'], ['proteinG', 'タンパク質', 'g'], ['carbsG', '炭水化物', 'g'], ['fatG', '脂質', 'g'], ['fiberG', '食物繊維', 'g']];
