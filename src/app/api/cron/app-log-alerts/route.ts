@@ -53,7 +53,8 @@
  *   メールを送れなかったとき (送信の設定が未完了・送信待ちへの登録の失敗・例外など) は、release_ops_alert で権利を返す。
  *   送れていないのに「送った」と記録したままだと、設定が直ったあともクールダウンの間は通知が来ないため。
  *   ただし宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) のときは返さない
- *   (送り直しても同じ結果で、15 分ごとの繰り返しになるため。#1577 の 8。NON_RELEASING_SEND_ERROR_CODES)。
+ *   (送り直しても同じ結果で、15 分ごとの繰り返しになるため。#1577 の 8。NON_RELEASING_SEND_ERROR_CODES は
+ *   src/lib/ops-alerts/send-release.ts にあり、backup-freshness の cron と共有する)。
  *   権利を取ったあとで関数ごと止められた (時間切れ・デプロイの切り替えなど) ときだけは返せず、次の通知が最大でクールダウンの分だけ遅れる (まれ)。
  * - メールが届くことには依存しない。sendEmail は送信待ち (email_outbox) に登録するだけで、送るのは worker
  *   (GET /api/cron/email-outbox)。登録できなかったときは sendEmail が app_logs に記録し (error)、この route も件数と関数名を warn で残す。応答は 200 のままにする
@@ -87,6 +88,7 @@ import { renderCronSecretDriftEmail } from '@/lib/emails/ops/cron-secret-drift';
 import { SUPER_ADMIN_EMAIL_OUTBOX_PATH } from '@/lib/emails/outbox';
 import { getSiteUrl } from '@/lib/site-config';
 import { resolveOpsAlertRecipient } from '@/lib/ops-alerts/recipient';
+import { NON_RELEASING_SEND_ERROR_CODES } from '@/lib/ops-alerts/send-release';
 import {
   APP_LOG_ALERT_COUNT_RPC,
   APP_LOG_ALERT_KEYS,
@@ -174,14 +176,6 @@ const SCOPE_LOG_LABEL: Readonly<Record<AppLogAlertScope, string>> = {
   cron_secret_drift: 'cron の共有シークレットのずれ',
   cron_secret_rotation: 'cron の共有シークレットの入れ替えの途中',
 };
-
-/**
- * sendEmail の結果が ok: false でも、送る権利 (と届けられなかったメールの印) を返さない失敗のコード (#1577 の 8)。
- * 宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) は、送り直しても同じ結果になり、
- * 権利を返すと 15 分ごとの繰り返しになるため。クールダウン (既定 60 分) の抑止を効かせる (suppressed は dead の行が画面に残る)。
- * それ以外 (送信の設定が未完了・送信待ちへの登録の失敗 outbox_failed など) は現行どおり権利を返し、次の回でもう一度試す
- */
-const NON_RELEASING_SEND_ERROR_CODES: ReadonlySet<string> = new Set(['suppressed', 'invalid_envelope']);
 
 /** 届けられなかったメールの通知に使う DB の関数 (§5.2 (5)(7)(8))。数える関数は種類ごとの表から取る (値の型は 'email_outbox_dead_counts') */
 const DEAD_LETTER_COUNT_RPC = APP_LOG_ALERT_COUNT_RPC.email_dead_letter;

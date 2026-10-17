@@ -10,7 +10,7 @@
  * 実際に解決された版 (package-lock.json) の両方で確かめる。
  *
  *   - Web アプリ (ルート): react / react-dom ↔ @types/react / @types/react-dom
- *   - モバイル (apps/mobile): react ↔ @types/react (Expo 53 + React 19.0 で、ルートとは別の版を入れ子で持つ)
+ *   - モバイル (apps/mobile): react ↔ @types/react (Expo 58 + React 19.3 (react 19.3.0・@types/react ~19.3.0) で、ルートとは別の版を入れ子で持つ)
  *
  * モバイルは CI で型検査をしていないため、モバイルの型がルートの @types/react (Web 用) で解決される状態になると、
  * 気付かないままモバイルの型エラーが増えうる。モバイルが自前の @types/react を入れ子で持っている間は、
@@ -106,7 +106,7 @@ describe('#1199 モバイル (apps/mobile) の React 本体と型のメジャー
   });
 
   it('package-lock.json: apps/mobile から見て解決される @types/react は react と同じメジャー', () => {
-    // ルートの @types/react は Web 用 (#1444 から 19.2 系)。モバイルは Expo 53 に合わせた 19.0 系を apps/mobile/node_modules に持つ。
+    // ルートの @types/react は Web 用 (#1444 から 19.2 系)。モバイルは Expo 58 に合わせた 19.3 系 (react 19.3.0・@types/react ~19.3.0) を apps/mobile/node_modules に持つ。
     const react = majorOf(resolveInLock(lock, 'apps/mobile', 'react').version, 'apps/mobile から見た react');
     const types = majorOf(
       resolveInLock(lock, 'apps/mobile', '@types/react').version,
@@ -120,7 +120,7 @@ describe('#1199 モバイルが自前の @types/react を入れ子で持つ間�
   const webTypes = resolveInLock(lock, '', '@types/react');
   const mobileTypes = resolveInLock(lock, 'apps/mobile', '@types/react');
   // Web とモバイルで @types/react の版が違い、モバイルが入れ子の版を持つ間は、モバイルの型をそれに固定する。
-  // #1444 で Web も 19 系 (19.2) になったが、モバイルは 19.0 系のままなので、メジャーが同じでも 2 つの版が並ぶ。
+  // #1444 で Web も 19 系 (19.2) になったが、モバイルは 19.3 系 (Expo 58) なので、メジャーが同じでも 2 つの版が並ぶ。
   // 同じ版がルートに 1 つだけ巻き上げられている (固定が不要な) 場合は、この 2 件は実行しない。
   const dualTypes = webTypes.version !== mobileTypes.version;
 

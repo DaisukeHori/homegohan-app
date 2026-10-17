@@ -15,6 +15,9 @@
  * - 送る権利: claim_ops_alert('backup_stale', 1380 分)。cron の間隔 (1440 分) より短いので翌日の回は取れ、
  *   同じ日の 2 回目 (Vercel Cron の二重起動・手動の再実行) は止まる。
  *   送らなかった / 送れなかったときは release_ops_alert で権利を返す (設定が直ったあともクールダウンで黙らないように)。
+ *   ただし宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) のときは返さない
+ *   (送り直しても同じ結果で、回ごとの繰り返しになるため。app-log-alerts と同じ規則。#1577 の 8。
+ *   NON_RELEASING_SEND_ERROR_CODES は src/lib/ops-alerts/send-release.ts で共有する)。
  *   返す操作の失敗は warn ログ 1 行だけで、応答は変えない。
  * - メールにも、ログにも、応答にも、宛先・利用者の情報は入れない。載せるのは最新の取得の日時としきい値だけ。
  * - AI を使わない (AI の SDK・Edge Function を import しない。tests/ai-usage-contract.test.ts の CRON_ENTRYPOINTS)。
@@ -33,6 +36,7 @@ import { sendEmail } from '@/lib/emails/send';
 import type { SendEmailResult } from '@/lib/emails/send-result';
 import { renderBackupStaleEmail } from '@/lib/emails/ops/backup-stale';
 import { resolveOpsAlertRecipient } from '@/lib/ops-alerts/recipient';
+import { NON_RELEASING_SEND_ERROR_CODES } from '@/lib/ops-alerts/send-release';
 import {
   BACKUP_AUDIT_TARGET_TYPE,
   BACKUP_STALE_AFTER_HOURS,
@@ -167,9 +171,12 @@ async function checkBackupFreshness(): Promise<NextResponse> {
     if (result.ok) {
       return respondStale('stale_sent', freshness, logger, { outbox_id: result.id });
     }
-    // 送れなかった、または送らなかった。権利を返して、設定が直ったあとの回で送れるようにする。
+    // 送れなかった、または送らなかった。宛先停止・文面の不備は送り直しても同じなので、権利を返さない (抑止が効く。#1577 の 8)。
+    // それ以外 (送信の設定が未完了・送信待ちへの登録の失敗など) は権利を返して、設定が直ったあとの回で送れるようにする。
     // 失敗そのものの記録 (宛先をマスクした error) は sendEmail が済ませている
-    await releaseClaim(supabase, claimedAt, logger);
+    if (!NON_RELEASING_SEND_ERROR_CODES.has(result.error.code)) {
+      await releaseClaim(supabase, claimedAt, logger);
+    }
     return respondStale(result.skipped ? 'stale_send_skipped' : 'stale_send_failed', freshness, logger, {
       error_code: result.error.code,
     });
