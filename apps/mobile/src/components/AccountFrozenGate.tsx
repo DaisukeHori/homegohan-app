@@ -2,7 +2,7 @@ import { router, useNavigationContainerRef, usePathname, useRootNavigationState 
 import { useEffect, useRef } from "react";
 
 import { FROZEN_SCREEN_ROUTE_NAME, isMobileFrozenExemptPath } from "../lib/account-frozen";
-import { ENTRY_SCREEN_PATH } from "../lib/legal-consent";
+import { ENTRY_SCREEN_PATH, routeNameOf } from "../lib/legal-consent";
 import { useAccountFrozen } from "../providers/AccountFrozenProvider";
 import { useAuth } from "../providers/AuthProvider";
 import { useProfile } from "../providers/ProfileProvider";
@@ -41,9 +41,7 @@ export function AccountFrozenGate() {
   useEffect(() => {
     if (!navigationReady) return;
     try {
-      // expo-router 58 の navigationRef は型付きの route の名前の一覧が空で、getCurrentRoute() の戻り値の型が never になる。名前を読むだけなので構造の型で受ける
-      const currentRoute: { readonly name: string } | undefined = navigationRef.getCurrentRoute();
-      const onFrozenScreen = currentRoute?.name === FROZEN_SCREEN_ROUTE_NAME;
+      const onFrozenScreen = routeNameOf(navigationRef.getCurrentRoute()) === FROZEN_SCREEN_ROUTE_NAME;
       if (!onFrozenScreen) closingRef.current = false;
 
       if (!session) {

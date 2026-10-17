@@ -38,6 +38,15 @@ export const LEGAL_CONSENT_SCREEN_PATH = "/legal-consent";
 export const LEGAL_CONSENT_SCREEN_ROUTE_NAME = "legal-consent";
 
 /**
+ * navigationRef.getCurrentRoute() が返す route から名前を読む (前面の route の名前。route が無ければ undefined)。
+ * expo-router 58 の navigationRef は型付きの route の名前の一覧が空で、getCurrentRoute() の戻り値の型が never になり、
+ * その場で ?.name と書くと型エラーになる。引数を名前だけの構造の型にして受ける (LegalConsentGate・AccountFrozenGate が使う)
+ */
+export function routeNameOf(route: { readonly name: string } | undefined): string | undefined {
+  return route?.name;
+}
+
+/**
  * Web の同意画面 (src/app/legal-consent/LegalConsentForm.tsx) が、同意を記録できた直後にネイティブへ送るメッセージの type
  * (src/lib/native-auth-bridge.ts の notifyNativeLegalConsentAccepted と同じ値。同じテストが固定する)
  */
