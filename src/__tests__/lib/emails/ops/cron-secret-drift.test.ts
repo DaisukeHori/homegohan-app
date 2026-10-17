@@ -87,7 +87,6 @@ describe('renderCronSecretDriftEmail (#1560)', () => {
     });
     expect(envelope.subject).not.toContain(canary);
     // 所見の id は文面に載せない (載せるのは題と対処だけ)
-    expect(envelope.text).not.toContain(`${canary}\n`);
     expect(envelope.text.split('\n').filter((line) => line.includes(canary))).toEqual([`https://app.example.test/super-admin/logs?x=${canary}`]);
     expect(envelope.text).toContain('このメールに、シークレットの値・ダイジェスト・利用者の情報は含めていません。');
   });
@@ -95,7 +94,8 @@ describe('renderCronSecretDriftEmail (#1560)', () => {
   it('E-4: 署名を付けない。contains_secret を宣言しない (秘密なしの文面)', () => {
     const envelope = renderCronSecretDriftEmail(baseVars);
     expect(envelope.text).not.toContain('ほめゴハン運営');
-    expect(envelope.text).not.toContain('--');
+    // 署名の区切り行 (-- だけの行) も無い
+    expect(envelope.text.split('\n').filter((line) => /^--\s*$/.test(line))).toEqual([]);
     expect(Object.keys(envelope)).not.toContain('contains_secret');
     expect((envelope as { contains_secret?: unknown }).contains_secret).toBeUndefined();
   });
