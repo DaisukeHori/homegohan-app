@@ -1585,16 +1585,28 @@ Stripe Webhook 受信 (idempotent)
 ---
 
 ### POST /api/webhooks/resend
-Resend Webhook 受信 (メール配信ステータス更新)
+Resend Webhook 受信 (ハードバウンス・苦情の宛先を宛先停止リストに入れる。#1184。記述は実装に合わせた: #1577 の 5)
 
-**処理フロー**:
+**処理フロー** (`src/app/api/webhooks/resend/route.ts`):
 ```
-1. Resend-Signature 検証
-2. event.type に応じて:
-   email.bounced → email_blacklist に追加 + email_delivery_logs 更新
-   email.complained → email_blacklist に追加
-   email.delivered / opened / clicked → email_delivery_logs 更新
+1. 本文の大きさ (256 KB まで。超えたら 413) → 署名 (svix-id / svix-timestamp / svix-signature) を RESEND_WEBHOOK_SECRET で検証
+   (秘密が未設定なら 503・合わなければ 401。src/lib/webhook/verify.ts) → JSON と形の検証 (読めなければ 400)
+2. event.type に応じて (src/lib/emails/resend-webhook-event.ts の classifyResendEvent):
+   email.bounced で bounce.type が Permanent (ハードバウンス) → 1 回で email_blacklist に追加 (reason 'bounce')
+   email.bounced のそれ以外 (Temporary などのソフトバウンス) → 何もしない (200)
+   email.complained → email_blacklist に追加 (reason 'complaint')
+   それ以外 (email.sent / delivered / opened / clicked など) → 何もしない (200)
+3. 追加は小文字にそろえた宛先で ON CONFLICT DO NOTHING (冪等。最初の理由と時刻が残る。src/lib/emails/suppression.ts)。
+   書き込みの失敗は 500 (Resend が送り直す)。成功は app_logs に info (宛先はマスク)
 ```
+
+- 停止リストに載っている宛先へは `sendEmail` (登録時) と worker (送信の直前) が送らない。送らなかった記録は、どちらで当たったかで違う (`10-logs-and-mail-retry.md` §7.3):
+  - `sendEmail` の登録時: `app_logs` の warn (`function_name = 'email'`) と、`email_outbox` の dead の行 (`last_error_code = 'suppressed'`)。`redact_after_send` の登録 (退会の完了メール・秘密を含む文面) は行を作らない (warn だけ)。
+  - worker の送信の直前 (登録のあとで停止リストに載った宛先と、登録時に停止リストを引けずに確かめないまま登録した行): `fail_email_outbox` でその行を dead (`last_error_code = 'suppressed'`) にし、`app_logs` に error (`function_name = 'cron/email-outbox'`、「メールを届けられませんでした (dead)」)。error なので、エラー急増の通知の数には入る。
+  - どちらの dead の行も、届けられなかったメールの通知 (`10-logs-and-mail-retry.md` §8) の数には入れない。
+- `email_delivery_logs` には書かない (§3.19 の表は残すが書かない。#1193)。
+- **実装しない (将来の検討)**: Hard bounce の回数の数え上げ (3 回で停止など)、停止した宛先への送信の Slack への通知、`delivered` / `opened` / `clicked` の配信の状態の記録 (`email_delivery_logs` / `email_outbox` のどちらにも書かない)。
+- メンテナンス中は、この Webhook も 503 になる (`src/lib/maintenance-mode.ts` の止めない対象に入っていない。扱いは #1577 の 4 で決める)。
 
 ---
 
