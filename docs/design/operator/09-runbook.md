@@ -165,7 +165,7 @@ Step 4: 監査ログ記録
 
 ### 5.1 失敗確認
 
-pg_cron のジョブの失敗は、運用メール (`ops_cron_failure`。`OPS_ALERT_EMAIL`) で届く。知らせた失敗は `public.cron_failure_alerts` に残る (operator/11 §4)。止まっているとき (有効なジョブがあるのに 60 分以上動いていない) は `ops_pg_cron_stalled` が届く。次の SQL で確かめる。
+pg_cron のジョブの失敗は、運用メール (`ops_cron_failure`。`OPS_ALERT_EMAIL`) で届く。知らせた失敗は `public.cron_failure_alerts` に残る (operator/11 §4)。止まっているとき (有効なジョブがあるのに 60 分以上動いていない) は `ops_pg_cron_stalled` が届く。cron の共有シークレットのずれ (pg_cron → Edge Function の 401 / 503) は `ops_cron_secret_drift` で届く (operator/12 §8.1.1 の所見の表と対処)。次の SQL で確かめる。
 
 ```sql
 -- pg_cron が動いているか (停止の確認。最新の start_time が古ければ止まっている)
@@ -739,6 +739,9 @@ Step 1: 即時対応 (T+0)
     - Edge Function secrets と Vault の app_cron_secret が一致している (Edge ⇔ Vault が PASS)
     - CRON_SECRET_PREVIOUS が残っていない (WARN が出ない)
     - Vault は SUPABASE_DB_URL (psql) か、SQL Editor で得たダイジェストを --vault-digest で渡す (値は表示されない)
+  □ 自動の確認 (GET /api/cron/app-log-alerts の cron_secret_drift / cron_secret_rotation。operator/12) も 30 分以内に判定する
+    - CRON_SECRET_PREVIOUS を外し忘れると 24 時間に 1 通「入れ替えが途中です」が届く
+    - 侵害時は外すまでの時間を短くする (届いたら即日外す)
 
 Step 2: 被害調査 (T+1h)
   □ 侵害経路の特定 (ログ調査)
