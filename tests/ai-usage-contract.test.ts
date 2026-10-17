@@ -326,6 +326,8 @@ const CRON_ENTRYPOINTS: Record<string, string> = {
   'pg_cron:purge-hidden-content': '運営が隠したコンテンツの完全削除 (AI を使わない)',
   // #1561 待ちのまま残った料理画像のジョブを拾う (積む時点で記録済み。キューは利用者から書けない: AI_QUEUE_TABLES / #1465)
   'pg_cron:process-meal-image-jobs': '料理画像のジョブの処理を起こす (ジョブを積んだ入口で記録済み。キューは利用者から書けない)',
+  // #1560 cron の共有シークレットの確認。GET /api/cron/app-log-alerts が DB の public.send_cron_secret_probe() から pg_net で呼ぶ (pg_cron のジョブではないが、走査は migration の URL をすべて pg_cron: で集める)。import は認証だけ
+  'pg_cron:cron-secret-probe': 'cron の共有シークレットの確認 (照合の結果だけを返す。AI を使わない)',
   // DB の関数が、名前を引数で受け取って Edge Function を呼ぶもの。呼び得る関数は PG_NET_CALLEES
   'pg_net:invoke_catalog_import': 'コンビニ商品カタログの取り込み (運営の処理で、利用者の AI 利用ではない)',
 };
