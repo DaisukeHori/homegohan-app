@@ -18,9 +18,12 @@
  *   5. expo-file-system は /legacy の入口だけを読む (新旧の API を混ぜない)。アプリのソースに加えて Jest のテストの
  *      jest.mock と import も見る (テストが既定の入口から mock の関数を取り出すと、SDK 58 では mock でない本物の入口になって落ちる)
  *   6. 使っていないので消した依存が、import の無いまま戻っていない
+ *   7. expo install --check から外すのは typescript だけ (ルートと同じ 1 つの typescript に据え置く。ほかの依存のずれは --check に報告させる)。
+ *      Jest の resolver は react-native-reanimated/jest/resolver (Reanimated 4 の内部ファイルを Jest の下で読む。docs/design/mobile/07 §7.2 C-10)
  * 落ちたら: SDK の更新としてまとめて上げる (docs/design/mobile/07-toolchain-upgrade.md §6)。片方だけ上げない。
  */
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -28,6 +31,7 @@ const ROOT = path.resolve(__dirname, '..');
 const MOBILE_DIR = 'apps/mobile';
 const MOBILE_PACKAGE_JSON = `${MOBILE_DIR}/package.json`;
 const MOBILE_APP_JSON = `${MOBILE_DIR}/app.json`;
+const MOBILE_JEST_CONFIG = `${MOBILE_DIR}/jest.config.js`;
 const LOCKFILE = 'package-lock.json';
 /** expo が SDK ごとに決める版の表 (expo install --fix / --check が読む)。ルートの node_modules に巻き上がる */
 const BUNDLED_NATIVE_MODULES = 'node_modules/expo/bundledNativeModules.json';
@@ -51,10 +55,19 @@ const SOURCE_FILE = /\.(ts|tsx)$/;
 /** import の from・require・jest.mock の第 1 引数にある expo-file-system の指定子 (第 1 グループは /legacy などの下の入口) */
 const FILE_SYSTEM_SPECIFIER = /(?:from\s+|require\(\s*|jest\.mock\(\s*)['"]expo-file-system(\/[^'"]*)?['"]/g;
 const FILE_SYSTEM_LEGACY_SUBPATH = '/legacy';
+/**
+ * expo install --check から外す依存 (apps/mobile/package.json の expo.install.exclude)。typescript だけ:
+ * SDK 58 の --check は Expo の API の relatedPackages (typescript ~6.0.3) とも突き合わせるが、ルートと同じ 5.9.3 に据え置く
+ * (docs/design/mobile/07 §6.4)。ほかの依存を足すと、その依存の SDK とのずれを --check が報告しなくなる
+ */
+const EXPO_INSTALL_EXCLUDED = ['typescript'] as const;
+/** jest.config.js の resolver (Reanimated 4 の Jest の resolver。docs/design/mobile/07 §7.2 C-10・§9.2) */
+const MOBILE_JEST_RESOLVER = 'react-native-reanimated/jest/resolver';
 
 interface PackageJson {
   dependencies?: Record<string, string>;
   devDependencies?: Record<string, string>;
+  expo?: { install?: { exclude?: unknown } };
 }
 interface Lockfile {
   packages: Record<string, { version?: string }>;
@@ -179,5 +192,19 @@ describe('#1591 expo-file-system は /legacy の入口だけを読む', () => {
     }
     expect(imports, '走査が空振りしていない (expo-file-system を読むファイルがある)').toBeGreaterThan(0);
     expect(offenders).toEqual([]);
+  });
+});
+
+describe('#1591 expo install --check と Jest の resolver', () => {
+  it('expo install --check から外すのは typescript だけで、apps/mobile の typescript はルートと同じ 1 つ (入れ子にしない)', () => {
+    expect(mobilePkg.expo?.install?.exclude).toEqual([...EXPO_INSTALL_EXCLUDED]);
+    expect(resolveInLock(MOBILE_DIR, 'typescript').location).toBe('node_modules/typescript');
+  });
+
+  it(`jest.config.js の resolver は ${MOBILE_JEST_RESOLVER} で、apps/mobile から解決できる`, () => {
+    const config = readText(MOBILE_JEST_CONFIG);
+    expect(config).toContain(`resolver: require.resolve('${MOBILE_JEST_RESOLVER}')`);
+    const requireFromMobile = createRequire(path.join(ROOT, MOBILE_PACKAGE_JSON));
+    expect(fs.existsSync(requireFromMobile.resolve(MOBILE_JEST_RESOLVER))).toBe(true);
   });
 });

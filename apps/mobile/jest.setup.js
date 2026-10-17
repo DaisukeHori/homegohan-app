@@ -13,7 +13,8 @@ jest.mock('@react-native-async-storage/async-storage', () =>
 );
 
 // react-native-worklets (Reanimated 4 の土台) はネイティブのモジュールを要るので、公式の mock に差し替える
-// (react-native-worklets の Jest の手引き。resolver の差し替えは @react-native/jest-preset の resolver を外すので使わない。#1591)
+// (react-native-worklets の Jest の手引き。#1591)。resolver は jest.config.js が react-native-reanimated/jest/resolver を指定する
+// (Reanimated 4 の内部ファイルを Jest の下で読めるようにする。@react-native/jest-preset の resolver は Jest 30 では効かないので、外して差し支えない)
 jest.mock('react-native-worklets', () => require('react-native-worklets/src/mock'));
 
 // Reanimated の Jest の設定 (matcher と既定の fps。Reanimated の Jest の手引き。#1591)

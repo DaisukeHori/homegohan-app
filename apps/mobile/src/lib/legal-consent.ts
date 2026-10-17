@@ -237,13 +237,20 @@ export function legalConsentScreenModeOf(
 /**
  * 同意画面の route を取り除く操作を止めるか (expo-router の usePreventRemove の第 1 引数)。
  *   awaiting-consent   同意が要る間は全部止める (ログインの直後の routeAfterSignIn の REPLACE など)。
- *                      ゲートの畳み直し (RESET) は同意画面の route を key ごと再利用するので、同意画面は取り除かれず、ここには来ない
+ *                      同意のゲートの畳み直し (RESET) は同意画面の route を key ごと再利用するので、同意画面は取り除かれず、ここには来ない
  *   signed-out-notice  ログアウトの後の案内。全部止める (「閉じる」でだけ閉じる)
  *   free               何も止めない
  * closing = 同意画面が自分で閉じる途中 (「閉じる」・未ログインで開かれたとき・afterSignOut)。止めない
+ * accountFrozen = アカウントが凍結中 (useAccountFrozen の state が frozen。#1861)。止めない (凍結が先)。
+ *   凍結のゲートの畳み直し (RESET。ルートの Stack を凍結の画面 1 つに) は同意画面の route を取り除く。expo-router 58 は、取り除かれる route の
+ *   1 つでも止めていれば RESET ごと捨てるので、止めたままだと凍結中の利用者が同意画面に残る
  */
-export function legalConsentScreenPreventsRemoval(mode: LegalConsentScreenMode, closing: boolean): boolean {
-  if (closing) return false;
+export function legalConsentScreenPreventsRemoval(
+  mode: LegalConsentScreenMode,
+  closing: boolean,
+  accountFrozen: boolean,
+): boolean {
+  if (closing || accountFrozen) return false;
   return mode !== "free";
 }
 

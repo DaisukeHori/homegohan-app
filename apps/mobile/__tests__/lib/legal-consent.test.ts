@@ -214,17 +214,24 @@ describe('subscribeLegalConsentEvents (T-ML5)', () => {
 
 describe('legalConsentScreenPreventsRemoval (T-ML6)', () => {
   it('awaiting-consent と signed-out-notice は止める (true)', () => {
-    expect(legalConsentScreenPreventsRemoval('awaiting-consent', false)).toBe(true);
-    expect(legalConsentScreenPreventsRemoval('signed-out-notice', false)).toBe(true);
+    expect(legalConsentScreenPreventsRemoval('awaiting-consent', false, false)).toBe(true);
+    expect(legalConsentScreenPreventsRemoval('signed-out-notice', false, false)).toBe(true);
   });
 
   it('free は止めない', () => {
-    expect(legalConsentScreenPreventsRemoval('free', false)).toBe(false);
+    expect(legalConsentScreenPreventsRemoval('free', false, false)).toBe(false);
   });
 
   it('closing なら扱いに関わらず止めない', () => {
     for (const mode of ['awaiting-consent', 'signed-out-notice', 'free'] as const) {
-      expect(legalConsentScreenPreventsRemoval(mode, true)).toBe(false);
+      expect(legalConsentScreenPreventsRemoval(mode, true, false)).toBe(false);
+    }
+  });
+
+  it('凍結中 (accountFrozen) なら扱いに関わらず止めない (凍結が先。凍結のゲートの RESET は同意画面の route を取り除く。#1861)', () => {
+    for (const mode of ['awaiting-consent', 'signed-out-notice', 'free'] as const) {
+      expect(legalConsentScreenPreventsRemoval(mode, false, true)).toBe(false);
+      expect(legalConsentScreenPreventsRemoval(mode, true, true)).toBe(false);
     }
   });
 });

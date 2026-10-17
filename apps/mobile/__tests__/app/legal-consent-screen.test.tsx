@@ -2,7 +2,8 @@
  * legal-consent-screen.test.tsx — apps/mobile/app/legal-consent.tsx (#1442 設計書 cross/13b §6.6.11。T-SC1〜T-SC3)
  *
  * 同意画面の route = Web の /legal-consent を WebViewScreen で開く画面。
- *   awaiting-consent   取り除く操作を usePreventRemove で全部止める (ゲートの畳み直しは同意画面の route を key ごと再利用するので、取り除かれない)
+ *   awaiting-consent   取り除く操作を usePreventRemove で全部止める (同意のゲートの畳み直しは同意画面の route を key ごと再利用するので、取り除かれない)。
+ *                      凍結中 (#1861) は止めない (凍結のゲートの畳み直しは同意画面の route を取り除く。実物の止めの層に通すのは legal-consent-frozen-collapse.test.tsx)
  *   signed-out-notice  ログアウトの後。Web の案内を残し、上に「閉じる」を出す。取り除く操作は全部止める
  *   free               何も止めない。未ログインのまま開かれたら自分で閉じる
  */
@@ -40,6 +41,11 @@ jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }
 let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'required';
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
+}));
+
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
 }));
 
 // WebViewScreen は受けた props を記録し、header だけを描く
@@ -82,6 +88,7 @@ beforeEach(() => {
   mockWebViewProps.length = 0;
   mockAuth = SIGNED_IN;
   mockLegalState = 'required';
+  mockFrozenState = 'clear';
   mockCanGoBack.mockReturnValue(false);
   mockGetSession.mockResolvedValue({ data: { session: null } });
 });
@@ -123,6 +130,39 @@ describe('同意画面の route — 同意を待つ間 (T-SC2)', () => {
 
     expect(preventsRemoval()).toBe(false);
     expect(view.queryByTestId('legal-consent-close')).toBeNull();
+  });
+
+  it('サインイン中で required でも、凍結中 (frozen) は usePreventRemove に false を渡す (凍結のゲートの RESET を止めない。#1861)。自分では閉じない', () => {
+    mockFrozenState = 'frozen';
+    const view = render(<LegalConsentScreen />);
+
+    expect(preventsRemoval()).toBe(false);
+    // 凍結の画面へ移すのは凍結のゲート。同意画面は自分で閉じない (止めを解く操作も遷移も積まない)
+    expect(mockDisablePrevention).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(view.queryByTestId('legal-consent-close')).toBeNull();
+  });
+
+  it.each(['loading', 'clear', 'unknown'] as const)(
+    '凍結の状態が %s なら、required の間は usePreventRemove に true を渡す (止めを解くのは frozen だけ)',
+    (frozenState) => {
+      mockFrozenState = frozenState;
+      render(<LegalConsentScreen />);
+
+      expect(preventsRemoval()).toBe(true);
+    },
+  );
+
+  it('凍結中に false を渡した後、凍結が解ける (clear) と、required の間はまた true を渡す', () => {
+    mockFrozenState = 'frozen';
+    const view = render(<LegalConsentScreen />);
+    expect(preventsRemoval()).toBe(false);
+
+    mockFrozenState = 'clear';
+    view.rerender(<LegalConsentScreen />);
+
+    expect(preventsRemoval()).toBe(true);
   });
 
   it('描画の間に disablePrevention を呼ばない (押下・自分で閉じるときだけ)', () => {

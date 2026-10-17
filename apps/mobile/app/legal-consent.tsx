@@ -12,6 +12,7 @@ import {
   legalConsentScreenSawRequired,
 } from "../src/lib/legal-consent";
 import { supabase } from "../src/lib/supabase";
+import { useAccountFrozen } from "../src/providers/AccountFrozenProvider";
 import { useAuth } from "../src/providers/AuthProvider";
 import { useLegalConsent } from "../src/providers/LegalConsentProvider";
 import { colors, spacing } from "../src/theme";
@@ -27,8 +28,9 @@ const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
  * Web の画面は、同意を記録できたら { type: 'legal-consent-accepted' } を、「同意しない」「登録をやめる」では { type: 'sign-out' } を
  * ネイティブへ送る (WebViewScreen の onMessage が受ける)。
  * 扱い (LegalConsentScreenMode。src/lib/legal-consent.ts) ごとの振る舞い:
- *   awaiting-consent   取り除く操作 (ログインの直後の routeAfterSignIn の replace など) を全部止める (ゲートの畳み直しは同意画面の route を
- *                      key ごと再利用するので、取り除かれない)。
+ *   awaiting-consent   取り除く操作 (ログインの直後の routeAfterSignIn の replace など) を全部止める (同意のゲートの畳み直しは同意画面の route を
+ *                      key ごと再利用するので、取り除かれない)。ただし凍結中 (#1861) は止めない (凍結が先。凍結のゲートの畳み直しは
+ *                      同意画面の route を取り除くので、止めると expo-router 58 が RESET ごと捨て、凍結の画面へ畳めない)。
  *                      iOS のスワイプは app/_layout.tsx の gestureEnabled: false。Android の戻るボタンは、この画面が Stack の
  *                      唯一の route なので OS に渡る (アプリが背面へ。usePreventRemove の止めには当たらない)
  *   signed-out-notice  Web からの sign-out でネイティブもログアウトした後。ウェルカムへ移らず (WebViewScreen の afterSignOut)、
@@ -42,6 +44,7 @@ const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
 export default function LegalConsentScreen() {
   const { session, isLoading: authLoading } = useAuth();
   const { state } = useLegalConsent();
+  const { state: frozenState } = useAccountFrozen();
   const signedIn = session !== null;
   /** この同意画面がサインイン中に required を見たか */
   const sawRequiredRef = useRef(false);
@@ -52,8 +55,12 @@ export default function LegalConsentScreen() {
   const [closing, setClosing] = useState(false);
 
   // 取り除く操作 (GO_BACK・POP・POP_TO_TOP・REPLACE・NAVIGATE・同意画面を含まない RESET) を止める。止めた操作は捨てる (repeat は呼ばない)。
-  // awaiting-consent で止めた置き換えの行き先は、同意の後に入口が profile から決め直す (cross/13b S1 の (B))
-  const disablePrevention = usePreventRemove(legalConsentScreenPreventsRemoval(mode, closing), () => {});
+  // awaiting-consent で止めた置き換えの行き先は、同意の後に入口が profile から決め直す (cross/13b S1 の (B))。
+  // 凍結中は止めない (凍結のゲートが Stack を凍結の画面 1 つに畳む RESET を通す。#1861)
+  const disablePrevention = usePreventRemove(
+    legalConsentScreenPreventsRemoval(mode, closing, frozenState === "frozen"),
+    () => {},
+  );
 
   const close = useCallback(() => {
     closingRef.current = true;
