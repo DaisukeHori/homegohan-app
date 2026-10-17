@@ -1,11 +1,13 @@
 /**
- * operator/12 (CRON_SECRET のずれの自動検知) の Status の行が、段ごとの実装の有無と食い違わない (#1797 ほかの 10/18 の記録の掃除)
+ * operator/12 (CRON_SECRET のずれの自動検知) の Status が「main に入っている」と書く段は、本当に main に入っている (#1797 ほかの 10/18 の記録の掃除)
  *
  * 段 A (Edge Function cron-secret-probe。#1863) が main に入ったあとも、記録の掃除の差分が Status を「実装は段 A から」に
- * しようとした (取り込みの再レビューの指摘)。段が main に入るたびに Status が実物から外れないようにする。
+ * しようとした (取り込みの再レビューの指摘)。Status が実物より先を言わないようにする。見張りは片方向だけ:
  *   1. §12 の段分けの表の段 (A・B・C) と、ここで見る段の印のファイルの段が同じ (段を足したら印も足す)
- *   2. Status が「<段の列> は main に入っている」と書く段 = 印のファイルがある段 (両方向)
- *   3. Status が「<段の列> はこれから」と書く段 = 印のファイルが無い段 (main に入った段が 1 つ以上あり、残りがあるとき)
+ *   2. Status が「<段の列> は main に入っている」と書く段は、どれも印のファイルがある (言い過ぎを止める)
+ * 逆向き (main に入った段を、Status がまだ「これから」と書く) は見ない。Status は設計正典 (docs/design/**) の行で、
+ * 段 B・段 C の実装の PR は docs/design を直せない。逆向きも見ると、その PR が印のファイルを足した時点で必ず赤になり、
+ * 正典の PATCH を待つことになる (敵対レビュー R3 の指摘)。Status の書き遅れは記録のみの食い違いで、マージのあとの記録の掃除で直す。
  * 印のファイルは §12 の各段の「中身」の最初の新設物 (段 A = Edge Function・段 B = migration・段 C = アプリの判定の本体)。
  */
 import fs from 'node:fs';
@@ -17,6 +19,8 @@ const DOC_PATH = 'docs/design/operator/12-cron-secret-drift-monitor.md';
 const MIGRATIONS_DIR = 'supabase/migrations';
 /** 段 B の migration のファイル名の末尾 (§12 の `<番号>_cron_secret_drift_monitor.sql`。.down.sql は数えない) */
 const STAGE_B_MIGRATION_SUFFIX = '_cron_secret_drift_monitor.sql';
+/** Status の中で「その段は main に入っている」を表す語 */
+const LANDED_PHRASE = 'は main に入っている';
 
 /** 段の名前 → その段が main に入っているか (印のファイルの有無) */
 const STAGE_LANDED: Readonly<Record<string, () => boolean>> = {
@@ -43,31 +47,52 @@ function stagesBefore(status: string, phrase: string): string[] | null {
   return match === null ? null : [...match[1].matchAll(/段 ([A-Z]) /g)].map((stage) => stage[1]);
 }
 
+/**
+ * Status が「main に入っている」と書くのに、印のファイルが無い段 (印を持たない段の名前も含む)。
+ * 「これから」と書かれた段が main に入っていても、ここには入れない (片方向)
+ */
+function overclaimedStages(status: string, isLanded: (stage: string) => boolean): string[] {
+  const knownStages = Object.keys(STAGE_LANDED);
+  return (stagesBefore(status, LANDED_PHRASE) ?? []).filter((stage) => !knownStages.includes(stage) || !isLanded(stage));
+}
+
 function statusLine(text: string): string {
   const lines = [...text.matchAll(/^Status: (.*)$/gm)];
   expect(lines, 'Status の行がちょうど 1 つ').toHaveLength(1);
   return lines[0][1];
 }
 
+const landedOnDisk = (stage: string): boolean => STAGE_LANDED[stage]();
+
 describe('operator/12 の Status と段の実装の有無', () => {
   it('§12 の段分けの表の段と、印のファイルを持つ段が同じ', () => {
     expect(stagesInSection12(doc()).sort()).toEqual(Object.keys(STAGE_LANDED).sort());
   });
 
-  it('Status の「main に入っている」段と「これから」の段が、印のファイルの有無と一致する', () => {
+  it('Status が「main に入っている」と書く段は、どれも印のファイルがある', () => {
     const status = statusLine(doc());
-    const landed = Object.keys(STAGE_LANDED).filter((stage) => STAGE_LANDED[stage]());
-    const pending = Object.keys(STAGE_LANDED).filter((stage) => !STAGE_LANDED[stage]());
-    expect((stagesBefore(status, 'は main に入っている') ?? []).sort(), `Status: ${status}`).toEqual(landed.sort());
-    if (landed.length > 0 && pending.length > 0) {
-      expect(stagesBefore(status, 'はこれから')?.sort(), `Status: ${status}`).toEqual(pending.sort());
-    }
+    expect(overclaimedStages(status, landedOnDisk), `Status: ${status}`).toEqual([]);
+  });
+
+  it('段の実装の PR が印のファイルを足しても、Status が「これから」のままで赤にならない (片方向)', () => {
+    // 段 B・段 C の PR は docs/design を直せない。どの段が main に入っても、いまの Status で言い過ぎにはならない
+    expect(overclaimedStages(statusLine(doc()), () => true)).toEqual([]);
+    const statusAfterStageA =
+      '設計ゲート通過。段 A (Edge・#1863) は main に入っている。段 B (DB)・段 C (アプリ) はこれから (§12 の順)';
+    expect(overclaimedStages(statusAfterStageA, (stage) => stage === 'A' || stage === 'B')).toEqual([]);
+    expect(overclaimedStages(statusAfterStageA, () => true)).toEqual([]);
+  });
+
+  it('Status が main に入っていない段を「main に入っている」と書けば見つける', () => {
+    const status = '設計ゲート通過。段 A (Edge・#1863)・段 B (DB・#1) は main に入っている。段 C (アプリ) はこれから';
+    expect(overclaimedStages(status, (stage) => stage === 'A')).toEqual(['B']);
+    expect(overclaimedStages('段 D (新しい段) は main に入っている', () => true)).toEqual(['D']);
   });
 
   it('Status の読み取りが空振りしない (書式の例で確かめる)', () => {
     const example = '設計ゲート通過。段 A (Edge・#1863)・段 B (DB・#1) は main に入っている。段 C (アプリ) はこれから (§12 の順)';
-    expect(stagesBefore(example, 'は main に入っている')).toEqual(['A', 'B']);
+    expect(stagesBefore(example, LANDED_PHRASE)).toEqual(['A', 'B']);
     expect(stagesBefore(example, 'はこれから')).toEqual(['C']);
-    expect(stagesBefore('設計ゲート通過・実装は段 A から', 'は main に入っている')).toBeNull();
+    expect(stagesBefore('設計ゲート通過・実装は段 A から', LANDED_PHRASE)).toBeNull();
   });
 });
