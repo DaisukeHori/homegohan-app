@@ -1914,7 +1914,7 @@ const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 | 9 | `operator/09-runbook.md` §11.5 (717 行〜) の「入れ替えの後、`node scripts/check-cron-secret-drift.mjs` … で確かめる」の項 | 「自動の確認 (`GET /api/cron/app-log-alerts` の `cron_secret_drift` / `cron_secret_rotation`。operator/12) も 30 分以内に判定する。`CRON_SECRET_PREVIOUS` を外し忘れると 24 時間に 1 通『入れ替えが途中です』が届く。侵害時は外すまでの時間を短くする (届いたら即日外す)」を足す。§5.1 (166 行〜) の冒頭の段落に「cron の共有シークレットのずれ (pg_cron → Edge Function の 401 / 503) は `ops_cron_secret_drift` で届く (operator/12 §8.1.1 の所見の表と対処)」を足す | C |
 | 10 | `operator/CLAUDE.md` のファイル一覧 | `12-cron-secret-drift-monitor.md | cron の共有シークレット (Vercel / Edge Function secrets / Vault) のずれの自動・定期の検知 (実経路の確認 + 運用アラートの 6 つ目・7 つ目の種類) | 03 §22.9` の行を足す (origin/main の一覧は 10 までで、`11-ops-batches-non-billing.md` の行も無い。同じ PR で 11 の行も足してよい: §16) | C |
 
-`#1560` を含む行には「オーナーが決定した / 新しい判断」の帰属を書かない (本書 §冒頭の 1 文の引用だけ)。
+`#1560` を含む行に、帰属の文言を新しく書かない (本書の冒頭の 1 文の引用だけ)。
 
 ---
 
