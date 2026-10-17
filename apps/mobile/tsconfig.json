@@ -5,7 +5,7 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      // ルートの @types/react は Web (Next 15 + React 19.2) 用の 19.2 系 (#1444 までは Next 14 + React 18 用の 18 系)。
+      // ルートの @types/react は Web (Next 16 + React 19.2) 用の 19.2 系 (#1444 までは Next 14 + React 18 用の 18 系)。
       // ルートに巻き上げられた react-native などが `from 'react'` で読む型を、このアプリの @types/react (19.3 系) に固定する (#1199)。
       // ルートが 18 系だったときは、固定しないと react-native などの型が React 18 の型で解決され、
       // モバイルの型エラーが 13 件から 34 件に増えた (実測)。

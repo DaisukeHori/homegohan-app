@@ -492,6 +492,59 @@ describe('GET /api/cron/backup-freshness: メールを送れなかったとき (
 
     expect(res.status).toBe(500);
   });
+
+  it.each([
+    ['suppressed (宛先が停止リスト)', 'suppressed', 'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした'],
+    ['invalid_envelope (文面の不備)', 'invalid_envelope', 'EMAIL_INVALID_ENVELOPE: subject: too long'],
+  ])(
+    'S-8: sendEmail が %s なら、送り直しても同じ結果なので権利を返さない (release を呼ばない)。stale_send_failed の 200 と warn 1 行 (#1577 の 8)',
+    async (_label, code, message) => {
+      setStale();
+      mocks.sendEmail.mockResolvedValue({
+        ok: false,
+        id: null,
+        attempts: 0,
+        skipped: false,
+        error: new EmailSendError(code, message, null, 0, false),
+      });
+
+      const res = await GET(authed());
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ status: 'stale_send_failed' });
+      expect(rpcCalls('claim_ops_alert')).toHaveLength(1);
+      expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+      const staleWarns = mocks.logWarn.mock.calls.filter(([, meta]) => (meta as { status?: string } | undefined)?.status === 'stale_send_failed');
+      expect(staleWarns).toHaveLength(1);
+      expect(staleWarns[0][1]).toMatchObject({ error_code: code });
+    },
+  );
+
+  it.each([
+    ['outbox_failed (送信待ちへの登録の失敗)', 'outbox_failed', true, false],
+    ['not_configured (送信の設定が未完了 = skipped)', 'not_configured', false, true],
+    ['validation_error (Resend 由来のほかのコード)', 'validation_error', false, false],
+  ])(
+    'S-9: sendEmail が %s なら、これまでどおり権利を返す (release を 1 回、取った時刻で呼ぶ) (#1577 の 8 の対照)',
+    async (_label, code, retryable, skipped) => {
+      setStale();
+      mocks.sendEmail.mockResolvedValue({
+        ok: false,
+        id: null,
+        attempts: 0,
+        skipped,
+        error: new EmailSendError(code, `EMAIL_TEST_FAILURE: ${code}`, null, 0, retryable),
+      });
+
+      const res = await GET(authed());
+
+      expect(res.status).toBe(200);
+      await expect(res.json()).resolves.toMatchObject({ status: skipped ? 'stale_send_skipped' : 'stale_send_failed' });
+      expect(rpcCalls('release_ops_alert')).toEqual([
+        ['release_ops_alert', { p_alert_key: 'backup_stale', p_claimed_at: CLAIMED_AT }],
+      ]);
+    },
+  );
 });
 
 // ---------------------------------------------------------------
