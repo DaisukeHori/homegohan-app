@@ -584,6 +584,9 @@ BAN 解除
 `/legal` (特定商取引法に基づく表記)・`/contact` (お問い合わせ) の画面 (#1486。未ログインでも読める公開の文面。
 その画面の下の API は止める: お問い合わせの送信 `POST /api/contact` は 503 で、画面には固定の文が出る。画面に出ているメールアドレスは使える)、
 `/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`、
+Resend の Webhook の受け口 `POST /api/webhooks/resend` (#1577 の 4。cron と同じ機械からの呼び出しで、止めると長いメンテナンスのあいだに
+知らせを失うか、Svix が宛先を無効にする恐れがあるため。完全一致の 1 本だけで、`/api/webhooks/stripe` などほかの Webhook は 503。
+`src/lib/maintenance-mode.ts` の `RESEND_WEBHOOK_API_PATH`。§21 の `POST /api/webhooks/resend`)、
 通知のトークンの claim `POST /api/push-tokens/claim` (#1636。端末の後片付けで、利用者の操作ではないため。完全一致の 1 本だけで、
 セッション無しの後片付け `POST /api/push-tokens/release` は止める。`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。
 `mobile/03-push-notification.md` §3.2)。
@@ -1625,7 +1628,12 @@ Resend Webhook 受信 (ハードバウンス・苦情の宛先を宛先停止リ
   - どちらの dead の行も、届けられなかったメールの通知 (`10-logs-and-mail-retry.md` §8) の数には入れない。
 - `email_delivery_logs` には書かない (§3.19 の表は残すが書かない。#1193)。
 - **実装しない (将来の検討)**: Hard bounce の回数の数え上げ (3 回で停止など)、停止した宛先への送信の Slack への通知、`delivered` / `opened` / `clicked` の配信の状態の記録 (`email_delivery_logs` / `email_outbox` のどちらにも書かない)。
-- メンテナンス中は、この Webhook も 503 になる (`src/lib/maintenance-mode.ts` の止めない対象に入っていない。扱いは #1577 の 4 で決める)。
+- メンテナンス中も、この Webhook は止めない (#1577 の 4。`src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath` が完全一致の `RESEND_WEBHOOK_API_PATH` を通す。§7 のメンテナンスモード)。
+  Resend (Svix) は 2xx でなければ送り直すが、約 1 日を超えるメンテナンスでは知らせを失うか、宛先を無効にされる恐れがあるため。ほかの Webhook (`/api/webhooks/stripe`) は 503 のまま (billing/01 §9.6)。
+- `sendEmail` を呼んだ側 (退会の完了・除名と脱退・譲渡・運営による譲渡と解散の通知、子の追加の控え、昇格の依頼、代表者の譲渡の提案、サポートの返信) が
+  「送れなかった」と残す追加のログは、理由がすべて停止リスト (`suppressed`) なら warn・ほかの理由が 1 つでもあれば error (#1577 の 7。
+  `src/lib/emails/send-result.ts` の `logEmailFailures`。止めた宛先へ送らないのは意図した動きで、エラー急増の通知の数に入れないため)。
+  worker の送信の直前で止めたときの error (上の 2 つ目) は変えない。
 
 ---
 

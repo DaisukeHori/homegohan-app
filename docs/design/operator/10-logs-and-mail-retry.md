@@ -32,7 +32,7 @@
 - Supabase Auth が送るメール (サインアップの確認・パスワード再設定) は `sendEmail` を通らないので対象外。
 - 急増通知のしきい値 (20 件 / 100 件)・窓 (15 分)・クールダウン (60 分) は変えない。
 - マーケティングメール・配信停止リンク (`membership/04-email-templates.md` §末尾の将来案) は対象外。
-- メンテナンス中の Webhook の扱い (#1577 の 4) は対象外 (worker は `/api/cron` 配下なので、`isMaintenanceExemptPath` で止まらない: `src/lib/maintenance-mode.ts`)。
+- メンテナンス中の Webhook の扱い (#1577 の 4) は対象外 (worker は `/api/cron` 配下なので、`isMaintenanceExemptPath` で止まらない: `src/lib/maintenance-mode.ts`)。Resend の Webhook (`POST /api/webhooks/resend`) は、#1577 の 4 でメンテナンス中も止めない対象に足した (`operator/02-api-spec.md` §7・§21)。
 
 ### 1.3 用語
 
