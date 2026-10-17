@@ -2,7 +2,12 @@
  * ログイン履歴・セッションの API の Zod (canonical)。設計の正典 docs/design/cross/16-auth-history-sessions.md §12.5。
  */
 import { z } from 'zod';
-/** POST /api/auth/login の PASSWORD_MAX_LENGTH と同じ値・同じ理由 (bcrypt は 72 バイト超を比べない。巨大な本文を送らない) */
+/**
+ * POST /api/auth/login の PASSWORD_MAX_LENGTH と同じ値・同じ理由 (bcrypt は 72 バイト超を比べない。巨大な本文を送らない)。
+ * 本文の大きさの上限で、パスワードの規則ではない。新しいパスワードの 72 バイトの上限 (packages/shared の PASSWORD_MAX_BYTES) は、
+ * Zod の後の validatePassword が見て 422 VALID_PASSWORD_WEAK (理由の文言つき) にする (ここで 72 にすると、規則の文言の無い 400 になる)。
+ * 現在のパスワード (current_password) には 72 バイトの上限を付けない (上限より長い既存のパスワードの利用者を締め出さない。#1864)
+ */
 export const PASSWORD_INPUT_MAX_LENGTH = 1024;
 /** user_sessions_metadata.device_name varchar(200) */
 export const DEVICE_NAME_MAX_LENGTH = 200;

@@ -7,6 +7,7 @@
  *  2. パスワードが 8 文字未満のときエラーを出し、API を呼ばない
  *  2b. (#1574) 英字だけ・数字だけのパスワードも止め、API も updateUser も呼ばない (規則と文言は packages/shared の validatePassword と共通。
  *      以前は長さしか見ておらず、`12345678` のような弱いパスワードでも更新を呼んでいた)
+ *  2c. (#1864) 72 バイト (GoTrue の bcrypt の上限) を超えるパスワードも止める
  *  3. 正常時に POST /api/auth/password/reset に { new_password } を送り、updateUser を呼ばない
  *  4. (#1038 F7-10) 更新後のサインアウトは、呼ぶ前のセッションの利用者 ID を共通のログアウト処理 (signOutWithCleanup) に渡す
  *     (supabase.auth.signOut() を直接呼ぶと、この端末の push token が user_push_tokens に残る)
@@ -17,6 +18,7 @@
 import React from 'react';
 import { Alert } from 'react-native';
 import { render, fireEvent, waitFor } from '@testing-library/react-native';
+import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 // ---- Mocks ----
 
@@ -140,6 +142,26 @@ describe('ResetPasswordPage', () => {
       expect(Alert.alert).toHaveBeenCalledWith('入力エラー', message);
     });
     expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(mockUpdateUser).not.toHaveBeenCalled();
+    expect(mockApiPost).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['半角 73 文字', `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`],
+    ['日本語を含む 26 文字 (74 バイト)', `a1${'あ'.repeat(24)}`],
+  ])('2c. 72 バイトを超えるパスワード (%s) は、新規登録・Web と同じ「長すぎる」の文言で止め、API も updateUser も呼ばない (#1864)', async (_label, tooLong) => {
+    const { getByPlaceholderText, getByText } = render(<ResetPasswordPage />);
+    await waitFor(() => {
+      expect(mockGetSession).toHaveBeenCalled();
+    });
+
+    fireEvent.changeText(getByPlaceholderText('8文字以上'), tooLong);
+    fireEvent.changeText(getByPlaceholderText('もう一度入力'), tooLong);
+    fireEvent.press(getByText('パスワードを更新'));
+
+    await waitFor(() => {
+      expect(Alert.alert).toHaveBeenCalledWith('入力エラー', PASSWORD_TOO_LONG_MESSAGE);
+    });
     expect(mockUpdateUser).not.toHaveBeenCalled();
     expect(mockApiPost).not.toHaveBeenCalled();
   });
