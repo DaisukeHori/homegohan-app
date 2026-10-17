@@ -180,6 +180,29 @@ describe('POST /api/contact: 上限を超えたとき (10 回/分)', () => {
   });
 });
 
+describe('POST /api/contact: 凍結中の利用者 (#1871)', () => {
+  // #1871: middleware は凍結中の利用者の POST /api/contact を route へ通す (src/lib/auth/frozen.ts の isFrozenContactSubmitRequest)。
+  // 回数の制限は、凍結中もそのまま効かせる。route は利用者の状態 (凍結) を読まず、ログイン中の本人でも同じ IP の枠で数える
+  it('ログイン中の本人の送信も同じ IP の枠で数え、11 回目は 429 で保存も通知メールもしない (保存した行は本人の user_id)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user: { id: 'frozen-user-1' } }, error: null });
+    const ip = '203.0.113.30';
+    for (let i = 0; i < 10; i++) {
+      expect((await POST(fromIp(ip))).status).toBe(200);
+    }
+    expect(mockInsert).toHaveBeenCalledTimes(10);
+    expect(mockInsert).toHaveBeenLastCalledWith(expect.objectContaining({ user_id: 'frozen-user-1' }));
+
+    const res = await POST(fromIp(ip));
+
+    expect(res.status).toBe(429);
+    expect((await res.json()).code).toBe('RATE_LIMITED');
+    expect(mockInsert).toHaveBeenCalledTimes(10);
+    expect(mockSendEmail).toHaveBeenCalledTimes(10);
+    // 回数の判定は利用者を読む前に行う (11 回目は利用者を確かめない)
+    expect(mockGetUser).toHaveBeenCalledTimes(10);
+  });
+});
+
 describe('POST /api/contact: 判定できないとき (fail-closed)', () => {
   it('判定が例外を投げたら 500 を返し、保存も通知メールもしない。構造化ログに error を残す', async () => {
     const failure = new Error('ECONNREFUSED: upstash unreachable');

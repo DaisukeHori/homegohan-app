@@ -513,7 +513,7 @@ Step 4: 応答して閉じる
 
 凍結中の利用者は `/settings` に入れず (`/frozen` へ回る)、`/api/account/data-requests` も 403 (`FROZEN_ALLOWED_API_PATHS` に含まれない)。請求を出した後に凍結された本人は、応答を設定画面で読めない。本人確認のリンク (`/settings/data-requests/verify`)・確認メールの再送・取り下げもできない。
 
-凍結中でもできること: 凍結の画面 (`/frozen`) の「退会・データの書き出し」から開く `/frozen/account` で、退会 (アカウントの削除) とデータの書き出しができる (#1445。呼ぶ API の `/api/account/delete`・`/api/account/export` は `FROZEN_ALLOWED_API_PATHS` に入っている。`src/app/frozen/account/page.tsx`・`src/lib/auth/frozen.ts`)。組織のオーナー・家族グループの代表者は、凍結中は譲渡・解散の操作ができないので退会が 409 で止まり、画面はサポートへの問い合わせを案内する (`src/app/frozen/account/page.tsx` の `DELETE_BLOCKED_GUIDANCE`)。§9.3.2 の表が案内するほかの画面 (プロフィール・AI の外部送信の同意・通知の設定など) は、凍結中は開けない。
+凍結中でもできること: 凍結の画面 (`/frozen`) の「退会・データの書き出し」から開く `/frozen/account` で、退会 (アカウントの削除) とデータの書き出しができる (#1445。呼ぶ API の `/api/account/delete`・`/api/account/export` は `FROZEN_ALLOWED_API_PATHS` に入っている。`src/app/frozen/account/page.tsx`・`src/lib/auth/frozen.ts`)。凍結の画面の「サポートに問い合わせる」から開く `/contact` で、お問い合わせも送れる (#1871。`POST /api/contact` は `src/lib/auth/frozen.ts` の `isFrozenContactSubmitRequest` で凍結中も通る。回数の制限はそのまま。届いた問い合わせは `/support/inquiries` で見る)。組織のオーナー・家族グループの代表者は、凍結中は譲渡・解散の操作ができないので退会が 409 で止まり、画面はサポートへの問い合わせを案内する (`src/app/frozen/account/page.tsx` の `DELETE_BLOCKED_GUIDANCE`)。§9.3.2 の表が案内するほかの画面 (プロフィール・AI の外部送信の同意・通知の設定など) は、凍結中は開けない。
 
 ```
 Step 1: 凍結中かを確かめる
