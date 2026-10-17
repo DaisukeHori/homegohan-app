@@ -1430,7 +1430,7 @@ export function renderCronSecretDriftEmail(vars: CronSecretDriftEmailVars): Emai
 
 権利 (`ops_alert_state`。キー `cron_secret_drift` / `cron_secret_rotation`): 11 §7.3 の「権利」の表と同じ (行なし → `claim` で行あり (t) → 抑止の間は NULL → 抑止明けで取り直し → 送れなければ `release(t)` で行なし。`release(t')` (t' ≠ t) は消さない。`claim` / `release` の error は 500 / warn)。2 つのキーは独立 (片方の抑止はもう片方に響かない)。
 
-3 か所の状態 × 確認の結果 (ずれと入れ替えの遷移。Edge = Edge Function secrets の現行の値 `C` と旧い値 `P`、Vault = `V`):
+3 か所の状態 × 確認の結果 (ずれと入れ替えの遷移。Edge = Edge Function secrets の現行の値 `C` と旧い値 `P`、Vault = `V`、Vercel = Vercel の環境変数の現行の値 `VC` と旧い値 `VP`)。§8.1.1 の P-1〜P-26 の所見はどれも、下のどこかの行に現れる (P-1・P-2 は「まだ決まっていない」の行、P-24〜P-26 は Vercel の 3 行)。Vercel の行は確認の行と独立で、Supabase 側 (Edge・Vault) の行と同時に成り立つ (Vercel と Supabase 側は比べない: Q-1):
 
 | 状態 | 確認の結果 | 所見 | 次の操作 (ENV_SETUP.md のローテーション手順) | 遷移先 |
 |---|---|---|---|---|
@@ -1440,10 +1440,18 @@ export function renderCronSecretDriftEmail(vars: CronSecretDriftEmailVars): Emai
 | ずれ (Vault だけ変えた: `C ≠ V'`・`P` なし) | 401 Unauthorized | `edge-vault-mismatch` (fail) | `C` を `V'` に合わせる (Vault が正) | そろっている |
 | ずれ (Edge だけ変えた: `C' ≠ V`・`P` なし) | 401 Unauthorized | `edge-vault-mismatch` (fail) | `C'` を `V` に戻す (Vault が正)、または入れ替えが目的なら手順 2 から | そろっている / 入れ替え中 |
 | Edge に値が無い (`C` も別名も無し) | 503 Service not configured | `edge-not-configured` (fail) | `C` に `V` を入れる | そろっている |
-| Vault に無い / 空 | (送らない) | `vault-missing` / `vault-empty` (fail) | Vault を作り直す (手順 3 の SQL / 「Catalog cron secret」) | そろっている |
+| Vault に無い / 空 | (送らない。`send_state` = `vault_missing` / `vault_empty`) | `vault-missing` / `vault-empty` (fail) | Vault を作り直す (手順 3 の SQL / 「Catalog cron secret」) | そろっている |
+| Vault を復号できない (行はあるが、復号の結果が NULL か、復号が例外) | (送らない。`send_state` = `vault_unreadable`) | `vault-unreadable` (fail) | Vault の鍵を確かめる (Supabase のサポート)。必要なら `app_cron_secret` を作り直す (ローテーション手順) | そろっている |
+| DB に Vault / pg_net が無い (`vault.decrypted_secrets` / `net._http_response` が無い。ローカル・CI の DB。本番では起きない) | (送らない。`send_state` = `vault_unavailable` / `net_unavailable`) | `vault-unavailable` / `pg-net-unavailable` (fail) | ローカル・CI なら操作なし (想定どおり)。本番で出たら拡張を確かめる | 変わらない (ローカル・CI) / そろっている (本番で拡張を戻した後) |
 | 別名だけ (`C` 無し・`SERVICE_ROLE_SECRET = V`) | 200 current・alias_used | `edge-alias-used` (info) | `C` に移す (任意) | そろっている |
 | Vault が service role key | 200 service_role_key | `vault-holds-service-role-key` (warn) | 手順 1〜5 で cron 専用の値に | そろっている |
-| 設定は正しいが経路が壊れている (verify_jwt・未デプロイ・pg_net・時間切れ) | 401 code / 404 / 未応答 / timed_out | `gateway-jwt` / `probe-not-deployed` / `probe-unanswered` / `probe-timeout` (fail) | Actions のデプロイ・pg_net の確認 | そろっている |
+| 設定は正しいが呼び先が届いていない (verify_jwt・未デプロイ) | 401 に code / 404 | `gateway-jwt` / `probe-not-deployed` (fail) | Actions「Deploy Supabase Functions」のデプロイを確かめる | そろっている |
+| 設定は正しいが経路が壊れている (pg_net が送らない・時間切れ・接続のエラー) | 未応答で猶予超え / `timed_out = true` / `has_error = true` または状態コード NULL | `probe-unanswered` / `probe-timeout` / `probe-error` (fail) | pg_net の worker (`net.http_request_queue`・`net._http_response`) と Supabase の状態 (ネットワーク・Edge Functions) を確かめる | そろっている |
+| 呼び先の応答が想定外 (呼び先が差し替わった・Supabase 側の障害) | 200 で `matched` が想定外 (P-15) / 401 でほかの本文 (P-19) / 503 でほかの本文 (P-21) / ほかの状態コード (P-23) | `probe-unexpected-response` (fail) | Edge Function のログと、ENV_SETUP.md「値が合っていないとどうなるか」の SQL で応答を確かめる | そろっている |
+| まだ決まっていない (確認が無い・送ったばかり) | 確認が 0 行 / `sent`・未応答・猶予 5 分以内 | `no-probe-yet` / `probe-pending` (info。通知しない) | 操作なし (次の回を待つ) | 上の行のどれか (次の回の確認の結果で決まる) |
+| Vercel: 旧い値なし (`VP` なし・空) | (確認の行と独立。毎回 `describeCronSecretRotationState`) `previous_configured = false` | なし (P-24) | Vercel の入れ替えのときだけ、`VC` を新しい値にし、手で呼ぶ運用があれば旧い値を `VP` に入れて再デプロイ (ENV_SETUP.md「Vercel の `CRON_SECRET` を入れ替えるとき」) | 変わらない / Vercel: 入れ替え中 |
+| Vercel: 入れ替え中 (`VP` あり・`VP ≠ VC`) | `previous_configured = true`・`previous_same_as_current = false` | `vercel-previous-set` (warn) | 呼び出し側を直したら `VP` を削除して再デプロイ | Vercel: 旧い値なし |
+| Vercel: 旧い値が現行と同じ (`VP = VC`) | `previous_configured = true`・`previous_same_as_current = true` | `vercel-previous-same` (warn) | 旧い値を入れる (入れ替えの途中なら) か、`VP` を削除して再デプロイ | Vercel: 入れ替え中 / Vercel: 旧い値なし |
 
 ---
 
@@ -1581,7 +1589,7 @@ OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES=
 - `it('CS-1: 確認の結果が 0 行なら両方 below_threshold。権利を取らず、send_cron_secret_probe を 1 回呼ぶ (最初の回)')`
 - `it('CS-2: 最新の決まった確認が 401 Unauthorized なら権利 (キー cron_secret_drift・既定の抑止 60 分) を取り、ops_cron_secret_drift (kind drift) を 1 通送る。応答 cron_secret_drift は sent・total 1。そのあと確認を送る')`
 - `it('CS-3: 抑止の間 (権利 NULL) は deduped。sendEmail を呼ばず、確認は送る')`
-- `it('CS-4: 503 Service not configured → edge-not-configured / 401 に code → gateway-jwt / 404 → probe-not-deployed / timed_out → probe-timeout / 未応答で猶予超え → probe-unanswered / send_state vault_missing → vault-missing、のそれぞれで drift の通知 (it.each)')`
+- `it('CS-4: fail の所見 13 種類のうち CS-2 の edge-vault-mismatch を除く 12 種類が、どれも同じ drift の通知 (キー cron_secret_drift・total 1・文面にその所見の題) になる (it.each・16 の入力): send_state vault_missing / vault_empty / vault_unreadable / vault_unavailable / net_unavailable → vault-missing / vault-empty / vault-unreadable / vault-unavailable / pg-net-unavailable、未応答で猶予超え → probe-unanswered、timed_out → probe-timeout、has_error true・http_status NULL の 2 つ → probe-error、200 で matched が想定外・401 でほかの本文・503 でほかの本文・405 の 4 つ → probe-unexpected-response、401 に code → gateway-jwt、503 Service not configured → edge-not-configured、404 → probe-not-deployed')`
 - `it('CS-5: 送れなかった (outbox_failed) ときは release (キー cron_secret_drift) → send_failed。suppressed / invalid_envelope は返さない')`
 - `it('CS-6: 文面の作成・sendEmail が例外なら release してから 500。確認は送らない')`
 - `it('CS-7: claim_ops_alert が error なら 500。rotation の判定にも確認の送信にも進まない')`
@@ -1628,15 +1636,15 @@ C-2 の前提: ローカルの pg_net で postgres ロールが `net._http_respo
 | 行 | it | 行 | it |
 |---|---|---|---|
 | P-1 | 単体 J-1・route CS-1 | P-14 | 単体 J-14・route CR-3 |
-| P-2 | 単体 J-2 | P-15 | 単体 J-15 |
+| P-2 | 単体 J-2 | P-15 | 単体 J-15・route CS-4 |
 | P-3 | 単体 J-3・route CS-4・結合 B-2 | P-16 | 単体 J-16 |
-| P-4 | 単体 J-4・結合 B-2 | P-17 | 単体 J-17・route CS-4・結合 C-2 |
-| P-5 | 単体 J-5・結合 B-4・契約 CT-18 | P-18 | 単体 J-18・route CS-2・結合 C-2 |
-| P-6 | 単体 J-6・契約 CT-18 | P-19 | 単体 J-19 |
-| P-7 | 単体 J-7・契約 CT-18 | P-20 | 単体 J-20・route CS-4 |
-| P-8 | 単体 J-8・D-1・route CS-4 | P-21 | 単体 J-21 |
+| P-4 | 単体 J-4・route CS-4・結合 B-2 | P-17 | 単体 J-17・route CS-4・結合 C-2 |
+| P-5 | 単体 J-5・route CS-4・結合 B-4・契約 CT-18 | P-18 | 単体 J-18・route CS-2・結合 C-2 |
+| P-6 | 単体 J-6・route CS-4・契約 CT-18 | P-19 | 単体 J-19・route CS-4 |
+| P-7 | 単体 J-7・route CS-4・契約 CT-18 | P-20 | 単体 J-20・route CS-4 |
+| P-8 | 単体 J-8・D-1・route CS-4 | P-21 | 単体 J-21・route CS-4 |
 | P-9 | 単体 J-9・route CS-4・結合 C-2 | P-22 | 単体 J-22・route CS-4 |
-| P-10 | 単体 J-10 | P-23 | 単体 J-23 |
+| P-10 | 単体 J-10・route CS-4 | P-23 | 単体 J-23・route CS-4 |
 | P-11 | 単体 J-11・route CS-10・結合 C-2 | P-24 | 単体 J-24・route CR-4 |
 | P-12 | 単体 J-12・route CR-2 | P-25 | 単体 J-24・route CR-4 |
 | P-13 | 単体 J-13・route CR-1 | P-26 | 単体 J-24・route CR-4 |
@@ -1671,7 +1679,7 @@ C-2 の前提: ローカルの pg_net で postgres ロールが `net._http_respo
 |---|---|---|---|---|
 | A: Edge | `supabase/functions/_shared/auth.ts` (`describeServiceRoleAuth`・`requireServiceRole` の載せ替え)・`supabase/functions/cron-secret-probe/index.ts`・`supabase/config.toml` の 1 節・`supabase/functions/README.md`・テスト (`tests/cron-secret.test.ts` DS-1〜DS-8・`tests/cron-secret-probe-edge.test.ts`・契約 CT-12・CT-13)・番兵の追随 (§14 の段 A の行: `tests/edge-function-cors.test.ts` の `BATCH_ONLY_SOURCES`) | 行 1 (Edge Function secrets の行)・行 6 (関数の表) | 無し | 単独でマージしてよい (main に入ると Actions が本番へ配る。呼び出し元はまだ無い) |
 | B: DB | migration `<番号>_cron_secret_drift_monitor.sql` + down (表 1・関数 3)・`database.types.ts` 2 か所・契約テスト (`tests/cron-secret-drift-monitor-contract.test.ts` CT-1〜CT-11・CT-18)・結合テスト (`tests/integration/security/cron-secret-drift-monitor.test.ts`)・番兵の追随 (§14 の段 B の行: `tests/edge-function-verify-jwt.test.ts` の `DB_HTTP_CALL_SITES` と it「DB から呼ばれる関数の宣言に …」・`tests/ai-usage-contract.test.ts` の `CRON_ENTRYPOINTS`) | 行 6 (README の `DB_HTTP_CALL_SITES` の列挙) | 段 A のマージ (`DB_HTTP_CALL_SITES` の呼び先 `cron-secret-probe` が `config.toml` に無いと番兵が赤) | 段 A の後。追加だけの migration なので、マージの前に本番へ当ててよい |
-| C: アプリ | `src/lib/ops-alerts/cron-secret-drift.ts`・`src/lib/emails/ops/cron-secret-drift.ts`・`src/lib/ops-alerts/app-log-error-spike.ts` の追記・`src/lib/cron-auth.ts` の追記・route・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md`・単体テスト (§11.2 の新設 2 ファイルと既存 4 ファイルへの追記)・既存テストの追随 (§14 の段 C の行と §14.1)・契約 CT-14〜CT-17 | 行 1 (Vault の行)・行 2・3・4・5・7・8・9・10 | 段 A と段 B のマージ、段 B の migration の本番への適用 (route が関数を呼ぶ) | 段 A・B の後 |
+| C: アプリ | `src/lib/ops-alerts/cron-secret-drift.ts`・`src/lib/emails/ops/cron-secret-drift.ts`・`src/lib/ops-alerts/app-log-error-spike.ts` の追記・`src/lib/cron-auth.ts` の追記・route・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md`・単体テスト (§11.2 の新設 2 ファイルと既存 3 ファイル (`src/__tests__/lib/cron-auth.test.ts`・`src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts`・`src/__tests__/api/cron/app-log-alerts.test.ts`) への追記)・既存テストの追随 (§14 の段 C の行と §14.1)・契約 CT-14〜CT-17 | 行 1 (Vault の行)・行 2・3・4・5・7・8・9・10 | 段 A と段 B のマージ、段 B の migration の本番への適用 (route が関数を呼ぶ) | 段 A・B の後 |
 
 段の順を守る理由: 段 C が段 A より先に本番に出ると、最初の確認が 404 (`probe-not-deployed`) で、ずれの通知が 1 通出る (S-07)。段 B の migration が当たっていないと、route が `cron_secret_probe_results` を見つけられず 500 (`cron_failure` に `vercel_cron/cron/app-log-alerts` が出る)。
 
@@ -1703,7 +1711,7 @@ C-2 の前提: ローカルの pg_net で postgres ロールが `net._http_respo
 | 応答のキー | `cron_secret_drift`・`cron_secret_rotation` (`GET /api/cron/app-log-alerts`) | C |
 | テスト | 契約 1: `tests/cron-secret-drift-monitor-contract.test.ts` (B で新設、A・C の it を足す) / 単体 3: `tests/cron-secret-probe-edge.test.ts` (A)・`src/__tests__/lib/ops-alerts/cron-secret-drift.test.ts`・`src/__tests__/lib/emails/ops/cron-secret-drift.test.ts` (C) / 結合 1: `tests/integration/security/cron-secret-drift-monitor.test.ts` (B) | A / B / C |
 
-変えるもの (既存): `supabase/functions/_shared/auth.ts`・`supabase/config.toml`・`supabase/functions/README.md` (A)、`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (B)、`src/lib/ops-alerts/app-log-error-spike.ts`・`src/lib/cron-auth.ts`・`src/app/api/cron/app-log-alerts/route.ts`・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` (C)、§14 のテスト。設計書 (§15 の行のとおり): `operator/07-audit-monitoring.md` §8.3・`operator/08-cron-batches.md` §6・`operator/09-runbook.md` §5.1・§11.5・`operator/10-logs-and-mail-retry.md` §8.1・`operator/CLAUDE.md`。**変えない**: `scripts/check-cron-secret-drift.mjs`・`scripts/lib/cron-secret-drift.mjs`・`supabase/functions/_shared/cron-secret.ts`・`vercel.json`・`src/lib/ops-alerts/recipient.ts`・`src/lib/api/errors.ts`・`src/lib/backups/core.ts`・既存の 5 種類の判定と文面・pg_cron のジョブ・`supabase/baseline/prod_schema.sql` (本番のスキーマの写し。段 A / B / C のどれでも変えない。将来の prod-schema-snapshot の更新の PR がこの関数を取り込んだら、その PR が §14 の行 1 の `count` を足す。本書の段の外)。
+変えるもの (既存): `supabase/functions/_shared/auth.ts`・`supabase/config.toml`・`supabase/functions/README.md` (A)、`src/types/database.types.ts`・`packages/shared/src/database.types.ts` (B)、`src/lib/ops-alerts/app-log-error-spike.ts`・`src/lib/cron-auth.ts`・`src/app/api/cron/app-log-alerts/route.ts`・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` (C)。既存のテスト (§11.2 の追記と §14 の「直し方」で編集するもの。全 12 ファイル): `tests/cron-secret.test.ts` (DS-1〜DS-8 を足す)・`tests/edge-function-cors.test.ts` (`BATCH_ONLY_SOURCES`) (A)、`tests/edge-function-verify-jwt.test.ts` (`DB_HTTP_CALL_SITES` と it「DB から呼ばれる関数の宣言に …」)・`tests/ai-usage-contract.test.ts` (`CRON_ENTRYPOINTS`) (B)、`src/__tests__/lib/cron-auth.test.ts` (RS-1〜RS-3)・`src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts` (R-10 と既存の入力・期待値)・`src/__tests__/api/cron/app-log-alerts.test.ts` (CS・CR・CO と §14.1)・`tests/app-log-error-counts-split-contract.test.ts` (A-1 / A-2)・`src/__tests__/lib/ops-alerts/cron-failure.test.ts` (K-2)・`src/__tests__/lib/env.test.ts` (`readOnlyBy` の期待と `typeOnly`)・`src/__tests__/lib/emails/secret-templates.test.ts` (秘密なしの表)・`tests/design-doc-followup-owned-edits.test.ts` (`OWNED_EDITS`) (C)。§14 で grep に当たっても編集しないテスト (`tests/env-source-scan.test.ts`・`src/__tests__/lib/emails/template-names.test.ts` は一覧・文面を走査するだけで、名前や件数を書いていない。`tests/cron-secret-contract.test.ts`・`tests/edge-function-service-role-auth.test.ts` ほか §14 で「変えない」「反応しない」の行) は変えない。設計書 (§15 の行のとおり): `operator/07-audit-monitoring.md` §8.3・`operator/08-cron-batches.md` §6・`operator/09-runbook.md` §5.1・§11.5・`operator/10-logs-and-mail-retry.md` §8.1・`operator/CLAUDE.md`。**変えない**: `scripts/check-cron-secret-drift.mjs`・`scripts/lib/cron-secret-drift.mjs`・`supabase/functions/_shared/cron-secret.ts`・`vercel.json`・`src/lib/ops-alerts/recipient.ts`・`src/lib/api/errors.ts`・`src/lib/backups/core.ts`・既存の 5 種類の判定と文面・pg_cron のジョブ・`supabase/baseline/prod_schema.sql` (本番のスキーマの写し。段 A / B / C のどれでも変えない。将来の prod-schema-snapshot の更新の PR がこの関数を取り込んだら、その PR が §14 の行 1 の `count` を足す。本書の段の外)。
 
 ---
 
