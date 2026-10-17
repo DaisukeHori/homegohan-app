@@ -283,7 +283,7 @@ function scanAllImageSources(): ImageRef[] {
   });
 }
 
-/** 使い方ガイド (src/app/guide/page.tsx) の手順の画像 15 枚。public/guide/ にまだ無い */
+/** 使い方ガイド (src/app/guide/guide-content.ts) の手順の画像 15 枚。#1852 で public/guide/ に置いた */
 const GUIDE_IMAGE_NAMES = [
   'signup',
   'profile',
