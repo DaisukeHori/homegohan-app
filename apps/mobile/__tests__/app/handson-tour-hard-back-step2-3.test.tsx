@@ -143,7 +143,9 @@ function analyticsCalls(eventName: string): unknown[] {
   return mockFireAnalytics.mock.calls.filter(([name]) => name === eventName).map(([, payload]) => payload);
 }
 
-type HardwareBackListener = () => boolean | null | undefined;
+type HardwareBackListener = Parameters<typeof BackHandler.addEventListener>[1];
+/** 端末バックの event (react-native 0.88 の HardwareBackPressEvent。受け手は値を見ない) */
+const HARDWARE_BACK_EVENT: Parameters<HardwareBackListener>[0] = { type: 'hardwareBackPress', timeStamp: 0 };
 /** BackHandler.addEventListener で登録された端末バックの受け手 (登録順)。jest の preset は iOS なので本物の BackHandler は何も持たない */
 let hardwareBackListeners: HardwareBackListener[] = [];
 let addBackListenerSpy: jest.SpyInstance | null = null;
@@ -152,7 +154,7 @@ let platformOsReplaced: jest.ReplaceProperty<typeof Platform.OS> | null = null;
 /** Android の端末バックを 1 回押す。本物と同じく、後に登録したものから順に呼び、true を返したところで止める。止まらなければ false (= 既定の戻る) */
 function pressHardwareBack(): boolean {
   for (const listener of [...hardwareBackListeners].reverse()) {
-    if (listener()) return true;
+    if (listener(HARDWARE_BACK_EVENT)) return true;
   }
   return false;
 }

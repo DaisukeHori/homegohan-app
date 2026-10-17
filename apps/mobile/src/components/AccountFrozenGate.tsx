@@ -41,7 +41,9 @@ export function AccountFrozenGate() {
   useEffect(() => {
     if (!navigationReady) return;
     try {
-      const onFrozenScreen = navigationRef.getCurrentRoute()?.name === FROZEN_SCREEN_ROUTE_NAME;
+      // expo-router 58 の navigationRef は型付きの route の名前の一覧が空で、getCurrentRoute() の戻り値の型が never になる。名前を読むだけなので構造の型で受ける
+      const currentRoute: { readonly name: string } | undefined = navigationRef.getCurrentRoute();
+      const onFrozenScreen = currentRoute?.name === FROZEN_SCREEN_ROUTE_NAME;
       if (!onFrozenScreen) closingRef.current = false;
 
       if (!session) {

@@ -53,7 +53,9 @@ export function LegalConsentGate() {
     // #1861: 凍結中は凍結のゲートに任せる (同意画面へ畳むと、凍結の画面と畳み合う)
     if (frozenState === "frozen") return;
     try {
-      const onConsentScreen = navigationRef.getCurrentRoute()?.name === LEGAL_CONSENT_SCREEN_ROUTE_NAME;
+      // expo-router 58 の navigationRef は型付きの route の名前の一覧が空で、getCurrentRoute() の戻り値の型が never になる。名前を読むだけなので構造の型で受ける
+      const currentRoute: { readonly name: string } | undefined = navigationRef.getCurrentRoute();
+      const onConsentScreen = currentRoute?.name === LEGAL_CONSENT_SCREEN_ROUTE_NAME;
       if (!onConsentScreen) closingRef.current = false;
 
       if (!session) {

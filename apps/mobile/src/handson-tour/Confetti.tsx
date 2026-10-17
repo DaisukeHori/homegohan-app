@@ -217,7 +217,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   reducedMotionContainer: {
-    ...StyleSheet.absoluteFillObject,
+    ...StyleSheet.absoluteFill,
     justifyContent: 'center',
     alignItems: 'center',
   },

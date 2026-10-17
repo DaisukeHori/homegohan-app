@@ -11,6 +11,7 @@ import {
   StyleSheet,
   View,
 } from 'react-native';
+import type { ViewInstance } from 'react-native';
 import { Text } from '../../src/components/ui/Text';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -60,10 +61,10 @@ function MealSandboxEmbed({ onSandboxComplete, prefilled = MOCK_PHOTO_RESPONSE, 
   const insets = useSafeAreaInsets();
 
   // Spotlight target refs
-  const cameraButtonRef = useRef<View>(null);
-  const resultDishNameRef = useRef<View>(null);
-  const resultCaloriesRef = useRef<View>(null);
-  const saveButtonRef = useRef<View>(null);
+  const cameraButtonRef = useRef<ViewInstance>(null);
+  const resultDishNameRef = useRef<ViewInstance>(null);
+  const resultCaloriesRef = useRef<ViewInstance>(null);
+  const saveButtonRef = useRef<ViewInstance>(null);
 
   useEffect(() => {
     // Register tour targets after mount

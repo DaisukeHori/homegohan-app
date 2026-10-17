@@ -21,6 +21,7 @@ import {
   StyleSheet,
   View,
 } from "react-native";
+import type { ScrollViewInstance } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Text, TextInput } from "../ui/Text";
 
@@ -166,7 +167,7 @@ export const AIAdvisorSheet: React.FC<Props> = ({ visible, onClose }) => {
   const [timedOutSend, setTimedOutSend] = useState<TimedOutSend | null>(null);
   const [reloadingAfterTimeout, setReloadingAfterTimeout] = useState(false);
 
-  const scrollRef = useRef<ScrollView>(null);
+  const scrollRef = useRef<ScrollViewInstance>(null);
 
   // 同意が必要で止められたとき (T15 / #1154) の案内。シートの上の 1日献立のモーダルと、このシート (モーダル) を閉じてから出す
   // (閉じないと、案内から開いた同意画面がモーダルの下に隠れる)。シートは閉じても外されない (AIFloatingFab が置いたまま) ので、
