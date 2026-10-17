@@ -60,7 +60,9 @@ export type RateLimitCategory =
   | 'auth-mfa-recover'
   | 'dsr'
   | 'billing'
-  | 'csp-report';
+  | 'csp-report'
+  | 'auth-password-change'
+  | 'auth-password-reset';
 
 /** 1 つの制限ルール。name は Upstash の prefix / in-memory の名前空間に使う (既存キーを変えないこと) */
 interface RateRule {
@@ -129,6 +131,11 @@ const HOUR_SEC = 60 * MINUTE_SEC;
 //   本人が打ち間違えても 1 分 5 回あれば足りる
 // - auth-mfa-recover: バックアップコードによる回復 (#1176。POST /api/auth/mfa/recover、key = user.id)。
 //   50 bit のコード。1 時間 10 回で総当たりは不可能。本人は 10 個のうち 1 個を打てればよい
+// - auth-password-change: ログイン中のパスワードの変更 (#1198。POST /api/auth/password/change、key = 認証で確定した user.id)。
+//   設計 docs/design/cross/16-auth-history-sessions.md §12.6。現在のパスワードの総当たりを、盗んだ本人のセッションで試させない
+//   (GoTrue のログインの制限を通らない経路なので、ここで数える)。本人が打ち間違えても 10 分 5 回あれば足りる
+// - auth-password-reset: メールのリンク / コードで作ったセッションによるパスワードの再設定 (#1198。POST /api/auth/password/reset、key = user.id)。
+//   同上の理由で、再設定のセッションでも 10 分 5 回に絞る (本人が弱いパスワードの案内を受けて打ち直しても足りる回数)
 const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
   // 課金の操作 (Checkout の作成・Portal・解約の予約と取り消し・戻り画面の同期)。利用者ごと。
   // Stripe の API を 1〜2 回呼ぶ操作なので、連打で Stripe 側のレート制限や顧客の重複を起こさない値
@@ -192,6 +199,8 @@ const CATEGORY_RULES: Record<RateLimitCategory, readonly RateRule[]> = {
     { name: 'csp-report', max: 30, windowSec: MINUTE_SEC },
     { name: 'csp-report-daily', max: 300, windowSec: DAY_SEC },
   ],
+  'auth-password-change': [{ name: 'auth-password-change', max: 5, windowSec: 10 * MINUTE_SEC }],
+  'auth-password-reset': [{ name: 'auth-password-reset', max: 5, windowSec: 10 * MINUTE_SEC }],
 };
 
 export interface RateLimitResult {

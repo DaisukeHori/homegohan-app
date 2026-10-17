@@ -4,10 +4,10 @@
 // 以前は、ログイン中に変更する手段が無かった (FAQ は「設定画面の『アカウント』から変更できます」と案内していたが、
 // その画面が無かった)。ここでは画面を jsdom に描画し、次を確かめる。
 //   - Google など、メール以外でログインしている人にはフォームを出さず、案内だけを出す (認証 API も呼ばない)
-//   - パスワード変更: 入力の検証 → 現在のパスワードで再認証 (本人のメールアドレスで signInWithPassword) →
-//     updateUser({ password }) → signOut({ scope: 'others' }) の順。現在のパスワードが違えば更新しない
+//   - パスワード変更 (#1720 段 C で API 経由に): 入力の検証 → POST /api/auth/password/change を 1 回呼ぶ。signInWithPassword / updateUser /
+//     signOut は呼ばない (現在のパスワードの確認・履歴の照合・他の端末の失効はサーバーと GoTrue が行う。cross/16 §14.6)
 //   - メールアドレス変更: updateUser({ email }, { emailRedirectTo: <origin>/auth/callback })。確認メールの案内を出す
-//   - 失敗の見せ方 (通信エラー・サーバーのエラー・signOut だけの失敗)、二重送信の防止、パスワードをログに出さないこと
+//   - 失敗の見せ方 (通信エラー・サーバーのエラー)、二重送信の防止、パスワードをログに出さないこと
 //
 // GoTrue (ローカルの Supabase Auth v2.183.0) が実際にどう答えるかは、結合テスト
 // tests/integration/security/account-credentials-change.test.ts が確かめる。
@@ -23,6 +23,8 @@ const h = React.createElement;
 const mocks = vi.hoisted(() => ({
   /** 認証 API を呼んだ順 */
   calls: [] as string[],
+  /** パスワードの変更 API (fetch) */
+  fetch: vi.fn(),
   getUser: vi.fn(),
   signInWithPassword: vi.fn(),
   updateUser: vi.fn(),
@@ -89,8 +91,21 @@ function mockSignedInAs(user: unknown) {
 }
 
 // GoTrue (v2.183.0) が実際に返したエラーの形
-const invalidCredentials = { name: 'AuthApiError', status: 400, code: 'invalid_credentials', message: 'Invalid login credentials' };
 const networkDown = { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' };
+
+const CHANGE_API_PATH = '/api/auth/password/change';
+/** route の flat の本文 { error, code } の応答 (cross/16 §14.6) */
+function apiError(status: number, code: string, error: string) {
+  return new Response(JSON.stringify({ error, code }), { status, headers: { 'Content-Type': 'application/json' } });
+}
+function apiOk() {
+  return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+}
+/** パスワードの変更 API に送った本文 (JSON) の 1 回目 */
+function sentBody(): Record<string, unknown> {
+  const init = mocks.fetch.mock.calls[0]?.[1] as RequestInit | undefined;
+  return JSON.parse(String(init?.body ?? 'null')) as Record<string, unknown>;
+}
 
 let container: HTMLDivElement;
 let root: Root;
@@ -112,6 +127,11 @@ beforeEach(() => {
     mocks.calls.push('signInWithPassword');
     return { data: { user: emailUser(), session: { access_token: 'new-session' } }, error: null };
   });
+  mocks.fetch.mockImplementation(async (url: string) => {
+    mocks.calls.push(`fetch:${url}`);
+    return apiOk();
+  });
+  vi.stubGlobal('fetch', mocks.fetch);
   mocks.updateUser.mockImplementation(async () => {
     mocks.calls.push('updateUser');
     return { data: { user: emailUser() }, error: null };
@@ -133,6 +153,7 @@ afterEach(() => {
     root.unmount();
   });
   container.remove();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
 
@@ -191,6 +212,8 @@ const authCallCount = () =>
 
 function expectNoAuthMutation() {
   expect(authCallCount()).toBe(0);
+  // パスワードの変更 API も呼んでいない
+  expect(mocks.fetch).not.toHaveBeenCalled();
 }
 
 // ================================================================
@@ -334,7 +357,7 @@ describe('#1187 パスワード変更: 入力の検証', () => {
     expectNoAuthMutation();
   });
 
-  it('新しいパスワードが現在のパスワードと同じなら、再認証の前に止める', async () => {
+  it('新しいパスワードが現在のパスワードと同じなら、API を呼ぶ前に止める', async () => {
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, CURRENT_PASSWORD);
 
@@ -352,25 +375,25 @@ describe('#1187 パスワード変更: 入力の検証', () => {
 });
 
 // ================================================================
-// 4. パスワード変更: 現在のパスワードが違う
+// 4. パスワード変更: 現在のパスワードが違う (サーバーが断る)
 // ================================================================
-describe('#1187 パスワード変更: 現在のパスワードが違う (再認証の失敗)', () => {
-  it('「現在のパスワードが正しくありません」と出し、updateUser も signOut もしない', async () => {
+describe('#1720 パスワード変更: 現在のパスワードが違う', () => {
+  it('400 AUTH_CURRENT_PASSWORD_MISMATCH: 「現在のパスワードが正しくありません」と出し、入力は残す', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.signInWithPassword.mockImplementation(async () => {
-      mocks.calls.push('signInWithPassword');
-      return { data: { user: null, session: null }, error: invalidCredentials };
+    mocks.fetch.mockImplementation(async (url: string) => {
+      mocks.calls.push(`fetch:${url}`);
+      return apiError(400, 'AUTH_CURRENT_PASSWORD_MISMATCH', '現在のパスワードが正しくありません。');
     });
 
     await renderPage();
     await submitPasswordForm('WrongPass2026x', NEW_PASSWORD);
 
-    // 再認証は、画面に出ている本人のメールアドレスで行う (利用者が入力した別のアドレスではない)
-    expect(mocks.signInWithPassword).toHaveBeenCalledTimes(1);
-    expect(mocks.signInWithPassword).toHaveBeenCalledWith({ email: USER_EMAIL, password: 'WrongPass2026x' });
-    expect(mocks.updateUser).not.toHaveBeenCalled();
-    expect(mocks.signOut).not.toHaveBeenCalled();
-    expect(mocks.calls).toEqual(['getUser', 'signInWithPassword']);
+    // API を 1 回呼ぶ。再認証 (signInWithPassword)・updateUser・signOut は呼ばない
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch.mock.calls[0][0]).toBe(CHANGE_API_PATH);
+    expect(sentBody()).toEqual({ current_password: 'WrongPass2026x', new_password: NEW_PASSWORD });
+    expect(authCallCount()).toBe(0);
+    expect(mocks.calls).toEqual(['getUser', `fetch:${CHANGE_API_PATH}`]);
 
     expect(text()).toContain('現在のパスワードが正しくありません');
     expect(byTestId('password-change-success')).toBeNull();
@@ -382,50 +405,50 @@ describe('#1187 パスワード変更: 現在のパスワードが違う (再認
     expect(JSON.stringify(consoleError.mock.calls)).not.toContain(NEW_PASSWORD);
   });
 
-  it('再認証が通信エラーで失敗したら、パスワードの間違いとは言わず、通信エラーとして伝える', async () => {
+  it('通信エラー (fetch の reject) は、パスワードの間違いとは言わず、通信エラーとして伝える', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.signInWithPassword.mockImplementation(async () => ({ data: { user: null, session: null }, error: networkDown }));
+    mocks.fetch.mockRejectedValue(new TypeError('Failed to fetch'));
 
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
     expect(text()).toContain('通信に失敗しました');
     expect(text()).not.toContain('現在のパスワードが正しくありません');
-    expect(mocks.updateUser).not.toHaveBeenCalled();
-    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(authCallCount()).toBe(0);
+    // 画面は壊れず、送信ボタンは押せる状態に戻る
+    expect((container.querySelector('[data-testid="password-change-form"] button[type="submit"]') as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it('再認証の呼び出しが例外を投げても (通信断など)、画面は壊れず、更新には進まない', async () => {
+  it('401 (ログインが切れた): ログインし直す案内を出す', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.signInWithPassword.mockRejectedValue(new TypeError('Failed to fetch'));
+    mocks.fetch.mockImplementation(async () => apiError(401, 'AUTH_UNAUTHENTICATED', 'ログインが切れました。もう一度ログインしてください。'));
 
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
-    expect(text()).toContain('通信に失敗しました');
-    expect(mocks.updateUser).not.toHaveBeenCalled();
-    expect(mocks.signOut).not.toHaveBeenCalled();
-    // 送信ボタンは押せる状態に戻る
-    expect((container.querySelector('[data-testid="password-change-form"] button[type="submit"]') as HTMLButtonElement).disabled).toBe(false);
+    expect(text()).toContain('ログインの有効期限が切れました');
+    expect(text()).toContain('ログインし直して');
+    expect(byTestId('password-change-success')).toBeNull();
   });
 });
 
 // ================================================================
 // 5. パスワード変更: 成功
 // ================================================================
-describe('#1187 パスワード変更: 成功', () => {
-  it('再認証 → updateUser → signOut({ scope: "others" }) の順に呼ぶ', async () => {
+describe('#1720 パスワード変更: 成功', () => {
+  it('POST /api/auth/password/change を 1 回呼び、signInWithPassword / updateUser / signOut を呼ばない', async () => {
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
-    expect(mocks.calls).toEqual(['getUser', 'signInWithPassword', 'updateUser', 'signOut:others']);
-
-    expect(mocks.signInWithPassword).toHaveBeenCalledWith({ email: USER_EMAIL, password: CURRENT_PASSWORD });
-    expect(mocks.updateUser).toHaveBeenCalledTimes(1);
-    expect(mocks.updateUser).toHaveBeenCalledWith({ password: NEW_PASSWORD });
-    // 'others': 今の端末のセッションは残して、ほかの端末のログインだけを解除する (global にすると、この端末も追い出される)
-    expect(mocks.signOut).toHaveBeenCalledTimes(1);
-    expect(mocks.signOut).toHaveBeenCalledWith({ scope: 'others' });
+    expect(mocks.calls).toEqual(['getUser', `fetch:${CHANGE_API_PATH}`]);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    const init = mocks.fetch.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe('POST');
+    expect(sentBody()).toEqual({ current_password: CURRENT_PASSWORD, new_password: NEW_PASSWORD });
+    // 再認証のサインイン・updateUser・signOut は使わない (他の端末の失効は GoTrue が更新と同じトランザクションで行う)
+    expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+    expect(mocks.signOut).not.toHaveBeenCalled();
   });
 
   it('この端末はログインしたまま: ユーザー別データの削除も、他タブへのサインアウト通知も、画面遷移もしない', async () => {
@@ -437,7 +460,7 @@ describe('#1187 パスワード変更: 成功', () => {
     expect(mocks.push).not.toHaveBeenCalled();
   });
 
-  it('成功の表示で、ほかの端末のログインを解除したことを伝え、入力欄を空にする', async () => {
+  it('成功の表示で、ほかの端末のログインを解除したことを伝え (確認できなかった枝は無い)、入力欄を空にする', async () => {
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
@@ -445,6 +468,7 @@ describe('#1187 パスワード変更: 成功', () => {
     expect(success?.textContent).toContain('パスワードを変更しました');
     expect(success?.textContent).toContain('この端末以外のログインはすべて解除しました');
     expect(success?.textContent).not.toContain('確認できませんでした');
+    expect(byTestId('password-change-others-not-signed-out-note')).toBeNull();
     expect(success?.getAttribute('role')).toBe('status');
 
     // パスワードを画面に残さない
@@ -453,6 +477,17 @@ describe('#1187 パスワード変更: 成功', () => {
     expect(field('confirm-password').value).toBe('');
     // エラーは出ていない
     expect(container.querySelector('[role="alert"]')).toBeNull();
+  });
+
+  it('成功の表示は、次の送信の始めに消える (もう一度変更するときに前の成功を残さない)', async () => {
+    await renderPage();
+    await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
+    expect(byTestId('password-change-success')).not.toBeNull();
+
+    mocks.fetch.mockImplementationOnce(async () => apiError(400, 'AUTH_CURRENT_PASSWORD_MISMATCH', '現在のパスワードが正しくありません。'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await submitPasswordForm('WrongPass2026x', 'AnotherPass2026x');
+    expect(byTestId('password-change-success')).toBeNull();
   });
 
   it('パスワードそのものをログに出さない', async () => {
@@ -466,11 +501,11 @@ describe('#1187 パスワード変更: 成功', () => {
     expect(logged).not.toContain(NEW_PASSWORD);
   });
 
-  it('二重に送信しても、再認証・更新は 1 回だけ。処理中はボタンを押せない', async () => {
-    let release!: (value: unknown) => void;
-    mocks.signInWithPassword.mockImplementation(() => {
-      mocks.calls.push('signInWithPassword');
-      return new Promise((resolve) => {
+  it('二重に送信しても、API は 1 回だけ。処理中はボタンを押せない', async () => {
+    let release!: (value: Response) => void;
+    mocks.fetch.mockImplementation((url: string) => {
+      mocks.calls.push(`fetch:${url}`);
+      return new Promise<Response>((resolve) => {
         release = resolve;
       });
     });
@@ -479,100 +514,80 @@ describe('#1187 パスワード変更: 成功', () => {
     await type('current-password', CURRENT_PASSWORD);
     await type('new-password', NEW_PASSWORD);
     await type('confirm-password', NEW_PASSWORD);
-    await submit('password-change-form'); // 1 回目: 再認証の応答待ち
+    await submit('password-change-form'); // 1 回目: API の応答待ち
     await submit('password-change-form'); // 2 回目: 待っている間
 
-    expect(mocks.signInWithPassword).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
     const button = container.querySelector('[data-testid="password-change-form"] button[type="submit"]') as HTMLButtonElement;
     expect(button.disabled).toBe(true);
     expect(button.textContent).toContain('変更中');
 
     await act(async () => {
-      release({ data: { user: emailUser(), session: {} }, error: null });
+      release(apiOk());
     });
 
-    expect(mocks.updateUser).toHaveBeenCalledTimes(1);
-    expect(mocks.signOut).toHaveBeenCalledTimes(1);
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
     expect(button.disabled).toBe(false);
+    expect(byTestId('password-change-success')).not.toBeNull();
   });
 });
 
 // ================================================================
-// 6. パスワード変更: 更新・ログアウトの失敗
+// 6. パスワード変更: サーバーが断る・失敗する
 // ================================================================
-describe('#1187 パスワード変更: 更新やログアウトの失敗', () => {
-  it('updateUser が失敗したら、その理由を日本語で出し、他の端末はログアウトしない', async () => {
+describe('#1720 パスワード変更: サーバーの失敗', () => {
+  it('422 VALID_PASSWORD_WEAK: 本文の文言を出し、GoTrue の英文は出さない', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.updateUser.mockImplementation(async () => {
-      mocks.calls.push('updateUser');
-      return {
-        data: { user: null },
-        error: {
-          name: 'AuthWeakPasswordError',
-          status: 422,
-          code: 'weak_password',
-          message: 'Password should be at least 6 characters.',
-          reasons: ['pwned'],
-        },
-      };
-    });
+    mocks.fetch.mockImplementation(async () =>
+      apiError(422, 'VALID_PASSWORD_WEAK', 'このパスワードは安全性の基準を満たしていません。別のパスワードにしてください。'),
+    );
 
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
-    expect(mocks.calls).toEqual(['getUser', 'signInWithPassword', 'updateUser']);
-    expect(mocks.signOut).not.toHaveBeenCalled();
-    expect(text()).toContain('過去に流出したことが確認されています');
+    expect(text()).toContain('安全性の基準を満たしていません');
     expect(text()).not.toContain('Password should be at least');
     expect(byTestId('password-change-success')).toBeNull();
     expect(consoleError).toHaveBeenCalled();
   });
 
-  it('GoTrue が今のパスワードと同じと判断した (same_password) ときも、日本語で伝える', async () => {
+  it('422 VALID_PASSWORD_HISTORY: 「最近使ったパスワードは使えません」を出す', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.updateUser.mockImplementation(async () => ({
-      data: { user: null },
-      error: { name: 'AuthApiError', status: 422, code: 'same_password', message: 'New password should be different from the old password.' },
-    }));
+    mocks.fetch.mockImplementation(async () =>
+      apiError(422, 'VALID_PASSWORD_HISTORY', '最近使ったパスワードは使えません。別のパスワードにしてください。'),
+    );
 
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
-    expect(text()).toContain('現在のパスワードと違うものにしてください');
-    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(text()).toContain('最近使ったパスワードは使えません');
+    expect(byTestId('password-change-success')).toBeNull();
+    // 直せるよう、入力は残す
+    expect(field('new-password').value).toBe(NEW_PASSWORD);
   });
 
-  const signOutFailures: Array<[string, () => Promise<{ error: { name: string; status: number; message: string } | null }>]> = [
-    ['エラーを返す', async () => ({ error: { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' } })],
-    [
-      '例外を投げる',
-      async () => {
-        throw new Error('network down');
-      },
-    ],
-  ];
-
-  it.each(signOutFailures)('signOut が%s: パスワードは変更済みなので成功を伝え、ほかの端末を確認できなかったことを添える', async (_label, impl) => {
-    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.signOut.mockImplementation(async (options?: { scope?: string }) => {
-      mocks.calls.push(`signOut:${options?.scope}`);
-      return impl();
-    });
+  it('403 AUTH_REAUTHENTICATION_REQUIRED: 「もう一度ログインしてから変更してください」を出す', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.fetch.mockImplementation(async () =>
+      apiError(403, 'AUTH_REAUTHENTICATION_REQUIRED', '安全のため、もう一度ログインしてから変更してください。'),
+    );
 
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
 
-    const success = byTestId('password-change-success');
-    expect(success?.textContent).toContain('パスワードを変更しました');
-    expect(success?.textContent).toContain('他の端末のログアウトを確認できませんでした');
-    expect(success?.textContent).not.toContain('すべて解除しました');
-    // 「変更に失敗しました」とは言わない
-    expect(container.querySelector('[role="alert"]')).toBeNull();
-    // 更新は 1 回だけ (再試行で同じパスワードを送り直さない)
-    expect(mocks.updateUser).toHaveBeenCalledTimes(1);
-    expect(mocks.clearUserScopedLocalStorage).not.toHaveBeenCalled();
-    expect(mocks.broadcastSignOut).not.toHaveBeenCalled();
-    expect(consoleError).toHaveBeenCalled();
+    expect(text()).toContain('安全のため、もう一度ログインしてから変更してください');
+    expect(byTestId('password-change-success')).toBeNull();
+  });
+
+  it('本文を読めない 500 は、共通の失敗の文言を出す (生の本文を出さない)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    mocks.fetch.mockImplementation(async () => new Response('<html>boom</html>', { status: 500 }));
+
+    await renderPage();
+    await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
+
+    expect(text()).toContain('パスワードを変更できませんでした');
+    expect(text()).not.toContain('boom');
   });
 });
 
@@ -582,24 +597,6 @@ describe('#1187 パスワード変更: 更新やログアウトの失敗', () =>
 //     (マイページの右上の歯車) とネイティブのログイン画面の「パスワードを忘れた？」を指す
 // ================================================================
 describe('#1552 アカウント画面: 「ログアウトして…」の案内は、アプリの中とブラウザで指し先を分ける', () => {
-  async function failOthersSignOut() {
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    mocks.signOut.mockImplementation(async (options?: { scope?: string }) => {
-      mocks.calls.push(`signOut:${options?.scope}`);
-      return { error: { name: 'AuthRetryableFetchError', status: 0, message: 'Failed to fetch' } };
-    });
-    await renderPage();
-    await submitPasswordForm(CURRENT_PASSWORD, NEW_PASSWORD);
-  }
-
-  it('ブラウザ: 他の端末を確認できなかったときは、Web の設定の「ログアウト」を指す', async () => {
-    await failOthersSignOut();
-    const note = byTestId('password-change-others-not-signed-out-note')?.textContent ?? '';
-    expect(note).toBe(
-      'ただし、他の端末のログアウトを確認できませんでした。心配な場合は、設定の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。',
-    );
-  });
-
   it('ブラウザ: 現在のパスワードを忘れた人には、Web のログイン画面の「忘れた場合」を指す', async () => {
     await renderPage();
     const note = byTestId('password-change-forgot-current-note')?.textContent ?? '';
@@ -608,17 +605,7 @@ describe('#1552 アカウント画面: 「ログアウトして…」の案内�
     );
   });
 
-  it('アプリの中 (useNativeAppMode): Web の設定の「ログアウト」は指さず、マイページの右上の歯車 (設定) を指す', async () => {
-    mocks.native.value = true;
-    await failOthersSignOut();
-    const note = byTestId('password-change-others-not-signed-out-note')?.textContent ?? '';
-    expect(note).toBe(
-      'ただし、他の端末のログアウトを確認できませんでした。心配な場合は、マイページの右上の歯車 (設定) の「ログアウト」でこの端末もログアウトして、新しいパスワードでログインし直してください。',
-    );
-    expect(note).not.toContain('設定の「ログアウト」');
-  });
-
-  it('アプリの中: 現在のパスワードを忘れた人には、歯車からのログアウトと、アプリのログイン画面の「パスワードを忘れた？」を指す', async () => {
+  it('アプリの中 (useNativeAppMode): 現在のパスワードを忘れた人には、歯車からのログアウトと、アプリのログイン画面の「パスワードを忘れた？」を指す', async () => {
     mocks.native.value = true;
     await renderPage();
     const note = byTestId('password-change-forgot-current-note')?.textContent ?? '';
@@ -633,9 +620,9 @@ describe('#1552 アカウント画面: 「ログアウトして…」の案内�
       postMessage: () => {},
     };
     try {
-      await failOthersSignOut();
-      expect(byTestId('password-change-others-not-signed-out-note')?.textContent).toContain('マイページの右上の歯車 (設定) の「ログアウト」');
+      await renderPage();
       expect(byTestId('password-change-forgot-current-note')?.textContent).toContain('「パスワードを忘れた？」');
+      expect(byTestId('password-change-forgot-current-note')?.textContent).toContain('マイページの右上の歯車 (設定)');
     } finally {
       delete (window as unknown as { ReactNativeWebView?: unknown }).ReactNativeWebView;
     }
@@ -648,25 +635,15 @@ describe('#1552 アカウント画面: 「ログアウトして…」の案内�
 describe('#1187 パスワード変更: どの失敗でも、入力したパスワードをコンソールに出さない', () => {
   const failures: Array<[string, () => void]> = [
     [
-      '再認証のエラー',
-      () =>
-        mocks.signInWithPassword.mockImplementation(async () => ({
-          data: { user: null, session: null },
-          error: invalidCredentials,
-        })),
+      '400 (現在のパスワードが違う)',
+      () => mocks.fetch.mockImplementation(async () => apiError(400, 'AUTH_CURRENT_PASSWORD_MISMATCH', '現在のパスワードが正しくありません。')),
     ],
-    ['再認証の例外', () => mocks.signInWithPassword.mockRejectedValue(new TypeError('Failed to fetch'))],
     [
-      '更新のエラー',
-      () =>
-        mocks.updateUser.mockImplementation(async () => ({
-          data: { user: null },
-          error: { name: 'AuthApiError', status: 422, code: 'same_password', message: 'New password should be different from the old password.' },
-        })),
+      '422 (履歴と同じ)',
+      () => mocks.fetch.mockImplementation(async () => apiError(422, 'VALID_PASSWORD_HISTORY', '最近使ったパスワードは使えません。別のパスワードにしてください。')),
     ],
-    ['更新の例外', () => mocks.updateUser.mockRejectedValue(new TypeError('Failed to fetch'))],
-    ['signOut のエラー', () => mocks.signOut.mockImplementation(async () => ({ error: networkDown }))],
-    ['signOut の例外', () => mocks.signOut.mockRejectedValue(new Error('network down'))],
+    ['500', () => mocks.fetch.mockImplementation(async () => apiError(500, 'INTERNAL_ERROR', 'サーバーでエラーが発生しました。'))],
+    ['通信の失敗 (fetch の reject)', () => mocks.fetch.mockRejectedValue(new TypeError('Failed to fetch'))],
   ];
 
   /** console に渡された引数を、Error も含めて文字列にする (JSON.stringify だと Error の message が落ちるため) */

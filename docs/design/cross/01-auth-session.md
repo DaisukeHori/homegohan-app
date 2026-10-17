@@ -203,12 +203,11 @@ export async function checkPasswordBreached(password: string): Promise<boolean> 
 2. Resend 経由でリセットリンク送信 (token = 32 byte random, 1 時間有効)
 3. GET /api/auth/password-reset/confirm?token={token}
    → token 検証 (使用済み即無効化)
-4. POST /api/auth/password-reset/set {token, new_password}
-   → HIBP チェック
-   → password_history 照合 (直近 N 個)
-   → Supabase Auth パスワード更新
-   → 全セッション revoke (リセット後は再ログイン強制)
-   → admin_audit_logs 記録
+4. POST /api/auth/password/reset {new_password}  (cross/16-auth-history-sessions.md §14.7。再設定メールのリンク / コードで作ったセッション = amr に 60 分以内の recovery / otp があるものだけが呼べる)
+   → password_history 照合 (直近 N 世代。RPC auth_password_check。cross/16 §11.5)
+   → Supabase Auth パスワード更新 (GoTrue の PUT /auth/v1/user を本人の access token で。他の端末のセッションは GoTrue が同じトランザクションで消す)
+   → 全セッション revoke (リセット後は再ログイン強制。ページが signOut({ scope: 'global' }) を呼ぶ)
+   → 照合と再設定の認可が効くのはこの API の経路だけ。GoTrue の PUT /auth/v1/user を直接呼ぶ経路は通らない (cross/16 §24・S-33。履歴の記録はトリガーでどの経路でも残る)
 ```
 
 ### 9.2 レート制限実装
