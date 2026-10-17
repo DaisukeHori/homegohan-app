@@ -43,6 +43,8 @@ const WEIGHT_WOBBLE_KG = [0, 0.3, -0.1, 0.2, -0.2, 0.1, 0];
 const BODY_FAT_START_PCT = 27.2;
 const BODY_FAT_END_PCT = 25.4;
 const WEIGHT_GOAL_KG = 60;
+/** プロフィールの入力の済み具合 (%)。使い込んだ利用者として、案内が出ない値にする */
+const PROFILE_COMPLETENESS_PCT = 80;
 /** 体重・体脂肪率を丸める桁 (小数 1 桁) */
 const ONE_DECIMAL = 10;
 
@@ -172,6 +174,10 @@ async function completeProfile(admin: SupabaseClient, userId: string, nickname: 
     height: 158,
     weight: weightKg,
     target_weight: WEIGHT_GOAL_KG,
+    occupation: '会社員',
+    fitness_goals: ['lose_weight'],
+    // 画面の「栄養目標を設定しましょう」の案内 (ProfileReminderBanner。50 未満で出る) を出さない、入力の済んだ利用者にする
+    profile_completeness: PROFILE_COMPLETENESS_PCT,
   }, { onConflict: 'id' }));
   must('nutrition_targets', await admin.from('nutrition_targets').upsert({
     user_id: userId,
@@ -263,7 +269,7 @@ async function seedDemo(admin: SupabaseClient) {
     badge_id: idOf(RARE_BADGE_CODE),
     period_type: 'weekly',
     period_start: jstMondayWeeksAgo(RARE_BADGE_WEEKS_AGO),
-    message: '1 週間、毎朝の朝食を欠かさず記録しました',
+    message: '1週間、毎朝の朝食を欠かさず記録しました',
     awarded_at: daysAgoIso(PRE_EARNED_BADGES.find((badge) => badge.code === RARE_BADGE_CODE)?.daysAgo ?? 0),
   }));
   console.log('OK demo');

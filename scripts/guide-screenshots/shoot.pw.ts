@@ -27,22 +27,22 @@ const BADGE_TOAST_SETTLE_MS = 700;
 /** 食事の写真の解析の結果 (テスト用の値。アプリの /api/ai/analyze-meal-photo の応答の形) */
 const MEAL_ANALYSIS = {
   dishes: [
-    { name: "鶏の照り焼き", role: "main", cal: 290, calories_kcal: 290 },
+    { name: "鶏の唐揚げ", role: "main", cal: 420, calories_kcal: 420 },
     { name: "ごはん", role: "rice", cal: 250, calories_kcal: 250 },
-    { name: "ほうれん草のおひたし", role: "side", cal: 30, calories_kcal: 30 },
-    { name: "豆腐とわかめの味噌汁", role: "soup", cal: 60, calories_kcal: 60 },
+    { name: "キャベツの千切り", role: "side", cal: 20, calories_kcal: 20 },
+    { name: "味噌汁", role: "soup", cal: 50, calories_kcal: 50 },
   ],
-  totalCalories: 630,
-  totalProtein: 32,
-  totalCarbs: 78,
-  totalFat: 18,
-  overallScore: 88,
-  vegScore: 72,
-  praiseComment: "主菜・主食・副菜・汁物がそろった、とてもバランスの良い定食です！ほうれん草で鉄分もしっかりとれていますね。",
-  nutritionTip: "夕食で野菜をもう 1 品足すと、1 日の野菜の目安に近づきます。",
+  totalCalories: 740,
+  totalProtein: 31,
+  totalCarbs: 92,
+  totalFat: 27,
+  overallScore: 82,
+  vegScore: 45,
+  praiseComment: "主食・主菜・汁物がそろった定食ですね！キャベツの千切りが添えてあって、野菜もちゃんととれています。",
+  nutritionTip: "揚げ物の日は、次の食事で野菜のおかずを 1 品足すとバランスが整います。",
   nutritionalAdvice: "",
   catalogMatches: [],
-};
+}
 
 /** 体重計の写真の読み取りの結果 (テスト用の値。/api/ai/analyze-weight-scale の応答の形) */
 const WEIGHT_SCALE_READING = { weight: DEMO_TODAY_WEIGHT_KG, bodyFat: 25.1, muscleMass: 43.8, confidence: 0.96 };
@@ -142,10 +142,12 @@ test.describe("使い方ガイドの画面", () => {
     await save(page, "menu-request");
 
     await banner.click();
-    const dialog = page.getByRole("dialog");
-    await expect(dialog.getByRole("heading", { name: "AIアシスタント" })).toBeVisible();
-    await dialog.getByRole("button", { name: /時短中心/ }).click();
-    await dialog.getByRole("button", { name: /ヘルシー/ }).click();
+    const modal = page.getByTestId("v4-generate-modal-normal");
+    await expect(modal.getByRole("heading", { name: "AIアシスタント" })).toBeVisible();
+    await modal.getByRole("button", { name: /時短中心/ }).click();
+    await modal.getByRole("button", { name: /ヘルシー/ }).click();
+    // 条件の選び方が見えるよう、モーダルの中を「条件を指定」まで送る
+    await modal.getByText("条件を指定").scrollIntoViewIfNeeded();
     await save(page, "menu-setting");
   });
 
@@ -162,7 +164,8 @@ test.describe("使い方ガイドの画面", () => {
     const weight = page.locator("#health-weight");
     await expect(weight).toBeVisible();
     await weight.fill(DEMO_TODAY_WEIGHT_KG.toFixed(1));
-    await weight.blur();
+    await page.getByPlaceholder("20.0").fill(WEIGHT_SCALE_READING.bodyFat.toFixed(1));
+    await page.getByPlaceholder("20.0").blur();
     await save(page, "weight");
   });
 
@@ -181,7 +184,8 @@ test.describe("使い方ガイドの画面", () => {
   test("trend: 体重の推移のグラフ", async ({ page }) => {
     await loginAs(page, "demo");
     await page.goto("/health/graphs");
-    await expect(page.locator("svg path").first()).toBeVisible();
+    await expect(page.getByText("体重の推移")).toBeVisible();
+    await expect(page.getByText("目標体重")).toBeVisible();
     await save(page, "trend");
   });
 
@@ -197,6 +201,8 @@ test.describe("使い方ガイドの画面", () => {
     await page.reload();
     await expect(page.getByRole("heading", { name: "トロフィールーム" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "新しいバッジを獲得！" })).toHaveCount(0);
+    // 一覧は未獲得のバッジが先に並ぶので、獲得したバッジ (はじめの一歩 など) が見えるところまで送る
+    await page.locator('[data-badge-code="first_bite"]').evaluate((card) => card.scrollIntoView({ block: "center" }));
     await save(page, "badge-collection");
 
     await page.locator('[data-badge-code="breakfast_champion"]').click();
