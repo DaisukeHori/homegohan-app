@@ -373,6 +373,7 @@ system.billing.subscription_status_changed - 個人の契約の status が変わ
 system.stripe.event_failed          - Stripe の Webhook のイベントの処理に失敗した (severity=warn。target_type='stripe_event'・target_id は NULL)
 system.billing.account_deletion_stripe_cancelled - 退会で Stripe の Checkout を閉じ・契約を即時解約し・顧客を匿名化した (退会の段階 billing / billing_recheck)
 system.billing.orphan_subscription_cancelled - 退会した利用者の顧客に残った契約を即時解約した (severity=warn。target_type='stripe_subscription'・target_id は NULL)
+system.billing.manual_grant_expired - 運営者が手動で付与した個人の契約が有効期限を過ぎて expired になった (DB 関数 billing_expire_manual_subscription_for_user。日次のプロシージャ billing_expire_manual_subscriptions が利用者ごとに呼ぶ。severity=info。target は利用者。billing/02 §6.4)
 system.stripe.chargeback            - チャージバック発生 (severity=critical)
 system.stripe.reconcile_discrepancy - reconcile 不一致検出
 system.plan.auto_expire             - プラン自動期限切れ
