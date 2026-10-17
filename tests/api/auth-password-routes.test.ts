@@ -99,6 +99,14 @@ vi.mock('@/lib/db-logger', () => ({
   generateRequestId: () => 'req_test',
 }));
 
+const { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } = await import('@homegohan/shared');
+/** #1864 GoTrue (bcrypt) が断る 72 バイトを 1 バイト超える新しいパスワード (英字・数字を含み、長さ以外の規則は満たす) */
+const TOO_LONG_ASCII = `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`;
+/** 日本語は 1 文字 3 バイトなので 26 文字 (74 バイト) で上限を超える */
+const TOO_LONG_JAPANESE = `a1${'あ'.repeat(24)}`;
+/** 72 バイトを超える現在のパスワード (上限より前に登録された既存の利用者を想定。現在のパスワードには上限を付けない) */
+const LONG_CURRENT_PASSWORD = `Current1${'y'.repeat(PASSWORD_MAX_BYTES)}`;
+
 const { POST: changePassword } = await import('@/app/api/auth/password/change/route');
 const { POST: resetPassword } = await import('@/app/api/auth/password/reset/route');
 
@@ -209,6 +217,32 @@ describe('POST /api/auth/password/change (§14.6)', () => {
     expect(mocks.userUpdateUser).not.toHaveBeenCalled();
     expect(mocks.checkRateLimit).not.toHaveBeenCalled();
     expect(mocks.createClient).not.toHaveBeenCalled();
+  });
+
+  it('#1864 change: 新しいパスワードが 72 バイトを超えれば 422 VALID_PASSWORD_WEAK (長すぎるの文言) で、回数制限・RPC・GoTrue を呼ばない', async () => {
+    for (const tooLong of [TOO_LONG_ASCII, TOO_LONG_JAPANESE]) {
+      const res = await changePassword(changeRequest({ new_password: tooLong }));
+      expect(res.status, tooLong).toBe(422);
+      expect(await bodyOf(res)).toEqual({ error: PASSWORD_TOO_LONG_MESSAGE, code: 'VALID_PASSWORD_WEAK' });
+      expect(res.headers.get('Cache-Control')).toBe('private, no-store');
+    }
+    expect(mocks.checkRateLimit).not.toHaveBeenCalled();
+    expect(mocks.adminRpc).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
+  });
+
+  it('#1864 change: 72 バイトちょうどの新しいパスワードは通り、GoTrue に渡す', async () => {
+    const exact = `a1${'x'.repeat(PASSWORD_MAX_BYTES - 2)}`;
+    const res = await changePassword(changeRequest({ new_password: exact }));
+    expect(res.status).toBe(200);
+    expect(gotrueCall().body).toEqual({ password: exact, current_password: CURRENT_PASSWORD });
+  });
+
+  it('#1864 change: 現在のパスワードが 72 バイトを超えていても断らず、そのまま RPC と GoTrue に渡す (既存の利用者を締め出さない)', async () => {
+    const res = await changePassword(changeRequest({ current_password: LONG_CURRENT_PASSWORD }));
+    expect(res.status).toBe(200);
+    expect(rpcArgs()).toEqual(expect.objectContaining({ p_current_password: LONG_CURRENT_PASSWORD, p_new_password: NEW_PASSWORD }));
+    expect(gotrueCall().body).toEqual({ password: NEW_PASSWORD, current_password: LONG_CURRENT_PASSWORD });
   });
 
   it('change: 新しいパスワードが現在のパスワードと同じなら 422 VALID_PASSWORD_HISTORY (現在のパスワードと違うものに)', async () => {
@@ -451,6 +485,17 @@ describe('POST /api/auth/password/reset (§14.7)', () => {
     expect(mocks.adminRpc).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(mocks.checkRateLimit).not.toHaveBeenCalled();
+  });
+
+  it('#1864 reset: 新しいパスワードが 72 バイトを超えれば 422 VALID_PASSWORD_WEAK (長すぎるの文言) で、回数制限・RPC・GoTrue を呼ばない', async () => {
+    for (const tooLong of [TOO_LONG_ASCII, TOO_LONG_JAPANESE]) {
+      const res = await resetPassword(resetRequest({ new_password: tooLong }));
+      expect(res.status, tooLong).toBe(422);
+      expect(await bodyOf(res)).toEqual({ error: PASSWORD_TOO_LONG_MESSAGE, code: 'VALID_PASSWORD_WEAK' });
+    }
+    expect(mocks.checkRateLimit).not.toHaveBeenCalled();
+    expect(mocks.adminRpc).not.toHaveBeenCalled();
+    expect(mocks.fetch).not.toHaveBeenCalled();
   });
 
   it('reset: amr に recovery も otp も無い (password) → 403 AUTH_RECOVERY_SESSION_REQUIRED で RPC も GoTrue も呼ばない', async () => {

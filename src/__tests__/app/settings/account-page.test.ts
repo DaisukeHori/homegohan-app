@@ -70,6 +70,7 @@ vi.mock('next/link', async () => {
 });
 
 import AccountSettingsPage from '@/app/(main)/settings/account/page';
+import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 const USER_EMAIL = 'user@example.com';
 const CURRENT_PASSWORD = 'CurrentPass2026x';
@@ -349,6 +350,8 @@ describe('#1187 パスワード変更: 入力の検証', () => {
     ['短い (8 文字未満)', 'Ab1', 'パスワードは8文字以上で入力してください'],
     ['数字だけ', '12345678', 'パスワードには英字を含めてください'],
     ['英字だけ', 'abcdefgh', 'パスワードには数字を含めてください'],
+    ['長すぎる (72 バイト超 #1864)', `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`, PASSWORD_TOO_LONG_MESSAGE],
+    ['日本語で長すぎる (26 文字 = 74 バイト #1864)', `a1${'あ'.repeat(24)}`, PASSWORD_TOO_LONG_MESSAGE],
   ])('弱いパスワード (%s) は、signup・再設定と同じ規則 (validatePassword) で止める', async (_label, weak, message) => {
     await renderPage();
     await submitPasswordForm(CURRENT_PASSWORD, weak);
@@ -449,6 +452,15 @@ describe('#1720 パスワード変更: 成功', () => {
     expect(mocks.signInWithPassword).not.toHaveBeenCalled();
     expect(mocks.updateUser).not.toHaveBeenCalled();
     expect(mocks.signOut).not.toHaveBeenCalled();
+  });
+
+  it('#1864 現在のパスワードが 72 バイトを超えていても止めず、そのまま API に送る (既存の利用者を締め出さない)', async () => {
+    const longCurrent = `Current1${'y'.repeat(PASSWORD_MAX_BYTES)}`;
+    await renderPage();
+    await submitPasswordForm(longCurrent, NEW_PASSWORD);
+
+    expect(mocks.fetch).toHaveBeenCalledTimes(1);
+    expect(sentBody()).toEqual({ current_password: longCurrent, new_password: NEW_PASSWORD });
   });
 
   it('この端末はログインしたまま: ユーザー別データの削除も、他タブへのサインアウト通知も、画面遷移もしない', async () => {
