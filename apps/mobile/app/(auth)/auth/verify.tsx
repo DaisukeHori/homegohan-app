@@ -3,6 +3,7 @@ import * as Linking from "expo-linking";
 import { Redirect, router } from "expo-router";
 import { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, View } from "react-native";
+import { EMAIL_CHANGE_AWAITING_OTHER_NOTICE } from "@homegohan/shared";
 import { Text } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
@@ -145,7 +146,7 @@ export default function VerifyPage() {
               >
                 <Ionicons name="mail-outline" size={20} color={colors.blue} />
                 <Text style={{ fontSize: 14, color: colors.text, flex: 1 }}>
-                  確認を受け付けました。メールアドレスの変更を終えるには、もう一方のメールアドレスに届いた確認メールのリンクも開いてください。
+                  {EMAIL_CHANGE_AWAITING_OTHER_NOTICE}
                 </Text>
               </View>
             ) : isDone && !hasError ? (

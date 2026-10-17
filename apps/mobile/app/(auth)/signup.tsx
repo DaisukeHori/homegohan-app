@@ -5,7 +5,7 @@ import * as WebBrowser from "expo-web-browser";
 import { useState } from "react";
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } from "react-native";
 import { Text, TextInput } from "../../src/components/ui/Text";
-import { SIGNUP_MINOR_NOTICE } from "@homegohan/shared";
+import { PASSWORD_HINT_TEXT, SIGNUP_MINOR_NOTICE, validatePassword } from "@homegohan/shared";
 import Svg, { Path } from "react-native-svg";
 
 import { colors, spacing, radius, shadows } from "../../src/theme";
@@ -59,21 +59,6 @@ export default function SignupScreen() {
     }
   }
 
-  // パスワード強度バリデーション
-  // 要件: 8文字以上 / 英字を含む / 数字を含む (Bug-33, #441)
-  function validatePassword(pwd: string): string | null {
-    if (pwd.length < 8) {
-      return "パスワードは8文字以上にしてください。";
-    }
-    if (!/[A-Za-z]/.test(pwd)) {
-      return "パスワードには英字を含めてください。";
-    }
-    if (!/[0-9]/.test(pwd)) {
-      return "パスワードには数字を含めてください。";
-    }
-    return null;
-  }
-
   async function onSubmit() {
     setErrorMessage(null);
     const trimmedEmail = email.trim().toLowerCase();
@@ -81,6 +66,8 @@ export default function SignupScreen() {
       Alert.alert("入力エラー", "メールアドレスとパスワードを入力してください。");
       return;
     }
+    // パスワードの強さ (8 文字以上・英字と数字を含む。Bug-33, #441) の規則と文言は、再設定・設定画面・Web と共通
+    // (packages/shared の password-policy.ts。以前はこの画面だけの写しで、文言が少し違っていた。#1574)
     const pwdError = validatePassword(password);
     if (pwdError) {
       Alert.alert("入力エラー", pwdError);
@@ -231,7 +218,7 @@ export default function SignupScreen() {
               </Pressable>
             </View>
             <Text style={{ fontSize: 11, color: colors.textMuted, marginTop: 4 }}>
-              8文字以上、英字と数字を含めてください
+              {PASSWORD_HINT_TEXT}
             </Text>
           </View>
 
