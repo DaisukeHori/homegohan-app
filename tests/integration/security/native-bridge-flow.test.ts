@@ -63,9 +63,10 @@ if (baseHost !== 'localhost' && baseHost !== '127.0.0.1') {
 
 /**
  * 旧方式 (トークンを URL で渡す GET) の受け付け期限。src/lib/auth/native-bridge-code.ts の LEGACY_SUNSET_AT と同じ値に保つ
- * (オーナーの確認待ちの仮置き。変えたらここも変える)。期限後は 426 になるのが正しい挙動。
+ * (変えたらここも変える。同じ値であることは src/__tests__/lib/auth/native-bridge-code.test.ts が確かめる)。
+ * 2026-10-18 00:00 JST に前倒しして過ぎているので、いまは常に 426 になるのが正しい挙動 (S-14 の旧方式の行はスキップされる)。
  */
-const LEGACY_SUNSET_AT = '2026-12-31T00:00:00+09:00';
+const LEGACY_SUNSET_AT = '2026-10-18T00:00:00+09:00';
 const legacyStillAllowed = Date.now() < Date.parse(LEGACY_SUNSET_AT);
 
 function client(key: string): SupabaseClient {

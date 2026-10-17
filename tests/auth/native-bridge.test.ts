@@ -117,7 +117,8 @@ function setSessionSucceeds(userId: string | null = USER_ID) {
 
 beforeEach(() => {
   vi.resetAllMocks();
-  // 期限 (2026-12-31) の前に固定する。Date だけを偽装し、タイマーは本物のまま
+  // 旧方式の期限 (LEGACY_SUNSET_AT = 2026-10-18 00:00 JST) の前に固定する。旧方式の枝 (受け付けた場合の動き) を
+  // 確かめ続けるため。Date だけを偽装し、タイマーは本物のまま。期限後の動きはケース 11 が確かめる
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(new Date('2026-10-07T00:00:00+09:00'));
 
@@ -784,15 +785,26 @@ describe('ケース11: 旧方式 (トークンを URL で渡す GET) を閉じ�
     await expectClosed(await GET(makeRequest(legacyParams)));
   });
 
-  it('期限 (2026-12-31 00:00 JST) の直前は動く', async () => {
-    vi.setSystemTime(new Date('2026-12-30T23:59:59+09:00'));
+  it('期限 (2026-10-18 00:00 JST) の直前は動く', async () => {
+    vi.setSystemTime(new Date('2026-10-17T23:59:59+09:00'));
     const res = await GET(makeRequest(legacyParams));
     expect(res.status).toBe(307);
     expect(mocks.setSession).toHaveBeenCalledTimes(1);
   });
 
   it('期限ちょうどから 426', async () => {
-    vi.setSystemTime(new Date('2026-12-31T00:00:00+09:00'));
+    vi.setSystemTime(new Date('2026-10-18T00:00:00+09:00'));
+    await expectClosed(await GET(makeRequest(legacyParams)));
+  });
+
+  it('前倒し前の期限 (2026-12-31) の前でも 426', async () => {
+    vi.setSystemTime(new Date('2026-12-30T23:59:59+09:00'));
+    await expectClosed(await GET(makeRequest(legacyParams)));
+  });
+
+  it.each(['', 'on', 'true'])('本番の今の時刻 (時計を偽装しない) では、NATIVE_BRIDGE_LEGACY_GET=%j でも 426', async (value) => {
+    vi.useRealTimers();
+    vi.stubEnv('NATIVE_BRIDGE_LEGACY_GET', value);
     await expectClosed(await GET(makeRequest(legacyParams)));
   });
 
