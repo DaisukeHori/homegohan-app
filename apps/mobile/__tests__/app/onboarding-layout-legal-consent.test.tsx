@@ -23,6 +23,14 @@ type AuthState = { session: { user: { id: string } } | null; isLoading: boolean 
 let mockAuth: AuthState;
 let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'clear';
 jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }));
+// #1861: 凍結の状態 (既定 clear。凍結のテストで変える)
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
+}));
+beforeEach(() => {
+  mockFrozenState = 'clear';
+});
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
 }));
@@ -78,5 +86,21 @@ describe('初期設定の layout — 規約の同意の状態 (#1442 T-OB1)', ()
     const { queryByTestId } = render(<OnboardingLayout />);
     expect(queryByTestId('onboarding-stack')).toBeNull();
     expect(queryByTestId('redirect-/login')).toBeNull();
+  });
+});
+
+describe('初期設定の layout — アカウントの凍結の状態 (#1861)', () => {
+  it.each(['loading', 'frozen'] as const)('session あり: 凍結の状態が %s なら Stack を描かない', (state) => {
+    mockFrozenState = state;
+    const { queryByTestId } = render(<OnboardingLayout />);
+
+    expect(queryByTestId('onboarding-stack')).toBeNull();
+  });
+
+  it.each(['clear', 'unknown'] as const)('session あり: 凍結の状態が %s なら Stack を描く', (state) => {
+    mockFrozenState = state;
+    const { getByTestId } = render(<OnboardingLayout />);
+
+    expect(getByTestId('onboarding-stack')).toBeTruthy();
   });
 });

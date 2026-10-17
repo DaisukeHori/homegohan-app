@@ -35,6 +35,14 @@ let mockAuth: AuthState;
 jest.mock('../../src/providers/AuthProvider', () => ({ useAuth: () => mockAuth }));
 
 let mockLegalState: 'loading' | 'clear' | 'required' | 'unknown' = 'clear';
+// #1861: 凍結の状態 (既定 clear。凍結のテストで変える)
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
+}));
+beforeEach(() => {
+  mockFrozenState = 'clear';
+});
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => ({ state: mockLegalState, status: null, refresh: jest.fn() }),
 }));
@@ -365,5 +373,36 @@ describe('LegalConsentGate — 畳み直し (T-G7 / T-G8)', () => {
     view.rerender(<LegalConsentGate />);
 
     expect(mockReset).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('LegalConsentGate — 凍結中は畳まない (#1861。凍結が先)', () => {
+  it('required でも、凍結中 (frozen) なら reset も replace もしない。凍結が解けたら (clear) 同意画面へ畳む', () => {
+    mockLegalState = 'required';
+    mockFrozenState = 'frozen';
+    mockPathname = '/frozen';
+    setFront('frozen');
+    const view = render(<LegalConsentGate />);
+
+    expect(mockReset).not.toHaveBeenCalled();
+    expect(mockReplace).not.toHaveBeenCalled();
+
+    mockFrozenState = 'clear';
+    view.rerender(<LegalConsentGate />);
+
+    expect(mockReset).toHaveBeenCalledTimes(1);
+    expect(mockReset).toHaveBeenCalledWith(CONSENT_RESET);
+  });
+
+  it('前面が同意画面で clear でも、凍結中なら閉じない (凍結のゲートが凍結の画面へ畳む)', () => {
+    mockLegalState = 'clear';
+    mockFrozenState = 'frozen';
+    setFront('legal-consent');
+
+    render(<LegalConsentGate />);
+
+    expect(mockReplace).not.toHaveBeenCalled();
+    expect(mockBack).not.toHaveBeenCalled();
+    expect(mockRefreshProfile).not.toHaveBeenCalled();
   });
 });

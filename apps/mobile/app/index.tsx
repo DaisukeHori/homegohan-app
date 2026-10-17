@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, View } from "react-native";
 import { Text } from "../src/components/ui/Text";
 
 import { colors, spacing, shadows, radius } from "../src/theme";
+import { useAccountFrozen } from "../src/providers/AccountFrozenProvider";
 import { useAuth } from "../src/providers/AuthProvider";
 import { useLegalConsent } from "../src/providers/LegalConsentProvider";
 import { useProfile } from "../src/providers/ProfileProvider";
@@ -12,11 +13,18 @@ export default function Index() {
   const { session, isLoading: authLoading } = useAuth();
   const { profile, isLoading: profileLoading } = useProfile();
   const { state: legalConsentState } = useLegalConsent();
+  const { state: frozenState } = useAccountFrozen();
 
   // #1442: 同意の状態が分かるまで振り分けない。required の間もスピナーのまま (LegalConsentGate が同意画面 1 つに畳む)。unknown は待たない
+  // #1861: 凍結の状態も同じ。分かるまで・凍結中はスピナーのまま (AccountFrozenGate が凍結の画面 1 つに畳む。ホームへ振り分けない)
   if (
     authLoading ||
-    (session && (profileLoading || legalConsentState === "loading" || legalConsentState === "required"))
+    (session &&
+      (profileLoading ||
+        legalConsentState === "loading" ||
+        legalConsentState === "required" ||
+        frozenState === "loading" ||
+        frozenState === "frozen"))
   ) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>

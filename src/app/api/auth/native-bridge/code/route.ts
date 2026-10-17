@@ -10,7 +10,11 @@
 //   - requireUser() / createClient().auth.getUser() は使わない。引数なしの getUser() は Authorization ヘッダより
 //     Cookie のセッションを優先するため、WebView と共有された古い Cookie が混ざるとアカウント切り替え直後に
 //     誤った 401 になり得る。ヘッダの JWT を明示して getUser(jwt) で検証する。
-//   - 凍結中のアカウントには発行しない (middleware も /api/* で凍結を弾くが、ここでも確認する)。
+//   - 凍結中のアカウントにも発行する (#1861)。モバイルの凍結の画面 (Web の /frozen を WebView で開く) を本人のセッションで開くため
+//     (発行しないと WebView がログイン画面になり、凍結中でも許している退会・書き出し (#1445) にたどり着けない)。
+//     コードで WebView に移るのは端末がすでに持っている本人のセッションだけで、凍結中の Web のセッションは middleware が
+//     画面を /frozen へ差し戻し、/api を FROZEN_ALLOWED_API_PATHS 以外 403 で止める (Web でログインしたときと同じ)。
+//     middleware の凍結の分岐もこのパスを止めない (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)。
 //   - アクセストークンの有効期限までの残りが短いときは発行しない。コードの引き換えで期限切れだと
 //     setSession がリフレッシュトークンをローテーションし、ネイティブ側の保持分が使用済みになってしまう。
 //
@@ -19,7 +23,6 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { getSupabaseAdmin } from '@/lib/supabase/server'
 import { createLogger, generateRequestId } from '@/lib/db-logger'
-import { isAccountFrozen } from '@/lib/auth/frozen'
 import {
   MAX_REFRESH_TOKEN_LENGTH,
   MIN_ACCESS_TOKEN_REMAINING_SECONDS,
@@ -100,24 +103,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // 5. 凍結中のアカウントには発行しない。確認できないときは安全側 (発行しない) に倒す
-    const { data: profile, error: profileError } = await admin
-      .from('user_profiles')
-      .select('frozen_at, unban_at')
-      .eq('id', user.id)
-      .maybeSingle()
-    if (profileError) {
-      // DB の生のエラーオブジェクトはログに渡さず、SQLSTATE だけを残す
-      logger
-        .withUser(user.id)
-        .error('user_profiles lookup failed', new Error('user_profiles lookup failed'), { pg_code: profileError.code })
-      return unavailable()
-    }
-    if (isAccountFrozen({ frozenAt: profile?.frozen_at ?? null, unbanAt: profile?.unban_at ?? null })) {
-      return errorResponse(403, 'AUTH_ACCOUNT_FROZEN', 'アカウントが凍結されています')
-    }
-
-    // 6. 発行 (DB には sha256 だけを保存する)
+    // 5. 発行 (凍結は見ない。#1861。理由は冒頭) (DB には sha256 だけを保存する)
     let code: string
     try {
       code = await issueNativeBridgeCode({ userId: user.id, accessToken: jwt, refreshToken })

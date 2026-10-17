@@ -75,6 +75,14 @@ let mockLegalConsent: { state: 'loading' | 'clear' | 'required' | 'unknown'; sta
   refresh: async () => {},
 };
 
+// #1861: 凍結の状態 (既定 clear。凍結のテストで変える)
+let mockFrozenState: 'loading' | 'clear' | 'frozen' | 'unknown' = 'clear';
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  useAccountFrozen: () => ({ state: mockFrozenState, refresh: jest.fn() }),
+}));
+beforeEach(() => {
+  mockFrozenState = 'clear';
+});
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   useLegalConsent: () => mockLegalConsent,
 }));
@@ -323,5 +331,28 @@ describe('TabsLayout: 規約の同意の状態 (#1442)', () => {
     view.rerender(<TabsLayout />);
     expect(view.queryByTestId('tabs-container')).toBeNull();
     expect(view.queryByTestId('ai-floating-fab')).toBeNull();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. アカウントの凍結の状態 (#1861)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('TabsLayout: アカウントの凍結の状態 (#1861)', () => {
+  it.each(['loading', 'frozen'] as const)(
+    '凍結の状態が %s ならスピナーで、Tabs も AI の FAB も描かない (AccountFrozenGate が凍結の画面へ畳む)',
+    (state) => {
+      mockFrozenState = state;
+      const { queryByTestId } = render(<TabsLayout />);
+      expect(queryByTestId('tabs-container')).toBeNull();
+      expect(queryByTestId('ai-floating-fab')).toBeNull();
+    },
+  );
+
+  it.each(['clear', 'unknown'] as const)('凍結の状態が %s なら Tabs と FAB を描く', (state) => {
+    mockFrozenState = state;
+    const { getByTestId } = render(<TabsLayout />);
+    expect(getByTestId('tabs-container')).toBeTruthy();
+    expect(getByTestId('ai-floating-fab')).toBeTruthy();
   });
 });
