@@ -342,7 +342,7 @@ describe('billing/02 段 A: ロックの順', () => {
     // 書き込みは対象の利用者 1 人分だけ: 関数ごとの UPDATE の全部を文面で並べる (これ以外の UPDATE は無い)。どれも WHERE で対象を名指しする
     // (契約の行 = 鍵の後で読んだ行の id・family_groups = p_user_id が代表者のグループ・user_profiles = p_user_id の行)。
     // plan_key_cached の式の SELECT も p_user_id の live な行だけから選ぶ (写像 (9) の 10. と同じ式)。
-    // WHERE を外すと全員の行が書き換わる。振る舞いは結合テスト 41 (ほかの利用者の断言)・39 (非 live な後の行) が見る。ここは文面の崩れを先に捕まえる
+    // WHERE が対象以外の行にも当たると全員の行が書き換わる。振る舞いは結合テスト 41 (ほかの利用者の断言)・39 (非 live な後の行) が見る。ここは文面の崩れを先に捕まえる
     const PLAN_KEY_CACHED_UPDATE =
       "UPDATE public.user_profiles AS p SET plan_key_cached = ( SELECT s.plan_key FROM public.personal_subscriptions AS s WHERE s.user_id = p_user_id AND s.status IN ('trialing', 'active', 'paused', 'past_due', 'grace') ORDER BY s.created_at DESC, s.id LIMIT 1) WHERE p.id = p_user_id";
     const UPDATES_BY_FUNCTION: Record<(typeof FUNCTIONS)[number]['name'], string[]> = {

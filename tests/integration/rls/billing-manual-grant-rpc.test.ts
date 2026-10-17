@@ -422,10 +422,12 @@ interface OtherUsers {
 
 /**
  * ほかの利用者が、用意したときのまま (plan_key_cached・契約の行) であることを見る。
- * 外す変異と、この断言で見分けるもの:
- *   user_profiles の UPDATE の WHERE p.id = p_user_id (付与・同期) → 全員の plan_key_cached が対象と同じ値に書き換わる
+ * UPDATE の WHERE が対象の利用者以外の行にも当たる (条件の誤り・常に真の条件) と、この断言で見分けるもの:
+ *   user_profiles の UPDATE (付与・同期。WHERE p.id = p_user_id) → 全員の plan_key_cached が対象と同じ値に書き換わる
  *     (付与では idle が NULL でなくなり、取り消し・期限切れの同期では subscriber が OTHER_USER_PLAN でなくなる)
- *   契約の行の UPDATE の WHERE id = v_row.id (取り消し・1 人分の期限切れ) → 全員の行が cancelled / expired になる (subscriber の S 行)
+ *   契約の行の UPDATE (取り消し・1 人分の期限切れ。WHERE id = v_row.id) → 全員の行が cancelled / expired になる (subscriber の S 行)
+ * (WHERE そのものを消した UPDATE は、ローカルの Supabase では PostgREST の接続で 21000 (UPDATE requires a WHERE clause) になり、
+ *  関数の呼び出しが失敗する。全員に当たる WHERE はそこを通るので、この断言で見る)
  */
 async function expectOtherUsersUntouched(others: OtherUsers, label: string): Promise<void> {
   expect(await planKeyCached(others.idle.id), `${label}: idle の plan_key_cached`).toBeNull();
