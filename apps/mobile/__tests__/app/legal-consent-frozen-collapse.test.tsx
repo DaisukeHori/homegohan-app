@@ -63,7 +63,11 @@ jest.mock('../../src/components/web/WebViewScreen', () => {
 import LegalConsentScreen from '../../app/legal-consent';
 import { AccountFrozenGate } from '../../src/components/AccountFrozenGate';
 import { FROZEN_SCREEN_ROUTE_NAME } from '../../src/lib/account-frozen';
-import { LEGAL_CONSENT_SCREEN_PATH, LEGAL_CONSENT_SCREEN_ROUTE_NAME } from '../../src/lib/legal-consent';
+import {
+  LEGAL_CONSENT_SCREEN_PATH,
+  LEGAL_CONSENT_SCREEN_ROUTE_NAME,
+  findNavigatorOwningRoute,
+} from '../../src/lib/legal-consent';
 
 /** 凍結の画面の path (app/frozen.tsx) */
 const FROZEN_SCREEN_PATH = `/${FROZEN_SCREEN_ROUTE_NAME}`;
@@ -95,9 +99,14 @@ function FrozenScreen() {
   return <Text testID="frozen-screen">frozen</Text>;
 }
 
-/** 前面の画面の route の名前の並び (ルートの Stack の routes) */
-function rootRouteNames(view: RenderRouterResult): string[] {
-  return (view.getRouterState()?.routes ?? []).map((route) => route.name);
+/**
+ * ルートの Stack (app/_layout.tsx の Stack。凍結の画面の route の持ち主) の routes の名前の並び。
+ * renderRouter の state の一番上は expo-router の __root の route で、layout の Stack はその下にある
+ */
+function rootStackRouteNames(view: RenderRouterResult): string[] {
+  const owner = findNavigatorOwningRoute(view.getRouterState(), FROZEN_SCREEN_ROUTE_NAME);
+  if (owner === null) throw new Error('ルートの Stack の state が見つからない');
+  return owner.routes.map((route) => route.name);
 }
 
 async function renderAtLegalConsent(): Promise<RenderRouterResult> {
@@ -112,6 +121,7 @@ async function renderAtLegalConsent(): Promise<RenderRouterResult> {
   );
   expect(view.getPathname()).toBe(LEGAL_CONSENT_SCREEN_PATH);
   expect(view.getByTestId('webview-legal-consent')).toBeTruthy();
+  expect(rootStackRouteNames(view)).toContain(LEGAL_CONSENT_SCREEN_ROUTE_NAME);
   return view;
 }
 
@@ -135,6 +145,7 @@ describe('同意画面の止めと凍結のゲート — 実物の expo-router 5
     });
 
     expect(view.getPathname()).toBe(LEGAL_CONSENT_SCREEN_PATH);
+    expect(rootStackRouteNames(view)).toContain(LEGAL_CONSENT_SCREEN_ROUTE_NAME);
     expect(view.queryByTestId('entry-screen')).toBeNull();
   });
 
@@ -146,7 +157,7 @@ describe('同意画面の止めと凍結のゲート — 実物の expo-router 5
     });
 
     expect(view.getPathname()).toBe(FROZEN_SCREEN_PATH);
-    expect(rootRouteNames(view)).toEqual([FROZEN_SCREEN_ROUTE_NAME]);
+    expect(rootStackRouteNames(view)).toEqual([FROZEN_SCREEN_ROUTE_NAME]);
     expect(view.getByTestId('frozen-screen')).toBeTruthy();
     expect(view.queryByTestId('webview-legal-consent')).toBeNull();
   });
@@ -164,7 +175,8 @@ describe('同意画面の止めと凍結のゲート — 実物の expo-router 5
       });
 
       expect(view.getPathname()).toBe(LEGAL_CONSENT_SCREEN_PATH);
-      expect(rootRouteNames(view)).not.toContain(FROZEN_SCREEN_ROUTE_NAME);
+      expect(rootStackRouteNames(view)).toContain(LEGAL_CONSENT_SCREEN_ROUTE_NAME);
+      expect(rootStackRouteNames(view)).not.toContain(FROZEN_SCREEN_ROUTE_NAME);
     },
   );
 });
