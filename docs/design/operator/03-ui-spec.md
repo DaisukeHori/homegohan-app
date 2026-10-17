@@ -63,6 +63,8 @@
 | └ システム設定 | super_admin |
 | └ バックアップ・DR (`/super-admin/backups`。取得の状態と DR 訓練の記録。`cross/17-backup-automation.md` §7.4。#1129・#1191) | super_admin |
 
+`/admin/moderation` と `/admin/moderation/{type}/{id}` の画面の仕様は、本書に節が無い。隠したコンテンツを戻す欄 (「非表示の解除」のカード) と一覧の「非表示中」のバッジは `operator/13-hidden-content-restore.md` §9 が正本。
+
 ---
 
 ## 4. `/admin` — 管理者ダッシュボード
