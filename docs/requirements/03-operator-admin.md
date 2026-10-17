@@ -2903,10 +2903,16 @@ UI 上の必須表示箇所:
 - DKIM: Resend ダッシュボードから取得した key を CNAME 登録
 - DMARC: `v=DMARC1; p=quarantine; rua=mailto:dmarc@homegohan.app`
 
-**Bounces / Complaints**:
-- Resend Webhook 受信 (`/api/webhooks/resend`、新規) → `email_delivery_logs` テーブル記録
-- Hard bounce 3 回でブラックリスト追加 (`email_blacklist`)
-- ブラックリスト中ユーザーへの送信は内部スキップ + Slack alert
+**Bounces / Complaints** (#1184 で実装。記述は実装に合わせた: #1577 の 5):
+- Resend Webhook 受信 (`POST /api/webhooks/resend`)。署名 (`svix-id` / `svix-timestamp` / `svix-signature`) を `RESEND_WEBHOOK_SECRET` で確かめる (`src/app/api/webhooks/resend/route.ts`)
+- `email.bounced` のうち `bounce.type` が `Permanent` (ハードバウンス) は、**1 回で**宛先停止リスト (`email_blacklist`、理由 `bounce`) に入れる。`Temporary` などのソフトバウンスは何もしない (`src/lib/emails/resend-webhook-event.ts` の `classifyResendEvent`)
+- `email.complained` は宛先停止リストに入れる (理由 `complaint`)。それ以外の種類 (`email.sent` / `delivered` / `opened` / `clicked` など) は何もせず 200 を返す
+- 宛先は小文字にそろえて入れ、既に載っている宛先はそのまま (最初の理由と時刻が残る。冪等。`src/lib/emails/suppression.ts` の `addToEmailBlacklist`)。外すのは運営が SQL で行う (`ENV_SETUP.md` の #1184 の節)
+- 停止リストに載っている宛先へは送らない (`sendEmail` の登録時と、worker の送信の直前の両方。`src/lib/emails/send.ts`・`src/lib/emails/outbox.ts`)。送らなかった記録は `app_logs` の warn (`function_name = 'email'`) と、送信待ち `email_outbox` の dead の行 (`last_error_code = 'suppressed'`) に残る。運用メールの「届けられなかったメール」の通知の数には入れない (`docs/design/operator/10-logs-and-mail-retry.md` §8)
+- `email_delivery_logs` には書かない (送信の記録は `email_outbox`。#1193 以降、`email_delivery_logs` は残すが書かない: `docs/design/operator/01-data-model.md` §3.19)
+- **実装しない (将来の検討)**: 「Hard bounce 3 回で停止」の回数の数え上げ、停止した宛先への送信を Slack に知らせること、`delivered` / `opened` / `clicked` で配信の状態を記録・更新すること
+
+下の SQL は要件の時点の素描。表の正本は `docs/design/operator/01-data-model.md` §3.19 (`email_blacklist.reason` は `bounce` / `complaint` / `manual`)。
 
 ```sql
 CREATE TABLE email_delivery_logs (
