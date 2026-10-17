@@ -160,6 +160,8 @@
 - 理由 (必須・500 文字まで)・本人確認の方法 (選択)・「本人確認を行った」のチェックがそろうまで [解除する] を押せない
 - 押すと確認ダイアログ → `POST /api/super-admin/admins/{id}/mfa/reset` → 消した数 (認証アプリ・バックアップコード) か、失敗の文を出す。対象はすべての端末でログアウトされる
 
+**手動のプラン付与** (`src/components/admin/ManualPlanGrantSection.tsx`。billing/02 §10): 出す条件 = 実行者が super_admin で対象が自分でない。契約なし → プラン・有効期限 (任意)・理由 → 確認ダイアログ → `POST /api/super-admin/users/{id}/manual-plan`。手動付与の契約あり → 理由 → 確認 → `DELETE`。Stripe の契約あり → 案内だけ。履歴 (付与 / 取り消し / 期限切れ) を直近 10 件
+
 ---
 
 ## 7. `/admin/organizations` — 組織一覧
