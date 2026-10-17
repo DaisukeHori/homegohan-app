@@ -15,6 +15,7 @@ import { canViewUserEmail } from '@/lib/admin/user-emails';
 import { normalizeProfileName } from '@/lib/profile-name';
 import { isMfaRequiredRoleSet } from '@/lib/auth/mfa/policy';
 import { OperatorMfaResetSection } from '@/components/admin/OperatorMfaResetSection';
+import { ManualPlanGrantSection } from '@/components/admin/ManualPlanGrantSection';
 import { z } from 'zod';
 import { LoginHistoryResponseSchema, type LoginHistoryEntry } from '@/lib/auth/sessions/schemas';
 import { LOGIN_HISTORY_PAGE_SIZE } from '@/lib/auth/sessions/constants';
@@ -191,6 +192,8 @@ export default async function AdminUserDetailPage(props: PageProps) {
   // 二段階認証の解除 (段 C): 実行者が super_admin で、対象が MFA_REQUIRED_ROLES のどれかを持つときだけ出す
   // (docs/design/cross/12-operator-mfa.md §15・§15.3。API は対象のロールを見ないが、画面は必須ロールの運営にだけ出す)
   const canResetMfa = isSuperAdmin && Array.isArray(profile.roles) && isMfaRequiredRoleSet(profile.roles);
+  // 手動のプラン付与 (billing/02 §10): 実行者が super_admin で、対象が自分でないときだけ出す (自分への付与は API も 403 OP_SELF_MODIFY)
+  const canGrantManualPlan = isSuperAdmin && actor.id !== profile.id;
   // ログイン履歴 (段 D §17): admin / super_admin のときだけ API を呼ぶ (support は API も 403 なので呼ばず、節も出さない)
   const loginHistory = actor.roles.some((role) => LOGIN_HISTORY_ROLES.has(role)) ? await loadLoginHistory(profile.id) : null;
 
@@ -315,6 +318,7 @@ export default async function AdminUserDetailPage(props: PageProps) {
       </div>
 
       {canResetMfa && <OperatorMfaResetSection userId={profile.id} />}
+      {canGrantManualPlan && <ManualPlanGrantSection userId={profile.id} />}
 
       {/* サブスクリプション情報 */}
       {activeSubscription && (

@@ -8,13 +8,13 @@
 |------|-----|
 | Project ID | `flmeolcfutuwwbjmzyoz` |
 | URL | `https://flmeolcfutuwwbjmzyoz.supabase.co` |
-| ANON_KEY | `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU` |
+| ANON_KEY | `<SUPABASE_ANON_KEY>` (値は Supabase のダッシュボードの API の設定か、環境変数 `NEXT_PUBLIC_SUPABASE_ANON_KEY` から取る。公開用のキーだが、リポジトリには直書きしない) |
 
 ### Functions呼び出し例
 
 ```bash
 curl -X POST "https://flmeolcfutuwwbjmzyoz.supabase.co/functions/v1/<function-name>" \
-  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZsbWVvbGNmdXR1d3diam16eW96Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM5NzAxODYsImV4cCI6MjA3OTU0NjE4Nn0.VVxUxKexNeN6dUiAMDkCNlnIoXa-F5rfBqHPBDcwdnU" \
+  -H "Authorization: Bearer <SUPABASE_ANON_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"key": "value"}'
 ```
