@@ -2,9 +2,10 @@
  * サービスの画像 (OGP / Twitter Card の画像・ホーム画面のアイコン) を PNG で作る (#1845)。
  *
  * 以前は src/app/layout.tsx が /og-image.png・/apple-touch-icon.png を、public/manifest.json が /icon-192.png・/icon-512.png を
- * 指していたが、public/ には SVG (og-image.svg・apple-touch-icon.svg・icon-192.svg・icon-512.svg) しか無く、本番ではどれも 404 だった。
+ * 指していたが、public/ には SVG (OGP の画像・apple-touch-icon.svg・icon-192.svg・icon-512.svg) しか無く、本番ではどれも 404 だった。
  * OGP / Twitter Card の画像と、ホーム画面に追加したときのアイコンには SVG を使えない。
  * そこで、SVG と同じ見た目を next/og の ImageResponse で描き、PNG で返す。
+ * OGP の画像の SVG は、どこからも参照されなくなったので #1853 で public/ から消した。OGP の画像の見た目の正本は、このファイルの OgCard。
  *
  * - OGP / Twitter Card の画像: src/app/opengraph-image.tsx・twitter-image.tsx (Next の file convention。1200×630)
  * - iOS のホーム画面のアイコン: src/app/apple-touch-icon.png/route.ts (180×180。public/apple-touch-icon.svg の見た目)
@@ -19,7 +20,7 @@ import { SITE_NAME, SITE_TAGLINE } from '@/lib/site-config';
 import { loadOgFont, OG_FONT_FAMILY, type OgFontWeight } from '@/lib/og-font';
 
 /**
- * ブランドの色。public/og-image.svg・public/icon.svg と同じ値。
+ * ブランドの色。public/icon.svg と同じ値 (#1853 で消した OGP の画像の SVG とも同じ値だった)。
  * accent は public/manifest.json の theme_color と layout の viewport.themeColor、background は manifest の background_color と同じ
  * (tests/og-image-1845.test.tsx が突き合わせる)。成功の緑は状態色のトークン (STATUS_COLOR_TOKENS.success) から取る。
  */
@@ -42,7 +43,7 @@ export const OG_IMAGE_SIZE = { width: 1200, height: 630 } as const;
 /** OGP / Twitter Card の画像の代替テキスト (layout の以前の alt と同じ文字) */
 export const OG_IMAGE_ALT = `${SITE_NAME} - ${SITE_TAGLINE}`;
 
-/** OGP の画像に並べる機能の札 (public/og-image.svg と同じ 3 つ。絵文字は外部から画像を取りに行くので使わない) */
+/** OGP の画像に並べる機能の札 (#1853 で消した OGP の画像の SVG と同じ 3 つ。絵文字は外部から画像を取りに行くので使わない) */
 export const OG_FEATURES = [
   { label: '写真で記録', color: BRAND_COLORS.accent },
   { label: '献立提案', color: BRAND_COLORS.green },
@@ -56,7 +57,7 @@ export const APPLE_TOUCH_ICON_SIZE = 180;
 export const MANIFEST_ICON_SIZES = { small: 192, large: 512 } as const;
 
 /**
- * OGP の画像の中の配置 (px)。public/og-image.svg の座標に合わせた値。
+ * OGP の画像の中の配置 (px)。#1853 で消した OGP の画像の SVG の座標に合わせた値。
  * 左上と右下の飾りの円・左のロゴ・右の文字の列 (サービス名・説明・機能の札)。
  */
 const OG_LAYOUT = {
@@ -74,9 +75,9 @@ const OG_LAYOUT = {
   featureFontSize: 20,
 } as const;
 
-/** 飾りの円の不透明度 (public/og-image.svg の opacity="0.1") */
+/** 飾りの円の不透明度 (#1853 で消した OGP の画像の SVG の opacity="0.1") */
 const DECOR_OPACITY = 0.1;
-/** 機能の札の下地の不透明度 (public/og-image.svg の opacity="0.15") */
+/** 機能の札の下地の不透明度 (#1853 で消した OGP の画像の SVG の opacity="0.15") */
 const FEATURE_BG_OPACITY = 0.15;
 /** 16 進の 2 桁の最大値 (不透明度を #RRGGBBAA の AA に直すのに使う) */
 const HEX_BYTE_MAX = 255;
@@ -153,7 +154,7 @@ function DecorCircle({ left, top, size }: { left: number; top: number; size: num
   );
 }
 
-/** OGP の画像の中身 (public/og-image.svg の見た目。ドメインの文字は入れない) */
+/** OGP の画像の中身 (#1853 で消した OGP の画像の SVG の見た目。ドメインの文字は入れない) */
 function OgCard() {
   return (
     <div
