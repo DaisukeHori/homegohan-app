@@ -8,6 +8,8 @@
  *   B. 凍結中の利用者が書き出しを呼ぶと 200 で、本人のデータの JSON が返る
  *   C. 凍結中の利用者が退会を呼ぶと 200 { success: true } で、アカウントが消える (prepare_account_deletion などの後始末も通る)
  *   D. 一時 BAN の継続中 (unban_at が未来) の利用者も退会できる
+ *   E. 凍結中の利用者も、お問い合わせを送れる (POST /api/contact は 200 で、本人の user_id の行が残る)。同じパスの GET (履歴) は 403 のまま
+ *      (#1871。middleware の凍結の分岐の isFrozenContactSubmitRequest。C の退会より前に流す)
  *
  * 実行 (ローカル Supabase と Next の dev サーバが必要):
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -123,6 +125,31 @@ describe('#1445 凍結中の利用者: ほかの API は止めたまま、退会
     // 本人のプロフィール (凍結の記録を含む) が出る
     expect(res.body.data?.user_profiles?.map((row) => row.id)).toEqual([permanent.id]);
     expect(res.body.data?.user_profiles?.[0]?.frozen_at).not.toBeNull();
+  }, 60_000);
+
+  it('E (#1871): お問い合わせの送信 (POST /api/contact) は 200 で、本人の user_id の行が残る。同じパスの GET (履歴) は 403 AUTH_ACCOUNT_FROZEN のまま', async () => {
+    const subject = `i1871-${RUN}`;
+    const res = await apiCall<{ success?: boolean; inquiryId?: string }>('POST', '/api/contact', permanent.jwt, {
+      inquiryType: 'support',
+      email: `i1871-${RUN}@homegohan.test`,
+      subject,
+      message: '凍結中のお問い合わせ (結合テスト)',
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.success).toBe(true);
+    expect(typeof res.body.inquiryId).toBe('string');
+
+    const { data: inquiry, error } = await srAdmin
+      .from('inquiries')
+      .select('user_id, subject, status')
+      .eq('id', res.body.inquiryId!)
+      .single();
+    expect(error).toBeNull();
+    expect(inquiry).toEqual({ user_id: permanent.id, subject, status: 'pending' });
+
+    const history = await apiCall<{ error?: { code?: string } }>('GET', '/api/contact', permanent.jwt);
+    expect(history.status).toBe(403);
+    expect(history.body.error?.code).toBe('AUTH_ACCOUNT_FROZEN');
   }, 60_000);
 
   it('C: 退会 (POST /api/account/delete) は 200 { success: true } で、アカウントが消える', async () => {

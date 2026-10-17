@@ -804,15 +804,21 @@ $$);
      billing/01 §9.8) は止めない
      (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS。完全一致。一覧は lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)。
      ほかに凍結中でも止めないのは、通知のトークンの claim (POST /api/push-tokens/claim。#1636) と、
-     ネイティブ認証ブリッジのコードの発行 (POST /api/auth/native-bridge/code。#1861) の 2 本だけ。
+     ネイティブ認証ブリッジのコードの発行 (POST /api/auth/native-bridge/code。#1861) と、
+     お問い合わせの送信 (POST /api/contact。#1871) の 3 本だけ。
      claim は利用者の操作ではなく端末の後片付け (同じ端末の前の利用者の行を外す) のため。退会・書き出しの一覧には入れず、src/lib/push-tokens.ts の
      isPushTokenClaimApiPath で別に判定する (全 route で広がらないことは lib/supabase/__tests__/middleware-push-token-claim-exemption.test.ts)。
      ブリッジのコードは、モバイルの凍結の画面 (Web の /frozen を WebView で開く。apps/mobile/app/frozen.tsx) を本人のセッションで開くため
      (止めると WebView がログイン画面になり、凍結中でも許している退会・書き出しにたどり着けない)。コードで WebView に移るのは端末が
      すでに持っている本人のセッションだけで、WebView の中では middleware が画面を /frozen へ差し戻し、/api を上の一覧以外 403 で止める
      (Web でログインしたときと同じ)。これも退会・書き出しの一覧には入れず、src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath で別に判定する
-     (route も凍結を見ない。一覧と 3 つの判定で通るパスは lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)。
-     規約の同意ゲート (13a) も、退会・書き出し・有料プランの解約の 3 本・claim を止めない (packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS に exact の行がある。
+     (route も凍結を見ない。一覧と 4 つの判定で通るパスは lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts が固定する)。
+     お問い合わせの送信は、凍結の画面 (/frozen) の「サポートに問い合わせる」から /contact (画面は凍結中も開ける) へ進んだ本人が
+     送れるようにするため (#1871 のオーナーの選択 (2026-10-18): 「凍結中も送れるようにする。/api/contact を凍結中も通す。今の回数の制限は、そのまま効かせる。」)。
+     サービスから離れる操作ではないので退会・書き出しの一覧には入れず、src/lib/auth/frozen.ts の isFrozenContactSubmitRequest で
+     メソッドまで見て別に判定する (POST だけ。同じパスの GET = 本人のお問い合わせの履歴は凍結中は 403 のまま)。
+     回数の制限 (src/lib/rate-limit.ts の contact カテゴリ。クライアント IP 単位) は route が利用者の状態を見ずにかけるので、凍結中もそのまま効く。
+     規約の同意ゲート (13a) も、退会・書き出し・有料プランの解約の 3 本・claim・お問い合わせ (/api/contact) を止めない (packages/shared の LEGAL_CONSENT_EXEMPT_API_PATHS に exact の行がある。
      ブリッジのコードは /api/auth の prefix の行 (auth_flow) で止めない。
      凍結中は同意の画面に進めないため。凍結の判定で通るパスがすべて同意の許可リストにあることは
      lib/supabase/__tests__/middleware-legal-consent-api.test.ts が全 route で確かめる)
