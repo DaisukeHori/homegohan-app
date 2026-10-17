@@ -15,6 +15,11 @@ module.exports = {
   // 1 件のテストの時間切れ。負荷の高い機械で Jest の既定の 5 秒を超えて落ちるため延ばす (jest.timeouts.js)
   testTimeout: resolveMobileJestTimeouts(process.env).testTimeout,
   modulePaths: [mobileNodeModules, worktreeNodeModules],
+  // Reanimated 4 は Jest の下で、一部の内部ファイル (initializers など) を native 用でなく web 用の実装で読む前提になっている。
+  // この resolver が無いと react-native-reanimated を読んだ時点で「setCSSEventHandler is not available in JSReanimated」で落ちる (#1591)。
+  // この resolver は react-native-worklets の resolver に続けて Jest の既定の resolver を呼ぶ。@react-native/jest-preset の resolver が
+  // していた react-native の exports の除去は、Jest 30 の resolver が packageFilter を持たないため、もう効いていない (jest-expo 58 の jest-preset.js のコメント)。
+  resolver: require.resolve('react-native-reanimated/jest/resolver'),
   // transformIgnorePatterns は書かない。jest-expo の既定 (react-native* / @react-native* / expo* / @expo* / @expo-google-fonts /
   // react-navigation / standard-navigation などを変換し、react-native-reanimated/plugin と @react-native/babel-preset は変換しない)
   // に任せる。自前の一覧を持つと、expo-router の新しい依存 (standard-navigation など) が一覧から漏れて SyntaxError になる (#1591)。
