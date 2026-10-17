@@ -139,11 +139,11 @@ Status: 設計ゲート審査中 (実装着手前)
 | R-15 | 一覧画面は、隠れている行に「非表示中」のバッジを出す (status の絞り込みは変えない) | D-12 | §9.3 |
 | R-16 | 戻す操作は BAN を解かない・投稿者に知らせない | D-9・D-11 | §1.2 |
 | R-17 | DB の変更なし (migration・RLS・トリガー・関数・索引・型ファイルを変えない)。環境変数を足さない | D-3・§5 | §5 §12 |
-| R-18 | 新しい route は既存の番兵 (NULL 文字・監査の網羅・MFA の入口・JST の走査) に追随する | §2.1 のテスト基盤 | §16 |
+| R-18 | 新しい route は既存の番兵 (NULL 文字・監査の網羅・MFA の入口・JST の走査・生のエラー文の走査) に追随する | §2.1 のテスト基盤 | §16 |
 | R-19 | 保管期間の値は Edge Function の `HIDDEN_CONTENT_RETENTION_DAYS` が正本。src 側の写しとの一致を契約テストで固定する | §6.1 の注記 | §13.1 (CT-1) |
 | R-20 | 同じコンテンツを 2 人の運営が同時に戻しても、片方は 200、もう片方は 409 (成功を 2 回数えない) | D-7 の 0 行更新の扱い | §8 §4.3 (S-16) |
 
-### 3.2 ユーザーシナリオ (22 本)
+### 3.2 ユーザーシナリオ (23 本)
 
 時刻は JST。「運営」は admin / super_admin / content_moderator のどれか。
 
@@ -171,6 +171,7 @@ Status: 設計ゲート審査中 (実装着手前)
 | S-20 | S-01 のあと、本人が M1 を家族に貼り付ける | 通る (`paste_meal_to_family` の `MEAL_HIDDEN` は `hidden_at IS NOT NULL` のときだけ) |
 | S-21 | S-01 のあと、本人がアカウントの出力を取る | `meals` の `hidden_at` / `hidden_reason` が null で出る (`hidden_by` はもともと出さない)。コードの変更なし |
 | S-22 | 運営が一覧を `status=rejected` で開く | 隠れている行の通報にはステータスの横に「非表示中」のバッジ。戻した行の通報は `approved` の一覧に移り、バッジは出ない。`pending` の通報でも、コンテンツがすでに隠れていればバッジが出る (S-18 の F5) |
+| S-23 | 公開レシピ R2 を隠したあとで持ち主が退会し、`recipes.user_id` が NULL になった (外部キー `recipes_user_id_fkey` は `ON DELETE SET NULL`。migration `20251126124224`。退会で残るのは公開レシピだけ: migration `20261010000100`)。運営が R2 の通報の画面から戻す | 200。R2 の 3 列が NULL になり、RLS `"Users can view public recipes"` の `user_id IS NULL` の項で全員に再び見える (隠れている間は `hidden_at IS NULL OR auth.uid() = user_id` が誰にも真にならず、誰にも見えない)。判定は `user_id` を見ないので S-05 と同じ道を通る。監査ログの `content_user_id` は null。隠した運営が退会して `hidden_by` が NULL の行も、判定は `hidden_at` だけを見るので同じ道 (`hidden_by_before` が null) |
 
 ---
 
@@ -228,13 +229,14 @@ flowchart LR
 | S-13 | ジョブの `.lt('hidden_at', cutoff)` に `hidden_at` NULL の M1 は入らない。needles の関数は `m.hidden_at IS NULL` で M1 の URL を数える | I-5 |
 | S-14 | 3d が例外 → `HiddenContentRestoreStepError('flags')` → 4 (warn・`status_saved: false`) → 500 `INTERNAL_ERROR` | 3e に進まない。行は隠れたまま |
 | S-15 | 3d 成功 → 3e が例外 → `HiddenContentRestoreStepError('rows'・approvedFlagIds)` → 4 (warn・`status_saved: true`・`restored: false`) → 500 `OP_CONTENT_RESTORE_FAILED` | やり直し: 3d は 0 行 (もう approved)・3e で戻る → 200 |
-| S-16 | 後の人: 3a〜3d (3d は 0 行) → 3e が 0 行 (`eq('hidden_at', t1)` に合う行が無い) → 読み直し not_hidden → 409 | 先の人の 200 と監査ログ 1 行だけ |
+| S-16 | 後の人: 先の人が書いたあとに 3a で読めば 3b not_hidden → 409。先の人より前に 3a で読んでいれば 3a〜3d (3d は 0 行) → 3e の UPDATE は先の人の行ロックを待ち、READ COMMITTED で `eq('hidden_at', t1)` を評価し直して 0 行 → 読み直し not_hidden → 409 | どちらの順でも先の人の 200・後の人の 409 と監査ログ 1 行だけ (結合 A-9) |
 | S-17 | 3 は `user_profiles` に触らない → BAN はそのまま | 画面の 1 文 (F-1) |
 | S-18 | F5 は pending なので 3d の `status = rejected` に合わず触らない。M1 は戻る | その後の delete_* は `hideModeratedContent` の `.is('hidden_at', null)` に合うので新しい `hidden_at` で隠す |
 | S-19 | 1 → type の検査 → `isModerationBacked` false → 501 (本文を読む前) | 既存の route と同じ順 |
 | S-20 | DB の関数の `v_source.hidden_at IS NOT NULL` が偽 | 既存 F3 と同じ道 |
 | S-21 | `account-export-tables.ts` は列をそのまま出す | 変更なし |
 | S-22 | `fetchModerationList` の embed に `hidden_at` を足し、正規化で `hidden_at` を返す → 一覧がバッジを出す | §7.2 §9.3 |
+| S-23 | 1 → 2 (通報・`content_id` = R2・`item.user_id` = null) → 3a (recipes: `user_id` null・`hidden_at` = t2) → 3b restorable (`user_id` を見ない) → 3c ([R2]) → 3d (`recipe_flags`) → 3e (1 行) → 4 (info・`content_user_id: null`) → 200 | RLS: `hidden_at IS NULL` かつ `user_id IS NULL` で全員に見える (隠す前と同じ) |
 
 ---
 
@@ -334,7 +336,7 @@ export type HiddenContentRestoreAdmin = Pick<SupabaseClient, 'from'>;
 /** 通報が指すコンテンツ本体の行の、戻す操作に関わる列 */
 export interface HiddenContentRow {
   id: string;
-  /** 持ち主。退会で外れた公開レシピは null */
+  /** 持ち主。退会で外れた公開レシピは null (外部キーは ON DELETE SET NULL)。戻せるかの判定には使わない (S-23) */
   user_id: string | null;
   hidden_at: string | null;
   hidden_by: string | null;
@@ -372,7 +374,7 @@ export function isWithinHiddenContentRestoreWindow(hiddenAt: string, now: Date):
   return hiddenAtMs >= hiddenContentRestoreCutoff(now).getTime();
 }
 
-/** 読んだ行から、戻せるかを決める (§10.1 の判定表 P-4〜P-6 の正本) */
+/** 読んだ行から、戻せるかを決める (§10.1.1 の判定表 P-9〜P-11 の正本) */
 export function judgeHiddenContentRestorability(row: HiddenContentRow | null, now: Date): HiddenContentRestorability {
   if (row === null) return { kind: 'gone' };
   if (row.hidden_at === null) return { kind: 'not_hidden', row };
@@ -1265,7 +1267,7 @@ export default function ModerationRestoreForm({
 | P-11 | `hidden_at < now − 89 日` (`window_expired`) | — | 409 `OP_CONTENT_RESTORE_WINDOW_EXPIRED` (`data.hidden_at`) | なし |
 | P-12 | 戻せる・食事・`paste_group_id` NULL | 対象 = [行] | (P-15 以降へ) | — |
 | P-13 | 戻せる・食事・`paste_group_id` あり | 対象 = 同じまとまりで `hidden_at` が同じ行 (通報された行を含む) | (P-15 以降へ) | — |
-| P-14 | 戻せる・レシピ | 対象 = [行] | (P-15 以降へ) | — |
+| P-14 | 戻せる・レシピ (持ち主 `user_id` が null の公開レシピも同じ: S-23) | 対象 = [行] | (P-15 以降へ) | — |
 | P-15 | 同じまとまりの読み取りが DB エラー | — | 500 `INTERNAL_ERROR` | warn (`restore_error`) |
 | P-16 | 通報の UPDATE (rejected → approved) が DB エラー | — | 500 `INTERNAL_ERROR` (「通報の状態を更新できませんでした」) | warn (`status_saved: false`・`status_error`) |
 | P-17 | 通報の UPDATE 成功 (0 行も可)・行の UPDATE が DB エラー | 通報 approved | 500 `OP_CONTENT_RESTORE_FAILED` (`data.approved_flag_ids`) | warn (`status_saved: true`・`restored: false`・`restore_error`) |
@@ -1283,7 +1285,7 @@ export default function ModerationRestoreForm({
 
 | 経路 | 隠れている間 | 戻したあと | 本書の変更 |
 |---|---|---|---|
-| RLS `meals_select_owner_or_family` / `recipes."Users can view public recipes"` | 本人だけ | 隠す前と同じ (家族・公開) | なし |
+| RLS `meals_select_owner_or_family` / `recipes."Users can view public recipes"` | 本人だけ (持ち主が退会して `user_id` が null のレシピは誰にも見えない) | 隠す前と同じ (家族・公開。`user_id` が null のレシピは全員: S-23) | なし |
 | `paste_meal_to_family` | `MEAL_HIDDEN` | 通る | なし |
 | `count_meals_per_user` / `calculate-segment-stats` の `hidden_at IS NULL` | 数えない | 数える | なし |
 | 完全削除のジョブ `.lt('hidden_at', cutoff)` | 90 日で消す | 対象外 | なし (D-13 の 89 日で交差を消す) |
@@ -1407,6 +1409,7 @@ export default function ModerationRestoreForm({
 - `it('CT-5: restore の route は recordAdminAudit に request を渡し、admin_audit_logs へ直接 INSERT しない (actionType は MODERATION_RESTORE_AUDIT_ACTION)')`
 - `it('CT-6: hidden-content-restore.ts は hidden_at を書く UPDATE を 1 つだけ持ち、hidden_at / hidden_by / hidden_reason を null にする (別の値を書かない)')`
 - `it('CT-7: hidden-content-restore.ts・route・ModerationRestoreForm.tsx に、ジョブが無かったころの言い回し (tests/purge-hidden-content-migration-contract.test.ts の STALE_PHRASES) が無く、ジョブの名前 purge-hidden-content を挙げる')`
+- `it('CT-8: hidden-content-restore.ts と restore の route は process.env を読まない (環境変数を足さない: R-17)')` (段 B で、同じ it の対象に `ModerationRestoreForm.tsx` を足す)
 
 ### 13.2 単体 (`tests`)
 
@@ -1415,7 +1418,7 @@ export default function ModerationRestoreForm({
 - `it('U-2: isWithinHiddenContentRestoreWindow: 89 日ちょうどは true、89 日 + 1 ms は false、1 分前は true')`
 - `it('U-3: isWithinHiddenContentRestoreWindow: 日時として読めない hidden_at は例外')`
 - `it('U-4: judgeHiddenContentRestorability: null → gone / hidden_at null → not_hidden (row を返す) / 89 日以内 → restorable (row.hidden_at が string) / 89 日超 → window_expired')`
-- `it('U-5: readHiddenContentRow: food は paste_group_id を含む列で、recipe は含まない列で読む。無ければ null。足りない列は null に。DB エラーは例外')`
+- `it('U-5: readHiddenContentRow: food は paste_group_id を含む列で、recipe は含まない列で読む。無ければ null。足りない列は null に。user_id が null の行 (退会で外れた公開レシピ: S-23) は user_id を null のまま返す。DB エラーは例外')`
 - `it('U-6: listRowsHiddenTogether: recipe は [id] だけ (読まない)。food で paste_group_id が null も [id] だけ。food で paste_group_id があれば meals を eq(paste_group_id)・eq(hidden_at) で読み、通報された行を必ず含める。DB エラーは例外')`
 - `it('U-7: approveRejectedFlagsOfContent: food は moderation_flags を status approved / resolved_by / resolved_at / resolution_note で、in(meal_id, 対象)・eq(status, rejected) で更新し、id を返す。recipe は recipe_flags を reviewed_by / reviewed_at で (resolution_note を書かない)。0 行は空配列。DB エラーは例外')`
 - `it('U-8: restoreHiddenContentRows: update は { hidden_at: null, hidden_by: null, hidden_reason: null } で、in(id, 対象)・eq(hidden_at, 読んだ値)・gte(hidden_at, now − 89 日)・select(id)。戻した id を返す。DB エラーは例外')`
@@ -1442,6 +1445,10 @@ export default function ModerationRestoreForm({
 - `it('RT-11: 監査ログの INSERT に失敗しても 200 (fail-open)')`
 - `it('RT-12: content_moderator でも 200 (隠す操作と同じ 3 ロール)。super_admin 限定の分岐は無い')`
 - `it('RT-13: user_profiles (BAN) には触らない')`
+- `it('RT-14: 行の読み取りが失敗したら (P-8) 500 INTERNAL_ERROR「コンテンツの状態を読み取れませんでした。…」(data を付けない)。通報も行も更新しない。監査ログは warn・status_saved false・status_error null・restored false・restore_error に元のエラー文・hidden_at_before null。構造化ログに step: read。応答の本文に生のエラー文を出さない')`
+- `it('RT-15: food (複製あり) で同じまとまりの読み取りが失敗したら (P-15) 500 INTERNAL_ERROR (RT-14 と同じ文・data なし)。通報も行も更新しない。監査ログは warn・status_saved false・restore_error・hidden_at_before は読んだ行の値。構造化ログに step: read')`
+- `it('RT-16: 行の更新が 0 行で、読み直しが失敗したら (P-22) 500 OP_CONTENT_RESTORE_FAILED (固定の文・data.approved_flag_ids)。監査ログは warn・status_saved true・restored false・restore_error。構造化ログに step: reread')`
+- `it('RT-17: recipe で持ち主 (recipes.user_id) が null の行 (S-23) も 200。recipe_flags は approved。監査ログの content_user_id は null')`
 
 `tests/moderation-route-contracts.test.ts` (既存に足す・段 A):
 - `it('#1538 GET /{type}/{id}: meals.hidden_at を hidden_at として返す (隠れていなければ null)')`
@@ -1455,6 +1462,12 @@ export default function ModerationRestoreForm({
 - `it('F-5: restorable が false なら理由の欄とボタンを出さず、89 日と 90 日を含む案内だけ')`
 - `it('F-6: 隠した日時を JST (Asia/Tokyo) で表示する。food では複製も一緒に戻る説明、recipe では出さない。type と id は URL に安全に埋め込む')`
 
+`tests/admin-moderation-hidden-pages.test.tsx` (新設・段 B。`tests/admin-user-login-history-page.test.tsx` と同じ形: `@/lib/auth/page-guard` の `requireRoleForPage` と `@/lib/admin/fetch` の `adminFetch` を mock し、`next/navigation` の mock に `useRouter` を入れ、async の Server Component を `renderToStaticMarkup` で HTML にして確かめる。「今」は `vi.setSystemTime` で固定する):
+- `it('PG-1: 一覧: hidden_at がある項目 (status rejected と pending) のステータスの欄に「非表示中」のバッジ。hidden_at が null の項目には出ない。status の絞り込みの選択肢 (pending / approved / rejected / escalated) は変わらない (S-22・R-15)')`
+- `it('PG-2: 詳細: 「コンテンツ情報」の「表示」の項目は、hidden_at があれば「非表示中 (隠した日時: <JST>)」(JST は toLocaleString ja-JP・Asia/Tokyo と同じ文字列)、null なら「表示中」(§9.1)')`
+- `it('PG-3: 詳細: status pending で hidden_at がある (89 日以内) と、審査の欄 (ModerationReviewForm の入力) と「非表示の解除」のカード (textarea#restore_note と「表示に戻す」) の両方が出る (S-18)。status rejected なら「このアイテムは既に審査済みです」と解除のカード。hidden_at が null なら解除のカードが無い (R-14)')`
+- `it('PG-4: 詳細: hidden_at が 90 日前なら「非表示の解除」のカードはあるが、textarea#restore_note とボタンが無く、89 日を過ぎた案内だけ (S-08・R-14)')`
+
 ### 13.3 結合 (ローカル Supabase)
 
 `tests/integration/rls/hidden-content-restore.test.ts` (新設・段 A。PostgREST を直接。`hidden-content-visibility.test.ts` と同じ seed の形。`restoreModeratedContent` ほかを service_role の client で直接呼ぶ):
@@ -1466,6 +1479,7 @@ export default function ModerationRestoreForm({
 - `it('I-6: 戻したあと paste_meal_to_family が通る (MEAL_HIDDEN にならない)')`
 - `it('I-7: hidden_at を 90 日前にした行は restoreHiddenContentRows で 0 行 (期限の gte が効く)。89 日前の行は戻る')`
 - `it('I-8: 戻すと、その行を指す rejected の通報は approved に、pending の通報はそのまま')`
+- `it('I-9: user_id が NULL の公開レシピ (退会で外れたもの: S-23) を service_role で隠すと、未ログイン (anon) にもほかのログインユーザーにも見えない。restoreModeratedContent で戻すと、両方に再び見える')`
 
 `tests/integration/operator/admin-moderation-restore.test.ts` (新設・段 A。Next の開発サーバー。`admin-moderation-detail.test.ts` と同じ `apiCall` / `dataOf` / `expectError` / `latestAuditLog`):
 - `it('A-1: admin: delete_only で隠した公開レシピを restore で戻すと 200。未ログインの GET /api/recipes に再び出る。recipe_flags は approved (reviewed_by = admin)。監査ログ admin.moderation.restore (info) に restore_note と restored_ids')`
@@ -1476,26 +1490,28 @@ export default function ModerationRestoreForm({
 - `it('A-6: 同じ食事に rejected の通報が 2 件あるとき、片方から戻すと両方 approved (approved_flag_ids に 2 つ)')`
 - `it('A-7: GET /queue と GET /{type}/{id} が hidden_at を返す (隠す前は null・隠したあとは ISO・戻したあと null)')`
 - `it('A-8: restore_note が空白だけなら 400 VALIDATION_ERROR。NULL 文字は 400 INVALID_CHARACTER')`
+- `it('A-9: admin と content_moderator が同じ通報を同時に (Promise.all) restore すると、応答は 200 と 409 OP_CONTENT_NOT_HIDDEN が 1 つずつ。行の 3 列は NULL。その通報を target_id とする admin.moderation.restore の監査ログは 1 行だけ増える (S-16・R-20)')`
 
 ### 13.4 整合ゲート (実装後・本番)
 
 - 本番の `meals` / `recipes` で `hidden_at IS NOT NULL` の行の件数を読む (読み取りだけ)。0 件なら、捨て伝票 (運営のテスト用のレシピ) を通報 → `delete_only` → restore で 1 往復し、戻ったこと・監査ログ 2 行・翌日のジョブが消していないことを確かめて、捨て伝票を消す。
 - 一覧の「非表示中」のバッジと詳細の「非表示の解除」の欄が、隠れている間だけ出ることを画面で確かめる。
+- 段 A・段 B の PR の差分 (`git diff --name-only origin/main...<枝>`) に、`supabase/**`・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md` が無いことを確かめる (R-17。DB と環境変数を変えない。環境変数を読まないことは CT-8 が見る)。
 
 ### 13.5 表の行・シナリオとテストの対応
 
 | 判定表 | it | 判定表 | it |
 |---|---|---|---|
-| P-1 | RT-1・A-8 | P-13 | U-6・U-11・RT-6・I-2 |
-| P-2 | RT-1・RT-12・A-2 | P-14 | U-6・RT-7・A-1 |
-| P-3 | RT-1 | P-15 | U-9 (read)・RT-8 の形 |
+| P-1 | RT-1・A-8 | P-13 | U-6・U-11・RT-6・RT-15・I-2 |
+| P-2 | RT-1・RT-12・A-2 | P-14 | U-6・RT-7・RT-17・A-1・I-9 |
+| P-3 | RT-1 | P-15 | U-9 (read)・RT-15 |
 | P-4 | RT-1 | P-16 | U-9・RT-8 |
 | P-5 | RT-1・F-2・A-8 | P-17 | U-9・RT-9 |
 | P-6 | RT-2 | P-18 | U-12・RT-10 |
 | P-7 | RT-3・A-5 | P-19 | U-12・RT-10・A-3 の形 |
-| P-8 | U-9・RT-8 の形 | P-20 | U-12・RT-10 |
+| P-8 | U-9 (read)・RT-14 | P-20 | U-12・RT-10 |
 | P-9 | U-4・U-10・RT-3 | P-21 | U-12・RT-10 |
-| P-10 | U-4・U-10・RT-4・A-3 | P-22 | U-9 (reread) |
+| P-10 | U-4・U-10・RT-4・A-3 | P-22 | U-9 (reread)・RT-16 |
 | P-11 | U-2・U-4・U-10・RT-4・I-7・A-4 | P-23 | U-11・RT-5・I-1・A-1 |
 | P-12 | U-6・RT-5 | P-24 | RT-11 |
 
@@ -1505,13 +1521,27 @@ export default function ModerationRestoreForm({
 | S-02 | RT-6・I-2 | S-13 | I-5 |
 | S-03 | U-6 (中身を見ない)・I-2 | S-14 | RT-8 |
 | S-04 | I-2 (別の時刻の複製) | S-15 | RT-9 |
-| S-05 | RT-7・I-3・A-1 | S-16 | U-12・RT-10 |
+| S-05 | RT-7・I-3・A-1 | S-16 | U-12・RT-10・A-9 |
 | S-06 | U-7・A-6 | S-17 | RT-13・F-1 |
-| S-07 | RT-4・A-3 | S-18 | I-8 |
-| S-08 | RT-4・F-5・A-4 | S-19 | RT-1 |
+| S-07 | RT-4・A-3 | S-18 | I-8・PG-3 |
+| S-08 | RT-4・F-5・PG-4・A-4 | S-19 | RT-1 |
 | S-09 | RT-2・RT-3・A-5 | S-20 | I-6 |
 | S-10 | RT-3 | S-21 | (既存 `tests/integration/security/account-export-scope.test.ts` の形。変更なし) |
-| S-11 | RT-1・F-2・A-8 | S-22 | A-7・§13.4 |
+| S-11 | RT-1・F-2・A-8 | S-22 | PG-1・A-7・§13.4 |
+| S-23 | U-5・RT-17・I-9 | — | — |
+
+| 要件 | it | 要件 | it |
+|---|---|---|---|
+| R-01 | RT-5・A-1・F-1・PG-3 | R-11 | RT-1・RT-12・CT-4・A-2 |
+| R-02 | RT-3・RT-4・A-3・A-5 | R-12 | RT-1 |
+| R-03 | U-2・CT-2・RT-4・I-7・A-4 | R-13 | `moderation-backend.test.ts` と `moderation-route-contracts.test.ts` の #1538 の it (各 2)・A-7 |
+| R-04 | I-5 | R-14 | PG-3・PG-4・F-5 |
+| R-05 | U-8・CT-6・I-1 | R-15 | PG-1 |
+| R-06 | U-6・RT-6・I-2 | R-16 | RT-13・F-1 |
+| R-07 | RT-1・F-2・A-8 | R-17 | CT-8・§13.4 (差分の確認) |
+| R-08 | U-7・RT-5・RT-7・I-8・A-6 | R-18 | §16 の番兵 (`null-character-routes`・`admin-mutation-audit-coverage-1571`・`operator-mfa-entry-points-scan`・`jst-today-source-scan`・`api-raw-error-message-scan`) |
+| R-09 | RT-8・RT-9・RT-14・RT-15・RT-16 | R-19 | CT-1 |
+| R-10 | CT-5・RT-5・RT-8・RT-9・A-1 | R-20 | U-12・RT-10・A-9 |
 
 ---
 
@@ -1519,8 +1549,8 @@ export default function ModerationRestoreForm({
 
 | 段 | 中身 | §17 の行 (他の文書の追随) | 前提 | マージの単位 |
 |---|---|---|---|---|
-| A: 部品と API | `src/lib/admin/hidden-content-restore.ts` (§6)・`moderation-schemas.ts` の追記 (§7.1)・`moderation-backend.ts` の `hidden_at` (§7.2)・route (§8)・テスト (CT-1〜CT-7 (CT-3 を除く)・U-1〜U-12・RT-1〜RT-13・`moderation-backend.test.ts` と `moderation-route-contracts.test.ts` の追記・I-1〜I-8・A-1〜A-8)・番兵の追随 (§16 の段 A の行) | 行 1・2・3・4・5 (オーケストレーターの docs PR。同日) | 無し | 単独でマージしてよい (画面はまだ呼ばないが、API は使える) |
-| B: 画面 | `ModerationRestoreForm.tsx` (§9.2)・詳細 `page.tsx` (§9.1)・一覧 `page.tsx` (§9.3)・テスト (F-1〜F-6・CT-3) | 行 6 | 段 A のマージ (API と `hidden_at`) | 段 A の後 |
+| A: 部品と API | `src/lib/admin/hidden-content-restore.ts` (§6)・`moderation-schemas.ts` の追記 (§7.1)・`moderation-backend.ts` の `hidden_at` (§7.2)・route (§8)・テスト (CT-1〜CT-8 (CT-3 を除く)・U-1〜U-12・RT-1〜RT-17・`moderation-backend.test.ts` と `moderation-route-contracts.test.ts` の追記・I-1〜I-9・A-1〜A-9)・番兵の追随 (§16 の段 A の行) | 行 1・2・3・4・5 (オーケストレーターの docs PR。同日) | 無し | 単独でマージしてよい (画面はまだ呼ばないが、API は使える) |
+| B: 画面 | `ModerationRestoreForm.tsx` (§9.2)・詳細 `page.tsx` (§9.1)・一覧 `page.tsx` (§9.3)・テスト (F-1〜F-6・PG-1〜PG-4・CT-3・CT-8 の対象に `ModerationRestoreForm.tsx` を足す) | 行 6 | 段 A のマージ (API と `hidden_at`) | 段 A の後 |
 
 段の順を守る理由: 段 B が先に出ると、詳細画面が `hidden_at` を受け取れず (常に null) 欄が出ない (壊れはしない)。段 A が先なら、API だけが先に使える。
 
@@ -1544,9 +1574,9 @@ export default function ModerationRestoreForm({
 | 応答の項目 | `GET /queue`・`GET /{type}/{id}` の `hidden_at`。`POST …/restore` の `data.success` / `content_hidden` / `restored_ids` / `approved_flag_ids` | A |
 | コンポーネント | `src/components/operator/moderation/ModerationRestoreForm.tsx` (default export・型 `ModerationRestoreFormProps`。内部の `NOTE_MIN_LENGTH`・`NOTE_MAX_LENGTH`・`REFRESH_STATUSES`・`SUBMIT_LABEL`・`formatJst`) | B |
 | 画面の項目 | 詳細の「表示」の項目と「非表示の解除」のカード。一覧の「非表示中」のバッジ | B |
-| テスト | 契約 1: `tests/hidden-content-restore-contract.test.ts` / 単体 3: `tests/hidden-content-restore.test.ts`・`tests/moderation-restore-route-contracts.test.ts` (A)・`tests/admin-moderation-restore-form.test.tsx` (B) / 結合 2: `tests/integration/rls/hidden-content-restore.test.ts`・`tests/integration/operator/admin-moderation-restore.test.ts` (A) | A / B |
+| テスト | 契約 1: `tests/hidden-content-restore-contract.test.ts` / 単体 4: `tests/hidden-content-restore.test.ts`・`tests/moderation-restore-route-contracts.test.ts` (A)・`tests/admin-moderation-restore-form.test.tsx`・`tests/admin-moderation-hidden-pages.test.tsx` (B) / 結合 2: `tests/integration/rls/hidden-content-restore.test.ts`・`tests/integration/operator/admin-moderation-restore.test.ts` (A) | A / B |
 
-変えるもの (既存): `src/lib/admin/moderation-schemas.ts`・`src/lib/admin/moderation-backend.ts` (A)、`src/app/admin/moderation/[type]/[id]/page.tsx`・`src/app/admin/moderation/page.tsx` (B)。既存のテスト・helper (§13.2 の追記と §16 の「直し方」で編集するもの。全 6 ファイル): `tests/moderation-backend.test.ts`・`tests/moderation-route-contracts.test.ts`・`tests/helpers/fake-supabase.ts`・`tests/admin-mutation-audit-coverage-1571.test.ts`・`src/__tests__/api/null-character-routes.test.ts`・`tests/jst-today-source-scan.test.ts`・`tests/purge-hidden-content-migration-contract.test.ts` (A。7 つ目)。設計書 (§17 のとおり): `operator/02-api-spec.md`・`operator/07-audit-monitoring.md`・`cross/04-api-conventions.md`・`operator/03-ui-spec.md`・`operator/CLAUDE.md`・`tests/design-doc-followup-owned-edits.test.ts` (オーケストレーターの docs PR)。**変えない**: `supabase/**` (migration・rollbacks・functions・baseline)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/admin/user-ban.ts`・`src/lib/admin/audit.ts`・`src/components/operator/moderation/ModerationReviewForm.tsx`・`src/app/api/admin/moderation/[type]/[id]/route.ts`・`src/app/api/admin/moderation/queue/route.ts`・`src/app/api/admin/moderation/route.ts`・`src/lib/account-export-tables.ts`・環境変数の一覧 (`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md`)。
+変えるもの (既存): `src/lib/admin/moderation-schemas.ts`・`src/lib/admin/moderation-backend.ts` (A)、`src/app/admin/moderation/[type]/[id]/page.tsx`・`src/app/admin/moderation/page.tsx` (B)。既存のテスト・helper (§13.2 の追記と §16 の「直し方」で編集するもの。全 7 ファイル・すべて段 A): `tests/moderation-backend.test.ts`・`tests/moderation-route-contracts.test.ts`・`tests/helpers/fake-supabase.ts`・`tests/admin-mutation-audit-coverage-1571.test.ts`・`src/__tests__/api/null-character-routes.test.ts`・`tests/jst-today-source-scan.test.ts`・`tests/purge-hidden-content-migration-contract.test.ts`。設計書 (§17 のとおり): `operator/02-api-spec.md`・`operator/07-audit-monitoring.md`・`cross/04-api-conventions.md`・`operator/03-ui-spec.md`・`operator/CLAUDE.md`・`tests/design-doc-followup-owned-edits.test.ts` (オーケストレーターの docs PR)。**変えない**: `supabase/**` (migration・rollbacks・functions・baseline)・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/admin/user-ban.ts`・`src/lib/admin/audit.ts`・`src/components/operator/moderation/ModerationReviewForm.tsx`・`src/app/api/admin/moderation/[type]/[id]/route.ts`・`src/app/api/admin/moderation/queue/route.ts`・`src/app/api/admin/moderation/route.ts`・`src/lib/account-export-tables.ts`・環境変数の一覧 (`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md`)。
 
 ---
 
@@ -1566,6 +1596,11 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 | `tests/integration/operator/admin-moderation-detail.test.ts` (`QueueItem`・`toMatchObject`) | `api/admin/moderation` | 応答は `toMatchObject` / `dataOf(res)` の `toEqual` は POST の `{ success, status, ban_applied }` (変えない) | 反応しない (`QueueItem` の interface は vitest の実行では型を見ない)。新しい結合テストは別ファイル (§13.3) | A |
 | `tests/operator-mfa-entry-points-scan.test.ts` ① | `src/app/api/admin`・`requireRole` | 運営の route の全 handler が入口の関数 (`requireRole` ほか) を呼ぶこと | 反応しない (route は `requireRole(['admin', 'super_admin', 'content_moderator'])` を既定の assurance で呼ぶ。`{ assurance: 'session' }` を渡さない) | A |
 | `tests/admin-view-audit-1326.test.ts` (b) | `admin_audit_logs`・`x-forwarded-for` | `src/app/api/admin` の route が監査ログを直接 INSERT せず、`x-forwarded-for` を直読みしない | 反応しない (`recordAdminAudit` だけ) | A |
+| `tests/api-raw-error-message-scan.test.ts` (#1172) | `src/app/api`・`NextResponse.json` | `src/app/api` 配下の全ファイルを readdir で走査し、`NextResponse.json(body)` の本文にエラー由来の値 (エラーらしい名前の値の `.message` / `.details` / `.hint`・catch の変数そのもの・それを入れた変数) があれば赤。新しい route (§8) は走査の対象になる | 直さずに通る (反応しない)。§8 の本文は固定の文と、`errorResponse` の引数 (`code` / `message` / `data`。どれも固定の文と ID の配列) と、`parseResult.error.flatten()` (同期の検証の結果) だけ。元のエラー文 (`describeError(err)`・`reasonText`) は `console.error`・構造化ログ・監査ログにだけ渡す。実装で元のエラー文を本文に入れると、この番兵と RT-8・RT-14 が赤になる | A |
+| `tests/lib-raw-error-message-scan.test.ts` (#1172) | `src/lib`・`RAW_TEXT_PROPERTIES` | `src/lib` のヘルパーの結果 (オブジェクトリテラル) にエラーの `.message` / `.details` / `.hint` を入れていないか。新しい `hidden-content-restore.ts` (§6) は走査の対象になる | 反応しない (§6 は DB のエラーを `throw` し、`HiddenContentRestoreStepError` の `reason` に代入で持つだけで、結果のオブジェクトにエラーの文面を入れない) | A |
+| `tests/operator-page-guard-wiring.test.ts` (#1176・`EXPECTED_PAGE_GUARDS`) | `src/app/admin/moderation/page.tsx`・`requireRoleForPage` | 運営の page の `requireRoleForPage` の roles・next を表で持ち、素の `requireRole(` と `redirect('/login')` が残っていないことを見る。§9 は表に載っている 2 つの page (一覧と詳細) を変える | 反応しない (§9 は両 page の `requireRoleForPage` の呼び出し (roles・next) を変えず、素の `requireRole(` も `redirect('/login')` も足さない。足すのは `ModerationRestoreForm` の描画・`isWithinHiddenContentRestoreWindow` の呼び出し・「表示」の項目・バッジだけ) | B |
+| `tests/admin-preparing-pages.test.tsx` (#1125 #1128) | `@/app/admin/moderation/page`・`AdminModerationDetailPage` | 一覧と詳細の page を描画する (一覧は `hidden_at` の無い項目、詳細は `ai_content` と未知の type だけ) | 反応しない (一覧の項目に `hidden_at` が無ければ `undefined` でバッジを出さない。詳細は `ai_content` で早く返すので `ModerationRestoreForm` (`useRouter` を使う) を描かない。このファイルの `next/navigation` の mock には `useRouter` が無いので、隠れている項目の描画は新しいファイル `tests/admin-moderation-hidden-pages.test.tsx` (§13.2) に置く) | B |
+| `tests/integration/operator/auth-boundary.test.ts` (`endpoints`) | `/api/admin`・`401 for no auth` | 主な運営の endpoint の一覧に、未認証 401・一般ユーザー 403 を当てる。一覧にモデレーションの endpoint は既存のものも無い | 反応しない・足さない (一覧は主な endpoint の抜き出しで網羅の番兵ではない。新しい endpoint の 401 / 403 は A-2 と RT-1 が見る) | A |
 | `tests/e2e-api-paths.test.ts` | `api/admin/moderation` | e2e spec が叩く `/api/...` のパスが実在する route に対応する | 反応しない (e2e spec は新しいパスを叩かない。route が増えるだけ) | — |
 | `tests/signed-photo-display-scan.test.ts` | `src/app/admin/moderation` | 保存された写真の URL を `img` に直接渡さない | 反応しない (`ModerationRestoreForm` と足す項目は画像を描かない。既存の `img` は変えない) | B |
 | `tests/moderation-photo-signing.test.ts` | `withSignedModerationContentUrls`・`detailGET` / `queueGET` | `content_url` の署名 | 反応しない (`hidden_at` は署名の対象外。generic の `T` にそのまま通る) | A |
