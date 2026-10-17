@@ -1,6 +1,6 @@
 # operator/ cron の共有シークレットのずれの自動・定期の検知 (#1560 の項目 8) — 実経路の確認 (probe) による監視の設計
 
-版: v1.1 (2026-10-17)
+版: v1.2 (2026-10-17)
 Status: 設計ゲート審査中 (実装着手前)
 
 要件の正本は Issue #1560 の本文 (「決めること (オーナー)」の項目 8) と 2026-10-17 のコメント。オーナーの選択 (2026-10-17) は次の 1 文で、本書はこれを要件の外形として言い換えずに使う。範囲の細部 (Q-1〜Q-4) も、同じ日のコメントのとおりオーナーの選択 (2026-10-17) で決まっている (§0.4)。
@@ -25,7 +25,7 @@ Status: 設計ゲート審査中 (実装着手前)
 | D-1 | どこで突き合わせるか | **DB から実経路で確かめる**。`GET /api/cron/app-log-alerts` の各回が DB の関数 `send_cron_secret_probe()` を呼び、関数が Vault の `app_cron_secret` を Bearer に付けて pg_net で新設の Edge Function `cron-secret-probe` を呼ぶ (pg_cron の実際の呼び出しと同じ道)。Edge Function は `requireServiceRole` と同じ規則で照合した結果を JSON で返し、応答は `net._http_response` に残る。次の回が `cron_secret_probe_results()` で読んで判定する。Vercel 側は route 自身の環境で `CRON_SECRET_PREVIOUS` を見る | §4 §5 §6 §7 |
 | D-2 | 3 か所それぞれの値をどう得るか | どの保管場所からも値もダイジェストも取り出さない。Vault は DB の中で読んで Bearer に付けるだけ、Edge は照合の結果だけ、Vercel は `CRON_SECRET_PREVIOUS` の有無と現行と同じかだけ | §2.3 |
 | D-3 | 「ずれ」の検知 | 確認の応答で判定する: 401 (食い違い)・503 (Edge に値が無い)・Vault が無い / 空 / 復号できない・ゲートウェイの JWT 検証・404・時間切れ・pg_net の不達 → FAIL。入れ替えの途中・`CRON_SECRET_PREVIOUS` の残り → WARN | §8.1.1 |
-| D-4 | 「呼び出しが 401 になる」ことの観測で代わりにできるか | **代わりにしない** (補助にもしない)。理由は §4.2 の案 A | §4.2 |
+| D-4 | 「呼び出しが 401 になる」ことの観測 (`net._http_response`・Vercel の 401 のログ) で代わりにできるか | **どちらも代わりにしない** (補助にもしない)。`net._http_response` の観測は §4.2 の案 A、Vercel の 401 のログの観測は案 A' で退ける | §4.2 |
 | D-5 | 知らせ方と抑止 | 運用アラートに 6 つ目の種類 `cron_secret_drift` (FAIL。抑止は既存の `OPS_ALERT_COOLDOWN_MINUTES`・既定 60 分) と 7 つ目の種類 `cron_secret_rotation` (WARN。抑止は新しい `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`・既定 1440 分 = 24 時間) を足す。文面は 1 本 (`ops_cron_secret_drift`。種類で件名と前置きを書き分ける)。台帳は使わない (`pg_cron_stalled` と同じく、続く間は抑止ごとに知らせる) | §7.3 §8.1.2 |
 | D-6 | 入れ替え中 (`CRON_SECRET_PREVIOUS` が入っている間) の扱い | FAIL にしない。WARN として `cron_secret_rotation` で 1 日 1 通まで知らせる (Q-2)。Edge の `CRON_SECRET_PREVIOUS` は確認の応答の `previous_configured` で、Vercel の分は route の環境で見る | §7.1 §8.1 |
 | D-7 | Vercel の `CRON_SECRET` と Supabase 側 (Edge / Vault) の一致 | **比べない** (Q-1)。ENV_SETUP.md の正 (Vercel の `CRON_SECRET` は独立で別の値でよい。手で流す検査でも INFO) のとおり | §0.4 |
@@ -51,12 +51,12 @@ Status: 設計ゲート審査中 (実装着手前)
 
 Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まった (Issue #1560 の 2026-10-17 のコメント)。
 
-| # | 決まったこと | 本書での形 |
+| # | 決まったこと (Issue #1560 の 2026-10-17 のコメントの文のまま) | 本書での形 |
 |---|---|---|
-| Q-1 | Vercel の CRON_SECRET と Supabase 側 (Edge / Vault) の一致は比べない。 | Vercel の値は Supabase 側へ送らず、Supabase 側のダイジェストも持ち出さない。Vercel 側で見るのは `CRON_SECRET_PREVIOUS` の有無と現行と同じかだけ (§7.2) |
-| Q-2 | 注意 (入れ替えの途中・CRON_SECRET_PREVIOUS の残り) は、メールで 1 日 1 通まで知らせる (抑止 24 時間)。 | WARN の所見 (§8.1.1 の 5 つ: Vault が旧い値で一致・Edge の `CRON_SECRET_PREVIOUS` の残り・Vault が service role key・Vercel の `CRON_SECRET_PREVIOUS` (現行と同じ / 違う)) はキー `cron_secret_rotation` の通知だけに載せ、抑止の既定値を 1440 分にする。環境変数 `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES` で長くはできるが、1440 分より短くはできない (§7.1 の `_MIN`)。ずれ (FAIL) の通知には WARN を載せない (§7.3) |
-| Q-3 | Vercel の CRON_SECRET の欠落の検知は、今回は入れない (別の Issue)。 | `app-log-alerts` 自身が 503 / 401 で止まる状態は本書の範囲外 (S-22・§17) |
-| Q-4 | 確認の間隔は、運用アラートと同じ 15 分おき。 | 確認の送り手は `app-log-alerts` の各回 (cron を足さない)。検知の遅れは最大 30 分 (確認を送った回の次の回で結果を読む) |
+| Q-1 | Vercel の CRON_SECRET と Supabase 側 (Edge と Vault) の一致は、比べません。 | Vercel の値は Supabase 側へ送らず、Supabase 側のダイジェストも持ち出さない。Vercel 側で見るのは `CRON_SECRET_PREVIOUS` の有無と現行と同じかだけ (§7.2) |
+| Q-2 | 注意の状態 (入れ替えの途中、または CRON_SECRET_PREVIOUS の消し忘れ) は、メールで 1 日 1 通まで知らせます。 | WARN の所見 (§8.1.1 の 5 つ: Vault が旧い値で一致・Edge の `CRON_SECRET_PREVIOUS` の残り・Vault が service role key・Vercel の `CRON_SECRET_PREVIOUS` (現行と同じ / 違う)) はキー `cron_secret_rotation` の通知だけに載せる。「1 日 1 通まで」を、本書は抑止の既定値 1440 分 (24 時間) として実装する。環境変数 `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES` で長くはできるが、1440 分より短くはできない (§7.1 の `_MIN`)。ずれ (FAIL) の通知には WARN を載せない (§7.3) |
+| Q-3 | Vercel の CRON_SECRET 自体が無いときの検知は、今回は入れません。 | `app-log-alerts` 自身が 503 で止まる状態は本書の範囲外 (S-22・§17) |
+| Q-4 | 確認は、運用アラートと同じ 15 分おきに行います。 | 確認の送り手は `app-log-alerts` の各回 (cron を足さない)。検知の遅れは最大 30 分 (確認を送った回の次の回で結果を読む) |
 
 ### 0.5 Issue 本文との食い違い (本書を正とする)
 
@@ -80,7 +80,7 @@ Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まっ�
 - Vercel の `CRON_SECRET` と Supabase 側の一致 (Q-1)。Vercel の `CRON_SECRET` の欠落の検知 (Q-3)。
 - 既存の運用アラート 5 種類 (server / client / email_dead_letter / cron_failure / pg_cron_stalled) のしきい値・窓・抑止・文面。
 - pg_cron のジョブの追加・`vercel.json` の変更・`net._http_response` の保持 (pg_net の `ttl`・既定で約 6 時間) の変更。
-- Supabase Management API や `supabase secrets list` を Vercel から呼ぶこと (§4.2 の案 C で退ける)。
+- Supabase Management API や `supabase secrets list` を Vercel から呼ぶこと (§4.2 の案 C で退ける)。Vercel のランタイムログ (401 の記録) を読むこと (§4.2 の案 A' で退ける)。
 
 ---
 
@@ -175,7 +175,7 @@ Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まっ�
 | S-19 | `cron_secret_probe_results` が DB の一時障害で error を返す | その回は 500 (前の 5 種類の判定と通知は済んでいる)。確認は送らない。次の回で読み直す (見る範囲 60 分の中に前の確認が残っている) |
 | S-20 | fail の所見で権利を取ったが、送信待ちへの登録が失敗した (`outbox_failed`) | `release_ops_alert` で権利を返し `send_failed`。次の回で同じ所見をもう一度知らせる |
 | S-21 | Vault の `app_cron_secret` に service role key を入れてしまった | 確認は 200 `matched: "service_role_key"` → `vault-holds-service-role-key` (warn) → `cron_secret_rotation` で 1 通 (対処: cron 専用のランダムな値に入れ替える) |
-| S-22 | Vercel の `CRON_SECRET` を消してしまった (cron の API が 503) | `app-log-alerts` 自身が動かず、本書の検知は働かない。今回は入れない (Q-3。別の Issue)。Vercel の Cron Jobs の画面の HTTP ステータスで分かる |
+| S-22 | Vercel の `CRON_SECRET` を消してしまった (cron の API が 503) | `app-log-alerts` 自身が動かず、本書の検知は働かない。今回は入れない (Q-3)。Vercel の Cron Jobs の画面の HTTP ステータスで分かる |
 | S-23 | Supabase 側 (Edge Function secrets の `CRON_SECRET` と Vault) は新しい値に入れ替え済みで、Vercel の `CRON_SECRET` だけが入れ替え前の値のまま (Vercel に `CRON_SECRET_PREVIOUS` は無い) | 所見なし (Q-1: Vercel と Supabase 側は比べない)。Vercel Cron は Vercel の値で Vercel の route を呼ぶので何も止まらない。確認は 200 `matched: "current"` → 両方 `below_threshold`。route は Vercel の値を Supabase 側へ送らない (`send_cron_secret_probe` は引数なし) |
 
 ---
@@ -219,6 +219,7 @@ flowchart LR
 | 案 | 中身 | 退ける / 採る理由 |
 |---|---|---|
 | A: 本物のジョブの 401 を観測する | `net._http_response` の直近の行で `status_code` が 401 / 503 のものを数えて知らせる (新しい Edge Function も確認の送信も要らない) | **退ける**。(1) 観測は本物のジョブの頻度に依存する (1 時間おきの `calculate-segment-stats` が最短。日次のものは 1 日 1 回) ので、検知が最大 1 時間 15 分遅れ、直したあとも次のジョブまで「ずれている」と出る。(2) 入れ替えの途中 (旧い値で一致 = 200) と `CRON_SECRET_PREVIOUS` の残りは見えない (R-04 を満たせない)。(3) Vault の欠落は pg_net の応答に出ない (ジョブが例外で `failed` → `cron_failure` に頼る)。(4) `net._http_response` には URL が無く、どの呼び出しの応答かを区別できない (ほかの失敗 — `SERVER_CONFIG_MISSING` の 503 など — と混ざる)。ただし、この「pg_net の応答の失敗一般」の監視は、秘密のずれとは別の価値 (`SERVER_CONFIG_MISSING` など、いまどの通知にも出ない失敗を拾う) があるので、別の候補として §17 に残す |
+| A': Vercel の 401 のログを観測する | Vercel のランタイムログから、Vercel Cron の route が `requireCronAuth` で 401 を返した記録を数えて知らせる | **退ける**。(1) Vercel Cron は Vercel の環境変数 `CRON_SECRET` を Bearer に付けて Vercel の route を呼び、route は同じ Vercel の環境変数 (と `CRON_SECRET_PREVIOUS`) で照らす。Vercel の 401 は、この Vercel の中の食い違いか第三者の要求でしか起きない。pg_cron → Edge Function の道は Vercel を通らないので、Edge と Vault のずれ (R-01・R-02 の本題) は Vercel のログに出ない。(2) Vercel の中で食い違うと、`app-log-alerts` 自身も同じ 401 で止まるので、route の中からは知らせられない (外からログを読む仕組みが要る。Q-3 で入れないことにした「Vercel の `CRON_SECRET` が無い」ときと同じ形で、本書の範囲外: §17)。(3) ログを読むには Vercel の API トークンをどこか (Vercel の環境変数か Supabase) に置くことになり、監視のために新しい秘密を増やす。(4) 入れ替えの途中は 200 で通るので 401 にならず、見えない (R-04 を満たせない)。第三者の要求の 401 も混ざる |
 | B: 実経路の確認 (probe) — DB から Vault の値で確認用の Edge Function を呼び、応答を次の回に読む (本書) | 値もダイジェストも持ち出さない。照合は Edge Function の既存の規則 (`checkCronSecret`) そのもの。ゲートウェイの検証・デプロイ漏れ・pg_net の停止・時間切れも同じ 1 本で見える。送り手は `app-log-alerts` の回 (pg_cron のジョブを足さない) | **採る**。「値を出さずに」をもっとも強く満たし (ダイジェストすら作らない)、手で流す検査が「同じ値なのに FAIL」と疑う必要のあった前提 (`supabase secrets list` が平文の SHA-256 を返すこと) を持たない。縁は、応答が次の回に分かること (遅れ ≤ 30 分) と、確認の記録の表 1 つ |
 | B': B と同じだが、同じ回の中で送って数秒待って読む | 表が要らない。遅れ ≤ 15 分 | **退ける**。pg_net の worker の遅れに依存して「待っても来ない」回が出る (route の `maxDuration` の中で待つ長さを決められない)。次の回に読む形なら、猶予 5 分で「送られていない」を確実に判定できる (S-13) |
 | B'': B と同じだが、確認の送り手を pg_cron のジョブにする | route は読むだけ | **退ける**。ジョブが 1 つ増え (08 §3.0 の数・番兵・ロールバック)、pg_cron が止まると確認も止まる (すでに `pg_cron_stalled` が見ている状態と重なる)。route から送れば、Vercel Cron が動いている限り確認は続く |
@@ -226,7 +227,7 @@ flowchart LR
 | D: Edge Function が Vault を読んで自分で比べる | Edge が service role で `vault.decrypted_secrets` を読む RPC を呼ぶ | **退ける**。Vault の値を Edge に読ませる経路 (RPC) を service_role に開くことになる (いまは pg_cron の定義者関数だけが読める)。B は値を「送る側 (DB)」から「受ける側 (Edge)」へ、いまと同じ向きにしか動かさない |
 | E: Vercel の値も Edge に送って 3 か所を比べる | route が自分の `CRON_SECRET` を Bearer に付けて `cron-secret-probe` を呼ぶ | **退ける** (Q-1)。独立であるべき値を別の系へ送り、INFO の情報しか増えない (D-7) |
 
-**「縁の発生源を消すより単純な構造は無いか」**: 縁の発生源は 2 つ。(1) 応答が非同期で次の回に分かること — 消すには同期の HTTP (pgsql-http 拡張。本番に無い) か B' の待ちが要り、どちらも本番の前提を変える。(2) 確認の記録の表 — 消すには要求 ID を覚える場所が要り、`ops_alert_state` の流用は意味を壊す。残りの部品 (Edge Function 1 本・判定の純粋な関数・文面) は案 C でも要る。案 A は構造としては最小だが、R-04 を満たせない。構造はここで確定し、仕上げ相では蒸し返さない。
+**「縁の発生源を消すより単純な構造は無いか」**: 縁の発生源は 2 つ。(1) 応答が非同期で次の回に分かること — 消すには同期の HTTP (pgsql-http 拡張。本番に無い) か B' の待ちが要り、どちらも本番の前提を変える。(2) 確認の記録の表 — 消すには要求 ID を覚える場所が要り、`ops_alert_state` の流用は意味を壊す。残りの部品 (Edge Function 1 本・判定の純粋な関数・文面) は案 C でも要る。案 A と案 A' は構造としては最小だが、R-04 を満たせない (A' は Edge と Vault のずれも見えない)。構造はここで確定し、仕上げ相では蒸し返さない。
 
 ### 4.3 トレース (全シナリオを §4.1 の構造で手で走らせる)
 
@@ -1568,7 +1569,7 @@ OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES=
 - `it('J-25: judgeCronSecretProbe は古い確認の結果を見ない (最新の決まった確認が 200 current なら、その前の 401 は所見にならない)')`
 - `it('J-26: body_error / body_code / matched に秘密らしい文字列 (canary) が入っていても、所見の title / action に現れない (所見は表の文だけ)')`
 - `it('Q-1: partitionCronSecretFindings は順を保って level で分け、cronSecretFindingIds は id だけを返す')`
-- `src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts` に `it('R-9 (#1560): OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES で rotation の抑止を変える。範囲外 (1439・10081・整数でない) は既定の 1440 に戻し ignored に入れる。2880 は受ける')` を足す (R-1〜R-6 の期待値に `cronSecretRotationCooldownMinutes: 1440` を足す: §14)
+- `src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts` に `it('R-10 (#1560): OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES で rotation の抑止を変える。範囲外 (1439・10081・整数でない) は既定の 1440 に戻し ignored に入れる。2880 は受ける')` を足す (名前の R-9 は既存の `R-9 (#1493)` が使っているので R-10。既存の it の入力と期待値の直し方は §14 の app-log-error-spike.test.ts の行)
 
 `src/__tests__/lib/emails/ops/cron-secret-drift.test.ts` (新設・段 C):
 - `it('E-1: template ops_cron_secret_drift・宛先・送信元 (EMAIL_FROM)・件名が種類ごとの決まった形 (drift / rotation)・100 字以内で、EmailEnvelopeSchema を通る')`
@@ -1669,7 +1670,7 @@ C-2 の前提: ローカルの pg_net で postgres ロールが `net._http_respo
 | 段 | 中身 | §15 の行 (他の文書の追随) | 前提 | マージの単位 |
 |---|---|---|---|---|
 | A: Edge | `supabase/functions/_shared/auth.ts` (`describeServiceRoleAuth`・`requireServiceRole` の載せ替え)・`supabase/functions/cron-secret-probe/index.ts`・`supabase/config.toml` の 1 節・`supabase/functions/README.md`・テスト (`tests/cron-secret.test.ts` DS-1〜DS-8・`tests/cron-secret-probe-edge.test.ts`・契約 CT-12・CT-13)・番兵の追随 (§14 の段 A の行: `tests/edge-function-cors.test.ts` の `BATCH_ONLY_SOURCES`) | 行 1 (Edge Function secrets の行)・行 6 (関数の表) | 無し | 単独でマージしてよい (main に入ると Actions が本番へ配る。呼び出し元はまだ無い) |
-| B: DB | migration `<番号>_cron_secret_drift_monitor.sql` + down (表 1・関数 3)・`database.types.ts` 2 か所・契約テスト (`tests/cron-secret-drift-monitor-contract.test.ts` CT-1〜CT-11・CT-18)・結合テスト (`tests/integration/security/cron-secret-drift-monitor.test.ts`)・番兵の追随 (§14 の段 B の行: `tests/edge-function-verify-jwt.test.ts` の `DB_HTTP_CALL_SITES`) | 行 6 (README の `DB_HTTP_CALL_SITES` の列挙) | 段 A のマージ (`DB_HTTP_CALL_SITES` の呼び先 `cron-secret-probe` が `config.toml` に無いと番兵が赤) | 段 A の後。追加だけの migration なので、マージの前に本番へ当ててよい |
+| B: DB | migration `<番号>_cron_secret_drift_monitor.sql` + down (表 1・関数 3)・`database.types.ts` 2 か所・契約テスト (`tests/cron-secret-drift-monitor-contract.test.ts` CT-1〜CT-11・CT-18)・結合テスト (`tests/integration/security/cron-secret-drift-monitor.test.ts`)・番兵の追随 (§14 の段 B の行: `tests/edge-function-verify-jwt.test.ts` の `DB_HTTP_CALL_SITES` と it「DB から呼ばれる関数の宣言に …」・`tests/ai-usage-contract.test.ts` の `CRON_ENTRYPOINTS`) | 行 6 (README の `DB_HTTP_CALL_SITES` の列挙) | 段 A のマージ (`DB_HTTP_CALL_SITES` の呼び先 `cron-secret-probe` が `config.toml` に無いと番兵が赤) | 段 A の後。追加だけの migration なので、マージの前に本番へ当ててよい |
 | C: アプリ | `src/lib/ops-alerts/cron-secret-drift.ts`・`src/lib/emails/ops/cron-secret-drift.ts`・`src/lib/ops-alerts/app-log-error-spike.ts` の追記・`src/lib/cron-auth.ts` の追記・route・`src/lib/env.ts`・`.env.example`・`ENV_SETUP.md`・単体テスト (§11.2 の新設 2 ファイルと既存 4 ファイルへの追記)・既存テストの追随 (§14 の段 C の行と §14.1)・契約 CT-14〜CT-17 | 行 1 (Vault の行)・行 2・3・4・5・7・8・9・10 | 段 A と段 B のマージ、段 B の migration の本番への適用 (route が関数を呼ぶ) | 段 A・B の後 |
 
 段の順を守る理由: 段 C が段 A より先に本番に出ると、最初の確認が 404 (`probe-not-deployed`) で、ずれの通知が 1 通出る (S-07)。段 B の migration が当たっていないと、route が `cron_secret_probe_results` を見つけられず 500 (`cron_failure` に `vercel_cron/cron/app-log-alerts` が出る)。
@@ -1712,8 +1713,9 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 
 | 番兵 | grep の語 | 反応する理由 | 直し方 | 段 |
 |---|---|---|---|---|
-| `tests/edge-function-verify-jwt.test.ts` (`DB_HTTP_CALL_SITES`・DB から呼ばれる関数の検査) | `DB_HTTP_CALL_SITES`・`net.http_post`・`/functions/v1/`・`verify_jwt = false` | migration の生の文字列で HTTP の呼び出しらしい箇所を数え、宣言の数と突き合わせる (宣言の無いファイルは 0)。呼び先が `config.toml` で `verify_jwt = false`・先頭で `requireServiceRole` であることも見る | 段 B の PR で、`MEAL_IMAGE_PICKUP_MIGRATION` の定数の次に `const CRON_SECRET_PROBE_MIGRATION = path.posix.join(MIGRATIONS_DIR, '<番号>_cron_secret_drift_monitor.sql');` と `const CRON_SECRET_PROBE_FUNCTION = 'cron-secret-probe';` を足し、`DB_HTTP_CALL_SITES` の末尾に `// public.send_cron_secret_probe: 定数 c_url の '.../functions/v1/cron-secret-probe' を net.http_post で呼ぶ (#1560)` と `[CRON_SECRET_PROBE_MIGRATION, { count: 2, callees: [CRON_SECRET_PROBE_FUNCTION] }],` を足す。it「DB から呼ばれる関数の宣言に … がある」の列挙に `CRON_SECRET_PROBE_FUNCTION` を足してよい (任意)。⚠ 本番のスキーマの写し `supabase/baseline/prod_schema.sql` に、将来 `send_cron_secret_probe` が取り込まれたら (prod-schema-snapshot の更新)、その行の `count` を 2 + 2 にする (そのときの PR の仕事。いまの `DB_HTTP_CALL_SITES` の baseline の行は `CATALOG_IMPORT_FUNCTIONS` の分 (count 2) だけで、本書の段 A / B / C は baseline を変えない: §13) | B (baseline の行は本書の段の外) |
+| `tests/edge-function-verify-jwt.test.ts` (`DB_HTTP_CALL_SITES`・DB から呼ばれる関数の検査) | `DB_HTTP_CALL_SITES`・`net.http_post`・`/functions/v1/`・`verify_jwt = false` | migration の生の文字列で HTTP の呼び出しらしい箇所を数え、宣言の数と突き合わせる (宣言の無いファイルは 0)。呼び先が `config.toml` で `verify_jwt = false`・先頭で `requireServiceRole` であることも見る | 段 B の PR で、`MEAL_IMAGE_PICKUP_MIGRATION` の定数の次に `const CRON_SECRET_PROBE_MIGRATION = path.posix.join(MIGRATIONS_DIR, '<番号>_cron_secret_drift_monitor.sql');` と `const CRON_SECRET_PROBE_FUNCTION = 'cron-secret-probe';` を足し、`DB_HTTP_CALL_SITES` の末尾に `// public.send_cron_secret_probe: 定数 c_url の '.../functions/v1/cron-secret-probe' を net.http_post で呼ぶ (#1560)` と `[CRON_SECRET_PROBE_MIGRATION, { count: 2, callees: [CRON_SECRET_PROBE_FUNCTION] }],` を足す。同じ PR で、it「DB から呼ばれる関数の宣言に、… とカタログ取り込みの 5 本がある」(origin/main の 533〜535 行) を必ず直す (`DB_CALLEES` は `DB_HTTP_CALL_SITES` の全 `callees` で、この it は完全一致の `toEqual` なので、宣言を足すだけでは赤): it の名前を `` `DB から呼ばれる関数の宣言に、${SEGMENT_STATS_FUNCTION}・${MEAL_IMAGE_WORKER_FUNCTION}・${PURGE_HIDDEN_CONTENT_FUNCTION}・${CRON_SECRET_PROBE_FUNCTION} とカタログ取り込みの 5 本がある` `` に、期待値を `[...CATALOG_IMPORT_FUNCTIONS, SEGMENT_STATS_FUNCTION, MEAL_IMAGE_WORKER_FUNCTION, PURGE_HIDDEN_CONTENT_FUNCTION, CRON_SECRET_PROBE_FUNCTION].sort()` にする。⚠ 本番のスキーマの写し `supabase/baseline/prod_schema.sql` に、将来 `send_cron_secret_probe` が取り込まれたら (prod-schema-snapshot の更新)、その行の `count` を 2 + 2 にする (そのときの PR の仕事。いまの `DB_HTTP_CALL_SITES` の baseline の行は `CATALOG_IMPORT_FUNCTIONS` の分 (count 2) だけで、本書の段 A / B / C は baseline を変えない: §13) | B (baseline の行は本書の段の外) |
 | 同上 (先頭の認証・CRON_SECRET を受け付ける関数) | `AUTH_CALLS`・`CRON_SECRET_ACCEPTANCE` | `verify_jwt = false` の関数は先頭で `await requireServiceRole(req)` を呼ぶこと。`requireServiceRole(` を含む関数は `verify_jwt = false` であること | `cron-secret-probe/index.ts` が先頭で `await requireServiceRole(req)` を呼び (§6.2)、`config.toml` に `verify_jwt = false` を書く (§6.3) ので、番兵は変えない。`describeServiceRoleAuth` を `AUTH_CALLS` に足さない (先頭の認証は `requireServiceRole` で済んでいる) | A |
+| `tests/ai-usage-contract.test.ts` (6. 定期実行: `CRON_ENTRYPOINTS`・`scanCronEntrypoints`) | `CRON_ENTRYPOINTS`・`functions\/v1\/` | `scanCronEntrypoints()` (origin/main の 351〜365 行) は、`supabase/migrations` の `.sql` (`.down.sql` を除く) から `--` のコメントを消したあと、`functions/v1/<名前>` に当たるものを全部 `pg_cron:<名前>` として集める (呼び出し元が pg_cron のジョブかどうかは見ない)。it「定期実行の入口の全数は CRON_ENTRYPOINTS の一覧どおり。…」(382〜387 行) は、その集合と `Object.keys(CRON_ENTRYPOINTS).sort()` の完全一致を求める。段 B の migration の `c_url` (§5.2。コードでありコメントではない) で `pg_cron:cron-secret-probe` が増える | 段 B の PR で、`CRON_ENTRYPOINTS` (origin/main の 312〜329 行) の `'pg_cron:process-meal-image-jobs'` の行の次 (`// DB の関数が、名前を引数で受け取って …` の行の前) に次の 2 行を足す。`// #1560 cron の共有シークレットの確認。GET /api/cron/app-log-alerts が DB の public.send_cron_secret_probe() から pg_net で呼ぶ (pg_cron のジョブではないが、走査は migration の URL をすべて pg_cron: で集める)。import は認証だけ` と `'pg_cron:cron-secret-probe': 'cron の共有シークレットの確認 (照合の結果だけを返す。AI を使わない)',`。`PG_NET_CALLEES` は変えない (呼び先は URL の定数に名前まで書いてあり、名前を文字列の連結で決める形ではない)。次の it「定期実行は記録しない: …」(389〜405 行) は、`pg_cron:` の入口について `listEdgeFunctions()` に `cron-secret-probe` があること (段 A で入る) と、`recordedFeatures(ALL_EDGE['cron-secret-probe']?.usage)` が `[]` であることを見る。`cron-secret-probe` は AI を使わないので `ENFORCED_EDGE` / `EXEMPT_EDGE` (`tests/helpers/ai-consent-enforced-paths.ts`) に行を足さない — `ALL_EDGE` に無い名前は `recordedFeatures(undefined)` = `[]` で通る | B |
 | `tests/cron-secret-contract.test.ts` CC-1〜CC-3 | `SECRET_ENV_NAMES`・`checkCronSecret`・`requireServiceRole` | 環境変数を読むのは `_shared/auth.ts` だけ / `requireServiceRole` は await / `checkCronSecret` の呼び出しは 1 つ | 変えない。§6.1 の載せ替えで `checkCronSecret` の呼び出しが `describeServiceRoleAuth` の 1 か所になり、`requireServiceRole` は呼ばない。`cron-secret-probe/index.ts` は環境変数の名前を書かない (CC-1 の走査は識別子と文字列。コメントは数えない) | A |
 | 同 CC-4〜CC-6 | `NEXT_CRON_SECRET_NAMES`・`requireCronAuth` | `CRON_SECRET` / `CRON_SECRET_PREVIOUS` を読むのは `src/lib/cron-auth.ts` だけ / `checkCronSecret` は 1 つ / cron の route は `requireCronAuth` | 変えない。`describeCronSecretRotationState` を `src/lib/cron-auth.ts` に置く (§7.2)。route は値を読まず、この関数を呼ぶだけ | C |
 | `tests/cron-secret.test.ts` RS-1〜RS-11・`tests/edge-function-service-role-auth.test.ts` SR-1〜SR-12 | `requireServiceRole` | `requireServiceRole` の振る舞い | 変えない (そのまま通ることが §6.1 の条件: R-22)。DS-1〜DS-8 を `tests/cron-secret.test.ts` に足す | A |
@@ -1724,7 +1726,7 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 | `src/__tests__/lib/ops-alerts/cron-failure.test.ts` K-2 | `APP_LOG_ALERT_KEYS`・`toHaveLength(5)` | キーの数を 5 で固定 | `toHaveLength(7)` に。it の名前の「5 つの値」を「7 つの値」に | C |
 | `src/__tests__/api/cron/app-log-alerts.test.ts` (O-1・応答の `toEqual`・`mocks.rpc` の上書き・呼び出しの順・文面の `vi.mock`) | `既定の場面で呼ぶのは 7 つ`・`PG_CRON_STALLED_QUIET`・`harness?.(fn, args)`・`expect(order).toEqual`・`vi.mock('@/lib/emails/ops/pg-cron-stalled'` | O-1 が既定の場面で呼ばれる RPC の集合を固定・応答の全体を `toEqual` で固定 (21 か所)・個別の上書きが知らない RPC に `scenario.release` を返す / 例外を投げる・呼び出しの順を固定 | §14.1 の逐語どおり | C |
 | `src/__tests__/lib/env.test.ts` の it「値を読む場所が決まっている変数 (… OPS_ALERT_* …)」 | `readOnlyBy`・`OPS_ALERT_` | `[name, readOnlyBy]` を `.sort()` してから `toEqual` で全件固定 | 期待の配列の `['OPS_ALERT_COOLDOWN_MINUTES', …],` の **前** (`.sort()` の順: `OPS_ALERT_CLIENT_ERROR_THRESHOLD` < `OPS_ALERT_COOLDOWN_MINUTES` < `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES` < `OPS_ALERT_EMAIL`。`CO` < `CR` なので `OPS_ALERT_COOLDOWN_MINUTES` の次・`OPS_ALERT_EMAIL` の前) に `// #1560 cron の共有シークレットの入れ替えの途中の通知の抑止。不正な値の扱い (既定値に戻して warn) を cron の route 1 か所に置く` と `['OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES', 'src/app/api/cron/app-log-alerts/route.ts'],` を足す。同じ it の `typeOnly` の `getOptionalEnv('OPS_ALERT_PG_CRON_STALL_MINUTES');` の次に `// @ts-expect-error OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES も同じ (#1560)` と `getOptionalEnv('OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES');` を足す | C |
-| `src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts` R-1〜R-6・R-8 | `resolveAppLogAlertSettings`・`pgCronStallMinutes` | 設定の `toEqual`・`AppLogAlertSettingSources` の全項目 | 入力に `cronSecretRotationCooldownMinutes: undefined`、期待値に `cronSecretRotationCooldownMinutes: 1440` を足す (`none` の定数も)。R-9 を足す (§11.2) | C |
+| `src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts` の describe「resolveAppLogAlertSettings (#1157)」(R-1〜R-6・R-8 (#1493)・R-9 (#1493)・R-8 (#1125)) | `resolveAppLogAlertSettings`・`pgCronStallMinutes` | 設定の `toEqual`・`AppLogAlertSettingSources` の全項目 (新しい項目は必須なので、入力のオブジェクトの直書きに無いと型エラー、期待値の全体に無いと赤) | (i) 入力: `none` の定数 (origin/main の 300 行) と、`...none` を使わずにオブジェクトを直書きした入力の 10 か所 (R-2・R-3・R-4 の 2 つ・R-5・R-6 の 2 つ・R-8 (#1493) の 1 つ目・R-9 (#1493) の 2 つ = ループの中と、末尾の `.ignored` だけを見る 1 つ) に `cronSecretRotationCooldownMinutes: undefined` を足す。足し終えたら (iv) の R-10 を足す前に数えて `grep -c 'pgCronStallMinutes: undefined'` (11) と `grep -c 'cronSecretRotationCooldownMinutes: undefined'` が同じ数になる。(ii) 期待値: 設定の全体を `toEqual` で見る 12 か所 (R-1・R-2・R-3・R-4 の 2 つ・R-5・R-6 の 2 つ・R-8 (#1493)・R-9 (#1493)・R-8 (#1125) の 2 つ) の `pgCronStallMinutes: …` の次に `cronSecretRotationCooldownMinutes: 1440` を足す (R-1 は 1 行の形なので `pgCronStallMinutes: 60, cronSecretRotationCooldownMinutes: 1440, ignored: []`)。足し終えたら (iv) の R-10 を足す前に数えて `grep -c 'pgCronStallMinutes: 60,'` (11) と `grep -c 'pgCronStallMinutes: 120,'` (1) の和 (12) が、`grep -c 'cronSecretRotationCooldownMinutes: 1440'` と同じ数になる。(iii) `.ignored`・`.clientErrorThreshold`・`.pgCronStallMinutes` だけを見る expect の期待値と、R-7 は変えない。(iv) R-10 (#1560) を足す (§11.2) | C |
 | `src/__tests__/lib/emails/template-names.test.ts` | `render\w+Email(` | 文面ごとに snake_case の template 1 つ | 新設の 1 本が `template: 'ops_cron_secret_drift'` を 1 行で持つ (そのまま通る) | C |
 | `src/__tests__/lib/emails/secret-templates.test.ts` | `PUBLIC_TEMPLATES`・`_url` | 文面は秘密あり / なしの表のどちらかに載せ、`*_url` の項目を列挙する。文面の件数も固定 | 秘密なしの表の `ops_pg_cron_stalled: ['logs_url'],` の次に `// #1560 cron の共有シークレットのずれ・入れ替えの途中の運用メール。リンクは運用ログ画面 (super_admin だけが開ける固定の URL)` と `ops_cron_secret_drift: ['logs_url'],` を足す | C |
 | `tests/env-source-scan.test.ts` 4・6・9 | `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES` | 一覧 (`env.ts`)・`.env.example`・`readOnlyBy` | §10.2 の項目を `env.ts` と `.env.example` に足す。値を読むのは route だけ | C |
@@ -1737,7 +1739,7 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 | `src/__tests__/lib/emails/ops/pg-cron-stalled.test.ts` | `pg-cron-stalled`・`ops_pg_cron_stalled` | `renderPgCronStalledEmail` の文面 (件名・本文・100 字以内) | 反応しない (`src/lib/emails/ops/pg-cron-stalled.ts` を変えない。新しい文面は別ファイル `cron-secret-drift.ts` で、そのテストは §11.2 の新設 `src/__tests__/lib/emails/ops/cron-secret-drift.test.ts`) | — |
 | `tests/integration/rls/ops-alert-state.test.ts` | `ops_alert_state` | `claim_ops_alert` の挙動 | 変えない (キーが増えるだけ) | — |
 | `tests/email-send-throttle-contract.test.ts` | `EXEMPT_EMAIL_SENDERS`・`MAIL_TRIGGERING_RPCS`・`sendEmail(` | `sendEmail` の呼び出し元の除外リスト・メールを送る RPC の一覧 | 反応しない (route はすでに除外リストにあり、新しい文面は `src/lib/emails/ops/`、新しい RPC 2 本はメールを送らない) | — |
-| `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 追随表の逐語の書き換えの行は、対象の文書に前か後の文のどちらかが残る | §15 の行 7 (10 §8.1 の「5 種類」→「7 種類」) は逐語の書き換えなので、`OWNED_EDITS` に `{ owner: 'docs/design/operator/12-cron-secret-drift-monitor.md', target: 'docs/design/operator/10-logs-and-mail-retry.md', pattern: /「([^」]*)」→「([^」]*)」/ }` を足す (段 C の PR)。ほかの行は「足す」だけなので載せない | C |
+| `tests/design-doc-followup-owned-edits.test.ts` | `OWNED_EDITS` | 追随表の逐語の書き換えの行は、対象の文書に前か後の文のどちらかが残る | §15 の行 7 のうち逐語の書き換え (10 §8.1 の「… 5 種類 …」→「… 7 種類 …」) は、§15.1 の表に 1 行で書いてある。その行は 1 列目が `` `docs/design/operator/10-logs-and-mail-retry.md` `` で始まり (この検査の `rowsOf` は、表の 1 列目が `target` のパスで始まる行だけを拾う)、2 列目が「前の文」→「後の文」の形なので、`OWNED_EDITS` の末尾に `{ owner: 'docs/design/operator/12-cron-secret-drift-monitor.md', target: 'docs/design/operator/10-logs-and-mail-retry.md', pattern: /「([^」]*)」→「([^」]*)」/ }` を足す (段 C の PR。直前にコメント `// operator/12 §15.1: 10 §8.1 の 2 か所 (キー / クールダウン・宛先) の同じ文。オーケストレーターの docs PR が持つ`)。本書の中で 1 列目がこのパスで始まる行は §15.1 の 1 行だけ (§15 の表の行は 1 列目が番号)。ほかの §15 の行は「足す」だけなので載せない | C |
 | `tests/edge-function-verify-jwt.test.ts` の `config.toml` の形の検査 | `TOML_FUNCTION_HEADER_LINE` | 許した形の行だけ | §6.3 の形 (行全体のコメント・見出し・`verify_jwt = false`) で書く | A |
 
 ### 14.1 `src/__tests__/api/cron/app-log-alerts.test.ts` の追随 (段 C・逐語)
@@ -1816,7 +1818,7 @@ const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 
 (5) `mocks.rpc` を個別に上書きしていて、知らない RPC を `harness` に渡す行が `cron_failure_counts` / `pg_cron_last_run_at` に限られている 3 件 (D-3・D-4・F-6: `if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);`)。この条件に `|| fn === 'cron_secret_probe_results' || fn === 'send_cron_secret_probe'` を足す (3 か所)。ほかの上書き (T-3・T-6・T-7b・T-9 など) は知らない RPC をすべて `harness` に渡しているので変えない。
 
-(6) 呼び出しの順を `toEqual` で固定している 3 件の期待値の末尾に `'cron_secret_probe_results', 'send_cron_secret_probe'` を足す: D-4 (`[…, 'cron_failure_counts', 'pg_cron_last_run_at', 'cron_secret_probe_results', 'send_cron_secret_probe']`)・T-3 (`'pg_cron_last_run_at'` の次に 2 つ)・ORD-1 (同じ)。既定の場面では権利を取らないので `claim_ops_alert` は増えない。
+(6) RPC の呼び出しの順を `toEqual` で固定している 2 件 (`mocks.rpc` で RPC の名前を `order` に積むもの) の期待値の末尾に `'cron_secret_probe_results', 'send_cron_secret_probe'` を足す: D-4 (`[…, 'cron_failure_counts', 'pg_cron_last_run_at', 'cron_secret_probe_results', 'send_cron_secret_probe']`)・T-3 (`'pg_cron_last_run_at'` の次に 2 つ)。既定の場面では所見が無く権利を取らないので `claim_ops_alert` は増えない。ORD-1 は**変えない**: その `order` は `sendEmail` の `mockImplementation` が積む `sendEmail:<template>` だけで RPC の名前は入らず、`everything()` の場面でも共有シークレットの所見は 0 件なので `sendEmail` は増えない (`claim_ops_alert` の鍵の列挙も 5 つのまま。後半の `pg_cron_stalled` の 500 の場面では route がそこで 500 を返し、`checkCronSecretDrift` に届かない)。
 
 (7) 足す it (CS- / CR- / CO-。§11.2) は、(1) の場面の項目 (`cronSecretResults` ほか) を `setScenario({ … })` で上書きして書く。確認の結果の行は `probeRowOk()` を元に `http_status` / `matched` / `body_error` などを変えて作る。Vercel 側 (CR-4) は `vi.stubEnv('CRON_SECRET_PREVIOUS', SECRET)` (同じ値) / `vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET)` (違う値) で作る。CS-11 の canary は `vi.stubEnv('CRON_SECRET', 'canary-cron-secret-…')` と、結果の行の `body_error: 'canary-body-…'` で作り、`mocks.sendEmail.mock.calls`・`mocks.logInfo/logWarn/logError.mock.calls`・応答の JSON を `JSON.stringify` して `not.toContain` で確かめる。
 
@@ -1832,12 +1834,20 @@ const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 | 4 | `ENV_SETUP.md` §「🚨 エラー急増の運用メール」(372 行〜) | 表に `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`（任意）の行 (例 `2880`・役割・未設定なら既定の 1440 分・1440〜10080 分で、1440 分より短くはできない) を足し、箇条書きに「**cron の共有シークレットのずれ**（6 つ目の通知。キーは `cron_secret_drift`。#1560）」と「**入れ替えの途中・旧い値の残り**（7 つ目の通知。キーは `cron_secret_rotation`。抑止は `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`）」の 2 点を足す。応答の `status` の説明に `cron_secret_drift.status` / `cron_secret_rotation.status` を足す | C |
 | 5 | `operator/07-audit-monitoring.md` §8.3 (669 行〜) の表 | 「定期処理の失敗と pg_cron の停止」の行の次に「cron の共有シークレットのずれと入れ替えの途中 (6 つ目・7 つ目の種類。#1560)」の行を足す (RPC `cron_secret_probe_results` / `send_cron_secret_probe`・表 `cron_secret_probes`・Edge Function `cron-secret-probe`・キー 2 つ・環境変数・文面 `src/lib/emails/ops/cron-secret-drift.ts` (template `ops_cron_secret_drift`)・本書 §4〜§8 への参照)。「実装」の行に新設 2 ファイルと migration・Edge Function を、「テスト」の行に CS- / CR- / CO- と新設のテストを足す。「限界」に「Vercel の `CRON_SECRET` の欠落は検知しない (本書 §17)」を足す | C |
 | 6 | `supabase/functions/README.md` | 関数の表 (認証の列) に `cron-secret-probe` の行 (§6.4)。`DB_HTTP_CALL_SITES` を説明する段落の「いまは … を定義するファイル」の列挙に `public.send_cron_secret_probe` を足す | A (表) / B (列挙) |
-| 7 | `operator/10-logs-and-mail-retry.md` §8.1 (1406 行〜) の表 | 「キー / クールダウン」の行と「宛先」の行の 2 か所の「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled` を含めて 5 種類。operator/11 §4〜§6)」を「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled`、#1560 の 6 つ目 `cron_secret_drift`・7 つ目 `cron_secret_rotation` を含めて 7 種類。operator/11 §4〜§6・operator/12 §7〜§8)」に。「キー / クールダウン」の行は「3 種類で同じ値・抑止は別々」のあとに「(`cron_secret_rotation` だけは `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`)」を足す。逐語の書き換えなので `tests/design-doc-followup-owned-edits.test.ts` の `OWNED_EDITS` に載せる (§14) | C |
+| 7 | `operator/10-logs-and-mail-retry.md` §8.1 (1406 行〜) の表 | 「キー / クールダウン」の行と「宛先」の行の 2 か所にある同じ文を、§15.1 の逐語のとおりに書き換える。「キー / クールダウン」の行は、さらに「(既定 60 分。3 種類で同じ値・抑止は別々)」の次に「(`cron_secret_rotation` だけは `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`)」を足す。§15.1 の行は `tests/design-doc-followup-owned-edits.test.ts` の `OWNED_EDITS` に載せる (§14) | C |
 | 8 | `operator/08-cron-batches.md` §6 (534 行〜) | 冒頭の段落の末尾に「cron の共有シークレットのずれ (Edge Function secrets と Vault の食い違いなど。pg_net は非同期なので `cron.job_run_details` に出ない) は、6 つ目・7 つ目の種類 `cron_secret_drift` / `cron_secret_rotation` が見る (正本は operator/12)」を 1 文足す。§6.1 の箇条書きに「pg_cron → Edge Function の 401 / 503 は失敗の行に出ないので、operator/12 の確認 (15 分おき) が受け持つ」を足す。ジョブの数と名前の注記 (§3.0・§3.1) は変えない (番兵) | C |
 | 9 | `operator/09-runbook.md` §11.5 (717 行〜) の「入れ替えの後、`node scripts/check-cron-secret-drift.mjs` … で確かめる」の項 | 「自動の確認 (`GET /api/cron/app-log-alerts` の `cron_secret_drift` / `cron_secret_rotation`。operator/12) も 30 分以内に判定する。`CRON_SECRET_PREVIOUS` を外し忘れると 24 時間に 1 通『入れ替えが途中です』が届く。侵害時は外すまでの時間を短くする (届いたら即日外す)」を足す。§5.1 (166 行〜) の冒頭の段落に「cron の共有シークレットのずれ (pg_cron → Edge Function の 401 / 503) は `ops_cron_secret_drift` で届く (operator/12 §8.1.1 の所見の表と対処)」を足す | C |
 | 10 | `operator/CLAUDE.md` のファイル一覧 | `12-cron-secret-drift-monitor.md | cron の共有シークレット (Vercel / Edge Function secrets / Vault) のずれの自動・定期の検知 (実経路の確認 + 運用アラートの 6 つ目・7 つ目の種類) | 03 §22.9` の行を足す (origin/main の一覧は 10 までで、`11-ops-batches-non-billing.md` の行も無い。同じ PR で 11 の行も足してよい) | C |
 
 `#1560` を含む行に、帰属の文言を新しく書かない (本書の冒頭の 1 文の引用だけ)。
+
+### 15.1 逐語の書き換え (`tests/design-doc-followup-owned-edits.test.ts` の `OWNED_EDITS` が見る行)
+
+1 列目は対象の文書のリポジトリの根からのパス、2 列目は「前の文」→「後の文」の 1 組だけ。前の文は、origin/main の対象の文書に逐語である (10 の 1415 行と 1416 行)。本書の中で 1 列目がこのパスで始まる行は、この 1 行だけにする (検査は 1 列目がパスで始まる行を拾い、組が 1 つだけであることを求める)。
+
+| 文書 | 書き換え | 箇所 | 段 |
+|---|---|---|---|
+| `docs/design/operator/10-logs-and-mail-retry.md` §8.1 の表 | 「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled` を含めて 5 種類。operator/11 §4〜§6)」→「(#1125 の B の 4 つ目 `cron_failure`・5 つ目 `pg_cron_stalled`、#1560 の 6 つ目 `cron_secret_drift`・7 つ目 `cron_secret_rotation` を含めて 7 種類。operator/11 §4〜§6・operator/12 §7〜§8)」 | 「キー / クールダウン」の行と「宛先」の行の 2 か所 (同じ文) | C (§15 の行 7) |
 
 ---
 
@@ -1853,7 +1863,7 @@ const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 
 ## 17. 限界 (知っておくこと)
 
-- **Vercel の `CRON_SECRET` が無い・不正なときは検知しない** (Q-3。別の Issue)。`app-log-alerts` 自身が 503 / 401 で止まるため。Vercel の Cron Jobs の画面の HTTP ステータスで分かる。
+- **Vercel の `CRON_SECRET` が無いときは検知しない** (Q-3)。`app-log-alerts` 自身が 503 で止まるため。同じく、Vercel の中で値が食い違って `app-log-alerts` 自身が 401 で止まるときも、本書の検知は働かない (§4.2 の案 A')。どちらも Vercel の Cron Jobs の画面の HTTP ステータスで分かる。
 - **Vercel と Supabase 側の一致は見ない** (Q-1)。
 - **検知の遅れは最大 30 分** (Q-4)。ずれの直後の 1 時間おきのジョブ (`calculate-segment-stats`) は、通知より先に 401 で止まることがある。
 - **確認は Vault の値を本番の Edge Function へ 15 分ごとに送る** (1 日 96 回)。pg_cron の実際の呼び出しと同じ経路・同じ露出で、pg_net の待ち行列に Authorization ヘッダーが載るのは送られるまでの数秒。
