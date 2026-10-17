@@ -80,6 +80,8 @@ export const config = {
      * - favicon.ico (favicon file)
      * - manifest.json (PWA manifest — must not be redirected to /login)
      * - robots.txt (crawler instructions)
+     * - sitemap.xml (サイトマップ #1867。src/app/sitemap.ts。ちょうどこのパスだけ。未ログインのクローラーを /login へ送らない。
+     *   XML で文書ではないので CSP も要らない。robots.txt と同じ扱い)
      * - sw.js / workbox-* (service worker files)
      * - api/health (死活監視用ヘルスチェック #1181。ちょうどこのパスだけ。
      *   Supabase のセッション処理を通さず、認証基盤の不調に引きずられないようにする。
@@ -94,6 +96,6 @@ export const config = {
      *   ちょうどこのパスだけ。拡張子の無いパスなので下の画像の拡張子の除外に当たらない。SNS のクローラーは未ログインなので、
      *   通すと /login へ送られ、画像の代わりにログイン画面の HTML が返る。画像は文書ではないので CSP も要らない)
      */
-    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|opengraph-image$|twitter-image$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sitemap\\.xml$|sw\\.js|workbox-|api/health$|opengraph-image$|twitter-image$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
