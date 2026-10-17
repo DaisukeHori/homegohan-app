@@ -312,7 +312,7 @@ worker はその値を使う (06 §2・§6.3)。
 | 通知音 | `sound: 'default'` | チャンネルの `sound` 設定を継承 |
 | 通知チャンネル | 不要 (iOS は自動) | `setNotificationChannelAsync` で `"default"` チャンネル必須 |
 | 通知権限 | 初回起動時に `requestPermissionsAsync` | Android 13+ (`POST_NOTIFICATIONS`) は手動リクエスト必要 |
-| APNs / FCM | APNs キー (.p8) を EAS Secret に登録済み | FCM Server Key を `EXPO_FCM_SERVER_KEY` として EAS Secret に追加要 |
+| APNs / FCM | APNs キー (.p8) を EAS Secret に登録済み | FCM V1 の資格情報 (Google のサービスアカウントキー) を EAS に登録する (未登録。`mobile/06-push-send.md` §14) |
 | フォアグラウンド表示 | `setNotificationHandler` で制御 | 同左 |
 
 #### Android チャンネル設定
@@ -504,7 +504,7 @@ appId: com.homegohan.app
 
 | 項目 | 優先度 | 担当 |
 |------|--------|------|
-| Android FCM Server Key の取得・EAS Secret 登録 | 高 | 送信の worker (`GET /api/cron/push-outbox`) は本番の Vercel Cron に登録済み。ただし本番に `EXPO_ACCESS_TOKEN` が入るまでは、送らずに掃除だけをする (iOS・Android とも届かない。入れるのはオーナーの作業で、#1115)。Android はこれに加えて、FCM V1 の資格情報を EAS に登録してから実機で確かめる (`mobile/06-push-send.md` §14。登録までは Android の端末だけ届かない) |
+| Android の FCM V1 の資格情報の EAS への登録 | 高 | 送信の worker (`GET /api/cron/push-outbox`) は本番の Vercel Cron に登録済み。ただし本番に `EXPO_ACCESS_TOKEN` が入るまでは、送らずに掃除だけをする (iOS・Android とも届かない。入れるのはオーナーの作業で、#1115)。Android はこれに加えて、FCM V1 の資格情報を EAS に登録してから実機で確かめる (`mobile/06-push-send.md` §14。登録までは Android の端末だけ届かない) |
 | ~~`pending_push_notifications` の pg_cron 送信バッチ (Quiet Hours 遅延送信)~~ | – | 解消済み: 表もバッチも作らない。夜間の延期は `push_outbox.next_attempt_at` で、毎分の worker が送る (06 §6.3) |
 | iOS の Rich Push (通知に画像表示) | 低 | Phase 2 |
 | Push 通知アクション (通知センターから直接「承認」ボタン) | 低 | iOS `categoryIdentifier` + Action Buttons で実装可能、Phase 2 |
