@@ -7,7 +7,8 @@
  *   2. 入力: body が JSON でない / refresh_token が無い・空・文字列でない・長すぎる は 400
  *   3. アクセストークンの残り有効期間が 150 秒 (コードの有効期間 60 秒 + auth-js の余裕 90 秒) 未満は
  *      401 (AUTH_TOKEN_EXPIRING)。Web 側でのリフレッシュトークンのローテーションを避ける
- *   4. 凍結中のアカウントは 403 (一時 BAN の期限切れは通す)。確認できないときは 503
+ *   4. 凍結中のアカウントにも発行する (#1861: モバイルの凍結の画面 = Web の /frozen の WebView を本人のセッションで開くため)。
+ *      凍結の状態 (user_profiles) は読まない
  *   5. 発行: 43 文字の base64url コード + expires_in 60 + no-store。RPC には sha256(コード) を渡し、コード本体は渡さない
  *   6. RPC の失敗は 503。ログには body・コード・トークンを出さない
  */
@@ -316,55 +317,32 @@ describe('アクセストークンの有効期限が近い・読めない場合�
 // ─────────────────────────────────────────────────────────────────────────────
 // 4. 凍結
 // ─────────────────────────────────────────────────────────────────────────────
-describe('凍結中のアカウントには発行しない', () => {
-  it('frozen_at あり・unban_at なし (無期限): 403 AUTH_ACCOUNT_FROZEN。コードは作らない', async () => {
-    mockMaybeSingle.mockResolvedValue({ data: { frozen_at: '2026-10-01T00:00:00Z', unban_at: null }, error: null });
+describe('凍結中のアカウントにも発行する (#1861)', () => {
+  it.each([
+    ['frozen_at あり・unban_at なし (無期限)', { frozen_at: '2026-10-01T00:00:00Z', unban_at: null }],
+    ['一時 BAN が継続中 (unban_at が未来)', { frozen_at: '2026-10-01T00:00:00Z', unban_at: '2026-10-08T00:00:00Z' }],
+  ])('%s: 200 でコードを発行する。凍結の状態 (user_profiles) は読まない', async (_label, row) => {
+    mockMaybeSingle.mockResolvedValue({ data: row, error: null });
 
     const res = await POST(postRequest());
     const json = await res.json();
 
-    expect(res.status).toBe(403);
-    expect(json.error.code).toBe('AUTH_ACCOUNT_FROZEN');
-    expect(mockRpc).not.toHaveBeenCalled();
-    expect(mockFrom).toHaveBeenCalledWith('user_profiles');
-  });
-
-  it('一時 BAN が継続中 (unban_at が未来): 403', async () => {
-    mockMaybeSingle.mockResolvedValue({
-      data: { frozen_at: '2026-10-01T00:00:00Z', unban_at: '2026-10-08T00:00:00Z' },
-      error: null,
-    });
-    const res = await POST(postRequest());
-    expect(res.status).toBe(403);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('一時 BAN の期限が切れている (unban_at が過去): 通す', async () => {
-    mockMaybeSingle.mockResolvedValue({
-      data: { frozen_at: '2026-10-01T00:00:00Z', unban_at: '2026-10-05T00:00:00Z' },
-      error: null,
-    });
-    const res = await POST(postRequest());
     expect(res.status).toBe(200);
+    expect(json.code).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(json.error).toBeUndefined();
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockFrom).not.toHaveBeenCalled();
   });
 
-  it('プロフィール行が無い: 凍結されていないものとして通す', async () => {
-    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
-    const res = await POST(postRequest());
-    expect(res.status).toBe(200);
-  });
-
-  it('凍結状態を確認できない (DB エラー): 安全側に倒して 503。発行せず、エラーをログに残す', async () => {
+  it('user_profiles を読めない状態 (DB エラー) でも、読まないので発行に影響しない (200)', async () => {
     mockMaybeSingle.mockResolvedValue({ data: null, error: { code: '57014', message: 'canceling statement' } });
 
     const res = await POST(postRequest());
-    const json = await res.json();
 
-    expect(res.status).toBe(503);
-    expect(json.error.code).toBe('NATIVE_BRIDGE_UNAVAILABLE');
-    expect(mockRpc).not.toHaveBeenCalled();
-    expect(mockWithUser).toHaveBeenCalledWith(USER_ID);
-    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(200);
+    expect(mockRpc).toHaveBeenCalledTimes(1);
+    expect(mockFrom).not.toHaveBeenCalled();
+    expect(mockLogError).not.toHaveBeenCalled();
   });
 });
 
@@ -474,10 +452,8 @@ describe('障害時の応答とログ', () => {
     const code = (await ok.json()).code as string;
     secrets.push(code);
 
-    // 失敗系: RPC 失敗 / 凍結確認の失敗 / 期限間近 / 不正 JWT / 不正 body
+    // 失敗系: RPC 失敗 / 期限間近 / 不正 JWT / 不正 body
     mockRpc.mockResolvedValueOnce({ data: null, error: { code: '23503', message: `failed for ${REFRESH_TOKEN} ${jwt}` } });
-    await POST(postRequest({ authorization: `Bearer ${jwt}` }));
-    mockMaybeSingle.mockResolvedValueOnce({ data: null, error: { code: 'XX000', message: `boom ${REFRESH_TOKEN}` } });
     await POST(postRequest({ authorization: `Bearer ${jwt}` }));
     await POST(postRequest({ authorization: `Bearer ${makeJwt(NOW_SEC + 5)}` }));
     mockGetUser.mockResolvedValueOnce({ data: { user: null }, error: { name: 'AuthApiError', status: 401, message: `bad ${jwt}` } });

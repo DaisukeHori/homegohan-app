@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { SUPABASE_COOKIE_ENCODING } from '@/lib/supabase/cookie-encoding'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
-import { isAccountFrozen, isFrozenAllowedApiPath } from '@/lib/auth/frozen'
+import { isAccountFrozen, isFrozenAllowedApiPath, isNativeBridgeCodeApiPath } from '@/lib/auth/frozen'
 import { isPushTokenClaimApiPath } from '@/lib/push-tokens'
 import {
   isMaintenanceExemptPath,
@@ -20,7 +20,13 @@ import {
   resolveLegalConsent,
 } from '@/lib/legal-consent'
 import { withMinorGuardianStatus } from '@/lib/legal-consent-minor'
-import { legalConsentRequiredBody, LEGAL_CONSENT_REQUIRED_STATUS, resolveLegalConsentApiDecision } from '@homegohan/shared'
+import {
+  accountFrozenBody,
+  ACCOUNT_FROZEN_STATUS,
+  legalConsentRequiredBody,
+  LEGAL_CONSENT_REQUIRED_STATUS,
+  resolveLegalConsentApiDecision,
+} from '@homegohan/shared'
 // 全リクエストの前に動く proxy (src/proxy.ts) から呼ばれるので、zod を持つ @/lib/env ではなく何も import しない env-required を使う (#1182)
 import { getSupabasePublicConfig } from '@/lib/env-required'
 import { internalError } from '@/lib/api/errors'
@@ -222,15 +228,19 @@ export async function updateSession(request: NextRequest) {
           // 凍結の画面 (/frozen/account・/frozen/billing) から本人が退会・書き出し・解約をできるようにするため。ほかの /api は今までどおり 403
           // #1636: 通知のトークンの claim (isPushTokenClaimApiPath) も止めない。利用者の操作ではなく端末の後片付け
           // (同じ端末の前の利用者の行を外す) で、止めると前の利用者宛ての通知がこの端末に届き続けるため
+          // #1861: ネイティブ認証ブリッジのコードの発行 (isNativeBridgeCodeApiPath) も止めない。モバイルの凍結の画面 (Web の /frozen の WebView) を
+          // 本人のセッションで開くのに要る (止めると WebView がログイン画面になり、退会・書き出しにたどり着けない)
+          // 本文と状態は packages/shared の account-frozen.ts (モバイルが同じ値で見分ける)
           if (
             apiFrozen &&
             !isFrozenAllowedApiPath(request.nextUrl.pathname) &&
-            !isPushTokenClaimApiPath(request.nextUrl.pathname)
+            !isPushTokenClaimApiPath(request.nextUrl.pathname) &&
+            !isNativeBridgeCodeApiPath(request.nextUrl.pathname)
           ) {
-            return NextResponse.json(
-              { error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } },
-              { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
-            )
+            return NextResponse.json(accountFrozenBody(), {
+              status: ACCOUNT_FROZEN_STATUS,
+              headers: { 'Cache-Control': 'private, no-store' },
+            })
           }
         }
       }
