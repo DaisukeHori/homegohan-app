@@ -24,6 +24,11 @@ const REVOKE_REASON = 'integration test manual revoke (#1797)';
 const GRANTABLE_PLAN_KEYS = ['pro', 'family_basic', 'family_pro'] as const;
 /** 画面の選択肢に出ないプラン (free は 0 円、org は組織ライセンス、family_addon は private のアドオン) */
 const NON_GRANTABLE_PLAN_KEYS = ['free', 'org_standard', 'family_addon'] as const;
+/**
+ * plans に無いプランの名前 (付与できないことを確かめる)。
+ * 名前に KEY を含めない: 「…KEYS, '<文字列>'」の並びが gitleaks の generic-api-key に誤検知されるため。
+ */
+const UNKNOWN_PLAN = 'no_such_plan_1797';
 
 interface ManualPlanView {
   current: { plan_key: string; status: string; source: 'stripe' | 'manual'; expires_at: string | null } | null;
@@ -155,7 +160,7 @@ describe('manual-plan: super_admin の付与と取り消し', () => {
   it('rejects ungrantable plans, a past expiry, a missing user, a non-UUID id and the actor own id', async () => {
     const path = pathOf(targetUser.userId);
     // 付与できないプランは 422 (free / org / private のアドオン / 存在しない)
-    for (const planKey of [...NON_GRANTABLE_PLAN_KEYS, 'no_such_plan_1797']) {
+    for (const planKey of [...NON_GRANTABLE_PLAN_KEYS, UNKNOWN_PLAN]) {
       expectError(await apiCall('POST', path, superAdminUser.jwt, { plan_key: planKey, reason: GRANT_REASON }), 422, 'OP_PLAN_NOT_GRANTABLE');
     }
     // 有効期限が今日 (JST) は 400
