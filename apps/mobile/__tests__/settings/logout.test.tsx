@@ -170,7 +170,9 @@ describe('設定タブ — ログアウト (#1038 F7-10)', () => {
 });
 
 describe('設定タブ — サインアウトが失敗したとき (オフラインなど。#1037)', () => {
-  // supabase.auth.signOut() は通信に失敗すると、保管庫のセッションを消さずに { error } を返し、SIGNED_OUT も出さない。
+  // supabase.auth.signOut() は、access token が失効していて更新もできないと (オフライン・5xx・失敗の控えの間)、
+  // 保管庫のセッションを消さずに { error } を返し、SIGNED_OUT も出さない (このテストの偽物の signOut はこちらの形)。
+  // access token が有効なうちなら、通信に失敗しても supabase-js が保管庫を消して SIGNED_OUT を出す。
   // そのまま "/" へ移ると、入口 (app/index.tsx) がホームへ戻し、「ログアウトしたのに戻された」ように見える
 
   it('signOut が { error } を返したら、保管庫のセッションと画面の状態を消してから、トップへ戻る', async () => {

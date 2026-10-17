@@ -2,12 +2,15 @@
  * 認証が必要なページの共通レイアウト (src/app/(main)/MainLayout.tsx) が、auth-js の SIGNED_OUT をどう扱うかのテスト (#1038 F7-05)
  *
  * モバイルアプリの WebView の Web 側は、ネイティブから借りたセッション (Cookie) で動く。その refresh_token は
- * 更新に使えない値 (NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER) なので、ブラウザの supabase-js (auth-js) が
- * 更新を試みると /token が 400 を返し、auth-js はセッションを捨てて SIGNED_OUT を出す。
- * 更新を試みるのは次の 2 つで、どちらも「切れる前にネイティブへ頼む」だけでは避けきれない。
+ * 更新に使えない値 (NATIVE_BRIDGE_WEB_REFRESH_TOKEN_PLACEHOLDER) なので、ブラウザの supabase-js (auth-js 2.117) が
+ * 更新を試みると /token が 400 を返す。auth-js 2.117 は、access token が有効なうちの更新の失敗ではセッションを捨てず
+ * (SIGNED_OUT も出さず、失敗を REFRESH_FAILURE_COOLDOWN_MS 控える)、access token が失効した後の更新の失敗でセッションを捨てて SIGNED_OUT を出す。
+ * 更新を試みるのは次の 2 つ。
  *   - 自動更新の tick (30 秒ごと)。残りが 120 秒を切ると更新する
  *   - getSession() (Supabase への API 呼び出しのたびに走る)・バックグラウンドからの復帰 (visibilitychange)。残り 90 秒未満なら更新する。
- *     バックグラウンドの間はタイマーも止まるので、1 時間以上置いて戻ったときは必ずここに来る
+ *     バックグラウンドの間はタイマーも止まるので、1 時間以上置いて戻ったときは access token が失効していて、必ずここで SIGNED_OUT になる
+ * 失効の前の区間は NativeSessionWatcher が受け持つ (残り 180 秒で session-expired を送る。別のテストで確かめる)。
+ * 失効の後の SIGNED_OUT は、ここで確かめる MainLayout が受け持つ。
  * この SIGNED_OUT を「利用者のログアウト」として扱うと、ログアウトしていないのに user-scoped の localStorage
  * (v4MenuGenerating など、リロード後に進行中の生成を復元する値) が消え、/login が一瞬出てしまう。
  * WebView の中では「借り物のセッションを失った」ものとして、ネイティブに再ブリッジを頼む。
@@ -28,12 +31,16 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import {
+  ALREADY_EXPIRED_REMAINING_SECONDS,
+  BORROWED_ACCESS_TOKEN,
   clearAllCookies,
   createFakeSupabaseFetch,
   createRealBrowserClient,
   fakeJwt,
   refreshRequests,
   seedBorrowedSession,
+  SIGNED_OUT_AFTER_EXPIRY_MAX_MS,
+  STORAGE_KEY,
 } from '../helpers/real-auth-js'
 
 const { pushMock } = vi.hoisted(() => ({ pushMock: vi.fn() }))
@@ -86,6 +93,14 @@ const USER_SCOPED_ITEMS: Record<string, string> = {
   shoppingListRegenerating: '1',
   profile_reminder_dismissed: '1',
 }
+
+/** A-1 の (3) で、失効の後を進める 1 歩。NATIVE_REBRIDGE_WAIT_MS (15 秒) より短くして、SIGNED_OUT を見つけた時点で待ちが満了していないようにする */
+const SIGNED_OUT_POLL_STEP_MS = 1_000
+/**
+ * A-9 の種の残り (秒)。残り 100 秒の種は、E-40 の更新の失敗の控えが E+20 まで効き、ブラウザの auth-js が捨てるのは E+20 の tick。
+ * E の直後はまだ捨てておらず、サーバーが先に Cookie を消す順 (S-27・S-28) を作れる。残り 60 秒の種は E ちょうどの tick で捨てるので使えない
+ */
+const SERVER_CLEARS_FIRST_REMAINING_SECONDS = 100
 
 const originalLocation = Object.getOwnPropertyDescriptor(window, 'location')
 let hrefSetter: Mock<(href: string) => void>
@@ -198,7 +213,7 @@ afterEach(async () => {
 describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED_OUT を出したとき (#1038 F7-05)', () => {
   // 残り 100 秒: 自動更新の tick (120 秒未満) だけが更新を試みる区間。残り 60 秒: getSession() も更新を試みる区間
   it.each([100, 60])(
-    '借り物のセッション (残り %i 秒) の更新に auth-js が失敗しても、ログアウト扱いにしない: user-scoped のキーが残り、/login へ移らず、session-expired を送る',
+    '借り物のセッション (残り %i 秒) の先回りの更新に auth-js が失敗しても、access token が有効な間はセッションを捨てず、何も送らず、user-scoped のキーも残る。失効して SIGNED_OUT が出たら、ログアウト扱いにせず session-expired を送る',
     async (remainingSeconds) => {
       enterNativeWebView()
       seedBorrowedSession(remainingSeconds)
@@ -206,12 +221,31 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
       await mountLayout()
       await advance(1_000) // 自動更新の tick (表示直後に 1 回走る) や getUser() が、更新を試みる
 
-      // 前提: auth-js が本当に借り物の refresh_token で更新を試みて失敗し、セッションを捨てている (= SIGNED_OUT が出ている)
+      // (1) 前提: auth-js が本当に借り物の refresh_token で更新を試みて失敗している。それでもセッションは残る (SIGNED_OUT は出ない)
       expect(refreshRequests(fakeFetch).length).toBeGreaterThanOrEqual(1)
-      const { data } = await supabaseClient.auth.getSession()
-      expect(data.session).toBeNull()
+      const { data: stillValid } = await supabaseClient.auth.getSession()
+      expect(stillValid.session?.access_token).toBe(BORROWED_ACCESS_TOKEN)
+      expect(sentTypes()).toEqual([])
+      expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
+      expect(hrefSetter).not.toHaveBeenCalled()
 
+      // (2) 失効 E の 1 ms 前まで進めても同じ
+      await advance(remainingSeconds * 1000 - 1_000 - 1)
+      expect(sentTypes()).toEqual([])
+      expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
+      expect(hrefSetter).not.toHaveBeenCalled()
+
+      // (3) 失効の後は 1 歩ずつ進め、SIGNED_OUT (= session-expired の送信) が出たところで止める。
+      // 一度に進めると 15 秒の待ちが満了して /login へ移ってしまう (下の「待ち時間を過ぎたら」の挙動)
+      expect(SIGNED_OUT_POLL_STEP_MS).toBeLessThan(NATIVE_REBRIDGE_WAIT_MS)
+      for (let waited = 0; sentTypes().length === 0 && waited <= SIGNED_OUT_AFTER_EXPIRY_MAX_MS; waited += SIGNED_OUT_POLL_STEP_MS) {
+        await advance(SIGNED_OUT_POLL_STEP_MS)
+      }
+
+      // (4) 失効の後の更新の失敗でセッションを捨てた: ログアウト扱いにはせず、ネイティブに再ブリッジを頼む
       expect(sentTypes()).toEqual(['session-expired'])
+      const { data: discarded } = await supabaseClient.auth.getSession()
+      expect(discarded.session).toBeNull()
       expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
       expect(hrefSetter).not.toHaveBeenCalled()
     },
@@ -219,7 +253,7 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
 
   it('ネイティブが読み込み直してくれないまま待ち時間を過ぎたら (古いアプリ・再ブリッジが止められたとき)、従来どおりログアウトとして /login へ移し、user-scoped のキーを消す', async () => {
     enterNativeWebView()
-    seedBorrowedSession(60)
+    seedBorrowedSession(ALREADY_EXPIRED_REMAINING_SECONDS)
 
     await mountLayout()
     await advance(1_000)
@@ -237,7 +271,7 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
 
   it('待ち時間の途中でこのレイアウトから離れた (ネイティブが読み込み直したなど) ときは、待ち時間が過ぎても何もしない', async () => {
     enterNativeWebView()
-    seedBorrowedSession(60)
+    seedBorrowedSession(ALREADY_EXPIRED_REMAINING_SECONDS)
 
     await mountLayout()
     await advance(1_000)
@@ -256,7 +290,7 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
 
   it('待っている間にセッションが戻ったとき (別のタブが先に再ブリッジされ、共有の Cookie が新しくなったなど) は、待ち時間が過ぎても何もしない', async () => {
     enterNativeWebView()
-    seedBorrowedSession(60)
+    seedBorrowedSession(ALREADY_EXPIRED_REMAINING_SECONDS)
 
     await mountLayout()
     await advance(1_000)
@@ -357,17 +391,77 @@ describe('MainLayout — モバイルアプリの WebView で auth-js が SIGNED
   })
 })
 
-describe('MainLayout — ふつうのブラウザで SIGNED_OUT になったとき (従来どおり)', () => {
-  it('すぐに user-scoped のキーを消して /login へ移る。ネイティブへは何も送らない', async () => {
+describe('MainLayout — ふつうのブラウザで auth-js の更新が失敗したとき', () => {
+  it.each([
+    {
+      state: '残り 60 秒',
+      remainingSeconds: 60,
+      loggedOut: false,
+      expectation: '先回りの更新に失敗してもセッションは残り、/login へ移らず、user-scoped のキーも消えない',
+    },
+    {
+      state: '失効済み',
+      remainingSeconds: ALREADY_EXPIRED_REMAINING_SECONDS,
+      loggedOut: true,
+      expectation: 'すぐに user-scoped のキーを消して /login へ移る。ネイティブへは何も送らない',
+    },
+  ])('[$state] $expectation', async ({ remainingSeconds, loggedOut }) => {
     // ReactNativeWebView が無い = ふつうのブラウザ。実際の refresh_token を持つ利用者が別のタブでログアウトした、など
-    seedBorrowedSession(60)
+    seedBorrowedSession(remainingSeconds)
 
     await mountLayout()
     await advance(1_000)
 
     expect(refreshRequests(fakeFetch).length).toBeGreaterThanOrEqual(1)
-    expect(hrefSetter).toHaveBeenCalledWith('/login')
-    expect(remainingKeys()).toEqual([])
+    const { data } = await supabaseClient.auth.getSession()
+    expect(data.session?.access_token).toBe(loggedOut ? undefined : BORROWED_ACCESS_TOKEN)
+    expect(hrefSetter.mock.calls.map(([href]) => href)).toEqual(loggedOut ? ['/login'] : [])
+    expect(remainingKeys()).toEqual(loggedOut ? [] : Object.keys(USER_SCOPED_ITEMS))
     expect(postMessage).not.toHaveBeenCalled()
   })
+})
+
+describe('MainLayout — auth-js が捨てる前にサーバーの応答が Cookie を消したとき (#1768)', () => {
+  // WebView = S-27・裁定 H、ふつうのブラウザ = S-28・裁定 H2 (docs/design/mobile/05-auth-session.md §9)
+  it.each([
+    { environment: 'WebView', inNativeWebView: true },
+    { environment: 'ふつうのブラウザ', inNativeWebView: false },
+  ])(
+    '[$environment] access token が失効した後、auth-js が自分で捨てる前にサーバーの応答が Cookie を消すと (middleware の失効後の更新の失敗)、SIGNED_OUT は出ず、MainLayout は session-expired を送らず、待ち時間を過ぎても /login へ移らず、user-scoped のキーも残る',
+    async ({ inNativeWebView }) => {
+      if (inNativeWebView) enterNativeWebView()
+      seedBorrowedSession(SERVER_CLEARS_FIRST_REMAINING_SECONDS)
+      let signedOutCount = 0
+      supabaseClient.auth.onAuthStateChange((event) => {
+        if (event === 'SIGNED_OUT') signedOutCount += 1
+      })
+
+      await mountLayout()
+      await advance(1_000)
+      // 失効 E の 1 ms 後まで進める
+      await advance(SERVER_CLEARS_FIRST_REMAINING_SECONDS * 1000 - 1_000 + 1)
+
+      // 前提: ブラウザの auth-js はまだ捨てていない (崩れたら、種の残りと失敗の控えの関係が変わったので種を選び直す)
+      expect(signedOutCount).toBe(0)
+      expect(sentTypes()).toEqual([])
+      expect(hrefSetter).not.toHaveBeenCalled()
+      expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
+
+      // サーバーの応答の Set-Cookie (maxAge 0) が、ブラウザの Cookie を消す。ブラウザの auth-js には事象が届かない
+      document.cookie = `${STORAGE_KEY}=; Max-Age=0; path=/`
+      const refreshCallsBefore = refreshRequests(fakeFetch).length
+
+      await advance(SIGNED_OUT_AFTER_EXPIRY_MAX_MS + NATIVE_REBRIDGE_WAIT_MS)
+
+      expect(signedOutCount).toBe(0)
+      expect(sentTypes()).toEqual([])
+      expect(hrefSetter).not.toHaveBeenCalled()
+      expect(remainingKeys()).toEqual(Object.keys(USER_SCOPED_ITEMS))
+      // 保管が空なので /token を呼ばない
+      expect(refreshRequests(fakeFetch)).toHaveLength(refreshCallsBefore)
+      const { data, error } = await supabaseClient.auth.getSession()
+      expect(data.session).toBeNull()
+      expect(error).toBeNull()
+    },
+  )
 })

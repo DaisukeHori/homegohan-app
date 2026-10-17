@@ -14,17 +14,19 @@ export const SESSION_CHECK_INTERVAL_MS = 20_000
 /**
  * 有効期限までの残りがこの秒数を切ったら、ネイティブに再ブリッジを頼む。
  *
- * Web 側の refresh_token は使えない値なので、auth-js (ブラウザの supabase-js) が更新を試みると必ず失敗して、
- * セッションが捨てられる (SIGNED_OUT)。auth-js が更新を試みるのは、残りが次の秒数を切ったとき (@supabase/auth-js 2.105)。
+ * Web 側の refresh_token は使えない値なので、auth-js (ブラウザの supabase-js) が更新を試みると必ず失敗する。
+ * access token がまだ有効なうちの失敗ではセッションを残し (SIGNED_OUT も出さず、失敗を 60 秒控える)、失効した後の失敗でセッションを捨てる (SIGNED_OUT)。
+ * auth-js が更新を試みるのは、残りが次の秒数を切ったとき (@supabase/auth-js 2.117)。
  *   - 自動更新の tick (30 秒ごと)               : 120 秒 ((AUTO_REFRESH_TICK_THRESHOLD + 1) × 30 秒)
  *   - getSession() ・前面への復帰 (visibilitychange): 90 秒 (EXPIRY_MARGIN_MS)
  * 前面で使っているときは、そのどれよりも先にネイティブへ頼めるよう、tick の 120 秒より十分に大きくする。
  * 確認の間隔 (SESSION_CHECK_INTERVAL_MS = 20 秒) だけ遅れて気づいても、ネイティブの再ブリッジに数秒かかっても、
  * まだ 120 秒より前になる (180 - 20 - 数秒)。以前の 120 秒は tick と同じ閾値で、tick が先に走ると (およそ 3 回に 1 回)
- * 借り物の refresh_token で更新して失敗していた。
+ * 借り物の refresh_token で更新して失敗していた。2.117 では、万一 tick が先に走っても access token が有効な間はセッションが残り
+ * (借り物の値での /token の 400 が 1 回出るだけ)、180 秒はその無駄な /token を避け、失効の前に読み込み直しを済ませるための値。
  *
  * バックグラウンドに置いて戻ったときは、その間タイマーが止まっているので、どんな閾値でも先回りできない。
- * その場合の SIGNED_OUT は MainLayout が受ける (ログアウト扱いにせず、再ブリッジを頼む)。
+ * その場合の SIGNED_OUT (access token の失効の後の更新の失敗) は MainLayout が受ける (ログアウト扱いにせず、再ブリッジを頼む)。
  *
  * コード方式の bridge (#1036 / #1289 の webViewBridge.ts) は、ネイティブのアクセストークンの残りが
  * BRIDGE_MIN_TOKEN_TTL_SEC に満たなければ、コードを発行してもらう前に先に更新する。受け取った Web セッションの残りが
