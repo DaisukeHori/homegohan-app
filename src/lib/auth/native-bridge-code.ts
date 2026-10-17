@@ -196,11 +196,15 @@ export async function consumeNativeBridgeCode(code: string): Promise<ConsumedNat
 /**
  * 旧方式の受け付けを終える日時。この時刻以降は 426 を返し、セッションを作らない。
  *
- * オーナー判断 (2026-10-07、#1036): 2026-12-31 に止める。それまでは旧ビルドのアプリも動く。
- * 期限より早く閉じたいときは、コードの変更ではなく環境変数 NATIVE_BRIDGE_LEGACY_GET=off を使う
- * (Vercel の環境変数の変更は再デプロイ後に効く)。止める前に app_logs の 'legacy token-in-query bridge used' の件数を見る。
+ * 2026-10-18 JST の 0 時に前倒しした (#1036)。当初の期限は 2026-12-31 (オーナー判断 2026-10-07) だったが、
+ * オーナーの選択 (2026-10-18、選択式「今すぐ止める」) で今止めることになった。前倒しの根拠:
+ * - 本番の app_logs の 'legacy token-in-query bridge used' が直近 30 日で 0 回 (旧方式を使うアプリが残っていない)
+ * - 今のアプリのコード (#1289) は新方式 (使い捨ての code を POST で受け取る) を使っている
+ * - 旧方式は URL にトークンを載せるため、受け付けている間はトークンがアクセスログに残る穴が開いたままになる
+ * この日時は過ぎているので、デプロイした時点から旧方式は常に 426 になる (環境変数で延ばすことはできない)。
+ * 環境変数 NATIVE_BRIDGE_LEGACY_GET=off で閉じるスイッチは、期限の前の日時へ戻したときのために残している。
  */
-export const LEGACY_SUNSET_AT = '2026-12-31T00:00:00+09:00'
+export const LEGACY_SUNSET_AT = '2026-10-18T00:00:00+09:00'
 
 /**
  * 旧方式 (GET /auth/native-bridge?access_token=...&refresh_token=...) を今受け付けてよいか。

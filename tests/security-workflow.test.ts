@@ -626,6 +626,8 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
     // RFC 6238 Appendix B の公開のテスト用の秘密 (tests/totp-helper.test.ts。#1707)
     'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ',
+    // ひとつ前の Cron の認証値のダミー (tests/cron-secret-probe-edge.test.ts の PREVIOUS_SECRET。#1560)
+    'dummy-previous-cron-secret-fedcba9876543210',
   ])('確かめたダミーの値は除外する: %s', (value) => {
     expect(allowed(value)).toBe(true);
   });
@@ -649,6 +651,10 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     // RFC 6238 のテスト用の秘密に 1 文字足した値・最後の 1 文字を変えた値 (ほかの base32 の TOTP の秘密は通さない)
     'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQA',
     'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJR',
+    // ひとつ前の Cron の認証値のダミーの、前後に足した値・最後の 1 文字を変えた値 (ほかの Cron の認証値は通さない)
+    'x-dummy-previous-cron-secret-fedcba9876543210',
+    'dummy-previous-cron-secret-fedcba98765432100',
+    'dummy-previous-cron-secret-fedcba9876543211',
   ])('少しでも違う値や、ランダムに見える値は除外しない: %s', (value) => {
     expect(allowed(value)).toBe(false);
   });

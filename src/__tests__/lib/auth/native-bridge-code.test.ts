@@ -10,6 +10,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const { mockRpc } = vi.hoisted(() => ({ mockRpc: vi.fn() }));
@@ -265,22 +267,45 @@ describe('定数', () => {
 describe('isLegacyNativeBridgeAllowed', () => {
   const sunsetMs = Date.parse(LEGACY_SUNSET_AT);
 
-  it('期限は解釈できる日時で、2026-12-31 (JST) の 0 時である (仮置き。オーナー確認待ち)', () => {
+  it('期限は解釈できる日時で、2026-10-18 (JST) の 0 時である (#1036 で 2026-12-31 から前倒し)', () => {
     expect(Number.isNaN(sunsetMs)).toBe(false);
-    expect(LEGACY_SUNSET_AT).toBe('2026-12-31T00:00:00+09:00');
-    expect(new Date(sunsetMs).toISOString()).toBe('2026-12-30T15:00:00.000Z');
+    expect(LEGACY_SUNSET_AT).toBe('2026-10-18T00:00:00+09:00');
+    expect(new Date(sunsetMs).toISOString()).toBe('2026-10-17T15:00:00.000Z');
+  });
+
+  it('結合テスト (tests/integration/security/native-bridge-flow.test.ts) が持つ期限の写しは、この期限と同じ値', () => {
+    // 結合テストはサーバーのモジュールを読み込まないため、期限を写しで持っている。写しが古いと、期限後の 426 を確かめずにスキップする
+    const integrationSource = readFileSync(
+      resolve(process.cwd(), 'tests/integration/security/native-bridge-flow.test.ts'),
+      'utf8',
+    );
+    const copied = /^const LEGACY_SUNSET_AT = '([^']+)';$/m.exec(integrationSource)?.[1];
+    expect(copied).toBe(LEGACY_SUNSET_AT);
   });
 
   it('環境変数が未設定なら、期限前は受け付ける', () => {
     vi.stubEnv('NATIVE_BRIDGE_LEGACY_GET', '');
     expect(isLegacyNativeBridgeAllowed(sunsetMs - 1)).toBe(true);
     expect(isLegacyNativeBridgeAllowed(Date.parse('2026-10-07T00:00:00+09:00'))).toBe(true);
+    // 期限の前日の終わり (JST 2026-10-17 23:59:59) までは受け付ける
+    expect(isLegacyNativeBridgeAllowed(Date.parse('2026-10-17T23:59:59+09:00'))).toBe(true);
   });
 
   it('期限ちょうど・期限後は受け付けない (境界は含まない)', () => {
+    vi.stubEnv('NATIVE_BRIDGE_LEGACY_GET', '');
     expect(isLegacyNativeBridgeAllowed(sunsetMs)).toBe(false);
     expect(isLegacyNativeBridgeAllowed(sunsetMs + 1)).toBe(false);
+    // 前倒し前の期限 (2026-12-31) の前でも受け付けない
+    expect(isLegacyNativeBridgeAllowed(Date.parse('2026-12-30T23:59:59+09:00'))).toBe(false);
     expect(isLegacyNativeBridgeAllowed(Date.parse('2027-06-01T00:00:00+09:00'))).toBe(false);
+  });
+
+  it.each(['', 'on', 'true', 'off'])('いまの実時間 (Date.now) では、環境変数が %j でも受け付けない (本番はもう閉じている)', (value) => {
+    // 時計を偽装しない。期限 (2026-10-18 00:00 JST) は過ぎているので、本番の今の時刻では常に閉じている
+    vi.useRealTimers();
+    vi.stubEnv('NATIVE_BRIDGE_LEGACY_GET', value);
+    expect(Date.now()).toBeGreaterThanOrEqual(sunsetMs);
+    expect(isLegacyNativeBridgeAllowed()).toBe(false);
   });
 
   it.each(['off', 'OFF', 'Off', ' off ', 'off\n'])('環境変数が %j なら、期限前でも受け付けない', (value) => {
