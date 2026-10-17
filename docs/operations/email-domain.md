@@ -232,8 +232,8 @@ DNS のレコード (Resend・DMARC) は残しておいてかまいません。
 
 ## 9. この手順の範囲外 (別の Issue)
 
-- 送信失敗のリトライ・失敗の保存 (#1193)
-- Resend のバウンス・苦情の受信と、送信の抑制 (#1184)
+- 送信失敗のリトライ・失敗の保存 (#1193。実装済み: 送信待ち `email_outbox` と worker。`docs/design/operator/10-logs-and-mail-retry.md`)
+- Resend のバウンス・苦情の受信と、送信の抑制 (#1184。実装済み。Webhook の登録と `RESEND_WEBHOOK_SECRET` の設定は `ENV_SETUP.md` の #1184 の節)
 - 運営会社・特定商取引法の事業者情報 (#1155)
 
 ---

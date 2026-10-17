@@ -2047,7 +2047,7 @@ export function parseEmailOutboxQuery(searchParams: URLSearchParams): ParseEmail
 
 ## 16. 未解決事項
 
-- Resend の Webhook (`email.delivered` / `email.bounced`) で `email_outbox.resend_message_id` の行に配信の結果を書くか (本書は書かない。`email_delivery_logs` の記述の差 (#1577 の 5) と一緒に決める)。
+- Resend の Webhook (`email.delivered` / `email.bounced`) で `email_outbox.resend_message_id` の行に配信の結果を書くか (本書は書かない。#1577 の 5 で要件書・`02-api-spec.md` の記述を実装に合わせ、配信の結果の記録は「実装しない (将来の検討)」と明記した)。
 - `OPS_ALERT_EMAIL` 未設定の本番で dead が溜まったとき、設定するまでの間に気づく手段は画面だけ。オーナー作業 (#1157 のコメント) が済むまでの間の扱い。(設定したあとは、未設定の間に dead になった行 (保持の 30 日以内) も印が無いので、最初の回の 1 通にまとめて入る。)
 - `exit-notification.ts` 等の「変えない」12 か所に `userId` を渡すか (本書では渡さない: §6.6。伏せ字は宛先の一致 (1b) と本文などの照合 (1c) で足りる。渡すと `user_id` でも引け、画面の監査の `target_type` が `user` になる。必要になったら別の Issue で)。
 - dead の一括再送 (「表示中の全部を再送」) は作らない。必要になったら API に `POST /api/super-admin/email-outbox/requeue` (id の配列) を足す。
