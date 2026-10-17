@@ -12,7 +12,7 @@ import {
   normalizeEmailChangeInput,
   validatePasswordChangeInput,
 } from './account-change-input';
-import { PASSWORD_MIN_LENGTH, validatePassword } from './password-policy';
+import { PASSWORD_MAX_BYTES, PASSWORD_MIN_LENGTH, PASSWORD_TOO_LONG_MESSAGE, validatePassword } from './password-policy';
 
 const VALID = { currentPassword: 'oldPass123', newPassword: 'newPass456', confirmPassword: 'newPass456' };
 
@@ -43,10 +43,26 @@ describe('validatePasswordChangeInput', () => {
   });
 
   it('強さの規則は validatePassword と同じもの', () => {
-    for (const candidate of ['short1', 'abcdefgh', '12345678', 'abcd1234']) {
+    for (const candidate of ['short1', 'abcdefgh', '12345678', 'abcd1234', `a1${'x'.repeat(PASSWORD_MAX_BYTES)}`]) {
       const reason = validatePasswordChangeInput({ ...VALID, newPassword: candidate, confirmPassword: candidate });
       expect(reason).toBe(validatePassword(candidate));
     }
+  });
+
+  it('#1864 新しいパスワードが 72 バイトを超えれば、長すぎると止める (日本語は 26 文字 = 74 バイトで止まる)', () => {
+    const longAscii = `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`;
+    expect(validatePasswordChangeInput({ ...VALID, newPassword: longAscii, confirmPassword: longAscii })).toBe(
+      PASSWORD_TOO_LONG_MESSAGE,
+    );
+    const longJapanese = `a1${'あ'.repeat(24)}`;
+    expect(validatePasswordChangeInput({ ...VALID, newPassword: longJapanese, confirmPassword: longJapanese })).toBe(
+      PASSWORD_TOO_LONG_MESSAGE,
+    );
+  });
+
+  it('#1864 現在のパスワードには上限を付けない (72 バイトを超える既存のパスワードの利用者も変更できる)', () => {
+    const longCurrent = `a1${'x'.repeat(PASSWORD_MAX_BYTES * 2)}`;
+    expect(validatePasswordChangeInput({ ...VALID, currentPassword: longCurrent })).toBeNull();
   });
 });
 
