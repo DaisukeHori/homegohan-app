@@ -534,13 +534,14 @@ await supabase.from('revenue_snapshots').upsert({
 
 ## 6. 監視・失敗時アラート
 
-定期処理の失敗の監視は、既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・宛先 `OPS_ALERT_EMAIL`・抑止 `claim_ops_alert`。07-audit-monitoring.md §8.3) に、4 つ目の種類 `cron_failure` と 5 つ目の種類 `pg_cron_stalled` を足して行う (正本は operator/11 §4〜§6)。Slack・Sentry は採用していない (07 §1.1・#1179) ので、`check_cron_failures` (6 時間ごとの pg_cron) と `withCronMonitoring` (ラッパー) は作らない。
+定期処理の失敗の監視は、既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・宛先 `OPS_ALERT_EMAIL`・抑止 `claim_ops_alert`。07-audit-monitoring.md §8.3) に、4 つ目の種類 `cron_failure` と 5 つ目の種類 `pg_cron_stalled` を足して行う (正本は operator/11 §4〜§6)。Slack・Sentry は採用していない (07 §1.1・#1179) ので、`check_cron_failures` (6 時間ごとの pg_cron) と `withCronMonitoring` (ラッパー) は作らない。cron の共有シークレットのずれ (Edge Function secrets と Vault の食い違いなど。pg_net は非同期なので `cron.job_run_details` に出ない) は、6 つ目・7 つ目の種類 `cron_secret_drift` / `cron_secret_rotation` が見る (正本は operator/12)。
 
 ### 6.1 pg_cron 失敗監視
 
 - 対象: `cron.job_run_details` の `status = 'failed'` の行 (1 実行 = 1 件)。直近 7 日のうち、まだ知らせていないものを 1 件から数える (DB の `cron_failure_counts`)。知らせた失敗は台帳 `cron_failure_alerts` に記録し、同じ失敗を 2 回知らせない (窓で数えない。operator/11 §4.2)。
 - 通知: 運用メール (template `ops_cron_failure`)。載せるのは `pg_cron/<ジョブ名>` ごとの件数と運用ログ画面へのリンクだけ (`command` / `return_message` は載せない)。
 - 停止: 有効なジョブがあるのに、最新の実行から `OPS_ALERT_PG_CRON_STALL_MINUTES` (既定 60 分) を超えて 1 つも動いていなければ、5 つ目の種類 `pg_cron_stalled` (template `ops_pg_cron_stalled`) で知らせる。止まったままなら、抑止 (既定 60 分) ごとに 1 通。
+- pg_cron → Edge Function の 401 / 503 は失敗の行に出ないので、operator/12 の確認 (15 分おき) が受け持つ。
 
 ### 6.2 Vercel Cron 失敗監視
 
