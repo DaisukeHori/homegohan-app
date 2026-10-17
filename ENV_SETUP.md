@@ -346,7 +346,7 @@ Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値
 
 ### 届かない宛先・苦情の宛先へ送らない（`RESEND_WEBHOOK_SECRET`。#1184）
 
-Resend から「届かなかった（ハードバウンス）」「迷惑メールと報告された（苦情）」の知らせを Webhook で受け、その宛先を宛先停止リスト（DB の `email_blacklist`）に入れます。アプリのメール（招待・譲渡・退会の知らせ・サポート返信・運用メールなど。`src/lib/emails/send.ts` の `sendEmail` を通るもの）は、送る前にこのリストを引き、載っている宛先へは送りません（`app_logs` の `function_name = 'email'` に「宛先停止リストに載っている宛先のため、メールを送信しませんでした」の warn が残ります。宛先はマスクされます）。送信待ちに登録したあとで停止リストに載った宛先は、worker（`GET /api/cron/email-outbox`）が送る直前に引いて止め、その行を届けられなかった（dead）にします。このときは warn ではなく、`function_name = 'cron/email-outbox'` に「メールを届けられませんでした (dead)」の error が残ります（エラー急増の通知の数に入ります。届けられなかったメールの通知の数には入りません）。
+Resend から「届かなかった（ハードバウンス）」「迷惑メールと報告された（苦情）」の知らせを Webhook で受け、その宛先を宛先停止リスト（DB の `email_blacklist`）に入れます。アプリのメール（招待・譲渡・退会の知らせ・サポート返信・運用メールなど。`src/lib/emails/send.ts` の `sendEmail` を通るもの）は、送る前にこのリストを引き、載っている宛先へは送りません（`app_logs` の `function_name = 'email'` に「宛先停止リストに載っている宛先のため、メールを送信しませんでした」の warn が残ります。宛先はマスクされます）。送信待ちに登録したあとで停止リストに載った宛先（登録時にリストを引けずに、確かめないまま登録した行も）は、worker（`GET /api/cron/email-outbox`）が送る直前に引いて止め、その行を届けられなかった（dead）にします。このときは warn ではなく、`function_name = 'cron/email-outbox'` に「メールを届けられませんでした (dead)」の error が残ります（エラー急増の通知の数に入ります。届けられなかったメールの通知の数には入りません）。
 
 | 環境変数 | 値の例 | 用途 | 未設定のとき |
 |---|---|---|---|
