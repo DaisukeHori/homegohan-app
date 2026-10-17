@@ -799,7 +799,7 @@ export function findNavigatorOwningRoute(
     if (current.routeNames?.includes(routeName)) {
       return current.stale === true || current.key === undefined ? null : { ...current, key: current.key };
     }
-    const focusedIndex = current.index ?? 0;
+    const focusedIndex: number = current.index ?? 0;
     current = current.routes[focusedIndex]?.state;
   }
   return null;
