@@ -8,7 +8,7 @@
  *   GoTrue が更新と同じトランザクションで、この端末以外のセッションを消す (この端末のセッションは入れ替えない)。
  *   再認証のサインイン (signInWithPassword)・updateUser・signOut({ scope: 'others' }) はもう使わない。
  *   Supabase の CAPTCHA の本人確認のトークン (Web の #1474) も、再認証が無くなったので要らない。
-- メールアドレス変更: updateUser({ email }, { emailRedirectTo }) で確認メールを送る。
+ * - メールアドレス変更: updateUser({ email }, { emailRedirectTo }) で確認メールを送る。
  *   確認メールのリンクの戻り先は、新規登録のメール確認と同じアプリのリンク (homegohan://auth/verify)。
  *   verify 画面がリンクのトークンでセッションを作る (authLink.ts)。現在のアドレスにも確認メールが届く設定
  *   (Supabase の Secure email change) では、1 通目のリンクで「もう一方の確認待ち」を表示する。
