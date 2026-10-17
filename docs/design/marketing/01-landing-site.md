@@ -583,9 +583,9 @@ FAQ の答えの「本当に無料」の上限の文は、安心の 1 つ目と�
 | `--lp-surface` | `#FFFFFF` | `BRAND_COLORS.white` | カード |
 | `--lp-ink` | `#2D2D2D` | `BRAND_COLORS.text` | 本文・見出し・主 CTA の下地・端末の枠 |
 | `--lp-ink-soft` | `#5F5F5F` | 本冊で決める (`textLight #6B6B6B` は `--lp-bg-tint` 上で 4.79:1 と余裕が無いので 1 段濃くする) | 副文・注記 |
-| `--lp-accent` | `#E07A5F` | `BRAND_COLORS.accent` | 装飾 (進捗の棒・バッジの輪)。文字には使わない |
+| `--lp-accent` | `#E07A5F` | `BRAND_COLORS.accent` | 装飾 (デモの進捗の棒)。文字には使わない |
 | `--lp-accent-soft` | `#FF9B7A` | `BRAND_COLORS.accentGradientEnd` | 濃色の面の上の CTA の下地・濃色の面の上のチェックの印 |
-| `--lp-accent-ink` | `#B34D2D` | 本冊で決める (accent を暗くした値。白で 5.23:1・`--lp-bg` 上で 4.97:1・`--lp-bg-tint` 上で 4.70:1) | 強調の文字・リンク・写真の選択の枠・使い方の手順の番号・見出しのグラデーションの始まり |
+| `--lp-accent-ink` | `#B34D2D` | 本冊で決める (accent を暗くした値。`--lp-surface` 上で 5.23:1・`--lp-bg` 上で 4.97:1・`--lp-bg-tint` 上で 4.70:1) | 強調の文字・リンク・写真の選択の枠・使い方の手順の番号・見出しのグラデーションの始まり |
 | `--lp-green` | `#6B9B6B` | `BRAND_COLORS.green` (= `STATUS_COLOR_TOKENS.success`) | 装飾 (スコアの箱の輪郭) |
 | `--lp-green-ink` | `#3F6E3F` | 本冊で決める (白で 5.98:1・`--lp-green-tint` 上で 5.37:1) | スコアの数字・安心の 3 点のチェックの印 |
 | `--lp-green-tint` | `#EDF5ED` | 本冊で決める | デモのスコアの箱の下地 |
@@ -611,7 +611,6 @@ FAQ の答えの「本当に無料」の上限の文は、安心の 1 つ目と�
 | `--lp-accent-ink` on `--lp-bg` | 4.97:1 | 同上 (ページの地) | 4.5 |
 | `--lp-accent-ink` on `--lp-bg-tint` | 4.70:1 | 同上 (帯の上: デモの小見出し・FAQ の末尾のリンク・使い方の手順の番号・機能のアイコン) | 4.5 |
 | `#FFFFFF` on `--lp-ink` | 13.77:1 | 主 CTA の文字 | 4.5 |
-| `#FFFFFF` on `--lp-accent-ink` | 5.23:1 | 強調の下地の上の白文字 | 4.5 |
 | `--lp-green-ink` on `--lp-green-tint` | 5.37:1 | スコアの数字 | 4.5 |
 | `--lp-ink` on `--lp-green-tint` | 12.38:1 | スコアの横の料理の名前 | 4.5 |
 | `--lp-on-dark` on `--lp-dark` | 17.24:1 | 最終 CTA の見出し | 4.5 |
@@ -625,7 +624,7 @@ FAQ の答えの「本当に無料」の上限の文は、安心の 1 つ目と�
 | `--lp-heading-accent-end` on `--lp-bg-tint` | 3.95:1 | h1 の 2 行目の終わり (同上) | 3 |
 | `#FFFFFF` on `#E07A5F` | 2.95:1 | (使わない) | 不合格 |
 
-**文字の色と下地は、上の表にある組み合わせだけを使う** (不合格の行を除く 22 組)。地は 5 つ: ページの地 `--lp-bg`・カード `--lp-surface`・帯とヒーローのグラデーション `--lp-bg-tint` (と、`--lp-bg` との間の色。間の色の上の比は両端の比の間にある)・スコアの箱 `--lp-green-tint`・濃色の面 `--lp-dark`。新しい組み合わせを作るときは、この表と U-8 の一覧に行を足す。重ねの行は、U-8 が下の色を `#FFFFFF` (最も明るい場合) として重ねた色で計算する。
+**文字の色と下地は、上の表にある組み合わせだけを使う** (不合格の行を除く 21 組)。地は 5 つ: ページの地 `--lp-bg`・カード `--lp-surface`・帯とヒーローのグラデーション `--lp-bg-tint` (と、`--lp-bg` との間の色。間の色の上の比は両端の比の間にある)・スコアの箱 `--lp-green-tint`・濃色の面 `--lp-dark`。新しい組み合わせを作るときは、この表と U-8 の一覧に行を足す。重ねの行は、U-8 が下の色を `#FFFFFF` (最も明るい場合) として重ねた色で計算する。
 
 ### 5.2 タイポグラフィ
 
@@ -1624,7 +1623,7 @@ origin/main `01d62462` の現状: トップの描画は `const { default: Landin
 | 健康の効能 | 「免疫力アップ」「美肌効果」「吸収率が 3 倍」「医者いらず」「ダイエットパートナー」 | 無し。免責 (医療目的に使わない) を安心・FAQ・最終 CTA に |
 | 実績の表示 | トップには無い。ログイン画面に「10,000+ ユーザーが実践中」 | トップ無し。ログイン画面の表示も削除 (段 0)。見張りに `10,000+` `ユーザーが実践中` を追加 |
 | 画像 | Unsplash の外部 URL 7 件 (実行時に読む)。実際の画面は無い。デモの写真の名前と中身が食い違う (「和風定食」の写真はサーモンのプレート) | 実際の画面 6 枚 (`public/guide`)。写真 3 枚は自前 (`public/marketing/photos`)。名前・alt・料理の名前は写っているものに合わせる (§7.2)。外部の要求 0 |
-| 色 | `colors` 定数 19 個 (ブランドと不一致)。白 on `#E07A5F` のボタン (2.95:1) | `.lp` のトークン (ブランドと一致・U-7 で突き合わせ)。白文字は `--lp-ink` / `--lp-accent-ink` の上 (5.23:1 以上)。文字と下地は §5.1 の表の 22 組だけ |
+| 色 | `colors` 定数 19 個 (ブランドと不一致)。白 on `#E07A5F` のボタン (2.95:1) | `.lp` のトークン (ブランドと一致・U-7 で突き合わせ)。白文字は `--lp-ink` / `--lp-accent-ink` の上 (5.23:1 以上)。文字と下地は §5.1 の表の 21 組だけ |
 | 絵文字 | 多数 | 無し (lucide のみ) |
 | フォント | Sans のみ | 見出し Serif・本文 Sans (既存の 2 書体) |
 | 動き | framer-motion を全面 (`whileInView`・`motion.button`)。`scrollY` の state | CSS + IO。framer-motion はデモの島だけ (`LazyMotion`)。スクロールに連動する動き・視差・固定した画面の切り替えは無い |
@@ -1741,7 +1740,7 @@ sequenceDiagram
 | U-5 | `実際の画面の alt は guide-content.ts の同じ画像の imageAlt と同じ文` | `hero.screens`・`how.steps[].image`・`features.cards[].image` の `/guide/` の画像それぞれ |
 | U-6 | `バッジ 6 つの code は AWARDABLE_BADGE_CODES にあり、name は badges の migration の同じ code の行の name と同じ` | `supabase/migrations/20251126124224_create_meal_planner_tables.sql` の `INSERT INTO public.badges` の行を正規表現で拾う |
 | U-7 | `marketing.css の --lp-bg / --lp-bg-tint / --lp-surface / --lp-ink / --lp-accent / --lp-accent-soft / --lp-green / --lp-gold は BRAND_COLORS の同じ色 (大文字小文字を区別しない)` | 変数の宣言の値を読む (§5.1 の「元」の列が BRAND_COLORS の行) |
-| U-8 | `文字と下地の組み合わせ (§5.1 の表の不合格の行を除く 22 組) はすべて求める比 (通常 4.5:1・h1 の 2 行目のグラデーションの 4 組は 3:1) を満たす (--lp-* は marketing.css の値を読み、重ねの行は黒を 0.7 の不透明度で #FFFFFF に重ねた色で、相対輝度から計算)` | 計算の式は `tests/design-system-1058.test.ts` と同じ相対輝度の式 |
+| U-8 | `文字と下地の組み合わせ (§5.1 の表の不合格の行を除く 21 組) はすべて求める比 (通常 4.5:1・h1 の 2 行目のグラデーションの 4 組は 3:1) を満たす (--lp-* は marketing.css の値を読み、重ねの行は黒を 0.7 の不透明度で #FFFFFF に重ねた色で、相対輝度から計算)` | 計算の式は `tests/design-system-1058.test.ts` と同じ相対輝度の式 |
 | U-9 | `landing-copy.ts のソースに絵文字 (Unicode の Extended_Pictographic) が無い` | – |
 | U-10 | `src/components/marketing/ の import は許可した先 (react・next/link・next/image・lucide-react・framer-motion・zod・@/lib/site-config・@/app/guide/guide-content・@/components/handson-tour/useReducedMotion・@/components/marketing/・相対・./marketing.css) だけ` | Supabase・`@/lib/env`・`next/headers` などを読まない |
 | U-11 | `demoReducer は §13.3 のデモの遷移表の全行どおり (「変化なし」は同じ参照を返す) で、selectedSampleId は idle で null・analyzing と result で sampleId` | 表の 8 行 (アンマウントの行を除く) を 1 行ずつ。`reset` は idle・analyzing・result の 3 つから |
@@ -1782,7 +1781,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 | E-4 | `FAQ: ボタンは aria-expanded を持ち、Enter で開閉し、1 つ目の答えに 1 日の利用回数の上限の文がある` | `#faq` の中のボタン 6 つが `aria-expanded="false"`。1 つ目に `focus()` して Enter → `aria-expanded="true"`・`aria-controls` の指す `region` が見え、その文に `1 日にご利用いただける回数` がある。もう一度 Enter で閉じる。2 つ目を開くと 1 つ目は閉じる |
 | E-5 | `375 px: 横スクロールが無く、ヘッダーの「無料で始める」がどこまでスクロールしても画面の中に見える` | `scrollWidth <= clientWidth`。`getByRole('banner')` の中の `/signup` のリンクが、開いた直後・「デモを試す」で `#demo` へ一気に移った後・末尾まで少しずつスクロールした後のどれでも、矩形の上端 0 以上・下端が画面の高さ以下で、computed の `visibility` が `visible` |
 | E-6 | `320 px と 640 px (1280 px を 200 % に拡大した幅) で横スクロールが無い` | `scrollWidth <= clientWidth` (ページの末尾まで少しずつスクロールしながら、各位置で) |
-| E-7 | `reduced-motion (reducedMotion: 'reduce'): 動く Animation が無く、最初から見え、デモの結果は待ち無しで最後の見え方で出る` | 開いた直後 (スクロールの前) に、`document.getAnimations()` に `playState` が `running` のものが無く、main の見える要素がすべて (E-1 と同じ判定で) `opacity` 1。`#hero` の中の 3 枚の画面の `img` と、その先祖の `opacity` が 1。デモの 1 つ目の写真を押すと、`role=status` に結果が待ち無しで出て、結果が出た直後の `requestAnimationFrame` の中で、`role=status` の中のすべての要素の computed の `opacity` が `1`・`transform` が `none` で、`role=status` の要素の `getAnimations({ subtree: true })` に `running` のものが無い |
+| E-7 | `reduced-motion (reducedMotion: 'reduce'): 動く Animation が無く、最初から見え、デモの結果は待ち無しで最後の見え方で出る` | 開いた直後 (スクロールの前) に、紹介ページの根 (`.lp`) の `getAnimations({ subtree: true })` に `playState` が `running` のものが無く、main の見える要素がすべて (E-1 と同じ判定で) `opacity` 1。`#hero` の中の 3 枚の画面の `img` と、その先祖の `opacity` が 1。デモの 1 つ目の写真を押すと、`role=status` に結果が待ち無しで出て、結果が出た直後の `requestAnimationFrame` の中で、`role=status` の中のすべての要素の computed の `opacity` が `1`・`transform` が `none` で、`role=status` の要素の `getAnimations({ subtree: true })` に `running` のものが無い |
 | E-8 | `img はすべて alt 属性を持ち、button はすべて見える名前を持ち、見出しは h1 → h2 → h3 の順を飛ばさない` | – |
 | E-9 | `ターゲットの大きさとフォーカスの見え方と、固定ヘッダーがフォーカスを隠さないこと` | ヘッダーのリンクとボタン (`getByRole('banner')` の中) は高さ 44 px 以上、ヒーローと最終 CTA のリンク・`footer` の中のリンク・`#trust` の中のリンクは 24×24 px 以上。各リンクとボタンに `focus()` すると `outline-style` が `none` でない。1280 px と 375 px のそれぞれで: `#faq` の 1 つ目のボタンの下端が画面の上端より上になる位置へ `window.scrollTo` で移り、2 つ目のボタンに `focus()` してから Shift+Tab で 1 つ目のボタンへ戻ると、1 つ目のボタンの矩形の上端が `getByRole('banner')` の矩形の下端以上 |
 | E-10 | `LCP が予算 (LANDING_LCP_BUDGET_MS、既定 2500) 以内で、LCP の要素が #hero の中にあり、CLS が予算 (LANDING_CLS_BUDGET、既定 0.1) 以内` | `PerformanceObserver` の `largest-contentful-paint` と `layout-shift` を `addInitScript` で積む |
@@ -1792,7 +1791,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 | E-14 | `見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを tests/e2e/.evidence/landing/ に保存する (比較はしない。整合ゲートで目視)` | 記録のみ。どのシナリオの期待も機械では判定しない (§16.6 の 3 列目・§24 Q-4) |
 | E-15 | `1280 px のキーボード操作: Tab を押すたびに、スキップリンク → マーク → ナビ 4 つ → ログイン → ヘッダーの無料で始める → ヒーローの無料で始める → デモを試す → デモの 1 つ目の写真のボタン の順にフォーカスが移り、どれも outline が none でない` | 各フォーカス先を `href` (`#main-content`・`/`・`#features` `#how` `#badges` `#faq`・`/login`・`/signup`・`/signup`・`#demo`) と、最後は `getByRole('group', { name: '食事の写真を選ぶ' })` の 1 つ目のボタンで見分ける (ヒーローの画面は画像だけで、フォーカスしない) |
 | E-16 | `アプリの WebView (is_native_app=1 の Cookie・未ログイン) で / を開くと、未ログインの / と同じ h1 とセクションが出て、アプリのストアへのリンク (apps.apple.com・play.google.com) が無く、ヒーローの無料で始めるは /signup を指す` | – |
-| E-17 | `ヒーローは動かない 3 枚の画面で、読み込みから 2 秒後に動いている Animation が無い` | 標準 (no-preference) と `reducedMotion: 'reduce'` のそれぞれで: `#hero` の中の `img` が 3 つあり、HTML の順に alt が `食事の写真を選んだ撮影の画面`・`食事の写真の解析結果の画面`・`解析結果の記録コメント`。開いてから `HERO_SETTLE_MS` (2,000 ms。ヒーローの立ち上がりの最長 560 ms より十分長い) 待ち、スクロールもデモの操作もしない状態で、`document.getAnimations()` に `playState` が `running` のものが無く、`iterations` が `Infinity` のものも無い |
+| E-17 | `ヒーローは動かない 3 枚の画面で、読み込みから 2 秒後に動いている Animation が無い` | 標準 (no-preference) と `reducedMotion: 'reduce'` のそれぞれで: `#hero` の中の `img` が 3 つあり、HTML の順に alt が `食事の写真を選んだ撮影の画面`・`食事の写真の解析結果の画面`・`解析結果の記録コメント`。開いてから `HERO_SETTLE_MS` (2,000 ms。ヒーローの立ち上がりの最長 560 ms より十分長い) 待ち、スクロールもデモの操作もしない状態で、紹介ページの根 (`.lp`) の `getAnimations({ subtree: true })` に `playState` が `running` のものが無く、`iterations` が `Infinity` のものも無い (layout の部品は数えない) |
 | E-18 | `/ の <meta name="viewport"> の content に user-scalable=no が無く、maximum-scale が 5 以上 (ピンチで拡大できる)。/login の viewport は変わっていない (maximum-scale=1 のまま)` | – |
 | E-19 | `375 px: 文字の大きさが下限を下回らず、本文の文は 16 px 以上` | `.lp` の中で、空白だけでない文字のテキストノードを子に持つ要素の computed の `font-size` がすべて 14 px (`--a11y-min-font-size`) 以上。§5.2 の「本文」の一覧の文 (`LANDING_COPY` から取る。記録コメントはデモの結果を出してから) を持つ要素の `font-size` が 16 px 以上 (lead は 17 px 以上) |
 | E-20 | `axe: 4 つの状態で WCAG 2.2 AA の違反が 0` | 1280 px の開いた直後・1280 px で FAQ の 1 つ目を開きデモの結果を出した後・375 px でページの末尾までスクロールした後・`reducedMotion: 'reduce'` の 1280 px の開いた直後 の 4 つで、各状態の前にページの末尾まで少しずつスクロールし (現れ方をすべて現す)、時間で進む Animation が終わるのを待ってから、`@axe-core/playwright` の `AxeBuilder` をタグ `wcag2a`・`wcag2aa`・`wcag21a`・`wcag21aa`・`wcag22aa` で流し、`violations` が 0 (失敗のときは規則の id と対象の要素を出す)。スクロールに連動する Animation は無い (U-18) ので、待ちは必ず終わる |
@@ -1887,7 +1886,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 
 ## 19. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4` で採取し、`cf6393c3` と `01d62462` (2026-10-18。R5 の反映の時点で `git fetch` した後も同じ sha) で突き合わせ直した。`be462ab4` からの変更のうち本書が指すファイルは、`tests/faq-guide-wording-1859.test.ts` と `src/app/faq/page.tsx` (#1876)・`lib/supabase/middleware.ts` (#1875。§2.4 の行番号は直し済み)・`tests/jst-today-source-scan.test.ts`・`src/lib/env.ts`・`docs/design/cross/08-legal-compliance.md`・`docs/design/billing/01-billing-core.md` で、どれも本書が頼る中身は変わらない)。e2e は `tests/e2e/` の `goto("/")` (と BASE_URL つきの同じ形) を引いた 13 本 (`tests/e2e/.exploration/` の探索用は門にも定期の実行にも入らないので数えない)。
+grep の語 = 本設計が足す・変える・移すものの名前で `tests/` `scripts/` `src/__tests__/` `lib/**/__tests__/` `apps/mobile/__tests__/` `packages/*/src/*.test.ts` を引いた結果 (origin/main `be462ab4` で採取し、`cf6393c3` と `01d62462` と `e5ce8e65` (2026-10-18。R5 の反映の時点の origin/main。`01d62462` からの 1 コミット (#1885) が本書の指すファイルで変えたのは `lib/supabase/middleware.ts` のコメント 2 行の文言だけで、行番号は変わらない) で突き合わせ直した。`be462ab4` からの変更のうち本書が指すファイルは、`tests/faq-guide-wording-1859.test.ts` と `src/app/faq/page.tsx` (#1876)・`lib/supabase/middleware.ts` (#1875。§2.4 の行番号は直し済み)・`tests/jst-today-source-scan.test.ts`・`src/lib/env.ts`・`docs/design/cross/08-legal-compliance.md`・`docs/design/billing/01-billing-core.md` で、どれも本書が頼る中身は変わらない)。e2e は `tests/e2e/` の `goto("/")` (と BASE_URL つきの同じ形) を引いた 13 本 (`tests/e2e/.exploration/` の探索用は門にも定期の実行にも入らないので数えない)。
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
