@@ -32,7 +32,12 @@ import {
   PUSH_TOKEN_RELEASE_API_PATH,
 } from '@homegohan/shared';
 import { LegalConsentRequiredBodySchema } from '@/lib/legal-consent-api';
-import { FROZEN_ALLOWED_API_PATHS, isFrozenAllowedApiPath } from '@/lib/auth/frozen';
+import {
+  FROZEN_ALLOWED_API_PATHS,
+  NATIVE_BRIDGE_CODE_API_PATH,
+  isFrozenAllowedApiPath,
+  isNativeBridgeCodeApiPath,
+} from '@/lib/auth/frozen';
 import { PUSH_TOKEN_CLAIM_API_PATH, isPushTokenClaimApiPath } from '@/lib/push-tokens';
 import { isMaintenanceExemptPath } from '@/lib/maintenance-mode';
 import { listRouteFiles } from '../../../tests/helpers/ai-reach';
@@ -256,18 +261,32 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
     }
   });
 
-  it('許可リストは、凍結の判定で通るパス (FROZEN_ALLOWED_API_PATHS + 通知のトークンの claim) をすべて exact の行で含む', () => {
-    // middleware の凍結の分岐が通すのは isFrozenAllowedApiPath と isPushTokenClaimApiPath (#1636) の 2 つ。
+  it('許可リストは、凍結の判定で通るパス (FROZEN_ALLOWED_API_PATHS + 通知のトークンの claim + ネイティブ認証ブリッジのコード) をすべて含む', () => {
+    // middleware の凍結の分岐が通すのは isFrozenAllowedApiPath と isPushTokenClaimApiPath (#1636) と isNativeBridgeCodeApiPath (#1861) の 3 つ。
     // 凍結中は同意の画面に進めないので、ここで通したパスを同意ゲートで止めると、凍結の例外が意味を失う
-    const frozenPassed = [...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH];
+    const frozenPassed = [...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH, NATIVE_BRIDGE_CODE_API_PATH];
+    const passedByFrozenGate = (path: string) =>
+      isFrozenAllowedApiPath(path) || isPushTokenClaimApiPath(path) || isNativeBridgeCodeApiPath(path);
     expect(FROZEN_ALLOWED_API_PATHS.length).toBeGreaterThan(0);
     for (const path of frozenPassed) {
-      expect(isFrozenAllowedApiPath(path) || isPushTokenClaimApiPath(path), `${path} は凍結の判定で通る`).toBe(true);
+      expect(passedByFrozenGate(path), `${path} は凍結の判定で通る`).toBe(true);
       expect(isLegalConsentExemptApiPath(path), path).toBe(true);
+    }
+    // FROZEN_ALLOWED_API_PATHS と claim は exact の行で含む
+    for (const path of [...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH]) {
       expect(LEGAL_CONSENT_EXEMPT_API_PATHS.some((entry) => entry.path === path && entry.match === 'exact'), path).toBe(true);
     }
+    // ブリッジのコードは、認証の途中 (/api/auth の prefix の行。auth_flow) で含む
+    expect(
+      LEGAL_CONSENT_EXEMPT_API_PATHS.some(
+        (entry) =>
+          entry.match === 'prefix' &&
+          entry.reason === 'auth_flow' &&
+          NATIVE_BRIDGE_CODE_API_PATH.startsWith(`${entry.path}/`),
+      ),
+    ).toBe(true);
     // 全 route で: 凍結の判定で通る route は、すべて同意の許可リストにある (凍結の一覧に足したときの漏れを見張る)
-    const frozenPassedRoutes = API_ROUTES.filter((route) => isFrozenAllowedApiPath(route.path) || isPushTokenClaimApiPath(route.path));
+    const frozenPassedRoutes = API_ROUTES.filter((route) => passedByFrozenGate(route.path));
     expect(frozenPassedRoutes.map((route) => route.path).sort()).toEqual([...frozenPassed].sort());
     for (const route of frozenPassedRoutes) {
       expect(isLegalConsentExemptApiPath(route.path), route.path).toBe(true);
@@ -285,7 +304,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
     }
   });
 
-  it('全 route を 未同意 × ENFORCE=on × 凍結中 で通すと、同意の 403 は 1 本も出ない (凍結の 403 か、通すかのどちらか)。claim と退会・書き出しは通る', async () => {
+  it('全 route を 未同意 × ENFORCE=on × 凍結中 で通すと、同意の 403 は 1 本も出ない (凍結の 403 か、通すかのどちらか)。claim と退会・書き出しとブリッジのコードは通る', async () => {
     mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED, { frozen_at: FROZEN_AT }));
 
     const consentDenied: string[] = [];
@@ -297,7 +316,7 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
     }
 
     expect(consentDenied).toEqual([]);
-    expect(passed.sort()).toEqual([...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH].sort());
+    expect(passed.sort()).toEqual([...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH, NATIVE_BRIDGE_CODE_API_PATH].sort());
   });
 
   it('全 route を 未同意 × ENFORCE=on × メンテナンス中 (一般の利用者) で通すと、同意の 403 は 1 本も出ない (503 か、通すかのどちらか)。claim は通る', async () => {
@@ -445,14 +464,14 @@ describe('updateSession — /api の同意ゲート (#1442): 403 の形・順序
     expect(res.headers.get('location')).toBeNull();
   });
 
-  it('凍結が先: 凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (同意の 403 ではない)。凍結中でも通す 2 本と claim は未同意でも通る', async () => {
+  it('凍結が先: 凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (同意の 403 ではない)。凍結中でも通す API と claim とブリッジのコードは未同意でも通る', async () => {
     mockMaybeSingle.mockResolvedValue(consentProfile(NOT_ACCEPTED, { frozen_at: FROZEN_AT }));
 
     const frozen = await updateSession(apiRequest('/api/meals'));
     expect(frozen.status).toBe(403);
     expect(await frozen.json()).toEqual({ error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' } });
 
-    for (const path of [...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH]) {
+    for (const path of [...FROZEN_ALLOWED_API_PATHS, PUSH_TOKEN_CLAIM_API_PATH, NATIVE_BRIDGE_CODE_API_PATH]) {
       const res = await updateSession(apiRequest(path));
       expect(res.status, path).toBe(200);
     }

@@ -1,5 +1,6 @@
 import { createHttpClient, type HttpClient, type HttpRequestOptions } from "@homegohan/core";
 
+import { accountFrozenErrorOf } from "./account-frozen";
 import { aiDailyLimitErrorOf } from "./ai-daily-limit";
 import { NETWORK_ERROR_MESSAGES } from "./api-error";
 import { MobileConfigError, resolveApiBaseUrl } from "./env";
@@ -68,6 +69,8 @@ function withRequestPolicy(method: string, path: string, init?: HttpRequestOptio
  *     (503 AI_CONSENT_CHECK_FAILED。#1486): ServiceUnavailableError (src/lib/service-unavailable.ts)
  *   - 403 LEGAL_CONSENT_REQUIRED (規約への同意が必要。#1442): LegalConsentRequiredError (src/lib/legal-consent.ts)。
  *     置き換えるときに LegalConsentProvider へ知らせ、ゲートがルートの Stack を同意画面 1 つに畳む
+ *   - 403 AUTH_ACCOUNT_FROZEN (アカウントが凍結されている。#1861): AccountFrozenError (src/lib/account-frozen.ts)。
+ *     置き換えるときに AccountFrozenProvider へ知らせ、ゲートがルートの Stack を凍結の画面 1 つに畳む
  * ほかのエラーはそのまま投げる。
  * getApi() を通らない生の fetch には効かない。そちらは失敗の応答から errorOfFailedResponse (src/lib/failed-response.ts。
  * 同じ 2 つの判定) で Error を作る。
@@ -76,7 +79,13 @@ export async function withFriendlyErrors<T>(request: Promise<T>): Promise<T> {
   try {
     return await request;
   } catch (error) {
-    throw aiDailyLimitErrorOf(error) ?? serviceUnavailableErrorOf(error) ?? legalConsentRequiredErrorOf(error) ?? error;
+    throw (
+      aiDailyLimitErrorOf(error) ??
+      serviceUnavailableErrorOf(error) ??
+      legalConsentRequiredErrorOf(error) ??
+      accountFrozenErrorOf(error) ??
+      error
+    );
   }
 }
 

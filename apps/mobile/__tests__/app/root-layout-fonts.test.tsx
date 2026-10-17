@@ -52,6 +52,12 @@ jest.mock('../../src/providers/AuthProvider', () => ({
   AuthProvider: ({ children }: { children: React.ReactNode }) => children,
   useAuth: () => ({ session: null, user: null, isLoading: false }),
 }));
+// #1861: 凍結の Provider とゲート (root-layout-config.test.tsx が入れ子を確かめる)
+jest.mock('../../src/providers/AccountFrozenProvider', () => ({
+  AccountFrozenProvider: ({ children }: { children: React.ReactNode }) => children,
+  useAccountFrozen: () => ({ state: 'clear', refresh: jest.fn() }),
+}));
+jest.mock('../../src/components/AccountFrozenGate', () => ({ AccountFrozenGate: () => null }));
 jest.mock('../../src/providers/LegalConsentProvider', () => ({
   LegalConsentProvider: ({ children }: { children: React.ReactNode }) => children,
   useLegalConsent: () => ({ state: 'clear', status: null, refresh: jest.fn() }),

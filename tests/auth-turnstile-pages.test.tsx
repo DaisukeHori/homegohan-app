@@ -90,6 +90,7 @@ import LoginPage from '@/app/(auth)/login/page';
 import SignupPage from '@/app/(auth)/signup/page';
 import ForgotPasswordPage from '@/app/(auth)/auth/forgot-password/page';
 import { CAPTCHA_FAILED_MESSAGE } from '@/lib/auth/turnstile';
+import { PASSWORD_MAX_BYTES, PASSWORD_TOO_LONG_MESSAGE } from '@homegohan/shared';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -468,6 +469,21 @@ describe('新規登録 (/signup)', () => {
       expect(credentials.options.captchaToken).toBe('tok-signup-1');
       expect(credentials.options.emailRedirectTo).toContain('/auth/callback');
       expect(turnstileApi.reset).toHaveBeenCalledWith('widget-1');
+    });
+
+    it.each([
+      ['半角 73 文字', `a1${'x'.repeat(PASSWORD_MAX_BYTES - 1)}`],
+      ['日本語を含む 26 文字 (74 バイト)', `a1${'あ'.repeat(24)}`],
+    ])('#1864 72 バイトを超えるパスワード (%s) は長すぎるの文言で止め、signUp を呼ばず、トークンも捨てない', async (_label, tooLong) => {
+      await renderPage(SignupPage);
+      await fill(tooLong);
+      await emitToken('tok-signup-1');
+
+      await submit();
+
+      expect(text()).toContain(PASSWORD_TOO_LONG_MESSAGE);
+      expect(mocks.signUp).not.toHaveBeenCalled();
+      expect(turnstileApi.reset).not.toHaveBeenCalled();
     });
 
     it('パスワードの強度で弾いたときは、使っていないトークンを捨てない', async () => {

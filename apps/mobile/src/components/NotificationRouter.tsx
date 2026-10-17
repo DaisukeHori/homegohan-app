@@ -27,10 +27,12 @@ import * as Notifications from "expo-notifications";
 import { router, usePathname } from "expo-router";
 import { useEffect, useRef, useState } from "react";
 
+import { isNavigationHeldForAccountFrozen } from "../lib/account-frozen";
 import { ENTRY_SCREEN_PATH, isNavigationHeldForLegalConsent } from "../lib/legal-consent";
 import { resolveNotificationHref } from "../lib/notificationRoute";
 import { useAuth } from "../providers/AuthProvider";
 import { useLegalConsent } from "../providers/LegalConsentProvider";
+import { useAccountFrozen } from "../providers/AccountFrozenProvider";
 import { useProfile } from "../providers/ProfileProvider";
 
 /** フォアグラウンドで届いた通知の扱い。バナーと通知センターに出し、音を鳴らし、バッジ (サーバーが数えた値) を付ける */
@@ -45,6 +47,7 @@ export function NotificationRouter() {
   const { session, isLoading: authLoading } = useAuth();
   const { profile, isLoading: profileLoading } = useProfile();
   const { state: legalConsentState } = useLegalConsent();
+  const { state: frozenState } = useAccountFrozen();
   const pathname = usePathname();
   // タップされた通知の行き先 (まだ遷移していないもの)
   const [pendingHref, setPendingHref] = useState<string | null>(null);
@@ -105,7 +108,14 @@ export function NotificationRouter() {
     // #1442: 同意の状態が決まるまで・同意が要る間・前面が同意画面の間 (同意の直後で、ゲートの router.replace('/') がまだ流れていない) と、
     // 前面が入口の間 (入口の Redirect の router.replace がまだ流れていない) は行き先を保留する。
     // 同じ描画で push すると、expo-router の routingQueue で push と replace が並び、移った先の画面が置き換わる
-    if (isNavigationHeldForLegalConsent(legalConsentState, pathname) || pathname === ENTRY_SCREEN_PATH) return;
+    // #1861: 凍結の状態が分かるまで・凍結中・前面が凍結の画面の間も保留する (凍結の画面の上に push を重ねない)
+    if (
+      isNavigationHeldForLegalConsent(legalConsentState, pathname) ||
+      isNavigationHeldForAccountFrozen(frozenState, pathname) ||
+      pathname === ENTRY_SCREEN_PATH
+    ) {
+      return;
+    }
     setPendingHref(null);
     if (!profile.onboardingCompletedAt) return;
     try {
@@ -114,7 +124,7 @@ export function NotificationRouter() {
       // 遷移の失敗でアプリを落とさない
       console.warn("[NotificationRouter] navigation failed", error);
     }
-  }, [pendingHref, authLoading, session, profileLoading, profile, legalConsentState, pathname]);
+  }, [pendingHref, authLoading, session, profileLoading, profile, legalConsentState, frozenState, pathname]);
 
   return null;
 }

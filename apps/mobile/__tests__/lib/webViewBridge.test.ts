@@ -558,6 +558,45 @@ describe('sanitizeInitialPath()', () => {
     });
   });
 
+  // #1861: 凍結の画面 (app/frozen.tsx) は path '/frozen' の WebViewScreen。/frozen と /frozen/account (退会・書き出し) は通す
+  describe('凍結の画面 (/frozen。#1861)', () => {
+    const FROZEN_PATH = '/frozen';
+    const frozenSanitize = (raw: unknown) => sanitizeInitialPath(raw, FROZEN_PATH, [...PREFIXES, pathnameOf(FROZEN_PATH)]);
+
+    it.each(['/frozen', '/frozen?_rb=1', '/frozen/account', '/frozen/account?mode=app', '/frozen/billing'])(
+      '凍結の画面の配下は通す: %s',
+      (raw) => {
+        expect(frozenSanitize(raw)).toBe(raw);
+      },
+    );
+
+    it.each([
+      '/frozenx',
+      '/frozen/../auth/native-bridge?code=x',
+      '/frozen/%2e%2e/auth/native-bridge',
+      '/auth/native-bridge?code=x&next=%2Ffrozen',
+      '//evil.example/frozen',
+      '/settings/account',
+    ])('凍結の画面の配下でないものは /frozen: %s', (raw) => {
+      expect(frozenSanitize(raw)).toBe(FROZEN_PATH);
+    });
+
+    it('認証ブリッジの next に /frozen と /frozen/account をそのまま載せ、自オリジンの native-bridge を開く', () => {
+      for (const next of ['/frozen?mode=app', '/frozen/account?mode=app']) {
+        const url = new URL(buildBridgeUrl('A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8S9t0U1v', next));
+        expect(url.origin).toBe(ORIGIN);
+        expect(url.pathname).toBe('/auth/native-bridge');
+        expect(url.searchParams.get('next')).toBe(next);
+      }
+    });
+
+    it('凍結の画面から進む Web の画面 (/frozen/account・/frozen/billing・/contact) は WebView の中で開く (自オリジン)', () => {
+      for (const pathname of ['/frozen/account', '/frozen/billing', '/contact']) {
+        expect(decideNavigation({ url: `${ORIGIN}${pathname}`, isTopFrame: true })).toEqual({ allow: true });
+      }
+    });
+  });
+
   it('許可する prefix が空なら何も通さない', () => {
     expect(sanitizeInitialPath('/home', FALLBACK, [])).toBe(FALLBACK);
   });

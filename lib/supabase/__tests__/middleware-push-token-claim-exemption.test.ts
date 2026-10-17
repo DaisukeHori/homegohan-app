@@ -155,7 +155,7 @@ describe('claim の例外は 1 本だけ (#1636)', () => {
     expect(passed).not.toContain(PUSH_TOKEN_RELEASE_API_PATH);
   });
 
-  it('凍結中: 全 route のうち、通るのは退会・書き出し (#1445)・有料プランの解約の 3 本 (billing/01 §9.8) と claim だけ (ほかの API は 403 のまま)', async () => {
+  it('凍結中: 全 route のうち、通るのは退会・書き出し (#1445)・有料プランの解約の 3 本 (billing/01 §9.8) と claim とネイティブ認証ブリッジのコード (#1861) だけ (ほかの API は 403 のまま)', async () => {
     mockMaybeSingle.mockResolvedValue({
       data: { roles: ['user'], frozen_at: '2026-07-01T00:00:00.000Z', unban_at: null },
       error: null,
@@ -174,6 +174,8 @@ describe('claim の例外は 1 本だけ (#1636)', () => {
         '/api/billing/subscription/cancel',
         '/api/billing/portal',
         PUSH_TOKEN_CLAIM_API_PATH,
+        // #1861: モバイルの凍結の画面 (Web の /frozen の WebView) を本人のセッションで開くため (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)
+        '/api/auth/native-bridge/code',
       ].sort(),
     );
   });
@@ -237,7 +239,7 @@ describe('規約の同意ゲート (#1689) でも claim は止めない (#1636)'
     }
   });
 
-  it('ENFORCE=on × 未同意 × 凍結中: 全 route のうち、通るのは退会・書き出し・有料プランの解約の 3 本と claim だけ (同意の 403 は出ない)', async () => {
+  it('ENFORCE=on × 未同意 × 凍結中: 全 route のうち、通るのは退会・書き出し・有料プランの解約の 3 本と claim とネイティブ認証ブリッジのコード (#1861) だけ (同意の 403 は出ない)', async () => {
     mockMaybeSingle.mockResolvedValue(unconsentedProfile({ frozen_at: FROZEN_AT }));
 
     const passed: string[] = [];
@@ -261,6 +263,7 @@ describe('規約の同意ゲート (#1689) でも claim は止めない (#1636)'
         '/api/billing/subscription/cancel',
         '/api/billing/portal',
         PUSH_TOKEN_CLAIM_API_PATH,
+        '/api/auth/native-bridge/code',
       ].sort(),
     );
   });

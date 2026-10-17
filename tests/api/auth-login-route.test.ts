@@ -96,6 +96,15 @@ describe('成功', () => {
     expect(mocks.signInWithPassword).toHaveBeenCalledWith({ email: EMAIL, password: PASSWORD });
   });
 
+  it('#1864 72 バイトを超えるパスワードも断らずに Supabase へ渡す (新しいパスワードの上限はログインには付けない。既存の利用者を締め出さない)', async () => {
+    const { PASSWORD_MAX_BYTES } = await import('@homegohan/shared');
+    const longPassword = `Passw0rd${'あ'.repeat(PASSWORD_MAX_BYTES)}`;
+    const res = await post({ email: EMAIL, password: longPassword });
+
+    expect(res.status).toBe(200);
+    expect(mocks.signInWithPassword).toHaveBeenCalledWith({ email: EMAIL, password: longPassword });
+  });
+
   it('失敗が 3 回未満なら、届いたトークンを options.captchaToken で Supabase へ渡す (こちらでは確かめない)', async () => {
     await post({ email: EMAIL, password: PASSWORD, captchaToken: 'tok-1' });
 
