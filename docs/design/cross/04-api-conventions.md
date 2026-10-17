@@ -132,7 +132,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `VALID_PASSWORD_TOO_SHORT` | パスワード最小長未満 | 422 |
 | `VALID_PASSWORD_BREACHED` | HIBP で漏洩確認済み | 422 |
 | `VALID_PASSWORD_HISTORY` | 過去に使用済みパスワード | 422 |
-| `VALID_PASSWORD_WEAK` | **[NEW]** パスワードが規則 (8 文字以上・英字と数字を含む。`validatePassword`) を満たさない、または GoTrue が弱いと判断した (`POST /api/auth/password/change`・`/reset`。`cross/16-auth-history-sessions.md` §19) | 422 |
+| `VALID_PASSWORD_WEAK` | **[NEW]** パスワードが規則 (8 文字以上・英字と数字を含む・UTF-8 で 72 バイトまで (GoTrue の bcrypt の上限 #1864)。`validatePassword`) を満たさない、または GoTrue が弱いと判断した (`POST /api/auth/password/change`・`/reset`。`cross/16-auth-history-sessions.md` §19) | 422 |
 | `VALID_FILE_TOO_LARGE` | ファイルサイズ超過 | 422 |
 | `VALID_FILE_TYPE` | 許可されていないファイル形式 | 422 |
 | `VALID_CURSOR_INVALID` | cursor パラメータ不正 | 422 |
