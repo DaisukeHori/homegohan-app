@@ -1645,7 +1645,7 @@ deprecated プラン通知 (日次 11:00 JST)
 ---
 
 ### POST /api/cron/re-engagement-email
-再エンゲージメントメール (日次 13:00 JST)
+再エンゲージメントメール (日次 13:00 JST)。当面は送らない (operator/11 §8)。route は無い
 
 **処理**:
 1. 7/14/30 日間ログインなし かつ `plan_key != 'free'` のユーザー
@@ -1654,7 +1654,7 @@ deprecated プラン通知 (日次 11:00 JST)
 ---
 
 ### POST /api/cron/nps-survey-sender
-NPS サーベイ送信 (日次 14:00 JST)
+NPS サーベイ送信 (日次 14:00 JST)。当面は送らない (operator/11 §8)。route は無い
 
 **処理**: 登録 30 日経過 + 前回 NPS から 90 日経過のユーザーに送信
 

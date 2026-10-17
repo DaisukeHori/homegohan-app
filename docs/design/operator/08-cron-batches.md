@@ -166,8 +166,8 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `license_renewal_reminder` | daily 10:00 | ライセンス更新リマインダー |
 | `deprecate_plan_notice` | daily 11:00 | deprecated プラン移行通知 |
 | `stripe_integrity_check` | daily 12:00 | Stripe reconciliation。billing/01 §12 の契約 (1 文の直接 UPDATE / 写像を呼ぶ) で作る。課金の配線の残りの冊 (運用バッチ。未作成) の対象 |
-| `re_engagement_email` | daily 13:00 | 再エンゲージメントメール (選択待ち: operator/11 §8) |
-| `nps_survey_sender` | daily 14:00 | NPS サーベイ送信 (選択待ち: operator/11 §8) |
+| `re_engagement_email` | daily 13:00 | 再エンゲージメントメール (当面は送らない: operator/11 §8) |
+| `nps_survey_sender` | daily 14:00 | NPS サーベイ送信 (当面は送らない: operator/11 §8) |
 | `hr_revoke_jobs_processor` | hourly :30 | HR revoke ジョブ処理 (HR 連携の冊に同梱: operator/11 §2.2) |
 | `grace_period_check` | daily 09:30 | 支払失敗グレースペリオドチェック |
 | `revenue_snapshot` | daily 01:00 | 日次収益スナップショット生成 |
@@ -349,7 +349,7 @@ $$ LANGUAGE plpgsql;
 
 *UTC → JST: UTC+9 で変換。例: `0 0 * * *` UTC = 09:00 JST*
 
-上の JSON は設計時の計画の例である (いまの `vercel.json` は §3.0)。`/api/cron/logical-backup` (GitHub Actions で取る。cross/17)・`/api/cron/hr-revoke-processor` (HR 連携の冊に同梱。operator/11 §2.2)・`/api/cron/re-engagement-email`・`/api/cron/nps-survey-sender` (選択待ち。operator/11 §8) は、例から外した。
+上の JSON は設計時の計画の例である (いまの `vercel.json` は §3.0)。`/api/cron/logical-backup` (GitHub Actions で取る。cross/17)・`/api/cron/hr-revoke-processor` (HR 連携の冊に同梱。operator/11 §2.2)・`/api/cron/re-engagement-email`・`/api/cron/nps-survey-sender` (当面は送らない。operator/11 §8) は、例から外した。
 
 ### 5.2 共通認証
 
@@ -463,7 +463,7 @@ export async function POST(request: Request) {
 
 ### 5.5 `re_engagement_email` (13:00 JST)
 
-この節の `re_engagement_email` は、利用者へ新しくメールを送り始めるかどうかの選択待ちである (operator/11 §8.1 に選択肢と推奨を書いた。送らない場合は 08 から外す。送るなら別の設計ゲート。コードは残さない)。
+この節の `re_engagement_email` は、当面は送らない (operator/11 §8.1。08 の「いま」の計画から外した。送り始めるなら別の設計ゲート。コードは残さない)。
 
 ### 5.6 `hr_revoke_jobs_processor` (hourly :30)
 

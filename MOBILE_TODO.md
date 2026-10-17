@@ -24,7 +24,7 @@ Web版（Next.js）で実装済みの「ほめゴハン」を **React Native / E
 ## 最初のストア提出は iOS のみ（2026-10-08 オーナー判断）
 
 - 提出するのは **iOS（App Store）だけ**。Android（Google Play）は iOS の提出後に別途進める。
-  - Android 側で残っているもの: Play Console のサービスアカウントキー（`apps/mobile/eas.json` の `serviceAccountKeyPath` が指す `secrets/google-play-service-account.json` はリポジトリに無く、配置を確認できていない）、FCM サーバーキー、Data Safety の入力、内部テストでの動作確認
+  - Android 側で残っているもの: Play Console のサービスアカウントキー（`apps/mobile/eas.json` の `serviceAccountKeyPath` が指す `secrets/google-play-service-account.json` はリポジトリに無く、配置を確認できていない）、FCM V1 の資格情報（Google のサービスアカウントキーを EAS に登録する。`docs/design/mobile/06-push-send.md` §14）、Data Safety の入力、内部テストでの動作確認
 - iOS の EAS 設定（`appleId` / `ascAppId` / `appleTeamId`）は `apps/mobile/eas.json` に入っている。実際の EAS Build / Submit はまだ実行していない
 - 手順書は `docs/eas-build-submit-handoff-20260429.md`、TestFlight の実機確認は `docs/operations/mobile-smoke-test.md`、審査メモは `docs/operations/app-store-metadata.md`
 

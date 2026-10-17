@@ -284,8 +284,8 @@ apps/mobile/
 │
 ├── src/
 │   ├── components/
-│   │   └── web/
-│   │       └── WebViewScreen.tsx    # 既存 (メンテナンス)
+│   │   ├── web/
+│   │   │   └── WebViewScreen.tsx    # 既存 (メンテナンス)
 │   │   └── legal/
 │   │       └── LegalConsentGate.tsx # 新規: 同意が要る間、スタックを同意画面 1 つに畳む (13b)
 │   ├── lib/
@@ -346,20 +346,15 @@ preview      → internal distribution + iOS .ipa (Apple Configurator 2) + Andro
 production   → App Store submission + Android .aab
 ```
 
-`eas.json` の既存設定で対応済み。新規追加が必要な環境変数:
+`eas.json` の既存設定で対応済み。使う環境変数 (どれも既存):
 
 | 変数 | プロファイル | 用途 |
 |------|-----------|------|
-| `EXPO_FCM_SERVER_KEY` | preview / production | Android FCM サーバーキー (新規) |
 | `EXPO_PUBLIC_EAS_PROJECT_ID` | preview / production | Expo Push Token 取得 (既存) |
 | `EXPO_PUBLIC_WEB_URL` | 全プロファイル | WebView ベース URL (既存)。`http://` は開発ビルド (`__DEV__`) か localhost / 10.0.2.2 等の開発用ホストだけ。本番ビルドで `http://` を設定しても、refresh_token を平文で送らないよう既定の https オリジンに戻る |
 | `EXPO_PUBLIC_SUPABASE_URL` | 全プロファイル | Supabase URL (既存) |
 
-**EAS Secret 登録コマンド** (iOS APNs キーは登録済み):
-```bash
-# Android FCM Server Key (新規)
-eas secret:create --scope project --name EXPO_FCM_SERVER_KEY --value "YOUR_FCM_SERVER_KEY"
-```
+Android の FCM は、FCM V1 の資格情報 (Google のサービスアカウントキー) を EAS に登録する (環境変数・EAS Secret ではない。旧い FCM サーバーキーは使わない)。登録はオーナーの作業で、未登録の間は Android の端末だけ届かない (`mobile/06-push-send.md` §14)。 iOS の APNs キーは登録済み。
 
 ### 7.3 配布フロー
 
