@@ -539,7 +539,7 @@ await supabase.from('revenue_snapshots').upsert({
 ### 6.2 Vercel Cron 失敗監視
 
 - 対象: cron の route が 500 を返した回。`internalError` (`src/lib/api/errors.ts`) が `app_logs` に固定の文で残す `error` の行のうち、`function_name` が cron の route の名前 (`cron/<名前>` または `<METHOD> /api/cron/<名前>`) のもの。`source = 'client'` の行 (利用者が `POST /api/log` で書ける) と、届けられなかったメールの 1 通ごとの `error` は数えない。
-- 通知: 同じ運用メール (`vercel_cron/<route 名>` ごとの件数)。`vercel.json` の 5 本 (`backup-freshness` を含む) と `app-log-alerts` 自身の 500 が対象になる。
+- 通知: 同じ運用メール (`vercel_cron/<route 名>` ごとの件数)。`vercel.json` の 6 本 (`backup-freshness`・`login-alerts` を含む) と `app-log-alerts` 自身の 500 が対象になる。
 
 ---
 

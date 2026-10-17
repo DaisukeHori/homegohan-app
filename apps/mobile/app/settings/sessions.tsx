@@ -7,7 +7,9 @@
  * - 失敗の文は getApiErrorMessage (本文の error = サーバーが決めた固定の文。圏外は通信の文)。
  */
 import { useCallback, useEffect, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+
+import { Text } from "../../src/components/ui/Text";
 
 import { Button, Card, LoadingState, PageHeader, SectionHeader } from "../../src/components/ui";
 import { getApiErrorMessage } from "../../src/lib/api-error";
