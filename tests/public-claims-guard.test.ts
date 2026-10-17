@@ -60,7 +60,9 @@ vi.mock('next/image', async () => {
   };
 });
 
-const { default: LandingPage } = await import('@/app/page');
+// トップは #1867 で Server Component の殻 (src/app/page.tsx。メタ情報と JSON-LD) と画面の本体 (LandingPageView.tsx) に分けた。
+// 文言を持つのは本体なので、本体を描いて読む
+const { default: LandingPage } = await import('@/app/LandingPageView');
 const { default: AboutPage } = await import('@/app/about/page');
 const { default: NewsPage } = await import('@/app/news/page');
 const { default: CompanyPage } = await import('@/app/company/page');
@@ -73,7 +75,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 /** 公開ページ (ログイン不要で誰でも見られる) */
 const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
-  { file: 'src/app/page.tsx', Page: LandingPage },
+  { file: 'src/app/LandingPageView.tsx', Page: LandingPage },
   { file: 'src/app/about/page.tsx', Page: AboutPage },
   { file: 'src/app/news/page.tsx', Page: NewsPage },
   { file: 'src/app/company/page.tsx', Page: CompanyPage },
@@ -392,7 +394,7 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
 
 describe('#1155 FAQ (/faq とトップページの FAQ)', () => {
   const faq = readSource('src/app/faq/page.tsx');
-  const landing = readSource('src/app/page.tsx');
+  const landing = readSource('src/app/LandingPageView.tsx');
 
   it('プランごとの上限・料金・プレミアム限定の説明を載せない', () => {
     for (const word of ['無料プランでは', 'プレミアムプラン', '月額', '年払い', 'Visa', '解約後も次回更新日まで']) {

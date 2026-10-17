@@ -1,14 +1,15 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
 import { SpeedInsightsClient } from "@/components/SpeedInsightsClient";
-import { getSiteUrl } from "@/lib/site-config";
+import { getSiteUrl, SITE_NAME } from "@/lib/site-config";
+import { OG_LOCALE, SITE_DEFAULT_TITLE, SITE_DESCRIPTION, SITE_TWITTER_DESCRIPTION } from "@/lib/seo/public-pages";
 import "./globals.css";
 
 // #1169: CSP の nonce は毎リクエスト違うので、全ページを動的に描画する (静的化した HTML には nonce が入らず、Next の
 // インラインスクリプトが止まる)。ルートの layout に書くと配下の全ルートが動的になる (docs/design/cross/18-csp-nonce.md §5)
 export const dynamic = 'force-dynamic';
 
-// サイトの URL (canonical・OGP の基点)。NEXT_PUBLIC_APP_URL、未設定なら既定値 (src/lib/site-config.ts, #1194)
+// サイトの URL (metadataBase。各ページの canonical・OGP の基点)。NEXT_PUBLIC_APP_URL、未設定なら既定値 (src/lib/site-config.ts, #1194)
 const siteUrl = getSiteUrl();
 
 const notoSans = Noto_Sans_JP({ 
@@ -25,10 +26,10 @@ const notoSerif = Noto_Serif_JP({
 
 export const metadata: Metadata = {
   title: {
-    default: "ほめゴハン | AIで食事管理をもっと簡単に",
-    template: "%s | ほめゴハン",
+    default: SITE_DEFAULT_TITLE,
+    template: `%s | ${SITE_NAME}`,
   },
-  description: "写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。あなたの食生活をサポートする次世代の食事管理アプリ。",
+  description: SITE_DESCRIPTION,
   keywords: [
     "食事管理",
     "献立",
@@ -50,15 +51,14 @@ export const metadata: Metadata = {
     telephone: false,
   },
   metadataBase: new URL(siteUrl),
-  alternates: {
-    canonical: "/",
-  },
+  // canonical (alternates) と og:url は、ここに書かない (#1867)。ルートの layout に書くと全ページに引き継がれ、
+  // 以前は全ページの canonical が「/」 (トップの重複) になっていた。公開ページは src/lib/seo/public-pages.ts の
+  // publicPageMetadata で自分のパスの canonical・og:url を持つ。ログインが要る画面は canonical を持たない。
   openGraph: {
-    title: "ほめゴハン | AIで食事管理をもっと簡単に",
-    description: "写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。あなたの食生活をサポートする次世代の食事管理アプリ。",
-    url: siteUrl,
-    siteName: "ほめゴハン",
-    locale: "ja_JP",
+    title: SITE_DEFAULT_TITLE,
+    description: SITE_DESCRIPTION,
+    siteName: SITE_NAME,
+    locale: OG_LOCALE,
     type: "website",
     // 画像 (og:image) は書かない。src/app/opengraph-image.tsx (Next の file convention) が PNG を作り、Next が
     // og:image / og:image:width / height / type / alt を metadataBase を前に付けた絶対 URL で入れる (#1845。
@@ -66,8 +66,8 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: "summary_large_image",
-    title: "ほめゴハン | AIで食事管理をもっと簡単に",
-    description: "写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。",
+    title: SITE_DEFAULT_TITLE,
+    description: SITE_TWITTER_DESCRIPTION,
     // 画像 (twitter:image) は src/app/twitter-image.tsx (Next の file convention) が入れる (#1845)
   },
   robots: {

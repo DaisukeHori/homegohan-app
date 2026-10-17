@@ -8,11 +8,11 @@ import {
   PARENTAL_CONSENT_DOCUMENT_COPY,
   formatLegalEffectiveDate,
 } from '@homegohan/shared';
+import { publicPageMetadata } from '@/lib/seo/public-pages';
 import { getSupportEmail } from '@/lib/site-config';
 
-export const metadata: Metadata = {
-  title: '保護者の同意書',
-};
+// #1867: title・description・canonical・OGP は src/lib/seo/public-pages.ts が正本 (/legal の layout の canonical を上書きする)
+export const metadata: Metadata = publicPageMetadata('/legal/parental-consent');
 
 export default function ParentalConsentDocumentPage() {
   return (
