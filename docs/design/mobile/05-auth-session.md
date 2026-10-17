@@ -105,6 +105,17 @@ auth-js 2.117 (#1768。§9.1) では、access token がまだ有効なうちの�
   2.117 は `_initialize` の失敗を控え、`getSession()` は控えた失敗をすぐ返す。そのため約 25 秒になる (コードから導いた値。§9.4 の T-19)
 - それでも、読み込み中の表示が約 25 秒 (2.105 のビルドでは約 50 秒) 続く。短くするには、保存済みのセッションで先に画面を出し、更新と検証を裏で行う設計が要る (未対応。§8)
 
+### 3.1 端末名の登録 (#1189。cross/16 §16)
+
+ログイン直後と起動時に `PATCH /api/auth/sessions/current` で端末名を登録する (cross/16 §16)。
+
+- `AuthProvider` の `onAuthStateChange` が、`INITIAL_SESSION` (セッションがあるとき) と `SIGNED_IN` で `registerDeviceName(session.access_token)` (`apps/mobile/src/lib/device-name.ts`) を呼ぶ。待たない (失敗しても画面・掃除の表は変わらない)
+- 端末名は機種名と OS の版 (`expo-device` の `modelName` と `osName`・`osVersion`。例 `iPhone 15 Pro (iOS 18.0)`)。利用者が付けた端末の名前 (`Device.deviceName`) は送らない。サーバーの `DEVICE_NAME_PATTERN` (英数字・空白・`()._,+-`) に無い文字は除く
+- 同じ access token では 1 回だけ送る (プロセスの中だけ覚える)。ログアウト → ログインは新しいセッション = 新しい token なので、その行に送り直す。失敗したら次の `SIGNED_IN` / `INITIAL_SESSION` で送り直す
+- 一覧の画面 (`apps/mobile/app/settings/sessions.tsx`。設定タブの「ログイン中の端末」から開く) は、端末名を UA から決まる見出し (`device_label`) の下に「端末名: …」として添える
+
+`apps/mobile/__tests__/providers/auth-provider.test.tsx` (渡す access token) と `apps/mobile/__tests__/lib/device-name.test.ts` (作る名前・重ねよけ・失敗のやり直し) が確かめる。
+
 ## 4. Google ログインのコールバック (F7-08)
 
 iOS の `ASWebAuthenticationSession` は、コールバック URL を `openAuthSessionAsync` の `result.url` にだけ返し、`Linking` のイベントには流さない。

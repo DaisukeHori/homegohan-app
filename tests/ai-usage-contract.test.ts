@@ -319,6 +319,8 @@ const CRON_ENTRYPOINTS: Record<string, string> = {
   'vercel:/api/cron/push-outbox': 'Push 通知の送信待ちを Expo に送る (AI を使わない)',
   // #1129 DB バックアップの鮮度 (admin_audit_logs の最新の backup.daily.completed) を運用メールで知らせる。import は cron の認証・ログ・Supabase・メールだけ
   'vercel:/api/cron/backup-freshness': 'DB バックアップが古くなったことを運用メールで知らせる (AI を使わない)',
+  // #1190 新しい端末・地域からのログインを本人にメールで知らせる worker。import は cron の認証・ログ・Supabase・メールの送信待ちへの登録だけ
+  'vercel:/api/cron/login-alerts': '新しい端末からのログインを本人にメールで知らせる (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
   // #1538 運営が隠してから 90 日を過ぎた食事・レシピと画像を消す。import は認証・ログ・Supabase と完全削除の本体だけ
   'pg_cron:purge-hidden-content': '運営が隠したコンテンツの完全削除 (AI を使わない)',

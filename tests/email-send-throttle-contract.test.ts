@@ -42,6 +42,9 @@ const MAIL_TRIGGERING_RPCS = [
  * 理由は「利用者が宛先を指定できない」「本人が 1 回しか実行できない」など、乱用の余地が無い根拠を書く。
  */
 const EXEMPT_EMAIL_SENDERS: Record<string, string> = {
+  // #1190 不審なログインの通知 (docs/design/cross/16-auth-history-sessions.md §13.3・§22 N-18)
+  'src/lib/auth/sessions/login-alert-worker.ts':
+    '宛先は本人の auth.users 上の登録メールアドレス (auth.admin.getUserById で引く) に固定で、利用者は宛先を指定できない。CRON_SECRET の Bearer 認証 (requireCronAuth) を通った Vercel Cron (GET /api/cron/login-alerts) からしか動かず、DB の claim_login_alerts で取り置いた 1 セッション (1 ログイン) につき 1 通だけを送信待ち (email_outbox) に登録する (Idempotency-Key login-alert:<session_id>。再試行・再送は送信待ちの worker が同じ鍵で行う)。本文は UA から決めた端末の言葉・IP・国と固定のリンクだけで、利用者が書ける値は含めない (cross/16 §13.3・§18)',
   // #1157 エラー急増の運用メール。利用者の操作で動く API ではなく、Vercel Cron だけが呼ぶ
   'src/app/api/cron/app-log-alerts/route.ts':
     '宛先は環境変数 OPS_ALERT_EMAIL の固定アドレス 1 つだけ (未設定なら送らない) で、利用者は宛先も本文も指定できない。' +

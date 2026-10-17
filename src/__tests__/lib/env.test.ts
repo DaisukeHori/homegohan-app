@@ -416,13 +416,15 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
     }
   });
 
-  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
+  it('値を読む場所が決まっている変数 (AI_ULTIMATE_MODE_DAILY_LIMIT・AUTH_LOGIN_ALERT・AUTH_LOGIN_FAILURE_RESET_MINUTES・CRON_SECRET・CRON_SECRET_PREVIOUS・CSP_REPORT_ONLY・DSR_RESPONSE_DUE_DAYS・EMAIL_OUTBOX_*・EXPO_ACCESS_TOKEN・FEATURE_FLAG_ACTIVE_USER_SCAN_LIMIT・FEATURE_FLAG_CACHE_TTL_MS・LEGAL_CONSENT_ENFORCE・LEGAL_CONSENT_NOTICE・MENU_PLANS_ADD_MAX_DATE_OFFSET_DAYS・OPERATOR_MFA_ENFORCE_FROM・OPS_ALERT_*・ORG_CHALLENGE_SHOW_NAMES・PHOTO_SIGNED_URL_TTL_SECONDS・PUSH_OUTBOX_*) は、check:env のために一覧にあるが、getOptionalEnv では読めない', () => {
     const sealed = ENV_VARS.filter((entry) => entry.readOnlyBy !== undefined);
 
     expect(sealed.map((entry) => [entry.name, entry.readOnlyBy]).sort()).toEqual([
       // #1142 究極モードの 1 日の上限の上書き。読み方 (0 以上の整数でなければ既定の 1 回) は Edge Functions と共用の
       // resolveAiUltimateModeDailyLimit。Web で値を読むのは consumeAiUsage の 1 か所だけ (名前を書いて読む)
       ['AI_ULTIMATE_MODE_DAILY_LIMIT', 'src/lib/plan/entitlements.ts'],
+      // #1190 不審なログインの通知のスイッチ。解釈 (未設定・不正な値は on) は src/lib/auth/sessions/constants.ts の resolveLoginAlertMode、値を読むのは cron の route 1 か所
+      ['AUTH_LOGIN_ALERT', 'src/app/api/cron/login-alerts/route.ts'],
       // #1165 ログインの連続失敗の回数を 0 に戻すまでの時間。不正な値の扱い (既定値に戻して warn) をログインの route 1 か所に置く
       ['AUTH_LOGIN_FAILURE_RESET_MINUTES', 'src/app/api/auth/login/route.ts'],
       ['CRON_SECRET', 'src/lib/cron-auth.ts'],
@@ -498,6 +500,8 @@ describe('環境変数の一覧 (zod のスキーマ)', () => {
       getOptionalEnv('OPS_ALERT_PG_CRON_STALL_MINUTES');
       // @ts-expect-error AUTH_LOGIN_FAILURE_RESET_MINUTES の値を読むのはログインの route (src/app/api/auth/login/route.ts) だけ
       getOptionalEnv('AUTH_LOGIN_FAILURE_RESET_MINUTES');
+      // @ts-expect-error AUTH_LOGIN_ALERT の値を読むのは cron の route (src/app/api/cron/login-alerts/route.ts) だけ (#1190)
+      getOptionalEnv('AUTH_LOGIN_ALERT');
       // @ts-expect-error AI_ULTIMATE_MODE_DAILY_LIMIT の値を読むのは src/lib/plan/entitlements.ts (consumeAiUsage) だけ (#1142)
       getOptionalEnv('AI_ULTIMATE_MODE_DAILY_LIMIT');
       // @ts-expect-error ORG_CHALLENGE_SHOW_NAMES の値を読むのは src/lib/org-challenges.ts (showParticipantNames) だけ (#1132)

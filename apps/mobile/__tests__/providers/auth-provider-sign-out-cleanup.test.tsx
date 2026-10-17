@@ -36,6 +36,8 @@ jest.mock('../../src/lib/supabase', () => ({
 
 // release の API (POST /api/push-tokens/release。#1636) の送り先。ほかの経路は getApi() を呼ばない
 const mockPost = jest.fn();
+// この端末のログインへの端末名の登録 (#1189。cross/16 §16・§22 N-37)。ここでは呼び出しを数えない (fetch の偽物の期待を変えない)
+jest.mock('../../src/lib/device-name', () => ({ registerDeviceName: jest.fn(() => Promise.resolve()) }));
 jest.mock('../../src/lib/api', () => ({
   getApi: () => ({ post: (...args: unknown[]) => mockPost(...args) }),
 }));

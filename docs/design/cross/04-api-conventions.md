@@ -103,6 +103,8 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `AUTH_2FA_ALREADY_ENROLLED` | **[NEW]** 2FA を登録済みで登録を始めた (先に解除。`cross/12-operator-mfa.md` §19) | 409 |
 | `AUTH_2FA_NATIVE_SESSION` | **[NEW]** アプリの WebView の借り物のセッションで、2FA の確認・解除 (セッションの token を発行し直す操作) をしようとした (`cross/12-operator-mfa.md` §16.4・§19) | 409 |
 | `AUTH_SESSION_REVOKED` | セッション無効化済み | 401 |
+| `AUTH_SESSION_NOT_FOUND` | **[NEW]** 指定した端末のログイン (セッション) が無い・終わっている・本人のものでない (`DELETE /api/auth/sessions/{id}`・`PATCH /api/auth/sessions/current`。`cross/16-auth-history-sessions.md` §19) | 404 |
+| `AUTH_SESSION_IS_CURRENT` | **[NEW]** いま使っている端末のセッションを一覧から失効させようとした (ログアウトを使う。`cross/16-auth-history-sessions.md` §19) | 409 |
 | `AUTH_ACCOUNT_LOCKED` | **使わない (#1165)**: ログインに続けて失敗してもアカウントはロックしない (01-auth-session.md §8)。欠番。別の意味に再利用しない | - |
 | `AUTH_PROFILE_NOT_FOUND` | user_profiles が見つからない | 403 |
 | `AUTH_IMPERSONATION_DENIED` | **廃止 (#1124)**: impersonate は提供しないため使わない (欠番。別の意味に再利用しない) | - |
