@@ -5,13 +5,19 @@ import { Text } from "../src/components/ui/Text";
 
 import { colors, spacing, shadows, radius } from "../src/theme";
 import { useAuth } from "../src/providers/AuthProvider";
+import { useLegalConsent } from "../src/providers/LegalConsentProvider";
 import { useProfile } from "../src/providers/ProfileProvider";
 
 export default function Index() {
   const { session, isLoading: authLoading } = useAuth();
   const { profile, isLoading: profileLoading } = useProfile();
+  const { state: legalConsentState } = useLegalConsent();
 
-  if (authLoading || (session && profileLoading)) {
+  // #1442: 同意の状態が分かるまで振り分けない。required の間もスピナーのまま (LegalConsentGate が同意画面 1 つに畳む)。unknown は待たない
+  if (
+    authLoading ||
+    (session && (profileLoading || legalConsentState === "loading" || legalConsentState === "required"))
+  ) {
     return (
       <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: colors.bg }}>
         <ActivityIndicator testID="welcome-loading" color={colors.accent} size="large" />

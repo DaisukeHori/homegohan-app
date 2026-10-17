@@ -399,14 +399,14 @@ CREATE POLICY "terms_no_delete"
 **重要変更時の対応**:
 - 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。`LEGAL_DOCUMENTS` の値を書き換えて出す
 - 強制 (`LEGAL_CONSENT_ENFORCE=on`) を始める日はオーナーが決める。始める前に、お知らせだけの期間 (`LEGAL_CONSENT_NOTICE=on`) を置くかどうかも決める。お知らせも既定では出ない
-  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (版・施行日は仮置きのまま。お知らせだけの期間は置いていない)。ゲートは Web の画面の取得に掛かり、13a で `/api/*` にも掛けた (403 `LEGAL_CONSENT_REQUIRED`)。モバイルのネイティブの画面は対象外 (#1442)
+  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (版・施行日は仮置きのまま。お知らせだけの期間は置いていない)。ゲートは Web の画面の取得に掛かり、13a で `/api/*` にも掛けた (403 `LEGAL_CONSENT_REQUIRED`)。13b でモバイルにも掛けた (同意が要る間は、ルートのゲートがアプリの画面を Web の `/legal-consent` の WebView 1 つにする。同意の後は入口から振り分け直す。「同意しない」の後の案内もアプリの同意画面に残る。設計書 13b。#1442)
 - 全ユーザーへ 30 日前メール通知 (Resend 一斉送信): **未実装**。本番のメール配信は、送信ドメインの検証が済むまで動かない
 - アプリ内強制再同意: 上のゲート (ダッシュボードアクセス時にインターセプト) として実装済み。効くのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (既定は off)
 - 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う
 
 **既知の残課題**:
 - `terms_acceptances` の本人による直接 INSERT (RLS `terms_self_insert`) は開いたまま。直接入れた行は端末情報を偽れるので、証跡として確かなのは `accept_legal_documents` が書いた行。保護者の同意は `parental_consents` (関数経由) に記録する (設計書 14)。`terms_acceptances` の `parental_consent` は使わない。`terms_self_insert` を閉じる条件は、AI の同意 (`external_data_provision`) の書き込みが関数経由になることだけが残る
-- アプリ (Expo) のネイティブのサインアップ画面には、まだ同意のチェックが無い (ゲートは WebView 側で効く)
+- アプリ (Expo) のネイティブのサインアップ画面には、まだ同意のチェックが無い (ゲートは WebView 側で効き、起動時のゲート (13b) で使う前に同意する)
 
 ---
 
