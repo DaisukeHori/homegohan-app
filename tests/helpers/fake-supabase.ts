@@ -32,6 +32,7 @@ export function createQueryBuilder(result: FakeQueryResult) {
     range: vi.fn(() => builder),
     is: vi.fn(() => builder),
     in: vi.fn(() => builder),
+    gte: vi.fn(() => builder), // #1538 戻す操作の絞り込み (同じまとまりの hidden_at 以後・期限 hidden_at >= now − 89 日)
     update: vi.fn(() => builder),
     insert: vi.fn(() => builder),
     delete: vi.fn(() => builder),
