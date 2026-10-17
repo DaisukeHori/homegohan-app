@@ -59,7 +59,7 @@ v1.8 (段 B の前の改定) は、この 1 冊の中の段 B の記述 (通知�
 
 | 文書 | 箇所 | 本書との関係 |
 |---|---|---|
-| Issue #1190 / #1189 / #1198 | 本文 | 要件の正本 (コメントは 0 件) |
+| Issue #1190 / #1189 / #1198 | 本文 | 要件の正本 (コメントは設計のマージ・本番の前提の読み取りの確認・閉じたときの記録で、要件を足していない) |
 | `docs/design/cross/01-auth-session.md` | §3.2・§4.1・§4.3・§4.4・§7.1・§9.1・§13.1・§13.3・§16・§17 | 方針。食い違う箇所は本書が正 (§23 で §4.3・§4.4・§9.1 を改める) |
 | `docs/design/operator/01-data-model.md` | §3.23 `password_history`・§3.25 `user_sessions_metadata` | DDL の正典。本書 §11.1 の列・ポリシーの変更を写す (§23) |
 | `docs/design/cross/02-rls-patterns.md` | §4.1 (self_ownership の用途の例)・§9 (`rls_hardening.sql` テンプレートの 2. `user_sessions_metadata`・4. `password_history`) | RLS の正典の記述。本書 §11.1 で本人の UPDATE ポリシーを消し、本人は SELECT だけにする。§9 のポリシー名 (`sessions_self_select` / `sessions_self_update`) は実際の名前 (`sessions_self` / `sessions_revoke_self`。migration 20251126124224:10874・10870) とずれている (§23) |

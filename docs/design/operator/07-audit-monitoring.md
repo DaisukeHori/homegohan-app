@@ -337,6 +337,11 @@ super_admin.organization.transfer_admin - org_admin 緊急転送
 super_admin.gdpr_delete.execute     - GDPR 削除実行
 super_admin.llm_quota.override      - LLM クォータ手動変更
 super_admin.setting.change          - システム設定変更
+super_admin.embeddings.regenerate   - 埋め込みの再生成 (POST /api/super-admin/embeddings/regenerate) (#1571)
+super_admin.organization.dissolve   - 組織の緊急解散 (severity=critical) (#1571)
+super_admin.family.dissolve         - 家族グループの緊急解散 (severity=critical) (#1571)
+super_admin.family.transfer_representative - 家族の代表者の緊急譲渡 (severity=warn) (#1571)
+super_admin.email_outbox.requeue    - 届けられなかったメール (dead) の再送 (POST /api/super-admin/email-outbox/{id}/requeue。§4.1.1) (#1708)
 ```
 
 ### 4.3 finance 系操作

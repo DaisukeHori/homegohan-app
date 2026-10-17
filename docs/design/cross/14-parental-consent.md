@@ -18,7 +18,7 @@
 - **本人 (大人) の年齢**: 生年月日は、全員が通る**同意画面 (`/legal-consent`) で 1 回だけ**聞き、`accept_legal_documents` が `user_profiles.birth_date` に書く (特権列。本人は直接書けない)。「同意が済んでいるか」の判定 (`lib/legal-consent.ts` → 13a の `/api` の 403 も) に「生年月日がある」を**畳む**ので、Web・API・モバイルのゲートが 1 つの述語で揃う。18 歳未満が自分で登録しようとしたら、何も記録せずに断り (`LEGAL_MINOR_SELF_SIGNUP_REFUSED`)、画面は「保護者が家族に追加する」道を案内し、「登録をやめる」で既存の退会 (`POST /api/account/delete`) を呼んでアカウントごと消す。
 - **13〜17 歳の本人のアカウント (昇格の経路)**: 保護者の同意とのつながり (自分の行に有効な同意がある、または自分宛の有効な昇格依頼 + その子供の有効な同意。DB の `legal_minor_has_guardian_path()`) がある間だけ使える。依頼を断る・取り消される・期限が切れる・家族を抜ける / 外されると、同じ同意ゲートが「保護者の同意とのつながりがありません」の画面で止める (`gaps` の `'guardian_consent'`。§6.3 (a))。18 歳未満の本人は、昇格 (`accept_child_promotion`) 以外で家族に入らず (家族の作成・招待の承諾)、家族の代表者・組織のオーナーを引き受けない (`MINOR_ACCOUNT_NOT_ALLOWED`。DB の 4 関数が断る。§6.4 の 12)。つながりが切れたときの出口 (退会) を代表者・オーナーの 409 で塞がず、別の家族の大人として同意の記録や子供の情報を読ませないため。
 - **子供 (家族のメンバー) の保護者の同意**: 子供の追加 (`add_family_child`) で生年月日を必須にし、18 歳未満なら**同じトランザクションで** `parental_consents` に電子署名 (氏名の入力 + 親権者の確認) を記録する。署名できるのは、自分の生年月日で 18 歳以上と確かめられる家族の大人 (代表者または大人の役割) だけ (`PARENTAL_CONSENT_SIGNER_NOT_ADULT`)。「同意待ち」の状態を作らない (同意が無ければ子供の行も無い)。取り消し = 子供を家族から外す (トリガーが `revoked_at` を入れる)。昇格 (`request_child_promotion` / `accept_child_promotion`) は 18 歳未満に有効な同意を求め、承諾で子供の生年月日を本人のプロフィールへ写す。
-- **13 歳未満**: 子供の追加と同意は同じ画面・同じ記録 (区別は `child_age_at_signing` と shared の述語 `isUnderCoppaAge`)。**本人のアカウントは作らない** (同意書の第 3 段落「お子さま本人のアカウントは作成せず」・要件 03 §17.10 の「子供アカウント自体は `auth.users` を持たない」に合わせる): 昇格 (`request_child_promotion` / `accept_child_promotion`) は 13 歳未満の子供を `PROMOTION_UNDER_COPPA_AGE` で断り、`accept_legal_documents` は 13 歳未満の生年月日を昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。Push の送信側はこのリポジトリに無いので、述語だけ置き、送信側を作る冊が除外に使う (13 歳未満の本人のアカウントは無いので保険。§6.18)。
+- **13 歳未満**: 子供の追加と同意は同じ画面・同じ記録 (区別は `child_age_at_signing` と shared の述語 `isUnderCoppaAge`)。**本人のアカウントは作らない** (同意書の第 3 段落「お子さま本人のアカウントは作成せず」・要件 03 §17.10 の「子供アカウント自体は `auth.users` を持たない」に合わせる): 昇格 (`request_child_promotion` / `accept_child_promotion`) は 13 歳未満の子供を `PROMOTION_UNDER_COPPA_AGE` で断り、`accept_legal_documents` は 13 歳未満の生年月日を昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。Push の送信側 (`mobile/06-push-send.md` の worker) は年齢を見ず、本冊は述語だけ置く (13 歳未満の本人のアカウントは無いので、送信側の除外は保険。§8 の 9)。
 
 ### 0.2 分冊判定 (相 1 で実施)
 
@@ -126,7 +126,7 @@
 
 - 同意文書の文面・版・施行日の確定 (弁護士の確認。§8)。本冊の文面は**仮**。
 - 18 歳到達バッチ (`family/01` §7 の索引だけ残っている未実装)・家族の分割 (`family/02` §4.10 未実装)・大人代理 (`01` §7.8 P1)。
-- Push の送信側 (このリポジトリに無い。述語だけ置く)。
+- Push の送信側 (`mobile/06-push-send.md` の worker。本冊は述語だけ置く。§8 の 9)。
 - `user_profiles.age` (栄養計算の自己申告) と `birth_date` の統合 (§8)。年齢の法的な判定は `birth_date` だけを見る。
 - `terms_acceptances` の本人による直接 INSERT (`terms_self_insert`) を閉じること (`08` §7.2 の残課題。本冊は `terms_acceptances` に書かない。§7)。
 - 家族の全メンバーが子供の `birth_date` を読める件 (`family_members_select_self_or_family`。要件 `01:678` は親のみ)。現行でも `child_profile.birth_date` は読める。本冊は列を増やすだけで露出を広げない。別 Issue (§8)。
@@ -160,7 +160,7 @@
 | R-10 | 同意文書の版は shared の定数 1 つ。route は body の版が現行と一致するときだけ記録する (`/api/legal/accept` と同じ形) | `08` §7.2 の版の扱い | T-SH8, T-CR7, T-CR11 |
 | R-11 | 文言 (同意文書・サインアップの注記・同意画面の生年月日の案内) は `packages/shared` に 1 か所 (`parental-consent.ts`)。同意画面の既存の文面 (13a の `LEGAL_CONSENT_COPY`・`legal-consent-copy.ts`) は変えずにそのまま使い、本冊の文面と重ねて持たない (§6.11)。公開ページ `/legal/parental-consent` が同じ定数を描く | 仕様「法的な文言の置き場所」 | T-SH9, T-LP1〜T-LP2, T-F1 |
 | R-12 | 同意を記録したら、署名した本人のメールアドレスへ控えを送る (best-effort。失敗しても追加は成功) | 仕様「メールの文面」 | T-CR8〜T-CR10, T-EM1〜T-EM2 |
-| R-13 | 13 歳未満の区別は記録 (`child_age_at_signing`) と述語 (`isUnderCoppaAge`) に残す。13 歳未満の本人のアカウントは作らない (昇格は `PROMOTION_UNDER_COPPA_AGE`、自己登録は昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED`。同意書の第 3 段落と一致させる)。Push の送信側はこの述語で除外する (将来。保険) | 要件 03 §17.10 (子供アカウントは `auth.users` を持たない・13 歳未満に Push 不可)、同意書 (§6.5.1 の `PARENTAL_CONSENT_DOCUMENT_COPY`) | T-SH3, T-SH9, T-DB33, T-DB34, T-MIG4, T-PR1, §6.18 |
+| R-13 | 13 歳未満の区別は記録 (`child_age_at_signing`) と述語 (`isUnderCoppaAge`) に残す。13 歳未満の本人のアカウントは作らない (昇格は `PROMOTION_UNDER_COPPA_AGE`、自己登録は昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED`。同意書の第 3 段落と一致させる)。Push の送信側 (`mobile/06-push-send.md` の worker) はいま年齢を見ない。除外は保険で、足すなら送信側の判定 (`decideEligibility`) にこの述語を足す (§8 の 9) | 要件 03 §17.10 (子供アカウントは `auth.users` を持たない・13 歳未満に Push 不可)、同意書 (§6.5.1 の `PARENTAL_CONSENT_DOCUMENT_COPY`) | T-SH3, T-SH9, T-DB33, T-DB34, T-MIG4, T-PR1, §6.18 |
 | R-14 | `as any`・マジックナンバーを使わない。年齢の境・期間は名前付き定数 (shared) と SQL のコメント | 共通ガード | lint, T-MIG2 |
 | R-15 | 18 歳未満の本人 (`user_profiles.birth_date` の分かる人) は、昇格 (`accept_child_promotion`) 以外で家族に入らず (家族の作成・招待の承諾)、家族の代表者・組織のオーナーを引き受けない (`MINOR_ACCOUNT_NOT_ALLOWED`)。R-2 の出口 (退会) を代表者・オーナーの 409 で塞がず、昇格の承諾を `ALREADY_IN_FAMILY` で壊さず、別の家族の大人として同意の記録・子供の情報を読ませない。運営の操作は止めない (§8 の 15) | 仕様「同意前に使える範囲」「家族のメンバー (子供) との関係」、R-2 | T-DB27, T-DB35〜T-DB37, T-MIG1, T-MIG5, T-MN1〜T-MN4, T-F5, T-F7 |
 
@@ -297,7 +297,7 @@
 | P10 | 同 | 未来・120 年超 | — | — | `CHILD_BIRTH_DATE_INVALID` (400) |
 | P11 | 同 | あり | ≥ 18 | consent の有無・版を問わない (無視。route を通るときは形の合う consent に限る。形の崩れた consent は P15e)。署名者の年齢も見ない | 子供の行だけ。201 `consent_recorded: false` |
 | P12 | 同 | あり | < 18 (13〜17) | 版 ✓・署名 ✓・親権者 ✓・署名者 (呼び出し者) の `user_profiles.birth_date` で 18 歳以上 | 子供の行 + 同意の行 (`child_age_at_signing` 13〜17)。201 `consent_recorded: true` |
-| P13 | 同 | あり | < 13 | 同 | 同 (age 0〜12)。Push の除外は `isUnderCoppaAge` |
+| P13 | 同 | あり | < 13 | 同 | 同 (age 0〜12)。13 歳未満の区別は `isUnderCoppaAge` (Push の送信側はいま年齢を見ない。§8 の 9) |
 | P14 | 同 | あり | < 18 | 版・署名・親権者のどれかが無い / 氏名が空白だけ / 100 文字超 | `PARENTAL_CONSENT_REQUIRED` (403)。何も作らない (署名者の年齢より先に見る)。RPC を直接呼んだときの結果。route を通ると consent が無いものは P15b、形の崩れたものは P15e が先に返る |
 | P14b | 同 | あり | < 18 | 版・署名・親権者 ✓ で、署名者の `user_profiles.birth_date` が無い・18 歳未満 (昇格した本人など) | `PARENTAL_CONSENT_SIGNER_NOT_ADULT` (403)。何も作らない (ロックの前) |
 | P15 | route `POST /api/family/members/child` | 形が `YYYY-MM-DD` でない・body に無い | — | consent の有無・版・形を問わない | 400 `VALIDATION_ERROR` (Zod の parse が最初。生年月日の暦・年齢・同意・版より先)。RPC を呼ばない |
@@ -322,7 +322,7 @@
 | P26 | authenticated が `family_members.birth_date` / `user_profiles.birth_date` を直接 UPDATE | — | — | — | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` (guard) |
 | P27 | service_role (テスト・運営の手作業) が `role = 'child'` ∧ `user_id IS NULL` の行を `birth_date` なしで INSERT / `birth_date` を NULL に UPDATE | 無し | — | — | 23514 (`family_members_child_birth_date_required`) |
 | P28 | service_role が `user_id` ありの行を `role = 'child'` に UPDATE (製品の経路には無い。結合テスト E2 が作る) | 無し (本人の生年月日は `user_profiles`) | — | — | CHECK は掛からない (従来どおり通る) |
-| P29 | `parental_consents` の SELECT (authenticated) | — | — | 署名した本人 / その家族の active な大人 / 運営 | 読める (署名した本人は家族を抜けたあとも自分の行だけ)。それ以外は 0 行 |
+| P29 | `parental_consents` の SELECT (authenticated) | — | — | 署名した本人 / その家族の active な大人 / 運営 | 読める (署名した本人は家族を抜けたあとも自分の行だけ。運営は、TOTP を登録済みなら aal2 のセッションのときだけ: 運営の MFA の判定 `operator_mfa_satisfied()`・cross/12 §11.4 と付録 A の末尾)。それ以外は 0 行 |
 | P30 | アカウントのデータ書き出し | — | — | 署名した本人 | 自分が署名した行 (`parent_user_id` = 本人) だけが `parental_consents` として出る。他の大人が署名した行・署名者が退会して NULL の行は出ない (RLS では読める行でも、書き出しの `.eq('parent_user_id', uid)` が絞る。T-EX2) |
 | P31 | 時間の経過 (署名からの年数・子供の 18 歳到達) | あり | 任意 | 有効な同意あり | 有効のまま (期限で失効させない。`parental_consent_active` は `revoked_at` だけを見る。18 歳以上では同意を読む側 (昇格 2 本・`legal_minor_has_guardian_path()` の呼び出し元) が年齢で検査を飛ばす) |
 | P32 | middleware / 同意画面 / 13a (本人のゲート) | あり | < 18 (製品の経路では 13〜17。13 歳未満の生年月日の行は P4b・P17b・P20 で作られない) | 版一致・`legal_minor_has_guardian_path()` = false (依頼を断った・取り消された・期限切れ・家族を抜けた / 外された / 解散) | gaps = ['guardian_consent'] → redirect → 同意画面の `guardian_missing` (退会だけ。§6.9) / 403 (13a) |
@@ -1826,7 +1826,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 6. **家族の全メンバーが子供の `birth_date` を読める** (`family_members_select_self_or_family`)。要件 `01:678` は親のみ。現行でも `child_profile.birth_date` が読める状態なので本冊は広げないが、列を隠す (子供には見せない) のは別 Issue。
 7. **`user_profiles.age` との二重化**: 栄養計算は `age` のまま。`birth_date` から導出に寄せるかは別 Issue。
 8. **`cross/04` の `FAM_PARENTAL_CONSENT_REQUIRED`**: 実コードの語彙 (接頭辞なし) に合わせる注記を §6.18 で足す。接頭辞つきに統一するなら家族の API 全体の改名になるので別冊。
-9. **Push の送信側**: このリポジトリに無い。作るときは `isUnderCoppaAge(user_profiles.birth_date)` で除外する (本冊では 13 歳未満の本人のアカウントは作られない (14) ので、除外は保険)。
+9. **Push の送信側**: `mobile/06-push-send.md` の worker (`src/lib/push/outbox.ts` の `decideEligibility`) は年齢を見ない (13 歳未満を除外しない)。本冊では 13 歳未満の本人のアカウントは作られない (14) ので、除外は保険。足すなら `decideEligibility` に `isUnderCoppaAge(user_profiles.birth_date)` の条件を足す。
 10. **13b との着地順** (§0.5)。13a は実装まで着地済みで、本冊の段 B が `/api` の分岐と `GET /api/legal/status` を本冊の述語に差し替える (`/api` は本冊のマージで止まる)。13b はどちらが先でも後の冊が合わせる。13b の実装が着地すると、モバイルのネイティブの画面にも同意ゲートが掛かり、生年月日の未入力・保護者の同意とのつながりが無い 18 歳未満の案内はアプリでも Web の同意画面 (WebView) が出す (それまでは、アプリのネイティブの画面からの API 呼び出しは 403 `LEGAL_CONSENT_REQUIRED` で止まる)。
 11. **同意の有効期限**: 本冊は期限を設けない (子供を外すまで有効。§6.2 の「同意の有効期限」・P31)。定期の再同意 (例: 一定年数ごと・13 歳になったとき) を求めるなら、3 と同じく `parental_consent_active` に条件を足す設計 (同意待ちの状態が復活する) が要るので、別冊。要否はオーナーの確認。
 12. **署名者の範囲 (要件との違い)**: 要件 03 §17.10 は 13 歳未満の同意の署名者を「親 (家族 owner)」と書く。本冊は、家族の大人 (代表者または大人の役割) のうち自分の `user_profiles.birth_date` で 18 歳以上と確かめられる人なら署名できる形にした (§6.4 の 9・P12〜P14b)。理由: 代表者が親権者とは限らない (祖父母が代表者で、親が大人のメンバーのことがある)。親権者であることは署名の「私はこのお子さまの親権者または法定保護者です」の確認で本人に宣言させる。18 歳未満 (昇格した本人) と生年月日の無い人は署名できない。代表者だけに絞るなら、§6.4 の 9 の署名者の検査に `v_caller_role = 'representative'` の条件を足すだけ (エラーの code は同じ)。どちらにするかはオーナーの確認。
