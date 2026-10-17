@@ -16,6 +16,8 @@
  * code は 1 回しか交換できないので、同じリンクの処理は 1 回だけ行い、結果を共有する。
  */
 
+import { isEmailChangeAwaitingOtherMessage } from "@homegohan/shared";
+
 import type { SupabaseLinkParams } from "./deeplink";
 import { supabase } from "./supabase";
 
@@ -37,13 +39,6 @@ export type AuthLinkOutcome =
 
 /** email_change: メールアドレス変更の確認リンク (#1187)。メールの雛形が token_hash の形のときに届く */
 type OtpType = "signup" | "email" | "recovery" | "invite" | "email_change";
-
-/**
- * 1 通目の確認を受け付けたときに Supabase Auth (GoTrue) が運んでくる知らせの文
- * ("Confirmation link accepted. Please proceed to confirm link sent to the other email")。
- * これ以外の知らせは、何が起きたか分からないので「処理できる情報が無い」扱いのままにする
- */
-const AWAITING_OTHER_CONFIRMATION_PATTERN = /confirm link sent to the other email/i;
 
 /** 同じリンクの結果を共有しておく時間 (ミリ秒)。Android で届く 2 回分の通知が、これより離れることはない */
 const RESULT_SHARE_MS = 60_000;
@@ -95,7 +90,9 @@ export function completeAuthLink(params: SupabaseLinkParams | null | undefined):
 
   const key = linkKey(params);
   if (!key) {
-    if (params.message && AWAITING_OTHER_CONFIRMATION_PATTERN.test(params.message)) {
+    // 1 通目の確認を受け付けたときの知らせの判定は Web と共通 (packages/shared の email-change-link.ts。#1574)。
+    // これ以外の知らせは、何が起きたか分からないので「処理できる情報が無い」扱いのままにする
+    if (isEmailChangeAwaitingOtherMessage(params.message)) {
       return Promise.resolve({ status: "awaiting_other_confirmation" });
     }
     return Promise.resolve({ status: "empty" });
