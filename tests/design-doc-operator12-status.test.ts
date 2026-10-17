@@ -25,8 +25,9 @@ const LANDED_PHRASE = 'は main に入っている';
 /** 段の名前 → その段が main に入っているか (印のファイルの有無) */
 const STAGE_LANDED: Readonly<Record<string, () => boolean>> = {
   A: () => fs.existsSync(path.join(ROOT, 'supabase/functions/cron-secret-probe/index.ts')),
-  // `<番号>_cron_secret_drift_monitor.down.sql` は末尾が `…monitor.down.sql` なので、この末尾の一致には入らない
-  B: () => fs.readdirSync(path.join(ROOT, MIGRATIONS_DIR)).some((name) => name.endsWith(STAGE_B_MIGRATION_SUFFIX)),
+  // 対の down.sql は supabase/rollbacks/ に置く (段 B の migration の 2 行目「戻し方」) ので、この走査 (supabase/migrations) には入らない。
+  // 同じ場所に置かれても、末尾が `…monitor.down.sql` なのでこの末尾の一致には入らない
+  B:() => fs.readdirSync(path.join(ROOT, MIGRATIONS_DIR)).some((name) => name.endsWith(STAGE_B_MIGRATION_SUFFIX)),
   C: () => fs.existsSync(path.join(ROOT, 'src/lib/ops-alerts/cron-secret-drift.ts')),
 };
 
