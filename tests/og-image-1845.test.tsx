@@ -34,6 +34,10 @@ import {
 } from '@/lib/brand-image';
 import { OG_FONT_FAMILY } from '@/lib/og-font';
 import { DEFAULT_SITE_URL, SITE_NAME, SITE_TAGLINE } from '@/lib/site-config';
+import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
+
+// テストの中で route を丸ごと読み込み、next/og (wasm) で PNG を描く。負荷の高い機械で既定の 5 秒を超えないよう延ばす (#1605 と同じ型)
+applyHeavyUnitTestTimeout();
 
 // next/font/google は Next.js のビルド時にだけ使える (テストで呼ぶと失敗する) ので、フォント変数だけ返す偽物にする
 vi.mock('next/font/google', () => ({
@@ -63,8 +67,6 @@ const PNG_SIGNATURE = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 /** IHDR の幅・高さが入っている位置 (シグネチャ 8 + 長さ 4 + 種類 4 = 16 バイト目から 4 バイトずつ) */
 const PNG_WIDTH_OFFSET = 16;
 const PNG_HEIGHT_OFFSET = 20;
-/** 1 枚の描画 (wasm の初期化を含む) を待つ上限。描画は数秒かかることがある */
-const RENDER_TIMEOUT_MS = 60_000;
 
 /** ソースからコメントを除いた本文 (説明のコメントに出てくる語を、コードとして数えないため) */
 function codeWithoutComments(relativePath: string): string {
@@ -136,7 +138,6 @@ describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)',
       // 自前の取得は試みている (Noto Sans JP の CSS)
       expect(offline.mock.calls.some(([url]) => String(url).startsWith('https://fonts.googleapis.com/css2?'))).toBe(true);
     },
-    RENDER_TIMEOUT_MS,
   );
 
   it(
@@ -149,7 +150,6 @@ describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)',
       expect(png.contentType).toBe('image/png');
       expect({ width: png.width, height: png.height }).toEqual({ width: 1200, height: 630 });
     },
-    RENDER_TIMEOUT_MS,
   );
 
   it(
@@ -175,7 +175,6 @@ describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)',
       // フォント本体も取りに行っている (CSS が指す fonts.gstatic.com の URL)
       expect(fakeFetch.mock.calls.filter(([url]) => String(url) === FONT_FILE_URL)).toHaveLength(2);
     },
-    RENDER_TIMEOUT_MS,
   );
 
   it(
@@ -205,7 +204,6 @@ describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)',
       expect('fonts' in withoutFont).toBe(false);
       expect(withoutFont).toMatchObject({ width: 1200, height: 630 });
     },
-    RENDER_TIMEOUT_MS,
   );
 
   it(
@@ -220,7 +218,6 @@ describe('#1845 OGP / Twitter Card の画像 (opengraph-image / twitter-image)',
       const options = imageResponseOptions.at(-1) as { fonts?: Array<{ weight: number }> };
       expect(options.fonts?.map(({ weight }) => weight)).toEqual([400]);
     },
-    RENDER_TIMEOUT_MS,
   );
 
   it('file convention の export は alt・1200×630・image/png で、静的に作る', async () => {
@@ -258,7 +255,6 @@ describe('#1845 ホーム画面のアイコン (apple-touch-icon.png / icon-192.
       expect(png.contentType).toBe('image/png');
       expect({ width: png.width, height: png.height }).toEqual({ width: expected, height: expected });
     },
-    RENDER_TIMEOUT_MS,
   );
 
   it('manifest.json の icons は、route が返す PNG の URL・大きさ・種類と一致する', () => {
@@ -344,6 +340,5 @@ describe.runIf(Boolean(process.env.OG_IMAGE_PREVIEW_DIR))('#1845 画像の書き
         fs.writeFileSync(path.join(dir, name), Buffer.from(await routeModule.GET().arrayBuffer()));
       }
     },
-    RENDER_TIMEOUT_MS,
   );
 });
