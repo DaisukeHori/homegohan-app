@@ -76,8 +76,11 @@ export default function LegalConsentScreen() {
 
   // Web からの sign-out (「同意しない」「登録をやめる」) と、失効の session-expired で、ネイティブのログアウトが済んだ後に呼ばれる
   // (webViewAuthMessages.ts の goToWelcome が、ウェルカムへ移る代わりに options.afterSignOut として呼ぶ)。ウェルカムへ移らず、Web の案内を残す。
-  // ネイティブのログアウトが通信の失敗で済まず、端末にセッションが残ったとき (signOutWithCleanup は失敗のときに端末のセッションを消さない。
-  // §6.8) は、今までどおり入口へ移す (入口は required でスピナー → LegalConsentGate が同意画面 1 つに畳み直す)
+  // 端末にセッションが残り getSession() がそれを返したとき (サインアウトの途中の例外など) は、今までどおり入口へ移す
+  // (入口は required でスピナー → LegalConsentGate が同意画面 1 つに畳み直す)。
+  // サインアウトが通信の失敗で終わったときは 2 つの枝がある。access token が有効なうちなら、supabase-js が端末のセッションを消して
+  // SIGNED_OUT を出すので、成功のときと同じく移らない。失効していて更新もできないときは端末のセッションが残るが、
+  // getSession() も null を返すので移らない (同意を待つ扱いのまま。Web の signOut() も失敗して form に戻る。docs/design/mobile/05-auth-session.md §9.3 の S-29)
   const afterSignOut = useCallback(() => {
     void supabase.auth.getSession().then(
       ({ data }) => {

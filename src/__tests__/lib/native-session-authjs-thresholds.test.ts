@@ -278,6 +278,8 @@ describe('auth-js 2.117 の更新の失敗の扱い (借り物のセッション
       cookieKept: false,
       signedOutCount: 1,
       refreshCalls: 0,
+      // 保管が空なので、続く getSession() は null を error なしで返す (規約の同意画面の afterSignOut が入口へ移らない入力。S-29)
+      sessionErrorName: null,
       expectation: 'signOut() の /logout が 503 でも、保管を消して SIGNED_OUT を出し { error } を返す',
     },
     {
@@ -287,9 +289,11 @@ describe('auth-js 2.117 の更新の失敗の扱い (借り物のセッション
       cookieKept: true,
       signedOutCount: 0,
       refreshCalls: null,
+      // 控えた失敗が getSession() から返る (これも afterSignOut が入口へ移らない入力。S-29)
+      sessionErrorName: 'AuthRetryableFetchError',
       expectation: 'signOut() は /logout を呼ばずに { error } を返し、保管は残り SIGNED_OUT も出ない',
     },
-  ])('B-6: [$state] $expectation', async ({ remainingSeconds, logoutCalls, cookieKept, signedOutCount, refreshCalls }) => {
+  ])('B-6: [$state] $expectation', async ({ remainingSeconds, logoutCalls, cookieKept, signedOutCount, refreshCalls, sessionErrorName }) => {
     // 前提: 有効の行は tick も getSession() も更新を試みない残り
     expect(LONG_REMAINING_SECONDS).toBeGreaterThan(TICK_REFRESHES_BELOW_SECONDS)
     const signOutFetch = createTransientSignOutFailureFetch()
@@ -308,12 +312,11 @@ describe('auth-js 2.117 の更新の失敗の扱い (借り物のセッション
     expect(signedOut.count).toBe(signedOutCount)
     if (refreshCalls !== null) {
       expect(refreshRequests(signOutFetch)).toHaveLength(refreshCalls)
-    } else {
-      // 失効済みの行: 控えた失敗が getSession() から返る
-      const { data, error: sessionError } = await client.auth.getSession()
-      expect(data.session).toBeNull()
-      expect(sessionError?.name).toBe('AuthRetryableFetchError')
     }
+    // signOut() の後の getSession(): 有効な token の行は保管が空で null (error なし)、失効済みの行は控えた失敗
+    const { data, error: sessionError } = await client.auth.getSession()
+    expect(data.session).toBeNull()
+    expect(sessionError?.name ?? null).toBe(sessionErrorName)
   })
 
   it.each([
