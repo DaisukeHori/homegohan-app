@@ -6,6 +6,8 @@ import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { validatePassword, PASSWORD_MIN_LENGTH } from "@/lib/auth/validate-password";
+import { describePasswordChangeApiError } from "@/lib/auth/account-errors";
+import { resetPassword } from "@/lib/auth/password/client";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { Lock, CheckCircle2, AlertCircle, Eye, EyeOff } from "lucide-react";
@@ -42,6 +44,9 @@ async function signOutEverywhere(supabase: ReturnType<typeof createClient>): Pro
     return false;
   }
 }
+
+/** POST /api/auth/password/reset が、再設定メールのリンクで作ったセッションではないと断る code (cross/16 §19) */
+const RECOVERY_SESSION_REQUIRED_CODE = "AUTH_RECOVERY_SESSION_REQUIRED";
 
 export default function ResetPasswordPage() {
   const router = useRouter();
@@ -87,12 +92,19 @@ export default function ResetPasswordPage() {
     const supabase = createClient();
     
     try {
-      const { error: updateError } = await supabase.auth.updateUser({
-        password: password,
-      });
-
-      if (updateError) {
-        throw updateError;
+      // 履歴の照合 (直近 N 世代と同じパスワードは 422) と、再設定のセッションかの確認 (amr の recovery / otp) はサーバーが行う
+      // (POST /api/auth/password/reset。cross/16 §14.7)。supabase.auth.updateUser は呼ばない
+      const outcome = await resetPassword({ new_password: password });
+      if (!outcome.ok) {
+        // パスワード・本文は出さない。コードだけを残す
+        console.error("Password reset failed:", outcome.error.code, outcome.status);
+        if (outcome.error.code === RECOVERY_SESSION_REQUIRED_CODE) {
+          // 再設定メールのリンクで作ったセッションではない: 「リンクが無効です」の画面と同じ案内
+          setIsValidSession(false);
+          return;
+        }
+        setError(describePasswordChangeApiError(outcome.error.code, outcome.error.message));
+        return;
       }
 
       // #1188: 更新できたら、この端末も含めて全端末をログアウトし、新しいパスワードで入り直してもらう
@@ -104,9 +116,9 @@ export default function ResetPasswordPage() {
       setTimeout(() => {
         router.push("/login");
       }, 3000);
-    } catch (err: any) {
-      console.error("Password update error:", err);
-      setError(err.message || "パスワードの更新に失敗しました");
+    } catch (err) {
+      console.error("Password update error:", err instanceof Error ? err.name : "unknown");
+      setError(describePasswordChangeApiError(null, null));
     } finally {
       setLoading(false);
     }

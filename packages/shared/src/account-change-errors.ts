@@ -150,6 +150,34 @@ export function describePasswordChangeError(error: unknown, step: 'reauth' | 'up
   return 'パスワードを変更できませんでした。時間をおいて、もう一度お試しください。';
 }
 
+/**
+ * パスワードの変更 API (POST /api/auth/password/change・/reset。cross/16 §14.6・§14.7) が失敗したときの文言 (#1198)。
+ *
+ * - serverMessage (応答の本文の error) が空でなければそれを返す。route は §19 の固定の文か internalError の共通の文で本文を作り、
+ *   GoTrue・DB の生の英文は入らない。
+ * - 空のとき、code が下の 5 つなら §19 の文。それ以外 (通信の失敗の null・VALID_PASSWORD_WEAK・RATE_LIMITED・AUTH_UNAUTHENTICATED・
+ *   INTERNAL_ERROR・知らない code) は共通の失敗の文言。
+ *
+ * Web の /settings/account は { code, message } (src/lib/auth/password/client.ts の戻り) で、モバイルは getApiErrorMessage の fallback として呼ぶ。
+ */
+export const PASSWORD_CHANGE_API_FAILURE_MESSAGE = 'パスワードを変更できませんでした。時間をおいて、もう一度お試しください。';
+
+const PASSWORD_CHANGE_API_ERROR_MESSAGES: Readonly<Record<string, string>> = {
+  AUTH_CURRENT_PASSWORD_MISMATCH: '現在のパスワードが正しくありません。',
+  VALID_PASSWORD_HISTORY: '最近使ったパスワードは使えません。別のパスワードにしてください。',
+  AUTH_REAUTHENTICATION_REQUIRED: '安全のため、もう一度ログインしてから変更してください。',
+  AUTH_RECOVERY_SESSION_REQUIRED: 'パスワードの再設定は、再設定メールのリンクから開き直してください。',
+  AUTH_PASSWORD_NOT_SET: 'このアカウントはパスワードでログインしていないため、変更できません。',
+};
+
+export function describePasswordChangeApiError(code: string | null, serverMessage: string | null): string {
+  if (serverMessage !== null && serverMessage.trim() !== '') return serverMessage;
+  if (code !== null && Object.prototype.hasOwnProperty.call(PASSWORD_CHANGE_API_ERROR_MESSAGES, code)) {
+    return PASSWORD_CHANGE_API_ERROR_MESSAGES[code];
+  }
+  return PASSWORD_CHANGE_API_FAILURE_MESSAGE;
+}
+
 /** メールアドレス変更 (updateUser({ email })) の失敗理由を日本語にする */
 export function describeEmailChangeError(error: unknown): string {
   const e = toErrorLike(error);

@@ -7,6 +7,7 @@
 
 export {
   describeEmailChangeError,
+  describePasswordChangeApiError,
   describePasswordChangeError,
   isNetworkAuthError,
   isRateLimitAuthError,

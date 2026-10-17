@@ -6,6 +6,8 @@ import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, View } fr
 import { Text, TextInput } from "../../../src/components/ui/Text";
 
 import { colors, spacing, radius, shadows } from "../../../src/theme";
+import { getApi } from "../../../src/lib/api";
+import { getApiErrorMessage } from "../../../src/lib/api-error";
 import { extractSupabaseLinkParams } from "../../../src/lib/deeplink";
 import { signOutWithCleanup } from "../../../src/lib/signOut";
 import { supabase } from "../../../src/lib/supabase";
@@ -88,15 +90,20 @@ export default function ResetPasswordPage() {
 
     setIsSubmitting(true);
     try {
-      const { data, error } = await supabase.auth.updateUser({ password });
-      if (error) throw error;
+      // ログアウトの掃除に渡す利用者 ID。API の応答 { ok: true } は ID を返さないので、呼ぶ前のセッションから取る
+      const { data: current } = await supabase.auth.getSession();
+      const userId = current.session?.user?.id ?? null;
+      // 履歴の照合 (直近 N 世代と同じパスワードは 422) と、再設定のセッションかの確認はサーバーが行う
+      // (POST /api/auth/password/reset。cross/16 §14.7)。supabase.auth.updateUser は呼ばない
+      await getApi().post("/api/auth/password/reset", { new_password: password });
       Alert.alert("完了", "パスワードを更新しました。ログインし直してください。");
       // 設定のログアウトと同じ共通処理 (push token の削除 → 端末データの削除 → サインアウト。#1038 F7-10)。
       // 直接 supabase.auth.signOut() を呼ぶと、この端末の push token が user_push_tokens に残る
-      await signOutWithCleanup(data?.user?.id);
+      await signOutWithCleanup(userId);
       router.replace("/login");
-    } catch (e: any) {
-      Alert.alert("更新失敗", e?.message ?? "更新に失敗しました。");
+    } catch (e: unknown) {
+      // 本文の error = cross/16 §19 の文 (422 VALID_PASSWORD_HISTORY / VALID_PASSWORD_WEAK、403 AUTH_RECOVERY_SESSION_REQUIRED など)。圏外は通信の文言
+      Alert.alert("更新失敗", getApiErrorMessage(e, "更新に失敗しました。"));
     } finally {
       setIsSubmitting(false);
     }

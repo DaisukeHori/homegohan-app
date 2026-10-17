@@ -3,17 +3,21 @@
  *
  * 背景:
  *   Web に「アカウント」画面 (src/app/(main)/settings/account/page.tsx) を作り、ログイン中のユーザーが
- *   自分でパスワードとメールアドレスを変えられるようにした。画面は Supabase Auth (GoTrue) の次の挙動に頼っている。
- *   画面の呼び出し順・文言・エラーの見せ方は単体テスト src/__tests__/app/settings/account-page.test.ts が見る。
- *   ここでは、画面が頼っている GoTrue 側の挙動を、実物で固定する。
+ *   自分でパスワードとメールアドレスを変えられるようにした。
+ *   パスワードの変更は POST /api/auth/password/change (cross/16 §14.6) が受け、GoTrue の PUT /user を本人の access token で呼ぶ
+ *   (#1720 段 C。画面は再認証のサインイン・updateUser・signOut({ scope: 'others' }) を直接呼ばなくなった)。
+ *   ここでは GoTrue の挙動 (A-1〜A-3) と、メールアドレスの変更の画面が頼る挙動 (A-4・A-5) を実物で固定する。
+ *   A-3 の same_password は performPasswordChange の対応 (cross/16 §13.2) が使う。
+ *   API の結合テストは tests/integration/security/auth-history-sessions.test.ts。
+ *   画面の呼び出し・文言・エラーの見せ方は単体テスト src/__tests__/app/settings/account-page.test.ts が見る。
  *
  * 確かめること (GoTrue v2.183.0 で確認。scripts/supabase-local.sh は本番に合わせた版でローカルを立てる):
  *   A-1: 現在のパスワードが違う signInWithPassword は 400 invalid_credentials で、セッションは作られない
- *        (画面はこのエラーコードで「現在のパスワードが正しくありません」を出す)
- *   A-2: 画面と同じ流れ (同じクライアントで再認証 → updateUser({ password }) → signOut({ scope: 'others' })) の後は、
+ *        (GoTrue の挙動の固定。「現在のパスワードが正しくありません」は API が DB の照合で出す)
+ *   A-2: 同じクライアントで再認証 → updateUser({ password }) → signOut({ scope: 'others' }) をした後は、
  *        再認証で作り直したこの端末のセッションだけが残る。再認証の前にこの端末が持っていたセッションも、
  *        ほかの端末のセッションも失効する。新しいパスワードでだけ入れる
- *   A-3: 今と同じパスワードへの updateUser は 422 same_password (画面はこのエラーコードで案内を出す)
+ *   A-3: 今と同じパスワードへの updateUser は 422 same_password (API はこのエラーコードを VALID_PASSWORD_HISTORY にする)
  *   A-4: updateUser({ email }) は、確認が済むまでメールアドレスを変えない (email はそのまま、new_email に入る)。
  *        確認前は、これまでのメールアドレスでログインできて、新しいメールアドレスでは入れない
  *   A-5: すでに使われているメールアドレスへの updateUser({ email }) は 422 email_exists
