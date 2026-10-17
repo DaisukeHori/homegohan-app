@@ -87,7 +87,7 @@ Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まっ�
 
 ### 2.1 根拠
 
-- 要件: Issue #1560 の本文 (項目 8) と 2026-10-17 のコメント (オーナーの選択)。要件定義 `docs/requirements/03-operator-admin.md` §22.9 (監視)。
+- 要件: Issue #1560 の本文 (項目 8) と 2026-10-17 のコメント (オーナーの選択 (2026-10-17))。要件定義 `docs/requirements/03-operator-admin.md` §22.9 (監視)。
 - 現行 (origin/main `2e94cc15`・2026-10-17):
   - `scripts/lib/cron-secret-drift.mjs`: 名前の定数 `CURRENT_NAME = 'CRON_SECRET'`・`PREVIOUS_NAME = 'CRON_SECRET_PREVIOUS'`・`ALIAS_NAME = 'SERVICE_ROLE_SECRET'`・`VAULT_SECRET_NAME = 'app_cron_secret'` (45〜50 行)。Edge の現行の値は `CRON_SECRET ?? SERVICE_ROLE_SECRET` (`effectiveEdgeCurrent`・619〜623 行。`??` は空文字を素通しする)。判定の ID は `edge-read` / `vault-read` / `vercel-read` / `edge-current` / `edge-alias-unused` / `vault-present` / `edge-vault-match` / `edge-previous` / `vercel-current` / `vercel-vs-supabase` / `vercel-previous` (`evaluate`・631〜776 行)。Edge ⇔ Vault の不一致の文は「pg_cron からの呼び出しが HTTP 401 ({"error":"Unauthorized"}) になります。Vault の app_cron_secret を正として、Edge Function secrets の CRON_SECRET をそれに合わせてください」(705 行)。Vercel は独立で `vercel-vs-supabase` は INFO (`--vercel-must-match` のときだけ FAIL。753〜756 行)。
   - `supabase/functions/_shared/auth.ts` の `requireServiceRole` (83〜124 行): Bearer が service role key (`SERVICE_ROLE_JWT` / `SUPABASE_SERVICE_ROLE_KEY`) と完全一致なら通す。それ以外は `checkCronSecret(authHeader, { current: Deno.env.get("CRON_SECRET") ?? Deno.env.get("SERVICE_ROLE_SECRET"), previous: Deno.env.get("CRON_SECRET_PREVIOUS") })`。`previous` で一致したら `console.warn` (パスを添える。値は出さない)。`not_configured` → 503 `{"error":"Service not configured"}`、`unauthorized` → 401 `{"error":"Unauthorized"}` (どちらも `Content-Type: application/json`)。
@@ -127,7 +127,7 @@ Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まっ�
 | R-02 | Edge Function secrets に現行の値が無い (503)・Vault に `app_cron_secret` が無い / 空 / 復号できない (例外) も、同じ通知で分かる | 手で流す検査の `edge-current`・`vault-present` | §5.2 §7.1 |
 | R-03 | ゲートウェイの JWT 検証が生きている (`verify_jwt` の設定漏れ)・確認の Edge Function が無い (404)・時間切れ・pg_net が送れない / 送らない、も同じ通知で分かる (値が合っていても止まる状態) | ENV_SETUP.md「値が合っていないとどうなるか」(#1406 の実害) | §7.1 |
 | R-04 | 入れ替えの途中 (Vault が旧い値で一致)・`CRON_SECRET_PREVIOUS` の残り (Edge / Vercel)・`CRON_SECRET_PREVIOUS` が現行と同じ (Vercel)・Vault が service role key と同じ、は FAIL ではなく WARN として、別の種類で 1 日 1 通まで知らせる (抑止は既定 24 時間で、それより短くできない。ずれ (FAIL) の通知には載せない) | 手で流す検査の `edge-previous`・`vercel-previous`・Q-2 | §7.1 §8.3 |
-| R-05 | 値もダイジェストも、メール・ログ・応答・DB (`cron_secret_probes`・`ops_alert_state`)・`net._http_response` の本文に出ない。本書の部品はダイジェストを計算しない | オーナーの選択「値を出さずに」・D-8 | §4.2 §11.1 §11.2 |
+| R-05 | 値もダイジェストも、メール・ログ・応答・DB (`cron_secret_probes`・`ops_alert_state`)・`net._http_response` の本文に出ない。本書の部品はダイジェストを計算しない | オーナーの選択 (2026-10-17) の「値を出さずに」・D-8 | §4.2 §11.1 §11.2 |
 | R-06 | Vault の値は DB の中で読み、Bearer に付けて Edge Function へ送るだけ (既存の `invoke_*` と同じ経路・同じ露出)。DB の関数の戻り値に値を含めない | 既存の `invoke_calculate_segment_stats` の形 | §5.2 |
 | R-07 | Edge Function `cron-secret-probe` は、既存の `requireServiceRole` と同じ規則で照合し (`verify_jwt = false`・先頭で認証・本文を読まない・DB に触らない・CORS なし)、応答の JSON は `ok` / `matched` / `previous_configured` / `alias_used` の 4 つのキーだけ。401 / 503 の本文は `requireServiceRole` と同じ | `tests/edge-function-verify-jwt.test.ts`・`tests/edge-function-cors.test.ts`・CC-1〜CC-3 | §6 |
 | R-08 | 確認の結果は、自分が送った要求 ID で `net._http_response` と突き合わせる (ほかの pg_net の呼び出しの応答と混ざらない)。判定に使う本文の項目は `matched` / `previous_configured` / `alias_used` / `error` / `code` だけで、長さを 64 字で切る。`headers` / `error_msg` の本文は読み出さない | D-4・R-05 | §5.2 |
