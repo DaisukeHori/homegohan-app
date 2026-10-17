@@ -55,6 +55,7 @@ WHERE
 
 cron 登録は **operator/08-cron-batches.md §3** で集約しています (`family_freeze_grace_batch`)。
 実装の詳細は **operator/08-cron-batches.md §4.3** の `process_family_freeze_grace_to_archive()` を参照してください。
+(2026-10-17 時点: 08 から外した。凍結の遷移を作る冊で `frozen` の列とバッチを一緒に設計する。operator/11 Q-4)
 
 ### 3.4 凍結状態でのアクセス制限
 
