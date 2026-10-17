@@ -166,8 +166,9 @@ describe('#1125 (B) 実行履歴の掃除 (段 D) のソース走査', () => {
     expect(code).toContain(`command ~* '[[:<:]]${FUNCTION_NAME}[[:>:]]'`);
     // pg_cron が無い DB では、cron.job を読む前に飛ばす
     const guardAt = code.indexOf("IF to_regclass('cron.job') IS NULL THEN");
-    const readAt = code.indexOf('FROM cron.job');
+    const readAt = code.search(/\bFROM cron\.job\s+WHERE\b/);
     expect(guardAt).toBeGreaterThanOrEqual(0);
+    expect(readAt, 'cron.job を読む SELECT が見つからない').toBeGreaterThanOrEqual(0);
     expect(readAt).toBeGreaterThan(guardAt);
     expect(code).toMatch(/IF to_regclass\('cron\.job'\) IS NULL THEN[\s\S]*?RETURN;/);
     // 実行ログ (RAISE) に command を載せない
