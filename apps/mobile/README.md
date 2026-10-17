@@ -52,6 +52,8 @@ npm run mobile:android
 > ここでいう「テスト」は、実装の動作確認（スモーク/手動）を指します。
 
 ### A) 実機（Expo Go）で確認（推奨）
+> SDK 58 の Expo Go は公開待ちで、push 通知は SDK 55 から Expo Go では例外になるため、SDK 58 の動作と push 通知は preview のビルド（`eas build --profile preview`）で確かめてください。
+
 1. iOS/Android 端末に **Expo Go** をインストール
 2. 端末とPCを同じネットワークに接続
 3. ルートで `npm run mobile:start` を実行
