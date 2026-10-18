@@ -44,7 +44,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 2. 文言: 見出し・本文の全文と、公開の主張の表 (46 件。根拠と条件) → §4
 3. 視覚の設計: 色 (v1.7 の色のトークン 18 に、青の 3 つ `--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足して 21)・タイポグラフィの緩急・余白・奥行き (影と層)・写真と画面の方針 (端末の枠・重なり・並べ替え・画面の一部の拡大 (ズーム))・図解・アイコン・ダークモード → §5
 4. 動きの設計: 17 の動き (スクロールに連動した物語・固定した端末の入れ替え・数値の増え方・図の描かれ方・画面の一部の拡大・微細な反応) と、それぞれの受入の条件 (幅・動きを減らす設定・JS 無し・測り方) → §6
-5. 画像の調達: 既存の 15 枚のうち使う 11 枚 (うち今の画面と文が食い違う 2 枚を撮り直す) と、新しく撮る 6 枚 (各画面に写っているべきもの・写ってはいけないものの受入の条件) → §7
+5. 画像の調達: 既存の 15 枚のうち使う 11 枚 (うち今の画面と合わない画像を撮り直す。少なくとも文が食い違う 2 枚) と、新しく撮る 6 枚 (各画面に写っているべきもの・写ってはいけないものの受入の条件) → §7
 6. 部品の分け方 (`src/components/marketing/`) と各部品の受入の条件・速さの予算と測り方・アクセシビリティの基準・検索の設計 → §8・§10・§11・§12
 7. テスト: 見た目の記録・Lighthouse の予算・アクセシビリティの自動検査・主張の見張り・物語と数値の状態機械・戻るの検査 → §16・§22
 8. 段分けと分冊 → §0.4・§17
@@ -69,7 +69,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | R-13 | 主張の正本は 1 つの表 (公開の主張の表)。各行は主張の文・製品の根拠 (file:line)・条件を持つ。ページの文と見本の文・数値は表の行に当たるものだけ。見本の数値はアプリの計算式で隣の値から再計算できるものだけ。ページに出す実際の画面の写真に写る AI の結果 (記録コメント・栄養メモ・スコア) も、アプリが作れる文と値だけにする。AI の自由な応答 (相談の返事・献立の振り返りの文) は画面写真に写さない | v1.7 の設計ゲートの構造の裁定 (R5 の時点) を引き継ぐ | §4.1, §4.5, §7, §9.1, §16 |
 | R-14 | 逐語の正典は見た目と振る舞いの決まり (トークン・部品と受入の条件・文言・遷移表) まで。CSS・部品のコード・テストのコードは逐語の正典にせず、検査は部品・トークン・文言・セクションの id・役割だけを参照する | v1.7 の設計ゲートの構造の裁定 (R5 の時点) を引き継ぐ | §3.2, §6, §8.3, §9, §16 |
 | R-15 | **量**: 製品の実際の機能を機能ごとに深く見せる。少なくとも: 写真で記録 (2 つの入口)・AI の献立 (週の献立・条件・買い物リスト)・栄養の見える化 (スコア・グラフ・週次)・健康の記録・勲章と続ける仕組み・家族で使う (家族の献立・共有)・組織で使う・食材の管理・AI に相談 (シート)・使い方ガイド・安全とプライバシー (データの扱い・同意・書き出しと退会)・料金 (今は無料・AI の 1 日の上限)・よくある質問 (拡充)。使う人の場面 (一人暮らし・子育て家庭・健康管理・チーム) ごとの物語。仕組み (写真 → 解析 → 記録 → 献立 の流れ) | Issue #1867 コメント 5 件目「対応 2」 | §3.1, §4 |
-| R-16 | **実際のアプリの画面を大きく使う**: `public/guide` の 15 枚 (v1.7 の段 0 で撮り直し済み) のうち 11 枚 (#1890・#1892 の前の文を写す `signup.png`・`badge-get.png` は v2.0 の段 0 で撮り直す) と、必要な追加の撮影 (`scripts/guide-screenshots` の台本・アプリが作れる値だけ) 6 枚を、端末の枠・重なり・ズーム・並べ替えで見せる。本書での当て方: 端末の枠 = `PhoneFrame` (§5.4)・重なり = ヒーローの 5 枚の扇 (§5.4。章の画面は札が隠れないよう重ねない)・ズーム = 章 photo と章 menu の画面の一部の拡大 `ScreenZoom` (§5.4 の「拡大」・§6.2 の M-17)・並べ替え = 章ごとの左右の入れ替えと、768 px 未満の横にスクロールする帯 (§5.4) | 同上 | §5.4, §6.2 (M-17), §7, §8.3 |
+| R-16 | **実際のアプリの画面を大きく使う**: `public/guide` の 15 枚 (v1.7 の段 0 で撮り直し済み) のうち 11 枚 (#1890・#1892 の前の文を写す `signup.png`・`badge-get.png` と、段 0 の撮ったままとの比べで今の画面と合わないと分かった画像は、v2.0 の段 0 で撮り直す: §7.1 の P-6・G-1〜G-6) と、必要な追加の撮影 (`scripts/guide-screenshots` の台本・アプリが作れる値だけ) 6 枚を、端末の枠・重なり・ズーム・並べ替えで見せる。本書での当て方: 端末の枠 = `PhoneFrame` (§5.4)・重なり = ヒーローの 5 枚の扇 (§5.4。章の画面は札が隠れないよう重ねない)・ズーム = 章 photo と章 menu の画面の一部の拡大 `ScreenZoom` (§5.4 の「拡大」・§6.2 の M-17)・並べ替え = 章ごとの左右の入れ替えと、768 px 未満の横にスクロールする帯 (§5.4) | 同上 | §5.4, §6.2 (M-17), §7, §8.3 |
 | R-17 | **見せ方の豊かさ**: スクロールに連動した物語 (区切りの切り替え・固定して中身が入れ替わる・数値が増える・図が描かれる)・微細な反応・グラデーションと奥行き・図解 (SVG)・タイポグラフィの緩急。各動きに受入の条件 (どの幅で・動きを減らす設定でどうなるか・測り方) を書く | 同上 | §5.3, §5.7, §6 |
 | R-18 | 動きを減らす設定・キーボード・JS なしでも内容は全部届く (動きの無いときの最後の見え方がそのまま内容。FAQ の答えはブラウザの `details` で JS 無しでも開く) | 同上・WCAG 2.3.3 | §6.1, §8.3 (`FaqSection`), §13.1, §13.3 |
 | R-19 | 戻るの不具合: `/signup` からブラウザの戻るで `/#how` などへ戻ると画面が切り替わらなかった。原因を記す (§2.2)。不具合そのものは B 型の修正 (Issue #1867 コメント 5 件目の「対応 1」。PR #1893 でマージ済み) が直した: ルートの layout の `HashHistoryEntryBridge` が、ハッシュの移動 (素の `<a href="#…">`・スキップリンク・アドレスバー) で積まれた `state = null` の項目に Next の印を付け、印の無い古い項目へ戻ったときは読み込み直す。紹介ページのページの中のリンクは `next/link` の `Link` で描き (Next が積む印つきの項目になり、bridge はその項目に何もしない)、移った先の区切りへフォーカスも移す。ページの中の戻る (E-23) とフォーカス (E-29) は本冊が持ち、`/signup` などを経る戻るは #1893 の門の spec `tests/e2e/back-navigation.spec.ts` が v2.0 のナビ 5 つで確かめる | オーナーの指示 (2026-10-18 13 時台) 逐語の前半 | §2.2, §8.3, §16.3 (E-23・E-29), §19, §24 Q-14 |
@@ -102,7 +102,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | S-21 | 家族で使うか迷っている人 | 家族の区切りと FAQ「家族の記録は誰に見えますか？」を読む | 代表者・大人・子ども (アカウントの無い子どもも登録できる) の 3 つの立場、メールでの招待、共有の範囲 (食事の記録・健康・献立) を自分で選べること、献立表で家族の献立を見られること (相手が共有をオンにしている場合) が書いてある |
 | S-22 | 職場で使うか調べている人 | 組織の区切りと料金の区切りと FAQ「会社やチームで使えますか？」を読む | 組織は運営が作るもので、登録しただけでは組織を作れず使えないこと (お問い合わせへの導線がある)・料金の「いま使える機能」(無料) の一覧に組織が入っていないこと・組織の管理者がメンバーを招待し、部署を作り、チャレンジを開けることと、個人の記録の集計 (活力スコアなど) は出していないこと、チャレンジの平均は終わった後に参加者が最小の人数以上のときだけ出ることが書いてある |
 | S-23 | AI の扱いを確かめたい人 | 安心の区切り・料金の区切り・FAQ「どんな機能に AI を使っていますか？」を読む | AI を使う機能の一覧・日本国外の事業者へのデータ提供の同意・1 日の上限・上限に数えない自動の機能があること・運営の判断で AI 相談を一時停止することがあること・分析は推定で医療目的に使わないことが書いてある |
-| S-24 | 撮影の台本を流す実装者 (段 0) | `scripts/guide-screenshots/run.sh` で 15 枚 + 新しい 6 枚を撮る | 新しい 6 枚 (`home`・`pantry`・`shopping`・`family`・`chat`・`consent`) が `public/marketing/screens/` に、撮り直した `signup.png`・`badge-get.png` が `public/guide/` に、540×1080・300 KB 以下で置かれる。8 枚とも §7.1 の表の「写っているべきもの」を写し、「写ってはいけないもの」(AI の自由な文・体重の記録・古い文言・実在の人の名前) を写さない。`signup.png` に `30秒` は無く、`badge-get.png` のお知らせの説明は今の `badges.description` の文。置き換えない 13 枚は変わらず、`tests/guide-images-1852.test.ts` が緑のまま |
+| S-24 | 撮影の台本を流す実装者 (段 0) | `scripts/guide-screenshots/run.sh` で 15 枚 + 新しい 6 枚を撮る | 新しい 6 枚 (`home`・`pantry`・`shopping`・`family`・`chat`・`consent`) が `public/marketing/screens/` に、撮り直した `signup.png`・`badge-get.png` (と、§7.1 の G-3 で置き換える画像) が `public/guide/` に、540×1080・300 KB 以下で置かれる。新しい 6 枚と置き換えた画像は §7.1 の表の「写っているべきもの」を写し、「写ってはいけないもの」(AI の自由な文・体重の記録・古い文言・実在の人の名前) を写さない。`signup.png` に `30秒` は無く、`badge-get.png` のお知らせの説明は今の `badges.description` の文。ほかの 13 枚の撮ったままが今の画像と違えば、違いの原因ごとの行き先 (§7.1 の G-1〜G-6) に従う。置き換えない画像は変わらず、`tests/guide-images-1852.test.ts` が緑のまま |
 | S-25 | 未ログインの人 (PC と スマートフォン) | 章「写真で記録」と章「AI 献立と買い物」を読む | 端末の画面の下に、その画面の一部 (章 photo: スコアと記録コメント・章 menu: 朝食の 1 食) を大きくした箱 (拡大) がある。標準の設定では、箱が画面に入ると縮んだ透明の形から元の大きさへ大きくなりながら現れる (M-17)。動きを減らす設定・JS 無しでは最初から元の大きさで見える。箱の中は同じ実際の画面の画像で、札 (何の部分か) と代替テキストがある。320 px でも横にはみ出さない |
 
 ### 0.4 分冊判定 (相 1 で実施)
@@ -111,9 +111,9 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 |---|---|---|
 | 設計書 800 行超 | 超える (文言の全文・公開の主張の表 46 件・表 3 点・受入の条件・トレースを 1 冊に持つため) | 該当 |
 | 消費先レーン 3 以上 | ページ (`src/app/page.tsx` の殻)・部品 (`src/components/marketing/`)・公開の資産 (`public/marketing/`)・撮影の台本 (`scripts/guide-screenshots/`)・単体の番兵 (`tests/`)・e2e の門 (`scripts/local-ci.sh`・`.github/workflows/e2e-local.yml`) = 6 | 該当 |
-| 共有面 2 つ以上 | `tests/public-claims-guard.test.ts` (公開ページ共通の見張り)・e2e の門の一覧・`public/guide/*.png` と撮影の台本 `scripts/guide-screenshots/` (使い方ガイドと同じ台本で撮る。新しい 6 枚は `public/marketing/screens/` に置く。ガイドの 15 枚のうち置き換えるのは、今の画面と文が食い違う `signup.png`・`badge-get.png` の 2 枚だけ: §7.1 の P-6)・`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION`。v2.0 では変えない) | 該当 |
+| 共有面 2 つ以上 | `tests/public-claims-guard.test.ts` (公開ページ共通の見張り)・e2e の門の一覧・`public/guide/*.png` と撮影の台本 `scripts/guide-screenshots/` (使い方ガイドと同じ台本で撮る。新しい 6 枚は `public/marketing/screens/` に置く。ガイドの 15 枚のうち置き換えるのは、今の画面と合わない画像だけ (少なくとも、文が食い違う `signup.png`・`badge-get.png` の 2 枚): §7.1 の P-6・G-1〜G-6)・`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION`。v2.0 では変えない) | 該当 |
 
-判定: **設計は 1 冊 (本書) のまま、実装は 1 本の B 型 WF の中で 4 段 (段 0: 新しい画面写真 6 枚の撮影と、今の画面と文が食い違う 2 枚の撮り直し / 段 1: 文言・主張・トークン・CSS・primitives と骨格・区切り (前半: ヘッダー〜バッジ) と FAQ / 段 2: 区切り (後半: AI に相談〜最終 CTA。FAQ を除く) / 段 3: e2e と門) に分け、段ごとに 2 枚レビューを挟み、マージは最後に 1 回**。理由: 核 (文言と部品) と配線 (ページ) を分けても、どちらも `LandingPage.tsx` の差し替えまで利用者には届かず、核だけをマージすると使われない部品が main に乗る。v1.7 と同じく共有面はどれも小さな差分で、別の冊にすると参照する「マージ済みの核」が無い。段 0 (撮影) は offload の Docker の枠を使う一番重い手順なので最初に済ませ、できなければ早く止める (§7.1 の「段 0 で作るもの」の 5)。文言の差し替え (§9.1) と区切りの前半を同じ段 1 にするのは、差し替えで消える鍵 (`how`・`badges`・`LANDING_IMAGE_SIZES.step`) と形の変わる型 (`FeatureCardId`) を読む既存の区切りを同じ段で書き換えないと、段 1 の終わりで型検査が通らず、段 1 のレビューが差し替えの結果を読めないため (vitest の全件の緑は段ごとには求めず、PR の先端だけで求める: §17)。区切りを前半 (段 1) と後半 (段 2) に分けるのは、区切りが 18 本 (ファイル 20 本超) で 1 段のレビューが重くなるため (正典の「段が 3 つ以上、または 1 段が 10 ファイル超なら段内レビュー」)。後半の v1.7 の区切り `TrustSection` が読む鍵は §9.1 でも同じ名前と型で残るので、段 1 の終わりでも型検査を通る (`FaqSection` は段 1 で `details` の作りに書き換える: §17)。
+判定: **設計は 1 冊 (本書) のまま、実装は 1 本の B 型 WF の中で 4 段 (段 0: 新しい画面写真 6 枚の撮影と、今の画面と合わないガイドの画像 (少なくとも 2 枚) の撮り直し / 段 1: 文言・主張・トークン・CSS・primitives と骨格・区切り (前半: ヘッダー〜バッジ) と FAQ / 段 2: 区切り (後半: AI に相談〜最終 CTA。FAQ を除く) / 段 3: e2e と門) に分け、段ごとに 2 枚レビューを挟み、マージは最後に 1 回**。理由: 核 (文言と部品) と配線 (ページ) を分けても、どちらも `LandingPage.tsx` の差し替えまで利用者には届かず、核だけをマージすると使われない部品が main に乗る。v1.7 と同じく共有面はどれも小さな差分で、別の冊にすると参照する「マージ済みの核」が無い。段 0 (撮影) は offload の Docker の枠を使う一番重い手順なので最初に済ませ、できなければ早く止める (§7.1 の「段 0 で作るもの」の 5)。文言の差し替え (§9.1) と区切りの前半を同じ段 1 にするのは、差し替えで消える鍵 (`how`・`badges`・`LANDING_IMAGE_SIZES.step`) と形の変わる型 (`FeatureCardId`) を読む既存の区切りを同じ段で書き換えないと、段 1 の終わりで型検査が通らず、段 1 のレビューが差し替えの結果を読めないため (vitest の全件の緑は段ごとには求めず、PR の先端だけで求める: §17)。区切りを前半 (段 1) と後半 (段 2) に分けるのは、区切りが 18 本 (ファイル 20 本超) で 1 段のレビューが重くなるため (正典の「段が 3 つ以上、または 1 段が 10 ファイル超なら段内レビュー」)。後半の v1.7 の区切り `TrustSection` が読む鍵は §9.1 でも同じ名前と型で残るので、段 1 の終わりでも型検査を通る (`FaqSection` は段 1 で `details` の作りに書き換える: §17)。
 
 ### 0.5 用語
 
@@ -122,7 +122,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 - **島 (client の島)**: `'use client'` の部品。状態 (スクロール・選択・いま見えている手順・数値の増え方) を持つものだけを島にし、文章と画像は Server Component で描く。v2.0 は 6 つ (§3.1)。FAQ の開閉はブラウザの `details` が持つので島にしない。
 - **主張 (claim)**: アプリの機能や条件について紹介ページが言うこと。§4.1 の公開の主張の表の 1 行 = `landing-copy.ts` の `claims` の 1 件 (id・文・根拠のパス (`evidence`)・条件 (`condition`))。46 件。
 - **受入の条件**: 部品ごとに、振る舞い・アクセシビリティ・動きを減らす設定と JS 無しのときの見え方・見た目の決まり (幅ごとの配置と大きさ)・確かめる検査を書いたもの (§8.3)。実装はこれを満たせば、書き方 (クラス名・DOM の入れ子・CSS の書き方) は自由。
-- **実際の画面**: `public/guide/*.png` (Issue #1852 で撮り、v1.7 の段 0 で食事の写真の解析の 2 枚を、v2.0 の段 0 で今の画面と文が食い違う `signup.png`・`badge-get.png` を撮り直すアプリの画面写真 15 枚。540×1080) と、本冊の段 0 で新しく撮る `public/marketing/screens/*.png` (6 枚。540×1080)。画面そのものは本物のアプリだが、写っている利用者と記録は撮影用の見本 (`scripts/guide-screenshots/seed.ts`) で、AI の読み取りの結果は撮影の台本が返す見本の値 (`scripts/guide-screenshots/meal-analysis-mock.ts` の `GUIDE_MEAL_ANALYSIS`)。だから数値と文は実際の利用者の結果ではない。画面を出す区切りには画面の注記 (`SCREENS_CAPTION`) を置く。
+- **実際の画面**: `public/guide/*.png` (Issue #1852 で撮り、v1.7 の段 0 で食事の写真の解析の 2 枚を、v2.0 の段 0 で今の画面と合わない画像 (少なくとも `signup.png`・`badge-get.png`) を撮り直すアプリの画面写真 15 枚。540×1080) と、本冊の段 0 で新しく撮る `public/marketing/screens/*.png` (6 枚。540×1080)。画面そのものは本物のアプリだが、写っている利用者と記録は撮影用の見本 (`scripts/guide-screenshots/seed.ts`) で、AI の読み取りの結果は撮影の台本が返す見本の値 (`scripts/guide-screenshots/meal-analysis-mock.ts` の `GUIDE_MEAL_ANALYSIS`)。だから数値と文は実際の利用者の結果ではない。画面を出す区切りには画面の注記 (`SCREENS_CAPTION`) を置く。
 - **物語 (ストーリー)**: 仕組みの区切り (`how`) の、スクロールで読み進める 4 つの手順と、固定した端末の画面の入れ替え (`StoryScroller`。§6.2 の M-6)。
 - **サンプル**: デモの結果 (スコア・記録コメント・推定の栄養)。AI は呼ばず、`landing-copy.ts` に書いた推定の値と料理の名前から、アプリと同じ式 (`demoScore`) と同じ定型の文 (`demoPraiseComment`) で作る。画面に「サンプル」と明記する。
 - **食事の記録の画面**: 写真から食事を記録する画面 `src/app/(main)/meals/new/page.tsx` (ホームの「食事を記録」・下のナビの「スキャン」(`src/app/(main)/MainLayout.tsx:31`) から開く。撮影の種類は 食事・冷蔵庫・健診結果・体重計 の 4 つ: `src/app/(main)/meals/new/page.tsx:53` の `PhotoMode`)。献立表の中の「写真から入力」(`src/app/(main)/menus/weekly/page.tsx` の `analyzePhotoWithAI`・モーダル `PhotoEditModal.tsx`) は別の入口で、この画面ではない (§4.1 の経路の表)。
@@ -142,7 +142,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | 本冊 | 対象外 |
 |---|---|
 | `/` の紹介ページ (ヘッダー・フッターを含む) | `/about` `/faq` `/guide` `/pricing` `/news` `/company` `/legal` `/contact` の作り直し (ヘッダー・フッターを共通化する案は §24 Q-6) |
-| 新しい画面写真 6 枚の撮影と、今の画面と文が食い違うガイドの画像 2 枚 (`signup.png`・`badge-get.png`) の撮り直し (段 0。撮影の台本 `scripts/guide-screenshots/` に 6 枚を撮る test と見本を足す: §7.1) | `/guide` の文言の見直し (§24 Q-11)・ガイドのほかの 13 枚の撮り直し (今の画面と文が合っている: §7.1 の表 1) |
+| 新しい画面写真 6 枚の撮影と、今の画面と合わないガイドの画像 (少なくとも `signup.png`・`badge-get.png` の 2 枚。§7.1 の P-6・G-3) の撮り直し (段 0。撮影の台本 `scripts/guide-screenshots/` に 6 枚を撮る test と見本を足す: §7.1) | `/guide` の文言の見直し (§24 Q-11)・今の画面と合っているガイドの画像の撮り直し (段 0 の撮ったままが今の画像と同じ画面: §7.1 の G-1) |
 | 戻るの不具合の原因の記録と、紹介ページ側のページの中のリンクの作り (§2.2・§8.3) と、ページの中の戻るとフォーカスの検査 (E-23・E-29) | 不具合そのものの修正 (B 型。Issue #1867 コメント 5 件目の「対応 1」。PR #1893 でマージ済み。`/signup` などを経る戻るの e2e `tests/e2e/back-navigation.spec.ts` も #1893 が門に入れた。§24 Q-14) |
 | `/` のメタ情報と JSON-LD は段 1 (#1874) の部品をそのまま使う (v2.0 は `SITE_DESCRIPTION` も変えない) | 段 1 の部品の作り直し・sitemap・全ページの canonical (着地済み)・vercel.app の重複 (Issue #1867 の段 1 の残り) |
 | 画像の置き場と調達の手順 (§7) | 新しいイラストの制作 (作らない。図解は SVG を部品が描く: §5.7) |
@@ -176,7 +176,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | Issue #1149 / `src/lib/plan/entitlements.ts`・`supabase/functions/_shared/ai-daily-limit.ts`・`supabase/functions/_shared/ai-usage-core.ts` | AI の 1 日の利用回数の上限 (全 AI 機能の合計。既定 free = 10 回・運営画面 `/super-admin/llm/quotas` で変えられる)。紹介ページの AI の主張の条件 (§4.1 の `ai-daily-limit`) |
 | Issue #1154 / `src/components/consent/AiDataConsentModal.tsx`・`src/lib/ai/consent-guard.ts`・`src/lib/ai/consent-config.ts` | AI 機能で使う日本国外の事業者へのデータ提供の同意。同意が無いと AI へ送らない (§4.1 の `ai-consent`)。同意画面の文 (`AI_CONSENT_COPY.intro`) が AI を使う機能を列挙する (食事の写真の解析・献立の作成・AI 相談・健康診断結果の読み取りなど) |
 | Issue #1148 / `src/lib/ai/ai-chat-unavailable.ts`・`supabase/migrations/20261010120000_unify_feature_flags_seed.sql` | AI 相談の緊急停止 (`feature_flags.ai_chat_enabled`。既定 ON)。紹介ページは「運営の判断で一時停止することがある」と書く (§4.1 の `ai-stop`) |
-| Issue #1852 / `src/app/guide/guide-content.ts`・`scripts/guide-screenshots/` | 実際の画面の画像 15 枚と、撮る手順 (`run.sh`)。本冊は同じ台本に 6 枚の撮影を足し、今の画面と文が食い違う 2 枚を撮り直す (§7.1) |
+| Issue #1852 / `src/app/guide/guide-content.ts`・`scripts/guide-screenshots/` | 実際の画面の画像 15 枚と、撮る手順 (`run.sh`)。本冊は同じ台本に 6 枚の撮影を足し、今の画面と合わない画像 (少なくとも 2 枚) を撮り直す (§7.1) |
 | Issue #1584 の 1 / `docs/design/family/10-family-menu-view.md` | 週間献立の「家族の表示」(家族の共有の献立を見る)。紹介ページの `family-menu-view` の根拠 |
 | `docs/design/membership/` | 家族・組織の招待・メンバー・共有の設定 (`share_meals` / `share_health` / `share_menu`) の正典。紹介ページの `family-roles`・`family-share`・`org-admin` の根拠 |
 | `docs/design/org/07-challenge.md`・`10-challenge-diff-privacy.md` | 組織のチャレンジと、集計の差分から 1 人の値を逆算させない守り (#1688)。紹介ページの `org-challenge-privacy` の根拠 |
@@ -200,7 +200,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | ヘッダーのナビ (`#features` `#how` `#badges` `#faq`) とヒーローの「デモを試す」(`#demo`) は、素の `<a href="#…">` で描いている (`next/link` を使っていない。`preventDefault` も router の処理も無い) | `SiteHeader.tsx:46-48`・`HeroSection.tsx` の `CtaLink` は `Link` だが、`DEMO_ANCHOR` は `#demo` | **戻るの不具合の原因だった** (下。#1893 の後は、素の `<a>` が積む項目にも bridge が印を付けるので、戻ると画面が切り替わる)。v2.0 はページの中のリンクをすべて `next/link` の `Link` で描く (§8.3。理由は下の「紹介ページ側の作り」) |
 | 殻の `viewport` は `maximumScale: 5`・`userScalable: true` (`/` だけ)。E-18 が見張る | `src/app/page.tsx` | 変えない |
 | `public/marketing/photos/` に写真 3 枚と `CREDITS.md` (Unsplash License の間に合わせ) | `public/marketing/photos/` | 変えない (Q-1 はそのまま) |
-| `public/guide/` の 15 枚は v1.7 の段 0 で `comment.png`・`analyze.png` を撮り直し済み (`GUIDE_MEAL_ANALYSIS`。スコア 89) | `public/guide/`・`scripts/guide-screenshots/meal-analysis-mock.ts` | 15 枚のうち 11 枚を使う (§7.1)。#1890・#1892 の前の文を写す `signup.png` (`30秒で完了します。…`)・`badge-get.png` (バッジの説明 `…記録しました。…`) は段 0 で撮り直し、ほかの 13 枚は変えない (§7.1 の P-6) |
+| `public/guide/` の 15 枚は v1.7 の段 0 で `comment.png`・`analyze.png` を撮り直し済み (`GUIDE_MEAL_ANALYSIS`。スコア 89) | `public/guide/`・`scripts/guide-screenshots/meal-analysis-mock.ts` | 15 枚のうち 11 枚を使う (§7.1)。#1890・#1892 の前の文を写す `signup.png` (`30秒で完了します。…`)・`badge-get.png` (バッジの説明 `…記録しました。…`) は段 0 で撮り直す。ほかの 13 枚は、段 0 で撮ったままが今の画像と同じ画面なら変えない (§7.1 の P-6・G-1〜G-6) |
 | e2e `tests/e2e/landing-page.spec.ts` (E-1〜E-22) と門への登録 (`e2e-local.yml`・`PW_ARGS`) と番兵 `tests/e2e-landing-suite.test.ts` は着地済み。`@axe-core/playwright` は devDependency にある | `tests/`・`package.json` | 流用して広げる (§16)。依存は足さない |
 | 速さの予算: JS gzip ≤ 240 KB (`LANDING_JS_BUDGET_BYTES` 既定 245760)。実測 227 KB (v1.7 §10.1) | `tests/e2e/landing-page.spec.ts` (E-11) | 予算を 256 KB に決め直す (§10.1) |
 
@@ -216,7 +216,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 |---|---|---|
 | `BRAND_COLORS` (accent `#E07A5F`・accentGradientEnd `#FF9B7A`・background `#FAF9F7`・backgroundGradientEnd `#FDF0ED`・text `#2D2D2D`・textLight `#6B6B6B`・white・sparkle `#FFD700`・green = `STATUS_COLOR_TOKENS.success` = `#6B9B6B`・blue `#5B8BC7`) | `src/lib/brand-image.tsx:27-38`・`packages/shared/src/design-tokens.ts:25` | 紹介ページのトークンの元 (§5.1)。`brand-image.tsx` は `next/og` を読むので client から import しない。値はテスト (U-7) で突き合わせる。v2.0 は `blue` から章の色 (`--lp-blue`) を足す |
 | ロゴ (湯気の立つお椀と星) | `public/icon.svg` ほか | ヘッダー・フッターのマークは `public/icon.svg` を `next/image` で出す (§4.2) |
-| 実際の画面 15 枚 (540×1080 の PNG・1 枚 300 KB 以下。実測 28〜105 KB) | `public/guide/{signup,profile,ready,camera,analyze,comment,menu-request,menu-setting,menu-result,weight,weight-photo,trend,badge-get,badge-collection,badge-rare}.png` | 11 枚を使う (§7.1。`badge-rare.png`・`ready.png`・`trend.png`・`weight-photo.png` の 4 枚は使わない: ほかの利用者との比較に基づくバッジ・到達の予想の日付・体重の減りが写るため)。`signup.png`・`badge-get.png` は段 0 で撮り直す (今の画面と文が食い違う: §7.1)。代替テキストは `guide-content.ts` の `imageAlt` と同じ文にする |
+| 実際の画面 15 枚 (540×1080 の PNG・1 枚 300 KB 以下。実測 28〜105 KB) | `public/guide/{signup,profile,ready,camera,analyze,comment,menu-request,menu-setting,menu-result,weight,weight-photo,trend,badge-get,badge-collection,badge-rare}.png` | 11 枚を使う (§7.1。`badge-rare.png`・`ready.png`・`trend.png`・`weight-photo.png` の 4 枚は使わない: ほかの利用者との比較に基づくバッジ・到達の予想の日付・体重の減りが写るため)。`signup.png`・`badge-get.png` は段 0 で撮り直す (今の画面と文が食い違う: §7.1)。ほかにも今の画面と合わない画像があれば撮り直す (§7.1 の G-3)。代替テキストは `guide-content.ts` の `imageAlt` と同じ文にする |
 | 新しい画面 6 枚 (段 0 で撮る。540×1080 の PNG・300 KB 以下) | `public/marketing/screens/{home,pantry,shopping,family,chat,consent}.png` | 章と家族と安心の区切りで使う (§7.1)。代替テキストは `landing-screens.ts` の `alt` (§9.2) |
 | サンプルの食事の写真 3 枚 (800×800 の WebP・120 KB 以下) | `public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.webp`・`CREDITS.md` | デモ (§4.5)。v1.7 のまま |
 | OGP の画像・アイコンの PNG | `src/app/opengraph-image.tsx`・`src/app/icon-192.png/route.ts` ほか | 変えない |
@@ -237,7 +237,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | モバイルの WebView | `apps/mobile/src/lib/webViewBridge.ts` の既定の行き先は `/home?mode=app`。`?mode=app` で `is_native_app` Cookie (`src/proxy.ts:58-67`) | 紹介ページは Cookie を読まない (S-8)。ストアへの導線は無い (§4.21) |
 | 拡大 (viewport) | `src/app/layout.tsx:104-113` の `viewport` が `maximumScale: 1`・`userScalable: false`。殻 `src/app/page.tsx` が `/` だけ `maximumScale: 5`・`userScalable: true` で上書き (v1.7) | 変えない (E-18) |
 | 計測 | Vercel Speed Insights (`src/components/SpeedInsightsClient.tsx`) が全ページで Web Vitals を送る | 実測は Speed Insights (field) と、整合ゲートの Lighthouse (lab) (§10.3) |
-| ガイドの画像の番兵 | `tests/guide-images-1852.test.ts` は `public/guide/` に `guideImagePaths()` の 15 枚だけがあること (使わない画像が残っていない) を確かめる | 新しい 6 枚は `public/guide/` に置かず、`public/marketing/screens/` に置く (§7.1)。`signup.png`・`badge-get.png` を撮り直しても名前・大きさ・重さの上限は同じなので、番兵は緑のまま。撮影の台本の最後の確認 (`shoot.pw.ts` の「撮った画像がガイドの画像の一覧と一致する」) は、ガイドの 15 枚と新しい 6 枚の和集合に広げる (§7.1 の「段 0 で作るもの」の 2) |
+| ガイドの画像の番兵 | `tests/guide-images-1852.test.ts` は `public/guide/` に `guideImagePaths()` の 15 枚だけがあること (使わない画像が残っていない) を確かめる | 新しい 6 枚は `public/guide/` に置かず、`public/marketing/screens/` に置く (§7.1)。撮り直した画像 (`signup.png`・`badge-get.png` と §7.1 の G-3 に当たる画像) も名前・大きさ・重さの上限は同じなので、番兵は緑のまま。撮影の台本の最後の確認 (`shoot.pw.ts` の「撮った画像がガイドの画像の一覧と一致する」) は、ガイドの 15 枚と新しい 6 枚の和集合に広げる (§7.1 の「段 0 で作るもの」の 2) |
 
 ### 2.5 公開の主張の制約
 
@@ -363,7 +363,7 @@ src/components/marketing/
     useReducedMotion.ts                  既存の再 export (v1.7 のまま)
 public/marketing/photos/                 デモの写真 3 枚 (v1.7 のまま)
 public/marketing/screens/                新しい画面写真 6 枚 (段 0。§7.1)
-scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮影を足し、public/guide の 2 枚を撮り直す。§7.1)
+scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮影を足し、public/guide の今の画面と合わない画像 (少なくとも 2 枚) を撮り直す。§7.1)
 ```
 
 島は 6 (`SiteHeader`・`DemoSection`・`Reveal`・`StoryScroller`・`ScoreRing`・`ReadingProgress`。v1.7 の島の `FaqSection` は、開閉をブラウザの `details` に任せる Server の部品にする (JS 無しでも答えを読める: R-18・§8.3)。`ReadingProgress` は `SiteHeader` の中に置くが、`'use client'` を持つ別のファイルなので 1 本と数える。hook の `.ts` (`useInViewOnce.ts`・`useInViewSteps.ts`・`useInPageLinkFocus.ts`) は部品でないので数えない。`useInViewOnce.ts` は v1.7 から `'use client'` を持ち、新しい hook 2 本も持ってよい)。数え方: `'use client'` を持つ部品のファイル (`.tsx`) は `SiteHeader.tsx`・`DemoSection.tsx`・`Reveal.tsx`・`StoryScroller.tsx`・`ScoreRing.tsx`・`ReadingProgress.tsx` の 6 本 (U-10 が `.tsx` だけを数える)。文章と画像は Server Component で描くので、JS が無くても全文が HTML にある (S-9)。
@@ -420,7 +420,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | S-21 | 家族の区切り: 要点 4 つ (立場・招待・共有の範囲・家族の献立) の文はそれぞれ `family-roles`・`family-share`・`family-menu-view` の行。共有の範囲の図 (SVG) は 3 つの項目 (食事の記録・健康・献立) とそれぞれの既定 (オン・オフ・オン) を描く。FAQ「家族の記録は誰に見えますか？」の答えが同じ事実 |
 | S-22 | 組織の区切り: 一文は「組織は運営が作ります（ご利用はお問い合わせください）。…」で、`org-admin` の条件 (組織は運営が作り、登録しただけでは使えない) を落とさない。要点 4 つの文は `org-admin`・`org-challenge-privacy` の行。「個人の記録の集計は出していません」と書く (条件を落とさない)。料金の一文は「登録してお使いいただける機能は、いまはすべて無料です。…組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。」で、「いま使える機能」の一覧に組織は無い。図は 管理者 → 部署 → メンバー の形だけ。FAQ「会社やチームで使えますか？」の答えが同じ事実 |
 | S-23 | 安心・料金・FAQ の AI の文はそれぞれ `ai-consent`・`ai-daily-limit`・`ai-stop`・`ai-estimate` の行。同意の画面の写真 (`consent.png`) が安心の区切りにあり、注記 `SCREENS_CAPTION` が付く |
-| S-24 | 段 0: 撮影の台本 (`run.sh` → 見本 → 本番ビルド → `shoot.pw.ts` → `optimize.ts`) に新しい 6 枚の test と見本を足し (見本の利用者・データ・API の差し替えの有無は実装が決める)、256 の Docker の枠で流す → 新しい 6 枚 (`public/marketing/screens/`) と、撮り直した `signup.png`・`badge-get.png` (`public/guide/`) と、撮ったままの 15 枚 (`.guide-shots/raw`) を持ち帰る (置き換えない 13 枚は作業ツリーでも書き換えない) → 段 0 のレビューが §7.1 の受入の条件 (P-1〜P-6・表 1・表 2) で 8 枚を目で確かめ (例: `home.png` は上から `今日の献立`・2 つのボタン・`今週の自炊率` で健康記録のカードが写っていない・`shopping.png` に品がカテゴリごとに並び `買い物リストは空です` が無い・`chat.png` にあいさつと提案のボタンがあり AI の返事が無い・`signup.png` に `30秒` が無い・`badge-get.png` のお知らせの説明が今の `badges.description`)、撮ったままの 13 枚が今の画像と同じ画面であることを確かめる → 8 枚をコミット |
+| S-24 | 段 0: 撮影の台本 (`run.sh` → 見本 → 本番ビルド → `shoot.pw.ts` → `optimize.ts`) に新しい 6 枚の test と見本を足し (見本の利用者・データ・API の差し替えの有無は実装が決める)、256 の Docker の枠で流す → 新しい 6 枚 (`public/marketing/screens/`) と、撮り直した `signup.png`・`badge-get.png` (`public/guide/`) と、撮ったままの 15 枚 (`.guide-shots/raw`) を持ち帰る (置き換えない画像は作業ツリーでも書き換えない) → 段 0 のレビューが §7.1 の受入の条件 (P-1〜P-6・表 1・表 2) で新しい 6 枚と置き換えた画像を目で確かめ (例: `home.png` は上から `今日の献立`・2 つのボタン・`今週の自炊率` で健康記録のカードが写っていない・`shopping.png` に品がカテゴリごとに並び `買い物リストは空です` が無い・`chat.png` にあいさつと提案のボタンがあり AI の返事が無い・`signup.png` に `30秒` が無い・`badge-get.png` のお知らせの説明が今の `badges.description`)、撮ったままの 13 枚を今の画像と比べ、違えば原因ごとの行き先 (§7.1 の G-1〜G-6: 日付だけなら置き換えない・台本のせいなら台本を直して撮り直す・origin/main の画面の変化なら置き換える・拡大の矩形を測った 2 枚や紹介ページでの使い方が変わる画像や原因が分からないものはオーケストレーターに返す) に従う → 新しい 6 枚と置き換えた画像をコミット |
 | S-25 | 1280 px・JS あり・no-preference: `ChapterSection` (章 photo) が画面の塊の下に `Reveal` で包んだ `ScreenZoom` を描く (サーバーの HTML: 箱は元の大きさ・不透明) → `Reveal` がマウントして JS の印 (`data-js`) を付ける → no-preference の CSS が、印があって「画面に入った」の印 (`is-in`) が無い `Reveal` の中の箱を `scale(0.85)`・`opacity: 0` に一瞬で隠す → スクロールで箱を包む `Reveal` が画面に入る → `is-in` → 箱が `--lp-dur-slow` (800 ms = `ZOOM_DRAW_MS`) で `scale(1)`・`opacity: 1` へ (`transform-origin` は箱の上の中央 = 上の画面の側)。箱の中の画像は `zoomFrame({ x: 14, y: 348, width: 512, height: 330 })` の幅 105.47 %・左 −2.73 %・上 −105.45 % で置かれ、`comment.png` のスコアの箱と記録コメントの箱が箱いっぱいに見える。章 menu も同じ (`menu-result.png` の朝食の 1 食)。reduce: 隠す規則と遷移が no-preference の中だけなので、マウントの後も箱は元の大きさ。JS 無し: `Reveal` の印が付かないので同じ。375 px: 箱は列の幅 (`min(100%, 24rem)`) で、章の画面の帯の箱の下に 1 つ。画像は箱より広いが箱が `overflow: hidden` なので、ページの幅は増えない (E-6) |
 
 ---
@@ -1012,7 +1012,7 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 | photo | `/guide/comment.png` | 14・348・512・330 | スコアの箱 (`89`・`いいね！`・料理の名前) と、記録コメントの箱 (見出しと定型の文) | `スコアと記録コメント` | `解析結果のスコアと記録コメントを拡大した部分` |
 | menu | `/guide/menu-result.png` | 8・431・524・437 | 今日の朝食の 1 食の箱 (朝食・時短・kcal・主菜と副菜の名前と kcal・「レシピを見る」・この食事の栄養素・「AIで変更」「手動で修正」) | `朝食の 1 食` | `献立表の朝食の 1 食を拡大した部分` |
 
-  矩形は origin/main `f0dff7a9` の `public/guide/comment.png`・`menu-result.png` (540×1080。§21 の保持で本冊は撮り直さない) の画素を読んで決めた: `comment.png` はスコアの箱が y 356〜488・記録コメントの箱が y 511〜671・どちらも x 22〜517 で、矩形はその外に 8 px の余白を足した y 348〜677・x 14〜525。`menu-result.png` は朝食の箱が y 439〜867・x 16〜523 で、矩形は上と左右に 8 px の余白を足し、下は箱の下の端までの y 431〜867・x 8〜531 (y 869 から画面の右下の AI アドバイザーのボタンが始まるので、それを入れない)。2 枚を撮り直したら矩形を測り直す (§24 Q-22)。拡大の中に写るものは隣の端末に写るものと同じ (R-13 の範囲は変わらない)。
+  矩形は origin/main `f0dff7a9` の `public/guide/comment.png`・`menu-result.png` (540×1080。本冊の段 0 で置き換えることになったら §7.1 の G-4) の画素を読んで決めた: `comment.png` はスコアの箱が y 356〜488・記録コメントの箱が y 511〜671・どちらも x 22〜517 で、矩形はその外に 8 px の余白を足した y 348〜677・x 14〜525。`menu-result.png` は朝食の箱が y 439〜867・x 16〜523 で、矩形は上と左右に 8 px の余白を足し、下は箱の下の端までの y 431〜867・x 8〜531 (y 869 から画面の右下の AI アドバイザーのボタンが始まるので、それを入れない)。2 枚を撮り直したら矩形を測り直す (§24 Q-22)。拡大の中に写るものは隣の端末に写るものと同じ (R-13 の範囲は変わらない)。
 - **横にスクロールする帯** (R-16 の並べ替え・M-13。幅によらず 1 つの規則): 帯は次の 6 つで、ほかに横にスクロールする箱は作らない。帯にするのは画面が `SCREEN_STRIP_MIN_SCREENS` (2) 枚以上の塊と、場面のカードだけ (画面が 1 枚の章 health・chat と、家族・安心の画面は帯にしない)。
 
 | 帯 | 中身 (`ul` の `li`) | `aria-label` (逐語) | 768 px 未満の `li` の幅 | 768 px 以上の並び |
@@ -1128,9 +1128,9 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 
 ## 7. 画像の調達
 
-### 7.1 実際の画面 (17 枚: 既存の 11 枚 (うち 2 枚を撮り直す) + 新しく撮る 6 枚)
+### 7.1 実際の画面 (17 枚: 既存の 11 枚 (うち少なくとも 2 枚を撮り直す) + 新しく撮る 6 枚)
 
-正典が決めるのは、使う画面の一覧・各画面に写っているべきものと写ってはいけないもの・アプリが作れる値であること・大きさと形式 (下の受入の条件 P-1〜P-6 と表 1・表 2) まで。**撮影の台本の中身 (撮影用の利用者と見本のデータの入れ方・API の応答の差し替えの有無と方法・撮る前の操作・台本の中の確認) は実装が決める** (受入の条件を満たせばよい)。下の「台本を書くときに知っておく事実」は製品の振る舞いの記録で、手順の指定ではない。
+正典が決めるのは、使う画面の一覧・各画面に写っているべきものと写ってはいけないもの・アプリが作れる値であること・大きさと形式 (下の受入の条件 P-1〜P-6 と表 1・表 2) と、段 0 で撮ったままが今の画像と違うときの行き先 (G-1〜G-6) まで。**撮影の台本の中身 (撮影用の利用者と見本のデータの入れ方・API の応答の差し替えの有無と方法・撮る前の操作・台本の中の確認) は実装が決める** (受入の条件を満たせばよい)。下の「台本を書くときに知っておく事実」は製品の振る舞いの記録で、手順の指定ではない。
 
 **受入の条件 (P-1〜P-5 は紹介ページで使う 17 枚に共通。P-6 は `public/guide/` の 15 枚の扱い)**:
 
@@ -1141,9 +1141,9 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 | P-3 | アプリが作れる値: 写る記録・数値・名前は撮影用の見本 (名前は架空) で、アプリの API や画面の操作で作れる形と値。AI の読み取りの結果は撮影の台本が返す見本の値で、アプリの式で再計算できるもの (`GUIDE_MEAL_ANALYSIS` と同じ扱い)。API の応答を台本で差し替えるなら、差し替えた値もアプリの API が返しうる形と値にする (R-13) |
 | P-4 | 写してはいけないもの: (a) AI が書いた自由な文 (相談の返事・献立の振り返りの文・栄養のアドバイスの文・健康のインサイト) (b) 体重の記録 (体重・前回との差・目標まで) と、体重の減り (c) 根拠の無い主張と古い文言 = 撮った時点の origin/main の画面のソースに無い文 (#1890・#1892 の前の文。例: `30秒で完了します`・バッジの説明の `記録しました`) (d) 実在の人の名前・メールアドレス・秘密 (e) 到達の予想の日付 |
 | P-5 | 文言の照合: 写っている固定の文 (見出し・ボタン・説明・あいさつ) は、origin/main の画面のソース (`src/`。DB の文は `supabase/migrations/`) にある文と同じ。段 0 のレビューは画像の文を読み、ソースを grep して突き合わせる |
-| P-6 | `public/guide/` の 15 枚で置き換えるのは、P-5 を満たさない画像 (写っている文が今の main と食い違う画像) だけ。origin/main `f0dff7a9` の画像を読んで突き合わせた結果は表 1 で、置き換えるのは `signup.png`・`badge-get.png` の 2 枚。ほかの 13 枚は置き換えない (コミットの差分に入れない)。`comment.png`・`menu-result.png` は拡大の矩形 (§5.4) を測った画像で、U-36 が sha-256 で固定する (置き換えるなら、同じ PR で矩形を測り直す: §24 Q-22) |
+| P-6 | `public/guide/` の 15 枚は使い方ガイドと共有で、今の画面と合うことを優先する (15 枚が変わらないことは約束しない)。置き換えるのは、今の画面と合わない画像 = P-5 を満たさない画像 (写っている文が今の main と食い違う) と、段 0 で撮ったまま (`.guide-shots/raw`) と比べて origin/main の画面の変化のぶん違う画像 (下の G-3)。origin/main `f0dff7a9` の画像を読んで突き合わせた結果は表 1 で、`signup.png`・`badge-get.png` の 2 枚は必ず置き換える。ほかの 13 枚は段 0 の比べ (G-1〜G-6) で決め、置き換えないものはコミットの差分に入れない。`comment.png`・`menu-result.png` は拡大の矩形 (§5.4) を測った画像で、U-36 が sha-256 で固定する (置き換えることになったら G-4) |
 
-**表 1: 既存の 15 枚** (`public/guide/`。alt は `guide-content.ts` の `imageAlt` と同じ。U-5。「写っているもの」は 2026-10-18 に画像を読んで確かめた):
+**表 1: 既存の 15 枚** (`public/guide/`。alt は `guide-content.ts` の `imageAlt` と同じ。U-5。「写っているもの」は 2026-10-18 に画像を読んで確かめた。「段 0」の列の `変えない` は origin/main `f0dff7a9` の画像を読んだ時点の判定で、段 0 の撮ったままと比べて違えば G-1〜G-6 に従う):
 
 | ファイル | alt | 使う場所 | 写っているもの | 段 0 |
 |---|---|---|---|---|
@@ -1175,7 +1175,7 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 
 **台本を書くときに知っておく事実** (origin/main `f0dff7a9`。手順の指定ではない):
 
-- 献立表 (`/menus/weekly`) は、家族に属する利用者には家族の切り替えと家族の献立の行を出す (`src/app/(main)/menus/weekly/page.tsx:1165-1168` の `useFamilyMenu`・`:5863-5866` の `FamilyViewSwitcher`)。期限が `PANTRY_EXPIRING_SOON_DAYS` (3 日。`packages/shared/src/pantry-expiry.ts:15`) 以内の食材があると、冷蔵庫のボタンに件数の印 (`:5640-5644`) を、2 日以内なら `早めに使い切り` の帯 (`:5944-5951`) を出す。ホームも期限間近の食材を読む (`src/hooks/useHomeData.ts:474-481`)。だから、使い方ガイドの画像を撮る既存の見本の利用者 (`scripts/guide-screenshots/guide-users.ts` の demo・planner・onboarding) に家族や食材を入れると、置き換えない 13 枚 (`menu-request.png`・`menu-result.png` ほか) の画面も変わる (下の「段 0 で作るもの」の 4 の (b) で止まる)。
+- 献立表 (`/menus/weekly`) は、家族に属する利用者には家族の切り替えと家族の献立の行を出す (`src/app/(main)/menus/weekly/page.tsx:1165-1168` の `useFamilyMenu`・`:5863-5866` の `FamilyViewSwitcher`)。期限が `PANTRY_EXPIRING_SOON_DAYS` (3 日。`packages/shared/src/pantry-expiry.ts:15`) 以内の食材があると、冷蔵庫のボタンに件数の印 (`:5640-5644`) を、2 日以内なら `早めに使い切り` の帯 (`:5944-5951`) を出す。ホームも期限間近の食材を読む (`src/hooks/useHomeData.ts:474-481`)。だから、使い方ガイドの画像を撮る既存の見本の利用者 (`scripts/guide-screenshots/guide-users.ts` の demo・planner・onboarding) に家族や食材を入れると、`signup.png`・`badge-get.png` を除く 13 枚 (`menu-request.png`・`menu-result.png` ほか) の画面も変わる (下の「段 0 で作るもの」の 4 の (b) と G-2 で止まる)。
 - 献立表のシートの買い物リストは、献立表を開いたときの `GET /api/meal-plans` の応答の `shoppingList.items` (利用者の有効な `shopping_lists` と `shopping_list_items`: `src/app/api/meal-plans/route.ts:93-108`) から読む (`page.tsx:1999-2010`・`:2064`)。`GET /api/shopping-list` を読むのは、品の追加・削除・作り直しの後と、範囲を選ぶシート。品はシートの中でカテゴリごとにまとまる (`ShoppingModal.tsx:142`)。
 - AI アドバイザーのシートは、開くと相談の一覧 (`GET /api/ai/consultation/sessions?status=all`) を読み、一覧が空なら新しい相談を作る (`POST /api/ai/consultation/sessions`。`AIChatBubble.tsx:365-406`・`:408`)。作れたときだけ、あいさつと提案のボタンが出る (`:424-428`・`:1119-1126`)。一覧に相談があれば、その相談のメッセージを読む。
 - ホーム (`/home`) の上の部分には、日付とあいさつ・連続自炊と今月の自炊のタイル (`home/page.tsx:162-230`)・健康記録のカード (`:235-312`)・今日の栄養スコアの箱の置き場 (`:333`)・今日のコンディション (`:432`)・30 秒チェックイン (`:549`) がある。撮影の画面は 390×780 (`shoot.pw.ts` の `SHOOT_VIEWPORT`) の 1 画面分。
@@ -1185,9 +1185,20 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 
 1. `src/components/marketing/landing-screens.ts` を新設する (§9.2 を逐語)。
 2. 撮影の台本 (`scripts/guide-screenshots/`) に、新しい 6 枚を撮る test と、そのための見本 (利用者・データ) を足す。最後の確認 `撮った画像がガイドの画像の一覧と一致する` は、ガイドの 15 枚と `LANDING_SCREENS` の 6 枚の両方を見る形に広げる。`optimize.ts` は 6 枚を `public/marketing/screens/` に置く (大きさ・色数・重さの上限はガイドと同じ)。`run.sh` の先頭のコメントに 6 枚の持ち帰り先 (`public/marketing/screens`) を足す。台本の中の意味のある数値は名前つきの定数 (根拠のコメントつき) にする。
-3. offload で 256 の Docker の枠に `run.sh` を流し、新しい 6 枚と、置き換える 2 枚 (`signup.png`・`badge-get.png`) と、確かめのための撮ったままの 15 枚 (`.guide-shots/raw`。git の管理外: `.gitignore:92`) を持ち帰る。置き換えない 13 枚は作業ツリーでも書き換えない (`--fetch public/guide` は 15 枚を書き換えるので、2 枚だけを git の管理外の置き場に写して持ち帰るなど、持ち帰り方は実装が決める)。
-4. 段 0 のレビュー (目視): (a) 新しい 6 枚と置き換えた 2 枚が、表 1・表 2 の「写っているべきもの」を写し、「写ってはいけないもの」と P-4 を写していない (b) 置き換えない 13 枚の撮ったまま (`.guide-shots/raw`) が、今の画像と同じ画面 (違いは撮った日付と、日付から決まる表示だけ。台本に見本を足しても、既存の画面が変わっていない) (c) 8 枚に写っている固定の文が origin/main のソースにある (P-5)。合わなければ手を止めてオーケストレーターに返す。`tests/guide-images-1852.test.ts` は、2 枚を置き換えても緑 (名前・大きさ・重さの上限は同じ)。
+3. offload で 256 の Docker の枠に `run.sh` を流し、新しい 6 枚と、置き換える画像 (`signup.png`・`badge-get.png` と、4 の (b) で G-3 に当たった画像) と、確かめのための撮ったままの 15 枚 (`.guide-shots/raw`。git の管理外: `.gitignore:92`) を持ち帰る。置き換えない画像は作業ツリーでも書き換えない (`--fetch public/guide` は 15 枚を書き換えるので、置き換える画像だけを git の管理外の置き場に写して持ち帰るなど、持ち帰り方は実装が決める)。
+4. 段 0 のレビュー (目視): (a) 新しい 6 枚と置き換えた画像が、表 1・表 2 の「写っているべきもの」を写し、「写ってはいけないもの」と P-4 (使わない 4 枚は P-4 を求めない: G-3) を写していない (b) `signup.png`・`badge-get.png` を除く 13 枚の撮ったまま (`.guide-shots/raw`) を今の画像と比べ、違う画像は違いの原因で下の G-1〜G-6 のどれかに分け、その行き先に従う (台本に見本を足しても既存の画面が変わっていないことは G-2 で確かめる) (c) 新しい 6 枚と置き換えた画像に写っている固定の文が origin/main のソースにある (P-5)。(a)・(c) を満たさなければ台本を直して撮り直し、直せなければ手を止めてオーケストレーターに返す (§14)。`tests/guide-images-1852.test.ts` は、画像を置き換えても緑 (名前・大きさ・重さの上限は同じ)。
 5. 撮れない (offload の Docker の枠が使えない・撮影が失敗する) ときは、手を止めてオーケストレーターに返す (6 枚が無いと U-4 が赤になる)。
+
+**撮ったままと今の画像の比べ (G-1〜G-6。段 0 のレビューの 4 の (b))**: `signup.png`・`badge-get.png` を除く 13 枚それぞれについて、撮ったまま (`.guide-shots/raw`) と今の `public/guide/` の画像を並べて見て、違いの原因で 1 つに分ける。
+
+| # | 違いの原因 | 行き先 |
+|---|---|---|
+| G-1 | 違いが無い、または撮った日付と、日付から決まる表示 (週の日付・今日の印など) だけ | 同じ画面。置き換えない |
+| G-2 | 台本の変更 (v2.0 で足した撮影用の利用者・見本のデータ・API の応答の差し替え) が既存の画面に出た (例: 献立表に家族の切り替えや `早めに使い切り` の帯が出る。上の「台本を書くときに知っておく事実」) | 画像は置き換えない。台本 (見本の入れ方) を直して撮り直し、G-1 になるまで繰り返す。直せなければ G-6 |
+| G-3 | origin/main の画面の変化 (文・部品・並び) のぶん違う (今の画像が今の画面と合わない) | 置き換える (`signup.png`・`badge-get.png` と同じ扱い)。置き換えた画像は P-1・P-2・P-3・P-5 を満たす。紹介ページで使う画像 (表 1 の「使う場所」が `使わない` でないもの) は P-4 も満たす。使わない 4 枚 (`badge-rare.png`・`ready.png`・`trend.png`・`weight-photo.png`) は使い方ガイドだけが使うので P-4 は求めない。段 0 の報告と PR の本文に、置き換えた画像の名前・違い (今の画像 → 撮ったもの)・変化の根拠 (origin/main の画面のソースの file:line) を書く。名前・大きさ・重さの上限は同じなので `tests/guide-images-1852.test.ts`・U-4・U-5 は変わらない。`analyze.png`・`comment.png` を置き換えても U-25 は緑 (v1.7 の段 0 の前の画像でないことを見る。`GUIDE_MEAL_ANALYSIS` は変えない)。置き換えた画像が使い方ガイドの文 (`guide-content.ts`。本冊では変えない) と食い違うようになるなら、それを段 0 の報告に書く (`/guide` の文言の見直しは本冊の範囲の外: §24 Q-11)。次の G-4・G-5 に当たるときは、そちらに従う |
+| G-4 | G-3 のうち `comment.png`・`menu-result.png` | 拡大の矩形 (§5.4 の表・§9.1 の `chapters.photo.zoom.region`・`chapters.menu.zoom.region`) と U-36 (§16.1) の矩形の値と sha-256 は本書の逐語なので、実装は変えない。置き換える画像を §5.4 の測り方 (箱の外に 8 px の余白。`menu-result.png` の下は箱の下の端まで) で測った矩形と、その画像の sha-256 を添えて手を止め、オーケストレーターに返す (本書を直してから続ける: §24 Q-22) |
+| G-5 | G-3 のうち紹介ページで使う画像で、撮ったものが P-4 に当たる、またはその画像を出す区切りの文 (§9.1) と食い違う | 紹介ページでの使い方 (表 1 の「使う場所」と §9.1) を本書で決め直すので、撮ったものと今の画像を添えて手を止め、オーケストレーターに返す |
+| G-6 | 原因を G-1〜G-3 に分けられない。または G-2 で台本を直せない | 撮ったまま・今の画像・目で見た違いを添えて手を止め、オーケストレーターに返す |
 
 ### 7.2 食事の写真 (デモ)
 
@@ -1211,7 +1222,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `scripts/guide-screenshots/` の台本 (`shoot.pw.ts`・`optimize.ts`・`run.sh` と、見本を足すなら `guide-users.ts`・`seed.ts`。既存・変更・段 0。どこをどう変えるかは実装が決める) | 撮影の台本 | 6 枚の撮影 (§7.1) | – |
 | `scripts/guide-screenshots/meal-analysis-mock.ts` (既存・変えない。§21 の保持) | 撮影の見本 | `GUIDE_MEAL_ANALYSIS` (`comment.png`・`analyze.png` に写る AI の読み取りの見本の値。U-25・U-28 が読み、§4.9 のスコアの輪の 89 の出どころ)。段 0 の撮影で `comment.png`・`analyze.png` を撮り直すことがあっても値は変えない。新しい 6 枚の撮影に AI の読み取りの見本が要るなら、このファイルの外 (台本のほかのファイル。どれかは実装が決める) に足す | – |
 | `public/marketing/screens/*.png` (新設・段 0) | 資産 | 新しい画面 6 枚 | – |
-| `public/guide/signup.png`・`badge-get.png` (既存・撮り直し・段 0) | 資産 | 今の画面と文が合う画像に置き換える (§7.1 の表 1。名前・大きさは同じ) | – |
+| `public/guide/signup.png`・`badge-get.png` と、§7.1 の G-3 に当たる `public/guide/` の画像 (既存・撮り直し・段 0) | 資産 | 今の画面と合う画像に置き換える (§7.1 の表 1・G-3。名前・大きさは同じ) | – |
 | `src/components/marketing/LandingPage.tsx` (変更) | Server | ページの骨格 (区切り 18 本) | – |
 | `src/components/marketing/landing-copy.ts` (差し替え) | データ | 文言・画像・公開の主張 46 件・デモの見本・定数 (§9.1) | – |
 | `src/components/marketing/landing-screens.ts` (新設) | データ | 新しい画面 6 枚の名前・alt・パス (§9.2) | – |
@@ -2533,7 +2544,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 区切り | ヒーロー / 使い方 3 (静的 3 列) / デモ / 機能 8 / バッジ 4 / 安心 4 / FAQ 6 / 最終 CTA | ヒーロー (5 枚の扇) / 仕組み (固定した端末 + 流れの図) / デモ / 機能の一覧 10 (各章へのリンク) / 章 6 (写真・献立と買い物・栄養の見える化・健康・バッジ・AI に相談) / 場面 4 / 家族 / 組織 / 安心 6 / 料金 / 使い方ガイド / FAQ 12 / 最終 CTA |
 | 主張 | 17 件 (`CLAIM_IDS`) | 46 件。各行に根拠 (file:line) と条件。新しい条件: 共有の設定・組織は運営が作り管理者だけが管理する (無料の機能の一覧に入れない)・集計は出していない・上限に数えない自動の機能・運営の一時停止。無料の範囲は「登録してお使いいただける機能」と書く |
 | よくある質問 | 6 件。`FaqSection` は島で、`h3` の中の `button aria-expanded` と `region`。閉じている間は高さ 0 + `inert`。同時に開くのは 1 つ。JS 無しでは閉じたまま (答えを読めない) | 12 件。`FaqSection` は Server (`'use client'` 無し) で、`details` と `summary` (中に `h3`)。開閉はブラウザが持ち、どれも独立して開閉できる。JS 無しでも開いて答えを読める (R-18)。動きは矢印の回転だけ (M-8) |
-| 実際の画面 | 6 枚 (`public/guide`) | 17 枚 (`public/guide` の 11 枚 (今の画面と文が食い違う `signup.png`・`badge-get.png` は段 0 で撮り直す) + `public/marketing/screens` の 6 枚 (段 0 で撮る))。正典は各画面の受入の条件 (写っているべきもの・写ってはいけないもの: §7.1) で、撮影の台本の中身は実装が決める。画面の注記は 12 の区切りに。章 photo・menu に画面の一部の拡大 (ズーム) を 2 つ (同じファイル。`ScreenZoom`) |
+| 実際の画面 | 6 枚 (`public/guide`) | 17 枚 (`public/guide` の 11 枚 (今の画面と文が食い違う `signup.png`・`badge-get.png` と、段 0 の比べで今の画面と合わないと分かった画像は段 0 で撮り直す: §7.1 の G-3) + `public/marketing/screens` の 6 枚 (段 0 で撮る))。正典は各画面の受入の条件 (写っているべきもの・写ってはいけないもの: §7.1) で、撮影の台本の中身は実装が決める。画面の注記は 12 の区切りに。章 photo・menu に画面の一部の拡大 (ズーム) を 2 つ (同じファイル。`ScreenZoom`) |
 | 動き | 8 (M-1〜M-3・M-5・M-7〜M-10)。控えめ。スクロール連動と固定した端末は置かない | 17 (M-1〜M-17)。固定した端末の入れ替え (M-6)・読む位置の棒 (M-4)・数字の増え方 (M-7・M-11)・輪 (M-11)・線 (M-12)・スナップ (M-13)・ナビの強調 (M-14)・端末とカードの反応 (M-15・M-16)・拡大の箱の立ち上がり (M-17)。各動きに受入の条件 |
 | ページの中のリンク | 素の `<a href="#…">` (ヘッダーのナビ 4・デモを試す)。戻るの不具合の原因だったが、#1893 の bridge で直った (§2.2) | すべて `next/link` の `Link` (ナビ 5・デモを試す・機能のカード 10)。移った先の区切り (`tabindex="-1"`) へフォーカスを移す (`useInPageLinkFocus`)。E-23 がページの中の戻るを、E-29 がフォーカスを確かめる。`/signup` などを経る戻るは門の `tests/e2e/back-navigation.spec.ts` (#1893) が v2.0 のナビ 5 つで確かめる |
 | 色 | 色のトークン 18 (`--lp-*` のうち色のもの。§5.1 の表の行)。文字と下地は 21 組 | 色のトークン 21 (`--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足す)。31 組 |
@@ -2542,7 +2553,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | `reduced-motion` | no-preference の中だけ + `MotionConfig` + `useReducedMotion` | 同じ規律。数字・溶け込み・輪・線も止まる |
 | 速さの予算 | JS gzip ≤ 240 KB (実測 227 KB) | ≤ 256 KB。画像は画面 17 + 写真 3 枚 (前の 1 枚のほかは lazy)。HTML ≤ 120 KB |
 | テスト | U-1〜U-26・E-1〜E-22 | U-1〜U-36 (U-3・U-4・U-7〜U-10・U-14・U-20・U-22・U-24・U-26 を広げ、U-27〜U-36 を足す)・E-1〜E-31 (E-1・E-3・E-4・E-7・E-9・E-11・E-12・E-15・E-17・E-19・E-21・E-22 を広げ、E-23〜E-31 を足す。E-20 は状態の名前と数が v1.7 のままで、2 つ目の状態で FAQ を開く操作だけを `summary` に変える) |
-| 撮影の台本 | 15 枚 (`public/guide`) | 15 枚 + 6 枚 (`public/marketing/screens`)。新しい 6 枚の test と見本を足す (中身は実装が決める: §7.1)。`signup.png`・`badge-get.png` は撮り直して置き換え、ほかの 13 枚は置き換えない |
+| 撮影の台本 | 15 枚 (`public/guide`) | 15 枚 + 6 枚 (`public/marketing/screens`)。新しい 6 枚の test と見本を足す (中身は実装が決める: §7.1)。`signup.png`・`badge-get.png` は撮り直して置き換え、ほかの 13 枚は段 0 の撮ったままが今の画像と同じ画面なら置き換えない (違えば §7.1 の G-1〜G-6) |
 | 横にスクロールする帯 | 無し | 6 つ (場面・章 photo・menu・nutrition・badges の画面・ガイドの画面)。どの幅でも `role="region"`・`aria-label`・`tabindex="0"` の箱で、768 px 未満だけスクロールする (§5.4) |
 | `SITE_DESCRIPTION`・殻・JSON-LD・OGP | v1.7 | 変えない |
 
@@ -2715,7 +2726,8 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 画像のファイルが無い (新しい 6 枚を含む) | 404 | U-4 がマージ前に赤にする |
 | 段 0 の撮影ができない | 6 枚が無い・2 枚を撮り直せない | 手を止めてオーケストレーターに返す (§7.1 の「段 0 で作るもの」の 5)。古い構成のまま段 1 へ進まない |
 | 撮った画面が受入の条件を満たさない (写っているべきものが無い・空のシート・写ってはいけないもの (AI の自由な文・体重の記録・古い文言) が写る) | 紹介ページに根拠の無い表示や体重の記録が載る (§2.5・R-13) | 段 0 のレビュー (§7.1 の「段 0 で作るもの」の 4) で止め、台本を直して撮り直す。直せなければ手を止めてオーケストレーターに返す (同じ 5)。受入の条件を緩めない。台本の中に確認 (例: 写るべき見出しの `toBeVisible()`・写ってはいけない要素の `not.toBeInViewport()`) を書くかは実装が決める |
-| 台本の変更 (見本の追加) で、置き換えない 13 枚の画面が変わる (例: 献立表に家族の切り替えや `早めに使い切り` の帯が出る) | 使い方ガイドの画像を次に撮り直したときに画面が変わる。`menu-result.png` なら拡大の矩形 (§5.4) もずれる | 段 0 のレビューの (b) (撮ったままの 13 枚が今と同じ画面) で止め、見本の入れ方を直す (§7.1 の「台本を書くときに知っておく事実」) |
+| 台本の変更 (見本の追加) で、`signup.png`・`badge-get.png` を除く 13 枚の画面が変わる (例: 献立表に家族の切り替えや `早めに使い切り` の帯が出る) | 使い方ガイドの画像を次に撮り直したときに画面が変わる。`menu-result.png` なら拡大の矩形 (§5.4) もずれる | 段 0 のレビューの (b) で止め、見本の入れ方を直して撮り直す (§7.1 の G-2 と「台本を書くときに知っておく事実」)。直せなければ手を止めてオーケストレーターに返す (G-6) |
+| 撮ったままの画像が、origin/main の画面の変化のぶん今の画像と違う (今の画像が今の画面と合わない) | 使い方ガイドと紹介ページに今と違う画面が残る | 置き換える (§7.1 の G-3)。拡大の矩形を測った `comment.png`・`menu-result.png` (G-4)・紹介ページでの使い方を決め直す画像 (G-5)・原因を分けられないもの (G-6) は、手を止めてオーケストレーターに返す |
 | 拡大の矩形が画像の外 (`chapters.*.zoom.region`) | 箱の中に画像の無い部分が出る | `LandingCopySchema` の `ZoomRegionSchema` の `refine` で U-1 と U-36 が赤 |
 | `IntersectionObserver` が無い | 現れ方・物語・輪・ナビの強調が動かない | `useInViewOnce` は true・`useInViewIds` は全部 false (§13.1 の行)。内容は見える |
 | `matchMedia` が無い | `useReducedMotion` が例外 | 既存の hook の挙動のまま |
@@ -2855,28 +2867,30 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | S-1 | E-1・E-2・E-3・E-10・E-21・E-25・E-26・E-31・U-14・U-26 | 動きの質 (時間・緩急) は E-14 の記録と目視。本番の LCP の p75 は Speed Insights |
 | S-2 | E-5・E-6・E-18・E-19・E-22・E-27・U-14・U-19 | Safari の実機の感触 |
 | S-3 | E-15・E-3・E-4・E-9・E-27・E-29・U-14・U-35 | – |
-| S-4 | E-8・U-14・E-3・E-20・E-30・E-21 (`aria-hidden`)・E-24 (`aria-hidden`)・U-32 | VoiceOver での読み上げ |
+| S-4 | E-8・U-14・E-3・E-20・E-30・E-21 (`aria-hidden`)・E-24 (`aria-hidden`)・U-32・U-5 (実際の画面の alt) | VoiceOver での読み上げ |
 | S-5 | E-7・E-17・E-31 (reduce)・U-20・U-23 | – |
 | S-6 | U-11・U-21・U-31・E-3・E-22 | 見本の推定の値が写真の料理としてありうるか |
 | S-7 | U-17・既存 `lib/supabase/__tests__/middleware.test.ts` | – |
 | S-8 | E-16 | App の実機の WebView |
-| S-9 | U-14・U-15・E-13・E-4 (JS 無しの FAQ)・既存 `tests/seo-public-pages-1867.test.tsx` | SNS のカードの見え方 |
+| S-9 | U-14・U-15・U-12 (JSON-LD は 1 本)・E-13・E-4 (JS 無しの FAQ)・既存 `tests/seo-public-pages-1867.test.tsx` | SNS のカードの見え方 |
 | S-10 | E-10・E-11・U-4 | 3G 相当の体感 (Lighthouse の mobile) |
 | S-11 | E-1 (640×360)・E-6 (640 px)・E-9・U-22 | 200 % での読みやすさ |
-| S-12 | E-12・既存 `tests/e2e/csp-nonce.spec.ts` | – |
-| S-13 | `tests/public-claims-guard.test.ts`・U-2・U-20・U-21 | – |
+| S-12 | E-12・U-12 (インラインの script は `SiteStructuredData` の 1 本だけ)・既存 `tests/e2e/csp-nonce.spec.ts` | – |
+| S-13 | `tests/public-claims-guard.test.ts`・U-1 (文言の長さと形)・U-2・U-20・U-21 | – |
 | S-14 | E-10・E-11・E-12・E-8・E-18・E-19・E-20・E-30 | Lighthouse の 4 項目 |
 | S-15 | U-24・U-20・E-4 | 根拠の中身は実装ゲートのレビュー |
 | S-16 | E-21・E-26・U-30・U-22 | 溶け込みと線の描かれ方の質 (目視) |
-| S-17 | E-25・U-28・U-31・U-32 | 数字の増え方の質 (目視) |
+| S-17 | E-25・U-28・U-25 (89 の出どころの見本はアプリが作れる値)・U-31・U-32 | 数字の増え方の質 (目視) |
 | S-18 | E-27・E-6・E-30 | スナップの感触 (実機) |
 | S-19 | E-23・E-28・E-29・U-27・U-33・U-35 | – |
 | S-20 | 門の `tests/e2e/back-navigation.spec.ts` (#1893)・U-27 | 本番 (Vercel) での再現 (整合ゲートで手で 1 回) |
 | S-21 | U-3・U-34・E-1・既存 `tests/public-claims-guard.test.ts` | 家族の要点の根拠の中身 (レビュー) |
 | S-22 | U-3・E-1 | 組織の要点の根拠の中身・組織の一文と料金の一文と FAQ 9 に「組織は運営が作る」があり、料金の「いま使える機能」の一覧に組織が無いこと (レビュー。§9.1 の逐語と突き合わせる) |
 | S-23 | U-24・U-26・E-4 | – |
-| S-24 | U-4・既存 `tests/guide-images-1852.test.ts`・撮影の台本の最後の確認 (15 + 6 枚の一致)・撮影の台本の中の確認 (実装が書く) | 段 0 のレビューの目視 (§7.1 の「段 0 で作るもの」の 4: 8 枚が表 1・表 2 の「写っているべきもの」を写し、「写ってはいけないもの」と P-4 を写さない・撮ったままの 13 枚が今と同じ画面・固定の文が origin/main のソースにある) |
+| S-24 | U-4・U-25・既存 `tests/guide-images-1852.test.ts`・撮影の台本の最後の確認 (15 + 6 枚の一致)・撮影の台本の中の確認 (実装が書く) | 段 0 のレビューの目視 (§7.1 の「段 0 で作るもの」の 4: 新しい 6 枚と置き換えた画像が表 1・表 2 の「写っているべきもの」を写し、「写ってはいけないもの」と P-4 を写さない・撮ったままの 13 枚が今と同じ画面か、違えば G-1〜G-6 の行き先に従った・固定の文が origin/main のソースにある) |
 | S-25 | E-31・U-36・E-6・E-8・E-22 | 拡大の箱の立ち上がりの質と、矩形が箱いっぱいに収まって見えること (目視。E-14 の記録) |
+
+**シナリオに現れない it (規則の番兵)**: 次の 9 本は、特定のシナリオの手順ではなく、文言と部品の作りの規則を見張る (どのシナリオでも守られている前提)。U-6 (バッジの名前と code は DB と同じ・説明は「完了」の語: §4.6・§24 Q-13)・U-7 (CSS のトークンと `BRAND_COLORS`: §5.1)・U-8 (文字と下地の 31 組のコントラスト: §5.1・WCAG 2.2 AA)・U-9 (絵文字を使わない: docs/design/marketing/CLAUDE.md の守ること)・U-10 (import の許可先と `'use client'` の島の本数: §3 の島 6 本・§8.1)・U-13 (殻と本体の分け方: §2.2)・U-16 (著作権の年は `COPYRIGHT_YEAR` 定数: §4 の footer)・U-18 (スクロール連動の CSS (`animation-timeline` ほか) を使わない: §2.4・§3 の案 C)・U-29 (ガイドの区切りの章の名前と手順の数は `guide-content.ts` と同じ: §9.1)。
 
 ---
 
@@ -2884,7 +2898,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 
 | 段 | 中身 | 触るファイル |
 |---|---|---|
-| 0. 新しい画面写真 6 枚と撮り直し 2 枚 | `landing-screens.ts` (§9.2) の新設・撮影の台本の拡張 (§7.1 の「段 0 で作るもの」の 2)・撮影・8 枚と撮ったままの 13 枚の目視・コミット。段 0 のレビューは §7.1 の受入の条件 (P-1〜P-6・表 1・表 2) との突き合わせと画像の目視。できなければ手を止めてオーケストレーターに返す | `src/components/marketing/landing-screens.ts` (新設)、`scripts/guide-screenshots/` の台本 (`shoot.pw.ts`・`optimize.ts`・`run.sh` と、見本を足すなら `guide-users.ts`・`seed.ts`)、`public/marketing/screens/{home,pantry,shopping,family,chat,consent}.png` (新設)、`public/guide/signup.png`・`badge-get.png` (撮り直し) |
+| 0. 新しい画面写真 6 枚と撮り直し (少なくとも 2 枚) | `landing-screens.ts` (§9.2) の新設・撮影の台本の拡張 (§7.1 の「段 0 で作るもの」の 2)・撮影・新しい 6 枚と置き換えた画像と撮ったままの 13 枚の目視・コミット。段 0 のレビューは §7.1 の受入の条件 (P-1〜P-6・表 1・表 2) との突き合わせと画像の目視と、撮ったままの 13 枚の比べ (G-1〜G-6)。できなければ手を止めてオーケストレーターに返す | `src/components/marketing/landing-screens.ts` (新設)、`scripts/guide-screenshots/` の台本 (`shoot.pw.ts`・`optimize.ts`・`run.sh` と、見本を足すなら `guide-users.ts`・`seed.ts`)、`public/marketing/screens/{home,pantry,shopping,family,chat,consent}.png` (新設)、`public/guide/signup.png`・`badge-get.png` (撮り直し) と、§7.1 の G-3 に当たる `public/guide/` の画像 (撮り直し) |
 | 1. 文言・主張・トークン・primitives と区切り (前半)・骨格 | `landing-copy.ts` (§9.1 を逐語で差し替え)・`story-state.ts`・`count-up.ts` (§9.4・§9.5)・`marketing.css` (§5 のトークン + §6 の動き。クラス名は実装が決める)・primitives の新設 5 本 (`StoryScroller`・`ScoreRing`・`ReadingProgress`・`FlowDiagram`・`ScreenZoom`) と hook 2 本 (`useInViewSteps.ts` の `useInViewIds`・`useInPageLinkFocus`)・`LandingPage.tsx` (前半の区切りと、v1.7 の `TrustSection`・`FinalCtaSection` と、書き換えた `FaqSection`。下の「段 1 の切り方」)・`SiteHeader` (ナビ 5・棒・強調)・`HeroSection` (5 枚)・`StorySection` (新設)・`DemoSection` (数字)・`FeaturesSection` (10 枚・`Link`)・`ChapterSection` (新設)・`PhotoChapter`・`MenuChapter`・`NutritionChapter`・`HealthChapter`・`BadgesChapter` (新設)・`FaqSection` (`details` にして `'use client'` を外す。12 件)・`HowItWorksSection.tsx`・`BadgesSection.tsx` の削除・`tests/landing-page-1867.test.ts` の it (U-1〜U-13・U-15〜U-25・U-27〜U-36 を §16.1 の形に。U-26 は読む鍵だけを直す。U-14 と U-26 の §16.1 の形は段 2: 下の「段 1 の終わりで赤でよいもの」。U-36 は段 1 で描く章 photo と章 nutrition を使うので段 1 で緑になる) | `src/components/marketing/landing-copy.ts`、`story-state.ts`、`count-up.ts`、`marketing.css`、`LandingPage.tsx`、`primitives/StoryScroller.tsx`、`ScoreRing.tsx`、`ReadingProgress.tsx`、`FlowDiagram.tsx`、`ScreenZoom.tsx`、`useInViewSteps.ts`、`useInPageLinkFocus.ts` (新設)、`sections/SiteHeader.tsx`、`HeroSection.tsx`、`StorySection.tsx` (新設)、`DemoSection.tsx`、`FeaturesSection.tsx`、`ChapterSection.tsx`・`PhotoChapter.tsx`・`MenuChapter.tsx`・`NutritionChapter.tsx`・`HealthChapter.tsx`・`BadgesChapter.tsx` (新設)、`sections/FaqSection.tsx`、`HowItWorksSection.tsx`・`BadgesSection.tsx` (削除)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (§9.7) |
 | 2. 区切り (後半) | `ChatChapter`・`ScenesSection`・`FamilySection`・`OrgSection`・`PricingSection`・`GuideSection` (新設)・`TrustSection` (6 点 + 画面)・`FinalCtaSection` (`tabIndex={-1}` を足すだけ)・`LandingPage.tsx` に後半の区切りを足して 18 にする・U-14 と U-26 を §16.1 の逐語にする (U-14 は 18 の区切りの `tabindex="-1"` と帯の箱 6 つ、U-26 は 12 の区切りの注記) | `sections/ChatChapter.tsx`・`ScenesSection.tsx`・`FamilySection.tsx`・`OrgSection.tsx`・`PricingSection.tsx`・`GuideSection.tsx` (新設)、`TrustSection.tsx`、`FinalCtaSection.tsx`、`LandingPage.tsx`、`tests/landing-page-1867.test.ts` |
 | 3. e2e | `tests/e2e/landing-page.spec.ts` (§16.3。E-1〜E-31)。門への登録と番兵は v1.7 のまま | `tests/e2e/landing-page.spec.ts` |
@@ -2963,7 +2977,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 文書 | 直すこと | 期日 |
 |---|---|---|
 | `docs/design/CLAUDE.md` のドメイン構成の表 | 直すことは無い。`marketing/` の行は origin/main `f0dff7a9` の 15 行目に既にある (#1891。担当範囲 = 未ログインの人向けの紹介ページ (`/`)・公開ページの見た目 (`01-landing-site.md`)。要件参照 = Issue #1867)。v2.0 は担当範囲を変えない | – |
-| `docs/design/marketing/CLAUDE.md` (既存を改訂。#1891 で新設され、origin/main `f0dff7a9` にファイル一覧の表 (`01-landing-site.md`・`prototype/index.html`)・実装の置き場所の文・守ること 1〜8 (文言の正本は `landing-copy.ts`・主張は公開の主張の表の行だけ・回数を約束する語を書かない・実績の数字を作らない・絵文字を使わない・逐語の正典の範囲・CSP と全ページ動的・更新の頻度) がある) | 既存との差分だけを直す: (1) 実装の置き場所の文に `landing-screens.ts` (新しい画面 6 枚の正本)・`story-state.ts`・`count-up.ts` を足す (2) 守ること 9 を足す: 新しい画面の写真は `public/marketing/screens/` に置き、alt と大きさの正本は `landing-screens.ts` (`LANDING_SCREENS`)。画面の写真の正典は「写っているべきもの・写ってはいけないもの」の受入の条件 (§7.1) で、撮影の台本の中身は実装が決める。`public/guide/` の画像は使い方ガイドと共有で、今の画面と文が食い違う画像は撮り直す (§7.1 の P-6) (3) 守ること 10 を足す: ページの中のリンク (`#…`) は `next/link` の `Link` で描き、素の `<a href="#…">` を書かない (Next が積む印つきの項目にして、戻る・進むを Next に描き直させ、#1893 の bridge の判定に依らないため。移った先の区切りへのフォーカスは `useInPageLinkFocus`: §2.2・§8.3) (4) 守ること 11 を足す: 章の拡大 (§5.4) の矩形は `public/guide/comment.png`・`menu-result.png` の今の画素に合わせてあり、`tests/landing-page-1867.test.ts` の U-36 が 2 枚の sha-256 を見張る。2 枚を撮り直す PR は、同じ PR で `chapters.photo.zoom.region`・`chapters.menu.zoom.region` と U-36 の sha-256 を直す (§24 Q-22)。守ること 1〜6 と 8 とファイル一覧の表は変えない (指す節 §2.4・§2.5・§4.0・§4.1・§4〜§6・§8〜§13・§16・§23 は v2.0 でも同じ中身。守ること 7 は下の行) | 本冊の実装 PR のマージと同日 (それより前に書くと、まだ無い `landing-screens.ts` ほかを指す) |
+| `docs/design/marketing/CLAUDE.md` (既存を改訂。#1891 で新設され、origin/main `f0dff7a9` にファイル一覧の表 (`01-landing-site.md`・`prototype/index.html`)・実装の置き場所の文・守ること 1〜8 (文言の正本は `landing-copy.ts`・主張は公開の主張の表の行だけ・回数を約束する語を書かない・実績の数字を作らない・絵文字を使わない・逐語の正典の範囲・CSP と全ページ動的・更新の頻度) がある) | 既存との差分だけを直す: (1) 実装の置き場所の文に `landing-screens.ts` (新しい画面 6 枚の正本)・`story-state.ts`・`count-up.ts` を足す (2) 守ること 9 を足す: 新しい画面の写真は `public/marketing/screens/` に置き、alt と大きさの正本は `landing-screens.ts` (`LANDING_SCREENS`)。画面の写真の正典は「写っているべきもの・写ってはいけないもの」の受入の条件 (§7.1) で、撮影の台本の中身は実装が決める。`public/guide/` の画像は使い方ガイドと共有で、今の画面と合わない画像は撮り直す (§7.1 の P-6・G-1〜G-6) (3) 守ること 10 を足す: ページの中のリンク (`#…`) は `next/link` の `Link` で描き、素の `<a href="#…">` を書かない (Next が積む印つきの項目にして、戻る・進むを Next に描き直させ、#1893 の bridge の判定に依らないため。移った先の区切りへのフォーカスは `useInPageLinkFocus`: §2.2・§8.3) (4) 守ること 11 を足す: 章の拡大 (§5.4) の矩形は `public/guide/comment.png`・`menu-result.png` の今の画素に合わせてあり、`tests/landing-page-1867.test.ts` の U-36 が 2 枚の sha-256 を見張る。2 枚を撮り直す PR は、同じ PR で `chapters.photo.zoom.region`・`chapters.menu.zoom.region` と U-36 の sha-256 を直す (§24 Q-22)。守ること 1〜6 と 8 とファイル一覧の表は変えない (指す節 §2.4・§2.5・§4.0・§4.1・§4〜§6・§8〜§13・§16・§23 は v2.0 でも同じ中身。守ること 7 は下の行) | 本冊の実装 PR のマージと同日 (それより前に書くと、まだ無い `landing-screens.ts` ほかを指す) |
 | `docs/design/marketing/CLAUDE.md` の守ること 7 | `src/app/layout.tsx:10` の `force-dynamic` → `:11` (#1893 が layout に import を 1 行足して、行がずれた。中身は同じ) | 本冊の設計 PR のマージと同日 (origin/main `f0dff7a9` で既にずれている) |
 | `docs/design/cross/05-i18n-a11y.md` §7 | 「a11y (紹介ページ `/`)」の行 (origin/main の 542 行目) に、v2.0 で足した E-30 の 2 つの状態 (1280 px で物語の 3 番目の手順まで進めた状態・375 px で場面の帯を 2 枚目まで送った状態) を書き足す。E-20 の 4 つの状態の文と「4 つの状態」は消さない (番兵 `tests/landing-axe-states-doc-1867.test.ts` が E-20 の状態と数を見る。§19) | 本冊の実装 PR のマージと同日 (それより前に足すと、まだ無い検査を書くことになる。番兵は E-20 の状態だけを見るので、書き足す前も後も赤にならない) |
 | `docs/design/cross/06-perf-cache.md` §3.1 | 直すことは無い。FID → INP は #1891 で直した (origin/main `f0dff7a9` の 29 行目) | – |
@@ -2983,8 +2997,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 区分 | 対象 |
 |---|---|
-| 保持 (変えない) | `src/app/page.tsx`、`src/app/layout.tsx`、`src/components/navigation/HashHistoryEntryBridge.tsx`・`src/lib/navigation/*` (#1893)、`tests/e2e/back-navigation.spec.ts`・`tests/e2e-back-navigation-suite.test.ts` (#1893)、`src/proxy.ts`、`lib/supabase/middleware.ts`、`src/lib/security/csp.ts`、`src/lib/site-config.ts`、`src/lib/brand-image.tsx`、`src/app/guide/guide-content.ts`、`src/app/about/page.tsx`、`src/app/faq/page.tsx`、`src/app/pricing/PricingPageView.tsx`、`src/__tests__/components/hash-history-entry-bridge.test.tsx` (#1893)、`public/guide/*.png` のうち 13 枚 (`signup.png`・`badge-get.png` を除く)、`public/marketing/photos/*`、`public/icon.svg`、`src/components/seo/SiteStructuredData.tsx`、`src/lib/seo/*`、`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` も)、`demo-state.ts`、`primitives/Reveal.tsx`・`PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts`、`sections/SiteFooter.tsx`、`scripts/guide-screenshots/meal-analysis-mock.ts`、`tests/e2e-landing-suite.test.ts`、`tests/seo-public-pages-1867.test.tsx`、`package.json`・`package-lock.json`、`supabase/functions/_shared/nutrition-pipeline.ts`、アプリの画面 (`/login` 以降)、`apps/mobile` |
-| 変更 | `src/components/marketing/LandingPage.tsx`、`landing-copy.ts` (差し替え)、`marketing.css`、`sections/SiteHeader.tsx`・`HeroSection.tsx`・`DemoSection.tsx`・`FeaturesSection.tsx`・`TrustSection.tsx`・`FaqSection.tsx`・`FinalCtaSection.tsx` (`tabIndex={-1}` だけ)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (1 行)、`tests/e2e/landing-page.spec.ts`、`scripts/guide-screenshots/` の台本 (段 0。`shoot.pw.ts`・`optimize.ts`・`run.sh` と、見本を足すなら `guide-users.ts`・`seed.ts`)、`public/guide/signup.png`・`badge-get.png` (段 0 で撮り直し) |
+| 保持 (変えない) | `src/app/page.tsx`、`src/app/layout.tsx`、`src/components/navigation/HashHistoryEntryBridge.tsx`・`src/lib/navigation/*` (#1893)、`tests/e2e/back-navigation.spec.ts`・`tests/e2e-back-navigation-suite.test.ts` (#1893)、`src/proxy.ts`、`lib/supabase/middleware.ts`、`src/lib/security/csp.ts`、`src/lib/site-config.ts`、`src/lib/brand-image.tsx`、`src/app/guide/guide-content.ts`、`src/app/about/page.tsx`、`src/app/faq/page.tsx`、`src/app/pricing/PricingPageView.tsx`、`src/__tests__/components/hash-history-entry-bridge.test.tsx` (#1893)、`public/guide/*.png` のうち段 0 で置き換えない画像 (`signup.png`・`badge-get.png` と §7.1 の G-3 に当たる画像を除く)、`public/marketing/photos/*`、`public/icon.svg`、`src/components/seo/SiteStructuredData.tsx`、`src/lib/seo/*`、`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` も)、`demo-state.ts`、`primitives/Reveal.tsx`・`PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts`、`sections/SiteFooter.tsx`、`scripts/guide-screenshots/meal-analysis-mock.ts`、`tests/e2e-landing-suite.test.ts`、`tests/seo-public-pages-1867.test.tsx`、`package.json`・`package-lock.json`、`supabase/functions/_shared/nutrition-pipeline.ts`、アプリの画面 (`/login` 以降)、`apps/mobile` |
+| 変更 | `src/components/marketing/LandingPage.tsx`、`landing-copy.ts` (差し替え)、`marketing.css`、`sections/SiteHeader.tsx`・`HeroSection.tsx`・`DemoSection.tsx`・`FeaturesSection.tsx`・`TrustSection.tsx`・`FaqSection.tsx`・`FinalCtaSection.tsx` (`tabIndex={-1}` だけ)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (1 行)、`tests/e2e/landing-page.spec.ts`、`scripts/guide-screenshots/` の台本 (段 0。`shoot.pw.ts`・`optimize.ts`・`run.sh` と、見本を足すなら `guide-users.ts`・`seed.ts`)、`public/guide/signup.png`・`badge-get.png` と §7.1 の G-3 に当たる画像 (段 0 で撮り直し) |
 | 新規 | §18 |
 | 削除 | `sections/HowItWorksSection.tsx`・`BadgesSection.tsx` |
 
@@ -3058,4 +3072,4 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | Q-19 | 二段階認証 (運営ロールだけ) を一般の利用者にも開くか | 本冊の範囲外。紹介ページには書かない |
 | Q-20 | FAQ の構造化データ (`FAQPage`) を足すか | 足さない (2 か所に同じ文を持たない)。要るなら `SiteStructuredData` 側で `landing-copy.ts` の `faq.items` を読む形を別に設計する |
 | Q-21 | `home.png` には今日の栄養スコアの箱が写らない (§7.1 の表 2: `今日の献立` を先頭にした 1 画面に、健康記録のカードと同じく箱は入らず、AI のアドバイスの文も写さない)。実際のアプリでは箱が出る。章 nutrition の文は「ホームに … 出ます」と言う | 文は根拠 (`home/page.tsx:332-360`) に基づく事実で、画像に写らないことは画面の注記 (撮影用の見本) の範囲。`home.png` に写るのは要点 2 (`今週の自炊率`) の画面。スコアを写すなら、体重の記録を持たない専用の利用者と、AI を使わずにスコアを出せる見本が要る (別の改定) |
-| Q-22 | 章の拡大の矩形 (§5.4) は `public/guide/comment.png`・`menu-result.png` の今の画素に合わせた値。2 枚を撮り直すと (使い方ガイドの案件など)、矩形がずれて箱の中の見え方が変わる | U-36 の (7) が 2 枚の sha-256 を見張るので、撮り直すと赤になる。2 枚を撮り直す案件は、同じ PR で `chapters.photo.zoom.region`・`chapters.menu.zoom.region` を測り直し、§5.4 の表と U-36 の矩形の値と sha-256 を直す。矩形の中身 (何が写るか) は機械で確かめられないので目視 (E-14 の記録) |
+| Q-22 | 章の拡大の矩形 (§5.4) は `public/guide/comment.png`・`menu-result.png` の今の画素に合わせた値。2 枚を撮り直すと (使い方ガイドの案件など)、矩形がずれて箱の中の見え方が変わる | U-36 の (7) が 2 枚の sha-256 を見張るので、撮り直すと赤になる。2 枚を撮り直す案件は、同じ PR で `chapters.photo.zoom.region`・`chapters.menu.zoom.region` を測り直し、§5.4 の表と U-36 の矩形の値と sha-256 を直す。矩形の中身 (何が写るか) は機械で確かめられないので目視 (E-14 の記録)。本冊の段 0 で 2 枚のどちらかが今の画面と合わないと分かったときは、実装は手を止め、オーケストレーターが本書の矩形の値と sha-256 を直してから続ける (§7.1 の G-4) |
