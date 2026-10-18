@@ -948,7 +948,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     expect(await page.evaluate(() => window.__landingCspViolations ?? [])).toEqual([]);
   });
 
-  test('E-13 JSON-LD の script が 1 つあり、type は application/ld+json、中身は @graph に Organization と WebSite', async ({ page }) => {
+  test('E-13 JSON-LD の script が 1 つあり、@graph に Organization と WebSite', async ({ page }) => {
     await open(page);
     const scripts = page.locator('script[type="application/ld+json"]');
     await expect(scripts).toHaveCount(1);
@@ -956,7 +956,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     expect((json['@graph'] ?? []).map((node) => node['@type']).sort()).toEqual(['Organization', 'WebSite']);
   });
 
-  test('E-14 見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを tests/e2e/.evidence/landing/ に保存する (比較はしない)', async ({ page }, testInfo) => {
+  test('E-14 見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを保存する (比較はしない)', async ({ page }, testInfo) => {
     fs.mkdirSync(EVIDENCE_DIR, { recursive: true });
     for (const viewport of [DESKTOP, PHONE]) {
       await open(page, viewport);
@@ -986,7 +986,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     expect(await activeOutlineStyle(page)).not.toBe('none');
   });
 
-  test('E-16 アプリの WebView (is_native_app=1 の Cookie・未ログイン) でも、同じ h1 と区切りが出て、ストアへのリンクが無い', async ({ page, baseURL }) => {
+  test('E-16 アプリの WebView (is_native_app=1・未ログイン) でも、同じ h1 と区切りが出て、ストアへのリンクが無い', async ({ page, baseURL }) => {
     await page.context().addCookies([{ name: 'is_native_app', value: '1', url: baseURL ?? 'http://localhost:3000' }]);
     await open(page);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(LANDING_COPY.hero.headlineLines.join(''));
@@ -1024,7 +1024,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     });
   }
 
-  test('E-18 / の viewport は拡大を止めず (maximum-scale 5 以上)、/login の viewport は変わっていない (maximum-scale=1)', async ({ page }) => {
+  test('E-18 / の viewport は拡大を止めず、/login の viewport は変わっていない', async ({ page }) => {
     const viewportContent = () => page.locator('meta[name="viewport"]').getAttribute('content');
     await page.goto('/');
     const top = (await viewportContent()) ?? '';
@@ -1181,7 +1181,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     for (let index = 0; index < alts.length; index += 1) await expect(storyStageImages(page).nth(index)).toBeHidden();
   });
 
-  test('E-22 短いラベルは途中で折れない (デモの写真の名前・推定の栄養の名前・バッジの名前・安心の見出し・料金の見出しと札・場面の見出し・章の画面の札・拡大の札・流れの図の節・ガイドの章の名前・フッターのリンクの文)', async ({ page }) => {
+  test('E-22 短いラベルは途中で折れない: 320・375・640・768・1024・1280 px で、デモの写真の名前 3・推定の栄養の名前 5・バッジの名前 4・安心の見出し 6・料金のカードの見出しと札 4・場面のカードの見出し 4・章の画面の札 (全部)・章の拡大の札 2 (chapters.photo.zoom.label・chapters.menu.zoom.label)・流れの図の節 5・ガイドの章の名前 5・フッターのリンクの文 12 が、それぞれ 1 行に収まる', async ({ page }) => {
     test.setTimeout(E22_TIMEOUT_MS);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const copy = LANDING_COPY;
@@ -1325,7 +1325,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     expect(Math.abs(after), `描き終わった後の stroke-dashoffset (${after})`).toBeLessThanOrEqual(FLOW_OFFSET_TOLERANCE);
   });
 
-  test('E-27 横にスクロールする帯: 375 px と 1280 px のどちらでも、帯の箱 6 つ (role="region"・§5.4 の aria-label・tabindex="0") があり、375 px では 6 つとも横にスクロールでき、場面の帯は 1 枚ぶん送ると 2 枚目の左端に止まり、矢印キーでも送れて、ページは横にスクロールしない。1280 px では 6 つともスクロールしない', async ({ page }) => {
+  test('E-27 横にスクロールする帯: 375 px と 1280 px のどちらでも、帯の箱 6 つ (role="region"・§5.4 の aria-label・tabindex="0") があり、375 px では 6 つとも横にスクロールでき (scrollWidth > clientWidth)、場面の帯は 1 枚ぶん送ると 2 枚目の左端に止まり (± 2 px)、矢印キーでも送れて、ページは横にスクロールしない。1280 px では 6 つともスクロールしない', async ({ page }) => {
     // 375 px
     await open(page, PHONE);
     for (const name of STRIP_LABELS) {

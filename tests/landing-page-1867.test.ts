@@ -392,7 +392,7 @@ describe('#1867 紹介ページのトークン', () => {
 // ─── U-9〜U-10: 絵文字・import の範囲・島の本数 ───
 
 describe('#1867 紹介ページのソースの決まり', () => {
-  it('U-9 landing-copy.ts と landing-screens.ts のソースに絵文字 (Unicode の Extended_Pictographic) が無い', () => {
+  it('U-9 landing-copy.ts と landing-screens.ts のソースに絵文字 (Extended_Pictographic) が無い', () => {
     for (const file of ['src/components/marketing/landing-copy.ts', 'src/components/marketing/landing-screens.ts']) {
       expect(read(file), file).not.toMatch(/\p{Extended_Pictographic}/u);
     }
@@ -439,7 +439,7 @@ describe('#1867 デモの状態機械 (§13.3 の遷移表)', () => {
   const analyzing = (sampleId: 'salad-bowl' | 'salmon-plate' | 'pesto-pasta'): DemoState => ({ phase: 'analyzing', sampleId, startedAt: NOW });
   const result = (sampleId: 'salad-bowl' | 'salmon-plate' | 'pesto-pasta'): DemoState => ({ phase: 'result', sampleId });
 
-  it('U-11 demoReducer は §13.3 のデモの遷移表の全行どおり (「変化なし」は同じ参照を返す) で、selectedSampleId は idle で null・analyzing と result で sampleId', () => {
+  it('U-11 demoReducer は §13.3 のデモの遷移表の全行どおり', () => {
     // idle + select(id) → analyzing(id)
     expect(demoReducer(DEMO_INITIAL_STATE, { type: 'select', sampleId: 'salad-bowl', now: NOW })).toEqual(analyzing('salad-bowl'));
     // idle + finish(any) → idle (変化なし。同じ参照)
@@ -589,7 +589,7 @@ const FORBIDDEN_WORDS = [
 ] as const;
 
 describe('#1867 紹介ページの殻のメタ情報と viewport', () => {
-  it('U-15 page.tsx の metadata は publicPageMetadata(/) と同じ値で、SITE_DESCRIPTION は v1.7 の文と同じ・50〜160 文字・書かない語を含まない', async () => {
+  it("U-15 page.tsx の metadata は publicPageMetadata('/') と同じ値で、SITE_DESCRIPTION は v1.7 の文と同じ・50〜160 文字・書かない語を含まない", async () => {
     const { metadata } = await import('@/app/page');
     expect(metadata).toEqual(publicPageMetadata('/'));
     expect(SITE_DESCRIPTION).toBe(
@@ -603,7 +603,7 @@ describe('#1867 紹介ページの殻のメタ情報と viewport', () => {
     for (const word of FORBIDDEN_WORDS) expect(SITE_DESCRIPTION, word).not.toContain(word);
   });
 
-  it('U-19 page.tsx の viewport は maximumScale が LANDING_VIEWPORT_MAXIMUM_SCALE (5 以上) で userScalable が true (ルートの layout の viewport は変えていない)', async () => {
+  it('U-19 page.tsx の viewport は maximumScale 5 以上・userScalable true', async () => {
     const { viewport } = await import('@/app/page');
     const MINIMUM_ALLOWED_MAXIMUM_SCALE = 5;
     expect(LANDING_VIEWPORT_MAXIMUM_SCALE).toBeGreaterThanOrEqual(MINIMUM_ALLOWED_MAXIMUM_SCALE);
@@ -615,14 +615,14 @@ describe('#1867 紹介ページの殻のメタ情報と viewport', () => {
 });
 
 describe('#1867 紹介ページの日付・ログイン済みの振り分け', () => {
-  it('U-16 footer の著作権の年は COPYRIGHT_YEAR で、Date を使って年を作っていない (landing-copy.ts と SiteFooter.tsx に new Date が無い)', () => {
+  it('U-16 footer の著作権の年は COPYRIGHT_YEAR で、new Date を使っていない', () => {
     expect(stripComments(read('src/components/marketing/landing-copy.ts'))).not.toContain('new Date');
     expect(stripComments(read('src/components/marketing/sections/SiteFooter.tsx'))).not.toContain('new Date');
     expect(LANDING_COPY.footer.copyrightYear).toBe(COPYRIGHT_YEAR);
     expect(renderLanding()).toContain(`© ${COPYRIGHT_YEAR} ほめゴハン`);
   });
 
-  it('U-17 ログイン済みの人は / で紹介ページを見ない: resolveOnboardingRedirect の pathname / は、完了 → /home・途中 → /onboarding/resume・まだ → /onboarding/welcome・運営ロール → /admin を返し、null を返す組み合わせが無い', () => {
+  it('U-17 ログイン済みの人は / で紹介ページを見ない (resolveOnboardingRedirect)', () => {
     const STARTED_AT = '2026-10-01T00:00:00.000Z';
     const COMPLETED_AT = '2026-10-02T00:00:00.000Z';
     expect(resolveOnboardingRedirect({ pathname: '/', onboardingStartedAt: STARTED_AT, onboardingCompletedAt: COMPLETED_AT })).toBe('/home');
@@ -700,7 +700,7 @@ describe('#1867 紹介ページの動き', () => {
     for (const file of marketingFiles(['.ts', '.tsx'])) expect(stripComments(read(file)), file).not.toMatch(TIMELINE_WORD);
   });
 
-  it('U-20 LANDING_COPY と LANDING_SCREENS と LANDING_ZOOMS のすべての文字列に §4.0 の書かない語が無く、marketing.css の動きの宣言は no-preference の中だけで、reduce の at-rule が無く、className に Tailwind の動きのクラスが無く、scroll-behavior の宣言が無い', () => {
+  it('U-20 LANDING_COPY と LANDING_SCREENS と LANDING_ZOOMS のすべての文字列に §4.0 の書かない語 (ランキング・上位・1位・認識しやすく・認識精度・確認してから実行・実行するかは・メンバー数だけ・メンバーを分け・部署に分け を含む) が無く、marketing.css の動きの宣言は no-preference の中だけで、reduce の at-rule が無く、className に Tailwind の動きのクラスが無く、scroll-behavior の宣言が無い', () => {
     const strings = [...allCopyStrings(), ...allStrings(LANDING_SCREENS), ...allStrings(LANDING_ZOOMS)];
     expect(strings.length).toBeGreaterThan(0);
     const hits = strings.flatMap((text) => FORBIDDEN_WORDS.filter((word) => text.includes(word)).map((word) => `「${word}」: ${text.slice(0, 40)}`));
@@ -742,7 +742,7 @@ describe('#1867 紹介ページの動き', () => {
     }
   });
 
-  it('U-23 自動で動き続けるものは高々 1 つ: marketing.css の宣言 (@keyframes の中を除く) のうち、animation か animation-iteration-count の値に infinite を含むものは 1 つ以下', () => {
+  it('U-23 自動で動き続けるものは高々 1 つ (infinite の宣言は 1 つ以下)', () => {
     const infinite = cssDeclarations(css).filter(
       (declaration) =>
         (declaration.property === 'animation' || declaration.property === 'animation-iteration-count') &&
@@ -759,7 +759,7 @@ describe('#1867 紹介ページの動き', () => {
 const NUTRITION_PIPELINE = read('supabase/functions/_shared/nutrition-pipeline.ts');
 
 describe('#1867 デモの見本と輪の値はアプリと同じ', () => {
-  it('U-21 各見本の demoPraiseComment と demoScore が §4.5 の表の文と値 (87・91・85) と同じで、どのスコアも範囲内で、nutrition-pipeline.ts のソースに §4.5 の「ソースの文字列」がすべてある', () => {
+  it('U-21 デモの見本はアプリと同じ (87・91・85・ソースの式)', () => {
     const expected: Record<string, { score: number; comment: string }> = {
       'salad-bowl': { score: 87, comment: 'サラダボウルの記録がしっかりできていて素晴らしいです。昼食を丁寧に残せていて、とても良い流れです。' },
       'salmon-plate': { score: 91, comment: '焼きサーモン、いんげんとミニトマトの記録がしっかりできていて素晴らしいです。夕食を丁寧に残せていて、とても良い流れです。' },
