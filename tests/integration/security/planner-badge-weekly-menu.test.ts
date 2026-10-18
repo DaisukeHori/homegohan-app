@@ -26,6 +26,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
 import { MOCK_MENU_RESPONSE } from '@homegohan/handson-tour-shared';
 import { weeklyMenuRequestWeeklyOriginData } from '../../../src/lib/ai/weekly-menu-request-origin';
+import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -77,9 +78,14 @@ async function createSignedInUser(label: string): Promise<TestUser> {
   createdUserIds.push(data.user.id);
 
   // お試しの献立の追加は user_profiles の行を見る (ツアー未完了・管理者でない)。必須の列だけ入れる
-  const { error: profileError } = await srAdmin.from('user_profiles').upsert(
-    { id: data.user.id, nickname: `planner ${label}`, age_group: '30s', gender: 'other', roles: [] },
-    { onConflict: 'id' },
+  // 既知の行 (id) の upsert なので、ゲートウェイの一時的な失敗のときだけやり直す (#1779。helpers/setup-transient-retry.ts)
+  const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createSignedInUser: user_profiles の upsert', (db) =>
+    db
+      .from('user_profiles')
+      .upsert(
+        { id: data.user.id, nickname: `planner ${label}`, age_group: '30s', gender: 'other', roles: [] },
+        { onConflict: 'id' },
+      ),
   );
   if (profileError) throw new Error(`user_profiles upsert ${label}: ${profileError.message}`);
 
