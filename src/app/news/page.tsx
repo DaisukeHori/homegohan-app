@@ -30,116 +30,33 @@ const categories = [
   { id: 'maintenance', name: 'メンテナンス', icon: <Wrench size={16} /> },
 ];
 
-const news = [
-  {
-    id: 1,
-    category: 'update',
-    title: '【新機能】健康記録機能をリリースしました',
-    date: '2025-01-20',
-    summary: '体重、睡眠、気分などを記録できる健康記録機能を追加しました。写真で体重計を撮影すると自動で数値を認識します。',
-    content: `
-いつもほめゴハンをご利用いただきありがとうございます。
+/** お知らせが 1 件も無いときに出す文 */
+const NO_NEWS_MESSAGE = '現在、お知らせはありません。';
 
-本日、健康記録機能をリリースしました！
+/** お知らせの 1 件 */
+interface NewsItem {
+  id: number;
+  category: 'update' | 'notice' | 'maintenance';
+  title: string;
+  /** 掲載日 (YYYY-MM-DD) */
+  date: string;
+  summary: string;
+  content: string;
+  isNew: boolean;
+}
 
-【新機能の概要】
-・体重、体脂肪率、血圧などの記録
-・睡眠時間、睡眠の質の記録
-・気分・コンディションの記録
-・体重計の写真から自動で数値を認識
-・週間・月間のトレンドグラフ
-・AIによる健康アドバイス
-
-【使い方】
-1. ホーム画面の「健康」タブをタップ
-2. 記録したい項目を選択
-3. 数値を入力または写真を撮影
-
-ぜひお試しください！
-    `,
-    isNew: true,
-  },
-  {
-    id: 2,
-    category: 'update',
-    title: '【改善】AI分析の精度が向上しました',
-    date: '2025-01-15',
-    summary: '最新のAIモデルを導入し、食事の認識精度が大幅に向上しました。特に和食の認識が改善されています。',
-    content: `
-AIモデルをアップデートし、食事の認識精度を向上させました。
-
-【改善点】
-・和食の認識精度が約20%向上
-・複数の料理が写っている場合の認識改善
-・暗い場所で撮影した写真の認識改善
-・調理方法（焼き、煮、揚げなど）の認識追加
-
-引き続き精度向上に努めてまいります。
-    `,
-    isNew: true,
-  },
-  {
-    id: 4,
-    category: 'maintenance',
-    title: '【完了】システムメンテナンスのお知らせ',
-    date: '2025-01-05',
-    summary: '1月5日 2:00〜5:00のメンテナンスは予定通り完了しました。',
-    content: `
-1月5日 2:00〜5:00に実施したシステムメンテナンスは予定通り完了しました。
-
-【メンテナンス内容】
-・サーバーの増強
-・データベースの最適化
-・セキュリティアップデート
-
-ご不便をおかけしました。
-    `,
-    isNew: false,
-  },
-  {
-    id: 5,
-    category: 'update',
-    title: '【新機能】バッジ機能を追加しました',
-    date: '2024-12-20',
-    summary: '目標達成でバッジがもらえるゲーミフィケーション機能を追加しました。50種類以上のバッジを集めよう！',
-    content: `
-バッジ機能を追加しました！
-
-【バッジの種類】
-・連続記録バッジ（7日、30日、100日など）
-・朝食マスター、野菜マニアなどの達成バッジ
-・季節限定バッジ
-・レアバッジ
-
-プロフィール画面で獲得したバッジを確認できます。
-全部集められるかな？
-    `,
-    isNew: false,
-  },
-  {
-    id: 6,
-    category: 'notice',
-    title: '【お知らせ】年末年始の営業について',
-    date: '2024-12-25',
-    summary: '年末年始期間中のサポート対応についてお知らせします。',
-    content: `
-年末年始期間中のサポート対応についてお知らせします。
-
-【サポート休業期間】
-2024年12月29日〜2025年1月3日
-
-この期間中にいただいたお問い合わせは、1月4日以降順次対応いたします。
-アプリは通常通りご利用いただけます。
-
-良いお年をお迎えください。
-    `,
-    isNew: false,
-  },
-];
+/**
+ * お知らせの一覧 (新しい順)。実際にあったことだけを載せる。
+ * #1867 (公開の主張の見直し): 以前ここにあった 5 件は、このリポジトリの最初のコミット (2025-11-24) より前の日付 (2024-12〜2025-01) の
+ * リリース・メンテナンス・年末年始の休業のお知らせで、根拠の無い数字 (認識精度の向上率・バッジの種類の数) や、
+ * 製品に無いバッジ (30日・100日の連続記録・季節限定など。付くバッジは src/lib/badges/awardable.ts) を含んでいたので取り下げた。
+ * 戻らないことは tests/public-claims-guard.test.ts が確かめる
+ */
+const news: readonly NewsItem[] = [];
 
 export default function NewsPage() {
   const [activeCategory, setActiveCategory] = useState('all');
-  const [selectedNews, setSelectedNews] = useState<typeof news[0] | null>(null);
+  const [selectedNews, setSelectedNews] = useState<NewsItem | null>(null);
 
   const filteredNews = news.filter(n => activeCategory === 'all' || n.category === activeCategory);
 
@@ -200,6 +117,11 @@ export default function NewsPage() {
 
         {/* ニュース一覧 */}
         <div className="max-w-3xl mx-auto space-y-4">
+          {filteredNews.length === 0 && (
+            <p className="text-center py-12" style={{ color: colors.textMuted }}>
+              {NO_NEWS_MESSAGE}
+            </p>
+          )}
           {filteredNews.map((item, i) => {
             const catInfo = getCategoryInfo(item.category);
             return (
