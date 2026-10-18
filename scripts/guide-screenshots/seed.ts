@@ -23,6 +23,8 @@ dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env.local') });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+/** 利用者を探すときに 1 度に読む数 (ローカルの撮影用の Supabase の利用者は数十人なので、1 ページで全員が入る) */
+const LIST_USERS_PER_PAGE = 1000;
 /** 書いてよい接続先のホスト (ローカルの Supabase だけ) */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
@@ -198,7 +200,7 @@ function must<T>(label: string, result: { data: T; error: { message: string } | 
 /** 利用者を作り直す (いれば消す。消すと profiles・食事・記録などは FK で一緒に消える) */
 async function recreateUser(admin: SupabaseClient, key: GuideUserKey): Promise<string> {
   const { email } = GUIDE_USERS[key];
-  const list = must('listUsers', await admin.auth.admin.listUsers({ perPage: 1000 }));
+  const list = must('listUsers', await admin.auth.admin.listUsers({ perPage: LIST_USERS_PER_PAGE }));
   const existing = list.users.find((u) => u.email === email);
   if (existing) must(`deleteUser ${email}`, await admin.auth.admin.deleteUser(existing.id));
   const created = must(
@@ -430,8 +432,9 @@ function jstDaysSinceMonday(): number {
 
 /** 家族の代表者がいれば、その家族のグループを先に消す (代表者の外部キーは ON DELETE RESTRICT なので、利用者を消し直す前に要る) */
 async function deleteFamiliesOf(admin: SupabaseClient, email: string) {
-  const list = must('listUsers', await admin.auth.admin.listUsers({ perPage: 1000 }));
-  const existing = list.users.find((u) => u.email === email);
+  const { data, error } = await admin.auth.admin.listUsers({ perPage: LIST_USERS_PER_PAGE });
+  if (error) throw new Error(`listUsers: ${error.message}`);
+  const existing = data.users.find((u) => u.email === email);
   if (!existing) return;
   must(`family_groups delete ${email}`, await admin.from('family_groups').delete().eq('representative_id', existing.id));
 }
