@@ -60,9 +60,10 @@ vi.mock('next/image', async () => {
   };
 });
 
-// トップは #1867 で Server Component の殻 (src/app/page.tsx。メタ情報と JSON-LD) と画面の本体 (LandingPageView.tsx) に分けた。
-// 文言を持つのは本体なので、本体を描いて読む
-const { default: LandingPage } = await import('@/app/LandingPageView');
+// トップは #1867 で Server Component の殻 (src/app/page.tsx。メタ情報・viewport・JSON-LD) と画面の本体 (src/components/marketing/LandingPage.tsx) に分けた。
+// 文言を持つのは本体なので、本体を描いて読む。page.tsx は async (nonce を読む) なので createElement(Page) では描けず、本体 (同期の Server Component) を直に描く。
+// 文言の正本は src/components/marketing/landing-copy.ts (下の PUBLIC_SOURCE_FILES でソースも走査する)
+const { LandingPage } = await import('@/components/marketing/LandingPage');
 const { default: AboutPage } = await import('@/app/about/page');
 const { default: NewsPage } = await import('@/app/news/page');
 const { default: CompanyPage } = await import('@/app/company/page');
@@ -75,13 +76,27 @@ const ROOT = path.resolve(__dirname, '..');
 
 /** 公開ページ (ログイン不要で誰でも見られる) */
 const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
-  { file: 'src/app/LandingPageView.tsx', Page: LandingPage },
+  { file: 'src/components/marketing/LandingPage.tsx', Page: LandingPage },
   { file: 'src/app/about/page.tsx', Page: AboutPage },
   { file: 'src/app/news/page.tsx', Page: NewsPage },
   { file: 'src/app/company/page.tsx', Page: CompanyPage },
   { file: 'src/app/legal/page.tsx', Page: LegalPage },
   { file: 'src/app/pricing/PricingPageView.tsx', Page: () => createElement(PricingPageView, { plans: [], isNativeApp: false }) },
   { file: 'src/app/faq/page.tsx', Page: FaqPage },
+];
+
+/**
+ * ソースを走査するファイル = 公開ページ全部 + 描画はしないファイル (#1867)。
+ * - src/components/marketing/landing-copy.ts: 紹介ページの文言の正本 (部品のソースには文言が無いので、ここを走査する)
+ * - src/lib/seo/public-pages.ts: 公開ページごとの description (SITE_DESCRIPTION を含む。検索結果に出る文)
+ * - src/app/(auth)/layout.tsx: ログイン・新規登録の画面の layout は children が要るので描画の対象にしないが、
+ *   根拠のない実績の表示が残っていた (10,000+ ユーザーが実践中) ので、ソースは公開ページと同じ FORBIDDEN で見る
+ */
+const PUBLIC_SOURCE_FILES: string[] = [
+  ...PUBLIC_PAGES.map(({ file }) => file),
+  'src/components/marketing/landing-copy.ts',
+  'src/lib/seo/public-pages.ts',
+  'src/app/(auth)/layout.tsx',
 ];
 
 /** 公開ページに載せてはいけない文字列と、その理由 */
@@ -99,6 +114,8 @@ const FORBIDDEN: { text: string; reason: string }[] = [
   { text: 'シードラウンド', reason: '架空の資金調達' },
   // 根拠のない利用者数・評価・実績
   { text: '10万人', reason: '根拠のない利用者数' },
+  { text: '10,000+', reason: '根拠のない利用者数 (ログイン画面に残っていた表示)' },
+  { text: 'ユーザーが実践中', reason: '根拠のない利用者数' },
   { text: 'App Store評価', reason: '根拠のない評価' },
   { text: '1,234,567', reason: '根拠のない分析件数' },
   { text: '98.7', reason: '根拠のない継続率' },
@@ -155,7 +172,7 @@ function findForbidden(content: string) {
 }
 
 describe('#1155 公開ページのソースに、架空・未確認の会社情報と実績、未確定の価格が無い', () => {
-  it.each(PUBLIC_PAGES.map(({ file }) => file))('%s', (file) => {
+  it.each(PUBLIC_SOURCE_FILES)('%s', (file) => {
     expect(findForbidden(readSource(file))).toEqual([]);
   });
 
@@ -165,6 +182,8 @@ describe('#1155 公開ページのソースに、架空・未確認の会社情�
       '山田 太郎',
       '神宮前1-2-3',
       '10万人',
+      '10,000+',
+      'ユーザーが実践中',
       'App Store評価',
       '1,234,567',
       'シリーズA',
@@ -394,7 +413,7 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
 
 describe('#1155 FAQ (/faq とトップページの FAQ)', () => {
   const faq = readSource('src/app/faq/page.tsx');
-  const landing = readSource('src/app/LandingPageView.tsx');
+  const landing = readSource('src/components/marketing/landing-copy.ts');
 
   it('プランごとの上限・料金・プレミアム限定の説明を載せない', () => {
     for (const word of ['無料プランでは', 'プレミアムプラン', '月額', '年払い', 'Visa', '解約後も次回更新日まで']) {

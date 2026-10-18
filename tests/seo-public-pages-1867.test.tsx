@@ -410,7 +410,7 @@ describe('#1867 トップの構造化データ (JSON-LD)', () => {
     vi.doMock('next/headers', () => ({
       headers: async () => new Headers({ 'x-csp-nonce': 'request-nonce' }),
     }));
-    vi.doMock('@/app/LandingPageView', () => ({ default: () => createElement('main', { id: 'landing' }) }));
+    vi.doMock('@/components/marketing/LandingPage', () => ({ LandingPage: () => createElement('main', { id: 'landing' }) }));
     try {
       const { default: HomePage, metadata } = await import('@/app/page');
       const html = renderToStaticMarkup(await HomePage());
@@ -421,12 +421,12 @@ describe('#1867 トップの構造化データ (JSON-LD)', () => {
       expect(metadata.alternates?.canonical).toBe('/');
     } finally {
       vi.doUnmock('next/headers');
-      vi.doUnmock('@/app/LandingPageView');
+      vi.doUnmock('@/components/marketing/LandingPage');
     }
   });
 
-  it('画面の本体 (LandingPageView.tsx) はクライアントコンポーネントのまま、殻 (page.tsx) は Server Component', () => {
-    expect(isClientModule('src/app/LandingPageView.tsx')).toBe(true);
+  it('紹介ページの本体 (src/components/marketing/LandingPage.tsx) と殻 (page.tsx) はどちらも Server Component (client は島だけ)', () => {
+    expect(isClientModule('src/components/marketing/LandingPage.tsx')).toBe(false);
     expect(isClientModule('src/app/page.tsx')).toBe(false);
   });
 });

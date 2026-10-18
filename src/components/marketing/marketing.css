@@ -1,0 +1,1005 @@
+/* ────────────────────────────────────────────────────────────────
+   紹介ページ (/) のスタイル。トークンと受入の条件は docs/design/marketing/01-landing-site.md §5・§6・§8.3 が正典。
+   - トークンは .lp の中の CSS 変数 (既存の globals.css の --accent などと衝突しない)。
+   - 動き (animation・transition) と、動きのための「隠す・ずらす」初期の見え方は、すべて末尾の
+     @media (prefers-reduced-motion: no-preference) の中にだけ書く (§6.1)。reduce のための打ち消しは書かない。
+   - スクロールに連動する動き (animation-timeline など) は置かない (§3.2)。
+   - 時間で繰り返す動き (infinite) は、デモの分析中の待ちの印の 1 つだけ (§6.1)。
+   ──────────────────────────────────────────────────────────────── */
+
+/* フォーカスの非遮蔽 (§5.3 の --lp-scroll-padding-top・§11 の 2.4.11)。html は .lp の外なので値を直に書く (= 6rem)。
+   アンカーへの移動にも Tab / Shift+Tab のフォーカスの移動にも効く。画面の下に固定する要素は置かない (§3.2) */
+html:has(.lp) {
+  scroll-padding-top: 6rem;
+}
+
+.lp {
+  /* 色 (§5.1) */
+  --lp-bg: #faf9f7;
+  --lp-bg-tint: #fdf0ed;
+  --lp-surface: #ffffff;
+  --lp-ink: #2d2d2d;
+  --lp-ink-soft: #5f5f5f;
+  --lp-accent: #e07a5f;
+  --lp-accent-soft: #ff9b7a;
+  --lp-accent-ink: #b34d2d;
+  --lp-green: #6b9b6b;
+  --lp-green-ink: #3f6e3f;
+  --lp-green-tint: #edf5ed;
+  --lp-gold: #ffd700;
+  --lp-dark: #1f1a17;
+  --lp-on-dark: #ffffff;
+  --lp-on-dark-soft: #ede4dd;
+  --lp-on-dark-muted: #b9ada5;
+  --lp-line: #e8e2dc;
+  --lp-heading-accent-end: #c4573c;
+  /* 動き (§6.1) */
+  --lp-dur-fast: 160ms;
+  --lp-dur: 320ms;
+  --lp-hero-step: 60ms;
+  --lp-stagger: 40ms;
+  --lp-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  /* 形・影・余白 (§5.3) */
+  --lp-radius-card: 1.25rem;
+  --lp-radius-phone: 2.25rem;
+  --lp-shadow-card: 0 1px 2px rgba(45, 45, 45, 0.04), 0 12px 32px -12px rgba(45, 45, 45, 0.12);
+  --lp-shadow-phone: 0 30px 60px -20px rgba(45, 45, 45, 0.28);
+  --lp-max-width: 72rem;
+  --lp-gutter: clamp(1rem, 4vw, 2.5rem);
+  --lp-section-y: clamp(4rem, 10vw, 8rem);
+  --lp-scroll-padding-top: 6rem;
+
+  /* 根 (§8.3 の LandingPage): ライトだけ (§5.6)・横方向を切り取る (スクロールの箱にしない)・長い語で横にはみ出さない */
+  color-scheme: light;
+  background: var(--lp-bg);
+  color: var(--lp-ink);
+  font-family: var(--font-sans), 'Noto Sans JP', system-ui, -apple-system, 'Hiragino Sans', sans-serif;
+  font-size: 1rem;
+  line-height: 1.75;
+  overflow-x: clip;
+  overflow-wrap: anywhere;
+}
+
+.lp *,
+.lp *::before,
+.lp *::after {
+  box-sizing: border-box;
+}
+
+/* タイポグラフィ (§5.2) */
+.lp h1,
+.lp h2 {
+  font-family: var(--font-serif), 'Noto Serif JP', 'Hiragino Mincho ProN', serif;
+  font-weight: 700;
+  margin: 0;
+  text-wrap: balance;
+}
+.lp h1 {
+  font-size: clamp(2.25rem, 1.2rem + 4.2vw, 4.5rem);
+  line-height: 1.15;
+  letter-spacing: -0.01em;
+}
+.lp h2 {
+  font-size: clamp(1.75rem, 1.1rem + 2.4vw, 3rem);
+  line-height: 1.2;
+  letter-spacing: -0.005em;
+}
+.lp h3 {
+  font-size: 1.125rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin: 0;
+  text-wrap: balance;
+}
+.lp p {
+  margin: 0;
+  text-wrap: pretty;
+}
+.lp ul,
+.lp ol,
+.lp dl,
+.lp dd {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lp a {
+  color: inherit;
+}
+.lp img {
+  display: block;
+}
+.lp .lp-lead {
+  font-size: clamp(1.0625rem, 0.95rem + 0.5vw, 1.25rem);
+  line-height: 1.75;
+  color: var(--lp-ink-soft);
+  max-width: 40rem;
+}
+.lp .lp-note {
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+}
+.lp .lp-eyebrow {
+  font-size: 0.875rem;
+  font-weight: 700;
+  line-height: 1.6;
+  color: var(--lp-accent-ink);
+  letter-spacing: 0.02em;
+}
+.lp .lp-headline-accent {
+  background: linear-gradient(100deg, var(--lp-accent-ink), var(--lp-heading-accent-end));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* 箱 */
+.lp .lp-container {
+  max-width: var(--lp-max-width);
+  margin-inline: auto;
+  padding-inline: var(--lp-gutter);
+}
+.lp .lp-section {
+  padding-block: var(--lp-section-y);
+}
+.lp .lp-section-head {
+  max-width: 40rem;
+  margin-bottom: 2.5rem;
+}
+.lp .lp-section-head > * + * {
+  margin-top: 0.75rem;
+}
+/* 帯 (デモ・バッジ・よくある質問の地。§5.3) */
+.lp .lp-band {
+  background: var(--lp-bg-tint);
+}
+
+/* フォーカスのリングは globals.css の 2 トーン (:focus-visible) をそのまま使う。濃色の面の上は白いリングが効く */
+
+/* CTA (§8.3 の CtaLink) */
+.lp .lp-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0.875rem 1.75rem;
+  border-radius: 9999px;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  line-height: 1.5;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.lp .lp-cta--primary {
+  background: var(--lp-ink);
+  color: #ffffff;
+  box-shadow: 0 10px 24px -12px rgba(45, 45, 45, 0.6);
+}
+.lp .lp-cta--secondary {
+  background: var(--lp-surface);
+  color: var(--lp-ink);
+  border: 1px solid var(--lp-line);
+}
+.lp .lp-cta--on-dark {
+  background: var(--lp-accent-soft);
+  color: var(--lp-dark);
+}
+.lp .lp-cta--compact {
+  min-height: 2.75rem;
+  padding: 0.5rem 1.125rem;
+  font-size: 0.875rem;
+}
+
+/* ヘッダー (§8.3 の SiteHeader・M-1) */
+.lp .lp-header {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+}
+.lp .lp-header.is-scrolled {
+  background: rgba(250, 249, 247, 0.85);
+  backdrop-filter: blur(12px);
+  box-shadow: inset 0 -1px 0 var(--lp-line);
+}
+.lp .lp-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  height: 4rem;
+}
+@media (min-width: 768px) {
+  .lp .lp-header-inner {
+    height: 5rem;
+  }
+}
+.lp .lp-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.75rem;
+  font-weight: 700;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.lp .lp-brand-mark {
+  width: 32px;
+  height: 32px;
+  flex: none;
+}
+.lp .lp-nav {
+  display: none;
+}
+@media (min-width: 768px) {
+  .lp .lp-nav {
+    display: block;
+  }
+}
+.lp .lp-nav ul {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.lp .lp-nav a {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.75rem;
+}
+.lp .lp-nav a:hover {
+  text-decoration: underline;
+}
+.lp .lp-header-right {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.lp .lp-login {
+  display: none;
+  align-items: center;
+  min-height: 2.75rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-decoration: none;
+  padding: 0 0.75rem;
+}
+@media (min-width: 640px) {
+  .lp .lp-login {
+    display: inline-flex;
+  }
+}
+
+/* ヒーロー (§8.3 の HeroSection) */
+.lp .lp-hero {
+  position: relative;
+  padding-block: clamp(2.5rem, 8vw, 6rem) var(--lp-section-y);
+  /* ヒーローの地 (§5.3)。静的なグラデーション 1 つ。右上を中心に --lp-bg-tint、下の端は --lp-bg。背景のための要素は置かない */
+  background: radial-gradient(farthest-side at 85% 20%, var(--lp-bg-tint), rgba(253, 240, 237, 0) 70%), var(--lp-bg);
+}
+.lp .lp-hero-grid {
+  position: relative;
+  display: grid;
+  gap: 3rem;
+  align-items: center;
+}
+@media (min-width: 1024px) {
+  .lp .lp-hero-grid {
+    grid-template-columns: 7fr 5fr;
+    gap: 4rem;
+  }
+}
+.lp .lp-hero-copy > * + * {
+  margin-top: 1.25rem;
+}
+.lp .lp-hero-ctas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.lp .lp-assurances {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--lp-ink-soft);
+}
+.lp .lp-assurances li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+.lp .lp-check {
+  width: 1rem;
+  height: 1rem;
+  flex: none;
+  color: var(--lp-green-ink);
+}
+
+/* 端末の枠 (§5.4・§8.3 の PhoneFrame) */
+.lp .lp-phone {
+  position: relative;
+  aspect-ratio: 540 / 1080;
+  width: min(100%, 300px);
+  margin-inline: auto;
+  border-radius: var(--lp-radius-phone);
+  background: var(--lp-ink);
+  padding: 0.5rem;
+  box-shadow: var(--lp-shadow-phone);
+}
+.lp .lp-phone-screen {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  border-radius: calc(var(--lp-radius-phone) - 0.5rem);
+  background: var(--lp-surface);
+}
+.lp .lp-phone-screen img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* ヒーローの画面の扇 (§5.4 の扇の形)。箱は 4 : 5。前の端末は幅 62.5 %、後ろは 50 % で左右から 6 %・上から 9 %。
+   傾けた後ろの端末の外接矩形も箱の中に収まる (320 px でも横スクロールを作らない) */
+.lp .lp-hero-stack {
+  position: relative;
+  width: min(100%, 26rem);
+  aspect-ratio: 4 / 5;
+  margin-inline: auto;
+}
+.lp .lp-hero-stack > .lp-phone {
+  position: absolute;
+  margin: 0;
+}
+.lp .lp-hero-stack > .lp-hero-phone--left {
+  width: 50%;
+  left: 6%;
+  top: 9%;
+  rotate: -6deg;
+}
+.lp .lp-hero-stack > .lp-hero-phone--right {
+  width: 50%;
+  right: 6%;
+  top: 9%;
+  rotate: 6deg;
+}
+.lp .lp-hero-stack > .lp-hero-phone--front {
+  width: 62.5%;
+  left: 18.75%;
+  top: 0;
+  z-index: 1;
+}
+.lp .lp-caption {
+  text-align: center;
+  margin-top: 1rem;
+}
+
+/* 使い方 (§8.3 の HowItWorksSection)。動かない 3 つの手順。768 px 以上は 3 列、未満は 1 列 */
+.lp .lp-steps {
+  display: grid;
+  gap: 3rem;
+}
+@media (min-width: 768px) {
+  .lp .lp-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+    align-items: start;
+  }
+}
+@media (min-width: 1024px) {
+  .lp .lp-steps {
+    gap: 2rem;
+  }
+}
+.lp .lp-steps .lp-phone {
+  width: min(100%, 13rem);
+}
+.lp .lp-step-text {
+  margin-top: 1.5rem;
+}
+.lp .lp-step-num {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  color: var(--lp-accent-ink);
+  background: var(--lp-bg-tint);
+  margin-bottom: 0.75rem;
+}
+.lp .lp-step-text p {
+  margin-top: 0.5rem;
+  color: var(--lp-ink-soft);
+}
+
+/* デモ (§8.3 の DemoSection) */
+.lp .lp-demo-grid {
+  display: grid;
+  gap: 1.5rem;
+}
+@media (min-width: 768px) {
+  .lp .lp-demo-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.lp .lp-card {
+  border-radius: var(--lp-radius-card);
+  background: var(--lp-surface);
+  padding: 1.5rem;
+  box-shadow: var(--lp-shadow-card);
+}
+.lp .lp-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+@media (min-width: 640px) {
+  .lp .lp-picker {
+    gap: 0.75rem;
+  }
+}
+.lp .lp-photo-btn {
+  position: relative;
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 1rem;
+  border: 2px solid var(--lp-line);
+  padding: 0;
+  background: var(--lp-bg-tint);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.lp .lp-photo-btn[aria-pressed='true'] {
+  border-color: var(--lp-accent-ink);
+}
+/* 分析中も disabled にしない (押したボタンのフォーカスを保つ。§13.3) */
+.lp .lp-photo-btn[aria-disabled='true'] {
+  cursor: progress;
+}
+.lp .lp-photo-btn img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+/* 写真の上の名前は、黒 70 % の帯の上の白文字 (写真の色によらず 8.45:1 以上。§5.1・§5.4)。名前は 4 字までで、320 px でも 1 行 */
+.lp .lp-photo-name {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 0.375rem 0.25rem;
+  white-space: nowrap;
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1.375;
+  color: #ffffff;
+  background: rgba(0, 0, 0, 0.7);
+  text-align: left;
+}
+.lp .lp-result {
+  min-height: 16rem;
+}
+.lp .lp-result-body > * + * {
+  margin-top: 0.75rem;
+}
+.lp .lp-result-score {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border-radius: 1rem;
+  background: var(--lp-green-tint);
+  box-shadow: inset 0 0 0 1px var(--lp-green);
+}
+.lp .lp-result-score strong {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--lp-green-ink);
+  line-height: 1;
+}
+.lp .lp-result-score span {
+  font-weight: 700;
+}
+/* 推定の栄養は、幅によらず 5 行の並び。列に分けない (5 列だと狭い幅で「タンパク質」が途中で折れる) */
+.lp .lp-nutri {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 1rem;
+  border-radius: 0.75rem;
+  background: var(--lp-bg-tint);
+}
+.lp .lp-nutri > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding-block: 0.375rem;
+}
+.lp .lp-nutri > div + div {
+  border-top: 1px solid var(--lp-line);
+}
+.lp .lp-nutri dt {
+  font-size: 0.875rem;
+  color: var(--lp-ink-soft);
+  white-space: nowrap;
+}
+.lp .lp-nutri dd {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--lp-ink);
+  white-space: nowrap;
+}
+.lp .lp-nutri dd small {
+  font-size: 0.875rem;
+  font-weight: 500;
+  margin-left: 0.25rem;
+}
+.lp .lp-demo-track {
+  height: 0.375rem;
+  border-radius: 9999px;
+  background: var(--lp-bg-tint);
+  overflow: hidden;
+  margin-top: 1rem;
+}
+.lp .lp-demo-progress {
+  height: 100%;
+  transform-origin: left;
+  background: var(--lp-accent);
+}
+.lp .lp-spin {
+  display: inline-block;
+  width: 1.125rem;
+  height: 1.125rem;
+  border-radius: 50%;
+  border: 2px solid var(--lp-bg-tint);
+  border-top-color: var(--lp-accent-ink);
+  vertical-align: -0.2em;
+  margin-right: 0.5rem;
+}
+
+/* 機能の bento (§8.3 の FeaturesSection)。1024 px 以上は 12 列で 大 = 6・中 = 3・小 = 6、768 px 以上は 2 列、未満は 1 列 */
+.lp .lp-bento {
+  display: grid;
+  gap: 1rem;
+}
+@media (min-width: 768px) {
+  .lp .lp-bento {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .lp .lp-bento {
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+  }
+  .lp .lp-bento > .is-large,
+  .lp .lp-bento > .is-small {
+    grid-column: span 6;
+  }
+  .lp .lp-bento > .is-medium {
+    grid-column: span 3;
+  }
+}
+.lp .lp-feature {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  border-radius: var(--lp-radius-card);
+  background: var(--lp-surface);
+  box-shadow: var(--lp-shadow-card);
+}
+.lp .lp-feature.is-small {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1rem;
+}
+.lp .lp-feature-body {
+  margin-top: 0.25rem;
+  color: var(--lp-ink-soft);
+}
+/* 画像のあるカードの画面の箱。端末を上から 1.5rem 下げて置き、下の部分は箱の下の端で切れる (カードの下から覗く見え方。§5.4) */
+.lp .lp-feature-media {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 4 / 3;
+  border-radius: 1rem;
+  background: var(--lp-bg-tint);
+}
+.lp .lp-feature.is-large .lp-feature-media {
+  aspect-ratio: 16 / 10;
+}
+.lp .lp-feature-media > .lp-phone {
+  position: absolute;
+  top: 1.5rem;
+  left: 0;
+  right: 0;
+  margin-inline: auto;
+  width: min(56%, 13rem);
+}
+.lp .lp-icon {
+  width: 2.5rem;
+  height: 2.5rem;
+  flex: none;
+  border-radius: 0.75rem;
+  display: grid;
+  place-items: center;
+  background: var(--lp-bg-tint);
+  color: var(--lp-accent-ink);
+}
+.lp .lp-icon svg {
+  width: 1.25rem;
+  height: 1.25rem;
+}
+
+/* バッジ (§8.3 の BadgesSection)。640 px 未満は 1 列 (輪の右に名前と説明)・640〜1023 px は 2 列・1024 px 以上は 4 列。名前はどの幅でも 1 行 */
+.lp .lp-badges {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+@media (min-width: 640px) {
+  .lp .lp-badges {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1024px) {
+  .lp .lp-badges {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.lp .lp-badge-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  text-align: left;
+  padding: 1.25rem;
+  border-radius: var(--lp-radius-card);
+  background: var(--lp-surface);
+  box-shadow: var(--lp-shadow-card);
+}
+@media (min-width: 640px) {
+  .lp .lp-badge-card {
+    flex-direction: column;
+    text-align: center;
+  }
+}
+.lp .lp-badge-ring {
+  flex: none;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(circle at 30% 30%, #fff3c4, var(--lp-gold));
+  color: var(--lp-ink);
+  box-shadow: inset 0 0 0 3px #ffffff, 0 0 0 1px var(--lp-line);
+}
+.lp .lp-badge-ring svg {
+  width: 1.5rem;
+  height: 1.5rem;
+}
+.lp .lp-badge-card h3 {
+  white-space: nowrap;
+}
+.lp .lp-badge-card p {
+  font-size: 0.875rem;
+  color: var(--lp-ink-soft);
+  margin-top: 0.25rem;
+  line-height: 1.5;
+}
+
+/* 安心 (§8.3 の TrustSection): 768 px 未満は 1 列・768〜1279 px は 2 列・1280 px 以上は 4 列 (見出しが 1 行に収まる幅) */
+.lp .lp-trust {
+  display: grid;
+  gap: 1rem;
+}
+@media (min-width: 768px) {
+  .lp .lp-trust {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1280px) {
+  .lp .lp-trust {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.lp .lp-trust-item {
+  padding: 1.5rem;
+  border-radius: var(--lp-radius-card);
+  background: var(--lp-surface);
+  box-shadow: var(--lp-shadow-card);
+}
+.lp .lp-trust-item h3 {
+  margin: 0.75rem 0 0.5rem;
+  white-space: nowrap;
+}
+.lp .lp-trust-item p {
+  font-size: 1rem;
+  color: var(--lp-ink-soft);
+}
+.lp .lp-trust-item a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  margin-top: 0.75rem;
+  color: var(--lp-accent-ink);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+/* よくある質問 (§8.3 の FaqSection・M-8) */
+.lp .lp-faq {
+  max-width: 48rem;
+}
+.lp .lp-faq-item {
+  border: 1px solid var(--lp-line);
+  border-radius: 1rem;
+  background: var(--lp-surface);
+  margin-bottom: 0.75rem;
+}
+.lp .lp-faq-btn {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.125rem 1.25rem;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-weight: 700;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 1rem;
+  min-height: 3rem;
+}
+.lp .lp-faq-chevron {
+  flex: none;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--lp-ink-soft);
+}
+.lp .lp-faq-chevron.is-open {
+  transform: rotate(180deg);
+}
+/* 答えの箱は高さを測らずに開く (grid-template-rows: 0fr → 1fr)。閉じている間は inert で Tab にも読み上げにも出ない */
+.lp .lp-faq-panel {
+  display: grid;
+  grid-template-rows: 0fr;
+}
+.lp .lp-faq-panel.is-open {
+  grid-template-rows: 1fr;
+}
+.lp .lp-faq-panel > div {
+  overflow: hidden;
+  min-height: 0;
+}
+.lp .lp-faq-panel p {
+  padding: 0 1.25rem 1.125rem;
+  color: var(--lp-ink-soft);
+  font-size: 1rem;
+}
+.lp .lp-faq-contact {
+  margin-top: 1.5rem;
+}
+/* 文の中のリンクは下線を付ける (色だけで区別しない: §11 の 1.4.1) */
+.lp .lp-faq-contact a {
+  color: var(--lp-accent-ink);
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+/* 最終 CTA (§8.3 の FinalCtaSection)。単色の濃い面。光や模様を重ねない */
+.lp .lp-final {
+  background: var(--lp-dark);
+  color: var(--lp-on-dark);
+}
+.lp .lp-final .lp-final-inner {
+  max-width: 48rem;
+  margin-inline: auto;
+  padding-inline: var(--lp-gutter);
+  text-align: center;
+}
+.lp .lp-final h2 {
+  color: var(--lp-on-dark);
+}
+.lp .lp-final .lp-lead {
+  color: var(--lp-on-dark-soft);
+  margin: 1rem auto 1.75rem;
+}
+.lp .lp-final .lp-assurances {
+  justify-content: center;
+  color: var(--lp-on-dark-soft);
+  margin-top: 1.5rem;
+}
+.lp .lp-final .lp-check {
+  color: var(--lp-accent-soft);
+}
+.lp .lp-final .lp-disclaimer {
+  color: var(--lp-on-dark-muted);
+  font-size: 0.875rem;
+  margin-top: 2rem;
+}
+
+/* フッター (§8.3 の SiteFooter): 768 px 未満は 1 列・768〜1023 px は上にマークと一文、下にリンクの 3 列・1024 px 以上は 4 列 */
+.lp .lp-footer {
+  background: var(--lp-surface);
+  border-top: 1px solid var(--lp-line);
+  padding: 3rem 0;
+}
+.lp .lp-footer-grid {
+  display: grid;
+  gap: 2rem;
+}
+@media (min-width: 768px) {
+  .lp .lp-footer-grid {
+    grid-template-columns: repeat(3, minmax(12rem, 1fr));
+  }
+  .lp .lp-footer-grid > :first-child {
+    grid-column: 1 / -1;
+  }
+}
+@media (min-width: 1024px) {
+  .lp .lp-footer-grid {
+    grid-template-columns: minmax(0, 1fr) repeat(3, minmax(12rem, 12rem));
+  }
+  .lp .lp-footer-grid > :first-child {
+    grid-column: auto;
+  }
+}
+.lp .lp-footer h3 {
+  font-size: 0.9375rem;
+  margin-bottom: 0.75rem;
+}
+.lp .lp-footer li {
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+.lp .lp-footer li a {
+  text-decoration: none;
+  color: var(--lp-ink-soft);
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  white-space: nowrap;
+}
+.lp .lp-footer li a:hover {
+  text-decoration: underline;
+}
+.lp .lp-footer-tagline {
+  margin-top: 0.75rem;
+  max-width: 22rem;
+}
+.lp .lp-footer-bottom {
+  border-top: 1px solid var(--lp-line);
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+  font-size: 0.875rem;
+  color: var(--lp-ink-soft);
+}
+
+/* ────────────────────────────────────────────────────────────────
+   動き (§6.1・§6.2)。animation・transition の宣言と、動きのための初期の見え方は、このブロックの中にだけ書く。
+   動きを減らす設定 (reduce) では丸ごと効かず、上の「動きの無いときの見え方」のまま (打ち消しの規則は書かない)。
+   ──────────────────────────────────────────────────────────────── */
+@keyframes lp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+/* M-3 ヒーローの画面の塊: 位置だけ動かし、不透明度は最初から 1。Chromium は不透明度 0 で最初に描いた要素を LCP の候補に数えず、
+   見えるようになっても描き直されるまで数えないので、LCP の候補の前の 1 枚 (preload) を不透明度 0 から始めない */
+@keyframes lp-rise-in-place {
+  from {
+    transform: translateY(12px);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes lp-progress {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+@keyframes lp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes lp-pop {
+  from {
+    transform: scale(0.92);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* M-9 押せる */
+  .lp .lp-cta {
+    transition: transform var(--lp-dur-fast) var(--lp-ease);
+  }
+  .lp .lp-cta:hover {
+    transform: translateY(-1px);
+  }
+  .lp .lp-cta:active {
+    transform: scale(0.98);
+  }
+  .lp .lp-photo-btn {
+    transition: border-color var(--lp-dur-fast), transform var(--lp-dur-fast) var(--lp-ease);
+  }
+  .lp .lp-photo-btn:hover {
+    transform: translateY(-2px);
+  }
+  /* M-1 ヘッダー */
+  .lp .lp-header {
+    transition: background-color var(--lp-dur-fast), box-shadow var(--lp-dur-fast);
+  }
+  /* M-5 現れ方。JS が動いた印 (data-js) が付いてから、まだ画面に入っていない間だけ隠す。サーバーの HTML では隠さない */
+  .lp .lp-reveal[data-js='1']:not(.is-in) {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  .lp .lp-reveal[data-js='1'] {
+    transition: opacity var(--lp-dur) var(--lp-ease), transform var(--lp-dur) var(--lp-ease);
+    transition-delay: var(--lp-reveal-delay, 0ms);
+  }
+  /* M-2 ヒーローの文字・M-3 ヒーローの画面の塊。読み込みのときに 1 回だけ (自動で動き続けるものは置かない) */
+  .lp .lp-hero-rise {
+    animation: lp-rise var(--lp-dur) var(--lp-ease) both;
+    animation-delay: calc(var(--lp-i, 0) * var(--lp-hero-step));
+  }
+  .lp .lp-hero-media-rise {
+    animation: lp-rise-in-place var(--lp-dur) var(--lp-ease) both;
+    animation-delay: calc(var(--lp-i, 0) * var(--lp-hero-step));
+  }
+  /* M-7 デモ: 進捗の棒・待ちの印 (繰り返す動きはこれだけ)・栄養の立ち上がり */
+  .lp .lp-demo-progress {
+    animation: lp-progress var(--lp-demo-ms, 1400ms) linear both;
+  }
+  .lp .lp-spin {
+    animation: lp-spin 1s linear infinite;
+  }
+  .lp .lp-nutri > div {
+    animation: lp-rise var(--lp-dur) var(--lp-ease) both;
+    animation-delay: calc(var(--lp-i, 0) * var(--lp-stagger));
+  }
+  /* M-10 バッジ */
+  .lp .lp-reveal.is-in .lp-badge-card {
+    animation: lp-pop var(--lp-dur) var(--lp-ease) both;
+    animation-delay: calc(var(--lp-i, 0) * var(--lp-stagger));
+  }
+  /* M-8 FAQ の開閉 */
+  .lp .lp-faq-panel {
+    transition: grid-template-rows var(--lp-dur) var(--lp-ease);
+  }
+  .lp .lp-faq-chevron {
+    transition: transform var(--lp-dur) var(--lp-ease);
+  }
+}
