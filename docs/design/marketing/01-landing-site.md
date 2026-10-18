@@ -351,14 +351,14 @@ src/components/marketing/
   primitives/                            12 本
     Reveal.tsx                           島: 現れ方 (v1.7 のまま)
     ScreenZoom.tsx                       Server: 章の画面の一部の拡大 (ズーム。§5.4)。箱の立ち上がり (M-17) は CSS で、きっかけは包む Reveal
-    StoryScroller.tsx                    島: 固定した端末の画面の入れ替え (M-6)。useInViewSteps で手順の交差を見る
+    StoryScroller.tsx                    島: 固定した端末の画面の入れ替え (M-6)。useInViewIds (useInViewSteps.ts) で手順の交差を見る
     ScoreRing.tsx                        島: スコアの輪の描かれ方と数値の増え方 (M-11)
     ReadingProgress.tsx                  島: 読む位置の棒 (M-4)。SiteHeader が置く
     FlowDiagram.tsx                      Server: 流れの図 (SVG)。線の描かれ方 (M-12) は CSS
     PhoneFrame.tsx                       Server: 端末の枠 (v1.7 のまま)
     CtaLink.tsx                          Server: Link にボタンの見た目 (v1.7 のまま)
     useInViewOnce.ts                     hook (v1.7 のまま。Reveal・ScoreRing が使う)
-    useInViewSteps.ts                    hook: 複数の要素の交差を 1 つの IntersectionObserver で見る (StoryScroller・SiteHeader が使う)
+    useInViewSteps.ts                    hook: useInViewIds を export する。id で指す複数の要素の交差を 1 つの IntersectionObserver で見る (StoryScroller・SiteHeader が使う)
     useInPageLinkFocus.ts                hook: ページの中のリンクを押したら、先の区切り (tabindex="-1") へフォーカスを移す (SiteHeader が使う。§2.2)
     useReducedMotion.ts                  既存の再 export (v1.7 のまま)
 public/marketing/photos/                 デモの写真 3 枚 (v1.7 のまま)
@@ -378,7 +378,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | D | 3D / 大きな演出ライブラリ (Three.js・GSAP・Lottie) | 派手な動きを作れる | 依存が増え、JS が数十〜数百 KB 増える。WCAG 2.3.3 と INP の予算に合わない。本物感は実際の画面 17 枚で出せる (§2.6) |
 | E | 紹介ページだけ静的化 | CDN から配れる | `docs/design/cross/18-csp-nonce.md` §22 Q-7 で裁定済み (nonce と両立しない)。全ページ動的の決定を本冊で覆さない |
 
-**縁の発生源を消すより単純な構造は無いか**: v1.7 は「書き切れない動きは外す」で固定した端末の入れ替え (旧 M-6) と視差 (旧 M-4) を外した。v2.0 は R-17 で「固定して中身が入れ替わる」を求められるので、旧 M-6 を**縁を 1 つずつ潰した形**で戻す: (1) 固定する列と手順の列の幅 → 1024 px 以上だけで 7 : 5 の 2 列、未満は 1 列で固定しない (幅ごとの出し分けは `display` の 2 通りだけ)。(2) 端末の高さが画面の高さを超えると固定が効かない → 端末の高さを `min(70vh, 34rem)` に決め、手順 1 つの最小の高さを `70vh` にして、端末が常に画面に収まる。(3) 中央の帯の判定 → `useInViewSteps` の IntersectionObserver の `rootMargin` を `-40% 0px -40% 0px` (画面の中央の 20 % の帯) に固定し、判定の純関数 `storyActiveIndex` (§9.4) を遷移表 (§13.3) で閉じる。(4) 飛ばしの遷移 → 「帯にある手順のうち最も下のもの。帯に無ければ直前の値のまま」の 1 規則にし、溶け込みは `opacity` の `transition` だけ (位置を動かさない)。(5) JS 無し・動きを減らす設定 → 手順ごとに自分の画面を HTML に持ち (1 列のときと同じ)、1024 px 以上で JS が動いたときだけ固定した端末に切り替える。視差 (旧 M-4) は戻さない (伝える中身が無く、前庭の負担)。
+**縁の発生源を消すより単純な構造は無いか**: v1.7 は「書き切れない動きは外す」で固定した端末の入れ替え (旧 M-6) と視差 (旧 M-4) を外した。v2.0 は R-17 で「固定して中身が入れ替わる」を求められるので、旧 M-6 を**縁を 1 つずつ潰した形**で戻す: (1) 固定する列と手順の列の幅 → 1024 px 以上だけで 7 : 5 の 2 列、未満は 1 列で固定しない (幅ごとの出し分けは `display` の 2 通りだけ)。(2) 端末の高さが画面の高さを超えると固定が効かない → 端末の高さを `min(70vh, 34rem)` に決め、手順 1 つの最小の高さを `70vh` にして、端末が常に画面に収まる。(3) 中央の帯の判定 → `useInViewIds` (`useInViewSteps.ts`) の IntersectionObserver の `rootMargin` を `-40% 0px -40% 0px` (画面の中央の 20 % の帯) に固定し、判定の純関数 `storyActiveIndex` (§9.4) を遷移表 (§13.3) で閉じる。(4) 飛ばしの遷移 → 「帯にある手順のうち最も下のもの。帯に無ければ直前の値のまま」の 1 規則にし、溶け込みは `opacity` の `transition` だけ (位置を動かさない)。(5) JS 無し・動きを減らす設定 → 手順ごとに自分の画面を HTML に持ち (1 列のときと同じ)、1024 px 以上で JS が動いたときだけ固定した端末に切り替える。視差 (旧 M-4) は戻さない (伝える中身が無く、前庭の負担)。
 
 同じ問いを新しい動きの 1 つずつに当て、置く根拠を §6.2 の「何を伝えるか」の列に書いた。置かないもの:
 
@@ -412,10 +412,10 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | S-13 | `landing-copy.ts` に `10万人が利用` → `public-claims-guard` のソース走査が赤、描画の走査も赤。`写真を撮るたびに` → U-20 が赤。`evidence: ['src/app/api/weekly-report/route.ts']` (実在しない) → U-2 が赤 |
 | S-14 | 本番ビルド → Lighthouse (desktop・mobile ×3) → Performance ≥ 90 → e2e `landing-page.spec.ts` (LCP / CLS・JS の転送量・CSP 違反 0・構造・axe・物語・輪・戻る) → Speed Insights で p75 |
 | S-15 | 料金の一文 `登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。…` と、安心の 1 つ目と FAQ の 1 つ目の答えが同じ事実を言う (U-24 が「すべて無料」を含む文字列に「1 日にご利用いただける回数」があることを確かめる。当たる文字列は 3 つ)。ページの文に `たびに` `毎回` `何度でも` `無制限` `使い放題` は無い (U-20) |
-| S-16 | 1280 px・JS あり・no-preference: `StoryScroller` がマウント → `data-js` を付け、1024 px 以上なので固定した端末 (4 枚を重ねた箱。`position: sticky`) を見せ、手順の中の画面を隠す (CSS)。`useInViewSteps` が手順 4 つを `rootMargin: -40% 0px -40% 0px` で見る → 手順 1 が帯に入る → `storyActiveIndex` = 0 → 1 枚目 `camera.png` が `opacity: 1`・ほかは 0 (溶け込み `--lp-dur`) → 手順 2 が帯に入る → 1 → `analyze.png` → … → 一気に末尾へ → 帯に手順 4 → 3 → `menu-result.png`。帯に何も無い瞬間 (手順と手順の間) は直前の値のまま。`FlowDiagram` を包む `Reveal` が画面に入る → `is-in` → 線が `stroke-dashoffset` で 1.2 s かけて描かれる (CSS) |
+| S-16 | 1280 px・JS あり・no-preference: `StoryScroller` がマウント → `data-js` を付け、1024 px 以上なので固定した端末 (4 枚を重ねた箱。`position: sticky`) を見せ、手順の中の画面を隠す (CSS)。`useInViewIds` が手順 4 つ (`how-step-1`〜`how-step-4`) を `rootMargin: -40% 0px -40% 0px` で見る → 手順 1 が帯に入る → `storyActiveIndex` = 0 → 1 枚目 `camera.png` が `opacity: 1`・ほかは 0 (溶け込み `--lp-dur`) → 手順 2 が帯に入る → 1 → `analyze.png` → … → 一気に末尾へ → 帯に手順 4 → 3 → `menu-result.png`。帯に何も無い瞬間 (手順と手順の間) は直前の値のまま。`FlowDiagram` を包む `Reveal` が画面に入る → `is-in` → 線が `stroke-dashoffset` で 1.2 s かけて描かれる (CSS) |
 | S-17 | `ScoreRing` がマウント → 根に `data-js` (状態 armed: no-preference なら見える数字は 0、CSS の `[data-js]:not([data-in])` の規則で輪は `stroke-dashoffset: 100` に一瞬で隠れる。reduce なら見える数字は 89 で、隠す規則は no-preference の中なので輪も最後の形のまま) → `ScoreRing` の根が画面に入る (`useInViewOnce`) → 根に `data-in` → no-preference なら CSS が輪の `stroke-dashoffset` を全長から `全長 × (1 − 89 / 100)` まで `RING_DRAW_MS` (800 ms) で動かし、JS が `countUpValue` で数字を 0 → 89 に 800 ms で増やす (rAF)。reduce なら最初から最後の見え方。JS 無しなら HTML の最後の値 (89) と最後の offset (SVG の属性) がそのまま見える。89 = `comment.png` に写るスコア = `GUIDE_MEAL_ANALYSIS.overallScore` (U-28 が突き合わせる) |
 | S-18 | 375 px: 場面の `ul` は `overflow-x: auto; scroll-snap-type: x mandatory`、各 `li` は `scroll-snap-align: start`・幅 `min(85vw, 22rem)`。指で送ると 1 枚ずつ止まる。`ul` は `tabindex="0"` と `aria-label` を持つ (axe の `scrollable-region-focusable`)。ページの `scrollWidth` は `clientWidth` 以下 (E-6)。768 px 以上は 2 列、1024 px 以上は 4 列で、スクロールの箱ではない (`tabindex` も付けない) |
-| S-19 | ナビ「料金」(`Link href="#pricing"`) を押す → Next の router が `__NA` つきで `pushState` し、`#pricing` の要素へスクロール (`html` の `scroll-padding-top: 6rem` で固定ヘッダーの下に上端が来る) → `SiteHeader` の `useInViewSteps` (18 の区切りを `rootMargin: -40% 0px -55% 0px` で見る) が `pricing` を強調 (`aria-current="location"`)。同じ click を `useInPageLinkFocus` が `document` で受け、`section#pricing` へフォーカスを移す (E-29) → 戻る → `popstate` の `state` は Next のもの (bridge は何もしない) → ヒーローの位置へ戻り、文書は読み込み直さない (E-23) |
+| S-19 | ナビ「料金」(`Link href="#pricing"`) を押す → Next の router が `__NA` つきで `pushState` し、`#pricing` の要素へスクロール (`html` の `scroll-padding-top: 6rem` で固定ヘッダーの下に上端が来る) → `SiteHeader` の `useInViewIds` (18 の区切りを `rootMargin: -40% 0px -55% 0px` で見る) が `pricing` を強調 (`aria-current="location"`)。同じ click を `useInPageLinkFocus` が `document` で受け、`section#pricing` へフォーカスを移す (E-29) → 戻る → `popstate` の `state` は Next のもの (bridge は何もしない) → ヒーローの位置へ戻り、文書は読み込み直さない (E-23) |
 | S-20 | `/` → ナビ「仕組み」(`Link`) → `/#how` (Next の印つきの項目) → ヘッダーの「無料で始める」(`Link`) → `/signup` → 戻る → `popstate` の `state.__NA` あり → Next が `/#how` を描く (bridge は何もしない) → 紹介ページ・`#how` が画面に (門の `tests/e2e/back-navigation.spec.ts` (#1893) の「`/` → ハッシュ → `/signup` → 戻る」の型で、v2.0 のナビ 5 つのそれぞれを流す)。素の `<a href="#…">` が積む項目 (layout のスキップリンク `#main-content`・アドレスバーで打ったハッシュ) も、#1893 の bridge が `hashchange` のあとに印を付けるので、同じく戻ると画面が切り替わる (§2.2) |
 | S-21 | 家族の区切り: 要点 4 つ (立場・招待・共有の範囲・家族の献立) の文はそれぞれ `family-roles`・`family-share`・`family-menu-view` の行。共有の範囲の図 (SVG) は 3 つの項目 (食事の記録・健康・献立) とそれぞれの既定 (オン・オフ・オン) を描く。FAQ「家族の記録は誰に見えますか？」の答えが同じ事実 |
 | S-22 | 組織の区切り: 一文は「組織は運営が作ります（ご利用はお問い合わせください）。…」で、`org-admin` の条件 (組織は運営が作り、登録しただけでは使えない) を落とさない。要点 4 つの文は `org-admin`・`org-challenge-privacy` の行。「個人の記録の集計は出していません」と書く (条件を落とさない)。料金の一文は「登録してお使いいただける機能は、いまはすべて無料です。…組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。」で、「いま使える機能」の一覧に組織は無い。図は 管理者 → 部署 → メンバー の形だけ。FAQ「会社やチームで使えますか？」の答えが同じ事実 |
@@ -1066,7 +1066,7 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 | M-11 | `ScoreRing` (章 nutrition) | スコアという数字の手応え | `ScoreRing` の根が画面に入ったとき (`useInViewOnce`。1 回だけ。入る前はマウントで付けた `data-js` の下で、見える数字 0・輪 `100` で待つ: §13.3 の armed) | 輪 (`circle`。`pathLength="100"`・`stroke-dasharray: 100`) の `stroke-dashoffset` が `100` から `100 − 89` (= 11) へ CSS の遷移で動く。数字は `countUpValue` で 0 → 89 を `RING_DRAW_MS` (800 ms) で増やす (rAF。読み上げは最後の値だけ: §8.3) | `--lp-dur-slow` / `--lp-ease`・数字は `easeOutCubic` | 全部 | 輪は最初から最後の形・数字は最初から 89 | HTML の最後の値 (89) と SVG の属性の最後の offset がそのまま見える | E-25・E-7・U-32 |
 | M-12 | `FlowDiagram` (仕組みの下) | 流れがつながっている | 図を包む `Reveal` が画面に入ったとき (`is-in`) | 線 (`path`。`pathLength="1"`) の `stroke-dashoffset` が `1` → `0` へ CSS の遷移で動く (描かれる)。節は `Reveal` の立ち上がり | `--lp-dur-draw` / linear | 全部 | 線は最初から描かれている | 線は最初から描かれている (隠す規則は no-preference + `[data-js]` の下だけ) | E-26・E-7 |
 | M-13 | `ScenesSection` の帯 | 自分で送る | 指・ホイール・キーボード (`tabindex="0"` の箱) | CSS の `scroll-snap-type: x mandatory` で 1 枚ずつ止まる。動きの宣言は無い (ブラウザのスクロール) | 無し | 768 px 未満だけ帯。以上は 2 列 (768〜1023) / 4 列 (1024〜) | 同じ (ブラウザの既定。`scroll-behavior` は書かない) | 同じ (CSS) | E-27・E-6 |
-| M-14 | `SiteHeader` のナビ | いまどこを読んでいるか | 区切りが画面の中央の帯 (`NAV_CURRENT_ROOT_MARGIN` = `-40% 0px -55% 0px`) に入る (`useInViewSteps` で 18 の区切りを見る) | いま画面にある区切りが属するナビの項目に `aria-current="location"` と下線 (`--lp-accent-ink`・2 px)。下線は `scaleX 0 → 1` | `--lp-dur-fast` / `--lp-ease` | 768 px 以上 (ナビが見えるとき) | 下線は一瞬で付く | 付かない | E-28・U-33 |
+| M-14 | `SiteHeader` のナビ | いまどこを読んでいるか | 区切りが画面の中央の帯 (`NAV_CURRENT_ROOT_MARGIN` = `-40% 0px -55% 0px`) に入る (`useInViewIds` で 18 の区切りを見る) | いま画面にある区切りが属するナビの項目に `aria-current="location"` と下線 (`--lp-accent-ink`・2 px)。下線は `scaleX 0 → 1` | `--lp-dur-fast` / `--lp-ease` | 768 px 以上 (ナビが見えるとき) | 下線は一瞬で付く | 付かない | E-28・U-33 |
 | M-15 | `PhoneFrame` (章の画面・ヒーローの前の 1 枚) | 手に取れる | `:hover` (`@media (hover: hover) and (pointer: fine)`) | 端末が `rotate(-1.5deg) translateY(-6px)` (傾きがある端末は元の傾きに足す)。影が濃くなる | `--lp-dur` / `--lp-ease` | マウスのある端末だけ | 無し | CSS なので動く | U-20 |
 | M-16 | `FeaturesSection` の画像のあるカード | 中身が見える | カードの `:hover` (`@media (hover: hover)`) | カードの中の端末が `translateY(-8px)` (覗く量が増える) | `--lp-dur` / `--lp-ease` | マウスのある端末だけ | 無し | CSS なので動く | U-20 |
 | M-17 | `ScreenZoom` (章 photo・menu の拡大の箱) | 画面の細部を手元に引き寄せて見ている (ズーム) | 箱を包む `Reveal` が画面に入ったとき (`is-in`。M-5 と同じ判定・1 回だけ) | 箱 (`data-zoom-lens` の要素) が `transform: scale(var(--lp-zoom-from))` (0.85) + `opacity: 0` から `none` + `opacity: 1` へ。`transform-origin: 50% 0` (上の画面の側から大きくなる)。中の画像と札は動かさない (包む `Reveal` の立ち上がり M-5 は箱と札を一緒に動かす)。隠す規則 (縮みと透明) は no-preference の中で、包む `Reveal` に JS の印 (`data-js`) があって「画面に入った」の印 (`is-in`) が無い間だけ。隠すときは遷移なし (`transition` の宣言は `is-in` の付いた `Reveal` の中の箱にだけ書く。`ScoreRing` の `[data-in]` と同じ書き方) | `--lp-dur-slow` (800 ms = `ZOOM_DRAW_MS`) / `--lp-ease` | 全部 (箱の幅は §5.3・§5.4) | 縮めも透明もしない (最初から元の大きさ) | 縮めも透明もしない (`Reveal` の JS の印が付かない) | E-31・E-1・U-20 |
@@ -1079,14 +1079,14 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 |---|---|---|
 | M-2, M-3, M-8, M-9, M-10, M-15, M-16, M-17 と M-7 の進捗の棒・待ちの印・栄養の立ち上がり、M-11 の輪、M-12 の線、M-14 の下線 | CSS (`@keyframes`・`transition`。宣言は `@media (prefers-reduced-motion: no-preference)` の中だけ) | JS 不要。reduce では宣言が無いので動かない |
 | M-1, M-4 | 島 + `scroll` (`passive` + `requestAnimationFrame` で間引く) | 全ブラウザで動く。状態 (`scrolled`・進み) を付けるだけ |
-| M-5, M-6, M-11 のきっかけ, M-12 のきっかけ, M-17 のきっかけ (包む `Reveal`), M-14 | IntersectionObserver (`useInViewOnce`: 1 回だけ / `useInViewSteps`: 複数の要素の交差を 1 つの observer で見続ける) | 全ブラウザで動く。「画面に入った」「帯にある」の印を付けるだけ |
+| M-5, M-6, M-11 のきっかけ, M-12 のきっかけ, M-17 のきっかけ (包む `Reveal`), M-14 | IntersectionObserver (`useInViewOnce`: 1 回だけ / `useInViewIds` (`useInViewSteps.ts`): 複数の要素の交差を 1 つの observer で見続ける) | 全ブラウザで動く。「画面に入った」「帯にある」の印を付けるだけ |
 | M-7 の出入り | framer-motion (`MotionConfig` + `LazyMotion features={domAnimation}` + `m.div`・`AnimatePresence`) をデモの島だけで | v1.7 と同じ |
 | M-7 と M-11 の数字 | `countUpValue` (純関数。§9.5) + `requestAnimationFrame` の小さなループ (`useCountUp` は作らず、各島の中で `useEffect` で回す。`useReducedMotion()` が true なら回さず最後の値) | ライブラリ不要。読み上げは最後の値だけ |
 | M-13 | CSS (`scroll-snap`) | JS 不要 |
 
 `Reveal` と `useInViewOnce` の作りは v1.7 と同じ (`threshold: 0` + `rootMargin`。要素の高さに依らない。U-22)。
 
-`useInViewSteps` の作り (受入の条件は §8.3): `useInViewSteps<T extends Element>(count: number, rootMargin: string): { refs: (index: number) => (el: T | null) => void; intersecting: ReadonlyArray<boolean> }`。1 つの IntersectionObserver (`threshold: 0`・引数の `rootMargin`) で `count` 個の要素を監視し、要素ごとの「いま帯と交差しているか」の配列を返す。監視は続ける (`unobserve` しない)。IO が無い環境では全部 `false` を返す (物語は 1 枚目のまま・ナビは強調なし)。アンマウントで `disconnect`。`threshold` は 0 固定 (U-22 の走査の対象: IntersectionObserver を作るのは `useInViewOnce.ts` と `useInViewSteps.ts` の 2 本で、どちらも `threshold` は 0)。
+`useInViewIds` の作り (ファイルは `primitives/useInViewSteps.ts`。受入の条件は §8.3): `useInViewIds(ids: ReadonlyArray<string>, rootMargin: string): ReadonlyArray<boolean>`。マウントの後に `ids` の要素を `document.getElementById` で取り (見つからない id は飛ばす)、1 つの IntersectionObserver (`threshold: 0`・引数の `rootMargin`) で監視し、`ids` の順に要素ごとの「いま帯と交差しているか」の配列を返す。監視は続ける (`unobserve` しない)。IO が無い環境では全部 `false` を返す (物語は 1 枚目のまま・ナビは強調なし)。アンマウントで `disconnect`。`ids` が変わったら作り直す。`threshold` は 0 固定 (U-22 の走査の対象: IntersectionObserver を作るのは `useInViewOnce.ts` と `useInViewSteps.ts` の 2 本で、どちらも `threshold` は 0)。`refs` を返す形 (`count` を受け取る形) は作らない。
 
 ### 6.4 `useReducedMotion`
 
@@ -1243,17 +1243,17 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `countUpValue` | `(target: number, elapsedMs: number, durationMs: number): number` (§9.5。0 以上 target 以下の整数) | `DemoSection`・`ScoreRing`・テスト |
 | `easeOutCubic` | `(t: number): number` (§9.5) | `countUpValue` |
 | `Reveal`・`CtaLink`・`PhoneFrame`・`useInViewOnce`・`useReducedMotion` | v1.7 と同じ | 各区切り |
-| `StoryScroller` | `({ steps, activeClassName }: { steps: ReadonlyArray<{ src: string; alt: string }>; activeClassName?: string }): JSX.Element`。手順の `li` は `StorySection` が描き、`StoryScroller` は `data-story-step` 属性を持つ `li` を `document.querySelectorAll` ではなく **props の `stepIds` で**受け取る: 正確には `({ steps, stepIds }: { steps: ReadonlyArray<{ src: string; alt: string }>; stepIds: ReadonlyArray<string> })`。マウント後に `stepIds` の要素を `document.getElementById` で取り、`useInViewSteps` 相当の IntersectionObserver (`STORY_BAND_ROOT_MARGIN`) で監視する | `StorySection` |
+| `StoryScroller` | `({ steps, stepIds }: { steps: ReadonlyArray<{ src: string; alt: string }>; stepIds: ReadonlyArray<string> }): JSX.Element`。手順の `li` (`id="how-step-<n>"`) は `StorySection` が描き、`StoryScroller` はその id を props の `stepIds` で受け取る。マウント後に `useInViewIds(stepIds, STORY_BAND_ROOT_MARGIN)` (§6.3) で監視する | `StorySection` |
 | `ScoreRing` | `({ value, max, label, note }: { value: number; max: number; label: string; note: string }): JSX.Element` (value は 0〜max の整数) | `NutritionChapter` |
 | `ReadingProgress` | `(): JSX.Element` (props 無し。`aria-hidden` の `div`) | `SiteHeader` |
 | `FlowDiagram` | `({ nodes, note }: { nodes: ReadonlyArray<{ id: FlowNodeId; label: string }>; note: string }): JSX.Element` (`FlowNodeId` = `'photo' \| 'analyze' \| 'record' \| 'menu' \| 'shopping'`。アイコンは id で部品が決める) | `StorySection` |
 | `ScreenZoom` | `({ zoom }: { zoom: ChapterZoom }): JSX.Element` (名前つきの export。Server。`ChapterZoom` は §9.1 の `ChapterZoomSchema` の型) | `ChapterSection` |
 | `zoomFrame` | `(region: ZoomRegion): ZoomFrame` (§9.1。箱の縦横比 `aspectRatio` (`'<幅> / <高さ>'`) と、箱の幅に対する画像の幅 `widthPercent`・箱の幅に対する画像の左 `leftPercent`・箱の高さに対する画像の上 `topPercent` (どれも %)。矩形がちょうど箱いっぱいになる) | `ScreenZoom`・テスト |
 | `ChapterSection` | `({ chapter, number, tone, children }: { chapter: Chapter; number: number; tone: ChapterTone; children?: ReactNode }): JSX.Element` (`Chapter` は §9.1 の `ChapterSchema` の型。`tone` = `'bg' \| 'tint' \| 'green' \| 'blue' \| 'dark'`。`children` は章ごとの追加 (輪・バッジの列・免責) で、要点と画面の間に置く) | 各章の部品 |
-| `useInViewSteps` | `<T extends Element>(count: number, rootMargin: string): { refs: (index: number) => (el: T \| null) => void; intersecting: ReadonlyArray<boolean> }` (§6.3) | `SiteHeader` (18 の区切りを `document.getElementById` で取る形でも可。その場合は `useInViewSteps` の代わりに同じ契約の `useInViewIds(ids: ReadonlyArray<string>, rootMargin: string): ReadonlyArray<boolean>` を同じファイルに置く) |
+| `useInViewIds` | `(ids: ReadonlyArray<string>, rootMargin: string): ReadonlyArray<boolean>` (§6.3。ファイルは `primitives/useInViewSteps.ts`) | `StoryScroller` (手順の id 4 つ)・`SiteHeader` (18 の区切りの id) |
 | 各区切り (`SiteHeader`・`HeroSection`・`StorySection`・`DemoSection`・`FeaturesSection`・`PhotoChapter`・`MenuChapter`・`NutritionChapter`・`HealthChapter`・`BadgesChapter`・`ChatChapter`・`ScenesSection`・`FamilySection`・`OrgSection`・`TrustSection`・`PricingSection`・`GuideSection`・`FaqSection`・`FinalCtaSection`・`SiteFooter`) | `(): JSX.Element` (props 無し。`LANDING_COPY` を読む。名前つきの export) | `LandingPage` |
 
-`StoryScroller` と `useInViewSteps` の契約は、上の表の「正確には」の形 (`stepIds` を受け取り、`useInViewIds` で監視する) を正とする。`useInViewSteps.ts` は `useInViewIds` を export し、`StoryScroller` と `SiteHeader` の両方がこれを使う (`refs` を返す形は作らない)。
+`useInViewSteps.ts` が export するのは `useInViewIds` だけで、`StoryScroller` と `SiteHeader` の両方がこれを使う (`refs` を返す形は作らない)。ファイル名は §18 の新設の一覧と U-22 の走査の対象に合わせて `useInViewSteps.ts` のまま。
 
 ### 8.3 受入の条件 (部品ごと)
 
@@ -2865,7 +2865,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | 型 / Zod (`landing-copy.ts`) | `SectionId`、`NavKey`、`ChapterId`、`ChapterTone`、`FlowNodeId`、`PointSchema`、`ChapterScreenSchema`、`ZoomRegionSchema`、`ChapterZoomSchema`、`ChapterSchema`、`SceneSchema`、`FlowNodeSchema`、`ShareFigureItemSchema`、`PlanCardSchema`、`GuideChapterSchema`、`Chapter`、`ChapterScreen`、`ZoomRegion`、`ChapterZoom`、`ZoomFrame`、`Point`、`Scene`、`FlowNode` |
 | 型 (`landing-screens.ts`) | `LandingScreenName`、`LandingScreen` |
 | CSS の変数 | `--lp-blue`、`--lp-blue-ink`、`--lp-blue-tint`、`--lp-dur-slow`、`--lp-dur-draw`、`--lp-chapter-y`、`--lp-shadow-card-hover`、`--lp-shadow-phone-far`、`--lp-zoom-width`、`--lp-zoom-from` |
-| DOM の id / 属性 | 区切りの id 10 個 (`photo` `menu` `nutrition` `health` `chat` `scenes` `family` `org` `pricing` `guide`) と見出しの id (`<id>-title`)・手順の id `how-step-1`〜`how-step-4`・区切りの `section` 18 の `tabindex="-1"`・印 `data-js` (`StoryScroller`・`ScoreRing`。`Reveal` は v1.7 から)・`data-in` (`ScoreRing`)・`data-active` (固定した端末の画面)・`data-zoom-lens` (拡大の箱)・`aria-current="location"` (ナビ)・場面と章の帯の `tabindex="0"` と `aria-label` |
+| DOM の id / 属性 | 区切りの id 10 個 (`photo` `menu` `nutrition` `health` `chat` `scenes` `family` `org` `pricing` `guide`) と見出しの id (`<id>-title`) (18 の区切りのうち `hero` `how` `demo` `features` `badges` `trust` `faq` `cta` の 8 個は v1.7 からある id なので、この一覧に入れない。`badges` は v1.7 の `BadgesSection` から v2.0 の `BadgesChapter` へ役目を移すが、id は同じ)・手順の id `how-step-1`〜`how-step-4`・区切りの `section` 18 の `tabindex="-1"`・印 `data-js` (`StoryScroller`・`ScoreRing`。`Reveal` は v1.7 から)・`data-in` (`ScoreRing`)・`data-active` (固定した端末の画面)・`data-zoom-lens` (拡大の箱)・`aria-current="location"` (ナビ)・場面と章の帯の `tabindex="0"` と `aria-label` |
 | 依存・環境変数・許可リストの行・route・テーブル・列・RLS・Storage・エラーコード | 無し (e2e の予算の既定 `LANDING_JS_BUDGET_BYTES` = 262144 はテストの中の定数) |
 | 消すもの | `src/components/marketing/sections/HowItWorksSection.tsx`、`BadgesSection.tsx` (役目は `StorySection`・`BadgesChapter` へ)、`landing-copy.ts` の `how`・`badges`・`trust` (4 点) の旧い節 (新しい節に置き換える)、`LANDING_IMAGE_SIZES.step` |
 
@@ -2983,6 +2983,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 ---
 
 ## 24. 未解決事項 (設計は上の既定で進める)
+
+番号は v1.7 と揃えるため詰めない。欠番: Q-2 は v1.7 より前の改定で閉じた。Q-8 (1 日の流れの区切りを置くか) は v1.7 の既定「置かない」のまま v2.0 で閉じた (使う人の場面は `scenes`、写真から献立までの流れは `how` が受け持ち、1 日の流れの区切りは置かない)。
 
 | # | 事項 | 既定 |
 |---|---|---|
