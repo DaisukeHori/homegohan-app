@@ -22,7 +22,7 @@ v1.7 から v2.0 で変える方針 (Issue #1867 の 2026-10-18 13 時台のコ�
 
 前提 (本書が従う条件): ローンチ前で利用者ゼロ。利用者数・利用者の声・受賞・メディア掲載などの実績を作らない。本番・コードは設計の段では変えない。
 
-本冊は、`/` の紹介ページ (いまは v1.7 のとおり、Server Component の殻 `src/app/page.tsx` + 本体 `src/components/marketing/LandingPage.tsx` + 島 4 つ (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`)) を、**Server Component の骨格 + 役目を 1 つずつ持つ client の島 (8 つ) + CSS 主体の動き** という構造のまま、18 の区切りに広げる (§3)。
+本冊は、`/` の紹介ページ (いまは v1.7 のとおり、Server Component の殻 `src/app/page.tsx` + 本体 `src/components/marketing/LandingPage.tsx` + 島 4 つ (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`)) を、**Server Component の骨格 + 役目を 1 つずつ持つ client の島 (7 つ) + CSS 主体の動き** という構造のまま、18 の区切りに広げる (§3)。
 
 本書の正典の持ち方 (§9 の冒頭に詳しく):
 
@@ -42,7 +42,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 
 1. 情報の設計: 18 の区切りの構成と、それぞれの目的・中身・行動の呼びかけ → §3.1・§4
 2. 文言: 見出し・本文の全文と、公開の主張の表 (46 件。根拠と条件) → §4
-3. 視覚の設計: 色 (v1.7 のトークンに章の色 2 つを足す)・タイポグラフィの緩急・余白・奥行き (影と層)・写真と画面の方針・図解・アイコン・ダークモード → §5
+3. 視覚の設計: 色 (v1.7 の色のトークン 18 に、青の 3 つ `--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足して 21)・タイポグラフィの緩急・余白・奥行き (影と層)・写真と画面の方針・図解・アイコン・ダークモード → §5
 4. 動きの設計: 16 の動き (スクロールに連動した物語・固定した端末の入れ替え・数値の増え方・図の描かれ方・微細な反応) と、それぞれの受入の条件 (幅・動きを減らす設定・JS 無し・測り方) → §6
 5. 画像の調達: 既存の 15 枚のうち使う 13 枚と、新しく撮る 6 枚 (撮影の台本と見本の値) → §7
 6. 部品の分け方 (`src/components/marketing/`) と各部品の受入の条件・速さの予算と測り方・アクセシビリティの基準・検索の設計 → §8・§10・§11・§12
@@ -118,7 +118,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 
 - **紹介ページ (LP)**: `/` で返す、未ログインの人向けのページ。公開ページ (`/about` `/faq` ほか) は別のページで、本冊の範囲外 (§1)。
 - **区切り (セクション)**: `main` の中の `section` 1 つ。v2.0 は 18 (§3.1)。**章 (チャプター)**: 区切りのうち、1 つの機能を深く見せるもの (写真で記録・AI 献立・栄養の見える化・健康の記録・バッジ・AI に相談の 6 つ)。同じ部品 `ChapterSection` で描く。
-- **島 (client の島)**: `'use client'` の部品。状態 (スクロール・選択・開閉・いま見えている手順・数値の増え方) を持つものだけを島にし、文章と画像は Server Component で描く。v2.0 は 8 つ (§3.1)。
+- **島 (client の島)**: `'use client'` の部品。状態 (スクロール・選択・開閉・いま見えている手順・数値の増え方) を持つものだけを島にし、文章と画像は Server Component で描く。v2.0 は 7 つ (§3.1)。
 - **主張 (claim)**: アプリの機能や条件について紹介ページが言うこと。§4.1 の公開の主張の表の 1 行 = `landing-copy.ts` の `claims` の 1 件 (id・文・根拠のパス (`evidence`)・条件 (`condition`))。46 件。
 - **受入の条件**: 部品ごとに、振る舞い・アクセシビリティ・動きを減らす設定と JS 無しのときの見え方・見た目の決まり (幅ごとの配置と大きさ)・確かめる検査を書いたもの (§8.3)。実装はこれを満たせば、書き方 (クラス名・DOM の入れ子・CSS の書き方) は自由。
 - **実際の画面**: `public/guide/*.png` (Issue #1852 で撮り、v1.7 の段 0 で食事の写真の解析の 2 枚を撮り直したアプリの画面写真 15 枚。540×1080) と、本冊の段 0 で新しく撮る `public/marketing/screens/*.png` (6 枚。540×1080)。画面そのものは本物のアプリだが、写っている利用者と記録は撮影用の見本 (`scripts/guide-screenshots/seed.ts`) で、AI の読み取りの結果は撮影の台本が返す見本の値 (`scripts/guide-screenshots/meal-analysis-mock.ts` の `GUIDE_MEAL_ANALYSIS`)。だから数値と文は実際の利用者の結果ではない。画面を出す区切りには画面の注記 (`SCREENS_CAPTION`) を置く。
@@ -188,7 +188,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 
 | 事実 | 場所 | 本冊での扱い |
 |---|---|---|
-| 区切りは 8 つ (`hero` `how` `demo` `features` `badges` `trust` `faq` `cta`)。島は 4 つ (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`)。framer-motion は `DemoSection.tsx` だけが読む | `LandingPage.tsx`・`sections/`・`primitives/` | 区切りを 18 に、島を 8 に広げる (§3.1)。`DemoSection` の framer-motion の使い方は変えない |
+| 区切りは 8 つ (`hero` `how` `demo` `features` `badges` `trust` `faq` `cta`)。島は 4 つ (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`)。framer-motion は `DemoSection.tsx` だけが読む | `LandingPage.tsx`・`sections/`・`primitives/` | 区切りを 18 に、島を 7 に広げる (§3.1)。`DemoSection` の framer-motion の使い方は変えない |
 | 文言と主張は `landing-copy.ts` (533 行・主張 17 件 `CLAIM_IDS`)。`LandingCopySchema` (zod) で形を固定し、U-1 で 1 回だけ parse する | `src/components/marketing/landing-copy.ts` | 主張を 46 件に、文言の節を 18 に広げる (§9.1 を逐語で差し替える) |
 | ヒーローは実際の画面 3 枚の扇 (前に `comment.png`・左右に `camera.png`・`analyze.png`。動かない)。使い方は静的な 3 列 | `HeroSection.tsx`・`HowItWorksSection.tsx` | ヒーローは 5 枚の扇に (640 px 以上。§5.4)。使い方は、固定した端末の画面がスクロールで入れ替わる物語 (`StoryScroller`。§6.2 M-6) に替える |
 | 動きは 8 つ (M-1〜M-3・M-5・M-7〜M-10)。`marketing.css` (1,005 行) の動きの宣言はすべて `@media (prefers-reduced-motion: no-preference)` の中 (`:943` 以降)。`animation-timeline` は使わない (U-18) | `marketing.css`・`Reveal.tsx`・`useInViewOnce.ts` | 動きを 16 に (§6.2)。動きの宣言の置き場の規律 (no-preference の中だけ・`animation-timeline` 無し) は変えない |
@@ -355,7 +355,7 @@ public/marketing/screens/                新しい画面写真 6 枚 (段 0。§
 scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮影と見本のデータを足す。§7.1)
 ```
 
-島は 8 (SiteHeader・DemoSection・FaqSection・Reveal・StoryScroller・ScoreRing・ReadingProgress と、SiteHeader の中で使う ReadingProgress を数えると 7 部品 + hook)。数え方: `'use client'` を持つ部品のファイルは `SiteHeader.tsx`・`DemoSection.tsx`・`FaqSection.tsx`・`Reveal.tsx`・`StoryScroller.tsx`・`ScoreRing.tsx`・`ReadingProgress.tsx` の 7 本 (U-10 が数える)。文章と画像は Server Component で描くので、JS が無くても全文が HTML にある (S-9)。
+島は 7 (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`・`StoryScroller`・`ScoreRing`・`ReadingProgress`。`ReadingProgress` は `SiteHeader` の中に置くが、`'use client'` を持つ別のファイルなので 1 本と数える。hook の `useInViewSteps.ts` は部品でないので数えない)。数え方: `'use client'` を持つ部品のファイルは `SiteHeader.tsx`・`DemoSection.tsx`・`FaqSection.tsx`・`Reveal.tsx`・`StoryScroller.tsx`・`ScoreRing.tsx`・`ReadingProgress.tsx` の 7 本 (U-10 が数える)。文章と画像は Server Component で描くので、JS が無くても全文が HTML にある (S-9)。
 
 ### 3.2 代替案の比較と裁定 (1 回だけ)
 
@@ -2397,7 +2397,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 実際の画面 | 6 枚 (`public/guide`) | 19 枚 (`public/guide` の 13 枚 + `public/marketing/screens` の 6 枚。段 0 で撮る)。画面の注記は 12 の区切りに |
 | 動き | 8 (M-1〜M-3・M-5・M-7〜M-10)。控えめ。スクロール連動と固定した端末は置かない | 16 (M-1〜M-16)。固定した端末の入れ替え (M-6)・読む位置の棒 (M-4)・数字の増え方 (M-7・M-11)・輪 (M-11)・線 (M-12)・スナップ (M-13)・ナビの強調 (M-14)・端末とカードの反応 (M-15・M-16)。各動きに受入の条件 |
 | ページの中のリンク | 素の `<a href="#…">` (ヘッダーのナビ 4・デモを試す) → 戻るの不具合の原因 (§2.2) | すべて `next/link` の `Link` (ナビ 5・デモを試す・機能のカード 10)。E-23 が戻るを確かめる |
-| 色 | トークン 19 (`--lp-*`)。文字と下地は 21 組 | トークン 22 (`--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足す)。31 組 |
+| 色 | 色のトークン 18 (`--lp-*` のうち色のもの。§5.1 の表の行)。文字と下地は 21 組 | 色のトークン 21 (`--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足す)。31 組 |
 | タイポグラフィ | h1・h2・h3・lead・本文・注記 | 章の h2 (32〜56 px)・大きな数字 (48〜80 px)・章の番号・eyebrow を足す |
 | 図解 | 無し | 3 つ (流れ・共有の範囲・組織の形)。JSX の SVG と HTML |
 | `reduced-motion` | no-preference の中だけ + `MotionConfig` + `useReducedMotion` | 同じ規律。数字・溶け込み・輪・線も止まる |
@@ -2689,8 +2689,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
-| `tests/landing-page-1867.test.ts` | `CLAIM_IDS`・`17 個`・`section が 8 つ`・`hero how demo features badges trust faq cta`・`21 組`・`useInViewOnce.ts だけ`・`3 つ`・`screensCaption`・`BadgesSection`・`HowItWorksSection`・`badges.items`・`trust.items` | 主張 17・区切り 8・組 21・IO 1 本・注記 3 区切り。バッジは `LANDING_COPY.badges.items` | §16.1 のとおり数と対象を広げ、U-27〜U-34 を足す | 1・2a |
-| `tests/e2e/landing-page.spec.ts` | `8 つのセクション`・`LANDING_JS_BUDGET_BYTES`・`245760`・`ナビ 4 つ`・`img が 3 つ`・`E-21`・`E-22`・`#features` `#how` `#badges` `#faq` | §16.3 の v1.7 の値 | §16.3 のとおり広げ、E-23〜E-28 を足す。既定 262144・ナビ 5・ヒーロー 5 枚・E-21 を書き直す | 3 |
+| `tests/landing-page-1867.test.ts` | `CLAIM_IDS`・`17 個`・`section が 8 つ`・`hero how demo features badges trust faq cta`・`21 組`・`useInViewOnce.ts だけ`・`3 つ`・`screensCaption`・`BadgesSection`・`HowItWorksSection`・`LANDING_COPY.how`・`LANDING_COPY.hero.screens`・`LANDING_COPY.features.cards`・`LANDING_COPY.badges.items` | 主張 17・区切り 8・組 21・IO 1 本・注記 3 区切り。読む `LANDING_COPY` の鍵: U-3 が `features.cards` (8 枚) の `claimId`、U-5 が `hero.screens` (3 枚)・`how.steps[].image` (3 件)・`features.cards[].image` の alt、U-6 が `badges.items` (4)、U-26 が `hero`・`how`・`features` の `screensCaption`。`trust` は読まない | §16.1 のとおり数と対象を広げ、U-27〜U-34 を足す。鍵の読み替え (§18 で `how`・`badges` の旧い節を消すので、旧い鍵のままでは型検査が赤になる): U-3 は `features.cards` 8 → 10 枚。U-5 は `hero.screens` 3 → 5 枚、`how.steps[].image` → `story.steps[].image` (3 → 4 件)、`chapters.*.screens[].image`・`guide.screens[].image` を足す (`/guide/` のものだけ)。U-6 は `badges.items` → `chapters.badges.items` (4 のまま)。U-26 は `how.screensCaption` → `story.screensCaption`、対象の区切りを 3 → 12 | 1・2a |
+| `tests/e2e/landing-page.spec.ts` | `8 つのセクション`・`LANDING_JS_BUDGET_BYTES`・`245760`・`ナビ 4 つ`・`img が 3 つ`・`E-21`・`E-22`・`#features` `#how` `#badges` `#faq` `#trust`・`copy.how`・`copy.badges`・`copy.trust.items` | §16.3 の v1.7 の値。読む `LANDING_COPY` の鍵: E-19 (本文の一覧) が `copy.how.lead`・`copy.badges.lead`・`copy.how.steps[].body`・`copy.trust.items[].body`、E-22 が `#badges` の中の `copy.badges.items[].name` と `#trust` の中の `copy.trust.items[].title`。E-9 は `#trust` の中のリンクを 24×24 px 以上で確かめ、E-15 は Tab の順の `href` に `#features` `#how` `#badges` `#faq` を期待し、E-21 は `#how img` (3 つ) を見る | §16.3 のとおり広げ、E-23〜E-28 を足す。既定 262144・ナビ 5・ヒーロー 5 枚・E-21 を書き直す。鍵の読み替え (§18 で `how`・`badges` の旧い節を消すので、旧い鍵のままでは型検査が赤になる): E-19 は `copy.how.lead` → `copy.story.lead`、`copy.badges.lead` → `copy.chapters.badges.lead`、`copy.how.steps` → `copy.story.steps` (3 → 4 件)、`copy.trust.items` は 4 → 6 件 (鍵は同じ)。E-22 は `copy.badges.items` → `copy.chapters.badges.items` (区切りの id `#badges` は v2.0 でも章 badges の id なので同じ)、`#trust` と `copy.trust.items[].title` はそのまま (6 件)。E-9 の `#trust` はそのまま (v2.0 の安心の区切りにもリンクが 1 つある: プライバシーポリシーを読む)。E-15 の期待は `#how` `#features` `#family` `#pricing` `#faq` | 3 |
 | `tests/public-claims-guard.test.ts` | `PUBLIC_SOURCE_FILES`・`landing-copy.ts` | `landing-copy.ts`・`public-pages.ts`・`(auth)/layout.tsx` | `landing-screens.ts` を足す (§9.7) | 1 |
 | `tests/guide-images-1852.test.ts` | `public/guide`・`guideImagePaths`・`使わない画像が残っていない` | `public/guide/` にガイドの 15 枚だけ | 変更なし (新しい 6 枚は `public/marketing/screens/`。`public/guide/` は触らない) | 0 |
 | `scripts/guide-screenshots/shoot.pw.ts` の最後の確認 | `guideImagePaths`・`readdirSync(RAW_DIR)` | 撮った PNG = ガイドの 15 枚 | `RAW_DIR` 直下の 15 枚と `RAW_DIR/landing/` の `LANDING_SCREENS` の 6 枚の両方を見る (§7.1 の 4) | 0 |
@@ -2722,6 +2722,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `docs/design/marketing/CLAUDE.md` (新設。v1.7 の §20 で予定) | ドメインの指針 (文言は `landing-copy.ts` が正本・主張は公開の主張の表の行だけ・回数を約束する語を書かない・実績の数字を作らない・絵文字を使わない・逐語の正典は見た目と振る舞いの決まりまで・CSP と全ページ動的・更新は月に数回・新しい画面写真は `public/marketing/screens/` と `landing-screens.ts`・ページの中のリンクは `Link`) | 同上 |
 | `docs/design/cross/05-i18n-a11y.md` §7 | `/` の axe の検査が E-20 の 6 つの状態に増えたことを 1 行 | 本冊の実装 PR のマージと同日 |
 | `docs/design/cross/06-perf-cache.md` §3.1 | FID → INP (v1.7 の §20 と同じ。任意) | 任意 |
+| `docs/design/billing/01-billing-core.md` (`/pricing` を指す箇所の一覧の行。origin/main `2863cb79` の 3849 行目付近) | `src/app/LandingPageView.tsx:586` (トップのフッターの「料金プラン」) を、いまの置き場所に直す: 文言とリンクは `src/components/marketing/landing-copy.ts` の `LANDING_COPY.footer.columns` の「サービス」の列 (`{ label: '料金プラン', href: '/pricing' }`)、描くのは `src/components/marketing/sections/SiteFooter.tsx`。`LandingPageView.tsx` は #1889 (v1.7) で消えている (§2.2)。v2.0 はフッターを変えないので、指す先は v1.7 の時点から同じで、本冊の実装を待たずに直せる | 本冊の設計 PR のマージと同日 |
 | `scripts/guide-screenshots/run.sh` の先頭のコメント | 撮る枚数 (15 + 6) と持ち帰る場所 (`public/marketing/screens`) — これは段 0 の実装で直す (docs ではなく台本) | 段 0 |
 | Issue #1867 | v2.0 の設計の要点 (18 の区切り・主張 46 件・動き 16・新しい画面 6 枚・戻るの原因と作り) をコメントで記録 | 実装 WF の投入時 (オーケストレーター) |
 | 戻るの不具合の B 型の Issue | 原因 (§2.2) と、紹介ページ側の作り (`Link`) と E-23 を本冊が持つことを書き、B 型の範囲 (`(auth)/` の側と Next の `popstate` の扱い) を決める | B 型の起票時 (オーケストレーター) |
