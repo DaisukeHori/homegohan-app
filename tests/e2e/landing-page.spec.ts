@@ -52,8 +52,6 @@ const REFLOW_CHECK_HEIGHT = 700;
 const REDUCED_RESULT_MAX_MS = DEMO_ANALYZING_MS / 2;
 /** 失敗の文に載せる、要素の文字の抜き出しの長さ (文字数。失敗の文を読める長さに保つためだけの値) */
 const EXCERPT_CHARS = 20;
-/** playwright.config.ts の baseURL が無いときの既定 (next start の既定のポート) */
-const FALLBACK_BASE_URL = 'http://localhost:3000';
 /** ヒーローの立ち上がりの最長 (560 ms) より十分長い待ち (ms)。読み込みからこの時間のあとに動いている Animation が無いことを確かめる */
 const HERO_SETTLE_MS = 2_000;
 /** スクロールを 1 回進めたあと、IntersectionObserver と描画が追いつくのを待つ時間 (ms) */
@@ -550,7 +548,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     const scriptBodies: Buffer[] = [];
     const bodyReads: Promise<void>[] = [];
     const externalRequests: string[] = [];
-    const origin = new URL(baseURL ?? FALLBACK_BASE_URL).origin;
+    const origin = new URL(baseURL ?? 'http://localhost:3000').origin;
     page.on('request', (request) => {
       const url = new URL(request.url());
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
@@ -625,7 +623,7 @@ test.describe('#1867 紹介ページ (/)', () => {
   });
 
   test('E-16 アプリの WebView (is_native_app=1 の Cookie・未ログイン) でも、同じ h1 とセクションが出て、ストアへのリンクが無い', async ({ page, baseURL }) => {
-    await page.context().addCookies([{ name: 'is_native_app', value: '1', url: baseURL ?? FALLBACK_BASE_URL }]);
+    await page.context().addCookies([{ name: 'is_native_app', value: '1', url: baseURL ?? 'http://localhost:3000' }]);
     await open(page);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(LANDING_COPY.hero.headlineLines.join(''));
     const sectionIds = await page.locator('main > section').evaluateAll((sections) => sections.map((section) => section.id));
