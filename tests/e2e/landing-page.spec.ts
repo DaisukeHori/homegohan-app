@@ -76,7 +76,7 @@ const FAQ_FIRST_ANSWER_LIMIT_SENTENCE = '1 日にご利用いただける回数'
 
 declare global {
   interface Window {
-    __landingVitals?: { lcp: { startTime: number; inHero: boolean }[]; layoutShift: number };
+    __landingVitals?: { lcp: { startTime: number; inHero: boolean; element: string }[]; layoutShift: number };
     __landingCspViolations?: string[];
   }
 }
@@ -475,7 +475,11 @@ test.describe('#1867 紹介ページ (/)', () => {
       new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           const lcp = entry as PerformanceEntry & { element?: Element | null };
-          window.__landingVitals?.lcp.push({ startTime: lcp.startTime, inHero: Boolean(lcp.element?.closest('#hero')) });
+          window.__landingVitals?.lcp.push({
+            startTime: lcp.startTime,
+            inHero: Boolean(lcp.element?.closest('#hero')),
+            element: lcp.element ? `${lcp.element.tagName.toLowerCase()}「${(lcp.element.textContent ?? '').trim().slice(0, 20)}」${lcp.element.getAttribute('src') ?? ''}` : '(要素なし)',
+          });
         }
       }).observe({ type: 'largest-contentful-paint', buffered: true });
       new PerformanceObserver((list) => {
@@ -491,7 +495,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     expect(lcpEntries.length, 'LCP の候補が取れない').toBeGreaterThan(0);
     const lcp = lcpEntries[lcpEntries.length - 1];
     expect(lcp.startTime, 'LCP (ms)').toBeLessThanOrEqual(LCP_BUDGET_MS);
-    expect(lcp.inHero, 'LCP の要素が #hero の中').toBe(true);
+    expect(lcp.inHero, `LCP の要素が #hero の中 (実際: ${lcp.element}。候補の履歴 ${JSON.stringify(lcpEntries)})`).toBe(true);
     // 遅れて読む画像で枠が動かないことも見るため、末尾までスクロールしてから CLS を読む
     await revealEverything(page);
     const cls = await page.evaluate(() => window.__landingVitals?.layoutShift ?? 0);
