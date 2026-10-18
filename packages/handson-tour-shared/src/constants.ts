@@ -45,6 +45,7 @@ export type HandsonTourConstantsKey = keyof typeof HANDSON_TOUR_CONSTANTS;
 /**
  * Step 3 (バッジ確認) に来た時点で、ツアーが前の Step で実際に付けているバッジのコード (#1626)。
  * - planner: Step 2 の [献立に追加] (POST /api/menu-plans/add) が awardBadge で付ける
+ *   (AI の週の献立の生成の完了でも付くが (#1867)、ツアーの中では週の献立の生成をしないので、Step 3 の時点の数には関わらない)
  * - first_bite は入れない: Step 1 のお試しの記録はバッジの判定に数えない (#1314。GET /api/badges は is_sandbox の記録を数えない)
  * Step 3 の intro_title / a11y_title の「n つ」(日本語・英語) はこの数と合わせる。
  * packages/handson-tour-shared/__tests__/i18n.test.ts が文言の数と、tests/handson-tour-step3-earned-count.test.ts が実際の付与の経路と突き合わせる

@@ -1,5 +1,6 @@
 /**
- * #1867 (§24 Q-13) バッジの説明を付く条件に合わせる migration (20261018040000_badges_description_matches_award.sql) を読む道具。
+ * #1867 (§24 Q-13) バッジの説明を付く条件に合わせる migration (20261018040000_badges_description_matches_award.sql) と、
+ * planner の説明を AI の週の献立の生成でも付くことに合わせた migration (20261018050000_planner_badge_description_weekly_menu.sql) を読む道具。
  * 静的な検査 (tests/badges-description-matches-award-contract.test.ts) と結合テスト
  * (tests/integration/security/badges-description-matches-award.test.ts) の両方が使う。
  */
@@ -10,6 +11,19 @@ export const REPO_ROOT = path.resolve(__dirname, '../..');
 
 export const BADGE_DESCRIPTION_MIGRATION = 'supabase/migrations/20261018040000_badges_description_matches_award.sql';
 export const BADGE_DESCRIPTION_ROLLBACK = 'supabase/rollbacks/20261018040000_badges_description_matches_award.down.sql';
+/**
+ * #1867 planner が AI の週の献立の生成でも付くようになったのに合わせ、planner の説明だけをもう一度書き換えた migration と戻し口
+ * (20261018040000 の後に当たる。planner のいまの説明はこちらの文)
+ */
+export const PLANNER_DESCRIPTION_MIGRATION = 'supabase/migrations/20261018050000_planner_badge_description_weekly_menu.sql';
+export const PLANNER_DESCRIPTION_ROLLBACK = 'supabase/rollbacks/20261018050000_planner_badge_description_weekly_menu.down.sql';
+
+/** バッジの説明を書き換える migration と戻し口。当たる順 (版の番号の順) に並べる。戻すときは逆順 */
+export const BADGE_DESCRIPTION_MIGRATIONS = [
+  { migration: BADGE_DESCRIPTION_MIGRATION, rollback: BADGE_DESCRIPTION_ROLLBACK },
+  { migration: PLANNER_DESCRIPTION_MIGRATION, rollback: PLANNER_DESCRIPTION_ROLLBACK },
+] as const;
+
 /** badges の元の行 (INSERT) がある migration。本番スキーマのベースラインを入れたもので、書き換えられない */
 export const BADGE_ORIGINAL_MIGRATION = 'supabase/migrations/20251126124224_create_meal_planner_tables.sql';
 
@@ -63,4 +77,16 @@ export function readOriginalBadgeRows(): Map<string, OriginalBadgeRow> {
     rows.set(match[1], { code: match[1], name: match[2], description: match[3], conditionJson: match[4] });
   }
   return rows;
+}
+
+/**
+ * 説明を書き換える migration を当てる順に全部当てたあとの説明 (code → 文)。後の migration の文が勝つ。
+ * migration を当てた DB のいまの説明と同じになる
+ */
+export function currentBadgeDescriptions(): Map<string, string> {
+  const current = new Map<string, string>();
+  for (const { migration } of BADGE_DESCRIPTION_MIGRATIONS) {
+    for (const [code, text] of parseDescriptionUpdates(readRepoFile(migration))) current.set(code, text);
+  }
+  return current;
 }

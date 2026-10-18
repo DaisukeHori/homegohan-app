@@ -70,7 +70,7 @@ const user = { id: 'user-1' };
 
 type Badge = { id: string; code: string; name: string; description: string };
 type QueryError = { message: string; code?: string };
-type QueryName = 'badges' | 'user_badges' | 'mealCount' | 'cookCount' | 'completedDays' | 'periodAwards';
+type QueryName = 'badges' | 'user_badges' | 'mealCount' | 'cookCount' | 'completedDays' | 'periodAwards' | 'weeklyMenuRequests';
 /** 関数 get_my_badge_period_award_summaries が返す 1 行 (バッジ 1 つぶんのまとめ) */
 type PeriodAwardSummaryRow = {
   badge_id: string;
@@ -97,6 +97,13 @@ interface SetupOptions {
     cookCount: number;
     completedDays: Array<{ day_date: string }>;
   };
+  /**
+   * 本人の weekly_menu_requests のうち、AI の週の献立の生成 (印 generated_data.weeklyRequest = true) で完了 (completed) した行の数 (#1867 planner)。
+   * 実 DB と同じく、クエリが user_id・status = completed・印で絞っていなければ、otherWeeklyMenuRequests の行も数えられる。省略時は 0
+   */
+  completedWeeklyMenuRequests?: number;
+  /** 印の無い行 (1 日・1 食の生成・献立の改善・お試しの献立の追加) や、完了していない行の数。絞り込みが欠けたときだけ数えられる。省略時は 0 */
+  otherWeeklyMenuRequests?: number;
   /** 比較ランキングのバッジを取った期間の、バッジごとのまとめ (関数 get_my_badge_period_award_summaries の行。#1528)。省略時は空 */
   periodAwards?: PeriodAwardSummaryRow[];
   /** クエリごとのエラー注入 (省略時は成功) */
@@ -137,6 +144,8 @@ function setupSupabaseMocks(opts: SetupOptions) {
   const plannedMealsQueries: Array<{ columns: unknown; options: unknown; eq: Array<[string, unknown]> }> = [];
   // 連続日数の計算に使う user_daily_meals の取得 (#1314: is_sandbox の絞り込みを確かめるため、絞り込みを記録する)
   const dailyMealsQueries: Array<{ columns: unknown; eq: Array<[string, unknown]> }> = [];
+  // #1867: planner の判定に使う weekly_menu_requests の数え上げ (絞り込みを確かめるため、列と絞り込みを記録する)
+  const weeklyMenuRequestsQueries: Array<{ columns: unknown; options: unknown; eq: Array<[string, unknown]> }> = [];
   const sessionUserBadgesWrite = vi.fn(); // セッション client での user_badges への書き込み (insert / upsert など)
   // セッション client の rpc() の呼び出し (#1528: 期間のまとめの関数を、引数なしで呼ぶことを確かめるため記録する)
   const rpcCalls: Array<{ name: string; args: unknown }> = [];
@@ -233,6 +242,24 @@ function setupSupabaseMocks(opts: SetupOptions) {
       };
     }
 
+    if (table === 'weekly_menu_requests') {
+      return {
+        select: (columns: unknown, options: unknown) => {
+          const entry = { columns, options, eq: [] as Array<[string, unknown]> };
+          weeklyMenuRequestsQueries.push(entry);
+          return makeQuery(({ eq }) => {
+            // 本人の行・完了・週の献立の生成の印の 3 つで絞っていなければ、ほかの行も数えられる
+            const narrowed =
+              eq.some(([column, value]) => column === 'user_id' && value === user.id) &&
+              eq.some(([column, value]) => column === 'status' && value === 'completed') &&
+              eq.some(([column, value]) => column === 'generated_data->>weeklyRequest' && value === 'true');
+            const count = (opts.completedWeeklyMenuRequests ?? 0) + (narrowed ? 0 : (opts.otherWeeklyMenuRequests ?? 0));
+            return { count, error: err('weeklyMenuRequests') };
+          }, entry.eq);
+        },
+      };
+    }
+
     // 表 user_badge_period_awards を行のまま読むと、行が 1,000 を超えたとき PostgREST が黙って打ち切る (#1528)。
     // ルートは関数でまとめたものだけを読むので、ここに来たら (Unexpected table で) 500 になり、テストが赤になる
     throw new Error(`Unexpected table: ${table}`);
@@ -276,6 +303,7 @@ function setupSupabaseMocks(opts: SetupOptions) {
     fromCallsWhenSettled,
     plannedMealsQueries,
     dailyMealsQueries,
+    weeklyMenuRequestsQueries,
     rpcCalls,
   };
 }
@@ -1000,5 +1028,125 @@ describe('GET /api/badges (#1528 確定したバッジを、取った期間と�
     expect(upsertMock).toHaveBeenCalledTimes(1);
     expect(mockLogError).toHaveBeenCalledTimes(1);
     expect(mockLogError.mock.calls[0][1]).toMatchObject({ code: 'PGRST202' });
+  });
+});
+
+describe('GET /api/badges (#1867 planner: AI の週の献立の生成が完了していれば付ける)', () => {
+  it('週の献立の生成 (印あり) が完了した本人の行があれば、未獲得の planner を新規獲得として保存して返す', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { upsertMock, weeklyMenuRequestsQueries } = setupSupabaseMocks({
+      allBadges: [PLANNER],
+      userBadges: [],
+      completedMealCount: 0,
+      cookCount: 0,
+      completedDays: [],
+      completedWeeklyMenuRequests: 1,
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.newEarnedBadgeCodes).toEqual(['planner']);
+    expect(json.badges.find((b: { code: string }) => b.code === 'planner')).toMatchObject({ earned: true, obtainedAt: OBTAINED_AT });
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+    expect(upsertMock.mock.calls[0][0]).toEqual([{ user_id: user.id, badge_id: PLANNER.id }]);
+
+    // 数えるのは本人・完了・週の献立の生成の印のある行だけ。行の中身は読まない (数だけ)
+    expect(weeklyMenuRequestsQueries).toHaveLength(1);
+    expect(weeklyMenuRequestsQueries[0].columns).toBe('id');
+    expect(weeklyMenuRequestsQueries[0].options).toEqual({ count: 'exact', head: true });
+    expect(weeklyMenuRequestsQueries[0].eq).toEqual([
+      ['user_id', user.id],
+      ['status', 'completed'],
+      ['generated_data->>weeklyRequest', 'true'],
+    ]);
+  });
+
+  it('印のある完了の行が無ければ付けない (印の無い行・完了していない行は数えない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { upsertMock } = setupSupabaseMocks({
+      allBadges: [PLANNER],
+      userBadges: [],
+      completedMealCount: 0,
+      cookCount: 0,
+      completedDays: [],
+      completedWeeklyMenuRequests: 0,
+      // 1 日・1 食の生成・献立の改善・お試しの献立の追加の完了の行や、失敗・生成中の週の献立の生成の行
+      otherWeeklyMenuRequests: 3,
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.newEarnedBadgeCodes).toEqual([]);
+    expect(json.badges.find((b: { code: string }) => b.code === 'planner')).toMatchObject({ earned: false, obtainedAt: null });
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it('planner を獲得済みなら weekly_menu_requests を読まない (新規獲得にも数えない)', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { upsertMock, weeklyMenuRequestsQueries } = setupSupabaseMocks({
+      allBadges: [PLANNER],
+      userBadges: [{ badge_id: PLANNER.id, obtained_at: '2026-10-01T00:00:00.000Z' }],
+      completedMealCount: 0,
+      cookCount: 0,
+      completedDays: [],
+      completedWeeklyMenuRequests: 1,
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(weeklyMenuRequestsQueries).toHaveLength(0);
+    expect(json.newEarnedBadgeCodes).toEqual([]);
+    expect(json.badges.find((b: { code: string }) => b.code === 'planner')).toMatchObject({
+      earned: true,
+      obtainedAt: '2026-10-01T00:00:00.000Z',
+    });
+    expect(upsertMock).not.toHaveBeenCalled();
+  });
+
+  it('マスターに planner が無ければ weekly_menu_requests を読まない', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { weeklyMenuRequestsQueries } = setupSupabaseMocks({
+      allBadges: [FIRST_BITE],
+      userBadges: [],
+      completedMealCount: 0,
+      cookCount: 0,
+      completedDays: [],
+      completedWeeklyMenuRequests: 1,
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+
+    expect(res.status).toBe(200);
+    expect(weeklyMenuRequestsQueries).toHaveLength(0);
+  });
+
+  it('weekly_menu_requests を読めなくても 500 にせず、planner を判定しないまま一覧を返し、エラーを記録する', async () => {
+    mockGetUser.mockResolvedValue({ data: { user }, error: null });
+    const { upsertMock } = setupSupabaseMocks({
+      allBadges: [FIRST_BITE, PLANNER],
+      userBadges: [],
+      completedMealCount: 1,
+      cookCount: 0,
+      completedDays: [],
+      completedWeeklyMenuRequests: 1,
+      queryErrors: { weeklyMenuRequests: { message: 'timeout', code: '57014' } },
+    });
+
+    const res = await GET(new Request('http://localhost/api/badges'));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    // ほかの判定・保存は今までどおり (first_bite は新規獲得)。planner は付けない
+    expect(json.newEarnedBadgeCodes).toEqual(['first_bite']);
+    expect(json.badges.find((b: { code: string }) => b.code === 'planner')).toMatchObject({ earned: false });
+    expect(upsertMock).toHaveBeenCalledTimes(1);
+    expect(mockLogError).toHaveBeenCalledTimes(1);
+    expect(mockLogError.mock.calls[0][1]).toMatchObject({ code: '57014' });
   });
 });

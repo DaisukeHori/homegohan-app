@@ -81,7 +81,7 @@ describe('buildBadgesTourBubble (Step 3)', () => {
     const bubble = buildBadgesTourBubble('3.2', { nickname: NICKNAME });
     expect(bubble.title).toBe(i18n.step3.first_bite_title);
     expect(bubble.body).toBe(i18n.step3.first_bite_bubble);
-    expect(bubble.body).toBe('食事を記録するともらえるバッジです');
+    expect(bubble.body).toBe('食事を「完了」にするともらえるバッジです');
     expect(bubble.body).not.toMatch(/しました|もらえます/);
   });
 

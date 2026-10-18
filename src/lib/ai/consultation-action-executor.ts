@@ -40,6 +40,7 @@ import { AI_DAILY_LIMIT_CODE, aiDailyLimitMessageOfDenied } from '../../../supab
 import { checkUserAiConsent } from '@/lib/ai/consent-guard';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
 import { weeklyMenuRequestUltimateModeData } from '@/lib/ai/weekly-menu-request-ultimate';
+import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-request-origin';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { createLogger } from '@/lib/db-logger';
 import { errorCodeOf, toLoggableError } from '@/lib/api/errors';
@@ -504,7 +505,12 @@ export async function runConsultationAction(
             message: '1週間分の献立を生成中...',
           },
           // 究極モードの生成かを、行を作った時点から行に残す (#1582。生成中の行の確認 (weekly/pending) が読む)
-          generated_data: weeklyMenuRequestUltimateModeData(ultimate),
+          // #1867: 1 週間分の生成なので、週の献立の生成の印 (weeklyRequest: true) も書く。行が completed になった時点で
+          // DB のトリガー (weekly_menu_requests_award_planner) がこの印を見て planner を付ける (src/lib/ai/weekly-menu-request-origin.ts)
+          generated_data: {
+            ...weeklyMenuRequestUltimateModeData(ultimate),
+            ...weeklyMenuRequestWeeklyOriginDataForDates(targetSlots.map((s) => s.date)),
+          },
         })
         .select('id')
         .single();
