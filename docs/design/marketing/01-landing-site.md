@@ -8,7 +8,7 @@
 | 範囲の正本 | Issue #1867 の本文とコメント。本書はその上で決めた範囲 (紹介ページ 1 本 = `/`) と設計。Issue と食い違ったら本書が正 |
 | 成果物 | 本書と、静的な試作 `docs/design/marketing/prototype/index.html` (§23。見た目の参考で、正典ではない) |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
-| 改定履歴 | v1.0〜v1.7 (2026-10-18。設計ゲート wf_d9caf74c-12e・wf_fc234aa6-092 を通過。8 区切り・主張 17 件) → **v2.0 (2026-10-18)**: 区切りを 8 → 18 に、公開の主張を 17 → 46 件に広げ (§4.1)、スクロールに連動した物語 (固定した端末の画面の入れ替え・数値の増え方・図の描かれ方) と微細な動きを、受入の条件つきで置く (§6)。実際の画面を 6 → 19 枚にし、6 枚を新しく撮る (§7)。戻るの不具合の原因と、ページの中のリンクの作りを決める (§2.2・§8.3)。速さの予算を決め直す (§10) |
+| 改定履歴 | v1.0〜v1.7 (2026-10-18。設計ゲート wf_d9caf74c-12e・wf_fc234aa6-092 を通過。8 区切り・主張 17 件) → **v2.0 (2026-10-18)**: 区切りを 8 → 18 に、公開の主張を 17 → 46 件に広げ (§4.1)、スクロールに連動した物語 (固定した端末の画面の入れ替え・数値の増え方・図の描かれ方) と微細な動きを、受入の条件つきで置く (§6)。実際の画面を 6 → 17 枚にし、6 枚を新しく撮る (§7)。戻るの不具合の原因と、ページの中のリンクの作り (`Link` と、移った先の区切りへのフォーカス) を決める (§2.2・§8.3)。速さの予算を決め直す (§10) |
 
 オーナーの指示 (2026-10-18) 逐語:「WEBサイトはめっちゃリッチでモダンで最高に手間をかけら素晴らしいページに仕立て上げて欲しい。世界最高のページを目標に手を抜かずにお願いします。」
 オーナーの指示 (2026-10-18 11 時台) 逐語:「もう一旦デプロイしていいんだけども。」
@@ -36,7 +36,7 @@ v1.7 から v2.0 で変える方針 (Issue #1867 の 2026-10-18 13 時台のコ�
 
 ### 0.1 発注と決めること
 
-Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基準を決めている。2 件目 (設計から作り直す。成果物 2 つ。見た目と動きの質・速さ・WCAG 2.2 AA・検索・主張の正確さ) と 4 件目 (試作の確認を待たずに進めてよい) に、5 件目 (2026-10-18 13 時台) が重なる: (1) `/signup` からブラウザの戻るで `/#how` などへ戻っても画面が切り替わらない不具合を調べて直す (B 型として別に起票。本冊は原因 (§2.2) と、紹介ページ側で持つべき作り (ページの中のリンクはすべて `next/link` の `Link`: §8.3 の `SiteHeader`・`HeroSection`・`FeaturesSection`) と検査 (E-23) を書く)。(2) 紹介ページの内容を 10 倍に: **量** (製品の実際の機能を、機能ごとに深く見せる・実際の画面を大きく使う・使う人の場面ごとの物語・仕組みの流れ・家族と組織・安全とプライバシー・料金・よくある質問の拡充) と **見せ方の豊かさ** (スクロールに連動した物語・微細な反応・グラデーションと奥行き・図解 (SVG)・タイポグラフィの緩急) の両方。置き場所 (今のアプリに同居・`/` が紹介・月数回の更新) は変えない。
+Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基準を決めている。2 件目 (設計から作り直す。成果物 2 つ。見た目と動きの質・速さ・WCAG 2.2 AA・検索・主張の正確さ) と 4 件目 (試作の確認を待たずに進めてよい) に、5 件目 (2026-10-18 13 時台) が重なる: (1) `/signup` からブラウザの戻るで `/#how` などへ戻っても画面が切り替わらない不具合を調べて直す (B 型として別に起票。本冊は原因 (§2.2。紹介ページの外の素のハッシュでも起きるので B 型は省けない) と、紹介ページ側で持つべき作り (ページの中のリンクはすべて `next/link` の `Link`: §8.3 の `SiteHeader`・`HeroSection`・`FeaturesSection`。移った先の区切りへのフォーカス: `useInPageLinkFocus`) と検査 (E-23・E-29) を書く)。(2) 紹介ページの内容を 10 倍に: **量** (製品の実際の機能を、機能ごとに深く見せる・実際の画面を大きく使う・使う人の場面ごとの物語・仕組みの流れ・家族と組織・安全とプライバシー・料金・よくある質問の拡充) と **見せ方の豊かさ** (スクロールに連動した物語・微細な反応・グラデーションと奥行き・図解 (SVG)・タイポグラフィの緩急) の両方。置き場所 (今のアプリに同居・`/` が紹介・月数回の更新) は変えない。
 
 本書で決めること (列挙):
 
@@ -44,7 +44,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 2. 文言: 見出し・本文の全文と、公開の主張の表 (46 件。根拠と条件) → §4
 3. 視覚の設計: 色 (v1.7 の色のトークン 18 に、青の 3 つ `--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足して 21)・タイポグラフィの緩急・余白・奥行き (影と層)・写真と画面の方針・図解・アイコン・ダークモード → §5
 4. 動きの設計: 16 の動き (スクロールに連動した物語・固定した端末の入れ替え・数値の増え方・図の描かれ方・微細な反応) と、それぞれの受入の条件 (幅・動きを減らす設定・JS 無し・測り方) → §6
-5. 画像の調達: 既存の 15 枚のうち使う 13 枚と、新しく撮る 6 枚 (撮影の台本と見本の値) → §7
+5. 画像の調達: 既存の 15 枚のうち使う 11 枚と、新しく撮る 6 枚 (撮影の台本と見本の値) → §7
 6. 部品の分け方 (`src/components/marketing/`) と各部品の受入の条件・速さの予算と測り方・アクセシビリティの基準・検索の設計 → §8・§10・§11・§12
 7. テスト: 見た目の記録・Lighthouse の予算・アクセシビリティの自動検査・主張の見張り・物語と数値の状態機械・戻るの検査 → §16・§22
 8. 段分けと分冊 → §0.4・§17
@@ -69,10 +69,10 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | R-13 | 主張の正本は 1 つの表 (公開の主張の表)。各行は主張の文・製品の根拠 (file:line)・条件を持つ。ページの文と見本の文・数値は表の行に当たるものだけ。見本の数値はアプリの計算式で隣の値から再計算できるものだけ。ページに出す実際の画面の写真に写る AI の結果 (記録コメント・栄養メモ・スコア) も、アプリが作れる文と値だけにする。AI の自由な応答 (相談の返事・献立の振り返りの文) は画面写真に写さない | v1.7 の設計ゲートの構造の裁定 (R5 の時点) を引き継ぐ | §4.1, §4.5, §7, §9.1, §16 |
 | R-14 | 逐語の正典は見た目と振る舞いの決まり (トークン・部品と受入の条件・文言・遷移表) まで。CSS・部品のコード・テストのコードは逐語の正典にせず、検査は部品・トークン・文言・セクションの id・役割だけを参照する | v1.7 の設計ゲートの構造の裁定 (R5 の時点) を引き継ぐ | §3.2, §6, §8.3, §9, §16 |
 | R-15 | **量**: 製品の実際の機能を機能ごとに深く見せる。少なくとも: 写真で記録 (2 つの入口)・AI の献立 (週の献立・条件・買い物リスト)・栄養の見える化 (スコア・グラフ・週次)・健康の記録・勲章と続ける仕組み・家族で使う (家族の献立・共有)・組織で使う・食材の管理・AI に相談 (シート)・使い方ガイド・安全とプライバシー (データの扱い・同意・書き出しと退会)・料金 (今は無料・AI の 1 日の上限)・よくある質問 (拡充)。使う人の場面 (一人暮らし・子育て家庭・健康管理・チーム) ごとの物語。仕組み (写真 → 解析 → 記録 → 献立 の流れ) | Issue #1867 コメント 5 件目「対応 2」 | §3.1, §4 |
-| R-16 | **実際のアプリの画面を大きく使う**: `public/guide` の 15 枚 (v1.7 の段 0 で撮り直し済み) のうち 13 枚と、必要な追加の撮影 (`scripts/guide-screenshots` の台本・アプリが作れる値だけ) 6 枚を、端末の枠・重なり・ズーム・並べ替えで見せる | 同上 | §5.4, §7 |
+| R-16 | **実際のアプリの画面を大きく使う**: `public/guide` の 15 枚 (v1.7 の段 0 で撮り直し済み) のうち 11 枚と、必要な追加の撮影 (`scripts/guide-screenshots` の台本・アプリが作れる値だけ) 6 枚を、端末の枠・重なり・ズーム・並べ替えで見せる | 同上 | §5.4, §7 |
 | R-17 | **見せ方の豊かさ**: スクロールに連動した物語 (区切りの切り替え・固定して中身が入れ替わる・数値が増える・図が描かれる)・微細な反応・グラデーションと奥行き・図解 (SVG)・タイポグラフィの緩急。各動きに受入の条件 (どの幅で・動きを減らす設定でどうなるか・測り方) を書く | 同上 | §5.3, §5.7, §6 |
 | R-18 | 動きを減らす設定・キーボード・JS なしでも内容は全部届く (動きの無いときの最後の見え方がそのまま内容) | 同上・WCAG 2.3.3 | §6.1, §13.1 |
-| R-19 | 戻るの不具合: `/signup` からブラウザの戻るで `/#how` などへ戻ると画面が切り替わらない。原因を記し、紹介ページのページの中のリンクはこの不具合を起こさない作り (`next/link` の `Link`) にし、戻るの検査を持つ。不具合そのものの修正は B 型 (Issue #1867 コメント 5 件目の「対応 1」) | オーナーの指示 (2026-10-18 13 時台) 逐語の前半 | §2.2, §8.3, §16.3 (E-23), §24 Q-14 |
+| R-19 | 戻るの不具合: `/signup` からブラウザの戻るで `/#how` などへ戻ると画面が切り替わらない。原因を記し、紹介ページのページの中のリンクはこの不具合を起こさない作り (`next/link` の `Link`。移った先の区切りへフォーカスも移す) にし、戻るの検査を持つ。紹介ページの外の素のハッシュ (layout のスキップリンク・アドレスバーで打ったハッシュ) が積む項目でも同じ不具合が起きるので、不具合そのものの修正 (Next の外で積まれた `state = null` の項目の `popstate` を扱う) は B 型 (Issue #1867 コメント 5 件目の「対応 1」) で、省けない | オーナーの指示 (2026-10-18 13 時台) 逐語の前半 | §2.2, §8.3, §16.3 (E-23・E-29), §24 Q-14 |
 | R-20 | 設計ゲートを通ったら、試作の確認を待たずに実装 → 本番へ進む (見た目の直しは本番に出た後に受け付ける) | オーナーの指示 (2026-10-18 11 時台) 逐語「もう一旦デプロイしていいんだけども。」・Issue #1867 コメント 4 件目 | §17 |
 
 ### 0.3 ユーザーシナリオ (24 本。トレースは §3.3)
@@ -81,7 +81,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 |---|---|---|---|
 | S-1 | 未ログインの人 (PC・Chrome) | 検索結果から `/` を開き、下まで読んで「無料で始める」を押す | ヒーローの見出しは HTML に入っていて JS を待たずに出る (LCP はヒーローの前の端末の画面か見出しで、予算 2.5 s 以内。社内の狙いは 2.0 s: §10.1)。18 の区切りがスクロールに合わせて現れ (画面の大きさや拡大の倍率によらず、下まで読むと隠れたままの要素が無い)、仕組みの区切りでは固定した端末の画面が手順に合わせて入れ替わり、デモを試せ、`/signup` に着く |
 | S-2 | 未ログインの人 (スマートフォン・Safari) | `/` を開き、片手でスクロールする | 横スクロールが出ない。上に固定されたヘッダーの「無料で始める」が、どこまでスクロールしても画面の中にある。ピンチで拡大できる。本文は 16 px 以上で、注記・ナビ・ボタン・写真の名前などの小さい文字も 14 px を下回らない (§5.2)。仕組みの区切りは手順ごとに画面が縦に並ぶ (固定の入れ替えは無い)。場面の区切りは横にスナップするカード (ページは横スクロールしない) |
-| S-3 | キーボードだけで操作する人 | Tab で順に移動し、Enter / Space で操作する | スキップリンク → ヘッダー → ヒーローの CTA → デモの写真 → 機能の一覧のカード (ページの中のリンク) → 場面のカードの列 → 安心のリンク → FAQ の順に、見えるフォーカスで移動できる。デモの写真を Enter / Space で押すと、分析中も結果が出た後も、フォーカスと見えるリングは押したボタンに残る。FAQ は Enter で開閉。固定ヘッダーがフォーカスした要素を隠さない |
+| S-3 | キーボードだけで操作する人 | Tab で順に移動し、Enter / Space で操作する | スキップリンク → ヘッダー → ヒーローの CTA → デモの写真 → 機能の一覧のカード (ページの中のリンク) → 場面のカードの列 → 安心のリンク → FAQ の順に、見えるフォーカスで移動できる。デモの写真を Enter / Space で押すと、分析中も結果が出た後も、フォーカスと見えるリングは押したボタンに残る。FAQ は Enter で開閉。固定ヘッダーがフォーカスした要素を隠さない。ナビ・「デモを試す」・機能のカードを Enter で押すと、移った先の区切りにフォーカスが移り、次の Tab はその区切りの中の最初のフォーカスできる要素へ進む |
 | S-4 | スクリーンリーダーの利用者 | ランドマークと見出しで移動する | `header` / `nav` / `main` / `footer` と、h1 が 1 つ・h2 が区切りごとにある。画像に意味のある代替テキスト。仕組みの固定した端末では、いま見えている画面だけが読み上げの対象 (ほかは `aria-hidden`)。デモの結果は `aria-live="polite"` で読み上げる。数値の増え方は読み上げに出ない (最後の値だけ) |
 | S-5 | 動きを減らす設定 (`prefers-reduced-motion: reduce`) の人 | `/` を開く | フェード・スライド・立ち上がり・進捗の演出・数値の増え方・図の描かれ方・端末の入れ替えの溶け込みが無く、最終の状態がすぐ出る (仕組みの端末の画面は手順に合わせて一瞬で切り替わる)。内容は同じ |
 | S-6 | 未ログインの人 | デモで写真を選ぶ → 待つ → 結果を読む → 別の写真を選ぶ | 選択 → 「分析中」(1.4 秒) → 結果 (スコアが 0 から増えて止まる・スコアの注記・記録コメント・推定の栄養 5 つ) → 別の写真で同じ流れ。「サンプル」の注記は写真を選ぶカードに、選ぶ前から常に出ている。待っている間の再選択は無視する。スコアは、隣に出す栄養の値から、アプリと同じ式で再計算できる (§4.5) |
@@ -97,7 +97,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | S-16 | 未ログインの人 (PC) | 仕組みの区切りを読み進める | 右に固定された端末の画面が、左の手順 (撮る → AI が見る → 褒められる → 献立へ) が画面の中央の帯に入るごとに入れ替わる (溶け込みの切り替え)。手順を飛ばして一気にスクロールしても、最後に中央の帯にある手順の画面になる。区切りの下の流れの図 (写真 → 解析 → 記録 → 献立 → 買い物リスト) は画面に入ったときに線が描かれる |
 | S-17 | 未ログインの人 (PC) | 栄養の見える化の区切りを読む | スコアの輪が画面に入ると、輪が 0 から 89 まで描かれ、数字が 0 から 89 まで増えて止まる (89 はヒーローの前の画面 `comment.png` に写るスコアと同じ値で、アプリの式で再計算できる: §4.9)。隣に、ホームの今日の栄養スコアと今週の自炊率の説明がある |
 | S-18 | 未ログインの人 (スマートフォン) | 場面の区切りで 4 枚のカードを横に送る | カードは 1 枚ずつスナップして止まる。ページ全体は横にスクロールしない。4 枚は 768 px 以上では並べて置かれ、送る操作は無い |
-| S-19 | 未ログインの人 | ヘッダーのナビ (仕組み・機能・家族と組織・料金・よくある質問) を押し、戻るを押す | 押すと該当の区切りの上端が固定ヘッダーの下に来る (隠れない)。ヘッダーのナビは、いま画面にある区切りを強調する。ブラウザの戻るで直前の位置 (ヒーロー) に戻る |
+| S-19 | 未ログインの人 | ヘッダーのナビ (仕組み・機能・家族と組織・料金・よくある質問) を押し、戻るを押す | 押すと該当の区切りの上端が固定ヘッダーの下に来る (隠れない)。フォーカスもその区切りへ移る (見えるリングは出ない: §5.3)。ヘッダーのナビは、いま画面にある区切りを強調する。ブラウザの戻るで直前の位置 (ヒーロー) に戻る |
 | S-20 | 未ログインの人 | `/#how` から「無料で始める」で `/signup` に移り、ブラウザの戻るを押す | `/#how` に戻り、紹介ページが描かれ、仕組みの区切りが画面にある (URL だけ変わって `/signup` の画面が残らない) |
 | S-21 | 家族で使うか迷っている人 | 家族の区切りと FAQ「家族の記録は誰に見えますか？」を読む | 代表者・大人・子ども (アカウントの無い子どもも登録できる) の 3 つの立場、メールでの招待、共有の範囲 (食事の記録・健康・献立) を自分で選べること、献立表で家族の献立を見られること (相手が共有をオンにしている場合) が書いてある |
 | S-22 | 職場で使うか調べている人 | 組織の区切りと FAQ「会社やチームで使えますか？」を読む | 管理者がメンバーを招待し、部署を作り、チャレンジを開けることと、個人の記録の集計 (活力スコアなど) は出していないこと、チャレンジの平均は終わった後に参加者が最小の人数以上のときだけ出ることが書いてある |
@@ -132,7 +132,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 
 ## 1. 目的・スコープ
 
-- `/` を、見た人が「これは本物だ」と感じ、製品の全体を一度に理解できる紹介ページに作り直す。本物感の源は、実績の数字ではなく、**実際の画面 19 枚と、機能ごとの正直で深い文言と、受入の条件を持つ豊かな動き**に置く (利用者ゼロで実績が無いことは、設計の前提)。
+- `/` を、見た人が「これは本物だ」と感じ、製品の全体を一度に理解できる紹介ページに作り直す。本物感の源は、実績の数字ではなく、**実際の画面 17 枚と、機能ごとの正直で深い文言と、受入の条件を持つ豊かな動き**に置く (利用者ゼロで実績が無いことは、設計の前提)。
 - 速さ・アクセシビリティ・検索・主張の正確さを、機械で確かめられる形 (予算の定数・番兵のテスト・公開の主張の表) で設計に焼き込む。
 - 文言・画像・順序を 1 ファイル (`landing-copy.ts`) に集め、月に数回の更新を 1 ファイルの変更で済ませる。
 
@@ -195,11 +195,15 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | ヘッダーのナビ (`#features` `#how` `#badges` `#faq`) とヒーローの「デモを試す」(`#demo`) は、素の `<a href="#…">` で描いている (`next/link` を使っていない。`preventDefault` も router の処理も無い) | `SiteHeader.tsx:46-48`・`HeroSection.tsx` の `CtaLink` は `Link` だが、`DEMO_ANCHOR` は `#demo` | **戻るの不具合の原因** (下)。v2.0 はページの中のリンクをすべて `next/link` の `Link` で描く (§8.3) |
 | 殻の `viewport` は `maximumScale: 5`・`userScalable: true` (`/` だけ)。E-18 が見張る | `src/app/page.tsx` | 変えない |
 | `public/marketing/photos/` に写真 3 枚と `CREDITS.md` (Unsplash License の間に合わせ) | `public/marketing/photos/` | 変えない (Q-1 はそのまま) |
-| `public/guide/` の 15 枚は v1.7 の段 0 で `comment.png`・`analyze.png` を撮り直し済み (`GUIDE_MEAL_ANALYSIS`。スコア 89) | `public/guide/`・`scripts/guide-screenshots/meal-analysis-mock.ts` | 変えない。15 枚のうち 13 枚を使う (§7.1) |
+| `public/guide/` の 15 枚は v1.7 の段 0 で `comment.png`・`analyze.png` を撮り直し済み (`GUIDE_MEAL_ANALYSIS`。スコア 89) | `public/guide/`・`scripts/guide-screenshots/meal-analysis-mock.ts` | 変えない。15 枚のうち 11 枚を使う (§7.1) |
 | e2e `tests/e2e/landing-page.spec.ts` (E-1〜E-22) と門への登録 (`e2e-local.yml`・`PW_ARGS`) と番兵 `tests/e2e-landing-suite.test.ts` は着地済み。`@axe-core/playwright` は devDependency にある | `tests/`・`package.json` | 流用して広げる (§16)。依存は足さない |
 | 速さの予算: JS gzip ≤ 240 KB (`LANDING_JS_BUDGET_BYTES` 既定 245760)。実測 227 KB (v1.7 §10.1) | `tests/e2e/landing-page.spec.ts` (E-11) | 予算を 256 KB に決め直す (§10.1) |
 
-**戻るの不具合 (R-19) の原因**: ブラウザの履歴の項目が「Next の router が作ったもの」でないとき、Next の App Router は `popstate` を扱わない。Next.js (canary・`packages/next/src/client/components/app-router.tsx` の `handlePopState`。2026-10-18 に GitHub の原文で確認) は、`popstate` の `event.state` が `null` なら何もせずに返り (コメント: pushState / replaceState が Next の外で呼ばれたときだけ起きる)、`state.__NA` が無ければ `window.location.reload()` する。紹介ページのヘッダーのナビと「デモを試す」は素の `<a href="#how">` なので、押すとブラウザが `state = null` の履歴の項目 (`/#how`) を作る。そこから `Link` で `/signup` へ移り (Next が `__NA` つきの項目を積む)、戻るを押すと `popstate` の `state` は `null` → Next は何もしない → URL は `/#how` に戻るが、画面は `/signup` のまま。これがオーナーの指示の前半 (`/signup` から `/#how` へ戻っても画面遷移しない) に一致する。**確かめ方**: 本番か本番ビルドで `/` を開き、ヘッダーの「使い方」(`#how`) を押してから「無料で始める」で `/signup` へ移り、戻るを押す (E-23 がこの手順を機械で確かめる)。**紹介ページ側の作り (本冊)**: ページの中のリンク (ヘッダーのナビ 5 つ・ヒーローの「デモを試す」・機能の一覧のカード 10 枚) をすべて `next/link` の `Link` (`href="#how"` のように `#` から始まる同じページの先) で描く。`Link` は Next の router を通して `__NA` つきの項目を積み、先の要素へスクロールする (`scroll-padding-top` が効く) ので、その項目へ戻ったときも Next が扱う。不具合そのものの修正 (`src/app/(auth)/` の側や、Next の `popstate` の扱いを補う処理) は B 型の案件で、本冊はその修正があっても無くても成り立つ作りにする (Q-14)。
+**戻るの不具合 (R-19) の原因**: ブラウザの履歴の項目が「Next の router が作ったもの」でないとき、Next の App Router は `popstate` を扱わない。Next.js (canary・`packages/next/src/client/components/app-router.tsx` の `handlePopState`。2026-10-18 に GitHub の原文で確認) は、`popstate` の `event.state` が `null` なら何もせずに返り (コメント: pushState / replaceState が Next の外で呼ばれたときだけ起きる)、`state.__NA` が無ければ `window.location.reload()` する。紹介ページのヘッダーのナビと「デモを試す」は素の `<a href="#how">` なので、押すとブラウザが `state = null` の履歴の項目 (`/#how`) を作る。そこから `Link` で `/signup` へ移り (Next が `__NA` つきの項目を積む)、戻るを押すと `popstate` の `state` は `null` → Next は何もしない → URL は `/#how` に戻るが、画面は `/signup` のまま。これがオーナーの指示の前半 (`/signup` から `/#how` へ戻っても画面遷移しない) に一致する。**確かめ方**: 本番か本番ビルドで `/` を開き、ヘッダーの「使い方」(`#how`) を押してから「無料で始める」で `/signup` へ移り、戻るを押す (E-23 がこの手順を機械で確かめる)。
+
+**`state = null` の項目を積むものは、紹介ページのリンクだけではない** (原因の洗い出し): (1) 紹介ページのヘッダーのナビと「デモを試す」(上。本冊が直す) (2) ルート layout のスキップリンク `<a href="#main-content">` (`src/app/layout.tsx:123`。`/` の上にもあり、S-3 の Tab の 1 つ目。押すとブラウザが `/#main-content` の項目を `state = null` で積む) (3) 利用者がアドレスバーでハッシュを打ち直したとき (ブラウザが `state = null` の項目を積む) (4) ほかの公開ページの素の `<a href="#…">` (本冊の範囲外)。(2)〜(4) のあとに `Link` で別のページへ移って戻ると、同じく URL だけが戻り画面は残る (例: `/` → スキップリンク → 「無料で始める」→ `/signup` → 戻る)。だから**不具合そのものの修正 (Next の外で積まれた `state = null` の項目の `popstate` を、Next の外で扱う処理) は B 型の案件で、省けない** (Q-14)。本冊の実装だけでは (1) の経路しか直らない。
+
+**紹介ページ側の作り (本冊)**: ページの中のリンク (ヘッダーのナビ 5 つ・ヒーローの「デモを試す」・機能の一覧のカード 10 枚) をすべて `next/link` の `Link` (`href="#how"` のように `#` から始まる同じページの先) で描く。`Link` は Next の router を通して `__NA` つきの項目を積み、先の要素へスクロールする (`scroll-padding-top` が効く) ので、その項目へ戻ったときも Next が扱う。**`Link` に替えるとフォーカスが移らなくなるので、本冊が移す**: 素の `<a href="#…">` なら、ブラウザが「次の Tab で進む起点」を移った先へ移す。`Link` はクリックの既定の動作を止めて router で移り、next 16.4.1 の `layout-router` の `InnerScrollHandler` はハッシュの先に `scrollIntoView()` を呼ぶだけでフォーカスに触らない (原文のコメント「This handler intentionally leaves focus untouched」。2026-10-18 に unpkg の `next@16.4.1/dist/client/components/layout-router.js` で確認)。そのままでは、キーボードの人がナビの「料金」を Enter で押すと画面は `#pricing` へ動くが、次の Tab はヘッダーの次のナビへ行く。そこで (a) `main` の中の 18 の `section` に `tabIndex={-1}` を付け (Tab の順には入らない)、(b) `SiteHeader` が使う hook `useInPageLinkFocus` (§8.2・§8.3) が、`.lp` の中のページの中のリンクのクリック (Enter を含む) を `document` で受けて、先の `section` に `focus({ preventScroll: true })` する (スクロールは Next に任せる)。次の Tab は、その区切りの中の最初のフォーカスできる要素へ進む (E-29)。区切りのフォーカスの見た目は §5.3。
 
 ### 2.3 ブランドと画像の資産
 
@@ -207,7 +211,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 |---|---|---|
 | `BRAND_COLORS` (accent `#E07A5F`・accentGradientEnd `#FF9B7A`・background `#FAF9F7`・backgroundGradientEnd `#FDF0ED`・text `#2D2D2D`・textLight `#6B6B6B`・white・sparkle `#FFD700`・green = `STATUS_COLOR_TOKENS.success` = `#6B9B6B`・blue `#5B8BC7`) | `src/lib/brand-image.tsx:27-38`・`packages/shared/src/design-tokens.ts:25` | 紹介ページのトークンの元 (§5.1)。`brand-image.tsx` は `next/og` を読むので client から import しない。値はテスト (U-7) で突き合わせる。v2.0 は `blue` から章の色 (`--lp-blue`) を足す |
 | ロゴ (湯気の立つお椀と星) | `public/icon.svg` ほか | ヘッダー・フッターのマークは `public/icon.svg` を `next/image` で出す (§4.2) |
-| 実際の画面 15 枚 (540×1080 の PNG・1 枚 300 KB 以下。実測 28〜105 KB) | `public/guide/{signup,profile,ready,camera,analyze,comment,menu-request,menu-setting,menu-result,weight,weight-photo,trend,badge-get,badge-collection,badge-rare}.png` | 13 枚を使う (§7.1。`trend.png`・`weight-photo.png` は使わない: 体重の減りが写るため)。代替テキストは `guide-content.ts` の `imageAlt` と同じ文にする |
+| 実際の画面 15 枚 (540×1080 の PNG・1 枚 300 KB 以下。実測 28〜105 KB) | `public/guide/{signup,profile,ready,camera,analyze,comment,menu-request,menu-setting,menu-result,weight,weight-photo,trend,badge-get,badge-collection,badge-rare}.png` | 11 枚を使う (§7.1。`badge-rare.png`・`ready.png`・`trend.png`・`weight-photo.png` の 4 枚は使わない: ほかの利用者との比較に基づくバッジ・到達の予想の日付・体重の減りが写るため)。代替テキストは `guide-content.ts` の `imageAlt` と同じ文にする |
 | 新しい画面 6 枚 (段 0 で撮る。540×1080 の PNG・300 KB 以下) | `public/marketing/screens/{home,pantry,shopping,family,chat,consent}.png` | 章と家族と安心の区切りで使う (§7.1)。代替テキストは `landing-screens.ts` の `alt` (§9.2) |
 | サンプルの食事の写真 3 枚 (800×800 の WebP・120 KB 以下) | `public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.webp`・`CREDITS.md` | デモ (§4.5)。v1.7 のまま |
 | OGP の画像・アイコンの PNG | `src/app/opengraph-image.tsx`・`src/app/icon-192.png/route.ts` ほか | 変えない |
@@ -289,7 +293,7 @@ Issue #1867 の 2026-10-18 のコメント (5 件) が本冊の成果物と基�
 | 6 | 章: 写真で記録 (`photo`) | `ChapterSection` | 2 つの入口と、解析の結果 (5 つの値・記録コメント・栄養メモ) を深く見せる | 見出し・一文・要点 4 つ・実際の画面 3 枚 (`camera`・`analyze`・`comment`) | 無料で始める |
 | 7 | 章: AI 献立と買い物 (`menu`) | `ChapterSection` | 週の献立・条件・献立の修正・買い物リスト・食材の管理を 1 つの流れで見せる | 要点 5 つ・実際の画面 4 枚 (`menu-request`・`menu-setting`・`menu-result`・`shopping`) + 食材の画面 1 枚 (`pantry`) | 無料で始める |
 | 8 | 章: 栄養の見える化 (`nutrition`) | `ChapterSection` + `ScoreRing` (島) | 数字で振り返れることを見せる | 要点 3 つ (今日の栄養スコア・今週の自炊率と統計・献立の振り返り)・スコアの輪 (M-11。89)・実際の画面 2 枚 (`home`・`comment`) | 無料で始める |
-| 9 | 章: 健康の記録 (`health`) | `ChapterSection` | 体重・体重計の写真・健診・血液検査・グラフ・目標を見せる | 要点 5 つ・実際の画面 2 枚 (`weight`・`ready`) | 無料で始める |
+| 9 | 章: 健康の記録 (`health`) | `ChapterSection` | 体重・体重計の写真・健診・血液検査・グラフ・目標を見せる | 要点 5 つ・免責・実際の画面 1 枚 (`weight`) | 無料で始める |
 | 10 | 章: バッジと続ける仕組み (`badges`) | `ChapterSection` + バッジの列 | 続ける仕掛けを見せる | 要点 2 つ (バッジ・ランク)・バッジ 4 つ (M-10)・実際の画面 2 枚 (`badge-get`・`badge-collection`) | 無料で始める |
 | 11 | 章: AI に相談 (`chat`) | `ChapterSection` | 画面の右下のシートから相談でき、提案を確認して実行できることを見せる | 要点 4 つ・実際の画面 1 枚 (`chat`) | 無料で始める |
 | 12 | 場面 (`scenes`) | `ScenesSection` | 自分の暮らしに当てはめる | 4 枚のカード (一人暮らし・子育て家庭・健康の記録を続けたい人・職場とチーム)。768 px 未満は横にスナップ (M-13) | (なし) |
@@ -318,7 +322,7 @@ src/components/marketing/
   count-up.ts                            数値の増え方の純関数 countUpValue (§9.5)
   marketing.css                          .lp のトークン・タイポグラフィ・動き (§5・§6)
   sections/                              17 本
-    SiteHeader.tsx                       島: スクロールで背景・読む位置の棒・いま画面にある区切りの強調 (M-1・M-4・M-14)
+    SiteHeader.tsx                       島: スクロールで背景・読む位置の棒・いま画面にある区切りの強調 (M-1・M-4・M-14)・ページの中のリンクの先へのフォーカス (useInPageLinkFocus)
     HeroSection.tsx                      Server。実際の画面 5 枚の扇 (動かない。立ち上がりだけ)
     StorySection.tsx                     Server。仕組みの区切りの骨格 (手順 4 つ・流れの図・注記)。中に StoryScroller
     DemoSection.tsx                      島: デモの状態機械。framer-motion はここだけ。スコアの数値の増え方 (count-up.ts)
@@ -337,9 +341,9 @@ src/components/marketing/
     PricingSection.tsx                   Server。料金
     GuideSection.tsx                     Server。使い方ガイド
     FaqSection.tsx                       島: アコーディオン (12 件)
-    FinalCtaSection.tsx                  Server
+    FinalCtaSection.tsx                  Server (v1.7 の部品に section の tabIndex={-1} を足すだけ)
     SiteFooter.tsx                       Server
-  primitives/                            10 本
+  primitives/                            11 本
     Reveal.tsx                           島: 現れ方 (v1.7 のまま)
     StoryScroller.tsx                    島: 固定した端末の画面の入れ替え (M-6)。useInViewSteps で手順の交差を見る
     ScoreRing.tsx                        島: スコアの輪の描かれ方と数値の増え方 (M-11)
@@ -349,13 +353,14 @@ src/components/marketing/
     CtaLink.tsx                          Server: Link にボタンの見た目 (v1.7 のまま)
     useInViewOnce.ts                     hook (v1.7 のまま。Reveal・ScoreRing が使う)
     useInViewSteps.ts                    hook: 複数の要素の交差を 1 つの IntersectionObserver で見る (StoryScroller・SiteHeader が使う)
+    useInPageLinkFocus.ts                hook: ページの中のリンクを押したら、先の区切り (tabindex="-1") へフォーカスを移す (SiteHeader が使う。§2.2)
     useReducedMotion.ts                  既存の再 export (v1.7 のまま)
 public/marketing/photos/                 デモの写真 3 枚 (v1.7 のまま)
 public/marketing/screens/                新しい画面写真 6 枚 (段 0。§7.1)
 scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮影と見本のデータを足す。§7.1)
 ```
 
-島は 7 (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`・`StoryScroller`・`ScoreRing`・`ReadingProgress`。`ReadingProgress` は `SiteHeader` の中に置くが、`'use client'` を持つ別のファイルなので 1 本と数える。hook の `useInViewSteps.ts` は部品でないので数えない)。数え方: `'use client'` を持つ部品のファイルは `SiteHeader.tsx`・`DemoSection.tsx`・`FaqSection.tsx`・`Reveal.tsx`・`StoryScroller.tsx`・`ScoreRing.tsx`・`ReadingProgress.tsx` の 7 本 (U-10 が数える)。文章と画像は Server Component で描くので、JS が無くても全文が HTML にある (S-9)。
+島は 7 (`SiteHeader`・`DemoSection`・`FaqSection`・`Reveal`・`StoryScroller`・`ScoreRing`・`ReadingProgress`。`ReadingProgress` は `SiteHeader` の中に置くが、`'use client'` を持つ別のファイルなので 1 本と数える。hook の `.ts` (`useInViewOnce.ts`・`useInViewSteps.ts`・`useInPageLinkFocus.ts`) は部品でないので数えない。`useInViewOnce.ts` は v1.7 から `'use client'` を持ち、新しい hook 2 本も持ってよい)。数え方: `'use client'` を持つ部品のファイル (`.tsx`) は `SiteHeader.tsx`・`DemoSection.tsx`・`FaqSection.tsx`・`Reveal.tsx`・`StoryScroller.tsx`・`ScoreRing.tsx`・`ReadingProgress.tsx` の 7 本 (U-10 が `.tsx` だけを数える)。文章と画像は Server Component で描くので、JS が無くても全文が HTML にある (S-9)。
 
 ### 3.2 代替案の比較と裁定 (1 回だけ)
 
@@ -364,7 +369,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | **A (採用)** | v1.7 の構造 (Server の骨格 + 小さな島 + CSS 主体の動き) を保ったまま、区切りを 18 に、島を 7 本 (役目 1 つずつ) に、動きを 16 に広げる。スクロールに連動する動きは IntersectionObserver と `scroll` (rAF) の小さな JS + CSS の `transition` で作る | 文章と画像は HTML に出る。JS は島の分だけ (+ 約 10 KB gz)。動きは CSS (`transform` / `opacity` / `stroke-dashoffset`) と IO。LCP・INP・CSP・a11y・検索・月数回の更新を同時に満たす。v1.7 の番兵と e2e を流用して広げられる | – |
 | B | 1 つの大きな client の島 + framer-motion の `useScroll` / `useTransform` でスクロール連動 | スクロール連動の動きが宣言的に書ける | framer-motion の `useScroll` は全体を 1 つの client にしやすく、`scroll` ごとの再描画が INP に悪い。`useScroll` を `LazyMotion` の下で使ったときの JS の増分は未計測 (リサーチの unknowns)。動きを減らす設定で止める処理を JS 側に全部書くことになる (CSS なら宣言の場所で止まる) |
 | C | CSS の scroll-driven animations (`animation-timeline: scroll()` / `view()`) | JS 不要。滑らか | Firefox はフラグの後ろで Baseline ではない (§2.4)。`scroll()` が結び付くスクロールの箱の縁 (`overflow: hidden` の祖先)・スクロールで進む Animation が e2e の「終わるまで待つ」を止める縁 (v1.7 §3.2) が残る。採らない (U-18 で不在を固定) |
-| D | 3D / 大きな演出ライブラリ (Three.js・GSAP・Lottie) | 派手な動きを作れる | 依存が増え、JS が数十〜数百 KB 増える。WCAG 2.3.3 と INP の予算に合わない。本物感は実際の画面 19 枚で出せる (§2.6) |
+| D | 3D / 大きな演出ライブラリ (Three.js・GSAP・Lottie) | 派手な動きを作れる | 依存が増え、JS が数十〜数百 KB 増える。WCAG 2.3.3 と INP の予算に合わない。本物感は実際の画面 17 枚で出せる (§2.6) |
 | E | 紹介ページだけ静的化 | CDN から配れる | `docs/design/cross/18-csp-nonce.md` §22 Q-7 で裁定済み (nonce と両立しない)。全ページ動的の決定を本冊で覆さない |
 
 **縁の発生源を消すより単純な構造は無いか**: v1.7 は「書き切れない動きは外す」で固定した端末の入れ替え (旧 M-6) と視差 (旧 M-4) を外した。v2.0 は R-17 で「固定して中身が入れ替わる」を求められるので、旧 M-6 を**縁を 1 つずつ潰した形**で戻す: (1) 固定する列と手順の列の幅 → 1024 px 以上だけで 7 : 5 の 2 列、未満は 1 列で固定しない (幅ごとの出し分けは `display` の 2 通りだけ)。(2) 端末の高さが画面の高さを超えると固定が効かない → 端末の高さを `min(70vh, 34rem)` に決め、手順 1 つの最小の高さを `70vh` にして、端末が常に画面に収まる。(3) 中央の帯の判定 → `useInViewSteps` の IntersectionObserver の `rootMargin` を `-40% 0px -40% 0px` (画面の中央の 20 % の帯) に固定し、判定の純関数 `storyActiveIndex` (§9.4) を遷移表 (§13.3) で閉じる。(4) 飛ばしの遷移 → 「帯にある手順のうち最も下のもの。帯に無ければ直前の値のまま」の 1 規則にし、溶け込みは `opacity` の `transition` だけ (位置を動かさない)。(5) JS 無し・動きを減らす設定 → 手順ごとに自分の画面を HTML に持ち (1 列のときと同じ)、1024 px 以上で JS が動いたときだけ固定した端末に切り替える。視差 (旧 M-4) は戻さない (伝える中身が無く、前庭の負担)。
@@ -388,7 +393,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 |---|---|
 | S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` (殻) が `getCspNonce()` → `SiteStructuredData` + `LandingPage` を描く (データ取得なし) → HTML (18 の区切りの全文。`<head>` にヒーローの前の画面 `comment.png` の preload) → ブラウザ: 見出しが先に描かれ、ヒーローの文字と 5 枚の画面の塊が立ち上がり (M-2・M-3)、前の画面か見出しで LCP 確定 → `Reveal` が IO で区切りとカードを順に表示 → `#how` で `StoryScroller` が手順の交差で画面を入れ替え (M-6)、`FlowDiagram` が線を描く (M-12) → `#demo` で写真を選ぶ (S-6) → `#nutrition` で `ScoreRing` が輪と数字を描く (M-11) → … → 「無料で始める」(`CtaLink` = `Link href="/signup"`) → `/signup` |
 | S-2 | 375 px: `<meta name="viewport">` は `maximum-scale=5, user-scalable=yes` (殻)。`.lp` の根は横方向を切り取り、どの部品も 320 px で横にはみ出さない。ヒーローの扇は 3 枚 (640 px 未満は遠くの 2 枚を `display: none`)。仕組みは 1 列 (手順ごとに画面 → 番号・見出し・本文。固定した端末は描かれない: `[data-js]` かつ 1024 px 以上のときだけ)。章は 1 列 (画面は 1 枚ずつ縦に)。場面は横にスナップする 4 枚 (`ul` の中だけがスクロールし、ページの `scrollWidth` は増えない)。ヘッダーの「無料で始める」は常に画面の上。本文 16 px・一文 17 px 以上・注記 14 px (E-19)。短い札 (デモの写真の名前・栄養の名前・バッジの名前・安心の見出し・料金のカードの見出し・場面のカードの見出し・フッターのリンク) は 1 行 (E-22) |
-| S-3 | Tab: スキップリンク → マーク (`/`) → ナビ 5 つ (768 px 以上) → ログイン (640 px 以上) → 無料で始める → ヒーローの CTA 2 つ (ヒーローの画面は画像だけでフォーカスしない) → 仕組み (フォーカスする要素は無い) → デモの写真 3 つ (`button aria-pressed`。分析中は `aria-disabled`。フォーカスはそのボタンに残る) → (結果が出ていれば「自分の食事で試す」) → 機能の一覧のカード 10 枚 (`Link`。`#photo` ほか) → 章 6 つの CTA (各 1 つ) → 場面のカードの列 (768 px 未満は `tabindex="0"` のスクロールの箱 1 つ。以上はフォーカスしない) → 家族の CTA → 組織の「お問い合わせ」→ 安心の「プライバシーポリシーを読む」→ 料金の CTA → ガイドの「使い方ガイドを読む」→ FAQ の `button aria-expanded` 12 つ → Enter で開閉 → 「お問い合わせフォームへ」→ 最終 CTA → フッターのリンク。`:focus-visible` は globals.css の 2 トーンのリング。固定ヘッダーは `scroll-padding-top` で隠さない (E-9) |
+| S-3 | Tab: スキップリンク → マーク (`/`) → ナビ 5 つ (768 px 以上) → ログイン (640 px 以上) → 無料で始める → ヒーローの CTA 2 つ (ヒーローの画面は画像だけでフォーカスしない) → 仕組み (フォーカスする要素は無い) → デモの写真 3 つ (`button aria-pressed`。分析中は `aria-disabled`。フォーカスはそのボタンに残る) → (結果が出ていれば「自分の食事で試す」) → 機能の一覧のカード 10 枚 (`Link`。`#photo` ほか) → 章 6 つの CTA (各 1 つ) → 場面のカードの列 (768 px 未満は `tabindex="0"` のスクロールの箱 1 つ。以上はフォーカスしない) → 家族の CTA → 組織の「お問い合わせ」→ 安心の「プライバシーポリシーを読む」→ 料金の CTA → ガイドの「使い方ガイドを読む」→ FAQ の `button aria-expanded` 12 つ → Enter で開閉 → 「お問い合わせフォームへ」→ 最終 CTA → フッターのリンク。`:focus-visible` は globals.css の 2 トーンのリング。固定ヘッダーは `scroll-padding-top` で隠さない (E-9)。ナビ「料金」で Enter → `Link` の click → Next が `#pricing` へスクロール、`useInPageLinkFocus` が `section#pricing` (`tabindex="-1"`。Tab の順には入らない) に `focus({ preventScroll: true })` → 次の Tab は料金のカードの「無料で始める」(E-29)。機能のカード「AI に相談」で Enter → `section#chat` → 次の Tab は章 chat の CTA |
 | S-4 | ランドマーク: `header` → `nav aria-label="サイトの案内"` → `main` → `section aria-labelledby` ×18 → `footer`。h1 は 1 つ (ヒーロー)。仕組みの手順は `ol`。固定した端末の 4 枚の画面は、いま見えている 1 枚だけが `aria-hidden="false"` (ほかは `aria-hidden="true"`)。デモの結果は `role="status" aria-live="polite"`。スコアの輪の数字は、増えている間も読み上げに出ない (`aria-hidden` の数字と、`aria-live` でない最後の値の `span` を分ける: §8.3 の `ScoreRing`)。読む位置の棒は `aria-hidden`。画像の alt は `landing-copy.ts` / `landing-screens.ts` の `alt` |
 | S-5 | `prefers-reduced-motion: reduce`: `marketing.css` の動きの宣言はすべて no-preference の中なので、reduce では動きの宣言が 1 つも無い → 立ち上がり・現れ方・溶け込み・輪の描かれ方・線の描かれ方・バッジの立ち上がり・FAQ の開閉・ナビの強調の遷移は、どれも最初から最後の見え方。JS: `useReducedMotion()` が true → デモの待ち 0・スコアの数値は最初から最後の値 (`countUpValue` を呼ばない)・物語の画面の入れ替えは一瞬 (遷移の宣言が無い)。読む位置の棒はスクロールの位置そのもの (動きの宣言は無い)。内容は同じ |
 | S-6 | 状態 `idle` → 写真 A を押す → `analyzing` (選んだ id・開始時刻) → 1,400 ms 後 `result` → 結果を描く (`aria-live`)。スコアの数字は no-preference なら `countUpValue` で 0 から 87 まで `COUNT_UP_MS` (600 ms) かけて増えて止まる (読み上げは最後の値だけ)。写真 B → `analyzing` → … 。`analyzing` の間に押しても無視 (§13.3)。スコアは隣の値から再計算できる (§4.5) |
@@ -402,10 +407,10 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | S-14 | 本番ビルド → Lighthouse (desktop・mobile ×3) → Performance ≥ 90 → e2e `landing-page.spec.ts` (LCP / CLS・JS の転送量・CSP 違反 0・構造・axe・物語・輪・戻る) → Speed Insights で p75 |
 | S-15 | 料金の一文 `現在ご提供している機能は、すべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。…` と、安心の 1 つ目と FAQ の 1 つ目の答えが同じ事実を言う (U-24 が「すべて無料」を含む文字列に「1 日にご利用いただける回数」があることを確かめる。当たる文字列は 3 つ)。ページの文に `たびに` `毎回` `何度でも` `無制限` `使い放題` は無い (U-20) |
 | S-16 | 1280 px・JS あり・no-preference: `StoryScroller` がマウント → `data-js` を付け、1024 px 以上なので固定した端末 (4 枚を重ねた箱。`position: sticky`) を見せ、手順の中の画面を隠す (CSS)。`useInViewSteps` が手順 4 つを `rootMargin: -40% 0px -40% 0px` で見る → 手順 1 が帯に入る → `storyActiveIndex` = 0 → 1 枚目 `camera.png` が `opacity: 1`・ほかは 0 (溶け込み `--lp-dur`) → 手順 2 が帯に入る → 1 → `analyze.png` → … → 一気に末尾へ → 帯に手順 4 → 3 → `menu-result.png`。帯に何も無い瞬間 (手順と手順の間) は直前の値のまま。`FlowDiagram` を包む `Reveal` が画面に入る → `is-in` → 線が `stroke-dashoffset` で 1.2 s かけて描かれる (CSS) |
-| S-17 | `ScoreRing` を包む箱が画面に入る (`useInViewOnce`) → no-preference なら CSS が輪の `stroke-dashoffset` を全長から `全長 × (1 − 89 / 100)` まで `RING_DRAW_MS` (800 ms) で動かし、JS が `countUpValue` で数字を 0 → 89 に 800 ms で増やす (rAF)。reduce なら最初から最後の見え方。JS 無しなら HTML の最後の値 (89) と最後の offset (SVG の属性) がそのまま見える。89 = `comment.png` に写るスコア = `GUIDE_MEAL_ANALYSIS.overallScore` (U-28 が突き合わせる) |
+| S-17 | `ScoreRing` がマウント → 根に `data-js` (状態 armed: no-preference なら見える数字は 0、CSS の `[data-js]:not([data-in])` の規則で輪は `stroke-dashoffset: 100` に一瞬で隠れる。reduce なら見える数字は 89 で、隠す規則は no-preference の中なので輪も最後の形のまま) → `ScoreRing` の根が画面に入る (`useInViewOnce`) → 根に `data-in` → no-preference なら CSS が輪の `stroke-dashoffset` を全長から `全長 × (1 − 89 / 100)` まで `RING_DRAW_MS` (800 ms) で動かし、JS が `countUpValue` で数字を 0 → 89 に 800 ms で増やす (rAF)。reduce なら最初から最後の見え方。JS 無しなら HTML の最後の値 (89) と最後の offset (SVG の属性) がそのまま見える。89 = `comment.png` に写るスコア = `GUIDE_MEAL_ANALYSIS.overallScore` (U-28 が突き合わせる) |
 | S-18 | 375 px: 場面の `ul` は `overflow-x: auto; scroll-snap-type: x mandatory`、各 `li` は `scroll-snap-align: start`・幅 `min(85vw, 22rem)`。指で送ると 1 枚ずつ止まる。`ul` は `tabindex="0"` と `aria-label` を持つ (axe の `scrollable-region-focusable`)。ページの `scrollWidth` は `clientWidth` 以下 (E-6)。768 px 以上は 2 列、1024 px 以上は 4 列で、スクロールの箱ではない (`tabindex` も付けない) |
-| S-19 | ナビ「料金」(`Link href="#pricing"`) を押す → Next の router が `__NA` つきで `pushState` し、`#pricing` の要素へスクロール (`html` の `scroll-padding-top: 6rem` で固定ヘッダーの下に上端が来る) → `SiteHeader` の `useInViewSteps` (18 の区切りを `rootMargin: -40% 0px -55% 0px` で見る) が `pricing` を強調 (`aria-current="location"`) → 戻る → `popstate` の `state` は Next のもの → ヒーローの位置へ戻る (E-23 の前半) |
-| S-20 | `/` → ナビ「仕組み」→ `/#how` (Next の項目) → ヘッダーの「無料で始める」(`Link`) → `/signup` → 戻る → `popstate` の `state.__NA` あり → Next が `/#how` を描く → 紹介ページ・`#how` が画面に (E-23 の後半)。素の `<a href="#how">` のままなら `state` は `null` で画面は `/signup` のまま (§2.2) |
+| S-19 | ナビ「料金」(`Link href="#pricing"`) を押す → Next の router が `__NA` つきで `pushState` し、`#pricing` の要素へスクロール (`html` の `scroll-padding-top: 6rem` で固定ヘッダーの下に上端が来る) → `SiteHeader` の `useInViewSteps` (18 の区切りを `rootMargin: -40% 0px -55% 0px` で見る) が `pricing` を強調 (`aria-current="location"`)。同じ click を `useInPageLinkFocus` が `document` で受け、`section#pricing` へフォーカスを移す (E-29) → 戻る → `popstate` の `state` は Next のもの → ヒーローの位置へ戻る (E-23 の前半) |
+| S-20 | `/` → ナビ「仕組み」→ `/#how` (Next の項目) → ヘッダーの「無料で始める」(`Link`) → `/signup` → 戻る → `popstate` の `state.__NA` あり → Next が `/#how` を描く → 紹介ページ・`#how` が画面に (E-23 の後半)。素の `<a href="#how">` のままなら `state` は `null` で画面は `/signup` のまま (§2.2)。layout のスキップリンク (`#main-content`) を押してから `/signup` へ移って戻る経路は、本冊の実装の後も `state = null` のままなので、B 型の修正が直す (§2.2・Q-14) |
 | S-21 | 家族の区切り: 要点 4 つ (立場・招待・共有の範囲・家族の献立) の文はそれぞれ `family-roles`・`family-share`・`family-menu-view` の行。共有の範囲の図 (SVG) は 3 つの項目 (食事の記録・健康・献立) とそれぞれの既定 (オン・オフ・オン) を描く。FAQ「家族の記録は誰に見えますか？」の答えが同じ事実 |
 | S-22 | 組織の区切り: 要点 4 つの文は `org-admin`・`org-challenge-privacy` の行。「個人の記録の集計は出していません」と書く (条件を落とさない)。図は 管理者 → 部署 → メンバー の形だけ。FAQ「会社やチームで使えますか？」の答えが同じ事実 |
 | S-23 | 安心・料金・FAQ の AI の文はそれぞれ `ai-consent`・`ai-daily-limit`・`ai-stop`・`ai-estimate` の行。同意の画面の写真 (`consent.png`) が安心の区切りにあり、注記 `SCREENS_CAPTION` が付く |
@@ -431,6 +436,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | `痩せ`・`効果`・`治る`・`予防`・`続きます` | 健康上の効果・習慣の定着を約束する語 (健康増進法・薬機法の当てはめ: §2.5) |
 | `ダメ出しはしません` | 改善の提案 (`advice`・`nutritionTip`) があるので事実と違う |
 | `ランキング`・`上位`・`1位` | ほかの利用者との比較に基づく表示の条件を本冊で確かめていない (§2.5・§24 Q-15) |
+| `認識しやすく`・`認識精度` | 撮り方 (明るさ・角度) による認識の良し悪しを確かめていない。撮り方は指示する文だけにする (公開の FAQ の「どんな写真を撮ればいいですか？」も、別の案件 (枝 `fix/public-claims-review-1018`) で同じ理由で指示だけの文に直した) |
 
 語を足すときは、いまの `LANDING_COPY` に当たらないことを確かめてから足す (U-20 の一覧と同じ)。
 
@@ -451,7 +457,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | `weekly-menu` | 1週間の献立を AI が提案する (条件: 冷蔵庫優先・時短中心・和食多め・ヘルシー)。前後の日の献立 (記録した食事を含む) と同じ料理が続かないようにする | 週の献立の画面 `src/app/(main)/menus/weekly/page.tsx`・生成の依頼 `src/app/api/ai/menu/weekly/request/route.ts:172`・条件の名前 `src/components/ai-assistant/V4GenerateModal.tsx:730-733`・同じ料理が続かない: 公開の FAQ の答え `src/app/faq/page.tsx:63` | 同意と上限の範囲で | ヒーローの一文・仕組み 4・機能「1週間の献立を AI が提案」・章 menu・場面「一人暮らし」・料金のカード・FAQ「本当に無料」 |
 | `shopping-list` | 献立から買い物リストを作る | `src/app/api/shopping-list/route.ts:65-71` (生成は `consumeAiUsage(user.id, 'shopping_list')` で数える)・`regenerate/`・`add-recipe/`・献立表の「買い物リストを開く」`src/app/(main)/menus/weekly/page.tsx:5649`・モーダル `_components/modals/ShoppingModal.tsx:101` | 生成と AI での作り直しは 1 日の利用回数の上限に数える → 章 menu の文に書く | ヒーローの一文・仕組み 4・機能「買い物リスト」・章 menu・場面「一人暮らし」・料金のカード |
 | `health-records` | 体重 (体重計の写真からも) と健康診断の結果 (写真から) を記録し、推移をグラフで見る | `src/app/api/ai/analyze-weight-scale/route.ts:41`・`src/app/api/ai/analyze-health-checkup/route.ts:57`・`src/app/api/health/checkups/route.ts`・`src/app/(main)/health/` | 写真の読み取りは同意と上限の範囲で | ヒーローの一文・機能「体重と健康の記録」・章 health・場面「健康の記録を続けたい人」・料金のカード・FAQ「本当に無料」 |
-| `badges` | 食べた食事を「完了」にした回数と続けた日数、アプリの中の使い方の案内の完走で、バッジが付く (4 つの名前と説明)。新しく付くとお知らせが出る | 数える: `src/app/api/badges/route.ts:44-50`・`:59-70`・`:113`。付ける: `:123-138`・migration `supabase/migrations/20251126124224_create_meal_planner_tables.sql:1164-1173` (`tutorial_complete`)。一覧の許可: `src/lib/badges/awardable.ts:17-29`。名前: 同じ migration の `INSERT INTO public.badges` (`:14030-14032`・`:14045`。U-6)。写真から献立表に保存した食事は未完了: `src/app/api/meal-plans/add-from-photo/route.ts:171`。お知らせ: `src/app/(main)/badges/page.tsx` の見出し「新しいバッジを獲得！」 | 数えるのは「完了」にした食事だけ → 文は「完了」と書く。アプリの中のバッジの説明 (`badges.description`) は、別の案件 (枝 `fix/badges-description-matches-award`・migration `20261018040000`。マージ待ち) で付与の条件に合わせた文 (例: `first_bite` = `はじめて食事を「完了」にしました。新しい習慣の第一歩です！`) に直る。本冊はその新しい説明を前提にし、紹介ページの説明は付与の条件を短く言う自分の文のまま (DB の文を写す必要は無い: U-6)。`photo_10` (`カメラマン`)・`planner` (`計画上手`) は、説明が直っても名前が付与の条件と食い違うので載せない (Q-13) | 機能「バッジを集める」・章 badges・ガイド「アプリの中の案内」 |
+| `badges` | 食べた食事を「完了」にした回数と続けた日数、アプリの中の使い方の案内の完走で、バッジが付く (4 つの名前と説明)。新しく付くとお知らせが出る | 数える: `src/app/api/badges/route.ts:44-50`・`:59-70`・`:113`。付ける: `:123-138`・migration `supabase/migrations/20251126124224_create_meal_planner_tables.sql:1164-1173` (`tutorial_complete`)。一覧の許可: `src/lib/badges/awardable.ts:17-29`。名前: 同じ migration の `INSERT INTO public.badges` (`:14030-14032`・`:14045`。U-6)。写真から献立表に保存した食事は未完了: `src/app/api/meal-plans/add-from-photo/route.ts:171`。お知らせ: `src/app/(main)/badges/page.tsx` の見出し「新しいバッジを獲得！」 | 数えるのは「完了」にした食事だけ → 文は「完了」と書く。アプリの中のバッジの説明 (`badges.description`) は、別の案件 (PR #1890・migration `20261018040000`。origin/main `897182fc` にマージ済み) で付与の条件に合わせた文 (例: `first_bite` = `はじめて食事を「完了」にしました。新しい習慣の第一歩です！`) に直した。本冊はその新しい説明を前提にし、紹介ページの説明は付与の条件を短く言う自分の文のまま (DB の文を写す必要は無い: U-6)。`photo_10` (`カメラマン`)・`planner` (`計画上手`) は、説明が直っても名前が付与の条件と食い違うので載せない (Q-13) | 機能「バッジを集める」・章 badges・ガイド「アプリの中の案内」 |
 | `fridge` | 冷蔵庫の写真から食材を読み取る | `src/app/api/ai/analyze-fridge/route.ts:80`・`src/app/(main)/pantry/page.tsx:116` | 同意と上限の範囲で | 機能「食材の管理」・章 menu「食材の管理」 |
 | `family` | 家族を招待して献立を一緒に見る・記録を共有する | `src/app/api/family/groups/route.ts`・`src/app/api/family/invites/route.ts`・`src/app/api/family/members/me/share/route.ts`・`src/app/(main)/family/` | 共有は本人の設定の範囲で (`family-share`) | 機能「家族と組織で使う」・家族の区切り・FAQ「家族で使えますか？」 |
 | `free-now` | いまは無料で使える・有料プランは準備中 | `src/app/pricing/PricingPageView.tsx:45` の `有料プランは準備中です（販売開始前）`・`:60` | AI を使う機能には 1 日の利用回数の上限がある → 「すべて無料」と書く文字列には上限の文も入れる (U-24) | 安心の 3 点・安心「いまは無料で使えます」・料金・FAQ「本当に無料」・`SITE_DESCRIPTION` |
@@ -488,7 +494,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | `guide-exists` | 使い方ガイド (5 つの章・15 の手順・画面の写真つき) と、アプリの中の使い方の案内 (ハンズオンツアー) がある | `src/app/guide/guide-content.ts:52-117` (`GUIDES`: start・record・menu・health・badge の 5 章 × 3 手順)・`src/app/handson-tour/page.tsx`・卒業でバッジ: migration `:1164-1173` | 無し | ガイドの区切り・フッター「使い方ガイド」 |
 | `sessions` | 設定の「ログイン中の端末」で、ログインしている端末の一覧と最近のログインを確かめ、ほかの端末のログインを個別に解除できる | `src/app/(main)/settings/security/sessions/page.tsx:3-4`・`:253` (`ログイン中の端末`)・`src/lib/auth/sessions/client.ts` | この端末 (いま使っている端末) は一覧から解除しない (画面の決まり)。二段階認証は運営ロールだけの機能なので書かない (Q-19) | 安心「ログイン中の端末」・FAQ「ログインしている端末」 |
 | `data-requests` | 開示・訂正・利用停止の請求を設定から送れる (本人確認のメールが届く) | `src/app/api/account/data-requests/`・`src/app/(main)/settings/data-requests/page.tsx`・公開の FAQ `src/app/faq/page.tsx:78` | 無し | 安心「退会・書き出し・請求」・FAQ「退会やデータの削除」 |
-| `photo-storage` | 写真は公開されない保存領域に保存し、表示するときはログインした本人のために有効期限つきの URL を発行する | 公開の FAQ `src/app/faq/page.tsx:72`・署名 `src/lib/photo-storage-signing.ts`・`src/app/api/storage/signed-urls/route.ts` | 「第三者に共有されることはありません」などの断定は書かない (`FORBIDDEN`) | 安心「写真の保存」・FAQ「写真はどこに」 |
+| `photo-storage` | 写真は公開されない保存領域に保存し、表示するときはログインした本人のために有効期限つきの URL を発行する | 公開の FAQ `src/app/faq/page.tsx:72`・署名 `src/lib/photo-storage-signing.ts`・`src/app/api/storage/signed-urls/route.ts` | 第三者への共有や提供を断定する文は書かない (`FORBIDDEN` の語。`claims` の `condition` も見張りのソース走査の対象なので、FORBIDDEN の語そのものを `condition` に引用しない) | 安心「写真の保存」・FAQ「写真はどこに」 |
 | `ai-stop` | 運営の判断で AI 相談を一時停止することがある | `src/lib/ai/ai-chat-unavailable.ts`・`supabase/migrations/20261010120000_unify_feature_flags_seed.sql:54` (`ai_chat_enabled`。既定 ON)・`src/components/AIChatBubble.tsx:22`・`:431` | 無し | 章 chat「上限と一時停止」・料金「一時停止」 |
 
 **`praise` と `nutrition-tip` の経路の表** (v1.7 と同じ。origin/main `2863cb79` で変わらない):
@@ -615,7 +621,7 @@ h2 `写真の記録だけじゃない。` / 一文 `献立から買い物、体�
 | eyebrow | `写真で記録` | – |
 | h2 | `撮るだけで、記録が終わる。` | – |
 | 一文 | `入口は 2 つ。食事の記録の画面と、献立表の「写真から入力」。` | `photo-entrances` |
-| 要点 1 | 見出し `2 つの入口` / 本文 `ホームや下のナビの「スキャン」から開く食事の記録の画面と、献立表の 1 食に写真を入れる「写真から入力」。どちらも同じ AI が解析します。` | `photo-entrances` |
+| 要点 1 | 見出し `2 つの入口` / 本文 `ホームや下のナビの「スキャン」から開く食事の記録の画面と、献立表の 1 食に写真を入れる「写真から入力」。どちらも同じ AI が解析します。` | `photo-entrances`・`photo-analyze` |
 | 要点 2 | 見出し `5 つの値を推定` / 本文 `カロリー・タンパク質・炭水化物・脂質・野菜の点。数値はあくまで推定で、料理や撮影の条件で実際の値と異なることがあります。` | `nutrition-five`・`ai-estimate` |
 | 要点 3 | 見出し `記録コメントと栄養メモ` / 本文 `食事の記録の画面では、写真で記録すると、記録をほめるひと言と栄養のひと言メモが出ます。献立表の「写真から入力」では、ほめるひと言は後で食事の詳細に出て、栄養メモは出ません。` | `praise`・`nutrition-tip`・`photo-entrances` |
 | 要点 4 | 見出し `撮るものは 4 種類` / 本文 `食事のほかに、冷蔵庫・健康診断の結果・体重計も、同じ画面から撮れます。` | `photo-modes` |
@@ -681,7 +687,7 @@ h2 `写真の記録だけじゃない。` / 一文 `献立から買い物、体�
 | 画面 (札) | `/guide/badge-get.png` (`新しいバッジ`)・`/guide/badge-collection.png` (`トロフィールーム`) | – |
 | CTA | `無料で始める` → `/signup` | `free-now` |
 
-バッジ 4 つ (v1.7 と同じ。`code` と名前は `badges` テーブルの行と同じで、すべて `AWARDABLE_BADGE_CODES` にある。説明は紹介ページの短い文で、付与の条件を言う。アプリの中の説明は migration `20261018040000` (別の案件。マージ待ち) で付与の条件に合う文に直るので、紹介ページの文と趣旨が同じになる):
+バッジ 4 つ (v1.7 と同じ。`code` と名前は `badges` テーブルの行と同じで、すべて `AWARDABLE_BADGE_CODES` にある。説明は紹介ページの短い文で、付与の条件を言う。アプリの中の説明は migration `20261018040000` (別の案件。PR #1890 でマージ済み) で付与の条件に合う文に直ったので、紹介ページの文と趣旨が同じ):
 
 | code | 名前 (DB の `name`) | 説明 (紹介ページの文) | 付与の条件 (根拠) | アイコン (lucide) |
 |---|---|---|---|---|
@@ -729,7 +735,7 @@ h2 `あなたの暮らしに、当てはめると。` / 一文 `使い方は人�
 | 要点 1 | 見出し `3 つの立場` / 本文 `代表者・大人・子ども。アカウントの無い子どもも、代表者が登録できます。代表者の役目は、あとから譲れます。` | `family-roles` |
 | 要点 2 | 見出し `メールで招待` / 本文 `大人のメンバーは、メールの招待リンクから参加します。` | `family-roles` |
 | 要点 3 | 見出し `共有の範囲は自分で` / 本文 `食事の記録・健康・献立の 3 つを、家族に見せるかどうか自分で選びます。はじめは、食事の記録はオン、健康はオフです。` | `family-share` |
-| 要点 4 | 見出し `家族の献立を見る` / 本文 `献立表の「家族の表示」で、共有をオンにしている家族の献立を読み取り専用で見られます。` | `family-menu-view` |
+| 要点 4 | 見出し `家族の献立を見る` / 本文 `献立表の「家族の表示」で、共有をオンにしている家族の献立を読み取り専用で見られます。` | `family-menu-view`・`family` |
 | 共有の範囲の図 (SVG。`FamilySection` が描く) | 3 つの札 `食事の記録`・`健康`・`献立` と、それぞれの既定 `はじめはオン`・`はじめはオフ`・`自分で選ぶ` | `family-share` |
 | 画面 (札) | `/marketing/screens/family.png` (`家族の画面`) | – |
 | CTA | `無料で始める` → `/signup` | `free-now` |
@@ -804,7 +810,7 @@ h2 `よくある質問` / 一文 `気になることがあれば、ここで。`
 |---|---|---|---|
 | 1 | `本当に無料で使えますか？` | `はい。現在ご提供している機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、すべて無料でお使いいただけます。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。` | `free-now`・`ai-daily-limit` |
 | 2 | `どんな機能に AI を使っていますか？` | `食事の写真の解析、献立の作成、買い物リストの作り直し、冷蔵庫や体重計や健康診断の結果の写真の読み取り、AI 相談、献立の振り返りです。どれも、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。画面を開くと自動で動く機能（ホームの栄養スコアなど）は、1 日の上限に数えません。` | `ai-features`・`ai-consent`・`ai-daily-limit` |
-| 3 | `どんな写真を撮ればいいですか？` | `食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で撮ると、料理を認識しやすくなります。` | `photo-analyze` |
+| 3 | `どんな写真を撮ればいいですか？` | `食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で、料理が重ならないように撮ってください。` | `photo-analyze` (撮り方の指示だけで、撮り方による認識の良し悪しは言わない: §4.0) |
 | 4 | `AI の分析は正確ですか？` | `AI による分析はあくまで推定値で、料理や撮影条件によっては実際の値と異なる場合があります。医療目的での使用はお控えください。日々の食生活の参考としてお使いください。` | `ai-estimate` |
 | 5 | `データは安全ですか？` | `データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。` | `privacy`・`delete-export` |
 | 6 | `写真はどこに保存されますか？` | `公開されない保存領域に保存します。URL を知っているだけでは閲覧できず、表示するときはログインしたご本人のために有効期限つきの URL を発行します。詳しくはプライバシーポリシーをご確認ください。` | `photo-storage`・`privacy` |
@@ -961,6 +967,7 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 | ヘッダーの高さ | `4rem` (768 px 未満)・`5rem` (768 px 以上) |
 | 読む位置の棒 | 高さ `3px`・ヘッダーの下端・`--lp-accent`・`transform: scaleX(進み)`・`transform-origin: left` |
 | ページのスクロールの余白 | `--lp-scroll-padding-top: 6rem` (`html` の `scroll-padding-top`。§11 の 2.4.11) |
+| 区切りのフォーカス (ページの中のリンクの先) | `main` の中の `section` (`tabindex="-1"`) は、`:focus` のときも `:focus-visible` のときも `outline: none` (枠も影も付けない)。区切りは操作する部品ではなく、移った先は画面の位置 (`scroll-padding-top` の下に上端) と、次の Tab で区切りの中の最初の要素に出るリング (globals.css の `:focus-visible`) で分かる。区切りの中のリンクとボタンのリングは変えない (§11 の 2.4.7) |
 | 押せる大きさ | CTA `min-height: 3rem` (48 px)・ヘッダーの小さい CTA・ナビ・ログインは `min-height: 2.75rem` (44 px)・フッターと安心と組織のリンクは `min-height: 1.5rem` (24 px)・FAQ のボタンは `min-height: 3rem`・機能のカード (リンク) は全体が押せる |
 | 区切りの地 | §5.1 の区切りごとの地の列。帯は全幅、カードは帯の上でも `--lp-surface` |
 | ヒーローの地 (静的。動かない) | `--lp-bg` の上に 2 つの放射状のグラデーションを重ねる: (1) 右上 (横 85 %・縦 20 %) を中心とする `--lp-bg-tint` (半径の 70 % で透明)・(2) 左下 (横 10 %・縦 95 %) を中心とする `--lp-green-tint` の 60 % の不透明度 (半径の 50 % で透明)。区切りの下の端は `--lp-bg`。背景のための要素 (円・装飾の画像・粒) は置かない |
@@ -1037,7 +1044,7 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 | M-8 | `FaqSection` | 開閉 | ボタン | 答えの箱が高さを測らずに開く (`grid-template-rows: 0fr → 1fr`) + 矢印の回転 180° | `--lp-dur` / `--lp-ease` | 全部 | 一瞬 | 閉じたまま (答えは DOM にある) | E-4 |
 | M-9 | `CtaLink`・機能のカード・場面のカード | 押せる | `:hover` / `:active` (`@media (hover: hover)`) | CTA は `translateY(-1px)` / `scale(0.98)`。カードは `translateY(-4px)` + 影を `--lp-shadow-card-hover` に。デモの写真のボタンは `translateY(-2px)` | `--lp-dur-fast` / `--lp-ease` | ポインタが `hover` できる端末だけ | 無し (`:hover` の `transform` も遷移も no-preference の中だけ) | CSS なので動く | U-20 |
 | M-10 | `BadgesChapter` のバッジの列 | 増えていく楽しさ | 列を包む `Reveal` が画面に入ったとき | 各カードが `scale(0.92) → 1` + `opacity 0 → 1`、4 つを `--lp-stagger` ずつ | `--lp-dur` / `--lp-ease` | 全部 | 動き無し | 隠さない (最初から見える) | E-1・E-7 |
-| M-11 | `ScoreRing` (章 nutrition) | スコアという数字の手応え | 輪を包む箱が画面に入ったとき (`useInViewOnce`。1 回だけ) | 輪 (`circle`。`pathLength="100"`・`stroke-dasharray: 100`) の `stroke-dashoffset` が `100` から `100 − 89` (= 11) へ CSS の遷移で動く。数字は `countUpValue` で 0 → 89 を `RING_DRAW_MS` (800 ms) で増やす (rAF。読み上げは最後の値だけ: §8.3) | `--lp-dur-slow` / `--lp-ease`・数字は `easeOutCubic` | 全部 | 輪は最初から最後の形・数字は最初から 89 | HTML の最後の値 (89) と SVG の属性の最後の offset がそのまま見える | E-25・E-7・U-32 |
+| M-11 | `ScoreRing` (章 nutrition) | スコアという数字の手応え | `ScoreRing` の根が画面に入ったとき (`useInViewOnce`。1 回だけ。入る前はマウントで付けた `data-js` の下で、見える数字 0・輪 `100` で待つ: §13.3 の armed) | 輪 (`circle`。`pathLength="100"`・`stroke-dasharray: 100`) の `stroke-dashoffset` が `100` から `100 − 89` (= 11) へ CSS の遷移で動く。数字は `countUpValue` で 0 → 89 を `RING_DRAW_MS` (800 ms) で増やす (rAF。読み上げは最後の値だけ: §8.3) | `--lp-dur-slow` / `--lp-ease`・数字は `easeOutCubic` | 全部 | 輪は最初から最後の形・数字は最初から 89 | HTML の最後の値 (89) と SVG の属性の最後の offset がそのまま見える | E-25・E-7・U-32 |
 | M-12 | `FlowDiagram` (仕組みの下) | 流れがつながっている | 図を包む `Reveal` が画面に入ったとき (`is-in`) | 線 (`path`。`pathLength="1"`) の `stroke-dashoffset` が `1` → `0` へ CSS の遷移で動く (描かれる)。節は `Reveal` の立ち上がり | `--lp-dur-draw` / linear | 全部 | 線は最初から描かれている | 線は最初から描かれている (隠す規則は no-preference + `[data-js]` の下だけ) | E-26・E-7 |
 | M-13 | `ScenesSection` の帯 | 自分で送る | 指・ホイール・キーボード (`tabindex="0"` の箱) | CSS の `scroll-snap-type: x mandatory` で 1 枚ずつ止まる。動きの宣言は無い (ブラウザのスクロール) | 無し | 768 px 未満だけ帯。以上は 2 列 (768〜1023) / 4 列 (1024〜) | 同じ (ブラウザの既定。`scroll-behavior` は書かない) | 同じ (CSS) | E-27・E-6 |
 | M-14 | `SiteHeader` のナビ | いまどこを読んでいるか | 区切りが画面の中央の帯 (`NAV_CURRENT_ROOT_MARGIN` = `-40% 0px -55% 0px`) に入る (`useInViewSteps` で 18 の区切りを見る) | いま画面にある区切りが属するナビの項目に `aria-current="location"` と下線 (`--lp-accent-ink`・2 px)。下線は `scaleX 0 → 1` | `--lp-dur-fast` / `--lp-ease` | 768 px 以上 (ナビが見えるとき) | 下線は一瞬で付く | 付かない | E-28・U-33 |
@@ -1089,9 +1096,9 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 
 ## 7. 画像の調達
 
-### 7.1 実際の画面 (既存の 15 枚のうち 13 枚 + 新しく撮る 6 枚 = 19 枚)
+### 7.1 実際の画面 (既存の 15 枚のうち 11 枚 + 新しく撮る 6 枚 = 17 枚)
 
-**既存の 13 枚** (`public/guide/`。v1.7 の段 0 で `comment.png`・`analyze.png` は撮り直し済み。alt は `guide-content.ts` の `imageAlt` と同じ。U-5):
+**既存の 15 枚のうち使う 11 枚と、使わない 4 枚** (`public/guide/`。v1.7 の段 0 で `comment.png`・`analyze.png` は撮り直し済み。alt は `guide-content.ts` の `imageAlt` と同じ。U-5):
 
 | ファイル | alt | 使う場所 |
 |---|---|---|
@@ -1171,7 +1178,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `src/components/marketing/story-state.ts` (新設) | 純関数 | `storyActiveIndex` (§9.4・§13.3) | – |
 | `src/components/marketing/count-up.ts` (新設) | 純関数 | `countUpValue`・`easeOutCubic` (§9.5) | – |
 | `src/components/marketing/marketing.css` (変更) | CSS | `.lp` のトークン (§5)・タイポグラフィ・動き (§6) | – |
-| `sections/SiteHeader.tsx` (変更) | 島 | ヘッダー (M-1・M-4・M-14) | `scrolled: boolean`・`currentSection: SectionId \| null` |
+| `sections/SiteHeader.tsx` (変更) | 島 | ヘッダー (M-1・M-4・M-14)・ページの中のリンクの先へのフォーカス (`useInPageLinkFocus` を呼ぶ) | `scrolled: boolean`・`currentSection: SectionId \| null` |
 | `sections/HeroSection.tsx` (変更) | Server | ヒーロー (5 枚の扇) | – |
 | `sections/StorySection.tsx` (新設) | Server | 仕組みの骨格 (手順 4 つ・流れの図・注記)。中に `StoryScroller` | – |
 | `sections/DemoSection.tsx` (変更) | 島 | デモ + スコアの数字の増え方 | `DemoState`・`shownScore: number` |
@@ -1183,14 +1190,16 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `sections/TrustSection.tsx` (変更) | Server | 安全とプライバシー 6 点 + 画面 | – |
 | `sections/PricingSection.tsx`・`GuideSection.tsx` (新設) | Server | 料金・使い方ガイド | – |
 | `sections/FaqSection.tsx` (変更: 12 件) | 島 | よくある質問 | `openIndex: number \| null` |
-| `sections/FinalCtaSection.tsx`・`SiteFooter.tsx` (変えない) | Server | 最終 CTA・フッター | – |
+| `sections/FinalCtaSection.tsx` (変更: `section#cta` に `tabIndex={-1}` を足すだけ。§8.3 の `LandingPage`) | Server | 最終 CTA | – |
+| `sections/SiteFooter.tsx` (変えない) | Server | フッター | – |
 | `sections/HowItWorksSection.tsx`・`BadgesSection.tsx` (削除) | – | v1.7 の使い方とバッジ (`StorySection`・`BadgesChapter` に置き換える) | – |
 | `primitives/Reveal.tsx`・`PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts` (変えない) | – | v1.7 のまま | – |
 | `primitives/StoryScroller.tsx` (新設) | 島 | 固定した端末の入れ替え (M-6) | `activeIndex: number` |
-| `primitives/ScoreRing.tsx` (新設) | 島 | 輪と数字 (M-11) | `inView: boolean`・`shown: number` |
+| `primitives/ScoreRing.tsx` (新設) | 島 | 輪と数字 (M-11) | `phase: 'server' \| 'armed' \| 'counting' \| 'final'` (§13.3 の数字の増え方の表)・`shown: number` |
 | `primitives/ReadingProgress.tsx` (新設) | 島 | 読む位置の棒 (M-4) | `progress: number` |
 | `primitives/FlowDiagram.tsx` (新設) | Server | 流れの図 (M-12 は CSS) | – |
 | `primitives/useInViewSteps.ts` (新設) | hook | 複数の要素の交差 (§6.3) | – |
+| `primitives/useInPageLinkFocus.ts` (新設) | hook | ページの中のリンクの先の区切りへフォーカスを移す (§2.2・§8.3) | – |
 
 `src/components/marketing/` の中は、`react`・`next/link`・`next/image`・`lucide-react`・`framer-motion`・`zod`・`@/lib/site-config` (`SITE_NAME`)・`@/app/guide/guide-content`・`@/components/handson-tour/useReducedMotion`・`@/components/marketing/` と相対の import 以外を import しない (U-10)。`scripts/` を import しない (`GUIDE_MEAL_ANALYSIS` の値は `landing-copy.ts` の `chapters.nutrition.ring` に写し、U-28 が突き合わせる)。
 
@@ -1203,7 +1212,9 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `LANDING_SCREENS` | `readonly LandingScreen[]` (§9.2。6 枚) | 各区切り (`landingScreen(name)` 経由)・`scripts/guide-screenshots/`・テスト |
 | `landingScreen` | `(name: LandingScreenName): LandingScreen` (無ければ throw) | 各区切り |
 | `landingClaims` | `(copy?: LandingCopy): readonly LandingClaim[]` | テスト |
-| `landingImagePaths` | `(copy?: LandingCopy): string[]` (ページが指す `public/` の画像のパス。出てくる順・重複なし。19 + 3) | テスト |
+| `landingImagePaths` | `(copy?: LandingCopy): string[]` (ページが指す `public/` の画像のパス。出てくる順・重複なし。§9.1 の `LANDING_COPY` では 20 件 = 実際の画面 17 (`/guide/` 11・`/marketing/screens/` 6) + 写真 3。U-4 が件数を見る) | テスト |
+| `inPageSectionId` | `(href: string): SectionId \| null` (§9.1。`#` で始まり、続きが `SECTION_IDS` のどれかなら、その id。ほかは null) | `useInPageLinkFocus`・テスト |
+| `useInPageLinkFocus` | `(): void` (§8.3。`SiteHeader` が 1 回だけ呼ぶ) | `SiteHeader` |
 | `demoPraiseComment`・`demoScore` | v1.7 と同じ (§9.1) | `DemoSection`・テスト |
 | `demoReducer`・`selectedSampleId`・`DEMO_INITIAL_STATE` | v1.7 と同じ (§9.3) | `DemoSection`・テスト |
 | `storyActiveIndex` | `(intersecting: ReadonlyArray<boolean>, current: number): number` (§9.4。帯にある手順のうち最も下の index。無ければ `current`) | `StoryScroller`・テスト |
@@ -1226,8 +1237,8 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 
 | 部品 | 振る舞いと構造 | アクセシビリティ | 動きを減らす設定・JS 無し | 見た目の決まり (幅ごと) | 確かめる検査 |
 |---|---|---|---|---|---|
-| `LandingPage` | 根は `.lp` の `div` 1 つ。中に `SiteHeader` → `main` → `SiteFooter`。`main` の中に区切り 18 を `id` の順 `hero how demo features photo menu nutrition health badges chat scenes family org trust pricing guide faq cta` で置く。データ取得・`headers()`・`cookies()` を呼ばない | `main` のランドマークは本部品が持つ | 文章と画像はすべて Server の HTML に出る | `.lp` の根は `color-scheme: light`・地 `--lp-bg`・文字 `--lp-ink`・`overflow-x: clip`・`overflow-wrap: anywhere` | U-12・U-14・E-1・E-6 |
-| `SiteHeader` | `header` 1 つ。上に固定 (`position: sticky; top: 0`)。左にマーク + `SITE_NAME` (`Link` で `/`)、中にナビ (`Link` 5 つ。`href` は `#how` `#features` `#family` `#pricing` `#faq`)、右にログイン (`Link` `/login`) と「無料で始める」(`CtaLink` `primary` `compact` `/signup`)。下端に `ReadingProgress`。`scrollY > HEADER_SCROLLED_PX` で背景 (M-1)。`useInViewIds` で 18 の区切りの交差を見て、いま帯にある区切り (複数なら最も下) が属するナビの項目に `aria-current="location"` (M-14。対応: hero・how → 仕組み / demo・features・photo・menu・nutrition・health・badges・chat → 機能 / scenes・family・org → 家族と組織 / trust・pricing・guide → 料金 / faq・cta → よくある質問) | `nav aria-label="サイトの案内"`。リンクは高さ 44 px 以上。読む位置の棒は `aria-hidden="true"` | reduce: 背景と下線の切り替えに遷移が無い。JS 無し: 背景は付かず、下線は無く、棒は 0 | 高さ 4rem (768 px 未満) / 5rem (以上)。ナビは 768 px 以上で見せる。ログインは 640 px 以上。「無料で始める」はどの幅でも 1 行 | E-2・E-5・E-9・E-15・E-23・E-24・E-28 |
+| `LandingPage` | 根は `.lp` の `div` 1 つ。中に `SiteHeader` → `main` → `SiteFooter`。`main` の中に区切り 18 を `id` の順 `hero how demo features photo menu nutrition health badges chat scenes family org trust pricing guide faq cta` で置く。区切りの `section` (各区切りの部品が描く) は 18 とも `tabIndex={-1}` を持つ (ページの中のリンクの先にフォーカスを移すため: §2.2。Tab の順には入らない。見た目は §5.3)。データ取得・`headers()`・`cookies()` を呼ばない | `main` のランドマークは本部品が持つ | 文章と画像はすべて Server の HTML に出る | `.lp` の根は `color-scheme: light`・地 `--lp-bg`・文字 `--lp-ink`・`overflow-x: clip`・`overflow-wrap: anywhere` | U-12・U-14・E-1・E-6・E-29 |
+| `SiteHeader` | `header` 1 つ。上に固定 (`position: sticky; top: 0`)。左にマーク + `SITE_NAME` (`Link` で `/`)、中にナビ (`Link` 5 つ。`href` は `#how` `#features` `#family` `#pricing` `#faq`)、右にログイン (`Link` `/login`) と「無料で始める」(`CtaLink` `primary` `compact` `/signup`)。下端に `ReadingProgress`。`scrollY > HEADER_SCROLLED_PX` で背景 (M-1)。`useInViewIds` で 18 の区切りの交差を見て、いま帯にある区切り (複数なら最も下) が属するナビの項目に `aria-current="location"` (M-14。対応: hero・how → 仕組み / demo・features・photo・menu・nutrition・health・badges・chat → 機能 / scenes・family・org → 家族と組織 / trust・pricing・guide → 料金 / faq・cta → よくある質問)。マウントの後に `useInPageLinkFocus()` を 1 回呼ぶ (ページの中のリンクの先へのフォーカス。下の行) | `nav aria-label="サイトの案内"`。リンクは高さ 44 px 以上。読む位置の棒は `aria-hidden="true"` | reduce: 背景と下線の切り替えに遷移が無い。JS 無し: 背景は付かず、下線は無く、棒は 0。ページの中のリンクはブラウザの既定のハッシュの移動になり、フォーカスの起点もブラウザが移す | 高さ 4rem (768 px 未満) / 5rem (以上)。ナビは 768 px 以上で見せる。ログインは 640 px 以上。「無料で始める」はどの幅でも 1 行 | E-2・E-5・E-9・E-15・E-23・E-24・E-28・E-29 |
 | `ReadingProgress` | `aria-hidden` の `div`。`scroll` (`passive` + rAF) で `style.transform = scaleX(p)` を更新。`p` は 0〜1 に収める。`resize` でも更新 | 読み上げの対象にしない | 動きの宣言は持たない | 高さ 3 px・`--lp-accent`・`transform-origin: left`・ヘッダーの下端に重ねる | E-24 |
 | `HeroSection` | `section#hero`・`aria-labelledby="hero-title"`。文字の列: eyebrow・h1 (`hero-title`。2 行目はグラデーションの文字)・lead・CTA 2 つ (`primary` → `/signup`・`secondary` → `#demo`。どちらも `CtaLink` = `Link`)・安心の 3 点 (`ul`)・手がかり (文字 + `ChevronDown`。リンクではない)。画面の列: 扇の箱に `PhoneFrame` 5 枚を `hero.screens` の順で置く (§5.4)。下に画面の注記 | h1 はページで 1 つ。画面は画像だけでフォーカスしない。前の 1 枚 (`comment.png`) だけ `preload` | reduce: 立ち上がり無し。JS 無し: 同じ (CSS なら動く) | 1024 px 以上: 2 列 (文字 7 : 画面 5)。未満: 1 列。640 px 未満: 遠くの 2 枚は `display: none` (3 枚の扇)。地は §5.3 のヒーローのグラデーション | U-14・E-1・E-7・E-10・E-17 |
 | `StorySection` | `section#how`・`aria-labelledby="how-title"`。見出しの塊と、1024 px 以上で 2 列 (左 7: 手順の `ol`・右 5: `StoryScroller`)。手順の `li` は `id="how-step-<n>"` (n = 1〜4) を持ち、中は上から: 手順の中の画面 (`PhoneFrame` + 画像。1024 px 以上で `[data-js]` のときは `display: none`)・番号 (`aria-hidden`)・h3・本文。`ol` の下に `FlowDiagram` (`Reveal` で包む) と画面の注記。手順の `li` の最小の高さは 1024 px 以上で `70vh` | 手順の順は `ol` で伝える | reduce: 入れ替えは一瞬 (状態は変わる)。JS 無し: `[data-js]` が無いので固定した端末は描かれず (`display: none`)、手順の中の画面が見える | 1024 px 以上: 7 : 5 の 2 列、固定した端末。未満: 1 列 (手順の間 3rem・画面は `min(100%, 13rem)` で中央) | E-1・E-21・U-26・U-30 |
@@ -1237,7 +1248,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `FeaturesSection` | `section#features`・`aria-labelledby="features-title"`。見出しの塊と、`ul` の中にカード 10 枚 (`features.cards` の順)。各カードは `Link` (`href` = カードの `href`。`#photo` ほか) で全体が押せる。画像のあるカード: 画面の箱の中に `PhoneFrame` + 画像。無いカード: アイコン。どちらも h3 + 本文。`ul` の下に画面の注記 | カードは `Link` なのでフォーカスする (アクセシブルな名前 = h3 の文 + 本文)。アイコンは `aria-hidden` | reduce・JS 無し: 全カードが最初から見え、`:hover` の動きは無い | 1024 px 以上: 12 列 (大 = 6 列ぶん ×2 が 1 行目・中 = 4 列ぶん ×6 が 2〜3 行目・小 = 6 列ぶん ×2 が 4 行目)。768〜1023 px: 2 列。未満: 1 列。カード: `--lp-surface`・角丸・影・内側の余白 1.5rem | U-3・U-4・U-5・U-26・E-1・E-8・E-15 |
 | `ChapterSection` | `section#<chapter.id>`・`aria-labelledby="<id>-title"`。中は: 章の番号 (`aria-hidden`)・eyebrow・h2 (`<id>-title`)・lead・要点の `ul` (各 `li`: アイコンの輪・h3・本文)・`children`・画面の塊 (`PhoneFrame` ×1〜5 と札。§5.4 の並び)・画面の注記・CTA (`CtaLink`。`tone` が `dark` なら `on-dark`、それ以外は `primary`)。1024 px 以上は 2 列 (文字 7 : 画面 5。章の番号が奇数なら文字が左、偶数なら画面が左 = 章ごとに左右を入れ替える) | 画面はフォーカスしない。768 px 未満で画面が 2 枚以上のときの帯 (`ul`) は `tabindex="0"` + `aria-label` = `<章の見出し>の画面` | reduce・JS 無し: 最初から見える | 上下 `--lp-chapter-y`。地は `tone` (§5.1)。濃色のときの文字は `--lp-on-dark*` | E-1・E-8・E-19・E-22・U-26 |
 | `NutritionChapter` | `ChapterSection` の `children` に `ScoreRing` (`value` = `chapters.nutrition.ring.value`・`max` = `RING_MAX` (100)・`label`・`note`) | – | – | 輪はカードの中 (`--lp-surface`)。地は `green` | E-25・U-28・U-32 |
-| `ScoreRing` | `'use client'`。`useInViewOnce` で画面に入ったら根に `data-in` を付ける。SVG の `circle` 2 本 (下地 `--lp-line`・値 `--lp-green`。`pathLength="100"`・`stroke-dasharray: 100`)。値の `circle` の `stroke-dashoffset` は HTML の属性で `100 − value` (最後の形)。no-preference + `[data-js]` では `data-in` の無い間だけ CSS が `stroke-dashoffset: 100` にし、`data-in` で遷移して最後の形へ。数字: `data-in` 後に `countUpValue` で 0 → value を `RING_DRAW_MS` で描く (reduce なら最初から value)。札と注記は文字 | SVG は `aria-hidden`。数字の読み上げは最後の値だけ (`DemoSection` と同じ 2 つの `span`) | reduce: 輪と数字は最初から最後の形。JS 無し: 同じ (HTML の属性が最後の形) | 輪の直径 `clamp(9rem, 20vw, 12rem)`・線の太さ 10 px。数字は §5.2 の大きな数字 | E-25・E-7・U-32 |
+| `ScoreRing` | `'use client'`。状態は §13.3 の数字の増え方の表 (`ScoreRing` の行) のとおり。マウントで根に `data-js` を付ける (armed)。`useInViewOnce` で根が画面に入ったら根に `data-in` を付ける。SVG の `circle` 2 本 (下地 `--lp-line`・値 `--lp-green`。`pathLength="100"`・`stroke-dasharray: 100`)。値の `circle` の `stroke-dashoffset` は HTML の属性で `100 − value` (最後の形)。no-preference の中だけで: 根が `[data-js]:not([data-in])` の間は CSS が `stroke-dashoffset: 100` にし (隠すときは遷移なし。`transition` の宣言は `[data-in]` の付いた根の下にだけ書く)、`data-in` で `RING_DRAW_MS` かけて最後の形へ。見える数字: armed の間は、`useReducedMotion()` が false なら 0・true なら value。`data-in` で、false なら counting (`countUpValue` で 0 → value を `RING_DRAW_MS`)、true なら final (value)。札と注記は文字 | SVG は `aria-hidden`。数字の読み上げは最後の値だけ (`DemoSection` と同じ 2 つの `span`) | reduce: 輪と数字は最初から最後の形 (隠す規則は no-preference の中だけ・見える数字は armed でも value)。JS 無し: 同じ (HTML の属性が最後の形・`data-js` が付かない) | 輪の直径 `clamp(9rem, 20vw, 12rem)`・線の太さ 10 px。数字は §5.2 の大きな数字 | E-25・E-7・U-32 |
 | `BadgesChapter` | `ChapterSection` の `children` にバッジの列 (`ul`。4 枚。アイコンの輪 (`--lp-gold` の輝き)・h3 (名前)・説明)。列を 1 つの `Reveal` で包み、M-10 が中をずらす | – | reduce・JS 無し: 最初から見える | 640 px 未満: 1 列・640〜1023: 2 列・1024 以上: 4 列。名前は 1 行 (E-22) | U-6・E-1・E-22 |
 | `HealthChapter` | `ChapterSection` の `children` に免責 (`chapters.health.disclaimer`。14 px・`--lp-ink-soft`) | – | – | 地は `blue` | U-26 |
 | `ScenesSection` | `section#scenes`・`aria-labelledby="scenes-title"`。見出しの塊と、`ul` の中にカード 4 枚 (アイコン・h3・本文)。768 px 未満は `ul` が `overflow-x: auto; scroll-snap-type: x mandatory`・各 `li` が `scroll-snap-align: start`・幅 `min(85vw, 22rem)` | 768 px 未満の `ul` は `tabindex="0"` + `aria-label="使い方の場面"`。以上は `tabindex` を付けない (`tabindex` は `[data-narrow]` ではなく CSS では切り替えられないので、`ul` には常に `tabindex="0"` と `aria-label` を付ける: 768 px 以上でもフォーカスできる箱が 1 つ増えるだけで、害は無い) | reduce・JS 無し: 同じ (CSS) | 768〜1023 px: 2 列・1024 以上: 4 列。カードは `--lp-surface`・角丸・影・内側の余白 1.5rem | E-27・E-6・E-20 |
@@ -1247,8 +1258,10 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `PricingSection` | `section#pricing`・`aria-labelledby="pricing-title"`。eyebrow・h2・lead・カード 2 枚 (`ul`。見出し・札・項目の `ul` か本文・CTA)・AI の上限 3 点 (`ul`) | 札は文字 (14 px) | 最初から見える | 768 px 以上: カード 2 列・上限 3 列。未満: 1 列。地は `tint` | U-24・E-1・E-22 |
 | `GuideSection` | `section#guide`・`aria-labelledby="guide-title"`。eyebrow・h2・lead・章の一覧 (`ol`。5 つ。アイコン・名前・手順の数)・要点 3 つ・画面 2 枚・画面の注記・CTA (`CtaLink` `secondary` → `/guide`) | 章の順は `ol` | 最初から見える | 1024 px 以上: 2 列 | U-26・U-29・E-1 |
 | `FaqSection` | v1.7 と同じ作り (`h3` の中の `button aria-expanded aria-controls`・`region`・閉じている間は高さ 0 + `inert`)。12 件。同時に開くのは 1 つ | 文の中のリンクは下線 | reduce: 一瞬。JS 無し: 閉じたまま | 最大幅 48rem | E-4・E-9・E-20 |
-| `FinalCtaSection`・`SiteFooter`・`Reveal`・`useInViewOnce`・`PhoneFrame`・`CtaLink` | v1.7 と同じ | 同左 | 同左 | 同左 | 同左 |
+| `FinalCtaSection` | v1.7 と同じ。足すのは `section#cta` の `tabIndex={-1}` だけ (§8.3 の `LandingPage`) | v1.7 と同じ | v1.7 と同じ | v1.7 と同じ | U-14・v1.7 と同じ |
+| `SiteFooter`・`Reveal`・`useInViewOnce`・`PhoneFrame`・`CtaLink` | v1.7 と同じ | 同左 | 同左 | 同左 | 同左 |
 | `useInViewIds` (`useInViewSteps.ts`) | 1 つの IntersectionObserver (`threshold: 0`・引数の `rootMargin`) で `ids` の要素を監視し、要素ごとの「いま交差しているか」の配列を返す。監視は続ける。IO が無い環境では全部 `false`。アンマウントで `disconnect`。`ids` が変わったら作り直す | – | – | – | U-22・U-30・U-33 |
+| `useInPageLinkFocus` (`useInPageLinkFocus.ts`) | マウントで `document` に `click` の listener を 1 つ付け (bubble)、アンマウントで外す。listener: (1) `event.button !== 0`・`metaKey`・`ctrlKey`・`shiftKey`・`altKey` のどれかなら何もしない (2) `event.target` が `Element` でなければ何もしない。`target.closest('a[href]')` が無い、または `.closest('.lp')` の外なら何もしない (3) `inPageSectionId(a.getAttribute('href') ?? '')` が null なら何もしない (4) `document.getElementById(id)` が `HTMLElement` なら `focus({ preventScroll: true })` を呼ぶ (スクロールは `Link` (Next の router) に任せる)。`Link` の `onClick` は React の根で先に動くので、この listener はその後に動く。フォーカスの移動は Next のスクロールと順序によらない (`preventScroll`)。Enter で押したリンクも `click` が出るので同じ | 移った先の `section` は `tabindex="-1"` (§8.3 の `LandingPage`) なのでフォーカスでき、次の Tab はその中の最初のフォーカスできる要素へ進む。区切りのリングは出さない (§5.3) | JS 無し: listener は無いが、`Link` も素の `a` としてブラウザの既定で移るので、起点はブラウザが移す。reduce: 同じ (動きではない) | – | E-29・U-35 |
 | `marketing.css` | §5 のトークンを `.lp` の中の CSS 変数で持つ。`html:has(.lp)` に `scroll-padding-top`。動きの宣言と動きのための初期の見え方は no-preference の中だけ。`reduce` の at-rule を書かない。`animation-timeline` / `scroll-timeline` / `view-timeline` を書かない。`infinite` は高々 1 つ。`scroll-behavior` を書かない (瞬時のスクロール: E-23 の判定が安定する) | – | – | – | U-7・U-8・U-18・U-20・U-23 |
 
 ---
@@ -1395,6 +1408,16 @@ export const SECTION_NAV_KEY: Record<SectionId, NavKey> = {
   faq: 'faq',
   cta: 'faq',
 };
+
+/** ページの中のリンクの href の頭 (同じページの区切りへ移るリンクは '#<区切りの id>') */
+const IN_PAGE_HREF_PREFIX = '#';
+
+/** ページの中のリンクの href から、移る先の区切りの id を返す。区切りでなければ null (useInPageLinkFocus がフォーカスを移す先。§2.2) */
+export function inPageSectionId(href: string): SectionId | null {
+  if (!href.startsWith(IN_PAGE_HREF_PREFIX)) return null;
+  const id = href.slice(IN_PAGE_HREF_PREFIX.length);
+  return SECTION_IDS.find((sectionId) => sectionId === id) ?? null;
+}
 
 // ─── デモの記録コメント (アプリの定型の文と同じ形。§4.5。v1.7 と同じ) ───
 export const DEMO_PRAISE_DISH_SUFFIX = 'の記録';
@@ -1813,7 +1836,7 @@ export const LANDING_COPY = {
       title: '撮るだけで、記録が終わる。',
       lead: '入口は 2 つ。食事の記録の画面と、献立表の「写真から入力」。',
       points: [
-        { title: '2 つの入口', body: 'ホームや下のナビの「スキャン」から開く食事の記録の画面と、献立表の 1 食に写真を入れる「写真から入力」。どちらも同じ AI が解析します。', claimIds: ['photo-entrances'] },
+        { title: '2 つの入口', body: 'ホームや下のナビの「スキャン」から開く食事の記録の画面と、献立表の 1 食に写真を入れる「写真から入力」。どちらも同じ AI が解析します。', claimIds: ['photo-entrances', 'photo-analyze'] },
         { title: '5 つの値を推定', body: 'カロリー・タンパク質・炭水化物・脂質・野菜の点。数値はあくまで推定で、料理や撮影の条件で実際の値と異なることがあります。', claimIds: ['nutrition-five', 'ai-estimate'] },
         { title: '記録コメントと栄養メモ', body: '食事の記録の画面では、写真で記録すると、記録をほめるひと言と栄養のひと言メモが出ます。献立表の「写真から入力」では、ほめるひと言は後で食事の詳細に出て、栄養メモは出ません。', claimIds: ['praise', 'nutrition-tip', 'photo-entrances'] },
         { title: '撮るものは 4 種類', body: '食事のほかに、冷蔵庫・健康診断の結果・体重計も、同じ画面から撮れます。', claimIds: ['photo-modes'] },
@@ -1943,7 +1966,7 @@ export const LANDING_COPY = {
       { title: '3 つの立場', body: '代表者・大人・子ども。アカウントの無い子どもも、代表者が登録できます。代表者の役目は、あとから譲れます。', claimIds: ['family-roles'] },
       { title: 'メールで招待', body: '大人のメンバーは、メールの招待リンクから参加します。', claimIds: ['family-roles'] },
       { title: '共有の範囲は自分で', body: '食事の記録・健康・献立の 3 つを、家族に見せるかどうか自分で選びます。はじめは、食事の記録はオン、健康はオフです。', claimIds: ['family-share'] },
-      { title: '家族の献立を見る', body: '献立表の「家族の表示」で、共有をオンにしている家族の献立を読み取り専用で見られます。', claimIds: ['family-menu-view'] },
+      { title: '家族の献立を見る', body: '献立表の「家族の表示」で、共有をオンにしている家族の献立を読み取り専用で見られます。', claimIds: ['family-menu-view', 'family'] },
     ],
     shareFigure: [
       { label: '食事の記録', state: 'on', note: 'はじめはオン' },
@@ -2031,7 +2054,8 @@ export const LANDING_COPY = {
     items: [
       { q: '本当に無料で使えますか？', a: 'はい。現在ご提供している機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、すべて無料でお使いいただけます。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。' },
       { q: 'どんな機能に AI を使っていますか？', a: '食事の写真の解析、献立の作成、買い物リストの作り直し、冷蔵庫や体重計や健康診断の結果の写真の読み取り、AI 相談、献立の振り返りです。どれも、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。画面を開くと自動で動く機能（ホームの栄養スコアなど）は、1 日の上限に数えません。' },
-      { q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で撮ると、料理を認識しやすくなります。' },
+      // 撮り方は指示するだけにし、撮り方による認識の良し悪しは言わない (確かめていない。公開の FAQ の同じ質問と同じ趣旨)
+      { q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で、料理が重ならないように撮ってください。' },
       { q: 'AI の分析は正確ですか？', a: 'AI による分析はあくまで推定値で、料理や撮影条件によっては実際の値と異なる場合があります。医療目的での使用はお控えください。日々の食生活の参考としてお使いください。' },
       // データの取り扱いの最終的な文言は、プライバシーポリシーの見直しと合わせて決める。それまでは断定せず、プライバシーポリシーへ案内する (tests/public-claims-guard.test.ts がこの行を見る)
       { q: "データは安全ですか？", a: 'データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。' },
@@ -2109,7 +2133,7 @@ export const LANDING_COPY = {
     { id: 'guide-exists', text: '使い方ガイド (5 つの章・15 の手順・画面の写真つき) と、アプリの中の使い方の案内 (ハンズオンツアー) がある', evidence: ['src/app/guide/guide-content.ts', 'src/app/handson-tour/page.tsx', 'supabase/migrations/20251126124224_create_meal_planner_tables.sql'], condition: null },
     { id: 'sessions', text: '設定の「ログイン中の端末」で、ログインしている端末の一覧と最近のログインを確かめ、ほかの端末のログインを個別に解除できる', evidence: ['src/app/(main)/settings/security/sessions/page.tsx', 'src/lib/auth/sessions/client.ts'], condition: 'いま使っている端末は一覧から解除しない。二段階認証は運営ロールだけの機能なので書かない' },
     { id: 'data-requests', text: '開示・訂正・利用停止の請求を設定から送れる (本人確認のメールが届く)', evidence: ['src/app/api/account/data-requests/', 'src/app/(main)/settings/data-requests/page.tsx', 'src/app/faq/page.tsx'], condition: null },
-    { id: 'photo-storage', text: '写真は公開されない保存領域に保存し、表示するときはログインした本人のために有効期限つきの URL を発行する', evidence: ['src/app/faq/page.tsx', 'src/lib/photo-storage-signing.ts', 'src/app/api/storage/signed-urls/route.ts'], condition: '「第三者に共有されることはありません」などの断定は書かない' },
+    { id: 'photo-storage', text: '写真は公開されない保存領域に保存し、表示するときはログインした本人のために有効期限つきの URL を発行する', evidence: ['src/app/faq/page.tsx', 'src/lib/photo-storage-signing.ts', 'src/app/api/storage/signed-urls/route.ts'], condition: '第三者への共有や提供を断定する文は書かず、プライバシーポリシーへ案内する' },
     { id: 'ai-stop', text: '運営の判断で AI 相談を一時停止することがある', evidence: ['src/lib/ai/ai-chat-unavailable.ts', 'supabase/migrations/20261010120000_unify_feature_flags_seed.sql', 'src/components/AIChatBubble.tsx'], condition: null },
   ],
 } satisfies LandingCopy;
@@ -2122,7 +2146,7 @@ export function landingClaims(copy: LandingCopy = LANDING_COPY): readonly Landin
   return copy.claims;
 }
 
-/** ページが指す public/ の画像のパス (出てくる順・重複なし。U-4) */
+/** ページが指す public/ の画像のパス (出てくる順・重複なし。LANDING_COPY では 20 件 = /guide/ 11・/marketing/screens/ 6・写真 3。U-4) */
 export function landingImagePaths(copy: LandingCopy = LANDING_COPY): string[] {
   const chapterScreens = Object.values(copy.chapters).flatMap((chapter) => chapter.screens.map((screen) => screen.image.src));
   const paths = [
@@ -2286,7 +2310,7 @@ export function countUpValue(target: number, elapsedMs: number, durationMs: numb
 | CLS | ≤ 0.1 (p75) | 同上 | field: Speed Insights。lab: e2e (環境変数 `LANDING_CLS_BUDGET`、既定 0.1)。数字の増え方は `tabular-nums` で幅が揺れない・輪は SVG の属性で大きさが固定 |
 | Lighthouse Performance (mobile・desktop) | ≥ 90 | `docs/design/CLAUDE.md` E・cross/06 §3.1 | 整合ゲートで本番ビルドを手で測る (§10.3) |
 | `/` の JS の転送量 (gzip) | ≤ 256 KB (環境変数 `LANDING_JS_BUDGET_BYTES`、既定 262144 = 256 × 1024) | v1.7 の実測 227 KB (本番ビルド・Next 16.4.1。基礎 179 KB + 島・framer-motion・lucide 48 KB) に、v2.0 で足す島 (`StoryScroller`・`ScoreRing`・`ReadingProgress`・`useInViewIds`・`story-state`・`count-up`・ヘッダーの強調。見積もり 8〜12 KB gz) と lucide のアイコン (+20 個。約 4 KB gz) を足した 240〜245 KB に、余裕を足した値。実装で実測し、超えたら予算を上げずに島を削る (§10.2) | e2e (E-11): v1.7 と同じ測り方 (同じオリジンの `script` の応答の本文を zlib の gzip で圧縮した長さの合計) |
-| 画像 (初期表示に入るもの) | ヒーローの前の 1 枚 (`comment.png`) だけ `preload`。ほかの 18 枚と写真 3 枚は `loading="lazy"`。1 枚の元の重さ ≤ 300 KB (ガイドと同じ)・写真 ≤ 120 KB。全部の合計 (19 枚 + 3 枚) は 1.6 MB 以下 (実測 15 枚の合計 0.8 MB + 新しい 6 枚の見込み 0.4 MB + 写真 0.24 MB) | §7 | U-4・`tests/guide-images-1852.test.ts` (既存の 15 枚) |
+| 画像 (初期表示に入るもの) | ヒーローの前の 1 枚 (`comment.png`) だけ `preload`。ほかの 16 枚と写真 3 枚は `loading="lazy"`。1 枚の元の重さ ≤ 300 KB (ガイドと同じ)・写真 ≤ 120 KB。全部の合計 (画面 17 枚 + 写真 3 枚 = `landingImagePaths` の 20 件) は 1.6 MB 以下 (使う 11 枚はガイドの 15 枚の実測の合計 0.8 MB 以下 + 新しい 6 枚の見込み 0.4 MB + 写真 0.24 MB) | §7 | U-4・`tests/guide-images-1852.test.ts` (既存の 15 枚) |
 | HTML の大きさ | ≤ 120 KB (gzip 前。v1.7 の約 40 KB gz から区切りが増える。JSON-LD は 1 KB 未満) | 本冊 | E-11 (参考値として記録) |
 | 外部のオリジンへの要求 | 0 (Speed Insights の同一オリジンのパスを除く) | §2.4 (CSP) | e2e (E-11) |
 | サーバーの描画 | データ取得 0 回。`headers()` 1 回 (nonce) | §3.2 | U-10 |
@@ -2330,9 +2354,9 @@ export function countUpValue(target: number, elapsedMs: number, durationMs: numb
 | 2.3.3 インタラクションによるアニメーション | すべての動きが `reduced-motion` で無くなる (§6.1)。数字の増え方・溶け込み・輪・線も含む | U-20・E-7 |
 | 2.4.1 ブロックスキップ | layout のスキップリンク (`#main-content`) | 既存・E-15 |
 | 2.4.2 ページタイトル | `publicPageMetadata('/')` の title | 既存 |
-| 2.4.3 フォーカス順序 | DOM の順 = 読む順。固定した端末 (後に描く) にフォーカスする要素は無い | E-15 |
+| 2.4.3 フォーカス順序 | DOM の順 = 読む順。固定した端末 (後に描く) にフォーカスする要素は無い。ページの中のリンク (`Link`) で移ったときは、移った先の区切り (`tabindex="-1"`) にフォーカスを移し、次の Tab をその区切りの中から始める (`useInPageLinkFocus`。§2.2) | E-15・E-29 |
 | 2.4.6 見出しとラベル | 見出しは内容を表す (§4) | 目視 |
-| 2.4.7 フォーカスの可視化 | globals.css の `:focus-visible`。フォーカスのある要素を `disabled` や `inert` にしない | E-3・E-9・E-15 |
+| 2.4.7 フォーカスの可視化 | globals.css の `:focus-visible`。フォーカスのある要素を `disabled` や `inert` にしない。区切りの `section` (`tabindex="-1"`。操作する部品ではない) はリングを出さない (§5.3)。区切りの中のリンクとボタンのリングは変えない | E-3・E-9・E-15・E-29 |
 | 2.4.11 フォーカスの非遮蔽 (最低限) | 固定ヘッダー (64〜80 px) がフォーカスした要素を隠さないよう `html:has(.lp)` に `scroll-padding-top: 6rem`。画面の下に固定する要素は置かない | E-9 |
 | 2.5.3 ラベルの名前 | ボタンの見た目の文字と `aria-label` を食い違わせない | E-8 |
 | 2.5.8 ターゲットのサイズ (最低限) | 文の中に無いボタンとリンクは 24×24 px 以上 (§5.3)。機能のカードは全体が押せる | E-9 |
@@ -2372,7 +2396,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 未ログイン | 640〜767 | ブラウザ (任意) | 任意 | あり | 標準 | 1 列。ヒーローは 5 枚の扇 (640 px 以上)。ナビのアンカーは非表示 (ログインは見える)。章の画面が 2 枚以上のときは横にスナップする帯。場面も帯。バッジは 2 列 |
 | 未ログイン | < 640 | ブラウザ (任意) | 任意 | あり | 標準 | 1 列。ヒーローは 3 枚の扇 (遠くの 2 枚は無い)。ナビとログインは非表示。ヘッダーの「無料で始める」はどこまでスクロールしても上。帯 (章の画面・場面) はスナップ。バッジは 1 列 |
 | 未ログイン | 任意 | ブラウザ (任意) | 任意 | あり | reduce | 動き無し (`marketing.css` の動きの宣言は no-preference の中だけ)。固定した端末は手順に合わせて一瞬で切り替わる (1024 px 以上)。輪と線は最初から最後の形、数字は最初から最後の値。デモの待ち 0。ナビの強調と読む位置の棒は状態なので付く。並びは同じ幅の標準の行と同じ |
-| 未ログイン | 任意 | ブラウザ (任意) | 任意 | あり (IntersectionObserver が無い古いブラウザ) | 任意 | `useInViewOnce` は最初から true (`Reveal` は隠さない・輪は最初から最後の形)。`useInViewIds` は全部 false (固定した端末は 1 枚目のまま・ナビの強調は無し)。ほかは同じ幅・同じ動きの設定の行と同じ |
+| 未ログイン | 任意 | ブラウザ (任意) | 任意 | あり (IntersectionObserver が無い古いブラウザ) | 任意 | `useInViewOnce` は最初から true (`Reveal` は隠さない。`ScoreRing` は `data-js` と `data-in` が同じ描画で付くので輪は最初から最後の形で、見える数字は標準なら 0 から 89 へ 1 回増え、reduce なら 89)。`useInViewIds` は全部 false (固定した端末は 1 枚目のまま・ナビの強調は無し)。ほかは同じ幅・同じ動きの設定の行と同じ |
 | 未ログイン | ≥ 1024 | ブラウザ (任意) | 任意 | 無し | 標準 | 全文と画像 (HTML)。並びは ≥ 1024 × JS ありと同じだが、固定した端末は描かれず (`[data-js]` が無い)、手順ごとの画面が見える。`Reveal` は隠さない。輪・線は最後の形、数字は最後の値。ヘッダーは透明のまま、強調も棒も無い。デモは押しても変わらない。FAQ は閉じたまま。ヒーローの立ち上がり (CSS) は動く |
 | 未ログイン | < 1024 | ブラウザ (任意) | 任意 | 無し | 標準 | 並びは同じ幅の JS ありの行と同じ (1 列・帯)。島の扱いは ≥ 1024 × JS 無しの行と同じ |
 | 未ログイン | 任意 | ブラウザ (任意) | 任意 | 無し | reduce | 幅ごとの並びと島の扱いは JS 無し × 標準と同じ。違いはヒーローの立ち上がり (M-2・M-3) が無いこと |
@@ -2382,7 +2406,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 未ログイン・メンテナンス中 | 任意 | 任意 | 任意 | – | – | メンテナンスの画面 (既存) |
 | 未ログイン | 640 (1280×720 を 200 % に拡大。CSS の高さ 360) | ブラウザ 200 % | 任意 | あり | 標準 | 並びは 640〜767 の行と同じ (1 列・5 枚の扇・帯)。文字は 2 倍に見え、横にはみ出さない (E-6)。画面の高さが 360 px でも `Reveal` は `threshold: 0` + `REVEAL_ROOT_MARGIN` なので隠れたままの要素は無い (E-1)。固定した端末は無い (1024 px 未満)。固定ヘッダー (64 px) は `scroll-padding-top` (96 px) より低い (E-9) |
 | 未ログイン | 任意 | ピンチ (最大 5 倍) | タッチ・トラックパッド | 任意 | 任意 | 並び・島・動きは拡大の前の幅の行と同じ (レイアウトのビューポートは変わらない)。`maximum-scale=5, user-scalable=yes` (E-18) |
-| 未ログイン | 任意 | ブラウザ (任意) | キーボードのみ | あり | 任意 | Tab の順は §3.3 の S-3 (スキップリンク → マーク → ナビ 5 → ログイン → 無料で始める → ヒーローの CTA 2 → デモの写真 3 (→ 自分の食事で試す) → 機能のカード 10 → 章の CTA 6 → 場面の帯 → 家族の CTA → 組織のリンク → 安心のリンク → 料金の CTA → ガイドのリンク → FAQ 12 → お問い合わせ → 最終 CTA → フッター)。固定した端末・輪・図にフォーカスする要素は無い。`:hover` の動き (M-9・M-15・M-16) は起きない |
+| 未ログイン | 任意 | ブラウザ (任意) | キーボードのみ | あり | 任意 | Tab の順は §3.3 の S-3 (スキップリンク → マーク → ナビ 5 → ログイン → 無料で始める → ヒーローの CTA 2 → デモの写真 3 (→ 自分の食事で試す) → 機能のカード 10 → 章の CTA 6 → 場面の帯 → 家族の CTA → 組織のリンク → 安心のリンク → 料金の CTA → ガイドのリンク → FAQ 12 → お問い合わせ → 最終 CTA → フッター)。固定した端末・輪・図にフォーカスする要素は無い。区切りの `section` は `tabindex="-1"` なので Tab の順に入らない。ナビ・「デモを試す」・機能のカードを Enter で押すと、移った先の区切りにフォーカスが移り (リングは出ない)、次の Tab はその区切りの中の最初の要素 (E-29)。`:hover` の動き (M-9・M-15・M-16) は起きない |
 | 未ログイン | 任意 | ブラウザ (任意) | ポインタ (マウス) | あり | 標準 | `:focus-visible` のリングは出ない。`:hover` で CTA・カード・端末が動く (M-9・M-15・M-16)。タッチでは `:hover` に頼る表示は無い |
 | 未ログイン | 任意 | ブラウザ (任意) | ポインタ (マウス) | あり | reduce | `:hover` の動きは無い (`transform` も遷移も no-preference の中だけ) |
 | 未ログイン | 任意 | ブラウザ (任意) | キーボードのみ / ポインタ | 無し | 任意 | 並びと島の扱いは同じ幅の JS 無しの行と同じ。Tab の順は JS ありと同じ要素を同じ順にたどる (デモの「自分の食事で試す」は順に入らない)。デモと FAQ のボタンは押しても変わらない。`:hover` の CSS の動きは標準なら動く |
@@ -2394,15 +2418,15 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 構造 | 殻 + `LandingPage.tsx` (Server) + 島 4 つ。区切り 8 | 殻 (変えない) + `LandingPage.tsx` (Server) + 島 7 本 (役目 1 つずつ)。区切り 18 |
 | 区切り | ヒーロー / 使い方 3 (静的 3 列) / デモ / 機能 8 / バッジ 4 / 安心 4 / FAQ 6 / 最終 CTA | ヒーロー (5 枚の扇) / 仕組み (固定した端末 + 流れの図) / デモ / 機能の一覧 10 (各章へのリンク) / 章 6 (写真・献立と買い物・栄養の見える化・健康・バッジ・AI に相談) / 場面 4 / 家族 / 組織 / 安心 6 / 料金 / 使い方ガイド / FAQ 12 / 最終 CTA |
 | 主張 | 17 件 (`CLAIM_IDS`) | 46 件。各行に根拠 (file:line) と条件。新しい条件: 共有の設定・組織の管理者だけ・集計は出していない・上限に数えない自動の機能・運営の一時停止 |
-| 実際の画面 | 6 枚 (`public/guide`) | 19 枚 (`public/guide` の 13 枚 + `public/marketing/screens` の 6 枚。段 0 で撮る)。画面の注記は 12 の区切りに |
+| 実際の画面 | 6 枚 (`public/guide`) | 17 枚 (`public/guide` の 11 枚 + `public/marketing/screens` の 6 枚。段 0 で撮る)。画面の注記は 12 の区切りに |
 | 動き | 8 (M-1〜M-3・M-5・M-7〜M-10)。控えめ。スクロール連動と固定した端末は置かない | 16 (M-1〜M-16)。固定した端末の入れ替え (M-6)・読む位置の棒 (M-4)・数字の増え方 (M-7・M-11)・輪 (M-11)・線 (M-12)・スナップ (M-13)・ナビの強調 (M-14)・端末とカードの反応 (M-15・M-16)。各動きに受入の条件 |
-| ページの中のリンク | 素の `<a href="#…">` (ヘッダーのナビ 4・デモを試す) → 戻るの不具合の原因 (§2.2) | すべて `next/link` の `Link` (ナビ 5・デモを試す・機能のカード 10)。E-23 が戻るを確かめる |
+| ページの中のリンク | 素の `<a href="#…">` (ヘッダーのナビ 4・デモを試す) → 戻るの不具合の原因 (§2.2) | すべて `next/link` の `Link` (ナビ 5・デモを試す・機能のカード 10)。移った先の区切り (`tabindex="-1"`) へフォーカスを移す (`useInPageLinkFocus`)。E-23 が戻るを、E-29 がフォーカスを確かめる。紹介ページの外の素のハッシュ (スキップリンク・手で打ったハッシュ) の戻るは B 型が直す (§2.2) |
 | 色 | 色のトークン 18 (`--lp-*` のうち色のもの。§5.1 の表の行)。文字と下地は 21 組 | 色のトークン 21 (`--lp-blue`・`--lp-blue-ink`・`--lp-blue-tint` を足す)。31 組 |
 | タイポグラフィ | h1・h2・h3・lead・本文・注記 | 章の h2 (32〜56 px)・大きな数字 (48〜80 px)・章の番号・eyebrow を足す |
 | 図解 | 無し | 3 つ (流れ・共有の範囲・組織の形)。JSX の SVG と HTML |
 | `reduced-motion` | no-preference の中だけ + `MotionConfig` + `useReducedMotion` | 同じ規律。数字・溶け込み・輪・線も止まる |
-| 速さの予算 | JS gzip ≤ 240 KB (実測 227 KB) | ≤ 256 KB。画像は 19 + 3 枚 (lazy)。HTML ≤ 120 KB |
-| テスト | U-1〜U-26・E-1〜E-22 | U-1〜U-34 (U-3・U-4・U-7〜U-10・U-14・U-20・U-22・U-24・U-26 を広げ、U-27〜U-34 を足す)・E-1〜E-28 (E-1・E-3・E-4・E-7・E-9・E-11・E-12・E-15・E-17・E-19〜E-22 を広げ、E-23〜E-28 を足す) |
+| 速さの予算 | JS gzip ≤ 240 KB (実測 227 KB) | ≤ 256 KB。画像は画面 17 + 写真 3 枚 (前の 1 枚のほかは lazy)。HTML ≤ 120 KB |
+| テスト | U-1〜U-26・E-1〜E-22 | U-1〜U-35 (U-3・U-4・U-7〜U-10・U-14・U-20・U-22・U-24・U-26 を広げ、U-27〜U-35 を足す)・E-1〜E-29 (E-1・E-3・E-4・E-7・E-9・E-11・E-12・E-15・E-17・E-19〜E-22 を広げ、E-23〜E-29 を足す) |
 | 撮影の台本 | 15 枚 (`public/guide`) | 15 枚 + 6 枚 (`public/marketing/screens`)。利用者 `fresh`・家族・食材の見本を足す |
 | `SITE_DESCRIPTION`・殻・JSON-LD・OGP | v1.7 | 変えない |
 
@@ -2424,13 +2448,21 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 
 **数字の増え方 (`DemoSection` のスコアと `ScoreRing` の数字。`countUpValue`)**
 
+隠した `span` (読み上げの対象) は、どの状態でも target。下の「見える数字」は `aria-hidden` の `span` の値。
+
 | 状態 | 操作 | 遷移先 | ガード | 見え方 |
 |---|---|---|---|---|
-| final (最後の値を表示) | きっかけ (デモ: result に入る / 輪: `data-in` が付く) | counting (開始時刻を記録。見える数字は 0) | `useReducedMotion()` が false | 見える数字 (`aria-hidden`) は `countUpValue(target, now − start, duration)`。隠した `span` は常に target |
-| final | きっかけ | final | `useReducedMotion()` が true | 最初から target |
-| counting | rAF (経過 < duration) | counting | – | 数字が増える (単調に非減少) |
+| server (`ScoreRing`。サーバーの HTML・JS 無し・マウント前) | – | – | – | 見える数字は target (89)。輪は SVG の属性の最後の形 (`stroke-dashoffset` = `RING_MAX − value`)。根に `data-js` も `data-in` も無い |
+| server (`ScoreRing`) | マウント | armed | – | 根に `data-js`。見える数字は `useReducedMotion()` が false なら 0、true なら target。輪は no-preference なら CSS (`[data-js]:not([data-in])`) で `stroke-dashoffset: 100` に一瞬で隠れ (遷移なし)、reduce なら隠す規則が無いので最後の形のまま |
+| armed (`ScoreRing`) | `useReducedMotion()` の値が変わる | armed | – | 見える数字は上の行の規則で決め直す (false → 0・true → target) |
+| armed (`ScoreRing`) | 根が画面に入る (`useInViewOnce`。根に `data-in`) | counting (開始時刻を記録) | `useReducedMotion()` が false | 輪は `[data-in]` の下の遷移で `RING_DRAW_MS` かけて最後の形へ。見える数字は 0 から増える |
+| armed (`ScoreRing`) | 根が画面に入る (根に `data-in`) | final | `useReducedMotion()` が true | target。輪は最後の形 |
+| (`DemoSection`) 結果が無い (idle・analyzing) | result に入る | counting (開始時刻を記録。見える数字は 0) | `useReducedMotion()` が false | – |
+| (`DemoSection`) 結果が無い | result に入る | final | `useReducedMotion()` が true | 最初から target |
+| counting | rAF (経過 < duration) | counting | – | 見える数字は `countUpValue(target, now − start, duration)` で増える (単調に非減少) |
 | counting | rAF (経過 ≥ duration) | final | – | target。rAF を止める |
-| counting | 新しいきっかけ (デモで別の写真) | counting (開始時刻を取り直す) | – | 0 から |
+| counting・final (`DemoSection`) | 別の写真を押す (デモは analyzing に入る) | 結果が無い | – | rAF を止める (結果のパネルは消える)。次に result に入ったら、上の行どおり 0 から |
+| final (`ScoreRing`) | スクロール (画面の外へ出る・また入る) | final | – | 変わらない (`useInViewOnce` は 1 回だけ) |
 | counting | アンマウント | – | – | rAF を止める |
 
 **物語 (`StoryScroller`。`storyActiveIndex`)**
@@ -2461,6 +2493,17 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | null (マウント直後) | マウント | 帯にある区切りのうち最も下 (無ければ null) | `SECTION_NAV_KEY[current]` の項目に `aria-current="location"` と下線 |
 | s | 区切りの交差が変わる | 帯にある区切りのうち最も下 (無ければ s のまま) | 下線が移る (no-preference は `--lp-dur-fast`) |
 | 任意 | IO が無い | null のまま | 強調なし |
+
+**ページの中のリンクのフォーカス (`useInPageLinkFocus`。`document.activeElement`)**
+
+| 状態 (フォーカスのある所) | 操作 | 遷移先 | ガード | 副作用 |
+|---|---|---|---|---|
+| ページの中のリンク (ナビ・「デモを試す」・機能のカード) | Enter か左クリック (`click`) | 移った先の `section#<id>` | 修飾キー無し・`button === 0`・リンクが `.lp` の中・`inPageSectionId(href)` が null でない・`document.getElementById(id)` がある | `focus({ preventScroll: true })`。スクロールは `Link` (Next の router) が `scrollIntoView` で行う。区切りにリングは出ない (§5.3) |
+| 同上 | 修飾キーつきの click・中ボタン | 変わらない | 上のガードが偽 | 無し (`Link` もブラウザの既定に任せる) |
+| ページの外へのリンク (`/signup` ほか) | click | 変わらない (Next が移る) | `inPageSectionId` が null | 無し |
+| `section#<id>` | Tab | 区切りの中の最初のフォーカスできる要素 | – | 無し (ブラウザの順) |
+| `section#<id>` | Shift+Tab | 区切りの前の最後のフォーカスできる要素 | – | 無し |
+| 任意 | JS 無し | – | listener が無い | リンクは素の `a` としてブラウザが移り、フォーカスの起点もブラウザが移す |
 
 **ヘッダーの背景 (M-1)・現れ方 (`Reveal`)・FAQ**: v1.7 と同じ (FAQ は 12 件で、同時に開くのは 1 つ)。
 
@@ -2518,7 +2561,7 @@ sequenceDiagram
     B->>I: スクロール → useInViewIds が手順の交差を通知 → storyActiveIndex → 固定した端末の画面が入れ替わる (CSS の遷移)
     B->>I: 輪が画面に入る → data-in → CSS が輪を描き、countUpValue で数字が増える
     B->>I: 写真を押す → demoReducer(select) → 1,400 ms → finish → 結果 (countUpValue でスコアが増える。aria-live)
-    B->>I: ナビ「料金」(Link) → Next の router が pushState (__NA) → #pricing へスクロール → aria-current
+    B->>I: ナビ「料金」(Link) → Next の router が pushState (__NA) → #pricing へスクロール → aria-current。同じ click で useInPageLinkFocus が section#pricing へ focus (preventScroll)
     B->>B: 「無料で始める」(Link) → /signup → 戻る → popstate (state.__NA) → Next が /#… を描く
 ```
 
@@ -2535,23 +2578,23 @@ sequenceDiagram
 | U-1 | `LANDING_COPY は LandingCopySchema を通る (文言の長さ・画像のパスの形・リンクの形・主張の根拠のパスの形・件数)` | 変更なし (スキーマが広がる) |
 | U-2 | `claims の evidence のパスはすべてリポジトリに実在する (ディレクトリは末尾 /、ファイルはそのまま)` | 変更なし (`docs/` も対象) |
 | U-3 | `claims の id は CLAIM_IDS の 46 個がちょうど 1 回ずつで、features の各カードの claimId と、要点・場面・料金の上限の claimIds は claims にある` | 対象に `chapters.*.points`・`family.points`・`org.points`・`guide.points`・`pricing.limits`・`scenes.items` の `claimIds` を足す |
-| U-4 | `landingImagePaths はすべて public/ に実在し、画面 (.png) は 540×1080 で 300 KB 以下、写真 (.webp) は 120 KB 以下で、/marketing/screens/ のパスと alt は LANDING_SCREENS と両方向で一致する` | 新しい 6 枚の大きさと重さ・`LANDING_COPY` の中の `/marketing/screens/` の画像 (src と alt) の集合 = `LANDING_SCREENS` の集合 |
+| U-4 | `landingImagePaths はすべて public/ に実在し、画面 (.png) は 540×1080 で 300 KB 以下、写真 (.webp) は 120 KB 以下で、/marketing/screens/ のパスと alt は LANDING_SCREENS と両方向で一致する` | 新しい 6 枚の大きさと重さ・`LANDING_COPY` の中の `/marketing/screens/` の画像 (src と alt) の集合 = `LANDING_SCREENS` の集合・`landingImagePaths()` が 20 件 (`/guide/` 11・`/marketing/screens/` 6・`/marketing/photos/` 3) |
 | U-5 | `実際の画面の alt は guide-content.ts の同じ画像の imageAlt と同じ文` | 対象に `story.steps[].image`・`chapters.*.screens[].image`・`guide.screens[].image` を足す (`/guide/` のものだけ) |
 | U-6 | `バッジ 4 つの code は AWARDABLE_BADGE_CODES にあり、name は badges の migration の同じ code の行の name と同じで、first_bite・streak_3・streak_7 の description は「完了」を含み、tutorial_complete の description は「案内」を含む` | 読む先を `LANDING_COPY.chapters.badges.items` に。「DB の説明と同じでない」の検査はやめる (DB の説明は migration `20261018040000` で付与の条件に合う文に直り、同じ趣旨になるため)。名前は元の migration の `INSERT INTO public.badges` の行から読む (名前は変わらない) |
 | U-7 | `marketing.css の --lp-bg / --lp-bg-tint / --lp-surface / --lp-ink / --lp-accent / --lp-accent-soft / --lp-green / --lp-gold / --lp-blue は BRAND_COLORS の同じ色` | `--lp-blue` を足す |
 | U-8 | `文字と下地の組み合わせ (§5.1 の表の不合格の行を除く 31 組) はすべて求める比を満たす` | 31 組 (青の 10 組を足す) |
 | U-9 | `landing-copy.ts と landing-screens.ts のソースに絵文字 (Extended_Pictographic) が無い` | `landing-screens.ts` を足す |
-| U-10 | `src/components/marketing/ の import は許可した先だけで、'use client' を持つファイルは SiteHeader・DemoSection・FaqSection・Reveal・StoryScroller・ScoreRing・ReadingProgress の 7 本だけ` | `scripts/` を import しないことと、島の本数を足す |
+| U-10 | `src/components/marketing/ の import は許可した先だけで、'use client' を持つ .tsx のファイルは SiteHeader・DemoSection・FaqSection・Reveal・StoryScroller・ScoreRing・ReadingProgress の 7 本だけ` | `scripts/` を import しないことと、島の本数を足す (hook の `.ts` は数えない: `useInViewOnce.ts` は v1.7 から `'use client'` を持つ) |
 | U-11 | `demoReducer は §13.3 のデモの遷移表の全行どおり` | 変更なし |
 | U-12 | `構造化データは SiteStructuredData の 1 本だけ (src/components/marketing/ に <script・dangerouslySetInnerHTML・application/ld+json が無く、描画した HTML にも <script が無い)` | 変更なし |
 | U-13 | `src/app/LandingPageView.tsx は無く、src/app/page.tsx は LandingPage・SiteStructuredData・LANDING_VIEWPORT_MAXIMUM_SCALE を import する` | 変更なし |
-| U-14 | `LandingPage を描画した HTML に h1 が 1 つ・section が 18 (SECTION_IDS の順) あり、footer の中に 利用規約 と プライバシーポリシー のリンクがある` | 8 → 18 (`SECTION_IDS`) |
+| U-14 | `LandingPage を描画した HTML に h1 が 1 つ・section が 18 (SECTION_IDS の順) あり、section はすべて tabindex="-1" を持ち、footer の中に 利用規約 と プライバシーポリシー のリンクがある` | 8 → 18 (`SECTION_IDS`)・`tabindex="-1"` (§2.2) を足す |
 | U-15 | `page.tsx の metadata は publicPageMetadata('/') と同じ値で、SITE_DESCRIPTION は v1.7 の文と同じ・50〜160 文字・書かない語を含まない` | 変更なし |
 | U-16 | `footer の著作権の年は COPYRIGHT_YEAR で、new Date を使っていない` | 変更なし |
 | U-17 | `ログイン済みの人は / で紹介ページを見ない (resolveOnboardingRedirect)` | 変更なし |
 | U-18 | `スクロールに連動する動きは無い: marketing.css と src/components/marketing/ に animation-timeline・scroll-timeline・view-timeline が無い` | 変更なし |
 | U-19 | `page.tsx の viewport は maximumScale 5 以上・userScalable true` | 変更なし |
-| U-20 | `LANDING_COPY と LANDING_SCREENS のすべての文字列に §4.0 の書かない語 (ランキング・上位・1位 を含む) が無く、marketing.css の動きの宣言は no-preference の中だけで、reduce の at-rule が無く、className に Tailwind の動きのクラスが無く、scroll-behavior の宣言が無い` | 語 3 つ・`LANDING_SCREENS`・`scroll-behavior` を足す |
+| U-20 | `LANDING_COPY と LANDING_SCREENS のすべての文字列に §4.0 の書かない語 (ランキング・上位・1位・認識しやすく・認識精度 を含む) が無く、marketing.css の動きの宣言は no-preference の中だけで、reduce の at-rule が無く、className に Tailwind の動きのクラスが無く、scroll-behavior の宣言が無い` | 語 5 つ (`ランキング`・`上位`・`1位`・`認識しやすく`・`認識精度`)・`LANDING_SCREENS`・`scroll-behavior` を足す |
 | U-21 | `デモの見本はアプリと同じ (87・91・85・ソースの式)` | 変更なし |
 | U-22 | `IntersectionObserver の判定は要素の高さに依らない: IntersectionObserver を作るのは useInViewOnce.ts と useInViewSteps.ts の 2 本だけで、どちらも threshold は 0` | 2 本に |
 | U-23 | `自動で動き続けるものは高々 1 つ (infinite の宣言は 1 つ以下)` | 変更なし |
@@ -2565,7 +2608,8 @@ sequenceDiagram
 | U-31 | `countUpValue は 経過 0 で 0・経過 ≥ duration で target・duration 0 で target・target 0 以下で 0・経過に対して単調に非減少・常に整数で target 以下` | 0〜duration を 50 分割して単調を見る |
 | U-32 | `ScoreRing を描画した HTML に、最後の値 (89) を持つ要素と、stroke-dashoffset が RING_MAX − value (11) の circle があり、数字の増え方の要素は aria-hidden` | `renderToStaticMarkup(createElement(NutritionChapter))` |
 | U-33 | `SECTION_NAV_KEY は SECTION_IDS の全部を鍵に持ち、値は NAV_KEYS にあり、header.nav の key は NAV_KEYS と同じ順` | M-14 の対応の閉包 |
-| U-34 | `機能のカードの href の先は章か家族の id で、同じ章を指すカードの claimId はその章の要点の claimIds に含まれる` | 一覧と章の整合 |
+| U-34 | `機能のカードの href の先は章か家族の id で、同じ章を指すカードの claimId はその章の要点の claimIds に含まれる` | 一覧と章の整合 (§9.1 では 10 枚とも含まれる: `photo` の `photo-analyze` は章 photo の要点 1、`family` の `family` は家族の要点 4) |
+| U-35 | `inPageSectionId は # と SECTION_IDS の id から id を返し、ほかは null で、LANDING_COPY の # で始まる href はすべて null でない` | `'#pricing'` → `'pricing'`・`'#demo'` → `'demo'`・`'#main-content'` → null・`'#'` → null・`'/signup'` → null・`'pricing'` → null。`header.nav`・`hero.secondaryCta`・`features.cards` の `href` を全部通す |
 
 U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` を Server として描く (`ScoreRing` は `'use client'` だが `renderToStaticMarkup` で HTML を出す)。
 
@@ -2605,10 +2649,11 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | E-22 | `短いラベルは途中で折れない: 320・375・640・768・1024・1280 px で、デモの写真の名前 3・推定の栄養の名前 5・バッジの名前 4・安心の見出し 6・料金のカードの見出しと札 4・場面のカードの見出し 4・章の画面の札 (全部)・流れの図の節 5・ガイドの章の名前 5・フッターのリンクの文 12 が、それぞれ 1 行に収まる` | 対象を広げる (文は `LANDING_COPY` から取る) |
 | E-23 | `戻る: ナビの「仕組み」を押すと URL に #how が付き #how が画面に来る。そこから「無料で始める」で /signup へ移り、戻ると /#how に戻って紹介ページの h1 と #how が画面にある。もう一度戻ると / に戻る` | `page.goBack()` の後に `waitForURL(/\/#how$/)`、h1 が見える、`#how` の矩形の上端が 0 以上・画面の高さ未満。`/signup` に着いた後に `networkidle` を待たない (`src/__tests__/config/e2e-auth-page-wait.test.ts` の規律) |
 | E-24 | `読む位置の棒: 開いた直後は scaleX が 0.05 未満、末尾までスクロールすると 0.95 以上で、途中 3 点で単調に増え、aria-hidden である` | computed の `transform` の行列から `scaleX` を読む |
-| E-25 | `スコアの輪: #nutrition が画面に入る前は見える数字が 0 で最後の値の要素は 89、入ってから RING_DRAW_MS + 200 ms 後に見える数字が 89 で、circle の stroke-dashoffset が 11 (± 0.5)` | 1280 px・標準 |
+| E-25 | `スコアの輪: マウントの後、#nutrition が画面に入る前は ScoreRing の根に data-js があって data-in が無く、見える数字が 0 で最後の値の要素は 89、circle の stroke-dashoffset が 100 (± 0.5)。入ってから RING_DRAW_MS + 200 ms 後に見える数字が 89 で、stroke-dashoffset が 11 (± 0.5)` | 1280 px・標準 (no-preference)。開いた直後 (先頭の位置) で `data-js` が付くのを待ってから見る (§13.3 の armed) |
 | E-26 | `流れの図: 画面に入る前は path の stroke-dashoffset が 1 で、入ってから --lp-dur-draw + 200 ms 後に 0` | 1280 px・標準 |
 | E-27 | `場面の帯: 375 px では ul が横にスクロールでき (scrollWidth > clientWidth)、tabindex="0" と aria-label を持ち、1 枚ぶん送ると 2 枚目の左端に止まる (± 2 px)。ページは横にスクロールしない。1280 px では ul はスクロールしない` | `ul.scrollBy({ left: card の幅 })` → 落ち着くまで待つ → `scrollLeft` が 2 枚目の `offsetLeft` と ± 2 px |
 | E-28 | `ヘッダーのナビの強調: 開いた直後は「仕組み」だけが aria-current="location" で、#pricing へ移ると「料金」だけになる` | 1280 px。`aria-current` を持つのは常に 1 つ以下 |
+| E-29 | `ページの中のリンクでフォーカスが移る: ナビの「料金」に Tab で移って Enter を押すと、フォーカスは section#pricing にあり、次の Tab で #pricing の中の「無料で始める」へ進む。機能のカード「AI に相談」で Enter → section#chat → 次の Tab で #chat の中の「無料で始める」。ヒーローの「デモを試す」で Enter → section#demo → 次の Tab でデモの 1 つ目の写真のボタン` | 1280 px・標準。`document.activeElement` の `id` と、次の Tab の後の `activeElement` が区切りの中 (`closest('section')` の `id`) にあること・アクセシブルな名前。区切りの `section` の computed の `outline-style` は `none` |
 
 予算の環境変数はテストの実行時だけ読む。見た目の画素の比較は採らない (Q-4)。
 
@@ -2622,7 +2667,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 |---|---|---|
 | S-1 | E-1・E-2・E-3・E-10・E-21・E-25・E-26・U-14・U-26 | 動きの質 (時間・緩急) は E-14 の記録と目視。本番の LCP の p75 は Speed Insights |
 | S-2 | E-5・E-6・E-18・E-19・E-22・E-27・U-14・U-19 | Safari の実機の感触 |
-| S-3 | E-15・E-3・E-4・E-9・E-27 | – |
+| S-3 | E-15・E-3・E-4・E-9・E-27・E-29・U-14・U-35 | – |
 | S-4 | E-8・U-14・E-3・E-20・E-21 (`aria-hidden`)・U-32 | VoiceOver での読み上げ |
 | S-5 | E-7・E-17・U-20・U-23 | – |
 | S-6 | U-11・U-21・U-31・E-3・E-22 | 見本の推定の値が写真の料理としてありうるか |
@@ -2638,7 +2683,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | S-16 | E-21・E-26・U-30・U-22 | 溶け込みと線の描かれ方の質 (目視) |
 | S-17 | E-25・U-28・U-31・U-32 | 数字の増え方の質 (目視) |
 | S-18 | E-27・E-6・E-20 | スナップの感触 (実機) |
-| S-19 | E-23 (前半)・E-28・U-27・U-33 | – |
+| S-19 | E-23 (前半)・E-28・E-29・U-27・U-33・U-35 | – |
 | S-20 | E-23 (後半)・U-27 | 本番 (Vercel) での再現 (整合ゲートで手で 1 回) |
 | S-21 | U-3・U-34・E-1・既存 `tests/public-claims-guard.test.ts` | 家族の要点の根拠の中身 (レビュー) |
 | S-22 | U-3・E-1 | 組織の要点の根拠の中身 (レビュー) |
@@ -2652,12 +2697,12 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | 段 | 中身 | 触るファイル |
 |---|---|---|
 | 0. 新しい画面写真 6 枚 | `landing-screens.ts` (§9.2) の新設・撮影の台本の拡張 (§7.1 の手順 2〜6)・撮影・21 枚の目視・コミット。段 0 のレビューは §7.1 の表 (写るもの) との突き合わせと画像の目視。できなければ手を止めてオーケストレーターに返す | `src/components/marketing/landing-screens.ts` (新設)、`scripts/guide-screenshots/guide-users.ts`、`seed.ts`、`shoot.pw.ts`、`optimize.ts`、`run.sh`、`public/marketing/screens/{home,pantry,shopping,family,chat,consent}.png` (新設) |
-| 1. 文言・主張・トークン・CSS・primitives | `landing-copy.ts` (§9.1 を逐語で差し替え)・`story-state.ts`・`count-up.ts` (§9.4・§9.5)・`marketing.css` (§5 のトークン + §6 の動き。クラス名は実装が決める)・primitives の新設 4 本 (`StoryScroller`・`ScoreRing`・`ReadingProgress`・`FlowDiagram`) と hook 1 本 (`useInViewSteps.ts` の `useInViewIds`)・`tests/landing-page-1867.test.ts` の純関数と文言の it (U-1〜U-10・U-20・U-24・U-28〜U-31・U-33) | `src/components/marketing/landing-copy.ts`、`story-state.ts`、`count-up.ts`、`marketing.css`、`primitives/StoryScroller.tsx`、`ScoreRing.tsx`、`ReadingProgress.tsx`、`FlowDiagram.tsx`、`useInViewSteps.ts` (新設)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (§9.7) |
-| 2a. 区切り (前半) と骨格 | `LandingPage.tsx` (18 の区切り)・`SiteHeader` (ナビ 5・棒・強調)・`HeroSection` (5 枚)・`StorySection` (新設)・`DemoSection` (数字)・`FeaturesSection` (10 枚・`Link`)・`ChapterSection` (新設)・`PhotoChapter`・`MenuChapter`・`NutritionChapter`・`HealthChapter`・`BadgesChapter` (新設)・`HowItWorksSection.tsx`・`BadgesSection.tsx` の削除・描画の it (U-11〜U-19・U-21〜U-23・U-25〜U-27・U-32・U-34) | `LandingPage.tsx`、`sections/SiteHeader.tsx`、`HeroSection.tsx`、`StorySection.tsx` (新設)、`DemoSection.tsx`、`FeaturesSection.tsx`、`ChapterSection.tsx`・`PhotoChapter.tsx`・`MenuChapter.tsx`・`NutritionChapter.tsx`・`HealthChapter.tsx`・`BadgesChapter.tsx` (新設)、`HowItWorksSection.tsx`・`BadgesSection.tsx` (削除)、`tests/landing-page-1867.test.ts` |
-| 2b. 区切り (後半) | `ChatChapter`・`ScenesSection`・`FamilySection`・`OrgSection`・`PricingSection`・`GuideSection` (新設)・`TrustSection` (6 点 + 画面)・`FaqSection` (12 件) | `sections/ChatChapter.tsx`・`ScenesSection.tsx`・`FamilySection.tsx`・`OrgSection.tsx`・`PricingSection.tsx`・`GuideSection.tsx` (新設)、`TrustSection.tsx`、`FaqSection.tsx` |
-| 3. e2e | `tests/e2e/landing-page.spec.ts` (§16.3。E-1〜E-28)。門への登録と番兵は v1.7 のまま | `tests/e2e/landing-page.spec.ts` |
+| 1. 文言・主張・トークン・CSS・primitives | `landing-copy.ts` (§9.1 を逐語で差し替え)・`story-state.ts`・`count-up.ts` (§9.4・§9.5)・`marketing.css` (§5 のトークン + §6 の動き。クラス名は実装が決める)・primitives の新設 4 本 (`StoryScroller`・`ScoreRing`・`ReadingProgress`・`FlowDiagram`) と hook 1 本 (`useInViewSteps.ts` の `useInViewIds`)・`tests/landing-page-1867.test.ts` の純関数と文言の it (U-1〜U-10・U-20・U-24・U-28〜U-31・U-33・U-35) | `src/components/marketing/landing-copy.ts`、`story-state.ts`、`count-up.ts`、`marketing.css`、`primitives/StoryScroller.tsx`、`ScoreRing.tsx`、`ReadingProgress.tsx`、`FlowDiagram.tsx`、`useInViewSteps.ts` (新設)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (§9.7) |
+| 2a. 区切り (前半) と骨格 | `LandingPage.tsx` (18 の区切り)・`SiteHeader` (ナビ 5・棒・強調)・`HeroSection` (5 枚)・`StorySection` (新設)・`DemoSection` (数字)・`FeaturesSection` (10 枚・`Link`)・`ChapterSection` (新設)・`PhotoChapter`・`MenuChapter`・`NutritionChapter`・`HealthChapter`・`BadgesChapter` (新設)・`useInPageLinkFocus` (新設。`SiteHeader` が呼ぶ)・`HowItWorksSection.tsx`・`BadgesSection.tsx` の削除・描画の it (U-11〜U-19・U-21〜U-23・U-25〜U-27・U-32・U-34) | `LandingPage.tsx`、`sections/SiteHeader.tsx`、`primitives/useInPageLinkFocus.ts` (新設)、`HeroSection.tsx`、`StorySection.tsx` (新設)、`DemoSection.tsx`、`FeaturesSection.tsx`、`ChapterSection.tsx`・`PhotoChapter.tsx`・`MenuChapter.tsx`・`NutritionChapter.tsx`・`HealthChapter.tsx`・`BadgesChapter.tsx` (新設)、`HowItWorksSection.tsx`・`BadgesSection.tsx` (削除)、`tests/landing-page-1867.test.ts` |
+| 2b. 区切り (後半) | `ChatChapter`・`ScenesSection`・`FamilySection`・`OrgSection`・`PricingSection`・`GuideSection` (新設)・`TrustSection` (6 点 + 画面)・`FaqSection` (12 件)・`FinalCtaSection` (`tabIndex={-1}` を足すだけ) | `sections/ChatChapter.tsx`・`ScenesSection.tsx`・`FamilySection.tsx`・`OrgSection.tsx`・`PricingSection.tsx`・`GuideSection.tsx` (新設)、`TrustSection.tsx`、`FaqSection.tsx`、`FinalCtaSection.tsx` |
+| 3. e2e | `tests/e2e/landing-page.spec.ts` (§16.3。E-1〜E-29)。門への登録と番兵は v1.7 のまま | `tests/e2e/landing-page.spec.ts` |
 
-段 2a が終わるまで `LandingPage.tsx` は段 2b の区切りを置けないので、段 2a では後半の区切り (chat・scenes・family・org・trust・pricing・guide・faq) に v1.7 の部品か空の `section` (id と h2 だけ) を置いて U-14 を緑にし、段 2b で差し替える。段 1 の primitives は段 2a で初めて使われる (段 1 の時点では未使用だが、同じ PR の中なので main には未使用のまま乗らない)。依存 (`package.json`) は変えないので、マージの前に CI の dependency review を待つ必要は無い。
+段 2a が終わるまで `LandingPage.tsx` は段 2b の区切りを置けないので、段 2a では後半の区切り (chat・scenes・family・org・trust・pricing・guide・faq) に空の `section` (id・`tabIndex={-1}`・h2 だけ。v1.7 の `TrustSection`・`FaqSection` は `tabIndex` を持たないので使わない) を置いて U-14 を緑にし、段 2b で差し替える。段 1 の primitives は段 2a で初めて使われる (段 1 の時点では未使用だが、同じ PR の中なので main には未使用のまま乗らない)。依存 (`package.json`) は変えないので、マージの前に CI の dependency review を待つ必要は無い。
 
 ---
 
@@ -2668,16 +2713,16 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | 種類 | 名前 |
 |---|---|
 | ディレクトリ | `public/marketing/screens/` |
-| ファイル (製品) | `src/components/marketing/landing-screens.ts`、`story-state.ts`、`count-up.ts`、`sections/StorySection.tsx`、`sections/ChapterSection.tsx`、`sections/PhotoChapter.tsx`、`sections/MenuChapter.tsx`、`sections/NutritionChapter.tsx`、`sections/HealthChapter.tsx`、`sections/BadgesChapter.tsx`、`sections/ChatChapter.tsx`、`sections/ScenesSection.tsx`、`sections/FamilySection.tsx`、`sections/OrgSection.tsx`、`sections/PricingSection.tsx`、`sections/GuideSection.tsx`、`primitives/StoryScroller.tsx`、`primitives/ScoreRing.tsx`、`primitives/ReadingProgress.tsx`、`primitives/FlowDiagram.tsx`、`primitives/useInViewSteps.ts` |
+| ファイル (製品) | `src/components/marketing/landing-screens.ts`、`story-state.ts`、`count-up.ts`、`sections/StorySection.tsx`、`sections/ChapterSection.tsx`、`sections/PhotoChapter.tsx`、`sections/MenuChapter.tsx`、`sections/NutritionChapter.tsx`、`sections/HealthChapter.tsx`、`sections/BadgesChapter.tsx`、`sections/ChatChapter.tsx`、`sections/ScenesSection.tsx`、`sections/FamilySection.tsx`、`sections/OrgSection.tsx`、`sections/PricingSection.tsx`、`sections/GuideSection.tsx`、`primitives/StoryScroller.tsx`、`primitives/ScoreRing.tsx`、`primitives/ReadingProgress.tsx`、`primitives/FlowDiagram.tsx`、`primitives/useInViewSteps.ts`、`primitives/useInPageLinkFocus.ts` |
 | ファイル (資産・段 0) | `public/marketing/screens/home.png`、`pantry.png`、`shopping.png`、`family.png`、`chat.png`、`consent.png` |
-| 関数・部品 | `landingScreen`、`landingScreenNames`、`storyActiveIndex`、`countUpValue`、`easeOutCubic`、`useInViewIds`、`StorySection`、`StoryScroller`、`ScoreRing`、`ReadingProgress`、`FlowDiagram`、`ChapterSection`、`PhotoChapter`、`MenuChapter`、`NutritionChapter`、`HealthChapter`、`BadgesChapter`、`ChatChapter`、`ScenesSection`、`FamilySection`、`OrgSection`、`PricingSection`、`GuideSection` |
-| 定数 (`landing-copy.ts`) | `SECTION_IDS`、`NAV_KEYS`、`SECTION_NAV_KEY`、`CHAPTER_IDS`、`CHAPTER_TONE`、`FLOW_NODE_IDS`、`CHAPTER_SCREEN_LABEL_MAX_CHARS`、`COUNT_UP_MS`、`RING_DRAW_MS`、`RING_MAX`、`STORY_BAND_ROOT_MARGIN`、`NAV_CURRENT_ROOT_MARGIN`、`LANDING_IMAGE_SIZES` の鍵 `heroFar`・`story`・`chapter`、(非 export) `CAMERA`〜`CONSENT` の画像の定数 |
+| 関数・部品 | `landingScreen`、`landingScreenNames`、`storyActiveIndex`、`countUpValue`、`easeOutCubic`、`useInViewIds`、`inPageSectionId`、`useInPageLinkFocus`、`StorySection`、`StoryScroller`、`ScoreRing`、`ReadingProgress`、`FlowDiagram`、`ChapterSection`、`PhotoChapter`、`MenuChapter`、`NutritionChapter`、`HealthChapter`、`BadgesChapter`、`ChatChapter`、`ScenesSection`、`FamilySection`、`OrgSection`、`PricingSection`、`GuideSection` |
+| 定数 (`landing-copy.ts`) | `SECTION_IDS`、`NAV_KEYS`、`SECTION_NAV_KEY`、`CHAPTER_IDS`、`CHAPTER_TONE`、`FLOW_NODE_IDS`、`CHAPTER_SCREEN_LABEL_MAX_CHARS`、`COUNT_UP_MS`、`RING_DRAW_MS`、`RING_MAX`、`STORY_BAND_ROOT_MARGIN`、`NAV_CURRENT_ROOT_MARGIN`、`LANDING_IMAGE_SIZES` の鍵 `heroFar`・`story`・`chapter`、(非 export) `CAMERA`〜`CONSENT` の画像の定数・`IN_PAGE_HREF_PREFIX` |
 | 定数 (`landing-screens.ts`) | `LANDING_SCREENS_DIR`、`LANDING_SCREEN_NAMES`、`LANDING_SCREENS` |
 | 定数 (撮影の台本) | `GUIDE_USERS.fresh` (`guide-users.ts`)、食材と家族と買い物リストの見本 (`seed.ts`・`shoot.pw.ts`。名前は実装が決める) |
 | 型 / Zod (`landing-copy.ts`) | `SectionId`、`NavKey`、`ChapterId`、`ChapterTone`、`FlowNodeId`、`PointSchema`、`ChapterScreenSchema`、`ChapterSchema`、`SceneSchema`、`FlowNodeSchema`、`ShareFigureItemSchema`、`PlanCardSchema`、`GuideChapterSchema`、`Chapter`、`ChapterScreen`、`Point`、`Scene`、`FlowNode` |
 | 型 (`landing-screens.ts`) | `LandingScreenName`、`LandingScreen` |
 | CSS の変数 | `--lp-blue`、`--lp-blue-ink`、`--lp-blue-tint`、`--lp-dur-slow`、`--lp-dur-draw`、`--lp-chapter-y`、`--lp-shadow-card-hover`、`--lp-shadow-phone-far` |
-| DOM の id / 属性 | 区切りの id 10 個 (`photo` `menu` `nutrition` `health` `chat` `scenes` `family` `org` `pricing` `guide`) と見出しの id (`<id>-title`)・手順の id `how-step-1`〜`how-step-4`・印 `data-js` (`StoryScroller`・`Reveal` は v1.7 から)・`data-in` (`ScoreRing`)・`data-active` (固定した端末の画面)・`aria-current="location"` (ナビ)・場面と章の帯の `tabindex="0"` と `aria-label` |
+| DOM の id / 属性 | 区切りの id 10 個 (`photo` `menu` `nutrition` `health` `chat` `scenes` `family` `org` `pricing` `guide`) と見出しの id (`<id>-title`)・手順の id `how-step-1`〜`how-step-4`・区切りの `section` 18 の `tabindex="-1"`・印 `data-js` (`StoryScroller`・`ScoreRing`。`Reveal` は v1.7 から)・`data-in` (`ScoreRing`)・`data-active` (固定した端末の画面)・`aria-current="location"` (ナビ)・場面と章の帯の `tabindex="0"` と `aria-label` |
 | 依存・環境変数・許可リストの行・route・テーブル・列・RLS・Storage・エラーコード | 無し (e2e の予算の既定 `LANDING_JS_BUDGET_BYTES` = 262144 はテストの中の定数) |
 | 消すもの | `src/components/marketing/sections/HowItWorksSection.tsx`、`BadgesSection.tsx` (役目は `StorySection`・`BadgesChapter` へ)、`landing-copy.ts` の `how`・`badges`・`trust` (4 点) の旧い節 (新しい節に置き換える)、`LANDING_IMAGE_SIZES.step` |
 
@@ -2725,7 +2770,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `docs/design/billing/01-billing-core.md` (`/pricing` を指す箇所の一覧の行。origin/main `2863cb79` の 3849 行目付近) | `src/app/LandingPageView.tsx:586` (トップのフッターの「料金プラン」) を、いまの置き場所に直す: 文言とリンクは `src/components/marketing/landing-copy.ts` の `LANDING_COPY.footer.columns` の「サービス」の列 (`{ label: '料金プラン', href: '/pricing' }`)、描くのは `src/components/marketing/sections/SiteFooter.tsx`。`LandingPageView.tsx` は #1889 (v1.7) で消えている (§2.2)。v2.0 はフッターを変えないので、指す先は v1.7 の時点から同じで、本冊の実装を待たずに直せる | 本冊の設計 PR のマージと同日 |
 | `scripts/guide-screenshots/run.sh` の先頭のコメント | 撮る枚数 (15 + 6) と持ち帰る場所 (`public/marketing/screens`) — これは段 0 の実装で直す (docs ではなく台本) | 段 0 |
 | Issue #1867 | v2.0 の設計の要点 (18 の区切り・主張 46 件・動き 16・新しい画面 6 枚・戻るの原因と作り) をコメントで記録 | 実装 WF の投入時 (オーケストレーター) |
-| 戻るの不具合の B 型の Issue | 原因 (§2.2) と、紹介ページ側の作り (`Link`) と E-23 を本冊が持つことを書き、B 型の範囲 (`(auth)/` の側と Next の `popstate` の扱い) を決める | B 型の起票時 (オーケストレーター) |
+| 戻るの不具合の B 型の Issue | 原因 (§2.2) と、紹介ページ側の作り (`Link`・移った先の区切りへのフォーカス) と E-23・E-29 を本冊が持つことを書く。B 型の範囲は、Next の外で積まれた `state = null` の項目の `popstate` を扱う処理 (紹介ページの外の素のハッシュ: layout のスキップリンク `#main-content` (`src/app/layout.tsx:123`)・アドレスバーで打ったハッシュ・ほかの公開ページの素の `<a href="#…">`)。B 型が持つ e2e: `/` でスキップリンクを押す → 「無料で始める」で `/signup` → 戻る → `/#main-content` に戻り紹介ページの h1 が見える (本冊の実装だけでは赤のまま) | B 型の起票時 (オーケストレーター) |
 
 ---
 
@@ -2733,8 +2778,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 | 区分 | 対象 |
 |---|---|
-| 保持 (変えない) | `src/app/page.tsx`、`src/app/layout.tsx`、`src/proxy.ts`、`lib/supabase/middleware.ts`、`src/lib/security/csp.ts`、`src/lib/site-config.ts`、`src/lib/brand-image.tsx`、`src/app/guide/guide-content.ts`、`public/guide/*.png` (15 枚)、`public/marketing/photos/*`、`public/icon.svg`、`src/components/seo/SiteStructuredData.tsx`、`src/lib/seo/*`、`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` も)、`demo-state.ts`、`primitives/Reveal.tsx`・`PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts`、`sections/FinalCtaSection.tsx`・`SiteFooter.tsx`、`scripts/guide-screenshots/meal-analysis-mock.ts`、`tests/e2e-landing-suite.test.ts`、`tests/seo-public-pages-1867.test.tsx`、`package.json`・`package-lock.json`、`supabase/functions/_shared/nutrition-pipeline.ts`、アプリの画面 (`/login` 以降)、`apps/mobile` |
-| 変更 | `src/components/marketing/LandingPage.tsx`、`landing-copy.ts` (差し替え)、`marketing.css`、`sections/SiteHeader.tsx`・`HeroSection.tsx`・`DemoSection.tsx`・`FeaturesSection.tsx`・`TrustSection.tsx`・`FaqSection.tsx`、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (1 行)、`tests/e2e/landing-page.spec.ts`、`scripts/guide-screenshots/guide-users.ts`・`seed.ts`・`shoot.pw.ts`・`optimize.ts`・`run.sh` (段 0) |
+| 保持 (変えない) | `src/app/page.tsx`、`src/app/layout.tsx`、`src/proxy.ts`、`lib/supabase/middleware.ts`、`src/lib/security/csp.ts`、`src/lib/site-config.ts`、`src/lib/brand-image.tsx`、`src/app/guide/guide-content.ts`、`public/guide/*.png` (15 枚)、`public/marketing/photos/*`、`public/icon.svg`、`src/components/seo/SiteStructuredData.tsx`、`src/lib/seo/*`、`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` も)、`demo-state.ts`、`primitives/Reveal.tsx`・`PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts`、`sections/SiteFooter.tsx`、`scripts/guide-screenshots/meal-analysis-mock.ts`、`tests/e2e-landing-suite.test.ts`、`tests/seo-public-pages-1867.test.tsx`、`package.json`・`package-lock.json`、`supabase/functions/_shared/nutrition-pipeline.ts`、アプリの画面 (`/login` 以降)、`apps/mobile` |
+| 変更 | `src/components/marketing/LandingPage.tsx`、`landing-copy.ts` (差し替え)、`marketing.css`、`sections/SiteHeader.tsx`・`HeroSection.tsx`・`DemoSection.tsx`・`FeaturesSection.tsx`・`TrustSection.tsx`・`FaqSection.tsx`・`FinalCtaSection.tsx` (`tabIndex={-1}` だけ)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (1 行)、`tests/e2e/landing-page.spec.ts`、`scripts/guide-screenshots/guide-users.ts`・`seed.ts`・`shoot.pw.ts`・`optimize.ts`・`run.sh` (段 0) |
 | 新規 | §18 |
 | 削除 | `sections/HowItWorksSection.tsx`・`BadgesSection.tsx` |
 
@@ -2754,7 +2799,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | バッジの実在と説明 | U-6 | code が `AWARDABLE_BADGE_CODES` に無い。name が migration の行と違う。食事のバッジ 3 つの説明に「完了」が無い。使い方マスターの説明に「案内」が無い |
 | ガイドの章の名前と数 | U-29 | `guide-content.ts` と違う |
 | 画面の注記 | U-26 | 12 の区切りのどれかに `SCREENS_CAPTION` が無い |
-| ページの中のリンク | U-27・E-23 | 素の `<a href="#…">` がある。戻るで画面が切り替わらない |
+| ページの中のリンク | U-27・U-35・E-23・E-29・U-14 | 素の `<a href="#…">` がある。戻るで画面が切り替わらない。移った先の区切りにフォーカスが移らない (`section` に `tabindex="-1"` が無い・次の Tab が区切りの中から始まらない) |
 | 短いラベルの折れ | E-22・U-1 (`CHAPTER_SCREEN_LABEL_MAX_CHARS`・`DEMO_PHOTO_NAME_MAX_CHARS`) | 2 行になる札がある |
 | ブランドの色・コントラスト | U-7・U-8・E-20 | トークンの値が違う。31 組のどれかが下回る。axe の `color-contrast` |
 | 絵文字・依存の範囲・島の本数 | U-9・U-10 | 絵文字がある。許可外の import。`'use client'` が 7 本でない |
@@ -2772,7 +2817,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 
 ## 23. 静的な試作 (`docs/design/marketing/prototype/index.html`)
 
-- 1 ファイルの HTML。CSS と JS を中に含む。外部の CDN・フォント・画像を読まない (ブラウザで開くだけで見られる)。**既存の 13 枚の実際の画面は、`public/guide/*.png` を data URI で埋め込む** (オーナーが Desktop に写した 1 ファイルで開けるように。R-9)。新しい 6 枚はまだ無いので、何が入るかを書いた枠 (例: `実際の画面: /marketing/screens/home.png (ホームの画面)`) を置く。
+- 1 ファイルの HTML。CSS と JS を中に含む。外部の CDN・フォント・画像を読まない (ブラウザで開くだけで見られる)。**既存の 11 枚の実際の画面は、`public/guide/*.png` を data URI で埋め込む** (オーナーが Desktop に写した 1 ファイルで開けるように。R-9)。新しい 6 枚はまだ無いので、何が入るかを書いた枠 (例: `実際の画面: /marketing/screens/home.png (ホームの画面)`) を置く。
 - **見た目の参考で、正典ではない** (§9 の冒頭)。実装は本書の正典 (トークン・受入の条件・文言) に従い、試作のコードは写さない。試作と本書が食い違ったら本書が正。
 - 文言と色は本書 (§4・§5.1) と同じ (R-9)。18 の区切り・ヒーローの 5 枚の扇 (§5.4 の形)・仕組みの固定した端末の入れ替え (M-6。中央の帯の判定と溶け込み)・流れの図の線 (M-12)・デモ (M-7。スコアの数字の増え方を含む)・機能の一覧 10 枚・章 6 つ (左右の入れ替え・画面の札・帯)・スコアの輪 (M-11)・場面のスナップ (M-13)・家族と組織の図・安心 6 点・料金・ガイド・FAQ 12・ヘッダーの強調 (M-14) と読む位置の棒 (M-4)・現れ方 (M-5)・バッジ (M-10)・`reduced-motion` の扱い (動きの宣言は no-preference の中だけ) を、同じ時間と緩急で再現する。
 - ページの中のリンクは素の `<a href="#…">` (試作は Next ではない。本番は `Link`)。
@@ -2793,14 +2838,14 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | Q-7 | 変換の計測 (CTA の押下数) | 計測しない |
 | Q-9 | 退会・書き出しの画面の導線の名前 | 「設定から」とだけ |
 | Q-10 | アプリの画面の拡大の禁止 | 本冊は `/` だけ外す |
-| Q-11 | 公開の FAQ と使い方ガイドの「AI が良いところを見つけて褒める」の食い違い | 本冊の範囲外。紹介ページには載せない |
-| Q-12 | ほかの公開ページの AI の上限の記載 | 本冊の範囲外 |
-| Q-13 | アプリの中のバッジの説明は、別の案件 (枝 `fix/badges-description-matches-award`・migration `20261018040000`。マージ待ち) で付与の条件に合わせて直した (`photo_10` = 食事を 10 食「完了」・`planner` = 使い方ガイドのお試しの献立の追加・`first_bite`・`streak_3`・`streak_7` = 「完了」の語)。名前 (`カメラマン`・`計画上手`) と付与の条件の食い違いは残る | 紹介ページは `photo_10`・`planner` を載せない (名前が条件と食い違うため)。4 つの説明は紹介ページの短い文のまま。U-6 は DB の説明との不一致を求めない |
-| Q-14 | 戻るの不具合 (R-19) の B 型との分担: 本冊は紹介ページ側を `Link` にし E-23 を持つ。B 型が `(auth)/` 側や Next の `popstate` の扱いを補うか、本冊の実装で十分とするかはオーケストレーターの判断 | 本冊の実装は B 型の有無によらず成り立つ。E-23 は本冊の実装で緑になる (素の `<a>` が無くなるため) |
+| Q-11 | 公開の FAQ と使い方ガイドの「AI が良いところを見つけて褒める」の食い違い | 別の案件 (枝 `fix/public-claims-review-1018`。マージ待ち) で直した: `/faq`・`/guide` は、写真の記録のコメントを定型の「記録コメント」と「栄養メモ」で説明し、AI が良いところを見つけて言葉にするのは献立の振り返りだけと書く。`/about` と `/guide` の「AI分析で気づき」(生成の呼び出しが無い) と、`/faq` の撮り方の答えの認識の良し悪しの約束も外した。紹介ページは同じ事実に揃える (§4.1 の `praise`・§4.19 の FAQ 3・§4.0 の書かない語) |
+| Q-12 | ほかの公開ページの AI の上限の記載 | 同じ別の案件 (枝 `fix/public-claims-review-1018`。マージ待ち) で直した: `/pricing` と `/faq` の無料の答えに、AI を使う機能の 1 日の上限を書いた。紹介ページの `free-now`・`ai-daily-limit` の行と同じ事実 |
+| Q-13 | アプリの中のバッジの説明は、別の案件 (PR #1890・migration `20261018040000`。origin/main `897182fc` にマージ済み) で付与の条件に合わせて直した (`photo_10` = 食事を 10 食「完了」・`planner` = 使い方ガイドのお試しの献立の追加・`first_bite`・`streak_3`・`streak_7` = 「完了」の語)。名前 (`カメラマン`・`計画上手`) と付与の条件の食い違いは残る | 紹介ページは `photo_10`・`planner` を載せない (名前が条件と食い違うため)。4 つの説明は紹介ページの短い文のまま。U-6 は DB の説明との不一致を求めない |
+| Q-14 | 戻るの不具合 (R-19) の B 型との分担 | 本冊は紹介ページの中のリンクを `Link` にし (移った先の区切りへのフォーカスも移す)、E-23・E-29 を持つ。これで直るのは紹介ページのリンクの経路だけ。layout のスキップリンク (`#main-content`)・アドレスバーで打ったハッシュ・ほかの公開ページの素のハッシュが積む `state = null` の項目では同じ不具合が残るので、Next の外で積まれた項目の `popstate` を扱う B 型の修正は省けない (§2.2・§20 の B 型の行。B 型はスキップリンク経由の戻るの e2e を持つ) |
 | Q-15 | ほかの利用者との比較に基づく表示 (みんなと比較・競争モード・セグメント 1 位のバッジ) を紹介ページに書くか。算出の母数・最小人数の条件が未確認 | 書かない (§4.0 の書かない語に `ランキング`・`上位`・`1位`)。条件が確かめられたら別の改定で足す |
 | Q-16 | 法令の当てはめの最終の確認 (弁護士) | 本冊の文は §2.5 の方針で書く。確認で直す語があれば `landing-copy.ts` だけで済む |
 | Q-17 | 家族の共有の「献立」の既定 (`share_menu`) | 文に書かない。図は「自分で選ぶ」 |
-| Q-18 | 「30秒で登録完了」(使い方ガイドの文) の一次の根拠 | 紹介ページには書かない |
+| Q-18 | 「30秒で登録完了」(使い方ガイドの文) | 別の案件 (枝 `fix/public-claims-review-1018`。マージ待ち) で、`/guide` と `/signup` の「30秒」を外した (一次の根拠が無い)。紹介ページも書かない (`signup-methods` の条件) |
 | Q-19 | 二段階認証 (運営ロールだけ) を一般の利用者にも開くか | 本冊の範囲外。紹介ページには書かない |
 | Q-20 | FAQ の構造化データ (`FAQPage`) を足すか | 足さない (2 か所に同じ文を持たない)。要るなら `SiteStructuredData` 側で `landing-copy.ts` の `faq.items` を読む形を別に設計する |
 | Q-21 | 新しい画面 6 枚の撮影で、ローカルの組み立てが `home` の栄養スコアの API を呼ばない形 (見本の応答で箱を出さない) にした。実際のアプリでは箱が出るので、紹介ページの `home.png` には「今日の栄養スコア」が写らない。章 nutrition の文は「ホームに … 出ます」と言う | 文は根拠 (`home/page.tsx:332-360`) に基づく事実で、画像に写らないことは画面の注記 (撮影用の見本) の範囲。本番のアプリでスコアつきのホームを撮れる見本 (AI を使わない) ができたら撮り直す |
