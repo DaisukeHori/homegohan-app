@@ -106,7 +106,7 @@ export const GUIDES: readonly Guide[] = [
     Icon: Trophy,
     color: GUIDE_COLORS.badge,
     steps: [
-      { title: '目標を達成', desc: '食べた食事を「完了」にした回数や、続けた日数などで、バッジが付きます。', image: '/guide/badge-get.png', imageAlt: '新しいバッジを獲得したお知らせ' },
+      { title: 'バッジが付く', desc: '食べた食事を「完了」にした回数や、続けた日数などで、バッジが付きます。', image: '/guide/badge-get.png', imageAlt: '新しいバッジを獲得したお知らせ' },
       { title: 'コレクション', desc: '獲得したバッジは、ホームの「獲得バッジ」から開くトロフィールームで確認できます。', image: '/guide/badge-collection.png', imageAlt: 'トロフィールームのバッジの一覧' },
       { title: 'ランキングのバッジ', desc: '期間ごとの集計で、同じ層の利用者の中で上位に入ったり、前の期間より数値が良くなったりすると付くバッジもあります。', image: '/guide/badge-rare.png', imageAlt: 'ランキングで付いたバッジの詳細' },
     ],
