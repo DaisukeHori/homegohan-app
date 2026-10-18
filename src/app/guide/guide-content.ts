@@ -6,6 +6,15 @@
  * ここに書いたパスがすべて public に実在すること・大きさと重さは tests/guide-images-1852.test.ts が確かめる。
  *
  * 説明の文は、撮影した画面の文言 (ボタンの名前など) と合わせる。画面の文言を変えたら、ここと画像も見直す。
+ *
+ * #1867 (公開の主張の見直し): 説明の文は、紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じく製品の根拠のある主張だけにする。
+ * - 「コメントをもらう」: 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) で、
+ *   食事の中身を見て良いところを探す文ではない。画面の見出し「記録コメント」「栄養メモ」(src/app/(main)/meals/new/page.tsx) で言う
+ * - 所要時間 (「30秒で」「数秒で」) は測っていないので書かない
+ * - バッジは、完了した食事の数と連続日数 (src/app/api/badges/route.ts)・期間ごとの集計の順位と改善率
+ *   (supabase/functions/calculate-segment-stats。src/lib/badges/awardable.ts の segment_* / improved_* / *_champion) で付く。
+ *   「目標達成」「レアバッジ」という付き方は無いので書かない
+ * 戻らないことは tests/public-claims-guard.test.ts が確かめる
  */
 import { Camera, ChefHat, Scale, Smartphone, Trophy, type LucideIcon } from 'lucide-react';
 
@@ -53,8 +62,8 @@ export const GUIDES: readonly Guide[] = [
     Icon: Smartphone,
     color: GUIDE_COLORS.primary,
     steps: [
-      { title: 'アカウント作成', desc: 'メールアドレスまたはGoogleアカウントで30秒で登録完了。', image: '/guide/signup.png', imageAlt: '新規登録の画面' },
-      { title: 'プロフィール設定', desc: '身長・体重・目標を入力。AIがあなたに最適な提案をするために必要です。', image: '/guide/profile.png', imageAlt: '身長と体重を入力する画面' },
+      { title: 'アカウント作成', desc: 'メールアドレスまたはGoogleアカウントで登録できます。クレジットカードは不要です。', image: '/guide/signup.png', imageAlt: '新規登録の画面' },
+      { title: 'プロフィール設定', desc: '身長・体重・目標を入力。栄養の目標の計算や、献立の提案に使います。', image: '/guide/profile.png', imageAlt: '身長と体重を入力する画面' },
       { title: '準備完了！', desc: 'これで準備OK！さっそく食事を記録してみましょう。', image: '/guide/ready.png', imageAlt: '設定が完了した画面' },
     ],
   },
@@ -65,8 +74,8 @@ export const GUIDES: readonly Guide[] = [
     color: GUIDE_COLORS.success,
     steps: [
       { title: '写真を撮る', desc: 'ホーム画面のカメラボタンをタップ。食事全体が写るように撮影します。', image: '/guide/camera.png', imageAlt: '食事の写真を選んだ撮影の画面' },
-      { title: 'AI分析を待つ', desc: '数秒でAIが料理を認識。カロリー、タンパク質、野菜スコアを自動計算。', image: '/guide/analyze.png', imageAlt: '食事の写真の解析結果の画面' },
-      { title: 'コメントをもらう', desc: 'AIがあなたの食事の良いところを見つけて褒めてくれます！', image: '/guide/comment.png', imageAlt: '解析結果の記録コメント' },
+      { title: 'AI分析を待つ', desc: 'AIが料理を認識して、カロリー、タンパク質、炭水化物、脂質、野菜の点を推定します。', image: '/guide/analyze.png', imageAlt: '食事の写真の解析結果の画面' },
+      { title: 'コメントをもらう', desc: '解析の結果に、記録をほめる「記録コメント」と、栄養についてのひと言の「栄養メモ」が出ます。', image: '/guide/comment.png', imageAlt: '解析結果の記録コメント' },
     ],
   },
   {
@@ -97,9 +106,9 @@ export const GUIDES: readonly Guide[] = [
     Icon: Trophy,
     color: GUIDE_COLORS.badge,
     steps: [
-      { title: '目標を達成', desc: '毎日の記録や目標達成でバッジをゲット！', image: '/guide/badge-get.png', imageAlt: '新しいバッジを獲得したお知らせ' },
+      { title: '目標を達成', desc: '食べた食事を「完了」にした回数や、続けた日数などで、バッジが付きます。', image: '/guide/badge-get.png', imageAlt: '新しいバッジを獲得したお知らせ' },
       { title: 'コレクション', desc: '獲得したバッジは、ホームの「獲得バッジ」から開くトロフィールームで確認できます。', image: '/guide/badge-collection.png', imageAlt: 'トロフィールームのバッジの一覧' },
-      { title: 'レアバッジ', desc: '特別な条件を満たすとレアバッジが！全部集められるかな？', image: '/guide/badge-rare.png', imageAlt: 'レアバッジの詳細' },
+      { title: 'ランキングのバッジ', desc: '期間ごとの集計で、同じ層の利用者の中で上位に入ったり、前の期間より数値が良くなったりすると付くバッジもあります。', image: '/guide/badge-rare.png', imageAlt: 'ランキングで付いたバッジの詳細' },
     ],
   },
 ];

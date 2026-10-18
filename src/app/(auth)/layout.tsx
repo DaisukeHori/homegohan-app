@@ -33,9 +33,10 @@ export default function AuthLayout({
               食べたものが、<br/>
               <span className="text-[#FF8A65]">未来のあなた</span>を作る。
             </h2>
+            {/* #1867 (公開の主張の見直し): 根拠の無い効果の言い回し (「パフォーマンスを最大化」) をやめ、紹介ページの claims の photo-analyze・praise の行と同じ事実を言う */}
             <p className="text-gray-300 text-lg leading-relaxed">
-              AIと共に、毎日の食事からパフォーマンスを最大化しましょう。<br/>
-              無理な制限ではなく、心地よいバランスを。
+              写真を撮るだけで、AIが料理を認識して栄養を推定します。<br/>
+              食事の記録の画面では、写真で記録すると、記録をほめるひと言が出ます。
             </p>
           </div>
         </div>

@@ -44,20 +44,31 @@ const CARD_DELAY_STEP_SEC = 0.1;
 // 有料プランは販売開始前。価格・機能・支払条件はまだ決まっていないので載せない。
 const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前）';
 
-// 現在ご利用いただける機能。実際にある機能だけを載せる (回数や期間の上限・広告の有無など、実際には無いものは書かない)。
+// 現在ご利用いただける機能。実際にある機能だけを載せ、紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じ言い方にする (#1867)。
+// - 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) なので、
+//   「AIコメント」とは書かず、食事の記録の画面の見出し「記録コメント」で言う (claims の praise の行)
+// - 週間レポートの機能は無い (API も画面も無い) ので載せない
+// - 期間の上限・広告など、実際には無い制限は書かない。実際にある制限は、AI を使う機能の 1 日の利用回数の上限 (#1149) だけで、
+//   それは AI_DAILY_LIMIT_NOTE で書く
 const freeFeatures = [
-  "写真で食事記録",
-  "AI栄養分析",
-  "AIコメント（褒める）",
-  "週間レポート",
-  "バッジ収集",
-  "献立提案",
-  "健康記録",
-  "過去データ閲覧",
+  "写真で食事の記録（AIが料理を認識して栄養を推定）",
+  "記録をほめるひと言（記録コメント）と栄養メモ",
+  "献立の提案",
+  "健康の記録",
+  "バッジ",
+  "過去の記録の閲覧",
 ];
 
+/**
+ * AI を使う機能の 1 日の利用回数の上限 (#1149)。数える: src/lib/plan/entitlements.ts の consumeAiUsage・
+ * 上限に達したときの文: supabase/functions/_shared/ai-daily-limit.ts。回数の数字は運営画面で変えられるので書かない
+ * (紹介ページの claims の ai-daily-limit の行と同じ扱い)
+ */
+const AI_DAILY_LIMIT_NOTE =
+  "AIを使う機能（写真の解析や献立の提案など）は、1日にご利用いただける回数に上限があり、上限に達した日は翌日0時からまたお使いいただけます。";
+
 const faqs = [
-  { q: "現在、料金はかかりますか？", a: "現在ご提供している機能は無料でご利用いただけます。" },
+  { q: "現在、料金はかかりますか？", a: `現在ご提供している機能は無料でご利用いただけます。${AI_DAILY_LIMIT_NOTE}` },
   { q: "有料プランはありますか？", a: `${PAID_PLAN_PENDING}。内容・料金・開始時期が決まりましたら、このページでご案内します。` },
 ];
 
@@ -150,6 +161,10 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
                 </li>
               ))}
             </ul>
+
+            <p className="text-xs leading-relaxed mb-6" style={{ color: colors.textMuted }}>
+              {AI_DAILY_LIMIT_NOTE}
+            </p>
 
             <Link href="/signup">
               <motion.button
