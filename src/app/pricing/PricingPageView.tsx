@@ -46,8 +46,8 @@ const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前�
 
 // 現在ご利用いただける機能。実際にある機能だけを載せ、紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じ言い方にする (#1867)。
 // - 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) なので、
-//   「AIコメント」とは書かず、食事の記録の画面の見出し「記録コメント」で言う (claims の praise の行)
-// - 週間レポートの機能は無い (API も画面も無い) ので載せない
+//   AI が書くコメントのようには書かず、食事の記録の画面の見出し「記録コメント」で言う (claims の praise の行)
+// - 週ごとのレポートの機能は無い (API も画面も無い) ので載せない
 // - 期間の上限・広告など、実際には無い制限は書かない。実際にある制限は、AI を使う機能の 1 日の利用回数の上限 (#1149) だけで、
 //   それは AI_DAILY_LIMIT_NOTE で書く
 const freeFeatures = [

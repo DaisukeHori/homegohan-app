@@ -25,6 +25,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from '@/lib/business-info';
 import { getSupportEmail } from '@/lib/site-config';
 import type { PurchasablePlan } from '@/lib/billing/core';
+import { GUIDES } from '@/app/guide/guide-content';
 
 // /pricing の page.tsx (Server Component) が読む「買えるプラン」と Cookie (is_native_app)。it ごとに値を変える
 const pricingMocks = vi.hoisted(() => ({
@@ -91,12 +92,19 @@ const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
  * - src/lib/seo/public-pages.ts: 公開ページごとの description (SITE_DESCRIPTION を含む。検索結果に出る文)
  * - src/app/(auth)/layout.tsx: ログイン・新規登録の画面の layout は children が要るので描画の対象にしないが、
  *   根拠のない実績の表示が残っていた (10,000+ ユーザーが実践中) ので、ソースは公開ページと同じ FORBIDDEN で見る
+ * - (#1867 公開の主張の見直し) 未ログインで開ける残りの公開の画面のソース: 使い方ガイド (/guide の本体と手順の文)・
+ *   ログインと新規登録の画面・お問い合わせ。描画には Next.js の実行環境 (ルーター・認証の状態) が要るので、ソースだけを見る
  */
 const PUBLIC_SOURCE_FILES: string[] = [
   ...PUBLIC_PAGES.map(({ file }) => file),
   'src/components/marketing/landing-copy.ts',
   'src/lib/seo/public-pages.ts',
   'src/app/(auth)/layout.tsx',
+  'src/app/(auth)/login/page.tsx',
+  'src/app/(auth)/signup/page.tsx',
+  'src/app/guide/page.tsx',
+  'src/app/guide/guide-content.ts',
+  'src/app/contact/page.tsx',
 ];
 
 /** 公開ページに載せてはいけない文字列と、その理由 */
@@ -149,7 +157,37 @@ const FORBIDDEN: { text: string; reason: string }[] = [
   { text: '第三者がアクセスすることはできません', reason: '断定できない (最終的な文言はプライバシーポリシーの見直しで決める)' },
   { text: '第三者に共有・販売することは一切', reason: '断定できない (最終的な文言はプライバシーポリシーの見直しで決める)' },
   { text: '第三者に共有されることはありません', reason: '断定できない (最終的な文言はプライバシーポリシーの見直しで決める)' },
+  // #1867 (紹介ページの設計 marketing/01 §24 の Q-11・Q-12 と、公開の画面の主張の見直し)
+  // 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) で、食事の中身を見て書く文ではない
+  { text: '総合的に分析し', reason: '写真の記録のコメントは、料理の名前と食事の区分だけが変わる定型の文 (Q-11)' },
+  { text: '良いところを見つけて褒めてくれます', reason: '写真の記録のコメントは、食事の中身を見て良いところを探す文ではない (Q-11)' },
+  { text: 'AIコメント（褒める）', reason: '写真の記録のコメントは AI が書く文ではない (Q-11)' },
+  { text: '彩りが素敵', reason: '写真の記録のコメントは、料理の見た目 (彩り) を見ない' },
+  // 製品に無い機能・付き方
+  { text: '週間レポート', reason: '週ごとのレポートの機能は無い (API も画面も無い)' },
+  { text: 'レアバッジ', reason: 'バッジに「レア」という区分は無い (付くバッジは src/lib/badges/awardable.ts)' },
+  { text: '目標達成でバッジ', reason: '目標の達成で付くバッジは無い (付くのは完了した食事の数・連続日数・期間ごとの集計)' },
+  { text: '50種類以上', reason: '根拠のないバッジの種類の数' },
+  { text: '%向上', reason: '根拠のない改善率' },
+  // 測っていない所要時間・確かめていない認識の良し悪し
+  { text: '30秒で', reason: '測っていない所要時間 (登録)' },
+  { text: '数秒で', reason: '測っていない所要時間 (写真の解析)' },
+  { text: '認識精度がアップ', reason: '確かめていない認識の良し悪し' },
+  { text: '認識精度が上がります', reason: '確かめていない認識の良し悪し' },
+  { text: '問題なく分析できます', reason: '確かめていない認識の良し悪し' },
+  // 根拠の無い効果・最上級・約束
+  { text: 'パフォーマンスを最大化', reason: '根拠のない効果の言い回し' },
+  { text: '続けられるから、健康になれる', reason: '健康上の効果の約束' },
+  { text: 'きっと実感', reason: '効果の約束' },
+  { text: '最適な', reason: '根拠を出せない最上級' },
+  { text: '24時間以内', reason: '返信の目安はお問い合わせの画面 (2〜3営業日) と食い違う' },
 ];
+
+/**
+ * AI を使う機能の 1 日の利用回数の上限 (#1149) を言う文の、/faq と /pricing で共通の部分 (#1867 Q-12)。
+ * 回数の数字は運営画面で変えられるので書かない (紹介ページの claims の ai-daily-limit の行と同じ扱い)
+ */
+const AI_DAILY_LIMIT_PHRASE = '1日にご利用いただける回数に上限があり、上限に達した日は翌日0時からまたお使いいただけます。';
 
 /** 確定情報がまだ無い項目に出す文言 (特定商取引法・運営会社) */
 const PENDING_NOTICE = '準備中（確定次第掲載します）';
@@ -440,5 +478,77 @@ describe('#1155 FAQ (/faq とトップページの FAQ)', () => {
   it('AI の認識精度を数字で約束しない', () => {
     expect(faq).not.toMatch(/\d+%以上の精度/);
     expect(landing).not.toMatch(/\d+%以上の精度/);
+  });
+});
+
+/** /faq のソースから、質問 q の答え a を読む (1 項目は 1 行に { category, q, a } で書く) */
+function faqAnswer(source: string, q: string): string {
+  const line = source.split('\n').find((l) => l.includes(`q: '${q}'`));
+  expect(line, `/faq に「${q}」が無い`).toBeDefined();
+  const match = /a:\s*'([^']*)'/.exec(line!);
+  expect(match, `/faq の「${q}」の答えが読めない`).not.toBeNull();
+  return match![1];
+}
+
+describe('#1867 (Q-11) 写真の記録のコメントを、実際に出るもの (定型の記録コメントと栄養メモ) で説明する', () => {
+  const faq = readSource('src/app/faq/page.tsx');
+  const recordScreen = readSource('src/app/(main)/meals/new/page.tsx');
+  const pipeline = readSource('supabase/functions/_shared/nutrition-pipeline.ts');
+
+  it('/faq「AIのコメントはどうやって生成されますか？」は、記録コメントが決まった形の文で、栄養メモがあることを言う', () => {
+    const answer = faqAnswer(faq, 'AIのコメントはどうやって生成されますか？');
+    expect(answer).toContain('「記録コメント」');
+    expect(answer).toContain('「栄養メモ」');
+    expect(answer).toContain('決まった形のひと言');
+    expect(answer).toContain('食事の記録の画面では、写真で記録すると');
+  });
+
+  it('使い方ガイドの手順「コメントをもらう」は、記録コメントと栄養メモで説明する', () => {
+    const step = GUIDES.flatMap((guide) => guide.steps).find((s) => s.title === 'コメントをもらう');
+    expect(step, '使い方ガイドに手順「コメントをもらう」が無い').toBeDefined();
+    expect(step!.desc).toContain('「記録コメント」');
+    expect(step!.desc).toContain('「栄養メモ」');
+  });
+
+  it('説明が名指しする見出しは、食事の記録の画面に実在し、文はアプリの定型の文から作る', () => {
+    expect(recordScreen).toContain('>記録コメント<');
+    expect(recordScreen).toContain('栄養メモ:');
+    expect(pipeline).toContain('function buildTemplatePraiseAndTip(');
+  });
+});
+
+describe('#1867 (Q-12) 無料の説明に、AI を使う機能の 1 日の利用回数の上限を書く', () => {
+  const faq = readSource('src/app/faq/page.tsx');
+  const pricingSource = readSource('src/app/pricing/PricingPageView.tsx');
+  const limitSource = readSource('supabase/functions/_shared/ai-daily-limit.ts');
+
+  it('上限は実在し、上限に達したときの文も「明日 0 時から」と言う (翌日 0 時からの根拠)', () => {
+    expect(limitSource).toContain('明日 0 時から使えます。');
+  });
+
+  it('/faq「現在、料金はかかりますか？」の答えに上限を書く', () => {
+    expect(faqAnswer(faq, '現在、料金はかかりますか？')).toContain(AI_DAILY_LIMIT_PHRASE);
+  });
+
+  it('/pricing は、フリーのカード (アプリの中でも出す) と販売開始前の FAQ の両方に上限を書く', () => {
+    const text = renderText(PricingPageWithoutPlans);
+    expect(text.split(AI_DAILY_LIMIT_PHRASE)).toHaveLength(3);
+    const nativeText = renderText(() => createElement(PricingPageView, { plans: [], isNativeApp: true }));
+    expect(nativeText).toContain(AI_DAILY_LIMIT_PHRASE);
+  });
+
+  it('/pricing の「現在ご利用いただける機能」の注記は、上限が入った今の事実を言う (上限が無いかのような古い書き方を残さない)', () => {
+    expect(pricingSource).not.toContain('回数や期間の上限・広告の有無など、実際には無いものは書かない');
+    expect(pricingSource).toContain('AI_DAILY_LIMIT_NOTE');
+  });
+});
+
+describe('#1867 お知らせ (/news) に、実際には無かったお知らせを載せない', () => {
+  it('お知らせが無いときは、その旨の文だけを出し、架空の日付のお知らせは出さない', () => {
+    const text = renderText(NewsPage);
+    expect(text).toContain('現在、お知らせはありません。');
+    for (const word of ['2024-12', '2025-01', '健康記録機能をリリースしました', 'バッジ機能を追加しました', '年末年始']) {
+      expect(text, `「${word}」が残っている`).not.toContain(word);
+    }
   });
 });

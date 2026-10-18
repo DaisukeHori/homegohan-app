@@ -22,14 +22,14 @@ const colors = {
 
 /**
  * 主な機能。紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じく、製品の根拠のある主張だけを書く (#1867)。
- * - 写真で記録: claims の photo-analyze・ai-estimate (数値は推定なので、「手入力は不要」とは言い切らない)
+ * - 写真で記録: claims の photo-analyze・ai-estimate (数値は推定なので、手で入力しなくてよいとは言い切らない)
  * - ほめるひと言: claims の praise・nutrition-tip。写真の記録のコメントは定型の文で、食事の中身を見て良いところを探す文ではない
  * - 献立の提案: 使う情報は /faq「献立提案はどういう基準で作られますか？」と同じ (tests/faq-guide-wording-1859.test.ts が実コードと突き合わせる)
  * - 栄養の目標: src/app/api/nutrition-targets/calculate/route.ts (@homegohan/core の calculateNutritionTargets。
  *   基礎代謝は年齢・身長・体重から、活動量は仕事のスタイルと運動から、配分は目標と持病から)
  * - 健康の記録: 体重・体脂肪率・血圧の記録 (src/app/(main)/health/record/page.tsx) と、健康画面の「AI分析」(src/app/(main)/health/page.tsx)
  * - 家族: claims の family (招待・献立を一緒に見る・記録の共有)。分量の計算は無いので書かない
- * 最上級 (「最適な」)・効果の約束 (「続けられる」「解決します」「実現します」) は書かない
+ * 最上級と、効果・習慣の定着の約束は書かない
  */
 const features = [
   {
@@ -154,8 +154,8 @@ export default function AboutPage() {
           <h2 className="text-3xl md:text-4xl font-bold mb-6" style={{ color: colors.text }}>
             私たちのミッション
           </h2>
-          {/* #1867: 他のアプリについての根拠の無い比較と、写真の記録のコメントが食事の中身を見て褒めるかのような例 (「彩りが素敵！」)・
-              健康上の効果の約束 (「健康になれる」) をやめ、実際にあることだけを書く */}
+          {/* #1867: 他のアプリについての根拠の無い比較と、写真の記録のコメントが料理の見た目を見て褒めるかのような例・
+              健康上の効果の約束をやめ、実際にあることだけを書く */}
           <p className="text-lg leading-relaxed mb-8" style={{ color: colors.textLight }}>
             私たちは「褒める」ことにこだわります。
             食事の記録の画面では、写真で記録すると、記録をほめるひと言が出ます。

@@ -184,7 +184,7 @@ function SignupContent() {
     <div className="space-y-6 animate-fade-up">
       <div className="space-y-2 text-center lg:text-left">
         <h1 className="text-3xl font-bold tracking-tight text-gray-900">アカウント作成</h1>
-        {/* #1867 (公開の主張の見直し): 所要時間 (「30秒で完了」) は測っていないので書かない。カード不要は登録の画面に決済の入力が無いことが根拠 */}
+        {/* #1867 (公開の主張の見直し): 登録にかかる時間は測っていないので書かない。カード不要は登録の画面に決済の入力が無いことが根拠 */}
         <p className="text-gray-500">クレジットカードは不要です。</p>
       </div>
 

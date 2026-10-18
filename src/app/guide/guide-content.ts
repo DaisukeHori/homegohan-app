@@ -10,10 +10,10 @@
  * #1867 (公開の主張の見直し): 説明の文は、紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じく製品の根拠のある主張だけにする。
  * - 「コメントをもらう」: 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) で、
  *   食事の中身を見て良いところを探す文ではない。画面の見出し「記録コメント」「栄養メモ」(src/app/(main)/meals/new/page.tsx) で言う
- * - 所要時間 (「30秒で」「数秒で」) は測っていないので書かない
+ * - 登録や解析にかかる時間は測っていないので書かない
  * - バッジは、完了した食事の数と連続日数 (src/app/api/badges/route.ts)・期間ごとの集計の順位と改善率
  *   (supabase/functions/calculate-segment-stats。src/lib/badges/awardable.ts の segment_* / improved_* / *_champion) で付く。
- *   「目標達成」「レアバッジ」という付き方は無いので書かない
+ *   目標の達成で付くバッジや、「レア」という区分は無いので書かない
  * 戻らないことは tests/public-claims-guard.test.ts が確かめる
  */
 import { Camera, ChefHat, Scale, Smartphone, Trophy, type LucideIcon } from 'lucide-react';
