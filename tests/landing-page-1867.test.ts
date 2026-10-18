@@ -153,7 +153,8 @@ const attribute = (attrs: string, name: string): string | undefined => attrs.mat
 
 /** HTML の文字参照を戻す (aria-label などの比較用) */
 function decodeEntities(text: string): string {
-  return text.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+  // &amp; は最後に戻す (先に戻すと &amp;lt; が < まで二重に戻る。CodeQL js/double-escaping)
+  return text.replace(/&quot;/g, '"').replace(/&#x27;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
 }
 
 /** 区切り (section) ごとの HTML (id → その section の中の HTML) */
