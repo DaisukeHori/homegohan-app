@@ -81,6 +81,17 @@ async function expectNoDocumentReload(watch: DocumentReloadWatch): Promise<void>
   expect(await watch.markerSurvives()).toBe(true);
 }
 
+/**
+ * 描画の後の effect が済むまで待つ (次の描画のフレームの後の 1 つのタスク)。
+ * 部品 (HashHistoryEntryBridge) は、いま描かれているルートを描画の後の effect で受け取る。画面が見えた直後 (同じフレームの中) に戻ると、
+ * 部品はまだ前のルートを持っていて、印の無い項目へ戻ったことに気付けない (WebKit で再現。人の操作では起きない間合い)
+ */
+async function waitForEffectsAfterPaint(page: Page): Promise<void> {
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(resolve)))),
+  );
+}
+
 /** 紹介ページを開き、ハイドレーションが済むのを待つ (ヘッダーのリンクを押せる状態) */
 async function openLanding(page: Page, search = ''): Promise<void> {
   await page.goto(`/${search}`);
@@ -261,10 +272,11 @@ test.describe('#1867 戻る で文書を読み込むのが正しい型 (別の�
     await page.evaluate((hash) => History.prototype.pushState.call(window.history, null, '', hash), REPORTED_HASH);
     await expect(page).toHaveURL(new RegExp(`/${REPORTED_HASH}$`));
     await goToSignupFromHeader(page);
+    await waitForEffectsAfterPaint(page);
 
     await page.goBack();
 
-    // state が null の項目なので Next は何もせず、画面 (/signup) と URL (/) のルートがずれる。部品が今の URL で 1 回だけ読み込み直す
+    // state が null の項目なので Next は何もせず、画面 (/signup) と URL (/#how のルートの /) がずれる。部品が今の URL で 1 回だけ読み込み直す
     await expect(page).toHaveURL(new RegExp(`/${REPORTED_HASH}$`));
     await expect(page.locator(REPORTED_HASH)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
     await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toHaveCount(0);
