@@ -122,8 +122,10 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
 
       await page.goBack();
 
+      // フッターを押した時点のスクロールはページの末尾なので、戻ったあとのスクロールの位置 (末尾に戻すか #how か) はブラウザで違う
+      // (WebKit は末尾に戻す)。ここで確かめるのは、紹介ページが描かれ (#how の区切りがある)、前の画面が残っていないこと
       await expect(page).toHaveURL(new RegExp(`/${REPORTED_HASH}$`));
-      await expect(page.locator(REPORTED_HASH)).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
+      await expect(page.locator(REPORTED_HASH)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
       await expect(page.getByRole('heading', { level: 1, name: target.heading })).toHaveCount(0);
     });
   }
