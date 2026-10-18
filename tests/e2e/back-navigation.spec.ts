@@ -155,17 +155,8 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
     await expect(page.locator('#hero')).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
   });
 
-  test('/ → #how → 文書の遷移 (アドレス欄で /signup を開く) → 戻る で、紹介ページの #how が見えている', async ({ page }) => {
-    await openLanding(page);
-    await clickHeaderHash(page, REPORTED_HASH);
-    await page.goto('/signup');
-    await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
-
-    await page.goBack();
-
-    await expectBackOnLandingSection(page, REPORTED_HASH);
-  });
-
+  // 文書の遷移で /signup を開く型より前に置く (src/__tests__/config/e2e-auth-page-wait.test.ts は、goto("/signup") から次の画面の移動までの行の networkidle 待ちを
+  // 登録の画面での待ちとみなす。ここでの networkidle は紹介ページでの待ち)
   for (const search of NON_CANONICAL_SEARCHES) {
     test(`/${search} → #how → #faq → 戻る で、読み込み直さずに #how へ戻る (検索の部分の書き方の違いで取り違えない)`, async ({ page }) => {
       await openLanding(page, search);
@@ -188,6 +179,17 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
       expect(await page.evaluate((marker) => Reflect.get(window, marker) === true, DOCUMENT_MARKER)).toBe(true);
     });
   }
+
+  test('/ → #how → 文書の遷移 (アドレス欄で /signup を開く) → 戻る で、紹介ページの #how が見えている', async ({ page }) => {
+    await openLanding(page);
+    await clickHeaderHash(page, REPORTED_HASH);
+    await page.goto('/signup');
+    await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+
+    await page.goBack();
+
+    await expectBackOnLandingSection(page, REPORTED_HASH);
+  });
 
   test('/pricing でスキップリンク (#main-content) → /signup → 戻る で、料金の画面に戻る (紹介ページ以外のハッシュ)', async ({ page }) => {
     await page.goto('/pricing');
