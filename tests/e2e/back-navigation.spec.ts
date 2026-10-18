@@ -169,22 +169,23 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
   for (const search of NON_CANONICAL_SEARCHES) {
     test(`/${search} → #how → #faq → 戻る で、読み込み直さずに #how へ戻る (検索の部分の書き方の違いで取り違えない)`, async ({ page }) => {
       await openLanding(page, search);
-      await page.evaluate((marker) => {
-        (window as unknown as Record<string, unknown>)[marker] = true;
-      }, DOCUMENT_MARKER);
+      await page.evaluate((marker) => Reflect.set(window, marker, true), DOCUMENT_MARKER);
+      // 読み込み直すと文書の load が起きる (戻るの後に始まる読み込み直しも数える)
+      let documentLoads = 0;
+      page.on('load', () => {
+        documentLoads += 1;
+      });
       await clickHeaderHash(page, REPORTED_HASH, search);
       await clickHeaderHash(page, '#faq', search);
 
       await page.goBack();
+      await page.waitForLoadState('networkidle');
 
       await expect(page).toHaveURL(new RegExp(`/${escapeRegExp(search)}${REPORTED_HASH}$`));
       await expect(page.locator(REPORTED_HASH)).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
+      expect(documentLoads).toBe(0);
       // 読み込み直すと文書が作り直され、置いた印が消える
-      const markerSurvived = await page.evaluate(
-        (marker) => (window as unknown as Record<string, unknown>)[marker] === true,
-        DOCUMENT_MARKER,
-      );
-      expect(markerSurvived).toBe(true);
+      expect(await page.evaluate((marker) => Reflect.get(window, marker) === true, DOCUMENT_MARKER)).toBe(true);
     });
   }
 
