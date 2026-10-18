@@ -34,7 +34,7 @@ export const SITE_DEFAULT_TITLE = `${SITE_NAME} | ${SITE_TAGLINE}`;
 
 /** サイト全体の説明 (トップの description。ルートの layout の description と openGraph.description も同じ文) */
 export const SITE_DESCRIPTION =
-  '写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。あなたの食生活をサポートする次世代の食事管理アプリ。';
+  '写真を撮るだけで、AI が料理を認識して栄養を推定し、その記録をほめてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。';
 
 /** Twitter Card のトップの説明 (以前のルートの layout の twitter.description と同じ文) */
 export const SITE_TWITTER_DESCRIPTION = '写真を撮るだけでAIが栄養分析。毎日の食事記録から献立提案、健康管理まで。';
