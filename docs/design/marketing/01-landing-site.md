@@ -1193,7 +1193,8 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `sections/FinalCtaSection.tsx` (変更: `section#cta` に `tabIndex={-1}` を足すだけ。§8.3 の `LandingPage`) | Server | 最終 CTA | – |
 | `sections/SiteFooter.tsx` (変えない) | Server | フッター | – |
 | `sections/HowItWorksSection.tsx`・`BadgesSection.tsx` (削除) | – | v1.7 の使い方とバッジ (`StorySection`・`BadgesChapter` に置き換える) | – |
-| `primitives/Reveal.tsx`・`PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts` (変えない) | – | v1.7 のまま | – |
+| `primitives/Reveal.tsx` (変えない) | 島 | 現れ方 (M-5。包むものは §6.5。v1.7 のまま) | `mounted: boolean`・`inView: boolean` |
+| `primitives/PhoneFrame.tsx`・`CtaLink.tsx`・`useInViewOnce.ts`・`useReducedMotion.ts` (変えない) | – | v1.7 のまま (`useInViewOnce.ts` は v1.7 から `'use client'` を持つ hook で、島に数えない。§3.1) | – |
 | `primitives/StoryScroller.tsx` (新設) | 島 | 固定した端末の入れ替え (M-6) | `activeIndex: number` |
 | `primitives/ScoreRing.tsx` (新設) | 島 | 輪と数字 (M-11) | `phase: 'server' \| 'armed' \| 'counting' \| 'final'` (§13.3 の数字の増え方の表)・`shown: number` |
 | `primitives/ReadingProgress.tsx` (新設) | 島 | 読む位置の棒 (M-4) | `progress: number` |
@@ -1251,7 +1252,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `ScoreRing` | `'use client'`。状態は §13.3 の数字の増え方の表 (`ScoreRing` の行) のとおり。マウントで根に `data-js` を付ける (armed)。`useInViewOnce` で根が画面に入ったら根に `data-in` を付ける。SVG の `circle` 2 本 (下地 `--lp-line`・値 `--lp-green`。`pathLength="100"`・`stroke-dasharray: 100`)。値の `circle` の `stroke-dashoffset` は HTML の属性で `100 − value` (最後の形)。no-preference の中だけで: 根が `[data-js]:not([data-in])` の間は CSS が `stroke-dashoffset: 100` にし (隠すときは遷移なし。`transition` の宣言は `[data-in]` の付いた根の下にだけ書く)、`data-in` で `RING_DRAW_MS` かけて最後の形へ。見える数字: armed の間は、`useReducedMotion()` が false なら 0・true なら value。`data-in` で、false なら counting (`countUpValue` で 0 → value を `RING_DRAW_MS`)、true なら final (value)。札と注記は文字 | SVG は `aria-hidden`。数字の読み上げは最後の値だけ (`DemoSection` と同じ 2 つの `span`) | reduce: 輪と数字は最初から最後の形 (隠す規則は no-preference の中だけ・見える数字は armed でも value)。JS 無し: 同じ (HTML の属性が最後の形・`data-js` が付かない) | 輪の直径 `clamp(9rem, 20vw, 12rem)`・線の太さ 10 px。数字は §5.2 の大きな数字 | E-25・E-7・U-32 |
 | `BadgesChapter` | `ChapterSection` の `children` にバッジの列 (`ul`。4 枚。アイコンの輪 (`--lp-gold` の輝き)・h3 (名前)・説明)。列を 1 つの `Reveal` で包み、M-10 が中をずらす | – | reduce・JS 無し: 最初から見える | 640 px 未満: 1 列・640〜1023: 2 列・1024 以上: 4 列。名前は 1 行 (E-22) | U-6・E-1・E-22 |
 | `HealthChapter` | `ChapterSection` の `children` に免責 (`chapters.health.disclaimer`。14 px・`--lp-ink-soft`) | – | – | 地は `blue` | U-26 |
-| `ScenesSection` | `section#scenes`・`aria-labelledby="scenes-title"`。見出しの塊と、`ul` の中にカード 4 枚 (アイコン・h3・本文)。768 px 未満は `ul` が `overflow-x: auto; scroll-snap-type: x mandatory`・各 `li` が `scroll-snap-align: start`・幅 `min(85vw, 22rem)` | 768 px 未満の `ul` は `tabindex="0"` + `aria-label="使い方の場面"`。以上は `tabindex` を付けない (`tabindex` は `[data-narrow]` ではなく CSS では切り替えられないので、`ul` には常に `tabindex="0"` と `aria-label` を付ける: 768 px 以上でもフォーカスできる箱が 1 つ増えるだけで、害は無い) | reduce・JS 無し: 同じ (CSS) | 768〜1023 px: 2 列・1024 以上: 4 列。カードは `--lp-surface`・角丸・影・内側の余白 1.5rem | E-27・E-6・E-20 |
+| `ScenesSection` | `section#scenes`・`aria-labelledby="scenes-title"`。見出しの塊と、`ul` の中にカード 4 枚 (アイコン・h3・本文)。768 px 未満は `ul` が `overflow-x: auto; scroll-snap-type: x mandatory`・各 `li` が `scroll-snap-align: start`・幅 `min(85vw, 22rem)` | 768 px 未満の `ul` は `tabindex="0"` + `aria-label="使い方の場面"`。以上は `tabindex` を付けない (`tabindex` は `[data-narrow]` ではなく CSS では切り替えられないので、`ul` には常に `tabindex="0"` と `aria-label` を付ける: 768 px 以上でもフォーカスできる箱が 1 つ増えるだけで、害は無い) | reduce・JS 無し: 同じ (CSS) | 768〜1023 px: 2 列・1024 以上: 4 列。カードは `--lp-surface`・角丸・影・内側の余白 1.5rem | E-27・E-6・E-30 |
 | `FamilySection` | `section#family`・`aria-labelledby="family-title"`。eyebrow・h2・lead・要点 4 つ (`ul`)・共有の範囲の図 (3 つの札 + 切り替えの形 (`aria-hidden`) + 既定の文)・画面 1 枚 (`family.png`)・画面の注記・CTA | 図の文は読める文字。切り替えの形は `aria-hidden` | 最初から見える | 1024 px 以上: 2 列 (文字 7 : 図と画面 5)。地は `tint` | E-1・E-8・U-26 |
 | `OrgSection` | `section#org`・`aria-labelledby="org-title"`。eyebrow・h2・lead・要点 4 つ・組織の形の図 (3 段の札 + SVG の線 `aria-hidden`)・CTA (`CtaLink` `secondary` → `/contact`) | 札は文字 | 最初から見える | 1024 px 以上: 2 列。地は `blue`。実際の画面は無い | E-1・E-8 |
 | `TrustSection` | `section#trust`・`aria-labelledby="trust-title"`。見出しの塊・`ul` の中に 6 項目 (アイコン・h3・本文・あればリンク)・画面 1 枚 (`consent.png`)・画面の注記 | リンクは高さ 24 px 以上 | 最初から見える | 768 px 未満: 1 列。768〜1279: 2 列。1280 以上: 3 列 (6 項目が 2 行)。見出しは 1 行 (E-22) | U-24・U-26・E-9・E-22 |
@@ -2344,7 +2345,7 @@ export function countUpValue(target: number, elapsedMs: number, durationMs: numb
 | 1.1.1 非テキストコンテンツ | すべての画像に `alt`。ガイドの画面は `guide-content.ts` の `imageAlt`・新しい画面は `landing-screens.ts` の `alt`。マークは `alt=""`。アイコン・SVG の図解の線・切り替えの形・読む位置の棒は `aria-hidden`。固定した端末の見えていない画面は `aria-hidden="true"` | U-5・U-4・E-8 |
 | 1.3.1 情報と関係性 | `header` / `nav` / `main` / `section aria-labelledby` ×18 / `footer`。h1 1 つ → h2 が区切りごと → h3 が要点・カード。仕組みの手順とガイドの章は `ol`。FAQ は `button aria-expanded` + `region`。デモの写真は `group` + `aria-pressed`。図解の文は HTML の文字 | E-8・U-14 |
 | 1.4.1 色の使用 | 文の中のリンクは下線。ナビの強調 (M-14) は下線 + `aria-current` (色だけでない)。家族の図の切り替えは文 (`はじめはオン` など) が意味を持つ | E-20・E-28 |
-| 1.4.3 コントラスト | §5.1 の表 (31 組)。文字の色と下地は表にある組み合わせだけ | U-8・E-20 |
+| 1.4.3 コントラスト | §5.1 の表 (31 組)。文字の色と下地は表にある組み合わせだけ | U-8・E-20・E-30 |
 | 1.4.4 テキストのサイズ変更 | `rem` と `clamp` だけ。200 % に拡大しても横にはみ出さない。ピンチの拡大を止めない (殻の `viewport`) | U-19・E-18・E-6 |
 | 1.4.10 リフロー | 320 px で横スクロール無し。どのグリッドも 768 px 未満で 1 列 (バッジは 640 px 未満で 1 列)。場面と章の画面の帯は `ul` の中だけがスクロール (ページは増えない)。短い札は途中で折れない | E-6・E-22 |
 | 1.4.11 非テキストのコントラスト | 写真の選択の枠・フォーカスのリング・輪の線 (`--lp-green` on `--lp-surface` は 2.4:1 だが、輪は数字 (文字) が値を伝えるので装飾) | 目視 (整合ゲート) |
@@ -2365,7 +2366,7 @@ export function countUpValue(target: number, elapsedMs: number, durationMs: numb
 | 4.1.2 名前、役割、値 | `aria-pressed`・`aria-expanded`・`aria-controls`・`aria-current`・`role="status" aria-live="polite"` | E-3・E-4・E-28 |
 | 4.1.3 ステータスメッセージ | デモの「分析中」「結果」は `aria-live="polite"`。数字の増え方は読み上げに出ない (最後の値だけ) | E-3 |
 
-自動検査の道具: `@axe-core/playwright` (v1.7 の段 2 で入れた) で、E-20 の 4 つの状態に「物語の 3 番目の手順まで進めた状態 (1280 px)」と「場面の帯を 2 枚目まで送った状態 (375 px)」を足した 6 つの状態で `violations` が 0 (タグは `wcag2a`・`wcag2aa`・`wcag21a`・`wcag21aa`・`wcag22aa`)。整合ゲートでは Lighthouse の Accessibility 100 を確かめる (§10.3)。
+自動検査の道具: `@axe-core/playwright` (v1.7 の段 2 で入れた) で、E-20 の 4 つの状態 (v1.7 のまま) と、E-30 の 2 つの状態 (「1280 px で物語の 3 番目の手順まで進めた状態」「375 px で場面の帯を 2 枚目まで送った状態」) の計 6 つの状態で `violations` が 0 (v2.0 で足す状態を E-20 に入れずに E-30 に分ける理由は §19 の `tests/landing-axe-states-doc-1867.test.ts` の行) (タグは `wcag2a`・`wcag2aa`・`wcag21a`・`wcag21aa`・`wcag22aa`)。整合ゲートでは Lighthouse の Accessibility 100 を確かめる (§10.3)。
 
 ---
 
@@ -2426,7 +2427,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 | 図解 | 無し | 3 つ (流れ・共有の範囲・組織の形)。JSX の SVG と HTML |
 | `reduced-motion` | no-preference の中だけ + `MotionConfig` + `useReducedMotion` | 同じ規律。数字・溶け込み・輪・線も止まる |
 | 速さの予算 | JS gzip ≤ 240 KB (実測 227 KB) | ≤ 256 KB。画像は画面 17 + 写真 3 枚 (前の 1 枚のほかは lazy)。HTML ≤ 120 KB |
-| テスト | U-1〜U-26・E-1〜E-22 | U-1〜U-35 (U-3・U-4・U-7〜U-10・U-14・U-20・U-22・U-24・U-26 を広げ、U-27〜U-35 を足す)・E-1〜E-29 (E-1・E-3・E-4・E-7・E-9・E-11・E-12・E-15・E-17・E-19〜E-22 を広げ、E-23〜E-29 を足す) |
+| テスト | U-1〜U-26・E-1〜E-22 | U-1〜U-35 (U-3・U-4・U-7〜U-10・U-14・U-20・U-22・U-24・U-26 を広げ、U-27〜U-35 を足す)・E-1〜E-30 (E-1・E-3・E-4・E-7・E-9・E-11・E-12・E-15・E-17・E-19・E-21・E-22 を広げ、E-23〜E-30 を足す。E-20 は v1.7 のまま) |
 | 撮影の台本 | 15 枚 (`public/guide`) | 15 枚 + 6 枚 (`public/marketing/screens`)。利用者 `fresh`・家族・食材の見本を足す |
 | `SITE_DESCRIPTION`・殻・JSON-LD・OGP | v1.7 | 変えない |
 
@@ -2644,7 +2645,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | E-17 | `ヒーローは動かない 5 枚の画面 (375 px では 3 枚が見える) で、読み込みから 2 秒後に動いている Animation が無い` | 1280 px: `#hero` の中の `img` が 5 つで alt が HTML の順に 5 つの文。375 px: 見える `img` が 3 つ (遠くの 2 枚は `display: none`) |
 | E-18 | `/ の viewport は拡大を止めず、/login の viewport は変わっていない` | 変更なし |
 | E-19 | `375 px: 文字の大きさが下限を下回らず、本文の文は 16 px 以上 (lead は 17 px 以上)` | 本文の一覧に §5.2 の新しい鍵を足す |
-| E-20 | `axe: 6 つの状態で WCAG 2.2 AA の違反が 0` | v1.7 の 4 つに「1280 px で物語の 3 番目の手順まで進めた状態」「375 px で場面の帯を 2 枚目まで送った状態」を足す |
+| E-20 | `axe: 4 つの状態で WCAG 2.2 AA の違反が 0` | 1280 px の開いた直後・1280 px で FAQ の 1 つ目を開きデモの結果を出した後・375 px でページの末尾までスクロールした後・`reducedMotion: 'reduce'` の 1280 px の開いた直後 の 4 つで、各状態の前にページの末尾まで少しずつスクロールし (現れ方をすべて現す)、時間で進む Animation が終わるのを待ってから、`@axe-core/playwright` の `AxeBuilder` をタグ `wcag2a`・`wcag2aa`・`wcag21a`・`wcag21aa`・`wcag22aa` で流し、`violations` が 0 (失敗のときは規則の id と対象の要素を出す)。スクロールに連動する Animation は無い (U-18) ので、待ちは必ず終わる。v2.0 で変更なし (番兵 `tests/landing-axe-states-doc-1867.test.ts` が本行の書式と状態の数を `landing-page.spec.ts` の `test('E-20 …')` の数と突き合わせるので、本行は v1.7 の書式と 4 つの状態のまま保つ。v2.0 で足す 2 つの状態は E-30。§19) |
 | E-21 | `仕組み: 1280 px では固定した端末が手順に合わせて入れ替わり、375 px では手順ごとの画面が縦に並ぶ` | 1280 px: `#how` の中に `data-js` の根があり、固定した端末の `img` が 4 つ (alt は手順の順)、手順の中の `img` は見えない。手順 1 が帯にあるとき 1 枚目だけ `opacity` 1 でほかは 0 かつ `aria-hidden="true"`。`#how-step-3` の中心を画面の中央へ `scrollTo` して遷移を待つと 3 枚目だけ `opacity` 1。さらに画面の高さの 1/4 だけ下へスクロールしても固定した端末の矩形の上端が同じ (sticky)。末尾へ一気に `scrollTo` して戻ると、帯にある手順の画面になる。375 px: `#how` の中の見える `img` が 4 つで上から順、固定した端末は見えない |
 | E-22 | `短いラベルは途中で折れない: 320・375・640・768・1024・1280 px で、デモの写真の名前 3・推定の栄養の名前 5・バッジの名前 4・安心の見出し 6・料金のカードの見出しと札 4・場面のカードの見出し 4・章の画面の札 (全部)・流れの図の節 5・ガイドの章の名前 5・フッターのリンクの文 12 が、それぞれ 1 行に収まる` | 対象を広げる (文は `LANDING_COPY` から取る) |
 | E-23 | `戻る: ナビの「仕組み」を押すと URL に #how が付き #how が画面に来る。そこから「無料で始める」で /signup へ移り、戻ると /#how に戻って紹介ページの h1 と #how が画面にある。もう一度戻ると / に戻る` | `page.goBack()` の後に `waitForURL(/\/#how$/)`、h1 が見える、`#how` の矩形の上端が 0 以上・画面の高さ未満。`/signup` に着いた後に `networkidle` を待たない (`src/__tests__/config/e2e-auth-page-wait.test.ts` の規律) |
@@ -2654,6 +2655,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | E-27 | `場面の帯: 375 px では ul が横にスクロールでき (scrollWidth > clientWidth)、tabindex="0" と aria-label を持ち、1 枚ぶん送ると 2 枚目の左端に止まる (± 2 px)。ページは横にスクロールしない。1280 px では ul はスクロールしない` | `ul.scrollBy({ left: card の幅 })` → 落ち着くまで待つ → `scrollLeft` が 2 枚目の `offsetLeft` と ± 2 px |
 | E-28 | `ヘッダーのナビの強調: 開いた直後は「仕組み」だけが aria-current="location" で、#pricing へ移ると「料金」だけになる` | 1280 px。`aria-current` を持つのは常に 1 つ以下 |
 | E-29 | `ページの中のリンクでフォーカスが移る: ナビの「料金」に Tab で移って Enter を押すと、フォーカスは section#pricing にあり、次の Tab で #pricing の中の「無料で始める」へ進む。機能のカード「AI に相談」で Enter → section#chat → 次の Tab で #chat の中の「無料で始める」。ヒーローの「デモを試す」で Enter → section#demo → 次の Tab でデモの 1 つ目の写真のボタン` | 1280 px・標準。`document.activeElement` の `id` と、次の Tab の後の `activeElement` が区切りの中 (`closest('section')` の `id`) にあること・アクセシブルな名前。区切りの `section` の computed の `outline-style` は `none` |
+| E-30 | `axe: v2.0 で足す 2 つの状態で WCAG 2.2 AA の違反が 0` | 1280 px で物語の 3 番目の手順まで進めた状態 (E-21 と同じく `#how-step-3` の中心を画面の中央へ `scrollTo` し、3 枚目が `opacity` 1 になるのを待つ)・375 px で場面の帯を 2 枚目まで送った状態 (E-27 と同じく `ul.scrollBy({ left: card の幅 })` で送り、落ち着くまで待つ) の 2 つ。test は状態ごとに 1 つで、名前は `E-30 ` で始める (`E-20 ` で始めない。E-20 の数は番兵が 4 と突き合わせる)。各状態の前の手順 (ページの末尾まで少しずつスクロールして現れ方をすべて現し、時間で進む Animation が終わるのを待つ)・`AxeBuilder` のタグ 5 つ・失敗のときの出力は E-20 と同じ |
 
 予算の環境変数はテストの実行時だけ読む。見た目の画素の比較は採らない (Q-4)。
 
@@ -2668,7 +2670,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | S-1 | E-1・E-2・E-3・E-10・E-21・E-25・E-26・U-14・U-26 | 動きの質 (時間・緩急) は E-14 の記録と目視。本番の LCP の p75 は Speed Insights |
 | S-2 | E-5・E-6・E-18・E-19・E-22・E-27・U-14・U-19 | Safari の実機の感触 |
 | S-3 | E-15・E-3・E-4・E-9・E-27・E-29・U-14・U-35 | – |
-| S-4 | E-8・U-14・E-3・E-20・E-21 (`aria-hidden`)・U-32 | VoiceOver での読み上げ |
+| S-4 | E-8・U-14・E-3・E-20・E-30・E-21 (`aria-hidden`)・U-32 | VoiceOver での読み上げ |
 | S-5 | E-7・E-17・U-20・U-23 | – |
 | S-6 | U-11・U-21・U-31・E-3・E-22 | 見本の推定の値が写真の料理としてありうるか |
 | S-7 | U-17・既存 `lib/supabase/__tests__/middleware.test.ts` | – |
@@ -2678,11 +2680,11 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | S-11 | E-1 (640×360)・E-6 (640 px)・E-9・U-22 | 200 % での読みやすさ |
 | S-12 | E-12・既存 `tests/e2e/csp-nonce.spec.ts` | – |
 | S-13 | `tests/public-claims-guard.test.ts`・U-2・U-20・U-21 | – |
-| S-14 | E-10・E-11・E-12・E-8・E-18・E-19・E-20 | Lighthouse の 4 項目 |
+| S-14 | E-10・E-11・E-12・E-8・E-18・E-19・E-20・E-30 | Lighthouse の 4 項目 |
 | S-15 | U-24・U-20・E-4 | 根拠の中身は実装ゲートのレビュー |
 | S-16 | E-21・E-26・U-30・U-22 | 溶け込みと線の描かれ方の質 (目視) |
 | S-17 | E-25・U-28・U-31・U-32 | 数字の増え方の質 (目視) |
-| S-18 | E-27・E-6・E-20 | スナップの感触 (実機) |
+| S-18 | E-27・E-6・E-30 | スナップの感触 (実機) |
 | S-19 | E-23 (前半)・E-28・E-29・U-27・U-33・U-35 | – |
 | S-20 | E-23 (後半)・U-27 | 本番 (Vercel) での再現 (整合ゲートで手で 1 回) |
 | S-21 | U-3・U-34・E-1・既存 `tests/public-claims-guard.test.ts` | 家族の要点の根拠の中身 (レビュー) |
@@ -2700,7 +2702,7 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | 1. 文言・主張・トークン・CSS・primitives | `landing-copy.ts` (§9.1 を逐語で差し替え)・`story-state.ts`・`count-up.ts` (§9.4・§9.5)・`marketing.css` (§5 のトークン + §6 の動き。クラス名は実装が決める)・primitives の新設 4 本 (`StoryScroller`・`ScoreRing`・`ReadingProgress`・`FlowDiagram`) と hook 1 本 (`useInViewSteps.ts` の `useInViewIds`)・`tests/landing-page-1867.test.ts` の純関数と文言の it (U-1〜U-10・U-20・U-24・U-28〜U-31・U-33・U-35) | `src/components/marketing/landing-copy.ts`、`story-state.ts`、`count-up.ts`、`marketing.css`、`primitives/StoryScroller.tsx`、`ScoreRing.tsx`、`ReadingProgress.tsx`、`FlowDiagram.tsx`、`useInViewSteps.ts` (新設)、`tests/landing-page-1867.test.ts`、`tests/public-claims-guard.test.ts` (§9.7) |
 | 2a. 区切り (前半) と骨格 | `LandingPage.tsx` (18 の区切り)・`SiteHeader` (ナビ 5・棒・強調)・`HeroSection` (5 枚)・`StorySection` (新設)・`DemoSection` (数字)・`FeaturesSection` (10 枚・`Link`)・`ChapterSection` (新設)・`PhotoChapter`・`MenuChapter`・`NutritionChapter`・`HealthChapter`・`BadgesChapter` (新設)・`useInPageLinkFocus` (新設。`SiteHeader` が呼ぶ)・`HowItWorksSection.tsx`・`BadgesSection.tsx` の削除・描画の it (U-11〜U-19・U-21〜U-23・U-25〜U-27・U-32・U-34) | `LandingPage.tsx`、`sections/SiteHeader.tsx`、`primitives/useInPageLinkFocus.ts` (新設)、`HeroSection.tsx`、`StorySection.tsx` (新設)、`DemoSection.tsx`、`FeaturesSection.tsx`、`ChapterSection.tsx`・`PhotoChapter.tsx`・`MenuChapter.tsx`・`NutritionChapter.tsx`・`HealthChapter.tsx`・`BadgesChapter.tsx` (新設)、`HowItWorksSection.tsx`・`BadgesSection.tsx` (削除)、`tests/landing-page-1867.test.ts` |
 | 2b. 区切り (後半) | `ChatChapter`・`ScenesSection`・`FamilySection`・`OrgSection`・`PricingSection`・`GuideSection` (新設)・`TrustSection` (6 点 + 画面)・`FaqSection` (12 件)・`FinalCtaSection` (`tabIndex={-1}` を足すだけ) | `sections/ChatChapter.tsx`・`ScenesSection.tsx`・`FamilySection.tsx`・`OrgSection.tsx`・`PricingSection.tsx`・`GuideSection.tsx` (新設)、`TrustSection.tsx`、`FaqSection.tsx`、`FinalCtaSection.tsx` |
-| 3. e2e | `tests/e2e/landing-page.spec.ts` (§16.3。E-1〜E-29)。門への登録と番兵は v1.7 のまま | `tests/e2e/landing-page.spec.ts` |
+| 3. e2e | `tests/e2e/landing-page.spec.ts` (§16.3。E-1〜E-30)。門への登録と番兵は v1.7 のまま | `tests/e2e/landing-page.spec.ts` |
 
 段 2a が終わるまで `LandingPage.tsx` は段 2b の区切りを置けないので、段 2a では後半の区切り (chat・scenes・family・org・trust・pricing・guide・faq) に空の `section` (id・`tabIndex={-1}`・h2 だけ。v1.7 の `TrustSection`・`FaqSection` は `tabIndex` を持たないので使わない) を置いて U-14 を緑にし、段 2b で差し替える。段 1 の primitives は段 2a で初めて使われる (段 1 の時点では未使用だが、同じ PR の中なので main には未使用のまま乗らない)。依存 (`package.json`) は変えないので、マージの前に CI の dependency review を待つ必要は無い。
 
@@ -2735,7 +2737,8 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 番兵 | grep の語 (反応するもの) | いま | 直し方 | 段 |
 |---|---|---|---|---|
 | `tests/landing-page-1867.test.ts` | `CLAIM_IDS`・`17 個`・`section が 8 つ`・`hero how demo features badges trust faq cta`・`21 組`・`useInViewOnce.ts だけ`・`3 つ`・`screensCaption`・`BadgesSection`・`HowItWorksSection`・`LANDING_COPY.how`・`LANDING_COPY.hero.screens`・`LANDING_COPY.features.cards`・`LANDING_COPY.badges.items` | 主張 17・区切り 8・組 21・IO 1 本・注記 3 区切り。読む `LANDING_COPY` の鍵: U-3 が `features.cards` (8 枚) の `claimId`、U-5 が `hero.screens` (3 枚)・`how.steps[].image` (3 件)・`features.cards[].image` の alt、U-6 が `badges.items` (4)、U-26 が `hero`・`how`・`features` の `screensCaption`。`trust` は読まない | §16.1 のとおり数と対象を広げ、U-27〜U-34 を足す。鍵の読み替え (§18 で `how`・`badges` の旧い節を消すので、旧い鍵のままでは型検査が赤になる): U-3 は `features.cards` 8 → 10 枚。U-5 は `hero.screens` 3 → 5 枚、`how.steps[].image` → `story.steps[].image` (3 → 4 件)、`chapters.*.screens[].image`・`guide.screens[].image` を足す (`/guide/` のものだけ)。U-6 は `badges.items` → `chapters.badges.items` (4 のまま)。U-26 は `how.screensCaption` → `story.screensCaption`、対象の区切りを 3 → 12 | 1・2a |
-| `tests/e2e/landing-page.spec.ts` | `8 つのセクション`・`LANDING_JS_BUDGET_BYTES`・`245760`・`ナビ 4 つ`・`img が 3 つ`・`E-21`・`E-22`・`#features` `#how` `#badges` `#faq` `#trust`・`copy.how`・`copy.badges`・`copy.trust.items` | §16.3 の v1.7 の値。読む `LANDING_COPY` の鍵: E-19 (本文の一覧) が `copy.how.lead`・`copy.badges.lead`・`copy.how.steps[].body`・`copy.trust.items[].body`、E-22 が `#badges` の中の `copy.badges.items[].name` と `#trust` の中の `copy.trust.items[].title`。E-9 は `#trust` の中のリンクを 24×24 px 以上で確かめ、E-15 は Tab の順の `href` に `#features` `#how` `#badges` `#faq` を期待し、E-21 は `#how img` (3 つ) を見る | §16.3 のとおり広げ、E-23〜E-28 を足す。既定 262144・ナビ 5・ヒーロー 5 枚・E-21 を書き直す。鍵の読み替え (§18 で `how`・`badges` の旧い節を消すので、旧い鍵のままでは型検査が赤になる): E-19 は `copy.how.lead` → `copy.story.lead`、`copy.badges.lead` → `copy.chapters.badges.lead`、`copy.how.steps` → `copy.story.steps` (3 → 4 件)、`copy.trust.items` は 4 → 6 件 (鍵は同じ)。E-22 は `copy.badges.items` → `copy.chapters.badges.items` (区切りの id `#badges` は v2.0 でも章 badges の id なので同じ)、`#trust` と `copy.trust.items[].title` はそのまま (6 件)。E-9 の `#trust` はそのまま (v2.0 の安心の区切りにもリンクが 1 つある: プライバシーポリシーを読む)。E-15 の期待は `#how` `#features` `#family` `#pricing` `#faq` | 3 |
+| `tests/e2e/landing-page.spec.ts` | `8 つのセクション`・`LANDING_JS_BUDGET_BYTES`・`245760`・`ナビ 4 つ`・`img が 3 つ`・`E-21`・`E-22`・`#features` `#how` `#badges` `#faq` `#trust`・`copy.how`・`copy.badges`・`copy.trust.items` | §16.3 の v1.7 の値。読む `LANDING_COPY` の鍵: E-19 (本文の一覧) が `copy.how.lead`・`copy.badges.lead`・`copy.how.steps[].body`・`copy.trust.items[].body`、E-22 が `#badges` の中の `copy.badges.items[].name` と `#trust` の中の `copy.trust.items[].title`。E-9 は `#trust` の中のリンクを 24×24 px 以上で確かめ、E-15 は Tab の順の `href` に `#features` `#how` `#badges` `#faq` を期待し、E-21 は `#how img` (3 つ) を見る | §16.3 のとおり広げ、E-23〜E-30 を足す (E-20 は v1.7 のまま。v2.0 で足す axe の 2 つの状態は E-30)。既定 262144・ナビ 5・ヒーロー 5 枚・E-21 を書き直す。鍵の読み替え (§18 で `how`・`badges` の旧い節を消すので、旧い鍵のままでは型検査が赤になる): E-19 は `copy.how.lead` → `copy.story.lead`、`copy.badges.lead` → `copy.chapters.badges.lead`、`copy.how.steps` → `copy.story.steps` (3 → 4 件)、`copy.trust.items` は 4 → 6 件 (鍵は同じ)。E-22 は `copy.badges.items` → `copy.chapters.badges.items` (区切りの id `#badges` は v2.0 でも章 badges の id なので同じ)、`#trust` と `copy.trust.items[].title` はそのまま (6 件)。E-9 の `#trust` はそのまま (v2.0 の安心の区切りにもリンクが 1 つある: プライバシーポリシーを読む)。E-15 の期待は `#how` `#features` `#family` `#pricing` `#faq` | 3 |
+| `tests/landing-axe-states-doc-1867.test.ts` | `E-20`・`axe: N つの状態`・`の N つで、`・`reducedMotion`・`a11y (紹介ページ`・`tests/e2e/landing-page.spec.ts` (読むファイルは本書・`landing-page.spec.ts`・`docs/design/cross/05-i18n-a11y.md`) | 3 つの it: (1) 本書 §16.3 の E-20 の行の 2 列目「axe: N つの状態」と 3 列目の頭「… の N つで、」の N と、3 列目が `・` で区切って挙げる状態の数が、`landing-page.spec.ts` の `test('E-20 …')` の数 (いま 4) と同じ。E-20 の行は本書にちょうど 1 つ (2) cross/05 §7 の紹介ページの a11y の行が E-20 の状態をすべて挙げ「N つの状態」と書く (いま「4 つの状態」。origin/main `docs/design/cross/05-i18n-a11y.md:542`) (3) E-20 の状態に `reducedMotion` を含むものがある | 変更なし。本冊は E-20 の行を v1.7 の書式と 4 つの状態のまま保ち (§16.3)、v2.0 で足す axe の 2 つの状態は別の番号 E-30 (`test('E-30 …')`) にする。こうすると、本冊の設計 PR のマージから実装 PR (段 3) のマージまでの間も、その後も、E-20 の数は本書・spec・cross/05 で 4 にそろったままで、番兵は赤にならない (E-20 を 6 にすると、設計 PR のマージの時点で本書 (6) と spec (4) と cross/05 (4) が食い違い、main が赤になる)。段 3 の実装は E-30 の test の名前を `E-20 ` で始めない。E-20 の 4 つの test の名前と順は変えない | 3 |
 | `tests/public-claims-guard.test.ts` | `PUBLIC_SOURCE_FILES`・`landing-copy.ts` | `landing-copy.ts`・`public-pages.ts`・`(auth)/layout.tsx` | `landing-screens.ts` を足す (§9.7) | 1 |
 | `tests/guide-images-1852.test.ts` | `public/guide`・`guideImagePaths`・`使わない画像が残っていない` | `public/guide/` にガイドの 15 枚だけ | 変更なし (新しい 6 枚は `public/marketing/screens/`。`public/guide/` は触らない) | 0 |
 | `scripts/guide-screenshots/shoot.pw.ts` の最後の確認 | `guideImagePaths`・`readdirSync(RAW_DIR)` | 撮った PNG = ガイドの 15 枚 | `RAW_DIR` 直下の 15 枚と `RAW_DIR/landing/` の `LANDING_SCREENS` の 6 枚の両方を見る (§7.1 の 4) | 0 |
@@ -2765,7 +2768,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 |---|---|---|
 | `docs/design/CLAUDE.md` のドメイン構成の表 | `marketing/` の行 (v1.7 の §20 で予定。origin/main `2863cb79` でまだ無ければ足す: 担当範囲 = 未ログインの人向けの紹介ページ (`/`)。要件参照 = Issue #1867) | 本冊の設計 PR のマージと同日 |
 | `docs/design/marketing/CLAUDE.md` (新設。v1.7 の §20 で予定) | ドメインの指針 (文言は `landing-copy.ts` が正本・主張は公開の主張の表の行だけ・回数を約束する語を書かない・実績の数字を作らない・絵文字を使わない・逐語の正典は見た目と振る舞いの決まりまで・CSP と全ページ動的・更新は月に数回・新しい画面写真は `public/marketing/screens/` と `landing-screens.ts`・ページの中のリンクは `Link`) | 同上 |
-| `docs/design/cross/05-i18n-a11y.md` §7 | `/` の axe の検査が E-20 の 6 つの状態に増えたことを 1 行 | 本冊の実装 PR のマージと同日 |
+| `docs/design/cross/05-i18n-a11y.md` §7 | 「a11y (紹介ページ `/`)」の行 (origin/main の 542 行目) に、v2.0 で足した E-30 の 2 つの状態 (1280 px で物語の 3 番目の手順まで進めた状態・375 px で場面の帯を 2 枚目まで送った状態) を書き足す。E-20 の 4 つの状態の文と「4 つの状態」は消さない (番兵 `tests/landing-axe-states-doc-1867.test.ts` が E-20 の状態と数を見る。§19) | 本冊の実装 PR のマージと同日 (それより前に足すと、まだ無い検査を書くことになる。番兵は E-20 の状態だけを見るので、書き足す前も後も赤にならない) |
 | `docs/design/cross/06-perf-cache.md` §3.1 | FID → INP (v1.7 の §20 と同じ。任意) | 任意 |
 | `docs/design/billing/01-billing-core.md` (`/pricing` を指す箇所の一覧の行。origin/main `2863cb79` の 3849 行目付近) | `src/app/LandingPageView.tsx:586` (トップのフッターの「料金プラン」) を、いまの置き場所に直す: 文言とリンクは `src/components/marketing/landing-copy.ts` の `LANDING_COPY.footer.columns` の「サービス」の列 (`{ label: '料金プラン', href: '/pricing' }`)、描くのは `src/components/marketing/sections/SiteFooter.tsx`。`LandingPageView.tsx` は #1889 (v1.7) で消えている (§2.2)。v2.0 はフッターを変えないので、指す先は v1.7 の時点から同じで、本冊の実装を待たずに直せる | 本冊の設計 PR のマージと同日 |
 | `scripts/guide-screenshots/run.sh` の先頭のコメント | 撮る枚数 (15 + 6) と持ち帰る場所 (`public/marketing/screens`) — これは段 0 の実装で直す (docs ではなく台本) | 段 0 |
@@ -2801,7 +2804,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 画面の注記 | U-26 | 12 の区切りのどれかに `SCREENS_CAPTION` が無い |
 | ページの中のリンク | U-27・U-35・E-23・E-29・U-14 | 素の `<a href="#…">` がある。戻るで画面が切り替わらない。移った先の区切りにフォーカスが移らない (`section` に `tabindex="-1"` が無い・次の Tab が区切りの中から始まらない) |
 | 短いラベルの折れ | E-22・U-1 (`CHAPTER_SCREEN_LABEL_MAX_CHARS`・`DEMO_PHOTO_NAME_MAX_CHARS`) | 2 行になる札がある |
-| ブランドの色・コントラスト | U-7・U-8・E-20 | トークンの値が違う。31 組のどれかが下回る。axe の `color-contrast` |
+| ブランドの色・コントラスト | U-7・U-8・E-20・E-30 | トークンの値が違う。31 組のどれかが下回る。axe の `color-contrast` |
 | 絵文字・依存の範囲・島の本数 | U-9・U-10 | 絵文字がある。許可外の import。`'use client'` が 7 本でない |
 | 状態機械 | U-11・U-30・U-31 | デモ・物語・数字の遷移が表と違う |
 | 構造化データ・殻・メタ情報・拡大・日付・振り分け | U-12・U-13・U-15・U-16・U-17・U-19 | v1.7 と同じ |
@@ -2811,7 +2814,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 自動で動き続けるもの | U-23・E-17 | `infinite` が 2 つ以上。2 秒後に動いている Animation |
 | 輪・線・棒・強調・帯 | E-25・E-26・E-24・E-28・E-27・U-32・U-33 | 最後の値・形にならない。棒が単調でない。`aria-current` が 2 つ以上。帯がスナップしない・ページが横に伸びる |
 | スマートフォンの登録の導線・リフロー | E-5・E-6 | v1.7 と同じ |
-| 速さ・CSP・a11y・門 | E-10・E-11・E-12・E-20・E-3・E-4・E-8・E-9・E-15・`tests/e2e-landing-suite.test.ts` | 予算超え (JS 256 KB)。CSP 違反。axe の違反 (6 つの状態)。Tab の順が違う |
+| 速さ・CSP・a11y・門 | E-10・E-11・E-12・E-20・E-30・E-3・E-4・E-8・E-9・E-15・`tests/e2e-landing-suite.test.ts` | 予算超え (JS 256 KB)。CSP 違反。axe の違反 (E-20 の 4 つと E-30 の 2 つの状態)。Tab の順が違う |
 
 ---
 
