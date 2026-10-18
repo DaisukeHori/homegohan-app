@@ -102,13 +102,13 @@ R-15 が「少なくとも」に挙げる機能は、どれも 1 本以上のシ
 | S-19 | 未ログインの人 | ヘッダーのナビ (仕組み・機能・家族と組織・料金・よくある質問) を押し、戻るを押す | 押すと該当の区切りの上端が固定ヘッダーの下に来る (隠れない)。フォーカスもその区切りへ移る (見えるリングは出ない: §5.3)。ヘッダーのナビは、いま画面にある区切りを強調する。ブラウザの戻るで直前の位置 (ヒーロー) に戻る |
 | S-20 | 未ログインの人 | `/#how` から「無料で始める」で `/signup` に移り、ブラウザの戻るを押す | `/#how` に戻り、紹介ページが描かれ、仕組みの区切りが画面にある (URL だけ変わって `/signup` の画面が残らない) |
 | S-21 | 家族で使うか迷っている人 | 家族の区切りと FAQ「家族の記録は誰に見えますか？」を読む | 代表者・大人・子ども (アカウントの無い子どもも登録できる) の 3 つの立場、メールでの招待、共有の範囲 (食事の記録・健康・献立) を自分で選べること、献立表で家族の献立を見られること (相手が共有をオンにしている場合) が書いてある |
-| S-22 | 職場で使うか調べている人 | 組織の区切りと料金の区切りと FAQ「会社やチームで使えますか？」を読む | 組織は運営が作るもので、登録しただけでは組織を作れず使えないこと (お問い合わせへの導線がある)・料金の「いま使える機能」(無料) の一覧に組織が入っていないこと・組織の管理者がメンバーを招待し、部署を作り、チャレンジを開けることと、個人の記録の集計 (活力スコアなど) は出していないこと、チャレンジの平均は終わった後に参加者が最小の人数以上のときだけ出ることが書いてある |
+| S-22 | 職場で使うか調べている人 | 組織の区切りと料金の区切りと FAQ「会社やチームで使えますか？」を読む | 組織は運営が作るもので、登録しただけでは組織を作れず使えないこと (お問い合わせへの導線がある)・料金の「いま使える機能」(無料) の一覧に組織が入っていないこと・組織の管理者がメンバーを招待し、部署を作り、チャレンジを開けることと、一人ひとりの記録は管理者に見せず、個人の記録の集計 (活力スコアなど) は出していないこと、チャレンジの平均は終わった後に参加者が最小の人数以上のときだけ出ることが書いてある |
 | S-23 | AI の扱いを確かめたい人 | 安心の区切り・料金の区切り・FAQ「どんな機能に AI を使っていますか？」を読む | AI を使う機能の一覧・日本国外の事業者へのデータ提供の同意・1 日の上限・上限に数えない自動の機能があること・運営の判断で AI 相談を一時停止することがあること・分析は推定で医療目的に使わないことが書いてある |
 | S-24 | 撮影の台本を流す実装者 (段 0) | `scripts/guide-screenshots/run.sh` で 15 枚 + 新しい 6 枚を撮る | 新しい 6 枚 (`home`・`pantry`・`shopping`・`family`・`chat`・`consent`) が `public/marketing/screens/` に、撮り直した `signup.png`・`badge-get.png` (と、§7.1 の G-3 で置き換える画像) が `public/guide/` に、540×1080・300 KB 以下で置かれる。新しい 6 枚と置き換えた画像は §7.1 の表の「写っているべきもの」を写し、「写ってはいけないもの」(AI の自由な文・体重の記録・古い文言・実在の人の名前) を写さない。`signup.png` に `30秒` は無く、`badge-get.png` のお知らせの説明は今の `badges.description` の文。ほかの 13 枚の撮ったままが今の画像と違えば、違いの原因ごとの行き先 (§7.1 の G-1〜G-6) に従う。置き換えない画像は変わらず、`tests/guide-images-1852.test.ts` が緑のまま |
 | S-25 | 未ログインの人 (PC と スマートフォン) | 章「写真で記録」と章「AI 献立と買い物」を読む | 端末の画面の下に、その画面の一部 (章 photo: スコアと記録コメント・章 menu: 朝食の 1 食) を大きくした箱 (拡大) がある。標準の設定では、箱が画面に入ると縮んだ透明の形から元の大きさへ大きくなりながら現れる (M-17)。動きを減らす設定・JS 無しでは最初から元の大きさで見える。箱の中は同じ実際の画面の画像で、札 (何の部分か) と代替テキストがある。320 px でも横にはみ出さない |
 | S-26 | 健康の記録を続けたい人 (PC と スマートフォン) | 章「健康の記録」と、場面のカード「健康の記録を続けたい人」を読む | 章 health に要点 5 つ (記録できる項目 = 体組成・バイタル・生活習慣・体調やメンタル / 体重計の写真から / 健康診断・血液検査 / 推移のグラフ = 体重・体脂肪率・血圧・睡眠と、目標体重までの差 / 目標の管理) と、要点の下に免責 (AI の読み取りと分析は推定・医療目的での使用は控える) がある。実際の画面は `weight.png` の 1 枚 (帯にしない)。体重の減りが写る `trend.png`・`weight-photo.png` は出ない。数値の改善や健康上の効果を言う文は無い (§2.5)。場面のカードは、写真からの取り込み・推移のグラフ・目標までの差を言う |
 | S-27 | 続けられるか気になる人 (PC と スマートフォン) | 章「バッジと続ける仕組み」を読む | バッジ 4 つ (`はじめの一歩`・`三日坊主卒業`・`週間チャンピオン`・`使い方マスター`) の名前と、付く条件を言う説明 (食事を「完了」にした回数・続けた日数・アプリの中の使い方の案内の完走) がある。ランク 5 段 (食の初心者 → 健康ルーキー → バランスの達人 → 栄養マスター → 食のレジェンド) と次のランクまでの数が出ることが書いてある。名前が付与の条件と食い違うバッジ (`カメラマン`・`計画上手`) と、ほかの利用者との比較に基づくバッジは出ない。実際の画面 2 枚 (`badge-get.png` = 新しいバッジのお知らせ。説明は今の `badges.description` の文・`badge-collection.png`) は帯の箱に入る。標準ではバッジ 4 つが順に立ち上がり (M-10)、動きを減らす設定・JS 無しでは最初から見える |
-| S-28 | AI に相談したい人 (PC・キーボード) | 機能の一覧のカード「AI に相談」を Enter で押し、章「AI に相談」を読む | 章 chat へ移り、フォーカスも章 chat の区切りに移る (次の Tab は章 chat の「無料で始める」)。章 chat に、アプリの画面の右下の「AIアドバイザー」のボタンから相談のシートが開くこと・相談の中で AI が献立の作成・買い物リストへの追加・食材や目標の変更を提案し、実行するかは利用者が決めること・相談を終了すると要約を保存すること・AI 相談は 1 日の利用回数の上限に数え、運営の判断で一時停止することがあることが書いてある。実際の画面 `chat.png` (1 枚) には、シートの見出し・はじめのあいさつ・提案のボタンが写り、AI の返事は写っていない (R-13) |
+| S-28 | AI に相談したい人 (PC・キーボード) | 機能の一覧のカード「AI に相談」を Enter で押し、章「AI に相談」を読む | 章 chat へ移り、フォーカスも章 chat の区切りに移る (次の Tab は章 chat の「無料で始める」)。章 chat に、アプリの画面の右下の「AIアドバイザー」のボタンから相談のシートが開くこと・相談の中で頼むと AI が献立の作成・買い物リストへの追加・食材や目標の変更などをその場で行うこと・相談を終了すると要約を保存すること・AI 相談は 1 日の利用回数の上限に数え、運営の判断で一時停止することがあることが書いてある。実際の画面 `chat.png` (1 枚) には、シートの見出し・はじめのあいさつ・提案のボタンが写り、AI の返事は写っていない (R-13) |
 | S-29 | 退会やデータの扱いを確かめたい人 | 安心の区切りの「退会・書き出し・請求」と、FAQ「データは安全ですか？」「退会やデータの削除はできますか？」を読む | 設定からいつでも退会できること・記録したデータを JSON 形式で書き出せること (FAQ では「退会の前に」)・開示・訂正・利用停止の請求を設定から送れることが書いてある。設定の中の画面や項目の名前は書かず「設定から」とだけ言う (`delete-export` の条件)。データの保存と第三者への提供は「プライバシーポリシーをご確認ください」とだけ言い、断定しない (`privacy`)。安心の区切りの「プライバシーポリシーを読む」で `/privacy` へ行ける。FAQ の 2 つは JS が無くても開いて読める |
 | S-30 | 食材を無駄にしたくない人 (PC・キーボード) | 機能の一覧のカード「食材の管理」を Enter で押し、章「AI 献立と買い物」の要点「食材の管理」と、料金の「いま使える機能」を読む | 章 menu へ移り、フォーカスも章 menu の区切りに移る。章 menu の要点「食材の管理」に、冷蔵庫を撮ると食材を読み取ること・手入力でも足せること・期限切れ・期限間近の食材に印が付くことが書いてある。章 menu の画面の帯に `pantry.png` (見出し `食材管理`・食材 3 件以上・`期限間近` の印) がある。冷蔵庫の写真の読み取りが AI を使う機能であること (同意と 1 日の上限の範囲) は FAQ「どんな機能に AI を使っていますか？」の答えにある。料金の「いま使える機能」(無料) の一覧に `食材の管理` がある |
 
@@ -307,7 +307,7 @@ R-15 が「少なくとも」に挙げる機能は、どれも 1 本以上のシ
 | 8 | 章: 栄養の見える化 (`nutrition`) | `ChapterSection` + `ScoreRing` (島) | 数字で振り返れることを見せる | 要点 3 つ (今日の栄養スコア・今週の自炊率と統計・献立の振り返り)・スコアの輪 (M-11。89)・実際の画面 2 枚 (`home`・`comment`) | 無料で始める |
 | 9 | 章: 健康の記録 (`health`) | `ChapterSection` | 体重・体重計の写真・健診・血液検査・グラフ・目標を見せる | 要点 5 つ・免責・実際の画面 1 枚 (`weight`) | 無料で始める |
 | 10 | 章: バッジと続ける仕組み (`badges`) | `ChapterSection` + バッジの列 | 続ける仕掛けを見せる | 要点 2 つ (バッジ・ランク)・バッジ 4 つ (M-10)・実際の画面 2 枚 (`badge-get`・`badge-collection`) | 無料で始める |
-| 11 | 章: AI に相談 (`chat`) | `ChapterSection` | 画面の右下のシートから相談でき、提案を確認して実行できることを見せる | 要点 4 つ・実際の画面 1 枚 (`chat`) | 無料で始める |
+| 11 | 章: AI に相談 (`chat`) | `ChapterSection` | 画面の右下のシートから相談でき、頼んだ操作 (献立の作成など) を AI がその場で行うことを見せる | 要点 4 つ・実際の画面 1 枚 (`chat`) | 無料で始める |
 | 12 | 場面 (`scenes`) | `ScenesSection` | 自分の暮らしに当てはめる | 4 枚のカード (一人暮らし・子育て家庭・健康の記録を続けたい人・職場とチーム)。768 px 未満は横にスナップ (M-13) | (なし) |
 | 13 | 家族で使う (`family`) | `FamilySection` | 家族の立場・招待・共有の範囲・家族の献立を見せる | 見出し・一文・要点 4 つ・実際の画面 1 枚 (`family`)・共有の範囲の図 (SVG) | 無料で始める |
 | 14 | 組織で使う (`org`) | `OrgSection` | 職場で使えることを、正直な条件つきで見せる | 見出し・一文・要点 4 つ・組織の形の図 (SVG。管理者 → 部署 → メンバー)。実際の画面は無い (管理者の画面は図で示す) | お問い合わせ → `/contact` |
@@ -425,7 +425,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | S-19 | ナビ「料金」(`Link href="#pricing"`) を押す → Next の router が `__NA` つきで `pushState` し、`#pricing` の要素へスクロール (`html` の `scroll-padding-top: 6rem` で固定ヘッダーの下に上端が来る) → `SiteHeader` の `useInViewIds` (18 の区切りを `rootMargin: -40% 0px -55% 0px` で見る) が `pricing` を強調 (`aria-current="location"`)。同じ click を `useInPageLinkFocus` が `document` で受け、`section#pricing` へフォーカスを移す (E-29) → 戻る → `popstate` の `state` は Next のもの (bridge は何もしない) → ヒーローの位置へ戻り、文書は読み込み直さない (E-23) |
 | S-20 | `/` → ナビ「仕組み」(`Link`) → `/#how` (Next の印つきの項目) → ヘッダーの「無料で始める」(`Link`) → `/signup` → 戻る → `popstate` の `state.__NA` あり → Next が `/#how` を描く (bridge は何もしない) → 紹介ページ・`#how` が画面に (門の `tests/e2e/back-navigation.spec.ts` (#1893) の「`/` → ハッシュ → `/signup` → 戻る」の型で、v2.0 のナビ 5 つのそれぞれを流す)。素の `<a href="#…">` が積む項目 (layout のスキップリンク `#main-content`・アドレスバーで打ったハッシュ) も、#1893 の bridge が `hashchange` のあとに印を付けるので、同じく戻ると画面が切り替わる (§2.2) |
 | S-21 | 家族の区切り: 要点 4 つ (立場・招待・共有の範囲・家族の献立) の文はそれぞれ `family-roles`・`family-share`・`family-menu-view` の行。共有の範囲の図 (SVG) は 3 つの項目 (食事の記録・健康・献立) とそれぞれの既定 (オン・オフ・オン) を描く。FAQ「家族の記録は誰に見えますか？」の答えが同じ事実 |
-| S-22 | 組織の区切り: 一文は「組織は運営が作ります（ご利用はお問い合わせください）。…」で、`org-admin` の条件 (組織は運営が作り、登録しただけでは使えない) を落とさない。要点 4 つの文は `org-admin`・`org-challenge-privacy` の行。「個人の記録の集計は出していません」と書く (条件を落とさない)。料金の一文は「登録してお使いいただける機能は、いまはすべて無料です。…組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。」で、「いま使える機能」の一覧に組織は無い。図は 管理者 → 部署 → メンバー の形だけ。FAQ「会社やチームで使えますか？」の答えが同じ事実 |
+| S-22 | 組織の区切り: 一文は「組織は運営が作ります（ご利用はお問い合わせください）。…」で、`org-admin` の条件 (組織は運営が作り、登録しただけでは使えない) を落とさない。要点 4 つの文は `org-admin`・`org-challenge-privacy` の行。一文と要点 4 は「一人ひとりの記録は、管理者に見せません」の事実を書き (条件を落とさない)、要点 4 は管理者に見える記録の集計をチャレンジの参加者数と終わった後の平均と書く (「管理者の画面に出る数はメンバー数だけ」と書かない)。料金の一文は「登録してお使いいただける機能は、いまはすべて無料です。…組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。」で、「いま使える機能」の一覧に組織は無い。図は 管理者 → 部署 → メンバー の形だけ。FAQ「会社やチームで使えますか？」の答えが同じ事実 |
 | S-23 | 安心・料金・FAQ の AI の文はそれぞれ `ai-consent`・`ai-daily-limit`・`ai-stop`・`ai-estimate` の行。同意の画面の写真 (`consent.png`) が安心の区切りにあり、注記 `SCREENS_CAPTION` が付く |
 | S-24 | 段 0: 撮影の台本 (`run.sh` → 見本 → 本番ビルド → `shoot.pw.ts` → `optimize.ts`) に新しい 6 枚の test と見本を足し (見本の利用者・データ・API の差し替えの有無は実装が決める)、256 の Docker の枠で流す → 新しい 6 枚 (`public/marketing/screens/`) と、撮り直した `signup.png`・`badge-get.png` (`public/guide/`) と、撮ったままの 15 枚 (`.guide-shots/raw`) を持ち帰る (置き換えない画像は作業ツリーでも書き換えない) → 段 0 のレビューが §7.1 の受入の条件 (P-1〜P-6・表 1・表 2) で新しい 6 枚と置き換えた画像を目で確かめ (例: `home.png` は上から `今日の献立`・2 つのボタン・`今週の自炊率` で健康記録のカードが写っていない・`shopping.png` に品がカテゴリごとに並び `買い物リストは空です` が無い・`chat.png` にあいさつと提案のボタンがあり AI の返事が無い・`signup.png` に `30秒` が無い・`badge-get.png` のお知らせの説明が今の `badges.description`)、撮ったままの 13 枚を今の画像と比べ、違えば原因ごとの行き先 (§7.1 の G-1〜G-6: 日付だけなら置き換えない・台本のせいなら台本を直して撮り直す・origin/main の画面の変化なら置き換える・拡大の矩形を測った 2 枚や紹介ページでの使い方が変わる画像や原因が分からないものはオーケストレーターに返す) に従う → 新しい 6 枚と置き換えた画像をコミット |
 | S-25 | 1280 px・JS あり・no-preference: `ChapterSection` (章 photo) が画面の塊の下に `Reveal` で包んだ `ScreenZoom` を描く (サーバーの HTML: 箱は元の大きさ・不透明) → `Reveal` がマウントして JS の印 (`data-js`) を付ける → no-preference の CSS が、印があって「画面に入った」の印 (`is-in`) が無い `Reveal` の中の箱を `scale(0.85)`・`opacity: 0` に一瞬で隠す → スクロールで箱を包む `Reveal` が画面に入る → `is-in` → 箱が `--lp-dur-slow` (800 ms = `ZOOM_DRAW_MS`) で `scale(1)`・`opacity: 1` へ (`transform-origin` は箱の上の中央 = 上の画面の側)。箱の中の画像は `zoomFrame({ x: 14, y: 348, width: 512, height: 330 })` の幅 105.47 %・左 −2.73 %・上 −105.45 % で置かれ、`comment.png` のスコアの箱と記録コメントの箱が箱いっぱいに見える。章 menu も同じ (`menu-result.png` の朝食の 1 食)。reduce: 隠す規則と遷移が no-preference の中だけなので、マウントの後も箱は元の大きさ。JS 無し: `Reveal` の印が付かないので同じ。375 px: 箱は列の幅 (`min(100%, 24rem)`) で、章の画面の帯の箱の下に 1 つ。画像は箱より広いが箱が `overflow: hidden` なので、ページの幅は増えない (E-6) |
@@ -454,6 +454,8 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | `いちばん`・`一番`・`最高`・`最新`・`完全`・`必ず`・`絶対`・`No.1`・`日本一`・`世界一` | 根拠を出せない最上級・断定 (景品表示法の当てはめ: §2.5) |
 | `痩せ`・`効果`・`治る`・`予防`・`続きます` | 健康上の効果・習慣の定着を約束する語 (健康増進法・薬機法の当てはめ: §2.5) |
 | `ダメ出しはしません` | 改善の提案 (`advice`・`nutritionTip`) があるので事実と違う |
+| `確認してから実行`・`実行するかは` | AI 相談は、頼まれた操作をその場で行い、実行の前に確かめる手順は無い (§4.1 の `ai-chat`。`src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts:763`・`:1189-1198`) |
+| `メンバー数だけ` | 組織の管理者の画面には、チャレンジの参加者数と終了後の平均も出る (§4.1 の `org-admin`。`src/app/(org)/org/challenges/page.tsx:245`) |
 | `ランキング`・`上位`・`1位` | ほかの利用者との比較に基づく表示の条件を本冊で確かめていない (§2.5・§24 Q-15) |
 | `認識しやすく`・`認識精度` | 撮り方 (明るさ・角度) による認識の良し悪しを確かめていない。撮り方は指示する文だけにする (公開の FAQ の「どんな写真を撮ればいいですか？」も、別の案件 (PR #1892) で同じ理由で指示だけの文に直した) |
 
@@ -501,12 +503,12 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | `health-goals` | 健康の目標を自分で決めて管理する | `src/app/(main)/health/goals/page.tsx:223`・`src/app/api/health/goals/route.ts` | 無し | 章 health「目標の管理」・場面「健康の記録を続けたい人」 |
 | `badge-ranks` | 獲得したバッジの数で、食の初心者 → 健康ルーキー → バランスの達人 → 栄養マスター → 食のレジェンド とランクが上がり、次のランクまでの数が出る | `src/app/(main)/badges/page.tsx:63-69` (`RANKS`。min は 0・3・8・15・25)・`:208` (`あと … 個でランクアップ`) | ランクの名前と数は画面の定義 | 章 badges「ランク」 |
 | `pantry-manage` | 食材は手入力でも追加・編集・削除でき、期限切れ・期限間近の食材に印が付く | `src/app/(main)/pantry/page.tsx:291` (`食材管理`)・`:311` (`写真で追加`)・`:441` (`手入力で追加`)・`:474-490` (期限切れ・期限間近)・`src/app/api/pantry/route.ts:6-70` | 無し | 機能「食材の管理」・章 menu「食材の管理」 |
-| `ai-chat` | アプリの画面の右下の「AIアドバイザー」から相談のシートが開く。相談の中で AI が献立の作成・買い物リストへの追加・食材や目標の変更を提案し、実行するかは利用者が決める。相談を終了すると要約を保存する | `src/components/AIChatBubble.tsx:901` (`AIアドバイザーを開く`)・`:1008` (`相談を終了して要約を保存`)・`:674` (提案の実行 `/api/ai/consultation/actions/…/execute`)・全画面に常設 `src/app/(main)/MainLayout.tsx:305`・提案の種類 `src/lib/ai/consultation-action-executor.ts:319-1413` (`generate_day_menu`・`generate_week_menu`・`add_to_shopping_list`・`add_pantry_item`・`set_health_goal` ほか)・`src/app/api/ai/consultation/sessions/route.ts` | 同意と上限の範囲で。運営が一時停止できる (`ai-stop`)。AI の返事の文は画面写真に写さない (R-13) | 機能「AI に相談」・章 chat の 3 点 |
+| `ai-chat` | アプリの画面の右下の「AIアドバイザー」から相談のシートが開く。相談の中で頼むと、AI が献立の作成・買い物リストへの追加・食材や目標の変更などをその場で行う。相談を終了すると要約を保存する | `src/components/AIChatBubble.tsx:901` (`AIアドバイザーを開く`)・`:1008` (`相談を終了して要約を保存`)・その場で行う: `src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts:1189-1198` (ストリームの経路) と `:1423-1433` (ストリームでない経路) で、AI の返事にアクションがあれば `executeAndFinalizeAction` (`:40`) をそのまま呼ぶ。AI への指示は `:763` (`確認を求めずに、すぐにアクションを実行してください`)・`:967` (`ユーザーが依頼したら、確認せずに即座にアクションJSONを出力する`)。返事の下の「実行する」のボタン (`AIChatBubble.tsx:1334`。`/api/ai/consultation/actions/…/execute`: `:674`) は手で実行し直す口で、実行の前の確認ではない・全画面に常設 `src/app/(main)/MainLayout.tsx:305`・行える操作の種類 `src/lib/ai/consultation-action-executor.ts:319-1413` (`generate_day_menu`・`generate_week_menu`・`add_to_shopping_list`・`add_pantry_item`・`set_health_goal` ほか)・`src/app/api/ai/consultation/sessions/route.ts` | 同意と上限の範囲で。運営が一時停止できる (`ai-stop`)。AI の返事の文は画面写真に写さない (R-13)。実行の前に確かめる手順は無いので、「確認してから実行」「実行するかは利用者が決める」の類は書かない | 機能「AI に相談」・章 chat の 3 点 |
 | `ai-features` | AI を使う機能は、食事の写真の解析・献立の作成・買い物リストの作り直し・冷蔵庫の写真・体重計の写真・健康診断の結果の読み取り・健康診断と血液検査の結果へのコメント・料理の画像の作成・AI 相談・献立の振り返りなど | 機能の一覧 `supabase/functions/_shared/ai-usage-core.ts:52-88` (`AI_FEATURES`。`menu_generation`・`consultation`・`photo_analysis`・`nutrition_advice`・`health_review`・`shopping_list`・`image_generation` ほか)・健康診断と血液検査の結果へのコメント `src/app/api/health/checkups/route.ts:119`・`src/app/api/health/blood-tests/route.ts:98` (`health_review`。同意の判定は `checkups/route.ts:113`・`blood-tests/route.ts:92`)・料理の画像の作成 `src/app/api/ai/image/generate/route.ts:79` (`image_generation`。同意の判定は `:60`)・同意画面の列挙 `src/lib/ai/consent-config.ts:121-122` (末尾は「など」)・目的 `:139-140` | すべて同意と上限の範囲で (上限に数えない自動の機能を除く)。`AI_FEATURES` のすべてを挙げてはいない (健康のインサイト・究極モードの献立ほか) ので、文は「など」で終え、列挙を全部と読ませない | FAQ「どんな機能に AI を」・料金「1 日の上限」 |
 | `family-roles` | 家族は代表者・大人・子どもの 3 つの立場。アカウントの無い子どもも代表者が登録でき、大人はメールの招待リンクから参加する。代表者の役目は譲れる | 招待 `src/app/(main)/family/members/invite/page.tsx`・`src/app/api/family/invites/route.ts`・ダッシュボードの「大人メンバーを招待」「メールで招待リンクを送信」`src/app/(main)/family/dashboard/page.tsx:170-178`・子ども `src/app/(main)/family/members/child/new/page.tsx`・`src/app/api/family/members/child/route.ts`・譲渡 `src/app/(main)/family/representative-transfer/page.tsx` | 無し | 家族の区切り「3 つの立場」「メールで招待」・場面「子育て家庭」・FAQ「家族の記録は誰に」 |
 | `family-share` | 家族に見せる範囲 (食事の記録・健康・献立) は自分で選ぶ。はじめは食事の記録はオン、健康はオフ | `src/schemas/membership/share-settings.ts:5-9`・`src/app/api/family/members/me/share/route.ts:47-63` (既定: `share_meals` true・`share_health` false)・画面 `src/app/(main)/family/members/[id]/page.tsx:318-330` | 献立の既定は文に書かない (本冊で確かめていない: Q-17) | 家族の区切り「共有の範囲は自分で」・場面「子育て家庭」・FAQ「家族の記録は誰に」 |
 | `family-menu-view` | 献立表の「家族の表示」で、共有をオンにしている家族の献立を読み取り専用で見られる | `src/hooks/useFamilyMenu.ts`・`src/components/membership/FamilyMenuRows.tsx`・`src/app/api/family/menu/route.ts`・`src/app/(main)/menus/weekly/page.tsx:46-53`・設計 `docs/design/family/10-family-menu-view.md` | 相手が `share_menu` をオンにしている献立だけ → 「共有をオンにしている家族の」と書く | 家族の区切り「家族の献立を見る」・場面「子育て家庭」・FAQ「家族で使えますか？」 |
-| `org-admin` | 組織は運営が作り、オーナーを決める (登録しただけでは組織は作れず、組織の画面も使えない)。組織の管理者 (オーナー・管理者) だけが開ける画面で、メンバー・部署・招待・チャレンジを管理する。個人の記録の集計 (活力スコアなど) と部署別の表示は出していない。管理者の画面に出る数はメンバー数だけ | 組織を作る: 運営の `src/app/api/admin/organizations/route.ts:1-4` (`POST`。権限は `admin`・`super_admin`: `:114`)・`OrgCreateSchema` (`:27-33`。`owner_id` を省けば作った運営がオーナー: `:154`)。利用者の `src/app/api/org/` に組織を作る route は無い。画面: `src/app/(org)/org/page.tsx:7-10`・`src/app/(org)/layout.tsx`・`src/app/(org)/org/invites/page.tsx`・`departments/page.tsx`・`members/page.tsx`・`challenges/page.tsx:233-240`・`src/app/api/org/invites/route.ts`・`departments/route.ts`・`challenges/route.ts`・集計を止めている `src/app/(org)/org/dashboard/page.tsx:5-7` (#1325 / #1120)・メンバー数 `src/app/api/org/stats/route.ts` | 「組織は運営が作り、登録しただけでは使えない」と「集計は出していない」を落とさない (組織の区切りの一文・料金の一文・場面「職場とチーム」・機能のカード「家族と組織で使う」・FAQ「会社やチームで」に書く)。組織を料金の「いま使える機能」(無料) の一覧に入れない (組織のプランの課金は別の冊: §2.5) | 機能の一覧の一文・機能「家族と組織で使う」・組織の区切りの一文と 4 点・場面「職場とチーム」・料金の一文・FAQ「会社やチームで」 |
+| `org-admin` | 組織は運営が作り、オーナーを決める (登録しただけでは組織は作れず、組織の画面も使えない)。組織の管理者 (オーナー・管理者) だけが開ける画面で、メンバー・部署・招待・チャレンジを管理する。管理者の画面に、一人ひとりの記録は出さない。チャレンジの参加者数と終了後の平均のほかに、個人の記録の集計 (活力スコアなど) と部署ごとの記録の集計は出していない | 組織を作る: 運営の `src/app/api/admin/organizations/route.ts:1-4` (`POST`。権限は `admin`・`super_admin`: `:114`)・`OrgCreateSchema` (`:27-33`。`owner_id` を省けば作った運営がオーナー: `:154`)。利用者の `src/app/api/org/` に組織を作る route は無い。画面: `src/app/(org)/org/page.tsx:7-10`・`src/app/(org)/layout.tsx`・`src/app/(org)/org/invites/page.tsx`・`departments/page.tsx`・`members/page.tsx` (表の列は `ユーザー`・`役割`・`参加日`: `:165-167`)・`challenges/page.tsx:233-240`・管理者に見える数: `challenges/page.tsx:245-248` (`管理者に見えるのは、チャレンジごとの集計 (参加者数と平均) だけです。`・`一人ひとりの記録・順位は、管理者にも表示されません。`)・参加した人 `:400-407`・終了時点の平均 `:90-121`・部署ごとの人数 `departments/page.tsx:181`・`src/app/api/org/invites/route.ts`・`departments/route.ts`・`challenges/route.ts`・集計を止めている `src/app/(org)/org/dashboard/page.tsx:5-7` (#1325 / #1120)・メンバー数 `src/app/api/org/stats/route.ts` | 「組織は運営が作り、登録しただけでは使えない」を落とさない (組織の区切りの一文・料金の一文・場面「職場とチーム」・機能のカード「家族と組織で使う」・FAQ「会社やチームで」に書く)。「一人ひとりの記録は管理者に見せない」を落とさない (組織の区切りの一文と要点 4・場面「職場とチーム」に書く)。管理者に見える数を、チャレンジの参加者数と終了後の平均を落として言わない (「管理者の画面に出る数はメンバー数だけ」の類を書かない)。組織を料金の「いま使える機能」(無料) の一覧に入れない (組織のプランの課金は別の冊: §2.5) | 機能の一覧の一文・機能「家族と組織で使う」・組織の区切りの一文と 4 点・場面「職場とチーム」・料金の一文・FAQ「会社やチームで」 |
 | `org-challenge-privacy` | チャレンジの平均は、終了したときに 1 回だけ確定した値を、終了時点の参加者が最小の人数以上のときだけ出す | `src/app/(org)/org/challenges/page.tsx:19-20`・`:112`・`:121`・設計 `docs/design/org/10-challenge-diff-privacy.md` (#1688) | 開催中は出さない | 組織の区切り「チャレンジ」・場面「職場とチーム」 |
 | `signup-methods` | メールアドレスか Google アカウントで登録できる | `src/app/(auth)/signup/page.tsx:47` (`handleGoogleSignup`)・`:235` (`Googleで登録`)・公開の FAQ `src/app/faq/page.tsx:48` | 「30秒」などの時間は書かない (一次の根拠が無い: Q-18) | ガイド「登録はメールか Google で」・FAQ「登録に必要なものは」 |
 | `onboarding` | 初期設定で身長・体重・目標を入れると目標カロリーを自動で計算し、根拠を確かめて自分で微調整できる | `src/app/onboarding/questions/page.tsx`・`src/app/onboarding/complete/page.tsx:39-42` (`栄養設計まで完了しました`・`自動計算の根拠を確認して…目標カロリーを微調整できます`) | 到達の予想 (日付) は書かない (結果の見込みに読めるため) | ガイド「初期設定で目標カロリーを計算」 |
@@ -628,7 +630,7 @@ h2 `写真の記録だけじゃない。` / 一文 `献立から買い物、体�
 | `nutrition` | 中 | `栄養の見える化` | `今日の栄養スコアと今週の自炊率をホームで。献立の振り返りも。` | `/marketing/screens/home.png` (`ホームの画面`) | `today-score` | `#nutrition` |
 | `health` | 中 | `体重と健康の記録` | `体重は体重計の写真からも。健康診断の結果も写真から取り込めます。推移はグラフで。` | `/guide/weight.png` (`体重を入力する画面`) | `health-records` | `#health` |
 | `badges` | 中 | `バッジを集める` | `食べた食事を「完了」にしていくと、バッジが増えていきます。` | `/guide/badge-collection.png` (`トロフィールームのバッジの一覧`) | `badges` | `#badges` |
-| `chat` | 小 | `AI に相談` | `画面の右下から相談できます。提案は確認してから実行します。` | (アイコンのみ `MessageCircle`) | `ai-chat` | `#chat` |
+| `chat` | 小 | `AI に相談` | `画面の右下から相談できます。頼むと、献立の作成などを AI がその場で行います。` | (アイコンのみ `MessageCircle`) | `ai-chat` | `#chat` |
 | `family` | 小 | `家族と組織で使う` | `家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。` | (アイコンのみ `Users`) | `family` | `#family` |
 
 カードは `Link` (ページの中の先)。画面の注記 (一覧の下): `SCREENS_CAPTION`。並びは §8.3 の `FeaturesSection`。画像のあるカードでは端末の上の部分だけが見える (§5.4: 下の端で切れる)。`nutrition` のカードで見えるのは `home.png` の上の部分 (`今日の献立` の箱。§7.1) で、`今週の自炊率` のグラフは章 nutrition の端末で全体が見える。カードの本文は「ホームで」見られるものを言い、画像はそのホームの画面 (alt `ホームの画面`) なので食い違わない。
@@ -727,7 +729,7 @@ h2 `写真の記録だけじゃない。` / 一文 `献立から買い物、体�
 | h2 | `迷ったら、聞ける。` | `ai-chat` |
 | 一文 | `画面の右下のボタンから、AI アドバイザーに相談できます。` | `ai-chat` |
 | 要点 1 | 見出し `どの画面からでも` / 本文 `アプリの画面の右下にある「AIアドバイザー」のボタンから、相談のシートが開きます。` | `ai-chat` |
-| 要点 2 | 見出し `提案は確認してから実行` / 本文 `相談の中で AI が、献立の作成や買い物リストへの追加、食材や目標の変更を提案します。実行するかは、あなたが決めます。` | `ai-chat` |
+| 要点 2 | 見出し `頼めば、その場で` / 本文 `相談の中で頼むと、AI が献立の作成や買い物リストへの追加、食材や目標の変更などを、その場で行います。` | `ai-chat` |
 | 要点 3 | 見出し `相談の要約` / 本文 `相談を終了すると、相談の要約を保存します。` | `ai-chat` |
 | 要点 4 | 見出し `上限と一時停止` / 本文 `AI 相談は、1 日の利用回数の上限に数えます。運営の判断で一時停止することがあります。` | `ai-daily-limit`・`ai-stop` |
 | 画面 (札) | `/marketing/screens/chat.png` (`AI 相談のシート`) | – |
@@ -742,7 +744,7 @@ h2 `あなたの暮らしに、当てはめると。` / 一文 `使い方は人�
 | `solo` | `一人暮らし` | `帰りが遅い日も、写真を撮るだけで AI が料理を認識して栄養を推定します。週末に 1週間分の献立を AI に頼み、買い物リストを持ってスーパーへ。` | `photo-analyze`・`weekly-menu`・`shopping-list` | `User` |
 | `family` | `子育て家庭` | `家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。` | `family-roles`・`family-share`・`family-menu-view` | `Users` |
 | `health` | `健康の記録を続けたい人` | `体重計や健康診断の結果を写真から取り込み、推移をグラフで確かめます。目標を決めて、目標までの差を見ながら記録します。` | `health-records`・`health-graphs`・`health-goals` | `HeartPulse` |
-| `team` | `職場とチーム` | `組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。個人の記録の集計は出しません。` | `org-admin` | `Building2` |
+| `team` | `職場とチーム` | `組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。` | `org-admin` | `Building2` |
 
 人物の名前・年齢・写真・引用・成果は書かない (§4.0)。
 
@@ -767,11 +769,11 @@ h2 `あなたの暮らしに、当てはめると。` / 一文 `使い方は人�
 |---|---|---|
 | eyebrow | `組織で使う` | – |
 | h2 | `職場の健康づくりにも。` | – |
-| 一文 | `組織は運営が作ります（ご利用はお問い合わせください）。組織の管理者が、メンバーを招待し、部署やチャレンジを管理します。個人の記録の集計は出しません。` | `org-admin` |
+| 一文 | `組織は運営が作ります（ご利用はお問い合わせください）。組織の管理者が、メンバーを招待し、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。` | `org-admin` |
 | 要点 1 | 見出し `管理者の画面` / 本文 `組織の管理者（オーナー・管理者）だけが開ける画面で、メンバー・部署・招待・チャレンジを管理します。` | `org-admin` |
 | 要点 2 | 見出し `部署とメンバー` / 本文 `部署を作ってメンバーを分け、メールで招待します。` | `org-admin` |
 | 要点 3 | 見出し `チャレンジ` / 本文 `期間を決めたチャレンジを開けます。平均は、チャレンジが終わった後に、終了時点の参加者が最小の人数以上のときだけ出します。` | `org-challenge-privacy` |
-| 要点 4 | 見出し `集計は出しません` / 本文 `活力スコアや部署別の集計は、いまは出していません。管理者の画面に出る数は、メンバー数だけです。` | `org-admin` |
+| 要点 4 | 見出し `一人ひとりの記録は見せません` / 本文 `管理者の画面に、一人ひとりの記録は出しません。チャレンジの参加者数と、終わった後の平均のほかに、活力スコアや部署ごとの記録の集計は、いまは出していません。` | `org-admin` |
 | 組織の形の図 (SVG。`OrgSection` が描く) | 3 段の札 `管理者` → `部署` → `メンバー` | – |
 | CTA | `組織での利用について問い合わせる` → `/contact` | – |
 
@@ -1934,7 +1936,7 @@ export const LANDING_COPY = {
       { id: 'nutrition', size: 'medium', title: '栄養の見える化', body: '今日の栄養スコアと今週の自炊率をホームで。献立の振り返りも。', image: HOME, claimId: 'today-score', href: '#nutrition' },
       { id: 'health', size: 'medium', title: '体重と健康の記録', body: '体重は体重計の写真からも。健康診断の結果も写真から取り込めます。推移はグラフで。', image: WEIGHT, claimId: 'health-records', href: '#health' },
       { id: 'badges', size: 'medium', title: 'バッジを集める', body: '食べた食事を「完了」にしていくと、バッジが増えていきます。', image: BADGE_COLLECTION, claimId: 'badges', href: '#badges' },
-      { id: 'chat', size: 'small', title: 'AI に相談', body: '画面の右下から相談できます。提案は確認してから実行します。', image: null, claimId: 'ai-chat', href: '#chat' },
+      { id: 'chat', size: 'small', title: 'AI に相談', body: '画面の右下から相談できます。頼むと、献立の作成などを AI がその場で行います。', image: null, claimId: 'ai-chat', href: '#chat' },
       { id: 'family', size: 'small', title: '家族と組織で使う', body: '家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。', image: null, claimId: 'family', href: '#family' },
     ],
     screensCaption: SCREENS_CAPTION,
@@ -2056,7 +2058,7 @@ export const LANDING_COPY = {
       lead: '画面の右下のボタンから、AI アドバイザーに相談できます。',
       points: [
         { title: 'どの画面からでも', body: 'アプリの画面の右下にある「AIアドバイザー」のボタンから、相談のシートが開きます。', claimIds: ['ai-chat'] },
-        { title: '提案は確認してから実行', body: '相談の中で AI が、献立の作成や買い物リストへの追加、食材や目標の変更を提案します。実行するかは、あなたが決めます。', claimIds: ['ai-chat'] },
+        { title: '頼めば、その場で', body: '相談の中で頼むと、AI が献立の作成や買い物リストへの追加、食材や目標の変更などを、その場で行います。', claimIds: ['ai-chat'] },
         { title: '相談の要約', body: '相談を終了すると、相談の要約を保存します。', claimIds: ['ai-chat'] },
         { title: '上限と一時停止', body: 'AI 相談は、1 日の利用回数の上限に数えます。運営の判断で一時停止することがあります。', claimIds: ['ai-daily-limit', 'ai-stop'] },
       ],
@@ -2073,7 +2075,7 @@ export const LANDING_COPY = {
       { id: 'solo', title: '一人暮らし', body: '帰りが遅い日も、写真を撮るだけで AI が料理を認識して栄養を推定します。週末に 1週間分の献立を AI に頼み、買い物リストを持ってスーパーへ。', claimIds: ['photo-analyze', 'weekly-menu', 'shopping-list'] },
       { id: 'family', title: '子育て家庭', body: '家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。', claimIds: ['family-roles', 'family-share', 'family-menu-view'] },
       { id: 'health', title: '健康の記録を続けたい人', body: '体重計や健康診断の結果を写真から取り込み、推移をグラフで確かめます。目標を決めて、目標までの差を見ながら記録します。', claimIds: ['health-records', 'health-graphs', 'health-goals'] },
-      { id: 'team', title: '職場とチーム', body: '組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。個人の記録の集計は出しません。', claimIds: ['org-admin'] },
+      { id: 'team', title: '職場とチーム', body: '組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。', claimIds: ['org-admin'] },
     ],
   },
   family: {
@@ -2098,12 +2100,12 @@ export const LANDING_COPY = {
   org: {
     eyebrow: '組織で使う',
     title: '職場の健康づくりにも。',
-    lead: '組織は運営が作ります（ご利用はお問い合わせください）。組織の管理者が、メンバーを招待し、部署やチャレンジを管理します。個人の記録の集計は出しません。',
+    lead: '組織は運営が作ります（ご利用はお問い合わせください）。組織の管理者が、メンバーを招待し、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。',
     points: [
       { title: '管理者の画面', body: '組織の管理者（オーナー・管理者）だけが開ける画面で、メンバー・部署・招待・チャレンジを管理します。', claimIds: ['org-admin'] },
       { title: '部署とメンバー', body: '部署を作ってメンバーを分け、メールで招待します。', claimIds: ['org-admin'] },
       { title: 'チャレンジ', body: '期間を決めたチャレンジを開けます。平均は、チャレンジが終わった後に、終了時点の参加者が最小の人数以上のときだけ出します。', claimIds: ['org-challenge-privacy'] },
-      { title: '集計は出しません', body: '活力スコアや部署別の集計は、いまは出していません。管理者の画面に出る数は、メンバー数だけです。', claimIds: ['org-admin'] },
+      { title: '一人ひとりの記録は見せません', body: '管理者の画面に、一人ひとりの記録は出しません。チャレンジの参加者数と、終わった後の平均のほかに、活力スコアや部署ごとの記録の集計は、いまは出していません。', claimIds: ['org-admin'] },
     ],
     figure: { admin: '管理者', department: '部署', member: 'メンバー' },
     cta: { label: '組織での利用について問い合わせる', href: '/contact' },
@@ -2239,12 +2241,12 @@ export const LANDING_COPY = {
     { id: 'health-goals', text: '健康の目標を自分で決めて管理する', evidence: ['src/app/(main)/health/goals/page.tsx', 'src/app/api/health/goals/route.ts'], condition: null },
     { id: 'badge-ranks', text: '獲得したバッジの数で、食の初心者 → 健康ルーキー → バランスの達人 → 栄養マスター → 食のレジェンド とランクが上がり、次のランクまでの数が出る', evidence: ['src/app/(main)/badges/page.tsx'], condition: 'ランクの名前と数は画面の定義' },
     { id: 'pantry-manage', text: '食材は手入力でも追加・編集・削除でき、期限切れ・期限間近の食材に印が付く', evidence: ['src/app/(main)/pantry/page.tsx', 'src/app/api/pantry/route.ts'], condition: null },
-    { id: 'ai-chat', text: 'アプリの画面の右下の「AIアドバイザー」から相談のシートが開く。相談の中で AI が献立の作成・買い物リストへの追加・食材や目標の変更を提案し、実行するかは利用者が決める。相談を終了すると要約を保存する', evidence: ['src/components/AIChatBubble.tsx', 'src/app/(main)/MainLayout.tsx', 'src/lib/ai/consultation-action-executor.ts', 'src/app/api/ai/consultation/sessions/route.ts'], condition: '同意と 1 日の利用回数の上限の範囲で。運営が一時停止できる (ai-stop)。AI の返事の文は画面写真に写さない' },
+    { id: 'ai-chat', text: 'アプリの画面の右下の「AIアドバイザー」から相談のシートが開く。相談の中で頼むと、AI が献立の作成・買い物リストへの追加・食材や目標の変更などをその場で行う。相談を終了すると要約を保存する', evidence: ['src/components/AIChatBubble.tsx', 'src/app/(main)/MainLayout.tsx', 'src/lib/ai/consultation-action-executor.ts', 'src/app/api/ai/consultation/sessions/route.ts', 'src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts'], condition: '同意と 1 日の利用回数の上限の範囲で。運営が一時停止できる (ai-stop)。AI の返事の文は画面写真に写さない。実行の前に確かめる手順は無い (頼むとその場で行う) ので、確かめてから行うと読める言い方は書かない' },
     { id: 'ai-features', text: 'AI を使う機能は、食事の写真の解析・献立の作成・買い物リストの作り直し・冷蔵庫の写真・体重計の写真・健康診断の結果の読み取り・健康診断と血液検査の結果へのコメント・料理の画像の作成・AI 相談・献立の振り返りなど', evidence: ['supabase/functions/_shared/ai-usage-core.ts', 'src/app/api/health/checkups/route.ts', 'src/app/api/health/blood-tests/route.ts', 'src/app/api/ai/image/generate/route.ts', 'src/lib/ai/consent-config.ts'], condition: 'すべて同意と上限の範囲で (上限に数えない自動の機能を除く)。AI_FEATURES のすべては挙げないので、文は「など」で終える' },
     { id: 'family-roles', text: '家族は代表者・大人・子どもの 3 つの立場。アカウントの無い子どもも代表者が登録でき、大人はメールの招待リンクから参加する。代表者の役目は譲れる', evidence: ['src/app/(main)/family/members/invite/page.tsx', 'src/app/api/family/invites/route.ts', 'src/app/(main)/family/dashboard/page.tsx', 'src/app/(main)/family/members/child/new/page.tsx', 'src/app/api/family/members/child/route.ts', 'src/app/(main)/family/representative-transfer/page.tsx'], condition: null },
     { id: 'family-share', text: '家族に見せる範囲 (食事の記録・健康・献立) は自分で選ぶ。はじめは食事の記録はオン、健康はオフ', evidence: ['src/schemas/membership/share-settings.ts', 'src/app/api/family/members/me/share/route.ts', 'src/app/(main)/family/members/[id]/page.tsx'], condition: '献立の既定は文に書かない' },
     { id: 'family-menu-view', text: '献立表の「家族の表示」で、共有をオンにしている家族の献立を読み取り専用で見られる', evidence: ['src/hooks/useFamilyMenu.ts', 'src/components/membership/FamilyMenuRows.tsx', 'src/app/api/family/menu/route.ts', 'src/app/(main)/menus/weekly/page.tsx', 'docs/design/family/10-family-menu-view.md'], condition: '相手が share_menu をオンにしている献立だけ' },
-    { id: 'org-admin', text: '組織は運営が作り、オーナーを決める (登録しただけでは組織は作れず、組織の画面も使えない)。組織の管理者 (オーナー・管理者) だけが開ける画面で、メンバー・部署・招待・チャレンジを管理する。個人の記録の集計 (活力スコアなど) と部署別の表示は出していない。管理者の画面に出る数はメンバー数だけ', evidence: ['src/app/api/admin/organizations/route.ts', 'src/app/(org)/org/page.tsx', 'src/app/(org)/layout.tsx', 'src/app/(org)/org/invites/page.tsx', 'src/app/(org)/org/departments/page.tsx', 'src/app/(org)/org/members/page.tsx', 'src/app/(org)/org/challenges/page.tsx', 'src/app/api/org/invites/route.ts', 'src/app/api/org/departments/route.ts', 'src/app/api/org/challenges/route.ts', 'src/app/(org)/org/dashboard/page.tsx', 'src/app/api/org/stats/route.ts'], condition: '「組織は運営が作り、登録しただけでは使えない」と「集計は出していない」を落とさない。組織を無料の機能の一覧に入れない (組織のプランの課金は別の冊)' },
+    { id: 'org-admin', text: '組織は運営が作り、オーナーを決める (登録しただけでは組織は作れず、組織の画面も使えない)。組織の管理者 (オーナー・管理者) だけが開ける画面で、メンバー・部署・招待・チャレンジを管理する。管理者の画面に、一人ひとりの記録は出さない。チャレンジの参加者数と終了後の平均のほかに、個人の記録の集計 (活力スコアなど) と部署ごとの記録の集計は出していない', evidence: ['src/app/api/admin/organizations/route.ts', 'src/app/(org)/org/page.tsx', 'src/app/(org)/layout.tsx', 'src/app/(org)/org/invites/page.tsx', 'src/app/(org)/org/departments/page.tsx', 'src/app/(org)/org/members/page.tsx', 'src/app/(org)/org/challenges/page.tsx', 'src/app/api/org/invites/route.ts', 'src/app/api/org/departments/route.ts', 'src/app/api/org/challenges/route.ts', 'src/app/(org)/org/dashboard/page.tsx', 'src/app/api/org/stats/route.ts'], condition: '「組織は運営が作り、登録しただけでは使えない」と「一人ひとりの記録は管理者に見せない」を落とさない。管理者に見える数を、チャレンジの参加者数と終了後の平均を落として言わない。組織を無料の機能の一覧に入れない (組織のプランの課金は別の冊)' },
     { id: 'org-challenge-privacy', text: 'チャレンジの平均は、終了したときに 1 回だけ確定した値を、終了時点の参加者が最小の人数以上のときだけ出す', evidence: ['src/app/(org)/org/challenges/page.tsx', 'docs/design/org/10-challenge-diff-privacy.md'], condition: '開催中は出さない' },
     { id: 'signup-methods', text: 'メールアドレスか Google アカウントで登録できる', evidence: ['src/app/(auth)/signup/page.tsx', 'src/app/faq/page.tsx'], condition: '「30秒」などの時間は書かない' },
     { id: 'onboarding', text: '初期設定で身長・体重・目標を入れると目標カロリーを自動で計算し、根拠を確かめて自分で微調整できる', evidence: ['src/app/onboarding/questions/page.tsx', 'src/app/onboarding/complete/page.tsx'], condition: '到達の予想 (日付) は書かない' },
@@ -2556,7 +2558,7 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 |---|---|---|
 | 構造 | 殻 + `LandingPage.tsx` (Server) + 島 4 つ。区切り 8 | 殻 (変えない) + `LandingPage.tsx` (Server) + 島 6 本 (役目 1 つずつ。v1.7 の島の `FaqSection` は `details` を使う Server の部品にする)。区切り 18 |
 | 区切り | ヒーロー / 使い方 3 (静的 3 列) / デモ / 機能 8 / バッジ 4 / 安心 4 / FAQ 6 / 最終 CTA | ヒーロー (5 枚の扇) / 仕組み (固定した端末 + 流れの図) / デモ / 機能の一覧 10 (各章へのリンク) / 章 6 (写真・献立と買い物・栄養の見える化・健康・バッジ・AI に相談) / 場面 4 / 家族 / 組織 / 安心 6 / 料金 / 使い方ガイド / FAQ 12 / 最終 CTA |
-| 主張 | 17 件 (`CLAIM_IDS`) | 46 件。各行に根拠 (file:line) と条件。新しい条件: 共有の設定・組織は運営が作り管理者だけが管理する (無料の機能の一覧に入れない)・集計は出していない・上限に数えない自動の機能・運営の一時停止。無料の範囲は「登録してお使いいただける機能」と書く |
+| 主張 | 17 件 (`CLAIM_IDS`) | 46 件。各行に根拠 (file:line) と条件。新しい条件: 共有の設定・組織は運営が作り管理者だけが管理する (無料の機能の一覧に入れない)・一人ひとりの記録は管理者に見せない (見える記録の集計はチャレンジの参加者数と終了後の平均だけ)・上限に数えない自動の機能・運営の一時停止。無料の範囲は「登録してお使いいただける機能」と書く |
 | よくある質問 | 6 件。`FaqSection` は島で、`h3` の中の `button aria-expanded` と `region`。閉じている間は高さ 0 + `inert`。同時に開くのは 1 つ。JS 無しでは閉じたまま (答えを読めない) | 12 件。`FaqSection` は Server (`'use client'` 無し) で、`details` と `summary` (中に `h3`)。開閉はブラウザが持ち、どれも独立して開閉できる。JS 無しでも開いて答えを読める (R-18)。動きは矢印の回転だけ (M-8) |
 | 実際の画面 | 6 枚 (`public/guide`) | 17 枚 (`public/guide` の 11 枚 (今の画面と文が食い違う `signup.png`・`badge-get.png` と、段 0 の比べで今の画面と合わないと分かった画像は段 0 で撮り直す: §7.1 の G-3) + `public/marketing/screens` の 6 枚 (段 0 で撮る))。正典は各画面の受入の条件 (写っているべきもの・写ってはいけないもの: §7.1) で、撮影の台本の中身は実装が決める。画面の注記は 12 の区切りに。章 photo・menu に画面の一部の拡大 (ズーム) を 2 つ (同じファイル。`ScreenZoom`) |
 | 動き | 8 (M-1〜M-3・M-5・M-7〜M-10)。控えめ。スクロール連動と固定した端末は置かない | 17 (M-1〜M-17)。固定した端末の入れ替え (M-6)・読む位置の棒 (M-4)・数字の増え方 (M-7・M-11)・輪 (M-11)・線 (M-12)・スナップ (M-13)・ナビの強調 (M-14)・端末とカードの反応 (M-15・M-16)・拡大の箱の立ち上がり (M-17)。各動きに受入の条件 |
@@ -2829,7 +2831,7 @@ sequenceDiagram
 | U-17 | `ログイン済みの人は / で紹介ページを見ない (resolveOnboardingRedirect)` | 変更なし |
 | U-18 | `スクロールに連動する動きは無い: marketing.css と src/components/marketing/ に animation-timeline・scroll-timeline・view-timeline が無い` | 変更なし |
 | U-19 | `page.tsx の viewport は maximumScale 5 以上・userScalable true` | 変更なし |
-| U-20 | `LANDING_COPY と LANDING_SCREENS のすべての文字列に §4.0 の書かない語 (ランキング・上位・1位・認識しやすく・認識精度 を含む) が無く、marketing.css の動きの宣言は no-preference の中だけで、reduce の at-rule が無く、className に Tailwind の動きのクラスが無く、scroll-behavior の宣言が無い` | 語 5 つ (`ランキング`・`上位`・`1位`・`認識しやすく`・`認識精度`)・`LANDING_SCREENS`・`scroll-behavior` を足す |
+| U-20 | `LANDING_COPY と LANDING_SCREENS のすべての文字列に §4.0 の書かない語 (ランキング・上位・1位・認識しやすく・認識精度・確認してから実行・実行するかは・メンバー数だけ を含む) が無く、marketing.css の動きの宣言は no-preference の中だけで、reduce の at-rule が無く、className に Tailwind の動きのクラスが無く、scroll-behavior の宣言が無い` | 語 8 つ (`ランキング`・`上位`・`1位`・`認識しやすく`・`認識精度`・`確認してから実行`・`実行するかは`・`メンバー数だけ`)・`LANDING_SCREENS`・`scroll-behavior` を足す |
 | U-21 | `デモの見本はアプリと同じ (87・91・85・ソースの式)` | 変更なし |
 | U-22 | `IntersectionObserver の判定は要素の高さに依らない: IntersectionObserver を作るのは useInViewOnce.ts と useInViewSteps.ts の 2 本だけで、どちらも threshold は 0` | 2 本に |
 | U-23 | `自動で動き続けるものは高々 1 つ (infinite の宣言は 1 つ以下)` | 変更なし |
@@ -2924,13 +2926,13 @@ U-28 の import は U-25 と同じ相対のパス。U-32 は `NutritionChapter` 
 | S-19 | E-23・E-28・E-29・U-27・U-33・U-35 | – |
 | S-20 | 門の `tests/e2e/back-navigation.spec.ts` (#1893)・U-27 | 本番 (Vercel) での再現 (整合ゲートで手で 1 回) |
 | S-21 | U-3・U-34・E-1・既存 `tests/public-claims-guard.test.ts` | 家族の要点の根拠の中身 (レビュー) |
-| S-22 | U-3・E-1 | 組織の要点の根拠の中身・組織の一文と料金の一文と FAQ 9 に「組織は運営が作る」があり、料金の「いま使える機能」の一覧に組織が無いこと (レビュー。§9.1 の逐語と突き合わせる) |
+| S-22 | U-3・U-20 (書かない語 `メンバー数だけ`)・E-1 | 組織の要点の根拠の中身・組織の一文と料金の一文と FAQ 9 に「組織は運営が作る」があり、料金の「いま使える機能」の一覧に組織が無いこと (レビュー。§9.1 の逐語と突き合わせる) |
 | S-23 | U-24・U-26・E-4 | – |
 | S-24 | U-4・U-25・既存 `tests/guide-images-1852.test.ts`・撮影の台本の最後の確認 (15 + 6 枚の一致)・撮影の台本の中の確認 (実装が書く) | 段 0 のレビューの目視 (§7.1 の「段 0 で作るもの」の 4: 新しい 6 枚と置き換えた画像が表 1・表 2 の「写っているべきもの」を写し、「写ってはいけないもの」と P-4 を写さない・撮ったままの 13 枚が今と同じ画面か、違えば G-1〜G-6 の行き先に従った・固定の文が origin/main のソースにある) |
 | S-25 | E-31・U-36・E-6・E-8・E-22 | 拡大の箱の立ち上がりの質と、矩形が箱いっぱいに収まって見えること (目視。E-14 の記録) |
 | S-26 | U-3 (章 health の要点の claimIds)・U-5 (`weight.png` の alt)・U-4 (`landingImagePaths()` が 20 件で、`trend.png`・`weight-photo.png` を含まない)・U-26 (章 health の注記)・U-20・E-1・E-9 (章の CTA) | 健康の要点の根拠の中身 (レビュー)・免責が要点の下にあること (目視。E-14 の記録) |
 | S-27 | U-6・U-3・U-5 (`badge-get.png`・`badge-collection.png` の alt)・E-22 (バッジの名前 4)・E-27 (章 badges の帯の箱)・E-1・E-7 (reduce で動きが無い)・既存 `tests/badges-description-matches-award-contract.test.ts` | `badge-get.png` のお知らせの説明が今の `badges.description` の文であること (段 0 のレビューの目視)・バッジの立ち上がり (M-10) の質 |
-| S-28 | E-29 (カード「AI に相談」→ `section#chat` → 章 chat の CTA)・E-23 (`/#chat` から戻る)・U-3・U-34 (カード `chat` と章 chat の要点)・U-4 (`chat.png` の alt と `LANDING_SCREENS`)・U-26・E-1 | `chat.png` に AI の返事が写っていない (段 0 のレビューの目視)・`ai-chat` の根拠の中身 (レビュー) |
+| S-28 | E-29 (カード「AI に相談」→ `section#chat` → 章 chat の CTA)・E-23 (`/#chat` から戻る)・U-3・U-20 (書かない語 `確認してから実行`・`実行するかは`)・U-34 (カード `chat` と章 chat の要点)・U-4 (`chat.png` の alt と `LANDING_SCREENS`)・U-26・E-1 | `chat.png` に AI の返事が写っていない (段 0 のレビューの目視)・`ai-chat` の根拠の中身 (レビュー) |
 | S-29 | U-2 (`delete-export`・`data-requests` の根拠のパスの実在)・U-3・E-4 (FAQ の 12 の `details`・JS 無しで開く)・E-22 (安心の見出し 6)・E-9 (安心のリンク)・既存 `tests/public-claims-guard.test.ts` (FAQ 5 の行) | 退会・書き出し・請求の根拠の中身 (レビュー) |
 | S-30 | U-34 (カード `pantry` の `pantry-manage` が章 menu の要点の claimIds にある)・U-3・U-4 (`pantry.png` の alt と `LANDING_SCREENS`)・E-27 (章 menu の帯の箱)・E-29 (ページの中のリンクのフォーカス)・E-1 | `pantry.png` に `期限間近` の印と食材 3 件以上が写っている (段 0 のレビューの目視)・食材の要点の根拠の中身 (レビュー) |
 
