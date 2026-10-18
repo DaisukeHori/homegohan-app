@@ -3,11 +3,11 @@
 
 INSERT INTO badges (code, name, description, condition_json) VALUES
 -- 🔰 Starter
-('first_bite', 'First Bite', 'はじめて食事を記録しました。新しい習慣の第一歩です！', '{"type": "count", "min": 1}'),
-('streak_3', 'Three Day Streak', '3日連続で記録しました。三日坊主は卒業です。', '{"type": "streak", "days": 3}'),
-('streak_7', 'Weekly Winner', '1週間連続で記録しました。素晴らしい継続力です！', '{"type": "streak", "days": 7}'),
+('first_bite', 'First Bite', 'はじめて食事を「完了」にしました。新しい習慣の第一歩です！', '{"type": "count", "min": 1}'),
+('streak_3', 'Three Day Streak', '3日連続で食事を「完了」にしました。三日坊主は卒業です。', '{"type": "streak", "days": 3}'),
+('streak_7', 'Weekly Winner', '1週間連続で食事を「完了」にしました。素晴らしい継続力です！', '{"type": "streak", "days": 7}'),
 ('streak_30', 'Monthly Master', '1ヶ月連続で記録しました。食生活が変わってきているはずです。', '{"type": "streak", "days": 30}'),
-('photo_10', 'Shutterbug', '写真を10枚撮影しました。食卓のアルバムができてきました。', '{"type": "count_photo", "min": 10}'),
+('photo_10', 'Shutterbug', '食事を10食「完了」にしました。毎日の食卓が積み重なってきました。', '{"type": "count_photo", "min": 10}'),
 
 -- ⏰ Rhythm
 ('early_bird', 'Early Bird', '朝食を7回記録しました。1日のスタートダッシュは完璧です。', '{"type": "count_type", "meal_type": "breakfast", "min": 7}'),
@@ -24,7 +24,7 @@ INSERT INTO badges (code, name, description, condition_json) VALUES
 
 -- 🤖 AI & Misc
 ('hello_ai', 'Hello AI', 'AIからのアドバイスを受け取りました。', '{"type": "feedback_view", "min": 1}'),
-('planner', 'Planner', '1週間の献立を作成しました。計画的な食生活の始まりです。', '{"type": "menu_create", "min": 1}'),
+('planner', 'Planner', '使い方ガイドで、お試しの献立を追加しました。献立づくりの練習はばっちりです。', '{"type": "menu_create", "min": 1}'),
 
 -- 🏆 Master
 ('legend_100', 'Streak Legend', '100日連続記録。あなたは真のレジェンドです。', '{"type": "streak", "days": 100}')
