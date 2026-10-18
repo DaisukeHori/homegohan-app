@@ -110,7 +110,7 @@ export async function GET(request: Request) {
     const mealCount = mealCountRes.count ?? 0;
     const cookCount = cookCountRes.count ?? 0;
 
-    // #1867 planner (計画上手): AI の週の献立の生成 (1 週間分の生成) が完了 (completed) した本人の行があるか。
+    // #1867 planner (計画上手): AI で複数の日の献立をまとめて作った生成 (印のある行) が完了 (completed) した本人の行があるか。
     // 付与の本体は、行が completed になった時点で付ける DB のトリガー weekly_menu_requests_award_planner
     // (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。ここは、トリガーが付け損ねた
     // (例外を WARNING にして献立の書き込みを優先した) ときの保険で、一覧を開いたときに拾う。

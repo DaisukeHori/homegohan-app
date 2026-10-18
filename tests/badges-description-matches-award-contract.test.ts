@@ -25,22 +25,32 @@
  *        付与の本体。トリガーの中身の検査は tests/planner-badge-weekly-menu-trigger-migration-contract.test.ts)
  *      - 保険: GET /api/ai/menu/weekly/status の awardBadge (週の献立の生成の行 (印あり) の完了を読んだとき)
  *      - 保険: GET /api/badges の判定 (完了した週の献立の生成の行があるとき)
- *      週の献立の生成の行の印を書くのは、利用者が AI で週の献立を作る経路 (行を作るとき) だけ:
+ *      週の献立の生成の行の印を書くのは、利用者が AI で複数の日の献立を作る経路 (行を作るとき) だけ:
  *        - POST /api/ai/menu/weekly/request (いつも 7 日分): いつも書く
  *        - POST /api/ai/menu/v4/generate・/v5/generate (Web の AI献立アシスタント・AI のチャット・モバイルの主経路):
- *          対象の枠が 1 週間を覆うときだけ書く
+ *          対象の枠が複数の日 (異なる日付が 2 日以上) にわたるときだけ書く
  *        - AI 相談のアクションの 1 週間分の生成 (generate_week_menu): 書く (1 日分・1 食には書かない)
+ *
+ * #1867 の続き (オーナーの選択 2026-10-18 21 時台): 週の途中に「空欄を埋める」で今週の残りを AI で作ったとき (7 日未満) も付ける。
+ * 印を書く条件を「1 週間 (7 日以上)」から「複数の日 (2 日以上)」に広げ、migration 20261018070000_planner_badge_description_multi_day.sql で
+ * planner の説明だけをもう一度書き換えた。
+ *   6. 20261018070000 は planner の description だけを書き換え、rollback は 20261018050000 の文に戻す
+ *   7. planner のいまの説明 (20261018070000 の文) が、印を書く条件 (MULTI_DAY_MENU_GENERATION_MIN_DAYS = 2 日以上) と合う:
+ *      「複数の日」と「まとめて」を言い、「1週間」とは書かない
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AWARDABLE_BADGE_CODES } from '@/lib/badges/awardable';
+import { MULTI_DAY_MENU_GENERATION_MIN_DAYS } from '@/lib/ai/weekly-menu-request-origin';
 import {
   BADGE_DESCRIPTION_MIGRATION,
   BADGE_DESCRIPTION_ROLLBACK,
   BADGE_ORIGINAL_MIGRATION,
   PLANNER_DESCRIPTION_MIGRATION,
   PLANNER_DESCRIPTION_ROLLBACK,
+  PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION,
+  PLANNER_MULTI_DAY_DESCRIPTION_ROLLBACK,
   REPO_ROOT,
   currentBadgeDescriptions,
   parseDescriptionUpdates,
@@ -56,7 +66,7 @@ const WEEKLY_STATUS_ROUTE = 'src/app/api/ai/menu/weekly/status/route.ts';
 const WEEKLY_REQUEST_ROUTE = 'src/app/api/ai/menu/weekly/request/route.ts';
 /** 週の献立の生成の行の印 (#1867) */
 const WEEKLY_ORIGIN_LIB = 'src/lib/ai/weekly-menu-request-origin.ts';
-/** 枠を対象にする献立の生成 (Web の AI献立アシスタント・AI のチャット・モバイルが使う。1 週間を覆うときに印を書く。#1867) */
+/** 枠を対象にする献立の生成 (Web の AI献立アシスタント・AI のチャット・モバイルが使う。複数の日にわたるときに印を書く。#1867) */
 const V4_GENERATE_ROUTE = 'src/app/api/ai/menu/v4/generate/route.ts';
 const V5_GENERATE_ROUTE = 'src/app/api/ai/menu/v5/generate/route.ts';
 /** AI 相談のアクション (1 週間分の生成 generate_week_menu で印を書く。#1867) */
@@ -104,6 +114,8 @@ const updates = parseDescriptionUpdates(readRepoFile(BADGE_DESCRIPTION_MIGRATION
 const rollback = parseDescriptionUpdates(readRepoFile(BADGE_DESCRIPTION_ROLLBACK));
 const plannerUpdates = parseDescriptionUpdates(readRepoFile(PLANNER_DESCRIPTION_MIGRATION));
 const plannerRollback = parseDescriptionUpdates(readRepoFile(PLANNER_DESCRIPTION_ROLLBACK));
+const plannerMultiDayUpdates = parseDescriptionUpdates(readRepoFile(PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION));
+const plannerMultiDayRollback = parseDescriptionUpdates(readRepoFile(PLANNER_MULTI_DAY_DESCRIPTION_ROLLBACK));
 /** 説明を書き換える migration を全部当てたあとの説明 (いまの DB の説明) */
 const current = currentBadgeDescriptions();
 const original = readOriginalBadgeRows();
@@ -215,13 +227,6 @@ describe('#1867 planner の説明の migration (20261018050000): AI の週の献
     expect(plannerUpdates.get('planner')).not.toBe(original.get('planner')?.description);
   });
 
-  it('planner のいまの説明は 20261018050000 の文で、ほかの 4 つは 20261018040000 の文のまま', () => {
-    expect(current.get('planner')).toBe(plannerUpdates.get('planner'));
-    for (const code of REWRITTEN_CODES.filter((c) => c !== 'planner')) {
-      expect(current.get(code), code).toBe(updates.get(code));
-    }
-  });
-
   it('planner を付ける処理は、お試しの献立の追加・週の献立の生成の完了のトリガー・(保険の) 状態の確認とバッジの一覧の判定の 4 つだけ', () => {
     // migration の中で user_badges に行を足すのは、元の migration (complete_handson_tour の tutorial_complete) と、
     // 週の献立の生成の完了で planner を付けるトリガーの migration だけ (新しく SQL の付与の経路を足したら、説明と条件を突き合わせてからここに足す)
@@ -264,7 +269,7 @@ describe('#1867 planner の説明の migration (20261018050000): AI の週の献
 
     // 週の献立の生成の行の印を書くのは、利用者が AI で週の献立を作る経路だけ (印の定義のファイルを除く):
     //   - いつも書く (weeklyMenuRequestWeeklyOriginData): いつも 7 日分を作る POST /api/ai/menu/weekly/request だけ
-    //   - 対象の枠が 1 週間を覆うときだけ書く (weeklyMenuRequestWeeklyOriginDataForDates): v4/generate・v5/generate・AI 相談のアクション
+    //   - 対象の枠が複数の日にわたるときだけ書く (weeklyMenuRequestWeeklyOriginDataForDates): v4/generate・v5/generate・AI 相談のアクション
     const writersOf = (call: RegExp) =>
       [...sourceFiles('src'), ...sourceFiles('supabase/functions')]
         .filter((file) => file !== WEEKLY_ORIGIN_LIB && call.test(readRepoFile(file)))
@@ -284,12 +289,48 @@ describe('#1867 planner の説明の migration (20261018050000): AI の週の献
     expect(weekCase).toMatch(/weeklyMenuRequestWeeklyOriginDataForDates\(/);
   });
 
-  it('planner のいまの説明は、AI で 1 週間の献立をはじめて作ったことと、使い方ガイドのお試しの両方を言う', () => {
-    const text = current.get('planner') ?? '';
+  it('planner の 20261018050000 の時点の文は、AI で 1 週間の献立をはじめて作ったことと、使い方ガイドのお試しの両方を言う', () => {
+    const text = plannerUpdates.get('planner') ?? '';
     expect(text).toContain('AI');
     expect(text).toContain('1週間の献立');
     expect(text).toContain('はじめて');
     expect(text).toContain('使い方ガイド');
     expect(text).toContain('お試し');
+  });
+});
+
+describe('#1867 planner の説明の migration (20261018070000): AI で複数の日の献立をまとめて作っても付く', () => {
+  it('migration は planner の description だけを書き換え、rollback は 20261018050000 の文に戻す', () => {
+    expect([...plannerMultiDayUpdates.keys()]).toEqual(['planner']);
+    expect([...plannerMultiDayRollback.keys()]).toEqual(['planner']);
+    expect(plannerMultiDayRollback.get('planner')).toBe(plannerUpdates.get('planner'));
+    expect(plannerMultiDayUpdates.get('planner')).not.toBe(plannerUpdates.get('planner'));
+    expect(plannerMultiDayUpdates.get('planner')).not.toBe(updates.get('planner'));
+    expect(plannerMultiDayUpdates.get('planner')).not.toBe(original.get('planner')?.description);
+  });
+
+  it('planner のいまの説明は 20261018070000 の文で、ほかの 4 つは 20261018040000 の文のまま', () => {
+    expect(current.get('planner')).toBe(plannerMultiDayUpdates.get('planner'));
+    for (const code of REWRITTEN_CODES.filter((c) => c !== 'planner')) {
+      expect(current.get(code), code).toBe(updates.get(code));
+    }
+  });
+
+  it('印を書く条件は「複数の日」= 異なる日付が 2 日以上 (1 日分・1 食分は届かない)', () => {
+    // 説明の「複数の日」は 2 日以上を言う。下限を変えたら説明と吹き出しの文も変える (この検査が赤になって気付く)
+    expect(MULTI_DAY_MENU_GENERATION_MIN_DAYS).toBe(2);
+    // 下限の定数の根拠のコメントは、いまの説明の migration を指す
+    expect(readRepoFile(WEEKLY_ORIGIN_LIB)).toContain(PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION.replace('supabase/migrations/', ''));
+  });
+
+  it('planner のいまの説明は、AI で複数の日の献立をはじめてまとめて作ったことと、使い方ガイドのお試しの両方を言い、「1週間」とは書かない', () => {
+    const text = current.get('planner') ?? '';
+    expect(text).toContain('AI');
+    expect(text).toContain('複数の日の献立');
+    expect(text).toContain('まとめて');
+    expect(text).toContain('はじめて');
+    expect(text).toContain('使い方ガイド');
+    expect(text).toContain('お試し');
+    expect(text).not.toContain('1週間');
   });
 });

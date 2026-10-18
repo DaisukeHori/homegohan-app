@@ -12,6 +12,7 @@
  *   - 付与の失敗で献立の最終の書き込みを止めない (EXCEPTION WHEN OTHERS で WARNING にして NEW を返す)
  *   - トリガー関数は SECURITY DEFINER・search_path ''・EXECUTE を誰にも付けない (REVOKE は完全形・GRANT 無し。anon-definer-execute の番兵の対象)
  *   - down.sql がトリガーと関数を消す。migration は何度流しても同じ (CREATE OR REPLACE・DROP TRIGGER IF EXISTS)
+ *   - 行の何日分かを見ない (印を書く条件を「1 週間 (7 日以上)」から「複数の日 (2 日以上)」に広げても、トリガーは変えない)
  * 実 DB での確認は tests/integration/security/planner-badge-weekly-menu.test.ts の W-5・W-6。
  */
 import fs from 'node:fs';
@@ -87,6 +88,19 @@ describe('#1867 planner を週の献立の生成の完了で付けるトリガ�
       'IF (NEW.generated_data ->> c_origin_key) IS DISTINCT FROM c_origin_value ' +
         'AND (OLD.generated_data ->> c_origin_key) IS DISTINCT FROM c_origin_value THEN RETURN NEW; END IF;',
     );
+  });
+
+  it('行の何日分かを見ず、status・持ち主・印 (と警告の id) だけで決める (印を書く条件を 7 日以上から 2 日以上に広げても、トリガーは変えない)', () => {
+    // 印を書く条件 (何日分から書くか) は書く側 (src/lib/ai/weekly-menu-request-origin.ts の MULTI_DAY_MENU_GENERATION_MIN_DAYS) だけが持つ。
+    // トリガーが target_slots・start_date などを読んで日数を数え直すと、書く側の条件と食い違う
+    const columns = new Set([...functionBody().matchAll(/\b(?:NEW|OLD)\.(\w+)/g)].map((match) => match[1]));
+    expect([...columns].sort()).toEqual(['generated_data', 'id', 'status', 'user_id']);
+    // この関数を定義し直す migration はほかに無い (後の migration で日数の判定を足していない)
+    const definers = fs
+      .readdirSync(path.join(ROOT, 'supabase/migrations'))
+      .filter((name) => name.endsWith('.sql') && read(`supabase/migrations/${name}`).includes(`FUNCTION ${TRIGGER_FUNCTION}(`))
+      .map((name) => `supabase/migrations/${name}`);
+    expect(definers).toEqual([MIGRATION]);
   });
 
   it('付けるのは planner (付与処理のあるバッジ) で、行の持ち主に ON CONFLICT DO NOTHING で足す', () => {

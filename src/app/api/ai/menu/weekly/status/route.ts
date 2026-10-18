@@ -35,7 +35,7 @@ export async function GET(request: Request) {
     // #1042: 通常ポーリング（3秒間隔）では生成中に肥大化する generated_data(jsonb) を
     // select しない。止まった行を failed にしたときだけ、更新の戻り値で受け取る。
     // 止まったかの判定は cleanup と同じ生存信号 (created_at・updated_at・worker_acquired_at) で行う (#1507)
-    // AI の週の献立の生成 (1 週間分の生成。src/lib/ai/weekly-menu-request-origin.ts) の行かは、generated_data の印だけを取り出して読む (#1867。planner の付与に使う)
+    // AI で複数の日の献立をまとめて作った生成 (src/lib/ai/weekly-menu-request-origin.ts) の行かは、generated_data の印だけを取り出して読む (#1867。planner の付与に使う)
     const { data: request, error } = await supabase
       .from('weekly_menu_requests')
       .select(`id, status, error_message, created_at, updated_at, worker_acquired_at, mode, start_date, target_meal_id, progress, ${WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT}`)
@@ -111,8 +111,8 @@ export async function GET(request: Request) {
     // (1 食も保存できなかったとき・利用者が中止したとき・止まったときは failed)。付与の本体は、行が completed になった時点で付ける
     // DB のトリガー weekly_menu_requests_award_planner (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。
     // 画面は完了を主に行の変化 (Realtime) で知り (モバイルはこの状態の確認を呼ばない)、ここは Web の代替の経路なので、ここでの付与はトリガーが付け損ねたときの保険:
-    // 本人が完了 (completed) を読んだときに、週の献立の生成の行 (印あり) なら本人に付ける。印を書くのは 1 週間分の生成
-    // (POST /api/ai/menu/v4/generate・/v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request)
+    // 本人が完了 (completed) を読んだときに、週の献立の生成の行 (印あり) なら本人に付ける。印を書くのは複数の日の生成
+    // (POST /api/ai/menu/v4/generate・/v5/generate で対象が複数の日 (2 日以上) にわたるとき・AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request)
     //   - 付けるのは行の持ち主 (上の読み取りを user.id の行に絞っている) で、家族の人数分の献立でも依頼した本人だけ
     //   - awardBadge は冪等 (付与済みなら何もしない)。トリガーや使い方ガイドのお試し (POST /api/menu-plans/add) で付いていても、
     //     完了の後のポーリングが続いても、user_badges は 1 行のまま
