@@ -2246,9 +2246,11 @@ html:has(.lp) {
     animation: lp-pop var(--lp-dur) var(--lp-ease) both;
     animation-delay: calc(var(--lp-i, 0) * var(--lp-stagger));
   }
-  /* M-11 スコアの輪: マウントの印 (data-js) があって画面に入る前 (data-in なし) は一瞬で隠し、入ったら RING_DRAW_MS で描く */
+  /* M-11 スコアの輪: マウントの印 (data-js) があって画面に入る前 (data-in なし) は一瞬で隠し、入ったら RING_DRAW_MS で描く。
+     隠している間は端を butt にする: round のままだと、長さ 0 の dash の丸い端が点として残る (Chromium で実測) */
   .lp .lp-ring[data-js]:not([data-in]) .lp-ring-value {
     stroke-dashoffset: 100;
+    stroke-linecap: butt;
   }
   .lp .lp-ring[data-in] .lp-ring-value {
     transition: stroke-dashoffset var(--lp-dur-slow) var(--lp-ease);
