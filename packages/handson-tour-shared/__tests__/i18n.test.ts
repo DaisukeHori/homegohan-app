@@ -382,14 +382,17 @@ describe('Step 3 の文言の「n つ」は、ツアーが Step 3 までに付�
     expect(en).not.toMatch(/\byou (logged|earned)\b|\bto earn it\b/i);
   });
 
-  // planner は、AI で週の献立を初めて作ったとき (週の献立の生成の完了) と、使い方ガイドのお試しの献立の追加で付く (#1867)。
+  // planner は、AI で複数の日 (2 日以上) の献立を初めてまとめて作ったとき (1 週間に満たなくても) と、使い方ガイドのお試しの献立の追加で付く (#1867)。
   // お試しの献立を追加せずに進んだ人には未獲得のカードを指すので、獲得の有無を言わず、2 つのもらい方を説明する
-  it('planner の吹き出しは獲得の有無を言わず、AI の週の献立とお試しの献立の 2 つのもらい方を説明する (#1867)', () => {
+  it('planner の吹き出しは獲得の有無を言わず、AI で複数の日の献立をまとめて作ることとお試しの献立の 2 つのもらい方を説明する (#1867)', () => {
     const ja = HANDSON_TOUR_I18N_JA.tour.step3.planner_bubble;
     const en = HANDSON_TOUR_I18N_EN.tour.step3.planner_bubble;
-    expect(ja).toBe('AI で 1 週間の献立を作るか、お試しの献立を追加するともらえるバッジです');
-    expect(en).toBe('Earned by creating a week of meals with AI, or by adding the trial meal plan');
-    // 以前の「献立を 1 度作りました」は獲得済みの言い方で、付く条件 (AI の週の献立・お試しの献立) も言っていなかった
+    expect(ja).toBe('AI で複数の日の献立をまとめて作るか、お試しの献立を追加するともらえるバッジです');
+    expect(en).toBe('Earned by creating meals for multiple days at once with AI, or by adding the trial meal plan');
+    // 付くのは 1 週間分に限らない (週の途中に今週の残りを作ったときも付く) ので、「1 週間」とは書かない
+    expect(ja).not.toContain('1 週間');
+    expect(en).not.toMatch(/\ba week\b/i);
+    // 以前の「献立を 1 度作りました」は獲得済みの言い方で、付く条件 (AI の献立・お試しの献立) も言っていなかった
     expect(ja).not.toMatch(/しました|もらいました/);
     expect(en).not.toMatch(/\byou (created|earned)\b/i);
   });

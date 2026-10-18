@@ -1,18 +1,21 @@
 // @vitest-environment node
 /**
- * #1867 「計画上手」(planner) は、AI で週の献立を初めて作ったときにも付く。利用者が実際に週の献立を作る経路
- * (Web の「AI献立アシスタント」(V4GenerateModal)・AI のチャット・モバイル) は POST /api/ai/menu/v4/generate (と v5/generate) なので、
- * この 2 つも、生成の対象の枠が 1 週間 (異なる日付が WEEKLY_MENU_GENERATION_MIN_DAYS 日以上) を覆うときは、
- * 行を作るときに generated_data へ週の献立の生成の印 (weeklyRequest: true) を書く。完了したら DB のトリガー (保険として状態の確認・バッジの一覧も) がこの印で付ける。
+ * #1867 「計画上手」(planner) は、AI で複数の日の献立を初めてまとめて作ったときにも付く (1 週間に満たなくても。
+ * オーナーの選択 2026-10-18 21 時台: 週の途中に「空欄を埋める」で今週の残りを AI で作ったとき (7 日未満) も付ける)。
+ * 利用者が実際に献立を作る経路 (Web の「AI献立アシスタント」(V4GenerateModal)・AI のチャット・モバイル) は
+ * POST /api/ai/menu/v4/generate (と v5/generate) なので、この 2 つは、生成の対象の枠が複数の日
+ * (異なる日付が MULTI_DAY_MENU_GENERATION_MIN_DAYS 日以上) にわたるときは、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
+ * 完了したら DB のトリガー (保険として状態の確認・バッジの一覧も) がこの印で付ける。
  *
  * 確かめること:
- *   - 7 日 × 3 食・7 日の夕食だけ: 印を書く (究極モードの印 ultimateMode はそのまま残る)
- *   - 6 日 × 3 食・1 日 3 食・1 食: 印を書かない (キー自体が無い)
+ *   - 7 日 × 3 食・7 日の夕食だけ (従来どおり)・6 日 × 3 食 (週の途中の残り)・2 日 × 3 食・2 日の夕食だけ (下限ちょうど): 印を書く
+ *     (究極モードの印 ultimateMode はそのまま残る)
+ *   - 1 日 3 食 (1 日分)・1 食: 印を書かない (キー自体が無い)
  *   - v5 は行を作ったあとに requestId を埋め込むため generated_data を丸ごと書き直すので、その更新にも同じ印がある (更新で消えない)
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { addDaysToDate } from '@/lib/date-utils';
-import { WEEKLY_MENU_GENERATION_MIN_DAYS } from '@/lib/ai/weekly-menu-request-origin';
+import { MULTI_DAY_MENU_GENERATION_MIN_DAYS } from '@/lib/ai/weekly-menu-request-origin';
 
 const h = vi.hoisted(() => ({
   getUser: vi.fn(),
@@ -96,6 +99,8 @@ const USER = { id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11' };
 /** 生成の対象の最初の日 */
 const FIRST_DAY = '2026-10-19';
 const MAIN_MEALS = ['breakfast', 'lunch', 'dinner'] as const;
+/** 1 週間 = 7 日 (従来の 1 週間分の生成も今までどおり印を書くことを確かめる) */
+const DAYS_PER_WEEK = 7;
 
 /** FIRST_DAY から days 日、mealTypes の枠 */
 function slots(days: number, mealTypes: readonly string[] = MAIN_MEALS) {
@@ -142,7 +147,7 @@ beforeEach(() => {
   };
 });
 
-describe.each(CASES)('$name: 1 週間を覆う生成の行に週の献立の生成の印を書く (#1867)', (testCase) => {
+describe.each(CASES)('$name: 複数の日にわたる生成の行に印を書く (#1867)', (testCase) => {
   /** 行を作るとき (と、v5 は requestId を埋め込む更新) の generated_data */
   async function generatedDataOf(body: Record<string, unknown>) {
     const res = await testCase.post(post(body));
@@ -156,8 +161,11 @@ describe.each(CASES)('$name: 1 週間を覆う生成の行に週の献立の生�
   }
 
   it.each([
-    ['7 日 × 朝昼夕 (21 枠)', slots(WEEKLY_MENU_GENERATION_MIN_DAYS)],
-    ['7 日の夕食だけ (7 枠)', slots(WEEKLY_MENU_GENERATION_MIN_DAYS, ['dinner'])],
+    ['7 日 × 朝昼夕 (21 枠。1 週間は従来どおり)', slots(DAYS_PER_WEEK)],
+    ['7 日の夕食だけ (7 枠)', slots(DAYS_PER_WEEK, ['dinner'])],
+    ['6 日 × 朝昼夕 (1 週間に満たない。週の途中の残り)', slots(DAYS_PER_WEEK - 1)],
+    ['2 日 × 朝昼夕 (下限ちょうど)', slots(MULTI_DAY_MENU_GENERATION_MIN_DAYS)],
+    ['2 日の夕食だけ (2 枠)', slots(MULTI_DAY_MENU_GENERATION_MIN_DAYS, ['dinner'])],
   ])('%s: 印 (weeklyRequest: true) を書く', async (_label, targetSlots) => {
     const { inserted, updated } = await generatedDataOf({ targetSlots });
 
@@ -170,8 +178,8 @@ describe.each(CASES)('$name: 1 週間を覆う生成の行に週の献立の生�
     }
   });
 
-  it('究極モードで 1 週間を作るときも印を書き、究極モードの印もそのまま書く', async () => {
-    const { inserted, updated } = await generatedDataOf({ targetSlots: slots(WEEKLY_MENU_GENERATION_MIN_DAYS), ultimateMode: true });
+  it('究極モードで複数の日を作るときも印を書き、究極モードの印もそのまま書く', async () => {
+    const { inserted, updated } = await generatedDataOf({ targetSlots: slots(MULTI_DAY_MENU_GENERATION_MIN_DAYS), ultimateMode: true });
 
     expect(inserted.weeklyRequest).toBe(true);
     expect(inserted.ultimateMode).toBe(true);
@@ -179,8 +187,7 @@ describe.each(CASES)('$name: 1 週間を覆う生成の行に週の献立の生�
   });
 
   it.each([
-    ['6 日 × 朝昼夕 (1 週間に 1 日足りない)', slots(WEEKLY_MENU_GENERATION_MIN_DAYS - 1)],
-    ['1 日の朝昼夕', slots(1)],
+    ['1 日の朝昼夕 (1 日分。下限に 1 日足りない)', slots(MULTI_DAY_MENU_GENERATION_MIN_DAYS - 1)],
     ['1 食', slots(1, ['dinner'])],
   ])('%s: 印を書かない (キーも無い)', async (_label, targetSlots) => {
     const { inserted, updated } = await generatedDataOf({ targetSlots });
@@ -192,8 +199,8 @@ describe.each(CASES)('$name: 1 週間を覆う生成の行に週の献立の生�
 });
 
 describe('POST /api/ai/menu/v4/generate: 印のほかの generated_data は今までどおり (#1867)', () => {
-  it('1 週間の生成の行の generated_data は、究極モードの印と週の献立の生成の印の 2 つだけ', async () => {
-    const res = await postV4Generate(post({ targetSlots: slots(WEEKLY_MENU_GENERATION_MIN_DAYS) }));
+  it('複数の日の生成の行の generated_data は、究極モードの印と複数の日の生成の印の 2 つだけ', async () => {
+    const res = await postV4Generate(post({ targetSlots: slots(MULTI_DAY_MENU_GENERATION_MIN_DAYS) }));
     expect(res.status).toBe(200);
     expect(queueWrite('insert')?.generated_data).toEqual({ ultimateMode: false, weeklyRequest: true });
   });

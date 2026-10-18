@@ -24,7 +24,7 @@ INSERT INTO badges (code, name, description, condition_json) VALUES
 
 -- 🤖 AI & Misc
 ('hello_ai', 'Hello AI', 'AIからのアドバイスを受け取りました。', '{"type": "feedback_view", "min": 1}'),
-('planner', 'Planner', '使い方ガイドで、お試しの献立を追加しました。献立づくりの練習はばっちりです。', '{"type": "menu_create", "min": 1}'),
+('planner', 'Planner', 'AIで複数の日の献立をはじめてまとめて作りました。使い方ガイドのお試しでも付きます。', '{"type": "menu_create", "min": 1}'),
 
 -- 🏆 Master
 ('legend_100', 'Streak Legend', '100日連続記録。あなたは真のレジェンドです。', '{"type": "streak", "days": 100}')

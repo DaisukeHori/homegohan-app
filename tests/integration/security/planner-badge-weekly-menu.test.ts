@@ -2,7 +2,9 @@
  * #1867 「計画上手」(planner) を、AI の週の献立の生成が成功したときにも付ける (実 DB の結合テスト)。
  * オーナーの選択 (2026-10-18 17 時台、選択式): 「取れる条件を足す」— AI で週の献立を初めて作ったときにも付くようにし、説明もそれに合わせる。
  *
- * 週の献立の生成 (1 週間分の生成: POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
+ * AI で複数の日の献立をまとめて作る生成 (POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が複数の日 (異なる日付が 2 日以上) に
+ * わたるとき・AI 相談の 1 週間分の生成) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。1 週間に満たなくても書く
+ * (オーナーの選択 2026-10-18 21 時台: 週の途中に「空欄を埋める」で今週の残りを AI で作ったとき (7 日未満) も付ける)。
  * Edge Function が献立を保存し終えると行は completed になる (1 食も保存できなかった・中止・止まったときは failed)。
  * 付与の本体は、行が completed になった時点で付ける DB のトリガー weekly_menu_requests_award_planner
  * (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。状態の確認 (GET /api/ai/menu/weekly/status) と
@@ -20,8 +22,9 @@
  *   W-4: (保険) 状態の確認を読まなかった人も、バッジの一覧 (GET /api/badges) を開くと、完了した週の献立の生成の行から planner が付く
  *        (印の絞り込み generated_data->>weeklyRequest = 'true' が実 DB の PostgREST で効く)。印の無い完了の行だけなら付かない
  *   W-5: 利用者が実際に週の献立を作る経路 (Web の AI献立アシスタント・モバイルが呼ぶ POST /api/ai/menu/v4/generate) の route を
- *        そのまま呼んで行を作る。対象の枠が 1 週間 (7 日) なら行に印が付き、完了を書いた時点で (状態の確認もバッジの一覧も読まずに)
- *        トリガーが planner を付ける。1 日だけの生成の行には印が無く、完了しても付かない (トリガーでも、状態の確認でも、バッジの一覧でも)。
+ *        そのまま呼んで行を作る。対象の枠が複数の日 (下限ちょうどの 2 日・従来の 1 週間 (7 日)) なら行に印が付き、完了を書いた時点で
+ *        (状態の確認もバッジの一覧も読まずに) トリガーが planner を付ける。1 日だけの生成の行には印が無く、完了しても付かない
+ *        (トリガーでも、状態の確認でも、バッジの一覧でも)。
  *        Edge Function は呼ばない (呼ぶ関数を差し替え、完了は service role で書く)
  *   W-6: トリガー (付与の本体)。画面が完了を読まなくても (モバイルは状態の確認もバッジの一覧も読まない)、行が completed になった時点で付く:
  *        - 印のある行が completed になると本人に 1 つ付く。completed のまま進み具合を書き直しても 1 つのまま (獲得日時も変わらない)
@@ -42,7 +45,7 @@ import { afterAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
 import { MOCK_MENU_RESPONSE } from '@homegohan/handson-tour-shared';
 import {
-  WEEKLY_MENU_GENERATION_MIN_DAYS,
+  MULTI_DAY_MENU_GENERATION_MIN_DAYS,
   weeklyMenuRequestWeeklyOriginData,
 } from '../../../src/lib/ai/weekly-menu-request-origin';
 import { addDaysToDate } from '../../../src/lib/date-utils';
@@ -123,6 +126,8 @@ const TS = Date.now();
 const TEST_PROMPT = `integration-1867-planner-weekly-${TS}`;
 /** 週の開始日 (行の start_date。生成は動かさないので、日付そのものに意味は無い) */
 const WEEK_START = '2026-10-19';
+/** 1 週間 = 7 日 (従来の 1 週間分の生成も今までどおり印が付き planner が付くことを確かめる) */
+const DAYS_PER_WEEK = 7;
 const createdUserIds: string[] = [];
 
 interface TestUser {
@@ -367,7 +372,7 @@ describe('#1867 planner: AI の週の献立の生成でも付く (実 DB)', () =
     return generatedData;
   }
 
-  it('W-5: v4/generate で 1 週間を作った行は印が付き、完了すると planner が付く。1 日だけの生成では付かない', async () => {
+  it('W-5: v4/generate で複数の日 (2 日・1 週間) を作った行は印が付き、完了すると planner が付く。1 日だけの生成では付かない', async () => {
     // 1 日だけの生成: 行に印が無く、完了しても状態の確認・バッジの一覧のどちらでも付かない
     const dayUser = await createSignedInUser('w5-day');
     const dayRequestId = await generateViaV4(1);
@@ -380,15 +385,20 @@ describe('#1867 planner: AI の週の献立の生成でも付く (実 DB)', () =
     expect(dayBadges.badges.find((badge) => badge.code === 'planner')?.earned).toBe(false);
     expect(await plannerRows(dayUser.id)).toEqual([]);
 
-    // 1 週間の生成: 行に印が付き (Edge Function の書き足しでも消えない)、完了を状態の確認が読むと付く
-    const weekUser = await createSignedInUser('w5-week');
-    const weekRequestId = await generateViaV4(WEEKLY_MENU_GENERATION_MIN_DAYS);
-    const weekData = await completeLikeEdgeFunction(weekRequestId);
-    expect(weekData.weeklyRequest).toBe(true);
-    // 完了を書いた時点で (状態の確認もバッジの一覧も読む前に) トリガーが付けている
-    expect(await plannerRows(weekUser.id)).toHaveLength(1);
-    expect((await runStatus(weekRequestId)).body.status).toBe('completed');
-    expect(await plannerRows(weekUser.id)).toHaveLength(1);
+    // 複数の日の生成 (下限ちょうどの 2 日 = 週の途中の残りの形・従来の 1 週間): 行に印が付き (Edge Function の書き足しでも消えない)、
+    // 完了を書いた時点で (状態の確認もバッジの一覧も読む前に) トリガーが付けている。状態の確認が読んでも 1 つのまま
+    for (const [label, days] of [
+      ['multi', MULTI_DAY_MENU_GENERATION_MIN_DAYS],
+      ['week', DAYS_PER_WEEK],
+    ] as const) {
+      const multiUser = await createSignedInUser(`w5-${label}`);
+      const multiRequestId = await generateViaV4(days);
+      const multiData = await completeLikeEdgeFunction(multiRequestId);
+      expect(multiData.weeklyRequest, `${days} 日`).toBe(true);
+      expect(await plannerRows(multiUser.id), `${days} 日`).toHaveLength(1);
+      expect((await runStatus(multiRequestId)).body.status).toBe('completed');
+      expect(await plannerRows(multiUser.id), `${days} 日`).toHaveLength(1);
+    }
   });
 
   describe('W-6: 行が completed になった時点で、DB のトリガーが付ける (画面が完了を読まなくても付く)', () => {

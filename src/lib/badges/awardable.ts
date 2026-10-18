@@ -23,7 +23,7 @@ export const AWARDABLE_BADGE_CODES = [
   'streak_7',
 
   // POST /api/menu-plans/add が、献立を追加したとき (使い方ガイドのお試し) に awardBadge で付与する。
-  // AI の週の献立の生成 (1 週間分の生成: POST /api/ai/menu/v4/generate・/v5/generate で対象が 1 週間を覆うとき・
+  // AI で複数の日の献立をまとめて作った生成 (POST /api/ai/menu/v4/generate・/v5/generate で対象が複数の日 (2 日以上) にわたるとき・
   // AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request) が完了したときも付ける (#1867): 行が completed になった時点で
   // DB のトリガー weekly_menu_requests_award_planner (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql) が付ける。
   // トリガーが付け損ねたときの保険として、状態の確認 (GET /api/ai/menu/weekly/status) が完了を読んだときの awardBadge と

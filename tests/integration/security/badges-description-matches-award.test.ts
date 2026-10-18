@@ -1,28 +1,31 @@
 /**
  * #1867 (設計 marketing/01 §24 Q-13) バッジの説明を付く条件に合わせる migration (20261018040000_badges_description_matches_award.sql) と、
- * planner の説明を AI の週の献立の生成でも付くことに合わせた migration (20261018050000_planner_badge_description_weekly_menu.sql) の結合テスト
+ * planner の説明を AI の週の献立の生成でも付くことに合わせた migration (20261018050000_planner_badge_description_weekly_menu.sql) と、
+ * planner の説明を AI で複数の日の献立をまとめて作ったとき (1 週間に満たなくても) に付くことに合わせた migration
+ * (20261018070000_planner_badge_description_multi_day.sql) の結合テスト
  *
  * 書き方の取り決めと、説明が付く条件と合うことの突き合わせは tests/badges-description-matches-award-contract.test.ts (静的な検査)。
  * ここでは、実 DB の badges の行で次を確かめる。
- *   1. migration を当てた DB では、書き換えた 5 つのバッジの説明がいまの文 (planner は 20261018050000 の文、ほかは 20261018040000 の文) で、
+ *   1. migration を当てた DB では、書き換えた 5 つのバッジの説明がいまの文 (planner は 20261018070000 の文、ほかは 20261018040000 の文) で、
  *      name・condition_json は元の行と同じ
- *   2. 20261018050000 の rollback で planner の説明が 20261018040000 の文に戻り、ほかの列とほかのバッジの行は変わらない。
+ *   2. 20261018070000 の rollback で planner の説明が 20261018050000 の文に戻り、ほかの列とほかのバッジの行は変わらない。
  *      もう一度流すといまの文に戻り、2 回流しても同じ
- *   3. rollback を新しい順に流すと (20261018050000 → 20261018040000)、5 つの説明が元の文に戻り、ほかの列とほかのバッジの行は変わらない
+ *   3. rollback を新しい順に流すと (20261018070000 → 20261018050000 → 20261018040000)、5 つの説明が元の文に戻り、
+ *      ほかの列とほかのバッジの行は変わらない
  *   4. migration を古い順にもう一度流すといまの文に戻り、2 回流しても同じ (ほかの行は変わらない)
  *
  * 最後に migration を古い順にもう一度流し、DB を migration を当てた状態に戻す。
- * 2 つの migration は同じ行 (planner) を書き換えるので、1 つのファイルで順に確かめる (結合テストのファイルが並んで走っても、行の取り合いにならない)。
+ * 3 つの migration は同じ行 (planner) を書き換えるので、1 つのファイルで順に確かめる (結合テストのファイルが並んで走っても、行の取り合いにならない)。
  * SQL は、ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) で流す。本番には接続しない。
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/badges-description-matches-award.test.ts
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
-  BADGE_DESCRIPTION_MIGRATION,
   BADGE_DESCRIPTION_MIGRATIONS,
   PLANNER_DESCRIPTION_MIGRATION,
-  PLANNER_DESCRIPTION_ROLLBACK,
+  PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION,
+  PLANNER_MULTI_DAY_DESCRIPTION_ROLLBACK,
   currentBadgeDescriptions,
   parseDescriptionUpdates,
   readOriginalBadgeRows,
@@ -40,12 +43,13 @@ if (!url || !serviceKey) {
 const MIGRATION_SQLS = BADGE_DESCRIPTION_MIGRATIONS.map(({ migration }) => readRepoFile(migration));
 /** 戻し口を新しい順に (元の文に戻す) */
 const ROLLBACK_SQLS = [...BADGE_DESCRIPTION_MIGRATIONS].reverse().map(({ rollback }) => readRepoFile(rollback));
-const PLANNER_MIGRATION_SQL = readRepoFile(PLANNER_DESCRIPTION_MIGRATION);
-const PLANNER_ROLLBACK_SQL = readRepoFile(PLANNER_DESCRIPTION_ROLLBACK);
+/** planner のいまの説明を書いた migration (20261018070000) と戻し口 */
+const PLANNER_MIGRATION_SQL = readRepoFile(PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION);
+const PLANNER_ROLLBACK_SQL = readRepoFile(PLANNER_MULTI_DAY_DESCRIPTION_ROLLBACK);
 /** いまの説明 (migration を全部当てたあと) */
 const CURRENT_DESCRIPTIONS = currentBadgeDescriptions();
-/** 20261018040000 の文 (planner の rollback が戻す先) */
-const FIRST_MIGRATION_DESCRIPTIONS = parseDescriptionUpdates(readRepoFile(BADGE_DESCRIPTION_MIGRATION));
+/** 20261018050000 の文 (planner のいまの migration の rollback が戻す先) */
+const PREVIOUS_PLANNER_DESCRIPTIONS = parseDescriptionUpdates(readRepoFile(PLANNER_DESCRIPTION_MIGRATION));
 const REWRITTEN_CODES = [...CURRENT_DESCRIPTIONS.keys()];
 const ORIGINAL_ROWS = readOriginalBadgeRows();
 
@@ -108,7 +112,7 @@ afterAll(async () => {
 });
 
 describe('#1867 バッジの説明の migration (実 DB)', () => {
-  it('migration を当てた DB では、5 つの説明がいまの文 (planner は 20261018050000 の文) で、name と condition_json は元の行と同じ', () => {
+  it('migration を当てた DB では、5 つの説明がいまの文 (planner は 20261018070000 の文) で、name と condition_json は元の行と同じ', () => {
     expect(REWRITTEN_CODES.length).toBeGreaterThan(0);
     expect(CURRENT_DESCRIPTIONS.get('planner')).toBe(parseDescriptionUpdates(PLANNER_MIGRATION_SQL).get('planner'));
     for (const code of REWRITTEN_CODES) {
@@ -122,7 +126,7 @@ describe('#1867 バッジの説明の migration (実 DB)', () => {
     }
   });
 
-  it('20261018050000 の rollback で planner の説明が 20261018040000 の文に戻り、もう一度流すといまの文に戻る (ほかの列・ほかの行は変わらない)', async () => {
+  it('20261018070000 の rollback で planner の説明が 20261018050000 の文に戻り、もう一度流すといまの文に戻る (ほかの列・ほかの行は変わらない)', async () => {
     await asPostgres(PLANNER_ROLLBACK_SQL);
     const afterRollback = await readBadges();
 
@@ -130,7 +134,7 @@ describe('#1867 バッジの説明の migration (実 DB)', () => {
     for (const [code, row] of afterRollback) {
       expect(withoutDescription(row), `${code} の description 以外の列が変わった`).toEqual(withoutDescription(before.get(code)));
       if (code === 'planner') {
-        expect(row.description).toBe(FIRST_MIGRATION_DESCRIPTIONS.get('planner'));
+        expect(row.description).toBe(PREVIOUS_PLANNER_DESCRIPTIONS.get('planner'));
         expect(row.description).not.toBe(before.get(code)?.description);
       } else {
         expect(row.description, `${code} は planner の rollback の対象外`).toBe(before.get(code)?.description);

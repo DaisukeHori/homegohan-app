@@ -158,12 +158,12 @@ const USER_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 const NOW = '2026-10-08T03:00:00.000Z';
 
 // 本番の badges マスタの planner 行 (supabase/baseline/prod_reference_data.sql。description は
-// 20261018050000_planner_badge_description_weekly_menu.sql で書き換えた後の文)。icon は絵文字
+// 20261018070000_planner_badge_description_multi_day.sql で書き換えた後の文)。icon は絵文字
 const PLANNER: Row = {
   id: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
   code: 'planner',
   name: '計画上手',
-  description: 'AIで1週間の献立をはじめて作りました。使い方ガイドのお試しでも付きます。',
+  description: 'AIで複数の日の献立をはじめてまとめて作りました。使い方ガイドのお試しでも付きます。',
   icon: '📋',
   priority: 40,
 };

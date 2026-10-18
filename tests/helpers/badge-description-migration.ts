@@ -1,6 +1,8 @@
 /**
  * #1867 (§24 Q-13) バッジの説明を付く条件に合わせる migration (20261018040000_badges_description_matches_award.sql) と、
- * planner の説明を AI の週の献立の生成でも付くことに合わせた migration (20261018050000_planner_badge_description_weekly_menu.sql) を読む道具。
+ * planner の説明を AI の週の献立の生成でも付くことに合わせた migration (20261018050000_planner_badge_description_weekly_menu.sql) と、
+ * planner の説明を AI で複数の日の献立をまとめて作ったとき (1 週間に満たなくても) に付くことに合わせた migration
+ * (20261018070000_planner_badge_description_multi_day.sql) を読む道具。
  * 静的な検査 (tests/badges-description-matches-award-contract.test.ts) と結合テスト
  * (tests/integration/security/badges-description-matches-award.test.ts) の両方が使う。
  */
@@ -13,15 +15,22 @@ export const BADGE_DESCRIPTION_MIGRATION = 'supabase/migrations/20261018040000_b
 export const BADGE_DESCRIPTION_ROLLBACK = 'supabase/rollbacks/20261018040000_badges_description_matches_award.down.sql';
 /**
  * #1867 planner が AI の週の献立の生成でも付くようになったのに合わせ、planner の説明だけをもう一度書き換えた migration と戻し口
- * (20261018040000 の後に当たる。planner のいまの説明はこちらの文)
+ * (20261018040000 の後に当たる。この時点の文は「1 週間」。いまの文は下の PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION)
  */
 export const PLANNER_DESCRIPTION_MIGRATION = 'supabase/migrations/20261018050000_planner_badge_description_weekly_menu.sql';
 export const PLANNER_DESCRIPTION_ROLLBACK = 'supabase/rollbacks/20261018050000_planner_badge_description_weekly_menu.down.sql';
+/**
+ * #1867 planner の印を書く条件を「1 週間 (7 日以上)」から「複数の日 (2 日以上)」に広げたのに合わせ、planner の説明だけを
+ * もう一度書き換えた migration と戻し口 (20261018050000 の後に当たる。planner のいまの説明はこちらの文)
+ */
+export const PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION = 'supabase/migrations/20261018070000_planner_badge_description_multi_day.sql';
+export const PLANNER_MULTI_DAY_DESCRIPTION_ROLLBACK = 'supabase/rollbacks/20261018070000_planner_badge_description_multi_day.down.sql';
 
 /** バッジの説明を書き換える migration と戻し口。当たる順 (版の番号の順) に並べる。戻すときは逆順 */
 export const BADGE_DESCRIPTION_MIGRATIONS = [
   { migration: BADGE_DESCRIPTION_MIGRATION, rollback: BADGE_DESCRIPTION_ROLLBACK },
   { migration: PLANNER_DESCRIPTION_MIGRATION, rollback: PLANNER_DESCRIPTION_ROLLBACK },
+  { migration: PLANNER_MULTI_DAY_DESCRIPTION_MIGRATION, rollback: PLANNER_MULTI_DAY_DESCRIPTION_ROLLBACK },
 ] as const;
 
 /** badges の元の行 (INSERT) がある migration。本番スキーマのベースラインを入れたもので、書き換えられない */

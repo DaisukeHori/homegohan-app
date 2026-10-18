@@ -3,7 +3,7 @@
  * 付与の本体は、行が completed になった時点で付ける DB のトリガー weekly_menu_requests_award_planner
  * (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql。tests/integration/security/planner-badge-weekly-menu.test.ts の W-6)。
  *
- * 週の献立の生成 (1 週間分の生成: POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
+ * AI で複数の日の献立をまとめて作る生成 (POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が複数の日 (2 日以上) にわたるとき・AI 相談の 1 週間分の生成) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
  * Edge Function が献立を保存し終えると行は completed になり (1 食も保存できなかった・中止・止まったときは failed)、
  * 画面は完了を主に行の変化 (Realtime) で知り、この状態の確認は代替の経路。状態の確認は、generated_data 全体を読まずに印だけを weekly_request として読む。
  *

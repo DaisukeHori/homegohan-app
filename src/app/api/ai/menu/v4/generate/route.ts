@@ -366,10 +366,10 @@ export async function POST(request: Request) {
         },
         // 究極モードの生成かを、行を作った時点から行に残す (#1582。生成中の行の確認 (weekly/pending) が読む。
         // Edge Function の工程 1 が generated_data を書くまでの間も見分けられるように)
-        // #1867: 対象の枠が 1 週間 (異なる日付が 7 日以上) を覆う生成なら、週の献立の生成の印 (weeklyRequest: true) も書く。
+        // #1867: 対象の枠が複数の日 (異なる日付が 2 日以上。1 週間に満たない週の途中の残りも) にわたる生成なら、印 (weeklyRequest: true) も書く。
         // 行が completed になった時点で DB のトリガー (weekly_menu_requests_award_planner) がこの印を見て planner を付ける
         // (保険として状態の確認 GET /api/ai/menu/weekly/status とバッジの一覧 GET /api/badges も。src/lib/ai/weekly-menu-request-origin.ts。
-        // 1 食・1 日・数日の生成、献立の改善には書かない)
+        // 1 食・1 日の生成、1 日分の献立の改善には書かない)
         generated_data: {
           ...weeklyMenuRequestUltimateModeData(ultimateMode),
           ...weeklyMenuRequestWeeklyOriginDataForDates(dates),
