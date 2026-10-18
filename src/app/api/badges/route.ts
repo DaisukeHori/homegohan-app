@@ -163,7 +163,7 @@ export async function GET(request: Request) {
       else if (badge.code === 'streak_7' && streak >= 7) {
         earned = true;
       }
-      // 計画上手 (AI の週の献立の生成が完了した。#1867。付与の本体は DB のトリガーで、ここは保険)
+      // 計画上手 (AI で複数の日 (2 日以上) の献立をまとめて作る生成が完了した。#1867。付与の本体は DB のトリガーで、ここは保険)
       else if (badge.code === 'planner' && hasCompletedWeeklyMenuRequest) {
         earned = true;
       }

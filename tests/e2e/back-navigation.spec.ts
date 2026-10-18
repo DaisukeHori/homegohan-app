@@ -38,7 +38,7 @@ const GUIDE_HEADING = /使い方ガイド/;
 /** ルートの layout のスキップリンクの飛び先 (src/app/layout.tsx) */
 const SKIP_LINK_HASH = '#main-content';
 
-/** 紹介ページのヘッダーのハッシュのリンク (#features・#how・#badges・#faq) */
+/** 紹介ページのヘッダーのハッシュのリンク (#how・#features・#family・#pricing・#faq) */
 const HEADER_HASH_LINKS = LANDING_COPY.header.nav.filter((item) => item.href.startsWith('#'));
 /** ハッシュから他の公開ページへ移って戻る型に使うハッシュ (オーナーの報告の #how) */
 const REPORTED_HASH = '#how';
