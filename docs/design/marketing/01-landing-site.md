@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | 版 | v1.7 (2026-10-18。設計ゲート R6 の指摘 4 件を反映: バッジは付与の条件と名前・説明が合う 4 つにし (§4.6)、デモの栄養は幅によらず行の並びにし (§8.3)、食事の写真の解析の画面 2 枚はアプリが作れる値で撮り直し (§7.1)、デモのサンプルの注記の検査の場所を直した (E-3)) |
-| Status | 設計ゲート通過 (wf_d9caf74c-12e・wf_fc234aa6-092)。実装は §17 の段分け (段 0 → 1 → 2 を 1 本の WF・1 本の PR) |
+| Status | 設計ゲート通過 (wf_d9caf74c-12e・wf_fc234aa6-092)。段 0〜2 は実装済み (1 本の WF・1 本の PR) |
 | Issue | #1867 (サービスの本サイト (homegohan.com) を作り直す) の本文とコメント (2026-10-18 の 2 件) |
 | 範囲の正本 | Issue #1867 の本文とコメント。本書はその上で決めた範囲 (紹介ページ 1 本 = `/`) と設計。Issue と食い違ったら本書が正 |
 | 成果物 | 本書と、静的な試作 `docs/design/marketing/prototype/index.html` (§23。見た目の参考で、正典ではない) |
@@ -316,7 +316,7 @@ public/marketing/photos/                 デモの写真 3 枚 (§7.2)
 
 | # | トレース |
 |---|---|
-| S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` (既存の殻) が `getCspNonce()` → `SiteStructuredData` (既存) + `LandingPage` を描く (データ取得なし) → HTML (全文。`<head>` にヒーローの前の画面 `comment.png` の preload) → ブラウザ: 見出しがフォールバックのフォントで描かれ、ヒーローの文字と画面の塊が立ち上がり (M-2・M-3)、見出しか前の画面で LCP 確定 → `Reveal` が IO でセクションとカードを順に表示 (要素の高さに依らない判定: §6.3) → `#demo` で写真を選ぶ (S-6) → 「無料で始める」(`CtaLink` = `Link href="/signup"`) → `/signup` |
+| S-1 | `GET /` → proxy が nonce を付け `updateSession` (未ログイン・`/` は publicPaths) → `page.tsx` (既存の殻) が `getCspNonce()` → `SiteStructuredData` (既存) + `LandingPage` を描く (データ取得なし) → HTML (全文。`<head>` にヒーローの前の画面 `comment.png` の preload) → ブラウザ: 見出しがフォールバックのフォントで描かれ、ヒーローの文字と画面の塊が立ち上がり (M-2・M-3。画面の塊は不透明度を動かさない)、前の画面か見出し (フォントの差し替えで描き直されたとき) で LCP 確定 → `Reveal` が IO でセクションとカードを順に表示 (要素の高さに依らない判定: §6.3) → `#demo` で写真を選ぶ (S-6) → 「無料で始める」(`CtaLink` = `Link href="/signup"`) → `/signup` |
 | S-2 | 375 px: `<meta name="viewport">` は `maximum-scale=5, user-scalable=yes` (殻の `viewport`。§9.3) でピンチの拡大ができる。`.lp` の根は横方向を切り取り (§8.3 の `marketing.css`)、どの部品も 320 px で横にはみ出さない。bento は 1 列。ヒーローの 3 枚の画面は見出しの下に置く (扇の箱は `min(100%, 26rem)` で、傾けた後ろの端末の外接矩形も箱の中に収まる: §5.4)。使い方は 1 列で、手順ごとに画面 → 番号・見出し・本文の順。ヘッダーは上に固定 (`SiteHeader`) で、ヘッダーの「無料で始める」(小さい CTA。幅で隠さない) は、少しずつのスクロールでも、`#demo` などのページの中のリンクで一気に移っても、画面の上にある。ヘッダーの中身は 320 px でも 1 行に収まる (マークと名前・「無料で始める」。ナビのアンカーは 768 px 未満、ログインは 640 px 未満で隠す)。本文は 16 px・一文 (lead) は 17 px 以上、注記・ナビ・ボタン・デモの写真の名前は 14 px (下限) (§5.2。E-19 が確かめる)。デモの推定の栄養は、幅によらず 5 行の並び (各行の左に名前、右に値と単位) で、名前は途中で折れない。バッジは 1 列 (アイコンの輪の右に名前と説明) で、名前は 1 行。デモの写真の名前 (4 字まで)・安心の見出し・フッターのリンクの文も 1 行 (E-22) |
 | S-3 | Tab: スキップリンク (layout) → マーク (`/`) → ナビ 4 つ → ログイン → 無料で始める → ヒーローの CTA 2 つ (ヒーローの画面は画像だけでフォーカスしない) → デモの写真 3 つ (`button aria-pressed`。Enter / Space で押すと分析中は `aria-disabled="true"` になるが `disabled` にはしないので、フォーカスとリングはそのボタンに残る。§13.3) → (結果が出ていれば「自分の食事で試す」) → 機能のカード (リンク無し・フォーカスしない) → 安心の「プライバシーポリシーを読む」 → FAQ の `button aria-expanded` → Enter で開閉 → FAQ の末尾の「お問い合わせフォームへ」→ 最終 CTA → フッターのリンク (§13.1 のキーボードのみの行)。`:focus-visible` は globals.css の 2 トーンのリング |
 | S-4 | ランドマーク: `header` → `nav aria-label="サイトの案内"` → `main` (`LandingPage` が描く。layout の `#main-content` は `div` でランドマークではない: `src/app/layout.tsx:126`) → `section aria-labelledby` ×8 → `footer`。h1 は 1 つ (ヒーロー)。使い方の手順は `ol` (番号は読み上げの順で伝わる)。デモの結果は `role="status" aria-live="polite"` の箱に入り、選ぶたびに「分析中」「結果: …」を読み上げる。画像の alt は `landing-copy.ts` の `alt` (実際の画面は `guide-content.ts` の `imageAlt` と同じ文) |
@@ -722,7 +722,7 @@ M-4 (背景の円の視差) と M-6 (使い方の固定した端末の切り替�
 |---|---|---|---|---|---|---|---|
 | M-1 | `SiteHeader` | 読み進めている | `scrollY > HEADER_SCROLLED_PX` (24) | 背景 `rgba(250, 249, 247, 0.85)` + `backdrop-filter: blur(12px)` + 下の罫線 (`--lp-line`) が付く・外れる | `--lp-dur-fast` (背景色と影) | 背景は一瞬で付く (遷移の宣言は no-preference の中だけ) | E-5 (ヘッダーの CTA が常に見える)・U-20 |
 | M-2 | `HeroSection` の文字 | 順に読ませる | 読み込み | eyebrow → h1 → 一文 → CTA → 安心の順に `translateY(12px)` + `opacity 0 → 1`。n 番目 (0〜4) を `n × --lp-hero-step` 遅らせる | `--lp-dur` / `--lp-ease`。最後が終わるのは 240 + 320 = 560 ms | 動き無し (最初から最後の見え方) | E-7・E-17 |
-| M-3 | `HeroSection` の画面の塊 (3 枚を包む箱) | 実際のアプリの画面がそこにある | 読み込み (1 回だけ) | 3 枚を包む箱が M-2 と同じ立ち上がり。遅れは h1 と同じ 1 × `--lp-hero-step` (前の 1 枚は LCP の候補で、不透明度が 0 の間は LCP に数えられないので、文字の順の最後に回さない)。3 枚の位置と傾きは動かさない (傾きは置き方で、動きではない。立ち上がりは外側の箱に付け、中の端末の傾きを上書きしない) | `--lp-dur` / `--lp-ease` | 動き無し (最初から 3 枚が同じ位置に見える) | E-7・E-10・E-17 |
+| M-3 | `HeroSection` の画面の塊 (3 枚を包む箱) | 実際のアプリの画面がそこにある | 読み込み (1 回だけ) | 3 枚を包む箱が M-2 と同じ時間と緩急で、`translateY(12px)` → `none` だけで立ち上がる (不透明度は最初から 1 で動かさない。前の 1 枚は LCP の候補で、Chromium は不透明度 0 で最初に描いた要素を LCP の候補に数えず、後で見えるようになっても描き直されるまで数えない (Chrome 86 の LCP の変更) ため)。遅れは h1 と同じ 1 × `--lp-hero-step`。3 枚の位置と傾きは動かさない (傾きは置き方で、動きではない。立ち上がりは外側の箱に付け、中の端末の傾きを上書きしない) | `--lp-dur` / `--lp-ease` | 動き無し (最初から 3 枚が同じ位置に見える) | E-7・E-10・E-17 |
 | M-5 | `Reveal` | 読み進めるリズム | 要素のどこか 1 px でも、画面の下の 10 % を除いた範囲に入ったとき (IO の `threshold: 0` + `rootMargin: REVEAL_ROOT_MARGIN` = `0px 0px -10% 0px`・1 回だけ。要素の高さに依らない: §6.3) | `translateY(16px)` + `opacity 0 → 1`。`index` (列の中の何番目か) で `min(index, REVEAL_STAGGER_MAX) × REVEAL_STAGGER_MS` 遅らせる (包むものは §6.5) | `--lp-dur` / `--lp-ease` | 隠さない (隠す規則も遷移も no-preference の中だけ)。JS が無くても見える (§6.3) | E-1・E-7・U-22 |
 | M-7 | `DemoSection` | AI が「見ている」時間 | 写真を押す | 押した写真に枠 (`--lp-accent-ink`) → 待ちのパネル (framer-motion で `opacity` の出入り) に進捗の棒 (`scaleX 0 → 1` を `DEMO_ANALYZING_MS` かけて・線形) と待ちの印 (回る輪。1 周 1 s・線形・繰り返し) → 結果のパネルが framer-motion で `translateY(DEMO_RESULT_OFFSET_PX)` + `opacity` で現れ、栄養の 5 行が CSS で `--lp-stagger` ずつ遅れて立ち上がる | 待ち 1,400 ms (`DEMO_ANALYZING_MS`) / 出入り `DEMO_MOTION_DURATION_S` (= `--lp-dur`)・`DEMO_MOTION_EASE` (= `--lp-ease`) | 待ち時間 0 (`DEMO_ANALYZING_MS_REDUCED`)。framer-motion は `MotionConfig reducedMotion="user"` + 時間 0 の transition で退場も 0、各パネルは `initial={false}` で最初の描画から最後の見え方。進捗の棒・待ちの印・栄養の立ち上がりは CSS の宣言が no-preference の中だけなので動かない (棒は満ちた形・印は止まった形・値は最初から見える) | E-3・E-7・E-20 |
 | M-8 | `FaqSection` | 開閉 | ボタン | 答えの箱が高さを測らずに開く (例: `grid-template-rows: 0fr → 1fr`) + 矢印の回転 180° | `--lp-dur` / `--lp-ease` | 一瞬 (遷移の宣言は no-preference の中だけ。矢印の向きは開いている間 180° のまま) | E-4 |
@@ -820,6 +820,7 @@ M-4 (背景の円の視差) と M-6 (使い方の固定した端末の切り替�
 2. それまでの間に合わせとして、Unsplash License (商用利用可・帰属不要・再配布は改変して用途に組み込む形なら可) の写真を、現行のトップが指している 3 枚 (`photo-1512621776951-a57141f2eefd` → `salad-bowl.webp`・`photo-1547592180-85f173990554` → `salmon-plate.webp`・`photo-1473093295043-cdd812d0e601` → `pesto-pasta.webp`) から `?w=800&h=800&fit=crop&fm=webp&q=75` で取得し、ファイルに落として置く。`CREDITS.md` に写真の ID・作者・License・**写っているもの** (上の表の列の文) を書く。
    - 現行のトップ (`src/app/LandingPageView.tsx:51` ほか) はこの 2 枚目を「和風定食」、3 枚目を「トマト」の料理として載せていたが、実物は上の表のとおり (サーモンのプレートと、バジルソースのパスタ。本書の設計の段で 3 枚を取得して目で確かめた)。現行の名前は引き継がない。
    - 置いた写真を**目で見て**、上の表の「中身」と、§4.5 の名前・alt・料理の名前 (`dishNames`) に写っていない料理が無いことを確かめる (実装者が取得した時点で、整合ゲートの検証者がもう一度)。違ったら、写真を差し替えるのではなく、手を止めてオーケストレーターに返す (§4.5 の文言と推定の値は写真と対で決めるため)。機械の検査 (U-4) はファイルの実在と重さしか見ないので、この目視が写真の中身の唯一の確認になる。
+   - 上の取得 (`q=75`) のままでは 800×800 の WebP が 120 KB を超える写真がある (2026-10-18 に取得した `salad-bowl` は 181 KB・`salmon-plate` は 233 KB)。取得した WebP を、Pillow で品質 75・method 6 に作り直して置く (800×800 のまま。`salad-bowl` 78 KB・`salmon-plate` 107 KB・`pesto-pasta` 51 KB)。`CREDITS.md` に作り方を書く。
 3. 紹介ページは `images.unsplash.com` を実行時に読まない (外部の要求ゼロ)。`next.config.mjs` の `remotePatterns` と CSP の `img-src` は、ほかの画面が使っているので変えない。
 
 写真の権利は §24 Q-1 (オーナーの確認)。
@@ -1557,7 +1558,7 @@ origin/main `01d62462` の現状: トップの描画は `const { default: Landin
 | INP | ≤ 200 ms (p75) | web.dev (FID は 2024-03-12 に INP へ置き換わった) | field: Speed Insights。lab: デモの操作で `event timing` を取る (e2e、参考値) |
 | CLS | ≤ 0.1 (p75) | 同上 | field: Speed Insights。lab: e2e (環境変数 `LANDING_CLS_BUDGET`、既定 0.1) |
 | Lighthouse Performance (mobile・desktop) | ≥ 90 | `docs/design/CLAUDE.md` E・cross/06 §3.1 | 整合ゲートで本番ビルドを手で測る (§10.3) |
-| `/` の JS の転送量 (gzip) | ≤ 170 KB (環境変数 `LANDING_JS_BUDGET_BYTES`、既定 174080 = 170 × 1024) | 本冊で決める: Next 16 + React 19 の基礎 (約 100 KB) + 島 (約 12 KB) + framer-motion の `domAnimation` (約 20 KB) + 余裕。余裕の中には zod (^4) も入る (島が `landing-copy.ts` の `LANDING_COPY` と定数を読み、同じモジュールが Zod のスキーマを定義するので、zod も client の塊に入る。`.parse` は呼ばない)。ルートの layout が読む client の部品は `SpeedInsightsClient` だけ (`src/app/layout.tsx`) | e2e (E-11): `/` を開いて読む同じオリジンの `script` の応答の本文を集め、それぞれを zlib の既定の強さの gzip で圧縮した長さの合計。応答の `content-length` は使わない (`next start` は既定で gzip して返し、そのとき `Content-Length` を付けず、Playwright の `response.body()` は展開した後のバイトを返すため) |
+| `/` の JS の転送量 (gzip) | ≤ 240 KB (環境変数 `LANDING_JS_BUDGET_BYTES`、既定 245760 = 240 × 1024) | 実装で実測して決めた (2026-10-18・本番ビルド・Next 16.4.1。当初の 170 KB は見積もりが成り立たなかった): ルートの layout が全ページに載せる基礎が、紹介ページの島を 1 つも持たない `/terms` の時点で 179 KB (react-dom 74 KB・Next の実行時 44 KB・zod を含む共有の塊 32 KB ほか)。紹介ページは 227 KB (島・framer-motion・lucide の分が 48 KB)。実測に約 8 % の余裕を足した値 | e2e (E-11): `/` を開いて読む同じオリジンの `script` の応答の本文を集め、それぞれを zlib の既定の強さの gzip で圧縮した長さの合計。応答の `content-length` は使わない (`next start` は既定で gzip して返し、そのとき `Content-Length` を付けず、Playwright の `response.body()` は展開した後のバイトを返すため) |
 | 画像 (初期表示に入るもの) | ヒーローの前の 1 枚 (`comment.png`) だけ `preload`。ほかは `loading="lazy"`。1 枚の元の重さ ≤ 300 KB (ガイドの画像の上限と同じ)・写真 ≤ 120 KB | §7 | U-4・`tests/guide-images-1852.test.ts` (既存) |
 | 外部のオリジンへの要求 | 0 (Speed Insights の同一オリジンのパスを除く) | §2.4 (CSP) | e2e (E-11。要求のホストを数える) |
 | サーバーの描画 | データ取得 0 回。`headers()` 1 回 (nonce) | §3.2 | U-10 (`src/components/marketing/` が Supabase・`next/headers` を import しない) |
@@ -1568,7 +1569,7 @@ origin/main `01d62462` の現状: トップの描画は `const { default: Landin
 |---|---|
 | 文章と画像を Server Component で描き、島は 4 つ (状態 1 つずつ) | LCP (HTML に文字がある)・INP (再描画が小さい)・JS の量 |
 | フォントは既存の `next/font` (自前配信・`font-display: swap`・サイズ調整つきの代替フォント)。新しい字形を足さない | LCP・CLS |
-| `next/image` に `width`・`height`・`sizes` (`LANDING_IMAGE_SIZES`) を必ず渡し、枠は `aspect-ratio` で先に確保。ヒーローの前の 1 枚 (`comment.png`) だけ `preload` (`<head>` の `<link rel="preload">`)。ヒーローの画面の立ち上がり (M-3) の遅れは h1 と同じ 60 ms にする (LCP の候補の画像の不透明度が 0 の間は LCP に数えられないため、文字の順の最後に回さない)。自動で切り替わる画面を置かないので、動きを減らす設定でも見える画像と LCP の要素が同じ | CLS・LCP |
+| `next/image` に `width`・`height`・`sizes` (`LANDING_IMAGE_SIZES`) を必ず渡し、枠は `aspect-ratio` で先に確保。ヒーローの前の 1 枚 (`comment.png`) だけ `preload` (`<head>` の `<link rel="preload">`)。ヒーローの画面の立ち上がり (M-3) は位置だけ動かし、不透明度を動かさない (LCP の候補の画像を不透明度 0 で最初に描くと、見えるようになっても描き直されるまで LCP に数えられないため)。遅れは h1 と同じ 60 ms。自動で切り替わる画面を置かないので、動きを減らす設定でも見える画像と LCP の要素が同じ | CLS・LCP |
 | 動きは `transform` / `opacity` だけ。`scroll` は `passive` + rAF。IO で現れ方。スクロールに連動する動きは置かない | INP・CLS |
 | framer-motion は `LazyMotion` + `m` (`domAnimation` だけ) をデモの島だけで使う。`motion` (全機能) は import しない | JS の量 |
 | 外部の画像・フォント・スクリプトを読まない | LCP (接続の往復が無い)・CSP |
@@ -1855,7 +1856,7 @@ U-15 は `import('@/app/page')` で殻を読むので、`next/headers` は読ま
 | E-8 | `img はすべて alt 属性を持ち、button はすべて見える名前を持ち、見出しは h1 → h2 → h3 の順を飛ばさない` | – |
 | E-9 | `ターゲットの大きさとフォーカスの見え方と、固定ヘッダーがフォーカスを隠さないこと` | ヘッダーの見えているリンク (`getByRole('banner')` の中。幅で隠れたナビとログインを除く) は高さ 44 px 以上、ヒーローと最終 CTA のリンク・`footer` の中のリンク・`#trust` の中のリンクは 24×24 px 以上。各リンクとボタンに `focus()` すると `outline-style` が `none` でない。1280 px と 375 px のそれぞれで: `#faq` の 1 つ目のボタンの下端が画面の上端より上になる位置へ `window.scrollTo` で移り、2 つ目のボタンに `focus()` してから Shift+Tab で 1 つ目のボタンへ戻ると、1 つ目のボタンの矩形の上端が `getByRole('banner')` の矩形の下端以上 |
 | E-10 | `LCP が予算 (LANDING_LCP_BUDGET_MS、既定 2500) 以内で、LCP の要素が #hero の中にあり、CLS が予算 (LANDING_CLS_BUDGET、既定 0.1) 以内` | `PerformanceObserver` の `largest-contentful-paint` と `layout-shift` を `addInitScript` で積む |
-| E-11 | `/ で読む同じオリジンの script を gzip した大きさの合計が予算 (LANDING_JS_BUDGET_BYTES、既定 170 KB) 以内で、外部のオリジンへの要求が無い (同一オリジンと /_vercel/ を除く)` | 測り方は §10.1 の表 |
+| E-11 | `/ で読む同じオリジンの script を gzip した大きさの合計が予算 (LANDING_JS_BUDGET_BYTES、既定 240 KB) 以内で、外部のオリジンへの要求が無い (同一オリジンと /_vercel/ を除く)` | 測り方は §10.1 の表 |
 | E-12 | `securitypolicyviolation が 0 件 (デモの操作を含む)` | `addInitScript` で `window` に積み、最後に 0 件 |
 | E-13 | `JSON-LD の script が 1 つあり、type は application/ld+json、中身は @graph に Organization と WebSite` | – |
 | E-14 | `見た目の記録: 1280 px と 375 px の全画面のスクリーンショットを tests/e2e/.evidence/landing/ に保存する (比較はしない。整合ゲートで目視)` | 記録のみ。どのシナリオの期待も機械では判定しない (§16.6 の 3 列目・§24 Q-4) |
