@@ -14,6 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
 import {
+  DEMO_ANALYZING_MS,
   DEMO_NUTRITION_KEYS,
   LANDING_COPY,
   demoPraiseComment,
@@ -38,6 +39,21 @@ const PHONE = { width: 375, height: 667 } as const;
 /** 短いラベルが折れないことを確かめる幅 (E-22) */
 const LABEL_WIDTHS = [320, 375, 640, 768, 1024, 1280] as const;
 const LABEL_HEIGHT = 800;
+/** E-22 のテスト 1 本の時間の上限 (ms)。LABEL_WIDTHS の 6 つの幅のそれぞれで、開く・ハイドレーションを待つ・デモの結果を出すので、既定 (playwright.config.ts) より長くする */
+const E22_TIMEOUT_MS = 120_000;
+/** 横スクロールが無いことを確かめる幅 (E-6)。320 = WCAG 1.4.10 (リフロー) の幅、640 = 1280 px の画面を 200 % に拡大したときの CSS の幅 */
+const REFLOW_CHECK_WIDTHS = [320, 640] as const;
+/** E-6 の画面の高さ (px)。横スクロールの有無は高さに依らない (高さで変わるのは末尾までのスクロールの回数だけ) */
+const REFLOW_CHECK_HEIGHT = 700;
+/**
+ * 動きを減らす設定で、写真を押してから結果が出るまでの上限 (ms。E-7)。設計書 §6.1 は待ち時間を 0 にする (DEMO_ANALYZING_MS_REDUCED)。
+ * 通常の待ち (DEMO_ANALYZING_MS = 1,400 ms) の半分を上限にして、reduce でも通常の待ちをする実装を落とす (描画の時間の余裕は残す)
+ */
+const REDUCED_RESULT_MAX_MS = DEMO_ANALYZING_MS / 2;
+/** 失敗の文に載せる、要素の文字の抜き出しの長さ (文字数。失敗の文を読める長さに保つためだけの値) */
+const EXCERPT_CHARS = 20;
+/** playwright.config.ts の baseURL が無いときの既定 (next start の既定のポート) */
+const FALLBACK_BASE_URL = 'http://localhost:3000';
 /** ヒーローの立ち上がりの最長 (560 ms) より十分長い待ち (ms)。読み込みからこの時間のあとに動いている Animation が無いことを確かめる */
 const HERO_SETTLE_MS = 2_000;
 /** スクロールを 1 回進めたあと、IntersectionObserver と描画が追いつくのを待つ時間 (ms) */
@@ -76,8 +92,9 @@ const FAQ_FIRST_ANSWER_LIMIT_SENTENCE = '1 日にご利用いただける回数'
 
 declare global {
   interface Window {
-    __landingVitals?: { lcp: { startTime: number; inFirstView: boolean; element: string }[]; layoutShift: number };
+    __landingVitals?: { lcp: { startTime: number; inHero: boolean; element: string }[]; layoutShift: number };
     __landingCspViolations?: string[];
+    __landingDemoTiming?: { pressedAt: number | null; resultAt: number | null };
   }
 }
 
@@ -132,7 +149,7 @@ async function revealEverything(page: Page): Promise<void> {
 
 /** main の見える要素 (空白だけでない文字のテキストノードを子に持つ要素と img。aria-hidden の中を除く) のうち、自分から main までの先祖の opacity が 1 でないもの */
 async function hiddenByOpacity(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
+  return page.evaluate((excerptChars) => {
     const main = document.querySelector('main');
     if (!main) return ['main が無い'];
     const hidden: string[] = [];
@@ -144,14 +161,14 @@ async function hiddenByOpacity(page: Page): Promise<string[]> {
     for (const element of candidates) {
       for (let node: Element | null = element; node; node = node.parentElement) {
         if (getComputedStyle(node).opacity !== '1') {
-          hidden.push(`${element.tagName.toLowerCase()}「${(element.textContent ?? '').trim().slice(0, 20)}」(opacity ${getComputedStyle(node).opacity})`);
+          hidden.push(`${element.tagName.toLowerCase()}「${(element.textContent ?? '').trim().slice(0, excerptChars)}」(opacity ${getComputedStyle(node).opacity})`);
           break;
         }
         if (node === main) break;
       }
     }
     return hidden;
-  });
+  }, EXCERPT_CHARS);
 }
 
 /** 横スクロールが無い (scrollWidth <= clientWidth) */
@@ -248,7 +265,8 @@ test.describe('#1867 紹介ページ (/)', () => {
       await expect(buttons.nth(index)).toHaveAttribute('aria-disabled', 'true');
       await expect(buttons.nth(index)).not.toHaveAttribute('disabled');
     }
-    expect(await page.evaluate(() => document.activeElement?.textContent ?? '')).toContain(demo.samples[0].name);
+    // フォーカスは押したボタンそのもの (文字の一致では、同じ名前を出す結果の箱や body でも通るので、要素の同一性で確かめる)
+    expect(await buttons.nth(0).evaluate((element) => element === document.activeElement), '分析中のフォーカスが押したボタン').toBe(true);
     expect(await activeOutlineStyle(page)).not.toBe('none');
     await expect(notice).toBeVisible();
 
@@ -267,7 +285,8 @@ test.describe('#1867 紹介ページ (/)', () => {
     for (let index = 0; index < demo.samples.length; index += 1) {
       await expect(buttons.nth(index)).toHaveAttribute('aria-disabled', 'false');
     }
-    expect(await page.evaluate(() => document.activeElement?.textContent ?? '')).toContain(first.name);
+    expect(await buttons.nth(0).evaluate((element) => element === document.activeElement), '結果が出た後のフォーカスが押したボタン').toBe(true);
+    expect(await activeOutlineStyle(page)).not.toBe('none');
     await expect(notice).toBeVisible();
     await expect(status.getByText(demo.sampleNotice)).toHaveCount(0);
 
@@ -341,9 +360,9 @@ test.describe('#1867 紹介ページ (/)', () => {
     await expectNoHorizontalScroll(page, '末尾');
   });
 
-  for (const width of [320, 640]) {
+  for (const width of REFLOW_CHECK_WIDTHS) {
     test(`E-6 ${width} px で横スクロールが無い`, async ({ page }) => {
-      await open(page, { width, height: 700 });
+      await open(page, { width, height: REFLOW_CHECK_HEIGHT });
       await scrollThroughPage(page, async () => {
         await expectNoHorizontalScroll(page, `${width} px`);
       });
@@ -359,7 +378,7 @@ test.describe('#1867 紹介ページ (/)', () => {
       expect(running, '動いている Animation').toBe(0);
       expect(await hiddenByOpacity(page)).toEqual([]);
       const heroImages = page.locator('#hero img');
-      await expect(heroImages).toHaveCount(3);
+      await expect(heroImages).toHaveCount(LANDING_COPY.hero.screens.length);
       const heroOpacity = await heroImages.evaluateAll((images) =>
         images.map((image) => {
           const opacities: string[] = [];
@@ -369,12 +388,34 @@ test.describe('#1867 紹介ページ (/)', () => {
       );
       for (const opacities of heroOpacity) expect(opacities.every((opacity) => opacity === '1')).toBe(true);
 
-      // デモ: 待ち無しで結果が最後の見え方で出る
+      // デモ: 待ち無しで結果が最後の見え方で出る。押した時刻 (Enter の keydown) と、結果の箱にスコアが出た時刻をページの中で測る
+      // (Playwright の待ちの既定 10 s では、reduce でも通常の待ち (DEMO_ANALYZING_MS) をする実装が通ってしまうため)
       const demo = LANDING_COPY.demo;
       const first = demo.samples[0];
-      await pressPhoto(page, 0);
+      const score = String(demoScore(first.nutrition));
       const status = demoStatus(page);
-      await expect(status).toContainText(String(demoScore(first.nutrition)));
+      await waitForHydration(pickerButtons(page).first());
+      await expect(status).not.toContainText(score);
+      await status.evaluate((box, expectedScore) => {
+        const timing = { pressedAt: null as number | null, resultAt: null as number | null };
+        window.__landingDemoTiming = timing;
+        document.addEventListener(
+          'keydown',
+          (event) => {
+            if (event.key === 'Enter' && timing.pressedAt === null) timing.pressedAt = performance.now();
+          },
+          { capture: true },
+        );
+        new MutationObserver(() => {
+          if (timing.resultAt === null && (box.textContent ?? '').includes(expectedScore)) timing.resultAt = performance.now();
+        }).observe(box, { subtree: true, childList: true, characterData: true });
+      }, score);
+      await pressPhoto(page, 0);
+      await expect(status).toContainText(score);
+      const timing = await page.evaluate(() => window.__landingDemoTiming ?? { pressedAt: null, resultAt: null });
+      expect(timing.pressedAt, '押した時刻が取れない').not.toBeNull();
+      expect(timing.resultAt, '結果が出た時刻が取れない').not.toBeNull();
+      expect((timing.resultAt ?? 0) - (timing.pressedAt ?? 0), '押してから結果が出るまで (ms)').toBeLessThanOrEqual(REDUCED_RESULT_MAX_MS);
       const state = await page.evaluate(
         () =>
           new Promise<{ notFinal: string[]; running: number }>((resolve) => {
@@ -469,16 +510,16 @@ test.describe('#1867 紹介ページ (/)', () => {
     });
   }
 
-  test('E-10 LCP が予算以内で、LCP の要素が #hero か header の中にあり、CLS が予算以内', async ({ page }) => {
-    await page.addInitScript(() => {
+  test('E-10 LCP が予算以内で、LCP の要素が #hero の中にあり、CLS が予算以内', async ({ page }) => {
+    await page.addInitScript((excerptChars) => {
       window.__landingVitals = { lcp: [], layoutShift: 0 };
       new PerformanceObserver((list) => {
         for (const entry of list.getEntries()) {
           const lcp = entry as PerformanceEntry & { element?: Element | null };
           window.__landingVitals?.lcp.push({
             startTime: lcp.startTime,
-            inFirstView: Boolean(lcp.element?.closest('#hero, header')),
-            element: lcp.element ? `${lcp.element.tagName.toLowerCase()}「${(lcp.element.textContent ?? '').trim().slice(0, 20)}」${lcp.element.getAttribute('src') ?? ''}` : '(要素なし)',
+            inHero: Boolean(lcp.element?.closest('#hero')),
+            element: lcp.element ? `${lcp.element.tagName.toLowerCase()}「${(lcp.element.textContent ?? '').trim().slice(0, excerptChars)}」${lcp.element.getAttribute('src') ?? ''}` : '(要素なし)',
           });
         }
       }).observe({ type: 'largest-contentful-paint', buffered: true });
@@ -488,17 +529,17 @@ test.describe('#1867 紹介ページ (/)', () => {
           if (!shift.hadRecentInput && window.__landingVitals) window.__landingVitals.layoutShift += shift.value;
         }
       }).observe({ type: 'layout-shift', buffered: true });
-    });
+    }, EXCERPT_CHARS);
     await open(page);
     await page.waitForTimeout(HERO_SETTLE_MS);
     const lcpEntries = await page.evaluate(() => window.__landingVitals?.lcp ?? []);
     expect(lcpEntries.length, 'LCP の候補が取れない').toBeGreaterThan(0);
     const lcp = lcpEntries[lcpEntries.length - 1];
     expect(lcp.startTime, 'LCP (ms)').toBeLessThanOrEqual(LCP_BUDGET_MS);
-    // 設計書 §16.3 の E-10 は「LCP の要素が #hero の中」だが、ヒーローは opacity 0 から立ち上がる (M-2・M-3) ので、Chromium は、Web フォントの差し替えによる
-    // 描き直しが無いとき (e2e のビルドは Google Fonts のモックで、代替の書体のまま) ヒーローを LCP の候補に数えず、ヘッダーのマークの文字が最後の候補になる
-    // (2026-10-18 に実測: 本物のフォントでは #hero、モックでは header)。折り返しの下の遅延の要素ではないこと (#hero か header の中) を確かめる
-    expect(lcp.inFirstView, `LCP の要素が #hero か header の中 (実際: ${lcp.element}。候補の履歴 ${JSON.stringify(lcpEntries)})`).toBe(true);
+    // Chromium は、不透明度 0 で最初に描いた要素を LCP の候補に数えず、後で見えるようになっても描き直されるまで数えない (Chrome 86 からの規則)。
+    // だからヒーローの画面の塊 (M-3) は不透明度を動かさずに立ち上がり、前の 1 枚 (preload) が最初の描画から LCP の候補になる。
+    // e2e のビルドは Google Fonts のモック (フォントの差し替えによる描き直しが無い) なので、M-3 が不透明度 0 から始まると、ここでヘッダーの文字が LCP になって落ちる
+    expect(lcp.inHero, `LCP の要素が #hero の中 (実際: ${lcp.element}。候補の履歴 ${JSON.stringify(lcpEntries)})`).toBe(true);
     // 遅れて読む画像で枠が動かないことも見るため、末尾までスクロールしてから CLS を読む
     await revealEverything(page);
     const cls = await page.evaluate(() => window.__landingVitals?.layoutShift ?? 0);
@@ -509,7 +550,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     const scriptBodies: Buffer[] = [];
     const bodyReads: Promise<void>[] = [];
     const externalRequests: string[] = [];
-    const origin = new URL(baseURL ?? 'http://localhost:3000').origin;
+    const origin = new URL(baseURL ?? FALLBACK_BASE_URL).origin;
     page.on('request', (request) => {
       const url = new URL(request.url());
       if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
@@ -584,7 +625,7 @@ test.describe('#1867 紹介ページ (/)', () => {
   });
 
   test('E-16 アプリの WebView (is_native_app=1 の Cookie・未ログイン) でも、同じ h1 とセクションが出て、ストアへのリンクが無い', async ({ page, baseURL }) => {
-    await page.context().addCookies([{ name: 'is_native_app', value: '1', url: baseURL ?? 'http://localhost:3000' }]);
+    await page.context().addCookies([{ name: 'is_native_app', value: '1', url: baseURL ?? FALLBACK_BASE_URL }]);
     await open(page);
     await expect(page.getByRole('heading', { level: 1 })).toHaveText(LANDING_COPY.hero.headlineLines.join(''));
     const sectionIds = await page.locator('main > section').evaluateAll((sections) => sections.map((section) => section.id));
@@ -599,7 +640,7 @@ test.describe('#1867 紹介ページ (/)', () => {
       test('E-17 ヒーローは動かない 3 枚の画面で、読み込みから 2 秒後に動いている Animation が無い', async ({ page }) => {
         await open(page);
         const images = page.locator('#hero img');
-        await expect(images).toHaveCount(3);
+        await expect(images).toHaveCount(LANDING_COPY.hero.screens.length);
         expect(await images.evaluateAll((list) => list.map((image) => image.getAttribute('alt')))).toEqual(LANDING_COPY.hero.screens.map((screen) => screen.alt));
         await page.waitForTimeout(HERO_SETTLE_MS);
         const state = await page.locator('.lp').evaluate((root) => {
@@ -644,7 +685,7 @@ test.describe('#1867 紹介ページ (/)', () => {
       ...copy.faq.items.map((item) => item.a),
     ];
     const result = await page.evaluate(
-      ({ leadTexts, bodyTexts, minFont }) => {
+      ({ leadTexts, bodyTexts, minFont, excerptChars }) => {
         const ownText = (element: Element) =>
           Array.from(element.childNodes)
             .filter((node) => node.nodeType === Node.TEXT_NODE)
@@ -658,7 +699,7 @@ test.describe('#1867 紹介ページ (/)', () => {
           const text = ownText(element);
           if (!text) continue;
           bySize.set(text, sizeOf(element));
-          if (sizeOf(element) < minFont) small.push(`${element.tagName.toLowerCase()}「${text.slice(0, 20)}」${sizeOf(element)}px`);
+          if (sizeOf(element) < minFont) small.push(`${element.tagName.toLowerCase()}「${text.slice(0, excerptChars)}」${sizeOf(element)}px`);
         }
         return {
           small,
@@ -666,11 +707,11 @@ test.describe('#1867 紹介ページ (/)', () => {
           bodies: bodyTexts.map((text) => [text, bySize.get(text) ?? null] as const),
         };
       },
-      { leadTexts: leads, bodyTexts: bodies, minFont: MIN_FONT_PX },
+      { leadTexts: leads, bodyTexts: bodies, minFont: MIN_FONT_PX, excerptChars: EXCERPT_CHARS },
     );
     expect(result.small, '14 px 未満の文字').toEqual([]);
-    for (const [text, size] of result.leads) expect(size, `lead「${text.slice(0, 20)}」の文字の大きさ`).toBeGreaterThanOrEqual(LEAD_FONT_PX);
-    for (const [text, size] of result.bodies) expect(size, `本文「${text.slice(0, 20)}」の文字の大きさ`).toBeGreaterThanOrEqual(BODY_FONT_PX);
+    for (const [text, size] of result.leads) expect(size, `lead「${text.slice(0, EXCERPT_CHARS)}」の文字の大きさ`).toBeGreaterThanOrEqual(LEAD_FONT_PX);
+    for (const [text, size] of result.bodies) expect(size, `本文「${text.slice(0, EXCERPT_CHARS)}」の文字の大きさ`).toBeGreaterThanOrEqual(BODY_FONT_PX);
   });
 
   test.describe('E-20 axe', () => {
@@ -714,7 +755,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     for (const viewport of [DESKTOP, PHONE]) {
       await open(page, viewport);
       const images = page.locator('#how img');
-      await expect(images).toHaveCount(3);
+      await expect(images).toHaveCount(alts.length);
       expect(await images.evaluateAll((list) => list.map((image) => image.getAttribute('alt')))).toEqual(alts);
       // 現れ方 (translateY) の途中の位置を測らないよう、すべて現してから測る
       await waitForHydration(pickerButtons(page).first());
@@ -745,7 +786,7 @@ test.describe('#1867 紹介ページ (/)', () => {
   });
 
   test('E-22 短いラベルは途中で折れない (デモの写真の名前・推定の栄養の名前・バッジの名前・安心の見出し・フッターのリンクの文)', async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(E22_TIMEOUT_MS);
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const copy = LANDING_COPY;
     const targets = [

@@ -17,6 +17,8 @@ import { GUIDES } from '@/app/guide/guide-content';
 import {
   CLAIM_IDS,
   COPYRIGHT_YEAR,
+  DEMO_ANALYZING_MS,
+  DEMO_ANALYZING_MS_REDUCED,
   DEMO_MEAL_TYPE_LABELS,
   DEMO_PHOTO_NAME_MAX_CHARS,
   DEMO_PRAISE_DISH_SEPARATOR,
@@ -635,6 +637,11 @@ describe('#1867 デモの見本はアプリと同じ', () => {
     for (const text of sourceStrings) {
       expect(NUTRITION_PIPELINE, `nutrition-pipeline.ts に「${text}」が無い (アプリの式か定型の文が変わった。デモを同じ PR で直す)`).toContain(text);
     }
+  });
+
+  it('動きを減らす設定のデモの待ち時間は 0 で (§6.1「JS の待ち時間は useReducedMotion() で 0 にする」)、通常の待ちより短い (押してから結果までの時間は e2e の E-7 が測る)', () => {
+    expect(DEMO_ANALYZING_MS_REDUCED).toBe(0);
+    expect(DEMO_ANALYZING_MS).toBeGreaterThan(DEMO_ANALYZING_MS_REDUCED);
   });
 
   it('U-24 「すべて無料」を含む LANDING_COPY の文字列は、同じ文字列に「1 日にご利用いただける回数」を含む', () => {

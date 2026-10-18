@@ -906,6 +906,16 @@ html:has(.lp) {
     transform: none;
   }
 }
+/* M-3 ヒーローの画面の塊: 位置だけ動かし、不透明度は最初から 1。Chromium は不透明度 0 で最初に描いた要素を LCP の候補に数えず、
+   見えるようになっても描き直されるまで数えないので、LCP の候補の前の 1 枚 (preload) を不透明度 0 から始めない */
+@keyframes lp-rise-in-place {
+  from {
+    transform: translateY(12px);
+  }
+  to {
+    transform: none;
+  }
+}
 @keyframes lp-progress {
   from {
     transform: scaleX(0);
@@ -963,6 +973,10 @@ html:has(.lp) {
   /* M-2 ヒーローの文字・M-3 ヒーローの画面の塊。読み込みのときに 1 回だけ (自動で動き続けるものは置かない) */
   .lp .lp-hero-rise {
     animation: lp-rise var(--lp-dur) var(--lp-ease) both;
+    animation-delay: calc(var(--lp-i, 0) * var(--lp-hero-step));
+  }
+  .lp .lp-hero-media-rise {
+    animation: lp-rise-in-place var(--lp-dur) var(--lp-ease) both;
     animation-delay: calc(var(--lp-i, 0) * var(--lp-hero-step));
   }
   /* M-7 デモ: 進捗の棒・待ちの印 (繰り返す動きはこれだけ)・栄養の立ち上がり */

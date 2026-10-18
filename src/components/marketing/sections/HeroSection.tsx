@@ -52,8 +52,9 @@ export function HeroSection() {
             ))}
           </ul>
         </div>
-        {/* 画面の塊 (M-3)。立ち上がりはこの外側の箱に付け、中の端末の rotate を上書きしない。遅れは h1 と同じ (LCP の候補を文字の順の最後に回さない) */}
-        <div className="lp-hero-media lp-hero-rise" style={riseStyle(1)}>
+        {/* 画面の塊 (M-3)。立ち上がりはこの外側の箱に付け、中の端末の rotate を上書きしない。遅れは h1 と同じ。
+            位置だけ動かし不透明度は動かさない (前の 1 枚は LCP の候補で、不透明度 0 で最初に描くと Chromium は LCP に数えない) */}
+        <div className="lp-hero-media lp-hero-media-rise" style={riseStyle(1)}>
           <div className="lp-hero-stack">
             {hero.screens.map((screen, index) => {
               const isFront = index === FRONT_SCREEN_INDEX;
