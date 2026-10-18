@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import { Noto_Sans_JP, Noto_Serif_JP } from "next/font/google";
 import { SpeedInsightsClient } from "@/components/SpeedInsightsClient";
+import { HashHistoryEntryBridge } from "@/components/navigation/HashHistoryEntryBridge";
 import { getSiteUrl, SITE_NAME } from "@/lib/site-config";
 import { OG_LOCALE, SITE_DEFAULT_TITLE, SITE_DESCRIPTION, SITE_TWITTER_DESCRIPTION } from "@/lib/seo/public-pages";
 import "./globals.css";
@@ -136,6 +137,11 @@ export default function RootLayout({
           読み込み先と 'self' は tests/speed-insights-1179.test.tsx が検査する (実際の送信先はデプロイ後に確認する)。
         */}
         <SpeedInsightsClient />
+        {/*
+          #1867: ハッシュだけの移動 (<a href="#how">・上のスキップリンクなど) で積まれた履歴の項目を、ブラウザの戻る / 進むで
+          Next の app router が描き直せるようにする (画面には何も描かない)。src/lib/navigation/hash-history-entry.ts
+        */}
+        <HashHistoryEntryBridge />
       </body>
     </html>
   );
