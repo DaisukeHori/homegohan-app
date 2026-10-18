@@ -10,6 +10,7 @@
  *
  * 直し方: ハッシュの移動で積まれた項目に、Next の公開の口 (history.replaceState。Next が差し替えて、自分の状態に取り込む) で印を付ける。
  * 印を付けるのは、画面に描かれているルートと URL のパス・検索の部分が同じとき (= 同じ画面の中のハッシュの移動) だけ。
+ * 検索の部分は、書き方の違い (`%20` と `+`・値の無いキー `?ref` と `?ref=`・`/` と `%2F`) をそろえてから比べる (normalizeSearch)。
  * それでも印の無い項目へ戻って画面と URL がずれたとき (印を付ける前に積まれた項目) は、今の URL で文書を読み込み直す。
  */
 
@@ -19,9 +20,24 @@ export const APP_ROUTER_HISTORY_MARK = '__NA';
 /** URL のうち、画面 (ルート) を決める部分 (ハッシュは画面を変えないので含めない) */
 export type RouteLocation = {
   pathname: string;
-  /** `?` から始まる検索の部分。無ければ空文字 (window.location.search と同じ形) */
+  /**
+   * `?` から始まる検索の部分。無ければ空文字 (window.location.search と同じ形)。
+   * 書き方は揃っていなくてよい (window.location.search は URL に書かれたまま、useSearchParams は URLSearchParams で書き直した形)。
+   * 比べるときは isSameRoute が normalizeSearch でそろえる。
+   */
   search: string;
 };
+
+/**
+ * 検索の部分を、URLSearchParams で読み直して書き直した形 (`?` つき。無ければ空文字) にそろえる。
+ * 画面側の値 (useSearchParams。Next 16.4.1 の app-router.js は new URL(canonicalUrl).searchParams を渡すので、toString() はこの形) と、
+ * URL 側の値 (window.location.search。URL に書かれたまま) を同じ形で比べるため。
+ * 例: `?a=x%20y&ref` → `?a=x+y&ref=`・`?next=/home` → `?next=%2Fhome`。同じ形に何度通しても変わらない。
+ */
+export function normalizeSearch(search: string): string {
+  const serialized = new URLSearchParams(search).toString();
+  return serialized ? `?${serialized}` : '';
+}
 
 /** history.state が app router の積んだ項目 (印つき) か */
 export function isAppRouterHistoryState(state: unknown): boolean {
@@ -35,10 +51,15 @@ export function toRouteLocation(pathname: string | null, searchParams: string | 
   return { pathname, search: searchParams ? `?${searchParams}` : '' };
 }
 
-/** 画面に描かれているルートと、ブラウザの URL のルートが同じか (ハッシュは比べない) */
+/**
+ * 画面に描かれているルートと、ブラウザの URL のルートが同じか (ハッシュは比べない)。
+ * 検索の部分は両辺を normalizeSearch でそろえて比べる (書き方だけ違う同じ URL を「別のルート」と取り違えると、
+ * hashchange で印が付かず、同じ画面の中の戻る / 進むのたびに読み込み直してしまう)。
+ * パスはそろえない: 両辺とも URL の解析器を通った形 (window.location.pathname と、app-router.js の new URL(canonicalUrl).pathname) で、書き方が揃っている。
+ */
 export function isSameRoute(rendered: RouteLocation | null, current: RouteLocation): boolean {
   if (rendered === null) return false;
-  return rendered.pathname === current.pathname && rendered.search === current.search;
+  return rendered.pathname === current.pathname && normalizeSearch(rendered.search) === normalizeSearch(current.search);
 }
 
 /** ハッシュの移動 (hashchange) のあとにすること */

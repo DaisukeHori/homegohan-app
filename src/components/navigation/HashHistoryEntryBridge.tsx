@@ -16,6 +16,7 @@ import {
 } from '@/lib/navigation/hash-history-entry';
 import { reloadCurrentDocument } from '@/lib/navigation/reload-document';
 
+/** ブラウザの URL のルート。search は URL に書かれたまま (画面側の useSearchParams の書き方とそろえるのは isSameRoute の仕事) */
 function currentRouteLocation(): RouteLocation {
   return { pathname: window.location.pathname, search: window.location.search };
 }

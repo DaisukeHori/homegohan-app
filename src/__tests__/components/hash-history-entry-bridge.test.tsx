@@ -19,6 +19,7 @@ import {
   decideOnPopState,
   isAppRouterHistoryState,
   isSameRoute,
+  normalizeSearch,
   toRouteLocation,
 } from '@/lib/navigation/hash-history-entry';
 
@@ -40,6 +41,16 @@ import { HashHistoryEntryBridge } from '@/components/navigation/HashHistoryEntry
 
 /** app router が積んだ項目の state (印つき) */
 const APP_ROUTER_STATE = { [APP_ROUTER_HISTORY_MARK]: true, __PRIVATE_NEXTJS_INTERNALS_TREE: { tree: ['', {}] } };
+
+/**
+ * 書き方だけ違う同じ検索の部分 (URL に書かれたまま = window.location.search / 画面側 = useSearchParams().toString())。
+ * 広告の流入 (%20)・値の無いキー・生の / と : で、両辺の文字列が食い違う。
+ */
+const EQUIVALENT_SEARCHES = [
+  { label: '%20 と +', raw: '?utm_campaign=spring%20sale', params: 'utm_campaign=spring+sale' },
+  { label: '値の無いキー', raw: '?ref', params: 'ref=' },
+  { label: '生の / と :', raw: '?next=/home&t=12:00', params: 'next=%2Fhome&t=12%3A00' },
+] as const;
 
 describe('判定 (src/lib/navigation/hash-history-entry.ts)', () => {
   it('isAppRouterHistoryState: 印 (__NA: true) のある state だけ真', () => {
@@ -64,6 +75,34 @@ describe('判定 (src/lib/navigation/hash-history-entry.ts)', () => {
     expect(isSameRoute({ pathname: '/p', search: '?x=2' }, { pathname: '/p', search: '?x=1' })).toBe(false);
     expect(isSameRoute(null, { pathname: '/', search: '' })).toBe(false);
   });
+
+  it('normalizeSearch: URLSearchParams で書き直した ? つきの形にそろえる (空なら空文字・何度通しても同じ)', () => {
+    expect(normalizeSearch('')).toBe('');
+    expect(normalizeSearch('?')).toBe('');
+    expect(normalizeSearch('?a=x%20y&ref')).toBe('?a=x+y&ref=');
+    expect(normalizeSearch('a=x%20y&ref')).toBe('?a=x+y&ref=');
+    expect(normalizeSearch('?next=/home')).toBe('?next=%2Fhome');
+    expect(normalizeSearch(normalizeSearch('?a=x%20y&ref'))).toBe('?a=x+y&ref=');
+    // 値・並びが違えば別の形のまま
+    expect(normalizeSearch('?a=1&b=2')).not.toBe(normalizeSearch('?b=2&a=1'));
+  });
+
+  it.each(EQUIVALENT_SEARCHES)('isSameRoute: 検索の部分の書き方だけが違う ($label) なら同じルート', ({ raw, params }) => {
+    expect(isSameRoute(toRouteLocation('/', params), { pathname: '/', search: raw })).toBe(true);
+    expect(isSameRoute({ pathname: '/', search: raw }, { pathname: '/', search: `?${params}` })).toBe(true);
+    // 値が違えば別のルート (そろえても取り違えない)
+    expect(isSameRoute(toRouteLocation('/', params), { pathname: '/', search: `${raw}x` })).toBe(false);
+  });
+
+  it.each(EQUIVALENT_SEARCHES)(
+    '書き方だけ違う検索 ($label): hashchange で印を付け、印の無い項目の popstate で読み込み直さない',
+    ({ raw, params }) => {
+      const rendered = toRouteLocation('/', params);
+      const current = { pathname: '/', search: raw };
+      expect(decideOnHashChange(null, rendered, current)).toBe('mark-entry');
+      expect(decideOnPopState(null, rendered, current)).toBe('none');
+    },
+  );
 
   it('decideOnHashChange: 印が無く、画面と URL のルートが同じときだけ印を付ける', () => {
     const landing = { pathname: '/', search: '' };
@@ -179,6 +218,26 @@ describe('HashHistoryEntryBridge', () => {
 
     expect(reloadDocument).toHaveBeenCalledTimes(1);
   });
+
+  it.each(EQUIVALENT_SEARCHES)(
+    '検索の部分の書き方が画面と URL で違っても ($label)、同じ画面の中のハッシュの移動に印を付け、戻るで読み込み直さない',
+    async ({ raw }) => {
+      // 画面側は useSearchParams (URLSearchParams で読んだ値)、URL 側は書かれたまま
+      navigation.search = raw;
+      window.history.replaceState(APP_ROUTER_STATE, '', `/${raw}`);
+      await mount();
+      replaceStateSpy.mockClear();
+
+      nativeHashNavigation('#how');
+      expect(replaceStateSpy).toHaveBeenCalledTimes(1);
+      expect(replaceStateSpy).toHaveBeenCalledWith(null, '', `${window.location.origin}/${raw}#how`);
+
+      // 印の無い項目どうしの、同じ画面の中の戻る (state null)
+      window.history.replaceState(null, '', `/${raw}#faq`);
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
+      expect(reloadDocument).not.toHaveBeenCalled();
+    },
+  );
 
   it('同じ画面の中のハッシュの移動の popstate (state null) では描き直さない', async () => {
     await mount();

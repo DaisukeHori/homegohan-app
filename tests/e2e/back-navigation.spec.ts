@@ -12,6 +12,7 @@
  *   - 戻ったあとの進む (/signup に戻る)
  *   - ハッシュ → 通常の文書の遷移 (page.goto) で /signup → 戻る
  *   - 紹介ページ以外のハッシュ (スキップリンクの #main-content。/pricing) → /signup → 戻る
+ *   - 検索の部分の書き方が画面と URL で違う `/` (広告の流入の %20・値の無いキー) で、ハッシュ → ハッシュ → 戻る が読み込み直さない
  * 検査の手がかりは、URL・セクションの id (ハッシュと同じ)・見出し・LANDING_COPY の文言だけ (紹介ページの見た目や文言の作り直しに引きずられない)。
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -38,17 +39,30 @@ const HEADER_HASH_LINKS = LANDING_COPY.header.nav.filter((item) => item.href.sta
 /** ハッシュから他の公開ページへ移って戻る型に使うハッシュ (オーナーの報告の #how) */
 const REPORTED_HASH = '#how';
 
+/**
+ * URL に書かれたままの形と、URLSearchParams で書き直した形が違う検索の部分 (広告の流入の %20・値の無いキー)。
+ * 画面側 (useSearchParams) と URL 側 (window.location.search) の書き方の違いで、同じ画面を「別のルート」と取り違えないこと
+ */
+const NON_CANONICAL_SEARCHES = ['?utm_campaign=a%20b', '?ref'] as const;
+/** 読み込み直しが起きていないことを見るため、文書に置く印の名前 (読み込み直すと消える) */
+const DOCUMENT_MARKER = '__backNavigationDocumentMarker';
+
 /** 紹介ページを開き、ハイドレーションが済むのを待つ (ヘッダーのリンクを押せる状態) */
-async function openLanding(page: Page): Promise<void> {
-  await page.goto('/');
+async function openLanding(page: Page, search = ''): Promise<void> {
+  await page.goto(`/${search}`);
   await expect(page.getByRole('heading', { level: 1 })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
   await page.waitForLoadState('networkidle');
 }
 
-/** ヘッダーのハッシュのリンクを押し、URL がそのハッシュになり、その区切りが画面に入るまで待つ */
-async function clickHeaderHash(page: Page, hash: string): Promise<void> {
+/** 正規表現の中で文字どおりに扱う (検索の部分の ? など) */
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** ヘッダーのハッシュのリンクを押し、URL が (検索の部分はそのままで) そのハッシュになり、その区切りが画面に入るまで待つ */
+async function clickHeaderHash(page: Page, hash: string, search = ''): Promise<void> {
   await page.getByRole('navigation', { name: 'サイトの案内' }).locator(`a[href="${hash}"]`).click();
-  await expect(page).toHaveURL(new RegExp(`/${hash}$`));
+  await expect(page).toHaveURL(new RegExp(`/${escapeRegExp(search)}${hash}$`));
   await expect(page.locator(hash)).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
 }
 
@@ -151,6 +165,28 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
 
     await expectBackOnLandingSection(page, REPORTED_HASH);
   });
+
+  for (const search of NON_CANONICAL_SEARCHES) {
+    test(`/${search} → #how → #faq → 戻る で、読み込み直さずに #how へ戻る (検索の部分の書き方の違いで取り違えない)`, async ({ page }) => {
+      await openLanding(page, search);
+      await page.evaluate((marker) => {
+        (window as unknown as Record<string, unknown>)[marker] = true;
+      }, DOCUMENT_MARKER);
+      await clickHeaderHash(page, REPORTED_HASH, search);
+      await clickHeaderHash(page, '#faq', search);
+
+      await page.goBack();
+
+      await expect(page).toHaveURL(new RegExp(`/${escapeRegExp(search)}${REPORTED_HASH}$`));
+      await expect(page.locator(REPORTED_HASH)).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
+      // 読み込み直すと文書が作り直され、置いた印が消える
+      const markerSurvived = await page.evaluate(
+        (marker) => (window as unknown as Record<string, unknown>)[marker] === true,
+        DOCUMENT_MARKER,
+      );
+      expect(markerSurvived).toBe(true);
+    });
+  }
 
   test('/pricing でスキップリンク (#main-content) → /signup → 戻る で、料金の画面に戻る (紹介ページ以外のハッシュ)', async ({ page }) => {
     await page.goto('/pricing');
