@@ -60,6 +60,11 @@ html:has(.lp) {
   --lp-shadow-phone: 0 30px 60px -20px rgba(45, 45, 45, 0.28);
   --lp-shadow-phone-far: 0 16px 32px -16px rgba(45, 45, 45, 0.2);
   --lp-scroll-padding-top: 6rem;
+  /* フォーカスの白いリング。globals.css の :focus-visible の box-shadow (0 0 0 6px #FFFFFF。2 トーンのリングの外側の白: #1058) と同じ値。
+     自分の影 (box-shadow) を持つフォーカスできる部品 (CTA・機能のカード・デモの写真のボタン) は、その影が globals.css の
+     :focus-visible より詳細度が高く白いリングを消すので、:focus-visible の規則でこの白を影の先頭に重ね直す
+     (§5.3・§11 の 2.4.7「区切りの中のリンクとボタンのリングは変えない」。濃色の面では白いリングがフォーカスの印になる) */
+  --lp-focus-ring: 0 0 0 6px #ffffff;
   /* 拡大の箱 (§5.3・M-17) */
   --lp-zoom-width: 24rem;
   --lp-zoom-from: 0.85;
@@ -288,22 +293,28 @@ html:has(.lp) {
   text-align: center;
   text-decoration: none;
   text-wrap: balance;
+  /* 影は形ごとの --lp-cta-shadow。box-shadow はここと下の :focus-visible の 2 つだけが書く (形の規則は変数だけを変える) */
+  box-shadow: var(--lp-cta-shadow, 0 0 #0000);
 }
 .lp .lp-cta--primary {
   background: var(--lp-ink);
   color: #ffffff;
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 12px 28px -14px rgba(45, 45, 45, 0.7);
+  --lp-cta-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 12px 28px -14px rgba(45, 45, 45, 0.7);
 }
 .lp .lp-cta--secondary {
   background: var(--lp-surface);
   color: var(--lp-ink);
   border-color: var(--lp-line);
-  box-shadow: 0 1px 2px rgba(45, 45, 45, 0.04);
+  --lp-cta-shadow: 0 1px 2px rgba(45, 45, 45, 0.04);
 }
 .lp .lp-cta--on-dark {
   background: var(--lp-accent-soft);
   color: var(--lp-dark);
-  box-shadow: 0 14px 30px -14px rgba(255, 155, 122, 0.55);
+  --lp-cta-shadow: 0 14px 30px -14px rgba(255, 155, 122, 0.55);
+}
+/* フォーカスのリング: 白いリング (--lp-focus-ring) を影の先頭に重ねる (濃色の面の CTA では白が印になる。outline は globals.css のまま) */
+.lp .lp-cta:focus-visible {
+  box-shadow: var(--lp-focus-ring), var(--lp-cta-shadow, 0 0 #0000);
 }
 .lp .lp-cta--compact {
   min-height: 2.75rem;
@@ -418,6 +429,30 @@ html:has(.lp) {
 @media (min-width: 640px) {
   .lp .lp-login {
     display: inline-flex;
+  }
+}
+/* 768〜1023 px (§13.1): ナビ 5 つ (768 px 以上で見せる)・ログイン・「無料で始める」(どの幅でも 1 行) を 1 行に収める (§8.3 の SiteHeader)。
+   どれも nowrap で縮まないので、上の間隔のままだと 768〜約 825 px で行が箱の幅を超え、.lp の overflow-x: clip で
+   「無料で始める」の右端が切れる。この幅だけリンクの左右の余白と間を詰める (下線の端も余白に合わせる)。1024 px 以上は上の間隔のまま */
+@media (min-width: 768px) and (max-width: 1023px) {
+  .lp .lp-header-inner {
+    gap: 0.75rem;
+  }
+  .lp .lp-nav ul {
+    gap: 0;
+  }
+  .lp .lp-nav-link {
+    padding: 0 0.5rem;
+  }
+  .lp .lp-nav-link::after {
+    left: 0.5rem;
+    right: 0.5rem;
+  }
+  .lp .lp-login {
+    padding: 0 0.5rem;
+  }
+  .lp .lp-nav + .lp-header-right {
+    margin-left: 0;
   }
 }
 /* 読む位置の棒 (M-4)。進みは JS が transform に書く。JS が無いときは 0 のまま */
@@ -853,10 +888,16 @@ html:has(.lp) {
   cursor: pointer;
   font: inherit;
   color: inherit;
+  /* 影は --lp-photo-btn-shadow (押した印の規則は変数だけを変える)。box-shadow はここと下の :focus-visible の 2 つだけが書く */
+  box-shadow: var(--lp-photo-btn-shadow, 0 0 #0000);
 }
 .lp .lp-photo-btn[aria-pressed='true'] {
   border-color: var(--lp-accent-ink);
-  box-shadow: 0 0 0 3px rgba(179, 77, 45, 0.18);
+  --lp-photo-btn-shadow: 0 0 0 3px rgba(179, 77, 45, 0.18);
+}
+/* フォーカスのリング: 押した印の影 (--lp-photo-btn-shadow) の先頭に白いリングを重ねる (押した後もリングを消さない: §13.3) */
+.lp .lp-photo-btn:focus-visible {
+  box-shadow: var(--lp-focus-ring), var(--lp-photo-btn-shadow, 0 0 #0000);
 }
 /* 分析中も disabled にしない (押したボタンのフォーカスを保つ。§13.3) */
 .lp .lp-photo-btn[aria-disabled='true'] {
@@ -1043,9 +1084,15 @@ html:has(.lp) {
   padding: 1.5rem;
   border-radius: var(--lp-radius-card);
   background: var(--lp-surface);
-  box-shadow: var(--lp-shadow-card);
+  /* 影は --lp-feature-shadow (hover は変数だけを変える)。box-shadow はここと下の :focus-visible の 2 つだけが書く */
+  --lp-feature-shadow: var(--lp-shadow-card);
+  box-shadow: var(--lp-feature-shadow);
   text-decoration: none;
   color: var(--lp-ink);
+}
+/* フォーカスのリング: カードの影の先頭に白いリングを重ねる (outline は globals.css のまま) */
+.lp .lp-feature-link:focus-visible {
+  box-shadow: var(--lp-focus-ring), var(--lp-feature-shadow);
 }
 .lp .lp-feature.is-small .lp-feature-link {
   flex-direction: row;
@@ -1655,6 +1702,16 @@ html:has(.lp) {
   font-size: 0.875rem;
   color: var(--lp-ink-soft);
   white-space: nowrap;
+}
+/* 640 px 未満: 名前と注記は nowrap で縮まないので、図と行の内側の余白と間を詰めて、320 px (WCAG 1.4.10) でも名前の箱からはみ出さないようにする */
+@media (max-width: 639px) {
+  .lp .lp-share-figure {
+    padding: 1rem;
+  }
+  .lp .lp-share-row {
+    gap: 0.5rem;
+    padding: 0.75rem;
+  }
 }
 /* 切り替えの形 (飾り。操作できない): オン = 緑で丸が右・オフ = 罫線の色で丸が左・自分で選ぶ = 半分 */
 .lp .lp-toggle {
@@ -2306,7 +2363,11 @@ html:has(.lp) {
         transform var(--lp-dur-fast) var(--lp-ease),
         box-shadow var(--lp-dur-fast) var(--lp-ease);
     }
-    .lp .lp-feature-link:hover,
+    /* カードの hover は影の変数だけを変える (box-shadow を書くと :focus-visible の白いリングを消すため) */
+    .lp .lp-feature-link:hover {
+      transform: translateY(-4px);
+      --lp-feature-shadow: var(--lp-shadow-card-hover);
+    }
     .lp .lp-scene:hover {
       transform: translateY(-4px);
       box-shadow: var(--lp-shadow-card-hover);

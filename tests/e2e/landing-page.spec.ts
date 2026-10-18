@@ -12,6 +12,8 @@
  * 速さの予算の環境変数 (LANDING_LCP_BUDGET_MS・LANDING_CLS_BUDGET・LANDING_JS_BUDGET_BYTES) はテストの実行時だけ読む (計測機の性能差のため)。
  * dev サーバでは LCP が本番より遅いので、local-ci.sh の e2e 段 (本番ビルド) で測る。
  * /signup などを経る戻る・進むは門の tests/e2e/back-navigation.spec.ts (#1893) が確かめるので、ここ (E-23) は紹介ページの中の戻るだけを見る。
+ * E-1〜E-31 のあとの「回帰」の test は、同じ受入の条件 (§5.3・§11 の 2.4.7 のフォーカスのリング・§8.3 / §13.1 のヘッダーの 1 行・1.4.10 のリフロー) を、
+ * E-n の検査が見ていなかった値 (computed の box-shadow・1 行の並びの右端) で確かめる。
  */
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Locator, type Page } from '@playwright/test';
@@ -157,6 +159,18 @@ const PROGRESS_END_MIN = 0.95;
 const PROGRESS_MID_POINTS = [0.25, 0.5, 0.75] as const;
 /** E-29: ナビの「料金」まで Tab で進む回数の上限 (スキップリンク・マーク・ナビ 4 つの 6 回で着く) */
 const TAB_SEARCH_MAX = 20;
+/**
+ * globals.css の :focus-visible の白いリング (box-shadow: 0 0 0 6px #FFFFFF) の computed の値。2 トーンのリングの外側で、濃色の面ではこの白が
+ * フォーカスの印になる (§5.3「区切りの中のリンクとボタンのリングは変えない」・§11 の 2.4.7)。outline-style だけを見ると、部品の影がこの白を消しても通る
+ */
+const WHITE_FOCUS_RING = 'rgb(255, 255, 255) 0px 0px 0px 6px';
+/** ヘッダーの 1 行 (マーク・ナビ 5 つ・ログイン・「無料で始める」) が収まることを確かめる幅。§13.1 の 768〜1023 の行の両端と途中 (800)・その上の 1024・1280 */
+const HEADER_ONE_LINE_WIDTHS = [768, 800, 1023, 1024, 1280] as const;
+const HEADER_ONE_LINE_HEIGHT = 720;
+/** 家族の共有の範囲の図の行 (名前・切り替えの形・注記。nowrap) が収まることを確かめる幅 (320 = WCAG 1.4.10 のリフローの幅・375 = スマートフォン) */
+const SHARE_ROW_WIDTHS = [320, 375] as const;
+/** 位置の比べの許し (px。getBoundingClientRect の小数の丸め) */
+const LAYOUT_ROUNDING_PX = 1;
 /** 物語の手順の li の id (§8.3 の StorySection: how-step-1〜4) と、3 番目の手順の添字 (0 から) */
 const storyStepSelector = (stepNumber: number): string => `#how-step-${stepNumber}`;
 const STORY_STEP_3 = 3;
@@ -385,6 +399,19 @@ function chapterZoom(zoom: ChapterZoom | null, chapter: string): ChapterZoom {
 const faqDetails = (page: Page): Locator => page.locator('#faq details');
 const faqSummaries = (page: Page): Locator => page.locator('#faq summary');
 
+/** document.activeElement の computed の box-shadow */
+async function activeBoxShadow(page: Page): Promise<string> {
+  return page.evaluate(() => (document.activeElement ? getComputedStyle(document.activeElement).boxShadow : 'none'));
+}
+
+/**
+ * フォーカスしている要素の box-shadow の先頭に globals.css の白いリング (WHITE_FOCUS_RING) が出る。
+ * 影に遷移 (--lp-dur-fast) を持つ部品 (機能のカード・デモの写真のボタン) があるので、遷移が終わるまで poll で待つ
+ */
+async function expectWhiteFocusRing(page: Page, label: string): Promise<void> {
+  await expect.poll(async () => (await activeBoxShadow(page)).startsWith(WHITE_FOCUS_RING), { message: `${label} の box-shadow の先頭に白いリング` }).toBe(true);
+}
+
 /** 物語の固定した端末の 4 枚 (data-active を持つ img) */
 const storyStageImages = (page: Page): Locator => page.locator('#how img[data-active]');
 
@@ -566,6 +593,8 @@ test.describe('#1867 紹介ページ (/)', () => {
     // フォーカスは押したボタンそのもの (文字の一致では、同じ名前を出す結果の箱や body でも通るので、要素の同一性で確かめる)
     expect(await buttons.nth(0).evaluate((element) => element === document.activeElement), '分析中のフォーカスが押したボタン').toBe(true);
     expect(await activeOutlineStyle(page)).not.toBe('none');
+    // 押した印の影 (aria-pressed) があっても、白いリングは消えない
+    await expectWhiteFocusRing(page, '分析中の押したボタン');
     await expect(notice).toBeVisible();
 
     // (2) 結果。スコアの最後の値の要素 (読み上げる方) は最初から最後の値で、見える数字は COUNT_UP_MS で増えて最後の値で止まる
@@ -588,6 +617,7 @@ test.describe('#1867 紹介ページ (/)', () => {
     }
     expect(await buttons.nth(0).evaluate((element) => element === document.activeElement), '結果が出た後のフォーカスが押したボタン').toBe(true);
     expect(await activeOutlineStyle(page)).not.toBe('none');
+    await expectWhiteFocusRing(page, '結果が出た後の押したボタン');
     await expect(notice).toBeVisible();
     await expect(status.getByText(demo.sampleNotice)).toHaveCount(0);
     await page.waitForTimeout(COUNT_UP_MS + COUNT_UP_SLACK_MS);
@@ -666,6 +696,79 @@ test.describe('#1867 紹介ページ (/)', () => {
       await scrollThroughPage(page, async () => {
         await expectNoHorizontalScroll(page, `${width} px`);
       });
+    });
+  }
+
+  test('回帰: 濃色の面 (章 chat・最終 CTA) の CTA にキーボードでフォーカスすると、globals.css の白い 6 px のリングが CTA の影の先頭に出る。機能のカードは hover していても出る', async ({ page }) => {
+    await open(page);
+    const darkCtas = [
+      { id: 'chat', name: LANDING_COPY.hero.primaryCta.label },
+      { id: 'cta', name: LANDING_COPY.finalCta.cta.label },
+    ];
+    for (const { id, name } of darkCtas) {
+      const section = page.locator(`#${id}`);
+      const cta = section.getByRole('link', { name });
+      await expect(cta).toHaveCount(1);
+      // 区切り (tabindex="-1") から Tab で進む (キーボードの操作。次の Tab の先が区切りの中の CTA であることは E-29 と同じ)
+      await section.focus();
+      await page.keyboard.press('Tab');
+      expect(await cta.evaluate((element) => element === document.activeElement && element.matches(':focus-visible')), `#${id} の次の Tab は CTA で :focus-visible`).toBe(true);
+      expect(await activeOutlineStyle(page), `#${id} の CTA の outline`).not.toBe('none');
+      await expectWhiteFocusRing(page, `#${id} の CTA`);
+    }
+    // 機能のカード: ポインタが上にある (hover の影) ままキーボードでフォーカスしても、白いリングが出る
+    const chatCard = page.locator('#features').getByRole('link', { name: featureCardTitle('chat') });
+    await chatCard.hover();
+    await chatCard.focus();
+    await expectWhiteFocusRing(page, '機能のカード「AI に相談」(hover 中)');
+  });
+
+  for (const width of HEADER_ONE_LINE_WIDTHS) {
+    test(`回帰: ${width} px でヘッダーの 1 行 (マーク・ナビ 5 つ・ログイン・「無料で始める」) が重ならず、「無料で始める」の右端が右の余白の内側にある`, async ({ page }) => {
+      await open(page, { width, height: HEADER_ONE_LINE_HEIGHT });
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      const links = banner(page).getByRole('link').filter({ visible: true });
+      const { nav, login, cta } = LANDING_COPY.header;
+      const names = (await links.evaluateAll((elements) => elements.map((element) => (element.textContent ?? '').trim()))).slice(1);
+      // マークの後に、ナビ 5 つ (768 px 以上で見せる)・ログイン (640 px 以上)・「無料で始める」がこの順に見えている
+      expect(names).toEqual([...nav.map((item) => item.label), login.label, cta.label]);
+      const layout = await links.evaluateAll((elements) => ({
+        rects: elements.map((element) => {
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom, text: (element.textContent ?? '').trim() };
+        }),
+        viewportWidth: document.documentElement.clientWidth,
+      }));
+      const first = layout.rects[0];
+      const last = layout.rects[layout.rects.length - 1];
+      // 箱 (中央寄せ・左右の余白が同じ) の右の端 = 画面の幅 − マークの左の端
+      const rightLimit = layout.viewportWidth - first.left;
+      expect(first.left, 'マークの左の端').toBeGreaterThanOrEqual(0);
+      expect(last.right, `「${last.text}」の右の端 (箱の右の端 ${rightLimit})`).toBeLessThanOrEqual(rightLimit + LAYOUT_ROUNDING_PX);
+      for (let index = 1; index < layout.rects.length; index += 1) {
+        const previous = layout.rects[index - 1];
+        const current = layout.rects[index];
+        expect(current.left, `「${previous.text}」と「${current.text}」が重ならない`).toBeGreaterThanOrEqual(previous.right - LAYOUT_ROUNDING_PX);
+        // 1 行: 縦の位置が重なる (折り返して下の行に回っていない)
+        expect(current.top, `「${current.text}」が「${previous.text}」と同じ行`).toBeLessThan(previous.bottom);
+      }
+    });
+  }
+
+  for (const width of SHARE_ROW_WIDTHS) {
+    test(`回帰: ${width} px で家族の共有の範囲の図の行 (名前・切り替えの形・注記) がそれぞれの箱からはみ出さない`, async ({ page }) => {
+      await open(page, { width, height: REFLOW_CHECK_HEIGHT });
+      await page.evaluate(() => document.fonts.ready.then(() => undefined));
+      for (const item of LANDING_COPY.family.shareFigure) {
+        const row = page.locator('#family').getByRole('listitem').filter({ hasText: item.note });
+        await expect(row, `「${item.label}」の行`).toHaveCount(1);
+        const overflow = await row.evaluate((element) =>
+          [element, ...Array.from(element.children)]
+            .filter((node) => node.scrollWidth > node.clientWidth)
+            .map((node) => `${node === element ? '行' : (node.textContent ?? '').trim() || '切り替えの形'}: scrollWidth ${node.scrollWidth} > clientWidth ${node.clientWidth}`),
+        );
+        expect(overflow, `「${item.label}」の行`).toEqual([]);
+      }
     });
   }
 
@@ -820,6 +923,9 @@ test.describe('#1867 紹介ページ (/)', () => {
       for (let index = 0; index < headerCount; index += 1) {
         const box = await headerLinks.nth(index).boundingBox();
         expect(box?.height ?? 0, `ヘッダーのリンク ${index}`).toBeGreaterThanOrEqual(HEADER_TARGET_PX);
+        await headerLinks.nth(index).focus();
+        expect(await activeOutlineStyle(page), `ヘッダーのリンク ${index} の outline`).not.toBe('none');
+        await expectWhiteFocusRing(page, `ヘッダーのリンク ${index}`);
       }
       // 区切りとフッターの見えているリンクは 24×24 px 以上 (CTA は高さ 48 px 以上) で、focus すると outline が出る
       for (const scope of TARGET_SCOPES) {
@@ -835,12 +941,14 @@ test.describe('#1867 紹介ページ (/)', () => {
           if (CTA_LABELS.has(text)) expect(box?.height ?? 0, `${scope} の CTA「${text}」の高さ`).toBeGreaterThanOrEqual(CTA_TARGET_PX);
           await link.focus();
           expect(await activeOutlineStyle(page), `${scope} のリンク ${index}「${text}」の outline`).not.toBe('none');
+          await expectWhiteFocusRing(page, `${scope} のリンク ${index}「${text}」`);
         }
       }
       const summaries = faqSummaries(page);
-      for (const target of [pickerButtons(page).first(), summaries.first()]) {
+      for (const target of [pickerButtons(page).first(), summaries.first(), page.getByRole('region', { name: SCENES_STRIP_LABEL })]) {
         await target.focus();
         expect(await activeOutlineStyle(page)).not.toBe('none');
+        await expectWhiteFocusRing(page, (await target.evaluate((element) => element.tagName)).toLowerCase());
       }
 
       // 固定ヘッダーがフォーカスを隠さない: 1 つ目の summary の下端が画面の上端より上になる位置へ移り、2 つ目の summary から Shift+Tab で戻る
