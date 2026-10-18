@@ -9,6 +9,9 @@
  * 400 で拒否されていた。
  *
  * #1128: type=ai_content (AI コンテンツ) の審査は準備中 (未対応)。API が 501 を返すので呼ばず、案内を出す。
+ *
+ * #1538: 隠れているコンテンツには「表示」の項目と、右の列に「非表示の解除」のカード (ModerationRestoreForm) を出す。
+ * 設計: docs/design/operator/13-hidden-content-restore.md §9.1
  */
 
 export const dynamic = 'force-dynamic';
@@ -19,6 +22,12 @@ import { requireRoleForPage } from '@/lib/auth/page-guard';
 import { adminFetch } from '@/lib/admin/fetch';
 import { MODERATION_TYPES, type ModerationType } from '@/lib/admin/moderation-schemas';
 import ModerationReviewForm from '@/components/operator/moderation/ModerationReviewForm';
+import ModerationRestoreForm from '@/components/operator/moderation/ModerationRestoreForm';
+import {
+  HIDDEN_CONTENT_RESTORE_WINDOW_DAYS,
+  HIDDEN_CONTENT_RETENTION_DAYS,
+  isWithinHiddenContentRestoreWindow,
+} from '@/lib/admin/hidden-content-restore';
 import { PreparingNotice } from '@/components/operator/PreparingNotice';
 
 interface PageProps {
@@ -37,6 +46,8 @@ type ModerationItem = {
   status: string;
   created_at: string;
   resolution_note: string | null;
+  /** コンテンツを隠した日時 (ISO)。隠れていなければ null (#1538) */
+  hidden_at: string | null;
 };
 
 interface ModerationDetailApiResponse {
@@ -164,6 +175,14 @@ export default async function AdminModerationDetailPage(props: PageProps) {
               <dt className="text-gray-500">投稿日時</dt>
               <dd className="text-gray-700">{new Date(resolvedItem.created_at).toLocaleString('ja-JP')}</dd>
             </div>
+            <div>
+              <dt className="text-gray-500">表示</dt>
+              <dd className="text-gray-700">
+                {resolvedItem.hidden_at
+                  ? `非表示中 (隠した日時: ${new Date(resolvedItem.hidden_at).toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo' })})`
+                  : '表示中'}
+              </dd>
+            </div>
           </dl>
 
           {/* コンテンツ画像プレビュー */}
@@ -188,15 +207,35 @@ export default async function AdminModerationDetailPage(props: PageProps) {
           )}
         </div>
 
-        {/* 審査アクション */}
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          <h2 className="text-lg font-semibold text-gray-800 mb-4">審査アクション</h2>
-          <ModerationReviewForm
-            key={`${type}:${id}`}
+        {/* 右の列: 審査アクション + 非表示の解除 (#1538) */}
+        <div className="space-y-6">
+          {/* 審査アクション */}
+          <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <h2 className="text-lg font-semibold text-gray-800 mb-4">審査アクション</h2>
+            <ModerationReviewForm
+              key={`${type}:${id}`}
+              type={type}
+              id={id}
+              status={resolvedItem.status}
+              isSuperAdmin={isSuperAdmin}
+            />
+          </div>
+
+          {/*
+            非表示の解除 (#1538)。条件なしで描く: 戻せたあとの router.refresh() で hidden_at が null になっても、
+            同じ位置・同じ key のままなので「表示に戻しました」と 409 の文面が画面に残る (設計 §9.1)。
+            カードの枠と見出しはコンポーネントが持ち、隠れていなくて結果も失敗の文も無いときは何も描かない
+          */}
+          <ModerationRestoreForm
+            key={`restore:${type}:${id}`}
             type={type}
             id={id}
-            status={resolvedItem.status}
-            isSuperAdmin={isSuperAdmin}
+            hiddenAt={resolvedItem.hidden_at}
+            restorable={
+              resolvedItem.hidden_at !== null && isWithinHiddenContentRestoreWindow(resolvedItem.hidden_at, new Date())
+            }
+            restoreWindowDays={HIDDEN_CONTENT_RESTORE_WINDOW_DAYS}
+            retentionDays={HIDDEN_CONTENT_RETENTION_DAYS}
           />
         </div>
       </div>

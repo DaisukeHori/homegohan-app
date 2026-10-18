@@ -1,7 +1,7 @@
 # operator/ cron の共有シークレットのずれの自動・定期の検知 (#1560 の項目 8) — 実経路の確認 (probe) による監視の設計
 
 版: v1.2 (2026-10-17)
-Status: 設計ゲート審査中 (実装着手前)
+Status: 設計ゲート通過。段 A (Edge・#1863)・段 B (DB・#1872)・段 C (アプリ・#1877) は main に入っている
 
 要件の正本は Issue #1560 の本文 (「決めること (オーナー)」の項目 8) と 2026-10-17 のコメント。オーナーの選択 (2026-10-17) は次の 1 文で、本書はこれを要件の外形として言い換えずに使う。範囲の細部 (Q-1〜Q-4) も、同じ日のコメントのとおりオーナーの選択 (2026-10-17) で決まっている (§0.4)。
 
@@ -60,7 +60,7 @@ Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まっ�
 
 ### 0.5 Issue 本文との食い違い (本書を正とする)
 
-- Issue #1560 の本文や関連の記述にある「Vercel Cron 6 本」は古い。origin/main (2026-10-17・`2e94cc15`) の `vercel.json` の `crons` は 5 本 (`process-menu-queue`・`app-log-alerts`・`email-outbox`・`push-outbox`・`backup-freshness`)。本書は `vercel.json` を変えない。
+- Vercel Cron の本数は、Issue #1560 の本文とコメントには書かれていない (「Vercel Cron 6 本」とする記述の出どころは確かめられない)。本書の調査時点 (origin/main 2026-10-17・`2e94cc15`) の `vercel.json` の `crons` は 5 本 (`process-menu-queue`・`app-log-alerts`・`email-outbox`・`push-outbox`・`backup-freshness`) だった。そのあと #1720 段 B (`307ae1cf`) が `login-alerts` を足し、いまの `vercel.json` の `crons` は 6 本 (上の 5 本と `login-alerts`)。本書は `vercel.json` を変えない。
 - 「3 か所 (Vercel・Edge・Vault) を突き合わせ」から読める「Vercel だけ古い」(Vercel の `CRON_SECRET` だけが入れ替え前の値で、Supabase 側 (Edge と Vault) は新しい値でそろっている) 場合は、所見にしない (Q-1 の「比べない」・D-7・R-20)。Vercel の `CRON_SECRET` は Vercel Cron が送り Vercel の route が照らす独立の値で、Supabase 側と違っても何も止まらないため (S-23)。Vercel の中で旧い値が残る形 (`CRON_SECRET_PREVIOUS`) は WARN で知らせる (S-09・S-10)。
 - Issue #1560 の項目 8 の例示「自己診断の Edge Function か、pg_cron の日次ジョブ」のうち、本書は「自己診断の Edge Function」を採り、pg_cron のジョブは足さない (確認の送り手は `app-log-alerts` の回。§4.2 の案 B)。
 
@@ -381,6 +381,7 @@ END $$;
 
 -- (2) 確認の結果。見る範囲 (p_lookback_minutes) の記録に net._http_response を要求 ID で突き合わせ、判定に要る項目だけを新しい順に返す。
 --     応答の本文は matched / previous_configured / alias_used / error / code の 5 項目だけを、各 64 字までで返す。headers と error_msg の本文は返さない。
+--     応答の無い行は、answered が false で、応答に由来する項目 (http_status / timed_out / has_error / 本文の 5 項目) はすべて NULL (「エラーなし」とは区別する)。
 CREATE OR REPLACE FUNCTION public.cron_secret_probe_results(p_lookback_minutes INTEGER DEFAULT 60, p_limit INTEGER DEFAULT 8)
 RETURNS TABLE (
   probe_id BIGINT, requested_at TIMESTAMPTZ, send_state TEXT, answered BOOLEAN,
@@ -408,7 +409,7 @@ BEGIN
     RETURN QUERY
     SELECT p.id, p.requested_at, p.send_state,
            (r.id IS NOT NULL),
-           r.status_code, r.timed_out, (r.error_msg IS NOT NULL),
+           r.status_code, r.timed_out, CASE WHEN r.id IS NOT NULL THEN (r.error_msg IS NOT NULL) END,
            pg_catalog.left(b.body ->> 'matched', c_body_field_max_length),
            CASE WHEN pg_catalog.jsonb_typeof(b.body -> 'previous_configured') = 'boolean' THEN (b.body ->> 'previous_configured')::boolean END,
            CASE WHEN pg_catalog.jsonb_typeof(b.body -> 'alias_used') = 'boolean' THEN (b.body ->> 'alias_used')::boolean END,
@@ -1407,7 +1408,7 @@ export function renderCronSecretDriftEmail(vars: CronSecretDriftEmailVars): Emai
 | メールの文面 (`ops_`) | 5 本 | 6 本 (+ `ops_cron_secret_drift`) |
 | DB の表 / 関数 | — | 表 `cron_secret_probes` + 関数 3 本 (`send_cron_secret_probe` / `cron_secret_probe_results` / `cron_secret_probe_body_json`) |
 | pg_cron のジョブ (migration が登録するもの) | 14 本 | 14 本 (変えない) |
-| `vercel.json` | 5 本 | 5 本 (変えない) |
+| `vercel.json` | 6 本 | 6 本 (変えない) |
 | `src/lib/cron-auth.ts` | `requireCronAuth` だけ | + `describeCronSecretRotationState` (値は返さない) |
 | 手で流す検査 | ある | ある (変えない)。ENV_SETUP.md に「自動の確認もある」を足す |
 
@@ -1723,7 +1724,7 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 |---|---|---|---|---|
 | `tests/edge-function-verify-jwt.test.ts` (`DB_HTTP_CALL_SITES`・DB から呼ばれる関数の検査) | `DB_HTTP_CALL_SITES`・`net.http_post`・`/functions/v1/`・`verify_jwt = false` | migration の生の文字列で HTTP の呼び出しらしい箇所を数え、宣言の数と突き合わせる (宣言の無いファイルは 0)。呼び先が `config.toml` で `verify_jwt = false`・先頭で `requireServiceRole` であることも見る | 段 B の PR で、`MEAL_IMAGE_PICKUP_MIGRATION` の定数の次に `const CRON_SECRET_PROBE_MIGRATION = path.posix.join(MIGRATIONS_DIR, '<番号>_cron_secret_drift_monitor.sql');` と `const CRON_SECRET_PROBE_FUNCTION = 'cron-secret-probe';` を足し、`DB_HTTP_CALL_SITES` の末尾に `// public.send_cron_secret_probe: 定数 c_url の '.../functions/v1/cron-secret-probe' を net.http_post で呼ぶ (#1560)` と `[CRON_SECRET_PROBE_MIGRATION, { count: 2, callees: [CRON_SECRET_PROBE_FUNCTION] }],` を足す。同じ PR で、it「DB から呼ばれる関数の宣言に、… とカタログ取り込みの 5 本がある」(origin/main の 533〜535 行) を必ず直す (`DB_CALLEES` は `DB_HTTP_CALL_SITES` の全 `callees` で、この it は完全一致の `toEqual` なので、宣言を足すだけでは赤): it の名前を `` `DB から呼ばれる関数の宣言に、${SEGMENT_STATS_FUNCTION}・${MEAL_IMAGE_WORKER_FUNCTION}・${PURGE_HIDDEN_CONTENT_FUNCTION}・${CRON_SECRET_PROBE_FUNCTION} とカタログ取り込みの 5 本がある` `` に、期待値を `[...CATALOG_IMPORT_FUNCTIONS, SEGMENT_STATS_FUNCTION, MEAL_IMAGE_WORKER_FUNCTION, PURGE_HIDDEN_CONTENT_FUNCTION, CRON_SECRET_PROBE_FUNCTION].sort()` にする。⚠ 本番のスキーマの写し `supabase/baseline/prod_schema.sql` に、将来 `send_cron_secret_probe` が取り込まれたら (prod-schema-snapshot の更新)、その行の `count` を 2 + 2 にする (そのときの PR の仕事。いまの `DB_HTTP_CALL_SITES` の baseline の行は `CATALOG_IMPORT_FUNCTIONS` の分 (count 2) だけで、本書の段 A / B / C は baseline を変えない: §13) | B (baseline の行は本書の段の外) |
 | 同上 (先頭の認証・CRON_SECRET を受け付ける関数) | `AUTH_CALLS`・`CRON_SECRET_ACCEPTANCE` | `verify_jwt = false` の関数は先頭で `await requireServiceRole(req)` を呼ぶこと。`requireServiceRole(` を含む関数は `verify_jwt = false` であること | `cron-secret-probe/index.ts` が先頭で `await requireServiceRole(req)` を呼び (§6.2)、`config.toml` に `verify_jwt = false` を書く (§6.3) ので、番兵は変えない。`describeServiceRoleAuth` を `AUTH_CALLS` に足さない (先頭の認証は `requireServiceRole` で済んでいる) | A |
-| `tests/ai-usage-contract.test.ts` (6. 定期実行: `CRON_ENTRYPOINTS`・`scanCronEntrypoints`) | `CRON_ENTRYPOINTS`・`functions\/v1\/` | `scanCronEntrypoints()` (origin/main の 351〜365 行) は、`supabase/migrations` の `.sql` (`.down.sql` を除く) から `--` のコメントを消したあと、`functions/v1/<名前>` に当たるものを全部 `pg_cron:<名前>` として集める (呼び出し元が pg_cron のジョブかどうかは見ない)。it「定期実行の入口の全数は CRON_ENTRYPOINTS の一覧どおり。…」(382〜387 行) は、その集合と `Object.keys(CRON_ENTRYPOINTS).sort()` の完全一致を求める。段 B の migration の `c_url` (§5.2。コードでありコメントではない) で `pg_cron:cron-secret-probe` が増える | 段 B の PR で、`CRON_ENTRYPOINTS` (origin/main の 312〜329 行) の `'pg_cron:process-meal-image-jobs'` の行の次 (`// DB の関数が、名前を引数で受け取って …` の行の前) に次の 2 行を足す。`// #1560 cron の共有シークレットの確認。GET /api/cron/app-log-alerts が DB の public.send_cron_secret_probe() から pg_net で呼ぶ (pg_cron のジョブではないが、走査は migration の URL をすべて pg_cron: で集める)。import は認証だけ` と `'pg_cron:cron-secret-probe': 'cron の共有シークレットの確認 (照合の結果だけを返す。AI を使わない)',`。`PG_NET_CALLEES` は変えない (呼び先は URL の定数に名前まで書いてあり、名前を文字列の連結で決める形ではない)。次の it「定期実行は記録しない: …」(389〜405 行) は、`pg_cron:` の入口について `listEdgeFunctions()` に `cron-secret-probe` があること (段 A で入る) と、`recordedFeatures(ALL_EDGE['cron-secret-probe']?.usage)` が `[]` であることを見る。`cron-secret-probe` は AI を使わないので `ENFORCED_EDGE` / `EXEMPT_EDGE` (`tests/helpers/ai-consent-enforced-paths.ts`) に行を足さない — `ALL_EDGE` に無い名前は `recordedFeatures(undefined)` = `[]` で通る | B |
+| `tests/ai-usage-contract.test.ts` (6. 定期実行: `CRON_ENTRYPOINTS`・`scanCronEntrypoints`) | `CRON_ENTRYPOINTS`・`functions\/v1\/` | `scanCronEntrypoints()` (同じファイルの関数) は、`supabase/migrations` の `.sql` (`.down.sql` を除く) から `--` のコメントを消したあと、`functions/v1/<名前>` に当たるものを全部 `pg_cron:<名前>` として集める (呼び出し元が pg_cron のジョブかどうかは見ない)。it「定期実行の入口の全数は CRON_ENTRYPOINTS の一覧どおり。…」は、その集合と `Object.keys(CRON_ENTRYPOINTS).sort()` の完全一致を求める。段 B の migration の `c_url` (§5.2。コードでありコメントではない) で `pg_cron:cron-secret-probe` が増える | 段 B の PR で、`CRON_ENTRYPOINTS` (同じファイルの定数) の `'pg_cron:process-meal-image-jobs'` の行の次 (`// DB の関数が、名前を引数で受け取って …` の行の前) に次の 2 行を足す。`// #1560 cron の共有シークレットの確認。GET /api/cron/app-log-alerts が DB の public.send_cron_secret_probe() から pg_net で呼ぶ (pg_cron のジョブではないが、走査は migration の URL をすべて pg_cron: で集める)。import は認証だけ` と `'pg_cron:cron-secret-probe': 'cron の共有シークレットの確認 (照合の結果だけを返す。AI を使わない)',`。`PG_NET_CALLEES` は変えない (呼び先は URL の定数に名前まで書いてあり、名前を文字列の連結で決める形ではない)。次の it「定期実行は記録しない: …」は、`pg_cron:` の入口について `listEdgeFunctions()` に `cron-secret-probe` があること (段 A で入る) と、`recordedFeatures(ALL_EDGE['cron-secret-probe']?.usage)` が `[]` であることを見る。`cron-secret-probe` は AI を使わないので `ENFORCED_EDGE` / `EXEMPT_EDGE` (`tests/helpers/ai-consent-enforced-paths.ts`) に行を足さない — `ALL_EDGE` に無い名前は `recordedFeatures(undefined)` = `[]` で通る | B |
 | `tests/cron-secret-contract.test.ts` CC-1〜CC-3 | `SECRET_ENV_NAMES`・`checkCronSecret`・`requireServiceRole` | 環境変数を読むのは `_shared/auth.ts` だけ / `requireServiceRole` は await / `checkCronSecret` の呼び出しは 1 つ | 変えない。§6.1 の載せ替えで `checkCronSecret` の呼び出しが `describeServiceRoleAuth` の 1 か所になり、`requireServiceRole` は呼ばない。`cron-secret-probe/index.ts` は環境変数の名前を書かない (CC-1 の走査は識別子と文字列。コメントは数えない) | A |
 | 同 CC-4〜CC-6 | `NEXT_CRON_SECRET_NAMES`・`requireCronAuth` | `CRON_SECRET` / `CRON_SECRET_PREVIOUS` を読むのは `src/lib/cron-auth.ts` だけ / `checkCronSecret` は 1 つ / cron の route は `requireCronAuth` | 変えない。`describeCronSecretRotationState` を `src/lib/cron-auth.ts` に置く (§7.2)。route は値を読まず、この関数を呼ぶだけ | C |
 | `tests/cron-secret.test.ts` RS-1〜RS-11・`tests/edge-function-service-role-auth.test.ts` SR-1〜SR-12 | `requireServiceRole` | `requireServiceRole` の振る舞い | 変えない (そのまま通ることが §6.1 の条件: R-22)。DS-1〜DS-8 を `tests/cron-secret.test.ts` に足す | A |
@@ -1743,7 +1744,7 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 | `tests/integration/security/anon-definer-execute.test.ts` A | `SECURITY DEFINER` | anon が EXECUTE できる定義者関数は許可リストの 2 本だけ | 段 B の定義者関数 2 本は完全形の REVOKE で anon から外れる (許可リストは変えない) | B |
 | `tests/log-cleanup-dau-snapshot-contract.test.ts` 規則 9・`tests/helpers/migration-cron-jobs.ts` | `cron.schedule(` | pg_cron のジョブの数と名前 | 反応しない (ジョブを足さない。CT-10 が `cron.schedule` を呼ばないことを固定) | — |
 | `tests/env-setup-cron-secret-crons.test.ts` | `CRON_SECRET`・`vercel.json` | `ENV_SETUP.md` の `CRON_SECRET` の行の path = `vercel.json` | 反応しない (`vercel.json` を変えない。`ENV_SETUP.md` の Vercel の行 (`| Vercel の環境変数 | \`CRON_SECRET\` |` で始まる行) の path は変えない。§15 の行 4 で足すのは別の行) | — |
-| `tests/cron-failure-monitoring-contract.test.ts` 9 (と 8) | `PG_CRON_STALL_MINUTES`・`vercel.json`・`internalError`・`createLogger` | 9: `src/app/api/cron/*/route.ts` が `createLogger` / `internalError` に渡す名前を走査し (文字列の直書きか、`const X = '…'` の定数)、候補の LIKE とディレクトリ名に合うかを見る。`vercel.json` の crons の 5 本が走査に入ることも見る。8: `PG_CRON_STALL_MINUTES` (60) を import してジョブの間隔と突き合わせる | 直さずに通る (反応しない)。段 C で route に足す `internalError` の呼び出し 4 か所 (§7.3) はどれも既存の定数 `ROUTE_NAME` (= `'cron/app-log-alerts'`。origin/main の route 115 行) を渡す。`createLogger` は足さない。`vercel.json` と `PG_CRON_STALL_MINUTES` は変えない | — |
+| `tests/cron-failure-monitoring-contract.test.ts` 9 (と 8) | `PG_CRON_STALL_MINUTES`・`vercel.json`・`internalError`・`createLogger` | 9: `src/app/api/cron/*/route.ts` が `createLogger` / `internalError` に渡す名前を走査し (文字列の直書きか、`const X = '…'` の定数)、候補の LIKE とディレクトリ名に合うかを見る。`vercel.json` の crons の 6 本 (`backup-freshness`・`login-alerts` を含む) が走査に入ることも見る。8: `PG_CRON_STALL_MINUTES` (60) を import してジョブの間隔と突き合わせる | 直さずに通る (反応しない)。段 C で route に足す `internalError` の呼び出し 4 か所 (§7.3) はどれも既存の定数 `ROUTE_NAME` (= `'cron/app-log-alerts'`。origin/main の route 115 行) を渡す。`createLogger` は足さない。`vercel.json` と `PG_CRON_STALL_MINUTES` は変えない | — |
 | `src/__tests__/lib/emails/ops/pg-cron-stalled.test.ts` | `pg-cron-stalled`・`ops_pg_cron_stalled` | `renderPgCronStalledEmail` の文面 (件名・本文・100 字以内) | 反応しない (`src/lib/emails/ops/pg-cron-stalled.ts` を変えない。新しい文面は別ファイル `cron-secret-drift.ts` で、そのテストは §11.2 の新設 `src/__tests__/lib/emails/ops/cron-secret-drift.test.ts`) | — |
 | `tests/integration/rls/ops-alert-state.test.ts` | `ops_alert_state` | `claim_ops_alert` の挙動 | 変えない (キーが増えるだけ) | — |
 | `tests/email-send-throttle-contract.test.ts` | `EXEMPT_EMAIL_SENDERS`・`MAIL_TRIGGERING_RPCS`・`sendEmail(` | `sendEmail` の呼び出し元の除外リスト・メールを送る RPC の一覧 | 反応しない (route はすでに除外リストにあり、新しい文面は `src/lib/emails/ops/`、新しい RPC 2 本はメールを送らない) | — |
@@ -1876,5 +1877,5 @@ const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 - **検知の遅れは最大 30 分** (Q-4)。ずれの直後の 1 時間おきのジョブ (`calculate-segment-stats`) は、通知より先に 401 で止まることがある。
 - **確認は Vault の値を本番の Edge Function へ 15 分ごとに送る** (1 日 96 回)。pg_cron の実際の呼び出しと同じ経路・同じ露出で、pg_net の待ち行列に Authorization ヘッダーが載るのは送られるまでの数秒。
 - **`cron-secret-probe` は、正しい秘密を持つ呼び出しにだけ `previous_configured` / `alias_used` を返す**。秘密を持たない呼び出しには既存の関数と同じ 401 しか返さない。
-- **`net._http_response` の保持 (既定 6 時間) より長く route が止まる**と、再開後の最初の回は `no-probe-yet` から始め直す。
+- **見る範囲 (60 分。`src/lib/ops-alerts/cron-secret-drift.ts` の `CRON_SECRET_PROBE_LOOKBACK_MINUTES`) より長く route が止まる**と、見る範囲に確認の行が無いので、再開後の最初の回は `no-probe-yet` から始め直す (`net._http_response` の保持 (既定 6 時間) より短い範囲しか見ないため)。
 - **本物のジョブの応答 (`SERVER_CONFIG_MISSING` の 503 など) は見ない** (§4.2 の案 A)。pg_net の応答の失敗一般の監視は別の候補。

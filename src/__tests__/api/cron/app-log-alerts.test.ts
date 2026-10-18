@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
+import { CRON_SECRET_FINDING_CATALOG, type CronSecretFindingId } from '@/lib/ops-alerts/cron-secret-drift';
 
 // #1157 GET /api/cron/app-log-alerts — 本番エラーの急増を運用メールに知らせる cron。
 // DB (Supabase の RPC)・メール送信 (sendEmail)・ロガーはモックにし、route 本体と、文面・判定の部品は実物を通す。
@@ -24,6 +25,8 @@ const mocks = vi.hoisted(() => ({
   renderCronFailureThrows: false,
   /** true の間、pg_cron の停止の文面を作る関数が例外を投げる (#1125 の B。P-24) */
   renderPgCronStalledThrows: false,
+  /** true の間、cron の共有シークレットのずれの文面を作る関数が例外を投げる (#1560。CS-6) */
+  renderCronSecretDriftThrows: false,
 }));
 
 vi.mock('@/lib/supabase/server', () => ({
@@ -84,6 +87,18 @@ vi.mock('@/lib/emails/ops/pg-cron-stalled', async (importOriginal) => {
   };
 });
 
+// #1560 cron の共有シークレットのずれ・入れ替えの途中の文面も実物を通し、フラグが true のときだけ例外にする
+vi.mock('@/lib/emails/ops/cron-secret-drift', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/emails/ops/cron-secret-drift')>();
+  return {
+    ...actual,
+    renderCronSecretDriftEmail: (vars: Parameters<typeof actual.renderCronSecretDriftEmail>[0]) => {
+      if (mocks.renderCronSecretDriftThrows) throw new Error('render failed');
+      return actual.renderCronSecretDriftEmail(vars);
+    },
+  };
+});
+
 const { GET } = await import('@/app/api/cron/app-log-alerts/route');
 
 const SECRET = 'dummy-cron-secret-0123456789abcdef';
@@ -107,6 +122,31 @@ const PG_CRON_STALLED_CLAIMED_AT = '2026-10-09T01:15:00.135791+00:00';
 const CRON_FAILURE_QUIET = { status: 'below_threshold', total: 0, threshold: 0 } as const;
 /** #1125 (B) pg_cron が無い (既定の場面) ときの、応答の pg_cron_stalled (既定のしきい値 60 分) */
 const PG_CRON_STALLED_QUIET = { status: 'below_threshold', total: 0, threshold: 60 } as const;
+/** #1560 ずれの通知のキー (cron_secret_drift) で権利を取った時刻 */
+const CRON_SECRET_DRIFT_CLAIMED_AT = '2026-10-09T01:15:00.357913+00:00';
+/** #1560 入れ替えの途中の通知のキー (cron_secret_rotation) で権利を取った時刻 */
+const CRON_SECRET_ROTATION_CLAIMED_AT = '2026-10-09T01:15:00.468024+00:00';
+/** #1560 所見が無いときの、応答の cron_secret_drift / cron_secret_rotation (しきい値 0 = 1 件から) */
+const CRON_SECRET_QUIET = { status: 'below_threshold', total: 0, threshold: 0 } as const;
+/** #1560 既定の場面の確認の結果 (前の回の確認が 200 current。所見なし)。requested_at は「いま」から 15 分前 */
+const probeRowOk = () => [
+  {
+    probe_id: 41,
+    requested_at: new Date(Date.now() - 15 * 60_000).toISOString(),
+    send_state: 'sent',
+    answered: true,
+    http_status: 200,
+    timed_out: false,
+    has_error: false,
+    matched: 'current',
+    previous_configured: false,
+    alias_used: false,
+    body_error: null,
+    body_code: null,
+  },
+];
+/** #1560 既定の場面の確認の送信の応答 */
+const PROBE_SENT = [{ probe_id: 42, send_state: 'sent', request_id: 9002 }];
 
 function makeRequest(authorization?: string) {
   return new Request('http://localhost/api/cron/app-log-alerts', {
@@ -170,6 +210,14 @@ interface Scenario {
   pgCronLastRun: RpcResult;
   /** #1125 (B) pg_cron の停止の通知のキー (pg_cron_stalled) で権利を取ったときの応答 */
   pgCronStalledClaim: RpcResult;
+  /** #1560 確認の結果 (cron_secret_probe_results) の応答 */
+  cronSecretResults: RpcResult;
+  /** #1560 確認の送信 (send_cron_secret_probe) の応答 */
+  cronSecretSend: RpcResult;
+  /** #1560 ずれの通知のキー (cron_secret_drift) で権利を取ったときの応答 */
+  cronSecretDriftClaim: RpcResult;
+  /** #1560 入れ替えの途中の通知のキー (cron_secret_rotation) で権利を取ったときの応答 */
+  cronSecretRotationClaim: RpcResult;
 }
 
 let scenario: Scenario;
@@ -194,6 +242,11 @@ function setScenario(overrides: Partial<Scenario> = {}) {
     cronFailureUnmark: { data: 0, error: null },
     pgCronLastRun: { data: [{ cron_available: false, active_jobs: 0, last_run_at: null }], error: null },
     pgCronStalledClaim: { data: PG_CRON_STALLED_CLAIMED_AT, error: null },
+    // 既定では前の回の確認が 200 current で所見が無い (既存のテストに混ざらない)
+    cronSecretResults: { data: probeRowOk(), error: null },
+    cronSecretSend: { data: PROBE_SENT, error: null },
+    cronSecretDriftClaim: { data: CRON_SECRET_DRIFT_CLAIMED_AT, error: null },
+    cronSecretRotationClaim: { data: CRON_SECRET_ROTATION_CLAIMED_AT, error: null },
     ...overrides,
   };
 }
@@ -224,6 +277,7 @@ beforeEach(() => {
   mocks.renderThrows = false;
   mocks.renderCronFailureThrows = false;
   mocks.renderPgCronStalledThrows = false;
+  mocks.renderCronSecretDriftThrows = false;
   vi.stubEnv('CRON_SECRET', SECRET);
   vi.stubEnv('CRON_SECRET_PREVIOUS', undefined);
   vi.stubEnv('OPS_ALERT_EMAIL', OPS_EMAIL);
@@ -232,6 +286,7 @@ beforeEach(() => {
   vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', undefined);
   vi.stubEnv('OPS_ALERT_CLIENT_ERROR_THRESHOLD', undefined);
   vi.stubEnv('OPS_ALERT_PG_CRON_STALL_MINUTES', undefined);
+  vi.stubEnv('OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES', undefined);
   vi.stubEnv('NEXT_PUBLIC_APP_URL', SITE_URL);
   consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
   consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -248,10 +303,14 @@ beforeEach(() => {
     if (fn === 'mark_cron_failures_alerted') return scenario.cronFailureMark;
     if (fn === 'unmark_cron_failures_alerted') return scenario.cronFailureUnmark;
     if (fn === 'pg_cron_last_run_at') return scenario.pgCronLastRun;
+    if (fn === 'cron_secret_probe_results') return scenario.cronSecretResults;
+    if (fn === 'send_cron_secret_probe') return scenario.cronSecretSend;
     if (fn === 'claim_ops_alert') {
       if (args?.p_alert_key === 'email_dead_letter') return scenario.deadClaim;
       if (args?.p_alert_key === 'cron_failure') return scenario.cronFailureClaim;
       if (args?.p_alert_key === 'pg_cron_stalled') return scenario.pgCronStalledClaim;
+      if (args?.p_alert_key === 'cron_secret_drift') return scenario.cronSecretDriftClaim;
+      if (args?.p_alert_key === 'cron_secret_rotation') return scenario.cronSecretRotationClaim;
       return args?.p_alert_key === 'app_logs_client_error_spike' ? scenario.clientClaim : scenario.claim;
     }
     if (fn === 'release_ops_alert') return scenario.release;
@@ -413,7 +472,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 20, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     // 何も起きなかった回は、ログを増やさない (15 分おきに積み上がらない)
@@ -426,7 +485,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(1);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
   });
@@ -436,7 +495,7 @@ describe('GET /api/cron/app-log-alerts: しきい値 (#1157)', () => {
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'below_threshold', total: 0, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
@@ -491,7 +550,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'deduped', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(mocks.sendEmail).not.toHaveBeenCalled();
     expect(rpcCalls('release_ops_alert')).toHaveLength(0);
   });
@@ -501,7 +560,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     let claims = 0;
     const harness = mocks.rpc.getMockImplementation();
     mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
-      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);
+      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at' || fn === 'cron_secret_probe_results' || fn === 'send_cron_secret_probe') return harness?.(fn, args);
       if (fn === 'app_log_error_counts') return scenario.counts;
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
@@ -526,7 +585,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
     const harness = mocks.rpc.getMockImplementation();
     mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
       order.push(fn);
-      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);
+      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at' || fn === 'cron_secret_probe_results' || fn === 'send_cron_secret_probe') return harness?.(fn, args);
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
       return fn === 'app_log_error_counts' ? scenario.counts : fn === 'claim_ops_alert' ? scenario.claim : scenario.release;
@@ -540,7 +599,7 @@ describe('GET /api/cron/app-log-alerts: 同じアラートを 60 分は送り直
 
     // サーバーの判定 (数える → 権利 → 送る) を済ませてから、クライアントの error を数える (#1493)
     // その後に届けられなかったメール (#1193) を数える
-    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts', 'email_outbox_dead_counts', 'cron_failure_counts', 'pg_cron_last_run_at']);
+    expect(order).toEqual(['app_log_error_counts', 'claim_ops_alert', 'sendEmail', 'app_log_client_error_counts', 'email_outbox_dead_counts', 'cron_failure_counts', 'pg_cron_last_run_at', 'cron_secret_probe_results', 'send_cron_secret_probe']);
   });
 
   it('D-5: 送れたときは権利を返さない (60 分の抑止が効く)', async () => {
@@ -565,14 +624,14 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
       threshold: 50,
       window_minutes: 15,
       client: CLIENT_QUIET,
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
 
     setScenario({ counts: { data: rowsOf(51), error: null } });
     const over = await GET(authed());
-    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(over.json()).resolves.toEqual({ status: 'sent', total: 51, threshold: 50, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
     // メールの文面のしきい値も、上書きした値になる
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 50 件を超えると');
@@ -586,7 +645,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 6, threshold: 5, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
   });
 
   it('E-3: OPS_ALERT_COOLDOWN_MINUTES で、権利を取るときのクールダウンを変える。メールの文面も同じ値', async () => {
@@ -617,7 +676,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
       const res = await GET(authed());
 
-      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+      await expect(res.json(), threshold).resolves.toEqual({ status: 'sent', total: 21, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
       expect(rpcCalls('claim_ops_alert'), cooldown).toEqual([
         ['claim_ops_alert', { p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 }],
       ]);
@@ -636,7 +695,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 31, threshold: 30, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn.mock.calls[0][1]).toEqual({ ignored_env: ['OPS_ALERT_COOLDOWN_MINUTES'] });
   });
@@ -647,7 +706,7 @@ describe('GET /api/cron/app-log-alerts: しきい値とクールダウンを環�
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(rpcCalls('claim_ops_alert')[0][1]).toEqual({ p_alert_key: 'app_logs_error_spike', p_cooldown_minutes: 60 });
     expect(mocks.logWarn).not.toHaveBeenCalled();
   });
@@ -760,7 +819,7 @@ describe('GET /api/cron/app-log-alerts: メールの内容 (#1157)', () => {
   it('M-6: 送れたら info を 1 行残す (件数と関数名・メールの ID だけ。宛先は出さない)', async () => {
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'sent', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(mocks.logInfo).toHaveBeenCalledTimes(1);
     const [, meta] = mocks.logInfo.mock.calls[0];
     expect(meta).toMatchObject({
@@ -788,7 +847,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ status: 'send_failed', total: 42, threshold: 20, window_minutes: 15, client: CLIENT_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     // claim が返した時刻をそのまま渡す (同じ時刻の行だけを消すため)
     expect(rpcCalls('release_ops_alert')).toEqual([
       ['release_ops_alert', { p_alert_key: 'app_logs_error_spike', p_claimed_at: CLAIMED_AT }],
@@ -868,7 +927,7 @@ describe('GET /api/cron/app-log-alerts: メールが届かなくても壊れな�
     mocks.sendEmail.mockResolvedValue(failedResult);
     const harness = mocks.rpc.getMockImplementation();
     mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
-      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at') return harness?.(fn, args);
+      if (fn === 'cron_failure_counts' || fn === 'pg_cron_last_run_at' || fn === 'cron_secret_probe_results' || fn === 'send_cron_secret_probe') return harness?.(fn, args);
       if (fn === 'app_log_error_counts') return scenario.counts;
       if (fn === 'app_log_client_error_counts') return scenario.clientCounts;
       if (fn === 'email_outbox_dead_counts') return scenario.deadCounts;
@@ -950,7 +1009,7 @@ describe('GET /api/cron/app-log-alerts: DB の失敗は 500 (汎用メッセー�
 // そのほか
 // ---------------------------------------------------------------
 describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
-  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は RPC だけ。既定の場面で呼ぶのは 7 つ)', async () => {
+  it('O-1: infra_alerts を含め、表を直接読み書きしない (DB への入口は RPC だけ。既定の場面で呼ぶのは 9 つ)', async () => {
     await GET(authed());
     mocks.sendEmail.mockResolvedValue(failedResult);
     await GET(authed());
@@ -962,9 +1021,11 @@ describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
       'app_log_error_counts',
       'claim_ops_alert',
       'cron_failure_counts',
+      'cron_secret_probe_results',
       'email_outbox_dead_counts',
       'pg_cron_last_run_at',
       'release_ops_alert',
+      'send_cron_secret_probe',
     ]);
   });
 
@@ -1039,7 +1100,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'below_threshold', total: 21, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toHaveLength(0);
     expect(mocks.sendEmail).not.toHaveBeenCalled();
@@ -1065,7 +1126,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 101, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toEqual([
       ['claim_ops_alert', { p_alert_key: 'app_logs_client_error_spike', p_cooldown_minutes: 60 }],
@@ -1097,7 +1158,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 150, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
@@ -1118,7 +1179,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'deduped', total: 400, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
@@ -1136,7 +1197,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 120, threshold: 100 },
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(claimKeys()).toEqual(['app_logs_error_spike', 'app_logs_client_error_spike']);
     expect(mocks.sendEmail.mock.calls.map(([envelope]) => envelope.subject)).toEqual([
@@ -1157,7 +1218,7 @@ describe('GET /api/cron/app-log-alerts: ブラウザ・端末の error は別の
       threshold: 20,
       window_minutes: 15,
       client: { status: 'sent', total: 31, threshold: 30 },
-      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(mocks.sendEmail.mock.calls[0][0].text as string).toContain('15 分で 30 件を超えると');
     expect(mocks.logWarn).not.toHaveBeenCalled();
@@ -1265,7 +1326,7 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
     const res = await GET(authed());
 
     expect(res.status).toBe(200);
-    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: { status: 'sent', total: 3, threshold: 0 }, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: { status: 'sent', total: 3, threshold: 0 }, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(rpcCalls('email_outbox_dead_counts')).toEqual([['email_outbox_dead_counts', { p_limit: 10 }]]);
     expect(rpcCalls('claim_ops_alert')).toEqual([['claim_ops_alert', { p_alert_key: 'email_dead_letter', p_cooldown_minutes: 60 }]]);
     expect(rpcCalls('mark_email_outbox_dead_alerted')).toEqual([
@@ -1302,7 +1363,7 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
 
     const res = await GET(authed());
 
-    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET });
+    await expect(res.json()).resolves.toEqual({ ...SERVER_QUIET, email_dead_letter: DEAD_LETTER_QUIET, cron_failure: CRON_FAILURE_QUIET, pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
     expect(rpcCalls('email_outbox_dead_counts')).toHaveLength(1);
     expect(claimKeys()).not.toContain('email_dead_letter');
     expect(rpcCalls('mark_email_outbox_dead_alerted')).toHaveLength(0);
@@ -1336,6 +1397,8 @@ describe('GET /api/cron/app-log-alerts: 届けられなかったメール (email
       'sendEmail:ops_email_dead_letter',
       'cron_failure_counts',
       'pg_cron_last_run_at',
+      'cron_secret_probe_results',
+      'send_cron_secret_probe',
     ]);
   });
 
@@ -1673,7 +1736,7 @@ describe('GET /api/cron/app-log-alerts: 定期処理の失敗 (cron_failure。#1
       client: CLIENT_QUIET,
       email_dead_letter: DEAD_LETTER_QUIET,
       cron_failure: { status: 'sent', total: 3, threshold: 0 },
-      pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      pg_cron_stalled: PG_CRON_STALLED_QUIET, cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET,
     });
     expect(rpcCalls('claim_ops_alert')).toContainEqual(['claim_ops_alert', { p_alert_key: 'cron_failure', p_cooldown_minutes: 60 }]);
     expect(rpcCalls('mark_cron_failures_alerted')).toEqual([
@@ -2264,5 +2327,699 @@ describe('GET /api/cron/app-log-alerts: 5 種類の判定の順 (#1125 の B)', 
     expect(keys).toEqual(['app_logs_error_spike']);
     // server の通知は済んでいるので、権利は返さない
     expect(rpcCalls('release_ops_alert')).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------
+// #1560 cron の共有シークレットのずれ (cron_secret_drift) と入れ替えの途中 (cron_secret_rotation)
+// 設計: docs/design/operator/12-cron-secret-drift-monitor.md §7.3・§8.1.2。CS- = ずれ / CR- = 入れ替え / CO- = 順と機械検査
+// ---------------------------------------------------------------
+describe('GET /api/cron/app-log-alerts: cron の共有シークレットのずれ・入れ替えの途中 (cron_secret_drift / cron_secret_rotation。#1560)', () => {
+  const GENERIC = { error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' };
+  const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
+  const claimKeys = () => rpcCalls('claim_ops_alert').map(([, args]) => (args as { p_alert_key: string }).p_alert_key);
+  const secretClaims = () => rpcCalls('claim_ops_alert').filter(([, args]) => /^cron_secret_/.test((args as { p_alert_key: string }).p_alert_key));
+  const secretReleases = () => rpcCalls('release_ops_alert').filter(([, args]) => /^cron_secret_/.test((args as { p_alert_key: string }).p_alert_key));
+  const CRON_SECRET_DRIFT_SUBJECT = (count: number) => `【ほめゴハン運用】cron の共有シークレットの確認が失敗しました (${count} 件)`;
+  const CRON_SECRET_ROTATION_SUBJECT = (count: number) => `【ほめゴハン運用】cron の共有シークレットの入れ替えが途中です (${count} 件)`;
+
+  /** ほかの 5 種類を静かにして、共有シークレットの判定だけを見る */
+  const secretOnly = (overrides: Partial<Scenario> = {}) => setScenario({ counts: { data: [], error: null }, ...overrides });
+
+  /** 前の回の確認の結果の 1 行。既定は 200 current (所見なし)。項目を変えて作る */
+  const probeRow = (overrides: Record<string, unknown> = {}) => ({ ...probeRowOk()[0], ...overrides });
+  /** 応答の無い行 (送れなかった確認・応答を待っている確認) */
+  const unansweredRow = (overrides: Record<string, unknown> = {}) =>
+    probeRow({
+      answered: false,
+      http_status: null,
+      timed_out: null,
+      has_error: null,
+      matched: null,
+      previous_configured: null,
+      alias_used: null,
+      body_error: null,
+      body_code: null,
+      ...overrides,
+    });
+  /** 401 Unauthorized (Edge と Vault の食い違い) */
+  const mismatchRow = (overrides: Record<string, unknown> = {}) =>
+    probeRow({ http_status: 401, matched: null, previous_configured: null, alias_used: null, body_error: 'Unauthorized', ...overrides });
+  const resultsOf = (...rows: unknown[]): RpcResult => ({ data: rows, error: null });
+
+  const sentTemplates = () => mocks.sendEmail.mock.calls.map(([envelope]) => (envelope as { template: string }).template);
+  const sentSubjects = () => mocks.sendEmail.mock.calls.map(([envelope]) => (envelope as { subject: string }).subject);
+  const sentTexts = () => mocks.sendEmail.mock.calls.map(([envelope]) => (envelope as { text: string }).text);
+  const sendProbeCalls = () => rpcCalls('send_cron_secret_probe');
+
+  const outboxFailedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('outbox_failed', 'EMAIL_OUTBOX_FAILED: メールを送信待ちに登録できませんでした', null, 0, true),
+  } as const;
+  const suppressedResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('suppressed', 'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした', null, 0, false),
+  } as const;
+  const invalidEnvelopeResult = {
+    ok: false,
+    id: null,
+    attempts: 0,
+    skipped: false,
+    error: new EmailSendError('invalid_envelope', 'EMAIL_INVALID_ENVELOPE: subject: too long', null, 0, false),
+  } as const;
+
+  // ---- ずれ (fail。キー cron_secret_drift) ----
+
+  it('CS-1: 確認の結果が 0 行なら両方 below_threshold。権利を取らず、send_cron_secret_probe を 1 回呼ぶ (最初の回)', async () => {
+    secretOnly({ cronSecretResults: { data: [], error: null } });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 0,
+      threshold: 20,
+      window_minutes: 15,
+      client: CLIENT_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET,
+      cron_failure: CRON_FAILURE_QUIET,
+      pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      cron_secret_drift: CRON_SECRET_QUIET,
+      cron_secret_rotation: CRON_SECRET_QUIET,
+    });
+    expect(secretClaims()).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(rpcCalls('cron_secret_probe_results')).toEqual([['cron_secret_probe_results', { p_lookback_minutes: 60, p_limit: 8 }]]);
+    expect(sendProbeCalls()).toHaveLength(1);
+  });
+
+  it('CS-2: 最新の決まった確認が 401 Unauthorized なら権利 (キー cron_secret_drift・既定の抑止 60 分) を取り、ops_cron_secret_drift (kind drift) を 1 通送る。応答 cron_secret_drift は sent・total 1。そのあと確認を送る', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    const order: string[] = [];
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      order.push(fn === 'claim_ops_alert' ? `claim_ops_alert:${args?.p_alert_key}` : fn);
+      return harness?.(fn, args);
+    });
+    mocks.sendEmail.mockImplementation(async (envelope: { template?: string }) => {
+      order.push(`sendEmail:${envelope.template}`);
+      return sentResult;
+    });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({
+      status: 'below_threshold',
+      total: 0,
+      threshold: 20,
+      window_minutes: 15,
+      client: CLIENT_QUIET,
+      email_dead_letter: DEAD_LETTER_QUIET,
+      cron_failure: CRON_FAILURE_QUIET,
+      pg_cron_stalled: PG_CRON_STALLED_QUIET,
+      cron_secret_drift: { status: 'sent', total: 1, threshold: 0 },
+      cron_secret_rotation: CRON_SECRET_QUIET,
+    });
+    expect(secretClaims()).toEqual([['claim_ops_alert', { p_alert_key: 'cron_secret_drift', p_cooldown_minutes: 60 }]]);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    const envelope = mocks.sendEmail.mock.calls[0][0] as { template: string; to: string; subject: string; text: string };
+    expect(envelope.template).toBe('ops_cron_secret_drift');
+    expect(envelope.to).toBe(OPS_EMAIL);
+    expect(envelope.subject).toBe(CRON_SECRET_DRIFT_SUBJECT(1));
+    expect(envelope.text).toContain(CRON_SECRET_FINDING_CATALOG['edge-vault-mismatch'].title);
+    expect(envelope.text).toContain(CRON_SECRET_FINDING_CATALOG['edge-vault-mismatch'].action);
+    expect(envelope.text).toContain(`${SITE_URL}/super-admin/logs`);
+    // 読む → 権利 → 送る → 次の回のための確認を送る の順
+    expect(order.slice(order.indexOf('cron_secret_probe_results'))).toEqual([
+      'cron_secret_probe_results',
+      'claim_ops_alert:cron_secret_drift',
+      'sendEmail:ops_cron_secret_drift',
+      'send_cron_secret_probe',
+    ]);
+    expect(secretReleases()).toHaveLength(0);
+  });
+
+  it('CS-3: 抑止の間 (権利 NULL) は deduped。sendEmail を呼ばず、確認は送る', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()), cronSecretDriftClaim: { data: null, error: null } });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: { status: 'deduped', total: 1, threshold: 0 },
+      cron_secret_rotation: CRON_SECRET_QUIET,
+    });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(secretReleases()).toHaveLength(0);
+    expect(sendProbeCalls()).toHaveLength(1);
+  });
+
+  /** fail の所見 13 種類のうち CS-2 の edge-vault-mismatch を除く 12 種類を起こす入力 (16 通り) */
+  const FAIL_CASES: ReadonlyArray<[string, () => unknown, CronSecretFindingId]> = [
+    ['send_state vault_missing', () => unansweredRow({ send_state: 'vault_missing' }), 'vault-missing'],
+    ['send_state vault_empty', () => unansweredRow({ send_state: 'vault_empty' }), 'vault-empty'],
+    ['send_state vault_unreadable', () => unansweredRow({ send_state: 'vault_unreadable' }), 'vault-unreadable'],
+    ['send_state vault_unavailable', () => unansweredRow({ send_state: 'vault_unavailable' }), 'vault-unavailable'],
+    ['send_state net_unavailable', () => unansweredRow({ send_state: 'net_unavailable' }), 'pg-net-unavailable'],
+    ['未応答で猶予超え', () => unansweredRow({ requested_at: minutesAgo(15) }), 'probe-unanswered'],
+    ['timed_out', () => probeRow({ http_status: null, timed_out: true, matched: null, previous_configured: null, alias_used: null }), 'probe-timeout'],
+    ['has_error true', () => probeRow({ http_status: null, has_error: true, matched: null, previous_configured: null, alias_used: null }), 'probe-error'],
+    ['http_status NULL', () => probeRow({ http_status: null, matched: null, previous_configured: null, alias_used: null }), 'probe-error'],
+    ['200 で matched が想定外', () => probeRow({ matched: 'something-else' }), 'probe-unexpected-response'],
+    ['401 でほかの本文', () => mismatchRow({ body_error: 'Something else' }), 'probe-unexpected-response'],
+    ['503 でほかの本文', () => probeRow({ http_status: 503, matched: null, previous_configured: null, alias_used: null, body_error: 'SERVER_CONFIG_MISSING' }), 'probe-unexpected-response'],
+    ['405', () => probeRow({ http_status: 405, matched: null, previous_configured: null, alias_used: null, body_error: 'Method not allowed' }), 'probe-unexpected-response'],
+    ['401 に code (ゲートウェイの JWT 検証)', () => mismatchRow({ body_error: null, body_code: 'UNAUTHORIZED_INVALID_JWT_FORMAT' }), 'gateway-jwt'],
+    ['503 Service not configured', () => probeRow({ http_status: 503, matched: null, previous_configured: null, alias_used: null, body_error: 'Service not configured' }), 'edge-not-configured'],
+    ['404', () => probeRow({ http_status: 404, matched: null, previous_configured: null, alias_used: null, body_code: 'NOT_FOUND' }), 'probe-not-deployed'],
+  ];
+
+  it.each(FAIL_CASES)('CS-4: fail の所見が drift の通知 (キー cron_secret_drift・total 1・文面にその所見の題) になる: %s', async (_name, build, findingId) => {
+    secretOnly({ cronSecretResults: resultsOf(build()) });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: { status: 'sent', total: 1, threshold: 0 },
+      cron_secret_rotation: CRON_SECRET_QUIET,
+    });
+    expect(secretClaims()).toEqual([['claim_ops_alert', { p_alert_key: 'cron_secret_drift', p_cooldown_minutes: 60 }]]);
+    expect(mocks.sendEmail).toHaveBeenCalledTimes(1);
+    expect(sentTemplates()).toEqual(['ops_cron_secret_drift']);
+    expect(sentSubjects()).toEqual([CRON_SECRET_DRIFT_SUBJECT(1)]);
+    expect(sentTexts()[0]).toContain(CRON_SECRET_FINDING_CATALOG[findingId].title);
+    expect(sendProbeCalls()).toHaveLength(1);
+  });
+
+  it('CS-5: 送れなかった (outbox_failed) ときは release (キー cron_secret_drift) → send_failed。suppressed / invalid_envelope は返さない', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    mocks.sendEmail.mockResolvedValue(outboxFailedResult);
+
+    const failed = await GET(authed());
+
+    await expect(failed.json()).resolves.toMatchObject({ cron_secret_drift: { status: 'send_failed', total: 1, threshold: 0 } });
+    expect(secretReleases()).toEqual([['release_ops_alert', { p_alert_key: 'cron_secret_drift', p_claimed_at: CRON_SECRET_DRIFT_CLAIMED_AT }]]);
+    expect(mocks.logWarn).toHaveBeenCalledWith(
+      'cron の共有シークレットのずれを検知しましたが、通知メールを送れませんでした',
+      expect.objectContaining({ scope: 'cron_secret_drift', total: 1, threshold: 0, error_code: 'outbox_failed' }),
+    );
+    // 権利を返しても、次の回の確認は送る
+    expect(sendProbeCalls()).toHaveLength(1);
+
+    for (const result of [suppressedResult, invalidEnvelopeResult]) {
+      vi.clearAllMocks();
+      secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+      mocks.sendEmail.mockResolvedValue(result);
+
+      const res = await GET(authed());
+
+      await expect(res.json()).resolves.toMatchObject({ cron_secret_drift: { status: 'send_failed', total: 1, threshold: 0 } });
+      expect(secretReleases(), result.error.code).toHaveLength(0);
+    }
+
+    // 送信設定が未完了 (not_configured) は skipped で返す・権利は返す
+    vi.clearAllMocks();
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    mocks.sendEmail.mockResolvedValue(skippedResult);
+    const skipped = await GET(authed());
+    await expect(skipped.json()).resolves.toMatchObject({ cron_secret_drift: { status: 'send_skipped', total: 1, threshold: 0 } });
+    expect(secretReleases()).toHaveLength(1);
+  });
+
+  it('CS-6: 文面の作成・sendEmail が例外なら release してから 500。確認は送らない', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    mocks.renderCronSecretDriftThrows = true;
+
+    const renderFailed = await GET(authed());
+
+    expect(renderFailed.status).toBe(500);
+    await expect(renderFailed.json()).resolves.toEqual(GENERIC);
+    expect(secretReleases()).toEqual([['release_ops_alert', { p_alert_key: 'cron_secret_drift', p_claimed_at: CRON_SECRET_DRIFT_CLAIMED_AT }]]);
+    expect(sendProbeCalls()).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+
+    vi.clearAllMocks();
+    mocks.renderCronSecretDriftThrows = false;
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    mocks.sendEmail.mockRejectedValue(new Error('send exploded'));
+
+    const sendFailed = await GET(authed());
+
+    expect(sendFailed.status).toBe(500);
+    await expect(sendFailed.json()).resolves.toEqual(GENERIC);
+    expect(secretReleases()).toHaveLength(1);
+    expect(sendProbeCalls()).toHaveLength(0);
+  });
+
+  it('CS-7: claim_ops_alert が error なら 500。rotation の判定にも確認の送信にも進まない', async () => {
+    secretOnly({
+      cronSecretResults: resultsOf(mismatchRow()),
+      cronSecretDriftClaim: { data: null, error: { code: '57P01', message: 'terminating connection due to administrator command' } },
+    });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET);
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    // rotation のキーでは権利を取っていない (warn の所見があっても、drift の失敗で止まる)
+    expect(claimKeys()).toEqual(['cron_secret_drift']);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(sendProbeCalls()).toHaveLength(0);
+    expect(secretReleases()).toHaveLength(0);
+  });
+
+  it('CS-8: cron_secret_probe_results が error・応答の形が誤り (send_state が想定外) なら 500。claim も send_cron_secret_probe も呼ばない', async () => {
+    const bad: ReadonlyArray<RpcResult> = [
+      { data: null, error: { code: '42883', message: 'function public.cron_secret_probe_results does not exist' } },
+      { data: resultsOf(probeRow({ send_state: 'unexpected_state' })).data, error: null },
+      { data: { not: 'an array' }, error: null },
+      { data: resultsOf(probeRow({ requested_at: 'not-a-date' })).data, error: null },
+    ];
+    for (const cronSecretResults of bad) {
+      vi.clearAllMocks();
+      secretOnly({ cronSecretResults });
+
+      const res = await GET(authed());
+
+      expect(res.status, JSON.stringify(cronSecretResults)).toBe(500);
+      await expect(res.json()).resolves.toEqual(GENERIC);
+      expect(secretClaims()).toHaveLength(0);
+      expect(sendProbeCalls()).toHaveLength(0);
+      expect(mocks.sendEmail).not.toHaveBeenCalled();
+    }
+  });
+
+  it('CS-9: send_cron_secret_probe が error・応答の形が誤り (sent なのに request_id 無し) なら 500。通知はその前に送信待ちに入っている (取り消さない)', async () => {
+    const bad: ReadonlyArray<RpcResult> = [
+      { data: null, error: { code: '42501', message: 'permission denied for function send_cron_secret_probe' } },
+      { data: [{ probe_id: 42, send_state: 'sent', request_id: null }], error: null },
+      { data: [], error: null },
+      { data: [{ probe_id: 42, send_state: 'unexpected_state', request_id: null }], error: null },
+    ];
+    for (const cronSecretSend of bad) {
+      vi.clearAllMocks();
+      secretOnly({ cronSecretResults: resultsOf(mismatchRow()), cronSecretSend });
+
+      const res = await GET(authed());
+
+      expect(res.status, JSON.stringify(cronSecretSend)).toBe(500);
+      await expect(res.json()).resolves.toEqual(GENERIC);
+      // ずれの通知は、確認の送信より前に送信待ちに入っている。500 でも権利は返さない
+      expect(sentTemplates()).toEqual(['ops_cron_secret_drift']);
+      expect(secretReleases()).toHaveLength(0);
+      expect(sendProbeCalls()).toHaveLength(1);
+    }
+    // 送れなかった確認 (vault_missing) は request_id 無しでよく、500 にならない
+    vi.clearAllMocks();
+    secretOnly({ cronSecretSend: { data: [{ probe_id: 43, send_state: 'vault_missing', request_id: null }], error: null } });
+    const ok = await GET(authed());
+    expect(ok.status).toBe(200);
+  });
+
+  it('CS-10: 直った (最新の決まった確認が 200 current) 回は所見なし。古い 401 の行が残っていても鳴らない', async () => {
+    secretOnly({
+      cronSecretResults: resultsOf(
+        probeRow({ probe_id: 42, requested_at: minutesAgo(15) }),
+        mismatchRow({ probe_id: 41, requested_at: minutesAgo(30) }),
+        mismatchRow({ probe_id: 40, requested_at: minutesAgo(45) }),
+      ),
+    });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
+    expect(secretClaims()).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    expect(sendProbeCalls()).toHaveLength(1);
+  });
+
+  it('CS-10b: 送ったばかりの確認 (未応答・猶予内) は判定に使わず、その前の決まった確認で判定する。info の所見 (edge-alias-used) はメールにしない', async () => {
+    secretOnly({
+      cronSecretResults: resultsOf(
+        unansweredRow({ probe_id: 42, requested_at: minutesAgo(1) }),
+        probeRow({ probe_id: 41, requested_at: minutesAgo(16), alias_used: true }),
+      ),
+    });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({ cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
+    expect(secretClaims()).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CS-11: canary: 環境変数 CRON_SECRET / CRON_SECRET_PREVIOUS と RPC の応答の body_error / body_code / matched に偽の秘密を入れても、メールの件名・本文、logger の全呼び出しの引数、応答の JSON のどこにもその文字列が現れない', async () => {
+    const canaryCron = 'canary-cron-secret-aaaa1111bbbb2222';
+    const canaryPrevious = 'canary-cron-previous-cccc3333dddd4444';
+    const canaryBody = 'canary-body-eeee5555ffff6666';
+    vi.stubEnv('CRON_SECRET', canaryCron);
+    vi.stubEnv('CRON_SECRET_PREVIOUS', canaryPrevious);
+    // 401 + code (gateway-jwt の fail) と、Vercel の CRON_SECRET_PREVIOUS (vercel-previous-set の warn) で、両方の通知を出す
+    secretOnly({
+      cronSecretResults: resultsOf(
+        mismatchRow({ body_error: canaryBody, body_code: canaryBody, matched: canaryBody }),
+      ),
+    });
+
+    const res = await GET(makeRequest(`Bearer ${canaryCron}`));
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.cron_secret_drift).toEqual({ status: 'sent', total: 1, threshold: 0 });
+    expect(body.cron_secret_rotation).toEqual({ status: 'sent', total: 1, threshold: 0 });
+    expect(sentTemplates()).toEqual(['ops_cron_secret_drift', 'ops_cron_secret_drift']);
+
+    const everything = JSON.stringify({
+      emails: mocks.sendEmail.mock.calls,
+      logInfo: mocks.logInfo.mock.calls,
+      logWarn: mocks.logWarn.mock.calls,
+      logError: mocks.logError.mock.calls,
+      consoleWarn: consoleWarn.mock.calls,
+      consoleError: consoleError.mock.calls,
+      response: body,
+      rpc: mocks.rpc.mock.calls,
+    });
+    for (const secret of [canaryCron, canaryPrevious, canaryBody]) {
+      expect(everything, secret).not.toContain(secret);
+    }
+  });
+
+  it('CS-12: ログに出すのは scope・total・threshold・finding_ids・outbox_id だけ (所見の題・対処も出さない)', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+
+    await GET(authed());
+
+    const logged = mocks.logInfo.mock.calls.filter(([, meta]) => (meta as { scope?: string } | undefined)?.scope === 'cron_secret_drift');
+    expect(logged).toHaveLength(1);
+    const [message, meta] = logged[0] as [string, Record<string, unknown>];
+    expect(message).toBe('cron の共有シークレットのずれを運用メールに知らせました');
+    expect(Object.keys(meta).sort()).toEqual(['finding_ids', 'outbox_id', 'scope', 'threshold', 'total']);
+    expect(meta).toEqual({ scope: 'cron_secret_drift', total: 1, threshold: 0, finding_ids: ['edge-vault-mismatch'], outbox_id: 'email-id-1' });
+    expect(JSON.stringify(mocks.logInfo.mock.calls)).not.toContain(CRON_SECRET_FINDING_CATALOG['edge-vault-mismatch'].title);
+  });
+
+  // ---- 入れ替えの途中 (warn。キー cron_secret_rotation) ----
+
+  it('CR-1: 200 previous (previous_configured true) → warn → 権利 (キー cron_secret_rotation・既定の抑止 1440 分) を取り、ops_cron_secret_drift (kind rotation) を 1 通。cron_secret_drift は below_threshold', async () => {
+    secretOnly({ cronSecretResults: resultsOf(probeRow({ matched: 'previous', previous_configured: true })) });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: CRON_SECRET_QUIET,
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(secretClaims()).toEqual([['claim_ops_alert', { p_alert_key: 'cron_secret_rotation', p_cooldown_minutes: 1440 }]]);
+    expect(sentTemplates()).toEqual(['ops_cron_secret_drift']);
+    expect(sentSubjects()).toEqual([CRON_SECRET_ROTATION_SUBJECT(1)]);
+    expect(sentTexts()[0]).toContain(CRON_SECRET_FINDING_CATALOG['edge-previous-in-use'].title);
+    expect(sendProbeCalls()).toHaveLength(1);
+  });
+
+  it('CR-2: 200 current・previous_configured → edge-previous-leftover で rotation の通知', async () => {
+    secretOnly({ cronSecretResults: resultsOf(probeRow({ previous_configured: true })) });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: CRON_SECRET_QUIET,
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(sentSubjects()).toEqual([CRON_SECRET_ROTATION_SUBJECT(1)]);
+    expect(sentTexts()[0]).toContain(CRON_SECRET_FINDING_CATALOG['edge-previous-leftover'].title);
+  });
+
+  it('CR-3: 200 service_role_key → vault-holds-service-role-key で rotation の通知', async () => {
+    secretOnly({ cronSecretResults: resultsOf(probeRow({ matched: 'service_role_key' })) });
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: CRON_SECRET_QUIET,
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(sentSubjects()).toEqual([CRON_SECRET_ROTATION_SUBJECT(1)]);
+    expect(sentTexts()[0]).toContain(CRON_SECRET_FINDING_CATALOG['vault-holds-service-role-key'].title);
+  });
+
+  it('CR-4: Vercel の CRON_SECRET_PREVIOUS が現行と同じ (vi.stubEnv) → vercel-previous-same で rotation の通知。違う値なら vercel-previous-set で rotation の通知 (題が違う)。cron_secret_drift はどちらも below_threshold', async () => {
+    secretOnly();
+    vi.stubEnv('CRON_SECRET_PREVIOUS', SECRET);
+
+    const same = await GET(authed());
+
+    await expect(same.json()).resolves.toMatchObject({
+      cron_secret_drift: CRON_SECRET_QUIET,
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(sentTexts()[0]).toContain(CRON_SECRET_FINDING_CATALOG['vercel-previous-same'].title);
+    expect(sentTexts()[0]).not.toContain(CRON_SECRET_FINDING_CATALOG['vercel-previous-set'].title);
+
+    vi.clearAllMocks();
+    secretOnly();
+    vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET);
+
+    // 旧い値 (CRON_SECRET_PREVIOUS) でも認証は通る。違う値なので vercel-previous-set
+    const set = await GET(makeRequest(`Bearer ${SECRET}`));
+
+    await expect(set.json()).resolves.toMatchObject({
+      cron_secret_drift: CRON_SECRET_QUIET,
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(sentTexts()[0]).toContain(CRON_SECRET_FINDING_CATALOG['vercel-previous-set'].title);
+    expect(sentTexts()[0]).not.toContain(CRON_SECRET_FINDING_CATALOG['vercel-previous-same'].title);
+  });
+
+  it('CR-5: OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES で rotation の権利の抑止を変える。不正な値は既定 (1440) に戻して warn (変数名だけ)。drift の抑止 (OPS_ALERT_COOLDOWN_MINUTES) は変わらない', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET);
+    vi.stubEnv('OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES', '2880');
+    vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', '120');
+
+    await GET(authed());
+
+    // drift は OPS_ALERT_COOLDOWN_MINUTES (120)・rotation は新しい変数 (2880)
+    expect(secretClaims()).toEqual([
+      ['claim_ops_alert', { p_alert_key: 'cron_secret_drift', p_cooldown_minutes: 120 }],
+      ['claim_ops_alert', { p_alert_key: 'cron_secret_rotation', p_cooldown_minutes: 2880 }],
+    ]);
+    expect(mocks.logWarn).not.toHaveBeenCalledWith('しきい値・クールダウンの環境変数の値が正しくないため、既定値を使います', expect.anything());
+
+    for (const bad of ['1439', '10081', 'abc', '2.5']) {
+      vi.clearAllMocks();
+      secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+      vi.stubEnv('OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES', bad);
+      vi.stubEnv('OPS_ALERT_COOLDOWN_MINUTES', undefined);
+
+      await GET(authed());
+
+      expect(secretClaims(), bad).toEqual([
+        ['claim_ops_alert', { p_alert_key: 'cron_secret_drift', p_cooldown_minutes: 60 }],
+        ['claim_ops_alert', { p_alert_key: 'cron_secret_rotation', p_cooldown_minutes: 1440 }],
+      ]);
+      expect(mocks.logWarn, bad).toHaveBeenCalledWith('しきい値・クールダウンの環境変数の値が正しくないため、既定値を使います', {
+        ignored_env: ['OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES'],
+      });
+    }
+  });
+
+  it('CR-6: fail と warn が同時 (401 + Vercel の previous が同じ) なら、drift の通知 (fail だけを載せる) と rotation の通知 (warn だけ) が別のキーで 1 通ずつ出る。drift の total は 1・rotation の total は 1。drift の文面に warn の題が無い', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', SECRET);
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: { status: 'sent', total: 1, threshold: 0 },
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(claimKeys().filter((key) => key.startsWith('cron_secret_'))).toEqual(['cron_secret_drift', 'cron_secret_rotation']);
+    expect(sentSubjects()).toEqual([CRON_SECRET_DRIFT_SUBJECT(1), CRON_SECRET_ROTATION_SUBJECT(1)]);
+    const [driftText, rotationText] = sentTexts();
+    expect(driftText).toContain(CRON_SECRET_FINDING_CATALOG['edge-vault-mismatch'].title);
+    expect(driftText).not.toContain(CRON_SECRET_FINDING_CATALOG['vercel-previous-same'].title);
+    expect(rotationText).toContain(CRON_SECRET_FINDING_CATALOG['vercel-previous-same'].title);
+    expect(rotationText).not.toContain(CRON_SECRET_FINDING_CATALOG['edge-vault-mismatch'].title);
+  });
+
+  it('CR-7: rotation の通知を送れなかったときは rotation のキーだけを返す (drift の抑止は触らない)', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', SECRET);
+    mocks.sendEmail.mockResolvedValueOnce(sentResult).mockResolvedValueOnce(outboxFailedResult);
+
+    const res = await GET(authed());
+
+    await expect(res.json()).resolves.toMatchObject({
+      cron_secret_drift: { status: 'sent', total: 1, threshold: 0 },
+      cron_secret_rotation: { status: 'send_failed', total: 1, threshold: 0 },
+    });
+    expect(secretReleases()).toEqual([['release_ops_alert', { p_alert_key: 'cron_secret_rotation', p_claimed_at: CRON_SECRET_ROTATION_CLAIMED_AT }]]);
+    expect(sendProbeCalls()).toHaveLength(1);
+  });
+
+  it('CR-8: Vercel と Supabase 側は比べない (Q-1・S-23): CRON_SECRET を別の値に stub し CRON_SECRET_PREVIOUS は無し・確認の結果は 200 current → 両方 below_threshold。send_cron_secret_probe は引数なしで呼ばれ、どの RPC の引数を JSON.stringify しても CRON_SECRET の値が現れない', async () => {
+    const vercelOnly = 'dummy-vercel-only-cron-secret-9876543210';
+    vi.stubEnv('CRON_SECRET', vercelOnly);
+    secretOnly({ cronSecretResults: resultsOf(probeRow()) });
+
+    const res = await GET(makeRequest(`Bearer ${vercelOnly}`));
+
+    await expect(res.json()).resolves.toMatchObject({ cron_secret_drift: CRON_SECRET_QUIET, cron_secret_rotation: CRON_SECRET_QUIET });
+    expect(secretClaims()).toHaveLength(0);
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+    // 引数なし (rpc の第 2 引数が undefined。Vercel の値を Supabase 側へ送らない)
+    expect(sendProbeCalls()).toHaveLength(1);
+    expect(sendProbeCalls()[0]).toEqual(['send_cron_secret_probe']);
+    expect(sendProbeCalls()[0][1]).toBeUndefined();
+    for (const call of mocks.rpc.mock.calls) {
+      expect(JSON.stringify(call[1] ?? null)).not.toContain(vercelOnly);
+    }
+  });
+
+  // ---- 順と独立 ----
+
+  it('CO-1: 順は server → client → email_dead_letter → cron_failure → pg_cron_stalled → cron_secret (results → claim → sendEmail → send)。後ろの 500 は前の通知を止めない', async () => {
+    const stalledRun = {
+      data: [{ cron_available: true, active_jobs: 17, last_run_at: minutesAgo(90) }],
+      error: null,
+    } as const;
+    const FAILURE_ROWS = [{ source: 'pg_cron', job_name: 'cleanup-old-app-logs', failed_count: 1, total_count: 1 }];
+    const everything = (overrides: Partial<Scenario> = {}) =>
+      setScenario({
+        clientCounts: { data: rowsOf(101), error: null },
+        deadCounts: { data: DEAD_ROWS, error: null },
+        cronFailureCounts: { data: FAILURE_ROWS, error: null },
+        cronFailureMark: { data: FAILURE_ROWS, error: null },
+        pgCronLastRun: stalledRun,
+        cronSecretResults: resultsOf(mismatchRow()),
+        ...overrides,
+      });
+    everything();
+    vi.stubEnv('CRON_SECRET_PREVIOUS', SECRET);
+    const order: string[] = [];
+    const harness = mocks.rpc.getMockImplementation();
+    mocks.rpc.mockImplementation(async (fn: string, args?: { p_alert_key?: string }) => {
+      order.push(fn === 'claim_ops_alert' ? `claim_ops_alert:${args?.p_alert_key}` : fn);
+      return harness?.(fn, args);
+    });
+    mocks.sendEmail.mockImplementation(async (envelope: { template?: string }) => {
+      order.push(`sendEmail:${envelope.template}`);
+      return sentResult;
+    });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(200);
+    expect(sentTemplates()).toEqual([
+      'ops_app_log_error_spike',
+      'ops_app_log_error_spike',
+      'ops_email_dead_letter',
+      'ops_cron_failure',
+      'ops_pg_cron_stalled',
+      'ops_cron_secret_drift',
+      'ops_cron_secret_drift',
+    ]);
+    expect(order.slice(order.indexOf('pg_cron_last_run_at'))).toEqual([
+      'pg_cron_last_run_at',
+      'claim_ops_alert:pg_cron_stalled',
+      'sendEmail:ops_pg_cron_stalled',
+      'cron_secret_probe_results',
+      'claim_ops_alert:cron_secret_drift',
+      'sendEmail:ops_cron_secret_drift',
+      'claim_ops_alert:cron_secret_rotation',
+      'sendEmail:ops_cron_secret_drift',
+      'send_cron_secret_probe',
+    ]);
+
+    // 最後の cron_secret が 500 でも、前の 5 種類の通知は送り終えている
+    vi.clearAllMocks();
+    everything({ cronSecretResults: { data: null, error: { code: '57P01', message: 'terminating connection due to administrator command' } } });
+    const failed = await GET(authed());
+    expect(failed.status).toBe(500);
+    await expect(failed.json()).resolves.toEqual(GENERIC);
+    expect(sentTemplates()).toEqual([
+      'ops_app_log_error_spike',
+      'ops_app_log_error_spike',
+      'ops_email_dead_letter',
+      'ops_cron_failure',
+      'ops_pg_cron_stalled',
+    ]);
+  });
+
+  it('CO-2: pg_cron_stalled の通知を送ったあと cron_secret_probe_results が error なら 500。前の 5 種類の sendEmail は呼ばれたまま', async () => {
+    setScenario({
+      pgCronLastRun: { data: [{ cron_available: true, active_jobs: 17, last_run_at: minutesAgo(90) }], error: null },
+      cronSecretResults: { data: null, error: { code: '42883', message: 'function public.cron_secret_probe_results does not exist' } },
+    });
+
+    const res = await GET(authed());
+
+    expect(res.status).toBe(500);
+    await expect(res.json()).resolves.toEqual(GENERIC);
+    expect(sentTemplates()).toEqual(['ops_app_log_error_spike', 'ops_pg_cron_stalled']);
+    expect(secretClaims()).toHaveLength(0);
+    expect(sendProbeCalls()).toHaveLength(0);
+    // 500 の内容は app_logs に残る (scope と RPC の名前)
+    expect(mocks.logError).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.anything(),
+      expect.objectContaining({ scope: 'cron_secret_drift', rpc: 'cron_secret_probe_results' }),
+    );
+  });
+
+  it('CO-3: OPS_ALERT_EMAIL が未設定・形が不正の回は、確認の結果に fail があっても cron_secret_probe_results も send_cron_secret_probe も呼ばない (disabled / invalid_config)', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    vi.stubEnv('OPS_ALERT_EMAIL', undefined);
+
+    const disabled = await GET(authed());
+
+    await expect(disabled.json()).resolves.toEqual({ status: 'disabled' });
+    expect(rpcCalls('cron_secret_probe_results')).toHaveLength(0);
+    expect(sendProbeCalls()).toHaveLength(0);
+
+    vi.clearAllMocks();
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()) });
+    vi.stubEnv('OPS_ALERT_EMAIL', 'not-an-email-address');
+
+    const invalid = await GET(authed());
+
+    await expect(invalid.json()).resolves.toEqual({ status: 'invalid_config' });
+    expect(rpcCalls('cron_secret_probe_results')).toHaveLength(0);
+    expect(sendProbeCalls()).toHaveLength(0);
+    expect(mocks.rpc).not.toHaveBeenCalled();
+  });
+
+  it('CO-4: 2 つのキーは独立: drift が抑止の間 (deduped) でも rotation は送れる。その逆も', async () => {
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()), cronSecretDriftClaim: { data: null, error: null } });
+    vi.stubEnv('CRON_SECRET_PREVIOUS', OLD_SECRET);
+
+    const driftDeduped = await GET(authed());
+
+    await expect(driftDeduped.json()).resolves.toMatchObject({
+      cron_secret_drift: { status: 'deduped', total: 1, threshold: 0 },
+      cron_secret_rotation: { status: 'sent', total: 1, threshold: 0 },
+    });
+    expect(sentSubjects()).toEqual([CRON_SECRET_ROTATION_SUBJECT(1)]);
+
+    vi.clearAllMocks();
+    secretOnly({ cronSecretResults: resultsOf(mismatchRow()), cronSecretRotationClaim: { data: null, error: null } });
+
+    const rotationDeduped = await GET(authed());
+
+    await expect(rotationDeduped.json()).resolves.toMatchObject({
+      cron_secret_drift: { status: 'sent', total: 1, threshold: 0 },
+      cron_secret_rotation: { status: 'deduped', total: 1, threshold: 0 },
+    });
+    expect(sentSubjects()).toEqual([CRON_SECRET_DRIFT_SUBJECT(1)]);
   });
 });

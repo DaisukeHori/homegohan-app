@@ -48,3 +48,26 @@ export async function requireCronAuth(req: Request): Promise<NextResponse | null
 
   return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
 }
+
+/** Vercel の環境の CRON_SECRET_PREVIOUS の状態 (値は含まない)。GET /api/cron/app-log-alerts の cron_secret_rotation が使う (#1560) */
+export interface CronSecretRotationState {
+  /** CRON_SECRET_PREVIOUS が設定されている (空文字でない) か */
+  previous_configured: boolean;
+  /** 設定されていて、現行の CRON_SECRET と同じ値か (入れ替えの意味が無い) */
+  previous_same_as_current: boolean;
+}
+
+/**
+ * CRON_SECRET_PREVIOUS の有無と、現行と同じかだけを返す (値は返さない)。
+ * 比較は、どちらもサーバーが持つ値どうし (外からの入力ではない) なので === でよい
+ * (checkCronSecret の定数時間の比較は、外からの Bearer を比べるためのもの)。
+ */
+export function describeCronSecretRotationState(): CronSecretRotationState {
+  const current = process.env.CRON_SECRET;
+  const previous = process.env.CRON_SECRET_PREVIOUS;
+  const previousConfigured = typeof previous === 'string' && previous.length > 0;
+  return {
+    previous_configured: previousConfigured,
+    previous_same_as_current: previousConfigured && previous === current,
+  };
+}

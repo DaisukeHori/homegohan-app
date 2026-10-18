@@ -91,7 +91,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 |---|---|---|---|
 | Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`cron-secret-probe`（cron の共有シークレットの確認。#1560）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
-| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
+| Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538）、`public.send_cron_secret_probe()`（`GET /api/cron/app-log-alerts` が 15 分おきに呼ぶ確認。Edge Function `cron-secret-probe` を 1 回。#1560） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
 つまり、**値を合わせないと動かないのは「Edge Function secrets の `CRON_SECRET`」と「Vault の `app_cron_secret`」の 2 つだけ**です。Vercel の `CRON_SECRET` は独立しています。
 
@@ -160,6 +160,15 @@ FROM vault.decrypted_secrets WHERE name = 'app_cron_secret';
 
 ローテーションの後（下の手順の 4 と 5）と、カタログ取り込みや比較ランキングの集計の結果がおかしいときに実行してください。
 
+#### 自動の確認（`GET /api/cron/app-log-alerts`。#1560）
+
+手で流す検査とは別に、運用アラートの cron（15 分おき）が自動で確かめます。DB の `send_cron_secret_probe()` が Vault の `app_cron_secret` を Bearer に付けて Edge Function `cron-secret-probe` を 1 回呼び（pg_cron の実際の呼び出しと同じ道）、次の回がその結果を判定します。検知の遅れは最大 30 分です。`OPS_ALERT_EMAIL` が未設定のときは何もしません。
+
+- **FAIL**（食い違い・Edge に値が無い・Vault が無い／空／復号できない・ゲートウェイの JWT 検証・未デプロイ・時間切れ・pg_net の不達）は、キー `cron_secret_drift` の運用メールで知らせます。抑止は `OPS_ALERT_COOLDOWN_MINUTES`（既定 60 分）で、直るまでその間隔で届きます。
+- **WARN**（入れ替えの途中・Edge Function secrets や Vercel の `CRON_SECRET_PREVIOUS` の残り・Vault が service role key）は、キー `cron_secret_rotation` の運用メールで知らせます。抑止は `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`（既定 1440 分 = 24 時間。1 日 1 通まで）で、ずれの通知には載りません。
+- Vercel の `CRON_SECRET` と Supabase 側（Edge Function secrets・Vault）の一致は比べません（Vercel は独立した値です）。Vercel の `CRON_SECRET` 自体が無いときは、この cron 自身が動かないので検知できません（Vercel の Cron Jobs の画面の HTTP ステータスで分かります）。
+- 値もダイジェストも計算しません（手で流す検査との違い）。メールに載るのは所見の題と対処だけです。所見の一覧と読み方は [`docs/design/operator/12-cron-secret-drift-monitor.md`](docs/design/operator/12-cron-secret-drift-monitor.md) の §8.1.1。
+
 ### Edge Function secrets の設定手順
 
 Supabase Dashboard → Edge Functions → Secrets で、追加・更新・削除ができます。CLI でも同じことができます。
@@ -182,7 +191,7 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 **前提**: `CRON_SECRET_PREVIOUS` に対応した Edge Function が本番にデプロイ済みであること。`supabase/functions/**` を変更した PR が main に入ると、GitHub Actions の「Deploy Supabase Functions」が自動でデプロイします。Actions で成功していることを確認してください。
 
 1. **新しい値を作る。** `openssl rand -base64 32` などで、32 文字以上のランダムな文字列を作り、パスワードマネージャに保存します。旧い値も、手元の控え（パスワードマネージャなど）から取り出しておきます。
-2. **Edge Function secrets に、新旧を同時に設定する。** `CRON_SECRET` に新しい値、`CRON_SECRET_PREVIOUS` に旧い値を入れます。これで、新旧どちらの Bearer も通ります。Vault はまだ旧い値のままなので、pg_cron の呼び出しは変わらず通り続けます。反映に少し時間がかかることがあるので、数分待ちます。
+2. **Edge Function secrets に、新旧を同時に設定する。** `CRON_SECRET` に新しい値、`CRON_SECRET_PREVIOUS` に旧い値を入れます。これで、新旧どちらの Bearer も通ります。Vault はまだ旧い値のままなので、pg_cron の呼び出しは変わらず通り続けます。反映に少し時間がかかることがあるので、数分待ちます。この間、自動の確認が Vault を更新するまで 24 時間に 1 通「入れ替えが途中です」を送ります（下の「自動の確認」）。
 3. **Vault の `app_cron_secret` を新しい値に更新する。** SQL Editor で次を実行します。SQL Editor の履歴に値が残る点に注意してください（気になる場合は、Dashboard の Vault 画面から編集します）。
 
    ```sql
@@ -200,7 +209,7 @@ Edge Function は、現行の `CRON_SECRET` に加えて `CRON_SECRET_PREVIOUS`�
 
    1 分ほど待って、上の `net._http_response` のクエリで **401 / 503 が出ていない** ことを確かめます。
    あわせて `node scripts/check-cron-secret-drift.mjs` で、Edge Function secrets と Vault が一致していること（Edge ⇔ Vault が PASS）を確かめます（上の「値のずれの確かめ方」）。
-5. **旧い値を外す。** 翌日の定期実行（UTC 3:00〜4:00）が終わるまで待ち、Edge Function のログに `CRON_SECRET_PREVIOUS (旧いシークレット) で認証されました` が出ていない（= 旧い値を使っている送り手が残っていない）ことを確かめてから、`CRON_SECRET_PREVIOUS` を削除します。削除した後に `node scripts/check-cron-secret-drift.mjs` を実行し、`CRON_SECRET_PREVIOUS` の WARN が消えていることを確かめます。外すまでは旧い値でも通ってしまうので、入れ替えの目的が漏えい対策なら、できるだけ早く外してください。
+5. **旧い値を外す。** 翌日の定期実行（UTC 3:00〜4:00）が終わるまで待ち、Edge Function のログに `CRON_SECRET_PREVIOUS (旧いシークレット) で認証されました` が出ていない（= 旧い値を使っている送り手が残っていない。`/cron-secret-probe` の記録は、自動の確認が Vault の値で呼んだものなので除く。Vault を更新したあとは、この記録も出なくなる）ことを確かめてから、`CRON_SECRET_PREVIOUS` を削除します。削除した後に `node scripts/check-cron-secret-drift.mjs` を実行し、`CRON_SECRET_PREVIOUS` の WARN が消えていることを確かめます。外すまでは旧い値でも通ってしまうので、入れ替えの目的が漏えい対策なら、できるだけ早く外してください。
 
 途中で戻したくなったときは:
 
@@ -311,7 +320,7 @@ migration の適用後や、`supabase/config.toml` の `verify_jwt` を変えた
 
 ### Vercel の `CRON_SECRET` を入れ替えるとき
 
-Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値を変更し、再デプロイします。Vercel Cron は再デプロイ後の値を付けて呼ぶので、Supabase 側とは無関係に入れ替えられます。`/api/cron/process-menu-queue` を curl などで手動で呼ぶ運用がある場合だけ、旧い値を一時的に Vercel の `CRON_SECRET_PREVIOUS` に入れて同時に再デプロイし、呼び出し側を直してから外してください。旧い値で呼ばれると、Vercel の関数ログに `CRON_SECRET_PREVIOUS (旧いシークレット) で認証されました` と警告が出ます。
+Vercel Dashboard → Settings → Environment Variables で `CRON_SECRET` の値を変更し、再デプロイします。Vercel Cron は再デプロイ後の値を付けて呼ぶので、Supabase 側とは無関係に入れ替えられます。`/api/cron/process-menu-queue` を curl などで手動で呼ぶ運用がある場合だけ、旧い値を一時的に Vercel の `CRON_SECRET_PREVIOUS` に入れて同時に再デプロイし、呼び出し側を直してから外してください。旧い値で呼ばれると、Vercel の関数ログに `CRON_SECRET_PREVIOUS (旧いシークレット) で認証されました` と警告が出ます。Vercel に `CRON_SECRET_PREVIOUS` がある間は、自動の確認が 1 日 1 通「入れ替えが途中です」を送ります（現行と同じ値なら、その旨の題で）。外して再デプロイすると止まります。
 
 ### 守ること
 
@@ -366,6 +375,8 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 - リストから外すときは、SQL Editor で `DELETE FROM public.email_blacklist WHERE email = '<小文字のアドレス>';` を実行します（宛先は小文字で入っています）。
 - 宛先停止リストを引けなかったとき（DB の不調・3 秒を超えたとき）は、確かめずに送ります（warn ログが残ります）。メールを全部止めてしまわないためです。
 - サインアップの確認メール・パスワード再設定メールは Supabase が送るので、このリストでは止まりません（Supabase の Custom SMTP に Resend を使っていれば、Resend 自身の停止リストが効きます）。
+- 退会・除名・譲渡の通知などを送った側が「送れなかった」と残すログも、理由が停止リストだけなら warn です（止めた宛先へ送らないのは意図した動きなので、エラー急増の通知の数には入りません。ほかの理由の失敗は error のまま。#1577）。
+- メンテナンス中（`maintenance_mode` が ON）も、この Webhook は止めません（#1577）。cron と同じ機械からの呼び出しで、止めると長いメンテナンスのあいだに知らせを失うか、Resend が宛先を無効にする恐れがあるためです。ほかの Webhook（Stripe）はメンテナンス中は 503 を返し、Stripe が送り直します。
 
 ---
 
@@ -382,16 +393,19 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 | `OPS_ALERT_CLIENT_ERROR_THRESHOLD`（任意） | `300` | ブラウザ・端末から届いた `error` のしきい値（#1493）。直近 15 分のその `error` が**この件数を超えたら**、サーバーとは別の通知を送る。1〜100000 の整数 | 既定の 100 件。不正な値は既定値に戻す（サーバーのしきい値と同じ） |
 | `OPS_ALERT_COOLDOWN_MINUTES`（任意） | `120` | 同じ通知を送り直さない時間（分）。1〜10080 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
 | `OPS_ALERT_PG_CRON_STALL_MINUTES`（任意） | `120` | pg_cron の停止のしきい値（#1125 の B）。有効なジョブがあるのに、最新の実行から**この分数を超えて**1 つも動いていなければ通知する。10〜1440 の整数 | 既定の 60 分。不正な値は既定値に戻す（しきい値と同じ） |
+| `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`（任意） | `2880` | cron の共有シークレットの入れ替えの途中・旧い値の残り（WARN。#1560）の通知を、送ったあと送り直さない時間（分）。1440〜10080 の整数で、1 日 1 通までより短くはできない。ずれ（FAIL）の通知は `OPS_ALERT_COOLDOWN_MINUTES` | 既定の 1440 分（24 時間）。不正な値は既定値に戻す（しきい値と同じ） |
 
 - 通知する条件: 直近 15 分のサーバーの `error` が **20 件を超えた**とき（21 件から）。ブラウザ・端末から届いた `error` は **100 件を超えた**とき（101 件から）に別の通知を送る。既定値は `src/lib/ops-alerts/app-log-error-spike.ts` の定数で、`OPS_ALERT_ERROR_THRESHOLD` / `OPS_ALERT_CLIENT_ERROR_THRESHOLD` で上書きできる。窓（15 分）は `vercel.json` の cron の間隔と同じにしてあるので、環境変数では変えない。
 - 同じ通知は **60 分は送り直さない**（`OPS_ALERT_COOLDOWN_MINUTES` で上書きできる。分数は 2 種類で同じだが、抑止は種類ごとに別々）（DB の `ops_alert_state` で覚える。キーはサーバーが `app_logs_error_spike`、ブラウザ・端末が `app_logs_client_error_spike`。メールを送れなかったときは「送った」と記録せず、15 分後の次の回でもう一度試す）。
 - **届けられなかったメール**（送信待ち `email_outbox` の dead。#1193）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます（3 つ目の通知。キーは `email_dead_letter`）。1 件からで、まだ知らせていない dead を数え、知らせた行には印を付けます（同じメールを 2 回は数えません。抑止の間に届けられなかったものは、抑止が明けた最初の回で知らせます）。宛先停止リスト・退会で送らなかったものと、運用メール自身は数えません。メールに載るのは、文面の名前（template）ごとの件数と、送信待ちの画面（`/super-admin/email-outbox`）へのリンクだけです。
 - **定期処理の失敗**（4 つ目の通知。キーは `cron_failure`。#1125 の B）も、同じ cron・同じ宛先・同じ抑止の分数で知らせます。対象は、pg_cron のジョブの失敗した実行（`cron.job_run_details` の `status = 'failed'`）と、Vercel Cron の route が 500 を返した回（`app_logs` の固定文の error）です。1 件から、直近 7 日のうちまだ知らせていないものを数え、知らせた失敗は台帳 `cron_failure_alerts` に記録します（同じ失敗を 2 回は数えません。抑止の間に起きたものは、抑止が明けた最初の回で知らせます）。ブラウザ・端末が書いた行（`source = 'client'`）は数えません。メールに載るのは、`pg_cron/<ジョブ名>`・`vercel_cron/<route 名>` ごとの件数と運用ログ画面へのリンクだけです。
 - **pg_cron の停止**（5 つ目の通知。キーは `pg_cron_stalled`。#1125 の B）も同じ宛先に知らせます。有効なジョブがあるのに、最新の実行から `OPS_ALERT_PG_CRON_STALL_MINUTES`（既定 60 分）を超えて 1 つも動いていないときです。止まったままなら、抑止（既定 60 分）ごとに 1 通届きます。
+- **cron の共有シークレットのずれ**（6 つ目の通知。キーは `cron_secret_drift`。#1560）も同じ宛先に知らせます。Edge Function secrets の `CRON_SECRET` と Vault の `app_cron_secret` の食い違いなど、pg_cron からの Edge Function の呼び出しが止まる状態です（pg_net は非同期なので `cron.job_run_details` には出ません）。続く間は、抑止（既定 60 分）ごとに 1 通届きます。
+- **入れ替えの途中・旧い値の残り**（7 つ目の通知。キーは `cron_secret_rotation`。#1560）は、いまは通るが片づけるべき状態（`CRON_SECRET_PREVIOUS` の残りなど）を知らせます。抑止は `OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES`（既定 24 時間）で、1 日 1 通までです。読み方は上の「自動の確認」。
 - メールに載るのは、件数・関数名・運用ログ画面（`/super-admin/logs`）へのリンクだけです。ユーザー ID・メールアドレス・ログの本文は載せません（送信先の Resend は米国の事業者のため）。
 - **メールが実際に届くには、メールの送信元ドメインを Resend で検証し、`RESEND_API_KEY` と `EMAIL_FROM` を設定する必要があります**（手順は [`docs/operations/email-domain.md`](docs/operations/email-domain.md)）。それまでは、送れなかったことが `app_logs`（`function_name = 'cron/email-outbox'` の error（届けられなかった行は `/super-admin/email-outbox` にも残る）と、`cron/app-log-alerts` の warn）に残るだけで、アプリの動きには影響しません。
 - ブラウザ・端末から届いたログ（`POST /api/log`）は、利用者ごとに 1 分 30 回・直近 24 時間で 1000 回までしか受け付けません（超えると 429。#1493）。
-- 応答（JSON）の `status`（サーバーの判定。ブラウザ・端末の判定は `client.status`）は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
+- 応答（JSON）の `status`（サーバーの判定。ブラウザ・端末の判定は `client.status`、共有シークレットのずれは `cron_secret_drift.status`、入れ替えの途中は `cron_secret_rotation.status`）は、`disabled`（宛先が未設定）・`invalid_config`（宛先の形が不正）・`below_threshold`（しきい値以下）・`deduped`（60 分以内に送信済み）・`sent`（送信した）・`send_skipped` / `send_failed`（送れなかった）のどれかです。cron が動いているかは、Vercel の Cron Jobs の画面（HTTP ステータス）で確かめられます。`app_logs`（`/super-admin/logs` で `function_name` に `cron/app-log-alerts` を指定）に残るのは、宛先が未設定・形が不正・通知した・通知できなかった回と、しきい値・クールダウンの環境変数の値が不正だった回 (warn。変数名だけ) です（しきい値以下の回と、60 分以内の回は何も残しません）。
 - 認証は他の cron と同じ `CRON_SECRET`（上の「Cron の共有シークレットの保管場所とローテーション」）。手で呼ぶ場合は `Authorization: Bearer <CRON_SECRET>` を付けます（値はコマンドの履歴やチャットに残さないこと）。しきい値を超えているときに手で呼ぶと、本物の通知メールが 1 通出て、60 分の抑止が始まります。
 
 ---

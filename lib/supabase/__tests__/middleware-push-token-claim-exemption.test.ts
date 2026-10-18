@@ -35,6 +35,7 @@ vi.mock('@/lib/feature-flags', () => ({
 
 import { updateSession } from '../middleware';
 import { PUSH_TOKEN_CLAIM_API_PATH, isPushTokenClaimApiPath } from '@/lib/push-tokens';
+import { CONTACT_API_PATH } from '@/lib/auth/frozen';
 import { LEGAL_CONSENT_REQUIRED_CODE, PUSH_TOKEN_RELEASE_API_PATH } from '@homegohan/shared';
 import { stubSupabasePublicEnv } from './supabase-public-env';
 
@@ -86,9 +87,18 @@ function apiRoutePaths(): string[] {
   return paths.sort();
 }
 
-/** もともと (#1636 より前から) メンテナンス中でも止めない API (src/lib/maintenance-mode.ts の isMaintenanceExemptPath) */
+/**
+ * claim のほかにメンテナンス中でも止めない API (src/lib/maintenance-mode.ts の isMaintenanceExemptPath)。
+ * #1636 より前からのものと、Resend の Webhook の受け口 (#1577 の 4。完全一致の 1 本)
+ */
 function isPreexistingMaintenanceExemptApi(path: string): boolean {
-  return path === '/api/health' || path.startsWith('/api/auth/') || path.startsWith('/api/cron/') || path === '/api/feature-flags';
+  return (
+    path === '/api/health' ||
+    path.startsWith('/api/auth/') ||
+    path.startsWith('/api/cron/') ||
+    path === '/api/feature-flags' ||
+    path === '/api/webhooks/resend'
+  );
 }
 
 async function passes(path: string, expectedBlockStatus: number): Promise<boolean> {
@@ -155,7 +165,7 @@ describe('claim の例外は 1 本だけ (#1636)', () => {
     expect(passed).not.toContain(PUSH_TOKEN_RELEASE_API_PATH);
   });
 
-  it('凍結中: 全 route のうち、通るのは退会・書き出し (#1445)・有料プランの解約の 3 本 (billing/01 §9.8) と claim とネイティブ認証ブリッジのコード (#1861) だけ (ほかの API は 403 のまま)', async () => {
+  it('凍結中: 全 route のうち、通るのは退会・書き出し (#1445)・有料プランの解約の 3 本 (billing/01 §9.8) と claim とネイティブ認証ブリッジのコード (#1861) とお問い合わせの送信 (#1871) だけ (ほかの API は 403 のまま)', async () => {
     mockMaybeSingle.mockResolvedValue({
       data: { roles: ['user'], frozen_at: '2026-07-01T00:00:00.000Z', unban_at: null },
       error: null,
@@ -176,6 +186,8 @@ describe('claim の例外は 1 本だけ (#1636)', () => {
         PUSH_TOKEN_CLAIM_API_PATH,
         // #1861: モバイルの凍結の画面 (Web の /frozen の WebView) を本人のセッションで開くため (src/lib/auth/frozen.ts の isNativeBridgeCodeApiPath)
         '/api/auth/native-bridge/code',
+        // #1871: お問い合わせの送信 (POST /api/contact。src/lib/auth/frozen.ts の isFrozenContactSubmitRequest。ここは全 route を POST で通す)
+        CONTACT_API_PATH,
       ].sort(),
     );
   });
@@ -239,7 +251,7 @@ describe('規約の同意ゲート (#1689) でも claim は止めない (#1636)'
     }
   });
 
-  it('ENFORCE=on × 未同意 × 凍結中: 全 route のうち、通るのは退会・書き出し・有料プランの解約の 3 本と claim とネイティブ認証ブリッジのコード (#1861) だけ (同意の 403 は出ない)', async () => {
+  it('ENFORCE=on × 未同意 × 凍結中: 全 route のうち、通るのは退会・書き出し・有料プランの解約の 3 本と claim とネイティブ認証ブリッジのコード (#1861) とお問い合わせの送信 (#1871) だけ (同意の 403 は出ない)', async () => {
     mockMaybeSingle.mockResolvedValue(unconsentedProfile({ frozen_at: FROZEN_AT }));
 
     const passed: string[] = [];
@@ -264,6 +276,7 @@ describe('規約の同意ゲート (#1689) でも claim は止めない (#1636)'
         '/api/billing/portal',
         PUSH_TOKEN_CLAIM_API_PATH,
         '/api/auth/native-bridge/code',
+        CONTACT_API_PATH,
       ].sort(),
     );
   });

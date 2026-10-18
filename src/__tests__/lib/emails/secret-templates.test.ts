@@ -39,6 +39,8 @@ const PUBLIC_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   // #1125 (B) 定期処理の失敗・pg_cron の停止の運用メール。リンクは運用ログ画面 (super_admin だけが開ける固定の URL)
   ops_cron_failure: ['logs_url'],
   ops_pg_cron_stalled: ['logs_url'],
+  // #1560 cron の共有シークレットのずれ・入れ替えの途中の運用メール。リンクは運用ログ画面 (super_admin だけが開ける固定の URL)
+  ops_cron_secret_drift: ['logs_url'],
   // #1129 DB バックアップの鮮度の運用メール。リンクは運営のバックアップ・DR の画面 (super_admin だけが開ける固定の URL) で、文面の中で組み立てる
   ops_backup_stale: [],
   member_left: ['members_url'],

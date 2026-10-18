@@ -292,6 +292,10 @@ const PURGE_HIDDEN_CONTENT_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261016
 const MEAL_IMAGE_PICKUP_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261015180000_meal_image_jobs_pickup_cron.sql');
 /** 料理画像の処理の Edge Function (#1561 で pg_cron から Vault の app_cron_secret で呼ぶようになった) */
 const MEAL_IMAGE_WORKER_FUNCTION = 'process-meal-image-jobs';
+/** cron の共有シークレットの確認 public.send_cron_secret_probe を足した migration (#1560) */
+const CRON_SECRET_PROBE_MIGRATION = path.posix.join(MIGRATIONS_DIR, '20261018030000_cron_secret_drift_monitor.sql');
+/** cron の共有シークレットの確認の Edge Function (#1560。DB の関数から Vault の app_cron_secret で呼ぶ) */
+const CRON_SECRET_PROBE_FUNCTION = 'cron-secret-probe';
 
 const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, DbHttpCallSite>([
   // public.invoke_catalog_import: '.../functions/v1/' || p_function_name を v_url に入れ、net.http_post で呼ぶ
@@ -306,6 +310,8 @@ const DB_HTTP_CALL_SITES: ReadonlyMap<string, DbHttpCallSite> = new Map<string, 
   [PURGE_HIDDEN_CONTENT_MIGRATION, { count: 2, callees: [PURGE_HIDDEN_CONTENT_FUNCTION] }],
   // public.invoke_process_meal_image_jobs: 定数 c_url の '.../functions/v1/process-meal-image-jobs' を net.http_post で呼ぶ (#1561)
   [MEAL_IMAGE_PICKUP_MIGRATION, { count: 2, callees: [MEAL_IMAGE_WORKER_FUNCTION] }],
+  // public.send_cron_secret_probe: 定数 c_url の '.../functions/v1/cron-secret-probe' を net.http_post で呼ぶ (#1560)
+  [CRON_SECRET_PROBE_MIGRATION, { count: 2, callees: [CRON_SECRET_PROBE_FUNCTION] }],
 ]);
 
 /**
@@ -530,8 +536,10 @@ describe('検査の道具が空振りしない', () => {
     });
   });
 
-  it(`DB から呼ばれる関数の宣言に、${SEGMENT_STATS_FUNCTION}・${MEAL_IMAGE_WORKER_FUNCTION}・${PURGE_HIDDEN_CONTENT_FUNCTION} とカタログ取り込みの 5 本がある`, () => {
-    expect(DB_CALLEES).toEqual([...CATALOG_IMPORT_FUNCTIONS, SEGMENT_STATS_FUNCTION, MEAL_IMAGE_WORKER_FUNCTION, PURGE_HIDDEN_CONTENT_FUNCTION].sort());
+  it(`DB から呼ばれる関数の宣言に、${SEGMENT_STATS_FUNCTION}・${MEAL_IMAGE_WORKER_FUNCTION}・${PURGE_HIDDEN_CONTENT_FUNCTION}・${CRON_SECRET_PROBE_FUNCTION} とカタログ取り込みの 5 本がある`, () => {
+    expect(DB_CALLEES).toEqual(
+      [...CATALOG_IMPORT_FUNCTIONS, SEGMENT_STATS_FUNCTION, MEAL_IMAGE_WORKER_FUNCTION, PURGE_HIDDEN_CONTENT_FUNCTION, CRON_SECRET_PROBE_FUNCTION].sort(),
+    );
   });
 
   // DB からの HTTP の呼び出しは、SQL を読まず、宣言と、生の文字列で数えた数の突き合わせで囲う (#1406 R4 のレビューの指摘。

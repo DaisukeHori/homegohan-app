@@ -27,6 +27,7 @@ import {
   EMAIL_DEAD_LETTER_ALERT_KEY,
   PG_CRON_STALLED_ALERT_KEY,
 } from '@/lib/ops-alerts/app-log-error-spike';
+import { CRON_SECRET_DRIFT_ALERT_KEY, CRON_SECRET_ROTATION_ALERT_KEY } from '@/lib/ops-alerts/cron-secret-drift';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase/migrations');
@@ -124,6 +125,9 @@ describe('#1493 アプリの定数と migration の突き合わせ', () => {
       // #1125 (B) 定期処理の失敗を数える関数と、pg_cron の最新の実行を読む関数 (段 A の migration が作る)
       cron_failure: 'cron_failure_counts',
       pg_cron_stalled: 'pg_cron_last_run_at',
+      // #1560 cron の共有シークレットの確認の結果を読む関数 (段 B の migration が作る)。ずれ (fail) と入れ替えの途中 (warn) は同じ 1 本から判定する
+      cron_secret_drift: 'cron_secret_probe_results',
+      cron_secret_rotation: 'cron_secret_probe_results',
     });
     for (const name of Object.values(APP_LOG_ALERT_COUNT_RPC)) {
       expect(latestDefinition(name), name).not.toBeNull();
@@ -137,11 +141,15 @@ describe('#1493 アプリの定数と migration の突き合わせ', () => {
       email_dead_letter: EMAIL_DEAD_LETTER_ALERT_KEY,
       cron_failure: CRON_FAILURE_ALERT_KEY,
       pg_cron_stalled: PG_CRON_STALLED_ALERT_KEY,
+      cron_secret_drift: CRON_SECRET_DRIFT_ALERT_KEY,
+      cron_secret_rotation: CRON_SECRET_ROTATION_ALERT_KEY,
     });
     expect(EMAIL_DEAD_LETTER_ALERT_KEY).toBe('email_dead_letter');
     expect(CRON_FAILURE_ALERT_KEY).toBe('cron_failure');
     expect(PG_CRON_STALLED_ALERT_KEY).toBe('pg_cron_stalled');
-    expect(new Set(Object.values(APP_LOG_ALERT_KEYS)).size).toBe(5);
+    expect(CRON_SECRET_DRIFT_ALERT_KEY).toBe('cron_secret_drift');
+    expect(CRON_SECRET_ROTATION_ALERT_KEY).toBe('cron_secret_rotation');
+    expect(new Set(Object.values(APP_LOG_ALERT_KEYS)).size).toBe(7);
     expect(APP_LOG_ALERT_KEY).toBe('app_logs_error_spike');
     expect(APP_LOG_CLIENT_ALERT_KEY).toBe('app_logs_client_error_spike');
     expect(APP_LOG_CLIENT_ALERT_KEY).not.toBe(APP_LOG_ALERT_KEY);

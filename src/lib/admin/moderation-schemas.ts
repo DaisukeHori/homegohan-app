@@ -73,4 +73,25 @@ export const ModerationItemSchema = z.object({
   resolution_note: z.string().nullable(),
   resolved_by: z.string().uuid().nullable(),
   resolved_at: z.string().nullable(),
+  /** 通報されたコンテンツ本体が運営に隠されているときの日時 (ISO)。隠れていない・コンテンツが無いときは null (#1538) */
+  hidden_at: z.string().nullable(),
 });
+
+// ─── 隠したコンテンツを戻す (#1538 の項目 4) ─────────────────────────────────
+
+/** 解決メモ (resolution_note) と戻す理由 (restore_note) の長さ。既存の ModerationResolveBodySchema の resolution_note と同じ上限 */
+export const MODERATION_NOTE_MIN_LENGTH = 1;
+export const MODERATION_NOTE_MAX_LENGTH = 5000;
+
+/**
+ * POST /api/admin/moderation/{type}/{id}/restore の本文。戻す理由は必須 (モデレーションの判定を覆す操作に、理由の無い実行を許さない)。
+ * 前後の空白を除いてから長さを見る (空白だけは 400)
+ */
+export const ModerationRestoreBodySchema = z.object({
+  restore_note: z.string().trim().min(MODERATION_NOTE_MIN_LENGTH).max(MODERATION_NOTE_MAX_LENGTH),
+});
+
+export type ModerationRestoreBody = z.infer<typeof ModerationRestoreBodySchema>;
+
+/** 戻す操作の監査ログの action_type (docs/design/operator/07-audit-monitoring.md §4.1) */
+export const MODERATION_RESTORE_AUDIT_ACTION = 'admin.moderation.restore';

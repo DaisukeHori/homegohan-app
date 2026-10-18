@@ -14,7 +14,7 @@
 import { z } from 'zod';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
 import { sendEmail } from '@/lib/emails/send';
-import { isEmailFailure, type SendEmailResult } from '@/lib/emails/send-result';
+import { isEmailFailure, logEmailFailures, type SendEmailResult } from '@/lib/emails/send-result';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
 import { getSiteUrl } from '@/lib/site-config';
 import type { ReplyEmailOutcome } from '@/lib/admin/support-reply-email-status';
@@ -102,9 +102,10 @@ async function deliverTicketReplyEmail(params: SendTicketReplyEmailParams): Prom
     logger.warn('support ticket reply email skipped: email sending is not configured', logMeta);
     return { status: 'skipped', reason: 'not_configured' };
   }
-  // 封筒の不備・宛先停止リスト・送信待ちへの登録の失敗 (outbox_failed)
+  // 封筒の不備・宛先停止リスト・送信待ちへの登録の失敗 (outbox_failed)。
+  // 宛先停止リストで止めた (suppressed) ときは意図した動きなのでログは warn、ほかの失敗は error (#1577 の 7)。結果はどちらも failed
   if (isEmailFailure(result)) {
-    logger.error('support ticket reply email: send failed', result.error, logMeta);
+    logEmailFailures(logger, 'support ticket reply email: send failed', [result.error], logMeta);
     return { status: 'failed', reason: 'send_failed' };
   }
 

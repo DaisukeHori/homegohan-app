@@ -2,7 +2,7 @@ import { createServerClient } from '@supabase/ssr'
 import { SUPABASE_COOKIE_ENCODING } from '@/lib/supabase/cookie-encoding'
 import { NextResponse, type NextRequest } from 'next/server'
 import { isAuthFlowPath, isPolicyPath, resolveOnboardingRedirect } from '@/lib/onboarding-routing'
-import { isAccountFrozen, isFrozenAllowedApiPath, isNativeBridgeCodeApiPath } from '@/lib/auth/frozen'
+import { isAccountFrozen, isFrozenAllowedApiPath, isFrozenContactSubmitRequest, isNativeBridgeCodeApiPath } from '@/lib/auth/frozen'
 import { isPushTokenClaimApiPath } from '@/lib/push-tokens'
 import {
   isMaintenanceExemptPath,
@@ -186,8 +186,8 @@ export async function updateSession(request: NextRequest) {
     // (meal-plans/pantry/recipes/health 等)、frozen_at を一切検査しないまま
     // 素通りしていた。ページナビゲーションと同様にここで凍結判定を行い、
     // 凍結中のアカウントは全 API 呼び出しを 403 で拒否する
-    // (#1445: 凍結中も呼べる API (FROZEN_ALLOWED_API_PATHS。退会・書き出しと、有料プランの解約の 3 本。billing/01 §9.8) は除く。一覧は src/lib/auth/frozen.ts。
-    //  ほかに、通知のトークンの claim (#1636) とネイティブ認証ブリッジのコード (#1861) も除く。理由は下の凍結の分岐)。
+    // (#1445: 凍結中も呼べる API (FROZEN_ALLOWED_API_PATHS の 5 本。退会・書き出しと、有料プランの解約の 3 本 (billing/01 §9.8)) は除く。一覧は src/lib/auth/frozen.ts。
+    //  ほかに、通知のトークンの claim (#1636) とネイティブ認証ブリッジのコード (#1861) と、お問い合わせの送信 (POST /api/contact。#1871) も除く。理由は下の凍結の分岐)。
     // 認証・プロフィール取得自体に失敗した場合は各 route 側のチェックに委ねる
     // (#348 と同様、一時的な DB/ネットワーク障害で全 API を誤って止めないための
     // fail-open。frozen かどうか確定できた場合のみブロックする)。
@@ -225,18 +225,21 @@ export async function updateSession(request: NextRequest) {
             unbanAt: profile?.unban_at ?? null,
           })
 
-          // #1445: 凍結中も呼べる API (FROZEN_ALLOWED_API_PATHS。退会・書き出しと、有料プランの解約の 3 本。billing/01 §9.8) は、凍結中でも止めない。
+          // #1445: 凍結中も呼べる API (FROZEN_ALLOWED_API_PATHS の 5 本。退会・書き出しと、有料プランの解約の 3 本 (billing/01 §9.8)) は、凍結中でも止めない。
           // 凍結の画面 (/frozen/account・/frozen/billing) から本人が退会・書き出し・解約をできるようにするため。ほかの /api は今までどおり 403
           // #1636: 通知のトークンの claim (isPushTokenClaimApiPath) も止めない。利用者の操作ではなく端末の後片付け
           // (同じ端末の前の利用者の行を外す) で、止めると前の利用者宛ての通知がこの端末に届き続けるため
           // #1861: ネイティブ認証ブリッジのコードの発行 (isNativeBridgeCodeApiPath) も止めない。モバイルの凍結の画面 (Web の /frozen の WebView) を
           // 本人のセッションで開くのに要る (止めると WebView がログイン画面になり、退会・書き出しにたどり着けない)
+          // #1871: お問い合わせの送信 (isFrozenContactSubmitRequest。POST /api/contact だけ。GET の履歴は止める) も止めない。
+          // 凍結の画面 (/frozen) の「サポートに問い合わせる」から /contact へ進んだ本人が送れるようにするため。回数の制限は route がそのままかける
           // 本文と状態は packages/shared の account-frozen.ts (モバイルが同じ値で見分ける)
           if (
             apiFrozen &&
             !isFrozenAllowedApiPath(request.nextUrl.pathname) &&
             !isPushTokenClaimApiPath(request.nextUrl.pathname) &&
-            !isNativeBridgeCodeApiPath(request.nextUrl.pathname)
+            !isNativeBridgeCodeApiPath(request.nextUrl.pathname) &&
+            !isFrozenContactSubmitRequest(request.method, request.nextUrl.pathname)
           ) {
             return NextResponse.json(accountFrozenBody(), {
               status: ACCOUNT_FROZEN_STATUS,
@@ -250,7 +253,7 @@ export async function updateSession(request: NextRequest) {
     }
 
     // #1148: メンテナンスモード (feature_flags の maintenance_mode)。運営ロール (admin / super_admin) 以外の API 呼び出しを
-    // 503 で止める。止めないパスは isMaintenanceExemptPath (死活監視・cron・認証・フラグの取得)。
+    // 503 で止める。止めないパスは isMaintenanceExemptPath (死活監視・cron・認証・フラグの取得・Resend の Webhook (#1577 の 4))。
     // フラグが読めないとき・行が無いときは止めない (isMaintenanceFlagOn は例外を投げず、OFF として答える)。
     // ロールを確かめられなかった (プロフィールを読めなかった) ときは、運営かどうか分からないので、運営ではない人として扱う
     if (!maintenanceExempt && !isOperatorRoles(apiRoles) && (await isMaintenanceFlagOn(apiUserId, apiRoles))) {

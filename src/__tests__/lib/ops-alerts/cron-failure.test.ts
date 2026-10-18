@@ -37,9 +37,9 @@ describe('定数 (#1125 の B)', () => {
     expect(CRON_FAILURE_SOURCES).toEqual(['pg_cron', 'vercel_cron']);
   });
 
-  it('K-2: 権利のキーは互いに独立: APP_LOG_ALERT_KEYS の 5 つの値と src/lib/backups/core.ts の BACKUP_STALE_ALERT_KEY (backup_stale) はすべて異なる (S-20)', () => {
+  it('K-2: 権利のキーは互いに独立: APP_LOG_ALERT_KEYS の 7 つの値と src/lib/backups/core.ts の BACKUP_STALE_ALERT_KEY (backup_stale) はすべて異なる (S-20)', () => {
     const keys = [...Object.values(APP_LOG_ALERT_KEYS), BACKUP_STALE_ALERT_KEY];
-    expect(Object.values(APP_LOG_ALERT_KEYS)).toHaveLength(5);
+    expect(Object.values(APP_LOG_ALERT_KEYS)).toHaveLength(7);
     expect(BACKUP_STALE_ALERT_KEY).toBe('backup_stale');
     expect(new Set(keys).size).toBe(keys.length);
   });

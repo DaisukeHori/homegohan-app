@@ -15,7 +15,7 @@
 // ── expo-file-system / expo-sharing モック ────────────────────────────────────
 // cacheDirectory が無い (null) 場合も試すため、getter 経由で差し替えられるようにする
 const mockDirs: { cache: string | null } = { cache: 'file:///data/app/Library/Caches/' };
-jest.mock('expo-file-system', () => ({
+jest.mock('expo-file-system/legacy', () => ({
   __esModule: true,
   get cacheDirectory() {
     return mockDirs.cache;
@@ -33,7 +33,7 @@ jest.mock('expo-sharing', () => ({
   shareAsync: jest.fn(),
 }));
 
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 
 import {

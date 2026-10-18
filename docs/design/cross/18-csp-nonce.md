@@ -189,11 +189,11 @@ POST /api/csp-report ──────▶ updateSession (同意の許可リス�
 | `NextResponse.json` 403 (凍結・同意) / `maintenanceApiResponse()` 503 | 付く | 不要 |
 | `maintenancePageResponse()` 503 HTML | 付く (`<style>` は `style-src 'unsafe-inline'` で有効) | 不要 (Next は描画しない) |
 | `internalError()` 500 (必須の環境変数が無い) | 付く | 不要 |
-| matcher の外 (`_next/static`・`_next/image`・`_vercel/`・`favicon.ico`・`manifest.json`・`robots.txt`・`sw.js`・`workbox-`・`api/health`・`opengraph-image`・`twitter-image`・画像拡張子) | 付かない (文書ではない。画像拡張子の存在しないパスの 404 HTML だけが残存: §22 Q-4) | – |
+| matcher の外 (`_next/static`・`_next/image`・`_vercel/`・`favicon.ico`・`manifest.json`・`robots.txt`・`sitemap.xml`・`sw.js`・`workbox-`・`api/health`・`opengraph-image`・`twitter-image`・画像拡張子) | 付かない (文書ではない。画像拡張子の存在しないパスの 404 HTML だけが残存: §22 Q-4) | – |
 
 ### 4.3 matcher
 
-変えない (本書の時点)。後から #1845 で、OGP / Twitter Card の画像の file convention の URL (`/opengraph-image`・`/twitter-image`。ちょうどこのパスだけ) を除外に足した (未ログインのクローラーを `/login` へ送らないため。画像は文書ではないので CSP は要らない。`tests/metadata-public-paths-1845.test.ts` が固定する)。Next 公式はプリフェッチ (`next-router-prefetch` / `purpose: prefetch`) の除外を勧めるが、プリフェッチの応答 (RSC) も `updateSession` を通すのが既存の挙動で、nonce の生成は乱数 16 バイトで無視できる。`tests/health-middleware-exemption.test.ts`・`tests/speed-insights-middleware-1179.test.ts`・`lib/supabase/__tests__/middleware-legal-consent-api.test.ts` の「`/api` で外すのは `api/health$` だけ」はそのまま緑。
+変えない (本書の時点)。後から #1845 で、OGP / Twitter Card の画像の file convention の URL (`/opengraph-image`・`/twitter-image`。ちょうどこのパスだけ) を除外に足した (未ログインのクローラーを `/login` へ送らないため。画像は文書ではないので CSP は要らない。`tests/metadata-public-paths-1845.test.ts` が固定する)。さらに #1867 で、サイトマップ (`/sitemap.xml`。`src/app/sitemap.ts`。ちょうどこのパスだけ) を除外に足した (未ログインのクローラーを `/login` へ送らないため。XML で文書ではないので CSP は要らない。`/robots.txt` と同じ扱い。`tests/seo-public-pages-1867.test.tsx` が固定する)。Next 公式はプリフェッチ (`next-router-prefetch` / `purpose: prefetch`) の除外を勧めるが、プリフェッチの応答 (RSC) も `updateSession` を通すのが既存の挙動で、nonce の生成は乱数 16 バイトで無視できる。`tests/health-middleware-exemption.test.ts`・`tests/speed-insights-middleware-1179.test.ts`・`lib/supabase/__tests__/middleware-legal-consent-api.test.ts` の「`/api` で外すのは `api/health$` だけ」はそのまま緑。
 
 ## 5. 静的ページの動的化 (R-5)
 
@@ -831,6 +831,8 @@ export const config = {
      * - favicon.ico (favicon file)
      * - manifest.json (PWA manifest — must not be redirected to /login)
      * - robots.txt (crawler instructions)
+     * - sitemap.xml (サイトマップ #1867。src/app/sitemap.ts。ちょうどこのパスだけ。未ログインのクローラーを /login へ送らない。
+     *   XML で文書ではないので CSP も要らない。robots.txt と同じ扱い)
      * - sw.js / workbox-* (service worker files)
      * - api/health (死活監視用ヘルスチェック #1181。ちょうどこのパスだけ。
      *   Supabase のセッション処理を通さず、認証基盤の不調に引きずられないようにする。
@@ -845,7 +847,7 @@ export const config = {
      *   ちょうどこのパスだけ。拡張子の無いパスなので下の画像の拡張子の除外に当たらない。SNS のクローラーは未ログインなので、
      *   通すと /login へ送られ、画像の代わりにログイン画面の HTML が返る。画像は文書ではないので CSP も要らない)
      */
-    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sw\\.js|workbox-|api/health$|opengraph-image$|twitter-image$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|_vercel/|favicon\\.ico|manifest\\.json|robots\\.txt|sitemap\\.xml$|sw\\.js|workbox-|api/health$|opengraph-image$|twitter-image$|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
   ],
 }
 ```
@@ -893,7 +895,7 @@ export const dynamic = 'force-dynamic';
 | `next-script` | `import … from 'next/script'`・`export … from 'next/script'`・`import('next/script')`・`require('next/script')`・`import … = require('next/script')` | 参照 1 つ | 静的 import で手元の名前を持ち、同じファイルにその名前の JSX の要素が 1 つ以上ある (要素の nonce は同じファイルの `jsx` の項目で確かめる)。export・`import()`・`require` は nonce を確かめられないので満たさない |
 | `string` | 文字列リテラル・テンプレートで、文字の部分に `<script` (大小を区別しない) を含むもの | リテラル 1 つ | テンプレートで、`<script` の開きタグ (次の `>` まで) ごとに `nonce=` の値が `${…}` の差し込み。差し込みの無い文字列 (固定の nonce を含む) は満たさない |
 
-照合 (`inlineScriptProblems`) の鍵は `file` と `kind` の組。次のどれかがあれば赤: ① 検出の組が `ALLOWED_INLINE_SCRIPTS` に無い ② 組はあるが検出が nonce の規則を満たさない ③ 項目の `count` とその組の検出の件数が違う (検出 0 件 = 古い項目を含む。同じファイルに 1 本足しても赤になり、理由を見直させる) ④ 項目の `reason` が空・`count` が 1 以上の整数でない・同じ組の項目が 2 つ以上。`next/script` を使うファイルは `next-script` と `jsx` の 2 項目を載せる。いまの許可リストは空で、§6.1 I-1 を消したあとの検出は 0 件 (origin/main の `src` / `lib` / `components` で `<script` / `next/script` を含むテスト以外のファイルは `src/app/layout.tsx` だけ)。
+照合 (`inlineScriptProblems`) の鍵は `file` と `kind` の組。次のどれかがあれば赤: ① 検出の組が `ALLOWED_INLINE_SCRIPTS` に無い ② 組はあるが検出が nonce の規則を満たさない ③ 項目の `count` とその組の検出の件数が違う (検出 0 件 = 古い項目を含む。同じファイルに 1 本足しても赤になり、理由を見直させる) ④ 項目の `reason` が空・`count` が 1 以上の整数でない・同じ組の項目が 2 つ以上。`next/script` を使うファイルは `next-script` と `jsx` の 2 項目を載せる。本書の時点の許可リストは空で、§6.1 I-1 を消したあとの検出は 0 件だった (origin/main の `src` / `lib` / `components` で `<script` / `next/script` を含むテスト以外のファイルは `src/app/layout.tsx` だけ)。#1867 で、トップの構造化データ (JSON-LD。`src/components/seo/SiteStructuredData.tsx` の `<script type="application/ld+json" nonce={…}>` 1 本。`nonce` は `src/app/page.tsx` が `getCspNonce()` で読んで渡す) を許可リストに足した。
 
 ```ts
 // tests/csp-no-inline-script.test.ts の検出と照合 (正典)
@@ -956,8 +958,20 @@ export interface AllowedInlineScript {
   reason: string;
 }
 
-/** いまは空 (アプリのインラインスクリプトは 0 本: docs/design/cross/18-csp-nonce.md §6.1) */
-export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [];
+/**
+ * 許可したインラインの script (docs/design/cross/18-csp-nonce.md §6.1 の時点では 0 本)。
+ * #1867: トップの構造化データ (JSON-LD) の 1 本だけ。
+ */
+export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [
+  {
+    file: 'src/components/seo/SiteStructuredData.tsx',
+    kind: 'jsx',
+    count: 1,
+    reason:
+      '構造化データ (JSON-LD の Organization と WebSite。#1867) は、検索エンジンが HTML の中の <script type="application/ld+json"> だけを読むので、' +
+      'JS のモジュールに移せない。実行されないデータの塊だが、規則どおり getCspNonce() の値を nonce に渡す (src/app/page.tsx が読んで渡す)',
+  },
+];
 
 /** 種類ごとの nonce の規則 (失敗の文に出す) */
 export const NONCE_RULES: Record<InlineScriptKind, string> = {
@@ -1258,7 +1272,7 @@ export function exportsForceDynamic(file: string, text: string): boolean {
 | P-10 | `POST /api/csp-report` | 対象 | `next` (同意の許可リスト。凍結 403 / メンテ 503 は既存どおり) | あり | – | – |
 | P-11 | route handler の HTML (`/auth/native-bridge` の 426) | 対象 | `NextResponse.next` | あり (応答ヘッダーの写し) | – | – (`<style>` のみ) |
 | P-12 | `updateSession` の 500 (必須の環境変数が無い) | 対象 | `internalError()` | あり | – | – |
-| P-13 | matcher の外 (`_next/static` `_next/image` `_vercel/` `favicon.ico` `manifest.json` `robots.txt` `sw.js` `workbox-` `api/health` `opengraph-image` `twitter-image` 画像拡張子) | 外 | – | なし | – | – |
+| P-13 | matcher の外 (`_next/static` `_next/image` `_vercel/` `favicon.ico` `manifest.json` `robots.txt` `sitemap.xml` `sw.js` `workbox-` `api/health` `opengraph-image` `twitter-image` 画像拡張子) | 外 | – | なし | – | – |
 | P-14 | 画像拡張子の存在しないパス (`/x.png`) の 404 HTML (画像拡張子でないパスは P-21) | 外 | – | なし (残存。§22 Q-4) | – | 無し (方針も無いので止まらない) |
 | P-15 | `CSP_REPORT_ONLY=on` × P-1〜P-12・P-18〜P-22 | 対象 | 同上 | `Content-Security-Policy-Report-Only` | request も同じ名前 (Next は `-report-only` からも読む) | あり |
 | P-16 | `next dev` × P-1〜P-12・P-18〜P-22 | 対象 | 同上 | あり + `'unsafe-eval'` | あり | あり |
@@ -1376,7 +1390,7 @@ sequenceDiagram
 | `tests/middleware-csp.test.ts` (新。`@/lib/supabase/middleware` の updateSession をモック) | `応答に Content-Security-Policy が付き、script-src の nonce が request header の x-csp-nonce と同じ` / `request header の content-security-policy にも同じ方針が載る (Next が読む経路)` / `updateSession が redirect / 403 JSON / 503 HTML / 500 を返しても CSP が付く` / `updateSession が NextResponse.next({ request }) を作り直しても (x-legal-consent-pending を足す経路) request header の nonce は変わらない` / `2 回の要求で nonce が違う` / `クライアントが送った x-csp-nonce・content-security-policy・content-security-policy-report-only は捨てられ、middleware の値だけが残る` / `CSP_REPORT_ONLY=on なら応答と request header の名前が Content-Security-Policy-Report-Only になり、Content-Security-Policy は付かない` / `NODE_ENV=development なら 'unsafe-eval' が付く` / `?mode=app の is_native_app Cookie は今までどおり付く` |
 | `src/__tests__/api/csp-report-route.test.ts` (新。`@/lib/db-logger` の createLogger をモック) | `application/csp-report の有効な報告は 204 で、createLogger('csp-report').warn が message と metadata (スクラブ済み) で 1 回呼ばれる` / `application/json でも 204` / `Content-Type が text/plain なら 415 CSP_REPORT_UNSUPPORTED_MEDIA_TYPE で warn は呼ばれない` / `8 KiB を超える本文は 413 CSP_REPORT_TOO_LARGE` / `JSON でない本文・csp-report の無い本文は 400 CSP_REPORT_INVALID` / `NULL 文字を含む本文は 400 INVALID_CHARACTER (回数制限より前)` / `同じ IP から 31 回目は 429 RATE_LIMITED (in-memory)。x-forwarded-for の先頭を key にする` / `checkRateLimit が例外を投げたら 500 INTERNAL_ERROR (fail-closed)` / `セッションを読まない (createClient を呼ばない)` |
 | `src/__tests__/lib/rate-limit-csp-report.test.ts` (新) | `csp-report は 30 回/分と 300 回/日の 2 つの規則` |
-| `tests/csp-no-inline-script.test.ts` (新。走査。検出と照合のコードは §9.11 の正典) | `src / lib / components (テストを除く) の走査結果を ALLOWED_INLINE_SCRIPTS と照合し、問題が 0 件 (いまは検出 0 件・許可リストは空。失敗の文に INLINE_SCRIPT_GUIDANCE を添える)` / `検出 jsx: <script> / <Script> / next/script の別名の要素を見つけ、nonce={式} のものだけが規則を満たす (nonce なし・nonce="固定"・{...props} だけは満たさない)` / `検出 next-script: import / export … from / import() / require / import = require を見つけ、静的 import で同じファイルに要素があるものだけが規則を満たす` / `検出 string: <script (大小を区別しない) を含む文字列・テンプレートを見つけ、開きタグごとに nonce= の値が差し込みのテンプレートだけが規則を満たす (固定の文字列・\${} と書いたものは満たさない)` / `検出: コメントと正規表現リテラルには反応しない` / `照合: 見本の許可リストで、載っていない検出・nonce の規則を満たさない検出・件数の食い違い (検出 0 件の古い項目を含む)・空の reason・1 未満の count・同じ file と kind の重複を、それぞれ問題として返す` / `照合: 規則どおりの見本 (next/script の import 1 件 + <Script nonce={nonce}> 1 件 + nonce が差し込みのテンプレート 1 件を、件数どおりの 3 項目で載せる) は問題 0 件` / `src/app/layout.tsx は export const dynamic = 'force-dynamic' を宣言している (exportsForceDynamic。見本: 宣言の無いソース・export の無い const・let は false)` |
+| `tests/csp-no-inline-script.test.ts` (新。走査。検出と照合のコードは §9.11 の正典) | `src / lib / components (テストを除く) の走査結果を ALLOWED_INLINE_SCRIPTS と照合し、問題が 0 件 (許可リストは #1867 の JSON-LD の 1 本。失敗の文に INLINE_SCRIPT_GUIDANCE を添える)` / `検出 jsx: <script> / <Script> / next/script の別名の要素を見つけ、nonce={式} のものだけが規則を満たす (nonce なし・nonce="固定"・{...props} だけは満たさない)` / `検出 next-script: import / export … from / import() / require / import = require を見つけ、静的 import で同じファイルに要素があるものだけが規則を満たす` / `検出 string: <script (大小を区別しない) を含む文字列・テンプレートを見つけ、開きタグごとに nonce= の値が差し込みのテンプレートだけが規則を満たす (固定の文字列・\${} と書いたものは満たさない)` / `検出: コメントと正規表現リテラルには反応しない` / `照合: 見本の許可リストで、載っていない検出・nonce の規則を満たさない検出・件数の食い違い (検出 0 件の古い項目を含む)・空の reason・1 未満の count・同じ file と kind の重複を、それぞれ問題として返す` / `照合: 規則どおりの見本 (next/script の import 1 件 + <Script nonce={nonce}> 1 件 + nonce が差し込みのテンプレート 1 件を、件数どおりの 3 項目で載せる) は問題 0 件` / `src/app/layout.tsx は export const dynamic = 'force-dynamic' を宣言している (exportsForceDynamic。見本: 宣言の無いソース・export の無い const・let は false)` |
 | `src/__tests__/config/next-config-headers.test.ts` (改) | いまの it は 6 つ (`:25`・`:33` の #1166 PostHog 2 つ・`:42` F6-09・`:57` 本番の Supabase・`:70` ローカルの Supabase・`:82` F6-08)。CSP の文字列を読む 5 つ (`:25`・`:33`・`:42`・`:57`・`:70`) はこのファイルから消し、`csp.test.ts` の同じ意味の it へ移す (`:42` F6-09 は `script-src 'self' 'unsafe-inline'` の期待を捨て、許可済みドメインと `style-src 'self' 'unsafe-inline'` の期待だけを `buildContentSecurityPolicy` の方針に対して持つ。`:57`・`:70` は csp.test.ts の Supabase の 2 つ。`:25`・`:33` は csp.test.ts の #1166 の 2 つ)。ヘルパー `getSecurityHeaders` は CSP の項を探さず `headers()` の群だけを返す形に替える (CSP の項が無いと `.value` で落ちるため)。残す: F6-08。足す: `headers() に Content-Security-Policy が無い (CSP は middleware が付ける。二重に付けない)` / `X-Frame-Options・X-Content-Type-Options・X-XSS-Protection・HSTS は残る` |
 | `src/__tests__/config/turnstile-config.test.ts` (改) | describe 名 `Turnstile: CSP (next.config.mjs)` を `Turnstile: CSP (src/lib/security/csp.ts)` に。`loadCspDirectives` を `cspDirectivesOf(buildContentSecurityPolicy({ nonce: 'dGVzdA==', isDev: false, supabaseUrl }))` に替える。it 名の「self / unsafe-inline / vercel-scripts」を「self / nonce / vercel-scripts」に。`'unsafe-inline'` の `toContain` を `not.toContain` に |
 | `tests/speed-insights-1179.test.tsx` (改) | CSP の節: `next.config.mjs` を読む代わりに `buildContentSecurityPolicy` を使う (ファイル頭の説明 `:14`・`:16` と `:125` のコメントの `next.config.mjs` も `src/lib/security/csp.ts` に)。it `script-src と connect-src に 'self' がある` は同じ |

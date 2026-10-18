@@ -697,6 +697,15 @@ const ALLOWLIST: ReadonlyArray<{ file: string; rule: Rule; count: number; reason
       '読むときと消すときの 2 回とも同じ期限で絞る。保管期間は隠した時刻から数えるので、暦日ではない',
   },
   {
+    file: 'src/lib/admin/hidden-content-restore.ts',
+    rule: 'G',
+    count: 2,
+    reason:
+      '運営が隠したコンテンツを戻す (#1538)。1 つは戻せる期限 (hidden_at >= 要求の時刻のちょうど 89 日前。今からの相対時刻) で行を戻す UPDATE を絞る ' +
+      '(完全削除のジョブの期限 90 日前と同じ行を扱わないための幅)。もう 1 つは、同じまとまりの行を、通報された行の hidden_at (DB から読んだ時刻そのもの) 以後で読む。' +
+      'どちらも暦日ではない',
+  },
+  {
     file: 'src/lib/data-subject-requests/service.ts',
     rule: 'G',
     count: 1,

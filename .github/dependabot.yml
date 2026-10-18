@@ -43,7 +43,7 @@ updates:
       - dependency-name: "eslint-config-next"
         update-types: ["version-update:semver-major"]
       # react / react-dom / react-test-renderer: Web は React 19 (19.2 系)。モバイルは react-native に入っているレンダラーと
-      # 「完全に同じ版」(いまは 19.0.0) でないと動かない。どの更新も、react-native と一緒に計画して上げる
+      # 「完全に同じ版」(いまは 19.3.0) でないと動かない。どの更新も、react-native と一緒に計画して上げる
       - dependency-name: "react"
       - dependency-name: "react-dom"
       - dependency-name: "react-test-renderer"

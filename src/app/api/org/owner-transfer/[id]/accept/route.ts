@@ -5,7 +5,7 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode, mapPgErrorToHttp } from '@/lib/errors/membership-errors';
 import { resolveAuthEmails } from '@/lib/membership/resolve-auth-emails';
 import { sendEmail, type EmailEnvelope } from '@/lib/emails/send';
-import { emailFailureReasons } from '@/lib/emails/send-result';
+import { emailFailureReasons, logEmailFailures } from '@/lib/emails/send-result';
 import { renderOrgTransferCompletedEmail } from '@/lib/emails/membership/org-transfer-completed';
 import { normalizeProfileName } from '@/lib/profile-name';
 
@@ -115,12 +115,11 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
       // 送れなかったもの: reject (想定外の例外) と ok: false の結果 (sendEmail は配信の失敗で例外を投げない)。
       // 1 通ごとの詳細 (文面の名前・マスクした宛先・エラーコード) は sendEmail が app_logs に記録している
       const failures = emailFailureReasons(results);
-      if (failures.length > 0) {
-        log.error('完了メールの一部を送信できませんでした (オーナーの譲渡は完了済み)', failures[0], {
-          proposal_id: proposalId,
-          failed_count: failures.length,
-        });
-      }
+      // すべて宛先停止リストで止めた (suppressed) ものなら意図した動きなので warn、ほかが 1 つでもあれば error (#1577 の 7)
+      logEmailFailures(log, '完了メールの一部を送信できませんでした (オーナーの譲渡は完了済み)', failures, {
+        proposal_id: proposalId,
+        failed_count: failures.length,
+      });
     }
   } catch (notifyErr) {
     log.error('完了メールの送信処理に失敗しました (オーナーの譲渡は完了済み)', notifyErr, {

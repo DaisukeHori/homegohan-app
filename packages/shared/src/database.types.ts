@@ -1368,6 +1368,27 @@ export type Database = {
         }
         Relationships: []
       }
+      cron_secret_probes: {
+        Row: {
+          id: number
+          request_id: number | null
+          requested_at: string
+          send_state: string
+        }
+        Insert: {
+          id?: number
+          request_id?: number | null
+          requested_at?: string
+          send_state: string
+        }
+        Update: {
+          id?: number
+          request_id?: number | null
+          requested_at?: string
+          send_state?: string
+        }
+        Relationships: []
+      }
       daily_active_users: {
         Row: {
           computed_at: string
@@ -8753,6 +8774,24 @@ export type Database = {
           total_count: number
         }[]
       }
+      cron_secret_probe_body_json: { Args: { p_content: string }; Returns: Json }
+      cron_secret_probe_results: {
+        Args: { p_limit?: number; p_lookback_minutes?: number }
+        Returns: {
+          alias_used: boolean
+          answered: boolean
+          body_code: string
+          body_error: string
+          has_error: boolean
+          http_status: number
+          matched: string
+          previous_configured: boolean
+          probe_id: number
+          requested_at: string
+          send_state: string
+          timed_out: boolean
+        }[]
+      }
       decline_family_representative_transfer: {
         Args: { p_proposal_id: string }
         Returns: {
@@ -10009,6 +10048,14 @@ export type Database = {
           id: string
           name: string
           similarity: number
+        }[]
+      }
+      send_cron_secret_probe: {
+        Args: never
+        Returns: {
+          probe_id: number
+          request_id: number
+          send_state: string
         }[]
       }
       snapshot_daily_active_users: {

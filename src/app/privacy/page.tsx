@@ -3,15 +3,15 @@ import Link from "next/link";
 import { LegalDocumentMeta } from "@/components/legal/LegalDocumentMeta";
 import { AI_CONSENT_PROVIDERS, AI_CONSENT_PROVIDER_INFO } from "@/lib/ai/consent-config";
 import { BUSINESS_NAME } from "@/lib/business-info";
+import { publicPageMetadata } from "@/lib/seo/public-pages";
 import { getSupportEmail } from "@/lib/site-config";
 
 // #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
 // ストア審査に出すプライバシー URL の着地点なので、(main) グループ (ログイン後の画面。アプリ用のナビ付き) の外に置く。
 // ログイン・オンボーディング・凍結の差し戻しからは、lib/supabase/middleware.ts の publicPaths と
 // lib/onboarding-routing.ts の isPolicyPath で除外している。
-export const metadata: Metadata = {
-  title: "プライバシーポリシー",
-};
+// #1867: title・description・canonical・OGP は src/lib/seo/public-pages.ts が正本
+export const metadata: Metadata = publicPageMetadata("/privacy");
 
 export default function PrivacyPage() {
   return (

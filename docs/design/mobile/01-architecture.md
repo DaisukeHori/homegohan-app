@@ -2,7 +2,7 @@
 
 ## 1. 目的・スコープ
 
-React Native + Expo SDK 53 によるモバイルアプリの全体構成を定義する。
+React Native + Expo SDK 58 によるモバイルアプリの全体構成を定義する。
 WebView ハイブリッド設計・セッション同期・ビルド設定・強制アップデートを扱う。
 
 **対象外**:
@@ -22,8 +22,8 @@ WebView ハイブリッド設計・セッション同期・ビルド設定・強
 
 | 項目 | 採用 | 備考 |
 |------|------|------|
-| フレームワーク | React Native (Expo SDK 53) | managed workflow |
-| ルーティング | Expo Router v4 (file-based) | `app/` ディレクトリ構成 |
+| フレームワーク | React Native (Expo SDK 58) | managed workflow |
+| ルーティング | Expo Router 58 (file-based) | `app/` ディレクトリ構成 |
 | UI ライブラリ | RN 標準 + `react-native-safe-area-context` | Tailwind 非採用 (Web 側のみ) |
 | WebView | `react-native-webview` | WebView ハイブリッドの核 |
 | ストレージ | `expo-secure-store` (セッション) / `@react-native-async-storage/async-storage` (設定) | |
@@ -49,7 +49,7 @@ Mobile はそれを `WebViewScreen` コンポーネント経由で表示する�
 | 認証画面群 | `app/(auth)/` | Supabase Auth セッション初期取得 |
 | 設定画面 | `app/(tabs)/settings.tsx` | 通知権限・ログアウト等の OS API |
 
-設定画面はタブバーに出さない (`app/(tabs)/_layout.tsx` の `href: null`)。入口は、マイページのタブ (WebView) の上に置いた歯車
+設定画面はタブバーに出さない (`app/(tabs)/_layout.tsx` の `tabBarButton: () => null` と `tabBarItemStyle: { display: "none" }`。expo-router 58 の `href: null` は route を届かなくするので使わない。mobile/07 §9.10)。入口は、マイページのタブ (WebView) の上に置いた歯車
 (`app/(tabs)/profile.tsx`、testID `profile-settings-button`。`WebViewScreen` の `header` に渡す) (#1037)。
 ログアウト・通知の設定・退会 (`app/settings/account.tsx`) はここから行う。
 アカウントの画面 (`app/settings/account.tsx`) には、個人情報の開示・訂正・利用停止・消去の請求の項目 (testID `account-data-requests-row`) も置く。
@@ -276,7 +276,7 @@ apps/mobile/
 │   │   ├── meals.tsx                # WebViewScreen path="/meals/new" (NATIVE_APP_TABS の rootPath)
 │   │   ├── comparison.tsx           # WebViewScreen path="/comparison"
 │   │   ├── profile.tsx              # WebViewScreen path="/profile" (設定への歯車つき)
-│   │   └── settings.tsx             # ネイティブ設定画面 (OS API 使用。タブバーには出さない: href: null)
+│   │   └── settings.tsx             # ネイティブ設定画面 (OS API 使用。タブバーには出さない: tabBarButton: () => null と display: none)
 │   ├── family/
 │   │   └── invite-accept.tsx        # 新規: homegohan://invite/family/{token}
 │   └── org/
@@ -320,6 +320,7 @@ apps/mobile/
     "slug": "homegohan",
     "scheme": "homegohan",
     "version": "0.1.0",
+    "runtimeVersion": { "policy": "fingerprint" },
     "ios": {
       "bundleIdentifier": "com.homegohan.app",
       "infoPlist": {
@@ -331,7 +332,12 @@ apps/mobile/
       "package": "com.homegohan.app",
       "permissions": ["android.permission.CAMERA", "android.permission.POST_NOTIFICATIONS"]
     },
-    "plugins": ["expo-router", "expo-image-picker", "expo-notifications"]
+    "plugins": [
+      "expo-router",
+      "expo-image-picker",
+      "expo-notifications",
+      ["expo-splash-screen", { "image": "./assets/splash-ios.png", "resizeMode": "contain", "backgroundColor": "#FFF7ED", "enableFullScreenImage_legacy": true }]
+    ]
   }
 }
 ```
@@ -591,7 +597,7 @@ Maestro flow を `apps/mobile/maestro/flows/tour/` 配下に 12 件追加(family
 | iOS 18 カメラ dismiss バグの根本解消 | 高 | `04-storage-camera.md` に詳細 |
 | Universal Links 対応 (Phase 2) | 低 | Apple Configurator 2 配布が続く間は不要 |
 | Biometric 認証 (Face ID / Touch ID) | 中 | `cross/01-auth-session.md` Phase 2 予定 |
-| OTA Update (expo-updates) | 低 | `app.json` で `enabled: false` のまま。大型変更時に検討 |
+| OTA Update (expo-updates) | 低 | `app.json` で `enabled: false` のまま。`runtimeVersion` は fingerprint (mobile/07 §11)。番兵 `tests/mobile-toolchain-contract.test.ts` |
 
 ## 14. 課金 (アプリ内課金をしない)
 

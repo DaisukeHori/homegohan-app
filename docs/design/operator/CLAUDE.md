@@ -16,6 +16,9 @@
 | `08-cron-batches.md` | pg_cron + Vercel Cron 全 job (license_expire / freeze_grace / archive_purge / trial_reminder) | 03 §15.17 |
 | `09-runbook.md` | 運用手順書 (Stripe reconcile / HR retry / deprecated rollback / incident response / DR) | 03 §15 §16.5 |
 | `10-logs-and-mail-retry.md` | email_outbox / worker / dead の通知 / ログ閲覧の検索と監査 | 03 §5.3 §22.9 §15 |
+| `11-ops-batches-non-billing.md` | 課金と関係のない運用バッチの残り (定期処理の失敗の監視・pg_cron の停止・解散した家族の物理削除) | 03 §22.9 |
+| `12-cron-secret-drift-monitor.md` | cron の共有シークレット (Vercel / Edge Function secrets / Vault) のずれの自動・定期の検知 (実経路の確認 + 運用アラートの 6 つ目・7 つ目の種類) | 03 §22.9 |
+| `13-hidden-content-restore.md` | 運営が隠したコンテンツ (#1101) を戻す操作 (API + 詳細画面の欄 + 一覧のバッジ。戻せる期間 89 日・通報を approved に・監査ログ) | 03 §5.3 |
 
 ## ドメインの役割
 

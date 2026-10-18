@@ -24,6 +24,8 @@
  * #1101: 違反コンテンツの「削除」は、行を消さずに `hidden_at` を入れて「隠す」
  * (`hideModeratedContent`)。隠した行は RLS により本人以外には見えず、隠してから 90 日 (保管期間) を
  * 過ぎたら、pg_cron のジョブ `purge-hidden-content` (#1538) が行と、ほかで使っていない画像を完全に消す。
+ * 戻すのは `src/lib/admin/hidden-content-restore.ts` (`POST /api/admin/moderation/{type}/{id}/restore`。#1538)。
+ * 戻した行は完全削除のジョブ `purge-hidden-content` の対象から外れる。
  * 注意: service-role で `meals` / `recipes` を読むコードは
  * RLS を通らないので、他のユーザーに見せる一覧を作るなら `hidden_at IS NULL` で絞ること。
  */
@@ -61,13 +63,18 @@ export interface NormalizedModerationItem {
   resolution_note: string | null;
   resolved_by: string | null;
   resolved_at: string | null;
+  /**
+   * 通報されたコンテンツ本体が運営に隠されている (#1101) なら、その日時 (ISO)。隠れていない・コンテンツが無いときは null (#1538)。
+   * 画面はこれで「非表示中」のバッジと「非表示の解除」の欄を出す
+   */
+  hidden_at: string | null;
   created_at: string | null;
 }
 
 type RawRow = Record<string, unknown>;
 
 function normalizeFoodRow(row: RawRow): NormalizedModerationItem {
-  const meal = (row.meals as { user_id?: string | null; photo_url?: string | null } | null) ?? null;
+  const meal = (row.meals as { user_id?: string | null; photo_url?: string | null; hidden_at?: string | null } | null) ?? null;
   return {
     id: row.id as string,
     type: 'food',
@@ -81,12 +88,13 @@ function normalizeFoodRow(row: RawRow): NormalizedModerationItem {
     resolution_note: (row.resolution_note as string | null) ?? null,
     resolved_by: (row.resolved_by as string | null) ?? null,
     resolved_at: (row.resolved_at as string | null) ?? null,
+    hidden_at: meal?.hidden_at ?? null,
     created_at: (row.created_at as string | null) ?? null,
   };
 }
 
 function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
-  const recipe = (row.recipes as { user_id?: string | null; image_url?: string | null } | null) ?? null;
+  const recipe = (row.recipes as { user_id?: string | null; image_url?: string | null; hidden_at?: string | null } | null) ?? null;
   return {
     id: row.id as string,
     type: 'recipe',
@@ -102,6 +110,7 @@ function normalizeRecipeRow(row: RawRow): NormalizedModerationItem {
     resolution_note: null,
     resolved_by: (row.reviewed_by as string | null) ?? null,
     resolved_at: (row.reviewed_at as string | null) ?? null,
+    hidden_at: recipe?.hidden_at ?? null,
     created_at: (row.created_at as string | null) ?? null,
   };
 }
@@ -146,7 +155,7 @@ export async function fetchModerationList(
   if (type === 'food') {
     const { data, error } = await supabase
       .from('moderation_flags')
-      .select('*, meals(user_id, photo_url)')
+      .select('*, meals(user_id, photo_url, hidden_at)')
       .eq('status', status)
       .order('created_at', { ascending: true })
       .limit(limit);
@@ -156,7 +165,7 @@ export async function fetchModerationList(
 
   const { data, error } = await supabase
     .from('recipe_flags')
-    .select('*, recipes(user_id, image_url)')
+    .select('*, recipes(user_id, image_url, hidden_at)')
     .eq('status', status)
     .order('created_at', { ascending: true })
     .limit(limit);
@@ -192,7 +201,7 @@ export async function fetchModerationSingle(
   if (type === 'food') {
     const { data, error } = await supabase
       .from('moderation_flags')
-      .select('*, meals(user_id, photo_url)')
+      .select('*, meals(user_id, photo_url, hidden_at)')
       .eq('id', id)
       .maybeSingle();
     if (error) throw error;
@@ -201,7 +210,7 @@ export async function fetchModerationSingle(
 
   const { data, error } = await supabase
     .from('recipe_flags')
-    .select('*, recipes(user_id, image_url)')
+    .select('*, recipes(user_id, image_url, hidden_at)')
     .eq('id', id)
     .maybeSingle();
   if (error) throw error;

@@ -164,7 +164,7 @@ R-6・R-7・R-12 (モバイルだけ) は 13b §3.1。R-8〜R-11・R-13 はサ�
 |---|---|
 | S5 | 版を上げてデプロイ → アプリの次の `getApi().get('/api/health/records')` → middleware: `isLegalConsentComplete` が false → 403 `LEGAL_CONSENT_REQUIRED` → `withFriendlyErrors` が `legalConsentRequiredErrorOf(e)` で見分け、`notifyLegalConsentRequired()` → provider が state を `required` にして `refresh()` → Gate が**いま表示中の画面の代わりに**同意画面 (Stack はそのまま) → 再同意 → `clear` → さっきの画面がそのまま描かれる (Stack の状態を捨てていないので「戻る」も残る)。画面側の catch は `LegalConsentRequiredError` (message = 固定の文) を受けるが、`Alert` を出す画面でも出るのは固定の文だけ |
 | S6 | curl `Authorization: Bearer <JWT>` → middleware は JWT 形式の Bearer を転送 (`middleware.ts:129-130`) → `getUser` → 本人 → `fetchMiddlewareProfile` → 未同意 → `resolveLegalConsentApiDecision` deny → 403 `{ error, code }` + `Cache-Control: private, no-store`。route には届かない |
-| S7 | `/api/account/delete` `/api/account/export` は許可リスト (`leave_service`) → allow → route へ (凍結中もこの 2 本は通る。凍結中に通る API は、課金の 3 本を含めて `FROZEN_ALLOWED_API_PATHS` の 5 本と、それとは別に判定する通知のトークンの claim (`isPushTokenClaimApiPath`。#1636)・ネイティブ認証ブリッジのコード (`isNativeBridgeCodeApiPath`。#1861。cross/08 §16.2)) |
+| S7 | `/api/account/delete` `/api/account/export` は許可リスト (`leave_service`) → allow → route へ (凍結中もこの 2 本は通る。凍結中に通る API は、課金の 3 本を含めて `FROZEN_ALLOWED_API_PATHS` の 5 本と、それとは別に判定する通知のトークンの claim (`isPushTokenClaimApiPath`。#1636)・ネイティブ認証ブリッジのコード (`isNativeBridgeCodeApiPath`。#1861。cross/08 §16.2)・お問い合わせの送信 (`isFrozenContactSubmitRequest`。`POST /api/contact` だけ。#1871。cross/08 §16.2)) |
 | S8 | `isLegalConsentEnforced()` false → `resolveLegalConsentApiDecision` は最初の分岐で allow → 既存の挙動。status は `enforced: false, required: false` → モバイルは `clear` |
 | S9 | `fetchMiddlewareProfile` が `profileError` → 同意の判定を含むブロックを飛ばす (凍結と同じ #348 の fail-open) → route へ (route 自身の `getUser`/DB 失敗は route の 500)。status route は 500 (`internalError`) → モバイルは `unknown` → children を描く。DB が戻った後の API 呼び出しが 403 → S5 の経路で同意画面 |
 | S10 | 既存の凍結判定が先に `return` (403 AUTH_ACCOUNT_FROZEN)。同意の判定には来ない |
@@ -232,7 +232,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | 同意の状況を知る API | 無し (画面の HTML か、`GET /api/profile` の列) | `GET /api/legal/status` |
 | `lib/legal-consent.ts` の `EXEMPT_PREFIXES` の `/api` | 画面の判定で対象外 (コメント「各 route が自分で認可する」) | 変えない (画面の判定の対象外のまま。コメントだけ本書のゲートを指すように直す) |
 | 同意画面の文面 | Web の `LegalConsentForm.tsx` のリテラル | `packages/shared/src/legal-consent-copy.ts` (Web とモバイルが同じ値を使う)。Web の画面に出る文は変わらない (「同意しない」のボタンは `declineAndSignOutButton` = 現行と同じ「同意しない（ログアウトする）」。押している間の文はリテラルのまま) |
-| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` の全部 (billing/01 §9.8 のあとは 5 本) | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・ネイティブ認証ブリッジのコード (`src/lib/auth/frozen.ts` の `isNativeBridgeCodeApiPath`。#1861。`/api/auth` の prefix の行 (`auth_flow`) で含む)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う)。逆は求めない (`/api/account/data-requests` は同意の許可リストにあるが、凍結中は通さない。#1751・cross/15 S-13) |
+| 許可リスト (凍結) | `FROZEN_ALLOWED_API_PATHS` の全部 (billing/01 §9.8 のあとは 5 本) | 変えない。同意の許可リストは、凍結・メンテナンスの判定で通るパス (`FROZEN_ALLOWED_API_PATHS`・通知のトークンの claim (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。#1636)・ネイティブ認証ブリッジのコード (`src/lib/auth/frozen.ts` の `isNativeBridgeCodeApiPath`。#1861。`/api/auth` の prefix の行 (`auth_flow`) で含む)・お問い合わせの送信 (`src/lib/auth/frozen.ts` の `isFrozenContactSubmitRequest`。`POST /api/contact`。#1871。`/api/contact` の exact の行 (`contact`) で含む)・`isMaintenanceExemptPath` の `/api`) をすべて含む (テストで固定。凍結中・メンテナンス中は同意の画面に進めないので、ここで通したパスを同意で止めると例外が意味を失う)。逆は求めない (`/api/account/data-requests` は同意の許可リストにあるが、凍結中は通さない。#1751・cross/15 S-13) |
 
 モバイルの行 (起動・改定の再同意・403 の扱い) は 13b §6.2。
 
@@ -284,7 +284,7 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/billing/portal` | exact | `leave_service` | Stripe の Billing Portal (支払い方法・請求書・解約)。解約の前提。凍結中も通す (billing/01 §9.8) |
 | `/api/account/data-requests` | prefix | `data_subject_rights` | 開示・訂正・利用停止・消去の請求 (#1702・cross/15)。規約への同意を条件にできない本人の権利 (#1751)。一覧・作成・詳細・本人確認 (`[id]/verify`)・確認のメールの再送 (`[id]/resend-verification`)・取り下げ (`[id]/withdraw`) の 6 route。凍結中は通さない (`FROZEN_ALLOWED_API_PATHS` に入れない。cross/15 S-13)。呼ぶ画面 `/settings/data-requests` (確認の画面 `/settings/data-requests/verify` を含む) も画面の判定の対象外 (`lib/legal-consent.ts`) |
 | `/api/push-tokens/claim` | exact | `device_cleanup` | 通知のトークンの claim (#1636)。利用者のデータの読み書きではなく端末の後片付け (同じ端末の前の利用者の行を外す)。凍結中・メンテナンス中も middleware が通す (`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`) のと同じ理由。凍結中・メンテナンス中は同意できないので、ここで止めると前の利用者の行が外れず、前の利用者宛ての通知がこの端末に届き続ける。release (`/api/push-tokens/release`) は載せない (セッション無しで route が端末の秘密の値で認可するので、同意の判定に来ない) |
-| `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (データの削除の依頼もここから)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route |
+| `/api/contact` | exact | `contact` | 同意しない人の連絡の窓口 (データの削除の依頼もここから)。Web の同意画面の「同意しない」が案内する先。POST は未ログインでも送れる route。POST は凍結中も middleware が通す (`isFrozenContactSubmitRequest`。#1871。cross/08 §16.2) |
 | `/api/log` | exact | `telemetry` | 画面・端末の失敗の報告の受け口 (`error-report.ts` → `POST /api/log`)。利用者のデータの利用ではなく運用のログ。未同意の人の失敗も残す |
 | `/api/csp-report` | exact | `telemetry` | ブラウザが送る CSP の違反の報告の受け口 (cross/18 §9.10)。利用者のデータではなく運用のログ。未同意の人の画面の違反も残す |
 | `/api/feature-flags` | exact | `client_status` | 画面が前もって状態を知る窓口 (メンテナンス中も通す `isMaintenanceExemptPath` と同じ扱い)。未ログインでも答える |
@@ -916,7 +916,7 @@ import { LEGAL_CONSENT_COPY, legalConsentAgreeLabel, legalConsentReadFullTextLab
 | 状況 | 経路 | status | 本文 | 形 | ヘッダー |
 |---|---|---|---|---|---|
 | 未同意・旧版・行なし・生年月日なし・保護者の同意とのつながりの無い 18 歳未満 (ENFORCE=on、許可リスト外) | middleware `/api` | 403 | `{ error: LEGAL_CONSENT_REQUIRED_MESSAGE, code: 'LEGAL_CONSENT_REQUIRED' }` | 平たい (AI 同意と同じ) | `Cache-Control: private, no-store` |
-| 凍結 (`FROZEN_ALLOWED_API_PATHS` の 5 本・通知のトークンの claim・ネイティブ認証ブリッジのコード (#1861) 以外) | middleware `/api` | 403 | `{ error: { code: 'AUTH_ACCOUNT_FROZEN', message } }` | 入れ子 (既存) | 同上 |
+| 凍結 (`FROZEN_ALLOWED_API_PATHS` の 5 本・通知のトークンの claim・ネイティブ認証ブリッジのコード (#1861)・お問い合わせの送信 (`POST /api/contact`。#1871) 以外) | middleware `/api` | 403 | `{ error: { code: 'AUTH_ACCOUNT_FROZEN', message } }` | 入れ子 (既存) | 同上 |
 | メンテナンス中 (運営以外) | middleware `/api` | 503 | `{ error, code: 'MAINTENANCE_MODE', retryAfter }` | 平たい (既存) | `Retry-After` |
 | 未ログイン | `GET /api/legal/status` | 401 | `{ error: '認証が必要です', code: 'AUTH_UNAUTHENTICATED' }` | 平たい | `no-store` |
 | プロフィールを読めない | `GET /api/legal/status` | 500 | `{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }` (`internalError`) | 平たい | — |
@@ -993,7 +993,7 @@ sequenceDiagram
 1. `src/app/api/**/route.ts` を全部列挙し (`tests/helpers/ai-reach.ts` の `listRouteFiles` を `src/app/api` に絞って使う)、動的な区間 (`[id]` など) を固定の値に置き換えた path を作り、**未同意 × ENFORCE=on で `updateSession` を 1 本ずつ通す**。期待 = 許可リストに当たる route だけ 403 でない、それ以外は全部 403 `LEGAL_CONSENT_REQUIRED`。route を足せば自動で表に入る (載せ忘れは無い)。本数は書き込まない (2026-10-15 の origin/main で 202 本 = §0.3)。列挙が 0 本なら (走査の道が変わった) 失敗にする (空の it.each で緑にしない)。
 2. 許可リストの各行は、実在する route (route.ts のディレクトリ) に当たる (prefix の行は 1 本以上)。消えた route が一覧に残らない。
 3. 許可リストの中身 (path・match・reason) をそのまま固定する (スナップショット)。足すときは、このテストと §6.4 の表を一緒に直す。
-4. 許可リストは、凍結・メンテナンスの判定で通る `/api` をすべて含む: 判定の関数での包含 (`FROZEN_ALLOWED_API_PATHS` + `isPushTokenClaimApiPath` は exact の行で。`isMaintenanceExemptPath` が通す route も全部) と、全 route を未同意 × ENFORCE=on × 凍結中 / メンテナンス中 (運営ではない) で `updateSession` に通して同意の 403 が 1 本も出ないこと (T-M14・T-M18〜T-M20)。
+4. 許可リストは、凍結・メンテナンスの判定で通る `/api` をすべて含む: 判定の関数での包含 (`FROZEN_ALLOWED_API_PATHS` + `isPushTokenClaimApiPath` + `isFrozenContactSubmitRequest` (#1871) は exact の行で。`isMaintenanceExemptPath` が通す route も全部) と、全 route を未同意 × ENFORCE=on × 凍結中 / メンテナンス中 (運営ではない) で `updateSession` に通して同意の 403 が 1 本も出ないこと (T-M14・T-M18〜T-M20)。
 5. `src/proxy.ts` の matcher が `/api` で外すのは `api/health$` だけ (`tests/health-middleware-exemption.test.ts` と同じ読み方)。
 
 **限界** (見張りが見ないもの。明記する):
@@ -1044,11 +1044,11 @@ sequenceDiagram
 | T-M7 | `列が無い DB (42703) では列を除いた select でやり直し、同意ゲートだけ素通り (凍結・メンテナンスは効く)` |
 | T-M8 | `未ログイン (user null) と getUser の失敗は判定に来ない (route の 401 に委ねる)` |
 | T-M9 | `403 の本文は { error, code } の 2 キーだけで LegalConsentRequiredBodySchema を通り、Cache-Control は private, no-store。トークン更新で溜まったセッション Cookie を引き継ぐ` |
-| T-M10 | `凍結が先: 凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (同意の 403 ではない)。凍結中でも通す API と claim とブリッジのコードは未同意でも通る` (凍結中でも通す API = `FROZEN_ALLOWED_API_PATHS` の 5 本。ブリッジのコードは #1861) |
+| T-M10 | `凍結が先: 凍結中かつ未同意は 403 AUTH_ACCOUNT_FROZEN (同意の 403 ではない)。凍結中でも通す API と claim とブリッジのコードとお問い合わせの送信は未同意でも通る` (凍結中でも通す API = `FROZEN_ALLOWED_API_PATHS` の 5 本。ブリッジのコードは #1861。お問い合わせの送信 (`POST /api/contact`) は #1871 で、同じパスの GET は凍結の 403 のまま) |
 | T-M11 | `メンテナンス中が先: 運営以外の未同意は 503 MAINTENANCE_MODE。運営はメンテナンスを通った後に同意の判定を受ける` |
 | T-M12 | `Bearer (JWT 形式) のモバイルのセッションでも同じ判定。非 JWT の Bearer (CRON_SECRET) は判定に来ない` |
 | T-M13 | `GET / HEAD / POST / PUT / PATCH / DELETE のどのメソッドでも 403 (API は画面と違って POST も止める)` |
-| T-M14 | `許可リストは、凍結の判定で通るパス (FROZEN_ALLOWED_API_PATHS + 通知のトークンの claim) をすべて exact の行で含む` |
+| T-M14 | `許可リストは、凍結の判定で通るパス (FROZEN_ALLOWED_API_PATHS + 通知のトークンの claim + ネイティブ認証ブリッジのコード + お問い合わせの送信) をすべて含む` (ブリッジのコードは `/api/auth` の prefix の行で、ほかは exact の行で。お問い合わせの送信は #1871) |
 | T-M15 | `src/proxy.ts の matcher が /api で外すのは api/health$ だけ` |
 | T-M16 | `/api の分岐の select は PROFILE_COLUMNS_WITH_LEGAL の 1 回だけ (クエリを増やさない)` |
 | T-M17 | `改定の後 (旧版に同意) × ENFORCE=on: 同じ人の /api/meals は 403 LEGAL_CONSENT_REQUIRED (本文の error は LEGAL_CONSENT_REQUIRED_MESSAGE)、画面の GET /home は /legal-consent?next=%2Fhome へ 307、画面の POST /home は回さない (S5・S14 の Web の流れ)` |

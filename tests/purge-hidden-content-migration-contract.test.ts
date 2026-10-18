@@ -145,6 +145,8 @@ describe('#1538 5. 隠す側の説明が、完全削除のジョブに追随し�
   const HIDE_DESCRIBERS = [
     'src/lib/admin/moderation-backend.ts',
     'src/app/api/admin/moderation/[type]/[id]/route.ts',
+    'src/lib/admin/hidden-content-restore.ts',
+    'src/app/api/admin/moderation/[type]/[id]/restore/route.ts',
     'tests/integration/rls/hidden-content-visibility.test.ts',
   ];
   /** このファイル自身 (言い回しを検査のために書いている) */

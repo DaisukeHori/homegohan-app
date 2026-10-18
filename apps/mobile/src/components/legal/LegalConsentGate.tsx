@@ -4,7 +4,10 @@ import { useEffect, useRef } from "react";
 import {
   ENTRY_SCREEN_PATH,
   LEGAL_CONSENT_SCREEN_ROUTE_NAME,
+  collapseStackAction,
+  findNavigatorOwningRoute,
   isMobileLegalConsentExemptPath,
+  routeNameOf,
 } from "../../lib/legal-consent";
 import { useAccountFrozen } from "../../providers/AccountFrozenProvider";
 import { useAuth } from "../../providers/AuthProvider";
@@ -14,7 +17,7 @@ import { useProfile } from "../../providers/ProfileProvider";
 /**
  * 規約の同意のゲート (#1442)。ルートの layout (app/_layout.tsx) が Provider の内側・Stack の後ろに 1 つだけ置く。描くものは無い。
  *   - サインイン中で required、いまの画面が対象 (対象外のパスでも同意画面でもない) → ルートの Stack を同意画面 1 つに畳む
- *     (navigationRef.reset。同意画面の下に画面を残さない。開いていた画面とその入力・Modal・端末の戻るの受け手は一緒に外れる)。
+ *     (navigationRef.dispatch。完全な state の RESET。同意画面の下に画面を残さない。開いていた画面とその入力・Modal・端末の戻るの受け手は一緒に外れる)。
  *     前面が、このゲートが畳んだ同意画面 (openedRef) なら何もしない。前面が同意画面でも、このゲートが畳んでいない
  *     (deep link で開いた・ログアウトの前から下に残っていた) なら畳み直す
  *   - サインイン中で、前面が同意画面で required でない (clear / unknown。同意が済んだ・取り直しで required でなくなった) →
@@ -26,7 +29,7 @@ import { useProfile } from "../../providers/ProfileProvider";
  *   - session が無い: 何もしない。同意を待っていた同意画面は Web の案内と「閉じる」を出し、未ログインのまま開いた同意画面は
  *     自分で入口へ移る (app/legal-consent.tsx)
  * 前面は pathname でなく、effect の時点の今のナビゲーションの state (navigationRef.getCurrentRoute()) で見る
- * (pathname は 1 描画遅れることがあり、タブの区画が外れると別のタブのパスに変わる。reset の後の前面は、次の描画の後の
+ * (pathname は 1 描画遅れることがあり、タブの区画が外れると別のタブのパスに変わる。dispatch の後の前面は、次の描画の後の
  * この effect から見える)。
  * アカウントが凍結中 (#1861。useAccountFrozen の state が frozen) の間は何もしない。凍結のゲート (src/components/AccountFrozenGate.tsx) が
  * Stack を凍結の画面 1 つに畳む (凍結が先。Web の middleware も 凍結 → 同意 の順に判定する)。凍結が解けたら、同意の判定に戻る。
@@ -43,7 +46,7 @@ export function LegalConsentGate() {
   const navigationReady = Boolean(useRootNavigationState()?.key);
   /** ナビゲーションのコンテナ (expo-router の store.navigationRef。同じ object を返し続ける) */
   const navigationRef = useNavigationContainerRef();
-  /** このゲートが reset で畳んだ同意画面が、いまの Stack にある (同意で閉じる・ログアウトの後に前面でなくなったら外す) */
+  /** このゲートが RESET で畳んだ同意画面が、いまの Stack にある (同意で閉じる・ログアウトの後に前面でなくなったら外す) */
   const openedRef = useRef(false);
   /** 同意画面を閉じる操作 (入口への replace か、下の画面への back) を積んだ (流れて前面が同意画面でなくなるまで、もう一度積まない) */
   const closingRef = useRef(false);
@@ -53,7 +56,7 @@ export function LegalConsentGate() {
     // #1861: 凍結中は凍結のゲートに任せる (同意画面へ畳むと、凍結の画面と畳み合う)
     if (frozenState === "frozen") return;
     try {
-      const onConsentScreen = navigationRef.getCurrentRoute()?.name === LEGAL_CONSENT_SCREEN_ROUTE_NAME;
+      const onConsentScreen = routeNameOf(navigationRef.getCurrentRoute()) === LEGAL_CONSENT_SCREEN_ROUTE_NAME;
       if (!onConsentScreen) closingRef.current = false;
 
       if (!session) {
@@ -67,8 +70,16 @@ export function LegalConsentGate() {
         if (onConsentScreen && openedRef.current) return;
         // 対象外のパス (認証の途中・公開ページ) はそのまま使わせる
         if (!onConsentScreen && isMobileLegalConsentExemptPath(pathname)) return;
-        // ルートの Stack を同意画面 1 つに畳む (畳み直す)。index: 0 は「最初の route を前面にする」の意味の慣用の値
-        navigationRef.reset({ index: 0, routes: [{ name: LEGAL_CONSENT_SCREEN_ROUTE_NAME }] });
+        // ルートの Stack を同意画面 1 つに畳む (畳み直す)
+        const owner = findNavigatorOwningRoute(navigationRef.getRootState(), LEGAL_CONSENT_SCREEN_ROUTE_NAME);
+        if (owner === null) {
+          // ルートの Stack の state がまだそろっていない。openedRef を立てず、次の描画 (pathname か state が変わる) で試す
+          console.warn("[LegalConsentGate] root stack is not ready; retry on next render");
+          return;
+        }
+        // expo-router 58 の RESET は完全な state (key・index・routeNames・routeKeySeq・stale: false) だけを受け付ける。
+        // 持ち主の navigator に宛てる。58 では dispatch は commit の後に流れる。同意画面の route が既にあれば key ごと再利用し、取り除かない
+        navigationRef.dispatch(collapseStackAction(owner, LEGAL_CONSENT_SCREEN_ROUTE_NAME));
         openedRef.current = true;
         closingRef.current = false;
         return;

@@ -11,8 +11,11 @@
  * を確かめる。
  * #1861: ネイティブ認証ブリッジのコードの発行 (NATIVE_BRIDGE_CODE_API_PATH) も、FROZEN_ALLOWED_API_PATHS とは別の判定
  * (isNativeBridgeCodeApiPath) で凍結中に止めない (モバイルの凍結の画面 = Web の /frozen の WebView を本人のセッションで開くため)。
+ * #1871: お問い合わせの送信 (POST /api/contact) も、FROZEN_ALLOWED_API_PATHS とは別の判定 (isFrozenContactSubmitRequest。
+ * メソッドまで見る) で凍結中に止めない (凍結の画面の「サポートに問い合わせる」から /contact へ進んだ本人が送れるようにするため)。
+ * 同じパスの GET (お問い合わせの履歴) と、ほかのメソッドは 403 のまま。
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
@@ -40,9 +43,12 @@ import {
   BILLING_CANCEL_API_PATH,
   BILLING_PORTAL_API_PATH,
   BILLING_SUBSCRIPTION_API_PATH,
+  CONTACT_API_PATH,
+  CONTACT_SUBMIT_METHOD,
   FROZEN_ALLOWED_API_PATHS,
   NATIVE_BRIDGE_CODE_API_PATH,
   isFrozenAllowedApiPath,
+  isFrozenContactSubmitRequest,
   isNativeBridgeCodeApiPath,
 } from '@/lib/auth/frozen';
 import { stubSupabasePublicEnv } from './supabase-public-env';
@@ -245,4 +251,73 @@ describe('#1861: ネイティブ認証ブリッジのコードの発行は、凍
       });
     },
   );
+});
+
+describe('#1871: お問い合わせの送信 (POST /api/contact) は、凍結中でも止めない', () => {
+  it('パスは /api/contact・メソッドは POST の 1 組で、route が実在し POST を受ける。FROZEN_ALLOWED_API_PATHS には入れない (別の判定)', () => {
+    expect(CONTACT_API_PATH).toBe('/api/contact');
+    expect(CONTACT_SUBMIT_METHOD).toBe('POST');
+    const routeFile = join(process.cwd(), 'src/app', CONTACT_API_PATH, 'route.ts');
+    expect(existsSync(routeFile)).toBe(true);
+    expect(readFileSync(routeFile, 'utf8')).toMatch(/^export async function POST\(/m);
+    expect(FROZEN_ALLOWED_API_PATHS).not.toContain(CONTACT_API_PATH);
+    expect(isFrozenAllowedApiPath(CONTACT_API_PATH)).toBe(false);
+    expect(isFrozenContactSubmitRequest('POST', CONTACT_API_PATH)).toBe(true);
+  });
+
+  it('パスは完全一致・メソッドは POST だけ (GET の履歴・ほかのメソッド・似たパスは当たらない)', () => {
+    for (const method of ['GET', 'HEAD', 'PUT', 'PATCH', 'DELETE', 'OPTIONS', 'post']) {
+      expect(isFrozenContactSubmitRequest(method, CONTACT_API_PATH), method).toBe(false);
+    }
+    for (const path of [
+      '/api/contact/',
+      '/api/contactx',
+      '/api/contact/extra',
+      '/api/Contact',
+      '/api/contact?x=1',
+      '/api/admin/inquiries',
+      '/contact',
+    ]) {
+      expect(isFrozenContactSubmitRequest('POST', path), path).toBe(false);
+    }
+  });
+
+  it.each([
+    ['Cookie', undefined],
+    ['Bearer', { authorization: 'Bearer aaa.bbb.ccc' }],
+  ])('凍結中の %s のセッションでも、POST /api/contact は route へ通す (凍結は判定した上で通す)', async (_session, headers) => {
+    const res = await updateSession(request(CONTACT_API_PATH, { method: 'POST', headers }));
+
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-middleware-next')).toBe('1');
+    expect(mockMaybeSingle).toHaveBeenCalledTimes(1);
+  });
+
+  it('一時 BAN の継続中 (unban_at が未来) でも、POST /api/contact は通す', async () => {
+    const future = new Date(Date.now() + ONE_DAY_MS).toISOString();
+    mockMaybeSingle.mockResolvedValue({ data: { ...FROZEN_PROFILE, unban_at: future }, error: null });
+
+    const res = await updateSession(request(CONTACT_API_PATH, { method: 'POST' }));
+
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    ['GET', '/api/contact'],
+    ['PUT', '/api/contact'],
+    ['PATCH', '/api/contact'],
+    ['DELETE', '/api/contact'],
+    ['POST', '/api/contact/'],
+    ['POST', '/api/contactx'],
+    ['POST', '/api/contact/extra'],
+    ['POST', '/api/admin/inquiries'],
+    ['POST', '/api/pantry'],
+  ])('凍結中の %s %s は今までどおり 403 AUTH_ACCOUNT_FROZEN (通すのは送信の 1 組だけ)', async (method, path) => {
+    const res = await updateSession(request(path, { method }));
+
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({
+      error: { code: 'AUTH_ACCOUNT_FROZEN', message: 'アカウントが凍結されています' },
+    });
+  });
 });

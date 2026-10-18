@@ -1148,3 +1148,75 @@ describe('GET /api/admin/moderation (#1128: aiFlags は未対応と分かる)', 
     expect(json.aiFlagsSupported).toBe(false);
   });
 });
+
+describe('#1538 hidden_at (一覧と詳細の応答)', () => {
+  it('#1538 GET /{type}/{id}: meals.hidden_at を hidden_at として返す (隠れていなければ null)', async () => {
+    const row = (hiddenAt: string | null) => ({
+      id: 'flag-1',
+      status: 'rejected',
+      reason: null,
+      resolution_note: null,
+      resolved_by: null,
+      resolved_at: null,
+      created_at: '2026-01-01T00:00:00Z',
+      user_id: 'reporter-x',
+      meal_id: 'meal-1',
+      meals: { user_id: 'owner-x', photo_url: null, hidden_at: hiddenAt },
+    });
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [
+        { data: row('2026-10-01T00:00:00+00:00'), error: null },
+        { data: row(null), error: null },
+      ],
+    });
+    const request = new Request('http://localhost/api/admin/moderation/food/flag-1');
+
+    const hidden = await GET(request, { params: { type: 'food', id: 'flag-1' } });
+    expect(((await hidden.json()) as { data: { hidden_at: string | null } }).data.hidden_at).toBe('2026-10-01T00:00:00+00:00');
+
+    const shown = await GET(request, { params: { type: 'food', id: 'flag-1' } });
+    expect(((await shown.json()) as { data: { hidden_at: string | null } }).data.hidden_at).toBeNull();
+  });
+
+  it('#1538 GET /queue: 各項目に hidden_at がある', async () => {
+    fakeSupabase = createFakeSupabase({
+      moderation_flags: [
+        {
+          data: [
+            {
+              id: 'flag-1',
+              status: 'rejected',
+              reason: null,
+              created_at: '2026-01-01T00:00:00Z',
+              meals: { user_id: 'owner-x', photo_url: null, hidden_at: '2026-10-01T00:00:00+00:00' },
+            },
+          ],
+          error: null,
+        },
+        { count: 1, error: null },
+      ],
+      recipe_flags: [
+        {
+          data: [
+            {
+              id: 'rflag-1',
+              status: 'pending',
+              created_at: '2026-01-01T00:00:00Z',
+              recipes: { user_id: 'owner-y', image_url: null, hidden_at: null },
+            },
+          ],
+          error: null,
+        },
+        { count: 1, error: null },
+      ],
+    });
+
+    const res = await queueGET(new Request('http://localhost/api/admin/moderation/queue?status=rejected'));
+    const json = (await res.json()) as { data: Array<{ type: string; hidden_at: string | null }> };
+
+    expect(res.status).toBe(200);
+    expect(json.data).toHaveLength(2);
+    expect(json.data.find((item) => item.type === 'food')?.hidden_at).toBe('2026-10-01T00:00:00+00:00');
+    expect(json.data.find((item) => item.type === 'recipe')).toHaveProperty('hidden_at', null);
+  });
+});

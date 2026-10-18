@@ -29,7 +29,17 @@
  *     (docs/design/operator/11-ops-batches-non-billing.md §4・§6)。
  *   - pg_cron_stalled: 有効なジョブがあるのに最新の実行から OPS_ALERT_PG_CRON_STALL_MINUTES (既定 60) 分を超えていたら、
  *     キー pg_cron_stalled の権利を取って 1 通送る (台帳は使わない。止まっている間は抑止ごとに知らせる)。
- *   - 後ろの種類の失敗 (500) は前の種類の通知を止めない。順は server → client → email_dead_letter → cron_failure → pg_cron_stalled。
+ *   - 後ろの種類の失敗 (500) は前の種類の通知を止めない。順は server → client → email_dead_letter → cron_failure → pg_cron_stalled → cron_secret。
+ *
+ * 6 つ目の種類 cron_secret_drift と 7 つ目の種類 cron_secret_rotation (cron の共有シークレットのずれの検知。#1560) は、pg_cron_stalled のあとに判定する
+ * (docs/design/operator/12-cron-secret-drift-monitor.md):
+ *   - 各回で DB の send_cron_secret_probe() を呼ぶ。DB の関数が Vault の app_cron_secret を Bearer に付けて Edge Function cron-secret-probe を pg_net で 1 回呼ぶ
+ *     (pg_cron の実際の呼び出しと同じ道。値はこの route に来ない)。次の回が cron_secret_probe_results() で前の回の確認の結果を読んで判定する。
+ *   - cron_secret_drift: fail の所見 (食い違い 401・Edge に値が無い 503・Vault が無い / 空 / 復号できない・ゲートウェイの JWT 検証・未デプロイ・時間切れ・pg_net の不達)。
+ *     キー cron_secret_drift・抑止は OPS_ALERT_COOLDOWN_MINUTES。台帳は使わない (続く間は抑止ごとに知らせる)。
+ *   - cron_secret_rotation: warn の所見 (入れ替えの途中・Edge / Vercel の CRON_SECRET_PREVIOUS の残り・Vault が service role key)。
+ *     キー cron_secret_rotation・抑止は OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES (既定 24 時間 = 注意の状態は 1 日 1 通まで)。ずれの通知には載せない。
+ *   - Vercel の CRON_SECRET と Supabase 側 (Edge / Vault) は比べない。値もダイジェストも、メール・ログ・応答に出さない (載せるのは所見の id と件数だけ)。
  *
  * - 認証: Vercel Cron が付ける `Authorization: Bearer <CRON_SECRET>` (src/lib/cron-auth.ts の requireCronAuth。
  *   定数時間の比較と、入れ替え中の旧シークレット CRON_SECRET_PREVIOUS の受け付けは共通ヘルパーが行う)。
@@ -43,7 +53,8 @@
  *   メールを送れなかったとき (送信の設定が未完了・送信待ちへの登録の失敗・例外など) は、release_ops_alert で権利を返す。
  *   送れていないのに「送った」と記録したままだと、設定が直ったあともクールダウンの間は通知が来ないため。
  *   ただし宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) のときは返さない
- *   (送り直しても同じ結果で、15 分ごとの繰り返しになるため。#1577 の 8。NON_RELEASING_SEND_ERROR_CODES)。
+ *   (送り直しても同じ結果で、15 分ごとの繰り返しになるため。#1577 の 8。NON_RELEASING_SEND_ERROR_CODES は
+ *   src/lib/ops-alerts/send-release.ts にあり、backup-freshness の cron と共有する)。
  *   権利を取ったあとで関数ごと止められた (時間切れ・デプロイの切り替えなど) ときだけは返せず、次の通知が最大でクールダウンの分だけ遅れる (まれ)。
  * - メールが届くことには依存しない。sendEmail は送信待ち (email_outbox) に登録するだけで、送るのは worker
  *   (GET /api/cron/email-outbox)。登録できなかったときは sendEmail が app_logs に記録し (error)、この route も件数と関数名を warn で残す。応答は 200 のままにする
@@ -51,18 +62,19 @@
  * - infra_alerts は書かない (インフラ画面は「未接続」のまま: #1180)。
  * - メールにも、ログにも、応答にも、ユーザー ID・メールアドレス・ログの本文は入れない。載せるのは件数と関数名だけ。
  *
- * 応答 (JSON): { status, total?, threshold?, window_minutes?, client?, email_dead_letter?, cron_failure?, pg_cron_stalled? }
+ * 応答 (JSON): { status, total?, threshold?, window_minutes?, client?, email_dead_letter?, cron_failure?, pg_cron_stalled?, cron_secret_drift?, cron_secret_rotation? }
  *   status / total / threshold は server の判定。client は { status, total, threshold } で、client の判定 (#1493)。
  *   email_dead_letter は { status, total, threshold } で、届けられなかったメールの判定 (#1193。窓を持たないので window_minutes は付けない)。
  *   cron_failure は { status, total, threshold } で、定期処理の失敗の判定 (total は知らせた (印を付けた) 件数か、数えた件数。threshold は 0)。
    pg_cron_stalled は { status, total, threshold } で、pg_cron の停止の判定 (total は最新の実行からの分数、threshold は停止のしきい値の分数)。
+ *   cron_secret_drift / cron_secret_rotation は { status, total, threshold } で、共有シークレットのずれ (fail) / 入れ替えの途中 (warn) の判定 (total は通知に載せた所見の件数、threshold は 0)。
    status: disabled / invalid_config / below_threshold / deduped / sent / send_skipped / send_failed
  *   (disabled / invalid_config のときは何も数えないので、total 以降と client・email_dead_letter は無い)
  *   DB の失敗 (数える・権利を取る) は 500。本文は汎用メッセージだけで、詳細は app_logs に残す (#1172)。
  */
 import { NextResponse } from 'next/server';
 import { waitUntil } from '@vercel/functions';
-import { requireCronAuth } from '@/lib/cron-auth';
+import { describeCronSecretRotationState, requireCronAuth } from '@/lib/cron-auth';
 import { internalError } from '@/lib/api/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { getSupabaseAdmin } from '@/lib/supabase/server';
@@ -72,9 +84,11 @@ import { renderAppLogErrorSpikeEmail } from '@/lib/emails/ops/app-log-error-spik
 import { renderEmailDeadLetterEmail } from '@/lib/emails/ops/email-dead-letter';
 import { renderCronFailureEmail } from '@/lib/emails/ops/cron-failure';
 import { renderPgCronStalledEmail } from '@/lib/emails/ops/pg-cron-stalled';
+import { renderCronSecretDriftEmail } from '@/lib/emails/ops/cron-secret-drift';
 import { SUPER_ADMIN_EMAIL_OUTBOX_PATH } from '@/lib/emails/outbox';
 import { getSiteUrl } from '@/lib/site-config';
 import { resolveOpsAlertRecipient } from '@/lib/ops-alerts/recipient';
+import { NON_RELEASING_SEND_ERROR_CODES } from '@/lib/ops-alerts/send-release';
 import {
   APP_LOG_ALERT_COUNT_RPC,
   APP_LOG_ALERT_KEYS,
@@ -99,6 +113,20 @@ import {
   normalizeCronFailureRows,
   parsePgCronLastRun,
 } from '@/lib/ops-alerts/cron-failure';
+import {
+  CRON_SECRET_ALERT_THRESHOLD,
+  CRON_SECRET_PROBE_LOOKBACK_MINUTES,
+  CRON_SECRET_PROBE_RESULT_LIMIT,
+  CRON_SECRET_PROBE_RESULTS_RPC,
+  CRON_SECRET_PROBE_SEND_RPC,
+  cronSecretFindingIds,
+  judgeCronSecretProbe,
+  judgeVercelRotation,
+  parseCronSecretProbeRows,
+  parseCronSecretProbeSendResult,
+  partitionCronSecretFindings,
+  type CronSecretFinding,
+} from '@/lib/ops-alerts/cron-secret-drift';
 
 // sendEmail (Resend の SDK と node:crypto) は Node.js ランタイムで動く。Edge にはしない
 export const runtime = 'nodejs';
@@ -124,7 +152,7 @@ const LOG_FLUSH_GRACE_MS = 1000;
 type AdminClient = ReturnType<typeof getSupabaseAdmin>;
 type Logger = ReturnType<typeof createLogger>;
 
-/** 1 種類 (server / client / email_dead_letter / cron_failure / pg_cron_stalled) の判定の結果 */
+/** 1 種類 (server / client / email_dead_letter / cron_failure / pg_cron_stalled / cron_secret_drift / cron_secret_rotation) の判定の結果 */
 type SpikeStatus = 'below_threshold' | 'deduped' | 'sent' | 'send_skipped' | 'send_failed';
 
 interface SpikeResult {
@@ -145,15 +173,9 @@ const SCOPE_LOG_LABEL: Readonly<Record<AppLogAlertScope, string>> = {
   email_dead_letter: '届けられなかったメール',
   cron_failure: '定期処理の失敗',
   pg_cron_stalled: 'pg_cron の停止',
+  cron_secret_drift: 'cron の共有シークレットのずれ',
+  cron_secret_rotation: 'cron の共有シークレットの入れ替えの途中',
 };
-
-/**
- * sendEmail の結果が ok: false でも、送る権利 (と届けられなかったメールの印) を返さない失敗のコード (#1577 の 8)。
- * 宛先が停止リストに載っている (suppressed)・文面の不備 (invalid_envelope) は、送り直しても同じ結果になり、
- * 権利を返すと 15 分ごとの繰り返しになるため。クールダウン (既定 60 分) の抑止を効かせる (suppressed は dead の行が画面に残る)。
- * それ以外 (送信の設定が未完了・送信待ちへの登録の失敗 outbox_failed など) は現行どおり権利を返し、次の回でもう一度試す
- */
-const NON_RELEASING_SEND_ERROR_CODES: ReadonlySet<string> = new Set(['suppressed', 'invalid_envelope']);
 
 /** 届けられなかったメールの通知に使う DB の関数 (§5.2 (5)(7)(8))。数える関数は種類ごとの表から取る (値の型は 'email_outbox_dead_counts') */
 const DEAD_LETTER_COUNT_RPC = APP_LOG_ALERT_COUNT_RPC.email_dead_letter;
@@ -599,6 +621,118 @@ async function checkPgCronStalled(
   return { result: { status: result.skipped ? 'send_skipped' : 'send_failed', ...counts } };
 }
 
+/** 2 つの種類 (ずれ = fail / 入れ替えの途中 = warn) の結果。route の応答のキーと同じ */
+interface CronSecretOutcome {
+  readonly cron_secret_drift: SpikeResult;
+  readonly cron_secret_rotation: SpikeResult;
+}
+
+/**
+ * 所見があれば権利を取って 1 通送る (台帳は無い。続く間は抑止ごとに知らせる: checkPgCronStalled と同じ形)。
+ * scope ごとにキーと抑止の分数が違う。文面には所見の題と対処だけを載せる (値・ダイジェストは所見に無い)。
+ */
+async function notifyCronSecret(
+  scope: 'cron_secret_drift' | 'cron_secret_rotation',
+  findings: readonly CronSecretFinding[],
+  cooldownMinutes: number,
+  supabase: AdminClient,
+  recipient: string,
+  requestId: string,
+  logger: Logger,
+): Promise<SpikeOutcome> {
+  const threshold = CRON_SECRET_ALERT_THRESHOLD;
+  const counts = { total: findings.length, threshold };
+  if (!exceedsErrorThreshold(findings.length, threshold)) {
+    return { result: { status: 'below_threshold', ...counts } };
+  }
+  const claimed = await supabase.rpc('claim_ops_alert', { p_alert_key: APP_LOG_ALERT_KEYS[scope], p_cooldown_minutes: cooldownMinutes });
+  if (claimed.error) {
+    return { response: internalError(ROUTE_NAME, claimed.error, { requestId, scope, rpc: 'claim_ops_alert' }) };
+  }
+  const claimedAt = typeof claimed.data === 'string' && claimed.data ? claimed.data : null;
+  if (!claimedAt) {
+    return { result: { status: 'deduped', ...counts } };
+  }
+  let sent: { readonly result: SendEmailResult } | { readonly thrown: unknown };
+  try {
+    const envelope = renderCronSecretDriftEmail({
+      kind: scope === 'cron_secret_drift' ? 'drift' : 'rotation',
+      to_email: recipient,
+      findings,
+      cooldown_minutes: cooldownMinutes,
+      logs_url: `${getSiteUrl()}${SUPER_ADMIN_LOGS_PATH}`,
+      detected_at: new Date(),
+    });
+    sent = { result: await sendEmail(envelope) };
+  } catch (thrown) {
+    sent = { thrown };
+  }
+  // ログには所見の id と件数だけ (題・対処の文も出さない。id から表を引ける)
+  const alertMeta = { scope, ...counts, finding_ids: cronSecretFindingIds(findings) };
+  if ('thrown' in sent) {
+    await releaseClaim(supabase, scope, claimedAt, cooldownMinutes, logger);
+    return { response: internalError(ROUTE_NAME, sent.thrown, { requestId, stage: 'send_email', ...alertMeta }) };
+  }
+  const { result } = sent;
+  const label = SCOPE_LOG_LABEL[scope];
+  if (result.ok) {
+    logger.info(`${label}を運用メールに知らせました`, { ...alertMeta, outbox_id: result.id });
+    return { result: { status: 'sent', ...counts } };
+  }
+  if (!NON_RELEASING_SEND_ERROR_CODES.has(result.error.code)) {
+    await releaseClaim(supabase, scope, claimedAt, cooldownMinutes, logger);
+  }
+  logger.warn(
+    result.skipped
+      ? `${label}を検知しましたが、メールの送信設定が未完了のため通知を送っていません`
+      : `${label}を検知しましたが、通知メールを送れませんでした`,
+    { ...alertMeta, error_code: result.error.code },
+  );
+  return { result: { status: result.skipped ? 'send_skipped' : 'send_failed', ...counts } };
+}
+
+/**
+ * cron の共有シークレットのずれ (#1560): 前の回の確認の結果を読む → 判定 → ずれ (fail) と入れ替えの途中 (warn) をそれぞれ通知 → 次の回のための確認を送る。
+ * 読む・送る RPC の失敗と応答の形の誤りは 500 (前の 5 種類の通知は済んでいる)。通知の失敗で 500 になった回は確認を送らない (次の回が前の確認を読み直す)。
+ */
+async function checkCronSecretDrift(
+  supabase: AdminClient,
+  recipient: string,
+  settings: AppLogAlertSettings,
+  requestId: string,
+  logger: Logger,
+): Promise<{ readonly result: CronSecretOutcome } | { readonly response: NextResponse }> {
+  // 1. 前の回の確認の結果 (見る範囲 60 分・新しい順に 8 行)。判定に要る項目だけが返る
+  const read = await supabase.rpc(CRON_SECRET_PROBE_RESULTS_RPC, {
+    p_lookback_minutes: CRON_SECRET_PROBE_LOOKBACK_MINUTES,
+    p_limit: CRON_SECRET_PROBE_RESULT_LIMIT,
+  });
+  if (read.error) {
+    return { response: internalError(ROUTE_NAME, read.error, { requestId, scope: 'cron_secret_drift', rpc: CRON_SECRET_PROBE_RESULTS_RPC }) };
+  }
+  const now = new Date();
+  const probe = judgeCronSecretProbe(parseCronSecretProbeRows(read.data, CRON_SECRET_PROBE_RESULTS_RPC), now);
+  const findings = [...probe.findings, ...judgeVercelRotation(describeCronSecretRotationState())];
+  const { fails, warns } = partitionCronSecretFindings(findings);
+
+  // 2. ずれ (fail)。抑止は既存の OPS_ALERT_COOLDOWN_MINUTES。warn は載せない (注意は 3. の通知だけで 1 日 1 通まで: 設計 §0.4 の Q-2)
+  const drift = await notifyCronSecret('cron_secret_drift', fails, settings.cooldownMinutes, supabase, recipient, requestId, logger);
+  if ('response' in drift) return drift;
+
+  // 3. 入れ替えの途中・残り (warn)。抑止は OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES (既定 24 時間)
+  const rotation = await notifyCronSecret('cron_secret_rotation', warns, settings.cronSecretRotationCooldownMinutes, supabase, recipient, requestId, logger);
+  if ('response' in rotation) return rotation;
+
+  // 4. 次の回のための確認を送る (Vault の値は DB の中で Bearer に付くだけで、ここには来ない)
+  const sent = await supabase.rpc(CRON_SECRET_PROBE_SEND_RPC);
+  if (sent.error) {
+    return { response: internalError(ROUTE_NAME, sent.error, { requestId, scope: 'cron_secret_drift', rpc: CRON_SECRET_PROBE_SEND_RPC }) };
+  }
+  parseCronSecretProbeSendResult(sent.data, CRON_SECRET_PROBE_SEND_RPC);
+
+  return { result: { cron_secret_drift: drift.result, cron_secret_rotation: rotation.result } };
+}
+
 /** 認証のあとの本体: 数える → しきい値 → 送る権利を取る → メールを送る */
 async function checkAppLogErrors(): Promise<NextResponse> {
   const requestId = generateRequestId();
@@ -623,6 +757,7 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     clientErrorThreshold: process.env.OPS_ALERT_CLIENT_ERROR_THRESHOLD,
     cooldownMinutes: process.env.OPS_ALERT_COOLDOWN_MINUTES,
     pgCronStallMinutes: process.env.OPS_ALERT_PG_CRON_STALL_MINUTES,
+    cronSecretRotationCooldownMinutes: process.env.OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES,
   });
   if (settings.ignored.length > 0) {
     logger.warn('しきい値・クールダウンの環境変数の値が正しくないため、既定値を使います', {
@@ -653,6 +788,10 @@ async function checkAppLogErrors(): Promise<NextResponse> {
     const pgCronStalled = await checkPgCronStalled(supabase, recipient.email, settings, requestId, logger);
     if ('response' in pgCronStalled) return pgCronStalled.response;
 
+    // cron の共有シークレットのずれ・入れ替えの途中 (#1560)。前の回の確認の結果を読んで通知し、次の回のための確認を送る
+    const cronSecret = await checkCronSecretDrift(supabase, recipient.email, settings, requestId, logger);
+    if ('response' in cronSecret) return cronSecret.response;
+
     return NextResponse.json({
       ...server.result,
       window_minutes: APP_LOG_ALERT_WINDOW_MINUTES,
@@ -660,6 +799,8 @@ async function checkAppLogErrors(): Promise<NextResponse> {
       email_dead_letter: deadLetter.result,
       cron_failure: cronFailure.result,
       pg_cron_stalled: pgCronStalled.result,
+      cron_secret_drift: cronSecret.result.cron_secret_drift,
+      cron_secret_rotation: cronSecret.result.cron_secret_rotation,
     });
   } catch (err) {
     return internalError(ROUTE_NAME, err, { requestId });

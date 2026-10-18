@@ -60,8 +60,20 @@ export interface AllowedInlineScript {
   reason: string;
 }
 
-/** いまは空 (アプリのインラインスクリプトは 0 本: docs/design/cross/18-csp-nonce.md §6.1) */
-export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [];
+/**
+ * 許可したインラインの script (docs/design/cross/18-csp-nonce.md §6.1 の時点では 0 本)。
+ * #1867: トップの構造化データ (JSON-LD) の 1 本だけ。
+ */
+export const ALLOWED_INLINE_SCRIPTS: readonly AllowedInlineScript[] = [
+  {
+    file: 'src/components/seo/SiteStructuredData.tsx',
+    kind: 'jsx',
+    count: 1,
+    reason:
+      '構造化データ (JSON-LD の Organization と WebSite。#1867) は、検索エンジンが HTML の中の <script type="application/ld+json"> だけを読むので、' +
+      'JS のモジュールに移せない。実行されないデータの塊だが、規則どおり getCspNonce() の値を nonce に渡す (src/app/page.tsx が読んで渡す)',
+  },
+];
 
 /** 種類ごとの nonce の規則 (失敗の文に出す) */
 export const NONCE_RULES: Record<InlineScriptKind, string> = {
@@ -324,7 +336,7 @@ function nonceOkOf(findings: readonly InlineScriptFinding[], kind: InlineScriptK
 }
 
 describe('インラインのスクリプトを足したら赤にする走査 (#1169)', () => {
-  it('src / lib / components (テストを除く) の走査結果を ALLOWED_INLINE_SCRIPTS と照合し、問題が 0 件 (いまは検出 0 件・許可リストは空。失敗の文に INLINE_SCRIPT_GUIDANCE を添える)', () => {
+  it('src / lib / components (テストを除く) の走査結果を ALLOWED_INLINE_SCRIPTS と照合し、問題が 0 件 (許可リストは #1867 の JSON-LD の 1 本。失敗の文に INLINE_SCRIPT_GUIDANCE を添える)', () => {
     const scanned = scanInlineScripts(ROOT);
     const problems = inlineScriptProblems(scanned, ALLOWED_INLINE_SCRIPTS).map((problem) => problem.message);
 

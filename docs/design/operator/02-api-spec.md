@@ -353,11 +353,14 @@ BAN 解除
       "content_url": "https://storage.../meal-photos/xxx.jpg",
       "reporter_count": 3,
       "user_id": "uuid",
+      "hidden_at": null,
       "created_at": "2026-05-06T10:00:00Z"
     }
   ]
 }
 ```
+
+`hidden_at`: 通報されたコンテンツが運営に隠されている (#1101) ときの日時 (ISO)。隠れていない・コンテンツが無いときは `null` (#1538)。`GET /api/admin/moderation/queue` と `GET /api/admin/moderation/{type}/{id}` の応答にも同じ項目がある。
 
 ---
 
@@ -399,7 +402,7 @@ BAN 解除
 - 隠したあとで判定の保存に失敗したときも、BAN をせず `500 INTERNAL_ERROR` を返す (通報は `pending` のまま)。隠すのは冪等
   (すでに隠れている行は上書きしない。保管期間の起点も延びない) なので、同じ操作をやり直せばよい
 - 通報にコンテンツが紐づかない (レスポンスの `content_id` が null。持ち主が先に消した等) ときは、隠す対象が無いので隠さずに続行する
-- `approve` / `escalate` は何も隠さない。隠した行を元に戻す操作は、まだ無い (必要なときは service_role で `hidden_*` を NULL に戻す)
+- `approve` / `escalate` は何も隠さない。隠した行を元に戻すのは `POST /api/admin/moderation/{type}/{id}/restore` (隠してから 89 日以内。`operator/13-hidden-content-restore.md`)
 - 食事は、家族へのペースト (`paste_meal_to_family`) で作られた複製 (同じ `paste_group_id` の行) のうち、中身 (`photo_url` と `memo`) が
   通報された行と同じもの (NULL どうしも同じとみなす) もまとめて隠す。ペーストのあとで持ち主が中身を書き換えた行は隠さない
   (違反していない他人の行を、通報の結果として隠さない)。複製の持ち主には自分の行として見えたまま、ほかの人には見えなくなる。
@@ -414,6 +417,22 @@ BAN 解除
   隠せなかったとき・隠したあとで判定を保存できなかったときも、監査ログ (severity `warn`) を残す
 - 画像ファイルそのものは隠さない。バケットは非公開 (#1365 段 2) で、保存された URL は本人の署名付き URL でしか読めない (隠す前に見た人が署名付き URL を持っていても、期限 + 1 時間で使えなくなる)。保管期間 (90 日) を過ぎたら、完全削除のジョブが画像も消す (上記)
 - `hidden_reason` は持ち主も読める列なので、解決メモ (`resolution_note`) は入れず、`moderation:<action>` の識別子を書く
+
+### POST /api/admin/moderation/{type}/{id}/restore
+運営が隠したコンテンツを戻す (#1538 の項目 4)。`{id}` は通報 (`moderation_flags` / `recipe_flags`) の id。権限は `PUT` と同じ (admin / super_admin / content_moderator)。
+
+**リクエスト**:
+```json
+{ "restore_note": "申し立てを確認。規約違反ではなかった" }
+```
+`restore_note` は必須 (前後の空白を除いて 1〜5000 字)。
+
+- 戻せるのは、隠されていて (`hidden_at` が入っている)、隠してから 89 日以内で、行がある場合だけ。行が無い (持ち主が消した・完全削除された) → 410 `OP_CONTENT_GONE`、隠れていない → 409 `OP_CONTENT_NOT_HIDDEN`、89 日を過ぎた → 409 `OP_CONTENT_RESTORE_WINDOW_EXPIRED`
+- `hidden_at` / `hidden_by` / `hidden_reason` を NULL に戻す。食事は、同じ操作で隠した複製と、あとから同じ中身のまま隠れた複製をまとめて戻す (`operator/13-hidden-content-restore.md` §6.3)。レシピはその行だけ
+- 戻す行を指す `rejected` の通報を `approved` にする (`pending` / `escalated` / `approved` は触らない)。順は「通報 → 行」。通報の更新に失敗したら 500 `INTERNAL_ERROR`、通報の更新のあとで行の更新に失敗したら 500 `OP_CONTENT_RESTORE_FAILED` (行は隠れたまま。同じ操作をやり直せる)。読んでから書くまでに状態が変わったときは 409 / 410 (別の時刻で隠し直されていたときは 409 `CONFLICT_STALE_DATA`)
+- 応答: `{ "data": { "success": true, "content_hidden": false, "restored_ids": ["uuid"], "approved_flag_ids": ["uuid"] } }`
+- 監査ログ `admin.moderation.restore` (07-audit-monitoring.md §4.1)。BAN には触れない (解除は `DELETE /api/admin/users/{id}/freeze`)
+- 正本は `operator/13-hidden-content-restore.md` §8
 
 ---
 
@@ -565,6 +584,9 @@ BAN 解除
 `/legal` (特定商取引法に基づく表記)・`/contact` (お問い合わせ) の画面 (#1486。未ログインでも読める公開の文面。
 その画面の下の API は止める: お問い合わせの送信 `POST /api/contact` は 503 で、画面には固定の文が出る。画面に出ているメールアドレスは使える)、
 `/api/health` (死活監視)、`/api/auth/*`、`/api/cron/*`、`/api/feature-flags`、`/_next/*`、
+Resend の Webhook の受け口 `POST /api/webhooks/resend` (#1577 の 4。cron と同じ機械からの呼び出しで、止めると長いメンテナンスのあいだに
+知らせを失うか、Svix が宛先を無効にする恐れがあるため。完全一致の 1 本だけで、`/api/webhooks/stripe` などほかの Webhook は 503。
+`src/lib/maintenance-mode.ts` の `RESEND_WEBHOOK_API_PATH`。§21 の `POST /api/webhooks/resend`)、
 通知のトークンの claim `POST /api/push-tokens/claim` (#1636。端末の後片付けで、利用者の操作ではないため。完全一致の 1 本だけで、
 セッション無しの後片付け `POST /api/push-tokens/release` は止める。`src/lib/push-tokens.ts` の `isPushTokenClaimApiPath`。
 `mobile/03-push-notification.md` §3.2)。
@@ -1606,7 +1628,12 @@ Resend Webhook 受信 (ハードバウンス・苦情の宛先を宛先停止リ
   - どちらの dead の行も、届けられなかったメールの通知 (`10-logs-and-mail-retry.md` §8) の数には入れない。
 - `email_delivery_logs` には書かない (§3.19 の表は残すが書かない。#1193)。
 - **実装しない (将来の検討)**: Hard bounce の回数の数え上げ (3 回で停止など)、停止した宛先への送信の Slack への通知、`delivered` / `opened` / `clicked` の配信の状態の記録 (`email_delivery_logs` / `email_outbox` のどちらにも書かない)。
-- メンテナンス中は、この Webhook も 503 になる (`src/lib/maintenance-mode.ts` の止めない対象に入っていない。扱いは #1577 の 4 で決める)。
+- メンテナンス中も、この Webhook は止めない (#1577 の 4。`src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath` が完全一致の `RESEND_WEBHOOK_API_PATH` を通す。§7 のメンテナンスモード)。
+  Resend (Svix) は 2xx でなければ送り直すが、約 1 日を超えるメンテナンスでは知らせを失うか、宛先を無効にされる恐れがあるため。ほかの Webhook (`/api/webhooks/stripe`) は 503 のまま (billing/01 §9.6)。
+- `sendEmail` を呼んだ側 (退会の完了・除名と脱退・譲渡・運営による譲渡と解散の通知、子の追加の控え、昇格の依頼、代表者の譲渡の提案、サポートの返信) が
+  「送れなかった」と残す追加のログは、理由がすべて停止リスト (`suppressed`) なら warn・ほかの理由が 1 つでもあれば error (#1577 の 7。
+  `src/lib/emails/send-result.ts` の `logEmailFailures`。止めた宛先へ送らないのは意図した動きで、エラー急増の通知の数に入れないため)。
+  worker の送信の直前で止めたときの error (上の 2 つ目) は変えない。
 
 ---
 

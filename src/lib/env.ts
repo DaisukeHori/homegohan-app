@@ -175,6 +175,13 @@ export const SERVER_ENV_VARS = {
     whenMissing: '既定の 60 分を使う (不正な値のときも既定値に戻し、warn ログを残す)',
     readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
   },
+  OPS_ALERT_CRON_SECRET_ROTATION_COOLDOWN_MINUTES: {
+    required: false,
+    description:
+      'cron の共有シークレットの入れ替えの途中・旧い値の残り (WARN) の運用メールを、送ったあと送り直さない時間 (分。#1560)。ずれ (FAIL) の通知は OPS_ALERT_COOLDOWN_MINUTES。1440〜10080 の整数 (1 日 1 通までより短くしない)',
+    whenMissing: '既定の 1440 分 (24 時間) を使う (不正な値のときも既定値に戻し、warn ログを残す)',
+    readOnlyBy: 'src/app/api/cron/app-log-alerts/route.ts',
+  },
   EXPO_ACCESS_TOKEN: {
     required: false,
     description:

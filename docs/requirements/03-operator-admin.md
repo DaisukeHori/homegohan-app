@@ -2912,6 +2912,8 @@ UI 上の必須表示箇所:
   - `sendEmail` の登録時に当たったとき: `app_logs` の warn (`function_name = 'email'`) と、送信待ち `email_outbox` の dead の行 (`last_error_code = 'suppressed'`)。`redact_after_send` の登録 (退会の完了メール・秘密を含む文面) は行を作らない (warn だけ)
   - worker が送る直前に当たったとき (登録のあとで停止リストに載った宛先と、登録時に停止リストを引けずに確かめないまま登録した行): `fail_email_outbox` でその行を dead (`last_error_code = 'suppressed'`) にし、`app_logs` に error (`function_name = 'cron/email-outbox'`、「メールを届けられませんでした (dead)」) を残す。error なので、エラー急増の通知 (`cron/app-log-alerts`) の数には入る
   - どちらの dead の行も、運用メールの「届けられなかったメール」の通知の数には入れない (同 §8)
+  - `sendEmail` を呼んだ側 (退会の完了・除名と脱退・譲渡・運営による譲渡と解散の通知、子の追加の控え、代表者への昇格の依頼、サポートの返信など) が「送れなかった」と残す追加のログも、理由が停止リスト (`suppressed`) だけなら warn にする (止めた宛先へ送らないのは意図した動きで、エラー急増の通知の数に入れない。#1577 の 7。`src/lib/emails/send-result.ts` の `logEmailFailures`)。ほかの理由が 1 つでもあれば error のまま
+- メンテナンス中 (`maintenance_mode` が ON) も、この Webhook は止めない (cron と同じ機械からの呼び出し。止めると、長いメンテナンスのあいだに知らせを失うか、Svix が宛先を無効にする恐れがあるため。#1577 の 4。`src/lib/maintenance-mode.ts` の `isMaintenanceExemptPath` の完全一致の 1 本)。ほかの Webhook (`/api/webhooks/stripe`) はメンテナンス中は 503 のまま
 - `email_delivery_logs` には書かない (送信の記録は `email_outbox`。#1193 以降、`email_delivery_logs` は残すが書かない: `docs/design/operator/01-data-model.md` §3.19)
 - **実装しない (将来の検討)**: 「Hard bounce 3 回で停止」の回数の数え上げ、停止した宛先への送信を Slack に知らせること、`delivered` / `opened` / `clicked` で配信の状態を記録・更新すること
 

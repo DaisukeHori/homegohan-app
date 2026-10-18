@@ -27,6 +27,12 @@ type OwnedEdit = {
 
 const OWNED_EDITS: readonly OwnedEdit[] = [
   {
+    // operator/13 §17.1: 02 §5 の delete_* の説明の 1 行。オーケストレーターの docs PR が持つ
+    owner: 'docs/design/operator/13-hidden-content-restore.md',
+    target: 'docs/design/operator/02-api-spec.md',
+    pattern: /「(`approve` \/ `escalate` は何も隠さない[^」]*)」→「([^」]*)」/,
+  },
+  {
     // cross/16 v1.8 (#1798) §23: 段 B の追随。§21.3 の段 B の行・§0.2 の段 B の行も同じ書き換えを指す
     owner: 'docs/design/cross/16-auth-history-sessions.md',
     target: 'docs/design/cross/01-auth-session.md',
@@ -49,6 +55,25 @@ const OWNED_EDITS: readonly OwnedEdit[] = [
     owner: 'docs/design/cross/13b-legal-consent-mobile.md',
     target: 'CLAUDE.md',
     pattern: /「([^」]*)」[^「]*「([^」]*)」/,
+  },
+  {
+    // operator/12 §15.1: 10 §8.1 の 2 か所 (キー / クールダウン・宛先) の同じ文。オーケストレーターの docs PR が持つ
+    owner: 'docs/design/operator/12-cron-secret-drift-monitor.md',
+    target: 'docs/design/operator/10-logs-and-mail-retry.md',
+    pattern: /「([^」]*)」→「([^」]*)」/,
+  },
+  {
+    // mobile/07 §15.2: 01 §3.1 の表のルーティングの行。オーケストレーターの専権 PATCH が持つ
+    // (§15.2 の「同上」の行と「ルート `CLAUDE.md`」の行は 1 列目が対象のパスで始まらないので、この見張りでは拾えない)
+    owner: 'docs/design/mobile/07-toolchain-upgrade.md',
+    target: 'docs/design/mobile/01-architecture.md',
+    pattern: /「(Expo Router v4)」 \| `SDK 58`・`(Expo Router 58)` に/,
+  },
+  {
+    // mobile/07 §15.2: 00-architecture の 17 行。オーケストレーターの専権 PATCH が持つ
+    owner: 'docs/design/mobile/07-toolchain-upgrade.md',
+    target: 'docs/design/00-architecture.md',
+    pattern: /「React Native \((Expo SDK 53)\)」 \| `(Expo SDK 58)` に/,
   },
 ];
 

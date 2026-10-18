@@ -336,6 +336,39 @@ describe('退会の完了メール: 送信に失敗しても退会は成功の�
     expect(serialized).not.toContain(USER);
   });
 
+  it('宛先停止リストで止めた (suppressed) ときは意図した動きなので、error ではなく warn を残す (#1577 の 7)', async () => {
+    mocks.sendEmail.mockImplementation(async () => {
+      world.calls.push('sendEmail');
+      return {
+        ok: false,
+        id: null,
+        attempts: 0,
+        skipped: false,
+        error: new EmailSendError(
+          'suppressed',
+          'EMAIL_SUPPRESSED: 宛先停止リストに載っている宛先のため、メールを送信しませんでした',
+          null,
+          0,
+          false,
+        ),
+      };
+    });
+    expect(await run()).toEqual({ ok: true });
+
+    expect(logs.entries.some((entry) => entry.level === 'error')).toBe(false);
+    const notice = logs.entries.find((entry) => entry.level === 'warn' && /completion email could not be sent/.test(entry.message));
+    expect(notice?.viaUser).toBe(false);
+    expect(notice?.metadata).toMatchObject({
+      request_id: REQUEST_ID,
+      template: ACCOUNT_DELETED_EMAIL_TEMPLATE,
+      error_code: 'suppressed',
+      attempts: 0,
+    });
+    const serialized = serializeLogs(logs.entries);
+    expect(serialized.toLowerCase()).not.toContain(EMAIL.toLowerCase());
+    expect(serialized).not.toContain(USER);
+  });
+
   it('RESEND_API_KEY が無くて送らなかった (skipped) ときは、失敗としてログに残さない (sendEmail が警告を残す)', async () => {
     mocks.sendEmail.mockResolvedValue({
       ok: false,

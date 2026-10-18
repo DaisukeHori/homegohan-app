@@ -294,7 +294,7 @@ describe('C. ウィジェットの中のリンク (Cloudflare の「プライバ
 
   beforeEach(() => {
     process.env.EXPO_PUBLIC_TURNSTILE_SITE_KEY = SITE_KEY;
-    openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
   });
 
   afterEach(() => {

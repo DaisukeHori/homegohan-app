@@ -17,6 +17,7 @@
 import { ImageResponse } from 'next/og';
 import { STATUS_COLOR_TOKENS } from '@homegohan/shared';
 import { SITE_NAME, SITE_TAGLINE } from '@/lib/site-config';
+import { OG_IMAGE_ALT, OG_IMAGE_SIZE } from '@/lib/brand-asset-paths';
 import { loadOgFont, OG_FONT_FAMILY, type OgFontWeight } from '@/lib/og-font';
 
 /**
@@ -37,11 +38,9 @@ export const BRAND_COLORS = {
   blue: '#5B8BC7',
 } as const;
 
-/** OGP の画像の大きさ。Facebook / X / LINE の大きい画像のカードの推奨 (1.91:1) */
-export const OG_IMAGE_SIZE = { width: 1200, height: 630 } as const;
-
-/** OGP / Twitter Card の画像の代替テキスト (layout の以前の alt と同じ文字) */
-export const OG_IMAGE_ALT = `${SITE_NAME} - ${SITE_TAGLINE}`;
+// OGP の画像の大きさ・代替テキストは、ページのメタ情報からも読むので src/lib/brand-asset-paths.ts に置く (#1867)。
+// 画像の route (opengraph-image.tsx など) とテストは、従来どおりこのファイルから読める
+export { OG_IMAGE_ALT, OG_IMAGE_SIZE };
 
 /** OGP の画像に並べる機能の札 (#1853 で消した OGP の画像の SVG と同じ 3 つ。絵文字は外部から画像を取りに行くので使わない) */
 export const OG_FEATURES = [

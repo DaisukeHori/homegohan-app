@@ -36,6 +36,8 @@ describe('/legal/parental-consent (T-LP1)', () => {
   });
 
   it('metadata.title は 保護者の同意書', () => {
-    expect(metadata.title).toBe('保護者の同意書');
+    // #1867: 公開ページの title はサービス名まで付けた absolute で渡す (親の /legal の layout の title が文字列だと、
+    // ルートの layout の title.template が配下に効かないため。src/lib/seo/public-pages.ts)
+    expect(metadata.title).toEqual({ absolute: '保護者の同意書 | ほめゴハン' });
   });
 });

@@ -5,9 +5,14 @@
  * アプリの WebView で開いたか (Cookie is_native_app) と一緒に、見た目 (PricingPageView) に渡す。
  * 出すか出さないかは Price の登録 (stripe_price_id) だけで決まり、Stripe の鍵は見ない (@/lib/env に届くものを import しない)。
  */
+import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { listPurchasablePlans } from '@/lib/billing/public-plans';
+import { publicPageMetadata } from '@/lib/seo/public-pages';
 import PricingPageView from './PricingPageView';
+
+// #1867: title・description・canonical・OGP は src/lib/seo/public-pages.ts が正本
+export const metadata: Metadata = publicPageMetadata('/pricing');
 
 /** ネイティブアプリの WebView が付ける Cookie (src/app/(main)/layout.tsx・src/hooks/useNativeAppMode.ts と同じ) */
 const NATIVE_APP_COOKIE = 'is_native_app';

@@ -165,7 +165,7 @@ Step 4: 監査ログ記録
 
 ### 5.1 失敗確認
 
-pg_cron のジョブの失敗は、運用メール (`ops_cron_failure`。`OPS_ALERT_EMAIL`) で届く。知らせた失敗は `public.cron_failure_alerts` に残る (operator/11 §4)。止まっているとき (有効なジョブがあるのに 60 分以上動いていない) は `ops_pg_cron_stalled` が届く。次の SQL で確かめる。
+pg_cron のジョブの失敗は、運用メール (`ops_cron_failure`。`OPS_ALERT_EMAIL`) で届く。知らせた失敗は `public.cron_failure_alerts` に残る (operator/11 §4)。止まっているとき (有効なジョブがあるのに 60 分以上動いていない) は `ops_pg_cron_stalled` が届く。cron の共有シークレットのずれ (pg_cron → Edge Function の 401 / 503) は `ops_cron_secret_drift` で届く (operator/12 §8.1.1 の所見の表と対処)。次の SQL で確かめる。
 
 ```sql
 -- pg_cron が動いているか (停止の確認。最新の start_time が古ければ止まっている)
@@ -513,7 +513,7 @@ Step 4: 応答して閉じる
 
 凍結中の利用者は `/settings` に入れず (`/frozen` へ回る)、`/api/account/data-requests` も 403 (`FROZEN_ALLOWED_API_PATHS` に含まれない)。請求を出した後に凍結された本人は、応答を設定画面で読めない。本人確認のリンク (`/settings/data-requests/verify`)・確認メールの再送・取り下げもできない。
 
-凍結中でもできること: 凍結の画面 (`/frozen`) の「退会・データの書き出し」から開く `/frozen/account` で、退会 (アカウントの削除) とデータの書き出しができる (#1445。呼ぶ API の `/api/account/delete`・`/api/account/export` は `FROZEN_ALLOWED_API_PATHS` に入っている。`src/app/frozen/account/page.tsx`・`src/lib/auth/frozen.ts`)。組織のオーナー・家族グループの代表者は、凍結中は譲渡・解散の操作ができないので退会が 409 で止まり、画面はサポートへの問い合わせを案内する (`src/app/frozen/account/page.tsx` の `DELETE_BLOCKED_GUIDANCE`)。§9.3.2 の表が案内するほかの画面 (プロフィール・AI の外部送信の同意・通知の設定など) は、凍結中は開けない。
+凍結中でもできること: 凍結の画面 (`/frozen`) の「退会・データの書き出し」から開く `/frozen/account` で、退会 (アカウントの削除) とデータの書き出しができる (#1445。呼ぶ API の `/api/account/delete`・`/api/account/export` は `FROZEN_ALLOWED_API_PATHS` に入っている。`src/app/frozen/account/page.tsx`・`src/lib/auth/frozen.ts`)。凍結の画面の「サポートに問い合わせる」から開く `/contact` で、お問い合わせも送れる (#1871。`POST /api/contact` は `src/lib/auth/frozen.ts` の `isFrozenContactSubmitRequest` で凍結中も通る。回数の制限はそのまま。届いた問い合わせは `/support/inquiries` で見る)。組織のオーナー・家族グループの代表者は、凍結中は譲渡・解散の操作ができないので退会が 409 で止まり、画面はサポートへの問い合わせを案内する (`src/app/frozen/account/page.tsx` の `DELETE_BLOCKED_GUIDANCE`)。§9.3.2 の表が案内するほかの画面 (プロフィール・AI の外部送信の同意・通知の設定など) は、凍結中は開けない。
 
 ```
 Step 1: 凍結中かを確かめる
@@ -739,6 +739,9 @@ Step 1: 即時対応 (T+0)
     - Edge Function secrets と Vault の app_cron_secret が一致している (Edge ⇔ Vault が PASS)
     - CRON_SECRET_PREVIOUS が残っていない (WARN が出ない)
     - Vault は SUPABASE_DB_URL (psql) か、SQL Editor で得たダイジェストを --vault-digest で渡す (値は表示されない)
+  □ 自動の確認 (GET /api/cron/app-log-alerts の cron_secret_drift / cron_secret_rotation。operator/12) も 30 分以内に判定する
+    - CRON_SECRET_PREVIOUS を外し忘れると 24 時間に 1 通「入れ替えが途中です」が届く
+    - 侵害時は外すまでの時間を短くする (届いたら即日外す)
 
 Step 2: 被害調査 (T+1h)
   □ 侵害経路の特定 (ログ調査)

@@ -72,7 +72,8 @@ export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
  * WebView を本人のセッションにするには、このコードが要る (無いと WebView はログイン画面になり、/frozen・/frozen/account にたどり着けない)。
  * そのため、FROZEN_ALLOWED_API_PATHS (本人がサービスから離れるための操作) とは別に、middleware の凍結の分岐で止めない。
  * コードで WebView に移るのは、端末がすでに持っている本人のセッションだけで、凍結中の Web のセッションは
- * middleware が画面を /frozen へ差し戻し、/api を FROZEN_ALLOWED_API_PATHS 以外 403 で止める (Web でログインしたときと同じ扱い)。
+ * middleware が画面を /frozen へ差し戻し、/api を凍結中も通す API (FROZEN_ALLOWED_API_PATHS と、通知のトークンの claim・このコード・
+ * お問い合わせの送信 (isFrozenContactSubmitRequest。#1871)) 以外 403 で止める (Web でログインしたときと同じ扱い)。
  * 一覧は tests (lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts) で固定している。
  */
 export const NATIVE_BRIDGE_CODE_API_PATH = '/api/auth/native-bridge/code';
@@ -80,6 +81,31 @@ export const NATIVE_BRIDGE_CODE_API_PATH = '/api/auth/native-bridge/code';
 /** ネイティブ認証ブリッジのコードの発行の API のパスか (#1861)。完全一致で判定する (isFrozenAllowedApiPath と同じ理由) */
 export function isNativeBridgeCodeApiPath(pathname: string): boolean {
   return pathname === NATIVE_BRIDGE_CODE_API_PATH;
+}
+
+/**
+ * お問い合わせの API (src/app/api/contact/route.ts)。送信 (POST) だけは凍結中でも呼べる (#1871)。
+ *
+ * #1871 のオーナーの選択 (2026-10-18): 「凍結中も送れるようにする。/api/contact を凍結中も通す。今の回数の制限は、そのまま効かせる。」
+ * 凍結の画面 (/frozen) の「サポートに問い合わせる」は /contact へ進み (画面は middleware の凍結の分岐が差し戻さない)、
+ * 凍結の案内も、凍結中の個人情報の請求 (cross/15 S-13) も /contact で受ける。送信の API を止めると、その窓口が 403 で使えない。
+ *
+ * FROZEN_ALLOWED_API_PATHS (本人がサービスから離れるための操作。パスだけで判定し、どのメソッドも通す) には入れず、
+ * isFrozenContactSubmitRequest でメソッドまで見て別に判定する。問い合わせはサービスから離れる操作ではなく、
+ * 同じパスの GET (本人のお問い合わせの履歴) は凍結中に通さないため。
+ * 回数の制限 (src/lib/rate-limit.ts の contact カテゴリ。クライアント IP 単位) は route が利用者の状態を見ずにかけるので、凍結中もそのまま効く。
+ * 一覧は tests (lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts) で固定している。
+ */
+export const CONTACT_API_PATH = '/api/contact';
+/** 凍結中も通す、お問い合わせの API のメソッド (送信だけ。#1871) */
+export const CONTACT_SUBMIT_METHOD = 'POST';
+
+/**
+ * 凍結中でも止めない、お問い合わせの送信 (POST /api/contact) か (#1871)。
+ * パスは完全一致で判定する (isFrozenAllowedApiPath と同じ理由)。メソッドも一致を求める (GET の履歴は通さない)。
+ */
+export function isFrozenContactSubmitRequest(method: string, pathname: string): boolean {
+  return method === CONTACT_SUBMIT_METHOD && pathname === CONTACT_API_PATH;
 }
 
 /**

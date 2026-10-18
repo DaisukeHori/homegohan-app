@@ -83,7 +83,8 @@ describe.each(pages)('$url のページ (#1174)', ({ url, title, type, Page, met
   });
 
   it('ブラウザのタブ名にもページ名が出る (metadata.title)', () => {
-    expect(metadata.title).toBe(title);
+    // #1867: 公開ページの title はサービス名まで付けた absolute で渡す (src/lib/seo/public-pages.ts)
+    expect(metadata.title).toEqual({ absolute: `${title} | ほめゴハン` });
   });
 
   it('戻るリンクはトップ (/) を指し、設定画面 (/settings) を指さない', () => {

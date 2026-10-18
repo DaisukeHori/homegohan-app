@@ -17,6 +17,7 @@ import { act, StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import fs from 'node:fs';
 import path from 'node:path';
+import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { applyHeavyUnitTestTimeout } from './helpers/heavy-unit-test-timeout';
 
@@ -429,6 +430,32 @@ describe.each(ERROR_FILES)('$file', ({ file, boundary, backHref, backLabel, full
 // 配置の取り決め (新しい区画を足したとき、error.tsx を忘れない)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * メタ情報だけを持つ layout か (#1867)。default export の関数の本体が `return children;` の 1 文だけのもの
+ * (src/app/about/layout.tsx など。'use client' のページの代わりに metadata を export するためだけに置く)。
+ * 画面に何も足さず、例外を出す処理も無いので、配下のページの例外は従来どおり上の error.tsx (ルートの受け皿) が受ける。
+ * 区画の中で「再試行」を出す error.tsx を求める理由 (サイドバーやヘッダーを残す) が無いので、下の取り決めの対象外にする。
+ */
+function isMetadataOnlyLayout(file: string): boolean {
+  const source = ts.createSourceFile(file, fs.readFileSync(file, 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  return source.statements.some((statement) => {
+    if (!ts.isFunctionDeclaration(statement) || statement.body === undefined) return false;
+    const isDefaultExport =
+      (statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword) ?? false) &&
+      (statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword) ?? false);
+    if (!isDefaultExport) return false;
+    const [only, ...rest] = statement.body.statements;
+    return (
+      rest.length === 0 &&
+      only !== undefined &&
+      ts.isReturnStatement(only) &&
+      only.expression !== undefined &&
+      ts.isIdentifier(only.expression) &&
+      only.expression.text === 'children'
+    );
+  });
+}
+
 function walk(dir: string, found: { layouts: string[]; errors: string[] }) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
@@ -437,6 +464,7 @@ function walk(dir: string, found: { layouts: string[]; errors: string[] }) {
       if (entry.name === 'api') continue;
       walk(full, found);
     } else if (entry.name === 'layout.tsx') {
+      if (isMetadataOnlyLayout(full)) continue;
       found.layouts.push(path.relative(APP_DIR, dir));
     } else if (entry.name === 'error.tsx') {
       found.errors.push(path.relative(APP_DIR, full));
@@ -457,6 +485,16 @@ describe('error.tsx の配置', () => {
 
   it('src/app 配下の error.tsx は、すべてこのテストの対象に入っている', () => {
     expect(errors.sort()).toEqual(ERROR_FILES.map((spec) => spec.file).sort());
+  });
+
+  it('メタ情報だけの layout (children をそのまま返す) だけを取り決めの対象外にし、画面を持つ layout は対象のまま (#1867)', () => {
+    expect(isMetadataOnlyLayout(path.join(APP_DIR, 'about/layout.tsx'))).toBe(true);
+    expect(isMetadataOnlyLayout(path.join(APP_DIR, 'legal/layout.tsx'))).toBe(true);
+    // 画面を持つ layout (TourProvider で包む・認証を確かめる) は対象外にしない
+    expect(isMetadataOnlyLayout(path.join(APP_DIR, 'handson-tour/layout.tsx'))).toBe(false);
+    expect(isMetadataOnlyLayout(path.join(APP_DIR, 'layout.tsx'))).toBe(false);
+    expect(layouts).toContain('handson-tour');
+    expect(layouts).not.toContain('about');
   });
 
   it('ルート以外の layout.tsx は、同じ階層か、layout を持つ上の階層に error.tsx がある', () => {

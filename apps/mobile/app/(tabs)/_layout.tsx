@@ -2,6 +2,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { Tabs, Redirect, router } from "expo-router";
 import type { ErrorBoundaryProps } from "expo-router";
 import { ActivityIndicator, Platform, View } from "react-native";
+import type { ColorValue } from "react-native";
 
 import { colors } from "../../src/theme";
 import { useAccountFrozen } from "../../src/providers/AccountFrozenProvider";
@@ -21,6 +22,11 @@ export function ErrorBoundary(props: ErrorBoundaryProps) {
 }
 
 const TAB_BAR_LABEL_STYLE = { fontSize: 11, fontWeight: "600" } as const;
+
+/** expo-router 58 の tabBarIcon の color は ColorValue (null や PlatformColor もありうる)。Ionicons は文字列だけを受けるので、文字列のときだけ渡す (このアプリのタブの色は文字列) */
+function iconColorOf(color: ColorValue): string | undefined {
+  return typeof color === "string" ? color : undefined;
+}
 
 export default function TabsLayout() {
   const { session, isLoading } = useAuth();
@@ -80,7 +86,7 @@ export default function TabsLayout() {
           name="home"
           options={{
             title: "ホーム",
-            tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={color} />,
+            tabBarIcon: ({ color, size }) => <Ionicons name="home" size={size} color={iconColorOf(color)} />,
             tabBarButtonTestID: "tab-home",
           }}
         />
@@ -88,7 +94,7 @@ export default function TabsLayout() {
           name="menus"
           options={{
             title: "献立",
-            tabBarIcon: ({ color, size }) => <Ionicons name="book-outline" size={size} color={color} />,
+            tabBarIcon: ({ color, size }) => <Ionicons name="book-outline" size={size} color={iconColorOf(color)} />,
             tabBarButtonTestID: "tab-menus",
           }}
         />
@@ -113,7 +119,7 @@ export default function TabsLayout() {
           name="comparison"
           options={{
             title: "比較",
-            tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={color} />,
+            tabBarIcon: ({ color, size }) => <Ionicons name="bar-chart" size={size} color={iconColorOf(color)} />,
             tabBarButtonTestID: "tab-comparison",
           }}
         />
@@ -121,12 +127,13 @@ export default function TabsLayout() {
           name="profile"
           options={{
             title: "マイページ",
-            tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={color} />,
+            tabBarIcon: ({ color, size }) => <Ionicons name="person" size={size} color={iconColorOf(color)} />,
             tabBarButtonTestID: "tab-profile",
           }}
         />
-        {/* タブバーに表示しないが(tabs)グループ内に必要なファイル */}
-        <Tabs.Screen name="settings" options={{ href: null }} />
+        {/* 設定の画面 (マイページの歯車から開く)。(tabs) の中に置き、タブバーには出さない: ボタンを描かず (tabBarButton が null)、枠も取らない (display: none)。
+            href: null は使わない (expo-router 58 では route を届かなくし、最初のタブへ戻す。expo-router 5 の href: null はこの 2 つへの展開だった。#1591) */}
+        <Tabs.Screen name="settings" options={{ tabBarButton: () => null, tabBarItemStyle: { display: "none" } }} />
       </Tabs>
       <AIFloatingFab />
     </View>

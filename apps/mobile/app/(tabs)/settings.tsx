@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as FileSystem from "expo-file-system";
+import * as FileSystem from "expo-file-system/legacy";
 import * as Notifications from "expo-notifications";
 import { router } from "expo-router";
 import * as Sharing from "expo-sharing";
@@ -225,7 +225,8 @@ export default function SettingsTab() {
       if (canShare) {
         await Sharing.shareAsync(fileUri, {
           mimeType: "text/csv",
-          dialogTitle: "食事記録をCSVでエクスポート",
+          // #1870: 書き出すのは献立 (/api/export/meals は planned_meals を返す)。Web の「献立をCSVエクスポート」と同じ呼び名にそろえる
+          dialogTitle: "献立をCSVでエクスポート",
           UTI: "public.comma-separated-values-text",
         });
       } else {
@@ -351,7 +352,9 @@ export default function SettingsTab() {
               icon="📋"
               iconBg="#F0FDF4"
               title="JSONでエクスポート"
-              subtitle="全データを JSON 形式でダウンロード"
+              // #1870: /api/account/export は本人のデータを書き出すが、認証情報・運営の内部の記録などは出さない
+              // (src/lib/account-export-tables.ts の ACCOUNT_EXPORT_EXCLUDED)。「全データ」とは言わず、FAQ と同じ「ご自身のデータ」と書く
+              subtitle="ご自身のデータを JSON 形式でダウンロード"
               testID="settings-export-json-row"
               onPress={handleExportJson}
               right={exportingJson ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}
@@ -360,7 +363,7 @@ export default function SettingsTab() {
               icon="☁️"
               iconBg="#F0FDF4"
               title="CSVでエクスポート"
-              subtitle="食事記録を CSV 形式でダウンロード"
+              subtitle="献立を CSV 形式でダウンロード"
               testID="settings-export-csv-row"
               onPress={handleExportCsv}
               right={exportingCsv ? <Text style={{ fontSize: 12, color: "#6B7280" }}>処理中…</Text> : undefined}

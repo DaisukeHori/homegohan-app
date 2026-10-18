@@ -63,6 +63,8 @@
 | └ システム設定 | super_admin |
 | └ バックアップ・DR (`/super-admin/backups`。取得の状態と DR 訓練の記録。`cross/17-backup-automation.md` §7.4。#1129・#1191) | super_admin |
 
+`/admin/moderation` と `/admin/moderation/{type}/{id}` の画面の仕様は、本書に節が無い。隠したコンテンツを戻す欄 (「非表示の解除」のカード) と一覧の「非表示中」のバッジは `operator/13-hidden-content-restore.md` §9 が正本。
+
 ---
 
 ## 4. `/admin` — 管理者ダッシュボード
@@ -159,6 +161,8 @@
 - 出す条件: 実行者が super_admin で、対象が二段階認証の必須ロール (super_admin / admin / finance / org_industrial_doctor) のどれかを持つとき
 - 理由 (必須・500 文字まで)・本人確認の方法 (選択)・「本人確認を行った」のチェックがそろうまで [解除する] を押せない
 - 押すと確認ダイアログ → `POST /api/super-admin/admins/{id}/mfa/reset` → 消した数 (認証アプリ・バックアップコード) か、失敗の文を出す。対象はすべての端末でログアウトされる
+
+**手動のプラン付与** (`src/components/admin/ManualPlanGrantSection.tsx`。billing/02 §10): 出す条件 = 実行者が super_admin で対象が自分でない。契約なし → プラン・有効期限 (任意)・理由 → 確認ダイアログ → `POST /api/super-admin/users/{id}/manual-plan`。手動付与の契約あり → 理由 → 確認 → `DELETE`。Stripe の契約あり → 案内だけ。履歴 (付与 / 取り消し / 期限切れ) を直近 10 件
 
 ---
 
