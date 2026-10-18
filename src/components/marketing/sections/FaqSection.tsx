@@ -1,57 +1,40 @@
-'use client';
-
-// よくある質問 (docs/design/marketing/01-landing-site.md §8.3 の FaqSection・M-8・§13.3 の FAQ の遷移表)。島。状態は openIndex だけ。
-// 同時に開くのは 1 つ。ボタンは aria-expanded / aria-controls を持ち、答えの箱は role=region。閉じている間は inert (Tab にも読み上げにも出ない)。
-// 答えの文は DOM に常にあるので、JS 無しでもクローラーは読める (JS 無しは閉じたまま。判断は §13.3)。
+// よくある質問 (docs/design/marketing/01-landing-site.md §4.19・§8.3 の FaqSection・M-8・§13.3 の FAQ の表)。Server Component (島にしない)。
+// 12 件の details (faq.items の順)。各 details の中は summary (中に h3 (問いの文) と ChevronDown (aria-hidden)) と、答えの箱 (p)。
+// 開閉はブラウザの details に任せる (open 属性。JS を持たない) ので、JS が無くても開いて答えを読める (R-18)。サーバーの HTML ではどれも閉じて描く。
+// name 属性は付けない (どの details も自分だけで開閉し、複数を同時に開ける)。summary の既定の三角の印は出さない (矢印は ChevronDown)。
+// 動きは矢印の回転だけ (M-8。open の状態で CSS が決める。遷移の宣言は no-preference の中だけ)。末尾に問い合わせの行 (Link)。
 import { ChevronDown } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
 import { LANDING_COPY } from '../landing-copy';
 import { Reveal } from '../primitives/Reveal';
 
 export function FaqSection() {
   const faq = LANDING_COPY.faq;
-  const [openIndex, setOpenIndex] = useState<number | null>(null);
-
   return (
-    <section id="faq" aria-labelledby="faq-title" className="lp-section lp-band">
-      <div className="lp-container">
-        <Reveal index={0} className="lp-section-head">
+    <section id="faq" aria-labelledby="faq-title" tabIndex={-1} className="lp-section lp-band lp-faq-section">
+      <div className="lp-container lp-faq-layout">
+        <Reveal index={0} className="lp-section-head lp-faq-head">
           <h2 id="faq-title">{faq.title}</h2>
           <p className="lp-lead">{faq.lead}</p>
         </Reveal>
-        <Reveal index={0} className="lp-faq">
-          {faq.items.map((item, index) => {
-            const open = openIndex === index;
-            const buttonId = `faq-button-${index}`;
-            const panelId = `faq-panel-${index}`;
-            return (
-              <div key={item.q} className="lp-faq-item">
-                <h3>
-                  <button
-                    type="button"
-                    id={buttonId}
-                    className="lp-faq-btn"
-                    aria-expanded={open}
-                    aria-controls={panelId}
-                    onClick={() => setOpenIndex(open ? null : index)}
-                  >
-                    <span>{item.q}</span>
-                    <ChevronDown className={open ? 'lp-faq-chevron is-open' : 'lp-faq-chevron'} aria-hidden="true" />
-                  </button>
-                </h3>
-                <div id={panelId} role="region" aria-labelledby={buttonId} className={open ? 'lp-faq-panel is-open' : 'lp-faq-panel'}>
-                  <div inert={!open}>
-                    <p>{item.a}</p>
-                  </div>
+        <div className="lp-faq-main">
+          <Reveal index={0} className="lp-faq">
+            {faq.items.map((item) => (
+              <details key={item.q} className="lp-faq-item">
+                <summary className="lp-faq-summary">
+                  <h3>{item.q}</h3>
+                  <ChevronDown className="lp-faq-chevron" aria-hidden="true" />
+                </summary>
+                <div className="lp-faq-answer">
+                  <p>{item.a}</p>
                 </div>
-              </div>
-            );
-          })}
-        </Reveal>
-        <Reveal index={0} className="lp-note lp-faq-contact">
-          {faq.contactLead} <Link href={faq.contact.href}>{faq.contact.label}</Link>
-        </Reveal>
+              </details>
+            ))}
+          </Reveal>
+          <Reveal index={0} className="lp-note lp-faq-contact">
+            {faq.contactLead} <Link href={faq.contact.href}>{faq.contact.label}</Link>
+          </Reveal>
+        </div>
       </div>
     </section>
   );

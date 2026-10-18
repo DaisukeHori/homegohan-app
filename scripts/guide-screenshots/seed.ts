@@ -1,5 +1,5 @@
 /**
- * 使い方ガイドの撮影 (#1852) のテスト用のデータを、ローカルの Supabase に入れる。
+ * 使い方ガイドの撮影 (#1852) と、紹介ページ (/) の新しい画面の撮影 (#1867 段 0) のテスト用のデータを、ローカルの Supabase に入れる。
  *
  *   npx --yes tsx@4 scripts/guide-screenshots/seed.ts
  *
@@ -8,18 +8,23 @@
  * - 利用者は guide-users.ts の GUIDE_USERS。何度流しても同じ状態になるよう、既にいれば消して作り直す。
  * - 日付は今日 (日本時間) からの相対で作る。献立表は今日の週 (月曜始まり) が埋まるよう、前後 6 日ずつ入れる。
  * - データはすべて架空のもの (料理・体重などのテスト用の値)。
+ * - 紹介ページの画面の利用者 (home・pantry・shopper・familyRep・familyAdult・consent) は、ガイドの 3 人 (demo・planner・onboarding) と
+ *   データを分ける。ガイドの 3 人のデータは変えない (ガイドの画面が変わらないように: docs/design/marketing/01-landing-site.md §7.1 の G-2)。
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import * as path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import * as dotenv from 'dotenv';
 import { grantE2eAiConsent } from '../lib/e2e-ai-consent';
-import { DEMO_TODAY_WEIGHT_KG, GUIDE_USERS, type GuideUserKey } from './guide-users';
+import { birthDateForAge, insertParentalConsentForChild } from '../../tests/e2e/helpers/membership-family';
+import { DEMO_TODAY_WEIGHT_KG, GUIDE_FAMILY, GUIDE_USERS, type GuideUserKey } from './guide-users';
 
 dotenv.config({ path: path.resolve(__dirname, '..', '..', '.env.local') });
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? process.env.SUPABASE_URL;
 const SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+/** 利用者を探すときに 1 度に読む数 (ローカルの撮影用の Supabase の利用者は数十人なので、1 ページで全員が入る) */
+const LIST_USERS_PER_PAGE = 1000;
 /** 書いてよい接続先のホスト (ローカルの Supabase だけ) */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1']);
 
@@ -112,6 +117,53 @@ const PLANNER_MEALS: Array<{ dayOffset: number; mealIndex: number; menuIndex: nu
   { dayOffset: 1, mealIndex: 2, menuIndex: 3, completed: false },
 ];
 
+// ─── 紹介ページ (/) の新しい画面の利用者のデータ (#1867 段 0。docs/design/marketing/01-landing-site.md §7.1 の表 2) ───
+
+/** 紹介ページの画面の利用者のプロフィールの体重 (kg)。初期設定の済んだ利用者にするための値で、体重の記録 (health_records) は作らない */
+const LANDING_USER_WEIGHT_KG = 58.6;
+/** ホームの利用者の、今日の食事のうち「完了」にしておく数 (朝食だけ。昼食と夕食はこれから)。昨日までの食事はすべて完了 */
+const HOME_TODAY_COMPLETED_MEALS = 1;
+
+/** 食材管理の画面の分類 (src/app/(main)/pantry/page.tsx の categoryLabel の鍵) */
+type PantryCategory = 'vegetable' | 'meat' | 'fish' | 'dairy' | 'other';
+/**
+ * 食材管理の画面に並べる食材 (expiresInDays = 今日 (日本時間) から期限までの日数)。
+ * 期限が今日から PANTRY_EXPIRING_SOON_DAYS (3 日。packages/shared/src/pantry-expiry.ts) 以内のものに「期限間近」の印が付く
+ */
+const PANTRY_ITEMS: Array<{ name: string; amount: string; category: PantryCategory; expiresInDays: number }> = [
+  { name: '鶏むね肉', amount: '300g', category: 'meat', expiresInDays: 1 },
+  { name: 'キャベツ', amount: '1/2玉', category: 'vegetable', expiresInDays: 2 },
+  { name: '生鮭', amount: '2切れ', category: 'fish', expiresInDays: 4 },
+  { name: '牛乳', amount: '1本', category: 'dairy', expiresInDays: 6 },
+  { name: '卵', amount: '6個', category: 'dairy', expiresInDays: 10 },
+  { name: 'にんじん', amount: '2本', category: 'vegetable', expiresInDays: 14 },
+];
+
+/** 買い物リストの題 (shopping_lists.title) */
+const SHOPPING_LIST_TITLE = '今週の買い物リスト';
+/** 買い物リストの品の作り方 (shopping_list_items.source)。generated = 献立から作った品 (シートには「AI」の札が付く) */
+const SHOPPING_ITEM_SOURCE_GENERATED = 'generated';
+/**
+ * 献立 (DAY_MENUS) から作った買い物リストの品。分類の名前は献立表のシートの並び順の名前
+ * (src/app/(main)/menus/weekly/page.tsx の CATEGORY_ORDER) にある語だけを使う
+ */
+const SHOPPING_ITEMS: Array<{ category: string; name: string; quantity: string }> = [
+  { category: '青果（野菜・果物）', name: 'キャベツ', quantity: '1玉' },
+  { category: '青果（野菜・果物）', name: 'ほうれん草', quantity: '1束' },
+  { category: '青果（野菜・果物）', name: '玉ねぎ', quantity: '2個' },
+  { category: '精肉', name: '鶏むね肉', quantity: '400g' },
+  { category: '精肉', name: '豚ロース薄切り肉', quantity: '300g' },
+  { category: '鮮魚', name: '生鮭', quantity: '2切れ' },
+  { category: '乳製品・卵', name: '卵', quantity: '1パック' },
+  { category: '豆腐・練り物', name: '絹ごし豆腐', quantity: '1丁' },
+  { category: '調味料', name: 'みそ', quantity: '1パック' },
+];
+
+/** アカウントの無い子どものメンバーの年齢 (18 歳未満なので、代表者が署名した保護者の同意の行も入れる) */
+const FAMILY_CHILD_AGE_YEARS = 7;
+/** 家族のグループのプラン (family_groups.plan_key。e2e の fresh-family と同じ) */
+const FAMILY_PLAN_KEY = 'free';
+
 function requireLocalEnv(): { url: string; serviceRole: string } {
   if (!SUPABASE_URL || !SERVICE_ROLE) throw new Error('.env.local に NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY が無い');
   const host = new URL(SUPABASE_URL).hostname;
@@ -148,7 +200,7 @@ function must<T>(label: string, result: { data: T; error: { message: string } | 
 /** 利用者を作り直す (いれば消す。消すと profiles・食事・記録などは FK で一緒に消える) */
 async function recreateUser(admin: SupabaseClient, key: GuideUserKey): Promise<string> {
   const { email } = GUIDE_USERS[key];
-  const list = must('listUsers', await admin.auth.admin.listUsers({ perPage: 1000 }));
+  const list = must('listUsers', await admin.auth.admin.listUsers({ perPage: LIST_USERS_PER_PAGE }));
   const existing = list.users.find((u) => u.email === email);
   if (existing) must(`deleteUser ${email}`, await admin.auth.admin.deleteUser(existing.id));
   const created = must(
@@ -159,7 +211,11 @@ async function recreateUser(admin: SupabaseClient, key: GuideUserKey): Promise<s
   return created.user.id;
 }
 
-async function completeProfile(admin: SupabaseClient, userId: string, nickname: string, weightKg: number) {
+/**
+ * 初期設定の済んだ利用者のプロフィールと栄養目標を入れる。aiConsent が true (既定) なら AI 機能の同意も記録する
+ * (false は同意の画面を撮る利用者だけ)
+ */
+async function completeProfile(admin: SupabaseClient, userId: string, nickname: string, weightKg: number, aiConsent = true) {
   must('user_profiles', await admin.from('user_profiles').upsert({
     id: userId,
     nickname,
@@ -187,7 +243,7 @@ async function completeProfile(admin: SupabaseClient, userId: string, nickname: 
     carbs_g: 230,
     auto_calculate: true,
   }, { onConflict: 'user_id' }));
-  await grantE2eAiConsent(admin, userId);
+  if (aiConsent) await grantE2eAiConsent(admin, userId);
 }
 
 function plannedMealRow(dailyMealId: string, meal: MealSeed, displayOrder: number, completed: boolean, completedAt: string | null) {
@@ -300,12 +356,154 @@ async function seedOnboarding(admin: SupabaseClient) {
   console.log('OK onboarding');
 }
 
+// ─── 紹介ページ (/) の新しい画面の利用者 (#1867 段 0) ───
+
+/**
+ * 今日の前後 MENU_DAYS_AROUND_TODAY 日の献立を入れる (DAY_MENUS を demo と同じ順で使う)。
+ * 昨日までの食事はすべて完了。今日の食事は、先頭から todayCompleted 食だけ完了にする
+ */
+async function insertWeekMenus(admin: SupabaseClient, userId: string, todayCompleted: number) {
+  for (let offset = -MENU_DAYS_AROUND_TODAY; offset <= MENU_DAYS_AROUND_TODAY; offset++) {
+    const dailyId = await insertDay(admin, userId, offset);
+    const menu = DAY_MENUS[(offset + MENU_DAYS_AROUND_TODAY) % DAY_MENUS.length];
+    const rows = menu.map((meal, i) => {
+      const completed = offset < 0 || (offset === 0 && i < todayCompleted);
+      return plannedMealRow(dailyId, meal, i, completed, completed ? daysAgoIso(-offset) : null);
+    });
+    must(`planned_meals ${offset}`, await admin.from('planned_meals').insert(rows));
+  }
+}
+
+/** ホームの画面と AI 相談のシートの利用者: 今週の献立だけを持つ (体重の記録・食材・家族・相談の履歴は持たない) */
+async function seedHome(admin: SupabaseClient) {
+  const userId = await recreateUser(admin, 'home');
+  await completeProfile(admin, userId, GUIDE_USERS.home.nickname, LANDING_USER_WEIGHT_KG);
+  await insertWeekMenus(admin, userId, HOME_TODAY_COMPLETED_MEALS);
+  console.log('OK home');
+}
+
+/** 食材管理の画面の利用者: 期限の違う食材を持つ */
+async function seedPantry(admin: SupabaseClient) {
+  const userId = await recreateUser(admin, 'pantry');
+  await completeProfile(admin, userId, GUIDE_USERS.pantry.nickname, LANDING_USER_WEIGHT_KG);
+  must('pantry_items', await admin.from('pantry_items').insert(
+    PANTRY_ITEMS.map((item) => ({
+      user_id: userId,
+      name: item.name,
+      amount: item.amount,
+      category: item.category,
+      expiration_date: jstDate(item.expiresInDays),
+    })),
+  ));
+  console.log('OK pantry');
+}
+
+/** 買い物リストのシートの利用者: 今週の献立と、献立から作った今週の買い物リスト (アクティブなリスト 1 つ) を持つ */
+async function seedShopper(admin: SupabaseClient) {
+  const userId = await recreateUser(admin, 'shopper');
+  await completeProfile(admin, userId, GUIDE_USERS.shopper.nickname, LANDING_USER_WEIGHT_KG);
+  await insertWeekMenus(admin, userId, HOME_TODAY_COMPLETED_MEALS);
+  // 今日の週 (月曜〜日曜。献立表の週と同じ) の買い物リスト
+  const sinceMonday = jstDaysSinceMonday();
+  const monday = jstDate(-sinceMonday);
+  const sunday = jstDate(-sinceMonday + DAYS_PER_WEEK - 1);
+  const list = must('shopping_lists', await admin
+    .from('shopping_lists')
+    .insert({ user_id: userId, title: SHOPPING_LIST_TITLE, start_date: monday, end_date: sunday, status: 'active' })
+    .select('id')
+    .single()) as { id: string };
+  must('shopping_list_items', await admin.from('shopping_list_items').insert(
+    SHOPPING_ITEMS.map((item) => ({
+      shopping_list_id: list.id,
+      category: item.category,
+      item_name: item.name,
+      quantity: item.quantity,
+      source: SHOPPING_ITEM_SOURCE_GENERATED,
+    })),
+  ));
+  console.log('OK shopper');
+}
+
+/** 日本時間の今日が、今日の週の月曜日から何日目か (月曜 = 0〜日曜 = 6) */
+function jstDaysSinceMonday(): number {
+  const today = new Date(Date.now() + JST_OFFSET_MS);
+  return (today.getUTCDay() + DAYS_PER_WEEK - 1) % DAYS_PER_WEEK;
+}
+
+/** 家族の代表者がいれば、その家族のグループを先に消す (代表者の外部キーは ON DELETE RESTRICT なので、利用者を消し直す前に要る) */
+async function deleteFamiliesOf(admin: SupabaseClient, email: string) {
+  const { data, error } = await admin.auth.admin.listUsers({ perPage: LIST_USERS_PER_PAGE });
+  if (error) throw new Error(`listUsers: ${error.message}`);
+  const existing = data.users.find((u) => u.email === email);
+  if (!existing) return;
+  must(`family_groups delete ${email}`, await admin.from('family_groups').delete().eq('representative_id', existing.id));
+}
+
+/** 家族の画面の利用者: 代表者・大人 (アカウントあり)・子ども (アカウントなし) の 3 人の家族 */
+async function seedFamily(admin: SupabaseClient) {
+  await deleteFamiliesOf(admin, GUIDE_USERS.familyRep.email);
+  const repId = await recreateUser(admin, 'familyRep');
+  await completeProfile(admin, repId, GUIDE_USERS.familyRep.nickname, LANDING_USER_WEIGHT_KG);
+  const adultId = await recreateUser(admin, 'familyAdult');
+  await completeProfile(admin, adultId, GUIDE_USERS.familyAdult.nickname, LANDING_USER_WEIGHT_KG);
+
+  const group = must('family_groups', await admin
+    .from('family_groups')
+    .insert({ name: GUIDE_FAMILY.groupName, representative_id: repId, plan_key: FAMILY_PLAN_KEY })
+    .select('id')
+    .single()) as { id: string };
+  must('family_members representative', await admin.from('family_members').insert({
+    family_id: group.id,
+    user_id: repId,
+    role: 'representative',
+    display_name: GUIDE_FAMILY.displayNames.representative,
+  }));
+  must('family_members adult', await admin.from('family_members').insert({
+    family_id: group.id,
+    user_id: adultId,
+    role: 'adult',
+    display_name: GUIDE_FAMILY.displayNames.adult,
+  }));
+  const childBirthDate = birthDateForAge(FAMILY_CHILD_AGE_YEARS);
+  const child = must('family_members child', await admin
+    .from('family_members')
+    .insert({
+      family_id: group.id,
+      user_id: null,
+      role: 'child',
+      display_name: GUIDE_FAMILY.displayNames.child,
+      // 子どもの行の child_profile は e2e の fresh-family と同じ形 (年齢・性別・アレルギー)
+      child_profile: { age: FAMILY_CHILD_AGE_YEARS, gender: 'male', allergies: [] },
+      birth_date: childBirthDate,
+    })
+    .select('id')
+    .single()) as { id: string };
+  // 18 歳未満の子どもには、代表者が署名した保護者の同意を入れる (本番の add_family_child と同じ状態。#1173)
+  await insertParentalConsentForChild({ familyId: group.id, memberId: child.id, parentUserId: repId, birthDate: childBirthDate });
+  for (const userId of [repId, adultId]) {
+    must('user_profiles family_id', await admin.from('user_profiles').update({ family_id: group.id }).eq('id', userId));
+  }
+  console.log('OK family');
+}
+
+/** 同意の画面の利用者: 初期設定は済んでいて、AI 機能の同意をまだしていない */
+async function seedConsent(admin: SupabaseClient) {
+  const userId = await recreateUser(admin, 'consent');
+  await completeProfile(admin, userId, GUIDE_USERS.consent.nickname, LANDING_USER_WEIGHT_KG, false);
+  console.log('OK consent');
+}
+
 (async () => {
   const { url, serviceRole } = requireLocalEnv();
   const admin = createClient(url, serviceRole, { auth: { autoRefreshToken: false, persistSession: false } });
   await seedDemo(admin);
   await seedPlanner(admin);
   await seedOnboarding(admin);
+  await seedHome(admin);
+  await seedPantry(admin);
+  await seedShopper(admin);
+  await seedFamily(admin);
+  await seedConsent(admin);
 })().catch((error: unknown) => {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

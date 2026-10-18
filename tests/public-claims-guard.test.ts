@@ -98,6 +98,8 @@ const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
 const PUBLIC_SOURCE_FILES: string[] = [
   ...PUBLIC_PAGES.map(({ file }) => file),
   'src/components/marketing/landing-copy.ts',
+  // 紹介ページの新しい画面と拡大の画像の alt (#1867 v2.0。docs/design/marketing/01-landing-site.md §9.7)
+  'src/components/marketing/landing-screens.ts',
   'src/lib/seo/public-pages.ts',
   'src/app/(auth)/layout.tsx',
   'src/app/(auth)/login/page.tsx',

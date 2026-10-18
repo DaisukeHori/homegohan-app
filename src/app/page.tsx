@@ -1,6 +1,6 @@
 /**
  * トップ (/。紹介ページ)。画面の本体は src/components/marketing/LandingPage.tsx (Server Component + 小さな client の島)。
- * 文言の正本は src/components/marketing/landing-copy.ts。殻が持つのはメタ情報・viewport・構造化データだけ (docs/design/marketing/01-landing-site.md §9.3)。
+ * 文言の正本は src/components/marketing/landing-copy.ts。殻が持つのはメタ情報・viewport・構造化データだけ (docs/design/marketing/01-landing-site.md §9.6)。
  *
  * #1867: 'use client' のファイルは metadata を export できないので、ページを Server Component の殻と画面の本体に分けた
  * (src/app/pricing/page.tsx と PricingPageView.tsx と同じ形)。殻が持つのは次の 3 つだけ:

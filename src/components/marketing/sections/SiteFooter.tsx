@@ -1,5 +1,5 @@
-// フッター (docs/design/marketing/01-landing-site.md §4.8・§8.3 の SiteFooter)。Server Component。
-// リンクの名前は §4.8 のまま (tests/e2e/public-policy-pages.spec.ts が footer の中の 利用規約 / プライバシーポリシー を exact で押す)。
+// フッター (docs/design/marketing/01-landing-site.md §4.20・§8.3 の SiteFooter)。Server Component。
+// リンクの名前は §4.20 のまま (tests/e2e/public-policy-pages.spec.ts が footer の中の 利用規約 / プライバシーポリシー を exact で押す)。
 // 年は定数 (COPYRIGHT_YEAR)。日付の計算はしない。SNS のリンクは置かない (socialLinks は空)。
 import Image from 'next/image';
 import Link from 'next/link';
