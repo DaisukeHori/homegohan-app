@@ -97,7 +97,7 @@ export const GUIDES: readonly Guide[] = [
     steps: [
       { title: '体重を記録', desc: '健康画面の「詳細記録」から体重を入力。グラフで推移を確認できます。', image: '/guide/weight.png', imageAlt: '体重を入力する画面' },
       { title: '写真で記録', desc: '健康画面の「写真で記録」から体重計を撮影すると、AIが数値を読み取ります。内容を確認してから記録できます。', image: '/guide/weight-photo.png', imageAlt: '体重計の読み取り結果を確認する画面' },
-      { title: 'トレンドを確認', desc: '1週間〜1年の推移をグラフで確認。目標体重まであと何kgかも分かります。健康画面の「AI分析」では、AIが気づきを教えてくれます。', image: '/guide/trend.png', imageAlt: '体重の推移のグラフ' },
+      { title: 'トレンドを確認', desc: '1週間〜1年の推移をグラフで確認。目標体重まであと何kgかも分かります。', image: '/guide/trend.png', imageAlt: '体重の推移のグラフ' },
     ],
   },
   {

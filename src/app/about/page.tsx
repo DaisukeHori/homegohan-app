@@ -27,7 +27,10 @@ const colors = {
  * - 献立の提案: 使う情報は /faq「献立提案はどういう基準で作られますか？」と同じ (tests/faq-guide-wording-1859.test.ts が実コードと突き合わせる)
  * - 栄養の目標: src/app/api/nutrition-targets/calculate/route.ts (@homegohan/core の calculateNutritionTargets。
  *   基礎代謝は年齢・身長・体重から、活動量は仕事のスタイルと運動から、配分は目標と持病から)
- * - 健康の記録: 体重・体脂肪率・血圧の記録 (src/app/(main)/health/record/page.tsx) と、健康画面の「AI分析」(src/app/(main)/health/page.tsx)
+ * - 健康の記録: 体重・体脂肪率・血圧の記録 (src/app/(main)/health/record/page.tsx) と、claims の health-records
+ *   (体重計の写真: src/app/api/ai/analyze-weight-scale/route.ts・健康診断の結果票の写真: src/app/api/ai/analyze-health-checkup/route.ts)。
+ *   健康画面の「AI分析」(/health/insights) は書かない: 中身を作る POST /api/health/insights を呼ぶ画面・アプリ・cron が無く、
+ *   いつも「分析結果がありません」のまま (src/app/(main)/health/insights/page.tsx は一覧の GET と既読にする POST だけ)
  * - 家族: claims の family (招待・献立を一緒に見る・記録の共有)。分量の計算は無いので書かない
  * 最上級と、効果・習慣の定着の約束は書かない
  */
@@ -59,7 +62,7 @@ const features = [
   {
     icon: Heart,
     title: '健康の記録',
-    description: '体重・体脂肪率・血圧などを記録して、推移をグラフで見られます。健康画面の「AI分析」では、AIが気づきを教えてくれます。',
+    description: '体重・体脂肪率・血圧などを記録して、推移をグラフで見られます。体重は体重計の写真から、健康診断の結果は結果票の写真から読み取って記録することもできます。',
     color: colors.primary,
   },
   {

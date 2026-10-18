@@ -169,6 +169,7 @@ const FORBIDDEN: { text: string; reason: string }[] = [
   { text: '目標達成でバッジ', reason: '目標の達成で付くバッジは無い (付くのは完了した食事の数・連続日数・期間ごとの集計)' },
   { text: '50種類以上', reason: '根拠のないバッジの種類の数' },
   { text: '%向上', reason: '根拠のない改善率' },
+  { text: 'AIが気づきを教えてくれます', reason: '健康画面の「AI分析」(/health/insights) の中身を作る POST /api/health/insights を呼ぶ画面・アプリ・cron が無く、いつも空のまま' },
   // 測っていない所要時間・確かめていない認識の良し悪し
   { text: '30秒で', reason: '測っていない所要時間 (登録)' },
   { text: '数秒で', reason: '測っていない所要時間 (写真の解析)' },
@@ -550,5 +551,34 @@ describe('#1867 お知らせ (/news) に、実際には無かったお知らせ�
     for (const word of ['2024-12', '2025-01', '健康記録機能をリリースしました', 'バッジ機能を追加しました', '年末年始']) {
       expect(text, `「${word}」が残っている`).not.toContain(word);
     }
+  });
+});
+
+describe('#1867 健康の記録の説明は、空のままの「AI分析」ではなく、実在する写真からの読み取りで言う', () => {
+  it('/about の「健康の記録」は、体重計と健康診断の結果票の写真からの記録を言い、「AI分析」の気づきは言わない', () => {
+    const text = renderText(AboutPage);
+    expect(text).toContain('体重は体重計の写真から、健康診断の結果は結果票の写真から読み取って記録することもできます。');
+    expect(text).not.toContain('AI分析');
+    expect(text).not.toContain('気づき');
+  });
+
+  it('使い方ガイドの手順「トレンドを確認」は、グラフで見られることだけを言い、「AI分析」の気づきは言わない', () => {
+    const step = GUIDES.flatMap((guide) => guide.steps).find((s) => s.title === 'トレンドを確認');
+    expect(step, '使い方ガイドに手順「トレンドを確認」が無い').toBeDefined();
+    expect(step!.desc).not.toContain('AI分析');
+    expect(step!.desc).not.toContain('気づき');
+  });
+
+  it('/about が言う写真からの読み取りは、画面から呼ばれている (体重計: 食事の記録の画面の写真の種類「体重計」・健康診断: 結果の登録の画面)', () => {
+    expect(readSource('src/app/(main)/meals/new/page.tsx')).toContain('/api/ai/analyze-weight-scale');
+    expect(readSource('src/app/(main)/health/checkups/new/page.tsx')).toContain('/api/ai/analyze-health-checkup');
+  });
+
+  it('健康画面の「AI分析」の画面は、一覧を読む (GET) と既読にするだけで、中身を作る POST /api/health/insights を呼ばない (呼ぶようになったら /about と /guide の説明を見直す)', () => {
+    for (const file of ['src/app/(main)/health/insights/page.tsx', 'src/app/(main)/health/page.tsx']) {
+      // 中身を作る POST は付け足しの無い '/api/health/insights' を宛先にする。一覧 (?limit=) と既読 (/${id}/read) は付け足しがある
+      expect(readSource(file), `${file} が /api/health/insights をそのまま呼んでいる`).not.toMatch(/['"`]\/api\/health\/insights['"`]/);
+    }
+    expect(readSource('src/app/(main)/health/insights/page.tsx')).toContain('/api/health/insights?limit=');
   });
 });
