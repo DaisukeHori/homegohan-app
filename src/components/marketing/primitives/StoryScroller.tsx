@@ -5,8 +5,9 @@
 // 帯 (画面の中央の 20 %) にある手順のうち最も下のものの画面を出す (storyActiveIndex。帯に無い間は直前のまま)。
 // - マウントで根に data-js を付ける。CSS は 1024 px 以上でこの印があるときだけ固定した端末を見せ、手順の中の画面を隠す
 //   (JS 無し・1024 px 未満では固定した端末は display: none で、手順ごとの画面が縦に並ぶ)。
-// - 固定した端末には 4 枚を重ね、activeIndex の 1 枚だけ data-active="true" (CSS で opacity 1。ほかは 0)・aria-hidden="false"。
-//   入れ替えの溶け込みは CSS の opacity の遷移 (no-preference の中だけ)。動きを減らす設定では一瞬で替わる (状態は同じ)。
+// - 固定した端末には 4 枚を重ね、activeIndex の 1 枚だけ data-active="true"・aria-hidden="false" (ほかは "false"・"true")。
+//   no-preference では 4 枚とも描き、CSS で data-active="true" の 1 枚だけ opacity 1 (ほかは 0) にして、opacity の遷移で溶け込ませる。
+//   動きを減らす設定では data-active="true" の 1 枚だけを描き (ほかは display: none)、一瞬で替わる (状態は同じ。marketing.css の理由)。
 // - いま見えている手順の li に data-story-current を付け、手順の番号と文を強める (飾り。JS 無しでは付かず、どの手順も同じ見え方)。
 // - フォーカスする要素は持たない。
 import Image from 'next/image';

@@ -655,13 +655,18 @@ html:has(.lp) {
 .lp .lp-story-stage {
   display: none;
 }
+/*
+ * 固定した端末の 4 枚。動きの無いときの見え方は「いまの手順の 1 枚だけを描く」(入れ替えは描くものの切り替えで、一瞬)。
+ * 不透明度で重ねて溶け込ませる見え方 (M-6) は no-preference の中だけに書く。動きを減らす設定で不透明度を切り替えると、
+ * globals.css の規則 (全要素の transition-duration を 0.01ms にする) が 0.01 ms の遷移を作り、data-active が付いた時点では
+ * まだ前の値になるため (E-7。描くものの切り替え (display) は遷移しない)
+ */
 .lp .lp-story-phone .lp-phone-screen img {
   position: absolute;
   inset: 0;
-  opacity: 0;
 }
-.lp .lp-story-phone .lp-phone-screen img[data-active='true'] {
-  opacity: 1;
+.lp .lp-story-phone .lp-phone-screen img[data-active='false'] {
+  display: none;
 }
 @media (min-width: 1024px) {
   .lp .lp-story-grid {
@@ -2220,9 +2225,13 @@ html:has(.lp) {
       transform var(--lp-dur) var(--lp-ease);
     transition-delay: var(--lp-reveal-delay, 0ms);
   }
-  /* M-6 物語の固定した端末の入れ替え (溶け込み。位置は動かさない) */
+  /* M-6 物語の固定した端末の入れ替え (溶け込み。位置は動かさない): 4 枚とも描いて重ね、いまの 1 枚だけ不透明にする */
   .lp .lp-story-phone .lp-phone-screen img {
     transition: opacity var(--lp-dur) var(--lp-ease);
+  }
+  .lp .lp-story-phone .lp-phone-screen img[data-active='false'] {
+    display: block;
+    opacity: 0;
   }
   /* M-12 流れの図の線: 図を包む Reveal に JS の印があって画面に入っていない間だけ隠し、入ったら描く */
   .lp .lp-reveal[data-js='1']:not(.is-in) .lp-flow-line path {
