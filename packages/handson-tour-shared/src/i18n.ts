@@ -97,9 +97,9 @@ export const HANDSON_TOUR_I18N_EN = {
 
       // badge-specific bubbles
       first_bite_title: 'First bite',
-      first_bite_bubble: 'Earned by logging a meal',
+      first_bite_bubble: 'Earned by marking a meal as done',
       planner_title: 'Planner',
-      planner_bubble: 'You created a meal plan once',
+      planner_bubble: 'Earned by creating a week of meals with AI, or by adding the trial meal plan',
       tutorial_complete_title: 'App Master',
       tutorial_complete_bubble: "You'll receive it on the next screen",
 
@@ -267,10 +267,14 @@ export const HANDSON_TOUR_I18N_JA = {
       // バッジ別吹き出し
       first_bite_title: 'はじめての一歩',
       // first_bite は、ツアーを通しただけなら未獲得 (#1314) だが、本物の食事の記録がある人のやり直しのツアーでは獲得済み。
-      // 吹き出しはどちらのカードを指しても食い違わないよう、獲得の有無を言わない、もらい方の説明にする (#1626)。英語版も同じ
-      first_bite_bubble: '食事を記録するともらえるバッジです',
+      // 吹き出しはどちらのカードを指しても食い違わないよう、獲得の有無を言わない、もらい方の説明にする (#1626)。英語版も同じ。
+      // 付くのは食事を「完了」にしたとき (GET /api/badges が数えるのは完了した食事だけ。写真から保存しただけの食事は数えない) なので、
+      // 「記録」ではなく「完了」と書く (#1867。アプリの中のバッジの説明 badges.description と同じ書き方)
+      first_bite_bubble: '食事を「完了」にするともらえるバッジです',
       planner_title: 'プランナー',
-      planner_bubble: '献立を 1 度作りました',
+      // planner は、AI で週の献立を初めて作ったとき (週の献立の生成の完了) と、使い方ガイドのお試しの献立の追加で付く (#1867)。
+      // お試しの献立を追加せずに進んだ人には未獲得のカードを指すので、first_bite と同じく獲得の有無を言わない、もらい方の説明にする。英語版も同じ
+      planner_bubble: 'AI で 1 週間の献立を作るか、お試しの献立を追加するともらえるバッジです',
       tutorial_complete_title: '使い方マスター',
       tutorial_complete_bubble: '次の画面で受け取れます',
 

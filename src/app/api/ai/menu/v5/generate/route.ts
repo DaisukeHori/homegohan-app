@@ -16,6 +16,7 @@ import { resolveExistingTargetSlots } from '@/lib/v4-target-slots';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rate-limit';
 import { aiDailyLimitResponse, consumeAiUsage, refundAiUsage } from '@/lib/plan/entitlements';
 import { isUltimateModeRequested } from '@/lib/ai/ultimate-mode';
+import { weeklyMenuRequestWeeklyOriginDataForDates } from '@/lib/ai/weekly-menu-request-origin';
 import { addDaysToDate, CALENDAR_DATE_REQUIREMENT, isCalendarDate, todayLocal } from '@/lib/date-utils';
 import { isMealType, isWithinMenuGenerationRange, MEAL_ORDER, MENU_GENERATION_RANGE_MAX_DAYS } from '@homegohan/shared';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
@@ -310,6 +311,12 @@ export async function POST(request: Request) {
       ultimateMode,
     };
 
+    // #1867: 対象の枠が 1 週間 (異なる日付が 7 日以上) を覆う生成なら、週の献立の生成の印 (weeklyRequest: true) を generated_data に書く。
+    // 行が completed になった時点で DB のトリガー (weekly_menu_requests_award_planner) がこの印を見て planner を付ける
+    // (保険として状態の確認 GET /api/ai/menu/weekly/status とバッジの一覧 GET /api/badges も。src/lib/ai/weekly-menu-request-origin.ts)。下の requestId を埋め込む更新も generated_data を丸ごと
+    // 書き直すので、両方に入れる (片方だけだと、更新で印が消える)
+    const weeklyOrigin = weeklyMenuRequestWeeklyOriginDataForDates(dates);
+
     const { data: requestData, error: insertError } = await queueDb
       .from('weekly_menu_requests')
       .insert({
@@ -326,7 +333,7 @@ export async function POST(request: Request) {
           totalSteps: targetSlots.length,
           message: '生成キューに追加しました',
         },
-        generated_data: { ...params, requestId: undefined },
+        generated_data: { ...params, requestId: undefined, ...weeklyOrigin },
       })
       .select('id')
       .single();
@@ -340,7 +347,7 @@ export async function POST(request: Request) {
     // generated_data に requestId を埋め込む
     await queueDb
       .from('weekly_menu_requests')
-      .update({ generated_data: { ...params, requestId: requestData.id } })
+      .update({ generated_data: { ...params, requestId: requestData.id, ...weeklyOrigin } })
       .eq('id', requestData.id)
       .eq('user_id', user.id);
 

@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase/server';
+import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { getAiQueueWriter } from '@/lib/ai/ai-queue-writer';
 import { NextResponse } from 'next/server';
 import { restorePlannedMealsSnapshot, extractPlannedMealsSnapshot } from '@/lib/planned-meals-snapshot';
@@ -10,6 +10,11 @@ import {
   weeklyMenuRequestErrorMessageForResponse,
 } from '@/lib/weekly-menu-request-error';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { awardBadge } from '@/lib/badges/awardBadge';
+import {
+  WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT,
+  isWeeklyMenuRequestWeeklyOrigin,
+} from '@/lib/ai/weekly-menu-request-origin';
 
 // #1203: stale 判定時の復元（スナップショットの書き戻し）が打ち切られないよう、実行時間の上限を明示する。
 export const maxDuration = 60; // Vercel Pro: 60s OK
@@ -30,9 +35,10 @@ export async function GET(request: Request) {
     // #1042: 通常ポーリング（3秒間隔）では生成中に肥大化する generated_data(jsonb) を
     // select しない。止まった行を failed にしたときだけ、更新の戻り値で受け取る。
     // 止まったかの判定は cleanup と同じ生存信号 (created_at・updated_at・worker_acquired_at) で行う (#1507)
+    // AI の週の献立の生成 (1 週間分の生成。src/lib/ai/weekly-menu-request-origin.ts) の行かは、generated_data の印だけを取り出して読む (#1867。planner の付与に使う)
     const { data: request, error } = await supabase
       .from('weekly_menu_requests')
-      .select('id, status, error_message, created_at, updated_at, worker_acquired_at, mode, start_date, target_meal_id, progress')
+      .select(`id, status, error_message, created_at, updated_at, worker_acquired_at, mode, start_date, target_meal_id, progress, ${WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_SELECT}`)
       .eq('id', requestId)
       .eq('user_id', user.id)
       .maybeSingle();
@@ -99,6 +105,29 @@ export async function GET(request: Request) {
     // (DB・例外・Edge Function の応答の本文) が入っていることがある。こちらで書いた文 (同意・stale・中止) だけを
     // そのまま返し (stale の英語の印は日本語の文にする。#1576)、それ以外は固定の文にする (#1172)
     const errorMessage = weeklyMenuRequestErrorMessageForResponse(request.error_message);
+
+    // #1867 「計画上手」(planner) は、AI で週の献立を初めて作ったときにも付ける。
+    // 週の献立の生成は Edge Function (generate-menu-v4 / v5) が裏で進め、献立を保存し終えると行を completed にする
+    // (1 食も保存できなかったとき・利用者が中止したとき・止まったときは failed)。付与の本体は、行が completed になった時点で付ける
+    // DB のトリガー weekly_menu_requests_award_planner (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。
+    // 画面は完了を主に行の変化 (Realtime) で知り (モバイルはこの状態の確認を呼ばない)、ここは Web の代替の経路なので、ここでの付与はトリガーが付け損ねたときの保険:
+    // 本人が完了 (completed) を読んだときに、週の献立の生成の行 (印あり) なら本人に付ける。印を書くのは 1 週間分の生成
+    // (POST /api/ai/menu/v4/generate・/v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request)
+    //   - 付けるのは行の持ち主 (上の読み取りを user.id の行に絞っている) で、家族の人数分の献立でも依頼した本人だけ
+    //   - awardBadge は冪等 (付与済みなら何もしない)。トリガーや使い方ガイドのお試し (POST /api/menu-plans/add) で付いていても、
+    //     完了の後のポーリングが続いても、user_badges は 1 行のまま
+    //   - 1 食・1 日・数日の生成、献立の改善の行 (印なし) では付けない
+    //   - 付与は副次処理。失敗しても状態の確認の応答は変えない (awardBadge が構造化ログに残す。付け損ねた分は GET /api/badges が拾う)
+    // user_badges には利用者の INSERT ポリシーが無いので、service role で付ける (POST /api/menu-plans/add と同じ)
+    if (request.status === 'completed' && isWeeklyMenuRequestWeeklyOrigin(request.weekly_request)) {
+      try {
+        const supabaseAdmin = getSupabaseAdmin();
+        await awardBadge(supabaseAdmin, user.id, 'planner');
+      } catch (badgeError) {
+        console.error('planner badge award after weekly menu generation failed (non-fatal):', badgeError);
+      }
+    }
+
     return NextResponse.json({
       status: request.status,
       errorMessage,

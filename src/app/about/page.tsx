@@ -20,41 +20,55 @@ const colors = {
   border: '#E8E8E8',
 };
 
+/**
+ * 主な機能。紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じく、製品の根拠のある主張だけを書く (#1867)。
+ * - 写真で記録: claims の photo-analyze・ai-estimate (数値は推定なので、手で入力しなくてよいとは言い切らない)
+ * - ほめるひと言: claims の praise・nutrition-tip。写真の記録のコメントは定型の文で、食事の中身を見て良いところを探す文ではない
+ * - 献立の提案: 使う情報は /faq「献立提案はどういう基準で作られますか？」と同じ (tests/faq-guide-wording-1859.test.ts が実コードと突き合わせる)
+ * - 栄養の目標: src/app/api/nutrition-targets/calculate/route.ts (@homegohan/core の calculateNutritionTargets。
+ *   基礎代謝は年齢・身長・体重から、活動量は仕事のスタイルと運動から、配分は目標と持病から)
+ * - 健康の記録: 体重・体脂肪率・血圧の記録 (src/app/(main)/health/record/page.tsx) と、claims の health-records
+ *   (体重計の写真: src/app/api/ai/analyze-weight-scale/route.ts・健康診断の結果票の写真: src/app/api/ai/analyze-health-checkup/route.ts)。
+ *   健康画面の「AI分析」(/health/insights) は書かない: 中身を作る POST /api/health/insights を呼ぶ画面・アプリ・cron が無く、
+ *   いつも「分析結果がありません」のまま (src/app/(main)/health/insights/page.tsx は一覧の GET と既読にする POST だけ)
+ * - 家族: claims の family (招待・献立を一緒に見る・記録の共有)。分量の計算は無いので書かない
+ * 最上級と、効果・習慣の定着の約束は書かない
+ */
 const features = [
   {
     icon: Camera,
-    title: '写真で簡単記録',
-    description: '食事の写真を撮るだけで、AIが自動で料理を認識し、カロリーや栄養素を推定します。面倒な手入力は不要です。',
+    title: '写真で記録',
+    description: '食事の写真を撮るだけで、AIが料理を認識し、カロリーや栄養素を推定します。推定の値なので、実際の値と異なる場合があります。',
     color: colors.primary,
   },
   {
     icon: Sparkles,
-    title: 'AIが褒めてくれる',
-    description: 'ダメ出しではなく、良いところを見つけて褒める。だから続けられる、だから楽しい。',
+    title: 'ほめるひと言',
+    description: '食事の記録の画面では、写真で記録すると、記録をほめるひと言と栄養のひと言メモが出ます。献立の振り返りでは、AIが良いところを見つけて言葉にします。',
     color: colors.warning,
   },
   {
     icon: Brain,
     title: 'AIによる献立提案',
-    description: 'あなたの好み、健康状態、冷蔵庫の食材を考慮して、最適な献立をAIが提案。毎日の「何作ろう？」を解決します。',
+    description: '目標と栄養の目標をもとに、AIが1週間分の献立を提案します。登録されていれば、アレルギー・苦手な食材・好み・健康診断の結果・冷蔵庫の食材も考慮します。',
     color: colors.secondary,
   },
   {
     icon: Target,
-    title: 'パーソナライズ栄養管理',
-    description: '年齢、体重、活動量、健康目標に基づいて、あなただけの栄養目標を設定。無理なく続けられる健康管理を実現します。',
+    title: 'あなたの栄養の目標',
+    description: '年齢・身長・体重・仕事のスタイルや運動・目標などから、あなたの1日の栄養の目標を計算します。',
     color: colors.success,
   },
   {
     icon: Heart,
-    title: '健康記録＆分析',
-    description: '体重、体脂肪、血圧などの健康データを記録し、AIが傾向を分析。健康状態の変化を可視化してアドバイスします。',
+    title: '健康の記録',
+    description: '体重・体脂肪率・血圧などを記録して、推移をグラフで見られます。体重は体重計の写真から、健康診断の結果は結果票の写真から読み取って記録することもできます。',
     color: colors.primary,
   },
   {
     icon: Users,
-    title: '家族みんなで使える',
-    description: '家族の人数に合わせた分量計算、それぞれの好き嫌いやアレルギーにも対応。家族全員の健康をサポートします。',
+    title: '家族で使える',
+    description: '家族を招待して、献立を一緒に見たり、記録を共有したりできます。',
     color: colors.warning,
   },
 ];
@@ -92,9 +106,9 @@ export default function AboutPage() {
             </h1>
             <p className="text-lg md:text-xl max-w-2xl mx-auto leading-relaxed" style={{ color: colors.textLight }}>
               「食べることを、もっと誇らしく。」<br />
-              写真を撮るだけで、AIがあなたの食事を分析。<br />
-              ダメ出しじゃなく、良いところを見つけて褒める。<br />
-              だから、続けられる。
+              写真を撮るだけで、AIが料理を認識して栄養を推定します。<br />
+              食事の記録の画面では、写真で記録すると、<br />
+              記録をほめるひと言が出ます。
             </p>
           </motion.div>
         </div>
@@ -143,15 +157,12 @@ export default function AboutPage() {
           <h2 className="text-3xl md:text-4xl font-bold mb-6" style={{ color: colors.text }}>
             私たちのミッション
           </h2>
-          <p className="text-lg leading-relaxed mb-8" style={{ color: colors.textLight }}>
-            多くの食事管理アプリは「カロリーオーバーです」「野菜が足りません」とダメ出しをします。
-            でも、それで続けられる人はどれだけいるでしょうか？
-          </p>
+          {/* #1867: 他のアプリについての根拠の無い比較と、写真の記録のコメントが料理の見た目を見て褒めるかのような例・
+              健康上の効果の約束をやめ、実際にあることだけを書く */}
           <p className="text-lg leading-relaxed mb-8" style={{ color: colors.textLight }}>
             私たちは「褒める」ことにこだわります。
-            「彩りが素敵！」「タンパク質バッチリ！」
-            良いところを見つけて褒めることで、食事が楽しくなる。
-            楽しいから続けられる。続けられるから、健康になれる。
+            食事の記録の画面では、写真で記録すると、記録をほめるひと言が出ます。
+            献立の振り返りでは、AIが良いところを見つけて言葉にします。
           </p>
           <p className="text-xl font-bold" style={{ color: colors.primary }}>
             「褒める」ことで、すべての人が健康的な食生活を<br />
@@ -167,8 +178,8 @@ export default function AboutPage() {
             今日から始めてみませんか？
           </h2>
           <p className="mb-8" style={{ color: colors.textLight }}>
-            まずは3日間、写真を撮ってみてください。<br />
-            食事が変わる感覚を、きっと実感できるはずです。
+            まずは3日、写真で記録してみてください。<br />
+            食事の記録の画面に、記録をほめるひと言が出ます。
           </p>
           <Link href="/signup">
             <motion.button
@@ -183,7 +194,6 @@ export default function AboutPage() {
             </motion.button>
           </Link>
           <div className="flex justify-center gap-6 mt-6 text-sm" style={{ color: colors.textMuted }}>
-            <span>✓ 30秒で登録</span>
             <span>✓ カード不要</span>
             <span>✓ いつでも退会OK</span>
           </div>

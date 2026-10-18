@@ -659,6 +659,8 @@ xl:  1280px  デスクトップ
 
 **ライブラリ**: `lucide-react` のみ使用。絵文字・その他アイコンライブラリは禁止。
 
+紹介ページ (`/`。`src/components/marketing/`) も `lucide-react` のみ。文言の正本 `src/components/marketing/landing-copy.ts` に絵文字が無いことを `tests/landing-page-1867.test.ts` の U-9 が確かめる (`docs/design/marketing/01-landing-site.md` §4.0・§5.5)。
+
 ```tsx
 import { AlertCircle, CheckCircle2, ChevronRight, X } from 'lucide-react';
 
