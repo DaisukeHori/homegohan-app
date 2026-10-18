@@ -78,10 +78,12 @@ async function scalePhoto(page: Page): Promise<Buffer> {
 const ZOOM_MARGIN_IMAGE_PX = 8;
 const ZOOM_MARGIN_PX = (ZOOM_MARGIN_IMAGE_PX * SHOOT_VIEWPORT.width) / GUIDE_IMAGE_SIZE.width;
 /**
- * 画面の右下の AI アドバイザーのボタンの影が、ボタンの枠の外にはみ出す幅 (CSS px)。
- * ボタンの影は Tailwind の shadow-lg (0 10px 15px -3px): 上の端は ぼかし 15 − 下へのずれ 10 + 広がり −3 = 2 px だけ上に出る
+ * 画面の右下の AI アドバイザーのボタンの枠の外に空ける幅 (CSS px)。
+ * ボタンの影 (Tailwind の shadow-lg: 0 10px 15px -3px と 0 4px 6px -4px。どちらも下へずれる) がボタンの枠より上に出す濃さは 1/255 未満
+ * (ぼかしの端の 2 px ほど) なので数えず、丸い縁をなめらかにする画素 (撮影の 2 倍の画素で 1 画素 = 0.5 CSS px) の分だけ空ける。
+ * 章 menu の拡大は、朝食の箱の下の端のすぐ下 (約 1.5 CSS px) からボタンが始まるので、影の 2 px を空けると箱が入らない (設計 §5.4)
  */
-const FAB_SHADOW_OVERFLOW_PX = 2;
+const FAB_EDGE_ALLOWANCE_PX = 0.5;
 /** ホームの画面と AI 相談のシートを撮るとき、「今日の献立」の箱の上の端を画面の上の端から下げる量 (CSS px) */
 const HOME_CARD_TOP_GAP_PX = 16;
 /** 食材管理の画面に写っているべき食材の行の数 (§7.1 の表 2: 食材の一覧が 3 件以上) */
@@ -111,7 +113,7 @@ async function saveZoom(page: Page, name: LandingZoomName, targets: ReadonlyArra
   if (!zoom) throw new Error(`LANDING_ZOOMS に ${name} が無い`);
   const targetBoxes = await Promise.all(targets.map((target) => boxOf(target.locator, target.label)));
   const chatButton = page.getByTestId(AI_CHAT_BUTTON_TEST_ID);
-  const avoid = (await chatButton.count()) > 0 ? [expandRect(await boxOf(chatButton, "AI アドバイザーのボタン"), FAB_SHADOW_OVERFLOW_PX)] : [];
+  const avoid = (await chatButton.count()) > 0 ? [expandRect(await boxOf(chatButton, "AI アドバイザーのボタン"), FAB_EDGE_ALLOWANCE_PX)] : [];
   const clip = zoomClip({ targets: targetBoxes, avoid, aspect: zoom.width / zoom.height, marginPx: ZOOM_MARGIN_PX, viewport: SHOOT_VIEWPORT });
   fs.mkdirSync(RAW_DIR, { recursive: true });
   await page.screenshot({ path: path.join(RAW_DIR, `${name}.png`), clip, animations: "disabled", caret: "hide" });
@@ -122,6 +124,21 @@ async function scrollBoxToTop(box: Locator, gapPx: number): Promise<void> {
   await box.evaluate((element, gap) => {
     window.scrollTo({ top: element.getBoundingClientRect().top + window.scrollY - gap, behavior: "instant" });
   }, gapPx);
+}
+
+/** 新しい相談のシートの提案のボタン (src/components/AIChatBubble.tsx の提案の 4 つ。§7.1 の表 2) */
+const CHAT_SUGGESTIONS = ["献立を提案してほしい", "冷蔵庫の食材で作れるものは?", "今日の栄養バランスは?", "来週の献立を作りたい"] as const;
+
+/** 要素を含むスクロールの箱 (中身が箱より高く、縦に送れるもの) を、いちばん上まで送る (スクロールの位置を選ぶだけ) */
+async function scrollContainerToTop(element: Locator): Promise<void> {
+  await element.evaluate((node) => {
+    let box = node.parentElement;
+    while (box && !(box.scrollHeight > box.clientHeight && ["auto", "scroll"].includes(getComputedStyle(box).overflowY))) {
+      box = box.parentElement;
+    }
+    if (!box) throw new Error("スクロールの箱が見つからない");
+    box.scrollTo({ top: 0, behavior: "instant" });
+  });
 }
 
 /** 写ってはいけないものが画面の中に無いことを確かめる (要素が無いか、あっても画面の外) */
@@ -316,8 +333,15 @@ test.describe("紹介ページの画面", () => {
     await page.getByTestId(AI_CHAT_BUTTON_TEST_ID).click();
     await expect(page.getByRole("heading", { name: "AIアドバイザー" })).toBeVisible();
     await expect(page.getByText("いつでも相談できます")).toBeVisible();
-    await expect(page.getByText(/^こんにちは！/)).toBeVisible();
-    await expect(page.getByRole("button", { name: "献立を提案してほしい" })).toBeVisible();
+    const greeting = page.getByText(/^こんにちは！/);
+    await expect(greeting).toBeVisible();
+    // シートは開くと相談の欄の末尾 (あいさつ) まで送られ、上の提案のボタンの 1 つ目が隠れる。提案のボタン 4 つが見えるよう、欄の先頭へ送る
+    const suggestions = CHAT_SUGGESTIONS.map((name) => page.getByRole("button", { name }));
+    await scrollContainerToTop(suggestions[0]);
+    for (const suggestion of suggestions) {
+      await expect(suggestion).toBeInViewport({ ratio: 1 });
+    }
+    await expect(greeting).toBeInViewport();
     await expect(page.getByPlaceholder("メッセージを入力...")).toBeVisible();
     await expectNotOnScreen(page, "健康記録");
     await save(page, "chat");

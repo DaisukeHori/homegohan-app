@@ -10,16 +10,16 @@ import { LANDING_ZOOMS } from '@/components/marketing/landing-screens';
 import { rectContains, rectsOverlap, unionRect, zoomClip, type ClipRect } from '../scripts/guide-screenshots/zoom-clip';
 import { SHOOT_VIEWPORT } from '../scripts/guide-screenshots/guide-users';
 
-/** 撮影の画面の右下の AI アドバイザーのボタン (right 16・bottom 96・56 px 角。src/components/AIChatBubble.tsx の既定の位置) と、影の 2 px */
+/** 撮影の画面の右下の AI アドバイザーのボタン (right 16・bottom 96・56 px 角。src/components/AIChatBubble.tsx の既定の位置) と、縁のなめらかにする画素の 0.5 px (shoot.pw.ts の FAB_EDGE_ALLOWANCE_PX) */
 const FAB_SIZE = 56;
 const FAB_RIGHT = 16;
 const FAB_BOTTOM = 96;
-const FAB_SHADOW = 2;
+const FAB_EDGE = 0.5;
 const FAB: ClipRect = {
-  x: SHOOT_VIEWPORT.width - FAB_RIGHT - FAB_SIZE - FAB_SHADOW,
-  y: SHOOT_VIEWPORT.height - FAB_BOTTOM - FAB_SIZE - FAB_SHADOW,
-  width: FAB_SIZE + FAB_SHADOW * 2,
-  height: FAB_SIZE + FAB_SHADOW * 2,
+  x: SHOOT_VIEWPORT.width - FAB_RIGHT - FAB_SIZE - FAB_EDGE,
+  y: SHOOT_VIEWPORT.height - FAB_BOTTOM - FAB_SIZE - FAB_EDGE,
+  width: FAB_SIZE + FAB_EDGE * 2,
+  height: FAB_SIZE + FAB_EDGE * 2,
 };
 const MARGIN = 6;
 const EPSILON = 1e-9;
@@ -45,13 +45,13 @@ describe('#1867 段 0 拡大の画像を切り出す範囲 (zoomClip)', () => {
     expect(clip.x).toBeCloseTo(union.x - MARGIN, 9);
   });
 
-  it('章 menu の形 (朝食の箱の下の端のすぐ下にボタン): 箱を含み、縦横比 6:5、下の端はボタンの影の上で止まり、上へ寄せる', () => {
+  it('章 menu の形 (朝食の箱の下の端のすぐ下にボタン): 箱を含み、縦横比 6:5、下の端はボタン (縁を含む) の上で止まり、上へ寄せる', () => {
     const breakfast: ClipRect = { x: 12, y: 318, width: 367, height: 307 };
     const clip = zoomClip({ targets: [breakfast], avoid: [FAB], aspect: aspectOf('zoom-menu'), marginPx: MARGIN, viewport: SHOOT_VIEWPORT });
     expect(rectContains(clip, breakfast)).toBe(true);
     expect(rectsOverlap(clip, FAB)).toBe(false);
     expect(clip.width / clip.height).toBeCloseTo(6 / 5, 9);
-    // 真ん中に置くとボタンに当たるので、下の端はボタン (影を含む) の上の端に合わせる
+    // 真ん中に置くとボタンに当たるので、下の端はボタン (縁を含む) の上の端に合わせる
     const centredBottom = breakfast.y + breakfast.height / 2 + clip.height / 2;
     expect(centredBottom).toBeGreaterThan(FAB.y);
     expect(clip.y + clip.height).toBeCloseTo(FAB.y, 9);
@@ -77,7 +77,7 @@ describe('#1867 段 0 拡大の画像を切り出す範囲 (zoomClip)', () => {
   });
 
   it('ボタンを避けると箱が切れるとき・範囲が画面より大きいとき・縦横比が正でないときは例外', () => {
-    // 箱の下の端がボタンの影より下 (ボタンを避けると箱が切れる)
+    // 箱の下の端がボタンより下 (ボタンを避けると箱が切れる)
     const overlapping: ClipRect = { x: 12, y: 330, width: 367, height: 307 };
     expect(() => zoomClip({ targets: [overlapping], avoid: [FAB], aspect: 6 / 5, marginPx: MARGIN, viewport: SHOOT_VIEWPORT })).toThrow(/写してはいけないもの/);
     const huge: ClipRect = { x: 0, y: 0, width: 390, height: 700 };
