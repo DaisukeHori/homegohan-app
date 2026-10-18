@@ -2,7 +2,7 @@
  * #1867 「計画上手」(planner) を、AI の週の献立の生成が成功したときにも付ける (実 DB の結合テスト)。
  * オーナーの選択 (2026-10-18 17 時台、選択式): 「取れる条件を足す」— AI で週の献立を初めて作ったときにも付くようにし、説明もそれに合わせる。
  *
- * 週の献立の生成 (POST /api/ai/menu/weekly/request) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
+ * 週の献立の生成 (1 週間分の生成: POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
  * Edge Function が献立を保存し終えると行は completed になる (1 食も保存できなかった・中止・止まったときは failed)。
  * ここでは Edge Function は動かさず、その結果の行 (印あり / なし、completed / failed) を service role で作り、
  * route のハンドラーをそのまま呼ぶ (利用者のクライアントと service role のクライアントは実物。weekly-menu-status-pending-stale.test.ts と同じ形)。
@@ -10,11 +10,14 @@
  * 確かめること:
  *   W-1: 印のある completed の行を状態の確認 (GET /api/ai/menu/weekly/status) が読むと、本人に planner が 1 つ付く。
  *        もう一度読んでも 1 つのまま (獲得日時も変わらない)
- *   W-2: 印のある failed の行 (失敗・中止)・印の無い completed の行 (汎用の生成・1 食の生成など) では付かない
+ *   W-2: 印のある failed の行 (失敗・中止)・印の無い completed の行 (1 日・1 食の生成など) では付かない
  *   W-3: 使い方ガイドのお試しの献立の追加 (POST /api/menu-plans/add の sandbox) で付いたあとに、週の献立の生成が完了しても、
  *        planner は 1 つのまま (獲得日時はお試しのときのまま)
  *   W-4: 状態の確認を読まなかった人も、バッジの一覧 (GET /api/badges) を開くと、完了した週の献立の生成の行から planner が付く
  *        (印の絞り込み generated_data->>weeklyRequest = 'true' が実 DB の PostgREST で効く)。印の無い完了の行だけなら付かない
+ *   W-5: 利用者が実際に週の献立を作る経路 (Web の AI献立アシスタント・モバイルが呼ぶ POST /api/ai/menu/v4/generate) の route を
+ *        そのまま呼んで行を作る。対象の枠が 1 週間 (7 日) なら行に印が付き、完了すると planner が付く。1 日だけの生成の行には印が無く、
+ *        完了しても付かない (状態の確認でも、バッジの一覧でも)。Edge Function は呼ばない (呼ぶ関数を差し替え、完了は service role で書く)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/planner-badge-weekly-menu.test.ts
@@ -25,7 +28,11 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
 import { MOCK_MENU_RESPONSE } from '@homegohan/handson-tour-shared';
-import { weeklyMenuRequestWeeklyOriginData } from '../../../src/lib/ai/weekly-menu-request-origin';
+import {
+  WEEKLY_MENU_GENERATION_MIN_DAYS,
+  weeklyMenuRequestWeeklyOriginData,
+} from '../../../src/lib/ai/weekly-menu-request-origin';
+import { addDaysToDate } from '../../../src/lib/date-utils';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
@@ -55,7 +62,40 @@ vi.mock('@/lib/supabase/server', () => ({
   getSupabaseAdmin: () => srAdmin,
 }));
 
+// W-5 で POST /api/ai/menu/v4/generate をそのまま呼ぶための差し替え (DB 以外の外の世界だけ):
+//   - 同意の判定は「同意済み」(同意が無いときの動きは tests/ai-consent-enforcement-routes.test.ts が見る)
+//   - レート制限・AI の利用回数の記録は通す (どちらも別のテストが見る)
+//   - エンジンは v4 (menu_generation_v5_direct は OFF) で、Edge Function は呼ばない (生成の完了は下で service role が書く)
+vi.mock('@/lib/ai/consent-guard', () => import('../../helpers/ai-consent-guard-allowed'));
+vi.mock('@/lib/rate-limit', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/rate-limit')>()),
+  checkRateLimit: vi.fn(async () => ({ success: true })),
+}));
+vi.mock('@/lib/plan/entitlements', async (importOriginal) => {
+  const { AI_USAGE_ALLOWED } = await import('../../helpers/ai-usage-mock');
+  return {
+    ...(await importOriginal<typeof import('@/lib/plan/entitlements')>()),
+    consumeAiUsage: vi.fn(async () => AI_USAGE_ALLOWED),
+    refundAiUsage: vi.fn(async () => undefined),
+  };
+});
+vi.mock('@/lib/feature-flags', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/feature-flags')>();
+  return {
+    ...actual,
+    isFeatureEnabled: vi.fn(async (...args: Parameters<typeof actual.isFeatureEnabled>) =>
+      args[0] === 'menu_generation_v5_direct' ? false : actual.isFeatureEnabled(...args),
+    ),
+  };
+});
+vi.mock('@/lib/generate-menu-v4-retry', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/generate-menu-v4-retry')>()),
+  callGenerateMenuV4WithRetry: vi.fn(async () => ({ ok: true, attempts: 1, response: new Response() })),
+}));
+vi.mock('@vercel/functions', () => ({ waitUntil: vi.fn() }));
+
 const { GET: getStatus } = await import('../../../src/app/api/ai/menu/weekly/status/route');
+const { POST: postV4Generate } = await import('../../../src/app/api/ai/menu/v4/generate/route');
 const { GET: getBadges } = await import('../../../src/app/api/badges/route');
 const { POST: postMenuAdd } = await import('../../../src/app/api/menu-plans/add/route');
 
@@ -237,5 +277,59 @@ describe('#1867 planner: AI の週の献立の生成でも付く (実 DB)', () =
     const againBody = (await again.json()) as { newEarnedBadgeCodes: string[] };
     expect(againBody.newEarnedBadgeCodes).not.toContain('planner');
     expect(await plannerRows(user.id)).toHaveLength(1);
+  });
+
+  /** POST /api/ai/menu/v4/generate の route をそのまま呼び、作った行の id を返す (対象は WEEK_START から days 日の朝昼夕) */
+  async function generateViaV4(days: number): Promise<string> {
+    const targetSlots: Array<{ date: string; mealType: string }> = [];
+    for (let i = 0; i < days; i++) {
+      for (const mealType of ['breakfast', 'lunch', 'dinner']) targetSlots.push({ date: addDaysToDate(WEEK_START, i), mealType });
+    }
+    const res = await postV4Generate(
+      new Request('http://localhost/api/ai/menu/v4/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ targetSlots, note: TEST_PROMPT }),
+      }),
+    );
+    const body = (await res.json()) as { requestId?: string };
+    expect(res.status).toBe(200);
+    expect(body.requestId).toEqual(expect.any(String));
+    return body.requestId as string;
+  }
+
+  /** Edge Function が献立を保存し終えたときと同じく、generated_data を広げて書き足し、行を completed にする */
+  async function completeLikeEdgeFunction(requestId: string): Promise<Record<string, unknown>> {
+    const { data: row, error } = await srAdmin.from('weekly_menu_requests').select('generated_data').eq('id', requestId).single();
+    if (error || !row) throw new Error(`weekly_menu_requests select: ${error?.message}`);
+    const generatedData = { ...((row.generated_data as Record<string, unknown> | null) ?? {}), version: 'v4' };
+    const { error: updateError } = await srAdmin
+      .from('weekly_menu_requests')
+      .update({ status: 'completed', generated_data: generatedData })
+      .eq('id', requestId);
+    if (updateError) throw new Error(`weekly_menu_requests update: ${updateError.message}`);
+    return generatedData;
+  }
+
+  it('W-5: v4/generate で 1 週間を作った行は印が付き、完了すると planner が付く。1 日だけの生成では付かない', async () => {
+    // 1 日だけの生成: 行に印が無く、完了しても状態の確認・バッジの一覧のどちらでも付かない
+    const dayUser = await createSignedInUser('w5-day');
+    const dayRequestId = await generateViaV4(1);
+    const dayData = await completeLikeEdgeFunction(dayRequestId);
+    expect(dayData).not.toHaveProperty('weeklyRequest');
+    expect((await runStatus(dayRequestId)).body.status).toBe('completed');
+    const dayBadges = (await (await getBadges(new Request('http://localhost/api/badges'))).json()) as {
+      badges: Array<{ code: string; earned: boolean }>;
+    };
+    expect(dayBadges.badges.find((badge) => badge.code === 'planner')?.earned).toBe(false);
+    expect(await plannerRows(dayUser.id)).toEqual([]);
+
+    // 1 週間の生成: 行に印が付き (Edge Function の書き足しでも消えない)、完了を状態の確認が読むと付く
+    const weekUser = await createSignedInUser('w5-week');
+    const weekRequestId = await generateViaV4(WEEKLY_MENU_GENERATION_MIN_DAYS);
+    const weekData = await completeLikeEdgeFunction(weekRequestId);
+    expect(weekData.weeklyRequest).toBe(true);
+    expect((await runStatus(weekRequestId)).body.status).toBe('completed');
+    expect(await plannerRows(weekUser.id)).toHaveLength(1);
   });
 });

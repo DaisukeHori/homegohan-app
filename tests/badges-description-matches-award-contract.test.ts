@@ -23,7 +23,11 @@
  *      - POST /api/menu-plans/add の awardBadge (呼ぶのは使い方ガイドのお試しの献立の追加だけ)
  *      - GET /api/ai/menu/weekly/status の awardBadge (週の献立の生成の行 (印あり) の完了を読んだとき)
  *      - GET /api/badges の判定 (完了した週の献立の生成の行があるとき)
- *      週の献立の生成の行の印を書くのは POST /api/ai/menu/weekly/request だけ
+ *      週の献立の生成の行の印を書くのは、利用者が AI で週の献立を作る経路 (行を作るとき) だけ:
+ *        - POST /api/ai/menu/weekly/request (いつも 7 日分): いつも書く
+ *        - POST /api/ai/menu/v4/generate・/v5/generate (Web の AI献立アシスタント・AI のチャット・モバイルの主経路):
+ *          対象の枠が 1 週間を覆うときだけ書く
+ *        - AI 相談のアクションの 1 週間分の生成 (generate_week_menu): 書く (1 日分・1 食には書かない)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -49,6 +53,11 @@ const WEEKLY_STATUS_ROUTE = 'src/app/api/ai/menu/weekly/status/route.ts';
 const WEEKLY_REQUEST_ROUTE = 'src/app/api/ai/menu/weekly/request/route.ts';
 /** 週の献立の生成の行の印 (#1867) */
 const WEEKLY_ORIGIN_LIB = 'src/lib/ai/weekly-menu-request-origin.ts';
+/** 枠を対象にする献立の生成 (Web の AI献立アシスタント・AI のチャット・モバイルが使う。1 週間を覆うときに印を書く。#1867) */
+const V4_GENERATE_ROUTE = 'src/app/api/ai/menu/v4/generate/route.ts';
+const V5_GENERATE_ROUTE = 'src/app/api/ai/menu/v5/generate/route.ts';
+/** AI 相談のアクション (1 週間分の生成 generate_week_menu で印を書く。#1867) */
+const CONSULTATION_EXECUTOR = 'src/lib/ai/consultation-action-executor.ts';
 /** POST /api/menu-plans/add を呼ぶ文字列 (引用符か `${...}` の直後に来るパス) */
 const MENU_PLANS_ADD_CALL = /[`'"}]\/api\/menu-plans\/add(?![\w-])/;
 
@@ -234,11 +243,26 @@ describe('#1867 planner の説明の migration (20261018050000): AI の週の献
       expect(readRepoFile(file), `${file} がお試しの経路でない`).toMatch(/source=handson_tour|sandbox: true/);
     }
 
-    // 週の献立の生成の行の印を書くのは POST /api/ai/menu/weekly/request だけ (印の定義のファイルを除く)
-    const originWriters = [...sourceFiles('src'), ...sourceFiles('supabase/functions')]
-      .filter((file) => file !== WEEKLY_ORIGIN_LIB && readRepoFile(file).includes('weeklyMenuRequestWeeklyOriginData('))
-      .sort();
-    expect(originWriters).toEqual([WEEKLY_REQUEST_ROUTE]);
+    // 週の献立の生成の行の印を書くのは、利用者が AI で週の献立を作る経路だけ (印の定義のファイルを除く):
+    //   - いつも書く (weeklyMenuRequestWeeklyOriginData): いつも 7 日分を作る POST /api/ai/menu/weekly/request だけ
+    //   - 対象の枠が 1 週間を覆うときだけ書く (weeklyMenuRequestWeeklyOriginDataForDates): v4/generate・v5/generate・AI 相談のアクション
+    const writersOf = (call: RegExp) =>
+      [...sourceFiles('src'), ...sourceFiles('supabase/functions')]
+        .filter((file) => file !== WEEKLY_ORIGIN_LIB && call.test(readRepoFile(file)))
+        .sort();
+    expect(writersOf(/\bweeklyMenuRequestWeeklyOriginData\(/)).toEqual([WEEKLY_REQUEST_ROUTE]);
+    expect(writersOf(/\bweeklyMenuRequestWeeklyOriginDataForDates\(/)).toEqual(
+      [V4_GENERATE_ROUTE, V5_GENERATE_ROUTE, CONSULTATION_EXECUTOR].sort(),
+    );
+
+    // AI 相談のアクションで印を書くのは 1 週間分の生成 (generate_week_menu) の中の 1 か所だけ (1 日分・1 食には書かない)
+    const executorSource = readRepoFile(CONSULTATION_EXECUTOR);
+    expect(executorSource.match(/weeklyMenuRequestWeeklyOriginDataForDates\(/g) ?? []).toHaveLength(1);
+    const weekCase = executorSource.slice(
+      executorSource.indexOf("case 'generate_week_menu'"),
+      executorSource.indexOf("case 'generate_single_meal'"),
+    );
+    expect(weekCase).toMatch(/weeklyMenuRequestWeeklyOriginDataForDates\(/);
   });
 
   it('planner のいまの説明は、AI で 1 週間の献立をはじめて作ったことと、使い方ガイドのお試しの両方を言う', () => {

@@ -44,7 +44,8 @@ describe('weeklyMenuRequestUltimateModeData', () => {
 describe('行を作るところは、究極モードかを generated_data に書く (#1582)', () => {
   it('v4 の生成の route は、行を作るときに判定した ultimateMode を generated_data に書く', () => {
     const src = read('src/app/api/ai/menu/v4/generate/route.ts');
-    expect(src).toMatch(/generated_data:\s*weeklyMenuRequestUltimateModeData\(ultimateMode\)/);
+    // #1867: 1 週間の生成なら週の献立の生成の印も一緒に広げて書くので、{ ...weeklyMenuRequestUltimateModeData(ultimateMode), ... } の形
+    expect(src).toMatch(/generated_data:\s*\{\s*\.\.\.weeklyMenuRequestUltimateModeData\(ultimateMode\),/);
   });
 
   it('AI 相談のアクションは、行を作る 3 か所 (1 日分・1 週間分・1 食) すべてで generated_data に書く', () => {
@@ -52,7 +53,8 @@ describe('行を作るところは、究極モードかを generated_data に書
     const inserts = src.match(/\.from\('weekly_menu_requests'\)\s*\.insert\(\{[\s\S]*?\}\)\s*\.select/g) ?? [];
     expect(inserts).toHaveLength(3);
     for (const insert of inserts) {
-      expect(insert).toMatch(/generated_data:\s*weeklyMenuRequestUltimateModeData\(ultimate\)/);
+      // #1867: 1 週間分の生成は週の献立の生成の印も一緒に広げて書くので、{ ...weeklyMenuRequestUltimateModeData(ultimate), ... } の形もある
+      expect(insert).toMatch(/generated_data:\s*(?:weeklyMenuRequestUltimateModeData\(ultimate\)|\{\s*\.\.\.weeklyMenuRequestUltimateModeData\(ultimate\),)/);
     }
   });
 

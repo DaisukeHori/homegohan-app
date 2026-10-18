@@ -23,7 +23,8 @@ export const AWARDABLE_BADGE_CODES = [
   'streak_7',
 
   // POST /api/menu-plans/add が、献立を追加したとき (使い方ガイドのお試し) に awardBadge で付与する。
-  // AI の週の献立の生成 (POST /api/ai/menu/weekly/request) が完了したときも付ける (#1867): 状態の確認
+  // AI の週の献立の生成 (1 週間分の生成: POST /api/ai/menu/v4/generate・/v5/generate で対象が 1 週間を覆うとき・
+  // AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request) が完了したときも付ける (#1867): 状態の確認
   // (GET /api/ai/menu/weekly/status) が完了を読んだときに awardBadge で、読まなかった人は GET /api/badges の判定で
   // (週の献立の生成の行は generated_data の印で見分ける。src/lib/ai/weekly-menu-request-origin.ts)
   'planner',

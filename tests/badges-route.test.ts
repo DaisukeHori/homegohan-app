@@ -102,7 +102,7 @@ interface SetupOptions {
    * 実 DB と同じく、クエリが user_id・status = completed・印で絞っていなければ、otherWeeklyMenuRequests の行も数えられる。省略時は 0
    */
   completedWeeklyMenuRequests?: number;
-  /** 印の無い行 (汎用の生成・1 食の生成・お試しの献立の追加) や、完了していない行の数。絞り込みが欠けたときだけ数えられる。省略時は 0 */
+  /** 印の無い行 (1 日・1 食の生成・献立の改善・お試しの献立の追加) や、完了していない行の数。絞り込みが欠けたときだけ数えられる。省略時は 0 */
   otherWeeklyMenuRequests?: number;
   /** 比較ランキングのバッジを取った期間の、バッジごとのまとめ (関数 get_my_badge_period_award_summaries の行。#1528)。省略時は空 */
   periodAwards?: PeriodAwardSummaryRow[];
@@ -1072,7 +1072,7 @@ describe('GET /api/badges (#1867 planner: AI の週の献立の生成が完了�
       cookCount: 0,
       completedDays: [],
       completedWeeklyMenuRequests: 0,
-      // 汎用の生成・1 食の生成・お試しの献立の追加の完了の行や、失敗・生成中の週の献立の生成の行
+      // 1 日・1 食の生成・献立の改善・お試しの献立の追加の完了の行や、失敗・生成中の週の献立の生成の行
       otherWeeklyMenuRequests: 3,
     });
 
