@@ -26,7 +26,7 @@
 |------|------|---------|
 | Lighthouse Performance Score | ≥ 90 | Lighthouse CI (CI 必須) |
 | LCP (Largest Contentful Paint) | < 2.5s (75 パーセンタイル) | Vercel Analytics + Web Vitals |
-| FID (First Input Delay) | < 100ms | 同上 |
+| INP (Interaction to Next Paint) | ≤ 200ms (75 パーセンタイル。2024-03-12 に FID から置き換わった Core Web Vitals の指標) | 同上 |
 | CLS (Cumulative Layout Shift) | < 0.1 | 同上 |
 | API レスポンスタイム p95 | < 500ms | Vercel Speed Insights |
 | API レスポンスタイム p99 | < 1500ms | 同上 |
