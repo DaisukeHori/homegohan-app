@@ -84,6 +84,12 @@ const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
   { file: 'src/app/faq/page.tsx', Page: FaqPage },
 ];
 
+/**
+ * ソースを走査するファイル = 公開ページ全部 + 描画はしないファイル。#1867 段 0: ログイン・新規登録の画面の layout は children が要るので
+ * 描画の対象にしないが、根拠のない実績の表示が残っていた (10,000+ ユーザーが実践中) ので、ソースは公開ページと同じ FORBIDDEN で見る。
+ */
+const PUBLIC_SOURCE_FILES: string[] = [...PUBLIC_PAGES.map(({ file }) => file), 'src/app/(auth)/layout.tsx'];
+
 /** 公開ページに載せてはいけない文字列と、その理由 */
 const FORBIDDEN: { text: string; reason: string }[] = [
   // ダミーの事業者情報
@@ -99,6 +105,8 @@ const FORBIDDEN: { text: string; reason: string }[] = [
   { text: 'シードラウンド', reason: '架空の資金調達' },
   // 根拠のない利用者数・評価・実績
   { text: '10万人', reason: '根拠のない利用者数' },
+  { text: '10,000+', reason: '根拠のない利用者数 (ログイン画面に残っていた表示)' },
+  { text: 'ユーザーが実践中', reason: '根拠のない利用者数' },
   { text: 'App Store評価', reason: '根拠のない評価' },
   { text: '1,234,567', reason: '根拠のない分析件数' },
   { text: '98.7', reason: '根拠のない継続率' },
@@ -155,7 +163,7 @@ function findForbidden(content: string) {
 }
 
 describe('#1155 公開ページのソースに、架空・未確認の会社情報と実績、未確定の価格が無い', () => {
-  it.each(PUBLIC_PAGES.map(({ file }) => file))('%s', (file) => {
+  it.each(PUBLIC_SOURCE_FILES)('%s', (file) => {
     expect(findForbidden(readSource(file))).toEqual([]);
   });
 
@@ -165,6 +173,8 @@ describe('#1155 公開ページのソースに、架空・未確認の会社情�
       '山田 太郎',
       '神宮前1-2-3',
       '10万人',
+      '10,000+',
+      'ユーザーが実践中',
       'App Store評価',
       '1,234,567',
       'シリーズA',

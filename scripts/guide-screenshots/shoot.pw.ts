@@ -13,6 +13,7 @@ import * as path from "path";
 import { injectSession } from "../../tests/e2e/fixtures/fresh-user";
 import { guideImagePaths } from "../../src/app/guide/guide-content";
 import { DEMO_TODAY_WEIGHT_KG, GUIDE_USERS, type GuideUserKey } from "./guide-users";
+import { GUIDE_MEAL_ANALYSIS } from "./meal-analysis-mock";
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const RAW_DIR = path.resolve(ROOT, process.env.GUIDE_SHOTS_RAW_DIR ?? path.join(".guide-shots", "raw"));
@@ -23,26 +24,6 @@ const MEAL_PHOTO = path.join(ROOT, "public", "handson-tour", "sample-meal.webp")
 const SETTLE_MS = 1_200;
 /** 新しいバッジのお知らせは 5 秒で消えるので、出だしの動き (約 0.5 秒) だけ待って撮る */
 const BADGE_TOAST_SETTLE_MS = 700;
-
-/** 食事の写真の解析の結果 (テスト用の値。アプリの /api/ai/analyze-meal-photo の応答の形) */
-const MEAL_ANALYSIS = {
-  dishes: [
-    { name: "鶏の唐揚げ", role: "main", cal: 420, calories_kcal: 420 },
-    { name: "ごはん", role: "rice", cal: 250, calories_kcal: 250 },
-    { name: "キャベツの千切り", role: "side", cal: 20, calories_kcal: 20 },
-    { name: "味噌汁", role: "soup", cal: 50, calories_kcal: 50 },
-  ],
-  totalCalories: 740,
-  totalProtein: 31,
-  totalCarbs: 92,
-  totalFat: 27,
-  overallScore: 82,
-  vegScore: 45,
-  praiseComment: "主食・主菜・汁物がそろった定食ですね！キャベツの千切りが添えてあって、野菜もちゃんととれています。",
-  nutritionTip: "揚げ物の日は、次の食事で野菜のおかずを 1 品足すとバランスが整います。",
-  nutritionalAdvice: "",
-  catalogMatches: [],
-}
 
 /** 体重計の写真の読み取りの結果 (テスト用の値。/api/ai/analyze-weight-scale の応答の形) */
 const WEIGHT_SCALE_READING = { weight: DEMO_TODAY_WEIGHT_KG, bodyFat: 25.1, muscleMass: 43.8, confidence: 0.96 };
@@ -65,7 +46,7 @@ async function loginAs(page: Page, key: GuideUserKey): Promise<void> {
 }
 
 async function mockAi(page: Page): Promise<void> {
-  await page.route("**/api/ai/analyze-meal-photo", (route) => route.fulfill({ json: MEAL_ANALYSIS }));
+  await page.route("**/api/ai/analyze-meal-photo", (route) => route.fulfill({ json: GUIDE_MEAL_ANALYSIS }));
   await page.route("**/api/ai/analyze-weight-scale", (route) => route.fulfill({ json: WEIGHT_SCALE_READING }));
 }
 

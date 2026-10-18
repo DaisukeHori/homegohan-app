@@ -38,18 +38,6 @@ export default function AuthLayout({
               無理な制限ではなく、心地よいバランスを。
             </p>
           </div>
-
-          <div className="flex items-center gap-4 text-sm text-gray-400">
-            <div className="flex -space-x-3">
-              {[1,2,3].map(i => (
-                <div key={i} className="w-8 h-8 rounded-full border-2 border-[#2D2D2D] bg-gray-600 overflow-hidden relative">
-                   {/* プレースホルダーとしてアバター画像を想定 */}
-                   <div className="absolute inset-0 bg-gradient-to-br from-gray-500 to-gray-700" />
-                </div>
-              ))}
-            </div>
-            <p>10,000+ ユーザーが実践中</p>
-          </div>
         </div>
       </div>
 
