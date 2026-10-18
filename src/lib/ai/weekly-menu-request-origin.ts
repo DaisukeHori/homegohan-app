@@ -15,10 +15,13 @@
  *   - Edge Function (generate-menu-v4 / v5) は generated_data を広げて (...generatedData) 書き足すので、印は消えない
  *     (究極モードの印 generated_data.ultimateMode と同じ。src/lib/ai/weekly-menu-request-ultimate.ts)
  *   - 利用者 (authenticated) は weekly_menu_requests に書けない (#1465) ので、印を自分で付けて planner を取ることはできない
- * 読むのは次の 2 つ。
- *   - GET /api/ai/menu/weekly/status: 本人が状態を確かめたとき、完了 (completed) の行に印があれば planner を付ける
- *   - GET /api/badges: planner が未獲得なら、完了 (completed) で印のある本人の行があるかを見て付ける
- *     (生成の途中で画面を離れた人や、状態の確認を使わない画面 (モバイルの生成は行の変化を購読して完了を知る) の人のため)
+ * 印を見て planner を付けるのは次の 3 つ。
+ *   - DB のトリガー weekly_menu_requests_award_planner (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql):
+ *     行が completed になった時点で、印があれば行の持ち主に付ける。これが付与の本体。書き手 (Edge Function など) を見分けず、
+ *     画面が完了をどう知るか (Web の週間献立の画面は行の変化 (Realtime) で知り、状態の確認のポーリングは代替。モバイルは Realtime と
+ *     行の直接の読み取りで知り、状態の確認を呼ばない。モバイルにはバッジの一覧の画面も無い) にも依らずに付く
+ *   - GET /api/ai/menu/weekly/status: 本人が状態を確かめたとき、完了 (completed) の行に印があれば付ける (トリガーが付け損ねたときの保険)
+ *   - GET /api/badges: planner が未獲得なら、完了 (completed) で印のある本人の行があるかを見て付ける (同じく保険)
  * 印は、この変更より後に作った行にだけある。前に作った行には無いので、付与の対象にしない。
  */
 

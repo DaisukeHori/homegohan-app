@@ -2,8 +2,9 @@
  * #1867 週の献立の生成 (1 週間分の生成: POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成) の行の印 (src/lib/ai/weekly-menu-request-origin.ts)
  *
  * 印を書くのは 1 週間分の生成だけ (枠を対象にする生成は、異なる日付が WEEKLY_MENU_GENERATION_MIN_DAYS 日以上のとき)。
- * 印は 3 か所で同じキーを使う (書く: 行を作るときの generated_data / 読む: 状態の確認の列の指定 / 絞る: バッジの一覧の絞り込み)。
- * 列の指定と絞り込みは型つきのクライアントが読めるよう文字列の直書きなので、キーが食い違うと、印のある行を読めず planner が付かない。
+ * 印は 4 か所で同じキーを使う (書く: 行を作るときの generated_data / 付ける: 完了で付ける DB のトリガー (付与の本体。突き合わせは
+ * tests/planner-badge-weekly-menu-trigger-migration-contract.test.ts) / 読む: 状態の確認の列の指定 (保険) / 絞る: バッジの一覧の絞り込み (保険))。
+ * 列の指定と絞り込みは型つきのクライアントが読めるよう文字列の直書きなので、キーが食い違うと、印のある行を読めず保険の経路で planner が付かない。
  */
 import { describe, expect, it } from 'vitest';
 import { addDaysToDate } from '@/lib/date-utils';

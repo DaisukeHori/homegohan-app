@@ -10,7 +10,7 @@
  * - Edge Function が成功した場合はロールバックを実行しないこと
  *
  * #1867: 行を作るとき、generated_data に週の献立の生成の印 (weeklyRequest: true) を書くこと
- * (完了したとき、状態の確認とバッジの一覧がこの印を見て planner を付ける)
+ * (行が completed になった時点で DB のトリガーがこの印を見て planner を付ける。保険として状態の確認とバッジの一覧も)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';

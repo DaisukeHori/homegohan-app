@@ -3,7 +3,7 @@
  * #1867 「計画上手」(planner) は、AI で週の献立を初めて作ったときにも付く。利用者が実際に週の献立を作る経路
  * (Web の「AI献立アシスタント」(V4GenerateModal)・AI のチャット・モバイル) は POST /api/ai/menu/v4/generate (と v5/generate) なので、
  * この 2 つも、生成の対象の枠が 1 週間 (異なる日付が WEEKLY_MENU_GENERATION_MIN_DAYS 日以上) を覆うときは、
- * 行を作るときに generated_data へ週の献立の生成の印 (weeklyRequest: true) を書く。完了したら状態の確認・バッジの一覧がこの印で付ける。
+ * 行を作るときに generated_data へ週の献立の生成の印 (weeklyRequest: true) を書く。完了したら DB のトリガー (保険として状態の確認・バッジの一覧も) がこの印で付ける。
  *
  * 確かめること:
  *   - 7 日 × 3 食・7 日の夕食だけ: 印を書く (究極モードの印 ultimateMode はそのまま残る)

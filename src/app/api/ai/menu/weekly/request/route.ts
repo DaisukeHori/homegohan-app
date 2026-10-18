@@ -238,8 +238,9 @@ export async function POST(request: Request) {
         prompt: noteForAi || '',
         constraints,
         // #1042: 生成失敗時に削除済み献立を復元するためのスナップショット（監査用途も兼ねる）
-        // #1867: 週の献立の生成で作った行の印 (weeklyRequest: true)。生成が完了 (completed) したとき、
-        // 状態の確認 (GET /api/ai/menu/weekly/status) とバッジの一覧 (GET /api/badges) がこの印を見て planner を付ける
+        // #1867: 週の献立の生成で作った行の印 (weeklyRequest: true)。行が completed になった時点で DB のトリガー
+        // (weekly_menu_requests_award_planner) がこの印を見て planner を付ける (保険として状態の確認 GET /api/ai/menu/weekly/status と
+        // バッジの一覧 GET /api/badges も。src/lib/ai/weekly-menu-request-origin.ts)
         generated_data: {
           ...weeklyMenuRequestWeeklyOriginData(),
           ...(deletedMealsSnapshot.length > 0 ? { snapshot: deletedMealsSnapshot } : {}),

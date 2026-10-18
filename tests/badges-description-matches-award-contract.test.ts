@@ -19,10 +19,12 @@
  * #1867 の続き (オーナーの選択 2026-10-18 17 時台「取れる条件を足す」): planner は AI の週の献立の生成でも付くようにし、
  * migration 20261018050000_planner_badge_description_weekly_menu.sql で planner の説明だけをもう一度書き換えた。
  *   4. 20261018050000 は planner の description だけを書き換え、rollback は 20261018040000 の文に戻す
- *   5. planner のいまの説明 (後の migration の文) が、付ける処理の条件と合う。付ける処理は次の 3 つだけ:
+ *   5. planner のいまの説明 (後の migration の文) が、付ける処理の条件と合う。付ける処理は次の 4 つだけ:
  *      - POST /api/menu-plans/add の awardBadge (呼ぶのは使い方ガイドのお試しの献立の追加だけ)
- *      - GET /api/ai/menu/weekly/status の awardBadge (週の献立の生成の行 (印あり) の完了を読んだとき)
- *      - GET /api/badges の判定 (完了した週の献立の生成の行があるとき)
+ *      - DB のトリガー weekly_menu_requests_award_planner (migration 20261018060000。週の献立の生成の行 (印あり) が completed になった時点。
+ *        付与の本体。トリガーの中身の検査は tests/planner-badge-weekly-menu-trigger-migration-contract.test.ts)
+ *      - 保険: GET /api/ai/menu/weekly/status の awardBadge (週の献立の生成の行 (印あり) の完了を読んだとき)
+ *      - 保険: GET /api/badges の判定 (完了した週の献立の生成の行があるとき)
  *      週の献立の生成の行の印を書くのは、利用者が AI で週の献立を作る経路 (行を作るとき) だけ:
  *        - POST /api/ai/menu/weekly/request (いつも 7 日分): いつも書く
  *        - POST /api/ai/menu/v4/generate・/v5/generate (Web の AI献立アシスタント・AI のチャット・モバイルの主経路):
@@ -36,6 +38,7 @@ import { AWARDABLE_BADGE_CODES } from '@/lib/badges/awardable';
 import {
   BADGE_DESCRIPTION_MIGRATION,
   BADGE_DESCRIPTION_ROLLBACK,
+  BADGE_ORIGINAL_MIGRATION,
   PLANNER_DESCRIPTION_MIGRATION,
   PLANNER_DESCRIPTION_ROLLBACK,
   REPO_ROOT,
@@ -47,7 +50,7 @@ import {
 
 const BADGES_ROUTE = 'src/app/api/badges/route.ts';
 const MENU_PLANS_ADD_ROUTE = 'src/app/api/menu-plans/add/route.ts';
-/** 週の献立の生成の状態の確認 (完了を読んだとき planner を付ける。#1867) */
+/** 週の献立の生成の状態の確認 (完了を読んだとき planner を付ける保険の経路。付与の本体は DB のトリガー。#1867) */
 const WEEKLY_STATUS_ROUTE = 'src/app/api/ai/menu/weekly/status/route.ts';
 /** 週の献立の生成 (行を作るときに印を書く。#1867) */
 const WEEKLY_REQUEST_ROUTE = 'src/app/api/ai/menu/weekly/request/route.ts';
@@ -58,6 +61,10 @@ const V4_GENERATE_ROUTE = 'src/app/api/ai/menu/v4/generate/route.ts';
 const V5_GENERATE_ROUTE = 'src/app/api/ai/menu/v5/generate/route.ts';
 /** AI 相談のアクション (1 週間分の生成 generate_week_menu で印を書く。#1867) */
 const CONSULTATION_EXECUTOR = 'src/lib/ai/consultation-action-executor.ts';
+/** 週の献立の生成の行が completed になった時点で planner を付けるトリガーの migration (#1867。付与の本体) */
+const PLANNER_TRIGGER_MIGRATION = 'supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql';
+/** user_badges へ行を足す SQL (migration の中の付与の経路を拾う) */
+const USER_BADGES_INSERT_SQL = /INSERT\s+INTO\s+(?:"?public"?\.)?"?user_badges"?/i;
 /** POST /api/menu-plans/add を呼ぶ文字列 (引用符か `${...}` の直後に来るパス) */
 const MENU_PLANS_ADD_CALL = /[`'"}]\/api\/menu-plans\/add(?![\w-])/;
 
@@ -215,7 +222,19 @@ describe('#1867 planner の説明の migration (20261018050000): AI の週の献
     }
   });
 
-  it('planner を付ける処理は、お試しの献立の追加・週の献立の生成の完了の状態の確認・バッジの一覧の判定の 3 つだけ', () => {
+  it('planner を付ける処理は、お試しの献立の追加・週の献立の生成の完了のトリガー・(保険の) 状態の確認とバッジの一覧の判定の 4 つだけ', () => {
+    // migration の中で user_badges に行を足すのは、元の migration (complete_handson_tour の tutorial_complete) と、
+    // 週の献立の生成の完了で planner を付けるトリガーの migration だけ (新しく SQL の付与の経路を足したら、説明と条件を突き合わせてからここに足す)
+    const migrationsDir = path.join(REPO_ROOT, 'supabase/migrations');
+    const sqlAwarders = fs
+      .readdirSync(migrationsDir)
+      .filter((name) => name.endsWith('.sql'))
+      .map((name) => `supabase/migrations/${name}`)
+      .filter((file) => USER_BADGES_INSERT_SQL.test(readRepoFile(file)))
+      .sort();
+    expect(sqlAwarders).toEqual([BADGE_ORIGINAL_MIGRATION, PLANNER_TRIGGER_MIGRATION].sort());
+    expect(readRepoFile(PLANNER_TRIGGER_MIGRATION)).toMatch(/c_badge_code CONSTANT text := 'planner';/);
+
     // awardBadge(..., 'planner') を呼ぶソースは POST /api/menu-plans/add と GET /api/ai/menu/weekly/status だけ
     const plannerAwarders = sourceFiles('src')
       .filter((file) => /awardBadge\([^)]*'planner'\)/.test(readRepoFile(file)))

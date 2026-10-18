@@ -111,8 +111,9 @@ export async function GET(request: Request) {
     const cookCount = cookCountRes.count ?? 0;
 
     // #1867 planner (計画上手): AI の週の献立の生成 (1 週間分の生成) が完了 (completed) した本人の行があるか。
-    // Web の週間献立の画面では、状態の確認 (GET /api/ai/menu/weekly/status) が完了を読んだときに付く。生成の途中で画面を離れて
-    // 完了を読まなかった人と、状態の確認を使わない画面 (モバイルは行の変化を購読して完了を知る) の人の分を、ここで拾う。
+    // 付与の本体は、行が completed になった時点で付ける DB のトリガー weekly_menu_requests_award_planner
+    // (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。ここは、トリガーが付け損ねた
+    // (例外を WARNING にして献立の書き込みを優先した) ときの保険で、一覧を開いたときに拾う。
     // 週の献立の生成の行は generated_data の印 (weeklyRequest: true) で見分ける
     // (src/lib/ai/weekly-menu-request-origin.ts。印は利用者からは書けない)。読むのは planner が未獲得のときだけ。
     // 読めなかったときは 500 にせず、planner を判定しないまま一覧を返す (原因はログに残す。次に一覧を開いたときにまた確かめる)
@@ -162,7 +163,7 @@ export async function GET(request: Request) {
       else if (badge.code === 'streak_7' && streak >= 7) {
         earned = true;
       }
-      // 計画上手 (AI の週の献立の生成が完了した。#1867)
+      // 計画上手 (AI の週の献立の生成が完了した。#1867。付与の本体は DB のトリガーで、ここは保険)
       else if (badge.code === 'planner' && hasCompletedWeeklyMenuRequest) {
         earned = true;
       }

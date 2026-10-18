@@ -4,26 +4,39 @@
  *
  * 週の献立の生成 (1 週間分の生成: POST /api/ai/menu/weekly/request・v4/generate と v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成) は、行を作るときに generated_data へ印 (weeklyRequest: true) を書く。
  * Edge Function が献立を保存し終えると行は completed になる (1 食も保存できなかった・中止・止まったときは failed)。
- * ここでは Edge Function は動かさず、その結果の行 (印あり / なし、completed / failed) を service role で作り、
+ * 付与の本体は、行が completed になった時点で付ける DB のトリガー weekly_menu_requests_award_planner
+ * (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。状態の確認 (GET /api/ai/menu/weekly/status) と
+ * バッジの一覧 (GET /api/badges) の付与は、トリガーが付け損ねたときの保険。
+ * ここでは Edge Function は動かさず、その結果の行 (印あり / なし、completed / failed) を service role で作り (または更新し)、
  * route のハンドラーをそのまま呼ぶ (利用者のクライアントと service role のクライアントは実物。weekly-menu-status-pending-stale.test.ts と同じ形)。
+ * W-1〜W-4 は行を最初から completed で INSERT する (トリガーは UPDATE で動くので動かない = トリガーが付け損ねた行) ことで、保険の経路だけを確かめる。
  *
  * 確かめること:
- *   W-1: 印のある completed の行を状態の確認 (GET /api/ai/menu/weekly/status) が読むと、本人に planner が 1 つ付く。
+ *   W-1: (保険) 印のある completed の行を状態の確認 (GET /api/ai/menu/weekly/status) が読むと、本人に planner が 1 つ付く。
  *        もう一度読んでも 1 つのまま (獲得日時も変わらない)
  *   W-2: 印のある failed の行 (失敗・中止)・印の無い completed の行 (1 日・1 食の生成など) では付かない
  *   W-3: 使い方ガイドのお試しの献立の追加 (POST /api/menu-plans/add の sandbox) で付いたあとに、週の献立の生成が完了しても、
  *        planner は 1 つのまま (獲得日時はお試しのときのまま)
- *   W-4: 状態の確認を読まなかった人も、バッジの一覧 (GET /api/badges) を開くと、完了した週の献立の生成の行から planner が付く
+ *   W-4: (保険) 状態の確認を読まなかった人も、バッジの一覧 (GET /api/badges) を開くと、完了した週の献立の生成の行から planner が付く
  *        (印の絞り込み generated_data->>weeklyRequest = 'true' が実 DB の PostgREST で効く)。印の無い完了の行だけなら付かない
  *   W-5: 利用者が実際に週の献立を作る経路 (Web の AI献立アシスタント・モバイルが呼ぶ POST /api/ai/menu/v4/generate) の route を
- *        そのまま呼んで行を作る。対象の枠が 1 週間 (7 日) なら行に印が付き、完了すると planner が付く。1 日だけの生成の行には印が無く、
- *        完了しても付かない (状態の確認でも、バッジの一覧でも)。Edge Function は呼ばない (呼ぶ関数を差し替え、完了は service role で書く)
+ *        そのまま呼んで行を作る。対象の枠が 1 週間 (7 日) なら行に印が付き、完了を書いた時点で (状態の確認もバッジの一覧も読まずに)
+ *        トリガーが planner を付ける。1 日だけの生成の行には印が無く、完了しても付かない (トリガーでも、状態の確認でも、バッジの一覧でも)。
+ *        Edge Function は呼ばない (呼ぶ関数を差し替え、完了は service role で書く)
+ *   W-6: トリガー (付与の本体)。画面が完了を読まなくても (モバイルは状態の確認もバッジの一覧も読まない)、行が completed になった時点で付く:
+ *        - 印のある行が completed になると本人に 1 つ付く。completed のまま進み具合を書き直しても 1 つのまま (獲得日時も変わらない)
+ *        - 印のある行が failed になったとき・印の無い行 (1 日・1 食の生成) が completed になったときは付かない
+ *        - 最後の書き込みが generated_data を印の無いものに書き直しても、更新前の行に印があれば付く
+ *        - お試しの献立の追加で付いたあとに完了しても 1 つのまま (獲得日時はお試しのときのまま)
+ *        - rollback でトリガーを消すと付かなくなり、migration をもう一度流す (2 回流しても同じ) と付くようになる
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/planner-badge-weekly-menu.test.ts
  * 本番には接続しない。自分の行は prompt の目印 (TEST_PROMPT) とテストユーザーで識別し、終了時に消す。
  */
 import { randomBytes } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import ws from 'ws';
@@ -34,6 +47,13 @@ import {
 } from '../../../src/lib/ai/weekly-menu-request-origin';
 import { addDaysToDate } from '../../../src/lib/date-utils';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import {
+  DEFAULT_GATEWAY_RETRY_ATTEMPTS,
+  DEFAULT_GATEWAY_RETRY_BASE_DELAY_MS,
+  GATEWAY_TRANSIENT_STATUSES,
+  defaultGatewayRetrySleep,
+  gatewayRetryDelayMs,
+} from '../helpers/gateway-transient';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -185,15 +205,51 @@ async function plannerRows(userId: string): Promise<Array<{ obtained_at: string 
   return (data ?? []) as Array<{ obtained_at: string }>;
 }
 
+/** 週の献立の生成の完了で planner を付けるトリガーの migration と戻し口 (#1867。W-6 の rollback で流す) */
+const PLANNER_TRIGGER_MIGRATION_SQL = fs.readFileSync(
+  path.resolve(__dirname, '../../../supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql'),
+  'utf8',
+);
+const PLANNER_TRIGGER_ROLLBACK_SQL = fs.readFileSync(
+  path.resolve(__dirname, '../../../supabase/rollbacks/20261018060000_planner_badge_award_on_weekly_menu_completed.down.sql'),
+  'utf8',
+);
+
+/**
+ * SQL を、本番の migration と同じ postgres ロールで流す (ローカルスタックの postgres-meta /pg/query。service_role キーが必要。本番には接続しない)。
+ * 流す SQL (migration と rollback) は何度流しても同じ結果になるので、ゲートウェイの一時的な失敗 (502 / 503 / 504) のときだけやり直す
+ */
+async function asPostgres(sql: string): Promise<void> {
+  for (let attempt = 1; ; attempt++) {
+    const res = await fetch(`${url}/pg/query`, {
+      method: 'POST',
+      headers: { apikey: serviceKey, Authorization: `Bearer ${serviceKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: `SET LOCAL ROLE postgres;\n${sql}` }),
+    });
+    if (res.ok) return;
+    const body = await res.text();
+    if (!GATEWAY_TRANSIENT_STATUSES.includes(res.status) || attempt >= DEFAULT_GATEWAY_RETRY_ATTEMPTS) {
+      throw new Error(`pg/query ${res.status}: ${body}`);
+    }
+    await defaultGatewayRetrySleep(gatewayRetryDelayMs(DEFAULT_GATEWAY_RETRY_BASE_DELAY_MS, attempt));
+  }
+}
+
 afterAll(async () => {
-  await srAdmin.from('weekly_menu_requests').delete().eq('prompt', TEST_PROMPT);
-  if (createdUserIds.length === 0) return;
-  await srAdmin.from('weekly_menus').delete().in('user_id', createdUserIds);
-  await srAdmin.from('weekly_menu_requests').delete().in('user_id', createdUserIds);
-  await srAdmin.from('user_badges').delete().in('user_id', createdUserIds);
-  await srAdmin.from('app_logs').delete().in('user_id', createdUserIds);
-  for (const id of createdUserIds) {
-    await srAdmin.auth.admin.deleteUser(id);
+  try {
+    // W-6 の rollback が途中で止まっても、トリガーを戻しておく (流せなかったら afterAll を赤にする。片付けは下の finally で続ける)
+    await asPostgres(PLANNER_TRIGGER_MIGRATION_SQL);
+  } finally {
+    await srAdmin.from('weekly_menu_requests').delete().eq('prompt', TEST_PROMPT);
+    if (createdUserIds.length > 0) {
+      await srAdmin.from('weekly_menus').delete().in('user_id', createdUserIds);
+      await srAdmin.from('weekly_menu_requests').delete().in('user_id', createdUserIds);
+      await srAdmin.from('user_badges').delete().in('user_id', createdUserIds);
+      await srAdmin.from('app_logs').delete().in('user_id', createdUserIds);
+      for (const id of createdUserIds) {
+        await srAdmin.auth.admin.deleteUser(id);
+      }
+    }
   }
 }, 60_000);
 
@@ -329,7 +385,111 @@ describe('#1867 planner: AI の週の献立の生成でも付く (実 DB)', () =
     const weekRequestId = await generateViaV4(WEEKLY_MENU_GENERATION_MIN_DAYS);
     const weekData = await completeLikeEdgeFunction(weekRequestId);
     expect(weekData.weeklyRequest).toBe(true);
+    // 完了を書いた時点で (状態の確認もバッジの一覧も読む前に) トリガーが付けている
+    expect(await plannerRows(weekUser.id)).toHaveLength(1);
     expect((await runStatus(weekRequestId)).body.status).toBe('completed');
     expect(await plannerRows(weekUser.id)).toHaveLength(1);
+  });
+
+  describe('W-6: 行が completed になった時点で、DB のトリガーが付ける (画面が完了を読まなくても付く)', () => {
+    /** 生成の途中 (Edge Function が保存を終える前) の行を service role で作る */
+    async function insertProcessingRequest(userId: string, weeklyOrigin: boolean): Promise<string> {
+      const { data, error } = await srAdmin
+        .from('weekly_menu_requests')
+        .insert({
+          user_id: userId,
+          start_date: WEEK_START,
+          mode: 'v4',
+          prompt: TEST_PROMPT,
+          status: 'processing',
+          generated_data: weeklyOrigin ? { ...weeklyMenuRequestWeeklyOriginData(), version: 'v4' } : { version: 'v4' },
+        })
+        .select('id')
+        .single();
+      if (error || !data) throw new Error(`weekly_menu_requests insert: ${error?.message}`);
+      return data.id as string;
+    }
+
+    /** Edge Function などの書き手と同じく、service role で行を更新する (トリガーは書き手を見分けない) */
+    async function updateRequest(requestId: string, values: Record<string, unknown>): Promise<void> {
+      const { error } = await srAdmin.from('weekly_menu_requests').update(values).eq('id', requestId);
+      if (error) throw new Error(`weekly_menu_requests update: ${error.message}`);
+    }
+
+    it('印のある行が completed になると本人に 1 つ付き、completed のまま書き直しても 1 つのまま (獲得日時も変わらない)', async () => {
+      const user = await createSignedInUser('w6-complete');
+      const requestId = await insertProcessingRequest(user.id, true);
+      expect(await plannerRows(user.id)).toEqual([]);
+
+      await updateRequest(requestId, { status: 'completed' });
+      const afterComplete = await plannerRows(user.id);
+      expect(afterComplete).toHaveLength(1);
+
+      // completed のまま進み具合と status を書き直す (status が変わらないのでトリガーは動かない。動いても ON CONFLICT で 1 行のまま)
+      await updateRequest(requestId, { status: 'completed', progress: { currentStep: 1, totalSteps: 1, message: '完了' } });
+      const afterRewrite = await plannerRows(user.id);
+      expect(afterRewrite).toHaveLength(1);
+      expect(afterRewrite[0].obtained_at).toBe(afterComplete[0].obtained_at);
+    });
+
+    it('印のある行が failed になったとき・印の無い行が completed になったときは付かない', async () => {
+      const user = await createSignedInUser('w6-not');
+      const failed = await insertProcessingRequest(user.id, true);
+      const unmarked = await insertProcessingRequest(user.id, false);
+
+      await updateRequest(failed, { status: 'failed', error_message: '中止しました' });
+      await updateRequest(unmarked, { status: 'completed' });
+
+      expect(await plannerRows(user.id)).toEqual([]);
+    });
+
+    it('最後の書き込みが generated_data を印の無いものに書き直しても、更新前の行に印があれば付く', async () => {
+      const user = await createSignedInUser('w6-old-mark');
+      const requestId = await insertProcessingRequest(user.id, true);
+
+      await updateRequest(requestId, { status: 'completed', generated_data: { version: 'v4' } });
+
+      expect(await plannerRows(user.id)).toHaveLength(1);
+    });
+
+    it('お試しの献立の追加で付いたあとに完了しても 1 つのまま (獲得日時はお試しのときのまま)', async () => {
+      const user = await createSignedInUser('w6-tour');
+      const addRes = await postMenuAdd(
+        new Request('http://localhost/api/menu-plans/add?source=handson_tour', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...MOCK_MENU_RESPONSE, sandbox: true, source: 'handson_tour' }),
+        }),
+      );
+      expect(addRes.status).toBe(200);
+      const afterTour = await plannerRows(user.id);
+      expect(afterTour).toHaveLength(1);
+
+      const requestId = await insertProcessingRequest(user.id, true);
+      await updateRequest(requestId, { status: 'completed' });
+
+      const afterWeekly = await plannerRows(user.id);
+      expect(afterWeekly).toHaveLength(1);
+      expect(afterWeekly[0].obtained_at).toBe(afterTour[0].obtained_at);
+    });
+
+    it('rollback でトリガーを消すと付かなくなり、migration をもう一度流す (2 回流しても同じ) と付くようになる', async () => {
+      const rolledBackUser = await createSignedInUser('w6-rollback');
+      const rolledBackRequest = await insertProcessingRequest(rolledBackUser.id, true);
+      try {
+        await asPostgres(PLANNER_TRIGGER_ROLLBACK_SQL);
+        await updateRequest(rolledBackRequest, { status: 'completed' });
+        expect(await plannerRows(rolledBackUser.id)).toEqual([]);
+      } finally {
+        // 途中で失敗しても、DB を migration を当てた状態に戻す
+        await asPostgres(PLANNER_TRIGGER_MIGRATION_SQL);
+      }
+      await asPostgres(PLANNER_TRIGGER_MIGRATION_SQL);
+
+      const reappliedUser = await createSignedInUser('w6-reapplied');
+      const reappliedRequest = await insertProcessingRequest(reappliedUser.id, true);
+      await updateRequest(reappliedRequest, { status: 'completed' });
+      expect(await plannerRows(reappliedUser.id)).toHaveLength(1);
+    });
   });
 });

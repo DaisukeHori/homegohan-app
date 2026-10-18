@@ -10,8 +10,9 @@
 --   この変更で、AI の週の献立の生成 (1 週間分の生成) が成功して献立を保存した (行が completed になった) ときにも付ける。
 --   1 週間分の生成 = POST /api/ai/menu/v4/generate・/v5/generate (Web の AI献立アシスタント・モバイル) で対象の枠が 1 週間 (異なる日付が 7 日以上) を覆うとき・
 --   AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request。付く時点:
---     - 状態の確認 (GET /api/ai/menu/weekly/status) が、週の献立の生成の行 (generated_data の印 weeklyRequest: true) の完了を読んだとき
---     - バッジの一覧 (GET /api/badges) を開いたとき、planner が未獲得で、完了した週の献立の生成の行があれば
+--     - 週の献立の生成の行 (generated_data の印 weeklyRequest: true) が completed になった時点で、DB のトリガー
+--       weekly_menu_requests_award_planner が付ける (20261018060000_planner_badge_award_on_weekly_menu_completed.sql。付与の本体)
+--     - 保険: 状態の確認 (GET /api/ai/menu/weekly/status) が完了を読んだとき・バッジの一覧 (GET /api/badges) を開いたとき
 --   (印は src/lib/ai/weekly-menu-request-origin.ts。お試しの献立の追加での付与は今までどおり)
 --
 -- 変更:

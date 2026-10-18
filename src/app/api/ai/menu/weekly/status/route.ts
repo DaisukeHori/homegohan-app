@@ -108,13 +108,14 @@ export async function GET(request: Request) {
 
     // #1867 「計画上手」(planner) は、AI で週の献立を初めて作ったときにも付ける。
     // 週の献立の生成は Edge Function (generate-menu-v4 / v5) が裏で進め、献立を保存し終えると行を completed にする
-    // (1 食も保存できなかったとき・利用者が中止したとき・止まったときは failed)。Web の週間献立の画面はこの状態の確認で完了を知るので、
+    // (1 食も保存できなかったとき・利用者が中止したとき・止まったときは failed)。付与の本体は、行が completed になった時点で付ける
+    // DB のトリガー weekly_menu_requests_award_planner (supabase/migrations/20261018060000_planner_badge_award_on_weekly_menu_completed.sql)。
+    // 画面は完了を主に行の変化 (Realtime) で知り (モバイルはこの状態の確認を呼ばない)、ここは Web の代替の経路なので、ここでの付与はトリガーが付け損ねたときの保険:
     // 本人が完了 (completed) を読んだときに、週の献立の生成の行 (印あり) なら本人に付ける。印を書くのは 1 週間分の生成
-    // (POST /api/ai/menu/v4/generate・/v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request)。
-    // 状態の確認を使わない画面 (モバイルは行の変化を購読して完了を知る) の人は、GET /api/badges が拾う
+    // (POST /api/ai/menu/v4/generate・/v5/generate で対象が 1 週間を覆うとき・AI 相談の 1 週間分の生成・POST /api/ai/menu/weekly/request)
     //   - 付けるのは行の持ち主 (上の読み取りを user.id の行に絞っている) で、家族の人数分の献立でも依頼した本人だけ
-    //   - awardBadge は冪等 (付与済みなら何もしない)。完了の後のポーリングや、使い方ガイドのお試し (POST /api/menu-plans/add) で
-    //     付いていても、user_badges は 1 行のまま
+    //   - awardBadge は冪等 (付与済みなら何もしない)。トリガーや使い方ガイドのお試し (POST /api/menu-plans/add) で付いていても、
+    //     完了の後のポーリングが続いても、user_badges は 1 行のまま
     //   - 1 食・1 日・数日の生成、献立の改善の行 (印なし) では付けない
     //   - 付与は副次処理。失敗しても状態の確認の応答は変えない (awardBadge が構造化ログに残す。付け損ねた分は GET /api/badges が拾う)
     // user_badges には利用者の INSERT ポリシーが無いので、service role で付ける (POST /api/menu-plans/add と同じ)

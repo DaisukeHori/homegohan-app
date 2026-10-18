@@ -3,7 +3,7 @@
  * #1867 「計画上手」(planner) は、AI で週の献立を初めて作ったときにも付く。AI 相談のアクションの 1 週間分の生成
  * (generate_week_menu。src/lib/ai/consultation-action-executor.ts) も利用者が AI で週の献立を作る経路なので、
  * 生成のリクエストの行を作るときに generated_data へ週の献立の生成の印 (weeklyRequest: true) を書く
- * (完了したら、バッジの一覧 (GET /api/badges) などがこの印で planner を付ける)。
+ * (行が completed になった時点で DB のトリガー weekly_menu_requests_award_planner がこの印で planner を付ける)。
  * 1 日分 (generate_day_menu)・1 食 (generate_single_meal) の生成には書かない。
  * 実際に runConsultationAction を動かし、キューに書いた行の generated_data で確かめる。
  */
