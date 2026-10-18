@@ -8,6 +8,8 @@
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -20,21 +22,16 @@ import {
   toRouteLocation,
 } from '@/lib/navigation/hash-history-entry';
 
-// usePathname / useSearchParams は「いま画面に描かれているルート」、useRouter().replace は描き直しの呼び出しを控える
-const { navigation, routerReplace, router } = vi.hoisted(() => {
-  const replace = vi.fn();
-  return {
-    navigation: { pathname: '/' as string | null, search: '' },
-    routerReplace: replace,
-    // app router の router は描き直しのあいだ同じ参照 (effect を張り直さない)
-    router: { replace },
-  };
-});
+// usePathname / useSearchParams は「いま画面に描かれているルート」、reloadCurrentDocument は読み込み直しの呼び出しを控える
+const { navigation, reloadDocument } = vi.hoisted(() => ({
+  navigation: { pathname: '/' as string | null, search: '' },
+  reloadDocument: vi.fn(),
+}));
 vi.mock('next/navigation', () => ({
   usePathname: () => navigation.pathname,
   useSearchParams: () => new URLSearchParams(navigation.search),
-  useRouter: () => router,
 }));
+vi.mock('@/lib/navigation/reload-document', () => ({ reloadCurrentDocument: reloadDocument }));
 
 import { HashHistoryEntryBridge } from '@/components/navigation/HashHistoryEntryBridge';
 
@@ -116,7 +113,7 @@ describe('HashHistoryEntryBridge', () => {
     window.history.replaceState(APP_ROUTER_STATE, '', '/');
     navigation.pathname = '/';
     navigation.search = '';
-    routerReplace.mockReset();
+    reloadDocument.mockReset();
     replaceStateSpy = vi.spyOn(window.history, 'replaceState');
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -142,7 +139,7 @@ describe('HashHistoryEntryBridge', () => {
 
     expect(replaceStateSpy).toHaveBeenCalledTimes(1);
     expect(replaceStateSpy).toHaveBeenCalledWith(null, '', `${window.location.origin}/#how`);
-    expect(routerReplace).not.toHaveBeenCalled();
+    expect(reloadDocument).not.toHaveBeenCalled();
   });
 
   it('既に印のある項目 (next/link のハッシュの移動) には何もしない', async () => {
@@ -164,23 +161,23 @@ describe('HashHistoryEntryBridge', () => {
     expect(replaceStateSpy).not.toHaveBeenCalled();
   });
 
-  it('印の無い項目へ戻って画面 (/signup) と URL (/#how) がずれたら、その URL へ置き換えの遷移で描き直す', async () => {
+  it('印の無い項目へ戻って画面 (/signup) と URL (/#how) がずれたら、今の URL で読み込み直す', async () => {
     navigation.pathname = '/signup';
     window.history.replaceState(null, '', '/#how');
     await mount();
     window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
 
-    expect(routerReplace).toHaveBeenCalledTimes(1);
-    expect(routerReplace).toHaveBeenCalledWith('/#how');
+    expect(reloadDocument).toHaveBeenCalledTimes(1);
   });
 
-  it('検索の部分も描き直しの URL に残す', async () => {
-    navigation.pathname = '/signup';
-    window.history.replaceState(null, '', '/pricing?plan=family#main-content');
+  it('パスが同じでも検索の部分が違えば (画面 /pricing?plan=a・URL /pricing?plan=b) 読み込み直す', async () => {
+    navigation.pathname = '/pricing';
+    navigation.search = 'plan=a';
+    window.history.replaceState(null, '', '/pricing?plan=b#main-content');
     await mount();
     window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
 
-    expect(routerReplace).toHaveBeenCalledWith('/pricing?plan=family#main-content');
+    expect(reloadDocument).toHaveBeenCalledTimes(1);
   });
 
   it('同じ画面の中のハッシュの移動の popstate (state null) では描き直さない', async () => {
@@ -188,7 +185,7 @@ describe('HashHistoryEntryBridge', () => {
     window.history.pushState(null, '', '#faq');
     window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
 
-    expect(routerReplace).not.toHaveBeenCalled();
+    expect(reloadDocument).not.toHaveBeenCalled();
   });
 
   it('印つきの項目の popstate は app router に任せる (描き直さない)', async () => {
@@ -197,7 +194,7 @@ describe('HashHistoryEntryBridge', () => {
     await mount();
     window.dispatchEvent(new PopStateEvent('popstate', { state: APP_ROUTER_STATE }));
 
-    expect(routerReplace).not.toHaveBeenCalled();
+    expect(reloadDocument).not.toHaveBeenCalled();
   });
 
   it('外したあとはイベントに反応しない', async () => {
@@ -211,6 +208,14 @@ describe('HashHistoryEntryBridge', () => {
     window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
 
     expect(replaceStateSpy).not.toHaveBeenCalled();
-    expect(routerReplace).not.toHaveBeenCalled();
+    expect(reloadDocument).not.toHaveBeenCalled();
+  });
+});
+
+describe('置き場所 (src/app/layout.tsx)', () => {
+  it('ルートの layout が部品を 1 つだけ置く (全ページのハッシュの移動を受け持つ。スキップリンクの #main-content も含む)', () => {
+    const layout = fs.readFileSync(path.join(process.cwd(), 'src/app/layout.tsx'), 'utf8');
+    expect(layout).toContain("import { HashHistoryEntryBridge } from \"@/components/navigation/HashHistoryEntryBridge\";");
+    expect(layout.split('<HashHistoryEntryBridge />').length - 1).toBe(1);
   });
 });

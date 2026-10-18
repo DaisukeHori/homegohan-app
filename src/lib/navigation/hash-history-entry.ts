@@ -10,7 +10,7 @@
  *
  * 直し方: ハッシュの移動で積まれた項目に、Next の公開の口 (history.replaceState。Next が差し替えて、自分の状態に取り込む) で印を付ける。
  * 印を付けるのは、画面に描かれているルートと URL のパス・検索の部分が同じとき (= 同じ画面の中のハッシュの移動) だけ。
- * それでも印の無い項目へ戻って画面と URL がずれたとき (印を付ける前に積まれた項目) は、その URL へ置き換えの遷移で描き直す。
+ * それでも印の無い項目へ戻って画面と URL がずれたとき (印を付ける前に積まれた項目) は、今の URL で文書を読み込み直す。
  */
 
 /** app router が history.state に入れる、自分の項目の印の鍵 (Next の内部の名前。Next を上げたら e2e の戻るの spec が検知する) */
@@ -57,7 +57,7 @@ export function decideOnHashChange(state: unknown, rendered: RouteLocation | nul
 export type PopStateAction = 'redraw' | 'none';
 
 /**
- * popstate のあと: state が null (app router が何もしない項目) で、画面と URL のルートが違うなら、その URL へ描き直す。
+ * popstate のあと: state が null (app router が何もしない項目) で、画面と URL のルートが違うなら、今の URL で読み込み直して描き直す。
  * state が null でないとき (印つき = app router が描き直す / 印の無い別の値 = app router が読み込み直す) は手を出さない。
  * ルートが同じとき (同じ画面の中のハッシュの移動) は、ブラウザがスクロールするだけでよい。
  */
