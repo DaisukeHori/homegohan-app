@@ -10,9 +10,13 @@
  *   - ハッシュ → 他の公開ページ (/login・/pricing・/guide。フッターの next/link) → 戻る
  *   - ハッシュ無しの `/` → /signup → 戻る (直す前から動いていた対照)
  *   - 戻ったあとの進む (/signup に戻る)
- *   - ハッシュ → 通常の文書の遷移 (page.goto) で /signup → 戻る
  *   - 紹介ページ以外のハッシュ (スキップリンクの #main-content。/pricing) → /signup → 戻る
  *   - 検索の部分の書き方が画面と URL で違う `/` (広告の流入の %20・値の無いキー) で、ハッシュ → ハッシュ → 戻る が読み込み直さない
+ * 同じ文書の中で戻る型は、画面が正しいことに加えて、読み込み直していない (文書の load が 0 回・window に置いた印が残っている) ことも確かめる
+ * (部品の印付けが効かず、保険の読み込み直しで画面が直った場合も赤にするため)。
+ * 読み込み直すのが正しい型は、最後の describe に分けて置く:
+ *   - ハッシュ → 通常の文書の遷移 (page.goto) で /signup → 戻る (別の文書へ戻るので、紹介ページの文書を読み込む)
+ *   - 印を付ける前に積まれた項目 (state が null のまま) → /signup → 戻る (部品が今の URL で読み込み直す)
  * 検査の手がかりは、URL・セクションの id (ハッシュと同じ)・見出し・LANDING_COPY の文言だけ (紹介ページの見た目や文言の作り直しに引きずられない)。
  */
 import { expect, test, type Page } from '@playwright/test';
@@ -46,6 +50,36 @@ const REPORTED_HASH = '#how';
 const NON_CANONICAL_SEARCHES = ['?utm_campaign=a%20b', '?ref'] as const;
 /** 読み込み直しが起きていないことを見るため、文書に置く印の名前 (読み込み直すと消える) */
 const DOCUMENT_MARKER = '__backNavigationDocumentMarker';
+
+/** 読み込み直しの見張り (見張りを始めてからの文書の load の回数と、始めたときに文書に置いた印) */
+type DocumentReloadWatch = {
+  /** 見張りを始めてから、文書の load が起きた回数 (読み込み直すと起きる。戻るの後に始まる読み込み直しも数える) */
+  loadCount: () => number;
+  /** 見張りを始めたときに置いた印が、今の文書に残っているか (読み込み直すと文書が作り直され、印が消える) */
+  markerSurvives: () => Promise<boolean>;
+};
+
+/** 今の文書に印を置き、以後の文書の load を数え始める */
+async function watchDocumentReloads(page: Page): Promise<DocumentReloadWatch> {
+  await page.evaluate((marker) => Reflect.set(window, marker, true), DOCUMENT_MARKER);
+  let documentLoads = 0;
+  page.on('load', () => {
+    documentLoads += 1;
+  });
+  return {
+    loadCount: () => documentLoads,
+    markerSurvives: () => page.evaluate((marker) => Reflect.get(window, marker) === true, DOCUMENT_MARKER),
+  };
+}
+
+/**
+ * 見張りを始めてから読み込み直していないこと。画面の検査の後に呼ぶ
+ * (印付けが効かずに保険の読み込み直しで直る場合、前の画面が消えるのは読み込み直しの後なので、画面の検査を通った時点で load が数えられている)
+ */
+async function expectNoDocumentReload(watch: DocumentReloadWatch): Promise<void> {
+  expect(watch.loadCount()).toBe(0);
+  expect(await watch.markerSurvives()).toBe(true);
+}
 
 /** 紹介ページを開き、ハイドレーションが済むのを待つ (ヘッダーのリンクを押せる状態) */
 async function openLanding(page: Page, search = ''): Promise<void> {
@@ -85,17 +119,20 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
   for (const item of HEADER_HASH_LINKS) {
     test(`/ → ${item.href} (${item.label}) → /signup → 戻る で、紹介ページの ${item.href} が見えている`, async ({ page }) => {
       await openLanding(page);
+      const watch = await watchDocumentReloads(page);
       await clickHeaderHash(page, item.href);
       await goToSignupFromHeader(page);
 
       await page.goBack();
 
       await expectBackOnLandingSection(page, item.href);
+      await expectNoDocumentReload(watch);
     });
   }
 
   test('/ → #how → /signup → 戻る → 進む で、登録の画面に戻る', async ({ page }) => {
     await openLanding(page);
+    const watch = await watchDocumentReloads(page);
     await clickHeaderHash(page, REPORTED_HASH);
     await goToSignupFromHeader(page);
     await page.goBack();
@@ -106,10 +143,12 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
     await expect(page).toHaveURL(/\/signup$/);
     await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
     await expect(page.locator(REPORTED_HASH)).toHaveCount(0);
+    await expectNoDocumentReload(watch);
   });
 
   test('/ → #how → #faq → /signup → 戻る 2 回 で、#faq → #how の順に戻る', async ({ page }) => {
     await openLanding(page);
+    const watch = await watchDocumentReloads(page);
     await clickHeaderHash(page, REPORTED_HASH);
     await clickHeaderHash(page, '#faq');
     await goToSignupFromHeader(page);
@@ -119,6 +158,7 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
 
     await page.goBack();
     await expectBackOnLandingSection(page, REPORTED_HASH);
+    await expectNoDocumentReload(watch);
   });
 
   const OTHER_PUBLIC_PAGES = [
@@ -129,6 +169,7 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
   for (const target of OTHER_PUBLIC_PAGES) {
     test(`/ → #how → ${target.path} (フッターの「${target.label}」) → 戻る で、紹介ページの #how が見えている`, async ({ page }) => {
       await openLanding(page);
+      const watch = await watchDocumentReloads(page);
       await clickHeaderHash(page, REPORTED_HASH);
       await page.getByRole('contentinfo').getByRole('link', { name: target.label, exact: true }).click();
       await expect(page).toHaveURL(new RegExp(`${target.path}$`));
@@ -141,11 +182,13 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
       await expect(page).toHaveURL(new RegExp(`/${REPORTED_HASH}$`));
       await expect(page.locator(REPORTED_HASH)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
       await expect(page.getByRole('heading', { level: 1, name: target.heading })).toHaveCount(0);
+      await expectNoDocumentReload(watch);
     });
   }
 
   test('ハッシュ無しの / → /signup → 戻る で、紹介ページの先頭に戻る (対照)', async ({ page }) => {
     await openLanding(page);
+    const watch = await watchDocumentReloads(page);
     await goToSignupFromHeader(page);
 
     await page.goBack();
@@ -153,6 +196,7 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
     await expect(page).toHaveURL(/\/$/);
     await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toHaveCount(0);
     await expect(page.locator('#hero')).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
+    await expectNoDocumentReload(watch);
   });
 
   // 文書の遷移で /signup を開く型より前に置く (src/__tests__/config/e2e-auth-page-wait.test.ts は、goto("/signup") から次の画面の移動までの行の networkidle 待ちを
@@ -160,12 +204,7 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
   for (const search of NON_CANONICAL_SEARCHES) {
     test(`/${search} → #how → #faq → 戻る で、読み込み直さずに #how へ戻る (検索の部分の書き方の違いで取り違えない)`, async ({ page }) => {
       await openLanding(page, search);
-      await page.evaluate((marker) => Reflect.set(window, marker, true), DOCUMENT_MARKER);
-      // 読み込み直すと文書の load が起きる (戻るの後に始まる読み込み直しも数える)
-      let documentLoads = 0;
-      page.on('load', () => {
-        documentLoads += 1;
-      });
+      const watch = await watchDocumentReloads(page);
       await clickHeaderHash(page, REPORTED_HASH, search);
       await clickHeaderHash(page, '#faq', search);
 
@@ -174,27 +213,15 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
 
       await expect(page).toHaveURL(new RegExp(`/${escapeRegExp(search)}${REPORTED_HASH}$`));
       await expect(page.locator(REPORTED_HASH)).toBeInViewport({ timeout: NAVIGATION_TIMEOUT });
-      expect(documentLoads).toBe(0);
-      // 読み込み直すと文書が作り直され、置いた印が消える
-      expect(await page.evaluate((marker) => Reflect.get(window, marker) === true, DOCUMENT_MARKER)).toBe(true);
+      await expectNoDocumentReload(watch);
     });
   }
-
-  test('/ → #how → 文書の遷移 (アドレス欄で /signup を開く) → 戻る で、紹介ページの #how が見えている', async ({ page }) => {
-    await openLanding(page);
-    await clickHeaderHash(page, REPORTED_HASH);
-    await page.goto('/signup');
-    await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
-
-    await page.goBack();
-
-    await expectBackOnLandingSection(page, REPORTED_HASH);
-  });
 
   test('/pricing でスキップリンク (#main-content) → /signup → 戻る で、料金の画面に戻る (紹介ページ以外のハッシュ)', async ({ page }) => {
     await page.goto('/pricing');
     await expect(page.getByRole('heading', { level: 1, name: PRICING_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
     await page.waitForLoadState('networkidle');
+    const watch = await watchDocumentReloads(page);
     await page.locator(`a[href="${SKIP_LINK_HASH}"]`).focus();
     await page.keyboard.press('Enter');
     await expect(page).toHaveURL(new RegExp(`/pricing${SKIP_LINK_HASH}$`));
@@ -208,5 +235,40 @@ test.describe('#1867 戻る / 進む で、ハッシュつきの URL の画面�
     await expect(page).toHaveURL(new RegExp(`/pricing${SKIP_LINK_HASH}$`));
     await expect(page.getByRole('heading', { level: 1, name: PRICING_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
     await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toHaveCount(0);
+    await expectNoDocumentReload(watch);
+  });
+});
+
+// 読み込み直すのが正しい型 (上の型と違い、読み込み直していないことは確かめない。読み込んだ後の画面が正しいことを確かめる)
+test.describe('#1867 戻る で文書を読み込むのが正しい型 (別の文書へ戻る・印を付ける前に積まれた項目へ戻る)', () => {
+  test('/ → #how → 文書の遷移 (アドレス欄で /signup を開く) → 戻る で、紹介ページの文書を読み込み、#how が見えている (別の文書へ戻る型)', async ({ page }) => {
+    // 戻るは /signup の文書から紹介ページの文書への移動なので、紹介ページの文書の load が起きる (部品の読み込み直しではない)
+    await openLanding(page);
+    await clickHeaderHash(page, REPORTED_HASH);
+    await page.goto('/signup');
+    await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+
+    await page.goBack();
+
+    await expectBackOnLandingSection(page, REPORTED_HASH);
+  });
+
+  test('/ → 印を付ける前に積まれた #how (state が null のまま) → /signup → 戻る で、読み込み直して紹介ページを描く (保険の読み込み直し)', async ({ page }) => {
+    await openLanding(page);
+    const watch = await watchDocumentReloads(page);
+    // Next が差し替える前の pushState (History.prototype の元の実装) で、state が null の #how の項目を積む。
+    // hashchange は起きないので部品は印を付けず、Next の状態も / のまま (部品が印を付ける前に積まれた項目と同じ形)
+    await page.evaluate((hash) => History.prototype.pushState.call(window.history, null, '', hash), REPORTED_HASH);
+    await expect(page).toHaveURL(new RegExp(`/${REPORTED_HASH}$`));
+    await goToSignupFromHeader(page);
+
+    await page.goBack();
+
+    // state が null の項目なので Next は何もせず、画面 (/signup) と URL (/) のルートがずれる。部品が今の URL で 1 回だけ読み込み直す
+    await expect(page).toHaveURL(new RegExp(`/${REPORTED_HASH}$`));
+    await expect(page.locator(REPORTED_HASH)).toBeVisible({ timeout: NAVIGATION_TIMEOUT });
+    await expect(page.getByRole('heading', { level: 1, name: SIGNUP_HEADING })).toHaveCount(0);
+    expect(watch.loadCount()).toBe(1);
+    expect(await watch.markerSurvives()).toBe(false);
   });
 });
