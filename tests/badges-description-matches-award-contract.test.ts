@@ -31,6 +31,8 @@ import {
 
 const BADGES_ROUTE = 'src/app/api/badges/route.ts';
 const MENU_PLANS_ADD_ROUTE = 'src/app/api/menu-plans/add/route.ts';
+/** POST /api/menu-plans/add を呼ぶ文字列 (引用符か `${...}` の直後に来るパス) */
+const MENU_PLANS_ADD_CALL = /[`'"}]\/api\/menu-plans\/add(?![\w-])/;
 
 /** この migration で説明を書き換えたバッジ */
 const REWRITTEN_CODES = ['first_bite', 'streak_3', 'streak_7', 'photo_10', 'planner'] as const;
@@ -164,9 +166,10 @@ describe('#1867 バッジの説明の migration: 説明が付く条件と合う'
     const plannerAwarders = sourceFiles('src').filter((file) => /awardBadge\([^)]*'planner'\)/.test(readRepoFile(file)));
     expect(plannerAwarders).toEqual([MENU_PLANS_ADD_ROUTE]);
 
-    // POST /api/menu-plans/add を呼ぶ画面は、どれも使い方ガイド (ハンズオンツアー) のお試しの経路
+    // POST /api/menu-plans/add を呼ぶ画面は、どれも使い方ガイド (ハンズオンツアー) のお試しの経路。
+    // 呼び出しは、パスで始まる文字列 ('/api/menu-plans/add…'・`${base}/api/menu-plans/add…`) で拾う (コメントの「POST /api/menu-plans/add」は拾わない)
     const callers = [...sourceFiles('src'), ...sourceFiles('apps/mobile/src'), ...sourceFiles('apps/mobile/app')]
-      .filter((file) => file !== MENU_PLANS_ADD_ROUTE && readRepoFile(file).includes('/api/menu-plans/add'))
+      .filter((file) => file !== MENU_PLANS_ADD_ROUTE && MENU_PLANS_ADD_CALL.test(readRepoFile(file)))
       .sort();
     expect(callers).toEqual([
       'apps/mobile/src/components/menu/V4GenerateModal.tsx',
