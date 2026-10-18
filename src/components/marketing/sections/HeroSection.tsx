@@ -21,8 +21,12 @@ const FAN_PLACEMENTS = [
 ] as const;
 /** 前の中央の 1 枚の位置 (hero.screens の添字)。この 1 枚だけ preload する */
 const FRONT_SCREEN_INDEX = 2;
+/**
+ * 文字の列の立ち上がりの順番 (M-2: eyebrow → h1 → 一文 → CTA → 安心 → 手がかり。n 番目 (0〜5) を n × --lp-hero-step 遅らせる)
+ */
+const RISE_ORDER = { eyebrow: 0, title: 1, lead: 2, ctas: 3, assurances: 4, cue: 5 } as const;
 /** 画面の塊の立ち上がりの順番 (M-3。h1 と同じ 1 × --lp-hero-step だけ遅らせる) */
-const MEDIA_RISE_ORDER = 1;
+const MEDIA_RISE_ORDER = RISE_ORDER.title;
 
 /** ヒーローの文字の立ち上がりの順番 (M-2。n 番目 × --lp-hero-step だけ遅らせる) */
 function riseStyle(order: number): CSSProperties {
@@ -35,18 +39,18 @@ export function HeroSection() {
     <section id="hero" aria-labelledby="hero-title" tabIndex={-1} className="lp-hero">
       <div className="lp-container lp-hero-grid">
         <div className="lp-hero-copy">
-          <p className="lp-eyebrow lp-hero-eyebrow lp-hero-rise" style={riseStyle(0)}>
+          <p className="lp-eyebrow lp-hero-eyebrow lp-hero-rise" style={riseStyle(RISE_ORDER.eyebrow)}>
             {hero.eyebrow}
           </p>
-          <h1 id="hero-title" className="lp-hero-rise" style={riseStyle(1)}>
+          <h1 id="hero-title" className="lp-hero-rise" style={riseStyle(RISE_ORDER.title)}>
             {hero.headlineLines[0]}
             <br />
             <span className="lp-headline-accent">{hero.headlineLines[1]}</span>
           </h1>
-          <p className="lp-lead lp-hero-lead lp-hero-rise" style={riseStyle(2)}>
+          <p className="lp-lead lp-hero-lead lp-hero-rise" style={riseStyle(RISE_ORDER.lead)}>
             {hero.lead}
           </p>
-          <div className="lp-hero-ctas lp-hero-rise" style={riseStyle(3)}>
+          <div className="lp-hero-ctas lp-hero-rise" style={riseStyle(RISE_ORDER.ctas)}>
             <CtaLink href={hero.primaryCta.href} variant="primary">
               {hero.primaryCta.label}
             </CtaLink>
@@ -54,7 +58,7 @@ export function HeroSection() {
               {hero.secondaryCta.label}
             </CtaLink>
           </div>
-          <ul className="lp-assurances lp-hero-rise" style={riseStyle(4)}>
+          <ul className="lp-assurances lp-hero-rise" style={riseStyle(RISE_ORDER.assurances)}>
             {hero.assurances.map((text) => (
               <li key={text}>
                 <Check className="lp-check" strokeWidth={2.5} aria-hidden="true" />
@@ -62,7 +66,7 @@ export function HeroSection() {
               </li>
             ))}
           </ul>
-          <p className="lp-scroll-cue lp-hero-rise" style={riseStyle(5)}>
+          <p className="lp-scroll-cue lp-hero-rise" style={riseStyle(RISE_ORDER.cue)}>
             {hero.scrollCue}
             <ChevronDown className="lp-scroll-cue-icon" aria-hidden="true" />
           </p>

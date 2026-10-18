@@ -71,6 +71,12 @@ const REFLOW_CHECK_HEIGHT = 700;
 const REDUCED_RESULT_MAX_MS = DEMO_ANALYZING_MS / 2;
 /** 失敗の文に載せる、要素の文字の抜き出しの長さ (文字数。失敗の文を読める長さに保つためだけの値) */
 const EXCERPT_CHARS = 20;
+/**
+ * E-7: 「動いている」と数える Animation の長さの下限 (ms)。globals.css の動きを減らす設定の規則は、すべての要素の transition-duration と
+ * animation-duration を 0.01ms にする。そのため reduce でも、ハイドレーションのときの見た目の変化 (ナビの強調・物語のいまの手順の印 など) が
+ * 0.01 ms の遷移として作られる (次の描画の前に終わる)。これは動きではないので、長さがこれ以下の Animation は数えない
+ */
+const INSTANT_ANIMATION_MAX_MS = 1;
 /** ヒーローの立ち上がりの最長 (620 ms) より十分長い待ち (ms)。読み込みからこの時間のあとに動いている Animation が無いことを確かめる */
 const HERO_SETTLE_MS = 2_000;
 /** スクロールを 1 回進めたあと、IntersectionObserver と描画が追いつくのを待つ時間 (ms) */
@@ -668,8 +674,16 @@ test.describe('#1867 紹介ページ (/)', () => {
     test('E-7 動く Animation が無く、最初から見え、デモの結果は待ち無しで最後の見え方で出て、輪と線は最初から最後の形、数字は最初から最後の値、固定した端末は一瞬で替わる', async ({ page }) => {
       await page.addInitScript(recordRingArmed);
       await open(page);
-      // 開いた直後 (スクロールの前)
-      const running = await page.locator('.lp').evaluate((root) => root.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running').length);
+      // 開いた直後 (スクロールの前)。長さが INSTANT_ANIMATION_MAX_MS 以下の Animation (globals.css の規則で 0.01ms にされた遷移) は動きではないので数えない
+      const running = await page.locator('.lp').evaluate(
+        (root, instantMaxMs) =>
+          root
+            .getAnimations({ subtree: true })
+            .filter((animation) => animation.playState === 'running')
+            .map((animation) => animation.effect?.getComputedTiming().duration)
+            .filter((duration) => typeof duration !== 'number' || duration > instantMaxMs).length,
+        INSTANT_ANIMATION_MAX_MS,
+      );
       expect(running, '動いている Animation').toBe(0);
       expect(await hiddenByOpacity(page)).toEqual([]);
       const heroImages = page.locator('#hero img');
@@ -730,7 +744,7 @@ test.describe('#1867 紹介ページ (/)', () => {
       expect((timing.resultAt ?? 0) - (timing.pressedAt ?? 0), '押してから結果が出るまで (ms)').toBeLessThanOrEqual(REDUCED_RESULT_MAX_MS);
       expect(timing.shownAtResult, '結果が出た時点の見える数字 (増えずに最初から最後の値)').toBe(score);
       const state = await page.evaluate(
-        () =>
+        (instantMaxMs) =>
           new Promise<{ notFinal: string[]; running: number }>((resolve) => {
             requestAnimationFrame(() => {
               const box = document.querySelector('#demo [role="status"]');
@@ -741,10 +755,17 @@ test.describe('#1867 紹介ページ (/)', () => {
                   if (style.opacity !== '1' || style.transform !== 'none') notFinal.push(`${element.tagName.toLowerCase()} opacity=${style.opacity} transform=${style.transform}`);
                 }
               }
-              const running = box ? box.getAnimations({ subtree: true }).filter((animation) => animation.playState === 'running').length : -1;
+              const running = box
+                ? box
+                    .getAnimations({ subtree: true })
+                    .filter((animation) => animation.playState === 'running')
+                    .map((animation) => animation.effect?.getComputedTiming().duration)
+                    .filter((duration) => typeof duration !== 'number' || duration > instantMaxMs).length
+                : -1;
               resolve({ notFinal, running });
             });
           }),
+        INSTANT_ANIMATION_MAX_MS,
       );
       expect(state.notFinal).toEqual([]);
       expect(state.running).toBe(0);

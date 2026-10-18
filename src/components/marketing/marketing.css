@@ -83,6 +83,13 @@ html:has(.lp) {
 }
 
 /* ─── タイポグラフィ (§5.2) ─── */
+/* 見出しは文節で折り返す (word-break: auto-phrase。lang="ja" の文に効く。対応しないブラウザは今までどおり)。
+   text-wrap: balance で行を均すと、文節を見ない折り返しでは「栄養」「同じ」のような語の途中で行が分かれるため */
+.lp h1,
+.lp h2,
+.lp h3 {
+  word-break: auto-phrase;
+}
 .lp h1,
 .lp h2 {
   font-family: var(--font-serif), 'Noto Serif JP', 'Hiragino Mincho ProN', serif;
