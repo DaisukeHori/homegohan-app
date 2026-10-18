@@ -32,8 +32,12 @@ const categories = [
 
 const faqs = [
   // 基本的な使い方
-  { category: 'general', q: 'ほめゴハンとはどんなアプリですか？', a: 'ほめゴハンは、写真を撮るだけで食事の栄養バランスをAIが分析し、良いところを褒めてくれる食事管理アプリです。ダメ出しではなく褒めることで、楽しく続けられるのが特徴です。' },
-  { category: 'general', q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでもOK。自然光で撮ると認識精度が上がります。お店のメニュー写真でも問題なく分析できます。' },
+  // #1867 (公開の主張の見直し): 紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じく、製品の根拠のある主張だけを書く。
+  // 写真で記録したときの「記録コメント」は、料理の名前と食事の区分だけが変わる定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) で、
+  // 食事の中身を見て良いところを探す文ではない。撮り方の答えも、確かめていない認識の良し悪し (自然光・メニュー写真) を約束しない。
+  // 戻らないことは tests/public-claims-guard.test.ts が確かめる
+  { category: 'general', q: 'ほめゴハンとはどんなアプリですか？', a: 'ほめゴハンは、写真を撮るだけでAIが料理を認識して栄養を推定し、記録をほめてくれる食事記録アプリです。食事の記録の画面では、写真で記録すると、記録をほめるひと言と栄養のひと言メモが出ます。' },
+  { category: 'general', q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでもかまいません。明るい場所で、料理が重ならないように撮ってください。' },
   { category: 'general', q: 'おやつや夜食も記録できますか？', a: 'はい、朝食・昼食・夕食のほか、おやつや夜食も記録できます。' },
   { category: 'general', q: '過去の記録は見られますか？', a: 'はい、過去の記録も閲覧できます。' },
   // #1859: 画面の名前と条件の選択肢を、献立表の画面 (src/app/(main)/menus/weekly) と使い方ガイド (src/app/guide/guide-content.ts) に合わせた。
@@ -54,16 +58,24 @@ const faqs = [
   // AI機能
   { category: 'ai', q: 'AIの分析は正確ですか？', a: 'AIによる分析はあくまで推定値で、料理や撮影条件によっては実際の値と異なる場合があります。医療目的での使用はお控えください。' },
   { category: 'ai', q: 'AIが認識できない料理はありますか？', a: '珍しい料理や、複数の料理が重なっている場合は認識精度が下がることがあります。その場合は手動で修正できます。' },
-  { category: 'ai', q: 'AIのコメントはどうやって生成されますか？', a: '食事の栄養バランス、食材の組み合わせ、過去の記録などを総合的に分析し、良いところを見つけてコメントを生成しています。' },
+  // #1867 (Q-11): 写真の記録のコメントは AI が書く文ではなく、アプリの定型の文 (nutrition-pipeline.ts の buildTemplatePraiseAndTip)。
+  // 「記録コメント」は AI が認識した料理の名前 (先頭 2 つ) と食事の区分を入れたひと言、「栄養メモ」は推定したタンパク質と食物繊維の量で選ぶひと言。
+  // どちらも出すのは食事の記録の画面 (src/app/(main)/meals/new/page.tsx) だけ。AI が良いところを見つけて書くのは献立の振り返り
+  // (src/app/api/ai/nutrition/feedback/route.ts の指示) だけ。紹介ページの claims の praise・nutrition-tip の行と同じ事実
+  { category: 'ai', q: 'AIのコメントはどうやって生成されますか？', a: '食事の記録の画面では、写真で記録すると、解析の結果に「記録コメント」と「栄養メモ」が出ます。記録コメントは、AIが認識した料理の名前と食事の区分を入れて記録をほめる、決まった形のひと言です（料理の彩りや組み合わせを見て書く文ではありません）。栄養メモは、推定したタンパク質と食物繊維の量に合わせて選ぶ、栄養についてのひと言です。献立の振り返りでは、AIが献立の良いところを見つけて言葉にします。' },
   // #1870: 献立の生成が実際に使う情報に合わせた。根拠は supabase/functions/_shared/user-context.ts (アレルギー・苦手・好み・持病・目標)・
   // supabase/functions/generate-menu-v4/index.ts と generate-menu-v5/index.ts (冷蔵庫の食材 pantry_items・健康診断の結果 health_checkups・前後の日の献立)。
-  // 生成は前後 7 日の献立 (planned_meals) を読み、同じ料理が続かないようにする。記録した食事 (planned_meals の is_completed = true。写真からの記録も含む) もここに含まれ、
-  // 読み込んだ existingMenus では status が "completed" の行になる (generate-menu-v4/index.ts と generate-menu-v5/index.ts)。読むのはこの前後の日だけなので、「過去の食事記録」の分析とは書かない。
+  // 生成は前後 7 日の献立 (planned_meals) を読み、同じ料理が続かないようにする。記録した食事も planned_meals の行なので、ここに含まれる。
+  // 読み込んだ existingMenus では、「完了」にした食事 (is_completed = true) は status が "completed" の行になる (generate-menu-v4/index.ts と generate-menu-v5/index.ts)。
+  // 写真から記録して献立表に保存した食事は未完了 (is_completed = false。src/app/api/meal-plans/add-from-photo/route.ts) で作られるので、完了にするまでは "completed" ではない行として読む。
+  // 読むのはこの前後の日だけなので、「過去の食事記録」の分析とは書かない。
   // 挙げた情報が実コードで使われていることは tests/faq-guide-wording-1859.test.ts が確かめる
   { category: 'ai', q: '献立提案はどういう基準で作られますか？', a: 'あなたの目標（ダイエット、筋トレなど）と栄養の目標をもとに、栄養バランスを考えて献立を提案します。登録されていれば、アレルギー（その食材を使わないようにします）、苦手な食材（できるだけ避けます）、好きな食材や料理のジャンル、持病、健康診断の結果、冷蔵庫の食材も考慮します。また、前後の日の献立（記録した食事を含む）と同じ料理が続かないようにしています。' },
   
   // 料金・支払い
-  { category: 'payment', q: '現在、料金はかかりますか？', a: '現在ご提供している機能は無料でご利用いただけます。' },
+  // #1867 (Q-12): AI を使う機能には 1 日の利用回数の上限がある (#1149。src/lib/plan/entitlements.ts の consumeAiUsage・supabase/functions/_shared/ai-daily-limit.ts)。
+  // 回数の数字は運営画面で変えられるので書かない。紹介ページの claims の free-now・ai-daily-limit の行と同じ事実
+  { category: 'payment', q: '現在、料金はかかりますか？', a: '現在ご提供している機能は無料でご利用いただけます。AIを使う機能（写真の解析や献立の提案など）は、1日にご利用いただける回数に上限があり、上限に達した日は翌日0時からまたお使いいただけます。' },
   { category: 'payment', q: '有料プランはありますか？', a: '有料プランは準備中です（販売開始前）。内容・料金・開始時期が決まりましたら、ご案内します。' },
   { category: 'payment', q: '返金はできますか？', a: '原則として返金には対応しておりません。ただし、サービスに重大な問題があった場合は個別に対応いたします。' },
   
@@ -216,7 +228,7 @@ export default function FaqPage() {
           <h3 className="text-xl font-bold mb-2" style={{ color: colors.text }}>解決しませんでしたか？</h3>
           <p className="text-sm mb-4" style={{ color: colors.textLight }}>
             お問い合わせフォームからお気軽にご連絡ください。<br />
-            通常24時間以内にご返信いたします。
+            通常2〜3営業日以内にご返信いたします。
           </p>
           <Link href="/contact">
             <motion.button

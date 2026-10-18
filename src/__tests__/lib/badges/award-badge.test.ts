@@ -157,12 +157,13 @@ function createFakeDb(options: FakeDbOptions = {}) {
 const USER_ID = 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11';
 const NOW = '2026-10-08T03:00:00.000Z';
 
-// 本番の badges マスタの planner 行 (supabase/baseline/prod_reference_data.sql)。icon は絵文字
+// 本番の badges マスタの planner 行 (supabase/baseline/prod_reference_data.sql。description は
+// 20261018040000_badges_description_matches_award.sql で書き換えた後の文)。icon は絵文字
 const PLANNER: Row = {
   id: 'b0eebc99-9c0b-4ef8-bb6d-6bb9bd380a22',
   code: 'planner',
   name: '計画上手',
-  description: '1週間の献立を作成しました。計画的な食生活の始まりです。',
+  description: '使い方ガイドで、お試しの献立を追加しました。献立づくりの練習はばっちりです。',
   icon: '📋',
   priority: 40,
 };

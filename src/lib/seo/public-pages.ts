@@ -93,7 +93,8 @@ export const PUBLIC_PAGE_SEO: Readonly<Record<PublicPagePath, PublicPageSeo>> = 
   '/': { title: null, description: SITE_DESCRIPTION },
   '/about': {
     title: 'ほめゴハンについて',
-    description: `${SITE_NAME}は、食事の写真からAIが栄養を分析し、良いところを褒めてくれる食事管理アプリです。主な機能と考え方を紹介します。`,
+    // #1867 (公開の主張の見直し): 写真の記録のコメントは定型の文で、食事の中身を見て良いところを探す文ではないので、紹介ページ (SITE_DESCRIPTION) と同じ言い方にする
+    description: `${SITE_NAME}は、写真を撮るだけでAIが料理を認識して栄養を推定し、その記録をほめてくれる食事記録アプリです。主な機能と考え方を紹介します。`,
   },
   '/pricing': {
     title: '料金プラン',
