@@ -8,7 +8,10 @@
  *   - popstate の state が null の項目は、app router が何もせずに返す (`if (!state) return`)。
  *   そのため `/` → `#how` (state null) → next/link で `/signup` → 戻る と進むと、URL だけ `/#how` に戻り、画面は `/signup` のまま残る。
  *
- * 直し方: ハッシュの移動で積まれた項目に、Next の公開の口 (history.replaceState。Next が差し替えて、自分の状態に取り込む) で印を付ける。
+ * 直し方: ハッシュの移動で積まれた項目で、Next の公開の口 (Next が差し替えた history.replaceState) を呼んで印を付ける。印は 2 段で付く (Next 16.4.1 の app-router.js):
+ *   1. 差し替えた replaceState は、今の項目の state にある印と木を写すだけ (copyNextJsInternalHistoryState)。ハッシュの移動で積まれた項目の state は null なので
+ *      写すものが無く、ここでは印は付かない。あわせて、今の URL で app router の状態を作り直す (applyUrlFromHistoryPushReplace → restore)。
+ *   2. restore の後の再描画で、HistoryUpdater が今の項目の state に印 (`__NA: true`) と今の画面の木を書く (replaceState。URL は変わらない)。
  * 印を付けるのは、画面に描かれているルートと URL のパス・検索の部分が同じとき (= 同じ画面の中のハッシュの移動) だけ。
  * 検索の部分は、書き方の違い (`%20` と `+`・値の無いキー `?ref` と `?ref=`・`/` と `%2F`) をそろえてから比べる (normalizeSearch)。
  * それでも印の無い項目へ戻って画面と URL がずれたとき (印を付ける前に積まれた項目) は、今の URL で文書を読み込み直す。
