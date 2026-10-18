@@ -22,7 +22,10 @@ export const AWARDABLE_BADGE_CODES = [
   'streak_3',
   'streak_7',
 
-  // POST /api/menu-plans/add が、献立を追加したときに awardBadge で付与する
+  // POST /api/menu-plans/add が、献立を追加したとき (使い方ガイドのお試し) に awardBadge で付与する。
+  // AI の週の献立の生成 (POST /api/ai/menu/weekly/request) が完了したときも付ける (#1867): 状態の確認
+  // (GET /api/ai/menu/weekly/status) が完了を読んだときに awardBadge で、読まなかった人は GET /api/badges の判定で
+  // (週の献立の生成の行は generated_data の印で見分ける。src/lib/ai/weekly-menu-request-origin.ts)
   'planner',
 
   // RPC complete_handson_tour() が、ハンズオンツアーの卒業時に付与する

@@ -8,6 +8,9 @@
  * - Edge Function 呼び出しが失敗した場合、スナップショットからのロールバック復元
  *   (restorePlannedMealsSnapshot) が実行されること
  * - Edge Function が成功した場合はロールバックを実行しないこと
+ *
+ * #1867: 行を作るとき、generated_data に週の献立の生成の印 (weeklyRequest: true) を書くこと
+ * (完了したとき、状態の確認とバッジの一覧がこの印を見て planner を付ける)
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -233,7 +236,8 @@ describe('POST /api/ai/menu/weekly/request', () => {
 
     // weekly_menu_requests insert に削除前スナップショットが退避されていること
     const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
-    expect(insertPayload.generated_data).toEqual({ snapshot: [existingBreakfast, existingLunch] });
+    // #1867: 週の献立の生成の印 (weeklyRequest: true) も一緒に書く (完了したとき planner を付けるため)
+    expect(insertPayload.generated_data).toEqual({ weeklyRequest: true, snapshot: [existingBreakfast, existingLunch] });
 
     await flushBackground();
 
@@ -315,7 +319,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
     expect(mockMarkWeeklyMenuRequestFailed).not.toHaveBeenCalled();
   });
 
-  it('削除対象の既存献立がない週は generated_data.snapshot を null にする', async () => {
+  it('削除対象の既存献立がない週は generated_data に snapshot を書かない (週の献立の生成の印だけを書く。#1867)', async () => {
     userDailyMealsQueue.length = 0;
     plannedMealsSelectQueue.length = 0;
     for (let i = 0; i < 7; i++) {
@@ -327,7 +331,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
     expect(res.status).toBe(200);
 
     const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
-    expect(insertPayload.generated_data).toBeNull();
+    expect(insertPayload.generated_data).toEqual({ weeklyRequest: true });
 
     await flushBackground();
     expect(mockRestorePlannedMealsSnapshot).not.toHaveBeenCalled();
@@ -358,7 +362,7 @@ describe('POST /api/ai/menu/weekly/request', () => {
 
     // 削除（スナップショット退避）されるのは今日分のみで、昨日の献立・完食記録は保持される
     const insertPayload = mockWeeklyInsertCall.mock.calls[0][0];
-    expect(insertPayload.generated_data).toEqual({ snapshot: [existingBreakfast] });
+    expect(insertPayload.generated_data).toEqual({ weeklyRequest: true, snapshot: [existingBreakfast] });
   });
 });
 

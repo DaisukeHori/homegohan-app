@@ -11,10 +11,19 @@
  *   2. 書き換えた説明が、付ける処理の条件と合う
  *      - first_bite / photo_10 / streak_3 / streak_7: GET /api/badges の判定のしきい値 (完了した食事の数・連続日数) を言い、「完了」と書く。
  *        「記録」「写真」「撮影」とは書かない (食事の記録の画面で写真から保存した食事は未完了で、数えない)
- *      - planner: 付けるのは POST /api/menu-plans/add の awardBadge だけで、それを呼ぶのは使い方ガイド (ハンズオンツアー) のお試しの献立の追加だけ。
- *        説明は使い方ガイドのお試しを言い、「1週間の献立を作成」とは書かない
+ *      - planner: (20261018040000 の時点) 付けるのは POST /api/menu-plans/add の awardBadge だけで、それを呼ぶのは使い方ガイド
+ *        (ハンズオンツアー) のお試しの献立の追加だけ。説明は使い方ガイドのお試しを言い、「1週間の献立を作成」とは書かない
  *   3. 付ける処理のあるバッジ (AWARDABLE_BADGE_CODES) は、この migration で書き換えたか、説明が条件と合うと確かめたものか、のどちらか
  *      (新しく付ける処理を足したら、説明が条件と合うかを確かめてから下の一覧に足す)
+ *
+ * #1867 の続き (オーナーの選択 2026-10-18 17 時台「取れる条件を足す」): planner は AI の週の献立の生成でも付くようにし、
+ * migration 20261018050000_planner_badge_description_weekly_menu.sql で planner の説明だけをもう一度書き換えた。
+ *   4. 20261018050000 は planner の description だけを書き換え、rollback は 20261018040000 の文に戻す
+ *   5. planner のいまの説明 (後の migration の文) が、付ける処理の条件と合う。付ける処理は次の 3 つだけ:
+ *      - POST /api/menu-plans/add の awardBadge (呼ぶのは使い方ガイドのお試しの献立の追加だけ)
+ *      - GET /api/ai/menu/weekly/status の awardBadge (週の献立の生成の行 (印あり) の完了を読んだとき)
+ *      - GET /api/badges の判定 (完了した週の献立の生成の行があるとき)
+ *      週の献立の生成の行の印を書くのは POST /api/ai/menu/weekly/request だけ
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -23,7 +32,10 @@ import { AWARDABLE_BADGE_CODES } from '@/lib/badges/awardable';
 import {
   BADGE_DESCRIPTION_MIGRATION,
   BADGE_DESCRIPTION_ROLLBACK,
+  PLANNER_DESCRIPTION_MIGRATION,
+  PLANNER_DESCRIPTION_ROLLBACK,
   REPO_ROOT,
+  currentBadgeDescriptions,
   parseDescriptionUpdates,
   readOriginalBadgeRows,
   readRepoFile,
@@ -31,6 +43,12 @@ import {
 
 const BADGES_ROUTE = 'src/app/api/badges/route.ts';
 const MENU_PLANS_ADD_ROUTE = 'src/app/api/menu-plans/add/route.ts';
+/** 週の献立の生成の状態の確認 (完了を読んだとき planner を付ける。#1867) */
+const WEEKLY_STATUS_ROUTE = 'src/app/api/ai/menu/weekly/status/route.ts';
+/** 週の献立の生成 (行を作るときに印を書く。#1867) */
+const WEEKLY_REQUEST_ROUTE = 'src/app/api/ai/menu/weekly/request/route.ts';
+/** 週の献立の生成の行の印 (#1867) */
+const WEEKLY_ORIGIN_LIB = 'src/lib/ai/weekly-menu-request-origin.ts';
 /** POST /api/menu-plans/add を呼ぶ文字列 (引用符か `${...}` の直後に来るパス) */
 const MENU_PLANS_ADD_CALL = /[`'"}]\/api\/menu-plans\/add(?![\w-])/;
 
@@ -68,6 +86,10 @@ const DAYS_PER_WEEK = 7;
 
 const updates = parseDescriptionUpdates(readRepoFile(BADGE_DESCRIPTION_MIGRATION));
 const rollback = parseDescriptionUpdates(readRepoFile(BADGE_DESCRIPTION_ROLLBACK));
+const plannerUpdates = parseDescriptionUpdates(readRepoFile(PLANNER_DESCRIPTION_MIGRATION));
+const plannerRollback = parseDescriptionUpdates(readRepoFile(PLANNER_DESCRIPTION_ROLLBACK));
+/** 説明を書き換える migration を全部当てたあとの説明 (いまの DB の説明) */
+const current = currentBadgeDescriptions();
 const original = readOriginalBadgeRows();
 const routeSource = readRepoFile(BADGES_ROUTE);
 
@@ -161,10 +183,42 @@ describe('#1867 バッジの説明の migration: 説明が付く条件と合う'
     }
   });
 
-  it('planner: 付けるのは POST /api/menu-plans/add だけで、そこを呼ぶのは使い方ガイドのお試しの献立の追加だけ → 説明は使い方ガイドのお試しを言う', () => {
-    // awardBadge(..., 'planner') を呼ぶソースは POST /api/menu-plans/add だけ
-    const plannerAwarders = sourceFiles('src').filter((file) => /awardBadge\([^)]*'planner'\)/.test(readRepoFile(file)));
-    expect(plannerAwarders).toEqual([MENU_PLANS_ADD_ROUTE]);
+  it('planner (20261018040000 の時点の文): 使い方ガイドのお試しを言い、「1週間の献立を作成」とは書かない', () => {
+    expect(description('planner')).toContain('使い方ガイド');
+    expect(description('planner')).toContain('お試し');
+    expect(description('planner')).not.toContain('1週間の献立を作成');
+  });
+});
+
+describe('#1867 planner の説明の migration (20261018050000): AI の週の献立の生成でも付く', () => {
+  it('migration は planner の description だけを書き換え、rollback は 20261018040000 の文に戻す', () => {
+    expect([...plannerUpdates.keys()]).toEqual(['planner']);
+    expect([...plannerRollback.keys()]).toEqual(['planner']);
+    expect(plannerRollback.get('planner')).toBe(updates.get('planner'));
+    expect(plannerUpdates.get('planner')).not.toBe(updates.get('planner'));
+    expect(plannerUpdates.get('planner')).not.toBe(original.get('planner')?.description);
+  });
+
+  it('planner のいまの説明は 20261018050000 の文で、ほかの 4 つは 20261018040000 の文のまま', () => {
+    expect(current.get('planner')).toBe(plannerUpdates.get('planner'));
+    for (const code of REWRITTEN_CODES.filter((c) => c !== 'planner')) {
+      expect(current.get(code), code).toBe(updates.get(code));
+    }
+  });
+
+  it('planner を付ける処理は、お試しの献立の追加・週の献立の生成の完了の状態の確認・バッジの一覧の判定の 3 つだけ', () => {
+    // awardBadge(..., 'planner') を呼ぶソースは POST /api/menu-plans/add と GET /api/ai/menu/weekly/status だけ
+    const plannerAwarders = sourceFiles('src')
+      .filter((file) => /awardBadge\([^)]*'planner'\)/.test(readRepoFile(file)))
+      .sort();
+    expect(plannerAwarders).toEqual([WEEKLY_STATUS_ROUTE, MENU_PLANS_ADD_ROUTE].sort());
+
+    // 状態の確認が付けるのは、完了 (completed) で、週の献立の生成の印のある行だけ
+    const statusSource = readRepoFile(WEEKLY_STATUS_ROUTE);
+    expect(statusSource).toMatch(/request\.status === 'completed' && isWeeklyMenuRequestWeeklyOrigin\(request\.weekly_request\)/);
+
+    // GET /api/badges は、完了した週の献立の生成の行があるときに planner を判定する
+    expect(routeSource).toMatch(/badge\.code === 'planner' && hasCompletedWeeklyMenuRequest/);
 
     // POST /api/menu-plans/add を呼ぶ画面は、どれも使い方ガイド (ハンズオンツアー) のお試しの経路。
     // 呼び出しは、パスで始まる文字列 ('/api/menu-plans/add…'・`${base}/api/menu-plans/add…`) で拾う (コメントの「POST /api/menu-plans/add」は拾わない)
@@ -180,8 +234,19 @@ describe('#1867 バッジの説明の migration: 説明が付く条件と合う'
       expect(readRepoFile(file), `${file} がお試しの経路でない`).toMatch(/source=handson_tour|sandbox: true/);
     }
 
-    expect(description('planner')).toContain('使い方ガイド');
-    expect(description('planner')).toContain('お試し');
-    expect(description('planner')).not.toContain('1週間の献立を作成');
+    // 週の献立の生成の行の印を書くのは POST /api/ai/menu/weekly/request だけ (印の定義のファイルを除く)
+    const originWriters = [...sourceFiles('src'), ...sourceFiles('supabase/functions')]
+      .filter((file) => file !== WEEKLY_ORIGIN_LIB && readRepoFile(file).includes('weeklyMenuRequestWeeklyOriginData('))
+      .sort();
+    expect(originWriters).toEqual([WEEKLY_REQUEST_ROUTE]);
+  });
+
+  it('planner のいまの説明は、AI で 1 週間の献立をはじめて作ったことと、使い方ガイドのお試しの両方を言う', () => {
+    const text = current.get('planner') ?? '';
+    expect(text).toContain('AI');
+    expect(text).toContain('1週間の献立');
+    expect(text).toContain('はじめて');
+    expect(text).toContain('使い方ガイド');
+    expect(text).toContain('お試し');
   });
 });

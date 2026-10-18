@@ -20,6 +20,7 @@ import { addDaysToDate, todayLocal } from '@/lib/date-utils';
 import { isCalendarDate } from '@/lib/jst-day-ranges';
 import { requireAiConsent } from '@/lib/ai/consent-guard';
 import { aiConsentReasonOfStoredError } from '@/lib/ai/consent-config';
+import { weeklyMenuRequestWeeklyOriginData } from '@/lib/ai/weekly-menu-request-origin';
 
 // Vercel Proプランでは最大300秒まで延長可能
 export const maxDuration = 300;
@@ -237,7 +238,12 @@ export async function POST(request: Request) {
         prompt: noteForAi || '',
         constraints,
         // #1042: 生成失敗時に削除済み献立を復元するためのスナップショット（監査用途も兼ねる）
-        generated_data: deletedMealsSnapshot.length > 0 ? { snapshot: deletedMealsSnapshot } : null,
+        // #1867: 週の献立の生成で作った行の印 (weeklyRequest: true)。生成が完了 (completed) したとき、
+        // 状態の確認 (GET /api/ai/menu/weekly/status) とバッジの一覧 (GET /api/badges) がこの印を見て planner を付ける
+        generated_data: {
+          ...weeklyMenuRequestWeeklyOriginData(),
+          ...(deletedMealsSnapshot.length > 0 ? { snapshot: deletedMealsSnapshot } : {}),
+        },
       })
       .select('id')
       .single();

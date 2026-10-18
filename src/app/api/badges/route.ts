@@ -2,6 +2,10 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { consecutiveDayStreak } from '@/lib/jst-day-ranges';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { isAwardableBadgeCode } from '@/lib/badges/awardable';
+import {
+  WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_FILTER_COLUMN,
+  WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_FILTER_VALUE,
+} from '@/lib/ai/weekly-menu-request-origin';
 import { toBadgePeriodAwardsByBadgeId, type BadgePeriodAwards } from '@homegohan/shared';
 import { NextResponse } from 'next/server';
 import { internalError } from '@/lib/api/errors';
@@ -106,6 +110,27 @@ export async function GET(request: Request) {
     const mealCount = mealCountRes.count ?? 0;
     const cookCount = cookCountRes.count ?? 0;
 
+    // #1867 planner (計画上手): AI の週の献立の生成 (POST /api/ai/menu/weekly/request) が完了 (completed) した本人の行があるか。
+    // 付けるのはふつう、状態の確認 (GET /api/ai/menu/weekly/status) が完了を読んだとき。生成の途中で画面を離れて完了を
+    // 読まなかった人の分を、ここで拾う。週の献立の生成の行は generated_data の印 (weeklyRequest: true) で見分ける
+    // (src/lib/ai/weekly-menu-request-origin.ts。印は利用者からは書けない)。読むのは planner が未獲得のときだけ。
+    // 読めなかったときは 500 にせず、planner を判定しないまま一覧を返す (原因はログに残す。次に一覧を開いたときにまた確かめる)
+    let hasCompletedWeeklyMenuRequest = false;
+    const plannerBadge = allBadges.find(badge => badge.code === 'planner');
+    if (plannerBadge && !earnedBadgeIds.has(plannerBadge.id)) {
+      const weeklyRes = await supabase
+        .from('weekly_menu_requests')
+        .select('id', { count: 'exact', head: true })
+        .eq('user_id', user.id)
+        .eq('status', 'completed')
+        .eq(WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_FILTER_COLUMN, WEEKLY_MENU_REQUEST_WEEKLY_ORIGIN_FILTER_VALUE);
+      if (weeklyRes.error) {
+        logger.withUser(user.id).error('weekly_menu_requests (completed weekly generation) query failed (planner is not judged)', weeklyRes.error);
+      } else {
+        hasCompletedWeeklyMenuRequest = (weeklyRes.count ?? 0) > 0;
+      }
+    }
+
     // ユニークな日付を取得
     const uniqueDates = [...new Set(completedDaysRes.data?.map(d => d.day_date) || [])];
     
@@ -134,6 +159,10 @@ export async function GET(request: Request) {
       }
       // Streak 7日連続
       else if (badge.code === 'streak_7' && streak >= 7) {
+        earned = true;
+      }
+      // 計画上手 (AI の週の献立の生成が完了した。#1867)
+      else if (badge.code === 'planner' && hasCompletedWeeklyMenuRequest) {
         earned = true;
       }
       // 以下の 3 つ (home_chef / master_chef / century) は、いまのマスターに行が無く、一覧に出すかどうかは

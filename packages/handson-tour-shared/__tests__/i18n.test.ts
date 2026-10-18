@@ -372,10 +372,25 @@ describe('Step 3 の文言の「n つ」は、ツアーが Step 3 までに付�
   it('first_bite の吹き出しは獲得の有無を言わず、もらい方を説明する (獲得済みでも未獲得でも食い違わない)', () => {
     const ja = HANDSON_TOUR_I18N_JA.tour.step3.first_bite_bubble;
     const en = HANDSON_TOUR_I18N_EN.tour.step3.first_bite_bubble;
-    expect(ja).toBe('食事を記録するともらえるバッジです');
-    expect(en).toBe('Earned by logging a meal');
+    // 付くのは食事を「完了」にしたとき (#1867)。「記録」とは書かない (写真から保存しただけの食事は数えない)
+    expect(ja).toBe('食事を「完了」にするともらえるバッジです');
+    expect(en).toBe('Earned by marking a meal as done');
+    expect(ja).not.toContain('記録');
+    expect(en).not.toMatch(/\blog/i);
     // 獲得済みの言い方 (以前の「写真から記録を 1 度しました」) でも、未獲得の言い方 (「…するともらえます」) でもない
     expect(ja).not.toMatch(/しました|もらえます|もらいました/);
     expect(en).not.toMatch(/\byou (logged|earned)\b|\bto earn it\b/i);
+  });
+
+  // planner は、AI で週の献立を初めて作ったとき (週の献立の生成の完了) と、使い方ガイドのお試しの献立の追加で付く (#1867)。
+  // お試しの献立を追加せずに進んだ人には未獲得のカードを指すので、獲得の有無を言わず、2 つのもらい方を説明する
+  it('planner の吹き出しは獲得の有無を言わず、AI の週の献立とお試しの献立の 2 つのもらい方を説明する (#1867)', () => {
+    const ja = HANDSON_TOUR_I18N_JA.tour.step3.planner_bubble;
+    const en = HANDSON_TOUR_I18N_EN.tour.step3.planner_bubble;
+    expect(ja).toBe('AI で 1 週間の献立を作るか、お試しの献立を追加するともらえるバッジです');
+    expect(en).toBe('Earned by creating a week of meals with AI, or by adding the trial meal plan');
+    // 以前の「献立を 1 度作りました」は獲得済みの言い方で、付く条件 (AI の週の献立・お試しの献立) も言っていなかった
+    expect(ja).not.toMatch(/しました|もらいました/);
+    expect(en).not.toMatch(/\byou (created|earned)\b/i);
   });
 });
