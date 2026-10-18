@@ -99,7 +99,7 @@ export const HANDSON_TOUR_I18N_EN = {
       first_bite_title: 'First bite',
       first_bite_bubble: 'Earned by marking a meal as done',
       planner_title: 'Planner',
-      planner_bubble: 'Earned by creating a week of meals with AI, or by adding the trial meal plan',
+      planner_bubble: 'Earned by creating meals for multiple days at once with AI, or by adding the trial meal plan',
       tutorial_complete_title: 'App Master',
       tutorial_complete_bubble: "You'll receive it on the next screen",
 
@@ -272,9 +272,10 @@ export const HANDSON_TOUR_I18N_JA = {
       // 「記録」ではなく「完了」と書く (#1867。アプリの中のバッジの説明 badges.description と同じ書き方)
       first_bite_bubble: '食事を「完了」にするともらえるバッジです',
       planner_title: 'プランナー',
-      // planner は、AI で週の献立を初めて作ったとき (週の献立の生成の完了) と、使い方ガイドのお試しの献立の追加で付く (#1867)。
+      // planner は、AI で複数の日 (2 日以上) の献立を初めてまとめて作ったとき (その生成の完了。1 週間に満たなくても付く) と、
+      // 使い方ガイドのお試しの献立の追加で付く (#1867。下限は src/lib/ai/weekly-menu-request-origin.ts の MULTI_DAY_MENU_GENERATION_MIN_DAYS)。
       // お試しの献立を追加せずに進んだ人には未獲得のカードを指すので、first_bite と同じく獲得の有無を言わない、もらい方の説明にする。英語版も同じ
-      planner_bubble: 'AI で 1 週間の献立を作るか、お試しの献立を追加するともらえるバッジです',
+      planner_bubble: 'AI で複数の日の献立をまとめて作るか、お試しの献立を追加するともらえるバッジです',
       tutorial_complete_title: '使い方マスター',
       tutorial_complete_bubble: '次の画面で受け取れます',
 

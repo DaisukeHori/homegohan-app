@@ -1,6 +1,6 @@
 // @vitest-environment node
 /**
- * #1867 「計画上手」(planner) は、AI で週の献立を初めて作ったときにも付く。AI 相談のアクションの 1 週間分の生成
+ * #1867 「計画上手」(planner) は、AI で複数の日の献立を初めてまとめて作ったときにも付く。AI 相談のアクションの 1 週間分の生成
  * (generate_week_menu。src/lib/ai/consultation-action-executor.ts) も利用者が AI で週の献立を作る経路なので、
  * 生成のリクエストの行を作るときに generated_data へ週の献立の生成の印 (weeklyRequest: true) を書く
  * (行が completed になった時点で DB のトリガー weekly_menu_requests_award_planner がこの印で planner を付ける)。

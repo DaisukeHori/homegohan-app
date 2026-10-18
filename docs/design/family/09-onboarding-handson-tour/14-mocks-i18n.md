@@ -205,9 +205,9 @@ export const HANDSON_TOUR_I18N_JA = {
 
       // バッジ別吹き出し
       first_bite_title: 'はじめての一歩',
-      first_bite_bubble: '食事を記録するともらえるバッジです',
+      first_bite_bubble: '食事を「完了」にするともらえるバッジです',
       planner_title: 'プランナー',
-      planner_bubble: '献立を 1 度作りました',
+      planner_bubble: 'AI で複数の日の献立をまとめて作るか、お試しの献立を追加するともらえるバッジです',
       tutorial_complete_title: '使い方マスター',
       tutorial_complete_bubble: '次の画面で受け取れます',
 
