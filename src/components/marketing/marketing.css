@@ -715,6 +715,8 @@ html:has(.lp) {
   position: relative;
   --lp-flow-ring: 3rem;
   --lp-flow-pitch: 4rem;
+  /* 線の太さ (§5.7 の 2 px)。SVG の箱の高さをこの太さにし、線は箱の高さいっぱいに引く (下の .lp-flow-line) */
+  --lp-flow-stroke: 2px;
 }
 .lp .lp-flow-nodes {
   position: relative;
@@ -749,24 +751,31 @@ html:has(.lp) {
   line-height: 1.4;
   white-space: nowrap;
 }
+/*
+ * 線の SVG の箱は、線そのものの大きさ (長さ × 太さ) にする。viewBox (0 0 1 1) を preserveAspectRatio="none" で箱に伸ばすので、
+ * 太さ 1 (viewBox の高さいっぱい) が箱の高さ = 2 px になり、pathLength="1" の dash (stroke-dasharray: 1・stroke-dashoffset: 1 → 0) は
+ * 線の座標のまま長さいっぱいに効く。vector-effect: non-scaling-stroke は使わない: Chromium では dash の間隔だけが線の実際の長さに
+ * 伸び、stroke-dashoffset が伸びないため、1 にしても線が隠れない (2026-10-18 に Chromium で実測。0.5 で半分が隠れず全部描かれた)。
+ * 端は butt: round の丸は横に伸ばした座標で線の長さの半分まで伸びるため。端は節の輪の中心にあり、輪の下に隠れる
+ */
 .lp .lp-flow-line {
   position: absolute;
   z-index: 0;
   overflow: visible;
   pointer-events: none;
-  /* 縦: 1 つ目の輪の中心 (上から ring / 2) から、最後の輪の中心まで。SVG の箱の左の真ん中を軸に 90° 回して縦にする */
+  /* 縦: 1 つ目の輪の中心から、最後の輪の中心まで。箱の左の真ん中 (= 1 つ目の輪の中心) を軸に 90° 回して縦にする */
   left: calc(var(--lp-flow-ring) / 2);
-  top: 0;
+  top: calc(var(--lp-flow-ring) / 2 - var(--lp-flow-stroke) / 2);
   width: calc((var(--lp-flow-count) - 1) * var(--lp-flow-pitch));
-  height: var(--lp-flow-ring);
+  height: var(--lp-flow-stroke);
   transform-origin: 0 50%;
   rotate: 90deg;
 }
 .lp .lp-flow-line path {
   fill: none;
   stroke: var(--lp-accent);
-  stroke-width: 2px;
-  stroke-linecap: round;
+  stroke-width: 1;
+  stroke-linecap: butt;
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
 }

@@ -25,9 +25,10 @@ export function FlowDiagram({ nodes, note }: FlowDiagramProps) {
   return (
     <div className="lp-flow">
       <div className="lp-flow-track" style={{ '--lp-flow-count': nodes.length } as CSSProperties}>
-        {/* 線は 1 本。viewBox は 0〜1 の正方形で、preserveAspectRatio="none" と non-scaling-stroke で箱の幅いっぱいに 2 px の線を引く */}
+        {/* 線は 1 本。SVG の箱は線の長さ × 太さ (2 px) で、viewBox (0〜1 の正方形) を preserveAspectRatio="none" で箱に伸ばし、
+            太さ 1 の線を箱いっぱいに引く (non-scaling-stroke を使わない理由は marketing.css の .lp-flow-line) */}
         <svg className="lp-flow-line" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true" focusable="false">
-          <path d="M 0 0.5 H 1" pathLength={1} vectorEffect="non-scaling-stroke" />
+          <path d="M 0 0.5 H 1" pathLength={1} />
         </svg>
         <ul className="lp-flow-nodes">
           {nodes.map((node, index) => {
