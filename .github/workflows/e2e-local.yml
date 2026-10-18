@@ -137,6 +137,7 @@ jobs:
           tests/e2e/w5-3-menu-gen-adversarial.spec.ts
           tests/e2e/wave2-f2-queue-reliability.spec.ts
           tests/e2e/csp-nonce.spec.ts
+          tests/e2e/landing-page.spec.ts
 
       # 規約・プライバシーポリシーの再同意ゲート (#1174) の「強制あり」(LEGAL_CONSENT_ENFORCE=on) の挙動は、
       # 同じビルドを on でもう 1 つ別のポート (3001) に起動して確かめる (環境変数はサーバーの起動時に読まれる)。
