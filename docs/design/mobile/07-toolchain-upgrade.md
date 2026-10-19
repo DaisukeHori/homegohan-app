@@ -299,7 +299,7 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 
 | 縁 | 消せるか | 判断 |
 |---|---|---|
-| React の二重化 (ルート 19.2.x と モバイル 19.3.0)。`metro.config.js` の `resolveRequest`・jest の `moduleNameMapper` の `react` の行・tsconfig の `paths.react`・ルートの `overrides` がこのために在る | 消すには Web (Next 16.4.1) とモバイル (react-native 0.88.0 のレンダラーが要求する 19.3.0 と完全に同じ版) の `react` をそろえる必要がある。Web の `react` を 19.3.0 の固定にすると、Web の更新がモバイルの SDK に縛られる (逆も)。いまの Next 16.4.1 と React 19.3 の組は未検証 | **消さない**。二重化は残し、固定の仕組み (4 か所) は版だけ更新する。番兵 (§9.7) で「モバイルの `react` = bundledNativeModules の `react` = `react-test-renderer`」と lockfile の置き場を固定し、ずれの発生を止める |
+| React の二重化 (ルート 19.2.x と モバイル 19.3.0)。`metro.config.js` の `resolveRequest`・jest の `moduleNameMapper` の `react` の行・tsconfig の `paths.react`・ルートの `overrides` がこのために在る | 消すには Web (Next 16.4.2) とモバイル (react-native 0.88.0 のレンダラーが要求する 19.3.0 と完全に同じ版) の `react` をそろえる必要がある。Web の `react` を 19.3.0 の固定にすると、Web の更新がモバイルの SDK に縛られる (逆も)。いまの Next 16.4.2 と React 19.3 の組は未検証 | **消さない**。二重化は残し、固定の仕組み (4 か所) は版だけ更新する。番兵 (§9.7) で「モバイルの `react` = bundledNativeModules の `react` = `react-test-renderer`」と lockfile の置き場を固定し、ずれの発生を止める |
 | lockfile の置き場が作り直しの手順で変わる (§2.4。1 回で作ると `react-native` ほかが入れ子になり、ルートの `@react-native/jest-preset` から `react-native` が見えない) | 置き場を npm に指示する仕組み (nohoist) は npm に無い。手順 (2 段) で古い木を先に消せば、いまの main と同じ置き場になる | 手順で固定する (§10.1)。作った後は V-1 の検査 (§9.11) で、マージ後は番兵 (§9.7) で置き場を見張る。lockfile を手で直さない |
 | jest 29 の経路 (`@react-native/jest-preset` の依存) | `overrides` で 30 にそろえれば lockfile から消える (実行時は jest-expo が自分の 30 を使うので挙動は変わらない) | 消す (§6.2) |
 | 根の advisory (braces・node-forge) | 上流に修正版が無い。`metro-file-map` と `@expo/cli` を使わない構造は Expo を使わない構造 | 消せない。残ることを合否の外に置き (§10 の V-4)、修正版が出たら Dependabot のパッチ更新で入る |
