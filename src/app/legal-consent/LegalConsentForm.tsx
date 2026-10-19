@@ -297,7 +297,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
         </div>
 
         <section className="space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="legal-consent-declined-account-guide">
-          <h2 className="font-bold text-gray-900">退会とデータの書き出しについて</h2>
+          <h2 className="font-bold text-gray-900">{LEGAL_CONSENT_COPY.accountPageHeading}について</h2>
           <p className="text-sm leading-relaxed text-gray-600">{LEGAL_CONSENT_COPY.declinedAccountGuide}</p>
           <Link
             href={`/login?next=${encodeURIComponent(LEGAL_CONSENT_ACCOUNT_PATH)}`}
