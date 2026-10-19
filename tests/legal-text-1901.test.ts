@@ -8,12 +8,12 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { createElement, type ReactNode } from 'react';
+import { createElement, type ComponentType, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
-import { ADULT_AGE_YEARS, COPPA_AGE_YEARS, DSR_SETTINGS_ENTRY_TITLE } from '@homegohan/shared';
+import { ADULT_AGE_YEARS, COPPA_AGE_YEARS, DSR_SETTINGS_ENTRY_TITLE, LEGAL_DOCUMENTS } from '@homegohan/shared';
 import { HIDDEN_CONTENT_RETENTION_DAYS } from '@/lib/admin/hidden-content-restore';
-import { AI_CONSENT_SETTINGS_ENTRY_TITLE } from '@/lib/ai/consent-config';
+import { AI_CONSENT_PROVIDERS, AI_CONSENT_PROVIDER_INFO, AI_CONSENT_SETTINGS_ENTRY_TITLE } from '@/lib/ai/consent-config';
 import { ACCOUNT_EXPORT_EXCLUDED, ACCOUNT_EXPORT_TABLES } from '@/lib/account-export-tables';
 import { MFA_REQUIRED_ROLES } from '@/lib/auth/mfa/policy';
 import { LOGIN_HISTORY_RETENTION_DAYS, SESSION_IDLE_EXPIRE_DAYS } from '@/lib/auth/sessions/constants';
@@ -44,6 +44,9 @@ vi.mock('next/link', async () => {
       react.createElement('a', { href, ...rest }, children),
   };
 });
+
+const { default: TermsPage } = await import('@/app/terms/page');
+const { default: PrivacyPage } = await import('@/app/privacy/page');
 
 const ROOT = path.resolve(__dirname, '..');
 const DESIGN_DOC = 'docs/design/cross/20-terms-privacy-text.md';
@@ -1048,6 +1051,72 @@ describe('#1901 本文の主張と画面の名前', () => {
     for (const text of texts) {
       for (const pattern of SCREEN_REFERENCE_PATTERNS) expect(text, `${pattern}`).not.toMatch(pattern);
       for (const name of SCREEN_NAMES) expect(text, name).not.toContain(name);
+    }
+  });
+});
+
+// ─── 段 B (ページ・版・旧版の控え) ─────────────────────────────────────────
+
+function renderPage(Page: ComponentType): string {
+  return renderToStaticMarkup(createElement(Page));
+}
+
+describe('#1901 ページ・版・旧版の控え', () => {
+  it('T-12 AI 事業者の一覧は ctx の順で data-testid="privacy-ai-providers" の ul に「名前（国）：使い道」で出る。利用規約には出ない', () => {
+    const html = renderPage(PrivacyPage);
+    const list = /<ul[^>]*data-testid="privacy-ai-providers"[^>]*>([\s\S]*?)<\/ul>/.exec(html);
+    expect(list, '送信先の一覧が無い').not.toBeNull();
+    const items = [...(list?.[1] ?? '').matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => decodeEntities(m[1].replace(/<[^>]*>/g, '')));
+    expect(items).toEqual(
+      AI_CONSENT_PROVIDERS.map((id) => {
+        const info = AI_CONSENT_PROVIDER_INFO[id];
+        return `${info.name}（${info.country}）：${info.usage}`;
+      }),
+    );
+    expect(renderPage(TermsPage)).not.toContain('privacy-ai-providers');
+  });
+
+  it('T-17 LEGAL_DOCUMENTS の 2 文書の版と施行日はそれぞれ同じで、版は仮置きの v2025.1 ではない', () => {
+    expect(LEGAL_DOCUMENTS.terms_of_service.version).not.toBe('v2025.1');
+    expect(LEGAL_DOCUMENTS.privacy_policy.version).toBe(LEGAL_DOCUMENTS.terms_of_service.version);
+    expect(LEGAL_DOCUMENTS.privacy_policy.effectiveDate).toBe(LEGAL_DOCUMENTS.terms_of_service.effectiveDate);
+  });
+
+  it('T-18 /terms の h3 の数は TERMS_ARTICLE_COUNT + 1 (附則)、/privacy は PRIVACY_SECTION_COUNT + 1', () => {
+    expect(h3Texts(renderPage(TermsPage))).toHaveLength(TERMS_ARTICLE_COUNT + 1);
+    expect(h3Texts(renderPage(PrivacyPage))).toHaveLength(PRIVACY_SECTION_COUNT + 1);
+  });
+
+  it('T-20 docs/legal/archive/v2025.1/terms.md と privacy.md があり、旧版の条の見出しを含む', () => {
+    const oldTerms = readRepo('docs/legal/archive/v2025.1/terms.md');
+    for (const heading of [
+      '第1条（適用）',
+      '第2条（利用登録）',
+      '第3条（ユーザーIDおよびパスワードの管理）',
+      '第4条（AI解析とデータ利用）',
+      '第5条（禁止事項）',
+      '第6条（本サービスの提供の停止等）',
+      '第7条（免責事項）',
+      '第8条（サービス内容の変更等）',
+      '第9条（準拠法・裁判管轄）',
+    ]) {
+      expect(oldTerms, heading).toContain(heading);
+    }
+    const oldPrivacy = readRepo('docs/legal/archive/v2025.1/privacy.md');
+    for (const heading of [
+      '第1条（個人情報）',
+      '第2条（個人情報の収集方法）',
+      '第3条（個人情報を収集・利用する目的）',
+      '第4条（利用目的の変更）',
+      '第5条（個人情報の第三者提供）',
+      '第6条（個人情報の開示・訂正・削除）',
+      '第7条（お問い合わせ窓口）',
+    ]) {
+      expect(oldPrivacy, heading).toContain(heading);
+    }
+    for (const text of [oldTerms, oldPrivacy]) {
+      expect(text).toContain('v2025.1');
+      expect(text).toContain('2025-01-01');
     }
   });
 });
