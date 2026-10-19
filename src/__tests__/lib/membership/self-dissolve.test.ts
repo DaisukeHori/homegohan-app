@@ -38,7 +38,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 function stubFetch(response: Response | (() => Promise<Response>)) {
-  const fn = vi.fn(async () => (typeof response === 'function' ? response() : response));
+  const fn = vi.fn(async (_input: string, _init?: RequestInit) => (typeof response === 'function' ? response() : response));
   vi.stubGlobal('fetch', fn);
   return fn;
 }
@@ -112,17 +112,16 @@ describe('dissolveOwnScope (#1917)', () => {
   it('dissolveOwnScope: 送る本文は { family_id, confirm: true } / { organization_id, confirm: true } で Content-Type は application/json', async () => {
     const fetchMock = stubFetch(jsonResponse(HTTP_OK, { data: { family_id: FAMILY_ID, dissolved_at: DISSOLVED_AT } }));
     await dissolveOwnScope('family', FAMILY_ID);
-    stubFetch(jsonResponse(HTTP_OK, { data: { organization_id: ORG_ID, dissolved_at: DISSOLVED_AT } }));
-    const orgFetch = vi.mocked(fetch);
+    const orgFetch = stubFetch(jsonResponse(HTTP_OK, { data: { organization_id: ORG_ID, dissolved_at: DISSOLVED_AT } }));
     await dissolveOwnScope('organization', ORG_ID);
 
-    const [familyUrl, familyInit] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    const [familyUrl, familyInit = {}] = fetchMock.mock.calls[0];
     expect(familyUrl).toBe('/api/family/dissolve');
     expect(familyInit.method).toBe('POST');
     expect(familyInit.headers).toEqual({ 'Content-Type': 'application/json' });
     expect(JSON.parse(String(familyInit.body))).toEqual({ family_id: FAMILY_ID, confirm: true });
 
-    const [orgUrl, orgInit] = orgFetch.mock.calls[0] as unknown as [string, RequestInit];
+    const [orgUrl, orgInit = {}] = orgFetch.mock.calls[0];
     expect(orgUrl).toBe('/api/org/dissolve');
     expect(orgInit.method).toBe('POST');
     expect(orgInit.headers).toEqual({ 'Content-Type': 'application/json' });
