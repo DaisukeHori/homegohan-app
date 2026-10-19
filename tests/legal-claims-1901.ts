@@ -22,7 +22,7 @@ export interface LegalClaim {
 }
 
 /** 主張の数 (宣言)。実列挙 (LEGAL_CLAIMS.length) と本文の単位の数の両方と一致する (T-35) */
-export const LEGAL_CLAIM_COUNT = 383;
+export const LEGAL_CLAIM_COUNT = 382;
 
 export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'terms-1#1', section: 'terms-1', fragment: 'この利用規約（以下「本規約」', chars: 118, basis: 'product', evidence: 'F-1・apps/mobile/app.json' },
@@ -58,7 +58,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'terms-5#1', section: 'terms-5', fragment: '13 歳以上 18 歳未満の', chars: 86, basis: 'product', evidence: 'F-10・F-38' },
   { id: 'terms-5#2', section: 'terms-5', fragment: '保護者の同意は、本規約とプラ', chars: 33, basis: 'contract', evidence: '契約の定め (保護者の同意の範囲。§18 Q-1)' },
   { id: 'terms-5#3', section: 'terms-5', fragment: 'の家族グループにつながった未', chars: 85, basis: 'product', evidence: 'F-33・F-49' },
-  { id: 'terms-5#4', section: 'terms-5', fragment: '保護者の同意とのつながりが無', chars: 77, basis: 'product', evidence: 'F-10・F-38' },
+  { id: 'terms-5#4', section: 'terms-5', fragment: '保護者の同意とのつながりが無', chars: 86, basis: 'product', evidence: 'F-10・F-38・src/app/legal-consent/account/page.tsx・packages/shared/src/legal-consent-api.ts' },
   { id: 'terms-5#5', section: 'terms-5', fragment: '未成年者が保護者の同意を得ず', chars: 60, basis: 'law', evidence: '民法 5 条 2 項・120 条' },
   { id: 'terms-6#1', section: 'terms-6', fragment: '本サービスは、食事や健康の記', chars: 69, basis: 'product', evidence: 'F-8・F-18・F-19・F-42' },
   { id: 'terms-6#2', section: 'terms-6', fragment: '各機能の内容と使い方は、本サ', chars: 34, basis: 'product', evidence: 'F-58' },
@@ -142,7 +142,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'terms-17#1', section: 'terms-17', fragment: 'ユーザーは、本サービスの画面', chars: 40, basis: 'product', evidence: 'F-11・F-12' },
   { id: 'terms-17#2', section: 'terms-17', fragment: '退会すると、アカウントと、ア', chars: 48, basis: 'product', evidence: 'F-11' },
   { id: 'terms-17#3', section: 'terms-17', fragment: '削除の前に、データを書き出す', chars: 21, basis: 'product', evidence: 'F-12' },
-  { id: 'terms-17#4', section: 'terms-17', fragment: '本規約またはプライバシーポリ', chars: 49, basis: 'contract', evidence: '第24条2項の参照' },
+  { id: 'terms-17#4', section: 'terms-17', fragment: '本規約またはプライバシーポリ', chars: 63, basis: 'product', evidence: 'src/app/legal-consent/account/page.tsx・packages/shared/src/legal-consent-api.ts' },
   { id: 'terms-17#5', section: 'terms-17', fragment: '組織のオーナーと家族グループ', chars: 63, basis: 'product', evidence: 'F-39' },
   { id: 'terms-17#6', section: 'terms-17', fragment: '退会後も残る情報と、その保存', chars: 39, basis: 'contract', evidence: '文書の参照 (プライバシーポリシー第12条)' },
   { id: 'terms-17#7', section: 'terms-17', fragment: '退会後に再び本サービスを利用', chars: 33, basis: 'product', evidence: 'F-11' },
@@ -180,11 +180,10 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'terms-24#3', section: 'terms-24', fragment: '当社は、変更の概要と施行日を', chars: 37, basis: 'process', evidence: '§9.4 の 2・F-31' },
   { id: 'terms-24#4', section: 'terms-24', fragment: '本規約またはプライバシーポリ', chars: 79, basis: 'product', evidence: 'F-5・§9.2' },
   { id: 'terms-24#5', section: 'terms-24', fragment: '同意するまでの間は、本サービ', chars: 46, basis: 'product', evidence: 'F-5・F-28・F-32' },
-  { id: 'terms-24#6', section: 'terms-24', fragment: 'ただし、個人情報の開示・訂正', chars: 52, basis: 'product', evidence: 'F-32・packages/shared/src/legal-consent-api.ts:88-110' },
-  { id: 'terms-24#7', section: 'terms-24', fragment: '同意の前に退会を希望する場合', chars: 44, basis: 'product', evidence: 'F-32・F-40' },
-  { id: 'terms-24#8', section: 'terms-24', fragment: '誤字の修正や表現の整理など、', chars: 53, basis: 'process', evidence: '§9.3' },
-  { id: 'terms-24#9', section: 'terms-24', fragment: '各文書の版と施行日は、その文', chars: 28, basis: 'product', evidence: 'F-3' },
-  { id: 'terms-24#10', section: 'terms-24', fragment: '改定前の版は当社が保管し、お', chars: 28, basis: 'process', evidence: '§9.4・docs/legal/archive (段 B で作る)' },
+  { id: 'terms-24#6', section: 'terms-24', fragment: 'ただし、個人情報の開示・訂正', chars: 63, basis: 'product', evidence: 'F-32・src/app/legal-consent/account/page.tsx・packages/shared/src/legal-consent-api.ts' },
+  { id: 'terms-24#7', section: 'terms-24', fragment: '誤字の修正や表現の整理など、', chars: 53, basis: 'process', evidence: '§9.3' },
+  { id: 'terms-24#8', section: 'terms-24', fragment: '各文書の版と施行日は、その文', chars: 28, basis: 'product', evidence: 'F-3' },
+  { id: 'terms-24#9', section: 'terms-24', fragment: '改定前の版は当社が保管し、お', chars: 28, basis: 'process', evidence: '§9.4・docs/legal/archive (段 B で作る)' },
   { id: 'terms-25#1', section: 'terms-25', fragment: 'ユーザーは、当社の書面による', chars: 62, basis: 'contract', evidence: '契約の定め (譲渡の禁止・事業の承継)' },
   { id: 'terms-25#2', section: 'terms-25', fragment: '当社が本サービスの事業を第三', chars: 74, basis: 'contract', evidence: '契約の定め (譲渡の禁止・事業の承継)' },
   { id: 'terms-26#1', section: 'terms-26', fragment: '本規約のいずれかの条項または', chars: 107, basis: 'contract', evidence: '契約の定め (分離可能性)' },
@@ -373,7 +372,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
   { id: 'privacy-13#4', section: 'privacy-13', fragment: '退会後も残るものは、本ポリシ', chars: 25, basis: 'contract', evidence: '第12条の参照' },
   { id: 'privacy-13#5', section: 'privacy-13', fragment: 'ユーザーは、自分の個人データ', chars: 42, basis: 'product', evidence: 'F-12' },
   { id: 'privacy-13#6', section: 'privacy-13', fragment: 'アカウントの凍結中も、退会と', chars: 23, basis: 'product', evidence: 'F-12' },
-  { id: 'privacy-13#7', section: 'privacy-13', fragment: '利用規約や本ポリシーの改定後', chars: 47, basis: 'contract', evidence: '利用規約第24条2項の参照' },
+  { id: 'privacy-13#7', section: 'privacy-13', fragment: '利用規約や本ポリシーの改定後', chars: 57, basis: 'product', evidence: 'src/app/legal-consent/account/page.tsx・packages/shared/src/legal-consent-api.ts' },
   { id: 'privacy-13#8', section: 'privacy-13', fragment: 'この間も、第14条の開示の請', chars: 38, basis: 'product', evidence: 'F-32・F-13' },
   { id: 'privacy-13#9', section: 'privacy-13', fragment: '組織のオーナーと家族グループ', chars: 64, basis: 'product', evidence: 'F-39' },
   { id: 'privacy-14#1', section: 'privacy-14', fragment: 'ユーザーは、当社に対し、個人', chars: 103, basis: 'law', evidence: '個人情報保護法 32〜35 条' },

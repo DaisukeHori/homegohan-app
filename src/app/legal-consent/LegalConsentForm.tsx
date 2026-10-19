@@ -6,7 +6,10 @@
 // - 利用規約・プライバシーポリシーそれぞれに必須のチェックボックス (required と aria-required="true"。
 //   どちらかが未チェックの間は「同意して続ける」を押せない)
 // - 「同意して続ける」: POST /api/legal/accept で同意を記録し、元の画面 (next) へ戻る。記録は DB 関数が本人の行だけに行う
-// - 「同意しない」: ログアウトして、ご利用いただけないこと・保存データの削除の依頼先 (お問い合わせ) を案内する
+// - 「同意しない」: ログアウトして、ご利用いただけないことと、もう一度ログインすれば同意しなくても退会とデータの書き出しができることを案内する
+//   (運営が代わりに削除する経路は無いので、お問い合わせによる削除は約束しない。#1901 cross/20 Q-23)
+// - #1901 (cross/20 Q-23): 同意しなくても、本人が退会とデータの書き出しをできる画面 (LEGAL_CONSENT_ACCOUNT_PATH = /legal-consent/account) への
+//   リンクを、フォームの下と未成年の案内の画面に出す。呼ぶ API (/api/account/delete・/api/account/export) は同意の許可リストにある
 // - #1173: 生年月日がプロフィールに無い人 (needsBirthDate) には生年月日の欄を出す (必須)。18 歳未満の自己登録は
 //   サーバーが 403 LEGAL_MINOR_SELF_SIGNUP_REFUSED で断り、案内 (生年月日を直す / 登録をやめる = 退会) を出す。
 //   保護者の同意とのつながりが無い 18 歳未満の本人 (guardianMissing) には、案内と「登録をやめる」だけを出す。
@@ -39,7 +42,7 @@ import {
 import { createClient } from '@/lib/supabase/client';
 import { broadcastSignOut, clearUserScopedLocalStorage } from '@/lib/user-storage';
 import { notifyNativeLegalConsentAccepted, notifyNativeSignOut } from '@/lib/native-auth-bridge';
-import { LEGAL_CONSENT_PATH } from '@/lib/legal-consent';
+import { LEGAL_CONSENT_ACCOUNT_PATH, LEGAL_CONSENT_PATH } from '@/lib/legal-consent';
 import {
   ACCOUNT_DELETE_FAILED_MESSAGE,
   accountDeletionBlockedMessage,
@@ -277,6 +280,8 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
             {phase === 'withdrawing' ? '削除しています...' : LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton}
           </button>
         </div>
+
+        <AccountEntryLink />
       </div>
     );
   }
@@ -291,18 +296,22 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
           </p>
         </div>
 
-        <section className="space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-4">
-          <h2 className="font-bold text-gray-900">保存されているデータの削除について</h2>
-          <p className="text-sm leading-relaxed text-gray-600">
-            これまでにご登録いただいた情報（食事の記録・健康に関する情報など）の削除をご希望の場合は、お問い合わせフォームからご連絡ください。
-            ご本人であることを確認のうえ、アカウントと保存されているデータを削除します。
-          </p>
+        <section className="space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="legal-consent-declined-account-guide">
+          <h2 className="font-bold text-gray-900">退会とデータの書き出しについて</h2>
+          <p className="text-sm leading-relaxed text-gray-600">{LEGAL_CONSENT_COPY.declinedAccountGuide}</p>
           <Link
-            href="/contact"
+            href={`/login?next=${encodeURIComponent(LEGAL_CONSENT_ACCOUNT_PATH)}`}
             className="inline-block font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800"
           >
-            お問い合わせフォームへ
+            {LEGAL_CONSENT_COPY.declinedAccountLink}
           </Link>
+          <p className="text-sm leading-relaxed text-gray-600">
+            そのほかのご質問は、
+            <Link href="/contact" className="font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800">
+              お問い合わせフォームへ
+            </Link>
+            お寄せください。
+          </p>
         </section>
 
         <section className="space-y-2 rounded-2xl border border-gray-200 bg-gray-50 p-4" data-testid="legal-consent-dsr-guide">
@@ -459,6 +468,23 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
           {DSR_SETTINGS_ENTRY_TITLE}の画面へ
         </Link>
       </p>
+
+      <AccountEntryLink />
     </form>
+  );
+}
+
+/** 同意しなくても退会とデータの書き出しができる画面 (/legal-consent/account) への案内 (#1901 cross/20 Q-23) */
+function AccountEntryLink() {
+  return (
+    <p className="text-sm leading-relaxed text-gray-500" data-testid="legal-consent-account-link">
+      {LEGAL_CONSENT_COPY.accountEntryLead}
+      <Link
+        href={LEGAL_CONSENT_ACCOUNT_PATH}
+        className="font-bold text-orange-700 underline underline-offset-4 hover:text-orange-800"
+      >
+        {LEGAL_CONSENT_COPY.accountEntryLink}
+      </Link>
+    </p>
   );
 }
