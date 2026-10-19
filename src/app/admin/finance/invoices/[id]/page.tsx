@@ -87,8 +87,8 @@ export default function InvoiceDetailPage() {
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
           {error ?? "請求書が見つかりません"}
         </div>
-        <Link href="/admin/finance/invoices" className="mt-4 inline-block text-indigo-600 hover:underline text-sm">
-          ← 一覧に戻る
+        <Link href="/admin/finance" className="mt-4 inline-block text-indigo-600 hover:underline text-sm">
+          ← 売上・経理に戻る
         </Link>
       </div>
     );
@@ -115,8 +115,8 @@ export default function InvoiceDetailPage() {
   return (
     <div className="p-8">
       <div className="flex items-center gap-3 mb-6">
-        <Link href="/admin/finance/invoices" className="text-indigo-600 hover:text-indigo-800 text-sm">
-          ← 請求書一覧
+        <Link href="/admin/finance" className="text-indigo-600 hover:text-indigo-800 text-sm">
+          ← 売上・経理
         </Link>
       </div>
 

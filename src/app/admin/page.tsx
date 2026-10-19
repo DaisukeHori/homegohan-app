@@ -50,7 +50,7 @@ const SECTIONS: ReadonlyArray<ConsoleSection> = [
   {
     href: '/admin/moderation',
     label: 'モデレーション',
-    description: '食事画像・レシピの審査キュー (AI コンテンツの審査は準備中)',
+    description: '食事画像・レシピの審査キュー',
     roles: ['admin', 'super_admin', 'content_moderator'],
   },
   {
@@ -68,7 +68,7 @@ const SECTIONS: ReadonlyArray<ConsoleSection> = [
   {
     href: '/admin/finance',
     label: '売上・経理',
-    description: 'MAU の確認と CSV の書き出し (売上・請求書・Stripe との整合チェックは、課金を始めるまで準備中)',
+    description: 'MAU の確認と CSV の書き出し',
     roles: ADMIN_ROLES,
   },
   {

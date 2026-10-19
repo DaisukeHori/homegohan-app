@@ -5,7 +5,7 @@
  * 実在する `moderation_flags` (food/meal 用) / `recipe_flags` (recipe 用) に統一する。
  * `ai_content` タイプはバックエンドテーブルが存在しないため未サポート (要 migration)。
  * ai_content を指定された API は、空の一覧や 404 ではなく 501 (OP_NOT_SUPPORTED) を返し、
- * 画面は「AIコンテンツ（未対応）」と明示する (#1128。オーナー判断 2026-10-08)。
+ * 画面には ai_content の選択肢を出さない (#1911。未完成の機能は画面に出さない)。
  *
  * 重要: BAN 対象ユーザー (`user_id`) は各フラグテーブル自身の `user_id` /
  * `reporter_id` ではなく、フラグが指す **コンテンツの所有者** (meals.user_id /
@@ -43,7 +43,7 @@ export function isModerationBacked(type: ModerationType): type is ModerationBack
 
 /** バックエンドの無いタイプ (ai_content) を指定された API の 501 の本文 (#1128) */
 export const AI_CONTENT_NOT_SUPPORTED_MESSAGE =
-  'AIコンテンツの審査は準備中（未対応）です。審査できるのは、食事画像とレシピの通報だけです。';
+  'AIコンテンツの審査はできません。審査できるのは、食事画像とレシピの通報だけです。';
 
 export interface NormalizedModerationItem {
   /** 通報 (moderation_flags.id / recipe_flags.id) の ID。コンテンツ本体の ID は `content_id` */

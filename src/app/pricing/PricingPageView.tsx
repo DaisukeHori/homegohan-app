@@ -4,7 +4,7 @@
  * /pricing の見た目 (billing/01 §10.1)。page.tsx (Server Component) が「買えるプラン」と、アプリの WebView で開いたか (is_native_app) を渡す。
  * この部品は Supabase も Cookie も読まない。
  *
- * - 買えるプランが 0 件 → 販売開始前の「準備中」の表示 (案内の段落・準備中のカード・FAQ)
+ * - 買えるプランが 0 件 → フリーのカードだけ (案内の段落・FAQ)。有料プランのカードは出さない (#1911: 未完成のものを「準備中」と出さない)
  * - 1 件以上 → 買えるプランごとにカードを 1 枚。カードの中は買える間隔 (isPurchasable が真) ごとに 1 行ずつ、金額と CTA
  *   (買えない間隔は金額も CTA も出さない。間隔の切替は置かない)
  * - アプリの WebView (isNativeApp) では有料プランのカードと CTA を描かない (アプリ内に価格・購入の導線を出さない。§10.4)
@@ -38,11 +38,8 @@ const colors = {
   border: '#E8E8E8',
 };
 
-/** カードが順に出てくるときの 1 枚ごとの遅れ (秒)。いまの準備中のカードの delay と同じ */
+/** カードが順に出てくるときの 1 枚ごとの遅れ (秒) */
 const CARD_DELAY_STEP_SEC = 0.1;
-
-// 有料プランは販売開始前。価格・機能・支払条件はまだ決まっていないので載せない。
-const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前）';
 
 // 現在ご利用いただける機能。実際にある機能だけを載せ、紹介ページ (src/components/marketing/landing-copy.ts の claims) と同じ言い方にする (#1867)。
 // - 写真の記録のコメントは定型の文 (supabase/functions/_shared/nutrition-pipeline.ts の buildTemplatePraiseAndTip) なので、
@@ -69,7 +66,6 @@ const AI_DAILY_LIMIT_NOTE =
 
 const faqs = [
   { q: "現在、料金はかかりますか？", a: `現在ご提供している機能は無料でご利用いただけます。${AI_DAILY_LIMIT_NOTE}` },
-  { q: "有料プランはありますか？", a: `${PAID_PLAN_PENDING}。内容・料金・開始時期が決まりましたら、このページでご案内します。` },
 ];
 
 /** 買える間隔ごとの金額の単位と CTA の文 (billing/01 §10.1 の表) */
@@ -126,14 +122,13 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
           </h1>
           {!onSale && (
             <p className="text-lg" style={{ color: colors.textLight }}>
-              現在は無料でご利用いただけます。<br />
-              {PAID_PLAN_PENDING}。
+              現在は無料でご利用いただけます。
             </p>
           )}
         </div>
 
-        {/* プランカード */}
-        <div className="grid md:grid-cols-2 gap-6 max-w-3xl mx-auto mb-20">
+        {/* プランカード (有料プランのカードを描かないときは、フリーのカード 1 枚を中央に置く) */}
+        <div className={`grid gap-6 mx-auto mb-20 ${showPaidCards ? "md:grid-cols-2 max-w-3xl" : "max-w-md"}`}>
           {/* フリープラン */}
           <motion.div
             className="relative p-6 rounded-3xl"
@@ -221,36 +216,9 @@ export default function PricingPageView({ plans, isNativeApp }: PricingPageViewP
                 </div>
               </motion.div>
             ))}
-
-          {/* 有料プラン (準備中) */}
-          {!onSale && (
-          <motion.div
-            className="relative p-6 rounded-3xl flex flex-col"
-            style={{ background: colors.card, border: `2px dashed ${colors.border}` }}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: CARD_DELAY_STEP_SEC }}
-          >
-            <div className="text-center mb-6">
-              <div className="w-14 h-14 mx-auto mb-4 rounded-2xl flex items-center justify-center" style={{ background: `${colors.textMuted}15`, color: colors.textMuted }}>
-                <Crown size={24} />
-              </div>
-              <h3 className="text-xl font-bold mb-1" style={{ color: colors.text }}>有料プラン</h3>
-              <p className="text-sm mb-4" style={{ color: colors.textMuted }}>販売開始前</p>
-              <div className="flex items-baseline justify-center gap-1">
-                <span className="text-4xl font-bold" style={{ color: colors.textMuted }}>準備中</span>
-              </div>
-            </div>
-
-            <p className="text-sm leading-relaxed text-center flex-1" style={{ color: colors.textLight }}>
-              {PAID_PLAN_PENDING}。<br />
-              内容・料金・開始時期が決まりましたら、このページでご案内します。
-            </p>
-          </motion.div>
-          )}
         </div>
 
-        {/* FAQ (販売開始前の案内。買えるプランがあるときは描かない) */}
+        {/* FAQ (買えるプランがあるときは描かない) */}
         {!onSale && (
         <div className="max-w-2xl mx-auto">
           <h2 className="text-2xl font-bold text-center mb-8" style={{ color: colors.text }}>よくある質問</h2>

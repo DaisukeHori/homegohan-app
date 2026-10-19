@@ -6,26 +6,48 @@
  * まだ販売していない有料プランの価格が載っていた。2026-10-08 のオーナー判断で取り下げたので、書き戻されないように見張る。
  *
  *   1. ソース走査: 公開ページのソースに、載せてはいけない文字列が無いこと
- *   2. 描画確認   : ページを実際に描画した結果にも載せてはいけない文字列が無く、「準備中」の案内が出ていること
+ *   2. 描画確認   : ページを実際に描画した結果にも載せてはいけない文字列が無いこと
  *      (文字列を組み立てて出す書き方や、`<br />` で分割した書き方もすり抜けないようにする)
  *
  * 実在の事業者情報が確定したとき、または有料プランの販売を始めるとき (課金導線 #1151 の実装後) は、
- * このテストの該当項目 (「準備中」の確認と、載せてよくなった文字列) を意図して更新する。
+ * このテストの該当項目 (特定商取引法の料金・支払の欄の文と、載せてよくなった文字列) を意図して更新する。
+ * #1911: 未完成のものを「準備中」「販売開始前」「確定次第掲載します」と書かない。買えるプランが無いときの /pricing は無料の案内だけを出し、
+ * 特定商取引法の表記には、有料の販売で要る項目 (販売価格・支払方法など) を項目ごと出さない (有料プランの販売 #1912 が足す)。
  * billing/01 §10.1 (#1701 段 C): /pricing は async の Server Component (page.tsx) になり、見える文は PricingPageView.tsx に移った。
- * 公開ページの走査・描画は PricingPageView を「買えるプランが 0 件」で描いたもの (いまと同じ「準備中」) で見る。
- * page.tsx そのものは @/lib/billing/public-plans と next/headers をモックして、0 件 (準備中) と買えるプランがある場合を見る。
- * 2026-10-14 (#1155): 事業者名・代表者が確定し、所在地・電話番号は「請求があった場合に遅滞なく開示します」とする扱いになったので、
- * 特定商取引法ページと運営会社ページの該当項目を更新した (値は src/lib/business-info.ts)。
+ * 公開ページの走査・描画は PricingPageView を「買えるプランが 0 件」で描いたもので見る。
+ * page.tsx そのものは @/lib/billing/public-plans と next/headers をモックして、0 件と買えるプランがある場合を見る。
+ * 2026-10-14 (#1155): 事業者名・代表者が確定したので、特定商取引法ページと運営会社ページの該当項目を更新した (値は src/lib/business-info.ts)。
+ * 2026-10-19 (#1911): 所在地・設立・資本金・メールアドレス・営業時間を株式会社MHD医健の公開の会社情報で埋めた (値は src/lib/business-info.ts)。
+ * 電話番号は載せず「請求があれば遅滞なく開示します」と書き、請求の窓口 (メールアドレスとお問い合わせのフォーム) を添える。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { createElement, type ComponentType, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from '@/lib/business-info';
-import { getSupportEmail } from '@/lib/site-config';
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_CAPITAL,
+  BUSINESS_EMAIL,
+  BUSINESS_ESTABLISHED,
+  BUSINESS_HOURS,
+  BUSINESS_NAME,
+  BUSINESS_REPRESENTATIVE,
+  PHONE_DISCLOSED_ON_REQUEST,
+} from '@/lib/business-info';
 import type { PurchasablePlan } from '@/lib/billing/core';
 import { GUIDES } from '@/app/guide/guide-content';
+
+/** タグを取り除く (1 回の置き換えでは「<scr<x>ipt>」のような入れ子が残るので、変わらなくなるまで繰り返す。CodeQL js/incomplete-multi-character-sanitization) */
+function stripAllTags(html: string): string {
+  let prev: string;
+  let out = html;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, '');
+  } while (out !== prev);
+  return out;
+}
 
 // /pricing の page.tsx (Server Component) が読む「買えるプラン」と Cookie (is_native_app)。it ごとに値を変える
 const pricingMocks = vi.hoisted(() => ({
@@ -117,7 +139,6 @@ const FORBIDDEN: { text: string; reason: string }[] = [
   { text: '神宮前1-2-3', reason: 'ダミーの住所' },
   { text: 'ほめゴハンビル', reason: 'ダミーのビル名' },
   { text: 'homegohan.jp', reason: '届かないメールアドレス・存在しない URL (support@homegohan.jp / https://homegohan.jp)' },
-  { text: '資本金', reason: '確認できていない会社情報' },
   { text: '従業員数', reason: '確認できていない会社情報' },
   // 架空の沿革・資金調達
   { text: 'シリーズA', reason: '架空の資金調達' },
@@ -192,10 +213,40 @@ const FORBIDDEN: { text: string; reason: string }[] = [
  */
 const AI_DAILY_LIMIT_PHRASE = '1日にご利用いただける回数に上限があり、上限に達した日は翌日0時からまたお使いいただけます。';
 
-/** 確定情報がまだ無い項目に出す文言 (特定商取引法・運営会社) */
+/** 以前、確定情報がまだ無い項目に出していた文言 (特定商取引法・運営会社)。#1911 で取り除いた */
 const PENDING_NOTICE = '準備中（確定次第掲載します）';
-/** 有料プランは販売開始前であることを示す文言 (特定商取引法・料金ページ) */
+/** 以前、有料プランが販売開始前であることを示していた文言 (特定商取引法・料金ページ・FAQ)。#1911 で取り除いた */
 const PAID_PLAN_PENDING_NOTICE = '有料プランは準備中です（販売開始前）';
+/** 未完成・予定を示す語。公開ページに出さない (#1911) */
+const PENDING_WORDS = ['準備中', '販売開始前', '確定次第', '決まりましたら', '決まり次第', '近日'];
+/**
+ * 特定商取引法の表記で、有料の販売で要る項目。有料プランの販売 (#1912) が足すまで、項目ごと出さない (#1911)。
+ * 「準備中」とも、販売していないことの説明の文とも書かない (販売を始めたときに事実と食い違うため)。
+ */
+const LEGAL_SALE_ROW_LABELS = [
+  '販売価格',
+  '商品代金以外の必要料金',
+  '支払方法',
+  '支払時期',
+  'サービス提供時期',
+  '返品・キャンセル',
+  '解約について',
+] as const;
+/** 販売していないことを説明する文。販売の項目は出さないので、販売を始めたときに偽りになるこれらの文も書かない (#1911) */
+const LEGAL_NOT_SELLING_TEXTS = [
+  '有料の商品・サービスの販売はありません',
+  'お支払いが必要な商品・サービスはありません',
+  '登録の後、すぐにご利用いただけます',
+  '設定から、いつでも退会できます',
+] as const;
+/** 電話番号の欄の文 (番号は載せず、請求があれば遅滞なく開示する。請求の窓口 = 事業者のメールアドレスとお問い合わせのフォーム) */
+const PHONE_CELL_TEXT = `${PHONE_DISCLOSED_ON_REQUEST}。ご請求は、${BUSINESS_EMAIL} またはお問い合わせフォームからお願いします。`;
+
+/** 表の 1 行 (<th>ラベル</th><td>値</td>) の値の HTML。行が無ければ null */
+function tableCellHtml(html: string, label: string): string | null {
+  const row = new RegExp(`<th[^>]*>\\s*${label}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`).exec(html);
+  return row ? row[1] : null;
+}
 
 const readSource = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf8');
 
@@ -248,80 +299,136 @@ describe('#1155 公開ページを描画した結果にも、架空・未確認�
 
 describe('#1155 特定商取引法ページ (/legal)', () => {
   const source = readSource('src/app/legal/page.tsx');
+  const html = renderHtml(LegalPage);
   const text = renderText(LegalPage);
 
-  it('販売事業者・代表者・所在地・電話番号・メールアドレスは確定した値 (所在地・電話番号は請求時に開示) を表示し、「準備中」は残さない', () => {
+  it('販売事業者・代表者・所在地・メールアドレス・営業時間は src/lib/business-info.ts の値を表示し、「準備中」は残さない (#1155 #1911)', () => {
     const expected: Record<string, string> = {
       販売事業者: BUSINESS_NAME,
       代表者: BUSINESS_REPRESENTATIVE,
-      所在地: DISCLOSED_ON_REQUEST,
-      電話番号: DISCLOSED_ON_REQUEST,
-      メールアドレス: getSupportEmail(),
+      所在地: BUSINESS_ADDRESS,
+      メールアドレス: BUSINESS_EMAIL,
+      営業時間: BUSINESS_HOURS,
     };
     for (const [label, value] of Object.entries(expected)) {
-      // 表の 1 行 = <th>ラベル</th><td>値</td>
-      const row = new RegExp(`<th[^>]*>\\s*${label}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`).exec(renderHtml(LegalPage));
-      expect(row, `「${label}」の行が無い`).not.toBeNull();
-      expect(row![1].replace(/<[^>]*>/g, '').trim(), `「${label}」の値`).toBe(value);
+      const cell = tableCellHtml(html, label);
+      expect(cell, `「${label}」の行が無い`).not.toBeNull();
+      expect(stripAllTags(cell!).trim(), `「${label}」の値`).toBe(value);
     }
+    // 公開の会社情報の値そのもの (定数を書き換えて別の値にしたら気付けるように、逐語でも見る)
+    expect(text).toContain('〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F');
+    expect(text).toContain('info@mhd-iken.com');
+    expect(text).toContain('平日 9:00-17:00 (年末年始を除く)');
     expect(text).not.toContain(PENDING_NOTICE);
   });
 
-  it('販売価格・支払方法・支払時期・サービス提供時期・解約は「有料プランは準備中です（販売開始前）」と表示する', () => {
-    for (const label of ['販売価格', '支払方法', '支払時期', 'サービス提供時期', '解約について']) {
-      const row = new RegExp(`<th[^>]*>\\s*${label}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`).exec(renderHtml(LegalPage));
-      expect(row, `「${label}」の行が無い`).not.toBeNull();
-      expect(row![1].replace(/<[^>]*>/g, '').trim(), `「${label}」の値`).toBe(PAID_PLAN_PENDING_NOTICE);
-    }
+  it('電話番号は載せず「請求があれば遅滞なく開示します」と書き、請求の窓口 (メールアドレスとお問い合わせのフォーム) を添える (#1911)', () => {
+    const cell = tableCellHtml(html, '電話番号');
+    expect(cell, '「電話番号」の行が無い').not.toBeNull();
+    expect(stripAllTags(cell!).trim()).toBe(PHONE_CELL_TEXT);
+    expect(cell).toContain('href="/contact"');
+    expect(stripAllTags(cell!)).not.toMatch(/\d{2,4}-\d{2,4}-\d{3,4}/);
+  });
+
+  it('有料の販売で要る項目 (販売価格・支払方法など) は、項目ごと出さない。「準備中」「販売開始前」も、販売していないことの説明の文も書かない (#1911)', () => {
+    const labels = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => stripAllTags(m[1]).trim());
+    // 表が読めていること (空の表で素通りしない)
+    expect(labels).toContain('販売事業者');
+    for (const label of LEGAL_SALE_ROW_LABELS) expect(labels, `「${label}」の行が残っている`).not.toContain(label);
+    for (const sentence of LEGAL_NOT_SELLING_TEXTS) expect(text, `「${sentence}」が残っている`).not.toContain(sentence);
+    expect(text).not.toContain(PAID_PLAN_PENDING_NOTICE);
+    for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
   });
 
   it('お問い合わせは /contact のフォームへ案内する', () => {
-    expect(renderHtml(LegalPage)).toContain('href="/contact"');
+    expect(tableCellHtml(html, 'お問い合わせ')).toContain('href="/contact"');
     expect(text).toContain('お問い合わせフォーム');
-    // ソースにも文言が残っていること (描画に頼らず、書き換えられたときに気付けるようにする)
-    expect(source).toContain(PAID_PLAN_PENDING_NOTICE);
+    // ソースにも取り除いた文言が残っていないこと (描画に頼らず、書き戻されたときに気付けるようにする)
+    expect(source).not.toContain(PAID_PLAN_PENDING_NOTICE);
   });
 
-  it('事業者名・代表者は src/lib/business-info.ts の定数から出す (ページに直接書かない)', () => {
-    expect(source).toContain('BUSINESS_NAME');
-    expect(source).toContain('BUSINESS_REPRESENTATIVE');
-    expect(source).not.toContain(BUSINESS_NAME);
-    expect(source).not.toContain(BUSINESS_REPRESENTATIVE);
+  it('事業者の情報は src/lib/business-info.ts の定数から出す (ページに直接書かない)', () => {
+    const constants: Record<string, string> = {
+      BUSINESS_NAME,
+      BUSINESS_REPRESENTATIVE,
+      BUSINESS_ADDRESS,
+      BUSINESS_EMAIL,
+      BUSINESS_HOURS,
+    };
+    for (const [name, value] of Object.entries(constants)) {
+      expect(source, `${name} を使っていない`).toContain(name);
+      expect(source, `${name} の値を直接書いている`).not.toContain(value);
+    }
+    expect(source).not.toContain(PHONE_DISCLOSED_ON_REQUEST);
   });
 });
 
 describe('#1155 運営会社ページ (/company)', () => {
+  const source = readSource('src/app/company/page.tsx');
   const html = renderHtml(CompanyPage);
   const text = renderText(CompanyPage);
+  const cell = (label: string) => {
+    const value = tableCellHtml(html, label);
+    expect(value, `「${label}」の行が無い`).not.toBeNull();
+    return stripAllTags(value!).trim();
+  };
 
-  it('チーム紹介・沿革は載せず、会社名・代表者は確定した値、所在地は「準備中」と表示する', () => {
+  it('チーム紹介・沿革は載せず、会社名・設立・資本金・代表者・所在地・メールアドレス・営業時間は src/lib/business-info.ts の値を表示する (#1911: 「準備中」と書かない)', () => {
     expect(text).not.toContain('沿革');
     expect(text).not.toContain('チーム');
-    const cell = (label: string) => {
-      const row = new RegExp(`<th[^>]*>\\s*${label}\\s*</th>\\s*<td[^>]*>([\\s\\S]*?)</td>`).exec(html);
-      expect(row, `「${label}」の行が無い`).not.toBeNull();
-      return row![1].replace(/<[^>]*>/g, '').trim();
-    };
     expect(cell('会社名')).toBe(BUSINESS_NAME);
+    expect(cell('設立')).toBe(BUSINESS_ESTABLISHED);
+    expect(cell('資本金')).toBe(BUSINESS_CAPITAL);
     expect(cell('代表者')).toBe(BUSINESS_REPRESENTATIVE);
-    expect(cell('所在地')).toBe(PENDING_NOTICE);
+    expect(cell('所在地')).toBe(BUSINESS_ADDRESS);
+    expect(cell('メールアドレス')).toBe(BUSINESS_EMAIL);
+    expect(cell('営業時間')).toBe(BUSINESS_HOURS);
+    // 公開の会社情報の値そのもの (定数を書き換えて別の値にしたら気付けるように、逐語でも見る)
+    expect(text).toContain('2025年1月31日');
+    expect(text).toContain('2,000,000円');
+    expect(text).toContain('〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F');
+    expect(text).not.toContain(PENDING_NOTICE);
+    for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
   });
 
-  it('お問い合わせは /contact のフォームへ案内する', () => {
+  it('電話番号は特定商取引法の表記と同じく、載せずに「請求があれば遅滞なく開示します」と請求の窓口を書く (#1911)', () => {
+    expect(cell('電話番号')).toBe(PHONE_CELL_TEXT);
+    expect(tableCellHtml(html, '電話番号')).toContain('href="/contact"');
+  });
+
+  it('値は src/lib/business-info.ts の定数から出す (ページに直接書かない)', () => {
+    const constants: Record<string, string> = {
+      BUSINESS_NAME,
+      BUSINESS_ESTABLISHED,
+      BUSINESS_CAPITAL,
+      BUSINESS_REPRESENTATIVE,
+      BUSINESS_ADDRESS,
+      BUSINESS_EMAIL,
+      BUSINESS_HOURS,
+    };
+    for (const [name, value] of Object.entries(constants)) {
+      expect(source, `${name} を使っていない`).toContain(name);
+      expect(source, `${name} の値を直接書いている`).not.toContain(value);
+    }
+  });
+
+  it('お問い合わせは /contact のフォームと事業者のメールアドレスへ案内する', () => {
     expect(html).toContain('href="/contact"');
+    expect(text).toContain(`メール (${BUSINESS_EMAIL})`);
   });
 });
 
-/** 買えるプランが 0 件のときの料金ページ (いまと同じ「準備中」) */
+/** 買えるプランが 0 件のときの料金ページ */
 const PricingPageWithoutPlans = () => createElement(PricingPageView, { plans: [], isNativeApp: false });
 
 describe('#1151 料金ページ (/pricing)', () => {
   const text = renderText(PricingPageWithoutPlans);
   const source = readSource('src/app/pricing/PricingPageView.tsx');
 
-  it('有料プランは「準備中」とだけ表示し、価格・機能・年払いの切り替えは出さない', () => {
-    expect(text).toContain(PAID_PLAN_PENDING_NOTICE);
-    expect(text).toContain('準備中');
+  it('買えるプランが無いときは、有料プランのカードを出さず (「準備中」「販売開始前」とも書かない)、価格・機能・年払いの切り替えは出さない (#1911)', () => {
+    expect(text).toContain('現在は無料でご利用いただけます。');
+    expect(text).not.toContain('有料プラン');
+    for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
     for (const word of ['プレミアム', 'ファミリー', '月払い', '年払い', '人気No.1', '広告表示']) {
       expect(text, `「${word}」が残っている`).not.toContain(word);
     }
@@ -358,7 +465,7 @@ async function renderPricingPageHtml(): Promise<string> {
   return renderToStaticMarkup(await PricingPage());
 }
 
-const stripTags = (html: string) => html.replace(/<[^>]*>/g, '');
+const stripTags = (html: string) => stripAllTags(html);
 
 describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () => {
   const planA = plan({
@@ -386,7 +493,7 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
     pricingMocks.nativeAppCookie = undefined;
   });
 
-  it('pricing page shows 準備中 when there is no purchasable plan: no rows, or the only row has no interval for which isPurchasable is true', async () => {
+  it('pricing page shows only the free card and the free FAQ (no 準備中 card, no pre-sale wording) when there is no purchasable plan: no rows, or the only row has no interval for which isPurchasable is true', async () => {
     for (const plans of [
       [],
       [plan({ plan_key: 'test_zero', display_name: 'テストZ', plan_type: 'personal', monthly_price_jpy: 0, stripe_price_id: 'price_zero', stripe_yearly_price_id: null })],
@@ -394,9 +501,10 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
       pricingMocks.plans = plans;
       const html = await renderPricingPageHtml();
       const text = stripTags(html);
-      expect(text).toContain(PAID_PLAN_PENDING_NOTICE);
+      expect(text).toContain('現在は無料でご利用いただけます。');
       expect(text).toContain('現在、料金はかかりますか？');
-      expect(text).toContain('有料プランはありますか？');
+      expect(text).not.toContain('有料プランはありますか？');
+      for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
       expect(text).not.toContain('月額で始める');
       expect(text).not.toContain('年額で始める');
       expect(text).not.toContain('テストZ');
@@ -533,7 +641,7 @@ describe('#1867 (Q-12) 無料の説明に、AI を使う機能の 1 日の利用
     expect(faqAnswer(faq, '現在、料金はかかりますか？')).toContain(AI_DAILY_LIMIT_PHRASE);
   });
 
-  it('/pricing は、フリーのカード (アプリの中でも出す) と販売開始前の FAQ の両方に上限を書く', () => {
+  it('/pricing は、フリーのカード (アプリの中でも出す) と、買えるプランが無いときの FAQ の両方に上限を書く', () => {
     const text = renderText(PricingPageWithoutPlans);
     expect(text.split(AI_DAILY_LIMIT_PHRASE)).toHaveLength(3);
     const nativeText = renderText(() => createElement(PricingPageView, { plans: [], isNativeApp: true }));

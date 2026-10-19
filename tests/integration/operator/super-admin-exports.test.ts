@@ -125,7 +125,7 @@ describe('/api/super-admin/exports', () => {
     );
     expect(res.status).toBe(501);
     expect(res.body.error?.code).toBe('OP_NOT_SUPPORTED');
-    expect(res.body.error?.message).toContain('準備中（未対応）');
+    expect(res.body.error?.message).toContain('データのエクスポートは利用できません');
     // 成功に見える応答 (一覧・偽の依頼 ID) を返さない
     expect(res.body.data).toBeUndefined();
   });

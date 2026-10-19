@@ -3,8 +3,8 @@
  *
  * NPS / CSAT のページと NPS の書き出しは、admin / super_admin だけが使える (財務ロール finance は外した)。
  * クイックリンクの「NPS / CSAT」は、使えない人には出さない。確認すること:
- *   - 書き出せる種別 (GET /api/admin/finance/exports) に nps がある人 (admin / super_admin) には、5 つのリンクを元の並びで出す。
- *   - nps が無い人 (財務ロール finance だけ) には、NPS / CSAT 以外の 4 つのリンクだけを出す。
+ *   - 書き出せる種別 (GET /api/admin/finance/exports) に nps がある人 (admin / super_admin) には、NPS / CSAT を含むリンクを元の並びで出す (収益推移・請求書・整合チェックは #1911 で並べなくなった)。
+ *   - nps が無い人 (財務ロール finance だけ) には、NPS / CSAT 以外のリンクだけを出す。
  *   - 種別が分かるまでは並びを出さない (NPS / CSAT のリンクが後から割り込んで、ほかのリンクが動かないように)。
  *   - 種別が取れなかった (通信失敗・エラー応答・想定外の形) ときは、NPS / CSAT だけ隠す。
  *   - 財務ダッシュボードのページが、このクイックリンクを使っている (ページに NPS / CSAT のリンクを直接書かない)。
@@ -49,13 +49,16 @@ const { GET: exportsGet } = await import('../src/app/api/admin/finance/exports/r
 
 const NPS_HREF = '/admin/finance/nps';
 
-/** NPS / CSAT 以外のリンク (出す順) */
+/**
+ * NPS / CSAT 以外のリンク (出す順)。
+ * 収益推移・請求書一覧・Stripe 整合チェックは、元になるデータを作る処理が無いので並べない (#1911: 未完成の機能は画面に出さない)
+ */
 const OTHER_LINKS = [
-  ['収益推移グラフ', '/admin/finance/revenue'],
-  ['請求書一覧', '/admin/finance/invoices'],
-  ['Stripe 整合チェック', '/admin/finance/reconciliation'],
   ['CSV エクスポート', '/admin/finance/exports'],
 ] as const;
+
+/** 並べない (未完成の) 画面へのリンク (#1911) */
+const HIDDEN_HREFS = ['/admin/finance/revenue', '/admin/finance/invoices', '/admin/finance/reconciliation'];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -109,20 +112,18 @@ afterEach(async () => {
 });
 
 describe('FinanceQuickLinks — リンクの出し分け', () => {
-  it('書き出せる種別に nps がある人 (admin / super_admin) には、NPS / CSAT を含む 5 つのリンクを元の並びで出す', async () => {
+  it('書き出せる種別に nps がある人 (admin / super_admin) には、NPS / CSAT を含む 2 つのリンクを元の並びで出す。未完成の画面へのリンクは出さない', async () => {
     fetchMock.mockResolvedValue(typesResponse(ADMIN_TYPES));
     await renderLinks();
 
     expect(renderedLinks()).toEqual([
-      ['収益推移グラフ', '/admin/finance/revenue'],
-      ['請求書一覧', '/admin/finance/invoices'],
-      ['Stripe 整合チェック', '/admin/finance/reconciliation'],
       ['NPS / CSAT', NPS_HREF],
       ['CSV エクスポート', '/admin/finance/exports'],
     ]);
+    for (const href of HIDDEN_HREFS) expect(hrefs()).not.toContain(href);
   });
 
-  it('nps が無い人 (財務ロール finance だけ) には、NPS / CSAT 以外の 4 つのリンクだけを出す', async () => {
+  it('nps が無い人 (財務ロール finance だけ) には、NPS / CSAT 以外のリンクだけを出す', async () => {
     fetchMock.mockResolvedValue(typesResponse(FINANCE_TYPES));
     await renderLinks();
 
@@ -155,7 +156,7 @@ describe('FinanceQuickLinks — リンクの出し分け', () => {
     await act(async () => {
       resolve(typesResponse(FINANCE_TYPES));
     });
-    expect(container.querySelectorAll('a')).toHaveLength(4);
+    expect(container.querySelectorAll('a')).toHaveLength(OTHER_LINKS.length);
     expect(hrefs()).not.toContain(NPS_HREF);
   });
 });
@@ -235,10 +236,10 @@ describe('FinanceQuickLinks — 本物の GET /api/admin/finance/exports の応�
     await renderLinks();
 
     expect(hrefs()).toContain(NPS_HREF);
-    expect(hrefs()).toHaveLength(5);
+    expect(hrefs()).toHaveLength(OTHER_LINKS.length + 1);
   });
 
-  it('財務ロール (finance) だけの人には NPS / CSAT のリンクが出ない。ほかの 4 つは出る', async () => {
+  it('財務ロール (finance) だけの人には NPS / CSAT のリンクが出ない。ほかのリンクは出る', async () => {
     actAs('finance');
     await renderLinks();
 

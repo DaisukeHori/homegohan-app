@@ -2654,7 +2654,7 @@ export default function WeeklyMenuPage() {
           // UX2-03: 「キャッシュ済み」でも「生成中」でもない想定外のレスポンス形状
           // (例: cached=true だが feedback/praiseComment が空、status が想定外の値等) に
           // フォールスルーすると setIsLoadingFeedback(false) が一度も呼ばれず
-          // 「分析を準備中...」のスピナーが永久に止まらなかった。
+          // 読み込み中 (「分析しています...」) のスピナーが永久に止まらなかった。
           // 他の失敗経路 (!res.ok / catch) と同じ文言・挙動に揃えて解除する
           // （これにより既存の「再分析」ボタンが再試行導線として機能する）。
           setNutritionFeedback('分析結果を取得できませんでした。');

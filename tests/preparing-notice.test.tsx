@@ -1,5 +1,6 @@
 /**
- * #1126 #1128 #1180 #1125: 「準備中」「未接続」の案内ボックス (src/components/operator/PreparingNotice.tsx ほか)
+ * #1126 #1128 #1180 #1125: 「未接続」の案内ボックス (src/components/operator/PreparingNotice.tsx ほか)
+ * #1911 で売上・経理の「課金は未開始のため準備中」の案内 (BillingNotStartedNotice) は取り除いた (未完成の機能は画面に出さない)。
  *
  * 運営画面の、まだ動いていない機能の案内に使う共通部品。ここでは、部品そのものの約束を確かめる。
  *   - 見出し (title) と補足 (children) を出す。補足が無ければ補足の枠を作らない
@@ -13,10 +14,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { PreparingNotice } from '@/components/operator/PreparingNotice';
-import {
-  BillingNotStartedNotice,
-  BILLING_NOT_STARTED_MESSAGE,
-} from '@/components/operator/finance/BillingNotStartedNotice';
 import {
   MonitoringNotConnectedNotice,
   MONITORING_DASHBOARD_LINKS,
@@ -78,20 +75,6 @@ describe('PreparingNotice', () => {
     const box = render(<PreparingNotice title="x" className="mb-6" />).querySelector('[role="note"]');
 
     expect(box?.className).toContain('mb-6');
-  });
-});
-
-describe('BillingNotStartedNotice', () => {
-  it('「課金は未開始のため準備中」を見出しにして、補足を出す', () => {
-    const notice = render(
-      <BillingNotStartedNotice>
-        <p>補足の文</p>
-      </BillingNotStartedNotice>,
-    );
-
-    expect(BILLING_NOT_STARTED_MESSAGE).toBe('課金は未開始のため準備中');
-    expect(notice.querySelector('[role="note"] p')?.textContent).toBe('課金は未開始のため準備中');
-    expect(notice.textContent).toContain('補足の文');
   });
 });
 

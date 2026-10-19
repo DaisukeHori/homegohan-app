@@ -104,7 +104,7 @@ function MfaSetupContent() {
 
   switch (view.kind) {
     case 'loading':
-      return <p className="text-sm text-gray-500">準備中…</p>;
+      return <p className="text-sm text-gray-500">読み込んでいます…</p>;
     case 'error':
       return (
         <p data-testid="mfa-setup-error" role="alert" className="text-sm text-red-600">

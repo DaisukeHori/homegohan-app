@@ -9,7 +9,7 @@ const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, monthly_price_j
 
 /**
  * /pricing に出す「買えるプラン」。月額の Price があるものだけ (年額は任意)。
- * 読み取りに失敗したら例外を投げずに空を返す (公開ページをエラーにせず、いまと同じ「準備中」を描く)。失敗は error ログに残す
+ * 読み取りに失敗したら例外を投げずに空を返す (公開ページをエラーにせず、買えるプランが無いときと同じ表示を描く)。失敗は error ログに残す
  */
 export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
   const supabase = await createClient();
@@ -23,7 +23,7 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
     .order('display_order', { ascending: true });
   if (error) {
     // 生のエラーは app_logs にだけ残す (ページには出さない)
-    logger.error('公開のプランの一覧を読めませんでした (/pricing は準備中を描く)', error);
+    logger.error('公開のプランの一覧を読めませんでした (/pricing は買えるプランが無いときの表示を描く)', error);
     return [];
   }
   return (data ?? []) as PurchasablePlan[];

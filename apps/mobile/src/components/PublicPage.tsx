@@ -61,7 +61,7 @@ export function PublicPage(props: {
         ) : (
           <Card>
             <Text style={{ color: colors.textLight, lineHeight: 22 }}>
-              このページはモバイル版で順次整備します。必要に応じてWeb版を参照してください。
+              このページの内容は、Web版でご覧いただけます。
             </Text>
           </Card>
         )}

@@ -1,5 +1,6 @@
 /**
- * #1126 #1149 #1180: super_admin の画面で、まだ動いていない機能を「準備中」「未接続」と明示する
+ * #1126 #1149 #1180 #1911: super_admin の画面で、動いていない機能を動いているように見せない
+ * (作っていない機能は画面から出さない (#1911)。動いていない監視の収集は「未接続」と明示する)
  *
  * 以前の画面は、動いていない機能を動いているように、あるいは問題が無いように見せていた。
  *   - データエクスポート: 依頼フォームがあり、受け付けるが、ファイルは作られない (一覧は本人の GDPR 削除要求の表を代用)
@@ -10,7 +11,7 @@
  *   - インフラ監視: アラート・メトリクスを書き込む処理が無いのに、空の一覧で「✅ 未解決のアラートはありません」と出る。
  *     Sentry / Better Stack の「接続状態」は環境変数の有無だけで、実際にはつながっていない
  * ここでは、ページを実際に描画して、次を確かめる。
- *   - エクスポート: 「準備中（未対応）」だけが出る。依頼フォーム・ボタン・通信が無い
+ *   - エクスポート: 未完成の機能なので、一覧も依頼の画面も 404 にする (#1911: 「準備中」とも出さない)。通信が無い
  *   - LLM 使用量: 「クォータ設定（準備中）」は出さず、AI の利用上限の画面 (/super-admin/llm/quotas) へのリンクを出す (#1149)
  *   - インフラ監視: 空のとき「未接続: 監視データの収集は設定されていません」と Vercel / Supabase のダッシュボードへの
  *     リンクが出る。「問題なし」に見える表示と、Sentry / Better Stack の接続状態は出ない
@@ -20,6 +21,14 @@
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+const notFound = vi.hoisted(() =>
+  vi.fn(() => {
+    throw new Error('NEXT_NOT_FOUND');
+  }),
+);
+
+vi.mock('next/navigation', () => ({ notFound }));
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
@@ -51,6 +60,7 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 beforeEach(() => {
+  notFound.mockClear();
   responses = [];
   fetchMock = vi.fn(async (input: unknown) => {
     const url = String(input);
@@ -86,40 +96,14 @@ async function render(element: React.ReactElement) {
   }
 }
 
-describe('/super-admin/exports (データエクスポート)', () => {
-  it('「準備中（未対応）」だけを出す。依頼のボタン・フォーム・リンクと、通信が無い', async () => {
-    await render(<ExportsPage />);
-
-    expect(text()).toContain('データエクスポート');
-    expect(text()).toContain('準備中（未対応）');
-    expect(container.querySelector('button, form, input, select, table')).toBeNull();
-    // 依頼の画面への導線を出さない
-    expect(container.querySelector('a[href="/super-admin/exports/new"]')).toBeNull();
-    // 空の一覧やエクスポートの依頼を促す文言を出さない
-    expect(text()).not.toContain('エクスポートリクエストがありません');
-    expect(text()).not.toContain('エクスポートを開始する');
-    expect(text()).not.toContain('新規エクスポート');
-    // API を呼ばない (一覧は 501 になる)
+describe('/super-admin/exports (データエクスポート) と /super-admin/exports/new (#1911)', () => {
+  it.each([
+    ['一覧 (/super-admin/exports)', () => ExportsPage()],
+    ['新規の依頼 (/super-admin/exports/new)', () => NewExportPage()],
+  ])('%s: 未完成の機能なので「準備中」とも出さず、404 にする。通信もしない', (_label, renderPage) => {
+    expect(renderPage).toThrow('NEXT_NOT_FOUND');
+    expect(notFound).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-});
-
-describe('/super-admin/exports/new (新規エクスポートリクエスト)', () => {
-  it('依頼フォームを取り除き、「準備中（未対応）」を出す。通信が無い', async () => {
-    await render(<NewExportPage />);
-
-    expect(text()).toContain('新規エクスポートリクエスト');
-    expect(text()).toContain('準備中（未対応）');
-    expect(container.querySelector('form, input, select, textarea, button')).toBeNull();
-    expect(text()).not.toContain('エクスポート開始');
-    expect(text()).not.toContain('PII マスキング');
-    expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('一覧へ戻るリンクがある', async () => {
-    await render(<NewExportPage />);
-
-    expect(container.querySelector('a[href="/super-admin/exports"]')).not.toBeNull();
   });
 });
 

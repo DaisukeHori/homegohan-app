@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 // 組織の集計 (活力スコア・朝食摂取率・深夜食率・活動率) と、部署別の表示は、オーナー判断 (#1325 / #1120) で止めている。
 // 集計結果の表は読まない。ここに出すのは、メンバー数 (GET /api/org/stats) だけ。
 // 部署ごとのランキングはダミーの数字だったので取り除いた。
+// 止めている集計の区切りは「準備中」とも出さない (#1911: 未完成の機能は画面に出さない)。
 
 type MemberCountState =
   | { status: "loading" }
@@ -58,10 +59,6 @@ export default function OrgDashboardPage() {
             <p className="text-xs text-red-500 mt-1">メンバー数を取得できませんでした</p>
           )}
         </div>
-      </div>
-
-      <div className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center">
-        <p className="font-bold text-gray-700">組織の集計・部署別の表示は準備中です</p>
       </div>
     </div>
   );

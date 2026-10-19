@@ -1878,16 +1878,12 @@ html:has(.lp) {
 }
 
 /* ─── 料金 (§4.17・§8.3 の PricingSection) ─── */
+/* カードは「いま使える機能」の 1 枚だけ (#1911: 未完成の有料プランのカードは出さない)。幅は 2 列だったときの 1 枚分 */
 .lp .lp-plans {
   display: grid;
   gap: 1rem;
-  max-width: 56rem;
+  max-width: 28rem;
   margin-inline: auto;
-}
-@media (min-width: 768px) {
-  .lp .lp-plans {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 .lp .lp-plan {
   display: flex;
@@ -1905,10 +1901,6 @@ html:has(.lp) {
     linear-gradient(var(--lp-surface), var(--lp-surface)) padding-box,
     linear-gradient(135deg, var(--lp-accent), var(--lp-accent-soft) 45%, var(--lp-green)) border-box;
   box-shadow: var(--lp-shadow-card-hover);
-}
-.lp .lp-plan--paid {
-  border: 1px dashed var(--lp-line);
-  box-shadow: none;
 }
 .lp .lp-plan-head {
   display: flex;
@@ -1933,10 +1925,6 @@ html:has(.lp) {
 .lp .lp-pill--free {
   color: var(--lp-green-ink);
   background: var(--lp-green-tint);
-}
-.lp .lp-pill--paid {
-  color: var(--lp-accent-ink);
-  background: var(--lp-bg-tint);
 }
 .lp .lp-plan-items {
   display: grid;

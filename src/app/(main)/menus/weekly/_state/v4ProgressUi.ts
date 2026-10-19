@@ -14,6 +14,7 @@
 //     (サーバーが行の generated_data.ultimateMode を isUltimateModeWeeklyMenuRequest で判定した結果)
 //   - 究極モードの無い生成 (1 食の生成・再生成・献立の改善・旧来の週の生成): false
 import type { AiGenerationAction, GenerationProgress } from './reducers/aiGenerationReducer';
+import { requestProgressForDisplay } from '@/lib/request-progress-display';
 
 /** 生成のリクエストの行 (weekly_menu_requests) の progress。V4 形式 (currentStep / totalSteps) か、UI 形式 (phase / percentage) */
 export interface V4GenerationProgress {
@@ -27,9 +28,12 @@ export interface V4GenerationProgress {
 }
 
 export const convertV4ProgressToUIFormat = (
-  progress: V4GenerationProgress,
+  rawProgress: V4GenerationProgress,
   ultimateMode: boolean,
 ): GenerationProgress => {
+  // DB の既定値の progress (ワーカーがまだ進捗を書いていない行。phase 'pending' で割合が無い) の文は出さず、
+  // 置き換えてから変換する (#1911。割合が無いので下のフォールバックに入る)
+  const progress = requestProgressForDisplay(rawProgress);
   const completedSlots = progress.completedSlots || 0;
   const totalSlots = progress.totalSlots || 0;
 

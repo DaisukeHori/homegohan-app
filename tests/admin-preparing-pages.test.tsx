@@ -1,16 +1,16 @@
 /**
- * #1125 #1128: admin の画面で、まだ動いていない機能を「準備中」「未対応」と明示する
+ * #1125 #1128 #1911: admin の画面に、まだ動いていない機能を出さない
  *
- * 以前の画面は、動いていない機能を、動いていて問題が無いように見せていた。
- *   - 売上・経理: 課金 (Stripe の Webhook・収益の集計バッチ) はまだ動いておらず、請求書・収益推移の表は常に空。
- *     Stripe 整合チェックは一度も動いていないのに「不一致件数 0 / 整合OK」を緑で出していた。
- *     ダッシュボードは、元データが無いため MRR・ARR・解約率・LTV を 0 で出していた
- *   - モデレーション: AI コンテンツのバックエンドが無く、「AI コンテンツ」を選ぶと必ず
- *     「審査待ちのアイテムはありません」と出て、通報 0 件に見えた
+ * 以前の画面は、動いていない機能を、動いていて問題が無いように見せていた (#1125 #1128)。
+ * その後「準備中」「未対応」と明示する形にしたが、#1911 で、未完成の機能は「準備中」とも出さず、画面から出さないことにした。
+ *   - 売上・経理: 課金 (Stripe の Webhook・収益の集計バッチ) は動いておらず、請求書・収益推移・整合チェックには元のデータが無い。
+ *     ダッシュボードは、元データが無いため MRR・ARR・解約率・LTV・契約数を API が 0 で返す
+ *   - モデレーション: AI コンテンツのバックエンドが無く、API は 501 を返す
  * ここでは、ページを実際に描画して、次を確かめる。
- *   - 請求書・収益推移・整合チェック: 「課金は未開始のため準備中」だけが出る。空の表・「整合OK」・通信が無い
- *   - ダッシュボード: MRR / ARR / Churn Rate / LTV と契約数は「準備中」。MAU は実データのまま出す
- *   - モデレーション: 「AIコンテンツ（未対応）」の選択肢は選べない。URL で ai_content を指定されても API を呼ばず案内を出す
+ *   - 請求書・収益推移・整合チェック: 404 (notFound)。通信が無い。ダッシュボードのクイックリンクにも並ばない
+ *   - ダッシュボード: MRR / ARR / Churn Rate / LTV と契約数のカードを出さない (値も「準備中」も)。MAU は実データのまま出す
+ *   - モデレーション: AI コンテンツの選択肢を出さない。URL で ai_content を指定されたら、種類を絞らない一覧として扱う。
+ *     個別審査の ai_content は API を呼ばずに 404
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  * モデレーションの画面は async の Server Component なので、結果を react-dom/server で HTML にして確かめる。
@@ -55,9 +55,8 @@ const { default: AdminModerationDetailPage } = await import('@/app/admin/moderat
 // React に「テスト環境 (act で包む)」であることを伝える
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-const BILLING_NOT_STARTED = '課金は未開始のため準備中';
-const AI_CONTENT_OPTION = 'AIコンテンツ（未対応）';
-const AI_CONTENT_NOTICE = 'AIコンテンツの審査は準備中（未対応）です';
+/** 未完成を示す語。どの画面にも出さない (#1911) */
+const PENDING_WORDS = ['準備中', '未対応', '課金は未開始'];
 
 let container: HTMLDivElement;
 let root: Root;
@@ -115,21 +114,10 @@ describe('/admin/finance の請求書・収益推移・Stripe 整合チェック
     { name: '収益推移 (revenue)', Page: RevenueListPage },
   ];
 
-  it.each(pages)('$name: 「課金は未開始のため準備中」だけを出す。空の表・フィルタ・通信が無い', async ({ Page }) => {
-    await render(<Page />);
-
-    expect(text()).toContain(BILLING_NOT_STARTED);
-    // 空の表 (「データがありません」の行を持つ表) と、検索のフィルタが無い
-    expect(container.querySelector('table, form, input, select, button')).toBeNull();
+  it.each(pages)('$name: 未完成の機能なので「準備中」とも出さず、404 にする。通信が無い', ({ Page }) => {
+    expect(() => Page()).toThrow('NEXT_NOT_FOUND');
+    expect(notFound).toHaveBeenCalledTimes(1);
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it('Stripe 整合チェック: チェックが動いていないのに「整合OK」「不一致は検出されていません」と出さない', async () => {
-    await render(<ReconciliationPage />);
-
-    expect(text()).not.toContain('整合OK');
-    expect(text()).not.toContain('不一致は検出されていません');
-    expect(text()).not.toContain('不一致件数');
   });
 });
 
@@ -166,49 +154,37 @@ describe('/admin/finance (売上ダッシュボード)', () => {
     });
   });
 
-  /** ラベルの文字を持つ要素を含むカード (ラベルの 2 つ上の要素) の文字 */
-  function cardText(label: string) {
-    const labelEl = Array.from(container.querySelectorAll('span')).find((el) => el.textContent === label);
-    expect(labelEl, `${label} のカードが無い`).toBeDefined();
-    return labelEl!.parentElement!.parentElement!.textContent ?? '';
-  }
-
-  it('今月の MRR・ARR・Churn Rate・LTV は、値ではなく「準備中」を出す', async () => {
+  it('今月の MRR・ARR・Churn Rate・LTV・MRR 内訳・契約数のカードを出さない。値も「準備中」も出さない', async () => {
     await render(<FinanceDashboardPage />);
 
-    for (const label of ['今月の MRR', 'ARR', 'Churn Rate', 'LTV']) {
-      const card = cardText(label);
-      expect(card, label).toContain('準備中');
-      expect(card, label).toContain(BILLING_NOT_STARTED);
+    for (const label of ['今月の MRR', 'ARR', 'Churn Rate', 'LTV', 'MRR 内訳', 'アクティブ契約数', '個人課金者', '家族グループ', '法人']) {
+      expect(text(), label).not.toContain(label);
     }
-    // 金額・解約率が一つも出ていない (API は 0 以外の値を返している)
+    for (const word of PENDING_WORDS) expect(text(), word).not.toContain(word);
+    // 金額・解約率・契約数が一つも出ていない (API は 0 以外の値を返している)
     expect(text()).not.toContain('¥');
     expect(text()).not.toContain('3.5%');
+    expect(text()).not.toContain('777');
   });
 
-  it('MRR 内訳と契約数 (個人課金者・家族グループ・法人) も「準備中」。MAU は実データのまま出す', async () => {
+  it('MAU は実データのまま出す', async () => {
     await render(<FinanceDashboardPage />);
-
-    expect(text()).toContain('MRR 内訳');
-    for (const label of ['個人課金者', '家族グループ', '法人']) {
-      const labelEl = Array.from(container.querySelectorAll('div')).find((el) => el.textContent === label);
-      expect(labelEl?.nextElementSibling?.textContent, label).toBe('準備中');
-    }
-    // 契約数の元の値 (777 など) が出ていない
-    expect(text()).not.toContain('777');
 
     const mauLabel = Array.from(container.querySelectorAll('div')).find((el) => el.textContent === 'MAU');
     expect(mauLabel?.nextElementSibling?.textContent).toBe('4,321');
   });
 
-  it('Stripe ダッシュボードへのリンクとクイックリンクは残る (NPS / CSAT は admin / super_admin に出る)', async () => {
+  it('Stripe ダッシュボードへのリンクと、使えるクイックリンクは残る。収益推移・請求書一覧・整合チェックへのリンクは出さない', async () => {
     await render(<FinanceDashboardPage />);
 
     expect(container.querySelector('a[href="https://dashboard.stripe.com"]')).not.toBeNull();
-    expect(container.querySelector('a[href="/admin/finance/revenue"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/admin/finance/exports"]')).not.toBeNull();
     // NPS / CSAT は、書き出せる種別に nps がある人 (admin / super_admin) にだけ出る。出し分けそのものは
-    // tests/admin-finance-quick-links.test.tsx が確かめる。ここでは、準備中にした画面でもリンクが残ることを確かめる
+    // tests/admin-finance-quick-links.test.tsx が確かめる
     expect(container.querySelector('a[href="/admin/finance/nps"]')).not.toBeNull();
+    for (const href of ['/admin/finance/revenue', '/admin/finance/invoices', '/admin/finance/reconciliation']) {
+      expect(container.querySelector(`a[href="${href}"]`), href).toBeNull();
+    }
   });
 
   it('書き出せる種別に nps が無い人 (財務ロール) には、NPS / CSAT のリンクを出さない。ほかのリンクは残る', async () => {
@@ -220,30 +196,25 @@ describe('/admin/finance (売上ダッシュボード)', () => {
 
     await render(<FinanceDashboardPage />);
 
-    expect(container.querySelector('a[href="/admin/finance/revenue"]')).not.toBeNull();
+    expect(container.querySelector('a[href="/admin/finance/exports"]')).not.toBeNull();
     expect(container.querySelector('a[href="/admin/finance/nps"]')).toBeNull();
   });
 });
 
 describe('/admin/moderation (モデレーション一覧)', () => {
-  it('「AIコンテンツ（未対応）」の選択肢は選べない。食事画像・レシピは選べる', async () => {
+  it('種類の選択肢は、審査できる食事画像・レシピ (と全タイプ) だけ。AI コンテンツの選択肢を出さない', async () => {
     const page = await renderServerPage(AdminModerationPage({ searchParams: {} }));
 
-    const aiOption = page.querySelector<HTMLOptionElement>('select[name="type"] option[value="ai_content"]');
-    expect(aiOption?.textContent?.trim()).toBe(AI_CONTENT_OPTION);
-    expect(aiOption?.disabled).toBe(true);
-    for (const value of ['', 'food', 'recipe']) {
-      const option = page.querySelector<HTMLOptionElement>(`select[name="type"] option[value="${value}"]`);
-      expect(option, `value=${value}`).not.toBeNull();
-      expect(option?.disabled, `value=${value}`).toBe(false);
-    }
+    const values = Array.from(page.querySelectorAll<HTMLOptionElement>('select[name="type"] option')).map((o) => o.value);
+    expect(values).toEqual(['', 'food', 'recipe']);
+    expect(page.querySelector('select[name="type"] option:disabled')).toBeNull();
   });
 
-  it('一覧の上に、AI コンテンツは審査できないこと (一覧は食事画像とレシピだけ) を書く', async () => {
+  it('「準備中」「未対応」の文を出さない', async () => {
     const page = await renderServerPage(AdminModerationPage({ searchParams: {} }));
 
-    expect(page.textContent).toContain('AIコンテンツの審査は準備中（未対応）です');
-    expect(page.textContent).toContain('食事画像とレシピの通報だけ');
+    for (const word of PENDING_WORDS) expect(page.textContent, word).not.toContain(word);
+    expect(page.textContent).not.toContain('AIコンテンツ');
   });
 
   it('type 未指定の一覧は、従来どおり API からキューを取る (type は付けない)', async () => {
@@ -280,33 +251,22 @@ describe('/admin/moderation (モデレーション一覧)', () => {
     expect(String(adminFetch.mock.calls[0][0])).toContain('type=food');
   });
 
-  it('URL で type=ai_content を指定されても API を呼ばず、「審査待ちのアイテムはありません」ではなく案内を出す', async () => {
-    const page = await renderServerPage(AdminModerationPage({ searchParams: { type: 'ai_content' } }));
+  it.each(['ai_content', 'unknown'])('URL で type=%s を指定されたら、種類を絞らない一覧 (全タイプ) として API を呼ぶ。案内も「準備中」も出さない', async (type) => {
+    const page = await renderServerPage(AdminModerationPage({ searchParams: { type } }));
 
-    expect(adminFetch).not.toHaveBeenCalled();
-    expect(page.textContent).toContain(AI_CONTENT_NOTICE);
-    // 一覧の位置には案内の行が 1 つだけ (審査のリンクを持つ行は無い)
-    expect(page.querySelectorAll('tbody tr')).toHaveLength(1);
-    expect(page.querySelector('tbody a')).toBeNull();
-    expect(page.textContent).not.toContain('審査待ちのアイテムはありません');
-    expect(page.textContent).not.toContain('アイテムが見つかりません');
-    // 件数を 0 と出さない
-    expect(page.textContent).not.toMatch(/件数:\s*0/);
+    expect(adminFetch).toHaveBeenCalledTimes(1);
+    expect(String(adminFetch.mock.calls[0][0])).not.toContain('type=');
+    expect(page.querySelector<HTMLSelectElement>('select[name="type"]')?.querySelector('option[selected]')?.getAttribute('value') ?? '').toBe('');
+    for (const word of PENDING_WORDS) expect(page.textContent, word).not.toContain(word);
   });
 });
 
 describe('/admin/moderation/[type]/[id] (個別審査)', () => {
-  it('type=ai_content は API を呼ばず、「準備中（未対応）」を出す。404 にしない', async () => {
-    const page = await renderServerPage(
+  it('type=ai_content は API を呼ばずに 404 (「準備中」の案内は出さない)', async () => {
+    await expect(
       AdminModerationDetailPage({ params: { type: 'ai_content', id: '00000000-0000-4000-8000-000000000001' } }),
-    );
-
+    ).rejects.toThrow('NEXT_NOT_FOUND');
     expect(adminFetch).not.toHaveBeenCalled();
-    expect(notFound).not.toHaveBeenCalled();
-    expect(page.textContent).toContain(AI_CONTENT_NOTICE);
-    // 審査アクションのフォームを出さない
-    expect(page.querySelector('form, select, textarea')).toBeNull();
-    expect(page.querySelector('a[href="/admin/moderation"]')).not.toBeNull();
   });
 
   it('未知の type は従来どおり 404', async () => {
