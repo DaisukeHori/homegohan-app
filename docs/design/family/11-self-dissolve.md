@@ -1,9 +1,9 @@
 # 家族グループ・組織の解散 — 代表者・オーナーが自分で解散する (#1917)
 
-> 版: v1.10 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
+> 版: v1.11 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
 > 位置づけ: 家族グループの代表者と組織のオーナーが、運営の手を介さずに自分の家族グループ・組織を解散し、そのあと退会できるようにする設計の正典。家族 (`family/`) と組織 (`org/`) の両方を 1 冊で扱う (解散の後始末は運営の強制解散 `operator_force_dissolve_family` / `operator_force_dissolve_org` と同じにし、同じ関数を 2 つの入口から呼ぶため)。組織の側の既存の設計は `docs/design/org/05-offboarding-flow.md` §7.3 (古い設計。`archived` 前提) と `docs/design/membership/05-operator-emergency-ui.md` §4 (運営の強制解散) を参照する。範囲の正本は Issue #1917 の本文とコメント。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` は 0 行・`organizations` は active 2 行 (`owner_id` あり)・`parental_consents` は 0 行・`ownership_transfer_proposals` は 0 行。2026-10-19 に読み取りで実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映。v1.7 2026-10-19 敵対レビュー R4 の反映。v1.8 2026-10-19 網羅性 (周 5) の反映。v1.9 2026-10-19 敵対レビュー R5 の反映 (§26)。v1.10 2026-10-19 網羅性 (周 6) の反映 (組織の運営の強制解散のシナリオ S-32)。
+> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映。v1.7 2026-10-19 敵対レビュー R4 の反映。v1.8 2026-10-19 網羅性 (周 5) の反映。v1.9 2026-10-19 敵対レビュー R5 の反映 (§26)。v1.10 2026-10-19 網羅性 (周 6) の反映 (組織の運営の強制解散のシナリオ S-32)。v1.11 2026-10-19 敵対レビュー R6 の反映 (メンテナンス中の解散の画面の文。§26)。
 
 ---
 
@@ -126,6 +126,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | F-27 | `tests/integration/security/family-lock-order-race.test.ts` C1・C2・R2 は、運営の強制解散のあと `family_groups.representative_id` が代表者のままであることを期待する (`:774, 791, 1162`)。`tests/integration/security/organizations-owner-id-not-null.test.ts` は、`afterEach` (`:181-186`) で実 DB の `organizations.owner_id` の `is_nullable` が `'NO'` であることを期待する。`:224, 240, 252` の `outcome.nullable` の `'NO'` と `:356` の `'YES'` は、1 つのトランザクションの中で旧 migration (`20261017100000`) / その戻し口を流した直後の値で、実 DB の状態ではない。`runInRolledBackTransaction` (`:147`) は先頭で `DROP NOT NULL` だけを流し、`orgSql` (`:156-157`) は `owner_id` NULL の組織を `status` を書かずに (既定の `'active'`。`20251126124224_create_meal_planner_tables.sql:793`) INSERT する。単体の契約テスト `tests/organizations-owner-id-not-null-migration-contract.test.ts` は、型の生成物 2 ファイルの `organizations` の `owner_id` が Row で `string`・Insert で `string`・Update で `string` の省略可で、`string \| null` が無いこと (`:171-186`。`it.each` で 2 ファイル) と、`OrganizationSchema.shape.owner_id` が NULL を受けないこと (`:188-191`) を固定する | 同ファイル |
 | F-28 | cross/20 §6 の利用規約第11条 4 項 (`:658`)・第12条 4 項 (`:674`)・第17条 2 項 (`:767`)、§7 のプライバシーポリシー第13条 9 項 (`:1404`) は「譲渡するまで退会できません」「譲渡できる相手がいなければお問い合わせ」と書き、実装の文面 (`src/lib/legal/terms-text.ts:255, 271, 364`・`src/lib/legal/privacy-text.ts:434`) も同じ文。主張の表の行は `terms-11#7`・`#8`・`terms-12#5`・`#6`・`terms-17#5`・`privacy-13#9` (実装 `tests/legal-claims-1901.ts:95-96, 103-104, 146, 377`・cross/20 §10.3 `:2097-2098, 2105-2106, 2148, 2379`)。§10.2 の区分の数は利用規約 167 (product 70・contract 90・law 2・process 5)・プライバシーポリシー 215・計 382 (`LEGAL_CLAIM_COUNT = 382`)。T-28 は本文に `譲渡するまで、退会できません` が在ることを `toContain` で見る (`tests/legal-text-1901.test.ts:894`。第12条 4 項と第17条 2 項に当たる)。T-35 は主張の表の `evidence` の `F-<数>` が cross/20 に `\| F-<数> \|` の行として在ることを見る (`tests/legal-text-1901.test.ts:1031-1057`)。cross/20 の F の最後は F-58 (`:252`)。版は `v2026.1`・`effectiveDate: '2026-10-19'` で、行末の目印のコメント (`仮置き: マージ直前に公開日へ置き換える`) は無い (公開済み)。解散した家族グループの保存の日数は `LEGAL_FACTS.dissolvedFamilyGroupRetentionDays` (90) にある。Q-26 のオーナーの選択の逐語は cross/20 §0.1 P-12 (`:38`) にある | `docs/design/cross/20-terms-privacy-text.md`・`packages/shared/src/legal-versions.ts:47-50`・`src/lib/legal/legal-text.ts:79, 109` |
 | F-29 | 同意の前の退会と書き出しの画面 `/legal-consent/account` (`src/app/legal-consent/account/page.tsx`・`AccountWithoutConsent.tsx`) は、凍結中の画面と同じ枠 `AccountSelfServicePanel` を、409 の案内 `LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance` (「規約に同意する前は、オーナー・代表者の譲渡の操作ができません。規約に同意したうえで譲渡するか、譲渡できる相手がいないときは、お問い合わせフォームからご連絡ください。」) で使う。退会のあとはログインの画面へ移らずに「退会しました」を出す。画面は同意ゲートの対象外 (同意画面の下のパス)。凍結中は凍結の差し戻しが先に効くので開けない (凍結中は `/frozen/account`)。アプリは同意画面を WebView で開き、その中でこの画面へ進め、退会のあとの `sign-out` を受けて「閉じる」を出す。画面の単体テストは、409 の本文に `family_group` を入れずに、サーバーの文 + `accountDeleteBlockedGuidance` を見る (`:225-241`)・呼ぶ API は退会と書き出しの 2 本だけを見る (`:252-268`) | `src/app/legal-consent/account/AccountWithoutConsent.tsx:4-5, 40-45`・`packages/shared/src/legal-consent-copy.ts:45-51`・`lib/legal-consent.ts:39-45`・`apps/mobile/app/legal-consent.tsx:25-37`・`tests/legal-consent-account-page-1901.test.tsx:11, 225-241, 252-268` |
+| F-30 | 画面が API の失敗の本文から出す文: メンテナンス中の API の応答は middleware の `maintenanceApiResponse()` の 503 `{ error: MAINTENANCE_MESSAGE, code: 'MAINTENANCE_MODE', retryAfter }` (運営ロール (admin / super_admin) 以外。ページの読み込みは `maintenancePageResponse()` の 503 の HTML)。固定の文と code の置き場は `@homegohan/shared` の `service-unavailable.ts` の 1 つ (`SERVICE_UNAVAILABLE_STATUS` = 503・`MAINTENANCE_API_CODE`・`MAINTENANCE_MESSAGE` =「ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。」・本文の code から固定の文を返す `serviceUnavailableMessageOfBody` (知らない code・code の無い本文は null)。モバイルが使う)。`membershipErrorMessageOfBody` は本文の `error.code` か `code` を `MembershipErrorCode` で引き、表に無い code (`MAINTENANCE_MODE`・null 文字の 400 の `INVALID_CHARACTER`・`internalError` の `INTERNAL_ERROR`) と JSON でない本文には `MEMBERSHIP_ERROR_FALLBACK_MESSAGE` (「処理に失敗しました。時間をおいてもう一度お試しください。」) を返す。Web の `src` に、fetch の 503 の本文の code からメンテナンスの文を出す共通の処理は無い (家族の献立の `fetchFamilyMenu` も 503 を `failed` にまとめる) | `src/lib/maintenance-mode.ts:171-173`・`packages/shared/src/service-unavailable.ts:16, 22-23, 50`・`packages/shared/src/index.ts:16`・`src/lib/errors/membership-errors.ts:253, 265-278`・`src/lib/api/null-character.ts:21`・`src/lib/api/errors.ts:23, 42`・`src/lib/membership/family-menu.ts:197-210`・`apps/mobile/src/lib/service-unavailable.ts:21, 38` |
 
 ### 3.2 テストの道具
 
@@ -188,7 +189,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | S-21 | 代表者が解散したとき、pending の譲渡の提案と招待が残っていた | 提案は pending のまま残り、承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY`。招待の承諾は `FAMILY_NOT_FOUND`。解散の RPC はどちらも触らない (§0.4) |
 | S-22 | オーナーが解散したとき、pending の組織の招待とオーナーの譲渡の提案が残っていた | どちらも pending のまま残る (解散の RPC は触らない。§0.4)。招待の承諾は組織の `status` を見ないので通ってしまう (既存。Q-4)。提案の承諾は承諾者の所属が外れているので `TRANSFER_ACCEPTOR_NOT_IN_ORG` で止まる (既存の判定。#1236) |
 | S-23 | 解散は成功したが、メールの送信 (Resend) が失敗する | 200。失敗は `app_logs` に残す (宛先のアドレスは載せない)。再送はしない |
-| S-24 | メンテナンス中に代表者が解散を押す | middleware が 503 `MAINTENANCE_MODE` (route に届かない)。運営ロールは通る。画面は「処理に失敗しました」ではなくメンテナンスの文 (既存の `fetch` の扱い) |
+| S-24 | メンテナンスが始まる前に開いていた解散の区画 (メンバーシップ設定の区画、または `/frozen/account`・`/legal-consent/account` で退会の 409 のあとに出ていた区画) で、メンテナンス中に代表者が解散を押す | middleware が 503 `MAINTENANCE_MODE` (route に届かない。家族は何も変わらない)。運営ロール (admin / super_admin) は通る。解散の区画には「ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。」(`@homegohan/shared` の `MAINTENANCE_MESSAGE`。`dissolveOwnScope` が 503 の本文の code から写す。§13.4) が `role="alert"` で出て、ボタンはもう一度押せる (「処理に失敗しました。…」は出ない)。画面を開き直すとメンテナンスの画面 (503 の HTML)。組織のオーナーも同じ |
 | S-25 | 未ログインで API を呼ぶ / anon が `/rest/v1/rpc/dissolve_family_by_representative` を直接呼ぶ | 前者は 401 `NOT_AUTHENTICATED`。後者は 42501 (anon に EXECUTE が無い) |
 | S-26 | 代表者が、解散の確認の区画で「キャンセル」を押す | 何も起きない。入力した文字は消える |
 | S-27 | 自己解散と招待の承諾を本物の経路で 8 回ずつ同時に呼ぶ (結合テスト) | デッドロックせず、全部終わったあと解散済みの家族に active が 1 人も残らない |
@@ -256,7 +257,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | S-21 | 解散の RPC は `ownership_transfer_proposals`・`family_invites` に触らない。承諾の関数の既存の判定が止める (S-16・S-17) |
 | S-22 | 解散の RPC は `org_invites`・`ownership_transfer_proposals` に触らない。`accept_org_invite` は `organizations.status` を読まない → 通る。本書の範囲外 (Q-4)。`accept_org_owner_transfer` は承諾者の `organization_id = 提案の組織` を見る (`:842-847`) → apply が所属を外したので `TRANSFER_ACCEPTOR_NOT_IN_ORG` |
 | S-23 | route: RPC 成功 → `notifySelfDissolve` の `sendEmail` が `ok: false` → `logEmailFailures` (warn / error) → 200 を返す |
-| S-24 | middleware の順 凍結 → メンテナンス → 同意 (F-16)。`/api/family/dissolve` は `isMaintenanceExemptPath` の外 → 503。`dissolveOwnScope` は `!res.ok` を `failed` にし、画面は本文の code から文を引く (`membershipErrorMessageOfBody` は `MAINTENANCE_MODE` を知らないので汎用の文) |
+| S-24 | middleware の順 凍結 → メンテナンス → 同意 (F-16)。`/api/family/dissolve` は `isMaintenanceExemptPath` の外で、運営ロールでない → `maintenanceApiResponse()` が 503 `{ error: MAINTENANCE_MESSAGE, code: 'MAINTENANCE_MODE', retryAfter }` (F-30)。`dissolveOwnScope` (§13.4) は `res.ok` でなく 401 でもない → `res.status === SERVICE_UNAVAILABLE_STATUS` なので `serviceUnavailableMessageOfBody(body)` を先に引き、`MAINTENANCE_MESSAGE` を `{ kind: 'failed', message }` で返す (`membershipErrorMessageOfBody` は `MAINTENANCE_MODE` を知らず `MEMBERSHIP_ERROR_FALLBACK_MESSAGE` を返すので、その前で分ける) → `SelfDissolveSection` (§15.2) が `setError(message)` で `role="alert"` に出し、`submitting` を戻す (キーワードは入ったままなので押せる)。画面の読み込みは `maintenancePageResponse()` の HTML |
 | S-25 | route: `getUser` 失敗 → 401。RPC: `REVOKE … FROM PUBLIC, anon` → 42501 |
 | S-26 | 部品の「キャンセル」が `onCancel` を呼び、親が区画を閉じる。入力の state は部品の中なので unmount で消える |
 | S-27 | §21.2 D-8。家族の行を最初に取る関数どうしなので 1 件ずつ処理される (#1310 の N1 と同じ) |
@@ -311,15 +312,15 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 家族の代表者 | 未同意 | 設定 | 同意画面へ (F-32。既存)。API は通る。画面の入口は同意の前の画面 (次の行) |
 | 家族の代表者 | 未同意 | `/legal-consent/account` の退会 (409) | その場に解散の区画 (家族の名前つき。S-10)。案内は `LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance` (§15.4)。解散 → 退会 → 「退会しました」 |
 | 家族の代表者 | 未同意 + 凍結中 | `/frozen/account` | 凍結の判定が先で画面は開け、API は凍結の例外にも同意の許可リストにもあるので通る → S-9 と同じ |
-| 家族の代表者 | メンテナンス中 | どの入口も | API は 503 (運営ロール以外)。画面はメンテナンスの画面 |
+| 家族の代表者 | メンテナンス中 | どの入口も | API は 503 `MAINTENANCE_MODE` (運営ロール以外。route に届かず、家族は変わらない)。画面を開く (読み込む) とメンテナンスの画面 (503 の HTML。アプリの WebView も同じ)。メンテナンスの前から開いていた解散の区画で解散を押すと、区画に `MAINTENANCE_MESSAGE` (§13.4。S-24)。退会を押したときの文 (Web の設定・枠 `AccountSelfServicePanel`・アプリのネイティブのアカウント画面) は既存のまま (409 にならないので、アプリの Alert に「メンバーシップ設定を開く」は出ない。§15.5) |
 | 家族の代表者 | 凍結中 | API 直接 (`POST /api/family/dissolve`) | middleware は凍結の例外 (`FROZEN_ALLOWED_API_PATHS`。§13.5) で route に通す。route と RPC の判定は「通常 × API 直接」の行と同じ (自分の家族なら 200・別の家族の id は 403・無い id は 404・解散済みは 409)。凍結中の画面の解散 (S-9) はこの経路を通る |
 | 家族の代表者 | 通常 | API 直接 (`POST /api/family/dissolve`) | 本文の `family_id` が自分の家族なら 200。別の家族の id なら 403 `NOT_FAMILY_REPRESENTATIVE` (存在しない id は 404 `FAMILY_NOT_FOUND`)。解散済みなら 409 `FAMILY_ALREADY_DISSOLVED` |
 | 家族の代表者 | 通常 | モバイル (ネイティブのアカウント画面の退会) | 409 → Alert「退会できません」+ サーバーの文 + ボタン「閉じる」「メンバーシップ設定を開く」(§15.5) → 開くと `app/settings/membership.tsx` が Web のメンバーシップ設定を WebView で開き、「通常 × 設定のメンバーシップ設定」の行と同じ (解散 → 200) → アカウント画面へ戻って退会 200 (S-11) |
 | 家族の代表者 | 凍結中 (未同意 + 凍結中も同じ) | モバイル | 凍結のゲート (`apps/mobile/src/components/AccountFrozenGate.tsx`) が Stack を凍結の画面 1 つに畳む (ネイティブのアカウント画面も `app/settings/membership.tsx` も `MOBILE_FROZEN_EXEMPT_PATHS` に無い。既存の決まりのまま)。凍結の画面 `app/frozen.tsx` は Web の `/frozen` を WebView で開くので、そこから `/frozen/account` の退会 (409) → 「凍結中 × `/frozen/account`」の行と同じ (S-9) |
 | 家族の代表者 | 未同意 | モバイル | 同意のゲート (`apps/mobile/src/components/legal/LegalConsentGate.tsx`) が Stack を同意画面 1 つに畳む (ネイティブのアカウント画面も `app/settings/membership.tsx` も `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` に無い。既存の決まりのまま)。同意画面は Web の `/legal-consent` の WebView で、その中で `/legal-consent/account` へ進めるので、「未同意 × `/legal-consent/account`」の行と同じ (退会のあとの `sign-out` と「閉じる」は #1901 の既存の動き。F-29)。同意したあとは「通常 × モバイル」の行と同じ |
-| 家族の代表者 (と、譲渡の提案を受けた大人) | 並行 (代表者が解散を押すのと同時に、大人が代表者の譲渡の提案を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 家族の行のロックで直列 (§11.3)。承諾が先なら解散は 403 `NOT_FAMILY_REPRESENTATIVE` (画面は失敗の文。家族は active のまま・新代表者が解散できる)。解散が先なら承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (家族は dissolved のまま)。デッドロックしない (S-16・D-8) |
+| 家族の代表者 (と、譲渡の提案を受けた大人) | 並行 (代表者が解散を押すのと同時に、大人が代表者の譲渡の提案を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 家族の行のロックで直列 (§11.3)。承諾が先なら解散は 403 `NOT_FAMILY_REPRESENTATIVE` (区画に「家族の代表者だけが操作できます。」(§14.3)。家族は active のまま・新代表者が解散できる)。解散が先なら承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (家族は dissolved のまま)。デッドロックしない (S-16・D-8) |
 | 家族の代表者 (と、招待された人) | 並行 (代表者が解散を押すのと同時に、招待された人が同じ家族の招待を承諾する) | 同上 | 家族の行のロックで直列。承諾が先なら、その人も apply で `left` になり、RPC がロックのあとに集める `member_user_ids` に入るのでメールも届く。解散が先なら承諾は `FAMILY_NOT_FOUND`。解散済みの家族に active が残らない (S-17・S-27・D-8) |
-| 家族の代表者 (と、譲渡の提案を受けた大人・招待された人) | 並行 × 凍結中 / 未同意 (凍結中か未同意の代表者が解散の区画で解散を押すのと同時に、ほかの人が譲渡の提案・招待を承諾する) | `/frozen/account`・`/legal-consent/account` の解散の区画 / API 直接 | RPC は凍結・同意を見ない (D-14) ので、直列と結果は「並行」の 2 行と同じ。承諾した側の操作は middleware を通る (承諾する人は凍結中でも未同意でもない)。譲渡の承諾が先で解散が 403 `NOT_FAMILY_REPRESENTATIVE` になったら、区画は失敗の文を出す (§15.2。もう一度押しても 403)。代表者でなくなったので、同じ画面で退会を押すと `findBlocker` の 409 に当たらず、退会の扱いは今までどおり (本書は変えない)。解散が先なら、そのあとの退会は 200 |
+| 家族の代表者 (と、譲渡の提案を受けた大人・招待された人) | 並行 × 凍結中 / 未同意 (凍結中か未同意の代表者が解散の区画で解散を押すのと同時に、ほかの人が譲渡の提案・招待を承諾する) | `/frozen/account`・`/legal-consent/account` の解散の区画 / API 直接 | RPC は凍結・同意を見ない (D-14) ので、直列と結果は「並行」の 2 行と同じ。承諾した側の操作は middleware を通る (承諾する人は凍結中でも未同意でもない)。譲渡の承諾が先で解散が 403 `NOT_FAMILY_REPRESENTATIVE` になったら、区画は「家族の代表者だけが操作できます。」を出す (§15.2・§14.3。もう一度押しても 403)。代表者でなくなったので、同じ画面で退会を押すと `findBlocker` の 409 に当たらず、退会の扱いは今までどおり (本書は変えない)。解散が先なら、そのあとの退会は 200 |
 | 家族の代表者 (と、凍結中か未同意の大人・招待された人) | 並行の相手が凍結中 / 未同意 (承諾する側が凍結中か、新しい版に未同意) | 承諾の API (`/api/family/representative-transfer/[id]/accept`・`/api/family/invites/[id]/accept`) | 承諾の API は凍結の例外 (`FROZEN_ALLOWED_API_PATHS`) にも同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`) にも無いので、middleware が 403 `AUTH_ACCOUNT_FROZEN` / 403 `LEGAL_CONSENT_REQUIRED` (同意の強制が有効なとき) で止め、RPC に届かない。並行は起きず、解散は「通常」の行と同じ。同意の強制が無効なときの未同意の人の承諾は「並行」の行と同じ (既存の決まりのまま。本書は変えない) |
 | 家族の代表者 | pending が残る (代表者の譲渡の提案・家族の招待) | メンバーシップ設定 / API 直接 | 解散は 200 (RPC は提案・招待に触らない。§0.4)。残った提案の承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY`、招待の承諾は `FAMILY_NOT_FOUND` で止まる (S-21) |
 | 家族の大人 / アカウントを持つ子供 | 通常 | メンバーシップ設定 | 解散の区画は出ない (今までどおり「家族を表示」「家族から脱退」)。API 直接は 403 |
@@ -329,7 +330,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 家族の大人 / アカウントを持つ子供 | 凍結中 | API 直接 (`POST /api/family/dissolve`) | 凍結の例外で route に届き、RPC が 403 `NOT_FAMILY_REPRESENTATIVE` (何も変わらない。S-3 と同じ) |
 | 家族の大人 / アカウントを持つ子供 | 未同意 | 設定 | 同意画面へ (既存)。API 直接は同意の許可リスト (§13.5) で route に届き、RPC が 403 `NOT_FAMILY_REPRESENTATIVE` |
 | 家族の大人 / アカウントを持つ子供 | 未同意 | `/legal-consent/account` の退会 | 代表者でないので `findBlocker` の 409 は出ず、解散の区画も出ない。退会の扱いは今までどおり (#1901 の既存の動き) |
-| 家族の大人 / アカウントを持つ子供 | メンテナンス中 | どの入口も | API は 503 (運営ロール以外。route に届かない)。画面はメンテナンスの画面 |
+| 家族の大人 / アカウントを持つ子供 | メンテナンス中 | どの入口も | API は 503 (運営ロール以外。route に届かない)。画面を開くとメンテナンスの画面 (既存)。解散の区画は出ない立場なので、解散の文も出ない |
 | 家族の大人 / アカウントを持つ子供 | 通常 | モバイル (ネイティブのアカウント画面の退会) | 代表者でないので `findBlocker` の 409 は出ず、「メンバーシップ設定を開く」のボタンも出ない (ボタンは 409 (`failure.kind === 'blocked'`) のときだけ。§15.5)。退会の扱いは今までどおり (本書は変えない)。アプリの中の `app/settings/membership.tsx` への入口は 409 の Alert だけなので、この立場には入口が無い (リンクなどで開いたとしても Web のメンバーシップ設定で、「通常 × メンバーシップ設定」の行と同じく解散の区画は出ない) |
 | 家族の大人 / アカウントを持つ子供 | 凍結中 (未同意 + 凍結中も同じ) | モバイル | 凍結のゲートが Stack を凍結の画面 1 つに畳む (家族の代表者の「凍結中 × モバイル」と同じ)。凍結の画面の WebView の `/frozen/account` から「凍結中 × `/frozen/account` の退会」の行と同じ (解散の区画は出ない) |
 | 家族の大人 / アカウントを持つ子供 | 未同意 | モバイル | 同意のゲートが Stack を同意画面 1 つに畳み、その WebView の `/legal-consent/account` から「未同意 × `/legal-consent/account` の退会」の行と同じ (解散の区画は出ない)。同意したあとは「通常 × モバイル」の行と同じ |
@@ -342,15 +343,15 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 組織のオーナー | 凍結中 | API 直接 (`POST /api/org/dissolve`) | 凍結の例外 (§13.5) で route に通す。判定は「通常 × API 直接」の行と同じ。凍結中の画面の解散はこの経路を通る |
 | 組織のオーナー | 未同意 | 設定 | 同意画面へ (既存)。API は同意の許可リスト (§13.5) で通る。画面の入口は同意の前の画面 (次の行) |
 | 組織のオーナー | 未同意 | `/legal-consent/account` の退会 (409) | その場に解散の区画 (組織の名前つき)。家族の代表者の「未同意 × `/legal-consent/account`」の行と同じ |
-| 組織のオーナー | メンテナンス中 | どの入口も | API は 503 (運営ロール以外)。画面はメンテナンスの画面 (S-24 と同じ) |
+| 組織のオーナー | メンテナンス中 | どの入口も | 家族の代表者の「メンテナンス中」の行と同じ (`POST /api/org/dissolve` も 503。組織は変わらない。開いていた解散の区画には `MAINTENANCE_MESSAGE`。S-24) |
 | 組織のオーナー | 通常 | API 直接 (`POST /api/org/dissolve`) | 自分の組織なら 200。別の組織なら 403 `NOT_ORG_OWNER` (無い id は 404 `ORG_NOT_FOUND`)。解散済みなら 409 `ORG_ALREADY_DISSOLVED` |
 | 組織のオーナー | 未同意 + 凍結中 | `/frozen/account` | 凍結の判定が先で画面は開け、API は凍結の例外にも同意の許可リストにもあるので通る → 「凍結中 × `/frozen/account`」の行と同じ (家族の代表者の「未同意 + 凍結中」と同じ) |
 | 組織のオーナー | 通常 | モバイル (ネイティブのアカウント画面の退会) | 409 → Alert「退会できません」+ サーバーの文 + ボタン「閉じる」「メンバーシップ設定を開く」(§15.5) → 開くと Web のメンバーシップ設定を WebView で開き、「通常 × メンバーシップ設定」の行と同じ (解散 → 200) → アカウント画面へ戻って退会 200 (家族の代表者の S-11 と同じ) |
 | 組織のオーナー | 凍結中 (未同意 + 凍結中も同じ) | モバイル | 凍結のゲートが Stack を凍結の画面 1 つに畳む (家族の代表者の「凍結中 × モバイル」と同じ)。凍結の画面の WebView の `/frozen/account` から「凍結中 × `/frozen/account`」の行と同じ (組織の名前つきの解散の区画) |
 | 組織のオーナー | 未同意 | モバイル | 同意のゲートが Stack を同意画面 1 つに畳み、その WebView の `/legal-consent/account` から「未同意 × `/legal-consent/account`」の行と同じ (家族の代表者の「未同意 × モバイル」と同じ)。同意したあとは「通常 × モバイル」の行と同じ |
-| 組織のオーナー (と、譲渡の提案を受けた admin / member) | 並行 (オーナーが解散を押すのと同時に、提案を受けた人がオーナーの譲渡の提案を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 本人 (オーナー) の `user_profiles` の行のロックで直列 (§11.3)。承諾が先なら解散は 403 `NOT_ORG_OWNER` (組織は active のまま・新オーナーが解散できる)。解散が先なら承諾は失敗 (`TRANSFER_ACCEPTOR_NOT_IN_ORG` か CHECK `user_profiles_org_consistency`。S-18)。組織は dissolved のまま。デッドロックしない (D-9) |
+| 組織のオーナー (と、譲渡の提案を受けた admin / member) | 並行 (オーナーが解散を押すのと同時に、提案を受けた人がオーナーの譲渡の提案を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 本人 (オーナー) の `user_profiles` の行のロックで直列 (§11.3)。承諾が先なら解散は 403 `NOT_ORG_OWNER` (区画に「組織のオーナーだけが操作できます。」(§14.3)。組織は active のまま・新オーナーが解散できる)。解散が先なら承諾は失敗 (`TRANSFER_ACCEPTOR_NOT_IN_ORG` か CHECK `user_profiles_org_consistency`。S-18)。組織は dissolved のまま。デッドロックしない (D-9) |
 | 組織のオーナー (と、招待された人) | 並行 (オーナーが解散を押すのと同時に、招待された人が同じ組織の招待を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 直列にならない (承諾は組織の行をロックせず、組織の `status` も見ない。Q-4)。解散は 200。承諾の commit が解散の宛先の集計より前ならその人も所属が外れメールも届く・集計と後始末の UPDATE の間なら所属は外れるがメールは届かない・後始末の UPDATE の時点で未 commit なら (解散が先に commit した場合も) 解散した組織に所属したまま残る (Q-4。本書は直さない)。デッドロックしない (S-30・D-15) |
-| 組織のオーナー (と、譲渡の提案を受けた admin / member・招待された人) | 並行 × 凍結中 / 未同意 (凍結中か未同意のオーナーが解散の区画で解散を押すのと同時に、ほかの人が譲渡の提案・招待を承諾する) | `/frozen/account`・`/legal-consent/account` の解散の区画 / API 直接 | RPC は凍結・同意を見ない (D-14 と同じ) ので、直列と結果は「並行」の 2 行と同じ。譲渡の承諾が先で解散が 403 `NOT_ORG_OWNER` になったら、区画は失敗の文を出す (§15.2。もう一度押しても 403)。オーナーでなくなったので、同じ画面で退会を押すと `findBlocker` の 409 に当たらず、退会の扱いは今までどおり (本書は変えない)。解散が先なら、そのあとの退会は 200 |
+| 組織のオーナー (と、譲渡の提案を受けた admin / member・招待された人) | 並行 × 凍結中 / 未同意 (凍結中か未同意のオーナーが解散の区画で解散を押すのと同時に、ほかの人が譲渡の提案・招待を承諾する) | `/frozen/account`・`/legal-consent/account` の解散の区画 / API 直接 | RPC は凍結・同意を見ない (D-14 と同じ) ので、直列と結果は「並行」の 2 行と同じ。譲渡の承諾が先で解散が 403 `NOT_ORG_OWNER` になったら、区画は「組織のオーナーだけが操作できます。」を出す (§15.2・§14.3。もう一度押しても 403)。オーナーでなくなったので、同じ画面で退会を押すと `findBlocker` の 409 に当たらず、退会の扱いは今までどおり (本書は変えない)。解散が先なら、そのあとの退会は 200 |
 | 組織のオーナー (と、凍結中か未同意の admin / member・招待された人) | 並行の相手が凍結中 / 未同意 (承諾する側が凍結中か、新しい版に未同意) | 承諾の API (`/api/org/owner-transfer/[id]/accept`・`/api/org/invites/[id]/accept`) | 承諾の API は凍結の例外にも同意の許可リストにも無いので、middleware が 403 `AUTH_ACCOUNT_FROZEN` / 403 `LEGAL_CONSENT_REQUIRED` (同意の強制が有効なとき) で止め、RPC に届かない。並行は起きず、解散は「通常」の行と同じ。同意の強制が無効なときの未同意の人の承諾は「並行」の行と同じ (既存の決まりのまま。本書は変えない) |
 | 組織のオーナー | pending が残る (組織の招待・オーナーの譲渡の提案) | メンバーシップ設定 / API 直接 | 解散は 200 (RPC は招待・提案に触らない。§0.4)。招待の承諾は組織の `status` を見ないので通る (既存。Q-4)。提案の承諾は `TRANSFER_ACCEPTOR_NOT_IN_ORG` で止まる (S-22) |
 | 組織の admin / member | 通常 | メンバーシップ設定 | 解散の区画は出ない (「組織から脱退」のまま)。API 直接は 403 |
@@ -360,7 +361,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 組織の admin / member | 凍結中 | API 直接 (`POST /api/org/dissolve`) | 凍結の例外で route に届き、RPC が 403 `NOT_ORG_OWNER` (何も変わらない。S-7 と同じ) |
 | 組織の admin / member | 未同意 | 設定 | 同意画面へ (既存)。API 直接は同意の許可リストで route に届き、RPC が 403 `NOT_ORG_OWNER` |
 | 組織の admin / member | 未同意 | `/legal-consent/account` の退会 | オーナーでないので `findBlocker` の 409 は出ず、解散の区画も出ない。退会の扱いは今までどおり |
-| 組織の admin / member | メンテナンス中 | どの入口も | API は 503 (運営ロール以外)。画面はメンテナンスの画面 |
+| 組織の admin / member | メンテナンス中 | どの入口も | API は 503 (運営ロール以外。route に届かない)。画面を開くとメンテナンスの画面 (既存)。解散の区画は出ない立場なので、解散の文も出ない |
 | 組織の admin / member | 通常 | モバイル (ネイティブのアカウント画面の退会) | オーナーでないので `findBlocker` の 409 は出ず、「メンバーシップ設定を開く」のボタンも出ない (§15.5)。退会の扱いは今までどおり (本書は変えない)。アプリの中の `app/settings/membership.tsx` への入口は無い (家族の大人の「通常 × モバイル」と同じ) |
 | 組織の admin / member | 凍結中 (未同意 + 凍結中も同じ) | モバイル | 凍結のゲートが Stack を凍結の画面 1 つに畳み、その WebView の `/frozen/account` から「凍結中 × `/frozen/account` の退会」の行と同じ (解散の区画は出ない) |
 | 組織の admin / member | 未同意 | モバイル | 同意のゲートが Stack を同意画面 1 つに畳み、その WebView の `/legal-consent/account` から「未同意 × `/legal-consent/account` の退会」の行と同じ (解散の区画は出ない)。同意したあとは「通常 × モバイル」の行と同じ |
@@ -382,7 +383,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 解散した家族の元代表者・解散した組織の元オーナー | 未同意 | 設定 | 同意画面へ (既存) |
 | 解散した家族の元代表者・解散した組織の元オーナー | 未同意 | 新しい家族の作成 (`POST /api/family/groups`) / 別の組織の招待の承諾 (`/api/org/invites/[id]/accept`) | どちらも同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`) に無いので、同意の強制が有効なときは middleware が 403 `LEGAL_CONSENT_REQUIRED` で止める。無効なときは「通常」の行と同じ (S-14・S-15。既存の決まりのまま。本書は変えない) |
 | 解散した家族の元代表者・解散した組織の元オーナー | 未同意 | モバイル | 同意のゲートが Stack を同意画面 1 つに畳み、その WebView の `/legal-consent/account` から「未同意 × `/legal-consent/account` の退会」の行と同じ (退会のあとの `sign-out` と「閉じる」は #1901 の既存の動き。F-29)。同意したあとは「通常 × モバイル」の行と同じ |
-| 解散した家族の元代表者・解散した組織の元オーナー | メンテナンス中 | どの入口も | API は 503 (運営ロール以外。route に届かない)。画面はメンテナンスの画面。メンテナンスが明けたら「通常」の行と同じ |
+| 解散した家族の元代表者・解散した組織の元オーナー | メンテナンス中 | どの入口も | API は 503 (運営ロール以外。route に届かない)。画面を開くとメンテナンスの画面 (既存)。解散の区画は出ない (解散は済んでいる)。メンテナンスが明けたら「通常」の行と同じ |
 | 元代表者・元オーナー (解散から 90 日後) | — | — | 家族: 同意の記録が無ければ行ごと消える、あれば残る (F-8)。組織: 行は残る (Q-3) |
 
 残る行とデータ (解散のあと):
@@ -480,6 +481,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 代表者 / オーナー (current) | 解散 | 家族・組織に属さない人 | RPC の判定 | 解散の副作用 (§10.1・§10.2)。次の退会は 200 |
 | 代表者 / オーナー (old / none・凍結でない) | 解散 (`/legal-consent/account`) | 同じ状態 (所属は外れる) | API は許可リストで通る。画面は同意の前の退会と書き出しの画面の 409 の分岐 (§15.4) | 同上。そのあと同じ画面から退会 200 |
 | 代表者 / オーナー (凍結中。版は問わない) | 解散 (`/frozen/account`) | 同じ状態 (凍結は続く。所属は外れる) | API は凍結の例外・許可リストの両方 | 同上。そのあと同じ画面から退会 200 |
+| 代表者 / オーナー (メンテナンス中。運営ロールでない。版・凍結は問わない) | 解散 (メンテナンスの前から開いていた区画 / API 直接) | 変わらず (所属も家族・組織の行も変わらない) | middleware の 503 `MAINTENANCE_MODE` (`isMaintenanceExemptPath` の外。route・RPC に届かない) | 区画に `MAINTENANCE_MESSAGE` (§13.4・S-24)。メンテナンスが明けたら、版・凍結に合う上の行と同じ |
 | 代表者 / オーナー (any) | 運営の強制解散 | 家族・組織に属さない人 | 運営の操作 | 既存 (cross/20 §11.3 の `any (家族グループのメンバー)` の行) |
 
 ---
@@ -1169,6 +1171,7 @@ export const MEMBERSHIP_SETTINGS_PATH = '/settings/membership';
 // place=src/lib/membership/self-dissolve.ts
 // #1917 利用者の解散 (docs/design/family/11-self-dissolve.md §13.4)。画面 (SelfDissolveSection・退会と書き出しの枠 AccountSelfServicePanel) が使う。
 // サーバー専用のもの (通知) は self-dissolve-notification.ts。
+import { SERVICE_UNAVAILABLE_STATUS, serviceUnavailableMessageOfBody } from '@homegohan/shared';
 import { FAMILY_DISSOLVE_API_PATH, ORG_DISSOLVE_API_PATH } from '@/lib/auth/frozen';
 import { LEGAL_FACTS } from '@/lib/legal/legal-text';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
@@ -1245,7 +1248,7 @@ export const FROZEN_DISSOLVE_GUIDANCE = '凍結中は譲渡の操作ができま
 export const SELF_DISSOLVED_NEXT_STEP = '解散しました。「削除します」と入力して退会を続けてください。';
 /** 退会と書き出しの枠で、409 の本文から立場の id と名前が読めなかった (解散の区画を出せない) ときに、サーバーの文に続けて出す文 */
 export const BLOCKED_SCOPE_UNKNOWN_GUIDANCE = 'お手数ですが、サポートにお問い合わせください。';
-/** 失敗 (通信の失敗・本文が読めない) の文 */
+/** 通信の失敗 (fetch が例外を投げた。応答が届かない) の文。届いた失敗の応答の本文が読めないときは membershipErrorMessageOfBody の汎用の文になる */
 export const SELF_DISSOLVE_FAILED_MESSAGE = '解散に失敗しました。時間をおいてもう一度お試しください。';
 
 const HTTP_UNAUTHORIZED = 401;
@@ -1253,7 +1256,13 @@ const HTTP_UNAUTHORIZED = 401;
 export type SelfDissolveResult =
   | { kind: 'dissolved'; dissolvedAt: string }
   | { kind: 'unauthorized' }
-  /** 4xx / 5xx。message は本文の code から引いた日本語の文 (membershipErrorMessageOfBody) */
+  /**
+   * 失敗。message は画面にそのまま出す日本語の文:
+   * - 503 で本文の code が serviceUnavailableMessageOfBody の知っている code (middleware のメンテナンス中の MAINTENANCE_MODE) なら、
+   *   @homegohan/shared の固定の文 (MAINTENANCE_MESSAGE)
+   * - それ以外の 4xx / 5xx は、本文の code から引いた文 (membershipErrorMessageOfBody。表に無い code・JSON でない本文は汎用の文)
+   * - 通信の失敗は SELF_DISSOLVE_FAILED_MESSAGE
+   */
   | { kind: 'failed'; message: string };
 
 /**
@@ -1276,6 +1285,13 @@ export async function dissolveOwnScope(scope: MembershipScope, scopeId: string):
       return { kind: 'dissolved', dissolvedAt };
     }
     if (res.status === HTTP_UNAUTHORIZED) return { kind: 'unauthorized' };
+    // メンテナンス中は middleware が route の手前で 503 { error, code: 'MAINTENANCE_MODE', retryAfter } を返す (src/lib/maintenance-mode.ts)。
+    // membershipErrorMessageOfBody は MAINTENANCE_MODE を知らず汎用の文 (「処理に失敗しました。…」) を返すので、その前に
+    // @homegohan/shared の固定の文 (MAINTENANCE_MESSAGE) に写す (docs/design/family/11-self-dissolve.md S-24)。知らない code の 503 は下の汎用の文
+    if (res.status === SERVICE_UNAVAILABLE_STATUS) {
+      const unavailableMessage = serviceUnavailableMessageOfBody(body);
+      if (unavailableMessage !== null) return { kind: 'failed', message: unavailableMessage };
+    }
     return { kind: 'failed', message: membershipErrorMessageOfBody(body) };
   } catch (error) {
     console.error('[self dissolve]', error);
@@ -1478,18 +1494,18 @@ export async function POST(request: Request) {
 
 ### 14.3 エラーの対応 (route と RPC)
 
-| RPC の RAISE / 事象 | HTTP | code | 画面の文 (`MEMBERSHIP_ERROR_MESSAGES`) |
+| RPC の RAISE / 事象 | HTTP | code | 画面の文 (解散の区画に出す文。§13.4 の `dissolveOwnScope` が返す。401 とメンテナンス中の 503 は行のとおり。ほかの 4xx / 5xx は `MEMBERSHIP_ERROR_MESSAGES` から引き、表に無い code は `MEMBERSHIP_ERROR_FALLBACK_MESSAGE`。F-30) |
 |---|---|---|---|
-| `NOT_AUTHENTICATED` (RPC) / `getUser` 失敗 | 401 | `NOT_AUTHENTICATED` | ログインが必要です。 |
+| `NOT_AUTHENTICATED` (RPC) / `getUser` 失敗 | 401 | `NOT_AUTHENTICATED` | 文を出さない (`dissolveOwnScope` は `unauthorized` を返し、区画が `onUnauthorized` を呼ぶ。メンバーシップ設定と凍結中の画面は `/login` へ、同意の前の画面は戻り先 (`next`) にその画面のパスを付けた `/login` へ移る (`AccountWithoutConsent.tsx` の既存の `onUnauthorized`)。§15.1・§15.4) |
 | 本文が壊れている・`confirm` が true でない・id が UUID でない | 400 | `VALIDATION_ERROR` | 入力の内容が正しくありません。確かめて、もう一度お試しください。 |
-| 本文に NULL 文字 | 400 | `INVALID_CHARACTER` | (既存の文) |
+| 本文に NULL 文字 | 400 | `INVALID_CHARACTER` (`rejectNullCharacterBody`。本文は平らな `{ error, code }`) | 画面からは起きない (区画が送る本文は id と `true` だけ)。起きれば `MEMBERSHIP_ERROR_FALLBACK_MESSAGE` (「処理に失敗しました。時間をおいてもう一度お試しください。」。`INVALID_CHARACTER` は `MembershipErrorCode` に無い) |
 | `FAMILY_NOT_FOUND` / `ORG_NOT_FOUND` | 404 | 同名 | 家族が見つかりません。/ 組織が見つかりません。 |
 | `NOT_FAMILY_REPRESENTATIVE` / `NOT_ORG_OWNER` | 403 | 同名 | 家族の代表者だけが操作できます。/ 組織のオーナーだけが操作できます。 |
 | `FAMILY_ALREADY_DISSOLVED` / `ORG_ALREADY_DISSOLVED` | 409 | 同名 | この家族グループはすでに解散しています。/ この組織はすでに解散しています。 |
 | 40P01 (デッドロック) | 409 | `CONFLICT_RETRY` | ほかの操作と重なりました。もう一度お試しください。 |
 | RPC のそれ以外の失敗・戻り値の形が違う | 500 | `INTERNAL_ERROR` (`internalError`) | 処理に失敗しました。時間をおいてもう一度お試しください。 |
 | 凍結中 | (通る) | — | — |
-| メンテナンス中 (運営ロール以外) | 503 | `MAINTENANCE_MODE` (middleware) | (既存の文) |
+| メンテナンス中 (運営ロール以外) | 503 | `MAINTENANCE_MODE` (middleware。route に届かない) | ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。 (`@homegohan/shared` の `MAINTENANCE_MESSAGE`。`dissolveOwnScope` が `serviceUnavailableMessageOfBody` で写す。S-24) |
 | 未同意 | (通る) | — | — |
 
 ---
@@ -2130,18 +2146,19 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 
 | 場面 | コード | HTTP | 画面の文 | 正本 |
 |---|---|---|---|---|
-| 未ログインで解散の API | `NOT_AUTHENTICATED` | 401 | ログインが必要です。 | route (§14)・`MEMBERSHIP_ERROR_MESSAGES` |
+| 未ログインで解散の API | `NOT_AUTHENTICATED` | 401 | 文を出さない。画面はログインの画面へ移る (`dissolveOwnScope` の `unauthorized` → 区画の `onUnauthorized`。§14.3) | route (§14)・§13.4・§15.2 |
 | 本文が壊れている・`confirm` が true でない・id が UUID でない | `VALIDATION_ERROR` | 400 | 入力の内容が正しくありません。確かめて、もう一度お試しください。 | route・`MembershipErrorCode.VALIDATION_ERROR` |
-| 本文に NULL 文字 | `INVALID_CHARACTER` | 400 | (既存) | `rejectNullCharacterBody` |
+| 本文に NULL 文字 | `INVALID_CHARACTER` | 400 | 画面からは起きない (区画の本文は id と `true` だけ)。起きれば 処理に失敗しました。時間をおいてもう一度お試しください。 (`MEMBERSHIP_ERROR_FALLBACK_MESSAGE`。F-30) | `rejectNullCharacterBody` |
 | 家族が無い / 組織が無い | `FAMILY_NOT_FOUND` / `ORG_NOT_FOUND` | 404 | 家族が見つかりません。/ 組織が見つかりません。 | RPC・enum |
 | 代表者でない / オーナーでない | `NOT_FAMILY_REPRESENTATIVE` / `NOT_ORG_OWNER` | 403 | 家族の代表者だけが操作できます。/ 組織のオーナーだけが操作できます。 | RPC・enum |
 | 解散済み | `FAMILY_ALREADY_DISSOLVED` / `ORG_ALREADY_DISSOLVED` (新) | 409 | この家族グループはすでに解散しています。/ この組織はすでに解散しています。 | RPC・enum (§13.3) |
 | デッドロック | `CONFLICT_RETRY` | 409 | ほかの操作と重なりました。もう一度お試しください。 | `mapPgErrorToHttp` (40P01) |
 | RPC の想定外の失敗・戻り値の形違い | `INTERNAL_ERROR` | 500 | 処理に失敗しました。時間をおいてもう一度お試しください。 | `internalError` |
-| 通信の失敗・本文が読めない (画面) | — | — | 解散に失敗しました。時間をおいてもう一度お試しください。 (`SELF_DISSOLVE_FAILED_MESSAGE`) | §13.4 |
+| 通信の失敗 (画面。`fetch` が例外を投げ、応答が届かない) | — | — | 解散に失敗しました。時間をおいてもう一度お試しください。 (`SELF_DISSOLVE_FAILED_MESSAGE`) | §13.4 |
+| 失敗の応答 (4xx / 5xx。401 と、503 の `MAINTENANCE_MODE` を除く) の本文が JSON でない・code が `MembershipErrorCode` に無い (画面) | — | 4xx / 5xx | 処理に失敗しました。時間をおいてもう一度お試しください。 (`MEMBERSHIP_ERROR_FALLBACK_MESSAGE`) | §13.4 (`membershipErrorMessageOfBody`。F-30) |
 | 退会の 409 の本文から立場の id と名前が読めない (凍結中の画面・同意の前の画面) | — | — | サーバーの文 + お手数ですが、サポートにお問い合わせください。 (`BLOCKED_SCOPE_UNKNOWN_GUIDANCE`。解散の区画は出さない) | §13.4・§15.4 |
 | 凍結中 (middleware) | — | 通る | — | `FROZEN_ALLOWED_API_PATHS` (§13.5) |
-| メンテナンス中 (運営ロール以外) | `MAINTENANCE_MODE` | 503 | (既存。画面は汎用の文) | middleware |
+| メンテナンス中 (運営ロール以外) | `MAINTENANCE_MODE` | 503 | ただいまメンテナンス中です。しばらくしてから、もう一度お試しください。 (`MAINTENANCE_MESSAGE`。`dissolveOwnScope` が 503 の本文の code から写す。S-24。画面を開き直すとメンテナンスの画面) | middleware (`maintenanceApiResponse`)・`@homegohan/shared` (`serviceUnavailableMessageOfBody`)・§13.4 |
 | 未同意 (middleware) | — | 通る | — | `LEGAL_CONSENT_EXEMPT_API_PATHS` (§13.5) |
 | anon が RPC を直接呼ぶ | 42501 | 401 / 403 (PostgREST) | — | REVOKE (§11.1) |
 | authenticated が後始末の関数を直接呼ぶ | 42501 | 401 / 403 | — | REVOKE (§11.1) |
@@ -2175,7 +2192,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | ファイル | it |
 |---|---|
 | `tests/membership-errors.test.ts` (追加) | `#1917: FAMILY_ALREADY_DISSOLVED / ORG_ALREADY_DISSOLVED が 409 で検出され、ALREADY_IN_FAMILY / ALREADY_IN_ORG に化けない` |
-| `src/__tests__/lib/membership/self-dissolve.test.ts` (新規) | `selfDissolveApiPath: family は /api/family/dissolve、organization は /api/org/dissolve (frozen.ts の定数と同じ値)` / `dissolveOwnScope: 200 なら dissolved と応答の dissolved_at、401 なら unauthorized、4xx は failed と本文の code から引いた文、通信の失敗は failed と固定の文` / `dissolveOwnScope: 送る本文は { family_id, confirm: true } / { organization_id, confirm: true } で Content-Type は application/json` / `SELF_DISSOLVE_COPY・FROZEN_DISSOLVE_GUIDANCE・SELF_DISSOLVED_NEXT_STEP・BLOCKED_SCOPE_UNKNOWN_GUIDANCE の文に R-12 の 2 語が無く、家族の effects に保存の日数 (DISSOLVED_FAMILY_GROUP_RETENTION_DAYS = LEGAL_FACTS.dissolvedFamilyGroupRetentionDays) が入る` / `組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)` / `SELF_DISSOLVE_CONFIRM_KEYWORD は 解散します` |
+| `src/__tests__/lib/membership/self-dissolve.test.ts` (新規) | `selfDissolveApiPath: family は /api/family/dissolve、organization は /api/org/dissolve (frozen.ts の定数と同じ値)` / `dissolveOwnScope: 200 なら dissolved と応答の dissolved_at、401 なら unauthorized、4xx と 500 は failed と本文の code から引いた文 (MEMBERSHIP_ERROR_MESSAGES。表に無い code と JSON でない本文は MEMBERSHIP_ERROR_FALLBACK_MESSAGE)、通信の失敗 (fetch が例外) は failed と SELF_DISSOLVE_FAILED_MESSAGE` / `dissolveOwnScope: メンテナンス中の 503 (本文 { error: MAINTENANCE_MESSAGE, code: MAINTENANCE_API_CODE, retryAfter } = maintenanceApiResponse() の本文と同じ形を @homegohan/shared の定数で作る) は failed と MAINTENANCE_MESSAGE (MEMBERSHIP_ERROR_FALLBACK_MESSAGE ではない)。503 でも code の無い本文・知らない code・JSON でない本文は failed と MEMBERSHIP_ERROR_FALLBACK_MESSAGE` / `dissolveOwnScope: 送る本文は { family_id, confirm: true } / { organization_id, confirm: true } で Content-Type は application/json` / `SELF_DISSOLVE_COPY・FROZEN_DISSOLVE_GUIDANCE・SELF_DISSOLVED_NEXT_STEP・BLOCKED_SCOPE_UNKNOWN_GUIDANCE の文に R-12 の 2 語が無く、家族の effects に保存の日数 (DISSOLVED_FAMILY_GROUP_RETENTION_DAYS = LEGAL_FACTS.dissolvedFamilyGroupRetentionDays) が入る` / `組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)` / `SELF_DISSOLVE_CONFIRM_KEYWORD は 解散します` |
 | `src/__tests__/lib/emails/self-dissolve.test.ts` (新規) | `件名は所属先の呼び方 + が解散されました (長い名前は件名だけ切る)。本文に 代表者 / オーナー により解散された旨・個人アカウントが残る旨・問い合わせ先があり、解散した人の名前は無い` / `名前が無い (null) なら宛名はアドレス。scope_name が null なら名前を省いた文面` / `contains_secret を付けない (リンク・トークンを持たない)。template は self_dissolve` |
 | `src/__tests__/api/family/dissolve.test.ts` (新規。`fake-service-role.ts` の形) | `未ログインは 401 NOT_AUTHENTICATED。RPC を呼ばない` / `本文が壊れている・confirm が無い・family_id が UUID でないときは 400 VALIDATION_ERROR。RPC を呼ばない` / `NULL 文字を含む本文は 400 INVALID_CHARACTER (Supabase のクライアントを作らない)` / `RPC の NOT_FAMILY_REPRESENTATIVE は 403、FAMILY_NOT_FOUND は 404、FAMILY_ALREADY_DISSOLVED は 409、40P01 は 409 CONFLICT_RETRY。本文に生のエラー文を入れない` / `RPC の想定外の失敗と、戻り値の形が違うときは internalError (汎用の 500。段階・request_id を本文に出さない)` / `成功: RPC に p_family_id (小文字にそろえた) だけを渡し、200 { data: { family_id, dissolved_at } }。応答に member_user_ids もメールアドレスも入れない` / `成功: RPC が返した member_user_ids の全員 (本人を含む) に 1 通ずつ、家族名つきの文面で送る。宛先は auth.users から引く (先頭 50 件より後ろでも)。user_profiles から email を読まない` / `通知先の解決・送信が失敗しても 200。ログに宛先のアドレスを残さない` / `service_role の client は RPC の成功のあとにだけ作る (401・400・RPC の失敗では作らない)` |
 | `src/__tests__/api/org/dissolve.test.ts` (新規) | 上と同型 (`NOT_ORG_OWNER` / `ORG_NOT_FOUND` / `ORG_ALREADY_DISSOLVED`・`p_organization_id`・組織名つきの文面) + `route は user_profiles の org_role を読まない (判定は RPC)` |
@@ -2325,7 +2342,7 @@ describe('deleteOwnAccount: 409 の本文の立場の id と名前 (scope。#191
 | S-20 | 既存 family/10 のテスト (変えない)・`membership-self-dissolve` (所属なし) |
 | S-21・S-22 | D-8 (家族の提案)・既存 `membership-transfer-accept.test.ts` E1 (`:183`。所属が外れた承諾者の組織の提案は `TRANSFER_ACCEPTOR_NOT_IN_ORG`。解散の apply も同じく `organization_id` を NULL にするので同じ判定に当たる。変えない)・Q-4 (組織の招待は本書で検査しない) |
 | S-23 | route (通知の失敗でも 200) |
-| S-24 | `middleware-self-dissolve` (503) |
+| S-24 | `middleware-self-dissolve` (503 `MAINTENANCE_MODE` で route に届かない・運営ロールは通る)・`src/__tests__/lib/membership/self-dissolve.test.ts` (503 のメンテナンスの本文は `MAINTENANCE_MESSAGE`。§21.1)・部品 `self-dissolve-section` (失敗の文を `role=alert` に出し、もう一度押せる) |
 | S-25 | route (401)・D-10 |
 | S-26 | 部品 (キャンセル) |
 | S-28 | D-1 (`family_groups.status = 'dissolved'`・代表者を含む active だった 4 行が `left` = 一覧の結合の条件 `fg.status = 'active'`・`fm.role = 'representative' AND fm.status = 'active'` に当たらない)。一覧の関数は本書で変えないので呼ばない (運営の aal2 のセッションが要り、組織の一覧は行があると既存の 42804 で失敗する。`tests/integration/security/operator-mfa-db-gate.test.ts:44-50`・Q-10)。`tests/integration/rls/is-inactive-user-rpc.test.ts` は変えない |
@@ -2470,6 +2487,7 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | 同上 | `tests/admin-mutation-audit-coverage-1571.test.ts:66-68` (運営の route の監査) | 反応しない (`/api/operator` の外) | — | — |
 | `self_dissolve` (文面) | `src/__tests__/lib/emails/secret-templates.test.ts:31-59` (`PUBLIC_TEMPLATES`)・`:81-92` (走査。`template` は `:88` の正規表現 `/^\s+template: '([^']*)',$/gm` でソースのリテラルの行から拾う)・`:115-120` (走査した名前と表の一致)・`src/__tests__/lib/emails/template-names.test.ts:22-28` (同じ正規表現で拾う)・`:44-50` (文面ごとに `toHaveLength(1)` と snake_case)・`:52-56` (名前の一意)・`src/__tests__/lib/emails/templates-site-config.test.ts:339-364` (ファイルの一覧と `TEMPLATES` の一致) | 赤 (表と一覧に無い文面)。`template` を定数・式で書くと、表に行を足しても赤のまま (`template-names` は名前 0 件で `toHaveLength(1)` が、`secret-templates` は `''` が表と食い違って赤) | `PUBLIC_TEMPLATES` の `operator_force_transfer: [],` の次の行に `self_dissolve: [],`、`TEMPLATES` に `membership/self-dissolve` の行 (§16.1 の逐語)。文面の `template` は字下げのあとに `template: 'self_dissolve',` だけを置いた 1 行 (§16.1)。`template-names` は表を持たないので書き換えない (`self_dissolve` は既存の名前と重ならない) | A |
 | `FAMILY_ALREADY_DISSOLVED` / `ORG_ALREADY_DISSOLVED` | `tests/membership-errors.test.ts` (全値に文)・`src/lib/errors/membership-errors.ts` の `Record` | 3 か所に足せば緑 | §13.3 | A |
+| `serviceUnavailableMessageOfBody` / `SERVICE_UNAVAILABLE_STATUS` の import (`src/lib/membership/self-dissolve.ts`。メンテナンス中の 503 の文。§13.4・S-24) | `tests/service-unavailable-shared.test.ts` (共有の code と文が、サーバーの 503 の本文から読めること)・`tests/mobile-service-unavailable-raw-fetch.test.ts` (`apps/mobile/app`・`apps/mobile/src` だけを走査) | 反応しない (共有の関数と定数を読むだけで、値と置き場は変えない。`src` は走査の対象外) | — | — |
 | `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` (改名と行き先・prompt の変更。§13.6) | `src/app/(main)/settings/page.tsx:19, 246` (import と添字。src は tsc の対象)・`tests/account-deletion-blocked-message.test.ts:22, 160` (import と prompt の期待)・`:169-180` (`it.each` の行き先の期待 `/org/settings/owner-transfer`・`/family/representative-transfer`)・`:9-10` のコメントと `:154`・`:172`・`:182`・`:193` の it 名 (「譲渡の画面」) | 改名だけを当てると tsc が TS2305 (settings/page.tsx) で赤、vitest は `:160` (添字が `undefined`) と `:169-180` (行き先) が赤。コメントと it 名は緑のまま事実と違う記述になる | §13.6・§15.3・§21.3.1 を同じコミットで当てる (改名を単独でコミットしない) | B |
 | `kind: 'blocked'` の形 (`scope` を足す。§13.6) | 結果を読む側: `src/app/(main)/settings/page.tsx:242-256`・`src/components/account/AccountSelfServicePanel.tsx:94-99`・`src/app/legal-consent/LegalConsentForm.tsx:210-219` (`message` だけを読む)。テスト: `tests/legal-consent-page.test.tsx:879, 914` (`scope` の無い `blocked` をモックの戻り値にする)・`src/__tests__/app/frozen-account-page.test.tsx:207`・`tests/legal-consent-account-page-1901.test.tsx:225` (409 の応答から画面の文を見る) | 反応しない (読む側は `scope` を読まなくても型が通る。`AccountDeletionResult` の `blocked` を組み立てる src は `deleteOwnAccount` だけ。`tests/` は tsc の対象外 (tsconfig の `exclude`) で、vitest は型を見ない。結果の形を `toEqual` で固定する既存のテストは無い) | `scope` を読むのは枠 `AccountSelfServicePanel` だけ (§15.4)。`LegalConsentForm.tsx` と `tests/legal-consent-page.test.tsx` は変えない。形の固定は §21.3.1 の末尾の describe が新しく持つ | B |
 | `DELETE_BLOCKED_GUIDANCE` (凍結中の文) を消す・部品の 409 の分岐 | `src/__tests__/app/frozen-account-page.test.tsx:207` (本文に `organization` が無い 409。`組織のオーナーです。` と `サポートにお問い合わせください` を含む) | 緑のまま (立場の id が無いので `BLOCKED_SCOPE_UNKNOWN_GUIDANCE` が出て、どちらの語も含む) | it の名前を替え、立場の id がある 409 の it を足す (§21.3) | B |
@@ -2563,3 +2581,4 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | v1.8 | 2026-10-19 | 網羅性 (周 5) の反映: §8 の「解散した家族の元代表者」「解散した組織の元オーナー」に、通常 × モバイル・凍結中 (`/frozen/account` の退会・設定・新しい家族の作成と別の組織の招待の承諾・モバイル)・未同意 (`/legal-consent/account` の退会・設定・作成と承諾・モバイル)・メンテナンス中の行を足した (退会は 409 にならず 200。作成と承諾は凍結中・未同意の middleware の既存の決まりのまま。家族・組織のもう一方の代表者・オーナーが残る人は、その所属の 409 の行と同じ) |
 | v1.9 | 2026-10-19 | 敵対レビュー R5 の反映: 退会の 409 の案内の改名 (`ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` → `ACCOUNT_DELETE_BLOCKED_GUIDE`)・行き先・prompt を段 A に置き、旧名を import する `src/app/(main)/settings/page.tsx:19, 246` と `tests/account-deletion-blocked-message.test.ts:22, 160` を段 B に置いていたため、段 A の終わりで tsc (TS2305) と vitest が赤になった。§13.6 (`scope` の追加を含む) を丸ごと段 B に移し、§15.3 と `tests/account-deletion-blocked-message.test.ts` の書き換えと同じコミットにした (段 A は `src/lib/account-self-service.ts` に触れない。`src/lib/account-deletion.ts` のコメントの追記だけは段 A)。`deleteOwnAccount` が 409 の本文から `scope` を読む処理を関数 `blockedScopeOfBody` として逐語にした。§21.3 の「it 6」(どの it にも当たらない番号) を、書き換える 4 つの it (`:150-167`・`:169-180` の行き先の `it.each`・`:182`・`:190-200`)・import・冒頭のコメントの逐語の表 (§21.3.1) と、`scope` を見る describe の逐語に置き換えた。§23 の 2 行を、反応する箇所 (`settings/page.tsx`・`:169-180`・it 名) と段 B に直し、`scope` の形の行に読む側 (`LegalConsentForm.tsx`) とモックの戻り値 (`tests/legal-consent-page.test.tsx:879, 914`) を反応しない理由つきで足した。波及: 段 C の規約の文 (「本サービスの画面から行え」) と cross/20 の F-59・§11.3・§12 の行が段 B の画面と `ACCOUNT_DELETE_BLOCKED_GUIDE` を名指しするので、段 C のマージを段 B のマージの後にした (§0.2・§0.3・§20)。§0.3・§20・§21.5・§22 を合わせた |
 | v1.10 | 2026-10-19 | 網羅性 (周 6) の反映: S-19 は家族の強制解散だけを扱い、組織の運営による強制解散 (`operator_force_dissolve_org`) のシナリオが §5 に無かった (§8 の運営の強制解散の画面の行が S-19 だけを指していた)。§5 に S-32 (組織の強制解散。所属の列 6 つが外れ・席数 0・運営の監査 `operator_force_dissolve` に `previous_owner_id`・`owner_id` NULL) を足して 32 本にし、§6.2 にトレース、§8 の運営の強制解散の画面の行を家族 (S-19) と組織 (S-32) の 2 行に分け、§10.1 / §10.2 の運営の強制解散の行に S-19 / S-32 を結び、§21.2 D-13 の組織の部分を明示し、§21.5 に S-32 の行を足した |
+| v1.11 | 2026-10-19 | 敵対レビュー R6 の反映: S-24 (メンテナンス中に解散を押す) の期待「メンテナンスの文 (既存の fetch の扱い)」が、§6.2 のトレース・§19 の「(既存。画面は汎用の文)」・§13.4 の `dissolveOwnScope` (503 の本文を `membershipErrorMessageOfBody` で引くと、`MAINTENANCE_MODE` は `MembershipErrorCode` に無いので「処理に失敗しました。…」) と食い違っていた (Web の `src` に、503 の本文の code からメンテナンスの文を出す共通の処理は無い。F-30)。`dissolveOwnScope` が 503 の本文を先に `@homegohan/shared` の `serviceUnavailableMessageOfBody` で引いて `MAINTENANCE_MESSAGE` を返す形にし (§13.4)、S-24 の期待とトレース、§8 のメンテナンス中の 5 行 (画面を開くとメンテナンスの画面・メンテナンスの前から開いていた区画には `MAINTENANCE_MESSAGE`)、§10.3 のメンテナンス中の行、§14.3・§19・§21.1 の it・§21.5・§23 を合わせた。同じ型の食い違い (画面に出す文) を全域で探し、§14.3・§19 の 401 (文を出さずにログインの画面へ移る)・null 文字の 400 (画面からは起きず、起きれば汎用の文)・「本文が読めない」(届いた失敗の応答の本文が読めないときは汎用の文で、`SELF_DISSOLVE_FAILED_MESSAGE` は通信の失敗だけ。§19 を 2 行に分け、§13.4 の JSDoc も合わせた) と、§8 の並行の 4 行の「失敗の文」を実際の文に直した。F-30 (画面が失敗の応答の本文から出す文の事実) を足した |
