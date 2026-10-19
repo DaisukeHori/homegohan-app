@@ -35,7 +35,7 @@
 | 有料と無料の線引き: AI の 1 日の回数の上限のプランごとの値、機能ごとの上限 (究極モード・料理画像の作成・献立の生成) を持つ `ai_plan_feature_caps`、家族の機能 (グループの作成・メンバーの追加) の門 (§6.5・§6.6・§7) | 運営画面での `ai_plan_feature_caps` の編集 (運営は SQL で変える。画面は配線の残りの冊)・組織 (`org_*`) の課金・`family_addon` |
 | App Store / Google Play の購入を RevenueCat の Webhook と同期の API で `personal_subscriptions` に写す仕組み (§6.3・§6.4・§8・§9) | RevenueCat の Stripe 連携 (Web の購入を RevenueCat に写すこと。§5.1 で採らない)・RevenueCat の Paywall UI (`react-native-purchases-ui`。自前の画面で作る) |
 | モバイルの購入の画面 (ストアの審査の要件を満たす形。§10.6)・購入の復元・ストアでの購読の管理への案内 | ネイティブの画面での契約の状態の細かい表示 (本冊は購入の画面に最小の状態を出す)・Web の `/account/billing` の WebView の表示の変更 (読み取り専用のまま) |
-| 公開の面の書き直し (料金ページ・特商法・運営会社・FAQ・紹介ページの料金の節。未完成や予定を示す文を書かない。§10.1〜§10.5・§11) | #1911 のうち本冊の面 (料金・特商法・運営会社・FAQ・紹介ページの料金) 以外 (バッジ・組織の画面・運営の画面の「準備中」) |
+| 公開の面の書き直し (料金ページ・特商法・運営会社・FAQ・紹介ページの料金の節。未完成や予定を示す文を書かない。§10.1〜§10.5・§11) | #1911 のうち本冊の面 (料金・特商法・運営会社・FAQ・紹介ページの料金) 以外 (バッジ・組織の画面・運営の画面の「準備中」)。ファイルで言うと、運営の画面 = `src/components/operator/finance/BillingNotStartedNotice.tsx` (「課金は未開始のため準備中」)・`src/components/operator/PreparingNotice.tsx`・`src/app/admin/page.tsx`・`src/app/admin/finance/**`・`src/app/admin/moderation/**`・`src/app/api/admin/moderation/**`・`src/lib/admin/moderation-backend.ts`・`src/lib/admin/not-supported.ts`・`src/app/super-admin/exports/**`・`src/app/api/super-admin/exports/**`・`src/lib/super-admin/exports-schemas.ts`、組織の画面 = `src/app/(org)/org/page.tsx`・`src/app/(org)/org/dashboard/page.tsx`・`src/app/(org)/org/challenges/page.tsx`。§16.1 の母集合の作り方 4 の grep はこれらにも当たるが、本冊では変えない (§16.1 の「#1911 の面」の行) |
 | 利用規約・プライバシーポリシーの有料の条文の差分と版の繰り上げ (#1901 の版の上に。§11) | #1901 の本文そのもの (本冊はその版の上に足す差分だけ) |
 | 「準備中」「販売開始前」「近日」「今後〜予定」などの文を、画面と規約の本文に書かない (§10・§11・§13 の文もその規則で選ぶ) | — |
 
@@ -360,11 +360,14 @@ CREATE POLICY plan_store_products_select_public ON public.plan_store_products
   FOR SELECT USING (EXISTS (
     SELECT 1 FROM public.subscription_plans AS p
      WHERE p.plan_key = plan_store_products.plan_key AND p.status IN ('public', 'private')));
--- 書くのは super_admin だけ (subscription_plans_mutate_super_admin と同じ形)
+-- 書くのは super_admin だけ。subscription_plans_mutate_super_admin の最新の定義 (20261017130000_operator_mfa_db_gate.sql:420) と同じ形:
+-- TO authenticated・運営ロールの条件の項に (SELECT public.operator_mfa_satisfied()) を AND で付ける (cross/12 §11.4。
+-- tests/integration/security/operator-mfa-db-gate.test.ts の DB-1 が、運営ロールの条件を持つ全ポリシーにこの 2 点を求める)
 DROP POLICY IF EXISTS plan_store_products_mutate_super_admin ON public.plan_store_products;
 CREATE POLICY plan_store_products_mutate_super_admin ON public.plan_store_products
-  USING (EXISTS (SELECT 1 FROM public.user_profiles WHERE user_profiles.id = auth.uid() AND 'super_admin' = ANY (user_profiles.roles)))
-  WITH CHECK (EXISTS (SELECT 1 FROM public.user_profiles WHERE user_profiles.id = auth.uid() AND 'super_admin' = ANY (user_profiles.roles)));
+  TO authenticated
+  USING (EXISTS (SELECT 1 FROM public.user_profiles WHERE user_profiles.id = auth.uid() AND ('super_admin' = ANY (user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))))
+  WITH CHECK (EXISTS (SELECT 1 FROM public.user_profiles WHERE user_profiles.id = auth.uid() AND ('super_admin' = ANY (user_profiles.roles) AND (SELECT public.operator_mfa_satisfied()))));
 REVOKE ALL ON public.plan_store_products FROM PUBLIC, anon, authenticated, service_role;
 GRANT SELECT ON public.plan_store_products TO anon, authenticated;
 GRANT SELECT, INSERT, UPDATE, DELETE ON public.plan_store_products TO service_role;
@@ -863,6 +866,16 @@ CREATE TRIGGER family_members_billing_plan_gate
 | `/legal` (特商法) | 価格・支払方法・時期・提供・解約の 5 行を販売の内容で (§10.2) | 同左 | 同左 | 同左 |
 | `GET /api/billing/iap/catalog?store=…` | (Stripe は関係しない) | (同左) | `plans: []` | 行のある plan × 間隔 |
 | アプリの購入の画面 | (同左) | (同左) | 現在の状態だけ | offerings と一致した商品のカード |
+
+`subscription_plans` と `ai_daily_limits` の書き手 (本冊の migration と干渉しないか):
+
+| 書き手 | 書く列 | 本冊での扱い | 本冊の migration (§6.2・§6.5) との関係 |
+|---|---|---|---|
+| 本冊の migration (§6.2) | `pro`・`family_basic`・`family_pro` の `monthly_price_jpy`・`yearly_price_jpy`・`trial_days`・`display_name`・`max_members` | 新設 | `stripe_product_id`・`stripe_price_id`・`stripe_yearly_price_id` は書かない (F1 の本番の値はどれも NULL のまま) |
+| `POST /api/super-admin/plans/[id]/price-change` (`src/app/api/super-admin/plans/[id]/price-change/route.ts:320-331`) | 変えた間隔の `monthly_price_jpy` / `yearly_price_jpy` と、Stripe の新しい Price の ID (`stripe_price_id` = 月額・`stripe_yearly_price_id` = 年額)。`plan_price_history` に 1 行 | 変更なし | migration の適用は §12 の順 1 (Stripe の Price の登録は順 3 の後)。順 3 で運営がこの API で Price の ID を入れるとき、価格は migration が入れた値のまま (`new_*_price_jpy` に同じ値を渡す)。migration は `stripe_*` を書かないので、この API が入れた ID を消さない |
+| Edge Function `stripe-price-sync` (`supabase/functions/stripe-price-sync/index.ts`・`sync.ts`・`deactivation.ts`) | DB に書かない (旧 Price の ID を `subscription_plans` から読むだけ。Stripe に新しい Price を作り、旧 Price を無効にする。`index.ts` の冒頭の契約の注) | 変更なし | 呼ばれるのは上の `price-change` からだけ。本冊は Stripe の Price を作らない |
+| `PATCH` / `DELETE /api/super-admin/plans/[id]`・`POST /api/super-admin/plans` (`src/app/api/super-admin/plans/[id]/route.ts`・`src/app/api/super-admin/plans/route.ts`) | プランの行 (表示名・状態・`stripe_product_id` など。operator/04) | 変更なし | 本冊の migration の後に運営が変えた値は、運営の値が正 (migration を流し直さない)。`plan_key` は変えない。`DELETE` は `draft` の行だけ (`:296-301`) で、`draft` の行には `plan_store_products` の行を入れない (§17.2 の行は 3 つの有料プランだけ) ので `ON DELETE RESTRICT` に当たらない |
+| `PATCH /api/super-admin/llm/quotas` (`src/app/api/super-admin/llm/quotas/route.ts:129-139`) | `ai_daily_limits` の upsert | 変更なし | migration は `free` を 5 に UPDATE し、有料の 3 行を `ON CONFLICT DO NOTHING` で足す (運営が先に入れた有料の行は上書きしない)。`ai_plan_feature_caps` は運営の画面に出さない (§0.2) |
 
 ### 7.2 状態比較表 (現行 vs 設計後)
 
@@ -3445,6 +3458,7 @@ export function billingErrorMessageOf(error: unknown): string {
 Web の契約の画面 (追加。§10.3・§10.4):
 87. `src/__tests__/app/account/billing-pages.test.ts`: `it('account billing page shows the store contract wording with the store management link and no cancel / resume / portal buttons for app_store and play_store rows')` (S4)
 88. `src/__tests__/app/frozen-billing-page.test.tsx`: `it('frozen billing page shows the store management wording and no cancel button for a store row')` (S22)
+103. `src/components/ai-assistant/__tests__/V4GenerateModal-ultimate-mode.test.ts` (追加。§10.3): `it('locks the ultimate-mode toggle with aria-disabled and the paid-plan wording when features.ai_feature_caps.menu_generation_ultimate is 0, and leaves it operable when the summary is null or the cap is above 0')` (`useBillingSummary` を `vi.mock` で差し替える) (S17)
 
 家族・AI の route:
 49. `tests/api/family-plan-required.test.ts`: `it('family routes map FAMILY_PLAN_REQUIRED from the RPC to 402 with the fixed message')`
@@ -3531,14 +3545,14 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S14 鍵が無い | 16・26・31・32 |
 | S15 ストアの商品が未登録 | 10・18・56 |
 | S16 Stripe の Price が無い間の料金ページ | 44・46 |
-| S17 無料の利用者の線引き | 41・42・49・57・74・77・89・91・92・97・98・99・101・102 |
+| S17 無料の利用者の線引き | 41・42・49・57・74・77・89・91・92・97・98・99・101・102・103 |
 | S18 有料の利用者の線引き | 74・75・76 |
 | S19 家族プランが終わったグループ | 69・78・79 |
 | S20 手動付与との共存 | 63・68・77 |
 | S21 規約の改定の再同意 | §16.1 の `middleware-legal-consent-api` の行 (許可リストは変えないので既存のテストが緑のまま守る) |
 | S22 凍結中のストアの契約 | 88 |
 | S23 無料体験の 1 人 1 回 | 70・83・84・86 |
-| S24 App Store の審査 (sandbox の購入) | 29・90・82 (実機) |
+| S24 App Store の審査 (sandbox の購入) | 29・90・81 (手動)・82 (実機) |
 | S25 二重購読の防止と案内 (ストア同士) | 68・32・96 |
 
 ---
@@ -3550,8 +3564,8 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
 | A: DB 層 | migration + rollback (§6)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、本人の書き出しの `omit`、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・§16.1 の結合テストの追随 | 60〜80・83・84・86・90・91・100 |
-| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 4 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102 |
-| C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48, 87, 88 |
+| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 4 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
+| C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48, 87, 88, 103 |
 | D: モバイル | `react-native-purchases`・`expo-dev-client` の追加、`purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`app/settings/plan.tsx`・設定タブの行・`AuthProvider`・`signOut.ts`・`UltimateModeToggle` と `V4GenerateModal` の錠・`env.example`・jest の mock と `moduleNameMapper`・`no-web-purchase-links.test.ts` のコメント | §8.10・§10.6 | 51〜59, 96 |
 | E: 規約とポリシーの条文 | `/terms`・`/privacy` の条・`legal-versions.ts` の版 | §11 | §16.1 の規約の行 |
 
@@ -3567,6 +3581,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - `packages/shared/src/billing-plans.ts`
 - `src/app/api/webhooks/revenuecat/route.ts`・`src/app/api/billing/iap/catalog/route.ts`・`src/app/api/billing/iap/sync/route.ts`
 - `src/hooks/useBillingSummary.ts`
+- テストの道具: `tests/integration/helpers/family-plan.ts` (`grantFamilyPlan`。§16.1 の家族の結合テストの行)・`tests/e2e/helpers/billing-plan.ts` (`grantManualPlanForE2e`。§16.1 の E2E の行)
 - `apps/mobile/src/lib/purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`apps/mobile/app/settings/plan.tsx`・`apps/mobile/__mocks__/react-native-purchases.js`
 - テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`tests/api/meals-plan-locked-image.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`
 
@@ -3589,9 +3604,12 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - 家族の結合テスト (§16.1 の行。家族プランの手動付与を前提に足す)
 - `apps/mobile/package.json`・`apps/mobile/jest.config.js`・`apps/mobile/app/(tabs)/settings.tsx`・`apps/mobile/src/providers/AuthProvider.tsx`・`apps/mobile/src/lib/signOut.ts`・`apps/mobile/src/components/menu/UltimateModeToggle.tsx`・`V4GenerateModal.tsx`・`apps/mobile/__tests__/app/no-web-purchase-links.test.ts` (コメントだけ)・`apps/mobile/__tests__/menus-weekly/ultimate-mode-toggle.test.tsx`・`apps/mobile/__tests__/lib/sign-out.test.ts`
 - `src/app/terms/page.tsx`・`src/app/privacy/page.tsx`・`packages/shared/src/legal-versions.ts` (段 E)
+- `src/app/super-admin/coupons/new/page.tsx` (粗利のプレビューの基準の価格。§16.1 の行)
+- `src/components/ai-assistant/__tests__/V4GenerateModal-ultimate-mode.test.ts` (テスト 103 と冒頭の経緯のコメント)・`tests/integration/operator/super-admin-llm.test.ts`・`tests/integration/rls/coupon-apply-rpc.test.ts` (it 名とコメントだけ)
+- E2E: `tests/e2e/fixtures/fresh-family.ts`・`tests/e2e/helpers/membership-family.ts`・`tests/e2e/bug-27-ultimate-mode-locked.spec.ts`・`tests/e2e/w5-3-menu-gen-adversarial.spec.ts` と、§16.1 の E2E の行の母集合 (母集合の作り方 7) で同じ直し方が当てはまる spec
 - docs: `docs/design/billing/03-paid-plans-and-iap.md` (本書)。他の文書は §16.2 の行だけ (専権 PATCH)
 
-触らない (凍結): `supabase/baseline/**`・`billing_apply_stripe_subscription`・`get_effective_plan`・`guard_user_profiles_privileged(_on_insert)`・`family_groups` の DDL とトリガー・`stripe_webhook_events`・`billing_customers`・Stripe の route 7 本と Webhook・`src/lib/billing/stripe-gateway.ts`・`account-deletion.ts`。
+触らない (凍結): `supabase/functions/stripe-price-sync/**`・`src/app/api/super-admin/plans/**` (`price-change`・`price-impact`・`[id]`・一覧。§7.1 の書き手の表)・`src/app/api/super-admin/llm/quotas/route.ts`・`src/app/api/health/route.ts`・`src/lib/super-admin/plan-subscribers.ts`・`src/lib/membership/exit-notification.ts`・既存の `supabase/migrations/**` と `supabase/rollbacks/**` (§16.1 の母集合の作り方 2 が当てても書き換えない)・#1911 の面 (§0.2 の対象外の欄のファイル)・`supabase/baseline/**`・`billing_apply_stripe_subscription`・`get_effective_plan`・`guard_user_profiles_privileged(_on_insert)`・`family_groups` の DDL とトリガー・`stripe_webhook_events`・`billing_customers`・Stripe の route 7 本と Webhook・`src/lib/billing/stripe-gateway.ts`・`account-deletion.ts`。
 
 ### 15.3 新設一覧 (識別子)
 
@@ -3618,6 +3636,8 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | エラーコード | §13.1 の [NEW] 7 つ |
 | 依存 (モバイル) | `react-native-purchases` 10.14.0・`expo-dev-client` |
 | 画面の定数 | `PLAN_SCREEN_PATH = "/settings/plan"` |
+| テストの道具 | `tests/integration/helpers/family-plan.ts` の `grantFamilyPlan`・`tests/e2e/helpers/billing-plan.ts` の `grantManualPlanForE2e` |
+| 運営の画面の定数 | `src/app/super-admin/coupons/new/page.tsx` の `COUPON_PREVIEW_PLAN_KEY` (粗利のプレビューの基準のプラン) |
 
 ---
 
@@ -3634,6 +3654,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 4. 公開の面の文を名指しするもの: `git grep -n -E "準備中|販売開始前|¥980|980円|9,800円|資本金" origin/main -- src apps packages tests ':!**/node_modules/**'`。
 5. 表の列の一覧を持つ偽の client: `git grep -n -E "SCHEMA_COLUMNS|KNOWN_COLUMNS|ALLOWED_COLUMNS" origin/main -- tests src`。
 6. docs の番兵: `git grep -n -E "docs/design/billing|BILLING_AUDIT_ACTIONS|REMOVED_MOBILE_SCREENS" origin/main -- tests`。
+7. E2E (本物のサーバに届く通信。上の 2 の `from(...)` は REST の直接の通信に当たらない): `git grep -l -E "rest/v1/family_(groups|members)|api/family/groups|api/ai/menu/weekly/request|api/ai/menu/v4/generate|api/ai/image/generate|ultimate-mode-toggle" origin/main -- tests/e2e`。当たった spec のうち、その API を `page.route` で差し替えていないものが対象 (差し替えていれば本冊の判定に届かない)。
 
 | 番兵 | 反応する理由 (grep の語) | 直し方 | 段 |
 |---|---|---|---|
@@ -3665,7 +3686,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/supabase-service-role-client-scan.test.ts` | `createClient` の import | `iap-repository.ts` は `getSupabaseAdmin` だけ | B |
 | `tests/next15-async-request-api-scan.test.ts` | `createClient()`・`params` | `await` を付ける | B |
 | `tests/zod-single-copy-1444.test.ts`・`tests/edge-function-dep-pinning.test.ts` | 依存・Edge Function | 依存を足さない (RevenueCat の SDK をサーバに入れない)。Edge Function を足さない | — |
-| `tests/billing-core.test.ts` (テスト 1〜16・72・89・95・111・112) | `summarizeSubscription` の 4 つ目の引数・`BillingSummary` の項目・`EXT_STRIPE_NOT_CONFIGURED` の文 | 呼び出しに `EMPTY_PLAN_FEATURES` を足す。`BillingSummary` のリテラルの期待に `source`・`manage_in_store: null`・`features` を足す。文の期待を新しい文に。テスト 34〜36 を足す | B |
+| `tests/billing-core.test.ts` (billing/01 §14 の番号のテスト 1〜16・72・89・95・111・112。本冊の §14 の番号ではない) | `summarizeSubscription` の 4 つ目の引数・`BillingSummary` の項目・`EXT_STRIPE_NOT_CONFIGURED` の文 | 呼び出しに `EMPTY_PLAN_FEATURES` を足す。`BillingSummary` のリテラルの期待に `source`・`manage_in_store: null`・`features` を足す。文の期待を新しい文に。テスト 34〜36 を足す | B |
 | `tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/frozen-billing-page.test.tsx` (`BillingSummary` の偽物・`summaryOf`) | `BillingSummary` の必須の項目が増える | 偽物に `manage_in_store: null`・`features: EMPTY_PLAN_FEATURES` を足す。`findPlanFeatures` の偽物を `BillingRepository` の偽物に足す。`billing-routes` の GET subscription の it に「遅延の再同期が要らない行では RevenueCat を呼ばない」を足す (テスト 33 は別ファイル) | B |
 | `tests/billing-manual-grant.test.ts`・`billing-manual-grant-service.test.ts`・`billing-manual-grant-client.test.ts`・`src/__tests__/components/admin/manual-plan-grant-section.test.tsx` | `source` の union に `'store'`・`SUBSCRIPTION_COLUMNS` | 偽物の行に `iap_store: null` を足す。`store` のときの表示の it を 1 つ足す | B |
 | `tests/billing-audit-action-lists-doc.test.ts` (`operator/07` §4 の `*.billing.*` の名前は 2 つの一覧のどちらかにある) | `system.revenuecat.event_failed` (名前に `.billing.` を含まない) | 変更なし。`operator/07` §4.5 に名前を足す (§16.2)。`BILLING_AUDIT_ACTIONS` の数は変えない | — |
@@ -3676,7 +3697,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/marketing/01-landing-site.md` の文言の表を見張るテスト (`tests/landing-*` があれば。実装時に `git grep -l landing-copy origin/main -- tests` で確かめる) | `landing-copy.ts` の料金の章と `claims` | 設計書の表 (§16.2 の marketing の行) と同じ変更を同じ PR で | C |
 | `src/__tests__/lib/feature-flags.test.ts` ほか `plan_key_cached` の偽の DB | 意味は変えない | 変更なし | — |
 | `tests/integration/security/legal-documents-acceptance.test.ts`・`tests/integration/rls/user-profiles-insert-guard.test.ts` | 特権列ガード | 変更なし (触らない) | — |
-| 家族の結合テスト (`tests/integration/security/family-*.test.ts`・`membership-*.test.ts`・`invite-*.test.ts`・`tests/integration/rls/ai-usage-rpc.test.ts`・`family-member-names-scope.test.ts`・`family-rls-recursion.test.ts`・`hidden-content-visibility.test.ts`・`meals-meal-type-trigger.test.ts`・`membership-audit-select.test.ts`・`paste-meal-*.test.ts`・`tests/integration/security/account-deletion.test.ts`・`invite-rpc-token.test.ts`・`plan-deprecate-subscribers.test.ts`・`purge-dissolved-family-groups.test.ts` ほか `create_family_group` か `family_members` の INSERT を使うもの (母集合の作り方 2) | `create_family_group` の門・`family_members` の INSERT のトリガー | 共通の道具 `tests/integration/helpers/family-plan.ts` (新設) に `grantFamilyPlan(srAdmin, userId, planKey = 'family_basic')` = `billing_grant_manual_subscription(p_user_id, p_plan_key, NULL)` の RPC (service_role) を置き、グループを作る利用者 (代表者) に、`create_family_group` を呼ぶ前に 1 行足す。service_role の直接の INSERT でグループを作るテストは、メンバーを足す前に `family_groups.plan_key` を `family_basic` に UPDATE する (すでにそうしているテストは変えない)。期待値 (人数の上限・`plan_key` の値) は、代表者に家族プランが入ることで `free` → `family_basic` / 4 になる箇所だけ更新する (実数に合わせる。緩めない) | A |
+| 家族の結合テスト (`tests/integration/security/family-*.test.ts`・`membership-*.test.ts`・`invite-*.test.ts`・`tests/integration/rls/ai-usage-rpc.test.ts`・`family-member-names-scope.test.ts`・`family-rls-recursion.test.ts`・`hidden-content-visibility.test.ts`・`meals-meal-type-trigger.test.ts`・`membership-audit-select.test.ts`・`paste-meal-*.test.ts`・`tests/integration/security/account-deletion.test.ts`・`invite-rpc-token.test.ts`・`plan-deprecate-subscribers.test.ts`・`purge-dissolved-family-groups.test.ts`・`parental-consent.test.ts`・`rpc-profile-name-placeholder.test.ts`・`invite-accept-missing-profile.test.ts`・`tests/integration/rls/family-menu-visibility.test.ts`・`hidden-content-restore.test.ts` ほか `create_family_group` か `family_members` の INSERT を使うもの (母集合の作り方 2) | `create_family_group` の門・`family_members` の INSERT のトリガー | 共通の道具 `tests/integration/helpers/family-plan.ts` (新設) に `grantFamilyPlan(srAdmin, userId, planKey = 'family_basic')` = `billing_grant_manual_subscription(p_user_id, p_plan_key, NULL)` の RPC (service_role) を置き、グループを作る利用者 (代表者) に、`create_family_group` を呼ぶ前に 1 行足す。service_role の直接の INSERT でグループを作るテストは、メンバーを足す前に `family_groups.plan_key` を `family_basic` に UPDATE する (すでにそうしているテストは変えない)。期待値 (人数の上限・`plan_key` の値) は、代表者に家族プランが入ることで `free` → `family_basic` / 4 になる箇所だけ更新する (実数に合わせる。緩めない) | A |
 | `tests/integration/operator/super-admin-plans*.test.ts`・`tests/plan-*.test.ts` (プランの行の値を前提にするもの) | 価格・`display_name` の UPDATE | 価格や名前をリテラルで期待する it があれば実数に合わせる (実装時に `git grep -n -E "'Pro'\|'Family Basic'\|980\|1480\|2480" origin/main -- tests` で確かめる) | A |
 | `src/__tests__/app/transfer-accept-fake-client.ts` (`SCHEMA_COLUMNS`) | `family_groups`・`personal_subscriptions` | 変更なし (`personal_subscriptions` は一覧に無い。`family_groups` の列は変えない) | — |
 | `tests/design-doc-removed-mobile-screens.test.ts`・`tests/mobile-removed-files-references.test.ts` | 本冊は `docs/design/` に置かれる | 本冊は消した画面を名指ししない (`apps/mobile/app/settings/plan.tsx` は新設で一覧に無い) | — |
@@ -3693,6 +3714,26 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `apps/mobile/__tests__/lib/sign-out.test.ts`・`sign-out-push-token-release.test.ts`・`providers/auth-provider*.test.tsx` | `resetPurchasesOnSignOut`・`identifyPurchases` の呼び出し | `react-native-purchases` は `moduleNameMapper` の mock で読まれる。順序の期待に影響しない (掃除の前に 1 回 `await` が増えるだけ)。テスト 59 を足す | D |
 | `tests/site-config-guard.test.ts` | ドメインを直接書かない | `STORE_SUBSCRIPTION_MANAGEMENT_URL` (`packages/shared/src/billing-plans.ts`) は Apple / Google のドメインで当社のドメインではない (このテストは当社のドメインの直接の記述を見る。実装時に正規表現を確かめ、当たるなら許可の一覧に足す) | B |
 | `tests/no-committed-credentials.test.ts` | 新しい spec | アカウントの資格情報を書かない | B |
+| `tests/integration/security/operator-mfa-db-gate.test.ts` (DB-1: 運営ロールの条件を持つポリシーは `operator_mfa_satisfied()` を呼び TO authenticated。DB-11: anon が `subscription_plans` を読める) | `plan_store_products_mutate_super_admin` (§6.3) | 変更なし (§6.3 のポリシーは TO authenticated で、`'super_admin' = ANY (roles)` の項に `(SELECT public.operator_mfa_satisfied())` を付けた形なので DB-1 の offenders に入らない。`DB_GATED_POLICY_MIN_COUNT` は下限なので変えない。cross/12 の付録 A は段 E の母集合の記録なので変えない。DB-11 は `subscription_plans` の RLS を変えないので緑) | A |
+| `tests/integration/security/billing-personal-subscriptions-rls.test.ts` | `personal_subscriptions` の新しい列と CHECK (§6.4) | 変更なし (新しい列は NULL 可か既定値つき。RLS と権限は変えない (§6.9)。テストの行は `iap_store` を持たないので `personal_subscriptions_iap_pair_check` に当たらない) | A |
+| `tests/integration/rls/billing-apply-subscription-rpc.test.ts` | `personal_subscriptions` (Stripe の写像) | 変更なし (`billing_apply_stripe_subscription` は凍結。手動の行で `BILL_LIVE_ROW_CONFLICT` を起こす it も、`iap_store` NULL の行なので同じ結果) | A |
+| `tests/integration/rls/billing-manual-grant-rpc.test.ts`・`tests/integration/operator/super-admin-users-manual-plan.test.ts` | §6.7 の手動付与の 3 関数の述語 | 変更なし (ストアの行を作らない it では、M 行の選び方に `AND s.iap_store IS NULL` が増えても結果は同じ。ストアの行を残すことは本冊のテスト 63 が見る) | A |
+| `tests/integration/rls/coupon-apply-rpc.test.ts` | `pro` の `monthly_price_jpy` (980 → 580) | 割引額の期待は `proPlan.monthly_price_jpy` から計算しているので変えない。事実と違う記述を直す: it 名「定率: 小数は切り捨て (980 円の 33% = 323.4 -> 323)」を「(580 円の 33% = 191.4 -> 191)」に、`:132` のコメント「月額 980 円 (参照データ)」を「月額 580 円 (参照データ)」に (`:134` の `org_standard` は本冊が変えないので触らない) | A |
+| `tests/integration/rls/subscription-plans-yearly-price-id.test.ts` | `subscription_plans` の列・ポリシー 3 本 | 変更なし (本冊は列もポリシーも足さない。§6.2 は 3 行の値の UPDATE だけ) | — |
+| `tests/integration/operator/super-admin-llm.test.ts` | `ai_daily_limits.free` が 5 に (§6.5) | `:130` の it 名「全プランの上限 (free は 1 日 10 回)」を「(free は 1 日 5 回)」に、`:142` の期待 `daily_limit: 10, effective_daily_limit: 10` を `5` に (実数に合わせる。緩めない)。`:144` の `arrayContaining(['free', 'pro', …])` はそのまま | A |
+| `tests/integration/operator/super-admin-input-validation.test.ts` | `subscription_plans` | 変更なし (自分で作ったプランの値だけを見る) | — |
+| `tests/integration/security/health-endpoint.test.ts` | anon が `subscription_plans` を 1 行読む (`src/app/api/health/route.ts:105`) | 変更なし (`subscription_plans` の RLS を変えない) | — |
+| `tests/super-admin-llm-quotas-page.test.tsx`・`tests/super-admin-llm-quotas-route.test.ts`・`tests/helpers/ai-usage-mock.ts`・`tests/ai-usage-photo-auto-grant.test.ts` (free = 10 を偽の DB の値・テストの上限として持つ) | `ai_daily_limits.free` | 変更なし (DB を読まない偽の値。画面と route の振る舞いは値に依らない) | — |
+| 母集合の作り方 2 が当てる src の読み手・書き手 (`src/app/(main)/family/**`・`src/app/(main)/settings/membership/page.tsx`・`src/app/(main)/menus/weekly/page.tsx`・`src/app/api/family/members/me/share/route.ts`・`src/app/api/family/members/names/route.ts`・`src/app/api/operator/membership/family/[id]/**`・`src/app/api/admin/finance/**`・`src/app/api/admin/users/[id]/route.ts`・`src/lib/membership/exit-notification.ts`・`src/lib/super-admin/plan-subscribers.ts`・`src/app/api/super-admin/plans/**`・`src/app/api/super-admin/llm/quotas/route.ts`・`src/app/api/health/route.ts`) | 本冊が変える表を読む・書く | 変更なし (読むだけか、§7.1 の書き手の表のとおり本冊の migration と干渉しない。どれも `family_members` に INSERT しない — 家族の行の追加は RPC (`accept_family_invite` など) の中で、§6.6 のトリガーが受ける) | — |
+| 母集合の作り方 2 の insert の grep が当てる既存の migration と rollback (`supabase/migrations/20261007150200_*`・`20261007160000_*`・`20261008090100_*`・`20261015170000_*`・`20261016200000_*` と `supabase/rollbacks/` の対の `.down.sql`・`20261017030000_*.down.sql`)・`supabase/baseline/prod_schema.sql`・`tests/accept-copies-profile-name-migration-contract.test.ts` (migration の文面を見る) | `insert into family_members` | 変更なし (既存の migration は書き換えない。それらが定義する関数の中の INSERT も §6.6 のトリガーが受ける。本冊は `accept_family_invite`・`accept_child_promotion` を置き換えない) | — |
+| `src/app/super-admin/coupons/new/page.tsx` (`:38-39` の `const typicalPrice = 980;` と `:176` の「Pro ¥980 基準」) | `pro` の価格 (980 → 580。980 は家族 Basic の価格になる) | 基準の価格を `@homegohan/shared` の `PLAN_CATALOG` から読む (`import { PLAN_CATALOG, formatJpy, planDisplayName, type PaidPlanKey } from '@homegohan/shared';`): `const COUPON_PREVIEW_PLAN_KEY: PaidPlanKey = 'pro'; // 粗利のプレビューの基準 = 個人 Pro の月額 (billing/03 §8.9)` と `const typicalPrice = PLAN_CATALOG.find((p) => p.plan_key === COUPON_PREVIEW_PLAN_KEY)?.monthly_price_jpy ?? 0;`。文は `実質粗利プレビュー ({planDisplayName(COUPON_PREVIEW_PLAN_KEY)} {formatJpy(typicalPrice)} 基準)`。テストは無い (`tests/jst-today-source-scan.test.ts` の当たりは日付の扱いで、変更なし) | C |
+| `src/components/ai-assistant/__tests__/V4GenerateModal-ultimate-mode.test.ts` (「スイッチが表示され、無効化されていない」ほか) | §10.3 の錠 (`useBillingSummary`) | `vi.mock('@/hooks/useBillingSummary')` で既存の it は `null` (錠なし) を返す (既存の期待は変えない)。冒頭の経緯のコメントに「無料プランでは錠 (billing/03 §10.3)」を足す。テスト 103 を足す | C |
+| `tests/e2e/bug-27-ultimate-mode-locked.spec.ts` (fresh-user = 無料の利用者でスイッチが操作できる) | §10.3 の錠 (無料では `menu_generation_ultimate` が 0) | 各 test の最初に、その利用者へ `grantManualPlanForE2e(userId, 'pro')` を呼ぶ (下の E2E の道具)。期待 (操作できる・`ultimateMode: true` が送られる) は変えない。冒頭の経緯のコメントに「有料プランで使える (billing/03 §10.3)。この spec は有料の利用者で確かめる」を足す | C |
+| `tests/e2e/w5-3-menu-gen-adversarial.spec.ts` (A-3: テストごとの利用者で献立の生成の要求を 5 回。`:17` の「free は 10 回」) | 無料の献立の生成が 1 日 2 回・AI が 1 日 5 回に (§6.5) | `apiUserTest` の利用者で `/api/ai/menu/weekly/request` を 3 回以上送る test は、最初に `grantManualPlanForE2e(userId, 'pro')` を呼ぶ (pro は献立 10 回・1 日 30 回)。`:17` のコメントの回数を新しい値に。期待 (5 件とも 200) は変えない | C |
+| 家族の E2E (`tests/e2e/fixtures/fresh-family.ts` の `family_groups` / `family_members` の直接の INSERT・`tests/e2e/helpers/membership-family.ts` と、それを使う `tests/e2e/family/*.spec.ts`・`tests/e2e/membership/05-*`〜`08-*`・`12-*`・`14-*`。UI からグループを作る spec) | `create_family_group` の門・`family_members` の INSERT のトリガー (free のグループにメンバーを足せない) | グループを作る前に、代表者へ `grantManualPlanForE2e(representativeUserId, 'family_basic')` を呼ぶ (billing/01 のトリガー `family_groups_billing_plan_follow_representative` が作成時に代表者の契約から `plan_key` / `member_limit` を決めるので、`plan_key: "free"` を直接書いても上書きされる。本文の `plan_key: "free"` は消す)。期待の人数の上限が 4 のままのものはそのまま、`free` を期待するものは `family_basic` に (実数に合わせる) | C |
+| E2E の道具 `tests/e2e/helpers/billing-plan.ts` (新設) | — | `export async function grantManualPlanForE2e(userId: string, planKey: PaidPlanKey): Promise<void>` = `membership-family.ts` と同じ service_role の REST で `POST ${supabaseUrl}/rest/v1/rpc/billing_grant_manual_subscription` に `{ p_user_id: userId, p_plan_key: planKey, p_expires_at: null }` を送り、`!resp.ok` なら本文の先頭を付けて throw する (結合テストの `grantFamilyPlan` と同じ RPC。引数は `20261017230000_billing_manual_plan_grant.sql:18-22` の `p_user_id uuid, p_plan_key text, p_expires_at timestamptz DEFAULT NULL`、EXECUTE は service_role だけ `:103`)。fixture の後片付けは利用者の削除で契約の行も CASCADE で消える | C |
+| #1911 の面 (§0.2 の対象外の欄のファイル) と、その「準備中」を見張るテスト (`tests/admin-preparing-pages.test.tsx`・`tests/preparing-notice.test.tsx`・`tests/admin-not-supported.test.ts`・`tests/super-admin-preparing-pages.test.tsx`・`tests/super-admin-exports-not-supported.test.ts`・`tests/moderation-route-contracts.test.ts`・`tests/admin-mutation-audit-coverage-1571.test.ts`・`tests/jst-today-source-scan.test.ts`・`tests/org-challenge-pages.test.tsx`・`tests/org-dashboard-refresh-route.test.tsx`・`tests/integration/operator/admin-moderation-detail.test.ts`・`tests/integration/operator/super-admin-exports.test.ts`・`tests/integration/security/super-admin-columns.test.ts`・`tests/integration/security/stop-aggregate-org-stats-cron.test.ts`・`tests/e2e/w5-12-admin-adversarial.spec.ts`・`src/__tests__/app/org/index-redirect.test.ts`) | 母集合の作り方 4 の「準備中」 | 変更なし (#1911 が受け持つ) | — |
+| 「準備中」が読み込み中の表示の意味で、課金と関係しないもの (`src/app/(main)/menus/weekly/_components/modals/NutritionDetailModal.tsx` の「分析を準備中...」とそのテスト・`src/app/(main)/menus/weekly/page.tsx` のコメント・`src/app/(main)/settings/security/mfa/setup/page.tsx` の「準備中…」) と、「準備中」が無いことを確かめる回帰のテスト (`src/__tests__/app/settings/data-export.test.ts`・`src/__tests__/app/settings/trainer-share-removed.test.ts`・`tests/data-share-not-consent.test.ts`・`tests/health-photo-entry.test.tsx`) | 母集合の作り方 4 の「準備中」 | 変更なし (本冊の面ではない) | — |
 | `tests/integration-ci-coverage.test.ts` | 新しい結合テストのパス | `tests/integration/rls/` と `security/` に置く | A |
 
 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` に足す 3 行 (逐語。既存の `account/delete` の行の後):
