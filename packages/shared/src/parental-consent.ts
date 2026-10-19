@@ -41,7 +41,7 @@ export interface ParentalConsentDocumentInfo {
  */
 export const PARENTAL_CONSENT_DOCUMENT: Readonly<ParentalConsentDocumentInfo> = {
   version: 'v2026.2',
-  effectiveDate: '2026-10-19', // 仮置き: マージ直前に公開日へ置き換える
+  effectiveDate: '2026-10-19',
 };
 /** 同意文書の全文を公開するパス (未ログインで読める。同意ゲートの対象外 /legal 以下) */
 export const PARENTAL_CONSENT_DOCUMENT_PATH = '/legal/parental-consent';
