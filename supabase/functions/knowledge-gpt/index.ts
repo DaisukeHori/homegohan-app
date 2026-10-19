@@ -405,10 +405,16 @@ Deno.serve(async (req) => {
     }
 
     const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1] ?? authHeader;
-    const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-
-    // サービスロールキーかどうかを確認（署名検証されないJWTペイロードのroleは信用せず、完全一致のみで判定）
-    const isServiceRole = serviceRoleKey.length > 0 && token === serviceRoleKey;
+    // サービスロールキーかどうかを確認（署名検証されないJWTペイロードのroleは信用せず、完全一致のみで判定）。
+    // #1910: 他の Edge Function (_shared/auth.ts・generate-menu-v5 など) と同じく、SERVICE_ROLE_JWT と
+    // SUPABASE_SERVICE_ROLE_KEY のどちらと一致しても service role とする。以前は SUPABASE_SERVICE_ROLE_KEY だけを見ていたため、
+    // Next.js の AI 相談の API が送る鍵 (Vercel の SUPABASE_SERVICE_ROLE_KEY) が Edge 側の SERVICE_ROLE_JWT と同じ値のとき、
+    // 利用者の JWT として getUser に回って 401 になり、ストリーミングの相談が毎回失敗していた
+    const serviceRoleKeys = [
+      Deno.env.get("SERVICE_ROLE_JWT"),
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY"),
+    ].filter((key): key is string => typeof key === "string" && key.length > 0);
+    const isServiceRole = serviceRoleKeys.includes(token);
 
     // #1177 ユーザー自身の JWT で直接呼ばれたときの利用者 ID (この経路だけ、AI へ送る直前に利用回数を記録する)。
     // service role (Next.js の AI 相談 API) の呼び出しは null のまま (Next.js が記録済み)
