@@ -40,6 +40,13 @@ module.exports = {
     // react-native-webview はネイティブモジュール (RNCWebViewModule) を必要とするため
     // Jest 環境では stub モックに差し替える。
     '^react-native-webview$': '<rootDir>/__mocks__/react-native-webview.js',
+    // lucide-react-native は 1.57 から package.json の exports に "react-native" の条件を持ち、ESM の .mjs を指す。
+    // jest-expo は "react-native" の条件で解決するため .mjs を読むが、変換の対象は \.[jt]sx?$ だけで .mjs は変換されず、
+    // 「Must use import to load ES Module」で落ちる (#1902・Dependabot #1900 の CI の赤)。
+    // 1.14 までと同じく CommonJS の版 (exports の "require" の条件) を読ませる。node の require.resolve は
+    // "require" の条件で解決するので、置き場所 (apps/mobile とルートのどちらに入るか) に依らない。
+    // アプリ本体 (Metro) は sourceExts に mjs を持ち、"react-native" の条件で ESM の版を読んで変換する。
+    '^lucide-react-native$': require.resolve('lucide-react-native', { paths: [__dirname] }),
   },
   setupFiles: [
     '<rootDir>/jest.env.setup.js',
