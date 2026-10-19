@@ -40,7 +40,7 @@ export { LEGAL_CONSENT_PATH };
  * 同意の前の退会とデータの書き出しの画面 (#1901 cross/20 Q-23: 規約に同意しなくても、本人が退会と書き出しをできるようにする)。
  * 同意画面の下のパスに置くので、同意ゲート (isLegalConsentPath) と初期設定の差し戻しの両方の対象外になる。
  * 凍結中は凍結の差し戻し (/frozen) が先に効くので開けない (凍結中の人は /frozen/account を使う)。
- * 呼ぶ API (/api/account/delete・/api/account/export) は同意の許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) にある。
+ * 呼ぶ API (/api/account/delete・/api/account/export と、409 のときの /api/family/dissolve・/api/org/dissolve) は同意の許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) にある。
  */
 export const LEGAL_CONSENT_ACCOUNT_PATH = `${LEGAL_CONSENT_PATH}/account`;
 

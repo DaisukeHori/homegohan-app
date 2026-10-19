@@ -7,7 +7,8 @@
  *   - 凍結中の利用者の画面 (src/app/frozen/account/page.tsx。#1445)
  *   - 規約・プライバシーポリシーにまだ同意していない人の画面 (src/app/legal-consent/account/page.tsx。#1901 cross/20 Q-23:
  *     同意しなくても、本人が退会と書き出しをできるようにする)
- * どちらの画面も、呼ぶ API は退会 (POST /api/account/delete) と書き出し (GET /api/account/export) の 2 つだけ
+ * どちらの画面も、呼ぶ API は退会 (POST /api/account/delete) と書き出し (GET /api/account/export) と、退会が 409 で止まったときの
+ * 家族グループ / 組織の解散 (POST /api/family/dissolve・POST /api/org/dissolve。#1917 docs/design/family/11-self-dissolve.md §15.4) の 4 つだけ
  * (凍結中も・同意の前も止めない API。src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS と
  * packages/shared/src/legal-consent-api.ts の LEGAL_CONSENT_EXEMPT_API_PATHS の両方にある)。
  * API の呼び方と退会のあとのログアウトの順番は、設定画面と共通 (src/lib/account-self-service.ts)。
@@ -26,13 +27,21 @@ import {
   exportAccountData,
   signOutAfterAccountDeletion,
 } from "@/lib/account-self-service";
+import { SelfDissolveSection } from "@/components/membership/SelfDissolveSection";
+import type { MembershipScope } from "@/lib/emails/membership/scope-label";
+import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from "@/lib/membership/self-dissolve";
 
 type Notice = { tone: "info" | "error"; text: string } | null;
+/** 退会を止めている家族グループ / 組織 (409 の本文から読む。解散の区画に渡す。#1917) */
+type BlockedScope = { scope: MembershipScope; id: string; name: string } | null;
 
 export interface AccountSelfServicePanelProps {
   /** 要素の id の接頭辞 (画面ごとに変える。例: "frozen" → #frozen-delete-confirm) */
   idPrefix: string;
-  /** 退会できなかった (組織のオーナー・家族の代表者。409) ときに、サーバーの文に続けて出す案内 */
+  /**
+   * 退会できなかった (組織のオーナー・家族の代表者。409) ときに、サーバーの文に続けて出す案内。
+   * その場に解散の区画を出すときの文 (立場の id が読めなかったときは BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出す)
+   */
   deleteBlockedGuidance: string;
   /** 退会してログアウトしたあとに呼ぶ */
   onDeleted: () => void;
@@ -52,6 +61,7 @@ export function AccountSelfServicePanel({
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [deleteNotice, setDeleteNotice] = useState<Notice>(null);
+  const [blockedScope, setBlockedScope] = useState<BlockedScope>(null);
 
   const handleExport = async () => {
     if (exporting) return;
@@ -91,17 +101,31 @@ export function AccountSelfServicePanel({
       case "unauthorized":
         onUnauthorized();
         return;
-      case "blocked":
-        setDeleteNotice({
-          tone: "error",
-          text: result.message ? `${result.message} ${deleteBlockedGuidance}` : deleteBlockedGuidance,
-        });
+      case "blocked": {
+        const nextScope: BlockedScope =
+          result.blocker && result.scope
+            ? {
+                scope: result.blocker === "organization" ? "organization" : "family",
+                id: result.scope.id,
+                name: result.scope.name,
+              }
+            : null;
+        setBlockedScope(nextScope);
+        const guidance = nextScope ? deleteBlockedGuidance : BLOCKED_SCOPE_UNKNOWN_GUIDANCE;
+        setDeleteNotice({ tone: "error", text: result.message ? `${result.message} ${guidance}` : guidance });
         break;
+      }
       case "failed":
         setDeleteNotice({ tone: "error", text: ACCOUNT_DELETE_FAILED_MESSAGE });
         break;
     }
     setDeleting(false);
+  };
+
+  /** 解散の区画で解散が済んだ (200)。区画を閉じ、退会を続ける案内を出す (入力欄はそのまま) */
+  const handleDissolved = () => {
+    setBlockedScope(null);
+    setDeleteNotice({ tone: "info", text: SELF_DISSOLVED_NEXT_STEP });
   };
 
   const noticeClass = (notice: NonNullable<Notice>) =>
@@ -163,6 +187,16 @@ export function AccountSelfServicePanel({
           </p>
         )}
       </section>
+      {blockedScope && (
+        <SelfDissolveSection
+          key={`${blockedScope.scope}-${blockedScope.id}`}
+          scope={blockedScope.scope}
+          scopeId={blockedScope.id}
+          scopeName={blockedScope.name}
+          onDissolved={handleDissolved}
+          onUnauthorized={onUnauthorized}
+        />
+      )}
     </>
   );
 }

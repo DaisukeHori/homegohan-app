@@ -6,8 +6,9 @@
  *   - 書き出し: GET /api/account/export を呼び、JSON をファイルとして保存する。429 / 失敗は画面に文で出す
  *   - 退会: 「削除します」と入力するまで押せない。POST /api/account/delete { confirm: true } のあと、
  *     端末のユーザー別データを消してから signOut し (CLAUDE.md の規約)、/login へ移る
- *   - 組織のオーナー・家族の代表者 (409) は、サーバーの文と、凍結中は譲渡できないのでサポートへ、の案内を出す
- *   - この画面は凍結中でも止めない API (FROZEN_ALLOWED_API_PATHS) のうち退会と書き出しの 2 つ以外を呼ばない
+ *   - 組織のオーナー・家族の代表者 (409) は、サーバーの文と FROZEN_DISSOLVE_GUIDANCE (譲渡はできない・解散すると退会できる) を出し、
+ *     その場に解散の区画を出す (#1917 docs/design/family/11-self-dissolve.md §15.4)。409 の本文に立場の id が無ければ、サポートへの案内だけ
+ *   - この画面は凍結中でも止めない API (FROZEN_ALLOWED_API_PATHS) のうち、退会と書き出しと、409 のときの家族グループ / 組織の解散の 4 つ以外を呼ばない
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する (frozen-page-logout.test.tsx と同じ)。
  */
@@ -23,6 +24,7 @@ vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ auth: { signOut
 const { default: FrozenPage } = await import('@/app/frozen/page')
 const { default: FrozenAccountPage } = await import('@/app/frozen/account/page')
 import { FROZEN_ALLOWED_API_PATHS } from '@/lib/auth/frozen'
+import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, FROZEN_DISSOLVE_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from '@/lib/membership/self-dissolve'
 import { resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -106,6 +108,27 @@ async function typeConfirm(value: string) {
     input!.dispatchEvent(new Event('input', { bubbles: true }))
   })
 }
+
+/** 解散の区画の入力欄 (data-testid は SelfDissolveSection の self-dissolve-<scope>-keyword) に入力する */
+async function typeDissolveKeyword(scope: 'family' | 'organization', value: string) {
+  const input = container.querySelector<HTMLInputElement>(`[data-testid="self-dissolve-${scope}-keyword"]`)
+  expect(input, `self-dissolve-${scope}-keyword`).not.toBeNull()
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!
+    setter.call(input, value)
+    input!.dispatchEvent(new Event('input', { bubbles: true }))
+  })
+}
+
+function dissolveSubmit(scope: 'family' | 'organization'): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(`[data-testid="self-dissolve-${scope}-submit"]`)
+}
+
+const ORG_OWNER_MESSAGE = '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。'
+const FAMILY_REPRESENTATIVE_MESSAGE = '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。'
+const ORG_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55'
+const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66'
+const DISSOLVED_AT = '2026-10-19T05:00:00.123456+00:00'
 
 function calledPaths(): string[] {
   return fetchMock.mock.calls.map((call) => String(call[0]))
@@ -204,12 +227,12 @@ describe('退会と書き出しの画面 (/frozen/account)', () => {
     expect(pushMock).toHaveBeenCalledWith('/login')
   })
 
-  it('退会: 組織のオーナー (409) は、サーバーの文と、凍結中は譲渡できないのでサポートへ、の案内を出す。ログアウトしない', async () => {
+  it('退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE (サポートへ) を出し、解散の区画は出さない。ログアウトしない', async () => {
     fetchMock.mockResolvedValue(
       new Response(
         JSON.stringify({
           error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER',
-          message: '組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。',
+          message: ORG_OWNER_MESSAGE,
         }),
         { status: 409 },
       ),
@@ -222,10 +245,90 @@ describe('退会と書き出しの画面 (/frozen/account)', () => {
     const alert = container.querySelector('[role="alert"]')?.textContent ?? ''
     expect(alert).toContain('組織のオーナーです。')
     expect(alert).toContain('サポートにお問い合わせください')
+    expect(alert).toBe(`${ORG_OWNER_MESSAGE} ${BLOCKED_SCOPE_UNKNOWN_GUIDANCE}`)
+    expect(dissolveSubmit('organization')).toBeNull()
+    expect(dissolveSubmit('family')).toBeNull()
     expect(signOutMock).not.toHaveBeenCalled()
     expect(pushMock).not.toHaveBeenCalled()
     // もう一度押せる
     expect(buttonByText('アカウントを削除').disabled).toBe(false)
+  })
+
+  it('退会: 組織のオーナー (409。本文に organization の id と名前) は、サーバーの文と FROZEN_DISSOLVE_GUIDANCE (譲渡はできない・解散すると退会できる) を出し、組織名つきの解散の区画を出す。ログアウトしない', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({ error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', message: ORG_OWNER_MESSAGE, organization: { id: ORG_ID, name: '株式会社テスト' } }),
+        { status: 409 },
+      ),
+    )
+    await render(<FrozenAccountPage />)
+
+    await typeConfirm('削除します')
+    await click(buttonByText('アカウントを削除'))
+
+    expect(container.textContent).toContain(`${ORG_OWNER_MESSAGE} ${FROZEN_DISSOLVE_GUIDANCE}`)
+    expect(container.textContent).not.toContain(BLOCKED_SCOPE_UNKNOWN_GUIDANCE)
+    expect(container.textContent).toContain('「株式会社テスト」を解散する')
+    expect(dissolveSubmit('organization')).not.toBeNull()
+    expect(signOutMock).not.toHaveBeenCalled()
+    expect(pushMock).not.toHaveBeenCalled()
+  })
+
+  it('退会: 家族の代表者 (409。本文に family_group) は、家族名つきの解散の区画を出す', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+          message: FAMILY_REPRESENTATIVE_MESSAGE,
+          family_group: { id: FAMILY_ID, name: '山田家' },
+        }),
+        { status: 409 },
+      ),
+    )
+    await render(<FrozenAccountPage />)
+
+    await typeConfirm('削除します')
+    await click(buttonByText('アカウントを削除'))
+
+    expect(container.textContent).toContain(`${FAMILY_REPRESENTATIVE_MESSAGE} ${FROZEN_DISSOLVE_GUIDANCE}`)
+    expect(container.textContent).toContain('「山田家」を解散する')
+    expect(dissolveSubmit('family')).not.toBeNull()
+    expect(dissolveSubmit('organization')).toBeNull()
+  })
+
+  it('解散の区画で解散すると (POST /api/org/dissolve が 200)、区画が消えて「解散しました。「削除します」と入力して退会を続けてください。」が出る。そのあとの退会は 200 で /login へ', async () => {
+    let deleteCalls = 0
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === '/api/account/delete') {
+        deleteCalls += 1
+        return deleteCalls === 1
+          ? new Response(
+              JSON.stringify({ error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', message: ORG_OWNER_MESSAGE, organization: { id: ORG_ID, name: '株式会社テスト' } }),
+              { status: 409 },
+            )
+          : new Response(JSON.stringify({ success: true }), { status: 200 })
+      }
+      if (input === '/api/org/dissolve') {
+        return new Response(JSON.stringify({ data: { organization_id: ORG_ID, dissolved_at: DISSOLVED_AT } }), { status: 200 })
+      }
+      return new Response('{}', { status: 404 })
+    })
+    await render(<FrozenAccountPage />)
+
+    await typeConfirm('削除します')
+    await click(buttonByText('アカウントを削除'))
+    await typeDissolveKeyword('organization', '解散します')
+    await click(dissolveSubmit('organization')!)
+
+    const dissolveCall = fetchMock.mock.calls.find((call) => call[0] === '/api/org/dissolve')
+    expect(JSON.parse(String((dissolveCall?.[1] as RequestInit).body))).toEqual({ organization_id: ORG_ID, confirm: true })
+    expect(dissolveSubmit('organization')).toBeNull()
+    expect(container.textContent).toContain(SELF_DISSOLVED_NEXT_STEP)
+    expect(SELF_DISSOLVED_NEXT_STEP).toBe('解散しました。「削除します」と入力して退会を続けてください。')
+
+    await click(buttonByText('アカウントを削除'))
+    expect(events).toEqual(['signOut:storage=cleared'])
+    expect(pushMock).toHaveBeenCalledWith('/login')
   })
 
   it('退会: 失敗 (500) は、失敗の文を出し、ログアウトしない', async () => {
@@ -242,16 +345,37 @@ describe('退会と書き出しの画面 (/frozen/account)', () => {
   })
 
   it('この画面は、凍結中でも止めない API (FROZEN_ALLOWED_API_PATHS) 以外を呼ばない', async () => {
-    fetchMock.mockImplementation(async (input: string) =>
-      input === '/api/account/delete'
-        ? new Response(JSON.stringify({ success: true }), { status: 200 })
-        : new Response('{}', { status: 200 }),
-    )
+    // 409 → 解散 → 退会の流れも通す (#1917。呼ぶのは退会・書き出し・解散で、どれも 7 本の一覧にある)
+    let deleteCalls = 0
+    fetchMock.mockImplementation(async (input: string) => {
+      if (input === '/api/account/delete') {
+        deleteCalls += 1
+        return deleteCalls === 1
+          ? new Response(
+              JSON.stringify({
+                error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+                message: FAMILY_REPRESENTATIVE_MESSAGE,
+                family_group: { id: FAMILY_ID, name: '山田家' },
+              }),
+              { status: 409 },
+            )
+          : new Response(JSON.stringify({ success: true }), { status: 200 })
+      }
+      if (input === '/api/family/dissolve') {
+        return new Response(JSON.stringify({ data: { family_id: FAMILY_ID, dissolved_at: DISSOLVED_AT } }), { status: 200 })
+      }
+      return new Response('{}', { status: 200 })
+    })
     await render(<FrozenAccountPage />)
 
     await click(buttonByText('データをエクスポート'))
     await typeConfirm('削除します')
     await click(buttonByText('アカウントを削除'))
+    await typeDissolveKeyword('family', '解散します')
+    await click(dissolveSubmit('family')!)
+    await click(buttonByText('アカウントを削除'))
+
+    expect(new Set(calledPaths())).toEqual(new Set(['/api/account/export', '/api/account/delete', '/api/family/dissolve']))
 
     expect(calledPaths().length).toBeGreaterThan(0)
     for (const path of calledPaths()) {
