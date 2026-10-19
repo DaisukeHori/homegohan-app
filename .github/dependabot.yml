@@ -50,6 +50,17 @@ updates:
       # 型の版は、動いている React の版にそろえる (CLAUDE.md「Web アプリは Next 16 + React 19」)。パッチ更新だけ許す
       - dependency-name: "@types/react*"
         update-types: ["version-update:semver-major", "version-update:semver-minor"]
+      # ESLint 10 (#1884・#1902): eslint-config-next 16.4 が入れるプラグインのうち 3 つが、ESLint 10 にまだ対応していない
+      # (2026-10-19 に npm の最新版で確かめた。どれも ESLint 10 に対応した版はまだ出ていない)。
+      #   - eslint-plugin-react 7.37.5: peerDependencies の eslint は ^9.7 まで。ESLint 10 で消えた context.getSourceCode() と
+      #     SourceCode#getJSDocComment を呼ぶ
+      #   - eslint-plugin-import 2.32.0: eslint は ^9 まで。ESLint 10 で消えた context.parserPath と
+      #     SourceCode#getTokenOrCommentBefore / getTokenOrCommentAfter を使う
+      #   - eslint-plugin-jsx-a11y 6.10.2: eslint は ^9 まで
+      # 3 つが ESLint 10 に対応した版を出し、eslint-config-next がそれを使うようになるまで、eslint のメジャー更新の PR は出さない。
+      # 9.x の中のマイナー更新とパッチ更新は、これまでどおり受け取る
+      - dependency-name: "eslint"
+        update-types: ["version-update:semver-major"]
 
       # --- モバイル: Expo SDK と React Native ---
       # React Native (0.x) はマイナー更新でも壊れる。Expo SDK の各パッケージ (expo*, jest-expo) と
