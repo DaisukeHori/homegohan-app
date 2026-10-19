@@ -213,4 +213,21 @@ describe('同意文書の版と文面', () => {
     }
     expect(retention).not.toContain('家族にいる間');
   });
+
+  it('#1901 (cross/20 Q-27): 同意書と未成年の案内の文は実装に無い約束をしない (代わりに記録する・AI の解析と献立の提案に子どもの記録を使う・お問い合わせからの削除の依頼)。同意書は登録できる情報 (お名前・生年月日・性別) を書き、版は v2026.1 から上げてある', () => {
+    const texts: string[] = [
+      SIGNUP_MINOR_NOTICE,
+      ...Object.values(LEGAL_CONSENT_BIRTH_DATE_COPY),
+      ...Object.values(PARENTAL_CONSENT_COPY),
+      ...PARENTAL_CONSENT_DOCUMENT_COPY.paragraphs,
+    ];
+    for (const text of texts) {
+      for (const phrase of ['代わりに記録', '代わりに食事', 'お子さまの記録が使われる', '食事の記録・アレルギー', 'お問い合わせからご依頼']) {
+        expect(text, phrase).not.toContain(phrase);
+      }
+    }
+    expect(PARENTAL_CONSENT_DOCUMENT_COPY.paragraphs[0]).toContain('お名前・生年月日・性別（任意）');
+    // 同意書の版の上げ (v2026.1 → v2026.2)。v2026.1 で記録した同意は失効しない (parental_consent_active は版を見ない。cross/14 S15)
+    expect(PARENTAL_CONSENT_DOCUMENT.version).toBe('v2026.2');
+  });
 });

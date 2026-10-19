@@ -297,8 +297,8 @@ export default function FamilyChildNewPage() {
           <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4">
             <p className="text-sm text-blue-700">
               ※ 子供本人のアカウントは作成しません。
-              親が代わりに食事記録を管理します。
-              後でご本人のアカウントとつなぐこともできます (ご本人の承認が必要です)。
+              登録するのは、名前・生年月日・性別だけです。
+              13歳以上なら、後でご本人のアカウントとつなぐこともできます (ご本人の承認が必要です)。
             </p>
           </div>
 

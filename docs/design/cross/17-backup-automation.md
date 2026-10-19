@@ -2215,7 +2215,7 @@ N が 11 のままの理由: 表は 12 行 → 13 行 (②を足す)、『実装
 | `docs/design/operator/09-runbook.md` §11.1 Step 4・§11.4 Step 3・§11.5 Step 6 | PITR が無い間の論理復元は `docs/operations/backup-restore.md` §5 / §6 | 実装のマージと同日 |
 | `docs/design/operator/09-runbook.md` §11.5 Step 3 (origin/main 627〜628 行「Weekly Cold Backup (S3 Glacier) から…」「SHA256 + GPG 署名を検証」)・§15 テスト方針の E2E「PITR 復元テスト (月 1 回)」(756 行)・§17 未解決事項の「`logical_backup` cron (`pg_dump → S3`): S3 接続情報と IAM 権限の設定は本番環境構築時に確定」(767 行) | §11.5 Step 3: 「Weekly Cold Backup (R2 の `weekly/`。bucket lock の下) から最新の未侵害の対象物を選ぶ」「`sha256sum -c <base>.sha256` で検証し、age の秘密鍵で復号する (GPG の署名は置かない。cross/17 §3.2)」「新しい Supabase プロジェクトへの復元は `docs/operations/backup-restore.md` §6」に。§15: 「PITR 復元テスト (月 1 回。Pro になるまでは `skipped` で記録。cross/17 §9.2)」に。§17: 「`logical_backup` は cross/17 で GitHub Actions + R2 として決めた (秘密は §13・初回の設定は手順書 §2)」に置き換え、未解決の項目から外す | 実装のマージと同日 |
 | `docs/design/cross/08-legal-compliance.md` §16.3 (法的保管義務の行) / §19 (GPG の行) | バックアップの保持期間 (§9.1) と、暗号化は age (GPG の体制の TODO を閉じる) | 実装のマージと同日 |
-| `src/app/privacy/page.tsx` | §9.1 の文の追加 (法務の確認の後。#1174 の版の扱いに従う) | 後続 (§21) |
+| `src/app/privacy/page.tsx` | §9.1 の文の追加 | 追記した (cross/20 §7 第12条。本文の正本は `src/lib/legal/privacy-text.ts`) |
 | `ENV_SETUP.md` 「GitHub Actions secrets」 | secrets 2 つ・variables 3 つ (+ 任意の調整用 4 つ)。復元 (`node scripts/backup-db.mjs restore`) はオーナーの手元のシェルに R2 の 4 つ (`RESTORE_REQUIRED_ENV_NAMES`。キーは復元用の読み取り専用のトークン) を置くこと (値は書かない。手順書 §5)。GitHub が自動で入れるもの (`GITHUB_TOKEN`・`GITHUB_REPOSITORY`・`GITHUB_RUN_ID`・`GITHUB_RUN_ATTEMPT`・`GITHUB_SHA`・`RUNNER_TEMP`) は設定しなくてよいこと。`NEW_DB_URL` は手順書 §6 でオーナーの手元のシェルにだけ置く変数で、GitHub・Vercel には置かないこと (§13) | 段 D |
 | `ENV_SETUP.md` の「3 つの保管場所」の表の Vercel の `CRON_SECRET` の行 (origin/main 88 行「Vercel Cron が `/api/cron/process-menu-queue` と `/api/cron/app-log-alerts`（どちらも `vercel.json` の `crons`）を呼ぶとき」) と、節「エラー急増の運用メール（`OPS_ALERT_EMAIL`）」の冒頭の段落 (origin/main 367 行「Vercel Cron が 15 分おきに `GET /api/cron/app-log-alerts` を呼び」) | 88 行: 列挙の最後に `/api/cron/backup-freshness` を足し、「どちらも」を「どれも」に (§18.1 の並行の規則 (f)。ほかの案件が先に足していればその後ろ)。367 行の段落の後ろに 1 文: 「同じ宛先に、DB バックアップが 30 時間より新しく取れていないことの通知も届きます (`GET /api/cron/backup-freshness`。日 1 回、14:37 JST。#1129)」 | 段 C (`vercel.json` に cron を足すのと同じ PR。どちらも `vercel.json` の crons の本数・名前を列挙する文) |
 | `docs/design/operator/08-cron-batches.md` §3.0 の「過去の migration で登録されたジョブ (`catalog-import-*` の 5 本、`handson-tour-sandbox-cleanup`) もある」の文 (origin/main 39 行) | 文の後ろに「この 6 本も含め、本番の `cron.job` の定義は DB バックアップの書庫の `cron_jobs.sql` に入り、新しいプロジェクトへの復元で戻す (cross/17 §4.3・`docs/operations/backup-restore.md` §6)」を足す (§18.1 の 5 か所とは別の行で、`tests/log-cleanup-dau-snapshot-contract.test.ts` が見る本数・名前の列挙に触れない。`#1125` を書かない) | 段 C (08 の §18.1 の 5 か所と同じ PR) |
@@ -2261,7 +2261,7 @@ N が 11 のままの理由: 表は 12 行 → 13 行 (②を足す)、『実装
 | 項目 | 本設計の既定 | 確認したいこと |
 |---|---|---|
 | annual の保持 | 7 年 (2,557 日)。07 の「永久」を置き換える | 法務として何年か。lock は後から短くできるかが R2 の文書に無い (短くするときは新しいバケットへ移す前提) |
-| プライバシーポリシーの文 | §9.1 の案。法務の確認の後に足す | 文言・年数・公開の時期 (#1174 の版の扱い) |
+| プライバシーポリシーの文 | 追記した (cross/20 §7 第12条) | 弁護士の確認を受けるかはオーナーの判断 (cross/20 §9.4) |
 | 復元点より後の退会 | 再現しない (24 時間の窓を受け入れる)。手順書に明記 | 復元のときに利用者へ知らせるか |
 | 暗号化の道具 | age (公開鍵。秘密鍵は CI に無い) | GPG を好むなら公開鍵の取り込みと `--trust-model always` の 2 行を手順書に足すだけで同じ構造にできる |
 | age の秘密鍵の保管 | パスワードマネージャー + 印刷の控え | 誰が持つか・2 人目を置くか |

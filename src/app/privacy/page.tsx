@@ -1,19 +1,51 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LegalDocumentBody } from "@/components/legal/LegalDocumentBody";
 import { LegalDocumentMeta } from "@/components/legal/LegalDocumentMeta";
 import { AI_CONSENT_PROVIDERS, AI_CONSENT_PROVIDER_INFO } from "@/lib/ai/consent-config";
-import { BUSINESS_NAME } from "@/lib/business-info";
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_EMAIL,
+  BUSINESS_HOURS,
+  BUSINESS_NAME,
+  BUSINESS_REPRESENTATIVE,
+  PHONE_DISCLOSED_ON_REQUEST,
+} from "@/lib/business-info";
+import { privacyText } from "@/lib/legal/privacy-text";
 import { publicPageMetadata } from "@/lib/seo/public-pages";
-import { getSupportEmail } from "@/lib/site-config";
 
 // #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクと、
 // ストア審査に出すプライバシー URL の着地点なので、(main) グループ (ログイン後の画面。アプリ用のナビ付き) の外に置く。
 // ログイン・オンボーディング・凍結の差し戻しからは、lib/supabase/middleware.ts の publicPaths と
 // lib/onboarding-routing.ts の isPolicyPath で除外している。
 // #1867: title・description・canonical・OGP は src/lib/seo/public-pages.ts が正本
+// #1901: 本文は src/lib/legal/privacy-text.ts (設計書 cross/20 §7) が正本。このファイルは文を持たない。
+//        事業者の情報と窓口は src/lib/business-info.ts (#1911) の定数を渡す (特定商取引法に基づく表記・運営会社のページと同じ値)
+// #1366: AI 事業者の一覧は、同意画面と同じ AI_CONSENT_PROVIDERS / AI_CONSENT_PROVIDER_INFO から作って渡す
+//        (実際の送信先と同意の一覧は tests/ai-consent-provider-inventory.test.ts が突き合わせている)
 export const metadata: Metadata = publicPageMetadata("/privacy");
 
+const MAIN_CLASS =
+  "p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed " +
+  "[&_h2]:mt-10 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:text-gray-900 " +
+  "[&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 " +
+  "[&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:mb-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-1 " +
+  "[&_table]:mb-4 [&_table]:w-full [&_table]:text-sm [&_th]:text-left [&_th]:align-top [&_th]:p-2 [&_th]:border-b " +
+  "[&_td]:align-top [&_td]:p-2 [&_td]:border-b";
+
 export default function PrivacyPage() {
+  const document = privacyText({
+    businessName: BUSINESS_NAME,
+    businessAddress: BUSINESS_ADDRESS,
+    businessRepresentative: BUSINESS_REPRESENTATIVE,
+    phoneDisclosure: PHONE_DISCLOSED_ON_REQUEST,
+    businessEmail: BUSINESS_EMAIL,
+    businessHours: BUSINESS_HOURS,
+    aiProviders: AI_CONSENT_PROVIDERS.map((id) => {
+      const info = AI_CONSENT_PROVIDER_INFO[id];
+      return { name: info.name, country: info.country, usage: info.usage };
+    }),
+  });
   return (
     <div className="min-h-screen bg-white">
       <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
@@ -25,57 +57,10 @@ export default function PrivacyPage() {
         </div>
       </header>
 
-      <main className="p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed [&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_li]:mb-1">
+      <main className={MAIN_CLASS}>
         {/* 版・施行日は packages/shared の LEGAL_DOCUMENTS (同意の記録に使う版と同じ値) から出す */}
         <LegalDocumentMeta type="privacy_policy" />
-
-        <p>{BUSINESS_NAME}（以下，「当社」といいます。）は，本ウェブサイト上で提供するサービス（以下,「本サービス」といいます。）における，ユーザーの個人情報の取扱いについて，以下のとおりプライバシーポリシー（以下，「本ポリシー」といいます。）を定めます。</p>
-
-        <h3>第1条（個人情報）</h3>
-        <p>「個人情報」とは，個人情報保護法にいう「個人情報」を指すものとし，生存する個人に関する情報であって，当該情報に含まれる氏名，生年月日，住所，電話番号，連絡先その他の記述等により特定の個人を識別できる情報及び容貌，指紋，声紋にかかるデータ，及び健康保険証の保険者番号などの当該情報単体から特定の個人を識別できる情報（個人識別情報）を指します。</p>
-
-        <h3>第2条（個人情報の収集方法）</h3>
-        <p>当社は，ユーザーが利用登録をする際に氏名，生年月日，メールアドレスなどの個人情報をお尋ねすることがあります。また、本サービスの利用において、食事画像や健康に関する情報（アレルギー、生活習慣など）を収集します。</p>
-
-        <h3>第3条（個人情報を収集・利用する目的）</h3>
-        <p>当社が個人情報を収集・利用する目的は，以下のとおりです。</p>
-        <ul>
-          <li>本サービスの提供・運営のため</li>
-          <li>ユーザーからのお問い合わせに回答するため（本人確認を行うことを含む）</li>
-          <li>AIによる食事解析・献立提案の精度向上のため</li>
-          <li>重要なお知らせなど必要に応じたご連絡のため</li>
-          <li>利用規約に違反したユーザーや，不正・不当な目的でサービスを利用しようとするユーザーの特定をし，ご利用をお断りするため</li>
-        </ul>
-
-        <h3>第4条（利用目的の変更）</h3>
-        <p>当社は，利用目的が変更前と関連性を有すると合理的に認められる場合に限り，個人情報の利用目的を変更するものとします。</p>
-
-        <h3>第5条（個人情報の第三者提供）</h3>
-        <p>当社は，次に掲げる場合を除いて，あらかじめユーザーの同意を得ることなく，第三者に個人情報を提供することはありません。ただし，個人情報保護法その他の法令で認められる場合を除きます。</p>
-        <p>なお、本サービスでは次の日本国外の事業者の AI を利用しており、解析や生成に必要な範囲で画像データおよびテキストデータが各事業者に送信される場合があります。</p>
-        {/* #1366: 事業者の一覧は、同意画面と同じ AI_CONSENT_PROVIDERS / AI_CONSENT_PROVIDER_INFO から出す
-            (実際の送信先と同意の一覧は tests/ai-consent-provider-inventory.test.ts が突き合わせている)。
-            文面だけの直しなので、同意の版 (AI_CONSENT_VERSION)・ポリシーの版 (LEGAL_DOCUMENTS) は変えていない */}
-        <ul data-testid="privacy-ai-providers">
-          {AI_CONSENT_PROVIDERS.map((id) => {
-            const info = AI_CONSENT_PROVIDER_INFO[id];
-            return (
-              <li key={id}>
-                {info.name}（{info.country}）：{info.usage}
-              </li>
-            );
-          })}
-        </ul>
-
-        <h3>第6条（個人情報の開示・訂正・削除）</h3>
-        <p>当社は，本人から個人情報の開示・訂正・削除を求められたときは，本人であることを確認の上で遅滞なくこれに応じます。</p>
-
-        <h3>第7条（お問い合わせ窓口）</h3>
-        <p>本ポリシーに関するお問い合わせは，以下の窓口までお願いいたします。</p>
-        <p>
-          {BUSINESS_NAME} 個人情報担当<br />
-          E-mail: {getSupportEmail()}
-        </p>
+        <LegalDocumentBody document={document} />
       </main>
 
       <footer className="py-8 border-t border-gray-100">

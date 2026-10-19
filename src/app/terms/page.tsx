@@ -1,7 +1,16 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { LegalDocumentBody } from "@/components/legal/LegalDocumentBody";
 import { LegalDocumentMeta } from "@/components/legal/LegalDocumentMeta";
-import { BUSINESS_NAME } from "@/lib/business-info";
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_EMAIL,
+  BUSINESS_HOURS,
+  BUSINESS_NAME,
+  BUSINESS_REPRESENTATIVE,
+  PHONE_DISCLOSED_ON_REQUEST,
+} from "@/lib/business-info";
+import { termsText } from "@/lib/legal/terms-text";
 import { publicPageMetadata } from "@/lib/seo/public-pages";
 
 // #1174 (同意の前提): 未ログインでも読める公開ページ。サインアップ画面・LP フッターの同意リンクの着地点なので、
@@ -9,9 +18,28 @@ import { publicPageMetadata } from "@/lib/seo/public-pages";
 // ログイン・オンボーディング・凍結の差し戻しからは、lib/supabase/middleware.ts の publicPaths と
 // lib/onboarding-routing.ts の isPolicyPath で除外している。
 // #1867: title・description・canonical・OGP は src/lib/seo/public-pages.ts が正本
+// #1901: 本文は src/lib/legal/terms-text.ts (設計書 cross/20 §6) が正本。このファイルは文を持たない。
+//        事業者の情報は src/lib/business-info.ts (#1911) の定数を渡す (特定商取引法に基づく表記・運営会社のページと同じ値)
 export const metadata: Metadata = publicPageMetadata("/terms");
 
+const MAIN_CLASS =
+  "p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed " +
+  "[&_h2]:mt-10 [&_h2]:mb-3 [&_h2]:text-xl [&_h2]:font-bold [&_h2]:text-gray-900 " +
+  "[&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 " +
+  "[&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_ol]:mb-4 [&_ol]:list-decimal [&_ol]:pl-6 [&_li]:mb-1 " +
+  "[&_table]:mb-4 [&_table]:w-full [&_table]:text-sm [&_th]:text-left [&_th]:align-top [&_th]:p-2 [&_th]:border-b " +
+  "[&_td]:align-top [&_td]:p-2 [&_td]:border-b";
+
 export default function TermsPage() {
+  const document = termsText({
+    businessName: BUSINESS_NAME,
+    businessAddress: BUSINESS_ADDRESS,
+    businessRepresentative: BUSINESS_REPRESENTATIVE,
+    phoneDisclosure: PHONE_DISCLOSED_ON_REQUEST,
+    businessEmail: BUSINESS_EMAIL,
+    businessHours: BUSINESS_HOURS,
+    aiProviders: [],
+  });
   return (
     <div className="min-h-screen bg-white">
       <header className="bg-white border-b border-gray-100 sticky top-0 z-20">
@@ -23,47 +51,10 @@ export default function TermsPage() {
         </div>
       </header>
 
-      <main className="p-6 max-w-3xl mx-auto text-gray-700 leading-relaxed [&_h3]:mt-8 [&_h3]:mb-2 [&_h3]:text-lg [&_h3]:font-bold [&_h3]:text-gray-900 [&_p]:mb-4 [&_ul]:mb-4 [&_ul]:list-disc [&_ul]:pl-6 [&_li]:mb-1">
+      <main className={MAIN_CLASS}>
         {/* 版・施行日は packages/shared の LEGAL_DOCUMENTS (同意の記録に使う版と同じ値) から出す */}
         <LegalDocumentMeta type="terms_of_service" />
-
-        <h3>第1条（適用）</h3>
-        <p>この利用規約（以下，「本規約」といいます。）は，{BUSINESS_NAME}（以下，「当社」といいます。）が提供するサービス「ほめゴハン」（以下，「本サービス」といいます。）の利用条件を定めるものです。登録ユーザーの皆さま（以下，「ユーザー」といいます。）には，本規約に従って本サービスをご利用いただきます。</p>
-
-        <h3>第2条（利用登録）</h3>
-        <p>本サービスにおいては，登録希望者が本規約に同意の上，当社の定める方法によって利用登録を申請し，当社がこれを承認することによって，利用登録が完了するものとします。</p>
-
-        <h3>第3条（ユーザーIDおよびパスワードの管理）</h3>
-        <p>ユーザーは，自己の責任において，本サービスのユーザーIDおよびパスワードを適切に管理するものとします。</p>
-
-        <h3>第4条（AI解析とデータ利用）</h3>
-        <p>ユーザーが本サービスにアップロードした食事画像およびテキストデータは、AI（人工知能）を用いた栄養解析およびフィードバック生成のために利用されます。ユーザーは、自身のデータをAIが処理することに同意するものとします。</p>
-
-        <h3>第5条（禁止事項）</h3>
-        <p>ユーザーは，本サービスの利用にあたり，以下の行為をしてはなりません。</p>
-        <ul>
-          <li>法令または公序良俗に違反する行為</li>
-          <li>犯罪行為に関連する行為</li>
-          <li>本サービスの内容等，本サービスに含まれる著作権，商標権ほか知的財産権を侵害する行為</li>
-          <li>他人の個人情報などを収集または蓄積する行為</li>
-          <li>不正なアクセスを試みる行為</li>
-        </ul>
-
-        <h3>第6条（本サービスの提供の停止等）</h3>
-        <p>当社は，以下のいずれかの事由があると判断した場合，ユーザーに事前に通知することなく本サービスの全部または一部の提供を停止または中断することができるものとします。</p>
-        <ul>
-          <li>本サービスにかかるコンピュータシステムの保守点検または更新を行う場合</li>
-          <li>地震，落雷，火災，停電または天災などの不可抗力により，本サービスの提供が困難となった場合</li>
-        </ul>
-
-        <h3>第7条（免責事項）</h3>
-        <p>当社の債務不履行責任は，当社の故意または重過失によらない場合には免責されるものとします。また、AIによる解析結果の正確性を保証するものではありません。</p>
-
-        <h3>第8条（サービス内容の変更等）</h3>
-        <p>当社は，ユーザーに通知することなく，本サービスの内容を変更しまたは本サービスの提供を中止することができるものとし，これによってユーザーに生じた損害について一切の責任を負いません。</p>
-
-        <h3>第9条（準拠法・裁判管轄）</h3>
-        <p>本規約の解釈にあたっては，日本法を準拠法とします。本サービスに関して紛争が生じた場合には，当社の本店所在地を管轄する裁判所を専属的合意管轄とします。</p>
+        <LegalDocumentBody document={document} />
       </main>
 
       <footer className="py-8 border-t border-gray-100">
