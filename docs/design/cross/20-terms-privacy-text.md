@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.4 (2026-10-19) |
+| 版 | v1.5 (2026-10-19) |
 | Status | 設計ゲート審査中 (実装着手は通過後) |
 | Issue | #1901 |
 | 範囲の正本 | Issue #1901 の本文とコメント。前提と判断は本書 §0.1 に文として書く |
@@ -265,7 +265,10 @@ src/components/legal/LegalDocumentBody.tsx   LegalDocumentText → h2 / h3 / p /
 src/app/terms/page.tsx    header・LegalDocumentMeta・<LegalDocumentBody document={termsText(ctx)} />・footer
 src/app/privacy/page.tsx  同上 (privacyText)。ctx に AI_CONSENT_PROVIDERS / AI_CONSENT_PROVIDER_INFO から作った一覧を渡す
 packages/shared/src/legal-versions.ts   LEGAL_DOCUMENTS を v2026.1 に (§9)
-tests/legal-text-1901.test.ts           §13
+tests/legal-text-1901.test.ts           §13 (文面モジュールとページ)
+tests/legal-document-body.test.tsx      §13 (描画部品。T-21〜T-23)
+tests/public-claims-guard.test.ts       既存。走査の対象に 2 ページと 2 つの文面モジュールを足す (§16)
+src/__tests__/api/cron/push-outbox.test.ts   既存。行 176 の版の直書きを LEGAL_DOCUMENTS に (§16)
 docs/legal/archive/v2025.1/{terms,privacy}.md   旧版の控え (段 B)
 ```
 
@@ -2156,7 +2159,7 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 
 ## 16. 既存の番兵 (契約テスト・走査テスト) の追随表
 
-本設計が足す・変える・移すものの名前を grep の語にして `tests/`・`scripts/`・`src/__tests__/`・`packages/shared/src/*.test.ts`・`lib/**/__tests__` を走査した結果 (2026-10-19・origin/main `5b85bb3f`)。
+本設計が足す・変える・移すものの名前を grep の語にして `tests/`・`scripts/`・`src/__tests__/`・`packages/shared/src/*.test.ts`・`lib/**/__tests__`・`apps/mobile/__tests__` を走査した結果 (2026-10-19・origin/main `5b85bb3f`)。パス `/terms` `/privacy` を文字列で持つテストは、origin/main で 21 本 (`git grep` で `'/terms'` `'/privacy'` `href="/terms"` などの形を引いた集合) で、すべて下の表のどれかの行にある。2 ページは同じパスに残る (§4.1・§8.3) ので、パスの番兵はすべて変更なしで緑のまま。
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
@@ -2171,6 +2174,12 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | `src/__tests__/api/cron/push-outbox.test.ts:176` | `'v2025.1'` | 版を直書きしているが、`LEGAL_CONSENT_ENFORCE` を未設定にしている (行 90) ので判定に使われず、緑のまま | `LEGAL_DOCUMENTS.terms_of_service.version` / `.privacy_policy.version` に置き換える (`import { LEGAL_DOCUMENTS } from '@homegohan/shared'`。`packages/shared/src/index.ts:12` が `legal-versions` を再エクスポートしている)。将来の版上げで「同意済みの利用者」の行が意味を失わないように | B |
 | `tests/landing-page-1867.test.ts:530-531` | `href="/terms"`・`href="/privacy"` | フッターのリンク先 | 変更なし | — |
 | `src/__tests__/lib/maintenance-mode.test.ts:66-68`・`tests/onboarding-routing.test.ts` | `/terms`・`/privacy` | 公開パスの判定 | 変更なし | — |
+| `lib/supabase/__tests__/middleware.test.ts:512` (`describe.each(['/terms', '/privacy'])`・#1174)・`lib/supabase/__tests__/middleware-legal-consent.test.ts:251, 370-371`・`lib/supabase/__tests__/middleware-maintenance.test.ts:350-351` | `/terms`・`/privacy` | middleware が 2 つのパスを未ログイン・同意の前・メンテナンス中でも通すこと (公開パスの判定) | 変更なし (パスは変えない。middleware も変えない) | — |
+| `tests/login-google-legal-note.test.tsx:48-49`・`tests/signup-legal-consent.test.tsx:96-97`・`tests/legal-parental-consent-page.test.tsx:35`・`tests/auth-callback-legal-consent.test.ts:191` | `/terms`・`/privacy`・`href="/privacy"` | ログイン・サインアップの同意の文・保護者の同意書のリンク先と、認証の戻り先が `/terms` のときの遷移 | 変更なし (リンク先のパスは変えない) | — |
+| `tests/integration/security/feature-flags-runtime.test.ts:323-324` | `getPage('/terms')`・`getPage('/privacy')` | メンテナンス中でも 2 ページが 200 を返すこと (実際にページを GET する) | 変更なし (§8.3 のページは新しいサーバーの依存を足さず、`termsText` / `privacyText` は同期の純関数なので 200 のまま) | B |
+| `apps/mobile/__tests__/components/PublicPage.test.tsx:85-87`・`apps/mobile/__tests__/components/account-frozen-gate.test.tsx:176`・`apps/mobile/__tests__/components/legal-consent-gate.test.tsx:144`・`apps/mobile/__tests__/lib/account-frozen.test.ts:267`・`apps/mobile/__tests__/lib/legal-consent.test.ts:153` | `/terms`・`/privacy` | モバイルが 2 ページを `getTermsUrl()` / `getPrivacyUrl()` の URL で開くこと・凍結と同意のゲートが 2 つのパスを公開として通すこと | 変更なし (モバイルのコードは変えない。§1) | — |
+| `tests/integration/security/legal-documents-acceptance.test.ts`・`tests/integration/rls/push-outbox.test.ts:905-906, 924-925`・`src/__tests__/lib/push/outbox.test.ts:87-88`・`tests/legal-consent-minor-guardian.test.ts:17-18`・`packages/shared/src/parental-consent.test.ts:34-35` | `LEGAL_DOCUMENTS`・`_version_accepted` | 同意済みの版を `LEGAL_DOCUMENTS` の値から作る (`legal-documents-acceptance` はテスト用の版 `test-v1` など (行 91-94) で、DB は版の中身を見ない) ので、版の値に依らない。文面の文字列は見ない | 変更なし (版を v2026.1 に上げても緑) | B |
+| `packages/shared/src/legal-consent-api.test.ts:330` | `'2025-01-01'` | 形の壊れた応答 (`version: ''`) を `isLegalConsentStatus` が弾くことの入力に、施行日の文字列を直書きしている。版 v2025.1 の施行日とは無関係の入力値 | 変更なし (`LEGAL_DOCUMENTS` の施行日を変えても、この入力は版が空なので弾かれたまま) | — |
 | `tests/ai-consent-provider-inventory.test.ts` | `AI_CONSENT_PROVIDERS` | 送信先と同意の一覧 | 変更なし (一覧は変えない) | — |
 | `src/__tests__/lib/emails/account/login-new-device.test.ts:67` | `SESSIONS_SETTINGS_PATH` | 値が `/settings/security/sessions` であることを固定 (文面モジュールが import する) | 変更なし | — |
 | `src/__tests__/lib/security/csp.test.ts` | `HOLIDAYS_API_ORIGIN`・`connect-src` | CSP の値の固定 (プライバシーポリシーの文面モジュールが `HOLIDAYS_API_ORIGIN` を import し、T-29 が `connect-src` を第10条と突き合わせる) | 変更なし | — |
@@ -2245,3 +2254,4 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | v1.2 | 2026-10-19 | 審査 R1 の反映: 利用規約第4条とプライバシーポリシー第10条のリンク先を実在の `/settings/security/sessions` (`SESSIONS_SETTINGS_PATH`) に (`SECURITY_SETTINGS_PATH` を廃止)・§8.1 の JSDoc の `*/` を除いた・利用規約第24条を再同意の実際 (同意の前は請求とお問い合わせだけ・施行日の前のお知らせ) に合わせ、§9.4 にお知らせの工程・§9.3 に外部送信の行・§11.3 の未同意の退会・書き出しの行を直した・写真は家族と組織に出ず運営は審査で見ることがある (第13条・第5条・第9条)・健康の記録は家族に出ない (第11条・第5条・第9条)・保護者が代わりに記録できるのは本人のアカウントが無い家族だけ (第5条・第11条・第15条)・AI に送る項目にプロフィールと健康の項目・ニックネームを足し「氏名は送りません」を削除 (第6条・第5条)・送信停止の記録はアドレスのまま、保護者の同意の記録は退会後も残る (第17条・第3条・第12条)・責任の上限を料金を受け取っていないユーザーに適用しない (第21条)・祝日の一覧と Supabase を外部送信に足した (第10条)・「遅滞なく」を戻した (第14条)・取扱いの責任者と人的な措置を削除。F-29〜F-33・R-22〜R-23・S-17・T-27〜T-29・§16 の 2 行・§17 の 2 行・Q-18〜Q-20 |
 | v1.3 | 2026-10-19 | 網羅性の反映 (周 2): §11.3 の凍結の行を none にも広げ (凍結されうるのは `user_profiles` の行がある人)、none と current の凍結の解除・凍結中の退会・書き出し・有料プランの解約・お問い合わせの行を足した・プライバシーポリシー第12条の保存期間の表にプッシュ通知の宛先・AI 機能の利用回数・回数の制限の計数の行を足し、アプリの動作のログの行がブラウザのセキュリティ違反の報告を含むことを書いた (§10.2 の根拠も)・§15 に `MAIN_CLASS` (ページのローカル。`LEGAL_MAIN_CLASS` は新設しないと確定し §8.3 の注を直した)・`LEGAL_TEXT_FORBIDDEN_CLAIMS` (テストのローカル)・既存ファイルの変更の行を足した・冒頭の実装の範囲に既存のテスト 2 本を足し、`push-outbox.test.ts:176` の置き換えを任意から確定に (§14・§16)・§0.7 に章構成テンプレートとの対応表 (データモデルと API は該当なし)・§3 に法令の一次資料の表 (§3.1。消費者契約法・景品表示法・健康増進法・薬機法・特定商取引法の出典) を足し、要件の表を §3.2 にした・R-11 の保存期間の列挙 |
 | v1.4 | 2026-10-19 | 審査 R2 の反映: 施行日の仮置きを `'<公開日はマージ時に確定>'` から YYYY-MM-DD の形の仮の施行日 `'2026-10-19'` + 行末の目印のコメントに替えた (形を外すと `/api/legal/status` が 500・`legal-consent-api-schema`・`legal-status-route`・`legal-consent-page`・`policy-pages-public` のテストも赤になるため。段 B は全件緑・既知の赤なし。§0.6・§9.1・§9.4 の 3・§14・§16・T-17・Q-12)・プライバシーポリシー第3条の IP の文を実装 (IP の全体を保存し、ネットワークの範囲と Web のログインでは国も記録・本人の画面とお知らせのメールに出し運営も見る) に合わせた (F-17・§10.2・§11.2・T-28)・利用規約第16条 5 項と第18条 4 項を軽過失の全部免除から「第21条に定める範囲で責任を負う」に改めた (R-4・§3.2・§10.1・§11.2・T-28) |
+| v1.5 | 2026-10-19 | 網羅性の反映 (周 3): §16 の走査の範囲に `apps/mobile/__tests__` を足し、パス `/terms` `/privacy` を持つテスト 21 本がすべて表にあることを書いた。§16 に middleware の公開パスの番兵 3 本・ログイン / サインアップ / 保護者の同意書 / 認証の戻り先のリンク先の番兵 4 本・メンテナンス中のページの GET (`feature-flags-runtime`)・モバイルの番兵 5 本・版を `LEGAL_DOCUMENTS` から読む番兵 5 本・`legal-consent-api.test.ts:330` の施行日の直書き (無関係の入力値) の行を足した (すべて変更なし)。§4.1 の構造に `tests/legal-document-body.test.tsx` と既存のテスト 2 本の追随を足し、§13・§14・§15 と揃えた |
