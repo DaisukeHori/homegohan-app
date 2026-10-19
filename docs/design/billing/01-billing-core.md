@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.11 (2026-10-15) |
-| Status | 設計ゲート通過。段 A (PR #1711)・段 B (PR #1726)・段 C (画面層。PR #1738) は main に実装済み |
+| 版 | v1.12 (2026-10-19) |
+| Status | 設計ゲート通過。段 A (PR #1711)・段 B (PR #1726)・段 C (画面層。PR #1738) は main に実装済み。#1911 (#1916 4b1e1abe・2026-10-19) が「準備中」の表示を取り除いた後の画面と文に合わせた (v1.12) |
 | Issue | #1151 (購入の入口)・#1125 (Webhook の受け口) の「核」。配線の冊は `02-manual-plan-grant.md` (手動付与。段 A〜D 実装済み) と、配線の残りの冊 (§0.2 右列のうち手動付与以外: 運用バッチ・Finance 画面ほか。未作成) に分かれる。本文の『配線の冊』は、手動付与については 02、それ以外は配線の残りの冊を指す |
 | 範囲の正本 | Issue #1151・#1125 の本文とコメント (オーナーの選択 2026-10-15 は #1701 と本書 §0 に記録) |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
@@ -76,7 +76,7 @@
 | # | 事実 | 出どころ |
 |---|---|---|
 | F1 | Checkout / Billing Portal / `constructEvent` の実装は 0 件。`stripe` npm 依存は無い。Stripe は REST (fetch) で扱う方針 | `git grep` 0 件・`package.json`・`supabase/functions/stripe-price-sync/index.ts` 冒頭のコメント |
-| F2 | `src/app/pricing/page.tsx:23-24,114` は有料プランを「準備中」(`PAID_PLAN_PENDING`) と表示。`tests/public-claims-guard.test.ts` が「準備中」の表示を固定 | 同ファイル |
+| F2 | `src/app/pricing/page.tsx:23-24,114` は有料プランを「準備中」(`PAID_PLAN_PENDING`) と表示。`tests/public-claims-guard.test.ts` が「準備中」の表示を固定 (本冊の時点。#1911 (#1916) で取り除き、いまは買えるプランが 0 件のとき `src/app/pricing/PricingPageView.tsx` はフリーのカードと案内の段落・FAQ だけを出す。`tests/public-claims-guard.test.ts` は「準備中」「販売開始前」が無いことを固定する) | 同ファイル |
 | F3 | `src/lib/webhook/verify.ts` は Resend (Svix 形式) だけ。`WebhookSecretMissingError`・`WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS`・`WebhookVerification` がある | 同ファイル :21-65 |
 | F4 | `STRIPE_SECRET_KEY` は `src/lib/env.ts:186` の一覧にある。`STRIPE_WEBHOOK_SECRET` は `.env.example:88` だけで一覧に無い。`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` (`.env.example:89`) は読む場所が無い | 同ファイル |
 | F5 | `personal_subscriptions` の DDL: `status` CHECK 7 値 (`trialing / active / paused / cancelled / expired / past_due / grace`)、`stripe_subscription_id` UNIQUE、部分 UNIQUE `idx_personal_subscriptions_active_per_user` (`trialing / active / paused / past_due / grace` は利用者ごとに 1 行)、`user_id` FK は `ON DELETE CASCADE`、`plan_key` FK は `ON UPDATE CASCADE ON DELETE RESTRICT`、`updated_at` のトリガーは無い | baseline migration 5787-5816・8146・9218・9223、本番 `pg_trigger` 0 件 |
@@ -121,7 +121,7 @@
 | R9 | Billing Portal | spec | `POST /api/billing/portal` (§9.4)。カードの変更・請求書の履歴。プランの切替は Portal で許さない (§17) |
 | R10 | 失敗の扱い | spec | Stripe の Smart Retries + 顧客向けメール (Dashboard 設定) + DB `past_due` の写像 + 監査ログ `system.payment.failed`。`grace` 以降は配線 (§12) |
 | R11 | モバイル (アプリ内課金をしない) | spec | アプリ内に購入・価格・外部決済への誘導を出さない。WebView で開いた `/pricing` `/account/billing` は購入導線を描かない。いまアプリにある料金の画面 (`apps/mobile/app/(public)/pricing.tsx`。Web の `/pricing` を外部のブラウザで開く) は消す (§10.4) |
-| R12 | 本番の秘密の値 | spec・#1113 | `STRIPE_SECRET_KEY` (既存の一覧) と `STRIPE_WEBHOOK_SECRET` (一覧に足す)。鍵が無ければ Stripe を呼ぶ API は 503、Stripe を呼ばない GET の 2 本 (要約・確認) は 200 (§9・S11)。`/pricing` は鍵を見ない: 買えるプラン (`stripe_price_id` のある行) が無い限り準備中 (鍵の有無とは独立。§10.1・S11)。本番は鍵を入れてから Price を登録する順で準備し、「`/pricing` に出ているのに購入が 503」の時間を作らない (§17) |
+| R12 | 本番の秘密の値 | spec・#1113 | `STRIPE_SECRET_KEY` (既存の一覧) と `STRIPE_WEBHOOK_SECRET` (一覧に足す)。鍵が無ければ Stripe を呼ぶ API は 503、Stripe を呼ばない GET の 2 本 (要約・確認) は 200 (§9・S11)。`/pricing` は鍵を見ない: 買えるプラン (`stripe_price_id` のある行) が無い限り有料プランのカードを出さない (鍵の有無とは独立。§10.1・S11)。本番は鍵を入れてから Price を登録する順で準備し、「`/pricing` に出ているのに購入が 503」の時間を作らない (§17) |
 | R13 | 退会で Stripe を即時解約し、顧客を匿名化して残す | spec (#1562) | `deleteAccount` に段階 `billing` (`prepare` の前) と `billing_recheck` (`deleteUser` の直前) を足す。どちらも顧客の開いたままの Checkout Session を閉じ (`expire`)、解約する契約を Stripe 側の一覧 (顧客の全契約) と DB の行の和で列挙して即時解約する (DB に写っていない契約・段階 `billing` のあとに完了した Checkout の契約も解約する。§11)。`deleteUser` のあとに Stripe に残った契約 (`billing_recheck` の列挙のあと `deleteUser` までの一瞬に完了した Checkout など) は、写像が「退会済み」(`customer_closed`) を返し、`syncSubscription` が即時解約する (§8.6・§7.3)。当社の DB にも氏名・メールを残さない: Webhook のイベントの記録は最小化した写しだけを保存する (§8.1 `minimizeStripeEventPayload`・§9.6) |
 | R14 | 利用者本人が契約の行と、その写し (`plan_key_cached`・`family_groups.plan_key`) を直接書けない | F6・F21・F23・`docs/design/CLAUDE.md` RLS 厳格化 | INSERT / UPDATE ポリシーから `user_id = auth.uid()` を外す (§6.2)。特権列ガード 2 本に `plan_key_cached` を足す (§6.4 (11))。家族グループを作るときのプランは代表者の契約から決め、`create_family_group` の `p_plan_key` を使わない (§6.4 (10)) |
 | R15 | 特商法の最終確認画面 | `cross/08` §3 | `/account/billing/checkout` (§10.2) |
@@ -145,7 +145,7 @@
 | S8 | Webhook の順序の入れ替わり・重複・失敗の再送: `customer.subscription.updated` が `created` より先に届く / 同じイベントが 2 回届く / 処理に失敗して Stripe が再送する |
 | S9 | 戻り画面が Webhook より先: 決済完了の直後に `/account/billing?checkout=success` が開き、Webhook より先に契約が表示される |
 | S10 | 退会: 契約中の利用者が退会する。Stripe のサブスクリプションは即時解約、顧客は氏名・メールを消して残る。退会後に届く Webhook は何も書かず 200。退会の前に開いた購入の画面 (Checkout) は閉じられて完了できず、退会の途中や直前に完了した購入の契約も即時解約される (退会した利用者に課金が続かない) |
-| S11 | 秘密が未設定: `STRIPE_SECRET_KEY` が無いと Stripe を呼ぶ API (購入・同期・Portal・解約の予約と取り消し) は 503。`/pricing` は鍵を見ない (Price を登録していない間は準備中のまま。鍵より先に Price を登録しない順で準備する。§17)。契約の要約と確認画面の内容 (GET の 2 本) は 200 のままで、設定画面からの `/account/billing` は開ける。`STRIPE_WEBHOOK_SECRET` が無いと Webhook は 503 |
+| S11 | 秘密が未設定: `STRIPE_SECRET_KEY` が無いと Stripe を呼ぶ API (購入・同期・Portal・解約の予約と取り消し) は 503。`/pricing` は鍵を見ない (Price を登録していない間は有料プランのカードを出さないまま。鍵より先に Price を登録しない順で準備する。§17)。契約の要約と確認画面の内容 (GET の 2 本) は 200 のままで、設定画面からの `/account/billing` は開ける。`STRIPE_WEBHOOK_SECRET` が無いと Webhook は 503 |
 | S12 | 二重契約の防止: 契約中 (または手動付与中) の利用者が買おうとすると 409 |
 | S13 | 運営が Stripe Dashboard で直接作った契約 (metadata 無し): price から plan_key を解決して写す。解決できなければイベントは `failed` で残り、監査に出る |
 | S14 | モバイルの WebView から `/pricing` と `/account/billing` を開く: 購入ボタン・価格・Portal・解約は出ない。契約の状態だけ出る |
@@ -211,7 +211,7 @@
 | S8 | (a) `updated` (active) が `created` より先: 先に届いた方で取り直し → Stripe の最新 (active) → INSERT `active` (t1)。後から `created` → 取り直し → 同じ最新 → t2 > t1 で適用、変化なし (監査なし)。(b) 同じ `event.id` が 2 回: 1 回目が終わっていれば 2 回目は `claim` = `completed` → 200。1 回目がまだ処理中なら `in_progress` → 409 → Stripe が後で再送 → そのときは `completed` → 200。(c) 処理に失敗 (DB 障害) → `finish(ok=false)` で `failed` → 500 → Stripe が再送 → `claim` が `failed` 行を `processing` に戻して claimed → 再処理。(d) 1 回目が `finish` まで届かずに死ぬ (関数の時間切れ・プロセス落ち・`finish` 自体の失敗) → 行は `processing` のまま → 15 分以内の再送は `in_progress` → 409 (Stripe は再送を続ける) → 15 分を過ぎた再送で `claim` が古い `processing` を取り直して claimed → 再処理。(e) 2 つの Lambda が同時に同じ契約を処理: A が t1 で取り直し、B が t2 > t1 で取り直し、B が先に commit → A の RPC は `stripe_synced_at (t2) >= t1` で `skipped: 'stale'` (`user_id` つき) → 200。A が `invoice.payment_failed` なら、監査 `system.payment.failed` は stale でも書く (§8.6。S4) |
 | S9 | 決済完了 → `success_url` = `/account/billing?checkout=success&session_id=cs_…` → 画面が `POST /api/billing/checkout/sync {session_id}` → Stripe `GET /checkout/sessions/{id}` → `client_reference_id` が本人か確認 → `status='complete'` かつ `subscription` あり → `syncSubscription` (取り直し t0・RPC) → 契約が表示される。数秒後に Webhook が同じ契約を写す (t1 > t0・変化なし) |
 | S10 | `POST /api/account/delete` → `deleteAccount`: `check_blockers` → **`billing`**: 解約の対象を 2 つの和で集める = (1) `billing_customers` の顧客の全契約を Stripe から列挙 (`GET /subscriptions?customer=<cus>&status=all`。DB に行が無い契約 = Webhook が着く前・S12 の 2 本目・S13 で写せなかった契約も入る) と (2) DB の行 (`stripe_subscription_id` あり・status が `cancelled` 以外。`expired` は Stripe の `paused` のことがあるので含める) のうち (1) に無いもの (`GET /subscriptions/{id}` で取る。別の顧客で作られた契約) → (その前に) 顧客の開いたままの Checkout Session を `GET /checkout/sessions?customer=<cus>&status=open` で列挙して `POST /checkout/sessions/{id}/expire` で閉じる (退会の前に開いた購入の画面は、もう完了できない。列挙してから閉じるまでの間に完了した Session は閉じられないので取り直して飛ばし、その契約は次の列挙で解約する) → status が終端 (`canceled` / `incomplete_expired`) でないものを `DELETE /subscriptions/{id}` → `POST /customers/{cus}` (`name=''`, `email=''`, `phone=''`, `description=''`, `address=''`, `shipping=''`, `metadata[user_id]=''`, `metadata[anonymized_at]=<ISO>`) → `billing_customers.anonymized_at=now()` → 監査 `system.billing.account_deletion_stripe_cancelled` (`phase: 'billing'`) → 以降は既存の段階 (`prepare` → `release_membership` → `storage`) → **`billing_recheck`**: 同じ処理をもう一度 (その間に別のタブで完了した Checkout の契約・その間に作られた顧客を閉じる。匿名化済みの顧客は匿名化を繰り返さない。閉じた・解約したものがあったときだけ監査) → `deleteUser`。`deleteUser` で `personal_subscriptions` は CASCADE で消え、`billing_customers.user_id` は SET NULL。その後に届く `customer.subscription.deleted` → RPC: metadata.user_id は `auth.users` に無い → `skipped: 'user_deleted'` (`customer_closed: true`) → Stripe の status は終端なので何もしない → 200。`billing_recheck` の列挙のあと `deleteUser` までの一瞬に完了した契約は、届いた `customer.subscription.created` などの取り直しで Stripe の status が `trialing` / `active` → RPC が `user_deleted` (`customer_closed: true`。対応表の行の `user_id` が NULL) → `syncSubscription` が `DELETE /subscriptions/{id}` で即時解約し、監査 `system.billing.orphan_subscription_cancelled` (warn) → 200 (解約に失敗したら `failed`・500 で Stripe が再送し、取り直しでやり直す)。metadata.user_id を持たない契約 (Dashboard で作った契約。S13) は、顧客の対応表の行が `user_id IS NULL AND anonymized_at IS NOT NULL` (退会で匿名化済み) なので、同じく `skipped: 'user_deleted'` → 200 (§6.4 (9) の 1.。`BILL_UNKNOWN_USER` の 500 にしない) |
-| S11 | `STRIPE_SECRET_KEY` 無し → Stripe を呼ぶ POST の 5 本は `StripeGateway` の生成で `StripeNotConfiguredError` → 503 `EXT_STRIPE_NOT_CONFIGURED`。GET の 2 本 (`/api/billing/subscription`・`/api/billing/checkout/preview`) は gateway を作らない (`BillingReadDeps`。§9) ので 200: 設定画面 → `/account/billing` は要約 (契約なしなら free・`can_purchase`。`has_customer` が false なので Portal のボタンも出ない) を描く (手動付与の利用者もその契約を見られる)。`/pricing` はプラン行に `stripe_price_id` が無い限り準備中 (鍵の有無とは独立)。`STRIPE_WEBHOOK_SECRET` 無し → 503 `webhook_not_configured` (Stripe は 2xx 以外を再送するので、設定後に届き直す) |
+| S11 | `STRIPE_SECRET_KEY` 無し → Stripe を呼ぶ POST の 5 本は `StripeGateway` の生成で `StripeNotConfiguredError` → 503 `EXT_STRIPE_NOT_CONFIGURED`。GET の 2 本 (`/api/billing/subscription`・`/api/billing/checkout/preview`) は gateway を作らない (`BillingReadDeps`。§9) ので 200: 設定画面 → `/account/billing` は要約 (契約なしなら free・`can_purchase`。`has_customer` が false なので Portal のボタンも出ない) を描く (手動付与の利用者もその契約を見られる)。`/pricing` はプラン行に `stripe_price_id` が無い限り有料プランのカードを出さない (鍵の有無とは独立)。`STRIPE_WEBHOOK_SECRET` 無し → 503 `webhook_not_configured` (Stripe は 2xx 以外を再送するので、設定後に届き直す) |
 | S12 | `POST /api/billing/checkout` → `findLiveSubscription` あり (Stripe-backed でも手動でも) → 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`。同時に 2 本来た場合は両方通り得る (check-then-act)。2 本目の契約の写像は RPC の `BILL_LIVE_ROW_CONFLICT` で失敗し、イベントが `failed` で残る (運営が Stripe で 2 本目を返金・解約する。§13)。運営が解約すると `customer.subscription.deleted` → 取り直し (`canceled`) → 2 本目の行は無いので `cancelled` の行を INSERT する (live でないので衝突の検査は無い。家族は同じプランの live な 1 本目があれば戻さない。監査 `subscription_created` (to=`cancelled`)。§7.3 の「– → cancelled / expired」の行) |
 | S13 | Dashboard で作られた契約の `created` → 取り直し → `metadata.plan_key` 無し → `findPlanKeyByPriceId(items[0].price.id)` で `subscription_plans.stripe_price_id / stripe_yearly_price_id` を引く → 当たれば写す。当たらなければ snapshot の `plan_key=null` → RPC `BILL_UNKNOWN_PLAN` → `failed` + 500 (Stripe が再送し続け、3 日で止まる) + 監査 `system.stripe.event_failed` (warn)。後で Price を登録してから写ったとき、Stripe の status が `past_due` なら `past_due`、終端 (`canceled` / `incomplete_expired`) や `paused` なら `cancelled` / `expired` の行を INSERT する (§7.3 の「–」の 3 行) |
 | S14 | WebView (Cookie `is_native_app=1`) で `/pricing` → サーバー側で Cookie を読み `isNativeApp=true` → 有料プランのカードと CTA を描かない。`/account/billing` → 契約の状態 (プラン・次回更新日・解約予約) だけ描き、Portal・解約・購入のボタンは描かない。API 自体は WebView からも呼べる (認可は同じ) |
@@ -1007,7 +1007,7 @@ ALTER TABLE public.personal_subscriptions
 
 | 項目 | 現行 (origin/main) | 設計後 |
 |---|---|---|
-| 購入の入口 | 無い (`/pricing` の CTA は `/signup`・準備中) | `/pricing` (買えるプランのカードに、買える間隔ごとの金額と CTA「月額で始める」/「年額で始める」。買えない間隔は出さない。切替のトグルは無い。§10.1) → `/account/billing/checkout?plan_key=&interval=` → `POST /api/billing/checkout` → Stripe Checkout |
+| 購入の入口 | 無い (`/pricing` の CTA は `/signup`。有料プランは「準備中」と出していた (#1911 で取り除いた)) | `/pricing` (買えるプランのカードに、買える間隔ごとの金額と CTA「月額で始める」/「年額で始める」。買えない間隔は出さない。切替のトグルは無い。§10.1) → `/account/billing/checkout?plan_key=&interval=` → `POST /api/billing/checkout` → Stripe Checkout |
 | 顧客の作成 | 無い | `billing_customers` に 1 利用者 1 顧客。Checkout の前に作る |
 | `personal_subscriptions` への書き込み | アプリコードに無い。RLS は本人が書ける (F6) | 写像関数だけが書く (service_role)。本人は書けない。admin/super_admin の直接書き込みは従来どおり |
 | `status` の値 | 7 値 | 8 値 (`incomplete` を足す) |
@@ -1029,8 +1029,8 @@ ALTER TABLE public.personal_subscriptions
 | 契約の行の `plan_key` | 書き手が無い (運営の手動付与だけ) | 行を作ったときに決まり、以後変わらない (写像は既存の行の `plan_key` を使う。Stripe 側で Price を付け替えても変えない。§6.4 (9) の 4.・§7.3) |
 | `updated_at` | トリガー無し | `update_updated_at_column` のトリガー |
 | 環境変数 | `STRIPE_SECRET_KEY` のみ一覧 | `STRIPE_WEBHOOK_SECRET` を一覧に足す。`NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` は `.env.example` から消す (読む場所が無い) |
-| 特定商取引法の表記 (`/legal`)・`/faq`・トップの FAQ | 販売価格ほか 5 行と FAQ が「有料プランは準備中です（販売開始前）」 | 本冊の段では変えない (Price を登録するまでは文のとおり)。販売開始 (§17.3) の前提として、別の PR で販売の内容に改める (文面は業務・法務の判断。§18 の 14) |
-| モバイル | 課金の記述なし。料金の画面 (`app/(public)/pricing.tsx`) が「Web版を開く」で Web の `/pricing` を外部のブラウザで開く (いまは Web が「準備中」なので購入には届かない) | アプリ内に購入導線を出さない規則。WebView のページも購入導線を描かない。料金の画面と入口の画面の「料金」のリンクを消す (§10.4) |
+| 特定商取引法の表記 (`/legal`)・`/faq`・トップの FAQ | 販売価格ほか 5 行と FAQ が「有料プランは準備中です（販売開始前）」 | 本冊の段では変えなかった。#1911 (#1916) で、`/legal` の販売の 5 行を項目ごと取り除き、`/faq`・トップの FAQ から「有料プランは準備中です（販売開始前）」を取り除いた (「準備中」とも書かない)。販売開始 (§17.3) の前提として、有料プランの販売 (#1912) が販売の内容の項目を足す (文面は業務・法務の判断。§18 の 14) |
+| モバイル | 課金の記述なし。料金の画面 (`app/(public)/pricing.tsx`) が「Web版を開く」で Web の `/pricing` を外部のブラウザで開く (買えるプランが無い間は Web にも有料プランのカードが無いので購入には届かない) | アプリ内に購入導線を出さない規則。WebView のページも購入導線を描かない。料金の画面と入口の画面の「料金」のリンクを消す (§10.4) |
 
 ### 7.3 状態遷移表 (status × 操作・イベント → 遷移先・ガード・副作用)
 
@@ -1510,7 +1510,7 @@ export const BILLING_ERROR_MESSAGES: Readonly<Record<BillingErrorCode, string>> 
   BILL_CANCEL_NOT_SCHEDULED: '解約は予約されていません',
   BILL_CHECKOUT_SESSION_MISMATCH: 'このお申し込みは確認できません',
   OP_SUBSCRIPTION_ALREADY_ACTIVE: 'すでに有効な契約があります',
-  EXT_STRIPE_NOT_CONFIGURED: 'お支払いの受付は準備中です',
+  EXT_STRIPE_NOT_CONFIGURED: 'お支払いを受け付けていません',
   EXT_STRIPE_API_FAILED: '決済サービスとの通信に失敗しました。しばらくしてからお試しください',
 };
 
@@ -3125,17 +3125,17 @@ export async function requireUserAllowingFrozen(): Promise<BillingRouteUser> {
 
 - `src/app/pricing/page.tsx` を **async の Server Component** にする。`listPurchasablePlans()` (`src/lib/billing/public-plans.ts`) で `subscription_plans` から `status='public' AND plan_type IN ('personal','family') AND plan_key <> 'free' AND stripe_price_id IS NOT NULL` を `display_order` 順に読み (RLS `subscription_plans_select_public` を通る `createClient()`。未ログインでも読める)、`(await cookies()).get('is_native_app')?.value === '1'` (`next/headers`。Next 15 の `cookies()` は Promise) を `isNativeApp` として、描画を `src/app/pricing/PricingPageView.tsx` (`"use client"`。いまの見た目を移す) に渡す。
 - `PricingPageView` は default export で、props は `{ plans: PurchasablePlan[]; isNativeApp: boolean }` (page.tsx が渡す。`PricingPageView` は Supabase も Cookie も読まない)。
-- `PricingPageView` の規則: プランごとの「買える間隔」= `BILLING_INTERVALS.filter((interval) => isPurchasable(plan, interval))` (どれも `@/lib/billing/core` の export。並びは `BILLING_INTERVALS` のとおり月額 → 年額)。「買えるプラン」= `plans` のうち買える間隔が 1 つ以上あるもの (`listPurchasablePlans` は月額の Price のある行だけを返すが、金額が NULL か 0 の間隔は買えないので、ここで外す)。買えるプランが 0 件 → いまと同じ「準備中」の表示 (`PAID_PLAN_PENDING` と FAQ はそのまま)。1 件以上 → 買えるプランごとにカードを 1 枚 (`plans` の順。表示名 `display_name`・`trial_days > 0` なら「X 日間無料」)。カードの中は**買える間隔ごとに 1 行**ずつ、金額と CTA を出す (下の表)。買えない間隔 (`isPurchasable(plan, interval)` が偽 = 年額の Price `stripe_yearly_price_id` が NULL・その間隔の金額が NULL か 0) は、DB に金額があっても**金額も CTA も出さない** (押すと確認画面の `GET /api/billing/checkout/preview` が 422 `BILL_PLAN_NOT_PURCHASABLE` になる CTA を作らない。§9.2)。間隔の切替 (トグル・タブ) は置かない (カードに買える間隔の行を並べるだけ。`PricingPageView` は状態を持たない。`tests/public-claims-guard.test.ts` の describe `#1151 料金ページ (/pricing)` がソースに `billingPeriod` が無いことを見ているので、その名前も使わない)。カードの枠・色はフリーのカードと同じ見た目、並べ方はいまの `grid md:grid-cols-2` のまま (カードが増えれば行が増える)。CTA は Next の `Link` (未ログインなら `(main)` の既存のガードでログインへ回る)。1 件以上では販売開始前の案内 = タイトルの下の段落 (「現在は無料でご利用いただけます。」+ `PAID_PLAN_PENDING`)・「有料プラン (準備中)」のカード (「販売開始前」「準備中」)・FAQ (「現在、料金はかかりますか？」「有料プランはありますか？」) を描かない (どれも文言は変えず、0 件のときだけ描く。新しい文は足さない)。フリーのカードと末尾の「無料で始める」はどちらの場合も描く。`isNativeApp` なら有料プランのカードと CTA を描かず、フリーの説明だけ描く (§10.4)。
+- `PricingPageView` の規則: プランごとの「買える間隔」= `BILLING_INTERVALS.filter((interval) => isPurchasable(plan, interval))` (どれも `@/lib/billing/core` の export。並びは `BILLING_INTERVALS` のとおり月額 → 年額)。「買えるプラン」= `plans` のうち買える間隔が 1 つ以上あるもの (`listPurchasablePlans` は月額の Price のある行だけを返すが、金額が NULL か 0 の間隔は買えないので、ここで外す)。買えるプランが 0 件 → フリーのカードと、タイトルの下の段落 (「現在は無料でご利用いただけます。」)・FAQ (「現在、料金はかかりますか？」) だけを描き、有料プランのカードは描かない (#1911 で `PAID_PLAN_PENDING`・「有料プラン (準備中)」のカード・FAQ の「有料プランはありますか？」を取り除いた。「準備中」とも書かない)。1 件以上 → 買えるプランごとにカードを 1 枚 (`plans` の順。表示名 `display_name`・`trial_days > 0` なら「X 日間無料」)。カードの中は**買える間隔ごとに 1 行**ずつ、金額と CTA を出す (下の表)。買えない間隔 (`isPurchasable(plan, interval)` が偽 = 年額の Price `stripe_yearly_price_id` が NULL・その間隔の金額が NULL か 0) は、DB に金額があっても**金額も CTA も出さない** (押すと確認画面の `GET /api/billing/checkout/preview` が 422 `BILL_PLAN_NOT_PURCHASABLE` になる CTA を作らない。§9.2)。間隔の切替 (トグル・タブ) は置かない (カードに買える間隔の行を並べるだけ。`PricingPageView` は状態を持たない。`tests/public-claims-guard.test.ts` の describe `#1151 料金ページ (/pricing)` がソースに `billingPeriod` が無いことを見ているので、その名前も使わない)。カードの枠・色はフリーのカードと同じ見た目、並べ方はいまの `grid md:grid-cols-2` のまま (カードが増えれば行が増える)。CTA は Next の `Link` (未ログインなら `(main)` の既存のガードでログインへ回る)。1 件以上ではタイトルの下の段落 (「現在は無料でご利用いただけます。」)・FAQ (「現在、料金はかかりますか？」) を描かない (0 件のときだけ描く。新しい文は足さない)。フリーのカードと末尾の「無料で始める」はどちらの場合も描く。`isNativeApp` なら有料プランのカードと CTA を描かず、フリーの説明だけ描く (§10.4)。
 
   | 買える間隔 | 金額の表示 (`amount = amountJpyFor(plan, interval)`。`isPurchasable` が真なら正の数) | CTA の文 | CTA の行き先 (`href`) |
   |---|---|---|---|
   | `month` | `¥${amount.toLocaleString('ja-JP')}` と、続けて `/ 月（税込）` | 月額で始める | `/account/billing/checkout?plan_key=${encodeURIComponent(plan.plan_key)}&interval=month` |
   | `year` | `¥${amount.toLocaleString('ja-JP')}` と、続けて `/ 年（税込）` | 年額で始める | `/account/billing/checkout?plan_key=${encodeURIComponent(plan.plan_key)}&interval=year` |
 
-  カードの全パターン (月額・年額の買える / 買えない): 両方買える → 2 行 (月額 → 年額)。月額だけ → 月額の 1 行 (年額の金額・「年額で始める」・`interval=year` の Link は無い)。年額だけ (月額の金額が NULL か 0) → 年額の 1 行。どちらも買えない → カードを描かない (ほかに買えるプランが無ければ 0 件 = 準備中)。
-- `/pricing` は鍵 (`STRIPE_SECRET_KEY`) を見ない (`@/lib/env` に届くものを import しない。§8 の表・F24)。出すか出さないかは `stripe_price_id` の登録だけで決まる。鍵が無い間に Price が登録されていると、`/pricing` と確認画面は出たまま「申し込む」が 503 (「お支払いの受付は準備中です」) になる。本番はこの状態を作らない順 (鍵 → Price) で準備する (§17)。
+  カードの全パターン (月額・年額の買える / 買えない): 両方買える → 2 行 (月額 → 年額)。月額だけ → 月額の 1 行 (年額の金額・「年額で始める」・`interval=year` の Link は無い)。年額だけ (月額の金額が NULL か 0) → 年額の 1 行。どちらも買えない → カードを描かない (ほかに買えるプランが無ければ 0 件 = 有料プランのカードは無い)。
+- `/pricing` は鍵 (`STRIPE_SECRET_KEY`) を見ない (`@/lib/env` に届くものを import しない。§8 の表・F24)。出すか出さないかは `stripe_price_id` の登録だけで決まる。鍵が無い間に Price が登録されていると、`/pricing` と確認画面は出たまま「申し込む」が 503 (「お支払いを受け付けていません」) になる。本番はこの状態を作らない順 (鍵 → Price) で準備する (§17)。
 - 価格の表示は `monthly_price_jpy` / `yearly_price_jpy` をそのまま (DB の値が正。上の表の `amountJpyFor`)。
-- `tests/public-claims-guard.test.ts` は `@/lib/billing/public-plans` と `next/headers` をモックして「買えるプランが 0 件 → 準備中」(いまの期待値。テスト 50) と「買えるプランがある → 買える間隔だけ金額と CTA・準備中の案内と FAQ は無い」(新しい期待値。テスト 51) の両方を持つ (書き方は §16.1 の行)。
+- `tests/public-claims-guard.test.ts` は `@/lib/billing/public-plans` と `next/headers` をモックして「買えるプランが 0 件 → フリーのカードと FAQ だけ (「準備中」のカードも販売開始前の文も無い)」(テスト 50。#1911 で期待値を改めた) と「買えるプランがある → 買える間隔だけ金額と CTA・0 件のときの段落と FAQ は無い」(テスト 51) の両方を持つ (書き方は §16.1 の行)。
 
 ```ts
 // tsc:skip place=src/lib/billing/public-plans.ts — 新設モジュール core を import する (§8.0 の手順で置き場所に置いて検査する)
@@ -3149,7 +3149,7 @@ const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, monthly_price_j
 
 /**
  * /pricing に出す「買えるプラン」。月額の Price があるものだけ (年額は任意)。
- * 読み取りに失敗したら例外を投げずに空を返す (公開ページをエラーにせず、いまと同じ「準備中」を描く)。失敗は error ログに残す
+ * 読み取りに失敗したら例外を投げずに空を返す (公開ページをエラーにせず、買えるプランが無いときと同じ表示を描く)。失敗は error ログに残す
  */
 export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
   const supabase = await createClient();
@@ -3163,14 +3163,14 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
     .order('display_order', { ascending: true });
   if (error) {
     // 生のエラーは app_logs にだけ残す (ページには出さない)
-    logger.error('公開のプランの一覧を読めませんでした (/pricing は準備中を描く)', error);
+    logger.error('公開のプランの一覧を読めませんでした (/pricing は買えるプランが無いときの表示を描く)', error);
     return [];
   }
   return (data ?? []) as PurchasablePlan[];
 }
 ```
 
-- 失敗の扱いは「空を返す」が正 (投げない)。`/pricing` は 0 件と同じ「準備中」を描き、エラーページにしない。テスト 97。
+- 失敗の扱いは「空を返す」が正 (投げない)。`/pricing` は 0 件と同じ表示 (フリーのカードだけ) を描き、エラーページにしない。テスト 97。
 
 ### 10.2 `/account/billing/checkout?plan_key=&interval=` — 特商法の最終確認 (`cross/08` §3)
 
@@ -3199,7 +3199,7 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
   `cancel_at_period_end` は status と同時に成り立つ (§7.3 の予約の行は live 5 値のどれにも付く) ので、2 行目は 1 行目に足す (1 行目を置き換えない)。表はテスト 112 (関数) とテスト 113 (画面) が全組で見張る。
 - ボタン: `has_customer` → 「お支払い方法・請求書 (Stripe)」= `POST /api/billing/portal` → `url` へ。`can_cancel` → 「解約する」(確認ダイアログ) = `POST …/cancel`。`can_resume` → 「解約を取り消す」= `POST …/resume`。`can_purchase` → 「プランを見る」= `/pricing`。
 - `isNativeApp` なら表示だけ (ボタンは描かない)。
-- ボタンの POST (Portal・解約・取り消し) が 4xx / 5xx を返したら、`BILLING_ERROR_MESSAGES` の固定の文を出す (鍵が無いときの 503 `EXT_STRIPE_NOT_CONFIGURED` は「お支払いの受付は準備中です」)。要約の GET は鍵が無くても 200 なので、ページそのものは開ける (§9・S11)。
+- ボタンの POST (Portal・解約・取り消し) が 4xx / 5xx を返したら、`BILLING_ERROR_MESSAGES` の固定の文を出す (鍵が無いときの 503 `EXT_STRIPE_NOT_CONFIGURED` は「お支払いを受け付けていません」)。要約の GET は鍵が無くても 200 なので、ページそのものは開ける (§9・S11)。
 - 設定画面 (`src/app/(main)/settings/page.tsx`) に「プランとお支払い」の行を足し `/account/billing` へ (Web だけ。`isNativeApp` では描かない)。
 
 ### 10.4 モバイル (アプリ内課金をしない)
@@ -3463,7 +3463,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 | `RATE_LIMITED` | 429 | `rateLimitExceededResponse` | 既存の文 |
 | `INTERNAL_ERROR` | 500 | `internalError` (nested) | 処理中にエラーが発生しました |
 | `EXT_STRIPE_API_FAILED` [NEW] | 502 | gateway | 決済サービスとの通信に失敗しました。しばらくしてからお試しください |
-| `EXT_STRIPE_NOT_CONFIGURED` [NEW] | 503 | gateway | お支払いの受付は準備中です |
+| `EXT_STRIPE_NOT_CONFIGURED` [NEW] | 503 | gateway | お支払いを受け付けていません |
 
 [NEW] は `cross/04` §4.2 に追記する (`BILL_` の接頭辞の行を §4.1 の表に足す。§16.2)。
 
@@ -3560,7 +3560,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 49. `it('migration comment does not attribute decisions (no "オーナー判断")')`
 
 `tests/public-claims-guard.test.ts` (更新):
-50. `it('pricing page shows 準備中 when there is no purchasable plan: no rows, or the only row has no interval for which isPurchasable is true')` (既存の期待値を保つ。2 つ目のモックは `stripe_price_id` はあるが `monthly_price_jpy: 0`・`stripe_yearly_price_id: null` の 1 件で、カードも CTA も出ず「準備中」になる。§10.1 の「どちらも買えない → カードを描かない」)
+50. `it('pricing page shows only the free card and the free FAQ (no 準備中 card, no pre-sale wording) when there is no purchasable plan: no rows, or the only row has no interval for which isPurchasable is true')` (#1911 で it の名前と期待値を改めた。2 つ目のモックは `stripe_price_id` はあるが `monthly_price_jpy: 0`・`stripe_yearly_price_id: null` の 1 件で、有料プランのカードも CTA も出ず、フリーのカードだけになる。§10.1 の「どちらも買えない → カードを描かない」)
 51. `it('pricing page shows one card per purchasable plan with an amount and a CTA only for the intervals where isPurchasable is true (both Prices: 月額で始める → interval=month and 年額で始める → interval=year; no stripe_yearly_price_id: only the monthly amount and 月額で始める, no yearly amount and no interval=year link), without the 準備中 notice and the pre-sale FAQ, and hides the cards and CTA in native app mode')` (§10.1。page.tsx は `@/lib/billing/public-plans` と `next/headers` の `cookies` をモックし `renderToStaticMarkup(await PricingPage())` で描く。§16.1 の `public-claims-guard` の行。モックは 2 件: A = `plan_type: 'personal'`・月額 1,234・年額 12,340・`stripe_price_id` と `stripe_yearly_price_id` の両方あり、B = `plan_type: 'family'`・月額 2,345・年額 23,450・`stripe_yearly_price_id: null` (どちらも `status: 'public'`。金額は `FORBIDDEN` に無い値)。期待: A の `¥1,234`・`¥12,340`・`plan_key=<A>&amp;interval=month`・`plan_key=<A>&amp;interval=year`、B の `¥2,345`・`plan_key=<B>&amp;interval=month` があり、`¥23,450` と `plan_key=<B>&amp;interval=year` が無い (`renderToStaticMarkup` は `href` の `&` を `&amp;` で出す)。「年額で始める」はちょうど 1 回 (A の分) だけ出る)
 
 追加 (番号は 72〜79。段は §15.1):
@@ -3766,7 +3766,7 @@ export const defaultAccountDeletionBilling: AccountDeletionBilling = {
 削除:
 - `apps/mobile/app/(public)/pricing.tsx` (アプリの料金の画面。§10.4。段 C)
 
-触らない (本冊の段の外。販売開始の前に別の PR で改める。§17.3 の前提・§18 の 14): `src/app/legal/page.tsx` (特定商取引法に基づく表記の「販売価格」ほか 5 行の「有料プランは準備中です（販売開始前）」)・`src/app/faq/page.tsx` と `src/app/page.tsx` の FAQ の同じ文・それを見張る `tests/public-claims-guard.test.ts` の describe `#1155 特定商取引法ページ (/legal)` と `#1155 FAQ (/faq とトップページの FAQ)` の it (同じファイルの料金のページの部分は §16.1 のとおり直す) と `tests/e2e/b10-unexplored-areas.spec.ts` の 4-1 / 4-3。本冊の段のあとも、Price を登録するまでは文のとおり販売していないので正しい
+触らない (本冊の段の外。§17.3 の前提・§18 の 14): `src/app/legal/page.tsx` (特定商取引法に基づく表記の「販売価格」ほか 5 行)・`src/app/faq/page.tsx` と `src/app/page.tsx` の FAQ・それを見張る `tests/public-claims-guard.test.ts` の describe `#1155 特定商取引法ページ (/legal)` と `#1155 FAQ (/faq とトップページの FAQ)` の it (同じファイルの料金のページの部分は §16.1 のとおり直す) と `tests/e2e/b10-unexplored-areas.spec.ts` の 4-1 / 4-3。本冊の段の後に #1911 (#1916) が、販売の 5 行を項目ごと取り除き、FAQ の「有料プランは準備中です（販売開始前）」を取り除いて、見張りのテストを「準備中」「販売開始前」が無いことの検査に改めた。販売の内容の項目は有料プランの販売 (#1912) が足す
 
 触らない (凍結。上の一覧の外なので、触ったら blocking。理由は §6.5):
 - `supabase/baseline/**` (`prod_schema.sql`・`prod_function_acl.sql`・`prod_table_acl.sql`・`catalog/*.csv`・`manifest.json`・`refresh-request.txt` ほか)。本番のスナップショットで、本冊の migration の前の本番の状態 (`personal_subscriptions_insert` / `_update`・旧 `guard_user_profiles_privileged(_on_insert)`) を持ったままでよい
@@ -3844,7 +3844,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/site-config-guard.test.ts` | `success_url` / `return_url` | `getSiteUrl()` から作る (ドメインを書かない) | B |
 | `tests/email-send-throttle-contract.test.ts` | `@/lib/emails/send` | 核はメールを送らないので反応しない | — |
 | `tests/public-claims-guard.test.ts` | `src/app/pricing/page.tsx` の描画・「準備中」。page.tsx は async の Server Component になり、いまの `renderToStaticMarkup(createElement(Page))` では描けない | (1) `PUBLIC_PAGES` の料金の行を `{ file: 'src/app/pricing/PricingPageView.tsx', Page: () => createElement(PricingPageView, { plans: [], isNativeApp: false }) }` にする (見える文は `PricingPageView` に移るので、ソースの走査もこのファイル)。`#1151 料金ページ (/pricing)` の describe の `text` も同じ 0 件の描画、`source` は `PricingPageView.tsx` (3 つの it の期待値は変えない。1 つ目の it はソースに `billingPeriod` が無いことを見るが、§10.1 は間隔の切替を置かないので緑のまま)。(2) page.tsx そのものはテスト 50・51 で見る: ファイルの先頭で `vi.mock('@/lib/billing/public-plans', …)` (`listPurchasablePlans` を it ごとに、0 件 / 買える間隔の無い 1 件 (テスト 50) / 年額の Price のあるプランと無いプランの 2 件 (テスト 51)) と `vi.mock('next/headers', …)` (`cookies` は `{ get: (name) => … }` を resolve する Promise を返す async 関数。`is_native_app` の値を it ごとに変える) をして、`renderToStaticMarkup(await PricingPage())` で描く。モックの価格は `FORBIDDEN` に無い値にする (値はテスト 51 の注のとおり)。(3) `FORBIDDEN` (`¥980`・`980円` ほか) は**変えない** (価格は DB の値でソースに無い。`/legal`・FAQ の見張りは販売開始の PR まで要る。「依頼で名指しされた文字列…をすべて検査している」の it も `¥980` を要る)。describe `#1155 特定商取引法ページ (/legal)`・`#1155 FAQ (/faq とトップページの FAQ)` の it は変えない (§15.2 の「触らない」) | C |
-| `tests/e2e/b10-unexplored-areas.spec.ts` (4-1: `/pricing` に「有料プランは準備中です（販売開始前）」が出て `¥980`・`年払い` が出ない / 4-3: `/legal` の同じ文) | `/pricing` のデータ駆動化 | 本冊の段では変更なし (ローカルの DB の `subscription_plans` は `stripe_price_id` が全部 NULL (migration `20251126124224` の INSERT) なので 0 件 = 準備中のまま。`/legal` は変えない)。本番に向ける手動の `full_suite` (`e2e.yml`) では、販売開始 (§17.3 の Price の登録) のあと 4-1 が赤になるので、4-1 / 4-3 は §17.3 の前提の「販売の内容に改める PR」で直す | — |
+| `tests/e2e/b10-unexplored-areas.spec.ts` (本冊の時点は 4-1: `/pricing` に「有料プランは準備中です（販売開始前）」が出て `¥980`・`年払い` が出ない / 4-3: `/legal` の同じ文。#1911 (#1916) で、4-1 は「現在は無料でご利用いただけます。」が出て「準備中」「販売開始前」が無いこと、4-3 は販売の項目 (「販売価格」「支払方法」) と「準備中」「販売開始前」が無いことに改めた) | `/pricing` のデータ駆動化 | 本冊の段では変更なし (ローカルの DB の `subscription_plans` は `stripe_price_id` が全部 NULL (migration `20251126124224` の INSERT) なので 0 件 = 有料プランのカードは出ない。`/legal` は変えない)。本番に向ける手動の `full_suite` (`e2e.yml`) では、販売開始 (§17.3 の Price の登録) のあと 4-1 が赤になる (0 件のときだけの段落が消える) ので、4-1 / 4-3 は §17.3 の前提の、販売の内容を足す PR (#1912) で直す | — |
 | `src/lib/maintenance-mode.ts`・`src/__tests__/lib/maintenance-mode.test.ts` (`/pricing` はメンテナンス中は止める側) | `/pricing` の作り直し・新しい route (`/api/billing/*`・`/api/webhooks/stripe`) | 変更なし (`/pricing` はメンテナンス中は止めたまま。新しい route も止める側で、Webhook は Stripe が再送する。§9.6) | — |
 | `src/app/contact/page.tsx:308` (「料金プランについて」→ `/pricing`)・`src/components/marketing/landing-copy.ts` のフッターの `料金プラン` → `/pricing` (トップの紹介ページのフッター。#1867 でトップの画面の本体を `src/components/marketing/` に作り直した。`docs/design/marketing/01-landing-site.md` §4.20)・`tests/legal-consent-gate.test.ts:89` (ゲートの対象のパスの一覧に `/pricing`)・`tests/e2e/.exploration/auth-explore.spec.ts:510`・`nutrition-badges-misc-explore.spec.ts:534` (未ログインで `/pricing` が開ける) | `/pricing` | 変更なし (`/pricing` は同じパスで未ログインでも開ける公開のページのまま。ゲートの対象外にもしない。WebView で開いたときの購入導線は Cookie で描かない。§10.4) | — |
 | `apps/mobile/__tests__/components/PublicPage.test.tsx` (「画面を拾えている」が `(public)` の画面を `about` / `pricing` / `privacy` / `terms` の 4 つと期待・各画面が `webPath="/…"` を渡す・例のパス `/pricing`)・`apps/mobile/__tests__/app/route-targets-exist.test.ts` (行き先の実在・`removedScreens`) | 料金の画面 `app/(public)/pricing.tsx` を消し、入口の画面のリンクを外す (§10.4) | §10.4 の箇条のとおり (一覧から `pricing.tsx` を外す・例のパスを `/about` に・`removedScreens` に `pricing`) | C |
@@ -3955,9 +3955,9 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/mobile/01-architecture.md` | 課金 | §10.4 の規則 (アプリ内に購入導線を出さない) を 1 節足す | 段 C と同じ PR |
 | `.env.example` | 84〜89 行 | `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=` を消す。`STRIPE_SECRET_KEY` の説明に Checkout / Portal を足す | 段 B |
 | `ENV_SETUP.md` | 表「必須 / 任意」の「任意」の行 (課金 `STRIPE_SECRET_KEY`)・節「機能ごとに要る環境変数（`check:env` では任意）」 | 「任意」の行の課金に `STRIPE_WEBHOOK_SECRET` を足す。節に `4. **Stripe (課金) 関連**` を足し、`STRIPE_SECRET_KEY` (Checkout・Billing Portal・退会の解約) と `STRIPE_WEBHOOK_SECRET` (`/api/webhooks/stripe` の署名の確認。無ければ 503) を書き、本冊 §17 の手順を指す (番号は 1〜3 に続けて 4。`tests/env-source-scan.test.ts` が番号の飛びを見る) | 段 B |
-| `docs/design/operator/02-api-spec.md` | §9 冒頭の注 (:570-573「課金 (Stripe の Webhook 受信…) は未開始」)・§21 `POST /api/webhooks/stripe` (:1411-1433)・§24 のテスト 1・2 (:1534-1535) と見本 (:1545-1627)・§25 (:1632) | §9 の注を「Webhook の受け口と契約の写しは billing/01 で入った。収益スナップショットなどの集計バッチと、請求書・収益推移・整合チェックの画面の実データ化は配線の冊 (それまで画面は準備中のまま。本冊 §18 の 20)」に直す。§21 の処理フローを「正本は billing/01 §9.6 (署名 → claim → Stripe から取り直し → 写像。冪等は `billing_claim_stripe_event`。処理中は 409・失敗は 500 で Stripe に再送させる)」へのリンクに置き換え、`stripe.webhooks.constructEvent`・INSERT の衝突での早期 return・イベントごとの直接の UPDATE・`trial_will_end` のリマインダーと `charge.dispute.created` の soft-suspend (どちらも配線) を消す。§24 の 1・2 は billing/01 §14 のテストを指す。見本 (`import Stripe from 'stripe'`・`@/lib/operator/stripe-webhook` の `validateStripeSignature`) は SDK を入れない (§5.1 C) ので、`src/lib/webhook/verify.ts` の `verifyStripeWebhook` (§8.3) と `src/__tests__/lib/webhook/verify.test.ts` を指す形に置き換える。§25 の行は「実装は billing/01」に。§1 (:5) の対象の一覧は変更なし (URL は同じ) | 段 B と同じ PR |
+| `docs/design/operator/02-api-spec.md` | §9 冒頭の注 (:570-573「課金 (Stripe の Webhook 受信…) は未開始」)・§21 `POST /api/webhooks/stripe` (:1411-1433)・§24 のテスト 1・2 (:1534-1535) と見本 (:1545-1627)・§25 (:1632) | §9 の注を「Webhook の受け口と契約の写しは billing/01 で入った。収益スナップショットなどの集計バッチと、請求書・収益推移・整合チェックの画面の実データ化は配線の冊 (それまで画面は出さない。#1911 (#1916) で、3 画面は 404 にし、売上・経理のクイックリンクからも外した。本冊 §18 の 20)」に直す。§21 の処理フローを「正本は billing/01 §9.6 (署名 → claim → Stripe から取り直し → 写像。冪等は `billing_claim_stripe_event`。処理中は 409・失敗は 500 で Stripe に再送させる)」へのリンクに置き換え、`stripe.webhooks.constructEvent`・INSERT の衝突での早期 return・イベントごとの直接の UPDATE・`trial_will_end` のリマインダーと `charge.dispute.created` の soft-suspend (どちらも配線) を消す。§24 の 1・2 は billing/01 §14 のテストを指す。見本 (`import Stripe from 'stripe'`・`@/lib/operator/stripe-webhook` の `validateStripeSignature`) は SDK を入れない (§5.1 C) ので、`src/lib/webhook/verify.ts` の `verifyStripeWebhook` (§8.3) と `src/__tests__/lib/webhook/verify.test.ts` を指す形に置き換える。§25 の行は「実装は billing/01」に。§1 (:5) の対象の一覧は変更なし (URL は同じ) | 段 B と同じ PR |
 | 同 | §22 `POST /api/cron/stripe-reconcile` (:1453-1460。「自動修復禁止」) | 「不一致は写像を呼んで直す (Stripe が正本。billing/01 §12)」に (05 §8 の行と同じ)。時刻・認証は配線の冊が決める | 配線の残りの冊 (`stripe_integrity_check` を作るとき) と同時 |
-| `docs/design/operator/03-ui-spec.md` | §13 冒頭の注 (:274-275「課金が未開始で元データが無いため」) | 「請求書・収益推移・整合チェックの元データ (集計バッチ・reconcile) は配線の冊で作るため、それまで」に直す。画面の案内 (`src/components/operator/finance/BillingNotStartedNotice.tsx` の「課金は未開始のため準備中」) を外すのは配線の冊 (本冊 §18 の 20) | 段 B と同じ PR |
+| `docs/design/operator/03-ui-spec.md` | §13 冒頭の注 (:274-275「課金が未開始で元データが無いため」) | 「請求書・収益推移・整合チェックの元データ (集計バッチ・reconcile) は配線の冊で作るため、それまで」に直す。画面の案内 (`src/components/operator/finance/BillingNotStartedNotice.tsx` の「課金は未開始のため準備中」) は #1911 (#1916) で部品ごと取り除き、3 画面は 404 にした。画面を実データで出すのは配線の冊 (本冊 §18 の 20) | 段 B と同じ PR |
 | 同 | §26 `/super-admin/integrations/stripe` の設定フォーム (:564「Publishable Key」) | 行を外す (本冊は公開鍵を使わない: Checkout と Portal はサーバが作った Stripe のページの URL へ移るだけ。`.env.example` の `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` も消す (上の `.env.example` の行))。:566-567 の Webhook の秘密と受け口の URL は本冊と同じ (変更なし) | 段 B と同じ PR |
 | `docs/design/operator/07-audit-monitoring.md` | §4 監査対象操作の網羅リスト (§4.5 システム自動操作 :307-316。利用者の操作の節は無い) | 本冊 §8.1 `BILLING_AUDIT_ACTIONS` の 9 つのうち一覧に無い 8 つを足す: 利用者の課金の操作の節を 1 つ足して `user.billing.checkout_started`・`user.billing.cancel_scheduled`・`user.billing.cancel_revoked`、§4.5 に `system.billing.subscription_created`・`system.billing.subscription_status_changed`・`system.stripe.event_failed`・`system.billing.account_deletion_stripe_cancelled`・`system.billing.orphan_subscription_cancelled` (`system.payment.failed` はすでにある)。`target_type` の値 `stripe_subscription` を書く (§8.1 `BILLING_AUDIT_TARGET_TYPES`) | 段 B と同じ PR |
 | `docs/design/operator/09-runbook.md` | §3.2 適用順序の図 (:32 `personal_subscriptions`) | 下に `billing_customers` (billing/01 §6.3) を足す | 段 A と同じ PR |
@@ -4013,7 +4013,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 
 ## 17. 本番の準備手順 (運用。秘密の値は #1113 のオーナー作業)
 
-順序: §17.1 (Stripe の設定) と §17.2 (鍵・秘密・migration) を済ませてから、最後に §17.3 で Price を登録する。Price の登録 (`subscription_plans.stripe_price_id`) がそのまま `/pricing` の公開の合図なので (§10.1)、鍵より先に登録すると「`/pricing` と確認画面は出ているのに『申し込む』が 503 (お支払いの受付は準備中です)」の時間ができる (R12・S11)。
+順序: §17.1 (Stripe の設定) と §17.2 (鍵・秘密・migration) を済ませてから、最後に §17.3 で Price を登録する。Price の登録 (`subscription_plans.stripe_price_id`) がそのまま `/pricing` の公開の合図なので (§10.1)、鍵より先に登録すると「`/pricing` と確認画面は出ているのに『申し込む』が 503 (お支払いを受け付けていません)」の時間ができる (R12・S11)。
 
 ### 17.1 Stripe の Dashboard (Price の登録より前)
 
@@ -4034,11 +4034,11 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 前提 (すべて済んでから):
 - §17.1 の 2〜6 と §17.2 (本番に鍵と Webhook の秘密が入り、デプロイ済み・migration 適用済み)。
 - 段 A〜C のマージと、モバイルの料金の画面を消した版のアプリの配布 (§10.4。配布済みの古い版の扱いは §18 の 2)。
-- 特定商取引法に基づく表記 (`/legal` の「販売価格」「支払方法」「支払時期」「サービス提供時期」「解約について」の 5 行) と、`/faq`・トップ (`/`) の FAQ の「有料プランは準備中です（販売開始前）」を、販売の内容に改める PR のマージ (文面は業務・法務の判断で、本冊の段の外。それを見張る `tests/public-claims-guard.test.ts` の describe `#1155 特定商取引法ページ (/legal)`・`#1155 FAQ (/faq とトップページの FAQ)` の it と、`tests/e2e/b10-unexplored-areas.spec.ts` の 4-1 (`/pricing` の「準備中」) と 4-3 (`/legal`) も同じ PR で直す。§15.2・§18 の 14)。販売を始めたのに表記が「準備中」のままにならないようにするため。
+- 特定商取引法に基づく表記 (`/legal`) に販売の内容の項目 (「販売価格」「支払方法」「支払時期」「サービス提供時期」「解約について」ほか) を足し、`/faq`・トップ (`/`) の FAQ に有料プランの答えを足す PR (有料プランの販売 #1912) のマージ (文面は業務・法務の判断で、本冊の段の外。#1911 (#1916) がこれらの項目と「有料プランは準備中です（販売開始前）」を取り除いたので、いまは項目ごと無い。それを見張る `tests/public-claims-guard.test.ts` の describe `#1155 特定商取引法ページ (/legal)`・`#1155 FAQ (/faq とトップページの FAQ)` の it と、`tests/e2e/b10-unexplored-areas.spec.ts` の 4-1 (`/pricing` の 0 件のときの段落) と 4-3 (`/legal` の販売の項目が無い) も同じ PR で直す。§15.2・§18 の 14)。販売を始めたのに、特定商取引法に基づく表記に販売の項目が無いままにならないようにするため。
 
 手順:
 1. `pro`・`family_basic`・`family_pro` の Product を作り、`PATCH /api/super-admin/plans/[id]` で `stripe_product_id` を入れる → `POST /api/super-admin/plans/[id]/price-change` で月額・年額を同期する (既存の機構 F16。Edge Function の secrets にも `STRIPE_SECRET_KEY` が要る)。`subscription_plans.stripe_price_id` が入った時点で `/pricing` に出る (§10.1)。
-- あとで鍵を外した (ローテーションの失敗など) 間は、`/pricing` と確認画面は出たまま「申し込む」が 503 (`EXT_STRIPE_NOT_CONFIGURED`・「お支払いの受付は準備中です」) になる。gateway の生成で止まるので、Stripe にも DB にも何も作られない (顧客も作らない)。鍵を戻せば解ける。
+- あとで鍵を外した (ローテーションの失敗など) 間は、`/pricing` と確認画面は出たまま「申し込む」が 503 (`EXT_STRIPE_NOT_CONFIGURED`・「お支払いを受け付けていません」) になる。gateway の生成で止まるので、Stripe にも DB にも何も作られない (顧客も作らない)。鍵を戻せば解ける。
 
 ### 17.4 受け入れの確認 (整合ゲートで読み取り)
 
@@ -4068,7 +4068,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | 11 | Billing Portal での解約の予約 / 取り消し (route を通らない) を `admin_audit_logs` に残すか | 残さない (写像は status の変化だけを監査する。記録は `stripe_webhook_events.payload` の最小化した写し (`cancel_at_period_end` / `cancel_at` を残す) と Stripe の履歴。§7.3)。要るなら写像に「`cancel_at_period_end` が変わったら `system.billing.cancel_changed` を書く」を足す (`BILLING_AUDIT_ACTIONS` が 1 つ増える) |
 | 12 | 退会で見つけられない契約: 別の顧客 (`billing_customers` に無い `cus_`) で作られ、写像も失敗して DB に行が無い契約 (Dashboard で手作業した場合だけ) | 解約されない。運営が Finance 画面 (配線) の `failed` イベントから拾って Stripe で解約する |
 | 13 | 家族プランを契約中の代表者が代表者を譲ったとき、契約 (支払い) は旧代表者に残り、グループは新しい代表者の契約に従う (無ければ free)。交代を止める・契約を移すなどの業務の扱い (family ドメイン) | 交代は止めない。グループのプランはいまの代表者の契約に従う (S18・§6.4 (10))。旧代表者の契約はそのまま旧代表者の個人の権利になる (解約は本人が `/account/billing` から) |
-| 14 | 特定商取引法に基づく表記 (`/legal`) の「販売価格」「支払方法」「支払時期」「サービス提供時期」「解約について」と、`/faq`・トップの FAQ の文面 (いまは「有料プランは準備中です（販売開始前）」)。販売を始めるときに何と書くか (本冊の仕組みでは、支払方法 = Stripe の Checkout が受け付ける方法 (Dashboard の設定による。`payment_method_types` は指定しない)・支払時期 = 申し込み時 (無料期間のあるプランは無料期間の終わり) と以後の更新日・提供時期 = 決済の完了後すぐ・解約 = `/account/billing` からいつでも、次回更新日の前日まで使え、日割りの返金なし) は業務・法務の判断 | 本冊の段では変えない。販売開始 (§17.3 の Price の登録) の前提として、別の PR で改める (`tests/public-claims-guard.test.ts` の `/legal`・FAQ の describe の it と `b10` の E2E 4-1 / 4-3 も同じ PR) |
+| 14 | 特定商取引法に基づく表記 (`/legal`) の「販売価格」「支払方法」「支払時期」「サービス提供時期」「解約について」と、`/faq`・トップの FAQ の文面 (#1911 (#1916) で「有料プランは準備中です（販売開始前）」と販売の 5 行を取り除き、いまは項目ごと無い)。販売を始めるときに何と書くか (本冊の仕組みでは、支払方法 = Stripe の Checkout が受け付ける方法 (Dashboard の設定による。`payment_method_types` は指定しない)・支払時期 = 申し込み時 (無料期間のあるプランは無料期間の終わり) と以後の更新日・提供時期 = 決済の完了後すぐ・解約 = `/account/billing` からいつでも、次回更新日の前日まで使え、日割りの返金なし) は業務・法務の判断 | 本冊の段では変えない。販売開始 (§17.3 の Price の登録) の前提として、有料プランの販売 (#1912) の PR で足す (`tests/public-claims-guard.test.ts` の `/legal`・FAQ の describe の it と `b10` の E2E 4-1 / 4-3 も同じ PR) |
 | 15 | 家族のグループの人数の上限 (`member_limit`) が下がったとき (`family_pro` 8 の契約の終了・代表者の交代で 4 に) に、すでに上限を超えているメンバーをどうするか (family ドメイン) | 外さない。新しい招待の作成・承諾・子供の追加だけが既存の `MEMBER_LIMIT_EXCEEDED` で止まり、画面は `6/4 人` のように表示する (§7.1)。外す・通知するなどは family の冊 (§16.2) |
 | 16 | 契約中のプランを別のプランに移す (例: `pro` → `family_basic`) 業務の扱い | 核では扱わない。Portal のプランの変更は OFF (§17.1 の 3.)・核の API に無い。運営が Stripe の Dashboard で Price を付け替えても、行の `plan_key` は変えない (§7.3)。移すときは解約 (期間末) のあと新しく購入する |
 | 17 | 退会のあとに Stripe に生まれた・残った契約 (`syncSubscription` が即時解約する。§8.6・§7.3) の最初の請求の返金と、解約しない場合の扱い | 自動で返金しない (核は返金を扱わない)。試用つきの最初の購入は試用中に解約されるので請求は起きない。試用の無い購入で最初の請求が済んでいれば、運営が監査 `system.billing.orphan_subscription_cancelled` (warn) から拾って Stripe で返金する。`customer_closed` が false の「退会済み」(当社の対応表に無い顧客の契約 = 同じ Stripe のテスト用アカウントを使う別の環境の契約、または運営が metadata の `user_id` を書き間違えた契約) は解約しない (当社の利用者のものと言えないため。運営が Finance 画面 (配線) で拾う) |
@@ -4094,5 +4094,6 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | v1.9 | 2026-10-15 | 網羅性 周 6 を反映: §16.2 に母集合の作り方 (`stripe|personal_subscriptions|plan_key_cached` を docs と `*.md` で grep した 44 本を 1 本ずつ判定) と、漏れていた文書の行 (operator/02 §9 の注・§21・§22・§24・§25、operator/03 §13・§26、operator/07 §4、operator/09 §3.2・§4・§9.1・§13・§12.2、cross/06 §4.2・§4.3・§4.4・§5.1・§9・§12、`00-architecture.md` :214 (SDK ラッパー → `billing/`)、org/04 :517 と requirements/02 :763-764 (一時停止は `pause_collection`)、requirements/03 の試用・DDL / RLS・reconcile、family / org の `migrate-to-personal`・family/03・family/08・組織の課金の文書、cross/07・cross/09、変更なしの文書と過去の記録) を足す・operator/CLAUDE.md の行に設計原則「2. Stripe との同期」を足す・R20 の指し先を新設の §16.3 (共有面の台帳。リポジトリに台帳のファイルは無い) に・§16.1 の母集合の問い 4. に `plan_key_cached` を足し、偽の DB で読むだけのテスト 3 本を「変更なし」の行に |
 | v1.10 | 2026-10-15 | 設計ゲート R6 の指摘を反映: (1) `/account/billing` の状態の表示文を `status` × `cancel_at_period_end` の表にし (`active` は「ご利用中」・`paused` は「一時停止中」・解約の予約は 2 行目に足す)、`billingStatusLines` / `formatBillingDate` を core に (§8.1・§10.3。テスト 112・113)。(2) 凍結 (BAN) 中の利用者も解約の予約・契約の要約・Billing Portal ができるように、`FROZEN_ALLOWED_API_PATHS` に 3 本を足し、3 本の route は `requireUserAllowingFrozen` で凍結を見ない (§9.8)。凍結中の解約の画面 `/frozen/billing` と `/frozen` のリンク (§10.5)・§7.1〜§7.3 の凍結の行・S21・§12 の凍結と課金の契約・§16 の追随 (テスト 114〜119)。(3) `handleStripeEvent` が `data.object` から使う値に、`invoice.payment_failed` の監査の `details` の請求の `id`・`attempt_count`・`amount_due` を足して §8.2・JSDoc・§5.2・テスト 33 の文をそろえる |
 | v1.11 | 2026-10-15 | 網羅性 周 7 (続きの走行の周 1) を反映: §7.3 に新規購入の 2 行 (live (S / M) → 409 `OP_SUBSCRIPTION_ALREADY_ACTIVE`・`incomplete` → 新しい Checkout で別の行) と、解約の予約・取り消しの 409 / 冪等の 3 行 (live な S の行が無い → `BILL_NO_LIVE_SUBSCRIPTION`・予約なしの取り消し → `BILL_CANCEL_NOT_SCHEDULED`・予約済みの 2 回目の予約 → 何もせず 200) を足す (§7.1 の新規購入・解約の列と対にする)・テスト 31 に `BILL_NO_LIVE_SUBSCRIPTION` の場合を足す・§16.1 の母集合の問い合わせに 6. (列の一覧を持つ偽の client) と `transfer-accept-fake-client.ts` の変更なしの行を足す |
+| v1.12 | 2026-10-19 | #1911 (#1916) の後の現在形化 (製品の挙動は変えない): 「準備中」の表示を前提にした記述 (F2・R12・S11 とトレース・§7 の状態の表・§10.1 の `PricingPageView` の規則・`listPurchasablePlans` のコメント・`EXT_STRIPE_NOT_CONFIGURED` の文「お支払いを受け付けていません」・テスト 50 の it の名前・§15.2・§16 の E2E の行・§17.3 の前提・§18 の 14・operator/02・03 の追随の行) を、買えるプランが無い間は有料プランのカードを出さず、`/legal` の販売の項目は項目ごと無い今の状態に合わせた |
 | v1.1 | 2026-10-15 | 設計ゲート R1 の指摘を反映: 退会の解約を Stripe の顧客の一覧から列挙 (§11)・家族のプランを代表者に従わせるトリガー (作成と交代。§6.4 (10))・`plan_key_cached` を特権列ガードに (§6.4 (11))・Stripe の一時停止 / 再開 / unpaid の遷移 (§7.3)・`billing_customers` を書き出しから除外・処理中のイベントの再送は 409 (§6.4 (7)・§9.6)・`maxDuration` はリテラル (§9.6)・監査の `target_type` (§8.1) |
 

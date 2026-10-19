@@ -2,7 +2,7 @@
 
 | 項目 | 値 |
 |---|---|
-| Status | 設計ゲート審査中 (v1.10) |
+| Status | 実装済み (#1758 12649661・2026-10-16)。設計ゲート通過 (v1.10・#1712)。同意書の文と版は #1901 (#1918 2ba5b3b3・2026-10-19。cross/20 Q-27) で v2026.2 に改めた (§6 の正典の写し・§8 の 14) |
 | Issue | #1173 (要件 03 §17.10。先例: #1174 の規約の同意 (`accept_legal_documents`)・#1232 の子供の昇格 (本人同意)・#1154 の AI 同意 (`external_data_consents.revoked_at`)) |
 | 分冊 | 1 冊・2 段 (段 A = DB + `packages/shared` + 書き出しの分類 / 段 B = Web + API + メール + モバイルの注記)。§0.2 |
 | 正典の関係 | `cross/01-auth-session.md` §12〜§13.2 (子供アカウント保護の方針・草案) と `family/01-data-model.md` §4.13 (`parental_consents` の草案 DDL) を**本冊が置き換える** (マージ後に両節は本冊への参照に現在形化する。§6.18)。`cross/08-legal-compliance.md` §7.2 の同意ゲート (#1174) に「生年月日の確認」を畳む。13a (#1442) は実装まで main に着地済み (#1697)・13b は設計書が main に着地済み。両冊との契約は §0.5 |
@@ -935,12 +935,12 @@ export interface ParentalConsentDocumentInfo {
  * v2026.2 (#1901 cross/20 Q-27): 同意書の文から実装に無い約束 (保護者が代わりに記録する・AI の解析と献立の提案に子どもの記録を使う・
  * お問い合わせからの削除の依頼) を消し、登録できる情報 (名前・生年月日・性別) だけを書いたので版を上げた。
  * v2026.1 で記録した同意は失効しない (parental_consent_active は版を見ない。cross/14 S15)。新しい子どもの追加は v2026.2 で記録する。
- * 施行日は公開 (デプロイ) の日。利用規約・プライバシーポリシーの施行日 (legal-versions.ts の LEGAL_DOCUMENTS) と同じく、
- * マージの直前に実際の公開日 (JST の YYYY-MM-DD) に置き換えて、行末の目印のコメントを消す (cross/20 §9.4 の 3)。
+ * 施行日は公開 (デプロイ) の日。利用規約・プライバシーポリシーの施行日 (legal-versions.ts の LEGAL_DOCUMENTS) と同じ
+ * 2026-10-19 に公開した (#1918。cross/20 §9.4 の 3)。
  */
 export const PARENTAL_CONSENT_DOCUMENT: Readonly<ParentalConsentDocumentInfo> = {
   version: 'v2026.2',
-  effectiveDate: '2026-10-19', // 仮置き: マージ直前に公開日へ置き換える
+  effectiveDate: '2026-10-19',
 };
 /** 同意文書の全文を公開するパス (未ログインで読める。同意ゲートの対象外 /legal 以下) */
 export const PARENTAL_CONSENT_DOCUMENT_PATH = '/legal/parental-consent';
@@ -1371,7 +1371,7 @@ export async function withMinorGuardianStatus<P extends LegalConsentProfile>(
 | `BIRTH_DATE_MAX_AGE_YEARS` | 120 | shared | 要件 01 行 1720。SQL の `INTERVAL '120 years'` と同値 |
 | `SIGNED_NAME_MAX_LENGTH` | 100 | shared | `parental_consents_signed_name_length` と同値 |
 | (新設しない) JST の今日・暦日の検査 | 既存の `todayLocal()`・`isCalendarDate()` | shared (`date-utils.ts`) | 時差・ミリ秒・ISO の文字数の定数は本冊では作らない (既存の関数が `timeZone: 'Asia/Tokyo'` で持つ。§0.3) |
-| `PARENTAL_CONSENT_DOCUMENT` | `{ version: 'v2026.2', effectiveDate: '2026-10-19' }` (施行日は仮置き。マージの直前に公開日へ。cross/20 §9.4 の 3。v2026.1 → v2026.2 は cross/20 Q-27 で文を実装に合わせたため) | shared | 改定は版を上げる (§8) |
+| `PARENTAL_CONSENT_DOCUMENT` | `{ version: 'v2026.2', effectiveDate: '2026-10-19' }` (施行日は公開日。#1918 で 2026-10-19 に公開した。cross/20 §9.4 の 3。v2026.1 → v2026.2 は cross/20 Q-27 で文を実装に合わせたため) | shared | 改定は版を上げる (§8) |
 | `PARENTAL_CONSENT_DOCUMENT_PATH` | `/legal/parental-consent` | shared | ゲートの対象外 (`/legal` prefix) |
 | `BIRTH_DATE_PATTERN` / `PARENTAL_CONSENT_VERSION_PATTERN` | 正規表現 | shared | DB の CHECK・`LEGAL_VERSION_PATTERN` と同じ |
 | 512 (UA の切り詰め) | 既存 `MAX_USER_AGENT_LENGTH` (accept route) と同値。child route にも同じ名前の定数を置く | SQL / route | `accept_legal_documents` と同じ |
@@ -1844,7 +1844,7 @@ E2E (3 サーバー) は `scripts/local-ci.sh` が流す。`account-export-scope
 11. **同意の有効期限**: 本冊は期限を設けない (子供を外すまで有効。§6.2 の「同意の有効期限」・P31)。定期の再同意 (例: 一定年数ごと・13 歳になったとき) を求めるなら、3 と同じく `parental_consent_active` に条件を足す設計 (同意待ちの状態が復活する) が要るので、別冊。要否はオーナーの確認。
 12. **署名者の範囲 (要件との違い)**: 要件 03 §17.10 は 13 歳未満の同意の署名者を「親 (家族 owner)」と書く。本冊は、家族の大人 (代表者または大人の役割) のうち自分の `user_profiles.birth_date` で 18 歳以上と確かめられる人なら署名できる形にした (§6.4 の 9・P12〜P14b)。理由: 代表者が親権者とは限らない (祖父母が代表者で、親が大人のメンバーのことがある)。親権者であることは署名の「私はこのお子さまの親権者または法定保護者です」の確認で本人に宣言させる。18 歳未満 (昇格した本人) と生年月日の無い人は署名できない。代表者だけに絞るなら、§6.4 の 9 の署名者の検査に `v_caller_role = 'representative'` の条件を足すだけ (エラーの code は同じ)。どちらにするかはオーナーの確認。
 13. **保護者の同意とのつながりが切れた 18 歳未満の本人のアカウント**: 本冊は同意ゲートで止め、退会の道だけを出す (アカウントと記録は残り、保護者が家族に追加し直して依頼し直すか、18 歳になれば使える。§6.3 (a))。一定期間後に自動で退会させる・記録を消す運用にするかは、5 と同じくオーナーの確認。
-14. **13 歳未満の本人のアカウント**: 本冊は作らない (昇格 2 本が `PROMOTION_UNDER_COPPA_AGE` で、`accept_legal_documents` が昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。§6.4 の 10・11)。理由: 公開する同意書の第 3 段落 (仮) が「お子さま本人のアカウントは作成せず、保護者の方が代わりに記録します」と書いており (v2026.2 で「代わりに記録」は実装に無いので外した。cross/20 Q-27)、要件 03 §17.10 も「子供アカウント自体は `auth.users` を持たない」「13 歳未満には Push 通知送信不可」と書くので、動作を文面と要件の側に揃えた (現行の昇格 #1232 は年齢を見ないので、13 歳未満の昇格は本冊から断るようになる。本番の `family_members` は 0 行で、影響を受ける人はいない)。13 歳未満でも保護者の依頼で本人のアカウントとつなげる形にするなら、3 つの IF (`accept_legal_documents` の `v_age < 13`・昇格 2 本の `< 13`) と `PROMOTION_UNDER_COPPA_AGE` を外し、同意書の第 3 段落・`SIGNUP_MINOR_NOTICE`・`minorRefusedBody`・`withdrawnBody` の「13歳以上」の文を直す (1 の弁護士の確認にも含める)。どちらにするかはオーナーの確認。
+14. **13 歳未満の本人のアカウント**: 本冊は作らない (昇格 2 本が `PROMOTION_UNDER_COPPA_AGE` で、`accept_legal_documents` が昇格の経路があっても `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。§6.4 の 10・11)。理由: 公開している同意書 (v2026.2) の第 3 段落が「お子さま本人のアカウントは作成せず、ほめゴハンに登録するお子さまの情報は、第1段落の情報だけです」と書いており (v2026.1 の「保護者の方が代わりに記録します」は実装に無いので v2026.2 で外した。cross/20 Q-27)、要件 03 §17.10 も「子供アカウント自体は `auth.users` を持たない」「13 歳未満には Push 通知送信不可」と書くので、動作を文面と要件の側に揃えた (現行の昇格 #1232 は年齢を見ないので、13 歳未満の昇格は本冊から断るようになる。本番の `family_members` は 0 行で、影響を受ける人はいない)。13 歳未満でも保護者の依頼で本人のアカウントとつなげる形にするなら、3 つの IF (`accept_legal_documents` の `v_age < 13`・昇格 2 本の `< 13`) と `PROMOTION_UNDER_COPPA_AGE` を外し、同意書の第 3 段落・`SIGNUP_MINOR_NOTICE`・`minorRefusedBody`・`withdrawnBody` の「13歳以上」の文を直す (1 の弁護士の確認にも含める)。どちらにするかはオーナーの確認。
 15. **18 歳未満の本人の家族・組織の役割の例外**: 本冊は本人の操作 (家族の作成・招待の承諾・代表者 / オーナーの譲渡の承諾) だけを `MINOR_ACCOUNT_NOT_ALLOWED` で断り (§6.4 の 12)、運営の操作 (`operator_force_representative_transfer`・`operator_force_owner_transfer`・組織の作成 `POST /api/admin/organizations`) は年齢を見ない (運営の判断を止めない)。運営が 18 歳未満を代表者・オーナーにしたあとで保護者の同意とのつながりが切れると、本人の「登録をやめる」は 409 になり、同意画面は 409 の文 (`accountDeletionBlockedMessage`) を出す (§6.5.6 の 6)。運営が譲渡で解く (強制解散は `representative_id` を残すので、解散済みの家族の代表者も 409 のまま。これは本冊より前からの `findBlocker` の動作)。生年月日の無い人 (同意ゲートを通る前) は年齢が分からないので止めない (強制ありでは画面と `/api` が先に同意画面へ回す)。運営の操作も止めるなら、運営の 2 関数に譲渡先 (`p_new_rep_id` / `p_new_owner_id`) の生年月日を見る IF を足し (`caller_is_minor_jst()` は呼び出した本人 = 運営を見るので使えない)、組織の作成の route に owner の生年月日の検査を足し、運営の 2 route と組織の作成の route に失敗の扱いを足す。どちらにするかはオーナーの確認。
 
 ---

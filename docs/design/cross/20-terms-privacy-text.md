@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.14 (2026-10-19) |
-| Status | 設計ゲート通過 (2026-10-19・wf_99d1e18c-96b の R1 で Opus・Sonnet の 2 枚が PASS)。実装は wf_9f341b60-578 (段 A・段 B) と、§18 Q-23・Q-27 の結論の反映 (v1.14) |
+| 版 | v1.15 (2026-10-19) |
+| Status | 実装済み・公開済み (#1918 2ba5b3b3・2026-10-19)。設計ゲート通過 (2026-10-19・wf_99d1e18c-96b の R1 で Opus・Sonnet の 2 枚が PASS)。実装は wf_9f341b60-578 (段 A・段 B) と、§18 Q-23・Q-27 の結論の反映 (v1.14)。公開の後の整合ゲート wf_1f7af830-226 で 2 枚とも PASS |
 | Issue | #1901 |
 | 範囲の正本 | Issue #1901 の本文とコメント。前提と判断は本書 §0.1 に文として書く |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
@@ -131,9 +131,9 @@
 | 電話番号 | 載せない (P-10) | 「請求があれば遅滞なく開示します」(`PHONE_DISCLOSED_ON_REQUEST`) に請求の窓口の文を続ける (§7 第1条)。架空の番号は書かない |
 | 管轄裁判所の名称 | 本店所在地は `BUSINESS_ADDRESS` (東京都港区。F-56) | 「当社の本店所在地を管轄する裁判所」(現行どおり。裁判所の名前は書かない。§18 Q-7) |
 | AI 事業者の正式名称・所在地・保存期間・学習利用の有無 | `consent-config.ts:23-31` の弁護士への宿題 | 画面に出す呼び名と国だけ (同意画面と同じ)。保存は「事業者ごとに異なり、各事業者の規約に従う」 |
-| 施行日 (`effectiveDate`) | 公開 (デプロイ) 日に合わせる | 実装では仮の施行日 `'2026-10-19'` (本書 v1.4 の日付。YYYY-MM-DD の形の実在する日付) を置き、同じ行に目印のコメント `仮置き: マージ直前に公開日へ置き換える` を付ける。オーケストレーターがマージ直前に公開日へ置き換え、目印を消す (§9.1・§9.4 の 3) |
+| 施行日 (`effectiveDate`) | 公開 (デプロイ) 日に合わせる | 公開日 `'2026-10-19'` (#1918 2ba5b3b3 で公開)。実装の間は仮の施行日と行末の目印のコメントで置き、マージの直前に公開日に確定して目印を消した (§9.1・§9.4 の 3) |
 | 認定個人情報保護団体への加入の有無 | 未確認 | 書かない (§18) |
-| 本番の Supabase のリージョン | cross/07 §5.1 は東京 (hnd1) と書くが、本番の実体は本書で未確認 | 「主に日本国内のデータセンター」とは書かず、委託先の所在国 (事業者の本拠) だけを書く (§7 第7条) |
+| 本番の Supabase のリージョン | ap-northeast-1 (東京)。2026-10-19 に読み取りで確認 (Q-11) | 「主に日本国内のデータセンター」とは書かず、委託先の所在国 (事業者の本拠) だけを書く (§7 第7条) |
 | 個人情報の取扱いの責任者 | 公開の画面に記載が無い (現行 `/privacy` の窓口の見出しは「個人情報担当」だけ) | 書かない (窓口は「個人情報担当」のまま。Q-20) |
 | 人的な安全管理措置 (従業者の教育・守秘) | 製品の挙動に当たらず、根拠が無い | 書かない。決まったら第11条に足して版を上げる (Q-20) |
 | 有料プランの価格と条件 | 販売の案件 (#1912) が決める (P-9) | 書かない (第10条は「無料で利用できます」だけ。§17 の #1912 の行) |
@@ -182,20 +182,20 @@
 | cross/17-backup-automation.md | バックアップの層と保持 (§9.1)・R2・age の暗号化・GitHub Actions |
 | cross/19-private-photo-buckets.md | 写真のバケットの非公開化・署名付き URL |
 | billing/01-billing-core.md | 課金の仕組み (Checkout・期間末の解約・退会時の即時解約と顧客の匿名化)。本書の本文は有料の条文を書かない (P-9。§0 の「アプリ内課金なし」はオーナーの選択と食い違うので #1912 が直す。§17) |
-| Issue #1911 (枝 `fix/issue-1911-remove-pending-text`) | 事業者の情報の定数 (`BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST`。F-56)・未完成の語の検査 (`tests/no-pending-wording-1911.test.ts`) |
+| Issue #1911 (#1916 4b1e1abe でマージ済み・2026-10-19) | 事業者の情報の定数 (`BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST`。F-56)・未完成の語の検査 (`tests/no-pending-wording-1911.test.ts`) |
 | Issue #1912 | 有料プランの販売 (有料の条文を足す側。§17 の #1912 の行) |
 | org/07・org/10・org/03 | チャレンジは任意・順位は参加者どうし・管理者は集計のみ |
 | family/01・08 | 共有設定 (`share_meals` / `share_health` / `share_menu`)・家族の食事の閲覧 |
 | docs/design/CLAUDE.md・cross/CLAUDE.md | 章構成・日本語・RLS・監査ログ |
 
-### 2.2 現行の事実 (origin/main `5b85bb3f`、2026-10-19。F-56〜F-58 は origin/main `a199f14a` と #1911 の枝で確かめた)
+### 2.2 現行の事実 (origin/main `5b85bb3f`、2026-10-19。F-56〜F-58 は origin/main `a199f14a` と #1911 の枝で確かめた。F-3・F-4・F-56 は #1911 (#1916)・#1901 (#1918) のマージの後の origin/main `2ba5b3b3` に合わせて直した)
 
 | # | 事実 | 出どころ |
 |---|---|---|
 | F-1 | `/terms` は第 1〜9 条 (適用・利用登録・ID 管理・AI 解析・禁止事項 5 項・提供停止・免責・変更・準拠法)。料金・凍結・退会・家族・組織・未成年・知的財産・再同意・医療免責・問い合わせ先が無い | `src/app/terms/page.tsx:30-66` |
 | F-2 | `/privacy` は第 1〜7 条。保存期間・委託先・安全管理措置・外国の制度の情報・要配慮の同意・請求の手続・退会後の扱いが無い。AI 事業者の一覧は `AI_CONSENT_PROVIDERS` から出す (`data-testid="privacy-ai-providers"`) | `src/app/privacy/page.tsx:34-78, 56-68` |
-| F-3 | 版・施行日はページの `<main>` の先頭に `LegalDocumentMeta` で出す。両文書とも `v2025.1` / `2025-01-01` の仮置き | `src/components/legal/LegalDocumentMeta.tsx`・`packages/shared/src/legal-versions.ts:39-42` |
-| F-4 | 事業者名 `株式会社MHD医健`・代表者・`DISCLOSED_ON_REQUEST`・問い合わせ先 `getSupportEmail()` (origin/main の現行。#1911 のマージで F-56 に変わる) | `src/lib/business-info.ts:13-22`・`src/lib/site-config.ts:148-156` |
+| F-3 | 版・施行日はページの `<main>` の先頭に `LegalDocumentMeta` で出す。本書の時点は両文書とも `v2025.1` / `2025-01-01` の仮置きで、#1918 (2026-10-19) で `v2026.1` / `2026-10-19` に上げた | `src/components/legal/LegalDocumentMeta.tsx`・`packages/shared/src/legal-versions.ts:40-49` |
+| F-4 | 事業者名 `BUSINESS_NAME` (`株式会社MHD医健`)・代表者 `BUSINESS_REPRESENTATIVE`・電話番号の欄の文 `PHONE_DISCLOSED_ON_REQUEST` (#1911 で `DISCLOSED_ON_REQUEST` から置き換わった。F-56)・問い合わせ先 `getSupportEmail()` | `src/lib/business-info.ts:17-41`・`src/lib/site-config.ts:148-156` |
 | F-5 | 同意ゲート: 画面は middleware が `/legal-consent` へ、`/api` は 403 `LEGAL_CONSENT_REQUIRED` (許可リストあり)、モバイルは WebView 1 枚。本番は強制 on | cross/08 §7.2・`packages/shared/src/legal-consent-api.ts:88-110` |
 | F-6 | 同意画面: 改定時の導入文 `introReconsent`・「改定あり」の印・「同意しない（ログアウトする）」・請求画面へのリンク | `packages/shared/src/legal-consent-copy.ts:8-28`・`src/app/legal-consent/LegalConsentForm.tsx:338-395, 456` |
 | F-7 | プッシュ通知の送信側は、同意の強制が on のとき、同意済みの版が古い利用者へ送らない (`consent_outdated`)。判定は版だけで、保護者の同意とのつながりは見ない。凍結は版より先に `account_frozen` で止める | `src/lib/push/outbox.ts:53-54, 245-259` |
@@ -247,7 +247,7 @@
 | F-53 | 解散した家族グループの物理削除: 解散した家族グループ (`family_groups.status = 'dissolved'`。解散は運営だけが行う。F-39) は、毎日のジョブ `purge-dissolved-family-groups` が、解散から 90 日 (`c_retention`) を過ぎたものを物理削除する。外部キーの `CASCADE` で `family_members`・`family_invites`・`family_promotion_requests` も消える。保護者の同意の記録 (`parental_consents`) を持つグループは候補から外し、消さずに残す (`NOT EXISTS`)。`family_groups` を消す処理はこのジョブだけ (`representative_id` は `ON DELETE RESTRICT`) なので、同意の記録を持つグループとその同意の記録は期限なく残る | `supabase/migrations/20261018010000_purge_dissolved_family_groups.sql:3-18, 46, 55-59, 69-77`・`supabase/migrations/20251126124224_create_meal_planner_tables.sql:8883, 8893, 8923, 8938` |
 | F-54 | レシピの公開と入口: レシピ (`recipes`) の SELECT の RLS (`Users can view public recipes`。最新は `20261009000500_hide_moderated_content.sql` の `ALTER POLICY`) は `TO` を持たず、隠されていない行のうち `user_id IS NULL OR is_public = true OR 本人` を返す。`anon` にも表の権限がある。`GET /api/recipes` は未ログインのとき `is_public = true` の行を返す。レシピを作る `POST /api/recipes` (`is_public` を受け取る) とコメントの `POST /api/recipes/[id]/comments` はあるが、呼ぶ画面は無い (`src/app`・`src/components`・`apps/mobile` に `/api/recipes` への POST と `isPublic` を参照する画面のコードが 0 件)。画面にあるのは、献立の「レシピを見る」(材料と作り方。`RecipeModal`)・週間献立のいいね (お気に入りの画面はいいねを外す)・AI 相談のコレクションへの追加 (`add_recipe_to_collection`)。本番の `recipes` は 0 行 (2026-10-19 の読み取り) | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:10088, 13825-13826`・`supabase/migrations/20261009000500_hide_moderated_content.sql:169-173`・`src/app/api/recipes/route.ts:36-44, 116-138`・`src/app/api/recipes/[id]/comments/route.ts:44`・`src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx`・`src/app/(main)/menus/weekly/page.tsx:3492`・`src/app/(main)/favorites/page.tsx:111`・`src/lib/ai/consultation-action-executor.ts:1220-1300` |
 | F-55 | 画面のメニューの名前: 設定の請求の入口は `DSR_SETTINGS_ENTRY_TITLE = '開示・訂正・利用停止の請求'` (Web の設定と、アプリのアカウントの画面が同じ定数を出す)。お支払いの入口は「プランとお支払い」(Web の設定の項目と、`/account/billing` の見出し)。AI の同意の入口は `AI_CONSENT_SETTINGS_ENTRY_TITLE = 'AI へのデータ提供の同意'`。ログイン履歴の入口は「ログイン中の端末・ログイン履歴」。ホームの区画の名前は「今日のコンディション」。v1.12 で本文はこれらの名前を引用しない (R-28。T-40 が名前の定数と突き合わせて本文に入れさせない) | `packages/shared/src/data-subject-requests.ts:15`・`src/app/(main)/settings/page.tsx:416, 457, 512, 529`・`apps/mobile/app/settings/account.tsx:120-125`・`src/app/(main)/account/billing/page.tsx:229`・`supabase/functions/_shared/ai-consent.ts:313`・`src/app/(main)/home/page.tsx:434` |
-| F-56 | #1911 (枝 `fix/issue-1911-remove-pending-text`。本書の時点で未マージ) は `src/lib/business-info.ts` に、所在地 `BUSINESS_ADDRESS` (`〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F`)・設立 `BUSINESS_ESTABLISHED`・資本金 `BUSINESS_CAPITAL`・メールアドレス `BUSINESS_EMAIL` (`info@mhd-iken.com`)・営業時間 `BUSINESS_HOURS` (`平日 9:00-17:00 (年末年始を除く)`)・電話番号の欄の文 `PHONE_DISCLOSED_ON_REQUEST` (`請求があれば遅滞なく開示します`) を足し、`DISCLOSED_ON_REQUEST` を `PHONE_DISCLOSED_ON_REQUEST` に置き換える。`/legal`・`/company` の電話番号の欄は、#1911 が足す部品 `PhoneOnRequest` が「`PHONE_DISCLOSED_ON_REQUEST`。ご請求は、`BUSINESS_EMAIL` またはお問い合わせフォームからお願いします。」と出し、`tests/business-info-legal-pages.test.ts`・`tests/public-claims-guard.test.ts` が値を固定する。アプリの問い合わせ先 (`getSupportEmail()`) は事業者のメールアドレスとは別のもの (同ファイルの JSDoc) | #1911 の枝 (`fix/issue-1911-remove-pending-text`。2026-10-19 の先頭 `3ddfacb0`) の `business-info.ts` の 8 つの定数・同枝の部品 `PhoneOnRequest`・同枝の `tests/business-info-legal-pages.test.ts` の電話番号の期待値 (ファイルの行は #1911 のマージで決まるので書かない) |
+| F-56 | #1911 (#1916 4b1e1abe でマージ済み・2026-10-19) は `src/lib/business-info.ts` に、所在地 `BUSINESS_ADDRESS` (`〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F`)・設立 `BUSINESS_ESTABLISHED`・資本金 `BUSINESS_CAPITAL`・メールアドレス `BUSINESS_EMAIL` (`info@mhd-iken.com`)・営業時間 `BUSINESS_HOURS` (`平日 9:00-17:00 (年末年始を除く)`)・電話番号の欄の文 `PHONE_DISCLOSED_ON_REQUEST` (`請求があれば遅滞なく開示します`) を足し、`DISCLOSED_ON_REQUEST` を `PHONE_DISCLOSED_ON_REQUEST` に置き換えた。`/legal`・`/company` の電話番号の欄は、#1911 が足した部品 `PhoneOnRequest` が「`PHONE_DISCLOSED_ON_REQUEST`。ご請求は、`BUSINESS_EMAIL` またはお問い合わせフォームからお願いします。」と出し、`tests/business-info-legal-pages.test.ts`・`tests/public-claims-guard.test.ts` が値を固定する。アプリの問い合わせ先 (`getSupportEmail()`) は事業者のメールアドレスとは別のもの (同ファイルの JSDoc) | `src/lib/business-info.ts:17-41` の 8 つの定数・`src/components/legal/PhoneOnRequest.tsx`・`tests/business-info-legal-pages.test.ts` の電話番号の期待値 |
 | F-57 | 有料プランは買えない: `listPurchasablePlans` は決済の価格の ID (`stripe_price_id`) を持つ公開のプランだけを返す。本番の読み取り (2026-10-19) で、その条件のプランは 0 件 (`subscription_plans` には価格の列の値があるが、決済の価格の ID が無い)。`billing_customers`・`personal_subscriptions`・`coupon_redemptions`・`org_license_pools` は 0 行。`billing_customers` を書くのは決済の申込みの処理 (`src/lib/billing/repository.ts` と `billing_core` の RPC) だけ、`coupon_redemptions` を書くのは super_admin のクーポンの適用 (`apply_coupon`) だけ。`personal_subscriptions` は決済の Webhook と運営の手動のプラン付与 (`billing_manual_plan_grant`) が書く (料金の無いプランの付与を含むので、第3条は「ご利用のプラン」としてアカウントの区分に入れる) | `src/lib/billing/public-plans.ts:14-24`・`src/lib/billing/repository.ts:89`・`supabase/migrations/20261016210000_billing_core.sql:368`・`supabase/migrations/20261007160700_apply_coupon_rpc.sql:237`・`supabase/migrations/20261017230000_billing_manual_plan_grant.sql`・本番の読み取り (2026-10-19。MCP の SELECT) |
 | F-58 | 使い方の案内: 未ログインでも開ける使い方ガイド `/guide` があり (`publicPaths`)、題は「使い方ガイド」 | `lib/supabase/middleware.ts:316`・`src/lib/seo/public-pages.ts:104`・`src/app/guide/page.tsx:62` |
 
@@ -1737,7 +1737,7 @@ export function LegalDocumentBody({ document }: { document: LegalDocumentText })
 
 ### 8.3 ページ (差し替え後の全文)
 
-前提: 本書の実装は #1911 のマージの後に始める (§14)。`src/lib/business-info.ts` に `BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST` があること (F-56)。#1911 がマージした名前が下と違えば、main にある名前に合わせる (§17 の #1911 の行)。
+前提: 本書の実装は #1911 のマージの後に始める (§14)。`src/lib/business-info.ts` に `BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST` があること (F-56)。#1911 は #1916 (4b1e1abe) でマージ済みで、main の名前は下と同じ (§17 の #1911 の行)。
 
 ```ts
 // tsc:skip
@@ -1919,20 +1919,19 @@ export interface LegalDocumentInfo {
 /**
  * #1901 (cross/20): 本文を作り込んだ改定。内容が変わる (利用目的・第三者提供・AI の扱い・責任の範囲・未成年 ほか) ので
  * 両文書の版を v2025.1 → v2026.1 に上げる。上げるとサインイン中の全員に再同意が求められる (ファイル先頭のコメントのとおり)。
- * 施行日は公開 (デプロイ) の日。実装の時点では仮の施行日 (2026-10-19) を置き、マージの直前にオーケストレーターが実際の公開日
- * (JST の YYYY-MM-DD) に置き換えて、行末の目印のコメントを消す (cross/20 §9.4 の 3)。
- * 仮の値も YYYY-MM-DD の形の実在する日付にする (形を外すと /api/legal/status が 500 を返し、同意画面とテストが壊れる)。
+ * 施行日は公開 (デプロイ) の日で、2026-10-19 に公開した (#1918。cross/20 §9.4 の 3)。
+ * 施行日は YYYY-MM-DD の形の実在する日付にする (形を外すと /api/legal/status が 500 を返し、同意画面とテストが壊れる)。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.1', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
-  privacy_policy: { version: 'v2026.1', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
+  terms_of_service: { version: 'v2026.1', effectiveDate: '2026-10-19' },
+  privacy_policy: { version: 'v2026.1', effectiveDate: '2026-10-19' },
 };
 ```
 
 - `version` は `LEGAL_VERSION_PATTERN` (`^[0-9A-Za-z._-]{1,20}$`) を満たす (`v2026.1` = 7 文字)。
 - 2 文書は**同時に**上げる (両方の内容が変わるため)。片方だけ上げると `getOutdatedLegalDocuments` がその片方だけを返し、同意画面の「改定あり」も片方だけに付く (仕組みとしては動くが、本書では両方)。
-- ファイル先頭のコメント 17〜18 行目「いまの値は『現在公開している文面 (最終更新日 2025年1月1日)』を指す仮置きで…」は、「v2026.1 は #1901 (cross/20) で作り込んだ文面の版。弁護士の確認で文面を変えるときは、内容が変わるなら次の版 (v2026.2 など) に上げる」に書き換える (事実の更新。帰属の文は書かない)。
-- `effectiveDate` の `'2026-10-19'` は**仮の施行日**で、migration の番号と同じく**マージ直前にオーケストレーターが公開日に置き換える**値。仮の値も YYYY-MM-DD の形の実在する日付にするのは、施行日の形を検査する既存の箇所がすべて通るようにするため: `packages/shared/src/legal-versions.test.ts` の「施行日は実在する日付の YYYY-MM-DD」(2 件)・`src/lib/legal-consent-api.ts:17, 32` の `EFFECTIVE_DATE_PATTERN` (形を外すと `src/app/api/legal/status/route.ts:50-52` の `safeParse` が失敗して 500 になり、`tests/api/legal-status-route.test.ts` と `tests/legal-consent-api-schema.test.ts` が赤になる)・`formatLegalEffectiveDate` (形を外すと値をそのまま返し、HTML の中で `<` が `&lt;` になって `tests/legal-consent-page.test.tsx:209` と `tests/policy-pages-public.test.tsx:60` の一致が外れる)。実装レーンは仮の値と行末の目印のコメント `// 仮置き: マージ直前に公開日へ置き換える` をそのまま残し、**全件は緑**で終える (既知の赤は無い)。仮の値は目印で見分ける (T-17 は値そのものを固定しない)。
+- ファイル先頭のコメント 17〜18 行目 (v2025.1 の「現在公開している文面 (最終更新日 2025年1月1日)」を指す仮置きの説明) は、「v2026.1 は #1901 (cross/20) で作り込んだ文面の版。弁護士の確認で文面を変えるときは、内容が変わるなら次の版 (v2026.2 など) に上げる」に書き換えた (事実の更新。帰属の文は書かない)。
+- `effectiveDate` の `'2026-10-19'` は公開日 (#1918 2ba5b3b3 で公開)。実装の間は仮の施行日と行末の目印のコメントで置き、migration の番号と同じくマージの直前にオーケストレーターが公開日に確定して目印を消した (§9.4 の 3)。施行日を YYYY-MM-DD の形の実在する日付にするのは、施行日の形を検査する既存の箇所がすべて通るようにするため: `packages/shared/src/legal-versions.test.ts` の「施行日は実在する日付の YYYY-MM-DD」(2 件)・`src/lib/legal-consent-api.ts:17, 32` の `EFFECTIVE_DATE_PATTERN` (形を外すと `src/app/api/legal/status/route.ts:50-52` の `safeParse` が失敗して 500 になり、`tests/api/legal-status-route.test.ts` と `tests/legal-consent-api-schema.test.ts` が赤になる)・`formatLegalEffectiveDate` (形を外すと値をそのまま返し、HTML の中で `<` が `&lt;` になって `tests/legal-consent-page.test.tsx:209` と `tests/policy-pages-public.test.tsx:60` の一致が外れる)。T-17 は施行日の値そのものを固定しない。
 
 ### 9.2 版を上げたときに起きること (実装済みの仕組み。本書で変えない)
 
@@ -1947,7 +1946,7 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | 新規登録 | `/auth/callback` が未同意の人を同意画面へ回す (強制の値に関わらず) | cross/08 §7.2「初回の作成」 |
 | 凍結中 | `/legal-consent` に進めないが、凍結の例外 (退会・書き出し・解約 3 本・お問い合わせ) は同意の許可リストにもあるので止まらない | `legal-consent-api.ts` の注記 |
 | AI の同意 | 影響なし (`AI_CONSENT_VERSION` は変えない。`external_data_consents` の判定は別) | `ai-consent.ts:42` |
-| 保護者の同意 | 影響なし (`PARENTAL_CONSENT_DOCUMENT` は変えない) | `parental-consent.ts:33-36` |
+| 保護者の同意 | 利用規約・プライバシーポリシーの版上げの影響は無い。保護者の同意書は v1.14 (Q-27) で文を直して `PARENTAL_CONSENT_DOCUMENT` を v2026.2 に上げた。v2026.1 で記録した同意は失効しない (cross/14 S15) | `parental-consent.ts:34-45` |
 
 ### 9.3 以後の文面の直し方 (規律)
 
@@ -1965,9 +1964,11 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 
 ### 9.4 公開の手順 (オーケストレーターの工程)
 
+実装済み・公開済み (#1918 2ba5b3b3・2026-10-19)。v2026.1 の公開では 1〜6 を次のとおり行った: 弁護士の確認は受けずに公開した (確認の有無はオーナーの判断。§18)・2 のお知らせは行わない (P-12)・3 の施行日は公開日 2026-10-19 に確定し、目印のコメントは 0 行・公開の後の整合はゲート wf_1f7af830-226 で 2 枚とも PASS。以下は、次に版を上げるときにも使う手順。
+
 1. 弁護士の確認 (任意。オーナーの判断) → 文面の差し替えがあれば §6・§7 を改定 (本書の改定版) → 実装に反映。
 2. (v1.14: 今回は行わない。P-12 の公開の選択「予告なしで直し次第公開」による。ローンチ前で利用者がいないため。利用規約第24条 1 項とプライバシーポリシー第18条 1 項の「施行日の前にお知らせに掲載」は v2026.1 の本文が以後の改定について約束するもので、v2025.1 の本文にこの約束は無い (`docs/legal/archive/v2025.1/`)。次の内容が変わる改定 (v2026.2 など) からは、この 2 の工程を行う) 公開日 (施行日) を決め、**公開日より前に**、運営画面のお知らせ (`/admin/announcements`。公開 (`is_public`) にすると Web とアプリのホームに出る。F-31) に改定の予告を載せる。載せる中身: 題「利用規約・プライバシーポリシーの改定のお知らせ」、本文に改定の概要 (§11.2 の「設計後」の要点: AI 機能の送る情報と事業者・委託先・保存期間・未成年・責任の範囲・凍結と退会)・施行日・施行日以後に同意をお願いすること・同意するまでの間は設定画面を使えないこと・同意の前でも開示等の請求・お問い合わせ・退会とデータの書き出し (同意画面の下の `/legal-consent/account`) ができること (利用規約第24条 2 項・プライバシーポリシー第13条 4 項。お知らせでも、お問い合わせによる削除は約束しない。F-40・P-12)。利用規約第24条 1 項とプライバシーポリシー第18条 1 項の「施行日の前にお知らせに掲載」はこの工程で守る (省くと公開した約束を破る)。メールでの一斉の知らせは仕組みが無いので行わず、文面もメールでの知らせを約束しない (F-34)。`/news` はコードの中の一覧で運営画面から載らないので使わない。
-3. マージ直前: `effectiveDate` の仮の値 `'2026-10-19'` を公開日 (JST の YYYY-MM-DD) に置き換え、行末の目印のコメント `// 仮置き: マージ直前に公開日へ置き換える` を消す (2 文書とも同じ日)。保護者の同意書の施行日 (`packages/shared/src/parental-consent.ts` の `PARENTAL_CONSENT_DOCUMENT.effectiveDate`。v1.14 で版を v2026.2 に上げ、同じ仮の値と目印を置いた) も同じ公開日に置き換える。`git grep -n '仮置き: マージ直前に公開日' -- packages/shared/src/legal-versions.ts packages/shared/src/parental-consent.ts` が 0 行になることを確かめる (公開日が仮の値と同じ日でも、目印は消す)。置き換えたあとに全件を流す。`docs/legal/archive/v2025.1/` の控えが PR に入っていることを確かめる。#1911 が main にマージされ、`src/lib/business-info.ts` に §8.3 が読む定数があることを確かめる (§14)。(2 のお知らせは今回は行わない。P-12。) **公開の前に解決しておく事項が解決していることを確かめる**: §17 の期日が「公開の前」の行 (同意しない人の画面 `declined` の、お問い合わせによる削除の約束・保護者の同意書と未成年の案内の、代わりに記録する機能と削除の依頼の約束) が直っていること、§18 の Q-23 (同意の前の退会の入口)・Q-27 (保護者の同意書) に結論が出て、その結論が画面・同意書・本書の文面に反映されていること (v1.14 で反映した。P-12・§14 段 C)。1 つでも残っていればマージ (公開) しない (版を上げた直後から、同意しない人に規約と食い違う約束を出し、規約の一部である個別規定に実装に無い約束が残るため)。
+3. マージ直前: `effectiveDate` の仮の値を公開日 (JST の YYYY-MM-DD) に置き換え、行末の目印のコメント `// 仮置き: マージ直前に公開日へ置き換える` を消す (2 文書とも同じ日)。保護者の同意書の施行日 (`packages/shared/src/parental-consent.ts` の `PARENTAL_CONSENT_DOCUMENT.effectiveDate`。v1.14 で版を v2026.2 に上げ、同じ仮の値と目印を置いた) も同じ公開日に置き換える。`git grep -n '仮置き: マージ直前に公開日' -- packages/shared/src/legal-versions.ts packages/shared/src/parental-consent.ts` が 0 行になることを確かめる (公開日が仮の値と同じ日でも、目印は消す)。置き換えたあとに全件を流す。`docs/legal/archive/v2025.1/` の控えが PR に入っていることを確かめる。#1911 が main にマージされ、`src/lib/business-info.ts` に §8.3 が読む定数があることを確かめる (§14。v2026.1 の公開では #1916 4b1e1abe でマージ済み)。(2 のお知らせは今回は行わない。P-12。) **公開の前に解決しておく事項が解決していることを確かめる**: §17 の期日が「公開の前」の行 (同意しない人の画面 `declined` の、お問い合わせによる削除の約束・保護者の同意書と未成年の案内の、代わりに記録する機能と削除の依頼の約束) が直っていること、§18 の Q-23 (同意の前の退会の入口)・Q-27 (保護者の同意書) に結論が出て、その結論が画面・同意書・本書の文面に反映されていること (v1.14 で反映した。P-12・§14 段 C)。1 つでも残っていればマージ (公開) しない (版を上げた直後から、同意しない人に規約と食い違う約束を出し、規約の一部である個別規定に実装に無い約束が残るため)。
 4. デプロイ (公開日)。デプロイの時点から再同意が始まる (施行日の前からは求めない: 施行日 = デプロイ日にする)。
 5. 公開後の整合: `/terms` `/privacy` を未ログインで開いて版 `v2026.1` と全文を確認。同意済みのテスト用アカウントで同意画面が出て「改定あり」が 2 つ付くこと、同意後に戻ること、アプリで WebView が出ることを確認。
 6. ロールバックするときの注意: デプロイを戻すと `LEGAL_DOCUMENTS` も `v2025.1` に戻り、`v2026.1` に同意した人は「古い版 (v2025.1) に未同意」としてもう一度同意画面が出る。文面だけ戻したいときは、版を戻さずに文面モジュールだけ戻す (版の規律 §9.3)。
@@ -2576,7 +2577,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
 | T-3 | `LEGAL_FACTS の値は正本の定数と一致する (ADULT_AGE_YEARS・COPPA_AGE_YEARS・HIDDEN_CONTENT_RETENTION_DAYS・LOGIN_HISTORY_RETENTION_DAYS・SESSION_IDLE_EXPIRE_DAYS・DSR_RESPONSE_DUE_DAYS_DEFAULT)` | 写しの一致 (`@homegohan/shared`・`@/lib/admin/hidden-content-restore`・`@/lib/auth/sessions/constants`・`@/lib/data-subject-requests/core` を import して比べる) |
 | T-4 | `LEGAL_FACTS の app_logs・送信待ちの保持は migration の文字列と一致する` | `supabase/migrations/20251126124224_create_meal_planner_tables.sql` に `DELETE FROM app_logs WHERE created_at < NOW() - INTERVAL '${appLogRetentionDays} days'`、`20261016234000_email_outbox.sql` と `20261016237000_push_outbox.sql` に `interval '${outboxSentRetentionDays} days'` と `interval '${outboxDeadRetentionDays} days'` が含まれる (大文字小文字を区別しない) |
 | T-5 | `LEGAL_FACTS のバックアップの保持は cross/17 §9.1 の表記と一致する` | `docs/design/cross/17-backup-automation.md` に `30 日で削除`・`366 日で削除`・`2,557 日で削除` と `(7 年)` が含まれる |
-| T-6 | `利用規約・プライバシーポリシーの本文に、未完成や予定を示す語が無い` | `termsText(ctx)`・`privacyText(ctx)` を `LegalDocumentBody` で描いた本文 (§10.1 のテストの文脈) に、テストのローカル定数 `LEGAL_TEXT_PENDING_WORDS` (§13.1) のどの語も含まれない。`/coming soon/i` にも当たらない (R-32・P-9。#1911 の `tests/no-pending-wording-1911.test.ts` は `src/lib/legal` を走査しないので、文面モジュールはこのテストが受け持つ) |
+| T-6 | `利用規約・プライバシーポリシーの本文に、未完成や予定を示す語が無い` | `termsText(ctx)`・`privacyText(ctx)` を `LegalDocumentBody` で描いた本文 (§10.1 のテストの文脈) に、テストのローカル定数 `LEGAL_TEXT_PENDING_WORDS` (§13.1) のどの語も含まれない。`/coming soon/i` にも当たらない (R-32・P-9。文面モジュールが返す本文の語はこのテストが受け持つ。#1911 の `tests/no-pending-wording-1911.test.ts` も `src/lib` の下 (`src/lib/legal` を含む) をコメントの外で走査するが、無い機能を示す書き方 (§13.1 で足した語) は見ない) |
 | T-7 | `PRIVACY_PROCESSORS の各行の evidence (file に needle) が実在し、needle と文面モジュールに外部のホスト名・URL が無い` | 委託先の表が実コードに当たる (`fs.readFileSync` で `includes`)。各 needle は `://` を含まず、ホスト名の形 (`/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i`) に当たらず、6 文字以上 (テストのローカル定数 `MIN_NEEDLE_LENGTH = 6`。根拠コメント: §7 の規則)。`src/lib/legal/` の `.ts` 4 本のソースに `https://` と `exp.host` が含まれない (送り先を 1 ファイルに限る走査テスト `tests/push-expo-boundary-scan.test.ts`・`tests/ai-consent-provider-inventory.test.ts` を、文面モジュールが赤にしないため。§16) |
 | T-8 | `プライバシーポリシーの保存期間と請求の手順の数は LEGAL_FACTS から埋まっている` | 描画した本文に `非表示にしてから ${hidden} 日`・`失効してから ${login} 日`・`${sessionIdle} 日間操作が無い`・`${appLog} 日`・`送れたものは ${sent} 日`・`送れなかったものは ${dead} 日`・`${dsrDue} 日以内を目安`・`${daily} 日、週次のものは ${weekly} 日、年次のものは ${annual} 日（${years} 年）` が含まれる |
 | T-9 | `利用規約第9条に cross/08 §8.1 と同じ医療免責の文と、救急（119）の案内がある` | `TERMS_MEDICAL_DISCLAIMER` が `docs/design/cross/08-legal-compliance.md` に逐語で含まれ、描画した本文に両方含まれる |
@@ -2900,7 +2901,7 @@ const SCREEN_NAMES: readonly string[] = [AI_CONSENT_SETTINGS_ENTRY_TITLE, DSR_SE
 
 ## 14. 段分け (実装 WF は 1 本・同じ worktree。段ごとに 2 枚レビュー。マージは段 B のあと 1 回)
 
-**着手の条件**: #1911 (「準備中」の表記を取り除く・事業者の情報の値を入れる) が main にマージされていること。`src/lib/business-info.ts` に `BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST` があることを確かめてから段 A を始める (§8.3 のページと T-16 が使う。F-56)。#1911 がマージした名前が本書と違えば、main の名前に合わせる (§17 の #1911 の行。実装者は本書を書き換えず、PR の本文に読み替えを書く)。
+**着手の条件**: #1911 (「準備中」の表記を取り除く・事業者の情報の値を入れる) が main にマージされていること。`src/lib/business-info.ts` に `BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST` があることを確かめてから段 A を始める (§8.3 のページと T-16 が使う。F-56)。#1911 がマージした名前が本書と違えば、main の名前に合わせる (§17 の #1911 の行。実装者は本書を書き換えず、PR の本文に読み替えを書く)。この条件は満たした (#1911 は #1916 4b1e1abe でマージ済み・名前は本書と同じ)。
 
 | 段 | 中身 | 触るファイル | 確認 |
 |---|---|---|---|
@@ -3015,7 +3016,7 @@ v1.11 から外したもの (新設しない): `PRICING_PATH`・`BILLING_PATH` (
 | `tests/site-config-ui.test.tsx` | `PrivacyPage`・`getSupportEmail`・`SCREENS` | 招待画面・お問い合わせの画面・`/privacy` の窓口に、`NEXT_PUBLIC_SUPPORT_EMAIL` (`getSupportEmail()`) のアドレスが出る | `SCREENS` から `/privacy` の行と `PrivacyPage` の import を外す。プライバシーポリシーの窓口は事業者のメールアドレス (`BUSINESS_EMAIL`) にした (P-10) ので、この番兵の「アプリの問い合わせ先に従う画面」の対象ではなくなる。代わりに T-16 が第1条と窓口の値を、`tests/business-info-legal-pages.test.ts` (#1911 の版) が事業者の情報の値を確かめる | B |
 | `tests/seo-public-pages-1867.test.tsx` | `/terms`・`/privacy`・`publicPageMetadata` | metadata が `publicPageMetadata` の値 | 変更なし | B |
 | `tests/public-claims-guard.test.ts` | `PUBLIC_PAGES`・`PUBLIC_SOURCE_FILES`・`FORBIDDEN` | 走査の対象に `/terms` `/privacy` が無い | `PUBLIC_PAGES` に 2 ページ、`PUBLIC_SOURCE_FILES` に 2 つの文面モジュールを足す (本文に禁止語が無いことを以後も守る)。#1911 がこのファイルを書き換えるので、#1911 のマージの後の版に足す | B |
-| `tests/no-pending-wording-1911.test.ts` (#1911 が足す) | `準備中`・`予定です`・`SCAN_DIRS` | `src/app`・`src/components`・`src/lib/emails`・`apps/mobile/app`・`apps/mobile/src/components` の `.ts`/`.tsx` (テストを除く) のコメントの外に、未完成や予定の語が無い。2 ページと `LegalDocumentBody.tsx` が走査の対象に入る (`src/lib/legal` は対象外) | 変更なし (2 ページと描画部品は文を持たず、コメントにも禁止の語を書かない。文面モジュールは T-6 が受け持つ) | B |
+| `tests/no-pending-wording-1911.test.ts` (#1911 が足した) | `準備中`・`予定です`・`SCAN_DIRS`・`SCAN_FILES` | `SCAN_DIRS` (`src/app`・`src/components`・`src/lib`・`src/hooks`・`apps/mobile/app`・`apps/mobile/src`・`supabase/functions`) の下の `.ts`/`.tsx` (`__tests__` の下と `*.test.*` を除く) と `SCAN_FILES` の 5 本のコメントの外に、未完成や予定の語が無い。あわせて、生成のリクエストの progress の SQL の既定値を見る。2 ページ・`LegalDocumentBody.tsx`・文面モジュール (`src/lib/legal`) が走査の対象に入る | 変更なし (2 ページと描画部品は文を持たず、コメントにも禁止の語を書かない。文面モジュールの本文は、この走査と T-6 の両方が見る) | B |
 | `packages/shared/src/legal-versions.test.ts` | `LEGAL_DOCUMENTS`・`effectiveDate`・`実在する日付` | 版の形と、施行日が実在する日付の YYYY-MM-DD であること | 変更なし (仮の施行日 `'2026-10-19'` も公開日も満たす。§9.1) | B |
 | `tests/legal-consent-page.test.tsx`・`tests/e2e/legal-consent-gate.spec.ts`・`src/__tests__/api/legal/accept.test.ts`・`tests/api/legal-status-route.test.ts`・`tests/legal-consent-api-schema.test.ts`・`tests/legal-consent-gate.test.ts` | `LEGAL_DOCUMENTS`・`effective_date`・`formatLegalEffectiveDate` | 版と施行日を `LEGAL_DOCUMENTS` から読むので、版の値と、YYYY-MM-DD の形の施行日の値には依らない。施行日の形を外すと、`/api/legal/status` が 500 (`src/lib/legal-consent-api.ts:17, 32`・`src/app/api/legal/status/route.ts:50-52`)、`resolveLegalConsentStatus` の結果が `LegalConsentStatusSchema` を通らず、施行日の表示の一致も外れる | 変更なし (仮の施行日も YYYY-MM-DD の形にする。§9.1) | B |
 | `src/__tests__/api/cron/push-outbox.test.ts:176` | `'v2025.1'` | 版を直書きしているが、`LEGAL_CONSENT_ENFORCE` を未設定にしている (行 90) ので判定に使われず、緑のまま | `LEGAL_DOCUMENTS.terms_of_service.version` / `.privacy_policy.version` に置き換える (`import { LEGAL_DOCUMENTS } from '@homegohan/shared'`。`packages/shared/src/index.ts:12` が `legal-versions` を再エクスポートしている)。将来の版上げで「同意済みの利用者」の行が意味を失わないように | B |
@@ -3071,7 +3072,7 @@ v1.11 から外したもの (新設しない): `PRICING_PATH`・`BILLING_PATH` (
 | `docs/design/cross/14-parental-consent.md` | 同上 (未成年の節) | 第15条・利用規約第5条を指す | 同上 |
 | `docs/design/billing/01-billing-core.md` | §10 の確認画面のリンク先が cross/08 §3 の `/legal/terms` を参照していれば | `/terms` `/privacy` | 同上 |
 | `packages/shared/src/legal-versions.ts` | 先頭コメント 17〜18 行 | §9.1 のとおり現在形化 (実装 PR で行う。設計正典ではない) | 実装 |
-| Issue #1911 (`src/lib/business-info.ts`・`src/app/company/page.tsx`・`src/app/legal/page.tsx`・組織の画面・運営の画面の「準備中」) | 事業者の情報の定数 (`BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST`) と、利用者・公開ページ・運営の画面の未完成の語 | #1911 が持つ (本書の範囲外)。本書の実装は #1911 のマージの後に始める (§14)。#1911 のマージのときに、定数の名前が本書の §8.1・§8.3・§13 と同じかを確かめ、違えば main にマージされた名前に本書を合わせる (docs PR。main が正で、本書が従う)。#1911 のマージの後は、`/privacy` 第1条・`/legal`・`/company` が同じ定数から出ることを T-16 と `tests/business-info-legal-pages.test.ts` で確かめる | #1911 のマージ |
+| Issue #1911 (`src/lib/business-info.ts`・`src/app/company/page.tsx`・`src/app/legal/page.tsx`・組織の画面・運営の画面の「準備中」) | 事業者の情報の定数 (`BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST`) と、利用者・公開ページ・運営の画面の未完成の語 | #1911 が持つ (本書の範囲外)。#1911 は #1916 (4b1e1abe・2026-10-19) でマージ済みで、本書の実装 (#1918) はその後に始めた (§14)。定数の名前は本書の §8.1・§8.3・§13 と同じ (`src/lib/business-info.ts:17-41`)。`/privacy` 第1条・`/legal`・`/company` が同じ定数から出ることは T-16 と `tests/business-info-legal-pages.test.ts` が確かめる | 済 (#1916) |
 | Issue #1912 (有料プランの販売) | 有料の条文 | #1912 が価格を公開する段で、両文書の版を上げて足す (P-9・R-30。本書の版の本文には有料の条文が無いので追記になる)。足す場所: 利用規約第10条 (料金) の 2 項以降に、価格は料金ページと特定商取引法に基づく表記に定めること・自動更新・解約の方法と時期・返金・App Store / Google Play での購入 (RevenueCat)・Web での購入 (決済の事業者)。第16条 2 項 (凍結中の解約)・第17条 (退会のときの契約の扱い)・第21条 (料金に結ぶ責任の上限を置くか。弁護士の確認。Q-6)・第24条 2 項 (同意の前の解約の手段。Q-21)。プライバシーポリシー第3条 (有料プランの区分。T-34 の `PRIVACY_DATA_EXCLUDED` の `'paid_plan'` の 2 表を `PRIVACY_DATA_TABLES` へ)・第4条 (契約・決済・請求・解約の管理の目的)・第7条 (`PRIVACY_PROCESSORS` に決済の事業者と RevenueCat・ストアの事業者)・第10条 (決済の画面の外部送信)・第12条 (決済の記録の保存)。T-33 (有料の語が無い) を改め、§10 の主張の表を作り直し、§9.3 の規律で版を上げる。`docs/design/billing/01-billing-core.md` §0 の「アプリ内課金なし」はオーナーの選択 (RevenueCat。P-9) と食い違うので、#1912 の設計で直す | #1912 の価格の公開 |
 | `apps/mobile/app/index.tsx:83-87`・`apps/mobile/app/(public)/terms.tsx`・`apps/mobile/app/(public)/privacy.tsx`・`apps/mobile/src/components/PublicPage.tsx` | アプリの最初の画面の「利用規約」「プライバシー」のリンクと、アプリの公開ページ (「Web版を開く」で Web の全文を開く。§11.1) | 変更不要。アプリの側に本文の写しは無く、Web のパス `/terms`・`/privacy` は変えない (§8.3)。公開ページの子の文「…はWeb版にて最新の内容をご確認ください。」も版に触れない。`PublicPage` の子が無いときの文は #1911 が直す (#1911 の枝の差分に `apps/mobile/src/components/PublicPage.tsx` がある) | — |
 | `src/app/legal/parental-consent/page.tsx:47-55` | 保護者の同意書のページの「個人情報の取り扱いはプライバシーポリシーをご確認ください」の `/privacy` へのリンク (§11.1) | 変更不要。パス `/privacy` は変えず、アンカーを付けないので条の組み替えで壊れない。同意書の本文の食い違いは下の `packages/shared/src/parental-consent.ts` の行 (Q-27) | — |
@@ -3115,11 +3116,11 @@ v1.11 にあって外した行: `src/app/(operator)/operator/membership/families
 | Q-8 | 電気通信事業法 27 条の 12 の対象役務に当たるか (当たらなくても第10条で公表する) | 公表する | 弁護士 |
 | Q-9 | 認定個人情報保護団体への加入の有無 | 未確認なので書かない | オーナー |
 | Q-10 | AI 事業者の正式名称・所在地・保存期間・学習利用の有無 (`consent-config.ts:23-31` の宿題) | 同意画面と同じ呼び名と国だけ | 弁護士・オーナー |
-| Q-11 | 本番の Supabase のリージョン (cross/07 §5.1 は東京)。「日本国内に保管」と書くなら確認が要る | 書かない (委託先の所在国だけ) | オーナー (MCP の読み取りで確認可) |
-| Q-12 | `effectiveDate` (公開日) | 実装は仮の施行日 `'2026-10-19'` と目印のコメントで置き、マージ直前に公開日へ置き換える (§9.1・§9.4 の 3) | オーケストレーター |
+| Q-11 | 本番の Supabase のリージョン (cross/07 §5.1 は東京)。「日本国内に保管」と書くなら確認が要る | 書かない (委託先の所在国だけ)。本番の Supabase は ap-northeast-1 (東京)。2026-10-19 に読み取りで確認 | オーナー |
+| Q-12 | `effectiveDate` (公開日) | 解決: 公開日 2026-10-19 に確定し、目印のコメントを消した (#1918 2ba5b3b3。§9.1・§9.4 の 3) | — |
 | Q-13 | Google OAuth で Google から受け取る項目 (識別子・メールアドレス・名前・プロフィール画像) の実測 (Supabase の `raw_user_meta_data`) | 第3条は「Google から受け取る情報」と種類の水準で書き、委託先の表に項目を書いた。実装の整合ゲートで本番の 1 行を読んで確かめる | 整合ゲート |
 | Q-14 | 法令で残す記録 (監査ログなど) の保存の期限 (cross/08 §16.3「未決」) | 「法令と当社の定めによります」 | オーナー |
-| Q-15 | #1911 の定数の名前と本書の揃え方 | 解決 (v1.12): #1911 の枝の名前 (`BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST`。F-56) を前提にした。#1911 のマージのときに名前が違えば main に合わせる (§17 の #1911 の行) | オーケストレーター |
+| Q-15 | #1911 の定数の名前と本書の揃え方 | 解決 (v1.12): #1911 の枝の名前 (`BUSINESS_ADDRESS`・`BUSINESS_EMAIL`・`BUSINESS_HOURS`・`PHONE_DISCLOSED_ON_REQUEST`。F-56) を前提にした。#1911 は #1916 (4b1e1abe) でマージ済みで、main の名前は同じ (§17 の #1911 の行) | — |
 | Q-16 | AI 事業者への提供の記録 (法 29 条) を同意の記録 (`external_data_consents`) で代えてよいか、またその保存の期間 (規則 21 条) と、退会で同意の記録が即時に消える (`ON DELETE CASCADE`。F-26) ことの関係。AI 事業者への提供を「第三者提供」でなく本人の指示による送信と整理できるかも含む (Q-2 と関連) | プライバシーポリシー第6条の 5 は「同意の記録を提供の記録として保存し、開示の請求にはこれをもとに答える」とだけ書き、退会後の保存は約束しない | 弁護士・オーナー (保存が要るなら別の設計で退会後も残す記録を作る) |
 | Q-17 | `apps/mobile/app.json` の使っていない権限の宣言 (`NSPhotoLibraryAddUsageDescription`・`RECORD_AUDIO`・`WRITE_EXTERNAL_STORAGE`) を外すか | 本書では変えない。ポリシーは使う機能だけを書く (§17 の候補行) | オーナー |
 | Q-18 | AI の同意 (`AI_CONSENT_COPY` の 6 項目で取った同意) が、実際に送っている要配慮個人情報 (持病・服薬・妊娠/授乳の状況) とプロフィールの種類 (F-29) まで含む同意として足りるか (法 20 条 2 項・28 条 2 項の「情報の提供」) | プライバシーポリシー第6条には実際の種類を書いた。同意画面の文の追随と `AI_CONSENT_VERSION` の更新は別 Issue の候補 (§17) | 弁護士・オーナー |
@@ -3157,3 +3158,4 @@ v1.11 にあって外した行: `src/app/(operator)/operator/membership/families
 | v1.12 | 2026-10-19 | 修正 R0 (前の走行の R6 の 12 件の blocking と、2026-10-19 11〜12 時台の範囲の判断 (P-9〜P-11) を設計書の全体に当てる書き直し): (1) 本文の粒度 (P-11・R-28): 本文を法令が求める事項と権利義務の約束だけにした。利用規約第6条の機能の一覧・画面の名前の引用 (「設定の「…」」「ホームの「…」」・links の「設定（…）」)・道順・家族の役割ごとの操作の列挙 (第5条 4 項・第11条 3 項)・組織の管理者の画面の項目の細部・第4条のログイン履歴の画面・第8条の機能ごとと自動処理の上限・第19条のメールの列挙を外し、プライバシーポリシー第3条 (取得する情報。15 区分の種類の水準)・第4条・第6条 (送る情報の種類)・第9条 (20 行の表を 8 項の種類の水準に)・第10条 (停止の方法の列を外した)・第12条 (18 行)・第14条 (確認メールの時間と回数を外した) を種類の水準に畳んだ。R-28 と T-40 を「画面の名前を写して突き合わせる」形から「画面の名前の引用の形を本文に入れさせない」形に改め、`QUOTED_SCREEN_NAME_SOURCES` などを廃止した。主張の表を 479 行から 383 行に作り直した。(2) 有料の条文 (P-9・R-30): 利用規約第10条を「料金」の条にして「本サービスは、無料で利用できます」だけにし、自動更新・解約・返金・決済の事業者・「アプリ内課金を行いません」の項と第17条の返金・第16条と第24条の解約・第21条の料金に結ぶ責任の上限を外した。プライバシーポリシーの有料プランの区分・決済の目的・委託先の Stripe・決済の画面の外部送信・決済の記録の保存を外した。#1912 が版を上げて足す行を §17 に置き、T-33 (有料の語が無い) を新設した。T-34 に有料プランの 2 表の理由 `paid_plan` を足した。(3) 未完成や予定の書き方 (R-32): 「現在、家族に健康の記録を表示する機能はありません」「解除予定の日時」「配信を止める設定はありません」を外し、T-6 (未完成や予定の語が無い) を新設した (旧 T-6 の未ログインの日数は、本文が日数を書かなくなったので廃止)。(4) 事業者の情報 (P-10・R-31): `LegalTextContext` を `businessAddress`・`phoneDisclosure`・`businessEmail`・`businessHours` に改め、プライバシーポリシー第1条に所在地・代表者・電話番号の欄の文・メールアドレス・営業時間を、窓口 (利用規約第28条・プライバシーポリシー第17条) に事業者のメールアドレスと営業時間を出す形にした。定数は #1911 の名前 (F-56)。着手の条件に #1911 のマージを足した (§14)。`tests/site-config-ui.test.tsx` の追随を §16 に足し、T-16 を事業者の情報の検査に改めた。(5) その他: 多要素認証の文を猶予に依らない形にし (Q-25 を解決)、未ログインの日数を「長期間」にし (Q-22 を解決)、Q-5・Q-15・Q-24 を解決、Q-6・Q-21 を #1912 へ、Q-30 を足した。F-56〜F-58・P-9〜P-11・R-30〜R-32・S-21〜S-22 を足した。§11.2 の状態比較表・§11.3 の条の参照・§13 のテスト (T-3・T-6・T-8・T-14・T-16・T-25・T-28・T-30〜T-34・T-36〜T-42)・§13.1 の定数・§15・§16・§17・§18 を追随させた |
 | v1.14 | 2026-10-19 | 公開の前に決める事項のオーナーの選択 (P-12) を反映: 同意の前でも本人が退会と書き出しを行える画面 `/legal-consent/account` と、同意画面・未成年の案内・「同意しない」の後の案内からの入口 (Q-23)。利用規約第5条 3 項・第17条 1 項・第24条 2 項とプライバシーポリシー第13条 4 項を合わせ (版は v2026.1 のまま)、主張の表を 382 行に (§10.2・§10.3)。保護者の同意書・未成年の案内・子どもの追加の画面の文を実装に合わせ、同意書の版を v2026.2 に (Q-27)。Q-26 は別の案件へ。§9.4 の 2 (お知らせへの予告) は今回は行わない (§9.3・§11.2 も合わせ、次の改定でお知らせに載せる中身を、同意の前でも退会と書き出しができることに直した)。F-10・F-32・F-40・R-24・S-5・S-14・S-17・§11.1〜§11.3・§13 の T-28・§14 段 C・§15・§17・§18 (Q-23・Q-26〜Q-28) を追随 |
 | v1.13 | 2026-10-19 | 網羅性の反映 (周 1): T-29 を CSP の `connect-src` だけから `script-src`・`frame-src`・`img-src`・`connect-src` の外部の許可先の全部に広げ、許可先 → 第10条の送り先の語の対応をテストのローカル定数 `CSP_EXTERNAL_ORIGIN_DISCLOSURE` (7 キー)・`CSP_DISCLOSED_DIRECTIVES`・`CSP_NON_EXTERNAL_SOURCE_PATTERN` にした (§13.1・§15)。`images.unsplash.com` は第10条の表に行を足さず、`null` (端末から送らない) とし、T-29 がその理由 (`next/image` の最適化を通る・アプリは使わない) をソースで確かめる (F-15。本番の DB の画像の URL の列にもこのホストは 0 件)。§11.3 に、未同意 (old / none) と凍結中の人の家族グループ・組織の操作の 2 行を足した。§12 に `AI_CONSENT_VERSION_MISMATCH` (409) の行と、内部の記録のコード `account_frozen`・`consent_outdated` の §12.1 を足した。§9.3・§11.2・§14・§16 の CSP の行を追随 |
+| v1.15 | 2026-10-19 | 公開の後の現在形化 (製品の挙動は変えない): Status と §9.4 を実装済み・公開済み (#1918 2ba5b3b3) に、F-3・F-4・F-56・§2.1・§8.3 の前提・§14 の着手の条件・§17 の #1911 の行・Q-15 を #1911 のマージ済み (#1916 4b1e1abe) に、§0.6・§9.1 の施行日の仮置きと目印の記述を公開日 2026-10-19 に確定した書き方に (Q-12 は解決)、§9.2 の保護者の同意の行を v1.14 の版上げ (v2026.2) に、§16 の `tests/no-pending-wording-1911.test.ts` の行と T-6 を今の走査の範囲 (`src/lib` を含む) に直した。§0.6 と Q-11 に本番の Supabase のリージョン (ap-northeast-1・2026-10-19 に読み取りで確認) を足した |
