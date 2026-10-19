@@ -271,11 +271,17 @@ test.describe("4. 静的ページ・リンク整合性", () => {
     // 特定商取引法テキストがあること
     const hasLegal = (await page.getByText(/特定商取引法|販売事業者/).count()) > 0;
     expect(hasLegal, "特定商取引法テキストが見つからない").toBe(true);
-    // 実在しないダミーの事業者情報は出さない。所在地・電話番号は請求時に開示する扱い (#1155。値は src/lib/business-info.ts)
+    // 実在しないダミーの事業者情報は出さない。所在地・メールアドレス・営業時間は公開の会社情報、
+    // 電話番号は載せずに請求があれば開示する (#1155 #1911。値は src/lib/business-info.ts)
     await expect(page.getByText("株式会社MHD医健").first()).toBeVisible();
-    await expect(page.getByText("請求があった場合に遅滞なく開示します").first()).toBeVisible();
-    // 料金・支払の欄は、いまの事実 (無料・支払いの要る商品は無い) だけを書き、「準備中」とは書かない (#1911)
-    await expect(page.getByText("お支払いが必要な商品・サービスはありません。").first()).toBeVisible();
+    await expect(page.getByText("〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F").first()).toBeVisible();
+    await expect(page.getByText("平日 9:00-17:00 (年末年始を除く)").first()).toBeVisible();
+    await expect(page.getByText("請求があれば遅滞なく開示します").first()).toBeVisible();
+    await expect(page.locator("body")).toContainText("info@mhd-iken.com");
+    // 有料の販売で要る項目 (販売価格・支払方法など) は項目ごと出さず、「準備中」とも書かない (#1911。#1912 が足す)
+    await expect(page.locator("body")).not.toContainText("販売価格");
+    await expect(page.locator("body")).not.toContainText("支払方法");
+    await expect(page.locator("body")).not.toContainText("お支払いが必要な商品・サービスはありません");
     await expect(page.locator("body")).not.toContainText("準備中");
     await expect(page.locator("body")).not.toContainText("販売開始前");
     await expect(page.locator("body")).not.toContainText("03-1234-5678");

@@ -2,8 +2,14 @@
 
 import type { ReactNode } from "react";
 import Link from "next/link";
-import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from "@/lib/business-info";
-import { getSupportEmail } from "@/lib/site-config";
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_EMAIL,
+  BUSINESS_HOURS,
+  BUSINESS_NAME,
+  BUSINESS_REPRESENTATIVE,
+} from "@/lib/business-info";
+import { PhoneOnRequest } from "@/components/legal/PhoneOnRequest";
 
 const colors = {
   primary: '#E07A5F',
@@ -17,27 +23,18 @@ const colors = {
   border: '#E8E8E8',
 };
 
-// 事業者名・代表者は src/lib/business-info.ts で決める (法務ページの間で食い違わないように)。
-// 所在地・電話番号は載せず、請求があったときに遅滞なく開示する。架空の値 (ダミーの住所・電話番号など) は載せない。
-// メールアドレスは問い合わせ先の設定 (src/lib/site-config.ts の getSupportEmail) を使う。
-
-// 料金・支払・解約の欄は、いまの事実だけを書く (#1911: 「準備中」「決まり次第」のような予定は書かない)。
-// 有料の商品を売り始めるとき (買えるプランを /pricing に出すとき) は、この 5 つの欄を実際の条件に書き換える。
-/** 販売価格の欄 */
-const PRICE_TEXT = '無料でお使いいただけます（AI を使う機能には、1 日にご利用いただける回数の上限があります）。有料の商品・サービスの販売はありません。';
-/** 支払方法・支払時期の欄 */
-const NO_PAYMENT_TEXT = 'お支払いが必要な商品・サービスはありません。';
-/** サービス提供時期の欄 */
-const SERVICE_START_TEXT = '登録の後、すぐにご利用いただけます。';
-/** 解約の欄 */
-const CANCEL_TEXT = '設定から、いつでも退会できます。';
-
+// 販売事業者・代表者・所在地・メールアドレス・営業時間は src/lib/business-info.ts の値を出す (法務ページの間で食い違わないように)。
+// 電話番号は載せず、請求があれば遅滞なく開示すると書いて、請求の窓口 (メールアドレスとお問い合わせのフォーム) を添える。
+// 架空の値 (ダミーの住所・電話番号など) は載せない。
+// 有料の販売で要る項目 (販売価格・商品代金以外の必要料金・支払方法・支払時期・サービス提供時期・返品・解約) は、
+// 有料プランの販売 (#1912) が足す。それまでは「準備中」とも書かず、項目ごと出さない (#1911)。
 const rows: { label: string; value: ReactNode }[] = [
   { label: '販売事業者', value: BUSINESS_NAME },
   { label: '代表者', value: BUSINESS_REPRESENTATIVE },
-  { label: '所在地', value: DISCLOSED_ON_REQUEST },
-  { label: '電話番号', value: DISCLOSED_ON_REQUEST },
-  { label: 'メールアドレス', value: getSupportEmail() },
+  { label: '所在地', value: BUSINESS_ADDRESS },
+  { label: '電話番号', value: <PhoneOnRequest linkColor={colors.primary} /> },
+  { label: 'メールアドレス', value: BUSINESS_EMAIL },
+  { label: '営業時間', value: BUSINESS_HOURS },
   {
     label: 'お問い合わせ',
     value: (
@@ -49,13 +46,6 @@ const rows: { label: string; value: ReactNode }[] = [
       </>
     ),
   },
-  { label: '販売価格', value: PRICE_TEXT },
-  { label: '商品代金以外の必要料金', value: 'インターネット接続料金、通信料金等はお客様のご負担となります。' },
-  { label: '支払方法', value: NO_PAYMENT_TEXT },
-  { label: '支払時期', value: NO_PAYMENT_TEXT },
-  { label: 'サービス提供時期', value: SERVICE_START_TEXT },
-  { label: '返品・キャンセル', value: 'デジタルコンテンツの性質上、購入後の返品・返金は原則としてお受けしておりません。\n\nただし、サービスに重大な瑕疵があった場合は、個別に対応いたします。' },
-  { label: '解約について', value: CANCEL_TEXT },
   { label: '動作環境', value: '【Webブラウザ】\nChrome、Safari、Firefox、Edgeの最新版\n\n【スマートフォン】\niOS 14.0以上\nAndroid 8.0以上' },
 ];
 

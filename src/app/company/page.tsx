@@ -3,7 +3,17 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Users, Target, Heart, Sparkles } from "lucide-react";
-import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from "@/lib/business-info";
+import type { ReactNode } from "react";
+import {
+  BUSINESS_ADDRESS,
+  BUSINESS_CAPITAL,
+  BUSINESS_EMAIL,
+  BUSINESS_ESTABLISHED,
+  BUSINESS_HOURS,
+  BUSINESS_NAME,
+  BUSINESS_REPRESENTATIVE,
+} from "@/lib/business-info";
+import { PhoneOnRequest } from "@/components/legal/PhoneOnRequest";
 
 const colors = {
   primary: '#E07A5F',
@@ -29,9 +39,21 @@ const values = [
   { icon: <Sparkles size={24} />, title: '技術で社会貢献', desc: '最新のAI技術を活用し、誰もが健康になれる社会を目指します。', color: colors.warning },
 ];
 
-// 架空の住所・沿革・チーム紹介などは載せない。
-// 会社名・代表者・所在地の扱いは src/lib/business-info.ts で決める (特定商取引法に基づく表記・規約・ポリシーと同じ値)。
-// 所在地は特定商取引法に基づく表記と同じく、請求があったときに開示する (#1911: 「準備中」とは書かない)。
+// 架空の沿革・チーム紹介などは載せない。
+// 会社名・設立・資本金・代表者・所在地・メールアドレス・営業時間は src/lib/business-info.ts の値を出す
+// (特定商取引法に基づく表記・規約・ポリシーと同じ値。ページに直接書かない)。
+// 電話番号は載せず、特定商取引法に基づく表記と同じく、請求があれば遅滞なく開示すると書いて請求の窓口を添える (#1911)。
+const companyRows: { label: string; value: ReactNode }[] = [
+  { label: '会社名', value: BUSINESS_NAME },
+  { label: '設立', value: BUSINESS_ESTABLISHED },
+  { label: '資本金', value: BUSINESS_CAPITAL },
+  { label: '代表者', value: BUSINESS_REPRESENTATIVE },
+  { label: '所在地', value: BUSINESS_ADDRESS },
+  { label: '事業内容', value: '食事管理アプリ「ほめゴハン」の企画・開発・運営' },
+  { label: 'メールアドレス', value: BUSINESS_EMAIL },
+  { label: '電話番号', value: <PhoneOnRequest linkColor={colors.primary} /> },
+  { label: '営業時間', value: BUSINESS_HOURS },
+];
 
 export default function CompanyPage() {
   return (
@@ -105,12 +127,7 @@ export default function CompanyPage() {
             <div className="rounded-3xl p-6 md:p-8" style={{ background: colors.card }}>
               <table className="w-full">
                 <tbody>
-                  {[
-                    { label: '会社名', value: BUSINESS_NAME },
-                    { label: '事業内容', value: '食事管理アプリ「ほめゴハン」の企画・開発・運営' },
-                    { label: '代表者', value: BUSINESS_REPRESENTATIVE },
-                    { label: '所在地', value: DISCLOSED_ON_REQUEST },
-                  ].map((row, i) => (
+                  {companyRows.map((row, i) => (
                     <tr key={i} className="border-b last:border-b-0" style={{ borderColor: colors.border }}>
                       <th className="py-4 pr-4 text-left align-top w-1/3 font-bold text-sm" style={{ color: colors.text }}>
                         {row.label}
@@ -131,7 +148,7 @@ export default function CompanyPage() {
           <div className="container mx-auto px-4 max-w-2xl text-center">
             <h2 className="text-3xl font-bold mb-8" style={{ color: colors.text }}>お問い合わせ</h2>
             <p className="text-sm leading-relaxed" style={{ color: colors.textLight }}>
-              お問い合わせは、下のお問い合わせフォームからお願いします。
+              お問い合わせは、下のお問い合わせフォームか、メール ({BUSINESS_EMAIL}) でお願いします。
             </p>
             <Link href="/contact" className="inline-block mt-8">
               <motion.button
