@@ -7,7 +7,7 @@
 | Issue | #1901 |
 | 範囲の正本 | Issue #1901 の本文とコメント。前提と判断は本書 §0.1 に文として書く |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
-| 実装の範囲 | `src/lib/legal/` (新設 4 本)・`src/components/legal/LegalDocumentBody.tsx` (新設)・`src/app/terms/page.tsx`・`src/app/privacy/page.tsx`・`packages/shared/src/legal-versions.ts` (版)・新設のテスト (§13)・既存のテスト 2 本の追随 (`tests/public-claims-guard.test.ts` の走査の対象・`src/__tests__/api/cron/push-outbox.test.ts:176` の版の直書き。§14 段 B・§16)・`docs/legal/archive/` (旧版の控え)。DB・API・モバイルのコードは変えない |
+| 実装の範囲 | `src/lib/legal/` (新設 4 本)・`src/components/legal/LegalDocumentBody.tsx` (新設)・`src/app/terms/page.tsx`・`src/app/privacy/page.tsx`・`packages/shared/src/legal-versions.ts` (版)・新設のテスト (§13。`tests/legal-claims-1901.ts` の主張の表を含む)・既存のテスト 2 本の追随 (`tests/public-claims-guard.test.ts` の走査の対象・`src/__tests__/api/cron/push-outbox.test.ts:176` の版の直書き。§14 段 B・§16)・`docs/legal/archive/` (旧版の控え)。DB・API・モバイルのコードは変えない |
 
 発注 (Issue #1901 に記録された 2026-10-19 08 時台の指示) の逐語: 「利用規約とプライバシーポリシーが薄すぎる。しっかり内容作り込んで。今では明らかに足りないでしょう」
 
@@ -126,7 +126,7 @@
 ### 0.7 読み方
 
 - §1〜§3 が外形 (目的・現行の事実・法令)。§4 構想とトレース → §5 構造裁定 → §6〜§17 が仕上げ。実装者は §6〜§17 だけ読めば手を止めない。
-- 正典の TS は §6・§7・§8・§9 の ```ts ブロック。§8.1 (型と定数) と §9.1 (版) は単独で型検査を通る。§6・§7・§8.2・§8.3 は新設モジュール同士の import を持つので、1 行目を `// tsc:skip` にし 2 行目に `// place=<パス>` を書く。実装者はその置き場所に置いてリポジトリ全体で `tsc` に掛ける。
+- 正典の TS は §6・§7・§8・§9・§10.3・§13.1 の ```ts ブロック。§8.1 (型と定数)・§9.1 (版)・§10.3 (主張の表)・§13.1 の 1 つ目 (テストの定数) は単独で型検査を通る。§6・§7・§8.2・§8.3・§8.4・§13.1 の 2 つ目 (単位の作り方) は新設モジュール同士の import を持つので、1 行目を `// tsc:skip` にし 2 行目に `// place=<パス>` を書く。実装者はその置き場所に置いてリポジトリ全体で `tsc` に掛ける。
 - 既存の設計書との食い違いは本冊が正。追随の行は §17。
 
 章構成テンプレート (`docs/design/CLAUDE.md` の「章構成テンプレート」§1〜§9) との対応。本書は A 型設計ゲートの 4 相 (外形固定 → 構想 → 構造裁定 → 仕上げ) の順に章を並べたので番号がずれる。テンプレートの各章の中身は次の場所にある。
@@ -263,7 +263,7 @@
 | 同 40 条 | 苦情の適切かつ迅速な処理 | §7 §17 |
 | 同 2 条 5 項・6 項・41〜46 条 | 仮名加工情報・匿名加工情報を作成するときは、作成の基準・安全管理・項目の公表など | 作成していない (F-27)。§7 §4 末尾に「作成していない・作成するときは公表して改定する」と書く |
 | 電気通信事業法 27 条の 12 | 利用者の端末から外部へ情報を送らせるときは、送る情報の内容・送り先・利用目的を通知または公表 (対象役務に当たる場合) | §7 §10 に表で公表 (対象役務への該当は未確定でも、公表しておく) |
-| 消費者契約法 8 条 1 項・3 項・8 条の 2 (出典 L-1) | 損害賠償責任の全部免除・故意重過失の一部免除・解除権の放棄は無効。軽過失の一部免除は、故意・重過失を除く過失にだけ適用されることを明らかにしなければ無効 (8 条 3 項) | §6 第 21 条 (故意・重過失を除く / 軽過失は通常損害に限る / 全部免除にしない)・第 16 条 5 項と第 18 条 4 項 (凍結などの措置・サービスの変更や中断による損害も「第21条に定める範囲で責任を負う」とし、軽過失の責任を全部は免除しない)・第 4 条 (第三者によるログインの手段の使用は、当社に故意または過失がある場合を除き責任を負わない = 当社に過失が無いときだけ)・第 17 条 1 項 (退会はいつでもできる)・第 10 条 4 項 (有料プランの解約はいつでもできる)。どちらも、版を上げた後の同意の前 (設定画面が同意画面へ回る間) は第 24 条 2 項のお問い合わせ (削除・解約の依頼) を手段として示し、解除の手段が無くなる期間を作らない |
+| 消費者契約法 8 条 1 項・3 項・8 条の 2 (出典 L-1) | 損害賠償責任の全部免除・故意重過失の一部免除・解除権の放棄は無効。軽過失の一部免除は、故意・重過失を除く過失にだけ適用されることを明らかにしなければ無効 (8 条 3 項) | §6 第 21 条 (故意・重過失を除く / 軽過失は通常損害に限る / 全部免除にしない)・第 16 条 5 項と第 18 条 4 項 (凍結などの措置・サービスの変更や中断による損害も「第21条に定める範囲で責任を負う」とし、軽過失の責任を全部は免除しない)・第 4 条 (第三者によるログインの手段の使用は、当社に故意または過失がある場合を除き責任を負わない = 当社に過失が無いときだけ)・第 17 条 1 項 (設定画面から退会できる)・第 10 条 4 項 (有料プランの解約を予約できる)。版を上げた後の同意の前 (設定画面が同意画面へ回る間) は、解約はお問い合わせから依頼でき (運営が決済代行事業者の管理画面で解約する。Q-21)、退会は改定後の内容に同意したうえで設定画面から行う (運営が代わりに削除する経路は無い。F-40)。同意を退会の前提にする形の当否は弁護士の確認 (Q-28) |
 | 同 9 条 1 項 (出典 L-1) | 平均的な損害を超える損害賠償の予定・年 14.6% 超の遅延損害金は無効 | 違約金・遅延損害金の条項を置かない |
 | 同 10 条 (出典 L-1) | 信義則に反して消費者の利益を一方的に害する条項は無効 | 通知の「到達みなし」を置かない。サービス変更・終了は周知の努力を書く |
 | 民法 5 条・120 条 | 未成年者の法律行為は法定代理人の同意が無ければ取り消しうる | §6 第 3・5 条 (18 歳未満は保護者の同意) |
@@ -291,6 +291,7 @@ src/app/privacy/page.tsx  同上 (privacyText)。ctx に AI_CONSENT_PROVIDERS / 
 packages/shared/src/legal-versions.ts   LEGAL_DOCUMENTS を v2026.1 に (§9)
 tests/legal-text-1901.test.ts           §13 (文面モジュールとページ)
 tests/legal-document-body.test.tsx      §13 (描画部品。T-21〜T-23)
+tests/legal-claims-1901.ts              §10.3 (主張の表。T-35 が本文と突き合わせる)
 tests/public-claims-guard.test.ts       既存。走査の対象に 2 ページと 2 つの文面モジュールを足す (§16)
 src/__tests__/api/cron/push-outbox.test.ts   既存。行 176 の版の直書きを LEGAL_DOCUMENTS に (§16)
 docs/legal/archive/v2025.1/{terms,privacy}.md   旧版の控え (段 B)
@@ -1978,7 +1979,7 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 ### 9.4 公開の手順 (オーケストレーターの工程)
 
 1. 弁護士の確認 (任意。オーナーの判断) → 文面の差し替えがあれば §6・§7 を改定 (本書の改定版) → 実装に反映。
-2. 公開日 (施行日) を決め、**公開日より前に**、運営画面のお知らせ (`/admin/announcements`。公開 (`is_public`) にすると Web とアプリのホームに出る。F-31) に改定の予告を載せる。載せる中身: 題「利用規約・プライバシーポリシーの改定のお知らせ」、本文に改定の概要 (§11.2 の「設計後」の要点: AI 機能の送る情報と事業者・委託先・保存期間・未成年・責任の範囲・凍結と退会)・施行日・施行日以後に同意をお願いすること・同意するまでの間は設定画面を使えないこと・同意しない場合はお問い合わせから削除 (有料プランの人は解約も) を依頼できること。利用規約第24条 1 項とプライバシーポリシー第18条 1 項の「施行日の前にお知らせに掲載」はこの工程で守る (省くと公開した約束を破る)。メールでの一斉の知らせは仕組みが無いので行わず、文面もメールでの知らせを約束しない (F-34)。`/news` はコードの中の一覧で運営画面から載らないので使わない。
+2. 公開日 (施行日) を決め、**公開日より前に**、運営画面のお知らせ (`/admin/announcements`。公開 (`is_public`) にすると Web とアプリのホームに出る。F-31) に改定の予告を載せる。載せる中身: 題「利用規約・プライバシーポリシーの改定のお知らせ」、本文に改定の概要 (§11.2 の「設計後」の要点: AI 機能の送る情報と事業者・委託先・保存期間・未成年・責任の範囲・凍結と退会)・施行日・施行日以後に同意をお願いすること・同意するまでの間は設定画面を使えないこと・同意の前でも開示等の請求とお問い合わせ (有料プランの解約の依頼を含む) ができること・退会は改定後の内容に同意したうえで設定画面から行えること (お知らせでも、お問い合わせによる削除は約束しない。F-40)。利用規約第24条 1 項とプライバシーポリシー第18条 1 項の「施行日の前にお知らせに掲載」はこの工程で守る (省くと公開した約束を破る)。メールでの一斉の知らせは仕組みが無いので行わず、文面もメールでの知らせを約束しない (F-34)。`/news` はコードの中の一覧で運営画面から載らないので使わない。
 3. マージ直前: `effectiveDate` の仮の値 `'2026-10-19'` を公開日 (JST の YYYY-MM-DD) に置き換え、行末の目印のコメント `// 仮置き: マージ直前に公開日へ置き換える` を消す (2 文書とも同じ日)。`git grep -n '仮置き: マージ直前に公開日' -- packages/shared/src/legal-versions.ts` が 0 行になることを確かめる (公開日が仮の値と同じ日でも、目印は消す)。置き換えたあとに全件を流す。`docs/legal/archive/v2025.1/` の控えが PR に入っていることを確かめる。2 のお知らせが公開日より前に載っていることを確かめる。
 4. デプロイ (公開日)。デプロイの時点から再同意が始まる (施行日の前からは求めない: 施行日 = デプロイ日にする)。
 5. 公開後の整合: `/terms` `/privacy` を未ログインで開いて版 `v2026.1` と全文を確認。同意済みのテスト用アカウントで同意画面が出て「改定あり」が 2 つ付くこと、同意後に戻ること、アプリで WebView が出ることを確認。
@@ -2851,10 +2852,10 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 
 | 段 | 中身 | 触るファイル | 確認 |
 |---|---|---|---|
-| A | 文面モジュールと描画部品 (ページは触らない) | 新設: `src/lib/legal/legal-text.ts`・`terms-text.ts`・`privacy-text.ts`・`index.ts`・`src/components/legal/LegalDocumentBody.tsx`・`tests/legal-text-1901.test.ts` (T-1〜T-11・T-13〜T-16・T-19・T-24〜T-33。下の割り振り表)・`tests/legal-document-body.test.tsx` (T-21〜T-23) | `tsc`・lint・全件 (すべて緑。ページ未切替なので挙動は変わらない) |
+| A | 文面モジュールと描画部品 (ページは触らない) | 新設: `src/lib/legal/legal-text.ts`・`terms-text.ts`・`privacy-text.ts`・`index.ts`・`src/components/legal/LegalDocumentBody.tsx`・`tests/legal-text-1901.test.ts` (T-1〜T-11・T-13〜T-16・T-19・T-24〜T-38。下の割り振り表)・`tests/legal-claims-1901.ts` (主張の表。§10.3)・`tests/legal-document-body.test.tsx` (T-21〜T-23) | `tsc`・lint・全件 (すべて緑。ページ未切替なので挙動は変わらない) |
 | B | ページの差し替え・版上げ・旧版の控え・番兵の追随 | `src/app/terms/page.tsx`・`src/app/privacy/page.tsx` (§8.3 の全文)・`packages/shared/src/legal-versions.ts` (§9.1)・`tests/public-claims-guard.test.ts` (§13 末尾)・`docs/legal/archive/v2025.1/terms.md`・`privacy.md` (現行 `page.tsx` の条を Markdown に写す。版 v2025.1・施行日 2025-01-01 を冒頭に)・`src/__tests__/api/cron/push-outbox.test.ts:176` (`'v2025.1'` 2 つを `LEGAL_DOCUMENTS.terms_of_service.version` / `LEGAL_DOCUMENTS.privacy_policy.version` に置き換え、`import { LEGAL_DOCUMENTS } from '@homegohan/shared'` を足す。§16)・`tests/legal-text-1901.test.ts` に残りの it (T-12・T-17・T-18・T-20) | `tsc`・lint・全件 (すべて緑。既知の赤は無い)。`effectiveDate` は仮の施行日 `'2026-10-19'` と行末の目印のコメントのまま残す (§9.1。公開日への置き換えはオーケストレーターがマージ直前に行う) |
 
-テストの割り振り (§13 の 33 本。各 it はどちらか一方の段にだけ入る)。判定の基準: **段 A** = 読むものが文面モジュール (`termsText(ctx)` / `privacyText(ctx)` とその定数。描くときは `LegalDocumentBody` で描く)・描画部品・リポジトリのファイル (migration・設計書・`app.json`・`database.types.ts`・CSP の関数・組織の画面と API のソース) だけで、段 A の時点で緑にできるもの。**段 B** = 2 ページ (`src/app/terms/page.tsx`・`src/app/privacy/page.tsx`) を描くもの、または段 B で変える・作るもの (版 `LEGAL_DOCUMENTS`・旧版の控え) を見るもの。
+テストの割り振り (§13 の 38 本。各 it はどちらか一方の段にだけ入る)。判定の基準: **段 A** = 読むものが文面モジュール (`termsText(ctx)` / `privacyText(ctx)` とその定数。描くときは `LegalDocumentBody` で描く)・描画部品・リポジトリのファイル (migration・設計書・`app.json`・`database.types.ts`・CSP の関数・組織の画面と API のソース) だけで、段 A の時点で緑にできるもの。**段 B** = 2 ページ (`src/app/terms/page.tsx`・`src/app/privacy/page.tsx`) を描くもの、または段 B で変える・作るもの (版 `LEGAL_DOCUMENTS`・旧版の控え) を見るもの。
 
 | 段 | it | 読むもの (判定の理由) |
 |---|---|---|
@@ -2871,15 +2872,20 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | A | T-29 | CSP の関数と `privacyText(ctx)` の第10条の表 |
 | A | T-30 | `database.types.ts`・`src`・`supabase` のソースと `privacyText(ctx)` を描いた本文 |
 | A | T-32 | 組織の画面と API のソース |
+| A | T-34 | `@/lib/account-export-tables` の 2 つの一覧・`privacyText(ctx)` の第3条の表・`src` などのソースと migration |
+| A | T-35 | `termsText(ctx)`・`privacyText(ctx)` の単位・`tests/legal-claims-1901.ts`・本設計書 (F-n・P-n の行) と根拠のファイルの実在 |
+| A | T-36 | AI 相談の route のソースと `privacyText(ctx)` の第6条 |
+| A | T-37 | migration・家族の画面のソース・`termsText(ctx)` |
+| A | T-38 | 運営の記録の見張りのテストのソース・審査の詳細の route・`privacyText(ctx)` |
 | B | T-12 | `/privacy`・`/terms` のページを描く (ページが `ctx.aiProviders` に `AI_CONSENT_PROVIDERS` を渡すことを見る) |
 | B | T-17 | `LEGAL_DOCUMENTS` の版 (段 B で v2026.1 に上げる) |
 | B | T-18 | 2 ページを描いた h3 の数 |
 | B | T-20 | `docs/legal/archive/v2025.1/` (段 B で作る) |
 
-段 A は 29 本 (`legal-text-1901.test.ts` 26 本・`legal-document-body.test.tsx` 3 本)、段 B は 4 本 (`legal-text-1901.test.ts`)。合わせて 33 本。
+段 A は 34 本 (`legal-text-1901.test.ts` 31 本・`legal-document-body.test.tsx` 3 本)、段 B は 4 本 (`legal-text-1901.test.ts`)。合わせて 38 本。
 
 - 横断整合 (段 B のレビュー): `tests/business-info-legal-pages.test.ts`・`tests/policy-pages-public.test.tsx`・`tests/site-config-ui.test.tsx`・`tests/seo-public-pages-1867.test.tsx`・`tests/legal-consent-page.test.tsx` が変更なしで緑であること (§16)。
-- 変異試験 (B 型の Haiku の枠): 製品コードは `src/lib/legal/*.ts`・`LegalDocumentBody.tsx`・2 ページ・`legal-versions.ts`。守りの中心 = T-3〜T-8 (数の一致)・T-11〜T-13 (名前の混入)・T-17 (版)・T-28・T-31・T-33 (約束の文)。
+- 変異試験 (B 型の Haiku の枠): 製品コードは `src/lib/legal/*.ts`・`LegalDocumentBody.tsx`・2 ページ・`legal-versions.ts`。守りの中心 = T-3〜T-8 (数の一致)・T-11〜T-13 (名前の混入)・T-17 (版)・T-28・T-31・T-33 (約束の文)・T-34〜T-36 (主張と取得する情報と送る情報の閉包)。
 
 ---
 
@@ -2894,6 +2900,7 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | ファイル | `LegalDocumentBody.tsx` | `src/components/legal/` |
 | ファイル | `legal-text-1901.test.ts` | `tests/` |
 | ファイル | `legal-document-body.test.tsx` | `tests/` |
+| ファイル | `legal-claims-1901.ts` (主張の表のデータ。§10.3。テストだけが import する) | `tests/` |
 | ファイル | `terms.md`・`privacy.md` | `docs/legal/archive/v2025.1/` |
 | 既存ファイルの変更 (新設ではない) | `src/app/terms/page.tsx`・`src/app/privacy/page.tsx` (§8.3)・`packages/shared/src/legal-versions.ts` (§9.1)・`tests/public-claims-guard.test.ts` (`PUBLIC_PAGES` に 2 ページ・`PUBLIC_SOURCE_FILES` に 2 つの文面モジュール。§13 末尾・§16)・`src/__tests__/api/cron/push-outbox.test.ts` (行 176 の `'v2025.1'` 2 つを `LEGAL_DOCUMENTS.terms_of_service.version` / `LEGAL_DOCUMENTS.privacy_policy.version` に。§16) | 段 B (§14) |
 | 型 | `AiProviderLine`・`LegalTextContext`・`LegalBlock`・`LegalSection`・`LegalChapter`・`LegalDocumentText`・`PrivacyProcessor` | `legal-text.ts`・`privacy-text.ts` |
@@ -2902,7 +2909,9 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | 定数 | `PRIVACY_SECTION_HEADINGS`・`PRIVACY_SECTION_COUNT`・`PRIVACY_PROCESSORS`・`HOLIDAYS_API_HOST` (export しない) | `privacy-text.ts` |
 | 定数 (ページのローカル。export しない) | `MAIN_CLASS` (`<main>` のクラス。2 ページに同じ文字列を §8.3 のとおり置く。共通の定数 `LEGAL_MAIN_CLASS` などは新設しない) | `src/app/terms/page.tsx`・`src/app/privacy/page.tsx` |
 | 定数 (テストのローカル。export しない) | `LEGAL_TEXT_FORBIDDEN_CLAIMS` (T-19 の効果・成果の言い回しの一覧。根拠コメント: R-18・§3 の薬機法・景品表示法・健康増進法の行) | `tests/legal-text-1901.test.ts` |
-| 定数 (テストのローカル。export しない) | `MIN_NEEDLE_LENGTH = 6` (T-7。根拠コメント: §7 の規則)・`IP_UA_COLUMNS`・`DISCLOSED_IP_UA_TABLES`・`EXCLUDED_IP_UA_TABLES` (T-30。根拠コメント: F-37) | `tests/legal-text-1901.test.ts` |
+| 定数 (テストのローカル。export しない) | `MIN_NEEDLE_LENGTH = 6` (T-7。根拠コメント: §7 の規則)・`IP_UA_COLUMNS`・`DISCLOSED_IP_UA_TABLES`・`EXCLUDED_IP_UA_TABLES` (T-30。根拠コメント: F-37)・`PRIVACY_DATA_TABLES`・`PRIVACY_DATA_EXCLUDED` (T-34。F-42)・`AI_CONTEXT_TABLES` (T-36。F-43)・`SENTENCE_END`・`TABLE_CELL_JOINER` (T-35。§10.1) | `tests/legal-text-1901.test.ts` |
+| 型・関数 (テストのローカル。export しない) | `LegalTextUnit`・`legalTextUnits(document)` (T-35。§13.1) | `tests/legal-text-1901.test.ts` |
+| 型・定数 (テストのデータ) | `LegalClaimBasis`・`LegalClaim`・`LEGAL_CLAIMS`・`LEGAL_CLAIM_COUNT` (§10.3) | `tests/legal-claims-1901.ts` |
 | 関数 | `termsText(ctx)`・`privacyText(ctx)` | 同上 |
 | 部品 | `LegalDocumentBody({ document })` | `LegalDocumentBody.tsx` |
 | 版 | `LEGAL_DOCUMENTS` の `version` を `v2026.1` (2 文書)、`effectiveDate` を公開日 | `packages/shared/src/legal-versions.ts` |
@@ -2944,7 +2953,9 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | `src/__tests__/lib/emails/account/login-new-device.test.ts:67` | `SESSIONS_SETTINGS_PATH` | 値が `/settings/security/sessions` であることを固定 (文面モジュールが import する) | 変更なし | — |
 | `src/__tests__/lib/security/csp.test.ts` | `HOLIDAYS_API_ORIGIN`・`connect-src` | CSP の値の固定 (プライバシーポリシーの文面モジュールが `HOLIDAYS_API_ORIGIN` を import し、T-29 が `connect-src` を第10条と突き合わせる) | 変更なし | — |
 | `tests/env-source-scan.test.ts`・`src/__tests__/lib/env.test.ts` | 環境変数名 | 新しい環境変数は無い | 変更なし | — |
-| `tests/account-export-tables.test.ts` | テーブル名 | 新しいテーブルは無い | 変更なし | — |
+| `tests/account-export-tables.test.ts` | テーブル名・`ACCOUNT_EXPORT_TABLES`・`ACCOUNT_EXPORT_EXCLUDED` | 新しいテーブルは無い。利用者に紐づく表を足すと、この番兵が 2 つの一覧への分類を求め、続けて T-34 が第3条の行への対応 (または載せない理由) を求める (2 段で閉じる) | 変更なし (T-34 は 2 つの一覧を読むだけ) | — |
+| `tests/admin-mutation-audit-coverage-1571.test.ts` | `EXPECTED`・`recordAdminAudit` | T-38 がこのファイルのソースの 2 行 (審査の変更と凍結の `'audited'`) を読む。運営の変更の操作の記録をやめると、この番兵と T-38 の両方が赤になり、プライバシーポリシー第5条 6 項と第11条の文を直すことになる | 変更なし | — |
+| 本設計書 (`docs/design/cross/20-terms-privacy-text.md`) | `\| F-<数> \|`・`\| P-<数> \|` | T-35 が主張の表の根拠の F-n・P-n の行の実在を、本書から読んで確かめる。本書の §2.2・§0.1 の行の番号を付け替えると T-35 が赤になる | 行の番号は付け替えない (消すときは主張の表の根拠も直す) | A |
 | `lib/supabase/__tests__/middleware-legal-consent-matrix.test.ts:54-55, 192-193, 208` | `src/app/terms/page.tsx`・`src/app/privacy/page.tsx`・`<LegalConsentBanner` | `PAGE_FILES` の 2 行がページのファイルの実在を検査する。お知らせ (`<LegalConsentBanner`) を描くのは `(main)` の下だけかを `src/app` の走査で検査する | 変更なし (2 ページのファイルは同じパスに残り、§8.3 のページと `LegalDocumentBody` は `<LegalConsentBanner` を描かない) | B |
 | 設計書の lint (`scripts/` の `design-lint` 系・`gfm-integrity`・`doc-file-line-anchors`) | 本書の file:line | 本書のアンカーが実在すること | A 型の Haiku の検証の枠が流す | 設計 |
 | 走査テスト (as any・マジックナンバー・PII) | `as any`・数のリテラル | 文面モジュールの数は `LEGAL_FACTS` から (直書きしない)。`LEGAL_FACTS` の各値には根拠コメント | §8.1 の形を守る | A |
@@ -2976,8 +2987,12 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | `src/app/(main)/family/members/[id]/page.tsx`・`src/app/(main)/settings/membership/page.tsx` | 健康の記録の共有 (`share_health`) の切り替え | 切り替えられるが、読む経路が無い (F-18)。利用規約第11条 2 項・プライバシーポリシー第9条は「現在、家族に健康の記録を表示する機能はありません」と書いた。候補: 切り替えの文に同じ注記を出すか、機能を作る (作るときはプライバシーポリシーの版を上げる)。本書の範囲外 | 候補 |
 | `src/lib/seo/public-pages.ts` | `/terms` `/privacy` の description | 変更不要 (「利用規約です」「プライバシーポリシー (個人情報の取り扱い) です」のまま) | — |
 | `src/app/(operator)/operator/membership/families/inactive/page.tsx:133`・`orgs/inactive/page.tsx:137` | 解散の理由の入力欄の例文「代表者が90日以上未ログインのため…」「オーナーが90日以上未ログインのため…」 | 一覧の判定 (30 日) と見出し (30日以上未ログイン) と食い違う。利用規約第11条 6 項・第12条 4 項は判定の 30 日を書いた (F-21)。候補: 例文の日数を 30 に揃える (本書の範囲外。T-6 は例文を見ない) | 候補 |
-| `lib/legal-consent.ts` (`EXEMPT_PREFIXES`)・`src/app/legal-consent/LegalConsentForm.tsx` の `declined` の画面 | 版上げの後、同意の前の人には退会・書き出し・解約の画面が無い (F-32) | 利用規約第10条 4 項・第17条 1 項・第24条 2 項は、この間の手段をお問い合わせ (運営が手で削除・解約する) と書いた。候補: 同意の前でも本人が自分で退会・書き出し・解約できる画面 (凍結中の `/frozen/account`・`/frozen/billing` と同じ部品) を `declined` の画面から開けるようにする。作ったら、3 つの条の「お問い合わせから依頼」を画面の案内に改め、版を上げる (Q-23) | 候補 (別 Issue) |
-| `src/app/(org)/org/members/page.tsx:52` | 組織のメンバーの一覧が `user_profiles` を直接読むが、SELECT の RLS は本人の行だけ (F-19) | 組織の管理者には自分の行しか出ない (画面の意図と食い違う)。利用規約第12条 1 項・プライバシーポリシー第9条は、画面が読む項目 (表示名・組織内の役割・参加日) を上限として書いた。候補: 一覧を service_role の API で返すなど (本書の範囲外。直しても見える項目が同じなら文面は変えない) | 候補 (別 Issue) |
+| `lib/legal-consent.ts` (`EXEMPT_PREFIXES`)・`src/app/legal-consent/LegalConsentForm.tsx` の `declined` の画面 | 版上げの後、同意の前の人には退会・書き出し・解約の画面が無い (F-32)。`declined` の画面の文 (`LegalConsentForm.tsx:295-298`) は「ご本人であることを確認のうえ、アカウントと保存されているデータを削除します」と約束するが、運営が代わりに削除する経路は無い (F-40) | 利用規約第17条 1 項・第24条 2 項とプライバシーポリシー第13条 1 項は「改定後の内容に同意したうえで設定画面から退会」と書き、お問い合わせによる削除は約束しない。画面の文はこれと食い違う。候補は 2 つ: (a) 画面の文を利用規約に合わせる (お問い合わせによる削除の約束を外し、同意のうえで設定画面から退会できること・開示の請求を案内する)。(b) 同意の前でも本人が自分で退会・書き出し・解約できる画面 (凍結中の `/frozen/account`・`/frozen/billing` と同じ部品) を `declined` の前 (ログアウトの前) に出す。(b) を作ったら、3 つの条の「同意したうえで」を画面の案内に改め、版を上げる (Q-23) | 公開の前 (別 Issue。本書の範囲外) |
+| `docs/design/operator/09-runbook.md` §9.2・§9.3 | 同意の前の人からの依頼の扱い | (1) 解約の依頼: 本人確認のうえ決済代行事業者の管理画面で解約し、自動更新の日までに処理する手順と期限 (Q-21)。(2) 削除の依頼: 運営が代わりに削除する経路が無いので、「改定後の内容に同意したうえで設定画面から退会」を案内する (利用規約第24条 2 項)。(3) 譲渡できる相手のいない代表者・オーナーからの退会の依頼の扱い (Q-26) | 実装のマージと同日 (docs PR) |
+| `src/lib/account-deletion.ts:248-285` (`findBlocker` の 2 つの文) | 「先に代表者を譲渡するか家族グループを解散してください」「先にオーナーを譲渡するか組織を解散してください」 | 利用者が解散する手段は無い (F-39)。候補: 文から「解散」を外し、譲渡できる相手がいなければお問い合わせへ案内する (または利用者の解散の機能を作る。Q-26)。本書の範囲外 | 候補 |
+| `packages/shared/src/parental-consent.ts` (`PARENTAL_CONSENT_DOCUMENT_COPY` の 1・2・3・4 段落・`LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedBody`・`PARENTAL_CONSENT_COPY.promotionUnderCoppaAge`)・`src/app/(main)/family/members/child/new/page.tsx:300` | 「保護者の方が代わりに記録します」「親が代わりに食事記録を管理します」「お子さまの情報（…食事の記録・アレルギーなどの健康に関する情報）」「AI による食事の解析・献立の提案にお子さまの記録が使われる」「保存済みの情報の削除は、お問い合わせからご依頼ください」 | 本人のアカウントが無い子どもの食事・健康の記録を代わりに付ける機能は無い (F-33)。保護者の同意書は利用規約第1条 3 項の個別規定で、食い違うときは個別規定が優先する定めなので、同意書の側を実装に合わせる必要がある。候補: 同意書と画面の文を実装 (名前・生年月日・性別の登録だけ) に合わせ、`PARENTAL_CONSENT_DOCUMENT.version` を上げる (保護者の同意の取り直しの扱いは cross/14)、または代わりに記録する機能を作る。本書の範囲外 (P-8)。Q-27 | 公開の前 (別 Issue) |
+| `src/app/api/admin/moderation/route.ts`・`src/app/api/admin/moderation/queue/route.ts` | 審査の一覧は写真の署名付き URL を返すが、監査の記録を残さない (F-41) | プライバシーポリシー第5条 6 項は、記録するのを「データを変更する操作」と「個別の投稿を開いて確認したこと」に限って書いた。候補: 一覧の閲覧も記録する (記録したら、文に一覧の閲覧を足して版を上げる)。本書の範囲外 | 候補 |
+| `src/app/(org)/org/members/page.tsx:52` | 組織のメンバーの一覧が `user_profiles` を直接読むが、SELECT の RLS は本人の行だけ (F-19) | 組織の管理者には自分の行しか出ない (画面の意図と食い違う)。利用規約第12条 1 項・プライバシーポリシー第9条は、画面が読む項目 (表示名・組織内の役割・参加日) を上限として書いた。同じ理由で、オーナーの譲渡の画面 (`src/app/(org)/org/settings/owner-transfer/page.tsx:50-55`) も候補を出せない (F-39)。候補: 一覧と候補を service_role の API で返すなど (本書の範囲外。直しても見える項目が同じなら文面は変えない) | 候補 (別 Issue) |
 
 ---
 
@@ -3007,9 +3022,12 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | Q-17 | `apps/mobile/app.json` の使っていない権限の宣言 (`NSPhotoLibraryAddUsageDescription`・`RECORD_AUDIO`・`WRITE_EXTERNAL_STORAGE`) を外すか | 本書では変えない。ポリシーは使う機能だけを書く (§17 の候補行) | オーナー |
 | Q-21 | 版上げの後、同意の前の有料プランの利用者からお問い合わせで解約の依頼を受けたとき、運営が決済代行事業者 (Stripe) の管理画面で解約する運用 (コードの経路は無い。F-32) と、自動更新の日に間に合わせる期限をどう決めるか | 利用規約第10条 4 項・第24条 2 項は「お問い合わせから解約を依頼してください」とだけ書き、処理の期限は約束しない。有料プランは販売開始前 (P-5) なので、販売開始までに運用の手順を決めるか、Q-23 の画面を作る | オーナー |
 | Q-22 | 代表者・オーナーの未ログインの日数を文面に書くか | 運営の一覧の判定 (30 日。F-21) を書いた (`LEGAL_FACTS.inactiveRepresentativeDays = 30`・T-6 が判定と突き合わせる)。日数を書かずに「長期間ログインしていないなど」とする案もある (そのときは `LEGAL_FACTS` からこの項目と T-6 を外す)。業務の判断で日数を変えるときは、判定の RPC と文面を一緒に変えて版を上げる | オーナー |
-| Q-23 | 同意の前でも本人が自分で退会・書き出し・解約できる画面を作るか (§17 の候補行) | 本書では作らない (DB・API・画面を変えない範囲)。作れば、第10条 4 項・第17条 1 項・第24条 2 項の「お問い合わせから依頼」が画面に置き換わり、Q-21 の運用も要らなくなる | オーナー |
-| Q-24 | 同型の指摘 (文面の主張が実装と食い違う) が審査の周をまたいで続いた (R2 のログインの履歴の IP → R3 の同意の記録の IP・組織の見える項目・メール・多要素認証)。発生源を消す構造として、文面のすべての主張の文に根拠のアンカー (ファイルと語。`PRIVACY_PROCESSORS` の `evidence` と同じ形) を持たせ、テストがアンカーの実在を確かめる形 (文と根拠の対応表をデータにする) に広げるか | 本書では、食い違いが出た面ごとに機械の検査を置いた (T-30 = IP・User-Agent を持つ表、T-31 = 多要素認証の対象、T-32 = 組織の画面が読む項目、T-6 = 未ログインの日数の判定、T-7 = needle の形)。全文に広げるのは文面の版の改定のときに検討する | オーナー (次の改定) |
+| Q-23 | 同意の前でも本人が自分で退会・書き出し・解約できる画面を作るか (§17 の候補行) | 本書では作らない (DB・API・画面を変えない範囲)。いまは、同意の前に退会するには改定後の内容に同意する必要がある (利用規約第17条 1 項・第24条 2 項)。運営が代わりに削除する経路も無い (F-40)。`declined` の画面の文はお問い合わせによる削除を約束しているので、公開の前に、画面の文を直すか画面を作るかを決める (§17)。作れば、3 つの条の「同意したうえで」が画面の案内に置き換わり、Q-21 の運用も要らなくなる | オーナー |
+| Q-24 | 同型の指摘 (文面の主張が実装と食い違う) が審査の周をまたいで続いた (R1 15 → R2 3 → R3 8 → R4 13)。発生源は、主張を条ごとに要約した対応表では母集合が閉じないこと | v1.8 で構造を替えた: 本文の 1 文 = 1 行の主張の表 (§10。区分と根拠つき) と、本文と表の 1 対 1 を確かめる T-35。取得する情報は利用者に紐づく表の全体から T-34 で、AI に送る情報は AI 相談が読む表から T-36 で閉じた。以後は、文を足す・変えると T-35 が赤になり、表の行と根拠を作り直すことになる | — (解決) |
 | Q-25 | 本番で運営の多要素認証の猶予 (`OPERATOR_MFA_ENFORCE_FROM`) が未来の日時に設定されていないか | プライバシーポリシー第11条は「管理者の権限などを持つ担当者のログインには、多要素認証を求めています」と書いた (F-35)。猶予中なら、公開の前に猶予を終えるか、文を「求めることにしています」に改める | 整合ゲート・オーナー |
+| Q-26 | ほかに 18 歳以上のメンバーがいない家族の代表者・組織のオーナーは、譲渡できず、利用者が解散する手段も無いので、退会できない (F-39)。運営の強制解散の画面は 30 日以上未ログインの一覧からだけ開ける | 利用規約第11条 5 項・第12条 4 項は「お問い合わせからご連絡ください」とだけ書き、解散を約束しない。候補: 利用者が解散できる機能を作る、または運営が任意の家族・組織を解散できる画面を作り runbook に手順を書く。作ったら文面を改めて版を上げる | オーナー |
+| Q-27 | 保護者の同意書 (`PARENTAL_CONSENT_DOCUMENT_COPY`) と未成年の案内の文が「保護者が代わりに記録します」と書くが、その機能は無い (F-33)。同意書は利用規約第1条 3 項の個別規定で、食い違うときは同意書が優先する | 利用規約・プライバシーポリシーは実装に合わせて「名前・生年月日・性別を登録できる」と書いた。公開の前に、同意書の文を実装に合わせて版を上げるか、機能を作るかを決める (§17) | オーナー |
+| Q-28 | 同意の前の退会に、改定後の内容への同意を求める形 (利用規約第17条 1 項・第24条 2 項) が、消費者契約法 10 条・個人情報保護法 35 条 (消去等の請求) に照らして妥当か | 実装の事実 (F-32・F-40) どおりに書いた。妥当でないなら Q-23 の画面を作る | 弁護士・オーナー |
 
 ---
 
@@ -3025,3 +3043,4 @@ function legalTextUnits(document: LegalDocumentText): LegalTextUnit[] {
 | v1.5 | 2026-10-19 | 網羅性の反映 (周 3): §16 の走査の範囲に `apps/mobile/__tests__` を足し、パス `/terms` `/privacy` を持つテスト 21 本がすべて表にあることを書いた。§16 に middleware の公開パスの番兵 3 本・ログイン / サインアップ / 保護者の同意書 / 認証の戻り先のリンク先の番兵 4 本・メンテナンス中のページの GET (`feature-flags-runtime`)・モバイルの番兵 5 本・版を `LEGAL_DOCUMENTS` から読む番兵 5 本・`legal-consent-api.test.ts:330` の施行日の直書き (無関係の入力値) の行を足した (すべて変更なし)。§4.1 の構造に `tests/legal-document-body.test.tsx` と既存のテスト 2 本の追随を足し、§13・§14・§15 と揃えた |
 | v1.6 | 2026-10-19 | 審査 R3 の反映: 利用規約第19条とプライバシーポリシー第16条から「一部のメールは設定画面で止められる」を外し、メールは止める設定が無いと書いた (F-34)。利用規約第24条 1 項・プライバシーポリシー第18条 1 項の「必要に応じてメールでもお知らせ」を外した (一斉メールの仕組みが無い)・利用規約第10条 4 項・第17条 1 項・プライバシーポリシー第13条 1 項・3 項に、版上げの後の同意の前は第24条 2 項 (お問い合わせからの削除と解約の依頼・開示の請求) によると書き、第24条 2 項に解約の依頼と、同意の前は設定画面を使えないことを足した (R-24・§11.3・Q-21・Q-23)・プライバシーポリシー第12条のお問い合わせの記録を、メールアドレスを伏せ件名と本文は残す実装に合わせた (F-36)・第11条の多要素認証を管理者などのロールに限った (F-35)・未ログインの日数を運営の一覧の判定の 30 日にし、T-6 を RPC の判定と見出しに結んだ (F-21・Q-22)・委託先の表の Expo の needle `exp.host` が `tests/push-expo-boundary-scan.test.ts` を赤にするので `EXPO_PUSH_SEND_URL` に替え、GitHub の needle も `apt-get install -y age` に替え、needle の規則 (§7) と T-7 の形の検査と §16 の走査テストの行を足した・同意の記録 (`terms_acceptances`) が IP と User-Agent を残す実装に合わせて F-17・§9.2・第3条・第12条を直し、IP・User-Agent を持つ表の全体 (F-37) を T-30 で第3条と突き合わせる形にした (`failed_invite_lookups` は書き込む処理が無いので第3条に載せない)・組織の管理者に見える項目を画面と API が読む項目 (表示名・組織内の役割・参加日・招待の状況・メンバー数と部署ごとの人数・チャレンジの参加人数と平均) にし、社員番号・最終ログイン・ライセンスの状態を外した (利用規約第6条・第12条・プライバシーポリシー第3条・第9条・F-19・T-32)・家族の招待の状況が代表者と大人のメンバーに見えることを第9条に書いた・利用規約第2条・第10条 5 項・第12条 5 項のライセンスの書き方を、参加できる人数の枠 (招待の承諾で 1 つ使う) と組織からの削除に合わせた。R-24〜R-25・F-34〜F-37・T-30〜T-33・§11.2 の 4 行・§16 の 5 行・§17 の 3 行・Q-21〜Q-25 |
 | v1.7 | 2026-10-19 | 網羅性の反映 (周 4): §11.2 の状態比較表に、AI 機能・AI 機能の 1 日の上限・料金と有料プラン・公開の範囲・家族グループでの見え方・凍結・退会・未成年の扱い・要配慮個人情報の取得の同意・外国にある第三者への提供・保存期間・開示等の請求の手続の行を足し、AI 事業者へ送る情報の行の現行の条番号を第5条に直した (現行 `/privacy` の AI の記載は第5条)。§12 のエラー表に、凍結中の 403 `AUTH_ACCOUNT_FROZEN` とメンテナンス中の 503 `MAINTENANCE_MODE` の行を足した (§11.3 の凍結の行と F-28 の判定の順が挙げるもの)。§14 の段分けで T-12 を段 B だけにし (2 ページを描くため)、33 本の it の段への割り振り表と判定の基準を足した。T-19 の読むものを文面モジュールを描いた本文と明記した |
+| v1.8 | 2026-10-19 | 審査 R4 の反映: 家族の役割を実装の 3 つ (代表者・大人・子ども) に直し、「管理者」を消した。大人のメンバー (本人のアカウントをつないだ未成年者を含む) が同じ権限で招待・招待先のメールアドレスの閲覧・子どもの追加・除名を行えることと、未成年者は家族の作成・参加・代表者の引き受けができないことを書いた (利用規約第5条・第11条・プライバシーポリシー第9条・F-38)。実装に無い「代わりに記録」「家族としての献立・買い物リスト」を削り、子どもについて登録できるのは名前・生年月日・性別だけと書いた (第2条・第5条・第6条・第11条・プライバシーポリシー第3条・第5条・第9条・第15条・F-33)。昇格の案内は保護者から本人のメールアドレスに届き本人が承諾すると直した (第5条 1 項)。利用者が解散する手段は無いので、代表者・オーナーは譲渡するまで退会できず、相手がいなければお問い合わせと書いた (第11条 5 項・第12条 4 項・第17条 2 項・プライバシーポリシー第13条 4 項・F-39・Q-26)。運営が代わりに削除する経路は無いので、同意の前の退会は「改定後の内容に同意したうえで設定画面から」と書き、お問い合わせによる削除の約束を消した (第17条 1 項・第24条 2 項・プライバシーポリシー第13条 1 項・第14条 7 項・F-40・Q-23・Q-28)。運営の操作の記録は、データを変更する操作と個別の投稿の確認に限った (プライバシーポリシー第5条 6 項・第11条・F-41)。取得する情報に AI 相談・毎日のコンディション・記録の継続と比較・運営の記録・パスワードの履歴などを足し、利用者に紐づく表の全体と第3条の行の対応を T-34 で閉じた (F-42・F-44・F-45)。AI 事業者へ送る情報に体重計・体組成計の写真と、AI 相談が読む健康の記録・最近の献立・冷蔵庫の食材・買い物リスト・バッジ・過去の相談の要約を足し、T-36 で閉じた (F-43・F-48)。保存期間に公開したレシピ・AI 事業者の呼び出しの記録・栄養の計算の確認の記録・請求の記録・招待と所属の変更の記録を足した (F-46)。確認メールの回数を「最初の送信を含めて 5 回まで」に直した (F-47)。家族の食事の記録は「閲覧できる状態になる」、献立は「料理の名前が表示される」と実装どおりに書いた (F-49)。§10 を、本文の 1 文 = 1 行の主張の表 (474 行。区分と根拠つき。`tests/legal-claims-1901.ts`) に作り替え、本文と表の 1 対 1 を T-35 で確かめる形にした (R-26。Q-24 を解決)。F-38〜F-50・R-26〜R-27・S-18〜S-20・T-34〜T-38・§13.1・§11.2〜§11.3・§12 の 2 行・§16 の 2 行・§17 の 5 行・Q-26〜Q-28 |
