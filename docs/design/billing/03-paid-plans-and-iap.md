@@ -234,7 +234,7 @@
 | R22 | 監査ログ必須 | `docs/design/CLAUDE.md` | 状態の変化は写像が `admin_audit_logs` に書く (核と同じ名前)。Webhook の失敗は `system.revenuecat.event_failed` (§8.1) |
 | R23 | 既存の番兵の追随と、2 PR 以上が触る共有面の台帳 | 設計の規約 | §16 |
 
-### 3.2 ユーザーシナリオ (29 本)
+### 3.2 ユーザーシナリオ (34 本)
 
 | ID | シナリオ |
 |---|---|
@@ -259,7 +259,7 @@
 | S19 | 家族プランが終わったグループ: 代表者の家族 Basic が `expired` になる。グループは `free` / 4 に戻り、いるメンバーはそのまま。新しい招待の承諾・子供の追加は 402 `FAMILY_PLAN_REQUIRED`。いる子供の昇格 (子供が自分のアカウントで昇格の依頼を承諾) は成功する (いる行の書き換えで、人数は増えない)。メンバーの AI の上限は free の値に戻る |
 | S20 | 運営の手動付与との共存: 運営が利用者に `family_pro` を手動で付与 (M 行)。その利用者がアプリで買おうとしても購入のボタンは出ない (live)。手動付与の取り消し・期限切れは、ストアの行 (`iap_store IS NOT NULL`) を M 行と見ない (§6.7) |
 | S21 | 規約の改定の再同意: 段 E で規約とポリシーの版が上がる。サインイン中の全員に再同意が求められる (既存の仕組み)。再同意していない人の購入の API は 403 `LEGAL_CONSENT_REQUIRED` で、同意してから買う (購入の API は未同意の許可リストに入れない)。再同意の前に解約したい人は、ストアの契約なら各ストアの定期購読の管理から、Web の契約ならお問い合わせから依頼して運営が解約する (利用規約第24条に足す項。Q-15) |
-| S22 | 凍結 (BAN) 中のストアの契約: 凍結中の利用者のストアの購読は更新され続ける (核の Stripe と同じく凍結は課金を止めない)。`/frozen/billing` はストアの行には「App Store / Google Play の購読の管理から解約できます」の文を出し、解約のボタンを出さない。Webhook と写像は凍結を見ない |
+| S22 | 凍結 (BAN) 中のストアの契約: 凍結中の利用者のストアの購読は更新され続ける (核の Stripe と同じく凍結は課金を止めない)。`/frozen/billing` はストアの行には「App Store / Google Play の購読の管理から解約できます」の文を出し、解約のボタンを出さない。Webhook と写像は凍結を見ない。凍結中の利用者のアプリは凍結の画面 1 つに畳まれ (#1861 の `AccountFrozenGate`)、購入の画面は開けない。カタログと同期の API は凍結中も通す API (`FROZEN_ALLOWED_API_PATHS`) に入れないので、呼ばれても 403 `AUTH_ACCOUNT_FROZEN` を返し、RevenueCat も DB の書き込みも呼ばない。凍結中のストアの更新・解約・返金は、Webhook と `GET /api/billing/subscription` (凍結中も通す。`/frozen/billing` が読む) の遅延の再同期が写し続ける |
 | S23 | 無料体験の 1 人 1 回: 利用者が iOS で個人 Pro の月額を 7 日間の無料体験つきで買い (行は `trialing`)、体験中に App Store で自動更新を切る。体験の終わりに行は `expired` になる。同じ Apple ID で後日アプリの購入の画面を開くと、App Store がこの利用者を体験の対象外と判定するので、個人 Pro の月額の行は「7 日間の無料体験のあと」を出さず「1 か月ごとに ¥580 が自動で更新されます」とだけ出す (S29)。後日 Web の `/pricing` から個人 Pro を申し込むと、確認画面の無料体験は 0 日で、Checkout も試用なしで作られる。家族 Basic を Web で申し込むときは 7 日の無料体験が付く (試用は同じプランで 1 回)。同じ Apple ID でストアからもう一度買うときの試用の可否は App Store が決める (Q-10) |
 | S24 | App Store の審査 (sandbox の購入): 審査官が本番のビルドに審査用のアカウントでログインし、sandbox の Apple ID で個人 Pro の月額を買う。Webhook (`environment` = `SANDBOX`) と同期の API が本物の購入と同じに写し、行は `trialing`・`iap_is_sandbox = true`・`plan_key_cached = 'pro'`。究極モードの錠が外れ、「プランとお支払い」は「個人 Pro をご利用中です」を出す。TestFlight・Google Play の内部テストの購入も同じ |
 | S25 | 二重購読の防止と案内 (ストア同士): App Store で個人 Pro を契約中の利用者が、別の端末 (Android) の購入の画面から Google Play でも買ってしまう。写像が `BILL_LIVE_ROW_CONFLICT` で止め、同期の API は 409 (S13 と同じ文)。運営は Google Play の購入を Play Console で返金する (購読はすぐ終わる。P14)。2 本とも App Store の購入のとき (別の Apple ID) は、運営は利用者に reportaproblem.apple.com からの返金の申し込みを案内する (Apple の購入は開発者が返金できない。P14) |
@@ -267,6 +267,11 @@
 | S27 | 無料の利用者が 1 週間の献立を作る: 無料の利用者が献立の画面から 1 週間の献立を頼む (`POST /api/ai/menu/weekly/request`)。献立は作られて保存されるが、料理画像は作られない (料理画像のジョブは積まれるが、`process-meal-image-jobs` が AI へ送らずに取り消し、料理を `image_status = 'failed'`・`image_error = 'skipped_plan'` にする)。料理の画面は「料理画像の作成は有料プランでお使いいただけます。」を出す。同じ利用者が個人 Pro を買ったあとに同じ料理を保存し直すと、料理画像が作られる |
 | S28 | 対応の無い古い商品の購入の履歴: 運営がセットアップの途中で誤った商品 ID で作った sandbox の商品を、テストの利用者が買って期限が切れた。運営はその商品の行を `plan_store_products` から消した (または初めから行が無い)。その利用者が正しい商品で個人 Pro を買うと、取り直しの `subscriptions` には古い商品 (期限切れ) と新しい商品 (live) の両方が入る。同期は古い商品を飛ばし (利用者の行も無いので何も作らない)、新しい商品の行を INSERT して `plan_key_cached='pro'` になる。古い商品の利用者の行がすでにある (運営が行を消す前に写っていた) ときは、その行の `plan_key` のまま状態だけを写す。運営が後から商品を差し替えるときは、古い行を `offered = false` にして新しい行を足す (同じプランと間隔の古い商品 ID も行として残せる) |
 | S29 | 無料体験の表示がストアの判定に従う: iOS の利用者 A は App Store で個人 Pro の体験を使ったことがあり、利用者 B は無い。購入の画面は、A には個人 Pro の月額の行に体験の文を出さず (`checkTrialOrIntroductoryPriceEligibility` が対象外)、B には「7 日間無料」と「体験の終了後は ¥580 が請求されます」を出す。Android では Google Play が対象の利用者にだけ体験の offer を返すので、offer の無い利用者には体験の文を出さない。DB の `trial_days` (Web の体験の日数) は購入の画面の文には使わない |
+| S30 | RevenueCat の API の失敗: RevenueCat の REST が 2xx 以外を返す・応答の形が違う・時間切れ (`REVENUECAT_REQUEST_TIMEOUT_MS`)・接続できない。利用者がアプリで買ったあとの同期の API は 502 `EXT_REVENUECAT_API_FAILED` で、購入の画面は「購入の確認サービスとの通信に失敗しました。しばらくしてからお試しください」を出す (RevenueCat の生の文は出さない)。DB は何も書かない。Webhook は 500 で、イベントを `failed` (`error_message` = `EXT_REVENUECAT_API_FAILED`) に記録し、RevenueCat が再送する。`GET /api/billing/subscription` の遅延の再同期は失敗を飲み込み、いまの行で要約を返す。RevenueCat が戻れば、アプリの前面復帰・画面を開いたときの同期・Webhook の再送・遅延の再同期のどれかで購入が写る |
+| S31 | カタログの不正な問い合わせ: `store` の無い問い合わせや、`app_store` / `play_store` 以外 (`store=stripe`・大文字の `APP_STORE` など) の `GET /api/billing/iap/catalog` は 400 `BILL_IAP_INVALID_INPUT` (「入力値が不正です」) で、`plan_store_products` もプランも読まない。アプリは `Platform.OS` から `app_store` / `play_store` だけを送り (iOS・Android 以外では呼ばない)、カタログの読み込みが失敗したときは購入のカードを出さない (§10.6) |
+| S32 | 月額から年額への切り替え (`PRODUCT_CHANGE`): App Store で個人 Pro の月額を契約中 (`active`) の利用者が、iOS の設定の購読の管理で同じグループの個人 Pro の年額に切り替える (当社の購入の画面は契約中は購入のカードを出さないので、切り替えはストアの管理から)。切り替えは月額の期間の終わりに効く。期間の終わりの取り直しで、月額の行が先に `expired` になり、続けて年額の行が `active` で INSERT され、`plan_key_cached` は `pro`、`billing_interval` は `year` になる。体験中 (`trialing`) の月額からの切り替えも同じ順で、月額の行の `trial_started_at` は残る |
+| S33 | 解約の予約の取り消し (`UNCANCELLATION`): S5 の利用者が期間の終わりの前に iOS の設定で自動更新を入れ直す。`UNCANCELLATION` → 取り直し → 行は `active` のまま `cancel_at_period_end = false`・`cancel_at = NULL` (状態は変わらないので監査なし)。Web の `/account/billing` とアプリの購入の画面から解約の予約の文が消え、更新の文に戻る。体験中 (`trialing`) と支払いの問題の中 (`past_due`) の取り消しも、状態を変えずに同じ 2 列だけが戻る |
+| S34 | 家族プランをストアで買う (月額): (a) iOS の利用者が家族 Pro の月額 (`homegohan_family_pro_month`) を買う。行は `trialing` (ストアの体験の対象でなければ `active`)、`plan_key_cached = 'family_pro'`、代表者の家族グループは `family_pro` / 8 (グループが無ければ作れるようになり、作ると `family_pro` / 8)。メンバーは家族 Pro の上限 (1 日 50 回・献立の作成 15 回・究極 3 回) を受ける。(b) Android の利用者が家族 Basic の月額 (`homegohan_family_basic:monthly-autorenewing`) を買うと `family_basic` / 4。§17.2 の 12 行 (6 商品 × 2 ストア) はどれも同じ流れで、商品 ID から `plan_key` と間隔が決まる (個人 Pro の年額・家族 Pro の年額も同じ) |
 
 ---
 
@@ -307,7 +312,7 @@
 | S19 | 1: 写像の 10. (ELSE 枝) が `family_groups` を `free` / 4 に。5: `family_members` の INSERT のトリガーが `plan_key='free'` で `FAMILY_PLAN_REQUIRED`。昇格は `accept_child_promotion` の UPDATE (origin/main `20261017030000_parental_consent_and_birth_date.sql:736`) で、トリガーは `BEFORE INSERT` だけなので当たらず成功する。メンバーの `get_effective_plan` は家族の `free` → free の上限 |
 | S20 | 1: M 行は live なので `BillingSummary.can_purchase=false` → アプリは購入のボタンを出さない。6.7: 取り消し・期限切れの述語 `stripe_subscription_id IS NULL AND iap_store IS NULL` でストアの行を触らない |
 | S21 | 既存の同意ゲート: `/api/billing/iap/*` は `LEGAL_CONSENT_EXEMPT_API_PATHS` に入れない → 未同意は 403 `LEGAL_CONSENT_REQUIRED` (アプリは既存の `LegalConsentGate` が同意画面に畳む)。解約: ストアの契約は当社の画面に依らない。Web の契約は `/contact` (同意の前でも開ける) → 運営が Stripe の Dashboard で解約 → Stripe の Webhook (`/api/webhooks` は同意の許可リストの `no_user_session`) が S 行を写す |
-| S22 | 既存: Webhook と写像は `frozen_at` を見ない。`/frozen/billing` は `summary.source` がストアなら文だけ (§10.4) |
+| S22 | 既存: Webhook と写像は `frozen_at` を見ない。`/frozen/billing` は `summary.source` がストアなら文だけ (§10.4)。アプリ: `AccountFrozenProvider` が凍結を知ると `AccountFrozenGate` が Stack を凍結の画面に畳む (origin/main `apps/mobile/app/_layout.tsx:111-128`)。カタログ・同期の API: middleware の凍結の分岐が `FROZEN_ALLOWED_API_PATHS` (変えない。`src/lib/auth/frozen.ts:60`) に無い `/api/billing/iap/catalog`・`/api/billing/iap/sync` を 403 `AUTH_ACCOUNT_FROZEN` で止める (route に届かない)。middleware の読み取りが失敗して素通りしたときは route の `requireUser` が `ForbiddenError('AUTH_ACCOUNT_FROZEN')` を投げ、`billingErrorResponse` が 403 (`src/lib/billing/http.ts` の既存の枝) を返す。どちらも `createRevenueCatGateway` より前で止まる。写し続けるのは Webhook (署名の受け口。凍結を見ない) と `GET /api/billing/subscription` (`requireUserAllowingFrozen`) の遅延の再同期 |
 | S23 | 1・2: 購入の取り直し (`period_type` trial) → 写像の 6. の INSERT が `trialing` の行に `trial_started_at = purchase_date`・`trial_ends_at = expires_date`・`trial_source = 'app_store'` を入れる (§6.4)。自動更新 OFF → `cancel_at_period_end=true` (S5 と同じ)。体験の終わりの取り直し → `expired`。UPDATE は `trial_started_at` / `trial_source` を `COALESCE` で保つ。Web: `previewCheckout` / `startCheckout` (`src/lib/billing/service.ts:73,97`) → `repository.hasUsedTrial(user, 'pro')` (`src/lib/billing/repository.ts:72-80`。同じ利用者・同じ `plan_key` で `trial_started_at` のある行を数える。行の出どころを見ないので I 行も入る。コードは変えない) = true → `trialDaysFor(7, true)` = 0 (`src/lib/billing/core.ts:446-448`)。`family_basic` は `hasUsedTrial(user, 'family_basic')` = false → 7 日。ストアでの買い直しは同じ (user, store, product) の行を再利用し、`trial_started_at` は最初の値を保つ (§7.3) |
 | S24 | 7・3: 審査官の購入 → 同期の API → 取り直し → `subscriptions['homegohan_pro_month']` (`is_sandbox: true`・`period_type` trial) → 2: `projectStoreSubscription` が `is_sandbox: true` の snapshot → 1: 行 INSERT (`trialing`・`iap_is_sandbox = true`)・`plan_key_cached='pro'`・監査の details に `is_sandbox: true`。Webhook (`environment: SANDBOX`) も環境を見ずに同じ取り直し (stale か同値)。route・同期・遅延の再同期のどれも環境で絞らない (§9.1) |
 | S25 | 2: Android の購入の取り直し → 写像の 5. が App Store の live 行を見つけ `BILL_LIVE_ROW_CONFLICT` → S13 と同じ記録と 409。運営: Play Console で Google Play の購入 (最新の注文) を返金 → 購読が終わる → RevenueCat の `EXPIRATION` (または `CANCELLATION`) → 取り直し → Google の商品は `refunded_at` あり (`cancelled` の履歴の行が INSERT。live でないので衝突しない)。App Store 同士は運営が利用者へ返金の申し込みを案内し、Apple が返金すると `CANCELLATION` → 取り直し → `refunded_at` → その行は `cancelled` |
@@ -315,6 +320,11 @@
 | S27 | 5: `weekly/request` → `consumeAiUsage(user, 'menu_generation')` (free の 1 回目・許可) → Edge `generate-menu-v5` → `saveMealToDb` が料理ごとにジョブを積む (`save-meal.ts:757-776`。変えない) → `process-meal-image-jobs` の `processJob` が同意の判定のあとに `ai_plan_feature_daily_cap(owner, 'meal_image_auto')` = 0 → `mealImageJobPlanDecision(0)` = `'locked'` → ジョブを `cancelled` (`last_error = 'skipped_plan'`)・料理を `writeDishImageFailure(reason 'skipped_plan')` で `failed` + `skipped_plan` (§8.8) → `RecipeModal` が `isMealImagePlanSkippedError` で有料プランの案内。Pro を買ったあとの保存し直し → route の `consumeAiUsage(user, 'meal_image_auto')` は `pro` の行が無いので安全弁で許可 → ジョブ → `ai_plan_feature_daily_cap(owner, ...)` = NULL → `'allowed'` → 画像を作る |
 | S28 | 2・4: 取り直し → `selectStoreSubscriptions` (古い商品: `expired`・mapping null / 新しい商品: `trialing`・mapping あり) → `listStoreSubscriptions(user)` に古い商品の行なし → `unmappedStoreSubscriptionDecision` = `'skip'` (`skipped_unknown` + 1) → 新しい商品を写像 → INSERT。古い商品の行がある場合は `'apply'` → snapshot の `plan_key = null` → 写像の 4. が既存の行の `plan_key` を使う (§6.4)。`plan_store_products` の主キーは `(store, product_id)` なので、同じプランと間隔に古い商品の行 (`offered = false`) と新しい行 (`offered = true`) を並べられ、カタログは `offered` の行だけを返す (§6.3・§8.1 `buildIapCatalog`) |
 | S29 | 7: 画面が `fetchOfferings()` → `matchCatalogWithPackages` の前に、iOS なら `fetchTrialEligibility(商品 ID の一覧)` (`Purchases.checkTrialOrIntroductoryPriceEligibility`) → A: `'ineligible'` / B: `'eligible'` → `storeTrialOf('app_store', pkg, eligibility)` は B にだけ `{ lengthText: '7 日間' }` を返す (App Store の 1 週間の体験は `introPrice` の `price` 0・`periodUnit` `WEEK`・`periodNumberOfUnits` 1・`cycles` 1 で届き、`storeTrialOf` が週を 7 日にして書く。Google Play の `P7D` は `DAY`・7) → `renewalText` が体験の文を付けるのは B だけ。Android は `fetchTrialEligibility` が `{}` を返し、`storeTrialOf('play_store', …)` は `introPrice` の有無だけで決める (§8.10) |
+| S30 | 3: アプリの購入の成功 → `syncIapPurchases()` → sync の route → `createRevenueCatGateway().getSubscriber(user.id)` (§8.3): 2xx 以外 → `RevenueCatApiError({ status })`・形の違い → `RevenueCatApiError`・`fetch` が投げる (時間切れの `AbortSignal.timeout`・接続の失敗) → `RevenueCatApiError({ status: null })` → `syncStoreSubscriber` は写像の前で投げる (DB を書かない) → `iapErrorResponse` が 502 `EXT_REVENUECAT_API_FAILED` (固定の文) → アプリの `billingErrorMessageOf` が `IAP_FIXED_MESSAGE_CODES` の固定の文を `notice` に。2: Webhook は `handleRevenueCatEvent` が投げる → `recordRevenueCatEventFailure(deps, event, errorCodeOf(error))` = `EXT_REVENUECAT_API_FAILED` → 500 → RevenueCat が再送。`GET /api/billing/subscription`: `lazyResyncStoreSubscription` が catch してログ (`code: 'unknown'`) → いまの行で `getBillingSummary` |
+| S31 | 4: catalog の route → `requireUser` → `IapCatalogQuerySchema.safeParse({ store: url.searchParams.get('store') })` (`z.enum(IAP_STORES)`。null・`stripe`・`APP_STORE` は不一致) → 400 `{ error: { code: 'BILL_IAP_INVALID_INPUT', message: IAP_ERROR_MESSAGES.BILL_IAP_INVALID_INPUT, details } }` → `createClient` も `listPublicPlans` も呼ばない。7: アプリは `Platform.OS` の `ios` / `android` だけで `fetchIapCatalog` を呼び、投げたら `cards = []` (§10.6) |
+| S32 | 2: 切り替えの前の取り直し (`PRODUCT_CHANGE` の合図) で `subscriptions` に年額が無ければ、月額の行は取り直しの姿のまま (変わらない)。期間の終わりの取り直し → `subscriptions` = { `homegohan_pro_month` (`expires_date` ≤ now), `homegohan_pro_year` (live) } → `selectStoreSubscriptions` が live でない月額を先に並べる → 写像 1 回目: 月額の行を `expired` (`plan_key_cached` NULL・監査 `subscription_status_changed`) → 写像 2 回目: 年額の行を INSERT (`active`・`billing_interval = 'year'`・`plan_key_cached = 'pro'`・監査 `subscription_created`)。2 回の写像は同じ取り直しの中で順に呼ぶので、年額の INSERT のときに月額の行は live でなく `BILL_LIVE_ROW_CONFLICT` にならない (§7.3 の `active` (月額) / `trialing` (月額) の行) |
+| S33 | 2: `UNCANCELLATION` → 取り直し → `unsubscribe_detected_at` が null → `projectStoreSubscription` の `cancel_at_period_end = false` → 写像の UPDATE が `cancel_at = NULL`・`cancel_at_period_end = false` (§6.4。状態は同じなので監査なし) → `summarizeSubscription` の状態の文 (`billingStatusLines` / `subscriptionStatusLines`) は解約の予約の行を出さない |
+| S34 | 2・4: 取り直し → `subscriptions['homegohan_family_pro_month']` → `plan_store_products` (`app_store`・`homegohan_family_pro_month`) = `family_pro`・`month` → 写像の INSERT → `plan_key_cached = 'family_pro'` → 写像の 10. が代表者のグループを `family_pro` / 8 に (グループが無ければ、作るときに `create_family_group` の門が通り、作成のトリガーが入れる)。5: メンバーの `get_effective_plan` = `family_pro` → `ai_daily_limits(family_pro) = 50`・`ai_plan_feature_caps(family_pro, menu_generation) = 15`・`(family_pro, menu_generation_ultimate) = 3`。(b) `homegohan_family_basic:monthly-autorenewing` (`play_store`) → `family_basic`・`month` → `family_basic` / 4 |
 
 ---
 
@@ -946,6 +956,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | `user_profiles.plan_key_cached` (機能フラグ) | 写像 (9) が書く | 02 の関数が書く | 本冊の写像 (§6.4 の 7.) が同じ式で書く | NULL |
 | `family_groups.plan_key / member_limit` | 写像 (10) + トリガー | 02 の関数 + トリガー | 本冊の写像 (§6.4 の 7.) + 既存のトリガー (作成・交代は `billing_has_live_family_plan` と同じ live の集合を読む) | `free` / 4 |
 | 家族の門 (`create_family_group`・`family_members` の INSERT。§6.6) | family なら通る | family なら通る | family なら通る | 通らない (`FAMILY_PLAN_REQUIRED`) |
+| 子供の昇格 (`accept_child_promotion` の `family_members` の UPDATE。§6.6・§9.5・S19) | 通る (門は `BEFORE INSERT` だけ) | 通る | 通る | 通る (グループが `free` でも。いる行の書き換えで人数は増えない。テスト 105) |
 | AI の 1 日の上限 (`ai_daily_limits`) | プランの行 | プランの行 | プランの行 | `free` の行 (5) |
 | AI の 1 日の上限 — 組織の利用者 (個人の契約も家族も無く、active な組織に所属。`get_effective_plan` が `organizations.plan` を返す) | (個人の契約が先。上の行と同じ) | 同左 | 同左 | 組織の plan の行 (本冊の migration (5a) が free を書き換える前の free の値 (本番 10) を写す。§6.5)。機能ごとの上限 (`ai_plan_feature_caps`) は組織の plan に行が無いので従来どおり (究極モードは環境変数の既定) |
 | AI の機能ごとの上限 (`ai_plan_feature_caps`) | プランの行 | プランの行 | プランの行 | `free` の行 (究極 0・画像の作成 0・自動の料理画像 0・献立の作成 3) |
@@ -953,6 +964,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | 料理の保存の自動の料理画像 (`meal_image_auto`。4 本の route と AI 相談の自動実行) | 有料プランは行なし → 安全弁 (1 日 20 回) で作る | 同左 | 同左 | 作らない (`plan_locked` → 料理は `image_error = 'skipped_plan'` で保存・`aiSkipped` なし。§8.8) |
 | 献立の作成が作る料理画像 (Edge の `save-meal` が積むジョブ。数えない。F22) → `process-meal-image-jobs` | `ai_plan_feature_daily_cap` = NULL (有料プランは行なし) → 作る | 同左 | 同左 | `ai_plan_feature_daily_cap` = 0 → AI へ送らずにジョブを `cancelled`・料理を `failed` + `skipped_plan` (§8.8) |
 | `GET /api/billing/subscription` (`BillingSummary`) | `source='stripe'`・Portal / 解約 / 取り消し | `source='manual'`・ボタン無し | `source='app_store' / 'play_store'`・`manage_in_store`・ボタン無し (§8.1) | `status=null`・`can_purchase=true` |
+| `GET /api/billing/subscription` の遅延の再同期 (I 行を書く 3 つ目の経路。§8.4 `lazyResyncStoreSubscription`・§8.5・S7・S12。凍結中も通す route) | 取り直さない (`needsLazyResync` は `iap_store` が NULL で偽) | 同左 | live な行の `current_period_end` ≤ now かつ `iap_synced_at` が 5 分 (`IAP_LAZY_RESYNC_MIN_INTERVAL_MS`) より古いか NULL のときだけ、RevenueCat から取り直して同期の API と同じ写像で写す (`p_source` = `iap_lazy_resync`)。鍵が無い・取り直しの失敗 (`EXT_REVENUECAT_API_FAILED` 相当・`BILL_LIVE_ROW_CONFLICT` など) は要約を止めず、いまの行で答える (S30)。live でない I 行は `findLiveSubscription` が返さないので取り直さない | 取り直さない (`findLiveSubscription` が null) |
 | `/account/billing` (Web) | いまのまま | いまのまま | 状態 + 「<ストア> でご契約中…」の文とストアの管理へのリンク (§10.3) | 「プランを見る」 |
 | `/frozen/billing` | いまのまま | 文だけ | 文だけ + ストアの管理の案内 (§10.4) | 「契約はありません」 |
 | アプリの購入の画面 (§10.6) | 「Web でご契約中」(ボタン無し) | 「ご利用中」(ボタン無し) | 状態 + 「購読の管理」(ストア) + 「購入を復元」 | プランの一覧 + 購入 + 「購入を復元」 |
@@ -960,6 +972,8 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | `POST /api/billing/subscription/cancel` / `resume`・`portal` | 可 | `BILL_NO_LIVE_SUBSCRIPTION` (Stripe の id なし) | 同左 (`stripe_subscription_id IS NULL`。ストアの解約はストアで) | 同左 |
 | `POST /api/billing/iap/sync` (本冊) | 取り直して写す (I 行が無ければ `BILL_LIVE_ROW_CONFLICT` になりうる) | 同左 | 取り直して写す | 取り直して写す (ストアに契約が無ければ何も作らない) |
 | RevenueCat の Webhook (本冊) | 同上 | 同上 | 同上 | 同上 |
+| 凍結 (BAN) 中の `GET /api/billing/iap/catalog`・`POST /api/billing/iap/sync` (S22) | 403 `AUTH_ACCOUNT_FROZEN` (middleware。`FROZEN_ALLOWED_API_PATHS` に入れない。素通りしたときは route の `requireUser`)。RevenueCat を呼ばず DB を書かない | 同左 | 同左。ストアの契約の変化は Webhook と上の遅延の再同期が写し続ける (写像は凍結を見ない) | 同左 |
+| 規約の版の未同意の `GET /api/billing/iap/catalog`・`POST /api/billing/iap/sync` (段 E の版の繰り上げのあと。S21) | 403 `LEGAL_CONSENT_REQUIRED` (middleware の同意ゲート。`LEGAL_CONSENT_EXEMPT_API_PATHS` に入れない)。アプリは既存の `LegalConsentGate` が同意の画面に畳む | 同左 | 同左 (Webhook と遅延の再同期は同意で止まらない。`/api/webhooks/revenuecat` は許可リストの `/api/webhooks` (prefix・`no_user_session`。`packages/shared/src/legal-consent-api.ts:131`)、`/api/billing/subscription` は許可リストの `leave_service`) | 同左 |
 | 手動付与の取り消し・期限切れ (02) | 触らない | 触る | 触らない (§6.7) | — |
 | 退会 (`deleteAccount` の段階 `billing`) | Stripe を解約 | — | ストアの購読は解約できない (ストアが契約の主体)。行は CASCADE で消え、以後の Webhook は `user_deleted` で何もしない (§6.4 の 1.)。退会の画面に「ストアの購読は各ストアで解約してください」を足す (§10.5) | — |
 | 本人のデータの書き出し (`account-export-tables.ts`) | `omit` 済み | — | 新しい列 `iap_store`・`iap_product_id`・`iap_is_sandbox` は書き出す (本人の契約の内容)。`iap_synced_at` は `omit` (内部の時刻。`stripe_synced_at` と同じ扱い) | — |
@@ -1048,7 +1062,8 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | 任意 | `TRANSFER` (別の利用者へ移った) | 移動元: `expired` (取り直しの `subscriptions` から消える・または期限切れ) / 移動先: 上の「– (行なし)」の規則 | 移動先に別の live 行があれば `BILL_LIVE_ROW_CONFLICT` | 両方の利用者を取り直す (§8.4)。移動元が `subscriptions` に商品を持たなくなったときは、移動元の live な I 行を `expired` にする (TS が `expires_date=now` の snapshot を作る。§8.1 `projectMissingSubscription`。行の `iap_is_sandbox` と `billing_interval` は snapshot に引き継いで保つ) |
 | 任意 | 取り直しが古い (`iap_synced_at` ≥ `p_fetched_at`) | 同じ | — | `skipped: 'stale'` |
 | 任意 | 退会 (`user_deleted`) | 行は CASCADE で消える | — | 以後の Webhook は `skipped: 'user_deleted'`・200 |
-| 任意 | 凍結 (BAN) | 同じ | — | 写像は凍結を見ない (S22) |
+| 任意 | 凍結 (BAN) | 同じ | — | 写像は凍結を見ない。Webhook と遅延の再同期は写し続け、カタログと同期の API は 403 `AUTH_ACCOUNT_FROZEN` で写像の前に止まる (S22) |
+| `trialing` / `active` / `past_due` | 取り直しが RevenueCat の失敗 (2xx 以外・形の違い・時間切れ・接続の失敗) | 同じ | — | 写像を呼ばない。同期の API は 502 `EXT_REVENUECAT_API_FAILED`・Webhook は 500 + `failed` (RevenueCat が再送)・遅延の再同期は飲み込む (S30) |
 
 同じ利用者の S 行・M 行の遷移は billing/01 §7.3・billing/02 §7.3 のまま (I 行があるときの「別の live 行あり」の枝が増えるだけ)。
 
@@ -1222,11 +1237,14 @@ export class RevenueCatNotConfiguredError extends Error {
   }
 }
 
-/** RevenueCat の REST が 2xx 以外を返した (502)。生の文面は rawMessage に持ち、ログにだけ残す */
+/**
+ * RevenueCat の REST が 2xx 以外を返した・応答の形が違った・届かなかった (時間切れ・接続の失敗。status = null) (502)。
+ * 生の文面は rawMessage に持ち、ログにだけ残す
+ */
 export class RevenueCatApiError extends Error {
-  readonly status: number;
+  readonly status: number | null;
   readonly rawMessage: string | null;
-  constructor(input: { status: number; rawMessage?: string | null }) {
+  constructor(input: { status: number | null; rawMessage?: string | null }) {
     super('RevenueCat API の呼び出しに失敗しました');
     this.name = 'RevenueCatApiError';
     this.status = input.status;
@@ -1719,11 +1737,19 @@ export function createRevenueCatGateway(fetchImpl: typeof fetch = fetch): Revenu
   return {
     async getSubscriber(appUserId) {
       const url = `${REVENUECAT_API_BASE_URL}/subscribers/${encodeURIComponent(appUserId)}`;
-      const response = await fetchImpl(url, {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(REVENUECAT_REQUEST_TIMEOUT_MS),
-      });
+      let response: Response;
+      try {
+        response = await fetchImpl(url, {
+          method: 'GET',
+          headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
+          signal: AbortSignal.timeout(REVENUECAT_REQUEST_TIMEOUT_MS),
+        });
+      } catch (cause) {
+        // 時間切れ (AbortSignal.timeout の TimeoutError)・接続の失敗も 502 にまとめる (§13.1 の文「通信に失敗しました」。S30)。生の文は残さず名前だけ
+        const error = new RevenueCatApiError({ status: null, rawMessage: cause instanceof Error ? cause.name : null });
+        logger.error('RevenueCat API に届きませんでした', error, { reason: 'fetch_failed' });
+        throw error;
+      }
       const json: unknown = await response.json().catch(() => null);
       if (!response.ok) {
         const error = new RevenueCatApiError({ status: response.status, rawMessage: typeof json === 'object' && json !== null ? JSON.stringify(json) : null });
@@ -3856,10 +3882,10 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 
 | コード | HTTP | 出どころ | 文 |
 |---|---|---|---|
-| `BILL_IAP_INVALID_INPUT` [NEW] | 400 | catalog のクエリ | 入力値が不正です |
+| `BILL_IAP_INVALID_INPUT` [NEW] | 400 | catalog のクエリ (`store` が無い・`app_store` / `play_store` 以外。S31) | 入力値が不正です |
 | `AUTH_UNAUTHENTICATED` | 401 | `requireUser` | 認証が必要です |
-| `AUTH_ACCOUNT_FROZEN` | 403 | middleware・`requireUser` (catalog・sync は凍結中は通さない) | 権限がありません |
-| `LEGAL_CONSENT_REQUIRED` | 403 | middleware の同意ゲート (catalog・sync は許可リストに入れない) | 既存の文 |
+| `AUTH_ACCOUNT_FROZEN` | 403 | middleware・`requireUser` (catalog・sync は凍結中は通さない。`FROZEN_ALLOWED_API_PATHS` に入れない。S22) | middleware はアカウントが凍結されています (既存。#1030)。middleware の読み取りが失敗して素通りしたときの route の `requireUser` → `billingErrorResponse` は権限がありません (既存の枝) |
+| `LEGAL_CONSENT_REQUIRED` | 403 | middleware の同意ゲート (catalog・sync は許可リストに入れない。S21) | 既存の文 |
 | `AI_FEATURE_NOT_IN_PLAN` [NEW] | 403 | `consume_ai_usage_at` (`plan_locked`) → `aiDailyLimitPayload` | `{機能}は、有料プランでお使いいただけます。` (`aiFeatureNotInPlanMessage`。`feature` も返す) |
 | `FAMILY_PLAN_REQUIRED` [NEW] | 402 | `create_family_group`・`family_members` のトリガー → family の route | 家族プランのご契約が必要です。 |
 | `BILL_IAP_SYNC_CONFLICT` [NEW] | 409 | sync (`BILL_LIVE_ROW_CONFLICT` の写し) | すでに別のご契約があるため、この購入をご利用のプランに反映できませんでした。お問い合わせフォームからご連絡ください。二重のお支払いにならないよう対応します |
@@ -3867,7 +3893,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 | `AI_DAILY_LIMIT` | 429 | `consume_ai_usage_at` (1 日の上限・機能ごとの上限 (cap > 0)) | 既存の文 (機能ごとの上限は `aiFeatureDailyLimitMessage`。献立の作成は「今日の献立の作成の利用回数の上限 (3 回) に達しました。明日 0 時から使えます。」。究極モードの文はいまと同じ) |
 | `RATE_LIMITED` | 429 | `rateLimitExceededResponse` | 既存の文 |
 | `INTERNAL_ERROR` | 500 | `internalError` | 処理中にエラーが発生しました |
-| `EXT_REVENUECAT_API_FAILED` [NEW] | 502 | gateway | 購入の確認サービスとの通信に失敗しました。しばらくしてからお試しください |
+| `EXT_REVENUECAT_API_FAILED` [NEW] | 502 | gateway (`RevenueCatApiError`: 2xx 以外・応答の形の違い・時間切れ・接続の失敗。sync の応答。Webhook は 500 + `failed` の記録のコード。S30) | 購入の確認サービスとの通信に失敗しました。しばらくしてからお試しください |
 | `EXT_REVENUECAT_NOT_CONFIGURED` [NEW] | 503 | gateway (鍵なし) | 購入の確認を完了できませんでした。時間をおいてお試しください |
 | `EXT_STRIPE_NOT_CONFIGURED` (変えない) | 503 | 核 | お支払いを受け付けていません (#1911 が直した main の文のまま。`src/lib/billing/core.ts:241`。CTA は Price のある間隔だけに出るので、販売の開始の後は鍵の設定の誤りのときだけ出る) |
 
@@ -3890,7 +3916,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 | コード | DETAIL | 意味 | 扱い |
 |---|---|---|---|
 | `BILL_UNKNOWN_PLAN` | `<store>:<product_id>` / plan_key | 商品の対応が無い (TS は先に `BILL_IAP_UNKNOWN_PRODUCT` で止めるので、ここに来るのは行の `plan_key` が `subscription_plans` から消えたときだけ) | Webhook `failed`・監査 |
-| `BILL_UNKNOWN_IAP_STATUS` [NEW] | status | snapshot の status が 5 値の外 (TS の不具合) | 同上 |
+| `BILL_UNKNOWN_IAP_STATUS` [NEW] | status | snapshot の status が 5 値の外 (TS の不具合) | 同上 (テスト 123) |
 | `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (S13・S25・PRODUCT_CHANGE の順の崩れ・TRANSFER の先に別の契約) | Webhook `failed` + 監査 `system.revenuecat.event_failed` (warn)。sync は 409。運営の処置は下の表 (利用者は後の購入のストアの契約で使い続けられるようにする) |
 | `FAMILY_PLAN_REQUIRED` [NEW] | family_id (トリガー) / なし (`create_family_group`) | 家族プランの契約の無い代表者のグループを作る・メンバーを足す | route が 402 |
 
@@ -3932,6 +3958,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 13. `it('IAP_ERROR_MESSAGES do not contain any UNFINISHED_WORDS (準備中 / 販売開始前 / 近日 / 予定 / まだ / 確定次第 / これから)')` (禁止語の一覧はテストの中にリテラルで書く。§14.1 冒頭)
 85. `it('deriveStoreStatus / projectStoreSubscription keep past_due with cancel_at_period_end = true for an unsubscribed billing-issue subscription, and false after uncancellation')` (§7.3 の `past_due` の行。83 以降は網羅性の反映で足した通し番号で、置き場所はファイルごとの組に合わせる)
 95. `it('IAP_STORES equals PURCHASE_STORES of @homegohan/shared (billing-plans.ts)')`
+125. `it('projectStoreSubscription maps each of the 12 product rows of §17.2 (6 products × app_store / play_store) to its plan_key and billing_interval')` (S34。12 行はテストの中にリテラルで持つ)
 
 `src/__tests__/lib/webhook/verify.test.ts` (追加):
 14. `it('verifyRevenueCatSignature returns missing_headers for a null or malformed header and invalid_timestamp for a non-numeric t')`
@@ -3949,17 +3976,25 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 24. `it('lazyResyncStoreSubscription syncs only when needsLazyResync and swallows failures')`
 
 `tests/webhooks-revenuecat-route.test.ts` (route。署名は本物、ほかは偽物):
-25. `it('returns 413 for bodies over 256 KiB, 401 for a bad signature, 400 for malformed JSON or envelope')`
-26. `it('returns 503 when REVENUECAT_WEBHOOK_SECRET or REVENUECAT_SECRET_API_KEY is missing')`
+25. `it('returns 413 { error: payload_too_large } for a content-length header or a body over REVENUECAT_WEBHOOK_MAX_BODY_BYTES (256 KiB) before verifying the signature, 401 for a bad signature, 400 for malformed JSON or envelope')` (§13.2 の 413 の行)
+26. `it('returns 503 { error: webhook_not_configured } when REVENUECAT_WEBHOOK_SECRET is missing and 503 { error: revenuecat_not_configured } when REVENUECAT_SECRET_API_KEY is missing, without claiming the event')` (§13.2 の 503 の行・S14)
 27. `it('returns 200 duplicate for completed claims, 409 for in_progress, and 200 synced after handling')`
 28. `it('returns 500 and records failure with the BillingRpcError / IapError code when handling throws')`
 29. `it('handles SANDBOX events exactly like PRODUCTION events (no environment branch): the sync is called and the response is 200 synced')`
 30. `it('maxDuration literal equals REVENUECAT_WEBHOOK_MAX_DURATION_SECONDS')`
+122. `it('returns 500 and records the event failed with EXT_REVENUECAT_API_FAILED when the RevenueCat fetch throws RevenueCatApiError, without the raw RevenueCat text in the body')` (S30)
 
 `tests/api/billing-iap-routes.test.ts` (catalog・sync・subscription の差分):
 31. `it('GET catalog requires a valid store query, returns plans with products for that store and never reads env')` (`reachesAi` で届かないことも見る)
 32. `it('POST sync returns the summary after syncing, 409 BILL_IAP_SYNC_CONFLICT on BILL_LIVE_ROW_CONFLICT, 503 when the key is missing')`
 33. `it('GET subscription lazily resyncs expired store rows and still returns the summary when RevenueCat is not configured')`
+117. `it('GET catalog and POST sync return 403 { code: AUTH_ACCOUNT_FROZEN, message: 権限がありません } when requireUser throws the frozen ForbiddenError, without reading plan_store_products or creating the RevenueCat gateway')` (S22。middleware を素通りしたときの route の枝)
+118. `it('/api/billing/iap/catalog and /api/billing/iap/sync are in neither FROZEN_ALLOWED_API_PATHS (src/lib/auth/frozen.ts) nor the legal consent exemption (isLegalConsentExemptApiPath of @homegohan/shared is false for both)')` (S21・S22。middleware の 403 `AUTH_ACCOUNT_FROZEN` / `LEGAL_CONSENT_REQUIRED` そのものは、src/app/api の全 route を走査する既存の it (`lib/supabase/__tests__/middleware-legal-consent-api.test.ts` の「全 route を 未同意 × ENFORCE=on で通すと…」と「…凍結中 で通すと…」) が新しい 2 本も含めて見る)
+119. `it('GET catalog returns 400 BILL_IAP_INVALID_INPUT with 入力値が不正です for a missing store, store=stripe and store=APP_STORE, and reads neither plan_store_products nor listPublicPlans')` (S31)
+120. `it('POST sync returns 502 EXT_REVENUECAT_API_FAILED with the fixed text (no raw RevenueCat text) and writes nothing when the gateway throws RevenueCatApiError, and GET subscription still returns the summary of the current row when the lazy resync gets the same error')` (S30)
+
+`tests/billing-revenuecat-gateway.test.ts` (新設。`createRevenueCatGateway(fetchImpl)` に偽の fetch を渡す。`getOptionalEnv` は `vi.mock`):
+121. `it('getSubscriber throws RevenueCatApiError with the status for a non-2xx response, with the status for an unexpected response shape, and with status null for a TimeoutError and a network TypeError, and returns the parsed subscriber for a 2xx response')` (S30)
 
 `tests/billing-core.test.ts` (追加):
 34. `it('summarizeSubscription marks store rows with source and manage_in_store and never can_cancel / can_resume them')`
@@ -4046,6 +4081,9 @@ Web の契約の画面 (追加。§10.3・§10.4):
 70. `it('reuses the same (user, store, product) row on repurchase and keeps trial_started_at')`
 71. `it('applies PRODUCT_CHANGE in order: month row expired first, then the yearly row inserted')`
 72. `it('returns user_deleted without writing for a missing auth user')`
+123. `it('raises BILL_UNKNOWN_IAP_STATUS (P0001, DETAIL = the status) for a snapshot status outside the 5 values and writes no row, no plan_key_cached and no audit')` (§13.3)
+124. `it('UNCANCELLATION: a newer snapshot without unsubscribe_detected_at sets cancel_at_period_end = false and cancel_at = NULL on a trialing or active row that had them set, keeps the status and writes no audit')` (S33)
+126. `it('a family_pro month store row sets the representative group to family_pro / 8 and a family_basic month store row sets it to family_basic / 4')` (S34)
 109. `it('inserts a past_due row with past_due_since and a warn subscription_created audit when the first fetch already has a billing issue, inserts cancel_at_period_end = true and cancel_at = expires_date when the first fetch already has unsubscribe_detected_at, and keeps billing_interval and iap_is_sandbox when a later snapshot has billing_interval null')` (§7.3 の「– (行なし)」の行・指摘の past_due の INSERT)
 90. `it('writes iap_is_sandbox from the snapshot (true for sandbox, false otherwise) and records is_sandbox in the audit details, with the same status and plan_key_cached as a production purchase')` (S24)
 83. `it('writes trial_started_at / trial_ends_at / trial_source = store on a trialing store row and keeps them after the row expires')` (S23)
@@ -4080,7 +4118,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 81. `tests/e2e/.manual/iap-webhook.spec.ts`: 本番の受け口 (RevenueCat に登録した 1 つの Webhook) へ RevenueCat の Dashboard の Test event (`TEST` → 200 `ignored`) と、TestFlight の sandbox の購入のイベントを送り、`personal_subscriptions` (`iap_is_sandbox = true`) と `revenuecat_webhook_events` を読み取りで確かめる (§17.4)。
 82. 実機 (整合ゲート): §17.4。
 
-### 14.4 シナリオ ⇄ テスト (§3.2 の 29 本がどのテストで守られるか)
+### 14.4 シナリオ ⇄ テスト (§3.2 の 34 本がどのテストで守られるか)
 
 | シナリオ | テスト (番号は §14.1〜§14.3) |
 |---|---|
@@ -4104,8 +4142,8 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S18 有料の利用者の線引き | 74・75・76 |
 | S19 家族プランが終わったグループ | 69・78・79・105 |
 | S20 手動付与との共存 | 63・68・77 |
-| S21 規約の改定の再同意 | §16.1 の `middleware-legal-consent-api` の行 (許可リストは変えないので既存のテストが緑のまま守る)・115 (版を上げた本文) |
-| S22 凍結中のストアの契約 | 88 |
+| S21 規約の改定の再同意 | 118・§16.1 の `middleware-legal-consent-api` の行 (許可リストは変えない。全 route を走査する既存の it が新しい 2 本の 403 も見る)・115 (版を上げた本文) |
+| S22 凍結中のストアの契約 | 88・117・118・§16.1 の `middleware-frozen-allowed-api` の行 (`FROZEN_ALLOWED_API_PATHS` の `toEqual` が変わらない)・`middleware-legal-consent-api` の凍結中の全 route の it |
 | S23 無料体験の 1 人 1 回 | 70・83・84・86・110 |
 | S24 App Store の審査 (sandbox の購入) | 29・90・81 (手動)・82 (実機) |
 | S25 二重購読の防止と案内 (ストア同士) | 68・32・96 |
@@ -4113,6 +4151,11 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S27 無料の利用者が 1 週間の献立を作る (料理画像を作らない) | 111・112・99 |
 | S28 対応の無い古い商品の購入の履歴 | 18・113・114・109 |
 | S29 無料体験の表示がストアの判定に従う | 110・51・55 |
+| S30 RevenueCat の API の失敗 | 121・120・122・24・96 |
+| S31 カタログの不正な問い合わせ | 119・31 |
+| S32 月額から年額への切り替え | 7・17・71・86 |
+| S33 解約の予約の取り消し | 5・85・124 |
+| S34 家族プランをストアで買う (月額) | 125・126・66・76 |
 
 §12 の発注者の作業 (App Store の Paid Applications Agreement・税と銀行の登録、Google Play の内部テストのトラックへの課金のライブラリ入りのビルドの提出、ストアの商品の作成) は運用の手順で、本冊のコードの振る舞いではない。シナリオとテストは持たず、§17.4 の受け入れの確認 (iOS の TestFlight・Android の内部テストの購入) で確かめる。
 
@@ -4124,8 +4167,8 @@ Web の契約の画面 (追加。§10.3・§10.4):
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (§6。`ai_plan_feature_daily_cap` と `plan_store_products` の主キー `(store, product_id)`・`offered` を含む)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts` (`iap_synced_at` の `omit`)・§16.1 の結合テストの追随 | 60〜80・83・84・86・90・91・100・105〜107・109・112・114 |
-| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・行の失敗の文の読み手のコメント 3 本 (§8.8)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・`process-meal-image-jobs/index.ts` (プランの門。§8.8)・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES` と `ENFORCED_EDGE` の注 (`tests/helpers/ai-consent-enforced-paths.ts`)・`null-character-routes` の表・送信先の棚卸しの `NON_AI_HOSTS` (`tests/ai-consent-provider-inventory.test.ts`) | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102, 108, 111, 113。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
+| A: DB 層 | migration + rollback (§6。`ai_plan_feature_daily_cap` と `plan_store_products` の主キー `(store, product_id)`・`offered` を含む)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts` (`iap_synced_at` の `omit`)・§16.1 の結合テストの追随 | 60〜80・83・84・86・90・91・100・105〜107・109・112・114・123・124・126 |
+| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・行の失敗の文の読み手のコメント 3 本 (§8.8)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・`process-meal-image-jobs/index.ts` (プランの門。§8.8)・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES` と `ENFORCED_EDGE` の注 (`tests/helpers/ai-consent-enforced-paths.ts`)・`null-character-routes` の表・送信先の棚卸しの `NON_AI_HOSTS` (`tests/ai-consent-provider-inventory.test.ts`) | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102, 108, 111, 113, 117〜122, 125。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
 | C: Web の画面と公開の面 | `/pricing` (`page.tsx`・`PricingPageView.tsx`)・`/legal` の販売の行・`/faq`・`landing-copy.ts`・`PricingSection.tsx` (冒頭の注)・`marketing.css` (料金の節)・`public-pages.ts` (`SITE_DESCRIPTION`)・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`b10` の E2E・`landing-page-1867`・クーポンの画面の基準の価格 | §10.1〜§10.5 | 44〜46, 48, 87, 88, 103, 104, 116 |
 | D: モバイル | `react-native-purchases`・`expo-dev-client` の追加、`purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`app/settings/plan.tsx`・設定タブの行・`AuthProvider`・`signOut.ts`・`UltimateModeToggle` と `V4GenerateModal` の錠・`env.example`・jest の mock と `moduleNameMapper`・`no-web-purchase-links.test.ts` のコメント | §8.10・§10.6 | 51〜59, 96, 110 |
 | E: 規約とポリシーの条文 | `src/lib/legal/terms-text.ts`・`privacy-text.ts` の差分・`tests/legal-claims-1901.ts` (主張の表)・`tests/legal-text-1901.test.ts` (T-33・T-34)・`packages/shared/src/legal-versions.ts` の版・`docs/legal/archive/v2026.1/` | §11 | 115 (と cross/20 のテストの全部が緑) |
@@ -4144,7 +4187,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - `src/hooks/useBillingSummary.ts`
 - テストの道具: `tests/integration/helpers/family-plan.ts` (`grantFamilyPlan`。§16.1 の家族の結合テストの行)・`tests/e2e/helpers/billing-plan.ts` (`grantManualPlanForE2e`。§16.1 の E2E の行)
 - `apps/mobile/src/lib/purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`apps/mobile/app/settings/plan.tsx`・`apps/mobile/__mocks__/react-native-purchases.js`
-- テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`・`tests/meal-image-plan-gate-source.test.ts`
+- テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/billing-revenuecat-gateway.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`・`tests/meal-image-plan-gate-source.test.ts`
 
 変更:
 - `src/lib/billing/core.ts`・`repository.ts`・`service.ts`・`http.ts`・`public-plans.ts`・`manual-grant.ts`・`manual-grant-repository.ts`・`src/components/admin/ManualPlanGrantSection.tsx`
@@ -4274,8 +4317,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `src/__tests__/app/transfer-accept-fake-client.ts` (`SCHEMA_COLUMNS`) | `family_groups`・`personal_subscriptions` | 変更なし (`personal_subscriptions` は一覧に無い。`family_groups` の列は変えない) | — |
 | `tests/design-doc-removed-mobile-screens.test.ts`・`tests/mobile-removed-files-references.test.ts` | 本冊は `docs/design/` に置かれる | 本冊は消した画面を名指ししない (`apps/mobile/app/settings/plan.tsx` は新設で一覧に無い) | — |
 | `tests/native-app-tabs-contract.test.ts` | タブ | 変更なし (タブを足さない。`/settings/plan` はタブの外) | — |
-| `tests/mobile-account-frozen-contract.test.ts`・`lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | `FROZEN_ALLOWED_API_PATHS` | 変更なし (本冊の route は凍結中に通さない) | — |
-| `lib/supabase/__tests__/middleware-legal-consent-api.test.ts`・`packages/shared/src/legal-consent-api.test.ts` | `LEGAL_CONSENT_EXEMPT_API_PATHS` | 変更なし (本冊の route は許可リストに入れない。S21) | — |
+| `tests/mobile-account-frozen-contract.test.ts`・`lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts` | `FROZEN_ALLOWED_API_PATHS` | 変更なし (本冊の route は凍結中に通さない。一覧の `toEqual` が変わらないことと、テスト 118 が新しい 2 本の不在を見る) | — |
+| `lib/supabase/__tests__/middleware-legal-consent-api.test.ts`・`packages/shared/src/legal-consent-api.test.ts` | `LEGAL_CONSENT_EXEMPT_API_PATHS` | 変更なし (本冊の route は許可リストに入れない。S21。`src/app/api` の全 route を走査する it が、新しい 3 本の route も表に入れて見る: catalog・sync は未同意の 403 と凍結中の 403、`/api/webhooks/revenuecat` は許可リストの `/api/webhooks` (prefix) に当たるので止めない) | — |
 | `tests/legal-consent-*.test.ts`・`tests/e2e/legal-consent-gate.spec.ts`・`src/__tests__/api/cron/push-outbox.test.ts` (版の値を持つなら) | `LEGAL_DOCUMENTS` の版 (`v2026.1` → `v2026.2`) | cross/20 の実装で `LEGAL_DOCUMENTS` の値を読む形になっている (cross/20 §16)。残っていれば段 E で `LEGAL_DOCUMENTS` の値に替える (`git grep -n "v2026.1" -- tests src packages apps` で確かめる) | E |
 | cross/20 のテスト `tests/legal-text-1901.test.ts`・`tests/legal-document-body.test.tsx`・`tests/legal-claims-1901.ts` (cross/20 §13。段 E の土台) | 第10条・第11条・第16条・第17条・第24条・ポリシー第3条・第4条・第7条・第10条・第12条の差分 | T-33 の書き換え・T-34 の移し替え・主張の表の 42 行の追加と 3 行の直し・`LEGAL_CLAIM_COUNT` (§11.4・§11.5)。T-1・T-2 (条の数)・T-6・T-7 (`PRIVACY_PROCESSORS` の根拠。段 B の `revenuecat-gateway.ts` が要る)・T-13・T-14 (`/legal` へのリンク)・T-16・T-17 (版)・T-19・T-24・T-28 (`本サービスは、無料で利用できます` が残る)・T-29 (CSP は変えない)・T-35・T-40 はコードを変えずに緑 | E |
 | `tests/public-claims-guard.test.ts` の、cross/20 の実装が足す `/terms`・`/privacy` の走査 (cross/20 §13.1 の後の注) | 段 E の文 | 変更なし (段 E の文に `FORBIDDEN` の語 (価格の語を含む) が無い。価格は本文に書かない。§11.0) | E |
