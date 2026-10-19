@@ -2,13 +2,14 @@
  * #1867: ハッシュだけの移動 (`<a href="#how">`・スキップリンク・アドレス欄でハッシュを書き換える) で積まれた履歴の項目を、
  * Next の app router が「戻る / 進む」で描き直せるようにするための判定 (部品は src/components/navigation/HashHistoryEntryBridge.tsx)。
  *
- * 原因 (Next 16.4.1 の next/dist/client/components/app-router.js の handlePopState):
+ * 原因 (Next 16.4.2 の next/dist/client/components/app-router.js の handlePopState。16.4.1 から app-router.js・layout-router.js・
+ *   router-reducer の restore は変わっていない (#1902 で node_modules の両版を突き合わせた)):
  *   - app router は自分が積んだ履歴の項目に、印 (`__NA: true`) と描き直しに使う木を history.state に入れる。
  *   - ブラウザの通常のハッシュの移動は、新しい項目を history.state = null で積む (Next を通らない)。
  *   - popstate の state が null の項目は、app router が何もせずに返す (`if (!state) return`)。
  *   そのため `/` → `#how` (state null) → next/link で `/signup` → 戻る と進むと、URL だけ `/#how` に戻り、画面は `/signup` のまま残る。
  *
- * 直し方: ハッシュの移動で積まれた項目で、Next の公開の口 (Next が差し替えた history.replaceState) を呼んで印を付ける。印は 2 段で付く (Next 16.4.1 の app-router.js):
+ * 直し方: ハッシュの移動で積まれた項目で、Next の公開の口 (Next が差し替えた history.replaceState) を呼んで印を付ける。印は 2 段で付く (Next 16.4.2 の app-router.js):
  *   1. 差し替えた replaceState は、今の項目の state にある印と木を写すだけ (copyNextJsInternalHistoryState)。ハッシュの移動で積まれた項目の state は null なので
  *      写すものが無く、ここでは印は付かない。あわせて、今の URL で app router の状態を作り直す (applyUrlFromHistoryPushReplace → restore)。
  *   2. restore の後の再描画で、HistoryUpdater が今の項目の state に印 (`__NA: true`) と今の画面の木を書く (replaceState。URL は変わらない)。
@@ -33,7 +34,7 @@ export type RouteLocation = {
 
 /**
  * 検索の部分を、URLSearchParams で読み直して書き直した形 (`?` つき。無ければ空文字) にそろえる。
- * 画面側の値 (useSearchParams。Next 16.4.1 の app-router.js は new URL(canonicalUrl).searchParams を渡すので、toString() はこの形) と、
+ * 画面側の値 (useSearchParams。Next 16.4.2 の app-router.js は new URL(canonicalUrl).searchParams を渡すので、toString() はこの形) と、
  * URL 側の値 (window.location.search。URL に書かれたまま) を同じ形で比べるため。
  * 例: `?a=x%20y&ref` → `?a=x+y&ref=`・`?next=/home` → `?next=%2Fhome`。同じ形に何度通しても変わらない。
  */
