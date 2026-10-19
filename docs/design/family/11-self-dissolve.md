@@ -1,9 +1,9 @@
 # 家族グループ・組織の解散 — 代表者・オーナーが自分で解散する (#1917)
 
-> 版: v1.0 (2026-10-19 初版) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
+> 版: v1.1 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
 > 位置づけ: 家族グループの代表者と組織のオーナーが、運営の手を介さずに自分の家族グループ・組織を解散し、そのあと退会できるようにする設計の正典。家族 (`family/`) と組織 (`org/`) の両方を 1 冊で扱う (解散の後始末は運営の強制解散 `operator_force_dissolve_family` / `operator_force_dissolve_org` と同じにし、同じ関数を 2 つの入口から呼ぶため)。組織の側の既存の設計は `docs/design/org/05-offboarding-flow.md` §7.3 (古い設計。`archived` 前提) と `docs/design/membership/05-operator-emergency-ui.md` §4 (運営の強制解散) を参照する。範囲の正本は Issue #1917 の本文とコメント。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` は 0 行・`organizations` は active 2 行 (`owner_id` あり)・`parental_consents` は 0 行・`ownership_transfer_proposals` は 0 行。2026-10-19 に読み取りで実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。
+> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映 (§26)。
 
 ---
 
@@ -122,7 +122,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | F-24 | `mapPgErrorToHttp` は `MembershipErrorCode` の値を単語境界で探し、`40P01` は `CONFLICT_RETRY` (409)。`ORG_ALREADY_DISSOLVED` は RPC が RAISE するが enum に無い (運営の route は `internalError` で返すので表に出ない)。`NOT_FAMILY_REPRESENTATIVE` (403)・`NOT_ORG_OWNER` (403)・`FAMILY_NOT_FOUND` (404)・`ORG_NOT_FOUND` (404) はある。`MEMBERSHIP_ERROR_MESSAGES` は全値に文が要る (`tests/membership-errors.test.ts`) | `src/lib/errors/membership-errors.ts:6, 15, 20, 35, 88-150, 185-210` |
 | F-25 | 本文を読む route は `rejectNullCharacterBody` を最初に呼び、`src/__tests__/api/null-character-routes.test.ts` の表に載せる (表と実コードの一致を見る) | 同ファイル `:1-15, 113-155` |
 | F-26 | 家族の退出 route は `supabase.auth.getUser()` で認証し、通知先を RPC の前に本人のセッションで読む (退出後は RLS で読めない。#1209)。組織のメンバーの `user_profiles` は本人の行しか RLS で読めない (cross/20 F-19) ので、運営の組織の解散 route は service_role で解散前にメンバーを読む | `src/app/api/family/leave/route.ts`・`src/app/api/operator/membership/org/[id]/dissolve/route.ts` |
-| F-27 | `tests/integration/security/family-lock-order-race.test.ts` C1・C2・R2 は、運営の強制解散のあと `family_groups.representative_id` が代表者のままであることを期待する (`:774, 791, 1162`)。`tests/integration/security/organizations-owner-id-not-null.test.ts` は `organizations.owner_id` の `is_nullable` が `'NO'` であることを期待する (`:186, 224, 240, 252`) | 同ファイル |
+| F-27 | `tests/integration/security/family-lock-order-race.test.ts` C1・C2・R2 は、運営の強制解散のあと `family_groups.representative_id` が代表者のままであることを期待する (`:774, 791, 1162`)。`tests/integration/security/organizations-owner-id-not-null.test.ts` は、`afterEach` (`:181-186`) で実 DB の `organizations.owner_id` の `is_nullable` が `'NO'` であることを期待する。`:224, 240, 252` の `outcome.nullable` の `'NO'` と `:356` の `'YES'` は、1 つのトランザクションの中で旧 migration (`20261017100000`) / その戻し口を流した直後の値で、実 DB の状態ではない。`runInRolledBackTransaction` (`:147`) は先頭で `DROP NOT NULL` だけを流し、`orgSql` (`:156-157`) は `owner_id` NULL の組織を `status` を書かずに (既定の `'active'`。`20251126124224_create_meal_planner_tables.sql:793`) INSERT する。単体の契約テスト `tests/organizations-owner-id-not-null-migration-contract.test.ts` は、型の生成物 2 ファイルの `organizations` の `owner_id` が Row で `string`・Insert で `string`・Update で `string` の省略可で、`string | null` が無いこと (`:171-186`。`it.each` で 2 ファイル) と、`OrganizationSchema.shape.owner_id` が NULL を受けないこと (`:188-191`) を固定する | 同ファイル |
 | F-28 | cross/20 §6 の利用規約第11条 4 項 (`:657`)・第12条 4 項 (`:673`)・第17条 2 項 (`:766`)、§7 のプライバシーポリシー第13条 9 項 (`:1403`) は「譲渡するまで退会できません」「譲渡できる相手がいなければお問い合わせ」と書く。主張の表の行は `terms-11#7`・`#8` (`:2096-2097`)・`terms-12#5`・`#6` (`:2104-2105`)・`terms-17#5` (`:2147`)・`privacy-13#9` (`:2379`)。`#1901` の実装 (`src/lib/legal/terms-text.ts` ほか) はまだ main に無い (枝 `feat/issue-1901-terms-privacy-text`)。`packages/shared/src/legal-versions.ts` の版は main では `v2025.1` | `docs/design/cross/20-terms-privacy-text.md`・`packages/shared/src/legal-versions.ts:39-42` |
 
 ### 3.2 テストの道具
@@ -292,7 +292,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 | 立場 | 状態 | 入口 | 何が起きるか |
 |---|---|---|---|
-| 家族の代表者 | 通常 | 設定のメンバーシップ設定 | 解散の区画 (譲渡へのリンクと解散のボタン) が出る。「家族から脱退」は出ない (代表者は退出できない。F-20 の 409 を押させない)。解散 → 200 → 「家族グループを解散しました。」→ 区画は「所属していません」になる |
+| 家族の代表者 | 通常 | 設定のメンバーシップ設定 | 解散の区画 (譲渡へのリンクと解散のボタン) が出る。「家族から脱退」は出ない (代表者は退出できない。F-20 の 409 を押させない)。解散 → 200 → 「家族グループを解散しました。」(`role="status"`) → 所属家族の区画は「所属していません」になり、共有設定の区画は消える (§15.1 `handleDissolved`)。所属組織の区画は読み直しの結果のまま |
 | 家族の代表者 | 通常 | 設定の退会 (409) | 案内の `confirm` → メンバーシップ設定へ (S-8) |
 | 家族の代表者 | 凍結中 | `/frozen/account` の退会 (409) | その場に解散の区画 (S-9)。解散 → 退会 |
 | 家族の代表者 | 凍結中 | 設定・メンバーシップ設定 | 開けない (`/frozen` へ差し戻し。既存) |
@@ -309,7 +309,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 家族の大人 / アカウントを持つ子供 | メンテナンス中 | どの入口も | API は 503 (運営ロール以外。route に届かない)。画面はメンテナンスの画面 |
 | 家族の大人 / 子供 (解散されたあと) | 通常 | 設定・献立・家族の画面 | `family_id` NULL。家族の画面は `/family/setup` へ (既存)。献立の切り替えは出ない (family/10 S-8)。解散のメールが届く (アカウントを持つ人だけ) |
 | アカウントの無い子供 (解散されたあと) | — | — | `family_members` の行が `left`。同意の記録は `member_left` で取り消し (F-9)。メールは無い |
-| 組織のオーナー | 通常 | メンバーシップ設定 | 解散の区画 (オーナーの譲渡へのリンクと解散のボタン)。「組織から脱退」は出ない (オーナーは退出できない) |
+| 組織のオーナー | 通常 | メンバーシップ設定 | 解散の区画 (オーナーの譲渡へのリンクと解散のボタン)。「組織から脱退」は出ない (オーナーは退出できない)。解散 → 200 → 「組織を解散しました。」(`role="status"`) → 所属組織の区画は「所属していません」になる (§15.1 `handleDissolved`)。所属家族の区画は読み直しの結果のまま |
 | 組織のオーナー | 通常 | 設定の退会 (409) | 案内の `confirm` → メンバーシップ設定へ |
 | 組織のオーナー | 凍結中 | `/frozen/account` (409) | その場に解散の区画 (組織の名前つき) |
 | 組織のオーナー | 凍結中 | 設定・メンバーシップ設定 | 開けない (`/frozen` へ差し戻し。既存) |
@@ -929,10 +929,12 @@ migration のあと、ローカルの Supabase で型を作り直し、`src/type
 | 箇所 | 直し方 |
 |---|---|
 | `src/schemas/membership/family-group.ts:17` `representative_id` | `z.string().uuid().nullable()` |
-| `src/schemas/membership/organization.ts:27` `owner_id` | `z.string().uuid().nullable()`。上のコメント「列は NOT NULL (#1103 項目 10 / migration 20261017100000)」を「active な行では NOT NULL (CHECK)。解散した行は NULL (#1917)」に |
+| `src/schemas/membership/organization.ts:26` `owner_id` (コメントは `:25`) | `z.string().uuid().nullable()`。上のコメント「列は NOT NULL (#1103 項目 10 / migration 20261017100000)」を「active な行では NOT NULL (CHECK)。解散した行は NULL (#1917)」に |
 | `src/app/api/admin/organizations/route.ts:30-32, 152-154` (読み手 1) | コードは変えない (作る組織は active なので `owner_id` を必ず入れる)。コメントの「列は NOT NULL」を CHECK の説明に |
 | (読み手 2〜5) `src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` | 読んだ `representative_id` / `owner_id` を `string | null` として扱う (`?? null`)。譲渡・退出の対象は active な行なので値は入っているが、型の上で NULL を受ける |
 | `src/lib/account-export-tables.ts:239` (`self('representative_id')`) | 変えない (本人の id と比べるだけ) |
+
+型の再生成と `OrganizationSchema` の `.nullable()` で、#1103 項目 10 の番兵 `tests/organizations-owner-id-not-null-migration-contract.test.ts:172-191` (型 2 ファイル × `it.each` と Zod の it) が赤になる。CHECK `organizations_active_has_owner` が DB に入ると `tests/integration/security/organizations-owner-id-not-null.test.ts` も赤になる。どちらも §21.6 の逐語で書き換える (§23)。
 
 ---
 
@@ -1348,9 +1350,165 @@ export async function POST(request: Request) {
 |---|---|---|
 | 所属組織 (`orgInfo`) | 名前・役割・「組織から脱退」 | `org_role === 'owner'` なら「組織から脱退」を出さず、「オーナーを譲渡」(`router.push('/org/settings/owner-transfer')`) と「組織を解散」(`setDissolveTarget('organization')`) を出す。それ以外は今までどおり |
 | 所属家族 (`familyInfo`) | 名前・役割・「家族を表示」「家族から脱退」 | `role === 'representative'` なら「家族から脱退」を出さず、「家族を表示」「代表者を譲渡」(`router.push('/family/representative-transfer')`)「家族グループを解散」(`setDissolveTarget('family')`) を出す。それ以外は今までどおり |
-| 解散の区画 | 無い | `dissolveTarget` が入っているときに、その所属の下に `SelfDissolveSection` (§15.2) を描く。`onCancel` で `null` に戻す。`onDissolved` で `loadData()` を呼び直す (所属が消えて「所属していません」になる。§8) |
+| 解散の区画 | 無い | `dissolveTarget` が入っているときに、その所属の区画 (`<section>`) のすぐ下 (兄弟の要素) に `SelfDissolveSection` (§15.2) を描く。`onCancel` で `dissolveTarget` を `null` に戻す。`onDissolved` で `handleDissolved(scope)` を呼ぶ: 区画を閉じ、解散した側の `familyInfo` / `orgInfo` をその場で `null` にし (「所属していません」になる。§8)、`SELF_DISSOLVE_COPY[scope].done` を `role="status"` で出し、`loadData('refresh')` でもう一方の所属を読み直す。`onUnauthorized` で `/login` へ |
+| 所属の読み込み (`loadData`) | `useEffect` の中の関数 (`:85-161`)。外から呼べない。所属がある分岐 (`:105`・`:141`) の中でだけ `setFamilyInfo` / `setOrgInfo` を呼び、所属が無いときに `null` へ戻さない | コンポーネントの中の `useCallback` に出し (`loadData(mode)`)、`useEffect` は `loadData('initial')` を呼ぶだけにする。読んだ結果を `nextFamily` / `nextOrg` (所属が無い・行が読めないときは `null`) に組み立て、分岐の外で必ず `setFamilyInfo(nextFamily)` / `setOrgInfo(nextOrg)` を呼ぶ。`'initial'` だけ `loading` を切り替える (`'refresh'` は画面を保ったまま読み直す。全体を読み込み中に替えると完了の文が消えるため) |
 
 - 所属の情報は今までどおり本人のセッションで読む (`user_profiles` の `family_id` / `organization_id` / `org_role`、`family_members` の自分の行、`family_groups` / `organizations` の名前)。解散に要るのは id と名前だけ。
+- `handleDissolved` が解散した側を読み直しの前に `null` にするのは、読み直しが失敗しても (catch でログだけ残す。今までどおり) 解散した所属が画面に残らないようにするため。もう一方の所属は読み直しの結果で決まる。
+
+変更の逐語 (`loadData` の取り出し・state・`handleDissolved`・区画の描画。既存の `handleShareToggle`・脱退の 2 つの関数・モーダルは変えない):
+
+```tsx
+// tsc:skip (src/app/(main)/settings/membership/page.tsx の変更の断片。FamilyInfo・OrgInfo・ShareSettings・supabase・router・setLoading などは同ファイルの既存の定義)
+// import に足す
+import type { MembershipScope } from '@/lib/emails/membership/scope-label';
+import { SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
+import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection';
+
+// state に足す (leaveError の下)
+  // #1917 解散の区画を開いている所属 (null は閉じている) と、解散が済んだときの文
+  const [dissolveTarget, setDissolveTarget] = useState<MembershipScope | null>(null);
+  const [dissolvedNotice, setDissolvedNotice] = useState<string | null>(null);
+
+// 「データ取得」の useEffect (:84-163) を、次の loadData と useEffect に置き換える
+  /**
+   * 所属を読む。'initial' (画面を開いたとき) だけ全体を読み込み中にする。'refresh' (解散のあと) は画面を保ったまま読み直す。
+   * 所属が無い・行が読めないときは familyInfo / orgInfo を null に戻す (解散のあとに古い所属が残らない。#1917)
+   */
+  const loadData = useCallback(
+    async (mode: 'initial' | 'refresh') => {
+      if (mode === 'initial') setLoading(true);
+      try {
+        const {
+          data: { user },
+        } = await supabase.auth.getUser();
+        if (!user) {
+          router.push('/login');
+          return;
+        }
+
+        // user_profiles から family_id / organization_id を取得
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('family_id, organization_id, org_role, nickname')
+          .eq('id', user.id)
+          .single();
+
+        // 家族情報
+        let nextFamily: FamilyInfo | null = null;
+        if (profile?.family_id) {
+          const [{ data: familyMember }, { data: familyGroup }] = await Promise.all([
+            supabase
+              .from('family_members')
+              .select('id, role, share_meals, share_health, share_menu')
+              .eq('family_id', profile.family_id)
+              .eq('user_id', user.id)
+              .eq('status', 'active')
+              .maybeSingle(),
+            supabase
+              .from('family_groups')
+              .select('id, name')
+              .eq('id', profile.family_id)
+              .maybeSingle(),
+          ]);
+
+          if (familyMember && familyGroup) {
+            nextFamily = {
+              family_id: profile.family_id,
+              family_name: familyGroup.name ?? '家族グループ',
+              role: familyMember.role,
+              share_settings: {
+                share_meals: familyMember.share_meals,
+                share_health: familyMember.share_health,
+                share_menu: familyMember.share_menu,
+              },
+            };
+            setShareSettings({
+              share_meals: familyMember.share_meals,
+              share_health: familyMember.share_health,
+              share_menu: familyMember.share_menu,
+            });
+          }
+        }
+        setFamilyInfo(nextFamily);
+
+        // 組織情報
+        let nextOrg: OrgInfo | null = null;
+        if (profile?.organization_id) {
+          const { data: org } = await supabase
+            .from('organizations')
+            .select('id, name')
+            .eq('id', profile.organization_id)
+            .maybeSingle();
+          if (org) {
+            nextOrg = {
+              organization_id: profile.organization_id,
+              org_name: org.name ?? '組織',
+              org_role: profile.org_role ?? 'member',
+            };
+          }
+        }
+        setOrgInfo(nextOrg);
+      } catch (err) {
+        console.error('[settings/membership] load error:', err);
+      } finally {
+        if (mode === 'initial') setLoading(false);
+      }
+    },
+    // supabase (createClient) と router は画面を開いたときのものを使う (置き換える前の useEffect の [] と同じ)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  useEffect(() => {
+    void loadData('initial');
+  }, [loadData]);
+
+  /** #1917 解散が済んだ (200)。区画を閉じ、解散した所属をその場で外し、完了の文を出して、もう一方の所属を読み直す */
+  const handleDissolved = useCallback(
+    (scope: MembershipScope) => {
+      setDissolveTarget(null);
+      if (scope === 'family') setFamilyInfo(null);
+      else setOrgInfo(null);
+      setDissolvedNotice(SELF_DISSOLVE_COPY[scope].done);
+      void loadData('refresh');
+    },
+    [loadData],
+  );
+
+// 描画: <div className="px-4 py-6 space-y-4 max-w-2xl mx-auto"> の最初の子に足す
+        {dissolvedNotice && (
+          <p role="status" className="rounded-2xl bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
+            {dissolvedNotice}
+          </p>
+        )}
+
+// 描画: 「所属組織セクション」の </section> のすぐ後に足す
+        {orgInfo && dissolveTarget === 'organization' && (
+          <SelfDissolveSection
+            scope="organization"
+            scopeId={orgInfo.organization_id}
+            scopeName={orgInfo.org_name}
+            onDissolved={() => handleDissolved('organization')}
+            onCancel={() => setDissolveTarget(null)}
+            onUnauthorized={() => router.push('/login')}
+          />
+        )}
+
+// 描画: 「所属家族セクション」の </section> のすぐ後に足す
+        {familyInfo && dissolveTarget === 'family' && (
+          <SelfDissolveSection
+            scope="family"
+            scopeId={familyInfo.family_id}
+            scopeName={familyInfo.family_name}
+            onDissolved={() => handleDissolved('family')}
+            onCancel={() => setDissolveTarget(null)}
+            onUnauthorized={() => router.push('/login')}
+          />
+        )}
+```
+
+「家族グループを解散」「組織を解散」のボタンは `onClick={() => { setDissolvedNotice(null); setDissolveTarget('family'); }}` (組織は `'organization'`) とする (前の解散の文を残したまま別の区画を開かない)。
 - 「組織から脱退」「家族から脱退」の確認モーダルは変えない (代表者・オーナー以外のまま)。
 - 作りかけ・先送りを示す語 (R-12 の 2 語) を書かない。
 
@@ -1519,7 +1677,8 @@ sequenceDiagram
   DB-->>R: { scope_id, scope_name, dissolved_at, member_user_ids }
   R->>M: resolveAuthEmails (service_role) → 1 人 1 通 (best-effort)
   R-->>P: 200 { data: { family_id, dissolved_at } }
-  P->>P: 所属を読み直す → 「所属していません」
+  P->>P: handleDissolved('family'): 区画を閉じる → familyInfo を null (「所属していません」) → 「家族グループを解散しました。」
+  P->>P: loadData('refresh'): 所属を読み直す (家族は null のまま・組織は今の値)
   U->>U: 設定 → 退会 → 200 (findBlocker は解散した行を見ない)
 ```
 
@@ -1770,7 +1929,7 @@ export async function notifySelfDissolve(params: NotifySelfDissolveParams): Prom
 
 | 段 | 触るファイル (新設は §22) | 検査 |
 |---|---|---|
-| A | migration + down (§11)・型 2 ファイル (§11.4)・`src/schemas/membership/self-dissolve.ts`・`index.ts`・`packages/shared/src/membership-settings.ts`・`index.ts`・`src/lib/errors/membership-errors.ts` (§13.3)・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts` (§13.5)・`src/lib/account-self-service.ts` (§13.6)・`src/lib/account-deletion.ts` (コメント)・`lib/supabase/middleware.ts:189, 228` (コメント)・`apps/mobile/src/lib/account-frozen.ts:5` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts` (nullable)・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・`src/lib/membership/self-dissolve.ts`・`self-dissolve-notification.ts`・`src/lib/emails/membership/self-dissolve.ts`・route 2 本・テスト (§21.1・§21.2) と既存の番兵の追随 (§23 の段 A の行) | `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (offload)・結合 (`vitest.integration.config.ts`) は `tests/integration/security/self-dissolve.test.ts`・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`anon-definer-execute.test.ts`・`account-deletion.test.ts`・`org-admin-residual-cleanup.test.ts`・`operator-mfa-db-gate.test.ts`・`purge-dissolved-family-groups.test.ts`・`auth-users-fk-on-delete.test.ts` |
+| A | migration + down (§11)・型 2 ファイル (§11.4)・`src/schemas/membership/self-dissolve.ts`・`index.ts`・`packages/shared/src/membership-settings.ts`・`index.ts`・`src/lib/errors/membership-errors.ts` (§13.3)・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts` (§13.5)・`src/lib/account-self-service.ts` (§13.6)・`src/lib/account-deletion.ts` (コメント)・`lib/supabase/middleware.ts:189, 228` (コメント)・`apps/mobile/src/lib/account-frozen.ts:5` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts` (nullable)・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・`src/lib/membership/self-dissolve.ts`・`self-dissolve-notification.ts`・`src/lib/emails/membership/self-dissolve.ts`・route 2 本・テスト (§21.1・§21.2) と既存の番兵の追随 (§23 の段 A の行。#1103 項目 10 の番兵 2 本の書き換えは §21.6 の逐語) | `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (offload)・結合 (`vitest.integration.config.ts`) は `tests/integration/security/self-dissolve.test.ts`・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`anon-definer-execute.test.ts`・`account-deletion.test.ts`・`org-admin-residual-cleanup.test.ts`・`operator-mfa-db-gate.test.ts`・`purge-dissolved-family-groups.test.ts`・`auth-users-fk-on-delete.test.ts` |
 | B | `src/app/(main)/settings/membership/page.tsx`・`src/components/membership/SelfDissolveSection.tsx`・`src/app/(main)/settings/page.tsx`・`src/app/frozen/account/page.tsx`・`apps/mobile/src/lib/membership-settings.ts`・`apps/mobile/app/settings/membership.tsx`・`apps/mobile/app/settings/account.tsx`・テスト (§21.3・§21.4) | 同上 + apps/mobile の tsc / jest・e2e (`tests/e2e/membership/15-self-dissolve.spec.ts`) |
 | C | cross/20 の設計書 (§18.3)・`src/lib/legal/terms-text.ts`・`privacy-text.ts`・`tests/legal-claims-1901.ts` (§18.1・§18.2)・`packages/shared/src/legal-versions.ts` (§18.4 の条件で)・`tests/design-doc-followup-owned-edits.test.ts` (4 行) | 全件 (T-35 が主張の表と本文の 1 対 1 を見る) |
 
@@ -1817,14 +1976,14 @@ export async function notifySelfDissolve(params: NotifySelfDissolveParams): Prom
 | D-13 | `運営の強制解散 (置き換え後) は今までどおり: super_admin (aal2) が呼ぶと dissolved・全員 left・membership_audit に operator_force_dissolve (metadata に previous_representative_id)。加えて representative_id が NULL になる。組織も同じ (org_admin も外れる・previous_owner_id)` |
 | D-14 | `凍結中 (frozen_at) の代表者でも RPC は通る (RPC は凍結を見ない。middleware の判定は §21.1)` |
 
-既存の結合テストの変更: `family-lock-order-race.test.ts` C1 (`:774`)・C2 (`:791`) の `representative_id` の期待を `toBeNull()` に (解散で NULL にするのが設計。it 名の「書き換えない」は「解散済みの家族の representative_id は NULL のまま (新代表者に書き換わらない)」に)。R2 (`:1162`。運営でない人は解散できない) はそのまま。`organizations-owner-id-not-null.test.ts` の `is_nullable` の期待 (`:186, 224, 240, 252`) を `'YES'` に変え、代わりに CHECK `organizations_active_has_owner` があることと、active の行で NULL が 23514 になることを見る (migration の it は、その migration が SET NOT NULL する時点の検査なので `:356` の `'YES'` と合わせて文脈のコメントを直す)。`account-deletion.test.ts` の 409 の describe (`:758`) に `家族を解散した元代表者は 200 で退会できる` を足す。`anon-definer-execute.test.ts` の決定表 B に 2 行 (§23)。
+既存の結合テストの変更: `family-lock-order-race.test.ts` C1 (`:774`)・C2 (`:791`) の `representative_id` の期待を `toBeNull()` に (解散で NULL にするのが設計。it 名の「書き換えない」は「解散済みの家族の representative_id は NULL のまま (新代表者に書き換わらない)」に)。R2 (`:1162`。運営でない人は解散できない) はそのまま。`organizations-owner-id-not-null.test.ts` は 3 か所を直す (逐語は §21.6.2)。(1) `runInRolledBackTransaction` (`:146-148`) の先頭の文の並びを `DROP NOT NULL` → `DROP CONSTRAINT organizations_active_has_owner` の 2 文にする (`orgSql` は `owner_id` NULL・`status` 既定 `'active'` の組織を作るので、CHECK が DB にあると INSERT が 23514 で止まり、`orgSql` を使う it がすべて赤になる。トランザクションごと巻き戻るので CHECK は DB に残る)。(2) `afterEach` (`:186`) の期待を `'YES'` にし、続けて CHECK `organizations_active_has_owner` が DB にあることを見る (巻き戻りで CHECK が戻っていること)。(3) 冒頭のコメント (`:4-9`) を現在の DB の形 (NULL 許容 + CHECK) に合わせる。`:224, 240, 252` の `'NO'` と `:356` の `'YES'` は、トランザクションの中で旧 migration / 戻し口を流した直後の値なので**変えない**。active の行で NULL が 23514 になることは D-11 が見る (このファイルには足さない)。`account-deletion.test.ts` の 409 の describe (`:758`) に `家族を解散した元代表者は 200 で退会できる` を足す。`anon-definer-execute.test.ts` の決定表 B に 2 行 (§23)。
 
 ### 21.3 画面 (段 B)
 
 | ファイル | it |
 |---|---|
 | `src/__tests__/components/membership/self-dissolve-section.test.tsx` (新規) | `キーワードが「解散します」と一致するまでボタンは押せない。一致すると押せる` / `押すと dissolveOwnScope を scope と id で 1 回呼び、成功で onDissolved(dissolvedAt) を呼ぶ。送信中はボタンと入力欄が無効` / `失敗は role=alert に文を出し、もう一度押せる` / `401 は onUnauthorized を呼ぶ` / `見出しに所属先の名前、効果の箇条書き (家族は 5 行・組織は 5 行)。文に R-12 の 2 語が無い` / `onCancel があるときだけ「キャンセル」が出る` |
-| `src/__tests__/app/settings/membership-self-dissolve.test.ts` (新規。`membership-no-org-guidance.test.ts` の形) | `代表者には「代表者を譲渡」「家族グループを解散」が出て、「家族から脱退」は出ない` / `大人には今までどおり「家族から脱退」が出て、解散のボタンは出ない` / `オーナーには「オーナーを譲渡」「組織を解散」が出て、「組織から脱退」は出ない` / `member には今までどおり「組織から脱退」` / `「家族グループを解散」を押すと SelfDissolveSection (家族名つき) が出て、解散のあとに所属を読み直す。「キャンセル」で閉じる` |
+| `src/__tests__/app/settings/membership-self-dissolve.test.ts` (新規。`membership-no-org-guidance.test.ts` の形) | `代表者には「代表者を譲渡」「家族グループを解散」が出て、「家族から脱退」は出ない` / `大人には今までどおり「家族から脱退」が出て、解散のボタンは出ない` / `オーナーには「オーナーを譲渡」「組織を解散」が出て、「組織から脱退」は出ない` / `member には今までどおり「組織から脱退」` / `「家族グループを解散」を押すと SelfDissolveSection (家族名つき) が出る。「キャンセル」で閉じる` / `家族の解散が済む (onDissolved) と、区画が閉じ、role=status に「家族グループを解散しました。」が出て、所属家族は「所属していません」・「家族を表示」と共有設定の区画が消える。所属組織は読み直した値のまま出る` / `組織の解散が済むと、所属組織は「所属していません」になり「組織を解散しました。」が出る。所属家族は読み直した値のまま出る` / `解散のあとの読み直しで profile の family_id / organization_id が null なら、familyInfo / orgInfo は null になる (読み直しの問い合わせが 2 回目の getUser と user_profiles を呼ぶ)` / `解散のあとの読み直しが失敗 (例外) しても、解散した所属は「所属していません」のまま (画面全体は読み込み中に戻らない)` |
 | `tests/account-deletion-blocked-message.test.ts` (変更) | it 6 を `409 で立場が分かれば、理由の文に続けてメンバーシップ設定 (譲渡か解散) を開くかを尋ね、OK ならその画面へ (ACCOUNT_DELETE_BLOCKED_GUIDE)` に。追加 `deleteOwnAccount は 409 の本文の family_group / organization の id と名前を scope として持ち帰る (無ければ null)` |
 | `src/__tests__/app/frozen-account-page.test.tsx` (変更) | `:207` の it を `退会: 代表者 (409) は、サーバーの文と凍結中の案内 (譲渡はできない・解散すると退会できる) を出し、家族名つきの解散の区画を出す。ログアウトしない` に。追加 `解散の区画で解散すると、区画が消えて「解散しました。「削除します」と入力して退会を続けてください。」が出る。そのあとの退会は 200` / `409 の本文に family_group / organization が無ければ、解散の区画は出さず、サポートへの案内を出す` / `:244` の it (この画面が呼ぶ API は FROZEN_ALLOWED_API_PATHS だけ) を、解散の呼び出しを含めて 7 本の一覧で通す |
 | `apps/mobile/__tests__/settings/account-delete.test.tsx` (変更) | 409 の it に `Alert に「閉じる」と「メンバーシップ設定を開く」があり、押すと MEMBERSHIP_SETTINGS_SCREEN_ROUTE へ router.push する。401・500・通信の失敗の Alert にはボタンが無い (文だけ)` |
@@ -1838,7 +1997,7 @@ export async function notifySelfDissolve(params: NotifySelfDissolveParams): Prom
 |---|---|
 | spec15-01 | `代表者が POST /api/family/dissolve で解散 → DB は dissolved・representative_id NULL・メンバー left・family_id NULL・membership_audit に group_dissolved → そのあと POST /api/account/delete が 200` (`freshFamilyWithMembers`) |
 | spec15-02 | `大人が POST /api/family/dissolve → 403 NOT_FAMILY_REPRESENTATIVE。家族は active のまま` |
-| spec15-03 | `代表者がメンバーシップ設定で「家族グループを解散」→「解散します」を入力 → 押す → 「所属していません」になる (画面の経路)` |
+| spec15-03 | `代表者がメンバーシップ設定で「家族グループを解散」→「解散します」を入力 → 押す → 「家族グループを解散しました。」が出て、所属家族が「所属していません」になる。ページを読み直しても「所属していません」のまま (画面の経路)` |
 | spec15-04 | `オーナーが POST /api/org/dissolve で解散 → organizations は dissolved・owner_id NULL・メンバーの所属が外れる → POST /api/account/delete が 200` (`setupFreshOrgWithMembers`。cleanup は組織の行を消してから利用者) |
 
 ### 21.5 シナリオとテストの対応
@@ -1869,6 +2028,81 @@ export async function notifySelfDissolve(params: NotifySelfDissolveParams): Prom
 | S-26 | 部品 (キャンセル) |
 | S-28 | `tests/integration/rls/is-inactive-user-rpc.test.ts` は変えない (解散済みの家族を一覧に求める it は無い)。D-1 のあとに `list_families_with_inactive_representative` に出ないことを D-1 の末尾で見る |
 
+### 21.6 既存のテストの書き換え (逐語。段 A)
+
+§11.4 で `organizations.owner_id` の型が `string | null` になり、§11.1 で CHECK `organizations_active_has_owner` が DB に入ると、#1103 項目 10 の番兵 2 本が赤になる (F-27・§23)。#1103 項目 10 の migration (`20261017100000`) と戻し口のファイルは変えないので、その文面と振る舞いの検査は残し、**型・Zod・実 DB の現在の形**を見る部分だけを #1917 の形に書き換える。
+
+#### 21.6.1 `tests/organizations-owner-id-not-null-migration-contract.test.ts` (単体の契約テスト)
+
+- `:171` の describe 名を `'#1103 項目 10 / #1917 型とコード'` にする。
+- `:172-186` の `it.each` と `:188-191` の it を、下の 2 つの it に置き換える (`read`・`TYPE_FILES`・`OrganizationSchema` は同ファイルの既存の定義をそのまま使う)。`:193-215` の it (組織を INSERT / UPSERT する src の箇所が `owner_id` を入れる) は変えない。
+- 冒頭のコメント (`:1-8`) の末尾に 1 行足す: ` * #1917 (docs/design/family/11-self-dissolve.md §11) で owner_id は NULL 許容 + CHECK organizations_active_has_owner (active な行では NOT NULL) になった。型と Zod の it はその形を見る。`
+
+```ts
+// tsc:skip (tests/organizations-owner-id-not-null-migration-contract.test.ts の :172-191 を置き換える断片。read・TYPE_FILES・OrganizationSchema・expect・it は同ファイルの既存の定義と import)
+  it.each(TYPE_FILES)(
+    '%s: organizations の owner_id は Row で string | null・Insert と Update で省略可の string | null (解散した行は NULL。active な行の NOT NULL は CHECK organizations_active_has_owner が守る。#1917)',
+    (rel) => {
+      const source = read(rel);
+      const start = source.indexOf('\n      organizations: {');
+      expect(start).toBeGreaterThan(0);
+      const block = source.slice(start, source.indexOf('\n      }', start));
+      const section = (name: 'Row' | 'Insert' | 'Update') => {
+        const from = block.indexOf(`${name}: {`);
+        return block.slice(from, block.indexOf('}', from));
+      };
+      expect(section('Row')).toContain('owner_id: string | null\n');
+      expect(section('Insert')).toContain('owner_id?: string | null\n');
+      expect(section('Update')).toContain('owner_id?: string | null\n');
+    },
+  );
+
+  it('Zod の OrganizationSchema は owner_id に NULL (解散した行) と UUID を受け、UUID でない文字列は受けない (#1917)', () => {
+    expect(OrganizationSchema.shape.owner_id.safeParse(null).success).toBe(true);
+    expect(OrganizationSchema.shape.owner_id.safeParse('00000000-0000-4000-8000-000000000000').success).toBe(true);
+    expect(OrganizationSchema.shape.owner_id.safeParse('not-a-uuid').success).toBe(false);
+  });
+```
+
+#### 21.6.2 `tests/integration/security/organizations-owner-id-not-null.test.ts` (実 DB の結合テスト)
+
+段 A の migration のあと、結合テストの DB の `organizations.owner_id` は NULL 許容で、CHECK `organizations_active_has_owner` がある。このファイルは 1 つのトランザクションの中で旧 migration を流して巻き戻す作りなので、次の 3 か所だけを直す。
+
+1. `runInRolledBackTransaction` の `pgQuery` の引数 (`:146-148`) — 先頭で CHECK も外す (`orgSql` は `owner_id` NULL・`status` 既定 `'active'` の組織を作るので、CHECK があると INSERT が 23514 で止まる)。外した CHECK は、例外でトランザクションごと巻き戻るので DB に残る。
+
+```ts
+// tsc:skip (tests/integration/security/organizations-owner-id-not-null.test.ts の :146-148 を置き換える断片。pgQuery・setup・body・report は同関数の既存の変数)
+  const result = await pgQuery(
+    [
+      'ALTER TABLE public.organizations ALTER COLUMN owner_id DROP NOT NULL;',
+      // #1917: active な行の owner_id の NOT NULL は CHECK が持つ。旧 migration の検査のために本番と同じ形 (owner_id が NULL の active な組織) を作るので外す (トランザクションごと巻き戻る)
+      'ALTER TABLE public.organizations DROP CONSTRAINT organizations_active_has_owner;',
+      setup,
+      body,
+      report,
+    ].join('\n'),
+  );
+```
+
+2. `afterEach` (`:181-186`) — 実 DB の `is_nullable` は `'YES'`。巻き戻りで CHECK が戻っていることも見る。
+
+```ts
+// tsc:skip (tests/integration/security/organizations-owner-id-not-null.test.ts の :182-186 を置き換える断片。pgQuery・expect は同ファイルの既存の定義と import)
+  // 巻き戻ったこと: 列は #1917 の形 (NULL 許容) のまま、CHECK organizations_active_has_owner は残り、作った組織は 1 つも残っていない
+  const column = await pgQuery(
+    "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'owner_id'",
+  );
+  expect(column).toEqual({ ok: true, rows: [{ is_nullable: 'YES' }] });
+  const check = await pgQuery(
+    "SELECT conname FROM pg_constraint WHERE conrelid = 'public.organizations'::regclass AND conname = 'organizations_active_has_owner'",
+  );
+  expect(check).toEqual({ ok: true, rows: [{ conname: 'organizations_active_has_owner' }] });
+```
+
+3. 冒頭のコメント (`:4-10`) — 「結合テストの DB には、この migration がすでに当たっている (owner_id は NOT NULL で、NULL の組織は無い)。」を「結合テストの DB には、この migration と #1917 の migration (`<番号はマージ時に確定>_self_dissolve.sql`。owner_id を NULL 許容にし、CHECK organizations_active_has_owner で active な行だけ NOT NULL) が当たっている。」に、手順 1 を「owner_id の NOT NULL と CHECK organizations_active_has_owner を外し、本番と同じ形の組織 (owner_id が NULL) を作り」に、`:9-10` を「例外でトランザクションごと巻き戻るので、外したものも作った行も DB には残らない (各テストの後に、列が NULL 許容のまま・CHECK が残っていること・作った組織が無いことも確かめる)。」に書き換える。実装の WF は `<番号はマージ時に確定>` をマージ時の番号に置き換える。
+
+**変えないもの**: `:224, 240, 252` の `expect(outcome?.nullable).toBe('NO')` と `:356` の `toBe('YES')` (トランザクションの中で旧 migration / 戻し口を流した直後の値。CHECK を外していても旧 migration の `SET NOT NULL` は効く)・describe 名 (`:201`)・ほかの it。active の行で NULL が 23514 になることは §21.2 D-11 が見る。
+
 ---
 
 ## 22. 新設一覧
@@ -1890,6 +2124,7 @@ export async function notifySelfDissolve(params: NotifySelfDissolveParams): Prom
 | ファイル | `src/app/api/family/dissolve/route.ts`・`src/app/api/org/dissolve/route.ts` | `POST` | A |
 | route (URL) | `POST /api/family/dissolve`・`POST /api/org/dissolve` | — | A |
 | ファイル | `src/components/membership/SelfDissolveSection.tsx` | `SelfDissolveSection`・interface `SelfDissolveSectionProps` | B |
+| 画面の state・関数 | `dissolveTarget`・`dissolvedNotice` (state)・`handleDissolved`・`loadData(mode: 'initial' \| 'refresh')` (`useEffect` の中から `useCallback` に移す) | `src/app/(main)/settings/membership/page.tsx` (§15.1) | B |
 | ファイル | `apps/mobile/src/lib/membership-settings.ts` | `MEMBERSHIP_SETTINGS_PATH` (再 export)・`MEMBERSHIP_SETTINGS_SCREEN_ROUTE` | B |
 | ファイル | `apps/mobile/app/settings/membership.tsx` | `MembershipSettingsScreen` | B |
 | 画面 (経路) | `/settings/membership` (アプリの画面。Web と同じパス) | — | B |
@@ -1905,7 +2140,8 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | grep の語 | 反応する番兵 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
 | `representative_id` (NULL になる) | `tests/integration/security/family-lock-order-race.test.ts:774, 791` (C1・C2: 運営の強制解散のあと `representative_id` が代表者のまま) | 赤 | `toBeNull()` に (it 名は「新代表者に書き換わらない (NULL のまま)」)。`:1162` (R2) は変えない | A |
-| `owner_id` の `is_nullable` | `tests/integration/security/organizations-owner-id-not-null.test.ts:186, 224, 240, 252` | 赤 | `'YES'` に変え、CHECK `organizations_active_has_owner` の存在と active の行の 23514 を見る it を足す (§21.2)。`:4` のコメントと describe 名を「active な行では NOT NULL (CHECK)」に | A |
+| `owner_id` の `is_nullable` (実 DB) と CHECK `organizations_active_has_owner` | `tests/integration/security/organizations-owner-id-not-null.test.ts:186` (`afterEach` の `'NO'`)・`:147` の前処理のまま `orgSql` (`:156-157`。`owner_id` NULL・`status` 既定 `'active'`) を使う it 全部 (CHECK で 23514) | 赤 | §21.6.2 の逐語。`:147` の前処理に `ALTER TABLE public.organizations DROP CONSTRAINT organizations_active_has_owner;` を足す・`:186` だけ `'YES'` にして CHECK の存在を見る 1 文を足す・冒頭のコメント (`:4-9`) を直す。`:224, 240, 252` (`'NO'`) と `:356` (`'YES'`) はトランザクションの中で旧 migration / 戻し口を流した直後の値なので変えない。describe 名 (`:201`) も変えない (旧 migration の検査のまま) | A |
+| `organizations` の `owner_id` の型 (`string \| null`) と `OrganizationSchema.shape.owner_id` の `.nullable()` | `tests/organizations-owner-id-not-null-migration-contract.test.ts:171-186` (`it.each` で型 2 ファイル。Row / Insert に `owner_id: string\n`・Update に `owner_id?: string\n`・`string \| null` が無い)・`:188-191` (Zod が NULL を受けない) | 赤 (3 つの it。型の再生成と Zod の変更で) | §21.6.1 の逐語に書き換える (型は Row が `owner_id: string \| null`・Insert / Update が `owner_id?: string \| null`。Zod は NULL と UUID を受け、UUID でない文字列は受けない)。同ファイルの `:193-215` (組織を INSERT / UPSERT する src の箇所が `owner_id` を入れる) と migration・ロールバックの形の describe (`:71-169`) はそのまま (active な行は CHECK で `owner_id` が要るので、作る入口が入れる検査は意味を保つ) | A |
 | `family_groups_representative_id_fkey` / `organizations_owner_id_fkey` (RESTRICT) | `tests/integration/security/auth-users-fk-on-delete.test.ts:111-116` (RESTRICT の許可リスト) | 反応しない (外部キーは変えない) | 許可リストの文言「譲渡か解散をしないと退会できない」はそのまま事実 (解散した行は本人を指さない) | — |
 | `dissolve_family_by_representative` / `dissolve_org_by_owner` (SECURITY DEFINER) | `tests/integration/security/anon-definer-execute.test.ts:122-150` A1 (anon が EXECUTE できる定義者関数は 2 本だけ)・決定表 B (`:196-`) | A1 は REVOKE で緑。B は表に無い関数を見ない | 決定表 B に 2 行 (`anon: false, authenticated: true, serviceRole: true, why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)'`) を足す。`family_dissolve_apply` / `org_dissolve_apply` は SECURITY INVOKER なので足さない | A |
 | 同上 (関数名) | `tests/database-types-migrations-contract.test.ts` (migration の CREATE FUNCTION が型 2 ファイルに無いと赤) | 赤 | 型を再生成して 2 ファイルを置き換える (§11.4) | A |
@@ -1933,7 +2169,7 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | `docs/design/family/11-self-dissolve.md` (本書) | `tests/docs-table-column-count.test.ts` (表の列数) | 列数が合わなければ赤 | 本書の表はセルの `|` をコードの span に入れている (v1.0 で検査済み) | — |
 | 同上 | `tests/design-doc-followup-owned-edits.test.ts` (追随表の逐語の書き換え) | 表に足さなければ反応しない | 段 C で `OWNED_EDITS` に 4 行 (owner = 本書、target = cross/20、pattern = §18.1 の「A」→「B」の 4 組) を足す。cross/20 の実装の側 (`terms-text.ts`) は T-35 が見る | C |
 | `terms-11#7` 等 (主張の表) | `tests/legal-claims-1901.ts` + T-35 (cross/20 §13。#1901 段 B がマージされたあとに存在) | 文を変えると赤 | §18.2 のとおり行を直す (fragment・chars・basis・evidence)。F-59 を cross/20 §2.2 に足さないと evidence の検査が赤 | C |
-| `表示名` / `家族から脱退` (メンバーシップ設定) | `src/__tests__/app/settings/membership-no-org-guidance.test.ts` (所属なしの案内) | 反応しない (所属なしの分岐は変えない) | — | — |
+| `表示名` / `家族から脱退` (メンバーシップ設定)・`loadData` の取り出し | `src/__tests__/app/settings/membership-no-org-guidance.test.ts` (所属なしの案内。`createClient` をモックし、`getUser` と `user_profiles` の `.single()` だけを返す) | 反応しない (`loadData` を `useCallback` に出しても、画面を開いたときに呼ぶ問い合わせと所属なしの描画は同じ。所属が無いときに `setFamilyInfo(null)` / `setOrgInfo(null)` を呼ぶのは初期値と同じ値) | — | — |
 | `representative_id: z.string().uuid()` → `.nullable()` | `src/__tests__/schemas/membership-types.test.ts:76-90` (`safeParse` に値あり) | 緑のまま | null の it を足す (§21.1) | A |
 | `e2e-membership-cleanup` のコメント「`owner_id` は NOT NULL」 | `tests/e2e-membership-cleanup.test.ts:5, 87` | 動きは同じ (active な組織の持ち主は RESTRICT + CHECK で先に消せない)。文言だけ | コメントと it 名の「NOT NULL」を「active な行では NOT NULL (CHECK)」に (candidates) | A |
 | `tests/e2e/membership/15-self-dissolve.spec.ts` | `tests/e2e-api-paths.test.ts:40-50` (`SPEC_FILES`) | 足さなくても赤にならないが、足す | `{ file, minRefs: 3 }` (§21.4) | B |
@@ -1980,3 +2216,4 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | 版 | 日付 | 内容 |
 |---|---|---|
 | v1.0 | 2026-10-19 | 初版 (A 型 4 相。Issue #1917) |
+| v1.1 | 2026-10-19 | 敵対レビュー R1 の反映: #1103 項目 10 の番兵 2 本 (`tests/organizations-owner-id-not-null-migration-contract.test.ts` の型と Zod の it・`tests/integration/security/organizations-owner-id-not-null.test.ts` の前処理と `afterEach`) の書き換えを §21.6 に逐語で足し、F-27・§11.4・§20・§21.2・§23 を合わせた (結合テストは `:186` だけを `'YES'` にし、`:224, 240, 252` と `:356` は変えない)。§15.1 のメンバーシップ設定の `loadData` を `useCallback` に出し、所属が無いときに `null` へ戻す形と、解散のあとの `handleDissolved` (その場で所属を外す・完了の文・読み直し) を逐語で足し、§8・§15.6・§21.3・§21.4 spec15-03・§22・§23 を合わせた。`organization.ts` の行番号を `:26` に直した |
