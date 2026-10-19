@@ -4191,7 +4191,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 `tests/billing-revenuecat-gateway.test.ts` (新設。`createRevenueCatGateway(fetchImpl)` に偽の fetch を渡す。`getOptionalEnv` は `vi.mock`):
 121. `it('getSubscriber throws RevenueCatApiError with the status for a non-2xx response, with the status for an unexpected response shape, and with status null for a TimeoutError and a network TypeError, and returns the parsed subscriber for a 2xx response')` (S30)
 
-`tests/billing-repository-plan-features.test.ts` (新設。`createBillingRepository(admin)` に `ai_daily_limits` と `ai_plan_feature_caps` の行を返す偽の client を渡す):
+`tests/billing-repository-plan-features.test.ts` (新設。`vi.mock('@/lib/supabase/server', () => ({ getSupabaseAdmin: () => fakeAdmin }))` で、`from('ai_daily_limits').select(…).in('plan_key', […])` と `from('ai_plan_feature_caps').select(…).eq('plan_key', …)` に表の行を返す偽の client を渡し、`createBillingRepository()` を引数なしで呼ぶ (型の変換を書かない)):
 138. `it('findPlanFeatures falls back to the free ai_daily_limits row only for the daily limit and never for ai_feature_caps: an organization plan (standard) with its own daily limit row and no ai_plan_feature_caps rows returns that limit and {}, a plan without an ai_daily_limits row returns the free limit and {}, a row whose daily_limit is NULL stays NULL, and free returns its 4 caps')` (S26・§8.6)
 
 `tests/billing-core.test.ts` (追加):
