@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.1 (2026-10-19) |
-| Status | 設計ゲート R1 の指摘を反映した版 (R2 の審査に出す) |
+| 版 | v1.2 (2026-10-19) |
+| Status | 設計ゲート R2 の指摘を反映した版 (R3 の審査に出す) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。関連: #1911 (「準備中」の撤去)・#1901 (規約とポリシーの作り込み)・#1567 (特定商取引法の表記の残り)・#1113 (本番の Stripe の鍵) |
 | 範囲の正本 | Issue #1912 の本文とコメント。本冊の §0.4 に、発注者の決定を逐語で写す |
 | 前提の冊 | `docs/design/billing/01-billing-core.md` (核。段 A〜C は main 実装済み)・`02-manual-plan-grant.md` (手動付与。段 A〜D 実装済み)。本冊は両冊の契約の上に積み、核の契約 (写像の入口・`personal_subscriptions` の列・`plan_key_cached` の同期) を壊さない |
@@ -64,9 +64,9 @@
 | # | 項目 | 推奨 | 根拠・代替案 |
 |---|---|---|---|
 | Q-1 | App Store の日本の価格帯で 580 / 980 / 1,480 / 5,800 / 9,800 / 14,800 円が選べるか | **App Store Connect の「サブスクリプションの価格」で発注者が確かめる** (一次情報は App Store Connect の画面だけ。Apple の公開ヘルプは「800 の価格帯から選ぶ」と書き、日本円の一覧は載せていない (§2.3)) | 選べない値があれば、近い上の価格帯 (例: 580 → 600・5,800 → 6,000) をストアの価格にし、Web (Stripe) は決めた値のまま (ストアの手数料の分だけストアの価格が高いのは、両ストアの規約が許す形 (§2.3 Apple 3.1.3(b))。Web とストアの価格が違うときは、料金ページの「アプリ内課金の価格はストアの表示が正」の 1 文で説明する (§10.1)) |
-| Q-2 | AI の 1 日の回数の上限 (`ai_daily_limits`) のプランごとの値 | **free 5 / 個人 Pro 30 / 家族 Basic 30 (メンバー 1 人ごと) / 家族 Pro 50 (同)** | いまは free = 10 (本番の行)。「いまの無料の範囲を絞る」の選択を回数で受ける。AI の原価は §2.4 (献立の生成 1 回 ≈ 26 円 (推計)・写真 1 枚 ≈ 0.2 円・料理画像 1 枚 ≈ 10 円)。無料で 5 回 = 写真 3 食 + 献立の生成 1 回 + 相談 1 回の使い方が収まる。上限は上限で、回数だけでは原価の上限にならないので、重い機能は Q-3 の機能ごとの上限と組にする。競合 (あすけん) は無料で写真の記録なし・プレミアム 580 円 (§2.4) |
+| Q-2 | AI の 1 日の回数の上限 (`ai_daily_limits`) のプランごとの値 | **free 5 / 個人 Pro 30 / 家族 Basic 30 (メンバー 1 人ごと) / 家族 Pro 50 (同)** | いまは free = 10 (本番の行)。「いまの無料の範囲を絞る」の選択を回数で受ける。AI の原価は §2.4 (献立の生成 1 回 ≈ 26 円 (推計)・写真 1 枚 ≈ 0.2 円・料理画像 1 枚 ≈ 10 円)。無料で 5 回 = 写真 3 食 + 献立の生成 1 回 + 相談 1 回の使い方が収まる。上限は上限で、回数だけでは原価の上限にならないので、重い機能は Q-3 の機能ごとの上限と組にする。競合 (あすけん) は無料で写真の記録なし・プレミアム 580 円 (§2.4)。組織の利用者 (`get_effective_plan` が組織の `organizations.plan` を返す人。組織の課金は本冊の対象外。§0.2) の上限は変えない: migration が free を書き換える前に、組織の plan の値に、いまの free の値の行を写す (§6.5) |
 | Q-3 | 機能ごとの 1 日の上限 (`ai_plan_feature_caps`) の値 | **究極モード: free 0 (使えない) / Pro 2 / 家族 Basic 2 / 家族 Pro 3。料理画像の作成 (`image_generation`。`POST /api/ai/image/generate`): free 0 / 有料は行なし (1 日の上限の中で)。料理を保存したときの自動の料理画像 (`meal_image_auto`): free 0 / 有料は行なし (いまの安全弁 1 日 20 回のまま)。献立の生成 (`menu_generation`): free 2 / Pro 10 / 家族 Basic 10 / 家族 Pro 15** | 「究極モードなど重い AI を有料に」を機能ごとの上限で受ける (0 = そのプランでは使えない。§6.5)。献立の生成は 1 回 ≈ 26 円で最も重いので、無料は 1 日 2 回に絞る。料理画像は 1 枚 ≈ 10 円で、自動の料理画像は保存 1 回で料理の数だけ画像を作る (1 回と数える。`src/app/api/meals/route.ts:170-174` の注) ので、無料に残すと 1 日 20 回 × 料理の数 × 10 円が原価の上限になる (§2.4)。無料では料理は画像なしで保存され、料理の画面は「料理画像の作成は有料プランでお使いいただけます」を出す (§8.8 (meal-image))。代替案: 自動の料理画像を無料に残す (行を入れない。原価の上限は §2.4 の下の行。有料の箇条書きの「料理画像の作成」は `image_generation` だけを指す文に変える)。いまの究極モードは全員 1 日 1 回 (環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` の既定)。本冊のあとは、行のあるプランは行の値が勝ち、行の無いプランだけ環境変数の既定 (§6.5) |
-| Q-4 | 家族の機能の門の範囲 | **家族グループの作成と、メンバーの追加 (招待の承諾・子供の追加・昇格による追加) を家族プラン (`family_basic` / `family_pro`) の契約がある代表者のグループだけに限る。契約が終わったグループは、いるメンバーはそのまま (読める・外れられる・解散できる) で、新しいメンバーを足せない** | 「家族で使う機能を有料に」を「グループに入ること」で受ける (家族の献立の表示・貼り付け・共有の設定はグループのメンバーであることが前提なので、入口を閉じれば全部が有料になる)。契約が終わったグループのメンバーをすぐ外す案は、家族の冊の判断 (billing/01 §18 の 15 と同じく外さない) に合わせない |
+| Q-4 | 家族の機能の門の範囲 | **家族グループの作成と、メンバーの追加 (招待の承諾・子供の追加) を家族プラン (`family_basic` / `family_pro`) の契約がある代表者のグループだけに限る。契約が終わったグループは、いるメンバーはそのまま (読める・外れられる・解散できる) で、新しいメンバーを足せない。子供の昇格 (`accept_child_promotion`。いる子供の行を、本人のアカウントの大人の行に書き換える UPDATE) はメンバーを足さない (人数は変わらない) ので門に当てない (契約が終わったグループでも昇格できる。「いるメンバーはそのまま」と同じ扱い)** | 「家族で使う機能を有料に」を「グループに入ること」で受ける (家族の献立の表示・貼り付け・共有の設定はグループのメンバーであることが前提なので、入口を閉じれば全部が有料になる)。契約が終わったグループのメンバーをすぐ外す案は、家族の冊の判断 (billing/01 §18 の 15 と同じく外さない) に合わせない |
 | Q-5 | Stripe の鍵と Price が無い間の、料金ページの有料プランのカードの CTA | **CTA を置かない (価格と内容だけを出す)。Price が入った間隔から「月額で始める」「年額で始める」が出る (いまの `isPurchasable` の規則)** | 「準備中」と書かない (§0.4)。CTA を「無料で始める」(新規登録) にする案は、有料プランのカードの押しどころが新規登録なのは紛らわしい。CTA を出して確認画面で止める案は、押せるのに申し込めないので採らない |
 | Q-6 | `subscription_plans.display_name` を日本語にする | **`個人 Pro` / `家族 Basic` / `家族 Pro`** (いまは `Pro` / `Family Basic` / `Family Pro`) | §0.4 の呼び名に合わせる。画面・特商法・規約・ストアの商品の表示名 (§17) に同じ名前を使う |
 | Q-7 | 本番の `subscription_plans` にある試験の行 2 件 (`test_integration_plan_*`・`test_patch_plan_*`。status `draft`) | **消す (発注者が SQL で `DELETE`)** | 本冊の migration は本番の行を消さない (段 A は追加と価格の UPDATE だけ)。`draft` は公開ページにも購入にも出ないので、残っていても利用者には見えない |
@@ -219,7 +219,7 @@
 | S16 | Stripe の Price が無い間の料金ページ: 本番に Price が無い間、`/pricing` は 3 プランのカード (価格・無料体験・内容) を出し、CTA は出さない (Q-5)。`/legal` は販売価格・支払方法・支払時期・提供時期・解約の行を販売の内容で出す。Stripe の有効化の審査はこの公開の面を見る (P11) |
 | S17 | 無料の利用者の線引き: 無料の利用者が献立の生成を 1 日 3 回目に頼むと 429 `AI_DAILY_LIMIT` (機能の上限 2 回)。究極モードのトグルは錠つきで押せず、押すと「究極モードは有料プランでお使いいただけます」の案内。料理画像の作成を押すと 403 `AI_FEATURE_NOT_IN_PLAN`。家族グループを作ろうとすると 402 `FAMILY_PLAN_REQUIRED`。料理を保存すると、料理は画像なしで保存され (`aiSkipped` は付かない)、料理の画面は「料理画像の作成は有料プランでお使いいただけます。」を出す |
 | S18 | 有料の利用者の線引き: 個人 Pro の利用者は 1 日 30 回・献立 10 回・究極 2 回・料理画像は上限の中で何度でも。家族 Basic のメンバー (代表者でない大人) も家族プランの上限 (30 回) と機能 (究極 2 回) を受ける (`get_effective_plan` が家族のプランを返す) |
-| S19 | 家族プランが終わったグループ: 代表者の家族 Basic が `expired` になる。グループは `free` / 4 に戻り、いるメンバーはそのまま。新しい招待の承諾・子供の追加は 402 `FAMILY_PLAN_REQUIRED`。メンバーの AI の上限は free の値に戻る |
+| S19 | 家族プランが終わったグループ: 代表者の家族 Basic が `expired` になる。グループは `free` / 4 に戻り、いるメンバーはそのまま。新しい招待の承諾・子供の追加は 402 `FAMILY_PLAN_REQUIRED`。いる子供の昇格 (子供が自分のアカウントで昇格の依頼を承諾) は成功する (いる行の書き換えで、人数は増えない)。メンバーの AI の上限は free の値に戻る |
 | S20 | 運営の手動付与との共存: 運営が利用者に `family_pro` を手動で付与 (M 行)。その利用者がアプリで買おうとしても購入のボタンは出ない (live)。手動付与の取り消し・期限切れは、ストアの行 (`iap_store IS NOT NULL`) を M 行と見ない (§6.7) |
 | S21 | 規約の改定の再同意: 段 E で規約とポリシーの版が上がる。サインイン中の全員に再同意が求められる (既存の仕組み)。再同意していない人の購入の API は 403 `LEGAL_CONSENT_REQUIRED` で、同意してから買う (購入の API は未同意の許可リストに入れない) |
 | S22 | 凍結 (BAN) 中のストアの契約: 凍結中の利用者のストアの購読は更新され続ける (核の Stripe と同じく凍結は課金を止めない)。`/frozen/billing` はストアの行には「App Store / Google Play の購読の管理から解約できます」の文を出し、解約のボタンを出さない。Webhook と写像は凍結を見ない |
@@ -263,7 +263,7 @@
 | S16 | 6: `listPublicPlans()` → 3 行 (Price なし) → `PricingPageView` が価格・体験・内容を描き、`isPurchasable` が偽なので CTA 無し。`/legal` は `PLAN_CATALOG` の文を描く |
 | S17 | 5: `consume_ai_usage_at` が `ai_plan_feature_caps(free, menu_generation) = 2` → 3 回目は `{allowed:false, capped_feature:'menu_generation', limit:2}` → 429。`image_generation` = 0 → `{allowed:false, limit:0, capped_feature}` → `aiDailyLimitPayload` が 403 `AI_FEATURE_NOT_IN_PLAN`。究極モードのトグルは `features.ai_feature_caps.menu_generation_ultimate === 0` で錠。`POST /api/family/groups` → `create_family_group` が `FAMILY_PLAN_REQUIRED` → 402。料理の保存 (`POST /api/meals`) → `consumeAiUsage(user, 'meal_image_auto')` → `ai_plan_feature_caps(free, meal_image_auto) = 0` → `{allowed:false, capped_feature:'meal_image_auto', plan_locked:true}` → `mealImageSkipReasonOf` = `'plan'` → 料理の `image_status = 'failed'`・`image_error = 'skipped_plan'` で保存・`aiDailyLimitSkippedField` は `planLocked` なので空 (`aiSkipped` なし) → 料理の画面は `isMealImagePlanSkippedError` で「料理画像の作成は有料プランでお使いいただけます。」 |
 | S18 | 5: `get_effective_plan` = `pro` → `ai_daily_limits(pro)=30`・`ai_plan_feature_caps(pro, menu_generation)=10`・`(pro, menu_generation_ultimate)=2`・`image_generation` 行なし → 上限の中で可。家族のメンバーは `get_effective_plan` = `family_basic` (家族の行) で同じ表を引く |
-| S19 | 1: 写像の 10. (ELSE 枝) が `family_groups` を `free` / 4 に。5: `family_members` の INSERT のトリガーが `plan_key='free'` で `FAMILY_PLAN_REQUIRED`。メンバーの `get_effective_plan` は家族の `free` → free の上限 |
+| S19 | 1: 写像の 10. (ELSE 枝) が `family_groups` を `free` / 4 に。5: `family_members` の INSERT のトリガーが `plan_key='free'` で `FAMILY_PLAN_REQUIRED`。昇格は `accept_child_promotion` の UPDATE (origin/main `20261017030000_parental_consent_and_birth_date.sql:736`) で、トリガーは `BEFORE INSERT` だけなので当たらず成功する。メンバーの `get_effective_plan` は家族の `free` → free の上限 |
 | S20 | 1: M 行は live なので `BillingSummary.can_purchase=false` → アプリは購入のボタンを出さない。6.7: 取り消し・期限切れの述語 `stripe_subscription_id IS NULL AND iap_store IS NULL` でストアの行を触らない |
 | S21 | 既存の同意ゲート: `/api/billing/iap/*` は `LEGAL_CONSENT_EXEMPT_API_PATHS` に入れない → 未同意は 403 `LEGAL_CONSENT_REQUIRED` (アプリは既存の `LegalConsentGate` が同意画面に畳む) |
 | S22 | 既存: Webhook と写像は `frozen_at` を見ない。`/frozen/billing` は `summary.source` がストアなら文だけ (§10.4) |
@@ -681,7 +681,26 @@ COMMENT ON FUNCTION public.billing_apply_store_subscription(jsonb, timestamptz, 
 
 ```sql
 -- (5) 1 日の上限 (Q-2 の推奨値)。free は本番の行 (10) を書き換える (§0.4 の「いまの無料の範囲を絞る」)。ほかは行が無ければ足す
+-- (5a) 組織の利用者の 1 日の上限は本冊では変えない (組織の課金は対象外。§0.2)。get_effective_plan は、個人の契約も家族も無い
+--      組織の利用者に organizations.plan (自由な文字列。列の既定は 'standard'。本番の 2 組織も 'standard') を返し、
+--      consume_ai_usage_at は行の無いプランを free の行で判定する。free を書き換える前に、組織の plan の値
+--      (organizations.plan の値・列の既定・subscription_plans の plan_type = 'org' の行) に、いまの free の値を行として写す。
+--      個人と家族の plan_key (free と下の 3 つ) は除く (組織が同じ値を持っていても、その行は (5b) と (5c) が決める)。既に行があれば上書きしない
+INSERT INTO public.ai_daily_limits (plan_key, daily_limit)
+SELECT k.plan_key, f.daily_limit
+  FROM (
+    SELECT o.plan AS plan_key FROM public.organizations AS o WHERE o.plan IS NOT NULL AND btrim(o.plan) <> ''
+    UNION
+    SELECT 'standard' AS plan_key  -- organizations.plan の列の既定 (これから作る組織も同じ上限)
+    UNION
+    SELECT p.plan_key FROM public.subscription_plans AS p WHERE p.plan_type = 'org'
+  ) AS k
+  CROSS JOIN (SELECT l.daily_limit FROM public.ai_daily_limits AS l WHERE l.plan_key = 'free') AS f
+ WHERE k.plan_key NOT IN ('free', 'pro', 'family_basic', 'family_pro')
+ON CONFLICT (plan_key) DO NOTHING;
+-- (5b) free
 UPDATE public.ai_daily_limits SET daily_limit = 5, updated_at = now() WHERE plan_key = 'free';
+-- (5c) 有料の 3 プラン
 INSERT INTO public.ai_daily_limits (plan_key, daily_limit) VALUES ('pro', 30), ('family_basic', 30), ('family_pro', 50)
 ON CONFLICT (plan_key) DO NOTHING;
 
@@ -775,7 +794,8 @@ COMMENT ON FUNCTION public.billing_has_live_family_plan(uuid) IS
   'billing/03 §6.6: 利用者に live な家族プラン (plan_type = family) の契約 (Stripe / ストア / 手動付与) があるか。家族の門が使う';
 
 -- (6') メンバーの追加の門: 代表者以外の行を、plan_key = free の active なグループに足せない (FAMILY_PLAN_REQUIRED)。
---      family_members に INSERT する経路 (accept_family_invite / add_family_child / 昇格 / service_role の直接の INSERT) をすべて受ける。
+--      family_members に INSERT する経路 (accept_family_invite / add_family_child / service_role の直接の INSERT) をすべて受ける。
+--      子供の昇格 (accept_child_promotion) は、いる子供の行の UPDATE (人数は変わらない) なので受けない (BEFORE INSERT だけ。Q-4)。
 --      SECURITY DEFINER の関数の中からでも同じ (current_user を見ない)。結合テストで free のグループにメンバーを足すときは、
 --      先に代表者へ手動付与 (billing_grant_manual_subscription) で家族プランを入れる (§16.1)
 CREATE OR REPLACE FUNCTION public.family_members_billing_plan_gate() RETURNS trigger
@@ -813,6 +833,7 @@ CREATE TRIGGER family_members_billing_plan_gate
   ```
   `GRANT` / `REVOKE` は既存のまま (`authenticated`・`service_role` に EXECUTE)。
 - グループの `plan_key` は billing/01 のトリガー (作成・代表者の交代) と写像 (購入・終了) が同期するので、門はそれを読むだけ。契約が終わった (`free` に戻った) グループのいるメンバーは触らない (S19・Q-4)。
+- 子供の昇格 (`accept_child_promotion`) は門に当てない (Q-4)。origin/main の定義 (`20261017030000_parental_consent_and_birth_date.sql:628-`) は、承諾した本人を、いる子供の行 (`v_member.id`) に `UPDATE family_members SET user_id = auth.uid(), child_profile = NULL, role = 'adult' …` (`:736`) で書き込むだけで `family_members` に INSERT しない。門のトリガーは `BEFORE INSERT` だけにし、`UPDATE` には付けない (ほかの `family_members` の UPDATE = 代表者の交代の役割の入れ替え・解散と脱退の `status = 'left'` もメンバーを足さない。UPDATE で `status` を `'active'` に戻す経路は origin/main の migration に無い (`git grep -n -i -A3 'update family_members' origin/main -- supabase/migrations` で確かめた))。本冊は `accept_child_promotion` も `POST /api/family/promotions/[token]/accept` の route も変えない (テスト 105 が、`free` のグループでの昇格の成功を固定する)。
 
 ### 6.7 (7) 手動付与 (billing/02) の述語に `iap_store IS NULL` を足す (F5)
 
@@ -820,7 +841,7 @@ CREATE TRIGGER family_members_billing_plan_gate
 
 ### 6.8 ロールバック (`<番号>_billing_paid_plans_iap.down.sql`)
 
-順に: (a) トリガー `family_members_billing_plan_gate` と関数を落とす。(b) `create_family_group` を土台にした migration の定義に戻す (逐語)。(c) 手動付与の 3 関数を `20261017230000` の定義に戻す (逐語)。(d) `consume_ai_usage_at`・`consume_ai_usage_capped_at` を土台の定義に戻す (逐語)。(e) `ai_plan_feature_caps` を落とす。`ai_daily_limits` は `free` を 10 に戻し、`pro` / `family_basic` / `family_pro` の行を消す。(f) `billing_apply_store_subscription`・`billing_claim_revenuecat_event`・`billing_finish_revenuecat_event` を落とす。(g) `idx_personal_subscriptions_iap_product`・制約 2 本・列 4 本 (`iap_store`・`iap_product_id`・`iap_synced_at`・`iap_is_sandbox`) を落とす (ストアの行があれば列ごと消えるので、本番に行が無いことを確かめてから流す)。(h) `revenuecat_webhook_events`・`plan_store_products` を落とす。(i) `subscription_plans` の 3 行を旧い値 (`Pro` 980 / 9800、`Family Basic` 1480 / 14800、`Family Pro` 2480 / 24800) に戻す。`trial_source` の COMMENT を `20261016210000` の前の文に戻す必要は無い (COMMENT だけ)。
+順に: (a) トリガー `family_members_billing_plan_gate` と関数を落とす。(b) `create_family_group` を土台にした migration の定義に戻す (逐語)。(c) 手動付与の 3 関数を `20261017230000` の定義に戻す (逐語)。(d) `consume_ai_usage_at`・`consume_ai_usage_capped_at` を土台の定義に戻す (逐語)。(e) `ai_plan_feature_caps` を落とす。`ai_daily_limits` は `free` を 10 に戻し、`pro` / `family_basic` / `family_pro` の行を消し、(5a) が足した組織の plan の行 (同じ選び方の plan_key のうち `updated_by IS NULL` = 運営が画面で変えていない行) を消す (行が消えると free の 10 で判定されるので、組織の利用者の上限は適用の前と同じ)。(f) `billing_apply_store_subscription`・`billing_claim_revenuecat_event`・`billing_finish_revenuecat_event` を落とす。(g) `idx_personal_subscriptions_iap_product`・制約 2 本・列 4 本 (`iap_store`・`iap_product_id`・`iap_synced_at`・`iap_is_sandbox`) を落とす (ストアの行があれば列ごと消えるので、本番に行が無いことを確かめてから流す)。(h) `revenuecat_webhook_events`・`plan_store_products` を落とす。(i) `subscription_plans` の 3 行を旧い値 (`Pro` 980 / 9800、`Family Basic` 1480 / 14800、`Family Pro` 2480 / 24800) に戻す。`trial_source` の COMMENT を `20261016210000` の前の文に戻す必要は無い (COMMENT だけ)。
 
 ### 6.9 migration が触らないもの
 
@@ -842,6 +863,7 @@ CREATE TRIGGER family_members_billing_plan_gate
 | `family_groups.plan_key / member_limit` | 写像 (10) + トリガー | 02 の関数 + トリガー | 本冊の写像 (§6.4 の 7.) + 既存のトリガー (作成・交代は `billing_has_live_family_plan` と同じ live の集合を読む) | `free` / 4 |
 | 家族の門 (`create_family_group`・`family_members` の INSERT。§6.6) | family なら通る | family なら通る | family なら通る | 通らない (`FAMILY_PLAN_REQUIRED`) |
 | AI の 1 日の上限 (`ai_daily_limits`) | プランの行 | プランの行 | プランの行 | `free` の行 (5) |
+| AI の 1 日の上限 — 組織の利用者 (個人の契約も家族も無く、active な組織に所属。`get_effective_plan` が `organizations.plan` を返す) | (個人の契約が先。上の行と同じ) | 同左 | 同左 | 組織の plan の行 (本冊の migration (5a) が free を書き換える前の free の値 (本番 10) を写す。§6.5)。機能ごとの上限 (`ai_plan_feature_caps`) は組織の plan に行が無いので従来どおり (究極モードは環境変数の既定) |
 | AI の機能ごとの上限 (`ai_plan_feature_caps`) | プランの行 | プランの行 | プランの行 | `free` の行 (究極 0・画像の作成 0・自動の料理画像 0・献立 2) |
 | 料理の保存の自動の料理画像 (`meal_image_auto`。4 本の route と AI 相談の自動実行) | 有料プランは行なし → 安全弁 (1 日 20 回) で作る | 同左 | 同左 | 作らない (`plan_locked` → 料理は `image_error = 'skipped_plan'` で保存・`aiSkipped` なし。§8.8) |
 | `GET /api/billing/subscription` (`BillingSummary`) | `source='stripe'`・Portal / 解約 / 取り消し | `source='manual'`・ボタン無し | `source='app_store' / 'play_store'`・`manage_in_store`・ボタン無し (§8.1) | `status=null`・`can_purchase=true` |
@@ -875,7 +897,7 @@ CREATE TRIGGER family_members_billing_plan_gate
 | `POST /api/super-admin/plans/[id]/price-change` (`src/app/api/super-admin/plans/[id]/price-change/route.ts:320-331`) | 変えた間隔の `monthly_price_jpy` / `yearly_price_jpy` と、Stripe の新しい Price の ID (`stripe_price_id` = 月額・`stripe_yearly_price_id` = 年額)。`plan_price_history` に 1 行 | 変更なし | migration の適用は §12 の順 1 (Stripe の Price の登録は順 3 の後)。順 3 で運営がこの API で Price の ID を入れるとき、価格は migration が入れた値のまま (`new_*_price_jpy` に同じ値を渡す)。migration は `stripe_*` を書かないので、この API が入れた ID を消さない |
 | Edge Function `stripe-price-sync` (`supabase/functions/stripe-price-sync/index.ts`・`sync.ts`・`deactivation.ts`) | DB に書かない (旧 Price の ID を `subscription_plans` から読むだけ。Stripe に新しい Price を作り、旧 Price を無効にする。`index.ts` の冒頭の契約の注) | 変更なし | 呼ばれるのは上の `price-change` からだけ。本冊は Stripe の Price を作らない |
 | `PATCH` / `DELETE /api/super-admin/plans/[id]`・`POST /api/super-admin/plans` (`src/app/api/super-admin/plans/[id]/route.ts`・`src/app/api/super-admin/plans/route.ts`) | プランの行 (表示名・状態・`stripe_product_id` など。operator/04) | 変更なし | 本冊の migration の後に運営が変えた値は、運営の値が正 (migration を流し直さない)。`plan_key` は変えない。`DELETE` は `draft` の行だけ (`:296-301`) で、`draft` の行には `plan_store_products` の行を入れない (§17.2 の行は 3 つの有料プランだけ) ので `ON DELETE RESTRICT` に当たらない |
-| `PATCH /api/super-admin/llm/quotas` (`src/app/api/super-admin/llm/quotas/route.ts:129-139`) | `ai_daily_limits` の upsert | 変更なし | migration は `free` を 5 に UPDATE し、有料の 3 行を `ON CONFLICT DO NOTHING` で足す (運営が先に入れた有料の行は上書きしない)。`ai_plan_feature_caps` は運営の画面に出さない (§0.2) |
+| `PATCH /api/super-admin/llm/quotas` (`src/app/api/super-admin/llm/quotas/route.ts:129-139`) | `ai_daily_limits` の upsert | 変更なし | migration は組織の plan の行 (5a) と有料の 3 行を `ON CONFLICT DO NOTHING` で足し (運営が先に入れた行は上書きしない)、`free` を 5 に UPDATE する。運営の画面の一覧 (`GET`) には組織の plan の行も出る (`configured: true`。値は適用の前の free の値)。`ai_plan_feature_caps` は運営の画面に出さない (§0.2) |
 
 ### 7.2 状態比較表 (現行 vs 設計後)
 
@@ -886,10 +908,11 @@ CREATE TRIGGER family_members_billing_plan_gate
 | `/legal` | 5 行が「有料プランは準備中です（販売開始前）」、所在地・電話番号は請求時開示 | 5 行が販売の内容、所在地・設立・資本金・営業時間・メールは会社情報、電話番号は請求時開示 |
 | `/company` | 所在地「準備中（確定次第掲載します）」 | 所在地・設立・資本金・営業時間・メール |
 | `/faq` 料金 | 「有料プランは準備中です」 | 無料と有料の線引きと価格 (§10.5) |
-| 紹介ページ 料金の章 | 「いまは、無料で使えます。」+ 準備中のカード | 無料と 3 プランのカード (§10.5) |
+| 紹介ページ (`landing-copy.ts`) | 料金の章「いまは、無料で使えます。」+ 準備中のカード、要点と FAQ「いまはすべて無料です。…有料プランは準備中です」、無料のカードに「家族で使う」、家族の章と FAQ に契約の条件なし、`ASSURANCES`「いまは無料で使えます」 | 料金の章は無料のカード (家族なし) と有料のカード (3 プランの価格の行)、要点と FAQ は無料プランの範囲と `PAID_PLAN_SUMMARY`、家族の 4 か所に「家族プラン」、`ASSURANCES`「無料で始められます」(§10.5 の表) |
+| サイトの説明 (`SITE_DESCRIPTION`) | 「…いまは無料で使えます。」 | 「…無料で始められます。」(§10.5) |
 | `EXT_STRIPE_NOT_CONFIGURED` の文 | 「お支払いの受付は準備中です」 | 「お申し込みを完了できませんでした。時間をおいてお試しください」(§13.1) |
-| AI の 1 日の上限 | 全員 10 (free の行だけ) | free 5 / pro 30 / family_basic 30 / family_pro 50 (Q-2) |
-| 究極モード | 全員 1 日 1 回 (環境変数) | free 0 (錠)・pro 2・family_basic 2・family_pro 3 (`ai_plan_feature_caps`)。行の無いプラン (org_* など) は環境変数の既定 |
+| AI の 1 日の上限 | 全員 10 (free の行だけ。組織の利用者も、組織の plan に行が無いので free の 10) | free 5 / pro 30 / family_basic 30 / family_pro 50 (Q-2)。組織の利用者は 10 のまま (組織の plan の値に、適用の前の free の値の行を写す。§6.5 (5a)) |
+| 究極モード | 全員 1 日 1 回 (環境変数) | free 0 (錠)・pro 2・family_basic 2・family_pro 3 (`ai_plan_feature_caps`)。行の無いプラン (組織の plan (`standard`・`org_*`) など) は環境変数の既定 (いまと同じ) |
 | 料理画像の作成 (`POST /api/ai/image/generate`) | 全員 (上限の中) | free は 403 `AI_FEATURE_NOT_IN_PLAN`、有料は上限の中 |
 | 料理の保存の自動の料理画像 (`meal_image_auto`) | 全員 (安全弁 1 日 20 回。達したら画像だけ見送り `skipped_ai_limit` + `aiSkipped`) | free は作らない (`skipped_plan`・`aiSkipped` なし・料理の画面は有料プランの案内)。有料は従来どおり |
 | テストの購入 (sandbox) | (ストアの購入が無い) | 本番でも本物の購入と同じに写し、`iap_is_sandbox = true` (Q-13) |
@@ -2662,6 +2685,8 @@ export const FREE_PLAN_FEATURES: readonly string[] = [
 ];
 /** 無料プランの AI の 1 日の回数の文 (料金ページ・FAQ。回数は PLAN_AI_DAILY_LIMITS.free と同じ) */
 export const FREE_PLAN_AI_LIMIT_NOTE = `AI を使う機能 (写真の解析や献立の提案など) は、無料プランでは 1 日 ${PLAN_AI_DAILY_LIMITS.free} 回までご利用いただけます。上限に達した日は翌日 0 時からまたお使いいただけます。`;
+/** 有料プランで増えるものの 1 文 (FAQ・紹介ページの要点と料金の章と FAQ。PLAN_CATALOG の features と同じ範囲。§10.5) */
+export const PAID_PLAN_SUMMARY = "有料プランでは、AI を使う回数の上限が上がり、究極モード・料理画像の作成・家族グループが使えます。";
 
 /** 金額の 3 桁区切り (Intl を使わない。"5,800円") */
 const THOUSANDS_GROUP = 3;
@@ -3150,7 +3175,8 @@ export function billingErrorMessageOf(error: unknown): string {
 
 ### 9.5 家族の API のエラーの写し (`FAMILY_PLAN_REQUIRED`)
 
-- `POST /api/family/groups` (`create_family_group`)・`POST /api/family/invites/[id]/accept` (`accept_family_invite`)・`POST /api/family/members/child` (`add_family_child`)・`POST /api/family/promotions/[token]/accept` (昇格による `family_members` の INSERT) の各 route は、RPC のエラー文に `FAMILY_PLAN_REQUIRED` が含まれるとき 402 `{ error: { code: 'FAMILY_PLAN_REQUIRED', message: MEMBERSHIP_ERROR_MESSAGES.FAMILY_PLAN_REQUIRED } }` を返す (既存の `MEMBER_LIMIT_EXCEEDED` の写しと同じ形。route は DB の生の文を出さない)。
+- `POST /api/family/groups` (`create_family_group`)・`POST /api/family/invites/[id]/accept` (`accept_family_invite`)・`POST /api/family/members/child` (`add_family_child`) の 3 本の route は、RPC のエラー文に `FAMILY_PLAN_REQUIRED` が含まれるとき 402 `{ error: { code: 'FAMILY_PLAN_REQUIRED', message: MEMBERSHIP_ERROR_MESSAGES.FAMILY_PLAN_REQUIRED } }` を返す (既存の `MEMBER_LIMIT_EXCEEDED` の写しと同じ形。route は DB の生の文を出さない)。
+- `POST /api/family/promotions/[token]/accept` (`accept_child_promotion`) は変えない。昇格はいる行の UPDATE で門に当たらない (§6.6・Q-4) ので、`FAMILY_PLAN_REQUIRED` を返すことが無い。
 - `src/lib/errors/membership-errors.ts`: `MembershipErrorCode.FAMILY_PLAN_REQUIRED = 'FAMILY_PLAN_REQUIRED'`、HTTP 402、文「家族プランのご契約が必要です。」を足す (§13.1)。
 - `POST /api/family/invites` (招待の作成) は DB の門に当たらない (INSERT は `family_invites`) が、作っても承諾できないので、route の最初で `billing_has_live_family_plan` 相当の判定はしない (招待を作れる・承諾で 402 になる、より先に止めるかは §18 の 6)。
 
@@ -3163,7 +3189,8 @@ export function billingErrorMessageOf(error: unknown): string {
 - `src/app/pricing/page.tsx`: `listPurchasablePlans()` を `listPublicPlans()` (§8.6) に替える (ほかは同じ。Cookie `is_native_app` で `isNativeApp`)。
 - `src/app/pricing/PricingPageView.tsx` (`props: { plans: PublicPlan[]; isNativeApp: boolean }`):
   - 消すもの: `PAID_PLAN_PENDING` の定数とその上の注 (`:44`「有料プランは販売開始前。…まだ決まっていないので載せない。」)、それを使う段落・「有料プラン (準備中)」のカード・FAQ (`faqs`) の節。`freeFeatures` と `AI_DAILY_LIMIT_NOTE` は `@homegohan/shared` の `FREE_PLAN_FEATURES` / `FREE_PLAN_AI_LIMIT_NOTE` に置き換える。
-  - フリーのカード: 見出し「フリー」・「¥0」・`FREE_PLAN_FEATURES` の箇条書き・`FREE_PLAN_AI_LIMIT_NOTE`・「無料で始める」(`/signup`)。
+  - 見出しの下の段落 (origin/main `:127-132`。`!onSale` のときの「現在は無料でご利用いただけます。」+ `PAID_PLAN_PENDING`) は消す (代わりの文は置かない)。`onSale` の変数と `!onSale` の枝 3 つ (段落・準備中のカード・FAQ) は全部消し、`showPaidCards` は `!isNativeApp && plans.length > 0` にする。
+  - フリーのカード: 見出し「フリー」・「¥0」・`FREE_PLAN_FEATURES` の箇条書き・`FREE_PLAN_AI_LIMIT_NOTE`・「無料で始める」(`/signup`)。`¥0` の横の「現在は無料」(`:152`) は消す (時を限る言い方。§0.4)。冒頭の注 (`:47`「現在ご利用いただける機能。…」) は「無料プランでできること (`@homegohan/shared` の `FREE_PLAN_FEATURES`)」に。
   - 有料のカード (`plans` の順。`isNativeApp` では描かない。いまと同じ規則): 見出し `display_name`・`trial_days > 0` なら「X日間無料」・`PLAN_CATALOG` の同じ `plan_key` の `features` の箇条書き (`PLAN_CATALOG` に無い `plan_key` は箇条書きなし)・金額の行は **両方の間隔を常に出す** (`¥{amount} / 月（税込）`・`¥{amount} / 年（税込）`。`amountJpyFor` が null か 0 の間隔は出さない)・CTA は `isPurchasable(plan, interval)` が真の間隔だけ (「月額で始める」/「年額で始める」。行き先は既存の `checkoutHref`)。買える間隔が 1 つも無いカードは CTA の代わりに何も置かない (文も置かない。Q-5)。
   - ページの末尾の「まずは無料で始めてみませんか？」+「無料で始める」は残す。
   - 注記 (有料のカードの下に 1 段落。`isNativeApp` では描かない): 「お支払いはクレジットカード (Stripe) のほか、iOS / Android アプリでは App Store / Google Play のアプリ内課金でもお申し込みいただけます。アプリ内課金の価格は各ストアの表示が正となります。」(Q-1 で価格が違うときの説明を兼ねる)。
@@ -3223,15 +3250,32 @@ export function billingErrorMessageOf(error: unknown): string {
 ### 10.5 FAQ (`/faq`)・紹介ページ (`landing-copy.ts`)
 
 - `/faq` の `payment` の 3 項目を次に置き換える (1 項目 1 行の `{ category, q, a }` の形は保つ。見張り `tests/public-claims-guard.test.ts` の FAQ の describe は `faqAnswer` で読む):
-  - 「現在、料金はかかりますか？」→ 「無料プランでは、写真での食事の記録、記録をほめるひと言、献立の提案、健康の記録などをお使いいただけます。`FREE_PLAN_AI_LIMIT_NOTE` 有料プランでは、AI を使う回数の上限が上がり、究極モード・料理画像の作成 (記録した料理の画像) ・家族グループが使えます。」(文は `@homegohan/shared` の `billing-plans.ts` の定数から組む)
+  - 「現在、料金はかかりますか？」→ 「無料プランでは、写真での食事の記録、記録をほめるひと言、献立の提案、健康の記録などをお使いいただけます。`FREE_PLAN_AI_LIMIT_NOTE` `PAID_PLAN_SUMMARY`」(文は `@homegohan/shared` の `billing-plans.ts` の定数から組む。`` `無料プランでは、写真での食事の記録、記録をほめるひと言、献立の提案、健康の記録などをお使いいただけます。${FREE_PLAN_AI_LIMIT_NOTE}${PAID_PLAN_SUMMARY}` ``)
   - 「有料プランはありますか？」→ 「個人 Pro (月額 580 円 / 年額 5,800 円)、家族 Basic (月額 980 円 / 年額 9,800 円・4 人まで)、家族 Pro (月額 1,480 円 / 年額 14,800 円・8 人まで) があります。どのプランも 7 日間の無料体験つきです。料金ページでご案内しています。」(`PLAN_CATALOG` から組む。`/pricing` へのリンクは FAQ の本文には書けないので文だけ)
   - 「返金はできますか？」→ (いまのまま)
   - 追加: 「有料プランを解約するには？」→ 「Web でお申し込みの方は、設定の「プランとお支払い」から解約できます。App Store / Google Play でお申し込みの方は、各ストアの定期購読の管理から解約してください。解約後も、お支払い済みの期間の終わりまでご利用いただけます。」
-- `src/components/marketing/landing-copy.ts` (紹介ページ。設計書 `marketing/01-landing-site.md` の文言の正本。§16.2):
-  - 要点 (`:755`) と FAQ (`:813`) の「有料プランは準備中です（販売開始前）。内容や料金が決まりましたらご案内します。」を「有料プランでは、AI を使う回数の上限が上がり、究極モード・料理画像の作成・家族グループが使えます。」に。
-  - 料金の章 (`:766-781`): `title: '無料ではじめて、必要になったら有料プランへ。'`、`lead` を「登録してお使いいただける機能は無料です。AI を使う機能には 1 日の利用回数の上限があります。有料プランでは上限が上がり、究極モード・料理画像の作成・家族グループが使えます。」に、カード `paid` を 3 枚 (`PLAN_CATALOG` の `display_name`・`月額 580円 / 年額 5,800円` の形・`features` の先頭 2 つ・`cta: { label: '料金プランを見る', href: '/pricing' }`) に。`badge: '準備中'` は消す。
-  - 主張の表 `claims` の `free-now` (`:860`) を「登録して使える機能は無料・有料プランは 3 つ (個人 Pro / 家族 Basic / 家族 Pro)」に、`evidence` に `packages/shared/src/billing-plans.ts` を足す。`ai-daily-limit` (`:861`) の `condition` の「既定は free の 10 回」を「free は 5 回」に (回数は文に書かないまま)。
-  - `ASSURANCES` の「いまは無料で使えます」は「無料で始められます」に。
+- `src/components/marketing/landing-copy.ts` (紹介ページ。設計書 `marketing/01-landing-site.md` の文言の正本。§16.2)。無料と有料の線引き (§6.5・§6.6) と食い違う文を残さない: 「すべて無料」「いまは無料」(時を限る言い方。§0.4) を書かず、無料の一覧に家族・究極モード・料理画像の作成を入れず、家族の文には家族プランの契約が要ることを書く。変える箇所は下の表で全部 (行は origin/main の `landing-copy.ts`。ほかの文は変えない)。文の中の `${…}` は `import { PAID_PLAN_SUMMARY, PLAN_CATALOG, formatJpy } from '@homegohan/shared';` の定数で組む:
+
+  | 箇所 (origin/main の行) | いま | 設計後 (逐語) |
+  |---|---|---|
+  | `ASSURANCES` (`:451`) | `'いまは無料で使えます'` | `'無料で始められます'` |
+  | `features` の家族のカード (`:578`) の `body` | 「家族を招待して献立を一緒に見る。職場では、…」 | 「家族プランで、家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。」 |
+  | 場面の「子育て家庭」(`:714`) の `body` | 「家族を招待して、献立表で…」 | 「家族プランで家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。」 |
+  | 家族の章の `lead` (`:722`) | 「代表者が家族を作り、…」 | 「家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。」 |
+  | `trust` の 1 項目 (`:755`) の `title` | `'いまは無料で使えます'` | `'無料プランと有料プラン'` |
+  | 同 `body` | 「登録してお使いいただける機能は、いまはすべて無料です。…有料プランは準備中です（販売開始前）。…」 | `` `無料プランでは、写真での食事の記録、記録をほめるひと言、献立の提案、健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。${PAID_PLAN_SUMMARY}` `` |
+  | `pricing.title` (`:767`) | `'いまは、無料で使えます。'` | `'無料ではじめて、必要になったら有料プランへ。'` |
+  | `pricing.lead` (`:768`) | 「登録してお使いいただける機能は、いまはすべて無料です。…」 | `` `無料プランで、写真での食事の記録・献立の提案・健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。${PAID_PLAN_SUMMARY}組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。` `` |
+  | `pricing.plans` の `free` (`:770-776`) | `title: 'いま使える機能'`・`items` の最後が `'AI に相談', '家族で使う'` | `title: 'フリー'`・`badge: '無料'` (いまのまま)・`items: ['写真で記録とほめるひと言', '1週間の献立と買い物リスト', '食材の管理', '栄養の見える化', '体重と健康の記録', 'バッジ', 'AI に相談']` (`'家族で使う'` を消す)・`body: null`・`cta: PRIMARY_CTA` (いまのまま) |
+  | `pricing.plans` の `paid` (`:778`) | `title: '有料プラン'`・`badge: '準備中'`・`items: []`・`body: '有料プランは準備中です…'`・`cta: null` | `title: '有料プラン'`・`badge: '無料体験つき'`・`` items: PLAN_CATALOG.map((plan) => `${plan.display_name}${plan.max_members === null ? '' : `（${plan.max_members} 人まで）`}　月額 ${formatJpy(plan.monthly_price_jpy)} / 年額 ${formatJpy(plan.yearly_price_jpy)}（税込）`) ``・`body: PAID_PLAN_SUMMARY`・`cta: { label: '料金プランを見る', href: '/pricing' }`。カードは `free` と `paid` の 2 枚のまま (`PlanCardSchema` の `id: z.enum(['free', 'paid'])` と `plans: z.array(PlanCardSchema).length(2)` を変えない。3 プランは `paid` のカードの `items` の 3 行で出す) |
+  | `faq` の「本当に無料で使えますか？」(`:813`) の `a` | 「はい。登録してお使いいただける機能は、…いまはすべて無料です。…有料プランは準備中です（販売開始前）。…」 | `` `はい。無料プランで、写真の記録、ほめるひと言、献立の提案、健康の記録などをお使いいただけます。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。${PAID_PLAN_SUMMARY}` `` |
+  | `faq` の「家族で使えますか？」(`:821`) の `a` | 「はい。家族を招待して、…」 | 「はい。家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族グループを作り、家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。」 |
+  | `claims` の `family` (`:859`) の `condition` | `'共有は本人の設定の範囲で (family-share)'` | `'共有は本人の設定の範囲で (family-share)。家族グループの作成とメンバーの追加は、代表者の家族プランの契約が要る (billing/03 §6.6)'` |
+  | `claims` の `free-now` (`:860`) | `text: '登録して使える機能は、いまは無料・有料プランは準備中'`・`evidence: ['src/app/pricing/PricingPageView.tsx']` | `text: '無料プランで使える機能があり、有料プランは 3 つ (個人 Pro / 家族 Basic / 家族 Pro)。家族グループ・究極モード・料理画像の作成は有料プラン'`・`evidence: ['src/app/pricing/PricingPageView.tsx', 'packages/shared/src/billing-plans.ts']`・`condition` は「AI を使う機能には 1 日の利用回数の上限がある。無料と書く段落には上限の文も入れる。無料の機能の一覧に、家族・究極モード・料理画像の作成と組織を入れない (組織は運営が作るもので、登録しただけでは使えない (org-admin))」 |
+  | `claims` の `ai-daily-limit` (`:861`) の `condition` | 「…既定は free の 10 回)。…」 | 「既定は free の 10 回」を「free は 5 回」に (回数は文に書かないまま) |
+
+  紹介ページの見た目 (`src/components/marketing/sections/PricingSection.tsx`) は変えない (カードの形が同じなので描き方はそのまま)。冒頭のコメントの「価格の数字・「0 円」・通貨の記号は書かない。「いま使える機能」の一覧に組織を入れない」は、「価格はカードの `items` (landing-copy.ts が `PLAN_CATALOG` から組む) だけに出し、このファイルに数字を書かない。無料の一覧に組織・家族・究極モード・料理画像の作成を入れない」に書き換える (コメントだけ)。
+- `src/lib/seo/public-pages.ts` の `SITE_DESCRIPTION` (`:37`) の最後の文「いまは無料で使えます。」を「無料で始められます。」に (時を限る言い方をやめる。50〜160 文字のまま)。
 - `src/app/(main)/badges/page.tsx`・組織の画面・運営の画面の「準備中」は #1911 (本冊の面ではない)。
 
 ### 10.6 モバイルの購入の画面 `apps/mobile/app/settings/plan.tsx` (R15・R16)
@@ -3304,7 +3348,7 @@ export function billingErrorMessageOf(error: unknown): string {
 | 1 | — | 段 A (DB: 価格・線引き・ストアの表) と段 C (公開の面: 料金・特商法・運営会社・FAQ・紹介ページ) のマージと本番の反映 | なし (Stripe の申請には順 2 の規約とポリシーの有料の条文の公開も要る) | — |
 | 2 | #1901 (規約とポリシーの作り込み) のマージ | 段 E (規約とポリシーの有料の条文。§11) | 弁護士の確認 (#1901 と同じ) | 確認のあと、版を上げてデプロイ (再同意が走る) = 規約とポリシーの有料の条文の公開 |
 | 3 | 順 1 と順 2 の本番の反映 (サイトに価格・有料の中身・特商法・規約とポリシーの有料の条文・解約と返金の条件・連絡先がそろっている状態。追記 1・P11) | — | **Stripe の本番の有効化** (事業の情報・銀行口座・サイトの URL。P11) | 承認後: Vercel に `STRIPE_SECRET_KEY` (`sk_live_`) と `STRIPE_WEBHOOK_SECRET` (#1113)。Stripe の Dashboard の設定 (billing/01 §17.1)。Product と Price を作り `PATCH /api/super-admin/plans/[id]` + `price-change` で `stripe_price_id` / `stripe_yearly_price_id` を入れる = **Web の販売開始** (`/pricing` に CTA が出る) |
-| 4 | — (順 1〜3 と並行してよい。ストアの契約・商品の作成は審査の提出ではない) | 段 B (サーバ: Webhook・同期・カタログ) と段 D (モバイル: 購入の画面) のマージ + EAS の開発ビルド (sandbox で購入の流れを確かめられる状態) | **App Store**: Paid Applications Agreement の署名・税と銀行の登録 → In-App Purchase Key (`.p8`) と Issuer ID の発行 (P7) → Subscription Group と 6 つの商品 (個人 Pro 月 / 年・家族 Basic 月 / 年・家族 Pro 月 / 年。商品 ID は §17.2 の表) の作成・価格 (Q-1)・ローカライズ・無料体験 (7 日。Introductory Offer)・審査用のスクリーンショット **/ Google Play**: Google Payments の merchant profile → `eas build --profile preview --platform android` の AAB を内部テストのトラックにアップロード (Billing Library 入り。P8) → 3 つの購読と base plan 6 つ (`monthly-autorenewing` / `annual-autorenewing`) + 無料体験の offer → Google Cloud のサービスアカウントと権限 (P8。36 時間) **/ RevenueCat**: プロジェクト・iOS と Android のアプリ (bundle id `com.homegohan.app`)・`.p8` と Issuer ID・サービスアカウントの JSON・商品 6 つ (Google は `<subscription_id>:<base_plan_id>`)・Entitlement 3 つ (`pro` / `family_basic` / `family_pro`。それぞれに月額と年額の商品)・Offering `default` に 6 つの package・Webhook (URL `https://<サイト>/api/webhooks/revenuecat`・署名 ON・秘密を控える)・App Store Server Notifications と Google RTDN の接続 (推奨)・Restore behavior は既定のまま | 承認後: Vercel に `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`、EAS に `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` を登録 → `plan_store_products` に 6 行 (運営が SQL で INSERT。§17.2) → 本番のビルド (`eas build --profile production`) |
+| 4 | — (順 1〜3 と並行してよい。ストアの契約・商品の作成は審査の提出ではない) | 段 B (サーバ: Webhook・同期・カタログ) と段 D (モバイル: 購入の画面) のマージ + EAS の開発ビルド (sandbox で購入の流れを確かめられる状態) | **App Store**: Paid Applications Agreement の署名・税と銀行の登録 → In-App Purchase Key (`.p8`) と Issuer ID の発行 (P7) → Subscription Group と 6 つの商品 (個人 Pro 月 / 年・家族 Basic 月 / 年・家族 Pro 月 / 年。商品 ID は §17.2 の表) の作成・価格 (Q-1)・ローカライズ・無料体験 (7 日。Introductory Offer)・審査用のスクリーンショット **/ Google Play**: Google Payments の merchant profile → `eas build --profile production --platform android` で AAB を作り (`apps/mobile/eas.json` の `production` は `android.buildType: "app-bundle"`。`preview` は `"apk"` なので使わない)、`eas submit --profile production --platform android` で内部テストのトラックに下書きで上げる (同じファイルの `submit.production.android` は `track: "internal"`・`releaseStatus: "draft"`。`eas.json` は変えない。Billing Library 入り。P8) → 3 つの購読と base plan 6 つ (`monthly-autorenewing` / `annual-autorenewing`) + 無料体験の offer → Google Cloud のサービスアカウントと権限 (P8。36 時間) **/ RevenueCat**: プロジェクト・iOS と Android のアプリ (bundle id `com.homegohan.app`)・`.p8` と Issuer ID・サービスアカウントの JSON・商品 6 つ (Google は `<subscription_id>:<base_plan_id>`)・Entitlement 3 つ (`pro` / `family_basic` / `family_pro`。それぞれに月額と年額の商品)・Offering `default` に 6 つの package・Webhook (URL `https://<サイト>/api/webhooks/revenuecat`・署名 ON・秘密を控える)・App Store Server Notifications と Google RTDN の接続 (推奨)・Restore behavior は既定のまま | 承認後: Vercel に `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`、EAS に `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` を登録 → `plan_store_products` に 6 行 (運営が SQL で INSERT。§17.2) → 本番のビルド (`eas build --profile production`) |
 | 5 | 順 2 と順 4 (アプリの購入の画面の「利用規約」「プライバシーポリシー」のリンク先 (§10.6 の 6) に有料の条文が載っている状態) | 本番のビルドの提出 | **App Store の審査** (最初の購読は購入の流れが入ったアプリの版と一緒に提出。審査用のメモに「購入の画面は 設定 → プランとお支払い」「購入の復元のボタン」「テスト用のサンドボックスのアカウント」を書く) **/ Google Play の審査** (製品版のトラックへ昇格) | 公開後: 整合ゲートで §17.4 の受け入れを確かめる = **アプリの販売開始** |
 
 - 順 1 と順 4 は並行してよい。順 2 は #1901 のマージのあと。順 3 (Stripe の有効化) は順 1 と順 2 の本番の反映のあと。順 5 (ストアの審査) は順 2 と順 4 のあと。
@@ -3453,6 +3497,9 @@ export function billingErrorMessageOf(error: unknown): string {
 47. `it('company page shows address, founded, capital, email and hours and no 準備中')`
 48. `it('no public page source or render (pricing / legal / company / faq / landing-copy) contains any of UNFINISHED_WORDS')`
 
+`tests/landing-page-1867.test.ts` (追加。§10.5):
+104. `it('U-37 pricing.plans の free の items に家族・究極モード・料理画像を含まず、paid の items は PLAN_CATALOG の 3 プランの価格の行で、家族を説明する文 (features の家族のカード・場面の子育て家庭・家族の章の lead・faq の「家族で使えますか？」の答え) はどれも「家族プラン」を含む')`
+
 `tests/business-info-legal-pages.test.ts` (書き換え): 所在地 = `BUSINESS_ADDRESS`・メールアドレス = `BUSINESS_EMAIL`・営業時間の行。
 
 Web の契約の画面 (追加。§10.3・§10.4):
@@ -3461,7 +3508,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 103. `src/components/ai-assistant/__tests__/V4GenerateModal-ultimate-mode.test.ts` (追加。§10.3): `it('locks the ultimate-mode toggle with aria-disabled and the paid-plan wording when features.ai_feature_caps.menu_generation_ultimate is 0, and leaves it operable when the summary is null or the cap is above 0')` (`useBillingSummary` を `vi.mock` で差し替える) (S17)
 
 家族・AI の route:
-49. `tests/api/family-plan-required.test.ts`: `it('family routes map FAMILY_PLAN_REQUIRED from the RPC to 402 with the fixed message')`
+49. `tests/api/family-plan-required.test.ts`: `it('the 3 family routes (groups, invite accept, child add) map FAMILY_PLAN_REQUIRED from the RPC to 402 with the fixed message')`
 50. `src/__tests__/lib/plan/entitlements.test.ts` (追加): `it('consumeAiUsage passes through plan_locked denials unchanged (403 is decided by aiDailyLimitPayload)')`
 
 モバイル (`apps/mobile`、jest):
@@ -3487,6 +3534,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 64. `it('rollback restores create_family_group, the manual-grant functions and the AI functions verbatim from their source migrations and drops everything the migration added')`
 65. `it('no UPDATE / DELETE outside function bodies except the 3 plan rows and the free ai_daily_limits row')`
 100. `it('the ai_plan_feature_caps feature CHECK lists exactly AI_PLAN_CAPPED_FEATURES and consume_ai_usage_at checks ai_plan_feature_caps before the c_unmetered branch')`
+106. `it('migration copies the free daily_limit to the organization plan keys (organizations.plan, standard, plan_type org) excluding free and the 3 paid keys before it updates free, and the rollback deletes only those rows with updated_by IS NULL')`
 
 `tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`:
 66. `it('inserts a trialing store row, syncs plan_key_cached and the family group, and audits subscription_created')`
@@ -3509,11 +3557,13 @@ Web の契約の画面 (追加。§10.3・§10.4):
 75. `it('consume_ai_usage_capped uses the plan row when present and the env cap otherwise')`
 76. `it('family plan members inherit the family plan limits via get_effective_plan')`
 91. `it('meal_image_auto is denied with plan_locked for free before the unmetered branch (no counter row), while a paid plan without a row still uses the ai_unmetered_daily_caps safety cap')`
+107. `it('an organization member without a personal or family plan keeps the pre-migration daily limit (the standard and org_* rows hold the old free value) while a free user is limited to 5')`
 
 `tests/integration/security/family-plan-gate.test.ts`:
 77. `it('create_family_group raises FAMILY_PLAN_REQUIRED without a live family plan and succeeds with a manual family grant')`
 78. `it('family_members insert (invite accept, child add) raises FAMILY_PLAN_REQUIRED when the group is free and succeeds when the representative has a family plan')`
 79. `it('existing members stay when the plan expires; new members are refused')`
+105. `it('accept_child_promotion succeeds in a free group (an UPDATE of the existing child row, not gated) and leaves the number of members unchanged')` (S19・Q-4)
 
 `tests/integration/security/plan-store-products-rls.test.ts`:
 80. `it('anon and authenticated can read public plan products, only super_admin can write, service_role can write')`
@@ -3547,7 +3597,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S16 Stripe の Price が無い間の料金ページ | 44・46 |
 | S17 無料の利用者の線引き | 41・42・49・57・74・77・89・91・92・97・98・99・101・102・103 |
 | S18 有料の利用者の線引き | 74・75・76 |
-| S19 家族プランが終わったグループ | 69・78・79 |
+| S19 家族プランが終わったグループ | 69・78・79・105 |
 | S20 手動付与との共存 | 63・68・77 |
 | S21 規約の改定の再同意 | §16.1 の `middleware-legal-consent-api` の行 (許可リストは変えないので既存のテストが緑のまま守る) |
 | S22 凍結中のストアの契約 | 88 |
@@ -3563,9 +3613,9 @@ Web の契約の画面 (追加。§10.3・§10.4):
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (§6)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、本人の書き出しの `omit`、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・§16.1 の結合テストの追随 | 60〜80・83・84・86・90・91・100 |
-| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 4 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
-| C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48, 87, 88, 103 |
+| A: DB 層 | migration + rollback (§6)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、本人の書き出しの `omit`、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・§16.1 の結合テストの追随 | 60〜80・83・84・86・90・91・100・105〜107 |
+| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
+| C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`PricingSection.tsx` (コメント)・`public-pages.ts` (`SITE_DESCRIPTION`)・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48, 87, 88, 103, 104 |
 | D: モバイル | `react-native-purchases`・`expo-dev-client` の追加、`purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`app/settings/plan.tsx`・設定タブの行・`AuthProvider`・`signOut.ts`・`UltimateModeToggle` と `V4GenerateModal` の錠・`env.example`・jest の mock と `moduleNameMapper`・`no-web-purchase-links.test.ts` のコメント | §8.10・§10.6 | 51〜59, 96 |
 | E: 規約とポリシーの条文 | `/terms`・`/privacy` の条・`legal-versions.ts` の版 | §11 | §16.1 の規約の行 |
 
@@ -3590,15 +3640,15 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - `src/lib/webhook/verify.ts`・`src/__tests__/lib/webhook/verify.test.ts`
 - `src/lib/env.ts`・`.env.example`・`ENV_SETUP.md`・`apps/mobile/env.example`
 - `src/app/api/billing/subscription/route.ts`
-- `src/app/api/family/groups/route.ts`・`invites/[id]/accept/route.ts`・`members/child/route.ts`・`promotions/[token]/accept/route.ts`・`src/lib/errors/membership-errors.ts`
+- `src/app/api/family/groups/route.ts`・`invites/[id]/accept/route.ts`・`members/child/route.ts`・`src/lib/errors/membership-errors.ts`
 - `supabase/functions/_shared/ai-daily-limit.ts`・`src/lib/ai/daily-limit-client.ts`・`apps/mobile/src/lib/ai-daily-limit.ts`・`src/lib/ai/consultation-action-executor.ts` (`dailyLimitResult` の code と、料理画像の見送りの理由の 1 行)
 - `supabase/functions/_shared/meal-image.ts`・`lib/meal-image.ts` (再 export の名前)・`src/app/api/meals/route.ts`・`src/app/api/meals/[id]/route.ts`・`src/app/api/meal-plans/meals/route.ts`・`src/app/api/meal-plans/meals/[id]/route.ts` (見送りの理由の 1 行と import)・`src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx` (文)
 - `packages/shared/src/index.ts` (`export * from './billing-plans';` の 1 行)
 - `src/lib/maintenance-mode.ts`・`src/__tests__/lib/maintenance-mode.test.ts`・`lib/supabase/middleware.ts` (Webhook の除外)・`lib/supabase/__tests__/middleware*.test.ts` のうち Webhook の除外を固定するもの
 - `tests/helpers/ai-consent-enforced-paths.ts` (`EXEMPT_ROUTES` に 3 行)・`src/__tests__/api/null-character-routes.test.ts` (`EXCLUDED` に 1 行)
-- `src/app/pricing/page.tsx`・`PricingPageView.tsx`・`src/app/legal/page.tsx`・`src/app/company/page.tsx`・`src/app/faq/page.tsx`・`src/components/marketing/landing-copy.ts`・`src/lib/business-info.ts`・`src/lib/seo/public-pages.ts` (description に「準備中」があれば)
+- `src/app/pricing/page.tsx`・`PricingPageView.tsx`・`src/app/legal/page.tsx`・`src/app/company/page.tsx`・`src/app/faq/page.tsx`・`src/components/marketing/landing-copy.ts`・`src/components/marketing/sections/PricingSection.tsx` (冒頭のコメントだけ)・`src/lib/business-info.ts`・`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` の最後の文と、description に「準備中」があれば)
 - `src/app/(main)/account/billing/page.tsx`・`src/app/frozen/billing/page.tsx`・`src/app/(main)/settings/page.tsx` (退会の文)・`src/app/frozen/account/page.tsx` (退会の文)・`src/components/ai-assistant/V4GenerateModal.tsx`
-- `tests/public-claims-guard.test.ts`・`tests/business-info-legal-pages.test.ts`・`tests/e2e/b10-unexplored-areas.spec.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/frozen-billing-page.test.tsx`・`tests/billing-core.test.ts`・`tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`tests/billing-manual-grant*.test.ts`・`tests/ai-daily-limit-core.test.ts`・`tests/ai-daily-limit-client.test.tsx`・`tests/consultation-action-usage.test.ts`・`tests/meal-image-skip.test.ts`・`tests/billing-public-plans.test.ts` (`listPurchasablePlans` → `listPublicPlans`)・`src/__tests__/lib/plan/entitlements.test.ts`・`tests/ai-usage-contract.test.ts` (突き合わせの対象が増える分だけ)・`apps/mobile/__tests__/lib/ai-daily-limit.test.ts`
+- `tests/public-claims-guard.test.ts`・`tests/landing-page-1867.test.ts` (U-24・U-15 とテスト 104)・`tests/business-info-legal-pages.test.ts`・`tests/e2e/b10-unexplored-areas.spec.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/frozen-billing-page.test.tsx`・`tests/billing-core.test.ts`・`tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`tests/billing-manual-grant*.test.ts`・`tests/ai-daily-limit-core.test.ts`・`tests/ai-daily-limit-client.test.tsx`・`tests/consultation-action-usage.test.ts`・`tests/meal-image-skip.test.ts`・`tests/billing-public-plans.test.ts` (`listPurchasablePlans` → `listPublicPlans`)・`src/__tests__/lib/plan/entitlements.test.ts`・`tests/ai-usage-contract.test.ts` (突き合わせの対象が増える分だけ)・`apps/mobile/__tests__/lib/ai-daily-limit.test.ts`
 - `src/lib/account-export-tables.ts`・`tests/account-export-tables.test.ts`・`tests/integration/security/account-export-scope.test.ts`
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成)
 - 家族の結合テスト (§16.1 の行。家族プランの手動付与を前提に足す)
@@ -3609,7 +3659,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - E2E: `tests/e2e/fixtures/fresh-family.ts`・`tests/e2e/helpers/membership-family.ts`・`tests/e2e/bug-27-ultimate-mode-locked.spec.ts`・`tests/e2e/w5-3-menu-gen-adversarial.spec.ts` と、§16.1 の E2E の行の母集合 (母集合の作り方 7) で同じ直し方が当てはまる spec
 - docs: `docs/design/billing/03-paid-plans-and-iap.md` (本書)。他の文書は §16.2 の行だけ (専権 PATCH)
 
-触らない (凍結): `supabase/functions/stripe-price-sync/**`・`src/app/api/super-admin/plans/**` (`price-change`・`price-impact`・`[id]`・一覧。§7.1 の書き手の表)・`src/app/api/super-admin/llm/quotas/route.ts`・`src/app/api/health/route.ts`・`src/lib/super-admin/plan-subscribers.ts`・`src/lib/membership/exit-notification.ts`・既存の `supabase/migrations/**` と `supabase/rollbacks/**` (§16.1 の母集合の作り方 2 が当てても書き換えない)・#1911 の面 (§0.2 の対象外の欄のファイル)・`supabase/baseline/**`・`billing_apply_stripe_subscription`・`get_effective_plan`・`guard_user_profiles_privileged(_on_insert)`・`family_groups` の DDL とトリガー・`stripe_webhook_events`・`billing_customers`・Stripe の route 7 本と Webhook・`src/lib/billing/stripe-gateway.ts`・`account-deletion.ts`。
+触らない (凍結): `supabase/functions/stripe-price-sync/**`・`src/app/api/super-admin/plans/**` (`price-change`・`price-impact`・`[id]`・一覧。§7.1 の書き手の表)・`src/app/api/super-admin/llm/quotas/route.ts`・`src/app/api/health/route.ts`・`src/lib/super-admin/plan-subscribers.ts`・`src/lib/membership/exit-notification.ts`・既存の `supabase/migrations/**` と `supabase/rollbacks/**` (§16.1 の母集合の作り方 2 が当てても書き換えない)・#1911 の面 (§0.2 の対象外の欄のファイル)・`supabase/baseline/**`・`billing_apply_stripe_subscription`・`get_effective_plan`・`guard_user_profiles_privileged(_on_insert)`・`family_groups` の DDL とトリガー・`stripe_webhook_events`・`billing_customers`・Stripe の route 7 本と Webhook・`src/lib/billing/stripe-gateway.ts`・`account-deletion.ts`・`src/app/api/family/promotions/[token]/accept/route.ts` と `accept_child_promotion` (昇格は門に当たらない。§6.6・§9.5)。
 
 ### 15.3 新設一覧 (識別子)
 
@@ -3631,7 +3681,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | 料理画像の見送りの値 | `MealImageSkipReason` の `'plan'`・`image_error` の値 `'skipped_plan'` |
 | TS モジュール | `src/lib/billing/{iap-core,revenuecat-gateway,iap-repository,iap-service}.ts`・`packages/shared/src/billing-plans.ts`・`src/hooks/useBillingSummary.ts`・`apps/mobile/src/lib/{purchases,iap-catalog,billing-api,plan-screen}.ts` |
 | TS の export (iap-core) | §8.1 の `export` のとおり (数は §8.1 が正。ストアの表示名と管理のページは `billing-plans.ts`) |
-| TS の export (ほか) | `verify.ts`: `verifyRevenueCatSignature`・`verifyRevenueCatWebhook` / `core.ts`: `PublicPlan`・`PlanFeatures`・`EMPTY_PLAN_FEATURES` / `public-plans.ts`: `listPublicPlans` (`listPurchasablePlans` を置き換え) / `http.ts`: `iapErrorResponse` / `iap-service.ts`: `IapDeps`・`syncStoreSubscriber`・`handleRevenueCatEvent`・`recordRevenueCatEventFailure`・`lazyResyncStoreSubscription`・`RevenueCatEventOutcome` / `revenuecat-gateway.ts`: `createRevenueCatGateway` / `iap-repository.ts`: `createIapRepository` / `packages/shared/src/billing-plans.ts`: `PURCHASE_STORES`・`PurchaseStore`・`isPurchaseStore`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`PAID_PLAN_KEYS`・`PaidPlanKey`・`PlanCatalogEntry`・`PLAN_AI_DAILY_LIMITS`・`PLAN_ULTIMATE_DAILY_CAPS`・`PLAN_MENU_GENERATION_DAILY_CAPS`・`FAMILY_PLAN_MAX_MEMBERS`・`PLAN_CATALOG`・`FREE_PLAN_FEATURES`・`FREE_PLAN_AI_LIMIT_NOTE`・`formatJpy`・`planCatalogPriceText`・`FREE_PLAN_DISPLAY_NAME`・`planDisplayName`・`SUBSCRIPTION_STATUSES_WIRE`・`SubscriptionStatusWire`・`BILLING_SOURCES_WIRE`・`BillingSourceWire`・`BILLING_INTERVALS_WIRE`・`BillingIntervalWire`・`PlanFeaturesWire`・`BillingSummaryWire`・`parseBillingSummaryWire`・`SUBSCRIPTION_STATUS_TEXT_WIRE`・`CANCEL_SCHEDULED_WITHOUT_DATE_TEXT_WIRE`・`formatBillingDateWire`・`subscriptionStatusLines` / `ai-daily-limit.ts` (新しい名前): `AI_FEATURE_NOT_IN_PLAN_CODE`・`AI_FEATURE_NOT_IN_PLAN_STATUS`・`AI_PLAN_CAPPED_FEATURES`・`AiPlanCappedFeature`・`AI_PLAN_CAPPED_FEATURE_LABELS`・`aiFeatureDailyLimitMessage`・`aiFeatureNotInPlanMessage`・`AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE`・`AiFeatureNotInPlanBody`・`AiUsageDeniedBody`・`AiUsageDenialReason` / `_shared/meal-image.ts`: `mealImageSkipReasonOf`・`isMealImagePlanSkippedError` / `business-info.ts`: `BUSINESS_ADDRESS`・`BUSINESS_FOUNDED`・`BUSINESS_CAPITAL`・`BUSINESS_EMAIL`・`BUSINESS_HOURS` / `membership-errors.ts`: `MembershipErrorCode.FAMILY_PLAN_REQUIRED` / `src/hooks/useBillingSummary.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`useBillingSummary` / モバイル `purchases.ts`: `isPurchasesAvailable`・`identifyPurchases`・`resetPurchasesOnSignOut`・`fetchOfferings`・`purchase`・`restore`・`currentCustomerInfo`・`PurchaseOutcome` / `iap-catalog.ts`: `CatalogPlanLike`・`PackageLike`・`PurchasablePlanCard`・`matchCatalogWithPackages`・`renewalText`・`parseIapCatalogPlans` / `billing-api.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`IAP_CATALOG_API_PATH`・`IAP_SYNC_API_PATH`・`BILLING_SUMMARY_LOAD_FAILED_MESSAGE`・`BILLING_PURCHASE_FAILED_MESSAGE`・`BillingSummaryShapeError`・`fetchBillingSummary`・`fetchIapCatalog`・`syncIapPurchases`・`billingErrorMessageOf` / `plan-screen.ts`: `PLAN_SCREEN_PATH` |
+| TS の export (ほか) | `verify.ts`: `verifyRevenueCatSignature`・`verifyRevenueCatWebhook` / `core.ts`: `PublicPlan`・`PlanFeatures`・`EMPTY_PLAN_FEATURES` / `public-plans.ts`: `listPublicPlans` (`listPurchasablePlans` を置き換え) / `http.ts`: `iapErrorResponse` / `iap-service.ts`: `IapDeps`・`syncStoreSubscriber`・`handleRevenueCatEvent`・`recordRevenueCatEventFailure`・`lazyResyncStoreSubscription`・`RevenueCatEventOutcome` / `revenuecat-gateway.ts`: `createRevenueCatGateway` / `iap-repository.ts`: `createIapRepository` / `packages/shared/src/billing-plans.ts`: `PURCHASE_STORES`・`PurchaseStore`・`isPurchaseStore`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`PAID_PLAN_KEYS`・`PaidPlanKey`・`PlanCatalogEntry`・`PLAN_AI_DAILY_LIMITS`・`PLAN_ULTIMATE_DAILY_CAPS`・`PLAN_MENU_GENERATION_DAILY_CAPS`・`FAMILY_PLAN_MAX_MEMBERS`・`PLAN_CATALOG`・`FREE_PLAN_FEATURES`・`FREE_PLAN_AI_LIMIT_NOTE`・`PAID_PLAN_SUMMARY`・`formatJpy`・`planCatalogPriceText`・`FREE_PLAN_DISPLAY_NAME`・`planDisplayName`・`SUBSCRIPTION_STATUSES_WIRE`・`SubscriptionStatusWire`・`BILLING_SOURCES_WIRE`・`BillingSourceWire`・`BILLING_INTERVALS_WIRE`・`BillingIntervalWire`・`PlanFeaturesWire`・`BillingSummaryWire`・`parseBillingSummaryWire`・`SUBSCRIPTION_STATUS_TEXT_WIRE`・`CANCEL_SCHEDULED_WITHOUT_DATE_TEXT_WIRE`・`formatBillingDateWire`・`subscriptionStatusLines` / `ai-daily-limit.ts` (新しい名前): `AI_FEATURE_NOT_IN_PLAN_CODE`・`AI_FEATURE_NOT_IN_PLAN_STATUS`・`AI_PLAN_CAPPED_FEATURES`・`AiPlanCappedFeature`・`AI_PLAN_CAPPED_FEATURE_LABELS`・`aiFeatureDailyLimitMessage`・`aiFeatureNotInPlanMessage`・`AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE`・`AiFeatureNotInPlanBody`・`AiUsageDeniedBody`・`AiUsageDenialReason` / `_shared/meal-image.ts`: `mealImageSkipReasonOf`・`isMealImagePlanSkippedError` / `business-info.ts`: `BUSINESS_ADDRESS`・`BUSINESS_FOUNDED`・`BUSINESS_CAPITAL`・`BUSINESS_EMAIL`・`BUSINESS_HOURS` / `membership-errors.ts`: `MembershipErrorCode.FAMILY_PLAN_REQUIRED` / `src/hooks/useBillingSummary.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`useBillingSummary` / モバイル `purchases.ts`: `isPurchasesAvailable`・`identifyPurchases`・`resetPurchasesOnSignOut`・`fetchOfferings`・`purchase`・`restore`・`currentCustomerInfo`・`PurchaseOutcome` / `iap-catalog.ts`: `CatalogPlanLike`・`PackageLike`・`PurchasablePlanCard`・`matchCatalogWithPackages`・`renewalText`・`parseIapCatalogPlans` / `billing-api.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`IAP_CATALOG_API_PATH`・`IAP_SYNC_API_PATH`・`BILLING_SUMMARY_LOAD_FAILED_MESSAGE`・`BILLING_PURCHASE_FAILED_MESSAGE`・`BillingSummaryShapeError`・`fetchBillingSummary`・`fetchIapCatalog`・`syncIapPurchases`・`billingErrorMessageOf` / `plan-screen.ts`: `PLAN_SCREEN_PATH` |
 | 環境変数 | `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET` (Web。一覧に追加)・`EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` (モバイル) |
 | エラーコード | §13.1 の [NEW] 7 つ |
 | 依存 (モバイル) | `react-native-purchases` 10.14.0・`expo-dev-client` |
@@ -3694,7 +3744,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/business-info-legal-pages.test.ts` | 所在地 = `DISCLOSED_ON_REQUEST`・メールアドレスの形 | 所在地 = `BUSINESS_ADDRESS`・メールアドレス = `BUSINESS_EMAIL`・営業時間の行の存在。`it.each` のマーカー (「確定次第掲載」など) はそのまま緑 | C |
 | `tests/e2e/b10-unexplored-areas.spec.ts` (4-1 / 4-3) | 「有料プランは準備中です（販売開始前）」の `toBeVisible` | 価格の文 (`580円`) の `toBeVisible` に (4-1 は `年払い` が無いことはそのまま。CTA の有無は環境 (Price の登録) で変わるので見ない) | C |
 | `tests/faq-guide-wording-1859.test.ts` (FAQ の「」の名前が画面に実在する) | FAQ の料金の項目の書き換え | 新しい答えが「」で挙げる画面の名前 (「プランとお支払い」) が `src/app/(main)/settings/page.tsx` と `apps/mobile/app/(tabs)/settings.tsx` に実在する (段 D の行の title と同じ文字列) | C・D |
-| `docs/design/marketing/01-landing-site.md` の文言の表を見張るテスト (`tests/landing-*` があれば。実装時に `git grep -l landing-copy origin/main -- tests` で確かめる) | `landing-copy.ts` の料金の章と `claims` | 設計書の表 (§16.2 の marketing の行) と同じ変更を同じ PR で | C |
+| `tests/landing-page-1867.test.ts` (紹介ページの文と殻のメタ情報) | U-24 (`すべて無料` を含む文字列がちょうど 3 つで、どれも「1 日にご利用いただける回数」を含む。§10.5 で 0 になる)・U-15 (`SITE_DESCRIPTION` の逐語「…いまは無料で使えます。」)・U-2 / U-3 (`claims` の `evidence` の実在・id の数 46。§10.5 は id を足さず、足す `evidence` の `packages/shared/src/billing-plans.ts` は段 B で実在する) | U-24 を `it('U-24 LANDING_COPY のどの文字列 (claims を含む) も「すべて無料」「いまは無料」を含まず、無料の範囲を説明する 3 つ (trust の「無料プランと有料プラン」の body・pricing.lead・faq の「本当に無料で使えますか？」の答え) は「1 日にご利用いただける回数」と PAID_PLAN_SUMMARY を含む')` に書き換える (3 つは場所で取り出す。数のハードコードは置かない)。U-15 の期待の文を「…体重や健康診断の記録まで。無料で始められます。」に (長さと書かない語の検査はそのまま)。U-2 / U-3 は変更なし。テスト 104 を足す。`docs/design/marketing/01-landing-site.md` の文言の表は §16.2 の marketing の行で同じ PR に | C |
 | `src/__tests__/lib/feature-flags.test.ts` ほか `plan_key_cached` の偽の DB | 意味は変えない | 変更なし | — |
 | `tests/integration/security/legal-documents-acceptance.test.ts`・`tests/integration/rls/user-profiles-insert-guard.test.ts` | 特権列ガード | 変更なし (触らない) | — |
 | 家族の結合テスト (`tests/integration/security/family-*.test.ts`・`membership-*.test.ts`・`invite-*.test.ts`・`tests/integration/rls/ai-usage-rpc.test.ts`・`family-member-names-scope.test.ts`・`family-rls-recursion.test.ts`・`hidden-content-visibility.test.ts`・`meals-meal-type-trigger.test.ts`・`membership-audit-select.test.ts`・`paste-meal-*.test.ts`・`tests/integration/security/account-deletion.test.ts`・`invite-rpc-token.test.ts`・`plan-deprecate-subscribers.test.ts`・`purge-dissolved-family-groups.test.ts`・`parental-consent.test.ts`・`rpc-profile-name-placeholder.test.ts`・`invite-accept-missing-profile.test.ts`・`tests/integration/rls/family-menu-visibility.test.ts`・`hidden-content-restore.test.ts` ほか `create_family_group` か `family_members` の INSERT を使うもの (母集合の作り方 2) | `create_family_group` の門・`family_members` の INSERT のトリガー | 共通の道具 `tests/integration/helpers/family-plan.ts` (新設) に `grantFamilyPlan(srAdmin, userId, planKey = 'family_basic')` = `billing_grant_manual_subscription(p_user_id, p_plan_key, NULL)` の RPC (service_role) を置き、グループを作る利用者 (代表者) に、`create_family_group` を呼ぶ前に 1 行足す。service_role の直接の INSERT でグループを作るテストは、メンバーを足す前に `family_groups.plan_key` を `family_basic` に UPDATE する (すでにそうしているテストは変えない)。期待値 (人数の上限・`plan_key` の値) は、代表者に家族プランが入ることで `free` → `family_basic` / 4 になる箇所だけ更新する (実数に合わせる。緩めない) | A |
@@ -3776,7 +3826,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/operator/09-runbook.md` | §3.2 適用順序の図・運用の手順 | 新設の 3 表と、`plan_store_products` に行を入れる手順 (§17.2)。二重購読 (`BILL_LIVE_ROW_CONFLICT`) の処置の表 (§13.3 の表をそのまま) と、App Store 同士のときに利用者へ送る案内の文 (「後からお買い上げの購入の返金は、reportaproblem.apple.com から Apple にお申し込みください」)。`iap_is_sandbox = true` の行の見方 (テストの購入。売上ではない) | 段 A と同じ PR (二重購読の処置は段 B と同じ PR) |
 | `docs/design/operator/06-ai-llm.md` (料理画像の見送りの理由 `skipped_ai_limit` を書いている箇所。`git grep -n "skipped_ai_limit" origin/main -- docs` で 1 ファイル) | 見送りの理由の一覧 | `skipped_plan` (ご利用中のプランでは自動の料理画像を作らない。`ai_plan_feature_caps` の `meal_image_auto` = 0。billing/03 §8.8) を足す | 段 B と同じ PR |
 | `docs/design/family/01-data-model.md`・`family/CLAUDE.md`・`membership/02-flow-spec.md` | `create_family_group`・メンバーの追加 | 「家族グループの作成とメンバーの追加は家族プランの契約者だけ (`FAMILY_PLAN_REQUIRED`。billing/03 §6.6)。契約が終わったグループのメンバーはそのまま」を注記 | 段 A と同じ PR |
-| `docs/design/marketing/01-landing-site.md` | 料金の章の表・§24 の Q-12・`claims` の `free-now` | §10.5 の文に合わせる (`free-now` の主張を「有料プランは 3 つ」に) | 段 C と同じ PR |
+| `docs/design/marketing/01-landing-site.md` | 料金の章の表・要点 (trust)・FAQ・家族の章・場面・features の家族のカード・`ASSURANCES`・`SITE_DESCRIPTION`・§24 の Q-12・`claims` の `free-now` / `family` / `ai-daily-limit` | §10.5 の表の文に合わせる (`free-now` の主張を「無料プランの範囲と有料プラン 3 つ」に) | 段 C と同じ PR |
 | `.env.example`・`ENV_SETUP.md`・`apps/mobile/env.example` | 課金の節 | §8.7 | 段 B / D |
 | `README.md`・`CLAUDE.md` (リポジトリの根) に「準備中」「アプリ内課金をしない」の記述があれば | 母集合の作り方の grep | 本冊の規則に書き換える | 段 B と同じ PR |
 | `docs/handover/**`・`docs/bug-fix-report-*.md` | その時点の記録 | 対象外 | — |
@@ -3834,7 +3884,7 @@ ON CONFLICT (plan_key, store, billing_interval) DO UPDATE SET product_id = EXCLU
 ### 17.3 Vercel / EAS / Supabase
 
 - Vercel (本番): `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`。RevenueCat の Webhook の URL は本番の 1 つ (`https://<サイト>/api/webhooks/revenuecat`) だけを登録する。sandbox の購入 (審査・TestFlight・内部テスト) も本番の受け口と本番の DB に写る (Q-13。行は `iap_is_sandbox = true`)。
-- EAS: `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` (公開 SDK キー)。`eas build --profile development` (sandbox の確認)・`preview` (内部テスト)・`production`。
+- EAS: `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` (公開 SDK キー)。`eas build --profile development` (sandbox の確認)・`preview` (APK。手元の端末への直接の配布だけ。Google Play には上げない)・`production` (AAB。Google Play の内部テストのトラックへの最初の上げ (§12 の順 4) と、両ストアの審査に出すビルド)。
 - migration の適用 (段 A のマージ後。追加 + 3 行の UPDATE)。
 
 ### 17.4 受け入れの確認 (整合ゲートで読み取り・実機)
@@ -3881,3 +3931,4 @@ ON CONFLICT (plan_key, store, billing_interval) DO UPDATE SET product_id = EXCLU
 |---|---|---|
 | v1.0 | 2026-10-19 | 新設 (設計ゲート R1 の叩き台。4 相: 外形固定 §3 → 構想 §4 → 構造裁定 §5 → 仕上げ §6〜§17) |
 | v1.1 | 2026-10-19 | R1 の指摘の反映: sandbox の購入を本番でも写す (App Store の審査の購入を権利にする。`iap_is_sandbox` の列を足し、v1.0 の環境変数 `REVENUECAT_ACCEPT_SANDBOX_EVENTS` を廃止)・ストアの猶予期間 (`grace_period_expires_date`) を `past_due` に・`plan_locked` と機能ごとの上限を `_shared/ai-daily-limit.ts` の全文で確定 (AI 相談の自動実行・Edge の生成の文も同じ関数で正しくなる)・自動の料理画像 (`meal_image_auto`) を無料から外す (Q-3)・モバイルが読む型と文を `packages/shared/src/billing-plans.ts` に置く・未完成を示す文の禁止語に「まだ」の類を足す・二重購読の処理を「当社が持つ側を解約・返金する」に・規約の草案の食い違い (保存期間・プランの変更) を実際の動きに合わせる・申請の順を「規約とポリシーの有料の条文の公開 → Stripe の申請・ストアの審査」に・`verify.ts` の正典を既存の `verifyStripeSignature` の上に書き直す |
+| v1.2 | 2026-10-19 | R2 の指摘の反映: 紹介ページ (`landing-copy.ts`) の変える箇所を逐語の表に (「すべて無料」「いまは無料」を書かない・無料のカードから「家族で使う」を消す・家族の 4 か所に家族プランの条件・有料のカードは `free` / `paid` の 2 枚の形のまま 3 プランの価格の行)・`PAID_PLAN_SUMMARY` を `billing-plans.ts` に・`SITE_DESCRIPTION` と `/pricing` の「現在は無料」を消す・`tests/landing-page-1867.test.ts` の追随 (U-24・U-15・テスト 104)・子供の昇格 (`accept_child_promotion` は UPDATE) を家族の門の対象から外す (Q-4・§6.6・§9.5・テスト 105)・組織の利用者の AI の 1 日の上限を変えない (組織の plan の値に適用前の free の値を写す。§6.5 (5a)・テスト 106・107)・Google Play の内部テストに上げる AAB を `production` のプロファイルで作る (§12 の順 4・§17.3) |
