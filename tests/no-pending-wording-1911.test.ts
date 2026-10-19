@@ -5,18 +5,36 @@
  * 「確定次第掲載します」など) は書かず、いまの事実だけを書く。読み込み中の表示も「準備中…」とは書かない
  * (「読み込んでいます…」「分析しています…」など、別の言い方は許す)。
  *
- * ここでは、見える文の置き場所 (画面・部品・紹介ページの文・メールの文面・モバイルの画面・API が返す文の定数) の
- * ソースから、コメントを除いた部分に、禁止の語が無いことを確かめる。コメント・テスト・開発者向けの文書は対象外。
+ * ここでは、見える文の置き場所 (画面・部品・紹介ページの文・メールの文面・モバイルの画面・API が返す文の定数・
+ * 画面が読む hooks・Edge Function が行に書く文) のソースから、コメントを除いた部分に、禁止の語が無いことを確かめる。
+ * コメント・テスト・開発者向けの文書は対象外。
+ * 見える文はソースの外 (DB の列の既定値) にも置かれる。生成のリクエストの行の progress の既定値の message は
+ * 画面に届くので、SQL の既定値に禁止の語があれば、それが progress の既定値 (phase 'pending') であり、
+ * 画面に出す前の置き換え (src/lib/request-progress-display.ts) が禁止の語の無い文にすることを確かめる。
  * 問い合わせの状態の「未対応」(まだ対応していない問い合わせ) は未完成の意味ではないので、括弧つきの「（未対応）」だけを禁じる。
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { DB_DEFAULT_REQUEST_PROGRESS_PHASE, requestProgressForDisplay } from '@/lib/request-progress-display';
+import { findProgressDefaults, findSqlDefaultLiterals } from './helpers/db-progress-defaults';
 
 const ROOT = path.resolve(__dirname, '..');
 
-/** 見える文を持つファイルを探すディレクトリ (この下の .ts / .tsx を全部見る。テストは除く) */
-const SCAN_DIRS = ['src/app', 'src/components', 'src/lib/emails', 'apps/mobile/app', 'apps/mobile/src/components'] as const;
+/**
+ * 見える文を持つファイルを探すディレクトリ (この下の .ts / .tsx を全部見る。テストは除く)。
+ * src/lib・src/hooks・apps/mobile/src は、画面や API の応答に出る文の定数・既定の文を持つ。
+ * supabase/functions は、Edge Function が行 (progress・error_message など) に書き、画面がそのまま出す文を持つ。
+ */
+const SCAN_DIRS = [
+  'src/app',
+  'src/components',
+  'src/lib',
+  'src/hooks',
+  'apps/mobile/app',
+  'apps/mobile/src',
+  'supabase/functions',
+] as const;
 
 /** ディレクトリの外にあり、画面や API の応答に出る文を持つファイル */
 const SCAN_FILES = [
@@ -107,6 +125,36 @@ describe('#1911 見える文に「準備中」「まだできていません」�
   });
 });
 
+describe('#1911 DB の列の既定値 (画面に届く文) に禁止の語が残っていても、画面には出ない', () => {
+  const sqlDefaults = findSqlDefaultLiterals();
+  const progressDefaults = findProgressDefaults();
+
+  it('SQL の既定値を拾えている (生成のリクエストの行の progress の既定値が 1 つ以上ある)', () => {
+    expect(sqlDefaults).not.toEqual([]);
+    expect(progressDefaults).not.toEqual([]);
+  });
+
+  it('禁止の語を含む既定値は、すべて progress の既定値 (phase が DB の既定値の phase) である', () => {
+    const offending = sqlDefaults.filter((literal) => findPendingWording(literal.file, literal.value).length > 0);
+    const notProgressDefault = offending
+      .filter((literal) => {
+        const progress = progressDefaults.find((p) => p.file === literal.file && p.line === literal.line);
+        return !progress || progress.progress.phase !== DB_DEFAULT_REQUEST_PROGRESS_PHASE;
+      })
+      .map((literal) => `${literal.file}:${literal.line} ${literal.sourceLine.slice(0, 120)}`);
+    expect(notProgressDefault).toEqual([]);
+  });
+
+  it('progress の既定値は、画面に出す前の置き換えで、禁止の語の無い文になる', () => {
+    const problems = progressDefaults.flatMap((literal) => {
+      const message = requestProgressForDisplay(literal.progress).message;
+      if (typeof message !== 'string' || message === '') return [`${literal.file}:${literal.line} message が空`];
+      return findPendingWording(`${literal.file}:${literal.line}`, message);
+    });
+    expect(problems).toEqual([]);
+  });
+});
+
 describe('#1911 検査そのものが空振りしていない', () => {
   it('以前の文 (有料プランの準備中・バッジの近日公開予定・組織のチャレンジの (準備中)・運営の（未対応）) を捕まえる', () => {
     const samples = [
@@ -119,6 +167,7 @@ describe('#1911 検査そのものが空振りしていない', () => {
       '<p>データのエクスポート機能は、まだ作られていません。</p>',
       'このページはモバイル版で順次整備します。',
       '<p>Coming Soon</p>',
+      '{"phase": "pending", "message": "準備中..."}',
     ];
     for (const sample of samples) {
       expect(findPendingWording('sample.tsx', sample), sample).not.toEqual([]);
