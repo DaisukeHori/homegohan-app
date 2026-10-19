@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| 版 | v1.4 (2026-10-19) |
-| Status | 設計ゲート R4 の指摘を反映した版 (R5 の審査に出す) |
+| 版 | v1.5 (2026-10-19) |
+| Status | 設計ゲート R5 の指摘を反映した版 (R6 の審査に出す) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。関連: #1911 (「準備中」の撤去。main にマージ済み)・#1901 (規約とポリシーの作り込み。正典 `docs/design/cross/20-terms-privacy-text.md` が main にマージ済み)・#1567 (特定商取引法の表記の残り)・#1113 (本番の Stripe の鍵) |
 | 範囲の正本 | Issue #1912 の本文とコメント。本冊の §0.4 に、発注者の決定を逐語で写す |
 | 土台 | origin/main `4b1e1abe` (#1911 のマージ。`66d02c5d` で cross/20 が入った後)。本冊の「現行」はこの版の事実 (§2.2) |
@@ -184,6 +184,7 @@
 | P15 | 無料体験の表示 (RevenueCat の SDK と Google Play): `PurchasesStoreProduct.introPrice: PurchasesIntroPrice \| null` (`price`・`priceString`・`cycles`・`period`・`periodUnit` (DAY / WEEK / MONTH / YEAR)・`periodNumberOfUnits`)。`Purchases.checkTrialOrIntroductoryPriceEligibility(productIdentifiers: string[]): Promise<{ [productId: string]: IntroEligibility }>` (`IntroEligibility.status: INTRO_ELIGIBILITY_STATUS`。`UNKNOWN = 0`・`INELIGIBLE = 1`・`ELIGIBLE = 2`・`NO_INTRO_OFFER_EXISTS = 3`) は「iOS only」で、「The best course of action on unknown status is to display the non-intro pricing, to not create a misleading situation」「Android always returns INTRO_ELIGIBILITY_STATUS_UNKNOWN」。`INTRO_ELIGIBILITY_STATUS` は `react-native-purchases` から名前で export される (`dist/index.d.ts` の `export * from './offerings'` が `@revenuecat/purchases-typescript-internal` の offerings を再 export。10.14.0 は 19.12.0 に依存)。Google Play の新規の利用者向けの offer は、利用者が対象でなければ「it will not show up in the `subscriptionOptions` of the `StoreProduct` in the SDK at all」 | https://unpkg.com/react-native-purchases@10.14.0/dist/purchases.d.ts ・ https://unpkg.com/react-native-purchases@10.14.0/dist/index.d.ts ・ https://unpkg.com/@revenuecat/purchases-typescript-internal@19.12.0/dist/offerings.d.ts ・ https://www.revenuecat.com/docs/subscription-guidance/subscription-offers/google-play-offers |
 | P16 | ストアのメタデータとプライバシーの申告: Apple は自動更新の購読について「Please note that your app and App Store metadata must include links to your Terms of Use and Privacy Policy」と書く (アプリの購入の画面 (§10.6 の 6) とは別に、App Store の製品ページの側にも要る)。App Store Connect の App のプライバシーは「Privacy Policy (Required): The URL to your publicly accessible privacy policy」。使用許諾は「If you don't provide a custom EULA, the standard EULA is applied to your app」(custom EULA は App 情報の License Agreement の欄に平文で入れる)。App のプライバシーの申告には Purchases の「Purchase History」(「An account's or individual's purchases or purchase tendencies」) があり、アプリに入れた第三者の SDK (「third-party partners」) が集めるものも申告する。RevenueCat の案内: App Store では「RevenueCat collects purchase history from users」なので Purchase History を目的 Analytics と App Functionality で申告し、app user ID がメールアドレスなどに結び付くなら linked to identity は Yes、独自の app user ID を使うなら Identifiers の User ID も申告する。Google Play のデータ セーフティでは Financial info の「Purchase history」を collected・目的 App functionality と Analytics・送信の暗号化 Yes・任意 No で申告する。Google の定義では、当社の指示で処理する service provider への移転は「共有」に当たらない。どちらのストアもプライバシーポリシーの URL が必須 | https://developer.apple.com/app-store/subscriptions/ ・ https://developer.apple.com/app-store/app-privacy-details/ ・ https://developer.apple.com/help/app-store-connect/manage-app-information/provide-a-custom-license-agreement ・ https://www.revenuecat.com/docs/platform-resources/apple-platform-resources/apple-app-privacy ・ https://www.revenuecat.com/docs/platform-resources/google-platform-resources/google-plays-data-safety ・ https://support.google.com/googleplay/android-developer/answer/10787469 |
 | P17 | アプリの中の退会と自動更新の購読: Apple は「If a person has an auto-renewable subscription, notify them that billing will continue through Apple and ask them to cancel their subscription before continuing」と書き、購読の管理の行き先に `showManageSubscriptions` か「https://apps.apple.com/account/subscriptions/」を挙げる。あわせて「If your app supports in-app purchases, help people understand how billing and cancellations will be handled」 | https://developer.apple.com/support/offering-account-deletion-in-your-app/ |
+| P18 | 購読の変更 (同じ Subscription Group の中): App Store は Apple の定義で、上位への変更 (upgrade) は「They are immediately upgraded and receive a refund of the prorated amount of their original subscription」、下位への変更 (downgrade) は「The subscription continues until the next renewal date, then is renewed at the lower level and price」、crossgrade は「If the subscriptions are the same duration, the new subscription begins immediately」「If the durations are different, the new subscription goes into effect at the next renewal date」。どれが上位かはグループの中の順位 (level) で決まる (「If you'd like users to immediately access more content or features, rank the subscription higher to make it an upgrade」)。体験 (introductory offer) の間の上位への変更は「Apple does not cancel the introductory offer but instead keeps the introductory offer active in addition to the upgraded product」で、同じグループの 2 つの商品が同時に live に見える。`PRODUCT_CHANGE` の Webhook は「should be considered informative」で、変更が効いたことを意味しない (Apple では `RENEWAL`、Google Play では `INITIAL_PURCHASE` で効く)。Google Play の購読の置き換え (replacement) は、アプリが Play Billing Library の購入の流れで置き換えのモード (`WITHOUT_PRORATION` など) を指定して始める | https://www.revenuecat.com/docs/subscription-guidance/managing-subscriptions ・ https://codelabs.developers.google.com/codelabs/play-billing-subs-replacement |
 
 ### 2.4 AI の原価の推計と、競合の線引き (Q-2・Q-3 の根拠。推計は 1 ドル = 150 円・入出力の token 数は本冊の見積もり)
 
@@ -224,7 +225,7 @@
 | R9 | RevenueCat の Webhook: 署名の検証・冪等・順序の入れ替わり | #1912・P4 | HMAC の署名 (§8.2)・`revenuecat_webhook_events` + claim (§6.3)・イベントは合図として扱い `GET /v1/subscribers/{app_user_id}` で取り直して `p_fetched_at` で単調に写す (§4.1) |
 | R10 | app_user_id と Supabase の user id の結び付け | #1912・P3 | app_user_id = Supabase の `auth.users.id` (UUID v4。P3 の条件を満たす)。アプリはログイン中の利用者の id で `configure` / `logIn` し、サインアウトで `logOut` する (§10.6)。Webhook の `app_user_id` / `transferred_*` を UUID として検証し、UUID でない (匿名 ID) は無視する (§8.1) |
 | R11 | 購入の復元 | #1912・P3・P9 | 「購入を復元」のボタン → `restorePurchases()` → 同期の API (§9.3・§10.6)。Restore behavior は既定 (Transfer to new App User ID) のまま (§17)。TRANSFER のイベントは移動元と移動先の両方を取り直す (§4.1) |
-| R12 | Web で買った人がアプリで使える・アプリで買った人の解約はストアで・二重購読の防止と案内 | #1912・P9 (3.1.3(b)) | 権利は DB の行なのでどこで買っても使える。アプリの画面は `GET /api/billing/subscription` で live な契約があれば購入のボタンを出さず、契約の出どころ (`source`) に応じて「Web でご契約中」/ ストアの購読の管理へのリンクを出す (§10.6)。ストアの契約は `can_cancel` / `can_resume` を偽にし、`manage_in_store` を返す (§8.1)。2 本目の live な契約は写像が `BILL_LIVE_ROW_CONFLICT` で止め、監査に残す (§7.3・§13.3)。運営は当社が止められる側 (Stripe の契約・手動付与・Google Play の購入) を解約・返金して写し直し、App Store 同士のときは利用者に Apple への返金の申し込みを案内する (P14・§13.3 の手順。S13・S25) |
+| R12 | Web で買った人がアプリで使える・アプリで買った人の解約はストアで・二重購読の防止と案内 | #1912・P9 (3.1.3(b)) | 権利は DB の行なのでどこで買っても使える。アプリの画面は `GET /api/billing/subscription` で live な契約があれば購入のボタンを出さず、契約の出どころ (`source`) に応じて「Web でご契約中」/ ストアの購読の管理へのリンクを出す (§10.6)。ストアの契約は `can_cancel` / `can_resume` を偽にし、`manage_in_store` を返す (§8.1)。2 本目の live な契約は写像が `BILL_LIVE_ROW_CONFLICT` で止め、監査に残す (§7.3・§13.3)。運営は当社が止められる側 (Stripe の契約・手動付与・Google Play の購入) を解約・返金して写し直す (P14・§13.3 の手順。S13・S25)。同じ App Store のグループの中の 2 つの live (上位への変更・体験中の変更。P18) は二重購読ではないので衝突にせず、新しい購入を権利にして古い行を終わらせる (§7.3・S36)。App Store 同士の二重購読 (別の Apple ID) はこれと見分けられないので同じ扱いになり、問い合わせを受けた運営は、一方の解約と Apple への返金の申し込みを案内する (§13.3) |
 | R13 | 家族のプランの席の数え方 | #1912 | いまのまま: `family_groups.member_limit` = プランの `max_members` (4 / 8) を写像とトリガーが同期し、人数は `family_members` の active な行 (子供を含む) で数える (F9・billing/01 §6.4 (10))。本冊は席を変えない |
 | R14 | 無料体験の 1 人 1 回 | #1912・operator/04 §5.2 | Q-10 のとおり (Web は `hasUsedTrial`、ストアはストア任せ + 行の `trial_started_at` で片向きに共有。S23) |
 | R15 | モバイルの購入の画面はストアの審査の要件を満たす | #1912・P9・P10 | プラン名と期間・提供する内容・更新の価格 (ストアの `priceString`)・無料体験の長さと終了後の価格・自動更新の説明・解約の方法 (ストアの管理へのリンク)・「購入を復元」・利用規約とプライバシーポリシーへのリンクを 1 画面に (§10.6)。無料体験の文は、ストアが返す商品の導入価格 (`product.introPrice`) が 0 円の体験を示し、かつその利用者が体験の対象のとき (iOS は `checkTrialOrIntroductoryPriceEligibility` が対象と返したとき。Android は Google Play が対象の利用者にだけ offer を返す) だけ出す (DB の `trial_days` からは作らない。§8.10 `storeTrialOf`。S29) |
@@ -239,7 +240,7 @@
 | R24 | アプリで買った人が退会するとき、ストアの購読は退会で解約されないことを知らせ、先に解約するよう求める | P17・§11.1 (d) (利用規約第17条に足す項) | 退会の API を呼ぶ 4 つの入口 (Web の設定・凍結中の退会・規約の同意の画面の「登録をやめる」・アプリの設定のアカウント) のすべてに、固定の文 `STORE_SUBSCRIPTION_DELETION_NOTICE` (§8.9) を出す。アプリの退会の確認には「定期購読の管理を開く」のボタンも置く (§10.4・S35)。入口の一覧が閉じていることはテスト 127 が見る |
 | R25 | ストアの審査に出す前に、ストアのメタデータ (利用規約とプライバシーポリシーの URL・プライバシーの申告の購入履歴) を入れる | P16・P9 | 発注者の作業 (§12 の順 4・§17.5)。当社のコードは変えない |
 
-### 3.2 ユーザーシナリオ (35 本)
+### 3.2 ユーザーシナリオ (36 本)
 
 | ID | シナリオ |
 |---|---|
@@ -267,7 +268,7 @@
 | S22 | 凍結 (BAN) 中のストアの契約: 凍結中の利用者のストアの購読は更新され続ける (核の Stripe と同じく凍結は課金を止めない)。`/frozen/billing` はストアの行には「App Store / Google Play の購読の管理から解約できます」の文を出し、解約のボタンを出さない。Webhook と写像は凍結を見ない。凍結中の利用者のアプリは凍結の画面 1 つに畳まれ (#1861 の `AccountFrozenGate`)、購入の画面は開けない。カタログと同期の API は凍結中も通す API (`FROZEN_ALLOWED_API_PATHS`) に入れないので、呼ばれても 403 `AUTH_ACCOUNT_FROZEN` を返し、RevenueCat も DB の書き込みも呼ばない。凍結中のストアの更新・解約・返金は、Webhook と `GET /api/billing/subscription` (凍結中も通す。`/frozen/billing` が読む) の遅延の再同期が写し続ける |
 | S23 | 無料体験の 1 人 1 回: 利用者が iOS で個人 Pro の月額を 7 日間の無料体験つきで買い (行は `trialing`)、体験中に App Store で自動更新を切る。体験の終わりに行は `expired` になる。同じ Apple ID で後日アプリの購入の画面を開くと、App Store がこの利用者を体験の対象外と判定するので、個人 Pro の月額の行は「7 日間の無料体験のあと」を出さず「1 か月ごとに ¥580 が自動で更新されます」とだけ出す (S29)。後日 Web の `/pricing` から個人 Pro を申し込むと、確認画面の無料体験は 0 日で、Checkout も試用なしで作られる。家族 Basic を Web で申し込むときは 7 日の無料体験が付く (試用は同じプランで 1 回)。同じ Apple ID でストアからもう一度買うときの試用の可否は App Store が決める (Q-10) |
 | S24 | App Store の審査 (sandbox の購入): 審査官が本番のビルドに審査用のアカウントでログインし、sandbox の Apple ID で個人 Pro の月額を買う。Webhook (`environment` = `SANDBOX`) と同期の API が本物の購入と同じに写し、行は `trialing`・`iap_is_sandbox = true`・`plan_key_cached = 'pro'`。究極モードの錠が外れ、「プランとお支払い」は「個人 Pro をご利用中です」を出す。TestFlight・Google Play の内部テストの購入も同じ |
-| S25 | 二重購読の防止と案内 (ストア同士): App Store で個人 Pro を契約中の利用者が、別の端末 (Android) の購入の画面から Google Play でも買ってしまう。写像が `BILL_LIVE_ROW_CONFLICT` で止め、同期の API は 409 (S13 と同じ文)。運営は Google Play の購入を Play Console で返金する (購読はすぐ終わる。P14)。2 本とも App Store の購入のとき (別の Apple ID) は、運営は利用者に reportaproblem.apple.com からの返金の申し込みを案内する (Apple の購入は開発者が返金できない。P14) |
+| S25 | 二重購読の防止と案内 (ストア同士): App Store で個人 Pro を契約中の利用者が、別の端末 (Android) の購入の画面から Google Play でも買ってしまう。写像が `BILL_LIVE_ROW_CONFLICT` で止め、同期の API は 409 (S13 と同じ文)。運営は Google Play の購入を Play Console で返金する (購読はすぐ終わる。P14)。2 本とも App Store の購入のとき (別の Apple ID) は、同じグループの中の変更 (S36) と見分けられないので、写像は衝突にせず新しい方を権利にして古い方の行を `expired` にする。二重の請求の問い合わせを受けた運営は、利用者にどちらか一方を App Store の定期購読の管理で解約し、その購入の返金を reportaproblem.apple.com から Apple に申し込むよう案内する (Apple の購入は開発者が返金できない。P14。残った方が次の取り直しで権利になる) |
 | S26 | 組織のメンバーの上限 (組織の課金は本冊の対象外。§0.2): 運営が作った組織に管理者から招待されて入った利用者で、個人の契約も家族も無い。本冊の migration の適用のあとも、AI の 1 日の上限は適用の前の free の値 (本番 10 回) のままで、無料の利用者 (5 回) と同じにはならない。究極モードは環境変数の既定 (1 日 1 回)・献立の作成と料理画像の作成は機能ごとの上限を持たない (これまでどおり) |
 | S27 | 無料の利用者が 1 週間の献立を作る: 無料の利用者が献立の画面から 1 週間の献立を頼む (`POST /api/ai/menu/weekly/request`)。献立は作られて保存されるが、料理画像は作られない (料理画像のジョブは積まれるが、`process-meal-image-jobs` が AI へ送らずに取り消し、料理を `image_status = 'failed'`・`image_error = 'skipped_plan'` にする)。料理の画面は「料理画像の作成は有料プランでお使いいただけます。」を出す。同じ利用者が個人 Pro を買ったあとに同じ料理を保存し直すと、料理画像が作られる |
 | S28 | 対応の無い古い商品の購入の履歴: 運営がセットアップの途中で誤った商品 ID で作った sandbox の商品を、テストの利用者が買って期限が切れた。運営はその商品の行を `plan_store_products` から消した (または初めから行が無い)。その利用者が正しい商品で個人 Pro を買うと、取り直しの `subscriptions` には古い商品 (期限切れ) と新しい商品 (live) の両方が入る。同期は古い商品を飛ばし (利用者の行も無いので何も作らない)、新しい商品の行を INSERT して `plan_key_cached='pro'` になる。古い商品の利用者の行がすでにある (運営が行を消す前に写っていた) ときは、その行の `plan_key` のまま状態だけを写す。運営が後から商品を差し替えるときは、古い行を `offered = false` にして新しい行を足す (同じプランと間隔の古い商品 ID も行として残せる) |
@@ -278,6 +279,7 @@
 | S33 | 解約の予約の取り消し (`UNCANCELLATION`): S5 の利用者が期間の終わりの前に iOS の設定で自動更新を入れ直す。`UNCANCELLATION` → 取り直し → 行は `active` のまま `cancel_at_period_end = false`・`cancel_at = NULL` (状態は変わらないので監査なし)。Web の `/account/billing` とアプリの購入の画面から解約の予約の文が消え、更新の文に戻る。体験中 (`trialing`) と支払いの問題の中 (`past_due`) の取り消しも、状態を変えずに同じ 2 列だけが戻る |
 | S34 | 家族プランをストアで買う (月額): (a) iOS の利用者が家族 Pro の月額 (`homegohan_family_pro_month`) を買う。行は `trialing` (ストアの体験の対象でなければ `active`)、`plan_key_cached = 'family_pro'`、代表者の家族グループは `family_pro` / 8 (グループが無ければ作れるようになり、作ると `family_pro` / 8)。メンバーは家族 Pro の上限 (1 日 50 回・献立の作成 15 回・究極 3 回) を受ける。(b) Android の利用者が家族 Basic の月額 (`homegohan_family_basic:monthly-autorenewing`) を買うと `family_basic` / 4。§17.2 の 12 行 (6 商品 × 2 ストア) はどれも同じ流れで、商品 ID から `plan_key` と間隔が決まる (個人 Pro の年額・家族 Pro の年額も同じ) |
 | S35 | アプリで買った人がアプリから退会する: App Store で個人 Pro を契約中の利用者が、アプリの設定 → アカウント →「アカウント削除」を押す。確認のダイアログに「アカウントとデータを削除します。取り消しできません。」に続けて「App Store / Google Play でお申し込みの有料プランは、退会しても自動では解約されません。各ストアの定期購読の管理から解約してください。」が出て、ボタンは「キャンセル」「定期購読の管理を開く」「削除」。「定期購読の管理を開く」を押すと App Store (Android では Google Play) の購読の管理のページが開き、退会はしない (画面はアカウントのまま)。解約してから「アカウント削除」→「削除」と進むと退会し、`personal_subscriptions` の行は CASCADE で消え、以後の Webhook は `user_deleted` で 200。解約せずに「削除」を押しても退会はでき、ストアの購読は続く (当社はストアの購読を止められない。確認の文がそれを知らせる)。Web の設定・凍結中の退会・規約の同意の画面の「登録をやめる」にも同じ文が出る |
+| S36 | App Store で上位のプランに変える (体験中を含む): App Store で個人 Pro の月額を 7 日間の無料体験中 (`trialing`) の利用者が、iOS の設定の購読の管理で同じグループの家族 Pro の月額に変える。家族 Pro はグループの中で上位 (§17.2 のレベル) なので変更はすぐに効き、体験中の変更では Apple が個人 Pro の体験を取り消さずに残す (P18) ので、取り直しの `subscriptions` には 2 つの商品が live で並ぶ。同期の API (200) か Webhook (`completed`) の取り直しで、個人 Pro の行は `expired` になり (`trial_started_at` は残る)、家族 Pro の行が INSERT され、`plan_key_cached` は `family_pro`、家族グループを作れるようになる (`BILL_LIVE_ROW_CONFLICT` にならない)。以後の取り直しで個人 Pro の体験がまだ live に見えても、個人 Pro の行は `expired` のまま。体験の外で `active` の個人 Pro から変えるときも同じ (Apple は個人 Pro の残りを日割りで返す。取り直しで個人 Pro が期限切れか返金済みなら先にその姿で写り、まだ live に見えても同じ規則で `expired`)。家族 Pro から個人 Pro への変更 (下位) は期間の終わりに効き、S32 と同じ順で写る |
 
 ---
 
@@ -286,7 +288,7 @@
 ### 4.1 構造 (発明相の結論)
 
 1. **権利の正本は DB の行のまま、ストアの契約も同じ表の行にする。** `personal_subscriptions` に `iap_store` / `iap_product_id` / `iap_synced_at` を足し、ストアの契約は `(user_id, iap_store, iap_product_id)` で 1 行 (部分 UNIQUE)。Stripe の行 (`stripe_subscription_id`)・手動付与の行 (どちらも NULL) と同じ表・同じ status の語彙・同じ部分 UNIQUE (1 利用者 1 live 行) に乗せる。権利判定 (`get_effective_plan`)・`plan_key_cached`・家族グループの同期・運営の手動付与・退会は、行の出どころを問わない (手動付与の述語だけ `iap_store IS NULL` を足す)。RevenueCat の entitlement は当社の権利判定には使わない (アプリは `GET /api/billing/subscription` を読む)。
-2. **RevenueCat のイベントは「何かが変わった合図」。契約は必ず `GET /v1/subscribers/{app_user_id}` で取り直してから写す** (核の Stripe と同じ考え。R9)。写す入口は DB 関数 `billing_apply_store_subscription(p_snapshot, p_fetched_at, p_source)` の 1 本で、Webhook・同期の API・遅延の再同期がすべてこれを呼ぶ。取り直した時刻で単調に写す (古い取り直しは stale)。
+2. **RevenueCat のイベントは「何かが変わった合図」。契約は必ず `GET /v1/subscribers/{app_user_id}` で取り直してから写す** (核の Stripe と同じ考え。R9)。写す入口は DB 関数 `billing_apply_store_subscription(p_snapshot, p_fetched_at, p_source)` の 1 本で、Webhook・同期の API・遅延の再同期がすべてこれを呼ぶ。取り直した時刻で単調に写す (古い取り直しは stale)。取り直しに同じ App Store のグループの 2 つ以上の商品が live で並ぶ (上位への変更・体験中の変更。P18) ときは、新しい購入の 1 つを権利にし、ほかを先に終わり (`expired`) として写す (§8.1 `selectStoreSubscriptions` の `supersededAt`。S36)。
 3. **同期の API (`POST /api/billing/iap/sync`) を、Webhook と同じ写像を本人の操作から呼ぶ入口にする。** アプリは購入・復元・画面を開いたとき・前面復帰で呼ぶ。Webhook の再送が尽きても (P4)、本人が使う限り写る。さらに `GET /api/billing/subscription` が、期限を過ぎたストアの行を読むときに取り直す (遅延の再同期)。
 4. **商品の対応は表 `plan_store_products (store, product_id) → (plan_key, billing_interval, offered)`。** 主キーは `(store, product_id)` で、同じプランと間隔に古い商品 ID の行 (`offered = false`) を残せる (購入の履歴の商品を認識し続けるため。S28)。売る商品は `offered = true` の行で、`(plan_key, store, billing_interval)` ごとに 1 つ (部分 UNIQUE)。RevenueCat の entitlement の id は `plan_key` と同じ文字列 (`pro` / `family_basic` / `family_pro`) に決める (表は要らない)。カタログの API は、ストアごとに `offered = true` の行を返し、アプリは offerings の `product.identifier` と突き合わせた package だけを買える商品として出す。行が無い商品は出ない (R18)。取り直した契約に対応の行が無い商品は、利用者の行があればその `plan_key` のまま写し、無ければ live のときだけ `BILL_IAP_UNKNOWN_PRODUCT` で止め、live でなければ飛ばす (§8.1 `unmappedStoreSubscriptionDecision`)。
 5. **線引きは DB の値。** `ai_daily_limits` の 4 行 + 新設 `ai_plan_feature_caps` の行 (0 = 使えない) を `consume_ai_usage_at` が読む (上限に数えない機能の枝より前に読むので、自動の料理画像も同じ表で止まる)。止めたときの文と応答は `_shared/ai-daily-limit.ts` の 1 か所で決まり、Web の route・Edge の生成・AI 相談の自動実行が同じ関数を通る。献立の作成 (Edge の `save-meal`) が積む料理画像のジョブは数えない (F22) ので、AI へ送る唯一の場所 `process-meal-image-jobs` が、同意の判定のすぐ後に同じ表の `meal_image_auto` の値 (`ai_plan_feature_daily_cap`) を見て、0 なら送らずに取り消す (料理画像のジョブを積む 6 つの入口の、どこから来たジョブも 1 か所で止まる)。家族の門は `create_family_group` の 1 行の判定と `family_members` の BEFORE INSERT のトリガー。画面は `BillingSummary.features` (プランの上限の表) で錠と案内を出すだけで、判定は持たない。
@@ -321,7 +323,7 @@
 | S22 | 既存: Webhook と写像は `frozen_at` を見ない。`/frozen/billing` は `summary.source` がストアなら文だけ (§10.4)。アプリ: `AccountFrozenProvider` が凍結を知ると `AccountFrozenGate` が Stack を凍結の画面に畳む (origin/main `apps/mobile/app/_layout.tsx:111-128`)。カタログ・同期の API: middleware の凍結の分岐が `FROZEN_ALLOWED_API_PATHS` (変えない。`src/lib/auth/frozen.ts:60`) に無い `/api/billing/iap/catalog`・`/api/billing/iap/sync` を 403 `AUTH_ACCOUNT_FROZEN` で止める (route に届かない)。middleware の読み取りが失敗して素通りしたときは route の `requireUser` が `ForbiddenError('AUTH_ACCOUNT_FROZEN')` を投げ、`billingErrorResponse` が 403 (`src/lib/billing/http.ts` の既存の枝) を返す。どちらも `createRevenueCatGateway` より前で止まる。写し続けるのは Webhook (署名の受け口。凍結を見ない) と `GET /api/billing/subscription` (`requireUserAllowingFrozen`) の遅延の再同期 |
 | S23 | 1・2: 購入の取り直し (`period_type` trial) → 写像の 6. の INSERT が `trialing` の行に `trial_started_at = purchase_date`・`trial_ends_at = expires_date`・`trial_source = 'app_store'` を入れる (§6.4)。自動更新 OFF → `cancel_at_period_end=true` (S5 と同じ)。体験の終わりの取り直し → `expired`。UPDATE は `trial_started_at` / `trial_source` を `COALESCE` で保つ。Web: `previewCheckout` / `startCheckout` (`src/lib/billing/service.ts:73,97`) → `repository.hasUsedTrial(user, 'pro')` (`src/lib/billing/repository.ts:72-80`。同じ利用者・同じ `plan_key` で `trial_started_at` のある行を数える。行の出どころを見ないので I 行も入る。コードは変えない) = true → `trialDaysFor(7, true)` = 0 (`src/lib/billing/core.ts:446-448`)。`family_basic` は `hasUsedTrial(user, 'family_basic')` = false → 7 日。ストアでの買い直しは同じ (user, store, product) の行を再利用し、`trial_started_at` は最初の値を保つ (§7.3) |
 | S24 | 7・3: 審査官の購入 → 同期の API → 取り直し → `subscriptions['homegohan_pro_month']` (`is_sandbox: true`・`period_type` trial) → 2: `projectStoreSubscription` が `is_sandbox: true` の snapshot → 1: 行 INSERT (`trialing`・`iap_is_sandbox = true`)・`plan_key_cached='pro'`・監査の details に `is_sandbox: true`。Webhook (`environment: SANDBOX`) も環境を見ずに同じ取り直し (stale か同値)。route・同期・遅延の再同期のどれも環境で絞らない (§9.1) |
-| S25 | 2: Android の購入の取り直し → 写像の 5. が App Store の live 行を見つけ `BILL_LIVE_ROW_CONFLICT` → S13 と同じ記録と 409。運営: Play Console で Google Play の購入 (最新の注文) を返金 → 購読が終わる → RevenueCat の `EXPIRATION` (または `CANCELLATION`) → 取り直し → Google の商品は `refunded_at` あり (`cancelled` の履歴の行が INSERT。live でないので衝突しない)。App Store 同士は運営が利用者へ返金の申し込みを案内し、Apple が返金すると `CANCELLATION` → 取り直し → `refunded_at` → その行は `cancelled` |
+| S25 | 2: Android の購入の取り直し → 写像の 5. が App Store の live 行を見つけ `BILL_LIVE_ROW_CONFLICT` → S13 と同じ記録と 409。運営: Play Console で Google Play の購入 (最新の注文) を返金 → 購読が終わる → RevenueCat の `EXPIRATION` (または `CANCELLATION`) → 取り直し → Google の商品は `refunded_at` あり (`cancelled` の履歴の行が INSERT。live でないので衝突しない)。App Store 同士 (別の Apple ID): 取り直しに 2 つの App Store の商品が live で並ぶので、S36 と同じく `selectStoreSubscriptions` が新しい方を権利にし、古い方を `expired` (`p_source` に `:superseded`) で先に写す (衝突しない)。問い合わせを受けた運営は監査の `:superseded` の行で確かめ、利用者が一方を解約して Apple に返金を申し込む → Apple が返金すると `CANCELLATION` → 取り直し → `refunded_at` → その商品は `cancelled` で写り、残った方だけが live |
 | S26 | 5: `get_effective_plan` = 個人の契約も家族も無いので `organizations.plan` (`standard`) → `consume_ai_usage_at` が `ai_daily_limits(standard)` を読む = migration (5a) が free を 5 に書き換える前に写した値 (10)。`ai_plan_feature_caps` に `standard` の行は無い → 究極モードは呼び出し側の環境変数の既定・ほかの機能は 1 日の上限の合計だけ (§6.5 の「行の無い (plan, feature) は従来どおり」) |
 | S27 | 5: `weekly/request` → `consumeAiUsage(user, 'menu_generation')` (free の 1 回目・許可) → Edge `generate-menu-v5` → `saveMealToDb` が料理ごとにジョブを積む (`save-meal.ts:757-776`。変えない) → `process-meal-image-jobs` の `processJob` が同意の判定のあとに `ai_plan_feature_daily_cap(owner, 'meal_image_auto')` = 0 → `mealImageJobPlanDecision(0)` = `'locked'` → ジョブを `cancelled` (`last_error = 'skipped_plan'`)・料理を `writeDishImageFailure(reason 'skipped_plan')` で `failed` + `skipped_plan` (§8.8) → `RecipeModal` が `isMealImagePlanSkippedError` で有料プランの案内。Pro を買ったあとの保存し直し → route の `consumeAiUsage(user, 'meal_image_auto')` は `pro` の行が無いので安全弁で許可 → ジョブ → `ai_plan_feature_daily_cap(owner, ...)` = NULL → `'allowed'` → 画像を作る |
 | S28 | 2・4: 取り直し → `selectStoreSubscriptions` (古い商品: `expired`・mapping null / 新しい商品: `trialing`・mapping あり) → `listStoreSubscriptions(user)` に古い商品の行なし → `unmappedStoreSubscriptionDecision` = `'skip'` (`skipped_unknown` + 1) → 新しい商品を写像 → INSERT。古い商品の行がある場合は `'apply'` → snapshot の `plan_key = null` → 写像の 4. が既存の行の `plan_key` を使う (§6.4)。`plan_store_products` の主キーは `(store, product_id)` なので、同じプランと間隔に古い商品の行 (`offered = false`) と新しい行 (`offered = true`) を並べられ、カタログは `offered` の行だけを返す (§6.3・§8.1 `buildIapCatalog`) |
@@ -332,6 +334,7 @@
 | S33 | 2: `UNCANCELLATION` → 取り直し → `unsubscribe_detected_at` が null → `projectStoreSubscription` の `cancel_at_period_end = false` → 写像の UPDATE が `cancel_at = NULL`・`cancel_at_period_end = false` (§6.4。状態は同じなので監査なし) → `summarizeSubscription` の状態の文 (`billingStatusLines` / `subscriptionStatusLines`) は解約の予約の行を出さない |
 | S34 | 2・4: 取り直し → `subscriptions['homegohan_family_pro_month']` → `plan_store_products` (`app_store`・`homegohan_family_pro_month`) = `family_pro`・`month` → 写像の INSERT → `plan_key_cached = 'family_pro'` → 写像の 10. が代表者のグループを `family_pro` / 8 に (グループが無ければ、作るときに `create_family_group` の門が通り、作成のトリガーが入れる)。5: メンバーの `get_effective_plan` = `family_pro` → `ai_daily_limits(family_pro) = 50`・`ai_plan_feature_caps(family_pro, menu_generation) = 15`・`(family_pro, menu_generation_ultimate) = 3`。(b) `homegohan_family_basic:monthly-autorenewing` (`play_store`) → `family_basic`・`month` → `family_basic` / 4 |
 | S35 | 1 (退会は行の出どころを問わない): `apps/mobile/app/settings/account.tsx` の `deleteAccount` → `Alert.alert("アカウント削除", ACCOUNT_DELETE_CONFIRM_MESSAGE, [キャンセル, 定期購読の管理を開く, 削除])` (`ACCOUNT_DELETE_CONFIRM_MESSAGE` = 取り消しの文 + `STORE_SUBSCRIPTION_DELETION_NOTICE`。§10.4)。「定期購読の管理を開く」→ `Linking.openURL(STORE_SUBSCRIPTION_MANAGEMENT_URL[DEVICE_PURCHASE_STORE])` → `resolve(false)` (削除の API を呼ばず、`deletingRef` と `deleting` を戻す)。「削除」→ 既存の `POST /api/account/delete` → `src/lib/account-deletion.ts` の段階 `billing` は Stripe の id の無いストアの行を解約しない → 利用者の削除で行が CASCADE → 次の取り直しの写像は `user_deleted` (§6.4 の 1.) で何も書かない。Web の 3 つの入口は同じ定数を `<p>` で出すだけ (§10.4 の表) |
+| S36 | 2: 変更の合図 (`PRODUCT_CHANGE` / `INITIAL_PURCHASE`) か同期の API → 取り直し → `subscriptions` = { `homegohan_pro_month` (`period_type` trial・`expires_date` = 体験の終わり・live), `homegohan_family_pro_month` (`purchase_date` = 変更の時刻・live) } → `selectStoreSubscriptions` が `app_store` の live を 2 つ見つけ (`SUPERSEDE_WITHIN_GROUP_STORES`)、`compareStoreSubscriptionRecency` で `purchase_date` の新しい家族 Pro を権利にし、個人 Pro に `supersededAt` = 家族 Pro の `purchase_date` を付けて先に並べる → `syncStoreSubscriber` の写像 1 回目 (`p_source` = `iap_sync:superseded`): `projectStoreSubscription` が `expired`・`expires_date` = `supersededAt`・`cancel_at_period_end = false` の snapshot → 個人 Pro の行を UPDATE (`expired`・`current_period_end` = 変更の時刻・`trial_started_at` は保つ・`plan_key_cached` NULL・監査 `subscription_status_changed` の `details.source` = `iap_sync:superseded`) → 写像 2 回目: 家族 Pro の行を INSERT (`active`。ストアが体験を付けたなら `trialing`)。写像の 5. は個人 Pro の行が live でないので衝突しない → `plan_key_cached = 'family_pro'` → 5: `create_family_group` の門が通る。以後の取り直しでも同じ snapshot (状態は同じなので監査なし)。個人 Pro の体験の期限が過ぎれば `deriveStoreStatus` も `expired`。Google Play の 2 つの live は `SUPERSEDE_WITHIN_GROUP_STORES` に入らないので写像の 5. の `BILL_LIVE_ROW_CONFLICT` のまま (S25) |
 
 ---
 
@@ -644,7 +647,9 @@ BEGIN
 
   v_live := v_status IN ('trialing', 'active', 'past_due');
 
-  -- 5. 同じ利用者の別の live 行 (Stripe の契約・手動付与・別のストアの契約) があれば失敗させる (二重購読の防止。S13)
+  -- 5. 同じ利用者の別の live 行 (Stripe の契約・手動付与・別のストアの契約) があれば失敗させる (二重購読の防止。S13)。
+  --    同じ App Store のグループの 2 つの live (上位への変更・体験中の変更) は、TS (billing/03 §8.1 selectStoreSubscriptions の
+  --    supersededAt) が古い方を先に expired の snapshot で写してから新しい方を写すので、ここでは衝突しない (§7.3・S36)
   IF v_live THEN
     SELECT s.id INTO v_other_live
       FROM public.personal_subscriptions AS s
@@ -1052,14 +1057,14 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 
 ### 7.3 状態遷移表 (I 行: 状態 × 出来事 → 遷移先・ガード・副作用)
 
-取り直した `subscriptions[<product_id>]` から状態を決める規則 (`deriveStoreStatus`。§8.1): `refunded_at` あり → `cancelled` / `expires_date` が無い → `active` / `expires_date` > now → (`billing_issues_detected_at` あり → `past_due`、`period_type` が `trial` → `trialing`、それ以外 → `active`) / `expires_date` ≤ now かつ `grace_period_expires_date` > now → `past_due` (ストアの猶予期間。P13) / それ以外 (`expires_date` ≤ now で猶予が無いか尽きた) → `expired`。`cancel_at_period_end` = `unsubscribe_detected_at` あり。イベントの種類は遷移を決めない (すべて取り直しの合図)。
+取り直した `subscriptions[<product_id>]` から状態を決める規則 (`deriveStoreStatus`。§8.1): `refunded_at` あり → `cancelled` / `expires_date` が無い → `active` / `expires_date` > now → (`billing_issues_detected_at` あり → `past_due`、`period_type` が `trial` → `trialing`、それ以外 → `active`) / `expires_date` ≤ now かつ `grace_period_expires_date` > now → `past_due` (ストアの猶予期間。P13) / それ以外 (`expires_date` ≤ now で猶予が無いか尽きた) → `expired`。`cancel_at_period_end` = `unsubscribe_detected_at` あり。イベントの種類は遷移を決めない (すべて取り直しの合図)。同じ取り直しに App Store の商品が 2 つ以上 live で並ぶとき (本冊の 6 商品は 1 つの Subscription Group。§17.2) は、`compareStoreSubscriptionRecency` で最も新しい 1 つだけを上の規則で写し、ほかは置き換えられた購読として `expired` (`expires_date` = 新しい購読の `purchase_date`・`cancel_at_period_end = false`) で先に写す (`selectStoreSubscriptions` の `supersededAt`。下の「同じグループの 2 つの live」の行)。Google Play はこの規則を当てない (`SUPERSEDE_WITHIN_GROUP_STORES`)。
 
 | 現在 | 出来事 (RevenueCat の合図・本人の操作) | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
 | – (行なし) | `INITIAL_PURCHASE` / 同期 (期間内・trial) | `trialing` | 別の live 行なし・商品の対応の行あり | INSERT・`plan_key_cached`・家族グループ・監査 `subscription_created` (info)・`trial_started_at` / `trial_ends_at` / `trial_source`。最初の取り直しで `unsubscribe_detected_at` があれば `cancel_at_period_end = true`・`cancel_at = expires_date` も INSERT に入れる (§6.4 の 6.) |
 | – | 同上 (期間内・normal / intro) | `active` | 同上 | INSERT・`plan_key_cached`・家族グループ・監査 `subscription_created` (info)。`unsubscribe_detected_at` があれば `cancel_at_period_end = true`・`cancel_at = expires_date` |
 | – | 同上 (最初の取り直しで `billing_issues_detected_at` があり期間内、または `expires_date` ≤ now で `grace_period_expires_date` > now。`INITIAL_PURCHASE` の Webhook が届かず、最初の同期が `BILLING_ISSUE` の後になったとき) | `past_due` | 同上 | INSERT・`past_due_since = now()`・`plan_key_cached`・家族グループ (権利は続く)・監査 `subscription_created` (severity **warn**)。`unsubscribe_detected_at` があれば `cancel_at_period_end = true`・`cancel_at = expires_date` |
-| – | 同上だが別の live 行あり (S / M / 別の I) | – | — | `BILL_LIVE_ROW_CONFLICT` → Webhook `failed` + 監査 `system.revenuecat.event_failed` (warn) / 同期 409 (S13) |
+| – | 同上だが別の live 行あり (S / M / 別のストアの I / 同じ Google Play の別の商品の I) | – | — | `BILL_LIVE_ROW_CONFLICT` → Webhook `failed` + 監査 `system.revenuecat.event_failed` (warn) / 同期 409 (S13・S25)。同じ App Store の別の商品の I 行は、取り直しにその商品も live で並んでいれば下の「同じグループの 2 つの live」の行で先に `expired` になるので、ここには来ない |
 | – | 取り直したが `subscriptions` に当社の商品が無い (購入していない・別の app_user_id) | – | — | 何もしない (`no_subscription: true` を TS が返す。§8.4) |
 | – | 取り直した live な商品 (trialing / active / past_due) が `plan_store_products` に無い | – | 利用者の行が無い (`unmappedStoreSubscriptionDecision` = `reject`) | `BILL_IAP_UNKNOWN_PRODUCT` → Webhook `failed` / 同期 422 (S15)。運営が行を足すと次の同期で上の行のとおり INSERT |
 | – | 取り直した live でない商品 (expired / cancelled) が `plan_store_products` に無い | – | 利用者の行が無い (`skip`) | 何もしない (`skipped_unknown` + 1。履歴の行を作らない。S28) |
@@ -1077,9 +1082,11 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | `trialing` / `active` / `past_due` | `EXPIRATION` (期間末・猶予の終わり・Google の一時停止) か、猶予の尽きたあとの取り直し | `expired` | `expires_date` ≤ now かつ (`grace_period_expires_date` が無いか ≤ now) | `plan_key_cached` を再計算 (NULL)・家族グループ `free` / 4・監査 |
 | `trialing` / `active` / `past_due` | `CANCELLATION` (`CUSTOMER_SUPPORT` = 返金) | `cancelled` | `refunded_at` あり | `cancelled_at=refunded_at`・同上 |
 | `expired` / `cancelled` | 同じ商品を買い直す (`INITIAL_PURCHASE` / `RENEWAL`) | `trialing` / `active` | 別の live 行なし | UPDATE (同じ (user, store, product) の行を再利用。`trial_started_at` は最初の値を保つ) |
-| `active` (月額) | `PRODUCT_CHANGE` (年額へ) | 月額の行は期限で `expired`、年額の商品は新しい行 | 年額の行の INSERT 時に月額の行が live なら `BILL_LIVE_ROW_CONFLICT` | 取り直しの `subscriptions` には両方の商品が入る。TS は live でないものを先に、次に `expires_date` の早い順に写し (§8.1 `selectStoreSubscriptions`・§8.4)、月額の行が先に `expired` になってから年額を INSERT する (同じ取り直しの中で順に適用) |
+| `active` (月額) | `PRODUCT_CHANGE` (年額へ。App Store の同じレベルで期間の違う crossgrade なので期間の終わりに効く。P18) | 月額の行は期限で `expired`、年額の商品は新しい行 | 取り直しで月額がまだ live に見えれば、下の「同じグループの 2 つの live」の行 (`purchase_date` の新しい年額が権利・月額は置き換えられて `expired`) | 取り直しの `subscriptions` には両方の商品が入る。TS は live でないものを先に、次に `expires_date` の早い順に写し (§8.1 `selectStoreSubscriptions`・§8.4)、月額の行が先に `expired` になってから年額を INSERT する (同じ取り直しの中で順に適用) |
 | `trialing` (月額) | `PRODUCT_CHANGE` (年額へ) | 上の `active` (月額) の行と同じ (月額の行は取り直しで期限を過ぎた時点で `expired`、年額の商品は新しい行) | 同上 | 順は上の行と同じ。年額の行の status は年額の取り直しの `period_type` で決まる (`trial` なら `trialing`、それ以外は `active`。§8.1 `deriveStoreStatus`)。月額の行の `trial_started_at` は保つので、Web の同じ `plan_key` の試用は付かない (S23) |
-| `past_due` (月額) | `PRODUCT_CHANGE` (年額へ) | 月額の行は取り直しの姿のまま (`past_due`。回復しなければ `EXPIRATION` で `expired`)、年額の商品は取り直しに現れた時点で新しい行 | 同上 (年額の行の INSERT 時に月額の行が live なら `BILL_LIVE_ROW_CONFLICT`) | 順は上の行と同じ (live でないものが先、次に `expires_date` の早い順) |
+| `past_due` (月額) | `PRODUCT_CHANGE` (年額へ) | 月額の行は、年額が取り直しに live で現れるまでは取り直しの姿のまま (`past_due`。回復しなければ `EXPIRATION` で `expired`)。年額が live で現れたら年額は新しい行、月額は置き換えられて `expired` | 同上 (年額と月額が両方 live なら下の「同じグループの 2 つの live」の行) | 順は上の行と同じ (live でないもの・置き換えられたものが先、次に `expires_date` の早い順) |
+| `trialing` / `active` / `past_due` (App Store の商品 A) | 同じグループの別の商品 B への変更が効いた (上位への変更・期間が同じ crossgrade はすぐ、体験中の上位への変更は A の体験を残したまま。P18)。取り直しの `subscriptions` に A と B が両方 live で並ぶ (S36) | A: `expired` / B: 上の「– (行なし)」の規則 (B の行があれば取り直しの姿のとおり) | ストアが `app_store` (`SUPERSEDE_WITHIN_GROUP_STORES`)・A と B が両方 live (`deriveStoreStatus`)・B が `compareStoreSubscriptionRecency` で新しい (`purchase_date` の新しい方。同じなら `expires_date` の遅い方、それも同じなら `product_id` の辞書順で後ろ) | `selectStoreSubscriptions` が A に `supersededAt` = B の `purchase_date` を付けて先に並べる → A を `expired` で UPDATE (`current_period_end` = B の `purchase_date`・`cancel_at_period_end = false`・`cancel_at = NULL`・`trial_started_at` は保つ。`p_source` は `<source>:superseded` なので監査 `subscription_status_changed` の `details.source` で見分けられる) → B を写す (A が live でないので写像の 5. は衝突しない)。`plan_key_cached` は B の `plan_key`。A と B の家族プランの違いは写像の 7. のとおり (A が家族プランならグループは一度 `free` / 4、B が家族プランなら B の値)。以後の取り直しで A がまだ live に見えても同じ snapshot (状態は同じなので監査なし)。A の行がまだ無い (A を写す前に変えた) ときは A を `expired` の履歴の行として INSERT し、`trial_started_at` は入らない (§18 の 5 と同じく、Web の試用の 1 回の数えに入らないことを許容)。対応の行も利用者の行も無い A は `unmappedStoreSubscriptionDecision` が `skip` (権利にしないので履歴の行を作らない) |
+| `trialing` / `active` / `past_due` (Google Play の商品 A) | 同じ Google Play の別の商品 B も live (二重購読。Google Play の置き換えは当社のアプリの購入の流れからしか始まらず (P18)、当社のアプリは契約中は購入のカードを出さない。§10.6) | A: 同じ / B: 作らない | — | 写像の 5. が `BILL_LIVE_ROW_CONFLICT` (S25。§13.3 の Google Play の行で運営が返金) |
 | 任意 | `TRANSFER` (別の利用者へ移った) | 移動元: `expired` (取り直しの `subscriptions` から消える・または期限切れ) / 移動先: 上の「– (行なし)」の規則 | 移動先に別の live 行があれば `BILL_LIVE_ROW_CONFLICT` | 両方の利用者を取り直す (§8.4)。移動元が `subscriptions` に商品を持たなくなったときは、移動元の live な I 行を `expired` にする (TS が `expires_date=now` の snapshot を作る。§8.1 `projectMissingSubscription`。行の `iap_is_sandbox` と `billing_interval` は snapshot に引き継いで保つ) |
 | 任意 | 取り直しが古い (`iap_synced_at` ≥ `p_fetched_at`) | 同じ | — | `skipped: 'stale'` |
 | 任意 | 退会 (`user_deleted`) | 行は CASCADE で消える | — | 以後の Webhook は `skipped: 'user_deleted'`・200 |
@@ -1101,7 +1108,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | §8.3 `revenuecat-gateway.ts` / `iap-repository.ts` | `src/lib/billing/` (新設) | `place=` |
 | §8.4 `iap-service.ts` | `src/lib/billing/iap-service.ts` (新設) | `place=` |
 | §8.5 route 3 本 | `src/app/api/webhooks/revenuecat/route.ts`・`src/app/api/billing/iap/catalog/route.ts`・`src/app/api/billing/iap/sync/route.ts` (新設)、`src/app/api/billing/subscription/route.ts` (差分) | `place=` / `insert=` |
-| §8.6 `public-plans.ts` (全文の置き換え)・`core.ts` の差分 | 既存 | `place=` / `insert=` |
+| §8.6 `public-plans.ts` (全文の置き換え)・`core.ts` の差分・`repository.ts` の差分 (`findPlanFeatures`) | 既存 | `place=` / `insert=` |
 | §8.7 `env.ts` の差分 | 既存 | `insert=` |
 | §8.8 `ai-daily-limit.ts` (全文の置き換え) | `supabase/functions/_shared/ai-daily-limit.ts` (Web・Edge・モバイル共用。import なし) | 単独 (import なし) |
 | §8.8 `meal-image.ts` の差分 | `supabase/functions/_shared/meal-image.ts`・`lib/meal-image.ts` (再 export) | `insert=` |
@@ -1165,6 +1172,14 @@ export const IAP_SYNC_SOURCE = 'iap_sync';
 export const IAP_LAZY_RESYNC_SOURCE = 'iap_lazy_resync';
 export function revenueCatWebhookSource(eventId: string): string {
   return `revenuecat:${eventId}`;
+}
+/**
+ * 同じグループの新しい購読に置き換えられた購読を終わらせる写像の p_source の後ろに付ける印 (§7.3 の「同じグループの 2 つの live」の行)。
+ * 監査 (system.billing.subscription_status_changed) の details.source で、置き換えによる終わりを見分ける (§13.3 の運営の処置)
+ */
+export const IAP_SUPERSEDED_SOURCE_SUFFIX = ':superseded';
+export function supersededStoreSource(source: string): string {
+  return `${source}${IAP_SUPERSEDED_SOURCE_SUFFIX}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1430,24 +1445,30 @@ export interface ProjectStoreSubscriptionInput {
   sub: RevenueCatSubscription;
   /** plan_store_products の行 (無ければ null) */
   mapping: PlanStoreProductRow | null;
+  /**
+   * selectStoreSubscriptions の supersededAt。null でなければ、同じグループの新しい購読に置き換えられた購読として、
+   * この時刻を expires_date にした expired の snapshot を作る (§7.3 の「同じグループの 2 つの live」の行)
+   */
+  supersededAt: string | null;
   nowMs: number;
 }
 
 export function projectStoreSubscription(input: ProjectStoreSubscriptionInput): StoreSubscriptionSnapshot {
   const { sub } = input;
   const transactionId = sub.store_transaction_id;
+  const status: StoreSubscriptionStatus = input.supersededAt === null ? deriveStoreStatus(sub, input.nowMs) : 'expired';
   return {
     user_id: input.userId,
     iap_store: input.store,
     iap_product_id: input.productId,
     plan_key: input.mapping?.plan_key ?? null,
     billing_interval: input.mapping?.billing_interval ?? null,
-    iap_status: deriveStoreStatus(sub, input.nowMs),
+    iap_status: status,
     is_sandbox: sub.is_sandbox ?? false,
     purchase_date: sub.purchase_date,
     original_purchase_date: sub.original_purchase_date ?? null,
-    expires_date: sub.expires_date ?? null,
-    cancel_at_period_end: parseMs(sub.unsubscribe_detected_at) !== null && deriveStoreStatus(sub, input.nowMs) !== 'expired',
+    expires_date: input.supersededAt ?? sub.expires_date ?? null,
+    cancel_at_period_end: parseMs(sub.unsubscribe_detected_at) !== null && status !== 'expired',
     refunded_at: sub.refunded_at ?? null,
     store_transaction_id: transactionId === null || transactionId === undefined ? null : String(transactionId),
   };
@@ -1491,11 +1512,49 @@ export interface SelectedStoreSubscription {
   store: IapStore;
   sub: RevenueCatSubscription;
   mapping: PlanStoreProductRow | null;
+  /**
+   * 同じグループの新しい購読に置き換えられた (権利にしない) なら、置き換えた購読の purchase_date (この購読を終わらせる時刻)。
+   * それ以外は null (§7.3 の「同じグループの 2 つの live」の行。S36)
+   */
+  supersededAt: string | null;
 }
 
 /**
- * 取り直した subscriptions のうち本冊のストア (app_store / play_store) のものを、適用する順 (live でないものが先、次に expires_date の早い順) に並べる。
- * 順が要る理由: 月額 → 年額の変更 (§7.3 PRODUCT_CHANGE) で、月額の行を先に expired にしてから年額を INSERT しないと BILL_LIVE_ROW_CONFLICT になる
+ * 同じストアの取り直しに 2 つ以上の商品が live で並ぶとき、新しい 1 つだけを権利にし、ほかを置き換えられた購読として終わらせるストア
+ * (§7.3 の「同じグループの 2 つの live」の行・S36)。
+ *   - App Store: 本冊の 6 商品は 1 つの Subscription Group (§17.2 の homegohan_plans) にあり、上位への変更と期間が同じ crossgrade は
+ *     すぐに効き、体験 (introductory offer) の間の上位への変更では Apple が体験を取り消さずに残す (P18)。2 つの live は二重購読ではない
+ *   - Google Play は入れない: 購読の置き換えはアプリの購入の流れからしか始まらず (P18)、当社のアプリは契約中に購入のカードを出さない
+ *     (§10.6)。2 つの live は二重購読なので、写像の 5. の BILL_LIVE_ROW_CONFLICT のまま (S25)
+ */
+export const SUPERSEDE_WITHIN_GROUP_STORES = ['app_store'] as const satisfies readonly IapStore[];
+
+/**
+ * 同じグループの live な 2 つの購読のどちらを権利にするかの順 (正の数 = a のほうが新しい = a を権利にする)。
+ *   1. purchase_date の新しい方 (上位への変更・crossgrade で新しく始まった購読。更新でも進む)
+ *   2. expires_date の遅い方 (無い = 期限なしを最も遅いとする)
+ *   3. product_id の辞書順で後ろの方 (同じ取り直しで必ず同じ答えにする)
+ */
+export function compareStoreSubscriptionRecency(
+  a: Pick<SelectedStoreSubscription, 'productId' | 'sub'>,
+  b: Pick<SelectedStoreSubscription, 'productId' | 'sub'>,
+): number {
+  const purchaseA = parseMs(a.sub.purchase_date) ?? 0;
+  const purchaseB = parseMs(b.sub.purchase_date) ?? 0;
+  if (purchaseA !== purchaseB) return purchaseA - purchaseB;
+  const expiresA = parseMs(a.sub.expires_date) ?? Number.POSITIVE_INFINITY;
+  const expiresB = parseMs(b.sub.expires_date) ?? Number.POSITIVE_INFINITY;
+  if (expiresA !== expiresB) return expiresA < expiresB ? -1 : 1;
+  if (a.productId === b.productId) return 0;
+  return a.productId < b.productId ? -1 : 1;
+}
+
+/**
+ * 取り直した subscriptions のうち本冊のストア (app_store / play_store) のものを、適用する順 (live でないもの・置き換えられたものが先、
+ * 次に expires_date の早い順) に並べる。SUPERSEDE_WITHIN_GROUP_STORES のストアで live が 2 つ以上なら、compareStoreSubscriptionRecency で
+ * 最も新しい 1 つを除いた購読に supersededAt (= 最も新しい購読の purchase_date) を付ける。
+ * 順が要る理由: 月額 → 年額の変更 (§7.3 PRODUCT_CHANGE) と同じグループの中の変更 (S36) で、古い行を先に expired にしてから新しい行を
+ * 写さないと、写像の 5. が BILL_LIVE_ROW_CONFLICT にする
  */
 export function selectStoreSubscriptions(
   info: RevenueCatCustomerInfo,
@@ -1508,25 +1567,34 @@ export function selectStoreSubscriptions(
   for (const [productId, sub] of Object.entries(info.subscriber.subscriptions)) {
     const store = REVENUECAT_STORE_TO_IAP_STORE[sub.store.toLowerCase()];
     if (store === undefined) continue;
-    selected.push({ productId, store, sub, mapping: byStoreAndProduct.get(`${store}:${productId}`) ?? null });
+    selected.push({ productId, store, sub, mapping: byStoreAndProduct.get(`${store}:${productId}`) ?? null, supersededAt: null });
   }
-  const rank = (entry: SelectedStoreSubscription): number => (isLiveStoreStatus(deriveStoreStatus(entry.sub, nowMs)) ? 1 : 0);
+  const isLive = (entry: SelectedStoreSubscription): boolean => isLiveStoreStatus(deriveStoreStatus(entry.sub, nowMs));
+  for (const store of SUPERSEDE_WITHIN_GROUP_STORES) {
+    const live = selected.filter((entry) => entry.store === store && isLive(entry));
+    if (live.length < 2) continue;
+    const winner = live.reduce((best, entry) => (compareStoreSubscriptionRecency(entry, best) > 0 ? entry : best));
+    for (const entry of live) if (entry !== winner) entry.supersededAt = winner.sub.purchase_date;
+  }
+  const rank = (entry: SelectedStoreSubscription): number => (entry.supersededAt === null && isLive(entry) ? 1 : 0);
   return selected.sort((a, b) => rank(a) - rank(b) || (parseMs(a.sub.expires_date) ?? 0) - (parseMs(b.sub.expires_date) ?? 0));
 }
 
 /**
  * plan_store_products に対応の行が無い商品の扱い (S15・S28)。
  *   - 対応の行がある、または利用者の行がすでにある → apply (行があれば SQL がその行の plan_key を使う。§6.4 の 4.)
+ *   - 対応の行も利用者の行も無く、置き換えられた購読 (supersededAt あり) → skip (権利にしないので履歴の行を作らない。S36)
  *   - 対応の行も利用者の行も無く、live (trialing / active / past_due) → reject (BILL_IAP_UNKNOWN_PRODUCT。運営が行を足すまで写せない)
  *   - 対応の行も利用者の行も無く、live でない (期限切れ・返金済みの履歴) → skip (履歴の行を作らない。ほかの商品の同期を止めない)
  */
 export type UnmappedStoreSubscriptionDecision = 'apply' | 'skip' | 'reject';
 export function unmappedStoreSubscriptionDecision(
-  entry: Pick<SelectedStoreSubscription, 'sub' | 'mapping'>,
+  entry: Pick<SelectedStoreSubscription, 'sub' | 'mapping' | 'supersededAt'>,
   hasExistingRow: boolean,
   nowMs: number,
 ): UnmappedStoreSubscriptionDecision {
   if (entry.mapping !== null || hasExistingRow) return 'apply';
+  if (entry.supersededAt !== null) return 'skip';
   return isLiveStoreStatus(deriveStoreStatus(entry.sub, nowMs)) ? 'reject' : 'skip';
 }
 
@@ -1914,6 +1982,7 @@ import {
   revenueCatWebhookSource,
   selectStoreSubscriptions,
   storeSubscriptionKey,
+  supersededStoreSource,
   unmappedStoreSubscriptionDecision,
   type IapRepository,
   type RevenueCatEvent,
@@ -1941,13 +2010,15 @@ async function audit(repository: IapRepository, entry: Parameters<IapRepository[
 
 /**
  * 利用者 1 人のストアの契約を RevenueCat から取り直して写す (すべての写しの入口。Webhook・同期の API・遅延の再同期)。
- *   1. GET /v1/subscribers/{user id} → 本冊のストアの契約を適用する順に並べる (live でないものが先)
+ *   1. GET /v1/subscribers/{user id} → 本冊のストアの契約を適用する順に並べる (live でないもの・同じ App Store のグループの新しい購読に
+ *      置き換えられたもの (supersededAt。§7.3・S36) が先)
  *   2. 利用者のストアの行を全部読む。plan_store_products に対応の行が無い商品は unmappedStoreSubscriptionDecision で振り分ける:
  *      利用者の行があれば写す (SQL がその行の plan_key を使う)・無くて live なら BILL_IAP_UNKNOWN_PRODUCT (何も書かずに止める。
  *      運営が行を足したあとの同期で写る。S15)・無くて live でなければ飛ばす (S28)
  *   3. 取り直した subscriptions に無い live なストアの行 (TRANSFER で移った・消えた) は expired の snapshot で終わらせる
  *      (行の iap_is_sandbox と billing_interval を引き継ぐ)
- *   4. 1 件ずつ billing_apply_store_subscription。BILL_LIVE_ROW_CONFLICT はそのまま投げる (route が 409 / failed にする。S13)
+ *   4. 1 件ずつ billing_apply_store_subscription。置き換えられた購読は expired の snapshot と p_source = <source>:superseded で写す。
+ *      BILL_LIVE_ROW_CONFLICT はそのまま投げる (route が 409 / failed にする。S13)
  */
 export async function syncStoreSubscriber(deps: IapDeps, userId: string, source: string): Promise<StoreSyncOutcome> {
   const now = (deps.now ?? (() => new Date()))();
@@ -1982,8 +2053,12 @@ export async function syncStoreSubscriber(deps: IapDeps, userId: string, source:
     if (result.applied) outcome.ended += 1;
   }
   for (const entry of toApply) {
-    const snapshot = projectStoreSubscription({ userId, store: entry.store, productId: entry.productId, sub: entry.sub, mapping: entry.mapping, nowMs });
-    const result = await deps.repository.applyStoreSubscription({ snapshot, fetchedAt: now, source });
+    const snapshot = projectStoreSubscription({
+      userId, store: entry.store, productId: entry.productId, sub: entry.sub, mapping: entry.mapping, supersededAt: entry.supersededAt, nowMs,
+    });
+    // 置き換えによる終わりは、監査の details.source で見分けられるように印を付ける (§13.3 の運営の処置)
+    const entrySource = entry.supersededAt === null ? source : supersededStoreSource(source);
+    const result = await deps.repository.applyStoreSubscription({ snapshot, fetchedAt: now, source: entrySource });
     if (result.applied) outcome.applied += 1;
     else if (result.skipped === 'stale') outcome.stale += 1;
   }
@@ -2313,9 +2388,13 @@ export interface PublicPlan extends PurchasablePlan {
 //   features: PlanFeatures;
 // (d) 新しい型 (BillingSummary の上)
 export interface PlanFeatures {
-  /** ai_daily_limits の値 (プランの行、無ければ free の行。NULL = 無制限) */
+  /** ai_daily_limits の値 (プランの行、無ければ free の行。NULL = 無制限。consume_ai_usage_at の c_default_plan と同じ倒し方) */
   ai_daily_limit: number | null;
-  /** ai_plan_feature_caps の行 (feature → daily_cap。0 = 使えない・NULL = 機能ごとの上限なし。行の無い機能は入らない) */
+  /**
+   * ai_plan_feature_caps のそのプランの行だけ (feature → daily_cap。0 = 使えない・NULL = 機能ごとの上限なし。行の無い機能は入らない)。
+   * free の行には倒さない (DB の consume_ai_usage_at・ai_plan_feature_daily_cap も c.plan_key = いまのプラン だけを見る)。
+   * 行の無いプラン (組織の plan の standard・org_* など) は {} で、画面の錠は出ない (S26)
+   */
   ai_feature_caps: Record<string, number | null>;
 }
 export const EMPTY_PLAN_FEATURES: PlanFeatures = { ai_daily_limit: null, ai_feature_caps: {} };
@@ -2345,9 +2424,35 @@ export function summarizeSubscription(row: SubscriptionRowView | null, hasCustom
   };
 }
 // (f) BILLING_ERROR_MESSAGES は変えない (EXT_STRIPE_NOT_CONFIGURED は #1911 が「お支払いを受け付けていません」に直し済み。core.ts:241)
-// (g) BillingRepository に 1 本足す (repository.ts は ai_daily_limits と ai_plan_feature_caps を service_role で読む。プランの行が無ければ free の行)
+// (g) BillingRepository に 1 本足す (実装は repository.ts。下のブロック。1 日の上限はプランの行、無ければ free の行。
+//     機能ごとの上限はそのプランの行だけで、free の行には倒さない)
 //   findPlanFeatures(planKey: string): Promise<PlanFeatures>;
 // (h) BILLING_STATUS_TEXT は変えない。ストアの行の 1 行目も同じ文 (「ご利用中」ほか)
+```
+
+```ts
+// tsc:skip insert=src/lib/billing/repository.ts — 差分 3 つ: (1) @/lib/billing/core の import に FREE_PLAN_KEY と type PlanFeatures を足す。(2) SUBSCRIPTION_VIEW_COLUMNS の末尾に ', iap_store, iap_synced_at' を足す。(3) createBillingRepository が返すオブジェクトの hasUsedTrial の下に次を足す
+    async findPlanFeatures(planKey: string): Promise<PlanFeatures> {
+      // 1 日の上限: プランの行、無ければ free の行 (consume_ai_usage_at の「そのプランの行。無ければ 'free' の行 (それも無ければ NULL =
+      // 無制限)」と同じ。行があって daily_limit が NULL なら無制限のまま)
+      const { data: limitRows, error: limitError } = await admin
+        .from('ai_daily_limits')
+        .select('plan_key, daily_limit')
+        .in('plan_key', [planKey, FREE_PLAN_KEY]);
+      if (limitError) throw limitError;
+      const ownLimit = (limitRows ?? []).find((row) => row.plan_key === planKey);
+      const freeLimit = (limitRows ?? []).find((row) => row.plan_key === FREE_PLAN_KEY);
+      // 機能ごとの上限: そのプランの行だけ。free の行には倒さない (consume_ai_usage_at と ai_plan_feature_daily_cap は c.plan_key = いまのプランだけを
+      // 見るので、行の無いプランは機能ごとの上限なし。組織の plan (standard など) の究極モードは環境変数の既定で使える。S26)
+      const { data: capRows, error: capError } = await admin
+        .from('ai_plan_feature_caps')
+        .select('feature, daily_cap')
+        .eq('plan_key', planKey);
+      if (capError) throw capError;
+      const aiFeatureCaps: Record<string, number | null> = {};
+      for (const row of capRows ?? []) aiFeatureCaps[row.feature] = row.daily_cap;
+      return { ai_daily_limit: (ownLimit ?? freeLimit)?.daily_limit ?? null, ai_feature_caps: aiFeatureCaps };
+    },
 ```
 
 - `BillingSummary` の形は `packages/shared/src/billing-plans.ts` の `BillingSummaryWire` (モバイルが読む JSON の形。§8.9) と同じに保つ。`tests/billing-summary-wire.test.ts` (テスト 94) が、`summarizeSubscription` の戻り値を `BillingSummaryWire` の変数に代入できること (型) と `parseBillingSummaryWire` が null を返さないこと (値) を見る。
@@ -2797,13 +2902,20 @@ export function mealImageJobPlanDecision(cap: unknown): MealImageJobPlanDecision
 //   const outcome = await processJob(job, consentByUser, planByUser);
 // (c) processJob の引数に planByUser を足し、同意の判定の if ブロック (`if (!decision.allowed) { … }`) の直後に次を置く
 async function readMealImageJobPlanDecision(ownerId: string): Promise<MealImageJobPlanDecision> {
-  const { data, error } = await supabase.rpc("ai_plan_feature_daily_cap", { p_user_id: ownerId, p_feature: "meal_image_auto" });
-  if (error) {
-    // 読めなかったときは止めない (mealImageJobPlanDecision の注)。生のエラーは app_logs にだけ残す
-    logger.warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: error.code ?? null });
+  try {
+    const { data, error } = await supabase.rpc("ai_plan_feature_daily_cap", { p_user_id: ownerId, p_feature: "meal_image_auto" });
+    if (error) {
+      // 読めなかったときは止めない (mealImageJobPlanDecision の注)。生のエラーは app_logs にだけ残す
+      logger.warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: error.code ?? null });
+      return "allowed";
+    }
+    return mealImageJobPlanDecision(data);
+  } catch (cause: unknown) {
+    // RPC が投げた (接続の失敗など) ときも止めない。processJob の try より前で呼ぶので、ここで投げるとジョブが貸し出し中のまま残り、
+    // 同じ実行の残りのジョブも処理されない (processJobs に try が無い)。生のエラーは残さず名前だけ
+    logger.warn("料理画像のプランの門を読めなかったため、止めずに処理します", { ownerId, code: cause instanceof Error ? cause.name : null });
     return "allowed";
   }
-  return mealImageJobPlanDecision(data);
 }
 //   (processJob の中)
 //   let plan = planByUser.get(ownerId);
@@ -2822,7 +2934,8 @@ async function readMealImageJobPlanDecision(ownerId: string): Promise<MealImageJ
 ```
 
   - 料理は `writeDishImageFailure` (`utils.ts:190`) で `image_status: 'failed'`・`image_error: 'skipped_plan'` になる (同意の門と同じ書き方)。料理の画面は `isMealImagePlanSkippedError` で有料プランの案内を出す (下の `RecipeModal` の箇条)。料理を保存し直すと `needsImageRetry` (`failed`) でジョブを積み直し、有料プランになっていれば作る。
-  - `readMealImageJobPlanDecision` は `processJob` の外 (ファイルの関数) に置く。`ai_plan_feature_daily_cap` の EXECUTE は service_role だけで、この関数の `supabase` は service role の client (`index.ts` の既存の `createClient`)。
+  - `readMealImageJobPlanDecision` は `processJob` の外 (ファイルの関数) に置き、場所は `fetchPendingJobs` の定義の直後 (`Deno.serve(` より後ろ。`tests/edge-function-verify-jwt.test.ts` は `Deno.serve(` 以降で認証の呼び出しより前の `.rpc(` を探すが、認証 (`requireServiceRole`) は `Deno.serve` の本体の先頭にあるので当たらない)。`ai_plan_feature_daily_cap` の EXECUTE は service_role だけで、この関数の `supabase` は service role の client (`index.ts` の既存の `createClient`)。RPC がエラーを返したときも、投げたときも `"allowed"` を返し、例外を `processJob` の外へ出さない (§18 の 21)。
+  - ハンドラを本物で動かす既存のテスト `tests/process-meal-image-jobs-worker-edges.test.ts` は Supabase の client を `{ from, storage }` だけの偽物にしているので、偽物に `rpc` を足す (§16.1 の行。足さないと `supabase.rpc` が無く、上の `catch` が warn を 1 つ足し、warn の数を 1 と数える既存の it が赤になる)。
   - `tests/helpers/ai-consent-enforced-paths.ts` の `ENFORCED_EDGE['process-meal-image-jobs'].consent` の文 (`:390`) に「同意のあとに、ジョブの持ち主のプランの門 (ai_plan_feature_caps の meal_image_auto = 0 なら取り消す。billing/03 §8.8) も見る」を足す (文だけ。`recordedBy` は変えない。`tests/ai-usage-contract.test.ts:543-545` が `recordedBy` に `AI_QUEUE_TABLES` を求める)。
 
 - 4 本の route (`src/app/api/meals/route.ts:187`・`src/app/api/meals/[id]/route.ts:236`・`src/app/api/meal-plans/meals/route.ts:122`・`src/app/api/meal-plans/meals/[id]/route.ts:194`) と `src/lib/ai/consultation-action-executor.ts:838` の `const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';` を `const skipReason = mealImageSkipReasonOf(imageUsage);` にする (import を足す。`skipReason === 'rate_limit'` の分岐はそのまま)。`'plan'` のとき応答に `aiSkipped` は付かない (`aiDailyLimitSkippedField` が `planLocked` を見る)。
@@ -3612,7 +3725,7 @@ export function billingErrorMessageOf(error: unknown): string {
 ### 10.3 `/account/billing`・究極モードの錠・料理画像の作成 (Web)
 
 - `src/app/(main)/account/billing/page.tsx` (`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`planDisplayName` は `@homegohan/shared` から import): `const store = summary.manage_in_store;` が null でないとき、ボタン (Portal・解約・取り消し) を描かず、状態の文の下に「`{IAP_STORE_LABELS[store]}` でご契約中です。解約・お支払い方法の変更は `{IAP_STORE_LABELS[store]}` の定期購読の管理から行えます。」と、`STORE_SUBSCRIPTION_MANAGEMENT_URL[store]` への外部リンク「定期購読の管理を開く」(`target="_blank" rel="noopener"`)。`isNativeApp` では文だけ (リンクも出さない。アプリの購入の画面が受け持つ)。`planLabel` は `planDisplayName(summary.plan_key)` を出す。
-- 究極モードの錠 (`src/components/ai-assistant/V4GenerateModal.tsx`): `GET /api/billing/subscription` の `features.ai_feature_caps.menu_generation_ultimate` が `0` のとき、トグルを `aria-disabled` + 錠のアイコンにし、説明に「究極モードは有料プランでお使いいただけます」を出す (押しても ON にならない)。`features` が読めない (401・失敗) ときは錠を出さない (サーバの判定が最後の砦)。読むのは `src/hooks/useBillingSummary.ts` (新設。`export const BILLING_SUBSCRIPTION_API_PATH = '/api/billing/subscription';`・`export function useBillingSummary(enabled: boolean): BillingSummaryWire | null` = `enabled` が偽から真になるたびに `fetch(BILLING_SUBSCRIPTION_API_PATH)` を 1 回読み、`res.ok` なら本文の `data` を `@homegohan/shared` の `parseBillingSummaryWire` で読む。失敗・形が違うときは null。`SWR` は使わない) で、モーダルが開くたびに読む (`useBillingSummary(open)`)。
+- 究極モードの錠 (`src/components/ai-assistant/V4GenerateModal.tsx`): `GET /api/billing/subscription` の `features.ai_feature_caps.menu_generation_ultimate` が `0` のとき、トグルを `aria-disabled` + 錠のアイコンにし、説明に「究極モードは有料プランでお使いいただけます」を出す (押しても ON にならない)。`features` が読めない (401・失敗) ときは錠を出さない (サーバの判定が最後の砦)。`ai_plan_feature_caps` に行の無いプラン (組織の plan の `standard`・`org_*` など) は `ai_feature_caps` に `menu_generation_ultimate` のキーが無い (`findPlanFeatures` は free の行に倒さない。§8.6) ので錠を出さない (サーバも環境変数の既定で使える。S26)。読むのは `src/hooks/useBillingSummary.ts` (新設。`export const BILLING_SUBSCRIPTION_API_PATH = '/api/billing/subscription';`・`export function useBillingSummary(enabled: boolean): BillingSummaryWire | null` = `enabled` が偽から真になるたびに `fetch(BILLING_SUBSCRIPTION_API_PATH)` を 1 回読み、`res.ok` なら本文の `data` を `@homegohan/shared` の `parseBillingSummaryWire` で読む。失敗・形が違うときは null。`SWR` は使わない) で、モーダルが開くたびに読む (`useBillingSummary(open)`)。
 - 料理画像の作成 (`POST /api/ai/image/generate` を押す画面): 403 `AI_FEATURE_NOT_IN_PLAN` の本文の `error` (固定の文) をそのまま出す (既存の `daily-limit-client.ts` の経路。§8.8)。ボタンの錠は付けない (押して案内が出る)。
 
 ### 10.4 `/frozen/billing` と退会の画面
@@ -3935,7 +4048,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 | 1 | — | 段 A (DB: 価格・線引き・ストアの表)・段 B (サーバ。段 C の前提)・段 C (公開の面: 料金・特商法の販売の項目・FAQ・紹介ページ) のマージと本番の反映 (運営会社と特商法の会社情報は #1911 で公開済み) | なし (Stripe の申請には順 2 の規約とポリシーの有料の条文の公開も要る) | — |
 | 2 | cross/20 (#1901。規約とポリシーの作り込み) の実装のマージと、本冊の段 B のマージ (§11.0) | 段 E (規約とポリシーの有料の条文・版 `v2026.2`。§11) | 弁護士の確認 (cross/20 と同じ) | 確認のあと、施行日の前に運営のお知らせに予告を載せ、版を上げてデプロイ (再同意が走る) = 規約とポリシーの有料の条文の公開 (cross/20 §9.4) |
 | 3 | 順 1 と順 2 の本番の反映 (サイトに価格・有料の中身・特商法・規約とポリシーの有料の条文・解約と返金の条件・連絡先がそろっている状態。追記 1・P11) | — | **Stripe の本番の有効化** (事業の情報・銀行口座・サイトの URL。P11) | 承認後: Vercel に `STRIPE_SECRET_KEY` (`sk_live_`) と `STRIPE_WEBHOOK_SECRET` (#1113)。Stripe の Dashboard の設定 (billing/01 §17.1)。Product と Price を作り `PATCH /api/super-admin/plans/[id]` + `price-change` で `stripe_price_id` / `stripe_yearly_price_id` を入れる = **Web の販売開始** (`/pricing` に CTA が出る) |
-| 4 | — (順 1〜3 と並行してよい。ストアの契約・商品の作成は審査の提出ではない) | 段 B (サーバ: Webhook・同期・カタログ) と段 D (モバイル: 購入の画面) のマージ + EAS の開発ビルド (sandbox で購入の流れを確かめられる状態) | **App Store**: Paid Applications Agreement の署名・税と銀行の登録 → In-App Purchase Key (`.p8`) と Issuer ID の発行 (P7) → Subscription Group と 6 つの商品 (個人 Pro 月 / 年・家族 Basic 月 / 年・家族 Pro 月 / 年。商品 ID は §17.2 の表) の作成・価格 (Q-1)・ローカライズ・無料体験 (7 日。Introductory Offer)・審査用のスクリーンショット → ストアのメタデータ (§17.5: Privacy Policy URL・説明文の利用規約とプライバシーポリシーの URL・App のプライバシーの購入履歴。P16) **/ Google Play**: Google Payments の merchant profile → `eas build --profile production --platform android` で AAB を作り (`apps/mobile/eas.json` の `production` は `android.buildType: "app-bundle"`。`preview` は `"apk"` なので使わない)、`eas submit --profile production --platform android` で内部テストのトラックに下書きで上げる (同じファイルの `submit.production.android` は `track: "internal"`・`releaseStatus: "draft"`。`eas.json` は変えない。Billing Library 入り。P8) → 3 つの購読と base plan 6 つ (`monthly-autorenewing` / `annual-autorenewing`) + 無料体験の offer → アプリのコンテンツ (§17.5: プライバシー ポリシーの URL・データ セーフティの購入履歴。P16) → Google Cloud のサービスアカウントと権限 (P8。36 時間) **/ RevenueCat**: プロジェクト・iOS と Android のアプリ (bundle id `com.homegohan.app`)・`.p8` と Issuer ID・サービスアカウントの JSON・商品 6 つ (Google は `<subscription_id>:<base_plan_id>`)・Entitlement 3 つ (`pro` / `family_basic` / `family_pro`。それぞれに月額と年額の商品)・Offering `default` に 6 つの package・Webhook (URL `https://<サイト>/api/webhooks/revenuecat`・署名 ON・秘密を控える)・App Store Server Notifications と Google RTDN の接続 (推奨)・Restore behavior は既定のまま | 承認後: Vercel に `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`、EAS に `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` を登録 → `plan_store_products` に 6 行 (運営が SQL で INSERT。§17.2) → 本番のビルド (`eas build --profile production`) |
+| 4 | — (順 1〜3 と並行してよい。ストアの契約・商品の作成は審査の提出ではない) | 段 B (サーバ: Webhook・同期・カタログ) と段 D (モバイル: 購入の画面) のマージ + EAS の開発ビルド (sandbox で購入の流れを確かめられる状態) | **App Store**: Paid Applications Agreement の署名・税と銀行の登録 → In-App Purchase Key (`.p8`) と Issuer ID の発行 (P7) → Subscription Group と 6 つの商品 (個人 Pro 月 / 年・家族 Basic 月 / 年・家族 Pro 月 / 年。商品 ID とグループの中のレベル (家族 Pro が上位) は §17.2 の表) の作成・価格 (Q-1)・ローカライズ・無料体験 (7 日。Introductory Offer)・審査用のスクリーンショット → ストアのメタデータ (§17.5: Privacy Policy URL・説明文の利用規約とプライバシーポリシーの URL・App のプライバシーの購入履歴。P16) **/ Google Play**: Google Payments の merchant profile → `eas build --profile production --platform android` で AAB を作り (`apps/mobile/eas.json` の `production` は `android.buildType: "app-bundle"`。`preview` は `"apk"` なので使わない)、`eas submit --profile production --platform android` で内部テストのトラックに下書きで上げる (同じファイルの `submit.production.android` は `track: "internal"`・`releaseStatus: "draft"`。`eas.json` は変えない。Billing Library 入り。P8) → 3 つの購読と base plan 6 つ (`monthly-autorenewing` / `annual-autorenewing`) + 無料体験の offer → アプリのコンテンツ (§17.5: プライバシー ポリシーの URL・データ セーフティの購入履歴。P16) → Google Cloud のサービスアカウントと権限 (P8。36 時間) **/ RevenueCat**: プロジェクト・iOS と Android のアプリ (bundle id `com.homegohan.app`)・`.p8` と Issuer ID・サービスアカウントの JSON・商品 6 つ (Google は `<subscription_id>:<base_plan_id>`)・Entitlement 3 つ (`pro` / `family_basic` / `family_pro`。それぞれに月額と年額の商品)・Offering `default` に 6 つの package・Webhook (URL `https://<サイト>/api/webhooks/revenuecat`・署名 ON・秘密を控える)・App Store Server Notifications と Google RTDN の接続 (推奨)・Restore behavior は既定のまま | 承認後: Vercel に `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET`、EAS に `EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` を登録 → `plan_store_products` に 6 行 (運営が SQL で INSERT。§17.2) → 本番のビルド (`eas build --profile production`) |
 | 5 | 順 2 と順 4 (アプリの購入の画面の「利用規約」「プライバシーポリシー」のリンク先 (§10.6 の 6) に有料の条文が載っている状態と、順 4 のストアのメタデータ (§17.5。P16・R25) が入っている状態) | 本番のビルドの提出 | **App Store の審査** (最初の購読は購入の流れが入ったアプリの版と一緒に提出。審査用のメモに「購入の画面は 設定 → プランとお支払い」「購入の復元のボタン」「テスト用のサンドボックスのアカウント」を書く) **/ Google Play の審査** (製品版のトラックへ昇格) | 公開後: 整合ゲートで §17.4 の受け入れを確かめる = **アプリの販売開始** |
 
 - 順 1 と順 4 は並行してよい。順 2 は cross/20 の実装と本冊の段 B のマージのあと。順 3 (Stripe の有効化) は順 1 と順 2 の本番の反映のあと。順 5 (ストアの審査) は順 2 と順 4 のあと。
@@ -3987,10 +4100,10 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 |---|---|---|---|
 | `BILL_UNKNOWN_PLAN` | `<store>:<product_id>` / plan_key | 商品の対応が無い (TS は先に `BILL_IAP_UNKNOWN_PRODUCT` で止めるので、ここに来るのは行の `plan_key` が `subscription_plans` から消えたときだけ) | Webhook `failed`・監査 |
 | `BILL_UNKNOWN_IAP_STATUS` [NEW] | status | snapshot の status が 5 値の外 (TS の不具合) | 同上 (テスト 123) |
-| `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (S13・S25・PRODUCT_CHANGE の順の崩れ・TRANSFER の先に別の契約) | Webhook `failed` + 監査 `system.revenuecat.event_failed` (warn)。sync は 409。運営の処置は下の表 (利用者は後の購入のストアの契約で使い続けられるようにする) |
+| `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (S13 = Stripe・手動付与とストア、S25 = 別のストア・同じ Google Play の 2 つ、TRANSFER の先に別の契約)。同じ App Store のグループの 2 つの live は TS が古い方を先に `expired` で写すので衝突しない (§7.3・S36) | Webhook `failed` + 監査 `system.revenuecat.event_failed` (warn)。sync は 409。運営の処置は下の表 (利用者は後の購入のストアの契約で使い続けられるようにする) |
 | `FAMILY_PLAN_REQUIRED` [NEW] | family_id (トリガー) / なし (`create_family_group`) | 家族プランの契約の無い代表者のグループを作る・メンバーを足す | route が 402 |
 
-二重購読 (`BILL_LIVE_ROW_CONFLICT`) のときの運営の処置 (S13・S25。operator/09 の手順に足す。§16.2):
+二重購読のときの運営の処置 (S13・S25・S36。operator/09 の手順に足す。§16.2)。「I 行 (App Store) × App Store」の行だけは写像が止まらず (衝突にしない。S36)、ほかの行は写像が `BILL_LIVE_ROW_CONFLICT` で止まったときの処置:
 
 | 先にある live 行 (DETAIL の行) | 後から来た購入 | 運営の処置 | 根拠 |
 |---|---|---|---|
@@ -3998,7 +4111,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 | M 行 (手動付与) | ストア | `DELETE /api/super-admin/users/[id]/manual-plan` (付与の取り消し。billing/02) → Retry / 同期 | 手動付与は当社の操作で外せる |
 | I 行 (App Store か Google Play) | Google Play | Play Console で後から来た Google Play の注文を返金する (購読はすぐ終わる。P14)。利用者は先の契約で使い続ける | Google Play は開発者が返金できる (P14) |
 | I 行 (Google Play) | App Store | Play Console で先の Google Play の最新の注文を返金する → 取り直しで先の行が `cancelled` → Retry / 同期で App Store の行が INSERT | 同上 |
-| I 行 (App Store) | App Store (別の Apple ID) | 利用者に、後から買った方の購入の返金を reportaproblem.apple.com から Apple に申し込むよう案内する (固定の案内の文は operator/09)。Apple が返金すると `CANCELLATION` → 取り直しで `refunded_at` → その商品の行は `cancelled` (live でないので衝突しない) | App Store の購入は開発者が返金できない (P14) |
+| I 行 (App Store) | App Store (同じ利用者の別の商品) | 写像は衝突にしない: 同じグループの中の変更 (上位への変更・体験中の変更。S36) として、新しい方 (`compareStoreSubscriptionRecency`) を権利にし、古い方の行を `expired` で写す (監査 `system.billing.subscription_status_changed` の `details.source` が `…:superseded`)。運営の処置は、利用者から二重の請求の問い合わせがあったときだけ: 監査の `:superseded` の行で 2 つの商品を確かめ、利用者に、どちらか一方を App Store の定期購読の管理で解約し、その購入の返金を reportaproblem.apple.com から Apple に申し込むよう案内する (固定の案内の文は operator/09)。別の Apple ID の二重購読 (S25) はグループの中の変更と見分けられないので同じ扱い。解約した方が期限切れか返金で live でなくなれば、残った方だけが次の取り直しで権利になる | 同じ Apple ID のグループの購読は Apple が 1 つだけ更新する (P18)。App Store の購入は開発者が返金できない (P14) |
 | I 行 (App Store) | Stripe (Web) | Stripe の写像が `BILL_LIVE_ROW_CONFLICT` で止める (billing/01 の既存の扱い)。運営は Stripe の Dashboard で後から来た Stripe の契約を解約・返金する | 当社が持つ契約 |
 
 核の `BILL_UNKNOWN_USER` (billing/01 §13.3) は本冊の写像 `billing_apply_store_subscription` では使わない。`app_user_id` が `auth.users` に無いとき (退会済み) は業務エラーにせず `{ applied: false, skipped: 'user_deleted' }` を返し、Webhook は 200 (§6.4 の 1.・§7.3・テスト 72)。そのため `STORE_RPC_ERROR_CODES` (§8.3) にも入れない。
@@ -4029,6 +4142,8 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 85. `it('deriveStoreStatus / projectStoreSubscription keep past_due with cancel_at_period_end = true for an unsubscribed billing-issue subscription, and false after uncancellation')` (§7.3 の `past_due` の行。83 以降は網羅性の反映で足した通し番号で、置き場所はファイルごとの組に合わせる)
 95. `it('IAP_STORES equals PURCHASE_STORES of @homegohan/shared (billing-plans.ts)')`
 125. `it('projectStoreSubscription maps each of the 12 product rows of §17.2 (6 products × app_store / play_store) to its plan_key and billing_interval')` (S34。12 行はテストの中にリテラルで持つ)
+134. `it('selectStoreSubscriptions marks every live app_store entry except the most recent by compareStoreSubscriptionRecency (purchase_date, then expires_date, then product_id) as superseded with supersededAt = the winner purchase_date and orders them before the winner, leaves a single live app_store entry and non-live entries with supersededAt null, and never supersedes two live play_store entries')` (S36・S25。体験中の個人 Pro の月額と、`purchase_date` の新しい家族 Pro の月額の 2 つを含む customer info をテストの中にリテラルで持つ)
+135. `it('projectStoreSubscription turns an entry with supersededAt into an expired snapshot whose expires_date is supersededAt and cancel_at_period_end is false even with unsubscribe_detected_at, and unmappedStoreSubscriptionDecision skips a superseded live entry that has neither a mapping nor a user row')` (S36)
 
 `src/__tests__/lib/webhook/verify.test.ts` (追加):
 14. `it('verifyRevenueCatSignature returns missing_headers for a null or malformed header and invalid_timestamp for a non-numeric t')`
@@ -4044,6 +4159,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 22. `it('handleRevenueCatEvent lets BILL_LIVE_ROW_CONFLICT propagate (route records the failure)')`
 23. `it('recordRevenueCatEventFailure marks the event failed and audits system.revenuecat.event_failed (audit is fail-open)')`
 24. `it('lazyResyncStoreSubscription syncs only when needsLazyResync and swallows failures')`
+136. `it('syncStoreSubscriber applies a superseded App Store entry first as an expired snapshot with the source suffixed :superseded and then the winner with the plain source, so an upgrade during a trial neither throws BILL_LIVE_ROW_CONFLICT nor keeps the old plan')` (S36。偽の repository が受けた `applyStoreSubscription` の引数の順と `source` を見る)
 
 `tests/webhooks-revenuecat-route.test.ts` (route。署名は本物、ほかは偽物):
 25. `it('returns 413 { error: payload_too_large } for a content-length header or a body over REVENUECAT_WEBHOOK_MAX_BODY_BYTES (256 KiB) before verifying the signature, 401 for a bad signature, 400 for malformed JSON or envelope')` (§13.2 の 413 の行)
@@ -4073,6 +4189,9 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 `tests/billing-revenuecat-gateway.test.ts` (新設。`createRevenueCatGateway(fetchImpl)` に偽の fetch を渡す。`getOptionalEnv` は `vi.mock`):
 121. `it('getSubscriber throws RevenueCatApiError with the status for a non-2xx response, with the status for an unexpected response shape, and with status null for a TimeoutError and a network TypeError, and returns the parsed subscriber for a 2xx response')` (S30)
 
+`tests/billing-repository-plan-features.test.ts` (新設。`createBillingRepository(admin)` に `ai_daily_limits` と `ai_plan_feature_caps` の行を返す偽の client を渡す):
+138. `it('findPlanFeatures falls back to the free ai_daily_limits row only for the daily limit and never for ai_feature_caps: an organization plan (standard) with its own daily limit row and no ai_plan_feature_caps rows returns that limit and {}, a plan without an ai_daily_limits row returns the free limit and {}, a row whose daily_limit is NULL stays NULL, and free returns its 4 caps')` (S26・§8.6)
+
 `tests/billing-core.test.ts` (追加):
 34. `it('summarizeSubscription marks store rows with source and manage_in_store and never can_cancel / can_resume them')`
 35. `it('summarizeSubscription includes features and keeps the stripe / manual behaviour unchanged')`
@@ -4099,6 +4218,8 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 98. `tests/meal-image-skip-routes.test.ts` (追加。既存の `describe.each(ENTRIES)` の中に 1 つ。5 つの入口 = POST /api/meals・POST /api/meal-plans/meals・PATCH /api/meals/[id]・PATCH /api/meal-plans/meals/[id]・AI 相談の update_meal): `it('A-plan. meal_image_auto が plan-locked: 料理を failed + skipped_plan で保存し (pending を残さない)、ジョブを積まず、数え戻さず、aiSkipped を付けない')` (`h.consumeAiUsage` の偽物が `{ ...AI_USAGE_DENIED, cappedFeature: 'meal_image_auto', planLocked: true }` を返す。既存の A の it と同じ形で、期待は `image_error: 'skipped_plan'` と `out.aiSkipped` が undefined)
 108. `tests/stored-failure-messages.test.ts` (追加。`describe('画面に出すときの絞り込み (Web とアプリが同じ答え)')` の中): `it('使えない機能の文 (AI_PLAN_CAPPED_FEATURES の 4 つの aiFeatureNotInPlanMessage と AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE)・機能ごとの上限の文 (aiFeatureDailyLimitMessage)・aiDailyLimitMessageOfDenied が planLocked と AI_PLAN_CAPPED_FEATURES の cappedFeature から作る文は、Web (weeklyMenuRequestErrorMessageForDisplay / ForResponse) とアプリ (menuRequestErrorMessageForDisplay) がどちらもそのまま出す')` (行に書く側が作りうる文を読む側がすべて通す契約を、本冊の新しい文まで広げる)
 99. `src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx` (新設): `it('RecipeModal shows the paid-plan wording for skipped_plan and keeps the existing wording for skipped_ai_limit / skipped_rate_limit')`
+140. `tests/process-meal-image-jobs-worker-edges.test.ts` (追加。§16.1 の行。ハンドラは本物): `it('billing/03: ai_plan_feature_daily_cap が 0 (無料の利用者) なら、画像を作らずにジョブを cancelled (last_error = skipped_plan) にし、料理を failed + skipped_plan にする')` (S27)
+141. 同: `it.each(['error', 'throws'] as const)('billing/03: ai_plan_feature_daily_cap の RPC が %s のときも止めずに画像を作り (completed)、warn を 1 つ残す')` (§18 の 21)
 
 `tests/public-claims-guard.test.ts` (書き換え。§10.1・§10.2):
 44. `it('pricing page shows one card per public plan with both interval amounts, trial and PLAN_CATALOG features and no CTA when no Price is registered, and only the free card when the read fails (no 現在は無料 and no FAQ section)')`
@@ -4170,6 +4291,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 83. `it('writes trial_started_at / trial_ends_at / trial_source = store on a trialing store row and keeps them after the row expires')` (S23)
 84. `it('Web repository hasUsedTrial counts a store trial row for the same plan_key and not for another plan_key')` (S23。`createBillingRepository` の既存の `hasUsedTrial` をローカル Supabase で呼ぶ)
 86. `it('applies PRODUCT_CHANGE from a trialing month row: month row expired with trial_started_at kept, then the yearly row inserted with the status from its own period_type')` (§7.3 の `trialing` (月額) の行)
+137. `it('an App Store upgrade during a trial: a superseded expired snapshot ends the trialing pro row (trial_started_at kept, audit details.source ends with :superseded), then the family_pro row inserts without BILL_LIVE_ROW_CONFLICT and sets plan_key_cached to family_pro, after which create_family_group succeeds with family_pro / 8')` (S36。§7.3 の「同じグループの 2 つの live」の行)
 
 `tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`:
 73. `it('claim returns claimed / completed / in_progress and lets failed and stale processing rows be reclaimed')`
@@ -4181,6 +4303,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 91. `it('meal_image_auto is denied with plan_locked for free before the unmetered branch (no counter row), while a paid plan without a row still uses the ai_unmetered_daily_caps safety cap')`
 107. `it('an organization member without a personal or family plan keeps the pre-migration daily limit (the standard and org_* rows hold the old free value) while a free user is limited to 5')` (S26)
 112. `it('ai_plan_feature_daily_cap returns 0 for meal_image_auto of a free user, NULL for a pro user (no row) and the family plan value for a member of a family plan group, and does not write ai_usage_counters')` (S27)
+139. `it('findPlanFeatures (createBillingRepository on the local Supabase) agrees with the DB gate: for an organization member (standard) it returns the copied pre-migration daily limit and no menu_generation_ultimate key while consume_ai_usage_capped still allows the env default, and for a free user menu_generation_ultimate is 0')` (S26。段 B で同じファイルに足す)
 
 `tests/integration/security/family-plan-gate.test.ts`:
 77. `it('create_family_group raises FAMILY_PLAN_REQUIRED without a live family plan and succeeds with a manual family grant')`
@@ -4199,7 +4322,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 81. `tests/e2e/.manual/iap-webhook.spec.ts`: 本番の受け口 (RevenueCat に登録した 1 つの Webhook) へ RevenueCat の Dashboard の Test event (`TEST` → 200 `ignored`) と、TestFlight の sandbox の購入のイベントを送り、`personal_subscriptions` (`iap_is_sandbox = true`) と `revenuecat_webhook_events` を読み取りで確かめる (§17.4)。
 82. 実機 (整合ゲート): §17.4。
 
-### 14.4 シナリオ ⇄ テスト (§3.2 の 35 本がどのテストで守られるか)
+### 14.4 シナリオ ⇄ テスト (§3.2 の 36 本がどのテストで守られるか)
 
 | シナリオ | テスト (番号は §14.1〜§14.3) |
 |---|---|
@@ -4227,9 +4350,9 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S22 凍結中のストアの契約 | 88・117・118・§16.1 の `middleware-frozen-allowed-api` の行 (`FROZEN_ALLOWED_API_PATHS` の `toEqual` が変わらない)・`middleware-legal-consent-api` の凍結中の全 route の it |
 | S23 無料体験の 1 人 1 回 | 70・83・84・86・110 |
 | S24 App Store の審査 (sandbox の購入) | 29・90・81 (手動)・82 (実機) |
-| S25 二重購読の防止と案内 (ストア同士) | 68・32・96 |
-| S26 組織のメンバーの上限 | 106・107・75 |
-| S27 無料の利用者が 1 週間の献立を作る (料理画像を作らない) | 111・112・99 |
+| S25 二重購読の防止と案内 (ストア同士) | 68・32・96・134 (Google Play の 2 つは置き換えない) |
+| S26 組織のメンバーの上限 | 106・107・75・138・139 |
+| S27 無料の利用者が 1 週間の献立を作る (料理画像を作らない) | 111・112・99・140 |
 | S28 対応の無い古い商品の購入の履歴 | 18・113・114・109 |
 | S29 無料体験の表示がストアの判定に従う | 110・51・55 |
 | S30 RevenueCat の API の失敗 | 121・120・122・24・96 |
@@ -4238,6 +4361,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S33 解約の予約の取り消し | 5・85・124 |
 | S34 家族プランをストアで買う (月額) | 125・126・66・76 |
 | S35 アプリで買った人がアプリから退会する | 129・127・128・130・72・82 (実機) |
+| S36 App Store で上位のプランに変える (体験中を含む) | 134・135・136・137・82 (実機。sandbox の購読の管理で変える) |
 
 §12 の発注者の作業 (App Store の Paid Applications Agreement・税と銀行の登録、Google Play の内部テストのトラックへの課金のライブラリ入りのビルドの提出、ストアの商品の作成、ストアのメタデータ (§17.5)) は運用の手順で、本冊のコードの振る舞いではない。シナリオとテストは持たず、§17.4 の受け入れの確認 (iOS の TestFlight・Android の内部テストの購入・ストアのメタデータ) で確かめる。
 
@@ -4249,8 +4373,8 @@ Web の契約の画面 (追加。§10.3・§10.4):
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (§6。`ai_plan_feature_daily_cap` と `plan_store_products` の主キー `(store, product_id)`・`offered` を含む)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts` (`iap_synced_at` の `omit`)・§16.1 の結合テストの追随・`create_family_group` の最後の定義を固定する 2 本 (`tests/parental-consent-migration-contract.test.ts`・`tests/rpc-profile-name-placeholder-migration-contract.test.ts`。§16.1) | 60〜80・83・84・86・90・91・100・105〜107・109・112・114・123・124・126 |
-| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・行の失敗の文の読み手のコメント 3 本 (§8.8)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・`process-meal-image-jobs/index.ts` (プランの門。§8.8)・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・メンテナンスの見張りのテスト 2 本 (`maintenance-mode.test.ts`・`middleware-maintenance.test.ts`。`maintenance-mode.ts` と `middleware.ts` は変えない。§9.1)・`tests/api/billing-routes.test.ts` (偽物と AI の印の棚卸し。§16.1)・`EXEMPT_ROUTES` と `ENFORCED_EDGE` の注 (`tests/helpers/ai-consent-enforced-paths.ts`)・`null-character-routes` の表・送信先の棚卸しの `NON_AI_HOSTS` (`tests/ai-consent-provider-inventory.test.ts`) | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102, 108, 111, 113, 117〜122, 125, 131〜133。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
+| A: DB 層 | migration + rollback (§6。`ai_plan_feature_daily_cap` と `plan_store_products` の主キー `(store, product_id)`・`offered` を含む)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts` (`iap_synced_at` の `omit`)・§16.1 の結合テストの追随・`create_family_group` の最後の定義を固定する 2 本 (`tests/parental-consent-migration-contract.test.ts`・`tests/rpc-profile-name-placeholder-migration-contract.test.ts`。§16.1)・使い方ページの撮影の種まき (`scripts/guide-screenshots/seed.ts` の家族の代表者に家族プランの手動付与。§16.1) | 60〜80・83・84・86・90・91・100・105〜107・109・112・114・123・124・126・137 |
+| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・行の失敗の文の読み手のコメント 3 本 (§8.8)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・`process-meal-image-jobs/index.ts` (プランの門。§8.8) とハンドラを本物で動かすテスト (`tests/process-meal-image-jobs-worker-edges.test.ts` の偽の client の `rpc`。§16.1)・`admin_audit_logs` の書き手の一覧のテスト (`tests/admin-audit-logs-insert-policy-migration-contract.test.ts`。§16.1)・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・メンテナンスの見張りのテスト 2 本 (`maintenance-mode.test.ts`・`middleware-maintenance.test.ts`。`maintenance-mode.ts` と `middleware.ts` は変えない。§9.1)・`tests/api/billing-routes.test.ts` (偽物と AI の印の棚卸し。§16.1)・`EXEMPT_ROUTES` と `ENFORCED_EDGE` の注 (`tests/helpers/ai-consent-enforced-paths.ts`)・`null-character-routes` の表・送信先の棚卸しの `NON_AI_HOSTS` (`tests/ai-consent-provider-inventory.test.ts`) | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102, 108, 111, 113, 117〜122, 125, 131〜136, 138〜141。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
 | C: Web の画面と公開の面 | `/pricing` (`page.tsx`・`PricingPageView.tsx`)・`/legal` の販売の行・`/faq`・`landing-copy.ts`・`PricingSection.tsx` (冒頭の注)・`marketing.css` (料金の節)・`public-pages.ts` (`SITE_DESCRIPTION`)・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`b10` の E2E・`landing-page-1867`・クーポンの画面の基準の価格・退会の 4 つの入口の文 (`settings/page.tsx`・`frozen/account/page.tsx`・`LegalConsentForm.tsx`・アプリの `app/settings/account.tsx`。§10.4) | §10.1〜§10.5 | 44〜46, 48, 87, 88, 103, 104, 116, 127〜130 |
 | D: モバイル | `react-native-purchases`・`expo-dev-client` の追加、`purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`app/settings/plan.tsx`・設定タブの行・`AuthProvider`・`signOut.ts`・`UltimateModeToggle` と `V4GenerateModal` の錠・`env.example`・jest の mock と `moduleNameMapper`・`no-web-purchase-links.test.ts` のコメント | §8.10・§10.6 | 51〜59, 96, 110 |
 | E: 規約とポリシーの条文 | `src/lib/legal/terms-text.ts`・`privacy-text.ts` の差分・`tests/legal-claims-1901.ts` (主張の表)・`tests/legal-text-1901.test.ts` (T-33・T-34)・`packages/shared/src/legal-versions.ts` の版・`docs/legal/archive/v2026.1/` | §11 | 115 (と cross/20 のテストの全部が緑) |
@@ -4269,7 +4393,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - `src/hooks/useBillingSummary.ts`
 - テストの道具: `tests/integration/helpers/family-plan.ts` (`grantFamilyPlan`。§16.1 の家族の結合テストの行)・`tests/e2e/helpers/billing-plan.ts` (`grantManualPlanForE2e`。§16.1 の E2E の行)
 - `apps/mobile/src/lib/purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`apps/mobile/app/settings/plan.tsx`・`apps/mobile/__mocks__/react-native-purchases.js`
-- テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/billing-revenuecat-gateway.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`・`tests/meal-image-plan-gate-source.test.ts`
+- テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/billing-revenuecat-gateway.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`・`tests/meal-image-plan-gate-source.test.ts`・`tests/billing-repository-plan-features.test.ts`
 
 変更:
 - `src/lib/billing/core.ts`・`repository.ts`・`service.ts`・`http.ts`・`public-plans.ts`・`manual-grant.ts`・`manual-grant-repository.ts`・`src/components/admin/ManualPlanGrantSection.tsx`
@@ -4281,7 +4405,9 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - コメントと it 名だけ (§16.1 の「free = 10 の文」の行): `src/lib/plan/entitlements.ts`・`supabase/functions/_shared/ai-usage-core.ts`・`tests/helpers/ai-usage-mock.ts`・`tests/meal-image-route-contracts.test.ts` (ほかの該当のファイルは別の行で変更の一覧に入っている)
 - AI の上限の結合テスト (§16.1 の `ai-usage-rpc` の行と「free = 10 の文」の行): `tests/integration/rls/ai-usage-rpc.test.ts`・`tests/integration/rls/ai-daily-limit-rpc.test.ts`・`tests/integration/rls/ai-usage-feature-cap-rpc.test.ts`
 - 行の失敗の文の読み手のコメントだけ (§8.8 の表): `src/lib/weekly-menu-request-error.ts`・`supabase/functions/_shared/stored-failure-messages.ts`・`apps/mobile/src/lib/menu-request-error.ts`
-- `supabase/functions/process-meal-image-jobs/index.ts` (プランの門。§8.8)
+- `supabase/functions/process-meal-image-jobs/index.ts` (プランの門。§8.8)・`tests/process-meal-image-jobs-worker-edges.test.ts` (偽の client に `rpc` とテスト 140・141。§16.1)
+- `tests/admin-audit-logs-insert-policy-migration-contract.test.ts` (`DIRECT_INSERT_ALLOWED` に `iap-repository.ts`。§16.1)
+- `scripts/guide-screenshots/seed.ts` (家族の代表者に家族プランの手動付与。§16.1)
 - `supabase/functions/_shared/meal-image.ts`・`lib/meal-image.ts` (再 export の名前)・`src/app/api/meals/route.ts`・`src/app/api/meals/[id]/route.ts`・`src/app/api/meal-plans/meals/route.ts`・`src/app/api/meal-plans/meals/[id]/route.ts` (見送りの理由の 1 行と import)・`src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx` (文)
 - `packages/shared/src/index.ts` (`export * from './billing-plans';` の 1 行)
 - `src/__tests__/lib/maintenance-mode.test.ts` (テスト 132)・`lib/supabase/__tests__/middleware-maintenance.test.ts` (テスト 133)。`src/lib/maintenance-mode.ts` と `lib/supabase/middleware.ts` は変えない (§9.1)
@@ -4342,7 +4468,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 
 **母集合の作り方** (実装の各段の最初に origin/main で流し直す。表に無いファイルが出たら、同じ型の行の「直し方」がそのまま当てはまるときに限り直してよい。当てはまらなければ報告する):
 1. 本冊の新しい route・ページと、本冊が import を足す既存の route が AI の印に届くか: `tests/helpers/ai-reach.ts` の `reachesAi` を当てる (`@/lib/env` を import するもの = `revenuecat-gateway.ts`・`verify.ts` を import する route。既存の route では `src/app/api/billing/subscription/route.ts` が届くようになる)。既存の route が届くようになるときは、その route を「届かない」と固定するテストも対象: `git grep -n "reachesAi(" origin/main -- tests src/__tests__` で当たる it のうち、その route のパスを書くもの (2026-10-19 の origin/main では `tests/api/billing-routes.test.ts:260-262` の 1 か所。下の行)。
-2. 本冊が変える表への書き込み: `git grep -n -E "from\(['\"](personal_subscriptions|family_members|ai_daily_limits|subscription_plans)['\"]\)" origin/main -- tests src` と `git grep -n -i -E "insert into (public\.)?(family_members|personal_subscriptions)" origin/main -- tests supabase`。
+2. 本冊が変える表への書き込み: `git grep -n -E "from\(['\"](personal_subscriptions|family_members|ai_daily_limits|subscription_plans)['\"]\)" origin/main -- tests src scripts` と `git grep -n -i -E "insert into (public\.)?(family_members|personal_subscriptions)" origin/main -- tests supabase scripts` (`scripts` は開発の道具の種まき。2026-10-19 の origin/main では `scripts/guide-screenshots/seed.ts` の `family_members` の 3 つの INSERT だけ。下の行)。
 3. 本冊が変える既存の関数・型・定数を名指しするテスト: `git grep -n -E "summarizeSubscription|SUBSCRIPTION_VIEW_COLUMNS|BillingSummary|BILLING_ERROR_MESSAGES|EXT_STRIPE_NOT_CONFIGURED|create_family_group|consume_ai_usage_capped|AI_DAILY_CAPPED_FEATURES|AI_CAPPED_FEATURES|parseConsumeAiUsageResult|aiDailyLimitPayload|aiDailyLimitMessageOfDenied|aiDailyLimitSkippedField|AiDailyLimitBody|MEAL_IMAGE_SKIPPED_ERRORS|MealImageSkipReason|LEGAL_DOCUMENTS|listPurchasablePlans|AI_DAILY_LIMIT_NOTE|LEGAL_SALE_ROW_LABELS|PlanCardSchema|AI_PLAN_CAPPED|ai_plan_feature|plan_store_products|PRIVACY_PROCESSORS|LEGAL_CLAIMS|LEGAL_TEXT_PAID_TERMS|PRIVACY_DATA_EXCLUDED" origin/main -- tests src/__tests__ lib/supabase/__tests__ apps/mobile/__tests__ packages/shared/src` (cross/20 の実装のテストは、段 E の前に main で流し直す)。
 4. 公開の面の文を名指しするもの: `git grep -n -E "¥980|980円|9,800円|現在は無料|いまは無料|すべて無料|現在、料金|有料プラン" origin/main -- src apps packages tests ':!**/node_modules/**'` (#1911 の後の main。「準備中」「販売開始前」は #1911 が取り除き、`tests/no-pending-wording-1911.test.ts` (F21) が見張る)。
 5. 表の列の一覧を持つ偽の client: `git grep -n -E "SCHEMA_COLUMNS|KNOWN_COLUMNS|ALLOWED_COLUMNS" origin/main -- tests src`。
@@ -4351,6 +4477,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 8. free の 1 日の上限 (10 回) と「全員が無料」をコメント・it 名・describe 名に書いたもの: `git grep -n -E "上限 ?10 ?回|1 日 ?10 ?回|free ?(は|=) ?(1 日 )?10|全員が free" origin/main -- src lib supabase/functions tests apps packages` (下の「free = 10 の文」の行)。
 9. 本冊が作り直す既存の関数の「最後の定義」を固定する migration の契約テスト: `git grep -l -E "definers\[definers\.length - [0-9]+\]|最後に定義|最後の定義" origin/main -- tests` で出たファイルのうち、本冊が作り直す 6 本 (`create_family_group`・`consume_ai_usage_at`・`consume_ai_usage_capped_at`・`billing_revoke_manual_subscription`・`billing_expire_manual_subscription_for_user`・`billing_expire_manual_subscriptions`) のどれかを名指しするもの。2026-10-19 の origin/main では 3 本: `tests/parental-consent-migration-contract.test.ts`・`tests/rpc-profile-name-placeholder-migration-contract.test.ts` (どちらも `create_family_group`。下の 2 行)・`tests/ai-usage-contract.test.ts` (`consume_ai_usage_at`。下の行)。`tests/billing-manual-plan-grant-migration-contract.test.ts` は自分の migration のファイルだけを読み、`tests/accept-copies-profile-name-migration-contract.test.ts` は本冊が作り直さない `accept_family_invite`・`accept_child_promotion` だけを見るので当たらない。
 10. 本冊が文を足す画面の入口の全部 (退会): `git grep -l "deleteOwnAccount(" origin/main -- src/app` と `git grep -l '"/api/account/delete"' origin/main -- apps/mobile/app` (2026-10-19 の origin/main では 3 + 1 ファイル。§10.4 の表。一覧が閉じていることはテスト 127 が見る)。
+11. 本冊が新しく直接書く表の書き手の一覧を固定するテスト (`iap-repository.ts` の `recordIapAudit` が `admin_audit_logs` に service_role で直接 INSERT する。§8.3): `git grep -n -E "admin_audit_logs.{1,20}\.insert" origin/main -- tests` で出たもののうち、`src` を走査して書き手を固定するもの。2026-10-19 の origin/main では `tests/admin-audit-logs-insert-policy-migration-contract.test.ts` (`src` 全体。下の行) の 1 本 (`tests/admin-view-audit-1326.test.ts` は `src/app/api/admin` と `super-admin` だけを走査するので当たらない。ほかは結合テストの直接の INSERT)。
+12. 本冊が中を変える Edge Function のハンドラを本物で動かすテスト (`process-meal-image-jobs` の `processJob` に門を足す。§8.8): `git grep -l "process-meal-image-jobs/index" origin/main -- tests` の 6 本のうち、ハンドラを読み込んで要求を流し、`processJob` まで届くもの。2026-10-19 の origin/main では `tests/process-meal-image-jobs-worker-edges.test.ts` の 1 本 (下の行。`tests/edge-missing-env-response.test.ts` は DB を罠にしてジョブの取得の前で止まり、`tests/edge-function-cors.test.ts` はこの関数のハンドラを読み込まず、`tests/ai-usage-contract.test.ts`・`tests/meal-cover-ownership.test.ts`・`tests/meal-image-jobs-pickup-cron-contract.test.ts` はソースを読むだけ)。
 
 | 番兵 | 反応する理由 (grep の語) | 直し方 | 段 |
 |---|---|---|---|
@@ -4397,6 +4525,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/frozen-billing-page.test.tsx` (`BillingSummary` の偽物・`summaryOf`) | `BillingSummary` の必須の項目が増える | 偽物に `manage_in_store: null`・`features: EMPTY_PLAN_FEATURES` を足す。`findPlanFeatures` の偽物を `BillingRepository` の偽物に足す。`tests/api/billing-routes.test.ts` の GET `/api/billing/subscription` まわりは次の行 (テスト 33 は別ファイル) | B |
 | `tests/api/billing-routes.test.ts` の GET `/api/billing/subscription` まわり (`:61` の `REPOSITORY = { kind: 'repository' }` は関数を持たない・`:219-242` の「鍵が無くても 200」と直接の import の検査・`:244-263` の AI の印の棚卸し「…and the 2 GET billing routes do not reach them」) | §8.5 で subscription の route が `repository.findLiveSubscription` を呼び、`createRevenueCatGateway` (`@/lib/billing/revenuecat-gateway`。中で `@/lib/env` を import する) を import する。棚卸しの `:260-262` が `reachesAi` の結果を `src/app/api/billing/subscription/route.ts` について `false` で固定しているので赤になる (母集合の作り方 1) | (1) 偽物: `mocks` に `findLiveSubscription: vi.fn()`・`createRevenueCatGateway: vi.fn()`・`lazyResyncStoreSubscription: vi.fn()` を足し、`REPOSITORY` を `{ kind: 'repository', findLiveSubscription: (...args: unknown[]) => mocks.findLiveSubscription(...args) }` に、`beforeEach` に `mocks.findLiveSubscription.mockResolvedValue(null);` を足す。`vi.mock('@/lib/billing/revenuecat-gateway', () => ({ createRevenueCatGateway: () => mocks.createRevenueCatGateway() }))`・`vi.mock('@/lib/billing/iap-repository', () => ({ createIapRepository: () => ({ kind: 'iap-repository' }) }))`・`vi.mock('@/lib/billing/iap-service', () => ({ lazyResyncStoreSubscription: (...args: unknown[]) => mocks.lazyResyncStoreSubscription(...args) }))` を足す (`RevenueCatNotConfiguredError` と `needsLazyResync` は `iap-core.ts` の本物を使う)。行が null なら再同期は要らないので、既存の it の期待 (`getBillingSummary` に `{ repository: REPOSITORY }` だけを渡す・`createStripeGateway` を呼ばない・凍結中も 200 ほか) は変えない。(2) `:236-241` の直接の import の検査は変えない (route は `@/lib/env` も `@/lib/billing/stripe-gateway` も直接は import しない)。(3) `:244-263` の棚卸し: `'src/app/api/billing/subscription/route.ts'` を `:260` の配列から `reaching` の配列 (`:246-254`) へ移し (env.ts を辿らなければ届かないことも同じ it が見る)、`:260` の配列は `'src/app/api/billing/checkout/preview/route.ts'` の 1 本にする。it 名を `'AI reach inventory: the 5 Stripe-calling billing routes, GET /api/billing/subscription (lazy RevenueCat resync), the Stripe webhook route and account/delete reach the AI markers only through src/lib/env.ts, and GET /api/billing/checkout/preview does not reach them'` にする。(4) テスト 131 を足す | B |
 | `tests/billing-manual-grant.test.ts`・`billing-manual-grant-service.test.ts`・`billing-manual-grant-client.test.ts`・`src/__tests__/components/admin/manual-plan-grant-section.test.tsx` | `source` の union に `'store'`・`SUBSCRIPTION_COLUMNS` | 偽物の行に `iap_store: null` を足す。`store` のときの表示の it を 1 つ足す | B |
+| `tests/admin-audit-logs-insert-policy-migration-contract.test.ts` (#1736。`:35` の `DIRECT_INSERT_ALLOWED` = `['src/lib/admin/audit.ts', 'src/lib/billing/repository.ts']`。`:144-150` の it「admin_audit_logs に直接 INSERT するのは recordAdminAudit と課金の repository (service_role) だけ」が、`src` の全ファイル (テストを除く) を `from(…'admin_audit_logs'…).insert(` の正規表現で走査して `toEqual` で固定する。母集合の作り方 11) | `src/lib/billing/iap-repository.ts` の `recordIapAudit` (§8.3) が `admin.from('admin_audit_logs').insert({` で書く。Webhook の失敗の監査 `system.revenuecat.event_failed` は `actor_id` NULL・`system.*` なので `recordAdminAudit` (本人の JWT) では書けず (同じファイルの `:152-` の it が `recordAdminAudit` に `system.*` を渡すことを禁じる)、核の `repository.ts` の `recordAudit` と同じく service_role で直接書く | (1) `:35` を `const DIRECT_INSERT_ALLOWED = ['src/lib/admin/audit.ts', 'src/lib/billing/repository.ts', 'src/lib/billing/iap-repository.ts'];` に、その上の注を「アプリのコードで admin_audit_logs に直接 INSERT してよいファイル (書き手の全数。#1736 の表と、billing/03 §8.3 の iap-repository.ts)」に。(2) `:144` の it 名を `'admin_audit_logs に直接 INSERT するのは recordAdminAudit と課金の repository 2 本 (billing/01 の repository.ts・billing/03 の iap-repository.ts。service_role) だけ'` に (本文は変えない)。(3) `:139-142` の「src を読めている」の it に `expect(sourceFiles).toContain('src/lib/billing/iap-repository.ts');` を足す。(4) 冒頭の注 (`:13-14`) の「課金の repository (service_role) だけ」を「課金の repository 2 本 (src/lib/billing/repository.ts と iap-repository.ts。service_role) だけ」に。`system.*` の it (`:152-`) は変えない (`iap-repository.ts` は `recordAdminAudit` を呼ばない) | B |
 | `tests/billing-audit-action-lists-doc.test.ts` (`operator/07` §4 の `*.billing.*` の名前は 2 つの一覧のどちらかにある) | `system.revenuecat.event_failed` (名前に `.billing.` を含まない) | 変更なし。`operator/07` §4.5 に名前を足す (§16.2)。`BILLING_AUDIT_ACTIONS` の数は変えない | — |
 | `tests/public-claims-guard.test.ts` (F21。#1911 の後の main) | `FORBIDDEN` の `¥980`・`980円`・`9,800円` (`¥980`・`980円` = 家族 Basic の月額、`9,800円` = 家族 Basic の年額。どれも本冊の価格で、料金ページ・特商法・FAQ・紹介ページに出る)・`vi.mock` の `listPurchasablePlans`・`#1151 料金ページ` (0 件で「現在は無料でご利用いただけます。」を含み「有料プラン」を含まない)・`billing/01 §10.1` のデータ駆動 (0 件で FAQ を描く・`PurchasablePlan`)・`/legal` の「有料の販売で要る項目は出さない」・`/faq` の `無料プランでは`・`月額` を書かない・`#1867 (Q-12)` (`/faq`「現在、料金はかかりますか？」・`/pricing` の 0 件の文の数 3・`AI_DAILY_LIMIT_NOTE` の名前) | (1) `FORBIDDEN` から `¥980`・`980円`・`9,800円` の 3 行を消し、`依頼で名指しされた文字列` の `required` から `'¥980'` を消す (`¥1,980`・`1,980円` は残す)。(2) `vi.mock` を `listPublicPlans: async () => pricingMocks.plans` に、`pricingMocks.plans` と `plan()` の型を `PublicPlan` (`max_members: null` を足す) に。(3) `#1151 料金ページ` の it (`:428-436`) を「0 件 (読み取りの失敗) のときはフリーのカードだけで、`現在は無料`・`有料プラン`・`PENDING_WORDS` を出さず、プレミアム・ファミリー・月払い・年払いも出さない。`billingPeriod` を使わない」に。(4) `billing/01 §10.1` の 1 つ目の it (`:496-516`) を「0 件と金額 0 のプランだけのときはフリーのカードだけ (FAQ の節・`現在は無料でご利用いただけます。` は無い)」に、2 つ目 (`:518-560`) は Price のある間隔だけ CTA (いまの期待のうち `現在は無料でご利用いただけます。`・`現在、料金はかかりますか？` を消し、それ以外はそのまま) に、Price が無いプランの it をテスト 44 として足す。(5) `/legal` の it (`:333-341`) をテスト 46 に書き換える (`LEGAL_SALE_ROW_LABELS` は「出す」ことの検査に使う。`LEGAL_NOT_SELLING_TEXTS`・`PENDING_WORDS`・`PAID_PLAN_PENDING_NOTICE` は出さないことの検査のまま)。(6) `/faq` の it (`:567-571`) と `#1867 (Q-12)` の `/faq` の it (`:640-642`) をテスト 116 に (`faqAnswer(faq, '料金はかかりますか？')` が `AI_DAILY_LIMIT_PHRASE` を含む。禁止の語は `プレミアムプラン`・`年払い`・`Visa`・`解約後も次回更新日まで`)。(7) `#1867 (Q-12)` の `/pricing` の it (`:644-649`) の数を「フリーのカードに 1 回」(`split` の長さ 2) に、`:651-654` の `AI_DAILY_LIMIT_NOTE` を `FREE_PLAN_AI_LIMIT_NOTE` に。(8) `/company` の describe (`:366-419`) は変えない | C |
 | `tests/business-info-legal-pages.test.ts` (#1911 の後の main) | `/legal` の行が増える (販売の 9 行) | 変更なし (会社情報の行の値・空欄と仮置きのマーカーが無いこと・`/company` と `/legal` の同じ欄の一致を見る。販売の行も値を持ち、マーカー (`確定次第掲載`・`XXX`・`TODO` ほか) を含まないので緑。`/terms`・`/privacy` の事業者名の検査は、段 E の文に `株式会社`・`Inc` が無いので緑) | — |
@@ -4441,6 +4570,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/e2e/bug-27-ultimate-mode-locked.spec.ts` (fresh-user = 無料の利用者でスイッチが操作できる) | §10.3 の錠 (無料では `menu_generation_ultimate` が 0) | 各 test の最初に、その利用者へ `grantManualPlanForE2e(userId, 'pro')` を呼ぶ (下の E2E の道具)。期待 (操作できる・`ultimateMode: true` が送られる) は変えない。冒頭の経緯のコメントに「有料プランで使える (billing/03 §10.3)。この spec は有料の利用者で確かめる」を足す | C |
 | `tests/e2e/w5-3-menu-gen-adversarial.spec.ts` (A-3: テストごとの利用者で献立の作成の要求を 5 回。`:17` の「free は 10 回」) | 無料の献立の作成が 1 日 3 回・AI が 1 日 5 回に (§6.5) | `apiUserTest` の利用者で `/api/ai/menu/weekly/request` を 4 回以上送る test は、最初に `grantManualPlanForE2e(userId, 'pro')` を呼ぶ (pro は献立 10 回・1 日 30 回)。`:17` のコメントの回数を新しい値に。期待 (5 件とも 200) は変えない | C |
 | 家族の E2E (`tests/e2e/fixtures/fresh-family.ts` の `family_groups` / `family_members` の直接の INSERT・`tests/e2e/helpers/membership-family.ts` と、それを使う `tests/e2e/family/*.spec.ts`・`tests/e2e/membership/05-*`〜`08-*`・`12-*`・`14-*`。UI からグループを作る spec) | `create_family_group` の門・`family_members` の INSERT のトリガー (free のグループにメンバーを足せない) | グループを作る前に、代表者へ `grantManualPlanForE2e(representativeUserId, 'family_basic')` を呼ぶ (billing/01 のトリガー `family_groups_billing_plan_follow_representative` が作成時に代表者の契約から `plan_key` / `member_limit` を決めるので、`plan_key: "free"` を直接書いても上書きされる。本文の `plan_key: "free"` は消す)。期待の人数の上限が 4 のままのものはそのまま、`free` を期待するものは `family_basic` に (実数に合わせる) | C |
+| 使い方ページの撮影の種まき `scripts/guide-screenshots/seed.ts` (#1852・#1867。`scripts/guide-screenshots/run.sh` がローカルの Supabase に流す。`:164-165` の `const FAMILY_PLAN_KEY = 'free';`、`seedFamily` (`:443-487`) が service_role で `family_groups` を `plan_key: FAMILY_PLAN_KEY` で INSERT (`:450-454`) し、`family_members` に `representative`・`adult`・`child` を INSERT する (`:455-480`)。母集合の作り方 2) | §6.6 の家族の門 (`family_members_billing_plan_gate`)。代表者に家族プランの契約が無いのでグループは `free` になり、`adult` の INSERT が `FAMILY_PLAN_REQUIRED` で失敗し、`must('family_members adult', …)` が投げて種まきが止まる (家族の画面を撮れない) | 家族の結合テスト・E2E の fresh-family と同じ直し方 (代表者に家族プランを先に手動付与する): (1) `:164-165` を `/** 家族のグループのプラン (代表者に手動付与で入れる家族プラン。billing/03 §6.6 の家族の門は、家族プランの契約の無い代表者のグループにメンバーを足せない。e2e の fresh-family と同じ family_basic) */` と `const FAMILY_PLAN_KEY = 'family_basic';` に。(2) `seedFamily` の `completeProfile(admin, repId, …)` の行 (`:446`) の直後 (グループの INSERT の前。手動付与には `user_profiles` の行が要る (`BILL_UNKNOWN_USER`)) に `must('billing_grant_manual_subscription', await admin.rpc('billing_grant_manual_subscription', { p_user_id: repId, p_plan_key: FAMILY_PLAN_KEY }));` を足す (`p_expires_at` は既定の NULL = 期限なし。`20261017230000_billing_manual_plan_grant.sql:18-22`。EXECUTE は service_role。利用者を作り直すと契約の行も CASCADE で消える)。グループの INSERT の `plan_key: FAMILY_PLAN_KEY` はそのまま (billing/01 のトリガー `family_groups_billing_plan_follow_representative` が代表者の契約から同じ `family_basic` / 4 を入れる)。テストは無い (撮影の手順 `run.sh` で流す) | A |
 | E2E の道具 `tests/e2e/helpers/billing-plan.ts` (新設) | — | `export async function grantManualPlanForE2e(userId: string, planKey: PaidPlanKey): Promise<void>` = `membership-family.ts` と同じ service_role の REST で `POST ${supabaseUrl}/rest/v1/rpc/billing_grant_manual_subscription` に `{ p_user_id: userId, p_plan_key: planKey, p_expires_at: null }` を送り、`!resp.ok` なら本文の先頭を付けて throw する (結合テストの `grantFamilyPlan` と同じ RPC。引数は `20261017230000_billing_manual_plan_grant.sql:18-22` の `p_user_id uuid, p_plan_key text, p_expires_at timestamptz DEFAULT NULL`、EXECUTE は service_role だけ `:103`)。fixture の後片付けは利用者の削除で契約の行も CASCADE で消える | C |
 | #1911 の面 (§0.2 の対象外の欄のファイル) と、その「準備中」を見張るテスト (`tests/admin-preparing-pages.test.tsx`・`tests/preparing-notice.test.tsx`・`tests/admin-not-supported.test.ts`・`tests/super-admin-preparing-pages.test.tsx`・`tests/super-admin-exports-not-supported.test.ts`・`tests/moderation-route-contracts.test.ts`・`tests/admin-mutation-audit-coverage-1571.test.ts`・`tests/jst-today-source-scan.test.ts`・`tests/org-challenge-pages.test.tsx`・`tests/org-dashboard-refresh-route.test.tsx`・`tests/integration/operator/admin-moderation-detail.test.ts`・`tests/integration/operator/super-admin-exports.test.ts`・`tests/integration/security/super-admin-columns.test.ts`・`tests/integration/security/stop-aggregate-org-stats-cron.test.ts`・`tests/e2e/w5-12-admin-adversarial.spec.ts`・`src/__tests__/app/org/index-redirect.test.ts`) | 母集合の作り方 4 | 変更なし (#1911 が main に入れ済み。本冊は触らない) | — |
 | 「準備中」が読み込み中の表示の意味で、課金と関係しないもの (`src/app/(main)/menus/weekly/_components/modals/NutritionDetailModal.tsx` の「分析を準備中...」とそのテスト・`src/app/(main)/menus/weekly/page.tsx` のコメント・`src/app/(main)/settings/security/mfa/setup/page.tsx` の「準備中…」) と、「準備中」が無いことを確かめる回帰のテスト (`src/__tests__/app/settings/data-export.test.ts`・`src/__tests__/app/settings/trainer-share-removed.test.ts`・`tests/data-share-not-consent.test.ts`・`tests/health-photo-entry.test.tsx`) | 母集合の作り方 4 の「準備中」 | 変更なし (本冊の面ではない) | — |
@@ -4450,7 +4580,8 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `src/__tests__/app/frozen-account-page.test.tsx`・`tests/legal-consent-page.test.tsx` (凍結中の退会・規約の同意の画面の案内。文は `toContain` とボタンの文で見る) | §10.4 の `<p>` が 1 つ増える | 変更なし。テスト 128・130 を足す | C |
 | `tests/ai-consent-provider-inventory.test.ts` (F25。コードの `https://` のホストの棚卸し) | `src/lib/billing/iap-core.ts` の `REVENUECAT_API_BASE_URL` (`api.revenuecat.com`)・`packages/shared/src/billing-plans.ts` の `STORE_SUBSCRIPTION_MANAGEMENT_URL` (`apps.apple.com`・`play.google.com`) | `NON_AI_HOSTS` に 3 行を足す (逐語): `'api.revenuecat.com': 'アプリ内課金の購入の確認と契約の取り直し (RevenueCat。billing/03 §8.3)。送るのは利用者の ID だけ'`・`'apps.apple.com': 'App Store の定期購読の管理のページへのリンク (billing/03 §8.9)。送信先ではない'`・`'play.google.com': 'Google Play の定期購読の管理のページへのリンク (billing/03 §8.9)。送信先ではない'` | B |
 | `tests/helpers/ai-consent-enforced-paths.ts` の `ENFORCED_EDGE['process-meal-image-jobs']` (`:389-396`)・`tests/ai-usage-contract.test.ts` (`:543-545` が `recordedBy` に `AI_QUEUE_TABLES` を求める) | `process-meal-image-jobs` にプランの門を足す (§8.8) | `consent` の文に「同意のあとに、ジョブの持ち主のプランの門 (ai_plan_feature_caps の meal_image_auto = 0 なら取り消す。billing/03 §8.8) も見る」を足す。`recordedBy` は変えない (緑のまま) | B |
-| `tests/meal-image-skip.test.ts`・`tests/meal-image-jobs-pickup-cron-contract.test.ts`・`tests/edge-function-cors.test.ts`・`tests/edge-function-verify-jwt.test.ts`・`tests/edge-missing-env-response.test.ts` (`process-meal-image-jobs` を名指し) | `processJob` の引数と、同意の後の門 | `meal-image-skip` にテスト 111 を足す。ほかは変更なし (貸し出しの長さ・CORS・JWT・環境変数の扱いを変えない)。テスト 111 の新設のソースの走査は `tests/meal-image-plan-gate-source.test.ts` | B |
+| `tests/meal-image-skip.test.ts`・`tests/meal-image-jobs-pickup-cron-contract.test.ts`・`tests/edge-function-cors.test.ts`・`tests/edge-function-verify-jwt.test.ts`・`tests/edge-missing-env-response.test.ts` (`process-meal-image-jobs` を名指し) | `processJob` の引数と、同意の後の門 | `meal-image-skip` にテスト 111 を足す。ほかは変更なし (貸し出しの長さ・CORS・JWT・環境変数の扱いを変えない。`edge-function-verify-jwt` は `Deno.serve(` 以降で認証より前の `.rpc(` を探すが、`readMealImageJobPlanDecision` の `.rpc(` は認証 (`requireServiceRole`) より後ろ。`edge-missing-env-response` の「設定がそろっていれば」の it は DB の罠でジョブの取得の前に 500 になり、門まで届かない)。テスト 111 の新設のソースの走査は `tests/meal-image-plan-gate-source.test.ts` | B |
+| `tests/process-meal-image-jobs-worker-edges.test.ts` (#1553。ハンドラ (`index.ts`) を本物で動かし、`:150-167` の `vi.mock('@supabase/supabase-js')` が `createClient` を `{ from, storage }` だけの偽物にする。`:283-294` の `runWorker` が `expect(res.status).toBe(200)` を求め、`:472`・`:491` の it は warn の数を 1 と数える。母集合の作り方 12) | `processJob` が同意の判定の直後に `supabase.rpc("ai_plan_feature_daily_cap", …)` を呼ぶ (§8.8)。偽物に `rpc` が無いと `readMealImageJobPlanDecision` の `catch` が warn を 1 つ足して `"allowed"` を返すので、warn を数える 2 つの it が赤になる | (1) `:43-66` の `vi.hoisted` の `h` に 4 つ足す (逐語): `/** billing/03: ai_plan_feature_daily_cap の答え (既定 null = 行なし = 止めない) */ planCap: null as number \| null,`・`planCapError: null as { code: string; message: string } \| null,`・`planCapThrows: null as Error \| null,`・`rpcCalls: [] as Array<{ name: string; args: Record<string, unknown> }>,`。(2) `:151` の `createClient: () => ({` の中の `from` の次に `rpc: async (name: string, args: Record<string, unknown>) => { h.rpcCalls.push({ name, args }); if (h.planCapThrows) throw h.planCapThrows; return { data: h.planCap, error: h.planCapError }; },` を足す。(3) `:246` の `beforeEach` に `h.planCap = null; h.planCapError = null; h.planCapThrows = null; h.rpcCalls = [];` を足す (既存の it は `planCap = null` = 止めない・warn なしなので期待を変えない)。(4) `describe('(3) …')` の後に `describe('(4) プランの門 (billing/03 §8.8)', …)` を足し、テスト 140 (`h.planCap = 0` → `runWorker()` の結果が `{ jobId: JOB_ID, status: 'cancelled', message: 'skipped_plan' }`・`job()` が `{ status: 'cancelled', last_error: 'skipped_plan' }`・`h.generateCalls` が 0・`h.uploads` が空・`mealDish(0)` が `{ image_status: 'failed', image_error: 'skipped_plan' }`・`h.rpcCalls` が `[{ name: 'ai_plan_feature_daily_cap', args: { p_user_id: USER_ID, p_feature: 'meal_image_auto' } }]`) とテスト 141 (`'error'` は `h.planCapError = { code: 'XX000', message: 'db unavailable' }`、`'throws'` は `h.planCapThrows = new TypeError('fetch failed')` → 結果の `status` が `'completed'`・`h.generateCalls` が 1・`h.logs` の warn がちょうど 1 つで `metadata` が `{ ownerId: USER_ID }` を含む) を置く。冒頭の注に「(4) 料理画像のプランの門 (billing/03 §8.8): 0 なら作らず、読めなくても止めない」を足す | B |
 
 `tests/helpers/ai-consent-enforced-paths.ts` の `EXEMPT_ROUTES` に足す 3 行 (逐語。既存の `account/delete` の行の後):
 
@@ -4491,7 +4622,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `docs/design/operator/06-ai-llm.md`・`cross/06-perf-cache.md` (AI の上限の運営画面) | `/super-admin/llm/quotas` | 「プランごとの 1 日の上限は 4 行 (free 5 / pro 30 / family_basic 30 / family_pro 50)。機能ごとの上限 `ai_plan_feature_caps` は運営画面に無く SQL で変える (billing/03 §6.5)」を注記 | 段 A と同じ PR |
 | `docs/design/operator/07-audit-monitoring.md` | §4.5 システム自動操作 | `system.revenuecat.event_failed` を足す (`target_type` の値 `revenuecat_event`)。`tests/billing-audit-action-lists-doc.test.ts` の規則 (`*.billing.*` でないので一覧の突き合わせの対象外) | 段 B と同じ PR |
 | `docs/design/operator/01-data-model.md` | §3.7 DDL・§4 ER 図 | `personal_subscriptions` の 3 列・`plan_store_products`・`revenuecat_webhook_events`・`ai_plan_feature_caps` | 段 A と同じ PR |
-| `docs/design/operator/09-runbook.md` | §3.2 適用順序の図・運用の手順 | 新設の 3 表と、`plan_store_products` に行を入れる手順 (§17.2)。二重購読 (`BILL_LIVE_ROW_CONFLICT`) の処置の表 (§13.3 の表をそのまま) と、App Store 同士のときに利用者へ送る案内の文 (「後からお買い上げの購入の返金は、reportaproblem.apple.com から Apple にお申し込みください」)。`iap_is_sandbox = true` の行の見方 (テストの購入。売上ではない) | 段 A と同じ PR (二重購読の処置は段 B と同じ PR) |
+| `docs/design/operator/09-runbook.md` | §3.2 適用順序の図・運用の手順 | 新設の 3 表と、`plan_store_products` に行を入れる手順 (§17.2)。二重購読の処置の表 (§13.3 の表をそのまま) と、App Store 同士のときの確かめ方 (監査 `system.billing.subscription_status_changed` の `details.source` が `:superseded` で終わる行) と利用者へ送る案内の文 (「どちらか一方の購読を App Store の定期購読の管理で解約し、その購入の返金を reportaproblem.apple.com から Apple にお申し込みください」)。`iap_is_sandbox = true` の行の見方 (テストの購入。売上ではない) | 段 A と同じ PR (二重購読の処置は段 B と同じ PR) |
 | `docs/design/operator/06-ai-llm.md` (料理画像の見送りの理由 `skipped_ai_limit` を書いている箇所。`git grep -n "skipped_ai_limit" origin/main -- docs` で 1 ファイル) | 見送りの理由の一覧 | `skipped_plan` (ご利用中のプランでは自動の料理画像を作らない。`ai_plan_feature_caps` の `meal_image_auto` = 0。billing/03 §8.8) を足す | 段 B と同じ PR |
 | `docs/design/family/01-data-model.md`・`family/CLAUDE.md`・`membership/02-flow-spec.md` | `create_family_group`・メンバーの追加 | 「家族グループの作成とメンバーの追加は家族プランの契約者だけ (`FAMILY_PLAN_REQUIRED`。billing/03 §6.6)。契約が終わったグループのメンバーはそのまま」を注記 | 段 A と同じ PR |
 | `docs/design/marketing/01-landing-site.md` | 料金の章の表 (§4.17・§8.3 のカードの数。#1911 の後は 1 枚)・要点 (trust)・FAQ・家族の章・場面・features の家族のカード・`ASSURANCES`・`SITE_DESCRIPTION`・§24 の Q-12・`claims` の `free-now` / `family` / `ai-daily-limit` | §10.5 の表の文に合わせる (カードは無料プランと有料プランの 2 枚・`free-now` の主張を「無料プランの範囲と有料プラン 3 つ」に) | 段 C と同じ PR |
@@ -4512,7 +4643,9 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `cross/04` のエラー表 | B | エラーコードを足す PR | 専権 PATCH で集める |
 | `tests/helpers/ai-consent-enforced-paths.ts`・`null-character-routes.test.ts`・メンテナンスの見張りのテスト (`src/__tests__/lib/maintenance-mode.test.ts`・`lib/supabase/__tests__/middleware-maintenance.test.ts`) | B | route を足す PR | 行の追加だけ (`maintenance-mode.ts` と `middleware.ts` は変えない。§9.1) |
 | `src/lib/billing/core.ts` (`BillingSummary`・`summarizeSubscription`) | B | 配線の残りの冊 | 項目の追加だけ (`BILLING_ERROR_MESSAGES` は変えない) |
-| `supabase/functions/process-meal-image-jobs/index.ts` (料理画像のジョブの処理) | B | 料理画像の処理を変える PR | 同意の門の直後に門を 1 つ足すだけ。マージの直前に `git log -- supabase/functions/process-meal-image-jobs` で後から入った変更を確かめる |
+| `supabase/functions/process-meal-image-jobs/index.ts` (料理画像のジョブの処理) と、そのハンドラを本物で動かす `tests/process-meal-image-jobs-worker-edges.test.ts` | B | 料理画像の処理を変える PR | 同意の門の直後に門を 1 つ足し、テストの偽の client に `rpc` を足すだけ。マージの直前に `git log -- supabase/functions/process-meal-image-jobs tests/process-meal-image-jobs-worker-edges.test.ts` で後から入った変更を確かめる |
+| `scripts/guide-screenshots/seed.ts` (使い方ページの撮影の種まき) | A | 使い方ページの撮影の PR (F1 の常設のレーン) | 家族の代表者への手動付与の 1 行と定数の値だけ。マージの直前に `git log -- scripts/guide-screenshots/seed.ts` で後から入った変更を確かめる |
+| `tests/admin-audit-logs-insert-policy-migration-contract.test.ts` の `DIRECT_INSERT_ALLOWED` | B | `admin_audit_logs` に直接書くファイルを足す PR | 一覧に 1 行足すだけ |
 | 公開の面 (`PricingPageView`・`legal`・`faq`・`landing-copy.ts`・`marketing.css`) と `tests/public-claims-guard.test.ts`・`tests/no-pending-wording-1911.test.ts` | C | #1911 (main にマージ済み。`4b1e1abe`)・ほかに公開の面を触る PR | 本冊は #1911 の後の main を土台に書いた (§10.1〜§10.5 の行番号は `4b1e1abe`)。段 C の着手の時に `git log 4b1e1abe..origin/main -- <これらのファイル>` で後から入った変更を確かめ、あれば本冊の差分をその上に当てる (main が正) |
 | `src/lib/legal/terms-text.ts`・`privacy-text.ts`・`tests/legal-claims-1901.ts`・`tests/legal-text-1901.test.ts`・`legal-versions.ts` | E | cross/20 (#1901) の実装 | cross/20 の実装のマージのあとに本冊の段 E (§11.0)。ほかに規約とポリシーの文を変える PR があれば直列にし、版はそれぞれ 1 つずつ上げる (cross/20 §9.3) |
 | `apps/mobile/package.json`・`jest.config.js`・設定タブ・`AuthProvider`・`signOut.ts` | D | モバイルを変える PR | 行の追加だけ |
@@ -4527,14 +4660,16 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 
 ### 17.2 ストアの商品 ID と `plan_store_products` の行 (運営が SQL で入れる。`super_admin` の RLS でも書ける)
 
-| plan_key | 間隔 | App Store の商品 ID (Subscription Group `homegohan_plans`) | Google Play の購読 ID : base plan ID |
-|---|---|---|---|
-| `pro` | month | `homegohan_pro_month` | `homegohan_pro:monthly-autorenewing` |
-| `pro` | year | `homegohan_pro_year` | `homegohan_pro:annual-autorenewing` |
-| `family_basic` | month | `homegohan_family_basic_month` | `homegohan_family_basic:monthly-autorenewing` |
-| `family_basic` | year | `homegohan_family_basic_year` | `homegohan_family_basic:annual-autorenewing` |
-| `family_pro` | month | `homegohan_family_pro_month` | `homegohan_family_pro:monthly-autorenewing` |
-| `family_pro` | year | `homegohan_family_pro_year` | `homegohan_family_pro:annual-autorenewing` |
+| plan_key | 間隔 | App Store の商品 ID (Subscription Group `homegohan_plans`) | App Store のグループの中のレベル (1 が最上位) | Google Play の購読 ID : base plan ID |
+|---|---|---|---|---|
+| `pro` | month | `homegohan_pro_month` | 3 | `homegohan_pro:monthly-autorenewing` |
+| `pro` | year | `homegohan_pro_year` | 3 | `homegohan_pro:annual-autorenewing` |
+| `family_basic` | month | `homegohan_family_basic_month` | 2 | `homegohan_family_basic:monthly-autorenewing` |
+| `family_basic` | year | `homegohan_family_basic_year` | 2 | `homegohan_family_basic:annual-autorenewing` |
+| `family_pro` | month | `homegohan_family_pro_month` | 1 | `homegohan_family_pro:monthly-autorenewing` |
+| `family_pro` | year | `homegohan_family_pro_year` | 1 | `homegohan_family_pro:annual-autorenewing` |
+
+- グループの中のレベル (App Store Connect の Subscription Group で、商品をドラッグして並べる順。P18): 提供する内容の多い順に、家族 Pro (1 日 50 回・究極 3 回・8 人) > 家族 Basic (1 日 30 回・究極 2 回・4 人) > 個人 Pro (1 日 30 回・究極 2 回。家族なし) (§0.6)。同じプランの月額と年額は同じレベルに置く。これで、個人 Pro → 家族 Basic / 家族 Pro と家族 Basic → 家族 Pro は上位への変更 (すぐに効く)、逆向きは下位への変更 (期間の終わりに効く)、同じプランの月額 ⇄ 年額は期間の違う crossgrade (期間の終わりに効く。S32) になる (P18)。すぐに効く変更で取り直しに 2 つの商品が live で並んだときの写し方は §7.3 の「同じグループの 2 つの live」の行 (S36)。レベルは当社のコードに持たない (写像はレベルを見ず、`purchase_date` の新しい方を権利にする)。
 
 ```sql
 -- tsc:skip 運営が本番で流す (service_role / super_admin)。商品 ID は実際に作ったものに合わせる
@@ -4570,7 +4705,7 @@ INSERT INTO public.plan_store_products (plan_key, store, billing_interval, produ
 - `/pricing` に 3 プランの価格・無料体験・内容が出て、Price の登録の前は CTA が無い (「現在は無料」・FAQ の節が無い)。`/legal` に販売の 9 行 (販売価格の 3 行を含む) と #1911 の会社情報。`/faq` に料金の 4 項目。紹介ページの料金の章にカード 2 枚。どのページにも「準備中」「販売開始前」「いまは無料」が無い。
 - 無料の利用者: 献立の作成 4 回目が 429 (「今日の献立の作成の利用回数の上限 (3 回) に達しました。…」)、1 週間の献立を作ると献立は保存され料理画像は作られない (料理の `image_error = 'skipped_plan'`・`meal_image_jobs` は `cancelled`。S27)、究極モードのトグルが錠、料理画像の作成が 403 (「料理画像の作成は、有料プランでお使いいただけます。」)、料理の保存で画像が付かず料理の画面に有料プランの案内、家族グループの作成が 402。
 - 手動付与で `pro` にした利用者: 1 日 30 回・究極 2 回・料理画像が作れる。`family_basic` の利用者: グループを作れ、4 人まで足せる。
-- iOS (TestFlight・sandbox のアカウント。本番の受け口と本番の DB): 設定 → プランとお支払い → 個人 Pro 月額 (ストアの価格の表示・7 日間無料の表示・自動更新の文) → 購入 → `personal_subscriptions` に `trialing`・`iap_store='app_store'`・`iap_is_sandbox = true`・`plan_key_cached='pro'`・`admin_audit_logs` に `subscription_created`。`revenuecat_webhook_events` に `INITIAL_PURCHASE` が `completed`。Web の `/account/billing` に「App Store でご契約中」。購入を復元 → 同じ行。sandbox の時間の進みで `RENEWAL` → `current_period_end` が進む。自動更新を切る → `cancel_at_period_end=true`。
+- iOS (TestFlight・sandbox のアカウント。本番の受け口と本番の DB): 設定 → プランとお支払い → 個人 Pro 月額 (ストアの価格の表示・7 日間無料の表示・自動更新の文) → 購入 → `personal_subscriptions` に `trialing`・`iap_store='app_store'`・`iap_is_sandbox = true`・`plan_key_cached='pro'`・`admin_audit_logs` に `subscription_created`。`revenuecat_webhook_events` に `INITIAL_PURCHASE` が `completed`。Web の `/account/billing` に「App Store でご契約中」。購入を復元 → 同じ行。sandbox の時間の進みで `RENEWAL` → `current_period_end` が進む。自動更新を切る → `cancel_at_period_end=true`。別の sandbox のアカウントで個人 Pro の体験中に iOS の設定の購読の管理から家族 Pro の月額に変える → 個人 Pro の行が `expired` (監査の `details.source` が `:superseded` で終わる)・家族 Pro の行が live・`plan_key_cached='family_pro'`・同期の API が 200 (S36)。
 - Android (内部テスト): 同じ流れで `play_store`。
 - 二重購読: Stripe で契約中の利用者のアプリに購入のボタンが出ない。
 - App Store の審査の購入 (sandbox): 審査のあとに `personal_subscriptions` に `iap_is_sandbox = true` の行が live で写っていた (読み取りで確かめる。S24)。
@@ -4603,7 +4738,7 @@ INSERT INTO public.plan_store_products (plan_key, store, billing_interval, produ
 | 5 | Web で試用済みの利用者がストアで同じプランの試用を受けること (Q-10 の逆向き) | 止められない (ストアの判定)。許容する |
 | 6 | 家族プランの無い利用者が招待を作れる (承諾で 402) こと | 招待の作成の route でも `billing_has_live_family_plan` を見て 402 にするかは family の冊。本冊は承諾の門だけ |
 | 7 | 契約が終わった家族グループのメンバーの扱い (そのまま。Q-4) | billing/01 §18 の 15 と同じ |
-| 8 | 二重購読の 2 本目の扱い。App Store の購入は開発者が返金できない (P14) | 当社が解約・返金できるもの (Stripe・手動付与・Google Play) は当社が処置し、App Store 同士は利用者に Apple への返金の申し込みを案内する (§13.3 の表。手順は `operator/09` の追随。§16.2) |
+| 8 | 二重購読の 2 本目の扱い。App Store の購入は開発者が返金できない (P14) | 当社が解約・返金できるもの (Stripe・手動付与・Google Play) は当社が処置し、App Store 同士は利用者に一方の解約と Apple への返金の申し込みを案内する (§13.3 の表。手順は `operator/09` の追随。§16.2)。App Store 同士は、同じ Apple ID のグループの中の変更 (S36) と別の Apple ID の二重購読を見分けられない (RevenueCat の `subscriptions` に Apple ID は無い) ので、どちらも写像は新しい方を権利にして止めない。別の Apple ID の二重購読は、どちらかが更新されるたびに `purchase_date` の新しい方へ権利が移る (状態の変化として監査に残る) が、問い合わせで一方が解約されるまでの間だけで、利用者はどちらかの有料プランを使い続けられる |
 | 9 | ストアの `grace` (当社の `grace` = Stripe の配線のジョブが進める状態) をストアの行で使うか | 使わない (ストアの猶予期間は `past_due` で表す。§7.3) |
 | 10 | `management_url` (RevenueCat) が null のときの行き先 | `STORE_SUBSCRIPTION_MANAGEMENT_URL` (§8.9) |
 | 11 | モバイルの `/account/billing` の WebView の表示 (読み取り専用のまま) とネイティブの購入の画面の二重 | 本冊はネイティブの画面を正にし、WebView の `/account/billing` は Web の文のまま (リンクは出さない) |
@@ -4616,7 +4751,7 @@ INSERT INTO public.plan_store_products (plan_key, store, billing_interval, produ
 | 18 | プライバシーポリシーの保存期間 | §11.2 (e) で有料プランの 4 行を足した (契約の行は退会で消える・顧客とクーポンの記録は紐づけを外して残る・通知の記録は利用者の ID とともに残る・事業者の記録は各事業者の規約)。通知の記録を消す仕組み (保存の期限) は無く、作るなら別の冊で第12条を直して版を上げる |
 | 19 | 凍結のファイル `src/app/api/super-admin/llm/quotas/route.ts:12` のコメント「既定は free = 1 日 10 回。migration 20261011020000_ai_daily_limits.sql」が本冊の migration の後の free (5) と合わない | 本冊は凍結 (§15.2) を守って触らない。運営の画面の冊 (operator/06) の次の改定で、コメントを「free の行の値 (billing/03 §6.5)」に直す |
 | 20 | `menu_generation` が 1 週間の作成と 1 食の作り直しを同じ 1 回で数えること (無料は合わせて 1 日 3 回) | Q-3 の代替案 (1)。作り直しが 1 週間の作成を止めるのが問題になれば、1 週間の作成を別の機能名で数える冊を立てる |
-| 21 | 料理画像のプランの門 (`process-meal-image-jobs`) は、`ai_plan_feature_daily_cap` を読めなかったとき止めない (fail-open) | `consume_ai_usage` の「判定に失敗したときは止めない」と同じ扱い (§8.8)。読めない間は無料の利用者にも料理画像が作られうるが、DB が読めない間は同意の判定 (fail-closed) がジョブを取り消すことが多い |
+| 21 | 料理画像のプランの門 (`process-meal-image-jobs`) は、`ai_plan_feature_daily_cap` を読めなかったとき (RPC がエラーを返した・投げた) 止めない (fail-open) | `consume_ai_usage` の「判定に失敗したときは止めない」と同じ扱い (§8.8)。投げたときも `readMealImageJobPlanDecision` が捕まえて `"allowed"` を返すので、ジョブは貸し出し中のまま残らず、同じ実行の残りのジョブも処理される (テスト 141)。読めない間は無料の利用者にも料理画像が作られうるが、DB が読めない間は同意の判定 (fail-closed) がジョブを取り消すことが多い |
 | 22 | 段 E は cross/20 の実装のマージを待つ | cross/20 の実装が遅れると、Stripe の有効化の申請 (§12 の順 3) も遅れる。cross/20 の実装を先に進める (オーケストレーターの段取り) |
 | 23 | 退会のときに RevenueCat の顧客の記録 (app user ID = 利用者の id と購入履歴) を消すか (RevenueCat の案内は、データ セーフティの削除の依頼をお問い合わせで受け、Dashboard か REST API で顧客を消す形。P16) | 本冊は消さない (プライバシーポリシーの保存期間 (§11.2 (e)) の「事業者の記録は各事業者の規約」のまま)。退会の段階に RevenueCat の顧客の削除を足すかは、運営の手順 (`operator/09`) か別の冊で決める |
 
@@ -4631,3 +4766,4 @@ INSERT INTO public.plan_store_products (plan_key, store, billing_interval, produ
 | v1.2 | 2026-10-19 | R2 の指摘の反映: 紹介ページ (`landing-copy.ts`) の変える箇所を逐語の表に (「すべて無料」「いまは無料」を書かない・無料のカードから「家族で使う」を消す・家族の 4 か所に家族プランの条件・有料のカードは `free` / `paid` の 2 枚の形のまま 3 プランの価格の行)・`PAID_PLAN_SUMMARY` を `billing-plans.ts` に・`SITE_DESCRIPTION` と `/pricing` の「現在は無料」を消す・`tests/landing-page-1867.test.ts` の追随 (U-24・U-15・テスト 104)・子供の昇格 (`accept_child_promotion` は UPDATE) を家族の門の対象から外す (Q-4・§6.6・§9.5・テスト 105)・組織の利用者の AI の 1 日の上限を変えない (組織の plan の値に適用前の free の値を写す。§6.5 (5a)・テスト 106・107)・Google Play の内部テストに上げる AAB を `production` のプロファイルで作る (§12 の順 4・§17.3) |
 | v1.3 | 2026-10-19 | R3 の指摘の反映: 土台を origin/main `4b1e1abe` (#1911 のマージ。cross/20 の正典が入った後) に移し、§2.2 (F2・F13・F14・F20 を書き直し、F21〜F25 を足す)・§7.2・§10.1 (`onSale` と「現在は無料」・FAQ の節を消す)・§10.2 (#1911 の 8 行に販売の 9 行を足す。`business-info.ts`・運営会社のページは変えない)・§10.5 (FAQ は一重引用符の文字列で定数の写し・`PlanCardSchema` を 2 枚に戻し `marketing.css` を戻す)・§13.1 (`EXT_STRIPE_NOT_CONFIGURED` は変えない)・§16.1 を main に合わせた。§11 を cross/20 §17 の「Issue #1912」の行に沿って書き直した (第10条の 2〜11 項・第11条 1 項・第16条 2 項・第17条・第24条・ポリシー第3/4/7/10/12条・主張の表の 42 行と 3 行の直し・T-33 / T-34 の改め・版 `v2026.2`。ストアの事業者は第7条に載せない (Q-17))。Q-14〜Q-17 と機能 × プランの表 (§0.6) を足した。献立の作成 (Edge の `save-meal`) の料理画像を `process-meal-image-jobs` のプランの門 (`ai_plan_feature_daily_cap`) で止め、原価の表に料理画像を入れた (§2.4・Q-16)。`menu_generation` を数える入口を全部挙げ (F23)、無料の上限を 3 回・止めたときの機能名を「献立の作成」にした。対応の無い商品は live でなければ飛ばし、利用者の行があればその `plan_key` で写す (`unmappedStoreSubscriptionDecision`)・`plan_store_products` の主キーを `(store, product_id)` にして `offered` を足した。購入の画面の無料体験の文をストアの導入価格と体験の対象の判定から作る (`storeTrialOf`・`fetchTrialEligibility`)。取り直しに無くなった行を終わらせるとき `iap_is_sandbox` と `billing_interval` を保つ。状態遷移表に最初の取り直しの `past_due` の INSERT と解約の予約を足した。§6.7 の手動付与の述語を `billing_revoke_manual_subscription`・`billing_expire_manual_subscription_for_user`・PROCEDURE `billing_expire_manual_subscriptions` に直した |
 | v1.4 | 2026-10-19 | R4 の指摘の反映: 退会の API を呼ぶ 4 つの入口 (Web の設定・凍結中の退会・規約の同意の画面の「登録をやめる」・アプリの設定のアカウント (`apps/mobile/app/settings/account.tsx`。ネイティブの確認で WebView を通らない)) のすべてに、ストアの購読は退会で解約されないことの固定の文 `STORE_SUBSCRIPTION_DELETION_NOTICE` (§8.9) を出し、アプリの確認に「定期購読の管理を開く」を置いた (§10.4・R24・S35・テスト 127〜130・P17)。§12 と §17.5 にストアのメタデータ (Privacy Policy URL・説明文の利用規約とプライバシーポリシーの URL・App のプライバシーとデータ セーフティの購入履歴) を足した (R25・P16)。`create_family_group` の最後の定義を固定する 2 本のテスト (`parental-consent-migration-contract`・`rpc-profile-name-placeholder-migration-contract`) の直し方を §16.1 に足し、母集合の作り方に 9 (最後の定義を固定するテスト) と 10 (文を足す画面の入口) を足した。`tests/api/billing-routes.test.ts` の偽物と AI の印の棚卸しの直し方を §16.1 に足した (テスト 131。母集合の作り方 1 に既存の route が届くようになる場合を足した)。`middleware.ts` と `maintenance-mode.ts` には Webhook の除外・止める側の一覧が無いので、どちらも変えないと §9.1・§15・§16 を直し、止まることをテスト 132・133 で固定した。§7.1 の退会の行の参照を §10.4 に直した |
+| v1.5 | 2026-10-19 | R5 の指摘の反映: (1) App Store の同じ Subscription Group の中の変更 (上位への変更・期間が同じ crossgrade・体験中の上位への変更) で取り直しに 2 つの商品が live で並ぶとき、`purchase_date` の新しい方を権利にし、古い方を `expired` (`p_source` に `:superseded`) で先に写す規則を足した (§8.1 `SUPERSEDE_WITHIN_GROUP_STORES`・`compareStoreSubscriptionRecency`・`selectStoreSubscriptions` の `supersededAt`・`projectStoreSubscription`・`unmappedStoreSubscriptionDecision`・§8.4 `syncStoreSubscriber`・§7.3 の 2 行・S36・P18・テスト 134〜137)。Google Play の 2 つの live は `BILL_LIVE_ROW_CONFLICT` のまま。§17.2 と §12 の順 4 にグループの中のレベル (家族 Pro > 家族 Basic > 個人 Pro) を足し、§13.3 の App Store 同士の処置と S25・R12 を直した。(2) `findPlanFeatures` の本体を正典で書いた (1 日の上限だけ free の行に倒し、機能ごとの上限はそのプランの行だけ。§8.6・§10.3・テスト 138・139)。(3) `admin_audit_logs` の書き手を固定する `tests/admin-audit-logs-insert-policy-migration-contract.test.ts` の追随 (`DIRECT_INSERT_ALLOWED` に `iap-repository.ts`) を §16.1 と §15.2 に足し、母集合の作り方 11 を足した。(4) `readMealImageJobPlanDecision` が RPC の例外も捕まえて止めないようにし (§8.8・§18 の 21)、ハンドラを本物で動かす `tests/process-meal-image-jobs-worker-edges.test.ts` の偽の client に `rpc` を足す追随とテスト 140・141 を §16.1 と §15.2 に足し、母集合の作り方 12 を足した。(5) 使い方ページの撮影の種まき `scripts/guide-screenshots/seed.ts` の家族の代表者に家族プランを手動付与する追随を §16.1・§15.1・§15.2・§16.3 に足し、母集合の作り方 2 の grep に `scripts` を加えた |
