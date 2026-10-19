@@ -197,7 +197,7 @@
 | R22 | 監査ログ必須 | `docs/design/CLAUDE.md` | 状態の変化は写像が `admin_audit_logs` に書く (核と同じ名前)。Webhook の失敗は `system.revenuecat.event_failed` (§8.1) |
 | R23 | 既存の番兵の追随と、2 PR 以上が触る共有面の台帳 | 設計の規約 | §16 |
 
-### 3.2 ユーザーシナリオ (25 本)
+### 3.2 ユーザーシナリオ (26 本)
 
 | ID | シナリオ |
 |---|---|
@@ -226,6 +226,7 @@
 | S23 | 無料体験の 1 人 1 回: 利用者が iOS で個人 Pro の月額を 7 日間の無料体験つきで買い (行は `trialing`)、体験中に App Store で自動更新を切る。体験の終わりに行は `expired` になる。後日 Web の `/pricing` から個人 Pro を申し込むと、確認画面の無料体験は 0 日で、Checkout も試用なしで作られる。家族 Basic を Web で申し込むときは 7 日の無料体験が付く (試用は同じプランで 1 回)。同じ Apple ID でストアからもう一度買うときの試用の可否は App Store が決める (Q-10) |
 | S24 | App Store の審査 (sandbox の購入): 審査官が本番のビルドに審査用のアカウントでログインし、sandbox の Apple ID で個人 Pro の月額を買う。Webhook (`environment` = `SANDBOX`) と同期の API が本物の購入と同じに写し、行は `trialing`・`iap_is_sandbox = true`・`plan_key_cached = 'pro'`。究極モードの錠が外れ、「プランとお支払い」は「個人 Pro をご利用中です」を出す。TestFlight・Google Play の内部テストの購入も同じ |
 | S25 | 二重購読の防止と案内 (ストア同士): App Store で個人 Pro を契約中の利用者が、別の端末 (Android) の購入の画面から Google Play でも買ってしまう。写像が `BILL_LIVE_ROW_CONFLICT` で止め、同期の API は 409 (S13 と同じ文)。運営は Google Play の購入を Play Console で返金する (購読はすぐ終わる。P14)。2 本とも App Store の購入のとき (別の Apple ID) は、運営は利用者に reportaproblem.apple.com からの返金の申し込みを案内する (Apple の購入は開発者が返金できない。P14) |
+| S26 | 組織のメンバーの上限 (組織の課金は本冊の対象外。§0.2): 運営が作った組織に管理者から招待されて入った利用者で、個人の契約も家族も無い。本冊の migration の適用のあとも、AI の 1 日の上限は適用の前の free の値 (本番 10 回) のままで、無料の利用者 (5 回) と同じにはならない。究極モードは環境変数の既定 (1 日 1 回)・献立の生成と料理画像の作成は機能ごとの上限を持たない (これまでどおり) |
 
 ---
 
@@ -270,6 +271,7 @@
 | S23 | 1・2: 購入の取り直し (`period_type` trial) → 写像の 6. の INSERT が `trialing` の行に `trial_started_at = purchase_date`・`trial_ends_at = expires_date`・`trial_source = 'app_store'` を入れる (§6.4)。自動更新 OFF → `cancel_at_period_end=true` (S5 と同じ)。体験の終わりの取り直し → `expired`。UPDATE は `trial_started_at` / `trial_source` を `COALESCE` で保つ。Web: `previewCheckout` / `startCheckout` (`src/lib/billing/service.ts:73,97`) → `repository.hasUsedTrial(user, 'pro')` (`src/lib/billing/repository.ts:72-80`。同じ利用者・同じ `plan_key` で `trial_started_at` のある行を数える。行の出どころを見ないので I 行も入る。コードは変えない) = true → `trialDaysFor(7, true)` = 0 (`src/lib/billing/core.ts:446-448`)。`family_basic` は `hasUsedTrial(user, 'family_basic')` = false → 7 日。ストアでの買い直しは同じ (user, store, product) の行を再利用し、`trial_started_at` は最初の値を保つ (§7.3) |
 | S24 | 7・3: 審査官の購入 → 同期の API → 取り直し → `subscriptions['homegohan_pro_month']` (`is_sandbox: true`・`period_type` trial) → 2: `projectStoreSubscription` が `is_sandbox: true` の snapshot → 1: 行 INSERT (`trialing`・`iap_is_sandbox = true`)・`plan_key_cached='pro'`・監査の details に `is_sandbox: true`。Webhook (`environment: SANDBOX`) も環境を見ずに同じ取り直し (stale か同値)。route・同期・遅延の再同期のどれも環境で絞らない (§9.1) |
 | S25 | 2: Android の購入の取り直し → 写像の 5. が App Store の live 行を見つけ `BILL_LIVE_ROW_CONFLICT` → S13 と同じ記録と 409。運営: Play Console で Google Play の購入 (最新の注文) を返金 → 購読が終わる → RevenueCat の `EXPIRATION` (または `CANCELLATION`) → 取り直し → Google の商品は `refunded_at` あり (`cancelled` の履歴の行が INSERT。live でないので衝突しない)。App Store 同士は運営が利用者へ返金の申し込みを案内し、Apple が返金すると `CANCELLATION` → 取り直し → `refunded_at` → その行は `cancelled` |
+| S26 | 5: `get_effective_plan` = 個人の契約も家族も無いので `organizations.plan` (`standard`) → `consume_ai_usage_at` が `ai_daily_limits(standard)` を読む = migration (5a) が free を 5 に書き換える前に写した値 (10)。`ai_plan_feature_caps` に `standard` の行は無い → 究極モードは呼び出し側の環境変数の既定・ほかの機能は 1 日の上限の合計だけ (§6.5 の「行の無い (plan, feature) は従来どおり」) |
 
 ---
 
@@ -2166,11 +2168,11 @@ export function summarizeSubscription(row: SubscriptionRowView | null, hasCustom
 
 | 呼び出し元 (origin/main) | 使う関数 | 本冊の後の文 | ファイルの変更 |
 |---|---|---|---|
-| Next の AI の route (`src/lib/plan/entitlements.ts:255` `aiDailyLimitResponse`) | `aiDailyLimitPayload(denied)` | 403 `AI_FEATURE_NOT_IN_PLAN` (使えない機能) / 429 (回数) | なし |
+| Next の AI の route (`src/lib/plan/entitlements.ts:255` `aiDailyLimitResponse`) | `aiDailyLimitPayload(denied)` | 403 `AI_FEATURE_NOT_IN_PLAN` (使えない機能) / 429 (回数) | コードはなし。冒頭のコメント (`:4`) だけ (§16.1 の「free = 10 の文」の行) |
 | Edge の AI の関数 (`supabase/functions/_shared/ai-usage.ts:185` `aiDailyLimitEdgeResponse`) | `aiDailyLimitPayload(denied)` | 同上 | なし |
 | Edge の献立の生成の行の失敗の欄 (`generate-menu-v4/index.ts:2908`・`generate-menu-v5/index.ts:3637`) | `aiDailyLimitMessageOfDenied(aiUsage)` | 「究極モードは、有料プランでお使いいただけます。」/「今日の献立の生成の利用回数の上限 (2 回) に達しました。…」 | なし (読む側の `isAiDailyLimitMessage` がこの文を通す) |
 | AI 相談の自動実行の結果 (`src/lib/ai/consultation-action-executor.ts:299-301` `dailyLimitResult`) | `aiDailyLimitMessageOfDenied(denied)` | 同上 | **あり**: `code` を `denied.planLocked === true ? AI_FEATURE_NOT_IN_PLAN_CODE : AI_DAILY_LIMIT_CODE` にし、戻り値の型を `{ error: string; code: typeof AI_DAILY_LIMIT_CODE \| typeof AI_FEATURE_NOT_IN_PLAN_CODE }` にする (import に `AI_FEATURE_NOT_IN_PLAN_CODE` を足す) |
-| 行の失敗の文の読み手 (`src/lib/weekly-menu-request-error.ts`・`src/lib/shopping-list-request-error.ts`・`apps/mobile/src/lib/menu-request-error.ts`・`supabase/functions/_shared/stored-failure-messages.ts`) | `isAiDailyLimitMessage(value)` | 使えない機能の文も「こちらで書いた文」として出す | なし |
+| 行の失敗の文の読み手 (`src/lib/weekly-menu-request-error.ts`・`src/lib/shopping-list-request-error.ts`・`apps/mobile/src/lib/menu-request-error.ts`・`supabase/functions/_shared/stored-failure-messages.ts`) | `isAiDailyLimitMessage(value)` | 使えない機能の文と機能ごとの上限の文も「こちらで書いた文」として出す (テスト 108) | 判定のコードはなし。コメントだけ 3 本: `weekly-menu-request-error.ts` の冒頭 (`:12-13`) と `:53`・`:60`、`stored-failure-messages.ts` の `:13-14` と `:61`、`menu-request-error.ts` の `:16` の「上限 (1 日・究極モード) の文」を「上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) の文」にする。`shopping-list-request-error.ts` は変えない (`:15-16` は「など」で閉じておらず、買い物リストの作り直しが数える `shopping_list` は `AI_PLAN_CAPPED_FEATURES` に無いので、使えない機能の文を書かない) |
 | Web の画面 (`src/lib/ai/daily-limit-client.ts` `aiDailyLimitMessageOfResponse`) | `aiDailyLimitMessageOfBody` | 403 の本文からも文を作る | **あり** (下の箇条) |
 | モバイル (`apps/mobile/src/lib/ai-daily-limit.ts` `aiDailyLimitErrorOf`) | `aiDailyLimitMessageOfBody` | 同上 | **あり** (下の箇条) |
 | 料理の保存の自動の料理画像 (4 本の route と AI 相談の自動実行。`aiDailyLimitSkippedField`) | `aiDailyLimitSkippedField(imageUsage)` | `planLocked` のときは `aiSkipped` を付けない | なし (関数の中で変わる)。見送りの理由だけ下の meal-image の差分で変える |
@@ -3487,7 +3489,8 @@ export function billingErrorMessageOf(error: unknown): string {
 97. `tests/consultation-action-usage.test.ts` (追加): `it('dailyLimitResult returns code AI_FEATURE_NOT_IN_PLAN with the not-in-plan message for planLocked denials and AI_DAILY_LIMIT otherwise')`
 101. `tests/ai-daily-limit-client.test.tsx` (追加): `it('aiDailyLimitMessageOfResponse returns the not-in-plan message for 403 AI_FEATURE_NOT_IN_PLAN and null for 403 AI_CONSENT_REQUIRED')`
 92. `tests/meal-image-skip.test.ts` (追加): `it('mealImageSkipReasonOf returns plan for planLocked denials, ai_limit for other denials and rate_limit for null / allowed; MEAL_IMAGE_SKIPPED_ERRORS.plan is skipped_plan and isMealImagePlanSkippedError matches only it')`
-98. `tests/api/meals-plan-locked-image.test.ts` (新設): `it('POST /api/meals, PATCH /api/meals/[id], POST /api/meal-plans/meals and PATCH /api/meal-plans/meals/[id] save the meal with image_error skipped_plan and no aiSkipped when meal_image_auto is plan-locked')` (consumeAiUsage の偽物が planLocked の止めを返す)
+98. `tests/meal-image-skip-routes.test.ts` (追加。既存の `describe.each(ENTRIES)` の中に 1 つ。5 つの入口 = POST /api/meals・POST /api/meal-plans/meals・PATCH /api/meals/[id]・PATCH /api/meal-plans/meals/[id]・AI 相談の update_meal): `it('A-plan. meal_image_auto が plan-locked: 料理を failed + skipped_plan で保存し (pending を残さない)、ジョブを積まず、数え戻さず、aiSkipped を付けない')` (`h.consumeAiUsage` の偽物が `{ ...AI_USAGE_DENIED, cappedFeature: 'meal_image_auto', planLocked: true }` を返す。既存の A の it と同じ形で、期待は `image_error: 'skipped_plan'` と `out.aiSkipped` が undefined)
+108. `tests/stored-failure-messages.test.ts` (追加。`describe('画面に出すときの絞り込み (Web とアプリが同じ答え)')` の中): `it('使えない機能の文 (AI_PLAN_CAPPED_FEATURES の 4 つの aiFeatureNotInPlanMessage と AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE)・機能ごとの上限の文 (aiFeatureDailyLimitMessage)・aiDailyLimitMessageOfDenied が planLocked と AI_PLAN_CAPPED_FEATURES の cappedFeature から作る文は、Web (weeklyMenuRequestErrorMessageForDisplay / ForResponse) とアプリ (menuRequestErrorMessageForDisplay) がどちらもそのまま出す')` (行に書く側が作りうる文を読む側がすべて通す契約を、本冊の新しい文まで広げる)
 99. `src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx` (新設): `it('RecipeModal shows the paid-plan wording for skipped_plan and keeps the existing wording for skipped_ai_limit / skipped_rate_limit')`
 
 `tests/public-claims-guard.test.ts` (書き換え。§10.1・§10.2):
@@ -3534,7 +3537,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 64. `it('rollback restores create_family_group, the manual-grant functions and the AI functions verbatim from their source migrations and drops everything the migration added')`
 65. `it('no UPDATE / DELETE outside function bodies except the 3 plan rows and the free ai_daily_limits row')`
 100. `it('the ai_plan_feature_caps feature CHECK lists exactly AI_PLAN_CAPPED_FEATURES and consume_ai_usage_at checks ai_plan_feature_caps before the c_unmetered branch')`
-106. `it('migration copies the free daily_limit to the organization plan keys (organizations.plan, standard, plan_type org) excluding free and the 3 paid keys before it updates free, and the rollback deletes only those rows with updated_by IS NULL')`
+106. `it('migration copies the free daily_limit to the organization plan keys (organizations.plan, standard, plan_type org) excluding free and the 3 paid keys before it updates free, and the rollback deletes only those rows with updated_by IS NULL')` (S26)
 
 `tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`:
 66. `it('inserts a trialing store row, syncs plan_key_cached and the family group, and audits subscription_created')`
@@ -3557,7 +3560,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 75. `it('consume_ai_usage_capped uses the plan row when present and the env cap otherwise')`
 76. `it('family plan members inherit the family plan limits via get_effective_plan')`
 91. `it('meal_image_auto is denied with plan_locked for free before the unmetered branch (no counter row), while a paid plan without a row still uses the ai_unmetered_daily_caps safety cap')`
-107. `it('an organization member without a personal or family plan keeps the pre-migration daily limit (the standard and org_* rows hold the old free value) while a free user is limited to 5')`
+107. `it('an organization member without a personal or family plan keeps the pre-migration daily limit (the standard and org_* rows hold the old free value) while a free user is limited to 5')` (S26)
 
 `tests/integration/security/family-plan-gate.test.ts`:
 77. `it('create_family_group raises FAMILY_PLAN_REQUIRED without a live family plan and succeeds with a manual family grant')`
@@ -3575,7 +3578,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 81. `tests/e2e/.manual/iap-webhook.spec.ts`: 本番の受け口 (RevenueCat に登録した 1 つの Webhook) へ RevenueCat の Dashboard の Test event (`TEST` → 200 `ignored`) と、TestFlight の sandbox の購入のイベントを送り、`personal_subscriptions` (`iap_is_sandbox = true`) と `revenuecat_webhook_events` を読み取りで確かめる (§17.4)。
 82. 実機 (整合ゲート): §17.4。
 
-### 14.4 シナリオ ⇄ テスト (§3.2 の 25 本がどのテストで守られるか)
+### 14.4 シナリオ ⇄ テスト (§3.2 の 26 本がどのテストで守られるか)
 
 | シナリオ | テスト (番号は §14.1〜§14.3) |
 |---|---|
@@ -3595,7 +3598,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S14 鍵が無い | 16・26・31・32 |
 | S15 ストアの商品が未登録 | 10・18・56 |
 | S16 Stripe の Price が無い間の料金ページ | 44・46 |
-| S17 無料の利用者の線引き | 41・42・49・57・74・77・89・91・92・97・98・99・101・102・103 |
+| S17 無料の利用者の線引き | 41・42・49・57・74・77・89・91・92・97・98・99・101・102・103・108 |
 | S18 有料の利用者の線引き | 74・75・76 |
 | S19 家族プランが終わったグループ | 69・78・79・105 |
 | S20 手動付与との共存 | 63・68・77 |
@@ -3604,6 +3607,9 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S23 無料体験の 1 人 1 回 | 70・83・84・86 |
 | S24 App Store の審査 (sandbox の購入) | 29・90・81 (手動)・82 (実機) |
 | S25 二重購読の防止と案内 (ストア同士) | 68・32・96 |
+| S26 組織のメンバーの上限 | 106・107・75 |
+
+§12 の発注者の作業 (App Store の Paid Applications Agreement・税と銀行の登録、Google Play の内部テストのトラックへの課金のライブラリ入りのビルドの提出、ストアの商品の作成) は運用の手順で、本冊のコードの振る舞いではない。シナリオとテストは持たず、§17.4 の受け入れの確認 (iOS の TestFlight・Android の内部テストの購入) で確かめる。
 
 ---
 
@@ -3614,7 +3620,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
 | A: DB 層 | migration + rollback (§6)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、本人の書き出しの `omit`、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・§16.1 の結合テストの追随 | 60〜80・83・84・86・90・91・100・105〜107 |
-| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
+| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`packages/shared/src/billing-plans.ts` と `index.ts` の 1 行・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 3 本の 402・`membership-errors.ts`・`_shared/ai-daily-limit.ts` (全文) と Web の `daily-limit-client.ts`・モバイルの `aiDailyLimitErrorOf`・`consultation-action-executor.ts` (`dailyLimitResult` の code と見送りの理由)・行の失敗の文の読み手のコメント 3 本 (§8.8)・`_shared/meal-image.ts` と `lib/meal-image.ts` の再 export・料理の保存の 4 本の route の見送りの理由・`RecipeModal.tsx` の文・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85, 89, 92〜95, 97〜99, 101, 102, 108。81 (手動の E2E。段 B のマージ後、§17.4 の整合ゲートで流す) |
 | C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`PricingSection.tsx` (コメント)・`public-pages.ts` (`SITE_DESCRIPTION`)・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48, 87, 88, 103, 104 |
 | D: モバイル | `react-native-purchases`・`expo-dev-client` の追加、`purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`app/settings/plan.tsx`・設定タブの行・`AuthProvider`・`signOut.ts`・`UltimateModeToggle` と `V4GenerateModal` の錠・`env.example`・jest の mock と `moduleNameMapper`・`no-web-purchase-links.test.ts` のコメント | §8.10・§10.6 | 51〜59, 96 |
 | E: 規約とポリシーの条文 | `/terms`・`/privacy` の条・`legal-versions.ts` の版 | §11 | §16.1 の規約の行 |
@@ -3633,7 +3639,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - `src/hooks/useBillingSummary.ts`
 - テストの道具: `tests/integration/helpers/family-plan.ts` (`grantFamilyPlan`。§16.1 の家族の結合テストの行)・`tests/e2e/helpers/billing-plan.ts` (`grantManualPlanForE2e`。§16.1 の E2E の行)
 - `apps/mobile/src/lib/purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`plan-screen.ts`・`apps/mobile/app/settings/plan.tsx`・`apps/mobile/__mocks__/react-native-purchases.js`
-- テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`tests/api/meals-plan-locked-image.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`
+- テスト: `tests/billing-iap-core.test.ts`・`tests/billing-iap-service.test.ts`・`tests/webhooks-revenuecat-route.test.ts`・`tests/api/billing-iap-routes.test.ts`・`tests/billing-plan-catalog.test.ts`・`tests/api/family-plan-required.test.ts`・`tests/billing-paid-plans-migration-contract.test.ts`・`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts`・`tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`・`tests/integration/rls/ai-plan-feature-caps-rpc.test.ts`・`tests/integration/security/family-plan-gate.test.ts`・`tests/integration/security/plan-store-products-rls.test.ts`・`tests/e2e/.manual/iap-webhook.spec.ts`・`apps/mobile/__tests__/lib/iap-catalog.test.ts`・`purchases.test.ts`・`billing-api.test.ts`・`apps/mobile/__tests__/settings/plan-entry.test.tsx`・`plan-screen.test.tsx`・`tests/billing-status-lines-parity.test.ts`・`tests/billing-summary-wire.test.ts`・`src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx`
 
 変更:
 - `src/lib/billing/core.ts`・`repository.ts`・`service.ts`・`http.ts`・`public-plans.ts`・`manual-grant.ts`・`manual-grant-repository.ts`・`src/components/admin/ManualPlanGrantSection.tsx`
@@ -3642,13 +3648,16 @@ Web の契約の画面 (追加。§10.3・§10.4):
 - `src/app/api/billing/subscription/route.ts`
 - `src/app/api/family/groups/route.ts`・`invites/[id]/accept/route.ts`・`members/child/route.ts`・`src/lib/errors/membership-errors.ts`
 - `supabase/functions/_shared/ai-daily-limit.ts`・`src/lib/ai/daily-limit-client.ts`・`apps/mobile/src/lib/ai-daily-limit.ts`・`src/lib/ai/consultation-action-executor.ts` (`dailyLimitResult` の code と、料理画像の見送りの理由の 1 行)
+- コメントと it 名だけ (§16.1 の「free = 10 の文」の行): `src/lib/plan/entitlements.ts`・`supabase/functions/_shared/ai-usage-core.ts`・`tests/helpers/ai-usage-mock.ts`・`tests/meal-image-route-contracts.test.ts` (ほかの該当のファイルは別の行で変更の一覧に入っている)
+- AI の上限の結合テスト (§16.1 の `ai-usage-rpc` の行と「free = 10 の文」の行): `tests/integration/rls/ai-usage-rpc.test.ts`・`tests/integration/rls/ai-daily-limit-rpc.test.ts`・`tests/integration/rls/ai-usage-feature-cap-rpc.test.ts`
+- 行の失敗の文の読み手のコメントだけ (§8.8 の表): `src/lib/weekly-menu-request-error.ts`・`supabase/functions/_shared/stored-failure-messages.ts`・`apps/mobile/src/lib/menu-request-error.ts`
 - `supabase/functions/_shared/meal-image.ts`・`lib/meal-image.ts` (再 export の名前)・`src/app/api/meals/route.ts`・`src/app/api/meals/[id]/route.ts`・`src/app/api/meal-plans/meals/route.ts`・`src/app/api/meal-plans/meals/[id]/route.ts` (見送りの理由の 1 行と import)・`src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx` (文)
 - `packages/shared/src/index.ts` (`export * from './billing-plans';` の 1 行)
 - `src/lib/maintenance-mode.ts`・`src/__tests__/lib/maintenance-mode.test.ts`・`lib/supabase/middleware.ts` (Webhook の除外)・`lib/supabase/__tests__/middleware*.test.ts` のうち Webhook の除外を固定するもの
 - `tests/helpers/ai-consent-enforced-paths.ts` (`EXEMPT_ROUTES` に 3 行)・`src/__tests__/api/null-character-routes.test.ts` (`EXCLUDED` に 1 行)
 - `src/app/pricing/page.tsx`・`PricingPageView.tsx`・`src/app/legal/page.tsx`・`src/app/company/page.tsx`・`src/app/faq/page.tsx`・`src/components/marketing/landing-copy.ts`・`src/components/marketing/sections/PricingSection.tsx` (冒頭のコメントだけ)・`src/lib/business-info.ts`・`src/lib/seo/public-pages.ts` (`SITE_DESCRIPTION` の最後の文と、description に「準備中」があれば)
 - `src/app/(main)/account/billing/page.tsx`・`src/app/frozen/billing/page.tsx`・`src/app/(main)/settings/page.tsx` (退会の文)・`src/app/frozen/account/page.tsx` (退会の文)・`src/components/ai-assistant/V4GenerateModal.tsx`
-- `tests/public-claims-guard.test.ts`・`tests/landing-page-1867.test.ts` (U-24・U-15 とテスト 104)・`tests/business-info-legal-pages.test.ts`・`tests/e2e/b10-unexplored-areas.spec.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/frozen-billing-page.test.tsx`・`tests/billing-core.test.ts`・`tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`tests/billing-manual-grant*.test.ts`・`tests/ai-daily-limit-core.test.ts`・`tests/ai-daily-limit-client.test.tsx`・`tests/consultation-action-usage.test.ts`・`tests/meal-image-skip.test.ts`・`tests/billing-public-plans.test.ts` (`listPurchasablePlans` → `listPublicPlans`)・`src/__tests__/lib/plan/entitlements.test.ts`・`tests/ai-usage-contract.test.ts` (突き合わせの対象が増える分だけ)・`apps/mobile/__tests__/lib/ai-daily-limit.test.ts`
+- `tests/public-claims-guard.test.ts`・`tests/landing-page-1867.test.ts` (U-24・U-15 とテスト 104)・`tests/business-info-legal-pages.test.ts`・`tests/e2e/b10-unexplored-areas.spec.ts`・`src/__tests__/app/account/billing-pages.test.ts`・`src/__tests__/app/frozen-billing-page.test.tsx`・`tests/billing-core.test.ts`・`tests/billing-service.test.ts`・`tests/api/billing-routes.test.ts`・`tests/billing-manual-grant*.test.ts`・`tests/ai-daily-limit-core.test.ts`・`tests/ai-daily-limit-client.test.tsx`・`tests/consultation-action-usage.test.ts`・`tests/meal-image-skip.test.ts`・`tests/meal-image-skip-routes.test.ts` (テスト 98)・`tests/stored-failure-messages.test.ts` (テスト 108)・`tests/billing-public-plans.test.ts` (`listPurchasablePlans` → `listPublicPlans`)・`src/__tests__/lib/plan/entitlements.test.ts`・`tests/ai-usage-contract.test.ts` (突き合わせの対象が増える分だけ)・`apps/mobile/__tests__/lib/ai-daily-limit.test.ts`
 - `src/lib/account-export-tables.ts`・`tests/account-export-tables.test.ts`・`tests/integration/security/account-export-scope.test.ts`
 - `src/types/database.types.ts`・`packages/shared/src/database.types.ts` (再生成)
 - 家族の結合テスト (§16.1 の行。家族プランの手動付与を前提に足す)
@@ -3705,6 +3714,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 5. 表の列の一覧を持つ偽の client: `git grep -n -E "SCHEMA_COLUMNS|KNOWN_COLUMNS|ALLOWED_COLUMNS" origin/main -- tests src`。
 6. docs の番兵: `git grep -n -E "docs/design/billing|BILLING_AUDIT_ACTIONS|REMOVED_MOBILE_SCREENS" origin/main -- tests`。
 7. E2E (本物のサーバに届く通信。上の 2 の `from(...)` は REST の直接の通信に当たらない): `git grep -l -E "rest/v1/family_(groups|members)|api/family/groups|api/ai/menu/weekly/request|api/ai/menu/v4/generate|api/ai/image/generate|ultimate-mode-toggle" origin/main -- tests/e2e`。当たった spec のうち、その API を `page.route` で差し替えていないものが対象 (差し替えていれば本冊の判定に届かない)。
+8. free の 1 日の上限 (10 回) と「全員が無料」をコメント・it 名・describe 名に書いたもの: `git grep -n -E "上限 ?10 ?回|1 日 ?10 ?回|free ?(は|=) ?(1 日 )?10|全員が free" origin/main -- src lib supabase/functions tests apps packages` (下の「free = 10 の文」の行)。
 
 | 番兵 | 反応する理由 (grep の語) | 直し方 | 段 |
 |---|---|---|---|
@@ -3723,7 +3733,13 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `tests/integration/rls/ai-usage-rpc.test.ts`・`ai-daily-limit-rpc.test.ts`・`ai-usage-feature-cap-rpc.test.ts` (free = 10 を前提に回数を回す・究極モードの env cap を前提にする) | `ai_daily_limits.free` が 5 に・`ai_plan_feature_caps` の free の行 (究極 0・献立 2・画像 0) | 回数の期待を 5 に合わせる (ハードコードの実数は更新。緩めない)。究極モードの既存の it は、利用者を `pro` の手動付与にして行の値 (2) で見るか、`ai_plan_feature_caps` の行を消して env の既定 (1) で見るかを it ごとに選ぶ。`menu_generation` を 3 回以上数える it は、free では 2 回で止まるので `pro` にする。`meal_image_auto` の安全弁 (`ai_unmetered_daily_caps`) を回す it は、free では `plan_locked` で 1 回目から止まるので利用者を `pro` の手動付与にする (安全弁の期待値は変えない)。`image_generation` を数える it も同じ | A |
 | `tests/ai-usage-contract.test.ts` (9: 上限に数えない機能・既定のプランは migration と同じ・`AI_DAILY_CAPPED_FEATURES` = `AI_CAPPED_FEATURES`) | `consume_ai_usage_at` の置き換え | 変更なし (本冊は `c_unmetered` と `AI_CAPPED_FEATURES` を変えない。`AI_PLAN_CAPPED_FEATURE_LABELS` は別の名前)。migration の走査が「最新の `consume_ai_usage_at` の定義」を本冊の migration から拾うなら、`c_unmetered` の行を逐語で保つことで緑 | B |
 | `tests/ai-daily-limit-core.test.ts`・`tests/ai-usage-edge.test.ts`・`tests/ai-daily-limit-client.test.tsx`・`tests/consultation-action-usage.test.ts`・`apps/mobile/__tests__/lib/ai-daily-limit.test.ts`・`src/__tests__/lib/plan/entitlements.test.ts` | `_shared/ai-daily-limit.ts` の全文の置き換え (`cappedFeature` の型が `AiPlanCappedFeature` に・`aiDailyLimitPayload` の本文が `AiUsageDeniedBody` に・`planLocked`) | 既存の期待は変えない (429 の本文の形・究極モードの文・1 日の上限の文は同じ)。「知らない機能名は付けない」の it が `menu_generation`・`image_generation`・`meal_image_auto` を知らない名前の例に使っていれば、AI_PLAN_CAPPED_FEATURES に無い名前 (例 `consultation`) に替える (実数に合わせる。緩めない)。テスト 41〜43・89・97・101・102 を足す | B |
-| `tests/meal-image-skip.test.ts`・料理の保存の route のテスト (`git grep -l -E "skipped_ai_limit\|markDishImagesSkipped\|meal_image_auto" origin/main -- tests src/__tests__` で母集合を作る) | `MEAL_IMAGE_SKIPPED_ERRORS` に `plan` が増える・見送りの理由を `mealImageSkipReasonOf` で決める | 既存の期待 (安全弁の `skipped_ai_limit` と `aiSkipped`・レート制限の `skipped_rate_limit`) は変えない (偽の `consumeAiUsage` は `planLocked` を返さないので同じ枝)。`Object.values(MEAL_IMAGE_SKIPPED_ERRORS)` の数を数える it があれば 3 に。テスト 92・98・99 を足す | B |
+| `tests/stored-failure-messages.test.ts` (行に書く側の文を読む側がすべて通す契約・Web とアプリが同じ答え。`AI_DAILY_CAPPED_FEATURES`・`aiDailyLimitMessageOfDenied`・`isAiDailyLimitMessage` を名指し) | `_shared/ai-daily-limit.ts` の全文の置き換え (使えない機能の文 `aiFeatureNotInPlanMessage`・機能ごとの上限の文 `aiFeatureDailyLimitMessage` が増える) | 既存の期待は変えない (`AI_DAILY_CAPPED_FEATURES` は究極モードだけのまま・既存の文は同じ・`{ limit, cappedFeature }` は `AiUsageDenialReason` に代入できる)。テスト 108 を足す (読む側 3 つの関数が本冊の新しい文をそのまま出す)。読む側のファイルはコメントだけ (§8.8) | B |
+| `apps/mobile/__tests__/lib/failed-response.test.ts` (生の fetch の口 `errorOfFailedResponse` と `getApi()` の `withFriendlyErrors`。`:100` の「同意の 403 は `HTTP 403: …` のまま」・`:185-213` の 403 `LEGAL_CONSENT_REQUIRED` / `AI_CONSENT_REQUIRED` / JSON でない本文) | `aiDailyLimitErrorOf` が 403 も見るようになる (§8.8 の下の箇条) | 変更なし (403 の本文の `code` が `AI_FEATURE_NOT_IN_PLAN` でなければ `aiDailyLimitMessageOfBody` が null を返し、`aiDailyLimitErrorOf` は null のまま。既存の 403 の例はどれも別の `code` か JSON でない本文なので同じ答え。403 `AI_FEATURE_NOT_IN_PLAN` を `AiDailyLimitError` にすることはテスト 102 が見る) | — |
+| `apps/mobile/src/lib/menu-request-error.ts` (`isKnownMenuRequestErrorMessage` が `isAiDailyLimitMessage` を呼ぶ) | `isAiDailyLimitMessage` が使えない機能の文も通す | 判定のコードは変えない。`:16` のコメントだけ (§8.8 の表)。振る舞いはテスト 108 が Web と同じ答えであることを見る | B |
+| `tests/meal-image-skip.test.ts`・料理の保存の route のテスト (`git grep -l -E "skipped_ai_limit\|markDishImagesSkipped\|meal_image_auto" origin/main -- tests src/__tests__` で母集合を作る。少なくとも下の 2 本) | `MEAL_IMAGE_SKIPPED_ERRORS` に `plan` が増える・見送りの理由を `mealImageSkipReasonOf` で決める | 既存の期待 (安全弁の `skipped_ai_limit` と `aiSkipped`・レート制限の `skipped_rate_limit`) は変えない (偽の `consumeAiUsage` は `planLocked` を返さないので同じ枝)。`Object.values(MEAL_IMAGE_SKIPPED_ERRORS)` の数を数える it があれば 3 に。テスト 92・99 を足す | B |
+| `tests/meal-image-skip-routes.test.ts` (5 つの入口の見送り。`:330` の A = 安全弁で `skipped_ai_limit` と `aiSkipped`、`:347` の B = レート制限) | 4 本の route と AI 相談の update_meal の見送りの理由の 1 行 (`mealImageSkipReasonOf`)・`image_error` の値 `'skipped_plan'` | 既存の A〜K の期待は変えない (偽物は `{ ...AI_USAGE_DENIED, safetyCap: true }` と `AI_USAGE_DENIED` で、どちらも `planLocked` を持たないので `ai_limit` の枝のまま)。`describe.each(ENTRIES)` の中にテスト 98 (plan-locked → `skipped_plan`・`aiSkipped` なし) を足す。5 つの入口を同じ it で見るので、AI 相談の update_meal の見送りの理由 (`consultation-action-executor.ts` の 1 行) もここで守る | B |
+| `tests/meal-image-route-contracts.test.ts` (`:296` の同意 → 上限 → ジョブの順・`:321` の安全弁で止めたときの `aiSkipped`) | 料理の保存の route の見送りの理由の 1 行 | 変更なし (偽物は `AI_USAGE_ALLOWED` / `AI_USAGE_DENIED` だけで `planLocked` を返さない。`consumeAiUsage` を呼ぶ順と `'meal_image_auto'` の名前は本冊で変えない。plan-locked の枝はテスト 98 が `meal-image-skip-routes.test.ts` で見る) | — |
+| free = 10 の文 (母集合の作り方 8。2026-10-19 の origin/main で `src/lib/plan/entitlements.ts:4`・`supabase/functions/_shared/ai-usage-core.ts:18`・`tests/helpers/ai-consent-enforced-paths.ts:22`・`tests/helpers/ai-usage-mock.ts:10`・`tests/consultation-action-usage.test.ts:13`・`tests/meal-image-route-contracts.test.ts:296`・`tests/integration/rls/ai-daily-limit-rpc.test.ts:5,12,210,262`・`tests/integration/operator/super-admin-llm.test.ts:130`・`tests/e2e/w5-3-menu-gen-adversarial.spec.ts:17`・`src/app/api/super-admin/llm/quotas/route.ts:12`) | `ai_daily_limits.free` が 5 に (§6.5)・有料プランの販売 | 文だけを直す (判定のコードは変えない)。`entitlements.ts:4` の「【いまの方針】課金は無料のまま計測する (いまは全員が free プラン)。AI の利用は 1 日 10 回まで (究極モードも 1 回)。」を「【方針】AI の利用回数の 1 日の上限はプランごと (DB の ai_daily_limits)。機能ごとの上限 (究極モード・献立の生成・料理画像の作成) は DB の ai_plan_feature_caps (0 = そのプランでは使えない。billing/03 §6.5)。」に (次の行の究極モードの環境変数の説明は「行の無いプランの究極モードは」で始める)。`ai-usage-core.ts:18`・`ai-consent-enforced-paths.ts:22`・`consultation-action-usage.test.ts:13`・`meal-image-route-contracts.test.ts:296` は「10 回」を消して値に依らない語 (「1 日の上限」「1 日の上限の回数に数えない」) に。`ai-usage-mock.ts:10` は「(テストの上限の回数。DB の既定の値とは独立)」に (値 `TEST_AI_DAILY_LIMIT = 10` は変えない)。`ai-daily-limit-rpc.test.ts` は上の `ai-usage-rpc` の行のとおり期待を 5 にし、コメントと it 名・describe 名の `free = 10` / `free = 1 日 10 回` も 5 に。`super-admin-llm.test.ts:130`・`w5-3:17` は各行のとおり。`quotas/route.ts:12` は凍結 (§15.2) なので触らない (文は migration `20261011020000` の既定を出典つきで書いたもの。§18 に載せる) | A・B・C |
 | `tests/billing-public-plans.test.ts`・`tests/public-claims-guard.test.ts` の `vi.mock('@/lib/billing/public-plans')` | `listPurchasablePlans` を `listPublicPlans` に置き換える | テストの関数名と mock の名前を `listPublicPlans` に。「失敗したら空を返して error ログ」の it はそのまま (ログの文の期待があれば新しい文に) | B・C |
 | `packages/shared/src/index.ts` を読むテスト (`git grep -l "packages/shared/src/index" origin/main -- tests packages`) | `export * from './billing-plans';` の 1 行 | export の一覧を固定する it があれば 1 行足す | B |
 | `src/__tests__/lib/plan/entitlements.test.ts` (`aiFeatureDailyCap` が尋ねる名前・`consume_ai_usage_capped` の呼び分け) | 変更なし (呼び分けは変えない) | テスト 50 を足すだけ | B |
@@ -3922,6 +3938,7 @@ ON CONFLICT (plan_key, store, billing_interval) DO UPDATE SET product_id = EXCLU
 | 16 | `trial_source` の値 `app_store` / `play_store` を読む運営の画面があるか | 実装時に grep (`git grep -n trial_source origin/main -- src`) で確かめ、`'checkout'` を前提にした分岐があれば `IAP_STORES` を足す |
 | 17 | テストの購入 (sandbox) を本番で権利にすること (Q-13) の悪用 | 販売開始の後、運営が `iap_is_sandbox = true` の行を確かめる。審査・TestFlight・ライセンステスターのほかの利用者の行が出たら、許可の一覧 (利用者 ID) の仕組みを別の冊で足す |
 | 18 | プライバシーポリシーの保存期間 | 本冊の差分に含めない (§11.2)。書くときは、契約の行は退会で消え、監査の記録とイベントの写しは運営の保存期間に従うという本冊の動きに合わせる |
+| 19 | 凍結のファイル `src/app/api/super-admin/llm/quotas/route.ts:12` のコメント「既定は free = 1 日 10 回。migration 20261011020000_ai_daily_limits.sql」が本冊の migration の後の free (5) と合わない | 本冊は凍結 (§15.2) を守って触らない。運営の画面の冊 (operator/06) の次の改定で、コメントを「free の行の値 (billing/03 §6.5)」に直す |
 
 ---
 
