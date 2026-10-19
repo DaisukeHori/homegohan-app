@@ -1,9 +1,9 @@
 # 家族グループ・組織の解散 — 代表者・オーナーが自分で解散する (#1917)
 
-> 版: v1.8 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
+> 版: v1.9 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
 > 位置づけ: 家族グループの代表者と組織のオーナーが、運営の手を介さずに自分の家族グループ・組織を解散し、そのあと退会できるようにする設計の正典。家族 (`family/`) と組織 (`org/`) の両方を 1 冊で扱う (解散の後始末は運営の強制解散 `operator_force_dissolve_family` / `operator_force_dissolve_org` と同じにし、同じ関数を 2 つの入口から呼ぶため)。組織の側の既存の設計は `docs/design/org/05-offboarding-flow.md` §7.3 (古い設計。`archived` 前提) と `docs/design/membership/05-operator-emergency-ui.md` §4 (運営の強制解散) を参照する。範囲の正本は Issue #1917 の本文とコメント。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` は 0 行・`organizations` は active 2 行 (`owner_id` あり)・`parental_consents` は 0 行・`ownership_transfer_proposals` は 0 行。2026-10-19 に読み取りで実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映。v1.7 2026-10-19 敵対レビュー R4 の反映。v1.8 2026-10-19 網羅性 (周 5) の反映 (§26)。
+> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映。v1.7 2026-10-19 敵対レビュー R4 の反映。v1.8 2026-10-19 網羅性 (周 5) の反映。v1.9 2026-10-19 敵対レビュー R5 の反映 (§26)。
 
 ---
 
@@ -27,15 +27,15 @@
 | 消費先レーン 3 以上 | DB (migration 1 本・関数 4 本と既存 2 本の置き換え)・API (route 2 本)・Web の画面 (設定・凍結中の画面・部品)・モバイル (画面 1 枚と 409 の案内)・規約の文面 (cross/20 への追随) の 5 | 当たる |
 | 共有面に 2 つ以上触る | 凍結中も通す API の一覧 (`FROZEN_ALLOWED_API_PATHS`)・同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`)・凍結中の画面と同意の前の画面が共通に使う退会と書き出しの枠 (`AccountSelfServicePanel`)・退会の本体 (`findBlocker`)・`family_groups` / `organizations` の列の制約・家族の行の特権列のガード (`guard_family_groups_privileged`)・運営の強制解散の RPC 2 本・規約の文面 | 当たる |
 
-**判定: 設計書は 1 冊、実装は 3 段 (A・B・C) に分け、A と B は同じ実装 WF・同じ worktree で段ごとにレビューを挟む。C は段 A のマージ後に別の WF で、規約の文面の実装 (`src/lib/legal/`。#1901 の実装は main にある) を書き換える。設計書 cross/20 の追随は実装者が書かず、オーケストレーターの専権の差分として段 C の PR に載せる (§18・§24)。** 分冊 (核と配線で別の設計書) にしない理由: 核 (DB の関数 4 本・列の制約・route 2 本) は小さく、配線 (画面) はその応答と既存の 409 の本文を読むだけで、契約 (§11〜§15) を本書に逐語で置けば段 B の実装者は本書だけで手が止まらない。家族と組織を分冊にしない理由: 解散の後始末・通知・画面の形・規約の文面が対称で、分けると同じ判断を 2 冊に書くことになる。
+**判定: 設計書は 1 冊、実装は 3 段 (A・B・C) に分け、A と B は同じ実装 WF・同じ worktree で段ごとにレビューを挟む。C は段 A のマージ後に別の WF で、規約の文面の実装 (`src/lib/legal/`。#1901 の実装は main にある) を書き換え、段 B のマージの後にマージする (§20)。設計書 cross/20 の追随は実装者が書かず、オーケストレーターの専権の差分として段 C の PR に載せる (§18・§24)。** 分冊 (核と配線で別の設計書) にしない理由: 核 (DB の関数 4 本・列の制約・route 2 本) は小さく、配線 (画面) はその応答と既存の 409 の本文を読むだけで、契約 (§11〜§15) を本書に逐語で置けば段 B の実装者は本書だけで手が止まらない。家族と組織を分冊にしない理由: 解散の後始末・通知・画面の形・規約の文面が対称で、分けると同じ判断を 2 冊に書くことになる。
 
 ### 0.3 段分け (実装 WF の単位と順序)
 
 | 段 | 中身 | 依存 | デプロイ後の状態 |
 |---|---|---|---|
-| **A 解散の口** | migration (§11: `representative_id` / `owner_id` を NULL 許容にして CHECK を足す・後始末の関数 2 本・利用者の解散の RPC 2 本・運営の強制解散の RPC 2 本を後始末の関数を呼ぶ形に置き換え・家族の行の特権列のガード `guard_family_groups_privileged` に `status` / `dissolved_at` を足す) と対の `.down.sql`・型の再生成 (§11.4)・エラーコード 2 つ (§13.3)・Zod (§13.1)・lib (§13.2・§13.4)・`POST /api/family/dissolve`・`POST /api/org/dissolve` (§14)・通知メール (§16)・凍結中も通す API と同意の許可リストへの追加 (§13.5)・退会の 409 の案内の行き先 (§13.6)・契約テスト・route のテスト・実 DB の結合テスト (§21) | なし | API を直接呼べば代表者・オーナーが解散でき、そのあと退会できる。画面はまだ変わらない |
-| **B 画面** | メンバーシップ設定の解散の区画 (§15.1)・解散の部品 `SelfDissolveSection` (§15.2)・設定画面の退会の 409 の案内 (§15.3)・退会と書き出しの枠 `AccountSelfServicePanel` の 409 の分岐の解散と、それを使う凍結中の画面・同意の前の画面の案内の文 (§15.4)・モバイル (§15.5)・画面のテストと e2e (§21) | A | Web とアプリの両方で、代表者・オーナーが画面 (設定・凍結中の画面・同意の前の画面) から解散して退会できる |
-| **C 規約の文面** | 実装者: `src/lib/legal/terms-text.ts`・`privacy-text.ts`・`tests/legal-claims-1901.ts` の書き換え (§18.1・§18.2)・版の扱い (§18.4。`packages/shared/src/legal-versions.ts` と旧版の控え `docs/legal/archive/v2026.1/`)・`tests/design-doc-followup-owned-edits.test.ts`・`tests/legal-text-1901.test.ts` の T-28 の phrase (§23)。設計書 cross/20 の追随 (§18.1〜§18.3) は実装者が書かず、オーケストレーターの専権の差分を同じ PR に載せる (§18・§24) | A (#1901 の実装は origin/main `2ba5b3b3` にある) | 利用規約第11条 4 項・第12条 4 項・第17条 2 項とプライバシーポリシー第13条 9 項が「譲渡するか解散するまで退会できない」になる |
+| **A 解散の口** | migration (§11: `representative_id` / `owner_id` を NULL 許容にして CHECK を足す・後始末の関数 2 本・利用者の解散の RPC 2 本・運営の強制解散の RPC 2 本を後始末の関数を呼ぶ形に置き換え・家族の行の特権列のガード `guard_family_groups_privileged` に `status` / `dissolved_at` を足す) と対の `.down.sql`・型の再生成 (§11.4)・エラーコード 2 つ (§13.3)・Zod (§13.1)・lib (§13.2・§13.4)・`POST /api/family/dissolve`・`POST /api/org/dissolve` (§14)・通知メール (§16)・凍結中も通す API と同意の許可リストへの追加 (§13.5)・契約テスト・route のテスト・実 DB の結合テスト (§21)。退会の 409 の案内 (`src/lib/account-self-service.ts`。§13.6) には触れない (段 B) | なし | API を直接呼べば代表者・オーナーが解散でき、そのあと退会できる。画面はまだ変わらない |
+| **B 画面** | メンバーシップ設定の解散の区画 (§15.1)・解散の部品 `SelfDissolveSection` (§15.2)・退会の 409 の案内の行き先の改名と `scope` (`src/lib/account-self-service.ts`。§13.6)・設定画面の退会の 409 の案内 (§15.3。§13.6 と同じコミット)・退会と書き出しの枠 `AccountSelfServicePanel` の 409 の分岐の解散と、それを使う凍結中の画面・同意の前の画面の案内の文 (§15.4)・モバイル (§15.5)・画面のテストと e2e (§21) | A | Web とアプリの両方で、代表者・オーナーが画面 (設定・凍結中の画面・同意の前の画面) から解散して退会できる |
+| **C 規約の文面** | 実装者: `src/lib/legal/terms-text.ts`・`privacy-text.ts`・`tests/legal-claims-1901.ts` の書き換え (§18.1・§18.2)・版の扱い (§18.4。`packages/shared/src/legal-versions.ts` と旧版の控え `docs/legal/archive/v2026.1/`)・`tests/design-doc-followup-owned-edits.test.ts`・`tests/legal-text-1901.test.ts` の T-28 の phrase (§23)。設計書 cross/20 の追随 (§18.1〜§18.3) は実装者が書かず、オーケストレーターの専権の差分を同じ PR に載せる (§18・§24) | A (投入)・B (マージは段 B のマージの後。§18.1 の文「本サービスの画面から行え」と、cross/20 の F-59・§11.3・§12 の行 (§18.3) が段 B の画面と `ACCOUNT_DELETE_BLOCKED_GUIDE` (§13.6) を名指しするため。#1901 の実装は origin/main `2ba5b3b3` にある) | 利用規約第11条 4 項・第12条 4 項・第17条 2 項とプライバシーポリシー第13条 9 項が「譲渡するか解散するまで退会できない」になる |
 
 migration の本番適用は段 A のマージ前にオーケストレーターが行う (列の NOT NULL を外す・CHECK を足す・関数の新設と置き換え (特権列のガードを含む)。既存の行は変えない: 本番に `dissolved` の行は無い (§0.1 の前提) ので、§11.1 の `UPDATE` は 0 行)。
 
@@ -1319,7 +1319,9 @@ export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
   { path: '/api/org/dissolve', match: 'exact', reason: 'leave_service', note: '組織の解散 (オーナー本人)。退会の前提 (凍結中も通す)' },
 ```
 
-### 13.6 退会の 409 の案内 (`src/lib/account-self-service.ts` の変更。逐語)
+### 13.6 退会の 409 の案内 (`src/lib/account-self-service.ts` の変更。段 B。逐語)
+
+この節の `src/lib/account-self-service.ts` の変更は段 B に置き、§15.3 (`src/app/(main)/settings/page.tsx` の import と分岐) と §21.3.1 の `tests/account-deletion-blocked-message.test.ts` の書き換えと**同じコミット**に入れる。旧名 `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` を参照しているのは origin/main で `src/app/(main)/settings/page.tsx:19, 246` と `tests/account-deletion-blocked-message.test.ts:22, 160` (どちらも import と添字) だけで、改名だけを先に当てると、そのコミットで `npx tsc --noEmit` (settings/page.tsx の TS2305) と vitest (同テスト) が赤になる。行き先と文 (「…解散ができます」) は、解散の区画 (§15.1) と同じ段で変わる。`scope` を読むのも段 B の枠 `AccountSelfServicePanel` (§15.4) だけ。段 A のあいだ、設定画面の 409 は今までどおり譲渡の画面へ案内する (§0.3「画面はまだ変わらない」)。
 
 - `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` を `ACCOUNT_DELETE_BLOCKED_GUIDE` に改名し、行き先をメンバーシップ設定にする。JSDoc の「解散は利用者の画面が無い (運営が行う) ので、譲渡の画面へ案内する」を消す。
 - `AccountDeletionResult` の `blocked` に `scope` を足す (退会と書き出しの枠 `AccountSelfServicePanel` (凍結中の画面・同意の前の画面) がその場で解散するために、409 の本文の `family_group` / `organization` の id と名前を持ち帰る)。
@@ -1353,16 +1355,37 @@ export interface AccountDeletionBlockedScope {
 export type AccountDeletionResult =
   | { kind: 'deleted' }
   | { kind: 'unauthorized' }
+  /**
+   * 組織のオーナー・家族の代表者なので、先に譲渡や解散が要る (409)。
+   * message はサーバーが書いた固定の文 (src/lib/account-deletion.ts の findBlocker の 2 つの文。利用者向けの日本語で、
+   * DB などの生のエラー文は入らない)。画面はこの文をそのまま出してよい (#1447)。本文に無ければ null。
+   * blocker は本文の error から分かる立場 (#1562 → #1917。メンバーシップ設定への案内に使う)。分からなければ null。
+   * scope は本文の立場の id と名前 (#1917。凍結中の画面・同意の前の画面がその場で解散するのに使う)。blocker が null か、本文の形が違えば null
+   */
   | { kind: 'blocked'; message: string | null; blocker: AccountDeletionBlocker | null; scope: AccountDeletionBlockedScope | null }
   | { kind: 'failed' };
 
-// deleteOwnAccount の 409 の分岐で、本文の family_group / organization を読む (無ければ null):
-//   const rawScope = blocker === 'family_group' ? body.family_group : blocker === 'organization' ? body.organization : null;
-//   const scope = typeof rawScope?.id === 'string' && typeof rawScope?.name === 'string' ? { id: rawScope.id, name: rawScope.name } : null;
-//   return { kind: 'blocked', message, blocker, scope };
+/**
+ * 409 の本文から、退会を止めている家族グループ / 組織の id と名前を読む (#1917)。
+ * findBlocker は、組織のオーナーなら本文の organization に、家族の代表者なら family_group に { id, name } を入れる。
+ * 本文の鍵の名前は AccountDeletionBlocker の値と同じ ('organization' / 'family_group') なので、立場をそのまま鍵に使う。
+ * 立場が分からない・鍵が無い・id か name が文字列でなければ null
+ */
+function blockedScopeOfBody(body: unknown, blocker: AccountDeletionBlocker | null): AccountDeletionBlockedScope | null {
+  if (blocker === null || typeof body !== 'object' || body === null) return null;
+  const raw: unknown = (body as Record<string, unknown>)[blocker];
+  if (typeof raw !== 'object' || raw === null) return null;
+  const { id, name } = raw as { id?: unknown; name?: unknown };
+  return typeof id === 'string' && typeof name === 'string' ? { id, name } : null;
+}
+
+// deleteOwnAccount の 409 の分岐 (今の `return { kind: 'blocked', message, blocker };` の 1 行を次の 2 行に置き換える。
+// message・errorCode・blocker の読み方は今のまま):
+//     const scope = blockedScopeOfBody(body, blocker);
+//     return { kind: 'blocked', message, blocker, scope };
 ```
 
-`findBlocker` (`src/lib/account-deletion.ts`) の問い合わせと 2 つの文は変えない (解散した行は本人を指さないので、`status` の条件は要らない。§7.2)。コメントの「P0 Critical Fix F12」の段落に「解散した行は representative_id / owner_id が NULL なので当たらない (#1917。docs/design/family/11-self-dissolve.md §11.1)」を足す。モバイルの定型の文 (`ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE`) は、解散の画面ができたことで事実に合うので変えない。
+`findBlocker` (`src/lib/account-deletion.ts`) の問い合わせと 2 つの文は変えない (解散した行は本人を指さないので、`status` の条件は要らない。§7.2)。このファイルのコメントの追記だけは段 A (§11.4・§20。migration と同じ段で事実になる): コメントの「P0 Critical Fix F12」の段落に「解散した行は representative_id / owner_id が NULL なので当たらない (#1917。docs/design/family/11-self-dissolve.md §11.1)」を足す。モバイルの定型の文 (`ACCOUNT_DELETE_BLOCKED_FALLBACK_MESSAGE`) は、解散の画面ができたことで事実に合うので変えない。
 
 ---
 
@@ -1741,7 +1764,7 @@ export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, on
 
 ### 15.3 設定画面 `src/app/(main)/settings/page.tsx` の退会の 409 (段 B)
 
-`:242-256` の分岐で `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` を `ACCOUNT_DELETE_BLOCKED_GUIDE` に替える (import も)。動き (`confirm(message + '\n\n' + prompt)` → OK で `router.push(guide.path)`) は同じで、行き先がメンバーシップ設定になる。コメントの「譲渡の画面へ案内する (#1562)」を「メンバーシップ設定 (譲渡と解散) へ案内する (#1562 → #1917)」に。
+`:19` の import と `:246` の添字の `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` を `ACCOUNT_DELETE_BLOCKED_GUIDE` に替える (分岐は `:242-256`)。動き (`confirm(message + '\n\n' + prompt)` → OK で `router.push(guide.path)`) は同じで、行き先がメンバーシップ設定になる。`:251` のコメントの「譲渡の画面へ案内する (#1562)」を「メンバーシップ設定 (譲渡と解散) へ案内する (#1562 → #1917)」に。§13.6 の改名と §21.3.1 の `tests/account-deletion-blocked-message.test.ts` の書き換えと同じコミットに入れる (§13.6 の冒頭)。
 
 ### 15.4 退会と書き出しの枠 `src/components/account/AccountSelfServicePanel.tsx` と、それを使う 2 つの画面 (段 B)
 
@@ -2131,13 +2154,14 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 
 | 段 | 触るファイル (新設は §22) | 検査 |
 |---|---|---|
-| A | migration + down (§11)・型 2 ファイル (§11.4)・`src/schemas/membership/self-dissolve.ts`・`index.ts`・`packages/shared/src/membership-settings.ts`・`index.ts`・`src/lib/errors/membership-errors.ts` (§13.3)・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts` (§13.5)・`src/lib/account-self-service.ts` (§13.6)・`src/lib/account-deletion.ts` (コメント)・`lib/supabase/middleware.ts:189, 228` (コメント)・`apps/mobile/src/lib/account-frozen.ts:5` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts` (nullable)・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・`src/lib/membership/self-dissolve.ts`・`self-dissolve-notification.ts`・`src/lib/emails/membership/self-dissolve.ts`・route 2 本・テスト (§21.1・§21.2) と既存の番兵の追随 (§23 の段 A の行。#1103 項目 10 の番兵 2 本の書き換えは §21.6 の逐語) | `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (offload)・結合 (`vitest.integration.config.ts`) は `tests/integration/security/self-dissolve.test.ts`・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`anon-definer-execute.test.ts`・`account-deletion.test.ts`・`org-admin-residual-cleanup.test.ts`・`operator-mfa-db-gate.test.ts`・`purge-dissolved-family-groups.test.ts`・`auth-users-fk-on-delete.test.ts`・`family-member-limit-race.test.ts`・`tests/integration/rls/family-menu-visibility.test.ts`・`ai-usage-rpc.test.ts`・`billing-manual-grant-rpc.test.ts`・`billing-apply-subscription-rpc.test.ts` (最後の 5 本は service_role / postgres で `family_groups.status` / `dissolved_at` を書く。特権列のガード (§11.1 の 6) の対象外のまま通ることを確かめる。§23) |
-| B | `src/app/(main)/settings/membership/page.tsx`・`src/components/membership/SelfDissolveSection.tsx`・`src/app/(main)/settings/page.tsx`・`src/components/account/AccountSelfServicePanel.tsx`・`src/app/frozen/account/page.tsx`・`src/app/legal-consent/account/AccountWithoutConsent.tsx` (コメント)・`packages/shared/src/legal-consent-copy.ts` (`accountDeleteBlockedGuidance`)・`lib/legal-consent.ts` (コメント)・`apps/mobile/src/lib/membership-settings.ts`・`apps/mobile/app/settings/membership.tsx`・`apps/mobile/app/settings/account.tsx`・テスト (§21.3・§21.4) と既存の番兵の追随 (§23 の段 B の行) | 同上 + apps/mobile の tsc / jest・e2e (`tests/e2e/membership/15-self-dissolve.spec.ts`) |
+| A | migration + down (§11)・型 2 ファイル (§11.4)・`src/schemas/membership/self-dissolve.ts`・`index.ts`・`packages/shared/src/membership-settings.ts`・`index.ts`・`src/lib/errors/membership-errors.ts` (§13.3)・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts` (§13.5)・`src/lib/account-deletion.ts` (コメント。§13.6 の最後の段落)・`lib/supabase/middleware.ts:189, 228` (コメント)・`apps/mobile/src/lib/account-frozen.ts:5` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts` (nullable)・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・`src/lib/membership/self-dissolve.ts`・`self-dissolve-notification.ts`・`src/lib/emails/membership/self-dissolve.ts`・route 2 本・テスト (§21.1・§21.2) と既存の番兵の追随 (§23 の段 A の行。#1103 項目 10 の番兵 2 本の書き換えは §21.6 の逐語) | `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (offload)・結合 (`vitest.integration.config.ts`) は `tests/integration/security/self-dissolve.test.ts`・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`anon-definer-execute.test.ts`・`account-deletion.test.ts`・`org-admin-residual-cleanup.test.ts`・`operator-mfa-db-gate.test.ts`・`purge-dissolved-family-groups.test.ts`・`auth-users-fk-on-delete.test.ts`・`family-member-limit-race.test.ts`・`tests/integration/rls/family-menu-visibility.test.ts`・`ai-usage-rpc.test.ts`・`billing-manual-grant-rpc.test.ts`・`billing-apply-subscription-rpc.test.ts` (最後の 5 本は service_role / postgres で `family_groups.status` / `dissolved_at` を書く。特権列のガード (§11.1 の 6) の対象外のまま通ることを確かめる。§23) |
+| B | `src/app/(main)/settings/membership/page.tsx`・`src/components/membership/SelfDissolveSection.tsx`・`src/lib/account-self-service.ts` (§13.6)・`src/app/(main)/settings/page.tsx` (§15.3)・`src/components/account/AccountSelfServicePanel.tsx`・`src/app/frozen/account/page.tsx`・`src/app/legal-consent/account/AccountWithoutConsent.tsx` (コメント)・`packages/shared/src/legal-consent-copy.ts` (`accountDeleteBlockedGuidance`)・`lib/legal-consent.ts` (コメント)・`apps/mobile/src/lib/membership-settings.ts`・`apps/mobile/app/settings/membership.tsx`・`apps/mobile/app/settings/account.tsx`・テスト (§21.3・§21.4) と既存の番兵の追随 (§23 の段 B の行) | 同上 + apps/mobile の tsc / jest・e2e (`tests/e2e/membership/15-self-dissolve.spec.ts`) |
 | C | `src/lib/legal/terms-text.ts`・`src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§18.1・§18.2)・`packages/shared/src/legal-versions.ts` と `docs/legal/archive/v2026.1/terms.md`・`privacy.md` (§18.4 の条件で)・`tests/design-doc-followup-owned-edits.test.ts` (`OWNED_EDITS` に 4 行。§23)・`tests/legal-text-1901.test.ts` (T-28 の phrase の 1 行を 3 行に置き換え、`not.toContain` の一覧に 1 行。§23 の逐語)。⛔ 設計書 cross/20 は編集しない (§18.1〜§18.3 の設計書の差分は、オーケストレーターの専権の差分として同じ PR に載る。§24) | 全件。番兵の反応は §23 の段 C の行のとおり: 本文の書き換え (§18.1) だけを当てると、T-28 (`譲渡するまで、退会できません` が本文から消える) と T-35 (主張の表と本文の 1 対 1。§18.2 を当てるまで) が赤。§23 の段 C の行 (主張の表・`OWNED_EDITS`・T-28 の phrase) をすべて当て、設計書の差分がまだ載っていない枝では、T-35 の `F-59 の行が設計書に無い` だけが赤 (`design-doc-followup-owned-edits` は cross/20 に前の文が残るので緑)。設計書の差分が載ると全件が緑 |
 
 - 段 A は `representative_id` / `owner_id` の型が変わるので、型の再生成を最初に行い、そのあとで Zod と読み手を直す。
-- 段 B の画面は `SelfDissolveSection` を先に作り、3 つの画面 (メンバーシップ設定・凍結中の画面・設定の 409 の案内) を順に配線する。
-- 段 C は段 A のマージ後に投入できる (#1901 の実装は origin/main `2ba5b3b3` にある)。段 A・B の間、規約の文面は「譲渡するまで退会できない」+「お問い合わせ」のままだが、解散の手段の存在を否定していないので、解散の機能と矛盾しない。
+- 段 A は `src/lib/account-self-service.ts`・`src/app/(main)/settings/page.tsx`・`tests/account-deletion-blocked-message.test.ts` に触れない (§13.6 の冒頭)。この 3 ファイルは段 A では origin/main のままなので、段 A の終わりの `npx tsc --noEmit` と vitest 全件に改名の赤は出ない (旧名の import が origin/main のまま残り、定義も残る)。`packages/shared/src/membership-settings.ts` (§13.2) と `src/lib/membership/self-dissolve.ts` (§13.4) は段 A で置き、それを読む画面は段 B (§13.6・§15)。
+- 段 B の画面は `SelfDissolveSection` を先に作り、3 つの画面 (メンバーシップ設定・凍結中の画面・設定の 409 の案内) を順に配線する。設定の 409 の案内は、§13.6 (`src/lib/account-self-service.ts` の改名・行き先・`scope`)・§15.3 (`src/app/(main)/settings/page.tsx`)・§21.3.1 の `tests/account-deletion-blocked-message.test.ts` の書き換えを 1 つのコミットにする (改名だけを先にコミットすると、そのコミットで tsc と vitest が赤)。枠 `AccountSelfServicePanel` (§15.4) は `scope` を読むので、このコミットの後に配線する。
+- 段 C は段 A のマージ後に投入でき、マージは段 B のマージの後にする (#1901 の実装は origin/main `2ba5b3b3` にある)。§18.1 の利用規約の文「…本サービスの画面から行え…」と、cross/20 の F-59・§11.3 の `current` の行・§12 の 409 の行 (§18.3) は、段 B の画面と `ACCOUNT_DELETE_BLOCKED_GUIDE` (§13.6) を名指しするため。段 A・B の間 (と段 B のマージから段 C のマージまで)、規約の文面は「譲渡するまで退会できない」+「お問い合わせ」のままだが、解散の手段の存在を否定していないので、解散の機能と矛盾しない。
 
 ---
 
@@ -2188,11 +2212,81 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 |---|---|
 | `src/__tests__/components/membership/self-dissolve-section.test.tsx` (新規) | `キーワードが「解散します」と一致するまでボタンは押せない。一致すると押せる` / `押すと dissolveOwnScope を scope と id で 1 回呼び、成功で onDissolved(dissolvedAt) を呼ぶ。送信中はボタンと入力欄が無効` / `失敗は role=alert に文を出し、もう一度押せる` / `401 は onUnauthorized を呼ぶ` / `見出しに所属先の名前、効果の箇条書き (家族は 5 行・組織は 4 行)。文に R-12 の 2 語が無い` / `onCancel があるときだけ「キャンセル」が出る` |
 | `src/__tests__/app/settings/membership-self-dissolve.test.ts` (新規。`membership-no-org-guidance.test.ts` の形) | `代表者には「代表者を譲渡」「家族グループを解散」が出て、「家族から脱退」は出ない` / `大人には今までどおり「家族から脱退」が出て、解散のボタンは出ない` / `オーナーには「オーナーを譲渡」「組織を解散」が出て、「組織から脱退」は出ない` / `member には今までどおり「組織から脱退」` / `「家族グループを解散」を押すと SelfDissolveSection (家族名つき) が出る。「キャンセル」で閉じる` / `家族の解散が済む (onDissolved) と、区画が閉じ、role=status に「家族グループを解散しました。」が出て、所属家族は「所属していません」・「家族を表示」と共有設定の区画が消える。所属組織は読み直した値のまま出る` / `組織の解散が済むと、所属組織は「所属していません」になり「組織を解散しました。」が出る。所属家族は読み直した値のまま出る` / `解散のあとの読み直しで profile の family_id / organization_id が null なら、familyInfo / orgInfo は null になる (読み直しの問い合わせが 2 回目の getUser と user_profiles を呼ぶ)` / `解散のあとの読み直しが失敗 (例外) しても、解散した所属は「所属していません」のまま (画面全体は読み込み中に戻らない)` |
-| `tests/account-deletion-blocked-message.test.ts` (変更) | it 6 を `409 で立場が分かれば、理由の文に続けてメンバーシップ設定 (譲渡か解散) を開くかを尋ね、OK ならその画面へ (ACCOUNT_DELETE_BLOCKED_GUIDE)` に。追加 `deleteOwnAccount は 409 の本文の family_group / organization の id と名前を scope として持ち帰る (無ければ null)` |
+| `tests/account-deletion-blocked-message.test.ts` (変更。§13.6・§15.3 と同じコミット) | §21.3.1 の逐語。書き換える it: `409 (%s): 失敗の定型文ではなく、譲渡や解散が先だというサーバーの文を出し、メンバーシップ設定 (譲渡か解散) を開くかを尋ねる (開かなければ留まる)` (`:150-167`) / `409 (%s) で開くと答えたら、メンバーシップ設定 (%s) へ移る。ログアウトはしない` (`:169-180`) / `409 で本文に文が無いときは、定型の案内の文を出す (立場が分かればメンバーシップ設定を開くかも尋ねる)` (`:182`) / `409 で立場が分からない (%s) ときは、理由の文だけを出す (メンバーシップ設定へは案内しない)` (`:190-200`)。追加 `deleteOwnAccount は 409 の本文の family_group / organization の id と名前を scope として持ち帰る (%s)` / `deleteOwnAccount は 409 の本文から立場の id と名前が読めなければ scope を null にする (%s)` |
 | `src/__tests__/app/frozen-account-page.test.tsx` (変更) | `:207` の it (本文に `organization` が無い 409) は名前を `退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE (サポートへ) を出し、解散の区画は出さない。ログアウトしない` に替え、`サポートにお問い合わせください` の検査はそのまま。追加 `退会: 組織のオーナー (409。本文に organization の id と名前) は、サーバーの文と FROZEN_DISSOLVE_GUIDANCE (譲渡はできない・解散すると退会できる) を出し、組織名つきの解散の区画を出す。ログアウトしない` / `退会: 家族の代表者 (409。本文に family_group) は、家族名つきの解散の区画を出す` / `解散の区画で解散すると (POST /api/org/dissolve が 200)、区画が消えて「解散しました。「削除します」と入力して退会を続けてください。」が出る。そのあとの退会は 200 で /login へ` / `:244` の it (この画面が呼ぶ API は FROZEN_ALLOWED_API_PATHS だけ) に、409 → 解散 → 退会の流れを足して 7 本の一覧で通す |
 | `tests/legal-consent-account-page-1901.test.tsx` (変更) | `:225` の it (本文に `family_group` が無い 409) は名前を `退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出し、解散の区画は出さない。ログアウトしない` に替え、期待の文を `${serverMessage} ${BLOCKED_SCOPE_UNKNOWN_GUIDANCE}` に。追加 `退会: 家族の代表者 (409。本文に family_group の id と名前) は、サーバーの文と LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance (解散すると退会できる) を出し、家族名つきの解散の区画を出す。ログアウトしない` / `解散の区画で解散すると (POST /api/family/dissolve が 200)、区画が消えて SELF_DISSOLVED_NEXT_STEP が出る。そのあとの退会は 200 で「退会しました」を出す` / `:252` の it の名前を `この画面が呼ぶ API は、同意の許可リストにある退会・書き出しと、409 のときの家族グループ / 組織の解散の 4 本だけ` に替え、409 → 解散 → 退会の流れを足して、呼んだパスの集合を `/api/account/delete`・`/api/account/export`・`/api/family/dissolve` にし、全部が `isLegalConsentExemptApiPath` で通ることを見る |
 | `apps/mobile/__tests__/settings/account-delete.test.tsx` (変更) | 409 の it に `Alert に「閉じる」と「メンバーシップ設定を開く」があり、押すと MEMBERSHIP_SETTINGS_SCREEN_ROUTE へ router.push する。401・500・通信の失敗の Alert にはボタンが無い (文だけ)` |
 | `apps/mobile/__tests__/settings/membership-entry.test.tsx` (新規。`data-requests-entry.test.tsx` の形) | `app/settings/membership.tsx は Web のメンバーシップ設定 (MEMBERSHIP_SETTINGS_PATH) を WebViewScreen で開く` / `MEMBERSHIP_SETTINGS_SCREEN_ROUTE に当たる画面のファイルが app/ にある` / `MEMBERSHIP_SETTINGS_PATH は @homegohan/shared の値そのもので、どのタブの受け持ち (NATIVE_APP_TABS) にも入らない` |
+
+### 21.3.1 `tests/account-deletion-blocked-message.test.ts` の書き換え (逐語。段 B)
+
+origin/main の行で書く。§13.6 (`src/lib/account-self-service.ts`) と §15.3 (`src/app/(main)/settings/page.tsx`) と同じコミットに入れる (どれか 1 つだけでは tsc か vitest が赤)。このファイルは、下の表の 6 か所と末尾に足す describe のほかは変えない (`:202-239` の 500・通信の失敗・401・成功の it と、`:241-` の 3 つの describe はそのまま)。
+
+| # | 箇所 (origin/main) | 現行 | 設計後 |
+|---|---|---|---|
+| 1 | import (`:20-26`) | `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE,` | `ACCOUNT_DELETE_BLOCKED_GUIDE,`。同じ import に `deleteOwnAccount,` を足す (`accountDeletionBlockedMessage,` の次の行) |
+| 2 | 冒頭のコメントの 6 (`:9-10`) | `6. (#1562) 409 の本文の error から立場 (組織のオーナー / 家族の代表者) が分かれば、理由の文に続けて譲渡の画面を開くかを尋ね` / `(confirm)、開くならその画面へ移る。立場が分からなければ、これまでどおり理由の文だけ (alert)` | `6. (#1562 → #1917) 409 の本文の error から立場 (組織のオーナー / 家族の代表者) が分かれば、理由の文に続けてメンバーシップ設定 (譲渡か解散) を` / `開くかを尋ね (confirm)、開くならその画面へ移る。立場が分からなければ、これまでどおり理由の文だけ (alert)`。続けて 1 行 `7. (#1917) deleteOwnAccount は 409 の本文の family_group / organization の id と名前を scope として持ち帰る (読めなければ null)` を足す |
+| 3 | `:154` の it 名と `:160` の期待 | `'409 (%s): 失敗の定型文ではなく、譲渡や解散が先だというサーバーの文を出し、譲渡の画面を開くかを尋ねる (開かなければ留まる)'`・`` `${message}\n\n${ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE[blocker].prompt}` `` | `'409 (%s): 失敗の定型文ではなく、譲渡や解散が先だというサーバーの文を出し、メンバーシップ設定 (譲渡か解散) を開くかを尋ねる (開かなければ留まる)'`・`` `${message}\n\n${ACCOUNT_DELETE_BLOCKED_GUIDE[blocker].prompt}` `` (ほかの行は変えない) |
+| 4 | `:169-172` の `it.each` の表と it 名 | `['ACCOUNT_DELETE_BLOCKED_ORG_OWNER', '/org/settings/owner-transfer']`・`['ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', '/family/representative-transfer']`・`'409 (%s) で開くと答えたら、譲渡の画面 (%s) へ移る。ログアウトはしない'` | `['ACCOUNT_DELETE_BLOCKED_ORG_OWNER', '/settings/membership']`・`['ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', '/settings/membership']`・`'409 (%s) で開くと答えたら、メンバーシップ設定 (%s) へ移る。ログアウトはしない'` (行き先は定数でなくリテラルで固定する。本体 `:173-180` は変えない) |
+| 5 | `:182` の it 名 | `'409 で本文に文が無いときは、定型の案内の文を出す (立場が分かれば譲渡の画面を開くかも尋ねる)'` | `'409 で本文に文が無いときは、定型の案内の文を出す (立場が分かればメンバーシップ設定を開くかも尋ねる)'` (本体は変えない) |
+| 6 | `:193` の it 名 | `'409 で立場が分からない (%s) ときは、理由の文だけを出す (譲渡の画面へは案内しない)'` | `'409 で立場が分からない (%s) ときは、理由の文だけを出す (メンバーシップ設定へは案内しない)'` (本体は変えない) |
+
+ファイルの末尾に足す describe (逐語):
+
+```ts
+// tsc:skip (既存のテストファイルの末尾に足す断片。tests/ は tsc の対象外。jsonResponse・ORG_OWNER_MESSAGE・FAMILY_REPRESENTATIVE_MESSAGE は同じファイルの既存の定義、deleteOwnAccount は上の 1 の import)
+// place=tests/account-deletion-blocked-message.test.ts
+describe('deleteOwnAccount: 409 の本文の立場の id と名前 (scope。#1917)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  /** 退会の API への fetch を、決まった応答で置き換える */
+  function stubDeleteResponse(response: Response) {
+    vi.stubGlobal('fetch', vi.fn(async () => response));
+  }
+
+  it.each([
+    [
+      '組織のオーナー',
+      { error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', message: ORG_OWNER_MESSAGE, organization: { id: 'org-1', name: '組織 A' } },
+      ORG_OWNER_MESSAGE,
+      'organization',
+      { id: 'org-1', name: '組織 A' },
+    ],
+    [
+      '家族グループの代表者',
+      { error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', message: FAMILY_REPRESENTATIVE_MESSAGE, family_group: { id: 'fg-1', name: '家族 A' } },
+      FAMILY_REPRESENTATIVE_MESSAGE,
+      'family_group',
+      { id: 'fg-1', name: '家族 A' },
+    ],
+  ] as const)('deleteOwnAccount は 409 の本文の family_group / organization の id と名前を scope として持ち帰る (%s)', async (_label, body, message, blocker, scope) => {
+    stubDeleteResponse(jsonResponse(409, body));
+    await expect(deleteOwnAccount()).resolves.toEqual({ kind: 'blocked', message, blocker, scope });
+  });
+
+  it.each([
+    [
+      '立場に合う鍵が無い (代表者なのに organization だけ)',
+      jsonResponse(409, { error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', organization: { id: 'org-1', name: '組織 A' } }),
+      'family_group',
+    ],
+    ['id が文字列でない', jsonResponse(409, { error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', organization: { id: 1, name: '組織 A' } }), 'organization'],
+    ['名前が無い', jsonResponse(409, { error: 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', organization: { id: 'org-1' } }), 'organization'],
+    ['立場が分からない (error が知らない値)', jsonResponse(409, { error: 'SOMETHING_ELSE', organization: { id: 'org-1', name: '組織 A' } }), null],
+    ['本文が JSON でない', new Response('not json', { status: 409 }), null],
+  ] as const)('deleteOwnAccount は 409 の本文から立場の id と名前が読めなければ scope を null にする (%s)', async (_label, response, blocker) => {
+    stubDeleteResponse(response);
+    const result = await deleteOwnAccount();
+    expect(result).toMatchObject({ kind: 'blocked', blocker });
+    expect(result.kind === 'blocked' ? result.scope : 'not-blocked').toBeNull();
+  });
+});
+```
+
+- 1 つ目の `it.each` は `toEqual` で結果の形 (4 つの鍵) を固定する。2 つ目は `scope` が `null` (鍵があって値が `null`) であることを見る (`undefined` では通らない)。
+- `jsonResponse` は `it.each` の表を作るときに呼ばれるので、`Response` は it ごとに別のもの (本文は 1 回しか読まれない)。
 
 ### 21.4 e2e (段 B。`tests/e2e/membership/15-self-dissolve.spec.ts` 新規)
 
@@ -2215,9 +2309,9 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | S-4 | D-2 (2 回目)・部品 (送信中は無効) |
 | S-5 | route (400)・部品 (キーワード) |
 | S-6・S-7 | D-5・D-6・org の route・spec15-04 |
-| S-8 | `account-deletion-blocked-message` (案内の行き先) |
-| S-9 | `frozen-account-page` (区画・次の案内)・`middleware-self-dissolve` (凍結中に通る)・D-14 |
-| S-10 | `legal-consent-account-page-1901` (区画・案内・次の案内・呼ぶ API)・`middleware-self-dissolve` (未同意で通る)・`middleware-legal-consent-api` (許可リストのスナップショット) |
+| S-8 | `account-deletion-blocked-message` (案内の行き先 `/settings/membership` と prompt。§21.3.1 の 3・4) |
+| S-9 | `frozen-account-page` (区画・次の案内)・`account-deletion-blocked-message` (409 の本文から `scope` を持ち帰る。§21.3.1 の末尾の describe)・`middleware-self-dissolve` (凍結中に通る)・D-14 |
+| S-10 | `legal-consent-account-page-1901` (区画・案内・次の案内・呼ぶ API)・`account-deletion-blocked-message` (`scope`)・`middleware-self-dissolve` (未同意で通る)・`middleware-legal-consent-api` (許可リストのスナップショット) |
 | S-11 | mobile `account-delete` (ボタン)・`membership-entry` |
 | S-12 | 既存 `purge-dissolved-family-groups.test.ts` (変えない) + C-10 |
 | S-13 | D-3・D-7・`account-deletion.test.ts` の追加 |
@@ -2328,7 +2422,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | ファイル | `src/schemas/membership/self-dissolve.ts` | Zod 5 つ (`DissolveFamilyBodySchema`・`DissolveOrgBodySchema`・`SelfDissolveRpcResultSchema`・`DissolveFamilyResponseSchema`・`DissolveOrgResponseSchema`)・型 5 つ | A |
 | ファイル | `packages/shared/src/membership-settings.ts` | `MEMBERSHIP_SETTINGS_PATH` | A |
 | 定数 | `FAMILY_DISSOLVE_API_PATH`・`ORG_DISSOLVE_API_PATH` | `src/lib/auth/frozen.ts` に追加 | A |
-| 定数 | `ACCOUNT_DELETE_BLOCKED_GUIDE` (`ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` の改名)・interface `AccountDeletionBlockedScope`・`AccountDeletionResult.blocked.scope` | `src/lib/account-self-service.ts` | A |
+| 定数・型・関数 | `ACCOUNT_DELETE_BLOCKED_GUIDE` (`ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` の改名)・interface `AccountDeletionBlockedScope`・`AccountDeletionResult.blocked.scope`・`blockedScopeOfBody` (export しない) | `src/lib/account-self-service.ts` (§13.6。§15.3・§21.3.1 と同じコミット) | B |
 | ファイル | `src/lib/membership/self-dissolve.ts` | `SELF_DISSOLVE_CONFIRM_KEYWORD`・`DISSOLVED_FAMILY_GROUP_RETENTION_DAYS`・`SELF_DISSOLVE_COPY`・`FROZEN_DISSOLVE_GUIDANCE`・`SELF_DISSOLVED_NEXT_STEP`・`BLOCKED_SCOPE_UNKNOWN_GUIDANCE`・`SELF_DISSOLVE_FAILED_MESSAGE`・`selfDissolveApiPath`・`dissolveOwnScope`・型 `SelfDissolveResult` | A |
 | ファイル | `src/lib/membership/self-dissolve-notification.ts` | `notifySelfDissolve`・interface `NotifySelfDissolveParams` | A |
 | ファイル | `src/lib/emails/membership/self-dissolve.ts` | `renderSelfDissolveEmail`・interface `SelfDissolveEmailVars` (template 名 `self_dissolve` は文字列のリテラル。定数にしない。§16.1) | A |
@@ -2342,7 +2436,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | 画面 (経路) | `/settings/membership` (アプリの画面。Web と同じパス) | — | B |
 | テスト | `src/__tests__/lib/membership/self-dissolve.test.ts`・`src/__tests__/lib/emails/self-dissolve.test.ts`・`src/__tests__/api/family/dissolve.test.ts`・`src/__tests__/api/org/dissolve.test.ts`・`lib/supabase/__tests__/middleware-self-dissolve.test.ts`・`tests/self-dissolve-migration-contract.test.ts`・`src/__tests__/lib/membership/self-dissolve-rpc-types.test.ts`・`tests/integration/security/self-dissolve.test.ts` | §21.1・§21.2 | A |
 | テスト | `src/__tests__/components/membership/self-dissolve-section.test.tsx`・`src/__tests__/app/settings/membership-self-dissolve.test.ts`・`apps/mobile/__tests__/settings/membership-entry.test.tsx`・`tests/e2e/membership/15-self-dissolve.spec.ts` | §21.3・§21.4 | B |
-| 変更 | `src/schemas/membership/index.ts`・`packages/shared/src/index.ts`・`src/lib/errors/membership-errors.ts`・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts`・`src/lib/account-self-service.ts`・`src/lib/account-deletion.ts` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts`・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・型 2 ファイル・`lib/supabase/middleware.ts` (コメント 2 か所)・`apps/mobile/src/lib/account-frozen.ts` (コメント)・`src/app/(main)/settings/membership/page.tsx`・`src/app/(main)/settings/page.tsx`・`src/components/account/AccountSelfServicePanel.tsx`・`src/app/frozen/account/page.tsx`・`src/app/legal-consent/account/AccountWithoutConsent.tsx` (コメント)・`packages/shared/src/legal-consent-copy.ts` (`accountDeleteBlockedGuidance` の文)・`lib/legal-consent.ts` (コメント)・`apps/mobile/app/settings/account.tsx`・既存テスト (§23。`src/__tests__/app/frozen-account-page.test.tsx`・`tests/legal-consent-account-page-1901.test.tsx`・`tests/integration/security/account-deletion.test.ts` (it 1 本を足す・§21.2)・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`organizations-owner-id-not-null-migration-contract.test.ts`・`anon-definer-execute.test.ts` ほか) | — | A / B |
+| 変更 | `src/schemas/membership/index.ts`・`packages/shared/src/index.ts`・`src/lib/errors/membership-errors.ts`・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts`・`src/lib/account-self-service.ts`・`src/lib/account-deletion.ts` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts`・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・型 2 ファイル・`lib/supabase/middleware.ts` (コメント 2 か所)・`apps/mobile/src/lib/account-frozen.ts` (コメント)・`src/app/(main)/settings/membership/page.tsx`・`src/app/(main)/settings/page.tsx`・`src/components/account/AccountSelfServicePanel.tsx`・`src/app/frozen/account/page.tsx`・`src/app/legal-consent/account/AccountWithoutConsent.tsx` (コメント)・`packages/shared/src/legal-consent-copy.ts` (`accountDeleteBlockedGuidance` の文)・`lib/legal-consent.ts` (コメント)・`apps/mobile/app/settings/account.tsx`・既存テスト (§23。`tests/account-deletion-blocked-message.test.ts` (§21.3.1)・`src/__tests__/app/frozen-account-page.test.tsx`・`tests/legal-consent-account-page-1901.test.tsx`・`tests/integration/security/account-deletion.test.ts` (it 1 本を足す・§21.2)・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`organizations-owner-id-not-null-migration-contract.test.ts`・`anon-definer-execute.test.ts` ほか) | — | A / B |
 | 変更 (段 C の実装者) | `src/lib/legal/terms-text.ts`・`src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts`・(条件つき) `packages/shared/src/legal-versions.ts` と新規 `docs/legal/archive/v2026.1/terms.md`・`privacy.md`・`tests/design-doc-followup-owned-edits.test.ts`・`tests/legal-text-1901.test.ts` (T-28 の phrase) | §18 | C |
 | 変更 (オーケストレーターの専権の差分。段 C の PR に載せる) | `docs/design/cross/20-terms-privacy-text.md` (§18.1〜§18.3。`/legal-consent/account` の行だけは段 B のマージの日) | §18・§24 | C |
 
@@ -2372,8 +2466,8 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | 同上 | `tests/admin-mutation-audit-coverage-1571.test.ts:66-68` (運営の route の監査) | 反応しない (`/api/operator` の外) | — | — |
 | `self_dissolve` (文面) | `src/__tests__/lib/emails/secret-templates.test.ts:31-59` (`PUBLIC_TEMPLATES`)・`:81-92` (走査。`template` は `:88` の正規表現 `/^\s+template: '([^']*)',$/gm` でソースのリテラルの行から拾う)・`:115-120` (走査した名前と表の一致)・`src/__tests__/lib/emails/template-names.test.ts:22-28` (同じ正規表現で拾う)・`:44-50` (文面ごとに `toHaveLength(1)` と snake_case)・`:52-56` (名前の一意)・`src/__tests__/lib/emails/templates-site-config.test.ts:339-364` (ファイルの一覧と `TEMPLATES` の一致) | 赤 (表と一覧に無い文面)。`template` を定数・式で書くと、表に行を足しても赤のまま (`template-names` は名前 0 件で `toHaveLength(1)` が、`secret-templates` は `''` が表と食い違って赤) | `PUBLIC_TEMPLATES` の `operator_force_transfer: [],` の次の行に `self_dissolve: [],`、`TEMPLATES` に `membership/self-dissolve` の行 (§16.1 の逐語)。文面の `template` は字下げのあとに `template: 'self_dissolve',` だけを置いた 1 行 (§16.1)。`template-names` は表を持たないので書き換えない (`self_dissolve` は既存の名前と重ならない) | A |
 | `FAMILY_ALREADY_DISSOLVED` / `ORG_ALREADY_DISSOLVED` | `tests/membership-errors.test.ts` (全値に文)・`src/lib/errors/membership-errors.ts` の `Record` | 3 か所に足せば緑 | §13.3 | A |
-| `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` (改名) | `tests/account-deletion-blocked-message.test.ts:22, 160` | 赤 (import が無い) | `ACCOUNT_DELETE_BLOCKED_GUIDE` に替え、行き先の期待を `/settings/membership` に (§21.3) | A (lib) / B (画面の it) |
-| `kind: 'blocked'` の形 (`scope` を足す) | `tests/account-deletion-blocked-message.test.ts`・`src/__tests__/app/frozen-account-page.test.tsx:207` (`toEqual` で結果の形を固定していれば) | 固定していれば赤 | `scope` を含む形に (§21.3) | A / B |
+| `ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` (改名と行き先・prompt の変更。§13.6) | `src/app/(main)/settings/page.tsx:19, 246` (import と添字。src は tsc の対象)・`tests/account-deletion-blocked-message.test.ts:22, 160` (import と prompt の期待)・`:169-180` (`it.each` の行き先の期待 `/org/settings/owner-transfer`・`/family/representative-transfer`)・`:9-10` のコメントと `:154`・`:172`・`:182`・`:193` の it 名 (「譲渡の画面」) | 改名だけを当てると tsc が TS2305 (settings/page.tsx) で赤、vitest は `:160` (添字が `undefined`) と `:169-180` (行き先) が赤。コメントと it 名は緑のまま事実と違う記述になる | §13.6・§15.3・§21.3.1 を同じコミットで当てる (改名を単独でコミットしない) | B |
+| `kind: 'blocked'` の形 (`scope` を足す。§13.6) | 結果を読む側: `src/app/(main)/settings/page.tsx:242-256`・`src/components/account/AccountSelfServicePanel.tsx:94-99`・`src/app/legal-consent/LegalConsentForm.tsx:210-219` (`message` だけを読む)。テスト: `tests/legal-consent-page.test.tsx:879, 914` (`scope` の無い `blocked` をモックの戻り値にする)・`src/__tests__/app/frozen-account-page.test.tsx:207`・`tests/legal-consent-account-page-1901.test.tsx:225` (409 の応答から画面の文を見る) | 反応しない (読む側は `scope` を読まなくても型が通る。`AccountDeletionResult` の `blocked` を組み立てる src は `deleteOwnAccount` だけ。`tests/` は tsc の対象外 (tsconfig の `exclude`) で、vitest は型を見ない。結果の形を `toEqual` で固定する既存のテストは無い) | `scope` を読むのは枠 `AccountSelfServicePanel` だけ (§15.4)。`LegalConsentForm.tsx` と `tests/legal-consent-page.test.tsx` は変えない。形の固定は §21.3.1 の末尾の describe が新しく持つ | B |
 | `DELETE_BLOCKED_GUIDANCE` (凍結中の文) を消す・部品の 409 の分岐 | `src/__tests__/app/frozen-account-page.test.tsx:207` (本文に `organization` が無い 409。`組織のオーナーです。` と `サポートにお問い合わせください` を含む) | 緑のまま (立場の id が無いので `BLOCKED_SCOPE_UNKNOWN_GUIDANCE` が出て、どちらの語も含む) | it の名前を替え、立場の id がある 409 の it を足す (§21.3) | B |
 | `LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance` (文を変える)・部品の 409 の分岐 | `tests/legal-consent-account-page-1901.test.tsx:225-241` (本文に `family_group` が無い 409 で、`${serverMessage} ${LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance}` と一致) | 赤 (立場の id が無いと `BLOCKED_SCOPE_UNKNOWN_GUIDANCE` が出る) | §21.3 の逐語の it に書き換える | B |
 | 同上 (呼ぶ API) | `tests/legal-consent-account-page-1901.test.tsx:252-268` (呼んだパスの集合が退会と書き出しの 2 本) | 緑のまま (退会は 200 で 409 の分岐に入らない) | §21.3 のとおり 409 → 解散 → 退会の流れに広げる | B |
@@ -2463,3 +2557,4 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | v1.6 | 2026-10-19 | 網羅性 (周 4) の反映: §8 の「並行」を、組織のオーナー × 招待された人の承諾 (直列にならない。承諾の commit の位置で 3 通り。Q-4) と、解散する側・承諾する側の凍結中 / 未同意との交差 (家族・組織に 2 行ずつ) に広げた。§5 に S-30 (組織の招待の承諾と解散の並行) を足して 30 本にし、§6.2 にトレース、§21.2 に D-15、§21.5 に S-30 と、シナリオ外の不変条件 (D-11・D-12) と migration の形の契約 (C-1〜C-9・C-11・C-12) の行を足した。§10.1 に active → active の招待の承諾・子供の追加・退出 / 除名 (解散との直列のしかたつき)、§10.2 に active → active の組織の招待の承諾を足した。§11.3 と Q-4 に S-30 を結んだ。§6.2 の S-27 の参照 (§21.4 D-7) を §21.2 D-8 に直した |
 | v1.7 | 2026-10-19 | 敵対レビュー R4 の反映: 家族の行の `status` / `dissolved_at` は、RLS `family_groups_update_adult` (active な代表者・大人に列を限らない UPDATE) と、3 列 (`representative_id` / `plan_key` / `member_limit`) しか守らない特権列のガードのせいで、REST の UPDATE で書けた。代表者を指したまま・メンバーが active のままの dissolved の行が作れ、代表者が退会の 409 と `FAMILY_ALREADY_DISSOLVED` で行き止まりになる (R-6 が成り立たない) ので、migration に 6 (`guard_family_groups_privileged` を #1309 と同じ形で置き換え、`status` / `dissolved_at` も 42501 にする) を足し、戻し口で 20251126124224 の定義に逐語で戻すようにした (§11.1・§11.2)。F-13 を測り直し (RLS・ガードの最新の定義・アプリに利用者の UPDATE が無いこと・組織の `dissolved_at` に読み手が無いこと)、§0.2・§0.3・§4 R-6・§5 S-31 (31 本に)・§6.1・§6.2・§8 (入口に「REST 直接」と家族・組織の行)・§9・§10.1・§10.2 (REST の UPDATE の行)・§19・§20 (段 A の結合)・§21.1 C-13・§21.2 D-16 と家族 H・§21.5・§22 (置き換える関数の行)・§23 (service_role / postgres で書く既存のテスト・本人のセッションの名前の変更・#1309 の属性のテスト・型の生成物の契約 (トリガー関数の除外) が反応しない理由)・§24 (billing/01 F22) を合わせた |
 | v1.8 | 2026-10-19 | 網羅性 (周 5) の反映: §8 の「解散した家族の元代表者」「解散した組織の元オーナー」に、通常 × モバイル・凍結中 (`/frozen/account` の退会・設定・新しい家族の作成と別の組織の招待の承諾・モバイル)・未同意 (`/legal-consent/account` の退会・設定・作成と承諾・モバイル)・メンテナンス中の行を足した (退会は 409 にならず 200。作成と承諾は凍結中・未同意の middleware の既存の決まりのまま。家族・組織のもう一方の代表者・オーナーが残る人は、その所属の 409 の行と同じ) |
+| v1.9 | 2026-10-19 | 敵対レビュー R5 の反映: 退会の 409 の案内の改名 (`ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE` → `ACCOUNT_DELETE_BLOCKED_GUIDE`)・行き先・prompt を段 A に置き、旧名を import する `src/app/(main)/settings/page.tsx:19, 246` と `tests/account-deletion-blocked-message.test.ts:22, 160` を段 B に置いていたため、段 A の終わりで tsc (TS2305) と vitest が赤になった。§13.6 (`scope` の追加を含む) を丸ごと段 B に移し、§15.3 と `tests/account-deletion-blocked-message.test.ts` の書き換えと同じコミットにした (段 A は `src/lib/account-self-service.ts` に触れない。`src/lib/account-deletion.ts` のコメントの追記だけは段 A)。`deleteOwnAccount` が 409 の本文から `scope` を読む処理を関数 `blockedScopeOfBody` として逐語にした。§21.3 の「it 6」(どの it にも当たらない番号) を、書き換える 4 つの it (`:150-167`・`:169-180` の行き先の `it.each`・`:182`・`:190-200`)・import・冒頭のコメントの逐語の表 (§21.3.1) と、`scope` を見る describe の逐語に置き換えた。§23 の 2 行を、反応する箇所 (`settings/page.tsx`・`:169-180`・it 名) と段 B に直し、`scope` の形の行に読む側 (`LegalConsentForm.tsx`) とモックの戻り値 (`tests/legal-consent-page.test.tsx:879, 914`) を反応しない理由つきで足した。波及: 段 C の規約の文 (「本サービスの画面から行え」) と cross/20 の F-59・§11.3・§12 の行が段 B の画面と `ACCOUNT_DELETE_BLOCKED_GUIDE` を名指しするので、段 C のマージを段 B のマージの後にした (§0.2・§0.3・§20)。§0.3・§20・§21.5・§22 を合わせた |
