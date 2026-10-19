@@ -54,6 +54,10 @@ const emailOutbox = await import('@/app/api/cron/email-outbox/route');
 const appLogAlerts = await import('@/app/api/cron/app-log-alerts/route');
 const backupFreshness = await import('@/app/api/cron/backup-freshness/route');
 
+/**
+ * Cron の認証値のダミー。gitleaks の generic-api-key が拾うので、.gitleaks.toml の除外に値を完全一致で載せている
+ * (tests/security-workflow.test.ts が除外を確かめる)。値を変えるときは、除外とそのテストも同時に直す
+ */
 const SECRET = 'dummy-cron-secret-1909-followup-0123456789';
 const TEST_SUPABASE_URL = 'http://127.0.0.1:54321';
 const TEST_SERVICE_ROLE_KEY = 'service-role-key-for-test';
