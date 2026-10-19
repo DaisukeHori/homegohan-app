@@ -36,6 +36,7 @@ import {
 import { PRIVACY_PROCESSORS, PRIVACY_SECTION_COUNT, PRIVACY_SECTION_HEADINGS, privacyText } from '@/lib/legal/privacy-text';
 import { TERMS_ARTICLE_COUNT, TERMS_ARTICLE_HEADINGS, TERMS_MEDICAL_DISCLAIMER, termsText } from '@/lib/legal/terms-text';
 import { LEGAL_CLAIMS, LEGAL_CLAIM_COUNT } from './legal-claims-1901';
+import { stripAllTags } from './helpers/strip-tags';
 
 vi.mock('next/link', async () => {
   const react = await import('react');
@@ -465,11 +466,11 @@ function renderDocumentHtml(document: LegalDocumentText): string {
 
 /** タグを空白に置き換えた本文 (tests/business-info-legal-pages.test.ts の renderText と同じ考え方) */
 function renderDocumentText(document: LegalDocumentText): string {
-  return decodeEntities(renderDocumentHtml(document).replace(/<[^>]*>/g, ' '));
+  return decodeEntities(stripAllTags(renderDocumentHtml(document), ' '));
 }
 
 function h3Texts(html: string): string[] {
-  return [...html.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/g)].map((m) => decodeEntities(m[1].replace(/<[^>]*>/g, '')));
+  return [...html.matchAll(/<h3[^>]*>([\s\S]*?)<\/h3>/g)].map((m) => decodeEntities(stripAllTags(m[1])));
 }
 
 function allSections(document: LegalDocumentText): LegalSection[] {
@@ -1081,7 +1082,7 @@ describe('#1901 ページ・版・旧版の控え', () => {
     const html = renderPage(PrivacyPage);
     const list = /<ul[^>]*data-testid="privacy-ai-providers"[^>]*>([\s\S]*?)<\/ul>/.exec(html);
     expect(list, '送信先の一覧が無い').not.toBeNull();
-    const items = [...(list?.[1] ?? '').matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => decodeEntities(m[1].replace(/<[^>]*>/g, '')));
+    const items = [...(list?.[1] ?? '').matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => decodeEntities(stripAllTags(m[1])));
     expect(items).toEqual(
       AI_CONSENT_PROVIDERS.map((id) => {
         const info = AI_CONSENT_PROVIDER_INFO[id];
