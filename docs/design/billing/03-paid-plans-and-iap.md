@@ -1113,7 +1113,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | §8.7 `env.ts` の差分 | 既存 | `insert=` |
 | §8.8 `ai-daily-limit.ts` (全文の置き換え) | `supabase/functions/_shared/ai-daily-limit.ts` (Web・Edge・モバイル共用。import なし) | 単独 (import なし) |
 | §8.8 `meal-image.ts` の差分 | `supabase/functions/_shared/meal-image.ts`・`lib/meal-image.ts` (再 export) | `insert=` |
-| §8.8 料理画像のジョブの処理の門 | `supabase/functions/process-meal-image-jobs/index.ts` (Deno の Edge Function。差分 3 か所) | `insert=` (Edge Function の型検査の手順で) |
+| §8.8 料理画像のジョブの処理の門 | `supabase/functions/process-meal-image-jobs/index.ts` (Deno の Edge Function。差分 4 か所) | `insert=` (Edge Function の型検査の手順で) |
 | §8.9 `billing-plans.ts` | `packages/shared/src/billing-plans.ts` (新設。`packages/shared/src/index.ts` に `export * from './billing-plans';`。Web とモバイルが `@homegohan/shared` から読む) | 単独 (import なし) |
 | §8.10 モバイル | `apps/mobile/src/lib/purchases.ts`・`iap-catalog.ts`・`billing-api.ts`・`app/settings/plan.tsx` (新設) | `iap-catalog.ts` は単独 (import なし)。ほかは `place=` (apps/mobile の tsconfig で検査) |
 
@@ -2896,13 +2896,13 @@ export function mealImageJobPlanDecision(cap: unknown): MealImageJobPlanDecision
 - 料理画像のジョブの処理 `supabase/functions/process-meal-image-jobs/index.ts` にプランの門を足す (F22。献立の作成 (`save-meal`) が積んだジョブは数えていないので、無料の利用者の献立の作成の画像を止めるのはここだけ。料理の保存の route 4 本と AI 相談は積む前に `consume_ai_usage_at` の門で止まるので、ここに来るのは門を通ったジョブか、献立の作成のジョブ)。`save-meal.ts` と `meal-image-jobs.ts` は変えない:
 
 ```ts
-// tsc:skip insert=supabase/functions/process-meal-image-jobs/index.ts — 3 か所の差分 (位置は各行の注)
+// tsc:skip insert=supabase/functions/process-meal-image-jobs/index.ts — 4 か所の差分 (位置は各行の注)
 // (a) import (../_shared/meal-image.ts の import に 3 つ足す)
 //   import { DEFAULT_MEAL_IMAGE_MODEL, MEAL_IMAGE_SKIPPED_ERRORS, mealImageJobPlanDecision, type MealImageDish, type MealImageJobPlanDecision } from "../_shared/meal-image.ts";
 // (b) processJobs: 同意の判定と同じく、1 回の実行の中で利用者ごとにプランの門の答えを使い回す
 //   const planByUser = new Map<string, Promise<MealImageJobPlanDecision>>();
 //   const outcome = await processJob(job, consentByUser, planByUser);
-// (c) processJob の引数に planByUser を足し、同意の判定の if ブロック (`if (!decision.allowed) { … }`) の直後に次を置く
+// (c) 次の関数を fetchPendingJobs の定義の直後に置く (Deno.serve( より後ろ)
 async function readMealImageJobPlanDecision(ownerId: string): Promise<MealImageJobPlanDecision> {
   try {
     const { data, error } = await supabase.rpc("ai_plan_feature_daily_cap", { p_user_id: ownerId, p_feature: "meal_image_auto" });
@@ -2919,7 +2919,7 @@ async function readMealImageJobPlanDecision(ownerId: string): Promise<MealImageJ
     return "allowed";
   }
 }
-//   (processJob の中)
+// (d) processJob の引数に planByUser: Map<string, Promise<MealImageJobPlanDecision>> を足し、同意の判定の if ブロック (`if (!decision.allowed) { … }`) の直後 (try より前) に次を置く
 //   let plan = planByUser.get(ownerId);
 //   if (!plan) {
 //     plan = readMealImageJobPlanDecision(ownerId);
