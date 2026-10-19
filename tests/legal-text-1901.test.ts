@@ -25,21 +25,16 @@ import {
   buildContentSecurityPolicy,
   cspDirectivesOf,
 } from '@/lib/security/csp';
+// @/lib/legal (index.ts) ではなく各モジュールを直接読む (vitest.config.ts の @/ の解決はディレクトリの index を先に試さないため)
 import {
   LEGAL_FACTS,
-  PRIVACY_PROCESSORS,
-  PRIVACY_SECTION_COUNT,
-  PRIVACY_SECTION_HEADINGS,
-  TERMS_ARTICLE_COUNT,
-  TERMS_ARTICLE_HEADINGS,
-  TERMS_MEDICAL_DISCLAIMER,
-  privacyText,
-  termsText,
   type LegalBlock,
   type LegalDocumentText,
   type LegalSection,
   type LegalTextContext,
-} from '@/lib/legal';
+} from '@/lib/legal/legal-text';
+import { PRIVACY_PROCESSORS, PRIVACY_SECTION_COUNT, PRIVACY_SECTION_HEADINGS, privacyText } from '@/lib/legal/privacy-text';
+import { TERMS_ARTICLE_COUNT, TERMS_ARTICLE_HEADINGS, TERMS_MEDICAL_DISCLAIMER, termsText } from '@/lib/legal/terms-text';
 import { LEGAL_CLAIMS, LEGAL_CLAIM_COUNT } from './legal-claims-1901';
 
 vi.mock('next/link', async () => {

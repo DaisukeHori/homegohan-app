@@ -9,7 +9,9 @@ import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { LegalDocumentBody } from '@/components/legal/LegalDocumentBody';
-import { privacyText, termsText, type LegalDocumentText, type LegalTextContext } from '@/lib/legal';
+import type { LegalDocumentText, LegalTextContext } from '@/lib/legal/legal-text';
+import { privacyText } from '@/lib/legal/privacy-text';
+import { termsText } from '@/lib/legal/terms-text';
 
 vi.mock('next/link', async () => {
   const react = await import('react');
