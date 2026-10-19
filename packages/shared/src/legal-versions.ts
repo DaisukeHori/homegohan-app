@@ -17,6 +17,8 @@
  * v2026.1 は #1901 (docs/design/cross/20-terms-privacy-text.md) で作り込んだ文面の版。
  *   弁護士の確認で文面を変えるときは、内容が変わるなら次の版 (v2026.2 など) に上げる (cross/20 §9.3)。
  *   改定前の版 (v2025.1) の文面は docs/legal/archive/v2025.1/ に控えてある。
+ * v2026.2 は #1917 (docs/design/family/11-self-dissolve.md §18) で、退会の条件 (譲渡するか解散するまで) を改めた版。
+ *   改定前の版 (v2026.1) の文面は docs/legal/archive/v2026.1/ に控えてある。
  *
  * version の形式:
  *   DB の terms_acceptances.document_version は varchar(20)。同意を記録する DB 関数 accept_legal_documents も同じ形式
@@ -43,10 +45,13 @@ export interface LegalDocumentInfo {
  * 施行日は公開 (デプロイ) の日。実装の時点では仮の施行日 (2026-10-19) を置き、マージの直前にオーケストレーターが実際の公開日
  * (JST の YYYY-MM-DD) に置き換えて、行末の目印のコメントを消す (cross/20 §9.4 の 3)。
  * 仮の値も YYYY-MM-DD の形の実在する日付にする (形を外すと /api/legal/status が 500 を返し、同意画面とテストが壊れる)。
+ *
+ * #1917 (docs/design/family/11-self-dissolve.md §18): 代表者・オーナーが解散してから退会できるようになり、利用規約第11条 4 項・第12条 4 項・第17条 2 項と
+ * プライバシーポリシー第13条 9 項の退会の条件が変わるので、両文書を v2026.2 に上げる。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.1', effectiveDate: '2026-10-19' },
-  privacy_policy: { version: 'v2026.1', effectiveDate: '2026-10-19' },
+  terms_of_service: { version: 'v2026.2', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
+  privacy_policy: { version: 'v2026.2', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
 };
 
 /** 画面に出す文書名 */
