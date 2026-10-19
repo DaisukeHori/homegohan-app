@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| 版 | v1.5 (2026-10-19) |
+| 版 | v1.6 (2026-10-19) |
 | Status | 設計ゲート審査中 (実装着手は通過後) |
 | Issue | #1901 |
 | 範囲の正本 | Issue #1901 の本文とコメント。前提と判断は本書 §0.1 に文として書く |
@@ -49,7 +49,7 @@
 | R-11 | 保存期間 (隠した投稿・ログ (ブラウザのセキュリティ違反の報告を含む)・ログイン履歴・送信待ち・プッシュ通知の宛先・AI 機能の利用回数・回数の制限の計数・バックアップ・退会後) を実装の値から書く | cross/17 §9.1・各 migration | §7 §12 |
 | R-12 | 外部送信 (Cookie・ブラウザの保存・ブラウザから直接の Supabase・Vercel Speed Insights・Turnstile・Stripe・Google・祝日の一覧 (GitHub Pages)・Expo の通知) を、電気通信事業法 27 条の 12 の公表事項 (送る情報・送り先・目的) の形で書く。広告・計測の Cookie は使っていない | 電気通信事業法 27 条の 12・`src/__tests__/lib/security/csp.test.ts:264-272` (PostHog 不採用)・F-15 | §7 §10 |
 | R-13 | 未成年 (18 歳未満は保護者の同意・13 歳未満の本人アカウント無し) を両文書に書く | cross/14・`packages/shared/src/parental-consent.ts:12-16` | §6 第 3・5 条・§7 §15 |
-| R-14 | 家族・組織で誰に何が見えるかを書く | 家族の共有設定・org/07 行 415・org/03 行 98 | §6 第 11〜12 条・§7 §9 |
+| R-14 | 家族・組織で誰に何が見えるかを書く。組織の管理者に見える項目は、組織の画面と API が実際に読む項目だけにする (設計書の計画の項目を書かない) | 家族の共有設定と招待 (F-18)・組織の管理者の画面 (F-19) | §6 第 11〜12 条・§7 §3・§9 |
 | R-15 | 版を上げる (両文書とも)。上げると何が起きるか (Web・API・モバイル・通知) を設計に書く | #1174・13a・13b・`src/lib/push/outbox.ts:245-256` | §9 |
 | R-16 | 文面は型のあるデータ (TS) で持ち、ページはそれを描く。文面の存在と製品の定数との一致はテストで固定する | 完成条件 (Sonnet が迷わない)・§13 | §5・§8・§13 |
 | R-17 | 既存のテスト (事業者名が 1 種類・AI の送信先の一覧・版の表示・h1・戻るリンク・公開ページの禁止語) を壊さない。文面に「株式会社」「Inc」「最適な」「24時間以内」などの禁止語を書かない | `tests/business-info-legal-pages.test.ts:96-103`・`tests/policy-pages-public.test.tsx`・`tests/public-claims-guard.test.ts:113-187` | §16 |
@@ -59,6 +59,8 @@
 | R-21 | 端末の機能 (カメラ・写真ライブラリ・通知) へのアクセスと使い道、取得しないもの (位置情報・連絡先・マイクの音声) を公表する | `apps/mobile/app.json:23-25, 34-41`・`apps/mobile/package.json:30` (F-25) | §7 §3 (端末の機能の表)・§10 (参照) |
 | R-22 | AI 事業者へ送る情報は、同意画面の 6 項目の写しで済ませず、実際にプロンプトに入る項目 (ニックネーム・プロフィール・持病・服薬・妊娠/授乳の状況などの要配慮個人情報) まで書く。送らないと言い切れないもの (氏名・メールアドレス) は言い切らない | 法 28 条 2 項・20 条 2 項・F-29 | §7 §5・§6 |
 | R-23 | 誰が何を見られるか (写真・つないだ未成年の記録・運営) は、実装の経路 (RLS・署名 API・RPC) どおりに書く | cross/19 §6.1・cross/14 §11・F-18・F-33 | §6 第 5・11・13 条・§7 §5・§9・§15 |
+| R-24 | 「いつでも」「設定画面から」と書く約束 (退会・書き出し・解約) は、版を上げた後の同意の前 (設定画面が同意画面へ回る間) の手段まで書く。メール・多要素認証・保存のしかたの約束は、実装の範囲 (止める設定の有無・対象のロール・伏せる列) に限る | F-32・F-34〜F-36・§11.3 | §6 第 10・17・19・24 条・§7 §11〜§13・§16 |
+| R-25 | IP アドレス・User-Agent を持つ表は、すべて第3条に載せるか、載せない理由 (利用者の情報でない・書き込む処理が無い) を持つ。表が増えたらテストが赤になる | F-17・F-37 | §7 §3・§12・T-30 |
 
 ### 0.3 ユーザーシナリオ (17 本。トレースは §4.3)
 
@@ -68,7 +70,7 @@
 | S-2 | ストア審査の担当者が `/privacy` を開き、集めるデータ・AI 事業者・委託先・保存期間・削除の方法・問い合わせ先を読む |
 | S-3 | 版を上げてデプロイした直後、同意済み (v2025.1) の Web の利用者がホームを開く。middleware が `/legal-consent?next=/` へ回し、「改定されました」の導入文と、両文書に「改定あり」の印が出る。全文のリンクで新しい文面を読み、2 つのチェックで「同意して続ける」を押すと、`user_profiles` の 2 列が新しい版になり元の画面へ戻る |
 | S-4 | 同じ利用者がアプリ (Expo) を開く。`GET /api/legal/status` が未同意を返し、ルートのゲートがアプリを `/legal-consent` の WebView 1 枚にする。同意すると `legal-consent-accepted` の合図で入口から振り分け直す |
-| S-5 | 新しい版に同意していない利用者のアプリが `/api/meals` を呼ぶ。middleware が 403 `LEGAL_CONSENT_REQUIRED` を返し、画面は同意画面へ案内する。退会・書き出し・開示等の請求・お問い合わせ・有料プランの解約の API は通る (ただし、凍結されていない成人の未同意の人には、退会・書き出し・解約の画面 (`/settings`・`/account/billing`) は同意画面へ回されて出ない。画面があるのは請求とお問い合わせだけ。F-32・S-17) |
+| S-5 | 新しい版に同意していない利用者のアプリが `/api/meals` を呼ぶ。middleware が 403 `LEGAL_CONSENT_REQUIRED` を返し、画面は同意画面へ案内する。退会・書き出し・開示等の請求・お問い合わせ・有料プランの解約の API は通る (ただし、凍結されていない成人の未同意の人には、退会・書き出し・解約の画面 (`/settings`・`/account/billing`) は同意画面へ回されて出ない。画面があるのは請求とお問い合わせだけ。利用規約第10条 4 項・第17条 1 項とプライバシーポリシー第13条 1 項・3 項は、この間の手段を第24条 2 項 (お問い合わせからの削除と解約の依頼・開示の請求) と書く。F-32・S-17) |
 | S-6 | 同意画面で「同意しない（ログアウトする）」を押す。ログアウトし、開示・訂正・利用停止・消去の請求 (`/settings/data-requests`) とお問い合わせへのリンクが出る。再ログインすると同意画面に戻る |
 | S-7 | 版を上げた後、プッシュ通知の cron が未同意の利用者の行を送らずに `consent_outdated` (`PUSH_OUTBOX_ERROR_CODES.CONSENT_OUTDATED`) で止める。再同意すると次回から届く |
 | S-8 | 新規登録の人がサインアップ画面で規約・プライバシーポリシーのリンクを開き、新しい全文を読んでから登録する。登録後 `/auth/callback` が同意画面へ回し、生年月日を入れて同意する |
@@ -80,7 +82,7 @@
 | S-14 | 保護者が 13 歳以上 18 歳未満の子を家族に追加し、保護者の同意書に同意して、子のアカウントをつなぐ。子は利用規約第 5 条を読み、保護者の同意とのつながりが切れたときは、保護者が家族に追加し直して本人が案内を承諾するか 18 歳になるまで、退会の道だけが出ることを知る |
 | S-15 | 実装者 (Sonnet) が §6・§7 の TS ブロックを `src/lib/legal/` に置き、§8 の描画部品でページを描き、§13 のテストを足し、§9 の版を書き換える。手を止める箇所が無い |
 | S-16 | 誤字の修正のように内容が変わらない直しをする人が、§9.3 の規律 (版を上げない) を読み、版を据え置いて文面だけ直す |
-| S-17 | 版上げの後、新しい版に同意したくない成人 (凍結されていない) が、利用規約第24条 2 項で「同意の前でもできること」を読み、同意画面の「同意しない（ログアウトする）」から、お問い合わせでデータの削除を依頼する (設定の退会の画面は同意画面へ回されるので使えない) |
+| S-17 | 版上げの後、新しい版に同意したくない成人 (凍結されていない) が、利用規約第24条 2 項で「同意の前でもできること」を読み、同意画面の「同意しない（ログアウトする）」から、お問い合わせでデータの削除を依頼する (設定の退会の画面は同意画面へ回されるので使えない)。有料プランを契約している人は、同じお問い合わせで解約を依頼し、自動更新を止める (設定の「お支払い」も同意画面へ回される) |
 
 ### 0.4 分冊判定
 
@@ -183,11 +185,11 @@
 | F-14 | 隠した投稿は 90 日で消す (`HIDDEN_CONTENT_RETENTION_DAYS`)。ログ (`app_logs`) 30 日。ログイン履歴 90 日・セッション無操作 30 日。送信待ち (メール・プッシュ) は送れた行 7 日・失敗 30 日 | `src/lib/admin/hidden-content-restore.ts:26`・`supabase/migrations/20251126124224_create_meal_planner_tables.sql:1120`・`src/lib/auth/sessions/constants.ts:12, 16`・`supabase/migrations/20261016234000_email_outbox.sql:271-272`・`20261016237000_push_outbox.sql:258-259` |
 | F-15 | 外部送信: ブラウザから直接 Supabase (`*.supabase.co`。認証・データの読み書き・写真の署名付き URL)・Vercel Speed Insights (同一オリジン `/_vercel/speed-insights/*`。URL のクエリ・トークンを消してから送る)・Cloudflare Turnstile (ログイン・登録・メール確認・パスワード再設定)・Stripe Checkout・Google OAuth・祝日の一覧 (週間献立 `/menus/weekly` がブラウザから `HOLIDAYS_API_ORIGIN` = `https://holidays-jp.github.io` の `/api/v1/<年>/date.json` を取得。送るのは年だけ。GitHub Pages に端末の IP とブラウザの情報が渡る)。PostHog・GA は不採用。フォントは `next/font` でビルド時に取り込む (実行時に Google へ送らない)。ログイン画面の背景の画像 (`images.unsplash.com`) は `next/image` の最適化 (`/_next/image`) を通り、ブラウザは Unsplash へ直接取りに行かない。アプリの更新の取得 (EAS Update) は無効 (`updates.enabled: false`・`checkAutomatically: "NEVER"`。`expo-updates` を呼ぶコードも無い) | `src/lib/speed-insights-scrub.ts:1-20`・`src/lib/auth/turnstile-verify.ts:22`・`src/app/layout.tsx:2`・`src/__tests__/lib/security/csp.test.ts:264-272`・`src/lib/security/csp.ts:30-34, 103`・`src/app/(main)/menus/weekly/_state/japaneseHolidays.ts:7-8`・`src/app/(main)/menus/weekly/page.tsx:427`・`src/app/(auth)/layout.tsx:15`・`next.config.mjs:95-103`・`apps/mobile/app.json:68-72` |
 | F-16 | 委託先: Supabase (認証・DB・Storage・Edge Functions)・Vercel (ホスティング)・Resend (メール)・Stripe (決済)・Upstash (Redis。回数制限のカウンタ。キーは利用者 ID / IP / 宛先のハッシュ)・Expo (プッシュ送信 `exp.host`)・Cloudflare (Turnstile・R2 のバックアップ)・GitHub (Actions がバックアップを実行)・Google (OAuth) | `src/lib/rate-limit.ts:17-31`・`src/lib/push/expo-transport.ts:14-15`・`src/lib/emails/outbox.ts`・`.github/workflows/db-backup.yml`・`src/app/(auth)/login/page.tsx:78-83` |
-| F-17 | 端末とログ: `user_sessions_metadata` に IP の全体 (`ip_address`。トリガー `auth_session_created` は `NEW.ip` をそのまま入れ、Web の route も受け取った IP をそのまま上書きする)・そのネットワーク (`ip_network`。IPv4 は /24、IPv6 は /48。`ip_address` とは別の列)・国 (`country_code`。Web のログインで Vercel のヘッダ `x-vercel-ip-country` から取る)・User-Agent・端末名。IP の全体と国は、本人の画面 (`/settings/security/sessions` のセッションとログイン履歴)・新しい端末の通知メール・運営の画面 (`/admin/users/[id]` のログイン履歴) に出る。CSP 違反の報告に User-Agent。お問い合わせは `x-forwarded-for` を回数制限のキーに使う。規約の同意の記録 (`terms_acceptances`) は版と日時だけで IP・User-Agent を残さない | `supabase/migrations/20261016243000_auth_history_sessions.sql:19-40, 56, 79-84`・`src/lib/auth/sessions/request-context.ts:3-15`・`src/lib/auth/sessions/web-login-context.ts:42`・`src/lib/auth/sessions/store.ts:141-144`・`src/app/(main)/settings/security/sessions/page.tsx:106-107, 146-147`・`src/lib/emails/account/login-new-device.ts:27-37`・`src/app/api/admin/users/[id]/login-history/route.ts:45-46`・`src/app/admin/users/[id]/page.tsx:142`・`src/app/api/csp-report/route.ts:11, 43`・`src/app/api/legal/accept/route.ts:19` |
+| F-17 | 端末とログ (IP・User-Agent を持つ表の全体は F-37): `user_sessions_metadata` に IP の全体 (`ip_address`。トリガー `auth_session_created` は `NEW.ip` をそのまま入れ、Web の route も受け取った IP をそのまま上書きする)・そのネットワーク (`ip_network`。IPv4 は /24、IPv6 は /48。`ip_address` とは別の列)・国 (`country_code`。Web のログインで Vercel のヘッダ `x-vercel-ip-country` から取る)・User-Agent・端末名。IP の全体と国は、本人の画面 (`/settings/security/sessions` のセッションとログイン履歴)・新しい端末の通知メール・運営の画面 (`/admin/users/[id]` のログイン履歴) に出る。CSP 違反の報告に User-Agent。お問い合わせは `x-forwarded-for` を回数制限のキーに使う。規約・ポリシーの同意の記録 (`terms_acceptances`) には、版と日時に加えて、サーバーが受け取った通信の IP (`extractClientIp`) と User-Agent (512 文字まで) を残す (`POST /api/legal/accept` が `p_ip`・`p_user_agent` で `accept_legal_documents` に渡し、関数が `terms_acceptances` の `ip_address`・`user_agent` に入れる)。`route.ts:19` の「IP・user_agent は残さない」は成功時のログの話で、記録の話ではない。`terms_acceptances` は退会で `ON DELETE CASCADE` により消える | `supabase/migrations/20261016243000_auth_history_sessions.sql:19-40, 56, 79-84`・`src/lib/auth/sessions/request-context.ts:3-15`・`src/lib/auth/sessions/web-login-context.ts:42`・`src/lib/auth/sessions/store.ts:141-144`・`src/app/(main)/settings/security/sessions/page.tsx:106-107, 146-147`・`src/lib/emails/account/login-new-device.ts:27-37`・`src/app/api/admin/users/[id]/login-history/route.ts:45-46`・`src/app/admin/users/[id]/page.tsx:142`・`src/app/api/csp-report/route.ts:11, 43`・`src/app/api/legal/accept/route.ts:19, 116-125`・`supabase/migrations/20261017030000_parental_consent_and_birth_date.sql:513-514`・`supabase/migrations/20251126124224_create_meal_planner_tables.sql:9408` (`terms_acceptances_user_id_fkey` の `ON DELETE CASCADE`) |
 | F-18 | 家族: `family_members.share_meals` (既定 true)・`share_health` (既定 false)・`share_menu` (既定 true)。食事の閲覧は `can_view_user_meals` の RLS (`share_meals = TRUE` を見る)、献立は #1584 の関数 (`share_menu = TRUE` を見る)。健康の記録 (`health_records`・`health_checkups`・`blood_test_results`) の SELECT の RLS は本人だけで、`share_health` を読む RLS・関数・API は無い (設定の画面で切り替えられるだけ。家族に健康の記録を見せる経路は無い) | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:124-126, 951, 10008, 10016, 10038, 10568`・`20261016241000_family_menu_view_functions.sql:42` |
-| F-19 | 組織: 管理者はメンバーの表示名・メール・社員番号・部署・最終ログイン・ライセンスを見る。健康スコアは集計のみ。チャレンジは任意・順位は参加者どうし・管理者は集計・名前の表示は環境変数で既定 off | org/02 §5 (`GET /api/org/members`)・org/03 行 98・org/07 行 415・`src/lib/org-challenges.ts:115-128` |
+| F-19 | 組織: 組織の管理者の画面が読むのは次だけ。(1) メンバーの表示名・組織内の役割・参加日 (`/org/members` が `user_profiles` を `select('id, nickname, org_role, joined_org_at')`。ただし `user_profiles` の SELECT の RLS は本人の行だけなので、いまは他のメンバーの行は返らない)。(2) 招待 (招待先のメールアドレス・役割・部署・承諾の有無・期限。RLS `org_invites_select_admin`)。(3) 部署の名前と部署ごとの人数 (人数は service_role で数えて数だけ返す)。(4) 組織のメンバー数 (`GET /api/org/stats`。活力スコアなどの組織の集計と部署別の表示は止めている)。(5) チャレンジの参加人数と平均 (参加者が `ORG_CHALLENGE_MIN_PARTICIPANTS` 人に満たないときは出さない。個人の値は返らない)。社員番号の列はどこにも無い (`supabase/migrations`・`src`・`packages/shared/src/database.types.ts` で `employee_id`・`employee_number` が 0 件)。登録したメールアドレス・最終ログイン・ライセンスの状態は組織の画面に出ない (最終ログインを出すのは運営の画面 `admin/users/[id]`・`support/users` だけ)。`GET /api/org/members` は画面から呼ばれておらず、同じ RLS で本人の行しか返らない。組織への参加 (`accept_org_invite`) は組織ごとの人数の枠 (`org_license_pools.used_licenses`) を 1 つ使い、部署は招待の行にだけ持つ (`user_profiles.department_id` を書く処理は無い)。チャレンジは任意・順位は参加者どうし・名前の表示は環境変数 `ORG_CHALLENGE_SHOW_NAMES` で既定 off | `src/app/(org)/org/members/page.tsx:52`・`supabase/migrations/20251126124224_create_meal_planner_tables.sql:10076` (`Users can view own profile`)・`src/app/api/org/invites/route.ts:39-50`・同 migration `:10644` (`org_invites_select_admin`)・`src/app/api/org/departments/route.ts:78-90`・`src/app/api/org/stats/route.ts:29`・`src/app/(org)/org/dashboard/page.tsx:5-6, 64`・`src/app/api/org/challenges/route.ts:89-118`・`src/app/api/org/members/route.ts:22-23`・`supabase/migrations/20261017160000_org_invite_same_org_member.sql` (`accept_org_invite` の最新の定義。`used_licenses` を 1 足す)・`src/lib/org-challenges.ts:115-128` |
 | F-20 | 凍結: `/frozen` に「利用規約違反等の理由により凍結」「一時的な凍結は解除予定日時の経過後に自動的に回復」「凍結中でもデータの書き出しと退会、有料プランの解約はできます」 | `src/app/frozen/page.tsx:48-56` |
-| F-21 | 代表者・オーナーが 90 日以上未ログインのとき、運営が譲渡・解散する運用 (運営画面の文) | `src/app/(operator)/operator/membership/families/inactive/page.tsx:133`・`.../orgs/inactive/page.tsx:137` |
+| F-21 | 代表者・オーナーが 30 日以上ログインしていない (または削除済みの) 家族グループ・組織を、運営の一覧に出す。判定は RPC `list_families_with_inactive_representative`・`list_orgs_with_inactive_owner` の `au.last_sign_in_at < NOW() - INTERVAL '30 days'` で、画面の見出しも「30日以上未ログインまたは削除済みアカウント…」。運営はこの一覧から譲渡・解散を行う (操作の RPC `operator_force_*` そのものは日数を見ず、理由を付けて行う)。「90日以上未ログイン」は解散の理由を入れる欄の入力例 (placeholder) にだけある文で、判定ではない | `supabase/migrations/20261017130000_operator_mfa_db_gate.sql:91, 125, 129, 162` (2 つの RPC の最新の定義)・`src/app/(operator)/operator/membership/families/inactive/page.tsx:88` (見出し)・`.../orgs/inactive/page.tsx:92` (見出し)・`.../families/inactive/page.tsx:133`・`.../orgs/inactive/page.tsx:137` (placeholder の例文) |
 | F-22 | プロフィールに病歴・服薬・妊娠の有無・健康診断の結果の欄がある (要配慮個人情報に当たりうる) | `supabase/migrations/20251126124224_create_meal_planner_tables.sql` の `user_profiles` (`health_conditions`・`medications`・`pregnancy_status`・`health_checkup_results`) |
 | F-23 | 公開ページの禁止語の走査 (`FORBIDDEN`) の対象に `/terms` `/privacy` は入っていない。事業者名の走査は入っている (「株式会社〇〇」「〇〇 Inc」を拾う) | `tests/public-claims-guard.test.ts:79-110`・`tests/business-info-legal-pages.test.ts:96-103` |
 | F-24 | 利用者向けの「ログイン中の端末・ログイン履歴」の画面 (`/settings/security/sessions`) があり、ログイン履歴・セッションの一覧と失効 (cross/16) がそこにある。設定画面のボタン (`settings-sessions-link`) から開く。パスの定数は `SESSIONS_SETTINGS_PATH`。`/settings/security` そのものの画面は無い (`settings/security/` の下は `mfa/**` と `sessions/` だけ。リダイレクトも無い)。コンテンツの通報の機能は無い | `src/lib/emails/account/login-new-device.ts:18`・`src/app/(main)/settings/page.tsx:409-410`・`src/app/(main)/settings/security/sessions/page.tsx`・`src/app/api` に report 系 route 無し |
@@ -198,8 +200,12 @@
 | F-29 | AI 事業者へ送るプロンプトには、同意画面の 6 項目 (`AI_CONSENT_COPY.dataCategories`) より広い項目が入る: ニックネーム (自由入力で、実名が入りうる)・年齢・性別・身長・体重・体脂肪率・目標・持病・服薬・妊娠/授乳の状況・アレルギーと好み・宗教上の制限・職業・業界・勤務形態・睡眠・ストレス・便通・飲酒・喫煙・家族の人数と子どもの年齢・調理と買い物の習慣・食費の予算・趣味など。メールアドレス・氏名を送らないことは、本書では確かめていない (言い切らない) | `supabase/functions/_shared/user-context.ts:363-377`・`src/app/api/ai/consultation/sessions/[sessionId]/messages/route.ts:284-356`・`src/lib/ai/consent-config.ts:126-133` |
 | F-30 | 保護者の同意の記録 (`parental_consents`) は、署名した氏名・保護者であることの確認・署名時点の子どもの生年月日と年齢・日時・IP アドレス・User-Agent を持つ。署名した保護者が退会しても `parent_user_id` が `ON DELETE SET NULL` で外れるだけで行は残る。家族グループの行が消えると `ON DELETE CASCADE` で消える。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために、退会でも伏せない (生のアドレスが残る) | `supabase/migrations/20261017030000_parental_consent_and_birth_date.sql:90-102`・cross/08 §16.3 (送信ログの行) |
 | F-31 | 運営は `/admin/announcements` でお知らせを書け、公開 (`is_public`) のお知らせは Web とアプリのホームに出る (`GET /api/announcements?mode=public`)。`/news` の一覧はコードの中の空の配列で、運営画面からは載らない | `src/app/admin/announcements/page.tsx`・`src/app/api/announcements/route.ts:27-49`・`src/hooks/useHomeData.ts:307-311`・`apps/mobile/src/hooks/useHomeData.ts:364-367`・`src/app/news/page.tsx` (`const news: readonly NewsItem[] = []`) |
-| F-32 | 未同意の人が画面で開けるのは、同意ゲートの対象外のパス (認証・`/terms`・`/privacy`・`/legal-consent`・`/settings/data-requests`・`/legal`・`/contact`・`/frozen`・`/handson-tour`) だけ。設定 (`/settings`。退会と書き出しの画面) と `/account/billing` (解約の画面) は同意画面へ回る。同意画面で「同意しない」を選んだ後に出るのは、お問い合わせからのデータの削除の依頼 (「ご本人であることを確認のうえ、アカウントと保存されているデータを削除します」) と、請求の画面へのリンクだけ。退会のボタンは 18 歳未満の案内 (`minor_refused` / `guardian_missing`) にしか出ない。凍結中の人は `/frozen` から `/frozen/account` (退会・書き出し) と `/frozen/billing` (解約) を開ける | `lib/legal-consent.ts:91-124`・`src/app/legal-consent/LegalConsentForm.tsx:200-217, 270-283, 284-318`・`src/app/frozen/page.tsx:9-10, 59-76` |
+| F-32 | 未同意の人が画面で開けるのは、同意ゲートの対象外のパス (認証・`/terms`・`/privacy`・`/legal-consent`・`/settings/data-requests`・`/legal`・`/contact`・`/frozen`・`/handson-tour`) だけ。設定 (`/settings`。退会と書き出しの画面) と `/account/billing` (解約の画面) は同意画面へ回る。同意画面で「同意しない」を選んだ後に出るのは、お問い合わせからのデータの削除の依頼 (「ご本人であることを確認のうえ、アカウントと保存されているデータを削除します」) と、請求の画面へのリンクだけ。退会のボタンは 18 歳未満の案内 (`minor_refused` / `guardian_missing`) にしか出ない。有料プランの解約を運営が行うコードの経路 (運営の API・画面) は無い (`src/app/api/admin`・`src/app/api/operator` に billing の解約の route が無い。運営による解約は決済代行事業者の管理画面で行う運用になる。Q-21)。凍結中の人は `/frozen` から `/frozen/account` (退会・書き出し) と `/frozen/billing` (解約) を開ける (`/frozen` 以下は同意ゲートの対象外 (`EXEMPT_PREFIXES`) だが、凍結されていない人を `/frozen` へ案内する画面は無い) | `lib/legal-consent.ts:91-124`・`src/app/legal-consent/LegalConsentForm.tsx:200-217, 270-283, 284-318`・`src/app/frozen/page.tsx:9-10, 59-76` |
 | F-33 | 写真 (食事・冷蔵庫) は家族にも組織にも経路が無い (家族の献立は `image_url` を返さない。署名 API は持ち主以外に null)。運営 (admin / super_admin / content_moderator) は審査 API の署名付き URL で閲覧できる。代わりに記録できるのは本人のアカウントが無い子どもの行 (`role = 'child'`・`user_id` が NULL) だけ。本人のアカウントをつないだ 13〜17 歳は、つなぐときに `share_meals` / `share_health` / `share_menu` を自分で選ぶ | cross/19 §6.1 (行 283・286)・`supabase/migrations/20251126124224_create_meal_planner_tables.sql:133`・docs/design/family/01-data-model.md:347-348・cross/14 §11 の表 (`accept_child_promotion(p_token, p_share_meals, p_share_health, p_share_menu)`) |
+| F-34 | 通知とメール: 利用者が変えられる通知の設定 (`notification_preferences`) は `notifications_enabled`・`auto_analyze_enabled`・`data_share_enabled` の 3 つだけで、`notifications_enabled` を読むのはプッシュの送信だけ (切っているとどの種類のプッシュも `notifications_disabled` で送らない)。メールを止める設定は無い (`src`・`supabase/migrations`・`apps/mobile` に 0 件)。送るメールは、アカウント (退会の完了・新しい端末からのログイン)・開示等の請求・家族と組織の招待とお知らせ・お問い合わせへの返信と、認証 (Supabase Auth の確認・パスワードの再設定) で、宣伝のメールの仕組みは無い。メールの送信を止めるのは苦情とバウンスの停止リスト (`email_blacklist`) だけ。改定を知らせる一斉メールの仕組みも無い (cross/08 §7.2 の 30 日前のメール通知は未実装。§1 の対象外) | `src/app/api/notification-preferences/route.ts:17-21, 73`・`src/lib/push/outbox-store.ts:29, 72, 87`・`src/lib/push/outbox.ts:260`・`src/lib/emails/account/`・`src/lib/emails/dsr/`・`src/lib/emails/membership/`・`src/lib/emails/support/`・`src/lib/emails/suppression.ts` |
+| F-35 | 運営の多要素認証: 必須にするロールは `MFA_REQUIRED_ROLES = ['super_admin', 'admin', 'finance', 'org_industrial_doctor']` だけで、`support`・`sales`・`content_moderator`・`org_admin` は対象外。写真を審査 API で見られる `content_moderator` (F-33) にも多要素認証は要らない。必須のロールでも、猶予の開始日時 (環境変数 `OPERATOR_MFA_ENFORCE_FROM`) を設定しているとその日時までは未登録で通る (`pass_grace`)。未設定なら猶予なし (即時)。本番の値は本書では確かめていない (環境変数の値を読まない。Q-25) | `src/lib/auth/mfa/policy.ts:12-18, 97-105, 140-149` |
+| F-36 | お問い合わせとサポートの記録: 退会の直前の `prepare_account_deletion` は `inquiries` の `email` を `redacted@redacted.invalid` に置き換えるだけで、件名 (`subject`)・本文 (`message`)・運営のメモは残す。`inquiries.user_id`・`support_tickets.user_id`・`support_ticket_messages.sender_id` は `ON DELETE SET NULL` で紐づけだけが外れ、チケットの件名とメッセージの本文は残る。これらを期限で消す処理は無い | `supabase/migrations/20261016234000_email_outbox.sql:468-472` (`prepare_account_deletion` の最新の定義の `inquiries` の段)・`20251126124224_create_meal_planner_tables.sql:5105-5119` (`inquiries` の列)・`:9023` (`inquiries_user_id_fkey`)・`20261010000100_auth_users_fk_on_delete.sql:186-194` (`support_tickets`・`support_ticket_messages` の `SET NULL`) |
+| F-37 | IP・User-Agent を持つ表 (`packages/shared/src/database.types.ts` の `public` の表のうち、`Row` に `ip_address`・`ip_network`・`user_agent`・`country_code` の列があるもの) は 8 つ: `user_sessions_metadata` (ログインの履歴。F-17)・`terms_acceptances` (規約・ポリシーの同意。F-17)・`external_data_consents` (AI の同意。F-8)・`parental_consents` (保護者の同意。F-30)・`admin_audit_logs` (運営の操作の記録。入るのは操作した運営担当者の IP で、利用者の IP ではない)・`cookie_consents` (書き込む処理が無い。Cookie の同意のバナーは未実装)・`failed_invite_lookups` (書き込む処理が無く常に空。掃除のジョブも置いていない)・`catalog_sources` (`country_code` は商品の情報の出どころの国で、個人の情報ではない)。プライバシーポリシー第3条に載せるのは前の 4 つ | `packages/shared/src/database.types.ts` (`terms_acceptances` は `:6974-6983`)・`src/lib/admin/audit.ts:20-39, 147-148`・`src/lib/account-export-tables.ts:243` (`cookie_consents` は書き出しの表に名前があるだけ)・`docs/design/operator/08-cron-batches.md:87, 157`・`tests/log-cleanup-dau-snapshot-contract.test.ts:213-214` (`failed_invite_lookups` に書き込む処理が無い)・`src`・`supabase` に `INSERT INTO … cookie_consents` / `failed_invite_lookups`・`.from('cookie_consents')` / `.from('failed_invite_lookups')` が 0 件 |
 
 ---
 
@@ -239,7 +245,7 @@
 | 同 40 条 | 苦情の適切かつ迅速な処理 | §7 §17 |
 | 同 2 条 5 項・6 項・41〜46 条 | 仮名加工情報・匿名加工情報を作成するときは、作成の基準・安全管理・項目の公表など | 作成していない (F-27)。§7 §4 末尾に「作成していない・作成するときは公表して改定する」と書く |
 | 電気通信事業法 27 条の 12 | 利用者の端末から外部へ情報を送らせるときは、送る情報の内容・送り先・利用目的を通知または公表 (対象役務に当たる場合) | §7 §10 に表で公表 (対象役務への該当は未確定でも、公表しておく) |
-| 消費者契約法 8 条 1 項・3 項・8 条の 2 (出典 L-1) | 損害賠償責任の全部免除・故意重過失の一部免除・解除権の放棄は無効。軽過失の一部免除は、故意・重過失を除く過失にだけ適用されることを明らかにしなければ無効 (8 条 3 項) | §6 第 21 条 (故意・重過失を除く / 軽過失は通常損害に限る / 全部免除にしない)・第 16 条 5 項と第 18 条 4 項 (凍結などの措置・サービスの変更や中断による損害も「第21条に定める範囲で責任を負う」とし、軽過失の責任を全部は免除しない)・第 4 条 (第三者によるログインの手段の使用は、当社に故意または過失がある場合を除き責任を負わない = 当社に過失が無いときだけ)・第 17 条 (退会はいつでもできる) |
+| 消費者契約法 8 条 1 項・3 項・8 条の 2 (出典 L-1) | 損害賠償責任の全部免除・故意重過失の一部免除・解除権の放棄は無効。軽過失の一部免除は、故意・重過失を除く過失にだけ適用されることを明らかにしなければ無効 (8 条 3 項) | §6 第 21 条 (故意・重過失を除く / 軽過失は通常損害に限る / 全部免除にしない)・第 16 条 5 項と第 18 条 4 項 (凍結などの措置・サービスの変更や中断による損害も「第21条に定める範囲で責任を負う」とし、軽過失の責任を全部は免除しない)・第 4 条 (第三者によるログインの手段の使用は、当社に故意または過失がある場合を除き責任を負わない = 当社に過失が無いときだけ)・第 17 条 1 項 (退会はいつでもできる)・第 10 条 4 項 (有料プランの解約はいつでもできる)。どちらも、版を上げた後の同意の前 (設定画面が同意画面へ回る間) は第 24 条 2 項のお問い合わせ (削除・解約の依頼) を手段として示し、解除の手段が無くなる期間を作らない |
 | 同 9 条 1 項 (出典 L-1) | 平均的な損害を超える損害賠償の予定・年 14.6% 超の遅延損害金は無効 | 違約金・遅延損害金の条項を置かない |
 | 同 10 条 (出典 L-1) | 信義則に反して消費者の利益を一方的に害する条項は無効 | 通知の「到達みなし」を置かない。サービス変更・終了は周知の努力を書く |
 | 民法 5 条・120 条 | 未成年者の法律行為は法定代理人の同意が無ければ取り消しうる | §6 第 3・5 条 (18 歳未満は保護者の同意) |
@@ -298,7 +304,7 @@ docs/legal/archive/v2025.1/{terms,privacy}.md   旧版の控え (段 B)
 | S-2 | `/privacy` も同じ。ctx.aiProviders は 5 社 → §6 のブロック `ai_providers` が `<ul data-testid="privacy-ai-providers">` に 5 行 → 委託先の表 (`table`)・保存期間の表・請求の手順・窓口 (`contact`) が並ぶ |
 | S-3 | middleware: `getOutdatedLegalDocuments({ terms_version_accepted: 'v2025.1', privacy_version_accepted: 'v2025.1' })` → `['terms_of_service','privacy_policy']` → `/legal-consent?next=/` → `LegalConsentForm` の `isReconsent=true, outdated=両方` → `introReconsent`・両方に `revisedBadge` → 全文のリンクは `LEGAL_DOCUMENT_PATHS` → 同意 → `POST /api/legal/accept` (body の版 = `LEGAL_DOCUMENTS` の値) → 200 → `next` へ |
 | S-4 | アプリ: `GET /api/legal/status` (許可リストにあるので通る) → `gaps` に 2 文書 → ゲートが WebView → 同意 → `legal-consent-accepted` → `refresh()` → 入口へ |
-| S-5 | `/api/meals` は許可リストに無い → 403 `{ code: 'LEGAL_CONSENT_REQUIRED' }` → 画面は同意画面へ。`/api/account/delete`・`/api/account/export`・`/api/account/data-requests/*`・`/api/contact`・`/api/billing/subscription*`・`/api/billing/portal` は許可リスト (`legal-consent-api.ts:88-110`) で通る |
+| S-5 | `/api/meals` は許可リストに無い → 403 `{ code: 'LEGAL_CONSENT_REQUIRED' }` → 画面は同意画面へ。`/api/account/delete`・`/api/account/export`・`/api/account/data-requests/*`・`/api/contact`・`/api/billing/subscription*`・`/api/billing/portal` は許可リスト (`legal-consent-api.ts:88-110`) で通る。ただし退会・書き出し・解約を呼ぶ画面 (`/settings`・`/account/billing`) は同意画面へ回るので、利用規約第10条 4 項・第17条 1 項・プライバシーポリシー第13条 1 項・3 項は、この間の手段を第24条 2 項 (お問い合わせ・請求) と書く (F-32) |
 | S-6 | 「同意しない（ログアウトする）」→ signOut → `declineUnavailable` の文と `DSR_SETTINGS_PATH`・`/contact` へのリンク → 再ログイン → S-3 に戻る |
 | S-7 | `decideEligibility(row, user, { legalConsentEnforced: true })` → `hasAcceptedCurrentLegalDocuments` が false → `{ ok: false, code: PUSH_OUTBOX_ERROR_CODES.CONSENT_OUTDATED }` (= `consent_outdated`) → 送らない。再同意後は true |
 | S-8 | サインアップ画面のリンク → `/terms`・`/privacy` (S-1/S-2) → 登録 → `/auth/callback` の `resolveFirstSignInDestination` が `/legal-consent?next=…` → 生年月日 + 2 つの同意 → `accept_legal_documents(p_birth_date)` |
@@ -310,7 +316,7 @@ docs/legal/archive/v2025.1/{terms,privacy}.md   旧版の控え (段 B)
 | S-14 | §6 第 5 条は `parental-consent.ts` の境 (18・13)・`LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedBody`・`guardianMissingHeading` (退会の道だけ) に当たる。第 5 条 3 項の「つないだ本人の記録の見え方は本人の共有の設定」は `accept_child_promotion` の 3 つの共有の引数、「代わりに記録できるのは本人のアカウントが無い子どもだけ」は `family_members_child_profile_consistency` (F-33) に当たる |
 | S-15 | §6・§7・§8 のブロックを置き、§8.2 の部品と §8.3 のページの差分を当て、§13 のテストを足し、§9.1 の版を書き換える。`npx tsc`・`vitest` 全件は offload で流す |
 | S-16 | §9.3: 内容が変わらない直しは版を据え置く。変わる直しは版を上げて再同意 |
-| S-17 | 版上げ後、凍結されていない成人の未同意の人が `/settings` を開く → 同意画面へ回る (F-32)。「同意しない（ログアウトする）」→ `declined` の画面にお問い合わせ (データの削除の依頼) と請求の画面へのリンク → `/contact` から依頼 → 運営が本人確認のうえ削除。利用規約第24条 2 項の「同意の前でもできること」(請求・お問い合わせ (削除の依頼を含む)) と食い違わない |
+| S-17 | 版上げ後、凍結されていない成人の未同意の人が `/settings` を開く → 同意画面へ回る (F-32)。「同意しない（ログアウトする）」→ `declined` の画面にお問い合わせ (データの削除の依頼) と請求の画面へのリンク → `/contact` から依頼 → 運営が本人確認のうえ削除。有料プランの人は同じ `/contact` から解約を依頼 → 運営が決済代行事業者の管理画面で解約する (運用。Q-21)。`/account/billing` も同意画面へ回る (F-32)。利用規約第24条 2 項の「同意の前でもできること」(請求・お問い合わせ (削除と解約の依頼を含む)) と、第10条 4 項・第17条 1 項・プライバシーポリシー第13条 1 項・3 項の「改めて同意するまでの間は第24条 2 項」と食い違わない |
 
 ---
 
@@ -449,7 +455,7 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
                   '「AI 機能」: 写真の読み取り、栄養の推定、献立や買い物リストの作成、AI 相談、健康診断・血液検査の結果へのコメント、健康に関するヒント、料理の画像の作成など、人工知能を用いて行う本サービスの機能。',
                   '「AI 事業者」: AI 機能のために当社がユーザーのデータを送る、日本国外にある事業者。一覧はプライバシーポリシーに記載します。',
                   '「家族グループ」: 複数のユーザーが食事の記録・献立・買い物リストを共有するための、本サービス上のグループ。',
-                  '「組織」: 企業・団体が、その従業員や会員のためにライセンスを管理する、本サービス上の単位。',
+                  '「組織」: 企業・団体が、その従業員や会員を招待して本サービスを利用するための、本サービス上の単位。',
                   `「保護者」: ${f.adultAgeYears} 歳未満のユーザーについて、親権者その他の法定代理人。`,
                 ],
               },
@@ -532,7 +538,7 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
                   'AI 相談、健康に関するヒント、料理の画像の作成。',
                   'レシピの作成、公開、保存（コレクション）、いいね、コメント。',
                   '家族グループによる記録・献立・買い物リストの共有。',
-                  '組織によるライセンスの管理と、任意参加のチャレンジ。',
+                  '組織によるメンバーの招待と管理と、任意参加のチャレンジ。',
                   '記録の継続に応じたバッジ、お知らせ、メールやプッシュ通知による連絡。',
                 ],
               },
@@ -595,9 +601,9 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
                   '本サービスには、無料で利用できる機能があります。',
                   '当社は、有料プランを提供することがあります。有料プランの内容、料金、支払方法、支払時期、契約期間、自動更新の有無、解約の方法は、料金ページと特定商取引法に基づく表記に定め、申込みの前の確認画面に表示します。有料プランの販売を開始していない間は、料金ページと特定商取引法に基づく表記に「準備中」と表示します。',
                   '有料プランの決済は、決済代行事業者（Stripe）を通じて行います。クレジットカードの番号などの決済情報は、当社ではなく決済代行事業者が取り扱い、当社は保持しません。',
-                  '有料プランは、ユーザーが解約の手続を行わない限り、契約期間ごとに自動的に更新されます。解約は、設定の「お支払い」からいつでも予約でき、予約した場合も契約期間の末日まで有料プランを利用できます。契約期間の途中で解約した場合、法令で必要とされる場合を除き、日割りの返金は行いません。ただし、本サービスに重大な瑕疵があった場合は、個別に対応します。',
+                  '有料プランは、ユーザーが解約の手続を行わない限り、契約期間ごとに自動的に更新されます。ユーザーは、いつでも解約を予約でき、予約した場合も契約期間の末日まで有料プランを利用できます。解約の予約は、設定の「お支払い」から行います。本規約またはプライバシーポリシーの改定後、改めて同意するまでの間は、設定の「お支払い」を利用できないため、第24条2項のとおり、お問い合わせから解約を依頼してください。契約期間の途中で解約した場合、法令で必要とされる場合を除き、日割りの返金は行いません。ただし、本サービスに重大な瑕疵があった場合は、個別に対応します。',
                   '有料プランの支払いが確認できないとき、当社は、有料プランの機能の提供を停止し、または契約を終了することがあります。',
-                  '組織向けのプランは、組織と当社との契約により提供し、組織に所属するユーザーへは組織がライセンスを割り当てます。',
+                  '組織向けのプランは、組織と当社との契約により提供します。組織に参加できる人数には、契約に応じて上限（ライセンスの数）を設けることがあり、組織への招待を承諾したユーザーがその枠を使います。',
                   'アプリ版では、アプリ内課金を行いません。有料プランの申込みと解約は、Web 版で行います。',
                 ],
               },
@@ -635,11 +641,11 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
               {
                 kind: 'ol',
                 items: [
-                  '組織の管理者は、組織に所属するユーザーについて、表示名、メールアドレス、社員番号、部署、所属の状態、最終ログイン日時、ライセンスの状態を確認し、ライセンスの割当てと所属の管理を行います。',
+                  '組織の管理者は、メンバーの招待（招待先のメールアドレス、組織内の役割、部署を指定します）と、メンバーの管理（組織からの削除など）を行います。組織の管理者に表示されるのは、メンバーの表示名、組織内の役割、組織に参加した日、招待の状況（招待先のメールアドレス、役割、部署、承諾したかどうか）、組織のメンバー数と部署ごとの人数、チャレンジの参加人数と平均（参加者が一定の人数以上の場合に限ります）です。',
                   '組織の管理者は、組織に所属する個々のユーザーの食事の記録、健康の記録、AI 相談の内容を閲覧できません。組織に対しては、個人を特定できない集計のみを提供します。',
                   '組織のチャレンジへの参加は任意です。順位は参加者どうしにのみ表示し、組織の管理者には集計のみを表示します。順位に参加者の表示名を出すかどうかは本サービスの設定によって決まり、出さないことを既定とします。',
                   `組織のオーナーは、退会の前に、オーナーを他の管理者へ譲渡するか、組織を解散する必要があります。オーナーが ${f.inactiveRepresentativeDays} 日以上ログインしていないなど、組織の運営に支障があるときは、当社が譲渡または解散を行うことがあります。`,
-                  '組織を退出し、またはライセンスを外されたユーザーは、個人のユーザーとして本サービスを引き続き利用できます。',
+                  '組織を退出し、または組織から削除されたユーザーは、個人のユーザーとして本サービスを引き続き利用できます。',
                 ],
               },
             ],
@@ -730,7 +736,7 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
               {
                 kind: 'ol',
                 items: [
-                  'ユーザーは、設定画面からいつでも退会できます。退会すると、アカウントと、アカウントに紐づく個人データは直ちに削除され、取り消すことはできません。削除の前に、設定画面からデータを書き出すことができます。',
+                  'ユーザーは、いつでも退会できます。退会は設定画面から行い（凍結中は第16条2項のとおりです）、退会すると、アカウントと、アカウントに紐づく個人データは直ちに削除され、取り消すことはできません。削除の前に、設定画面からデータを書き出すことができます。本規約またはプライバシーポリシーの改定後、改めて同意するまでの間は、設定画面を利用できないため、第24条2項のとおり、お問い合わせから削除を依頼し、データの開示は個人情報の開示の請求により求めてください。',
                   '組織のオーナーと家族グループの代表者は、退会の前に、オーナーまたは代表者を譲渡するか、組織または家族グループを解散する必要があります。',
                   '退会後も、次のものは残ります。（a）ユーザーが公開したレシピは、ユーザーとの紐づけを外して匿名の状態で残ります（他のユーザーの保存やコメントが付いていることがあるため）。非公開のレシピは削除します。（b）法令上の保存義務や、不正利用の防止、会計のために必要な記録（クーポンや紹介の利用記録、運営の操作の記録など）は、ユーザーとの紐づけを外して残します。（c）苦情や配信の失敗があったメールアドレスへの送信停止の記録は、再び送らないために、メールアドレスのまま残します。（d）保護者として未成年者の利用に同意したときの同意の記録（署名した氏名など）は、同意の根拠として、プライバシーポリシーに定めるとおり残します。（e）バックアップの中のデータは、プライバシーポリシーに定める期間が経過するまで残ります。',
                   '退会すると、有料プランの契約は直ちに解約されます。既に支払われた料金は、法令で必要とされる場合を除き、返金しません。',
@@ -762,7 +768,8 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
                 kind: 'ol',
                 items: [
                   '当社からユーザーへの連絡は、登録されたメールアドレスへのメール、本サービス上の表示、またはアプリのプッシュ通知により行います。ユーザーは、登録するメールアドレスを連絡の取れる状態に保つものとします。',
-                  'プッシュ通知と一部のメールは、設定画面または端末の設定で止めることができます。本規約やプライバシーポリシーの改定、セキュリティに関する連絡など、本サービスの利用に必要な連絡は、この設定にかかわらず行うことがあります。',
+                  'プッシュ通知は、設定画面または端末の設定で止めることができます。止めている間も、本規約やプライバシーポリシーの改定など、本サービスの利用に必要なお知らせは、本サービス上の表示で行います。',
+                  '当社がお送りするメール（アカウントやログインのお知らせ、本人確認、家族グループや組織の招待とお知らせ、お問い合わせへの返信、個人情報の請求への対応など）は、本サービスの利用に伴う連絡のためのもので、配信を止める設定はありません。',
                 ],
               },
             ],
@@ -848,8 +855,8 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
               {
                 kind: 'ol',
                 items: [
-                  '当社は、本規約を変更することがあります。内容が変わる変更は、次項のとおりユーザーに改めて同意をお願いして行い、変更後の本規約は、ユーザーが同意した時から、そのユーザーに適用されます。当社は、変更の概要と施行日を、施行日の前に本サービスのお知らせに掲載し、必要に応じて登録されたメールアドレスへもお知らせします。',
-                  '本規約またはプライバシーポリシーの内容が変わる改定を行ったときは、文書の版を更新し、施行日以後にユーザーが本サービスを利用するときに、改めて同意をお願いします。同意するまでの間、本サービスの機能は利用できません。ただし、個人情報の開示・訂正・利用停止・消去の請求と、お問い合わせ（アカウントと保存されたデータの削除の依頼を含みます）は、同意の前でも行うことができます。同意しない場合は、お問い合わせから削除を依頼してください。当社は、ご本人であることを確認のうえ、アカウントと保存されたデータを削除します。',
+                  '当社は、本規約を変更することがあります。内容が変わる変更は、次項のとおりユーザーに改めて同意をお願いして行い、変更後の本規約は、ユーザーが同意した時から、そのユーザーに適用されます。当社は、変更の概要と施行日を、施行日の前に本サービスのお知らせに掲載します。',
+                  '本規約またはプライバシーポリシーの内容が変わる改定を行ったときは、文書の版を更新し、施行日以後にユーザーが本サービスを利用するときに、改めて同意をお願いします。同意するまでの間は、本サービスの機能（設定画面を含みます）を利用できず、退会、データの書き出し、有料プランの解約の予約、AI へのデータ提供の同意の撤回なども、設定画面からは行えません（凍結中の方は第16条2項のとおりです）。ただし、個人情報の開示・訂正・利用停止・消去の請求と、お問い合わせ（アカウントと保存されたデータの削除の依頼と、有料プランの解約の依頼を含みます）は、同意の前でも行うことができます。同意しない場合は、お問い合わせから削除を依頼してください。当社は、ご本人であることを確認のうえ、アカウントと保存されたデータを削除します。',
                   '誤字の修正や表現の整理など、内容が変わらない修正は、版を更新せず、改めての同意をお願いしないことがあります。',
                   '各文書の版と施行日は、その文書のページの冒頭に表示します。改定前の版は当社が保管し、お問い合わせによりご提供します。',
                 ],
@@ -928,6 +935,8 @@ export function termsText(ctx: LegalTextContext): LegalDocumentText {
 書き方の規則は §6 と同じ。加えて:
 - AI 事業者の一覧は `ctx.aiProviders` (ページが `AI_CONSENT_PROVIDERS` / `AI_CONSENT_PROVIDER_INFO` から作る) だけから出す。文面モジュールに事業者の名前 (`Google`・`OpenAI`・`Perplexity`・`xAI`・`AI/ML API`) を書かない (`tests/business-info-legal-pages.test.ts:162-167` と同じ趣旨。`Google` は OAuth の事業者としては委託先の表 (`PRIVACY_PROCESSORS`) に出る)。
 - 委託先の表は `PRIVACY_PROCESSORS` から描く。各行に製品の根拠 (`evidence`: ファイルとその中の語) を持たせ、テストが実在を確かめる (§13)。
+- `evidence.needle` には、外部の事業者のホスト名 (`exp.host`・`api.resend.com` など)・`://` を含む URL を書かない。送り先や送信の部品を 1 つのファイルに限る走査テスト (`tests/push-expo-boundary-scan.test.ts` は `exp.host` を含むファイルを、`tests/ai-consent-provider-inventory.test.ts` は `https://<ホスト>` を含むファイルを数える) が、文面モジュールを送信の場所と数えて赤になるため。根拠のファイルの中の識別子 (定数名・import する名前・ワークフローの手順の文) を 6 文字以上で選ぶ (T-7 が形を検査する。§16)。
+- 文面モジュールの文と JSDoc に `https://` で始まる URL を書かない (同じ理由。祝日の一覧の送り先は `HOLIDAYS_API_ORIGIN` を import してホストを作る)。
 - 所在地・電話番号は `ctx.addressDisclosure` (= `DISCLOSED_ON_REQUEST`)。架空の値を書かない。
 
 ```ts
@@ -976,7 +985,7 @@ export const PRIVACY_SECTION_HEADINGS = [
   '第13条（退会、削除、データの書き出し）',
   '第14条（開示、訂正、利用停止、消去などの請求）',
   '第15条（未成年者の個人情報）',
-  '第16条（通知とメールの設定）',
+  '第16条（通知とメール）',
   '第17条（苦情と相談の窓口）',
   '第18条（本ポリシーの改定）',
 ] as const;
@@ -984,7 +993,11 @@ export const PRIVACY_SECTION_HEADINGS = [
 /** 条の数 (宣言)。実列挙と一致することをテストが確かめる */
 export const PRIVACY_SECTION_COUNT = 18;
 
-/** 委託先の表の 1 行。evidence はリポジトリの中の根拠 (file にその needle が含まれる) */
+/**
+ * 委託先の表の 1 行。evidence はリポジトリの中の根拠 (file にその needle が含まれる)。
+ * needle は根拠のファイルの中の識別子にし、外部のホスト名や URL を書かない (送り先を 1 ファイルに限る走査テストが
+ * このファイルを送信の場所と数えるため。設計書 cross/20 §7 の規則・T-7)。
+ */
 export interface PrivacyProcessor {
   readonly name: string;
   readonly country: string;
@@ -1046,7 +1059,7 @@ export const PRIVACY_PROCESSORS: readonly PrivacyProcessor[] = [
     country: 'アメリカ合衆国',
     purpose: 'アプリのプッシュ通知の配信',
     data: '端末のプッシュ通知のトークン、通知の題名と本文',
-    evidence: { file: 'src/lib/push/expo-transport.ts', needle: 'exp.host' },
+    evidence: { file: 'src/lib/push/expo-transport.ts', needle: 'EXPO_PUSH_SEND_URL' },
   },
   {
     name: 'Cloudflare',
@@ -1060,7 +1073,7 @@ export const PRIVACY_PROCESSORS: readonly PrivacyProcessor[] = [
     country: 'アメリカ合衆国',
     purpose: 'バックアップの取得処理の実行',
     data: '取得の処理中に一時的に扱うデータベースの内容（暗号化して保管先へ送ったあとは残しません）',
-    evidence: { file: '.github/workflows/db-backup.yml', needle: 'age' },
+    evidence: { file: '.github/workflows/db-backup.yml', needle: 'apt-get install -y age' },
   },
 ];
 
@@ -1134,10 +1147,10 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                   ['食事と献立', '食事の写真、料理名、分量、栄養の推定値、食事の時間、ユーザーのメモ、食事へのコメント、冷蔵庫の写真と食材、献立、買い物リスト、レシピ、コレクション、いいね、コメント', '記録の画面での入力・撮影・アップロードと、AI 機能による推定'],
                   ['健康', '体重・体脂肪率・血圧などの記録、健康診断の写真と数値、血液検査の数値、健康の目標、これらへのコメント（要配慮個人情報を含みます）', '健康の画面での入力・撮影・アップロードと、AI 機能による読み取り'],
                   ['家族グループ', '家族グループの名前、メンバーの続柄、共有の設定、招待先のメールアドレス、保護者が登録する子どもの名前・生年月日・記録', '家族の画面での入力と招待'],
-                  ['組織', '社員番号、部署、所属の状態、ライセンスの状態、チャレンジへの参加と集計', '組織の管理者による登録と、本サービスの利用'],
+                  ['組織', '所属する組織、組織内の役割、組織に参加した日、組織からの招待（招待を受けたメールアドレス、役割、部署）、チャレンジへの参加と、チャレンジの集計のために食事の記録から計算する値', '組織の管理者による招待と、本サービスの利用'],
                   ['有料プラン', '決済代行事業者（Stripe）の顧客 ID、契約 ID、請求書 ID、契約の状態（カード番号などの決済情報は当社では保持しません）', '有料プランの申込みと決済代行事業者からの通知'],
                   ['お問い合わせ・サポート', 'お問い合わせの種類、件名、本文、メールアドレス、やりとりの履歴、満足度の回答', 'お問い合わせとサポートの画面での入力'],
-                  ['同意の記録', '利用規約とプライバシーポリシーに同意した版と日時。AI 機能のための日本国外の事業者への提供に同意した版・日時・IP アドレス・ブラウザや端末の種類。保護者の同意の署名（氏名）、親権者または法定代理人であることの確認、同意した版と日時、IP アドレス、ブラウザや端末の種類、署名の時点の子どもの生年月日と年齢', '同意の画面での操作（IP アドレスと端末の種類はサーバーが受け取った通信から取得します）'],
+                  ['同意の記録', '利用規約とプライバシーポリシーに同意した版・日時・IP アドレス・ブラウザや端末の種類。AI 機能のための日本国外の事業者への提供に同意した版・日時・IP アドレス・ブラウザや端末の種類。保護者の同意の署名（氏名）、親権者または法定代理人であることの確認、同意した版と日時、IP アドレス、ブラウザや端末の種類、署名の時点の子どもの生年月日と年齢', '同意の画面での操作（IP アドレスと端末の種類はサーバーが受け取った通信から取得します）'],
                   ['端末・利用状況・ログ', 'IP アドレス（ログインの履歴とログイン中のセッションの記録では、IP アドレスの全体に加えて、その IP アドレスが属するネットワークの範囲と、Web からのログインではホスティング事業者が通信から判定した国を記録します。これらは、ユーザー本人が設定画面の「ログイン中の端末・ログイン履歴」と新しい端末からのログインのお知らせのメールで確認でき、当社も運営の画面で確認することがあります）、ブラウザや端末の種類、アプリでの端末の機種名と OS の版（ユーザーが端末に付けた名前は使いません）、ログインの日時、ログイン中のセッション、プッシュ通知の宛先（トークン）、アプリの動作のログ（エラーの内容、処理の識別子）、ブラウザのセキュリティ違反の報告、AI 機能の利用回数、回数制限のための計数', '本サービスの利用に伴って自動的に記録'],
                   ['Cookie 等', '第10条のとおり', 'ブラウザとアプリ'],
                 ],
@@ -1294,9 +1307,12 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                   ['AI 相談の内容', '表示されません', '表示されません'],
                   ['子ども（本人のアカウントが無い家族）の記録', '保護者または管理者が記録し、家族グループに表示されます', '表示されません'],
                   ['本人のアカウントをつないだ未成年者の記録', '上の各行のとおり、本人の共有の設定に従います（保護者も、ほかのメンバーと同じ扱いです）', '表示されません'],
-                  ['メールアドレス、社員番号、部署、所属の状態、最終ログイン日時、ライセンスの状態', '表示されません（招待の送信に本人のメールアドレスを使うことはあります）', '表示されます'],
-                  ['チャレンジ', '—', '個人を特定できない集計のみ。順位は参加者どうしにのみ表示され、参加者の表示名を出すかどうかは本サービスの設定によります（出さないことが初期設定です）'],
-                  ['健康に関する集計', '—', '個人を特定できない集計のみ'],
+                  ['登録したメールアドレス、ログインの履歴', '表示されません', '表示されません'],
+                  ['招待の状況（招待先のメールアドレス、役割、承諾したかどうか）', '家族グループへの招待は、家族グループの代表者と大人のメンバーに表示されます', '組織への招待（部署を含みます）は、組織の管理者に表示されます'],
+                  ['組織内の役割、組織に参加した日', '—', '表示されます'],
+                  ['組織のメンバー数、部署ごとの人数', '—', '表示されます'],
+                  ['チャレンジ', '—', '参加人数と、食事の記録から計算した平均だけが表示されます（参加者が一定の人数に満たないときは表示されません）。順位は参加者どうしにのみ表示され、参加者の表示名を出すかどうかは本サービスの設定によります（出さないことが初期設定です）'],
+                  ['健康に関する集計（体重や食事の傾向など）', '—', '表示されません'],
                 ],
               },
               { kind: 'p', text: '共有の設定は、家族の画面からいつでも変更できます。家族グループから退出すると、その後の記録はメンバーに表示されません。' },
@@ -1336,7 +1352,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                 items: [
                   '基本方針: 個人情報保護法と関係するガイドラインを遵守し、本ポリシーを定めて公表しています。',
                   '取扱いの規律: 個人データを扱う機能の設計を文書に定め、変更のたびに審査と自動テストを行っています。',
-                  '組織的な措置: 運営の権限を役割ごとに分け、運営担当者の操作を記録しています。運営担当者のログインには多要素認証を求めています。漏えいなどが生じたときは、法令に従い個人情報保護委員会への報告と本人への通知を行います。',
+                  '組織的な措置: 運営の権限を役割ごとに分け、運営担当者の操作を記録しています。運営担当者のうち、管理者の権限などを持つ担当者のログインには、多要素認証を求めています。漏えいなどが生じたときは、法令に従い個人情報保護委員会への報告と本人への通知を行います。',
                   '物理的な措置: 本サービスのデータは、委託先のクラウド事業者のデータセンターで保管し、入退室管理などの物理的な措置は各事業者の管理に依拠しています。',
                   '技術的な措置: 通信の暗号化、パスワードのハッシュ化、本人の行だけを読み書きできるデータベースのアクセス制御、写真の非公開の保存と有効期限つきの URL による表示、回数の制限とボットの判定、ブラウザのセキュリティ設定（CSP）、ログにメールアドレスなどを残さない処理、バックアップの暗号化（復号の鍵を持つ者を限り、復旧の目的以外で開きません）、退会時の即時削除。',
                   '外的環境の把握: 委託先と AI 事業者の所在国（アメリカ合衆国、エストニア）の個人情報の保護に関する制度を把握したうえで、個人データを取り扱っています（第6条・第7条）。',
@@ -1353,7 +1369,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                 kind: 'table',
                 headers: ['情報', '保存の期間'],
                 rows: [
-                  ['アカウント、登録情報、ユーザーコンテンツ、利用規約・プライバシーポリシーと AI 機能への同意の記録', '退会するまで。退会すると直ちに削除します（第13条）'],
+                  ['アカウント、登録情報、ユーザーコンテンツ、利用規約・プライバシーポリシーと AI 機能への同意の記録（同意したときの IP アドレスと端末の種類を含みます）', '退会するまで。退会すると直ちに削除します（第13条）'],
                   ['保護者として署名した同意の記録（署名した氏名、日時、IP アドレス、端末の種類、子どもの生年月日の写しなど）', '同意の根拠として保存します。署名した保護者が退会しても、保護者のアカウントとの紐づけを外して残します。家族グループの記録が削除されると、あわせて削除します'],
                   ['当社が非表示にしたコンテンツ', `非表示にしてから ${f.hiddenContentRetentionDays} 日`],
                   ['ログインの履歴とセッションの記録', `セッションが失効してから ${f.loginHistoryRetentionDays} 日。セッションは ${f.sessionIdleExpireDays} 日間操作が無いと失効します`],
@@ -1362,7 +1378,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                   ['AI 機能の利用回数（日ごと・機能ごとの回数）', '退会するまで。退会すると直ちに削除します'],
                   ['回数の制限のための計数', '制限の判定に使う期間が過ぎた後、自動的に消えます'],
                   ['メールとプッシュ通知の送信待ちの記録', `送れたものは ${f.outboxSentRetentionDays} 日、送れなかったものは ${f.outboxDeadRetentionDays} 日。退会すると宛先・件名・本文を伏せます`],
-                  ['お問い合わせとサポートの記録', '対応に必要な期間。退会するとメールアドレスを伏せ、やりとりの記録は個人を特定できない形で残します'],
+                  ['お問い合わせとサポートの記録', '期限を定めずに保存します。退会すると、ユーザーとの紐づけを外し、お問い合わせのメールアドレスを伏せて残します（件名と本文はそのまま残ります。本文に氏名や連絡先を書いた場合は、それも残ります）'],
                   ['法令上の保存義務や、不正利用の防止、会計のために必要な記録（クーポンや紹介の利用記録、運営担当者の操作の記録）', '退会後も、ユーザーとの紐づけを外して残します。保存の期限は法令と当社の定めによります'],
                   ['メールの送信停止の記録（苦情や配信の失敗があったメールアドレス）', '再び送らないために、退会後もメールアドレスのまま残します（第16条）'],
                   ['退会の記録', '退会した日時と理由を、ユーザーを特定できない形（識別子のハッシュ）で残します'],
@@ -1380,9 +1396,9 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
               {
                 kind: 'ol',
                 items: [
-                  'ユーザーは、設定画面からいつでも退会できます。退会すると、アカウントと、アカウントに紐づく個人データ（食事、献立、健康の記録、写真、家族グループのメンバーとしての情報など）を直ちに削除します。削除は取り消せません。',
+                  'ユーザーは、いつでも退会できます。退会は設定画面から行い、退会すると、アカウントと、アカウントに紐づく個人データ（食事、献立、健康の記録、写真、家族グループのメンバーとしての情報など）を直ちに削除します。削除は取り消せません。利用規約や本ポリシーの改定後、改めて同意するまでの間は、設定画面を利用できないため、利用規約第24条2項のとおり、お問い合わせから削除を依頼してください。',
                   '退会後も残るものは、利用規約第17条と本ポリシー第12条のとおりです。ユーザーが公開したレシピは、ユーザーとの紐づけを外して匿名の状態で残ります。',
-                  'ユーザーは、設定画面から、自分の個人データを機械で読める形式（JSON）で書き出すことができます。アカウントの凍結中も、退会と書き出しは行えます。',
+                  'ユーザーは、設定画面から、自分の個人データを機械で読める形式（JSON）で書き出すことができます。アカウントの凍結中も、退会と書き出しは行えます。利用規約や本ポリシーの改定後、改めて同意するまでの間は、書き出しの代わりに、第14条の開示の請求により個人データの開示を求めることができます。',
                   '組織のオーナーと家族グループの代表者は、退会の前に譲渡または解散が必要です。',
                 ],
               },
@@ -1435,7 +1451,8 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
               {
                 kind: 'ol',
                 items: [
-                  'プッシュ通知は、設定画面と端末の設定で止めることができます。一部のメールも設定画面で止めることができます。本サービスの利用に必要な連絡（改定の連絡、セキュリティに関する連絡、本人確認など）は、設定にかかわらず送ることがあります。',
+                  'プッシュ通知は、設定画面と端末の設定で止めることができます。止めると、プッシュ通知は届かなくなります。',
+                  '当社がお送りするメール（アカウントやログインのお知らせ、本人確認、家族グループや組織の招待とお知らせ、お問い合わせへの返信、第14条の請求への対応など）は、本サービスの利用に伴う連絡のためのもので、配信を止める設定はありません。',
                   '当社からのメールについて苦情が寄せられたとき、または届かない状態が続いたときは、そのメールアドレスへの送信を止めます。この送信停止の記録は、再び送らないために、退会後も残します。',
                 ],
               },
@@ -1457,7 +1474,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
               {
                 kind: 'ol',
                 items: [
-                  '当社は、法令の改正や本サービスの変更に応じて、本ポリシーを改定することがあります。内容が変わる改定をするときは、改定の概要と施行日を施行日の前に本サービスのお知らせに掲載し、必要に応じて登録されたメールアドレスへもお知らせします。改定後の内容は、施行日からこのページに表示します。',
+                  '当社は、法令の改正や本サービスの変更に応じて、本ポリシーを改定することがあります。内容が変わる改定をするときは、改定の概要と施行日を施行日の前に本サービスのお知らせに掲載します。改定後の内容は、施行日からこのページに表示します。',
                   '個人情報の利用目的、第三者への提供、日本国外の事業者への提供など、内容が変わる改定を行ったときは、本ポリシーの版を更新し、ユーザーが次に本サービスを利用するときに改めて同意をお願いします。同意するまでの間の取扱いは、利用規約第24条のとおりです。',
                   '本ポリシーの版と施行日は、このページの冒頭に表示します。改定前の版は当社が保管し、お問い合わせによりご提供します。',
                 ],
@@ -1587,10 +1604,11 @@ export const LEGAL_FACTS = {
   /** 応答期限の既定 (同 DSR_RESPONSE_DUE_DAYS_DEFAULT。環境変数 DSR_RESPONSE_DUE_DAYS で上書きされうるので「目安」と書く) */
   dsrResponseDueDaysDefault: 30,
   /**
-   * 代表者・オーナーの未ログインで運営が譲渡・解散する日数。運営画面の文が正本:
-   * src/app/(operator)/operator/membership/families/inactive/page.tsx と orgs/inactive/page.tsx
+   * 代表者・オーナーが何日ログインしていないと、運営の一覧 (譲渡・解散の候補) に出るか。正本は一覧の判定:
+   * supabase/migrations の list_families_with_inactive_representative / list_orgs_with_inactive_owner の最新の定義の
+   * INTERVAL '30 days' (見出しの文「30日以上未ログイン…」も同じ値)。解散の理由の入力欄の例文 (placeholder) の日数は判定ではない
    */
-  inactiveRepresentativeDays: 90,
+  inactiveRepresentativeDays: 30,
   /** 責任の上限に使う、損害が生じた時より前の月数 (利用規約第21条 2 項の定め。製品の定数ではなく本書 §6 で決めた値。料金を受け取っていないユーザーには上限を適用しない) */
   liabilityCapMonths: 12,
 } as const;
@@ -1897,7 +1915,7 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 |---|---|---|
 | Web の画面 | サインイン中で `user_profiles.terms_version_accepted` / `privacy_version_accepted` が `v2026.1` でない人は、次の画面の取得で `/legal-consent?next=<元のパス>` へ。対象外: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/settings/data-requests` `/frozen` `/auth/*` `/api/*` `/handson-tour` と静的ファイル | cross/08 §7.2・`lib/supabase/middleware.ts` |
 | 同意画面 | `isReconsent=true`・`outdated=['terms_of_service','privacy_policy']` → 導入文 `introReconsent` (「利用規約・プライバシーポリシーが改定されました…」)・両文書に「改定あり」・版と施行日の行・全文のリンク (`/terms` `/privacy`)・チェック 2 つ・「同意して続ける」・「同意しない（ログアウトする）」・請求画面へのリンク。生年月日が無い人は欄が出る | `LegalConsentForm.tsx:338-395`・`legal-consent-copy.ts` |
-| 同意の記録 | `POST /api/legal/accept` は body の版が `LEGAL_DOCUMENTS` と一致するときだけ `accept_legal_documents` を呼ぶ (違えば 409 `versionMismatch`)。`terms_acceptances` に 2 行、`user_profiles` の 2 列と `legal_accepted_at` を更新。IP・User-Agent は残さない | `src/app/api/legal/accept/route.ts`・cross/08 §7.2 |
+| 同意の記録 | `POST /api/legal/accept` は body の版が `LEGAL_DOCUMENTS` と一致するときだけ `accept_legal_documents` を呼ぶ (違えば 409 `versionMismatch`)。`terms_acceptances` に 2 行 (版・日時と、サーバーが受け取った通信の IP・User-Agent (512 文字まで))、`user_profiles` の 2 列と `legal_accepted_at` を更新。ログには版だけを残し、IP・User-Agent はログに出さない (記録の表には残る。プライバシーポリシー第3条の同意の記録の行・F-17) | `src/app/api/legal/accept/route.ts:19, 116-125`・`supabase/migrations/20261017030000_parental_consent_and_birth_date.sql:513-514`・cross/08 §7.2 |
 | `/api/*` | `LEGAL_CONSENT_EXEMPT_API_PATHS` 以外は 403 `LEGAL_CONSENT_REQUIRED`。通るもの: 同意 2 本・`/api/auth/*`・退会・書き出し・課金の解約 3 本・`/api/account/data-requests/*`・push token の claim・お問い合わせ・ログ・状態の窓口 | `packages/shared/src/legal-consent-api.ts:88-110` |
 | モバイル | `LegalConsentProvider` が `GET /api/legal/status` → `gaps` に 2 文書 → ルートのゲートがアプリを `/legal-consent` の WebView 1 枚にする。同意後 `legal-consent-accepted` で入口へ。アプリ側の文面は無い (Web を開く) | 13b・`apps/mobile/src/providers/LegalConsentProvider.tsx` |
 | プッシュ通知 | `LEGAL_CONSENT_ENFORCE=on` のとき、未同意の利用者への行は `consent_outdated` で送らない (再同意まで通知が届かない。食事のリマインドなども止まる) | `src/lib/push/outbox.ts:53-54, 245-259` |
@@ -1921,7 +1939,7 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 ### 9.4 公開の手順 (オーケストレーターの工程)
 
 1. 弁護士の確認 (任意。オーナーの判断) → 文面の差し替えがあれば §6・§7 を改定 (本書の改定版) → 実装に反映。
-2. 公開日 (施行日) を決め、**公開日より前に**、運営画面のお知らせ (`/admin/announcements`。公開 (`is_public`) にすると Web とアプリのホームに出る。F-31) に改定の予告を載せる。載せる中身: 題「利用規約・プライバシーポリシーの改定のお知らせ」、本文に改定の概要 (§11.2 の「設計後」の要点: AI 機能の送る情報と事業者・委託先・保存期間・未成年・責任の範囲・凍結と退会)・施行日・施行日以後に同意をお願いすること・同意しない場合はお問い合わせから削除を依頼できること。利用規約第24条 1 項とプライバシーポリシー第18条 1 項の「施行日の前にお知らせに掲載」はこの工程で守る (省くと公開した約束を破る)。`/news` はコードの中の一覧で運営画面から載らないので使わない。
+2. 公開日 (施行日) を決め、**公開日より前に**、運営画面のお知らせ (`/admin/announcements`。公開 (`is_public`) にすると Web とアプリのホームに出る。F-31) に改定の予告を載せる。載せる中身: 題「利用規約・プライバシーポリシーの改定のお知らせ」、本文に改定の概要 (§11.2 の「設計後」の要点: AI 機能の送る情報と事業者・委託先・保存期間・未成年・責任の範囲・凍結と退会)・施行日・施行日以後に同意をお願いすること・同意するまでの間は設定画面を使えないこと・同意しない場合はお問い合わせから削除 (有料プランの人は解約も) を依頼できること。利用規約第24条 1 項とプライバシーポリシー第18条 1 項の「施行日の前にお知らせに掲載」はこの工程で守る (省くと公開した約束を破る)。メールでの一斉の知らせは仕組みが無いので行わず、文面もメールでの知らせを約束しない (F-34)。`/news` はコードの中の一覧で運営画面から載らないので使わない。
 3. マージ直前: `effectiveDate` の仮の値 `'2026-10-19'` を公開日 (JST の YYYY-MM-DD) に置き換え、行末の目印のコメント `// 仮置き: マージ直前に公開日へ置き換える` を消す (2 文書とも同じ日)。`git grep -n '仮置き: マージ直前に公開日' -- packages/shared/src/legal-versions.ts` が 0 行になることを確かめる (公開日が仮の値と同じ日でも、目印は消す)。置き換えたあとに全件を流す。`docs/legal/archive/v2025.1/` の控えが PR に入っていることを確かめる。2 のお知らせが公開日より前に載っていることを確かめる。
 4. デプロイ (公開日)。デプロイの時点から再同意が始まる (施行日の前からは求めない: 施行日 = デプロイ日にする)。
 5. 公開後の整合: `/terms` `/privacy` を未ログインで開いて版 `v2026.1` と全文を確認。同意済みのテスト用アカウントで同意画面が出て「改定あり」が 2 つ付くこと、同意後に戻ること、アプリで WebView が出ることを確認。
@@ -1940,24 +1958,24 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | 第3条 | メールまたは Google・生年月日の申告 (1 回だけ・本人は変更不可)・18 歳未満は登録不可・13 歳未満のアカウント無し・登録は無料 | `src/app/(auth)/login/page.tsx:78-83`・`LEGAL_CONSENT_BIRTH_DATE_COPY.hint`・`parental-consent.ts:12-18, 123-134`・`src/app/pricing` (free プラン) |
 | 第4条 | 「ログイン中の端末・ログイン履歴」の画面 (`SESSIONS_SETTINGS_PATH` = `/settings/security/sessions`) でログイン履歴とセッションの失効・新しい端末の通知・30 日無操作で失効 | F-24・`src/lib/emails/account/login-new-device.ts:18`・`sessions/constants.ts:16`・migration `20261016243000:381` |
 | 第5条 | 保護者が家族に追加 → 同意書 → つなぐ・13 歳未満は代理記録・つないだ本人の記録の見え方は本人の共有の設定 (つなぐときに本人が選ぶ)・代わりに記録できるのは本人のアカウントが無い家族だけ・つながりが切れたら、追加し直して承諾するか 18 歳になるまで退会のみ | `parental-consent.ts:82-108, 118-140` (`guardian_consent` の gap・`guardianMissingBody`)・cross/14 §11 (`accept_child_promotion` の共有の引数)・F-33 |
-| 第6条 | 機能の一覧 | `src/app/api/ai/*` (F-24 の一覧)・`src/app/api/family/**`・`src/app/(org)/org/**`・`src/lib/badges/` |
+| 第6条 | 機能の一覧 (組織はメンバーの招待と管理・チャレンジ) | `src/app/api/ai/*` (F-24 の一覧)・`src/app/api/family/**`・`src/app/(org)/org/**` (F-19)・`src/lib/badges/` |
 | 第7条 | 外国の AI 事業者・同意が無ければ送らない・撤回・自動処理は同意前に実行しない・結果は推定 | F-8・`consent-config.ts:12-14, 29-30, 149-164` |
 | 第8条 | 1 日の上限・翌日 0 時・プランと設定・機能別上限・自動処理の安全弁 | F-9・`ai-daily-limit.ts:38-66`・`tests/public-claims-guard.test.ts:189-193` (回数は書かない) |
 | 第9条 | 医療免責の文 (逐語)・119 | cross/08 §8.1 |
-| 第10条 | 無料の機能・有料は準備中の表示・Stripe・自動更新と期間末の解約・返金は原則なし・組織のライセンス・アプリ内課金なし | `src/app/legal/page.tsx:24-50`・billing/01 §0.2・§9.5 (S6)・`org_license_pools` |
-| 第11条 | 招待・共有設定 3 つ (食事と献立は共有を選べば表示・健康の記録は家族に表示する経路が無い)・代表者と管理者・代理記録は本人のアカウントが無い家族だけ・退出・譲渡か解散・90 日 | F-18・F-21・F-33・cross/08 §16.2 の 409 |
-| 第12条 | 管理者が見る項目・個人の記録は見ない・チャレンジは任意・順位は参加者どうし・名前は既定 off・譲渡か解散・退出後も個人として利用 | F-19 |
+| 第10条 | 無料の機能・有料は準備中の表示・Stripe・自動更新と期間末の解約 (解約はいつでも。予約は設定の「お支払い」から、改定後の同意の前は第24条 2 項のお問い合わせから)・返金は原則なし・組織のライセンス (参加できる人数の上限。招待の承諾で枠を 1 つ使う)・アプリ内課金なし | `src/app/legal/page.tsx:24-50`・billing/01 §0.2・§9.5 (S6)・`org_license_pools` (`total_licenses` が NULL なら上限なし)・F-19 (`accept_org_invite` が `used_licenses` を 1 足す)・F-32 (`/account/billing` は同意画面へ回る。運営が解約するコードの経路は無く運用で行う。Q-21) |
+| 第11条 | 招待・共有設定 3 つ (食事と献立は共有を選べば表示・健康の記録は家族に表示する経路が無い)・代表者と管理者・代理記録は本人のアカウントが無い家族だけ・退出・譲渡か解散・30 日 (運営の一覧の判定。`LEGAL_FACTS.inactiveRepresentativeDays`) | F-18・F-21・F-33・cross/08 §16.2 の 409 |
+| 第12条 | 管理者が行うこと (招待・メンバーの管理) と見る項目 (表示名・組織内の役割・参加日・招待の状況・メンバー数と部署ごとの人数・チャレンジの参加人数と平均。社員番号・登録したメールアドレス・最終ログイン・ライセンスの状態は見ない)・個人の記録は見ない・チャレンジは任意・順位は参加者どうし・名前は既定 off・譲渡か解散と 30 日・退出後も個人として利用 | F-19・F-21 |
 | 第13条 | 写真は非公開 (署名付き URL)・家族と組織には表示しない・運営は審査などで閲覧することがある・公開レシピと社会機能・非表示と 90 日・通報は問い合わせ | cross/19 §6.1 (行 283・286)・F-33・migration `20261017070000`・`20251126124224:10088` (`Users can view public recipes`)・F-14・F-24 (通報機能無し) |
 | 第14条 | AI 生成物 3 項 (cross/08 §14 逐語の趣旨)・ユーザーコンテンツの処理 | cross/08 §14 |
 | 第15条 | 禁止事項 (現行 5 項を含む) | `src/app/terms/page.tsx:42-50`・`src/lib/rate-limit.ts` (回数制限の回避) |
 | 第16条 | 非表示・制限・凍結・凍結中にできること・自動解除・措置による損害は第21条の範囲 (R-4) | F-12・F-20・`src/lib/admin/moderation-backend.ts` |
-| 第17条 | 即時削除・取り消し不可・譲渡か解散・公開レシピ匿名化・法令で残す記録は紐づけを外して残す・送信停止の記録はアドレスのまま残す・保護者として署名した同意の記録は残す・バックアップ・Stripe 即時解約・返金なし | cross/08 §16.1-16.3・F-30・billing/01 §11 |
+| 第17条 | いつでも退会できる (設定画面から。凍結中は第16条、改定後の同意の前は第24条 2 項のお問い合わせと開示の請求)・即時削除・取り消し不可・譲渡か解散・公開レシピ匿名化・法令で残す記録は紐づけを外して残す・送信停止の記録はアドレスのまま残す・保護者として署名した同意の記録は残す・バックアップ・Stripe 即時解約・返金なし | cross/08 §16.1-16.3・F-30・F-32・billing/01 §11 |
 | 第18条 | 変更・中断 (保守・不可抗力・外部事業者)・メンテナンス表示・終了・変更などによる損害は第21条の範囲 (R-4) | `lib/supabase/middleware.ts:111-113, 337-338` (maintenance)・現行第 6・8 条 |
-| 第19条 | メール・画面・プッシュ・設定で止める | `notification_preferences`・`src/lib/push/` |
+| 第19条 | メール・画面・プッシュ・プッシュは設定で止められる (止めている間の必要なお知らせは画面の表示)・メールは利用に伴う連絡で止める設定は無い | F-34・F-31 (お知らせはホームに出る) |
 | 第20条 | 保証の否認・バックアップは保証でない | cross/17・現行第 7 条 |
 | 第21条 | 故意重過失を除く・通常損害・損害の前 12 か月に受け取った有料プランの料金の上限 (料金を受け取っていないユーザーには上限を適用しない)・強行法規 | 消費者契約法 8 条 (§3)・R-4 |
 | 第22〜23条 | 一般条項 | — (製品の挙動に当たらない) |
-| 第24条 | 内容が変わる変更は再同意で行い、同意した時から適用・施行日の前にお知らせに掲載・同意の前にできるのは請求とお問い合わせ (削除の依頼を含む)・内容の変わらない修正は版据え置き・版と施行日の表示 | §9.2〜§9.4・F-31・F-32・`LegalConsentForm.tsx:284-318` |
+| 第24条 | 内容が変わる変更は再同意で行い、同意した時から適用・施行日の前にお知らせに掲載 (メールでの知らせは約束しない。F-34)・同意の前は設定画面を使えない (退会・書き出し・解約の予約・AI の同意の撤回も画面からはできない)・同意の前にできるのは請求とお問い合わせ (削除と解約の依頼を含む)・内容の変わらない修正は版据え置き・版と施行日の表示 | §9.2〜§9.4・F-31・F-32・F-34・`LegalConsentForm.tsx:284-318` |
 | 第25〜26条 | 一般条項 | — (製品の挙動に当たらない) |
 | 第27条 | 日本法・本店所在地の裁判所 | 現行第 9 条 |
 | 第28条 | 窓口 | `getSupportEmail()`・`/contact` |
@@ -1968,22 +1986,22 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 |---|---|---|
 | 第1条 | 名称・代表者・請求時開示・窓口 (取扱いの責任者は書かない。§0.6) | F-4 |
 | 第2条 | 用語 | 法 2 条・16 条 |
-| 第3条 | 取得する情報の表 (ログインの履歴は IP の全体・ネットワークの範囲・国 (Web のログイン) を記録し、本人の画面と新しい端末のお知らせのメールに出し、運営も見る)・端末の機能の表 (カメラ・写真ライブラリ・通知・位置情報等は取らない)・端末の機種名と OS の版 | F-25・F-22 (user_profiles)・`meals`・`health_checkups`・`blood_test_results`・`family_members`・`organizations`・`billing_customers`・`inquiries` (migration `:5105`)・`external_data_consents` (`:4672`)・`terms_acceptances` (`:6553`)・`parental_consents`・`user_sessions_metadata`・`user_push_tokens` (`:6698`)・`app_logs` (`:3899`)・F-17 |
+| 第3条 | 取得する情報の表 (ログインの履歴は IP の全体・ネットワークの範囲・国 (Web のログイン) を記録し、本人の画面と新しい端末のお知らせのメールに出し、運営も見る。規約・ポリシーの同意も IP と端末の種類を記録する。組織は所属・役割・参加日・招待・チャレンジ。IP・User-Agent を持つ表は F-37 の 4 つを載せる)・端末の機能の表 (カメラ・写真ライブラリ・通知・位置情報等は取らない)・端末の機種名と OS の版 | F-25・F-22 (user_profiles)・`meals`・`health_checkups`・`blood_test_results`・`family_members`・`organizations`・`organization_invites`・`organization_challenge_participants` (F-19)・`billing_customers`・`inquiries` (migration `:5105`)・`external_data_consents` (`:4672`)・`terms_acceptances` (`:6553`。IP・User-Agent は `accept_legal_documents` が入れる。F-17)・`parental_consents`・`user_sessions_metadata`・`user_push_tokens` (`:6698`)・`app_logs` (`:3899`)・F-17・F-37 |
 | 第4条 | 利用目的・仮名加工情報と匿名加工情報を作らない | 各機能 (F-8・F-9・F-13・F-16)・当社自身の学習に使わない = 学習のコードが無い・F-27 |
 | 第5条 | 要配慮・任意・操作をもって同意・保護者 (本人のアカウントが無い子ども)・AI は別同意で、要配慮の項目も送る・健康の記録と写真は家族にも組織にも表示しない・運営は審査などの範囲で扱い操作は記録・オプトアウトなし | F-18・F-19・F-22・F-29・F-33・`admin_audit_logs` |
 | 第6条 | AI 事業者 (動的)・送る情報 (`AI_CONSENT_COPY` の 6 項目 + プロフィールと健康の項目・ニックネーム。F-29)・目的 (`AI_CONSENT_COPY` と同じ)・米国とエストニアの制度・措置・同意の記録と撤回・提供の記録 (= 同意の記録。開示と書き出しに使う) | F-8・F-26・F-29・`consent-config.ts:126-147`・§3 の法 28 条・29 条 |
 | 第7条 | 委託先 9 社と根拠 (`evidence`)・監督・基準適合体制 | F-16・`PRIVACY_PROCESSORS` |
 | 第8条 | 第三者提供の原則と例外・共同利用なし・オプトアウトなし・承継 | 法 27 条 |
-| 第9条 | 家族と組織の見え方の表 (写真は家族・組織に出ない・健康の記録は家族に出ない・つないだ未成年は本人の共有の設定) | F-18・F-19・F-33・`can_view_user_meals` (migration `:10568`)・健康の表の SELECT は本人だけ (`:10008, 10016, 10038`) |
+| 第9条 | 家族と組織の見え方の表 (写真は家族・組織に出ない・健康の記録は家族に出ない・つないだ未成年は本人の共有の設定・登録したメールアドレスとログインの履歴はどちらにも出ない・招待の状況は家族の代表者と大人のメンバー / 組織の管理者に出る・組織の管理者には役割・参加日・メンバー数と部署ごとの人数・チャレンジの参加人数と平均 (最小人数未満は出さない)・健康に関する集計は組織に出さない) | F-18・F-19・F-33・`can_view_user_meals` (migration `:10568`)・健康の表の SELECT は本人だけ (`:10008, 10016, 10038`)・`family_invites_select_adult` (`:10371`。`is_active_family_adult` は役割が `representative`・`adult`)・`org_invites_select_admin` (`:10644`) |
 | 第10条 | ブラウザとアプリから直接の Supabase・Cookie (認証)・WebView の保存・Speed Insights・Turnstile・Stripe・Google・祝日の一覧 (GitHub Pages。`HOLIDAYS_API_ORIGIN`)・Expo (通知の許可のあとだけ)・広告/計測なし・バナーなし・端末の機能は第3条を参照・EAS Update は無効 (行を置かない。T-27) | F-15・F-25・`apps/mobile/src/lib/pushNotifications.ts:261-264`・`apps/mobile/src/components/web/WebViewScreen.tsx:232-251`・`sessions/constants.ts:16` |
-| 第11条 | 安全管理措置 (ロールと監査ログ・運営の MFA・TLS・ハッシュ・RLS・非公開写真・回数制限・CSP・ログの伏せ・バックアップ暗号化 (鍵を持つ者を限る)・即時削除)。人的な措置と取扱いの責任者は根拠が無いので書かない (§0.6・Q-20) | cross/12・cross/18・cross/19・cross/17 §3.2・`src/lib/emails/outbox.ts` (マスク)・cross/08 §16 |
-| 第12条 | 保存期間の表 (保護者の同意の記録は退会後も紐づけを外して残り、家族グループの削除で消える・送信停止の記録はアドレスのまま・ブラウザのセキュリティ違反の報告はアプリの動作のログと同じ保持・プッシュ通知の宛先はログアウトと無効の知らせで消え退会で消える・AI 機能の利用回数は退会まで・回数の制限の計数は期間の後に自動で消える) | F-11・F-14・F-30・cross/08 §16.3・`email_blacklist`・`src/app/api/csp-report/route.ts:1-6, 68-70` (報告は `app_logs` に warn で残すだけ)・`user_push_tokens` の `ON DELETE CASCADE` (migration `20251126124224_create_meal_planner_tables.sql:9472-9473`)・`apps/mobile/src/lib/signOut.ts:5` (ログアウトで端末の行を消す)・`src/lib/push/outbox.ts:298` (`DeviceNotRegistered` で端末の行を消す)・`ai_usage_counters` の `ON DELETE CASCADE` と消す処理が無いこと (`20261010140000_ai_usage_foundation.sql:62-63`)・`src/lib/rate-limit.ts:260` (`Ratelimit.slidingWindow`。`@upstash/ratelimit` はキーに期限 (`PEXPIRE`) を付ける) |
-| 第13条 | 退会・書き出し (JSON)・凍結中も可 | F-11・F-12 |
+| 第11条 | 安全管理措置 (ロールと監査ログ・運営の MFA (管理者などのロールだけ。F-35)・TLS・ハッシュ・RLS・非公開写真・回数制限・CSP・ログの伏せ・バックアップ暗号化 (鍵を持つ者を限る)・即時削除)。人的な措置と取扱いの責任者は根拠が無いので書かない (§0.6・Q-20) | cross/12・cross/18・cross/19・cross/17 §3.2・`src/lib/auth/mfa/policy.ts:18` (`MFA_REQUIRED_ROLES`)・`src/lib/emails/outbox.ts` (マスク)・cross/08 §16 |
+| 第12条 | 保存期間の表 (規約・ポリシーと AI の同意の記録は IP と端末の種類を含み退会で消える・お問い合わせとサポートの記録は期限なしで、退会で紐づけを外しメールアドレスを伏せ件名と本文は残る・保護者の同意の記録は退会後も紐づけを外して残り、家族グループの削除で消える・送信停止の記録はアドレスのまま・ブラウザのセキュリティ違反の報告はアプリの動作のログと同じ保持・プッシュ通知の宛先はログアウトと無効の知らせで消え退会で消える・AI 機能の利用回数は退会まで・回数の制限の計数は期間の後に自動で消える) | F-11・F-14・F-17・F-30・F-36・cross/08 §16.3・`email_blacklist`・`src/app/api/csp-report/route.ts:1-6, 68-70` (報告は `app_logs` に warn で残すだけ)・`user_push_tokens` の `ON DELETE CASCADE` (migration `20251126124224_create_meal_planner_tables.sql:9472-9473`)・`apps/mobile/src/lib/signOut.ts:5` (ログアウトで端末の行を消す)・`src/lib/push/outbox.ts:298` (`DeviceNotRegistered` で端末の行を消す)・`ai_usage_counters` の `ON DELETE CASCADE` と消す処理が無いこと (`20261010140000_ai_usage_foundation.sql:62-63`)・`src/lib/rate-limit.ts:260` (`Ratelimit.slidingWindow`。`@upstash/ratelimit` はキーに期限 (`PEXPIRE`) を付ける) |
+| 第13条 | いつでも退会できる (設定画面から。改定後の同意の前は利用規約第24条 2 項のお問い合わせ)・書き出し (JSON。改定後の同意の前は第14条の開示の請求)・凍結中も可 | F-11・F-12・F-32 |
 | 第14条 | 請求の種類・手順・24 時間・5 回・遅滞なく (現行 `/privacy` 第6条の約束と法 33 条)・30 日の目安・例外・無料・凍結中と退会後は /contact・利用停止の扱い | F-13・cross/15 §7・§12・S-10・S-13 |
 | 第15条 | 未成年・保護者が代わりに記録できるのは本人のアカウントが無い子どもだけ・つないだ本人の記録は本人の共有の設定 | F-10・F-33 |
-| 第16条 | 通知の設定・送信停止リスト | `notification_preferences`・cross/08 §16.3 (`email_blacklist` は伏せない) |
+| 第16条 | プッシュは設定で止められる・メールは利用に伴う連絡で止める設定は無い・送信停止リスト | F-34・cross/08 §16.3 (`email_blacklist` は伏せない) |
 | 第17条 | 窓口 | F-4 |
-| 第18条 | 改定と再同意・施行日の前にお知らせに掲載 | §9・F-31 |
+| 第18条 | 改定と再同意・施行日の前にお知らせに掲載 (メールでの知らせは約束しない) | §9・F-31・F-34 |
 
 ---
 
@@ -2025,7 +2043,11 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | ログの IP と国の公表 | 無い | 第3条: ログインの履歴は IP の全体・ネットワークの範囲・国 (Web のログイン) を記録し、本人の画面とお知らせのメールに出し、運営も見る (F-17) |
 | 外部送信の公表 | 無い | 第10条の表 9 行 (Supabase・当社の Cookie・WebView・Vercel・Turnstile・Stripe・Google・祝日の一覧 (GitHub Pages)・Expo)。CSP の `connect-src` と T-29 で突き合わせる |
 | AI 事業者へ送る情報 | AI の同意の文の 6 項目の写し (現行 `/privacy` 第4条) | 実際の送信 (プロフィール・健康の項目・ニックネーム) まで (F-29) |
-| 改定の知らせ方 | 無い | 施行日の前に運営のお知らせ (ホーム) に掲載 → 施行日にデプロイ → 再同意 (§9.4) |
+| 改定の知らせ方 | 無い | 施行日の前に運営のお知らせ (ホーム) に掲載 → 施行日にデプロイ → 再同意 (§9.4)。メールでの知らせは仕組みが無いので約束しない (F-34) |
+| 同意の前の退会・書き出し・解約の手段 | 書いていない | 「いつでも」の権利は残し、版上げの後の同意の前は第24条 2 項 (お問い合わせからの削除と解約の依頼・開示の請求) と各条に書く (利用規約第10条 4 項・第17条 1 項・プライバシーポリシー第13条 1 項・3 項。F-32) |
+| 組織の管理者に見える項目 | 書いていない (計画の設計書は社員番号・最終ログインなど) | 組織の画面と API が読む項目だけ (表示名・組織内の役割・参加日・招待の状況・メンバー数と部署ごとの人数・チャレンジの参加人数と平均。F-19) |
+| メールを止める設定 | 書いていない | 止める設定は無いと書く (プッシュだけ止められる。F-34) |
+| 同意の記録の IP・端末の種類 | 書いていない | 規約・ポリシーの同意も IP と端末の種類を記録すると第3条に書く (F-17)。IP・User-Agent を持つ表は T-30 が第3条と突き合わせる (F-37) |
 
 ### 11.3 ③状態遷移表 (利用者の同意の状態 × 出来事 → 遷移先・ガード・副作用)
 
@@ -2038,10 +2060,10 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | old | 版上げをデプロイ | old (判定が未同意になる) | — | 次の画面の取得で `/legal-consent`。`/api` は 403。プッシュは止まる |
 | old / none | 同意画面で「同意して続ける」 | current | body の版 = `LEGAL_DOCUMENTS` (違えば 409)。生年月日 (無い人)。13 歳未満・つながりの無い 18 歳未満は `LEGAL_MINOR_SELF_SIGNUP_REFUSED` | `user_profiles` 2 列 + `legal_accepted_at`・`terms_acceptances` 2 行。元の画面へ。プッシュ再開 |
 | old / none | 「同意しない（ログアウトする）」 | old / none | — | signOut。請求画面・問い合わせへのリンク |
-| old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 退会したい | old / none (画面からは退会できない) | — | 退会の画面 (`/settings`) は同意画面へ回る (F-32)。入口は同意画面の「同意しない（ログアウトする）」→ `declined` の案内 → `/contact` から削除の依頼 → 運営が本人確認のうえ削除。退会の API (`/api/account/delete`) は同意の許可リストにあるが、この人に出す退会のボタンは無い。利用規約第24条 2 項はこの経路だけを約束する |
+| old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 退会したい | old / none (画面からは退会できない) | — | 退会の画面 (`/settings`) は同意画面へ回る (F-32)。入口は同意画面の「同意しない（ログアウトする）」→ `declined` の案内 → `/contact` から削除の依頼 → 運営が本人確認のうえ削除。退会の API (`/api/account/delete`) は同意の許可リストにあるが、この人に出す退会のボタンは無い。利用規約第24条 2 項はこの経路だけを約束し、第17条 1 項とプライバシーポリシー第13条 1 項は「改めて同意するまでの間は第24条 2 項」と書く (「設定画面からいつでも」とは書かない) |
 | current | 退会 | (削除) | 組織オーナー・家族代表でない (同じ) | 即時削除。`terms_acceptances`・`external_data_consents` も消える (F-26)。利用規約第17条・プライバシーポリシー第12条・第13条のとおり残るものだけ残る |
 | old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 請求・問い合わせ | old / none | — | 画面 (`/settings/data-requests`・`/contact`) は同意ゲートの対象外で開け、API も許可リストで通る |
-| old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 書き出し・有料プランの解約 | old / none (画面からはできない) | — | 画面 (`/settings`・`/account/billing`) は同意画面へ回る。API は許可リストで通るが、入口の画面が無い。データの開示は請求 (開示) で行える |
+| old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 書き出し・有料プランの解約 | old / none (画面からはできない) | — | 画面 (`/settings`・`/account/billing`) は同意画面へ回る。API は許可リストで通るが、入口の画面が無い。データの開示は請求 (開示) で行える (プライバシーポリシー第13条 3 項)。解約は `/contact` から依頼し、運営が決済代行事業者の管理画面で行う (運用。コードの経路は無い。Q-21)。利用規約第10条 4 項と第24条 2 項はこの経路を書く。自動更新の日までに依頼が処理されないと更新されるので、運用の手順と期限は Q-21 |
 | current | 文面だけの修正 (版据え置き) | current | §9.3 | 何も起きない |
 | current | 次の内容が変わる改定 (v2026.2) | current (判定が未同意になる) | — | 最初の行と同じ |
 | current | 凍結 | current | — | 画面は `/frozen`。例外の API だけ通る |
@@ -2085,8 +2107,8 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | T-3 | `LEGAL_FACTS の値は正本の定数と一致する (ADULT_AGE_YEARS・COPPA_AGE_YEARS・HIDDEN_CONTENT_RETENTION_DAYS・LOGIN_HISTORY_RETENTION_DAYS・SESSION_IDLE_EXPIRE_DAYS・DSR_VERIFICATION_TTL_HOURS・DSR_VERIFICATION_MAX_SENDS・DSR_RESPONSE_DUE_DAYS_DEFAULT)` | 写しの一致 (`@homegohan/shared`・`@/lib/admin/hidden-content-restore`・`@/lib/auth/sessions/constants`・`@/lib/data-subject-requests/core` を import して比べる) |
 | T-4 | `LEGAL_FACTS の app_logs・送信待ちの保持は migration の文字列と一致する` | `supabase/migrations/20251126124224_create_meal_planner_tables.sql` に `DELETE FROM app_logs WHERE created_at < NOW() - INTERVAL '${appLogRetentionDays} days'`、`20261016234000_email_outbox.sql` と `20261016237000_push_outbox.sql` に `interval '${outboxSentRetentionDays} days'` と `interval '${outboxDeadRetentionDays} days'` が含まれる (大文字小文字を区別しない) |
 | T-5 | `LEGAL_FACTS のバックアップの保持は cross/17 §9.1 の表記と一致する` | `docs/design/cross/17-backup-automation.md` に `30 日で削除`・`366 日で削除`・`2,557 日で削除` と `(7 年)` が含まれる |
-| T-6 | `LEGAL_FACTS の未ログインの日数は運営画面の文と一致する` | `src/app/(operator)/operator/membership/families/inactive/page.tsx` と `orgs/inactive/page.tsx` に `${inactiveRepresentativeDays}日以上未ログイン` が含まれる |
-| T-7 | `PRIVACY_PROCESSORS の各行の evidence (file に needle) が実在する` | 委託先の表が実コードに当たる (`fs.readFileSync` で `includes`) |
+| T-6 | `LEGAL_FACTS の未ログインの日数は、運営の一覧の判定 (RPC の INTERVAL) と見出しの文と一致する` | (1) `supabase/migrations` の `.sql` (`.down.sql` を除く) を名前の順に並べ、`list_families_with_inactive_representative` と `list_orgs_with_inactive_owner` のそれぞれについて、正規表現 `CREATE OR REPLACE FUNCTION\s+"?public"?\."?<名前>"?\s*\(` に当たる最後のファイルを選び、一致した位置から次の `$$;` までの文に `INTERVAL '${inactiveRepresentativeDays} days'` が含まれる (いまは `20261017130000_operator_mfa_db_gate.sql`)。(2) `src/app/(operator)/operator/membership/families/inactive/page.tsx` に `${inactiveRepresentativeDays}日以上未ログインまたは削除済みアカウントが代表者の家族グループ`、`orgs/inactive/page.tsx` に `${inactiveRepresentativeDays}日以上未ログインまたは削除済みアカウントが owner の組織` が含まれる (解散の理由の入力欄の例文 (placeholder) は判定ではないので見ない。F-21) |
+| T-7 | `PRIVACY_PROCESSORS の各行の evidence (file に needle) が実在し、needle と文面モジュールに外部のホスト名・URL が無い` | 委託先の表が実コードに当たる (`fs.readFileSync` で `includes`)。各 needle は `://` を含まず、ホスト名の形 (`/^[a-z0-9-]+(\.[a-z0-9-]+)+$/i`) に当たらず、6 文字以上 (テストのローカル定数 `MIN_NEEDLE_LENGTH = 6`。根拠コメント: §7 の規則)。`src/lib/legal/` の `.ts` 4 本のソースに `https://` と `exp.host` が含まれない (送り先を 1 ファイルに限る走査テスト `tests/push-expo-boundary-scan.test.ts`・`tests/ai-consent-provider-inventory.test.ts` を、文面モジュールが赤にしないため。§16) |
 | T-8 | `プライバシーポリシーの保存期間と請求の手順の数は LEGAL_FACTS から埋まっている` | 描画した本文に `非表示にしてから ${hidden} 日`・`失効してから ${login} 日`・`${sessionIdle} 日間操作が無い`・`${appLog} 日`・`送れたものは ${sent} 日`・`${dsrTtl} 時間有効`・`${dsrSends} 回まで`・`${dsrDue} 日以内を目安`・`${daily} 日、週次のものは ${weekly} 日、年次のものは ${annual} 日（${years} 年）` が含まれる |
 | T-9 | `利用規約第9条に cross/08 §8.1 と同じ医療免責の文と、救急（119）の案内がある` | `TERMS_MEDICAL_DISCLAIMER` が `docs/design/cross/08-legal-compliance.md` に逐語で含まれ、描画した本文に両方含まれる |
 | T-10 | `利用規約第14条に AI 生成物の 3 項 (ユーザー帰属・匿名化した集計利用・CC0 相当) がある` | 描画した本文に `個人利用の範囲でユーザーに帰属`・`匿名化した形で`・`CC0 相当` が含まれる |
@@ -2107,8 +2129,12 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | T-25 | `プライバシーポリシーに、仮名加工情報・匿名加工情報を作成しない旨、AI 事業者への提供の記録、端末の機能の表がある` | 描画した本文に `仮名加工情報および匿名加工情報`・`提供の記録として、同意の記録`・`カメラ`・`写真ライブラリ`・`位置情報、連絡先、マイクの音声を取得しません`・`new URL(HOLIDAYS_API_ORIGIN).host` (祝日の一覧の送り先) が含まれる |
 | T-26 | `apps/mobile/app.json の端末の権限の宣言は、既知の一覧に含まれる (新しい権限を足したら第3条の端末の機能の表を直す)` | `app.json` を `JSON.parse` し、`expo.ios.infoPlist` のうち `UsageDescription` で終わるキーの集合 ⊆ { `NSCameraUsageDescription`・`NSPhotoLibraryUsageDescription`・`NSPhotoLibraryAddUsageDescription` }、`expo.android.permissions` ⊆ { `CAMERA`・`READ_MEDIA_IMAGES`・`READ_EXTERNAL_STORAGE`・`WRITE_EXTERNAL_STORAGE`・`POST_NOTIFICATIONS`・`RECORD_AUDIO` に `android.permission.` を付けたもの }。既知の一覧はテストの中の定数 (根拠コメント: F-25。使っていない宣言は §17 の候補) |
 | T-27 | `アプリの更新の取得 (EAS Update) は無効のまま (有効にしたらプライバシーポリシー第10条に送り先の行を足して版を上げる)` | `apps/mobile/app.json` を `JSON.parse` し `expo.updates.enabled === false` と `expo.updates.checkAutomatically === 'NEVER'`。`apps/mobile/app`・`apps/mobile/src` の `.ts`/`.tsx` に `expo-updates` の import (`from 'expo-updates'` / `from "expo-updates"`) が無い (根拠コメント: F-15) |
-| T-28 | `利用規約・プライバシーポリシーの約束の文は実装に合わせてある (責任の上限と軽過失の責任・同意の前にできること・施行日の前のお知らせ・遅滞なく・写真と健康の見え方・AI に送る項目・送信停止の記録・ログとプッシュの宛先と AI の利用回数の保存期間・ログインの履歴の IP と国)` | `termsText(ctx)` を `LegalDocumentBody` で描いた本文に `その期間に有料プランの料金を受け取っていないユーザーには、本項の上限を適用しません`・`お問い合わせ（アカウントと保存されたデータの削除の依頼を含みます）`・`施行日の前に本サービスのお知らせに掲載`・`第21条（損害賠償と責任の制限）に定める範囲で責任を負います` (第16条 5 項と第18条 4 項の 2 か所。出現の数が 2) が含まれ、`退会、データの書き出し、個人情報の開示`・`本人が共有を設定した家族グループのメンバーだけが閲覧`・`重大な過失がある場合を除き、責任を負いません` が含まれない。`privacyText(ctx)` を同じく描いた本文に `遅滞なく対応します`・`家族グループのメンバーにも組織の管理者にも表示されません`・`持病・健康上の注意点、服薬、妊娠・授乳の状況`・`メールアドレスのまま残します`・`ブラウザのセキュリティ違反の報告を含みます`・`その端末の宛先をその時点で削除します`・`AI 機能の利用回数（日ごと・機能ごとの回数）`・`IP アドレスの全体に加えて、その IP アドレスが属するネットワークの範囲`・`ホスティング事業者が通信から判定した国` が含まれ、`氏名は送りません`・`個人情報の取扱いの責任者`・`ネットワーク単位にして保存` が含まれない |
+| T-28 | `利用規約・プライバシーポリシーの約束の文は実装に合わせてある (責任の上限と軽過失の責任・同意の前にできること・施行日の前のお知らせ・遅滞なく・写真と健康の見え方・AI に送る項目・送信停止の記録・ログとプッシュの宛先と AI の利用回数の保存期間・ログインの履歴の IP と国)` | `termsText(ctx)` を `LegalDocumentBody` で描いた本文に `その期間に有料プランの料金を受け取っていないユーザーには、本項の上限を適用しません`・`お問い合わせ（アカウントと保存されたデータの削除の依頼と、有料プランの解約の依頼を含みます）`・`施行日の前に本サービスのお知らせに掲載`・`第21条（損害賠償と責任の制限）に定める範囲で責任を負います` (第16条 5 項と第18条 4 項の 2 か所。出現の数が 2) が含まれ、`退会、データの書き出し、個人情報の開示`・`本人が共有を設定した家族グループのメンバーだけが閲覧`・`重大な過失がある場合を除き、責任を負いません` が含まれない。`privacyText(ctx)` を同じく描いた本文に `遅滞なく対応します`・`家族グループのメンバーにも組織の管理者にも表示されません`・`持病・健康上の注意点、服薬、妊娠・授乳の状況`・`メールアドレスのまま残します`・`ブラウザのセキュリティ違反の報告を含みます`・`その端末の宛先をその時点で削除します`・`AI 機能の利用回数（日ごと・機能ごとの回数）`・`IP アドレスの全体に加えて、その IP アドレスが属するネットワークの範囲`・`ホスティング事業者が通信から判定した国` が含まれ、`氏名は送りません`・`個人情報の取扱いの責任者`・`ネットワーク単位にして保存` が含まれない |
 | T-29 | `CSP の connect-src の外部の送り先は、プライバシーポリシー第10条の表に行がある送り先だけ` | `buildContentSecurityPolicy({ nonce: 'n', isDev: false, supabaseUrl: 'https://example.supabase.co' })` を `cspDirectivesOf` で分け、`connect-src` の値の集合 ⊆ { `'self'`・`*.supabase.co`・`wss://*.supabase.co`・`*.vercel.app`・`HOLIDAYS_API_ORIGIN` }。テストの中の対応表 (値 → 第10条の行の送り先の語: `*.supabase.co`・`wss://*.supabase.co` → `Supabase`、`*.vercel.app` → `Vercel`、`HOLIDAYS_API_ORIGIN` → `GitHub`) の各語が `privacyText(ctx)` の第10条 (`id: 'privacy-10'`) の `table` ブロックの 1 列目のどれかに含まれる。connect-src に送り先を足したら、この集合と第10条の表と版を一緒に直す (根拠コメント: F-15・§9.3) |
+| T-30 | `IP アドレス・User-Agent を持つ表は、プライバシーポリシー第3条に載せた表か、載せない理由を持つ表のどちらかに入っている` | `packages/shared/src/database.types.ts` を行ごとに読み、`public` の `Tables` の範囲 (行 `    Tables: {` から次の行 `    Views: {` まで) で、6 字下げの `<表>: {` を表の始まり、8 字下げの `Row: {` から次の 8 字下げの `}` までを列として、列名がテストのローカル定数 `IP_UA_COLUMNS = ['ip_address', 'ip_network', 'user_agent', 'country_code']` のどれかである表の集合を作る。その集合が `DISCLOSED_IP_UA_TABLES` と `EXCLUDED_IP_UA_TABLES` (どちらもテストのローカル定数。根拠コメント: F-37) のキーの和と等しい。`DISCLOSED_IP_UA_TABLES` (表 → 本文の文): `user_sessions_metadata` → `IP アドレスの全体に加えて`・`terms_acceptances` → `利用規約とプライバシーポリシーに同意した版・日時・IP アドレス`・`external_data_consents` → `日本国外の事業者への提供に同意した版・日時・IP アドレス`・`parental_consents` → `保護者の同意の署名`。各文が `privacyText(ctx)` を `LegalDocumentBody` で描いた本文に含まれる。`EXCLUDED_IP_UA_TABLES` (表 → 理由): `admin_audit_logs` (運営担当者の IP)・`cookie_consents` (書き込む処理が無い)・`failed_invite_lookups` (書き込む処理が無い)・`catalog_sources` (個人の情報でない)。理由が「書き込む処理が無い」の 2 つは、`src`・`supabase/functions` の `.ts`/`.tsx` (テストを除く) に `.from('<表>')`・`.from("<表>")` が無く、`supabase/migrations` の `.sql` に `INSERT INTO` に続く `<表>`・`public.<表>`・`"public"."<表>"` が無いことも確かめる (書き込む処理を足したら赤になり、第3条に載せ直す) |
+| T-31 | `プライバシーポリシー第11条の多要素認証の文は MFA_REQUIRED_ROLES に当たる (管理者を含み、運営担当者の全員とは書かない)` | `MFA_REQUIRED_ROLES` (`@/lib/auth/mfa/policy`) が `'admin'` と `'super_admin'` を含む。`privacyText(ctx)` を描いた本文に `管理者の権限などを持つ担当者のログインには、多要素認証を求めています` が含まれ、`運営担当者のログインには多要素認証を求めています` が含まれない (F-35) |
+| T-32 | `組織の管理者の画面が読む項目は、利用規約第12条とプライバシーポリシー第9条に書いた項目に当たる` | `src/app/(org)/org/members/page.tsx` に `.select('id, nickname, org_role, joined_org_at')` が含まれる。`src/app/api/org/invites/route.ts` の GET の `.select(` の直後のテンプレートリテラル (バッククォートで囲んだ文字列) の中の列 (空白と `,` で分けた語) の集合が { `id`・`email`・`role`・`department_id`・`token`・`expires_at`・`accepted_at`・`created_at`・`departments(name)` } と等しい。`src/app/(org)`・`src/app/api/org` の `.ts`/`.tsx` (テストを除く) に `last_sign_in_at` と `employee_` が含まれない (最終ログインと社員番号を組織の画面に足したら赤になり、文面を直す。F-19) |
+| T-33 | `メール・同意の前の退会と解約の手段・お問い合わせの保存・組織の管理者に見える項目・同意の記録の IP の文は実装に合わせてある` | `termsText(ctx)` を描いた本文に `配信を止める設定はありません`・`改めて同意するまでの間は、設定の「お支払い」を利用できないため`・`改めて同意するまでの間は、設定画面を利用できないため`・`組織の管理者に表示されるのは、メンバーの表示名` が含まれ、`一部のメール`・`登録されたメールアドレスへもお知らせします`・`この設定にかかわらず行うことがあります`・`からいつでも予約でき`・`設定画面からいつでも退会できます`・`社員番号`・`最終ログイン日時` が含まれない。`privacyText(ctx)` を描いた本文に `配信を止める設定はありません`・`件名と本文はそのまま残ります`・`利用規約とプライバシーポリシーに同意した版・日時・IP アドレス`・`改めて同意するまでの間は、設定画面を利用できないため`・`第14条の開示の請求により個人データの開示を求めることができます` が含まれ、`一部のメール`・`登録されたメールアドレスへもお知らせします`・`設定にかかわらず送ることがあります`・`設定画面からいつでも退会できます`・`やりとりの記録は個人を特定できない形で残します`・`社員番号`・`最終ログイン日時`・`ライセンスの状態` が含まれない (F-17・F-19・F-32・F-34・F-36) |
 
 既存テストの追随 (§16): `tests/public-claims-guard.test.ts` の `PUBLIC_PAGES` に `/terms` `/privacy` の 2 ページ、`PUBLIC_SOURCE_FILES` に `src/lib/legal/terms-text.ts`・`src/lib/legal/privacy-text.ts` を足す (禁止語の走査を本文にも掛ける)。`src/__tests__/api/cron/push-outbox.test.ts:176` の `'v2025.1'` 2 つを `LEGAL_DOCUMENTS` の値に置き換える。
 
@@ -2123,11 +2149,11 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 
 | 段 | 中身 | 触るファイル | 確認 |
 |---|---|---|---|
-| A | 文面モジュールと描画部品 (ページは触らない) | 新設: `src/lib/legal/legal-text.ts`・`terms-text.ts`・`privacy-text.ts`・`index.ts`・`src/components/legal/LegalDocumentBody.tsx`・`tests/legal-text-1901.test.ts` (T-1〜T-16・T-19・T-24〜T-29 のうちページに依らないもの。文面モジュールを直接描くので T-25・T-28・T-29 は段 A で書ける)・`tests/legal-document-body.test.tsx` (T-21〜T-23) | `tsc`・lint・全件 (すべて緑。ページ未切替なので挙動は変わらない) |
+| A | 文面モジュールと描画部品 (ページは触らない) | 新設: `src/lib/legal/legal-text.ts`・`terms-text.ts`・`privacy-text.ts`・`index.ts`・`src/components/legal/LegalDocumentBody.tsx`・`tests/legal-text-1901.test.ts` (T-1〜T-16・T-19・T-24〜T-33 のうちページに依らないもの。文面モジュールを直接描くので T-25・T-28〜T-33 は段 A で書ける)・`tests/legal-document-body.test.tsx` (T-21〜T-23) | `tsc`・lint・全件 (すべて緑。ページ未切替なので挙動は変わらない) |
 | B | ページの差し替え・版上げ・旧版の控え・番兵の追随 | `src/app/terms/page.tsx`・`src/app/privacy/page.tsx` (§8.3 の全文)・`packages/shared/src/legal-versions.ts` (§9.1)・`tests/public-claims-guard.test.ts` (§13 末尾)・`docs/legal/archive/v2025.1/terms.md`・`privacy.md` (現行 `page.tsx` の条を Markdown に写す。版 v2025.1・施行日 2025-01-01 を冒頭に)・`src/__tests__/api/cron/push-outbox.test.ts:176` (`'v2025.1'` 2 つを `LEGAL_DOCUMENTS.terms_of_service.version` / `LEGAL_DOCUMENTS.privacy_policy.version` に置き換え、`import { LEGAL_DOCUMENTS } from '@homegohan/shared'` を足す。§16)・`tests/legal-text-1901.test.ts` に残りの it (T-12・T-17・T-18・T-20) | `tsc`・lint・全件 (すべて緑。既知の赤は無い)。`effectiveDate` は仮の施行日 `'2026-10-19'` と行末の目印のコメントのまま残す (§9.1。公開日への置き換えはオーケストレーターがマージ直前に行う) |
 
 - 横断整合 (段 B のレビュー): `tests/business-info-legal-pages.test.ts`・`tests/policy-pages-public.test.tsx`・`tests/site-config-ui.test.tsx`・`tests/seo-public-pages-1867.test.tsx`・`tests/legal-consent-page.test.tsx` が変更なしで緑であること (§16)。
-- 変異試験 (B 型の Haiku の枠): 製品コードは `src/lib/legal/*.ts`・`LegalDocumentBody.tsx`・2 ページ・`legal-versions.ts`。守りの中心 = T-3〜T-8 (数の一致)・T-11〜T-13 (名前の混入)・T-17 (版)。
+- 変異試験 (B 型の Haiku の枠): 製品コードは `src/lib/legal/*.ts`・`LegalDocumentBody.tsx`・2 ページ・`legal-versions.ts`。守りの中心 = T-3〜T-8 (数の一致)・T-11〜T-13 (名前の混入)・T-17 (版)・T-28・T-31・T-33 (約束の文)。
 
 ---
 
@@ -2150,6 +2176,7 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | 定数 | `PRIVACY_SECTION_HEADINGS`・`PRIVACY_SECTION_COUNT`・`PRIVACY_PROCESSORS`・`HOLIDAYS_API_HOST` (export しない) | `privacy-text.ts` |
 | 定数 (ページのローカル。export しない) | `MAIN_CLASS` (`<main>` のクラス。2 ページに同じ文字列を §8.3 のとおり置く。共通の定数 `LEGAL_MAIN_CLASS` などは新設しない) | `src/app/terms/page.tsx`・`src/app/privacy/page.tsx` |
 | 定数 (テストのローカル。export しない) | `LEGAL_TEXT_FORBIDDEN_CLAIMS` (T-19 の効果・成果の言い回しの一覧。根拠コメント: R-18・§3 の薬機法・景品表示法・健康増進法の行) | `tests/legal-text-1901.test.ts` |
+| 定数 (テストのローカル。export しない) | `MIN_NEEDLE_LENGTH = 6` (T-7。根拠コメント: §7 の規則)・`IP_UA_COLUMNS`・`DISCLOSED_IP_UA_TABLES`・`EXCLUDED_IP_UA_TABLES` (T-30。根拠コメント: F-37) | `tests/legal-text-1901.test.ts` |
 | 関数 | `termsText(ctx)`・`privacyText(ctx)` | 同上 |
 | 部品 | `LegalDocumentBody({ document })` | `LegalDocumentBody.tsx` |
 | 版 | `LEGAL_DOCUMENTS` の `version` を `v2026.1` (2 文書)、`effectiveDate` を公開日 | `packages/shared/src/legal-versions.ts` |
@@ -2160,6 +2187,8 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 ## 16. 既存の番兵 (契約テスト・走査テスト) の追随表
 
 本設計が足す・変える・移すものの名前を grep の語にして `tests/`・`scripts/`・`src/__tests__/`・`packages/shared/src/*.test.ts`・`lib/**/__tests__`・`apps/mobile/__tests__` を走査した結果 (2026-10-19・origin/main `5b85bb3f`)。パス `/terms` `/privacy` を文字列で持つテストは、origin/main で 21 本 (`git grep` で `'/terms'` `'/privacy'` `href="/terms"` などの形を引いた集合) で、すべて下の表のどれかの行にある。2 ページは同じパスに残る (§4.1・§8.3) ので、パスの番兵はすべて変更なしで緑のまま。
+
+もう 1 つの軸として、**新設のファイル (`src/lib/legal/*.ts`・`src/components/legal/LegalDocumentBody.tsx`) が走査の対象に入る番兵** を洗った。`src` を `readdirSync` で歩いてソースの中の文字列・書き方を数えるテスト (`tests/*-scan.test.ts`・`*-boundary-scan`・`*-single-implementation`・`ai-consent-provider-inventory` など) は、パスの語では引けないので、走査の対象 (`src` を含む) と数える語で引いた。審査 R3 の指摘 6 の実測 (本書 v1.5 の ts ブロックを置き場所どおりに置いて全件を流した結果。871 ファイル中 870 通過) で赤になったのは `tests/push-expo-boundary-scan.test.ts` の 1 本だけで、原因は委託先の表の `evidence.needle` に書いた `exp.host` だった。v1.6 で needle を根拠のファイルの中の識別子に替え (`EXPO_PUSH_SEND_URL`。GitHub の行も `apt-get install -y age` に)、needle の形の規則を §7 に、検査を T-7 に置いた。替えた needle の語は、`tests/`・`src/__tests__/`・`lib`・`packages/shared/src`・`apps/mobile/__tests__`・`scripts` の `git grep` でどの走査テストにも当たらない (当たるのは `src/__tests__/lib/push/expo-transport.test.ts` の import だけで、走査ではない)。
 
 | 番兵 | grep の語 | 反応 | 直し方 | 段 |
 |---|---|---|---|---|
@@ -2180,7 +2209,12 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | `apps/mobile/__tests__/components/PublicPage.test.tsx:85-87`・`apps/mobile/__tests__/components/account-frozen-gate.test.tsx:176`・`apps/mobile/__tests__/components/legal-consent-gate.test.tsx:144`・`apps/mobile/__tests__/lib/account-frozen.test.ts:267`・`apps/mobile/__tests__/lib/legal-consent.test.ts:153` | `/terms`・`/privacy` | モバイルが 2 ページを `getTermsUrl()` / `getPrivacyUrl()` の URL で開くこと・凍結と同意のゲートが 2 つのパスを公開として通すこと | 変更なし (モバイルのコードは変えない。§1) | — |
 | `tests/integration/security/legal-documents-acceptance.test.ts`・`tests/integration/rls/push-outbox.test.ts:905-906, 924-925`・`src/__tests__/lib/push/outbox.test.ts:87-88`・`tests/legal-consent-minor-guardian.test.ts:17-18`・`packages/shared/src/parental-consent.test.ts:34-35` | `LEGAL_DOCUMENTS`・`_version_accepted` | 同意済みの版を `LEGAL_DOCUMENTS` の値から作る (`legal-documents-acceptance` はテスト用の版 `test-v1` など (行 91-94) で、DB は版の中身を見ない) ので、版の値に依らない。文面の文字列は見ない | 変更なし (版を v2026.1 に上げても緑) | B |
 | `packages/shared/src/legal-consent-api.test.ts:330` | `'2025-01-01'` | 形の壊れた応答 (`version: ''`) を `isLegalConsentStatus` が弾くことの入力に、施行日の文字列を直書きしている。版 v2025.1 の施行日とは無関係の入力値 | 変更なし (`LEGAL_DOCUMENTS` の施行日を変えても、この入力は版が空なので弾かれたまま) | — |
-| `tests/ai-consent-provider-inventory.test.ts` | `AI_CONSENT_PROVIDERS` | 送信先と同意の一覧 | 変更なし (一覧は変えない) | — |
+| `tests/ai-consent-provider-inventory.test.ts` | `AI_CONSENT_PROVIDERS`・`https://` | 送信先と同意の一覧。`src`・`supabase/functions`・`shared`・`lib`・`packages`・`apps/mobile/app`・`apps/mobile/src` のコードの `https://<ホスト>` と送り先の SDK の import を集め、AI 事業者でないホストは理由つきの一覧に載っていることを求める | 変更なし (一覧は変えない。文面モジュールに `https://` を書かない規則 (§7) と T-7 で、新設のファイルが送信先として数えられないようにする) | A |
+| `tests/push-expo-boundary-scan.test.ts` | `exp.host` | `src`・`supabase/functions`・`apps/mobile/src` の非テストの `.ts`/`.tsx` で `exp.host` を含むファイルが `src/lib/push/expo-transport.ts` だけであること (`expect(writers).toEqual([ALLOWED_FILE])`) | 変更なし。委託先の表の Expo の行の needle を `EXPO_PUSH_SEND_URL` にし (v1.5 の `exp.host` だと `src/lib/legal/privacy-text.ts` が数えられて赤になった。審査 R3 の指摘 6)、文面モジュールに `exp.host` を書かない (T-7 が検査する) | A |
+| `tests/email-resend-boundary-scan.test.ts`・`tests/rate-limit-single-implementation.test.ts` | `resend`・`api.resend.com`・`@upstash/ratelimit` | `resend` の import と `api.resend.com` を含む文字列リテラル、`@upstash/ratelimit` の import を、許したファイルに限る (TypeScript の構文木で import と文字列リテラルを見る) | 変更なし (委託先の表の needle `resend`・`@upstash/ratelimit` は import ではなく、`api.resend.com` を含まない。審査 R3 の実測でも緑) | A |
+| `src` を走査するその他の番兵 (`tests/api-raw-error-message-scan.test.ts`・`tests/lib-raw-error-message-scan.test.ts`・`tests/env-source-scan.test.ts`・`tests/jst-today-source-scan.test.ts`・`tests/next15-async-request-api-scan.test.ts`・`tests/role-check-source-scan.test.ts`・`tests/signed-photo-display-scan.test.ts`・`tests/supabase-service-role-client-scan.test.ts`・`tests/operator-mfa-entry-points-scan.test.ts`・`tests/email-suppressed-log-level-scan.test.ts`・`tests/auth/*-source-scan.test.ts`・`tests/native-sign-out-order-source-scan.test.ts`) | 各テストの書き方 (`process.env`・`new Date`・service role の client・役割の判定・`error.message` の返し方など) | 文面モジュールと描画部品は、文字列のデータ・型・import・JSX だけで、これらが数える書き方を持たない | 変更なし (審査 R3 の実測で緑) | A |
+| `tests/log-cleanup-dau-snapshot-contract.test.ts:213-214` | `failed_invite_lookups` | `failed_invite_lookups` に書き込む処理が無いので掃除のジョブを足さないこと | 変更なし (T-30 は同じ事実を「第3条に載せない理由」として使う。書き込む処理を足すときは、この番兵と T-30 の両方が直しを求める) | — |
+| `tests/operator-mfa-db-gate-migration-contract.test.ts`・`tests/e2e-test-session.test.ts`・`tests/api/auth-mfa-routes.test.ts`・`tests/super-admin-mfa-reset-route.test.ts` | `MFA_REQUIRED_ROLES` | ロールの一覧と、DB・e2e の写しの一致 | 変更なし (T-31 は読むだけで、一覧を変えない) | — |
 | `src/__tests__/lib/emails/account/login-new-device.test.ts:67` | `SESSIONS_SETTINGS_PATH` | 値が `/settings/security/sessions` であることを固定 (文面モジュールが import する) | 変更なし | — |
 | `src/__tests__/lib/security/csp.test.ts` | `HOLIDAYS_API_ORIGIN`・`connect-src` | CSP の値の固定 (プライバシーポリシーの文面モジュールが `HOLIDAYS_API_ORIGIN` を import し、T-29 が `connect-src` を第10条と突き合わせる) | 変更なし | — |
 | `tests/env-source-scan.test.ts`・`src/__tests__/lib/env.test.ts` | 環境変数名 | 新しい環境変数は無い | 変更なし | — |
@@ -2215,6 +2249,9 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | `src/lib/ai/consent-config.ts` | `AI_CONSENT_COPY.dataCategories` (6 項目) | 実際に AI 事業者へ送る項目 (プロフィール・持病・服薬・妊娠/授乳の状況・ニックネーム。F-29) より狭い。プライバシーポリシー第6条は実際の項目を書いたので、同意画面の文と食い違う。候補: 同意画面の文に項目を足し、`AI_CONSENT_VERSION` を上げる (AI の同意の取り直しが起きる)。本書の範囲外 (P-8)。Q-18 | 候補 (別 Issue) |
 | `src/app/(main)/family/members/[id]/page.tsx`・`src/app/(main)/settings/membership/page.tsx` | 健康の記録の共有 (`share_health`) の切り替え | 切り替えられるが、読む経路が無い (F-18)。利用規約第11条 2 項・プライバシーポリシー第9条は「現在、家族に健康の記録を表示する機能はありません」と書いた。候補: 切り替えの文に同じ注記を出すか、機能を作る (作るときはプライバシーポリシーの版を上げる)。本書の範囲外 | 候補 |
 | `src/lib/seo/public-pages.ts` | `/terms` `/privacy` の description | 変更不要 (「利用規約です」「プライバシーポリシー (個人情報の取り扱い) です」のまま) | — |
+| `src/app/(operator)/operator/membership/families/inactive/page.tsx:133`・`orgs/inactive/page.tsx:137` | 解散の理由の入力欄の例文「代表者が90日以上未ログインのため…」「オーナーが90日以上未ログインのため…」 | 一覧の判定 (30 日) と見出し (30日以上未ログイン) と食い違う。利用規約第11条 6 項・第12条 4 項は判定の 30 日を書いた (F-21)。候補: 例文の日数を 30 に揃える (本書の範囲外。T-6 は例文を見ない) | 候補 |
+| `lib/legal-consent.ts` (`EXEMPT_PREFIXES`)・`src/app/legal-consent/LegalConsentForm.tsx` の `declined` の画面 | 版上げの後、同意の前の人には退会・書き出し・解約の画面が無い (F-32) | 利用規約第10条 4 項・第17条 1 項・第24条 2 項は、この間の手段をお問い合わせ (運営が手で削除・解約する) と書いた。候補: 同意の前でも本人が自分で退会・書き出し・解約できる画面 (凍結中の `/frozen/account`・`/frozen/billing` と同じ部品) を `declined` の画面から開けるようにする。作ったら、3 つの条の「お問い合わせから依頼」を画面の案内に改め、版を上げる (Q-23) | 候補 (別 Issue) |
+| `src/app/(org)/org/members/page.tsx:52` | 組織のメンバーの一覧が `user_profiles` を直接読むが、SELECT の RLS は本人の行だけ (F-19) | 組織の管理者には自分の行しか出ない (画面の意図と食い違う)。利用規約第12条 1 項・プライバシーポリシー第9条は、画面が読む項目 (表示名・組織内の役割・参加日) を上限として書いた。候補: 一覧を service_role の API で返すなど (本書の範囲外。直しても見える項目が同じなら文面は変えない) | 候補 (別 Issue) |
 
 ---
 
@@ -2242,6 +2279,11 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | Q-19 | 同意を得ない規約の変更 (民法 548 条の 4) の定めを置くか | 置かない。内容が変わる変更はすべて再同意で行う (再同意のゲートがあるので同意を得ない変更の経路が要らない)。置くなら、施行日の前に変更後の全文をお知らせに載せる工程を §9.4 に足す | 弁護士・オーナー |
 | Q-20 | 個人情報の取扱いの責任者と、人的な安全管理措置 (従業者の教育・守秘) | 根拠が無いので書かない (§0.6)。決まったら第1条・第11条に足して版を上げる | オーナー |
 | Q-17 | `apps/mobile/app.json` の使っていない権限の宣言 (`NSPhotoLibraryAddUsageDescription`・`RECORD_AUDIO`・`WRITE_EXTERNAL_STORAGE`) を外すか | 本書では変えない。ポリシーは使う機能だけを書く (§17 の候補行) | オーナー |
+| Q-21 | 版上げの後、同意の前の有料プランの利用者からお問い合わせで解約の依頼を受けたとき、運営が決済代行事業者 (Stripe) の管理画面で解約する運用 (コードの経路は無い。F-32) と、自動更新の日に間に合わせる期限をどう決めるか | 利用規約第10条 4 項・第24条 2 項は「お問い合わせから解約を依頼してください」とだけ書き、処理の期限は約束しない。有料プランは販売開始前 (P-5) なので、販売開始までに運用の手順を決めるか、Q-23 の画面を作る | オーナー |
+| Q-22 | 代表者・オーナーの未ログインの日数を文面に書くか | 運営の一覧の判定 (30 日。F-21) を書いた (`LEGAL_FACTS.inactiveRepresentativeDays = 30`・T-6 が判定と突き合わせる)。日数を書かずに「長期間ログインしていないなど」とする案もある (そのときは `LEGAL_FACTS` からこの項目と T-6 を外す)。業務の判断で日数を変えるときは、判定の RPC と文面を一緒に変えて版を上げる | オーナー |
+| Q-23 | 同意の前でも本人が自分で退会・書き出し・解約できる画面を作るか (§17 の候補行) | 本書では作らない (DB・API・画面を変えない範囲)。作れば、第10条 4 項・第17条 1 項・第24条 2 項の「お問い合わせから依頼」が画面に置き換わり、Q-21 の運用も要らなくなる | オーナー |
+| Q-24 | 同型の指摘 (文面の主張が実装と食い違う) が審査の周をまたいで続いた (R2 のログインの履歴の IP → R3 の同意の記録の IP・組織の見える項目・メール・多要素認証)。発生源を消す構造として、文面のすべての主張の文に根拠のアンカー (ファイルと語。`PRIVACY_PROCESSORS` の `evidence` と同じ形) を持たせ、テストがアンカーの実在を確かめる形 (文と根拠の対応表をデータにする) に広げるか | 本書では、食い違いが出た面ごとに機械の検査を置いた (T-30 = IP・User-Agent を持つ表、T-31 = 多要素認証の対象、T-32 = 組織の画面が読む項目、T-6 = 未ログインの日数の判定、T-7 = needle の形)。全文に広げるのは文面の版の改定のときに検討する | オーナー (次の改定) |
+| Q-25 | 本番で運営の多要素認証の猶予 (`OPERATOR_MFA_ENFORCE_FROM`) が未来の日時に設定されていないか | プライバシーポリシー第11条は「管理者の権限などを持つ担当者のログインには、多要素認証を求めています」と書いた (F-35)。猶予中なら、公開の前に猶予を終えるか、文を「求めることにしています」に改める | 整合ゲート・オーナー |
 
 ---
 
@@ -2255,3 +2297,4 @@ export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentIn
 | v1.3 | 2026-10-19 | 網羅性の反映 (周 2): §11.3 の凍結の行を none にも広げ (凍結されうるのは `user_profiles` の行がある人)、none と current の凍結の解除・凍結中の退会・書き出し・有料プランの解約・お問い合わせの行を足した・プライバシーポリシー第12条の保存期間の表にプッシュ通知の宛先・AI 機能の利用回数・回数の制限の計数の行を足し、アプリの動作のログの行がブラウザのセキュリティ違反の報告を含むことを書いた (§10.2 の根拠も)・§15 に `MAIN_CLASS` (ページのローカル。`LEGAL_MAIN_CLASS` は新設しないと確定し §8.3 の注を直した)・`LEGAL_TEXT_FORBIDDEN_CLAIMS` (テストのローカル)・既存ファイルの変更の行を足した・冒頭の実装の範囲に既存のテスト 2 本を足し、`push-outbox.test.ts:176` の置き換えを任意から確定に (§14・§16)・§0.7 に章構成テンプレートとの対応表 (データモデルと API は該当なし)・§3 に法令の一次資料の表 (§3.1。消費者契約法・景品表示法・健康増進法・薬機法・特定商取引法の出典) を足し、要件の表を §3.2 にした・R-11 の保存期間の列挙 |
 | v1.4 | 2026-10-19 | 審査 R2 の反映: 施行日の仮置きを `'<公開日はマージ時に確定>'` から YYYY-MM-DD の形の仮の施行日 `'2026-10-19'` + 行末の目印のコメントに替えた (形を外すと `/api/legal/status` が 500・`legal-consent-api-schema`・`legal-status-route`・`legal-consent-page`・`policy-pages-public` のテストも赤になるため。段 B は全件緑・既知の赤なし。§0.6・§9.1・§9.4 の 3・§14・§16・T-17・Q-12)・プライバシーポリシー第3条の IP の文を実装 (IP の全体を保存し、ネットワークの範囲と Web のログインでは国も記録・本人の画面とお知らせのメールに出し運営も見る) に合わせた (F-17・§10.2・§11.2・T-28)・利用規約第16条 5 項と第18条 4 項を軽過失の全部免除から「第21条に定める範囲で責任を負う」に改めた (R-4・§3.2・§10.1・§11.2・T-28) |
 | v1.5 | 2026-10-19 | 網羅性の反映 (周 3): §16 の走査の範囲に `apps/mobile/__tests__` を足し、パス `/terms` `/privacy` を持つテスト 21 本がすべて表にあることを書いた。§16 に middleware の公開パスの番兵 3 本・ログイン / サインアップ / 保護者の同意書 / 認証の戻り先のリンク先の番兵 4 本・メンテナンス中のページの GET (`feature-flags-runtime`)・モバイルの番兵 5 本・版を `LEGAL_DOCUMENTS` から読む番兵 5 本・`legal-consent-api.test.ts:330` の施行日の直書き (無関係の入力値) の行を足した (すべて変更なし)。§4.1 の構造に `tests/legal-document-body.test.tsx` と既存のテスト 2 本の追随を足し、§13・§14・§15 と揃えた |
+| v1.6 | 2026-10-19 | 審査 R3 の反映: 利用規約第19条とプライバシーポリシー第16条から「一部のメールは設定画面で止められる」を外し、メールは止める設定が無いと書いた (F-34)。利用規約第24条 1 項・プライバシーポリシー第18条 1 項の「必要に応じてメールでもお知らせ」を外した (一斉メールの仕組みが無い)・利用規約第10条 4 項・第17条 1 項・プライバシーポリシー第13条 1 項・3 項に、版上げの後の同意の前は第24条 2 項 (お問い合わせからの削除と解約の依頼・開示の請求) によると書き、第24条 2 項に解約の依頼と、同意の前は設定画面を使えないことを足した (R-24・§11.3・Q-21・Q-23)・プライバシーポリシー第12条のお問い合わせの記録を、メールアドレスを伏せ件名と本文は残す実装に合わせた (F-36)・第11条の多要素認証を管理者などのロールに限った (F-35)・未ログインの日数を運営の一覧の判定の 30 日にし、T-6 を RPC の判定と見出しに結んだ (F-21・Q-22)・委託先の表の Expo の needle `exp.host` が `tests/push-expo-boundary-scan.test.ts` を赤にするので `EXPO_PUSH_SEND_URL` に替え、GitHub の needle も `apt-get install -y age` に替え、needle の規則 (§7) と T-7 の形の検査と §16 の走査テストの行を足した・同意の記録 (`terms_acceptances`) が IP と User-Agent を残す実装に合わせて F-17・§9.2・第3条・第12条を直し、IP・User-Agent を持つ表の全体 (F-37) を T-30 で第3条と突き合わせる形にした (`failed_invite_lookups` は書き込む処理が無いので第3条に載せない)・組織の管理者に見える項目を画面と API が読む項目 (表示名・組織内の役割・参加日・招待の状況・メンバー数と部署ごとの人数・チャレンジの参加人数と平均) にし、社員番号・最終ログイン・ライセンスの状態を外した (利用規約第6条・第12条・プライバシーポリシー第3条・第9条・F-19・T-32)・家族の招待の状況が代表者と大人のメンバーに見えることを第9条に書いた・利用規約第2条・第10条 5 項・第12条 5 項のライセンスの書き方を、参加できる人数の枠 (招待の承諾で 1 つ使う) と組織からの削除に合わせた。R-24〜R-25・F-34〜F-37・T-30〜T-33・§11.2 の 4 行・§16 の 5 行・§17 の 3 行・Q-21〜Q-25 |
