@@ -182,6 +182,7 @@ Web の画面で利用者がログアウトするときは、`clearUserScopedLoc
 
 - **`auth.users` を指す外部キーには、必ず `ON DELETE` を書く。** `NO ACTION` のままだと、参照する行が 1 件でも残っている利用者・運営者の `auth.admin.deleteUser` が外部キー違反で失敗する。本人だけの記録は `CASCADE`、サポート・会計・運営者の記録は行を残して `SET NULL` (列は NULL を許す形にする)。`tests/integration/security/auth-users-fk-on-delete.test.ts` が検査する。
 - 退会後も行が残る表に、利用者の生のメールアドレスを入れる列を足したら、`prepare_account_deletion` (migration `20261010000100`) で伏せるか、伏せない理由を同じテストの一覧 (H) に書く。
+- 退会と書き出しの画面 (Web) は 3 つ: 設定 (`/settings`)・凍結中の `/frozen/account`・利用規約とプライバシーポリシーに同意する前の `/legal-consent/account` (#1901・設計書 cross/20 Q-23。同意画面の下のパスなので同意ゲートと初期設定の差し戻しの対象外)。後の 2 つは共通の部品 `src/components/account/AccountSelfServicePanel.tsx` を使い、呼ぶ API は `POST /api/account/delete` と `GET /api/account/export` (どちらも同意の許可リストと凍結中の許可リストにある) だけ。アプリは `apps/mobile/app/settings/account.tsx`。
 - 利用者のファイルを置く Storage は、先頭のフォルダを `<user_id>/` にする (`src/lib/storage-paths.ts`)。退会はこのフォルダを丸ごと消す (`src/lib/account-deletion-storage.ts`)。それ以外の場所に置くと、DB の URL から辿れるものだけが消える。
 
 ### エラー境界 (画面の描画中の例外を受ける)
