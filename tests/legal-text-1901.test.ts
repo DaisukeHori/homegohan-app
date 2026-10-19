@@ -938,6 +938,15 @@ describe('#1901 約束の文は実装に合わせてある', () => {
     ]) {
       expect(privacyBody, phrase).not.toContain(phrase);
     }
+
+    // #1901 R1: 設計書 §9.4 の 2 (改定の予告) でお知らせに載せる中身も、利用規約第24条2項 (同意の前でも退会と書き出しができる) と食い違わない
+    const announcementSteps = readRepo(DESIGN_DOC)
+      .split('\n')
+      .filter((line) => line.startsWith('2. ') && line.includes('改定の予告を載せる'));
+    expect(announcementSteps, '§9.4 の 2 の行').toHaveLength(1);
+    expect(termsBody).toContain('退会とデータの書き出しは、同意の前でも行うことができます');
+    expect(announcementSteps[0]).toContain('同意の前でも開示等の請求・お問い合わせ・退会とデータの書き出し');
+    expect(announcementSteps[0]).not.toContain('同意したうえで');
   });
 
   it('T-37 家族の役割は代表者・大人・子どもの 3 つで、本人のアカウントをつないだ未成年者は大人になる (利用規約第11条の「代表者」とプライバシーポリシー第9条の「家族グループのメンバー」の前提)', () => {

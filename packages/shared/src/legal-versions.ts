@@ -45,8 +45,8 @@ export interface LegalDocumentInfo {
  * 仮の値も YYYY-MM-DD の形の実在する日付にする (形を外すと /api/legal/status が 500 を返し、同意画面とテストが壊れる)。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.1', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
-  privacy_policy: { version: 'v2026.1', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
+  terms_of_service: { version: 'v2026.1', effectiveDate: '2026-10-19' },
+  privacy_policy: { version: 'v2026.1', effectiveDate: '2026-10-19' },
 };
 
 /** 画面に出す文書名 */
