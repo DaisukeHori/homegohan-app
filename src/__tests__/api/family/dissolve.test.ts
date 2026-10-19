@@ -253,7 +253,7 @@ describe('POST /api/family/dissolve: 成功と通知 (#1917)', () => {
   it('通知先の解決・送信が失敗しても 200。ログに宛先のアドレスを残さない', async () => {
     fake.authFailures.add(ADULT_ID);
     mocks.sendEmail.mockImplementation(async (envelope: SentEmail) => {
-      if (envelope.to === TEEN_EMAIL) throw new EmailSendError('resend down');
+      if (envelope.to === TEEN_EMAIL) throw new EmailSendError('outbox_failed', 'outbox down', null, 0, true);
       return { ok: true, id: 'email-1' };
     });
 
