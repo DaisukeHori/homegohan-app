@@ -2616,7 +2616,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
 | old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 退会したい | old / none のまま退会はできない。同意画面で同意すれば current になり、そのあと設定画面から退会できる (下の current × 退会) | — | 退会の画面 (`/settings`) は同意画面へ回る (F-32)。同意画面に退会のボタンは無い。退会の API (`/api/account/delete`) は同意の許可リストにあるが、この人に出す入口が無い。運営が代わりに削除する経路も無い (F-40)。`declined` の画面の文はお問い合わせによる削除を約束するが、裏付けが無い (§17 で画面の文を直す)。利用規約第17条 1 項・第24条 2 項とプライバシーポリシー第13条 1 項は「改定後の内容に同意したうえで設定画面から退会」と書き、お問い合わせによる削除は書かない。同意の前に本人が退会できる入口は Q-23 |
 | current | 退会 | (削除) | 組織のオーナー・家族の代表者でない (`findBlocker`) | 即時削除。`terms_acceptances`・`external_data_consents` も消える (F-26)。利用規約第17条・プライバシーポリシー第12条・第13条のとおり残るものだけ残る |
 | current | 退会 (組織のオーナー・家族の代表者) | current (退会できない) | `findBlocker` に当たる | 409 `ACCOUNT_DELETE_BLOCKED_ORG_OWNER` / `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE` → 画面は譲渡の画面へ案内 (`ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE`)。譲渡の相手は 18 歳以上のメンバー (承諾できるのは 18 歳以上。F-38)。譲渡が済むと次の退会で上の行。利用者が解散する手段は無く、譲渡できる相手がいなければお問い合わせ (利用規約第11条 5 項・第12条 4 項・第17条 2 項。F-39・Q-26) |
-| current | 家族グループから退出 (代表者以外) | current | `leave_family` が代表者を断る (`IS_FAMILY_REPRESENTATIVE`) | 行の `status` が `left` になり、ほかのメンバーはその人の食事の記録と献立を読めなくなる (F-49)。未成年者なら保護者の同意とのつながりが切れる (下の行) |
+| current | 家族グループから退出 (代表者以外) | current | `leave_family` が代表者を断る (`IS_FAMILY_REPRESENTATIVE`) | 行の `status` が `left` になり、ほかのメンバーはその人の食事の記録と献立を読めなくなる (F-49)。その人が招待を受けて参加していた場合、承諾済みの招待とその宛先のメールアドレス (参加の時点の登録のアドレス) は招待の一覧に残り、代表者と大人が読める (F-51。プライバシーポリシー第9条)。未成年者なら保護者の同意とのつながりが切れる (下の行) |
 | old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 請求・問い合わせ | old / none | — | 画面 (`/settings/data-requests`・`/contact`) は同意ゲートの対象外で開け、API も許可リストで通る |
 | old / none (凍結でない。18 歳未満の案内 (`minor_refused` / `guardian_missing`) が出る人を除く) | 書き出し・有料プランの解約 | old / none (画面からはできない) | — | 画面 (`/settings`・`/account/billing`) は同意画面へ回る。API は許可リストで通るが、入口の画面が無い。データの開示は請求 (開示) で行える (プライバシーポリシー第13条 3 項)。解約は `/contact` から依頼し、運営が決済代行事業者の管理画面で行う (運用。コードの経路は無い。Q-21)。利用規約第10条 4 項と第24条 2 項はこの経路を書く。自動更新の日までに依頼が処理されないと更新されるので、運用の手順と期限は Q-21 |
 | current | 文面だけの修正 (版据え置き) | current | §9.3 | 何も起きない |
@@ -2633,6 +2633,7 @@ export const LEGAL_CLAIMS: readonly LegalClaim[] = [
 | none / old / current (18 歳未満・つながり有り) | 保護者の同意とのつながりが切れる (家族から外れる・家族の解散・案内を断る / 取り消される / 期限が切れる) | 同じ状態のまま (gap に `guardian_consent` が加わる) | — | 次の画面の取得で `/legal-consent` に `guardianMissingHeading`・`guardianMissingBody` と退会ボタンだけ (同意のボタンは出ない)。`/api` は 403 `LEGAL_CONSENT_REQUIRED` (許可リスト以外。退会は通る)。プッシュの判定は版だけを見るので、current の人には届き続ける (F-7) |
 | none / old / current (18 歳未満・つながり無し) | 保護者が家族に追加し直し、本人が案内を承諾する / 18 歳になる | 同じ状態のまま (gap の `guardian_consent` が消える) | — | current なら通常どおり使える。old・none なら同意画面 (版の同意) が残る |
 | none / old / current (18 歳未満・つながり無し) | 退会 (「登録をやめる（アカウントを削除する）」) | (削除) | — | 即時削除 (`withdrawnHeading`・`withdrawnBody`) |
+| any (家族グループのメンバー) | 運営が家族グループを解散する (代表者が 30 日以上ログインしていないときなど。F-21・F-39) | 同じ状態のまま | 運営の操作 | グループは `dissolved` になる。解散から `LEGAL_FACTS.dissolvedFamilyGroupRetentionDays` 日で、毎日のジョブがグループとメンバーの行・招待・未成年者の本人のアカウントをつなぐ案内を物理削除する。保護者の同意の記録を持つグループは削除せずに残す (F-53。利用規約第11条 6 項・プライバシーポリシー第12条)。つないだ未成年者は保護者の同意とのつながりが切れる (上の行) |
 | any | デプロイを戻す (v2025.1) | current → 未同意判定 | — | v2026.1 に同意した人にも同意画面 (§9.4 の 6) |
 
 ---
