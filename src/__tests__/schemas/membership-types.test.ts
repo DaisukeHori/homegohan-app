@@ -115,6 +115,16 @@ describe('membership Zod schema 構文チェック', () => {
       plan: null,
       status: 'dissolved',
       contact_email: null,
+      contact_name: null,
+      industry: null,
+      employee_count: null,
+      logo_url: null,
+      settings: null,
+      subscription_status: null,
+      subscription_expires_at: null,
+      dissolved_at: '2026-10-19T00:00:00.000Z',
+      created_at: '2026-05-11T00:00:00.000Z',
+      updated_at: '2026-10-19T00:00:00.000Z',
     });
     expect(result.success).toBe(true);
   });

@@ -57,9 +57,14 @@ function functionSource(sql: string, name: string): { header: string; body: stri
   return { header: rest.slice(0, opened.index), body: rest.slice(bodyStart, bodyEnd), whole: rest.slice(0, bodyEnd + 2) };
 }
 
-/** 本体の中の UPDATE 文 (UPDATE から ; まで) を、空白を 1 つにそろえて並べる */
+/** 行コメント (-- から行末まで) を外す (関数の本体の中のコメントも外す) */
+function stripLineComments(sql: string): string {
+  return sql.replace(/--[^\n]*/g, '');
+}
+
+/** 本体の中の UPDATE 文 (行頭の UPDATE から ; まで。FOR NO KEY UPDATE は文の頭ではないので数えない) を、空白を 1 つにそろえて並べる */
 function updateStatements(body: string): string[] {
-  return [...body.matchAll(/\bUPDATE\s[^;]*;/g)].map((m) => m[0].replace(/\s+/g, ' ').trim());
+  return [...stripLineComments(body).matchAll(/^\s*UPDATE\s[^;]*;/gm)].map((m) => m[0].replace(/\s+/g, ' ').trim());
 }
 
 /** 文の中の識別子の public. / pg_catalog. の接頭辞を外す (土台は search_path = public で接頭辞なしに書く) */
@@ -277,9 +282,12 @@ describe('#1917 家族グループ・組織の解散 (段 A の migration) の�
   });
 
   it('C-12 migration の中に、関数の外の DELETE・TRUNCATE が無い', () => {
-    const outsideFunctions = code.replace(/AS \$\$[\s\S]*?\$\$;/g, '');
+    // COMMENT ON の文字列 (「ON DELETE RESTRICT のまま」) は文ではないので、文字列のリテラルを外してから見る
+    const withoutStrings = stripLineComments(code).replace(/'(?:[^']|'')*'/g, "''");
+    const outsideFunctions = withoutStrings.replace(/AS \$\$[\s\S]*?\$\$;/g, '');
     expect(outsideFunctions).not.toMatch(/\bDELETE\b|\bTRUNCATE\b/i);
-    expect(code).not.toMatch(/\bDELETE\b|\bTRUNCATE\b/i);
+    // 関数の中にも行を消す文は無い
+    expect(withoutStrings).not.toMatch(/\bDELETE\s+FROM\b|\bTRUNCATE\b/i);
   });
 
   it('C-13 guard_family_groups_privileged は RETURNS trigger・LANGUAGE plpgsql で SECURITY DEFINER も SET search_path も持たず、5 列を守る。rollback は 20251126124224 の定義と逐語で同じ', () => {
