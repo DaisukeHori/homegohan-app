@@ -138,7 +138,7 @@ export function createLogger(functionName: string, requestId?: string) {
       level,
       message,
       metadata,
-    }).catch(() => {});
+    });
   };
 
   return {
