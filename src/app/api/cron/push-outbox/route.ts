@@ -16,7 +16,6 @@
  */
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
-import { waitUntil } from '@vercel/functions';
 import { PUSH_NOTIFICATION_KIND_SPECS } from '@homegohan/shared';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { internalError } from '@/lib/api/errors';
@@ -38,13 +37,6 @@ export const maxDuration = 60; // Vercel Pro: 60s。送信は PUSH_OUTBOX_RUN_BU
 /** 構造化ログ (app_logs.function_name) の名前。cron/app-log-alerts と同じ付け方 */
 const ROUTE_NAME = 'cron/push-outbox';
 
-/**
- * 応答を返したあとも関数を延命する時間 (ミリ秒)。
- * createLogger の書き込みは待たずに進む (非同期)。応答を返した直後に関数が止められると、書き込み中のログ (回の要約・dead の理由) が
- * 失われることがあるので、少しだけ延命して書き切らせる (app-log-alerts の route と同じ)。
- */
-const LOG_FLUSH_GRACE_MS = 1000;
-
 export async function GET(req: Request) {
   // 1. 認証 (401 / 503)
   const authError = await requireCronAuth(req);
@@ -62,14 +54,12 @@ export async function GET(req: Request) {
     if (!accessToken) {
       const cleaned = await store.cleanup();
       logger.warn('EXPO_ACCESS_TOKEN が未設定のため、Push 通知を送りません (掃除だけをしました)', { ...cleaned });
-      const response = NextResponse.json({
+      return NextResponse.json({
         status: 'not_configured',
         cleaned_expired: cleaned.expired,
         cleaned_sent: cleaned.sent,
         cleaned_dead: cleaned.dead,
       });
-      waitUntil(new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_GRACE_MS)));
-      return response;
     }
     const settings = resolvePushOutboxSettings({
       maxAttempts: process.env.PUSH_OUTBOX_MAX_ATTEMPTS,
@@ -98,12 +88,12 @@ export async function GET(req: Request) {
     if (summary.claimed > 0 || summary.receipts_claimed > 0 || summary.cleaned_expired > 0) {
       logger.info('Push の送信待ちを処理しました', { ...summary });
     }
-    const response = NextResponse.json({
+    // ログの保存 (回の要約・dead の理由。待たずに進む) は、createLogger が 1 行ごとに保存が終わるまで関数を止めさせない (#1909)。
+    // route では延命しない
+    return NextResponse.json({
       status: summary.claimed === 0 && summary.receipts_claimed === 0 ? 'idle' : 'processed',
       ...summary,
     });
-    waitUntil(new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_GRACE_MS)));
-    return response;
   } catch (err) {
     // 5. RPC の失敗・応答の形の誤りは 500 (本文は汎用)
     return internalError(ROUTE_NAME, err, { requestId });
