@@ -1,9 +1,9 @@
 # 家族グループ・組織の解散 — 代表者・オーナーが自分で解散する (#1917)
 
-> 版: v1.5 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
+> 版: v1.6 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
 > 位置づけ: 家族グループの代表者と組織のオーナーが、運営の手を介さずに自分の家族グループ・組織を解散し、そのあと退会できるようにする設計の正典。家族 (`family/`) と組織 (`org/`) の両方を 1 冊で扱う (解散の後始末は運営の強制解散 `operator_force_dissolve_family` / `operator_force_dissolve_org` と同じにし、同じ関数を 2 つの入口から呼ぶため)。組織の側の既存の設計は `docs/design/org/05-offboarding-flow.md` §7.3 (古い設計。`archived` 前提) と `docs/design/membership/05-operator-emergency-ui.md` §4 (運営の強制解散) を参照する。範囲の正本は Issue #1917 の本文とコメント。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` は 0 行・`organizations` は active 2 行 (`owner_id` あり)・`parental_consents` は 0 行・`ownership_transfer_proposals` は 0 行。2026-10-19 に読み取りで実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映 (§26)。
+> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映 (§26)。
 
 ---
 
@@ -161,7 +161,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 ---
 
-## 5. ユーザーシナリオ (29 本)
+## 5. ユーザーシナリオ (30 本)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -194,6 +194,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | S-27 | 自己解散と招待の承諾を本物の経路で 8 回ずつ同時に呼ぶ (結合テスト) | デッドロックせず、全部終わったあと解散済みの家族に active が 1 人も残らない |
 | S-28 | 解散した家族の元代表者が 30 日以上ログインしていない | 運営の未ログインの家族の一覧 (`/operator/membership/families/inactive`・`list_families_with_inactive_representative`) に出ない。一覧は `family_groups.status = 'active'` の家族と active な代表者のメンバーの行で結合するので (`representative_id` は読まない)、解散済みの家族は今までどおり出ない。解散済みの家族に運営の対応は要らない |
 | S-29 | 解散した組織の元オーナーが 30 日以上ログインしていない | 運営の未ログインの組織の一覧 (`/operator/membership/orgs/inactive`・`list_orgs_with_inactive_owner`) に出ない。一覧は `user_profiles` の `organization_id = 組織` かつ `org_role = 'owner'` の行で結合し (`owner_id` は読まない)、解散は全員の所属の列を外すので結合に当たらない (運営の強制解散と同じ)。画面の `owner_id` (`InactiveOwnerTable`) は一覧の `owner_user_id` (`user_profiles.id`) から作るので NULL にならない |
+| S-30 | オーナーが解散を押すのと同時に、招待された人が同じ組織の招待を承諾する | 直列にならない (組織の招待の承諾は組織の行をロックせず、組織の `status` も見ない。Q-4)。解散は 200。承諾が解散の宛先の集計より前に commit していれば、その人も所属が外れ、解散のメールが届く。集計のあと・後始末の UPDATE の前に commit していれば、所属は外れるがメールは届かない。後始末の UPDATE の時点で承諾が commit していなければ (解散が先に commit した場合も)、その人は解散した組織に所属したまま残る (Q-4 と同じ既存の欠陥。本書は直さない)。どの順でもデッドロックしない (待ち合うのは `org_license_pools` の 1 行だけ) |
 
 ---
 
@@ -255,9 +256,10 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | S-24 | middleware の順 凍結 → メンテナンス → 同意 (F-16)。`/api/family/dissolve` は `isMaintenanceExemptPath` の外 → 503。`dissolveOwnScope` は `!res.ok` を `failed` にし、画面は本文の code から文を引く (`membershipErrorMessageOfBody` は `MAINTENANCE_MODE` を知らないので汎用の文) |
 | S-25 | route: `getUser` 失敗 → 401。RPC: `REVOKE … FROM PUBLIC, anon` → 42501 |
 | S-26 | 部品の「キャンセル」が `onCancel` を呼び、親が区画を閉じる。入力の state は部品の中なので unmount で消える |
-| S-27 | §21.4 D-7。家族の行を最初に取る関数どうしなので 1 件ずつ処理される (#1310 の N1 と同じ) |
+| S-27 | §21.2 D-8。家族の行を最初に取る関数どうしなので 1 件ずつ処理される (#1310 の N1 と同じ) |
 | S-28 | `list_families_with_inactive_representative` (最新の定義 `supabase/migrations/20261017130000_operator_mfa_db_gate.sql:91-126`) は `JOIN family_members fm ON fm.family_id = fg.id AND fm.role = 'representative' AND fm.status = 'active'`・`JOIN auth.users au ON au.id = fm.user_id`・`WHERE fg.status = 'active'` (`:119-123`) → 解散した家族は `status = 'dissolved'` で、代表者のメンバーの行も `left` → 出ない。`representative_id` を読まないので NULL の影響は無い。本書は関数を変えない |
 | S-29 | `list_orgs_with_inactive_owner` (最新の定義 同ファイル `:129-163`) は `JOIN user_profiles up ON up.organization_id = o.id AND up.org_role = 'owner'`・`JOIN auth.users au ON au.id = up.id` (`:159-160`) → `org_dissolve_apply` が全員の `organization_id` / `org_role` を NULL にする → 結合に当たらず出ない。画面 (`src/app/(operator)/operator/membership/orgs/inactive/page.tsx:28, 85`) は `owner_user_id` を `InactiveOwner.owner_id` (`src/components/operator/membership/InactiveOwnerTable.tsx:13`。`string`) に写し、`dissolved` の行を落とす。`owner_user_id` は `up.id` なので NULL にならない。本書は関数・画面を変えない |
+| S-30 | 解散: 本人の `user_profiles` → 組織の行 (どちらも NO KEY UPDATE) → 宛先の集計 (`SELECT … FROM user_profiles WHERE organization_id = p`) → apply の `UPDATE user_profiles … WHERE organization_id = p` → `org_license_pools` → 組織の行。承諾 (`accept_org_invite`。最新の定義 `supabase/migrations/20261017160000_org_invite_same_org_member.sql`): 招待の行 (FOR UPDATE) → 承諾者の `user_profiles` の `INSERT … ON CONFLICT DO UPDATE … WHERE user_profiles.organization_id IS NULL` (外部キー `user_profiles_organization_id_fkey` の確認で組織の行に KEY SHARE。解散の NO KEY UPDATE と衝突しない) → `org_license_pools` (FOR UPDATE) → +1。解散の UPDATE は承諾者の行の commit 済みの版 (所属が NULL) を WHERE で外すので、その行を待たない。共有して待ち合うのは `org_license_pools` の 1 行だけ → 待ちの向きが 1 つでデッドロックしない。各文は文の時点で commit 済みの版を読む (READ COMMITTED) ので、承諾の commit の位置で S-30 の期待の 3 通りに分かれる。`org_license_pools` は、承諾が先に取っていれば解散が待って 0 に、解散が先に取っていれば承諾が待って 0 から +1 になる |
 
 ---
 
@@ -293,7 +295,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 ## 8. ① 全パターン表 (立場 × 状態 × 入口 → 何が起きるか)
 
-状態: 通常 / 凍結中 (`frozen_at`) / 未同意 (版上げ後に新しい版に未同意・凍結でない) / メンテナンス中 / 並行 (解散と、同じ家族・組織の譲渡の提案や招待の承諾が同時に走る) / pending が残る (解散のときに譲渡の提案・招待が pending で残っている)。入口: 設定 (`/settings/membership`・`/settings` の退会) / 凍結中の画面 (`/frozen/account`) / 同意の前の画面 (`/legal-consent/account`) / モバイル (ネイティブのアカウント画面 → WebView) / API 直接。
+状態: 通常 / 凍結中 (`frozen_at`) / 未同意 (版上げ後に新しい版に未同意・凍結でない) / メンテナンス中 / 並行 (解散と、同じ家族・組織の譲渡の提案や招待の承諾が同時に走る。解散する側の凍結中・未同意と、承諾する側の凍結中・未同意とも交差させる) / pending が残る (解散のときに譲渡の提案・招待が pending で残っている)。入口: 設定 (`/settings/membership`・`/settings` の退会) / 凍結中の画面 (`/frozen/account`) / 同意の前の画面 (`/legal-consent/account`) / モバイル (ネイティブのアカウント画面 → WebView) / API 直接。
 
 | 立場 | 状態 | 入口 | 何が起きるか |
 |---|---|---|---|
@@ -312,6 +314,8 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 家族の代表者 | 未同意 | モバイル | 同意のゲート (`apps/mobile/src/components/legal/LegalConsentGate.tsx`) が Stack を同意画面 1 つに畳む (ネイティブのアカウント画面も `app/settings/membership.tsx` も `MOBILE_LEGAL_CONSENT_EXEMPT_PATHS` に無い。既存の決まりのまま)。同意画面は Web の `/legal-consent` の WebView で、その中で `/legal-consent/account` へ進めるので、「未同意 × `/legal-consent/account`」の行と同じ (退会のあとの `sign-out` と「閉じる」は #1901 の既存の動き。F-29)。同意したあとは「通常 × モバイル」の行と同じ |
 | 家族の代表者 (と、譲渡の提案を受けた大人) | 並行 (代表者が解散を押すのと同時に、大人が代表者の譲渡の提案を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 家族の行のロックで直列 (§11.3)。承諾が先なら解散は 403 `NOT_FAMILY_REPRESENTATIVE` (画面は失敗の文。家族は active のまま・新代表者が解散できる)。解散が先なら承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` (家族は dissolved のまま)。デッドロックしない (S-16・D-8) |
 | 家族の代表者 (と、招待された人) | 並行 (代表者が解散を押すのと同時に、招待された人が同じ家族の招待を承諾する) | 同上 | 家族の行のロックで直列。承諾が先なら、その人も apply で `left` になり、RPC がロックのあとに集める `member_user_ids` に入るのでメールも届く。解散が先なら承諾は `FAMILY_NOT_FOUND`。解散済みの家族に active が残らない (S-17・S-27・D-8) |
+| 家族の代表者 (と、譲渡の提案を受けた大人・招待された人) | 並行 × 凍結中 / 未同意 (凍結中か未同意の代表者が解散の区画で解散を押すのと同時に、ほかの人が譲渡の提案・招待を承諾する) | `/frozen/account`・`/legal-consent/account` の解散の区画 / API 直接 | RPC は凍結・同意を見ない (D-14) ので、直列と結果は「並行」の 2 行と同じ。承諾した側の操作は middleware を通る (承諾する人は凍結中でも未同意でもない)。譲渡の承諾が先で解散が 403 `NOT_FAMILY_REPRESENTATIVE` になったら、区画は失敗の文を出す (§15.2。もう一度押しても 403)。代表者でなくなったので、同じ画面で退会を押すと `findBlocker` の 409 に当たらず、退会の扱いは今までどおり (本書は変えない)。解散が先なら、そのあとの退会は 200 |
+| 家族の代表者 (と、凍結中か未同意の大人・招待された人) | 並行の相手が凍結中 / 未同意 (承諾する側が凍結中か、新しい版に未同意) | 承諾の API (`/api/family/representative-transfer/[id]/accept`・`/api/family/invites/[id]/accept`) | 承諾の API は凍結の例外 (`FROZEN_ALLOWED_API_PATHS`) にも同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`) にも無いので、middleware が 403 `AUTH_ACCOUNT_FROZEN` / 403 `LEGAL_CONSENT_REQUIRED` (同意の強制が有効なとき) で止め、RPC に届かない。並行は起きず、解散は「通常」の行と同じ。同意の強制が無効なときの未同意の人の承諾は「並行」の行と同じ (既存の決まりのまま。本書は変えない) |
 | 家族の代表者 | pending が残る (代表者の譲渡の提案・家族の招待) | メンバーシップ設定 / API 直接 | 解散は 200 (RPC は提案・招待に触らない。§0.4)。残った提案の承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY`、招待の承諾は `FAMILY_NOT_FOUND` で止まる (S-21) |
 | 家族の大人 / アカウントを持つ子供 | 通常 | メンバーシップ設定 | 解散の区画は出ない (今までどおり「家族を表示」「家族から脱退」)。API 直接は 403 |
 | 家族の大人 / アカウントを持つ子供 | 凍結中 | `/frozen/account` の退会 | 代表者でないので `findBlocker` の 409 は出ず、解散の区画も出ない (`blockedScope` は 409 のときだけ入る。§15.4)。退会の扱いは今までどおり (本書は変えない) |
@@ -339,6 +343,9 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 組織のオーナー | 凍結中 (未同意 + 凍結中も同じ) | モバイル | 凍結のゲートが Stack を凍結の画面 1 つに畳む (家族の代表者の「凍結中 × モバイル」と同じ)。凍結の画面の WebView の `/frozen/account` から「凍結中 × `/frozen/account`」の行と同じ (組織の名前つきの解散の区画) |
 | 組織のオーナー | 未同意 | モバイル | 同意のゲートが Stack を同意画面 1 つに畳み、その WebView の `/legal-consent/account` から「未同意 × `/legal-consent/account`」の行と同じ (家族の代表者の「未同意 × モバイル」と同じ)。同意したあとは「通常 × モバイル」の行と同じ |
 | 組織のオーナー (と、譲渡の提案を受けた admin / member) | 並行 (オーナーが解散を押すのと同時に、提案を受けた人がオーナーの譲渡の提案を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 本人 (オーナー) の `user_profiles` の行のロックで直列 (§11.3)。承諾が先なら解散は 403 `NOT_ORG_OWNER` (組織は active のまま・新オーナーが解散できる)。解散が先なら承諾は失敗 (`TRANSFER_ACCEPTOR_NOT_IN_ORG` か CHECK `user_profiles_org_consistency`。S-18)。組織は dissolved のまま。デッドロックしない (D-9) |
+| 組織のオーナー (と、招待された人) | 並行 (オーナーが解散を押すのと同時に、招待された人が同じ組織の招待を承諾する) | メンバーシップ設定 / API 直接 (どちらの入口も同じ RPC) | 直列にならない (承諾は組織の行をロックせず、組織の `status` も見ない。Q-4)。解散は 200。承諾の commit が解散の宛先の集計より前ならその人も所属が外れメールも届く・集計と後始末の UPDATE の間なら所属は外れるがメールは届かない・後始末の UPDATE の時点で未 commit なら (解散が先に commit した場合も) 解散した組織に所属したまま残る (Q-4。本書は直さない)。デッドロックしない (S-30・D-15) |
+| 組織のオーナー (と、譲渡の提案を受けた admin / member・招待された人) | 並行 × 凍結中 / 未同意 (凍結中か未同意のオーナーが解散の区画で解散を押すのと同時に、ほかの人が譲渡の提案・招待を承諾する) | `/frozen/account`・`/legal-consent/account` の解散の区画 / API 直接 | RPC は凍結・同意を見ない (D-14 と同じ) ので、直列と結果は「並行」の 2 行と同じ。譲渡の承諾が先で解散が 403 `NOT_ORG_OWNER` になったら、区画は失敗の文を出す (§15.2。もう一度押しても 403)。オーナーでなくなったので、同じ画面で退会を押すと `findBlocker` の 409 に当たらず、退会の扱いは今までどおり (本書は変えない)。解散が先なら、そのあとの退会は 200 |
+| 組織のオーナー (と、凍結中か未同意の admin / member・招待された人) | 並行の相手が凍結中 / 未同意 (承諾する側が凍結中か、新しい版に未同意) | 承諾の API (`/api/org/owner-transfer/[id]/accept`・`/api/org/invites/[id]/accept`) | 承諾の API は凍結の例外にも同意の許可リストにも無いので、middleware が 403 `AUTH_ACCOUNT_FROZEN` / 403 `LEGAL_CONSENT_REQUIRED` (同意の強制が有効なとき) で止め、RPC に届かない。並行は起きず、解散は「通常」の行と同じ。同意の強制が無効なときの未同意の人の承諾は「並行」の行と同じ (既存の決まりのまま。本書は変えない) |
 | 組織のオーナー | pending が残る (組織の招待・オーナーの譲渡の提案) | メンバーシップ設定 / API 直接 | 解散は 200 (RPC は招待・提案に触らない。§0.4)。招待の承諾は組織の `status` を見ないので通る (既存。Q-4)。提案の承諾は `TRANSFER_ACCEPTOR_NOT_IN_ORG` で止まる (S-22) |
 | 組織の admin / member | 通常 | メンバーシップ設定 | 解散の区画は出ない (「組織から脱退」のまま)。API 直接は 403 |
 | 組織の admin / member | 凍結中 | `/frozen/account` の退会 | オーナーでないので `findBlocker` の 409 は出ず、解散の区画も出ない。退会の扱いは今までどおり (本書は変えない) |
@@ -410,6 +417,9 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | active | 代表者以外が解散の API | active | — | 403。何も変わらない |
 | active | 代表者が退会 | active | `findBlocker` が止める | 409 `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE` (案内はメンバーシップ設定へ) |
 | active | 代表者の譲渡の承諾 | active (`representative_id` が新代表者) | 既存 | 既存 (旧代表者は退会できるようになる) |
+| active | 招待の承諾 (`accept_family_invite`) | active (承諾した人が active のメンバー) | 家族の行を最初にロック (#1310)・招待 (期限・宛先のメール)・`ALREADY_IN_FAMILY`・家族が active・人数の上限 | 既存。解散と同時なら家族の行で直列 (S-17・S-27): 承諾が先なら解散の apply がその人も `left` にし、宛先にも入る。解散が先なら承諾は `FAMILY_NOT_FOUND` |
+| active | 子供の追加 (`add_family_child`) | active (子供の行が増える) | 呼んだ人が家族の active な大人 (ロックの前)・生年月日と保護者の同意・家族の行 (FOR UPDATE) のロック下で家族が active・人数の上限 | 既存。解散と同時なら家族の行で直列: 追加が先なら解散の apply が子供の行も `left` にする (同意は `member_left` で取り消し。アカウントの無い子供は宛先に入らない)。解散が先なら `NOT_FAMILY_ADULT` (大人の判定の前に解散が commit) か `FAMILY_NOT_FOUND` (判定のあとでロックを待った場合) |
+| active | 大人・子供の退出 (`leave_family`) / 大人による除名 (`remove_family_member`) | active (その人の行が `left`) | 家族の行のロック (#1310)・本人 / 対象が active・代表者は退出も除名もできない (`IS_FAMILY_REPRESENTATIVE`) | 既存。解散と同時なら家族の行で直列: 退出・除名が先ならその人は解散の宛先に入らない (メールは届かない)。解散が先なら `NOT_IN_FAMILY` / `NOT_FAMILY_ADULT` |
 | active | 代表者が RLS で DELETE (REST 直接) | (消える) | `representative_id = auth.uid()` | 既存。CASCADE。本書は触らない (§0.4) |
 | dissolved | 代表者 (元) が解散の API | dissolved | — | 409 `FAMILY_ALREADY_DISSOLVED` |
 | dissolved | 運営が強制解散 | dissolved | super_admin + MFA | 既存どおり通る (`dissolved_at` を上書き。監査 1 行)。変えない |
@@ -428,6 +438,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | active | オーナー以外が解散の API | active | — | 403 `NOT_ORG_OWNER` |
 | active | オーナーが退会 | active | `findBlocker` | 409 `ACCOUNT_DELETE_BLOCKED_ORG_OWNER` |
 | active | オーナーの譲渡の承諾 | active (`owner_id` が新オーナー) | 既存 | 既存 |
+| active | 組織の招待の承諾 (`accept_org_invite`) | active (承諾した人の所属の列が入る・`used_licenses` +1) | 招待の行 (FOR UPDATE)・期限・宛先のメール・`ALREADY_IN_ORG`・`IS_ORG_OWNER`・席数 (`org_license_pools` FOR UPDATE)。組織の行はロックしない (外部キーの確認の KEY SHARE だけ)・組織の `status` を見ない | 既存。解散と同時でも直列にならない (S-30): 承諾の commit が解散の宛先の集計より前なら所属も外れメールも届く・集計と後始末の UPDATE の間なら所属は外れるがメールは届かない・後始末の UPDATE の時点で未 commit なら解散した組織に所属が残る (Q-4)。待ち合うのは `org_license_pools` の 1 行だけでデッドロックしない (D-15) |
 | dissolved | 元オーナーが解散の API | dissolved | — | 409 `ORG_ALREADY_DISSOLVED` |
 | dissolved | 運営が強制解散 | dissolved | — | `ORG_ALREADY_DISSOLVED` (既存。route は 500 `internalError`) |
 | dissolved | 元オーナーが退会 | dissolved (`owner_id` NULL のまま) | — | 200 |
@@ -945,7 +956,7 @@ COMMENT ON COLUMN public.organizations.owner_id IS NULL;
 |---|---|---|---|
 | `dissolve_family_by_representative` | `family_groups` (NO KEY UPDATE) → `family_members` → `user_profiles` | `accept_family_invite`・`add_family_child`・`accept_family_representative_transfer`・`leave_family`・`remove_family_member`・`accept_child_promotion`・`operator_force_dissolve_family` (すべて家族の行が先。#1310) | F-10。`CLAUDE.md` の一覧に本関数を足す (§24) |
 | `operator_force_dissolve_family` | 同上 (変えない) | 同上 | F-4 |
-| `dissolve_org_by_owner` | `user_profiles` (本人。NO KEY UPDATE) → `organizations` (NO KEY UPDATE) → `user_profiles` (全員) → `org_license_pools` → `organizations` | `accept_org_owner_transfer` (提案 → 旧オーナーの `user_profiles` → 新オーナーの `user_profiles` → `organizations`): 旧オーナー = 本人の行で直列 (S-18)。`leave_org` (本人の行 → `org_license_pools`): 解散が後始末で他のメンバーの行を待つ間、`leave_org` は `org_license_pools` を取って commit するので待ち合わない。`accept_org_invite` (招待の行 → `user_profiles` の INSERT/UPDATE → `org_license_pools` FOR UPDATE): 新しい人の行は解散の UPDATE の対象外 (所属がまだ無い) か、承諾の commit 後なら対象。`org_license_pools` を先に取る関数が `organizations` を待つことは無い | F-11。組織の行を最初に取ると、承諾 (`user_profiles` → `organizations`) と逆向きになり 40P01 になりうるので取らない |
+| `dissolve_org_by_owner` | `user_profiles` (本人。NO KEY UPDATE) → `organizations` (NO KEY UPDATE) → `user_profiles` (全員) → `org_license_pools` → `organizations` | `accept_org_owner_transfer` (提案 → 旧オーナーの `user_profiles` → 新オーナーの `user_profiles` → `organizations`): 旧オーナー = 本人の行で直列 (S-18)。`leave_org` (本人の行 → `org_license_pools`): 解散が後始末で他のメンバーの行を待つ間、`leave_org` は `org_license_pools` を取って commit するので待ち合わない。`accept_org_invite` (招待の行 → `user_profiles` の INSERT/UPDATE → `org_license_pools` FOR UPDATE): 新しい人の行は解散の UPDATE の対象外 (所属がまだ無い) か、承諾の commit 後なら対象 (S-30・D-15)。`org_license_pools` を先に取る関数が `organizations` を待つことは無い | F-11。組織の行を最初に取ると、承諾 (`user_profiles` → `organizations`) と逆向きになり 40P01 になりうるので取らない |
 | `operator_force_dissolve_org` | `user_profiles` (全員) → `org_license_pools` → `organizations` (変えない) | 既存どおり | F-5 |
 
 デッドロックが起きたとき (40P01) は `mapPgErrorToHttp(message, code)` が `CONFLICT_RETRY` (409) にし、画面は「ほかの操作と重なりました。もう一度お試しください。」を出す (既存の規約。route は `error.code` を渡す。§14)。
@@ -2086,6 +2097,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | D-12 | `active な家族の代表者 / 組織のオーナーの auth.users を service_role で消すと 23503 (RESTRICT は残っている)` |
 | D-13 | `運営の強制解散 (置き換え後) は今までどおり: super_admin (aal2) が呼ぶと dissolved・全員 left・membership_audit に operator_force_dissolve (metadata に previous_representative_id)。加えて representative_id が NULL になる。組織も同じ (org_admin も外れる・previous_owner_id)` |
 | D-14 | `凍結中 (frozen_at) の代表者でも RPC は通る (RPC は凍結を見ない。middleware の判定は §21.1)` |
+| D-15 | `組織: 招待の承諾 (accept_org_invite) が commit したあとに解散すると、承諾した人の所属の列も外れ、戻り値の member_user_ids に入る。自己解散と招待の承諾を本物の経路で 8 回ずつ同時に呼んでも、デッドロック (40P01) せず、どちらも P0001 以外で失敗しない (承諾した人が解散した組織に所属したまま残るかは Q-4 の既存の動きで、本書では検査しない)` |
 
 既存の結合テストの変更: `family-lock-order-race.test.ts` C1 (`:774`)・C2 (`:791`) の `representative_id` の期待を `toBeNull()` に (解散で NULL にするのが設計。it 名の「書き換えない」は「解散済みの家族の representative_id は NULL のまま (新代表者に書き換わらない)」に)。R2 (`:1162`。運営でない人は解散できない) はそのまま。`organizations-owner-id-not-null.test.ts` は 3 か所を直す (逐語は §21.6.2)。(1) `runInRolledBackTransaction` (`:146-148`) の先頭の文の並びを `DROP NOT NULL` → `DROP CONSTRAINT organizations_active_has_owner` の 2 文にする (`orgSql` は `owner_id` NULL・`status` 既定 `'active'` の組織を作るので、CHECK が DB にあると INSERT が 23514 で止まり、`orgSql` を使う it がすべて赤になる。トランザクションごと巻き戻るので CHECK は DB に残る)。(2) `afterEach` (`:186`) の期待を `'YES'` にし、続けて CHECK `organizations_active_has_owner` が DB にあることを見る (巻き戻りで CHECK が戻っていること)。(3) 冒頭のコメント (`:4-9`) を現在の DB の形 (NULL 許容 + CHECK) に合わせる。`:224, 240, 252` の `'NO'` と `:356` の `'YES'` は、トランザクションの中で旧 migration / 戻し口を流した直後の値なので**変えない**。active の行で NULL が 23514 になることは D-11 が見る (このファイルには足さない)。`account-deletion.test.ts` の 409 の describe (`:758`) の末尾に it `家族を解散した元代表者は 200 で退会できる` を足す (既存の 2 本のあとに流す。`pgQuery` (postgres) で `select public.family_dissolve_apply(<ownedIds.fg>)` を流して解散させ、`deleteAccount({ userId: representative.id, admin: srAdmin })` が `ok: true`・`auth.users` が消える・`family_groups` の行は `dissolved` で残り `representative_id` が NULL。`afterAll` は今のまま (行を消してから利用者を消す。消えた利用者の `deleteUser` は `catch` で流れる))。`anon-definer-execute.test.ts` の決定表 B に 2 行 (§23)。
 
@@ -2140,6 +2152,9 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | S-26 | 部品 (キャンセル) |
 | S-28 | D-1 (`family_groups.status = 'dissolved'`・代表者を含む active だった 4 行が `left` = 一覧の結合の条件 `fg.status = 'active'`・`fm.role = 'representative' AND fm.status = 'active'` に当たらない)。一覧の関数は本書で変えないので呼ばない (運営の aal2 のセッションが要り、組織の一覧は行があると既存の 42804 で失敗する。`tests/integration/security/operator-mfa-db-gate.test.ts:44-50`・Q-10)。`tests/integration/rls/is-inactive-user-rpc.test.ts` は変えない |
 | S-29 | D-5 (オーナーを含む 3 人の `organization_id` / `org_role` が NULL = 一覧の結合の条件 `up.organization_id = o.id AND up.org_role = 'owner'` に当たらない)。一覧の関数と画面は変えないので、S-28 と同じ理由で一覧は呼ばない。画面の `InactiveOwnerTable` は変えない (§23) |
+| S-30 | D-15 (承諾が先の結果とデッドロックしないこと)・Q-4 (承諾が後の結果は本書で検査しない) |
+| シナリオ外 (DB の不変条件。§9 の CHECK と RESTRICT) | D-11 (active の行の `representative_id` / `owner_id` を NULL にすると 23514)・D-12 (active な家族の代表者・組織のオーナーの `auth.users` の削除は 23503)。どのシナリオも利用者の操作で NULL や削除を起こさないので、守りの層として単独で見る |
+| シナリオ外 (migration の形の契約。§11) | C-1〜C-9・C-11・C-12 (対の rollback・制約・関数の属性・後始末の並び・RAISE のコード・監査・運営の RPC の逐語・戻し口・既存の dissolved の行の UPDATE・関数の外の DELETE が無いこと)。C-10 は S-12 |
 
 ### 21.6 既存のテストの書き換え (逐語。段 A)
 
@@ -2339,7 +2354,7 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | Q-1 | 凍結中 (BAN) の代表者・オーナーに解散を許してよいか | 許す (R-8・§7.2)。#1445 (凍結中も退会できる) を代表者・オーナーにも成り立たせるため。許さない形に戻すなら、`FROZEN_ALLOWED_API_PATHS` の 2 行を外し、凍結中の画面だけ区画を出さない props を枠 `AccountSelfServicePanel` に足して (§15.4)、`/frozen/account` の文を「凍結中は譲渡も解散もできません。サポートへ」に戻す (同意の許可リストの 2 行と、同意の前の画面の区画は残してよい) |
 | Q-2 | 未同意 (版上げ後) の代表者・オーナーの画面の入口 | 解決 (v1.3): #1901 の実装で同意の前の画面 `/legal-consent/account` が main にある (F-29)。その画面と凍結中の画面が共通に使う枠 `AccountSelfServicePanel` の 409 の分岐に解散の区画を足す (§15.4)。API は同意の許可リストで通す (§13.5) |
 | Q-3 | 解散した組織の行の物理削除 | 作らない (org/04 の「90 日後物理削除」は未実装のまま)。解散した組織の行は `dissolved`・`owner_id` NULL で残る。消すならジョブ (purge_dissolved_organizations) を別の設計で |
-| Q-4 | `accept_org_invite` が組織の `status` を見ず、解散した組織の招待を承諾できる (既存。運営の強制解散でも同じ) | 本書は触らない (範囲外)。画面の文 (§13.4 の組織の effects) は招待が使えなくなるとは書かず、`self-dissolve.test.ts` が「招待」の語の無いことを見る (§21.1)。直すなら `accept_org_invite` に `organizations.status = 'active'` の判定 (`ORG_NOT_FOUND`) を足す別の小さな PR (直したら effects に招待の行を戻してよい) |
+| Q-4 | `accept_org_invite` が組織の `status` を見ず、解散した組織の招待を承諾できる (既存。運営の強制解散でも同じ) | 本書は触らない (範囲外)。画面の文 (§13.4 の組織の effects) は招待が使えなくなるとは書かず、`self-dissolve.test.ts` が「招待」の語の無いことを見る (§21.1)。解散と招待の承諾が同時に走ったとき、承諾の commit が後始末の UPDATE より後なら承諾した人が解散した組織に所属したまま残るのも同じ原因 (S-30)。直すなら `accept_org_invite` に `organizations.status = 'active'` の判定 (`ORG_NOT_FOUND`) を足す別の小さな PR (直したら effects に招待の行を戻してよい) |
 | Q-5 | 運営が解散済みの家族をもう一度強制解散すると `dissolved_at` が上書きされ、90 日の数え直しになる (既存の動き。`operator_force_dissolve_family` は `status` を見ない) | 本書は変えない (運営の RPC の動きは変えない。R-13)。直すなら運営側で |
 | Q-6 | 代表者・オーナーのメンバーシップ設定で「家族から脱退」「組織から脱退」を出さなくてよいか (押しても 409 になるボタン) | 出さない (§15.1)。出したまま残したければ、解散の区画を足すだけにして脱退のボタンは変えない (テスト §21.3 の 1 つ目・3 つ目の it を変える) |
 | Q-7 | 規約の文面の版の扱い (v2026.1 が未公開か公開済みか) | §18.4 の条件で段 C の実装者が決め、PR に書く |
@@ -2357,3 +2372,4 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | v1.3 | 2026-10-19 | 敵対レビュー R2 の反映: (1) cross/20 の設計書の追随 (§18.1〜§18.3) を段 C の実装者の作業から外し、オーケストレーターの専権の差分として段 C の PR に載せる形にした (§0.3・§18・§20・§22・§24)。cross/20 §0.1 P-12 に Q-26 の選択の逐語が既にあるので、P-n の行を足す直しを消し、P-12 の受け方の (3) を現在形にする直しに替えた。§18.1 の行の 1 列目を cross/20 のパスで始め、`OWNED_EDITS` の 4 つの pattern を §23 に逐語で書いた。(2) 組織の解散の画面の文から、事実と違う「組織の設定・部署・招待・チャレンジは、解散とともに使えなくなります。」の行を外し (組織の招待は解散のあとも承諾できる。Q-4)、組織の effects を 4 行にした (§13.4・§21.1・§21.3・Q-4)。origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合: 凍結中の画面の 409 の分岐が共通の枠 `AccountSelfServicePanel` に移り、同じ枠を使う同意の前の画面 `/legal-consent/account` ができたので、解散の区画を枠に足し、同意の前の画面の案内の文を合わせた (F-18・F-29・§0.4・§1・§4 R-7・R-9・§5 S-10・§6・§8・§9・§10.3・§13.4〜§13.6・§15.2・§15.4・§15.5・§19〜§23・Q-1・Q-2)。`DISSOLVED_FAMILY_GROUP_RETENTION_DAYS` を `LEGAL_FACTS.dissolvedFamilyGroupRetentionDays` から読む形にした (§12・§13.4)。cross/20 の行番号・§10.2 の区分の数 (計 382)・版 (v2026.1 は公開済み) を origin/main に合わせた (F-28・§18) |
 | v1.4 | 2026-10-19 | 網羅性 (周 3) の反映: §8 の状態の軸に「並行」(解散と承諾が同時に走る) と「pending が残る」を足し、家族の代表者・組織のオーナーの行 (S-16・S-17・S-18・S-21・S-22) と、家族の大人 / アカウントを持つ子供・組織の admin / member の「モバイル」の行 (通常・凍結中・未同意)、運営の未ログインの一覧の行を足した。運営の未ログインの一覧の関数 2 本を origin/main で測り直し、どちらも `representative_id` / `owner_id` を読まない (家族は `status = 'active'` と代表者のメンバーの行、組織は `user_profiles` の所属の列で結合する) ことを §5 S-28・§6.2・§7.1・§7.2・§9 に反映した (v1.0〜v1.3 の「`representative_id` との結合」「解散済みの家族も出る」は誤り)。組織の版のシナリオ S-29 を足し (§5 を 29 本に)、§21.5 で S-28・S-29 を D-1・D-5 の結合の条件で見る形にした (一覧の関数の既存の 42804 を Q-10 に)。組織の譲渡の提案は解散のあと `TRANSFER_ACCEPTOR_NOT_IN_ORG` で止まることを S-18・S-22・§6.2・§8 の残る行に反映した。§23 に、運営の未ログインの一覧の読み手 (`InactiveOwnerTable`・`orgs/inactive`・`families/inactive`) と、`representative_id` / `owner_id` を読む既存のテスト (承諾・メンバーの削除・脱退のモック、管理画面の組織の作成、ほかの migration の文面の契約、`purge-dissolved-family-groups.test.ts`) を反応しない理由つきで足した。§24 の `membership/05` の行に §2 の注記を足した |
 | v1.5 | 2026-10-19 | 敵対レビュー R3 の反映: (1) 通知メールの文面 (§16.1) の `template` を、定数 `SELF_DISSOLVE_EMAIL_TEMPLATE` から文字列のリテラル `template: 'self_dissolve',` に改めた (`template-names.test.ts`・`secret-templates.test.ts` はソースのリテラルの行から名前を拾うので、定数では名前が拾えず赤になる)。定数を §12・§22 から外し、§16.1・§23 にリテラルの制約と `template-names.test.ts` を書き、F-22 に走査の形を足した。§12 の `SELF_DISSOLVE_NOTICE_TIMEOUT_MS` (コードに無い名前) を、既存の `NOTICE_TIMEOUT_MS` をそのまま import する行に直した (§16.2)。(2) 段 C で利用規約の本文から `譲渡するまで、退会できません` が消え、T-28 (`tests/legal-text-1901.test.ts:894`) が赤になることを §23 に足し、phrase の書き換えを逐語で書いた (§0.3・§18・§20・§22・F-28)。本文を読むほかの番兵 (T-39・T-40・T-17・`public-claims-guard`・`no-pending-wording-1911` ほか) が反応しない理由を §23 に足し、§20 の段 C の検査の欄を、番兵ごとの赤と緑の順に書き直した (v1.4 までの「それ以外の赤は無い」は誤り)。§23 の `null-character-routes.test.ts` の行を逐語の 2 行にした |
+| v1.6 | 2026-10-19 | 網羅性 (周 4) の反映: §8 の「並行」を、組織のオーナー × 招待された人の承諾 (直列にならない。承諾の commit の位置で 3 通り。Q-4) と、解散する側・承諾する側の凍結中 / 未同意との交差 (家族・組織に 2 行ずつ) に広げた。§5 に S-30 (組織の招待の承諾と解散の並行) を足して 30 本にし、§6.2 にトレース、§21.2 に D-15、§21.5 に S-30 と、シナリオ外の不変条件 (D-11・D-12) と migration の形の契約 (C-1〜C-9・C-11・C-12) の行を足した。§10.1 に active → active の招待の承諾・子供の追加・退出 / 除名 (解散との直列のしかたつき)、§10.2 に active → active の組織の招待の承諾を足した。§11.3 と Q-4 に S-30 を結んだ。§6.2 の S-27 の参照 (§21.4 D-7) を §21.2 D-8 に直した |
