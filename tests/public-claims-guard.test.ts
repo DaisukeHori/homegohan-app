@@ -94,6 +94,9 @@ const { default: LegalPage } = await import('@/app/legal/page');
 const { default: PricingPage } = await import('@/app/pricing/page');
 const { default: PricingPageView } = await import('@/app/pricing/PricingPageView');
 const { default: FaqPage } = await import('@/app/faq/page');
+// #1901: 利用規約・プライバシーポリシーの本文にも禁止の語の走査を掛ける (本文の正本は src/lib/legal の文面モジュール)
+const { default: TermsPage } = await import('@/app/terms/page');
+const { default: PrivacyPage } = await import('@/app/privacy/page');
 
 const ROOT = path.resolve(__dirname, '..');
 
@@ -106,6 +109,8 @@ const PUBLIC_PAGES: { file: string; Page: ComponentType }[] = [
   { file: 'src/app/legal/page.tsx', Page: LegalPage },
   { file: 'src/app/pricing/PricingPageView.tsx', Page: () => createElement(PricingPageView, { plans: [], isNativeApp: false }) },
   { file: 'src/app/faq/page.tsx', Page: FaqPage },
+  { file: 'src/app/terms/page.tsx', Page: TermsPage },
+  { file: 'src/app/privacy/page.tsx', Page: PrivacyPage },
 ];
 
 /**
@@ -129,6 +134,9 @@ const PUBLIC_SOURCE_FILES: string[] = [
   'src/app/guide/page.tsx',
   'src/app/guide/guide-content.ts',
   'src/app/contact/page.tsx',
+  // #1901: 利用規約・プライバシーポリシーの本文の正本 (ページは文を持たない)
+  'src/lib/legal/terms-text.ts',
+  'src/lib/legal/privacy-text.ts',
 ];
 
 /** 公開ページに載せてはいけない文字列と、その理由 */

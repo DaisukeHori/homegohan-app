@@ -4,6 +4,8 @@
  * 使う画面:
  *   - 設定画面 (src/app/(main)/settings/page.tsx)
  *   - 凍結中の利用者の画面 (src/app/frozen/account/page.tsx。#1445: 凍結中でも退会と書き出しをできるようにする)
+ *   - 規約にまだ同意していない人の画面 (src/app/legal-consent/account/page.tsx。#1901 cross/20 Q-23: 同意しなくても退会と書き出しをできるようにする)。
+ *     この 2 つは共通の部品 src/components/account/AccountSelfServicePanel.tsx から呼ぶ
  * 2 つの画面で、API の呼び方・ファイルの保存のしかた・退会のあとのログアウトの順番を食い違わせないために、ここにまとめる。
  *
  * API の契約:

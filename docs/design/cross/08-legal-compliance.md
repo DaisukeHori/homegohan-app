@@ -5,7 +5,7 @@
 特商法・個人情報保護法・インボイス制度・GDPR・医療免責等の法的要件を実装レベルで具体化する。  
 各ドメイン実装は本ドキュメントで定めた UI テキスト・フロー・テーブル設計に準拠する。
 
-**対象外**: 利用規約・プライバシーポリシーの法的文書そのもの (法務担当が別途作成)
+**対象外**: 利用規約・プライバシーポリシーの全文 (全文は `cross/20-terms-privacy-text.md` が正典)
 
 ---
 
@@ -83,8 +83,8 @@ export function CheckoutConfirmation({
       </table>
 
       <p className="text-sm text-text-secondary">
-        <a href="/legal/terms" className="underline">利用規約</a> および{' '}
-        <a href="/legal/privacy" className="underline">プライバシーポリシー</a>
+        <a href="/terms" className="underline">利用規約</a> および{' '}
+        <a href="/privacy" className="underline">プライバシーポリシー</a>
         に同意の上でお申し込みください。
       </p>
 
@@ -165,7 +165,7 @@ export function AiDataConsentModal({ onAccept, onDecline }: ConsentModalProps) {
           </ul>
           <p>
             詳細は{' '}
-            <a href="/legal/privacy#section5" className="text-primary underline">
+            <a href="/privacy#privacy-6" className="text-primary underline">
               プライバシーポリシー §5
             </a>{' '}
             をご参照ください。
@@ -390,19 +390,19 @@ CREATE POLICY "terms_no_delete"
 | 同意の記録 | DB 関数 `accept_legal_documents(p_terms_version, p_privacy_version, p_ip, p_user_agent, p_birth_date)` (SECURITY DEFINER、authenticated のみ) | `auth.uid()` 本人の行だけを書く。`user_profiles` の 3 列を更新し (行が無ければ既定値で作る)、生年月日が未記録なら `p_birth_date` を 1 回だけ記録し (13 歳未満と、保護者の同意とのつながりが無い 18 歳未満の自己登録は何も書かずに `LEGAL_MINOR_SELF_SIGNUP_REFUSED` で断る。設計書 14)、`terms_acceptances` に文書ごとに 1 行足す (同じ版は重複して足さない)。UPDATE / DELETE は RLS で禁止のまま |
 | 記録の API | `POST /api/legal/accept` | body の版がいま有効な版と一致するときだけ関数を呼ぶ (違えば 409)。IP・user_agent は、body ではなくサーバーが受け取ったリクエストから取る |
 | ゲート | `lib/supabase/middleware.ts` (判定は `lib/legal-consent.ts`) | 判定は `isLegalConsentComplete` (`packages/shared/src/parental-consent.ts`。版 + 生年月日 + 18 歳未満なら保護者の同意とのつながり。設計書 14。つながりは `lib/legal-consent-minor.ts` の `withMinorGuardianStatus` が DB に聞いて入れる)。これを満たさない、サインイン中の利用者を、環境変数 `LEGAL_CONSENT_ENFORCE=on` のときだけ `/legal-consent?next=<元のパス>` へ回す。強制していない間は、環境変数 `LEGAL_CONSENT_NOTICE=on` のときだけ `(main)` の画面の上に「同意のお願い」のお知らせ (同意画面へのリンク。戻り先は強制と同じ `buildLegalConsentPath` で作り、いまのクエリも残す) を出し、誰も止めない。どちらも未設定 (既定) なら何も出さず、誰も止めない。2 つのフラグの値の読み方は共通 (`isLegalConsentFlagOn`。`on` のときだけ有効、大文字小文字と前後の空白は区別しない)。どちらもサーバー側 (middleware) だけで読み、お知らせを出すかは `(main)` の layout から props で画面へ渡す。`/api/*` は middleware の `/api` の分岐で判定する (許可リストは `packages/shared/src/legal-consent-api.ts`。`LEGAL_CONSENT_ENFORCE=on` で `isLegalConsentComplete` を満たさなければ 403 `LEGAL_CONSENT_REQUIRED`。設計書 13a・14) |
-| 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、データ削除の依頼先 (お問い合わせ) を案内する。生年月日 (無いときだけ。文は `LEGAL_CONSENT_BIRTH_DATE_COPY`)・未成年の案内 (`LEGAL_MINOR_SELF_SIGNUP_REFUSED` のとき)・保護者の同意とのつながりが無い 18 歳未満の案内も出す (設計書 14)。フォームの下と「同意しない」の後の案内に、同意せずに開示・訂正・利用停止・消去を請求できる画面 (`/settings/data-requests`) へのリンクを出す (#1751) |
+| 同意画面 | `src/app/legal-consent/` | 必須チェック 2 つ (利用規約・プライバシーポリシー。それぞれ全文へのリンクつき。`required` と `aria-required="true"`。フォームは `noValidate` で、送れるかどうかは両方のチェックで「同意して続ける」が押せるようになるかで決まる)。「同意しない」はログアウトして、もう一度ログインすれば同意しなくても退会とデータの書き出しの画面 (`/legal-consent/account`。cross/20 Q-23) へ進めることと、お問い合わせを案内する (お問い合わせによる削除は約束しない)。フォームの下と未成年の案内にも、この画面へのリンクを出す。生年月日 (無いときだけ。文は `LEGAL_CONSENT_BIRTH_DATE_COPY`)・未成年の案内 (`LEGAL_MINOR_SELF_SIGNUP_REFUSED` のとき)・保護者の同意とのつながりが無い 18 歳未満の案内も出す (設計書 14)。フォームの下と「同意しない」の後の案内に、同意せずに開示・訂正・利用停止・消去を請求できる画面 (`/settings/data-requests`) へのリンクを出す (#1751) |
 | サインアップ | `src/app/(auth)/signup/page.tsx` | 「続行することで同意したものとみなされます」をやめ、必須チェックボックスにした (チェックするまで Google 登録も登録ボタンも押せない)。このチェックは同意の記録を残さない。記録が残るのは同意画面で同意したときだけ。登録後は、`/auth/callback` が初期設定を始めていない未同意の人を `LEGAL_CONSENT_ENFORCE` の値に関わらず同意画面へ回す (下の「初回の作成」の行。#1435) |
 | 初回の作成 | `src/app/(auth)/auth/callback/route.ts` (判定は `lib/legal-consent.ts` の `resolveFirstSignInDestination`) | 初期設定を始めていない (プロフィールの行が無い、または `onboarding_started_at` / `onboarding_completed_at` がどちらも NULL) のに、いま有効な版に同意していない人を、`LEGAL_CONSENT_ENFORCE` の値に関わらず `/legal-consent?next=<本来の遷移先>` へ回す。サインアップ画面の Google 登録・メール確認と、ログイン画面の「Googleで続ける」で初めて入った人 (サインアップ画面のチェックを通らない) が、どれもここを通る。ログイン画面には、初めての人には同意の画面が出ることを、規約・プライバシーポリシーへのリンクつきで出す (みなし同意の文面は出さない)。回さないもの: 管理者・プロフィールを読めなかったとき・遷移先がゲートの対象外のパス (`/auth/*` など)。初期設定を始めたあとの人を止めるかは、これまでどおりゲートの強制で決まる |
 
 画面の判定の対象外のパス: `/terms` `/privacy` `/legal` `/legal-consent` `/contact` `/settings/data-requests` (開示・訂正・利用停止・消去の請求の画面と確認の画面。初期設定の差し戻しからも外す。#1751) `/frozen` `/auth/*` (ネイティブ認証ブリッジを含む) `/api/*` `/handson-tour` と静的ファイル (`/api/*` は画面の判定では対象外で、API は 13a のゲートが判定する)。リダイレクトは画面の取得 (GET / HEAD) だけに掛ける。凍結の判定のあと、初期設定の差し戻しの前に見る。
 
 **重要変更時の対応**:
-- 版・施行日・同意文言は弁護士の確認を経て決める (オーナー判断。T30)。`LEGAL_DOCUMENTS` の値を書き換えて出す
+- 版は v2026.1、施行日は公開日 (`LEGAL_DOCUMENTS`。全文と版の上げ方は cross/20 §6・§7・§9)。公開は弁護士の確認を待たない (cross/20 P-12「予告なしで直し次第公開」)。確認を受けるかはオーナーの判断 (cross/20 Q-1)。確認で直しがあれば版を上げる (T30)
 - 強制 (`LEGAL_CONSENT_ENFORCE=on`) を始める日はオーナーが決める。始める前に、お知らせだけの期間 (`LEGAL_CONSENT_NOTICE=on`) を置くかどうかも決める。お知らせも既定では出ない
-  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (版・施行日は仮置きのまま。お知らせだけの期間は置いていない)。ゲートは Web の画面の取得に掛かり、13a で `/api/*` にも掛けた (403 `LEGAL_CONSENT_REQUIRED`)。13b でモバイルにも掛けた (同意が要る間は、ルートのゲートがアプリの画面を Web の `/legal-consent` の WebView 1 つにする。同意の後は入口から振り分け直す。「同意しない」の後の案内もアプリの同意画面に残る。設計書 13b。#1442)
+  - 2026-10-10 のオーナー判断で、本番は `LEGAL_CONSENT_ENFORCE=on` にした (このときの版・施行日は v2025.1 の仮置きで、#1901 で v2026.1 に上げた。お知らせだけの期間は置いていない)。ゲートは Web の画面の取得に掛かり、13a で `/api/*` にも掛けた (403 `LEGAL_CONSENT_REQUIRED`)。13b でモバイルにも掛けた (同意が要る間は、ルートのゲートがアプリの画面を Web の `/legal-consent` の WebView 1 つにする。同意の後は入口から振り分け直す。「同意しない」の後の案内もアプリの同意画面に残る。設計書 13b。#1442)
 - 全ユーザーへ 30 日前メール通知 (Resend 一斉送信): **未実装**。本番のメール配信は、送信ドメインの検証が済むまで動かない
 - アプリ内強制再同意: 上のゲート (ダッシュボードアクセス時にインターセプト) として実装済み。効くのは `LEGAL_CONSENT_ENFORCE=on` のときだけ (既定は off)
-- 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う
+- 旧バージョンを `docs/legal/archive/v{version}/` に永久保管: 改定のたびに手で行う (v2025.1 は `docs/legal/archive/v2025.1/` に保管した)
 
 **既知の残課題**:
 - `terms_acceptances` の本人による直接 INSERT (RLS `terms_self_insert`) は開いたまま。直接入れた行は端末情報を偽れるので、証跡として確かなのは `accept_legal_documents` が書いた行。保護者の同意は `parental_consents` (関数経由) に記録する (設計書 14)。`terms_acceptances` の `parental_consent` は使わない。`terms_self_insert` を閉じる条件は、AI の同意 (`external_data_provision`) の書き込みが関数経由になることだけが残る
@@ -444,7 +444,7 @@ export function MedicalDisclaimer({ variant = 'footer' }: { variant?: 'modal' | 
 2. 健診結果アップロード画面 (フッター)
 3. 産業医アドバイス画面 (フッター)
 4. AI ヘルスインサイト画面 (フッター)
-5. 利用規約 §X (法的文書内)
+5. 利用規約第9条 (cross/20 §6)
 
 急病時の表示 (特定キーワード検知時):
 ```tsx
@@ -629,6 +629,8 @@ $$);
 
 ## 12. Cookie 同意バナー (改正電気通信事業法)
 
+> 広告・計測の Cookie を使っていないため、バナーは置かない (プライバシーポリシー第10条。cross/20 §7)。採用するときは本節を復活させ、プライバシーポリシーの版を上げる。
+
 ### 12.1 UI 要件 (2023 年 6 月施行対応)
 
 ```tsx
@@ -653,7 +655,7 @@ export function CookieConsentBanner() {
       <p className="text-sm text-text-secondary mb-4">
         このサイトはアクセス解析・広告のため Cookie を使用します。
         詳細は
-        <a href="/legal/privacy#cookies" className="text-primary underline">
+        <a href="/privacy#privacy-10" className="text-primary underline">
           プライバシーポリシー
         </a>
         をご参照ください。
@@ -739,6 +741,8 @@ export function sanitizeEventProperties(
 ---
 
 ## 14. AI 生成コンテンツの著作権
+
+> 利用規約第14条として実装した (cross/20 §6)。
 
 利用規約への記載内容 (実装での表示箇所: 利用規約画面):
 
@@ -879,7 +883,7 @@ $$);
 | 法的保管義務のあるデータ (産業医記録 §11、監査ログ) | 削除せず、匿名化して保持 | 監査ログ (`admin_audit_logs`) は FK の `ON DELETE SET NULL` で操作者 ID が外れて残る。クーポンの償還記録 (`coupon_redemptions`) と紹介報酬 (`referral_rewards`) も、行を残して利用者との紐づけだけを外す (償還記録には匿名化した日時 `anonymized_at` が入る)。何年残すか (保存の期限) は未決で、決まるまでは「匿名化して残す」。期限を過ぎた記録を消すバッチは、期限が決まってから作る |
 | 送信ログ中の生メールアドレス (`email_delivery_logs.email`) | 削除または匿名化 | 実装済み (#1175)。RPC `prepare_account_deletion` が `redacted@redacted.invalid` に置き換える (行は残す)。問い合わせ・招待も同様。宛先停止リスト (`email_blacklist`) は、苦情・バウンスのあったアドレスへ再送しないために伏せない。`membership_audit.metadata` の招待先アドレスは、退会に関係なく生のアドレスを持たない (#1562。migration 20261016190000)。トリガーが `email` を `email_hash` (正規化したアドレスの HMAC。鍵は Vault の `pii_hmac_key`) に置き換え、既存の行も置き換えた。#1163 の 24 時間の送信上限は `email_hash` 同士で比べるので、退会しても上限は戻らない |
 | 送信待ちの宛先 (`email_outbox.to_email`) | 削除または匿名化 | 実装済み (#1193)。RPC `prepare_account_deletion` が本人の行の宛先・件名・本文を伏せ (queued は dead)、他人宛の行の件名・本文・返信先の中の本人のアドレスだけを伏せる。退会の完了メールは送れたあと・届けられなかったあとに伏せる |
-| DB バックアップ (R2) の中の個人情報 | 復旧の目的でだけ、暗号化して保管する | 実装済み (cross/17-backup-automation.md §9.1)。daily 30 日・weekly 366 日・annual 2,557 日 (7 年) 残り、退会した利用者の行も取得の時点の分は含まれる。開けるのは age の秘密鍵を持つオーナーだけで、復元以外の目的で開かない。プライバシーポリシーへの追記は法務の確認の後 (cross/17 §21) |
+| DB バックアップ (R2) の中の個人情報 | 復旧の目的でだけ、暗号化して保管する | 実装済み (cross/17-backup-automation.md §9.1)。daily 30 日・weekly 366 日・annual 2,557 日 (7 年) 残り、退会した利用者の行も取得の時点の分は含まれる。開けるのは age の秘密鍵を持つオーナーだけで、復元以外の目的で開かない。プライバシーポリシーに追記した (cross/20 §7 第12条) |
 | 送信待ちの送信元 (`email_outbox.from_email`) | 伏せない | 送信元はアプリのアドレス (`EMAIL_FROM`・運用メールも同じ) で、利用者のものではない |
 | 途中で失敗したとき | 半端な状態を残さず、やり直せる | 実装済み (#1175)。後始末 (手順 4。ライセンス席の解放を除く) の失敗は 500 (internalError) で止めて `deleteUser` を呼ばない。外部キー違反で `deleteUser` が失敗する経路は無い (組織のオーナー・家族の代表者は先に 409 で止める) |
 
@@ -941,11 +945,11 @@ $$);
 | 項目 | 状態 | 期限 |
 |------|------|------|
 | 運営側適格請求書発行事業者番号 (T番号) の取得状況確認 | TODO | 法人向け機能リリース前 |
-| 弁護士レビュー: 特商法表示内容・利用規約 §X の医療免責文言 | TODO | Phase 1 リリース前 |
+| 弁護士レビュー: 特商法表示内容・利用規約第9条の医療免責文言 | cross/20 の全文を対象に含める。確認の有無はオーナーの判断 | Phase 1 リリース前 |
 | GPG 鍵を使った署名者の体制 (誰が鍵を管理するか) | 済 (cross/17) | バックアップの暗号化は age (公開鍵。秘密鍵はオーナーが保管。CI・Vercel・Supabase・リポジトリには置かない)。GPG の署名は置かない (cross/17 §3.2・§4.4) |
 | 退会 (即時削除) 時の Stripe 顧客・サブスクリプションの扱い | 済 (billing/01 §11) | 段階 billing / billing_recheck で即時解約と顧客の匿名化を行う (§16.2 の手順 4・§16.3) |
 | 削除の実行記録 (誰がいつ消したか) を何で残すか | 済 (#1562) | `gdpr_deletion_requests` に個人を特定できない形で残す (§16.4) |
 | `gdpr_deletion_requests` テーブルの廃止・用途変更 | 済 (#1562) | 削除の実行記録に当てた (§16.4) |
 | 運営による代理削除と、消去の請求 (cross/15) の運営側の完了操作 | TODO | 代理削除 (§16.5) を実装するときに接続する (cross/15 §4.4・§21) |
 | CloudSign API 連携の詳細設計 (法人電子締結) | TODO | operator/05-stripe-integration.md で定義 |
-| 旧バージョン利用規約の `docs/legal/archive/` 保管場所設定 | TODO | 初版リリース前 |
+| 旧バージョン利用規約の `docs/legal/archive/` 保管場所設定 | 済 (`docs/legal/archive/v2025.1/`) | 初版リリース前 |

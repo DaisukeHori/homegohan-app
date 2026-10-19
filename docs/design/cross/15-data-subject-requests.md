@@ -1297,7 +1297,7 @@ grep の語は、本設計が足す・変える名前 (tests/ と src/__tests__/
 | `docs/design/operator/09-runbook.md` | 新しい節「開示・訂正・利用停止・消去の請求の対応」(一覧の見方・種類ごとの手段 §9.2 (利用停止に凍結を使わない理由を含む)・期限・退会済みの扱い・請求者が凍結中 (利用者詳細で確かめる) のときは応答を設定画面で読めないので、サポート窓口のメールでも応答を送る) | 実装のマージと同日 |
 | `docs/design/cross/08-legal-compliance.md` §16.5 / §19 | 消去の請求と代理削除の関係 (本設計 §4.4) への参照 | 実装のマージと同日 |
 | `docs/design/mobile/*` と `apps/mobile/app/settings/account.tsx` | ネイティブの設定からこの Web 画面 (`DSR_SETTINGS_PATH`) へのリンク | #1812 で実装済み |
-| `src/app/privacy/page.tsx` 第6条 / `src/app/contact/page.tsx` | 請求の導線 (設定画面) への案内文 | 後続 (§21 の法務判断の後) |
+| `src/app/privacy/page.tsx` 第6条 / `src/app/contact/page.tsx` | 請求の導線 (設定画面) への案内文 | プライバシーポリシーは第14条 (`/privacy#privacy-14`。cross/20 §7) が請求の手順と請求の画面へのリンクを持つ。お問い合わせ画面は後続 (§21 の法務判断の後) |
 | `.env.example` / `src/lib/env.ts` | `DSR_RESPONSE_DUE_DAYS` (§12。実装の段 A が行う) | 段 A |
 
 ---

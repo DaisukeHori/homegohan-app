@@ -2,7 +2,9 @@
  * #1194 画面に出す問い合わせ先 (support@…) は、環境変数 NEXT_PUBLIC_SUPPORT_EMAIL で決まる (src/lib/site-config.ts)
  *
  * 以前は、招待画面 (.app)・お問い合わせ画面とプライバシーポリシー (.jp) が別々のアドレスを直接書いていて、
- * メールの文面とも食い違っていた。ここでは、3 つの画面が同じ設定に従うことを確かめる。
+ * メールの文面とも食い違っていた。ここでは、2 つの画面が同じ設定に従うことを確かめる。
+ * プライバシーポリシー (/privacy) の窓口は #1901 で事業者のメールアドレス (src/lib/business-info.ts の BUSINESS_EMAIL) にしたので、
+ * この対象から外した (窓口の値は tests/legal-text-1901.test.ts の T-16 が確かめる。設計書 cross/20 §16)。
  *
  * NEXT_PUBLIC_ の環境変数はビルド時に埋め込まれるが、テストでは呼ぶたびに読むので、描画の直前に差し替えられる。
  * このリポジトリには @testing-library/react が無いため、react-dom/server で HTML にして文字列で調べる。
@@ -24,7 +26,6 @@ vi.mock('next/link', () => ({
 }));
 
 const { InviteLayout } = await import('@/components/membership/InviteLayout');
-const { default: PrivacyPage } = await import('@/app/privacy/page');
 const { default: ContactPage } = await import('@/app/contact/page');
 
 const SCREENS = [
@@ -33,7 +34,6 @@ const SCREENS = [
     render: () => renderToStaticMarkup(<InviteLayout scope="family">本文</InviteLayout>),
   },
   { name: 'お問い合わせ画面 (/contact) の連絡先', render: () => renderToStaticMarkup(<ContactPage />) },
-  { name: 'プライバシーポリシー (/privacy) の窓口', render: () => renderToStaticMarkup(<PrivacyPage />) },
 ] as const;
 
 beforeEach(() => {
