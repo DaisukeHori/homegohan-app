@@ -38,6 +38,17 @@ import {
 import type { PurchasablePlan } from '@/lib/billing/core';
 import { GUIDES } from '@/app/guide/guide-content';
 
+/** タグを取り除く (1 回の置き換えでは「<scr<x>ipt>」のような入れ子が残るので、変わらなくなるまで繰り返す。CodeQL js/incomplete-multi-character-sanitization) */
+function stripAllTags(html: string): string {
+  let prev: string;
+  let out = html;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, '');
+  } while (out !== prev);
+  return out;
+}
+
 // /pricing の page.tsx (Server Component) が読む「買えるプラン」と Cookie (is_native_app)。it ごとに値を変える
 const pricingMocks = vi.hoisted(() => ({
   plans: [] as PurchasablePlan[],
@@ -302,7 +313,7 @@ describe('#1155 特定商取引法ページ (/legal)', () => {
     for (const [label, value] of Object.entries(expected)) {
       const cell = tableCellHtml(html, label);
       expect(cell, `「${label}」の行が無い`).not.toBeNull();
-      expect(cell!.replace(/<[^>]*>/g, '').trim(), `「${label}」の値`).toBe(value);
+      expect(stripAllTags(cell!).trim(), `「${label}」の値`).toBe(value);
     }
     // 公開の会社情報の値そのもの (定数を書き換えて別の値にしたら気付けるように、逐語でも見る)
     expect(text).toContain('〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F');
@@ -314,13 +325,13 @@ describe('#1155 特定商取引法ページ (/legal)', () => {
   it('電話番号は載せず「請求があれば遅滞なく開示します」と書き、請求の窓口 (メールアドレスとお問い合わせのフォーム) を添える (#1911)', () => {
     const cell = tableCellHtml(html, '電話番号');
     expect(cell, '「電話番号」の行が無い').not.toBeNull();
-    expect(cell!.replace(/<[^>]*>/g, '').trim()).toBe(PHONE_CELL_TEXT);
+    expect(stripAllTags(cell!).trim()).toBe(PHONE_CELL_TEXT);
     expect(cell).toContain('href="/contact"');
-    expect(cell!.replace(/<[^>]*>/g, '')).not.toMatch(/\d{2,4}-\d{2,4}-\d{3,4}/);
+    expect(stripAllTags(cell!)).not.toMatch(/\d{2,4}-\d{2,4}-\d{3,4}/);
   });
 
   it('有料の販売で要る項目 (販売価格・支払方法など) は、項目ごと出さない。「準備中」「販売開始前」も、販売していないことの説明の文も書かない (#1911)', () => {
-    const labels = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => m[1].replace(/<[^>]*>/g, '').trim());
+    const labels = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => stripAllTags(m[1]).trim());
     // 表が読めていること (空の表で素通りしない)
     expect(labels).toContain('販売事業者');
     for (const label of LEGAL_SALE_ROW_LABELS) expect(labels, `「${label}」の行が残っている`).not.toContain(label);
@@ -359,7 +370,7 @@ describe('#1155 運営会社ページ (/company)', () => {
   const cell = (label: string) => {
     const value = tableCellHtml(html, label);
     expect(value, `「${label}」の行が無い`).not.toBeNull();
-    return value!.replace(/<[^>]*>/g, '').trim();
+    return stripAllTags(value!).trim();
   };
 
   it('チーム紹介・沿革は載せず、会社名・設立・資本金・代表者・所在地・メールアドレス・営業時間は src/lib/business-info.ts の値を表示する (#1911: 「準備中」と書かない)', () => {
@@ -454,7 +465,7 @@ async function renderPricingPageHtml(): Promise<string> {
   return renderToStaticMarkup(await PricingPage());
 }
 
-const stripTags = (html: string) => html.replace(/<[^>]*>/g, '');
+const stripTags = (html: string) => stripAllTags(html);
 
 describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () => {
   const planA = plan({

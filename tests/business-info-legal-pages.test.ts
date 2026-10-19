@@ -30,6 +30,17 @@ import {
   PHONE_DISCLOSED_ON_REQUEST,
 } from '@/lib/business-info';
 
+/** タグを取り除く (1 回の置き換えでは「<scr<x>ipt>」のような入れ子が残るので、変わらなくなるまで繰り返す。CodeQL js/incomplete-multi-character-sanitization) */
+function stripAllTags(html: string): string {
+  let prev: string;
+  let out = html;
+  do {
+    prev = out;
+    out = out.replace(/<[^>]*>/g, '');
+  } while (out !== prev);
+  return out;
+}
+
 vi.mock('next/link', async () => {
   const react = await import('react');
   return {
@@ -114,8 +125,8 @@ describe('#1155 事業者名は 1 種類だけ', () => {
 describe('#1155 特定商取引法に基づく表記 (/legal) に、空欄・仮置き・ダミーの値が無い', () => {
   const html = renderHtml(LegalPage);
   const rows = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => ({
-    label: m[1].replace(/<[^>]*>/g, '').trim(),
-    value: m[2].replace(/<[^>]*>/g, '').trim(),
+    label: stripAllTags(m[1]).trim(),
+    value: stripAllTags(m[2]).trim(),
   }));
 
   it('表が読み取れている (販売事業者・代表者・所在地・電話番号・メールアドレス・営業時間の行がある)', () => {
@@ -137,8 +148,8 @@ describe('#1155 特定商取引法に基づく表記 (/legal) に、空欄・仮
   it('運営会社 (/company) と特定商取引法の表記 (/legal) で、所在地・代表者・メールアドレス・営業時間・電話番号の欄が同じ値 (#1911)', () => {
     const companyHtml = renderHtml(CompanyPage);
     const companyRows = [...companyHtml.matchAll(/<th[^>]*>([\s\S]*?)<\/th>\s*<td[^>]*>([\s\S]*?)<\/td>/g)].map((m) => ({
-      label: m[1].replace(/<[^>]*>/g, '').trim(),
-      value: m[2].replace(/<[^>]*>/g, '').trim(),
+      label: stripAllTags(m[1]).trim(),
+      value: stripAllTags(m[2]).trim(),
     }));
     const legalValue = (label: string) => rows.find((r) => r.label === label)?.value;
     const companyValue = (label: string) => companyRows.find((r) => r.label === label)?.value;
@@ -163,7 +174,7 @@ describe('#1155 特定商取引法に基づく表記 (/legal) に、空欄・仮
 describe('#1366 プライバシーポリシーの AI の送信先の一覧', () => {
   const html = renderHtml(PrivacyPage);
   const list = /<ul[^>]*data-testid="privacy-ai-providers"[^>]*>([\s\S]*?)<\/ul>/.exec(html);
-  const items = list ? [...list[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => m[1].replace(/<[^>]*>/g, '')) : [];
+  const items = list ? [...list[1].matchAll(/<li[^>]*>([\s\S]*?)<\/li>/g)].map((m) => stripAllTags(m[1])) : [];
 
   it('同意を取る事業者 (AI_CONSENT_PROVIDERS) と同じ数・同じ順に並ぶ', () => {
     expect(list, '送信先の一覧が無い').not.toBeNull();
