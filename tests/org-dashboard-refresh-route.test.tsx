@@ -56,7 +56,8 @@ const { default: OrgDashboardPage } = await import('@/app/(org)/org/dashboard/pa
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const PAGE_SOURCE_PATH = path.resolve(__dirname, '../src/app/(org)/org/dashboard/page.tsx');
-const NOTICE = '組織の集計・部署別の表示は準備中です';
+/** #1911 で取り除いた「準備中」の案内 (未完成の集計の区切りは画面に出さない) */
+const REMOVED_NOTICE = '組織の集計・部署別の表示は準備中です';
 
 let container: HTMLDivElement;
 let root: Root;
@@ -123,11 +124,12 @@ async function renderDashboard() {
 
 const text = () => container.textContent ?? '';
 
-describe('組織ダッシュボード: 集計を止めて「準備中」にする (#1325 / #1120)', () => {
-  it('DR-1: 「準備中」の案内と、GET /api/org/stats のメンバー数が出る', async () => {
+describe('組織ダッシュボード: 集計を止め、その区切りも出さない (#1325 / #1120 / #1911)', () => {
+  it('DR-1: GET /api/org/stats のメンバー数が出る。止めている集計の「準備中」の案内は出さない', async () => {
     await renderDashboard();
 
-    expect(text()).toContain(NOTICE);
+    expect(text()).not.toContain(REMOVED_NOTICE);
+    expect(text()).not.toContain('準備中');
     expect(text()).toContain('Total Members');
     expect(text()).toMatch(/7\s*users/);
   });
@@ -184,24 +186,24 @@ describe('組織ダッシュボード: 集計を止めて「準備中」にす�
     ['権限が無い (HTTP 403)', () => jsonResponse({ error: { code: 'FORBIDDEN' } }, 403)],
     ['サーバーの失敗 (HTTP 500)', () => jsonResponse({ error: { code: 'INTERNAL_ERROR' } }, 500)],
     ['形式が違う応答 (member_count が無い)', () => jsonResponse({ stats: {} })],
-  ])('DR-6: メンバー数が取れない (%s) ときも、案内は出る。数は「—」にして、失敗を短く伝える', async (_label, respond) => {
+  ])('DR-6: メンバー数が取れない (%s) ときは、数を「—」にして、失敗を短く伝える (「準備中」は出さない)', async (_label, respond) => {
     fetchMock.mockImplementation(async () => respond());
 
     await renderDashboard();
 
-    expect(text()).toContain(NOTICE);
+    expect(text()).not.toContain('準備中');
     expect(text()).toContain('メンバー数を取得できませんでした');
     expect(text()).not.toMatch(/\d+\s*users/);
     expect(text()).toContain('—');
     expect(alertSpy).not.toHaveBeenCalled();
   });
 
-  it('DR-7: 通信自体が失敗しても、同じように案内と失敗の表示が出る', async () => {
+  it('DR-7: 通信自体が失敗しても、同じように失敗の表示が出る', async () => {
     fetchMock.mockRejectedValue(new TypeError('Failed to fetch'));
 
     await renderDashboard();
 
-    expect(text()).toContain(NOTICE);
+    expect(text()).not.toContain('準備中');
     expect(text()).toContain('メンバー数を取得できませんでした');
   });
 });
@@ -227,8 +229,8 @@ describe('組織ダッシュボードのソース: 取り除いたものが残�
     expect(source).not.toContain(banned);
   });
 
-  it('DR-9: 案内の文言と、メンバー数の取得先 (GET /api/org/stats) がソースにある', () => {
-    expect(source).toContain(NOTICE);
+  it('DR-9: メンバー数の取得先 (GET /api/org/stats) がソースにあり、取り除いた「準備中」の案内は無い', () => {
+    expect(source).not.toContain(REMOVED_NOTICE);
     expect(source).toContain('"/api/org/stats"');
   });
 });

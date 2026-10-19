@@ -23,7 +23,7 @@ export const MONITORING_DASHBOARD_LINKS = [
 export function MonitoringNotConnectedNotice() {
   return (
     <PreparingNotice title={MONITORING_NOT_CONNECTED_MESSAGE} tone="dark">
-      <p>アラートやメトリクスを集める処理がまだ無いため、この画面は空です。空であることは「問題が無い」という意味ではありません。</p>
+      <p>アラートやメトリクスを集める処理が無いため、この画面は空です。空であることは「問題が無い」という意味ではありません。</p>
       <p>実際の状態は、各サービスのダッシュボードで確認してください。</p>
       <ul className="flex flex-wrap gap-4 pt-1">
         {MONITORING_DASHBOARD_LINKS.map((link) => (

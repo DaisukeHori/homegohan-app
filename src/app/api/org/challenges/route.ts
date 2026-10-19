@@ -160,7 +160,7 @@ export async function POST(request: Request) {
     // #1132: 作成できるのは、食事の記録から計算できる種類だけ (歩数・体重・カスタムは、同意の仕組みができるまで止める)
     if (!isOrgChallengeType(challengeType)) {
       return NextResponse.json(
-        { error: 'この種類のチャレンジは、まだ作成できません', code: 'CHALLENGE_TYPE_DISABLED' },
+        { error: 'この種類のチャレンジは作成できません', code: 'CHALLENGE_TYPE_DISABLED' },
         { status: 400 },
       );
     }
@@ -281,7 +281,7 @@ export async function PUT(request: Request) {
       // #1132: 開始 (active) にできるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタムは、同意の仕組みができるまで止める
       if (updates.status === 'active' && currentRow && !isOrgChallengeType(currentRow.challenge_type)) {
         return NextResponse.json(
-          { error: 'この種類のチャレンジは、まだ開始できません', code: 'CHALLENGE_TYPE_DISABLED' },
+          { error: 'この種類のチャレンジは開始できません', code: 'CHALLENGE_TYPE_DISABLED' },
           { status: 400 },
         );
       }

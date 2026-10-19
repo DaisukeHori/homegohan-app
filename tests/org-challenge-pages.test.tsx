@@ -946,17 +946,17 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain('このチャレンジの状態は変えられません');
   });
 
-  it('作成フォーム: 使える 3 種類だけ選べる。歩数・体重・カスタムは「準備中」で選べない', async () => {
+  it('作成フォーム: 選択肢は使える 3 種類だけ。歩数・体重・カスタムは選択肢に出さず、「準備中」や予定の文も出さない (#1911)', async () => {
     fetchMock.mockResolvedValue(jsonResponse({ challenges: [] }));
     await render(<OrgChallengesAdminPage />);
 
     await click(button('+ 新規チャレンジ'));
 
     const options = Array.from(container.querySelectorAll('select option')) as HTMLOptionElement[];
-    expect(options.filter((o) => !o.disabled).map((o) => o.value)).toEqual(['breakfast_rate', 'veg_score', 'cooking_rate']);
-    expect(options.filter((o) => o.disabled).map((o) => o.value)).toEqual(['steps', 'weight_loss', 'custom']);
-    for (const option of options.filter((o) => o.disabled)) expect(option.textContent).toContain('準備中');
-    expect(text()).toContain('歩数・体重のチャレンジは、健康データの同意の仕組みができてから選べるようになります');
+    expect(options.map((o) => o.value)).toEqual(['breakfast_rate', 'veg_score', 'cooking_rate']);
+    expect(options.every((o) => !o.disabled)).toBe(true);
+    expect(text()).not.toContain('準備中');
+    expect(text()).not.toContain('選べるようになります');
   });
 
   it('種類を選ぶと、単位と目標値の初期値が変わる (野菜スコアは初期値なし、0〜100 まで)', async () => {
@@ -1015,7 +1015,7 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
   it('作成に失敗したら、API のメッセージを出す', async () => {
     fetchMock.mockImplementation(async (url: string, init?: { method?: string }) =>
       init?.method === 'POST'
-        ? jsonResponse({ error: 'この種類のチャレンジは、まだ作成できません', code: 'CHALLENGE_TYPE_DISABLED' }, 400)
+        ? jsonResponse({ error: 'この種類のチャレンジは作成できません', code: 'CHALLENGE_TYPE_DISABLED' }, 400)
         : jsonResponse({ challenges: [] }),
     );
     await render(<OrgChallengesAdminPage />);
@@ -1031,20 +1031,20 @@ describe('管理者向けの画面 (/org/challenges): 集計だけ', () => {
     });
     await act(async () => {});
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('この種類のチャレンジは、まだ作成できません');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('この種類のチャレンジは作成できません');
     expect(container.querySelector('form')).not.toBeNull();
   });
 
   it('状態の変更に失敗したら、API のメッセージを出す', async () => {
     fetchMock.mockImplementation(async (url: string, init?: { method?: string }) =>
       init?.method === 'PUT'
-        ? jsonResponse({ error: 'この種類のチャレンジは、まだ開始できません', code: 'CHALLENGE_TYPE_DISABLED' }, 400)
+        ? jsonResponse({ error: 'この種類のチャレンジは開始できません', code: 'CHALLENGE_TYPE_DISABLED' }, 400)
         : jsonResponse({ challenges: [adminChallenge({ status: 'draft' })] }),
     );
     await render(<OrgChallengesAdminPage />);
 
     await click(button('開始'));
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain('この種類のチャレンジは、まだ開始できません');
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain('この種類のチャレンジは開始できません');
   });
 });

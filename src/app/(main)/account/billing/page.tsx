@@ -9,7 +9,7 @@
  * - ?checkout=cancelled なら「お申し込みは完了していません」(S17。sync は呼ばない)
  * - ボタン: has_customer → Billing Portal / can_cancel → 解約する / can_resume → 解約を取り消す / can_purchase → プランを見る (/pricing)
  * - アプリの WebView (isNativeApp) では表示だけ (ボタンは描かない。§10.4・S14)
- * - ボタンの POST が 2xx 以外なら BILLING_ERROR_MESSAGES の固定の文を出す (鍵が無いときの 503 は「お支払いの受付は準備中です」)
+ * - ボタンの POST が 2xx 以外なら BILLING_ERROR_MESSAGES の固定の文を出す (鍵が無いときの 503 は「お支払いを受け付けていません」)
  */
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";

@@ -173,9 +173,6 @@ export function ManualEditModal({
             className="w-full p-3 rounded-xl text-[13px] outline-none"
             style={{ background: colors.bg, border: `1px solid ${colors.border}` }}
           />
-          <p style={{ fontSize: 11, color: colors.textMuted, margin: '6px 0 0 0' }}>
-            コンビニだけでなく、今後はスーパーや外食メニューも同じ catalog で追加します。
-          </p>
 
           {selectedCatalogProduct && (
             <div

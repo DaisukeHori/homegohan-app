@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  DISABLED_ORG_CHALLENGE_TYPES,
   ORG_CHALLENGE_MIN_PARTICIPANTS,
   ORG_CHALLENGE_TYPES,
   ORG_CHALLENGE_TYPE_LABELS,
@@ -40,15 +39,10 @@ interface Challenge {
   createdAt: string;
 }
 
-// 作成できるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタムは、健康データの同意の仕組みができるまで選べない
+// 作成できるのは、食事の記録から計算できる種類だけ。歩数・体重・カスタム (DISABLED_ORG_CHALLENGE_TYPES) は選択肢に出さない (#1911: 未完成の機能は「準備中」とも出さない)
 const ENABLED_TYPE_OPTIONS = ORG_CHALLENGE_TYPES.map((value) => ({
   value,
   label: ORG_CHALLENGE_TYPE_META[value].label,
-}));
-
-const DISABLED_TYPE_OPTIONS = DISABLED_ORG_CHALLENGE_TYPES.map((value) => ({
-  value,
-  label: `${ORG_CHALLENGE_TYPE_LABELS[value]} (準備中)`,
 }));
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
@@ -287,13 +281,9 @@ export default function OrgChallengesPage() {
                   {ENABLED_TYPE_OPTIONS.map((type) => (
                     <option key={type.value} value={type.value}>{type.label}</option>
                   ))}
-                  {DISABLED_TYPE_OPTIONS.map((type) => (
-                    <option key={type.value} value={type.value} disabled>{type.label}</option>
-                  ))}
                 </select>
                 <p id="challenge-type-help" className="text-xs text-gray-500 mt-1">
                   {isOrgChallengeType(formData.challengeType) ? ORG_CHALLENGE_TYPE_META[formData.challengeType].description : ""}
-                  {" "}歩数・体重のチャレンジは、健康データの同意の仕組みができてから選べるようになります。
                 </p>
               </div>
               <div>

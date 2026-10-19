@@ -21,8 +21,16 @@ const colors = {
 // 所在地・電話番号は載せず、請求があったときに遅滞なく開示する。架空の値 (ダミーの住所・電話番号など) は載せない。
 // メールアドレスは問い合わせ先の設定 (src/lib/site-config.ts の getSupportEmail) を使う。
 
-// 有料プランは販売開始前。価格・支払・解約などの条件はまだ決まっていないので載せない。
-const PAID_PLAN_PENDING = '有料プランは準備中です（販売開始前）';
+// 料金・支払・解約の欄は、いまの事実だけを書く (#1911: 「準備中」「決まり次第」のような予定は書かない)。
+// 有料の商品を売り始めるとき (買えるプランを /pricing に出すとき) は、この 5 つの欄を実際の条件に書き換える。
+/** 販売価格の欄 */
+const PRICE_TEXT = '無料でお使いいただけます（AI を使う機能には、1 日にご利用いただける回数の上限があります）。有料の商品・サービスの販売はありません。';
+/** 支払方法・支払時期の欄 */
+const NO_PAYMENT_TEXT = 'お支払いが必要な商品・サービスはありません。';
+/** サービス提供時期の欄 */
+const SERVICE_START_TEXT = '登録の後、すぐにご利用いただけます。';
+/** 解約の欄 */
+const CANCEL_TEXT = '設定から、いつでも退会できます。';
 
 const rows: { label: string; value: ReactNode }[] = [
   { label: '販売事業者', value: BUSINESS_NAME },
@@ -41,13 +49,13 @@ const rows: { label: string; value: ReactNode }[] = [
       </>
     ),
   },
-  { label: '販売価格', value: PAID_PLAN_PENDING },
+  { label: '販売価格', value: PRICE_TEXT },
   { label: '商品代金以外の必要料金', value: 'インターネット接続料金、通信料金等はお客様のご負担となります。' },
-  { label: '支払方法', value: PAID_PLAN_PENDING },
-  { label: '支払時期', value: PAID_PLAN_PENDING },
-  { label: 'サービス提供時期', value: PAID_PLAN_PENDING },
+  { label: '支払方法', value: NO_PAYMENT_TEXT },
+  { label: '支払時期', value: NO_PAYMENT_TEXT },
+  { label: 'サービス提供時期', value: SERVICE_START_TEXT },
   { label: '返品・キャンセル', value: 'デジタルコンテンツの性質上、購入後の返品・返金は原則としてお受けしておりません。\n\nただし、サービスに重大な瑕疵があった場合は、個別に対応いたします。' },
-  { label: '解約について', value: PAID_PLAN_PENDING },
+  { label: '解約について', value: CANCEL_TEXT },
   { label: '動作環境', value: '【Webブラウザ】\nChrome、Safari、Firefox、Edgeの最新版\n\n【スマートフォン】\niOS 14.0以上\nAndroid 8.0以上' },
 ];
 
@@ -91,7 +99,7 @@ export default function LegalPage() {
         </div>
 
         <p className="text-center text-sm mt-8" style={{ color: colors.textMuted }}>
-          最終更新日：2026年10月14日
+          最終更新日：2026年10月19日
         </p>
       </main>
 

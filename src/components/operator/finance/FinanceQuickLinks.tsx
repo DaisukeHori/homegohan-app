@@ -22,10 +22,8 @@ interface QuickLink {
   requiresExportType?: string;
 }
 
+// 収益推移・請求書一覧・Stripe 整合チェックは、元になるデータを作る処理が無いので並べない (#1911: 未完成の機能は画面に出さない。#1125)
 const QUICK_LINKS: QuickLink[] = [
-  { href: '/admin/finance/revenue', label: '収益推移グラフ', icon: '📈' },
-  { href: '/admin/finance/invoices', label: '請求書一覧', icon: '🧾' },
-  { href: '/admin/finance/reconciliation', label: 'Stripe 整合チェック', icon: '🔄' },
   { href: '/admin/finance/nps', label: 'NPS / CSAT', icon: '⭐', requiresExportType: 'nps' },
   { href: '/admin/finance/exports', label: 'CSV エクスポート', icon: '📥' },
 ];

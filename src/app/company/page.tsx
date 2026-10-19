@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { Users, Target, Heart, Sparkles } from "lucide-react";
-import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE } from "@/lib/business-info";
+import { BUSINESS_NAME, BUSINESS_REPRESENTATIVE, DISCLOSED_ON_REQUEST } from "@/lib/business-info";
 
 const colors = {
   primary: '#E07A5F',
@@ -29,10 +29,9 @@ const values = [
   { icon: <Sparkles size={24} />, title: '技術で社会貢献', desc: '最新のAI技術を活用し、誰もが健康になれる社会を目指します。', color: colors.warning },
 ];
 
-// 事業者の実在情報がまだ確定していない項目 (所在地) の表示。
-// 架空の住所・沿革・チーム紹介などは載せない。確定したら実際の値に差し替える。
-// 会社名・代表者は src/lib/business-info.ts で決める (特定商取引法に基づく表記・規約・ポリシーと同じ値)。
-const PENDING = '準備中（確定次第掲載します）';
+// 架空の住所・沿革・チーム紹介などは載せない。
+// 会社名・代表者・所在地の扱いは src/lib/business-info.ts で決める (特定商取引法に基づく表記・規約・ポリシーと同じ値)。
+// 所在地は特定商取引法に基づく表記と同じく、請求があったときに開示する (#1911: 「準備中」とは書かない)。
 
 export default function CompanyPage() {
   return (
@@ -110,7 +109,7 @@ export default function CompanyPage() {
                     { label: '会社名', value: BUSINESS_NAME },
                     { label: '事業内容', value: '食事管理アプリ「ほめゴハン」の企画・開発・運営' },
                     { label: '代表者', value: BUSINESS_REPRESENTATIVE },
-                    { label: '所在地', value: PENDING },
+                    { label: '所在地', value: DISCLOSED_ON_REQUEST },
                   ].map((row, i) => (
                     <tr key={i} className="border-b last:border-b-0" style={{ borderColor: colors.border }}>
                       <th className="py-4 pr-4 text-left align-top w-1/3 font-bold text-sm" style={{ color: colors.text }}>
@@ -132,7 +131,6 @@ export default function CompanyPage() {
           <div className="container mx-auto px-4 max-w-2xl text-center">
             <h2 className="text-3xl font-bold mb-8" style={{ color: colors.text }}>お問い合わせ</h2>
             <p className="text-sm leading-relaxed" style={{ color: colors.textLight }}>
-              メールアドレス・電話番号・所在地の掲載は準備中です（確定次第掲載します）。<br />
               お問い合わせは、下のお問い合わせフォームからお願いします。
             </p>
             <Link href="/contact" className="inline-block mt-8">
