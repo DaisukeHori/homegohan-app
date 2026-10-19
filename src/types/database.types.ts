@@ -2562,7 +2562,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -2573,7 +2573,7 @@ export type Database = {
           member_limit?: number
           name: string
           plan_key?: string
-          representative_id: string
+          representative_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -2584,7 +2584,7 @@ export type Database = {
           member_limit?: number
           name?: string
           plan_key?: string
-          representative_id?: string
+          representative_id?: string | null
           status?: string
           updated_at?: string
         }
@@ -5167,7 +5167,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -5185,7 +5185,7 @@ export type Database = {
           industry?: string | null
           logo_url?: string | null
           name: string
-          owner_id: string
+          owner_id?: string | null
           plan?: string | null
           settings?: Json | null
           status?: string
@@ -5203,7 +5203,7 @@ export type Database = {
           industry?: string | null
           logo_url?: string | null
           name?: string
-          owner_id?: string
+          owner_id?: string | null
           plan?: string | null
           settings?: Json | null
           status?: string
@@ -8044,7 +8044,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -8225,7 +8225,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -8681,7 +8681,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -8840,6 +8840,14 @@ export type Database = {
         Args: { p_id: string; p_until: string; p_worker_id: string }
         Returns: boolean
       }
+      dissolve_family_by_representative: {
+        Args: { p_family_id: string }
+        Returns: Json
+      }
+      dissolve_org_by_owner: {
+        Args: { p_organization_id: string }
+        Returns: Json
+      }
       email_outbox_dead_counts: {
         Args: { p_limit?: number }
         Returns: {
@@ -8887,6 +8895,26 @@ export type Database = {
           p_worker_id: string
         }
         Returns: string
+      }
+      family_dissolve_apply: {
+        Args: { p_family_id: string }
+        Returns: {
+          created_at: string
+          dissolved_at: string | null
+          id: string
+          member_limit: number
+          name: string
+          plan_key: string
+          representative_id: string | null
+          status: string
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "family_groups"
+          isOneToOne: true
+          isSetofReturn: false
+        }
       }
       family_menu_planned_meals: {
         Args: { p_end_date: string; p_start_date: string }
@@ -9273,7 +9301,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -9296,7 +9324,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -9327,7 +9355,7 @@ export type Database = {
           industry: string | null
           logo_url: string | null
           name: string
-          owner_id: string
+          owner_id: string | null
           plan: string | null
           settings: Json | null
           status: string
@@ -9351,7 +9379,7 @@ export type Database = {
           member_limit: number
           name: string
           plan_key: string
-          representative_id: string
+          representative_id: string | null
           status: string
           updated_at: string
         }
@@ -9367,6 +9395,33 @@ export type Database = {
         Returns: number
       }
       operator_mfa_satisfied: { Args: never; Returns: boolean }
+      org_dissolve_apply: {
+        Args: { p_organization_id: string }
+        Returns: {
+          contact_email: string | null
+          contact_name: string | null
+          created_at: string | null
+          dissolved_at: string | null
+          employee_count: number | null
+          id: string
+          industry: string | null
+          logo_url: string | null
+          name: string
+          owner_id: string | null
+          plan: string | null
+          settings: Json | null
+          status: string
+          subscription_expires_at: string | null
+          subscription_status: string | null
+          updated_at: string | null
+        }
+        SetofOptions: {
+          from: "*"
+          to: "organizations"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       organizations_owner_id_unchanged: {
         Args: { p_new_owner_id: string; p_org_id: string }
         Returns: boolean

@@ -19,3 +19,4 @@ export * from './meal-paste';
 export * from './share-settings';
 export * from './operator-membership';
 export * from './family-menu';
+export * from './self-dissolve';

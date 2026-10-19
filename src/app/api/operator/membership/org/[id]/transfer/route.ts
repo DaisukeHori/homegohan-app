@@ -144,7 +144,7 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
       }
 
       // 旧 owner・組織名は RPC 実行前に控えた値を使う (RPC の戻り値の owner_id は新 owner)。
-      // owner_id の列は NOT NULL (#1103 項目 10 / migration 20261017100000) だが、控えの型は NULL も受ける (防御)。
+      // owner_id の列は active な行では NOT NULL (CHECK organizations_active_has_owner。#1103 項目 10 → #1917)。解散した行は NULL なので、控えの型は NULL も受ける。
       // 旧 owner が分からないときは null (= old_owner 役の宛先なし)
       const oldOwnerId = preOrg.owner_id;
       const orgName = preOrg.name ?? '';

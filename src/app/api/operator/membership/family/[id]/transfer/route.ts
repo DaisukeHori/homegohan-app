@@ -59,7 +59,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
     // その結果、本当の旧代表者に旧オーナー向けの通知が届かず、新代表者宛の「旧オーナー」欄も
     // 新代表者自身のアドレスになる。
     // 通知は best-effort (設計 §8) なので、ここで失敗しても譲渡は止めず、後段で通知だけを省く。
-    let preFg: { name: string | null; representative_id: string } | null = null;
+    // representative_id は active な行では NOT NULL (CHECK family_groups_active_has_representative)。解散した行は NULL (#1917) なので、型は NULL も受ける
+    let preFg: { name: string | null; representative_id: string | null } | null = null;
     let preFgError: unknown = null;
     try {
       const { data, error } = await getSupabaseAdmin()
@@ -142,7 +143,8 @@ export async function POST(req: NextRequest, props: { params: Promise<{ id: stri
 
       // 旧代表者・家族名は RPC 実行前に控えた値を使う (RPC 後の representative_id は新代表者)
       const familyName = preFg.name ?? '';
-      const oldRepId = preFg.representative_id;
+      // 旧代表者が分からない (解散した行は NULL。#1917) ときは null (= old_owner 役の宛先なし)
+      const oldRepId = preFg.representative_id ?? null;
 
       // auth.users のメールアドレス。listUsers() は先頭 50 件しか返さないため、通知先と
       // 旧・新代表者の分だけを引く (#1204)。取得できなかった人は警告ログに残り、その人には送らない

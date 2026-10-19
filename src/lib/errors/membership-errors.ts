@@ -33,6 +33,10 @@ export enum MembershipErrorCode {
   MEMBER_NOT_FOUND = 'MEMBER_NOT_FOUND',
   IS_FAMILY_REPRESENTATIVE = 'IS_FAMILY_REPRESENTATIVE',
   NOT_FAMILY_REPRESENTATIVE = 'NOT_FAMILY_REPRESENTATIVE',
+  // #1917: 利用者の解散 (dissolve_family_by_representative / dissolve_org_by_owner) が RAISE する。ORG_ALREADY_DISSOLVED は
+  // operator_force_dissolve_org も前から RAISE している (運営の route は internalError で返すので、これまで表に無かった)
+  FAMILY_ALREADY_DISSOLVED = 'FAMILY_ALREADY_DISSOLVED',
+  ORG_ALREADY_DISSOLVED = 'ORG_ALREADY_DISSOLVED',
   CANNOT_TRANSFER_TO_CHILD = 'CANNOT_TRANSFER_TO_CHILD',
   // #1576: /api/family/members/[member_id]/remove が、RPC のエラー文にこのコードが含まれるときにだけ返す古い守り。
   // remove_family_member は代表者を外そうとすると IS_FAMILY_REPRESENTATIVE を RAISE する (このコードを RAISE する SQL は無い)。
@@ -111,6 +115,8 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 404,
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: 409,
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: 403,
+  [MembershipErrorCode.FAMILY_ALREADY_DISSOLVED]: 409,
+  [MembershipErrorCode.ORG_ALREADY_DISSOLVED]: 409,
   [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: 409,
   [MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]: 409,
   [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: 404,
@@ -208,6 +214,8 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.MEMBER_NOT_FOUND]: 'メンバーが見つかりません。',
   [MembershipErrorCode.IS_FAMILY_REPRESENTATIVE]: '代表者はこの操作をできません。先に代表者を譲ってください。',
   [MembershipErrorCode.NOT_FAMILY_REPRESENTATIVE]: '家族の代表者だけが操作できます。',
+  [MembershipErrorCode.FAMILY_ALREADY_DISSOLVED]: 'この家族グループはすでに解散しています。',
+  [MembershipErrorCode.ORG_ALREADY_DISSOLVED]: 'この組織はすでに解散しています。',
   [MembershipErrorCode.CANNOT_TRANSFER_TO_CHILD]: '子どものメンバーには代表者を譲れません。',
   [MembershipErrorCode.CANNOT_REMOVE_REPRESENTATIVE]: '代表者は家族から外せません。先に代表者を譲ってください。',
   [MembershipErrorCode.PROMOTION_REQUEST_NOT_FOUND]: '昇格の依頼が見つかりません。',
