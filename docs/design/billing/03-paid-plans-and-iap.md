@@ -180,7 +180,7 @@
 | R11 | 購入の復元 | #1912・P3・P9 | 「購入を復元」のボタン → `restorePurchases()` → 同期の API (§9.3・§10.6)。Restore behavior は既定 (Transfer to new App User ID) のまま (§17)。TRANSFER のイベントは移動元と移動先の両方を取り直す (§4.1) |
 | R12 | Web で買った人がアプリで使える・アプリで買った人の解約はストアで・二重購読の防止と案内 | #1912・P9 (3.1.3(b)) | 権利は DB の行なのでどこで買っても使える。アプリの画面は `GET /api/billing/subscription` で live な契約があれば購入のボタンを出さず、契約の出どころ (`source`) に応じて「Web でご契約中」/ ストアの購読の管理へのリンクを出す (§10.6)。ストアの契約は `can_cancel` / `can_resume` を偽にし、`manage_in_store` を返す (§8.1)。2 本目の live な契約は写像が `BILL_LIVE_ROW_CONFLICT` で止め、監査に残す (§7.3・§13.3) |
 | R13 | 家族のプランの席の数え方 | #1912 | いまのまま: `family_groups.member_limit` = プランの `max_members` (4 / 8) を写像とトリガーが同期し、人数は `family_members` の active な行 (子供を含む) で数える (F9・billing/01 §6.4 (10))。本冊は席を変えない |
-| R14 | 無料体験の 1 人 1 回 | #1912・operator/04 §5.2 | Q-10 のとおり (Web は `hasUsedTrial`、ストアはストア任せ + 行の `trial_started_at` で片向きに共有) |
+| R14 | 無料体験の 1 人 1 回 | #1912・operator/04 §5.2 | Q-10 のとおり (Web は `hasUsedTrial`、ストアはストア任せ + 行の `trial_started_at` で片向きに共有。S23) |
 | R15 | モバイルの購入の画面はストアの審査の要件を満たす | #1912・P9・P10 | プラン名と期間・提供する内容・更新の価格 (ストアの `priceString`)・無料体験の長さと終了後の価格・自動更新の説明・解約の方法 (ストアの管理へのリンク)・「購入を復元」・利用規約とプライバシーポリシーへのリンクを 1 画面に (§10.6) |
 | R16 | アプリの中に、Web での購入への誘導を出さない | billing/01 R11 の改定・P9 (3.1.3) | アプリの中にアプリ内課金の購入の画面を持つ (R7)。Web の購入のページ (`/pricing`・`/account/billing`) へのリンクは引き続き出さない (見張り `no-web-purchase-links.test.ts` は保つ。§10.6・§16.1) |
 | R17 | 販売の開始と同時に出す文: 規約・ポリシー (Stripe と RevenueCat への送信・外部送信の公表)・特商法 | #1912 (決めること 5)・追記 2 | §11 (差分として書き、#1901 の版の上に足す)。特商法の表記の会社情報は追記 2 の値 (§10.2) |
@@ -191,7 +191,7 @@
 | R22 | 監査ログ必須 | `docs/design/CLAUDE.md` | 状態の変化は写像が `admin_audit_logs` に書く (核と同じ名前)。Webhook の失敗は `system.revenuecat.event_failed` (§8.1) |
 | R23 | 既存の番兵の追随と、2 PR 以上が触る共有面の台帳 | 設計の規約 | §16 |
 
-### 3.2 ユーザーシナリオ (22 本)
+### 3.2 ユーザーシナリオ (23 本)
 
 | ID | シナリオ |
 |---|---|
@@ -217,6 +217,7 @@
 | S20 | 運営の手動付与との共存: 運営が利用者に `family_pro` を手動で付与 (M 行)。その利用者がアプリで買おうとしても購入のボタンは出ない (live)。手動付与の取り消し・期限切れは、ストアの行 (`iap_store IS NOT NULL`) を M 行と見ない (§6.7) |
 | S21 | 規約の改定の再同意: 段 E で規約とポリシーの版が上がる。サインイン中の全員に再同意が求められる (既存の仕組み)。再同意していない人の購入の API は 403 `LEGAL_CONSENT_REQUIRED` で、同意してから買う (購入の API は未同意の許可リストに入れない) |
 | S22 | 凍結 (BAN) 中のストアの契約: 凍結中の利用者のストアの購読は更新され続ける (核の Stripe と同じく凍結は課金を止めない)。`/frozen/billing` はストアの行には「App Store / Google Play の購読の管理から解約できます」の文を出し、解約のボタンを出さない。Webhook と写像は凍結を見ない |
+| S23 | 無料体験の 1 人 1 回: 利用者が iOS で個人 Pro の月額を 7 日間の無料体験つきで買い (行は `trialing`)、体験中に App Store で自動更新を切る。体験の終わりに行は `expired` になる。後日 Web の `/pricing` から個人 Pro を申し込むと、確認画面の無料体験は 0 日で、Checkout も試用なしで作られる。家族 Basic を Web で申し込むときは 7 日の無料体験が付く (試用は同じプランで 1 回)。同じ Apple ID でストアからもう一度買うときの試用の可否は App Store が決める (Q-10) |
 
 ---
 
@@ -258,6 +259,7 @@
 | S20 | 1: M 行は live なので `BillingSummary.can_purchase=false` → アプリは購入のボタンを出さない。6.7: 取り消し・期限切れの述語 `stripe_subscription_id IS NULL AND iap_store IS NULL` でストアの行を触らない |
 | S21 | 既存の同意ゲート: `/api/billing/iap/*` は `LEGAL_CONSENT_EXEMPT_API_PATHS` に入れない → 未同意は 403 `LEGAL_CONSENT_REQUIRED` (アプリは既存の `LegalConsentGate` が同意画面に畳む) |
 | S22 | 既存: Webhook と写像は `frozen_at` を見ない。`/frozen/billing` は `summary.source` がストアなら文だけ (§10.4) |
+| S23 | 1・2: 購入の取り直し (`period_type` trial) → 写像の 6. の INSERT が `trialing` の行に `trial_started_at = purchase_date`・`trial_ends_at = expires_date`・`trial_source = 'app_store'` を入れる (§6.4)。自動更新 OFF → `cancel_at_period_end=true` (S5 と同じ)。体験の終わりの取り直し → `expired`。UPDATE は `trial_started_at` / `trial_source` を `COALESCE` で保つ。Web: `previewCheckout` / `startCheckout` (`src/lib/billing/service.ts:73,97`) → `repository.hasUsedTrial(user, 'pro')` (`src/lib/billing/repository.ts:72-80`。同じ利用者・同じ `plan_key` で `trial_started_at` のある行を数える。行の出どころを見ないので I 行も入る。コードは変えない) = true → `trialDaysFor(7, true)` = 0 (`src/lib/billing/core.ts:446-448`)。`family_basic` は `hasUsedTrial(user, 'family_basic')` = false → 7 日。ストアでの買い直しは同じ (user, store, product) の行を再利用し、`trial_started_at` は最初の値を保つ (§7.3) |
 
 ---
 
@@ -478,7 +480,8 @@ COMMENT ON COLUMN public.personal_subscriptions.trial_source IS
 --      戻り値 (jsonb): { applied: true, subscription_id, user_id, status_from, status_to, plan_key } /
 --                      { applied: false, skipped: 'stale', subscription_id, user_id } /
 --                      { applied: false, skipped: 'user_deleted' }
---      業務エラー (P0001): BILL_UNKNOWN_USER (auth.users に無い) / BILL_UNKNOWN_PLAN / BILL_UNKNOWN_IAP_STATUS / BILL_LIVE_ROW_CONFLICT。
+--      業務エラー (P0001): BILL_UNKNOWN_PLAN / BILL_UNKNOWN_IAP_STATUS / BILL_LIVE_ROW_CONFLICT。
+--      (auth.users に無い利用者は BILL_UNKNOWN_USER にせず skipped: 'user_deleted' を返す。§13.3)
 --      ロックの順は核と同じ: advisory billing-user:<uuid> → iap-subscription:<store>:<product> → 契約の行 → family_groups → user_profiles
 CREATE OR REPLACE FUNCTION public.billing_apply_store_subscription(
   p_snapshot   jsonb,
@@ -828,6 +831,7 @@ CREATE TRIGGER family_members_billing_plan_gate
 | 退会 (`deleteAccount` の段階 `billing`) | Stripe を解約 | — | ストアの購読は解約できない (ストアが契約の主体)。行は CASCADE で消え、以後の Webhook は `user_deleted` で何もしない (§6.4 の 1.)。退会の画面に「ストアの購読は各ストアで解約してください」を足す (§10.5) | — |
 | 本人のデータの書き出し (`account-export-tables.ts`) | `omit` 済み | — | 新しい列 `iap_store`・`iap_product_id` は書き出す (本人の契約の内容)。`iap_synced_at` は `omit` (内部の時刻。`stripe_synced_at` と同じ扱い) | — |
 | `countPlanSubscribers` (運営のプランの廃止の判定) | 数える | 数える | 数える (live 5 値で数える。変更なし) | — |
+| 無料体験の 1 人 1 回 (R14・Q-10・S23。Web の `hasUsedTrial` = 同じ利用者・同じ `plan_key` で `trial_started_at` のある行が 1 行でもあれば Checkout に試用を付けない。出どころを見ない。コードは変えない) | 写像 (9) が Checkout の試用の `trial_start` を `trial_started_at` に書く → 数える | `trial_started_at` を入れない (billing/02 §4.1) → 数えない | 写像 (§6.4 の 6.) が `trialing` のときだけ `trial_started_at` / `trial_ends_at` / `trial_source` (`app_store` / `play_store`) を書き、期限切れ・買い直しでも保つ → 数える (Web の同じプランの試用は付かない)。ストアの試用の可否はストアが決める (当社は止めない。§18 の 5) | 数えない (Web の最初の申し込みは `trial_days` = 7) |
 
 公開の面 (プランの表示):
 
@@ -859,6 +863,7 @@ CREATE TRIGGER family_members_billing_plan_gate
 | RevenueCat の Webhook | 無い | `POST /api/webhooks/revenuecat` (署名・claim・取り直し・写像) |
 | `BillingSummary.source` | `'stripe' / 'manual' / null` | `'stripe' / 'manual' / 'app_store' / 'play_store' / null` + `manage_in_store` + `features` |
 | 手動付与の M 行の述語 | `stripe_subscription_id IS NULL` | `stripe_subscription_id IS NULL AND iap_store IS NULL` |
+| 無料体験の 1 人 1 回 (R14・Q-10) | Web だけ: 同じ `plan_key` で `trial_started_at` のある行 (S 行) があれば Checkout に試用を付けない (`hasUsedTrial`。`src/lib/billing/repository.ts:72-80`) | Web の規則は同じ (コードは変えない)。I 行の `trial_started_at` も同じ問い合わせに入るので、ストアで試用した利用者は Web で同じプランの試用を受けない (S23)。ストアの試用はストアの判定 (Apple ID / Google アカウントごと)。Web で試用した利用者のストアの試用は止めない (§18 の 5) |
 | 規約・ポリシーの版 | `v2025.1` (#1901 が上げる予定の版を x とする) | x の次の版 (§11) |
 | billing/01 §10.4 の規則 (アプリ内課金をしない) | アプリに購入の画面を置かない | アプリ内課金の購入の画面を置く。Web の購入のページへのリンクは引き続き出さない (§16.2) |
 
@@ -877,13 +882,17 @@ CREATE TRIGGER family_members_billing_plan_gate
 | `trialing` | `RENEWAL` (試用 → 課金) | `active` | 取り直しが新しい | UPDATE・監査 `status_changed` |
 | `trialing` / `active` | `CANCELLATION` (`UNSUBSCRIBE`。自動更新 OFF) | 同じ | 同上 | `cancel_at_period_end=true`・`cancel_at=expires_date` (監査なし) |
 | `trialing` / `active` | `UNCANCELLATION` | 同じ | 同上 | `cancel_at_period_end=false`・`cancel_at=NULL` |
+| `past_due` | `CANCELLATION` (`UNSUBSCRIBE`。猶予の間に自動更新 OFF) | `past_due` | 取り直しが新しい・`expires_date` > now (`billing_issues_detected_at` が先に効く。`deriveStoreStatus`) | `cancel_at_period_end=true`・`cancel_at=expires_date`・`past_due_since` は保つ (状態は変わらないので監査なし)。猶予が尽きたら下の `EXPIRATION` の行 |
+| `past_due` | `UNCANCELLATION` | `past_due` | 同上 | `cancel_at_period_end=false`・`cancel_at=NULL` (監査なし) |
 | `trialing` / `active` | `RENEWAL` (更新) | `active` | 同上 | `current_period_end` が進む |
 | `trialing` / `active` | `BILLING_ISSUE` (猶予の間) | `past_due` | `expires_date` > now | `past_due_since`・監査 (warn) |
 | `past_due` | `RENEWAL` (回復) | `active` | 同上 | `past_due_since=NULL`・監査 |
 | `trialing` / `active` / `past_due` | `EXPIRATION` (期間末・猶予の終わり・Google の一時停止) | `expired` | `expires_date` ≤ now | `plan_key_cached` を再計算 (NULL)・家族グループ `free` / 4・監査 |
 | `trialing` / `active` / `past_due` | `CANCELLATION` (`CUSTOMER_SUPPORT` = 返金) | `cancelled` | `refunded_at` あり | `cancelled_at=refunded_at`・同上 |
 | `expired` / `cancelled` | 同じ商品を買い直す (`INITIAL_PURCHASE` / `RENEWAL`) | `trialing` / `active` | 別の live 行なし | UPDATE (同じ (user, store, product) の行を再利用。`trial_started_at` は最初の値を保つ) |
-| `active` (月額) | `PRODUCT_CHANGE` (年額へ) | 月額の行は期限で `expired`、年額の商品は新しい行 | 年額の行の INSERT 時に月額の行が live なら `BILL_LIVE_ROW_CONFLICT` | 取り直しの `subscriptions` には両方の商品が入る。TS は `expires_date` の遅い順に写し (§8.4)、月額の行が先に `expired` になってから年額を INSERT する (同じ取り直しの中で順に適用) |
+| `active` (月額) | `PRODUCT_CHANGE` (年額へ) | 月額の行は期限で `expired`、年額の商品は新しい行 | 年額の行の INSERT 時に月額の行が live なら `BILL_LIVE_ROW_CONFLICT` | 取り直しの `subscriptions` には両方の商品が入る。TS は live でないものを先に、次に `expires_date` の早い順に写し (§8.1 `selectStoreSubscriptions`・§8.4)、月額の行が先に `expired` になってから年額を INSERT する (同じ取り直しの中で順に適用) |
+| `trialing` (月額) | `PRODUCT_CHANGE` (年額へ) | 上の `active` (月額) の行と同じ (月額の行は取り直しで期限を過ぎた時点で `expired`、年額の商品は新しい行) | 同上 | 順は上の行と同じ。年額の行の status は年額の取り直しの `period_type` で決まる (`trial` なら `trialing`、それ以外は `active`。§8.1 `deriveStoreStatus`)。月額の行の `trial_started_at` は保つので、Web の同じ `plan_key` の試用は付かない (S23) |
+| `past_due` (月額) | `PRODUCT_CHANGE` (年額へ) | 月額の行は取り直しの姿のまま (`past_due`。回復しなければ `EXPIRATION` で `expired`)、年額の商品は取り直しに現れた時点で新しい行 | 同上 (年額の行の INSERT 時に月額の行が live なら `BILL_LIVE_ROW_CONFLICT`) | 順は上の行と同じ (live でないものが先、次に `expires_date` の早い順) |
 | 任意 | `TRANSFER` (別の利用者へ移った) | 移動元: `expired` (取り直しの `subscriptions` から消える・または期限切れ) / 移動先: 上の「– (行なし)」の規則 | 移動先に別の live 行があれば `BILL_LIVE_ROW_CONFLICT` | 両方の利用者を取り直す (§8.4)。移動元が `subscriptions` に商品を持たなくなったときは、移動元の live な I 行を `expired` にする (TS が `expires_date=now` の snapshot を作る。§8.4 `projectMissingSubscription`) |
 | 任意 | 取り直しが古い (`iap_synced_at` ≥ `p_fetched_at`) | 同じ | — | `skipped: 'stale'` |
 | 任意 | 退会 (`user_deleted`) | 行は CASCADE で消える | — | 以後の Webhook は `skipped: 'user_deleted'`・200 |
@@ -1569,7 +1578,7 @@ import {
 } from '@/lib/billing/iap-core';
 
 /** DB の RPC が P0001 で返す業務エラーのうち本冊の写像が足すもの (核の BillingRpcError の code の集合に足す。§13.3) */
-const STORE_RPC_ERROR_CODES = new Set(['BILL_UNKNOWN_USER', 'BILL_UNKNOWN_PLAN', 'BILL_UNKNOWN_IAP_STATUS', 'BILL_LIVE_ROW_CONFLICT']);
+const STORE_RPC_ERROR_CODES = new Set(['BILL_UNKNOWN_PLAN', 'BILL_UNKNOWN_IAP_STATUS', 'BILL_LIVE_ROW_CONFLICT']);
 
 const LIVE_STATUSES = ['trialing', 'active', 'paused', 'past_due', 'grace'] as const;
 
@@ -2609,6 +2618,8 @@ export function renewalText(interval: "month" | "year", priceString: string, tri
 | `BILL_LIVE_ROW_CONFLICT` | 既存の live 行の id | 同じ利用者に別の live 行 (S13・PRODUCT_CHANGE の順の崩れ・TRANSFER の先に別の契約) | Webhook `failed` + 監査 `system.revenuecat.event_failed` (warn)。sync は 409。運営はストアで返金し、必要なら RevenueCat の Dashboard で Retry |
 | `FAMILY_PLAN_REQUIRED` [NEW] | family_id (トリガー) / なし (`create_family_group`) | 家族プランの契約の無い代表者のグループを作る・メンバーを足す | route が 402 |
 
+核の `BILL_UNKNOWN_USER` (billing/01 §13.3) は本冊の写像 `billing_apply_store_subscription` では使わない。`app_user_id` が `auth.users` に無いとき (退会済み) は業務エラーにせず `{ applied: false, skipped: 'user_deleted' }` を返し、Webhook は 200 (§6.4 の 1.・§7.3・テスト 72)。そのため `STORE_RPC_ERROR_CODES` (§8.3) にも入れない。
+
 ---
 
 ## 14. テスト一覧 (it 名)
@@ -2629,6 +2640,7 @@ export function renewalText(interval: "month" | "year", priceString: string, tri
 11. `it('RevenueCatWebhookEnvelopeSchema accepts the documented INITIAL_PURCHASE / RENEWAL / TRANSFER samples and rejects a body without event.id')`
 12. `it('RevenueCatCustomerInfoSchema accepts the documented subscriber shape (subscriptions keyed by product id)')`
 13. `it('IAP_ERROR_MESSAGES and IAP_STORE_LABELS do not contain 準備中 / 販売開始前 / 近日 / 予定')`
+85. `it('deriveStoreStatus / projectStoreSubscription keep past_due with cancel_at_period_end = true for an unsubscribed billing-issue subscription, and false after uncancellation')` (§7.3 の `past_due` の行。83 以降は網羅性の反映で足した通し番号で、置き場所はファイルごとの組に合わせる)
 
 `src/__tests__/lib/webhook/verify.test.ts` (追加):
 14. `it('parseRevenueCatSignatureHeader reads t and v1 and returns null for malformed headers')`
@@ -2683,6 +2695,10 @@ export function renewalText(interval: "month" | "year", priceString: string, tri
 
 `tests/business-info-legal-pages.test.ts` (書き換え): 所在地 = `BUSINESS_ADDRESS`・メールアドレス = `BUSINESS_EMAIL`・営業時間の行。
 
+Web の契約の画面 (追加。§10.3・§10.4):
+87. `src/__tests__/app/account/billing-pages.test.ts`: `it('account billing page shows the store contract wording with the store management link and no cancel / resume / portal buttons for app_store and play_store rows')` (S4)
+88. `src/__tests__/app/frozen-billing-page.test.tsx`: `it('frozen billing page shows the store management wording and no cancel button for a store row')` (S22)
+
 家族・AI の route:
 49. `tests/api/family-plan-required.test.ts`: `it('family routes map FAMILY_PLAN_REQUIRED from the RPC to 402 with the fixed message')`
 50. `src/__tests__/lib/plan/entitlements.test.ts` (追加): `it('consumeAiUsage passes through plan_locked denials unchanged (403 is decided by aiDailyLimitPayload)')`
@@ -2716,6 +2732,9 @@ export function renewalText(interval: "month" | "year", priceString: string, tri
 70. `it('reuses the same (user, store, product) row on repurchase and keeps trial_started_at')`
 71. `it('applies PRODUCT_CHANGE in order: month row expired first, then the yearly row inserted')`
 72. `it('returns user_deleted without writing for a missing auth user')`
+83. `it('writes trial_started_at / trial_ends_at / trial_source = store on a trialing store row and keeps them after the row expires')` (S23)
+84. `it('Web repository hasUsedTrial counts a store trial row for the same plan_key and not for another plan_key')` (S23。`createBillingRepository` の既存の `hasUsedTrial` をローカル Supabase で呼ぶ)
+86. `it('applies PRODUCT_CHANGE from a trialing month row: month row expired with trial_started_at kept, then the yearly row inserted with the status from its own period_type')` (§7.3 の `trialing` (月額) の行)
 
 `tests/integration/rls/billing-revenuecat-events-claim-rpc.test.ts`:
 73. `it('claim returns claimed / completed / in_progress and lets failed and stale processing rows be reclaimed')`
@@ -2740,6 +2759,34 @@ export function renewalText(interval: "month" | "year", priceString: string, tri
 81. `tests/e2e/.manual/iap-webhook.spec.ts`: Preview の受け口へ RevenueCat の Dashboard の Test event と sandbox の購入のイベントを送り、`personal_subscriptions` と `revenuecat_webhook_events` を確かめる。
 82. 実機 (整合ゲート): §17.4。
 
+### 14.4 シナリオ ⇄ テスト (§3.2 の 23 本がどのテストで守られるか)
+
+| シナリオ | テスト (番号は §14.1〜§14.3) |
+|---|---|
+| S1 iOS の新規購入 (無料体験) | 17・32・51・54・55・66・83・82 (実機) |
+| S2 Android の年額 (家族 Basic) | 17・66・77・82 (実機) |
+| S3 Web で買った人がアプリを開く | 35・54 |
+| S4 アプリで買った人が Web を開く | 34・68・87 |
+| S5 ストアでの解約の予約 → 期限切れ | 5・69 |
+| S6 更新 | 4・67 |
+| S7 支払いの問題 (猶予 → 期限切れ) | 4・69・85 |
+| S8 返金 | 4 |
+| S9 購入の復元 | 32・54 |
+| S10 別の利用者が復元 (TRANSFER) | 3・19・21 |
+| S11 順序の入れ替わり・重複・再送 | 27・67・73 |
+| S12 Webhook が届かない | 8・24・33 |
+| S13 二重購読の防止 | 22・28・32・68 |
+| S14 鍵が無い | 16・26・31・32 |
+| S15 ストアの商品が未登録 | 10・18・56 |
+| S16 Stripe の Price が無い間の料金ページ | 44・46 |
+| S17 無料の利用者の線引き | 41・42・49・57・74・77 |
+| S18 有料の利用者の線引き | 74・75・76 |
+| S19 家族プランが終わったグループ | 69・78・79 |
+| S20 手動付与との共存 | 63・68・77 |
+| S21 規約の改定の再同意 | §16.1 の `middleware-legal-consent-api` の行 (許可リストは変えないので既存のテストが緑のまま守る) |
+| S22 凍結中のストアの契約 | 88 |
+| S23 無料体験の 1 人 1 回 | 70・83・84・86 |
+
 ---
 
 ## 15. 段分け・触るファイルの母集合・新設一覧
@@ -2748,9 +2795,9 @@ export function renewalText(interval: "month" | "year", priceString: string, tri
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (§6)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、本人の書き出しの `omit`、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・§16.1 の結合テストの追随 | 60〜80 |
-| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`plan-catalog.ts`・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 4 本の 402・`membership-errors.ts`・`ai-daily-limit.ts` と Web / モバイルの `aiDailyLimitErrorOf`・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50 |
-| C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48 |
+| A: DB 層 | migration + rollback (§6)、`database.types.ts` の再生成 (2 本)、SQL の契約テスト、結合テスト、本人の書き出しの `omit`、家族の結合テストの前提 (家族プランの手動付与) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`src/lib/account-export-tables.ts`・§16.1 の結合テストの追随 | 60〜80・83・84・86 |
+| B: サーバ層 | `iap-core.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`iap-service.ts`・`http.ts` の差分・`core.ts` の差分・`repository.ts` の差分 (`SUBSCRIPTION_VIEW_COLUMNS`・`findPlanFeatures`・`BillingRpcError` の code)・`service.ts` の差分・`public-plans.ts` (`listPublicPlans`)・`plan-catalog.ts`・`verify.ts`・`env.ts`・`.env.example`・`ENV_SETUP.md`・route 3 本・`subscription/route.ts` の差分・family の route 4 本の 402・`membership-errors.ts`・`ai-daily-limit.ts` と Web / モバイルの `aiDailyLimitErrorOf`・`maintenance-mode.ts`・middleware の Webhook の除外・`EXEMPT_ROUTES`・`null-character-routes` の表 | §8・§9 | 1〜43, 49, 50, 85 |
+| C: Web の画面と公開の面 | `/pricing`・`/legal`・`/company`・`/faq`・`landing-copy.ts`・`business-info.ts`・`/account/billing`・`/frozen/billing`・退会の文・究極モードの錠 (`V4GenerateModal`・`useBillingSummary`)・`public-claims-guard`・`business-info-legal-pages`・`b10` の E2E | §10.1〜§10.5 | 44〜48, 87, 88 |
 | D: モバイル | `react-native-purchases`・`expo-dev-client` の追加、`purchases.ts`・`iap-catalog.ts`・`plan-screen.ts`・`app/settings/plan.tsx`・設定タブの行・`AuthProvider`・`signOut.ts`・`UltimateModeToggle` と `V4GenerateModal` の錠・`ai-daily-limit.ts` (モバイル)・`env.example`・jest の mock と `moduleNameMapper`・`no-web-purchase-links.test.ts` のコメント | §8.10・§10.6 | 51〜59 |
 | E: 規約とポリシーの条文 | `/terms`・`/privacy` の条・`legal-versions.ts` の版 | §11 | §16.1 の規約の行 |
 
