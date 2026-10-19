@@ -35,7 +35,7 @@ export function HashHistoryEntryBridge() {
   useEffect(() => {
     const onHashChange = () => {
       if (decideOnHashChange(window.history.state, renderedRef.current, currentRouteLocation()) !== 'mark-entry') return;
-      // Next が差し替えた replaceState を通す (URL は変わらない・スクロールしない)。印は 2 段で付く (Next 16.4.1 の app-router.js):
+      // Next が差し替えた replaceState を通す (URL は変わらない・スクロールしない)。印は 2 段で付く (Next 16.4.2 の app-router.js):
       //   1. 差し替えた replaceState は、今の項目の state にある印と木を写すだけ (copyNextJsInternalHistoryState)。この項目の state は null なので
       //      写すものが無く、ここでは印は付かない。あわせて、今の URL で app router の状態を作り直す (applyUrlFromHistoryPushReplace → restore)。
       //   2. restore の後の再描画で、HistoryUpdater がこの項目の state に印 (`__NA: true`) と今の画面の木を書く。
