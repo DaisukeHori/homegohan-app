@@ -1040,7 +1040,7 @@ export const ORG_DISSOLVE_API_PATH = '/api/org/dissolve';
 // FROZEN_ALLOWED_API_PATHS の JSDoc に 1 段落足す:
 //   #1917 (docs/design/family/11-self-dissolve.md §13.5): 家族グループ・組織の解散の 2 本も足す。代表者・オーナーは譲渡か解散をしないと退会できず
 //   (findBlocker の 409)、凍結中は譲渡の画面 (/family/representative-transfer・/org/settings/owner-transfer) を開けないので、
-//   解散を通さないと凍結中の代表者・オーナーだけが退会できない (#1445 の選択「凍結中も退会できる」が成り立たない)。
+//   解散を通さないと凍結中の代表者・オーナーだけが退会できない (#1445 の決まり「凍結中も退会できる」が成り立たない)。
 //   解散は「本人がサービスから離れるための操作」の一部。どちらの route も本人のセッションの利用者だけを対象にし、解散できるのは
 //   本人が代表者・オーナーである家族・組織だけ (RPC が行のロック下で判定する)。
 export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
