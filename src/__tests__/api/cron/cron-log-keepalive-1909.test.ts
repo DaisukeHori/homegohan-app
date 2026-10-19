@@ -48,6 +48,12 @@ vi.mock('@/lib/push/outbox-store', () => ({
   createOutboxStore: () => ({ cleanup: mocks.cleanup }),
 }));
 
+// route はファイルの一番外側で読む (テストの中で丸ごと読み込まない。tests/heavy-unit-test-timeout.test.ts の「同じ型」にしない)
+const pushOutbox = await import('@/app/api/cron/push-outbox/route');
+const emailOutbox = await import('@/app/api/cron/email-outbox/route');
+const appLogAlerts = await import('@/app/api/cron/app-log-alerts/route');
+const backupFreshness = await import('@/app/api/cron/backup-freshness/route');
+
 const SECRET = 'dummy-cron-secret-1909-followup-0123456789';
 const TEST_SUPABASE_URL = 'http://127.0.0.1:54321';
 const TEST_SERVICE_ROLE_KEY = 'service-role-key-for-test';
@@ -65,7 +71,7 @@ const ROUTE_FILES = [
 
 type RouteCase = {
   name: string;
-  load: () => Promise<{ GET: (req: Request) => Promise<Response> }>;
+  GET: (req: Request) => Promise<Response>;
   /** その経路を通すための環境変数 (undefined は消す) */
   env: Record<string, string | undefined>;
   expectedBody: Record<string, unknown>;
@@ -74,25 +80,25 @@ type RouteCase = {
 const CASES: RouteCase[] = [
   {
     name: 'cron/push-outbox (EXPO_ACCESS_TOKEN が未設定 → 掃除だけして warn)',
-    load: () => import('@/app/api/cron/push-outbox/route'),
+    GET: pushOutbox.GET,
     env: { EXPO_ACCESS_TOKEN: undefined },
     expectedBody: { status: 'not_configured', cleaned_expired: 0, cleaned_sent: 0, cleaned_dead: 0 },
   },
   {
     name: 'cron/email-outbox (RESEND_API_KEY が未設定 → warn)',
-    load: () => import('@/app/api/cron/email-outbox/route'),
+    GET: emailOutbox.GET,
     env: { RESEND_API_KEY: undefined },
     expectedBody: { status: 'not_configured' },
   },
   {
     name: 'cron/app-log-alerts (OPS_ALERT_EMAIL が未設定 → info)',
-    load: () => import('@/app/api/cron/app-log-alerts/route'),
+    GET: appLogAlerts.GET,
     env: { OPS_ALERT_EMAIL: undefined },
     expectedBody: { status: 'disabled' },
   },
   {
     name: 'cron/backup-freshness (OPS_ALERT_EMAIL が未設定 → info)',
-    load: () => import('@/app/api/cron/backup-freshness/route'),
+    GET: backupFreshness.GET,
     env: { OPS_ALERT_EMAIL: undefined },
     expectedBody: { status: 'disabled' },
   },
@@ -163,7 +169,7 @@ afterEach(() => {
 });
 
 describe('cron の route: 1 秒の延命を外しても、ログの保存は終わるまで待たれる (#1909)', () => {
-  it.each(CASES)('$name', async ({ load, env, expectedBody, name }) => {
+  it.each(CASES)('$name', async ({ GET, env, expectedBody, name }) => {
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
     const pendingInserts: Array<ReturnType<typeof deferred<{ error: null }>>> = [];
     mocks.insert.mockImplementation(() => {
@@ -171,7 +177,6 @@ describe('cron の route: 1 秒の延命を外しても、ログの保存は終�
       pendingInserts.push(d);
       return d.promise;
     });
-    const { GET } = await load();
     // 延命のタイマー (setTimeout) だけを偽にする (認証のダイジェストなどのマイクロタスクはそのまま流れる)
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
 
@@ -196,9 +201,8 @@ describe('cron の route: 1 秒の延命を外しても、ログの保存は終�
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it.each(CASES)('$name: 認証で断った要求は、ログも延命も無い', async ({ load, env, name }) => {
+  it.each(CASES)('$name: 認証で断った要求は、ログも延命も無い', async ({ GET, env, name }) => {
     for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
-    const { GET } = await load();
 
     const res = await GET(new Request(`http://localhost/api/${name.split(' ')[0]}`));
     expect(res.status).toBe(401);
