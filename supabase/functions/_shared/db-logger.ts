@@ -57,6 +57,58 @@ async function saveLog(entry: LogEntry): Promise<void> {
 }
 
 /**
+ * app_logs への保存を待たせる上限 (ミリ秒)。Next.js 側の src/lib/db-logger.ts の LOG_SAVE_KEEPALIVE_TIMEOUT_MS と同じ値・同じ理由
+ * (保存がこれより長くかかるときは、それ以上は関数を延命しない。Supabase に届かないときに、ログのたびに関数が止まれずに
+ * 実行時間が伸びるのを防ぐ)。2 つが同じ値であることは tests/edge-db-logger-keepalive-1909.test.ts が確かめる。
+ */
+export const LOG_SAVE_KEEPALIVE_TIMEOUT_MS = 10_000;
+
+/** EdgeRuntime.waitUntil の形 (Supabase の Edge Runtime だけにある。Deno の素の実行やテストには無い) */
+interface EdgeRuntimeLike {
+  waitUntil(promise: Promise<unknown>): void;
+}
+
+/**
+ * Supabase の Edge Runtime の EdgeRuntime を取り出す。無ければ (Supabase の外・テスト) null。
+ * 型の宣言 (@supabase/functions-js/edge-runtime.d.ts) を読まずに済むよう、globalThis から形を確かめて取り出す。
+ */
+function getEdgeRuntime(): EdgeRuntimeLike | null {
+  const runtime: unknown = Reflect.get(globalThis, "EdgeRuntime");
+  if (typeof runtime !== "object" || runtime === null) return null;
+  if (!("waitUntil" in runtime) || typeof runtime.waitUntil !== "function") return null;
+  const waitUntil = runtime.waitUntil;
+  return {
+    waitUntil: (promise) => {
+      waitUntil.call(runtime, promise);
+    },
+  };
+}
+
+/**
+ * ログの保存を始め、保存が終わる (または LOG_SAVE_KEEPALIVE_TIMEOUT_MS を過ぎる) まで Edge Function を止めさせない (#1909)。
+ *
+ * 呼び出し元はログの保存を待たずに応答を返す。Supabase の Edge Runtime は、応答を返したあとの処理を
+ * EdgeRuntime.waitUntil に渡された Promise の分だけ続ける (公式の文書 "Background Tasks":
+ * "The Function instance continues to run until the promise provided to waitUntil completes")。
+ * 渡さないと、保存の通信の途中で関数が止められ、その行は app_logs に残らない (Next.js 側の #1909 と同じ形)。
+ * EdgeRuntime が無い環境 (テスト・素の Deno) では渡さずに保存だけを続ける。
+ * 渡す Promise は reject しない (saveLog は例外を投げない。上限のタイマーも resolve だけ)。
+ */
+function saveLogInBackground(entry: LogEntry): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const saving = saveLog(entry).catch(() => {});
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, LOG_SAVE_KEEPALIVE_TIMEOUT_MS);
+  });
+  const settled = Promise.race([saving, deadline]).finally(() => clearTimeout(timer));
+  try {
+    getEdgeRuntime()?.waitUntil(settled);
+  } catch {
+    // waitUntil が使えない状態でも、ログの保存そのものは続ける (ログの失敗で呼び出し元を止めない)
+  }
+}
+
+/**
  * Edge Function用のロガー
  */
 export function createLogger(functionName: string, requestId?: string) {
@@ -80,8 +132,8 @@ export function createLogger(functionName: string, requestId?: string) {
       console.log(logLine, metadata || '');
     }
     
-    // DB保存（非同期、待たない）
-    saveLog({
+    // DB保存（非同期、待たない。保存が終わるまで関数は止めさせない (#1909)）
+    saveLogInBackground({
       ...baseEntry,
       level,
       message,
@@ -100,14 +152,14 @@ export function createLogger(functionName: string, requestId?: string) {
       const timestamp = new Date().toISOString();
       console.error(`[${timestamp}] [ERROR] [${functionName}] ${message}`, error, metadata || '');
       
-      saveLog({
+      saveLogInBackground({
         ...baseEntry,
         level: 'error',
         message,
         metadata,
         error_message: errorMessage,
         error_stack: errorStack,
-      }).catch(() => {});
+      });
     },
     
     /**
@@ -120,12 +172,12 @@ export function createLogger(functionName: string, requestId?: string) {
         const timestamp = new Date().toISOString();
         console.log(`[${timestamp}] [${level.toUpperCase()}] [${functionName}] [user:${userId}] ${message}`, metadata || '');
         
-        saveLog({
+        saveLogInBackground({
           ...userEntry,
           level,
           message,
           metadata,
-        }).catch(() => {});
+        });
       };
 
       return {
@@ -138,14 +190,14 @@ export function createLogger(functionName: string, requestId?: string) {
           
           console.error(`[${new Date().toISOString()}] [ERROR] [${functionName}] [user:${userId}] ${message}`, error, metadata || '');
           
-          saveLog({
+          saveLogInBackground({
             ...userEntry,
             level: 'error',
             message,
             metadata,
             error_message: errorMessage,
             error_stack: errorStack,
-          }).catch(() => {});
+          });
         },
       };
     },
