@@ -1,9 +1,9 @@
 # 家族グループ・組織の解散 — 代表者・オーナーが自分で解散する (#1917)
 
-> 版: v1.6 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
+> 版: v1.7 (2026-10-19) / Issue: #1917 (`家族の代表者・組織のオーナーが自分で家族グループ・組織を解散できるようにする (譲渡できない人が退会できない問題・#1901 の Q-26)`)
 > 位置づけ: 家族グループの代表者と組織のオーナーが、運営の手を介さずに自分の家族グループ・組織を解散し、そのあと退会できるようにする設計の正典。家族 (`family/`) と組織 (`org/`) の両方を 1 冊で扱う (解散の後始末は運営の強制解散 `operator_force_dissolve_family` / `operator_force_dissolve_org` と同じにし、同じ関数を 2 つの入口から呼ぶため)。組織の側の既存の設計は `docs/design/org/05-offboarding-flow.md` §7.3 (古い設計。`archived` 前提) と `docs/design/membership/05-operator-emergency-ui.md` §4 (運営の強制解散) を参照する。範囲の正本は Issue #1917 の本文とコメント。
 > 前提: ローンチ前で利用者ゼロ (本番の `family_groups` は 0 行・`organizations` は active 2 行 (`owner_id` あり)・`parental_consents` は 0 行・`ownership_transfer_proposals` は 0 行。2026-10-19 に読み取りで実測)。正しい形で作る。本番の DB には触らない。
-> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映 (§26)。
+> 改定履歴: v1.0 2026-10-19 初版 (A 型 4 相)。v1.1 2026-10-19 敵対レビュー R1 の反映。v1.2 2026-10-19 網羅性 (周 2) の反映。v1.3 2026-10-19 敵対レビュー R2 の反映と origin/main `2ba5b3b3` (#1901 の実装のマージ) との突合。v1.4 2026-10-19 網羅性 (周 3) の反映。v1.5 2026-10-19 敵対レビュー R3 の反映。v1.6 2026-10-19 網羅性 (周 4) の反映。v1.7 2026-10-19 敵対レビュー R4 の反映 (§26)。
 
 ---
 
@@ -25,7 +25,7 @@
 |---|---|---|
 | 設計書 800 行超 | 超える (家族と組織の 2 面・表 3 点・正典コード・追随表を 1 冊に持つため) | 当たる |
 | 消費先レーン 3 以上 | DB (migration 1 本・関数 4 本と既存 2 本の置き換え)・API (route 2 本)・Web の画面 (設定・凍結中の画面・部品)・モバイル (画面 1 枚と 409 の案内)・規約の文面 (cross/20 への追随) の 5 | 当たる |
-| 共有面に 2 つ以上触る | 凍結中も通す API の一覧 (`FROZEN_ALLOWED_API_PATHS`)・同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`)・凍結中の画面と同意の前の画面が共通に使う退会と書き出しの枠 (`AccountSelfServicePanel`)・退会の本体 (`findBlocker`)・`family_groups` / `organizations` の列の制約・運営の強制解散の RPC 2 本・規約の文面 | 当たる |
+| 共有面に 2 つ以上触る | 凍結中も通す API の一覧 (`FROZEN_ALLOWED_API_PATHS`)・同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`)・凍結中の画面と同意の前の画面が共通に使う退会と書き出しの枠 (`AccountSelfServicePanel`)・退会の本体 (`findBlocker`)・`family_groups` / `organizations` の列の制約・家族の行の特権列のガード (`guard_family_groups_privileged`)・運営の強制解散の RPC 2 本・規約の文面 | 当たる |
 
 **判定: 設計書は 1 冊、実装は 3 段 (A・B・C) に分け、A と B は同じ実装 WF・同じ worktree で段ごとにレビューを挟む。C は段 A のマージ後に別の WF で、規約の文面の実装 (`src/lib/legal/`。#1901 の実装は main にある) を書き換える。設計書 cross/20 の追随は実装者が書かず、オーケストレーターの専権の差分として段 C の PR に載せる (§18・§24)。** 分冊 (核と配線で別の設計書) にしない理由: 核 (DB の関数 4 本・列の制約・route 2 本) は小さく、配線 (画面) はその応答と既存の 409 の本文を読むだけで、契約 (§11〜§15) を本書に逐語で置けば段 B の実装者は本書だけで手が止まらない。家族と組織を分冊にしない理由: 解散の後始末・通知・画面の形・規約の文面が対称で、分けると同じ判断を 2 冊に書くことになる。
 
@@ -33,11 +33,11 @@
 
 | 段 | 中身 | 依存 | デプロイ後の状態 |
 |---|---|---|---|
-| **A 解散の口** | migration (§11: `representative_id` / `owner_id` を NULL 許容にして CHECK を足す・後始末の関数 2 本・利用者の解散の RPC 2 本・運営の強制解散の RPC 2 本を後始末の関数を呼ぶ形に置き換え) と対の `.down.sql`・型の再生成 (§11.4)・エラーコード 2 つ (§13.3)・Zod (§13.1)・lib (§13.2・§13.4)・`POST /api/family/dissolve`・`POST /api/org/dissolve` (§14)・通知メール (§16)・凍結中も通す API と同意の許可リストへの追加 (§13.5)・退会の 409 の案内の行き先 (§13.6)・契約テスト・route のテスト・実 DB の結合テスト (§21) | なし | API を直接呼べば代表者・オーナーが解散でき、そのあと退会できる。画面はまだ変わらない |
+| **A 解散の口** | migration (§11: `representative_id` / `owner_id` を NULL 許容にして CHECK を足す・後始末の関数 2 本・利用者の解散の RPC 2 本・運営の強制解散の RPC 2 本を後始末の関数を呼ぶ形に置き換え・家族の行の特権列のガード `guard_family_groups_privileged` に `status` / `dissolved_at` を足す) と対の `.down.sql`・型の再生成 (§11.4)・エラーコード 2 つ (§13.3)・Zod (§13.1)・lib (§13.2・§13.4)・`POST /api/family/dissolve`・`POST /api/org/dissolve` (§14)・通知メール (§16)・凍結中も通す API と同意の許可リストへの追加 (§13.5)・退会の 409 の案内の行き先 (§13.6)・契約テスト・route のテスト・実 DB の結合テスト (§21) | なし | API を直接呼べば代表者・オーナーが解散でき、そのあと退会できる。画面はまだ変わらない |
 | **B 画面** | メンバーシップ設定の解散の区画 (§15.1)・解散の部品 `SelfDissolveSection` (§15.2)・設定画面の退会の 409 の案内 (§15.3)・退会と書き出しの枠 `AccountSelfServicePanel` の 409 の分岐の解散と、それを使う凍結中の画面・同意の前の画面の案内の文 (§15.4)・モバイル (§15.5)・画面のテストと e2e (§21) | A | Web とアプリの両方で、代表者・オーナーが画面 (設定・凍結中の画面・同意の前の画面) から解散して退会できる |
 | **C 規約の文面** | 実装者: `src/lib/legal/terms-text.ts`・`privacy-text.ts`・`tests/legal-claims-1901.ts` の書き換え (§18.1・§18.2)・版の扱い (§18.4。`packages/shared/src/legal-versions.ts` と旧版の控え `docs/legal/archive/v2026.1/`)・`tests/design-doc-followup-owned-edits.test.ts`・`tests/legal-text-1901.test.ts` の T-28 の phrase (§23)。設計書 cross/20 の追随 (§18.1〜§18.3) は実装者が書かず、オーケストレーターの専権の差分を同じ PR に載せる (§18・§24) | A (#1901 の実装は origin/main `2ba5b3b3` にある) | 利用規約第11条 4 項・第12条 4 項・第17条 2 項とプライバシーポリシー第13条 9 項が「譲渡するか解散するまで退会できない」になる |
 
-migration の本番適用は段 A のマージ前にオーケストレーターが行う (列の NOT NULL を外す・CHECK を足す・関数の新設と置き換え。既存の行は変えない: 本番に `dissolved` の行は無い (§0.1 の前提) ので、§11.1 の `UPDATE` は 0 行)。
+migration の本番適用は段 A のマージ前にオーケストレーターが行う (列の NOT NULL を外す・CHECK を足す・関数の新設と置き換え (特権列のガードを含む)。既存の行は変えない: 本番に `dissolved` の行は無い (§0.1 の前提) ので、§11.1 の `UPDATE` は 0 行)。
 
 ### 0.4 本書が決めないもの (範囲外)
 
@@ -109,7 +109,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | F-10 | 家族の関数のロック順 (#1310): 最初に `family_groups` の行を `FOR NO KEY UPDATE`、そのあとで子の行。`leave_family` / `remove_family_member` / `accept_family_invite` / `accept_family_representative_transfer` / `accept_child_promotion` / 運営の 2 本が従う | `supabase/migrations/20261008090100_family_lock_order.sql:15-20`・`CLAUDE.md:266` |
 | F-11 | 組織の関数に決めたロック順は無い。`accept_org_owner_transfer` は 提案の行 → `user_profiles` (旧オーナー) → `user_profiles` (新オーナー) → `organizations` の順に書く。`leave_org` は `user_profiles` (本人) → `org_license_pools`。`accept_org_invite` は `organization_invites` (FOR UPDATE) → `user_profiles` → `org_license_pools` (FOR UPDATE) | `supabase/migrations/20261017030000_parental_consent_and_birth_date.sql` (`accept_org_owner_transfer` の最新の定義)・`20251126124224:2803-2835` (`leave_org` の形)・`20261017160000_org_invite_same_org_member.sql` |
 | F-12 | `accept_org_invite` は「自身が別 org の owner か」を `organizations.owner_id = auth.uid() AND id <> 招待の組織` で判定し `IS_ORG_OWNER` を返す。`status` を見ないので、解散した組織の元オーナーは (owner_id が残る限り) どの組織の招待も承諾できない。`create_family_group` は `family_members` の active の行で判定する (`ALREADY_IN_FAMILY`) ので、解散で `left` になった元代表者は新しい家族を作れる | `supabase/migrations/20261017160000_org_invite_same_org_member.sql:203-205`・`20261017030000_parental_consent_and_birth_date.sql` (`create_family_group` の最新の定義) |
-| F-13 | `family_groups` の BEFORE UPDATE トリガー `trg_guard_family_groups_privileged` は、`current_user` が `authenticated` / `anon` のときだけ `representative_id` / `plan_key` / `member_limit` の変更を 42501 で止める。`organizations` の `trg_guard_organizations_privileged` は同じ条件で `owner_id` / `status` の変更を止める。SECURITY DEFINER の関数 (所有者 postgres) からの UPDATE は通る | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:1779-1790, 8514, 8522` |
+| F-13 | `family_groups` の BEFORE UPDATE トリガー `trg_guard_family_groups_privileged` (関数 `guard_family_groups_privileged`。SECURITY INVOKER・`search_path` の指定なし) は、`current_user` が `authenticated` / `anon` のときだけ `representative_id` / `plan_key` / `member_limit` の変更を 42501 (`CANNOT_MODIFY_PRIVILEGED_COLUMN`) で止める。**`status` と `dissolved_at` は止めない** (後の migration で関数を置き換えたものは無い。`git grep guard_family_groups_privileged origin/main -- supabase/migrations` は 20251126124224 だけ)。UPDATE の RLS `family_groups_update_adult` は `FOR UPDATE TO authenticated USING (is_active_family_adult(id))` (WITH CHECK 無し。`is_active_family_adult` は「その家族の active な代表者・大人か」) で、テーブルの UPDATE は `authenticated` に GRANT されている。このため、**active な代表者・大人は PostgREST から `PATCH /rest/v1/family_groups?id=eq.<家族>` で `status` を `dissolved` に、`dissolved_at` を任意の値に書ける** (CHECK `family_groups_status_check` は値の種類だけを見る)。その行は `representative_id` が代表者を指したまま・メンバーは active のままの dissolved の行になる。アプリとスクリプトに、ログインユーザーとして `family_groups` を UPDATE する箇所は無い (テストと docs を除く `git grep "from('family_groups')"` は 14 か所で、`src/` の 12 か所はすべて読み取り、`scripts/guide-screenshots/seed.ts:439, 451` は service_role の DELETE / INSERT。`apps/` には無い)。`family_members` の同じ穴 (`status` / `removed_at`) は #1309 (`20261008090000_family_members_status_guard.sql`) が、ガードに列を足す形 (値を変えない送り直しは通す・SECURITY INVOKER のまま) で塞いだ。`organizations` の `trg_guard_organizations_privileged` は同じ条件で `owner_id` / `status` の変更を止める (UPDATE の RLS `organizations_update_admin` はオーナー・admin)。`organizations.dissolved_at` はガードの対象外だが、読んで判定する処理は無い (読み手は Zod の型 `src/schemas/membership/organization.ts:38` だけ。組織の purge のジョブも無い。Q-3)。SECURITY DEFINER の関数 (所有者 postgres) と service_role からの UPDATE は、どちらのガードも通る | `supabase/migrations/20251126124224_create_meal_planner_tables.sql:1779-1791, 1826-1837, 1982-1999, 8514, 8522, 10360, 10702`・`supabase/migrations/20261008090000_family_members_status_guard.sql:1-60` |
 | F-14 | `family_groups` の BEFORE INSERT / UPDATE OF `representative_id` トリガー `family_groups_billing_plan_follow_representative` は、`NEW.status <> 'active'` なら何もしない (`:446-452`)。解散と同じ UPDATE 文で `representative_id` を NULL にしても、課金の写像は動かない | `supabase/migrations/20261016210000_billing_core.sql:446-497` |
 | F-15 | `membership_audit.action` の CHECK は 28 値で `group_dissolved` を含む (利用者の解散に使える。これまで書く処理は無かった)。Zod `AuditActionSchema` にも `group_dissolved` がある | `supabase/migrations/20261017030000_parental_consent_and_birth_date.sql:249-258`・`src/schemas/membership/membership-audit.ts:9` |
 | F-16 | 凍結中も通す API は `FROZEN_ALLOWED_API_PATHS` の 5 本 (退会・書き出し・課金 3 本)。足すときは「本人がサービスから離れるための操作か」を確かめる、とテストが求める。middleware は凍結 → メンテナンス → 同意の順に判定する | `src/lib/auth/frozen.ts:60-66`・`lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts:77-91`・`lib/supabase/middleware.ts:234-242` |
@@ -149,7 +149,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | R-3 | 解散の知らせ: アカウントを持つメンバー全員 (解散した本人を含む) に 1 人 1 通 (best-effort。失敗しても解散は完了) | Issue 範囲 2・membership/05 §8 | §16 |
 | R-4 | データの扱い: 家族は解散から 90 日で物理削除 (既存のジョブ)。保護者の同意の記録を持つグループは残す。組織の行は残る。各メンバーの記録はそれぞれのアカウントに残る | Issue 範囲 2・operator/11 §5.4 | §8・§10 |
 | R-5 | 監査ログ: `membership_audit` に `group_dissolved` (actor = 本人。元の代表者 / オーナーの id を metadata に) | Issue 範囲 2・CLAUDE.md 監査ログ必須 | §17 |
-| R-6 | 解散のあと、本人が退会できる (409 で止まらず、`auth.users` の削除も外部キーで失敗しない) | Issue の「今の状態」・F-6 | §11.1・§11.2・§10 |
+| R-6 | 解散のあと、本人が退会できる (409 で止まらず、`auth.users` の削除も外部キーで失敗しない)。解散の状態 (`status` / `dissolved_at`) を書けるのは解散の関数だけにし、利用者が REST の UPDATE で、代表者を指したままの解散した行を作れないようにする (作れると代表者は退会の 409 と `FAMILY_ALREADY_DISSOLVED` で行き止まりになる) | Issue の「今の状態」・F-6・F-13 | §11.1 (1・2・6)・§11.2・§10・S-31 |
 | R-7 | 未同意の代表者・オーナー: 解散の API は退会・書き出しと同じく同意の許可リストで通し、同意の前の退会と書き出しの画面 (`/legal-consent/account`) の退会の 409 から、その場で解散できる (凍結中の画面と共通の枠 `AccountSelfServicePanel`) | Issue 範囲 3 | §13.5・§15.4・§8 |
 | R-8 | 凍結中の代表者・オーナー: 解散の API は退会と同じく凍結中も通し、凍結中の退会の画面から解散できる | #1445 (凍結中も退会できる。`src/lib/auth/frozen.ts` の説明) を代表者・オーナーにも成り立たせる | §13.5・§15.4・Q-1 |
 | R-9 | 退会の 409 の案内を実際にできる操作に合わせる: Web はメンバーシップ設定 (譲渡と解散) へ、凍結中の画面と同意の前の画面はその場で解散、モバイルはメンバーシップ設定 (WebView) へ | Issue 範囲 4 | §13.6・§15.3〜§15.5 |
@@ -161,7 +161,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 ---
 
-## 5. ユーザーシナリオ (30 本)
+## 5. ユーザーシナリオ (31 本)
 
 | # | シナリオ | 期待 |
 |---|---|---|
@@ -195,6 +195,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | S-28 | 解散した家族の元代表者が 30 日以上ログインしていない | 運営の未ログインの家族の一覧 (`/operator/membership/families/inactive`・`list_families_with_inactive_representative`) に出ない。一覧は `family_groups.status = 'active'` の家族と active な代表者のメンバーの行で結合するので (`representative_id` は読まない)、解散済みの家族は今までどおり出ない。解散済みの家族に運営の対応は要らない |
 | S-29 | 解散した組織の元オーナーが 30 日以上ログインしていない | 運営の未ログインの組織の一覧 (`/operator/membership/orgs/inactive`・`list_orgs_with_inactive_owner`) に出ない。一覧は `user_profiles` の `organization_id = 組織` かつ `org_role = 'owner'` の行で結合し (`owner_id` は読まない)、解散は全員の所属の列を外すので結合に当たらない (運営の強制解散と同じ)。画面の `owner_id` (`InactiveOwnerTable`) は一覧の `owner_user_id` (`user_profiles.id`) から作るので NULL にならない |
 | S-30 | オーナーが解散を押すのと同時に、招待された人が同じ組織の招待を承諾する | 直列にならない (組織の招待の承諾は組織の行をロックせず、組織の `status` も見ない。Q-4)。解散は 200。承諾が解散の宛先の集計より前に commit していれば、その人も所属が外れ、解散のメールが届く。集計のあと・後始末の UPDATE の前に commit していれば、所属は外れるがメールは届かない。後始末の UPDATE の時点で承諾が commit していなければ (解散が先に commit した場合も)、その人は解散した組織に所属したまま残る (Q-4 と同じ既存の欠陥。本書は直さない)。どの順でもデッドロックしない (待ち合うのは `org_license_pools` の 1 行だけ) |
+| S-31 | 家族の代表者でない active な大人 (または代表者本人) が、画面を通さずに `PATCH /rest/v1/family_groups?id=eq.<家族>` で `{ "status": "dissolved" }` (や `dissolved_at` の値) を送る | 403 (PostgREST。42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN`)。家族は active・`dissolved_at` は NULL・`representative_id` は代表者のまま・メンバーも active のまま (何も変わらない)。代表者はそのあとメンバーシップ設定から解散でき (200)、続けて退会できる (R-6)。家族の名前 (`name`) の変更と、`status` / `dissolved_at` を今と同じ値で送り直す更新は今までどおり通る |
 
 ---
 
@@ -225,6 +226,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 - **後始末は 1 か所**: 利用者の解散と運営の強制解散が同じ `*_dissolve_apply` を呼ぶ。列を足す・外すときの直し場所が 1 つになる (§7.1)。
 - **元の代表者・オーナーを指さない**: 解散した行の `representative_id` / `owner_id` を NULL にする。退会 (`findBlocker`・RESTRICT) と、`owner_id = auth.uid()` で判定する既存の関数 (F-12) が、解散した行を自然に無視する。
 - **通知の宛先は RPC の戻り値**: 認可 (RPC の成功) の前に service_role でメンバーを読まない。RPC が後始末の前に集めた `member_user_ids` を返し、route がそのあとで宛先を引く。
+- **解散の状態を書けるのは解散の関数だけ**: `family_groups.status` / `dissolved_at` は、後始末の関数 (所有者 postgres の SECURITY DEFINER の RPC から呼ぶ) と service_role だけが書く。RLS `family_groups_update_adult` は active な代表者・大人に列を限らない UPDATE を許すので、特権列のガード `guard_family_groups_privileged` に `status` / `dissolved_at` を足して、REST の直接の UPDATE を 42501 にする (§11.1 の 6。F-13。#1309 が `family_members.status` を守ったのと同じ形)。これが無いと「判定は DB の関数 1 本に閉じる」が REST の UPDATE で迂回され、代表者を指したままの解散した行ができる (S-31)。組織は `guard_organizations_privileged` が既に `status` / `owner_id` を止めている。
 
 ### 6.2 トレース (構造で手で走らせた結果)
 
@@ -260,6 +262,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | S-28 | `list_families_with_inactive_representative` (最新の定義 `supabase/migrations/20261017130000_operator_mfa_db_gate.sql:91-126`) は `JOIN family_members fm ON fm.family_id = fg.id AND fm.role = 'representative' AND fm.status = 'active'`・`JOIN auth.users au ON au.id = fm.user_id`・`WHERE fg.status = 'active'` (`:119-123`) → 解散した家族は `status = 'dissolved'` で、代表者のメンバーの行も `left` → 出ない。`representative_id` を読まないので NULL の影響は無い。本書は関数を変えない |
 | S-29 | `list_orgs_with_inactive_owner` (最新の定義 同ファイル `:129-163`) は `JOIN user_profiles up ON up.organization_id = o.id AND up.org_role = 'owner'`・`JOIN auth.users au ON au.id = up.id` (`:159-160`) → `org_dissolve_apply` が全員の `organization_id` / `org_role` を NULL にする → 結合に当たらず出ない。画面 (`src/app/(operator)/operator/membership/orgs/inactive/page.tsx:28, 85`) は `owner_user_id` を `InactiveOwner.owner_id` (`src/components/operator/membership/InactiveOwnerTable.tsx:13`。`string`) に写し、`dissolved` の行を落とす。`owner_user_id` は `up.id` なので NULL にならない。本書は関数・画面を変えない |
 | S-30 | 解散: 本人の `user_profiles` → 組織の行 (どちらも NO KEY UPDATE) → 宛先の集計 (`SELECT … FROM user_profiles WHERE organization_id = p`) → apply の `UPDATE user_profiles … WHERE organization_id = p` → `org_license_pools` → 組織の行。承諾 (`accept_org_invite`。最新の定義 `supabase/migrations/20261017160000_org_invite_same_org_member.sql`): 招待の行 (FOR UPDATE) → 承諾者の `user_profiles` の `INSERT … ON CONFLICT DO UPDATE … WHERE user_profiles.organization_id IS NULL` (外部キー `user_profiles_organization_id_fkey` の確認で組織の行に KEY SHARE。解散の NO KEY UPDATE と衝突しない) → `org_license_pools` (FOR UPDATE) → +1。解散の UPDATE は承諾者の行の commit 済みの版 (所属が NULL) を WHERE で外すので、その行を待たない。共有して待ち合うのは `org_license_pools` の 1 行だけ → 待ちの向きが 1 つでデッドロックしない。各文は文の時点で commit 済みの版を読む (READ COMMITTED) ので、承諾の commit の位置で S-30 の期待の 3 通りに分かれる。`org_license_pools` は、承諾が先に取っていれば解散が待って 0 に、解散が先に取っていれば承諾が待って 0 から +1 になる |
+| S-31 | PostgREST の `PATCH /rest/v1/family_groups` は本人のセッション (`current_user` = `authenticated`) で `UPDATE public.family_groups SET status = 'dissolved' WHERE id = <家族>` を流す → RLS `family_groups_update_adult` の USING `is_active_family_adult(id)` は大人・代表者なので真 (WITH CHECK は無い) → BEFORE UPDATE のトリガーが名前の順に動く: `family_groups_billing_plan_follow_representative` は UPDATE OF `representative_id` なので動かず、`trg_guard_family_groups_privileged` (§11.1 の 6) が `NEW.status IS DISTINCT FROM OLD.status` で `RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501'` → 文ごと失敗 (CHECK に届かない・行は変わらない) → PostgREST は 403。`dissolved_at` だけの更新も同じ。`name` だけの更新は 5 列がどれも `IS NOT DISTINCT FROM` なので通る。アカウントを持つ子供は `is_active_family_adult` が偽で 0 行 (既存)。そのあとの解散は `dissolve_family_by_representative` が `status = 'active'`・`representative_id = auth.uid()` を読んで S-1 と同じ |
 
 ---
 
@@ -295,7 +298,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 ## 8. ① 全パターン表 (立場 × 状態 × 入口 → 何が起きるか)
 
-状態: 通常 / 凍結中 (`frozen_at`) / 未同意 (版上げ後に新しい版に未同意・凍結でない) / メンテナンス中 / 並行 (解散と、同じ家族・組織の譲渡の提案や招待の承諾が同時に走る。解散する側の凍結中・未同意と、承諾する側の凍結中・未同意とも交差させる) / pending が残る (解散のときに譲渡の提案・招待が pending で残っている)。入口: 設定 (`/settings/membership`・`/settings` の退会) / 凍結中の画面 (`/frozen/account`) / 同意の前の画面 (`/legal-consent/account`) / モバイル (ネイティブのアカウント画面 → WebView) / API 直接。
+状態: 通常 / 凍結中 (`frozen_at`) / 未同意 (版上げ後に新しい版に未同意・凍結でない) / メンテナンス中 / 並行 (解散と、同じ家族・組織の譲渡の提案や招待の承諾が同時に走る。解散する側の凍結中・未同意と、承諾する側の凍結中・未同意とも交差させる) / pending が残る (解散のときに譲渡の提案・招待が pending で残っている)。入口: 設定 (`/settings/membership`・`/settings` の退会) / 凍結中の画面 (`/frozen/account`) / 同意の前の画面 (`/legal-consent/account`) / モバイル (ネイティブのアカウント画面 → WebView) / API 直接 / REST 直接 (本人のセッションで PostgREST から `family_groups` / `organizations` を直接 UPDATE する。Next の route と middleware を通らない)。
 
 | 立場 | 状態 | 入口 | 何が起きるか |
 |---|---|---|---|
@@ -318,6 +321,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 家族の代表者 (と、凍結中か未同意の大人・招待された人) | 並行の相手が凍結中 / 未同意 (承諾する側が凍結中か、新しい版に未同意) | 承諾の API (`/api/family/representative-transfer/[id]/accept`・`/api/family/invites/[id]/accept`) | 承諾の API は凍結の例外 (`FROZEN_ALLOWED_API_PATHS`) にも同意の許可リスト (`LEGAL_CONSENT_EXEMPT_API_PATHS`) にも無いので、middleware が 403 `AUTH_ACCOUNT_FROZEN` / 403 `LEGAL_CONSENT_REQUIRED` (同意の強制が有効なとき) で止め、RPC に届かない。並行は起きず、解散は「通常」の行と同じ。同意の強制が無効なときの未同意の人の承諾は「並行」の行と同じ (既存の決まりのまま。本書は変えない) |
 | 家族の代表者 | pending が残る (代表者の譲渡の提案・家族の招待) | メンバーシップ設定 / API 直接 | 解散は 200 (RPC は提案・招待に触らない。§0.4)。残った提案の承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY`、招待の承諾は `FAMILY_NOT_FOUND` で止まる (S-21) |
 | 家族の大人 / アカウントを持つ子供 | 通常 | メンバーシップ設定 | 解散の区画は出ない (今までどおり「家族を表示」「家族から脱退」)。API 直接は 403 |
+| 家族の代表者・家族の大人 / アカウントを持つ子供 | どの状態でも (ガードはセッションの凍結・同意・メンテナンスを見ず、REST は Next の middleware を通らない) | REST 直接 (`PATCH /rest/v1/family_groups` で `status` / `dissolved_at`) | 代表者・大人は 403 (42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN`。§11.1 の 6)。行は変わらず、`status` は active・`representative_id` は代表者のまま (S-31)。アカウントを持つ子供は RLS (`is_active_family_adult`) に当たらず 0 行 (既存)。`name` の変更と、同じ値の送り直しは今までどおり通る |
 | 家族の大人 / アカウントを持つ子供 | 凍結中 | `/frozen/account` の退会 | 代表者でないので `findBlocker` の 409 は出ず、解散の区画も出ない (`blockedScope` は 409 のときだけ入る。§15.4)。退会の扱いは今までどおり (本書は変えない) |
 | 家族の大人 / アカウントを持つ子供 | 凍結中 | 設定・メンバーシップ設定 | 開けない (`/frozen` へ差し戻し。既存) |
 | 家族の大人 / アカウントを持つ子供 | 凍結中 | API 直接 (`POST /api/family/dissolve`) | 凍結の例外で route に届き、RPC が 403 `NOT_FAMILY_REPRESENTATIVE` (何も変わらない。S-3 と同じ) |
@@ -348,6 +352,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 組織のオーナー (と、凍結中か未同意の admin / member・招待された人) | 並行の相手が凍結中 / 未同意 (承諾する側が凍結中か、新しい版に未同意) | 承諾の API (`/api/org/owner-transfer/[id]/accept`・`/api/org/invites/[id]/accept`) | 承諾の API は凍結の例外にも同意の許可リストにも無いので、middleware が 403 `AUTH_ACCOUNT_FROZEN` / 403 `LEGAL_CONSENT_REQUIRED` (同意の強制が有効なとき) で止め、RPC に届かない。並行は起きず、解散は「通常」の行と同じ。同意の強制が無効なときの未同意の人の承諾は「並行」の行と同じ (既存の決まりのまま。本書は変えない) |
 | 組織のオーナー | pending が残る (組織の招待・オーナーの譲渡の提案) | メンバーシップ設定 / API 直接 | 解散は 200 (RPC は招待・提案に触らない。§0.4)。招待の承諾は組織の `status` を見ないので通る (既存。Q-4)。提案の承諾は `TRANSFER_ACCEPTOR_NOT_IN_ORG` で止まる (S-22) |
 | 組織の admin / member | 通常 | メンバーシップ設定 | 解散の区画は出ない (「組織から脱退」のまま)。API 直接は 403 |
+| 組織のオーナー・admin / member | どの状態でも (ガードはセッションの状態を見ず、REST は Next の middleware を通らない) | REST 直接 (`PATCH /rest/v1/organizations` で `status` / `owner_id` / `dissolved_at`) | オーナー・admin の `status` / `owner_id` の変更は 403 (42501。既存の `guard_organizations_privileged`。本書は変えない)。`dissolved_at` だけの変更は通る (既存。`status` は active のままで解散にならず、`organizations.dissolved_at` を読んで判定する処理は無い。F-13)。member は RLS (`organizations_update_admin`) に当たらず 0 行 (既存) |
 | 組織の admin / member | 凍結中 | `/frozen/account` の退会 | オーナーでないので `findBlocker` の 409 は出ず、解散の区画も出ない。退会の扱いは今までどおり (本書は変えない) |
 | 組織の admin / member | 凍結中 | 設定・メンバーシップ設定 | 開けない (`/frozen` へ差し戻し。既存) |
 | 組織の admin / member | 凍結中 | API 直接 (`POST /api/org/dissolve`) | 凍結の例外で route に届き、RPC が 403 `NOT_ORG_OWNER` (何も変わらない。S-7 と同じ) |
@@ -387,6 +392,8 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | 解散の後始末の置き場 | `operator_force_dissolve_family` / `operator_force_dissolve_org` の本体に直書き | `family_dissolve_apply` / `org_dissolve_apply` (運営の RPC もこれを呼ぶ) |
 | 解散した行の `representative_id` / `owner_id` | 元の人を指したまま (NOT NULL) | NULL。列は NULL 許容 + CHECK `(status <> 'active' OR 列 IS NOT NULL)`。既存の `dissolved` の行は migration で NULL にする (本番は 0 行) |
 | `auth.users` への外部キー | RESTRICT | RESTRICT のまま (active な行だけが退会を止める) |
+| 利用者による `family_groups.status` / `dissolved_at` の直接の更新 (REST) | active な代表者・大人なら通る (RLS `family_groups_update_adult` は列を限らず、特権列のガードは `representative_id` / `plan_key` / `member_limit` だけ。F-13)。`representative_id` が代表者を指したまま・メンバーが active のままの dissolved の行ができ、代表者は退会の 409 と `FAMILY_ALREADY_DISSOLVED` で行き止まり (`dissolved_at` を過去にすれば 90 日のジョブが家族ごと消す) | 42501 (`CANNOT_MODIFY_PRIVILEGED_COLUMN`)。ガードの対象に `status` / `dissolved_at` を足す (§11.1 の 6)。解散の状態を書くのは後始末の関数 (SECURITY DEFINER の RPC の中) と service_role だけ。`name` の変更と同じ値の送り直しは通る (S-31) |
+| 利用者による `organizations.status` / `owner_id` / `dissolved_at` の直接の更新 (REST) | `status` / `owner_id` は 42501 (`guard_organizations_privileged`)。`dissolved_at` だけは通る (読み手が無い。F-13) | 変わらない |
 | 解散した家族の元代表者・組織の元オーナーの退会 | 409 のまま (抜けても 23503) | 200 |
 | 解散した組織の元オーナーの別の組織への参加 | `IS_ORG_OWNER` で永久にできない (F-12) | できる |
 | 運営の未ログインの一覧 (家族) | `family_groups.status = 'active'` と active な代表者のメンバーの行で結合するので、解散済みの家族は出ない (`representative_id` は読まない) | 変わらない (S-28。関数は変えない) |
@@ -421,10 +428,13 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | active | 子供の追加 (`add_family_child`) | active (子供の行が増える) | 呼んだ人が家族の active な大人 (ロックの前)・生年月日と保護者の同意・家族の行 (FOR UPDATE) のロック下で家族が active・人数の上限 | 既存。解散と同時なら家族の行で直列: 追加が先なら解散の apply が子供の行も `left` にする (同意は `member_left` で取り消し。アカウントの無い子供は宛先に入らない)。解散が先なら `NOT_FAMILY_ADULT` (大人の判定の前に解散が commit) か `FAMILY_NOT_FOUND` (判定のあとでロックを待った場合) |
 | active | 大人・子供の退出 (`leave_family`) / 大人による除名 (`remove_family_member`) | active (その人の行が `left`) | 家族の行のロック (#1310)・本人 / 対象が active・代表者は退出も除名もできない (`IS_FAMILY_REPRESENTATIVE`) | 既存。解散と同時なら家族の行で直列: 退出・除名が先ならその人は解散の宛先に入らない (メールは届かない)。解散が先なら `NOT_IN_FAMILY` / `NOT_FAMILY_ADULT` |
 | active | 代表者が RLS で DELETE (REST 直接) | (消える) | `representative_id = auth.uid()` | 既存。CASCADE。本書は触らない (§0.4) |
+| active | 代表者・大人が RLS で UPDATE (`status` / `dissolved_at`。REST 直接) | active (変わらない) | RLS `family_groups_update_adult` (`is_active_family_adult`) は通るが、`trg_guard_family_groups_privileged` が `current_user` = `authenticated` / `anon` の `status` / `dissolved_at` の変更を止める (§11.1 の 6) | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` (PostgREST は 403)。何も変わらない。現行はこの UPDATE が通り、`representative_id` が代表者を指したまま・メンバーが active のままの dissolved の行ができた (F-13・S-31) |
+| active | 代表者・大人が RLS で UPDATE (`name` など特権でない列。REST 直接) | active | `is_active_family_adult`・ガードの 5 列 (`representative_id` / `plan_key` / `member_limit` / `status` / `dissolved_at`) が変わらない | 既存。本書は変えない (5 列を同じ値で送り直す更新も通る) |
 | dissolved | 代表者 (元) が解散の API | dissolved | — | 409 `FAMILY_ALREADY_DISSOLVED` |
 | dissolved | 運営が強制解散 | dissolved | super_admin + MFA | 既存どおり通る (`dissolved_at` を上書き。監査 1 行)。変えない |
 | dissolved | 元代表者が退会 | dissolved (`representative_id` は NULL のまま) | — | 200。`family_members` の本人の行は CASCADE で消える |
 | dissolved | 元代表者が RLS で DELETE | dissolved | `representative_id` が NULL なので当たらない | 何も起きない (0 行) |
+| dissolved | 元メンバーが RLS で UPDATE (REST 直接) | dissolved | `is_active_family_adult` が偽 (解散で全員 `left`) | 何も起きない (0 行) |
 | dissolved | 招待の承諾 / 譲渡の承諾 / 子供の追加 / 退出 / 除名 | dissolved | 既存の判定 | `FAMILY_NOT_FOUND` / `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` / `NOT_FAMILY_ADULT` / `NOT_IN_FAMILY` (#1310 の C1〜C4 と同じ) |
 | dissolved (90 日経過・同意の記録なし) | 03:40 JST のジョブ | (消える) | F-8 | CASCADE。監査 `system.family.dissolved_purge` |
 | dissolved (90 日経過・同意の記録あり) | 同上 | dissolved | F-8 | 残る。`skipped_with_consents_count` に数える |
@@ -439,12 +449,15 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | active | オーナーが退会 | active | `findBlocker` | 409 `ACCOUNT_DELETE_BLOCKED_ORG_OWNER` |
 | active | オーナーの譲渡の承諾 | active (`owner_id` が新オーナー) | 既存 | 既存 |
 | active | 組織の招待の承諾 (`accept_org_invite`) | active (承諾した人の所属の列が入る・`used_licenses` +1) | 招待の行 (FOR UPDATE)・期限・宛先のメール・`ALREADY_IN_ORG`・`IS_ORG_OWNER`・席数 (`org_license_pools` FOR UPDATE)。組織の行はロックしない (外部キーの確認の KEY SHARE だけ)・組織の `status` を見ない | 既存。解散と同時でも直列にならない (S-30): 承諾の commit が解散の宛先の集計より前なら所属も外れメールも届く・集計と後始末の UPDATE の間なら所属は外れるがメールは届かない・後始末の UPDATE の時点で未 commit なら解散した組織に所属が残る (Q-4)。待ち合うのは `org_license_pools` の 1 行だけでデッドロックしない (D-15) |
+| active | オーナー・admin が RLS で UPDATE (`status` / `owner_id`。REST 直接) | active (変わらない) | RLS `organizations_update_admin` は通るが、`trg_guard_organizations_privileged` が止める (既存。F-13) | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN`。何も変わらない (本書は変えない) |
+| active | オーナー・admin が RLS で UPDATE (`dissolved_at` だけ。REST 直接) | active (`dissolved_at` だけが変わる) | `organizations_update_admin`。ガードの対象外 (既存) | 既存。`status` は active のままで解散ではない。`organizations.dissolved_at` を読んで判定する処理は無い (F-13。組織の purge のジョブも無い。Q-3)。本書は変えない |
 | dissolved | 元オーナーが解散の API | dissolved | — | 409 `ORG_ALREADY_DISSOLVED` |
 | dissolved | 運営が強制解散 | dissolved | — | `ORG_ALREADY_DISSOLVED` (既存。route は 500 `internalError`) |
 | dissolved | 元オーナーが退会 | dissolved (`owner_id` NULL のまま) | — | 200 |
 | dissolved | 元オーナーが別の組織の招待を承諾 | dissolved | — | 承諾できる (S-15) |
 | dissolved | 組織の招待の承諾 (解散した組織へ) | dissolved | 組織の `status` を見ない | 通ってしまう (Q-4。既存) |
 | dissolved | オーナーの譲渡の承諾 | dissolved | 承諾者の所属 | `TRANSFER_ACCEPTOR_NOT_IN_ORG` |
+| dissolved | 元メンバーが RLS で UPDATE (REST 直接) | dissolved | 所属の列が外れているので `organizations_update_admin` に当たらない | 何も起きない (0 行) |
 
 ### 10.3 利用者 (退会との関係。cross/20 §11.3 の `current × 退会 (組織のオーナー・家族の代表者)` の行を置き換える)
 
@@ -479,7 +492,13 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 --      (土台は 20261017130000_operator_mfa_db_gate.sql の定義。権限・MFA の判定・エラー・監査の action・戻り値は変えない。
 --       監査の metadata に previous_representative_id / previous_owner_id を足す)。
 --   5. 既に dissolved の行の representative_id / owner_id を NULL にする (本番は 0 行。2026-10-19 実測)。
--- 既存データへの影響: 5 の UPDATE だけ (dissolved の行だけ。本番は 0 行)。active の行は変えない。
+--   6. 家族の行の特権列のガード guard_family_groups_privileged が、ログインユーザー (current_user が authenticated / anon) による
+--      status / dissolved_at の変更も 42501 で拒否する (土台は 20251126124224_create_meal_planner_tables.sql:1779-1791。後の migration での置き換えは無い)。
+--      RLS family_groups_update_adult は active な代表者・大人に列を限らない UPDATE を許すので、これが無いと REST の UPDATE で
+--      representative_id が代表者を指したままの dissolved の行が作れ、代表者が退会できなくなる (§10.1・S-31)。
+--      #1309 (20261008090000_family_members_status_guard.sql) と同じ形: 値を変えない更新は拒否しない・SECURITY INVOKER のまま・
+--      search_path の指定なしのまま・トリガー本体と RLS と GRANT は変えない。
+-- 既存データへの影響: 5 の UPDATE だけ (dissolved の行だけ。本番は 0 行)。active の行は変えない。6 は関数の本文だけを置き換える。
 -- 冪等: ALTER COLUMN DROP NOT NULL / ADD CONSTRAINT IF NOT EXISTS (DO ブロックで存在を確かめる) / CREATE OR REPLACE / REVOKE・GRANT は何度流しても同じ。
 -- 確認: tests/self-dissolve-migration-contract.test.ts (文面)・tests/integration/security/self-dissolve.test.ts (実 DB)
 -- ロールバック: supabase/rollbacks/<番号はマージ時に確定>_self_dissolve.down.sql
@@ -785,12 +804,42 @@ END $$;
 -- ─────────────────────────────────────────────────────────
 UPDATE public.family_groups SET representative_id = NULL WHERE status = 'dissolved' AND representative_id IS NOT NULL;
 UPDATE public.organizations SET owner_id = NULL WHERE status = 'dissolved' AND owner_id IS NOT NULL;
+
+-- ─────────────────────────────────────────────────────────
+-- 6. 家族の行の特権列のガードに status / dissolved_at を足す (土台 = 20251126124224_create_meal_planner_tables.sql:1779-1791)
+-- ─────────────────────────────────────────────────────────
+CREATE OR REPLACE FUNCTION public.guard_family_groups_privileged() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated','anon') THEN
+    -- #1917: status / dissolved_at もログインユーザーは直接変更できない。解散は後始末の関数 family_dissolve_apply
+    -- (呼ぶのは SECURITY DEFINER の dissolve_family_by_representative / operator_force_dissolve_family) か service_role だけが行う。
+    -- RLS family_groups_update_adult は active な代表者・大人に列を限らない UPDATE を許すので、ここで止めないと
+    -- representative_id が代表者を指したままの dissolved の行が作れ、代表者が退会できなくなる (docs/design/family/11-self-dissolve.md S-31)。
+    IF NEW.representative_id IS DISTINCT FROM OLD.representative_id
+       OR NEW.plan_key     IS DISTINCT FROM OLD.plan_key
+       OR NEW.member_limit IS DISTINCT FROM OLD.member_limit
+       OR NEW.status       IS DISTINCT FROM OLD.status
+       OR NEW.dissolved_at IS DISTINCT FROM OLD.dissolved_at THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
+END $$;
 ```
 
 - `SET search_path = ''` の新設の関数は参照を完全修飾する (`public.`・`pg_catalog.`)。運営の 2 本は既存の属性 (`search_path` = public) を変えない (本体の置き換えだけ)。
 - `family_dissolve_apply` / `org_dissolve_apply` は SECURITY INVOKER。呼ぶのは所有者 postgres の SECURITY DEFINER 関数なので、その中では postgres として動き、RLS と特権列ガード (F-13。`current_user` が authenticated / anon のときだけ止める) を通る。authenticated / anon からは EXECUTE を剥がす (`tests/integration/security/anon-definer-execute.test.ts` の A1 は SECURITY DEFINER だけを数えるので、この 2 本は表に足さない。利用者の RPC 2 本は決定表 B に足す。§23)。
-- `UPDATE family_groups ... representative_id = NULL` は `trg_guard_family_groups_privileged` (BEFORE UPDATE) を通る (postgres)。`family_groups_billing_plan_follow_representative` (BEFORE UPDATE OF representative_id) は `NEW.status <> 'active'` で何もしない (F-14)。`organizations` の `trg_guard_organizations_privileged` も同じ。
+- 後始末の `UPDATE family_groups SET status = 'dissolved', dissolved_at = …, representative_id = NULL` は `trg_guard_family_groups_privileged` (BEFORE UPDATE。6 で `status` / `dissolved_at` も守る) を通る (`current_user` は postgres)。`family_groups_billing_plan_follow_representative` (BEFORE UPDATE OF representative_id) は `NEW.status <> 'active'` で何もしない (F-14)。`organizations` の `trg_guard_organizations_privileged` も同じ。
 - CHECK は既存の active の行を全部通す (本番は `owner_id` が入った active 2 行・`family_groups` 0 行。`20261017100000` で NOT NULL にしたので NULL の active は無い)。
+- 6 のガード (F-13・S-31):
+  - 方式は #1309 と同じく、トリガーで列を守る。UPDATE の列権限 (`GRANT UPDATE (列, …)`) に絞る案は、テーブル単位の GRANT を作り替える大きな変更になり、本番の権限のスナップショット (`supabase/baseline/prod_table_acl.sql`) とも形が変わる。RLS の WITH CHECK は変更前の値 (OLD) を読めないので「`status` を変えた」ことを判定できない。どちらも採らない。
+  - 値を変えない更新 (`NEW.status = OLD.status`) は拒否しない。行をまるごと送り直すクライアントも壊れない。`name` の変更は今までどおり通る。
+  - 属性は変えない。SECURITY INVOKER のまま (SECURITY DEFINER にすると `current_user` が常に postgres になり、ガードが効かなくなる)。`search_path` の指定も現行 (なし) のまま (本文は名前を解決しない)。トリガー `trg_guard_family_groups_privileged` (BEFORE UPDATE FOR EACH ROW) は関数の本文だけが変わるので作り直さない。RLS・テーブルの GRANT・関数の GRANT も変えない (CREATE OR REPLACE は ACL を変えない)。
+  - 正規の経路への影響は無い: `family_groups.status` / `dissolved_at` を書くのは、後始末の関数 (SECURITY DEFINER の利用者の解散の RPC・運営の強制解散の中で postgres として動く) と service_role (テスト・運営の道具) だけ。アプリにログインユーザーとして `family_groups` を UPDATE する箇所は無い (F-13)。家族の行を作る経路は INSERT (`create_family_group`・service_role) で、BEFORE UPDATE のトリガーの対象外。
+  - 組織の `guard_organizations_privileged` は変えない (既に `status` / `owner_id` を止めている。`dissolved_at` は読み手が無い。F-13)。
+  - 本番の `family_groups` は 0 行なので、ガードの前に REST で作られた不整合な dissolved の行 (`representative_id` あり・active のメンバーあり) は無い (§0.1 の前提の実測)。5 の UPDATE はそのような行の `representative_id` も NULL にする。
 
 ### 11.2 `supabase/rollbacks/<番号はマージ時に確定>_self_dissolve.down.sql`
 
@@ -801,8 +850,11 @@ UPDATE public.organizations SET owner_id = NULL WHERE status = 'dissolved' AND o
 -- 戻すもの: 利用者の解散の RPC 2 本と後始末の関数 2 本を DROP し、運営の強制解散の RPC 2 本を 20261017130000_operator_mfa_db_gate.sql の定義 (:166-235, :281-319) に逐語で戻し、
 --   CHECK 2 本を外す。NOT NULL は、NULL の行が無いときだけ戻す (解散で NULL にした行があると SET NOT NULL は 23502 で失敗するので、
 --   その場合は NOTICE を出して NULL 許容のまま残す。解散した行の元の代表者・オーナーは membership_audit の metadata にだけ残り、列には戻せない)。
+--   家族の行の特権列のガード guard_family_groups_privileged を 20251126124224_create_meal_planner_tables.sql の定義 (:1779-1791) に逐語で戻す。
+--   ⚠️ 戻すと、active な代表者・大人が REST の UPDATE で family_groups の status / dissolved_at を書けるようになる
+--   (代表者を指したままの dissolved の行が作れ、代表者が退会できなくなる。family/11 S-31)。緊急時の切り戻し専用。
 -- 戻らないもの: 利用者が解散した家族・組織 (dissolved のまま。メンバーの所属も戻らない)。membership_audit の group_dissolved の行 (記録として残す)。
--- 触れないもの: 外部キー (変えていない)・ほかの関数・RLS。
+-- 触れないもの: 外部キー (変えていない)・ほかの関数・RLS・トリガー・組織の特権列のガード (up で変えていない)。
 -- 冪等: DROP FUNCTION IF EXISTS / DROP CONSTRAINT IF EXISTS / CREATE OR REPLACE。
 
 SET LOCAL lock_timeout = '10s';
@@ -923,6 +975,22 @@ BEGIN
           ));
 
   RETURN v_fam;
+END $$;
+
+-- 家族の行の特権列のガード: 20251126124224_create_meal_planner_tables.sql の定義 (:1779-1791) を逐語で戻す (status / dissolved_at を守る列から外す)。
+-- 属性 (SECURITY INVOKER・search_path の指定なし)・トリガー・権限は up で変えていないので触らない
+CREATE OR REPLACE FUNCTION "public"."guard_family_groups_privileged"() RETURNS "trigger"
+    LANGUAGE "plpgsql"
+    AS $$
+BEGIN
+  IF current_user IN ('authenticated','anon') THEN
+    IF NEW.representative_id IS DISTINCT FROM OLD.representative_id
+       OR NEW.plan_key     IS DISTINCT FROM OLD.plan_key
+       OR NEW.member_limit IS DISTINCT FROM OLD.member_limit THEN
+      RAISE EXCEPTION 'CANNOT_MODIFY_PRIVILEGED_COLUMN' USING ERRCODE = '42501';
+    END IF;
+  END IF;
+  RETURN NEW;
 END $$;
 
 DROP FUNCTION IF EXISTS public.family_dissolve_apply(uuid);
@@ -2041,6 +2109,8 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | 未同意 (middleware) | — | 通る | — | `LEGAL_CONSENT_EXEMPT_API_PATHS` (§13.5) |
 | anon が RPC を直接呼ぶ | 42501 | 401 / 403 (PostgREST) | — | REVOKE (§11.1) |
 | authenticated が後始末の関数を直接呼ぶ | 42501 | 401 / 403 | — | REVOKE (§11.1) |
+| 家族の代表者・大人が REST で `family_groups` の `status` / `dissolved_at` を変える (`representative_id` / `plan_key` / `member_limit` も同じ) | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` | 403 (PostgREST) | — (画面からは呼ばない) | `guard_family_groups_privileged` (§11.1 の 6。S-31) |
+| 組織のオーナー・admin が REST で `organizations` の `status` / `owner_id` を変える | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` | 403 (PostgREST) | — | `guard_organizations_privileged` (既存。変えない。F-13) |
 | active の行の `representative_id` / `owner_id` を NULL にする UPDATE | 23514 (`family_groups_active_has_representative` / `organizations_active_has_owner`) | — | — | CHECK (§11.1) |
 | active な家族の代表者 / 組織のオーナーの `auth.users` を消す (退会の 409 を迂回) | 23503 (`family_groups_representative_id_fkey` / `organizations_owner_id_fkey`) | — | — | RESTRICT (変えない。F-6) |
 | 代表者・オーナーが退会 | `ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE` / `ACCOUNT_DELETE_BLOCKED_ORG_OWNER` | 409 | 家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。/ 組織のオーナーです。先にオーナーを譲渡するか組織を解散してください。(変えない) + 案内 (§13.6・§15.3〜§15.5。凍結中の画面は `FROZEN_DISSOLVE_GUIDANCE`、同意の前の画面は `LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance`) | `findBlocker` |
@@ -2051,7 +2121,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 
 | 段 | 触るファイル (新設は §22) | 検査 |
 |---|---|---|
-| A | migration + down (§11)・型 2 ファイル (§11.4)・`src/schemas/membership/self-dissolve.ts`・`index.ts`・`packages/shared/src/membership-settings.ts`・`index.ts`・`src/lib/errors/membership-errors.ts` (§13.3)・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts` (§13.5)・`src/lib/account-self-service.ts` (§13.6)・`src/lib/account-deletion.ts` (コメント)・`lib/supabase/middleware.ts:189, 228` (コメント)・`apps/mobile/src/lib/account-frozen.ts:5` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts` (nullable)・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・`src/lib/membership/self-dissolve.ts`・`self-dissolve-notification.ts`・`src/lib/emails/membership/self-dissolve.ts`・route 2 本・テスト (§21.1・§21.2) と既存の番兵の追随 (§23 の段 A の行。#1103 項目 10 の番兵 2 本の書き換えは §21.6 の逐語) | `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (offload)・結合 (`vitest.integration.config.ts`) は `tests/integration/security/self-dissolve.test.ts`・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`anon-definer-execute.test.ts`・`account-deletion.test.ts`・`org-admin-residual-cleanup.test.ts`・`operator-mfa-db-gate.test.ts`・`purge-dissolved-family-groups.test.ts`・`auth-users-fk-on-delete.test.ts` |
+| A | migration + down (§11)・型 2 ファイル (§11.4)・`src/schemas/membership/self-dissolve.ts`・`index.ts`・`packages/shared/src/membership-settings.ts`・`index.ts`・`src/lib/errors/membership-errors.ts` (§13.3)・`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts` (§13.5)・`src/lib/account-self-service.ts` (§13.6)・`src/lib/account-deletion.ts` (コメント)・`lib/supabase/middleware.ts:189, 228` (コメント)・`apps/mobile/src/lib/account-frozen.ts:5` (コメント)・`src/schemas/membership/family-group.ts`・`organization.ts` (nullable)・`src/app/api/admin/organizations/route.ts` (コメント)・`src/app/api/family/representative-transfer/[id]/accept/route.ts`・`src/app/api/operator/membership/family/[id]/transfer/route.ts`・`src/app/api/operator/membership/org/[id]/transfer/route.ts`・`src/lib/membership/exit-notification.ts` (§11.4 の読み手 5 ファイル)・`src/lib/membership/self-dissolve.ts`・`self-dissolve-notification.ts`・`src/lib/emails/membership/self-dissolve.ts`・route 2 本・テスト (§21.1・§21.2) と既存の番兵の追随 (§23 の段 A の行。#1103 項目 10 の番兵 2 本の書き換えは §21.6 の逐語) | `npx tsc --noEmit`・`npm run lint`・`npx vitest run` 全件 (offload)・結合 (`vitest.integration.config.ts`) は `tests/integration/security/self-dissolve.test.ts`・`family-lock-order-race.test.ts`・`organizations-owner-id-not-null.test.ts`・`anon-definer-execute.test.ts`・`account-deletion.test.ts`・`org-admin-residual-cleanup.test.ts`・`operator-mfa-db-gate.test.ts`・`purge-dissolved-family-groups.test.ts`・`auth-users-fk-on-delete.test.ts`・`family-member-limit-race.test.ts`・`tests/integration/rls/family-menu-visibility.test.ts`・`ai-usage-rpc.test.ts`・`billing-manual-grant-rpc.test.ts`・`billing-apply-subscription-rpc.test.ts` (最後の 5 本は service_role / postgres で `family_groups.status` / `dissolved_at` を書く。特権列のガード (§11.1 の 6) の対象外のまま通ることを確かめる。§23) |
 | B | `src/app/(main)/settings/membership/page.tsx`・`src/components/membership/SelfDissolveSection.tsx`・`src/app/(main)/settings/page.tsx`・`src/components/account/AccountSelfServicePanel.tsx`・`src/app/frozen/account/page.tsx`・`src/app/legal-consent/account/AccountWithoutConsent.tsx` (コメント)・`packages/shared/src/legal-consent-copy.ts` (`accountDeleteBlockedGuidance`)・`lib/legal-consent.ts` (コメント)・`apps/mobile/src/lib/membership-settings.ts`・`apps/mobile/app/settings/membership.tsx`・`apps/mobile/app/settings/account.tsx`・テスト (§21.3・§21.4) と既存の番兵の追随 (§23 の段 B の行) | 同上 + apps/mobile の tsc / jest・e2e (`tests/e2e/membership/15-self-dissolve.spec.ts`) |
 | C | `src/lib/legal/terms-text.ts`・`src/lib/legal/privacy-text.ts`・`tests/legal-claims-1901.ts` (§18.1・§18.2)・`packages/shared/src/legal-versions.ts` と `docs/legal/archive/v2026.1/terms.md`・`privacy.md` (§18.4 の条件で)・`tests/design-doc-followup-owned-edits.test.ts` (`OWNED_EDITS` に 4 行。§23)・`tests/legal-text-1901.test.ts` (T-28 の phrase の 1 行を 3 行に置き換え、`not.toContain` の一覧に 1 行。§23 の逐語)。⛔ 設計書 cross/20 は編集しない (§18.1〜§18.3 の設計書の差分は、オーケストレーターの専権の差分として同じ PR に載る。§24) | 全件。番兵の反応は §23 の段 C の行のとおり: 本文の書き換え (§18.1) だけを当てると、T-28 (`譲渡するまで、退会できません` が本文から消える) と T-35 (主張の表と本文の 1 対 1。§18.2 を当てるまで) が赤。§23 の段 C の行 (主張の表・`OWNED_EDITS`・T-28 の phrase) をすべて当て、設計書の差分がまだ載っていない枝では、T-35 の `F-59 の行が設計書に無い` だけが赤 (`design-doc-followup-owned-edits` は cross/20 に前の文が残るので緑)。設計書の差分が載ると全件が緑 |
 
@@ -2073,13 +2143,13 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | `src/__tests__/api/family/dissolve.test.ts` (新規。`fake-service-role.ts` の形) | `未ログインは 401 NOT_AUTHENTICATED。RPC を呼ばない` / `本文が壊れている・confirm が無い・family_id が UUID でないときは 400 VALIDATION_ERROR。RPC を呼ばない` / `NULL 文字を含む本文は 400 INVALID_CHARACTER (Supabase のクライアントを作らない)` / `RPC の NOT_FAMILY_REPRESENTATIVE は 403、FAMILY_NOT_FOUND は 404、FAMILY_ALREADY_DISSOLVED は 409、40P01 は 409 CONFLICT_RETRY。本文に生のエラー文を入れない` / `RPC の想定外の失敗と、戻り値の形が違うときは internalError (汎用の 500。段階・request_id を本文に出さない)` / `成功: RPC に p_family_id (小文字にそろえた) だけを渡し、200 { data: { family_id, dissolved_at } }。応答に member_user_ids もメールアドレスも入れない` / `成功: RPC が返した member_user_ids の全員 (本人を含む) に 1 通ずつ、家族名つきの文面で送る。宛先は auth.users から引く (先頭 50 件より後ろでも)。user_profiles から email を読まない` / `通知先の解決・送信が失敗しても 200。ログに宛先のアドレスを残さない` / `service_role の client は RPC の成功のあとにだけ作る (401・400・RPC の失敗では作らない)` |
 | `src/__tests__/api/org/dissolve.test.ts` (新規) | 上と同型 (`NOT_ORG_OWNER` / `ORG_NOT_FOUND` / `ORG_ALREADY_DISSOLVED`・`p_organization_id`・組織名つきの文面) + `route は user_profiles の org_role を読まない (判定は RPC)` |
 | `lib/supabase/__tests__/middleware-self-dissolve.test.ts` (新規。`middleware-family-menu.test.ts` の形) | `凍結中 (frozen_at・unban_at 未来) でも POST /api/family/dissolve と POST /api/org/dissolve は route へ通す (403 AUTH_ACCOUNT_FROZEN にならない)` / `未同意 × LEGAL_CONSENT_ENFORCE=on でも通す (同意の許可リスト)` / `メンテナンス中は 503 MAINTENANCE_MODE (運営ロールは通す)` |
-| `tests/self-dissolve-migration-contract.test.ts` (新規。DB を使わない。`purge-dissolved-family-groups-contract.test.ts` の形) | C-1 `migration と rollback が対・1 行目の見出しと戻し方の案内が正しい・版の番号が重ならない` / C-2 `representative_id と owner_id の DROP NOT NULL が 1 文ずつあり、CHECK family_groups_active_has_representative (status <> 'active' OR representative_id IS NOT NULL) と organizations_active_has_owner を DO ブロックで存在を確かめて足す。外部キー (RESTRICT) に触れない` / C-3 `family_dissolve_apply / org_dissolve_apply は SECURITY INVOKER・search_path ''・参照が完全修飾。REVOKE ... FROM PUBLIC, anon, authenticated と GRANT EXECUTE ... TO service_role` / C-4 `後始末の UPDATE の並びは 20261017130000 の operator_force_dissolve_family (:303-308) / operator_force_dissolve_org (:198-217) の並びと同じ (representative_id = NULL / owner_id = NULL を足した以外は、列と WHERE が同じ)` / C-5 `dissolve_family_by_representative / dissolve_org_by_owner は SECURITY DEFINER・RETURNS jsonb・REVOKE FROM PUBLIC, anon・GRANT TO authenticated, service_role。家族は最初の文が family_groups の FOR NO KEY UPDATE、組織は user_profiles (本人) の FOR NO KEY UPDATE → organizations の FOR NO KEY UPDATE の順` / C-6 `RAISE するコード (NOT_AUTHENTICATED・FAMILY_NOT_FOUND・FAMILY_ALREADY_DISSOLVED・NOT_FAMILY_REPRESENTATIVE・ORG_NOT_FOUND・ORG_ALREADY_DISSOLVED・NOT_ORG_OWNER) はすべて MembershipErrorCode にある` / C-7 `監査は group_dissolved・actor_id = auth.uid()・metadata の鍵は dissolved_by / previous_representative_id (previous_owner_id) / member_count。戻り値の鍵は scope_id / scope_name / dissolved_at / member_user_ids` / C-8 `運営の RPC 2 本の判定の部分 (ロール・MFA・ORG_NOT_FOUND・ORG_ALREADY_DISSOLVED・監査の action) が 20261017130000 と逐語で同じで、本体は *_dissolve_apply の呼び出し 1 文。監査の metadata に previous_representative_id / previous_owner_id` / C-9 `rollback は利用者の RPC 2 本と後始末 2 本を DROP し、運営の 2 本を 20261017130000 の定義と逐語で戻し、CHECK を外し、NOT NULL は NULL の行が無いときだけ戻す。行を消す文を持たない` / C-10 `DISSOLVED_FAMILY_GROUP_RETENTION_DAYS (LEGAL_FACTS.dissolvedFamilyGroupRetentionDays の 90) は purge_dissolved_family_groups の c_retention (interval '90 days') と一致する` / C-11 `既に dissolved の行の representative_id / owner_id を NULL にする UPDATE が 1 文ずつあり、WHERE に status = 'dissolved' を持つ (active の行に触れない)` / C-12 `migration の中に、関数の外の DELETE・TRUNCATE が無い` |
+| `tests/self-dissolve-migration-contract.test.ts` (新規。DB を使わない。`purge-dissolved-family-groups-contract.test.ts` の形) | C-1 `migration と rollback が対・1 行目の見出しと戻し方の案内が正しい・版の番号が重ならない` / C-2 `representative_id と owner_id の DROP NOT NULL が 1 文ずつあり、CHECK family_groups_active_has_representative (status <> 'active' OR representative_id IS NOT NULL) と organizations_active_has_owner を DO ブロックで存在を確かめて足す。外部キー (RESTRICT) に触れない` / C-3 `family_dissolve_apply / org_dissolve_apply は SECURITY INVOKER・search_path ''・参照が完全修飾。REVOKE ... FROM PUBLIC, anon, authenticated と GRANT EXECUTE ... TO service_role` / C-4 `後始末の UPDATE の並びは 20261017130000 の operator_force_dissolve_family (:303-308) / operator_force_dissolve_org (:198-217) の並びと同じ (representative_id = NULL / owner_id = NULL を足した以外は、列と WHERE が同じ)` / C-5 `dissolve_family_by_representative / dissolve_org_by_owner は SECURITY DEFINER・RETURNS jsonb・REVOKE FROM PUBLIC, anon・GRANT TO authenticated, service_role。家族は最初の文が family_groups の FOR NO KEY UPDATE、組織は user_profiles (本人) の FOR NO KEY UPDATE → organizations の FOR NO KEY UPDATE の順` / C-6 `RAISE するコード (NOT_AUTHENTICATED・FAMILY_NOT_FOUND・FAMILY_ALREADY_DISSOLVED・NOT_FAMILY_REPRESENTATIVE・ORG_NOT_FOUND・ORG_ALREADY_DISSOLVED・NOT_ORG_OWNER) はすべて MembershipErrorCode にある` / C-7 `監査は group_dissolved・actor_id = auth.uid()・metadata の鍵は dissolved_by / previous_representative_id (previous_owner_id) / member_count。戻り値の鍵は scope_id / scope_name / dissolved_at / member_user_ids` / C-8 `運営の RPC 2 本の判定の部分 (ロール・MFA・ORG_NOT_FOUND・ORG_ALREADY_DISSOLVED・監査の action) が 20261017130000 と逐語で同じで、本体は *_dissolve_apply の呼び出し 1 文。監査の metadata に previous_representative_id / previous_owner_id` / C-9 `rollback は利用者の RPC 2 本と後始末 2 本を DROP し、運営の 2 本を 20261017130000 の定義と逐語で戻し、CHECK を外し、NOT NULL は NULL の行が無いときだけ戻す。行を消す文を持たない` / C-10 `DISSOLVED_FAMILY_GROUP_RETENTION_DAYS (LEGAL_FACTS.dissolvedFamilyGroupRetentionDays の 90) は purge_dissolved_family_groups の c_retention (interval '90 days') と一致する` / C-11 `既に dissolved の行の representative_id / owner_id を NULL にする UPDATE が 1 文ずつあり、WHERE に status = 'dissolved' を持つ (active の行に触れない)` / C-12 `migration の中に、関数の外の DELETE・TRUNCATE が無い` / C-13 `guard_family_groups_privileged の CREATE OR REPLACE が 1 つあり、RETURNS trigger・LANGUAGE plpgsql で SECURITY DEFINER も SET search_path も持たない。current_user IN ('authenticated','anon') の中で representative_id / plan_key / member_limit / status / dissolved_at の 5 列を IS DISTINCT FROM で見て CANNOT_MODIFY_PRIVILEGED_COLUMN (ERRCODE '42501') を RAISE する。migration は trg_guard_family_groups_privileged・family_groups の POLICY・GRANT の文を持たない。rollback は 20251126124224_create_meal_planner_tables.sql の :1779-1791 の 13 行と逐語で同じ定義で戻す` |
 | `src/__tests__/lib/membership/self-dissolve-rpc-types.test.ts` (新規。tsc の対象に置く) | `生成型の Functions に dissolve_family_by_representative / dissolve_org_by_owner (Args { p_family_id } / { p_organization_id }・Returns Json) と family_dissolve_apply / org_dissolve_apply がある。Tables.family_groups.Row.representative_id と Tables.organizations.Row.owner_id は string \| null` |
 | `src/__tests__/schemas/membership-types.test.ts` (追加) | `FamilyGroupSchema は representative_id が null の行 (解散済み) も受ける` / `OrganizationSchema は owner_id が null の行 (解散済み) も受ける` |
 
 ### 21.2 実 DB の結合 (段 A。`tests/integration/security/self-dissolve.test.ts` 新規)
 
-利用者: 家族 F (代表者 rep・大人 adult・アカウントを持つ子供 teen・アカウントの無い子供 (生年月日あり・保護者の同意あり))、家族 G (別の代表者 other)、組織 O (オーナー owner・admin・member)、組織 P (別のオーナー)。すべて `createUser` で作り、`afterAll` で家族・組織を消してから利用者を消す (RESTRICT の順)。
+利用者: 家族 F (代表者 rep・大人 adult・アカウントを持つ子供 teen・アカウントの無い子供 (生年月日あり・保護者の同意あり))、家族 G (別の代表者 other)、家族 H (代表者 hrep・大人 hadult。D-16 だけが使う。作り方と本人のセッションの UPDATE は `tests/integration/security/family-member-status-guard.test.ts` の `createFamily` / `addAdult` / `directUpdate` と同じ形)、組織 O (オーナー owner・admin・member)、組織 P (別のオーナー)。すべて `createUser` で作り、`afterAll` で家族・組織を消してから利用者を消す (RESTRICT の順)。
 
 | # | it |
 |---|---|
@@ -2098,6 +2168,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | D-13 | `運営の強制解散 (置き換え後) は今までどおり: super_admin (aal2) が呼ぶと dissolved・全員 left・membership_audit に operator_force_dissolve (metadata に previous_representative_id)。加えて representative_id が NULL になる。組織も同じ (org_admin も外れる・previous_owner_id)` |
 | D-14 | `凍結中 (frozen_at) の代表者でも RPC は通る (RPC は凍結を見ない。middleware の判定は §21.1)` |
 | D-15 | `組織: 招待の承諾 (accept_org_invite) が commit したあとに解散すると、承諾した人の所属の列も外れ、戻り値の member_user_ids に入る。自己解散と招待の承諾を本物の経路で 8 回ずつ同時に呼んでも、デッドロック (40P01) せず、どちらも P0001 以外で失敗しない (承諾した人が解散した組織に所属したまま残るかは Q-4 の既存の動きで、本書では検査しない)` |
+| D-16 | `家族の行の特権列のガード: 家族 H の大人 hadult と代表者 hrep が、本人のセッションの client で family_groups の status を dissolved にする UPDATE と dissolved_at に値を入れる UPDATE は、4 つとも 42501 (message に CANNOT_MODIFY_PRIVILEGED_COLUMN) で、service_role で読み直すと status は active・dissolved_at は NULL・representative_id は hrep のまま・hadult の family_members は active のまま。status を今と同じ active で送り直す UPDATE と name の変更は通る。そのあと hrep の dissolve_family_by_representative は通り (FAMILY_ALREADY_DISSOLVED にならない)、hrep は deleteAccount で退会できる。service_role は status / dissolved_at を書ける (ガードの対象外)` |
 
 既存の結合テストの変更: `family-lock-order-race.test.ts` C1 (`:774`)・C2 (`:791`) の `representative_id` の期待を `toBeNull()` に (解散で NULL にするのが設計。it 名の「書き換えない」は「解散済みの家族の representative_id は NULL のまま (新代表者に書き換わらない)」に)。R2 (`:1162`。運営でない人は解散できない) はそのまま。`organizations-owner-id-not-null.test.ts` は 3 か所を直す (逐語は §21.6.2)。(1) `runInRolledBackTransaction` (`:146-148`) の先頭の文の並びを `DROP NOT NULL` → `DROP CONSTRAINT organizations_active_has_owner` の 2 文にする (`orgSql` は `owner_id` NULL・`status` 既定 `'active'` の組織を作るので、CHECK が DB にあると INSERT が 23514 で止まり、`orgSql` を使う it がすべて赤になる。トランザクションごと巻き戻るので CHECK は DB に残る)。(2) `afterEach` (`:186`) の期待を `'YES'` にし、続けて CHECK `organizations_active_has_owner` が DB にあることを見る (巻き戻りで CHECK が戻っていること)。(3) 冒頭のコメント (`:4-9`) を現在の DB の形 (NULL 許容 + CHECK) に合わせる。`:224, 240, 252` の `'NO'` と `:356` の `'YES'` は、トランザクションの中で旧 migration / 戻し口を流した直後の値なので**変えない**。active の行で NULL が 23514 になることは D-11 が見る (このファイルには足さない)。`account-deletion.test.ts` の 409 の describe (`:758`) の末尾に it `家族を解散した元代表者は 200 で退会できる` を足す (既存の 2 本のあとに流す。`pgQuery` (postgres) で `select public.family_dissolve_apply(<ownedIds.fg>)` を流して解散させ、`deleteAccount({ userId: representative.id, admin: srAdmin })` が `ok: true`・`auth.users` が消える・`family_groups` の行は `dissolved` で残り `representative_id` が NULL。`afterAll` は今のまま (行を消してから利用者を消す。消えた利用者の `deleteUser` は `catch` で流れる))。`anon-definer-execute.test.ts` の決定表 B に 2 行 (§23)。
 
@@ -2153,8 +2224,9 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | S-28 | D-1 (`family_groups.status = 'dissolved'`・代表者を含む active だった 4 行が `left` = 一覧の結合の条件 `fg.status = 'active'`・`fm.role = 'representative' AND fm.status = 'active'` に当たらない)。一覧の関数は本書で変えないので呼ばない (運営の aal2 のセッションが要り、組織の一覧は行があると既存の 42804 で失敗する。`tests/integration/security/operator-mfa-db-gate.test.ts:44-50`・Q-10)。`tests/integration/rls/is-inactive-user-rpc.test.ts` は変えない |
 | S-29 | D-5 (オーナーを含む 3 人の `organization_id` / `org_role` が NULL = 一覧の結合の条件 `up.organization_id = o.id AND up.org_role = 'owner'` に当たらない)。一覧の関数と画面は変えないので、S-28 と同じ理由で一覧は呼ばない。画面の `InactiveOwnerTable` は変えない (§23) |
 | S-30 | D-15 (承諾が先の結果とデッドロックしないこと)・Q-4 (承諾が後の結果は本書で検査しない) |
+| S-31 | D-16 (REST の UPDATE は 42501 で行は変わらない・同じ値の送り直しと名前の変更は通る・そのあと解散と退会が通る・service_role は書ける)・C-13 (ガードの文面と戻し口) |
 | シナリオ外 (DB の不変条件。§9 の CHECK と RESTRICT) | D-11 (active の行の `representative_id` / `owner_id` を NULL にすると 23514)・D-12 (active な家族の代表者・組織のオーナーの `auth.users` の削除は 23503)。どのシナリオも利用者の操作で NULL や削除を起こさないので、守りの層として単独で見る |
-| シナリオ外 (migration の形の契約。§11) | C-1〜C-9・C-11・C-12 (対の rollback・制約・関数の属性・後始末の並び・RAISE のコード・監査・運営の RPC の逐語・戻し口・既存の dissolved の行の UPDATE・関数の外の DELETE が無いこと)。C-10 は S-12 |
+| シナリオ外 (migration の形の契約。§11) | C-1〜C-9・C-11・C-12 (対の rollback・制約・関数の属性・後始末の並び・RAISE のコード・監査・運営の RPC の逐語・戻し口・既存の dissolved の行の UPDATE・関数の外の DELETE が無いこと)。C-10 は S-12、C-13 は S-31 |
 
 ### 21.6 既存のテストの書き換え (逐語。段 A)
 
@@ -2240,6 +2312,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | migration | `<番号はマージ時に確定>_self_dissolve.sql` / `.down.sql` | `supabase/migrations` / `supabase/rollbacks` | A |
 | 制約 (SQL) | `family_groups_active_has_representative`・`organizations_active_has_owner` (CHECK) | migration | A |
 | 関数 (SQL) | `public.family_dissolve_apply(uuid)`・`public.org_dissolve_apply(uuid)` (SECURITY INVOKER)・`public.dissolve_family_by_representative(uuid)`・`public.dissolve_org_by_owner(uuid)` (SECURITY DEFINER) | migration | A |
+| 関数の置き換え (SQL。新設ではない。名前・引数・戻り値・属性・権限は変えない) | `public.operator_force_dissolve_family(uuid, text)`・`public.operator_force_dissolve_org(uuid, text)` (本体を後始末の関数の呼び出しに。§11.1 の 4)・`public.guard_family_groups_privileged()` (守る列に `status`・`dissolved_at` を足す。§11.1 の 6) | migration | A |
 | エラー (SQL / TS) | `FAMILY_ALREADY_DISSOLVED` (新)・`ORG_ALREADY_DISSOLVED` (TS に新。SQL は既存) | RPC・`src/lib/errors/membership-errors.ts` | A |
 | 監査の metadata | `dissolved_by`・`previous_representative_id`・`previous_owner_id`・`member_count` (action は既存の `group_dissolved` / `operator_force_dissolve`) | RPC | A |
 | ファイル | `src/schemas/membership/self-dissolve.ts` | Zod 5 つ (`DissolveFamilyBodySchema`・`DissolveOrgBodySchema`・`SelfDissolveRpcResultSchema`・`DissolveFamilyResponseSchema`・`DissolveOrgResponseSchema`)・型 5 つ | A |
@@ -2275,6 +2348,7 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | `family_groups_representative_id_fkey` / `organizations_owner_id_fkey` (RESTRICT) | `tests/integration/security/auth-users-fk-on-delete.test.ts:111-116` (RESTRICT の許可リスト) | 反応しない (外部キーは変えない) | 許可リストの文言「譲渡か解散をしないと退会できない」はそのまま事実 (解散した行は本人を指さない) | — |
 | `dissolve_family_by_representative` / `dissolve_org_by_owner` (SECURITY DEFINER) | `tests/integration/security/anon-definer-execute.test.ts:122-150` A1 (anon が EXECUTE できる定義者関数は 2 本だけ)・決定表 B (`:196-`) | A1 は REVOKE で緑。B は表に無い関数を見ない | 決定表 B に 2 行 (`anon: false, authenticated: true, serviceRole: true, why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)'`) を足す。`family_dissolve_apply` / `org_dissolve_apply` は SECURITY INVOKER なので足さない | A |
 | 同上 (関数名) | `tests/database-types-migrations-contract.test.ts` (migration の CREATE FUNCTION が型 2 ファイルに無いと赤) | 赤 | 型を再生成して 2 ファイルを置き換える (§11.4) | A |
+| `guard_family_groups_privileged` (migration の CREATE OR REPLACE) | `tests/database-types-migrations-contract.test.ts:16, 94-110, 171-172` (最後の CREATE が `RETURNS trigger` の関数は型に出ないので期待から除き、型にあれば赤) | 反応しない (6 は `RETURNS trigger` で書く。型の生成物にも出ない) | 6 の文面の `RETURNS trigger` を崩さない (C-13) | A |
 | `_self_dissolve` | `tests/migration-file-version-integrity.test.ts` (見出し・戻し口・参照の一致・番号の重複) | 形が違えば赤 | 1 行目 `-- migration: <名前>`、本文に `supabase/rollbacks/<名前>.down.sql`、戻し口の 1 行目 `-- rollback: <名前>` (§11.1・§11.2) | A |
 | `operator_force_dissolve_family` / `operator_force_dissolve_org` (再定義) | `tests/operator-mfa-db-gate-migration-contract.test.ts:294-` (20261017130000 の文面)・`tests/admin-mutation-audit-1571.test.ts:353-395` (route の監査。RPC はモック)・`src/__tests__/api/operator/membership/family-dissolve.test.ts`・`org-dissolve.test.ts` (RPC はモック) | 反応しない (20261017130000 のファイルは変えない。route は変えない) | — | — |
 | 同上 (実 DB) | `tests/integration/security/operator-mfa-db-gate.test.ts:377` (DB-5: aal1 は `OPERATOR_MFA_REQUIRED`・status は active のまま)・`org-admin-residual-cleanup.test.ts:191` (R-3: org_admin が外れる)・`family-member-status-guard.test.ts`・`family-lock-order-race.test.ts` (A1〜N5) | 本体を apply に置き換えても同じ動き (D-13 で確かめる)。C1・C2 だけ上の行 | — | A |
@@ -2313,6 +2387,9 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | 同上 (管理画面の組織の作成) | `tests/admin-organizations-page.test.tsx:536-576` (組織の作成で `owner_id` を送る / 空なら送らない)・`tests/admin-console-helpers.test.ts:21` (`owner_id` の検証エラーの表示) | 反応しない (作る組織は active で、API が `owner_id` を必ず入れる。`tests/organizations-owner-id-not-null-migration-contract.test.ts:193-215` が見る。NULL を送る経路は足さない) | — | — |
 | 同上 (ほかの migration の文面の契約) | `tests/billing-manual-plan-grant-migration-contract.test.ts:367-396` (`WHERE g.representative_id = p_user_id AND g.status = 'active'`)・`tests/billing-migration-contract.test.ts:173` (トリガー `BEFORE INSERT OR UPDATE OF representative_id`)・`tests/family-menu-view-migration-contract.test.ts:38, 210` (献立の 2 つの関数は `representative_id` を読まない)・`tests/org-invite-same-org-member-migration-contract.test.ts:89, 154` (`owner_id = auth.uid()`・`JOIN auth.users u ON u.id = o.owner_id`) | 反応しない (既存の migration の文面の検査で、本書はそのファイルを変えない。動きも変わらない: 課金の 2 つは `status = 'active'` で絞るか `NEW.status <> 'active'` で何もしない (F-14)。献立の関数は列を読まない。招待の 2 つは、NULL が `auth.uid()` にも `auth.users` にも当たらず (解散した組織の元オーナーを止めない。S-15)、解散した組織には所属の判定 `NOT_ORG_ADMIN` が先に当たるので招待を作れない) | — | — |
 | 同上 (実 DB。解散した行を作る) | `tests/integration/security/purge-dissolved-family-groups.test.ts:172, 372` (`INSERT INTO public.family_groups (name, representative_id, status, dissolved_at)` で `dissolved` の行を値ありで作る) | 反応しない (CHECK `family_groups_active_has_representative` は `status <> 'active' OR representative_id IS NOT NULL` なので、`dissolved` の行に値を入れても通る。migration の既存の行の UPDATE はテストが行を作る前に流れる) | — (S-12。消す条件は `status`・`dissolved_at`・`parental_consents` だけで `representative_id` を見ない。F-8) | — |
+| `guard_family_groups_privileged` (守る列に `status` / `dissolved_at` を足す。§11.1 の 6) — `status` / `dissolved_at` を書く既存のテスト | `tests/integration/rls/family-menu-visibility.test.ts:394-396, 403`・`tests/integration/rls/ai-usage-rpc.test.ts:431-433, 439-441`・`tests/integration/rls/billing-manual-grant-rpc.test.ts:1048-1050`・`tests/integration/security/family-member-limit-race.test.ts:508-510` (どれも `srAdmin` = service_role の UPDATE)・`tests/integration/rls/billing-apply-subscription-rpc.test.ts:1197` (postgres-meta の接続の `UPDATE public.family_groups SET status = 'dissolved', dissolved_at = now()`)・`tests/integration/security/purge-dissolved-family-groups.test.ts:172, 372` (postgres の INSERT) | 反応しない (ガードは `current_user` が `authenticated` / `anon` のときだけ止める。service_role・postgres の UPDATE と、INSERT (BEFORE UPDATE のトリガーの対象外) は通る) | — (段 A の結合で流して確かめる。§20) | A |
+| 同上 — 本人のセッションで `family_groups` を UPDATE する既存のテスト | `tests/integration/rls/family-rls-recursion.test.ts:258-266` (GU-1: 大人が `name` を変えられる)・`:268-276` (GU-2: 別の家族の代表者は 0 行) | 反応しない (`name` はガードの対象外で、5 列はどれも変わらない。GU-2 は RLS で 0 行のままトリガーに届かない) | — | A |
+| 同上 — ガード関数の属性を見る既存のテスト | `tests/integration/security/family-member-status-guard.test.ts:689-` (A1: `guard_family_members_privileged` の属性と `family_members` のトリガーの本数) | 反応しない (`family_groups` のガードを見ない) | 本書のガードの文面は C-13、動きは D-16 が見る | — |
 | 運営の未ログインの一覧の読み手 (`owner_user_id` / `representative_user_id` → `InactiveOwner.owner_id`) | `src/app/(operator)/operator/membership/orgs/inactive/page.tsx:17, 28, 85` (`owner_user_id: string` を `owner_id` に写し、`dissolved` の行を落とす)・`src/app/(operator)/operator/membership/families/inactive/page.tsx:17, 26`・`src/components/operator/membership/InactiveOwnerTable.tsx:13` (`owner_id: string`)・`src/app/api/operator/membership/orgs/inactive/route.ts`・`families/inactive/route.ts` (RPC をそのまま返す)・番兵 `tests/integration/rls/is-inactive-user-rpc.test.ts:166-176` (一般ユーザーはエラー)・`tests/integration/security/operator-mfa-db-gate.test.ts:356-361` (DB-4。aal2 で判定を通る) | 反応しない (一覧の関数 2 本は `representative_id` / `owner_id` を読まない。`owner_user_id` は `user_profiles.id`、`representative_user_id` は `family_members.user_id` を結合した値なので NULL にならず、`string` の型のままで正しい。解散した家族・組織は結合に当たらず出ない (S-28・S-29)。関数・route・画面・型は変えない) | — | — |
 | 実装のコメント・テストのコメントの「`owner_id` は NOT NULL (#1103 項目 10)」 | `tests/e2e/fixtures/fresh-user.ts:352`・`tests/e2e/helpers/membership.ts:68, 374`・`tests/integration/helpers/org-owner.ts:4`・`tests/integration/security/e2e-org-cleanup-helper.test.ts:4`・`tests/integration/rls/*` と `tests/integration/security/*` の「組織の持ち主 (owner_id は NOT NULL。#1103 項目 10)」の JSDoc (約 20 ファイル) | 反応しない (コメント) | 変えない。作る組織は active なので CHECK で `owner_id` が要り、「持ち主を必ず入れる・組織を消してから持ち主を消す」というコメントの趣旨は保たれる (candidates) | — |
 | `FROZEN_ALLOWED_API_PATHS` に 2 本を足す (一覧の部分集合・否定を見る番兵) | `tests/api/billing-routes.test.ts:318-319` (`/api/billing/` で始まる部分集合が 3 本)・`tests/mobile-account-frozen-contract.test.ts:84-86` (`FROZEN_PROBE_API_PATH` が一覧に入らない)・`lib/supabase/__tests__/middleware-frozen-allowed-api.test.ts:215, 263` (ブリッジのコード・お問い合わせが一覧に入らない)・`src/__tests__/app/frozen-billing-page.test.tsx:154` (課金の画面が呼ぶ API が一覧にある) | 反応しない (足す 2 本は `/api/billing/` で始まらず、判定の API・ブリッジ・お問い合わせのパスでもない) | — | — |
@@ -2343,6 +2420,7 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | `docs/design/family/CLAUDE.md` のファイル一覧 | `11-self-dissolve.md` の行 (「代表者・オーナーの解散 (家族と組織)」)。「退職時の家族グループ凍結」の節の「個人プラン移行 / 譲渡 / 解散から選択」は `07-lifecycle.md` の古い設計で、解散の実装は 11 | 設計のマージと同日 |
 | `docs/design/org/CLAUDE.md` | 「他ドメインとの依存」に `family/11-self-dissolve.md` (オーナーの解散) の行 | 設計のマージと同日 |
 | `docs/design/operator/09-runbook.md` §9.2 (`:436-437`) | 「譲渡できる相手がいない代表者・オーナーは、利用者が解散する手段が無いので退会できない。利用規約第11条 4 項・第12条 4 項はお問い合わせを案内するだけで解散を約束しない。利用者が解散する機能は別の案件で作る (cross/20 Q-26)」の 2 行を、「譲渡できる相手がいない代表者・オーナーは、本人がメンバーシップ設定 (凍結中は /frozen/account、同意の前は /legal-consent/account) から家族グループ・組織を解散してから退会できるので、それを案内する (family/11)」に | 段 B のマージと同日 |
+| `docs/design/billing/01-billing-core.md` F22 (`:99`) | 「`trg_guard_family_groups_privileged` (`authenticated` / `anon` が `representative_id` / `plan_key` / `member_limit` を変えたら 42501)」に `status` / `dissolved_at` を足す (family/11 §11.1 の 6) | 段 A のマージと同日 (candidates) |
 | `docs/design/operator/11-ops-batches-non-billing.md` D-4 (`:26`) | 「解散は運営の強制解散だけ」の含みを「運営の強制解散と利用者の解散 (family/11)」に | 段 A のマージと同日 |
 | `docs/design/family/10-family-menu-view.md` S-8 | 「代表者が家族を解散 (`operator_force_dissolve_family` / 解散の RPC)」の「解散の RPC」を `dissolve_family_by_representative` と名指し | 段 A のマージと同日 (candidates) |
 | リポジトリの `CLAUDE.md:266` (家族を変える関数のロック順の一覧) | `dissolve_family_by_representative`・`family_dissolve_apply` を一覧に足す | 段 A のマージと同日 |
@@ -2373,3 +2451,4 @@ grep の語 = 本書が足す・変える・移す名前。`tests/`・`src/__tes
 | v1.4 | 2026-10-19 | 網羅性 (周 3) の反映: §8 の状態の軸に「並行」(解散と承諾が同時に走る) と「pending が残る」を足し、家族の代表者・組織のオーナーの行 (S-16・S-17・S-18・S-21・S-22) と、家族の大人 / アカウントを持つ子供・組織の admin / member の「モバイル」の行 (通常・凍結中・未同意)、運営の未ログインの一覧の行を足した。運営の未ログインの一覧の関数 2 本を origin/main で測り直し、どちらも `representative_id` / `owner_id` を読まない (家族は `status = 'active'` と代表者のメンバーの行、組織は `user_profiles` の所属の列で結合する) ことを §5 S-28・§6.2・§7.1・§7.2・§9 に反映した (v1.0〜v1.3 の「`representative_id` との結合」「解散済みの家族も出る」は誤り)。組織の版のシナリオ S-29 を足し (§5 を 29 本に)、§21.5 で S-28・S-29 を D-1・D-5 の結合の条件で見る形にした (一覧の関数の既存の 42804 を Q-10 に)。組織の譲渡の提案は解散のあと `TRANSFER_ACCEPTOR_NOT_IN_ORG` で止まることを S-18・S-22・§6.2・§8 の残る行に反映した。§23 に、運営の未ログインの一覧の読み手 (`InactiveOwnerTable`・`orgs/inactive`・`families/inactive`) と、`representative_id` / `owner_id` を読む既存のテスト (承諾・メンバーの削除・脱退のモック、管理画面の組織の作成、ほかの migration の文面の契約、`purge-dissolved-family-groups.test.ts`) を反応しない理由つきで足した。§24 の `membership/05` の行に §2 の注記を足した |
 | v1.5 | 2026-10-19 | 敵対レビュー R3 の反映: (1) 通知メールの文面 (§16.1) の `template` を、定数 `SELF_DISSOLVE_EMAIL_TEMPLATE` から文字列のリテラル `template: 'self_dissolve',` に改めた (`template-names.test.ts`・`secret-templates.test.ts` はソースのリテラルの行から名前を拾うので、定数では名前が拾えず赤になる)。定数を §12・§22 から外し、§16.1・§23 にリテラルの制約と `template-names.test.ts` を書き、F-22 に走査の形を足した。§12 の `SELF_DISSOLVE_NOTICE_TIMEOUT_MS` (コードに無い名前) を、既存の `NOTICE_TIMEOUT_MS` をそのまま import する行に直した (§16.2)。(2) 段 C で利用規約の本文から `譲渡するまで、退会できません` が消え、T-28 (`tests/legal-text-1901.test.ts:894`) が赤になることを §23 に足し、phrase の書き換えを逐語で書いた (§0.3・§18・§20・§22・F-28)。本文を読むほかの番兵 (T-39・T-40・T-17・`public-claims-guard`・`no-pending-wording-1911` ほか) が反応しない理由を §23 に足し、§20 の段 C の検査の欄を、番兵ごとの赤と緑の順に書き直した (v1.4 までの「それ以外の赤は無い」は誤り)。§23 の `null-character-routes.test.ts` の行を逐語の 2 行にした |
 | v1.6 | 2026-10-19 | 網羅性 (周 4) の反映: §8 の「並行」を、組織のオーナー × 招待された人の承諾 (直列にならない。承諾の commit の位置で 3 通り。Q-4) と、解散する側・承諾する側の凍結中 / 未同意との交差 (家族・組織に 2 行ずつ) に広げた。§5 に S-30 (組織の招待の承諾と解散の並行) を足して 30 本にし、§6.2 にトレース、§21.2 に D-15、§21.5 に S-30 と、シナリオ外の不変条件 (D-11・D-12) と migration の形の契約 (C-1〜C-9・C-11・C-12) の行を足した。§10.1 に active → active の招待の承諾・子供の追加・退出 / 除名 (解散との直列のしかたつき)、§10.2 に active → active の組織の招待の承諾を足した。§11.3 と Q-4 に S-30 を結んだ。§6.2 の S-27 の参照 (§21.4 D-7) を §21.2 D-8 に直した |
+| v1.7 | 2026-10-19 | 敵対レビュー R4 の反映: 家族の行の `status` / `dissolved_at` は、RLS `family_groups_update_adult` (active な代表者・大人に列を限らない UPDATE) と、3 列 (`representative_id` / `plan_key` / `member_limit`) しか守らない特権列のガードのせいで、REST の UPDATE で書けた。代表者を指したまま・メンバーが active のままの dissolved の行が作れ、代表者が退会の 409 と `FAMILY_ALREADY_DISSOLVED` で行き止まりになる (R-6 が成り立たない) ので、migration に 6 (`guard_family_groups_privileged` を #1309 と同じ形で置き換え、`status` / `dissolved_at` も 42501 にする) を足し、戻し口で 20251126124224 の定義に逐語で戻すようにした (§11.1・§11.2)。F-13 を測り直し (RLS・ガードの最新の定義・アプリに利用者の UPDATE が無いこと・組織の `dissolved_at` に読み手が無いこと)、§0.2・§0.3・§4 R-6・§5 S-31 (31 本に)・§6.1・§6.2・§8 (入口に「REST 直接」と家族・組織の行)・§9・§10.1・§10.2 (REST の UPDATE の行)・§19・§20 (段 A の結合)・§21.1 C-13・§21.2 D-16 と家族 H・§21.5・§22 (置き換える関数の行)・§23 (service_role / postgres で書く既存のテスト・本人のセッションの名前の変更・#1309 の属性のテスト・型の生成物の契約 (トリガー関数の除外) が反応しない理由)・§24 (billing/01 F22) を合わせた |
