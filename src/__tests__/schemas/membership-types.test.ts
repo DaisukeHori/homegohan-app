@@ -15,6 +15,7 @@ import {
   AddOrgMemberRequestBodySchema,
 } from '@/schemas/membership/organization-invite';
 import { FamilyGroupSchema } from '@/schemas/membership/family-group';
+import { OrganizationSchema } from '@/schemas/membership/organization';
 import { FamilyInviteSchema } from '@/schemas/membership/family-invite';
 import { z } from 'zod';
 import { describe, it, expect } from 'vitest';
@@ -89,6 +90,33 @@ describe('membership Zod schema 構文チェック', () => {
     if (!result.success) {
       throw new Error(`FamilyGroupSchema parse failed: ${JSON.stringify(result.error.issues)}`);
     }
+  });
+
+  it('FamilyGroupSchema は representative_id が null の行 (解散済み) も受ける', () => {
+    const result = FamilyGroupSchema.safeParse({
+      id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      name: 'テスト家族',
+      representative_id: null,
+      plan_key: 'free',
+      member_limit: 4,
+      status: 'dissolved',
+      created_at: '2026-05-11T00:00:00.000Z',
+      updated_at: '2026-05-11T00:00:00.000Z',
+      dissolved_at: '2026-10-19T00:00:00.000Z',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('OrganizationSchema は owner_id が null の行 (解散済み) も受ける', () => {
+    const result = OrganizationSchema.safeParse({
+      id: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+      name: 'テスト組織',
+      owner_id: null,
+      plan: null,
+      status: 'dissolved',
+      contact_email: null,
+    });
+    expect(result.success).toBe(true);
   });
 
   it('FamilyInviteSchema が有効な Zod スキーマである', () => {

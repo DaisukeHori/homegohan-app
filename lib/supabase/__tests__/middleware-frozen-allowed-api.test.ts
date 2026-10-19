@@ -45,8 +45,10 @@ import {
   BILLING_SUBSCRIPTION_API_PATH,
   CONTACT_API_PATH,
   CONTACT_SUBMIT_METHOD,
+  FAMILY_DISSOLVE_API_PATH,
   FROZEN_ALLOWED_API_PATHS,
   NATIVE_BRIDGE_CODE_API_PATH,
+  ORG_DISSOLVE_API_PATH,
   isFrozenAllowedApiPath,
   isFrozenContactSubmitRequest,
   isNativeBridgeCodeApiPath,
@@ -75,19 +77,23 @@ afterAll(() => {
 });
 
 describe('FROZEN_ALLOWED_API_PATHS (#1445): 凍結中でも止めない API の一覧', () => {
-  it('退会・書き出しと、有料プランの解約の 3 本 (契約の要約・解約の予約・Billing Portal) の 5 つだけ (足すときは、本人がサービスから離れるための操作かを確かめてから、このテストも直す)', () => {
+  it('退会・書き出しと、有料プランの解約の 3 本 (契約の要約・解約の予約・Billing Portal) と、家族グループ・組織の解散の 2 本の 7 つだけ (足すときは、本人がサービスから離れるための操作かを確かめてから、このテストも直す)', () => {
     expect([...FROZEN_ALLOWED_API_PATHS]).toEqual([
       '/api/account/delete',
       '/api/account/export',
       '/api/billing/subscription',
       '/api/billing/subscription/cancel',
       '/api/billing/portal',
+      '/api/family/dissolve',
+      '/api/org/dissolve',
     ]);
     expect(ACCOUNT_DELETE_API_PATH).toBe('/api/account/delete');
     expect(ACCOUNT_EXPORT_API_PATH).toBe('/api/account/export');
     expect(BILLING_SUBSCRIPTION_API_PATH).toBe('/api/billing/subscription');
     expect(BILLING_CANCEL_API_PATH).toBe('/api/billing/subscription/cancel');
     expect(BILLING_PORTAL_API_PATH).toBe('/api/billing/portal');
+    expect(FAMILY_DISSOLVE_API_PATH).toBe('/api/family/dissolve');
+    expect(ORG_DISSOLVE_API_PATH).toBe('/api/org/dissolve');
   });
 
   it('一覧のパスには、実際の route がある (route を移したのに一覧だけ古いまま、を防ぐ)', () => {

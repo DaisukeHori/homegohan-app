@@ -54,6 +54,7 @@ const PUBLIC_TEMPLATES: Readonly<Record<string, readonly string[]>> = {
   member_removed: [],
   operator_force_dissolve: [],
   operator_force_transfer: [],
+  self_dissolve: [],
   account_deleted: [], // 宛先を伏せるのは呼び出し元の redactAfterSend (退会した本人のアドレスを残さないため。秘密の宣言ではない)
   login_new_device: ['country_code'], // 新しい端末からのログインの通知 (cross/16 §18)。country_code は ISO 3166-1 の 2 文字の国コードで、リンクでもトークンでもない (名前が _code で終わるので走査が拾う)。リンクは getSiteUrl() + 固定のパス 2 つだけ
 };
