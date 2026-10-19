@@ -16,7 +16,7 @@ import { DSR_SETTINGS_ENTRY_DESCRIPTION, DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_
 import { getSupportEmail } from "@/lib/site-config";
 import { BILLING_PAGE_PATH } from "@/lib/billing/core";
 import {
-  ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE,
+  ACCOUNT_DELETE_BLOCKED_GUIDE,
   ACCOUNT_DELETE_CONFIRM_KEYWORD,
   ACCOUNT_DELETE_FAILED_MESSAGE,
   ACCOUNT_EXPORT_FAILED_MESSAGE,
@@ -243,12 +243,12 @@ export default function SettingsPage() {
       // 組織のオーナー・家族の代表者 (409)。失敗の定型文ではなく、譲渡や解散が先だというサーバーの案内を出す (#1447)
       const message = accountDeletionBlockedMessage(result.message);
       setDeleting(false);
-      const guide = result.blocker ? ACCOUNT_DELETE_BLOCKED_TRANSFER_GUIDE[result.blocker] : null;
+      const guide = result.blocker ? ACCOUNT_DELETE_BLOCKED_GUIDE[result.blocker] : null;
       if (!guide) {
         alert(message);
         return;
       }
-      // どちらの立場かが分かれば、譲渡の画面へ案内する (#1562)。開かないなら、ここに留まる
+      // どちらの立場かが分かれば、メンバーシップ設定 (譲渡と解散) へ案内する (#1562 → #1917)。開かないなら、ここに留まる
       if (confirm(`${message}\n\n${guide.prompt}`)) {
         setShowDeleteModal(false);
         router.push(guide.path);
