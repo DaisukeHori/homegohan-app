@@ -8,6 +8,7 @@ import { AccountCredentialsSection } from "../../src/components/settings/Account
 import { Button, Card, PageHeader, SectionHeader } from "../../src/components/ui";
 import { accountDeletionErrorOf } from "../../src/lib/account-deletion-error";
 import { DSR_SCREEN_ROUTE, DSR_SETTINGS_ENTRY_DESCRIPTION, DSR_SETTINGS_ENTRY_TITLE } from "../../src/lib/data-subject-requests";
+import { MEMBERSHIP_SETTINGS_SCREEN_ROUTE } from "../../src/lib/membership-settings";
 import { getApi } from "../../src/lib/api";
 import { supabase } from "../../src/lib/supabase";
 import { signOutAfterAccountDeletion, signOutOnDevice } from "../../src/lib/signOut";
@@ -19,6 +20,10 @@ import { typography } from "../../src/theme/typography";
 const ACCOUNT_DELETE_FAILED_TITLE = "削除失敗";
 /** 組織のオーナー・家族の代表者 (409) で退会できないときの Alert の見出し */
 const ACCOUNT_DELETE_BLOCKED_TITLE = "退会できません";
+/** 409 の Alert の、メンバーシップ設定 (譲渡と解散。Web の画面を WebView で開く) へ移るボタン (#1917) */
+const ACCOUNT_DELETE_BLOCKED_OPEN_MEMBERSHIP = "メンバーシップ設定を開く";
+/** 409 の Alert の、閉じるボタン */
+const ACCOUNT_DELETE_BLOCKED_CLOSE = "閉じる";
 /** ログインが切れていて (401) 退会できなかったときの Alert の見出し (#1562) */
 const ACCOUNT_DELETE_UNAUTHORIZED_TITLE = "ログインが必要です";
 /** 削除は済んだが、端末のログアウトに失敗したときの文 */
@@ -82,7 +87,16 @@ export default function AccountSettingsPage() {
         router.replace("/");
         return;
       }
-      Alert.alert(failure.kind === "blocked" ? ACCOUNT_DELETE_BLOCKED_TITLE : ACCOUNT_DELETE_FAILED_TITLE, failure.message);
+      if (failure.kind === "blocked") {
+        // 組織のオーナー・家族の代表者 (409)。譲渡か解散ができるメンバーシップ設定 (Web) を開けるようにする
+        // (#1917。docs/design/family/11-self-dissolve.md §15.5)
+        Alert.alert(ACCOUNT_DELETE_BLOCKED_TITLE, failure.message, [
+          { text: ACCOUNT_DELETE_BLOCKED_CLOSE, style: "cancel" },
+          { text: ACCOUNT_DELETE_BLOCKED_OPEN_MEMBERSHIP, onPress: () => router.push(MEMBERSHIP_SETTINGS_SCREEN_ROUTE) },
+        ]);
+      } else {
+        Alert.alert(ACCOUNT_DELETE_FAILED_TITLE, failure.message);
+      }
       deletingRef.current = false;
       setDeleting(false);
       return;

@@ -48,6 +48,8 @@ const SPEC_FILES: ReadonlyArray<{ file: string; minRefs: number }> = [
   { file: "tests/e2e/w5-3-menu-gen-adversarial.spec.ts", minRefs: 15 },
   // #1176 運営の MFA の画面 (段 B。docs/design/cross/12-operator-mfa.md §23 N-10)
   { file: "tests/e2e/operator/03-mfa.spec.ts", minRefs: 4 },
+  // #1917 代表者・オーナーの解散と、そのあとの退会 (docs/design/family/11-self-dissolve.md §21.4)
+  { file: "tests/e2e/membership/15-self-dissolve.spec.ts", minRefs: 3 },
 ];
 
 /**

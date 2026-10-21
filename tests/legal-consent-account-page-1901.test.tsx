@@ -7,8 +7,9 @@
  *   - 書き出し: GET /api/account/export を呼び、JSON をファイルとして保存する
  *   - 退会: 「削除します」と入力するまで押せない。POST /api/account/delete { confirm: true } のあと、端末のユーザー別データを消してから
  *     signOut し、ログインの画面へ移らずに「退会しました」を出す (アプリの WebView では同意画面の上に「閉じる」が出るため)
- *   - 組織のオーナー・家族の代表者 (409) は、サーバーの文と、同意の前は譲渡できないことの案内を出し、ログアウトしない
- *   - この画面が呼ぶ API は、同意の許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) にある退会と書き出しの 2 本だけ
+ *   - 組織のオーナー・家族の代表者 (409) は、サーバーの文と、解散すると退会できることの案内を出し、その場に解散の区画を出す。ログアウトしない
+ *     (#1917 docs/design/family/11-self-dissolve.md §15.4。409 の本文に立場の id が無ければ、サポートへの案内だけ)
+ *   - この画面が呼ぶ API は、同意の許可リスト (LEGAL_CONSENT_EXEMPT_API_PATHS) にある退会・書き出しと、409 のときの家族グループ / 組織の解散の 4 本だけ
  *   - お問い合わせと、同意の画面へ戻るリンクがある
  *
  * このリポジトリには @testing-library/react が無いため、サーバー側は react-dom/server、画面は react-dom/client + act で描画する。
@@ -58,6 +59,7 @@ vi.mock('@/lib/supabase/client', () => ({
 const { default: LegalConsentAccountPage } = await import('@/app/legal-consent/account/page');
 const { default: AccountWithoutConsent } = await import('@/app/legal-consent/account/AccountWithoutConsent');
 import { resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge';
+import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from '@/lib/membership/self-dissolve';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -144,6 +146,49 @@ async function typeConfirm(value: string) {
   });
 }
 
+/** 解散の区画の入力欄 (data-testid は SelfDissolveSection の self-dissolve-<scope>-keyword) に入力する */
+async function typeDissolveKeyword(scope: 'family' | 'organization', value: string) {
+  const input = container.querySelector<HTMLInputElement>(`[data-testid="self-dissolve-${scope}-keyword"]`);
+  expect(input, `self-dissolve-${scope}-keyword`).not.toBeNull();
+  await act(async () => {
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    setter.call(input, value);
+    input!.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+function dissolveSubmit(scope: 'family' | 'organization'): HTMLButtonElement | null {
+  return container.querySelector<HTMLButtonElement>(`[data-testid="self-dissolve-${scope}-submit"]`);
+}
+
+const FAMILY_REPRESENTATIVE_MESSAGE = '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。';
+const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
+const DISSOLVED_AT = '2026-10-19T05:00:00.123456+00:00';
+
+/** 1 回目の退会は 409 (家族の代表者・本文に family_group)、解散は 200、2 回目の退会は 200 を返す fetch */
+function blockedThenDissolvedFetch() {
+  let deleteCalls = 0;
+  return async (input: string) => {
+    if (input === '/api/account/delete') {
+      deleteCalls += 1;
+      return deleteCalls === 1
+        ? new Response(
+            JSON.stringify({
+              error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+              message: FAMILY_REPRESENTATIVE_MESSAGE,
+              family_group: { id: FAMILY_ID, name: '山田家' },
+            }),
+            { status: 409 },
+          )
+        : new Response(JSON.stringify({ success: true }), { status: 200 });
+    }
+    if (input === '/api/family/dissolve') {
+      return new Response(JSON.stringify({ data: { family_id: FAMILY_ID, dissolved_at: DISSOLVED_AT } }), { status: 200 });
+    }
+    return new Response('{}', { status: 200 });
+  };
+}
+
 function calledPaths(): string[] {
   return fetchMock.mock.calls.map((call) => String(call[0]));
 }
@@ -222,7 +267,7 @@ describe('#1901 Q-23 同意の前の退会と書き出しの画面 (/legal-conse
     expect(container.querySelector('button')).toBeNull();
   });
 
-  it('退会: 家族の代表者 (409) は、サーバーの文と、同意の前は譲渡できないことの案内を出す。ログアウトしない', async () => {
+  it('退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出し、解散の区画は出さない。ログアウトしない', async () => {
     const serverMessage = '家族グループの代表者です。先に代表者を譲渡するか家族グループを解散してください。';
     fetchMock.mockResolvedValue(
       new Response(JSON.stringify({ error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', message: serverMessage }), { status: 409 }),
@@ -232,12 +277,53 @@ describe('#1901 Q-23 同意の前の退会と書き出しの画面 (/legal-conse
     await typeConfirm(CONFIRM_KEYWORD);
     await click(buttonByText('アカウントを削除'));
 
-    expect(container.querySelector('[role="alert"]')?.textContent).toBe(
-      `${serverMessage} ${LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance}`,
-    );
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe(`${serverMessage} ${BLOCKED_SCOPE_UNKNOWN_GUIDANCE}`);
+    expect(dissolveSubmit('family')).toBeNull();
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="legal-consent-account-deleted"]')).toBeNull();
     expect(buttonByText('アカウントを削除').disabled).toBe(false);
+  });
+
+  it('退会: 家族の代表者 (409。本文に family_group の id と名前) は、サーバーの文と LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance (解散すると退会できる) を出し、家族名つきの解散の区画を出す。ログアウトしない', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+          message: FAMILY_REPRESENTATIVE_MESSAGE,
+          family_group: { id: FAMILY_ID, name: '山田家' },
+        }),
+        { status: 409 },
+      ),
+    );
+    await render(<AccountWithoutConsent />);
+
+    await typeConfirm(CONFIRM_KEYWORD);
+    await click(buttonByText('アカウントを削除'));
+
+    expect(container.textContent).toContain(`${FAMILY_REPRESENTATIVE_MESSAGE} ${LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance}`);
+    expect(LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance).toContain('解散すると、退会できます');
+    expect(container.textContent).toContain('「山田家」を解散する');
+    expect(dissolveSubmit('family')).not.toBeNull();
+    expect(mocks.signOut).not.toHaveBeenCalled();
+    expect(container.querySelector('[data-testid="legal-consent-account-deleted"]')).toBeNull();
+  });
+
+  it('解散の区画で解散すると (POST /api/family/dissolve が 200)、区画が消えて SELF_DISSOLVED_NEXT_STEP が出る。そのあとの退会は 200 で「退会しました」を出す', async () => {
+    fetchMock.mockImplementation(blockedThenDissolvedFetch());
+    await render(<AccountWithoutConsent />);
+
+    await typeConfirm(CONFIRM_KEYWORD);
+    await click(buttonByText('アカウントを削除'));
+    await typeDissolveKeyword('family', '解散します');
+    await click(dissolveSubmit('family')!);
+
+    expect(dissolveSubmit('family')).toBeNull();
+    expect(container.textContent).toContain(SELF_DISSOLVED_NEXT_STEP);
+
+    await click(buttonByText('アカウントを削除'));
+    expect(events).toEqual(['signOut:storage=cleared']);
+    const deleted = container.querySelector('[data-testid="legal-consent-account-deleted"]');
+    expect(deleted?.textContent).toContain(LEGAL_CONSENT_COPY.accountDeletedHeading);
   });
 
   it('セッションが切れていた (401) ら、ログインの画面へ移る (ログインの後はこの画面へ戻る)', async () => {
@@ -249,19 +335,18 @@ describe('#1901 Q-23 同意の前の退会と書き出しの画面 (/legal-conse
     expect(mocks.push).toHaveBeenCalledWith(`/login?next=${encodeURIComponent(ACCOUNT_PATH)}`);
   });
 
-  it('この画面が呼ぶ API は、同意の許可リストにある退会と書き出しの 2 本だけ', async () => {
-    fetchMock.mockImplementation(async (input: string) =>
-      input === '/api/account/delete'
-        ? new Response(JSON.stringify({ success: true }), { status: 200 })
-        : new Response('{}', { status: 200 }),
-    );
+  it('この画面が呼ぶ API は、同意の許可リストにある退会・書き出しと、409 のときの家族グループ / 組織の解散の 4 本だけ', async () => {
+    fetchMock.mockImplementation(blockedThenDissolvedFetch());
     await render(<AccountWithoutConsent />);
 
     await click(buttonByText('データをエクスポート'));
     await typeConfirm(CONFIRM_KEYWORD);
     await click(buttonByText('アカウントを削除'));
+    await typeDissolveKeyword('family', '解散します');
+    await click(dissolveSubmit('family')!);
+    await click(buttonByText('アカウントを削除'));
 
-    expect([...new Set(calledPaths())].sort()).toEqual(['/api/account/delete', '/api/account/export']);
+    expect([...new Set(calledPaths())].sort()).toEqual(['/api/account/delete', '/api/account/export', '/api/family/dissolve']);
     for (const path of calledPaths()) {
       expect(isLegalConsentExemptApiPath(path), path).toBe(true);
     }

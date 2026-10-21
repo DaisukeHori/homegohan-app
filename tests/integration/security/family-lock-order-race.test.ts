@@ -259,14 +259,14 @@ async function memberOf(familyId: string, userId: string): Promise<MemberRow> {
   return row;
 }
 
-async function familyRow(familyId: string): Promise<{ status: string; representative_id: string; dissolved_at: string | null } | null> {
+async function familyRow(familyId: string): Promise<{ status: string; representative_id: string | null; dissolved_at: string | null } | null> {
   const { data, error } = await srAdmin
     .from('family_groups')
     .select('status, representative_id, dissolved_at')
     .eq('id', familyId)
     .maybeSingle();
   if (error) throw new Error(`family_groups: ${error.message}`);
-  return data as { status: string; representative_id: string; dissolved_at: string | null } | null;
+  return data as { status: string; representative_id: string | null; dissolved_at: string | null } | null;
 }
 
 async function inviteStatus(token: string): Promise<string | null> {
@@ -761,7 +761,7 @@ describe('#1310 代表者による家族の削除と招待の承諾を本物の�
 // ---------------------------------------------------------------------------------------------
 
 describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・削除が割り込む', () => {
-  it('C1: 代表者の移譲の承諾は TRANSFER_ACCEPTOR_NOT_IN_FAMILY になり、解散済みの家族の representative_id を書き換えない', async () => {
+  it('C1: 代表者の移譲の承諾は TRANSFER_ACCEPTOR_NOT_IN_FAMILY になり、解散済みの家族の representative_id は NULL のまま (新代表者に書き換わらない)', async () => {
     const { rep, adults, familyId } = await buildFamily('c1', 1);
     const [adult] = adults;
     const proposalId = await proposeTransfer(rep, familyId, adult.id);
@@ -773,14 +773,15 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
 
     expect(accept.ok).toBe(false);
     expect(accept.message).toContain('TRANSFER_ACCEPTOR_NOT_IN_FAMILY');
-    // 修正前は承諾が成功し、解散済みの家族の representative_id が書き換わって、提案も accepted になる
-    expect((await familyRow(familyId))?.representative_id).toBe(rep.id);
+    // 修正前は承諾が成功し、解散済みの家族の representative_id が書き換わって、提案も accepted になる。
+    // #1917: 解散 (family_dissolve_apply) は representative_id を NULL にする (docs/design/family/11-self-dissolve.md §11.1)
+    expect((await familyRow(familyId))?.representative_id).toBeNull();
     expect(await proposalStatus(proposalId)).toBe('pending');
     expect(await auditCount(familyId, 'representative_transferred')).toBe(0);
     await expectDissolvedWithNoActiveMembers(familyId, [rep.id, adult.id]);
   });
 
-  it('C2: 運営の強制譲渡は TARGET_NOT_IN_FAMILY になり、解散済みの家族の representative_id を書き換えない', async () => {
+  it('C2: 運営の強制譲渡は TARGET_NOT_IN_FAMILY になり、解散済みの家族の representative_id は NULL のまま (新代表者に書き換わらない)', async () => {
     const { rep, adults, familyId } = await buildFamily('c2', 1);
     const [adult] = adults;
 
@@ -791,7 +792,8 @@ describe('#1310 運営の強制解散 (コミット前) に、移譲・脱退・
 
     expect(transfer.ok).toBe(false);
     expect(transfer.message).toContain('TARGET_NOT_IN_FAMILY');
-    expect((await familyRow(familyId))?.representative_id).toBe(rep.id);
+    // #1917: 解散は representative_id を NULL にする
+    expect((await familyRow(familyId))?.representative_id).toBeNull();
     expect(await auditCount(familyId, 'operator_force_representative_transfer')).toBe(0);
     await expectDissolvedWithNoActiveMembers(familyId, [rep.id, adult.id]);
   });

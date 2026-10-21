@@ -5,6 +5,7 @@
  * 本物の DB での振る舞い (0 人の組織だけが消える・owner で埋まる・止まる条件・冪等・ロールバック) は
  * tests/integration/security/organizations-owner-id-not-null.test.ts が確かめる。
  * ここでは、写し間違いや後からの書き換えで崩れやすい所を、ファイルの文面だけで確かめる。
+ * #1917 (docs/design/family/11-self-dissolve.md §11) で owner_id は NULL 許容 + CHECK organizations_active_has_owner (active な行では NOT NULL) になった。型と Zod の it はその形を見る。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -168,26 +169,28 @@ describe('#1103 項目 10 ロールバック', () => {
   });
 });
 
-describe('#1103 項目 10 型とコード', () => {
-  it.each(TYPE_FILES)('%s: organizations の owner_id は Row で必須・Insert で必須・Update で省略可 (NULL 不可)', (rel) => {
-    const source = read(rel);
-    const start = source.indexOf('\n      organizations: {');
-    expect(start).toBeGreaterThan(0);
-    const block = source.slice(start, source.indexOf('\n      }', start));
-    const section = (name: 'Row' | 'Insert' | 'Update') => {
-      const from = block.indexOf(`${name}: {`);
-      return block.slice(from, block.indexOf('}', from));
-    };
-    expect(section('Row')).toContain('owner_id: string\n');
-    expect(section('Insert')).toContain('owner_id: string\n');
-    expect(section('Update')).toContain('owner_id?: string\n');
-    expect(block).not.toContain('owner_id?: string | null');
-    expect(block).not.toContain('owner_id: string | null');
-  });
+describe('#1103 項目 10 / #1917 型とコード', () => {
+  it.each(TYPE_FILES)(
+    '%s: organizations の owner_id は Row で string | null・Insert と Update で省略可の string | null (解散した行は NULL。active な行の NOT NULL は CHECK organizations_active_has_owner が守る。#1917)',
+    (rel) => {
+      const source = read(rel);
+      const start = source.indexOf('\n      organizations: {');
+      expect(start).toBeGreaterThan(0);
+      const block = source.slice(start, source.indexOf('\n      }', start));
+      const section = (name: 'Row' | 'Insert' | 'Update') => {
+        const from = block.indexOf(`${name}: {`);
+        return block.slice(from, block.indexOf('}', from));
+      };
+      expect(section('Row')).toContain('owner_id: string | null\n');
+      expect(section('Insert')).toContain('owner_id?: string | null\n');
+      expect(section('Update')).toContain('owner_id?: string | null\n');
+    },
+  );
 
-  it('Zod の OrganizationSchema は owner_id に NULL を許さない', () => {
-    expect(OrganizationSchema.shape.owner_id.safeParse(null).success).toBe(false);
+  it('Zod の OrganizationSchema は owner_id に NULL (解散した行) と UUID を受け、UUID でない文字列は受けない (#1917)', () => {
+    expect(OrganizationSchema.shape.owner_id.safeParse(null).success).toBe(true);
     expect(OrganizationSchema.shape.owner_id.safeParse('00000000-0000-4000-8000-000000000000').success).toBe(true);
+    expect(OrganizationSchema.shape.owner_id.safeParse('not-a-uuid').success).toBe(false);
   });
 
   it('src で organizations に INSERT / UPSERT する箇所は、どれも owner_id を入れる', () => {

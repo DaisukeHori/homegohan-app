@@ -20,6 +20,7 @@ import { renderOrgInviteExistingEmail } from '@/lib/emails/membership/org-invite
 import { renderOrgInviteNewEmail } from '@/lib/emails/membership/org-invite-new';
 import { renderOrgTransferCompletedEmail } from '@/lib/emails/membership/org-transfer-completed';
 import { renderOrgTransferProposedEmail } from '@/lib/emails/membership/org-transfer-proposed';
+import { renderSelfDissolveEmail } from '@/lib/emails/membership/self-dissolve';
 import { renderTicketReplyEmail } from '@/lib/emails/support/ticket-reply';
 import { renderDsrVerificationEmail } from '@/lib/emails/dsr/verification';
 import { renderDsrReceivedEmail } from '@/lib/emails/dsr/received';
@@ -183,6 +184,12 @@ const TEMPLATES: TemplateCase[] = [
     file: 'membership/operator-force-transfer',
     name: 'operator-force-transfer (メンバー宛)',
     render: () => renderForceTransferEmail({ ...forceTransferBase, recipient_role: 'member' }),
+    mentionsSupport: true,
+  },
+  {
+    file: 'membership/self-dissolve',
+    name: 'self-dissolve',
+    render: () => renderSelfDissolveEmail({ to_email: 'taro@example.com', to_name: null, scope: 'family', scope_name: '山田家' }),
     mentionsSupport: true,
   },
   { file: 'membership/org-invite-existing', name: 'org-invite-existing', render: () => renderOrgInviteExistingEmail(inviteVars), mentionsSupport: true },

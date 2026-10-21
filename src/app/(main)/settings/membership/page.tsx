@@ -10,6 +10,9 @@ import { motion } from 'framer-motion';
 import { createClient } from '@/lib/supabase/client';
 import { membershipErrorMessageOfBody } from '@/lib/errors/membership-errors';
 import { ChevronLeft, Users, Building2, AlertTriangle } from 'lucide-react';
+import type { MembershipScope } from '@/lib/emails/membership/scope-label';
+import { SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
+import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection';
 
 // スイッチコンポーネント
 const Switch = ({
@@ -81,10 +84,18 @@ export default function MembershipSettingsPage() {
   const [leaveLoading, setLeaveLoading] = useState(false);
   const [leaveError, setLeaveError] = useState<string | null>(null);
 
+  // #1917 解散の区画を開いている所属 (null は閉じている) と、解散が済んだときの文
+  const [dissolveTarget, setDissolveTarget] = useState<MembershipScope | null>(null);
+  const [dissolvedNotice, setDissolvedNotice] = useState<string | null>(null);
+
   // データ取得
-  useEffect(() => {
-    async function loadData() {
-      setLoading(true);
+  /**
+   * 所属を読む。'initial' (画面を開いたとき) だけ全体を読み込み中にする。'refresh' (解散のあと) は画面を保ったまま読み直す。
+   * 所属が無い・行が読めないときは familyInfo / orgInfo を null に戻す (解散のあとに古い所属が残らない。#1917)
+   */
+  const loadData = useCallback(
+    async (mode: 'initial' | 'refresh') => {
+      if (mode === 'initial') setLoading(true);
       try {
         const {
           data: { user },
@@ -102,6 +113,7 @@ export default function MembershipSettingsPage() {
           .single();
 
         // 家族情報
+        let nextFamily: FamilyInfo | null = null;
         if (profile?.family_id) {
           const [{ data: familyMember }, { data: familyGroup }] = await Promise.all([
             supabase
@@ -119,7 +131,7 @@ export default function MembershipSettingsPage() {
           ]);
 
           if (familyMember && familyGroup) {
-            setFamilyInfo({
+            nextFamily = {
               family_id: profile.family_id,
               family_name: familyGroup.name ?? '家族グループ',
               role: familyMember.role,
@@ -128,7 +140,7 @@ export default function MembershipSettingsPage() {
                 share_health: familyMember.share_health,
                 share_menu: familyMember.share_menu,
               },
-            });
+            };
             setShareSettings({
               share_meals: familyMember.share_meals,
               share_health: familyMember.share_health,
@@ -136,8 +148,10 @@ export default function MembershipSettingsPage() {
             });
           }
         }
+        setFamilyInfo(nextFamily);
 
         // 組織情報
+        let nextOrg: OrgInfo | null = null;
         if (profile?.organization_id) {
           const { data: org } = await supabase
             .from('organizations')
@@ -145,22 +159,40 @@ export default function MembershipSettingsPage() {
             .eq('id', profile.organization_id)
             .maybeSingle();
           if (org) {
-            setOrgInfo({
+            nextOrg = {
               organization_id: profile.organization_id,
               org_name: org.name ?? '組織',
               org_role: profile.org_role ?? 'member',
-            });
+            };
           }
         }
+        setOrgInfo(nextOrg);
       } catch (err) {
         console.error('[settings/membership] load error:', err);
       } finally {
-        setLoading(false);
+        if (mode === 'initial') setLoading(false);
       }
-    }
-    loadData();
+    },
+    // supabase (createClient) と router は画面を開いたときのものを使う (置き換える前の useEffect の [] と同じ)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    [],
+  );
+
+  useEffect(() => {
+    void loadData('initial');
+  }, [loadData]);
+
+  /** #1917 解散が済んだ (200)。区画を閉じ、解散した所属をその場で外し、完了の文を出して、もう一方の所属を読み直す */
+  const handleDissolved = useCallback(
+    (scope: MembershipScope) => {
+      setDissolveTarget(null);
+      if (scope === 'family') setFamilyInfo(null);
+      else setOrgInfo(null);
+      setDissolvedNotice(SELF_DISSOLVE_COPY[scope].done);
+      void loadData('refresh');
+    },
+    [loadData],
+  );
 
   // 共有設定の更新
   // Note: PATCH /api/family/members/me/share は P4 implementer 担当のため、
@@ -261,6 +293,11 @@ export default function MembershipSettingsPage() {
       </div>
 
       <div className="px-4 py-6 space-y-4 max-w-2xl mx-auto">
+        {dissolvedNotice && (
+          <p role="status" className="rounded-2xl bg-white px-4 py-3 text-sm text-gray-700 shadow-sm">
+            {dissolvedNotice}
+          </p>
+        )}
         {/* 所属組織セクション */}
         <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100">
@@ -278,12 +315,30 @@ export default function MembershipSettingsPage() {
                     役割: {orgInfo.org_role}
                   </p>
                 </div>
-                <button
-                  className="text-sm text-red-500 font-medium"
-                  onClick={() => { setLeaveError(null); setShowLeaveOrgModal(true); }}
-                >
-                  組織から脱退
-                </button>
+                {orgInfo.org_role === 'owner' ? (
+                  // #1917: オーナーは脱退できない (IS_ORG_OWNER) ので、譲渡と解散を出す (docs/design/family/11-self-dissolve.md §15.1)
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="text-sm text-blue-500 font-medium"
+                      onClick={() => router.push('/org/settings/owner-transfer')}
+                    >
+                      オーナーを譲渡
+                    </button>
+                    <button
+                      className="text-sm text-red-500 font-medium"
+                      onClick={() => { setDissolvedNotice(null); setDissolveTarget('organization'); }}
+                    >
+                      組織を解散
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    className="text-sm text-red-500 font-medium"
+                    onClick={() => { setLeaveError(null); setShowLeaveOrgModal(true); }}
+                  >
+                    組織から脱退
+                  </button>
+                )}
               </div>
             ) : (
               <div className="space-y-3">
@@ -297,6 +352,16 @@ export default function MembershipSettingsPage() {
             )}
           </div>
         </section>
+        {orgInfo && dissolveTarget === 'organization' && (
+          <SelfDissolveSection
+            scope="organization"
+            scopeId={orgInfo.organization_id}
+            scopeName={orgInfo.org_name}
+            onDissolved={() => handleDissolved('organization')}
+            onCancel={() => setDissolveTarget(null)}
+            onUnauthorized={() => router.push('/login')}
+          />
+        )}
 
         {/* 所属家族セクション */}
         <section className="bg-white rounded-2xl shadow-sm overflow-hidden">
@@ -327,12 +392,30 @@ export default function MembershipSettingsPage() {
                   >
                     家族を表示
                   </button>
-                  <button
-                    className="text-sm text-red-500 font-medium"
-                    onClick={() => { setLeaveError(null); setShowLeaveFamilyModal(true); }}
-                  >
-                    家族から脱退
-                  </button>
+                  {familyInfo.role === 'representative' ? (
+                    // #1917: 代表者は脱退できない (IS_FAMILY_REPRESENTATIVE) ので、譲渡と解散を出す (docs/design/family/11-self-dissolve.md §15.1)
+                    <>
+                      <button
+                        className="text-sm text-blue-500 font-medium"
+                        onClick={() => router.push('/family/representative-transfer')}
+                      >
+                        代表者を譲渡
+                      </button>
+                      <button
+                        className="text-sm text-red-500 font-medium"
+                        onClick={() => { setDissolvedNotice(null); setDissolveTarget('family'); }}
+                      >
+                        家族グループを解散
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="text-sm text-red-500 font-medium"
+                      onClick={() => { setLeaveError(null); setShowLeaveFamilyModal(true); }}
+                    >
+                      家族から脱退
+                    </button>
+                  )}
                 </div>
               </div>
             ) : (
@@ -348,6 +431,16 @@ export default function MembershipSettingsPage() {
             )}
           </div>
         </section>
+        {familyInfo && dissolveTarget === 'family' && (
+          <SelfDissolveSection
+            scope="family"
+            scopeId={familyInfo.family_id}
+            scopeName={familyInfo.family_name}
+            onDissolved={() => handleDissolved('family')}
+            onCancel={() => setDissolveTarget(null)}
+            onUnauthorized={() => router.push('/login')}
+          />
+        )}
 
         {/* 家族への共有設定セクション */}
         {familyInfo && (

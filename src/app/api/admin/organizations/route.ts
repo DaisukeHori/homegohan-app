@@ -27,7 +27,7 @@ const OrgSearchSchema = z.object({
 const OrgCreateSchema = z.object({
   name: z.string().min(1, { message: 'name は必須です' }).max(200),
   plan: z.enum(['standard', 'premium', 'enterprise']).optional().default('standard'),
-  // organizations.owner_id は NOT NULL (#1103 項目 10 / migration 20261017100000)。
+  // organizations.owner_id は active な行では NOT NULL (CHECK organizations_active_has_owner。#1103 項目 10 → #1917)。作る組織は active。
   // 本文では省略してよく、未指定時は呼び出し元の運営を owner にする (下の POST で必ず埋める)
   owner_id: z.string().uuid().optional(),
 });
@@ -149,7 +149,7 @@ export async function POST(request: Request) {
   const { name, plan, owner_id } = parseResult.data;
   const supabase = await createClient();
 
-  // owner_id は必ず INSERT に含める (列は NOT NULL。#1103 項目 10 / migration 20261017100000)。
+  // owner_id は必ず INSERT に含める (active な行では NOT NULL (CHECK organizations_active_has_owner)。#1103 項目 10 → #1917)。
   // 明示的に指定がない場合は呼び出し元 admin を owner とする
   const effectiveOwnerId = owner_id ?? actor.id;
 

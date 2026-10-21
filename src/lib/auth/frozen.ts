@@ -40,6 +40,10 @@ export const BILLING_SUBSCRIPTION_API_PATH = '/api/billing/subscription';
 export const BILLING_CANCEL_API_PATH = '/api/billing/subscription/cancel';
 /** Stripe の Billing Portal を開く (POST。支払い方法の更新・請求書の履歴・Portal での解約)。凍結中でも呼べる (billing/01 §9.8) */
 export const BILLING_PORTAL_API_PATH = '/api/billing/portal';
+/** 家族グループの解散 (POST。代表者が自分で解散する。#1917)。凍結中でも呼べる (docs/design/family/11-self-dissolve.md §13.5) */
+export const FAMILY_DISSOLVE_API_PATH = '/api/family/dissolve';
+/** 組織の解散 (POST。オーナーが自分で解散する。#1917)。凍結中でも呼べる */
+export const ORG_DISSOLVE_API_PATH = '/api/org/dissolve';
 
 /**
  * #1445: 凍結 (BAN) 中の利用者でも呼べる API のパス (完全一致)。
@@ -56,6 +60,12 @@ export const BILLING_PORTAL_API_PATH = '/api/billing/portal';
  * 凍結は契約も Stripe の課金も止めないので、ここで止めると凍結中の利用者は退会のほかに課金を止められない
  * (特定商取引法の最終確認画面の「解約予告期間 (いつでも)」に反する)。解約の取り消し (resume)・購入 (checkout・checkout/preview・checkout/sync) は
  * 足さない (サービスの利用を続ける・始める操作のため)。どの route が凍結を見ない認証 (requireUserAllowingFrozen) を使うかは tests/api/billing-routes.test.ts が見張る
+ *
+ * #1917 (docs/design/family/11-self-dissolve.md §13.5): 家族グループ・組織の解散の 2 本も足す。代表者・オーナーは譲渡か解散をしないと退会できず
+ * (findBlocker の 409)、凍結中は譲渡の画面 (/family/representative-transfer・/org/settings/owner-transfer) を開けないので、
+ * 解散を通さないと凍結中の代表者・オーナーだけが退会できない (#1445 の決まり「凍結中も退会できる」が成り立たない)。
+ * 解散は「本人がサービスから離れるための操作」の一部。どちらの route も本人のセッションの利用者だけを対象にし、解散できるのは
+ * 本人が代表者・オーナーである家族・組織だけ (RPC が行のロック下で判定する)。
  */
 export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
   ACCOUNT_DELETE_API_PATH,
@@ -63,6 +73,8 @@ export const FROZEN_ALLOWED_API_PATHS: readonly string[] = Object.freeze([
   BILLING_SUBSCRIPTION_API_PATH,
   BILLING_CANCEL_API_PATH,
   BILLING_PORTAL_API_PATH,
+  FAMILY_DISSOLVE_API_PATH,
+  ORG_DISSOLVE_API_PATH,
 ]);
 
 /**

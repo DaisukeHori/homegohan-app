@@ -337,6 +337,21 @@ const EXPECTED_ACL: Array<{
     serviceRole: true,
     why: '運営の枝のポリシー (TO authenticated) と運営の関数 7 本が呼ぶ判定。anon は呼ばない (cross/12 §11.4)',
   },
+  // ---- #1917 家族グループ・組織の解散 (docs/design/family/11-self-dissolve.md §11.1・§23) ----
+  {
+    sig: 'dissolve_family_by_representative(uuid)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)',
+  },
+  {
+    sig: 'dissolve_org_by_owner(uuid)',
+    anon: false,
+    authenticated: true,
+    serviceRole: true,
+    why: '利用者本人が自分の家族 / 組織を解散する RPC (#1917)',
+  },
 ];
 
 describe('#1103 (7) B: 関数ごとの EXECUTE 権限 (決定表)', () => {
