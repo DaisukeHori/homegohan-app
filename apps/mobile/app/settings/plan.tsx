@@ -14,8 +14,10 @@
  */
 import {
   IAP_STORE_LABELS,
+  ORG_PLAN_DISPLAY_NAME,
   PLAN_CATALOG,
   STORE_SUBSCRIPTION_MANAGEMENT_URL,
+  isCatalogPlanKey,
   isPurchaseStore,
   planDisplayName,
   subscriptionStatusLines,
@@ -57,6 +59,11 @@ export const PLAN_PURCHASE_COMPLETED_MESSAGE = "お申し込みが完了しま�
 export const PLAN_RESTORE_NOTHING_MESSAGE = "復元できる購入がありませんでした";
 /** 無料プランの利用者の現在の状態 */
 export const PLAN_FREE_STATUS_TEXT = "無料プランをご利用中です";
+/**
+ * 組織のプランが効いている利用者 (自分の契約も家族も無く、いま効いているプランが PLAN_CATALOG にも free にも無い値) の現在の状態。
+ * 組織のプランの内部の値 (standard など) は出さない (#1912)。Web の契約の画面の定型の文 (「家族 / 組織のプランが適用中」) と同じ「組織のプラン」の語
+ */
+export const PLAN_ORG_STATUS_TEXT = `${ORG_PLAN_DISPLAY_NAME}をご利用中です`;
 /** Web (Stripe) で申し込んだ契約の出どころの文 (Web の画面へのリンクは出さない。R16) */
 export const PLAN_STRIPE_SOURCE_TEXT =
   "Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。";
@@ -82,10 +89,14 @@ function deviceStore(): PurchaseStore | null {
   return null;
 }
 
-/** 現在の状態の 1 行目 (§10.6 の 2)。live でない (status が null か終わった契約) ときは、いま効いているプランで書く */
+/**
+ * 現在の状態の 1 行目 (§10.6 の 2)。live でない (status が null か終わった契約) ときは、いま効いているプランで書く。
+ * いま効いているプランが PLAN_CATALOG の key (家族のプラン) ならその名前、それ以外 (組織のプランの値) は固定の文 (#1912)
+ */
 function currentPlanText(summary: BillingSummaryWire, live: boolean): string {
   if (live) return `${planDisplayName(summary.plan_key)}をご利用中です`;
   if (summary.effective_plan_key === "free") return PLAN_FREE_STATUS_TEXT;
+  if (!isCatalogPlanKey(summary.effective_plan_key)) return PLAN_ORG_STATUS_TEXT;
   return `${planDisplayName(summary.effective_plan_key)}をご利用中です (ご家族または組織のプラン)`;
 }
 

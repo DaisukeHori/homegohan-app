@@ -49,9 +49,10 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
 
-import { STORE_SUBSCRIPTION_MANAGEMENT_URL } from '@homegohan/shared';
+import { ORG_PLAN_DISPLAY_NAME, STORE_SUBSCRIPTION_MANAGEMENT_URL } from '@homegohan/shared';
 
 import PlanSettingsScreen, {
+  PLAN_ORG_STATUS_TEXT,
   PLAN_PURCHASE_COMPLETED_MESSAGE,
   PLAN_RESTORE_NOTHING_MESSAGE,
   PLAN_STRIPE_SOURCE_TEXT,
@@ -279,6 +280,24 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
     await waitFor(() => expect(api.getByText('無料プランをご利用中です')).toBeTruthy());
     api.unmount();
   });
+
+  // #1912: 組織の利用者 (自分の契約も家族も無い) の effective_plan_key は organizations.plan の値 (standard / premium / enterprise) か
+  // org_* になる。画面のどこにもその内部の値を出さず、固定の文 (組織のプラン) を出す
+  it.each(['standard', 'premium', 'enterprise', 'org_standard', 'unknown_plan_value'])(
+    'plan screen never shows the internal org plan_key %s and shows the fixed organization plan text instead',
+    async (orgPlanKey) => {
+      summaryResponse = { data: { ...FREE_SUMMARY, effective_plan_key: orgPlanKey } };
+      const api = await renderScreen();
+      expect(api.getByText(PLAN_ORG_STATUS_TEXT)).toBeTruthy();
+      expect(PLAN_ORG_STATUS_TEXT).toBe(`${ORG_PLAN_DISPLAY_NAME}をご利用中です`);
+      const texts = renderedTexts(api.toJSON());
+      expect(texts.length).toBeGreaterThan(0);
+      for (const text of texts) expect(text).not.toContain(orgPlanKey);
+      // 家族のプランの文 (「ご家族または組織のプラン」) にはならない
+      expect(api.queryByText(/ご家族または組織のプラン/)).toBeNull();
+      api.unmount();
+    },
+  );
 
   it('plan screen purchases a package, then syncs and shows the updated summary; cancelled purchases show nothing; the trial wording appears only for options whose storeTrialOf is not null (an ineligible iOS user sees no trial wording)', async () => {
     const api = await renderScreen();
