@@ -56,7 +56,8 @@
 --   accept_org_invite            : 招待の行 → organizations → 承諾者の user_profiles → org_license_pools (20261022100000)
 --   leave_org / release_user_membership: 本人の user_profiles → org_license_pools
 --   remove_org_member            : 対象の user_profiles → org_license_pools (呼び出し元の行は読むだけ)
---   propose_org_owner_transfer / decline_org_owner_transfer: 提案の行だけ (user_profiles・organizations は読むだけ)
+--   propose_org_owner_transfer / decline_org_owner_transfer: 提案の行だけ (提案は先に 24 時間の上限の advisory lock を取る。
+--                                user_profiles・organizations は読むだけで、行のロックは取らない)
 --   (後始末 (org_dissolve_apply) の最後の organizations の UPDATE は、先に取った組織の行を書くだけで、新しく待つ行ではない)
 -- 規則: どの関数も (1) 提案の行・招待の行 → (2) 現オーナーの user_profiles → (3) organizations → (4) オーナーでない人の user_profiles →
 --   (5) org_license_pools の順にしか取らず、ある段の行を持ったまま、それより前の段の行を待たない (1 つも取らない段は飛ばす)。
