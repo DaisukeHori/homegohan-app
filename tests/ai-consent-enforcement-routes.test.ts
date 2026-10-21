@@ -1097,7 +1097,7 @@ const ULTIMATE_ROUTES = [
   },
 ] as const;
 
-describe('究極モード (#1142): 1 人 1 日 1 回まで。1 日の AI の上限にも 1 回と数える', () => {
+describe('究極モード (#1142): 環境変数の上限 (既定 1 回。ai_plan_feature_caps に行の無いプランに効く) を consume_ai_usage_capped に渡す。1 日の AI の上限にも 1 回と数える', () => {
   beforeEach(() => {
     h.state.consentMode = 'granted';
     h.state.rpc.consume_ai_usage_capped = CONSUME_ALLOWED_ROW;
