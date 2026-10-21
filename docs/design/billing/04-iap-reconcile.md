@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| 版 | v1.2 (2026-10-22) |
-| Status | 設計ゲート審査中 (A 型。R2 の修正版) |
+| 版 | v1.3 (2026-10-22) |
+| Status | 設計ゲート審査中 (A 型。R3 の修正版) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§5.2 の縁の発生源 (2)・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
-| 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い。§14.2 の行の番号は `d950a7b1` で取り直した (billing/03 §18 の 4 が `:5190` → `:5206` に動いていた) |
+| 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い。§14.2 の行の番号は `d950a7b1` で取り直した (billing/03 §18 の 4 が `:5190` → `:5206` に動いていた)。続けて origin/main `c1ecc93b` (#1934) で再確認し、同じファイルと §14.2 の文書に差分は無い (#1934 が変えたのは運営の画面の AI の上限の 10 ファイルだけ) |
 | 前提の冊 | `docs/design/billing/03-paid-plans-and-iap.md` (親。RevenueCat の口 = §8.1 `iap-core.ts`・§8.3 `revenuecat-gateway.ts` / `iap-repository.ts`・§8.4 `iap-service.ts`・§6.4 の写像 `billing_apply_store_subscription`・§7.3 の状態遷移表)・`01-billing-core.md` (核。§12 の「reconcile は写像を呼んで直す」の型)・`02-manual-plan-grant.md` (手動付与の日次の失効 = pg_cron の先例)・`docs/design/operator/08-cron-batches.md`・`11-ops-batches-non-billing.md` (cron の台帳と失敗の監視)。本冊は親の契約 (写しの入口は `billing_apply_store_subscription` の 1 つ・`p_fetched_at` で単調・TS の入口は `syncStoreSubscriber`) を壊さず、その上に定期の処理を 1 本足す |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
 
@@ -19,17 +19,17 @@
 | 目安 | 本冊 | 判定 |
 |---|---|---|
 | 設計書 800 行超 | 超える (正典コード・SQL・表 3 点・トレース・追随表を 1 冊に持つため) | 該当 |
-| 消費先レーン 3 以上 | DB (候補の関数・印の表・索引)・サーバ (cron の route と facade) の 2 | 非該当 |
+| 消費先レーン 3 以上 | DB (候補の関数・印を書く関数・印の表・索引)・サーバ (cron の route と facade) の 2 | 非該当 |
 | 共有面 2 つ以上 | `vercel.json` (Vercel Cron の一覧。4 冊の設計書と 3 本のテストが本数を見張る)・`src/lib/env.ts` の一覧・AI の入口の一覧 (`tests/helpers/ai-consent-enforced-paths.ts`)・定期実行の入口の一覧 (`tests/ai-usage-contract.test.ts`)・`personal_subscriptions` (索引を 1 本足すだけ。列は足さない)・利用者に紐づく表の分類 (`src/lib/account-export-tables.ts`・`tests/legal-text-1901.test.ts` の T-34・`auth.users` の外部キーの一覧。新しい表 `iap_reconcile_attempts` を 1 行ずつ足す) | 該当 |
 
-判定: **設計は 1 冊 (本書)。実装は 2 段 (A: DB 層 / B: サーバ層。§13.1) に分け、段ごとに 2 枚レビューを挟む**。理由: 核 (DB の候補の関数) と配線 (cron の route) は、候補の関数の引数と戻り値 (§6.2) を挟んで表裏で、冊を分けると配線の冊が未マージの関数を参照する指摘を自分で作る。書き込みの経路は親の `billing_apply_store_subscription` と `syncStoreSubscriber` をそのまま使い、本冊は新しい写像を作らない (§5.3)。段 A は単独でマージできる (表 1 つ・関数 1 本・索引 1 本の新設と、その表の分類の 3 か所だけ。既存の行は変えない。段 A のテストは段 B のファイルを import しない)。
+判定: **設計は 1 冊 (本書)。実装は 2 段 (A: DB 層 / B: サーバ層。§13.1) に分け、段ごとに 2 枚レビューを挟む**。理由: 核 (DB の候補の関数) と配線 (cron の route) は、候補の関数の引数と戻り値 (§6.2) を挟んで表裏で、冊を分けると配線の冊が未マージの関数を参照する指摘を自分で作る。書き込みの経路は親の `billing_apply_store_subscription` と `syncStoreSubscriber` をそのまま使い、本冊は新しい写像を作らない (§5.3)。段 A は単独でマージできる (表 1 つ・関数 2 本・索引 1 本の新設と、その表の分類の 3 か所だけ。既存の行は変えない。段 A のテストは段 B のファイルを import しない)。
 
 ### 0.2 本冊の範囲と、対象外
 
 | 本冊 | 対象外 (別の冊・別の Issue) |
 |---|---|
 | 期限 (`current_period_end`) を過ぎたままの live なストアの行 (`iap_store IS NOT NULL`) を、定期に RevenueCat から取り直して `personal_subscriptions` に写す処理 (Vercel Cron の route `GET /api/cron/iap-reconcile`。§8・§9) | Stripe (Web) の契約の reconcile (`stripe_integrity_check`。billing/01 §12・operator/08 §3.2 の未作成の行。本冊は触れない) |
-| 候補の選び方 (status・期限・最後の同期の時刻) と順番 (最後に試した時刻の古い順。取り直せない利用者が後ろの利用者を止めない) を DB の関数 1 本 (`billing_iap_reconcile_claim_candidates`。§6.2) と印の表 `iap_reconcile_attempts` で確定し、1 回の件数の上限と RevenueCat への間隔を定数と環境変数で持つ (§8.1) | 手動付与 (M 行) の失効 (billing/02 の `expire-manual-plan-grants`)・Webhook の受け口と同期の API と遅延の再同期そのもの (billing/03。本冊は変えない) |
+| 候補の選び方 (status・期限・最後の同期の時刻) と順番 (最後に試した時刻の古い順。取り直せない利用者が後ろの利用者を止めない) を、読むだけの DB の関数 1 本 (`billing_iap_reconcile_candidates`)・試した利用者に回の終わりに時刻を書く関数 1 本 (`billing_iap_reconcile_mark_attempted`)・印の表 `iap_reconcile_attempts` で確定し (§6.2)、1 回の件数の上限と RevenueCat への間隔を定数と環境変数で持つ (§8.1) | 手動付与 (M 行) の失効 (billing/02 の `expire-manual-plan-grants`)・Webhook の受け口と同期の API と遅延の再同期そのもの (billing/03。本冊は変えない) |
 | 鍵が無いときの止め方・RevenueCat の失敗 (回全体の失敗と、利用者 1 人の失敗を分ける)・率の制限 (429) のときの止め方と、失敗の監視 (既存の `app-log-alerts` の `cron_failure`) への乗せ方 (§8.3・§11) | 新しい運用アラートの種類 (取り直せない行の滞留の通知)。§16 の 3 |
 | 期限の後も取り直せないときに有料を止める「猶予」の扱い (Q-2。推奨は「猶予を置かず、取り直せるまで権利を続ける」) | 権利の判定 (`get_effective_plan`・`consume_ai_usage_at`) の変更 (§5.1 の案 E で退ける) |
 | 既存の番兵 (cron の本数・入口の一覧・環境変数の一覧) の追随 (§14) | 運営の画面 (Finance 画面での一覧) |
@@ -56,7 +56,7 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 
 | # | 項目 | 推奨 | 根拠・代替案 |
 |---|---|---|---|
-| Q-1 | 取り直しの間隔 (Vercel Cron の予定) | **毎時 (`41 * * * *`)** | 親の Q-11 は「日次」と書いたが、期限を過ぎてから権利が止まるまでの窓は間隔そのもの (日次なら最長 24 時間、毎時なら最長 1 時間)。候補が 0 の回は DB の関数 1 回で終わり (RevenueCat は呼ばない)、Vercel Pro は毎分まで予定できる (§2.3 P2)。代替案: 日次 (`41 4 * * *` = JST 13:41) にすると `vercel.json` の 1 行と `IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES` の 2 つの定数が変わるだけで、ほかは同じ。ただし 1 回の上限 40 人 (§8.1) では 1 日に 40 人しか取り直せないので、日次にするなら `IAP_RECONCILE_BATCH_SIZE` も上げる (予算 40 秒の中では RevenueCat への間隔を詰めることになり、§2.3 P1 の案内 (1 秒に 1 回) から外れる) |
+| Q-1 | 取り直しの間隔 (Vercel Cron の予定) | **毎時 (`41 * * * *`)** | 親の Q-11 は「日次」と書いたが、期限を過ぎてから権利が止まるまでの窓は間隔そのもの (日次なら最長 24 時間、毎時なら最長 1 時間)。候補が 0 の回は DB の関数 1 回で終わり (RevenueCat は呼ばない)、Vercel Pro は毎分まで予定できる (§2.3 P2)。代替案: 日次 (`41 4 * * *` = JST 13:41) にすると `vercel.json` の 1 行と `IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES` の 2 つの定数が変わるだけで、ほかは同じ。ただし 1 回に試せるのは予算 ÷ 間隔 = 40 人まで (§8.1 `IAP_RECONCILE_BATCH_SIZE_MAX`。環境変数 `IAP_RECONCILE_BATCH_SIZE` は下げる向きにだけ使え、上げても試せる数は増えない) なので、日次では 1 日に 40 人しか取り直せない。増やすには RevenueCat への間隔を詰める (§2.3 P1 の案内 (1 秒に 1 回) から外れる) か、予算と `maxDuration` を延ばす (定数の変更) ことになる |
 | Q-2 | 取り直しも失敗し続けるとき、期限の後どれだけで有料を止めるか (猶予) | **猶予を置かない (取り直せるまで権利を続ける)。失敗は毎時の回ごとに 500 で失敗の監視 (運用メール) に乗せる** | 取り直せない原因は (a) 鍵の誤り・失効 (401) (b) RevenueCat の障害 (c) 当社の cron の停止 (d) その利用者だけの失敗 (応答の形が当社の Zod と合わない・写像の想定外の DB の失敗)、のどれかで、(d) はほかの利用者の取り直しを止めず (§4.1 の 5)、(a)(b)(d) は毎時の 500 が `app-log-alerts` の `cron_failure` (1 件から・抑止つき) で運用メールになる (§2.2 F15)。期限の後 N 日で `expired` に書く案 (代替案 1) は、`expired` の行は候補から外れる (§6.2 の述語) ので、RevenueCat が戻っても本人の同期か Webhook が来るまで戻らず、支払っている利用者を切ったまま戻せない。権利の判定に期限を見せる案 (代替案 2) は核の関数 (`get_effective_plan`) と `plan_key_cached` の読み手 (運営の画面・機能フラグ) の食い違いを生む (§5.1 の案 E)。代替案 1 を採るなら、強制で終わらせた行を候補に戻す印 (列) が要り、本冊の範囲を超える (§16 の 2) |
 | Q-3 | 「期限が近い」行 (期限の前) も取り直すか | **取り直さない (期限を過ぎた行だけ)** | 期限の前に取り直しても、更新 (RENEWAL) はストアが期限の時点で決めるので、見えるのは「まだ更新されていない」姿だけで、権利は変わらない。期限の後の最初の回 (≤ 1 時間) で更新か失効が見える。代替案: 期限の 24 時間前から候補にする (`p_now + interval '24 hours'` を述語に足す) と、1 つの更新につき取り直しが 2 回になる |
 
@@ -65,7 +65,7 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 ## 1. 目的・スコープ
 
 - 解決すること: Webhook の再送 (5 回・約 80 分) が尽きて写らなかったストアの購読の失効・更新を、本人の操作が無くても、期限の後 1 時間以内に `personal_subscriptions` に写し、権利 (`plan_key_cached`・`get_effective_plan`・家族グループのプラン) を正しくする。
-- やり方: 既存の写しの入口 (`syncStoreSubscriber` → `billing_apply_store_subscription`) を、期限を過ぎた live なストアの行の利用者について、Vercel Cron の route から 1 人ずつ呼ぶ。候補は最後に試した時刻の古い順に選び (印の表 `iap_reconcile_attempts`)、取り直せない利用者が毎回先頭に来て後ろの利用者を止めることを無くす。新しい写像・`personal_subscriptions` の新しい列・新しい状態は作らない。
+- やり方: 既存の写しの入口 (`syncStoreSubscriber` → `billing_apply_store_subscription`) を、期限を過ぎた live なストアの行の利用者について、Vercel Cron の route から 1 人ずつ呼ぶ。候補は最後に試した時刻の古い順に選び (印の表 `iap_reconcile_attempts`。印を書くのは、その回に実際に取り直しを試した利用者だけ)、取り直せない利用者が毎回先頭に来て後ろの利用者を止めることを無くす。新しい写像・`personal_subscriptions` の新しい列・新しい状態は作らない。
 - 対象外: §0.2。
 
 ## 2. 関連要件と現行の事実
@@ -132,15 +132,15 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 |---|---|---|---|
 | R1 | 期限を過ぎた live なストアの行を、本人の操作が無くても定期に RevenueCat から取り直して写す | #1912 (§0.4 の 1・2)・billing/03 Q-11 | Vercel Cron `GET /api/cron/iap-reconcile` (毎時 41 分) が候補の利用者を 1 人ずつ `syncStoreSubscriber(deps, userId, 'iap_reconcile')` で取り直す (§8.3・§9) |
 | R2 | 定期の処理の置き場は既存の cron の型に合わせる | §0.4 | RevenueCat を呼ぶ TS の処理なので Vercel Cron (push-outbox・login-alerts と同じ型。§5.1)。認証は `requireCronAuth`、ログは `createLogger('cron/iap-reconcile')`、500 は `internalError` (失敗の監視に乗る。F15) |
-| R3 | 対象の選び方 (status・期限・最後の同期の時刻) を確定する | §0.4 | DB の関数 `billing_iap_reconcile_claim_candidates(p_now, p_recheck_after, p_limit)` (§6.2): `iap_store IS NOT NULL` ∧ `status IN ('trialing','active','past_due')` ∧ `current_period_end <= p_now` ∧ (`iap_synced_at IS NULL` ∨ `iap_synced_at < current_period_end` ∨ `iap_synced_at <= p_now - p_recheck_after`)。利用者ごとに 1 行、最後に試した時刻 (`iap_reconcile_attempts.attempted_at`。無ければ先頭) の古い順 → `current_period_end` の早い順、`p_limit` 件。返した利用者の `attempted_at` を `p_now` にする (次の回はその利用者を後ろに回す) |
-| R4 | 1 回の件数の上限と RevenueCat の率の制限 | §0.4・P1 | 1 回 `IAP_RECONCILE_BATCH_SIZE` (既定 40 人。環境変数 `IAP_RECONCILE_BATCH_SIZE` で 1〜200)・取り直しの開始の間隔 `IAP_RECONCILE_REQUEST_INTERVAL_MS` (1 秒)・予算 `IAP_RECONCILE_RUN_BUDGET_MS` (40 秒) で打ち切り・429 はその回を止めて次の回 (§8.1・§8.3) |
+| R3 | 対象の選び方 (status・期限・最後の同期の時刻) を確定する | §0.4 | 読むだけの DB の関数 `billing_iap_reconcile_candidates(p_now, p_recheck_after, p_limit)` (§6.2): `iap_store IS NOT NULL` ∧ `status IN ('trialing','active','past_due')` ∧ `current_period_end <= p_now` ∧ (`iap_synced_at IS NULL` ∨ `iap_synced_at < current_period_end` ∨ `iap_synced_at <= p_now - p_recheck_after`)。利用者ごとに 1 行、最後に試した時刻 (`iap_reconcile_attempts.attempted_at`。無ければ先頭) の古い順 → `current_period_end` の早い順、`p_limit` 件。回の終わりに、その回に `syncStoreSubscriber` を呼んだ利用者だけの `attempted_at` を回の開始の時刻にする (`billing_iap_reconcile_mark_attempted`。1 回の RPC)。試した利用者は次の回で後ろに回り、選んだのに試さなかった利用者 (予算・429・回全体の失敗の後ろ) は印が進まず先に来る |
+| R4 | 1 回の件数の上限と RevenueCat の率の制限 | §0.4・P1 | 1 回 `IAP_RECONCILE_BATCH_SIZE` (既定 40 人 = 1 回に試せる上限 = 予算 ÷ 間隔。環境変数 `IAP_RECONCILE_BATCH_SIZE` で 1〜40 に下げられる)・取り直しの開始の間隔 `IAP_RECONCILE_REQUEST_INTERVAL_MS` (1 秒)・予算 `IAP_RECONCILE_RUN_BUDGET_MS` (40 秒) で打ち切り・429 はその回を止めて次の回 (§8.1・§8.3) |
 | R5 | 取り直した結果の写し方は Webhook・同期と同じ関数を通し、書き込みの経路を 1 つにする | §0.4・billing/03 §0 | TS は `syncStoreSubscriber` (billing/03 §8.4)、DB は `billing_apply_store_subscription` (§6.4) だけ。本冊は新しい写像を作らない。`p_source = 'iap_reconcile'` で監査の `details.source` に残る |
 | R6 | 同時に Webhook (同期・遅延の再同期) が来たときの順序 | §0.4 | 写像の advisory lock (`billing-user:<uuid>`) で直列、`p_fetched_at` (GET の前の時刻) の新しい方だけが写り、古い方は `stale` (F7)。取り直しの回が並行しても同じ (§4.2 S5・S6・S14) |
 | R7 | 鍵が未設定のときに安全に止まる | §0.4 | `createRevenueCatGateway()` が投げる `RevenueCatNotConfiguredError` を受けて、DB に触れず 200 `{ status: 'not_configured' }` + warn 1 行 (push-outbox の R-12 と同じ型)。鍵の誤り (401 / 403) は失敗として 500 (§11) |
-| R8 | 取り直しも失敗したときの猶予 | §0.4 | 猶予を置かない (Q-2)。回全体の失敗 (RevenueCat に届かない・401 / 403・5xx) はその回を止めて 500、利用者 1 人の失敗 (応答の形の違い・そのほかの 4xx・写像などの想定外の失敗) は数えて次の利用者へ進み、最後に 500 (§8.3)。どちらも失敗の監視に乗る。候補は残り、次の回 (1 時間後) に再び取り直す (試した利用者は後ろに回る) |
+| R8 | 取り直しも失敗したときの猶予 | §0.4 | 猶予を置かない (Q-2)。回全体の失敗 (RevenueCat に届かない・401 / 403・5xx) はその回を止めて 500、利用者 1 人の失敗 (応答の形の違い・そのほかの 4xx・写像などの想定外の失敗) は数えて次の利用者へ進み、最後に 500 (§8.3)。どちらも失敗の監視に乗る。候補は残り、次の回 (1 時間後) に再び取り直す (試した利用者は後ろに回り、試さなかった利用者が先に来る) |
 | R9 | ログ・失敗時の運営アラートは既存の型 | §0.4 | ログは `app_logs` (`createLogger`)。500 は `internalError` の固定の文 → `app-log-alerts` の `cron_failure` (F15)。新しいアラートの種類は足さない (§16 の 3) |
 | R10 | Stripe の側は触れない | §0.4 | 候補の述語は `iap_store IS NOT NULL`。Stripe の行 (`stripe_subscription_id`) と手動付与の行は本冊の処理に入らない |
-| R11 | 新しい状態・権利の表の列・利用者向けのエラーコードを作らない | billing/03 §7.3 (遷移表に無い遷移は作らない) | 遷移は billing/03 §7.3 の「取り直しの合図」の行のとおり。本冊が足す DB のものは、印の表 1 つ (`iap_reconcile_attempts`。利用者 ID と最後に試した時刻だけ。権利の判定は読まない)・関数 1 本・索引 1 本 (§6)。利用者向けの API は無い |
+| R11 | 新しい状態・権利の表の列・利用者向けのエラーコードを作らない | billing/03 §7.3 (遷移表に無い遷移は作らない) | 遷移は billing/03 §7.3 の「取り直しの合図」の行のとおり。本冊が足す DB のものは、印の表 1 つ (`iap_reconcile_attempts`。利用者 ID と最後に試した時刻だけ。権利の判定は読まない)・関数 2 本 (候補を読む・印を書く)・索引 1 本 (§6)。利用者向けの API は無い |
 | R12 | migration の番号はマージ時に確定・`.down.sql` を対で | 設計の規約 | §6.1 |
 | R13 | as any 禁止・マジックナンバー禁止・運用で変えうる値は環境変数で上書き | 設計の規約 | §8.1 の定数に根拠。上限と再確認の間隔は `IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_RECHECK_HOURS` で上書き (範囲外は既定に戻して warn) |
 | R14 | 監査ログ必須 | `docs/design/CLAUDE.md` | 状態の変化は写像が `admin_audit_logs` に書く (`system.billing.subscription_status_changed`・`details.source = 'iap_reconcile'`)。回の要約はログ (個人の情報を載せない) |
@@ -148,7 +148,7 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 | R16 | メンテナンス中は書かない | push-outbox の R-14 (operator/11) | `isMaintenanceFlagOn()` なら `{ status: 'maintenance' }` で何もしない (§8.4) |
 | R17 | 本番の書き込み・外部の設定の変更はしない (設計) | #1912 の守ること | 本冊は読み取りだけ。環境変数の設定の手順は §15 |
 
-### 3.2 ユーザーシナリオ (17 本)
+### 3.2 ユーザーシナリオ (18 本)
 
 | ID | シナリオ |
 |---|---|
@@ -160,15 +160,16 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 | S6 | Webhook と同時: 取り直しの GET の直後に `RENEWAL` の Webhook が届いて先に写した。本冊の `p_fetched_at` の方が古いので `stale` (何も壊さない)。逆の順なら Webhook の方が `stale` |
 | S7 | 鍵が無い (販売開始前・本番に `REVENUECAT_SECRET_API_KEY` を入れる前): 回は DB に触れず 200 `{ status: 'not_configured' }`、warn ログ 1 行 (変数名はログにだけ)。失敗の監視には乗らない |
 | S8 | RevenueCat が落ちている・鍵が無効 (401): 1 人目の取り直しが `RevenueCatApiError` (`status` が `null` / 401 / 403 / 5xx = 回全体の失敗) → その回を止めて 500 → `app_logs` の error → `app-log-alerts` の `cron_failure` が運用メール。次の回 (1 時間後) に再び取り直す。候補の行はそのまま (権利は続く。Q-2) |
-| S9 | 429 (率の制限): 途中の利用者で 429 → その回を止めて 200 `{ status: 'processed', stopped_early: 'rate_limited', … }` (warn)。残りは次の回。失敗の監視には乗らない |
+| S9 | 429 (率の制限): 途中の利用者で 429 → その回を止めて 200 `{ status: 'processed', stopped_early: 'rate_limited', … }` (warn)。残りは次の回 (試さなかった残りは印が進まないので、次の回で先に選ばれる)。失敗の監視には乗らない |
 | S10 | 候補が上限を超える: Webhook が丸 1 日止まり、期限を過ぎた行が 120 人分ある。回ごとに、まだ試していない利用者を `current_period_end` の古い順に 40 人 (1 秒に 1 人) 取り直し、`stopped_early: null` で 40 人、残り 80 人は次の 2 回で終わる。回の予算 (40 秒) を超えたら `stopped_early: 'budget'` |
 | S11 | 運営の処置が要る行: 別の live 行 (Stripe) がある利用者 (billing/03 S13) と、`plan_store_products` に無い商品の利用者 (S15) が候補にいる。それぞれ `BILL_LIVE_ROW_CONFLICT`・`BILL_IAP_UNKNOWN_PRODUCT` で写せないので、warn (利用者 ID とコード) を残して飛ばし、次の利用者へ。候補に残るので毎回の回で試み (試した利用者は次の回で後ろに回る)、運営の処置 (billing/03 §13.3・S15) で解消する。`rejected` はこの 2 つのコードだけ (`IAP_RECONCILE_REJECTED_CODES`) |
 | S12 | メンテナンス中: `maintenance_mode` のフラグが ON の回は 200 `{ status: 'maintenance' }` で何もしない (DB に書かない) |
 | S13 | 対象外の行: 手動付与 (M 行)・Stripe (S 行)・`expired` / `cancelled` のストアの行・期限 (`current_period_end`) が NULL のストアの行・期限の前の行は候補に出ない |
-| S14 | 回の二重 (手動の再実行と毎時の回が重なった): 候補を選ぶ関数は鍵で直列なので、後の回は先の回が選んだ利用者を後ろに回して選ぶ。候補が上限より少ないときは同じ利用者を選び、片方は `stale` か同じ姿で、結果は変わらない。RevenueCat への回数は 2 倍になるが 1 秒に 1 回の間隔はそれぞれが守る |
+| S14 | 回の二重 (手動の再実行と毎時の回が重なった): 候補を選ぶ関数は何も書かないので、2 つの回は同じ利用者を選びうる。各利用者の写像は advisory lock で直列になり、後の方は `stale` か同じ姿で、結果は変わらない。RevenueCat への回数は最大で 2 倍になる (1 秒に 1 回の間隔はそれぞれが守る。合わせて超えて 429 になった回は 200 で止まる)。印は新しい方の時刻が残る (`GREATEST`) |
 | S15 | 退会: 候補の利用者が取り直しの最中に退会した。行は CASCADE で消え (印の表の行も)、写像は `skipped: 'user_deleted'` を返し、`StoreSyncOutcome` は何も数えない (`synced` には数える)。次の回の候補には出ない |
 | S16 | 利用者 1 人だけ取り直せない: 候補の先頭の利用者 A の RevenueCat の応答が当社の Zod に合わない (形の違い。2xx) か、A の写像が運営の処置の 2 つ (S11) 以外の失敗 (`BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS`・P0001 以外の DB の失敗) になる。A を `failed` に数えて warn (利用者 ID と種類) を残し、後ろの B〜E は取り直して写す。回の終わりに 500 (失敗の監視の運用メール)。次の回は B〜E が候補から外れ、A だけが残る (直すのは当社のコードかデータ。§15 の 4) |
 | S17 | 取り直せない利用者が上限より多い: 写せない利用者 (S11・S16) が 50 人たまり、ほかに期限を過ぎた利用者 C が 1 人いる。回 1 は 50 人のうち 40 人を試す。回 2 はまだ試していない 10 人と C を先に選ぶ (試した 40 人は後ろ)。C は遅くとも 2 回目で取り直される |
+| S18 | 選んだ利用者を 1 回で試しきれない: 候補 40 人 (どれも試したことが無い) のうち期限の古い 30 人が写せない利用者 (S11) で、RevenueCat の GET と写像の往復に 1 人あたり 2 秒かかり、約 20 人を試したところで予算 (40 秒) を超えて止まった (`stopped_early: 'budget'`)。回の終わりに、試した約 20 人にだけ印を書く。選んだのに試さなかった約 20 人 (失効が届かなかった S1 の利用者を含む) は印が進まないので、次の回はこの約 20 人が試した利用者より先に選ばれ、取り直される。429 (S9)・回全体の失敗 (S8) で止めた回も同じ (止めた利用者までが試した利用者) |
 
 ---
 
@@ -180,18 +181,19 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 Vercel Cron (毎時 41 分)
   └ GET /api/cron/iap-reconcile ── requireCronAuth ── isMaintenanceFlagOn ── createRevenueCatGateway (無ければ not_configured)
         └ reconcileStoreSubscriptions(deps, settings)            ← 本冊の facade (src/lib/billing/iap-reconcile-service.ts)
-              ├ reconcileRepository.claimReconcileCandidates()   ← DB 関数 billing_iap_reconcile_claim_candidates (候補の規則と順番の唯一の置き場)
-              └ 利用者ごとに (1 秒に 1 人・予算 40 秒・上限 40 人)
-                    syncStoreSubscriber(deps, userId, 'iap_reconcile')   ← billing/03 §8.4 (写しの唯一の TS の入口。変えない)
-                          └ gateway.getSubscriber → billing_apply_store_subscription (billing/03 §6.4。変えない)
+              ├ reconcileRepository.listReconcileCandidates()    ← DB 関数 billing_iap_reconcile_candidates (候補の規則と順番の唯一の置き場。読むだけ)
+              ├ 利用者ごとに (1 秒に 1 人・予算 40 秒・上限 40 人)
+              │     syncStoreSubscriber(deps, userId, 'iap_reconcile')   ← billing/03 §8.4 (写しの唯一の TS の入口。変えない)
+              │           └ gateway.getSubscriber → billing_apply_store_subscription (billing/03 §6.4。変えない)
+              └ reconcileRepository.markReconcileAttempted()     ← DB 関数 billing_iap_reconcile_mark_attempted (試した利用者だけに印。回の終わりに 1 回)
 ```
 
-1. **候補の規則と順番は DB の関数 1 本に置く** (`billing_iap_reconcile_claim_candidates`)。列と列の比較 (`iap_synced_at < current_period_end`) は PostgREST のフィルタで書けず、TS で絞ると `LIMIT` の後の絞り込みになって、絞られた行の裏で待つ行が永久に取り直されない。SQL なら 1 文で「利用者ごとに 1 行・順番・上限」まで閉じる。順番は「最後に試した時刻の古い順 (試したことが無い利用者が先) → 期限の古い順」で、関数は返した利用者の時刻を印の表 `iap_reconcile_attempts` に書く (claim)。写せない利用者 (S11)・取り直せない利用者 (S16) は `iap_synced_at` が進まず候補に残り続けるが、試すたびに後ろへ回るので、後ろの利用者を止めない (S17)。
+1. **候補の規則と順番は DB の関数 1 本に置く** (`billing_iap_reconcile_candidates`。読むだけ)。列と列の比較 (`iap_synced_at < current_period_end`) は PostgREST のフィルタで書けず、TS で絞ると `LIMIT` の後の絞り込みになって、絞られた行の裏で待つ行が永久に取り直されない。SQL なら 1 文で「利用者ごとに 1 行・順番・上限」まで閉じる。順番は「最後に試した時刻の古い順 (試したことが無い利用者が先) → 期限の古い順」。時刻の印 (`iap_reconcile_attempts`) は、facade がループの後に、その回に `syncStoreSubscriber` を呼んだ利用者の ID だけを 1 回の RPC (`billing_iap_reconcile_mark_attempted`) で書く。写せない利用者 (S11)・取り直せない利用者 (S16) は `iap_synced_at` が進まず候補に残り続けるが、試すたびに後ろへ回るので、後ろの利用者を止めない (S17)。選んだのに予算・429・回全体の失敗で試さなかった利用者は印が進まず、次の回で試した利用者より先に来る (S18)。
 2. **書き込みは親の入口をそのまま使う**。本冊は `syncStoreSubscriber` を `source = 'iap_reconcile'` で呼ぶだけで、snapshot も写像も作らない。順序・冪等・同時の規則は親の `p_fetched_at` と advisory lock がそのまま効く (R5・R6)。
-3. **候補の述語**: `iap_store IS NOT NULL` ∧ live (trialing / active / past_due) ∧ `current_period_end <= p_now` ∧ (`iap_synced_at IS NULL` ∨ `iap_synced_at < current_period_end` ∨ `iap_synced_at <= p_now - p_recheck_after`)。読み方: 「期限の後の姿をまだ取り直していない行」(2 つ目) は何度でも候補、「期限の後に取り直しても live のままの行」(ストアの猶予期間) は `p_recheck_after` (6 時間) ごとに候補。取り直して `expired` / `cancelled` になれば live でなくなって候補から外れ、更新されていれば `current_period_end` が進んで外れる。取り直せた利用者は候補から外れ、取り直せない利用者は残るが後ろに回る (1 の順番)。
-4. **率と予算**: 1 回の処理は利用者を 1 人ずつ直列に、取り直しの開始の間隔を 1 秒空け (P1 の案内)、予算 40 秒で打ち切る (`maxDuration` 60 秒の中に最後の取り直しの時間切れ 10 秒 + RPC + 応答が収まる)。上限は既定 40 人 (= 40 秒 ÷ 1 秒)。429 はその回を止める (止めて再試行 = 次の回)。
+3. **候補の述語**: `iap_store IS NOT NULL` ∧ live (trialing / active / past_due) ∧ `current_period_end <= p_now` ∧ (`iap_synced_at IS NULL` ∨ `iap_synced_at < current_period_end` ∨ `iap_synced_at <= p_now - p_recheck_after`)。読み方: 「期限の後の姿をまだ取り直していない行」(2 つ目) は何度でも候補、「期限の後に取り直しても live のままの行」(ストアの猶予期間) は `p_recheck_after` (6 時間) ごとに候補。取り直して `expired` / `cancelled` になれば live でなくなって候補から外れ、更新されていれば `current_period_end` が進んで外れる。取り直せた利用者は候補から外れ、取り直せない利用者は残るが試すたびに後ろに回る (1 の順番)。
+4. **率と予算**: 1 回の処理は利用者を 1 人ずつ直列に、取り直しの開始の間隔を 1 秒空け (P1 の案内)、予算 40 秒で打ち切る (`maxDuration` 60 秒の中に最後の取り直しの時間切れ 10 秒 + RPC + 応答が収まる)。上限は既定 40 人 (= 40 秒 ÷ 1 秒 = 1 回に試せる上限。環境変数は下げる向きだけ)。429 はその回を止める (止めて再試行 = 次の回)。
 5. **失敗の扱い** (§8.1 `classifyReconcileFailure`): 鍵が無い = 止まる (200 `not_configured`)。運営の処置が要る利用者 (`BillingRpcError` の `BILL_LIVE_ROW_CONFLICT`・`IapError` の `BILL_IAP_UNKNOWN_PRODUCT`。billing/03 §13.3・S15 で運営の処置が決まっている 2 つだけ = `IAP_RECONCILE_REJECTED_CODES`) = `rejected` に数えて次へ (warn。200)。**回全体の失敗** (RevenueCat に届かない `status: null`・401 / 403・5xx) = `failed` に数えてその回を止め、500。**利用者 1 人の失敗** (RevenueCat の応答の形の違い (2xx)・そのほかの 4xx・`RevenueCatApiError` 以外 (写像の `BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` (billing/03 §13.3 の扱いは失敗)・P0001 以外の `PostgrestError` など)) = `failed` に数えて次の利用者へ進み、回の終わりに 500。500 はどちらも失敗の監視に乗る (R9)。候補を選ぶ RPC の失敗は、誰も取り直していないのでそのまま投げて 500。
-6. **新しいものは最小**: DB の印の表 1 つ・関数 1 本・部分索引 1 本、TS のモジュール 3 本 (純・repository・facade) と route 1 本、環境変数 2 つ、`vercel.json` の 1 行。`personal_subscriptions` の列・状態・利用者向けのエラーコード・監査の action_type は足さない。
+6. **新しいものは最小**: DB の印の表 1 つ・関数 2 本 (候補を読む・印を書く)・部分索引 1 本、TS のモジュール 3 本 (純・repository・facade) と route 1 本、環境変数 2 つ、`vercel.json` の 1 行。`personal_subscriptions` の列・状態・利用者向けのエラーコード・監査の action_type は足さない。
 
 ```mermaid
 sequenceDiagram
@@ -203,14 +205,15 @@ sequenceDiagram
   V->>R: Authorization: Bearer CRON_SECRET
   R->>R: requireCronAuth (401 / 503) → isMaintenanceFlagOn (maintenance) → createRevenueCatGateway (not_configured)
   R->>S: deps { gateway, repository, reconcileRepository }, settings { batchSize, recheckHours }
-  S->>DB: billing_iap_reconcile_claim_candidates(p_now, '6 hours', 40)
-  DB-->>S: [{ user_id, period_end, synced_at }] (最後に試した時刻の古い順 → 期限の古い順・利用者ごとに 1 行。返した利用者の attempted_at = p_now)
+  S->>DB: billing_iap_reconcile_candidates(p_now, '6 hours', 40)
+  DB-->>S: [{ user_id, period_end, synced_at }] (最後に試した時刻の古い順 → 期限の古い順・利用者ごとに 1 行。何も書かない)
   loop 候補ごと (1 秒に 1 人・予算 40 秒)
     S->>RC: GET /v1/subscribers/{user_id} (syncStoreSubscriber の中)
     RC-->>S: customer info
     S->>DB: billing_apply_store_subscription(snapshot, p_fetched_at, 'iap_reconcile') × 行
     DB-->>S: applied / stale / user_deleted (衝突は BILL_LIVE_ROW_CONFLICT)
   end
+  S->>DB: billing_iap_reconcile_mark_attempted(試した利用者の ID, p_now) (1 人以上試したときだけ)
   S-->>R: IapReconcileSummary (failed が 0) / IapReconcileFailedError (failed が 1 以上)
   R-->>V: 200 { status: idle | processed, ...summary } / 500 (internalError → app-log-alerts の cron_failure)
 ```
@@ -219,23 +222,24 @@ sequenceDiagram
 
 | ID | トレース |
 |---|---|
-| S1 | 期限 T に `EXPIRATION` が届かない → 行は `active`・`current_period_end = T`・`iap_synced_at` = 購入時の取り直し (< T) → T の次の 41 分の回: `billing_iap_reconcile_claim_candidates` の述語 (`current_period_end <= p_now` ∧ `iap_synced_at < current_period_end`) に当たり、返されて `iap_reconcile_attempts.attempted_at = p_now` → `syncStoreSubscriber(deps, user, 'iap_reconcile')`: GET → `deriveStoreStatus` が `expires_date ≤ now`・猶予なし → `expired` の snapshot → 写像の UPDATE (`status = 'expired'`・`iap_synced_at = p_fetched_at`) → `plan_key_cached` の再計算 (live 行が無く NULL)・家族グループは個人 Pro なので変わらない・監査 `system.billing.subscription_status_changed` (`from: 'active', to: 'expired', source: 'iap_reconcile'`) → 要約 `applied: 1` → 以後 `get_effective_plan` は free → `consume_ai_usage_at` の上限 3 回・究極モードは `plan_locked`。窓は T から次の回まで ≤ 60 分 + 回の中の順番 |
+| S1 | 期限 T に `EXPIRATION` が届かない → 行は `active`・`current_period_end = T`・`iap_synced_at` = 購入時の取り直し (< T) → T の次の 41 分の回: `billing_iap_reconcile_candidates` の述語 (`current_period_end <= p_now` ∧ `iap_synced_at < current_period_end`) に当たり、返される → `syncStoreSubscriber(deps, user, 'iap_reconcile')`: GET → `deriveStoreStatus` が `expires_date ≤ now`・猶予なし → `expired` の snapshot → 写像の UPDATE (`status = 'expired'`・`iap_synced_at = p_fetched_at`) → `plan_key_cached` の再計算 (live 行が無く NULL)・家族グループは個人 Pro なので変わらない・監査 `system.billing.subscription_status_changed` (`from: 'active', to: 'expired', source: 'iap_reconcile'`) → 要約 `applied: 1` → 回の終わりに `billing_iap_reconcile_mark_attempted` がこの利用者の `attempted_at = p_now` を書く → 以後 `get_effective_plan` は free → `consume_ai_usage_at` の上限 3 回・究極モードは `plan_locked`。窓は T から次の回まで ≤ 60 分 + 回の中の順番 |
 | S2 | `RENEWAL` が届かない → T の次の回で候補 → GET の `expires_date` は T + 1 か月 → `deriveStoreStatus` = `active` → 写像の UPDATE (`current_period_end` が進む・`status` は同じなので監査なし) → `applied: 1`。次の回は `current_period_end > p_now` なので候補に出ない |
 | S3 | `BILLING_ISSUE` → `past_due` (billing/03 §7.3)。期限 T を過ぎた最初の回: 候補 (2 つ目の条件) → GET: `expires_date ≤ now` かつ `grace_period_expires_date > now` → `past_due` のまま → UPDATE (`iap_synced_at = now`。状態は同じで監査なし) → 次の回: `iap_synced_at > current_period_end` なので 2 つ目は偽、3 つ目 (`iap_synced_at <= p_now - 6 時間`) も偽 → 候補に出ない → 6 時間後の回で候補 → 猶予が尽きたあとの回の取り直しで `expired` (billing/03 §7.3 の `EXPIRATION` の行と同じ遷移) |
 | S4 | T − 10 分の同期で `iap_synced_at = T − 10 分` → T の次の回: `iap_synced_at < current_period_end` → 候補 → 取り直し (S1 か S2 の姿) |
 | S5 | 同じ分に、遅延の再同期 (`p_fetched_at = t1`) と本冊の回 (`p_fetched_at = t2`) が同じ利用者を取り直す → 写像は `billing-user:<uuid>` の advisory lock で直列 → 先に入った方が UPDATE し `iap_synced_at` を自分の `p_fetched_at` に → 後の方は `iap_synced_at >= p_fetched_at` なら `stale`、そうでなければ同じ姿で UPDATE (監査は状態が変わったときだけ) → どちらの順でも最終の行は新しい方の姿。本冊の要約は `applied` か `stale` |
 | S6 | 本冊の GET が t2 に始まり、`RENEWAL` の Webhook が t3 (> t2) に GET して先に写した → 本冊の写像は `iap_synced_at (= t3) >= p_fetched_at (= t2)` で `stale` → `stale: 1`。逆の順なら Webhook が `stale` (Webhook は 200 で終わる) |
 | S7 | `createRevenueCatGateway()` が `RevenueCatNotConfiguredError` → route は `logger.warn('REVENUECAT_SECRET_API_KEY が未設定のため、ストアの購読の取り直しを行いません')` → 200 `{ status: 'not_configured' }`。`reconcileRepository` も作らず DB に触れない。500 ではないので `cron_failure` に乗らない |
-| S8 | 1 人目の `gateway.getSubscriber` が `RevenueCatApiError({ status: 401 })` (鍵の誤り) か `{ status: null }` (届かない) → `classifyReconcileFailure` = `run`・種類 `revenuecat_unauthorized` / `revenuecat_unreachable` → `failed[種類] = 1`・`stopped_early = 'revenuecat_unavailable'` → ループを抜け、warn (要約) を残して `IapReconcileFailedError` を投げる → route の `internalError('cron/iap-reconcile', err, { requestId, summary })` → `app_logs` に `level = 'error'`・固定の文 → 15 分おきの `app-log-alerts` の `checkCronFailures` が `cron/iap-reconcile` を 1 件から数え、運用メール → 次の回で再試行 (候補は残る。この回に選んだ 40 人は後ろに回るので、候補が 40 人を超えていれば次の回はほかの利用者から試す) |
-| S9 | k 人目で `RevenueCatApiError({ status: 429 })` → `classifyReconcileFailure` = `rate_limited` → `summary.stopped_early = 'rate_limited'` → ループを抜けて要約を返す (warn) → 200 `{ status: 'processed', synced: k − 1, stopped_early: 'rate_limited', … }`。残りは次の回 (k 人目から後ろは試していないが、選んだ時点で `attempted_at` は進んでいる。候補が上限以下なら次の回も全員を選ぶ) |
-| S10 | 候補 120 人 (どれも試したことが無い) → `p_limit = 40` で期限の古い 40 人 (`attempted_at` が入る) → 1 人ずつ: 間隔 1 秒 (前の取り直しの開始から 1 秒未満なら `sleep`) → 40 人で約 40 秒 → 予算を超えたら残りを置いて `stopped_early: 'budget'` (超えなければ `null`) → 次の回はまだ試していない 80 人のうち期限の古い 40 人。3 回 (3 時間) で全員 |
+| S8 | 1 人目の `gateway.getSubscriber` が `RevenueCatApiError({ status: 401 })` (鍵の誤り) か `{ status: null }` (届かない) → `classifyReconcileFailure` = `run`・種類 `revenuecat_unauthorized` / `revenuecat_unreachable` → `failed[種類] = 1`・`stopped_early = 'revenuecat_unavailable'` → ループを抜け、warn (要約) を残して `IapReconcileFailedError` を投げる → route の `internalError('cron/iap-reconcile', err, { requestId, summary })` → `app_logs` に `level = 'error'`・固定の文 → 15 分おきの `app-log-alerts` の `checkCronFailures` が `cron/iap-reconcile` を 1 件から数え、運用メール → 次の回で再試行 (候補は残る。印を書くのは試した 1 人目だけなので、選んだのに試さなかった 2 人目から後ろは次の回で 1 人目より先に選ばれる。1 人目の GET だけが毎回時間切れになる場合も、1 人目は後ろに回るので回が毎回同じ利用者で止まらない) |
+| S9 | k 人目で `RevenueCatApiError({ status: 429 })` → `classifyReconcileFailure` = `rate_limited` → `summary.stopped_early = 'rate_limited'` → ループを抜けて要約を返す (warn) → 200 `{ status: 'processed', synced: k − 1, stopped_early: 'rate_limited', … }`。回の終わりの印は 1〜k 人目だけ (k 人目は `syncStoreSubscriber` を呼んだので試した利用者)。k + 1 人目から後ろは印が進まず、次の回で 1〜k 人目より先に選ばれる |
+| S10 | 候補 120 人 (どれも試したことが無い) → `p_limit = 40` で期限の古い 40 人 (関数は何も書かない) → 1 人ずつ: 間隔 1 秒 (前の取り直しの開始から 1 秒未満なら `sleep`) → 40 人で約 40 秒 → 予算を超えたら残りを置いて `stopped_early: 'budget'` (超えなければ `null`) → 回の終わりに試した利用者に印 → 次の回はまだ試していない利用者 (80 人。予算で止めた回なら、選んで試さなかった利用者もここに入る) のうち期限の古い 40 人。3 回 (3 時間) で全員 |
 | S11 | 候補 A (Stripe の live 行あり) → `syncStoreSubscriber` の写像が `BILL_LIVE_ROW_CONFLICT` (`BillingRpcError`) → `rejected['BILL_LIVE_ROW_CONFLICT'] += 1`・warn (`user_id`・`code`) → 次の候補 B (対応の無い live な商品) → `syncStoreSubscriber` が書く前に `IapError('BILL_IAP_UNKNOWN_PRODUCT')` → `rejected['BILL_IAP_UNKNOWN_PRODUCT'] += 1` → 次へ。回は 200 (`rejected` は失敗の監視に乗せない。billing/03 §13.3・S15 の運営の処置の対象)。A・B は `iap_synced_at` が進まないので次の回も候補 (毎時 warn 1 行ずつ。順番は後ろ)。運営が billing/03 §13.3 の処置をすると、次の回で写る |
 | S12 | `isMaintenanceFlagOn()` が true → 200 `{ status: 'maintenance' }`。gateway も候補も作らない |
 | S13 | 述語: M 行・S 行は `iap_store IS NULL` で外れる。`expired` / `cancelled` は `status IN (...)` で外れる。`current_period_end IS NULL` は `IS NOT NULL` で外れる。期限の前は `<= p_now` で外れる |
-| S14 | 回 X が候補を選ぶ (関数の中の `pg_advisory_xact_lock('billing-iap-reconcile-claim')` を持って選び、`attempted_at` を書いてコミット) → 回 Y が同じ鍵を待ってから選ぶ → 候補が 40 人を超えていれば Y は X の 40 人を後ろに回してほかの利用者を選ぶ。超えていなければ同じ利用者を選び、各利用者の写像は advisory lock で直列、後の方は `stale` か同じ姿 → 行は同じ。RevenueCat への回数は最大で 2 倍 (各回は 1 秒に 1 回を守る) |
+| S14 | 回 X (開始 t1) と回 Y (開始 t2 > t1) が、どちらも印を書く前に候補を選ぶ → 候補の関数は読むだけなので、同じ順番の同じ利用者を選ぶ → 各利用者の写像は advisory lock (`billing-user:<uuid>`) で直列、後の方は `stale` か同じ姿 → 行は同じ。RevenueCat への回数は最大で 2 倍 (各回は 1 秒に 1 回を守る。合わせた率で 429 になった回は `stopped_early: 'rate_limited'` の 200) → 回の終わりに X と Y がそれぞれ試した利用者に印を書く → 同じ利用者の印は `GREATEST` で t2 が残る (どちらが先に書いても同じ) |
 | S15 | 取り直しの GET の間に退会 → 行は `auth.users` の CASCADE で消える (`personal_subscriptions` も `iap_reconcile_attempts` も) → 写像は `auth.users` に無いので `{ applied: false, skipped: 'user_deleted' }` → `StoreSyncOutcome` は `applied` も `stale` も増えない → 要約は `synced + 1` だけ → 次の回は行が無いので候補に出ない |
 | S16 | 候補 A・B・C (A が先頭) → A の `getSubscriber` が `RevenueCatApiError({ status: 200, rawMessage: 'unexpected response shape' })` → `classifyReconcileFailure` = `user`・種類 `revenuecat_unexpected_response` → `failed['revenuecat_unexpected_response'] = 1`・warn (`user_id`・`kind`) → B・C は取り直して写す (`synced: 2`) → ループの後、`failed` が 1 以上なので warn (要約) を残して `IapReconcileFailedError` を投げる → 500 → `cron_failure`。A の写像が `BillingRpcError` (`BILL_UNKNOWN_PLAN` / `BILL_UNKNOWN_IAP_STATUS`。`IAP_RECONCILE_REJECTED_CODES` に無い) か `PostgrestError` (P0001 の業務コード以外) でも、種類が `internal` (warn の `error_name`・`error_code` に例外の名前とコード) になるだけで同じ。次の回: B・C は候補から外れ、A だけが選ばれて同じ失敗 → 直すまで毎時 500 (運用メールは `OPS_ALERT_COOLDOWN_MINUTES` で抑止) |
-| S17 | 写せない利用者 50 人 (`attempted_at` が NULL) と利用者 C (NULL・期限は 50 人より新しい) → 回 1: 期限の古い 40 人を選び (`attempted_at = 回 1`)、どれも `rejected` か `failed` → 回 2: NULL の 11 人 (残り 10 人と C) が先、続けて回 1 の 40 人から 29 人 → C を取り直して写す。以後は回ごとに「試した時刻の古い 40 人」が回る |
+| S17 | 写せない利用者 50 人 (`attempted_at` が NULL) と利用者 C (NULL・期限は 50 人より新しい) → 回 1: 期限の古い 40 人を選び、40 人とも試して `rejected` か `failed` → 回の終わりに 40 人の `attempted_at = 回 1` → 回 2: NULL の 11 人 (残り 10 人と C) が先、続けて回 1 の 40 人から 29 人 → C を取り直して写す。以後は回ごとに「試した時刻の古い 40 人」が回る |
+| S18 | 候補 40 人 (NULL・期限の古い 30 人が写せない利用者・残り 10 人に S1 の利用者 D) → 回 1: 40 人を選ぶ → 1 人 2 秒で 1〜20 人目を試し、21 人目の前で `isReconcileBudgetExhausted` が真 → `stopped_early: 'budget'` → 回の終わりに `billing_iap_reconcile_mark_attempted([1〜20 人目], 回 1)` → 回 2: 印の無い 20 人 (写せない 10 人と D を含む 10 人) が先 (期限の古い順)、続けて回 1 の 20 人 → 20 人を試したところで予算 → D は回 2 で取り直されて `expired` (期限から ≤ 2 時間) → 回 3 からは試した時刻の古い順に回る |
 
 ---
 
@@ -258,13 +262,14 @@ sequenceDiagram
 - 強制の失効 (猶予 N 日で `expired` に書く) を入れない (Q-2): 入れると「取り直さずに書いた行」を候補に戻す印 (列) が要り、親の写像に「取り直した姿でない snapshot」を通すことになる。入れなければ、本冊が書くのは親の写像が取り直した姿だけ。
 - `IapRepository` を広げない (F22): 候補の読み取りは別のポート `IapReconcileRepository` にし、親のポートと偽物を変えない。
 - 回の中の並列を入れない: 直列 + 1 秒の間隔で率の制限 (P1) を守り、429 と予算は「止めて次の回」の 1 規則で受ける。
-- 取り直せない利用者が先頭に居座る縁 (S16・S17) は、失敗の種類を分けるだけでは消えない (写せない利用者が上限の 40 人以上たまると、毎回その 40 人で枠が尽きる)。発生源 = 「順番が期限だけで決まり、試しても順番が変わらない」を消すため、選んだ利用者に試した時刻を書き、順番をその時刻の古い順にする (印の表 `iap_reconcile_attempts`。§6.2)。退けた代わり: (i) `personal_subscriptions` に列を足す = 親の写像の外から権利の表に書く経路ができる (R5 の「書き込みの経路を 1 つ」を崩す)。(ii) 時刻ごとに並びを混ぜる (hash の回転) = 状態は要らないが、取り直される時期が確率でしか決まらず、テストで確かめられない。(iii) 失敗の利用者を TS で後ろに回す = 回をまたいで覚える場所が無い。
+- 取り直せない利用者が先頭に居座る縁 (S16・S17・S18) は、失敗の種類を分けるだけでは消えない (写せない利用者が上限の 40 人以上たまると、毎回その 40 人で枠が尽きる)。発生源 = 「順番が期限だけで決まり、試しても順番が変わらない」を消すため、試した利用者に試した時刻を書き、順番をその時刻の古い順にする (印の表 `iap_reconcile_attempts`。§6.2)。印を書くのは「試した」利用者 (その回に `syncStoreSubscriber` を呼んだ利用者) だけで、書く時点は回の終わり (facade がループの後に試した利用者の ID の配列で 1 回の RPC)。候補を選ぶ関数は読むだけにする (2 つの回が重なっても、印は `GREATEST` で新しい方の時刻が残るだけ。S14)。退けた代わり: (i) `personal_subscriptions` に列を足す = 親の写像の外から権利の表に書く経路ができる (R5 の「書き込みの経路を 1 つ」を崩す)。(ii) 時刻ごとに並びを混ぜる (hash の回転) = 状態は要らないが、取り直される時期が確率でしか決まらず、テストで確かめられない。(iii) 失敗の利用者を TS で後ろに回す = 回をまたいで覚える場所が無い。(iv) 選んだ時点で印を書く (v1.1〜v1.2 の形) = 1 回に試せる数を超えて選んだ回 (遅い応答・429・回全体の失敗) で、試さなかった利用者まで同じ時刻で後ろに回り、その中の並びが期限の順に戻るので、期限の古い同じ利用者が毎回先に試され、後ろが永久に試されない (S18)。(v) 1 回に選ぶ数を試せる数 (予算 ÷ 間隔) に切り詰めるだけ = 遅い応答 (1 人 1 秒を超える) の回を防げない (切り詰めは印の書き方と併せて行う。§8.1 `IAP_RECONCILE_BATCH_SIZE_MAX`)。(vi) 試すたびに利用者ごとの RPC で書く = RPC が倍になる (回の終わりの 1 回で足りる。予算で `maxDuration` の前に止まるので、回の終わりに届かないことは起きない想定。§16 の 9)。
 - 失敗を回全体と利用者 1 人に分ける (S8・S16): 回全体の失敗で止めないと 40 人ぶん同じ失敗を繰り返し (時間切れなら 4 人で予算が尽きる)、利用者 1 人の失敗で止めると後ろが取り直されない。分け方は `RevenueCatApiError.status` だけで決める純関数 1 つ (§8.1 `classifyReconcileFailure`)。
 
 ### 5.3 確定した構造
 
-- 置き場: `src/lib/billing/iap-reconcile-core.ts` (純。定数・Zod・型・ポート・失敗の分け方)・`iap-reconcile-repository.ts` (RPC)・`iap-reconcile-service.ts` (facade)・`src/app/api/cron/iap-reconcile/route.ts`。DB は印の表 `iap_reconcile_attempts`・`billing_iap_reconcile_claim_candidates`・部分索引 `idx_personal_subscriptions_iap_reconcile`。
+- 置き場: `src/lib/billing/iap-reconcile-core.ts` (純。定数・Zod・型・ポート・失敗の分け方)・`iap-reconcile-repository.ts` (RPC)・`iap-reconcile-service.ts` (facade)・`src/app/api/cron/iap-reconcile/route.ts`。DB は印の表 `iap_reconcile_attempts`・候補を読む関数 `billing_iap_reconcile_candidates`・印を書く関数 `billing_iap_reconcile_mark_attempted`・部分索引 `idx_personal_subscriptions_iap_reconcile`。
 - 補正 (v1.1。設計ゲート R1 の指摘による): 叩き台 (v1.0) の構造は「候補を期限の順に読むだけの関数」と「429 以外の失敗で回を止める」だったが、利用者 1 人の失敗で後ろの全員が永久に取り直されない欠陥があり、上の 2 つ (順番の印・失敗の分け方) を足した。書き込みの経路・cron の置き場・候補の述語は変えていない。
+- 補正 (v1.3。設計ゲート R3 の指摘による): v1.1 の印は「選んだとき」に書いていたため、1 回に試せる数を超えて選んだ回で、試さなかった利用者が永久に試されない欠陥が残った (S18)。印を書く時点を「回の終わりに、試した利用者だけ」に移し (`billing_iap_reconcile_mark_attempted`)、候補の関数を読むだけ (`billing_iap_reconcile_candidates`。v1.0 の名前に戻す) にした。あわせて環境変数 `IAP_RECONCILE_BATCH_SIZE` の上限を 1 回に試せる数 (40) にした。書き込みの経路・cron の置き場・候補の述語・順番の規則は変えていない。
 - 変えないもの: `iap-core.ts`・`iap-service.ts`・`revenuecat-gateway.ts`・`iap-repository.ts`・`billing_apply_store_subscription`・`get_effective_plan`・遅延の再同期・同期の API・Webhook。
 - 以後の蒸し返しを禁じる: 仕上げ (§6〜§14) の中で構造の疑義が出たら、blocking ではなく「裁定への差し戻し事由」として別に扱う。
 
@@ -276,20 +281,21 @@ sequenceDiagram
 
 | ファイル | 内容 |
 |---|---|
-| `supabase/migrations/<番号はマージ時に確定>_billing_iap_reconcile.sql` | 印の表 1 つ・部分索引 1 本・関数 1 本 (§6.2)。番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-22 時点 `20261021110000_org_plan_ai_daily_limits.sql`) より大きい値で確定する。1 行目は `-- migration: <ファイル名>`、最初の文は `SET LOCAL lock_timeout = '10s';` (billing/03 段 A と同じ) |
+| `supabase/migrations/<番号はマージ時に確定>_billing_iap_reconcile.sql` | 印の表 1 つ・部分索引 1 本・関数 2 本 (§6.2)。番号はマージ直前に origin/main の `supabase/migrations` の最大 (2026-10-22 時点 `20261021110000_org_plan_ai_daily_limits.sql`) より大きい値で確定する。1 行目は `-- migration: <ファイル名>`、最初の文は `SET LOCAL lock_timeout = '10s';` (billing/03 段 A と同じ) |
 | `supabase/rollbacks/<番号>_billing_iap_reconcile.down.sql` | §6.3。1 行目は `-- rollback: <ファイル名>` |
 
 migration は `cron.schedule` を呼ばない (Vercel Cron は `vercel.json`。§8.5)。既存の表の列・CHECK・ポリシー・トリガーの変更と、既存の行の UPDATE / DELETE は無い。`CREATE OR REPLACE` する既存の関数も無い。
 
-### 6.2 印の表 `iap_reconcile_attempts`・候補の関数 `billing_iap_reconcile_claim_candidates`・索引
+### 6.2 印の表 `iap_reconcile_attempts`・候補を読む関数 `billing_iap_reconcile_candidates`・印を書く関数 `billing_iap_reconcile_mark_attempted`・索引
 
 ```sql
 -- migration: <番号はマージ時に確定>_billing_iap_reconcile.sql
--- billing/04 (Issue #1912 の配線の残りの冊): ストアの購読の定期の取り直しの候補を選ぶ関数と、順番の印の表と、索引。
+-- billing/04 (Issue #1912 の配線の残りの冊): ストアの購読の定期の取り直しの候補を読む関数と、試した時刻の印の表と、印を書く関数と、索引。
 -- 候補 = live (trialing / active / past_due) なストアの行 (iap_store IS NOT NULL) のうち、期限 (current_period_end) を過ぎていて、
 --        期限の後の姿をまだ取り直していない (iap_synced_at が NULL か期限より前) か、取り直しても live のまま p_recheck_after より古いもの。
 -- 利用者ごとに 1 行 (取り直しは利用者単位。billing/03 §8.4 syncStoreSubscriber)。順番は最後に試した時刻 (無ければ先頭) の古い順 → 期限の早い順、p_limit 件。
--- 返した利用者の attempted_at を p_now にする (取り直せない利用者が毎回先頭に来て、後ろの利用者を止めないため)。
+-- 候補を読む関数は何も書かない。印 (attempted_at) は、その回に実際に取り直しを試した利用者だけに、回の終わりに印を書く関数で書く
+-- (取り直せない利用者が毎回先頭に来て後ろを止めないため。選んだのに試さなかった利用者は印が進まず、次の回で先に選ばれる)。
 -- personal_subscriptions には書かない (写しの入口は billing_apply_store_subscription の 1 つだけ。billing/03 §6.4)。
 -- 呼ぶのは GET /api/cron/iap-reconcile (service_role) だけ。
 SET LOCAL lock_timeout = '10s';
@@ -300,7 +306,7 @@ CREATE TABLE IF NOT EXISTS public.iap_reconcile_attempts (
   attempted_at timestamptz NOT NULL
 );
 COMMENT ON TABLE public.iap_reconcile_attempts IS
-  'billing/04 §6.2: ストアの購読の定期の取り直しで、利用者を最後に候補に選んだ時刻 (候補の順番を回す印)。書くのは billing_iap_reconcile_claim_candidates だけ。service_role は読むだけ';
+  'billing/04 §6.2: ストアの購読の定期の取り直しで、利用者に最後に取り直しを試した時刻 (候補の順番を回す印)。書くのは billing_iap_reconcile_mark_attempted だけ。service_role は読むだけ';
 ALTER TABLE public.iap_reconcile_attempts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS iap_reconcile_attempts_no_access ON public.iap_reconcile_attempts;
 CREATE POLICY iap_reconcile_attempts_no_access ON public.iap_reconcile_attempts USING (false) WITH CHECK (false);
@@ -314,34 +320,32 @@ CREATE INDEX IF NOT EXISTS idx_personal_subscriptions_iap_reconcile
 COMMENT ON INDEX public.idx_personal_subscriptions_iap_reconcile IS
   'billing/04 §6.2: 定期の取り直しの候補 (live なストアの行を current_period_end の順に読む)';
 
--- (3) 候補を選ぶ関数。印の表に書くので VOLATILE。SECURITY DEFINER で service_role だけが呼ぶ
-CREATE OR REPLACE FUNCTION public.billing_iap_reconcile_claim_candidates(
+-- (3) 候補を読む関数。何も書かないので STABLE。SECURITY DEFINER で service_role だけが呼ぶ
+CREATE OR REPLACE FUNCTION public.billing_iap_reconcile_candidates(
   p_now           timestamptz,
   p_recheck_after interval,
   p_limit         integer
 ) RETURNS TABLE (user_id uuid, period_end timestamptz, synced_at timestamptz)
 LANGUAGE plpgsql
-VOLATILE
+STABLE
 SECURITY DEFINER
 SET search_path = ''
 AS $$
 #variable_conflict use_column
 DECLARE
-  -- 1 回に返す上限の上限。TS の IAP_RECONCILE_BATCH_SIZE_MAX (billing/04 §8.1) と同じ値 (一致は tests/billing-iap-reconcile-core.test.ts のテスト 10。段 B)
-  c_max_limit CONSTANT integer := 200;
-  -- 2 つの回が同時に候補を選ぶときに直列にする鍵 (後の回は、先の回が選んだ利用者を後ろに回して選ぶ。billing/04 §4.2 S14)
-  c_claim_lock_key CONSTANT text := 'billing-iap-reconcile-claim';
+  -- 1 回の呼び出しで扱う利用者の数の安全の上限 (誤った引数で大量の行を返さない)。TS の IAP_RECONCILE_BATCH_SIZE_MAX (40。billing/04 §8.1) はこれ以下
+  -- (tests/billing-iap-reconcile-core.test.ts のテスト 10 が migration の文面を読んで見る。段 B)
+  c_max_users CONSTANT integer := 200;
 BEGIN
   IF p_now IS NULL OR p_recheck_after IS NULL OR p_limit IS NULL THEN
-    RAISE EXCEPTION 'billing_iap_reconcile_claim_candidates: p_now / p_recheck_after / p_limit are required' USING ERRCODE = '22023';
+    RAISE EXCEPTION 'billing_iap_reconcile_candidates: p_now / p_recheck_after / p_limit are required' USING ERRCODE = '22023';
   END IF;
   IF p_recheck_after <= interval '0' THEN
-    RAISE EXCEPTION 'billing_iap_reconcile_claim_candidates: p_recheck_after must be positive' USING ERRCODE = '22023';
+    RAISE EXCEPTION 'billing_iap_reconcile_candidates: p_recheck_after must be positive' USING ERRCODE = '22023';
   END IF;
-  IF p_limit < 1 OR p_limit > c_max_limit THEN
-    RAISE EXCEPTION 'billing_iap_reconcile_claim_candidates: p_limit must be between 1 and %', c_max_limit USING ERRCODE = '22023';
+  IF p_limit < 1 OR p_limit > c_max_users THEN
+    RAISE EXCEPTION 'billing_iap_reconcile_candidates: p_limit must be between 1 and %', c_max_users USING ERRCODE = '22023';
   END IF;
-  PERFORM pg_advisory_xact_lock(hashtext(c_claim_lock_key));
   RETURN QUERY
     WITH due AS (
       SELECT DISTINCT ON (s.user_id)
@@ -357,30 +361,56 @@ BEGIN
               OR s.iap_synced_at < s.current_period_end
               OR s.iap_synced_at <= p_now - p_recheck_after)
        ORDER BY s.user_id, s.current_period_end
-    ), picked AS (
-      SELECT d.due_user_id, d.due_period_end, d.due_synced_at, a.attempted_at AS prev_attempted_at
-        FROM due AS d
-        LEFT JOIN public.iap_reconcile_attempts AS a ON a.user_id = d.due_user_id
-       ORDER BY a.attempted_at ASC NULLS FIRST, d.due_period_end, d.due_user_id
-       LIMIT p_limit
-    ), marked AS (
-      -- 返す利用者に試した時刻を書く (WITH の中の INSERT は、主の SELECT が読まなくても必ず 1 回だけ実行される)
-      INSERT INTO public.iap_reconcile_attempts (user_id, attempted_at)
-      SELECT p.due_user_id, p_now FROM picked AS p
-      ON CONFLICT ON CONSTRAINT iap_reconcile_attempts_pkey DO UPDATE SET attempted_at = EXCLUDED.attempted_at
     )
-    SELECT p.due_user_id, p.due_period_end, p.due_synced_at
-      FROM picked AS p
-     ORDER BY p.prev_attempted_at ASC NULLS FIRST, p.due_period_end, p.due_user_id;
+    SELECT d.due_user_id, d.due_period_end, d.due_synced_at
+      FROM due AS d
+      LEFT JOIN public.iap_reconcile_attempts AS a ON a.user_id = d.due_user_id
+     ORDER BY a.attempted_at ASC NULLS FIRST, d.due_period_end, d.due_user_id
+     LIMIT p_limit;
 END
 $$;
-REVOKE ALL ON FUNCTION public.billing_iap_reconcile_claim_candidates(timestamptz, interval, integer) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION public.billing_iap_reconcile_claim_candidates(timestamptz, interval, integer) TO service_role;
-COMMENT ON FUNCTION public.billing_iap_reconcile_claim_candidates(timestamptz, interval, integer) IS
-  'billing/04 §6.2: 定期の取り直しの候補 (期限を過ぎた live なストアの行の利用者。期限の後の姿をまだ取り直していないか、取り直しても live のまま p_recheck_after より古い)。利用者ごとに 1 行・最後に試した時刻の古い順 → 期限の早い順・p_limit 件。返した利用者の iap_reconcile_attempts.attempted_at を p_now にする。personal_subscriptions には書かない。service_role だけ';
+REVOKE ALL ON FUNCTION public.billing_iap_reconcile_candidates(timestamptz, interval, integer) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.billing_iap_reconcile_candidates(timestamptz, interval, integer) TO service_role;
+COMMENT ON FUNCTION public.billing_iap_reconcile_candidates(timestamptz, interval, integer) IS
+  'billing/04 §6.2: 定期の取り直しの候補 (期限を過ぎた live なストアの行の利用者。期限の後の姿をまだ取り直していないか、取り直しても live のまま p_recheck_after より古い)。利用者ごとに 1 行・最後に試した時刻の古い順 (無ければ先頭) → 期限の早い順・p_limit 件。何も書かない。service_role だけ';
+
+-- (4) 印を書く関数。その回に取り直しを試した利用者の ID を、回の終わりに 1 回で渡す。SECURITY DEFINER で service_role だけが呼ぶ
+CREATE OR REPLACE FUNCTION public.billing_iap_reconcile_mark_attempted(
+  p_user_ids     uuid[],
+  p_attempted_at timestamptz
+) RETURNS void
+LANGUAGE plpgsql
+VOLATILE
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+  -- 1 回の呼び出しで扱う利用者の数の安全の上限 (候補を読む関数の c_max_users と同じ値。TS の IAP_RECONCILE_BATCH_SIZE_MAX はこれ以下。テスト 10)
+  c_max_users CONSTANT integer := 200;
+BEGIN
+  IF p_user_ids IS NULL OR p_attempted_at IS NULL THEN
+    RAISE EXCEPTION 'billing_iap_reconcile_mark_attempted: p_user_ids / p_attempted_at are required' USING ERRCODE = '22023';
+  END IF;
+  IF cardinality(p_user_ids) > c_max_users THEN
+    RAISE EXCEPTION 'billing_iap_reconcile_mark_attempted: p_user_ids must have at most % ids', c_max_users USING ERRCODE = '22023';
+  END IF;
+  -- auth.users にある利用者だけを書く (取り直しの最中に退会した利用者は外部キーの違反にせず飛ばす。billing/04 S15)。
+  -- 同じ ID が配列に 2 度あっても auth.users の 1 行で 1 回だけ書く。既にある印は新しい方の時刻を残す (2 つの回が重なったとき。S14)
+  INSERT INTO public.iap_reconcile_attempts AS t (user_id, attempted_at)
+  SELECT u.id, p_attempted_at
+    FROM auth.users AS u
+   WHERE u.id = ANY (p_user_ids)
+  ON CONFLICT ON CONSTRAINT iap_reconcile_attempts_pkey
+  DO UPDATE SET attempted_at = GREATEST(t.attempted_at, EXCLUDED.attempted_at);
+END
+$$;
+REVOKE ALL ON FUNCTION public.billing_iap_reconcile_mark_attempted(uuid[], timestamptz) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.billing_iap_reconcile_mark_attempted(uuid[], timestamptz) TO service_role;
+COMMENT ON FUNCTION public.billing_iap_reconcile_mark_attempted(uuid[], timestamptz) IS
+  'billing/04 §6.2: 定期の取り直しで、その回に取り直しを試した利用者の iap_reconcile_attempts.attempted_at を p_attempted_at にする (既にある印は新しい方を残す。auth.users に無い利用者は飛ばす)。回の終わりに 1 回だけ呼ぶ。personal_subscriptions には書かない。service_role だけ';
 ```
 
-述語と順番の読み方 (§7.1 の表と同じ):
+述語と順番と印の読み方 (§7.1 の表と同じ):
 
 | 条件 | 意味 |
 |---|---|
@@ -390,22 +420,22 @@ COMMENT ON FUNCTION public.billing_iap_reconcile_claim_candidates(timestamptz, i
 | `iap_synced_at IS NULL OR iap_synced_at < current_period_end` | 期限の後の姿をまだ取り直していない (何度でも候補) |
 | `iap_synced_at <= p_now - p_recheck_after` | 期限の後に取り直しても live のまま (ストアの猶予期間など) の行を、間隔を空けて再び取り直す |
 | `DISTINCT ON (user_id)` … `ORDER BY s.user_id, s.current_period_end` | 利用者ごとに 1 行 (その利用者の最も早い期限) |
-| `ORDER BY a.attempted_at ASC NULLS FIRST, period_end, user_id LIMIT p_limit` | 試したことが無い利用者が先、続けて最後に試した時刻の古い順。同じ時刻は期限の古い順、同じ期限は `user_id` で安定 |
-| `marked` (INSERT … ON CONFLICT DO UPDATE) | 返した利用者の `attempted_at` を `p_now` に。取り直しの成否に関わらず書く (取り直せない利用者・この回で予算や 429 で届かなかった利用者も、次の回は後ろに回る。どちらも、まだ試していない利用者の後で必ず再び選ばれる) |
-| `pg_advisory_xact_lock(hashtext('billing-iap-reconcile-claim'))` | 2 つの回の選び方を直列にする (S14)。鍵は関数のトランザクションの終わりで外れる (RPC 1 回 = 1 トランザクション) |
+| `ORDER BY a.attempted_at ASC NULLS FIRST, period_end, user_id LIMIT p_limit` | 試したことが無い利用者 (印の行が無い) が先、続けて最後に試した時刻の古い順。同じ時刻は期限の古い順、同じ期限は `user_id` で安定。候補を読む関数は何も書かない (`STABLE`) |
+| `billing_iap_reconcile_mark_attempted(p_user_ids, p_attempted_at)` | 回の終わりに 1 回。その回に `syncStoreSubscriber` を呼んだ利用者 (結果を問わない。429・回全体の失敗で止めた利用者を含む) の `attempted_at` を回の開始の時刻 (= 候補の `p_now`) に。選んだのに試さなかった利用者 (予算・429・回全体の失敗の後ろ) は渡さないので印が進まず、次の回で試した利用者より先に選ばれる (S18)。`auth.users` に無い利用者は飛ばす (S15)。既にある印は `GREATEST` で新しい方を残す (S14) |
 
 ### 6.3 ロールバック (`<番号>_billing_iap_reconcile.down.sql`)
 
 ```sql
 -- rollback: <番号はマージ時に確定>_billing_iap_reconcile.sql
--- 先に vercel.json から /api/cron/iap-reconcile の行を外して Web のデプロイを戻すこと (新しい Web の cron の route はこの関数を呼ぶ。
+-- 先に vercel.json から /api/cron/iap-reconcile の行を外して Web のデプロイを戻すこと (新しい Web の cron の route はこの 2 つの関数を呼ぶ。
 -- 関数だけ消すと GET /api/cron/iap-reconcile が毎時 500 になり、失敗の監視の通知が出続ける)。
--- 消えるもの: 関数 1 本・索引 1 本・印の表 iap_reconcile_attempts (候補の順番の印だけ。権利の行 personal_subscriptions は消さない・変えない)。
+-- 消えるもの: 関数 2 本・索引 1 本・印の表 iap_reconcile_attempts (候補の順番の印だけ。権利の行 personal_subscriptions は消さない・変えない)。
 -- 戻したあとは、Webhook が届かなかった期限切れの購読が、本人の同期か遅延の再同期まで写らない (billing/03 Q-11 の状態に戻る)。
 -- 本番への適用: 本番への直接 SQL は禁止 (CLAUDE.md)。この内容を新しい migration として supabase/migrations に追加し、PR → main マージ → CI で適用する。
 SET LOCAL lock_timeout = '10s';
 
-DROP FUNCTION IF EXISTS public.billing_iap_reconcile_claim_candidates(timestamptz, interval, integer);
+DROP FUNCTION IF EXISTS public.billing_iap_reconcile_mark_attempted(uuid[], timestamptz);
+DROP FUNCTION IF EXISTS public.billing_iap_reconcile_candidates(timestamptz, interval, integer);
 DROP INDEX IF EXISTS public.idx_personal_subscriptions_iap_reconcile;
 DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 ```
@@ -443,9 +473,9 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 | I (候補) | live | ≤ now | 候補の条件 | 出る | `RevenueCatApiError` 以外の想定外 (P0001 の業務コード以外の `PostgrestError`・行の読み取りの失敗など) → `failed['internal']`。次の利用者へ。回の終わりに 500 (同じ利用者の先に写した行は写ったまま) | S16・F23 |
 | I (候補) | live | ≤ now | 候補の条件 | 出る | RevenueCat に届かない (`status: null`)・401 / 403・5xx → `failed['revenuecat_unreachable' / 'revenuecat_unauthorized' / 'revenuecat_server_error']`・その回を止める (`stopped_early: 'revenuecat_unavailable'`) → 500 | S8 |
 | I (候補) | live | ≤ now | 候補の条件 | 出る | RevenueCat の 429 → その回を止める (200 `stopped_early: 'rate_limited'`) | S9 |
-| 候補の順番 (`iap_reconcile_attempts`) | — | — | — | 印の行が無い (試したことが無い) 利用者が先、続けて `attempted_at` の古い順 (同じなら期限の古い順)。この回に返した利用者は `attempted_at = p_now` (取り直しの成否に関わらず) | — | S10・S11・S16・S17 |
+| 候補の順番 (`iap_reconcile_attempts`) | — | — | — | 印の行が無い (試したことが無い) 利用者が先、続けて `attempted_at` の古い順 (同じなら期限の古い順)。回の終わりに、この回に `syncStoreSubscriber` を呼んだ利用者だけが `attempted_at` = 回の開始 (取り直しの成否・429・回全体の失敗を問わない)。選んだのに試さなかった利用者 (予算・429・回全体の失敗の後ろ) は印が進まず、次の回で先に選ばれる | — | S10・S11・S16・S17・S18 |
 | 消費経路 (読む側) | | | | | | |
-| `iap_reconcile_attempts` | — | — | — | — | 書くのは `billing_iap_reconcile_claim_candidates` だけ。読むのも同じ関数 (service_role の SELECT は結合テストの確認用)。退会で CASCADE。本人のデータの書き出しには出さない (`ACCOUNT_EXPORT_EXCLUDED`)。プライバシーポリシー第 3 条は「有料プラン」の行 (`PRIVACY_DATA_TABLES`) | §6.2・F24 |
+| `iap_reconcile_attempts` | — | — | — | — | 書くのは `billing_iap_reconcile_mark_attempted` だけ。読むのは `billing_iap_reconcile_candidates` (service_role の SELECT は結合テストの確認用)。退会で CASCADE。本人のデータの書き出しには出さない (`ACCOUNT_EXPORT_EXCLUDED`)。プライバシーポリシー第 3 条は「有料プラン」の行 (`PRIVACY_DATA_TABLES`) | §6.2・F24 |
 | `GET /api/billing/subscription` の遅延の再同期 | — | — | — | — | 変えない (`needsLazyResync` の 5 分の規則はそのまま。本冊の取り直しで `iap_synced_at` が進むと、その後 5 分は遅延の再同期も取り直さない) | F1・F3 |
 | `POST /api/billing/iap/sync` | — | — | — | — | 変えない | F4 |
 | `get_effective_plan` / `consume_ai_usage_at` / `plan_key_cached` / `family_groups` | — | — | — | — | 変えない。本冊の取り直しが写像を通すので、`expired` になった時点で free に戻る | F7・F8 |
@@ -461,10 +491,10 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 | ストアの猶予期間の `past_due` | 本人が開くたび 5 分おきに取り直す (F1) | 本人が開かなくても 6 時間ごとに取り直す (S3)。開けば遅延の再同期も変わらず動く |
 | 取り直しの入口 | Webhook (`revenuecat:<id>`)・同期 (`iap_sync`)・遅延の再同期 (`iap_lazy_resync`) の 3 つ | + 定期の取り直し (`iap_reconcile`)。4 つとも `syncStoreSubscriber` → `billing_apply_store_subscription` |
 | RevenueCat の取り直しの失敗の見え方 | 同期の API は 502、Webhook は 500 (再送)、遅延の再同期は warn で飲み込む (billing/03 S30) | + 定期の取り直しは 500 → `cron_failure` の運用メール。回全体の失敗はその回を止め (S8)、利用者 1 人の失敗は後ろの利用者を取り直してから 500 (S16)。429 は 200 で次の回 (S9) |
-| 取り直せない利用者がいるときの後ろの利用者 | (定期の取り直しが無い) | 止まらない。試した利用者は次の回で後ろに回る (S16・S17) |
+| 取り直せない利用者がいるときの後ろの利用者 | (定期の取り直しが無い) | 止まらない。試した利用者は次の回で後ろに回り、選んだのに試さなかった利用者は次の回で先に来る (S16・S17・S18) |
 | Vercel Cron | 6 本 (F11) | 7 本 (`/api/cron/iap-reconcile`・`41 * * * *`) |
 | `src/lib/env.ts` の一覧 | `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET` | + `IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_RECHECK_HOURS` (`readOnlyBy` = route) |
-| DB | `personal_subscriptions` のストアの列と写像 (billing/03) | + 印の表 `iap_reconcile_attempts`・関数 `billing_iap_reconcile_claim_candidates`・部分索引 `idx_personal_subscriptions_iap_reconcile` (`personal_subscriptions` の列・状態は増えない) |
+| DB | `personal_subscriptions` のストアの列と写像 (billing/03) | + 印の表 `iap_reconcile_attempts`・関数 `billing_iap_reconcile_candidates` (読むだけ)・`billing_iap_reconcile_mark_attempted` (印を書く)・部分索引 `idx_personal_subscriptions_iap_reconcile` (`personal_subscriptions` の列・状態は増えない) |
 | 利用者に紐づく表の分類 (F24) | `billing_customers` ほか | + `iap_reconcile_attempts` (書き出しは除外・第 3 条は「有料プラン」・退会で CASCADE) |
 | 権利の判定 (`get_effective_plan`) | status だけ | 変えない (R11・案 E を退ける) |
 | 手動付与の失効 (`expire-manual-plan-grants`) | ストアの行を扱わない | 変えない (ストアの行は本冊の cron) |
@@ -500,14 +530,18 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 | 認証済み | `isMaintenanceFlagOn()` = true | 終わり | 200 `{ status: 'maintenance' }` |
 | 認証済み | `createRevenueCatGateway()` が `RevenueCatNotConfiguredError` | 終わり | 200 `{ status: 'not_configured' }`・warn 1 行 (変数名はログにだけ) |
 | 設定の解釈 | `IAP_RECONCILE_*` が範囲外・整数でない | 処理へ | warn `{ ignored_env }`・既定値 |
-| 候補 | 候補の RPC (`billing_iap_reconcile_claim_candidates`) の失敗・想定外の形 | 終わり | service はそのまま投げる (誰も取り直していない) → route が `internalError` → 500 |
-| 処理 | 候補 0 | 終わり | 200 `{ status: 'idle', candidates: 0, …, failed: {}, stopped_early: null, oldest_period_end: null }` |
+| 候補 | 候補の RPC (`billing_iap_reconcile_candidates`) の失敗・想定外の形 | 終わり | service はそのまま投げる (誰も取り直していない。印の RPC も呼ばない) → route が `internalError` → 500 |
+| 処理 | 候補 0 | 終わり | 200 `{ status: 'idle', candidates: 0, …, failed: {}, stopped_early: null, oldest_period_end: null }` (印の RPC を呼ばない) |
+| 処理 | 予算の内で次の利用者の取り直しを始める (`syncStoreSubscriber` を呼ぶ) | 処理 | その利用者を「試した利用者」に加える (結果を問わない。下の 4 つの行のどれになっても) |
 | 処理 | 運営の処置が要る利用者 (`isIapReconcileRejectedCode`: `BillingRpcError` の `BILL_LIVE_ROW_CONFLICT`・`IapError` の `BILL_IAP_UNKNOWN_PRODUCT`) | 処理 (次の利用者) | `rejected[code] += 1`・warn (`user_id`・`code`) |
 | 処理 | 利用者 1 人の失敗 (`classifyReconcileFailure` = `user`: 応答の形の違い・そのほかの 4xx・`RevenueCatApiError` 以外 (`BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` の `BillingRpcError` を含む)) | 処理 (次の利用者) | `failed[kind] += 1`・warn (`user_id`・`kind`) |
-| 処理 | 回全体の失敗 (`run`: `status: null`・401 / 403・5xx) | 締め | `failed[kind] += 1`・`stopped_early = 'revenuecat_unavailable'` |
-| 処理 | 予算 (40 秒) を超えた | 締め | `stopped_early = 'budget'` |
-| 処理 | 429 (`rate_limited`) | 締め | `stopped_early = 'rate_limited'`・warn |
-| 処理 | 候補を全部試した | 締め | — |
+| 処理 | 回全体の失敗 (`run`: `status: null`・401 / 403・5xx) | 印 | `failed[kind] += 1`・`stopped_early = 'revenuecat_unavailable'` (この利用者は試した利用者。後ろは試さない) |
+| 処理 | 予算 (40 秒) を超えた (次の利用者を始める前に判定) | 印 | `stopped_early = 'budget'` (この利用者から後ろは試さない) |
+| 処理 | 429 (`rate_limited`) | 印 | `stopped_early = 'rate_limited'`・warn (この利用者は試した利用者。後ろは試さない) |
+| 処理 | 候補を全部試した | 印 | — |
+| 印 | 試した利用者が 0 (候補の RPC が予算を使い切り、1 人目の前に止まった回だけ) | 締め | 印の RPC を呼ばない |
+| 印 | 試した利用者が 1 以上 | 締め | `markReconcileAttempted({ userIds: 試した利用者, attemptedAt: 回の開始 })` (1 回の RPC = `billing_iap_reconcile_mark_attempted`)。選んだのに試さなかった利用者は渡さない (印が進まず、次の回で先に選ばれる) |
+| 印 | 印の RPC の失敗 | 終わり | service はそのまま投げる (取り直しと写しは済んでいる) → route が `internalError` → 500 (要約は残らない。試した利用者の印が進まないので、次の回も同じ利用者が先に来る) |
 | 締め | `failed` が 0 | 終わり | 200 `{ status: 'processed', …, failed: {}, stopped_early }`・info 1 行 (要約) |
 | 締め | `failed` が 1 以上 | 終わり | service が warn (要約) → `IapReconcileFailedError` → route が `internalError(…, { requestId, summary })` → 500 固定の本文・`app_logs` error (要約つき) → `cron_failure` |
 
@@ -525,7 +559,7 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 | §8.4 route | `src/app/api/cron/iap-reconcile/route.ts` (新設) | `place=` |
 | §8.5 既存ファイルの差分 | 段 A: `src/lib/account-export-tables.ts` (`insert=`)。段 B: `src/lib/env.ts` (`insert=`)・`.env.example`・`vercel.json`・`ENV_SETUP.md` | `insert=` / 文面 |
 
-手順は billing/01 §8.0 (印の付いたブロックを置き場所に置き、`npx tsc --noEmit` をリポジトリ全体に当てる)。段 B は段 A のマージ後 (`database.types.ts` に `billing_iap_reconcile_claim_candidates` がある状態) に型検査する。
+手順は billing/01 §8.0 (印の付いたブロックを置き場所に置き、`npx tsc --noEmit` をリポジトリ全体に当てる)。段 B は段 A のマージ後 (`database.types.ts` に `billing_iap_reconcile_candidates`・`billing_iap_reconcile_mark_attempted` がある状態) に型検査する。
 
 規則 (billing/03 §8.0 と同じ): `iap-reconcile-core.ts` は zod 以外を import しない。`iap-reconcile-service.ts` は `revenuecat-gateway`・`iap-repository`・`iap-reconcile-repository`・`@/lib/env` を import しない (route が作って deps で渡す)。親の `iap-core.ts`・`iap-service.ts`・`revenuecat-gateway.ts`・`iap-repository.ts` は変えない。
 
@@ -566,11 +600,14 @@ export const IAP_RECONCILE_MAX_DURATION_SECONDS = 60;
 export const IAP_RECONCILE_RUN_BUDGET_MS = 40_000;
 /** 取り直しの開始の間隔 (ms)。RevenueCat の案内 (REST v1 は 1 秒に 1 回程度。billing/04 §2.3 P1) に合わせる */
 export const IAP_RECONCILE_REQUEST_INTERVAL_MS = 1_000;
-/** 1 回の処理で取り直す利用者の上限 (既定) = 予算 ÷ 間隔 (= 40)。環境変数 IAP_RECONCILE_BATCH_SIZE で上書きできる */
-export const IAP_RECONCILE_BATCH_SIZE = Math.floor(IAP_RECONCILE_RUN_BUDGET_MS / IAP_RECONCILE_REQUEST_INTERVAL_MS);
+/**
+ * 1 回の処理で試せる利用者の数の上限 = 予算 ÷ 間隔 (= 40)。これより多く選んでも予算の中で試せない (試さなかった利用者は印が進まず次の回に回るだけ)
+ * ので、環境変数 IAP_RECONCILE_BATCH_SIZE はこれより上に上げられない (下げる向きだけ)。DB 関数の c_max_users (200) 以下 (テスト 10 が migration の文面を読んで見る)
+ */
+export const IAP_RECONCILE_BATCH_SIZE_MAX = Math.floor(IAP_RECONCILE_RUN_BUDGET_MS / IAP_RECONCILE_REQUEST_INTERVAL_MS);
+/** 1 回の処理で選ぶ利用者の数 (既定) = 試せる数の上限。環境変数 IAP_RECONCILE_BATCH_SIZE で 1〜上限に下げられる (RevenueCat への回数を減らす) */
+export const IAP_RECONCILE_BATCH_SIZE = IAP_RECONCILE_BATCH_SIZE_MAX;
 export const IAP_RECONCILE_BATCH_SIZE_MIN = 1;
-/** DB 関数 billing_iap_reconcile_claim_candidates の p_limit の上限 (c_max_limit) と同じ値 (一致はテスト 10。migration の文面を読む) */
-export const IAP_RECONCILE_BATCH_SIZE_MAX = 200;
 /**
  * 期限の後に取り直しても live のままの行 (ストアの猶予期間の past_due など) を、次に取り直すまでの間隔 (時間。既定)。
  * 猶予期間は日の単位で続くので毎時は無駄が多く、6 時間なら 1 日 4 回。環境変数 IAP_RECONCILE_RECHECK_HOURS で上書きできる
@@ -625,7 +662,7 @@ export function resolveIapReconcileSettings(sources: IapReconcileSettingSources)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 候補 (DB 関数 billing_iap_reconcile_claim_candidates の行) とポート
+// 候補 (DB 関数 billing_iap_reconcile_candidates の行)・試した利用者の印とポート
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** RETURNS TABLE (user_id uuid, period_end timestamptz, synced_at timestamptz) の 1 行 (PostgREST は timestamptz を ISO の文字列で返す) */
@@ -646,12 +683,22 @@ export interface IapReconcileCandidateQuery {
   limit: number;
 }
 
+/** 回の終わりに書く印 (DB 関数 billing_iap_reconcile_mark_attempted の引数) */
+export interface IapReconcileAttemptMark {
+  /** p_user_ids: この回に syncStoreSubscriber を呼んだ利用者 (結果を問わない。1〜IAP_RECONCILE_BATCH_SIZE_MAX 人・重複なし)。選んだのに試さなかった利用者は入れない */
+  userIds: string[];
+  /** p_attempted_at: 回の開始 (候補の判定の now と同じ時刻) */
+  attemptedAt: Date;
+}
+
 /**
- * 候補を選ぶ (実装は iap-reconcile-repository.ts。テストは偽物を渡す)。返した利用者には DB が試した時刻を書く (次の回は後ろに回る)。
+ * 候補を読み、試した利用者に印を書く (実装は iap-reconcile-repository.ts。テストは偽物を渡す)。
+ * listReconcileCandidates は何も書かない。markReconcileAttempted は回の終わりに 1 回だけ呼ぶ (試した利用者は次の回で後ろに回る)。
  * billing/03 の IapRepository は変えない (別のポート)
  */
 export interface IapReconcileRepository {
-  claimReconcileCandidates(query: IapReconcileCandidateQuery): Promise<IapReconcileCandidate[]>;
+  listReconcileCandidates(query: IapReconcileCandidateQuery): Promise<IapReconcileCandidate[]>;
+  markReconcileAttempted(mark: IapReconcileAttemptMark): Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -811,7 +858,7 @@ export function isReconcileBudgetExhausted(startedAtMs: number, nowMs: number): 
 ```ts
 // tsc:skip place=src/lib/billing/iap-reconcile-repository.ts
 /**
- * IapReconcileRepository の実装 (billing/04 §8.2)。service_role の client で候補の RPC を呼ぶ (RPC が書くのは順番の印の表
+ * IapReconcileRepository の実装 (billing/04 §8.2)。service_role の client で候補を読む RPC と印を書く RPC を呼ぶ (書くのは順番の印の表
  * iap_reconcile_attempts だけ。権利の表への書き込みは billing/03 の iap-repository.ts の applyStoreSubscription が唯一)。
  * 呼ぶ側は必ず cron の認証 (requireCronAuth) のあと
  */
@@ -825,16 +872,23 @@ const hoursInterval = (hours: number): string => `${hours} hours`;
 
 export function createIapReconcileRepository(admin: Admin = getSupabaseAdmin()): IapReconcileRepository {
   return {
-    async claimReconcileCandidates({ now, recheckHours, limit }) {
-      const { data, error } = await admin.rpc('billing_iap_reconcile_claim_candidates', {
+    async listReconcileCandidates({ now, recheckHours, limit }) {
+      const { data, error } = await admin.rpc('billing_iap_reconcile_candidates', {
         p_now: now.toISOString(),
         p_recheck_after: hoursInterval(recheckHours),
         p_limit: limit,
       });
       if (error) throw error;
       const parsed = IapReconcileCandidatesSchema.safeParse(data);
-      if (!parsed.success) throw new Error('billing_iap_reconcile_claim_candidates が想定外の結果を返しました');
+      if (!parsed.success) throw new Error('billing_iap_reconcile_candidates が想定外の結果を返しました');
       return parsed.data;
+    },
+    async markReconcileAttempted({ userIds, attemptedAt }) {
+      const { error } = await admin.rpc('billing_iap_reconcile_mark_attempted', {
+        p_user_ids: userIds,
+        p_attempted_at: attemptedAt.toISOString(),
+      });
+      if (error) throw error;
     },
   };
 }
@@ -854,8 +908,10 @@ export function createIapReconcileRepository(admin: Admin = getSupabaseAdmin()):
  *       rate_limited (429)  → その回を止める (stopped_early = 'rate_limited'。残りは次の回)
  *       run (届かない・401 / 403・5xx) → failed に数えてその回を止める (stopped_early = 'revenuecat_unavailable')
  *       user (応答の形の違い・そのほかの 4xx・RevenueCatApiError 以外 (上の 2 つ以外の業務エラーを含む)) → failed に数えて次の利用者へ
+ *   - ループの後、この回に syncStoreSubscriber を呼んだ利用者 (結果を問わない) にだけ、1 回の RPC で印を書く (markReconcileAttempted)。
+ *     選んだのに予算・429・回全体の失敗で試さなかった利用者は渡さない (印が進まず、次の回で試した利用者より先に選ばれる。billing/04 S18)
  *   - 回の終わりに failed が 1 以上なら IapReconcileFailedError を投げる (route が 500 → 失敗の監視)
- *   - 候補を選ぶ RPC の失敗は、誰も取り直していないのでそのまま投げる (route が 500)
+ *   - 候補を読む RPC・印を書く RPC の失敗はそのまま投げる (route が 500)
  */
 import { createLogger } from '@/lib/db-logger';
 import { BillingRpcError } from '@/lib/billing/repository';
@@ -905,19 +961,22 @@ function rejectedCodeOf(error: unknown): IapReconcileRejectedCode | null {
 }
 
 /**
- * 1 回の処理。候補を選ぶ → 1 人ずつ取り直す → 要約を返す (取り直せなかった利用者がいれば IapReconcileFailedError を投げる)。
- * 取り直しの p_fetched_at は syncStoreSubscriber が GET の前に取る (ここでは取らない)。候補の判定の p_now は処理の開始に 1 回取る
+ * 1 回の処理。候補を読む → 1 人ずつ取り直す → 試した利用者に印を書く → 要約を返す (取り直せなかった利用者がいれば IapReconcileFailedError を投げる)。
+ * 取り直しの p_fetched_at は syncStoreSubscriber が GET の前に取る (ここでは取らない)。候補の判定の p_now と印の時刻は、処理の開始に 1 回取る
  */
 export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settings: IapReconcileRunSettings): Promise<IapReconcileSummary> {
   const now = deps.now ?? (() => new Date());
   const sleep = deps.sleep ?? defaultSleep;
   const startedAtMs = now().getTime();
-  const candidates = await deps.reconcileRepository.claimReconcileCandidates({
-    now: new Date(startedAtMs),
+  const startedAt = new Date(startedAtMs);
+  const candidates = await deps.reconcileRepository.listReconcileCandidates({
+    now: startedAt,
     recheckHours: settings.recheckHours,
     limit: settings.batchSize,
   });
   const summary = emptyIapReconcileSummary(candidates);
+  /** この回に syncStoreSubscriber を呼んだ利用者 (結果を問わない)。ループの後に印を書く。選んだのに試さなかった利用者は入れない */
+  const attemptedUserIds: string[] = [];
   let lastFetchStartedAtMs: number | null = null;
   for (const candidate of candidates) {
     if (isReconcileBudgetExhausted(startedAtMs, now().getTime())) {
@@ -927,6 +986,7 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
     const delay = reconcileFetchDelayMs(lastFetchStartedAtMs, now().getTime());
     if (delay > 0) await sleep(delay);
     lastFetchStartedAtMs = now().getTime();
+    attemptedUserIds.push(candidate.user_id);
     try {
       const outcome = await syncStoreSubscriber(deps, candidate.user_id, IAP_RECONCILE_SOURCE);
       summary.synced += 1;
@@ -938,7 +998,7 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
     } catch (error) {
       const rejectedCode = rejectedCodeOf(error);
       if (rejectedCode !== null) {
-        // 別の live 行との衝突・対応の無い商品 (billing/03 §13.3・S15 の運営の処置)。この利用者は飛ばす (候補に残り、次の回は後ろに回る)
+        // 別の live 行との衝突・対応の無い商品 (billing/03 §13.3・S15 の運営の処置)。この利用者は飛ばす (候補に残り、印で次の回は後ろに回る)
         summary.rejected[rejectedCode] = (summary.rejected[rejectedCode] ?? 0) + 1;
         logger.warn('ストアの購読の取り直しを写せませんでした (運営の処置が要ります)', { user_id: candidate.user_id, code: rejectedCode });
         continue;
@@ -948,7 +1008,7 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
         error instanceof RevenueCatApiError ? { source: 'revenuecat', status: error.status } : { source: 'other' },
       );
       if (failure.scope === 'rate_limited') {
-        // 率の制限。止めて次の回に回す (RevenueCat の案内「止めて再試行」。billing/04 §2.3 P1)
+        // 率の制限。止めて次の回に回す (RevenueCat の案内「止めて再試行」。billing/04 §2.3 P1)。この利用者は試した利用者 (印を書く)、後ろは試さない
         summary.stopped_early = 'rate_limited';
         logger.warn('RevenueCat の率の制限 (429) のため、この回の取り直しを止めました (残りは次の回)', {
           candidates: summary.candidates,
@@ -964,12 +1024,16 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
         ...errorFingerprint(error),
       });
       if (failure.scope === 'run') {
-        // 回全体の失敗 (届かない・鍵の誤り・5xx): 次の利用者でも同じになるので、この回を止める
+        // 回全体の失敗 (届かない・鍵の誤り・5xx): 次の利用者でも同じになるので、この回を止める (この利用者は印で後ろに回る。毎回同じ利用者で止まらない)
         summary.stopped_early = 'revenuecat_unavailable';
         break;
       }
-      // 利用者 1 人の失敗: 後ろの利用者を止めない (この利用者は候補に残り、次の回は後ろに回る)
+      // 利用者 1 人の失敗: 後ろの利用者を止めない (この利用者は候補に残り、印で次の回は後ろに回る)
     }
+  }
+  if (attemptedUserIds.length > 0) {
+    // 試した利用者にだけ印を書く (1 回の RPC)。失敗はそのまま投げる (取り直しと写しは済んでいる。route が 500)
+    await deps.reconcileRepository.markReconcileAttempted({ userIds: attemptedUserIds, attemptedAt: startedAt });
   }
   summary.elapsed_ms = now().getTime() - startedAtMs;
   if (countReconcileFailures(summary) > 0) {
@@ -989,15 +1053,15 @@ export async function reconcileStoreSubscriptions(deps: IapReconcileDeps, settin
  * GET /api/cron/iap-reconcile — 期限を過ぎた live なストアの購読の行を RevenueCat から取り直して写す (Vercel Cron。毎時 41 分。billing/04 §9)
  *
  * Webhook の再送 (5 回・約 80 分) が尽きて写らなかった失効・更新を、本人の操作が無くても期限の後 1 時間以内に personal_subscriptions に写す。
- * 本体は src/lib/billing/iap-reconcile-service.ts の reconcileStoreSubscriptions、候補は DB の関数 billing_iap_reconcile_claim_candidates
- * (src/lib/billing/iap-reconcile-repository.ts)、取り直しと写像は billing/03 の syncStoreSubscriber → billing_apply_store_subscription。
+ * 本体は src/lib/billing/iap-reconcile-service.ts の reconcileStoreSubscriptions、候補と試した利用者の印は DB の関数 billing_iap_reconcile_candidates /
+ * billing_iap_reconcile_mark_attempted (src/lib/billing/iap-reconcile-repository.ts)、取り直しと写像は billing/03 の syncStoreSubscriber → billing_apply_store_subscription。
  *
  * - 認証: Vercel Cron が付ける `Authorization: Bearer <CRON_SECRET>` (src/lib/cron-auth.ts の requireCronAuth)。
  * - メンテナンス中は何もせず次の回に回す (push-outbox と同じ)。
  * - REVENUECAT_SECRET_API_KEY が未設定なら何もしない (DB にも触れない。変数名は warn のログにだけ書き、応答には出さない)。
  * - IAP_RECONCILE_BATCH_SIZE / IAP_RECONCILE_RECHECK_HOURS で 1 回の件数と再確認の間隔を上書きできる (不正な値は既定値に戻して warn)。
  * - 応答 (JSON): { status: 'maintenance' } / { status: 'not_configured' } / { status: 'idle' | 'processed', ...summary }
- *   (件数だけ。利用者 ID・RevenueCat の生の文は出さない)。取り直せなかった利用者がいる回 (IapReconcileFailedError)・候補の RPC の失敗は
+ *   (件数だけ。利用者 ID・RevenueCat の生の文は出さない)。取り直せなかった利用者がいる回 (IapReconcileFailedError)・候補の RPC と印の RPC の失敗は
  *   500 (本文は汎用。要約と詳細は app_logs)。
  * - AI を使わない (AI の SDK・Edge Function を import しない。tests/ai-usage-contract.test.ts の CRON_ENTRYPOINTS)。
  */
@@ -1065,7 +1129,7 @@ export async function GET(req: Request) {
     // ログの保存 (回の要約。待たずに進む) は、createLogger が 1 行ごとに保存が終わるまで関数を止めさせない (#1909)。route では延命しない
     return NextResponse.json({ status: summary.candidates === 0 ? 'idle' : 'processed', ...summary });
   } catch (err) {
-    // 6. 取り直せなかった利用者がいる回・候補の RPC の失敗・想定外は 500 (本文は汎用。app_logs の error → app-log-alerts の cron_failure)。
+    // 6. 取り直せなかった利用者がいる回・候補の RPC と印の RPC の失敗・想定外は 500 (本文は汎用。app_logs の error → app-log-alerts の cron_failure)。
     //    取り直せなかった回は要約 (件数と種類だけ) を error の metadata に残す
     if (err instanceof IapReconcileFailedError) {
       return internalError(ROUTE_NAME, err, { requestId, summary: err.summary });
@@ -1092,8 +1156,8 @@ export async function GET(req: Request) {
   IAP_RECONCILE_BATCH_SIZE: {
     required: false,
     description:
-      'ストアの購読の定期の取り直し (GET /api/cron/iap-reconcile。毎時) で、1 回に取り直す利用者の上限 (1〜200 の整数。billing/04 §8.1)',
-    whenMissing: '既定の 40 人 (予算 40 秒 ÷ RevenueCat への間隔 1 秒)。範囲外・整数でない値も既定に戻る (warn ログに変数名だけが残る)',
+      'ストアの購読の定期の取り直し (GET /api/cron/iap-reconcile。毎時) で、1 回に選ぶ利用者の数 (1〜40 の整数。既定の 40 人より下げる向きだけ。billing/04 §8.1)',
+    whenMissing: '既定の 40 人 (予算 40 秒 ÷ RevenueCat への間隔 1 秒 = 1 回に試せる上限)。範囲外・整数でない値も既定に戻る (warn ログに変数名だけが残る)',
     readOnlyBy: 'src/app/api/cron/iap-reconcile/route.ts',
   },
   IAP_RECONCILE_RECHECK_HOURS: {
@@ -1109,7 +1173,7 @@ export async function GET(req: Request) {
 
 ```text
 # ストアの購読の定期の取り直し (GET /api/cron/iap-reconcile。毎時 41 分。billing/04)。どちらも任意。
-# 1 回に取り直す利用者の上限 (1〜200。空なら 40 人) と、期限の後に取り直しても live のままの行を次に取り直すまでの間隔 (1〜168 時間。空なら 6 時間)。
+# 1 回に選ぶ利用者の数 (1〜40。空なら 40 人。下げる向きだけ) と、期限の後に取り直しても live のままの行を次に取り直すまでの間隔 (1〜168 時間。空なら 6 時間)。
 # 整数だけ。範囲外・整数でない値は既定値に戻る (warn ログに変数名だけが残る)。
 IAP_RECONCILE_BATCH_SIZE=
 IAP_RECONCILE_RECHECK_HOURS=
@@ -1124,7 +1188,7 @@ IAP_RECONCILE_RECHECK_HOURS=
     }
 ```
 
-`ENV_SETUP.md`: (1) 「3 つの保管場所」の表の `Vercel の環境変数 | CRON_SECRET` の行 (`:94`) の path の列挙 `…・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）` を `…・`/api/cron/login-alerts`・`/api/cron/iap-reconcile`（どれも `vercel.json` の `crons`）` にする (`tests/env-setup-cron-secret-crons.test.ts` が集合の一致を見る)。(2) Push 通知の環境変数の表 (`:423` の `PUSH_OUTBOX_BATCH_SIZE` の行がある表) の後に、同じ列の形で「ストアの購読の定期の取り直し（`GET /api/cron/iap-reconcile`。毎時 41 分。billing/04）」の小節を足し、`IAP_RECONCILE_BATCH_SIZE`（任意。1〜200。既定 40）と `IAP_RECONCILE_RECHECK_HOURS`（任意。1〜168。既定 6）の 2 行と、「`REVENUECAT_SECRET_API_KEY` が無い間は何もしない（200 `not_configured`）」の 1 文を書く。
+`ENV_SETUP.md`: (1) 「3 つの保管場所」の表の `Vercel の環境変数 | CRON_SECRET` の行 (`:94`) の path の列挙 `…・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）` を `…・`/api/cron/login-alerts`・`/api/cron/iap-reconcile`（どれも `vercel.json` の `crons`）` にする (`tests/env-setup-cron-secret-crons.test.ts` が集合の一致を見る)。(2) Push 通知の環境変数の表 (`:423` の `PUSH_OUTBOX_BATCH_SIZE` の行がある表) の後に、同じ列の形で「ストアの購読の定期の取り直し（`GET /api/cron/iap-reconcile`。毎時 41 分。billing/04）」の小節を足し、`IAP_RECONCILE_BATCH_SIZE`（任意。1〜40。既定 40。下げる向きだけ）と `IAP_RECONCILE_RECHECK_HOURS`（任意。1〜168。既定 6）の 2 行と、「`REVENUECAT_SECRET_API_KEY` が無い間は何もしない（200 `not_configured`）」の 1 文を書く。
 
 ---
 
@@ -1137,9 +1201,9 @@ IAP_RECONCILE_RECHECK_HOURS=
 | 呼ぶ側 | Vercel Cron (`vercel.json`。`41 * * * *` = 毎時 41 分)。運営の手動の実行は operator/09 §5.3 と同じ (`curl -H "Authorization: Bearer $CRON_SECRET" https://<サイト>/api/cron/iap-reconcile`) |
 | 認証 | `requireCronAuth` (`Authorization: Bearer <CRON_SECRET>`。`CRON_SECRET_PREVIOUS` も受理)。無い・不一致は 401 `{ error: 'unauthorized' }`、未設定は 503 `{ error: 'cron_disabled' }` (既存の型。DB に触れない) |
 | 本文 | 読まない (GET。クエリも読まない) |
-| 流れ | 認証 → `isMaintenanceFlagOn()` (ON なら `maintenance`) → `createRevenueCatGateway()` (鍵が無ければ `not_configured`) → `resolveIapReconcileSettings` (環境変数。不正な値は既定 + warn) → `reconcileStoreSubscriptions(deps, settings)` (§8.3。候補を選ぶ → 1 人ずつ取り直す) → 応答 |
+| 流れ | 認証 → `isMaintenanceFlagOn()` (ON なら `maintenance`) → `createRevenueCatGateway()` (鍵が無ければ `not_configured`) → `resolveIapReconcileSettings` (環境変数。不正な値は既定 + warn) → `reconcileStoreSubscriptions(deps, settings)` (§8.3。候補を読む → 1 人ずつ取り直す → 試した利用者に印を書く) → 応答 |
 | 応答 200 | `{ status: 'maintenance' }` / `{ status: 'not_configured' }` / `{ status: 'idle' \| 'processed', candidates, synced, applied, stale, ended, no_subscription, skipped_unknown, rejected: { [code]: n } (code は `IAP_RECONCILE_REJECTED_CODES` の 2 値), failed: {}, stopped_early: 'budget' \| 'rate_limited' \| null, oldest_period_end: string \| null, elapsed_ms }` (`idle` = 候補 0。200 の `failed` はいつも空。1 以上なら 500)。件数だけで、利用者 ID・RevenueCat の生の文・環境変数の値は載せない |
-| 応答 500 | `internalError` の固定の本文 (`{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }`。`src/lib/api/errors.ts` の既存の形)。取り直せなかった利用者がいた回 (`IapReconcileFailedError`: 回全体の失敗 = 届かない・401 / 403・5xx でその回を止めた、か、利用者 1 人の失敗 = 応答の形の違い・そのほかの 4xx・運営の処置の 2 つ以外の写像の失敗 (`BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` を含む) で、後ろの利用者を取り直したあと)・候補の RPC の失敗・想定外。`app_logs` に `function_name = 'cron/iap-reconcile'`・`level = 'error'` の固定の文 (`IapReconcileFailedError` なら metadata に要約) が残り、`app-log-alerts` の `cron_failure` が運用メールにする |
+| 応答 500 | `internalError` の固定の本文 (`{ error: '処理中にエラーが発生しました', code: 'INTERNAL_ERROR' }`。`src/lib/api/errors.ts` の既存の形)。取り直せなかった利用者がいた回 (`IapReconcileFailedError`: 回全体の失敗 = 届かない・401 / 403・5xx でその回を止めた、か、利用者 1 人の失敗 = 応答の形の違い・そのほかの 4xx・運営の処置の 2 つ以外の写像の失敗 (`BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` を含む) で、後ろの利用者を取り直したあと)・候補を読む RPC と印を書く RPC の失敗・想定外。`app_logs` に `function_name = 'cron/iap-reconcile'`・`level = 'error'` の固定の文 (`IapReconcileFailedError` なら metadata に要約) が残り、`app-log-alerts` の `cron_failure` が運用メールにする |
 | キャッシュ | `dynamic = 'force-dynamic'`・`fetchCache = 'force-no-store'` |
 | 実行時間 | `maxDuration = 60`。処理の予算は 40 秒 (`IAP_RECONCILE_RUN_BUDGET_MS`) |
 | レート制限 | 当社側 (`checkRateLimit`) は使わない (cron の認証で足りる。既存の cron と同じ)。RevenueCat 側は 1 秒に 1 人の間隔と 429 で止める規則 (§8.3) |
@@ -1170,7 +1234,7 @@ IAP_RECONCILE_RECHECK_HOURS=
 | 200 | `{ status: 'processed', ..., stopped_early: 'rate_limited' }` | RevenueCat の 429 で止めた。残りは次の回 |
 | 401 | `{ error: 'unauthorized' }` | `CRON_SECRET` が合わない・無い (`requireCronAuth`) |
 | 503 | `{ error: 'cron_disabled' }` | `CRON_SECRET` が未設定 (`requireCronAuth`) |
-| 500 | `internalError` の固定の本文 | 取り直せなかった利用者がいた回 (`IapReconcileFailedError`)・候補の RPC の失敗・想定外。失敗の監視に乗る |
+| 500 | `internalError` の固定の本文 | 取り直せなかった利用者がいた回 (`IapReconcileFailedError`)・候補を読む RPC と印を書く RPC の失敗・想定外。失敗の監視に乗る |
 
 利用者向けのエラーコード (cross/04) は足さない。
 
@@ -1186,7 +1250,8 @@ IAP_RECONCILE_RECHECK_HOURS=
 | `RevenueCatApiError` (そのほかの 4xx = 400・404 など) | gateway | `user` (利用者 1 人の失敗)。`failed['revenuecat_client_error'] += 1`・warn・次の利用者へ → 回の終わりに 500 |
 | `RevenueCatApiError` (2xx = 応答の形が `RevenueCatCustomerInfoSchema` に合わない。F6) | gateway | `user`。`failed['revenuecat_unexpected_response'] += 1`・warn・次の利用者へ → 回の終わりに 500 |
 | `RevenueCatApiError` 以外 (P0001 の業務コード以外の `PostgrestError`・`listStoreProducts` / `listStoreSubscriptions` の失敗・想定外。F23) | `syncStoreSubscriber` の中 | `user`。`failed['internal'] += 1`・warn (`user_id`・`kind`・`error_name`・`error_code`)・次の利用者へ → 回の終わりに 500 |
-| 候補の RPC の失敗 (`PostgrestError`)・想定外の形 (`Error`) | `claimReconcileCandidates` | 誰も取り直していないので、そのまま投げる → 500 |
+| 候補の RPC の失敗 (`PostgrestError`)・想定外の形 (`Error`) | `listReconcileCandidates` | 誰も取り直していないので、そのまま投げる (印の RPC も呼ばない) → 500 |
+| 印の RPC の失敗 (`PostgrestError`。DB の障害・退会と同時になった外部キーの違反 23503 など) | `markReconcileAttempted` (ループの後) | 取り直しと写しは済んでいる。そのまま投げる → 500 (`IapReconcileFailedError` より先に投げるので、要約は app_logs に残らない。各利用者の warn は残る)。試した利用者の印が進まないので、次の回も同じ利用者が先に来る |
 | `RevenueCatNotConfiguredError` | `createRevenueCatGateway` (route) | ここには来ない (route が先に `not_configured` を返す) |
 
 ### 11.3 ログ (`app_logs`)
@@ -1214,27 +1279,27 @@ IAP_RECONCILE_RECHECK_HOURS=
 `tests/billing-iap-reconcile-core.test.ts` (`iap-reconcile-core.ts` を本物で読む。1 は `tests/billing-iap-core.test.ts` の同名の検査と同じ作り):
 
 1. `it('iap-reconcile-core imports only zod (no I/O, no @/lib)')`
-2. `it('IAP_RECONCILE_BATCH_SIZE equals Math.floor(IAP_RECONCILE_RUN_BUDGET_MS / IAP_RECONCILE_REQUEST_INTERVAL_MS) (= 40) within [MIN 1, MAX 200], IAP_RECONCILE_RECHECK_HOURS (6) is within [MIN 1, MAX 168], and IAP_RECONCILE_RUN_BUDGET_MS + REVENUECAT_REQUEST_TIMEOUT_MS is below IAP_RECONCILE_MAX_DURATION_SECONDS * 1000')`
+2. `it('IAP_RECONCILE_BATCH_SIZE_MAX and IAP_RECONCILE_BATCH_SIZE both equal Math.floor(IAP_RECONCILE_RUN_BUDGET_MS / IAP_RECONCILE_REQUEST_INTERVAL_MS) (= 40) with MIN 1, IAP_RECONCILE_RECHECK_HOURS (6) is within [MIN 1, MAX 168], and IAP_RECONCILE_RUN_BUDGET_MS + REVENUECAT_REQUEST_TIMEOUT_MS is below IAP_RECONCILE_MAX_DURATION_SECONDS * 1000')`
 3. `it('IAP_RECONCILE_SOURCE is iap_reconcile, differs from IAP_SYNC_SOURCE and IAP_LAZY_RESYNC_SOURCE, and does not end with IAP_SUPERSEDED_SOURCE_SUFFIX')`
-4. `it('resolveIapReconcileSettings returns the defaults for undefined / blank, keeps in-range integers, and falls back with the variable name in ignored for out-of-range (0, 201 / 0, 169), non-integer (1.5) and non-numeric values')`
+4. `it('resolveIapReconcileSettings returns the defaults for undefined / blank, keeps in-range integers, and falls back with the variable name in ignored for out-of-range (0, 41 / 0, 169), non-integer (1.5) and non-numeric values')`
 5. `it('IapReconcileCandidatesSchema accepts RPC rows (uuid user_id, period_end, nullable synced_at) and rejects a non-uuid user_id, a missing period_end and a non-array')`
 6. `it('reconcileFetchDelayMs is 0 before the first fetch, IAP_RECONCILE_REQUEST_INTERVAL_MS minus the elapsed time after a fetch started, and 0 once the interval has passed; isReconcileBudgetExhausted is false at exactly the budget and true 1 ms after')`
 7. `it('emptyIapReconcileSummary sets candidates to the length, every count to 0, rejected and failed to {}, stopped_early to null, oldest_period_end to the earliest period_end among the candidates even when it is not the first (null for none) and elapsed_ms to 0; countReconcileFailures sums failed over every kind')`
 8. `it('classifyReconcileFailure maps RevenueCat status null / 401 / 403 / 500 / 503 to run with revenuecat_unreachable / revenuecat_unauthorized / revenuecat_server_error, 429 to rate_limited, 400 / 404 to user with revenuecat_client_error, 200 to user with revenuecat_unexpected_response, and source other to user with internal; every kind is in IAP_RECONCILE_FAILURE_KINDS; IAP_RECONCILE_REJECTED_CODES is exactly [BILL_LIVE_ROW_CONFLICT, BILL_IAP_UNKNOWN_PRODUCT] and isIapReconcileRejectedCode is true for those two and false for BILL_UNKNOWN_PLAN / BILL_UNKNOWN_IAP_STATUS / BILL_IAP_SYNC_CONFLICT')`
 9. `it('IapReconcileFailedError keeps the summary, has the name IapReconcileFailedError and a fixed message that contains no user id')`
-10. `it('IAP_RECONCILE_BATCH_SIZE_MAX equals the c_max_limit constant in the one migration ending with _billing_iap_reconcile.sql')`
+10. `it('IAP_RECONCILE_BATCH_SIZE_MAX is at most the c_max_users constant, declared with the same value in both billing_iap_reconcile_candidates and billing_iap_reconcile_mark_attempted, in the one migration ending with _billing_iap_reconcile.sql')`
 
-`tests/billing-iap-reconcile-service.test.ts` (`reconcileStoreSubscriptions` を本物で動かす。gateway・`IapRepository`・`IapReconcileRepository`・`sleep`・`now` は偽物。`@/lib/db-logger` は `vi.mock`。`syncStoreSubscriber` は本物を通す (`tests/billing-iap-service.test.ts` の `makeRepository` と同じ偽物の作り)):
+`tests/billing-iap-reconcile-service.test.ts` (`reconcileStoreSubscriptions` を本物で動かす。gateway・`IapRepository`・`IapReconcileRepository` (`listReconcileCandidates`・`markReconcileAttempted` の呼び出しを記録する)・`sleep`・`now` は偽物。`@/lib/db-logger` は `vi.mock`。`syncStoreSubscriber` は本物を通す (`tests/billing-iap-service.test.ts` の `makeRepository` と同じ偽物の作り)):
 
-11. `it('reconcileStoreSubscriptions claims candidates with now / recheckHours / limit = batchSize, syncs each user in the returned order with source iap_reconcile through the given gateway and repository, and sums the outcomes (synced / applied / stale / ended / no_subscription / skipped_unknown)')`
+11. `it('reconcileStoreSubscriptions lists candidates with now / recheckHours / limit = batchSize, syncs each user in the returned order with source iap_reconcile through the given gateway and repository, sums the outcomes (synced / applied / stale / ended / no_subscription / skipped_unknown), and after the loop calls markReconcileAttempted once with every synced user id in order and attemptedAt equal to the listing now')`
 12. `it('reconcileStoreSubscriptions does not sleep before the first fetch and sleeps IAP_RECONCILE_REQUEST_INTERVAL_MS minus the elapsed time between the starts of consecutive fetches (a fetch slower than the interval gets no sleep)')`
-13. `it('reconcileStoreSubscriptions stops with stopped_early = budget, leaving the remaining candidates untouched, once now() minus the start exceeds IAP_RECONCILE_RUN_BUDGET_MS, and sets elapsed_ms')`
-14. `it('reconcileStoreSubscriptions skips a user whose sync throws BillingRpcError (BILL_LIVE_ROW_CONFLICT) or IapError (BILL_IAP_UNKNOWN_PRODUCT), counts it in rejected by code, logs a warn with user_id and code, continues with the next user and returns without throwing')`
-15. `it('reconcileStoreSubscriptions stops with stopped_early = rate_limited and returns the summary without throwing on RevenueCatApiError status 429, logging a warn')`
-16. `it('reconcileStoreSubscriptions on RevenueCatApiError status null / 401 / 403 / 503 for the first user counts failed by kind, sets stopped_early = revenuecat_unavailable, does not fetch the next user, and throws IapReconcileFailedError carrying the summary')`
-17. `it('reconcileStoreSubscriptions on a per-user failure of the first user (RevenueCatApiError status 200 unexpected shape, status 404, a BillingRpcError BILL_UNKNOWN_PLAN or BILL_UNKNOWN_IAP_STATUS from applyStoreSubscription (kind internal, error_code = the code, rejected stays {}), or a non-business PostgrestError from applyStoreSubscription) counts failed by kind, logs a warn with user_id / kind / error_code, still syncs every later user, and then throws IapReconcileFailedError whose summary has the later users in synced')`
-18. `it('reconcileStoreSubscriptions throws IapReconcileFailedError when a 429 stops a run that already has a per-user failure, and rethrows the original error without syncing anyone when claimReconcileCandidates fails')`
-19. `it('reconcileStoreSubscriptions with no candidates calls neither the gateway nor sleep and returns candidates 0 / failed {} / stopped_early null / oldest_period_end null')`
+13. `it('reconcileStoreSubscriptions stops with stopped_early = budget once now() minus the start exceeds IAP_RECONCILE_RUN_BUDGET_MS, leaving the remaining candidates untouched (not synced and not passed to markReconcileAttempted, which receives only the users tried before the stop), and sets elapsed_ms; when the budget is already exceeded before the first user, markReconcileAttempted is not called')`
+14. `it('reconcileStoreSubscriptions skips a user whose sync throws BillingRpcError (BILL_LIVE_ROW_CONFLICT) or IapError (BILL_IAP_UNKNOWN_PRODUCT), counts it in rejected by code, logs a warn with user_id and code, continues with the next user, passes the skipped user to markReconcileAttempted, and returns without throwing')`
+15. `it('reconcileStoreSubscriptions stops with stopped_early = rate_limited and returns the summary without throwing on RevenueCatApiError status 429, logging a warn; markReconcileAttempted receives the users up to and including the one that got 429, not the later ones')`
+16. `it('reconcileStoreSubscriptions on RevenueCatApiError status null / 401 / 403 / 503 for the first user counts failed by kind, sets stopped_early = revenuecat_unavailable, does not fetch the next user, marks only the first user, and throws IapReconcileFailedError carrying the summary')`
+17. `it('reconcileStoreSubscriptions on a per-user failure of the first user (RevenueCatApiError status 200 unexpected shape, status 404, a BillingRpcError BILL_UNKNOWN_PLAN or BILL_UNKNOWN_IAP_STATUS from applyStoreSubscription (kind internal, error_code = the code, rejected stays {}), or a non-business PostgrestError from applyStoreSubscription) counts failed by kind, logs a warn with user_id / kind / error_code, still syncs every later user, marks every user including the failed one, and then throws IapReconcileFailedError whose summary has the later users in synced')`
+18. `it('reconcileStoreSubscriptions throws IapReconcileFailedError when a 429 stops a run that already has a per-user failure, rethrows the original error without syncing or marking anyone when listReconcileCandidates fails, and rethrows a markReconcileAttempted failure after the users were synced')`
+19. `it('reconcileStoreSubscriptions with no candidates calls neither the gateway, sleep nor markReconcileAttempted and returns candidates 0 / failed {} / stopped_early null / oldest_period_end null')`
 20. `it('reconcileStoreSubscriptions counts a user_deleted outcome only in synced (applied / stale unchanged)')`
 
 `tests/api/cron-iap-reconcile-route.test.ts` (route を本物で動かす。`@/lib/billing/iap-reconcile-service`・`@/lib/billing/revenuecat-gateway`・`@/lib/billing/iap-repository`・`@/lib/billing/iap-reconcile-repository`・`@/lib/maintenance-mode`・`@/lib/db-logger` は `vi.mock`。`requireCronAuth` は本物。route はファイルの一番外側で 1 回だけ読む (`tests/api/cron-login-alerts-route.test.ts` と同じ形。テスト・フックの中で import しない)。`CRON_SECRET` のダミーは `dummy-cron-secret-0123456789abcdef` (login-alerts・backup-freshness と同じ値。`.gitleaks.toml` の除外に載っている)):
@@ -1255,32 +1320,33 @@ IAP_RECONCILE_RECHECK_HOURS=
 `tests/billing-iap-reconcile-migration-contract.test.ts` (`tests/billing-manual-plan-grant-migration-contract.test.ts` と同じ作り):
 
 31. `it('exactly one migration ends with _billing_iap_reconcile.sql, the same-numbered rollback exists, and the headers name each other (-- migration: / -- rollback:)')`
-32. `it('the migration starts with SET LOCAL lock_timeout; its statements are only CREATE TABLE IF NOT EXISTS iap_reconcile_attempts (user_id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE, attempted_at timestamptz NOT NULL) with ENABLE ROW LEVEL SECURITY / DROP POLICY IF EXISTS + CREATE POLICY / REVOKE / GRANT / COMMENT on it, CREATE INDEX IF NOT EXISTS idx_personal_subscriptions_iap_reconcile with its COMMENT, and CREATE OR REPLACE FUNCTION billing_iap_reconcile_claim_candidates with REVOKE / GRANT / COMMENT; no ALTER TABLE on other tables, no TRIGGER, no cron.schedule, and no INSERT / UPDATE / DELETE outside the function body')`
-33. `it('iap_reconcile_attempts has RLS enabled with a USING (false) WITH CHECK (false) policy, revokes PUBLIC / anon / authenticated / service_role and grants only SELECT to service_role; billing_iap_reconcile_claim_candidates is VOLATILE SECURITY DEFINER with SET search_path = empty and #variable_conflict use_column, references tables as public.*, has no dynamic SQL, revokes PUBLIC / anon / authenticated and grants EXECUTE to service_role only')`
-34. `it('the function declares c_max_limit as a positive integer CONSTANT, and the 22023 guards cover NULL arguments, a non-positive p_recheck_after and p_limit outside 1..c_max_limit')`
-35. `it('the candidate predicate is verbatim (iap_store IS NOT NULL / status IN trialing, active, past_due / current_period_end IS NOT NULL / current_period_end <= p_now / iap_synced_at IS NULL OR iap_synced_at < current_period_end OR iap_synced_at <= p_now - p_recheck_after) with DISTINCT ON (user_id), the order is ORDER BY a.attempted_at ASC NULLS FIRST, d.due_period_end, d.due_user_id with LIMIT p_limit, the picked users are upserted into iap_reconcile_attempts with p_now under pg_advisory_xact_lock, and the index predicate is iap_store IS NOT NULL AND status IN the same 3 values')`
-36. `it('rollback drops the function with the same signature, the index and the table iap_reconcile_attempts, and contains no DELETE / UPDATE / TRUNCATE')`
+32. `it('the migration starts with SET LOCAL lock_timeout; its statements are only CREATE TABLE IF NOT EXISTS iap_reconcile_attempts (user_id uuid PRIMARY KEY REFERENCES auth.users (id) ON DELETE CASCADE, attempted_at timestamptz NOT NULL) with ENABLE ROW LEVEL SECURITY / DROP POLICY IF EXISTS + CREATE POLICY / REVOKE / GRANT / COMMENT on it, CREATE INDEX IF NOT EXISTS idx_personal_subscriptions_iap_reconcile with its COMMENT, and CREATE OR REPLACE FUNCTION billing_iap_reconcile_candidates and billing_iap_reconcile_mark_attempted, each with REVOKE / GRANT / COMMENT; no ALTER TABLE on other tables, no TRIGGER, no cron.schedule, no INSERT / UPDATE / DELETE outside the body of billing_iap_reconcile_mark_attempted, and none inside the body of billing_iap_reconcile_candidates')`
+33. `it('iap_reconcile_attempts has RLS enabled with a USING (false) WITH CHECK (false) policy, revokes PUBLIC / anon / authenticated / service_role and grants only SELECT to service_role; billing_iap_reconcile_candidates is STABLE SECURITY DEFINER with SET search_path = empty and #variable_conflict use_column, billing_iap_reconcile_mark_attempted is VOLATILE SECURITY DEFINER with SET search_path = empty, both reference tables as public.* / auth.users, have no dynamic SQL, revoke PUBLIC / anon / authenticated and grant EXECUTE to service_role only')`
+34. `it('both functions declare c_max_users as a positive integer CONSTANT; the 22023 guards of billing_iap_reconcile_candidates cover NULL arguments, a non-positive p_recheck_after and p_limit outside 1..c_max_users, and those of billing_iap_reconcile_mark_attempted cover NULL arguments and more than c_max_users ids')`
+35. `it('the candidate predicate is verbatim (iap_store IS NOT NULL / status IN trialing, active, past_due / current_period_end IS NOT NULL / current_period_end <= p_now / iap_synced_at IS NULL OR iap_synced_at < current_period_end OR iap_synced_at <= p_now - p_recheck_after) with DISTINCT ON (user_id), the order is ORDER BY a.attempted_at ASC NULLS FIRST, d.due_period_end, d.due_user_id with LIMIT p_limit, billing_iap_reconcile_mark_attempted inserts SELECT u.id, p_attempted_at FROM auth.users AS u WHERE u.id = ANY (p_user_ids) ON CONFLICT ON CONSTRAINT iap_reconcile_attempts_pkey DO UPDATE SET attempted_at = GREATEST(t.attempted_at, EXCLUDED.attempted_at), and the index predicate is iap_store IS NOT NULL AND status IN the same 3 values')`
+36. `it('rollback drops both functions with the same signatures, the index and the table iap_reconcile_attempts, and contains no DELETE / UPDATE / TRUNCATE')`
 37. `it('migration and rollback comments do not attribute decisions')`
 
 ### 12.3 結合 (ローカル Supabase。`tests/integration/rls` に置く。段 A)
 
-`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts` (`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts` と同じ前提と片付け。行は `service_role` で INSERT し、`p_now` を固定の時刻で渡す。利用者ごとに印の行が残るので、it ごとに新しい利用者を作る):
+`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts` (`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts` と同じ前提と片付け。行は `service_role` で INSERT し、`p_now` を固定の過去の時刻で渡し、自分の行の期限をそれより前にする (ほかのテストの行は期限が `p_now` より後なので候補に出ない)。利用者ごとに印の行が残るので、it ごとに新しい利用者を作る):
 
 38. `it('returns one row per user for live store rows past current_period_end whose iap_synced_at is null or earlier than current_period_end, ordered by period_end then user_id among never-attempted users, limited by p_limit')`
 39. `it('excludes a row synced after its current_period_end within p_recheck_after and includes it once iap_synced_at <= p_now - p_recheck_after')`
 40. `it('excludes Stripe rows, manual rows, expired / cancelled store rows, rows with current_period_end NULL and rows whose period has not ended')`
 41. `it('a user with an expired store row and a live store row past its end appears once with the live row period_end')`
-42. `it('raises 22023 for p_limit 0 and 201, for a zero or negative p_recheck_after and for NULL arguments; anon and authenticated cannot execute the function or select iap_reconcile_attempts (42501)')`
+42. `it('billing_iap_reconcile_candidates raises 22023 for p_limit 0 and 201, for a zero or negative p_recheck_after and for NULL arguments; anon and authenticated cannot execute it or select iap_reconcile_attempts (42501)')`
 43. `it('after billing_apply_store_subscription writes an expired snapshot with p_fetched_at after current_period_end, the user is no longer returned; after a renewed snapshot (expires_date in the future) it is no longer returned either')`
-44. `it('sets attempted_at = p_now for every returned user, and with more due users than p_limit the next call returns the never-attempted users first and the users claimed by the previous call last (a user that stays due is not returned first again)')`
+44. `it('billing_iap_reconcile_candidates writes no iap_reconcile_attempts row; with due users A, B, C (A oldest) and p_limit 3, after billing_iap_reconcile_mark_attempted marks only A (B and C returned but not tried), the next call returns B and C before A; after marking B and C later than A, the next call returns A first again (a user that stays due is not returned first every time)')`
+45. `it('billing_iap_reconcile_mark_attempted sets attempted_at = p_attempted_at, keeps the later time when called again with an earlier one (GREATEST), writes a duplicated id once, skips ids that are not in auth.users without error, raises 22023 for NULL arguments and for 201 ids, and anon and authenticated cannot execute it (42501)')`
 
 ### 12.4 受け入れ (整合ゲート。実機)
 
-45. 本番で `curl -H "Authorization: Bearer $CRON_SECRET" https://<サイト>/api/cron/iap-reconcile` が 200 を返し、`REVENUECAT_SECRET_API_KEY` の有無に応じて `not_configured` か `idle` であること。Vercel の Cron Jobs の画面に `/api/cron/iap-reconcile` が毎時の予定で載り、直近の実行が 200 であること。`app_logs` に `cron/iap-reconcile` の error が無いこと。
+46. 本番で `curl -H "Authorization: Bearer $CRON_SECRET" https://<サイト>/api/cron/iap-reconcile` が 200 を返し、`REVENUECAT_SECRET_API_KEY` の有無に応じて `not_configured` か `idle` であること。Vercel の Cron Jobs の画面に `/api/cron/iap-reconcile` が毎時の予定で載り、直近の実行が 200 であること。`app_logs` に `cron/iap-reconcile` の error が無いこと。
 
 ### 12.5 シナリオ ⇄ テスト
 
-並行 (S5・S6・S14) の扱い: 写像の直列 (`billing-user:<uuid>` の advisory lock) と `p_fetched_at` の単調は billing/03 の写像 `billing_apply_store_subscription` の性質で、本冊はその関数を変えないので、同時の書き込みの検査は billing/03 の結合テスト 67 (`is monotonic by p_fetched_at (older fetch is stale) and idempotent for the same snapshot`) が受け持つ。本冊のテストが見るのは、写像が返した `stale` を要約に数えること (11) と、候補を選ぶ関数が鍵を取って印を書くこと (35 の文面・44 の続けて呼んだときの順番) まで。2 つの回を本当に同時に走らせる検査は置かない (鍵の待ちを時刻で作る検査は揺れるため。鍵の文面は 35 が逐語で見る)。
+並行 (S5・S6・S14) の扱い: 写像の直列 (`billing-user:<uuid>` の advisory lock) と `p_fetched_at` の単調は billing/03 の写像 `billing_apply_store_subscription` の性質で、本冊はその関数を変えないので、同時の書き込みの検査は billing/03 の結合テスト 67 (`is monotonic by p_fetched_at (older fetch is stale) and idempotent for the same snapshot`) が受け持つ。本冊のテストが見るのは、写像が返した `stale` を要約に数えること (11) と、候補を読む関数が何も書かないこと (32 の文面・44)、印を書く関数が新しい方の時刻を残すこと (35 の文面・45 の `GREATEST`) まで。2 つの回を本当に同時に走らせる検査は置かない (重なりを時刻で作る検査は揺れるため。重なっても、候補の関数は読むだけ・写像は billing/03 の鍵で直列・印は `GREATEST` で、どの順でも結果が同じことを上の 3 つで見る)。
 
 | シナリオ | テスト |
 |---|---|
@@ -1290,16 +1356,17 @@ IAP_RECONCILE_RECHECK_HOURS=
 | S4 期限の直前の同期 | 38・35 |
 | S5 遅延の再同期と同時 / S6 Webhook と同時 | 11 (写像が返した `stale` を要約の `stale` に数える)・billing/03 の結合テスト 67「is monotonic by p_fetched_at …」(写像の直列と単調。上の注) |
 | S7 鍵が無い | 23 |
-| S8 RevenueCat の失敗・鍵の誤り (回全体) | 8・16・26 |
-| S9 429 | 8・15・18・25 |
-| S10 候補が上限を超える | 12・13・38 (p_limit)・44 |
+| S8 RevenueCat の失敗・鍵の誤り (回全体) | 8・16 (印は 1 人目だけ)・26 |
+| S9 429 | 8・15 (印は 429 の利用者まで)・18・25 |
+| S10 候補が上限を超える | 2 (上限 = 予算 ÷ 間隔)・4 (環境変数は 40 まで)・12・13・38 (p_limit)・44 |
 | S11 運営の処置が要る行 | 8・14・25・44 |
 | S12 メンテナンス中 | 22 |
 | S13 対象外の行 | 40・35 |
-| S14 回の二重 | 35 (候補の関数の advisory lock の文面)・44 (先の回が選んだ利用者を後ろに回す)・11 (`stale` の数え方)・billing/03 の結合テスト 67 (monotonic) |
-| S15 退会 | 20・32 (ON DELETE CASCADE)・`auth-users-fk-on-delete` の `EXPECTED_ACTIONS` (§14.1) |
-| S16 利用者 1 人だけ取り直せない | 8・17・26 |
-| S17 取り直せない利用者が上限より多い | 44 |
+| S14 回の二重 | 32・44 (候補の関数は何も書かない)・35・45 (印は `GREATEST`)・11 (`stale` の数え方)・billing/03 の結合テスト 67 (monotonic) |
+| S15 退会 | 20・32 (ON DELETE CASCADE)・45 (`auth.users` に無い利用者の印は飛ばす)・`auth-users-fk-on-delete` の `EXPECTED_ACTIONS` (§14.1) |
+| S16 利用者 1 人だけ取り直せない | 8・17 (失敗した利用者にも印)・26 |
+| S17 取り直せない利用者が上限より多い | 14・17 (試した利用者に印)・44 |
+| S18 選んだ利用者を 1 回で試しきれない | 13 (予算で止めた後ろには印を書かない)・15・16・44 (印の無い利用者が次の回で先) |
 
 ---
 
@@ -1309,10 +1376,10 @@ IAP_RECONCILE_RECHECK_HOURS=
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (§6)・`database.types.ts` の再生成 (2 本)・契約テスト・結合テスト・印の表の分類 3 か所 (F24。新しい表が migration と同時に見張りに当たるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`tests/billing-iap-reconcile-migration-contract.test.ts`・`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts`・`src/lib/account-export-tables.ts` (§8.5)・`tests/legal-text-1901.test.ts`・`tests/integration/security/auth-users-fk-on-delete.test.ts` (§14.1) | 31〜44 と §14.1 の段 A の行。どれも段 B の `src/lib/billing/iap-reconcile-*` を import しない |
+| A: DB 層 | migration + rollback (§6)・`database.types.ts` の再生成 (2 本)・契約テスト・結合テスト・印の表の分類 3 か所 (F24。新しい表が migration と同時に見張りに当たるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`tests/billing-iap-reconcile-migration-contract.test.ts`・`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts`・`src/lib/account-export-tables.ts` (§8.5)・`tests/legal-text-1901.test.ts`・`tests/integration/security/auth-users-fk-on-delete.test.ts` (§14.1) | 31〜45 と §14.1 の段 A の行。どれも段 B の `src/lib/billing/iap-reconcile-*` を import しない |
 | B: サーバ層 | `iap-reconcile-core.ts`・`iap-reconcile-repository.ts`・`iap-reconcile-service.ts`・route・`env.ts`・`.env.example`・`ENV_SETUP.md`・`vercel.json`・単体テスト・既存の番兵の追随 (§14.1)・設計書の本数の追随 (§14.2 の「段 B と同じ PR」の行。オーケストレーターの専権 PATCH を段 B の PR に合流させる) | §8・§14 | 1〜30 と §14.1 の段 B の行 |
 
-段 B は段 A のマージ後 (型の再生成済み。`admin.rpc('billing_iap_reconcile_claim_candidates', …)` が型で通り、テスト 10 が読む migration がある)。段 A の本番の適用 (追加だけの migration) はマージの前に行う (関数が無いまま新しい Web が出ると route が毎時 500 になるため。段 A のマージ → 本番の適用 → 段 B のマージの順)。段 A は 2 ファイル + 型 2 本 + テスト 2 本 + 分類 3 か所の 9 ファイルで 15 以内。段 B は 4 ファイル + 既存 4 ファイル + テスト 3 本 + 番兵 5 本 (§13.2) + 設計書 5 冊の 21 ファイルで 15 を超えるので、段 B のレビューは分割パネル (サーバ層 8 本・テストと番兵 8 本・設計書 5 冊の各担当 + 横断整合) で行う。
+段 B は段 A のマージ後 (型の再生成済み。`admin.rpc('billing_iap_reconcile_candidates', …)`・`admin.rpc('billing_iap_reconcile_mark_attempted', …)` が型で通り、テスト 10 が読む migration がある)。段 A の本番の適用 (追加だけの migration) はマージの前に行う (関数が無いまま新しい Web が出ると route が毎時 500 になるため。段 A のマージ → 本番の適用 → 段 B のマージの順)。段 A は 2 ファイル + 型 2 本 + テスト 2 本 + 分類 3 か所の 9 ファイルで 15 以内。段 B は 4 ファイル + 既存 4 ファイル + テスト 3 本 + 番兵 5 本 (§13.2) + 設計書 5 冊の 21 ファイルで 15 を超えるので、段 B のレビューは分割パネル (サーバ層 8 本・テストと番兵 8 本・設計書 5 冊の各担当 + 横断整合) で行う。
 
 ### 13.2 触るファイルの母集合 (閉じた一覧。これ以外を触ったら blocking。例外は §14.1 冒頭の「母集合の作り方」で新たに出た、同じ型の行がそのまま当てはまるファイルだけ)
 
@@ -1335,14 +1402,14 @@ IAP_RECONCILE_RECHECK_HOURS=
 
 | 種別 | 名前 |
 |---|---|
-| 表 | `iap_reconcile_attempts` (`user_id uuid` PK・`auth.users` へ ON DELETE CASCADE / `attempted_at timestamptz NOT NULL`。RLS 有効・ポリシー `iap_reconcile_attempts_no_access` (USING false)・service_role は SELECT だけ) |
-| DB 関数 | `billing_iap_reconcile_claim_candidates(timestamptz, interval, integer)` (VOLATILE・SECURITY DEFINER・EXECUTE は service_role だけ。advisory lock の鍵 `billing-iap-reconcile-claim`) |
+| 表 | `iap_reconcile_attempts` (`user_id uuid` PK・`auth.users` へ ON DELETE CASCADE / `attempted_at timestamptz NOT NULL`。RLS 有効・ポリシー `iap_reconcile_attempts_no_access` (USING false)・service_role は SELECT だけ。書くのは `billing_iap_reconcile_mark_attempted` だけ) |
+| DB 関数 | `billing_iap_reconcile_candidates(timestamptz, interval, integer)` (候補を読む。STABLE・SECURITY DEFINER・EXECUTE は service_role だけ。定数 `c_max_users`)・`billing_iap_reconcile_mark_attempted(uuid[], timestamptz)` (試した利用者に印を書く。RETURNS void・VOLATILE・SECURITY DEFINER・EXECUTE は service_role だけ。定数 `c_max_users`) |
 | 索引 | `idx_personal_subscriptions_iap_reconcile` (部分索引。`(current_period_end) WHERE iap_store IS NOT NULL AND status IN ('trialing','active','past_due')`) |
 | 既存の表の列・トリガー・状態・DB の業務エラー・監査 action_type | 無し |
 | 写像の `p_source` の値 | `iap_reconcile` |
 | route | `GET /api/cron/iap-reconcile` (Vercel Cron `41 * * * *`) |
 | TS モジュール | `src/lib/billing/{iap-reconcile-core,iap-reconcile-repository,iap-reconcile-service}.ts`・`src/app/api/cron/iap-reconcile/route.ts` |
-| TS の export (`iap-reconcile-core`) | `IAP_RECONCILE_SOURCE`・`IAP_RECONCILE_CRON_PATH`・`IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES`・`IAP_RECONCILE_MAX_DURATION_SECONDS`・`IAP_RECONCILE_RUN_BUDGET_MS`・`IAP_RECONCILE_REQUEST_INTERVAL_MS`・`IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_BATCH_SIZE_MIN`・`IAP_RECONCILE_BATCH_SIZE_MAX`・`IAP_RECONCILE_RECHECK_HOURS`・`IAP_RECONCILE_RECHECK_HOURS_MIN`・`IAP_RECONCILE_RECHECK_HOURS_MAX`・`HTTP_STATUS_TOO_MANY_REQUESTS`・`HTTP_STATUS_UNAUTHORIZED`・`HTTP_STATUS_FORBIDDEN`・`HTTP_STATUS_CLIENT_ERROR_MIN`・`HTTP_STATUS_SERVER_ERROR_MIN`・`IapReconcileSettingEnvName`・`IapReconcileSettingSources`・`IapReconcileSettings`・`resolveIapReconcileSettings`・`IapReconcileCandidateSchema`・`IapReconcileCandidate`・`IapReconcileCandidatesSchema`・`IapReconcileCandidateQuery`・`IapReconcileRepository`・`IAP_RECONCILE_REJECTED_CODES`・`IapReconcileRejectedCode`・`isIapReconcileRejectedCode`・`IAP_RECONCILE_FAILURE_KINDS`・`IapReconcileFailureKind`・`IapReconcileFailureInput`・`IapReconcileFailureClass`・`classifyReconcileFailure`・`IAP_RECONCILE_STOP_REASONS`・`IapReconcileStopReason`・`IAP_RECONCILE_RUN_STATUSES`・`IapReconcileRunStatus`・`IapReconcileSummary`・`emptyIapReconcileSummary`・`countReconcileFailures`・`IapReconcileFailedError`・`reconcileFetchDelayMs`・`isReconcileBudgetExhausted` (45) |
+| TS の export (`iap-reconcile-core`) | `IAP_RECONCILE_SOURCE`・`IAP_RECONCILE_CRON_PATH`・`IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES`・`IAP_RECONCILE_MAX_DURATION_SECONDS`・`IAP_RECONCILE_RUN_BUDGET_MS`・`IAP_RECONCILE_REQUEST_INTERVAL_MS`・`IAP_RECONCILE_BATCH_SIZE_MAX`・`IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_BATCH_SIZE_MIN`・`IAP_RECONCILE_RECHECK_HOURS`・`IAP_RECONCILE_RECHECK_HOURS_MIN`・`IAP_RECONCILE_RECHECK_HOURS_MAX`・`HTTP_STATUS_TOO_MANY_REQUESTS`・`HTTP_STATUS_UNAUTHORIZED`・`HTTP_STATUS_FORBIDDEN`・`HTTP_STATUS_CLIENT_ERROR_MIN`・`HTTP_STATUS_SERVER_ERROR_MIN`・`IapReconcileSettingEnvName`・`IapReconcileSettingSources`・`IapReconcileSettings`・`resolveIapReconcileSettings`・`IapReconcileCandidateSchema`・`IapReconcileCandidate`・`IapReconcileCandidatesSchema`・`IapReconcileCandidateQuery`・`IapReconcileAttemptMark`・`IapReconcileRepository`・`IAP_RECONCILE_FAILURE_KINDS`・`IapReconcileFailureKind`・`IAP_RECONCILE_REJECTED_CODES`・`IapReconcileRejectedCode`・`isIapReconcileRejectedCode`・`IapReconcileFailureInput`・`IapReconcileFailureClass`・`classifyReconcileFailure`・`IAP_RECONCILE_STOP_REASONS`・`IapReconcileStopReason`・`IAP_RECONCILE_RUN_STATUSES`・`IapReconcileRunStatus`・`IapReconcileSummary`・`emptyIapReconcileSummary`・`countReconcileFailures`・`IapReconcileFailedError`・`reconcileFetchDelayMs`・`isReconcileBudgetExhausted` (46) |
 | TS の export (ほか) | `iap-reconcile-repository.ts`: `createIapReconcileRepository` / `iap-reconcile-service.ts`: `IapReconcileDeps`・`IapReconcileRunSettings`・`reconcileStoreSubscriptions` / route: `runtime`・`dynamic`・`fetchCache`・`maxDuration`・`GET` |
 | 環境変数 | `IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_RECHECK_HOURS` (どちらも任意。`readOnlyBy` = route) |
 | ログの `function_name` | `cron/iap-reconcile`・`billing/iap-reconcile-service` |
@@ -1355,7 +1422,7 @@ IAP_RECONCILE_RECHECK_HOURS=
 
 ### 14.1 既存の番兵 (契約テスト・走査テスト) の追随
 
-grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`crons`・`CRON_ENTRYPOINTS`・`EXEMPT_ROUTES`・`readOnlyBy`・`IAP_RECONCILE`・`iap-reconcile`・`iap_reconcile`・`billing_iap_reconcile_claim_candidates`・`iap_reconcile_attempts`・`personal_subscriptions`・`ACCOUNT_EXPORT_EXCLUDED`・`PRIVACY_DATA_TABLES`・`EXPECTED_ACTIONS`・`cron.schedule`・`6 本`・`REVENUECAT_SECRET_API_KEY`・`iap_synced_at`・`getSupabaseAdmin`・`requireCronAuth`・`internalError`・`createLogger`。
+grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`crons`・`CRON_ENTRYPOINTS`・`EXEMPT_ROUTES`・`readOnlyBy`・`IAP_RECONCILE`・`iap-reconcile`・`iap_reconcile`・`billing_iap_reconcile_candidates`・`billing_iap_reconcile_mark_attempted`・`iap_reconcile_attempts`・`personal_subscriptions`・`ACCOUNT_EXPORT_EXCLUDED`・`PRIVACY_DATA_TABLES`・`EXPECTED_ACTIONS`・`cron.schedule`・`6 本`・`REVENUECAT_SECRET_API_KEY`・`iap_synced_at`・`getSupabaseAdmin`・`requireCronAuth`・`internalError`・`createLogger`。
 
 **母集合の作り方** (実装の各段の最初に origin/main で流し直す。表に無いファイルが出たら、同じ型の行の「直し方」がそのまま当てはまるときに限り直してよい。当てはまらなければ報告する):
 1. `vercel.json` の crons の数・名前を読むテスト: `git grep -l "vercel.json" origin/main -- tests src scripts`。2026-10-22 の origin/main `0fb02e52` では 17 本 (テスト 13 本・コード 4 本。どれも下の行にある。全部の crons を読むのは 7 本、自分の path だけを絞るのは 4 本、残り 2 本とコード 4 本はコメントか別の値で触れるだけ)。
@@ -1384,7 +1451,7 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | `src/__tests__/lib/env.test.ts` (`:419-470` の `sealed` の一覧 (`toEqual`)・`:479-520` の `typeOnly`) | `IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_RECHECK_HOURS` に `readOnlyBy` | `sealed` の `['FEATURE_FLAG_CACHE_TTL_MS', …]` の行の後 (並びは `.sort()` なので `F` と `L` の間) に 2 行 (逐語): `// #1912 billing/04 ストアの購読の定期の取り直しの 1 回の件数と再確認の間隔。不正な値の扱い (既定値に戻して warn) を cron の route 1 か所に置く` / `['IAP_RECONCILE_BATCH_SIZE', 'src/app/api/cron/iap-reconcile/route.ts'],` / `['IAP_RECONCILE_RECHECK_HOURS', 'src/app/api/cron/iap-reconcile/route.ts'],`。`typeOnly` に 2 行: `// @ts-expect-error IAP_RECONCILE_BATCH_SIZE の値を読むのは cron の route (src/app/api/cron/iap-reconcile/route.ts) だけ (#1912 billing/04)` / `getOptionalEnv('IAP_RECONCILE_BATCH_SIZE');` / `// @ts-expect-error IAP_RECONCILE_RECHECK_HOURS も同じ` / `getOptionalEnv('IAP_RECONCILE_RECHECK_HOURS');`。`:419` の it 名の列挙に `IAP_RECONCILE_*` を足す (`FEATURE_FLAG_CACHE_TTL_MS・` の後) | B |
 | `tests/env-source-scan.test.ts` (一覧の全変数が `.env.example` にある・本番コードで値を読むのは `readOnlyBy` のファイルだけ・`process.env.X!` を書かない・`:614-640` の毎分の cron (`process-menu-queue`) が `env.ts` に届かない) | 2 つの環境変数・route が `process.env.IAP_RECONCILE_*` を名前で読む・route は `revenuecat-gateway.ts` 経由で `env.ts` に届く | 変更なし (`.env.example` に 2 行 (§8.5)、読むのは `readOnlyBy` の route だけ、`!` を使わない。`ENTRIES` は `process-menu-queue` だけで、毎時の route は対象外。billing/03 の Webhook の route と同じ) | — |
 | `src/__tests__/lib/plan/entitlements.test.ts` (`:251`・`:277`。`aiFeatureDailyCap` が尋ねる変数の `readOnlyBy` が `src/lib/plan/entitlements.ts`)・`tests/org-challenges-lib.test.ts` (`:309`。`SERVER_ENV_VARS.ORG_CHALLENGE_SHOW_NAMES.readOnlyBy`)・`tests/cron-secret-contract.test.ts` (`:33`。コメントだけ) | `readOnlyBy` の語 | 変更なし (どれも自分の変数の項を名前で引くだけで一覧の全数を見ない。本冊の 2 つの変数はどの項でもない) | — |
-| `tests/database-types-migrations-contract.test.ts` (migration の `CREATE FUNCTION` の名前が両方の `database.types.ts` の `Functions` にある) | `billing_iap_reconcile_claim_candidates` (表 `iap_reconcile_attempts` も型の `Tables` に入る) | 両方の `database.types.ts` を再生成する (operator/09 §3.3 の 5 の手順。270k / 256 で) | A |
+| `tests/database-types-migrations-contract.test.ts` (migration の `CREATE FUNCTION` の名前が両方の `database.types.ts` の `Functions` にある) | `billing_iap_reconcile_candidates`・`billing_iap_reconcile_mark_attempted` (表 `iap_reconcile_attempts` も型の `Tables` に入る) | 両方の `database.types.ts` を再生成する (operator/09 §3.3 の 5 の手順。270k / 256 で) | A |
 | `tests/account-export-tables.test.ts` (`:275` 「分類されていない表が無い」・`:321` 「除外リストの表は、実際にユーザー識別列を持つ」。migration の `CREATE TABLE` を重ねて読む) | 新しい表 `iap_reconcile_attempts` (`user_id`) | テストは変えない。`src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED` に 1 項を足す (§8.5 の逐語) | A |
 | `tests/legal-text-1901.test.ts` (T-34 `:867-891`: 書き出しの分類の表の集合 = `PRIVACY_DATA_TABLES` と `PRIVACY_DATA_EXCLUDED` の和) | `ACCOUNT_EXPORT_EXCLUDED` に `iap_reconcile_attempts` が増える | `PRIVACY_DATA_TABLES` (`:128`) の `coupon_redemptions: '有料プラン',` の行の後に 1 行 (逐語): `iap_reconcile_attempts: '有料プラン',`。`PRIVACY_DATA_EXCLUDED` の `no_writer` には入れない (関数が INSERT するので、同じ it の「書くコード・INSERT する migration が無い」で赤になる)。第 3 条の「有料プラン」の行は既にあるので文面は変えない | A |
 | `tests/integration/security/auth-users-fk-on-delete.test.ts` (D: `auth.users` を指す外部キーの「表.列」の集合 = `EXPECTED_ACTIONS` のキー。`:123`) | 新しい外部キー `iap_reconcile_attempts.user_id` (ON DELETE CASCADE) | `EXPECTED_ACTIONS` の名前の順の並びで `'health_streaks.user_id': 'CASCADE',` (`:191`) の行の後に 1 行 (逐語): `'iap_reconcile_attempts.user_id': 'CASCADE',` | A |
@@ -1418,7 +1485,7 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | `docs/design/operator/11-ops-batches-non-billing.md` §2.1 | `:97` 「いまは #1720 段 B の `cron/login-alerts` (`ROUTE_NAME`) を足した 6 本で、どれも 1 対 1」 | 「いまは #1720 段 B の `cron/login-alerts` (`ROUTE_NAME`) と #1912 billing/04 の `cron/iap-reconcile` (`ROUTE_NAME`) を足した 7 本で、どれも 1 対 1」 | 段 B と同じ PR |
 | 同 §4.1 | `:188` 「V[Vercel Cron の route 6 本]」 | 「V[Vercel Cron の route 7 本]」 | 段 B と同じ PR |
 | 同 §4.2 | `:223` 「既存の 6 本 (`backup-freshness`・`login-alerts` を含む) はどれも」 | 「既存の 7 本 (`backup-freshness`・`login-alerts`・`iap-reconcile` を含む) はどれも」 | 段 B と同じ PR |
-| 同 §11.1 | `:1407` 「vercel.json の crons の 6 本 (backup-freshness・login-alerts を含む) のどれもこの走査に入る')`」 | 「vercel.json の crons の 7 本 (backup-freshness・login-alerts・iap-reconcile を含む) のどれもこの走査に入る')`」(テストの it 名と同じ文) | 段 B と同じ PR |
+| 同 §11.1 | `:1407` 「vercel.json の crons の 6 本 (backup-freshness・login-alerts を含む) のどれもこの走査に入る」 | 「vercel.json の crons の 7 本 (backup-freshness・login-alerts・iap-reconcile を含む) のどれもこの走査に入る」(テストの it 名と同じ文。行の末尾の閉じの引用符・括弧・バッククォートはそのまま残す) | 段 B と同じ PR |
 | `docs/design/operator/12-cron-secret-drift-monitor.md` §0.5 | `:63` 「いまの `vercel.json` の `crons` は 6 本 (上の 5 本と `login-alerts`)。」 | 「いまの `vercel.json` の `crons` は 7 本 (上の 5 本と `login-alerts`・`iap-reconcile` (#1912 billing/04))。」 | 段 B と同じ PR |
 | 同 §8.2 | `:1411` 「\| `vercel.json` \| 6 本 \| 6 本 (変えない) \|」 | 「\| `vercel.json` \| 7 本 \| 7 本 (変えない) \|」(operator/12 は変えない、の意味はそのまま) | 段 B と同じ PR |
 | `docs/design/operator/12-cron-secret-drift-monitor.md` §14 (§14.1 の番兵の追随表の `tests/cron-failure-monitoring-contract.test.ts` 9 (と 8) の行) | `:1747` 「`vercel.json` の crons の 6 本 (`backup-freshness`・`login-alerts` を含む) が走査に入ることも見る」 | 「`vercel.json` の crons の 7 本 (`backup-freshness`・`login-alerts`・`iap-reconcile` を含む) が走査に入ることも見る」 | 段 B と同じ PR |
@@ -1446,9 +1513,9 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 
 ## 15. 本番の準備と運用 (秘密の値は発注者の作業)
 
-1. 段 A のマージ → 本番への migration の適用 (追加だけ。印の表・関数・索引) → 段 B のマージ (Vercel のデプロイで `vercel.json` の cron が登録される)。順を逆にしない (route が関数を呼べず毎時 500 になる)。
+1. 段 A のマージ → 本番への migration の適用 (追加だけ。印の表・関数 2 本・索引) → 段 B のマージ (Vercel のデプロイで `vercel.json` の cron が登録される)。順を逆にしない (route が関数を呼べず毎時 500 になる)。
 2. Vercel の環境変数: `CRON_SECRET` (既存)・`REVENUECAT_SECRET_API_KEY` (billing/03 §17.3。無い間は `not_configured` で何もしない)。`IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_RECHECK_HOURS` は未設定でよい (既定 40 人・6 時間)。
-3. 受け入れ (整合ゲート): §12.4 の 45。販売開始の後は、`app_logs` の `cron/iap-reconcile` の info の要約 (`candidates`・`oldest_period_end`・`stopped_early`) を週に 1 回見て、`stopped_early: 'budget'` / `'rate_limited'` が続くなら `IAP_RECONCILE_BATCH_SIZE` を下げる (率) か、予定を 30 分おきにする (件数。`vercel.json` と `IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES` を同時に変える)。
+3. 受け入れ (整合ゲート): §12.4 の 46。販売開始の後は、`app_logs` の `cron/iap-reconcile` の info の要約 (`candidates`・`synced`・`oldest_period_end`・`stopped_early`) を週に 1 回見る。`candidates` が毎回上限 (40 人) に届いて `oldest_period_end` が古くなっていくか、`stopped_early: 'budget'` (1 人あたりの取り直しが間隔の 1 秒より遅く、選んだ利用者を試しきれない回。試さなかった利用者は印が進まず次の回で先に来る) が続くなら、1 時間に試せる数 (40 人) が足りないので、予定を 30 分おきにする (`vercel.json` と `IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES` を同時に変える)。`IAP_RECONCILE_BATCH_SIZE` は 40 より上げられない (1 回に試せる数は予算 ÷ 間隔で決まる。§8.1)。`stopped_early: 'rate_limited'` が続くなら、`IAP_RECONCILE_BATCH_SIZE` を下げて 1 回に RevenueCat を呼ぶ数を減らす (同期・遅延の再同期・Webhook の処理と RevenueCat の枠を分け合うため) か、`IAP_RECONCILE_REQUEST_INTERVAL_MS` を上げる (定数。§16 の 4)。
 4. 運営の処置が要る行 (`rejected` が続く利用者) は、`app_logs` の warn (`billing/iap-reconcile-service`。`user_id`・`code`) から billing/03 §13.3 (`BILL_LIVE_ROW_CONFLICT`)・S15 (`BILL_IAP_UNKNOWN_PRODUCT`) の手順へ。取り直せない利用者 (`cron/iap-reconcile` の error の `summary.failed`) は、warn `ストアの購読を取り直せませんでした` の `user_id`・`kind`・`error_code` から原因を見る: `revenuecat_unexpected_response` = 当社の Zod (`RevenueCatCustomerInfoSchema`) が RevenueCat の応答に合わない (コードの直し)、`revenuecat_client_error` = その利用者の要求を RevenueCat が拒んだ、`internal` = 写像・行の読み取りの失敗 (`error_code` が `BILL_UNKNOWN_PLAN` なら行の `plan_key` が `subscription_plans` から消えた (データの直し)・`BILL_UNKNOWN_IAP_STATUS` なら TS の不具合 (コードの直し)・それ以外は SQLSTATE)。直すまでその利用者のぶんだけ毎時 500 になる (運用メールは抑止つき)。ほかの利用者の取り直しは止まらない。
 5. 戻すとき: `vercel.json` から行を外して Web を戻す → §6.3 のロールバックを新しい migration として適用 (順を守る)。
 
@@ -1466,8 +1533,9 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | 6 | 遅延の再同期の 5 分 (`IAP_LAZY_RESYNC_MIN_INTERVAL_MS`) と本冊の 6 時間 (`IAP_RECONCILE_RECHECK_HOURS`) は別の定数 | 別のままにする (本人の操作に応える頻度と、定期の裏の頻度は目的が違う) |
 | 7 | 本番のストアの行が 0 件 (F19) なので、1 回の件数の上限 (40 人) と間隔 (毎時) の妥当性は実測できない | 販売開始の後、§15 の 3 で見直す。更新は月額が月 1 回・年額が年 1 回なので、候補は 1 日に契約数の 1/30 程度 + 猶予期間の行。契約 1,000 件でも 1 日 ≈ 35 人で毎時 40 人の上限に届かない |
 | 8 | Vercel の Cron の起動の精度 (Pro は分の精度。P2)。41 分ちょうどに動かない回があっても、候補は次の回に残る | 受け入れる。`IAP_RECONCILE_RECHECK_HOURS_MIN` = 1 時間は、回のぶれで 6 時間ちょうどの回が候補を取りこぼしても次の回で拾える |
-| 9 | 候補を選んだ時点で `attempted_at` を書く (取り直しの成否・予算や 429 で届かなかったかを問わない) | 受け入れる。届かなかった利用者も、まだ試していない利用者と試した時刻の古い利用者の後で必ず再び選ばれる (候補が上限以下なら次の回にそのまま選ばれる)。取り直しのたびに書く形 (利用者ごとの RPC) は RPC が倍になり、得るものが「届かなかった利用者を 1 回早める」だけ |
-| 10 | 回の途中で DB が落ちたとき、残りの利用者は `internal` (利用者 1 人の失敗) に数えられ、RevenueCat への GET を上限まで続けてから 500 になる | 受け入れる (無駄な GET は 1 回に最大 40 件で、1 秒に 1 回の間隔は守る)。DB の失敗を回全体の失敗に数えると、ある利用者の行だけの制約違反で毎回止まる (S16 の欠陥に戻る)。候補を選ぶ RPC の失敗 (DB が初めから落ちている) は、誰も取り直さずに 500 |
+| 9 | 印 (`attempted_at`) を書くのは、その回に `syncStoreSubscriber` を呼んだ利用者だけ (結果を問わない。429・回全体の失敗で止めた利用者を含む)。書く時点は回の終わりの 1 回の RPC (`billing_iap_reconcile_mark_attempted`)。時刻は回の開始 | 受け入れる。選んだのに試さなかった利用者 (予算・429・回全体の失敗の後ろ) は印が進まず、次の回で試した利用者より先に選ばれる (S18)。止めた利用者にも印を書くのは、その利用者だけの GET が毎回時間切れになる (`status: null` = 回全体の失敗に分ける) 場合に、毎回その利用者で回が止まらないため。選んだ時点で書く形 (v1.1〜v1.2) は、試しきれない回で同じ利用者が毎回先に試され、後ろが永久に試されない欠陥があった (§5.2 の (iv))。試すたびに利用者ごとの RPC で書く形は RPC が倍になる。回の終わりに届かない (関数が `maxDuration` で殺される) と印が書かれず、その回に試した利用者が次の回も先に来るが、予算 (40 秒) + 最後の 1 人の時間切れ (10 秒) は `maxDuration` (60 秒) より 10 秒短く (テスト 2)、写像と印の RPC はその余りに収まるので、起きない想定。取り直しが写った利用者は候補から外れるので、起きても同じ利用者を写し直すだけ |
+| 10 | 回の途中で DB が落ちたとき、残りの利用者は `internal` (利用者 1 人の失敗) に数えられ、RevenueCat への GET を上限まで続けてから 500 になる (最後の印の RPC も失敗すれば、その失敗で 500。§16 の 11) | 受け入れる (無駄な GET は 1 回に最大 40 件で、1 秒に 1 回の間隔は守る)。DB の失敗を回全体の失敗に数えると、ある利用者の行だけの制約違反で毎回止まる (S16 の欠陥に戻る)。候補を読む RPC の失敗 (DB が初めから落ちている) は、誰も取り直さずに 500 |
+| 11 | 印の RPC が失敗した回 (DB の障害・取り直しの最中の退会と印の書き込みが重なった外部キーの違反 23503) | 受け入れる。その回は 500 で失敗の監視に乗る (取り直しと写しは済んでいる。要約は残らず、各利用者の warn は残る)。印が進まないので、その回に試した利用者が次の回も先に来る。退会との重なりは次の回で消える (退会した利用者は `auth.users` に無いので印の関数が飛ばす)。DB の障害が続けば毎時 500 で運用メール |
 
 ---
 
@@ -1478,3 +1546,4 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | v1.0 | 2026-10-22 | 新設 (設計ゲート R1 の叩き台。4 相: 外形固定 §3 → 構想 §4 → 構造裁定 §5 → 仕上げ §6〜§15。Issue #1912 の配線の残りの冊「日次の reconcile」を、毎時の Vercel Cron `GET /api/cron/iap-reconcile` と DB の候補の関数 `billing_iap_reconcile_candidates` で確定) |
 | v1.1 | 2026-10-22 | 設計ゲート R1 の指摘 3 件を反映。(1)(2) 利用者 1 人の失敗 (応答の形の違い・そのほかの 4xx・写像の想定外) で回が止まり、その利用者が毎回先頭に来て後ろの全員が取り直されない欠陥: 失敗を回全体 / 利用者 1 人に分け (`classifyReconcileFailure`・`IapReconcileFailedError`・要約の `failed`)、候補の順番を「最後に試した時刻の古い順」にする印の表 `iap_reconcile_attempts` と、選んだ利用者に時刻を書く関数 `billing_iap_reconcile_claim_candidates` (旧 `billing_iap_reconcile_candidates`) に改めた (§4.1・§5.2・§6.2・§8・§11)。表の分類 3 か所を段 A に足した (F24)。(3) 段 A のテストが段 B の定数を import していた点: `c_max_limit` と `IAP_RECONCILE_BATCH_SIZE_MAX` の一致の検査を段 B の単体テスト 10 へ移した。テストを 45 本に振り直した (§12)。シナリオ S16・S17 を足した。周 2 の網羅性の反映: §14.2 に operator/08 §6.2 (`:549`。番兵の見張りの外) の行を足し、operator/12 §14 の行の文書名を明記、行の番号を `d950a7b1` で取り直し (operator/08 §3.2 `:178`・`:180`、billing/03 §18 `:5206`)、§14.1 の `design-doc-vercel-cron-count` の行の数え方 (設計書 3 冊の 8 か所 + it 名 1 か所) を直した |
 | v1.2 | 2026-10-22 | 設計ゲート R2 の指摘 1 件を反映。写像の `BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` を `rejected` (200・運用メールなし) に入れていた点: billing/03 §13.3 の扱いは失敗で運営の処置の表が無いので、`rejected` は運営の処置が決まっている `BILL_LIVE_ROW_CONFLICT` (§13.3)・`BILL_IAP_UNKNOWN_PRODUCT` (S15) の 2 つだけにし、定数 `IAP_RECONCILE_REJECTED_CODES`・型 `IapReconcileRejectedCode`・`isIapReconcileRejectedCode` (§8.1) で 1 か所に閉じた。ほかの業務エラーは `classifyReconcileFailure` の `other` → `failed['internal']` (500 → `cron_failure`)。§2.1・§3.2・§4.1・§4.2・§7.1・§7.3 (a)(b)・§8.1・§8.3・§9.1・§11.2・§12 (テスト 8・14・17)・§12.5・§13.3 (export 42 → 45)・§15 を揃えた。周 3 の網羅性の反映: §14.2 に billing/03 §5.2 の縁の発生源 (2) (`:380`) の行を足し、§0.3・§2.1 の参照に加えた。§7.1 にストア (`iap_store`) の軸の 3 行を足し、§7.3 (a) の置き換えの行と「別の live 行あり」の行にストアの条件を書いた。§14.1 の母集合 3 を 5 本に直し、名指しで読むだけの 3 本の行を足した。§12.5 の S5・S6・S14 の対応をテスト 20 (退会) から 11 (`stale` の数え方) に直し、並行の検査の受け持ち (billing/03 の結合テスト 67) を注に書いた |
+| v1.3 | 2026-10-22 | 設計ゲート R3 の指摘 2 件を反映。(1) §14.2 の operator/11 §11.1 の行で、引用の末尾のバッククォートがセルの間の `|` をコードの span に飲み込み、`tests/docs-table-column-count.test.ts` が赤になる点: 引用から末尾の閉じの記号を外した (本書の表の列の食い違いは 0)。(2) 候補の印を「選んだとき」に書いていたため、1 回に試せる数を超えて選んだ回 (環境変数で上限を上げた・遅い応答・429・回全体の失敗) で、試さなかった利用者まで後ろに回り、期限の古い同じ利用者が毎回先に試されて後ろが永久に試されない欠陥: 候補の関数を読むだけの `billing_iap_reconcile_candidates` (STABLE。advisory lock を外す) に戻し、印はループの後に、その回に `syncStoreSubscriber` を呼んだ利用者だけに 1 回の RPC `billing_iap_reconcile_mark_attempted(uuid[], timestamptz)` (`GREATEST`・`auth.users` に無い利用者は飛ばす) で書く形にした。ポートを `listReconcileCandidates`・`markReconcileAttempted` (`IapReconcileAttemptMark`) にした。あわせて `IAP_RECONCILE_BATCH_SIZE_MAX` を 1 回に試せる数 (予算 ÷ 間隔 = 40) にし (環境変数は下げる向きだけ)、DB の上限は `c_max_users` (200。TS の上限以下をテスト 10 が見る) にした。シナリオ S18 を足し、§0.2・§0.5 Q-1・§1・§3.1 R3・R4・§4・§5.2 (退けた代わり (iv)〜(vi))・§5.3・§6・§7・§8・§9.1・§11・§12 (テスト 2・4・10・11・13〜19・32〜36・42・44 と新しい 45。受け入れは 46)・§12.5・§13・§14.1・§15 の 3・§16 の 9 と 11 を揃えた。土台を origin/main `c1ecc93b` で再確認した |
