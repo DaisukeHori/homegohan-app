@@ -9,6 +9,7 @@ import {
   FROZEN_DISSOLVE_GUIDANCE,
   SELF_DISSOLVE_CONFIRM_KEYWORD,
   SELF_DISSOLVE_COPY,
+  FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE,
   SELF_DISSOLVE_FAILED_MESSAGE,
   SELF_DISSOLVED_NEXT_STEP,
   dissolveOwnScope,
@@ -150,7 +151,18 @@ describe('画面の文 (#1917)', () => {
     }
     expect(DISSOLVED_FAMILY_GROUP_RETENTION_DAYS).toBe(LEGAL_FACTS.dissolvedFamilyGroupRetentionDays);
     expect(SELF_DISSOLVE_COPY.family.effects.some((line) => line.includes(`${DISSOLVED_FAMILY_GROUP_RETENTION_DAYS} 日`))).toBe(true);
-    expect(SELF_DISSOLVE_COPY.family.effects).toHaveLength(5);
+    expect(SELF_DISSOLVE_COPY.family.effects).toHaveLength(6);
+  });
+
+  it('家族の effects に、家族プランの契約は解散しても続き、解約は課金の画面 (ストアの契約はストアの定期購読の管理) から行う、の 1 行がある (billing/03)。組織の effects には無い', () => {
+    expect(SELF_DISSOLVE_COPY.family.effects).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE);
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('解散しても契約は続きます');
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('「プランとお支払い」');
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('App Store / Google Play');
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('定期購読の管理');
+    // 取り消せないことの行は最後のまま
+    expect(SELF_DISSOLVE_COPY.family.effects.at(-1)).toBe('この操作は取り消せません。');
+    expect(SELF_DISSOLVE_COPY.organization.effects).not.toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE);
   });
 
   it('組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)', () => {

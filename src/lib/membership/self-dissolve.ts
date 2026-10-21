@@ -26,6 +26,13 @@ function selfDissolveBody(scope: MembershipScope, scopeId: string): Record<strin
   return scope === 'family' ? { family_id: scopeId, confirm: true } : { organization_id: scopeId, confirm: true };
 }
 
+/**
+ * 家族グループを解散しても、代表者の家族プランの契約 (personal_subscriptions) は続く (billing/03。解散は契約を止めない)。
+ * 解約は課金の画面から (App Store / Google Play の契約はストアの定期購読の管理から) 行うことを、解散の確認に出す
+ */
+export const FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE =
+  '家族プランをご契約の場合、家族グループを解散しても契約は続きます。解約は、Web でお申し込みの方は「プランとお支払い」の画面から、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。';
+
 /** 画面の文 (家族 / 組織)。作りかけ・先送りを示す語 (R-12) は書かない */
 export const SELF_DISSOLVE_COPY: Readonly<
   Record<
@@ -47,6 +54,7 @@ export const SELF_DISSOLVE_COPY: Readonly<
       '解散のお知らせが、アカウントを持つメンバーにメールで届きます。',
       `解散した家族グループの情報 (名前・メンバーの履歴・招待) は、解散から ${DISSOLVED_FAMILY_GROUP_RETENTION_DAYS} 日が経過すると削除されます。保護者の同意の記録があるグループは、同意の記録として残ります。`,
       '各メンバーの食事・健康・献立の記録は、それぞれのアカウントに残ります。',
+      FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE,
       'この操作は取り消せません。',
     ],
     keywordPrompt: `確認のため「${SELF_DISSOLVE_CONFIRM_KEYWORD}」と入力してください`,

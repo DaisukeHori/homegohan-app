@@ -16,7 +16,7 @@ vi.mock('@/lib/membership/self-dissolve', async (importOriginal) => {
 });
 
 import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection';
-import { SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
+import { FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE, SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,7 +25,7 @@ const PENDING_WORDS = ['準備中', '予定'] as const;
 const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
 const ORG_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
 const DISSOLVED_AT = '2026-10-19T05:00:00.123456+00:00';
-const FAMILY_EFFECT_LINES = 5;
+const FAMILY_EFFECT_LINES = 6;
 const ORG_EFFECT_LINES = 4;
 
 let container: HTMLDivElement;
@@ -147,10 +147,11 @@ describe('SelfDissolveSection (#1917)', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it('見出しに所属先の名前、効果の箇条書き (家族は 5 行・組織は 4 行)。文に R-12 の 2 語が無い', async () => {
+  it('見出しに所属先の名前、効果の箇条書き (家族は 6 行 (家族プランの契約は解散しても続くこと。billing/03 を含む)・組織は 4 行)。文に R-12 の 2 語が無い', async () => {
     await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={vi.fn()} />);
     expect(container.querySelector('h3')?.textContent).toBe('「山田家」を解散する');
     expect(container.querySelectorAll('li')).toHaveLength(FAMILY_EFFECT_LINES);
+    expect(Array.from(container.querySelectorAll('li')).map((li) => li.textContent)).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE);
     for (const word of PENDING_WORDS) expect(container.textContent).not.toContain(word);
 
     await render(<SelfDissolveSection scope="organization" scopeId={ORG_ID} scopeName="株式会社テスト" onDissolved={vi.fn()} />);
