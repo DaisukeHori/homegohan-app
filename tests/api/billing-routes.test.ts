@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
   createPortalSession: vi.fn(),
   scheduleCancellation: vi.fn(),
   revokeCancellation: vi.fn(),
+  // billing/03 §8.5: GET /api/billing/subscription の遅延の再同期
+  findLiveSubscription: vi.fn(),
+  createRevenueCatGateway: vi.fn(),
+  lazyResyncStoreSubscription: vi.fn(),
 }));
 
 vi.mock('@/lib/db-logger', () => {
@@ -35,6 +39,11 @@ vi.mock('@/lib/rate-limit', async (importOriginal) => {
 });
 vi.mock('@/lib/billing/stripe-gateway', () => ({ createStripeGateway: () => mocks.createStripeGateway() }));
 vi.mock('@/lib/billing/repository', () => ({ createBillingRepository: () => mocks.createBillingRepository() }));
+vi.mock('@/lib/billing/revenuecat-gateway', () => ({ createRevenueCatGateway: () => mocks.createRevenueCatGateway() }));
+vi.mock('@/lib/billing/iap-repository', () => ({ createIapRepository: () => ({ kind: 'iap-repository' }) }));
+vi.mock('@/lib/billing/iap-service', () => ({
+  lazyResyncStoreSubscription: (...args: unknown[]) => mocks.lazyResyncStoreSubscription(...args),
+}));
 vi.mock('@/lib/billing/service', () => ({
   startCheckout: (...args: unknown[]) => mocks.startCheckout(...args),
   previewCheckout: (...args: unknown[]) => mocks.previewCheckout(...args),
@@ -61,7 +70,7 @@ const USER = { id: '11111111-1111-4111-8111-111111111111', email: 'person@exampl
 const SUMMARY = { plan_key: 'pro', effective_plan_key: 'pro', status: 'active', can_cancel: true };
 const RAW = 'raw stripe message cus_secret (person@example.com)';
 const GATEWAY = { mode: 'test' };
-const REPOSITORY = { kind: 'repository' };
+const REPOSITORY = { kind: 'repository', findLiveSubscription: (...args: unknown[]) => mocks.findLiveSubscription(...args) };
 
 type Call = () => Promise<Response>;
 
@@ -115,6 +124,7 @@ beforeEach(() => {
   mocks.createPortalSession.mockResolvedValue({ url: 'https://billing.stripe.test/p' });
   mocks.scheduleCancellation.mockResolvedValue(SUMMARY);
   mocks.revokeCancellation.mockResolvedValue(SUMMARY);
+  mocks.findLiveSubscription.mockResolvedValue(null);
 });
 
 describe('POST /api/billing/checkout', () => {
@@ -216,6 +226,29 @@ describe('課金の route 共通', () => {
     expect(mocks.checkRateLimit).not.toHaveBeenCalled();
   });
 
+  it('GET /api/billing/subscription reads findLiveSubscription and neither creates the RevenueCat gateway nor calls lazyResyncStoreSubscription for a null row, a Stripe row (iap_store null) or a store row whose current_period_end is in the future', async () => {
+    const future = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const rows = [
+      null,
+      { plan_key: 'pro', status: 'active', stripe_subscription_id: 'sub_1', iap_store: null, current_period_end: '2020-01-01T00:00:00.000Z', iap_synced_at: null },
+      { plan_key: 'pro', status: 'active', stripe_subscription_id: null, iap_store: 'app_store', current_period_end: future, iap_synced_at: null },
+    ];
+    for (const row of rows) {
+      vi.clearAllMocks();
+      mocks.requireUserAllowingFrozen.mockResolvedValue({ id: USER.id, email: USER.email });
+      mocks.createBillingRepository.mockReturnValue(REPOSITORY);
+      mocks.getBillingSummary.mockResolvedValue(SUMMARY);
+      mocks.findLiveSubscription.mockResolvedValue(row);
+      const res = await subscriptionGET();
+      expect(res.status, JSON.stringify(row)).toBe(200);
+      expect(await res.json()).toEqual({ data: SUMMARY });
+      expect(mocks.findLiveSubscription).toHaveBeenCalledWith(USER.id);
+      expect(mocks.createRevenueCatGateway, JSON.stringify(row)).not.toHaveBeenCalled();
+      expect(mocks.lazyResyncStoreSubscription, JSON.stringify(row)).not.toHaveBeenCalled();
+      expect(mocks.getBillingSummary).toHaveBeenCalledWith({ repository: REPOSITORY }, USER.id);
+    }
+  });
+
   it('GET /api/billing/subscription and GET /api/billing/checkout/preview return 200 without STRIPE_SECRET_KEY: they pass only the repository to the service and never call createStripeGateway', async () => {
     mocks.createStripeGateway.mockImplementation(() => {
       throw new StripeNotConfiguredError();
@@ -241,7 +274,7 @@ describe('課金の route 共通', () => {
     }
   });
 
-  it('AI reach inventory: the 5 Stripe-calling billing routes, the Stripe webhook route and account/delete reach the AI markers only through src/lib/env.ts, and the 2 GET billing routes do not reach them', () => {
+  it('AI reach inventory: the 5 Stripe-calling billing routes, GET /api/billing/subscription (lazy RevenueCat resync), the Stripe webhook route and account/delete reach the AI markers only through src/lib/env.ts, and GET /api/billing/checkout/preview does not reach them', () => {
     const envFile = path.join(ROOT, 'src/lib/env.ts');
     const reaching = [
       'src/app/api/billing/checkout/route.ts',
@@ -249,6 +282,7 @@ describe('課金の route 共通', () => {
       'src/app/api/billing/portal/route.ts',
       'src/app/api/billing/subscription/cancel/route.ts',
       'src/app/api/billing/subscription/resume/route.ts',
+      'src/app/api/billing/subscription/route.ts',
       'src/app/api/webhooks/stripe/route.ts',
       'src/app/api/account/delete/route.ts',
     ];
@@ -257,7 +291,7 @@ describe('課金の route 共通', () => {
       expect(reachesAi(full), file).toBe(true);
       expect(reachesAi(full, new Set([envFile])), `${file} は env.ts を辿らなければ届かない`).toBe(false);
     }
-    for (const file of ['src/app/api/billing/subscription/route.ts', 'src/app/api/billing/checkout/preview/route.ts']) {
+    for (const file of ['src/app/api/billing/checkout/preview/route.ts']) {
       expect(reachesAi(path.join(ROOT, file)), file).toBe(false);
     }
   });
@@ -298,7 +332,7 @@ describe('凍結 (BAN) 中の利用者 (billing/01 §9.8)', () => {
       });
     const files = list(apiRoot);
     // 走査の道が変わって 0 本で緑にならないように、本数を固定する
-    expect(files).toHaveLength(7);
+    expect(files).toHaveLength(9);
     const stripComments = (text: string) => text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1');
     const urls: string[] = [];
     for (const file of files) {

@@ -71,6 +71,25 @@ describe('aiDailyLimitErrorOf', () => {
   });
 });
 
+describe('billing/03 §8.8: そのプランでは使えない機能 (HTTP 403 AI_FEATURE_NOT_IN_PLAN)', () => {
+  it('aiDailyLimitErrorOf turns HTTP 403 AI_FEATURE_NOT_IN_PLAN into AiDailyLimitError with the not-in-plan message and leaves 403 LEGAL_CONSENT_REQUIRED and 403 with an AI_DAILY_LIMIT body alone', () => {
+    const locked = aiDailyLimitErrorOf(
+      new Error(`HTTP 403 Forbidden: ${JSON.stringify({ error: '本文の文', code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'menu_generation_ultimate' })}`),
+    );
+    expect(locked).toBeInstanceOf(AiDailyLimitError);
+    expect(locked?.message).toBe('究極モードは、有料プランでお使いいただけます。');
+    // 入れ子の本文も同じ
+    expect(
+      aiDailyLimitErrorOf(new Error(`HTTP 403 : ${JSON.stringify({ error: { code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'image_generation' } })}`))?.message,
+    ).toBe('料理画像の作成は、有料プランでお使いいただけます。');
+    expect(
+      aiDailyLimitErrorOf(new Error(`HTTP 403 Forbidden: ${JSON.stringify({ error: { code: 'LEGAL_CONSENT_REQUIRED', message: '同意が必要です' } })}`)),
+    ).toBeNull();
+    expect(aiDailyLimitErrorOf(new Error(`HTTP 403 Forbidden: ${JSON.stringify({ code: 'AI_DAILY_LIMIT', limit: 10 })}`))).toBeNull();
+    expect(aiDailyLimitErrorOf(new Error(`HTTP 429 Too Many Requests: ${JSON.stringify({ code: 'AI_FEATURE_NOT_IN_PLAN', feature: 'image_generation' })}`))).toBeNull();
+  });
+});
+
 describe('errorOfFailedResponse (生の fetch の失敗の応答)', () => {
   it('429 + AI_DAILY_LIMIT: 固定の文の AiDailyLimitError (生の本文を含まない)', () => {
     const body = JSON.stringify({ error: '本文の文', code: 'AI_DAILY_LIMIT', limit: 10, retryAfter: 3600 });

@@ -19,9 +19,13 @@ import {
   AI_DAILY_CAPPED_FEATURES,
   AI_DAILY_LIMIT_CODE,
   AI_DAILY_LIMIT_FALLBACK_MESSAGE,
+  AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE,
+  AI_PLAN_CAPPED_FEATURES,
   aiDailyLimitMessage,
   aiDailyLimitMessageOfBody,
   aiDailyLimitMessageOfDenied,
+  aiFeatureDailyLimitMessage,
+  aiFeatureNotInPlanMessage,
   aiUltimateModeDailyLimitMessage,
   isAiDailyLimitMessage,
 } from '../supabase/functions/_shared/ai-daily-limit';
@@ -217,6 +221,27 @@ describe('画面に出すときの絞り込み (Web とアプリが同じ答え)
   it.each(RAW_MESSAGES)('こちらで書いた文でない %s は汎用の文に寄せる', (stored) => {
     expect(weeklyMenuRequestErrorMessageForDisplay(stored)).toBe(MENU_REQUEST_FAILED_MESSAGE);
     expect(menuRequestErrorMessageForDisplay(stored)).toBe(MENU_REQUEST_FAILED_MESSAGE);
+  });
+
+  it('使えない機能の文 (AI_PLAN_CAPPED_FEATURES の 4 つの aiFeatureNotInPlanMessage と AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE)・機能ごとの上限の文 (aiFeatureDailyLimitMessage)・aiDailyLimitMessageOfDenied が planLocked と AI_PLAN_CAPPED_FEATURES の cappedFeature から作る文は、Web (weeklyMenuRequestErrorMessageForDisplay / ForResponse) とアプリ (menuRequestErrorMessageForDisplay) がどちらもそのまま出す', () => {
+    // billing/03 §8.8: 行に書く側 (generate-menu-v4 / v5 の aiDailyLimitMessageOfDenied) が作りうる新しい文を、読む側がすべて通す
+    const stored = [
+      ...AI_PLAN_CAPPED_FEATURES.map((feature) => aiFeatureNotInPlanMessage(feature)),
+      AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE,
+      ...AI_PLAN_CAPPED_FEATURES.flatMap((feature) => [aiFeatureDailyLimitMessage(feature, 3), aiFeatureDailyLimitMessage(feature, 15)]),
+      ...AI_PLAN_CAPPED_FEATURES.map((feature) => aiDailyLimitMessageOfDenied({ limit: 0, cappedFeature: feature, planLocked: true })),
+      ...AI_PLAN_CAPPED_FEATURES.map((feature) => aiDailyLimitMessageOfDenied({ limit: 10, cappedFeature: feature })),
+    ];
+    for (const message of stored) {
+      expect(weeklyMenuRequestErrorMessageForDisplay(message), message).toBe(message);
+      expect(weeklyMenuRequestErrorMessageForResponse(message), message).toBe(message);
+      expect(menuRequestErrorMessageForDisplay(message), message).toBe(message);
+    }
+    // 似せた文 (機能名だけ違う・後ろに文が付いた) は汎用の文に寄せる
+    for (const fake of ['写真の解析は、有料プランでお使いいただけます。', `${aiFeatureNotInPlanMessage('image_generation')} detail: secret`]) {
+      expect(weeklyMenuRequestErrorMessageForDisplay(fake), fake).toBe(MENU_REQUEST_FAILED_MESSAGE);
+      expect(menuRequestErrorMessageForDisplay(fake), fake).toBe(MENU_REQUEST_FAILED_MESSAGE);
+    }
   });
 
   it('空 (null・undefined・空文字) は null (画面は自分の既定の文を出す)。文字列でない値は汎用の文', () => {

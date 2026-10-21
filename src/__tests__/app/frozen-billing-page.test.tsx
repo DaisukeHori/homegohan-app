@@ -12,7 +12,7 @@
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { BillingSummary } from '@/lib/billing/core'
+import { EMPTY_PLAN_FEATURES, type BillingSummary } from '@/lib/billing/core'
 
 const { pushMock, nativeMock } = vi.hoisted(() => ({ pushMock: vi.fn(), nativeMock: { value: false } }))
 
@@ -49,6 +49,8 @@ function summaryOf(overrides: Partial<BillingSummary> = {}): BillingSummary {
     can_purchase: false,
     can_cancel: true,
     can_resume: false,
+    manage_in_store: null,
+    features: EMPTY_PLAN_FEATURES,
     ...overrides,
   }
 }
