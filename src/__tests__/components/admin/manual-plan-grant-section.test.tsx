@@ -465,6 +465,36 @@ describe('ManualPlanGrantSection (billing/02 §8.6・§10)', () => {
     expect(text(rows[2])).toContain('2026/10/1 12:00:00');
   });
 
+  it('ManualPlanGrantSection: with a store contract (billing/03 §8.6) shows 由来 ストア, the store note and no grant / revoke form', async () => {
+    mocks.fetchManualPlanView.mockResolvedValueOnce(
+      ok(
+        viewOf({
+          current: {
+            subscription_id: SUBSCRIPTION_ID,
+            plan_key: 'family_pro',
+            status: 'trialing',
+            source: 'store',
+            starts_at: '2026-10-01T00:00:00.000Z',
+            expires_at: EXPIRES_AT_ISO,
+          },
+        }),
+      ),
+    );
+    await renderSection();
+
+    const current = byTestId('manual-plan-grant-current');
+    expect(Array.from(current?.querySelectorAll('dt') ?? []).map((n) => n.textContent)).toEqual(['プラン', '由来', '次回更新']);
+    expect(Array.from(current?.querySelectorAll('dd') ?? []).map((n) => n.textContent)).toEqual(['family_pro', 'ストア (アプリ内課金)', EXPIRES_AT_DISPLAY]);
+    expect(MANUAL_PLAN_SOURCE_LABELS.store).toBe('ストア (アプリ内課金)');
+    expect(byTestId('manual-plan-grant-store-note')?.textContent).toBe(
+      'ストアの契約があります。手動付与はできません (解約は利用者が App Store・Google Play の定期購読の管理で行います)。',
+    );
+    expect(byTestId('manual-plan-grant-stripe-note')).toBeNull();
+    expect(container.querySelector('form')).toBeNull();
+    expect(byTestId('manual-plan-grant-submit')).toBeNull();
+    expect(byTestId('manual-plan-revoke-submit')).toBeNull();
+  });
+
   it('ManualPlanGrantSection: a grant with an expiry date sends expires_on as the date and shows the JST end time; after grant then revoke the grant form comes back with plan/expiry/reason all empty', async () => {
     const grantedWithExpiry: ManualPlanGrantResult = {
       subscription_id: SUBSCRIPTION_ID,

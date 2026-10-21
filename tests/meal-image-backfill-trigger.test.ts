@@ -22,7 +22,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { runMealImageBackfill, type MealImageBackfillOptions } from '../scripts/lib/meal-image-backfill';
 
 const MEAL_ID = 'meal-1';
-/** 画像を待っている AI の画像の料理 (3 品。どれも積み直しの対象) */
+/** 画像を待っている AI の画像の料理 (3 品。役割が無いので、積み直すのは先頭の 1 品だけ。billing/03 Q-16) */
 const WAITING_DISHES = [0, 1, 2].map((index) => ({
   name: `料理${index}`,
   image_status: 'pending',
@@ -71,12 +71,12 @@ describe('#1532 runMealImageBackfill: 処理を起こす条件と件数', () => 
     h.trigger.mockClear();
   });
 
-  it('limit は積めた行と重複の数 (3 品のうち 1 品の書き込みが失敗なら 2)', async () => {
+  it('limit は積めた行と重複の数 (積めた 1・重複 1・失敗 1 の結果なら 2)', async () => {
     h.enqueue.mockResolvedValue({ inserted: 1, duplicates: 1, duplicatesProcessing: 0, failed: 1 });
     const report = await runMealImageBackfill(makeAdmin(), options());
 
     expect(h.enqueue).toHaveBeenCalledTimes(1);
-    expect(h.enqueue.mock.calls[0][0].jobs).toHaveLength(WAITING_DISHES.length);
+    expect(h.enqueue.mock.calls[0][0].jobs.map((job: { dishIndex: number }) => job.dishIndex)).toEqual([0]);
     expect(h.trigger).toHaveBeenCalledTimes(1);
     expect(h.trigger).toHaveBeenCalledWith({
       supabaseUrl: 'http://supabase.test',

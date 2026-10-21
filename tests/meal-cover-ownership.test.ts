@@ -40,11 +40,16 @@ const THREE_DISHES: MealImageDish[] = [
   { name: '味噌汁', role: 'soup', ingredients: ['豆腐', 'わかめ'] },
 ];
 
-/** 3 品の AI の献立 (reconcileDishImages を通した、画像がまだ無い pending の料理) */
+/** 3 品の AI の献立 (reconcileDishImages を通した。画像を待つのは主菜の鮭の塩焼きだけで、副菜と汁物は画像の無い状態。billing/03 Q-16) */
 async function pendingAiMeal(): Promise<MealImageDish[]> {
   const result = await reconcileDishImages({ previousDishes: [], nextDishes: THREE_DISHES, triggerSource: 'test' });
-  expect(result.jobs).toHaveLength(THREE_DISHES.length);
+  expect(result.jobs.map((job) => job.dishIndex)).toEqual([0]);
   return result.dishes;
+}
+
+/** 3 品とも画像を待つ AI の献立 (段 B の前に積んだ献立の形。billing/03 Q-16 の後は主菜だけを積むが、段 B の前の待ちのジョブは主菜でない料理にも画像を書く。§7.3) */
+async function legacyPendingAiMeal(): Promise<MealImageDish[]> {
+  return Promise.all(THREE_DISHES.map(async (dish, index) => ({ ...dish, image_url: null, image_source: 'generated_ai' as const, image_status: 'pending' as const, image_subject_hash: await buildDishImageSubjectHash(dish, index) })));
 }
 
 /** 画像の処理が、ジョブの料理ごとに AI の画像を書いたあとの料理とカバー (各回でカバーの持ち主の決まりを通す) */
@@ -142,15 +147,16 @@ describe('#1487 の整合ゲート: 3 品の AI の献立に利用者がカバ�
       fallbackMealImageUrl: null,
     });
     expect(patched.mealCoverImageUrl).toBe(USER_COVER);
-    expect(patched.jobs.map((job) => job.dishIndex)).toEqual([0, 1, 2]);
+    expect(patched.jobs.map((job) => job.dishIndex)).toEqual([0]);
     // 料理は AI の料理のまま (利用者の画像は料理に付かない)
-    expect(patched.dishes.every((dish) => dish.image_source === 'generated_ai' && !dish.image_url)).toBe(true);
+    expect(patched.dishes[0]).toMatchObject({ image_source: 'generated_ai', image_url: null });
+    expect(patched.dishes.slice(1).every((dish) => dish.image_source === null && !dish.image_url)).toBe(true);
 
     // ワーカーが 3 品の画像を書く: カバーは一度も書かれない
-    const worked = runWorker(patched.dishes, patched.mealCoverImageUrl, [0, 1, 2]);
+    const worked = runWorker(patched.dishes, patched.mealCoverImageUrl, [0]);
     expect(worked.cover).toBe(USER_COVER);
     expect(worked.coverWrites).toBe(0);
-    expect(worked.dishes.map((dish) => dish.image_url)).toEqual(AI_URLS);
+    expect(worked.dishes.map((dish) => dish.image_url)).toEqual([AI_0, null, null]);
 
     // 完了の切り替え (料理を変えない保存し直し): カバーは利用者の画像のまま、ジョブも積まない
     const toggled = await buildDishImagePayload({
@@ -165,7 +171,7 @@ describe('#1487 の整合ゲート: 3 品の AI の献立に利用者がカバ�
 
   it('料理の画像ができあがったあとに利用者がカバーを付けても、保存し直しで AI の料理の画像に戻らない', async () => {
     const dishes = await pendingAiMeal();
-    const ready = runWorker(dishes, null, [0, 1, 2]);
+    const ready = runWorker(dishes, null, [0]);
     // 空のカバーは AI の料理の画像で付け替わる (今までどおり)
     expect(ready.cover).toBe(AI_0);
 
@@ -234,7 +240,7 @@ describe('#1487 の整合ゲート: 写真・商品のカバーの献立に、�
   });
 
   it('カバーが空か AI の料理の画像のときは、今までどおり付け替わる', async () => {
-    const dishes = await pendingAiMeal();
+    const dishes = await legacyPendingAiMeal();
     // 空: 最初にできた料理の画像
     const first = runWorker(dishes, null, [1]);
     expect(first.cover).toBe(AI_1);
@@ -276,13 +282,13 @@ describe('#1487 の整合ゲート: 新しく作る入口 (POST) で送られた
     expect(payload.mealCoverImageUrl).toBe(PHOTO_URL);
   });
 
-  it('商品・手で付けた画像の料理も保持する。source の無い料理と generated_ai の料理は今までどおりジョブを積む', async () => {
+  it('商品・手で付けた画像の料理も保持する。source の無い料理と generated_ai の料理は今までどおり AI の画像の料理として扱い、主菜 (ふつうの料理) にだけ積む (billing/03 Q-16)', async () => {
     const payload = await buildDishImagePayload({
       previousDishes: null,
       nextDishes: [
         { name: '幕の内弁当', image_url: PRODUCT_URL, image_source: 'catalog' },
         { name: '手の画像', image_url: USER_COVER, image_source: 'manual_override', image_status: 'ready' },
-        { name: 'ふつうの料理' },
+        { name: 'ふつうの料理', role: 'main' },
         { name: 'AI の料理', image_url: AI_0, image_source: 'generated_ai', image_status: 'ready' },
       ],
       triggerSource: 'test:POST',
@@ -291,7 +297,8 @@ describe('#1487 の整合ゲート: 新しく作る入口 (POST) で送られた
     });
     expect(payload.dishes[0]).toMatchObject({ image_url: PRODUCT_URL, image_source: 'catalog' });
     expect(payload.dishes[1]).toMatchObject({ image_url: USER_COVER, image_source: 'manual_override', image_status: 'ready' });
-    expect(payload.jobs.map((job) => job.dishIndex)).toEqual([2, 3]);
+    expect(payload.jobs.map((job) => job.dishIndex)).toEqual([2]);
+    expect(payload.dishes[3]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
   });
 
   it('更新の入口 (preserveSubmittedDishImages なし) では、送られた source を見ない (前回の料理で決める)', async () => {
@@ -307,7 +314,7 @@ describe('#1487 の整合ゲート: 新しく作る入口 (POST) で送られた
 
 describe('#1553 料理が 2 品以上の献立で、PATCH の image_url: null (clearCover) が利用者のカバーを外す', () => {
   it('料理の画像ができあがった献立: 利用者のカバーを外し、先頭の AI の料理の画像に戻す (ジョブは積まない)', async () => {
-    const ready = runWorker(await pendingAiMeal(), USER_COVER, [0, 1, 2]);
+    const ready = runWorker(await pendingAiMeal(), USER_COVER, [0]);
     expect(ready.cover).toBe(USER_COVER);
 
     const cleared = await buildDishImagePayload({
@@ -319,7 +326,7 @@ describe('#1553 料理が 2 品以上の献立で、PATCH の image_url: null (c
     });
     expect(cleared.mealCoverImageUrl).toBe(AI_0);
     expect(cleared.jobs).toEqual([]);
-    expect(cleared.dishes.map((dish) => dish.image_url)).toEqual(AI_URLS);
+    expect(cleared.dishes.map((dish) => dish.image_url)).toEqual([AI_0, null, null]);
   });
 
   it('料理の画像がまだ無い献立: カバーを空にし、できた AI の料理の画像が付く', async () => {
@@ -331,9 +338,9 @@ describe('#1553 料理が 2 品以上の献立で、PATCH の image_url: null (c
       fallbackMealImageUrl: USER_COVER,
     });
     expect(cleared.mealCoverImageUrl).toBeNull();
-    expect(cleared.jobs.map((job) => job.dishIndex)).toEqual([0, 1, 2]);
+    expect(cleared.jobs.map((job) => job.dishIndex)).toEqual([0]);
 
-    const worked = runWorker(cleared.dishes, cleared.mealCoverImageUrl, [0, 1, 2]);
+    const worked = runWorker(cleared.dishes, cleared.mealCoverImageUrl, [0]);
     expect(worked.cover).toBe(AI_0);
     expect(worked.coverWrites).toBe(1);
   });
@@ -422,7 +429,7 @@ describe('#1553 料理が 2 品以上の献立で、PATCH の image_url: null (c
   });
 
   it('clearCover が無ければ、今までどおり利用者のカバーを残す', async () => {
-    const ready = runWorker(await pendingAiMeal(), USER_COVER, [0, 1, 2]);
+    const ready = runWorker(await pendingAiMeal(), USER_COVER, [0]);
     const resaved = await buildDishImagePayload({
       previousDishes: ready.dishes,
       triggerSource: 'test:PATCH',
@@ -440,7 +447,7 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
   ];
 
   it('利用者のカバーの AI の献立を、違う料理に作り直す: カバーを空にし、できた AI の画像が付く', async () => {
-    const ready = runWorker(await pendingAiMeal(), USER_COVER, [0, 1, 2]);
+    const ready = runWorker(await pendingAiMeal(), USER_COVER, [0]);
     const regenerated = await reconcileDishImages({
       previousDishes: ready.dishes,
       nextDishes: REGENERATED,
@@ -449,8 +456,8 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
       regeneration: true,
     });
     expect(regenerated.mealCoverImageUrl).toBeNull();
-    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([0, 1]);
-    expect(runWorker(regenerated.dishes, regenerated.mealCoverImageUrl, [0, 1]).cover).toBe(AI_0);
+    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([0]);
+    expect(runWorker(regenerated.dishes, regenerated.mealCoverImageUrl, [0]).cover).toBe(AI_0);
   });
 
   it('写真の料理 (1 品) を違う料理に作り直す: 写真を料理に写さず、AI の画像のジョブを積み、カバーを空にする', async () => {
@@ -509,7 +516,7 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
     expect(runWorker(regenerated.dishes, regenerated.mealCoverImageUrl, [0]).cover).toBe(AI_0);
   });
 
-  it('一部の料理だけ変わった作り直し: 変わった料理は更新待ち、同じまま残った写真の料理は AI の画像の生成に回す (ジョブは料理の順)', async () => {
+  it('一部の料理だけ変わった作り直し: 同じまま残った写真の主菜は AI の画像の生成に回し、変わった副菜 (きんぴら) は主菜でないので画像の無い状態にする (billing/03 Q-16)', async () => {
     const regenerated = await reconcileDishImages({
       previousDishes: photoMeal(),
       nextDishes: [OYAKODON, { ...REGENERATED[1], displayOrder: 1 }],
@@ -518,13 +525,13 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
       regeneration: true,
     });
     await expectReleasedToAi(regenerated.dishes[0], OYAKODON, 0);
-    expect(regenerated.dishes[1]).toMatchObject({ image_url: null, image_source: 'generated_ai', image_status: 'stale' });
-    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([0, 1]);
+    expect(regenerated.dishes[1]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([0]);
     expect(regenerated.mealCoverImageUrl).toBeNull();
-    expect(runWorker(regenerated.dishes, regenerated.mealCoverImageUrl, [0, 1]).cover).toBe(AI_0);
+    expect(runWorker(regenerated.dishes, regenerated.mealCoverImageUrl, [0]).cover).toBe(AI_0);
   });
 
-  it('料理を足した作り直し (前の料理は同じ): 同じまま残った写真の料理も、足した料理も AI の画像の生成に回す', async () => {
+  it('料理を足した作り直し (前の料理は同じ): 同じまま残った写真の主菜は AI の画像の生成に回し、写真の味噌汁と足した料理は主菜でないので画像の無い状態にする (billing/03 Q-16)', async () => {
     const added = { ...REGENERATED[1], displayOrder: 2 };
     const regenerated = await reconcileDishImages({
       previousDishes: photoMeal(),
@@ -534,9 +541,9 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
       regeneration: true,
     });
     await expectReleasedToAi(regenerated.dishes[0], OYAKODON, 0);
-    await expectReleasedToAi(regenerated.dishes[1], MISOSHIRU, 1);
-    expect(regenerated.dishes[2]).toMatchObject({ image_url: null, image_source: 'generated_ai', image_status: 'pending' });
-    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([0, 1, 2]);
+    expect(regenerated.dishes[1]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+    expect(regenerated.dishes[2]).toMatchObject({ image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([0]);
     expect(regenerated.mealCoverImageUrl).toBeNull();
   });
 
@@ -581,7 +588,7 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
     expect(resaved.mealCoverImageUrl).toBe(PHOTO_URL);
   });
 
-  it('自分の写真を持つ料理 (1 品の写真) は、料理を足した作り直しでも写真のまま残し、カバーはその料理の写真から選び直す', async () => {
+  it('自分の写真を持つ料理 (1 品の写真・主菜) は、料理を足した作り直しでも写真のまま残し、足した料理は主菜でないので積まず、カバーはその料理の写真から選び直す (billing/03 Q-16)', async () => {
     // 写真の献立のカバーは外すが、同じまま残った料理が自分の画像 (写真) を持つなら、その料理の画像がカバーの候補になる (deriveMealCoverImage)
     const regenerated = await reconcileDishImages({
       previousDishes: buildPhotoDishList([{ name: '親子丼', role: 'main' }], PHOTO_URL),
@@ -591,7 +598,8 @@ describe('#1553 AI の作り直し (reconcileDishImages の regeneration) で料
       regeneration: true,
     });
     expect(regenerated.dishes[0]).toMatchObject({ image_url: PHOTO_URL, image_source: 'meal_photo', image_status: 'ready' });
-    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([1]);
+    expect(regenerated.jobs.map((job) => job.dishIndex)).toEqual([]);
+    expect(regenerated.dishes[1]).toMatchObject({ image_source: null, image_status: null, image_subject_hash: null });
     expect(regenerated.mealCoverImageUrl).toBe(PHOTO_URL);
   });
 

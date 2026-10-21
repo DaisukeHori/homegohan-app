@@ -12,7 +12,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/db-logger', () => ({ createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn() }) }));
 
-import { reconcileDishImages, type MealImageDish } from '../supabase/functions/_shared/meal-image';
+import { DEFAULT_MEAL_IMAGE_MODEL, buildDishImagePrompt, buildDishImageSubjectHash, type MealImageDish } from '../supabase/functions/_shared/meal-image';
 import { buildDishImagePayload } from '../lib/meal-image-jobs';
 import {
   MEAL_DISH_WRITE_MAX_ATTEMPTS,
@@ -32,11 +32,9 @@ const TWO_DISHES: MealImageDish[] = [
   { name: '味噌汁', role: 'soup', ingredients: ['豆腐', 'わかめ'] },
 ];
 
-/** AI の献立の料理 (reconcileDishImages を通した、画像がまだ無い pending の料理。subject_hash つき) */
+/** 画像を待つ AI の料理 (generated_ai・pending・subject_hash つき) を手で作る。billing/03 Q-16 の後 reconcileDishImages は主菜の 1 品にしか積まないが、同じ献立の 2 つの料理のジョブ (段 B の前に積んだジョブ・主菜を入れ替えた前後のジョブ) は残りうるので、#1527 の競合は 2 品で確かめる */
 async function pendingAiDishes(nextDishes: MealImageDish[]): Promise<MealImageDish[]> {
-  const result = await reconcileDishImages({ previousDishes: [], nextDishes, triggerSource: 'test' });
-  expect(result.jobs).toHaveLength(nextDishes.length);
-  return result.dishes;
+  return Promise.all(nextDishes.map(async (dish, index) => ({ ...dish, image_url: null, image_source: 'generated_ai' as const, image_status: 'pending' as const, image_subject_hash: await buildDishImageSubjectHash(dish, index), image_prompt: buildDishImagePrompt(dish), image_model: DEFAULT_MEAL_IMAGE_MODEL })));
 }
 
 interface UpdateRecord {

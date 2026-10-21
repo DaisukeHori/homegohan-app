@@ -1,3 +1,4 @@
+// @vitest-environment node
 /**
  * RevenueCat の REST v1 の gateway (src/lib/billing/revenuecat-gateway.ts) の単体テスト (billing/03 §14.1 のテスト 121)。
  * createRevenueCatGateway(fetchImpl) に偽の fetch を渡す。秘密の鍵は getOptionalEnv の偽物で与える (本物の RevenueCat を呼ばない)。
