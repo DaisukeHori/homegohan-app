@@ -4631,7 +4631,7 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 116. `it('/faq の料金は「料金はかかりますか？」(FREE_PLAN_FAQ_ANSWER。AI_DAILY_LIMIT_PHRASE を含む)・「有料プランはありますか？」(PAID_PLANS_FAQ_ANSWER)・「返金はできますか？」・「有料プランを解約するには？」の 4 項目で、ページにプレミアム限定・Visa・解約後も次回更新日まで・年払いを書かない')` (§10.5。いまの `:567-571` の it と `:640-642` の it を置き換える)
 
 `tests/legal-text-1901.test.ts` (段 E。cross/20 の T-33・T-34 を改める。§11.5):
-115. T-33 の書き換え (it 名は §11.5)。T-34 の `PRIVACY_DATA_TABLES` / `PRIVACY_DATA_EXCLUDED` の移し替え (it 名は cross/20 のまま)。T-35 は主張の表の 42 行の追加と 2 行の直しで緑
+115. T-33 の書き換え (it 名は §11.5)。T-34 の `PRIVACY_DATA_TABLES` / `PRIVACY_DATA_EXCLUDED` の移し替え (it 名は cross/20 のまま)。T-35 は主張の表の 42 行の追加と 3 行の直し (§11.4) で緑
 
 `tests/landing-page-1867.test.ts` (追加。§10.5):
 104. `it('U-37 pricing.plans の free の items に家族・究極モード・料理画像を含まず、paid の items は PLAN_CATALOG の 3 プランの価格の行で、家族を説明する文 (features の家族のカード・場面の子育て家庭・家族の章の lead・faq の「家族で使えますか？」の答え) はどれも「家族プラン」を含む')`

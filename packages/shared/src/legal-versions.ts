@@ -56,8 +56,8 @@ export interface LegalDocumentInfo {
  * v2026.3 の施行日は公開 (デプロイ) の日 (cross/20 §9.4 の 3・billing/03 §11.6)。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.3', effectiveDate: '2026-10-22' }, // 仮置き: マージ直前に公開日へ置き換える
-  privacy_policy: { version: 'v2026.3', effectiveDate: '2026-10-22' }, // 仮置き: マージ直前に公開日へ置き換える
+  terms_of_service: { version: 'v2026.3', effectiveDate: '2026-10-22' },
+  privacy_policy: { version: 'v2026.3', effectiveDate: '2026-10-22' },
 };
 
 /** 画面に出す文書名 */
