@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { ArrowLeft, Camera, Brain, Target, Users, Heart, Sparkles, ArrowRight } from "lucide-react";
+import { FREE_PLAN_AI_LIMIT_NOTE, PAID_PLAN_SUMMARY } from "@homegohan/shared";
 
 const colors = {
   primary: '#E07A5F',
@@ -31,7 +32,11 @@ const colors = {
  *   (体重計の写真: src/app/api/ai/analyze-weight-scale/route.ts・健康診断の結果票の写真: src/app/api/ai/analyze-health-checkup/route.ts)。
  *   健康画面の「AI分析」(/health/insights) は書かない: 中身を作る POST /api/health/insights を呼ぶ画面・アプリ・cron が無く、
  *   いつも「分析結果がありません」のまま (src/app/(main)/health/insights/page.tsx は一覧の GET と既読にする POST だけ)
- * - 家族: claims の family (招待・献立を一緒に見る・記録の共有)。分量の計算は無いので書かない
+ * - 家族: claims の family (招待・献立を一緒に見る・記録の共有)。分量の計算は無いので書かない。
+ *   家族グループの作成と招待は代表者の家族プランの契約が要る (FAMILY_PLAN_REQUIRED。billing/03 §6.6) ので、
+ *   紹介ページ (landing-copy.ts の「家族で使う」の lead・FAQ) と同じ言い方で条件を書く (#1912 P7)
+ * - AI を使う機能の 1 日の回数の上限と、有料プランで増えるもの: 機能の一覧の下に、/faq・紹介ページと同じ定数
+ *   (FREE_PLAN_AI_LIMIT_NOTE・PAID_PLAN_SUMMARY。@homegohan/shared) で書く (#1912 P7。条件なしで AI の機能を並べない)
  * 最上級と、効果・習慣の定着の約束は書かない
  */
 const features = [
@@ -68,7 +73,7 @@ const features = [
   {
     icon: Users,
     title: '家族で使える',
-    description: '家族を招待して、献立を一緒に見たり、記録を共有したりできます。',
+    description: '家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族を招待して、献立を一緒に見たり、記録を共有したりできます。',
     color: colors.warning,
   },
 ];
@@ -148,6 +153,10 @@ export default function AboutPage() {
               );
             })}
           </div>
+          <p className="text-sm leading-relaxed max-w-5xl mx-auto mt-8" style={{ color: colors.textMuted }} data-testid="about-plan-note">
+            {FREE_PLAN_AI_LIMIT_NOTE}
+            {PAID_PLAN_SUMMARY}
+          </p>
         </div>
       </section>
 
