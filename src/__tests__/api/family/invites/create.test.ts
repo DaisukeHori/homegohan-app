@@ -648,3 +648,38 @@ describe('POST /api/family/invites: 大文字・混在の family_id (#1793)', ()
     expect(mockRpc).not.toHaveBeenCalled();
   });
 });
+
+describe('POST /api/family/invites: 家族プランの門 (billing/03 §6.6・§9.5・#1912)', () => {
+  /** DB の RAISE の生の文 (応答に出してはいけない家族の id を含む) */
+  const rawDbMessage = `FAMILY_PLAN_REQUIRED (family ${familyId})`;
+
+  it('RPC が FAMILY_PLAN_REQUIRED: groups/route.ts と同じ 402 と固定の文を返し、招待の詳細も取らずメールも送らない', async () => {
+    mockRpc.mockImplementation(async (fn: string) => {
+      if (fn === 'create_family_invite') {
+        return { data: null, error: { code: 'P0001', message: rawDbMessage, details: familyId } };
+      }
+      throw new Error(`unexpected rpc: ${fn}`);
+    });
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const res = await POST(postRequest(validBody));
+    const text = await res.text();
+
+    expect(res.status).toBe(402);
+    expect(JSON.parse(text)).toEqual({ error: { code: 'FAMILY_PLAN_REQUIRED', message: '家族プランのご契約が必要です。' } });
+    expect(text).not.toContain(familyId);
+    expect(res.headers.get('Retry-After')).toBeNull();
+    expect(mockRpc.mock.calls.map(([fn]) => fn)).toEqual(['create_family_invite']);
+    expect(mockSendEmail).not.toHaveBeenCalled();
+    // 想定内の断り (契約が無い) なので、500 の RPC_FAILED のログは出さない
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
+  it('家族プランのグループ (RPC が招待を返す) では従来どおり 201 で、招待メールを 1 通送る', async () => {
+    const res = await POST(postRequest(validBody));
+
+    expect(res.status).toBe(201);
+    expect(mockSendEmail).toHaveBeenCalledTimes(1);
+  });
+});

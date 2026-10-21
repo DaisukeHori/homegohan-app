@@ -9,6 +9,10 @@
  *     (招待の承諾・子供の追加・service_role の直接の INSERT のすべて)。子供の昇格 (accept_child_promotion) は、いる子供の行の UPDATE
  *     なので門に当たらない
  *
+ * migration *_family_invite_plan_gate.sql (#1912 の取りこぼし) が足すもの:
+ *   - create_family_invite: 認可 (NOT_FAMILY_ADULT) の直後に、グループが plan_key = free の active なら FAMILY_PLAN_REQUIRED
+ *     (承諾の門のトリガーと同じ式。承諾で断られる招待とそのメールを作らない)
+ *
  * 家族プランの契約は、手動付与 (billing_grant_manual_subscription) で入れ、取り消し (billing_revoke_manual_subscription) で終える
  * (グループのプランは billing/01・02 の同期で family_basic / 4 ⇄ free / 4 になる)。
  *
@@ -221,7 +225,11 @@ describe('billing/03 §6.6: 家族の機能の門', () => {
     const familyId = await insertFreeFamily(rep);
     expect(await familyOf(familyId)).toMatchObject({ plan_key: 'free', member_limit: DEFAULT_MEMBER_LIMIT, status: 'active' });
     const joiner = await createUser('free-group-joiner');
+    // free のグループには招待を作れない (#1912。create_family_invite の門)。承諾の門を見るために、家族プランの間に招待を作ってから契約を終える
+    await grantFamilyPlan(srAdmin, rep.id);
     const token = await inviteToken(rep, familyId, joiner.email);
+    await revokePlan(rep.id);
+    expect(await familyOf(familyId)).toMatchObject({ plan_key: 'free', member_limit: DEFAULT_MEMBER_LIMIT, status: 'active' });
 
     const refusedAccept = await acceptInvite(joiner, token);
     expect(refusedAccept.data).toBeNull();
@@ -258,6 +266,9 @@ describe('billing/03 §6.6: 家族の機能の門', () => {
     expect((await addChild(rep, familyId, 'expire-child')).error).toBeNull();
     const before = await activeMembers(familyId);
     expect(before).toHaveLength(3);
+    // 契約が終わる前に作った招待 (free のグループには新しい招待を作れない。#1912)
+    const late = await createUser('expire-late');
+    const lateToken = await inviteToken(rep, familyId, late.email);
 
     // 契約が終わる (手動付与の取り消し): グループは free / 4 に戻るが、いるメンバーはそのまま
     await revokePlan(rep.id);
@@ -265,8 +276,6 @@ describe('billing/03 §6.6: 家族の機能の門', () => {
     expect(await activeMembers(familyId)).toEqual(before);
 
     // 新しいメンバーは足せない (招待の承諾・子供の追加)
-    const late = await createUser('expire-late');
-    const lateToken = await inviteToken(rep, familyId, late.email);
     expect((await acceptInvite(late, lateToken)).error).toMatchObject({ code: 'P0001', message: 'FAMILY_PLAN_REQUIRED' });
     expect((await addChild(rep, familyId, 'expire-late-child')).error).toMatchObject({ code: 'P0001', message: 'FAMILY_PLAN_REQUIRED' });
     expect(await activeMembers(familyId)).toEqual(before);
@@ -275,6 +284,79 @@ describe('billing/03 §6.6: 家族の機能の門', () => {
     const { error: leaveError } = await asUser(member.jwt).rpc('leave_family');
     expect(leaveError).toBeNull();
     expect((await activeMembers(familyId)).map((m) => m.user_id)).not.toContain(member.id);
+  });
+
+  // #1912 (段 A の門の取りこぼし): 招待の作成
+  it('create_family_invite raises FAMILY_PLAN_REQUIRED for a free group (before the member limit, after the authorization), writes nothing, and creates invites again once the representative has a family plan', async () => {
+    const rep = await createUser('invite-gate-rep');
+    await grantFamilyPlan(srAdmin, rep.id);
+    const familyId = await mustCreateFamily(rep);
+    const adult = await createUser('invite-gate-adult');
+    expect((await acceptInvite(adult, await inviteToken(rep, familyId, adult.email))).error).toBeNull();
+    // 契約がある間に作った pending の招待 (断られた呼び出しが、同じ宛先の pending を revoke しないことを見る)
+    const target = await createUser('invite-gate-target');
+    const pendingToken = await inviteToken(rep, familyId, target.email);
+    const outsider = await createUser('invite-gate-outsider');
+
+    const invitesOf = async () => {
+      const { data, error } = await srAdmin.from('family_invites').select('token, email, status').eq('family_id', familyId).order('created_at', { ascending: true });
+      if (error) throw new Error(`family_invites: ${error.message}`);
+      return data ?? [];
+    };
+    const inviteAuditCount = async () => {
+      const { count, error } = await srAdmin
+        .from('membership_audit')
+        .select('id', { count: 'exact', head: true })
+        .eq('scope_id', familyId)
+        .eq('action', 'invite_created');
+      if (error) throw new Error(`membership_audit: ${error.message}`);
+      return count ?? 0;
+    };
+
+    // 契約が終わる: グループは free / 4 に戻る
+    await revokePlan(rep.id);
+    expect(await familyOf(familyId)).toMatchObject({ plan_key: 'free', member_limit: DEFAULT_MEMBER_LIMIT, status: 'active' });
+    const invitesBefore = await invitesOf();
+    const auditBefore = await inviteAuditCount();
+    expect(invitesBefore.find((i) => i.token === pendingToken)).toMatchObject({ status: 'pending' });
+
+    // 代表者・大人とも、同じ宛先 (pending がある) にも新しい宛先にも作れない
+    const fresh = `sec-family-plan-gate-invite-fresh-${RUN}@homegohan.test`;
+    for (const [inviter, email] of [[rep, target.email], [rep, fresh], [adult, target.email], [adult, fresh]] as const) {
+      const refused = await asUser(inviter.jwt).rpc('create_family_invite', { p_family_id: familyId, p_email: email });
+      expect(refused.data, `${inviter.email} → ${email}`).toBeNull();
+      expect(refused.error, `${inviter.email} → ${email}`).toMatchObject({ code: 'P0001', message: 'FAMILY_PLAN_REQUIRED' });
+    }
+    // 断ったときは何も書かない (招待の行・既存の pending の revoke・監査ログ)
+    expect(await invitesOf()).toEqual(invitesBefore);
+    expect(await inviteAuditCount()).toBe(auditBefore);
+
+    // 認可が先: 家族の外の人には、グループのプランの有無ではなく NOT_FAMILY_ADULT を返す
+    const outsiderCall = await asUser(outsider.jwt).rpc('create_family_invite', { p_family_id: familyId, p_email: fresh });
+    expect(outsiderCall.error).toMatchObject({ code: 'P0001', message: 'NOT_FAMILY_ADULT' });
+
+    // 人数上限より先: 上限に達した free のグループでも、理由は FAMILY_PLAN_REQUIRED
+    const activeCount = (await activeMembers(familyId)).length;
+    const { error: limitError } = await srAdmin.from('family_groups').update({ member_limit: activeCount }).eq('id', familyId);
+    expect(limitError).toBeNull();
+    expect((await asUser(rep.jwt).rpc('create_family_invite', { p_family_id: familyId, p_email: fresh })).error).toMatchObject({
+      code: 'P0001',
+      message: 'FAMILY_PLAN_REQUIRED',
+    });
+    const { error: restoreError } = await srAdmin.from('family_groups').update({ member_limit: DEFAULT_MEMBER_LIMIT }).eq('id', familyId);
+    expect(restoreError).toBeNull();
+
+    // 代表者に家族プランが入り直すと、また作れて、承諾もできる
+    await grantFamilyPlan(srAdmin, rep.id);
+    expect(await familyOf(familyId)).toMatchObject({ plan_key: 'family_basic', member_limit: DEFAULT_MEMBER_LIMIT });
+    const joiner = await createUser('invite-gate-joiner');
+    const created = await asUser(adult.jwt).rpc('create_family_invite', { p_family_id: familyId, p_email: joiner.email });
+    expect(created.error).toBeNull();
+    expect((created.data as { token: string; status: string }).status).toBe('pending');
+    expect((created.data as { token: string }).token).toMatch(/^[0-9a-f]{64}$/);
+    expect(await inviteAuditCount()).toBe(auditBefore + 1);
+    expect((await acceptInvite(joiner, (created.data as { token: string }).token)).error).toBeNull();
+    expect((await activeMembers(familyId)).map((m) => m.user_id)).toContain(joiner.id);
   });
 
   // 105
