@@ -19,6 +19,9 @@
  * 2026-10-14 (#1155): 事業者名・代表者が確定したので、特定商取引法ページと運営会社ページの該当項目を更新した (値は src/lib/business-info.ts)。
  * 2026-10-19 (#1911): 所在地・設立・資本金・メールアドレス・営業時間を株式会社MHD医健の公開の会社情報で埋めた (値は src/lib/business-info.ts)。
  * 電話番号は載せず「請求があれば遅滞なく開示します」と書き、請求の窓口 (メールアドレスとお問い合わせのフォーム) を添える。
+ * billing/03 (#1912 段 C): 有料プランの販売を始めた。価格 (個人 Pro 580円 / 家族 Basic 980円 / 家族 Pro 1,480円) は公開してよい文字列になったので
+ * FORBIDDEN から外し、/pricing は公開のプラン (listPublicPlans) の価格と内容を Price の有無に依らず出し、CTA は買える間隔だけに置く。
+ * 特定商取引法の表記には販売の 9 行を出し、/faq の料金は 4 項目にした (テスト 44〜46・48・116)。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,23 +38,21 @@ import {
   BUSINESS_REPRESENTATIVE,
   PHONE_DISCLOSED_ON_REQUEST,
 } from '@/lib/business-info';
-import type { PurchasablePlan } from '@/lib/billing/core';
+import type { PublicPlan } from '@/lib/billing/core';
+import {
+  FREE_PLAN_AI_LIMIT_NOTE,
+  FREE_PLAN_FAQ_ANSWER,
+  PAID_PLANS_FAQ_ANSWER,
+  PLAN_CATALOG,
+  PLAN_TRIAL_DAYS,
+  planCatalogPriceText,
+} from '@homegohan/shared';
 import { GUIDES } from '@/app/guide/guide-content';
+import { stripAllTags } from './helpers/strip-tags';
 
-/** タグを取り除く (1 回の置き換えでは「<scr<x>ipt>」のような入れ子が残るので、変わらなくなるまで繰り返す。CodeQL js/incomplete-multi-character-sanitization) */
-function stripAllTags(html: string): string {
-  let prev: string;
-  let out = html;
-  do {
-    prev = out;
-    out = out.replace(/<[^>]*>/g, '');
-  } while (out !== prev);
-  return out;
-}
-
-// /pricing の page.tsx (Server Component) が読む「買えるプラン」と Cookie (is_native_app)。it ごとに値を変える
+// /pricing の page.tsx (Server Component) が読む「公開のプラン」(listPublicPlans) と Cookie (is_native_app)。it ごとに値を変える
 const pricingMocks = vi.hoisted(() => ({
-  plans: [] as PurchasablePlan[],
+  plans: [] as PublicPlan[],
   nativeAppCookie: undefined as string | undefined,
 }));
 
@@ -177,12 +178,9 @@ const FORBIDDEN: { text: string; reason: string }[] = [
   { text: '自炊率0%→70%', reason: '架空の利用者の成果' },
   { text: '野菜摂取量2倍', reason: '架空の利用者の成果' },
   { text: '体調スコア+30%', reason: '架空の利用者の成果' },
-  // 未確定の価格・約束
-  { text: '¥980', reason: '未確定の価格' },
+  // 未確定の価格・約束 (billing/03 で決めた価格 (¥980・980円・9,800円 = 家族 Basic) は公開してよいので外した)
   { text: '¥1,980', reason: '未確定の価格' },
-  { text: '980円', reason: '未確定の価格' },
   { text: '1,980円', reason: '未確定の価格' },
-  { text: '9,800円', reason: '未確定の価格' },
   { text: '永久無料', reason: '将来にわたる無料の約束 (有料プランの内容が決まっていないため約束できない)' },
   // 事実と違う断定
   { text: '第三者がアクセスすることはできません', reason: '断定できない (最終的な文言はプライバシーポリシーの見直しで決める)' },
@@ -217,7 +215,7 @@ const FORBIDDEN: { text: string; reason: string }[] = [
 
 /**
  * AI を使う機能の 1 日の利用回数の上限 (#1149) を言う文の、/faq と /pricing で共通の部分 (#1867 Q-12)。
- * 回数の数字は運営画面で変えられるので書かない (紹介ページの claims の ai-daily-limit の行と同じ扱い)
+ * 無料プランの回数は、この文の後ろに FREE_PLAN_AI_LIMIT_NOTE (@homegohan/shared) が書く (billing/03 §8.9)
  */
 const AI_DAILY_LIMIT_PHRASE = '1日にご利用いただける回数に上限があり、上限に達した日は翌日0時からまたお使いいただけます。';
 
@@ -228,8 +226,8 @@ const PAID_PLAN_PENDING_NOTICE = '有料プランは準備中です（販売開�
 /** 未完成・予定を示す語。公開ページに出さない (#1911) */
 const PENDING_WORDS = ['準備中', '販売開始前', '確定次第', '決まりましたら', '決まり次第', '近日'];
 /**
- * 特定商取引法の表記で、有料の販売で要る項目。有料プランの販売 (#1912) が足すまで、項目ごと出さない (#1911)。
- * 「準備中」とも、販売していないことの説明の文とも書かない (販売を始めたときに事実と食い違うため)。
+ * 特定商取引法の表記で、有料の販売の項目 (billing/03 §10.2 の 9 行)。値は下の LEGAL_SALE_ROW_VALUES (設計書の逐語)。
+ * 「準備中」とも、販売していないことの説明の文とも書かない (#1911)。
  */
 const LEGAL_SALE_ROW_LABELS = [
   '販売価格',
@@ -239,8 +237,27 @@ const LEGAL_SALE_ROW_LABELS = [
   'サービス提供時期',
   '返品・キャンセル',
   '解約について',
+  '定期購入について',
+  '無料体験について',
 ] as const;
-/** 販売していないことを説明する文。販売の項目は出さないので、販売を始めたときに偽りになるこれらの文も書かない (#1911) */
+/** 販売の 9 行の値 (billing/03 §10.2 の表の逐語。セルの文は改行 (\n) を whitespace-pre-wrap でそのまま描く) */
+const LEGAL_SALE_ROW_VALUES: Readonly<Record<(typeof LEGAL_SALE_ROW_LABELS)[number], string>> = {
+  販売価格: `${planCatalogPriceText()}\n無料プランは 0 円です。`,
+  商品代金以外の必要料金: 'インターネット接続料金、通信料金等はお客様のご負担となります。',
+  支払方法: 'Web: クレジットカード (決済の事業者 Stripe の決済画面で受け付けるカード)。\niOS / Android アプリ: App Store / Google Play のアプリ内課金。',
+  支払時期:
+    'Web: お申し込みの時に初回のお支払いをいただきます (無料体験のあるプランは、無料体験の終了時)。以後は毎月または毎年の更新日に自動でお支払いいただきます。\nアプリ内課金: 各ストアの定める時期にお支払いいただきます。',
+  サービス提供時期: 'お支払いの手続き (無料体験のあるプランは、お申し込みの手続き) が完了した時点から、すぐにご利用いただけます。',
+  '返品・キャンセル':
+    'デジタルコンテンツの性質上、購入後の返品・返金は原則としてお受けしておりません。ただし、サービスに重大な瑕疵があった場合は、個別に対応いたします。\n\nApp Store / Google Play でお申し込みの場合の返金は、各ストアの規定によります。',
+  解約について:
+    'いつでも解約できます。Web でお申し込みの方は本サービスの画面から、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から解約してください。解約後も、お支払い済みの期間の終わりまでご利用いただけます。期間の途中の解約による日割りの返金はありません。',
+  定期購入について: '有料プランは自動更新の定期購入です。解約しない限り、月額または年額の期間ごとに同じ金額が自動で請求されます。',
+  無料体験について: `Web でお申し込みの場合、どの有料プランも ${PLAN_TRIAL_DAYS} 日間の無料体験つきです (同じプランにつき 1 回)。無料体験の終了時に自動で有料の期間に移り、販売価格が請求されます。無料体験の間に解約すると、料金は請求されません。App Store / Google Play でお申し込みの場合の無料体験は、各ストアの表示によります。`,
+};
+/** 未完成や予定を示す語 (billing/03 §14.1 のテスト 48。設計書の UNFINISHED_WORDS と同じ一覧) */
+const UNFINISHED_WORDS = ['準備中', '販売開始前', '近日', '予定', 'まだ', '確定次第', 'これから'] as const;
+/** 販売していないことを説明する文。販売を始めたので偽りになるこれらの文を書かない (#1911・billing/03 §10.2) */
 const LEGAL_NOT_SELLING_TEXTS = [
   '有料の商品・サービスの販売はありません',
   'お支払いが必要な商品・サービスはありません',
@@ -260,7 +277,17 @@ const readSource = (file: string) => fs.readFileSync(path.join(ROOT, file), 'utf
 
 /** 描画して、タグを外した本文を返す。`support@<br />homegohan.jp` のような分割も一続きの文字列として検査できる */
 function renderText(Page: ComponentType): string {
-  return renderToStaticMarkup(createElement(Page)).replace(/<[^>]*>/g, '');
+  return stripAllTags(renderToStaticMarkup(createElement(Page)));
+}
+
+/** HTML の文字の実体参照を戻す (renderToStaticMarkup が書く 5 つ。&amp; は最後に戻す) */
+function decodeEntities(text: string): string {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#x27;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 function renderHtml(Page: ComponentType): string {
@@ -288,7 +315,6 @@ describe('#1155 公開ページのソースに、架空・未確認の会社情�
       '1,234,567',
       'シリーズA',
       'Forbes',
-      '¥980',
       '¥1,980',
       '血圧-15mmHg',
     ];
@@ -338,11 +364,27 @@ describe('#1155 特定商取引法ページ (/legal)', () => {
     expect(stripAllTags(cell!)).not.toMatch(/\d{2,4}-\d{2,4}-\d{3,4}/);
   });
 
-  it('有料の販売で要る項目 (販売価格・支払方法など) は、項目ごと出さない。「準備中」「販売開始前」も、販売していないことの説明の文も書かない (#1911)', () => {
+  it('legal page keeps the #1911 business rows and adds the 9 sale rows (販売価格 from planCatalogPriceText, 支払方法, 支払時期, サービス提供時期, 返品・キャンセル, 解約について, 定期購入について, 無料体験について, 商品代金以外の必要料金) without LEGAL_NOT_SELLING_TEXTS and PENDING_WORDS', () => {
     const labels = [...html.matchAll(/<th[^>]*>([\s\S]*?)<\/th>/g)].map((m) => stripAllTags(m[1]).trim());
-    // 表が読めていること (空の表で素通りしない)
-    expect(labels).toContain('販売事業者');
-    for (const label of LEGAL_SALE_ROW_LABELS) expect(labels, `「${label}」の行が残っている`).not.toContain(label);
+    // #1911 の事業者の行と、お問い合わせ・動作環境の行は残す (表の行の並び: 事業者の 7 行 → 販売の 9 行 → 動作環境)
+    expect(labels).toEqual([
+      '販売事業者',
+      '代表者',
+      '所在地',
+      '電話番号',
+      'メールアドレス',
+      '営業時間',
+      'お問い合わせ',
+      ...LEGAL_SALE_ROW_LABELS,
+      '動作環境',
+    ]);
+    // 販売の 9 行の値は設計書の文のとおり (販売価格は planCatalogPriceText の 3 行 = PLAN_CATALOG の価格。DB との一致は tests/billing-plan-catalog.test.ts)
+    for (const label of LEGAL_SALE_ROW_LABELS) {
+      const cell = tableCellHtml(html, label);
+      expect(cell, `「${label}」の行が無い`).not.toBeNull();
+      expect(decodeEntities(stripAllTags(cell!)), `「${label}」の値`).toBe(LEGAL_SALE_ROW_VALUES[label]);
+    }
+    expect(text).toContain('個人 Pro: 月額 580円 / 年額 5,800円 (税込)');
     for (const sentence of LEGAL_NOT_SELLING_TEXTS) expect(text, `「${sentence}」が残っている`).not.toContain(sentence);
     expect(text).not.toContain(PAID_PLAN_PENDING_NOTICE);
     for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
@@ -426,15 +468,16 @@ describe('#1155 運営会社ページ (/company)', () => {
   });
 });
 
-/** 買えるプランが 0 件のときの料金ページ */
+/** 公開のプランが 0 件 (読み取りの失敗) のときの料金ページ */
 const PricingPageWithoutPlans = () => createElement(PricingPageView, { plans: [], isNativeApp: false });
 
 describe('#1151 料金ページ (/pricing)', () => {
   const text = renderText(PricingPageWithoutPlans);
   const source = readSource('src/app/pricing/PricingPageView.tsx');
 
-  it('買えるプランが無いときは、有料プランのカードを出さず (「準備中」「販売開始前」とも書かない)、価格・機能・年払いの切り替えは出さない (#1911)', () => {
-    expect(text).toContain('現在は無料でご利用いただけます。');
+  it('公開のプランが 0 件 (読み取りの失敗) のときはフリーのカードだけで、「現在は無料」「有料プラン」・未完成を示す語を出さず、プレミアム・ファミリー・月払い・年払いも出さない。billingPeriod を使わない (billing/03 §10.1)', () => {
+    expect(text).toContain('フリー');
+    expect(text).not.toContain('現在は無料');
     expect(text).not.toContain('有料プラン');
     for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
     for (const word of ['プレミアム', 'ファミリー', '月払い', '年払い', '人気No.1', '広告表示']) {
@@ -456,7 +499,7 @@ describe('#1151 料金ページ (/pricing)', () => {
 });
 
 /** テスト 51 のモックのプラン。金額は FORBIDDEN に無い値 */
-function plan(overrides: Partial<PurchasablePlan> & Pick<PurchasablePlan, 'plan_key' | 'display_name' | 'plan_type'>): PurchasablePlan {
+function plan(overrides: Partial<PublicPlan> & Pick<PublicPlan, 'plan_key' | 'display_name' | 'plan_type'>): PublicPlan {
   return {
     status: 'public',
     monthly_price_jpy: null,
@@ -464,9 +507,27 @@ function plan(overrides: Partial<PurchasablePlan> & Pick<PurchasablePlan, 'plan_
     trial_days: 0,
     stripe_price_id: null,
     stripe_yearly_price_id: null,
+    max_members: null,
     ...overrides,
   };
 }
+
+/** PLAN_CATALOG の 3 プランを、Stripe の Price を入れる前 (stripe_price_id が無い) の公開のプランの行にしたもの (DB の値の写し) */
+const CATALOG_PLANS_WITHOUT_PRICE: PublicPlan[] = PLAN_CATALOG.map((entry) =>
+  plan({
+    plan_key: entry.plan_key,
+    display_name: entry.display_name,
+    plan_type: entry.max_members === null ? 'personal' : 'family',
+    monthly_price_jpy: entry.monthly_price_jpy,
+    yearly_price_jpy: entry.yearly_price_jpy,
+    trial_days: entry.trial_days,
+    max_members: entry.max_members,
+  }),
+);
+
+/** 有料のカードの下の注記 (billing/03 §10.1 の逐語) */
+const PAID_PLAN_PAYMENT_NOTE =
+  'お支払いはクレジットカード (Stripe) のほか、iOS / Android アプリでは App Store / Google Play のアプリ内課金でもお申し込みいただけます。アプリ内課金の価格は各ストアの表示が正となります。';
 
 /** page.tsx (async の Server Component) を描いて HTML を返す */
 async function renderPricingPageHtml(): Promise<string> {
@@ -501,7 +562,7 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
     pricingMocks.nativeAppCookie = undefined;
   });
 
-  it('pricing page shows only the free card and the free FAQ (no 準備中 card, no pre-sale wording) when there is no purchasable plan: no rows, or the only row has no interval for which isPurchasable is true', async () => {
+  it('pricing page shows only the free card (no FAQ section and no 現在は無料でご利用いただけます。) when there are no rows or the only row has amount 0', async () => {
     for (const plans of [
       [],
       [plan({ plan_key: 'test_zero', display_name: 'テストZ', plan_type: 'personal', monthly_price_jpy: 0, stripe_price_id: 'price_zero', stripe_yearly_price_id: null })],
@@ -509,9 +570,11 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
       pricingMocks.plans = plans;
       const html = await renderPricingPageHtml();
       const text = stripTags(html);
-      expect(text).toContain('現在は無料でご利用いただけます。');
-      expect(text).toContain('現在、料金はかかりますか？');
+      expect(text).not.toContain('現在は無料でご利用いただけます。');
+      expect(text).not.toContain('よくある質問');
+      expect(text).not.toContain('料金はかかりますか？');
       expect(text).not.toContain('有料プランはありますか？');
+      expect(text).not.toContain(PAID_PLAN_PAYMENT_NOTE);
       for (const word of PENDING_WORDS) expect(text, `「${word}」が残っている`).not.toContain(word);
       expect(text).not.toContain('月額で始める');
       expect(text).not.toContain('年額で始める');
@@ -523,7 +586,7 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
     }
   });
 
-  it('pricing page shows one card per purchasable plan with an amount and a CTA only for the intervals where isPurchasable is true (both Prices: 月額で始める → interval=month and 年額で始める → interval=year; no stripe_yearly_price_id: only the monthly amount and 月額で始める, no yearly amount and no interval=year link), without the 準備中 notice and the pre-sale FAQ, and hides the cards and CTA in native app mode', async () => {
+  it('pricing page shows CTA only for purchasable intervals and hides paid cards and the payment note in native app mode', async () => {
     pricingMocks.plans = [planA, planB];
     const html = await renderPricingPageHtml();
     const text = stripTags(html);
@@ -535,11 +598,11 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
     expect(text).toContain('¥12,340');
     expect(html).toContain('/account/billing/checkout?plan_key=test_personal_a&amp;interval=month');
     expect(html).toContain('/account/billing/checkout?plan_key=test_personal_a&amp;interval=year');
-    // B: 年額の Price が無いので月額だけ
+    // B: 年額の Price が無いので、年額の金額は出すが CTA は月額だけ (billing/03 §10.1: 金額は金額のある間隔ごとに常に出し、CTA は買える間隔だけ)
     expect(text).toContain('テストB');
     expect(text).toContain('¥2,345');
+    expect(text).toContain('¥23,450');
     expect(html).toContain('/account/billing/checkout?plan_key=test_family_b&amp;interval=month');
-    expect(text).not.toContain('¥23,450');
     expect(html).not.toContain('plan_key=test_family_b&amp;interval=year');
     // 単位と CTA の文
     expect(text).toContain('/ 月（税込）');
@@ -549,9 +612,9 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
     // 販売開始前の案内 (段落・準備中のカード・FAQ) は描かない
     expect(text).not.toContain(PAID_PLAN_PENDING_NOTICE);
     expect(text).not.toContain('販売開始前');
-    expect(text).not.toContain('現在は無料でご利用いただけます。');
-    expect(text).not.toContain('現在、料金はかかりますか？');
     expect(text).not.toContain('有料プランはありますか？');
+    // お支払いの方法の注記 (有料のカードの下に 1 段落)
+    expect(text.split(PAID_PLAN_PAYMENT_NOTE)).toHaveLength(2);
     // フリーのカードと末尾の「無料で始める」は描く
     expect(text).toContain('フリー');
     expect(text).toContain('無料で始める');
@@ -560,11 +623,49 @@ describe('billing/01 §10.1 料金ページ (/pricing) のデータ駆動', () =
     pricingMocks.nativeAppCookie = '1';
     const nativeHtml = await renderPricingPageHtml();
     const nativeText = stripTags(nativeHtml);
-    for (const word of ['テストA', 'テストB', '¥1,234', '¥2,345', '月額で始める', '年額で始める']) {
+    for (const word of ['テストA', 'テストB', '¥1,234', '¥2,345', '月額で始める', '年額で始める', PAID_PLAN_PAYMENT_NOTE]) {
       expect(nativeText, `アプリの中に「${word}」が出ている`).not.toContain(word);
     }
     expect(nativeHtml).not.toContain('/account/billing/checkout');
     expect(nativeText).toContain('フリー');
+  });
+
+  it('pricing page shows one card per public plan with both interval amounts, trial and PLAN_CATALOG features and no CTA when no Price is registered, and only the free card when the read fails (no 現在は無料 and no FAQ section)', async () => {
+    pricingMocks.plans = CATALOG_PLANS_WITHOUT_PRICE;
+    const html = await renderPricingPageHtml();
+    const text = stripTags(html);
+
+    for (const entry of PLAN_CATALOG) {
+      // 見出し・月額と年額の金額・無料体験・PLAN_CATALOG の features の箇条書き
+      expect(text, entry.plan_key).toContain(entry.display_name);
+      expect(text, entry.plan_key).toContain(`¥${entry.monthly_price_jpy.toLocaleString('ja-JP')}`);
+      expect(text, entry.plan_key).toContain(`¥${entry.yearly_price_jpy.toLocaleString('ja-JP')}`);
+      for (const feature of entry.features) expect(text, `${entry.plan_key}: ${feature}`).toContain(feature);
+    }
+    expect(text.split(`${PLAN_TRIAL_DAYS}日間無料`)).toHaveLength(PLAN_CATALOG.length + 1);
+    expect(text).toContain('¥580');
+    expect(text).toContain('¥5,800');
+    // Price が無いので CTA は無い (代わりの文も置かない。Q-5)
+    expect(text).not.toContain('月額で始める');
+    expect(text).not.toContain('年額で始める');
+    expect(html).not.toContain('/account/billing/checkout');
+    // 注記は有料のカードを描くときに出す。「現在は無料」・FAQ の節は無い
+    expect(text.split(PAID_PLAN_PAYMENT_NOTE)).toHaveLength(2);
+    expect(text).not.toContain('現在は無料');
+    expect(text).not.toContain('よくある質問');
+    for (const word of PENDING_WORDS) expect(text, `「${word}」が出ている`).not.toContain(word);
+    // フリーのカードは無料プランの機能と回数の文を出す
+    expect(text).toContain(FREE_PLAN_AI_LIMIT_NOTE);
+
+    // 読み取りの失敗 (listPublicPlans は空を返す) ではフリーのカードだけ
+    pricingMocks.plans = [];
+    const failedText = stripTags(await renderPricingPageHtml());
+    expect(failedText).toContain('フリー');
+    expect(failedText).toContain(FREE_PLAN_AI_LIMIT_NOTE);
+    for (const entry of PLAN_CATALOG) expect(failedText, entry.plan_key).not.toContain(entry.display_name);
+    expect(failedText).not.toContain(PAID_PLAN_PAYMENT_NOTE);
+    expect(failedText).not.toContain('現在は無料');
+    expect(failedText).not.toContain('よくある質問');
   });
 });
 
@@ -572,9 +673,27 @@ describe('#1155 FAQ (/faq とトップページの FAQ)', () => {
   const faq = readSource('src/app/faq/page.tsx');
   const landing = readSource('src/components/marketing/landing-copy.ts');
 
-  it('プランごとの上限・料金・プレミアム限定の説明を載せない', () => {
-    for (const word of ['無料プランでは', 'プレミアムプラン', '月額', '年払い', 'Visa', '解約後も次回更新日まで']) {
+  it('/faq の料金は「料金はかかりますか？」(FREE_PLAN_FAQ_ANSWER。AI_DAILY_LIMIT_PHRASE を含む)・「有料プランはありますか？」(PAID_PLANS_FAQ_ANSWER)・「返金はできますか？」・「有料プランを解約するには？」の 4 項目で、ページにプレミアム限定・Visa・解約後も次回更新日まで・年払いを書かない', () => {
+    const paymentQuestions = faq
+      .split('\n')
+      .filter((line) => line.includes("category: 'payment'"))
+      .map((line) => /q:\s*'([^']*)'/.exec(line)?.[1]);
+    expect(paymentQuestions).toEqual(['料金はかかりますか？', '有料プランはありますか？', '返金はできますか？', '有料プランを解約するには？']);
+    expect(faqAnswer(faq, '料金はかかりますか？')).toBe(FREE_PLAN_FAQ_ANSWER);
+    expect(faqAnswer(faq, '料金はかかりますか？')).toContain(AI_DAILY_LIMIT_PHRASE);
+    expect(faqAnswer(faq, '有料プランはありますか？')).toBe(PAID_PLANS_FAQ_ANSWER);
+    expect(faqAnswer(faq, '返金はできますか？')).toContain('App Store / Google Play でお申し込みの場合の返金は、各ストアの規定によります。');
+    expect(faqAnswer(faq, '有料プランを解約するには？')).toContain('「プランとお支払い」');
+    expect(faqAnswer(faq, '有料プランを解約するには？')).toContain('各ストアの定期購読の管理から解約してください。');
+    // 時を限る言い方 (「現在、」) を質問から外した
+    expect(faq).not.toContain('現在、料金はかかりますか？');
+    for (const word of ['プレミアムプラン', '年払い', 'Visa', '解約後も次回更新日まで']) {
       expect(faq, `/faq に「${word}」が残っている`).not.toContain(word);
+    }
+    const rendered = renderText(FaqPage);
+    expect(rendered).toContain('有料プランを解約するには？');
+    for (const word of ['プレミアムプラン', '年払い', 'Visa', '解約後も次回更新日まで']) {
+      expect(rendered, `/faq の描画に「${word}」が出ている`).not.toContain(word);
     }
   });
 
@@ -645,20 +764,42 @@ describe('#1867 (Q-12) 無料の説明に、AI を使う機能の 1 日の利用
     expect(limitSource).toContain('明日 0 時から使えます。');
   });
 
-  it('/faq「現在、料金はかかりますか？」の答えに上限を書く', () => {
-    expect(faqAnswer(faq, '現在、料金はかかりますか？')).toContain(AI_DAILY_LIMIT_PHRASE);
+  it('/faq「料金はかかりますか？」の答えに上限を書く', () => {
+    expect(faqAnswer(faq, '料金はかかりますか？')).toContain(AI_DAILY_LIMIT_PHRASE);
   });
 
-  it('/pricing は、フリーのカード (アプリの中でも出す) と、買えるプランが無いときの FAQ の両方に上限を書く', () => {
+  it('/pricing は、フリーのカード (アプリの中でも出す) に上限を書く (FAQ の節は billing/03 §10.1 で無くなった)', () => {
     const text = renderText(PricingPageWithoutPlans);
-    expect(text.split(AI_DAILY_LIMIT_PHRASE)).toHaveLength(3);
+    expect(text.split(AI_DAILY_LIMIT_PHRASE)).toHaveLength(2);
     const nativeText = renderText(() => createElement(PricingPageView, { plans: [], isNativeApp: true }));
     expect(nativeText).toContain(AI_DAILY_LIMIT_PHRASE);
   });
 
   it('/pricing の「現在ご利用いただける機能」の注記は、上限が入った今の事実を言う (上限が無いかのような古い書き方を残さない)', () => {
     expect(pricingSource).not.toContain('回数や期間の上限・広告の有無など、実際には無いものは書かない');
-    expect(pricingSource).toContain('AI_DAILY_LIMIT_NOTE');
+    expect(pricingSource).toContain('FREE_PLAN_AI_LIMIT_NOTE');
+  });
+});
+
+describe('billing/03 §10.1〜§10.5 公開の面に未完成や予定を示す語を書かない (テスト 48)', () => {
+  it('no public page source or render (pricing / legal / faq / landing-copy) contains any of UNFINISHED_WORDS', () => {
+    const sources = ['src/app/pricing/PricingPageView.tsx', 'src/app/legal/page.tsx', 'src/app/faq/page.tsx', 'src/components/marketing/landing-copy.ts'];
+    for (const file of sources) {
+      const source = readSource(file);
+      for (const word of UNFINISHED_WORDS) expect(source, `${file} に「${word}」がある`).not.toContain(word);
+    }
+    const renders: { name: string; Page: ComponentType }[] = [
+      { name: '/pricing (0 件)', Page: PricingPageWithoutPlans },
+      { name: '/pricing (公開のプラン 3 つ・Price なし)', Page: () => createElement(PricingPageView, { plans: CATALOG_PLANS_WITHOUT_PRICE, isNativeApp: false }) },
+      { name: '/legal', Page: LegalPage },
+      { name: '/faq', Page: FaqPage },
+    ];
+    for (const { name, Page } of renders) {
+      const text = renderText(Page);
+      // 描画が空で素通りしないこと
+      expect(text.length, name).toBeGreaterThan(0);
+      for (const word of UNFINISHED_WORDS) expect(text, `${name} に「${word}」が出ている`).not.toContain(word);
+    }
   });
 });
 

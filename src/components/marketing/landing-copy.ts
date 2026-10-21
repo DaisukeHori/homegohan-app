@@ -780,7 +780,7 @@ export const LANDING_COPY = {
         id: 'paid',
         title: '有料プラン',
         badge: '無料体験つき',
-        // 価格は PLAN_CATALOG (DB の価格の写し) から組む。body は null (PricingSection.tsx は body に予定の印のアイコンを付けるため。有料で増えるものは lead の PAID_PLAN_SUMMARY で書く。billing/03 §10.5)
+        // 価格は PLAN_CATALOG (DB の価格の写し) から組む。body は null (PricingSection.tsx は body の前にカレンダーの印のアイコン (CalendarClock) を付けるため。有料で増えるものは lead の PAID_PLAN_SUMMARY で書く。billing/03 §10.5)
         items: PLAN_CATALOG.map(
           (plan) =>
             `${plan.display_name}${plan.max_members === null ? '' : `（${plan.max_members} 人まで）`}　月額 ${formatJpy(plan.monthly_price_jpy)} / 年額 ${formatJpy(plan.yearly_price_jpy)}（税込）`,
