@@ -13,7 +13,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
+import { IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, PAID_PLAN_GENERIC_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
 import { EMPTY_PLAN_FEATURES, type BillingSummary, type SubscriptionStatus } from '@/lib/billing/core';
 
 const h = React.createElement;
@@ -279,6 +279,27 @@ describe('billing/01 §10.3 /account/billing', () => {
 
       expect(container.querySelector('[data-testid="billing-plan"]')?.textContent).toBe(plan);
       expect(container.textContent ?? '').not.toContain(internalKey);
+
+      act(() => {
+        root!.unmount();
+      });
+      root = undefined;
+    }
+  });
+
+  // #1912: 契約の plan_key が PLAN_CATALOG にも組織のプランの値にも無い key (private の家族の追加枠 family_addon・運営が新しく作った
+  // 個人や家族のプラン) のときは、「組織のプラン」と出さず汎用の名前 (有料プラン) を出す。内部の値も出さない
+  it('account billing page shows PAID_PLAN_GENERIC_DISPLAY_NAME (never 組織のプラン nor the internal value) for a contract whose plan_key is neither in PLAN_CATALOG nor an organization plan value', async () => {
+    for (const planKey of ['family_addon', 'personal_lite']) {
+      fetchMock.mockReset();
+      fetchMock.mockImplementation(async () =>
+        jsonResponse({ data: summaryOf({ plan_key: planKey, effective_plan_key: planKey, source: 'manual', has_customer: false, can_cancel: false }) }),
+      );
+      await render(AccountBillingPage);
+
+      expect(container.querySelector('[data-testid="billing-plan"]')?.textContent).toBe(PAID_PLAN_GENERIC_DISPLAY_NAME);
+      expect(container.textContent ?? '').not.toContain(planKey);
+      expect(container.textContent ?? '').not.toContain(ORG_PLAN_DISPLAY_NAME);
 
       act(() => {
         root!.unmount();
