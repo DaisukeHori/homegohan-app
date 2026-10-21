@@ -4118,7 +4118,7 @@ export function billingErrorMessageOf(error: unknown): string {
   | 定期購入について | `'有料プランは自動更新の定期購入です。解約しない限り、月額または年額の期間ごとに同じ金額が自動で請求されます。'` |
   | 無料体験について | `` `Web でお申し込みの場合、どの有料プランも ${PLAN_TRIAL_DAYS} 日間の無料体験つきです (同じプランにつき 1 回)。無料体験の終了時に自動で有料の期間に移り、販売価格が請求されます。無料体験の間に解約すると、料金は請求されません。App Store / Google Play でお申し込みの場合の無料体験は、各ストアの表示によります。` `` |
   | 動作環境 | (いまのまま。Q-12) |
-  - 「最終更新日：2026年10月19日」(`:92`) は実装の日付に更新する。
+  - 「最終更新日：2026年10月19日」(`:92`) は実装の日付に更新する。#1912 P8 で、最終更新日は定数 `LEGAL_NOTICE_LAST_UPDATED` (`src/lib/legal-notice.ts`。販売の項目を公開した 2026-10-22) から `formatLegalEffectiveDate` で出す形になった。表の中身の指紋と日付の組は `tests/legal-notice-last-updated.test.ts` が見る。
   - 文に「準備中」「販売開始前」「近日」「予定」などの語と、販売していないことの説明の文 (`LEGAL_NOT_SELLING_TEXTS`) を書かない (F21)。
 - 見張りの直し方: `tests/public-claims-guard.test.ts` の `/legal` の it (`:333-341`) を、販売の 9 行が出て値が文のとおりで、`LEGAL_NOT_SELLING_TEXTS` と `PENDING_WORDS` は出ない、に書き換える (§16.1)。`tests/business-info-legal-pages.test.ts` は変えない (行の値が空・仮置きでないことと会社情報の行を見る。販売の行も値を持つので緑)。`tests/e2e/b10-unexplored-areas.spec.ts` の 4-3 (`:282-283` の「販売価格」「支払方法」が無いこと) を、「販売価格」と `580円` が見えること、に書き換える (§16.1)。
 

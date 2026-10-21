@@ -42,6 +42,7 @@ import type { PublicPlan } from '@/lib/billing/core';
 import {
   FREE_PLAN_AI_LIMIT_NOTE,
   FREE_PLAN_FAQ_ANSWER,
+  PAID_PLAN_SUMMARY,
   PAID_PLANS_FAQ_ANSWER,
   PLAN_CATALOG,
   PLAN_TRIAL_DAYS,
@@ -840,5 +841,73 @@ describe('#1867 健康の記録の説明は、空のままの「AI分析」で�
       expect(readSource(file), `${file} が /api/health/insights をそのまま呼んでいる`).not.toMatch(/['"`]\/api\/health\/insights['"`]/);
     }
     expect(readSource('src/app/(main)/health/insights/page.tsx')).toContain('/api/health/insights?limit=');
+  });
+});
+
+/** /about の「家族で使える」の説明 (#1912 P7。紹介ページの「家族で使う」の lead・FAQ と同じ条件 = 家族プランを契約した代表者が招待する) */
+const ABOUT_FAMILY_DESCRIPTION =
+  '家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族を招待して、献立を一緒に見たり、記録を共有したりできます。';
+/** 有料の機能を言う語 (家族・究極モード・料理画像)。これを含む文には、有料のプランの条件を書く (#1912 P7) */
+const PAID_FEATURE_WORDS = ['家族を招待', '家族グループ', '究極モード', '料理画像'] as const;
+/** 有料の機能を言う文に要る、条件の語 (どちらか) */
+const PAID_CONDITION_WORDS = ['家族プラン', '有料プラン'] as const;
+/** 有料の機能を言うのに、条件 (家族プラン・有料プラン) の無い文。文は「。」と改行で区切る */
+function unconditionedPaidSentences(text: string): string[] {
+  return text
+    .split(/[。\n]/)
+    .map((sentence) => sentence.trim())
+    .filter(
+      (sentence) =>
+        PAID_FEATURE_WORDS.some((word) => sentence.includes(word)) && !PAID_CONDITION_WORDS.some((word) => sentence.includes(word)),
+    );
+}
+/**
+ * 文の条件を見る公開ページ (描画したもの)。利用規約・プライバシーポリシーは条文の前後で条件を書く (利用規約の家族の条文は、
+ * 前の文で家族プランの契約を言い、次の文が「家族グループを作成したユーザーが代表者になります。」) ので、文ごとの検査の対象にしない
+ */
+const PAID_CONDITION_PAGES: { name: string; Page: ComponentType }[] = [
+  { name: '紹介ページ', Page: LandingPage },
+  { name: '/about', Page: AboutPage },
+  { name: '/faq', Page: FaqPage },
+  { name: '/pricing (0 件)', Page: () => createElement(PricingPageView, { plans: [], isNativeApp: false }) },
+  { name: '/legal', Page: LegalPage },
+  { name: '/company', Page: CompanyPage },
+  { name: '/news', Page: NewsPage },
+];
+
+describe('#1912 P7 公開ページは、有料の機能 (家族・究極モード・料理画像・AI の回数) を条件なしで書かない', () => {
+  it('/about の「家族で使える」は、家族プランを契約した代表者が家族を招待することを書く', () => {
+    const text = renderText(AboutPage);
+    expect(text).toContain(`家族で使える${ABOUT_FAMILY_DESCRIPTION}`);
+    // 条件の無い旧の文 (見出しの直後に「家族を招待して」で始まる) に戻さない
+    expect(text).not.toContain('家族で使える家族を招待して');
+  });
+
+  it('/about の機能の一覧の下に、AI を使う機能の 1 日の回数の上限と、有料プランで増えるものを書く (/faq・紹介ページと同じ定数)', () => {
+    const html = renderHtml(AboutPage);
+    const note = /<p[^>]*data-testid="about-plan-note"[^>]*>([\s\S]*?)<\/p>/.exec(html);
+    expect(note, '/about に上限の注記が無い').not.toBeNull();
+    expect(stripAllTags(note![1])).toBe(`${FREE_PLAN_AI_LIMIT_NOTE}${PAID_PLAN_SUMMARY}`);
+    const text = renderText(AboutPage);
+    expect(text.split(FREE_PLAN_AI_LIMIT_NOTE)).toHaveLength(2);
+    expect(text.split(PAID_PLAN_SUMMARY)).toHaveLength(2);
+    expect(readSource('src/app/about/page.tsx'), '/about が文を直接書いている').not.toContain(PAID_PLAN_SUMMARY);
+  });
+
+  it.each(PAID_CONDITION_PAGES.map(({ name, Page }) => [name, Page] as const))(
+    '%s: 家族・究極モード・料理画像を言う文には、家族プランか有料プランの条件がある',
+    (_name, Page) => {
+      // タグを改行に置き換えて、見出しと本文を別の文として読む (見出しの語が隣の文の条件に紛れないように)
+      const text = decodeEntities(stripAllTags(renderHtml(Page), '\n'));
+      // 描画が空で素通りしないこと
+      expect(text.trim().length).toBeGreaterThan(0);
+      expect(unconditionedPaidSentences(text)).toEqual([]);
+    },
+  );
+
+  it('文の検査が実際に条件の無い文を見つける (検査が空回りしない)', () => {
+    expect(
+      unconditionedPaidSentences('家族を招待して、献立を一緒に見たり、記録を共有したりできます。家族プランで家族を招待できます。\n究極モード\n有料プランでは、究極モードが使えます。'),
+    ).toEqual(['家族を招待して、献立を一緒に見たり、記録を共有したりできます', '究極モード']);
   });
 });
