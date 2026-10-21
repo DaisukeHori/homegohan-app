@@ -349,6 +349,8 @@ DROP TABLE IF EXISTS public.ai_plan_feature_caps;
 UPDATE public.ai_daily_limits SET daily_limit = 10, updated_at = now() WHERE plan_key = 'free';
 DELETE FROM public.ai_daily_limits WHERE plan_key IN ('pro', 'family_basic', 'family_pro');
 -- (5a) が足した組織の plan の行 (同じ選び方。運営が画面で変えていない = updated_by IS NULL の行だけ)。消えると free の 10 で判定される
+-- 'premium'・'enterprise' の行は後の migration 20261021110000_org_plan_ai_daily_limits.sql が足したもので、その戻し口
+-- (supabase/rollbacks/20261021110000_org_plan_ai_daily_limits.down.sql) を先に流して消す (新しい migration から順に戻す)
 DELETE FROM public.ai_daily_limits AS l
  WHERE l.updated_by IS NULL
    AND l.plan_key NOT IN ('free', 'pro', 'family_basic', 'family_pro')

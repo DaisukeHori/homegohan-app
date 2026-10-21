@@ -5,6 +5,8 @@
  * migration *_billing_paid_plans_iap.sql が足すもの・変えるもの:
  *   - ai_daily_limits: free = 3・pro = 30・family_basic = 30・family_pro = 50。組織の plan の値 (organizations.plan・standard・
  *     plan_type = org の行) には、free を書き換える前の free の値を写す (組織の利用者の上限は変えない)
+ *   - (#1912 段 A の整合ゲートの指摘) migration *_org_plan_ai_daily_limits.sql: アプリが organizations.plan に書ける値
+ *     (ORG_PLAN_VALUES) のうち (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 (10) の行を足す
  *   - ai_plan_feature_caps: free は究極モード 0・画像の作成 0・自動の料理画像 0・献立の作成 3。有料は究極モード 2 / 2 / 3・献立の作成 10 / 10 / 15
  *   - consume_ai_usage_at: 上限に数えない機能の枝より前に、プラン × 機能の行を見る (0 = そのプランでは使えない = plan_locked)
  *   - consume_ai_usage_capped_at: 行のあるプランは引数の上限 (環境変数の既定) を使わず行の値で判定する
@@ -25,6 +27,7 @@ import ws from 'ws';
 import { grantFamilyPlan, type FamilyPlanKey } from '../helpers/family-plan';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -89,6 +92,8 @@ const createdUserIds: string[] = [];
 const createdFamilyIds: string[] = [];
 let seq = 0;
 let orgId: string | null = null;
+/** organizations.plan に書ける値ごとの組織 (ORG_PLAN 以外。同じ持ち主の組織。後片付けで持ち主より先に消す) */
+const orgIdByPlan = new Map<OrgPlanValue, string>();
 let orgOwnerId: string | null = null;
 
 interface TestUser {
@@ -135,9 +140,9 @@ async function createFamilyMember(label: string, planKey: FamilyPlanKey): Promis
   return member;
 }
 
-async function createOrgMember(label: string): Promise<TestUser> {
+async function createOrgMember(label: string, organizationId: string | null = orgId): Promise<TestUser> {
   const user = await createUser(label);
-  const { error } = await srAdmin.from('user_profiles').update({ organization_id: orgId, org_role: 'member' }).eq('id', user.userId);
+  const { error } = await srAdmin.from('user_profiles').update({ organization_id: organizationId, org_role: 'member' }).eq('id', user.userId);
   if (error) throw new Error(`user_profiles.organization_id ${label}: ${error.message}`);
   return user;
 }
@@ -188,6 +193,17 @@ beforeAll(async () => {
     .single();
   if (error || !data) throw new Error(`organizations: ${error?.message}`);
   orgId = data.id as string;
+  // アプリが organizations.plan に書ける値のうち ORG_PLAN 以外の値の組織 (#1912 段 A の整合ゲートの指摘: 'premium' / 'enterprise')
+  for (const plan of ORG_PLAN_VALUES) {
+    if (plan === ORG_PLAN) continue;
+    const { data: planOrg, error: planOrgError } = await srAdmin
+      .from('organizations')
+      .insert({ name: `plan-caps org ${plan} ${TS}`, plan, owner_id: orgOwnerId })
+      .select('id')
+      .single();
+    if (planOrgError || !planOrg) throw new Error(`organizations (${plan}): ${planOrgError?.message}`);
+    orgIdByPlan.set(plan, planOrg.id as string);
+  }
 });
 
 afterAll(async () => {
@@ -206,6 +222,10 @@ afterAll(async () => {
   if (orgId) {
     const { error } = await srAdmin.from('organizations').delete().eq('id', orgId);
     if (error) failures.push(`organizations: ${error.message}`);
+  }
+  if (orgIdByPlan.size > 0) {
+    const { error } = await srAdmin.from('organizations').delete().in('id', [...orgIdByPlan.values()]);
+    if (error) failures.push(`organizations (plan ごと): ${error.message}`);
   }
   if (orgOwnerId) {
     try {
@@ -359,6 +379,27 @@ describe('billing/03 §6.5: プラン × 機能の上限 (consume_ai_usage)', ()
       expect(await consume(free.userId, 'photo_analysis'), `${used} 回目`).toMatchObject({ allowed: true, plan: 'free', limit: DAILY_LIMIT.free, used });
     }
     expect(await consume(free.userId, 'photo_analysis')).toMatchObject({ allowed: false, plan: 'free', limit: DAILY_LIMIT.free, used: DAILY_LIMIT.free });
+  });
+
+  // #1912 段 A の整合ゲートの指摘 (組織の plan の値 'premium'・'enterprise' に行が無く、free の 3 で判定されていた)
+  it('every value the app can write to organizations.plan (ORG_PLAN_VALUES) has an ai_daily_limits row holding the organization limit, and a member of each such organization is judged by it, not by free', async () => {
+    const { data, error } = await srAdmin.from('ai_daily_limits').select('plan_key, daily_limit').in('plan_key', [...ORG_PLAN_VALUES]);
+    if (error) throw new Error(`ai_daily_limits: ${error.message}`);
+    const limits = new Map(((data ?? []) as Array<{ plan_key: string; daily_limit: number | null }>).map((r) => [r.plan_key, r.daily_limit]));
+    for (const plan of ORG_PLAN_VALUES) {
+      expect(limits.has(plan), `${plan} の行`).toBe(true);
+      expect(limits.get(plan), plan).toBe(PRE_MIGRATION_FREE_LIMIT);
+    }
+
+    for (const [plan, organizationId] of orgIdByPlan) {
+      const member = await createOrgMember(`org-limit-${plan}`, organizationId);
+      for (let used = 1; used <= PRE_MIGRATION_FREE_LIMIT; used++) {
+        expect(await consume(member.userId, 'photo_analysis'), `${plan} ${used} 回目`).toMatchObject({ allowed: true, plan, limit: PRE_MIGRATION_FREE_LIMIT, used });
+      }
+      expect(await consume(member.userId, 'photo_analysis'), plan).toMatchObject({ allowed: false, plan, limit: PRE_MIGRATION_FREE_LIMIT, used: PRE_MIGRATION_FREE_LIMIT });
+    }
+    // ORG_PLAN 以外の値の組織を作れていること (空の Map で上のループが素通りしない)
+    expect([...orgIdByPlan.keys()].sort()).toEqual(ORG_PLAN_VALUES.filter((plan) => plan !== ORG_PLAN).sort());
   });
 });
 

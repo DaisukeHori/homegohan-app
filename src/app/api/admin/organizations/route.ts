@@ -14,19 +14,20 @@ import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { z } from 'zod';
 import { recordAdminAudit } from '@/lib/admin/audit';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { ORG_PLAN_DEFAULT, ORG_PLAN_VALUES } from '@/lib/org-plans';
 
 export const dynamic = 'force-dynamic';
 
 const OrgSearchSchema = z.object({
   q: z.string().optional(),
-  plan: z.enum(['standard', 'premium', 'enterprise']).optional(),
+  plan: z.enum(ORG_PLAN_VALUES).optional(),
   page: z.coerce.number().int().min(1).optional().default(1),
   per_page: z.coerce.number().int().min(1).max(100).optional().default(30),
 });
 
 const OrgCreateSchema = z.object({
   name: z.string().min(1, { message: 'name は必須です' }).max(200),
-  plan: z.enum(['standard', 'premium', 'enterprise']).optional().default('standard'),
+  plan: z.enum(ORG_PLAN_VALUES).optional().default(ORG_PLAN_DEFAULT),
   // organizations.owner_id は active な行では NOT NULL (CHECK organizations_active_has_owner。#1103 項目 10 → #1917)。作る組織は active。
   // 本文では省略してよく、未指定時は呼び出し元の運営を owner にする (下の POST で必ず埋める)
   owner_id: z.string().uuid().optional(),
