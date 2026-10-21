@@ -27,6 +27,7 @@ import { randomUUID } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
+import { grantFamilyPlan } from '../helpers/family-plan';
 import { createPlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -159,17 +160,24 @@ async function joinOrg(userId: string, orgId: string | null) {
 
 /**
  * 代表者として家族を作る (create_family_group は、代表者の active なメンバー行も作る)。
+ * billing/03 §6.6: create_family_group は家族プランの契約者だけが作れるので、作る前に代表者へ家族プランを手動付与し
+ * (tests/integration/helpers/family-plan.ts)、作ったあとに取り消す (billing_revoke_manual_subscription。グループは free / 4 に戻る)。
+ * 取り消すのは、このファイルが確かめるのが「家族のグループのプラン」で効くプラン (get_effective_plan の b.) で、
+ * 代表者の個人の契約 (a.) が残っていると家族より先に効いてしまうため。
  * billing/01 §6.4 (10): active なグループの作成はトリガーが代表者の契約から plan_key を決める (p_plan_key は使わない) ので、
  * プランの付いたグループは、作ったあとに service_role で family_groups.plan_key を UPDATE する
  * (UPDATE OF plan_key はトリガーに当たらない。service_role は特権列ガードにも当たらない)
  */
 async function createFamily(rep: TestUser, planKey: string): Promise<string> {
+  await grantFamilyPlan(srAdmin, rep.userId);
   const { data, error } = await asUser(rep.jwt!).rpc('create_family_group', {
     p_name: `#1177 ${TS}-${++seq}`,
   });
   if (error || !data) throw new Error(`create_family_group: ${error?.message}`);
   const familyId = (data as { id: string }).id;
   createdFamilyIds.push(familyId);
+  const { error: revokeError } = await srAdmin.rpc('billing_revoke_manual_subscription', { p_user_id: rep.userId });
+  if (revokeError) throw new Error(`billing_revoke_manual_subscription: ${revokeError.message}`);
   if (planKey !== 'free') {
     const { error: planError } = await srAdmin.from('family_groups').update({ plan_key: planKey }).eq('id', familyId);
     if (planError) throw new Error(`family_groups.plan_key: ${planError.message}`);
@@ -177,10 +185,14 @@ async function createFamily(rep: TestUser, planKey: string): Promise<string> {
   return familyId;
 }
 
+/**
+ * その利用者・そのプランの契約の行の status を変える (無ければ作る)。plan_key でも絞る
+ * (createFamily が家族プランの手動付与の行 (取り消し済み) を残すので、利用者だけで絞ると別のプランの行を書き換えてしまう)
+ */
 async function setSubscription(userId: string, planKey: string, status: string): Promise<void> {
-  const { data: existing } = await srAdmin.from('personal_subscriptions').select('id').eq('user_id', userId).limit(1);
+  const { data: existing } = await srAdmin.from('personal_subscriptions').select('id').eq('user_id', userId).eq('plan_key', planKey).limit(1);
   if (existing && existing.length > 0) {
-    const { error } = await srAdmin.from('personal_subscriptions').update({ status }).eq('user_id', userId);
+    const { error } = await srAdmin.from('personal_subscriptions').update({ status }).eq('user_id', userId).eq('plan_key', planKey);
     if (error) throw new Error(`personal_subscriptions update: ${error.message}`);
     return;
   }
