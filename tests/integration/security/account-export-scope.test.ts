@@ -574,8 +574,8 @@ describe('#1131 エクスポート: 本物の RLS の上で本人の行だけが
       expect(data.user_profiles[0]).not.toHaveProperty(column);
     }
     expect(data.personal_subscriptions[0]).toMatchObject({ user_id: A.id, plan_key: 'pro' });
-    // stripe_status・stripe_synced_at は Stripe との同期の内部の記録 (billing/01 §7.1)
-    for (const column of ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at']) {
+    // stripe_status・stripe_synced_at は Stripe との同期の内部の記録 (billing/01 §7.1)。iap_synced_at はストアとの同期の内部の記録 (billing/03 §6.4)
+    for (const column of ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at', 'iap_synced_at']) {
       expect(data.personal_subscriptions[0]).not.toHaveProperty(column);
     }
     expect(data.support_tickets[0]).not.toHaveProperty('assignee_id');

@@ -247,6 +247,8 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'ai_usage_counters.user_id': 'CASCADE',
   // 20261011020000 (AI の 1 日の上限): 上限を変えた運営者の紐づけだけ外す
   'ai_daily_limits.updated_by': 'SET NULL',
+  // billing/03 (プラン × AI の機能の上限): 上限を変えた運営者の紐づけだけ外す
+  'ai_plan_feature_caps.updated_by': 'SET NULL',
   // 20261011030000 (AI の回数の付与の受け取り): 本人の受け取りの記録は本人と一緒に消す
   'ai_usage_grant_claims.user_id': 'CASCADE',
   // 20261015130000 (期間のバッジ): 本人のバッジは本人と一緒に消す
