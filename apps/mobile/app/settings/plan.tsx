@@ -4,9 +4,11 @@
  *  1. 見出し
  *  2. 現在の状態 (GET /api/billing/subscription の要約。出どころが Web (Stripe) なら Web で管理する旨、ストアなら購読の管理を開くボタン)
  *  3. プランの一覧 (購入できる人 (can_purchase) で、このビルドがストアの購入を扱えて、カタログとストアの両方にある商品があるときだけ)。
- *     価格はストアの表示 (priceString) をそのまま出し、自動更新の説明を添える。無料体験の文は、ストアの導入価格と体験の対象の判定から作る
- *  4. 購入 → サーバの同期 (POST /api/billing/iap/sync) → 要約を置き換える
- *  5. 購入の復元 (常に出す。ストアの購入を扱えないビルドでは押せない形)
+ *     価格はストアの表示 (priceString) をそのまま出し、自動更新の説明を添える。無料体験の文は、ストアの導入価格と体験の対象の判定から作る。
+ *     ストアの購入をこの利用者に結び付けられない (identifyPurchases が投げた) うちは出さない (前面復帰・再読み込みでやり直す。#1912)
+ *  4. 購入 → サーバの同期 (POST /api/billing/iap/sync) → 要約を置き換える。購入の前に SDK の利用者を確かめ (ensurePurchasesIdentity)、
+ *     確かめられなければ買わない。完了の文は同期の要約が live のときだけ (#1912)
+ *  5. 購入の復元 (常に出す。ストアの購入を扱えないビルドでは押せない形。復元の前にも SDK の利用者を確かめる)
  *  6. 利用規約・プライバシーポリシー・特定商取引法に基づく表記へのリンク
  *  7. 要約の読み込み中・失敗 (失敗のときは 2・3 を出さず、再読み込みのボタン)
  *
@@ -40,6 +42,7 @@ import {
 import { matchCatalogWithPackages, renewalText, type PurchasablePlanCard } from "../../src/lib/iap-catalog";
 import {
   currentCustomerInfo,
+  ensurePurchasesIdentity,
   fetchOfferings,
   fetchTrialEligibility,
   identifyPurchases,
@@ -53,8 +56,14 @@ import { colors, spacing } from "../../src/theme";
 
 /** 画面の見出し */
 export const PLAN_SCREEN_TITLE = "プランとお支払い";
-/** 購入が完了したときの文 */
+/** 購入が完了したときの文 (購入のあとの同期で、この利用者の契約が live になったときだけ出す。#1912) */
 export const PLAN_PURCHASE_COMPLETED_MESSAGE = "お申し込みが完了しました";
+/**
+ * 購入はストアで済んだが、そのあとの同期の要約が live でない (この利用者に契約が付いていない) ときの文 (#1912)。
+ * 完了の文は出さず、購入の復元 (ストアの購入をこの利用者に移して同期し直す) を案内する
+ */
+export const PLAN_PURCHASE_NOT_REFLECTED_MESSAGE =
+  "購入は受け付けましたが、契約の反映を確認できませんでした。「購入を復元」をお試しください。";
 /** 購入の復元で、復元できる契約が無かったときの文 */
 export const PLAN_RESTORE_NOTHING_MESSAGE = "復元できる購入がありませんでした";
 /** 無料プランの利用者の現在の状態 */
@@ -100,6 +109,14 @@ function currentPlanText(summary: BillingSummaryWire, live: boolean): string {
   return `${planDisplayName(summary.effective_plan_key)}をご利用中です (ご家族または組織のプラン)`;
 }
 
+/** live な契約 (trialing・active・past_due・grace・paused) か。状態の行 (subscriptionStatusLines) が出るのと同じ判定 */
+function isLiveSummary(summary: BillingSummaryWire): boolean {
+  return subscriptionStatusLines(summary).length > 0;
+}
+
+/** 買えるプランのカードの読み込みの段 (#1912): idle = まだ (失敗したらここに戻り、前面復帰・再読み込みでやり直す) / loading = 読み込み中 / done = 読んだ */
+type CardsLoadState = "idle" | "loading" | "done";
+
 export default function PlanSettingsScreen() {
   const { user } = useAuth();
   const userId = user?.id ?? null;
@@ -114,9 +131,16 @@ export default function PlanSettingsScreen() {
   const busyRef = useRef(false);
   // 同期 (並行して走る) が要約を先に置き換えたか。置き換えたあとに届いた最初の読み込みの結果で古い要約に戻さない
   const syncedSummaryRef = useRef(false);
+  // 要約を一度でも置き換えたか (要約が無いうちはカードを読まない)
+  const hasSummaryRef = useRef(false);
+  // ストアの購入 (RevenueCat) をこの利用者に結び付けられたか。結び付けられないうちはカードを読まない (#1912)
+  const identityReadyRef = useRef(false);
+  // カードの読み込みの段 (同期と要約の読み込みのどちらが先に要約を置き換えても、1 回だけ読む)
+  const cardsLoadStateRef = useRef<CardsLoadState>("idle");
 
   /** 要約を置き換え、読み込みの失敗の表示を消す */
   const applySummary = useCallback((next: BillingSummaryWire) => {
+    hasSummaryRef.current = true;
     setSummary(next);
     setLoadError(false);
   }, []);
@@ -128,7 +152,53 @@ export default function PlanSettingsScreen() {
     };
   }, []);
 
-  /** 同期 (POST /api/billing/iap/sync) の結果で要約を置き換える。失敗しても画面は読んだ要約のまま */
+  /**
+   * カタログ × ストアの offerings × 体験の対象の判定 → 買えるプランのカード。どれかが失敗したら空 (一覧を出さない)。
+   * 読めた (このビルドで購入を扱えず空にしたときも含む) なら true、失敗なら false (前面復帰・再読み込みでやり直す)
+   */
+  const loadCards = useCallback(async (): Promise<boolean> => {
+    const store = deviceStore();
+    if (store === null || !isPurchasesAvailable()) {
+      if (mountedRef.current) setCards([]);
+      return true;
+    }
+    try {
+      const plans = await fetchIapCatalog(store);
+      const offerings = await fetchOfferings();
+      const packages = offerings.current?.availablePackages ?? [];
+      const eligibility = await fetchTrialEligibility(packages.map((pkg) => pkg.product.identifier));
+      if (mountedRef.current) setCards(matchCatalogWithPackages(store, plans, packages, eligibility));
+      return true;
+    } catch {
+      if (mountedRef.current) setCards([]);
+      return false;
+    }
+  }, []);
+
+  /**
+   * 要約があり、カードをまだ読んでいなければ、この利用者に結び付けてからカードを読む (#1912)。
+   * 結び付け (identifyPurchases) が失敗したらカードを読まない (前の利用者や匿名のままの SDK で買わせない)。
+   * 要約の読み込みのあと・同期が要約を置き換えたあと・前面復帰のときに呼ぶ (同期だけが要約を読めたときもカードを出す。P4)
+   */
+  const ensureCards = useCallback(async () => {
+    if (userId === null || !hasSummaryRef.current || cardsLoadStateRef.current !== "idle") return;
+    cardsLoadStateRef.current = "loading";
+    if (!identityReadyRef.current) {
+      try {
+        await identifyPurchases(userId);
+        identityReadyRef.current = true;
+      } catch {
+        // 結び付けられない: カードを出さない。前面復帰・再読み込みでやり直す
+        cardsLoadStateRef.current = "idle";
+        if (mountedRef.current) setCards([]);
+        return;
+      }
+    }
+    const loaded = await loadCards();
+    cardsLoadStateRef.current = loaded ? "done" : "idle";
+  }, [userId, loadCards]);
+
+  /** 同期 (POST /api/billing/iap/sync) の結果で要約を置き換え、カードがまだならカードも読む。失敗しても画面は読んだ要約のまま */
   const syncQuietly = useCallback(async () => {
     try {
       const synced = await syncIapPurchases();
@@ -137,37 +207,17 @@ export default function PlanSettingsScreen() {
       applySummary(synced);
     } catch {
       // 同期の失敗は画面に出さない (読んだ要約で描く)
-    }
-  }, [applySummary]);
-
-  /** カタログ × ストアの offerings × 体験の対象の判定 → 買えるプランのカード。どれかが失敗したら空 (一覧を出さない) */
-  const loadCards = useCallback(async () => {
-    const store = deviceStore();
-    if (store === null || !isPurchasesAvailable()) {
-      if (mountedRef.current) setCards([]);
       return;
     }
-    try {
-      const plans = await fetchIapCatalog(store);
-      const offerings = await fetchOfferings();
-      const packages = offerings.current?.availablePackages ?? [];
-      const eligibility = await fetchTrialEligibility(packages.map((pkg) => pkg.product.identifier));
-      if (mountedRef.current) setCards(matchCatalogWithPackages(store, plans, packages, eligibility));
-    } catch {
-      if (mountedRef.current) setCards([]);
-    }
-  }, []);
+    await ensureCards();
+  }, [applySummary, ensureCards]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setLoadError(false);
-    if (userId !== null) {
-      try {
-        await identifyPurchases(userId);
-      } catch {
-        // 結び付けに失敗しても要約は読む (offerings の読み込みが失敗すれば一覧を出さない)
-      }
-    }
+    // 開くたび・再読み込みのたびに結び付けからやり直す
+    identityReadyRef.current = false;
+    cardsLoadStateRef.current = "idle";
     // 要約の読み込みと並行して、ストアの契約の同期を 1 回走らせる (成功したら要約を置き換える)
     syncedSummaryRef.current = false;
     void syncQuietly();
@@ -177,26 +227,33 @@ export default function PlanSettingsScreen() {
       if (!syncedSummaryRef.current) applySummary(loaded);
     } catch {
       if (!mountedRef.current) return;
-      // 並行の同期が要約を読めていれば、それで描く
-      if (!syncedSummaryRef.current) setLoadError(true);
       setLoading(false);
+      // 並行の同期が要約を読めていなければ、失敗の表示 (カードは読まない)
+      if (!syncedSummaryRef.current) {
+        setLoadError(true);
+        return;
+      }
+      // 並行の同期が要約を読めていれば、それで描き、カードも読む (P4)
+      await ensureCards();
       return;
     }
     setLoading(false);
-    await loadCards();
-  }, [userId, syncQuietly, loadCards, applySummary]);
+    await ensureCards();
+  }, [syncQuietly, ensureCards, applySummary]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // アプリに戻ったとき (ストアの購読の管理から戻ったときなど) にもう一度同期する
+  // アプリに戻ったとき (ストアの購読の管理から戻ったときなど) にもう一度同期する。結び付けかカードの読み込みが失敗していれば、やり直す
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
-      if (state === "active") void syncQuietly();
+      if (state !== "active") return;
+      void syncQuietly();
+      void ensureCards();
     });
     return () => subscription.remove();
-  }, [syncQuietly]);
+  }, [syncQuietly, ensureCards]);
 
   const startPurchase = useCallback(
     async (option: PurchasablePlanCard["options"][number]) => {
@@ -205,6 +262,17 @@ export default function PlanSettingsScreen() {
       setBusy(true);
       setNotice(null);
       try {
+        // 購入の前に、SDK の利用者がログイン中の利用者であることを確かめる。確かめられなければ買わない (#1912。ストアの生の文は出さない)
+        if (userId === null) {
+          if (mountedRef.current) setNotice(BILLING_PURCHASE_FAILED_MESSAGE);
+          return;
+        }
+        try {
+          await ensurePurchasesIdentity(userId);
+        } catch {
+          if (mountedRef.current) setNotice(BILLING_PURCHASE_FAILED_MESSAGE);
+          return;
+        }
         let outcome: Awaited<ReturnType<typeof purchase>>;
         try {
           const offerings = await fetchOfferings();
@@ -227,7 +295,8 @@ export default function PlanSettingsScreen() {
           const synced = await syncIapPurchases();
           if (mountedRef.current) {
             applySummary(synced);
-            setNotice(PLAN_PURCHASE_COMPLETED_MESSAGE);
+            // この利用者に契約が付いた (live) ときだけ完了の文。付いていなければ購入の復元を案内する (#1912)
+            setNotice(isLiveSummary(synced) ? PLAN_PURCHASE_COMPLETED_MESSAGE : PLAN_PURCHASE_NOT_REFLECTED_MESSAGE);
           }
         } catch (error) {
           if (mountedRef.current) setNotice(billingErrorMessageOf(error));
@@ -237,7 +306,7 @@ export default function PlanSettingsScreen() {
         if (mountedRef.current) setBusy(false);
       }
     },
-    [applySummary],
+    [applySummary, userId],
   );
 
   const startRestore = useCallback(async () => {
@@ -246,6 +315,17 @@ export default function PlanSettingsScreen() {
     setBusy(true);
     setNotice(null);
     try {
+      // 復元の前に、SDK の利用者がログイン中の利用者であることを確かめる。確かめられなければ復元しない (#1912)
+      if (userId === null) {
+        if (mountedRef.current) setNotice(BILLING_PURCHASE_FAILED_MESSAGE);
+        return;
+      }
+      try {
+        await ensurePurchasesIdentity(userId);
+      } catch {
+        if (mountedRef.current) setNotice(BILLING_PURCHASE_FAILED_MESSAGE);
+        return;
+      }
       try {
         await restore();
       } catch {
@@ -257,7 +337,8 @@ export default function PlanSettingsScreen() {
         const synced = await syncIapPurchases();
         if (!mountedRef.current) return;
         applySummary(synced);
-        if (synced.status === null) setNotice(PLAN_RESTORE_NOTHING_MESSAGE);
+        // live な契約が無い (status が null か、終わった契約) なら、復元できる購入が無かった旨 (#1912。黙って終えない)
+        if (!isLiveSummary(synced)) setNotice(PLAN_RESTORE_NOTHING_MESSAGE);
       } catch (error) {
         if (mountedRef.current) setNotice(billingErrorMessageOf(error));
       }
@@ -265,7 +346,7 @@ export default function PlanSettingsScreen() {
       busyRef.current = false;
       if (mountedRef.current) setBusy(false);
     }
-  }, [applySummary]);
+  }, [applySummary, userId]);
 
   const openStoreManagement = useCallback(async (store: PurchaseStore) => {
     let url: string = STORE_SUBSCRIPTION_MANAGEMENT_URL[store];

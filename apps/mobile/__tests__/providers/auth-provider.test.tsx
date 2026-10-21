@@ -61,6 +61,15 @@ jest.mock('../../src/lib/device-name', () => ({
   registerDeviceName: (...args: unknown[]) => mockRegisterDeviceName(...args),
 }));
 
+// ストアの購入 (RevenueCat) の利用者の結び付けと外し (billing/03 §8.10・#1912)。中身は purchases.test.ts で確かめる。
+// ここでは、signOut.ts を通らない SIGNED_OUT でも外しが呼ばれることと、次の利用者の結び付けとの順番を見る
+const mockIdentifyPurchases = jest.fn();
+const mockResetPurchasesOnSignOut = jest.fn();
+jest.mock('../../src/lib/purchases', () => ({
+  identifyPurchases: (...args: unknown[]) => mockIdentifyPurchases(...args),
+  resetPurchasesOnSignOut: (...args: unknown[]) => mockResetPurchasesOnSignOut(...args),
+}));
+
 import { AuthProvider, useAuth } from '../../src/providers/AuthProvider';
 
 /**
@@ -124,6 +133,8 @@ beforeEach(() => {
   mockRecordStoredReleases.mockResolvedValue(undefined);
   mockGetStoredSession.mockResolvedValue(null);
   mockRegisterDeviceName.mockResolvedValue(undefined);
+  mockIdentifyPurchases.mockResolvedValue(undefined);
+  mockResetPurchasesOnSignOut.mockResolvedValue(undefined);
   mockOnAuthStateChange.mockImplementation((listener: AuthListener) => {
     authListener = listener;
     return { data: { subscription: { unsubscribe: mockUnsubscribe } } };
@@ -480,6 +491,35 @@ describe('AuthProvider — 起動時のセッション復元', () => {
         act(() => authListener('SIGNED_OUT', null));
         await waitFor(() => expect(mockClearAfterSignedOut).toHaveBeenLastCalledWith('user-refreshed'));
         expect(mockClearAfterSignedOut).toHaveBeenCalledTimes(2);
+      });
+
+      it('ストアの購入 (RevenueCat) の利用者を外す (signOut.ts を通らない SIGNED_OUT でも。#1912)。次の利用者の結び付けはそのあと', async () => {
+        const api = await renderSignedIn('user-1');
+        expect(mockIdentifyPurchases).toHaveBeenCalledWith('user-1');
+        expect(mockResetPurchasesOnSignOut).not.toHaveBeenCalled();
+
+        act(() => authListener('SIGNED_OUT', null));
+
+        expect(text(api, 'session')).toBe('none');
+        expect(mockResetPurchasesOnSignOut).toHaveBeenCalledTimes(1);
+
+        act(() => authListener('SIGNED_IN', makeSession('user-2', 'access-2')));
+        expect(mockIdentifyPurchases).toHaveBeenLastCalledWith('user-2');
+        // 外しは次の利用者の結び付けより先に呼ばれている (purchases.ts の列で、この順に流れる)
+        const resetOrder = mockResetPurchasesOnSignOut.mock.invocationCallOrder[0];
+        const identifyOrders = mockIdentifyPurchases.mock.invocationCallOrder;
+        expect(resetOrder).toBeLessThan(identifyOrders[identifyOrders.length - 1]);
+      });
+
+      it('外しが失敗 (拒否) しても、未ログインにし、掃除を続ける', async () => {
+        mockResetPurchasesOnSignOut.mockRejectedValueOnce(new Error('reset failed'));
+        const api = await renderSignedIn('user-1');
+
+        act(() => authListener('SIGNED_OUT', null));
+
+        expect(text(api, 'session')).toBe('none');
+        await waitFor(() => expect(mockClearAfterSignedOut).toHaveBeenCalledWith('user-1'));
+        expect(mockResetPurchasesOnSignOut).toHaveBeenCalledTimes(1);
       });
 
       it('続けて届いた 2 回目の SIGNED_OUT は、ID なしで掃除する (覚えている ID は 1 回の掃除で忘れる)', async () => {
