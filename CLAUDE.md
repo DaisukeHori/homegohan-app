@@ -283,10 +283,10 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 
 組織の所属・解散を変える関数は、組織の行のロックを次の順でそろえる (`supabase/migrations/20261022100000_org_invite_dissolved.sql`・`20261019120000_self_dissolve.sql`)。
 
-- 解散 (`dissolve_org_by_owner`・`operator_force_dissolve_org`): オーナーの `user_profiles` → `organizations` の行 (どちらも `FOR NO KEY UPDATE`) → 後始末 (全員の `user_profiles` → `org_license_pools` → `organizations`)。運営の強制解散は、途中でオーナーが変わっていたら取り直す。
+- 解散 (`dissolve_org_by_owner`・`operator_force_dissolve_org`): オーナーの `user_profiles` (`dissolve_org_by_owner` は呼び出した本人の行。オーナーでなければこのあとの判定で断る) → `organizations` の行 (どちらも `FOR NO KEY UPDATE`) → 後始末 (全員の `user_profiles` → `org_license_pools` → `organizations`)。運営の強制解散は、途中でオーナーが変わっていたら取り直す。
 - 招待の承諾 (`accept_org_invite`): 招待の行 (`FOR UPDATE`) → `organizations` の行 (`FOR NO KEY UPDATE`。`status` が `active` でなければ `ORG_ALREADY_DISSOLVED`) → 承諾者の `user_profiles` → `org_license_pools`。
 - 新しく足す組織の行のロックは `FOR NO KEY UPDATE` にする (家族と同じ理由。`FOR UPDATE` だと外部キーの確認 (`FOR KEY SHARE`) と待ち合う)。
-- 組織の譲渡の承諾 (`accept_org_owner_transfer`) は、在籍の判定をロックの外で行う (既知。強制解散と同時に走ると、承諾が CHECK `user_profiles_org_consistency` (23514) で止まる)。
+- 組織の譲渡の承諾 (`accept_org_owner_transfer`) は、在籍の判定をロックの外で行う (既知。オーナーの解散・運営の強制解散と同時に走ると、承諾が CHECK `user_profiles_org_consistency` (23514) で止まる)。
 
 ---
 
