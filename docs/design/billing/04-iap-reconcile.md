@@ -6,7 +6,7 @@
 | Status | 設計ゲート審査中 (A 型。R1 の修正版) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
-| 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `fe426b34` (#1932) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い |
+| 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵・§14.2 の行の番号) に差分は無い |
 | 前提の冊 | `docs/design/billing/03-paid-plans-and-iap.md` (親。RevenueCat の口 = §8.1 `iap-core.ts`・§8.3 `revenuecat-gateway.ts` / `iap-repository.ts`・§8.4 `iap-service.ts`・§6.4 の写像 `billing_apply_store_subscription`・§7.3 の状態遷移表)・`01-billing-core.md` (核。§12 の「reconcile は写像を呼んで直す」の型)・`02-manual-plan-grant.md` (手動付与の日次の失効 = pg_cron の先例)・`docs/design/operator/08-cron-batches.md`・`11-ops-batches-non-billing.md` (cron の台帳と失敗の監視)。本冊は親の契約 (写しの入口は `billing_apply_store_subscription` の 1 つ・`p_fetched_at` で単調・TS の入口は `syncStoreSubscriber`) を壊さず、その上に定期の処理を 1 本足す |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
 
