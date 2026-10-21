@@ -26,6 +26,7 @@ import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -121,6 +122,9 @@ beforeAll(async () => {
     .from('family_members')
     .insert({ family_id: familyId, user_id: familyRep.id, role: 'representative', status: 'active' });
   if (memberError) throw new Error(`family_members: ${memberError.message}`);
+  // billing/03 §6.6 (#1912): free のグループには招待を作れない (create_family_invite の FAMILY_PLAN_REQUIRED)。
+  // service_role の直接の INSERT で作ったグループは代表者に契約が無いので free になる。招待を作る前に家族プランにする
+  await setFamilyGroupPlan(srAdmin, [familyId]);
 }, 60_000);
 
 afterAll(async () => {
