@@ -368,8 +368,9 @@ describe.each(ENTRIES)('#1487 料理画像の見送り・数え戻し: $name', (
     expect(h.consumeAiUsage).toHaveBeenCalledTimes(1);
     expect(h.consumeAiUsage).toHaveBeenCalledWith(USER_ID, 'meal_image_auto');
     expect(h.state.queueInserts.map((row) => row.dish_index)).toEqual([1]);
-    expect(savedDishes()[0]).toMatchObject({ name: '味噌汁', image_url: null, image_source: null, image_status: null, image_subject_hash: null });
-    expect(savedDishes()[1]).toMatchObject({ name: 'カレー', image_source: 'generated_ai', image_status: 'pending' });
+    // POST の入口は 1 品目の名前を献立の名前 (dishName) にするので、役割で見る
+    expect(savedDishes()[0]).toMatchObject({ role: 'soup', image_url: null, image_source: null, image_status: null, image_subject_hash: null });
+    expect(savedDishes()[1]).toMatchObject({ role: 'main', image_source: 'generated_ai', image_status: 'pending' });
   });
 
   it('B. レート制限で止められた: failed + skipped_rate_limit で保存し、上限を数えない', async () => {
