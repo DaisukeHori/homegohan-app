@@ -4,7 +4,7 @@
 |---|---|
 | 版 | v1.2 (2026-10-22) |
 | Status | 設計ゲート審査中 (A 型。R2 の修正版) |
-| Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
+| Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§5.2 の縁の発生源 (2)・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
 | 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い。§14.2 の行の番号は `d950a7b1` で取り直した (billing/03 §18 の 4 が `:5190` → `:5206` に動いていた) |
 | 前提の冊 | `docs/design/billing/03-paid-plans-and-iap.md` (親。RevenueCat の口 = §8.1 `iap-core.ts`・§8.3 `revenuecat-gateway.ts` / `iap-repository.ts`・§8.4 `iap-service.ts`・§6.4 の写像 `billing_apply_store_subscription`・§7.3 の状態遷移表)・`01-billing-core.md` (核。§12 の「reconcile は写像を呼んで直す」の型)・`02-manual-plan-grant.md` (手動付与の日次の失効 = pg_cron の先例)・`docs/design/operator/08-cron-batches.md`・`11-ops-batches-non-billing.md` (cron の台帳と失敗の監視)。本冊は親の契約 (写しの入口は `billing_apply_store_subscription` の 1 つ・`p_fetched_at` で単調・TS の入口は `syncStoreSubscriber`) を壊さず、その上に定期の処理を 1 本足す |
@@ -38,7 +38,7 @@
 
 - §3 要件行列・§3.2 シナリオ → §4 構想とトレース → §5 構造裁定 → §6 以降が仕上げ (実装者は §6〜§14 だけ読めば手を止めない)。
 - 正典の TS は §8 の ```ts ブロック。`import` が zod だけのブロック (§8.1 `iap-reconcile-core.ts`) は単独で型検査できる。1 行目に `// tsc:skip place=<パス>` / `insert=<パス>` の印があるブロックは、既存のモジュール (`@/lib/...`) を import するので単独の検査から外し、billing/01 §8.0 の手順 (印の付いたブロックを置き場所に置き、`npx tsc --noEmit` をリポジトリ全体に当てる) で検査する。印の無い `// tsc:skip` のブロックは説明用の断片だけ。SQL は §6。
-- 既存の設計書との食い違いは本冊が正。親 (billing/03) の Q-11 と §18 の 4 の「日次の reconcile は配線の残りの冊」は、本冊が「毎時の取り直し (`GET /api/cron/iap-reconcile`)」として確定する (§14.2 で親に追随の行を書く)。
+- 既存の設計書との食い違いは本冊が正。親 (billing/03) の Q-11・§5.2 の縁の発生源 (2)・§18 の 4 の「日次の reconcile は配線の残りの冊」は、本冊が「毎時の取り直し (`GET /api/cron/iap-reconcile`)」として確定する (§14.2 で親に追随の行を書く)。
 - main にマージ済みの事実 (billing/03 の実装 `src/lib/billing/iap-*.ts`・migration `20261021100000_billing_paid_plans_iap.sql`) が本冊の記述と食い違ったら、main が正で本冊が従う。
 
 ### 0.4 前提 (Issue #1912 の本文の逐語と、着手の前に origin/main で確かめた事実)
@@ -74,7 +74,7 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 
 | 文書 | 本冊との関係 |
 |---|---|
-| billing/03 §0.5 Q-11・§3.2 S12・§18 の 4 | 「日次の reconcile は配線の残りの冊」。本冊がその冊。RevenueCat の全契約の列挙は API に無い (P5) ので、`personal_subscriptions` のストアの live 行を 1 人ずつ取り直す、と仮置きされている (§18 の 4)。本冊もその形 |
+| billing/03 §0.5 Q-11・§3.2 S12・§5.2 の縁の発生源 (2)・§18 の 4 | 「日次の reconcile は配線の残りの冊」。本冊がその冊。RevenueCat の全契約の列挙は API に無い (P5) ので、`personal_subscriptions` のストアの live 行を 1 人ずつ取り直す、と仮置きされている (§18 の 4)。本冊もその形 |
 | billing/03 §8.4 `syncStoreSubscriber` / `lazyResyncStoreSubscription`・§8.1 `needsLazyResync` | 写しの入口と、遅延の再同期の判定 (期限を過ぎた行・5 分より古い取り直し)。本冊は入口をそのまま呼び、遅延の再同期は変えない (§7.2) |
 | billing/03 §6.4 `billing_apply_store_subscription` | `p_fetched_at` で単調・advisory lock `billing-user:<uuid>` と `iap-subscription:<store>:<product>` で直列。Webhook・同期・遅延の再同期・本冊の取り直しが同時でも、新しい取り直しだけが写る (§4.2 S5・S6) |
 | billing/03 §7.3 | ストアの行の状態遷移。本冊の取り直しは「取り直しの合図」の 1 つで、遷移先は取り直した姿 (`deriveStoreStatus`) で決まる (§7.3 (a)) |
@@ -418,7 +418,7 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 
 ## 7. 表 3 点
 
-### 7.1 全パターン表 (行の由来 × 状態 × 期限 × 最後の取り直し → 候補か・取り直しの結果)
+### 7.1 全パターン表 (行の由来 (ストア `iap_store` を含む) × 状態 × 期限 × 最後の取り直し → 候補か・取り直しの結果)
 
 | 行の由来 | status | `current_period_end` | `iap_synced_at` | 候補 | 取り直しの結果 (`syncStoreSubscriber` → 写像) | 根拠 |
 |---|---|---|---|---|---|---|
@@ -430,6 +430,9 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 | I | live | ≤ now | < `current_period_end` | 出る (毎回) | 取り直した姿: `expired` (S1) / `active` で期限が進む (S2) / `past_due` のまま (S3) / `cancelled` (返金) | 期限の後の姿をまだ見ていない。S1・S2・S4 |
 | I | live | ≤ now | ≥ `current_period_end` かつ > now − 6 時間 | 出ない | — | 期限の後に取り直し済みで新しい (ストアの猶予期間の `past_due`)。S3 |
 | I | live | ≤ now | ≥ `current_period_end` かつ ≤ now − 6 時間 | 出る | 取り直した姿 (猶予が尽きていれば `expired`) | S3 |
+| I (`iap_store` = `app_store` / `play_store`。ストアの軸) | live | ≤ now | 候補の条件 | 出る (ストアで変わらない。述語は `iap_store IS NOT NULL` だけを見る。§6.2) | 利用者ごとに 1 回取り直し、取り直しの `subscriptions` の両方のストアの購読を `selectStoreSubscriptions` が写す順に並べる (行の `iap_store` で取り直しの API は分かれない) | §6.2・billing/03 §8.1 |
+| I (`app_store`) | live | ≤ now | 候補の条件 | 出る | 取り直しに App Store の商品が 2 つ以上 live (同じグループの中の変更、または別の Apple ID の二重購読) → 古い方 `expired` (`p_source` = `iap_reconcile:superseded`)・新しい方は取り直した姿 (§7.3 (a)) | billing/03 S36・S25・`SUPERSEDE_WITHIN_GROUP_STORES` = `['app_store']` |
+| I (`play_store`) / ストアをまたぐ | live | ≤ now | 候補の条件 | 出る | 取り直しに Google Play の商品が 2 つ以上 live、または App Store と Google Play の商品が両方 live → 置き換えにしない (二重購読)。後に写す live が写像の 5. で `BILL_LIVE_ROW_CONFLICT` → `rejected` (下の行。候補に残る) | billing/03 S25・`SUPERSEDE_WITHIN_GROUP_STORES` に `play_store` は無い |
 | I (候補) | live | ≤ now | 候補の条件 | 出る | 別の live 行あり → `BILL_LIVE_ROW_CONFLICT` (飛ばす。`rejected`) | S11・billing/03 §13.3 |
 | I (候補) | live | ≤ now | 候補の条件 | 出る | live な商品が `plan_store_products` に無く利用者の行も無い → `BILL_IAP_UNKNOWN_PRODUCT` (何も書かずに飛ばす) | S11・billing/03 S15 |
 | I (候補) | live | ≤ now | 候補の条件 | 出る | 取り直しに当社の商品が無い (`no_subscription`) → 行は `projectMissingSubscription` で `expired` (`ended`) | billing/03 §8.4 の 3 (TRANSFER で移った行) |
@@ -478,8 +481,8 @@ DROP TABLE IF EXISTS public.iap_reconcile_attempts;
 | 同上 | `expires_date` ≤ now かつ `grace_period_expires_date` > now | `past_due` | 同上 | UPDATE (`past_due_since` は保つ)。`active` → `past_due` のときだけ監査 (warn) |
 | 同上 | `refunded_at` あり | `cancelled` | 同上 | `cancelled_at = refunded_at`・`plan_key_cached`・家族グループ・監査 |
 | 同上 | 取り直しに当社の商品が無い | `expired` (`projectMissingSubscription`) | 同上 | `ended + 1`。`plan_key_cached`・家族グループ・監査 |
-| 同上 | 同じ App Store のグループに 2 つ以上 live | 古い方 `expired` (`:superseded`)・新しい方は上の行 | billing/03 §7.3 S36 | 親の規則のとおり |
-| 同上 | 別の live 行あり | 同じ | — | `BILL_LIVE_ROW_CONFLICT` → `rejected` に数えて飛ばす (warn)。候補に残る |
+| 同上 | 同じ App Store のグループに 2 つ以上 live | 古い方 `expired` (`:superseded`)・新しい方は上の行 | billing/03 §7.3 S36。ストアが `app_store` のときだけ (`SUPERSEDE_WITHIN_GROUP_STORES`。Google Play とストアをまたぐ 2 つの live は下の「別の live 行あり」) | 親の規則のとおり |
+| 同上 | 別の live 行あり (Stripe の行・Google Play の 2 つの live・App Store と Google Play の両方の live。billing/03 S13・S25) | 同じ | — | `BILL_LIVE_ROW_CONFLICT` → `rejected` に数えて飛ばす (warn)。候補に残る |
 | 同上 | live な商品が `plan_store_products` に無く利用者の行も無い | 同じ | — | `BILL_IAP_UNKNOWN_PRODUCT` → `rejected` に数えて飛ばす (何も書かない) |
 | 同上 | 取り直しが古い (`iap_synced_at >= p_fetched_at`) | 同じ | — | `stale + 1` |
 | 同上 | 退会済み | 行なし | — | `user_deleted` (数えない) |
@@ -1277,13 +1280,15 @@ IAP_RECONCILE_RECHECK_HOURS=
 
 ### 12.5 シナリオ ⇄ テスト
 
+並行 (S5・S6・S14) の扱い: 写像の直列 (`billing-user:<uuid>` の advisory lock) と `p_fetched_at` の単調は billing/03 の写像 `billing_apply_store_subscription` の性質で、本冊はその関数を変えないので、同時の書き込みの検査は billing/03 の結合テスト 67 (`is monotonic by p_fetched_at (older fetch is stale) and idempotent for the same snapshot`) が受け持つ。本冊のテストが見るのは、写像が返した `stale` を要約に数えること (11) と、候補を選ぶ関数が鍵を取って印を書くこと (35 の文面・44 の続けて呼んだときの順番) まで。2 つの回を本当に同時に走らせる検査は置かない (鍵の待ちを時刻で作る検査は揺れるため。鍵の文面は 35 が逐語で見る)。
+
 | シナリオ | テスト |
 |---|---|
 | S1 失効が届かない | 11・35・38・43 (遷移は billing/03 の結合テスト「transitions active → expired …」が担う) |
 | S2 更新が届かない | 11・43 |
 | S3 ストアの猶予期間 | 39・35 |
 | S4 期限の直前の同期 | 38・35 |
-| S5 遅延の再同期と同時 / S6 Webhook と同時 | 20 (stale の数え方)・billing/03 の結合テスト「is monotonic by p_fetched_at …」 |
+| S5 遅延の再同期と同時 / S6 Webhook と同時 | 11 (写像が返した `stale` を要約の `stale` に数える)・billing/03 の結合テスト 67「is monotonic by p_fetched_at …」(写像の直列と単調。上の注) |
 | S7 鍵が無い | 23 |
 | S8 RevenueCat の失敗・鍵の誤り (回全体) | 8・16・26 |
 | S9 429 | 8・15・18・25 |
@@ -1291,7 +1296,7 @@ IAP_RECONCILE_RECHECK_HOURS=
 | S11 運営の処置が要る行 | 8・14・25・44 |
 | S12 メンテナンス中 | 22 |
 | S13 対象外の行 | 40・35 |
-| S14 回の二重 | 20・35 (advisory lock)・44・billing/03 の結合テスト (monotonic) |
+| S14 回の二重 | 35 (候補の関数の advisory lock の文面)・44 (先の回が選んだ利用者を後ろに回す)・11 (`stale` の数え方)・billing/03 の結合テスト 67 (monotonic) |
 | S15 退会 | 20・32 (ON DELETE CASCADE)・`auth-users-fk-on-delete` の `EXPECTED_ACTIONS` (§14.1) |
 | S16 利用者 1 人だけ取り直せない | 8・17・26 |
 | S17 取り直せない利用者が上限より多い | 44 |
@@ -1355,7 +1360,7 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 **母集合の作り方** (実装の各段の最初に origin/main で流し直す。表に無いファイルが出たら、同じ型の行の「直し方」がそのまま当てはまるときに限り直してよい。当てはまらなければ報告する):
 1. `vercel.json` の crons の数・名前を読むテスト: `git grep -l "vercel.json" origin/main -- tests src scripts`。2026-10-22 の origin/main `0fb02e52` では 17 本 (テスト 13 本・コード 4 本。どれも下の行にある。全部の crons を読むのは 7 本、自分の path だけを絞るのは 4 本、残り 2 本とコード 4 本はコメントか別の値で触れるだけ)。
 2. `src/app/api/cron/` の route を走査するテスト: `git grep -l "api/cron" origin/main -- tests src/__tests__`。43 本 (どれも下の行にある)。route 自体を読み込む固定の一覧 (`cron-log-keepalive-1909`) と、ディレクトリを `readdirSync` で走査するもの (`cron-failure-monitoring-contract`・`cron-secret-contract` と、`src` を走査する 6 本) と、特定の route の名前を書くだけのものを分けて下の行に。
-3. 環境変数の一覧を読むテスト: `git grep -n "readOnlyBy" origin/main -- tests src/__tests__`。`src/__tests__/lib/env.test.ts` と `tests/env-source-scan.test.ts`。
+3. 環境変数の一覧を読むテスト: `git grep -n "readOnlyBy" origin/main -- tests src/__tests__`。2026-10-22 の origin/main `d950a7b1` では 5 本: 一覧の全数を見るのは `src/__tests__/lib/env.test.ts` と `tests/env-source-scan.test.ts` の 2 本。`src/__tests__/lib/plan/entitlements.test.ts` (`:251`・`:277`) と `tests/org-challenges-lib.test.ts` (`:309`) は自分の変数の項だけを名指しで読み、`tests/cron-secret-contract.test.ts` (`:33`) はコメントで触れるだけ (どれも下の行にある)。
 4. migration の関数の名前を型と突き合わせるテスト: `tests/database-types-migrations-contract.test.ts`。
 5. `@/lib/env` に届く route の一覧: `tests/helpers/ai-consent-enforced-paths.ts` と、それを読む `tests/ai-consent-enforcement.test.ts`・`tests/ai-usage-contract.test.ts`。本冊の route は `revenuecat-gateway.ts` を import するので届く (billing/03 §16.1 の母集合の作り方 1 と同じ)。
 6. 設計書の「いま」の本数を読むテスト: `tests/design-doc-vercel-cron-count.test.ts`・`tests/log-cleanup-dau-snapshot-contract.test.ts`・`tests/env-setup-cron-secret-crons.test.ts` (直すのはテストでなく文書。§14.2)。
@@ -1378,6 +1383,7 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | 母集合 2 の残り 17 本 (既存の route を名指しするか、別のディレクトリを走査するだけ): `src/__tests__/api/cron/process-menu-queue.test.ts`・`push-outbox.test.ts`・`src/__tests__/api/webhooks/resend.test.ts`・`src/__tests__/lib/cron-auth.test.ts`・`src/__tests__/lib/emails/ops/cron-failure.test.ts`・`src/__tests__/lib/ops-alerts/app-log-error-spike.test.ts`・`src/__tests__/lib/ops-alerts/cron-secret-drift.test.ts`・`tests/ai-consent-enforcement-routes.test.ts`・`tests/cron-process-menu-queue-ai-consent.test.ts`・`tests/cron-secret-probe-edge.test.ts`・`tests/e2e/w5-3-menu-gen-adversarial.spec.ts`・`tests/email-suppression-log-docs-1577.test.ts`・`tests/health-middleware-exemption.test.ts`・`tests/integration/rls/ops-alert-state.test.ts`・`tests/legal-claims-1901.ts`・`tests/edge-function-cors.test.ts` (走査は `supabase/functions`)・`tests/security-workflow.test.ts` (走査は `.github/workflows`) | `api/cron` の語 | 変更なし (本冊の route を一覧に求めない) | — |
 | `src/__tests__/lib/env.test.ts` (`:419-470` の `sealed` の一覧 (`toEqual`)・`:479-520` の `typeOnly`) | `IAP_RECONCILE_BATCH_SIZE`・`IAP_RECONCILE_RECHECK_HOURS` に `readOnlyBy` | `sealed` の `['FEATURE_FLAG_CACHE_TTL_MS', …]` の行の後 (並びは `.sort()` なので `F` と `L` の間) に 2 行 (逐語): `// #1912 billing/04 ストアの購読の定期の取り直しの 1 回の件数と再確認の間隔。不正な値の扱い (既定値に戻して warn) を cron の route 1 か所に置く` / `['IAP_RECONCILE_BATCH_SIZE', 'src/app/api/cron/iap-reconcile/route.ts'],` / `['IAP_RECONCILE_RECHECK_HOURS', 'src/app/api/cron/iap-reconcile/route.ts'],`。`typeOnly` に 2 行: `// @ts-expect-error IAP_RECONCILE_BATCH_SIZE の値を読むのは cron の route (src/app/api/cron/iap-reconcile/route.ts) だけ (#1912 billing/04)` / `getOptionalEnv('IAP_RECONCILE_BATCH_SIZE');` / `// @ts-expect-error IAP_RECONCILE_RECHECK_HOURS も同じ` / `getOptionalEnv('IAP_RECONCILE_RECHECK_HOURS');`。`:419` の it 名の列挙に `IAP_RECONCILE_*` を足す (`FEATURE_FLAG_CACHE_TTL_MS・` の後) | B |
 | `tests/env-source-scan.test.ts` (一覧の全変数が `.env.example` にある・本番コードで値を読むのは `readOnlyBy` のファイルだけ・`process.env.X!` を書かない・`:614-640` の毎分の cron (`process-menu-queue`) が `env.ts` に届かない) | 2 つの環境変数・route が `process.env.IAP_RECONCILE_*` を名前で読む・route は `revenuecat-gateway.ts` 経由で `env.ts` に届く | 変更なし (`.env.example` に 2 行 (§8.5)、読むのは `readOnlyBy` の route だけ、`!` を使わない。`ENTRIES` は `process-menu-queue` だけで、毎時の route は対象外。billing/03 の Webhook の route と同じ) | — |
+| `src/__tests__/lib/plan/entitlements.test.ts` (`:251`・`:277`。`aiFeatureDailyCap` が尋ねる変数の `readOnlyBy` が `src/lib/plan/entitlements.ts`)・`tests/org-challenges-lib.test.ts` (`:309`。`SERVER_ENV_VARS.ORG_CHALLENGE_SHOW_NAMES.readOnlyBy`)・`tests/cron-secret-contract.test.ts` (`:33`。コメントだけ) | `readOnlyBy` の語 | 変更なし (どれも自分の変数の項を名前で引くだけで一覧の全数を見ない。本冊の 2 つの変数はどの項でもない) | — |
 | `tests/database-types-migrations-contract.test.ts` (migration の `CREATE FUNCTION` の名前が両方の `database.types.ts` の `Functions` にある) | `billing_iap_reconcile_claim_candidates` (表 `iap_reconcile_attempts` も型の `Tables` に入る) | 両方の `database.types.ts` を再生成する (operator/09 §3.3 の 5 の手順。270k / 256 で) | A |
 | `tests/account-export-tables.test.ts` (`:275` 「分類されていない表が無い」・`:321` 「除外リストの表は、実際にユーザー識別列を持つ」。migration の `CREATE TABLE` を重ねて読む) | 新しい表 `iap_reconcile_attempts` (`user_id`) | テストは変えない。`src/lib/account-export-tables.ts` の `ACCOUNT_EXPORT_EXCLUDED` に 1 項を足す (§8.5 の逐語) | A |
 | `tests/legal-text-1901.test.ts` (T-34 `:867-891`: 書き出しの分類の表の集合 = `PRIVACY_DATA_TABLES` と `PRIVACY_DATA_EXCLUDED` の和) | `ACCOUNT_EXPORT_EXCLUDED` に `iap_reconcile_attempts` が増える | `PRIVACY_DATA_TABLES` (`:128`) の `coupon_redemptions: '有料プラン',` の行の後に 1 行 (逐語): `iap_reconcile_attempts: '有料プラン',`。`PRIVACY_DATA_EXCLUDED` の `no_writer` には入れない (関数が INSERT するので、同じ it の「書くコード・INSERT する migration が無い」で赤になる)。第 3 条の「有料プラン」の行は既にあるので文面は変えない | A |
@@ -1419,6 +1425,7 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | `ENV_SETUP.md` | `:94` と Push 通知の環境変数の表の後 | §8.5 のとおり | 段 B と同じ PR |
 | `docs/design/billing/03-paid-plans-and-iap.md` §0.5 Q-11 | `:86` 「…日次の reconcile は配線の残りの冊**」 | 「…定期の取り直し (毎時) は `04-iap-reconcile.md`**」 | docs PR |
 | 同 §3.2 S12 | `:270` 「…のどちらかで写る (Q-11)」 | 「…のどちらかで写る (Q-11)。本人が開かない契約は、`04-iap-reconcile.md` の毎時の取り直しが期限の後 1 時間以内に写す」 | docs PR |
+| 同 §5.2 の縁の発生源 (2) | `:380` 「…本人の操作からの同期 (3) と遅延の再同期 (§8.4) で受ける。日次の reconcile は配線の残りの冊 (Q-11)。」 | 「…本人の操作からの同期 (3) と遅延の再同期 (§8.4) で受け、本人が開かない契約は `04-iap-reconcile.md` の定期の取り直し (毎時) で受ける (Q-11)。」 | docs PR |
 | 同 §18 の 4 | `:5206` 「日次の reconcile (…) は配線の残りの冊」 | 「定期の取り直し (`personal_subscriptions` の期限を過ぎた live なストアの行の利用者を毎時 1 人ずつ取り直す) は `04-iap-reconcile.md` で確定」 | docs PR |
 | `docs/design/CLAUDE.md` | `:16` 「…`02-manual-plan-grant.md` (運営者の手動のプラン付与) と、配線の残りの冊 (運用バッチ・運営の Finance 画面ほか。未作成))」 | 「…`02-manual-plan-grant.md` (運営者の手動のプラン付与)・`03-paid-plans-and-iap.md` (有料プランの販売とアプリ内課金)・`04-iap-reconcile.md` (ストアの購読の定期の取り直し) と、配線の残りの冊 (運営の Finance 画面ほか。未作成))」 | docs PR |
 | `docs/design/operator/09-runbook.md` §5.3 | `:204-210` (Vercel Cron の手動実行) | 例に `/api/cron/iap-reconcile` を足し、応答の `status`・`stopped_early`・`oldest_period_end` の読み方 (§9.1) を 1 段落で書く (任意) | docs PR |
@@ -1470,4 +1477,4 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 |---|---|---|
 | v1.0 | 2026-10-22 | 新設 (設計ゲート R1 の叩き台。4 相: 外形固定 §3 → 構想 §4 → 構造裁定 §5 → 仕上げ §6〜§15。Issue #1912 の配線の残りの冊「日次の reconcile」を、毎時の Vercel Cron `GET /api/cron/iap-reconcile` と DB の候補の関数 `billing_iap_reconcile_candidates` で確定) |
 | v1.1 | 2026-10-22 | 設計ゲート R1 の指摘 3 件を反映。(1)(2) 利用者 1 人の失敗 (応答の形の違い・そのほかの 4xx・写像の想定外) で回が止まり、その利用者が毎回先頭に来て後ろの全員が取り直されない欠陥: 失敗を回全体 / 利用者 1 人に分け (`classifyReconcileFailure`・`IapReconcileFailedError`・要約の `failed`)、候補の順番を「最後に試した時刻の古い順」にする印の表 `iap_reconcile_attempts` と、選んだ利用者に時刻を書く関数 `billing_iap_reconcile_claim_candidates` (旧 `billing_iap_reconcile_candidates`) に改めた (§4.1・§5.2・§6.2・§8・§11)。表の分類 3 か所を段 A に足した (F24)。(3) 段 A のテストが段 B の定数を import していた点: `c_max_limit` と `IAP_RECONCILE_BATCH_SIZE_MAX` の一致の検査を段 B の単体テスト 10 へ移した。テストを 45 本に振り直した (§12)。シナリオ S16・S17 を足した。周 2 の網羅性の反映: §14.2 に operator/08 §6.2 (`:549`。番兵の見張りの外) の行を足し、operator/12 §14 の行の文書名を明記、行の番号を `d950a7b1` で取り直し (operator/08 §3.2 `:178`・`:180`、billing/03 §18 `:5206`)、§14.1 の `design-doc-vercel-cron-count` の行の数え方 (設計書 3 冊の 8 か所 + it 名 1 か所) を直した |
-| v1.2 | 2026-10-22 | 設計ゲート R2 の指摘 1 件を反映。写像の `BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` を `rejected` (200・運用メールなし) に入れていた点: billing/03 §13.3 の扱いは失敗で運営の処置の表が無いので、`rejected` は運営の処置が決まっている `BILL_LIVE_ROW_CONFLICT` (§13.3)・`BILL_IAP_UNKNOWN_PRODUCT` (S15) の 2 つだけにし、定数 `IAP_RECONCILE_REJECTED_CODES`・型 `IapReconcileRejectedCode`・`isIapReconcileRejectedCode` (§8.1) で 1 か所に閉じた。ほかの業務エラーは `classifyReconcileFailure` の `other` → `failed['internal']` (500 → `cron_failure`)。§2.1・§3.2・§4.1・§4.2・§7.1・§7.3 (a)(b)・§8.1・§8.3・§9.1・§11.2・§12 (テスト 8・14・17)・§12.5・§13.3 (export 42 → 45)・§15 を揃えた |
+| v1.2 | 2026-10-22 | 設計ゲート R2 の指摘 1 件を反映。写像の `BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` を `rejected` (200・運用メールなし) に入れていた点: billing/03 §13.3 の扱いは失敗で運営の処置の表が無いので、`rejected` は運営の処置が決まっている `BILL_LIVE_ROW_CONFLICT` (§13.3)・`BILL_IAP_UNKNOWN_PRODUCT` (S15) の 2 つだけにし、定数 `IAP_RECONCILE_REJECTED_CODES`・型 `IapReconcileRejectedCode`・`isIapReconcileRejectedCode` (§8.1) で 1 か所に閉じた。ほかの業務エラーは `classifyReconcileFailure` の `other` → `failed['internal']` (500 → `cron_failure`)。§2.1・§3.2・§4.1・§4.2・§7.1・§7.3 (a)(b)・§8.1・§8.3・§9.1・§11.2・§12 (テスト 8・14・17)・§12.5・§13.3 (export 42 → 45)・§15 を揃えた。周 3 の網羅性の反映: §14.2 に billing/03 §5.2 の縁の発生源 (2) (`:380`) の行を足し、§0.3・§2.1 の参照に加えた。§7.1 にストア (`iap_store`) の軸の 3 行を足し、§7.3 (a) の置き換えの行と「別の live 行あり」の行にストアの条件を書いた。§14.1 の母集合 3 を 5 本に直し、名指しで読むだけの 3 本の行を足した。§12.5 の S5・S6・S14 の対応をテスト 20 (退会) から 11 (`stale` の数え方) に直し、並行の検査の受け持ち (billing/03 の結合テスト 67) を注に書いた |
