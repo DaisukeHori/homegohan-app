@@ -47,12 +47,11 @@ export interface LegalDocumentInfo {
  *
  * #1917 (docs/design/family/11-self-dissolve.md §18): 代表者・オーナーが解散してから退会できるようになり、利用規約第11条 4 項・第12条 4 項・第17条 2 項と
  * プライバシーポリシー第13条 9 項の退会の条件が変わるので、両文書を v2026.2 に上げる。
- * v2026.2 の施行日は仮の値 (2026-10-19) を置き、マージの直前にオーケストレーターが実際の公開日 (JST の YYYY-MM-DD) に置き換えて、
- * 行末の目印のコメントを消す (cross/20 §9.4 の 3・family/11 §18.4)。
+ * v2026.2 の施行日は公開 (デプロイ) の日の 2026-10-21 (cross/20 §9.4 の 3・family/11 §18.4)。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.2', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
-  privacy_policy: { version: 'v2026.2', effectiveDate: '2026-10-19' }, // 仮置き: マージ直前に公開日へ置き換える
+  terms_of_service: { version: 'v2026.2', effectiveDate: '2026-10-21' },
+  privacy_policy: { version: 'v2026.2', effectiveDate: '2026-10-21' },
 };
 
 /** 画面に出す文書名 */
