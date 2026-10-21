@@ -24,7 +24,12 @@ vi.mock('@/lib/supabase/client', () => ({ createClient: () => ({ auth: { signOut
 const { default: FrozenPage } = await import('@/app/frozen/page')
 const { default: FrozenAccountPage } = await import('@/app/frozen/account/page')
 import { FROZEN_ALLOWED_API_PATHS } from '@/lib/auth/frozen'
-import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, FROZEN_DISSOLVE_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from '@/lib/membership/self-dissolve'
+import {
+  BLOCKED_SCOPE_UNKNOWN_GUIDANCE,
+  FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE,
+  FROZEN_DISSOLVE_GUIDANCE,
+  SELF_DISSOLVED_NEXT_STEP,
+} from '@/lib/membership/self-dissolve'
 import { resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge'
 import { STORE_SUBSCRIPTION_DELETION_NOTICE } from '@homegohan/shared'
 
@@ -311,6 +316,29 @@ describe('退会と書き出しの画面 (/frozen/account)', () => {
     expect(container.textContent).toContain('「山田家」を解散する')
     expect(dissolveSubmit('family')).not.toBeNull()
     expect(dissolveSubmit('organization')).toBeNull()
+  })
+
+  it('退会: 家族の代表者の解散の区画は、家族プランの解約を凍結中に開ける「有料プランの解約・お支払い」(/frozen/billing) へ案内し、凍結中は開けない「プランとお支払い」(/account/billing) を名指さない', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+          message: FAMILY_REPRESENTATIVE_MESSAGE,
+          family_group: { id: FAMILY_ID, name: '山田家' },
+        }),
+        { status: 409 },
+      ),
+    )
+    await render(<FrozenAccountPage />)
+
+    await typeConfirm('削除します')
+    await click(buttonByText('アカウントを削除'))
+
+    const lines = Array.from(container.querySelectorAll('li')).map((li) => li.textContent)
+    expect(lines).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.frozen)
+    expect(lines).not.toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.settings)
+    expect(container.textContent).toContain('「有料プランの解約・お支払い」')
+    expect(container.textContent).not.toContain('「プランとお支払い」')
   })
 
   it('解散の区画で解散すると (POST /api/org/dissolve が 200)、区画が消えて「解散しました。「削除します」と入力して退会を続けてください。」が出る。そのあとの退会は 200 で /login へ', async () => {

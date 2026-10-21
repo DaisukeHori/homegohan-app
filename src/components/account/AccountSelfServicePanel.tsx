@@ -29,7 +29,11 @@ import {
 } from "@/lib/account-self-service";
 import { SelfDissolveSection } from "@/components/membership/SelfDissolveSection";
 import type { MembershipScope } from "@/lib/emails/membership/scope-label";
-import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from "@/lib/membership/self-dissolve";
+import {
+  BLOCKED_SCOPE_UNKNOWN_GUIDANCE,
+  SELF_DISSOLVED_NEXT_STEP,
+  type AccountSelfServiceSurface,
+} from "@/lib/membership/self-dissolve";
 import { STORE_SUBSCRIPTION_DELETION_NOTICE } from "@homegohan/shared";
 
 type Notice = { tone: "info" | "error"; text: string } | null;
@@ -39,6 +43,11 @@ type BlockedScope = { scope: MembershipScope; id: string; name: string } | null;
 export interface AccountSelfServicePanelProps {
   /** 要素の id の接頭辞 (画面ごとに変える。例: "frozen" → #frozen-delete-confirm) */
   idPrefix: string;
+  /**
+   * 枠を出す画面 (凍結中の画面 /frozen/account / 同意の前の画面 /legal-consent/account)。解散の区画の家族プランの解約の案内が、
+   * その画面の利用者が開ける画面を名指すように渡す (SelfDissolveSection の surface)
+   */
+  surface: AccountSelfServiceSurface;
   /**
    * 退会できなかった (組織のオーナー・家族の代表者。409) ときに、サーバーの文に続けて出す案内。
    * その場に解散の区画を出すときの文 (立場の id が読めなかったときは BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出す)
@@ -52,6 +61,7 @@ export interface AccountSelfServicePanelProps {
 
 export function AccountSelfServicePanel({
   idPrefix,
+  surface,
   deleteBlockedGuidance,
   onDeleted,
   onUnauthorized,
@@ -195,6 +205,7 @@ export function AccountSelfServicePanel({
           scope={blockedScope.scope}
           scopeId={blockedScope.id}
           scopeName={blockedScope.name}
+          surface={surface}
           onDissolved={handleDissolved}
           onUnauthorized={onUnauthorized}
         />

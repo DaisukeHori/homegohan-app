@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MAINTENANCE_API_CODE, MAINTENANCE_MESSAGE, SERVICE_UNAVAILABLE_STATUS } from '@homegohan/shared';
 import { FAMILY_DISSOLVE_API_PATH, ORG_DISSOLVE_API_PATH } from '@/lib/auth/frozen';
@@ -9,11 +11,13 @@ import {
   FROZEN_DISSOLVE_GUIDANCE,
   SELF_DISSOLVE_CONFIRM_KEYWORD,
   SELF_DISSOLVE_COPY,
+  SELF_DISSOLVE_SURFACES,
   FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE,
   SELF_DISSOLVE_FAILED_MESSAGE,
   SELF_DISSOLVED_NEXT_STEP,
   dissolveOwnScope,
   selfDissolveApiPath,
+  selfDissolveEffects,
 } from '@/lib/membership/self-dissolve';
 
 // #1917 利用者の解散の lib (docs/design/family/11-self-dissolve.md §13.4・§21.1)
@@ -141,6 +145,7 @@ describe('画面の文 (#1917)', () => {
         copy.submitting,
         copy.done,
       ]),
+      ...Object.values(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE),
       FROZEN_DISSOLVE_GUIDANCE,
       SELF_DISSOLVED_NEXT_STEP,
       BLOCKED_SCOPE_UNKNOWN_GUIDANCE,
@@ -151,18 +156,48 @@ describe('画面の文 (#1917)', () => {
     }
     expect(DISSOLVED_FAMILY_GROUP_RETENTION_DAYS).toBe(LEGAL_FACTS.dissolvedFamilyGroupRetentionDays);
     expect(SELF_DISSOLVE_COPY.family.effects.some((line) => line.includes(`${DISSOLVED_FAMILY_GROUP_RETENTION_DAYS} 日`))).toBe(true);
-    expect(SELF_DISSOLVE_COPY.family.effects).toHaveLength(6);
+    expect(SELF_DISSOLVE_COPY.family.effects).toHaveLength(5);
   });
 
-  it('家族の effects に、家族プランの契約は解散しても続き、解約は課金の画面 (ストアの契約はストアの定期購読の管理) から行う、の 1 行がある (billing/03)。組織の effects には無い', () => {
-    expect(SELF_DISSOLVE_COPY.family.effects).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE);
-    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('解散しても契約は続きます');
-    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('「プランとお支払い」');
-    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('App Store / Google Play');
-    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE).toContain('定期購読の管理');
-    // 取り消せないことの行は最後のまま
-    expect(SELF_DISSOLVE_COPY.family.effects.at(-1)).toBe('この操作は取り消せません。');
-    expect(SELF_DISSOLVE_COPY.organization.effects).not.toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE);
+  it('家族の効果 (selfDissolveEffects) は、どの画面でも、家族プランの契約は解散しても続くことの 1 行を取り消せないことの行の手前に持つ (billing/03)。組織には無い', () => {
+    for (const surface of SELF_DISSOLVE_SURFACES) {
+      const familyEffects = selfDissolveEffects('family', surface);
+      expect(familyEffects).toEqual([
+        ...SELF_DISSOLVE_COPY.family.effects.slice(0, -1),
+        FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE[surface],
+        'この操作は取り消せません。',
+      ]);
+      const line = FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE[surface];
+      expect(line).toContain('解散しても契約は続きます');
+      expect(line).toContain('App Store / Google Play');
+      expect(line).toContain('定期購読の管理');
+
+      const orgEffects = selfDissolveEffects('organization', surface);
+      expect(orgEffects).toEqual(SELF_DISSOLVE_COPY.organization.effects);
+      for (const planLine of Object.values(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE)) expect(orgEffects).not.toContain(planLine);
+    }
+    // 画面ごとに文が違う (同じ文を 3 つの画面に出さない)
+    expect(new Set(Object.values(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE)).size).toBe(SELF_DISSOLVE_SURFACES.length);
+  });
+
+  it('家族プランの解約の案内は、その画面の利用者が開ける画面だけを名指す (凍結中・同意の前の人は「プランとお支払い」(/account/billing) を開けない)', () => {
+    const ROOT = path.resolve(__dirname, '../../../..');
+    const read = (relativePath: string) => fs.readFileSync(path.join(ROOT, relativePath), 'utf-8');
+    // 名指す画面の見出しは、その画面の h1 と同じ文 (画面の名前が変わったら、ここが赤になる)
+    const ACCOUNT_BILLING_TITLE = 'プランとお支払い';
+    const FROZEN_BILLING_TITLE = '有料プランの解約・お支払い';
+    expect(read('src/app/(main)/account/billing/page.tsx')).toContain(`>${ACCOUNT_BILLING_TITLE}</h1>`);
+    expect(read('src/app/frozen/billing/page.tsx')).toContain(`>${FROZEN_BILLING_TITLE}</h1>`);
+
+    // メンバーシップ設定: Web の契約は「プランとお支払い」(/account/billing) から
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.settings).toContain(`「${ACCOUNT_BILLING_TITLE}」`);
+    // 凍結中: middleware が /account/billing を /frozen へ差し戻す。解約は /frozen/billing から (billing/01 §10.5)
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.frozen).toContain(`「${FROZEN_BILLING_TITLE}」`);
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.frozen).not.toContain(`「${ACCOUNT_BILLING_TITLE}」`);
+    // 同意の前: どちらの課金の画面も開けない (/frozen/billing は凍結中の人の画面)。Web の契約はお問い合わせから (billing/03 §0.5 Q-15)
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.legal_consent).not.toContain(`「${ACCOUNT_BILLING_TITLE}」`);
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.legal_consent).not.toContain(`「${FROZEN_BILLING_TITLE}」`);
+    expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.legal_consent).toContain('お問い合わせ');
   });
 
   it('組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)', () => {
