@@ -162,8 +162,8 @@ describe('UltimateModeToggle (#1142)', () => {
     expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(false);
     expect(getByText('有料プランでお使いいただけます')).toBeTruthy();
     // value が true のまま渡されても、錠のあいだは ON に見せない
-    const { getAllByTestId } = render(<UltimateModeToggle value onValueChange={onValueChange} locked />);
-    expect(isChecked(getAllByTestId('ultimate-mode-toggle')[1])).toBe(false);
+    const lockedOn = render(<UltimateModeToggle value onValueChange={onValueChange} locked />);
+    expect(isChecked(lockedOn.getByTestId('ultimate-mode-toggle'))).toBe(false);
   });
 
   it('locked でなければ錠の注は出ない', () => {

@@ -153,7 +153,7 @@ beforeEach(() => {
   mockPurchase.mockResolvedValue({ ok: false, cancelled: true });
   mockRestore.mockResolvedValue({});
   mockCurrentCustomerInfo.mockResolvedValue({ managementURL: null });
-  openUrlSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+  openUrlSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
   appStateHandler = null;
   jest.spyOn(AppState, 'addEventListener').mockImplementation(((_type: string, handler: (state: string) => void) => {
     appStateHandler = handler;
@@ -400,9 +400,11 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
 
     // このビルドでストアの購入を扱えない (キーが無い): 一覧を出さず、復元は押せない形で出す
     mockIsPurchasesAvailable.mockReturnValue(false);
+    const offeringsCalls = mockFetchOfferings.mock.calls.length;
     api = await renderScreen();
     expect(api.queryByTestId('plan-card-pro')).toBeNull();
-    expect(mockFetchOfferings).toHaveBeenCalledTimes(1);
+    // ストアに尋ねない
+    expect(mockFetchOfferings.mock.calls.length).toBe(offeringsCalls);
     const restore = api.getByTestId('plan-restore');
     expect(restore.props.accessibilityState?.disabled ?? restore.props.disabled).toBe(true);
     fireEvent.press(restore);

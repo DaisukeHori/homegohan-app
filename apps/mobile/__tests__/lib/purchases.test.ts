@@ -89,7 +89,7 @@ describe('purchases.ts (billing/03 §8.10)', () => {
     expect(Purchases.logIn).toHaveBeenCalledTimes(1);
     expect(Purchases.logIn).toHaveBeenCalledWith('user-b');
 
-    // 匿名でなければ logOut。そのあとの identify は logIn で切り替える
+    // 匿名でなければ logOut。そのあとの identify は logIn で切り替える (configure は 1 回だけ)
     Purchases.isAnonymous.mockResolvedValueOnce(false);
     await purchases.resetPurchasesOnSignOut();
     expect(Purchases.logOut).toHaveBeenCalledTimes(1);
