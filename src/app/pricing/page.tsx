@@ -1,5 +1,5 @@
 /**
- * /pricing (公開ページ) — データ駆動で「買えるプランだけ」を描く (billing/01 §10.1)
+ * /pricing (公開ページ) — 公開のプランの価格と内容を DB の値で描き、CTA は買える間隔だけに置く (billing/01 §10.1・billing/03 §10.1)
  *
  * subscription_plans から公開のプラン (public・個人/家族・free でない・月額の金額が正。billing/03 §8.6 の listPublicPlans) を読み、
  * アプリの WebView で開いたか (Cookie is_native_app) と一緒に、見た目 (PricingPageView) に渡す。

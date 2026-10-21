@@ -5,6 +5,7 @@
 // 絵文字は書かない (アイコンは各部品が lucide-react から import する)。ドメイン (homegohan.*) は書かない (tests/site-config-guard.test.ts)。
 // 新しい画面と拡大の画像 (/marketing/screens/*.png) の名前と alt は landing-screens.ts (LANDING_SCREENS・LANDING_ZOOMS) が正本で、ここに書くパスと alt はその一覧と一致する (U-4)。拡大の画像の大きさは landing-screens.ts だけが持つ。
 import { z } from 'zod';
+import { PAID_PLAN_SUMMARY, PLAN_CATALOG, formatJpy } from '@homegohan/shared';
 import { SITE_NAME } from '@/lib/site-config';
 
 /** ページが指す public/ の画像 (ガイドの画面写真・紹介ページの写真・紹介ページの新しい画面写真)。実在は U-4 が見る */
@@ -269,7 +270,7 @@ export const FlowNodeSchema = z.object({ id: z.enum(FLOW_NODE_IDS), label: z.str
 /** 家族の共有の範囲の図の 1 項目 (§5.7)。state は切り替えの形 */
 export const ShareFigureItemSchema = z.object({ label: z.string().min(1), state: z.enum(['on', 'off', 'choose']), note: z.string().min(1) });
 export const PlanCardSchema = z.object({
-  id: z.enum(['free']),
+  id: z.enum(['free', 'paid']),
   title: z.string().min(1),
   badge: z.string().min(1),
   items: z.array(z.string().min(1)),
@@ -354,7 +355,7 @@ export const LandingCopySchema = z.object({
     eyebrow: z.string().min(1),
     title: z.string().min(1),
     lead: z.string().min(1),
-    plans: z.array(PlanCardSchema).length(1),
+    plans: z.array(PlanCardSchema).length(2),
     limits: z.array(PointSchema).length(3),
   }),
   guide: z.object({
@@ -448,7 +449,7 @@ export const COPYRIGHT_YEAR = 2026;
 export const SIGNUP_HREF = '/signup';
 export const DEMO_ANCHOR = '#demo';
 
-const ASSURANCES: [string, string, string] = ['いまは無料で使えます', 'クレジットカード不要', 'いつでも退会できます'];
+const ASSURANCES: [string, string, string] = ['無料で始められます', 'クレジットカード不要', 'いつでも退会できます'];
 /** 実際の画面を出す区切りの注記 (§7.1) */
 export const SCREENS_CAPTION = '実際のアプリの画面です。表示している記録と数値は、撮影用の見本です。';
 const PRIMARY_CTA = { label: '無料で始める', href: SIGNUP_HREF };
@@ -575,7 +576,7 @@ export const LANDING_COPY = {
       { id: 'health', size: 'medium', title: '体重と健康の記録', body: '体重は体重計の写真からも。健康診断の結果も写真から取り込めます。推移はグラフで。', image: WEIGHT, claimId: 'health-records', href: '#health' },
       { id: 'badges', size: 'medium', title: 'バッジを集める', body: '食べた食事を「完了」にしていくと、バッジが増えていきます。', image: BADGE_COLLECTION, claimId: 'badges', href: '#badges' },
       { id: 'chat', size: 'small', title: 'AI に相談', body: '画面の右下から相談できます。頼むと、献立の作成などを AI がその場で行います。', image: null, claimId: 'ai-chat', href: '#chat' },
-      { id: 'family', size: 'small', title: '家族と組織で使う', body: '家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。', image: null, claimId: 'family', href: '#family' },
+      { id: 'family', size: 'small', title: '家族と組織で使う', body: '家族プランで、家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。', image: null, claimId: 'family', href: '#family' },
     ],
     screensCaption: SCREENS_CAPTION,
   },
@@ -711,7 +712,7 @@ export const LANDING_COPY = {
     lead: '使い方は人それぞれ。4 つの場面で、機能の組み合わせを紹介します。',
     items: [
       { id: 'solo', title: '一人暮らし', body: '帰りが遅い日も、写真を撮るだけで AI が料理を認識して栄養を推定します。週末に 1週間分の献立を AI に頼み、買い物リストを持ってスーパーへ。', claimIds: ['photo-analyze', 'weekly-menu', 'shopping-list'] },
-      { id: 'family', title: '子育て家庭', body: '家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。', claimIds: ['family-roles', 'family-share', 'family-menu-view'] },
+      { id: 'family', title: '子育て家庭', body: '家族プランで家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。', claimIds: ['family-roles', 'family-share', 'family-menu-view'] },
       { id: 'health', title: '健康の記録を続けたい人', body: '体重計や健康診断の結果を写真から取り込み、推移をグラフで確かめます。目標を決めて、目標までの差を見ながら記録します。', claimIds: ['health-records', 'health-graphs', 'health-goals'] },
       { id: 'team', title: '職場とチーム', body: '組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。', claimIds: ['org-admin'] },
     ],
@@ -719,7 +720,7 @@ export const LANDING_COPY = {
   family: {
     eyebrow: '家族で使う',
     title: '家族の献立を、ひとつの表で。',
-    lead: '代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。',
+    lead: '家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。',
     points: [
       { title: '3 つの立場', body: '代表者・大人・子ども。アカウントの無い子どもも、代表者が登録できます。代表者の役目は、あとから譲れます。', claimIds: ['family-roles'] },
       { title: 'メールで招待', body: '大人のメンバーは、メールの招待リンクから参加します。', claimIds: ['family-roles'] },
@@ -752,7 +753,7 @@ export const LANDING_COPY = {
     title: '正直に、お伝えします。',
     lead: 'できることと、できないこと。データの扱いも、ここに書きます。',
     items: [
-      { title: 'いまは無料で使えます', body: '登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。', link: null },
+      { title: '無料プランと有料プラン', body: `無料プランでは、写真での食事の記録、記録をほめるひと言、献立の作成、健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。${PAID_PLAN_SUMMARY}`, link: null },
       { title: 'データの取り扱い', body: 'AI を使う機能は、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。写真や記録の保存と第三者への提供については、プライバシーポリシーをご確認ください。', link: { label: 'プライバシーポリシーを読む', href: '/privacy' } },
       { title: '写真の保存', body: '写真は、公開されない保存領域に保存します。表示するときは、ログインしたご本人のために有効期限つきの URL を発行します。', link: null },
       { title: 'AI の分析は推定です', body: '料理や撮影の条件によって、実際の値と異なることがあります。医療目的での使用はお控えください。', link: null },
@@ -764,16 +765,28 @@ export const LANDING_COPY = {
   },
   pricing: {
     eyebrow: '料金',
-    title: 'いまは、無料で使えます。',
-    lead: '登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。',
+    title: '無料ではじめて、必要になったら有料プランへ。',
+    lead: `無料プランで、写真での食事の記録・献立の作成・健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。${PAID_PLAN_SUMMARY}組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。`,
     plans: [
       {
         id: 'free',
-        title: 'いま使える機能',
+        title: '無料プラン',
         badge: '無料',
-        items: ['写真で記録とほめるひと言', '1週間の献立と買い物リスト', '食材の管理', '栄養の見える化', '体重と健康の記録', 'バッジ', 'AI に相談', '家族で使う'],
+        items: ['写真で記録とほめるひと言', '1週間の献立と買い物リスト', '食材の管理', '栄養の見える化', '体重と健康の記録', 'バッジ', 'AI に相談'],
         body: null,
         cta: PRIMARY_CTA,
+      },
+      {
+        id: 'paid',
+        title: '有料プラン',
+        badge: '無料体験つき',
+        // 価格は PLAN_CATALOG (DB の価格の写し) から組む。body は null (PricingSection.tsx は body に予定の印のアイコンを付けるため。有料で増えるものは lead の PAID_PLAN_SUMMARY で書く。billing/03 §10.5)
+        items: PLAN_CATALOG.map(
+          (plan) =>
+            `${plan.display_name}${plan.max_members === null ? '' : `（${plan.max_members} 人まで）`}　月額 ${formatJpy(plan.monthly_price_jpy)} / 年額 ${formatJpy(plan.yearly_price_jpy)}（税込）`,
+        ),
+        body: null,
+        cta: { label: '料金プランを見る', href: '/pricing' },
       },
     ],
     limits: [
@@ -809,7 +822,7 @@ export const LANDING_COPY = {
     title: 'よくある質問',
     lead: '気になることがあれば、ここで。',
     items: [
-      { q: '本当に無料で使えますか？', a: 'はい。登録してお使いいただける機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、いまはすべて無料です。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。' },
+      { q: '本当に無料で使えますか？', a: `はい。無料プランで、写真の記録、ほめるひと言、献立の作成、健康の記録などをお使いいただけます。AI を使う機能（写真の解析や献立の作成など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。${PAID_PLAN_SUMMARY}` },
       { q: 'どんな機能に AI を使っていますか？', a: '食事の写真の解析、献立の作成、買い物リストの作り直し、冷蔵庫や体重計や健康診断の結果の写真の読み取り、健康診断と血液検査の結果へのコメント、料理の画像の作成、AI 相談、献立の振り返りなどです。どれも、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。画面を開くと自動で動く機能（ホームの栄養スコアなど）は、1 日の上限に数えません。' },
       // 撮り方は指示するだけにし、撮り方による認識の良し悪しは言わない (確かめていない。公開の FAQ の同じ質問と同じ趣旨)
       { q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で、料理が重ならないように撮ってください。' },
@@ -817,7 +830,7 @@ export const LANDING_COPY = {
       // データの取り扱いの最終的な文言は、プライバシーポリシーの見直しと合わせて決める。それまでは断定せず、プライバシーポリシーへ案内する (tests/public-claims-guard.test.ts がこの行を見る)
       { q: "データは安全ですか？", a: 'データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。' },
       { q: '写真はどこに保存されますか？', a: '公開されない保存領域に保存します。URL を知っているだけでは閲覧できず、表示するときはログインしたご本人のために有効期限つきの URL を発行します。詳しくはプライバシーポリシーをご確認ください。' },
-      { q: '家族で使えますか？', a: 'はい。家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。' },
+      { q: '家族で使えますか？', a: 'はい。家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族グループを作り、家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。' },
       { q: '家族の記録は誰に見えますか？', a: '家族のメンバーそれぞれが、食事の記録・健康・献立の 3 つを家族に見せるかどうかを自分で選びます。はじめは、食事の記録はオン、健康はオフです。アカウントの無い子どもの登録もできます。' },
       { q: '会社やチームで使えますか？', a: 'はい。組織は運営が作ります（お問い合わせください）。組織の管理者（オーナー・管理者）が、メンバーを招待し、部署を作り、チャレンジを開けます。個人の記録の集計（活力スコアなど）は出しません。チャレンジの平均は、終わった後に、参加者が最小の人数以上のときだけ出します。' },
       { q: '登録に必要なものは？', a: 'メールアドレスか、Google アカウントです。クレジットカードは不要です。' },
@@ -855,9 +868,9 @@ export const LANDING_COPY = {
     { id: 'health-records', text: '体重 (体重計の写真からも) と健康診断の結果 (写真から) を記録し、推移をグラフで見る', evidence: ['src/app/api/ai/analyze-weight-scale/route.ts', 'src/app/api/ai/analyze-health-checkup/route.ts', 'src/app/api/health/checkups/route.ts', 'src/app/(main)/health/'], condition: '写真の読み取りは同意と 1 日の利用回数の上限の範囲で' },
     { id: 'badges', text: '食べた食事を「完了」にした回数と続けた日数、アプリの中の使い方の案内の完走などで、バッジが付く。新しく付くとお知らせが出る', evidence: ['src/app/api/badges/route.ts', 'src/lib/badges/awardable.ts', 'src/lib/jst-day-ranges.ts', 'supabase/migrations/20251126124224_create_meal_planner_tables.sql', 'src/app/api/meal-plans/add-from-photo/route.ts', 'src/app/(main)/badges/page.tsx'], condition: '数えるのは完了にした食事 (使い方の練習のお試しの記録を除く) と、完了した食事のある日の連続日数。写真から献立表に保存しただけの食事は、完了にするまで数えない。付く条件はほかにもあるので、文は「など」で終える。photo_10 は名前が付与の条件と食い違うので載せない。planner は名前と付与の条件が合うが、章 badges の列は 4 枚のまま保ち載せない' },
     { id: 'fridge', text: '冷蔵庫の写真から食材を読み取る', evidence: ['src/app/api/ai/analyze-fridge/route.ts', 'src/app/(main)/pantry/'], condition: '同意と 1 日の利用回数の上限の範囲で' },
-    { id: 'family', text: '家族を招待して献立を一緒に見る・記録を共有する', evidence: ['src/app/api/family/groups/route.ts', 'src/app/api/family/invites/route.ts', 'src/app/api/family/members/me/share/route.ts', 'src/app/(main)/family/'], condition: '共有は本人の設定の範囲で (family-share)' },
-    { id: 'free-now', text: '登録して使える機能は、いまは無料', evidence: ['src/app/pricing/PricingPageView.tsx'], condition: 'AI を使う機能には 1 日の利用回数の上限がある。無料と書く段落には上限の文も入れる。組織は運営が作るもので、登録しただけでは使えない (org-admin) ので、無料の範囲は「登録してお使いいただける機能」と書き、無料の機能の一覧に組織を入れない' },
-    { id: 'ai-daily-limit', text: 'AI を使う機能 (写真の解析や献立の提案など) は、1 日に使える回数に上限がある。上限に達した日は、翌日 0 時から使える。画面を開くと自動で動く機能は上限に数えない', evidence: ['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-daily-limit.ts', 'supabase/functions/_shared/ai-usage-core.ts', 'supabase/migrations/20261011020000_ai_daily_limits.sql'], condition: '回数の数字は書かない (運営画面で変えられる。既定は free の 10 回)。上限に数えない自動の機能もある' },
+    { id: 'family', text: '家族を招待して献立を一緒に見る・記録を共有する', evidence: ['src/app/api/family/groups/route.ts', 'src/app/api/family/invites/route.ts', 'src/app/api/family/members/me/share/route.ts', 'src/app/(main)/family/'], condition: '共有は本人の設定の範囲で (family-share)。家族グループの作成とメンバーの追加は、代表者の家族プランの契約が要る (billing/03 §6.6)' },
+    { id: 'free-now', text: '無料プランで使える機能があり、有料プランは 3 つ (個人 Pro / 家族 Basic / 家族 Pro)。家族グループ・究極モード・料理画像の作成は有料プラン', evidence: ['src/app/pricing/PricingPageView.tsx', 'packages/shared/src/billing-plans.ts'], condition: 'AI を使う機能には 1 日の利用回数の上限がある。無料と書く段落には上限の文も入れる。無料の機能の一覧に、家族・究極モード・料理画像の作成と組織を入れない (組織は運営が作るもので、登録しただけでは使えない (org-admin))' },
+    { id: 'ai-daily-limit', text: 'AI を使う機能 (写真の解析や献立の提案など) は、1 日に使える回数に上限がある。上限に達した日は、翌日 0 時から使える。画面を開くと自動で動く機能は上限に数えない', evidence: ['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-daily-limit.ts', 'supabase/functions/_shared/ai-usage-core.ts', 'supabase/migrations/20261011020000_ai_daily_limits.sql'], condition: '回数の数字は書かない (運営画面で変えられる。free は 3 回 (billing/03 §6.5))。上限に数えない自動の機能もある' },
     { id: 'ai-consent', text: 'AI を使う機能は、日本国外の AI 事業者へのデータ提供について同意を受けてから使える', evidence: ['src/components/consent/AiDataConsentModal.tsx', 'src/lib/ai/consent-guard.ts', 'src/lib/ai/consent-config.ts'], condition: null },
     { id: 'no-card', text: 'クレジットカード不要', evidence: ['src/app/(auth)/signup/'], condition: null },
     { id: 'delete-export', text: 'いつでも退会できる・データを JSON で書き出せる', evidence: ['src/app/api/account/', 'tests/account-delete-route.test.ts', 'tests/account-export.test.ts'], condition: null },
