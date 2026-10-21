@@ -154,7 +154,9 @@ export async function getBillingSummary(deps: BillingReadDeps, userId: string): 
     deps.repository.findCustomer(userId),
     getEffectivePlan(userId),
   ]);
-  return summarizeSubscription(row, customer !== null, effectivePlanKey);
+  // いま効いているプランの AI の上限 (画面の錠と案内。billing/03 §8.6)
+  const features = await deps.repository.findPlanFeatures(effectivePlanKey);
+  return summarizeSubscription(row, customer !== null, effectivePlanKey, features);
 }
 
 export async function createPortalSession(deps: BillingDeps, userId: string): Promise<{ url: string }> {

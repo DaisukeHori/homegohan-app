@@ -30,7 +30,11 @@ export const MANUAL_GRANT_HISTORY_LABELS: Readonly<Record<ManualGrantHistoryEntr
   'system.billing.manual_grant_expired': '期限切れ',
 };
 /** 由来の表示 */
-export const MANUAL_PLAN_SOURCE_LABELS: Readonly<Record<'stripe' | 'manual', string>> = { stripe: 'Stripe', manual: '手動付与' };
+export const MANUAL_PLAN_SOURCE_LABELS: Readonly<Record<'stripe' | 'manual' | 'store', string>> = {
+  stripe: 'Stripe',
+  manual: '手動付与',
+  store: 'ストア (アプリ内課金)',
+};
 /** 日時の表示 (JST)。期限は「その日の終わり」なので、翌日の 0 時を 1 日戻した日付で出さず、日時のまま出す */
 export const MANUAL_PLAN_DISPLAY_LOCALE = 'ja-JP';
 export const MANUAL_PLAN_DISPLAY_TIME_ZONE = 'Asia/Tokyo';
@@ -130,6 +134,11 @@ export function ManualPlanGrantSection({ userId }: { userId: string }) {
       {view !== null && view.current !== null && view.current.source === 'stripe' && (
         <p data-testid="manual-plan-grant-stripe-note" className="text-sm text-gray-600">
           Stripe の契約があるため、手動付与はできません (解約は利用者の操作か Stripe で行います)。
+        </p>
+      )}
+      {view !== null && view.current !== null && view.current.source === 'store' && (
+        <p data-testid="manual-plan-grant-store-note" className="text-sm text-gray-600">
+          ストアの契約があります。手動付与はできません (解約は利用者が App Store・Google Play の定期購読の管理で行います)。
         </p>
       )}
       {view !== null && view.current === null && (

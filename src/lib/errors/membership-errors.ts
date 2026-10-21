@@ -58,6 +58,9 @@ export enum MembershipErrorCode {
   PROMOTION_UNDER_COPPA_AGE = 'PROMOTION_UNDER_COPPA_AGE', // request_child_promotion / accept_child_promotion だけが RAISE する
   // create_family_group / accept_family_invite / accept_family_representative_transfer / accept_org_owner_transfer だけが RAISE する
   MINOR_ACCOUNT_NOT_ALLOWED = 'MINOR_ACCOUNT_NOT_ALLOWED',
+  // billing/03 §6.6・§9.5: create_family_group と family_members のトリガー (family_members_billing_plan_gate) が RAISE する。
+  // 家族グループの作成とメンバーの追加は、家族プランの契約がある代表者のグループだけ
+  FAMILY_PLAN_REQUIRED = 'FAMILY_PLAN_REQUIRED',
   // invite
   INVITE_NOT_FOUND = 'INVITE_NOT_FOUND',
   INVITE_EXPIRED = 'INVITE_EXPIRED',
@@ -132,6 +135,7 @@ export const ErrorStatusMap: Record<MembershipErrorCode, number> = {
   [MembershipErrorCode.PARENTAL_CONSENT_SIGNER_NOT_ADULT]: 403,
   [MembershipErrorCode.PROMOTION_UNDER_COPPA_AGE]: 403,
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: 403,
+  [MembershipErrorCode.FAMILY_PLAN_REQUIRED]: 402,
   [MembershipErrorCode.INVITE_NOT_FOUND]: 404,
   [MembershipErrorCode.INVITE_EXPIRED]: 410,
   [MembershipErrorCode.INVITE_ALREADY_USED]: 409,
@@ -236,6 +240,7 @@ export const MEMBERSHIP_ERROR_MESSAGES: Record<MembershipErrorCode, string> = {
   [MembershipErrorCode.PROMOTION_UNDER_COPPA_AGE]: '13歳未満のお子さまは、ご本人のアカウントとつなげません。',
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]:
     '18歳未満の方は、家族グループの作成・家族の招待からの参加・家族の代表者や組織のオーナーの引き受けはできません。保護者の方の家族には、保護者から届く「アカウントをつなぐ」案内から参加できます。',
+  [MembershipErrorCode.FAMILY_PLAN_REQUIRED]: '家族プランのご契約が必要です。',
   [MembershipErrorCode.INVITE_NOT_FOUND]: '招待が見つかりません。',
   [MembershipErrorCode.INVITE_EXPIRED]: '招待の期限が切れています。',
   [MembershipErrorCode.INVITE_ALREADY_USED]: 'この招待はすでに使われています。',

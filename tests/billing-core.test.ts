@@ -7,6 +7,8 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   BILLING_CANCEL_SCHEDULED_WITHOUT_DATE_TEXT,
+  BILLING_ERROR_MESSAGES,
+  EMPTY_PLAN_FEATURES,
   STRIPE_EVENT_ACTIONS,
   STRIPE_SUBSCRIBED_EVENT_TYPES,
   STRIPE_TO_DB_STATUS,
@@ -29,6 +31,7 @@ import {
   toFormBody,
   trialDaysFor,
   type BillingSummary,
+  type PlanFeatures,
   type PurchasablePlan,
   type StripeEventEnvelope,
   type StripeSubscription,
@@ -87,6 +90,8 @@ function row(overrides: Partial<SubscriptionRowView> = {}): SubscriptionRowView 
     trial_ends_at: null,
     cancel_at_period_end: false,
     cancel_at: null,
+    iap_store: null,
+    iap_synced_at: null,
     ...overrides,
   };
 }
@@ -307,7 +312,7 @@ describe('billing core: Checkout のパラメータ', () => {
 
 describe('billing core: 契約の要約', () => {
   it('summarizeSubscription: no row → free/can_purchase, live row (paused included) → can_cancel, scheduled → can_resume, manual row → no cancel', () => {
-    expect(summarizeSubscription(null, false, 'free')).toEqual({
+    expect(summarizeSubscription(null, false, 'free', EMPTY_PLAN_FEATURES)).toEqual({
       plan_key: 'free',
       effective_plan_key: 'free',
       status: null,
@@ -321,18 +326,20 @@ describe('billing core: 契約の要約', () => {
       can_purchase: true,
       can_cancel: false,
       can_resume: false,
+      manage_in_store: null,
+      features: { ai_daily_limit: null, ai_feature_caps: {} },
     });
     for (const status of ['trialing', 'active', 'past_due', 'grace', 'paused']) {
-      const summary = summarizeSubscription(row({ status }), true, 'pro');
+      const summary = summarizeSubscription(row({ status }), true, 'pro', EMPTY_PLAN_FEATURES);
       expect(summary, status).toMatchObject({ plan_key: 'pro', status, source: 'stripe', can_purchase: false, can_cancel: true, can_resume: false });
     }
-    expect(summarizeSubscription(row({ cancel_at_period_end: true, cancel_at: '2026-11-20T15:00:00.000Z' }), true, 'pro')).toMatchObject({
+    expect(summarizeSubscription(row({ cancel_at_period_end: true, cancel_at: '2026-11-20T15:00:00.000Z' }), true, 'pro', EMPTY_PLAN_FEATURES)).toMatchObject({
       can_cancel: false,
       can_resume: true,
       cancel_at_period_end: true,
       cancel_at: '2026-11-20T15:00:00.000Z',
     });
-    expect(summarizeSubscription(row({ stripe_subscription_id: null }), false, 'pro')).toMatchObject({
+    expect(summarizeSubscription(row({ stripe_subscription_id: null }), false, 'pro', EMPTY_PLAN_FEATURES)).toMatchObject({
       source: 'manual',
       plan_key: 'pro',
       can_purchase: false,
@@ -341,7 +348,7 @@ describe('billing core: 契約の要約', () => {
     });
     // live でない行 (cancelled / expired / incomplete) は free として買える
     for (const status of ['cancelled', 'expired', 'incomplete']) {
-      expect(summarizeSubscription(row({ status }), true, 'free'), status).toMatchObject({
+      expect(summarizeSubscription(row({ status }), true, 'free', EMPTY_PLAN_FEATURES), status).toMatchObject({
         plan_key: 'free',
         status,
         can_purchase: true,
@@ -350,11 +357,11 @@ describe('billing core: 契約の要約', () => {
       });
     }
     // 知らない status は null として扱う
-    expect(summarizeSubscription(row({ status: 'bogus' }), true, 'free')).toMatchObject({ status: null, can_purchase: true });
+    expect(summarizeSubscription(row({ status: 'bogus' }), true, 'free', EMPTY_PLAN_FEATURES)).toMatchObject({ status: null, can_purchase: true });
     // 間隔は month / year だけ
-    expect(summarizeSubscription(row({ billing_interval: 'week' }), true, 'pro').billing_interval).toBeNull();
+    expect(summarizeSubscription(row({ billing_interval: 'week' }), true, 'pro', EMPTY_PLAN_FEATURES).billing_interval).toBeNull();
     // 効いているプラン (家族・組織) は get_effective_plan の値をそのまま
-    expect(summarizeSubscription(null, false, 'family_basic').effective_plan_key).toBe('family_basic');
+    expect(summarizeSubscription(null, false, 'family_basic', EMPTY_PLAN_FEATURES).effective_plan_key).toBe('family_basic');
   });
 
   it('summarizeSubscription on rows shaped like the read-back after a Portal reservation and its revocation: a stripe-backed row with status active / trialing / past_due / grace and cancel_at_period_end true with cancel_at set gives can_resume true and can_cancel false; the same row with cancel_at_period_end false and cancel_at null gives can_cancel true and can_resume false', () => {
@@ -363,10 +370,102 @@ describe('billing core: 契約の要約', () => {
         row({ status, cancel_at_period_end: true, cancel_at: '2026-11-20T15:00:00.000Z' }),
         true,
         'pro',
+        EMPTY_PLAN_FEATURES,
       );
       expect(reserved, status).toMatchObject({ status, can_resume: true, can_cancel: false });
-      const revoked = summarizeSubscription(row({ status, cancel_at_period_end: false, cancel_at: null }), true, 'pro');
+      const revoked = summarizeSubscription(row({ status, cancel_at_period_end: false, cancel_at: null }), true, 'pro', EMPTY_PLAN_FEATURES);
       expect(revoked, status).toMatchObject({ status, can_cancel: true, can_resume: false });
+    }
+  });
+});
+
+describe('billing/03 §8.6: ストアの契約の要約と features (テスト 34〜36)', () => {
+  /** 未完成や予定を示す語 (billing/03 §14.1 の冒頭。発注者の指示「「まだできてません」みたいなのは書かないで」) */
+  const UNFINISHED_WORDS = ['準備中', '販売開始前', '近日', '予定', 'まだ', '確定次第', 'これから'] as const;
+
+  it('summarizeSubscription marks store rows with source and manage_in_store and never can_cancel / can_resume them', () => {
+    for (const store of ['app_store', 'play_store'] as const) {
+      for (const status of ['trialing', 'active', 'past_due']) {
+        for (const cancelAtPeriodEnd of [false, true]) {
+          const summary = summarizeSubscription(
+            row({ status, stripe_subscription_id: null, iap_store: store, iap_synced_at: '2026-10-20T00:00:00.000Z', cancel_at_period_end: cancelAtPeriodEnd }),
+            false,
+            'pro',
+            EMPTY_PLAN_FEATURES,
+          );
+          expect(summary, `${store}/${status}/${cancelAtPeriodEnd}`).toMatchObject({
+            plan_key: 'pro',
+            status,
+            source: store,
+            manage_in_store: store,
+            can_purchase: false,
+            can_cancel: false,
+            can_resume: false,
+          });
+        }
+      }
+      // live でないストアの行: source はストア、管理の案内 (manage_in_store) は出さない
+      for (const status of ['cancelled', 'expired']) {
+        expect(
+          summarizeSubscription(row({ status, stripe_subscription_id: null, iap_store: store }), false, 'free', EMPTY_PLAN_FEATURES),
+          `${store}/${status}`,
+        ).toMatchObject({ plan_key: 'free', source: store, manage_in_store: null, can_purchase: true, can_cancel: false, can_resume: false });
+      }
+    }
+    // 知らないストアの値は手動付与と同じ扱い (ストアの案内を出さない)
+    expect(summarizeSubscription(row({ stripe_subscription_id: null, iap_store: 'amazon' }), false, 'pro', EMPTY_PLAN_FEATURES)).toMatchObject({
+      source: 'manual',
+      manage_in_store: null,
+    });
+  });
+
+  it('summarizeSubscription includes features and keeps the stripe / manual behaviour unchanged', () => {
+    const features: PlanFeatures = {
+      ai_daily_limit: 3,
+      ai_feature_caps: { menu_generation_ultimate: 0, image_generation: 0, meal_image_auto: 0, menu_generation: 3 },
+    };
+    expect(summarizeSubscription(null, false, 'free', features)).toEqual({
+      plan_key: 'free',
+      effective_plan_key: 'free',
+      status: null,
+      source: null,
+      manage_in_store: null,
+      billing_interval: null,
+      current_period_end: null,
+      trial_ends_at: null,
+      cancel_at_period_end: false,
+      cancel_at: null,
+      has_customer: false,
+      can_purchase: true,
+      can_cancel: false,
+      can_resume: false,
+      features,
+    });
+    // Stripe の行: いまのまま (解約・取り消しのボタン)。features はそのまま返す
+    const proFeatures: PlanFeatures = { ai_daily_limit: 30, ai_feature_caps: { menu_generation_ultimate: 2, menu_generation: 10 } };
+    expect(summarizeSubscription(row(), true, 'pro', proFeatures)).toMatchObject({
+      source: 'stripe',
+      manage_in_store: null,
+      can_cancel: true,
+      can_resume: false,
+      features: proFeatures,
+    });
+    // 手動付与の行: いまのまま (ボタンなし)
+    expect(summarizeSubscription(row({ stripe_subscription_id: null }), false, 'pro', proFeatures)).toMatchObject({
+      source: 'manual',
+      manage_in_store: null,
+      can_cancel: false,
+      can_resume: false,
+      features: proFeatures,
+    });
+    // 何も無いとき用の既定の形
+    expect(EMPTY_PLAN_FEATURES).toEqual({ ai_daily_limit: null, ai_feature_caps: {} });
+  });
+
+  it('BILLING_ERROR_MESSAGES.EXT_STRIPE_NOT_CONFIGURED stays お支払いを受け付けていません (#1911) and contains none of UNFINISHED_WORDS', () => {
+    expect(BILLING_ERROR_MESSAGES.EXT_STRIPE_NOT_CONFIGURED).toBe('お支払いを受け付けていません');
+    for (const word of UNFINISHED_WORDS) {
+      expect(BILLING_ERROR_MESSAGES.EXT_STRIPE_NOT_CONFIGURED, word).not.toContain(word);
     }
   });
 });

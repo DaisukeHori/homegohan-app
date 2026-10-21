@@ -215,8 +215,10 @@ export async function logStreamingUsage(
 - 止め方は入口ごと: 利用者が押す操作は 429 `AI_DAILY_LIMIT` (§11)、保存と AI の分析を一緒にする操作は保存だけして `aiSkipped: AI_DAILY_LIMIT`、
   料理画像の副作用は画像だけ見送る、キューに積む操作は積む時点で判定する。上限に数えない機能が安全弁で止められたときも同じ止め方
   (ホームの栄養の集計は AI の部分だけ省く、栄養士のコメントの自動の取得は 429、料理画像は画像だけ見送る)
-- 料理画像 (#1487): 見送るかどうか (レート制限・同意・上限の判定) は、料理 (`planned_meals.dishes`) を保存する前に決める。
-  見送るなら、ジョブを積む料理を `image_status: 'failed'` + `image_error` (`skipped_ai_limit` = 安全弁 / `skipped_rate_limit` = レート制限・判定の例外)
+- 料理画像 (#1487): ジョブを積むのは献立の主菜の 1 品だけ (役割 `main` / `主菜` の最初の料理、主菜の無い献立は先頭の料理。`autoImageDishIndexOf`)。ほかの料理に積もうとした種は落とし、画像の無い状態 (状態なし・subject_hash なし) にする。主菜でない料理だけを変えた保存は安全弁の 1 回を数えない (billing/03 §8.8・Q-16)。
+  見送るかどうか (レート制限・同意・上限の判定) は、料理 (`planned_meals.dishes`) を保存する前に決める。
+  見送るなら、ジョブを積む料理を `image_status: 'failed'` + `image_error` (`skipped_ai_limit` = 安全弁 / `skipped_rate_limit` = レート制限・判定の例外 /
+  `skipped_plan` = ご利用中のプランでは自動の料理画像を作らない (`ai_plan_feature_caps` の `meal_image_auto` = 0。billing/03 §8.8))
   にしてから保存する ('pending' のまま保存すると、処理するジョブが無いので「生成中」のまま残る)。同じ料理 (subject_hash が同じ) でも、
   画像が無く待ち・更新待ち・失敗のまま (AI の画像) なら、保存し直したときにジョブを積み直す。
   ジョブを積むのは `image_source` が `generated_ai` か未設定の料理だけ。前回の料理の `image_source` が `meal_photo` / `catalog` /

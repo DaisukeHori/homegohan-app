@@ -7,6 +7,7 @@
  *      献立のカバーが料理ごとの画像を持たない写真・商品・手の画像の料理のもの (isMealCoverHeldByImagelessPreservedDish) の献立の料理
  *   2. parseMealImageBackfillArgs: 既定は dry-run・50 献立・処理を起こす。上限を超える数・分からない引数は止める
  *   3. resolveMealImageBackfillIntervalMs: 環境変数で待ちを上書きできる
+ *   4. (billing/03 Q-16) 積み直すのは献立の主菜 (自動の料理画像を作る 1 品。autoImageDishIndexOf) の待ちの料理だけ。ほかは not_auto_image_dish
  * 実 DB に対しての数え方・積み直しは tests/integration/rls/meal-image-backfill.test.ts
  */
 import { describe, expect, it } from 'vitest';
@@ -23,7 +24,7 @@ import {
 import { DEFAULT_MEAL_IMAGE_MODEL, buildDishImagePrompt } from '../supabase/functions/_shared/meal-image';
 
 describe('planDishImageJobs', () => {
-  it('画像が無い AI の画像の、待ち・更新待ちで subject_hash がある料理だけを積む。理由ごとに数える', () => {
+  it('画像が無い AI の画像の、待ち・更新待ちで subject_hash がある料理だけを積む。理由ごとに数える (積むのは献立の主菜の 1 品だけ。主菜の無い献立は先頭の料理。billing/03 Q-16)', () => {
     const dishes = [
       { name: 'カレー', image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: 'h0', image_prompt: 'p0', image_model: 'm0' },
       { name: 'サラダ', image_status: 'stale', image_url: null, image_subject_hash: 'h1' },
@@ -38,15 +39,6 @@ describe('planDishImageJobs', () => {
 
     expect(plan.seeds).toEqual([
       { dishIndex: 0, dishName: 'カレー', subjectHash: 'h0', prompt: 'p0', model: 'm0', triggerSource: MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE, referenceImageUrls: [] },
-      {
-        dishIndex: 1,
-        dishName: 'サラダ',
-        subjectHash: 'h1',
-        prompt: buildDishImagePrompt(dishes[1] as { name: string }),
-        model: DEFAULT_MEAL_IMAGE_MODEL,
-        triggerSource: MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE,
-        referenceImageUrls: [],
-      },
     ]);
     expect(plan.skipped).toEqual({
       not_waiting: 2,
@@ -56,7 +48,10 @@ describe('planDishImageJobs', () => {
       not_object: 1,
       catalog_meal_dish: 0,
       meal_cover_preserved: 0,
+      not_auto_image_dish: 1,
     });
+    // 更新待ち・source なしの料理も積む対象 (その料理だけの献立なら、先頭の料理として積む)
+    expect(planDishImageJobs([dishes[1]]).seeds).toEqual([{ dishIndex: 0, dishName: 'サラダ', subjectHash: 'h1', prompt: buildDishImagePrompt(dishes[1] as { name: string }), model: DEFAULT_MEAL_IMAGE_MODEL, triggerSource: MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE, referenceImageUrls: [] }]);
   });
 
   it('商品の献立 (catalog_product_id / source_type) の、画像の項目の無い古い商品の料理 (先頭) は積まない (#1514 の asCatalogMealDish)', () => {
@@ -73,7 +68,7 @@ describe('planDishImageJobs', () => {
   it('献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のものなら、その献立の料理はどれも積まない (#1514)', () => {
     const photoMealDishes = [
       { name: '写真の料理', image_status: 'stale', image_url: null, image_source: 'meal_photo' },
-      { name: '足した料理', image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: 'h1' },
+      { name: '足した料理', role: 'main', image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: 'h1' },
     ];
     const held = planDishImageJobs(photoMealDishes, { image_url: 'https://example.com/photo.jpg' });
     expect(held.seeds).toEqual([]);
@@ -90,6 +85,22 @@ describe('planDishImageJobs', () => {
 
     // カバーが無ければ、写真の料理以外の AI の料理は積む (reconcileDishImages と同じ)
     expect(planDishImageJobs(photoMealDishes, { image_url: null }).seeds.map((seed) => seed.dishIndex)).toEqual([1]);
+  });
+
+  it('planDishImageJobs skips waiting dishes other than the auto image dish as not_auto_image_dish and still plans the waiting main dish (billing/03 Q-16)', () => {
+    const waiting = (name: string, role: string, hash: string) => ({ name, role, image_status: 'pending', image_url: null, image_source: 'generated_ai', image_subject_hash: hash });
+    // 段 B の前に積まれた献立: どの料理も画像を待っている。積み直すのは主菜 (位置 1) だけ
+    const plan = planDishImageJobs([waiting('ご飯', 'rice', 'h0'), waiting('鮭の塩焼き', 'main', 'h1'), waiting('味噌汁', 'soup', 'h2')]);
+    expect(plan.seeds.map((seed) => [seed.dishIndex, seed.dishName])).toEqual([[1, '鮭の塩焼き']]);
+    expect(plan.skipped.not_auto_image_dish).toBe(2);
+    // 日本語の役割「主菜」も主菜。料理でない値は役割の無い料理として位置を数える
+    const japanese = planDishImageJobs(['not-an-object', waiting('焼き魚', '主菜', 'h1'), waiting('サラダ', 'side', 'h2')]);
+    expect(japanese.seeds.map((seed) => seed.dishIndex)).toEqual([1]);
+    expect(japanese.skipped).toMatchObject({ not_object: 1, not_auto_image_dish: 1 });
+    // 主菜が画像を持つ (ready) なら、ほかの待ちの料理は積まない
+    const mainReady = planDishImageJobs([{ ...waiting('鮭の塩焼き', 'main', 'h0'), image_status: 'ready', image_url: 'https://example.com/a.png' }, waiting('味噌汁', 'soup', 'h1')]);
+    expect(mainReady.seeds).toEqual([]);
+    expect(mainReady.skipped).toMatchObject({ not_waiting: 1, not_auto_image_dish: 1 });
   });
 
   it('料理が配列でなければ何も積まない', () => {

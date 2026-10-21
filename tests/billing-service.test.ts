@@ -37,6 +37,7 @@ import {
   type BillingAuditEntry,
   type BillingCustomerRow,
   type BillingRepository,
+  type PlanFeatures,
   type PurchasablePlan,
   type StripeCheckoutSession,
   type StripeEventEnvelope,
@@ -92,9 +93,14 @@ function liveRow(overrides: Partial<SubscriptionRowView> = {}): SubscriptionRowV
     trial_ends_at: null,
     cancel_at_period_end: false,
     cancel_at: null,
+    iap_store: null,
+    iap_synced_at: null,
     ...overrides,
   };
 }
+
+/** いま効いているプランの AI の上限 (billing/03 §8.6。findPlanFeatures の偽物の既定) */
+const PRO_FEATURES: PlanFeatures = { ai_daily_limit: 30, ai_feature_caps: { menu_generation_ultimate: 2, menu_generation: 10 } };
 
 const APPLIED: ApplySubscriptionResult = {
   applied: true,
@@ -146,6 +152,7 @@ function makeRepository(overrides: Partial<BillingRepository> = {}) {
     findPlanKeyByPriceId: vi.fn(async (_priceId: string): Promise<string | null> => null),
     findLiveSubscription: vi.fn(async (_userId: string): Promise<SubscriptionRowView | null> => null),
     hasUsedTrial: vi.fn(async () => false),
+    findPlanFeatures: vi.fn(async (_planKey: string): Promise<PlanFeatures> => PRO_FEATURES),
     findCustomer: vi.fn(async (_userId: string): Promise<BillingCustomerRow | null> => null),
     saveCustomer: vi.fn(async (userId: string, stripeCustomerId: string): Promise<BillingCustomerRow> => ({
       stripe_customer_id: stripeCustomerId,
@@ -443,8 +450,12 @@ describe('getBillingSummary / createPortalSession', () => {
       has_customer: true,
       can_resume: true,
       can_cancel: false,
+      manage_in_store: null,
+      features: PRO_FEATURES,
     });
     expect(mockGetEffectivePlan).toHaveBeenCalledWith(USER);
+    // features は効いているプラン (get_effective_plan) で読む (billing/03 §8.6)
+    expect(repository.findPlanFeatures).toHaveBeenCalledWith('pro');
   });
 
   it('createPortalSession は顧客が無ければ 404、あれば戻り先 /account/billing で Portal を作る', async () => {

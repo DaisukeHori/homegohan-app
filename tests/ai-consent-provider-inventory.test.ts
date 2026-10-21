@@ -40,6 +40,9 @@ const NON_AI_HOSTS: Record<string, string> = {
   'xxxx.supabase.co': '環境変数の一覧 (src/lib/env.ts) の書き方の例',
   'api.stripe.com': '決済 (Stripe)',
   'dashboard.stripe.com': '決済 (Stripe) の管理画面へのリンク',
+  'api.revenuecat.com': 'アプリ内課金の購入の確認と契約の取り直し (RevenueCat。billing/03 §8.3)。送るのは利用者の ID だけ',
+  'apps.apple.com': 'App Store の定期購読の管理のページへのリンク (billing/03 §8.9)。送信先ではない',
+  'play.google.com': 'Google Play の定期購読の管理のページへのリンク (billing/03 §8.9)。送信先ではない',
   'api.resend.com': 'メールの送信 (Resend)',
   'exp.host':
     'Push 通知の送信 (Expo Push Service。#1136)。送るのは端末の token・固定の文面・画面のパス・依頼 ID だけで、利用者のデータは送らない',

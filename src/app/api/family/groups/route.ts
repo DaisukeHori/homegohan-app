@@ -3,7 +3,7 @@
 import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { CreateFamilyGroupBodySchema } from '@/schemas/membership/family-group';
-import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
+import { ErrorStatusMap, MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 export async function POST(request: Request) {
@@ -67,6 +67,18 @@ export async function POST(request: Request) {
           },
         },
         { status: 403 },
+      );
+    }
+    // billing/03 §9.5: 家族プランの契約が無い代表者のグループは作れない (DB の門が FAMILY_PLAN_REQUIRED を RAISE する)。DB の生の文は出さない
+    if ((error.message ?? '').includes(MembershipErrorCode.FAMILY_PLAN_REQUIRED)) {
+      return NextResponse.json(
+        {
+          error: {
+            code: MembershipErrorCode.FAMILY_PLAN_REQUIRED,
+            message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.FAMILY_PLAN_REQUIRED],
+          },
+        },
+        { status: ErrorStatusMap[MembershipErrorCode.FAMILY_PLAN_REQUIRED] },
       );
     }
     if (error.message?.includes('ALREADY_IN_FAMILY')) {

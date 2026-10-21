@@ -9,6 +9,7 @@
  *     いまは書くときの読み直し (readMealSnapshot) と同じく、エラーはジョブを失敗にし、行が無いときだけ取り消す。
  * (3) 書き込みを諦めたとき・書かずにやめたとき、ジョブがアップロードした画像が Storage に残っていた。
  *     いまはそのジョブ自身のパスの 1 ファイルだけを消す (消せなくてもジョブの結果は変えない)。
+ * (4) 料理画像のプランの門 (billing/03 §8.8): 0 なら作らず、読めなくても止めない
  *
  * ここでは Edge Function のハンドラ (index.ts) を本物で動かし、Supabase (meal_image_jobs・planned_meals・Storage)・
  * 画像の AI・同意の判定・ロガーを作り物にする。planned_meals の update は条件 (eq / is) を本当に評価し、
@@ -63,6 +64,11 @@ const h = vi.hoisted(() => ({
   generateCalls: 0,
   generateError: null as Error | null,
   logs: [] as Array<{ level: string; message: string; error?: unknown; metadata?: Record<string, unknown> }>,
+  /** billing/03: ai_plan_feature_daily_cap の答え (既定 null = 行なし = 止めない) */
+  planCap: null as number | null,
+  planCapError: null as { code: string; message: string } | null,
+  planCapThrows: null as Error | null,
+  rpcCalls: [] as Array<{ name: string; args: Record<string, unknown> }>,
 }));
 
 function nextUpdatedAt(): string {
@@ -150,6 +156,11 @@ function tableQuery(table: string) {
 vi.mock('@supabase/supabase-js', () => ({
   createClient: () => ({
     from: (table: string) => tableQuery(table),
+    rpc: async (name: string, args: Record<string, unknown>) => {
+      h.rpcCalls.push({ name, args });
+      if (h.planCapThrows) throw h.planCapThrows;
+      return { data: h.planCap, error: h.planCapError };
+    },
     storage: {
       from: () => ({
         upload: async (path: string) => {
@@ -228,7 +239,7 @@ afterAll(() => {
   vi.unstubAllGlobals();
 });
 
-/** AI の献立の料理 (画像がまだ無い pending の料理。subject_hash つき) */
+/** AI の献立の料理 (reconcileDishImages を通した。主菜は画像を待つ pending (subject_hash つき)、汁物は画像の無い状態 (billing/03 Q-16)。この file は主菜 (位置 0) のジョブだけを流す) */
 async function pendingAiDishes(): Promise<MealImageDish[]> {
   const result = await reconcileDishImages({
     previousDishes: [],
@@ -259,6 +270,10 @@ beforeEach(async () => {
   h.generateCalls = 0;
   h.generateError = null;
   h.logs = [];
+  h.planCap = null;
+  h.planCapError = null;
+  h.planCapThrows = null;
+  h.rpcCalls = [];
   h.meal = { id: MEAL_ID, dishes: structuredClone(dishes), image_url: null, updated_at: READ_AT };
   h.jobs = [
     {
@@ -526,6 +541,30 @@ describe('(3) 書かなかった画像を Storage から消す (#1553)', () => {
     expect(outcome.status).toBe('failed');
     expect(h.uploads).toEqual([]);
     expect(h.removes).toEqual([]);
+  });
+});
+
+describe('(4) プランの門 (billing/03 §8.8)', () => {
+  it('billing/03: ai_plan_feature_daily_cap が 0 (無料の利用者) なら、画像を作らずにジョブを cancelled (last_error = skipped_plan) にし、料理を failed + skipped_plan にする', async () => {
+    h.planCap = 0;
+    const outcomes = await runWorker();
+    expect(outcomes).toEqual([{ jobId: JOB_ID, status: 'cancelled', message: 'skipped_plan' }]);
+    expect(job()).toMatchObject({ status: 'cancelled', last_error: 'skipped_plan' });
+    expect(h.generateCalls).toBe(0);
+    expect(h.uploads).toEqual([]);
+    expect(mealDish(0)).toMatchObject({ image_status: 'failed', image_error: 'skipped_plan' });
+    expect(h.rpcCalls).toEqual([{ name: 'ai_plan_feature_daily_cap', args: { p_user_id: USER_ID, p_feature: 'meal_image_auto' } }]);
+  });
+
+  it.each(['error', 'throws'] as const)('billing/03: ai_plan_feature_daily_cap の RPC が %s のときも止めずに画像を作り (completed)、warn を 1 つ残す', async (mode) => {
+    if (mode === 'error') h.planCapError = { code: 'XX000', message: 'db unavailable' };
+    else h.planCapThrows = new TypeError('fetch failed');
+    const [outcome] = await runWorker();
+    expect(outcome.status).toBe('completed');
+    expect(h.generateCalls).toBe(1);
+    const warns = h.logs.filter((log) => log.level === 'warn');
+    expect(warns).toHaveLength(1);
+    expect(warns[0].metadata).toMatchObject({ ownerId: USER_ID });
   });
 });
 

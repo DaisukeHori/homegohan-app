@@ -28,6 +28,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { grantFamilyPlan, type FamilyPlanKey } from '../helpers/family-plan';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
+import { createBillingRepository } from '@/lib/billing/repository';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 import { ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
 
@@ -415,6 +416,36 @@ describe('billing/03 §6.5: プラン × 機能の上限 (consume_ai_usage)', ()
     }
     // ORG_PLAN 以外の値の組織を作れていること (空の Map で上のループが素通りしない)
     expect([...orgIdByPlan.keys()].sort()).toEqual(ORG_PLAN_VALUES.filter((plan) => plan !== ORG_PLAN).sort());
+  });
+});
+
+describe('billing/03 §8.6: 契約の要約の features (findPlanFeatures) と DB の門の一致 (段 B)', () => {
+  // 139
+  it('findPlanFeatures (createBillingRepository on the local Supabase) agrees with the DB gate: for an organization member (standard) it returns the copied pre-migration daily limit and no menu_generation_ultimate key while consume_ai_usage_capped still allows the env default, and for a free user menu_generation_ultimate is 0', async () => {
+    const repository = createBillingRepository(srAdmin);
+    // 組織の plan: 写した 1 日の上限と、機能ごとの上限なし (free の行に倒さない)
+    const orgFeatures = await repository.findPlanFeatures(ORG_PLAN);
+    expect(orgFeatures.ai_daily_limit).toBe(PRE_MIGRATION_FREE_LIMIT);
+    expect(orgFeatures.ai_feature_caps).not.toHaveProperty(ULTIMATE);
+    expect(orgFeatures.ai_feature_caps).toEqual({});
+    // DB の門も同じ答え: 組織のメンバーは環境変数の既定 (1 回) で究極モードを使える
+    const orgMember = await createOrgMember('features-org');
+    expect(await consumeCapped(orgMember.userId)).toMatchObject({ allowed: true, plan: ORG_PLAN, used: 1 });
+
+    // free: 1 日 3 回と、4 つの機能ごとの上限 (究極モードは 0)
+    const freeFeatures = await repository.findPlanFeatures('free');
+    expect(freeFeatures).toEqual({
+      ai_daily_limit: DAILY_LIMIT.free,
+      ai_feature_caps: { menu_generation_ultimate: 0, image_generation: 0, meal_image_auto: 0, menu_generation: MENU_GENERATION_CAP.free },
+    });
+    const free = await createUser('features-free');
+    expect(await consumeCapped(free.userId)).toMatchObject({ allowed: false, capped_feature: ULTIMATE, plan_locked: true });
+
+    // 有料: そのプランの行
+    expect(await repository.findPlanFeatures('pro')).toEqual({
+      ai_daily_limit: DAILY_LIMIT.pro,
+      ai_feature_caps: { menu_generation_ultimate: ULTIMATE_CAP.pro, menu_generation: MENU_GENERATION_CAP.pro },
+    });
   });
 });
 

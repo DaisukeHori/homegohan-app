@@ -1,8 +1,8 @@
 /**
  * プランの判定と、AI の利用回数の上限 (#1149 / T40) と記録 (#1177 / T26)
  *
- * 【いまの方針】課金は無料のまま計測する (いまは全員が free プラン)。AI の利用は 1 日 10 回まで (究極モードも 1 回)。
- * 究極モードは、そのうえ 1 人 1 日 1 回まで (#1142。機能名 'menu_generation_ultimate'。既定 AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT = 1、
+ * 【方針】AI の利用回数の 1 日の上限はプランごと (DB の ai_daily_limits)。機能ごとの上限 (究極モード・献立の作成・料理画像の作成) は DB の ai_plan_feature_caps (0 = そのプランでは使えない。billing/03 §6.5)。
+ * 行の無いプランの究極モードは、そのうえ 1 人 1 日 1 回まで (#1142。機能名 'menu_generation_ultimate'。既定 AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT = 1、
  * 環境変数 AI_ULTIMATE_MODE_DAILY_LIMIT で上書き。consumeAiUsage が DB の consume_ai_usage_capped で両方の上限を判定する)。
  * 上限の値は DB の ai_daily_limits (プランごと。行の無いプランは free の値)。運営画面 (/super-admin/llm/quotas) から変えられる。
  *
@@ -32,7 +32,7 @@
  *       安全弁に達したら、入口の止め方で止める)
  *     写真の「オート」(判別 → 解析) → 判別 (classify-photo) で 1 回数え、数え済みの印 (issueAiUsageGrant) を返す。
  *       続く解析 (analyze-*) は印を使えたら数えない (redeemAiUsageGrant。印は 1 回だけ使える)
- * - 上限に数えない機能 (AI_UNMETERED_FEATURES。画面を開く・保存するだけで呼ばれる AI) は、1 日の上限 (10 回) に数えないが、
+ * - 上限に数えない機能 (AI_UNMETERED_FEATURES。画面を開く・保存するだけで呼ばれる AI) は、1 日の上限に数えないが、
  *   どの機能名で数えるかの材料はクライアントが送る値なので、機能ごとの 1 日の安全弁 (DB の ai_unmetered_daily_caps。
  *   既定は AI_UNMETERED_DAILY_CAP_DEFAULTS) を超えたら DB が止める (allowed: false)。止めたあとの扱いは上限と同じ
  * - user.id には、認証で確定した ID だけを渡す (リクエストの本文・URL の未検証の ID は渡さない)。

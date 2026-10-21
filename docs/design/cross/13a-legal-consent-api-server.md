@@ -293,6 +293,8 @@ S1〜S4・S12・S13・S18 のトレースは 13b §4.2。
 | `/api/webhooks` | prefix | `no_user_session` | 外部 (Resend) からの通知。署名で認証。利用者のセッションが無い |
 | `/api/e2e` | prefix | `test_only` | テスト基盤 (`e2e/reset-onboarding`。本番は `NODE_ENV` で 403)。e2e の共通ユーザーの初期化を同意に左右させない |
 
+注 (billing/03): アプリ内課金の `/api/billing/iap/catalog`・`/api/billing/iap/sync` は許可リストに入れない (同意の前は購入の画面を開かない。凍結中も通さない)。RevenueCat の Webhook `/api/webhooks/revenuecat` はセッションを持たない受け口で、上の `/api/webhooks` (prefix・`no_user_session`) が通す (Stripe の受け口と同じ形)。
+
 載せない (= 止める) ことを決めたもの (既定 deny なので、この表に無い route もすべて止まる。この表は、止めるか通すかの判断が分かれうる候補と、その判断の理由を書いたもの):
 
 | 候補 | 止める理由 |

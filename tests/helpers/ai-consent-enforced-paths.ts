@@ -19,7 +19,7 @@ import type { AiFeature } from '../../supabase/functions/_shared/ai-usage-core';
 import type { HttpMethod } from './ai-reach';
 
 /**
- * 上限 (#1149。1 日 10 回・全機能の合計) に達したときの止め方。入口ごとに決める。
+ * 上限 (#1149。1 日の上限・全機能の合計。値はプランごと (ai_daily_limits)) に達したときの止め方。入口ごとに決める。
  *
  * | 止め方      | 応答                                                         | 入口                                                         |
  * |-------------|--------------------------------------------------------------|--------------------------------------------------------------|
@@ -301,6 +301,19 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: '退会。AI へは送らない (退会の段階 billing が Stripe の鍵を読む env.ts の一覧に届くだけ)',
     handlers: { POST: { noAi: '退会 (Stripe の契約の解約と顧客の匿名化・本人のデータの削除)。送る先は Stripe と Supabase だけ' } },
   },
+  // billing/03 (アプリ内課金)。RevenueCat の鍵と署名の秘密を getOptionalEnv で読むため環境変数の一覧 (src/lib/env.ts) に届くだけで、送る先は RevenueCat と DB だけ
+  'src/app/api/webhooks/revenuecat/route.ts': {
+    consent: 'RevenueCat からのストアの契約の知らせ。AI へは送らない (署名の秘密と鍵を読む env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'RevenueCat から契約を取り直して DB に写すだけ。送る先は RevenueCat' } },
+  },
+  'src/app/api/billing/iap/sync/route.ts': {
+    consent: '本人のストアの契約の同期。AI へは送らない (env.ts の一覧に届くだけ)',
+    handlers: { POST: { noAi: 'RevenueCat から契約を取り直して DB に写すだけ' } },
+  },
+  'src/app/api/billing/subscription/route.ts': {
+    consent: '契約の要約。期限を過ぎたストアの行だけ RevenueCat から取り直す (env.ts の一覧に届くだけ)。AI へは送らない',
+    handlers: { GET: { noAi: 'DB の契約の要約を返すだけ (必要なときだけ RevenueCat から取り直す)' } },
+  },
   // #1178 / #1702 個人情報の請求 (DSR) の本人向けの API。メール (src/lib/data-subject-requests/notifications.ts) が運営への知らせの宛先を
   // getOptionalEnv('ADMIN_NOTIFICATION_EMAIL') で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
   // 送る先は DB (data_subject_requests) とメール (Resend) だけ。利用者のデータを AI へ送らない
@@ -387,7 +400,9 @@ export const ENFORCED_EDGE: Record<string, AiEdgeEntry> = {
   },
   'normalize-shopping-list': { consent: '利用者の JWT の直後', usage: record('reject', 'shopping_list') },
   'process-meal-image-jobs': {
-    consent: 'ジョブごとに、献立の持ち主 (meal_image_jobs.user_id) で判定。未同意なら取り消す',
+    consent:
+      'ジョブごとに、献立の持ち主 (meal_image_jobs.user_id) で判定。未同意なら取り消す。' +
+      '同意のあとに、ジョブの持ち主のプランの門 (ai_plan_feature_caps の meal_image_auto = 0 なら取り消す。billing/03 §8.8) も見る',
     usage: {
       recordedBy:
         '料理画像の生成ジョブの実行。献立の保存・更新の route (meal_image_auto) と、献立生成 (menu_generation の一部) が積んだジョブを、service role で処理する。' +

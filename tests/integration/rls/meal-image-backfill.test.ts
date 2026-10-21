@@ -3,7 +3,8 @@
  *
  * 確認すること (この利用者の献立だけに絞って動かす。処理 (process-meal-image-jobs) は起こさない):
  *   B-1: dry-run は数えるだけで、meal_image_jobs にも献立にも書かない。jsonb の包含 (dishes @> [{"image_status": ...}]) で
- *        待ち・更新待ちの料理を含む献立を読み、対象の料理と対象外の理由を数える
+ *        待ち・更新待ちの料理を含む献立を読み、対象の料理と対象外の理由を数える。献立の主菜 (最初の主菜) でない待ちの料理は積まない
+ *        (not_auto_image_dish。billing/03 Q-16)
  *   B-2: --apply は対象の料理だけを積み (部分索引に対して 42P10 にならない)、日付の新しい献立から maxMeals 件までにする
  *   B-3: もう一度 --apply しても、待ちのジョブと同じ料理は重複として数え、行を増やさない
  *   B-4: 保存し直し (reconcileDishImages) が積まない献立の料理は積まない (#1514 と同じ共通の判定)。商品の献立 (source_type 'catalog_product')
@@ -154,12 +155,12 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
       apply: false,
       scannedMeals: 4,
       candidateMeals: 2,
-      candidateDishes: 3,
+      candidateDishes: 2,
       processedMeals: 0,
       enqueue: { inserted: 0, duplicates: 0, duplicatesProcessing: 0, failed: 0 },
       triggeredMeals: 0,
     });
-    expect(report.skipped).toMatchObject({ no_subject_hash: 1, catalog_meal_dish: 1, meal_cover_preserved: 1, not_ai_image: 1 });
+    expect(report.skipped).toMatchObject({ no_subject_hash: 1, catalog_meal_dish: 1, meal_cover_preserved: 1, not_ai_image: 1, not_auto_image_dish: 1 });
     expect(await jobRows()).toEqual([]);
     expect(await dishesOf(newerMealId)).toEqual(before);
     // 画像ができている献立は読まない
@@ -169,11 +170,10 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
   it('B-2: --apply は日付の新しい献立から maxMeals 件まで、対象の料理だけを積む (42P10 にならない)', async () => {
     const report = await runMealImageBackfill(srAdmin, { ...options(), apply: true });
 
-    expect(report).toMatchObject({ apply: true, processedMeals: 1, enqueue: { inserted: 2, duplicates: 0, duplicatesProcessing: 0, failed: 0 }, triggeredMeals: 0 });
+    expect(report).toMatchObject({ apply: true, processedMeals: 1, enqueue: { inserted: 1, duplicates: 0, duplicatesProcessing: 0, failed: 0 }, triggeredMeals: 0 });
     const rows = await jobRows();
     expect(rows.map((row) => [row.planned_meal_id, row.dish_index, row.status, row.trigger_source])).toEqual([
       [newerMealId, 0, 'pending', MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE],
-      [newerMealId, 1, 'pending', MEAL_IMAGE_BACKFILL_TRIGGER_SOURCE],
     ]);
     expect(rows[0].idempotency_key).toBe(await buildMealImageIdempotencyKey({ plannedMealId: newerMealId, dishIndex: 0, subjectHash: `h-curry-${TS}` }));
     // 古い献立はまだ積まない (maxMeals 1)
@@ -183,8 +183,8 @@ describe('料理画像を待ったままの料理にジョブを積み直す (#1
   it('B-3: もう一度 --apply しても、待ちのジョブと同じ料理は重複として数え、行を増やさない', async () => {
     const report = await runMealImageBackfill(srAdmin, { ...options(), apply: true });
 
-    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 2, duplicatesProcessing: 0, failed: 0 });
-    expect(await jobRows()).toHaveLength(2);
+    expect(report.enqueue).toEqual({ inserted: 0, duplicates: 1, duplicatesProcessing: 0, failed: 0 });
+    expect(await jobRows()).toHaveLength(1);
   });
 
   it('B-4: 商品の献立の古い商品の料理・写真のカバーの献立の料理は積まず、料理も献立のカバーも変えない (#1514)', async () => {

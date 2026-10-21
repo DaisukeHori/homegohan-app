@@ -34,6 +34,7 @@ export * from './badge-period-awards';
 export * from './handson-tour-nickname';
 export * from './push-token-claim';
 export * from './push-notification-kinds';
+export * from './billing-plans';
 export type {
   Json,
   Database,

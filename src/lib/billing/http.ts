@@ -2,8 +2,10 @@
 import { NextResponse } from 'next/server';
 import type { z } from 'zod';
 import { internalError } from '@/lib/api/errors';
+import { createLogger } from '@/lib/db-logger';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { BILLING_ERROR_HTTP_STATUS, BILLING_ERROR_MESSAGES, BillingError, StripeApiError, StripeNotConfiguredError } from '@/lib/billing/core';
+import { IAP_ERROR_HTTP_STATUS, IAP_ERROR_MESSAGES, IapError, RevenueCatApiError, RevenueCatNotConfiguredError } from '@/lib/billing/iap-core';
 
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
 
@@ -43,4 +45,33 @@ export function billingErrorResponse(routeName: string, error: unknown, ctx: { u
     );
   }
   return internalError(routeName, error, ctx, { shape: 'nested' });
+}
+
+/**
+ * アプリ内課金 (billing/03 §8.5) の route の catch で、billingErrorResponse より先に使う。固定の文だけを本文にする。
+ * IapError → 表のステータス、RevenueCatNotConfiguredError → 503 EXT_REVENUECAT_NOT_CONFIGURED、RevenueCatApiError → 502 EXT_REVENUECAT_API_FAILED。
+ * それ以外は null (呼び出し側が billingErrorResponse に渡す)。RevenueCat の生の文 (RevenueCatApiError.rawMessage) は本文に入れない
+ */
+export function iapErrorResponse(routeName: string, error: unknown, ctx: { userId?: string } = {}): NextResponse | null {
+  if (error instanceof IapError) {
+    // 422 (対応の行が無い商品) と 409 (別の契約と衝突) は運営の対応が要るので、コードだけを構造化ログに残す (§13.3 の運営の処置)
+    createLogger(routeName).warn('アプリ内課金の同期を止めました', { code: error.code, user_id: ctx.userId ?? null });
+    return NextResponse.json(
+      { error: { code: error.code, message: IAP_ERROR_MESSAGES[error.code] } },
+      { status: IAP_ERROR_HTTP_STATUS[error.code], headers: NO_STORE },
+    );
+  }
+  if (error instanceof RevenueCatNotConfiguredError) {
+    return NextResponse.json(
+      { error: { code: 'EXT_REVENUECAT_NOT_CONFIGURED', message: IAP_ERROR_MESSAGES.EXT_REVENUECAT_NOT_CONFIGURED } },
+      { status: IAP_ERROR_HTTP_STATUS.EXT_REVENUECAT_NOT_CONFIGURED, headers: NO_STORE },
+    );
+  }
+  if (error instanceof RevenueCatApiError) {
+    return NextResponse.json(
+      { error: { code: 'EXT_REVENUECAT_API_FAILED', message: IAP_ERROR_MESSAGES.EXT_REVENUECAT_API_FAILED } },
+      { status: IAP_ERROR_HTTP_STATUS.EXT_REVENUECAT_API_FAILED, headers: NO_STORE },
+    );
+  }
+  return null;
 }

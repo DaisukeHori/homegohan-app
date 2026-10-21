@@ -6,7 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { ManualGrantError, type ManualPlanGrantResult, type ManualPlanRevokeResult, type ManualPlanView } from '@/lib/billing/manual-grant';
-import { ManualGrantRpcError, type ManualGrantRepository } from '@/lib/billing/manual-grant-repository';
+import { ManualGrantRpcError, createManualGrantRepository, type ManualGrantRepository } from '@/lib/billing/manual-grant-repository';
 import { expiresAtOf, getManualPlanView, grantManualPlan, revokeManualPlan } from '@/lib/billing/manual-grant-service';
 import { countPlanSubscribers, totalPlanSubscribers, type SubscriberCountClient } from '@/lib/super-admin/plan-subscribers';
 import { createFakePlanSubscribersDb } from './helpers/fake-plan-subscribers-db';
@@ -214,7 +214,7 @@ describe('countPlanSubscribers: 手動付与の行 (S19)', () => {
     // 偽の client は知らない絞り込みのメソッドで例外を投げるので、stripe_subscription_id で絞る変更が入れば赤になる
     const { client } = createFakePlanSubscribersDb({
       tables: {
-        personal_subscriptions: [{ plan_key: 'pro', status: 'active', stripe_subscription_id: null }],
+        personal_subscriptions: [{ plan_key: 'pro', status: 'active', stripe_subscription_id: null, iap_store: null }],
       },
     });
     const counts = await countPlanSubscribers(client as unknown as SubscriberCountClient, 'pro');
@@ -224,10 +224,48 @@ describe('countPlanSubscribers: 手動付与の行 (S19)', () => {
     // 取り消し済みの手動付与の行は数えない (廃止を止め続けない)
     const { client: cancelledClient } = createFakePlanSubscribersDb({
       tables: {
-        personal_subscriptions: [{ plan_key: 'pro', status: 'cancelled', stripe_subscription_id: null }],
+        personal_subscriptions: [{ plan_key: 'pro', status: 'cancelled', stripe_subscription_id: null, iap_store: null }],
       },
     });
     const cancelledCounts = await countPlanSubscribers(cancelledClient as unknown as SubscriberCountClient, 'pro');
     expect(cancelledCounts.personal_subscriptions).toBe(0);
+
+    // billing/03 §7.1: ストアの契約 (I 行) も live なら同じく数える (出どころを見ない)
+    const { client: storeClient } = createFakePlanSubscribersDb({
+      tables: {
+        personal_subscriptions: [{ plan_key: 'pro', status: 'trialing', stripe_subscription_id: null, iap_store: 'app_store' }],
+      },
+    });
+    expect((await countPlanSubscribers(storeClient as unknown as SubscriberCountClient, 'pro')).personal_subscriptions).toBe(1);
+  });
+});
+
+describe('billing/03 §8.6: 手動付与の画面が読む live な契約の出どころ (findLiveSubscription)', () => {
+  it('findLiveSubscription reads iap_store and reports source stripe / manual / store for S / M / I rows', async () => {
+    const base = { id: '44444444-4444-4444-8444-444444444444', plan_key: 'pro', status: 'active', starts_at: '2026-10-01T00:00:00.000Z', current_period_end: null };
+    const cases: Array<[Record<string, unknown>, string]> = [
+      [{ ...base, stripe_subscription_id: 'sub_1', iap_store: null }, 'stripe'],
+      [{ ...base, stripe_subscription_id: null, iap_store: null }, 'manual'],
+      [{ ...base, stripe_subscription_id: null, iap_store: 'app_store' }, 'store'],
+      [{ ...base, stripe_subscription_id: null, iap_store: 'play_store' }, 'store'],
+    ];
+    for (const [row, source] of cases) {
+      const selects: string[] = [];
+      const chain = {
+        select: (columns: string) => {
+          selects.push(columns);
+          return chain;
+        },
+        eq: () => chain,
+        in: () => chain,
+        order: () => chain,
+        limit: () => chain,
+        maybeSingle: async () => ({ data: row, error: null }),
+      };
+      const admin = { from: () => chain };
+      const repository = createManualGrantRepository(admin as unknown as Parameters<typeof createManualGrantRepository>[0]);
+      expect(await repository.findLiveSubscription(TARGET_ID), source).toMatchObject({ subscription_id: base.id, source });
+      expect(selects[0]).toContain('iap_store');
+    }
   });
 });

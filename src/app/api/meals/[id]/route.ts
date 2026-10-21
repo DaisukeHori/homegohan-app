@@ -5,7 +5,7 @@ import {
   buildCatalogSelectionUpdate,
   clearCatalogSelectionMetadata,
 } from '../../../../lib/catalog-products';
-import { isCatalogProductMeal, countMealImageJobsToProcess, markDishImagesSkipped, type MealImageJobSeed } from '../../../../lib/meal-image';
+import { isCatalogProductMeal, countMealImageJobsToProcess, markDishImagesSkipped, mealImageSkipReasonOf, type MealImageJobSeed } from '../../../../lib/meal-image';
 import {
   buildDishImagePayload,
   cancelPendingMealImageJobs,
@@ -215,7 +215,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
           // (同意の判定 → 利用回数の記録 → AI への送信の順)。ジョブを積むかどうかは、同意の有無では変えない (止めるのは処理する側)
           const imageConsent = await checkUserAiConsent(supabase, user.id);
           if (imageConsent.allowed) {
-            // #1149 料理画像は保存の自動の副作用なので、明示の 1 日の上限 (10 回) には数えない ('meal_image_auto'。記録だけ。
+            // #1149 料理画像は保存の自動の副作用なので、明示の 1 日の上限には数えない ('meal_image_auto'。記録だけ。
             // 食事を記録するだけで AI 相談や写真の解析が止まらないように)。そのかわり料理画像だけの安全弁 (DB の ai_unmetered_daily_caps。
             // 既定は 1 日 20 回) があり、達していれば画像だけ見送る (ジョブを積まない。献立の保存はそのまま。応答の aiSkipped: AI_DAILY_LIMIT)。
             // 操作 1 回で 1 回 (積む画像のジョブの数によらない)。判定に失敗したときは止めない
@@ -233,7 +233,7 @@ export async function PATCH(request: Request, props: { params: Promise<{ id: str
       }
 
       if (!imageAllowed) {
-        const skipReason = imageUsage?.allowed === false ? 'ai_limit' : 'rate_limit';
+        const skipReason = mealImageSkipReasonOf(imageUsage);
         if (skipReason === 'rate_limit') {
           // レート制限で見送った (上限 #1149 で見送ったときは、下の aiSkipped で知らせる)
           imageGenerationThrottled = true;
