@@ -6,6 +6,8 @@
  *   - 空欄で保存すると無制限 (daily_limit: null)
  *   - 0 以上の整数でない・上限を超える・理由が空のときは送らずに、行に案内を出す
  *   - 保存に失敗したら、API の文 (error.message) を行に出す
+ *   - #1912: 組織のプランの値の行 (plan_source: 'org_plan') は表示名「<値>（組織のプラン）」で出て、保存できる。
+ *     どちらにも無いキーの行 (plan_source: 'unknown') は、入力欄と保存のボタンを止めて案内を出す (PATCH が 404 で断るため)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -33,9 +35,11 @@ let patchStatus = 200;
 
 const LIST = {
   data: [
-    { plan_key: 'free', display_name: 'Free', plan_type: 'personal', daily_limit: 10, configured: true, effective_daily_limit: 10, updated_at: '2026-10-11T00:00:00Z' },
-    { plan_key: 'pro', display_name: 'Pro', plan_type: 'personal', daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
-    { plan_key: 'org_enterprise', display_name: 'Org Enterprise', plan_type: 'org', daily_limit: null, configured: true, effective_daily_limit: null, updated_at: '2026-10-11T00:00:00Z' },
+    { plan_key: 'free', plan_source: 'subscription_plan', display_name: 'Free', plan_type: 'personal', daily_limit: 10, configured: true, effective_daily_limit: 10, updated_at: '2026-10-11T00:00:00Z' },
+    { plan_key: 'pro', plan_source: 'subscription_plan', display_name: 'Pro', plan_type: 'personal', daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
+    { plan_key: 'org_enterprise', plan_source: 'subscription_plan', display_name: 'Org Enterprise', plan_type: 'org', daily_limit: null, configured: true, effective_daily_limit: null, updated_at: '2026-10-11T00:00:00Z' },
+    { plan_key: 'premium', plan_source: 'org_plan', display_name: 'premium（組織のプラン）', plan_type: null, daily_limit: 10, configured: true, effective_daily_limit: 10, updated_at: '2026-10-21T00:00:00Z' },
+    { plan_key: 'legacy_plan', plan_source: 'unknown', display_name: null, plan_type: null, daily_limit: 3, configured: true, effective_daily_limit: 3, updated_at: '2026-10-11T00:00:00Z' },
   ],
   default_plan_key: 'free',
   enforced: true,
@@ -154,6 +158,33 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
 
     expect(patchBodies()).toEqual([]);
     expect(row('free').textContent).toContain('変更の理由を入力してください');
+  });
+
+  it('#1912: 組織のプランの値の行は「<値>（組織のプラン）」と key を出し、保存すると PATCH にその値を送る', async () => {
+    await render();
+    expect(row('premium').textContent).toContain('premium（組織のプラン）');
+    expect(row('premium').querySelector('.font-mono')?.textContent).toBe('premium');
+    expect(row('premium').querySelector('[data-testid="quota-not-editable-premium"]')).toBeNull();
+
+    await save('premium', '30', '組織の上限を上げる');
+
+    expect(patchBodies()).toEqual([{ plan_key: 'premium', daily_limit: 30, reason: '組織の上限を上げる' }]);
+  });
+
+  it('#1912: どちらにも無いキーの行は、入力欄と保存のボタンを止めて案内を出す (押しても送らない)', async () => {
+    await render();
+    const inputs = Array.from(row('legacy_plan').querySelectorAll('input'));
+    const button = row('legacy_plan').querySelector('button') as HTMLButtonElement;
+
+    expect(inputs.map((input) => input.disabled)).toEqual([true, true]);
+    expect(button.disabled).toBe(true);
+    expect(row('legacy_plan').querySelector('[data-testid="quota-not-editable-legacy_plan"]')?.textContent).toContain('保存できません');
+    // 保存できる行は止めない
+    expect((row('pro').querySelector('button') as HTMLButtonElement).disabled).toBe(false);
+    expect(Array.from(row('pro').querySelectorAll('input')).map((input) => input.disabled)).toEqual([false, false]);
+
+    await save('legacy_plan', '5', '理由');
+    expect(patchBodies()).toEqual([]);
   });
 
   it('保存に失敗したら、API の文を行に出す', async () => {
