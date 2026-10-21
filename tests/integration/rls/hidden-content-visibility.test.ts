@@ -37,6 +37,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
 import { hideModeratedContent } from '@/lib/admin/moderation-backend';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -166,6 +167,8 @@ beforeAll(async () => {
     .single();
   if (familyError || !family) throw new Error(`family_groups: ${familyError?.message}`);
   familyId = family.id as string;
+  // billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする
+  await setFamilyGroupPlan(srAdmin, [familyId]);
   const { error: memberError } = await srAdmin.from('family_members').insert([
     { family_id: familyId, user_id: owner.id, role: 'representative', status: 'active', share_meals: true },
     { family_id: familyId, user_id: famMember.id, role: 'adult', status: 'active', share_meals: true },

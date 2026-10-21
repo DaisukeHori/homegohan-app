@@ -43,3 +43,19 @@ export async function grantFamilyPlan(
   if (error || !data) throw new Error(`grantFamilyPlan(${userId}, ${planKey}): ${error?.message ?? '戻り値が無い'}`);
   return data as FamilyPlanGrant;
 }
+
+/**
+ * service_role の直接の INSERT で作ったグループを家族プランにする (メンバーを足す前に呼ぶ)。
+ * グループの INSERT では billing/01 のトリガーが代表者の契約から plan_key を決め、契約が無ければ free にする (渡した plan_key は使わない)。
+ * free のままだとメンバーの INSERT がトリガー family_members_billing_plan_gate に FAMILY_PLAN_REQUIRED で止められるので、
+ * 作ったあとに service_role で plan_key を UPDATE する (UPDATE OF plan_key はそのトリガーに当たらない。service_role は特権列のガードにも当たらない)。
+ * member_limit は変えない (DDL の既定 4 = family_basic の人数)
+ */
+export async function setFamilyGroupPlan(
+  srAdmin: SupabaseClient,
+  familyIds: readonly string[],
+  planKey: FamilyPlanKey = DEFAULT_FAMILY_PLAN_KEY,
+): Promise<void> {
+  const { error } = await srAdmin.from('family_groups').update({ plan_key: planKey }).in('id', [...familyIds]);
+  if (error) throw new Error(`setFamilyGroupPlan(${familyIds.join(', ')}, ${planKey}): ${error.message}`);
+}

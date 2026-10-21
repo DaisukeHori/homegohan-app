@@ -21,6 +21,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -109,6 +110,8 @@ beforeAll(async () => {
   if (groupError || !groups) throw new Error(`family_groups: ${groupError?.message}`);
   familyF = groups.find((g) => g.name.startsWith('rls-family F'))!.id;
   familyG = groups.find((g) => g.name.startsWith('rls-family G'))!.id;
+  // billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする
+  await setFamilyGroupPlan(srAdmin, [familyF, familyG]);
 
   repMemberId = await insertMember({ family_id: familyF, user_id: rep.id, role: 'representative', status: 'active' });
   adultMemberId = await insertMember({ family_id: familyF, user_id: adult.id, role: 'adult', status: 'active' });
