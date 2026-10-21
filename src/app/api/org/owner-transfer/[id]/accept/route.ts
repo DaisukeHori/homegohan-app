@@ -18,6 +18,13 @@ const TRANSFER_ACCEPT_MESSAGES: Record<string, string> = {
   NOT_AUTHENTICATED: '認証が必要です。',
   // #1173: 18 歳未満の本人は組織のオーナーを引き受けない (DB の関数が先頭で断る)
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
+  // 解散と同時の承諾 (supabase/migrations/20261022110000_org_transfer_toctou.sql)。承諾は組織の行をロックしてから status を読み、
+  // 解散した組織の提案は承諾させない (従来は判定のあとに解散が commit すると CHECK 23514 の 500 だった)
+  [MembershipErrorCode.ORG_ALREADY_DISSOLVED]: 'この組織は解散しているため、オーナー権限を引き継げません。',
+  // 同じ migration: 提案者がもうこの組織のオーナーでない (運営の強制譲渡のあとに残った提案など)。オーナーは変わらない
+  [MembershipErrorCode.NOT_ORG_OWNER]: '譲渡を申し出た人が今はこの組織のオーナーではないため、オーナー権限を引き継げません。',
+  // ロックの取り直しの間に別の譲渡と解散が重なった、まれなデッドロック (40P01)。そのままやり直せば通る
+  [MembershipErrorCode.CONFLICT_RETRY]: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.CONFLICT_RETRY],
 };
 
 export async function POST(_request: Request, props: { params: Promise<{ id: string }> }) {
@@ -48,7 +55,15 @@ export async function POST(_request: Request, props: { params: Promise<{ id: str
   });
 
   if (rpcError) {
-    const { code, status } = mapPgErrorToHttp(rpcError.message);
+    // SQLSTATE も渡す (40P01 を CONFLICT_RETRY にするため)
+    const { code, status } = mapPgErrorToHttp(rpcError.message, rpcError.code);
+    if (code === 'UNKNOWN') {
+      // 想定外の DB のエラー (CHECK 違反など) の生の文は本文に出さず、構造化ログにだけ残す
+      log.error('オーナーの譲渡の承諾の RPC が想定外のエラーで失敗しました', rpcError, {
+        proposal_id: proposalId,
+        pg_code: rpcError.code ?? null,
+      });
+    }
     const message = TRANSFER_ACCEPT_MESSAGES[code] ?? '組織オーナー権限の引き継ぎに失敗しました。';
     return NextResponse.json({ error: { code, message } }, { status });
   }

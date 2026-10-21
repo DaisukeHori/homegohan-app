@@ -410,6 +410,13 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
       'あなたは現在この組織のメンバーではないため、オーナー権限を引き継げません。',
     ],
     ['TRANSFER_PROPOSAL_EXPIRED', 410, '譲渡提案の有効期限が切れています。'],
+    // 20261022110000_org_transfer_toctou.sql: 解散と同時の承諾・運営の強制譲渡のあとに残った提案
+    ['ORG_ALREADY_DISSOLVED', 409, 'この組織は解散しているため、オーナー権限を引き継げません。'],
+    [
+      'NOT_ORG_OWNER',
+      403,
+      '譲渡を申し出た人が今はこの組織のオーナーではないため、オーナー権限を引き継げません。',
+    ],
   ])('RPC が %s で失敗: %i と専用の文言を返し、完了メールは送らない', async (code, status, message) => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message: code, code: 'P0001' } });
 
@@ -430,6 +437,40 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
 
     expect(res.status).toBe(500);
     expect(json.error).toEqual({ code: 'UNKNOWN', message: '組織オーナー権限の引き継ぎに失敗しました。' });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CHECK 違反 (23514) などの生の DB のエラーは、本文に出さず 500 と汎用の文言にし、構造化ログにだけ残す', async () => {
+    const rawMessage =
+      'new row for relation "user_profiles" violates check constraint "user_profiles_org_consistency"';
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: rawMessage, code: '23514' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({
+      error: { code: 'UNKNOWN', message: '組織オーナー権限の引き継ぎに失敗しました。' },
+    });
+    expect(text).not.toContain('user_profiles_org_consistency');
+    expect(text).not.toContain('23514');
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError.mock.calls[0][2]).toEqual({ proposal_id: PROPOSAL_ID, pg_code: '23514' });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('デッドロック (SQLSTATE 40P01) は 409 CONFLICT_RETRY と「もう一度お試しください」の文にする (SQLSTATE を mapPgErrorToHttp に渡す)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'deadlock detected', code: '40P01' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.error).toEqual({
+      code: 'CONFLICT_RETRY',
+      message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.CONFLICT_RETRY],
+    });
+    expect(mocks.logError).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
