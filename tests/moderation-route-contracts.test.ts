@@ -151,7 +151,7 @@ beforeEach(() => {
 });
 
 describe('GET /api/admin/moderation/[type]/[id]', () => {
-  it('ai_content は準備中 (未対応) のため 501 OP_NOT_SUPPORTED (404 にしない。存在しないテーブルを叩かない)', async () => {
+  it('ai_content は審査の仕組みが無い (未対応) ため 501 OP_NOT_SUPPORTED (404 にしない。存在しないテーブルを叩かない)', async () => {
     fakeSupabase = createFakeSupabase({});
     const res = await GET(new Request('http://localhost/api/admin/moderation/ai_content/x'), {
       params: { type: 'ai_content', id: 'x' },
@@ -159,7 +159,7 @@ describe('GET /api/admin/moderation/[type]/[id]', () => {
     expect(res.status).toBe(501);
     const json = (await res.json()) as { error: { code: string; message: string } };
     expect(json.error.code).toBe('OP_NOT_SUPPORTED');
-    expect(json.error.message).toContain('準備中（未対応）');
+    expect(json.error.message).toContain('AIコンテンツの審査はできません');
     expect(fakeSupabase.from).not.toHaveBeenCalled();
     // DB (service-role) のクライアントも作らない
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();
@@ -1074,7 +1074,7 @@ describe('GET /api/admin/moderation/queue (#1128: ai_content は 501)', () => {
 
     expect(res.status).toBe(501);
     expect(json.error.code).toBe('OP_NOT_SUPPORTED');
-    expect(json.error.message).toContain('準備中（未対応）');
+    expect(json.error.message).toContain('AIコンテンツの審査はできません');
     expect(json).not.toHaveProperty('data');
     expect(fakeSupabase.from).not.toHaveBeenCalled();
     expect(mockGetSupabaseAdmin).not.toHaveBeenCalled();

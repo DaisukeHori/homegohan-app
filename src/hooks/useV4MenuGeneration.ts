@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@homegohan/shared";
 import { AiConsentRequiredError, aiFetch, isAiConsentRequiredResponse } from "@/lib/ai/consent-required";
 import { weeklyMenuRequestErrorMessageForDisplay } from "@/lib/weekly-menu-request-error";
+import { requestProgressForDisplay } from "@/lib/request-progress-display";
 
 interface UseV4MenuGenerationOptions {
   onGenerationStart?: (requestId: string) => void;
@@ -106,9 +107,12 @@ export function useV4MenuGeneration(options: UseV4MenuGenerationOptions = {}) {
           const newData = payload.new as Tables<"weekly_menu_requests">;
 
           // progressにstatusも含めて渡す（コールバック側で完了判定できるように）
-          const progressObj = (typeof newData.progress === 'object' && newData.progress !== null && !Array.isArray(newData.progress))
-            ? (newData.progress as Record<string, unknown>)
-            : {};
+          // DB の既定値の progress (ワーカーがまだ進捗を書いていない行) の文は画面に出さず、置き換える (#1911)
+          const progressObj = requestProgressForDisplay(
+            (typeof newData.progress === 'object' && newData.progress !== null && !Array.isArray(newData.progress))
+              ? (newData.progress as Record<string, unknown>)
+              : {},
+          );
           // 行の error_message は、こちらで書いた定型の文 (同意・上限・失敗の固定の文など) だけをそのまま出し、
           // それ以外 (#1478 より前に Edge Function が書いた例外の文面など) は汎用の文に寄せる
           const displayErrorMessage = weeklyMenuRequestErrorMessageForDisplay(newData.error_message);

@@ -237,15 +237,17 @@ test.describe("3. オンボーディング", () => {
 // ============================================================
 
 test.describe("4. 静的ページ・リンク整合性", () => {
-  test("4-1: /pricing ページが 200 相当で表示される (有料プランは準備中)", async ({ page }) => {
+  test("4-1: /pricing ページが 200 相当で表示される (買えるプランが無いときは無料の案内だけ)", async ({ page }) => {
     await page.goto("/pricing");
     await expect(page).not.toHaveURL(/error/);
     await expect(page.locator("body")).not.toContainText("500");
     // 料金関連のテキストがあること
     const hasPricing = (await page.getByText(/プラン|料金/).count()) > 0;
     expect(hasPricing, "料金テキストが見つからない").toBe(true);
-    // 有料プランは販売開始前なので、価格は出さず「準備中」と案内する (#1155 #1151)
-    await expect(page.getByText("有料プランは準備中です（販売開始前）").first()).toBeVisible();
+    // 買えるプランが無いときは、無料の案内だけを出し、「準備中」「販売開始前」とは書かない (#1155 #1151 #1911)
+    await expect(page.getByText("現在は無料でご利用いただけます。").first()).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("準備中");
+    await expect(page.locator("body")).not.toContainText("販売開始前");
     await expect(page.locator("body")).not.toContainText("¥980");
     await expect(page.locator("body")).not.toContainText("¥1,980");
     await expect(page.locator("body")).not.toContainText("年払い");
@@ -269,11 +271,19 @@ test.describe("4. 静的ページ・リンク整合性", () => {
     // 特定商取引法テキストがあること
     const hasLegal = (await page.getByText(/特定商取引法|販売事業者/).count()) > 0;
     expect(hasLegal, "特定商取引法テキストが見つからない").toBe(true);
-    // 実在しないダミーの事業者情報は出さない。所在地・電話番号は請求時に開示する扱い (#1155。値は src/lib/business-info.ts)
+    // 実在しないダミーの事業者情報は出さない。所在地・メールアドレス・営業時間は公開の会社情報、
+    // 電話番号は載せずに請求があれば開示する (#1155 #1911。値は src/lib/business-info.ts)
     await expect(page.getByText("株式会社MHD医健").first()).toBeVisible();
-    await expect(page.getByText("請求があった場合に遅滞なく開示します").first()).toBeVisible();
-    await expect(page.locator("body")).not.toContainText("準備中（確定次第掲載します）");
-    await expect(page.getByText("有料プランは準備中です（販売開始前）").first()).toBeVisible();
+    await expect(page.getByText("〒105-0013 東京都港区浜松町２丁目2番15号 浜松町ダイヤビル2F").first()).toBeVisible();
+    await expect(page.getByText("平日 9:00-17:00 (年末年始を除く)").first()).toBeVisible();
+    await expect(page.getByText("請求があれば遅滞なく開示します").first()).toBeVisible();
+    await expect(page.locator("body")).toContainText("info@mhd-iken.com");
+    // 有料の販売で要る項目 (販売価格・支払方法など) は項目ごと出さず、「準備中」とも書かない (#1911。#1912 が足す)
+    await expect(page.locator("body")).not.toContainText("販売価格");
+    await expect(page.locator("body")).not.toContainText("支払方法");
+    await expect(page.locator("body")).not.toContainText("お支払いが必要な商品・サービスはありません");
+    await expect(page.locator("body")).not.toContainText("準備中");
+    await expect(page.locator("body")).not.toContainText("販売開始前");
     await expect(page.locator("body")).not.toContainText("03-1234-5678");
     await expect(page.locator("body")).not.toContainText("山田 太郎");
     await expect(page.locator("body")).not.toContainText("神宮前1-2-3");

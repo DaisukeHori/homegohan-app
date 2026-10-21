@@ -8,7 +8,7 @@
  *     押すと POST /api/legal/accept に、いま有効な版を送る。成功したら戻り先へ (読み込み直し)。
  *     401 はログイン画面へ、409 (規約が更新された) は読み込み直しを案内、それ以外は汎用のエラー。いずれもやり直せる
  *   - 「同意しない」: localStorage を消し、ネイティブ (アプリの WebView) へ知らせてから signOut し (#1038)、
- *     ご利用いただけないことと、データ削除の依頼先 (お問い合わせ) を案内する。
+ *     ご利用いただけないことと、もう一度ログインすれば同意しなくても退会と書き出しができること (#1901 cross/20 Q-23) を案内する。
  *     API は呼ばない。signOut に失敗したら案内に進まず、エラーを出す
  *
  * #1173 (設計書 cross/14 T-F1〜T-F7): 生年月日の欄 (needsBirthDate)・18 歳未満の自己登録の案内 (minor_refused)・
@@ -22,6 +22,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   LEGAL_CONSENT_BIRTH_DATE_COPY,
+  LEGAL_CONSENT_COPY,
   LEGAL_DOCUMENTS,
   LEGAL_DOCUMENT_LABELS,
   LEGAL_DOCUMENT_PATHS,
@@ -510,7 +511,7 @@ describe('/legal-consent フォーム (クライアント側)', () => {
   });
 
   describe('「同意しない」', () => {
-    it('★localStorage を消してから signOut し、ご利用いただけないことと、データ削除の依頼先 (お問い合わせ) を案内する。API は呼ばない', async () => {
+    it('★localStorage を消してから signOut し、ご利用いただけないことと、もう一度ログインすれば同意しなくても退会と書き出しができること (#1901 Q-23) を案内する。お問い合わせによる削除は約束しない。API は呼ばない', async () => {
       await renderForm();
 
       await act(async () => {
@@ -528,7 +529,15 @@ describe('/legal-consent フォーム (クライアント側)', () => {
       const declined = container.querySelector('[data-testid="legal-consent-declined"]');
       expect(declined).not.toBeNull();
       expect(declined!.textContent).toContain('ご利用いただけません');
-      expect(declined!.textContent).toContain('削除');
+      // #1901 (cross/20 Q-23): 退会と書き出しは、もう一度ログインすれば同意しなくても本人が行える。ログインの後は退会と書き出しの画面へ戻る
+      const accountGuide = declined!.querySelector('[data-testid="legal-consent-declined-account-guide"]');
+      expect(accountGuide!.textContent).toContain(LEGAL_CONSENT_COPY.declinedAccountGuide);
+      expect(accountGuide!.querySelector(`a[href="/login?next=${encodeURIComponent('/legal-consent/account')}"]`)?.textContent).toBe(
+        LEGAL_CONSENT_COPY.declinedAccountLink,
+      );
+      // 運営が代わりに削除する経路は無いので、お問い合わせによる削除を約束しない (お問い合わせの窓口のリンクは残す)
+      expect(declined!.textContent).not.toContain('ご本人であることを確認のうえ');
+      expect(declined!.textContent).not.toContain('削除をご希望の場合は、お問い合わせ');
       expect(declined!.querySelector('a[href="/contact"]')).not.toBeNull();
       expect(declined!.querySelector('a[href="/login"]')).not.toBeNull();
       // 同意のフォームは消える
@@ -813,6 +822,31 @@ describe('#1173 /legal-consent フォーム (クライアント側) の生年月
     expect(container.querySelector('form')).toBeNull();
     expect(checkboxes()).toHaveLength(0);
     expect(locationMock.assign).not.toHaveBeenCalled();
+  });
+
+  /** 同意しなくても退会と書き出しができる画面 (/legal-consent/account) へのリンク (#1901 cross/20 Q-23) */
+  const accountEntryLink = () =>
+    container.querySelector<HTMLAnchorElement>('[data-testid="legal-consent-account-link"] a[href="/legal-consent/account"]');
+
+  it('#1901 Q-23: 同意のフォームの下に、同意しなくても退会と書き出しができる画面 (/legal-consent/account) へのリンクがある', async () => {
+    await renderForm();
+
+    expect(container.querySelector('form')).not.toBeNull();
+    expect(container.querySelector('[data-testid="legal-consent-account-link"]')?.textContent).toContain(LEGAL_CONSENT_COPY.accountEntryLead);
+    expect(accountEntryLink()?.textContent).toBe(LEGAL_CONSENT_COPY.accountEntryLink);
+  });
+
+  it('#1901 Q-23: 18 歳未満の案内 (minor_refused・guardian_missing) にも、退会と書き出しの画面へのリンクがある', async () => {
+    await reachMinorRefused();
+    expect(accountEntryLink()?.textContent).toBe(LEGAL_CONSENT_COPY.accountEntryLink);
+
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm({ guardianMissing: true });
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading);
+    expect(accountEntryLink()?.textContent).toBe(LEGAL_CONSENT_COPY.accountEntryLink);
   });
 
   it('T-F4: 「生年月日を直す」でフォームに戻り、入力を直して送り直せる (S5)', async () => {

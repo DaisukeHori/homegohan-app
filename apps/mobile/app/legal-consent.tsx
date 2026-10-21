@@ -25,7 +25,7 @@ const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
  * (文面・チェック・生年月日 (cross/14)・未成年の案内・「登録をやめる」・409 の読み込み直し・「同意しない」の後の案内は Web の画面のまま。
  * 2 か所に持たない)。AI 同意の画面 (settings/ai-consent.tsx) と同じ形。同意が要る間は、LegalConsentGate がルートの Stack を
  * この画面 1 つに畳み、同意の後に入口へ移す。
- * Web の画面は、同意を記録できたら { type: 'legal-consent-accepted' } を、「同意しない」「登録をやめる」では { type: 'sign-out' } を
+ * Web の画面は、同意を記録できたら { type: 'legal-consent-accepted' } を、「同意しない」「登録をやめる」と同意の前の退会 (/legal-consent/account。#1901) では { type: 'sign-out' } を
  * ネイティブへ送る (WebViewScreen の onMessage が受ける)。
  * 扱い (LegalConsentScreenMode。src/lib/legal-consent.ts) ごとの振る舞い:
  *   awaiting-consent   取り除く操作 (ログインの直後の routeAfterSignIn の replace など) を全部止める (同意のゲートの畳み直しは同意画面の route を
@@ -34,7 +34,7 @@ const LEGAL_CONSENT_CLOSE_LABEL = "閉じる";
  *                      iOS のスワイプは app/_layout.tsx の gestureEnabled: false。Android の戻るボタンは、この画面が Stack の
  *                      唯一の route なので OS に渡る (アプリが背面へ。usePreventRemove の止めには当たらない)
  *   signed-out-notice  Web からの sign-out でネイティブもログアウトした後。ウェルカムへ移らず (WebViewScreen の afterSignOut)、
- *                      Web の案内 (削除の依頼先・請求の画面・「登録をやめました」) を残し、WebView の上に「閉じる」を出す。
+ *                      Web の案内 (退会と書き出しの画面へのログイン・請求の画面・「登録をやめました」・「退会しました」) を残し、WebView の上に「閉じる」を出す。
  *                      取り除く操作は全部止め、「閉じる」でだけ入口へ移る
  *   free               何も止めない。サインイン中ならゲートが閉じる。未ログインのまま開かれた (deep link) なら、
  *                      auth の読み込みが済んだところで自分で閉じる

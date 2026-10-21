@@ -7,6 +7,7 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { waitUntil } from '@vercel/functions';
 import { sanitizeLogEntry, sanitizeMetadata } from '../../supabase/functions/_shared/log-sanitizer';
 // 何も import しないファイル。ここから読んでも、ブラウザ・Edge のバンドルに余計なものは入らない
 import { getSupabaseServiceConfig, isMissingEnvError } from './env-required';
@@ -103,6 +104,36 @@ async function saveLog(entry: LogEntry): Promise<void> {
 }
 
 /**
+ * app_logs への保存を待たせる上限 (ミリ秒)。undici (Node.js の fetch) の接続のタイムアウトの既定値 (10 秒) と同じにする。
+ * 保存がこれより長くかかるときは、それ以上は関数を延命しない (Supabase に届かないときに、ログのたびに関数が止まれずに課金が伸びるのを防ぐ)。
+ */
+export const LOG_SAVE_KEEPALIVE_TIMEOUT_MS = 10_000;
+
+/**
+ * ログの保存を始め、保存が終わる (または LOG_SAVE_KEEPALIVE_TIMEOUT_MS を過ぎる) まで Vercel の関数を止めさせない (#1909)。
+ *
+ * 呼び出し元はログの保存を待たずに応答を返す。Vercel は応答を返した関数を止める (凍結する) ので、
+ * 保存の通信 (Supabase への接続・TLS の握手・insert) の途中で止められると、次の呼び出しで関数が起こされたときに
+ * 接続が切れていて `TypeError: fetch failed` (ECONNRESET / UND_ERR_SOCKET) になり、その行は保存されない。
+ * waitUntil に渡すと、Vercel は渡した Promise が終わるまで関数を止めない。Vercel の外 (ローカル・テスト・ブラウザ) では
+ * waitUntil は何もしない (@vercel/functions の getContext が空を返す)。
+ * 渡す Promise は reject しない (saveLog は例外を投げない。上限のタイマーも resolve だけ)。
+ */
+function saveLogInBackground(entry: LogEntry): void {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const saving = saveLog(entry).catch(() => {});
+  const deadline = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, LOG_SAVE_KEEPALIVE_TIMEOUT_MS);
+  });
+  const settled = Promise.race([saving, deadline]).finally(() => clearTimeout(timer));
+  try {
+    waitUntil(settled);
+  } catch {
+    // waitUntil が使えない環境でも、ログの保存そのものは続ける (ログの失敗で呼び出し元を止めない)
+  }
+}
+
+/**
  * API Route用のロガー
  */
 export function createLogger(routeName: string, requestId?: string) {
@@ -129,13 +160,13 @@ export function createLogger(routeName: string, requestId?: string) {
       console.log(logLine, sanitizedMetadata || '');
     }
 
-    // DB保存（非同期、待たない）
-    saveLog({
+    // DB保存（非同期、待たない。保存が終わるまで関数は止めさせない (#1909)）
+    saveLogInBackground({
       ...baseEntry,
       level,
       message,
       metadata,
-    }).catch(() => {});
+    });
   };
 
   return {
@@ -151,14 +182,14 @@ export function createLogger(routeName: string, requestId?: string) {
       const timestamp = new Date().toISOString();
       console.error(`[${timestamp}] [ERROR] [${routeName}] ${message}`, error, sanitizeMetadata(metadata) || '');
 
-      saveLog({
+      saveLogInBackground({
         ...baseEntry,
         level: 'error',
         message,
         metadata,
         error_message: errorMessage,
         error_stack: errorStack,
-      }).catch(() => {});
+      });
     },
     
     /**
@@ -171,12 +202,12 @@ export function createLogger(routeName: string, requestId?: string) {
         const timestamp = new Date().toISOString();
         console.log(`[${timestamp}] [${level.toUpperCase()}] [${routeName}] [user:${userId}] ${message}`, sanitizeMetadata(metadata) || '');
 
-        saveLog({
+        saveLogInBackground({
           ...userEntry,
           level,
           message,
           metadata,
-        }).catch(() => {});
+        });
       };
 
       return {
@@ -191,14 +222,14 @@ export function createLogger(routeName: string, requestId?: string) {
 
           console.error(`[${new Date().toISOString()}] [ERROR] [${routeName}] [user:${userId}] ${message}`, error, sanitizeMetadata(metadata) || '');
 
-          saveLog({
+          saveLogInBackground({
             ...userEntry,
             level: 'error',
             message,
             metadata,
             error_message: errorMessage,
             error_stack: errorStack,
-          }).catch(() => {});
+          });
         },
       };
     },

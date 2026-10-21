@@ -4,8 +4,10 @@
  *
  * 前提: tests/e2e/fixtures/karaage.jpg が存在すること。
  * なければ skip するのでテスト全体はブロックしない。
+ * 解析は本物の AI を呼ぶので、E2E_ALLOW_AI_CALLS=1 のときだけ流す (tests/e2e/helpers/ai-calls.ts。#1909)。
  */
 import { test, expect } from "./fixtures/auth";
+import { AI_CALLS_DISABLED_REASON, isAiCallAllowed } from "./helpers/ai-calls";
 import path from "path";
 import fs from "fs";
 
@@ -16,6 +18,10 @@ test("食事画像認識: 結果画面に料理が表示される", async ({ aut
 
   if (!fs.existsSync(FIXTURE_IMAGE)) {
     test.skip(true, `fixture 画像が存在しません: ${FIXTURE_IMAGE}`);
+    return;
+  }
+  if (!isAiCallAllowed()) {
+    test.skip(true, AI_CALLS_DISABLED_REASON);
     return;
   }
 

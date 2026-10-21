@@ -190,13 +190,13 @@ export function NutritionDetailModal({
               {/* 献立改善ボタン */}
               {/* UX2-03: 従来は `nutritionFeedback && !isLoadingFeedback` の否定 = 「フィードバックが
                   無ければ常にスピナー」という判定だったため、isLoadingFeedback が false になっても
-                  nutritionFeedback が空（想定外レスポンス等）だと「分析を準備中...」が実質的に
+                  nutritionFeedback が空（想定外レスポンス等）だと読み込み中の表示が実質的に
                   永久に表示され続けた。isLoadingFeedback を最優先で判定し、ローディング終了後は
                   取得成功/失敗を明確に分岐させ、失敗時は再試行ボタンを表示する。 */}
               {isLoadingFeedback ? (
                 <div className="flex items-center gap-2 mb-4">
                   <div className="w-4 h-4 border-2 border-t-transparent rounded-full animate-spin" style={{ borderColor: colors.accent, borderTopColor: 'transparent' }} />
-                  <span style={{ fontSize: 11, color: colors.textLight }}>分析を準備中...</span>
+                  <span style={{ fontSize: 11, color: colors.textLight }}>分析しています...</span>
                 </div>
               ) : nutritionFeedback ? (
                 <div className="mb-4">

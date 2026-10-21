@@ -181,7 +181,7 @@ describe('課金の route 共通', () => {
       route.usecase.mockRejectedValueOnce(new StripeNotConfiguredError());
       const notConfigured = await route.call();
       expect(notConfigured.status, route.name).toBe(503);
-      expect(await notConfigured.json()).toEqual({ error: { code: 'EXT_STRIPE_NOT_CONFIGURED', message: 'お支払いの受付は準備中です' } });
+      expect(await notConfigured.json()).toEqual({ error: { code: 'EXT_STRIPE_NOT_CONFIGURED', message: 'お支払いを受け付けていません' } });
 
       route.usecase.mockRejectedValueOnce(new Error(RAW));
       const internal = await route.call();

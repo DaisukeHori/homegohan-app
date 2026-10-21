@@ -238,7 +238,7 @@ export const BILLING_ERROR_MESSAGES: Readonly<Record<BillingErrorCode, string>> 
   BILL_CANCEL_NOT_SCHEDULED: '解約は予約されていません',
   BILL_CHECKOUT_SESSION_MISMATCH: 'このお申し込みは確認できません',
   OP_SUBSCRIPTION_ALREADY_ACTIVE: 'すでに有効な契約があります',
-  EXT_STRIPE_NOT_CONFIGURED: 'お支払いの受付は準備中です',
+  EXT_STRIPE_NOT_CONFIGURED: 'お支払いを受け付けていません',
   EXT_STRIPE_API_FAILED: '決済サービスとの通信に失敗しました。しばらくしてからお試しください',
 };
 

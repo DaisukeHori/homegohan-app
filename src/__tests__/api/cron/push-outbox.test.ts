@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { LEGAL_DOCUMENTS } from '@homegohan/shared';
 
 // #1136 GET /api/cron/push-outbox — Push 通知の送信待ちを Expo に送る worker の route。
 // DB (Supabase の RPC と表)・Expo への fetch・メンテナンスの判定・ロガーは作り物にし、route と worker の本体 (src/lib/push/*) は実物を通す。
@@ -9,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   getSupabaseAdmin: vi.fn(),
   isMaintenanceFlagOn: vi.fn(),
-  waitUntil: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
@@ -35,9 +35,8 @@ vi.mock('@/lib/db-logger', () => ({
   generateRequestId: () => 'req_test',
 }));
 
-vi.mock('@vercel/functions', () => ({
-  waitUntil: mocks.waitUntil,
-}));
+// ログの保存を待つ延命 (waitUntil) は createLogger が行い、route は延命しない (#1909)。
+// 本物の createLogger を通した確認は cron-log-keepalive-1909.test.ts
 
 const { GET } = await import('@/app/api/cron/push-outbox/route');
 
@@ -150,7 +149,6 @@ describe('GET /api/cron/push-outbox (#1136)', () => {
         sent: 3,
         dead: 4,
       });
-      expect(mocks.waitUntil).toHaveBeenCalledTimes(1);
     }
   });
 
@@ -173,7 +171,7 @@ describe('GET /api/cron/push-outbox (#1136)', () => {
     mocks.from.mockImplementation(
       tableReturning({
         user_profiles: [
-          { id: USER_ID, frozen_at: null, unban_at: null, terms_version_accepted: 'v2025.1', privacy_version_accepted: 'v2025.1' },
+          { id: USER_ID, frozen_at: null, unban_at: null, terms_version_accepted: LEGAL_DOCUMENTS.terms_of_service.version, privacy_version_accepted: LEGAL_DOCUMENTS.privacy_policy.version },
         ],
         notification_preferences: [],
       }),

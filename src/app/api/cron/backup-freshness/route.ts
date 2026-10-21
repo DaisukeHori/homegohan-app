@@ -27,7 +27,6 @@
  *   DB の失敗 (読む・権利を取る) と、権利を取ったあとの例外は 500。本文は汎用メッセージだけで、詳細は app_logs に残す。
  */
 import { NextResponse } from 'next/server';
-import { waitUntil } from '@vercel/functions';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { internalError } from '@/lib/api/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -56,12 +55,6 @@ export const maxDuration = 60; // Vercel Pro: 60s OK (読むのは 1 行・メ�
 
 /** 構造化ログ (app_logs.function_name) の名前。cron/app-log-alerts と同じ付け方 */
 const ROUTE_NAME = 'cron/backup-freshness';
-
-/**
- * 応答を返したあとも関数を延命する時間 (ミリ秒)。createLogger の書き込みは待たずに進む (非同期) ので、
- * 応答の直後に関数が止められてログが失われないよう、少しだけ延命して書き切らせる (app-log-alerts と同じ値)
- */
-const LOG_FLUSH_GRACE_MS = 1000;
 
 /** 取得の行のうち、鮮度に使う action_type (日次の成功) */
 const DAILY_COMPLETED_ACTION = backupAuditAction('daily', 'completed');
@@ -205,8 +198,6 @@ export async function GET(req: Request) {
   const authError = await requireCronAuth(req);
   if (authError) return authError;
 
-  const response = await checkBackupFreshness();
-  // ログの書き込み (待たずに進む) が、応答の返却で止められないようにする。認証で断った要求にはログが無いので、ここまで来たものだけ
-  waitUntil(new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_GRACE_MS)));
-  return response;
+  // ログの保存 (待たずに進む) は、createLogger が 1 行ごとに保存が終わるまで関数を止めさせない (#1909)。route では延命しない
+  return checkBackupFreshness();
 }

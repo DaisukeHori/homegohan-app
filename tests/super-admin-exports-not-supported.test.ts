@@ -71,7 +71,7 @@ describe.each(ROUTES)('$name', ({ file, handlers }) => {
 
     expect(res.status).toBe(501);
     expect(json).toEqual({ error: { code: 'OP_NOT_SUPPORTED', message: EXPORTS_NOT_SUPPORTED_MESSAGE } });
-    expect(json.error.message).toContain('準備中（未対応）');
+    expect(json.error.message).toContain('データのエクスポートは利用できません');
     // 偽の依頼 ID や「処理中」の応答を返さない
     expect(json).not.toHaveProperty('data');
     expect(requireRole).toHaveBeenCalledWith(['super_admin']);

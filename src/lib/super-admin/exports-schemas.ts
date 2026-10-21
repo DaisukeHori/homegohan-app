@@ -12,9 +12,9 @@ import { z } from 'zod';
 // 日付は YYYY-MM-DD の実在する日付だけを通す (#1482。正規表現だけでは 2026-02-30 が通り、DB の date 型への変換で失敗する)
 import { CalendarDateSchema } from '@/lib/calendar-date-schema';
 
-/** API (501) の本文。画面の「準備中（未対応）」と同じ内容を伝える */
+/** API (501) の本文。予定は書かず、いまの事実だけを伝える (#1911) */
 export const EXPORTS_NOT_SUPPORTED_MESSAGE =
-  'データのエクスポートは準備中（未対応）です。依頼を受け付けても、ファイルを作る処理がまだ無いため、現在は利用できません。';
+  'データのエクスポートは利用できません。依頼を受け付けても、ファイルを作る処理がありません。';
 
 export const ExportType = ['user_data', 'audit_logs', 'meal_records', 'org_data', 'gdpr'] as const;
 export const ExportFormat = ['csv', 'json', 'parquet'] as const;

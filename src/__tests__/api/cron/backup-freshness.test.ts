@@ -23,7 +23,6 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   getSupabaseAdmin: vi.fn(),
   sendEmail: vi.fn(),
-  waitUntil: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
@@ -50,10 +49,8 @@ vi.mock('@/lib/emails/send', () => ({
   sendEmail: mocks.sendEmail,
 }));
 
-// 関数を延命する waitUntil。Vercel の外では何もしないが、呼ばれたかを確かめるために差し替える
-vi.mock('@vercel/functions', () => ({
-  waitUntil: mocks.waitUntil,
-}));
+// ログの保存を待つ延命 (waitUntil) は createLogger が行い、route は延命しない (#1909)。
+// 本物の createLogger を通した確認は cron-log-keepalive-1909.test.ts
 
 // 文面は実物を通す。renderThrows のときだけ例外にする
 vi.mock('@/lib/emails/ops/backup-stale', async (importOriginal) => {
@@ -682,20 +679,6 @@ describe('GET /api/cron/backup-freshness: そのほか (#1129)', () => {
     expect(routeModule.dynamic).toBe('force-dynamic');
     expect(routeModule.fetchCache).toBe('force-no-store');
     expect(routeModule.maxDuration).toBe(60);
-  });
-
-  it('O-3: 応答を返したあとも関数を延命して、ログを書き切らせる (認証で断った要求は対象外)', async () => {
-    await GET(makeRequest());
-    expect(mocks.waitUntil).not.toHaveBeenCalled();
-
-    await GET(authed());
-    expect(mocks.waitUntil).toHaveBeenCalledTimes(1);
-    expect(mocks.waitUntil.mock.calls[0][0]).toBeInstanceOf(Promise);
-
-    // 宛先が未設定で info ログだけの回も、そのログを書き切らせる
-    vi.stubEnv('OPS_ALERT_EMAIL', undefined);
-    await GET(authed());
-    expect(mocks.waitUntil).toHaveBeenCalledTimes(2);
   });
 
   it('O-4: DB への入口は admin_audit_logs の select と 2 つの RPC (claim_ops_alert・release_ops_alert) だけ', async () => {
