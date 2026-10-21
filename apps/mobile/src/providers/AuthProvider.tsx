@@ -3,7 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import { classifyAuthError } from "../lib/authErrors";
 import { registerDeviceName } from "../lib/device-name";
-import { identifyPurchases } from "../lib/purchases";
+import { identifyPurchases, resetPurchasesOnSignOut } from "../lib/purchases";
 import {
   flushPendingPushTokenReleases,
   recordPushTokenRelease,
@@ -260,6 +260,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // 残っている値を全部。上の表の注)
         const userId = lastKnownUserIdRef.current;
         lastKnownUserIdRef.current = null;
+        // ストアの購入 (RevenueCat) の利用者も外す (#1912。billing/03 §8.10)。signOut.ts を通らない SIGNED_OUT (自動更新の失効など) では
+        // ここが唯一の外し。外さないと、次の利用者の logIn が通信で落ちたとき、SDK が前の利用者のままになる。
+        // 待たない (失敗しても投げない)。identify と同じ列に並ぶので、このあとの次の利用者の identify より先に済む。
+        // signOut.ts のあとに届く SIGNED_OUT では既に外れていて何もしない (二重でも害は無い)
+        resetPurchasesOnSignOut().catch(() => undefined);
         setSession(null);
         setIsLoading(false);
         Promise.resolve()

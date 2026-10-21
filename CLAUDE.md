@@ -279,6 +279,15 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 - 子の行を先に取って、あとで家族の行を外部キーの確認で取る関数 (`create_family_invite` の再招待 / `request_child_promotion`) は、まだ家族の行を先に取らない。代表者の DELETE と同時に走ると、まれにどちらかがデッドロックで失敗する (既知。やり直せば通る)。
 - 回帰テスト: `tests/integration/security/family-lock-order-race.test.ts`・`tests/integration/rls/billing-apply-subscription-rpc.test.ts` のテスト 106 (写像と運営の強制解散・代表者の家族の削除が同時に走っても 40P01 にならない)・`tests/integration/rls/billing-manual-grant-rpc.test.ts` のテスト 41・47・57 (期限切れのジョブと家族の操作・代表者の交代が同時に走っても 40P01 にならない)
 
+## 組織 (organizations) を変える関数のロック順 (DB)
+
+組織の所属・解散を変える関数は、組織の行のロックを次の順でそろえる (`supabase/migrations/20261022100000_org_invite_dissolved.sql`・`20261019120000_self_dissolve.sql`)。
+
+- 解散 (`dissolve_org_by_owner`・`operator_force_dissolve_org`): オーナーの `user_profiles` (`dissolve_org_by_owner` は呼び出した本人の行。オーナーでなければこのあとの判定で断る) → `organizations` の行 (どちらも `FOR NO KEY UPDATE`) → 後始末 (全員の `user_profiles` → `org_license_pools` → `organizations`)。運営の強制解散は、途中でオーナーが変わっていたら取り直す。
+- 招待の承諾 (`accept_org_invite`): 招待の行 (`FOR UPDATE`) → `organizations` の行 (`FOR NO KEY UPDATE`。`status` が `active` でなければ `ORG_ALREADY_DISSOLVED`) → 承諾者の `user_profiles` → `org_license_pools`。
+- 新しく足す組織の行のロックは `FOR NO KEY UPDATE` にする (家族と同じ理由。`FOR UPDATE` だと外部キーの確認 (`FOR KEY SHARE`) と待ち合う)。
+- 組織の譲渡の承諾 (`accept_org_owner_transfer`) は、在籍の判定をロックの外で行う (既知。オーナーの解散・運営の強制解散と同時に走ると、承諾が CHECK `user_profiles_org_consistency` (23514) で止まる)。
+
 ---
 
 ## Claude Code Cloud (claude.ai/code) 動作要件

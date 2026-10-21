@@ -83,8 +83,9 @@ export const SELF_DISSOLVE_COPY: Readonly<
   },
   organization: {
     title: '組織を解散する',
-    // 組織の招待 (pending) は解散で止まらない (accept_org_invite は組織の status を見ない。§0.4・Q-4) ので、
-    // 招待・設定などが「使えなくなる」とは書かない (事実と違う効果を、取り消せない操作の確認に出さない)
+    // 組織の招待 (pending) は解散で取り消さず pending のまま残る (§0.4)。承諾は解散した組織を ORG_ALREADY_DISSOLVED で断る
+    // (Q-4。supabase/migrations/20261022100000_org_invite_dissolved.sql)。effects は所属・通知・記録・取り消せないことの 4 行に絞り、
+    // 招待・設定などの扱いは書かない (事実と違う効果を、取り消せない操作の確認に出さない)
     effects: [
       'メンバー全員の所属が解除されます。',
       '解散のお知らせが、メンバーにメールで届きます。',
