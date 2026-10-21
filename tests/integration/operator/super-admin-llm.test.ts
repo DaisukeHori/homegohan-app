@@ -13,6 +13,9 @@
  *     保存した値が判定に効くことは tests/integration/rls/ai-daily-limit-rpc.test.ts の「F. プランごとの上限」
  *     (以前の PATCH は 501 で何も保存しなかった。その前は、保存せずに監査ログだけを残していた)
  *   - 上限を変えるのは、ほかのテストが使わないプラン (family_addon) で行い、終わったら元に戻す (free の値は変えない)
+ *   - #1912: 組織のプランの値 (ORG_PLAN_VALUES。subscription_plans に無いキー) も GET に出て PATCH で保存できる。
+ *     組織の行はほかのテスト (tests/integration/rls/ai-plan-feature-caps-rpc.test.ts) が値を読むので、いまと同じ値で保存し、
+ *     終わったら行をまるごと (保存した人・時刻も) 元に戻す
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
@@ -33,6 +36,10 @@ let adminUser: TestUser;
 /** 上限を変えて確かめるプラン (ほかのテストが使わないもの) */
 const QUOTA_TEST_PLAN = 'family_addon';
 let originalQuotaRow: { plan_key: string; daily_limit: number | null } | null = null;
+/** 保存できることを確かめる組織のプランの値 (ORG_PLAN_VALUES の 1 つ。subscription_plans に無い) */
+const ORG_QUOTA_TEST_PLAN = 'enterprise';
+type FullQuotaRow = { plan_key: string; daily_limit: number | null; updated_by: string | null; updated_at: string };
+let originalOrgQuotaRow: FullQuotaRow | null = null;
 
 beforeAll(async () => {
   [superAdminUser, adminUser] = await Promise.all([
@@ -42,12 +49,16 @@ beforeAll(async () => {
   const { data } = await retryIdempotentSetup(supabaseAdmin, 'beforeAll: ai_daily_limits の select', (db) =>
     db.from('ai_daily_limits').select('plan_key, daily_limit').eq('plan_key', QUOTA_TEST_PLAN).maybeSingle());
   originalQuotaRow = data;
+  const { data: orgRow } = await retryIdempotentSetup(supabaseAdmin, 'beforeAll: ai_daily_limits の select (組織のプラン)', (db) =>
+    db.from('ai_daily_limits').select('plan_key, daily_limit, updated_by, updated_at').eq('plan_key', ORG_QUOTA_TEST_PLAN).maybeSingle());
+  originalOrgQuotaRow = orgRow as FullQuotaRow | null;
 }, 60000);
 
 afterAll(async () => {
   // 上限の行を元に戻す (無かったなら消す)
   if (originalQuotaRow) await supabaseAdmin.from('ai_daily_limits').upsert(originalQuotaRow, { onConflict: 'plan_key' });
   else await supabaseAdmin.from('ai_daily_limits').delete().eq('plan_key', QUOTA_TEST_PLAN);
+  if (originalOrgQuotaRow) await supabaseAdmin.from('ai_daily_limits').upsert(originalOrgQuotaRow, { onConflict: 'plan_key' });
 
   await Promise.all([
     cleanupAuditLogs(superAdminUser.userId),
@@ -202,6 +213,38 @@ describe('PATCH /api/super-admin/llm/quotas', () => {
       const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, body);
       expect(res.status).toBe(400);
     }
+  });
+
+  it('#1912: 200 for an organization plan value (subscription_plans に無い enterprise): ai_daily_limits の行を保存し、GET では組織のプランの行として出る', async () => {
+    // migration 20261021110000 が enterprise の行を入れている。値はいまと同じにして、ほかのテストの判定を変えない
+    expect(originalOrgQuotaRow).not.toBeNull();
+    const { data: planRow } = await supabaseAdmin.from('subscription_plans').select('plan_key').eq('plan_key', ORG_QUOTA_TEST_PLAN).maybeSingle();
+    expect(planRow).toBeNull();
+
+    const body = { plan_key: ORG_QUOTA_TEST_PLAN, daily_limit: originalOrgQuotaRow!.daily_limit, reason: 'Integration test org plan quota' };
+    const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, body);
+    expect(res.status).toBe(200);
+    expect((res.body as { data: { plan_key: string } }).data).toMatchObject({ plan_key: ORG_QUOTA_TEST_PLAN, daily_limit: body.daily_limit });
+
+    const { data: saved } = await supabaseAdmin
+      .from('ai_daily_limits')
+      .select('daily_limit, updated_by')
+      .eq('plan_key', ORG_QUOTA_TEST_PLAN)
+      .single();
+    expect(saved).toEqual({ daily_limit: body.daily_limit, updated_by: superAdminUser.userId });
+
+    const list = await apiCall('GET', '/api/super-admin/llm/quotas', superAdminUser.jwt);
+    const row = (list.body as { data: Array<{ plan_key: string; plan_source: string; display_name: string | null; configured: boolean }> }).data.find(
+      (r) => r.plan_key === ORG_QUOTA_TEST_PLAN,
+    );
+    expect(row).toMatchObject({ plan_source: 'org_plan', display_name: 'enterprise（組織のプラン）', configured: true });
+
+    const { data: audits } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('details')
+      .eq('actor_id', superAdminUser.userId)
+      .eq('action_type', 'super_admin.llm_quota.update');
+    expect(audits!.map((a) => (a.details as { plan_key: string }).plan_key)).toContain(ORG_QUOTA_TEST_PLAN);
   });
 
   it('404 for a plan that does not exist (行を作らない)', async () => {
