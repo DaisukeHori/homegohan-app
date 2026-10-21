@@ -10,12 +10,19 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
+import { PLAN_CATALOG, type PaidPlanKey } from '@homegohan/shared';
+
+/** 有料 3 プランのひな形の表示名と月額は公開の価格の写しから読む (billing/03 §8.9 の PLAN_CATALOG。旧案の値を持たない) */
+function paidPlanTemplate(planKey: PaidPlanKey): { display_name: string; monthly_price_jpy: number } {
+  const entry = PLAN_CATALOG.find((plan) => plan.plan_key === planKey);
+  return { display_name: entry?.display_name ?? planKey, monthly_price_jpy: entry?.monthly_price_jpy ?? 0 };
+}
 
 const OFFICIAL_PLANS = [
   { plan_key: 'free', display_name: 'Free', plan_type: 'personal', monthly_price_jpy: 0 },
-  { plan_key: 'pro', display_name: 'Pro', plan_type: 'personal', monthly_price_jpy: 980 },
-  { plan_key: 'family_basic', display_name: 'Family Basic', plan_type: 'family', monthly_price_jpy: 1480 },
-  { plan_key: 'family_pro', display_name: 'Family Pro', plan_type: 'family', monthly_price_jpy: 2480 },
+  { plan_key: 'pro', plan_type: 'personal', ...paidPlanTemplate('pro') },
+  { plan_key: 'family_basic', plan_type: 'family', ...paidPlanTemplate('family_basic') },
+  { plan_key: 'family_pro', plan_type: 'family', ...paidPlanTemplate('family_pro') },
   { plan_key: 'family_addon', display_name: 'Family Addon', plan_type: 'family', monthly_price_jpy: 280 },
   { plan_key: 'org_starter', display_name: 'Org Starter', plan_type: 'org', monthly_price_jpy: 580 },
   { plan_key: 'org_standard', display_name: 'Org Standard', plan_type: 'org', monthly_price_jpy: 980 },

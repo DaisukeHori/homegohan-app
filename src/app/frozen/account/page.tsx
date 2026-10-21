@@ -31,6 +31,7 @@ export default function FrozenAccountPage() {
 
         <AccountSelfServicePanel
           idPrefix="frozen"
+          surface="frozen"
           deleteBlockedGuidance={FROZEN_DISSOLVE_GUIDANCE}
           onDeleted={() => router.push("/login")}
           onUnauthorized={() => router.push("/login")}

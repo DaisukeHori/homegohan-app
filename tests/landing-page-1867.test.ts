@@ -66,6 +66,7 @@ import { BRAND_COLORS } from '@/lib/brand-image';
 import { publicPageMetadata, SITE_DESCRIPTION } from '@/lib/seo/public-pages';
 import { resolveOnboardingRedirect } from '@/lib/onboarding-routing';
 import { GUIDE_MEAL_ANALYSIS } from '../scripts/guide-screenshots/meal-analysis-mock';
+import { PAID_PLAN_SUMMARY, PLAN_CATALOG, formatJpy } from '@homegohan/shared';
 
 // next/link と next/image は描画に Next.js の実行環境を要らないよう、素の a / img に置き換える (tests/public-claims-guard.test.ts と同じ)
 vi.mock('next/link', async () => {
@@ -410,6 +411,7 @@ describe('#1867 紹介ページのソースの決まり', () => {
       '@/lib/site-config',
       '@/app/guide/guide-content',
       '@/components/handson-tour/useReducedMotion',
+      '@homegohan/shared', // billing/03 §10.5: 料金の文の定数と関数 (PLAN_CATALOG・PAID_PLAN_SUMMARY・formatJpy)。packages/shared/src の本体は外部の import を持たず (node: の import はテストのファイルだけ)、package.json は sideEffects: false。'use client' の部品も既に読む (src/components/native-app/NativeAppTabRouter.tsx)
     ]);
     const violations: string[] = [];
     for (const file of marketingFiles(['.ts', '.tsx'])) {
@@ -594,7 +596,7 @@ describe('#1867 紹介ページの殻のメタ情報と viewport', () => {
     const { metadata } = await import('@/app/page');
     expect(metadata).toEqual(publicPageMetadata('/'));
     expect(SITE_DESCRIPTION).toBe(
-      '写真を撮るだけで、AI が料理を認識して栄養を推定し、その記録をほめてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。いまは無料で使えます。',
+      '写真を撮るだけで、AI が料理を認識して栄養を推定し、その記録をほめてくれる食事記録アプリ。1週間の献立の提案、買い物リスト、体重や健康診断の記録まで。無料で始められます。',
     );
     const DESCRIPTION_MIN_CHARS = 50;
     const DESCRIPTION_MAX_CHARS = 160;
@@ -796,11 +798,56 @@ describe('#1867 デモの見本と輪の値はアプリと同じ', () => {
     expect(DEMO_ANALYZING_MS).toBeGreaterThan(DEMO_ANALYZING_MS_REDUCED);
   });
 
-  it('U-24 「すべて無料」を含む LANDING_COPY の文字列 (3 つ) は、同じ文字列に「1 日にご利用いただける回数」を含む', () => {
-    const withFree = allCopyStrings().filter((text) => text.includes('すべて無料'));
-    const FREE_STRING_COUNT = 3;
-    expect(withFree).toHaveLength(FREE_STRING_COUNT);
-    for (const text of withFree) expect(text, text.slice(0, 40)).toContain('1 日にご利用いただける回数');
+  it('U-24 LANDING_COPY のどの文字列 (claims を含む) も「すべて無料」「いまは無料」を含まず、無料の範囲を説明する 3 つ (trust の「無料プランと有料プラン」の body・pricing.lead・faq の「本当に無料で使えますか？」の答え) は「1 日にご利用いただける回数」と PAID_PLAN_SUMMARY を含む', () => {
+    for (const text of allCopyStrings()) {
+      expect(text, text.slice(0, 40)).not.toContain('すべて無料');
+      expect(text, text.slice(0, 40)).not.toContain('いまは無料');
+    }
+    for (const claim of LANDING_COPY.claims) {
+      for (const text of [claim.text, claim.condition ?? '']) {
+        expect(text, claim.id).not.toContain('すべて無料');
+        expect(text, claim.id).not.toContain('いまは無料');
+      }
+    }
+    const trustFree = LANDING_COPY.trust.items.find((item) => item.title === '無料プランと有料プラン');
+    const faqFree = LANDING_COPY.faq.items.find((item) => item.q === '本当に無料で使えますか？');
+    const freeScopeTexts = [trustFree?.body, LANDING_COPY.pricing.lead, faqFree?.a];
+    for (const text of freeScopeTexts) {
+      expect(text, '無料の範囲を説明する文が無い').toBeDefined();
+      expect(text).toContain('1 日にご利用いただける回数');
+      expect(text).toContain(PAID_PLAN_SUMMARY);
+    }
+  });
+
+  it('U-37 pricing.plans の free の items に家族・究極モード・料理画像を含まず、paid の items は PLAN_CATALOG の 3 プランの価格の行で、家族を説明する文 (features の家族のカード・場面の子育て家庭・家族の章の lead・faq の「家族で使えますか？」の答え) はどれも「家族プラン」を含む', () => {
+    const free = LANDING_COPY.pricing.plans.find((plan) => plan.id === 'free');
+    const paid = LANDING_COPY.pricing.plans.find((plan) => plan.id === 'paid');
+    expect(LANDING_COPY.pricing.plans.map((plan) => plan.id)).toEqual(['free', 'paid']);
+    expect(free).toBeDefined();
+    for (const item of free!.items) {
+      for (const word of ['家族', '究極モード', '料理画像']) expect(item, `無料の一覧に「${word}」`).not.toContain(word);
+    }
+    expect(paid).toBeDefined();
+    expect(paid!.items).toEqual(
+      PLAN_CATALOG.map(
+        (plan) =>
+          `${plan.display_name}${plan.max_members === null ? '' : `（${plan.max_members} 人まで）`}　月額 ${formatJpy(plan.monthly_price_jpy)} / 年額 ${formatJpy(plan.yearly_price_jpy)}（税込）`,
+      ),
+    );
+    expect(paid!.items[0]).toBe('個人 Pro　月額 580円 / 年額 5,800円（税込）');
+    expect(paid!.body).toBeNull();
+    expect(paid!.cta).toEqual({ label: '料金プランを見る', href: '/pricing' });
+
+    const familyTexts = [
+      LANDING_COPY.features.cards.find((card) => card.id === 'family')?.body,
+      LANDING_COPY.scenes.items.find((scene) => scene.id === 'family')?.body,
+      LANDING_COPY.family.lead,
+      LANDING_COPY.faq.items.find((item) => item.q === '家族で使えますか？')?.a,
+    ];
+    for (const text of familyTexts) {
+      expect(text, '家族を説明する文が無い').toBeDefined();
+      expect(text).toContain('家族プラン');
+    }
   });
 
   it('U-25 撮影の見本の値はアプリが作れる値で、食事の写真の解析の画面 2 枚は撮り直してある', () => {

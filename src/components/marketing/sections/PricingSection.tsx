@@ -1,6 +1,6 @@
 // 料金 (docs/design/marketing/01-landing-site.md §4.17・§8.3 の PricingSection)。Server Component。地は tint。
-// eyebrow・h2・lead・カード 1 枚 (ul。見出し・札・項目の ul か本文・CTA。#1911 で有料プランの「準備中」のカードを取り除いた)・AI の上限 3 点 (ul)。
-// 768 px 以上は上限 3 列、未満は 1 列。価格の数字・「0 円」・通貨の記号は書かない。「いま使える機能」の一覧に組織を入れない (文言は landing-copy.ts)。
+// eyebrow・h2・lead・カード 2 枚 (無料プランと有料プラン。ul。見出し・札・項目の ul・CTA)・AI の上限 3 点 (ul)。768 px 以上はカード 2 列・上限 3 列、未満は 1 列。
+// 価格の数字はカードの `items` (landing-copy.ts が `PLAN_CATALOG` から組む) だけに出し、このファイルに書かない。無料の一覧に組織・家族・究極モード・料理画像の作成を入れない (文言は landing-copy.ts)。
 import { CalendarClock, Check, Gauge, CirclePause, Sparkles, type LucideIcon } from 'lucide-react';
 import { LANDING_COPY } from '../landing-copy';
 import { CtaLink } from '../primitives/CtaLink';

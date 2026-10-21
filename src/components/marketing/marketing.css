@@ -1878,12 +1878,17 @@ html:has(.lp) {
 }
 
 /* ─── 料金 (§4.17・§8.3 の PricingSection) ─── */
-/* カードは「いま使える機能」の 1 枚だけ (#1911: 未完成の有料プランのカードは出さない)。幅は 2 列だったときの 1 枚分 */
+/* カードは無料プランと有料プランの 2 枚 (billing/03 §10.5) */
 .lp .lp-plans {
   display: grid;
   gap: 1rem;
-  max-width: 28rem;
+  max-width: 56rem;
   margin-inline: auto;
+}
+@media (min-width: 768px) {
+  .lp .lp-plans {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 .lp .lp-plan {
   display: flex;
@@ -1925,6 +1930,10 @@ html:has(.lp) {
 .lp .lp-pill--free {
   color: var(--lp-green-ink);
   background: var(--lp-green-tint);
+}
+.lp .lp-pill--paid {
+  color: var(--lp-accent-ink);
+  background: var(--lp-bg-tint);
 }
 .lp .lp-plan-items {
   display: grid;

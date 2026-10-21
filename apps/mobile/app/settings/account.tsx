@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useRef, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { Alert, Linking, Platform, Pressable, ScrollView, StyleSheet, View } from "react-native";
+import { STORE_SUBSCRIPTION_DELETION_NOTICE, STORE_SUBSCRIPTION_MANAGEMENT_URL, type PurchaseStore } from "@homegohan/shared";
 import { Text } from "../../src/components/ui/Text";
 
 import { AccountCredentialsSection } from "../../src/components/settings/AccountCredentialsSection";
@@ -31,6 +32,12 @@ const ACCOUNT_DELETED_SIGN_OUT_FAILED_MESSAGE =
   "アカウントの削除は完了しましたが、端末側のログアウト処理に失敗しました。お手数ですが、アプリを再起動してください。";
 /** 請求の項目の右の矢印の大きさ (退会のボタンのアイコンと同じ大きさにそろえる) */
 const DATA_REQUESTS_CHEVRON_SIZE = 18;
+/** 退会の確認の本文 (取り消せないことと、ストアの購読は退会で解約されないこと。billing/03 §10.4) */
+const ACCOUNT_DELETE_CONFIRM_MESSAGE = `アカウントとデータを削除します。取り消しできません。\n\n${STORE_SUBSCRIPTION_DELETION_NOTICE}`;
+/** 退会の確認から購読の管理を開くボタン (購入の画面 (billing/03 §10.6 の 2) のボタンと同じ文) */
+const STORE_SUBSCRIPTION_MANAGE_BUTTON_LABEL = "定期購読の管理を開く";
+/** この端末のストア (Android は Google Play、それ以外 (iOS) は App Store)。購読の管理のページの行き先を選ぶ */
+const DEVICE_PURCHASE_STORE: PurchaseStore = Platform.OS === "android" ? "play_store" : "app_store";
 
 export default function AccountSettingsPage() {
   const { clearSession } = useAuth();
@@ -52,8 +59,16 @@ export default function AccountSettingsPage() {
     setDeleting(true);
 
     const ok = await new Promise<boolean>((resolve) => {
-      Alert.alert("アカウント削除", "アカウントとデータを削除します。取り消しできません。", [
+      Alert.alert("アカウント削除", ACCOUNT_DELETE_CONFIRM_MESSAGE, [
         { text: "キャンセル", style: "cancel", onPress: () => resolve(false) },
+        {
+          text: STORE_SUBSCRIPTION_MANAGE_BUTTON_LABEL,
+          // 購読の管理を開き、退会はしない (解約してから、もう一度「アカウント削除」を押す)。開けなかったときも退会しない
+          onPress: () => {
+            Linking.openURL(STORE_SUBSCRIPTION_MANAGEMENT_URL[DEVICE_PURCHASE_STORE]).catch(() => undefined);
+            resolve(false);
+          },
+        },
         { text: "削除", style: "destructive", onPress: () => resolve(true) },
       ]);
     });

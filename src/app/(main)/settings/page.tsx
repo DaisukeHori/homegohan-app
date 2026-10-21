@@ -28,6 +28,7 @@ import {
   signOutAfterAccountDeletion,
 } from "@/lib/account-self-service";
 import { getMfaStatus } from "@/lib/auth/mfa/client";
+import { STORE_SUBSCRIPTION_DELETION_NOTICE } from "@homegohan/shared";
 import { useInNativeWebView } from "@/components/auth/mfa/useInNativeWebView";
 
 type WeekStartDay = 'sunday' | 'monday';
@@ -728,6 +729,7 @@ export default function SettingsPage() {
                 すべての食事記録・設定・データが<strong className="text-red-600">完全に削除</strong>されます。<br/>
                 この操作は取り消せません。
               </p>
+              <p className="text-gray-500 mb-6 text-xs text-left">{STORE_SUBSCRIPTION_DELETION_NOTICE}</p>
               <p className="text-sm text-gray-600 mb-2 text-left">
                 確認のため「<span className="font-bold text-red-600">{DELETE_KEYWORD}</span>」と入力してください
               </p>

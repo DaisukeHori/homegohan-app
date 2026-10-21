@@ -1430,8 +1430,8 @@ export async function withMinorGuardianStatus<P extends LegalConsentProfile>(
 |---|---|---|
 | `/legal-consent` (Web。アプリの WebView でも同じ) | `needsBirthDate` | 生年月日の欄 (必須) + チェック 2 (初期値はどちらもオフ。同意済みの版の人 (S3) も改めてチェックする) |
 | 同 | 改定の再同意・生年月日あり | 従来どおり (欄は出ない) |
-| 同 | `minor_refused` | 見出し・本文・「生年月日を直す」・「登録をやめる（アカウントを削除する）」 |
-| 同 | `guardian_missing` (gaps に `'guardian_consent'`。18 歳未満で保護者の同意とのつながりが無い) | 見出し `guardianMissingHeading`・本文 `guardianMissingBody`・「登録をやめる（アカウントを削除する）」だけ (生年月日の欄・チェック・「同意しない」は出さない) |
+| 同 | `minor_refused` | 見出し・本文 (本文の下に `STORE_SUBSCRIPTION_DELETION_NOTICE` の文 = ストアの購読は退会で解約されない。billing/03 §10.4)・「生年月日を直す」・「登録をやめる（アカウントを削除する）」 |
+| 同 | `guardian_missing` (gaps に `'guardian_consent'`。18 歳未満で保護者の同意とのつながりが無い) | 見出し `guardianMissingHeading`・本文 `guardianMissingBody`・`STORE_SUBSCRIPTION_DELETION_NOTICE` の文 (billing/03 §10.4)・「登録をやめる（アカウントを削除する）」だけ (生年月日の欄・チェック・「同意しない」は出さない) |
 | 同 | `withdrawn` | 「登録をやめました」+ 本文 + `/signup` へのリンク |
 | `/signup` (Web) / `(auth)/signup.tsx` (モバイル) | 常時 | `SIGNUP_MINOR_NOTICE` 1 行 |
 | `/family/members/child/new` | 生年月日 < 18 | 同意の枠 (要約・全文リンク・チェック 2・氏名) |

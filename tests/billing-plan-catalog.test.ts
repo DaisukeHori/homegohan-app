@@ -1,8 +1,7 @@
 /**
  * 公開の文とモバイルが読む型の正本 (packages/shared/src/billing-plans.ts) と、価格・AI の上限の正本 (DB の migration) の突き合わせ
  * (billing/03 §14.1 のテスト 37〜40・155)。§0.6 の表の値はテストの中にリテラルで持つ。
- * テスト 37 の後半 (/faq のソースが FREE_PLAN_FAQ_ANSWER・PAID_PLANS_FAQ_ANSWER を逐語で持つ) とテスト 127 (退会の入口) は、
- * /faq と退会の入口の画面を変える段 C で、このファイルに足す。
+ * 段 C で、テスト 37 の後半 (/faq のソースが FREE_PLAN_FAQ_ANSWER・PAID_PLANS_FAQ_ANSWER を逐語で持つ) とテスト 127 (退会の入口) を足した。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -135,5 +134,76 @@ describe('billing/03 §8.9 公開の文', () => {
       expect(lines[0], plan.plan_key).toContain('主菜');
       for (const word of UNFINISHED_WORDS) expect(lines[0], `${plan.plan_key}: ${word}`).not.toContain(word);
     }
+  });
+});
+
+/** /faq のソースから、質問 q の答え a を読む (1 項目は 1 行に { category, q, a } で書き、a は一重引用符の文字列。tests/faq-guide-wording-1859.test.ts と同じ読み方) */
+function faqAnswerOf(source: string, q: string): string | null {
+  const line = source.split('\n').find((l) => l.includes(`q: '${q}'`));
+  if (line === undefined) return null;
+  return /a:\s*'([^']*)'/.exec(line)?.[1] ?? null;
+}
+
+describe('billing/03 §10.5 /faq の料金の答えは @homegohan/shared の文の写し (テスト 37 の後半)', () => {
+  it('src/app/faq/page.tsx holds FREE_PLAN_FAQ_ANSWER and PAID_PLANS_FAQ_ANSWER verbatim as the a of 料金はかかりますか？ and 有料プランはありますか？', () => {
+    const faq = fs.readFileSync(path.join(ROOT, 'src/app/faq/page.tsx'), 'utf8');
+    expect(faqAnswerOf(faq, '料金はかかりますか？')).toBe(FREE_PLAN_FAQ_ANSWER);
+    expect(faqAnswerOf(faq, '有料プランはありますか？')).toBe(PAID_PLANS_FAQ_ANSWER);
+    // 価格の文字列そのもの (定数を変えたのに写しを直し忘れたら、上の一致で赤になる。ここは値の確かめ)
+    expect(PAID_PLANS_FAQ_ANSWER).toContain('個人 Pro (月額 580円 / 年額 5,800円)');
+  });
+});
+
+/** 退会の入口 (退会の API を呼ぶファイル。billing/03 §10.4 の表の 4 つ) */
+const ACCOUNT_DELETION_ENTRY_FILES = [
+  'apps/mobile/app/settings/account.tsx',
+  'src/app/(main)/settings/page.tsx',
+  'src/app/legal-consent/LegalConsentForm.tsx',
+  'src/components/account/AccountSelfServicePanel.tsx',
+] as const;
+
+/** dir の下の .ts / .tsx を全部 (node_modules とテストのディレクトリ __tests__ は除く)。パスはリポジトリの根からの相対 */
+function sourceFilesUnder(dir: string): string[] {
+  const out: string[] = [];
+  const walk = (relative: string) => {
+    for (const entry of fs.readdirSync(path.join(ROOT, relative), { withFileTypes: true })) {
+      const child = `${relative}/${entry.name}`;
+      if (entry.isDirectory()) {
+        if (entry.name === 'node_modules' || entry.name === '__tests__') continue;
+        walk(child);
+      } else if (/\.tsx?$/.test(entry.name)) {
+        out.push(child);
+      }
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+describe('billing/03 §10.4 退会の入口にストアの購読の文 (テスト 127・S35)', () => {
+  it('the account deletion entry points are exactly the 3 files under src/app and src/components that call deleteOwnAccount( and the 1 file under apps/mobile/app that posts "/api/account/delete", each imports STORE_SUBSCRIPTION_DELETION_NOTICE from @homegohan/shared and uses it, and the notice contains none of UNFINISHED_WORDS', () => {
+    const webEntries = [...sourceFilesUnder('src/app'), ...sourceFilesUnder('src/components')].filter((file) =>
+      fs.readFileSync(path.join(ROOT, file), 'utf8').includes('deleteOwnAccount('),
+    );
+    const mobileEntries = sourceFilesUnder('apps/mobile/app').filter((file) =>
+      fs.readFileSync(path.join(ROOT, file), 'utf8').includes('"/api/account/delete"'),
+    );
+    expect([...webEntries, ...mobileEntries].sort()).toEqual([...ACCOUNT_DELETION_ENTRY_FILES].sort());
+    expect(webEntries).toHaveLength(3);
+    expect(mobileEntries).toHaveLength(1);
+
+    for (const file of ACCOUNT_DELETION_ENTRY_FILES) {
+      const source = fs.readFileSync(path.join(ROOT, file), 'utf8');
+      const importLine = source
+        .split('\n')
+        .find((line) => /^import\s/.test(line) && line.includes('STORE_SUBSCRIPTION_DELETION_NOTICE') && /from\s+["']@homegohan\/shared["']/.test(line));
+      expect(importLine, `${file} が @homegohan/shared から STORE_SUBSCRIPTION_DELETION_NOTICE を import していない`).toBeDefined();
+      // 使う = import の行の外にも名前がもう 1 回以上ある
+      const outsideImport = source.replace(importLine!, '');
+      expect(outsideImport, `${file} が STORE_SUBSCRIPTION_DELETION_NOTICE を使っていない`).toContain('STORE_SUBSCRIPTION_DELETION_NOTICE');
+      // 文をファイルに直接書かない
+      expect(source, `${file} が文を直接書いている`).not.toContain(STORE_SUBSCRIPTION_DELETION_NOTICE);
+    }
+    for (const word of UNFINISHED_WORDS) expect(STORE_SUBSCRIPTION_DELETION_NOTICE, word).not.toContain(word);
   });
 });

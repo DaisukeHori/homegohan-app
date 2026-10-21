@@ -7,7 +7,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   X, Sparkles, Calendar, Target, RefreshCw,
   Refrigerator, Zap, UtensilsCrossed, Heart,
-  ChevronRight, Loader2, Wand2, AlertTriangle, CalendarDays
+  ChevronRight, Loader2, Wand2, AlertTriangle, CalendarDays, Lock
 } from "lucide-react";
 import type { TargetSlot, MenuGenerationConstraints } from "@/types/domain";
 import {
@@ -25,6 +25,14 @@ import {
 } from "@homegohan/handson-tour-shared";
 import { ConfirmDeleteModal } from "@/components/common/ConfirmDeleteModal";
 import { useAiConsent } from "@/hooks/useAiConsent";
+import { useBillingSummary } from "@/hooks/useBillingSummary";
+
+/** 究極モードの機能の名前 (ai_plan_feature_caps の feature。billing/03 §6.5) */
+const ULTIMATE_MODE_FEATURE = "menu_generation_ultimate";
+/** 機能ごとの上限の 0 = そのプランでは使えない (billing/03 §6.5) */
+const ULTIMATE_MODE_NOT_IN_PLAN_CAP = 0;
+/** 究極モードの錠のときの説明 (billing/03 §10.3) */
+const ULTIMATE_MODE_PLAN_REQUIRED_TEXT = "究極モードは有料プランでお使いいただけます";
 
 // ============================================
 // Types
@@ -511,11 +519,25 @@ function V4GenerateModalNormal({
   const [note, setNote] = useState("");
 
   // Ultimate Mode (究極モード): AIが献立を自動で見直し、栄養バランスを改善する (#1142)。
-  // プランによる制限は無く、全員が使える。通常は 3 ステップのところ 6 ステップかかり時間も長くなるため、
+  // 有料プランで使える (無料プランは ai_plan_feature_caps の menu_generation_ultimate が 0。billing/03 §10.3)。
+  // 通常は 3 ステップのところ 6 ステップかかり時間も長くなるため、
   // 既定は OFF。モーダルを開くたびに OFF に戻し (下の isOpen の useEffect)、使うかどうかを毎回選んでもらう。
   const [ultimateMode, setUltimateMode] = useState(false);
   // スイッチの説明文を aria-describedby で結びつけるための id
   const ultimateDescriptionId = useId();
+  // 究極モードの錠 (billing/03 §10.3): 契約の要約の features.ai_feature_caps.menu_generation_ultimate が 0 のときだけ掛ける。
+  // 要約が読めない (401・失敗) とき・キーが無いプラン (組織のプランなど ai_plan_feature_caps に行の無いプラン) は錠を出さない
+  // (サーバの判定が最後の砦)。要約はモーダルが開くたびに読む
+  const billingSummary = useBillingSummary(isOpen);
+  const ultimateCaps = billingSummary?.features.ai_feature_caps;
+  const ultimateLocked =
+    ultimateCaps !== undefined &&
+    Object.hasOwn(ultimateCaps, ULTIMATE_MODE_FEATURE) &&
+    ultimateCaps[ULTIMATE_MODE_FEATURE] === ULTIMATE_MODE_NOT_IN_PLAN_CAP;
+  // 要約が届く前に ON にしていても、錠が掛かったら OFF に戻す (錠のときは ON のまま送らない)
+  useEffect(() => {
+    if (ultimateLocked) setUltimateMode(false);
+  }, [ultimateLocked]);
 
   // ローカルの送信中状態（即座にフィードバックを与えるため）
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -619,7 +641,7 @@ function V4GenerateModalNormal({
         targetSlots: slots,
         constraints,
         note,
-        ultimateMode,
+        ultimateMode: ultimateMode && !ultimateLocked,
       });
     } catch (error) {
       // エラー時はローディングを解除
@@ -886,7 +908,7 @@ function V4GenerateModalNormal({
                   </div>
                 </div>
 
-                {/* 究極モード: AIが献立を見直して栄養バランスを改善する。全員に開放している (#1142) */}
+                {/* 究極モード: AIが献立を見直して栄養バランスを改善する (#1142)。無料プランでは錠を掛ける (billing/03 §10.3) */}
                 <div
                   className="mb-6 p-4 rounded-xl transition-colors"
                   style={{ backgroundColor: ultimateMode ? colors.accentLight : colors.bg }}
@@ -908,6 +930,11 @@ function V4GenerateModalNormal({
                           <p className="text-xs" style={{ color: colors.textLight }}>
                             通常より生成に時間がかかります
                           </p>
+                          {ultimateLocked && (
+                            <p className="text-xs font-bold" style={{ color: colors.textLight }} data-testid="ultimate-mode-plan-required">
+                              {ULTIMATE_MODE_PLAN_REQUIRED_TEXT}
+                            </p>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -918,15 +945,22 @@ function V4GenerateModalNormal({
                       aria-checked={ultimateMode}
                       aria-label="究極モード"
                       aria-describedby={ultimateDescriptionId}
+                      aria-disabled={ultimateLocked ? true : undefined}
                       data-testid="ultimate-mode-toggle"
-                      onClick={() => setUltimateMode((prev) => !prev)}
-                      className="relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200"
+                      onClick={() => {
+                        // 錠のときは押しても ON にしない (説明に「有料プランでお使いいただけます」を出している)
+                        if (ultimateLocked) return;
+                        setUltimateMode((prev) => !prev);
+                      }}
+                      className={`relative w-14 h-8 rounded-full flex-shrink-0 transition-colors duration-200${ultimateLocked ? ' cursor-not-allowed opacity-60' : ''}`}
                       style={{ backgroundColor: ultimateMode ? colors.accent : '#D1D5DB' }}
                     >
                       <span
-                        className="absolute top-1 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-200"
+                        className="absolute top-1 w-6 h-6 rounded-full bg-white shadow-md transition-all duration-200 flex items-center justify-center"
                         style={{ left: ultimateMode ? '28px' : '4px' }}
-                      />
+                      >
+                        {ultimateLocked && <Lock size={12} aria-hidden="true" data-testid="ultimate-mode-lock" style={{ color: colors.textLight }} />}
+                      </span>
                     </button>
                   </div>
                 </div>

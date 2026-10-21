@@ -39,6 +39,7 @@ export default function AccountWithoutConsent() {
 
       <AccountSelfServicePanel
         idPrefix="legal-consent-account"
+        surface="legal_consent"
         deleteBlockedGuidance={LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance}
         onDeleted={() => setDeleted(true)}
         onUnauthorized={() => router.push(`/login?next=${encodeURIComponent(LEGAL_CONSENT_ACCOUNT_PATH)}`)}

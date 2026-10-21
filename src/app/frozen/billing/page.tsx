@@ -8,10 +8,13 @@
  * 凍結中でもこの画面は開ける。この画面が呼ぶ API は、凍結中でも止めない API (src/lib/auth/frozen.ts の FROZEN_ALLOWED_API_PATHS) の
  * うち課金の 3 本 (契約の要約・解約の予約・Billing Portal) だけ。解約の取り消しと購入は凍結中はできないので、そのボタンもリンクも置かない。
  * アプリの WebView では状態の文だけを出す (ボタンは描かない。§10.4)。
+ * App Store / Google Play の契約 (manage_in_store が null でない) は解約のボタンを描かず、ストアの定期購読の管理から解約できることを
+ * 文で出す (管理のページへのリンクはアプリの WebView でなければ出す。billing/03 §10.4)。
  */
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { IAP_STORE_LABELS, STORE_SUBSCRIPTION_MANAGEMENT_URL } from "@homegohan/shared";
 import { isInNativeWebView } from "@/lib/native-auth-bridge";
 import { BILLING_CANCEL_API_PATH, BILLING_PORTAL_API_PATH, BILLING_SUBSCRIPTION_API_PATH } from "@/lib/auth/frozen";
 import {
@@ -29,6 +32,8 @@ const LOAD_FAILED_TEXT = "契約の状態を読み込めませんでした。時
 const UNKNOWN_ERROR_TEXT = "処理中にエラーが発生しました。時間をおいて再度お試しください。";
 const NO_CONTRACT_TEXT = "有料プランの契約はありません。";
 const CANCEL_SCHEDULED_TEXT = "解約を予約しました。";
+/** ストアの定期購読の管理のページへのリンクの文 (アプリの購入の画面のボタンと同じ文。billing/03 §10.4) */
+const STORE_MANAGE_LINK_TEXT = "定期購読の管理を開く";
 
 function isBillingErrorCode(code: unknown): code is BillingErrorCode {
   return typeof code === "string" && Object.hasOwn(BILLING_ERROR_MESSAGES, code);
@@ -91,6 +96,9 @@ export default function FrozenBillingPage() {
       cancelled = true;
     };
   }, []);
+
+  // App Store / Google Play の契約はストアで解約する (解約のボタンを描かない。billing/03 §10.4)
+  const store = summary?.manage_in_store ?? null;
 
   const handleCancel = async () => {
     if (!summary || busy) return;
@@ -167,10 +175,25 @@ export default function FrozenBillingPage() {
                 {line}
               </p>
             ))}
+          {store !== null && (
+            <div className="space-y-2" data-testid="frozen-billing-store-notice">
+              <p className="text-sm text-gray-700">{IAP_STORE_LABELS[store]} の定期購読の管理から解約できます。</p>
+              {!isNativeApp && (
+                <a
+                  href={STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-block text-sm font-bold text-orange-600 underline"
+                >
+                  {STORE_MANAGE_LINK_TEXT}
+                </a>
+              )}
+            </div>
+          )}
 
           {summary && !isNativeApp && (
             <div className="space-y-3 pt-2">
-              {summary.can_cancel && (
+              {store === null && summary.can_cancel && (
                 <button
                   type="button"
                   onClick={handleCancel}

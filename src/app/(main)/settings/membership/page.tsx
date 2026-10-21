@@ -357,6 +357,7 @@ export default function MembershipSettingsPage() {
             scope="organization"
             scopeId={orgInfo.organization_id}
             scopeName={orgInfo.org_name}
+            surface="settings"
             onDissolved={() => handleDissolved('organization')}
             onCancel={() => setDissolveTarget(null)}
             onUnauthorized={() => router.push('/login')}
@@ -436,6 +437,7 @@ export default function MembershipSettingsPage() {
             scope="family"
             scopeId={familyInfo.family_id}
             scopeName={familyInfo.family_name}
+            surface="settings"
             onDissolved={() => handleDissolved('family')}
             onCancel={() => setDissolveTarget(null)}
             onUnauthorized={() => router.push('/login')}
