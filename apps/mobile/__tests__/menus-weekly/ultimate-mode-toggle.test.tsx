@@ -1,5 +1,5 @@
 /**
- * #1142: 究極モード (UltimateModeToggle / V4GenerateModal) は全員に開放されている
+ * #1142: 究極モード (UltimateModeToggle / V4GenerateModal) を全員に開放した (いまは billing/03 §10.6 で、使えないプラン (無料プラン) には錠を出す。下の 5・6)
  *
  * 以前は Premium プラン向けとして、スイッチが常に OFF・操作不可で、
  * 押すと「究極モードは Premium プラン準備中です」のアラートが出るだけの飾りだった。

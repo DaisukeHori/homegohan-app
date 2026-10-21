@@ -251,10 +251,8 @@ async function migrateToPersonal(groupId: string, actorId: string, ifUnmodifiedS
 
 ### 7.3 `POST /api/family/groups/{id}/dissolve`
 
-- パスワード再認証必須
-- `status = 'archived'` に変更 (dissolved は archived に統一)
-- さらに 90 日後に物理削除 (pg_cron)
-- (実装は `dissolved` のまま 90 日で物理削除: operator/11 §5.4)
+- この入口は作らなかった。家族グループの解散は family/11 (`docs/design/family/11-self-dissolve.md`) の `POST /api/family/dissolve` (代表者本人。キーワードの確認。`status = 'dissolved'`) で実装した。パスワード再認証と `archived` は使わない
+- 解散した家族のグループは `dissolved` のまま 90 日で物理削除 (operator/11 §5.4)
 
 ### 7.4 advisory lock の実装
 

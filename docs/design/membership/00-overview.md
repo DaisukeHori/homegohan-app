@@ -35,8 +35,8 @@ org/ や family/ 既存設計書と本ディレクトリの記述が矛盾した
 階層は機能的には 2 段 (org: owner+admin / member、family: 代表+大人 / 子)。代表/owner は契約上の名義で、大人/admin は対等な運営権を持つ。
 
 ### 1.5 不変条件 (DB 制約として表現)
-- `organizations.owner_id` は常に NOT NULL かつその user は `org_role='owner'` を持つ
-- `family_groups.representative_id` は常に NOT NULL かつ対応する `family_members.role='representative'` 行が存在
+- `organizations.owner_id` は active な行では NOT NULL (CHECK `organizations_active_has_owner`) かつその user は `org_role='owner'` を持つ。解散した行は NULL (#1917。family/11 §11.1)
+- `family_groups.representative_id` は active な行では NOT NULL (CHECK `family_groups_active_has_representative`) かつ対応する `family_members.role='representative'` 行が存在。解散した行は NULL (#1917。family/11 §11.1)
 - `family_members.user_id` は (NOT NULL のとき) UNIQUE
 - `meals.user_id` は NOT NULL
 

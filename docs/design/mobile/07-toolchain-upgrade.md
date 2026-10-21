@@ -34,7 +34,7 @@
 | 上げ先で壊れる所 (API・設定・テスト) の全列挙と直し方 (§7) | `@testing-library/react-native` 14 への移行 (`render` / `fireEvent` / `act` が Promise を返すようになり、`render(` を使うテスト 67 ファイルの書き換えになる。§5.1 の C) |
 | `runtimeVersion` の方針 (fingerprint) と、OTA を使わない現状の固定 (§11) | OTA (EAS Update) を使い始めること (`mobile/01` §13 の「大型変更時に検討」のまま) |
 | Jest 29 → 30 への追随と、Reanimated 4 (worklets) の Jest の設定 (§7.3) | `expo-file-system` の新しい API (`File` / `Directory`) への移行 (`/legacy` の入口を使い続ける。§7.1 の A-3) |
-| 使っていない依存 3 つの削除 (§6.3) | `expo-dev-client` の導入 (`eas.json` の `development` プロファイルは、いまも入っていない。変えない) |
+| 使っていない依存 3 つの削除 (§6.3) | `expo-dev-client` の導入 (本冊では導入しなかった。`expo-dev-client` ~58.0.14 は billing/03 段 D (#1931) で入った。下の「本冊のマージの後に足した依存」) |
 | 検証 (tsc・local-ci の mobile:jest / mobile:core・npm audit・expo-doctor・`expo install --check`) と合格の数 (§10) | ネイティブのビルド・提出・実機の確認 (オーナー作業。§16 に手順と確認の表を置く) |
 | 番兵 (版の組・lockfile の置き場・`runtimeVersion`・`/legacy` の入口) の新設 (§9.7) | `react-native-web` / `expo start --web` の整備 (`react-dom` を宣言していない現状のまま。既知の制約として §17) |
 

@@ -25,7 +25,7 @@ Step 2 は **「ボタン 1 つで明日の献立が決まる」体験を提供�
 | `generation-retry-button` | リトライ |
 | `success-message-title` | 成功メッセージ |
 | `success-message-body` | 同上 |
-| `ultimate-mode-toggle` | 究極モードの切り替え (#1142。全員が使える・1 人 1 日 1 回 (JST) まで。operator/06-ai-llm.md §5.1) |
+| `ultimate-mode-toggle` | 究極モードの切り替え (#1142。使える回数はプランで決まる: `ai_plan_feature_caps` の `menu_generation_ultimate` (無料プランは 0 で錠)。operator/06-ai-llm.md §5.1・billing/03 §6.5) |
 
 ### 2.3 既存 API
 - `POST /api/ai/menu/v5/generate` (V4 で v5 という命名)
