@@ -1119,6 +1119,8 @@ describe('#1310 通常の流れ (順番に呼ぶ) は従来どおり動く', () 
     expect(await auditCount(familyId, 'operator_force_representative_transfer')).toBe(1);
 
     // 子供の枠 → 昇格のリクエスト → 本人 (e) の承認で、その枠が e の大人メンバーになる
+    // billing/03 §6.6: 代表者が家族プランの契約者から d に替わったのでグループは free に戻っている。子供を足す前に d に家族プランを付与する
+    await grantFamilyPlan(srAdmin, d.id);
     const child = await api(d).rpc('add_family_child', {
       p_family_id: familyId,
       p_display_name: 'r1-child',

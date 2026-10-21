@@ -569,12 +569,13 @@ describe('#1149 J. 自動のアドバイス (nutrition_advice_auto) の安全弁
 
 describe('#1149 K. 料理画像 (meal_image_auto) の安全弁', () => {
   /**
-   * 有料プラン (pro) の利用者。無料プランは ai_plan_feature_caps の meal_image_auto = 0 で 1 回目から止まる (billing/03 §6.5) ので、
-   * 安全弁は pro の手動付与 (billing_grant_manual_subscription) の利用者で確かめる (pro には meal_image_auto の行が無い = 安全弁だけ)
+   * 有料プランの利用者。無料プランは ai_plan_feature_caps の meal_image_auto = 0 で 1 回目から止まる (billing/03 §6.5) ので、
+   * 安全弁は家族 Basic の手動付与 (billing_grant_manual_subscription) の利用者で確かめる (meal_image_auto の行が無い = 安全弁だけ)。
+   * pro は使わない: F が pro の 1 日の上限の行を書き換え、元に戻すのはこのファイルの最後 (afterAll) なので、ここではまだ 0 のことがある
    */
   const createPaidUser = async (label: string): Promise<TestUser> => {
     const user = await createUser(label);
-    const { error } = await srAdmin.rpc('billing_grant_manual_subscription', { p_user_id: user.userId, p_plan_key: 'pro', p_expires_at: null });
+    const { error } = await srAdmin.rpc('billing_grant_manual_subscription', { p_user_id: user.userId, p_plan_key: 'family_basic', p_expires_at: null });
     if (error) throw new Error(`billing_grant_manual_subscription ${label}: ${error.message}`);
     return user;
   };

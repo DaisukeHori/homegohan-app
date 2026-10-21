@@ -268,6 +268,8 @@ async function seedOrgAndFamily(): Promise<void> {
       values (${q(rows.orgInviteAcceptedByS)}, ${q(rows.org)}, ${q(emailOf('someone-else'))}, ${q(`tok-${id()}`)}, now() + interval '7 days', 'accepted', ${q(S.id)}, now());
 
     insert into public.family_groups (id, name, representative_id) values (${q(rows.fg)}, 't11 family', ${q(B.id)});
+    -- billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする
+    update public.family_groups set plan_key = 'family_basic' where id = ${q(rows.fg)};
     insert into public.family_members (id, family_id, user_id, role) values
       (${q(rows.fmB)}, ${q(rows.fg)}, ${q(B.id)}, 'representative'),
       (${q(rows.fmS)}, ${q(rows.fg)}, ${q(S.id)}, 'adult');

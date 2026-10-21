@@ -3,7 +3,8 @@
  * (設計: docs/design/billing/03-paid-plans-and-iap.md §6.3・§14.2 の 80・114)
  *
  *   80. anon と authenticated は、公開のプラン (subscription_plans.status が public / private) の商品だけを読める (下書きのプランの商品は
- *       読めない)。書けるのは super_admin (aal2。operator_mfa_satisfied) と service_role だけ。super_admin でも aal1 のセッションは書けない
+ *       読めない)。書けるのは super_admin と service_role だけ (super_admin の項に operator_mfa_satisfied() を付けた形は、
+ *       tests/integration/security/operator-mfa-db-gate.test.ts の DB-1 と migration の契約テスト 61 が見る)
  *  114. 同じプラン・ストア・間隔に、売る行 (offered = true) は 1 つだけ (idx_plan_store_products_offered)。売らない行 (offered = false) は
  *       並べて持てる。同じ (store, product_id) を 2 つのプランに結び付けられない (主キー)
  *
@@ -78,8 +79,8 @@ interface TestUser {
   jwt: string;
 }
 
-/** 利用者を作り、roles を入れてからサインインする (必須ロールなら aal2。aal1 が要るときは aal1: true) */
-async function createUser(label: string, roles: string[], options: { aal1?: boolean } = {}): Promise<TestUser> {
+/** 利用者を作り、roles を入れてからサインインする (必須ロールなら aal2) */
+async function createUser(label: string, roles: string[]): Promise<TestUser> {
   const email = `sec-psp-${label}-${RUN}@homegohan.test`;
   const { data, error } = await srAdmin.auth.admin.createUser({ email, password: PASSWORD, email_confirm: true });
   if (error || !data.user) throw new Error(`createUser ${label}: ${error?.message}`);
@@ -87,11 +88,6 @@ async function createUser(label: string, roles: string[], options: { aal1?: bool
   const { error: profileError } = await retryIdempotentSetup(srAdmin, 'createUser: user_profiles の upsert', (db) =>
     db.from('user_profiles').upsert({ id: data.user.id, nickname: `psp-${label}`, age_group: '30s', gender: 'other', roles }, { onConflict: 'id' }));
   if (profileError) throw new Error(`profile ${label}: ${profileError.message}`);
-  if (options.aal1) {
-    const signIn = await anon().auth.signInWithPassword({ email, password: PASSWORD });
-    if (signIn.error || !signIn.data.session) throw new Error(`signIn ${label}: ${signIn.error?.message}`);
-    return { id: data.user.id, email, jwt: signIn.data.session.access_token };
-  }
   return { id: data.user.id, email, jwt: await signInForIntegration({ email, password: PASSWORD, roles }) };
 }
 
@@ -109,13 +105,11 @@ async function insertAsService(row: ProductRow): Promise<void> {
 }
 
 let superAdmin: TestUser;
-let superAdminAal1: TestUser;
 let ordinary: TestUser;
 
 beforeAll(async () => {
-  [superAdmin, superAdminAal1, ordinary] = await Promise.all([
+  [superAdmin, ordinary] = await Promise.all([
     createUser('super', ['user', 'super_admin']),
-    createUser('super-aal1', ['user', 'super_admin'], { aal1: true }),
     createUser('ordinary', ['user']),
   ]);
   const { error } = await srAdmin
@@ -150,11 +144,10 @@ describe('billing/03 §6.3: plan_store_products の RLS と権限', () => {
       expect(data, label).toEqual([{ product_id: publicProduct, plan_key: 'pro', offered: true }]);
     }
 
-    // 書けない: anon (権限なし)・ふつうの利用者 (RLS)・super_admin の aal1 (operator_mfa_satisfied が false)
+    // 書けない: anon (権限なし)・ふつうの利用者 (RLS)
     for (const [label, db] of [
       ['anon', anon()],
       ['authenticated', asUser(ordinary.jwt)],
-      ['super_admin aal1', asUser(superAdminAal1.jwt)],
     ] as const) {
       const product = nextProduct(`refused-${label.replace(/\W+/g, '-')}`);
       const inserted = await db.from('plan_store_products').insert({ store: 'play_store', product_id: product, plan_key: 'pro', billing_interval: 'year', offered: false });
@@ -170,7 +163,7 @@ describe('billing/03 §6.3: plan_store_products の RLS と権限', () => {
     const { data: unchanged } = await srAdmin.from('plan_store_products').select('offered').eq('product_id', publicProduct).single();
     expect(unchanged).toEqual({ offered: true });
 
-    // 書ける: super_admin (aal2)
+    // 書ける: super_admin
     const adminProduct = nextProduct('admin-year');
     const db = asUser(superAdmin.jwt);
     expect((await db.from('plan_store_products').insert({ store: 'play_store', product_id: adminProduct, plan_key: 'pro', billing_interval: 'year', offered: true })).error).toBeNull();

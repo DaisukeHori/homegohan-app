@@ -702,7 +702,7 @@ describe('#1309 ガード関数の属性 (CREATE OR REPLACE で変わらない)'
     expect(fns[0]).toEqual({ secdef: false, config: null, owner: 'postgres', rettype: 'trigger' });
 
     // tgtype: 1 = ROW, 2 = BEFORE, 16 = UPDATE の組み合わせ (= 19)。tgenabled 'O' = 有効
-    // #1173 の同意の取り消しは、AFTER UPDATE の行トリガー (trg_family_members_revoke_parental_consent = 17) と BEFORE DELETE の行トリガー (trg_family_members_revoke_parental_consent_on_delete = 1 + 2 + 8 = 11)。family_members のトリガーはこの 3 本だけ
+    // #1173 の同意の取り消しは、AFTER UPDATE の行トリガー (trg_family_members_revoke_parental_consent = 17) と BEFORE DELETE の行トリガー (trg_family_members_revoke_parental_consent_on_delete = 1 + 2 + 8 = 11)。billing/03 §6.6 の家族プランの門は BEFORE INSERT の行トリガー (family_members_billing_plan_gate = 1 + 2 + 4 = 7)。family_members のトリガーはこの 4 本だけ
     const triggers = await pgQuery<{ tgname: string; tgenabled: string; tgtype: number; fn: string }>(`
       SELECT t.tgname, t.tgenabled, t.tgtype::int AS tgtype, p.proname AS fn
       FROM pg_trigger t JOIN pg_proc p ON p.oid = t.tgfoid
@@ -710,6 +710,7 @@ describe('#1309 ガード関数の属性 (CREATE OR REPLACE で変わらない)'
       ORDER BY t.tgname
     `);
     expect(triggers).toEqual([
+      { tgname: 'family_members_billing_plan_gate', tgenabled: 'O', tgtype: 7, fn: 'family_members_billing_plan_gate' },
       { tgname: 'trg_family_members_revoke_parental_consent', tgenabled: 'O', tgtype: 17, fn: 'revoke_parental_consent_on_member_inactive' },
       { tgname: 'trg_family_members_revoke_parental_consent_on_delete', tgenabled: 'O', tgtype: 11, fn: 'revoke_parental_consent_on_member_delete' },
       { tgname: 'trg_guard_family_members_privileged', tgenabled: 'O', tgtype: 19, fn: 'guard_family_members_privileged' },

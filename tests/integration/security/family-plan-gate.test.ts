@@ -158,7 +158,8 @@ async function activeMembers(familyId: string): Promise<Array<{ id: string; user
     .select('id, user_id, role')
     .eq('family_id', familyId)
     .eq('status', 'active')
-    .order('created_at', { ascending: true });
+    .order('joined_at', { ascending: true })
+    .order('id', { ascending: true });
   if (error) throw new Error(`family_members: ${error.message}`);
   return (data ?? []) as Array<{ id: string; user_id: string | null; role: string }>;
 }

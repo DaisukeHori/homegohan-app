@@ -23,6 +23,7 @@ import { apiCall } from '../helpers/api';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { ACCOUNT_EXPORT_TABLES } from '@/lib/account-export-tables';
 import { generateAccountExport, type AccountExportSupabase } from '@/lib/account-export';
+import { setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -333,6 +334,8 @@ beforeAll(async () => {
   // B が代表者の家族に A が入っている (RLS では A に B のメンバー行・家族グループが見える)
   const family = await insert('family_groups', { name: `FAMILY-B-${RUN}`, representative_id: B.id });
   created.familyGroupId = family.id;
+  // billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする
+  await setFamilyGroupPlan(srAdmin, [family.id]);
   await insert('family_members', { family_id: family.id, user_id: B.id, role: 'representative', display_name: `MEMBER-B-${RUN}` });
   await insert('family_members', { family_id: family.id, user_id: A.id, role: 'adult', display_name: `MEMBER-A-${RUN}` });
   // #1173 (T-EX2): 子供 2 人と保護者の同意 3 行 (A が署名・B が署名・署名者も子供の行も外れた取り消し済みの行)。
