@@ -154,6 +154,7 @@ WHERE owner_id IS NULL;
 
 ALTER TABLE organizations
   ALTER COLUMN owner_id SET NOT NULL;
+-- #1917 で NULL 許容 + CHECK (organizations_active_has_owner。active な行では NOT NULL) に改めた。解散した行は NULL (family/11 §11.1)
 
 -- 検索用 index
 CREATE INDEX IF NOT EXISTS idx_organizations_owner_id ON organizations(owner_id);
