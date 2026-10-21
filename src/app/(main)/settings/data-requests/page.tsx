@@ -27,15 +27,19 @@ import {
   type DsrRequestType,
 } from "@/lib/data-subject-requests/core";
 import { dsrRateLimitedMessage } from "@/lib/data-subject-requests/client-messages";
+import { STORE_SUBSCRIPTION_DELETION_NOTICE } from "@homegohan/shared";
 
-/** 種類ごとの説明 (開示は自分で書き出す方法、消去はすぐに退会できることを添える。§9.1) */
+/**
+ * 種類ごとの説明 (開示は自分で書き出す方法、消去はすぐに退会できることを添える。§9.1)。
+ * 消去は退会と同じく、App Store / Google Play の購読は自動では解約されないことも添える (STORE_SUBSCRIPTION_DELETION_NOTICE。billing/03 §10.4)
+ */
 const REQUEST_TYPE_DESCRIPTIONS: Record<DsrRequestType, string> = {
   disclosure:
     "保有している個人情報の開示を求めます。登録した記録はいつでも、設定の「データをエクスポート」から自分で書き出せます。書き出しに含まれない情報や、書面での回答が必要なときにご利用ください。",
   correction: "誤っている個人情報の訂正を求めます。プロフィールなど、ご自身で直せる項目は各画面から直せます。",
   suspension: "個人情報の利用の停止を求めます。止めたい利用の内容をお書きください。",
   erasure:
-    "個人情報の消去を求めます。アカウントの削除は設定画面からすぐにできます (削除すると記録はすべて消え、元に戻せません)。",
+    `個人情報の消去を求めます。アカウントの削除は設定画面からすぐにできます (削除すると記録はすべて消え、元に戻せません)。${STORE_SUBSCRIPTION_DELETION_NOTICE}`,
 };
 
 /** 通信に失敗したとき・想定外の応答のときの文 */

@@ -13,6 +13,7 @@ import { act, createElement, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DsrOwnDto, DsrStatus } from '@/lib/data-subject-requests/core';
+import { STORE_SUBSCRIPTION_DELETION_NOTICE } from '@homegohan/shared';
 
 const mocks = vi.hoisted(() => ({
   searchParams: new URLSearchParams(),
@@ -221,6 +222,21 @@ describe('/settings/data-requests: 新しい請求', () => {
 
     expect(form).toContain('データをエクスポート');
     expect(form).toContain('アカウントの削除は設定画面からすぐにできます');
+  });
+
+  it('#1912 P6: 消去の説明にだけ、ストアの購読は退会で解約されないこと (STORE_SUBSCRIPTION_DELETION_NOTICE) を添える', async () => {
+    route('GET', DSR_ACCOUNT_API_PATH, () => json({ requests: [] }));
+    await render(createElement(DataRequestsSettingsPage));
+    const labelTextOf = (type: string) => byTestId(`dsr-type-${type}`)?.closest('label')?.textContent ?? '';
+
+    expect(labelTextOf('erasure')).toContain(STORE_SUBSCRIPTION_DELETION_NOTICE);
+    expect(labelTextOf('erasure').split(STORE_SUBSCRIPTION_DELETION_NOTICE)).toHaveLength(2);
+    for (const type of ['disclosure', 'correction', 'suspension']) {
+      const text = labelTextOf(type);
+      // 描画が空で素通りしないこと
+      expect(text.length, type).toBeGreaterThan(0);
+      expect(text, type).not.toContain(STORE_SUBSCRIPTION_DELETION_NOTICE);
+    }
   });
 });
 
