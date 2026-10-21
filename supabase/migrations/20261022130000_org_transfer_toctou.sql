@@ -1,5 +1,5 @@
--- migration: 20261022110000_org_transfer_toctou.sql
--- 戻し方: supabase/rollbacks/20261022110000_org_transfer_toctou.down.sql
+-- migration: 20261022130000_org_transfer_toctou.sql
+-- 戻し方: supabase/rollbacks/20261022130000_org_transfer_toctou.down.sql
 -- 組織のオーナーの譲渡の承諾が解散と同時に走ると、生の DB のエラー (CHECK user_profiles_org_consistency・23514) が API に届く
 -- 既存の欠陥を直す (docs/design/family/11-self-dissolve.md の S-18・§11.3。CLAUDE.md の「組織 (organizations) を変える関数のロック順 (DB)」の既知の箇条)。
 --

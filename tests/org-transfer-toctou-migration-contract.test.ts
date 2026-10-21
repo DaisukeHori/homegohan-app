@@ -1,6 +1,6 @@
 /**
  * 組織の譲渡の承諾と解散の同時の実行で CHECK user_profiles_org_consistency (23514) が API に届く欠陥の修正
- * (supabase/migrations/20261022110000_org_transfer_toctou.sql) を、ファイルどうしの突き合わせで確かめる (DB には接続しない)。
+ * (supabase/migrations/20261022130000_org_transfer_toctou.sql) を、ファイルどうしの突き合わせで確かめる (DB には接続しない)。
  *
  * 後の migration が下の 5 つの関数を CREATE OR REPLACE し直すとき (古い本文をそのまま写すとき) に、ロックと判定し直しを
  * 落とさないよう、各関数の「最新の定義」(supabase/migrations を version 順に見て、最後に CREATE OR REPLACE したもの) で確かめる。
@@ -23,7 +23,7 @@ import { describe, it, expect } from 'vitest';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
-const MIGRATION = '20261022110000_org_transfer_toctou';
+const MIGRATION = '20261022130000_org_transfer_toctou';
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 
 /** 戻し先の定義: ファイルと、その中の関数の行 (1 始まり・両端を含む) */

@@ -14,7 +14,7 @@
  *     オーナーでない人が呼ぶと、組織の行のあとにその人の行を取る関数 (譲渡の承諾・運営の強制譲渡・招待の承諾・ほかの解散の後始末) と
  *     逆向きになり、同時に走るとデッドロック (40P01) した。
  *
- * 修正後 (supabase/migrations/20261022110000_org_transfer_toctou.sql):
+ * 修正後 (supabase/migrations/20261022130000_org_transfer_toctou.sql):
  *   - 承諾は 提案の行 → 現オーナーの user_profiles (取り直しつき) → 組織の行 → 承諾者の user_profiles をロックしてから判定し直す。
  *     解散した組織なら ORG_ALREADY_DISSOLVED、所属が外れていれば TRANSFER_ACCEPTOR_NOT_IN_ORG、提案者がもうオーナーでなければ NOT_ORG_OWNER。
  *   - 運営の強制譲渡は 現オーナーの user_profiles → 組織の行 → 新オーナーの user_profiles をロックしてから TARGET_NOT_IN_ORG を判定する。

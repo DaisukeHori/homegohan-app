@@ -18,7 +18,7 @@ const TRANSFER_ACCEPT_MESSAGES: Record<string, string> = {
   NOT_AUTHENTICATED: '認証が必要です。',
   // #1173: 18 歳未満の本人は組織のオーナーを引き受けない (DB の関数が先頭で断る)
   [MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED]: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.MINOR_ACCOUNT_NOT_ALLOWED],
-  // 解散と同時の承諾 (supabase/migrations/20261022110000_org_transfer_toctou.sql)。承諾は組織の行をロックしてから status を読み、
+  // 解散と同時の承諾 (supabase/migrations/20261022130000_org_transfer_toctou.sql)。承諾は組織の行をロックしてから status を読み、
   // 解散した組織の提案は承諾させない (従来は判定のあとに解散が commit すると CHECK 23514 の 500 だった)
   [MembershipErrorCode.ORG_ALREADY_DISSOLVED]: 'この組織は解散しているため、オーナー権限を引き継げません。',
   // 同じ migration: 提案者がもうこの組織のオーナーでない (運営の強制譲渡のあとに残った提案など)。オーナーは変わらない

@@ -547,7 +547,7 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
 
       if (isDeadlock(dissolve) || isDeadlock(accept)) problems.push(`#${i} デッドロック: ${JSON.stringify({ dissolve, accept })}`);
       if (!dissolve.ok) problems.push(`#${i} 強制解散が失敗: ${JSON.stringify(dissolve)}`);
-      // 承諾はオーナーの行 → 組織の行をロックしてから判定し直すので (20261022110000_org_transfer_toctou.sql)、強制解散が先なら
+      // 承諾はオーナーの行 → 組織の行をロックしてから判定し直すので (20261022130000_org_transfer_toctou.sql)、強制解散が先なら
       // ORG_ALREADY_DISSOLVED で止まる (修正前は CHECK user_profiles_org_consistency (23514) で止まることがあった)
       if (!accept.ok && !(accept.code === 'P0001' && accept.message === 'ORG_ALREADY_DISSOLVED')) {
         problems.push(`#${i} 承諾が ORG_ALREADY_DISSOLVED 以外で失敗: ${JSON.stringify(accept)}`);

@@ -443,7 +443,7 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
       'あなたは現在この組織のメンバーではないため、オーナー権限を引き継げません。',
     ],
     ['TRANSFER_PROPOSAL_EXPIRED', 410, '譲渡提案の有効期限が切れています。'],
-    // 20261022110000_org_transfer_toctou.sql: 解散と同時の承諾・運営の強制譲渡のあとに残った提案
+    // 20261022130000_org_transfer_toctou.sql: 解散と同時の承諾・運営の強制譲渡のあとに残った提案
     ['ORG_ALREADY_DISSOLVED', 409, 'この組織は解散しているため、オーナー権限を引き継げません。'],
     [
       'NOT_ORG_OWNER',

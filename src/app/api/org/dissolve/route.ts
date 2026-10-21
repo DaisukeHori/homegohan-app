@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   const organizationId = normalizeUuid(parsed.data.organization_id);
 
   // オーナーかの判定・後始末・監査は RPC の中 (現オーナーの user_profiles の行 → 組織の行のロック下。呼び出した本人の行は取らない。
-  // supabase/migrations/20261022110000_org_transfer_toctou.sql)。route は役割 (org_role) を読まない
+  // supabase/migrations/20261022130000_org_transfer_toctou.sql)。route は役割 (org_role) を読まない
   const { data, error } = await supabase.rpc('dissolve_org_by_owner', { p_organization_id: organizationId });
   if (error) {
     const { code, status } = mapPgErrorToHttp(error.message ?? '', error.code);

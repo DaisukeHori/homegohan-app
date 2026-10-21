@@ -281,7 +281,7 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 
 ## 組織 (organizations) を変える関数のロック順 (DB)
 
-組織の所属・解散を変える関数は、組織の行のロックを次の順でそろえる (`supabase/migrations/20261022110000_org_transfer_toctou.sql`・`20261022100000_org_invite_dissolved.sql`・`20261019120000_self_dissolve.sql`)。所属や役割の判定は、判定に使う行をロックしてから行う (ロックの外で判定すると、判定のあとに所属が外れた行へ `org_role` を書いて CHECK `user_profiles_org_consistency` (23514) になる)。
+組織の所属・解散を変える関数は、組織の行のロックを次の順でそろえる (`supabase/migrations/20261022130000_org_transfer_toctou.sql`・`20261022100000_org_invite_dissolved.sql`・`20261019120000_self_dissolve.sql`)。所属や役割の判定は、判定に使う行をロックしてから行う (ロックの外で判定すると、判定のあとに所属が外れた行へ `org_role` を書いて CHECK `user_profiles_org_consistency` (23514) になる)。
 
 - 解散 (`dissolve_org_by_owner`・`operator_force_dissolve_org`): 組織の行から読んだ現オーナーの `user_profiles` (途中でオーナーが変わっていたら取り直す) → `organizations` の行 (どちらも `FOR NO KEY UPDATE`) → 後始末 (全員の `user_profiles` → `org_license_pools`)。`dissolve_org_by_owner` も呼び出した本人の行は取らない (オーナーでない人も API から呼べるので、本人の行を先に取ると、組織の行のあとにその人の行を取る譲渡の承諾・運営の強制譲渡・招待の承諾・ほかの解散の後始末と逆向きになり 40P01 になる)。本人がオーナーかは組織の行を取ったあとで判定する (`NOT_ORG_OWNER`)。
 - 譲渡の承諾 (`accept_org_owner_transfer`): 提案の行 → 現オーナーの `user_profiles` (途中でオーナーが変わっていたら取り直す) → `organizations` の行 → 承諾者の `user_profiles` (どれも `FOR NO KEY UPDATE`) を取ってから判定する。解散した組織なら `ORG_ALREADY_DISSOLVED`、承諾者の所属が外れていれば `TRANSFER_ACCEPTOR_NOT_IN_ORG`、提案者がもうオーナーでなければ `NOT_ORG_OWNER`。

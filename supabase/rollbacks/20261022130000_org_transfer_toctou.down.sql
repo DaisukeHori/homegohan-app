@@ -1,4 +1,4 @@
--- rollback: 20261022110000_org_transfer_toctou.sql
+-- rollback: 20261022130000_org_transfer_toctou.sql
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
 --
 -- 戻すもの: 5 つの関数を、この migration より前の最新の定義に逐語で戻す。
