@@ -2,11 +2,11 @@
 
 | | |
 |---|---|
-| 版 | v1.3 (2026-10-22) |
-| Status | 設計ゲート審査中 (A 型。R3 の修正版) |
+| 版 | v1.4 (2026-10-22) |
+| Status | 設計ゲート審査中 (A 型。R4 の修正版) |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§5.2 の縁の発生源 (2)・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
-| 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い。§14.2 の行の番号は `d950a7b1` で取り直した (billing/03 §18 の 4 が `:5190` → `:5206` に動いていた)。続けて origin/main `c1ecc93b` (#1934) で再確認し、同じファイルと §14.2 の文書に差分は無い (#1934 が変えたのは運営の画面の AI の上限の 10 ファイルだけ) |
+| 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い。§14.2 の行の番号は `d950a7b1` で取り直した (billing/03 §18 の 4 が `:5190` → `:5206` に動いていた)。続けて origin/main `c1ecc93b` (#1934) で再確認し、同じファイルと §14.2 の文書に差分は無い (#1934 が変えたのは運営の画面の AI の上限の 10 ファイルだけ)。さらに origin/main `7532a77c` (#1935) で再確認した。#1935 が変えたのは `apps/mobile` の 7 ファイルと billing/03 の §8.10 (モバイルの正典コード)・§10.6 (モバイルの購入の画面) だけで、本冊が参照するサーバのファイル・番兵・§12.3 が参照する結合テストと `vitest.integration.config.ts` に差分は無い。billing/03 の行は §8.10 の伸びで §18 の 4 が `:5206` → `:5250` に動いた (§14.2 を直した。`:86`・`:270`・`:380` は動いていない) |
 | 前提の冊 | `docs/design/billing/03-paid-plans-and-iap.md` (親。RevenueCat の口 = §8.1 `iap-core.ts`・§8.3 `revenuecat-gateway.ts` / `iap-repository.ts`・§8.4 `iap-service.ts`・§6.4 の写像 `billing_apply_store_subscription`・§7.3 の状態遷移表)・`01-billing-core.md` (核。§12 の「reconcile は写像を呼んで直す」の型)・`02-manual-plan-grant.md` (手動付与の日次の失効 = pg_cron の先例)・`docs/design/operator/08-cron-batches.md`・`11-ops-batches-non-billing.md` (cron の台帳と失敗の監視)。本冊は親の契約 (写しの入口は `billing_apply_store_subscription` の 1 つ・`p_fetched_at` で単調・TS の入口は `syncStoreSubscriber`) を壊さず、その上に定期の処理を 1 本足す |
 | 実装者 | Sonnet 5.5 が本書だけを読んで手を止めずに実装できることを完成条件にする |
 
@@ -1329,7 +1329,61 @@ IAP_RECONCILE_RECHECK_HOURS=
 
 ### 12.3 結合 (ローカル Supabase。`tests/integration/rls` に置く。段 A)
 
-`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts` (`tests/integration/rls/billing-apply-store-subscription-rpc.test.ts` と同じ前提と片付け。行は `service_role` で INSERT し、`p_now` を固定の過去の時刻で渡し、自分の行の期限をそれより前にする (ほかのテストの行は期限が `p_now` より後なので候補に出ない)。利用者ごとに印の行が残るので、it ごとに新しい利用者を作る):
+`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts`。前提 (ローカル Supabase・`client` の作り・`createUser` (`retryIdempotentSetup` で `user_profiles` を upsert)) は `tests/integration/rls/billing-apply-store-subscription-rpc.test.ts` と同じ。行は `service_role` で `personal_subscriptions` に INSERT する (ストアの行は `iap_store = 'app_store'`・`iap_product_id` = `it.iap-reconcile.${RUN}.pro.month`・`plan_key = 'pro'`・`billing_interval = 'month'`。同じ利用者に 2 本目のストアの行を置く 41 だけ、2 本目は `it.iap-reconcile.${RUN}.pro.year`・`billing_interval = 'year'` (同じ利用者・ストア・商品は 1 行の一意の索引があるため)。43 は写像 `billing_apply_store_subscription` を同じ `user_id`・`iap_store`・`iap_product_id` の snapshot で呼ぶ)。
+
+候補を読む関数は `personal_subscriptions` の全体を読み、38〜41・43・44 は返った配列を丸ごと期待と比べる (自分の利用者に絞らない。期待はその it の利用者だけで組む)。そこで「候補に出るのは、いま走っている it が作った利用者だけ」を次の 3 つで保つ (時刻と片付けの型は `tests/integration/rls/org-challenge-diff-privacy.test.ts` の ① afterEach の片付け・③ 過去の年の時刻と同じ):
+
+1. **時刻は固定の過去の年**: このファイルの時刻 (`p_now`・`current_period_start`・`current_period_end`・`iap_synced_at`・`p_fetched_at`・`expires_date`・`p_attempted_at`) は、どれも下の `at(hours)` で書く。`p_now` と `p_attempted_at` に渡すのは `at(-P_NOW_SPREAD_HOURS)`〜`at(P_NOW_SPREAD_HOURS)` の値だけ。`p_now` の既定は `at(0)` で、ほかの値を渡すのは 39 だけ (行は期限 `at(-RECHECK_HOURS - 2)`・`iap_synced_at = at(-1)`。`p_now = at(0)` では間隔の中なので出ず、`p_now = at(RECHECK_HOURS - 1)` で `iap_synced_at <= p_now - p_recheck_after` の等号に当たって出る)。期限を過ぎた行の期限は `at(-1)` 以前。ほかの結合テストのファイルが作る行の期限は `Date.now()` からの相対 (数日前〜1 年後) なので、どれもこのファイルの `p_now` より後で、候補に出ない (そのファイルの片付けが失敗して残った行も同じ)。結合テストは 1 本ずつ走る (`vitest.integration.config.ts` の `maxWorkers: 1`)。
+2. **it ごとの片付け (`afterEach`)**: その it が作った利用者を、下の `deleteTestUsers` で消す。印の表 `iap_reconcile_attempts` は `service_role` が SELECT しかできない (§6.2) ので、印の行は `auth.users` を消した ON DELETE CASCADE で消す (`personal_subscriptions` も CASCADE だが、`billing-apply-store-subscription-rpc.test.ts` の片付けと同じく先に明示で消す。`user_profiles` は CASCADE に任せる)。消したあとに 2 つの表を読み直し、行が残っていれば throw する (片付けの失敗を、次の it の順番の検査の赤に化けさせない)。期限が 2000 年の行を残さないので、ほかのファイルの `now()` で期限を見る処理 (手動付与の日次の失効 `billing_expire_manual_subscriptions` など) にも当たらない。`afterAll` は、`afterEach` が途中で止まって残った利用者を同じ関数で消す安全網。
+3. **it ごとに新しい利用者**: どの it も自分で利用者を作る。`describe` の `beforeAll` で利用者を共有しない (42 の `authenticated` の検査も、その it の中でサインインした利用者を使う)。
+
+これで 44 の 2 回目と 3 回目の呼び出しの候補は A・B・C の 3 人だけになり、期待 (〔B, C, A〕 → 〔A, B, C〕) がそのまま成り立つ。ほかの it も、返る配列をその it の利用者だけの期待と丸ごと比べられる。時刻と片付けの形 (説明用の断片。`srAdmin`・`RUN`・`createUser` の残りは参照先と同じ作り):
+
+```ts
+// tsc:skip
+import { afterAll, afterEach } from 'vitest';
+
+/** 候補の判定の「いま」の起点。ほかの結合テストのファイルの行の期限 (Date.now() からの相対) より十分に前の、固定の過去の時刻 */
+const RECONCILE_NOW_MS = Date.parse('2000-01-01T00:00:00.000Z');
+const HOUR_MS = 60 * 60 * 1000;
+/** p_now・p_attempted_at に渡す値の、起点からの幅 (時間)。この中なら、ほかのファイルの行の期限は必ず p_now より後 */
+const P_NOW_SPREAD_HOURS = 24;
+/** 39 などで渡す p_recheck_after (時間)。述語の検査に使うだけの値 (段 A のテストなので、段 B の IAP_RECONCILE_RECHECK_HOURS を import しない) */
+const RECHECK_HOURS = 6;
+const at = (hours: number): string => new Date(RECONCILE_NOW_MS + hours * HOUR_MS).toISOString();
+
+/** 作った利用者の全部 (afterAll の安全網) と、いま走っている it の分。createUser が両方に積む */
+const createdUserIds: string[] = [];
+const currentTestUserIds: string[] = [];
+
+async function deleteTestUsers(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const audits = await srAdmin.from('admin_audit_logs').delete().in('target_id', ids); // 43 の写像が監査を書く
+  if (audits.error) throw new Error(`admin_audit_logs: ${audits.error.message}`);
+  const subscriptions = await srAdmin.from('personal_subscriptions').delete().in('user_id', ids);
+  if (subscriptions.error) throw new Error(`personal_subscriptions: ${subscriptions.error.message}`);
+  for (const id of ids) {
+    // iap_reconcile_attempts と user_profiles は auth.users の ON DELETE CASCADE で消える
+    const { error } = await srAdmin.auth.admin.deleteUser(id);
+    if (error) throw new Error(`deleteUser: ${error.message}`);
+    const index = createdUserIds.indexOf(id);
+    if (index >= 0) createdUserIds.splice(index, 1);
+  }
+  for (const table of ['personal_subscriptions', 'iap_reconcile_attempts'] as const) {
+    const left = await srAdmin.from(table).select('user_id').in('user_id', ids);
+    if (left.error) throw new Error(`${table}: ${left.error.message}`);
+    if ((left.data ?? []).length > 0) throw new Error(`${table} にこの it の利用者の行が残った`);
+  }
+}
+
+afterEach(async () => {
+  await deleteTestUsers(currentTestUserIds.splice(0));
+});
+
+afterAll(async () => {
+  await deleteTestUsers([...createdUserIds]);
+});
+```
 
 38. `it('returns one row per user for live store rows past current_period_end whose iap_synced_at is null or earlier than current_period_end, ordered by period_end then user_id among never-attempted users, limited by p_limit')`
 39. `it('excludes a row synced after its current_period_end within p_recheck_after and includes it once iap_synced_at <= p_now - p_recheck_after')`
@@ -1493,7 +1547,7 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | `docs/design/billing/03-paid-plans-and-iap.md` §0.5 Q-11 | `:86` 「…日次の reconcile は配線の残りの冊**」 | 「…定期の取り直し (毎時) は `04-iap-reconcile.md`**」 | docs PR |
 | 同 §3.2 S12 | `:270` 「…のどちらかで写る (Q-11)」 | 「…のどちらかで写る (Q-11)。本人が開かない契約は、`04-iap-reconcile.md` の毎時の取り直しが期限の後 1 時間以内に写す」 | docs PR |
 | 同 §5.2 の縁の発生源 (2) | `:380` 「…本人の操作からの同期 (3) と遅延の再同期 (§8.4) で受ける。日次の reconcile は配線の残りの冊 (Q-11)。」 | 「…本人の操作からの同期 (3) と遅延の再同期 (§8.4) で受け、本人が開かない契約は `04-iap-reconcile.md` の定期の取り直し (毎時) で受ける (Q-11)。」 | docs PR |
-| 同 §18 の 4 | `:5206` 「日次の reconcile (…) は配線の残りの冊」 | 「定期の取り直し (`personal_subscriptions` の期限を過ぎた live なストアの行の利用者を毎時 1 人ずつ取り直す) は `04-iap-reconcile.md` で確定」 | docs PR |
+| 同 §18 の 4 | `:5250` 「日次の reconcile (…) は配線の残りの冊」 | 「定期の取り直し (`personal_subscriptions` の期限を過ぎた live なストアの行の利用者を毎時 1 人ずつ取り直す) は `04-iap-reconcile.md` で確定」 | docs PR |
 | `docs/design/CLAUDE.md` | `:16` 「…`02-manual-plan-grant.md` (運営者の手動のプラン付与) と、配線の残りの冊 (運用バッチ・運営の Finance 画面ほか。未作成))」 | 「…`02-manual-plan-grant.md` (運営者の手動のプラン付与)・`03-paid-plans-and-iap.md` (有料プランの販売とアプリ内課金)・`04-iap-reconcile.md` (ストアの購読の定期の取り直し) と、配線の残りの冊 (運営の Finance 画面ほか。未作成))」 | docs PR |
 | `docs/design/operator/09-runbook.md` §5.3 | `:204-210` (Vercel Cron の手動実行) | 例に `/api/cron/iap-reconcile` を足し、応答の `status`・`stopped_early`・`oldest_period_end` の読み方 (§9.1) を 1 段落で書く (任意) | docs PR |
 
@@ -1547,3 +1601,4 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 | v1.1 | 2026-10-22 | 設計ゲート R1 の指摘 3 件を反映。(1)(2) 利用者 1 人の失敗 (応答の形の違い・そのほかの 4xx・写像の想定外) で回が止まり、その利用者が毎回先頭に来て後ろの全員が取り直されない欠陥: 失敗を回全体 / 利用者 1 人に分け (`classifyReconcileFailure`・`IapReconcileFailedError`・要約の `failed`)、候補の順番を「最後に試した時刻の古い順」にする印の表 `iap_reconcile_attempts` と、選んだ利用者に時刻を書く関数 `billing_iap_reconcile_claim_candidates` (旧 `billing_iap_reconcile_candidates`) に改めた (§4.1・§5.2・§6.2・§8・§11)。表の分類 3 か所を段 A に足した (F24)。(3) 段 A のテストが段 B の定数を import していた点: `c_max_limit` と `IAP_RECONCILE_BATCH_SIZE_MAX` の一致の検査を段 B の単体テスト 10 へ移した。テストを 45 本に振り直した (§12)。シナリオ S16・S17 を足した。周 2 の網羅性の反映: §14.2 に operator/08 §6.2 (`:549`。番兵の見張りの外) の行を足し、operator/12 §14 の行の文書名を明記、行の番号を `d950a7b1` で取り直し (operator/08 §3.2 `:178`・`:180`、billing/03 §18 `:5206`)、§14.1 の `design-doc-vercel-cron-count` の行の数え方 (設計書 3 冊の 8 か所 + it 名 1 か所) を直した |
 | v1.2 | 2026-10-22 | 設計ゲート R2 の指摘 1 件を反映。写像の `BILL_UNKNOWN_PLAN`・`BILL_UNKNOWN_IAP_STATUS` を `rejected` (200・運用メールなし) に入れていた点: billing/03 §13.3 の扱いは失敗で運営の処置の表が無いので、`rejected` は運営の処置が決まっている `BILL_LIVE_ROW_CONFLICT` (§13.3)・`BILL_IAP_UNKNOWN_PRODUCT` (S15) の 2 つだけにし、定数 `IAP_RECONCILE_REJECTED_CODES`・型 `IapReconcileRejectedCode`・`isIapReconcileRejectedCode` (§8.1) で 1 か所に閉じた。ほかの業務エラーは `classifyReconcileFailure` の `other` → `failed['internal']` (500 → `cron_failure`)。§2.1・§3.2・§4.1・§4.2・§7.1・§7.3 (a)(b)・§8.1・§8.3・§9.1・§11.2・§12 (テスト 8・14・17)・§12.5・§13.3 (export 42 → 45)・§15 を揃えた。周 3 の網羅性の反映: §14.2 に billing/03 §5.2 の縁の発生源 (2) (`:380`) の行を足し、§0.3・§2.1 の参照に加えた。§7.1 にストア (`iap_store`) の軸の 3 行を足し、§7.3 (a) の置き換えの行と「別の live 行あり」の行にストアの条件を書いた。§14.1 の母集合 3 を 5 本に直し、名指しで読むだけの 3 本の行を足した。§12.5 の S5・S6・S14 の対応をテスト 20 (退会) から 11 (`stale` の数え方) に直し、並行の検査の受け持ち (billing/03 の結合テスト 67) を注に書いた |
 | v1.3 | 2026-10-22 | 設計ゲート R3 の指摘 2 件を反映。(1) §14.2 の operator/11 §11.1 の行で、引用の末尾のバッククォートがセルの間の `|` をコードの span に飲み込み、`tests/docs-table-column-count.test.ts` が赤になる点: 引用から末尾の閉じの記号を外した (本書の表の列の食い違いは 0)。(2) 候補の印を「選んだとき」に書いていたため、1 回に試せる数を超えて選んだ回 (環境変数で上限を上げた・遅い応答・429・回全体の失敗) で、試さなかった利用者まで後ろに回り、期限の古い同じ利用者が毎回先に試されて後ろが永久に試されない欠陥: 候補の関数を読むだけの `billing_iap_reconcile_candidates` (STABLE。advisory lock を外す) に戻し、印はループの後に、その回に `syncStoreSubscriber` を呼んだ利用者だけに 1 回の RPC `billing_iap_reconcile_mark_attempted(uuid[], timestamptz)` (`GREATEST`・`auth.users` に無い利用者は飛ばす) で書く形にした。ポートを `listReconcileCandidates`・`markReconcileAttempted` (`IapReconcileAttemptMark`) にした。あわせて `IAP_RECONCILE_BATCH_SIZE_MAX` を 1 回に試せる数 (予算 ÷ 間隔 = 40) にし (環境変数は下げる向きだけ)、DB の上限は `c_max_users` (200。TS の上限以下をテスト 10 が見る) にした。シナリオ S18 を足し、§0.2・§0.5 Q-1・§1・§3.1 R3・R4・§4・§5.2 (退けた代わり (iv)〜(vi))・§5.3・§6・§7・§8・§9.1・§11・§12 (テスト 2・4・10・11・13〜19・32〜36・42・44 と新しい 45。受け入れは 46)・§12.5・§13・§14.1・§15 の 3・§16 の 9 と 11 を揃えた。土台を origin/main `c1ecc93b` で再確認した |
+| v1.4 | 2026-10-22 | 設計ゲート R4 の指摘 1 件を反映。§12.3 の結合テストが「固定の過去の `p_now` を 1 つ」と afterAll だけの片付けを指定していたため、前の it が残した期限切れ・印なしの利用者がテスト 44 の候補で A より前に並び、`p_limit` 3 の結果から A が抜けて必ず赤になる点: 時刻を固定の過去の年 (`RECONCILE_NOW_MS` = 2000-01-01Z、`p_now` はその前後 24 時間の中) に置き、it ごとの片付け (`afterEach` で利用者を消し、`service_role` が消せない印の行は `auth.users` の ON DELETE CASCADE で消して、残っていないことを読み直す) と it ごとの新しい利用者を逐語で決めた (`tests/integration/rls/org-challenge-diff-privacy.test.ts` と同じ型)。38〜41・43・44 は返る配列をその it の利用者だけの期待と丸ごと比べる。行の作り方 (ストアの行の列と、41 の 2 本目の商品 ID) と、39 の行と `p_now` の組を具体の値で書いた。土台を origin/main `7532a77c` (#1935) で再確認し、§14.2 の billing/03 §18 の 4 の行の番号を `:5206` → `:5250` に直した |
