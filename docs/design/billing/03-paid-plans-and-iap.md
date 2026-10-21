@@ -3484,24 +3484,44 @@ export const PAID_PLANS_FAQ_ANSWER = `${PLAN_CATALOG.map(
 /** free の plan_key の表示名 */
 export const FREE_PLAN_DISPLAY_NAME = "無料プラン";
 /**
- * PLAN_CATALOG にも free にも無い plan_key の表示名 (#1912)。そうした key の実際の出どころは組織のプラン
- * (organizations.plan の値 'standard' / 'premium' / 'enterprise' (src/lib/org-plans.ts の ORG_PLAN_VALUES) と、
- * subscription_plans の plan_type = 'org' の行の org_*。get_effective_plan が組織の利用者にそのまま返す)。
- * 内部の値 (plan_key) は利用者の画面に出さず、この固定の名前を出す
+ * 組織のプランの値の表示名 (#1912)。組織のプランの値 (isOrgPlanKey) は内部の値 (plan_key) を利用者の画面に出さず、この固定の名前を出す
  */
 export const ORG_PLAN_DISPLAY_NAME = "組織のプラン";
+/**
+ * PLAN_CATALOG にも free にも無く、組織のプランの値でもない plan_key の表示名 (#1912)。private の家族の追加枠 (family_addon) や、
+ * 運営の画面で新しく作った個人・家族のプラン (Stripe の price が付けば買え、手動の付与もできる) が契約の plan_key になったときに出す。
+ * 内部の値 (plan_key) は利用者の画面に出さない
+ */
+export const PAID_PLAN_GENERIC_DISPLAY_NAME = "有料プラン";
+/**
+ * organizations.plan に書ける値 (#1912)。正本は src/lib/org-plans.ts の ORG_PLAN_VALUES。shared は src を import できない
+ * (依存の向きは src → shared だけ) ので同じ一覧の写しを持ち、tests/billing-plan-display-name.test.ts が正本と一致することを見る
+ */
+export const ORG_PLAN_VALUES_WIRE = ["standard", "premium", "enterprise"] as const;
+/** subscription_plans の plan_type = 'org' の行の plan_key の接頭辞 (org_starter・org_standard など。get_effective_plan が組織の利用者にそのまま返す) */
+export const ORG_SUBSCRIPTION_PLAN_KEY_PREFIX = "org_";
+/**
+ * 組織のプランの値か (#1912)。organizations.plan の値 (ORG_PLAN_VALUES_WIRE) と、subscription_plans の plan_type = 'org' の行の
+ * plan_key (ORG_SUBSCRIPTION_PLAN_KEY_PREFIX で始まる key)
+ */
+export function isOrgPlanKey(planKey: string): boolean {
+  return (ORG_PLAN_VALUES_WIRE as readonly string[]).includes(planKey) || planKey.startsWith(ORG_SUBSCRIPTION_PLAN_KEY_PREFIX);
+}
 /** PLAN_CATALOG にある (表示名と説明を持つ有料の) plan_key か */
 export function isCatalogPlanKey(planKey: string): planKey is PaidPlanKey {
   return PLAN_CATALOG.some((plan) => plan.plan_key === planKey);
 }
 /**
  * plan_key の利用者向けの表示名。free は「無料プラン」、PLAN_CATALOG にある key はその display_name、
- * それ以外 (組織のプランの値・未知の値) は ORG_PLAN_DISPLAY_NAME (内部の値をそのまま返さない。#1912)。
+ * 組織のプランの値 (isOrgPlanKey) は ORG_PLAN_DISPLAY_NAME、それ以外 (家族の追加枠・運営が新しく作った個人や家族のプラン・未知の値) は
+ * PAID_PLAN_GENERIC_DISPLAY_NAME (内部の値をそのまま返さない。#1912)。
  * 運営の画面など生の plan_key を見せたいところは、この関数を通さず key を直接出す
  */
 export function planDisplayName(planKey: string): string {
   if (planKey === "free") return FREE_PLAN_DISPLAY_NAME;
-  return PLAN_CATALOG.find((plan) => plan.plan_key === planKey)?.display_name ?? ORG_PLAN_DISPLAY_NAME;
+  const catalogName = PLAN_CATALOG.find((plan) => plan.plan_key === planKey)?.display_name;
+  if (catalogName !== undefined) return catalogName;
+  return isOrgPlanKey(planKey) ? ORG_PLAN_DISPLAY_NAME : PAID_PLAN_GENERIC_DISPLAY_NAME;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4264,7 +4284,7 @@ const DEVICE_PURCHASE_STORE: PurchaseStore = Platform.OS === "android" ? "play_s
 | # | 要素 | 文・振る舞い |
 |---|---|---|
 | 1 | 見出し | 「プランとお支払い」(`PageHeader`。戻るで設定タブへ) |
-| 2 | 現在の状態 | `fetchBillingSummary()` の `summary`: `status === null` かつ `effective_plan_key === 'free'` → 「無料プランをご利用中です」/ `status === null` かつ `effective_plan_key` が `PLAN_CATALOG` の key (`isCatalogPlanKey`。家族のプラン) → 「`planDisplayName(summary.effective_plan_key)` をご利用中です (ご家族または組織のプラン)」/ `status === null` かつ `effective_plan_key` が `'free'` でも `PLAN_CATALOG` の key でもない (組織のプラン: `organizations.plan` の値 `standard`・`premium`・`enterprise` か `org_*`。#1912) → 「組織のプランをご利用中です」(`PLAN_ORG_STATUS_TEXT` = `` `${ORG_PLAN_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live → 「`planDisplayName(summary.plan_key)` をご利用中です」+ `subscriptionStatusLines(summary)` の各行 (無料期間中（X まで）・解約の予約) + 出どころ: `source === 'stripe'` → 「Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。」(リンク無し。R16) / `'manual'` → 文なし / `'app_store'`・`'play_store'` → 「`IAP_STORE_LABELS[source]` でお申し込みのプランです。」+ ボタン「定期購読の管理を開く」(押すと `const info = await currentCustomerInfo(); Linking.openURL(info?.managementURL ?? STORE_SUBSCRIPTION_MANAGEMENT_URL[source])`) |
+| 2 | 現在の状態 | `fetchBillingSummary()` の `summary`: `status === null` かつ `effective_plan_key === 'free'` → 「無料プランをご利用中です」/ `status === null` かつ `effective_plan_key` が組織のプランの値 (`isOrgPlanKey`: `organizations.plan` の値 `standard`・`premium`・`enterprise` (`ORG_PLAN_VALUES_WIRE`) か `org_` で始まる key。#1912) → 「組織のプランをご利用中です」(`PLAN_ORG_STATUS_TEXT` = `` `${ORG_PLAN_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / `status === null` かつ `effective_plan_key` が `PLAN_CATALOG` の key (`isCatalogPlanKey`。家族のプラン) → 「`planDisplayName(summary.effective_plan_key)` をご利用中です (ご家族のプラン)」(`PLAN_FAMILY_STATUS_SUFFIX`) / `status === null` かつ `effective_plan_key` が `'free'` でも組織のプランの値でも `PLAN_CATALOG` の key でもない (private の `family_addon`・運営の画面で新しく作った個人・家族のプランなど。#1912) → 「有料プランをご利用中です」(`PLAN_GENERIC_STATUS_TEXT` = `` `${PAID_PLAN_GENERIC_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live → 「`planDisplayName(summary.plan_key)` をご利用中です」(PLAN_CATALOG に無い key は `planDisplayName` が組織の名前か汎用の名前を返す)+ `subscriptionStatusLines(summary)` の各行 (無料期間中（X まで）・解約の予約) + 出どころ: `source === 'stripe'` → 「Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。」(リンク無し。R16) / `'manual'` → 文なし / `'app_store'`・`'play_store'` → 「`IAP_STORE_LABELS[source]` でお申し込みのプランです。」+ ボタン「定期購読の管理を開く」(押すと `const info = await currentCustomerInfo(); Linking.openURL(info?.managementURL ?? STORE_SUBSCRIPTION_MANAGEMENT_URL[source])`) |
 | 3 | プランの一覧 (`summary.can_purchase` かつ `isPurchasesAvailable()` かつ `cards.length > 0` のときだけ。`cards` はこの利用者への結び付け (`identifyPurchases(user.id)`) が通ったあとにだけ読む。#1912) | カード = `display_name`・`PLAN_CATALOG` の同じ `plan_key` の `features` (無ければ箇条書きなし)・`max_members` があれば「X 人まで」・間隔ごとの行 (`options`) = `priceString` + `renewalText(interval, priceString, option.trial)` (自動更新の説明と、体験があるときだけ体験の長さ。P9・P10) + ボタン「`<display_name>` を月額で始める」/「`<display_name>` を年額で始める」。請求額 (`priceString`) をカードで最も大きい文字にする (P9 の「most prominent」)。`option.trial` が null でない行だけ、価格の上に「`option.trial.lengthText`無料」と、その下に「体験の終了後は `priceString` が請求されます」を出す。`option.trial` は `storeTrialOf` (§8.10) がストアの導入価格と体験の対象の判定から作る (DB の `trial_days` は使わない。対象外の利用者に体験の文を出さない。R15・S29) |
 | 4 | 購入 | ボタン → `busy = true` → `await ensurePurchasesIdentity(user.id)` (投げた・`user` が無い → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える。`purchase` を呼ばない。#1912) → `purchase(pkg)` (`pkg` は `fetchOfferings()` の `current.availablePackages` のうち `identifier === option.packageIdentifier` のもの) → `ok` なら `syncIapPurchases()` → `summary` を置き換え、置き換えた `summary` が live (`subscriptionStatusLines(summary)` が空でない) なら `notice` =「お申し込みが完了しました」、live でなければ (この利用者に契約が付いていない) `notice` = `PLAN_PURCHASE_NOT_REFLECTED_MESSAGE` (「購入は受け付けましたが、契約の反映を確認できませんでした。「購入を復元」をお試しください。」。完了の文は出さない。#1912)。`cancelled` なら何もしない。`ok: false, cancelled: false` → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` (ストアの生の文は出さない)。同期が投げた例外 → `notice` = `billingErrorMessageOf(e)` (409 `BILL_IAP_SYNC_CONFLICT` などはサーバの固定の文)。最後に `busy = false` |
 | 5 | 購入を復元 | ボタン「購入を復元」(常に出す。P9 3.1.1。`isPurchasesAvailable()` が偽なら押せない形で出す) → `await ensurePurchasesIdentity(user.id)` (投げた・`user` が無い → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える。`restore` を呼ばない。#1912) → `restore()` → `syncIapPurchases()` → `summary` を置き換え。置き換えた `summary` が live でない (`status` が null か終わった契約) なら `notice` =「復元できる購入がありませんでした」。`restore()` の例外 → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` (ストアの生の文は出さない)。復元のあとの `syncIapPurchases()` の例外 → `notice` = `billingErrorMessageOf(e)` |
