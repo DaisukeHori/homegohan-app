@@ -20,5 +20,10 @@ export const ORG_PLAN_VALUES = ['standard', 'premium', 'enterprise'] as const;
 
 export type OrgPlanValue = (typeof ORG_PLAN_VALUES)[number];
 
+/** 値が organizations.plan に書ける値 (ORG_PLAN_VALUES) のどれかか */
+export function isOrgPlanValue(value: string): value is OrgPlanValue {
+  return (ORG_PLAN_VALUES as readonly string[]).includes(value);
+}
+
 /** organizations.plan の列の既定 (運営が作るときにプランを指定しなければこれ) */
 export const ORG_PLAN_DEFAULT: OrgPlanValue = 'standard';

@@ -7,21 +7,18 @@
 //   - 上限は 1 日 (日本時間の暦日) の、全機能の合計の回数。空欄で保存すると無制限
 //   - 自分の行が無いプランは free の値を使う (「free の値」と表示する)
 //   - 変更の理由は必須 (監査ログに残す)
+//   - 組織のプランの値 (standard / premium / enterprise) の行も保存できる。どちらにも無いキーの行は入力欄と保存を止める (#1912)
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { parseLimitInput } from "@/lib/super-admin/ai-daily-limits";
-import { AI_DAILY_LIMIT_MAX } from "@/lib/super-admin/llm-schemas";
+import { isAiDailyLimitRowEditable, parseLimitInput } from "@/lib/super-admin/ai-daily-limits";
+import { AI_DAILY_LIMIT_MAX, type AiDailyLimitRow } from "@/lib/super-admin/llm-schemas";
 
-interface QuotaRow {
-  plan_key: string;
-  display_name: string | null;
-  plan_type: string | null;
-  daily_limit: number | null;
-  configured: boolean;
-  effective_daily_limit: number | null;
-  updated_at: string | null;
-}
+/** 一覧の 1 行 (API の型そのもの) */
+type QuotaRow = AiDailyLimitRow;
+
+/** 保存できない行 (プランの表にも組織のプランにも無いキー) に出す案内 (#1912) */
+const NOT_EDITABLE_NOTE = "このキーはプランの表にも組織のプランにも無いため、保存できません";
 
 interface QuotaListResponse {
   data: QuotaRow[];
@@ -158,6 +155,7 @@ export default function LLMQuotasPage() {
               {rows.map((row) => {
                 const draft = drafts[row.plan_key] ?? { limit: "", reason: "" };
                 const message = rowMessage[row.plan_key];
+                const editable = isAiDailyLimitRowEditable(row);
                 return (
                   <tr key={row.plan_key} data-testid={`quota-row-${row.plan_key}`}>
                     <td className="py-3">
@@ -176,8 +174,9 @@ export default function LLMQuotasPage() {
                         inputMode="numeric"
                         aria-label={`${row.plan_key} の新しい上限`}
                         value={draft.limit}
+                        disabled={!editable}
                         onChange={(e) => updateDraft(row.plan_key, { limit: e.target.value })}
-                        className="w-28 bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm"
+                        className="w-28 bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm disabled:opacity-50"
                       />
                     </td>
                     <td className="py-3">
@@ -185,9 +184,15 @@ export default function LLMQuotasPage() {
                         type="text"
                         aria-label={`${row.plan_key} の変更の理由`}
                         value={draft.reason}
+                        disabled={!editable}
                         onChange={(e) => updateDraft(row.plan_key, { reason: e.target.value })}
-                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm"
+                        className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm disabled:opacity-50"
                       />
+                      {!editable && (
+                        <div className="text-slate-500 text-xs mt-1" data-testid={`quota-not-editable-${row.plan_key}`}>
+                          {NOT_EDITABLE_NOTE}
+                        </div>
+                      )}
                       {message && (
                         <div className={`text-xs mt-1 ${message.ok ? "text-green-400" : "text-red-400"}`} role="status">
                           {message.text}
@@ -198,7 +203,7 @@ export default function LLMQuotasPage() {
                       <button
                         type="button"
                         onClick={() => void save(row.plan_key)}
-                        disabled={savingPlan !== null}
+                        disabled={!editable || savingPlan !== null}
                         className="px-4 py-1.5 rounded-lg text-sm font-medium bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50"
                       >
                         {savingPlan === row.plan_key ? "保存中…" : "保存"}
