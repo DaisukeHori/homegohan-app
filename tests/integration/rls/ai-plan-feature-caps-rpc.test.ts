@@ -6,7 +6,9 @@
  *   - ai_daily_limits: free = 3・pro = 30・family_basic = 30・family_pro = 50。組織の plan の値 (organizations.plan・standard・
  *     plan_type = org の行) には、free を書き換える前の free の値を写す (組織の利用者の上限は変えない)
  *   - (#1912 段 A の整合ゲートの指摘) migration *_org_plan_ai_daily_limits.sql: アプリが organizations.plan に書ける値
- *     (ORG_PLAN_VALUES) のうち (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 (10) の行を足す
+ *     (ORG_PLAN_VALUES) のうち (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 (10) の行を足す。
+ *     トリガー guard_organizations_plan_value で、owner / admin の JWT が organizations.plan を ORG_PLAN_VALUES の外
+ *     (有料の plan_key・行の無い値・NULL) へ変えるのを拒む (service_role の書き込みは止めない)
  *   - ai_plan_feature_caps: free は究極モード 0・画像の作成 0・自動の料理画像 0・献立の作成 3。有料は究極モード 2 / 2 / 3・献立の作成 10 / 10 / 15
  *   - consume_ai_usage_at: 上限に数えない機能の枝より前に、プラン × 機能の行を見る (0 = そのプランでは使えない = plan_locked)
  *   - consume_ai_usage_capped_at: 行のあるプランは引数の上限 (環境変数の既定) を使わず行の値で判定する
@@ -95,6 +97,8 @@ let orgId: string | null = null;
 /** organizations.plan に書ける値ごとの組織 (ORG_PLAN 以外。同じ持ち主の組織。後片付けで持ち主より先に消す) */
 const orgIdByPlan = new Map<OrgPlanValue, string>();
 let orgOwnerId: string | null = null;
+/** owner / admin の JWT で plan を書き換えてみる組織 (ほかのテストの組織の plan を動かさないため別にする) */
+let planGuardOrgId: string | null = null;
 
 interface TestUser {
   userId: string;
@@ -204,6 +208,13 @@ beforeAll(async () => {
     if (planOrgError || !planOrg) throw new Error(`organizations (${plan}): ${planOrgError?.message}`);
     orgIdByPlan.set(plan, planOrg.id as string);
   }
+  const { data: guardOrg, error: guardOrgError } = await srAdmin
+    .from('organizations')
+    .insert({ name: `plan-caps guard org ${TS}`, plan: ORG_PLAN, owner_id: orgOwnerId })
+    .select('id')
+    .single();
+  if (guardOrgError || !guardOrg) throw new Error(`organizations (plan guard): ${guardOrgError?.message}`);
+  planGuardOrgId = guardOrg.id as string;
 });
 
 afterAll(async () => {
@@ -226,6 +237,10 @@ afterAll(async () => {
   if (orgIdByPlan.size > 0) {
     const { error } = await srAdmin.from('organizations').delete().in('id', [...orgIdByPlan.values()]);
     if (error) failures.push(`organizations (plan ごと): ${error.message}`);
+  }
+  if (planGuardOrgId) {
+    const { error } = await srAdmin.from('organizations').delete().eq('id', planGuardOrgId);
+    if (error) failures.push(`organizations (plan guard): ${error.message}`);
   }
   if (orgOwnerId) {
     try {
@@ -439,5 +454,84 @@ describe('billing/03 §6.5: ai_plan_feature_daily_cap (数えない読み取り)
       { plan_key: 'free', feature: 'menu_generation', daily_cap: MENU_GENERATION_CAP.free },
       { plan_key: 'free', feature: 'menu_generation_ultimate', daily_cap: ULTIMATE_CAP.free },
     ]);
+  });
+});
+
+describe('#1912 段 A の整合ゲートの指摘: owner / admin の JWT による organizations.plan の直接の書き込み', () => {
+  /** ORG_PLAN_VALUES の外の値: 有料の plan_key (支払い無しで有料の上限になる)・free・組織の plan_key (アプリは書かない)・行の無い値 */
+  const NOT_ALLOWED: ReadonlyArray<string | null> = ['pro', 'family_basic', 'family_pro', 'free', 'org_pro', 'not-a-plan', null];
+
+  async function createOrgStaff(label: string, role: 'owner' | 'admin'): Promise<TestUser> {
+    const user = await createUser(label, { withJwt: true });
+    const { error } = await srAdmin.from('user_profiles').update({ organization_id: planGuardOrgId, org_role: role }).eq('id', user.userId);
+    if (error) throw new Error(`user_profiles.org_role ${label}: ${error.message}`);
+    return user;
+  }
+
+  async function planOf(organizationId: string): Promise<string | null> {
+    const { data, error } = await srAdmin.from('organizations').select('plan').eq('id', organizationId).single();
+    if (error || !data) throw new Error(`organizations.plan: ${error?.message}`);
+    return (data as { plan: string | null }).plan;
+  }
+
+  async function setPlanAsService(plan: string): Promise<void> {
+    const { error } = await srAdmin.from('organizations').update({ plan }).eq('id', planGuardOrgId!);
+    if (error) throw new Error(`organizations.plan (service_role) ${plan}: ${error.message}`);
+  }
+
+  it('an owner or admin cannot PATCH organizations.plan to a value outside ORG_PLAN_VALUES (ORG_PLAN_NOT_ALLOWED, 42501), the plan stays, and a member is still judged by the organization limit', async () => {
+    await setPlanAsService(ORG_PLAN);
+    const owner = await createOrgStaff('guard-owner', 'owner');
+    const admin = await createOrgStaff('guard-admin', 'admin');
+    for (const staff of [owner, admin]) {
+      for (const plan of NOT_ALLOWED) {
+        const { data, error } = await asUser(staff.jwt!).from('organizations').update({ plan }).eq('id', planGuardOrgId!).select('plan');
+        expect(error?.code, String(plan)).toBe('42501');
+        expect(error?.message, String(plan)).toBe('ORG_PLAN_NOT_ALLOWED');
+        expect(data, String(plan)).toBeNull();
+        expect(await planOf(planGuardOrgId!), String(plan)).toBe(ORG_PLAN);
+      }
+    }
+
+    // 拒んだあとも、メンバーは組織の上限 (有料の 30 / 50 でも free の 3 でもない) で判定される
+    const member = await createOrgMember('guard-member', planGuardOrgId);
+    expect(await consume(member.userId, 'photo_analysis')).toMatchObject({ allowed: true, plan: ORG_PLAN, limit: PRE_MIGRATION_FREE_LIMIT, used: 1 });
+  });
+
+  it('an owner or admin can still PATCH organizations.plan to every value in ORG_PLAN_VALUES (the org settings path), and an UPDATE that keeps the plan is not stopped', async () => {
+    await setPlanAsService(ORG_PLAN);
+    const owner = await createOrgStaff('allow-owner', 'owner');
+    const admin = await createOrgStaff('allow-admin', 'admin');
+    for (const staff of [owner, admin]) {
+      // 今の値と違う値から順に書く (同じ値だとトリガーの枝を通らない)。最後に ORG_PLAN に戻す
+      const order = [...ORG_PLAN_VALUES.filter((plan) => plan !== ORG_PLAN), ORG_PLAN];
+      for (const plan of order) {
+        const { data, error } = await asUser(staff.jwt!).from('organizations').update({ plan }).eq('id', planGuardOrgId!).select('plan');
+        expect(error, plan).toBeNull();
+        expect(data, plan).toEqual([{ plan }]);
+      }
+    }
+
+    // service_role はトリガーに止められない (運営の作業・フィクスチャ)。その値のまま plan を書く UPDATE と、plan を書かない UPDATE は
+    // ログインした利用者でも通る (値を変えていないので)
+    await setPlanAsService('org_pro');
+    expect(await planOf(planGuardOrgId!)).toBe('org_pro');
+    const same = await asUser(owner.jwt!).from('organizations').update({ plan: 'org_pro' }).eq('id', planGuardOrgId!).select('plan');
+    expect(same.error).toBeNull();
+    expect(same.data).toEqual([{ plan: 'org_pro' }]);
+    const rename = await asUser(owner.jwt!).from('organizations').update({ name: `plan-caps guard org renamed ${TS}` }).eq('id', planGuardOrgId!).select('plan');
+    expect(rename.error).toBeNull();
+    expect(rename.data).toEqual([{ plan: 'org_pro' }]);
+    await setPlanAsService(ORG_PLAN);
+  });
+
+  it('a signed-in user cannot INSERT an organization with a paid plan (no INSERT policy for authenticated)', async () => {
+    const user = await createUser('guard-insert', { withJwt: true });
+    const { data, error } = await asUser(user.jwt!)
+      .from('organizations')
+      .insert({ name: `plan-caps guard insert ${TS}`, plan: 'pro', owner_id: user.userId })
+      .select('id');
+    expect(error?.code).toBe('42501');
+    expect(data).toBeNull();
   });
 });

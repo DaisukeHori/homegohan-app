@@ -7,14 +7,22 @@
  * plan_type = 'org' の行だけで、アプリが書ける 'premium'・'enterprise' が漏れていた (行の無いプランは free の行 = 3 で判定される)。
  * 20261021110000_org_plan_ai_daily_limits.sql がその 2 つの行を足した。
  *
+ * organizations.plan を書く経路は 3 つ: a. 運営の組織の作成 (service_role)・b. 組織の設定 (owner / admin の JWT)・
+ * c. owner / admin の JWT で PostgREST から直接 UPDATE (RLS organizations_update_admin。アプリの Zod を通らない)。
+ * a・b はアプリの Zod が ORG_PLAN_VALUES に限り、b・c は同じ migration のトリガー guard_organizations_plan_value が
+ * ORG_PLAN_VALUES に限る (c で有料の plan_key や行の無い値を書けないようにする)。
+ *
  * ここで確かめること:
- *   1. organizations.plan の書き手 (運営の組織の作成・組織の設定・運営の画面の選択肢) が、どれも src/lib/org-plans.ts の
+ *   1. アプリの書き手 (運営の組織の作成・組織の設定・運営の画面の選択肢) が、どれも src/lib/org-plans.ts の
  *      ORG_PLAN_VALUES を使い、別の一覧を持たない。9 種の OrgPlanKeySchema (書き手が使っていない) を書き手に使わせない
  *   2. ORG_PLAN_DEFAULT は organizations.plan の列の既定と同じ
  *   3. ORG_PLAN_VALUES のすべての値に、migration が ai_daily_limits の行を作り、その値は組織の上限 (10) である
  *      (値の一覧はコードの定義 ORG_PLAN_VALUES から読む。値を足したら、同じ PR で行を足す migration も要る)
  *   4. 関数の本体の外で ai_daily_limits を UPDATE / DELETE する migration は free の行だけを触る (組織の行を後から変えない)
- *   5. 戻し口は、足した行のうち運営が画面で変えていない (updated_by IS NULL) ものだけを消す
+ *   5. 戻し口は、トリガーとトリガー関数を消し、足した行のうち運営が画面で変えていない (updated_by IS NULL) ものだけを消す
+ *   6. トリガー関数が authenticated / anon に許す plan の値は ORG_PLAN_VALUES と同じ集合で、NULL を拒み、
+ *      organizations の BEFORE UPDATE OF plan に付く。ほかの migration はそのトリガー・関数を作り直さない・消さない
+ *      (DB の上の挙動は tests/integration/rls/ai-plan-feature-caps-rpc.test.ts が owner / admin の JWT で確かめる)
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -34,6 +42,10 @@ const PAID_PLANS_MIGRATION = `${MIGRATIONS_DIR}/20261021100000_billing_paid_plan
 const OURS = '20261021110000_org_plan_ai_daily_limits';
 const OUR_MIGRATION = `${MIGRATIONS_DIR}/${OURS}.sql`;
 const OUR_ROLLBACK = `${ROLLBACKS_DIR}/${OURS}.down.sql`;
+
+/** owner / admin の JWT による organizations.plan の直接の UPDATE を ORG_PLAN_VALUES に限るトリガー関数とトリガー (本 migration) */
+const PLAN_GUARD_FUNCTION = 'guard_organizations_plan_value';
+const PLAN_GUARD_TRIGGER = 'trg_guard_organizations_plan_value';
 
 /** 組織の利用者の 1 日の上限 (20261011020000 の free の既定の値。(5a) が組織の plan の値に写した値。設計 §6.5 (5a) で変えない) */
 const ORG_DAILY_LIMIT = 10;
@@ -101,7 +113,7 @@ describe('#1912 段 A の整合ゲートの指摘: organizations.plan に書け�
     expect(new Set(ORG_PLAN_VALUES).size).toBe(ORG_PLAN_VALUES.length);
   });
 
-  it('every writer of organizations.plan uses ORG_PLAN_VALUES and no other file under src spells an organization plan list', () => {
+  it('every app writer of organizations.plan (admin create, org settings, admin screen) uses ORG_PLAN_VALUES and no other file under src spells an organization plan list', () => {
     // 組織の設定 (PUT /api/org/settings) の一覧は ORG_PLAN_VALUES そのもの
     expect(ORG_SETTINGS_PLANS).toBe(ORG_PLAN_VALUES);
 
@@ -204,10 +216,46 @@ describe('#1912 段 A の整合ゲートの指摘: organizations.plan に書け�
     for (const entry of touching) expect(entry).toMatch(/ WHERE plan_key = 'free'$/);
   });
 
-  it('the rollback deletes only the rows the migration added that the operator has not changed (updated_by IS NULL)', () => {
+  it('the latest definition of the plan value trigger function lets authenticated / anon change organizations.plan only to ORG_PLAN_VALUES (rejecting NULL), the trigger fires before UPDATE OF plan, and no migration drops them', () => {
+    const head = `CREATE OR REPLACE FUNCTION public.${PLAN_GUARD_FUNCTION}() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$`;
+    // 値を足すときは後の migration が関数を作り直す。いま効いているのは最後の定義
+    const definers = migrationFiles.filter((file) => squash(stripSqlLineComments(read(`${MIGRATIONS_DIR}/${file}`))).includes(head));
+    expect(definers[0], '最初の定義は本 migration').toBe(`${OURS}.sql`);
+    const latest = definers[definers.length - 1];
+    const flat = squash(stripSqlLineComments(read(`${MIGRATIONS_DIR}/${latest}`)));
+    const at = flat.indexOf(head);
+    const body = flat.slice(at + head.length, flat.indexOf('END $$', at));
+
+    // 止めるのはログインした利用者と anon が plan を変えるときだけ (service_role・SECURITY DEFINER の中・plan を変えない UPDATE は通す)
+    expect(body).toContain("IF current_user IN ('authenticated', 'anon') AND NEW.plan IS DISTINCT FROM OLD.plan THEN");
+    // 許す値の集合 = ORG_PLAN_VALUES (順序も同じ)。NULL は行が無く free で判定されるので拒む
+    const allowed = body.match(/IF NEW\.plan IS NULL OR NEW\.plan NOT IN \(([^)]*)\) THEN RAISE EXCEPTION 'ORG_PLAN_NOT_ALLOWED' USING ERRCODE = '42501'; END IF;/);
+    expect(allowed, '許す値の条件').not.toBeNull();
+    const allowedValues = [...(allowed?.[1] ?? '').matchAll(/'([^']*)'/g)].map((match) => match[1]);
+    expect(allowedValues).toEqual([...ORG_PLAN_VALUES]);
+    expect(body).toContain('RETURN NEW;');
+
+    const statements = statementsOf(OUR_MIGRATION);
+    expect(statements).toContain(`REVOKE ALL ON FUNCTION public.${PLAN_GUARD_FUNCTION}() FROM PUBLIC, anon, authenticated, service_role`);
+    expect(statements).toContain(
+      `CREATE OR REPLACE TRIGGER ${PLAN_GUARD_TRIGGER} BEFORE UPDATE OF plan ON public.organizations FOR EACH ROW EXECUTE FUNCTION public.${PLAN_GUARD_FUNCTION}()`,
+    );
+
+    // migration がトリガー・関数を消すと、ログインした利用者の書き込みがまた値を限られなくなる (消すのは戻し口だけ)
+    const dropping = migrationFiles.filter((file) =>
+      statementsOf(`${MIGRATIONS_DIR}/${file}`).some(
+        (statement) => /^DROP (TRIGGER|FUNCTION)\b/i.test(statement) && (statement.includes(PLAN_GUARD_FUNCTION) || statement.includes(PLAN_GUARD_TRIGGER)),
+      ),
+    );
+    expect(dropping).toEqual([]);
+  });
+
+  it('the rollback drops the plan value trigger and its function, and deletes only the rows the migration added that the operator has not changed (updated_by IS NULL)', () => {
     const statements = statementsOf(OUR_ROLLBACK);
     expect(statements).toEqual([
       "SET LOCAL lock_timeout = '10s'",
+      `DROP TRIGGER IF EXISTS ${PLAN_GUARD_TRIGGER} ON public.organizations`,
+      `DROP FUNCTION IF EXISTS public.${PLAN_GUARD_FUNCTION}()`,
       "DELETE FROM public.ai_daily_limits AS l WHERE l.updated_by IS NULL AND l.plan_key IN ('premium', 'enterprise')",
     ]);
     // 戻す行の集合は、足した行の集合と同じ
