@@ -37,7 +37,7 @@ const LEGAL_SALE_ROWS_PUBLISHED_ON = '2026-10-22';
  */
 const LEGAL_TABLE_REVISION = {
   updatedOn: '2026-10-22',
-  tableSha256: 'PENDING_FINGERPRINT',
+  tableSha256: '257b74f2fd3a3a08626391f6973034ff165a8362d1a20a4a8246e66d1a5444a8',
 } as const;
 
 /** HTML の文字の実体参照を戻す (renderToStaticMarkup が書く 5 つ。&amp; は最後に戻す) */
