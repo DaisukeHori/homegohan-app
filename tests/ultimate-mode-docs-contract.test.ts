@@ -170,6 +170,18 @@ describe('究極モードの上限を書いた文は、プランの行 (ai_plan_
     expect(body).toContain('行の無いプラン');
   });
 
+  it('supabase/functions/README.md の AI の上限の段落は、行のあるプランは行の値・既定は行の無いプランにだけ効くと書く', () => {
+    const paragraph = sliceBetween(
+      read('supabase/functions/README.md'),
+      'AI を使う処理は、利用回数を数え',
+      '\n',
+      'supabase/functions/README.md',
+    );
+    expect(paragraph).toContain('ai_plan_feature_caps');
+    expect(paragraph).toContain('行の無いプラン');
+    expect(paragraph).toContain(AI_ULTIMATE_MODE_DAILY_LIMIT_ENV);
+  });
+
   it.each(OPENING_TEST_HEADERS)('%s に、#1142 の時点の書き方 (全員が使える・値を DB に置かない) が残っていない', (file) => {
     const source = read(file);
     for (const phrase of STALE_ULTIMATE_PHRASES) {
