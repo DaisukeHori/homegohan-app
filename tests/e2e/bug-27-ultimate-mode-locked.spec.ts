@@ -21,9 +21,46 @@
  *
  * 注: 実際の LLM 生成・DB 書き込みは行わない。究極モードは通常より AI の呼び出しが多いため、
  *     生成 API はモックして、送られた内容だけを検証する。
+ *
+ * 有料プランで使える (billing/03 §10.3)。この spec は有料の利用者で確かめる:
+ *   無料プランは ai_plan_feature_caps の menu_generation_ultimate が 0 で、モーダルのスイッチに錠が掛かる
+ *   (錠の見た目は src/components/ai-assistant/__tests__/V4GenerateModal-ultimate-mode.test.ts のテスト 103)。
+ *   各 test の利用者には、最初に pro を手動付与する (billing/03 §16.1 の bug-27 の行。期待は変えない)。
  */
-import { test, expect } from "./fixtures/fresh-user";
+import {
+  test as freshUserTest,
+  expect,
+  cleanupFreshUser,
+  createFreshUser,
+  getAdminClient,
+  injectSession,
+  upsertUserProfile,
+} from "./fixtures/fresh-user";
 import type { Locator, Page, Route } from "@playwright/test";
+import { E2E_PAID_PERSONAL_PLAN_KEY, grantManualPlanForE2e } from "./helpers/billing-plan";
+import { grantE2eAiConsent } from "../../scripts/lib/e2e-ai-consent";
+
+/**
+ * 有料の利用者: fresh-user の regularUser と同じ作り方 (テストごとに作る・AI の提供の同意を記録・roles = ['user'] と初期設定の完了・
+ * セッションの注入・終わったら削除) に、最初に pro の手動付与を足したもの (w5-3 の paidRegularUser と同じ)
+ */
+const test = freshUserTest.extend<{ paidRegularUser: Page }>({
+  paidRegularUser: async ({ page, aiConsentGranted }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, { emailPrefix: "e2e-fresh-paid" });
+    try {
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
+      await upsertUserProfile(user.id, { nickname: "E2E Paid User", roles: ["user"] });
+      // 手動付与は user_profiles の行が要るので、プロファイルの後に呼ぶ
+      await grantManualPlanForE2e(user.id, E2E_PAID_PERSONAL_PLAN_KEY);
+      await injectSession(page, user.email);
+      await use(page);
+    } finally {
+      // 契約の行は利用者の削除で CASCADE で消える
+      await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+});
 
 /** 生成 API のモックが返す、実在しない requestId */
 const FAKE_REQUEST_ID = "00000000-0000-4444-8888-000000001142";
@@ -86,9 +123,9 @@ async function startSingleDayGeneration(modal: Locator) {
   await modal.getByRole("button", { name: "献立を生成", exact: true }).click();
 }
 
-test.describe("究極モードは全員に開放されている (#1142)", () => {
-  test("スイッチが操作でき、「Premium」「準備中」の表示も alert も無い", async ({ regularUser }) => {
-    const page = regularUser;
+test.describe("究極モードは有料プランで操作できる (#1142・billing/03 §10.3)", () => {
+  test("スイッチが操作でき、「Premium」「準備中」の表示も alert も無い", async ({ paidRegularUser }) => {
+    const page = paidRegularUser;
 
     // alert が出たら記録する (以前は押すと「Premium プラン準備中です」の alert が出た)
     const dialogMessages: string[] = [];
@@ -118,8 +155,8 @@ test.describe("究極モードは全員に開放されている (#1142)", () => 
     expect(dialogMessages, "究極モードを押しても alert は出ない").toEqual([]);
   });
 
-  test("ON にして生成すると、生成 API に ultimateMode: true が送られる", async ({ regularUser }) => {
-    const page = regularUser;
+  test("ON にして生成すると、生成 API に ultimateMode: true が送られる", async ({ paidRegularUser }) => {
+    const page = paidRegularUser;
     const requestBodies = await mockGenerateApi(page);
 
     const { modal, toggle } = await openAssistantModal(page);
@@ -134,8 +171,8 @@ test.describe("究極モードは全員に開放されている (#1142)", () => 
     expect(requestBodies[0].targetSlots).toHaveLength(3);
   });
 
-  test("触らずに生成すると、生成 API には ultimateMode: false が送られる (既定は OFF)", async ({ regularUser }) => {
-    const page = regularUser;
+  test("触らずに生成すると、生成 API には ultimateMode: false が送られる (既定は OFF)", async ({ paidRegularUser }) => {
+    const page = paidRegularUser;
     const requestBodies = await mockGenerateApi(page);
 
     const { modal, toggle } = await openAssistantModal(page);
@@ -147,8 +184,8 @@ test.describe("究極モードは全員に開放されている (#1142)", () => 
     expect(requestBodies[0].ultimateMode).toBe(false);
   });
 
-  test("モーダルを閉じて開き直すと、究極モードは OFF に戻る", async ({ regularUser }) => {
-    const page = regularUser;
+  test("モーダルを閉じて開き直すと、究極モードは OFF に戻る", async ({ paidRegularUser }) => {
+    const page = paidRegularUser;
 
     const { toggle } = await openAssistantModal(page);
     await toggle.click();

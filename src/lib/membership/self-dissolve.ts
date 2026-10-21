@@ -26,6 +26,33 @@ function selfDissolveBody(scope: MembershipScope, scopeId: string): Record<strin
   return scope === 'family' ? { family_id: scopeId, confirm: true } : { organization_id: scopeId, confirm: true };
 }
 
+/**
+ * 解散の区画 (SelfDissolveSection) を出す画面。家族プランの解約の案内は、その画面の利用者が開ける画面を名指す (開けない画面を案内しない)。
+ *   - settings: メンバーシップ設定 (/settings/membership)。Web の契約は「プランとお支払い」(/account/billing) から解約できる
+ *   - frozen: 凍結中の画面 (/frozen/account)。middleware が /frozen と /contact 以外を /frozen へ差し戻すので /account/billing は開けない。
+ *     凍結中の解約は「有料プランの解約・お支払い」(/frozen/billing。billing/01 §10.5) から
+ *   - legal_consent: 同意の前の画面 (/legal-consent/account)。/account/billing は同意の画面へ回される。Web の契約はお問い合わせから
+ *     依頼を受けて運営が解約する (billing/03 §0.5 Q-15・利用規約第24条)
+ */
+export const SELF_DISSOLVE_SURFACES = ['settings', 'frozen', 'legal_consent'] as const;
+export type SelfDissolveSurface = (typeof SELF_DISSOLVE_SURFACES)[number];
+/** 退会と書き出しの枠 (AccountSelfServicePanel) が出す画面 (設定画面は使わない) */
+export type AccountSelfServiceSurface = Exclude<SelfDissolveSurface, 'settings'>;
+
+/** 家族プランの契約が解散しても続くことの、文の頭 (どの画面でも同じ) */
+const FAMILY_PLAN_CONTINUES_HEAD = '家族プランをご契約の場合、家族グループを解散しても契約は続きます。';
+
+/**
+ * 家族グループを解散しても、代表者の家族プランの契約 (personal_subscriptions) は続く (billing/03。解散は契約を止めない)。
+ * 解約の手段 (Web の契約は課金の画面 / お問い合わせ、App Store / Google Play の契約はストアの定期購読の管理) を、解散の確認に出す。
+ * Web の契約の手段は画面ごとに違う (SelfDissolveSurface の説明)
+ */
+export const FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE: Readonly<Record<SelfDissolveSurface, string>> = {
+  settings: `${FAMILY_PLAN_CONTINUES_HEAD}解約は、Web でお申し込みの方は「プランとお支払い」の画面から、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。`,
+  frozen: `${FAMILY_PLAN_CONTINUES_HEAD}解約は、Web でお申し込みの方は「有料プランの解約・お支払い」の画面から、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。`,
+  legal_consent: `${FAMILY_PLAN_CONTINUES_HEAD}解約は、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。Web でお申し込みの方は、お問い合わせからご依頼いただければ、当社が解約の手続を行います。`,
+};
+
 /** 画面の文 (家族 / 組織)。作りかけ・先送りを示す語 (R-12) は書かない */
 export const SELF_DISSOLVE_COPY: Readonly<
   Record<
@@ -70,6 +97,17 @@ export const SELF_DISSOLVE_COPY: Readonly<
     done: '組織を解散しました。',
   },
 };
+
+/**
+ * 解散の区画に出す効果の箇条書き。家族は、SELF_DISSOLVE_COPY.family.effects の最後の行 (取り消せないこと) の手前に、
+ * 家族プランの契約が続くことの 1 行 (画面ごとの解約の手段) を入れる。組織は SELF_DISSOLVE_COPY.organization.effects のまま
+ */
+export function selfDissolveEffects(scope: MembershipScope, surface: SelfDissolveSurface): readonly string[] {
+  const { effects } = SELF_DISSOLVE_COPY[scope];
+  if (scope !== 'family') return effects;
+  // 取り消せないことの行は、確認の最後に読む行として最後に残す
+  return [...effects.slice(0, -1), FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE[surface], ...effects.slice(-1)];
+}
 
 /** 凍結中の画面で、解散の区画の上に出す文 (サーバーの 409 の文に続ける。AccountSelfServicePanel の deleteBlockedGuidance) */
 export const FROZEN_DISSOLVE_GUIDANCE = '凍結中は譲渡の操作ができません。下の「解散する」で家族グループ・組織を解散すると、退会できます。';

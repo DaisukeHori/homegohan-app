@@ -496,3 +496,51 @@ describe('AccountSettingsPage — ログインが切れていて退会できな�
     expect(failures.map(([title, message]) => [title, message])).toEqual([['ログインが必要です', ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE]]);
   });
 });
+
+describe('AccountSettingsPage — 退会の確認とストアの購読 (billing/03 §10.4・S35)', () => {
+  it('the アカウント削除 confirmation shows the irreversible text followed by STORE_SUBSCRIPTION_DELETION_NOTICE with キャンセル / 定期購読の管理を開く / 削除, and 定期購読の管理を開く opens STORE_SUBSCRIPTION_MANAGEMENT_URL for the platform (play_store on android, app_store otherwise) without calling the delete API', async () => {
+    const { Linking, Platform } = require('react-native');
+    const { STORE_SUBSCRIPTION_DELETION_NOTICE, STORE_SUBSCRIPTION_MANAGEMENT_URL } = require('@homegohan/shared');
+    const openURLSpy = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    // この it の中だけ、確認のダイアログで「定期購読の管理を開く」を押す
+    alertSpy.mockImplementation((title, _message, buttons) => {
+      if (title === 'アカウント削除') {
+        buttons?.find((b) => b.text === '定期購読の管理を開く')?.onPress?.();
+      }
+    });
+    try {
+      render(<AccountSettingsPage />);
+      fireEvent.press(screen.getByTestId('account-delete-button'));
+
+      await waitFor(() => {
+        expect(openURLSpy).toHaveBeenCalledTimes(1);
+      });
+      const confirmCalls = alertSpy.mock.calls.filter(([title]) => title === 'アカウント削除');
+      expect(confirmCalls).toHaveLength(1);
+      const [, message, buttons] = confirmCalls[0];
+      expect(message).toBe(`アカウントとデータを削除します。取り消しできません。\n\n${STORE_SUBSCRIPTION_DELETION_NOTICE}`);
+      expect((buttons ?? []).map((b) => b.text)).toEqual(['キャンセル', '定期購読の管理を開く', '削除']);
+
+      const expectedStore = Platform.OS === 'android' ? 'play_store' : 'app_store';
+      expect(openURLSpy).toHaveBeenCalledWith(STORE_SUBSCRIPTION_MANAGEMENT_URL[expectedStore]);
+      // 退会はしない (削除の API を呼ばず、ログアウトもしない)。ボタンは押せる状態に戻る
+      expect(mockPost).not.toHaveBeenCalledWith('/api/account/delete', expect.anything());
+      expect(mockSignOut).not.toHaveBeenCalled();
+      expect(mockReplace).not.toHaveBeenCalled();
+      // 多重実行のガードが戻っているので、もう一度押すと確認のダイアログがまた出る
+      fireEvent.press(screen.getByTestId('account-delete-button'));
+      await waitFor(() => {
+        expect(openURLSpy).toHaveBeenCalledTimes(2);
+      });
+      expect(alertSpy.mock.calls.filter(([title]) => title === 'アカウント削除')).toHaveLength(2);
+      expect(mockPost).not.toHaveBeenCalledWith('/api/account/delete', expect.anything());
+    } finally {
+      openURLSpy.mockRestore();
+      alertSpy.mockImplementation((title, _message, buttons) => {
+        if (title === 'アカウント削除') {
+          buttons?.find((b) => b.text === '削除')?.onPress?.();
+        }
+      });
+    }
+  });
+});

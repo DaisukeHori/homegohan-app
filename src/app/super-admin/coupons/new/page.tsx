@@ -10,6 +10,9 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { todayLocal } from '@/lib/date-utils';
+import { PLAN_CATALOG, formatJpy, planDisplayName, type PaidPlanKey } from '@homegohan/shared';
+
+const COUPON_PREVIEW_PLAN_KEY: PaidPlanKey = 'pro'; // 粗利のプレビューの基準 = 個人 Pro の月額 (billing/03 §8.9)
 
 // Stripe 手数料: 3.6% + ¥40 (operator/04-plan-management.md §4.1 §15.12)
 function calcGrossMargin(priceJpy: number, discountPercent: number = 0): number {
@@ -35,8 +38,8 @@ export default function CouponNewPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
 
-  // 粗利プレビュー (典型的な Pro 月額 ¥980 で計算)
-  const typicalPrice = 980;
+  // 粗利プレビュー (個人 Pro の月額で計算。価格は公開の価格の写し PLAN_CATALOG から読む)
+  const typicalPrice = PLAN_CATALOG.find((p) => p.plan_key === COUPON_PREVIEW_PLAN_KEY)?.monthly_price_jpy ?? 0;
   const grossMarginPreview = discountType === 'percentage' && discountValue
     ? calcGrossMargin(typicalPrice, Number(discountValue))
     : null;
@@ -173,7 +176,7 @@ export default function CouponNewPage() {
           {/* 粗利プレビュー (operator/04-plan-management.md §4.1) */}
           {grossMarginPreview !== null && (
             <div className="mt-2 bg-slate-50 border border-slate-200 rounded px-3 py-2 text-xs text-slate-600">
-              実質粗利プレビュー (Pro ¥980 基準): <strong>¥{grossMarginPreview.toLocaleString()}</strong>
+              実質粗利プレビュー ({planDisplayName(COUPON_PREVIEW_PLAN_KEY)} {formatJpy(typicalPrice)} 基準): <strong>¥{grossMarginPreview.toLocaleString()}</strong>
               <span className="text-slate-400 ml-2">(Stripe 手数料 3.6%+¥40 控除後)</span>
             </div>
           )}

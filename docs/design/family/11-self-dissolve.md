@@ -1199,6 +1199,33 @@ function selfDissolveBody(scope: MembershipScope, scopeId: string): Record<strin
   return scope === 'family' ? { family_id: scopeId, confirm: true } : { organization_id: scopeId, confirm: true };
 }
 
+/**
+ * 解散の区画 (SelfDissolveSection) を出す画面。家族プランの解約の案内は、その画面の利用者が開ける画面を名指す (開けない画面を案内しない)。
+ *   - settings: メンバーシップ設定 (/settings/membership)。Web の契約は「プランとお支払い」(/account/billing) から解約できる
+ *   - frozen: 凍結中の画面 (/frozen/account)。middleware が /frozen と /contact 以外を /frozen へ差し戻すので /account/billing は開けない。
+ *     凍結中の解約は「有料プランの解約・お支払い」(/frozen/billing。billing/01 §10.5) から
+ *   - legal_consent: 同意の前の画面 (/legal-consent/account)。/account/billing は同意の画面へ回される。Web の契約はお問い合わせから
+ *     依頼を受けて運営が解約する (billing/03 §0.5 Q-15・利用規約第24条)
+ */
+export const SELF_DISSOLVE_SURFACES = ['settings', 'frozen', 'legal_consent'] as const;
+export type SelfDissolveSurface = (typeof SELF_DISSOLVE_SURFACES)[number];
+/** 退会と書き出しの枠 (AccountSelfServicePanel) が出す画面 (設定画面は使わない) */
+export type AccountSelfServiceSurface = Exclude<SelfDissolveSurface, 'settings'>;
+
+/** 家族プランの契約が解散しても続くことの、文の頭 (どの画面でも同じ) */
+const FAMILY_PLAN_CONTINUES_HEAD = '家族プランをご契約の場合、家族グループを解散しても契約は続きます。';
+
+/**
+ * 家族グループを解散しても、代表者の家族プランの契約 (personal_subscriptions) は続く (billing/03。解散は契約を止めない)。
+ * 解約の手段 (Web の契約は課金の画面 / お問い合わせ、App Store / Google Play の契約はストアの定期購読の管理) を、解散の確認に出す。
+ * Web の契約の手段は画面ごとに違う (SelfDissolveSurface の説明)
+ */
+export const FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE: Readonly<Record<SelfDissolveSurface, string>> = {
+  settings: `${FAMILY_PLAN_CONTINUES_HEAD}解約は、Web でお申し込みの方は「プランとお支払い」の画面から、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。`,
+  frozen: `${FAMILY_PLAN_CONTINUES_HEAD}解約は、Web でお申し込みの方は「有料プランの解約・お支払い」の画面から、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。`,
+  legal_consent: `${FAMILY_PLAN_CONTINUES_HEAD}解約は、App Store / Google Play でお申し込みの方は各ストアの定期購読の管理から行ってください。Web でお申し込みの方は、お問い合わせからご依頼いただければ、当社が解約の手続を行います。`,
+};
+
 /** 画面の文 (家族 / 組織)。作りかけ・先送りを示す語 (R-12) は書かない */
 export const SELF_DISSOLVE_COPY: Readonly<
   Record<
@@ -1243,6 +1270,17 @@ export const SELF_DISSOLVE_COPY: Readonly<
     done: '組織を解散しました。',
   },
 };
+
+/**
+ * 解散の区画に出す効果の箇条書き。家族は、SELF_DISSOLVE_COPY.family.effects の最後の行 (取り消せないこと) の手前に、
+ * 家族プランの契約が続くことの 1 行 (画面ごとの解約の手段) を入れる。組織は SELF_DISSOLVE_COPY.organization.effects のまま
+ */
+export function selfDissolveEffects(scope: MembershipScope, surface: SelfDissolveSurface): readonly string[] {
+  const { effects } = SELF_DISSOLVE_COPY[scope];
+  if (scope !== 'family') return effects;
+  // 取り消せないことの行は、確認の最後に読む行として最後に残す
+  return [...effects.slice(0, -1), FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE[surface], ...effects.slice(-1)];
+}
 
 /** 凍結中の画面で、解散の区画の上に出す文 (サーバーの 409 の文に続ける。AccountSelfServicePanel の deleteBlockedGuidance) */
 export const FROZEN_DISSOLVE_GUIDANCE = '凍結中は譲渡の操作ができません。下の「解散する」で家族グループ・組織を解散すると、退会できます。';
@@ -1659,6 +1697,7 @@ import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection
             scope="organization"
             scopeId={orgInfo.organization_id}
             scopeName={orgInfo.org_name}
+            surface="settings"
             onDissolved={() => handleDissolved('organization')}
             onCancel={() => setDissolveTarget(null)}
             onUnauthorized={() => router.push('/login')}
@@ -1671,6 +1710,7 @@ import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection
             scope="family"
             scopeId={familyInfo.family_id}
             scopeName={familyInfo.family_name}
+            surface="settings"
             onDissolved={() => handleDissolved('family')}
             onCancel={() => setDissolveTarget(null)}
             onUnauthorized={() => router.push('/login')}
@@ -1694,13 +1734,24 @@ import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection
 // 親から id と名前を受け取り、解散の API を呼ぶだけ (設定画面の状態や Supabase の読み取りに依存しない)。
 import { useState } from 'react';
 import type { MembershipScope } from '@/lib/emails/membership/scope-label';
-import { SELF_DISSOLVE_CONFIRM_KEYWORD, SELF_DISSOLVE_COPY, dissolveOwnScope } from '@/lib/membership/self-dissolve';
+import {
+  SELF_DISSOLVE_CONFIRM_KEYWORD,
+  SELF_DISSOLVE_COPY,
+  dissolveOwnScope,
+  selfDissolveEffects,
+  type SelfDissolveSurface,
+} from '@/lib/membership/self-dissolve';
 
 export interface SelfDissolveSectionProps {
   scope: MembershipScope;
   scopeId: string;
   /** 家族グループ名 / 組織名 (見出しに「「山田家」を解散する」の形で出す) */
   scopeName: string;
+  /**
+   * 区画を出す画面 (メンバーシップ設定 / 凍結中の画面 / 同意の前の画面)。家族プランの解約の案内は、その画面の利用者が開ける画面を名指す
+   * (FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE。凍結中・同意の前の人は「プランとお支払い」(/account/billing) を開けない)
+   */
+  surface: SelfDissolveSurface;
   /** 解散が済んだ (200) あと。親が所属を読み直す・次の案内を出す */
   onDissolved: (dissolvedAt: string) => void;
   /** 「キャンセル」。親が区画を閉じる */
@@ -1709,8 +1760,9 @@ export interface SelfDissolveSectionProps {
   onUnauthorized?: () => void;
 }
 
-export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, onCancel, onUnauthorized }: SelfDissolveSectionProps) {
+export function SelfDissolveSection({ scope, scopeId, scopeName, surface, onDissolved, onCancel, onUnauthorized }: SelfDissolveSectionProps) {
   const copy = SELF_DISSOLVE_COPY[scope];
+  const effects = selfDissolveEffects(scope, surface);
   const [keyword, setKeyword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1741,7 +1793,7 @@ export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, on
         「{scopeName}」を解散する
       </h3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
-        {copy.effects.map((line) => (
+        {effects.map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>
@@ -1789,7 +1841,7 @@ export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, on
 
 ### 15.4 退会と書き出しの枠 `src/components/account/AccountSelfServicePanel.tsx` と、それを使う 2 つの画面 (段 B)
 
-凍結中の画面 (`/frozen/account`) と同意の前の画面 (`/legal-consent/account`。cross/20 Q-23) は、書き出しと退会の枠を共通の部品 `AccountSelfServicePanel` に任せている (F-18・F-29)。退会の 409 の分岐はこの部品の中にあるので、解散の区画は部品に 1 か所だけ足し、2 つの画面は 409 の案内の文 (props `deleteBlockedGuidance`) だけを替える。部品の props の形 (`idPrefix`・`deleteBlockedGuidance`・`onDeleted`・`onUnauthorized`) は変えない。
+凍結中の画面 (`/frozen/account`) と同意の前の画面 (`/legal-consent/account`。cross/20 Q-23) は、書き出しと退会の枠を共通の部品 `AccountSelfServicePanel` に任せている (F-18・F-29)。退会の 409 の分岐はこの部品の中にあるので、解散の区画は部品に 1 か所だけ足し、2 つの画面は 409 の案内の文 (props `deleteBlockedGuidance`) だけを替える。部品の既存の props (`idPrefix`・`deleteBlockedGuidance`・`onDeleted`・`onUnauthorized`) の形は変えない (#1917)。billing/03 (#1912) で、解散の区画を出す画面 `surface` (`AccountSelfServiceSurface` = `'frozen'` / `'legal_consent'`。§13.4) を props に足し、解散の区画 (`SelfDissolveSection` の `surface`) へそのまま渡す。家族プランの解約の案内 (`FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE`) が、その画面の利用者が開ける画面を名指すようにするため (凍結中の人は `/account/billing` を開けず `/frozen/billing` から、同意の前の人は Web の契約をお問い合わせから解約する。billing/03 §0.5 Q-15)。
 
 | 箇所 | 現行 | 設計後 |
 |---|---|---|
@@ -1797,7 +1849,8 @@ export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, on
 | 部品の描画 (`:114-167`) | 書き出しの枠と退会の枠 | 退会の枠の `</section>` の下に、`blockedScope` があるときだけ `SelfDissolveSection` (§15.2。`onCancel` は渡さない・`onUnauthorized` は部品の props のもの)。解散が済む (`onDissolved`) と `blockedScope` を `null` にし、`deleteNotice` を `{ tone: "info", text: SELF_DISSOLVED_NEXT_STEP }` にする。退会の入力欄 (`confirmText`) はそのまま残す |
 | 部品の props `deleteBlockedGuidance` の JSDoc | 「退会できなかった (組織のオーナー・家族の代表者。409) ときに、サーバーの文に続けて出す案内」 | 「退会できなかった (組織のオーナー・家族の代表者。409) ときに、サーバーの文に続けて出す案内。その場に解散の区画を出すときの文 (立場の id が読めなかったときは BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出す)」 |
 | 部品の冒頭のコメント (`:10-12`) | 「どちらの画面も、呼ぶ API は退会 (POST /api/account/delete) と書き出し (GET /api/account/export) の 2 つだけ (凍結中も・同意の前も止めない API。…の両方にある)。」 | 「どちらの画面も、呼ぶ API は退会 (POST /api/account/delete) と書き出し (GET /api/account/export) と、退会が 409 で止まったときの家族グループ / 組織の解散 (POST /api/family/dissolve・POST /api/org/dissolve。#1917 docs/design/family/11-self-dissolve.md §15.4) の 4 つだけ (凍結中も・同意の前も止めない API。…の両方にある)。」(「…」の部分は今の文のまま) |
-| 凍結中の画面 `src/app/frozen/account/page.tsx` の `DELETE_BLOCKED_GUIDANCE` (`:16-18`) | 「凍結中は、オーナー・代表者の譲渡や解散の操作ができません。お手数ですが、サポートにお問い合わせください。」 | 定数を消し、`deleteBlockedGuidance={FROZEN_DISSOLVE_GUIDANCE}` (§13.4。`@/lib/membership/self-dissolve` から import) を渡す |
+| 凍結中の画面 `src/app/frozen/account/page.tsx` の `DELETE_BLOCKED_GUIDANCE` (`:16-18`) | 「凍結中は、オーナー・代表者の譲渡や解散の操作ができません。お手数ですが、サポートにお問い合わせください。」 | 定数を消し、`deleteBlockedGuidance={FROZEN_DISSOLVE_GUIDANCE}` (§13.4。`@/lib/membership/self-dissolve` から import) を渡す。`surface="frozen"` も渡す (billing/03。#1912) |
+| 同意の前の画面 `src/app/legal-consent/account/AccountWithoutConsent.tsx` の部品の呼び出し | `idPrefix`・`deleteBlockedGuidance`・`onDeleted`・`onUnauthorized` | `surface="legal_consent"` を足す (billing/03。#1912) |
 | 凍結中の画面の冒頭のコメント (`:8`) | 「…のうち退会と書き出しの 2 つだけ。」 | 「…のうち、退会と書き出しと、退会が 409 で止まったときの家族グループ / 組織の解散 (`/api/family/dissolve`・`/api/org/dissolve`。#1917) の 4 つだけ。」 |
 | 同意の前の画面の案内 `LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance` (`packages/shared/src/legal-consent-copy.ts:45-51`) | 「規約に同意する前は、オーナー・代表者の譲渡の操作ができません。規約に同意したうえで譲渡するか、譲渡できる相手がいないときは、お問い合わせフォームからご連絡ください。」 | 「規約に同意する前は、オーナー・代表者の譲渡の操作ができません。下の「解散する」で家族グループ・組織を解散すると、退会できます。規約に同意したうえで譲渡することもできます。」。JSDoc の「譲渡できる相手がいないときはお問い合わせ (利用規約第11条4項・第12条4項)」を「解散の API (/api/family/dissolve・/api/org/dissolve) は同意の許可リストにあり、この画面の 409 の分岐からその場で解散できる (#1917。docs/design/family/11-self-dissolve.md §15.4)」に |
 | `src/app/legal-consent/account/AccountWithoutConsent.tsx` の冒頭のコメント (`:4-5`) | 「…呼ぶ API は退会と書き出しの 2 つだけ (どちらも同意の許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS にある)。」 | 「…呼ぶ API は退会と書き出しと、409 のときの家族グループ / 組織の解散 (#1917) の 4 つだけ (どれも同意の許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS にある)。」 |
@@ -1811,11 +1864,22 @@ export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, on
 // (1) import に足す
 import { SelfDissolveSection } from "@/components/membership/SelfDissolveSection";
 import type { MembershipScope } from "@/lib/emails/membership/scope-label";
-import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from "@/lib/membership/self-dissolve";
+import {
+  BLOCKED_SCOPE_UNKNOWN_GUIDANCE,
+  SELF_DISSOLVED_NEXT_STEP,
+  type AccountSelfServiceSurface,
+} from "@/lib/membership/self-dissolve";
 
 // (2) type Notice の下に足す
 /** 退会を止めている家族グループ / 組織 (409 の本文から読む。解散の区画に渡す。#1917) */
 type BlockedScope = { scope: MembershipScope; id: string; name: string } | null;
+
+// (2b) props に足す (billing/03。#1912。関数の引数の分割代入にも surface を足す)
+  /**
+   * 枠を出す画面 (凍結中の画面 /frozen/account / 同意の前の画面 /legal-consent/account)。解散の区画の家族プランの解約の案内が、
+   * その画面の利用者が開ける画面を名指すように渡す (SelfDissolveSection の surface)
+   */
+  surface: AccountSelfServiceSurface;
 
 // (3) deleteNotice の state の下に足す
 const [blockedScope, setBlockedScope] = useState<BlockedScope>(null);
@@ -1850,6 +1914,7 @@ const [blockedScope, setBlockedScope] = useState<BlockedScope>(null);
           scope={blockedScope.scope}
           scopeId={blockedScope.id}
           scopeName={blockedScope.name}
+          surface={surface}
           onDissolved={handleDissolved}
           onUnauthorized={onUnauthorized}
         />
@@ -2194,7 +2259,7 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 | ファイル | it |
 |---|---|
 | `tests/membership-errors.test.ts` (追加) | `#1917: FAMILY_ALREADY_DISSOLVED / ORG_ALREADY_DISSOLVED が 409 で検出され、ALREADY_IN_FAMILY / ALREADY_IN_ORG に化けない` |
-| `src/__tests__/lib/membership/self-dissolve.test.ts` (新規) | `selfDissolveApiPath: family は /api/family/dissolve、organization は /api/org/dissolve (frozen.ts の定数と同じ値)` / `dissolveOwnScope: 200 なら dissolved と応答の dissolved_at、401 なら unauthorized、4xx と 500 は failed と本文の code から引いた文 (MEMBERSHIP_ERROR_MESSAGES。表に無い code と JSON でない本文は MEMBERSHIP_ERROR_FALLBACK_MESSAGE)、通信の失敗 (fetch が例外) は failed と SELF_DISSOLVE_FAILED_MESSAGE` / `dissolveOwnScope: メンテナンス中の 503 (本文 { error: MAINTENANCE_MESSAGE, code: MAINTENANCE_API_CODE, retryAfter } = maintenanceApiResponse() の本文と同じ形を @homegohan/shared の定数で作る) は failed と MAINTENANCE_MESSAGE (MEMBERSHIP_ERROR_FALLBACK_MESSAGE ではない)。503 でも code の無い本文・知らない code・JSON でない本文は failed と MEMBERSHIP_ERROR_FALLBACK_MESSAGE` / `dissolveOwnScope: 送る本文は { family_id, confirm: true } / { organization_id, confirm: true } で Content-Type は application/json` / `SELF_DISSOLVE_COPY・FROZEN_DISSOLVE_GUIDANCE・SELF_DISSOLVED_NEXT_STEP・BLOCKED_SCOPE_UNKNOWN_GUIDANCE の文に R-12 の 2 語が無く、家族の effects に保存の日数 (DISSOLVED_FAMILY_GROUP_RETENTION_DAYS = LEGAL_FACTS.dissolvedFamilyGroupRetentionDays) が入る` / `組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)` / `SELF_DISSOLVE_CONFIRM_KEYWORD は 解散します` |
+| `src/__tests__/lib/membership/self-dissolve.test.ts` (新規) | `selfDissolveApiPath: family は /api/family/dissolve、organization は /api/org/dissolve (frozen.ts の定数と同じ値)` / `dissolveOwnScope: 200 なら dissolved と応答の dissolved_at、401 なら unauthorized、4xx と 500 は failed と本文の code から引いた文 (MEMBERSHIP_ERROR_MESSAGES。表に無い code と JSON でない本文は MEMBERSHIP_ERROR_FALLBACK_MESSAGE)、通信の失敗 (fetch が例外) は failed と SELF_DISSOLVE_FAILED_MESSAGE` / `dissolveOwnScope: メンテナンス中の 503 (本文 { error: MAINTENANCE_MESSAGE, code: MAINTENANCE_API_CODE, retryAfter } = maintenanceApiResponse() の本文と同じ形を @homegohan/shared の定数で作る) は failed と MAINTENANCE_MESSAGE (MEMBERSHIP_ERROR_FALLBACK_MESSAGE ではない)。503 でも code の無い本文・知らない code・JSON でない本文は failed と MEMBERSHIP_ERROR_FALLBACK_MESSAGE` / `dissolveOwnScope: 送る本文は { family_id, confirm: true } / { organization_id, confirm: true } で Content-Type は application/json` / `SELF_DISSOLVE_COPY・FROZEN_DISSOLVE_GUIDANCE・SELF_DISSOLVED_NEXT_STEP・BLOCKED_SCOPE_UNKNOWN_GUIDANCE の文に R-12 の 2 語が無く、家族の effects に保存の日数 (DISSOLVED_FAMILY_GROUP_RETENTION_DAYS = LEGAL_FACTS.dissolvedFamilyGroupRetentionDays) が入る` / `家族の効果 (selfDissolveEffects) は、どの画面でも、家族プランの契約は解散しても続くことの 1 行を取り消せないことの行の手前に持つ (billing/03)。組織には無い` / `家族プランの解約の案内は、その画面の利用者が開ける画面だけを名指す (凍結中・同意の前の人は「プランとお支払い」(/account/billing) を開けない)` / `組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)` / `SELF_DISSOLVE_CONFIRM_KEYWORD は 解散します` |
 | `src/__tests__/lib/emails/self-dissolve.test.ts` (新規) | `件名は所属先の呼び方 + が解散されました (長い名前は件名だけ切る)。本文に 代表者 / オーナー により解散された旨・個人アカウントが残る旨・問い合わせ先があり、解散した人の名前は無い` / `名前が無い (null) なら宛名はアドレス。scope_name が null なら名前を省いた文面` / `contains_secret を付けない (リンク・トークンを持たない)。template は self_dissolve` |
 | `src/__tests__/api/family/dissolve.test.ts` (新規。`fake-service-role.ts` の形) | `未ログインは 401 NOT_AUTHENTICATED。RPC を呼ばない` / `本文が壊れている・confirm が無い・family_id が UUID でないときは 400 VALIDATION_ERROR。RPC を呼ばない` / `NULL 文字を含む本文は 400 INVALID_CHARACTER (Supabase のクライアントを作らない)` / `RPC の NOT_FAMILY_REPRESENTATIVE は 403、FAMILY_NOT_FOUND は 404、FAMILY_ALREADY_DISSOLVED は 409、40P01 は 409 CONFLICT_RETRY。本文に生のエラー文を入れない` / `RPC の想定外の失敗と、戻り値の形が違うときは internalError (汎用の 500。段階・request_id を本文に出さない)` / `成功: RPC に p_family_id (小文字にそろえた) だけを渡し、200 { data: { family_id, dissolved_at } }。応答に member_user_ids もメールアドレスも入れない` / `成功: RPC が返した member_user_ids の全員 (本人を含む) に 1 通ずつ、家族名つきの文面で送る。宛先は auth.users から引く (先頭 50 件より後ろでも)。user_profiles から email を読まない` / `通知先の解決・送信が失敗しても 200。ログに宛先のアドレスを残さない` / `service_role の client は RPC の成功のあとにだけ作る (401・400・RPC の失敗では作らない)` |
 | `src/__tests__/api/org/dissolve.test.ts` (新規) | 上と同型 (`NOT_ORG_OWNER` / `ORG_NOT_FOUND` / `ORG_ALREADY_DISSOLVED`・`p_organization_id`・組織名つきの文面) + `route は user_profiles の org_role を読まない (判定は RPC)` |
@@ -2232,11 +2297,11 @@ origin/main `2ba5b3b3` では目印が無い (F-28) ので、v2026.1 は公開�
 
 | ファイル | it |
 |---|---|
-| `src/__tests__/components/membership/self-dissolve-section.test.tsx` (新規) | `キーワードが「解散します」と一致するまでボタンは押せない。一致すると押せる` / `押すと dissolveOwnScope を scope と id で 1 回呼び、成功で onDissolved(dissolvedAt) を呼ぶ。送信中はボタンと入力欄が無効` / `失敗は role=alert に文を出し、もう一度押せる` / `401 は onUnauthorized を呼ぶ` / `見出しに所属先の名前、効果の箇条書き (家族は 5 行・組織は 4 行)。文に R-12 の 2 語が無い` / `onCancel があるときだけ「キャンセル」が出る` |
+| `src/__tests__/components/membership/self-dissolve-section.test.tsx` (新規) | `キーワードが「解散します」と一致するまでボタンは押せない。一致すると押せる` / `押すと dissolveOwnScope を scope と id で 1 回呼び、成功で onDissolved(dissolvedAt) を呼ぶ。送信中はボタンと入力欄が無効` / `失敗は role=alert に文を出し、もう一度押せる` / `401 は onUnauthorized を呼ぶ` / `見出しに所属先の名前、効果の箇条書き (家族は 6 行 (家族プランの契約は解散しても続くこと。billing/03 を含む)・組織は 4 行)。文に R-12 の 2 語が無い` / `家族プランの契約が続くことの行は、渡された画面 (surface) の文を出し、ほかの画面の文を出さない。取り消せないことの行は最後のまま` / `onCancel があるときだけ「キャンセル」が出る` |
 | `src/__tests__/app/settings/membership-self-dissolve.test.ts` (新規。`membership-no-org-guidance.test.ts` の形) | `代表者には「代表者を譲渡」「家族グループを解散」が出て、「家族から脱退」は出ない` / `大人には今までどおり「家族から脱退」が出て、解散のボタンは出ない` / `オーナーには「オーナーを譲渡」「組織を解散」が出て、「組織から脱退」は出ない` / `member には今までどおり「組織から脱退」` / `「家族グループを解散」を押すと SelfDissolveSection (家族名つき) が出る。「キャンセル」で閉じる` / `家族の解散が済む (onDissolved) と、区画が閉じ、role=status に「家族グループを解散しました。」が出て、所属家族は「所属していません」・「家族を表示」と共有設定の区画が消える。所属組織は読み直した値のまま出る` / `組織の解散が済むと、所属組織は「所属していません」になり「組織を解散しました。」が出る。所属家族は読み直した値のまま出る` / `解散のあとの読み直しで profile の family_id / organization_id が null なら、familyInfo / orgInfo は null になる (読み直しの問い合わせが 2 回目の getUser と user_profiles を呼ぶ)` / `解散のあとの読み直しが失敗 (例外) しても、解散した所属は「所属していません」のまま (画面全体は読み込み中に戻らない)` |
 | `tests/account-deletion-blocked-message.test.ts` (変更。§13.6・§15.3 と同じコミット) | §21.3.1 の逐語。書き換える it: `409 (%s): 失敗の定型文ではなく、譲渡や解散が先だというサーバーの文を出し、メンバーシップ設定 (譲渡か解散) を開くかを尋ねる (開かなければ留まる)` (`:150-167`) / `409 (%s) で開くと答えたら、メンバーシップ設定 (%s) へ移る。ログアウトはしない` (`:169-180`) / `409 で本文に文が無いときは、定型の案内の文を出す (立場が分かればメンバーシップ設定を開くかも尋ねる)` (`:182`) / `409 で立場が分からない (%s) ときは、理由の文だけを出す (メンバーシップ設定へは案内しない)` (`:190-200`)。追加 `deleteOwnAccount は 409 の本文の family_group / organization の id と名前を scope として持ち帰る (%s)` / `deleteOwnAccount は 409 の本文から立場の id と名前が読めなければ scope を null にする (%s)` |
-| `src/__tests__/app/frozen-account-page.test.tsx` (変更) | `:207` の it (本文に `organization` が無い 409) は名前を `退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE (サポートへ) を出し、解散の区画は出さない。ログアウトしない` に替え、`サポートにお問い合わせください` の検査はそのまま。追加 `退会: 組織のオーナー (409。本文に organization の id と名前) は、サーバーの文と FROZEN_DISSOLVE_GUIDANCE (譲渡はできない・解散すると退会できる) を出し、組織名つきの解散の区画を出す。ログアウトしない` / `退会: 家族の代表者 (409。本文に family_group) は、家族名つきの解散の区画を出す` / `解散の区画で解散すると (POST /api/org/dissolve が 200)、区画が消えて「解散しました。「削除します」と入力して退会を続けてください。」が出る。そのあとの退会は 200 で /login へ` / `:244` の it (この画面が呼ぶ API は FROZEN_ALLOWED_API_PATHS だけ) に、409 → 解散 → 退会の流れを足して 7 本の一覧で通す |
-| `tests/legal-consent-account-page-1901.test.tsx` (変更) | `:225` の it (本文に `family_group` が無い 409) は名前を `退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出し、解散の区画は出さない。ログアウトしない` に替え、期待の文を `${serverMessage} ${BLOCKED_SCOPE_UNKNOWN_GUIDANCE}` に。追加 `退会: 家族の代表者 (409。本文に family_group の id と名前) は、サーバーの文と LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance (解散すると退会できる) を出し、家族名つきの解散の区画を出す。ログアウトしない` / `解散の区画で解散すると (POST /api/family/dissolve が 200)、区画が消えて SELF_DISSOLVED_NEXT_STEP が出る。そのあとの退会は 200 で「退会しました」を出す` / `:252` の it の名前を `この画面が呼ぶ API は、同意の許可リストにある退会・書き出しと、409 のときの家族グループ / 組織の解散の 4 本だけ` に替え、409 → 解散 → 退会の流れを足して、呼んだパスの集合を `/api/account/delete`・`/api/account/export`・`/api/family/dissolve` にし、全部が `isLegalConsentExemptApiPath` で通ることを見る |
+| `src/__tests__/app/frozen-account-page.test.tsx` (変更) | `:207` の it (本文に `organization` が無い 409) は名前を `退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE (サポートへ) を出し、解散の区画は出さない。ログアウトしない` に替え、`サポートにお問い合わせください` の検査はそのまま。追加 `退会: 組織のオーナー (409。本文に organization の id と名前) は、サーバーの文と FROZEN_DISSOLVE_GUIDANCE (譲渡はできない・解散すると退会できる) を出し、組織名つきの解散の区画を出す。ログアウトしない` / `退会: 家族の代表者 (409。本文に family_group) は、家族名つきの解散の区画を出す` / `解散の区画で解散すると (POST /api/org/dissolve が 200)、区画が消えて「解散しました。「削除します」と入力して退会を続けてください。」が出る。そのあとの退会は 200 で /login へ` / `:244` の it (この画面が呼ぶ API は FROZEN_ALLOWED_API_PATHS だけ) に、409 → 解散 → 退会の流れを足して 7 本の一覧で通す。billing/03 (#1912) で追加 `退会: 家族の代表者の解散の区画は、家族プランの解約を凍結中に開ける「有料プランの解約・お支払い」(/frozen/billing) へ案内し、凍結中は開けない「プランとお支払い」(/account/billing) を名指さない` |
+| `tests/legal-consent-account-page-1901.test.tsx` (変更) | `:225` の it (本文に `family_group` が無い 409) は名前を `退会: 409 の本文に立場の id が無ければ、サーバーの文と BLOCKED_SCOPE_UNKNOWN_GUIDANCE を出し、解散の区画は出さない。ログアウトしない` に替え、期待の文を `${serverMessage} ${BLOCKED_SCOPE_UNKNOWN_GUIDANCE}` に。追加 `退会: 家族の代表者 (409。本文に family_group の id と名前) は、サーバーの文と LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance (解散すると退会できる) を出し、家族名つきの解散の区画を出す。ログアウトしない` / `解散の区画で解散すると (POST /api/family/dissolve が 200)、区画が消えて SELF_DISSOLVED_NEXT_STEP が出る。そのあとの退会は 200 で「退会しました」を出す` / `:252` の it の名前を `この画面が呼ぶ API は、同意の許可リストにある退会・書き出しと、409 のときの家族グループ / 組織の解散の 4 本だけ` に替え、409 → 解散 → 退会の流れを足して、呼んだパスの集合を `/api/account/delete`・`/api/account/export`・`/api/family/dissolve` にし、全部が `isLegalConsentExemptApiPath` で通ることを見る。billing/03 (#1912) で追加 `退会: 家族の代表者の解散の区画は、家族プランの Web の契約の解約をお問い合わせへ案内し (billing/03 §0.5 Q-15)、同意の前は開けない課金の画面を名指さない` |
 | `apps/mobile/__tests__/settings/account-delete.test.tsx` (変更) | 409 の it に `Alert に「閉じる」と「メンバーシップ設定を開く」があり、押すと MEMBERSHIP_SETTINGS_SCREEN_ROUTE へ router.push する。401・500・通信の失敗の Alert にはボタンが無い (文だけ)` |
 | `apps/mobile/__tests__/settings/membership-entry.test.tsx` (新規。`data-requests-entry.test.tsx` の形) | `app/settings/membership.tsx は Web のメンバーシップ設定 (MEMBERSHIP_SETTINGS_PATH) を WebViewScreen で開く` / `MEMBERSHIP_SETTINGS_SCREEN_ROUTE に当たる画面のファイルが app/ にある` / `MEMBERSHIP_SETTINGS_PATH は @homegohan/shared の値そのもので、どのタブの受け持ち (NATIVE_APP_TABS) にも入らない` |
 
