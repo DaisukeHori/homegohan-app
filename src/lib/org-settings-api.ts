@@ -16,9 +16,10 @@ import {
   ORG_INDUSTRY_MAX_LENGTH,
   ORG_SETTINGS_NAME_MAX_LENGTH,
 } from '@homegohan/shared';
+import { ORG_PLAN_VALUES } from '@/lib/org-plans';
 
-/** 組織の設定で選べるプラン (この route の従来の値。運営の組織作成と同じ) */
-export const ORG_SETTINGS_PLANS = ['standard', 'premium', 'enterprise'] as const;
+/** 組織の設定で選べるプラン (organizations.plan に書ける値。運営の組織作成と同じ一覧 ORG_PLAN_VALUES) */
+export const ORG_SETTINGS_PLANS = ORG_PLAN_VALUES;
 
 /** 自由記述の項目: 前後の空白を除き、空なら null (保存されている値を消す) にする */
 function nullableText(maxLength: number) {

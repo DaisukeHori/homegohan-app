@@ -15,10 +15,11 @@ import type { FormEvent } from 'react';
 import { extractApiErrorMessage } from '@/lib/admin/api-error-message';
 import { formatJstDateTime } from '@/lib/admin/format-datetime';
 import { isUuid } from '@/lib/http-params';
+import { ORG_PLAN_VALUES, type OrgPlanValue } from '@/lib/org-plans';
 
-/** API (OrgSearchSchema / OrgCreateSchema) が受け付けるプラン */
-const PLANS = ['standard', 'premium', 'enterprise'] as const;
-type OrgPlan = (typeof PLANS)[number];
+/** API (OrgSearchSchema / OrgCreateSchema) が受け付けるプラン (organizations.plan に書ける値) */
+const PLANS = ORG_PLAN_VALUES;
+type OrgPlan = OrgPlanValue;
 
 /** 1 ページに出す件数 (API の既定値) */
 const PER_PAGE = 30;
