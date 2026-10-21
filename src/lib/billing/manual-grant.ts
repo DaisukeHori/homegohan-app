@@ -150,12 +150,13 @@ export const GrantablePlanViewSchema = z.object({
 });
 export type GrantablePlanView = z.infer<typeof GrantablePlanViewSchema>;
 
-/** 利用者の live な契約の行 (S でも M でも)。無ければ null */
+/** 利用者の live な契約の行 (S でも M でも I でも)。無ければ null */
 export const ManualPlanCurrentViewSchema = z.object({
   subscription_id: z.uuid(),
   plan_key: z.string(),
   status: z.enum(SUBSCRIPTION_STATUSES),
-  source: z.enum(['stripe', 'manual']),
+  /** stripe = Stripe の契約 / manual = 手動付与 / store = App Store・Google Play の契約 (アプリ内課金。billing/03 §8.6) */
+  source: z.enum(['stripe', 'manual', 'store']),
   starts_at: z.string(),
   /** M 行の有効期限 (current_period_end。NULL = 期限なし)。S 行では次回の更新日 */
   expires_at: z.string().nullable(),

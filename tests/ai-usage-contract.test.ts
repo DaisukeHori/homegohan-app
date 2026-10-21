@@ -654,7 +654,7 @@ describe('AI 利用回数の記録 (#1177): 機能名の定義', () => {
     for (const [label, usage] of entries) {
       if (!usage || !('record' in usage)) continue;
       expect(['reject', 'skipAi', 'skipImage'], label).toContain(usage.onLimit);
-      // 料理画像の副作用は、1 日の上限 (10 回) に数えない meal_image_auto で数える (安全弁で画像だけ見送る。#1149)
+      // 料理画像の副作用は、1 日の上限の回数に数えない meal_image_auto で数える (安全弁で画像だけ見送る。#1149)
       if (usage.onLimit === 'skipImage') expect([...usage.record], label).toEqual(['meal_image_auto']);
     }
     // Edge Function は、どれも 429 で止める (保存と AI を一緒にする関数は無い)

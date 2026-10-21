@@ -9,8 +9,8 @@
  * 行に書いてよい文 (画面が見分ける、こちらで書いた文) は次のものだけ。それ以外の失敗は固定の文にする。
  *   - AI_CONSENT_REQUIRED_MESSAGE / AI_CONSENT_CHECK_FAILED_MESSAGE: 同意の判定で止めた (T15 / #1154)。
  *     画面は aiConsentReasonOfStoredError でこの文を見分けて同意画面へ案内する
- *   - aiDailyLimitMessage(n)・aiUltimateModeDailyLimitMessage(n) など (isAiDailyLimitMessage): 1 日の上限 (#1149)・
- *     究極モードの 1 日の上限 (#1142) で止めた (Edge Function が aiDailyLimitMessageOfDenied で書く)
+ *   - aiDailyLimitMessage(n)・aiUltimateModeDailyLimitMessage(n)・aiFeatureNotInPlanMessage(feature) など (isAiDailyLimitMessage):
+ *     上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) で止めた (Edge Function が aiDailyLimitMessageOfDenied で書く)
  *   - WEEKLY_MENU_REQUEST_STALE_MESSAGE ('stale_request_timeout'): 状態の確認で、進まなくなった行を失敗にした。
  *     英語の印なので、応答の本文・画面には MENU_REQUEST_STALE_DISPLAY_MESSAGE (日本語の文) に置き換えて出す (#1576)
  *   - WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE ('中止しました'): 利用者が中止した (UX2-11)
@@ -50,14 +50,14 @@ export const WEEKLY_MENU_REQUEST_STALE_DISPLAY_MESSAGE = MENU_REQUEST_STALE_DISP
 /** 利用者が中止したときの文 (POST /api/ai/menu/weekly/status が書く) */
 export const WEEKLY_MENU_REQUEST_CANCELLED_MESSAGE = MENU_REQUEST_CANCELLED_MESSAGE;
 
-/** 行に書いてよい文・画面へそのまま返してよい文 (こちらで書いた文だけ。上限の文 (1 日・究極モード) は isAiDailyLimitMessage で別に見る) */
+/** 行に書いてよい文・画面へそのまま返してよい文 (こちらで書いた文だけ。上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) の文は isAiDailyLimitMessage で別に見る) */
 const KNOWN_WEEKLY_MENU_REQUEST_ERROR_MESSAGES: ReadonlySet<string> = new Set([
   AI_CONSENT_REQUIRED_MESSAGE,
   AI_CONSENT_CHECK_FAILED_MESSAGE,
   ...MENU_REQUEST_FIXED_MESSAGES,
 ]);
 
-/** こちらで書いた文 (上の一覧のどれか、または上限 (1 日・究極モード) で止めたときの文) か */
+/** こちらで書いた文 (上の一覧のどれか、または上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) で止めたときの文) か */
 export function isKnownWeeklyMenuRequestErrorMessage(value: unknown): value is string {
   return (
     typeof value === 'string' && (KNOWN_WEEKLY_MENU_REQUEST_ERROR_MESSAGES.has(value) || isAiDailyLimitMessage(value))

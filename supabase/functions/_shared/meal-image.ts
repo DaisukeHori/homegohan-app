@@ -60,6 +60,8 @@ export interface ReconcileDishImagesParams<TDish extends MealImageDish> {
    *     (カバーが空・ジョブが 0 で、画像の無い写真の印の料理だけが残る献立を作らない)
    * 料理が同じまま (前回と同じ数・同じ中身) の保存し直しでは、今までどおり何も外さない。
    * 商品の献立は、作り直しても商品の料理・商品の画像のまま (商品とのつながりは、この保存では外さないため)
+   * どの保存でも、AI の画像のジョブを積むのは献立の主菜の 1 品だけ (最後に autoImageDishIndexOf で絞る。billing/03 Q-16)。
+   * 上の「ジョブを積む」「AI の画像の料理にして」は、その 1 品のときだけ。ほかの料理は画像の無い状態になる
    */
   regeneration?: boolean | null;
 }
@@ -73,11 +75,12 @@ export interface ReconcileDishImagesResult<TDish extends MealImageDish> {
 export const DEFAULT_MEAL_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
 /**
- * 料理画像のジョブを積まずに見送ったときの理由 (#1487)。
+ * 料理画像のジョブを積まずに見送ったときの理由 (#1487・billing/03)。
  *   - ai_limit:   料理画像の安全弁 (DB の ai_unmetered_daily_caps の meal_image_auto) に達した (consumeAiUsage が不許可)
  *   - rate_limit: 画像のレート制限 (checkRateLimit の 'image') に達した、または判定が例外で終わった
+ *   - plan:       ご利用中のプランでは自動の料理画像を作らない (ai_plan_feature_caps の meal_image_auto = 0。DB の plan_locked)
  */
-export type MealImageSkipReason = 'ai_limit' | 'rate_limit';
+export type MealImageSkipReason = 'ai_limit' | 'rate_limit' | 'plan';
 
 /**
  * 見送った料理に書く image_error (#1487)。image_status は既存の 'failed' を使う
@@ -88,11 +91,37 @@ export type MealImageSkipReason = 'ai_limit' | 'rate_limit';
 export const MEAL_IMAGE_SKIPPED_ERRORS: Readonly<Record<MealImageSkipReason, string>> = Object.freeze({
   ai_limit: 'skipped_ai_limit',
   rate_limit: 'skipped_rate_limit',
+  plan: 'skipped_plan',
 });
 
 /** image_error が、見送り (MEAL_IMAGE_SKIPPED_ERRORS) を表すか */
 export function isMealImageSkippedError(value: unknown): boolean {
   return typeof value === 'string' && Object.values(MEAL_IMAGE_SKIPPED_ERRORS).includes(value);
+}
+
+/**
+ * consumeAiUsage(user, 'meal_image_auto') の結果から見送りの理由を決める (4 本の route と AI 相談の自動実行が同じ式で使う)。
+ * 判定していない (null) か許可されたのに見送るのはレート制限のときだけ
+ */
+export function mealImageSkipReasonOf(usage: { allowed: boolean; planLocked?: true } | null): MealImageSkipReason {
+  if (usage === null || usage.allowed) return 'rate_limit';
+  return usage.planLocked === true ? 'plan' : 'ai_limit';
+}
+
+/** image_error が、プランで見送った (skipped_plan) ことを表すか (料理の画面が有料プランの案内を出す) */
+export function isMealImagePlanSkippedError(value: unknown): boolean {
+  return value === MEAL_IMAGE_SKIPPED_ERRORS.plan;
+}
+
+/**
+ * 料理画像のジョブを AI へ送る前の、プランの門の答え (billing/03 §8.8)。process-meal-image-jobs が、同意の判定のすぐ後に使う。
+ * cap は DB の ai_plan_feature_daily_cap(ジョブの持ち主, 'meal_image_auto') の戻り値。
+ *   0 → locked (そのプランでは自動の料理画像を作らない。ジョブを取り消し、料理を failed + skipped_plan にする)
+ *   null (行なし)・正の数・読めなかった値 → allowed (読めなかったときは止めない。consume_ai_usage の「判定に失敗したときは止めない」と同じ)
+ */
+export type MealImageJobPlanDecision = 'locked' | 'allowed';
+export function mealImageJobPlanDecision(cap: unknown): MealImageJobPlanDecision {
+  return cap === 0 ? 'locked' : 'allowed';
 }
 
 /**
@@ -566,6 +595,101 @@ export function isAiImagePipelineDish(dish: MealImageDish): boolean {
 }
 
 /**
+ * 自動の料理画像 (料理の保存・更新の 4 本の route・AI 相談の料理の更新・献立の作成 (Edge の save-meal) が積むジョブ) を作る
+ * 料理の役割 (billing/03 §8.8・Q-16)。自動で作るのは献立の主菜の 1 品だけ。
+ * 料理の役割 (dishes[].role) は、AI が作る献立では 'main' / 'side' / 'soup' / 'rice' / 'other' (_shared/meal-generator.ts)、
+ * 利用者が日本語で保存した料理では '主菜' など (packages/shared/src/dish-roles.ts の getDishConfig が 'main' と同じ「主菜」として読む)。
+ * 比べるときは前後の空白を除き、英字を小文字にする (normalizeText)
+ */
+export const AUTO_IMAGE_DISH_ROLES: ReadonlyArray<string> = Object.freeze(['main', '主菜']);
+
+/**
+ * 主菜の無い献立 (朝食のご飯と汁物だけ・役割が other だけ・役割の無い料理だけ) で、自動の料理画像を作る料理の位置 (先頭の料理)。
+ * 献立のカバーを 1 枚残すため (Q-16 の「見た目は残し」)
+ */
+export const AUTO_IMAGE_FALLBACK_DISH_INDEX = 0;
+
+/** 料理が 1 品の献立の料理の数 (献立のカバーがその料理の画像と同じになる献立) */
+const SINGLE_DISH_MEAL_DISH_COUNT = 1;
+
+/**
+ * 献立の料理のうち、自動の料理画像を作る 1 品の位置 (billing/03 §8.8・Q-16)。
+ * 役割が主菜 (AUTO_IMAGE_DISH_ROLES) の最初の料理。主菜の無い献立は AUTO_IMAGE_FALLBACK_DISH_INDEX。料理が無ければ null
+ */
+export function autoImageDishIndexOf(dishes: ReadonlyArray<Pick<MealImageDish, 'role'>>): number | null {
+  if (dishes.length === 0) return null;
+  const mainIndex = dishes.findIndex((dish) => AUTO_IMAGE_DISH_ROLES.includes(normalizeText(dish.role)));
+  return mainIndex >= 0 ? mainIndex : AUTO_IMAGE_FALLBACK_DISH_INDEX;
+}
+
+/**
+ * 料理の画面で、自分の画像の無い料理に献立のカバー (planned_meals.image_url) を代わりに出してよいか (billing/03 §10.3・Q-16)。
+ * 出すのは、料理が 1 品の献立の料理・自動の料理画像を作る料理 (autoImageDishIndexOf の位置。カバーはその料理の画像になる)・
+ * カバーに頼る写真・商品・手の画像の料理 (写真の複数の料理など。image_source が meal_photo / catalog / manual_override) だけ。
+ * ほかの料理 (主菜でない料理) には出さない (カバーは主菜の画像なので、別の料理の画像を出すことになる)。位置に料理が無ければ false
+ */
+export function mealCoverRepresentsDish(
+  dishes: ReadonlyArray<Pick<MealImageDish, 'role' | 'image_source'>>,
+  dishIndex: number,
+): boolean {
+  const dish = dishes[dishIndex];
+  if (!dish) return false;
+  if (dishes.length <= SINGLE_DISH_MEAL_DISH_COUNT) return true;
+  return dishIndex === autoImageDishIndexOf(dishes) || isCoverReadySource(dish.image_source ?? null);
+}
+
+/**
+ * 主菜の引き継ぎ (billing/03 §8.8・§7.3・Q-16)。この保存で自動の料理画像を作る位置 (autoImageDishIndexOf) が別の料理へ移り
+ * (前の主菜を消した・前の主菜の役割を外した。移った先の料理はもとからその位置にあり、中身・役割・位置を変えていない)、
+ * 移った先の料理が画像の無い状態 (N: 画像・source・subject_hash なし。主菜でなかった間に withoutAutoDishImage が外した料理など) なら、その位置を返す。
+ * reconcileDishImages はその料理に種を 1 本足す (献立のカバーを 1 枚残す。R26・S38・S42)。それ以外は null。
+ *   - 前回の料理が無い (新しい献立): null (新しい料理は reconcileDishImages の for の中で種になる)
+ *   - 位置が移っていない (前回と今回の autoImageDishIndexOf が同じ): null。料理を変えずに保存し直した (完了の切り替えなど) ときは
+ *     役割と並びが同じなので必ずここに当たり、AI の画像の料理だと分からない料理を変えずに保存し直しても積まない今の決まり
+ *     (reconcileDishImages の「前回のまま写し、積まない」。#1487) は変わらない
+ *   - 移った先の料理にもう種がある (中身・役割・位置が変わった料理・待ちの料理の積み直し): null (種は 1 本のまま)
+ *   - 移った先の料理が画像を持つ・写真・商品・手の画像の料理 (isPreservedDishImage)・AI の画像の料理 (isAiImagePipelineDish): null
+ * previousDishes は保存する前の料理 (料理でない値は役割の無い料理として位置を数える)、dishes は reconcileDishImages の for で作った料理、
+ * seededDishIndexes はその時点の種の位置
+ */
+export function autoImageDishHandoverIndexOf(params: {
+  previousDishes: ReadonlyArray<MealImageDish | null | undefined>;
+  dishes: ReadonlyArray<MealImageDish>;
+  seededDishIndexes: ReadonlyArray<number>;
+}): number | null {
+  if (params.previousDishes.length === 0) return null;
+  const autoImageDishIndex = autoImageDishIndexOf(params.dishes);
+  if (autoImageDishIndex === null) return null;
+  const previousAutoImageDishIndex = autoImageDishIndexOf(
+    params.previousDishes.map((dish): MealImageDish => (dish && typeof dish === 'object' ? dish : {})),
+  );
+  if (previousAutoImageDishIndex === autoImageDishIndex) return null;
+  if (params.seededDishIndexes.includes(autoImageDishIndex)) return null;
+  const dish = params.dishes[autoImageDishIndex];
+  if (!dish || dish.image_url || isPreservedDishImage(dish) || isAiImagePipelineDish(dish)) return null;
+  return autoImageDishIndex;
+}
+
+/**
+ * 自動の料理画像を作らない料理を、画像の無い状態にする (billing/03 §8.8・Q-16)。状態・source・subject_hash・画像を持たない
+ * (画面は「生成中」「再生成待ち」を出さず、料理の画面は画像の枠を出さない。subject_hash も source も無いので、次に変えずに
+ * 保存し直しても AI の画像の料理とみなさず積み直さない (isAiImagePipelineDish が偽))。プロンプトとモデルは残す。
+ * 渡した料理は変えず、新しい料理を返す
+ */
+function withoutAutoDishImage<TDish extends MealImageDish>(dish: TDish): TDish {
+  const cleared: TDish = {
+    ...dish,
+    image_subject_hash: null,
+    image_url: null,
+    image_source: null,
+    image_status: null,
+    image_generated_at: null,
+    image_error: null,
+  };
+  return cleared;
+}
+
+/**
  * 商品の献立の planned_meals.source_type (lib/catalog-products.ts の buildCatalogMealFields が書く。
  * 以前は端末の保存 (モバイルの食事の新規作成の画面 apps/mobile/app/meals/new.tsx) も書いていた。画面は届かない画面として消したが (#1598)、
  * その画面が書いた行は残るので、下の「端末の保存」の形も読み続ける)
@@ -932,6 +1056,34 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
     jobs.push(buildDishJobSeed(nextDish, index, subjectHash, prompt));
   }
 
+  // billing/03 §8.8・Q-16: 主菜の引き継ぎ。前の主菜を消した・前の主菜の役割を外したことで、自動の料理画像の位置が、中身・役割・位置の
+  // 変わらない画像の無い料理へ移ったら、その料理に種を 1 本足す (for の中では「前回のまま写し、積まない」に当たるため。献立のカバーを 1 枚残す)。
+  // 位置が移らない保存し直し (完了の切り替えなど) では足さない (autoImageDishHandoverIndexOf)。足した料理は jobDishes にも入れるので、
+  // 下の「献立のカバーが写真・商品の料理のもの」の判定に当たれば前の状態 (画像の無い状態) に戻る
+  const handoverDishIndex = autoImageDishHandoverIndexOf({
+    previousDishes,
+    dishes,
+    seededDishIndexes: jobs.map((job) => job.dishIndex),
+  });
+  if (handoverDishIndex !== null) {
+    const unchangedDish = dishes[handoverDishIndex];
+    const { subjectHash, prompt } = dishSubjects[handoverDishIndex];
+    const handedOver: TDish = {
+      ...unchangedDish,
+      image_subject_hash: subjectHash,
+      image_url: null,
+      image_source: 'generated_ai',
+      // 前回の画像の無い料理の画像を作るので 'pending' (同じ料理の積み直しと同じ決まり)
+      image_status: 'pending',
+      image_generated_at: null,
+      image_error: null,
+    };
+    dishes[handoverDishIndex] = handedOver;
+    jobDishes.push({ index: handoverDishIndex, sameSubject: true, previousDish: unchangedDish });
+    jobs.push(buildDishJobSeed(handedOver, handoverDishIndex, subjectHash, prompt));
+    jobs.sort((a, b) => a.dishIndex - b.dishIndex);
+  }
+
   // AI の作り直しで料理が変わったら、利用者のカバー (AI の料理の画像でないカバー) を外す (#1553)。
   // 外したカバーは無いものとして、ジョブを積むか (下の判定) とカバーの選び直し (deriveMealCoverImage) を決める
   const releaseOnRegeneration = releaseUserImagesOnChange && mealDishesChanged;
@@ -945,6 +1097,7 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
   // 写真のカバーは上で外すので、残すと画像がどこにも無いまま「再生成待ち」の写真の印の料理になり、あとから画像を作る経路も無い
   // (needsImageRetry は写真の料理を積み直さない)。外すカバーが空・AI の画像のときも、その料理に画像が無いのは同じなので回す。
   // 回したあとはカバーに頼る料理が残らないので、下の「ジョブを積まない」判定には当たらない
+  // 主菜でない料理に回した種は、最後の絞り込み (billing/03 Q-16) で落ちて画像の無い状態になる
   if (releaseOnRegeneration) {
     for (let index = 0; index < dishes.length; index += 1) {
       if (!isImagelessCoverReadyDish(dishes[index])) continue;
@@ -993,6 +1146,17 @@ export async function reconcileDishImages<TDish extends MealImageDish>(
       dishes[index] = kept;
     }
     jobs = [];
+  }
+
+  // billing/03 §8.8・Q-16: 自動の料理画像は献立の主菜の 1 品だけに作る (autoImageDishIndexOf)。ほかの料理に積もうとした種は積まず、
+  // その料理を画像の無い状態にする ('pending' / 'stale' のまま残すと、処理するジョブが無いので「生成中」に見える)。
+  // 前回の画像や状態を写した料理 (種を作らなかった料理) はここで触らないので、段 B の前に作られた画像は消えない
+  const autoImageDishIndex = autoImageDishIndexOf(dishes);
+  if (jobs.some((job) => job.dishIndex !== autoImageDishIndex)) {
+    for (const job of jobs) {
+      if (job.dishIndex !== autoImageDishIndex) dishes[job.dishIndex] = withoutAutoDishImage(dishes[job.dishIndex]);
+    }
+    jobs = jobs.filter((job) => job.dishIndex === autoImageDishIndex);
   }
 
   return {

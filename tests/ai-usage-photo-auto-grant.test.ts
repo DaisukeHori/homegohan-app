@@ -19,7 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const USER = '11111111-1111-4111-8111-111111111111';
 const OTHER_USER = '22222222-2222-4222-8222-222222222222';
 const SERVICE_KEY = 'service-role-key-for-test';
-/** テストの 1 日の上限 (既定の free と同じ 10 回) */
+/** テストの 1 日の上限 (DB の既定の値とは独立) */
 const LIMIT = 10;
 /** 判別の結果の確からしさ (route が判別できたとみなす値より上) */
 const CONFIDENT = 0.9;

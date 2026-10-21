@@ -293,7 +293,7 @@ describe.each(IMAGE_ROUTE_CASES)('料理画像の生成の AI 利用回数の記
     vi.mocked(enqueueMealImageJobs).mockResolvedValue(ENQUEUED_ONE);
   });
 
-  it('同意済みなら、同意を判定したあとで meal_image_auto (1 日の上限 10 回に数えない料理画像) を 1 回記録し、ジョブを積む (記録はジョブを積むより前)', async () => {
+  it('同意済みなら、同意を判定したあとで meal_image_auto (1 日の上限の回数に数えない料理画像) を 1 回記録し、ジョブを積む (記録はジョブを積むより前)', async () => {
     vi.mocked(checkUserAiConsent).mockResolvedValue({ allowed: true });
     const response = await call();
     expect(response.status).toBe(200);

@@ -10,7 +10,7 @@
  *
  *   1. 献立の生成 3 種 (generate_day_menu / generate_week_menu / generate_single_meal): menu_generation を 1 回記録し、
  *      それが Edge Function (generate-menu-v4 / v5。AI へ送る) の呼び出しより前。呼び出しには記録済みの印を付ける (二重に記録しない)
- *   2. update_meal が付ける料理画像: 同意済みなら meal_image_auto (1 日の上限 10 回に数えず、料理画像の安全弁で止める) を 1 回、
+ *   2. update_meal が付ける料理画像: 同意済みなら meal_image_auto (1 日の上限の回数に数えず、料理画像の安全弁で止める) を 1 回、
  *      画像のジョブを積む前に記録する。
  *      未同意・判定の失敗なら記録しない (ジョブを積むかどうかは変えない。止めるのは処理する Edge Function)
  *   3. 回帰 (R3 指摘 5): 記録を Edge Function の呼び出しのあとへ動かした写しでは、1 の順番の検査が落ちる

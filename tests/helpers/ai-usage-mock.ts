@@ -7,7 +7,7 @@
  */
 import type { AiUsageAllowed, AiUsageDenied } from '../../supabase/functions/_shared/ai-daily-limit';
 
-/** テストの上限の回数 (既定の free = 1 日 10 回と同じ) */
+/** テストの上限の回数 (DB の既定の値とは独立) */
 export const TEST_AI_DAILY_LIMIT = 10;
 /** テストの数えた日 (JST) */
 export const TEST_AI_USAGE_DATE = '2026-10-11';

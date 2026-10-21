@@ -245,6 +245,18 @@ export const SERVER_ENV_VARS = {
       'POST /api/webhooks/stripe が、届いたイベントの署名をこれで確かめる (billing/01 §8.3)',
     whenMissing: 'Stripe の Webhook を受け付けない (503)。購入・更新・解約が personal_subscriptions に写らない',
   },
+  REVENUECAT_SECRET_API_KEY: {
+    required: false,
+    description:
+      'RevenueCat の秘密の API キー (sk_ で始まる値。Project Settings → API keys の secret key)。ストアの契約を取り直す GET /v1/subscribers に Authorization: Bearer で付ける (billing/03 §8.3)',
+    whenMissing: 'RevenueCat の Webhook とアプリ内課金の同期の API が 503 を返す (購入・更新・解約が personal_subscriptions に写らない)。アプリの購入の画面は開ける',
+  },
+  REVENUECAT_WEBHOOK_SECRET: {
+    required: false,
+    description:
+      'RevenueCat の Webhook の署名の秘密 (Integrations → Webhooks で署名を有効にすると 1 回だけ表示される値)。POST /api/webhooks/revenuecat が、届いたイベントの署名をこれで確かめる (billing/03 §8.2)',
+    whenMissing: 'RevenueCat の Webhook を受け付けない (503)',
+  },
   GOOGLE_AI_STUDIO_API_KEY: {
     required: false,
     description: 'Google AI (Gemini) の API キー。別名の GOOGLE_GEN_AI_API_KEY と、どちらか一方でよい',

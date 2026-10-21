@@ -2,7 +2,7 @@
  * Webhook の署名の確認。サーバー専用。#1184
  *
  * 規約の正本は docs/design/cross/04-api-conventions.md §10 (全 Webhook で署名の確認を必須にする)。
- * いまあるのは Resend (Svix の形) と Stripe (t/v1 の形。billing/01 §8.3)。
+ * いまあるのは Resend (Svix の形) と Stripe (t/v1 の形。billing/01 §8.3) と RevenueCat (Stripe と同じ t/v1 の形。billing/03 §8.2)。
  *
  * Resend は Svix の形で署名を付ける (https://resend.com/docs/webhooks/verify-webhooks-requests):
  *   - ヘッダー: svix-id (メッセージ ID) / svix-timestamp (送った時刻。UNIX 秒) / svix-signature ("v1,<base64>" を空白区切りで 1 つ以上)
@@ -181,4 +181,32 @@ export function verifyStripeWebhook(payload: string, header: string | null, nowM
   const secret = getOptionalEnv('STRIPE_WEBHOOK_SECRET');
   if (!secret || secret.trim().length === 0) throw new WebhookSecretMissingError();
   return verifyStripeSignature(payload, header, secret.trim(), nowMs);
+}
+
+/**
+ * RevenueCat の Webhook の署名を確かめる (秘密は引数で渡す。純粋な関数。billing/03 §8.2)。
+ * RevenueCat の X-RevenueCat-Webhook-Signature は Stripe-Signature と同じ形 (t=<unix 秒>,v1=<HMAC-SHA256 hex>・対象は "<t>.<本文>"・
+ * 鍵は秘密の文字列そのまま) なので、Stripe の確認をそのまま使う。時刻の許容も同じ (WEBHOOK_TIMESTAMP_TOLERANCE_SECONDS = 5 分)
+ * @param payload 受け取った本文そのまま
+ * @param header  X-RevenueCat-Webhook-Signature の値 (無ければ null。無い・形が違うときは missing_headers)
+ * @param secret  署名の秘密 (RevenueCat の Integrations → Webhooks で 1 回だけ表示される値)
+ * @param nowMs   いまの時刻 (テストで差し替える)
+ */
+export function verifyRevenueCatSignature(
+  payload: string,
+  header: string | null,
+  secret: string,
+  nowMs: number = Date.now(),
+): WebhookVerification {
+  return verifyStripeSignature(payload, header, secret, nowMs);
+}
+
+/**
+ * RevenueCat の Webhook の署名を、環境変数 REVENUECAT_WEBHOOK_SECRET の秘密で確かめる。
+ * 秘密が無ければ受け付けずに WebhookSecretMissingError を投げる (fail-closed。route は 503)
+ */
+export function verifyRevenueCatWebhook(payload: string, header: string | null, nowMs: number = Date.now()): WebhookVerification {
+  const secret = getOptionalEnv('REVENUECAT_WEBHOOK_SECRET');
+  if (!secret || secret.trim().length === 0) throw new WebhookSecretMissingError();
+  return verifyRevenueCatSignature(payload, header, secret.trim(), nowMs);
 }

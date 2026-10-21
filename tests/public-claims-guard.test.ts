@@ -56,7 +56,7 @@ const pricingMocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@/lib/billing/public-plans', () => ({
-  listPurchasablePlans: async () => pricingMocks.plans,
+  listPublicPlans: async () => pricingMocks.plans,
 }));
 
 vi.mock('next/headers', () => ({

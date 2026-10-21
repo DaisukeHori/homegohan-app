@@ -423,6 +423,10 @@ export interface PurchasablePlan {
   stripe_price_id: string | null;
   stripe_yearly_price_id: string | null;
 }
+/** 公開の面が読む列 (PurchasablePlan に max_members を足した形。billing/03 §8.6) */
+export interface PublicPlan extends PurchasablePlan {
+  max_members: number | null;
+}
 
 export function priceIdFor(plan: PurchasablePlan, interval: BillingInterval): string | null {
   return interval === 'month' ? plan.stripe_price_id : plan.stripe_yearly_price_id;
@@ -700,7 +704,24 @@ export interface SubscriptionRowView {
   trial_ends_at: string | null;
   cancel_at_period_end: boolean;
   cancel_at: string | null;
+  /** アプリ内課金のストア (app_store / play_store)。NULL = Stripe か手動付与の行 (billing/03 §6.4) */
+  iap_store: string | null;
+  /** RevenueCat から取り直した時刻 (遅延の再同期の判定。billing/03 §8.4) */
+  iap_synced_at: string | null;
 }
+
+/** いま効いているプランの AI の上限 (画面の錠と案内。billing/03 §8.6・§10.3・§10.6) */
+export interface PlanFeatures {
+  /** ai_daily_limits の値 (プランの行、無ければ free の行。NULL = 無制限。consume_ai_usage_at の c_default_plan と同じ倒し方) */
+  ai_daily_limit: number | null;
+  /**
+   * ai_plan_feature_caps のそのプランの行だけ (feature → daily_cap。0 = 使えない・NULL = 機能ごとの上限なし。行の無い機能は入らない)。
+   * free の行には倒さない (DB の consume_ai_usage_at・ai_plan_feature_daily_cap も c.plan_key = いまのプラン だけを見る)。
+   * 行の無いプラン (組織の plan の standard・org_* など) は {} で、画面の錠は出ない (S26)
+   */
+  ai_feature_caps: Record<string, number | null>;
+}
+export const EMPTY_PLAN_FEATURES: PlanFeatures = { ai_daily_limit: null, ai_feature_caps: {} };
 
 export interface BillingSummary {
   /** 個人契約の plan_key (live な行が無ければ free) */
@@ -708,7 +729,9 @@ export interface BillingSummary {
   /** いま効いているプラン (get_effective_plan。家族・組織を含む) */
   effective_plan_key: string;
   status: SubscriptionStatus | null;
-  source: 'stripe' | 'manual' | null;
+  source: 'stripe' | 'manual' | 'app_store' | 'play_store' | null;
+  /** ストアの契約なら、解約・支払い方法の変更をするストア (画面は管理のページへ案内する)。それ以外は null (billing/03 §8.6) */
+  manage_in_store: 'app_store' | 'play_store' | null;
   billing_interval: BillingInterval | null;
   current_period_end: string | null;
   trial_ends_at: string | null;
@@ -719,18 +742,27 @@ export interface BillingSummary {
   can_purchase: boolean;
   can_cancel: boolean;
   can_resume: boolean;
+  /** いま効いているプラン (effective_plan_key) の AI の上限 (画面の錠と案内。billing/03 §10.3・§10.6) */
+  features: PlanFeatures;
 }
 
-export function summarizeSubscription(row: SubscriptionRowView | null, hasCustomer: boolean, effectivePlanKey: string): BillingSummary {
+export function summarizeSubscription(
+  row: SubscriptionRowView | null,
+  hasCustomer: boolean,
+  effectivePlanKey: string,
+  features: PlanFeatures,
+): BillingSummary {
   const status = row !== null && isSubscriptionStatus(row.status) ? row.status : null;
   const live = status !== null && isLiveStatus(status);
   const stripeBacked = row !== null && row.stripe_subscription_id !== null;
+  const storeBacked = row !== null && (row.iap_store === 'app_store' || row.iap_store === 'play_store') ? row.iap_store : null;
   const interval = row !== null && row.billing_interval !== null && isBillingInterval(row.billing_interval) ? row.billing_interval : null;
   return {
     plan_key: live && row !== null ? row.plan_key : FREE_PLAN_KEY,
     effective_plan_key: effectivePlanKey,
     status,
-    source: row === null ? null : stripeBacked ? 'stripe' : 'manual',
+    source: row === null ? null : stripeBacked ? 'stripe' : storeBacked ?? 'manual',
+    manage_in_store: live ? storeBacked : null,
     billing_interval: interval,
     current_period_end: row?.current_period_end ?? null,
     trial_ends_at: row?.trial_ends_at ?? null,
@@ -740,6 +772,7 @@ export function summarizeSubscription(row: SubscriptionRowView | null, hasCustom
     can_purchase: !live,
     can_cancel: live && stripeBacked && row !== null && !row.cancel_at_period_end,
     can_resume: live && stripeBacked && row !== null && row.cancel_at_period_end,
+    features,
   };
 }
 
@@ -863,6 +896,11 @@ export interface BillingRepository {
   findLiveSubscription(userId: string): Promise<SubscriptionRowView | null>;
   /** 同じ plan_key で trial_started_at が入った行がある (cancelled / expired の履歴を含む) */
   hasUsedTrial(userId: string, planKey: string): Promise<boolean>;
+  /**
+   * いま効いているプランの AI の上限 (billing/03 §8.6)。1 日の上限はプランの行、無ければ free の行。
+   * 機能ごとの上限はそのプランの行だけで、free の行には倒さない
+   */
+  findPlanFeatures(planKey: string): Promise<PlanFeatures>;
   findCustomer(userId: string): Promise<BillingCustomerRow | null>;
   /** INSERT … ON CONFLICT (user_id) DO NOTHING のあと SELECT。同時の 2 本は同じ行を返す */
   saveCustomer(userId: string, stripeCustomerId: string): Promise<BillingCustomerRow>;

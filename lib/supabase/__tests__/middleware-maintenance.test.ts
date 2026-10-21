@@ -204,7 +204,7 @@ describe('updateSession — メンテナンスモード: API (/api/*) (#1148)', 
     expect(res.status).toBe(503);
   });
 
-  it.each(['/api/webhooks/stripe', '/api/webhooks'])(
+  it.each(['/api/webhooks/stripe', '/api/webhooks', '/api/webhooks/revenuecat'])(
     '#1577 の 4: Resend の Webhook を通しても、ほかの Webhook (%s) はメンテナンス中は 503 のまま',
     async (path) => {
       mockGetUser.mockResolvedValue({ data: { user: null }, error: null });

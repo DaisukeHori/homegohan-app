@@ -1,17 +1,20 @@
-/** /pricing に出す「買えるプラン」の読み取り (billing/01 §10.1) */
+/** 公開の面に出すプランの読み取り (billing/01 §10.1・billing/03 §8.6) */
 import { createLogger } from '@/lib/db-logger';
 import { createClient } from '@/lib/supabase/server';
-import { FREE_PLAN_KEY, PURCHASABLE_PLAN_TYPES, type PurchasablePlan } from '@/lib/billing/core';
+import { FREE_PLAN_KEY, PURCHASABLE_PLAN_TYPES, type PublicPlan } from '@/lib/billing/core';
 
 const logger = createLogger('billing/public-plans');
 
-const PLAN_COLUMNS = 'plan_key, display_name, plan_type, status, monthly_price_jpy, yearly_price_jpy, trial_days, stripe_price_id, stripe_yearly_price_id';
+/** 読む列 (PublicPlan の列。max_members は家族の人数の表示に使う) */
+const PLAN_COLUMNS =
+  'plan_key, display_name, plan_type, status, monthly_price_jpy, yearly_price_jpy, trial_days, stripe_price_id, stripe_yearly_price_id, max_members';
 
 /**
- * /pricing に出す「買えるプラン」。月額の Price があるものだけ (年額は任意)。
- * 読み取りに失敗したら例外を投げずに空を返す (公開ページをエラーにせず、買えるプランが無いときと同じ表示を描く)。失敗は error ログに残す
+ * 公開の面に出すプラン (表示用。R2)。public・個人/家族・free でない・月額の金額が正。Stripe の Price の有無では絞らない
+ * (鍵と Price が無い間も価格と内容を公開する。買えるかどうかは isPurchasable で間隔ごとに見る)。
+ * 読み取りに失敗したら例外を投げずに空を返す (公開ページをエラーにしない)。失敗は error ログに残す
  */
-export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
+export async function listPublicPlans(): Promise<PublicPlan[]> {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from('subscription_plans')
@@ -19,12 +22,11 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
     .eq('status', 'public')
     .in('plan_type', [...PURCHASABLE_PLAN_TYPES])
     .neq('plan_key', FREE_PLAN_KEY)
-    .not('stripe_price_id', 'is', null)
+    .gt('monthly_price_jpy', 0)
     .order('display_order', { ascending: true });
   if (error) {
-    // 生のエラーは app_logs にだけ残す (ページには出さない)
-    logger.error('公開のプランの一覧を読めませんでした (/pricing は買えるプランが無いときの表示を描く)', error);
+    logger.error('公開のプランの一覧を読めませんでした (/pricing はフリーのカードだけを描く)', error);
     return [];
   }
-  return (data ?? []) as PurchasablePlan[];
+  return (data ?? []) as PublicPlan[];
 }

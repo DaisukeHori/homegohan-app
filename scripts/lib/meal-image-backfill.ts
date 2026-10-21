@@ -18,6 +18,7 @@
  *       - 商品の献立 (isCatalogProductMeal) の、画像の項目の無い古い商品の料理 (asCatalogMealDish が商品の料理として読む料理)
  *       - 献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のもの (isMealCoverHeldByImagelessPreservedDish) なら、
  *         その献立の料理はどれも積まない
+ *   - 献立の主菜 (自動の料理画像を作る 1 品。autoImageDishIndexOf) である (billing/03 Q-16。保存し直し (reconcileDishImages) と同じ判定)
  * 献立のカバー (planned_meals.image_url) には、ここでも処理する側でも直接は書かない。画像ができたときのカバーは、処理する側が
  * カバーの持ち主の決まり (applyGeneratedDishImage → writeGeneratedDishImage。#1525) で決める (写真・商品・利用者のカバーは置き換えない)。
  * プロンプト・モデルは、保存したときに料理に書いた image_prompt / image_model を使う (無ければ今の作り方・既定のモデル)。
@@ -29,6 +30,7 @@ import {
   DEFAULT_MEAL_IMAGE_MODEL,
   EMPTY_ENQUEUE_MEAL_IMAGE_JOBS_RESULT,
   asCatalogMealDish,
+  autoImageDishIndexOf,
   buildDishImagePrompt,
   countMealImageJobsToProcess,
   isCatalogProductMeal,
@@ -68,6 +70,7 @@ export const MEAL_IMAGE_BACKFILL_DEFAULT_INTERVAL_MS = 10_000;
  *   - catalog_meal_dish: 商品の献立の、画像の項目の無い古い商品の料理 (asCatalogMealDish)
  *   - meal_cover_preserved: 献立のカバーが、料理ごとの画像を持たない写真・商品・手の画像の料理のもの
  *     (isMealCoverHeldByImagelessPreservedDish)。ほかの理由に当たらない待ちの料理を、この理由で数える
+ *   - not_auto_image_dish: 献立の主菜 (自動の料理画像を作る 1 品。autoImageDishIndexOf) でない料理 (billing/03 Q-16。保存し直しも積まない)
  */
 export type MealImageBackfillSkipReason =
   | 'not_waiting'
@@ -76,7 +79,8 @@ export type MealImageBackfillSkipReason =
   | 'no_subject_hash'
   | 'not_object'
   | 'catalog_meal_dish'
-  | 'meal_cover_preserved';
+  | 'meal_cover_preserved'
+  | 'not_auto_image_dish';
 
 /** 献立 (planned_meals の行) のうち、積み直すかの判定に使う項目 */
 export interface MealImageBackfillMealContext {
@@ -101,6 +105,7 @@ function emptySkipCounts(): Record<MealImageBackfillSkipReason, number> {
     not_object: 0,
     catalog_meal_dish: 0,
     meal_cover_preserved: 0,
+    not_auto_image_dish: 0,
   };
 }
 
@@ -135,6 +140,9 @@ export function planDishImageJobs(
     isDishObject(value) ? asCatalogMealDish(value, dishIndex, mealIsCatalog) : value,
   );
   const mealCoverPreserved = isMealCoverHeldByImagelessPreservedDish(viewed.filter(isDishObject), meal.image_url ?? null);
+  // 保存し直し (reconcileDishImages) と同じく、自動の料理画像は献立の主菜の 1 品だけ (billing/03 Q-16)。
+  // 料理でない値 (not_object) は役割の無い料理として位置を数える (主菜の位置は dishes の添字のまま)
+  const autoImageDishIndex = autoImageDishIndexOf(viewed.map((value): MealImageDish => (isDishObject(value) ? value : {})));
 
   dishes.forEach((value: unknown, dishIndex) => {
     if (!isDishObject(value)) {
@@ -166,6 +174,10 @@ export function planDishImageJobs(
     }
     if (mealCoverPreserved) {
       plan.skipped.meal_cover_preserved += 1;
+      return;
+    }
+    if (dishIndex !== autoImageDishIndex) {
+      plan.skipped.not_auto_image_dish += 1;
       return;
     }
     plan.seeds.push({

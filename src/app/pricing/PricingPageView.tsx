@@ -83,7 +83,7 @@ function checkoutHref(plan: PurchasablePlan, interval: BillingInterval): string 
 }
 
 export interface PricingPageViewProps {
-  /** 公開のプランのうち月額の Price のあるもの (listPurchasablePlans。並びは display_order) */
+  /** 公開のプラン (listPublicPlans。並びは display_order。買えるかどうかは isPurchasable で間隔ごとに見る) */
   plans: PurchasablePlan[];
   /** アプリの WebView で開いた (Cookie is_native_app=1) */
   isNativeApp: boolean;

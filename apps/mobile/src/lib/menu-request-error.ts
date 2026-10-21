@@ -13,7 +13,7 @@
  *   - MENU_REQUEST_FIXED_MESSAGES (失敗・既存の献立を守った・一部だけ保存・進まなくなった・中止・日付の指定が正しくない)。
  *     進まなくなった行の英語の印 ('stale_request_timeout') は、日本語の文 (MENU_REQUEST_STALE_DISPLAY_MESSAGE) にして出す (#1576)
  *   - 同意の判定で止めたときの文 (aiConsentReasonOfStoredError。画面は handleStoredAiConsentFailure で見分けて同意画面へ案内する)
- *   - 上限で止めたときの文 (isAiDailyLimitMessage。1 日の上限 (#1149) と究極モードの 1 日の上限 (#1142) の文)
+ *   - 上限で止めたときの文 (isAiDailyLimitMessage。上限 (1 日・機能ごと) とそのプランでは使えない機能 (billing/03) の文)
  */
 import { aiConsentReasonOfStoredError } from "../../../../supabase/functions/_shared/ai-consent";
 import { isAiDailyLimitMessage } from "../../../../supabase/functions/_shared/ai-daily-limit";

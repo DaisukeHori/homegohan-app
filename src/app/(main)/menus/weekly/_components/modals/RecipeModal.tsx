@@ -8,7 +8,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { BookOpen, X, Flame, ShoppingCart, Heart } from "lucide-react";
 import { useDialogA11y } from "@/components/common/useDialogA11y";
-import { isMealImageSkippedError } from "@/lib/meal-image";
+import { isMealImagePlanSkippedError, isMealImageSkippedError } from "@/lib/meal-image";
 
 const colors = {
   bg: '#F7F6F3',
@@ -212,9 +212,12 @@ export function RecipeModal({
                     ? '料理画像を生成中です'
                     : selectedRecipeData?.image_status === 'stale'
                       ? '料理内容の変更後、画像を再生成待ちです'
-                      : isMealImageSkippedError(selectedRecipeData?.image_error)
-                        ? '料理画像は作っていません'
-                        : '料理画像の生成に失敗しました'}
+                      : isMealImagePlanSkippedError(selectedRecipeData?.image_error)
+                        // ご利用中のプランでは自動の料理画像を作らない (billing/03 §8.8 の skipped_plan)
+                        ? '料理画像の作成は有料プランでお使いいただけます'
+                        : isMealImageSkippedError(selectedRecipeData?.image_error)
+                          ? '料理画像は作っていません'
+                          : '料理画像の生成に失敗しました'}
                 </p>
               </div>
             )}
@@ -224,10 +227,13 @@ export function RecipeModal({
                   ? 'AIが料理画像を生成しています。'
                   : selectedRecipeData.image_status === 'stale'
                     ? '現在の料理内容に合わせた画像へ更新待ちです。'
-                    : isMealImageSkippedError(selectedRecipeData.image_error)
-                      // 料理画像の安全弁・レート制限でジョブを積まなかった (#1487)。料理を保存し直すと作り直す
-                      ? '今日は料理画像を作れる回数を超えたため、画像を作りませんでした。あとで料理を保存し直すと作ります。'
-                      : '画像生成に失敗しました。後でもう一度お試しください。'}
+                    : isMealImagePlanSkippedError(selectedRecipeData.image_error)
+                      // ご利用中のプランでは自動の料理画像を作らない (billing/03 §8.8)。有料プランにして料理を保存し直すと作る
+                      ? '料理画像の作成は有料プランでお使いいただけます。有料プランにすると、料理を保存し直したときに画像を作ります。'
+                      : isMealImageSkippedError(selectedRecipeData.image_error)
+                        // 料理画像の安全弁・レート制限でジョブを積まなかった (#1487)。料理を保存し直すと作り直す
+                        ? '今日は料理画像を作れる回数を超えたため、画像を作りませんでした。あとで料理を保存し直すと作ります。'
+                        : '画像生成に失敗しました。後でもう一度お試しください。'}
               </p>
             )}
           </div>

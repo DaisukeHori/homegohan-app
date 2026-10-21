@@ -134,6 +134,10 @@ describe('isMaintenanceExemptPath', () => {
     '/api/webhooks/resend/extra',
     '/api/webhooks/stripe',
     '/api/webhooks/stripe/',
+    // billing/03 §9.1: RevenueCat の Webhook とアプリ内課金の API もメンテナンス中は止める (RevenueCat は再送する)
+    '/api/webhooks/revenuecat',
+    '/api/billing/iap/catalog',
+    '/api/billing/iap/sync',
     '/API/webhooks/resend',
   ])('%s は止める', (path) => {
     expect(isMaintenanceExemptPath(path)).toBe(false);
