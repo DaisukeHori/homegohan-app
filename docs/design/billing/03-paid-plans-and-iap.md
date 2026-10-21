@@ -250,9 +250,9 @@
 | R23 | 既存の番兵の追随と、2 PR 以上が触る共有面の台帳 | 設計の規約 | §16 |
 | R24 | アプリで買った人が退会するとき、ストアの購読は退会で解約されないことを知らせ、先に解約するよう求める | P17・§11.1 (d) (利用規約第17条に足す項) | 退会の API を呼ぶ 4 つの入口 (Web の設定・凍結中と同意の前の退会の共通の部品 (`/frozen/account`・`/legal-consent/account`)・規約の同意の画面の「登録をやめる」・アプリの設定のアカウント) のすべてに、固定の文 `STORE_SUBSCRIPTION_DELETION_NOTICE` (§8.9) を出す。アプリの退会の確認には「定期購読の管理を開く」のボタンも置く (§10.4・S35)。入口の一覧が閉じていることはテスト 127 が見る |
 | R25 | ストアの審査に出す前に、ストアのメタデータ (利用規約とプライバシーポリシーの URL・プライバシーの申告の購入履歴) を入れる | P16・P9 | 発注者の作業 (§12 の順 4・§17.5)。当社のコードは変えない |
-| R26 | 献立の料理画像は主菜の 1 品だけ作る (見た目は残し、原価を下げる) | §0.4 の追記 3 (Q-16) | 自動の料理画像のジョブの種を作る `reconcileDishImages` の 1 か所で、種を献立の主菜の 1 品 (`autoImageDishIndexOf`。役割が `main` か `主菜` の最初の料理、主菜の無い献立は先頭の料理) だけに絞り、ほかの料理を画像の無い状態 (状態・source・subject_hash なし) にする (§8.8)。料理の保存・更新の 4 本の route・AI 相談の料理の更新・献立の作成 (Edge の `save-meal`) はどれもこの関数を通るので同じ規則になり、積み直しの道具 (`planDishImageJobs`) も同じ関数で主菜でない料理を積まない (`not_auto_image_dish`)。プランで分けない (無料は Q-3 の門が先に止める)。献立のカバーは主菜の画像になる (`deriveMealCoverImage` の既存の規則。先頭のできあがった画像)。料理の画面は、主菜でない料理に献立のカバー (= 主菜の画像) を代わりに出さず、画像の枠を出さない (`mealCoverRepresentsDish`。§10.3)。本冊の前に作られた主菜でない料理の画像は、同じ料理のままなら消さない (S41) |
+| R26 | 献立の料理画像は主菜の 1 品だけ作る (見た目は残し、原価を下げる) | §0.4 の追記 3 (Q-16) | 自動の料理画像のジョブの種を作る `reconcileDishImages` の 1 か所で、種を献立の主菜の 1 品 (`autoImageDishIndexOf`。役割が `main` か `主菜` の最初の料理、主菜の無い献立は先頭の料理) だけに絞り、ほかの料理を画像の無い状態 (状態・source・subject_hash なし) にする (§8.8)。料理の保存・更新の 4 本の route・AI 相談の料理の更新・献立の作成 (Edge の `save-meal`) はどれもこの関数を通るので同じ規則になり、積み直しの道具 (`planDishImageJobs`) も同じ関数で主菜でない料理を積まない (`not_auto_image_dish`)。プランで分けない (無料は Q-3 の門が先に止める)。献立のカバーは主菜の画像になる (`deriveMealCoverImage` の既存の規則。先頭のできあがった画像)。料理の画面は、主菜でない料理に献立のカバー (= 主菜の画像) を代わりに出さず、画像の枠を出さない (`mealCoverRepresentsDish`。§10.3)。本冊の前に作られた主菜でない料理の画像は、同じ料理のままなら消さない (S41)。前の主菜を消した・前の主菜の役割を外した保存で、主菜の位置が変わらない画像の無い料理へ移ったら、その料理に種を 1 本足す (主菜の引き継ぎ `autoImageDishHandoverIndexOf`。献立に画像もジョブも無い状態を作らない。S42) |
 
-### 3.2 ユーザーシナリオ (41 本)
+### 3.2 ユーザーシナリオ (42 本)
 
 | ID | シナリオ |
 |---|---|
@@ -297,6 +297,7 @@
 | S39 | 有料の利用者が料理を手で保存・編集する (Q-16): 主菜・副菜・汁物の 3 品の献立を手で保存すると (`POST /api/meals` ほか 4 本の route と AI 相談の料理の更新のどれでも)、主菜の 1 本だけ積み、`meal_image_auto` を 1 回数える。副菜だけを変えて保存し直すと、ジョブを積まず数えない (副菜は画像の無い状態)。主菜の中身を変えると主菜の 1 本を積み直し、1 回数える。役割が日本語の `主菜` の料理も主菜として扱う |
 | S40 | 主菜でない料理の画像が欲しい (Q-18): 個人 Pro の利用者が、献立の編集の「AIで画像生成」(「AIで料理画像を生成」) で画像を作る (`image_generation`。1 日の上限の中で 1 回数える)。料理が 2 品以上の献立では、作った画像は献立のカバーになる (どれかの料理の画像にはならない。料理を選んで作る入口は無い)。料理が 1 品の献立では、その料理の画像になる。無料の利用者は 403 `AI_FEATURE_NOT_IN_PLAN` (「料理画像の作成は、有料プランでお使いいただけます。」) |
 | S41 | 本冊の前に作られた料理画像 (Q-16): 段 B のデプロイの前に作られた献立で、副菜が AI の画像を持っている (`ready`)。同じ料理のまま保存し直しても、副菜の画像は残る (消さない)。副菜の中身を変えると画像は外れ、画像の無い状態になる (ジョブは積まない)。副菜が画像を待ったまま (`pending` / `failed`) の献立を保存し直すと、副菜は画像の無い状態になる (「生成中」のまま残らない)。積み直しの道具 (`scripts/requeue-pending-meal-images.ts`) も、主菜でない待ちの料理を積まず `not_auto_image_dish` として数える |
+| S42 | 主菜を消す・主菜の役割を外す (主菜の引き継ぎ。Q-16): 個人 Pro の利用者の、ご飯と主菜の献立 (主菜は AI の画像あり (`ready`)・ご飯は画像の無い状態)。利用者が献立の編集で主菜を消して保存すると、ご飯が献立の主菜の位置 (主菜の無い献立の先頭) になり、ご飯の画像のジョブを 1 本積んで `meal_image_auto` を 1 回数える (ご飯は「生成中」の枠になり、できるとご飯の画像が献立のカバーになる)。主菜が 2 品の献立 (副菜・主菜 1 (`ready`)・主菜 2 (画像の無い状態)) で主菜 1 の役割を副菜に変えると、主菜 1 の画像は外れ、主菜 2 の 1 本を積んで 1 回数える。どちらも、献立を変えずに保存し直す (完了の切り替えなど) だけなら積まず数えない。無料の利用者は同じ保存で積まず、新しい主菜の位置の料理が有料プランの案内 (`skipped_plan`) になる |
 
 ---
 
@@ -357,6 +358,7 @@
 | S39 | 5: `POST /api/meals` → `buildDishImagePayload` → `reconcileDishImages` → 種 3 本 → 絞り込みで主菜の 1 本 → `imageJobs.length` = 1 > 0 → `consumeAiUsage(user, 'meal_image_auto')` (pro は行なし → 安全弁で 1 回) → 積む。副菜だけを変えた `PATCH` → 主菜は同じ料理で `ready` (`needsImageRetry` が偽) → 種なし。副菜は中身が変わり種 → 絞り込みで落ち、画像の無い状態 → `jobs` = [] → `imageJobs.length` = 0 なので `consumeAiUsage` を呼ばない (数えない)・積まない。主菜を変えた `PATCH` → 主菜の種 (`stale`) → 1 回数えて積む。役割 `主菜`: `normalizeText('主菜')` が `AUTO_IMAGE_DISH_ROLES` にある |
 | S40 | 5: `ManualEditModal` の「AIで画像生成」→ `ImageGenerateModal` → `POST /api/ai/image/generate` → `consumeAiUsage(user, 'image_generation')` → pro: `ai_plan_feature_caps(pro, image_generation)` の行なし → 1 日の合計 (30) の中で許可 → 画像 → `PATCH /api/meal-plans/meals/[id]` の `imageUrl` → `buildDishImagePayload` の `imageUrlOverride`: 料理が 2 品以上 → カバーだけに付く (料理の画像は変えない。`reconcileDishImages` の種は主菜の 1 本まで)、1 品 → その料理を `manual_override`。free: `(free, image_generation) = 0` → `plan_locked` → 403 `AI_FEATURE_NOT_IN_PLAN` (`aiFeatureNotInPlanMessage('image_generation')`) |
 | S41 | 5: 副菜 (`generated_ai`・`ready`・画像あり) の同じ料理の保存し直し → `reconcileDishImages` の「同じ料理で `needsImageRetry` が偽」の枝が前回の画像と状態を写し、種を作らない → 絞り込みは種だけを見るので副菜に触れない (画像は残る)。副菜の中身を変えた → 種 (`stale`) → 絞り込みで落ちて画像の無い状態 (`image_url` も null)。副菜が `pending` / `failed` で画像なし → `needsImageRetry` が真で種 → 絞り込みで落ちて画像の無い状態 → 次の同じ料理の保存し直しは `isAiImagePipelineDish` が偽 (subject_hash も source も無い) で写すだけ。積み直しの道具: `planDishImageJobs` → 待ち・画像なし・AI の画像・subject_hash ありの副菜 → `dishIndex !== autoImageDishIndex` → `skipped.not_auto_image_dish` + 1 |
+| S42 | 5: [ご飯 (位置 0・画像の無い状態: `image_subject_hash`・`image_source` なし)・主菜 (位置 1・`ready`)] から主菜を消す `PATCH` → `reconcileDishImages` の for: ご飯は `buildDishImageSubjectHash` (名前・役割・材料・`displayOrder`・位置) が前回と同じ → `sameSubject` かつ `isAiImagePipelineDish(前回のご飯)` が偽 → 前回のまま写し、種なし → for の直後の (b0): `autoImageDishHandoverIndexOf` → 今回の `autoImageDishIndexOf` = 0 (主菜が無いので先頭)・前回 = 1 → 違う・位置 0 に種なし・ご飯は画像の無い状態 → 0 を返す → ご飯を `generated_ai`・`pending`・subject_hash 付きにして種 1 本 → カバーの判定 (`isMealCoverHeldByImagelessPreservedDish`) は写真の料理が無いので偽 → 最後の絞り込み: 種は位置 0 だけ (= `autoImageDishIndexOf`) なので落ちない → `deriveMealCoverImage`: カバーは前の主菜の AI の画像 (前回の料理で `generated_ai` と一致) なので付け替えてよく、今回の料理にできあがった画像が無いので空 → route は `imageJobs.length` = 1 > 0 → `consumeAiUsage(user, 'meal_image_auto')` を 1 回 → 積む → 画像の処理 → `applyGeneratedDishImage` がご飯の画像をカバーに。[副菜・主菜 1 (`ready`)・主菜 2 (画像の無い状態)] で主菜 1 の役割を `side` に: 主菜 1 は役割が変わり subject_hash が違う → 種 (`stale`)、主菜 2 は同じ料理で写すだけ → (b0): 今回 2・前回 1 → 位置 2 に種 1 本 → 絞り込みで位置 1 の種を落として `withoutAutoDishImage` (主菜 1 の画像は外れる) → 種は主菜 2 の 1 本 → 1 回数える。変えずに保存し直す (完了の切り替え): 役割と並びが同じなので今回と前回の `autoImageDishIndexOf` が同じ → (b0) は null → 種なし・数えない (#1487 のまま)。free: 種 1 本 → route の門 (`mealImageSkipReasonOf` = `'plan'`) で積まず `markDishImagesSkipped` が新しい主菜の位置の料理を `skipped_plan` に |
 
 ---
 
@@ -1068,6 +1070,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | 料理が 1 品 | その料理の 1 本 | その料理 | — | 1 回 | 自分の画像かカバー (1 品の献立はいつもカバーを出す) | その料理 |
 | 主菜は同じ料理で画像あり (`ready`)、ほかの料理だけを足した・変えた | 0 本 | (主菜は積み直さない) | 足した・変えた料理は画像の無い状態。変えていない料理は前のまま | 数えない (種が 0 なので `consumeAiUsage` を呼ばない。F26) | 主菜: 自分の画像 / ほか: 前の画像があればそれ、無ければ枠なし | — |
 | 主菜の中身を変えた (主菜の前の画像は外れる) | 主菜の 1 本 (`stale`) | 主菜 | 前のまま | 1 回 | 主菜: できるまではカバー (前の主菜の AI の画像だったカバーは、ほかの料理にできあがった画像が無ければ `deriveMealCoverImage` が空にする) | — |
+| 主菜を消した・主菜の役割を外した (主菜の位置が、もとからその位置にある変わらない料理へ移る。例: ご飯・主菜の献立から主菜を消す、主菜が 2 品の献立で最初の主菜を副菜にする。S42) | 移った先の料理が画像の無い状態なら、その料理の 1 本 (`pending`。主菜の引き継ぎ `autoImageDishHandoverIndexOf`)。移った先が画像を持つ・写真・商品・手の画像なら 0 本、待ち・止まった料理なら積み直しの 1 本 | 移った先の料理 (主菜の無い献立になったなら先頭) | 前のまま (役割を外した前の主菜は画像の無い状態・前の画像は外れる) | 1 回 (種が 1 本のとき。0 本なら数えない) | 新しい主菜: できるまでは「生成中」の枠 (前の主菜の AI の画像だったカバーは、ほかにできあがった画像が無ければ `deriveMealCoverImage` が空にする) / ほか: 枠なし | — |
 | 写真の献立 (料理ごとの画像なし・カバーは写真。`meal_photo` の `stale`) に料理を足した・変えた | 0 本 (いまの規則: カバーに頼る写真の料理があれば積まない。`isMealCoverHeldByImagelessPreservedDish`) | — | 足した料理は状態なし (いまのまま) | 数えない | 写真の料理: カバー (写真。source が `meal_photo`) / 足した料理: 主菜 (自動の料理画像の位置) ならカバー、ほかは枠なし | 積まない (`meal_cover_preserved`) |
 | 写真の料理 1 品 (自分の写真あり) か商品の料理 (`catalog`・役割 `main`) に料理を足した | 0 本 (主菜は写真・商品の料理で画像を持つ。足した料理は主菜でないので絞り込みで落ちる。v1.7 までは足した料理に積んだ) | 写真・商品の料理 (積まない) | 足した料理は画像の無い状態 | 数えない | 写真・商品の料理: 自分の画像 / 足した料理: 枠なし | — |
 | AI の作り直し (`save-meal` の `regeneration`) で料理が変わった写真の献立 | 主菜 (主菜が無ければ先頭) の 1 本 (写真の料理を AI の画像に回すのも主菜だけ) | 主菜 | 画像の無い状態 (写真の印も外れる) | (献立の作成は数えない。F22) | 主菜: できるまでは空のカバー (写真のカバーは外す。#1553) / ほか: 枠なし | — |
@@ -1092,6 +1095,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | 料理の保存の自動の料理画像 (`meal_image_auto`) | 全員 (安全弁 1 日 20 回。達したら画像だけ見送り `skipped_ai_limit` + `aiSkipped`)。保存した料理ごとに 1 枚 | free は作らない (主菜は `skipped_plan`・`aiSkipped` なし・主菜の料理の画面は有料プランの案内)。有料は献立の主菜の 1 品だけ (Q-16。安全弁は従来どおり。ほかの料理だけを変えた保存は数えない) |
 | 献立の作成が作る料理画像 | 全員 (作った料理ごと。数えない) | 各食の主菜の 1 品だけ積む (Q-16。主菜の無い献立は先頭の料理)。free は作らない (`process-meal-image-jobs` が主菜のジョブを取り消し、主菜を `skipped_plan` に)。有料は主菜の画像を作る |
 | 主菜でない料理の画像 | 作った料理ごとに AI の画像 (できるまでは「生成中」の枠) | 画像を持たない (状態なし)。段 B の前に作られた画像は、同じ料理のままなら残す (S41) |
+| 主菜を消した・主菜の役割を外した保存 (残った料理は変えない) | 残った料理はそれぞれの画像を持つので、献立の見た目は残る (種は作らない) | 主菜の位置が移った先の料理が画像の無い状態なら、その料理の 1 本を積む (主菜の引き継ぎ `autoImageDishHandoverIndexOf`。route と AI 相談は 1 回数える。S42)。画像を持つ・写真・商品・手の画像の料理なら積まない |
 | 料理の画面 (Web の献立の画面の `RecipeModal`) で、自分の画像の無い料理 | 献立のカバーを代わりに出す (`dish.image_url ?? meal.imageUrl`。F26) | 1 品の献立・自動の料理画像の料理 (主菜)・写真・商品・手の画像の料理だけカバーを出し、ほかの料理は出さない (枠なし。`mealCoverRepresentsDish`。§10.3) |
 | 積み直しの道具 (`scripts/requeue-pending-meal-images.ts`) | 待ちの料理をすべて積み直す | 主菜 (自動の料理画像の料理) の待ちだけ積み直し、ほかは `not_auto_image_dish` で数える |
 | テストの購入 (sandbox) | (ストアの購入が無い) | 本番でも本物の購入と同じに写し、`iap_is_sandbox = true` (Q-13) |
@@ -1154,7 +1158,7 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 
 同じ利用者の S 行・M 行の遷移は billing/01 §7.3・billing/02 §7.3 のまま (I 行があるときの「別の live 行あり」の枝が増えるだけ)。
 
-料理の画像の状態の遷移 (自動の料理画像。Q-16。状態の記号: **無** = その位置に料理が無い (新しい料理)・**N** = 画像の無い状態 (`image_source`・`image_status`・`image_subject_hash`・`image_url` が null)・**P** = AI の画像を待つ (`generated_ai`・`pending` / `stale`・画像なし・subject_hash あり)・**R** = AI の画像あり (`generated_ai`・`ready`)・**F** = 待ちで止まった (`generated_ai`・`failed`・画像なし。`skipped_*`・`enqueue_failed`・同意の理由)・**K** = 写真・商品・手の画像 (`meal_photo` / `catalog` / `manual_override`)。出来事の「保存」は料理の保存・更新の 4 本の route・AI 相談の料理の更新・献立の作成 (Edge の `save-meal`) のどれでも同じ (`reconcileDishImages`)。「主菜」= 保存する献立の `autoImageDishIndexOf` の位置の料理 (主菜の無い献立は先頭)):
+料理の画像の状態の遷移 (自動の料理画像。Q-16。状態の記号: **無** = その位置に料理が無い (新しい料理)・**N** = 画像の無い状態 (`image_source`・`image_status`・`image_subject_hash`・`image_url` が null)・**P** = AI の画像を待つ (`generated_ai`・`pending` / `stale`・画像なし・subject_hash あり)・**R** = AI の画像あり (`generated_ai`・`ready`)・**F** = 待ちで止まった (`generated_ai`・`failed`・画像なし。`skipped_*`・`enqueue_failed`・同意の理由)・**K** = 写真・商品・手の画像 (`meal_photo` / `catalog` / `manual_override`)。出来事の「保存」は料理の保存・更新の 4 本の route・AI 相談の料理の更新・献立の作成 (Edge の `save-meal`) のどれでも同じ (`reconcileDishImages`)。「主菜」= 保存する献立の `autoImageDishIndexOf` の位置の料理 (主菜の無い献立は先頭)。「主菜でない → 主菜」は、前回の献立では主菜の位置でなかった料理が、この保存で主菜の位置になる行。「主菜 → 主菜でない」はその逆):
 
 | 位置 | 現在 | 出来事 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|---|
@@ -1166,16 +1170,20 @@ M 行を選ぶ述語 `s.stripe_subscription_id IS NULL` を持つ 3 本を、ori
 | 主菜 | P | 画像の処理 (`ai_plan_feature_daily_cap` = 0) | F (`skipped_plan`) | 同意の判定の後 | ジョブ `cancelled` (§8.8) |
 | 主菜 | P | 画像の処理 (同意なし) | F (同意の理由) | — | ジョブ `cancelled` (いまのまま) |
 | 主菜 | K | 保存 | K (手の画像は中身を変えると `stale`。いまの規則) | — | 種なし |
+| 主菜 | N | 同じ料理の保存 (役割と並びも同じ。完了の切り替えなど) | N | `isAiImagePipelineDish` が偽・前回と今回の `autoImageDishIndexOf` が同じ (主菜の位置が移っていない) | なし (前回のまま写す。#1487 の「AI の画像の料理だと分からない料理を変えずに保存し直しても積まない」。本冊の前からある画像の無い料理・写真や商品の献立で積まなかった料理) |
 | 主菜でない | 無 | 保存 (新しい料理) | N | — | 種を落とす (積まない。種がほかに無ければ数えない) |
 | 主菜でない | R | 同じ料理の保存 | R | — | なし (段 B の前に作られた画像を残す。S41) |
 | 主菜でない | R | 中身を変えた保存 | N | — | 種を落とす。前の画像は外れる |
 | 主菜でない | P / F | 同じ料理の保存 | N | `needsImageRetry` が真 (積み直そうとした種を落とす) | なし (「生成中」のまま残さない。S41) |
 | 主菜でない | P / F / N | 中身を変えた保存 | N | — | 種を落とす |
-| 主菜でない | N | 同じ料理の保存 | N | `isAiImagePipelineDish` が偽 (subject_hash も source も無い) | なし (前回のまま写す) |
+| 主菜でない | N | 同じ料理の保存 | N | `isAiImagePipelineDish` が偽 (subject_hash も source も無い)・この保存で料理が主菜にならない (なるときは下の「主菜でない → 主菜 (位置が移った先の、変わらない料理)」の行) | なし (前回のまま写す) |
 | 主菜でない | P | 画像の処理 (段 B の前に積まれたジョブ) | R | ジョブの subject_hash = 料理の subject_hash | いまの規則のまま画像を書く (処理の門は主菜かを見ない。段 B の前の待ちのジョブだけ) |
 | 主菜でない | K | 保存 | K (いまの規則) | — | 種なし |
-| 主菜でない → 主菜 | N / R / P | 主菜の役割を付けた・前の主菜を消して先頭になった保存 (役割と位置は subject_hash に入るので、中身が変わった扱い) | P (前の料理があれば `stale`、無ければ `pending`) | 新しい `autoImageDishIndexOf` の位置 | 種 1 本 |
-| 主菜 → 主菜でない | R / P / F | 役割を変えた・前に別の主菜を足した保存 | N | — | 種を落とす。前の画像は外れる |
+| 主菜でない → 主菜 | N / R / P | その料理の役割か位置が変わって主菜になる保存 (主菜の役割を付けた・前にある料理を消して位置が詰まり、新しい `autoImageDishIndexOf` の位置になった。役割と位置は subject_hash に入るので、中身が変わった扱い) | P (前の料理があれば `stale`、無ければ `pending`) | 新しい `autoImageDishIndexOf` の位置 | 種 1 本 (for の中の「中身を変えた」の種) |
+| 主菜でない → 主菜 (位置が移った先の、変わらない料理) | N | 前の主菜を消した・前の主菜の役割を外した保存で、`autoImageDishIndexOf` の位置が、もとからその位置にある中身・役割・位置の変わらない料理へ移った (例: [ご飯 (位置 0・N)・主菜 (位置 1・R)] から主菜を消す / [副菜・主菜 1 (R)・主菜 2 (N)] で主菜 1 の役割を副菜にする。S42) | P (`pending`) | `autoImageDishHandoverIndexOf` が位置を返す (前回と今回の `autoImageDishIndexOf` が違う・その位置に種が無い・料理が N)・献立のカバーが写真・商品の料理のものでない (当たれば N に戻して積まない) | 種 1 本 (主菜の引き継ぎ。§8.8 の (b0))。route と AI 相談は `meal_image_auto` を 1 回 (無料は積まずに F (`skipped_plan`))。カバーは前の主菜の AI の画像だったので、ほかにできあがった画像が無ければ `deriveMealCoverImage` が空にし、新しい主菜の画像ができるとカバーになる |
+| 主菜でない → 主菜 (位置が移った先の、変わらない料理) | R / K | 同上 | R / K (同じ) | 画像を持つ料理・写真・商品・手の画像の料理 (`autoImageDishHandoverIndexOf` が null) | 種なし (カバーは `deriveMealCoverImage` の既存の規則) |
+| 主菜でない → 主菜 (位置が移った先の、変わらない料理) | P / F | 同上 | P (`pending`) | `needsImageRetry` が真・`isAiImagePipelineDish` が真 (段 B の前の待ちの料理・無料で止めた料理) | 種 1 本 (for の中の積み直しの種。新しい位置なので最後の絞り込みで残る) |
+| 主菜 → 主菜でない | R / P / F | 役割を変えた・前に別の主菜を足した保存 | N | — | 種を落とす。前の画像は外れる。主菜の位置が移った先の料理は、上の「主菜でない → 主菜」の行のどれか (変わらない N の料理なら主菜の引き継ぎで種 1 本) |
 | 待ちの料理 (積み直しの道具) | P (subject_hash あり) | `--apply` | 主菜: 積む / 主菜でない: 積まない | 待ち・画像なし・AI の画像・商品と写真のカバーの献立でない (いまの規則) | 主菜でないものは `skipped.not_auto_image_dish` + 1 |
 
 ---
@@ -3104,9 +3112,10 @@ async function readMealImageJobPlanDecision(ownerId: string): Promise<MealImageJ
 - 料理の画面 `src/app/(main)/menus/weekly/_components/modals/RecipeModal.tsx:213-229`: `isMealImageSkippedError` の 2 か所の前に `isMealImagePlanSkippedError(...)` の枝を置き、画像の枠の文は「料理画像の作成は有料プランでお使いいただけます」、下の注は「料理画像の作成は有料プランでお使いいただけます。有料プランにすると、料理を保存し直したときに画像を作ります。」にする (`skipped_ai_limit` / `skipped_rate_limit` の文は変えない)。`needsImageRetry` は変えない (保存し直すたびに判定し、有料プランになっていれば作る)。
 
 - 自動の料理画像は献立の主菜の 1 品だけ (Q-16・R26・§7.1 の「自動の料理画像を作る料理」の表・§7.3 の料理の画像の状態の遷移)。ジョブの種を作る `reconcileDishImages` の最後で、種を主菜の 1 品に絞る (6 つの入口はどれもこの関数を通る。F26)。主菜の判定 `autoImageDishIndexOf` は同じファイルに置き、積み直しの道具 (`planDishImageJobs`) と料理の画面 (`mealCoverRepresentsDish`) も同じ関数を読む。プランで分けない (無料は上の処理の門と route の門が先に止める)。`lib/meal-image-jobs.ts` (`buildDishImagePayload`・`enqueueMealImageJobs`) と `supabase/functions/_shared/meal-image-jobs.ts` は変えない (渡ってくる種が 1 本までになるだけ)。4 本の route と AI 相談は、種が 0 本なら `consumeAiUsage(user, 'meal_image_auto')` を呼ばない今のコード (F26) のまま、主菜でない料理だけを変えた保存では数えない。
+- 主菜の引き継ぎ (§7.3 の「主菜でない → 主菜 (位置が移った先の、変わらない料理)」の行・S42)。前の主菜を消した・前の主菜の役割を外した保存では、自動の料理画像の位置 (`autoImageDishIndexOf`) が、もとからその位置にある中身・役割・位置の変わらない料理へ移ることがある (例: [ご飯 (位置 0・画像の無い状態)・主菜 (位置 1・`ready`)] から主菜を消す → 位置 0 のご飯。[副菜・主菜 1 (`ready`)・主菜 2 (画像の無い状態)] で主菜 1 の役割を副菜にする → 位置 2 の主菜 2)。その料理は subject_hash が変わらず、`isAiImagePipelineDish` も偽 (`withoutAutoDishImage` が外した) なので、for の中の「前回のまま写し、積まない」(#1487) に当たり種ができない。絞り込みだけでは献立に画像もジョブも無くなる (カバーは前の主菜の AI の画像だったので `deriveMealCoverImage` が空にする) ため、for の直後の (b0) で `autoImageDishHandoverIndexOf` が返す位置に種を 1 本足す (`pending`)。足す条件は「前回と今回の `autoImageDishIndexOf` が違う」「その位置にまだ種が無い」「その料理が画像の無い状態 (画像・写真・商品・手の画像・AI の画像の印のどれも無い)」の 3 つで、料理を変えずに保存し直した (完了の切り替えなど) ときは役割と並びが同じなので位置が移らず、#1487 の「変えずに保存し直しても積まない」は変わらない。足した種はほかの種と同じに扱う: route と AI 相談は種が 1 本あるので `meal_image_auto` を 1 回数え (無料は `skipped_plan` で積まない)、献立の作成 (`save-meal`) は積んで処理の門が見る。献立のカバーが写真・商品の料理のもの (`isMealCoverHeldByImagelessPreservedDish`) なら、ほかの種と同じく (足した料理は `jobDishes` に入っている) 前の状態 (画像の無い状態) に戻して積まない。移った先の料理が画像を持つ (段 B の前の `ready`)・写真・商品・手の画像・待ち (`pending` / `stale` / `failed`。for の中で積み直しの種になる) なら足さない。既存のテスト (§16.1 の母集合の作り方 17 の母集合) の保存はどれも、主菜の位置が前回と同じ (料理を足す・1 品を変える・変えずに保存し直す) で、前の主菜を消す・主菜の役割を外す it は無い (origin/main `2ba5b3b3` で読んだ) ので、引き継ぎで期待が変わる既存の it は無い。守るのはテスト 156〜158。
 
 ```ts
-// tsc:skip insert=supabase/functions/_shared/meal-image.ts — 3 か所 (位置は各行の注)。lib/meal-image.ts の再 export の名前の一覧に AUTO_IMAGE_DISH_ROLES・AUTO_IMAGE_FALLBACK_DISH_INDEX・autoImageDishIndexOf・mealCoverRepresentsDish を足す
+// tsc:skip insert=supabase/functions/_shared/meal-image.ts — 4 か所 ((a)・(b0)・(b)・(c)。位置は各行の注)。lib/meal-image.ts の再 export の名前の一覧に AUTO_IMAGE_DISH_ROLES・AUTO_IMAGE_FALLBACK_DISH_INDEX・autoImageDishIndexOf・mealCoverRepresentsDish を足す (autoImageDishHandoverIndexOf は reconcileDishImages の中とテスト (`_shared/meal-image` を直に読む) だけが使うので、再 export に足さない)
 // (a) isAiImagePipelineDish の定義の直後に置く (normalizeText・isCoverReadySource はこのファイルの関数宣言なので、後ろで定義されていても呼べる)
 
 /**
@@ -3154,6 +3163,38 @@ export function mealCoverRepresentsDish(
 }
 
 /**
+ * 主菜の引き継ぎ (billing/03 §8.8・§7.3・Q-16)。この保存で自動の料理画像を作る位置 (autoImageDishIndexOf) が別の料理へ移り
+ * (前の主菜を消した・前の主菜の役割を外した。移った先の料理はもとからその位置にあり、中身・役割・位置を変えていない)、
+ * 移った先の料理が画像の無い状態 (N: 画像・source・subject_hash なし。主菜でなかった間に withoutAutoDishImage が外した料理など) なら、その位置を返す。
+ * reconcileDishImages はその料理に種を 1 本足す (献立のカバーを 1 枚残す。R26・S38・S42)。それ以外は null。
+ *   - 前回の料理が無い (新しい献立): null (新しい料理は reconcileDishImages の for の中で種になる)
+ *   - 位置が移っていない (前回と今回の autoImageDishIndexOf が同じ): null。料理を変えずに保存し直した (完了の切り替えなど) ときは
+ *     役割と並びが同じなので必ずここに当たり、AI の画像の料理だと分からない料理を変えずに保存し直しても積まない今の決まり
+ *     (reconcileDishImages の「前回のまま写し、積まない」。#1487) は変わらない
+ *   - 移った先の料理にもう種がある (中身・役割・位置が変わった料理・待ちの料理の積み直し): null (種は 1 本のまま)
+ *   - 移った先の料理が画像を持つ・写真・商品・手の画像の料理 (isPreservedDishImage)・AI の画像の料理 (isAiImagePipelineDish): null
+ * previousDishes は保存する前の料理 (料理でない値は役割の無い料理として位置を数える)、dishes は reconcileDishImages の for で作った料理、
+ * seededDishIndexes はその時点の種の位置
+ */
+export function autoImageDishHandoverIndexOf(params: {
+  previousDishes: ReadonlyArray<MealImageDish | null | undefined>;
+  dishes: ReadonlyArray<MealImageDish>;
+  seededDishIndexes: ReadonlyArray<number>;
+}): number | null {
+  if (params.previousDishes.length === 0) return null;
+  const autoImageDishIndex = autoImageDishIndexOf(params.dishes);
+  if (autoImageDishIndex === null) return null;
+  const previousAutoImageDishIndex = autoImageDishIndexOf(
+    params.previousDishes.map((dish): MealImageDish => (dish && typeof dish === 'object' ? dish : {})),
+  );
+  if (previousAutoImageDishIndex === autoImageDishIndex) return null;
+  if (params.seededDishIndexes.includes(autoImageDishIndex)) return null;
+  const dish = params.dishes[autoImageDishIndex];
+  if (!dish || dish.image_url || isPreservedDishImage(dish) || isAiImagePipelineDish(dish)) return null;
+  return autoImageDishIndex;
+}
+
+/**
  * 自動の料理画像を作らない料理を、画像の無い状態にする (billing/03 §8.8・Q-16)。状態・source・subject_hash・画像を持たない
  * (画面は「生成中」「再生成待ち」を出さず、料理の画面は画像の枠を出さない。subject_hash も source も無いので、次に変えずに
  * 保存し直しても AI の画像の料理とみなさず積み直さない (isAiImagePipelineDish が偽))。プロンプトとモデルは残す。
@@ -3171,6 +3212,35 @@ function withoutAutoDishImage<TDish extends MealImageDish>(dish: TDish): TDish {
   };
   return cleared;
 }
+
+// (b0) reconcileDishImages の for の閉じ括弧の直後 (「// AI の作り直しで料理が変わったら、利用者のカバー (AI の料理の画像でないカバー) を外す (#1553)。」の前) に置く
+  // billing/03 §8.8・Q-16: 主菜の引き継ぎ。前の主菜を消した・前の主菜の役割を外したことで、自動の料理画像の位置が、中身・役割・位置の
+  // 変わらない画像の無い料理へ移ったら、その料理に種を 1 本足す (for の中では「前回のまま写し、積まない」に当たるため。献立のカバーを 1 枚残す)。
+  // 位置が移らない保存し直し (完了の切り替えなど) では足さない (autoImageDishHandoverIndexOf)。足した料理は jobDishes にも入れるので、
+  // 下の「献立のカバーが写真・商品の料理のもの」の判定に当たれば前の状態 (画像の無い状態) に戻る
+  const handoverDishIndex = autoImageDishHandoverIndexOf({
+    previousDishes,
+    dishes,
+    seededDishIndexes: jobs.map((job) => job.dishIndex),
+  });
+  if (handoverDishIndex !== null) {
+    const unchangedDish = dishes[handoverDishIndex];
+    const { subjectHash, prompt } = dishSubjects[handoverDishIndex];
+    const handedOver: TDish = {
+      ...unchangedDish,
+      image_subject_hash: subjectHash,
+      image_url: null,
+      image_source: 'generated_ai',
+      // 前回の画像の無い料理の画像を作るので 'pending' (同じ料理の積み直しと同じ決まり)
+      image_status: 'pending',
+      image_generated_at: null,
+      image_error: null,
+    };
+    dishes[handoverDishIndex] = handedOver;
+    jobDishes.push({ index: handoverDishIndex, sameSubject: true, previousDish: unchangedDish });
+    jobs.push(buildDishJobSeed(handedOver, handoverDishIndex, subjectHash, prompt));
+    jobs.sort((a, b) => a.dishIndex - b.dishIndex);
+  }
 
 // (b) reconcileDishImages の最後の return の直前 (「献立のカバーが、料理ごとの画像を持たない写真・商品の料理のもの…」の if ブロックの後) に置く
   // billing/03 §8.8・Q-16: 自動の料理画像は献立の主菜の 1 品だけに作る (autoImageDishIndexOf)。ほかの料理に積もうとした種は積まず、
@@ -4530,6 +4600,9 @@ cross/20 §10 の規則のまま (1 文と表の 1 行が 1 行・`fragment` は
 153. `tests/meal-image-plan-gate-source.test.ts` (追加。ソースの走査): `it('the weekly page falls back to the meal cover only through mealCoverRepresentsDish (no dish.image_url ?? meal.imageUrl), and reconcileDishImages narrows the jobs with autoImageDishIndexOf before it returns')` (S37。`src/app/(main)/menus/weekly/page.tsx` と `supabase/functions/_shared/meal-image.ts` をコメントを除いて読む)
 154. `src/__tests__/app/menus/weekly/recipe-modal-plan-skipped.test.tsx` (追加): `it('RecipeModal shows no image frame for a dish without imageUrl and image_status (a non-main dish under billing/03 Q-16)')` (S37)
 155. `tests/billing-plan-catalog.test.ts` (追加): `it('every PLAN_CATALOG plan has exactly one 料理画像の作成 feature line, which says the image is made for the main dish (主菜) and contains none of UNFINISHED_WORDS')` (S37・R26。`PAID_MEAL_IMAGE_FEATURE` は export しないので、`features` の中の「料理画像の作成」で始まる行を見る)
+156. `tests/meal-image-skip.test.ts` (追加): `it('autoImageDishHandoverIndexOf returns the new auto image dish index only when it differs from the previous one, the dish there has no job and no image state (no image_url, image_source or image_subject_hash), and returns null for no previous dishes, an unchanged role order, a seeded index, a ready / pending / meal_photo / catalog / manual_override dish, and treats a non-object previous dish as a dish without a role')` (S42)
+157. 同: `it('reconcileDishImages hands the auto image over to an unchanged no-image dish: deleting the ready main of [rice, main] enqueues one pending job for the rice (dish 0), changing the first of two main dishes to side enqueues only the second main (dish 2) and clears the first, and an unchanged re-save of a meal with no-image dishes enqueues nothing')` (S42。カバーの献立 (写真の料理があり `isMealCoverHeldByImagelessPreservedDish` が真) では引き継ぎの料理を画像の無い状態に戻して積まないことも同じ it で見る)
+158. `tests/meal-image-skip-routes.test.ts` (追加。既存の `describe.each(UPDATE_ENTRIES)` の中に 1 つ。更新の 3 つの入口): `it('Q-16. ご飯と主菜 (主菜は画像あり・ご飯は画像の無い状態) の献立で主菜を消して保存し直すと、ご飯の 1 行 (dish_index 0) を積んで 1 回数える')` (S42)
 
 `tests/public-claims-guard.test.ts` (書き換え。§10.1・§10.2):
 44. `it('pricing page shows one card per public plan with both interval amounts, trial and PLAN_CATALOG features and no CTA when no Price is registered, and only the free card when the read fails (no 現在は無料 and no FAQ section)')`
@@ -4632,7 +4705,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 81. `tests/e2e/.manual/iap-webhook.spec.ts`: 本番の受け口 (RevenueCat に登録した 1 つの Webhook) へ RevenueCat の Dashboard の Test event (`TEST` → 200 `ignored`) と、TestFlight の sandbox の購入のイベントを送り、`personal_subscriptions` (`iap_is_sandbox = true`) と `revenuecat_webhook_events` を読み取りで確かめる (§17.4)。
 82. 実機 (整合ゲート): §17.4。
 
-### 14.4 シナリオ ⇄ テスト (§3.2 の 41 本がどのテストで守られるか)
+### 14.4 シナリオ ⇄ テスト (§3.2 の 42 本がどのテストで守られるか)
 
 | シナリオ | テスト (番号は §14.1〜§14.3) |
 |---|---|
@@ -4677,6 +4750,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | S39 有料の利用者が料理を手で保存・編集する | 143・144・147・150・151 |
 | S40 主菜でない料理の画像が欲しい (献立の編集の「AIで画像生成」) | 42・74・101・`tests/meal-cover-ownership.test.ts` の既存の it (料理が 2 品以上の献立に付けた画像はカバーだけ。§16.1 の行) |
 | S41 本冊の前に作られた料理画像 | 146・147・152 |
+| S42 主菜を消す・主菜の役割を外す (主菜の引き継ぎ) | 156・157・158 |
 
 §12 の発注者の作業 (App Store の Paid Applications Agreement・税と銀行の登録、Google Play の内部テストのトラックへの課金のライブラリ入りのビルドの提出、ストアの商品の作成、ストアのメタデータ (§17.5)) は運用の手順で、本冊のコードの振る舞いではない。シナリオとテストは持たず、§17.4 の受け入れの確認 (iOS の TestFlight・Android の内部テストの購入・ストアのメタデータ) で確かめる。
 
@@ -4767,7 +4841,7 @@ Web の契約の画面 (追加。§10.3・§10.4):
 | 料理画像の見送りの値 | `MealImageSkipReason` の `'plan'`・`image_error` の値 `'skipped_plan'`・積み直しの道具の `MealImageBackfillSkipReason` の `'not_auto_image_dish'` (`scripts/lib/meal-image-backfill.ts`。§8.8) |
 | TS モジュール | `src/lib/billing/{iap-core,revenuecat-gateway,iap-repository,iap-service}.ts`・`packages/shared/src/billing-plans.ts`・`src/hooks/useBillingSummary.ts`・`apps/mobile/src/lib/{purchases,iap-catalog,billing-api,plan-screen}.ts` |
 | TS の export (iap-core) | §8.1 の `export` のとおり (数は §8.1 が正。ストアの表示名と管理のページは `billing-plans.ts`) |
-| TS の export (ほか) | `verify.ts`: `verifyRevenueCatSignature`・`verifyRevenueCatWebhook` / `core.ts`: `PublicPlan`・`PlanFeatures`・`EMPTY_PLAN_FEATURES` / `public-plans.ts`: `listPublicPlans` (`listPurchasablePlans` を置き換え) / `http.ts`: `iapErrorResponse` / `iap-service.ts`: `IapDeps`・`syncStoreSubscriber`・`handleRevenueCatEvent`・`recordRevenueCatEventFailure`・`lazyResyncStoreSubscription`・`RevenueCatEventOutcome` / `revenuecat-gateway.ts`: `createRevenueCatGateway` / `iap-repository.ts`: `createIapRepository` / `packages/shared/src/billing-plans.ts`: `PURCHASE_STORES`・`PurchaseStore`・`isPurchaseStore`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`PAID_PLAN_KEYS`・`PaidPlanKey`・`PlanCatalogEntry`・`PLAN_AI_DAILY_LIMITS`・`PLAN_ULTIMATE_DAILY_CAPS`・`PLAN_MENU_GENERATION_DAILY_CAPS`・`PLAN_TRIAL_DAYS`・`FAMILY_PLAN_MAX_MEMBERS`・`PLAN_CATALOG`・`FREE_PLAN_FEATURES`・`FREE_PLAN_AI_LIMIT_NOTE`・`PAID_PLAN_SUMMARY`・`formatJpy`・`planCatalogPriceText`・`FREE_PLAN_FAQ_ANSWER`・`PAID_PLANS_FAQ_ANSWER`・`FREE_PLAN_DISPLAY_NAME`・`planDisplayName`・`SUBSCRIPTION_STATUSES_WIRE`・`SubscriptionStatusWire`・`BILLING_SOURCES_WIRE`・`BillingSourceWire`・`BILLING_INTERVALS_WIRE`・`BillingIntervalWire`・`PlanFeaturesWire`・`BillingSummaryWire`・`parseBillingSummaryWire`・`SUBSCRIPTION_STATUS_TEXT_WIRE`・`CANCEL_SCHEDULED_WITHOUT_DATE_TEXT_WIRE`・`formatBillingDateWire`・`subscriptionStatusLines`・`STORE_SUBSCRIPTION_DELETION_NOTICE` / `ai-daily-limit.ts` (新しい名前): `AI_FEATURE_NOT_IN_PLAN_CODE`・`AI_FEATURE_NOT_IN_PLAN_STATUS`・`AI_PLAN_CAPPED_FEATURES`・`AiPlanCappedFeature`・`AI_PLAN_CAPPED_FEATURE_LABELS`・`aiFeatureDailyLimitMessage`・`aiFeatureNotInPlanMessage`・`AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE`・`AiFeatureNotInPlanBody`・`AiUsageDeniedBody`・`AiUsageDenialReason`・`aiDailyLimitMessageOfStatusAndBody` / `_shared/meal-image.ts`: `mealImageSkipReasonOf`・`isMealImagePlanSkippedError`・`mealImageJobPlanDecision`・`MealImageJobPlanDecision`・`AUTO_IMAGE_DISH_ROLES`・`AUTO_IMAGE_FALLBACK_DISH_INDEX`・`autoImageDishIndexOf`・`mealCoverRepresentsDish` (export しない: `SINGLE_DISH_MEAL_DISH_COUNT`・`withoutAutoDishImage`。§8.8) / `membership-errors.ts`: `MembershipErrorCode.FAMILY_PLAN_REQUIRED` / `src/hooks/useBillingSummary.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`useBillingSummary` / モバイル `purchases.ts`: `isPurchasesAvailable`・`identifyPurchases`・`resetPurchasesOnSignOut`・`fetchOfferings`・`fetchTrialEligibility`・`purchase`・`restore`・`currentCustomerInfo`・`PurchaseOutcome` / `iap-catalog.ts`: `CatalogPlanLike`・`IntroPriceLike`・`PackageLike`・`TrialEligibility`・`StoreTrial`・`PurchasablePlanCard`・`storeTrialOf`・`matchCatalogWithPackages`・`renewalText`・`parseIapCatalogPlans` / `billing-api.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`IAP_CATALOG_API_PATH`・`IAP_SYNC_API_PATH`・`BILLING_SUMMARY_LOAD_FAILED_MESSAGE`・`BILLING_PURCHASE_FAILED_MESSAGE`・`BillingSummaryShapeError`・`fetchBillingSummary`・`fetchIapCatalog`・`syncIapPurchases`・`billingErrorMessageOf` / `plan-screen.ts`: `PLAN_SCREEN_PATH` |
+| TS の export (ほか) | `verify.ts`: `verifyRevenueCatSignature`・`verifyRevenueCatWebhook` / `core.ts`: `PublicPlan`・`PlanFeatures`・`EMPTY_PLAN_FEATURES` / `public-plans.ts`: `listPublicPlans` (`listPurchasablePlans` を置き換え) / `http.ts`: `iapErrorResponse` / `iap-service.ts`: `IapDeps`・`syncStoreSubscriber`・`handleRevenueCatEvent`・`recordRevenueCatEventFailure`・`lazyResyncStoreSubscription`・`RevenueCatEventOutcome` / `revenuecat-gateway.ts`: `createRevenueCatGateway` / `iap-repository.ts`: `createIapRepository` / `packages/shared/src/billing-plans.ts`: `PURCHASE_STORES`・`PurchaseStore`・`isPurchaseStore`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`PAID_PLAN_KEYS`・`PaidPlanKey`・`PlanCatalogEntry`・`PLAN_AI_DAILY_LIMITS`・`PLAN_ULTIMATE_DAILY_CAPS`・`PLAN_MENU_GENERATION_DAILY_CAPS`・`PLAN_TRIAL_DAYS`・`FAMILY_PLAN_MAX_MEMBERS`・`PLAN_CATALOG`・`FREE_PLAN_FEATURES`・`FREE_PLAN_AI_LIMIT_NOTE`・`PAID_PLAN_SUMMARY`・`formatJpy`・`planCatalogPriceText`・`FREE_PLAN_FAQ_ANSWER`・`PAID_PLANS_FAQ_ANSWER`・`FREE_PLAN_DISPLAY_NAME`・`planDisplayName`・`SUBSCRIPTION_STATUSES_WIRE`・`SubscriptionStatusWire`・`BILLING_SOURCES_WIRE`・`BillingSourceWire`・`BILLING_INTERVALS_WIRE`・`BillingIntervalWire`・`PlanFeaturesWire`・`BillingSummaryWire`・`parseBillingSummaryWire`・`SUBSCRIPTION_STATUS_TEXT_WIRE`・`CANCEL_SCHEDULED_WITHOUT_DATE_TEXT_WIRE`・`formatBillingDateWire`・`subscriptionStatusLines`・`STORE_SUBSCRIPTION_DELETION_NOTICE` / `ai-daily-limit.ts` (新しい名前): `AI_FEATURE_NOT_IN_PLAN_CODE`・`AI_FEATURE_NOT_IN_PLAN_STATUS`・`AI_PLAN_CAPPED_FEATURES`・`AiPlanCappedFeature`・`AI_PLAN_CAPPED_FEATURE_LABELS`・`aiFeatureDailyLimitMessage`・`aiFeatureNotInPlanMessage`・`AI_FEATURE_NOT_IN_PLAN_FALLBACK_MESSAGE`・`AiFeatureNotInPlanBody`・`AiUsageDeniedBody`・`AiUsageDenialReason`・`aiDailyLimitMessageOfStatusAndBody` / `_shared/meal-image.ts`: `mealImageSkipReasonOf`・`isMealImagePlanSkippedError`・`mealImageJobPlanDecision`・`MealImageJobPlanDecision`・`AUTO_IMAGE_DISH_ROLES`・`AUTO_IMAGE_FALLBACK_DISH_INDEX`・`autoImageDishIndexOf`・`mealCoverRepresentsDish`・`autoImageDishHandoverIndexOf` (export しない: `SINGLE_DISH_MEAL_DISH_COUNT`・`withoutAutoDishImage`。§8.8) / `membership-errors.ts`: `MembershipErrorCode.FAMILY_PLAN_REQUIRED` / `src/hooks/useBillingSummary.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`useBillingSummary` / モバイル `purchases.ts`: `isPurchasesAvailable`・`identifyPurchases`・`resetPurchasesOnSignOut`・`fetchOfferings`・`fetchTrialEligibility`・`purchase`・`restore`・`currentCustomerInfo`・`PurchaseOutcome` / `iap-catalog.ts`: `CatalogPlanLike`・`IntroPriceLike`・`PackageLike`・`TrialEligibility`・`StoreTrial`・`PurchasablePlanCard`・`storeTrialOf`・`matchCatalogWithPackages`・`renewalText`・`parseIapCatalogPlans` / `billing-api.ts`: `BILLING_SUBSCRIPTION_API_PATH`・`IAP_CATALOG_API_PATH`・`IAP_SYNC_API_PATH`・`BILLING_SUMMARY_LOAD_FAILED_MESSAGE`・`BILLING_PURCHASE_FAILED_MESSAGE`・`BillingSummaryShapeError`・`fetchBillingSummary`・`fetchIapCatalog`・`syncIapPurchases`・`billingErrorMessageOf` / `plan-screen.ts`: `PLAN_SCREEN_PATH` |
 | 環境変数 | `REVENUECAT_SECRET_API_KEY`・`REVENUECAT_WEBHOOK_SECRET` (Web。一覧に追加)・`EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY`・`EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY` (モバイル) |
 | エラーコード | §13.1 の [NEW] 7 つ |
 | 依存 (モバイル) | `react-native-purchases` `10.14.0`・`expo-dev-client` `~58.0.14` (`apps/mobile/package.json` の `dependencies`。`package-lock.json` のルートの `node_modules/` に増えるキーは §8.10 の「依存の追加と `package-lock.json` の作り直し」の 3 の 8 つ。P19) |
@@ -5002,6 +5076,7 @@ grep の語 = 本冊が足す・変える名前。段 = §15.1。
 | `src/lib/legal/terms-text.ts`・`privacy-text.ts`・`tests/legal-claims-1901.ts`・`tests/legal-text-1901.test.ts`・`legal-versions.ts` | E | cross/20 (#1901) の実装 (origin/main `2ba5b3b3` でマージ済み) | 段 E の着手の時に `git log 2ba5b3b3..origin/main -- <これらのファイル>` で後から入った変更を確かめ、あれば本冊の差分をその上に当てる (main が正。§11.0)。ほかに規約とポリシーの文を変える PR があれば直列にし、版はそれぞれ 1 つずつ上げる (cross/20 §9.3) |
 | `apps/mobile/package.json`・`jest.config.js`・設定タブ・`AuthProvider`・`signOut.ts` | D | モバイルを変える PR | 行の追加だけ |
 | `package-lock.json` (ルート。npm workspaces の 1 つの lock) | D | Dependabot の PR (週 1 回。ルートの lock)・依存を変えるほかの PR | 手で衝突を解かない。マージの直前の main の lock を土台に §8.10 の「依存の追加と `package-lock.json` の作り直し」の 2〜4 をやり直し、依存の宣言か lock を読む番兵 6 本 (§16.1 の母集合の作り方 13) を流し直す |
+| `src/lib/errors/membership-errors.ts` (`MembershipErrorCode`) | B | `docs/design/family/11-self-dissolve.md` (#1917。設計は origin/main `f89ba354` でマージ済み・実装は未着手。解散のエラーコードを足す) | どちらも行の追加だけ (本冊は `FAMILY_PLAN_REQUIRED`)。後にマージする方が、マージの直前に `git log -- src/lib/errors/membership-errors.ts` で先に入った行を確かめて並べる。family/11 が足す凍結中と同意の前に通す API の 2 本 (`src/lib/auth/frozen.ts`・`packages/shared/src/legal-consent-api.ts`) は本冊が変えないファイルで、テスト 118 は本冊の 2 本が一覧に無いことだけを見るので、どちらが先に入っても赤にならない |
 
 ---
 
