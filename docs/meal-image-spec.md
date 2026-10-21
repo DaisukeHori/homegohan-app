@@ -75,6 +75,7 @@
 - `image_status = 'pending'`
 - `image_prompt` を保存
 - `meal_image_jobs` に 1 dish 1 job で enqueue
+- 自動で積むのは献立の主菜の 1 品だけ (役割 `main` / `主菜` の最初の料理、主菜の無い献立は先頭の料理。`autoImageDishIndexOf`。ほかの料理は画像の無い状態。billing/03 §8.8・Q-16)
 
 ### FR-3 Direct mutation path
 
@@ -83,6 +84,7 @@ AI生成以外の更新経路で `dish` の内容が変わった場合、対象 
 - stale の定義は `name`, `role`, `dish count`, `dish order`, catalog による実質的な料理変更
 - stale になった dish は `image_status = 'stale'`
 - 自動再生成対象なら enqueue
+- 自動で積むのは献立の主菜の 1 品だけ (役割 `main` / `主菜` の最初の料理、主菜の無い献立は先頭の料理。`autoImageDishIndexOf`。ほかの料理は画像の無い状態。billing/03 §8.8・Q-16)
 - `manual_override` は subject hash が変わるまで維持
 
 ### FR-4 Photo-based meals
@@ -105,6 +107,8 @@ AI生成以外の更新経路で `dish` の内容が変わった場合、対象 
 1. `dish.image_url`
 2. `meal.image_url`
 3. placeholder
+
+献立のカバー (`meal.image_url`) を代わりに出すのは、1 品の献立・主菜・写真や商品の料理だけ (`mealCoverRepresentsDish`。billing/03 §10.3)。
 
 meal 一覧の表示順は以下。
 
