@@ -21,6 +21,7 @@ jest.mock('../../src/lib/api', () => ({
 
 const mockIsPurchasesAvailable = jest.fn();
 const mockIdentifyPurchases = jest.fn();
+const mockEnsurePurchasesIdentity = jest.fn();
 const mockFetchOfferings = jest.fn();
 const mockFetchTrialEligibility = jest.fn();
 const mockPurchase = jest.fn();
@@ -29,6 +30,7 @@ const mockCurrentCustomerInfo = jest.fn();
 jest.mock('../../src/lib/purchases', () => ({
   isPurchasesAvailable: (...args: unknown[]) => mockIsPurchasesAvailable(...args),
   identifyPurchases: (...args: unknown[]) => mockIdentifyPurchases(...args),
+  ensurePurchasesIdentity: (...args: unknown[]) => mockEnsurePurchasesIdentity(...args),
   fetchOfferings: (...args: unknown[]) => mockFetchOfferings(...args),
   fetchTrialEligibility: (...args: unknown[]) => mockFetchTrialEligibility(...args),
   purchase: (...args: unknown[]) => mockPurchase(...args),
@@ -49,10 +51,12 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
 
-import { STORE_SUBSCRIPTION_MANAGEMENT_URL } from '@homegohan/shared';
+import { ORG_PLAN_DISPLAY_NAME, STORE_SUBSCRIPTION_MANAGEMENT_URL } from '@homegohan/shared';
 
 import PlanSettingsScreen, {
+  PLAN_ORG_STATUS_TEXT,
   PLAN_PURCHASE_COMPLETED_MESSAGE,
+  PLAN_PURCHASE_NOT_REFLECTED_MESSAGE,
   PLAN_RESTORE_NOTHING_MESSAGE,
   PLAN_STRIPE_SOURCE_TEXT,
 } from '../../app/settings/plan';
@@ -148,6 +152,7 @@ beforeEach(() => {
   mockPost.mockRejectedValue(new Error('HTTP 503 Service Unavailable: {}'));
   mockIsPurchasesAvailable.mockReturnValue(true);
   mockIdentifyPurchases.mockResolvedValue(undefined);
+  mockEnsurePurchasesIdentity.mockResolvedValue(undefined);
   mockFetchOfferings.mockResolvedValue({ current: { availablePackages: PACKAGES } });
   mockFetchTrialEligibility.mockResolvedValue({ pro_month: 'eligible', pro_year: 'ineligible' });
   mockPurchase.mockResolvedValue({ ok: false, cancelled: true });
@@ -280,6 +285,24 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
     api.unmount();
   });
 
+  // #1912: 組織の利用者 (自分の契約も家族も無い) の effective_plan_key は organizations.plan の値 (standard / premium / enterprise) か
+  // org_* になる。画面のどこにもその内部の値を出さず、固定の文 (組織のプラン) を出す
+  it.each(['standard', 'premium', 'enterprise', 'org_standard', 'unknown_plan_value'])(
+    'plan screen never shows the internal org plan_key %s and shows the fixed organization plan text instead',
+    async (orgPlanKey) => {
+      summaryResponse = { data: { ...FREE_SUMMARY, effective_plan_key: orgPlanKey } };
+      const api = await renderScreen();
+      expect(api.getByText(PLAN_ORG_STATUS_TEXT)).toBeTruthy();
+      expect(PLAN_ORG_STATUS_TEXT).toBe(`${ORG_PLAN_DISPLAY_NAME}をご利用中です`);
+      const texts = renderedTexts(api.toJSON());
+      expect(texts.length).toBeGreaterThan(0);
+      for (const text of texts) expect(text).not.toContain(orgPlanKey);
+      // 家族のプランの文 (「ご家族または組織のプラン」) にはならない
+      expect(api.queryByText(/ご家族または組織のプラン/)).toBeNull();
+      api.unmount();
+    },
+  );
+
   it('plan screen purchases a package, then syncs and shows the updated summary; cancelled purchases show nothing; the trial wording appears only for options whose storeTrialOf is not null (an ineligible iOS user sees no trial wording)', async () => {
     const api = await renderScreen();
 
@@ -330,6 +353,13 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
       fireEvent.press(api.getByTestId('plan-buy-pro-month'));
     });
     expect(mockPost).toHaveBeenLastCalledWith('/api/billing/iap/sync');
+    // 購入の前に、SDK の利用者がログイン中の利用者であることを確かめている (#1912)
+    expect(mockEnsurePurchasesIdentity).toHaveBeenLastCalledWith('uid-plan');
+    const ensureOrder = mockEnsurePurchasesIdentity.mock.invocationCallOrder;
+    const purchaseOrder = mockPurchase.mock.invocationCallOrder;
+    expect(purchaseOrder.length).toBeGreaterThan(0);
+    expect(ensureOrder.length).toBe(purchaseOrder.length);
+    purchaseOrder.forEach((order, index) => expect(ensureOrder[index]).toBeLessThan(order));
     expect(api.getByText(PLAN_PURCHASE_COMPLETED_MESSAGE)).toBeTruthy();
     expect(api.getByText('個人 Proをご利用中です')).toBeTruthy();
     expect(api.queryByTestId('plan-card-pro')).toBeNull();
@@ -431,5 +461,165 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
     for (const text of allTexts) {
       for (const word of UNFINISHED_WORDS) expect(text).not.toContain(word);
     }
+  });
+  // #1912 P3: RevenueCat の利用者の結び付けが確かめられないうちは、カードを出さず、購入も復元もしない
+  describe('ストアの購入の利用者の結び付け (#1912 P3)', () => {
+    it('画面を開いたときの結び付けが失敗したらカードを読まず (カタログ・offerings を読まない)、前面復帰で結び付けられたらカードを出す', async () => {
+      mockIdentifyPurchases.mockRejectedValue(new Error('logIn failed'));
+      const api = await renderScreen();
+      expect(mockIdentifyPurchases).toHaveBeenCalledWith('uid-plan');
+      // 要約は出す (状態の文)。カードは出さない
+      expect(api.getByText('無料プランをご利用中です')).toBeTruthy();
+      expect(api.queryByTestId('plan-card-pro')).toBeNull();
+      expect(mockGet).not.toHaveBeenCalledWith('/api/billing/iap/catalog?store=app_store');
+      expect(mockFetchOfferings).not.toHaveBeenCalled();
+      expect(mockFetchTrialEligibility).not.toHaveBeenCalled();
+
+      // 前面復帰でもう一度失敗: まだ出さない
+      await act(async () => {
+        appStateHandler?.('active');
+      });
+      expect(api.queryByTestId('plan-card-pro')).toBeNull();
+      expect(mockFetchOfferings).not.toHaveBeenCalled();
+
+      // 前面復帰で結び付けられた: カードを出す
+      mockIdentifyPurchases.mockResolvedValue(undefined);
+      await act(async () => {
+        appStateHandler?.('active');
+      });
+      await waitFor(() => expect(api.getByTestId('plan-card-pro')).toBeTruthy());
+      expect(mockFetchOfferings).toHaveBeenCalledTimes(1);
+      api.unmount();
+    });
+
+    it('購入の前の確かめ (ensurePurchasesIdentity) が投げたら購入を呼ばず、固定の文を出す (ストアの生の文は出さない)', async () => {
+      const api = await renderScreen();
+      const offeringsCalls = mockFetchOfferings.mock.calls.length;
+      const postsBefore = mockPost.mock.calls.length;
+      mockEnsurePurchasesIdentity.mockRejectedValueOnce(new Error('raw identity error'));
+      await act(async () => {
+        fireEvent.press(api.getByTestId('plan-buy-pro-month'));
+      });
+      expect(mockEnsurePurchasesIdentity).toHaveBeenCalledWith('uid-plan');
+      expect(mockPurchase).not.toHaveBeenCalled();
+      expect(mockFetchOfferings.mock.calls.length).toBe(offeringsCalls);
+      expect(mockPost.mock.calls.length).toBe(postsBefore);
+      expect(api.getByText(BILLING_PURCHASE_FAILED_MESSAGE)).toBeTruthy();
+      expect(api.queryByText('raw identity error')).toBeNull();
+      expect(api.queryByText(PLAN_PURCHASE_COMPLETED_MESSAGE)).toBeNull();
+      // 押せる形に戻る (次の押下で確かめ直す)
+      mockPurchase.mockResolvedValueOnce({ ok: true, customerInfo: {} });
+      mockPost.mockResolvedValueOnce({ data: liveSummary('app_store') });
+      await act(async () => {
+        fireEvent.press(api.getByTestId('plan-buy-pro-month'));
+      });
+      expect(mockPurchase).toHaveBeenCalledTimes(1);
+      expect(api.getByText(PLAN_PURCHASE_COMPLETED_MESSAGE)).toBeTruthy();
+      api.unmount();
+    });
+
+    it('復元の前の確かめが投げたら復元を呼ばず、固定の文を出す', async () => {
+      const api = await renderScreen();
+      const postsBefore = mockPost.mock.calls.length;
+      mockEnsurePurchasesIdentity.mockRejectedValueOnce(new Error('raw identity error'));
+      await act(async () => {
+        fireEvent.press(api.getByTestId('plan-restore'));
+      });
+      expect(mockEnsurePurchasesIdentity).toHaveBeenCalledWith('uid-plan');
+      expect(mockRestore).not.toHaveBeenCalled();
+      expect(mockPost.mock.calls.length).toBe(postsBefore);
+      expect(api.getByText(BILLING_PURCHASE_FAILED_MESSAGE)).toBeTruthy();
+      expect(api.queryByText('raw identity error')).toBeNull();
+      api.unmount();
+    });
+
+    it.each([
+      ['契約なし (status が null)', FREE_SUMMARY],
+      ['終わった契約 (expired)', { ...FREE_SUMMARY, plan_key: 'pro', status: 'expired', source: 'app_store' }],
+      ['終わった契約 (cancelled)', { ...FREE_SUMMARY, plan_key: 'pro', status: 'cancelled', source: 'app_store' }],
+    ])('購入のあとの同期が %s を返したら、完了の文を出さず、購入の復元を案内する', async (_label, synced) => {
+      const api = await renderScreen();
+      mockPurchase.mockResolvedValueOnce({ ok: true, customerInfo: {} });
+      mockPost.mockResolvedValueOnce({ data: synced });
+      await act(async () => {
+        fireEvent.press(api.getByTestId('plan-buy-pro-month'));
+      });
+      expect(mockPurchase).toHaveBeenCalledTimes(1);
+      expect(mockPost).toHaveBeenLastCalledWith('/api/billing/iap/sync');
+      expect(api.queryByText(PLAN_PURCHASE_COMPLETED_MESSAGE)).toBeNull();
+      expect(api.getByTestId('plan-notice').props.children).toBe(PLAN_PURCHASE_NOT_REFLECTED_MESSAGE);
+      api.unmount();
+    });
+
+    it('復元のあとの同期が終わった契約 (expired) を返したら、復元できる購入が無かった旨を出す', async () => {
+      const api = await renderScreen();
+      mockPost.mockResolvedValueOnce({ data: { ...FREE_SUMMARY, plan_key: 'pro', status: 'expired', source: 'app_store' } });
+      await act(async () => {
+        fireEvent.press(api.getByTestId('plan-restore'));
+      });
+      expect(mockRestore).toHaveBeenCalledTimes(1);
+      expect(api.getByText(PLAN_RESTORE_NOTHING_MESSAGE)).toBeTruthy();
+      api.unmount();
+    });
+  });
+
+  // #1912 P4: 要約の読み込みが失敗しても、並行の同期が要約を読めていれば、カードも出す
+  describe('要約の読み込みの失敗と並行の同期 (#1912 P4)', () => {
+    /** 外から決着をつけられる Promise */
+    function deferred<T>() {
+      let resolve: (value: T) => void = () => {};
+      let reject: (error: unknown) => void = () => {};
+      const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+      });
+      return { promise, resolve, reject };
+    }
+
+    it('同期が先に要約を置き換え、そのあと要約の読み込みが失敗した: 失敗の表示にせず、カードを出す', async () => {
+      const summaryLoad = deferred<unknown>();
+      mockGet.mockImplementation(async (path: string) => {
+        if (path === '/api/billing/subscription') return summaryLoad.promise;
+        if (path.startsWith('/api/billing/iap/catalog')) return catalogResponse;
+        throw new Error(`unexpected GET ${path}`);
+      });
+      mockPost.mockResolvedValueOnce({ data: FREE_SUMMARY });
+      const api = await renderScreen();
+      await act(async () => {
+        summaryLoad.reject(new Error('HTTP 500 Internal Server Error: {}'));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitFor(() => expect(api.getByTestId('plan-card-pro')).toBeTruthy());
+      expect(api.queryByTestId('plan-load-error')).toBeNull();
+      expect(api.getByText('無料プランをご利用中です')).toBeTruthy();
+      expect(mockFetchOfferings).toHaveBeenCalledTimes(1);
+      api.unmount();
+    });
+
+    it('要約の読み込みが先に失敗し、そのあと同期が要約を読めた: 失敗の表示を消して、カードを出す', async () => {
+      const sync = deferred<unknown>();
+      summaryResponse = new Error('HTTP 500 Internal Server Error: {}');
+      mockPost.mockImplementationOnce(() => sync.promise);
+      const api = await renderScreen();
+      expect(api.getByTestId('plan-load-error')).toBeTruthy();
+      expect(mockFetchOfferings).not.toHaveBeenCalled();
+      await act(async () => {
+        sync.resolve({ data: FREE_SUMMARY });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      await waitFor(() => expect(api.getByTestId('plan-card-pro')).toBeTruthy());
+      expect(api.queryByTestId('plan-load-error')).toBeNull();
+      expect(mockFetchOfferings).toHaveBeenCalledTimes(1);
+      api.unmount();
+    });
+
+    it('要約の読み込みも同期も失敗した: 失敗の表示で、カードは読まない', async () => {
+      summaryResponse = new Error('HTTP 500 Internal Server Error: {}');
+      const api = await renderScreen();
+      expect(api.getByTestId('plan-load-error')).toBeTruthy();
+      expect(mockIdentifyPurchases).not.toHaveBeenCalled();
+      expect(mockFetchOfferings).not.toHaveBeenCalled();
+      api.unmount();
+    });
   });
 });

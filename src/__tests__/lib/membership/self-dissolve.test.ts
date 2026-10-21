@@ -200,7 +200,7 @@ describe('画面の文 (#1917)', () => {
     expect(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.legal_consent).toContain('お問い合わせ');
   });
 
-  it('組織の effects は 4 行で、「招待」の語を含まない (解散のあとも組織の招待は承諾できる。§0.4・Q-4)', () => {
+  it('組織の effects は 4 行で、「招待」の語を含まない (解散で招待は取り消さず pending のまま残る。§0.4・Q-4)', () => {
     expect(SELF_DISSOLVE_COPY.organization.effects).toHaveLength(4);
     for (const line of SELF_DISSOLVE_COPY.organization.effects) expect(line).not.toContain('招待');
   });
