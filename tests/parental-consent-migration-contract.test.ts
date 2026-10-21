@@ -97,6 +97,11 @@ const REDEFINED_FUNCTIONS = [
   'guard_family_members_privileged',
 ] as const;
 
+/** 本 migration の後にその関数を作り直した migration の名前の後半 (version の 14 桁を除く)。billing/03 §6.6 が家族プランの門を足して create_family_group を作り直す */
+const LATER_REDEFINER_SUFFIXES: Readonly<Partial<Record<(typeof REDEFINED_FUNCTIONS)[number], readonly string[]>>> = {
+  create_family_group: ['_billing_paid_plans_iap.sql'],
+};
+
 /** 18 歳未満の本人の役割を断る IF (§6.4 の 12)。行コメントを除いて空白を詰めた形 */
 const MINOR_IF = "IF public.caller_is_minor_jst() THEN RAISE EXCEPTION 'MINOR_ACCOUNT_NOT_ALLOWED' USING ERRCODE = 'P0001'; END IF;";
 const NOT_AUTHENTICATED_IF = "IF auth.uid() IS NULL THEN RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001'; END IF;";
@@ -129,9 +134,10 @@ describe('#1173 migration とロールバックのファイル (T-MIG1)', () => 
     }
   });
 
-  it.each(REDEFINED_FUNCTIONS)('%s を最後に定義する migration が本 migration で、ロールバックが同じ関数を定義し直す', (fn) => {
+  it.each(REDEFINED_FUNCTIONS)('%s を本 migration が作り直し、その後に作り直した migration は LATER_REDEFINER_SUFFIXES のものだけで、ロールバックが同じ関数を定義し直す', (fn) => {
     const definers = migrationFiles.filter((name) => definesPattern(fn).test(stripLineComments(read(`${MIGRATIONS_DIR}/${name}`))));
-    expect(definers[definers.length - 1]).toBe(ours[0]);
+    expect(definers).toContain(ours[0]);
+    expect(definers.filter((name) => name > ours[0]).map((name) => name.slice(ourVersion.length))).toEqual(LATER_REDEFINER_SUFFIXES[fn] ?? []);
     expect(rollback).toMatch(definesPattern(fn));
   });
 

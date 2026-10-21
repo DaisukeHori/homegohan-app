@@ -17,6 +17,7 @@ import {
   PARENTAL_CONSENT_DOCUMENT,
   calculateAgeYears,
 } from "../../../packages/shared/src/parental-consent";
+import { E2E_FAMILY_PLAN_KEY, grantManualPlanForE2e } from "./billing-plan";
 
 dotenvConfig({ path: path.resolve(__dirname, "../../../.env.local") });
 dotenvConfig({ path: path.resolve(__dirname, "../../../../.env.local") });
@@ -95,6 +96,10 @@ async function serviceApiFetch(
 /**
  * service_role API 経由で family グループを直接作成する。
  * owner として指定したユーザを representative として family_members に INSERT する。
+ * owner には、グループを作る前に家族プラン (family_basic) を手動付与する (billing/03 §6.6 の家族の門。
+ * 家族プランの契約の無い代表者のグループ (free) には、招待の承諾・子供の追加で代表者以外のメンバーを足せない)。
+ * plan_key は送らない (billing/01 のトリガー family_groups_billing_plan_follow_representative が代表者の契約から決める)。
+ * owner の user_profiles の行を先に作っておくこと (手動付与が BILL_UNKNOWN_USER で失敗する)。
  *
  * @param ownerToken - owner ユーザの access_token (API 認証用ではなく user_id 取得に使用)
  * @param ownerUserId - owner の user_id
@@ -107,7 +112,10 @@ export async function createFreshFamily(params: {
 }): Promise<string> {
   const { supabaseUrl, serviceRoleKey } = getSupabaseConfig();
 
-  // family_groups INSERT
+  // 代表者に家族プランを手動付与 (グループの作成の前)
+  await grantManualPlanForE2e(params.ownerUserId, E2E_FAMILY_PLAN_KEY);
+
+  // family_groups INSERT (plan_key は代表者の契約から family_basic になる)
   const groupResp = await fetch(`${supabaseUrl}/rest/v1/family_groups`, {
     method: "POST",
     headers: {
@@ -119,7 +127,6 @@ export async function createFreshFamily(params: {
     body: JSON.stringify({
       name: params.name,
       representative_id: params.ownerUserId,
-      plan_key: "free",
     }),
   });
 

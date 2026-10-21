@@ -21,6 +21,7 @@ import ws from 'ws';
 // 結合テストの設定 (vitest.integration.config.ts) は @homegohan/shared の別名を持たないので、判定の本体を直接読む
 import { PROFILE_NAME_PLACEHOLDER, normalizeProfileName } from '../../../packages/shared/src/profile-name';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -81,6 +82,8 @@ async function createUser(label: string, nickname: string | null): Promise<TestU
 /** 代表者を作り、家族を 1 つ作る (1 ケース 1 家族。人数の上限に当たらないように) */
 async function createFamily(label: string): Promise<{ rep: TestUser; familyId: string }> {
   const rep = await createUser(`rep-${label}`, `#1584 代表者 ${label}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1584 family ${label} ${TS}`,
     p_plan_key: 'free',

@@ -23,6 +23,7 @@ import { apiCall } from '../helpers/api';
 import { FAMILY_MENU_API_PATH, FAMILY_MENU_RANGE_MAX_DAYS } from '@/lib/membership/family-menu';
 import { FamilyMenuDataSchema, FamilyMenuRpcRowSchema } from '@/schemas/membership/family-menu';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan, setFamilyGroupPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -244,6 +245,8 @@ beforeAll(async () => {
   familyF = groups.find((g) => g.name.startsWith('rls-family-menu F'))!.id;
   familyG = groups.find((g) => g.name.startsWith('rls-family-menu G'))!.id;
   createdFamilyIds.push(familyF, familyG);
+  // billing/03 §6.6: free のグループにはメンバーを足せないので、メンバーを足す前に家族プランにする (member_limit はそのまま)
+  await setFamilyGroupPlan(srAdmin, [familyF, familyG]);
 
   repMemberId = await insertMember({ family_id: familyF, user_id: rep.id, role: 'representative', status: 'active' });
   adultMemberId = await insertMember({ family_id: familyF, user_id: adult.id, role: 'adult', status: 'active' });
@@ -597,6 +600,8 @@ describe('#1584 の 1 family_menu_visible_members / family_menu_planned_meals (�
       createUser('h-join-on', `H-join-on-${TS}`),
     ]);
 
+    // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れる (招待の承諾も、代表者が家族プランのグループにだけ足せる)
+    await grantFamilyPlan(srAdmin, creator.id);
     const created = await asUser(creator.jwt).rpc('create_family_group', { p_name: `rls-family-menu H ${TS}`, p_plan_key: 'free' });
     if (created.error || !created.data) throw new Error(`create_family_group: ${created.error?.message}`);
     const familyH = (created.data as { id: string }).id;

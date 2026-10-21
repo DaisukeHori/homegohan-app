@@ -14,17 +14,53 @@
  *   - 本物の生成の API (POST /api/ai/menu/weekly/request・/api/ai/menu/v4/generate) へ直接送るテスト (A-3・C-9〜C-12・Edge) と、
  *     生成のモーダルを開いて送る A-1・E-19 は、テストごとに作るユーザー (fresh-user の regularUser) を使う (apiUserTest)。
  *     本物の API は、利用者ごとに 1 分 5 回のレート制限 (src/lib/rate-limit.ts の generation) と 1 日の AI の上限
- *     (free は 10 回。429 AI_DAILY_LIMIT) で数え、その週の献立を消して生成の要求の行を作る。
+ *     (free は 1 日の AI 3 回・献立の作成 3 回。billing/03 §6.5。429) で数え、その週の献立を消して生成の要求の行を作る。
+ *     1 人で献立の作成を 4 回以上送るテスト (A-3・C-12) は、テストごとのユーザーに pro (献立の作成 10 回・1 日の AI 30 回) を
+ *     手動付与してから送る (paidApiUserTest。billing/03 §16.1 の w5-3 の行)。3 回以下のテストは無料のユーザーのまま。
  *     共通のテストユーザーは worker の番号で 4 人を回して使うので、同じユーザーの送信が並びによって 1 分に 5 回を超えて 429 になりえた。
  *     429 を Retry-After どおりに待つ案は採らない: 1 日の上限の 429 は次の JST 0 時まで待たせるので待っても通らず、
  *     共通のユーザーの献立を消すことも残るため。
  */
 
-import { test, expect, type Page } from "./fixtures/auth";
-import { test as apiUserTest } from "./fixtures/fresh-user";
-import type { APIResponse } from "@playwright/test";
+import { test, expect } from "./fixtures/auth";
+import {
+  test as apiUserTest,
+  cleanupFreshUser,
+  createFreshUser,
+  getAdminClient,
+  injectSession,
+  upsertUserProfile,
+} from "./fixtures/fresh-user";
+// Page は @playwright/test から取る (./fixtures/auth は Page を export していないので、そこから取ると型が any になる)
+import type { APIResponse, Page } from "@playwright/test";
 import { addDaysToDate } from "../../packages/shared/src/date-utils";
 import { jstThisMonday } from "./helpers/jst-week";
+import { E2E_PAID_PERSONAL_PLAN_KEY, grantManualPlanForE2e } from "./helpers/billing-plan";
+import { grantE2eAiConsent } from "../../scripts/lib/e2e-ai-consent";
+
+/**
+ * 1 人で献立の作成を 4 回以上送るテスト (A-3・C-12) の利用者: fresh-user の regularUser と同じ作り方
+ * (テストごとに作る・AI の提供の同意を記録・roles = ['user'] と初期設定の完了・セッションの注入・終わったら削除) に、
+ * pro の手動付与を足したもの。無料の利用者は献立の作成が 1 日 3 回・AI が 1 日 3 回 (billing/03 §6.5) で、
+ * 4 回目が 429 になるため (billing/03 §16.1 の w5-3 の行)。期待 (受け付けられること) は変えない
+ */
+const paidApiUserTest = apiUserTest.extend<{ paidRegularUser: Page }>({
+  paidRegularUser: async ({ page, aiConsentGranted }, use) => {
+    const supabaseAdmin = getAdminClient();
+    const user = await createFreshUser(supabaseAdmin, { emailPrefix: "e2e-fresh-paid" });
+    try {
+      if (aiConsentGranted) await grantE2eAiConsent(supabaseAdmin, user.id);
+      await upsertUserProfile(user.id, { nickname: "E2E Paid User", roles: ["user"] });
+      // 手動付与は user_profiles の行が要るので、プロファイルの後に呼ぶ
+      await grantManualPlanForE2e(user.id, E2E_PAID_PERSONAL_PLAN_KEY);
+      await injectSession(page, user.email);
+      await use(page);
+    } finally {
+      // 契約の行は利用者の削除で CASCADE で消える
+      await cleanupFreshUser(supabaseAdmin, user.id);
+    }
+  },
+});
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 // 今週の月曜日は、ページ (ブラウザは Asia/Tokyo) と同じ JST の週で作る (#1564)。前後の週は暦の計算 (addDaysToDate) でずらす
@@ -378,16 +414,17 @@ const HTTP_OK = 200;
  * page.request (API へ直接送る通信) は page.route の差し替えを通らないので、本物のサーバーに届く (#1672)。
  * 以前はモックが効く前提の書き方で、本物のサーバーの 400 / 401 / 500 も許していたが、429 は許しておらず、
  * 共通のテストユーザーの生成が 1 分に 5 回を超えると赤になった。テストごとのユーザー (apiUserTest) で送り、
- * 1 分 5 回の枠の中 (5 回) なので、5 件とも受け付けられることまで確かめる (429 は前提が崩れたとして失敗)
+ * 1 分 5 回の枠の中 (5 回) なので、5 件とも受け付けられることまで確かめる (429 は前提が崩れたとして失敗)。
+ * 無料の献立の作成は 1 日 3 回 (billing/03 §6.5) なので、5 回送るこのテストは pro を付与した利用者 (paidApiUserTest) で送る
  */
-apiUserTest("[menu-gen][adversarial] A-3: 異なる週を5連続リクエスト → 各 requestId 返却", async ({
-  regularUser,
+paidApiUserTest("[menu-gen][adversarial] A-3: 異なる週を5連続リクエスト → 各 requestId 返却", async ({
+  paidRegularUser,
 }) => {
   const monday = jstThisMonday();
   const results: Array<{ startDate: string; status: number; requestId: unknown }> = [];
   for (let i = 0; i < A3_WEEK_COUNT; i++) {
     const startDate = addDaysToDate(monday, i * DAYS_PER_WEEK);
-    const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
+    const res = await paidRegularUser.request.post("/api/ai/menu/weekly/request", {
       data: { startDate },
       headers: { "Content-Type": "application/json" },
     });
@@ -790,10 +827,11 @@ apiUserTest("[menu-gen][adversarial] C-11: targetSlots が不正サイズ → �
  * 期待: サーバーがクラッシュしない（400 or 200）
  *
  * 6 件のうち NULL byte はレート制限の前に 400 で断られるので、レート制限に数えるのは 5 件 (1 分 5 回の枠の中)。
- * 件を足すときは、1 分 5 回を超えないよう別のテストに分ける (#1672)
+ * 件を足すときは、1 分 5 回を超えないよう別のテストに分ける (#1672)。
+ * 無料の献立の作成は 1 日 3 回 (billing/03 §6.5) なので、5 件を数えるこのテストは pro を付与した利用者 (paidApiUserTest) で送る
  */
-apiUserTest("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッシュなし", async ({
-  regularUser,
+paidApiUserTest("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバークラッシュなし", async ({
+  paidRegularUser,
 }) => {
   const monday = jstThisMonday();
   const cases: Array<{ name: string; note: string; expectedStatus?: number; expectedCode?: string }> = [
@@ -807,7 +845,7 @@ apiUserTest("[menu-gen][adversarial] C-12: 異常メモ入力 → サーバー�
   ];
 
   for (const c of cases) {
-    const res = await regularUser.request.post("/api/ai/menu/weekly/request", {
+    const res = await paidRegularUser.request.post("/api/ai/menu/weekly/request", {
       data: { startDate: monday, note: c.note },
       headers: { "Content-Type": "application/json" },
     });

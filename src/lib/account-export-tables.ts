@@ -250,8 +250,10 @@ export const ACCOUNT_EXPORT_TABLES: readonly ExportTableSpec[] = [
     scope: self('user_id'),
     // Stripe の顧客 / 契約 / 価格 ID と運営の備考は外部サービスの識別子・内部メモ。
     // stripe_status (Stripe の素の状態) と stripe_synced_at (Stripe から取り直した時刻) は Stripe との同期の内部の記録 (billing/01 §7.1)。
-    // cancel_at_period_end・billing_interval は本人の契約の内容なので出力する
-    omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at'],
+    // cancel_at_period_end・billing_interval は本人の契約の内容なので出力する。
+    // iap_synced_at (RevenueCat から取り直した時刻) はストアとの同期の内部の記録 (billing/03 §6.4)。
+    // iap_store・iap_product_id・iap_is_sandbox は本人の契約の内容 (どのストアのどの商品か・テストの購入か) なので出力する
+    omit: ['stripe_customer_id', 'stripe_subscription_id', 'stripe_price_id', 'notes', 'stripe_status', 'stripe_synced_at', 'iap_synced_at'],
   },
   { table: 'coupon_redemptions', scope: self('user_id'), omit: ['approved_by'] },
   {

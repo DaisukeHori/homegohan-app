@@ -2,17 +2,17 @@
  * #1149 (T40) AI の 1 日の利用回数の上限 (consume_ai_usage / refund_ai_usage / ai_daily_limits) のテスト (実 DB)
  *
  * 20261011020000_ai_daily_limits.sql が足すもの:
- *   - ai_daily_limits(plan_key PK, daily_limit (NULL は無制限), updated_at, updated_by)。既定は free = 10
+ *   - ai_daily_limits(plan_key PK, daily_limit (NULL は無制限), updated_at, updated_by)。既定は free = 10 (billing/03 の migration が 3 に)
  *   - consume_ai_usage(p_user_id, p_feature) -> jsonb   上限の判定と記録を 1 回で (上限なら記録せずに allowed: false)
  *   - consume_ai_usage_at(p_user_id, p_feature, p_at)    本体 (時刻を引数で受ける。API からは呼べない)
  *   - refund_ai_usage(p_user_id, p_feature, p_usage_date) -> boolean   数えた 1 回を戻す (0 より下にしない)
  *
  * 確認すること:
  *   A. 定義と権限 (カタログ): RLS 有効・ポリシー無し・テーブル権限は service_role だけ。関数は SECURITY DEFINER・search_path が空。
- *      EXECUTE は consume / refund が service_role、本体は所有者だけ。既定の行 free = 10
- *   B. 上限の境目: 9・10 回目は許可 (used が 9・10)、11 回目は止め (記録しない。回数は 10 のまま)。機能をまたいで合計で数える
+ *      EXECUTE は consume / refund が service_role、本体は所有者だけ。既定の行 free = 3 (billing/03 §6.5)
+ *   B. 上限の境目: 上限 - 1 回目・上限の回目は許可 (used が 2・3)、上限 + 1 回目は止め (記録しない。回数は 3 のまま)。機能をまたいで合計で数える
  *   C. JST の日の境目: 上限に達した日の 23:59:59.999 (UTC 14:59:59.999) は止め、0:00 (UTC 15:00) は翌日として許可
- *   D. 同時実行: 上限 10 の利用者に同時に 15 本 → 許可はちょうど 10 本、止めは 5 本、回数は 10
+ *   D. 同時実行: 上限 3 の利用者に同時に 15 本 → 許可はちょうど 3 本、止めは 12 本、回数は 3
  *   E. 上限に数えない機能 (nutrition_advice_auto): 上限に達していても (安全弁の内なら) 許可し、記録する。合計に入れない
  *   F. プランごとの上限: 自分の行が無いプランは free の値。行の値 (保存した値) が次の判定から効く。NULL は無制限、0 は 1 回目から止め
  *   G. 数え戻し: 数えた日の回数を 1 減らす。0 より下にしない。別の日・別の機能は変えない
@@ -24,8 +24,9 @@
  *   - consume_ai_usage_at の差し替え: 上限に数えない機能も、その機能のその日の回数が安全弁に達していれば記録せずに止める
  *   - ai_usage_grant_claims と claim_ai_usage_grant(p_user_id, p_grant_id) -> boolean (写真の判別の数え済みの印を 1 回だけ使う)
  *   J. 自動のアドバイス (nutrition_advice_auto) の安全弁の境目: 安全弁 - 1 回目・ちょうど (安全弁の回目) は許可、超えると止め (記録しない)。
- *      明示の 10 回とは別に数える (安全弁に達しても押した操作は 10 回使える。10 回に達しても自動は安全弁まで使える)
- *   K. 料理画像 (meal_image_auto) の安全弁: 既定 20 回。機能ごとに別に数える。行の値が次の判定から効く。行が無ければ 20 (無制限にしない)
+ *      明示の 1 日の上限とは別に数える (安全弁に達しても押した操作は上限まで使える。上限に達しても自動は安全弁まで使える)
+ *   K. 料理画像 (meal_image_auto) の安全弁: 既定 20 回。機能ごとに別に数える。行の値が次の判定から効く。行が無ければ 20 (無制限にしない)。
+ *      無料プランは ai_plan_feature_caps の meal_image_auto = 0 で 1 回目から止まる (billing/03 §6.5) ので、安全弁は有料プラン (pro の手動付与) の利用者で確かめる
  *   L. 数え済みの印 (claim_ai_usage_grant): 1 回目は true、同じ印の 2 回目・他人が同じ ID を使うのは false。古い記録は消す。
  *      権限 (service_role だけ・テーブルは RLS 有効でポリシー無し)
  *
@@ -33,6 +34,8 @@
  *   npx vitest run --config vitest.integration.config.ts tests/integration/rls/ai-daily-limit-rpc.test.ts
  * 時刻を指定する consume_ai_usage_at と、カタログの確認は、ローカルスタックの postgres-meta (/pg/query、service_role キーが必要) で行う。
  * 本番には接続しない。free の行の値はほかのテストも前提にするので変えない (プランごとの上限は pro の行で確かめ、終わったら元に戻す)。
+ * 無料プランの機能ごとの上限 (ai_plan_feature_caps: menu_generation = 3・image_generation と meal_image_auto = 0。billing/03 §6.5) に当たらないよう、
+ * 1 日の合計の上限を確かめる it は機能ごとの上限の行が無い機能 (photo_analysis・consultation・health_review) で数える
  */
 
 import { randomUUID } from 'node:crypto';
@@ -100,8 +103,8 @@ async function pgQuery<T = Record<string, unknown>>(query: string): Promise<T[]>
 // ---------------------------------------------------------------
 const TS = Date.now();
 const PASSWORD = 'TestPass!2026-rls';
-/** 既定の free の上限 (migration の既定の行) */
-const FREE_LIMIT = 10;
+/** free の上限 (billing/03 §6.5 の migration が 10 から 3 にした行) */
+const FREE_LIMIT = 3;
 /** プランごとの上限を確かめるのに使うプラン (free の行は変えない) */
 const PLAN_FOR_LIMITS = 'pro';
 /** 同時実行の本数 (上限より多く) */
@@ -207,7 +210,7 @@ afterAll(async () => {
 // A. 定義と権限
 // ---------------------------------------------------------------
 describe('#1149 A. テーブル・関数の定義と権限 (カタログ)', () => {
-  it('上限の表は RLS 有効・ポリシー無し。テーブル権限は service_role だけ。既定の行 free = 10', async () => {
+  it('上限の表は RLS 有効・ポリシー無し。テーブル権限は service_role だけ。既定の行 free = 3', async () => {
     const rls = await pgQuery<{ relrowsecurity: boolean }>(`SELECT c.relrowsecurity FROM pg_class AS c WHERE c.oid = 'public.ai_daily_limits'::regclass`);
     expect(rls).toEqual([{ relrowsecurity: true }]);
     const policies = await pgQuery<{ n: number }>(`SELECT count(*)::int AS n FROM pg_policies WHERE schemaname = 'public' AND tablename = 'ai_daily_limits'`);
@@ -259,21 +262,23 @@ describe('#1149 A. テーブル・関数の定義と権限 (カタログ)', () =
 // ---------------------------------------------------------------
 // B. 上限の境目
 // ---------------------------------------------------------------
-describe('#1149 B. 上限の境目 (free = 1 日 10 回)', () => {
-  it('9・10 回目は許可、11 回目は止め (記録しない)。機能をまたいで合計で数える。究極モードも 1 回の操作は 1 回', async () => {
+describe('#1149 B. 上限の境目 (free = 1 日 3 回)', () => {
+  it(`${FREE_LIMIT - 1}・${FREE_LIMIT} 回目は許可、${FREE_LIMIT + 1} 回目は止め (記録しない)。機能をまたいで合計で数える`, async () => {
     const user = await createUser('boundary');
     const features = ['menu_generation', 'photo_analysis', 'consultation'];
     for (let i = 1; i <= FREE_LIMIT - 2; i++) await consume(user.userId, features[i % features.length]);
 
-    const ninth = await consume(user.userId, 'menu_generation');
-    expect(ninth).toMatchObject({ allowed: true, metered: true, plan: 'free', limit: FREE_LIMIT, used: FREE_LIMIT - 1 });
-    const tenth = await consume(user.userId, 'image_generation');
-    expect(tenth).toMatchObject({ allowed: true, limit: FREE_LIMIT, used: FREE_LIMIT });
-    const eleventh = await consume(user.userId, 'consultation');
-    expect(eleventh).toMatchObject({ allowed: false, metered: true, plan: 'free', limit: FREE_LIMIT, used: FREE_LIMIT });
-    expect(eleventh.usage_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    const beforeLast = await consume(user.userId, 'menu_generation');
+    expect(beforeLast).toMatchObject({ allowed: true, metered: true, plan: 'free', limit: FREE_LIMIT, used: FREE_LIMIT - 1 });
+    // image_generation は無料プランでは使えない (ai_plan_feature_caps = 0) ので、機能ごとの上限の行の無い health_review で数える
+    const last = await consume(user.userId, 'health_review');
+    expect(last).toMatchObject({ allowed: true, limit: FREE_LIMIT, used: FREE_LIMIT });
+    const over = await consume(user.userId, 'consultation');
+    expect(over).toMatchObject({ allowed: false, metered: true, plan: 'free', limit: FREE_LIMIT, used: FREE_LIMIT });
+    expect(over).not.toHaveProperty('capped_feature');
+    expect(over.usage_date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
 
-    // 止めた呼び出しは記録しない (回数は 10 のまま)。もう一度呼んでも同じ
+    // 止めた呼び出しは記録しない (回数は上限のまま)。もう一度呼んでも同じ
     expect(totalOf(await counters(user.userId))).toBe(FREE_LIMIT);
     expect((await consume(user.userId, 'photo_analysis')).allowed).toBe(false);
     expect(totalOf(await counters(user.userId))).toBe(FREE_LIMIT);
@@ -286,16 +291,17 @@ describe('#1149 B. 上限の境目 (free = 1 日 10 回)', () => {
 describe('#1149 C. JST の 0 時 (= UTC の 15 時) で上限が戻る', () => {
   it('上限に達した日の 23:59:59.999 は止め、翌日の 0:00 は許可。usage_date は JST の暦日', async () => {
     const user = await createUser('jst');
+    // 機能ごとの上限の行が無い機能 (無料の menu_generation は機能ごとの上限 3 が先に効くので使わない)
     for (let i = 0; i < FREE_LIMIT; i++) {
-      const result = await consumeAt(user.userId, 'menu_generation', '2026-10-11T00:00:00Z'); // JST 10/11 09:00
+      const result = await consumeAt(user.userId, 'photo_analysis', '2026-10-11T00:00:00Z'); // JST 10/11 09:00
       expect(result.allowed).toBe(true);
     }
-    const lastSecond = await consumeAt(user.userId, 'menu_generation', '2026-10-11T14:59:59.999Z'); // JST 10/11 23:59:59.999
+    const lastSecond = await consumeAt(user.userId, 'photo_analysis', '2026-10-11T14:59:59.999Z'); // JST 10/11 23:59:59.999
     expect(lastSecond).toMatchObject({ allowed: false, usage_date: '2026-10-11', used: FREE_LIMIT });
     // UTC の暦日は 10/10 だが、JST では 10/11 の 0:00 (同じ日に数える)
-    expect(await consumeAt(user.userId, 'menu_generation', '2026-10-10T15:00:00Z')).toMatchObject({ allowed: false, usage_date: '2026-10-11' });
+    expect(await consumeAt(user.userId, 'photo_analysis', '2026-10-10T15:00:00Z')).toMatchObject({ allowed: false, usage_date: '2026-10-11' });
 
-    const nextDay = await consumeAt(user.userId, 'menu_generation', '2026-10-11T15:00:00Z'); // JST 10/12 00:00
+    const nextDay = await consumeAt(user.userId, 'photo_analysis', '2026-10-11T15:00:00Z'); // JST 10/12 00:00
     expect(nextDay).toMatchObject({ allowed: true, usage_date: '2026-10-12', used: 1 });
     expect((await counters(user.userId)).map((r) => [r.usage_date, r.count])).toEqual([
       ['2026-10-11', FREE_LIMIT],
@@ -311,11 +317,11 @@ describe('#1149 D. 同時実行', () => {
   it(`上限 ${FREE_LIMIT} の利用者に同時に ${CONCURRENT_CALLS} 本: 許可はちょうど ${FREE_LIMIT} 本、回数は ${FREE_LIMIT} (上限を超えない)`, async () => {
     const user = await createUser('race');
     const results = await Promise.all(
-      Array.from({ length: CONCURRENT_CALLS }, (_, i) => consume(user.userId, i % 2 === 0 ? 'menu_generation' : 'photo_analysis')),
+      Array.from({ length: CONCURRENT_CALLS }, (_, i) => consume(user.userId, i % 2 === 0 ? 'consultation' : 'photo_analysis')),
     );
     expect(results.filter((r) => r.allowed)).toHaveLength(FREE_LIMIT);
     expect(results.filter((r) => !r.allowed)).toHaveLength(CONCURRENT_CALLS - FREE_LIMIT);
-    // 許可した呼び出しの used は 1〜10 が 1 つずつ (直列に判定された)
+    // 許可した呼び出しの used は 1〜上限が 1 つずつ (直列に判定された)
     expect(results.filter((r) => r.allowed).map((r) => r.used).sort((a, b) => (a ?? 0) - (b ?? 0))).toEqual(
       Array.from({ length: FREE_LIMIT }, (_, i) => i + 1),
     );
@@ -330,7 +336,7 @@ describe('#1149 E. 上限に数えない機能 (画面を開くと自動で呼�
   it('nutrition_advice_auto は、上限に達していても許可して記録する。合計に入れない', async () => {
     const user = await createUser('unmetered');
     for (let i = 0; i < 3; i++) expect((await consume(user.userId, 'nutrition_advice_auto')).metered).toBe(false);
-    // 自動の 3 回は合計に入らないので、押した操作は 10 回まで使える
+    // 自動の 3 回は合計に入らないので、押した操作は上限まで使える
     for (let i = 0; i < FREE_LIMIT; i++) expect((await consume(user.userId, 'consultation')).allowed).toBe(true);
     expect((await consume(user.userId, 'consultation')).allowed).toBe(false);
     // 上限に達したあとも、自動の呼び出しは止めない
@@ -391,19 +397,19 @@ describe('#1149 F. プランごとの上限', () => {
 describe('#1149 G. 数え戻し (refund_ai_usage)', () => {
   it('数えた日の、その機能の回数を 1 減らす (上限に達していても、戻した分はまた使える)。0 より下にしない', async () => {
     const user = await createUser('refund');
-    for (let i = 0; i < FREE_LIMIT; i++) await consume(user.userId, 'menu_generation');
-    const denied = await consume(user.userId, 'menu_generation');
+    for (let i = 0; i < FREE_LIMIT; i++) await consume(user.userId, 'photo_analysis');
+    const denied = await consume(user.userId, 'photo_analysis');
     expect(denied.allowed).toBe(false);
 
-    const { data, error } = await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'menu_generation', p_usage_date: denied.usage_date });
+    const { data, error } = await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'photo_analysis', p_usage_date: denied.usage_date });
     expect(error).toBeNull();
     expect(data).toBe(true);
     expect(totalOf(await counters(user.userId))).toBe(FREE_LIMIT - 1);
-    expect((await consume(user.userId, 'menu_generation')).allowed).toBe(true);
+    expect((await consume(user.userId, 'photo_analysis')).allowed).toBe(true);
 
     // 別の機能・別の日の行は変えない (行が無ければ false)
-    expect((await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'consultation', p_usage_date: denied.usage_date })).data).toBe(false);
-    expect((await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'menu_generation', p_usage_date: '2000-01-01' })).data).toBe(false);
+    expect((await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'health_review', p_usage_date: denied.usage_date })).data).toBe(false);
+    expect((await srAdmin.rpc('refund_ai_usage', { p_user_id: user.userId, p_feature: 'photo_analysis', p_usage_date: '2000-01-01' })).data).toBe(false);
     expect(totalOf(await counters(user.userId))).toBe(FREE_LIMIT);
   });
 
@@ -518,7 +524,7 @@ describe('#1149 J. 自動のアドバイス (nutrition_advice_auto) の安全弁
     expect(await countOf(user.userId, 'nutrition_advice_auto')).toBe(AUTO_ADVICE_CAP);
   });
 
-  it('明示の 10 回とは別に数える: 安全弁に達しても押した操作は 10 回使え、10 回に達しても自動は安全弁まで使える', async () => {
+  it('明示の 1 日の上限とは別に数える: 安全弁に達しても押した操作は上限まで使え、上限に達しても自動は安全弁まで使える', async () => {
     const autoFirst = await createUser('auto-then-explicit');
     for (let i = 0; i < AUTO_ADVICE_CAP; i++) await consume(autoFirst.userId, 'nutrition_advice_auto');
     expect((await consume(autoFirst.userId, 'nutrition_advice_auto')).allowed).toBe(false);
@@ -528,11 +534,11 @@ describe('#1149 J. 自動のアドバイス (nutrition_advice_auto) の安全弁
     expect((await consume(autoFirst.userId, 'consultation')).allowed).toBe(false);
 
     const explicitFirst = await createUser('explicit-then-auto');
-    for (let i = 0; i < FREE_LIMIT; i++) await consume(explicitFirst.userId, 'menu_generation');
-    expect((await consume(explicitFirst.userId, 'menu_generation')).allowed).toBe(false);
+    for (let i = 0; i < FREE_LIMIT; i++) await consume(explicitFirst.userId, 'photo_analysis');
+    expect((await consume(explicitFirst.userId, 'photo_analysis')).allowed).toBe(false);
     for (let i = 1; i <= AUTO_ADVICE_CAP; i++) expect((await consume(explicitFirst.userId, 'nutrition_advice_auto')).allowed, `自動の ${i} 回目`).toBe(true);
     expect(await consume(explicitFirst.userId, 'nutrition_advice_auto')).toMatchObject({ allowed: false, limit: AUTO_ADVICE_CAP });
-    expect(await countOf(explicitFirst.userId, 'menu_generation')).toBe(FREE_LIMIT);
+    expect(await countOf(explicitFirst.userId, 'photo_analysis')).toBe(FREE_LIMIT);
   });
 
   it('JST の 0 時で安全弁も戻る', async () => {
@@ -562,6 +568,18 @@ describe('#1149 J. 自動のアドバイス (nutrition_advice_auto) の安全弁
 });
 
 describe('#1149 K. 料理画像 (meal_image_auto) の安全弁', () => {
+  /**
+   * 有料プランの利用者。無料プランは ai_plan_feature_caps の meal_image_auto = 0 で 1 回目から止まる (billing/03 §6.5) ので、
+   * 安全弁は家族 Basic の手動付与 (billing_grant_manual_subscription) の利用者で確かめる (meal_image_auto の行が無い = 安全弁だけ)。
+   * pro は使わない: F が pro の 1 日の上限の行を書き換え、元に戻すのはこのファイルの最後 (afterAll) なので、ここではまだ 0 のことがある
+   */
+  const createPaidUser = async (label: string): Promise<TestUser> => {
+    const user = await createUser(label);
+    const { error } = await srAdmin.rpc('billing_grant_manual_subscription', { p_user_id: user.userId, p_plan_key: 'family_basic', p_expires_at: null });
+    if (error) throw new Error(`billing_grant_manual_subscription ${label}: ${error.message}`);
+    return user;
+  };
+
   let originalMealImageRow: { feature: string; daily_cap: number } | null = null;
 
   beforeAll(async () => {
@@ -572,24 +590,24 @@ describe('#1149 K. 料理画像 (meal_image_auto) の安全弁', () => {
     await setCap('meal_image_auto', originalMealImageRow ? originalMealImageRow.daily_cap : 'none');
   });
 
-  it(`既定 ${MEAL_IMAGE_CAP} 回まで許可し、超えると止める。明示の 10 回・自動のアドバイスとは別に数える`, async () => {
-    const user = await createUser('meal-image-cap');
+  it(`(有料プラン) 既定 ${MEAL_IMAGE_CAP} 回まで許可し、超えると止める。明示の 1 日の上限・自動のアドバイスとは別に数える`, async () => {
+    const user = await createPaidUser('meal-image-cap');
     for (let i = 1; i <= MEAL_IMAGE_CAP; i++) expect((await consume(user.userId, 'meal_image_auto')).allowed, `${i} 回目`).toBe(true);
     expect(await consume(user.userId, 'meal_image_auto')).toMatchObject({ allowed: false, metered: false, limit: MEAL_IMAGE_CAP, used: MEAL_IMAGE_CAP });
-    // 料理画像を何枚作っても、押した操作の 10 回と自動のアドバイスは減らない
+    // 料理画像を何枚作っても、押した操作の 1 日の上限と自動のアドバイスは減らない
     expect(await consume(user.userId, 'photo_analysis')).toMatchObject({ allowed: true, used: 1 });
     expect((await consume(user.userId, 'nutrition_advice_auto')).allowed).toBe(true);
     expect(await countOf(user.userId, 'meal_image_auto')).toBe(MEAL_IMAGE_CAP);
   });
 
   it('行の値 (運用で変えた値) が次の判定から効く。行が無ければ c_unmetered_fallback_cap (無制限にしない)', async () => {
-    const user = await createUser('meal-image-cap-row');
+    const user = await createPaidUser('meal-image-cap-row');
     await setCap('meal_image_auto', SMALL_CAP);
     for (let i = 0; i < SMALL_CAP; i++) expect((await consume(user.userId, 'meal_image_auto')).allowed).toBe(true);
     expect(await consume(user.userId, 'meal_image_auto')).toMatchObject({ allowed: false, limit: SMALL_CAP, used: SMALL_CAP });
 
     await setCap('meal_image_auto', 'none');
-    const fallback = await createUser('meal-image-cap-fallback');
+    const fallback = await createPaidUser('meal-image-cap-fallback');
     for (let i = 0; i < UNMETERED_FALLBACK_CAP; i++) expect((await consume(fallback.userId, 'meal_image_auto')).allowed).toBe(true);
     expect(await consume(fallback.userId, 'meal_image_auto')).toMatchObject({ allowed: false, limit: UNMETERED_FALLBACK_CAP });
   });

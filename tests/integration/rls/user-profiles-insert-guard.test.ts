@@ -16,6 +16,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -92,6 +93,8 @@ beforeAll(async () => {
     .from('user_profiles')
     .insert({ id: owner.id, ...base });
   if (profileError) throw new Error(`owner profile: ${profileError.message}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, owner.id);
   const { data: group, error: groupError } = await asUser(owner.jwt).rpc('create_family_group', {
     p_name: `profile insert guard family ${TS}`,
     p_plan_key: 'free',

@@ -30,6 +30,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -106,6 +107,8 @@ async function createUser(label: string, options: { withProfile?: boolean } = {}
 
 async function createFamily(label: string): Promise<TestFamily> {
   const rep = await createUser(`rep-${label}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1232 family ${label} ${TS}`,
     p_plan_key: 'free',

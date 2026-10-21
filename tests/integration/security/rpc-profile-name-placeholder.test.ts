@@ -28,6 +28,7 @@ import { PROFILE_NAME_PLACEHOLDER, normalizeProfileName } from '../../../package
 // Edge Functions が使う写し (#1649)。正本との一致は tests/edge-profile-name-sync.test.ts が見張る。ここでは SQL とも一致することを見る
 import { normalizeProfileName as edgeNormalizeProfileName } from '../../../supabase/functions/_shared/profile-name';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -95,6 +96,8 @@ async function createUser(label: string, nickname: string | null): Promise<TestU
 /** 代表者が create_family_group で家族を作る。代表者のメンバーの行の display_name も返す */
 async function createFamilyAs(label: string, nickname: string): Promise<{ rep: TestUser; familyId: string; repDisplayName: string | null }> {
   const rep = await createUser(`rep-${label}`, nickname);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1678 family ${label} ${TS}`,
     p_plan_key: 'free',

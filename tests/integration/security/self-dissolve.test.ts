@@ -17,6 +17,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
 import { PARENTAL_CONSENT_DOCUMENT, todayLocal } from '@homegohan/shared';
 import { deleteAccount } from '../../../src/lib/account-deletion';
+import { grantFamilyPlan } from '../helpers/family-plan';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -163,7 +164,22 @@ async function createUsers(prefix: string, count: number): Promise<TestUser[]> {
 // 家族
 // ---------------------------------------------------------------------------------------------
 
+/** 家族プランを付与済みの利用者 (同じ利用者に 2 回付与すると BILL_LIVE_ROW_CONFLICT になるので、付与は 1 人 1 回) */
+const familyPlanGrantedUserIds = new Set<string>();
+
+/**
+ * billing/03 §6.6: 家族グループは家族プランの契約者だけが作れ (create_family_group の FAMILY_PLAN_REQUIRED)、
+ * free のグループには代表者以外のメンバーを足せない (トリガー family_members_billing_plan_gate)。
+ * 家族を作る前に代表者に家族プランを手動付与する。付与は利用者に付くので、解散のあとに同じ代表者が作り直す (D-4) ときは付与し直さない
+ */
+async function ensureFamilyPlan(rep: TestUser): Promise<void> {
+  if (familyPlanGrantedUserIds.has(rep.id)) return;
+  await grantFamilyPlan(srAdmin, rep.id);
+  familyPlanGrantedUserIds.add(rep.id);
+}
+
 async function createFamily(rep: TestUser, label: string): Promise<string> {
+  await ensureFamilyPlan(rep);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1917 ${label} ${TS}`, p_plan_key: 'free' });
   if (error || !data) throw new Error(`create_family_group ${label}: ${error?.message}`);
   const familyId = (data as { id: string }).id;

@@ -127,7 +127,7 @@ describe('GET /api/super-admin/llm/usage', () => {
 // ─────────────────────────────────────────
 
 describe('GET /api/super-admin/llm/quotas', () => {
-  it('200 for super_admin: 全プランの上限 (free は 1 日 10 回)。enforced: true', async () => {
+  it('200 for super_admin: 全プランの上限 (free は 1 日 3 回)。enforced: true', async () => {
     const res = await apiCall('GET', '/api/super-admin/llm/quotas', superAdminUser.jwt);
     expect(res.status).toBe(200);
     const body = res.body as {
@@ -139,7 +139,7 @@ describe('GET /api/super-admin/llm/quotas', () => {
     expect(body.enforced).toBe(true);
     expect(body.default_plan_key).toBe('free');
     const free = body.data.find((row) => row.plan_key === 'free');
-    expect(free).toMatchObject({ configured: true, daily_limit: 10, effective_daily_limit: 10 });
+    expect(free).toMatchObject({ configured: true, daily_limit: 3, effective_daily_limit: 3 });
     // subscription_plans のプランは全部出る
     expect(body.data.map((row) => row.plan_key)).toEqual(expect.arrayContaining(['free', 'pro', QUOTA_TEST_PLAN]));
   });

@@ -33,6 +33,7 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -113,6 +114,8 @@ async function createUsers(prefix: string, count: number): Promise<TestUser[]> {
 
 /** 代表者 rep の家族を作り、人数の上限を memberLimit にする (service_role は上限の列を直接変えられる) */
 async function createFamily(rep: TestUser, label: string, memberLimit: number): Promise<string> {
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1213 ${label} ${TS}`,
     p_plan_key: 'free',
