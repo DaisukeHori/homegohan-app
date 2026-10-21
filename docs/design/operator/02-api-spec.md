@@ -334,9 +334,10 @@ BAN 解除
 
 `type`: `food` | `recipe` | `ai_content`
 
-> **現状 (2026-10, #1128)**: `ai_content` (AI コンテンツ) の審査は**準備中 (未対応)**。バックエンドのテーブルが無いため、
+> **現状 (2026-10, #1128・#1911)**: `ai_content` (AI コンテンツ) の審査は**できない (未対応)**。バックエンドのテーブルが無いため、
 > `ai_content` を指定した一覧 (`/queue?type=ai_content`)・個別取得・解決 (`PUT` / `POST` `/{type}/{id}`) は
-> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面の「AIコンテンツ（未対応）」は選べない。
+> 空や 404 ではなく **501 `OP_NOT_SUPPORTED`** を返す。画面 (`/admin/moderation`) の絞り込みに `ai_content` の選択肢は出さず
+> (#1911: 未完成の機能は画面に出さない)、URL で `ai_content` を指定されたときは種類を絞らない一覧として扱う。
 > 集約 API `GET /api/admin/moderation` の `aiFlags` は空配列のままで、`aiFlagsSupported: false` を添える
 > (空は「通報 0 件」ではなく「未対応」の意味。配布済みの古いモバイルアプリの運営画面 (リポジトリからは #1389 で削除済み) が
 > `...(res.aiFlags ?? [])` と配列として展開するため、形は変えない)。
@@ -691,9 +692,9 @@ LLM 使用量ダッシュボード (super_admin のみ)
 
 > **現状 (2026-10, #1125)**: Stripe の Webhook の受け口と契約の写しは billing/01 (`docs/design/billing/01-billing-core.md`) で入った。
 > 収益の日次スナップショットなどの集計バッチと、請求書・収益推移・Stripe 整合チェックの画面の実データ化は配線の冊で作る。
-> それまで画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は「課金は未開始のため準備中」と表示し、
-> 売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数は「準備中」とする
-> (MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
+> それまで画面 (`/admin/finance/invoices` `/revenue` `/reconciliation`) は出さない: URL で開かれたら 404 にし、
+> 売上・経理のクイックリンクにも並べない。売上ダッシュボードの MRR / ARR / Churn Rate / LTV / 契約数のカードも出さない
+> (#1911: 未完成の機能は画面に出さない。「準備中」とも出さない。MAU は `daily_active_users` の実データなのでそのまま出す)。API は残してある。
 
 ### GET /api/admin/finance/dashboard
 売上ダッシュボード
@@ -1200,9 +1201,10 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 
 ## 16. データエクスポート API
 
-> **現状 (2026-10, #1126)**: データエクスポートは**準備中 (未対応)**。ファイルを作る処理 (cron / worker) と専用の
+> **現状 (2026-10, #1126・#1911)**: データエクスポートは**使えない (未対応)**。ファイルを作る処理 (cron / worker) と専用の
 > `exports` テーブルが無いため、`/api/super-admin/exports` と `/exports/{id}` は全メソッドが 501 `OP_NOT_SUPPORTED` を返し、
-> DB には触れない。画面 (`/super-admin/exports`, `/new`) は「準備中（未対応）」だけを出し、依頼フォームは無い。
+> DB には触れない。画面 (`/super-admin/exports`, `/new`) は出さない: サイドバーに並べず、URL で開かれたら 404 にする
+> (#1911: 未完成の機能は画面に出さない。「準備中」とも出さない)。依頼フォームは無い。
 > 以前は、利用者本人の GDPR 削除要求の表 (`gdpr_deletion_requests`) を代用していたが、これは本人の削除要求を
 > 取り消す事故につながるため止めた。実装するときは、専用テーブルを先に用意すること。
 
@@ -1731,7 +1733,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_STRIPE_SYNC_FAILED` | 502 | Stripe API 呼び出し失敗 |
 | `OP_COUPON_EXPIRED` | 422 | クーポン期限切れ |
 | `OP_TRIAL_ALREADY_USED` | 422 | 同一プランの試用は 1 回のみ |
-| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応 (準備中) の機能。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
+| `OP_NOT_SUPPORTED` | 501 | [NEW] 未対応の機能 (本文は予定を書かず、いまの事実だけを言う。#1911)。認可を通った人にだけ返す (データエクスポート・AI コンテンツの審査) |
 | `DSR_INVALID_TRANSITION` | 409 | [NEW] 個人情報の請求の更新 (`PATCH /api/admin/data-requests/{id}`) が状態遷移表に無い (同じ状態の指定・本人確認待ち / 終わった請求への更新を含む。cross/15 §7.4・§13) |
 | `DSR_RESPONSE_NOTE_REQUIRED` | 422 | [NEW] 個人情報の請求を対応済み・対応できずにするのに本人への応答が空 (`PATCH /api/admin/data-requests/{id}`。cross/15 §13) |
 | `CONFLICT_PRECONDITION_REQUIRED` / `CONFLICT_OPTIMISTIC_LOCK` / `CONFLICT_STALE_DATA` | 428 / 412 / 409 | 楽観的ロック (cross/04 §4.2)。`PATCH /api/admin/data-requests/{id}` で、`If-Unmodified-Since` が無い / GET が返した `updated_at` と違う / 条件つきの UPDATE が 0 行 |
