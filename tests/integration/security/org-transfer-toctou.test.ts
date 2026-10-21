@@ -30,6 +30,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
+import { apiCall } from '../helpers/api';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -636,6 +637,48 @@ describe('脱退・除名と譲渡の承諾が同時に走っても、オーナ�
     expectRaised(removed, 'CANNOT_REMOVE_OWNER');
     expect(await orgRow(orgId)).toMatchObject({ status: 'active', owner_id: admin.id });
     expect(await orgProfile(admin.id)).toMatchObject({ organization_id: orgId, org_role: 'owner' });
+  }, TEST_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------------------------
+// 承諾の API (POST /api/org/owner-transfer/[id]/accept) の文
+// ---------------------------------------------------------------------------------------------
+
+interface ErrorBody {
+  error?: { code?: string; message?: string };
+}
+
+describe('承諾の API は新しく返りうるエラーを利用者向けの文にし、生の DB のエラーを出さない', () => {
+  it('OT-16: 解散した組織の提案を API で承諾すると 409 ORG_ALREADY_DISSOLVED と利用者向けの文 (コードの文字列や DB の語を本文に出さない)', async () => {
+    const { owner, admin, orgId, proposalId } = await setupTransfer('ot16');
+    expect((await dissolveOrg(owner, orgId)).ok).toBe(true);
+
+    const res = await apiCall<ErrorBody>('POST', `/api/org/owner-transfer/${proposalId}/accept`, admin.jwt);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toEqual({
+      code: 'ORG_ALREADY_DISSOLVED',
+      message: 'この組織は解散しているため、オーナー権限を引き継げません。',
+    });
+    expect(JSON.stringify(res.body)).not.toMatch(/user_profiles|23514|check constraint/i);
+    expect(await proposalStatus(proposalId)).toBe('pending');
+  }, TEST_TIMEOUT_MS);
+
+  it('OT-17: 運営の強制譲渡のあとに残った提案を API で承諾すると 403 NOT_ORG_OWNER と利用者向けの文', async () => {
+    const op = await operator();
+    const { admin, orgId, proposalId } = await setupTransfer('ot17');
+    const [member] = await createUsers('ot17-member', 1);
+    await setOrgMembership(member, orgId, 'member');
+    expect((await operatorTransfer(op.jwt, orgId, member.id)).ok).toBe(true);
+
+    const res = await apiCall<ErrorBody>('POST', `/api/org/owner-transfer/${proposalId}/accept`, admin.jwt);
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toEqual({
+      code: 'NOT_ORG_OWNER',
+      message: '譲渡を申し出た人が今はこの組織のオーナーではないため、オーナー権限を引き継げません。',
+    });
+    expect(await ownerRoleHolders(orgId)).toEqual([member.id]);
   }, TEST_TIMEOUT_MS);
 });
 
