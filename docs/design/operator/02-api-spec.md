@@ -668,7 +668,9 @@ LLM 使用量ダッシュボード (super_admin のみ)
 > **現状 (2026-10, #1149)**: プランごとの AI の 1 日の上限 (全機能の合計・JST の暦日) は、`/api/super-admin/llm/quotas` で読み書きする
 > (見出しの `POST /api/super-admin/llm-usage/quota-update` というパスは無い)。保存先は DB の `ai_daily_limits` で、保存した値は次の AI の利用の判定 (`consume_ai_usage`) から効く
 > (詳細は operator/06-ai-llm.md §5)。super_admin のみ。
->   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`
+>   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`。
+>     組織のプランの値 (`organizations.plan` に書ける `standard` / `premium` / `enterprise`。`src/lib/org-plans.ts` の `ORG_PLAN_VALUES`) の行も出す
+>     (`plan_source: 'org_plan'`・表示名「<値>（組織のプラン）」。#1912)。どちらにも無いキーの行は `plan_source: 'unknown'` で、画面は保存させない
 >   - `PATCH`: 1 つのプランの上限を保存する。保存すると監査ログ `super_admin.llm_quota.update` を残す
 >   - 上限に達した AI の呼び出しは 429 `AI_DAILY_LIMIT` (§23)
 >   - 利用者ごとの上限と月次の上限は無い。上限に数えない機能の安全弁 (`ai_unmetered_daily_caps`) は DB の行で変える (API・画面は無い)
@@ -682,7 +684,7 @@ LLM 使用量ダッシュボード (super_admin のみ)
   "reason": "1 日の上限の見直し"
 }
 ```
-- `plan_key`: `subscription_plans` にあるプラン (無ければ 404 `PLAN_NOT_FOUND`)
+- `plan_key`: `subscription_plans` にあるプラン、または組織のプランの値 (`ORG_PLAN_VALUES`。行が無ければ作る。#1912)。どちらでもなければ 404 `PLAN_NOT_FOUND`
 - `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
 - `reason`: 変更の理由 (監査ログに残す)
 
@@ -1718,7 +1720,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_TARGET_PROTECTED` | 403 | 保護ユーザーへの操作不可 (super_admin BAN 等) |
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
-| `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無い (§8) |
+| `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無く、組織のプランの値 (`ORG_PLAN_VALUES`) でもない (§8) |
 | `SETTING_READ_ONLY` | 409 | システム設定の保存 (`PUT /api/super-admin/settings`) で、使われていない key (旧 `feature_flags` 行) を書き換えようとした (§7。#1457) |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
 | `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |
