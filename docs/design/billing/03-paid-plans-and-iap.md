@@ -3669,6 +3669,9 @@ function apiKeyForPlatform(): string | null {
   return key !== undefined && key.trim() !== "" ? key.trim() : null;
 }
 
+/** このプロセスで Purchases.configure を呼んだか (configure は 1 回だけ。サインアウトのあとの次の利用者は logIn で切り替える) */
+let purchasesConfigured = false;
+/** いま RevenueCat に結び付いている利用者 (サインアウトで null。null のあいだは購入の情報を読まない) */
 let configuredAppUserId: string | null = null;
 
 /** このビルドでストアの購入を扱えるか (キーがある・iOS か Android) */
@@ -3680,9 +3683,10 @@ export function isPurchasesAvailable(): boolean {
 export async function identifyPurchases(userId: string): Promise<void> {
   const apiKey = apiKeyForPlatform();
   if (apiKey === null) return;
-  if (configuredAppUserId === null) {
+  if (!purchasesConfigured) {
     if (__DEV__) await Purchases.setLogLevel(LOG_LEVEL.DEBUG);
     Purchases.configure({ apiKey, appUserID: userId });
+    purchasesConfigured = true;
     configuredAppUserId = userId;
     return;
   }
