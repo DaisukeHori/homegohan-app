@@ -249,6 +249,8 @@ describe('updateSession — /api の同意ゲート (#1442): 全 route の表 (�
       { path: '/api/billing/subscription', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/subscription/cancel', match: 'exact', reason: 'leave_service' },
       { path: '/api/billing/portal', match: 'exact', reason: 'leave_service' },
+      { path: '/api/family/dissolve', match: 'exact', reason: 'leave_service' },
+      { path: '/api/org/dissolve', match: 'exact', reason: 'leave_service' },
       { path: '/api/account/data-requests', match: 'prefix', reason: 'data_subject_rights' },
       { path: '/api/push-tokens/claim', match: 'exact', reason: 'device_cleanup' },
       { path: '/api/contact', match: 'exact', reason: 'contact' },

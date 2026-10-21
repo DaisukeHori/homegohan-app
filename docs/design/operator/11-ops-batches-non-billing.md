@@ -23,7 +23,7 @@ Status: 設計ゲート通過 (2026-10-17・R2 で Opus 5.5 と Sonnet 5.5 の 2
 | D-1 | (B) の 9 項目の仕分け (作る / 不要 = 08 から外す / 済み = 08 を現在形に / 当面は送らない) | §2.2 の表。作る = B-9 ジョブの失敗の監視 (pg_cron の失敗・Vercel Cron の route の失敗・pg_cron の停止。その土台の実行履歴の保持 (段 D) を含む) と、B-2 解散した家族のグループの物理削除の 2 件 (9 項目の数え方。実装の単位は §0.2 の 3 件 = 失敗の監視・実行履歴の掃除・解散した家族の物理削除)。不要 = `family_freeze_grace_batch`・`meal_request_expire_batch`・`data_integrity_check`・`hr_revoke_jobs_processor` の 4 件。済み = `logical_backup`。当面は送らない (Q-5) = `re_engagement_email`・`nps_survey_sender` | §2.2 §8 |
 | D-2 | ジョブの失敗をどう知るか | 既存の運用アラート (`GET /api/cron/app-log-alerts`・15 分おき・`OPS_ALERT_EMAIL`・`claim_ops_alert`) に **4 つ目の種類 `cron_failure`** (pg_cron の失敗した実行 + Vercel Cron の route の 500) と **5 つ目の種類 `pg_cron_stalled`** (pg_cron が一定時間 1 つも動いていない) を足す。失敗は「まだ知らせていないもの」を数え、知らせた失敗を台帳 `cron_failure_alerts` に記録する (10 §8 の `dead_alerted_at` と同じ考え方。窓で数えない) | §4 §5 §6 |
 | D-3 | 実行履歴 (`cron.job_run_details`) の保持 | Supabase は自動では消さない (本番で 2026-05-01 からの行が残っている)。pg_cron のジョブ `cleanup-cron-run-history` (毎日 03:35 JST) が 30 日より古い実行履歴と台帳の行を消す。既存の行を消すので、段 A から切り出した段 D に置いた (Q-3 はオーナーの確認 (2026-10-17) で確定) | §5.3 §12 |
-| D-4 | 解散した家族のグループ (`family_groups.status = 'dissolved'`) の物理削除 | 08 §4.4 の `family_archive_purge_batch` は `archived` 状態を前提にするが、実装の状態は `active` / `dissolved` だけ。解散から 90 日 (保存期間) を過ぎた行を、pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで物理削除する (`purge_dissolved_family_groups(p_dry_run)`)。保護者の同意の記録 (`parental_consents`) を持つグループは消さずに数だけ報告する。消す範囲と保存期間はオーナーの確認点 (§0.4) | §5.4 |
+| D-4 | 解散した家族のグループ (`family_groups.status = 'dissolved'`。解散は運営の強制解散と利用者の解散 (family/11) の 2 つ) の物理削除 | 08 §4.4 の `family_archive_purge_batch` は `archived` 状態を前提にするが、実装の状態は `active` / `dissolved` だけ。解散から 90 日 (保存期間) を過ぎた行を、pg_cron のジョブ `purge-dissolved-family-groups` (毎日 03:40 JST) が 1 回 500 件まで物理削除する (`purge_dissolved_family_groups(p_dry_run)`)。保護者の同意の記録 (`parental_consents`) を持つグループは消さずに数だけ報告する。消す範囲と保存期間はオーナーの確認点 (§0.4) | §5.4 |
 | D-5 | 凍結 (`frozen`) 系・食事リクエスト・HR 連携のバッチ | 発生源 (ライセンスの失効 = (A)・HR の Webhook・`family_meal_requests`) がどれも main に無く、バッチだけ先に作ると「何も対象の無い処理」になる。08 の「いま」の計画から外し、発生源を作る冊に同梱する (08 の記述の外し方は §15) | §2.2 §15 |
 | D-6 | 利用者へ送るメール 2 本 | 2 本とも当面は送らない (オーナーの選択 (2026-10-17)。§8)。実装しない。08 からは「当面は送らない」として外す | §8 |
 
@@ -1304,7 +1304,8 @@ export function renderPgCronStalledEmail(vars: PgCronStalledEmailVars): EmailEnv
 
 | 状態 | 操作 | 遷移先 | ガード | 副作用 |
 |---|---|---|---|---|
-| `active` | `operator_force_dissolve_family` (家族の冊) | `dissolved` (dissolved_at = now) | super_admin | members → left・profiles.family_id → NULL・membership_audit |
+| `active` | `operator_force_dissolve_family` (家族の冊) | `dissolved` (dissolved_at = now) | super_admin | members → left・profiles.family_id → NULL・`representative_id` → NULL (family/11 §11.1 の 4)・membership_audit |
+| `active` | `dissolve_family_by_representative` (家族の冊。family/11) | `dissolved` (dissolved_at = now) | 本人が代表者 (行のロック下) | members → left・profiles.family_id → NULL・`representative_id` → NULL・membership_audit (`group_dissolved`) |
 | `dissolved` (< 90 日) | `purge-dissolved-family-groups` | 同じ | — | — |
 | `dissolved` (≥ 90 日・同意の記録なし) | 同上 | 行が消える (CASCADE: members / invites / promotion_requests) | 古い順に 500 件まで | 監査ログ 1 行 (消した回ごと) |
 | `dissolved` (≥ 90 日・同意の記録あり) | 同上 | 同じ | Q-2 | 戻り値の `skipped_with_consents_count` に数える。同じ回に消したものがあれば、その回の監査ログにも載る (P-20)。消したものが無い回は監査ログなし (P-27) |

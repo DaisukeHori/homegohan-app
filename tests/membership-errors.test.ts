@@ -103,6 +103,19 @@ describe("mapPgErrorToHttp", () => {
     expect(r.code).not.toBe(MembershipErrorCode.NOT_IN_FAMILY);
   });
 
+  it("#1917: FAMILY_ALREADY_DISSOLVED / ORG_ALREADY_DISSOLVED が 409 で検出され、ALREADY_IN_FAMILY / ALREADY_IN_ORG に化けない", () => {
+    const family = mapPgErrorToHttp("ERROR:  FAMILY_ALREADY_DISSOLVED", "P0001");
+    expect(family.code).toBe(MembershipErrorCode.FAMILY_ALREADY_DISSOLVED);
+    expect(family.status).toBe(409);
+    expect(family.code).not.toBe(MembershipErrorCode.ALREADY_IN_FAMILY);
+    const org = mapPgErrorToHttp("ERROR:  ORG_ALREADY_DISSOLVED", "P0001");
+    expect(org.code).toBe(MembershipErrorCode.ORG_ALREADY_DISSOLVED);
+    expect(org.status).toBe(409);
+    expect(org.code).not.toBe(MembershipErrorCode.ALREADY_IN_ORG);
+    expect(MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.FAMILY_ALREADY_DISSOLVED]).toBe("この家族グループはすでに解散しています。");
+    expect(MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.ORG_ALREADY_DISSOLVED]).toBe("この組織はすでに解散しています。");
+  });
+
   // #1232: 子供メンバー昇格の本人同意フロー
   it("#1232: 40P01 (deadlock_detected) は CONFLICT_RETRY/409 に正規化される", () => {
     const r = mapPgErrorToHttp("deadlock detected", "40P01");

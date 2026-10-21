@@ -1,13 +1,14 @@
 /**
  * #1103 項目 10: migration 20261017100000_organizations_owner_id_not_null.sql の振る舞いを、本物の DB (ローカルの Supabase) で確かめる。
  *
- * 結合テストの DB には、この migration がすでに当たっている (owner_id は NOT NULL で、NULL の組織は無い)。そこで、
+ * 結合テストの DB には、この migration と #1917 の migration (20261019120000_self_dissolve.sql。owner_id を NULL 許容にし、
+ * CHECK organizations_active_has_owner で active な行だけ NOT NULL) が当たっている。そこで、
  * 1 回の問い合わせ (postgres-meta の /pg/query。複数の文を 1 つの暗黙のトランザクションで流す) の中で
- *   1. owner_id の NOT NULL を外し、本番と同じ形の組織 (owner_id が NULL) を作り
+ *   1. owner_id の NOT NULL と CHECK organizations_active_has_owner を外し、本番と同じ形の組織 (owner_id が NULL) を作り
  *   2. migration のファイルの中身をそのまま流し
  *   3. 結果を JSON にして例外 (TEST_RESULT) で返す
- * ようにする。例外でトランザクションごと巻き戻るので、NOT NULL を外したことも作った行も DB には残らない
- * (各テストの後に、NOT NULL が付いたままで作った組織が無いことも確かめる)。
+ * ようにする。例外でトランザクションごと巻き戻るので、外したものも作った行も DB には残らない
+ * (各テストの後に、列が NULL 許容のまま・CHECK が残っていること・作った組織が無いことも確かめる)。
  *
  * ここで確かめること:
  *   - メンバーが 0 人で owner_id が NULL の組織だけが消え、その org_license_pools の行も消える (CASCADE)
@@ -144,7 +145,14 @@ BEGIN
 END
 $report$;`;
   const result = await pgQuery(
-    `ALTER TABLE public.organizations ALTER COLUMN owner_id DROP NOT NULL;\n${setup}\n${body}\n${report}`,
+    [
+      'ALTER TABLE public.organizations ALTER COLUMN owner_id DROP NOT NULL;',
+      // #1917: active な行の owner_id の NOT NULL は CHECK が持つ。旧 migration の検査のために本番と同じ形 (owner_id が NULL の active な組織) を作るので外す (トランザクションごと巻き戻る)
+      'ALTER TABLE public.organizations DROP CONSTRAINT organizations_active_has_owner;',
+      setup,
+      body,
+      report,
+    ].join('\n'),
   );
   if (result.ok) throw new Error('結果の例外が返らなかった (トランザクションが巻き戻っていない恐れ)');
   const at = result.error.indexOf(RESULT_MARKER);
@@ -179,11 +187,15 @@ beforeAll(async () => {
 }, 60_000);
 
 afterEach(async () => {
-  // 巻き戻ったこと: NOT NULL は付いたまま、作った組織は 1 つも残っていない
+  // 巻き戻ったこと: 列は #1917 の形 (NULL 許容) のまま、CHECK organizations_active_has_owner は残り、作った組織は 1 つも残っていない
   const column = await pgQuery(
     "SELECT is_nullable FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'organizations' AND column_name = 'owner_id'",
   );
-  expect(column).toEqual({ ok: true, rows: [{ is_nullable: 'NO' }] });
+  expect(column).toEqual({ ok: true, rows: [{ is_nullable: 'YES' }] });
+  const check = await pgQuery(
+    "SELECT conname FROM pg_constraint WHERE conrelid = 'public.organizations'::regclass AND conname = 'organizations_active_has_owner'",
+  );
+  expect(check).toEqual({ ok: true, rows: [{ conname: 'organizations_active_has_owner' }] });
   if (fixtureOrgIds.length > 0) {
     const { data: left, error } = await srAdmin.from('organizations').select('id').in('id', fixtureOrgIds);
     expect(error).toBeNull();

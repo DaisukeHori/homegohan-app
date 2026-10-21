@@ -247,6 +247,7 @@ async function completeDeletionRecord(
 /** 組織のオーナー / 家族の代表者なら、削除をブロックする結果を返す (問い合わせ自体の失敗は例外) */
 async function findBlocker(admin: AccountDeletionAdmin, userId: string): Promise<DeleteAccountResult | null> {
   // P0 Critical Fix F12: 削除前に owner/representative チェック
+  // 解散した行は representative_id / owner_id が NULL なので当たらない (#1917。docs/design/family/11-self-dissolve.md §11.1)
   // organizations の owner であれば削除不可 (譲渡または解散が必要)
   const { data: ownedOrgs, error: orgError } = await admin
     .from('organizations')

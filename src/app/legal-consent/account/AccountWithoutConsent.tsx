@@ -1,8 +1,8 @@
 'use client';
 
 // #1901 (cross/20 Q-23): 規約・プライバシーポリシーに同意していない人の、退会とデータの書き出し。
-// 退会と書き出しの 2 つの枠は、凍結中の画面 (/frozen/account) と共通の部品 (AccountSelfServicePanel)。呼ぶ API は退会と書き出しの 2 つだけ
-// (どちらも同意の許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS にある)。
+// 退会と書き出しの 2 つの枠は、凍結中の画面 (/frozen/account) と共通の部品 (AccountSelfServicePanel)。呼ぶ API は退会と書き出しと、
+// 409 のときの家族グループ / 組織の解散 (#1917) の 4 つだけ (どれも同意の許可リスト LEGAL_CONSENT_EXEMPT_API_PATHS にある)。
 // 退会できたら (ログアウト済み)、ログインの画面へ移らずに「退会しました」を出す: アプリの WebView の中では、ネイティブがログアウトを受けて
 // 同意画面の上に「閉じる」を出し、Web の案内を残す (apps/mobile/app/legal-consent.tsx の signed-out-notice)。
 import { useState } from 'react';

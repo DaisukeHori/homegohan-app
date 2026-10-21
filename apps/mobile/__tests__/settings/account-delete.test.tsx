@@ -67,8 +67,9 @@ jest.mock('../../src/providers/AuthProvider', () => ({
 }));
 
 const mockReplace = jest.fn();
+const mockPush = jest.fn();
 jest.mock('expo-router', () => ({
-  router: { replace: (...args: any[]) => mockReplace(...args) },
+  router: { replace: (...args: any[]) => mockReplace(...args), push: (...args: unknown[]) => mockPush(...args) },
 }));
 
 jest.mock('@expo/vector-icons', () => ({
@@ -114,6 +115,7 @@ import {
 } from '../../src/lib/account-deletion-error';
 import { NETWORK_ERROR_MESSAGES } from '../../src/lib/api-error';
 import { ServiceUnavailableError } from '../../src/lib/service-unavailable';
+import { MEMBERSHIP_SETTINGS_SCREEN_ROUTE } from '../../src/lib/membership-settings';
 import {
   readPendingWebViewUserScopedStorageClear,
   resetWebViewUserStorageCleanupForTests,
@@ -336,6 +338,18 @@ describe('AccountSettingsPage — 退会できない・失敗したときの文 
     return { title: failures[0][0], message: failures[0][1] };
   }
 
+  /** 削除を押して、出た Alert (確認のダイアログ以外) のボタンを返す (ボタンが無ければ undefined) */
+  async function pressDeleteAndGetFailureButtons() {
+    render(<AccountSettingsPage />);
+    fireEvent.press(screen.getByTestId('account-delete-button'));
+    await waitFor(() => {
+      expect(alertSpy.mock.calls.some(([title]) => title !== 'アカウント削除')).toBe(true);
+    });
+    const failures = alertSpy.mock.calls.filter(([title]) => title !== 'アカウント削除');
+    expect(failures).toHaveLength(1);
+    return failures[0][2];
+  }
+
   it.each([
     ['組織のオーナー', 'HTTP 409 Conflict', 'ACCOUNT_DELETE_BLOCKED_ORG_OWNER', ORG_OWNER_MESSAGE],
     // HTTP/2 では statusText が空になる
@@ -346,6 +360,29 @@ describe('AccountSettingsPage — 退会できない・失敗したときの文 
     );
     const alert = await pressDeleteAndGetFailureAlert();
     expect(alert).toEqual({ title: '退会できません', message });
+  });
+
+  it('409: Alert に「閉じる」と「メンバーシップ設定を開く」があり、押すと MEMBERSHIP_SETTINGS_SCREEN_ROUTE へ router.push する (#1917)', async () => {
+    mockPost.mockRejectedValueOnce(
+      new Error(`HTTP 409 Conflict: ${JSON.stringify({ error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE', message: FAMILY_REPRESENTATIVE_MESSAGE })}`),
+    );
+    const buttons = await pressDeleteAndGetFailureButtons();
+    expect(buttons?.map((b) => b.text)).toEqual(['閉じる', 'メンバーシップ設定を開く']);
+    expect(buttons?.[0].style).toBe('cancel');
+    expect(mockPush).not.toHaveBeenCalled();
+    buttons?.[1].onPress?.();
+    expect(mockPush).toHaveBeenCalledTimes(1);
+    expect(mockPush).toHaveBeenCalledWith(MEMBERSHIP_SETTINGS_SCREEN_ROUTE);
+    expect(MEMBERSHIP_SETTINGS_SCREEN_ROUTE).toBe('/settings/membership');
+  });
+
+  it.each([
+    ['500', new Error('HTTP 500 Internal Server Error: {}')],
+    ['通信の失敗', new HttpNetworkError('offline', 'raw offline')],
+  ])('%s の Alert にはボタンが無い (文だけ)', async (_label, error) => {
+    mockPost.mockRejectedValueOnce(error);
+    const buttons = await pressDeleteAndGetFailureButtons();
+    expect(buttons).toBeUndefined();
   });
 
   it('409 で本文に文が無いときは、定型の案内の文を出す', async () => {
@@ -399,6 +436,8 @@ describe('AccountSettingsPage — ログインが切れていて退会できな�
     expect(failures[0][0]).toBe('ログインが必要です');
     expect(failures[0][1]).toBe(ACCOUNT_DELETE_SESSION_EXPIRED_MESSAGE);
     expect(failures[0][1]).not.toBe(ACCOUNT_DELETE_FAILED_MESSAGE);
+    // #1917: 401 の Alert にはボタンが無い (メンバーシップ設定へのボタンは 409 だけ)
+    expect(failures[0][2]).toBeUndefined();
     // アカウントは消えていないので、通常のログアウト (push token の削除 → 端末のデータの削除 → サインアウト)
     expect(mockUnregisterExpoPushToken).toHaveBeenCalledWith('uid-1', expect.anything());
     expect(mockClearUserScopedAsyncStorage).toHaveBeenCalledWith('uid-1');

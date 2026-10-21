@@ -818,6 +818,22 @@ describe('#1175 退会: 組織のオーナー・家族の代表者は 409 で止
     const { data } = await srAdmin.auth.admin.getUserById(representative.id);
     expect(data.user?.id).toBe(representative.id);
   });
+
+  // #1917 (docs/design/family/11-self-dissolve.md §21.2): 解散した家族の行は representative_id が NULL になるので、
+  // findBlocker の 409 にも auth.users への RESTRICT にも当たらない。既存の 2 本のあとに流す (同じ代表者を解散させる)
+  it('家族を解散した元代表者は 200 で退会できる', async () => {
+    await pgQuery(`select public.family_dissolve_apply(${q(ownedIds.fg)})`);
+
+    const result = await deleteAccount({ userId: representative.id, admin: srAdmin });
+    expect(result).toMatchObject({ ok: true });
+
+    const { data } = await srAdmin.auth.admin.getUserById(representative.id);
+    expect(data.user).toBeNull();
+    const rows = await pgQuery<{ status: string; representative_id: string | null }>(
+      `select status, representative_id from public.family_groups where id = ${q(ownedIds.fg)}`,
+    );
+    expect(rows).toEqual([{ status: 'dissolved', representative_id: null }]);
+  }, 60_000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

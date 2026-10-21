@@ -14,7 +14,8 @@ export const CreateFamilyGroupBodySchema = z.object({
 export const FamilyGroupSchema = z.object({
   id: z.string().uuid(),
   name: z.string(),
-  representative_id: z.string().uuid(),
+  // active な行では NOT NULL (CHECK family_groups_active_has_representative)。解散した行は NULL (#1917)
+  representative_id: z.string().uuid().nullable(),
   plan_key: z.string(),
   member_limit: z.number().int().positive(),
   status: FamilyStatusSchema,
