@@ -130,6 +130,7 @@ const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
   personal_subscriptions: '有料プラン',
   billing_customers: '有料プラン',
   coupon_redemptions: '有料プラン',
+  iap_reconcile_attempts: '有料プラン',
   user_profiles: 'プロフィール',
   nutrition_targets: 'プロフィール',
   meals: '食事と献立',

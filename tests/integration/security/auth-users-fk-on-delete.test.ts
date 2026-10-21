@@ -189,6 +189,7 @@ const EXPECTED_ACTIONS: Readonly<Record<string, 'CASCADE' | 'SET NULL'>> = {
   'health_insights.user_id': 'CASCADE',
   'health_records.user_id': 'CASCADE',
   'health_streaks.user_id': 'CASCADE',
+  'iap_reconcile_attempts.user_id': 'CASCADE',
   'legacy_family_groups.owner_id': 'CASCADE',
   'meals.user_id': 'CASCADE',
   'notification_preferences.user_id': 'CASCADE',
