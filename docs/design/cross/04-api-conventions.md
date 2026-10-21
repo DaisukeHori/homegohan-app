@@ -122,6 +122,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `PERM_NO_ORG` | 組織未所属 | 403 |
 | `PERM_FAMILY_NOT_MEMBER` | 家族グループ非メンバー | 403 |
 | `PERM_FAMILY_OWNER_REQUIRED` | 家族 owner 権限が必要 | 403 |
+| `AI_FEATURE_NOT_IN_PLAN` | **[NEW]** ご利用中のプランでは使えない AI の機能 (`ai_plan_feature_caps` の daily_cap = 0。本文は平たい `{ error, code, feature }`・Retry-After なし。`docs/design/billing/03-paid-plans-and-iap.md` §13.1) | 403 |
 
 #### VALID 系
 
@@ -166,7 +167,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `EXT_STRIPE_WEBHOOK_FAILED` | Stripe Webhook 処理失敗 | 502 |
 | `EXT_STRIPE_CHARGE_FAILED` | Stripe 課金失敗 | 502 |
 | `EXT_STRIPE_API_FAILED` | **[NEW]** Stripe の API の呼び出しに失敗した (課金の自己サービスの API。`docs/design/billing/01-billing-core.md` §13.1) | 502 |
-| `EXT_STRIPE_NOT_CONFIGURED` | **[NEW]** Stripe の秘密鍵 (`STRIPE_SECRET_KEY`) が未設定で、Stripe を呼ぶ課金の API を受け付けない (`docs/design/billing/01-billing-core.md` §13.1) | 503 |
+| `EXT_STRIPE_NOT_CONFIGURED` | **[NEW]** Stripe の秘密鍵 (`STRIPE_SECRET_KEY`) が未設定で、Stripe を呼ぶ課金の API を受け付けない (`docs/design/billing/01-billing-core.md` §13.1)。文は「お支払いを受け付けていません」(#1911) | 503 |
+| `EXT_REVENUECAT_API_FAILED` | **[NEW]** RevenueCat の REST の呼び出しに失敗した (2xx 以外・応答の形の違い・時間切れ・接続の失敗。`POST /api/billing/iap/sync`。`docs/design/billing/03-paid-plans-and-iap.md` §13.1) | 502 |
+| `EXT_REVENUECAT_NOT_CONFIGURED` | **[NEW]** RevenueCat の秘密の API キー (`REVENUECAT_SECRET_API_KEY`) が未設定で、ストアの契約を取り直せない (`POST /api/billing/iap/sync`。billing/03 §13.1) | 503 |
 | `EXT_LLM_TIMEOUT` | LLM API タイムアウト | 504 |
 | `EXT_LLM_CONTENT_POLICY` | LLM コンテンツポリシー拒否 | 422 |
 | `EXT_RESEND_FAILED` | Resend メール送信失敗 | 502 |
@@ -187,7 +190,7 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `FAM_PARENTAL_CONSENT_REQUIRED` | 保護者同意が必要 | 403 |
 | `FAM_CHILD_PROMOTE_AUTH_REQUIRED` | 子供アカウント独立化には親の再認証が必要 | 401 |
 
-注: 家族の API の実コードは接頭辞なしの `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) を使う。保護者の同意は `PARENTAL_CONSENT_REQUIRED` (403)。ほかに `CHILD_BIRTH_DATE_REQUIRED` / `CHILD_BIRTH_DATE_INVALID` (400)・`PARENTAL_CONSENT_VERSION_MISMATCH` (409)・`PARENTAL_CONSENT_SIGNER_NOT_ADULT` (403)・`PROMOTION_UNDER_COPPA_AGE` (403)・`MINOR_ACCOUNT_NOT_ALLOWED` (403。家族と組織の API) (設計書 `docs/design/cross/14-parental-consent.md`)。
+注: 家族の API の実コードは接頭辞なしの `MembershipErrorCode` (`src/lib/errors/membership-errors.ts`) を使う。保護者の同意は `PARENTAL_CONSENT_REQUIRED` (403)。ほかに `CHILD_BIRTH_DATE_REQUIRED` / `CHILD_BIRTH_DATE_INVALID` (400)・`PARENTAL_CONSENT_VERSION_MISMATCH` (409)・`PARENTAL_CONSENT_SIGNER_NOT_ADULT` (403)・`PROMOTION_UNDER_COPPA_AGE` (403)・`MINOR_ACCOUNT_NOT_ALLOWED` (403。家族と組織の API) (設計書 `docs/design/cross/14-parental-consent.md`)。家族プランの契約の無い代表者のグループの作成・メンバーの追加は `FAMILY_PLAN_REQUIRED` (**[NEW]** 402。`POST /api/family/groups`・`POST /api/family/invites/[id]/accept`・`POST /api/family/members/child`。`docs/design/billing/03-paid-plans-and-iap.md` §9.5・§13.1)。
 
 #### LEGAL 系
 
@@ -279,6 +282,9 @@ POST   /api/webhooks/stripe                   # Stripe Webhook
 | `BILL_NO_LIVE_SUBSCRIPTION` | **[NEW]** 解約の予約・取り消しの対象になる、有効で Stripe の契約がある行が無い (`POST /api/billing/subscription/cancel` / `resume`) | 409 |
 | `BILL_CANCEL_NOT_SCHEDULED` | **[NEW]** 解約が予約されていないのに取り消そうとした (`POST /api/billing/subscription/resume`) | 409 |
 | `BILL_PLAN_NOT_PURCHASABLE` | **[NEW]** 買えないプラン (無い・公開でない・個人 / 家族でない・free・その期間の Price が無い・金額 0。`POST /api/billing/checkout`・`GET /api/billing/checkout/preview`) | 422 |
+| `BILL_IAP_INVALID_INPUT` | **[NEW]** アプリ内課金のカタログのクエリ `store` が無い・`app_store` / `play_store` 以外 (`GET /api/billing/iap/catalog`。`docs/design/billing/03-paid-plans-and-iap.md` §13.1) | 400 |
+| `BILL_IAP_SYNC_CONFLICT` | **[NEW]** ストアの契約を写そうとしたが、同じ利用者に別の live な契約 (Stripe・手動付与・別のストア) がある (`POST /api/billing/iap/sync`。DB の `BILL_LIVE_ROW_CONFLICT` の写し。billing/03 §13.1) | 409 |
+| `BILL_IAP_UNKNOWN_PRODUCT` | **[NEW]** ストアの live な商品が `plan_store_products` に無く、利用者の行も無い (`POST /api/billing/iap/sync`。billing/03 §13.1) | 422 |
 
 #### DSR 系
 
