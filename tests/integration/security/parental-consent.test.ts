@@ -26,6 +26,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import ws from 'ws';
 import { PARENTAL_CONSENT_DOCUMENT, addDaysToDate, todayLocal } from '@homegohan/shared';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -156,6 +157,8 @@ async function createUser(
 
 async function createFamily(label: string): Promise<TestFamily> {
   const rep = await createUser(`rep-${label}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1173 family ${label} ${TS}`,
     p_plan_key: 'free',
@@ -917,6 +920,8 @@ describe('#1173 18 歳未満の本人の家族・組織の役割 (MINOR_ACCOUNT_
 
     for (const birthDate of [ADULT_BIRTH_DATE, null]) {
       const user = await createUser(`db35-${birthDate ?? 'null'}`, { birthDate });
+      // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+      await grantFamilyPlan(srAdmin, user.id);
       const { data, error: createError } = await asUser(user.jwt).rpc('create_family_group', {
         p_name: `#1173 db35 ${birthDate ?? 'null'} ${TS}`,
         p_plan_key: 'free',

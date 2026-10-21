@@ -36,6 +36,7 @@ import ws from 'ws';
 import { apiCall } from '../helpers/api';
 import { createPlaceholderOrgOwner, deletePlaceholderOrgOwner } from '../helpers/org-owner';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { grantFamilyPlan } from '../helpers/family-plan';
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
@@ -126,6 +127,8 @@ async function createFamily(
   options: { adult?: boolean; memberLimit?: number } = {},
 ): Promise<TestFamily> {
   const rep = await createUser(`rep-${label}`);
+  // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+  await grantFamilyPlan(srAdmin, rep.id);
   const { data, error } = await asUser(rep.jwt).rpc('create_family_group', {
     p_name: `#1163 db-cap ${label} ${TS}`,
     p_plan_key: 'free',
@@ -616,6 +619,8 @@ describe('#1163 家族の招待 (create_family_invite): 招待者ごと 20 / 同
 
   it('FI-5: 家族を消して作り直しても上限は戻らない (監査行は家族と無関係に残り、招待者ごとに数える)', async () => {
     const rep = await createUser('rep-fi-recreate');
+    // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
+    await grantFamilyPlan(srAdmin, rep.id);
     const created = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1163 recreate-1 ${TS}`, p_plan_key: 'free' });
     const firstFamilyId = (created.data as { id: string }).id;
     createdFamilyIds.push(firstFamilyId);
