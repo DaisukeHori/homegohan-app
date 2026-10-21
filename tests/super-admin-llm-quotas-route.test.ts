@@ -8,12 +8,16 @@
  *   - PATCH: { plan_key, daily_limit (null は無制限), reason } を検証し、実在するプランだけを保存 (upsert) する。
  *     監査ログ (super_admin.llm_quota.update) に前と後の値と理由を残す。存在しないプランは 404、入力の誤りは 400
  *   - どちらも super_admin だけ (未認証 401・権限なし 403)。DB のエラーは汎用の 500 (本文に DB の文を出さない)
+ *   - #1912: 組織のプランの値 (ORG_PLAN_VALUES = standard / premium / enterprise。subscription_plans に無いキー) も
+ *     GET に出し (plan_source: 'org_plan'・表示名「<値>（組織のプラン）」)、PATCH で保存できる。どちらにも無いキーは 404 のまま、
+ *     GET では plan_source: 'unknown' (画面は保存させない)
  * 実 DB での確認は tests/integration/operator/super-admin-llm.test.ts と tests/integration/rls/ai-daily-limit-rpc.test.ts。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { AI_DAILY_LIMIT_MAX, LLM_QUOTAS_ENFORCED_NOTE } from '@/lib/super-admin/llm-schemas';
-import { LLM_QUOTA_AUDIT_ACTION, buildAiDailyLimitRows } from '@/lib/super-admin/ai-daily-limits';
+import { LLM_QUOTA_AUDIT_ACTION, buildAiDailyLimitRows, isAiDailyLimitRowEditable } from '@/lib/super-admin/ai-daily-limits';
+import { ORG_PLAN_VALUES } from '@/lib/org-plans';
 
 const requireRole = vi.hoisted(() => vi.fn());
 const db = vi.hoisted(() => ({
@@ -24,6 +28,8 @@ const db = vi.hoisted(() => ({
   upsertError: null as { message: string } | null,
   upserts: [] as Array<{ table: string; values: Record<string, unknown>; options: unknown }>,
   audits: [] as Array<Record<string, unknown>>,
+  /** subscription_plans を plan_key で 1 行引いた回数 (PATCH の存在の確認) */
+  planLookups: 0,
 }));
 
 vi.mock('@/lib/auth/helpers', () => ({ requireRole }));
@@ -48,7 +54,10 @@ function adminQuery(table: string) {
       upserted = values;
       return builder;
     },
-    maybeSingle: async () => ({ data: rows()[0] ?? null, error: db.readError[table] ?? null }),
+    maybeSingle: async () => {
+      if (table === 'subscription_plans') db.planLookups += 1;
+      return { data: rows()[0] ?? null, error: db.readError[table] ?? null };
+    },
     single: async () =>
       db.upsertError
         ? { data: null, error: db.upsertError }
@@ -104,6 +113,7 @@ beforeEach(() => {
   db.upsertError = null;
   db.upserts = [];
   db.audits = [];
+  db.planLookups = 0;
 });
 
 describe('GET /api/super-admin/llm/quotas', () => {
@@ -117,9 +127,13 @@ describe('GET /api/super-admin/llm/quotas', () => {
     expect(json.note).toBe(LLM_QUOTAS_ENFORCED_NOTE);
     expect(json.default_plan_key).toBe('free');
     expect(json.data).toEqual([
-      { plan_key: 'free', display_name: 'Free', plan_type: 'personal', daily_limit: 10, configured: true, effective_daily_limit: 10, updated_at: '2026-10-11T00:00:00Z' },
-      { plan_key: 'pro', display_name: 'Pro', plan_type: 'personal', daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
-      { plan_key: 'org_enterprise', display_name: 'Org Enterprise', plan_type: 'org', daily_limit: null, configured: true, effective_daily_limit: null, updated_at: '2026-10-11T00:00:00Z' },
+      { plan_key: 'free', plan_source: 'subscription_plan', display_name: 'Free', plan_type: 'personal', daily_limit: 10, configured: true, effective_daily_limit: 10, updated_at: '2026-10-11T00:00:00Z' },
+      { plan_key: 'pro', plan_source: 'subscription_plan', display_name: 'Pro', plan_type: 'personal', daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
+      { plan_key: 'org_enterprise', plan_source: 'subscription_plan', display_name: 'Org Enterprise', plan_type: 'org', daily_limit: null, configured: true, effective_daily_limit: null, updated_at: '2026-10-11T00:00:00Z' },
+      // 組織のプランの値 (#1912)。ai_daily_limits に行が無くても出す (保存すると行を作る)
+      { plan_key: 'standard', plan_source: 'org_plan', display_name: 'standard（組織のプラン）', plan_type: null, daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
+      { plan_key: 'premium', plan_source: 'org_plan', display_name: 'premium（組織のプラン）', plan_type: null, daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
+      { plan_key: 'enterprise', plan_source: 'org_plan', display_name: 'enterprise（組織のプラン）', plan_type: null, daily_limit: null, configured: false, effective_daily_limit: 10, updated_at: null },
     ]);
   });
 
@@ -176,6 +190,69 @@ describe('PATCH /api/super-admin/llm/quotas', () => {
     expect(db.upserts[1].values).toMatchObject({ daily_limit: 0 });
   });
 
+  it.each(ORG_PLAN_VALUES)(
+    '#1912: 組織のプランの値 %s (subscription_plans に無い) も 200 で保存する。行が無ければ作り (upsert)、監査ログは今と同じ形',
+    async (planKey) => {
+      const res = await PATCH(patch({ plan_key: planKey, daily_limit: 15, reason: '組織の上限を変える' }));
+      const json = await res.json();
+
+      expect(res.status).toBe(200);
+      expect(json.data).toMatchObject({ plan_key: planKey, daily_limit: 15 });
+      expect(db.upserts).toEqual([
+        expect.objectContaining({
+          table: 'ai_daily_limits',
+          values: expect.objectContaining({ plan_key: planKey, daily_limit: 15, updated_by: ADMIN_ID }),
+          options: { onConflict: 'plan_key' },
+        }),
+      ]);
+      expect(db.audits).toEqual([
+        expect.objectContaining({
+          actor_id: ADMIN_ID,
+          action_type: LLM_QUOTA_AUDIT_ACTION,
+          target_type: 'ai_daily_limit',
+          details: { plan_key: planKey, before: null, after: { daily_limit: 15 }, reason: '組織の上限を変える' },
+        }),
+      ]);
+      // 組織のプランの値は subscription_plans で存在を確かめない (そこに無いのが正しい)
+      expect(db.planLookups).toBe(0);
+    },
+  );
+
+  it('#1912: 組織のプランの値の行が既にあれば、前の値を監査ログに残して上書きする。値の範囲の検査は同じ (超えれば 400)', async () => {
+    db.limits.push({ plan_key: 'premium', daily_limit: 10, updated_at: '2026-10-21T00:00:00Z' });
+
+    expect((await PATCH(patch({ plan_key: 'premium', daily_limit: null, reason: '無制限に' }))).status).toBe(200);
+    expect(db.audits[0].details).toMatchObject({ plan_key: 'premium', before: { daily_limit: 10 }, after: { daily_limit: null } });
+
+    const over = await PATCH(patch({ plan_key: 'premium', daily_limit: AI_DAILY_LIMIT_MAX + 1, reason: 'x' }));
+    expect(over.status).toBe(400);
+    expect(db.upserts).toHaveLength(1);
+  });
+
+  it('#1912: 組織のプランの値でも、super_admin でなければ拒む (未認証 401・権限なし 403・保存しない)', async () => {
+    requireRole.mockRejectedValueOnce(new AuthError('AUTH_UNAUTHENTICATED'));
+    expect((await PATCH(patch({ plan_key: 'standard', daily_limit: 1, reason: 'x' }))).status).toBe(401);
+
+    requireRole.mockRejectedValueOnce(new ForbiddenError('PERM_DENIED', 'Requires one of: super_admin'));
+    expect((await PATCH(patch({ plan_key: 'enterprise', daily_limit: 1, reason: 'x' }))).status).toBe(403);
+
+    expect(requireRole).toHaveBeenCalledWith(['super_admin']);
+    expect(db.upserts).toEqual([]);
+    expect(db.audits).toEqual([]);
+  });
+
+  it.each(['Standard', 'org_premium', 'standard_x'])(
+    '#1912: 組織のプランの値に似ただけのキー (%s) は、subscription_plans に無ければ 404 のまま (行を作らない)',
+    async (planKey) => {
+      const res = await PATCH(patch({ plan_key: planKey, daily_limit: 5, reason: 'x' }));
+      expect(res.status).toBe(404);
+      expect((await res.json()).error.code).toBe('PLAN_NOT_FOUND');
+      expect(db.planLookups).toBe(1);
+      expect(db.upserts).toEqual([]);
+      expect(db.audits).toEqual([]);
+    },
+  );
+
   it('存在しないプランは 404 (行を作らない・監査ログも残さない)', async () => {
     const res = await PATCH(patch({ plan_key: 'no_such_plan', daily_limit: 5, reason: '打ち間違い' }));
 
@@ -229,14 +306,30 @@ describe('PATCH /api/super-admin/llm/quotas', () => {
 });
 
 describe('buildAiDailyLimitRows: 一覧の組み立て', () => {
-  it('free の行も無ければ、行の無いプランは無制限。プランの表に無いキーの行も最後に出す', () => {
+  it('free の行も無ければ、行の無いプランは無制限。組織のプランの値を次に、どちらにも無いキーの行を最後に出す (unknown は保存できない)', () => {
     const rows = buildAiDailyLimitRows(
       [{ plan_key: 'pro', display_name: 'Pro', plan_type: 'personal' }],
-      [{ plan_key: 'legacy_plan', daily_limit: 3, updated_at: '2026-10-11T00:00:00Z' }],
+      [
+        { plan_key: 'legacy_plan', daily_limit: 3, updated_at: '2026-10-11T00:00:00Z' },
+        { plan_key: 'premium', daily_limit: 10, updated_at: '2026-10-21T00:00:00Z' },
+      ],
     );
     expect(rows).toEqual([
-      { plan_key: 'pro', display_name: 'Pro', plan_type: 'personal', daily_limit: null, configured: false, effective_daily_limit: null, updated_at: null },
-      { plan_key: 'legacy_plan', display_name: null, plan_type: null, daily_limit: 3, configured: true, effective_daily_limit: 3, updated_at: '2026-10-11T00:00:00Z' },
+      { plan_key: 'pro', plan_source: 'subscription_plan', display_name: 'Pro', plan_type: 'personal', daily_limit: null, configured: false, effective_daily_limit: null, updated_at: null },
+      { plan_key: 'standard', plan_source: 'org_plan', display_name: 'standard（組織のプラン）', plan_type: null, daily_limit: null, configured: false, effective_daily_limit: null, updated_at: null },
+      { plan_key: 'premium', plan_source: 'org_plan', display_name: 'premium（組織のプラン）', plan_type: null, daily_limit: 10, configured: true, effective_daily_limit: 10, updated_at: '2026-10-21T00:00:00Z' },
+      { plan_key: 'enterprise', plan_source: 'org_plan', display_name: 'enterprise（組織のプラン）', plan_type: null, daily_limit: null, configured: false, effective_daily_limit: null, updated_at: null },
+      { plan_key: 'legacy_plan', plan_source: 'unknown', display_name: null, plan_type: null, daily_limit: 3, configured: true, effective_daily_limit: 3, updated_at: '2026-10-11T00:00:00Z' },
+    ]);
+    expect(rows.map((row) => isAiDailyLimitRowEditable(row))).toEqual([true, true, true, true, false]);
+  });
+
+  it('#1912: 組織のプランの値が subscription_plans にもあれば、プランの表の行として 1 回だけ出す (重ねない)', () => {
+    const rows = buildAiDailyLimitRows([{ plan_key: 'standard', display_name: 'Standard', plan_type: 'org' }], []);
+    expect(rows.map((row) => [row.plan_key, row.plan_source, row.display_name])).toEqual([
+      ['standard', 'subscription_plan', 'Standard'],
+      ['premium', 'org_plan', 'premium（組織のプラン）'],
+      ['enterprise', 'org_plan', 'enterprise（組織のプラン）'],
     ]);
   });
 });
