@@ -19,6 +19,7 @@
  *   改定前の版 (v2025.1) の文面は docs/legal/archive/v2025.1/ に控えてある。
  * v2026.2 は #1917 (docs/design/family/11-self-dissolve.md §18) で、退会の条件 (譲渡するか解散するまで) を改めた版。
  *   改定前の版 (v2026.1) の文面は docs/legal/archive/v2026.1/ に控えてある。
+ * v2026.3 は billing/03 (#1912) で有料プランの条文を足した版。改定前の版 (v2026.2) の文面は docs/legal/archive/v2026.2/ に控えてある。
  *
  * version の形式:
  *   DB の terms_acceptances.document_version は varchar(20)。同意を記録する DB 関数 accept_legal_documents も同じ形式
@@ -48,10 +49,15 @@ export interface LegalDocumentInfo {
  * #1917 (docs/design/family/11-self-dissolve.md §18): 代表者・オーナーが解散してから退会できるようになり、利用規約第11条 4 項・第12条 4 項・第17条 2 項と
  * プライバシーポリシー第13条 9 項の退会の条件が変わるので、両文書を v2026.2 に上げる。
  * v2026.2 の施行日は公開 (デプロイ) の日の 2026-10-21 (cross/20 §9.4 の 3・family/11 §18.4)。
+ *
+ * billing/03 (#1912。docs/design/billing/03-paid-plans-and-iap.md §11): 有料プランの条文 (料金・自動更新・解約・返金・無料体験・
+ * アプリ内課金・家族プラン、決済の事業者 (Stripe) と RevenueCat への提供と外部送信、保存期間) を利用規約第10条・第11条 1 項・
+ * 第16条 2 項・第17条・第24条とプライバシーポリシー第3条・第4条・第7条・第10条・第12条に足すので、両文書を v2026.3 に上げる。
+ * v2026.3 の施行日は公開 (デプロイ) の日 (cross/20 §9.4 の 3・billing/03 §11.6)。
  */
 export const LEGAL_DOCUMENTS: Readonly<Record<LegalDocumentType, LegalDocumentInfo>> = {
-  terms_of_service: { version: 'v2026.2', effectiveDate: '2026-10-21' },
-  privacy_policy: { version: 'v2026.2', effectiveDate: '2026-10-21' },
+  terms_of_service: { version: 'v2026.3', effectiveDate: '2026-10-22' }, // 仮置き: マージ直前に公開日へ置き換える
+  privacy_policy: { version: 'v2026.3', effectiveDate: '2026-10-22' }, // 仮置き: マージ直前に公開日へ置き換える
 };
 
 /** 画面に出す文書名 */
