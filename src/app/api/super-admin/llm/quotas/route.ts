@@ -1,6 +1,7 @@
 /**
  * GET   /api/super-admin/llm/quotas  — AI の 1 日の利用回数の上限 (プランごと) の一覧
  * PATCH /api/super-admin/llm/quotas  — プランの 1 日の上限を保存する
+ *   保存できるキー = subscription_plans にあるプラン + 組織のプランの値 (ORG_PLAN_VALUES。#1912)。それ以外は 404 PLAN_NOT_FOUND
  * operator/02-api-spec.md §8
  *
  * #1149 (T40): 上限の値は DB の ai_daily_limits に保存し、AI を使う入口の判定 (consume_ai_usage。
@@ -34,6 +35,7 @@ import {
   type SubscriptionPlanRecord,
 } from '@/lib/super-admin/ai-daily-limits';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
+import { isOrgPlanValue } from '@/lib/org-plans';
 
 export const dynamic = 'force-dynamic';
 
@@ -112,17 +114,22 @@ export async function PATCH(request: Request) {
   try {
     const admin = getSupabaseAdmin();
 
-    // 実在するプランだけを保存する (打ち間違えたキーの行を作らない)
-    const { data: plan, error: planError } = await admin
-      .from('subscription_plans')
-      .select('plan_key')
-      .eq('plan_key', planKey)
-      .maybeSingle();
-    if (planError) {
-      return internalError(PATCH_ROUTE, planError, { userId: actorId, table: 'subscription_plans' }, { shape: 'nested' });
-    }
-    if (!plan) {
-      return NextResponse.json({ error: { code: 'PLAN_NOT_FOUND', message: '指定したプランはありません' } }, { status: 404 });
+    // 実在するプランだけを保存する (打ち間違えたキーの行を作らない)。
+    // 受け付けるのは subscription_plans にあるキーと、組織のプランの値 (ORG_PLAN_VALUES。organizations.plan に書ける値)。
+    // 組織の利用者の AI の上限は organizations.plan の値の行で決まり (get_effective_plan がその値を返す)、この値は subscription_plans に無い。
+    // 一覧 (GET) はこの値の行を出すので、ここで断ると画面の行が保存できない (#1912)
+    if (!isOrgPlanValue(planKey)) {
+      const { data: plan, error: planError } = await admin
+        .from('subscription_plans')
+        .select('plan_key')
+        .eq('plan_key', planKey)
+        .maybeSingle();
+      if (planError) {
+        return internalError(PATCH_ROUTE, planError, { userId: actorId, table: 'subscription_plans' }, { shape: 'nested' });
+      }
+      if (!plan) {
+        return NextResponse.json({ error: { code: 'PLAN_NOT_FOUND', message: '指定したプランはありません' } }, { status: 404 });
+      }
     }
 
     const { data: before, error: beforeError } = await admin
