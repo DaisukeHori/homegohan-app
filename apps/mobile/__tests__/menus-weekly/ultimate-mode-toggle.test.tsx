@@ -10,6 +10,10 @@
  *  2. 操作できない状態 (disabled) のときは、押しても切り替わらない
  *  3. AI アシスタントのモーダルで ON にして生成すると、onGenerate の ultimateMode が true になる
  *  4. モーダルを開き直すと OFF に戻る (時間がかかるので、使うかどうかを毎回選ぶ)
+ *
+ * billing/03 §10.6 (有料プランの販売) で、究極モードを使えないプラン (無料プラン) には錠を出す:
+ *  5. locked のトグルは押しても ON にならず、有料プランの案内 (Alert) を出す (テスト 57)
+ *  6. モーダルは開くたびに契約の要約を読み、究極モードの 1 日の上限が 0 なら錠を渡す。読めなければ錠を出さない
  */
 
 // ============================================================
@@ -20,9 +24,11 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
 }));
 
-// V4GenerateModal の import が連鎖して読み込む API クライアント (このテストでは呼ばない)
+// V4GenerateModal の import が連鎖して読み込む API クライアント。get はモーダルを開くたびの契約の要約の読み込み (billing/03 §10.6)。
+// 既定は undefined を返す (要約の形が違う → 錠を出さない)
+const mockApiGet = jest.fn();
 jest.mock('../../src/lib/api', () => ({
-  getApi: () => ({ get: jest.fn(), post: jest.fn() }),
+  getApi: () => ({ get: mockApiGet, post: jest.fn() }),
 }));
 
 // ============================================================
@@ -33,12 +39,41 @@ import React from 'react';
 import { Alert } from 'react-native';
 import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
 
-import { UltimateModeToggle } from '../../src/components/menu/UltimateModeToggle';
+import {
+  ULTIMATE_MODE_LOCKED_ALERT_MESSAGE,
+  ULTIMATE_MODE_LOCKED_ALERT_TITLE,
+  UltimateModeToggle,
+} from '../../src/components/menu/UltimateModeToggle';
 import { V4GenerateModal } from '../../src/components/menu/V4GenerateModal';
 
 beforeEach(() => {
   (Alert.alert as jest.Mock).mockClear();
+  mockApiGet.mockReset();
+  mockApiGet.mockResolvedValue(undefined);
 });
+
+/** GET /api/billing/subscription の応答 (究極モードの 1 日の上限だけを変える) */
+function billingSummaryResponse(ultimateCap: number | null) {
+  return {
+    data: {
+      plan_key: 'free',
+      effective_plan_key: 'free',
+      status: null,
+      source: null,
+      manage_in_store: null,
+      billing_interval: null,
+      current_period_end: null,
+      trial_ends_at: null,
+      cancel_at_period_end: false,
+      cancel_at: null,
+      has_customer: false,
+      can_purchase: true,
+      can_cancel: false,
+      can_resume: false,
+      features: { ai_daily_limit: 3, ai_feature_caps: { menu_generation_ultimate: ultimateCap } },
+    },
+  };
+}
 
 function isChecked(node: { props: { accessibilityState?: { checked?: boolean } } }): boolean | undefined {
   return node.props.accessibilityState?.checked;
@@ -107,6 +142,34 @@ describe('UltimateModeToggle (#1142)', () => {
 
     expect(onValueChange).not.toHaveBeenCalled();
   });
+
+  it('locked toggle does not switch on and announces the plan requirement', () => {
+    const onValueChange = jest.fn();
+    const { getByTestId, getByText } = render(
+      <UltimateModeToggle value={false} onValueChange={onValueChange} locked />,
+    );
+    const toggle = getByTestId('ultimate-mode-toggle');
+
+    fireEvent.press(toggle);
+
+    expect(onValueChange).not.toHaveBeenCalled();
+    expect(Alert.alert).toHaveBeenCalledTimes(1);
+    expect(Alert.alert).toHaveBeenCalledWith(ULTIMATE_MODE_LOCKED_ALERT_TITLE, ULTIMATE_MODE_LOCKED_ALERT_MESSAGE);
+    expect(ULTIMATE_MODE_LOCKED_ALERT_TITLE).toBe('プランとお支払い');
+    expect(ULTIMATE_MODE_LOCKED_ALERT_MESSAGE).toBe(
+      '究極モードは有料プランでお使いいただけます。設定の「プランとお支払い」からお申し込みいただけます。',
+    );
+    expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(false);
+    expect(getByText('有料プランでお使いいただけます')).toBeTruthy();
+    // value が true のまま渡されても、錠のあいだは ON に見せない
+    const { getAllByTestId } = render(<UltimateModeToggle value onValueChange={onValueChange} locked />);
+    expect(isChecked(getAllByTestId('ultimate-mode-toggle')[1])).toBe(false);
+  });
+
+  it('locked でなければ錠の注は出ない', () => {
+    const { queryByTestId } = render(<UltimateModeToggle value={false} onValueChange={jest.fn()} />);
+    expect(queryByTestId('ultimate-mode-locked-note')).toBeNull();
+  });
 });
 
 // ============================================================
@@ -168,5 +231,65 @@ describe('V4GenerateModal の究極モード (#1142)', () => {
     });
 
     expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(false);
+  });
+});
+
+describe('V4GenerateModal の究極モードの錠 (billing/03 §10.6)', () => {
+  it('開くと契約の要約を読み、究極モードの 1 日の上限が 0 なら錠を出し、押しても ON にならず、生成は ultimateMode: false', async () => {
+    mockApiGet.mockResolvedValue(billingSummaryResponse(0));
+    const { getByTestId, findByTestId, onGenerate } = renderModal();
+
+    await findByTestId('ultimate-mode-locked-note');
+    expect(mockApiGet).toHaveBeenCalledWith('/api/billing/subscription');
+
+    fireEvent.press(getByTestId('ultimate-mode-toggle'));
+    expect(Alert.alert).toHaveBeenCalledWith(ULTIMATE_MODE_LOCKED_ALERT_TITLE, ULTIMATE_MODE_LOCKED_ALERT_MESSAGE);
+    expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(false);
+
+    fireEvent.press(getByTestId('v4-mode-single-day'));
+    fireEvent.press(getByTestId('v4-submit-btn'));
+    await waitFor(() => expect(onGenerate).toHaveBeenCalledTimes(1));
+    expect(onGenerate.mock.calls[0][0].ultimateMode).toBe(false);
+  });
+
+  it('読み込みの前に ON にしていても、錠が分かったら OFF に戻す', async () => {
+    let resolveSummary: (value: unknown) => void = () => undefined;
+    mockApiGet.mockReturnValue(new Promise((resolve) => { resolveSummary = resolve; }));
+    const { getByTestId, findByTestId } = renderModal();
+
+    fireEvent.press(getByTestId('ultimate-mode-toggle'));
+    expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(true);
+
+    await act(async () => {
+      resolveSummary(billingSummaryResponse(0));
+    });
+    await findByTestId('ultimate-mode-locked-note');
+    expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(false);
+  });
+
+  it('究極モードを使えるプラン (上限が 0 でない・無制限の null) と、要約を読めないときは錠を出さない', async () => {
+    for (const response of [billingSummaryResponse(2), billingSummaryResponse(null), undefined]) {
+      mockApiGet.mockReset();
+      mockApiGet.mockResolvedValue(response);
+      const { queryByTestId, getByTestId, unmount } = renderModal();
+      await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(1));
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(queryByTestId('ultimate-mode-locked-note')).toBeNull();
+      fireEvent.press(getByTestId('ultimate-mode-toggle'));
+      expect(isChecked(getByTestId('ultimate-mode-toggle'))).toBe(true);
+      unmount();
+    }
+
+    mockApiGet.mockReset();
+    mockApiGet.mockRejectedValue(new Error('HTTP 500 Internal Server Error: {}'));
+    const { queryByTestId, unmount } = renderModal();
+    await waitFor(() => expect(mockApiGet).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(queryByTestId('ultimate-mode-locked-note')).toBeNull();
+    unmount();
   });
 });

@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, Switch, View } from "react-native";
+import { Alert, Pressable, Switch, View } from "react-native";
 import { Text } from "../ui/Text";
 
 import { radius, spacing } from "../../theme";
@@ -28,31 +28,50 @@ interface Props {
   onValueChange: (next: boolean) => void;
   /** 生成中など、操作させないとき */
   disabled?: boolean;
+  /**
+   * いまのプランでは究極モードを使えない (錠。billing/03 §10.6)。押しても ON にせず、有料プランの案内を出す。
+   * V4GenerateModal が、契約の要約の features.ai_feature_caps.menu_generation_ultimate が 0 のときに渡す
+   */
+  locked?: boolean;
 }
+
+/** 錠のトグルを押したときの案内の見出しと本文 (Web の究極モードの錠の文と同じ意味。billing/03 §10.6) */
+export const ULTIMATE_MODE_LOCKED_ALERT_TITLE = "プランとお支払い";
+export const ULTIMATE_MODE_LOCKED_ALERT_MESSAGE =
+  "究極モードは有料プランでお使いいただけます。設定の「プランとお支払い」からお申し込みいただけます。";
 
 // ============================================================
 // UltimateModeToggle
 // ============================================================
 // 究極モード: AIが献立を自動で見直し、栄養バランスを改善する。
-// 以前は Premium プラン向けとして常に OFF・操作不可 (「準備中」) だったが、
-// プランによる制限は無く、全員が使える (#1142)。WEB の AI アシスタントと同じ。
+// 使えるかどうかはプランで決まる (billing/03 §0.6。無料プランは使えない)。使えないプランでは locked で錠を出し、
+// 押しても ON にせず、有料プランの案内 (Alert) を出す。最後の砦はサーバの 403 (AI_FEATURE_NOT_IN_PLAN)。WEB の AI アシスタントと同じ。
 export const UltimateModeToggle: React.FC<Props> = ({
   value,
   onValueChange,
   disabled = false,
+  locked = false,
 }) => {
+  const checked = value && !locked;
+  const handlePress = () => {
+    if (locked) {
+      Alert.alert(ULTIMATE_MODE_LOCKED_ALERT_TITLE, ULTIMATE_MODE_LOCKED_ALERT_MESSAGE);
+      return;
+    }
+    onValueChange(!value);
+  };
   return (
     <Pressable
       testID="ultimate-mode-toggle"
       accessibilityRole="switch"
-      accessibilityLabel="究極モード"
-      accessibilityState={{ checked: value, disabled }}
+      accessibilityLabel={locked ? "究極モード (有料プラン)" : "究極モード"}
+      accessibilityState={{ checked, disabled }}
       disabled={disabled}
-      onPress={() => onValueChange(!value)}
+      onPress={handlePress}
       style={{
         padding: spacing.md,
         borderRadius: radius.xl,
-        backgroundColor: value ? C.accentLight : C.bg,
+        backgroundColor: checked ? C.accentLight : C.bg,
         opacity: disabled ? 0.6 : 1,
         flexDirection: "row",
         alignItems: "center",
@@ -65,15 +84,15 @@ export const UltimateModeToggle: React.FC<Props> = ({
           width: 40,
           height: 40,
           borderRadius: 20,
-          backgroundColor: value ? C.accent : C.border,
+          backgroundColor: checked ? C.accent : C.border,
           alignItems: "center",
           justifyContent: "center",
         }}
       >
         <Ionicons
-          name="color-wand"
+          name={locked ? "lock-closed" : "color-wand"}
           size={20}
-          color={value ? C.card : C.textLight}
+          color={checked ? C.card : C.textLight}
         />
       </View>
 
@@ -88,6 +107,11 @@ export const UltimateModeToggle: React.FC<Props> = ({
         <Text style={{ fontSize: 12, color: C.textLight }}>
           通常より生成に時間がかかります
         </Text>
+        {locked ? (
+          <Text testID="ultimate-mode-locked-note" style={{ fontSize: 12, color: C.accent, marginTop: 2 }}>
+            有料プランでお使いいただけます
+          </Text>
+        ) : null}
       </View>
 
       {/* スイッチ (見た目だけ)。押す操作は行全体の Pressable が受けるので、Switch 自身は触れないようにして二重に切り替わるのを防ぐ */}
@@ -97,7 +121,7 @@ export const UltimateModeToggle: React.FC<Props> = ({
         importantForAccessibility="no-hide-descendants"
       >
         <Switch
-          value={value}
+          value={checked}
           disabled={disabled}
           trackColor={{ false: C.border, true: C.accent }}
           thumbColor={C.card}

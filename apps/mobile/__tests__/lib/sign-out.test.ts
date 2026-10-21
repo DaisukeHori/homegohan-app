@@ -20,6 +20,10 @@
  * 退会のあとのログアウト (signOutAfterAccountDeletion。#1037):
  *   push token は消さない (auth.users の削除で ON DELETE CASCADE)。端末データの削除 → サインアウトの順。
  *   サインアウトが失敗したら、signOutOnDevice と同じく、保管庫のセッションと画面の状態を端末だけで消す。
+ *
+ * ストアの購入 (RevenueCat) の利用者を外す (resetPurchasesOnSignOut。billing/03 §8.10・テスト 59):
+ *   3 つの経路のどれも、掃除 (push token の削除・端末データの削除) の前に 1 回呼ぶ。次にログインした別の利用者に購入を引き継がないため。
+ *   ほかの it では何もしない (calls に積まない) ので、既存の順番の期待は変わらない。
  */
 
 const calls: string[] = [];
@@ -54,6 +58,12 @@ const mockClearWebViewCookies = jest.fn();
 jest.mock('../../src/lib/webViewUserStorageCleanup', () => ({
   requestWebViewUserScopedStorageClear: (...args: unknown[]) => mockRequestWebViewClear(...args),
   clearWebViewNativeCookies: (...args: unknown[]) => mockClearWebViewCookies(...args),
+}));
+
+// ストアの購入の利用者を外す (billing/03 §8.10)。既定は何もしない。テスト 59 だけが calls に積む
+const mockResetPurchases = jest.fn();
+jest.mock('../../src/lib/purchases', () => ({
+  resetPurchasesOnSignOut: (...args: unknown[]) => mockResetPurchases(...args),
 }));
 
 import {
@@ -94,6 +104,29 @@ beforeEach(() => {
   });
   mockClearSession.mockImplementation(() => {
     calls.push('clearSession');
+  });
+  mockResetPurchases.mockImplementation(async () => undefined);
+});
+
+describe('ストアの購入の利用者を外す (billing/03 §8.10)', () => {
+  it('sign-out paths call resetPurchasesOnSignOut before clearing user-scoped data', async () => {
+    mockResetPurchases.mockImplementation(async () => {
+      calls.push('resetPurchases');
+    });
+
+    await signOutWithCleanup('user-1');
+    expect(calls).toEqual(['resetPurchases', 'unregister', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
+
+    calls.length = 0;
+    await signOutOnDevice('user-1', { clearSession: mockClearSession });
+    expect(calls).toEqual(['resetPurchases', 'unregister', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
+
+    calls.length = 0;
+    await signOutAfterAccountDeletion('user-1', { clearSession: mockClearSession });
+    expect(calls).toEqual(['resetPurchases', 'clearStorage', 'requestWebViewClear', 'clearWebViewCookies', 'signOut']);
+
+    // 3 つの経路で 1 回ずつ
+    expect(mockResetPurchases).toHaveBeenCalledTimes(3);
   });
 });
 
