@@ -321,6 +321,8 @@ const CRON_ENTRYPOINTS: Record<string, string> = {
   'vercel:/api/cron/backup-freshness': 'DB バックアップが古くなったことを運用メールで知らせる (AI を使わない)',
   // #1190 新しい端末・地域からのログインを本人にメールで知らせる worker。import は cron の認証・ログ・Supabase・メールの送信待ちへの登録だけ
   'vercel:/api/cron/login-alerts': '新しい端末からのログインを本人にメールで知らせる (AI を使わない)',
+  // #1912 billing/04 期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。import は cron の認証・ログ・Supabase・RevenueCat への fetch だけ
+  'vercel:/api/cron/iap-reconcile': 'ストアの購読の期限切れ・更新を RevenueCat から取り直して写す (AI を使わない)',
   'pg_cron:calculate-segment-stats': 'セグメント統計の集計 (AI を使わない)',
   // #1538 運営が隠してから 90 日を過ぎた食事・レシピと画像を消す。import は認証・ログ・Supabase と完全削除の本体だけ
   'pg_cron:purge-hidden-content': '運営が隠したコンテンツの完全削除 (AI を使わない)',
