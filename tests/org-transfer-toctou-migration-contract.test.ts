@@ -2,7 +2,7 @@
  * 組織の譲渡の承諾と解散の同時の実行で CHECK user_profiles_org_consistency (23514) が API に届く欠陥の修正
  * (supabase/migrations/20261022110000_org_transfer_toctou.sql) を、ファイルどうしの突き合わせで確かめる (DB には接続しない)。
  *
- * 後の migration が下の 4 つの関数を CREATE OR REPLACE し直すとき (古い本文をそのまま写すとき) に、ロックと判定し直しを
+ * 後の migration が下の 5 つの関数を CREATE OR REPLACE し直すとき (古い本文をそのまま写すとき) に、ロックと判定し直しを
  * 落とさないよう、各関数の「最新の定義」(supabase/migrations を version 順に見て、最後に CREATE OR REPLACE したもの) で確かめる。
  *
  *   1. accept_org_owner_transfer: 提案の行 → 現オーナーの user_profiles (取り直しのループ) → 組織の行 → 承諾者の user_profiles を
@@ -11,7 +11,10 @@
  *   2. operator_force_owner_transfer: 権限・MFA のあと、現オーナーの user_profiles (ループ) → 組織の行 → 新オーナーの user_profiles を
  *      取り、そのあとで TARGET_NOT_IN_ORG を判定してから書く
  *   3. leave_org / remove_org_member: 判定に使う行 (本人 / 対象) を FOR NO KEY UPDATE で読む
- *   4. 戻し口が実在し、4 つの関数を前の定義に逐語で戻す
+ *   4. dissolve_org_by_owner: 呼び出した本人の行ではなく、現オーナーの user_profiles (ループ) → 組織の行 を取ってから判定する
+ *      (本人がオーナーでないとき「本人の行 → 組織の行」は、組織の行のあとに本人の行を取る関数と逆向きになりデッドロックする)。
+ *      判定のあと (宛先の集計・後始末・監査・戻り値) は 20261019120000 の定義と逐語で同じ
+ *   5. 戻し口が実在し、5 つの関数を前の定義に逐語で戻す
  * 実際の挙動 (解散・脱退・除名と承諾の同時の実行) は tests/integration/security/org-transfer-toctou.test.ts (実 DB) が確かめる。
  */
 import fs from 'node:fs';
@@ -29,7 +32,20 @@ const RESTORED_SOURCES = [
   { name: 'operator_force_owner_transfer', file: '20261017130000_operator_mfa_db_gate.sql', from: 238, to: 278 },
   { name: 'leave_org', file: '20251126124224_create_meal_planner_tables.sql', from: 2084, to: 2120 },
   { name: 'remove_org_member', file: '20251126124224_create_meal_planner_tables.sql', from: 2878, to: 2921 },
+  { name: 'dissolve_org_by_owner', file: '20261019120000_self_dissolve.sql', from: 175, to: 223 },
 ] as const;
+
+/** dissolve_org_by_owner の戻し先の説明 (COMMENT ON FUNCTION) の行 (20261019120000_self_dissolve.sql の中。1 始まり・両端を含む) */
+const DISSOLVE_COMMENT_SOURCE = { file: '20261019120000_self_dissolve.sql', from: 226, to: 227 } as const;
+
+/** ファイルの from〜to 行 (1 始まり・両端を含む) を改行でつないで返す */
+function linesOf(file: string, from: number, to: number): string {
+  return fs
+    .readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8')
+    .split('\n')
+    .slice(from - 1, to)
+    .join('\n');
+}
 
 const migrations = fs
   .readdirSync(MIGRATIONS_DIR)
@@ -77,11 +93,11 @@ function indexOf(body: string, pattern: RegExp, label: string): number {
   return at;
 }
 
-/** 現オーナーの行を取り、オーナーを読み直して、変わっていたら取り直すループ (operator_force_dissolve_org と同じ形) */
+/** 現オーナーの行を取り、オーナーを読み直して、変わっていたら取り直すループ (operator_force_dissolve_org と同じ形)。表の名前の public. はあってもなくてもよい */
 const ownerLockLoop = (orgVar: string): RegExp =>
   new RegExp(
-    `LOOP\\s+PERFORM\\s+1\\s+FROM\\s+user_profiles\\s+WHERE\\s+id\\s*=\\s*v_lock_owner\\s+FOR\\s+NO\\s+KEY\\s+UPDATE\\s*;\\s*` +
-      `SELECT\\s+owner_id\\s+INTO\\s+v_current_owner\\s+FROM\\s+organizations\\s+WHERE\\s+id\\s*=\\s*${orgVar}\\s*;\\s*` +
+    `LOOP\\s+PERFORM\\s+1\\s+FROM\\s+(?:public\\.)?user_profiles\\s+WHERE\\s+id\\s*=\\s*v_lock_owner\\s+FOR\\s+NO\\s+KEY\\s+UPDATE\\s*;\\s*` +
+      `SELECT\\s+owner_id\\s+INTO\\s+v_current_owner\\s+FROM\\s+(?:public\\.)?organizations\\s+WHERE\\s+id\\s*=\\s*${orgVar}\\s*;\\s*` +
       `EXIT\\s+WHEN\\s+v_current_owner\\s+IS\\s+NOT\\s+DISTINCT\\s+FROM\\s+v_lock_owner\\s*;\\s*` +
       `v_lock_owner\\s*:=\\s*v_current_owner\\s*;\\s*END\\s+LOOP\\s*;`,
     'i',
@@ -267,6 +283,79 @@ describe('leave_org / remove_org_member の最新の定義', () => {
   });
 });
 
+describe('dissolve_org_by_owner の最新の定義', () => {
+  const { file, header, body: rawBody } = latestOf('dissolve_org_by_owner');
+  const body = stripLineComments(rawBody);
+  /** 置き換える前の定義 (20261019120000_self_dissolve.sql の :175-223) */
+  const base = linesOf('20261019120000_self_dissolve.sql', 175, 223);
+
+  it("最新の定義はこの migration で、SECURITY DEFINER・search_path = ''・RETURNS jsonb のまま", () => {
+    expect(file).toBe(`${MIGRATION}.sql`);
+    expect(header, file).toMatch(/RETURNS\s+jsonb/i);
+    expect(header, file).toMatch(/SECURITY\s+DEFINER/i);
+    expect(header, file).toMatch(/SET\s+search_path\s*=\s*''/i);
+  });
+
+  it('現オーナーの行を取ったあとにオーナーを読み直し、変わっていたら取り直す (ループ)', () => {
+    expect(body, file).toMatch(ownerLockLoop('p_organization_id'));
+  });
+
+  it('呼び出した本人の user_profiles の行はロックしない (本人がオーナーでないとき、組織の行のあとに本人の行を取る譲渡・招待の承諾・ほかの解散と逆向きになる)', () => {
+    expect(body, file).not.toMatch(/FROM\s+(?:public\.)?user_profiles\s+WHERE\s+id\s*=\s*auth\.uid\(\)[^;]*FOR\s+(?:NO\s+KEY\s+)?UPDATE/i);
+    // ロックする user_profiles の行は、ループの現オーナーの行だけ (後始末は org_dissolve_apply の中)
+    expect(body.match(/FROM\s+(?:public\.)?user_profiles\b[^;]*\bFOR\s+(?:NO\s+KEY\s+)?UPDATE/gi) ?? [], file).toHaveLength(1);
+  });
+
+  it('NOT_AUTHENTICATED → 現オーナーの行 → 組織の行 → ORG_NOT_FOUND → ORG_ALREADY_DISSOLVED → NOT_ORG_OWNER → 後始末 の順', () => {
+    const authAt = indexOf(body, /RAISE\s+EXCEPTION\s+'NOT_AUTHENTICATED'/i, '認証の判定');
+    const ownerReadAt = indexOf(
+      body,
+      /SELECT\s+owner_id\s+INTO\s+v_lock_owner\s+FROM\s+public\.organizations\s+WHERE\s+id\s*=\s*p_organization_id\s*;/i,
+      'オーナーの読み出し',
+    );
+    const ownerLockAt = indexOf(body, /PERFORM\s+1\s+FROM\s+public\.user_profiles\s+WHERE\s+id\s*=\s*v_lock_owner\s+FOR\s+NO\s+KEY\s+UPDATE/i, 'オーナーの行のロック');
+    const orgLockAt = indexOf(
+      body,
+      /SELECT\s+\*\s+INTO\s+v_org\s+FROM\s+public\.organizations\s+WHERE\s+id\s*=\s*p_organization_id\s+FOR\s+NO\s+KEY\s+UPDATE/i,
+      '組織の行のロック',
+    );
+    const notFoundAt = indexOf(body, /RAISE\s+EXCEPTION\s+'ORG_NOT_FOUND'/i, 'ORG_NOT_FOUND');
+    const dissolvedAt = indexOf(body, /RAISE\s+EXCEPTION\s+'ORG_ALREADY_DISSOLVED'/i, 'ORG_ALREADY_DISSOLVED');
+    const ownerCheckAt = indexOf(
+      body,
+      /IF\s+v_org\.owner_id\s+IS\s+DISTINCT\s+FROM\s+auth\.uid\(\)\s+THEN\s+RAISE\s+EXCEPTION\s+'NOT_ORG_OWNER'/i,
+      'オーナーかの判定',
+    );
+    const applyAt = indexOf(body, /v_org\s*:=\s*public\.org_dissolve_apply\(p_organization_id\)/i, '後始末');
+    const order = [authAt, ownerReadAt, ownerLockAt, orgLockAt, notFoundAt, dissolvedAt, ownerCheckAt, applyAt];
+    expect(order, file).toEqual([...order].sort((a, b) => a - b));
+  });
+
+  it('見出し・宣言の前半・認証の判定・組織の行の判定・判定のあと (宛先の集計・後始末・監査・戻り値) は 20261019120000 の定義と逐語で同じ', () => {
+    const sql = migrations.find((m) => m.file === `${MIGRATION}.sql`)?.sql ?? '';
+    // 見出しと宣言 (v_member_count まで)
+    expect(sql).toContain(base.slice(0, base.indexOf('\nBEGIN\n') + 1));
+    // 認証の判定
+    expect(rawBody).toContain("BEGIN\n  IF auth.uid() IS NULL THEN\n    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';\n  END IF;\n");
+    // 組織の行のロックと判定 (ORG_NOT_FOUND → ORG_ALREADY_DISSOLVED → NOT_ORG_OWNER)
+    const judgeFrom = base.indexOf('  SELECT * INTO v_org FROM public.organizations');
+    const tailFrom = base.indexOf('  SELECT coalesce(pg_catalog.array_agg(id)');
+    expect(judgeFrom).toBeGreaterThan(0);
+    expect(tailFrom).toBeGreaterThan(judgeFrom);
+    expect(rawBody).toContain(base.slice(judgeFrom, tailFrom));
+    // 宛先の集計・後始末・監査・戻り値 (END $$; の手前まで)
+    expect(rawBody).toContain(base.slice(tailFrom, base.lastIndexOf('END $$;')));
+  });
+
+  it('関数の説明 (COMMENT) をロックの順 (現オーナーの行 → 組織の行) に合わせる', () => {
+    const sql = migrations.find((m) => m.file === `${MIGRATION}.sql`)?.sql ?? '';
+    const comments = [...sql.matchAll(/COMMENT ON FUNCTION public\.dissolve_org_by_owner\(uuid\) IS\s+'([^']*)';/g)].map((m) => m[1]);
+    expect(comments).toHaveLength(1);
+    expect(comments[0]).toContain('現オーナーの user_profiles の行 (オーナーが変わっていたら取り直す) → 組織の行の順にロック');
+    expect(comments[0]).not.toContain('本人の user_profiles の行 → 組織の行');
+  });
+});
+
 describe('戻し口', () => {
   it('戻し口が実在し、1 行目が自分の migration を指す', () => {
     expect(fs.existsSync(ROLLBACK_PATH), ROLLBACK_PATH).toBe(true);
@@ -282,13 +371,10 @@ describe('戻し口', () => {
 
   it.each(RESTORED_SOURCES)('$name を $file の :$from-$to に逐語で戻す', ({ name, file, from, to }) => {
     const rollback = fs.readFileSync(ROLLBACK_PATH, 'utf-8');
-    const source = fs
-      .readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8')
-      .split('\n')
-      .slice(from - 1, to)
-      .join('\n');
-    // 行の範囲が関数の定義の先頭と末尾を指していること (土台のファイルが書き換わって行がずれたら気づく)
-    expect(source).toMatch(new RegExp(`^CREATE OR REPLACE FUNCTION "public"\\."${name}"\\(`));
+    const source = linesOf(file, from, to);
+    // 行の範囲が関数の定義の先頭と末尾を指していること (土台のファイルが書き換わって行がずれたら気づく)。
+    // 名前は "public"."name"( (pg_dump の形) と public.name( (手で書いた形) のどちらか
+    expect(source).toMatch(new RegExp(`^CREATE OR REPLACE FUNCTION (?:"public"\\."${name}"|public\\.${name})\\(`));
     expect(source).toMatch(/END \$\$;$/);
     expect(rollback).toContain(source);
     // 戻し先は、この migration より前の最後の定義
@@ -298,13 +384,26 @@ describe('戻し口', () => {
     expect(earlier[earlier.length - 1]?.file).toBe(file);
   });
 
-  it('戻した 4 つの関数は、この migration のロックを含まない', () => {
+  it('戻した 5 つの関数は、この migration のロックを含まない (dissolve_org_by_owner は呼び出した本人の行のロックに戻る)', () => {
     const sql = stripLineComments(fs.readFileSync(ROLLBACK_PATH, 'utf-8'));
     for (const { name } of RESTORED_SOURCES) {
       const defs = definitionsIn(ROLLBACK_PATH, sql, name);
       expect(defs, name).toHaveLength(1);
       expect(defs[0].body, name).not.toMatch(/v_lock_owner/);
-      expect(defs[0].body, name).not.toMatch(/FROM\s+user_profiles\s+WHERE\s+id\s*=\s*(?:auth\.uid\(\)|p_user_id)\s+FOR\s+NO\s+KEY\s+UPDATE/i);
+      if (name === 'dissolve_org_by_owner') {
+        expect(defs[0].body.replace(/\s+/g, ' '), name).toContain('PERFORM 1 FROM public.user_profiles WHERE id = auth.uid() FOR NO KEY UPDATE;');
+      } else {
+        expect(defs[0].body, name).not.toMatch(/FROM\s+(?:public\.)?user_profiles\s+WHERE\s+id\s*=\s*(?:auth\.uid\(\)|p_user_id)\s+FOR\s+NO\s+KEY\s+UPDATE/i);
+      }
     }
+  });
+
+  it('dissolve_org_by_owner の説明 (COMMENT) を 20261019120000 の文に逐語で戻す (関数の定義のあと)', () => {
+    const rollback = fs.readFileSync(ROLLBACK_PATH, 'utf-8');
+    const { file, from, to } = DISSOLVE_COMMENT_SOURCE;
+    const source = linesOf(file, from, to);
+    expect(source).toMatch(/^COMMENT ON FUNCTION public\.dissolve_org_by_owner\(uuid\) IS\n {2}'[^']*';$/);
+    expect(rollback).toContain(source);
+    expect(rollback.indexOf(source)).toBeGreaterThan(rollback.indexOf('CREATE OR REPLACE FUNCTION public.dissolve_org_by_owner('));
   });
 });

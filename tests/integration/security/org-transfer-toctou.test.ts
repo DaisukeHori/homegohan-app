@@ -10,17 +10,23 @@
  *   - 脱退 (leave_org)・除名 (remove_org_member) は本人・対象の org_role をロックの外で判定し、譲渡の承諾が先に commit して
  *     オーナーになった人の所属を外した (organizations.owner_id が所属の無い人を指す)。
  *   - 運営の強制譲渡のあとに残った提案を承諾すると、オーナーの役割の人が 2 人になった。
+ *   - オーナーの解散 (dissolve_org_by_owner。最新の定義は 20261019120000_self_dissolve.sql) は呼び出した本人の行 → 組織の行の順に取ったので、
+ *     オーナーでない人が呼ぶと、組織の行のあとにその人の行を取る関数 (譲渡の承諾・運営の強制譲渡・招待の承諾・ほかの解散の後始末) と
+ *     逆向きになり、同時に走るとデッドロック (40P01) した。
  *
  * 修正後 (supabase/migrations/20261022110000_org_transfer_toctou.sql):
  *   - 承諾は 提案の行 → 現オーナーの user_profiles (取り直しつき) → 組織の行 → 承諾者の user_profiles をロックしてから判定し直す。
  *     解散した組織なら ORG_ALREADY_DISSOLVED、所属が外れていれば TRANSFER_ACCEPTOR_NOT_IN_ORG、提案者がもうオーナーでなければ NOT_ORG_OWNER。
  *   - 運営の強制譲渡は 現オーナーの user_profiles → 組織の行 → 新オーナーの user_profiles をロックしてから TARGET_NOT_IN_ORG を判定する。
  *   - 脱退・除名は、判定に使う行 (本人 / 対象) を FOR NO KEY UPDATE で読む。
+ *   - 解散 (dissolve_org_by_owner) は、呼び出した本人の行ではなく、現オーナーの user_profiles (取り直しつき) → 組織の行の順に取る
+ *     (OT-18〜OT-23。組織の行だけを持つ接続 holdOrgRow の手前に 2 本を決まった順に並ばせ、修正前の待ちの輪ができる順を作る)。
  *
  * 呼び出しは本物の経路 (PostgREST + 本人の JWT)。先の処理をコミット前のまま開いておくのは、ローカルスタックの
  * postgres-meta (/pg/query、service_role キーが必要) を使う (org-invite-dissolved.test.ts・self-dissolve.test.ts と同じ道具)。
  *
- * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない。
+ * 前提: ローカル Supabase (scripts/supabase-local.sh)。OT-16・OT-17 (承諾の API) だけは Next の開発サーバーも要る
+ * (tests/integration/helpers/api.ts の apiCall。INTEGRATION_BASE_URL。scripts/local-ci.sh の integration は立てる)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
  *   npx vitest run --config vitest.integration.config.ts tests/integration/security/org-transfer-toctou.test.ts
  * 本番には接続しない。
@@ -119,6 +125,16 @@ const SEEDED_USED_LICENSES = 2;
 const ITERATIONS = 8;
 /** 先の処理をコミット前のまま開いておく秒数 */
 const HOLD_SECONDS = 3;
+/**
+ * 組織の行だけを持つ接続 (holdOrgRow) が行を持つ秒数。そのあいだに 2 本の呼び出しを本物の経路 (Kong → PostgREST) で投げ、
+ * どちらも行のロックの待ちに並ぶまで待つので HOLD_SECONDS より長く取る。並んだ呼び出しは放すまで待つので、
+ * authenticated の文の時間切れ (Supabase の既定の statement_timeout 8 秒) より短くする
+ */
+const ORDER_HOLD_SECONDS = 5;
+/** 招待のトークンのバイト数 (hex で 64 文字。create_org_invite と同じ形。org-invite-dissolved.test.ts と同じ) */
+const TOKEN_BYTES = 32;
+/** 招待の期限 (14 日。create_org_invite と同じ) */
+const INVITE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 /** pg_sleep に入るのを待つ上限 (ミリ秒) と確かめる間隔 */
 const HOLDER_DEADLINE_MS = 20_000;
 const HOLDER_POLL_MS = 50;
@@ -195,6 +211,22 @@ async function proposeOrgTransfer(owner: TestUser, orgId: string, toUserId: stri
   const { data, error } = await asUser(owner.jwt).rpc('propose_org_owner_transfer', { p_organization_id: orgId, p_to_user_id: toUserId });
   if (error || !data) throw new Error(`propose_org_owner_transfer: ${error?.message}`);
   return data as string;
+}
+
+/** 組織の pending の招待を service_role で入れる (create_org_invite の 24 時間の上限に当たらないように。org-invite-dissolved.test.ts と同じ) */
+async function insertPendingOrgInvite(orgId: string, email: string, invitedBy: string): Promise<string> {
+  const token = randomBytes(TOKEN_BYTES).toString('hex');
+  const { error } = await srAdmin.from('organization_invites').insert({
+    organization_id: orgId,
+    email: email.toLowerCase(),
+    token,
+    invited_role: 'member',
+    status: 'pending',
+    expires_at: new Date(Date.now() + INVITE_TTL_MS).toISOString(),
+    invited_by: invitedBy,
+  });
+  if (error) throw new Error(`organization_invites: ${error.message}`);
+  return token;
 }
 
 /** オーナー・admin・提案 (オーナー → admin) をそろえる */
@@ -277,6 +309,11 @@ async function dissolveOrg(user: TestUser, orgId: string): Promise<Outcome> {
   return toOutcome(data, error);
 }
 
+async function acceptInvite(user: TestUser, token: string): Promise<Outcome> {
+  const { data, error } = await asUser(user.jwt).rpc('accept_org_invite', { p_token: token });
+  return toOutcome(data, error);
+}
+
 async function operatorDissolveOrg(operatorJwt: string, orgId: string): Promise<Outcome> {
   const { data, error } = await asUser(operatorJwt).rpc('operator_force_dissolve_org', { p_organization_id: orgId, p_reason: 'toctou' });
   return toOutcome(data, error);
@@ -324,18 +361,41 @@ async function operator(): Promise<Operator> {
 interface Holder {
   sleeping: Promise<void>;
   done: Promise<Outcome>;
+  /** 先の接続がもう終わったか (pg_sleep を抜けて、持っていた行を放したか) */
+  finished: () => boolean;
 }
 
 function holdCall(actor: TestUser, callSql: string, extraClaims: Record<string, string> = {}): Holder {
   const marker = `org-transfer-toctou-holder-${randomBytes(6).toString('hex')}`;
   const claims = JSON.stringify({ sub: actor.id, role: 'authenticated', ...extraClaims });
-  const sql = `/* ${marker} */
+  return startHolder(
+    marker,
+    `/* ${marker} */
     SELECT set_config('request.jwt.claims', '${claims}', true);
     SET LOCAL ROLE authenticated;
     SELECT * FROM ${callSql};
     SELECT pg_sleep(${HOLD_SECONDS});
-    SELECT 'held' AS result;`;
+    SELECT 'held' AS result;`,
+  );
+}
 
+/**
+ * 組織の行だけを FOR NO KEY UPDATE で ORDER_HOLD_SECONDS 秒持つ接続 (pg/query の権限。user_profiles の行は 1 つも持たない)。
+ * そのあとに呼んだ関数を組織の行の手前 (またはその前のロック) で待たせ、呼んだ順に並ばせる
+ */
+function holdOrgRow(orgId: string): Holder {
+  const marker = `org-transfer-toctou-org-row-${randomBytes(6).toString('hex')}`;
+  return startHolder(
+    marker,
+    `/* ${marker} */
+    SELECT 1 FROM public.organizations WHERE id = '${orgId}'::uuid FOR NO KEY UPDATE;
+    SELECT pg_sleep(${ORDER_HOLD_SECONDS});
+    SELECT 'held' AS result;`,
+  );
+}
+
+/** marker を含む sql を pg/query に投げ (終わりを待たない)、その接続が pg_sleep に入るまでを sleeping で待てるようにする */
+function startHolder(marker: string, sql: string): Holder {
   const state: { outcome: Outcome | null } = { outcome: null };
   const done = pgRequest(sql).then((res): Outcome => {
     const body = res.body as { error?: unknown; code?: unknown } | null;
@@ -365,7 +425,20 @@ function holdCall(actor: TestUser, callSql: string, extraClaims: Record<string, 
     throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
   })();
 
-  return { sleeping, done };
+  return { sleeping, done, finished: () => state.outcome !== null };
+}
+
+/** 関数 fnName を本物の経路で呼んだ接続が、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に count 本以上入るまで待つ */
+async function waitForLockWaiters(fnName: string, count: number): Promise<void> {
+  const deadline = Date.now() + HOLDER_DEADLINE_MS;
+  while (Date.now() < deadline) {
+    const rows = await pgQuery<{ n: number }>(`
+      SELECT count(*)::int AS n FROM pg_stat_activity
+      WHERE wait_event_type = 'Lock' AND query LIKE '%${fnName}%' AND pid <> pg_backend_pid()`);
+    if ((rows[0]?.n ?? 0) >= count) return;
+    await sleep(HOLDER_POLL_MS);
+  }
+  throw new Error(`${fnName} の呼び出しが行のロックの待ちに入りませんでした (遅すぎます)`);
 }
 
 const AAL2_CLAIMS = { aal: 'aal2' } as const;
@@ -379,6 +452,7 @@ afterAll(async () => {
   }
   if (createdOrgIds.length > 0) {
     await srAdmin.from('membership_audit').delete().in('scope_id', createdOrgIds);
+    await srAdmin.from('organization_invites').delete().in('organization_id', createdOrgIds);
     await srAdmin.from('org_license_pools').delete().in('organization_id', createdOrgIds);
     // organizations.owner_id は ON DELETE RESTRICT なので、利用者より先に組織を消す
     await srAdmin.from('organizations').delete().in('id', createdOrgIds);
@@ -641,6 +715,147 @@ describe('脱退・除名と譲渡の承諾が同時に走っても、オーナ�
 });
 
 // ---------------------------------------------------------------------------------------------
+// オーナーでない人の解散 (dissolve_org_by_owner) と、組織の行のあとにその人の行を取る関数
+// (修正前は解散が呼び出した本人の行 → 組織の行 の順に取り、逆向きになってデッドロック (40P01) した)
+// ---------------------------------------------------------------------------------------------
+
+/** 呼び出し 1 本 (待ちを見分けるための関数名と、本物の経路での呼び出し) */
+interface QueuedCall {
+  fn: string;
+  call: () => Promise<Outcome>;
+}
+
+/**
+ * 組織の行を holdOrgRow で持っている間に first → second の順に呼び、2 本とも行のロックの待ちに並んでから組織の行を放す。
+ * first は組織の行の手前で待ち (それより前の行は取ったまま)、先に組織の行を取る。修正前は second の解散が呼び出した本人の行を
+ * 持ったまま組織の行を待ち、組織の行を取った first がその本人の行を待って 40P01 になった。修正後は second の解散が現オーナーの行
+ * (first が先に取っている、または誰も持っていない) から取るので、待ちの輪ができない
+ */
+async function runQueuedBehindOrgRow(orgId: string, first: QueuedCall, second: QueuedCall): Promise<[Outcome, Outcome]> {
+  const holder = holdOrgRow(orgId);
+  await holder.sleeping;
+  const firstDone = first.call();
+  await waitForLockWaiters(first.fn, 1);
+  const secondDone = second.call();
+  await waitForLockWaiters(second.fn, first.fn === second.fn ? 2 : 1);
+  // 2 本が並んだ時点で組織の行はまだ持たれている (並べた順で結果が決まる。放したあとに並んだのでは、この順を確かめていない)
+  expect(holder.finished(), '組織の行を放す前に 2 本が並びませんでした (遅すぎます)').toBe(false);
+  const [held, firstOutcome, secondOutcome] = await Promise.all([holder.done, firstDone, secondDone]);
+  expect(held.ok, JSON.stringify(held)).toBe(true);
+  return [firstOutcome, secondOutcome];
+}
+
+describe('オーナーでない人が解散を呼んでも、解散は現オーナーの行から取るので、組織の行のあとにその人の行を取る関数と逆向きにならない (デッドロックしない)', () => {
+  it('OT-18: 提案を受けた admin が、自分の承諾と同時に解散の RPC を呼んでも (呼び出した時点ではオーナーでない) デッドロックせず、承諾が通り、解散は新しいオーナーとして通る (修正前は 承諾: 組織の行 → 承諾者の行 と 解散: 本人の行 → 組織の行 が逆向きで 40P01)', async () => {
+    const { admin, orgId, proposalId } = await setupTransfer('ot18');
+
+    const [accept, dissolve] = await runQueuedBehindOrgRow(
+      orgId,
+      { fn: 'accept_org_owner_transfer', call: () => acceptTransfer(admin, proposalId) },
+      { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(admin, orgId) },
+    );
+
+    expect(isDeadlock(accept) || isDeadlock(dissolve), JSON.stringify({ accept, dissolve })).toBe(false);
+    expect(accept.ok, JSON.stringify(accept)).toBe(true);
+    expect(dissolve.ok, JSON.stringify(dissolve)).toBe(true);
+    expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
+    expect(await orgMemberCount(orgId)).toBe(0);
+    expect(await proposalStatus(proposalId)).toBe('accepted');
+  }, TEST_TIMEOUT_MS);
+
+  it('OT-19: 運営が admin へ強制譲渡するのと同時に、その admin が解散の RPC を呼んでも、デッドロックせず、強制譲渡が通り、解散は新しいオーナーとして通る (修正前は 強制譲渡: 組織の行 → 新オーナーの行 と逆向きで 40P01)', async () => {
+    const op = await operator();
+    const [owner, admin] = await createUsers('ot19', 2);
+    const orgId = await createOrg(owner, admin, 'ot19');
+
+    const [forced, dissolve] = await runQueuedBehindOrgRow(
+      orgId,
+      { fn: 'operator_force_owner_transfer', call: () => operatorTransfer(op.jwt, orgId, admin.id) },
+      { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(admin, orgId) },
+    );
+
+    expect(isDeadlock(forced) || isDeadlock(dissolve), JSON.stringify({ forced, dissolve })).toBe(false);
+    expect(forced.ok, JSON.stringify(forced)).toBe(true);
+    expect(dissolve.ok, JSON.stringify(dissolve)).toBe(true);
+    expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
+    expect(await orgMemberCount(orgId)).toBe(0);
+  }, TEST_TIMEOUT_MS);
+
+  it('OT-20: オーナーの解散と同時に admin が解散の RPC を呼んでも、デッドロックせず、オーナーの解散が通り、admin は ORG_ALREADY_DISSOLVED (修正前は 後始末: 組織の行 → 全員の行 と逆向きで 40P01)', async () => {
+    const [owner, admin] = await createUsers('ot20', 2);
+    const orgId = await createOrg(owner, admin, 'ot20');
+
+    const [ownerDissolve, adminDissolve] = await runQueuedBehindOrgRow(
+      orgId,
+      { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(owner, orgId) },
+      { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(admin, orgId) },
+    );
+
+    expect(isDeadlock(ownerDissolve) || isDeadlock(adminDissolve), JSON.stringify({ ownerDissolve, adminDissolve })).toBe(false);
+    expect(ownerDissolve.ok, JSON.stringify(ownerDissolve)).toBe(true);
+    expectRaised(adminDissolve, 'ORG_ALREADY_DISSOLVED');
+    expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
+    expect(await orgMemberCount(orgId)).toBe(0);
+  }, TEST_TIMEOUT_MS);
+
+  it('OT-21: 運営の強制解散と同時に admin が解散の RPC を呼んでも、デッドロックせず、強制解散が通り、admin は ORG_ALREADY_DISSOLVED (修正前は 後始末: 組織の行 → 全員の行 と逆向きで 40P01)', async () => {
+    const op = await operator();
+    const [owner, admin] = await createUsers('ot21', 2);
+    const orgId = await createOrg(owner, admin, 'ot21');
+
+    const [forcedDissolve, adminDissolve] = await runQueuedBehindOrgRow(
+      orgId,
+      { fn: 'operator_force_dissolve_org', call: () => operatorDissolveOrg(op.jwt, orgId) },
+      { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(admin, orgId) },
+    );
+
+    expect(isDeadlock(forcedDissolve) || isDeadlock(adminDissolve), JSON.stringify({ forcedDissolve, adminDissolve })).toBe(false);
+    expect(forcedDissolve.ok, JSON.stringify(forcedDissolve)).toBe(true);
+    expectRaised(adminDissolve, 'ORG_ALREADY_DISSOLVED');
+    expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
+    expect(await orgMemberCount(orgId)).toBe(0);
+  }, TEST_TIMEOUT_MS);
+
+  it('OT-22: 招待された人が招待の承諾と同時にその組織の解散の RPC を呼んでも、デッドロックせず、承諾が通り、解散は NOT_ORG_OWNER (修正前は 招待の承諾: 組織の行 → 承諾者の行 と逆向きで 40P01)', async () => {
+    const [owner, admin, invitee] = await createUsers('ot22', 3);
+    const orgId = await createOrg(owner, admin, 'ot22');
+    const token = await insertPendingOrgInvite(orgId, invitee.email, owner.id);
+
+    const [accept, dissolve] = await runQueuedBehindOrgRow(
+      orgId,
+      { fn: 'accept_org_invite', call: () => acceptInvite(invitee, token) },
+      { fn: 'dissolve_org_by_owner', call: () => dissolveOrg(invitee, orgId) },
+    );
+
+    expect(isDeadlock(accept) || isDeadlock(dissolve), JSON.stringify({ accept, dissolve })).toBe(false);
+    expect(accept.ok, JSON.stringify(accept)).toBe(true);
+    expectRaised(dissolve, 'NOT_ORG_OWNER');
+    expect(await orgRow(orgId)).toMatchObject({ status: 'active', owner_id: owner.id });
+    expect(await orgProfile(invitee.id)).toMatchObject({ organization_id: orgId, org_role: 'member' });
+  }, TEST_TIMEOUT_MS);
+
+  it('OT-23: 提案を受けた admin の承諾と解散を本物の経路で 8 回ずつ同時に呼んでも、デッドロック・23514 にならず、承諾は成功し、解散は成功か NOT_ORG_OWNER。終わったあとは「dissolved で所属 0 人」か「active で owner が admin」', async () => {
+    const problems: string[] = [];
+    for (let i = 0; i < ITERATIONS; i++) {
+      const { admin, orgId, proposalId } = await setupTransfer(`ot23-${i}`);
+
+      const [accept, dissolve] = await Promise.all([acceptTransfer(admin, proposalId), dissolveOrg(admin, orgId)]);
+
+      if (isDeadlock(accept) || isDeadlock(dissolve)) problems.push(`#${i} デッドロック: ${JSON.stringify({ accept, dissolve })}`);
+      if (!accept.ok) problems.push(`#${i} 承諾が失敗: ${JSON.stringify(accept)}`);
+      if (!failedOnlyWith(dissolve, ['NOT_ORG_OWNER'])) problems.push(`#${i} 解散が決まったエラー以外で失敗: ${JSON.stringify(dissolve)}`);
+      const row = await orgRow(orgId);
+      const members = await orgMemberCount(orgId);
+      const owners = await ownerRoleHolders(orgId);
+      const dissolvedEnd = dissolve.ok && row?.status === 'dissolved' && row.owner_id === null && members === 0;
+      const transferredEnd = !dissolve.ok && row?.status === 'active' && row.owner_id === admin.id && owners.length === 1 && owners[0] === admin.id;
+      if (!dissolvedEnd && !transferredEnd) problems.push(`#${i} 中間の状態: ${JSON.stringify({ row, members, owners, accept, dissolve })}`);
+    }
+    expect(problems).toEqual([]);
+  }, RACE_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------------------------
 // 承諾の API (POST /api/org/owner-transfer/[id]/accept) の文
 // ---------------------------------------------------------------------------------------------
 
@@ -705,5 +920,17 @@ describe('関数の属性と権限は変えていない', () => {
     }
     const anonAccept = await anon().rpc('accept_org_owner_transfer', { p_proposal_id: '00000000-0000-0000-0000-000000000000' });
     expect(anonAccept.error?.code).toBe('42501');
+  }, TEST_TIMEOUT_MS);
+
+  it("OT-24: dissolve_org_by_owner は作り直したあとも SECURITY DEFINER・search_path='' のまま、anon は呼べず authenticated は呼べる", async () => {
+    const rows = await pgQuery<{ prosecdef: boolean; proconfig: string[] | null; anon_exec: boolean; auth_exec: boolean }>(`
+      SELECT p.prosecdef, p.proconfig,
+             has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec,
+             has_function_privilege('authenticated', p.oid, 'EXECUTE') AS auth_exec
+        FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+       WHERE n.nspname = 'public' AND p.proname = 'dissolve_org_by_owner'`);
+    expect(rows).toEqual([{ prosecdef: true, proconfig: ['search_path=""'], anon_exec: false, auth_exec: true }]);
+    const anonDissolve = await anon().rpc('dissolve_org_by_owner', { p_organization_id: '00000000-0000-0000-0000-000000000000' });
+    expect(anonDissolve.error?.code).toBe('42501');
   }, TEST_TIMEOUT_MS);
 });

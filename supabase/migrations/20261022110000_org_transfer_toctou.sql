@@ -15,6 +15,11 @@
 --   脱退 (leave_org) と除名 (remove_org_member。どちらも最新の定義は 20251126124224_create_meal_planner_tables.sql) は、
 --   本人・対象の org_role の判定をロックの外で行う。譲渡の承諾が先に commit して本人・対象がオーナーになっていても、
 --   判定の時点の版 (member / admin) のまま所属を外すので、organizations.owner_id が所属の無い人を指す組織が残る。
+--   オーナーの解散 (dissolve_org_by_owner。最新の定義は 20261019120000_self_dissolve.sql) は、呼び出した本人の user_profiles の行を
+--   最初に取ってから組織の行を取り、そのあとでオーナーかを判定する。解散の API (src/app/api/org/dissolve/route.ts) は役割を読まずに
+--   RPC を呼ぶので、オーナーでない人も呼べる。そのとき「本人の行 → 組織の行」は、組織の行のあとにその人の行を取る関数と逆向きになり、
+--   同時に走るとデッドロック (40P01) する: 本人の招待の承諾 (accept_org_invite: 組織の行 → 承諾者 = 本人の行)、オーナーの解散と
+--   運営の強制解散 (組織の行 → 後始末で全員の行)、下の 1・2 の譲渡 (組織の行 → 承諾者 / 新オーナー = 本人の行)。
 --
 -- 変更:
 --   1. accept_org_owner_transfer: 提案の読み出しを FOR NO KEY UPDATE にし、期限の判定のあと、所属を書く前に
@@ -35,30 +40,39 @@
 --      旧オーナーはロックした組織の行の owner_id。解散した組織は所属が 0 人なので、従来どおり TARGET_NOT_IN_ORG になる (新しいエラーは無い)。
 --   3. leave_org: 本人の user_profiles の読み出しを FOR NO KEY UPDATE にする (NOT_IN_ORG / IS_ORG_OWNER の判定をロックの下で行う)。
 --   4. remove_org_member: 対象の user_profiles の読み出しを FOR NO KEY UPDATE にする (USER_NOT_IN_ORG / CANNOT_REMOVE_OWNER /
---      NOT_ORG_OWNER の判定をロックの下で行う)。呼び出し元の行はロックしない (下のロックの向きの表の注)。
+--      NOT_ORG_OWNER の判定をロックの下で行う)。呼び出し元の行はロックしない (下のロックの向きの規則の (4))。
+--   5. dissolve_org_by_owner: 呼び出した本人の行ではなく、組織の行から読んだ現オーナーの user_profiles を最初に取る
+--      (FOR NO KEY UPDATE。読んだ後にオーナーが変わっていたら取り直す。operator_force_dissolve_org と同じ形) → 組織の行 (FOR NO KEY UPDATE)
+--      → 判定。オーナーが呼ぶときは現オーナー = 本人なので、取る行も順も従来と同じ。オーナーでない人が呼ぶときは本人の行を取らず、
+--      現オーナーの行を持ってから NOT_ORG_OWNER で止まる (オーナーを読んでから行を取るまでに本人への譲渡が commit していれば、
+--      本人は新しいオーナーとして解散できる。譲渡のあとの解散と同じ)。エラーとその順番 (NOT_AUTHENTICATED → ORG_NOT_FOUND →
+--      ORG_ALREADY_DISSOLVED → NOT_ORG_OWNER)・後始末・監査・戻り値は従来のまま。関数の説明 (COMMENT) をこの順に合わせる。
 --
--- ロックの向き (どれも、同じ組織について最初に取るのは現オーナーの user_profiles か、組織の行を取らない関数の 1 行だけ):
---   dissolve_org_by_owner       : 本人 (オーナー) の user_profiles → organizations → 全員の user_profiles → org_license_pools → organizations
---   operator_force_dissolve_org : オーナーの user_profiles (取り直しつき) → organizations → 全員の user_profiles → org_license_pools → organizations
---   accept_org_owner_transfer   : 提案の行 → オーナーの user_profiles (取り直しつき) → organizations → 承諾者の user_profiles
---   operator_force_owner_transfer: オーナーの user_profiles (取り直しつき) → organizations → 新オーナーの user_profiles
---   accept_org_invite           : 招待の行 → organizations → 承諾者の user_profiles → org_license_pools (20261022100000)
---   leave_org                   : 本人の user_profiles → org_license_pools
---   remove_org_member           : 対象の user_profiles → org_license_pools
---   解散・譲渡の 4 本はオーナーの行を最初に取るので、オーナーの行で直列になる。メンバーの行は、どれも組織の行のあとに取る
---   (脱退・除名は組織の行を取らず、メンバーの行のあとは org_license_pools だけ。org_license_pools を取った関数が
---   ユーザーの行や組織の行を待つことは無い)。提案の行を取るのは承諾・提案 (propose_org_owner_transfer)・辞退
---   (decline_org_owner_transfer) だけで、提案と辞退はほかの行を取らない。したがって逆向きの待ちは無い。
---   除名で呼び出し元の行も取ると、譲渡を受けた admin が旧オーナーを除名しようとしたとき
---   (呼び出し元 = 承諾者の行 → 対象 = オーナーの行) と承諾 (オーナーの行 → 承諾者の行) が逆向きになるので取らない。
---   取り直しのループ: オーナーを読んでから行を取るまでに譲渡が commit すると、古いオーナーの行を持ったまま新しいオーナーの行を待つ。
---   その間に新しいオーナーが解散を始めると (新オーナーの行 → 組織 → 古いオーナーの行) 逆向きになり、まれにデッドロック (40P01) しうる
---   (operator_force_dissolve_org と同じ。20261022100000)。承諾の API は 40P01 を CONFLICT_RETRY (409・「もう一度お試しください」) にする。
+-- ロックの向き (この migration のあと。組織の所属・役割・解散を変える関数すべて):
+--   dissolve_org_by_owner        : 現オーナーの user_profiles (取り直しつき) → organizations → 全員の user_profiles → org_license_pools
+--   operator_force_dissolve_org  : 現オーナーの user_profiles (取り直しつき) → organizations → 全員の user_profiles → org_license_pools (20261022100000)
+--   accept_org_owner_transfer    : 提案の行 → 現オーナーの user_profiles (取り直しつき) → organizations → 承諾者の user_profiles
+--   operator_force_owner_transfer: 現オーナーの user_profiles (取り直しつき) → organizations → 新オーナーの user_profiles
+--   accept_org_invite            : 招待の行 → organizations → 承諾者の user_profiles → org_license_pools (20261022100000)
+--   leave_org / release_user_membership: 本人の user_profiles → org_license_pools
+--   remove_org_member            : 対象の user_profiles → org_license_pools (呼び出し元の行は読むだけ)
+--   propose_org_owner_transfer / decline_org_owner_transfer: 提案の行だけ (user_profiles・organizations は読むだけ)
+--   (後始末 (org_dissolve_apply) の最後の organizations の UPDATE は、先に取った組織の行を書くだけで、新しく待つ行ではない)
+-- 規則: どの関数も (1) 提案の行・招待の行 → (2) 現オーナーの user_profiles → (3) organizations → (4) オーナーでない人の user_profiles →
+--   (5) org_license_pools の順にしか取らず、ある段の行を持ったまま、それより前の段の行を待たない (1 つも取らない段は飛ばす)。
+--   呼び出し元の行を最初に取る関数は無い (呼び出し元がオーナーとは限らず、(4) を (3) より前に取ることになる。5 の修正の理由)。
+--   1 人の user_profiles の行は 1 つの組織にしか属さず (招待の承諾者は所属の無い人)、組織をまたいで待ち合うこともない。
+--   したがって、オーナーが変わらない間は待ちの輪 (デッドロック) ができない。
+-- 例外 (既知・まれ): 取り直しのループで、読んだオーナー X の行を取るまでに X からの譲渡が commit すると、ループは X の行
+--   (もうオーナーでない人の行 = (4)) を持ったまま、新しいオーナー Y の行 ((2)) を待つ。その間に Y の行を先に取った処理が X の行を待つと
+--   (Y の解散・運営の強制解散の後始末、Y から X への譲渡のし直し) 40P01 になる。ループを持つ 4 本 (解散 2 本・譲渡 2 本) に共通
+--   (operator_force_dissolve_org と同じ。20261022100000)。利用者の API (譲渡の承諾・解散) は 40P01 を CONFLICT_RETRY
+--   (409・「ほかの操作と重なりました。もう一度お試しください。」) にする。やり直せば通る。
 --
--- signature・戻り値・SECURITY DEFINER・search_path・所有者・EXECUTE 権限 (4 つの関数とも) は変えない
+-- signature・戻り値・SECURITY DEFINER・search_path・所有者・EXECUTE 権限 (5 つの関数とも) は変えない
 -- (CREATE OR REPLACE のため、権限はそのまま残る)。
--- 既存データへの影響: なし (関数の本文の置き換えだけ)。
--- 冪等: CREATE OR REPLACE FUNCTION のため、2 回続けて適用してもエラーにならない。
+-- 既存データへの影響: なし (関数の本文と、dissolve_org_by_owner の説明 (COMMENT) の置き換えだけ)。
+-- 冪等: CREATE OR REPLACE FUNCTION と COMMENT ON FUNCTION のため、2 回続けて適用してもエラーにならない。
 -- 確認: tests/integration/security/org-transfer-toctou.test.ts (実 DB)
 --       tests/org-transfer-toctou-migration-contract.test.ts (静的)
 
@@ -108,10 +122,10 @@ BEGIN
 
   -- LOCK-ORDER (docs/design/family/11-self-dissolve.md §11.3・CLAUDE.md の組織のロック順):
   -- 提案の行 → 現オーナーの user_profiles → 組織の行 → 承諾者の user_profiles (どれも FOR NO KEY UPDATE)。
-  -- 解散 (dissolve_org_by_owner / operator_force_dissolve_org) も オーナーの user_profiles → 組織の行 → 全員の user_profiles の順なので、
+  -- 解散 (dissolve_org_by_owner / operator_force_dissolve_org) も 現オーナーの user_profiles → 組織の行 → 全員の user_profiles の順なので、
   -- オーナーの行で直列になる。解散が先なら、承諾は解散の commit を待ってから dissolved を読んで止まる (所属の外れた行に org_role を書かない)。
-  -- 承諾が先なら、解散は承諾の commit を待ってから、変わったオーナーを読んで止まる (オーナーの解散は NOT_ORG_OWNER) か、
-  -- 新しいオーナーの行を取り直して解散する (運営の強制解散)。
+  -- 承諾が先なら、解散は承諾の commit を待ってから新しいオーナーの行を取り直し、呼び出した人がもうオーナーでなければ止まる
+  -- (オーナーの解散は NOT_ORG_OWNER。承諾者本人の解散なら新しいオーナーとして解散する) か、そのまま解散する (運営の強制解散)。
   -- オーナーを読んでから行を取るまでに譲渡が commit していたら、新しいオーナーの行を取り直す (operator_force_dissolve_org と同じ)。
   -- 組織の行が無い・解散した組織は owner_id が NULL なので、何もロックせずに抜ける
   SELECT owner_id INTO v_lock_owner FROM organizations WHERE id = v_org_id;
@@ -324,3 +338,73 @@ BEGIN
 
   RETURN v_target;
 END $$;
+
+-- ----------------------------------------------------------------
+-- 5. dissolve_org_by_owner (SECURITY DEFINER・search_path = '' のまま)。本文は 20261019120000_self_dissolve.sql の定義の、
+--    最初のロック (呼び出した本人の user_profiles) を、現オーナーの user_profiles (取り直しつき。operator_force_dissolve_org と同じ形) に
+--    置き換えたもの。判定・後始末・監査・戻り値は変えない
+-- ----------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.dissolve_org_by_owner(p_organization_id uuid)
+RETURNS jsonb
+LANGUAGE plpgsql VOLATILE SECURITY DEFINER SET search_path = '' AS $$
+DECLARE
+  v_org          public.organizations;
+  v_member_ids   uuid[];
+  v_member_count integer;
+  v_lock_owner   uuid;
+  v_current_owner uuid;
+BEGIN
+  IF auth.uid() IS NULL THEN
+    RAISE EXCEPTION 'NOT_AUTHENTICATED' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- LOCK-ORDER (docs/design/family/11-self-dissolve.md §11.3・CLAUDE.md の組織のロック順):
+  -- 現オーナーの user_profiles (取り直しつき) → 組織の行 (どちらも FOR NO KEY UPDATE) → 後始末 (全員の user_profiles → org_license_pools)。
+  -- 呼び出した本人の行は取らない: 本人がオーナーでないとき「本人の行 → 組織の行」は、組織の行のあとに本人の行を取る関数
+  -- (譲渡の承諾・運営の強制譲渡・招待の承諾・ほかの解散の後始末) と逆向きになり、同時に走るとデッドロック (40P01) する。
+  -- オーナーが呼ぶときは現オーナー = 本人なので、取る行は従来と同じ。オーナーを読んでから行を取るまでに譲渡が commit していたら、
+  -- 新しいオーナーの行を取り直す (operator_force_dissolve_org と同じ)。組織の行が無い・解散した組織は owner_id が NULL なので、
+  -- 何もロックせずに抜けて、下の判定が ORG_NOT_FOUND / ORG_ALREADY_DISSOLVED にする
+  SELECT owner_id INTO v_lock_owner FROM public.organizations WHERE id = p_organization_id;
+  LOOP
+    PERFORM 1 FROM public.user_profiles WHERE id = v_lock_owner FOR NO KEY UPDATE;
+    SELECT owner_id INTO v_current_owner FROM public.organizations WHERE id = p_organization_id;
+    EXIT WHEN v_current_owner IS NOT DISTINCT FROM v_lock_owner;
+    v_lock_owner := v_current_owner;
+  END LOOP;
+
+  SELECT * INTO v_org FROM public.organizations WHERE id = p_organization_id FOR NO KEY UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORG_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_org.status = 'dissolved' THEN
+    RAISE EXCEPTION 'ORG_ALREADY_DISSOLVED' USING ERRCODE = 'P0001';
+  END IF;
+  IF v_org.owner_id IS DISTINCT FROM auth.uid() THEN
+    RAISE EXCEPTION 'NOT_ORG_OWNER' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT coalesce(pg_catalog.array_agg(id), '{}'::uuid[]), pg_catalog.count(*)::integer
+    INTO v_member_ids, v_member_count
+    FROM public.user_profiles
+   WHERE organization_id = p_organization_id;
+
+  v_org := public.org_dissolve_apply(p_organization_id);
+
+  INSERT INTO public.membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES ('organization', p_organization_id, 'group_dissolved', auth.uid(), NULL,
+          pg_catalog.jsonb_build_object(
+            'dissolved_by', 'owner',
+            'previous_owner_id', auth.uid(),
+            'member_count', v_member_count
+          ));
+
+  RETURN pg_catalog.jsonb_build_object(
+    'scope_id', v_org.id,
+    'scope_name', v_org.name,
+    'dissolved_at', v_org.dissolved_at,
+    'member_user_ids', pg_catalog.to_jsonb(v_member_ids)
+  );
+END $$;
+COMMENT ON FUNCTION public.dissolve_org_by_owner(uuid) IS
+  '#1917 オーナーが自分の組織を解散する。現オーナーの user_profiles の行 (オーナーが変わっていたら取り直す) → 組織の行の順にロックしてオーナーかを判定し (呼び出した本人の行は取らない)、org_dissolve_apply で後始末、membership_audit に group_dissolved。戻り値は { scope_id, scope_name, dissolved_at, member_user_ids }';
