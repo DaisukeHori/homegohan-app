@@ -13,7 +13,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { IAP_STORE_LABELS, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
+import { IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
 import { EMPTY_PLAN_FEATURES, type BillingSummary, type SubscriptionStatus } from '@/lib/billing/core';
 
 const h = React.createElement;
@@ -255,6 +255,36 @@ describe('billing/01 §10.3 /account/billing', () => {
     await render(AccountBillingPage);
     expect(container.textContent).not.toContain('でご契約中です。');
     expect(buttonTexts()).toEqual(['お支払い方法・請求書 (Stripe)', '解約する']);
+  });
+
+  // #1912: 組織の利用者 (自分の契約も家族も無い) の effective_plan_key は organizations.plan の値 (standard など) で、
+  // 手動の付与などで自分の契約の plan_key が PLAN_CATALOG に無い値でも、画面に内部の値を出さない
+  it('account billing page never shows an internal plan_key that is not in PLAN_CATALOG: an organization member sees 無料プラン with the family / org wording, and a contract whose plan_key is outside PLAN_CATALOG shows ORG_PLAN_DISPLAY_NAME', async () => {
+    const cases: { summary: BillingSummary; internalKey: string; plan: string }[] = [
+      {
+        summary: summaryOf({ status: null, plan_key: 'free', effective_plan_key: 'standard', source: null, billing_interval: null, current_period_end: null, has_customer: false, can_purchase: true, can_cancel: false }),
+        internalKey: 'standard',
+        plan: '無料プラン',
+      },
+      {
+        summary: summaryOf({ plan_key: 'org_standard', effective_plan_key: 'org_standard', source: 'manual', has_customer: false, can_cancel: false }),
+        internalKey: 'org_standard',
+        plan: ORG_PLAN_DISPLAY_NAME,
+      },
+    ];
+    for (const { summary, internalKey, plan } of cases) {
+      fetchMock.mockReset();
+      fetchMock.mockImplementation(async () => jsonResponse({ data: summary }));
+      await render(AccountBillingPage);
+
+      expect(container.querySelector('[data-testid="billing-plan"]')?.textContent).toBe(plan);
+      expect(container.textContent ?? '').not.toContain(internalKey);
+
+      act(() => {
+        root!.unmount();
+      });
+      root = undefined;
+    }
   });
 });
 
