@@ -236,7 +236,7 @@ describe('billing/04 §8.3 reconcileStoreSubscriptions', () => {
 
     // 1 人目の前は待たない。2 人目は 1 人目の開始から 300 ms 経っているので残りだけ。3 人目は 2 人目の開始から間隔を超えているので待たない
     expect(harness.sleeps).toEqual([interval - firstFetchMs]);
-    expect(harness.events).toEqual([`fetch:${uid(1)}`, `sleep:${interval - firstFetchMs}`, `fetch:${uid(2)}`, `fetch:${uid(3)}`]);
+    expect(harness.events).toEqual([`fetch:${uid(1)}`, `sleep:${interval - firstFetchMs}`, `fetch:${uid(2)}`, `fetch:${uid(3)}`, 'mark']);
   });
 
   it('reconcileStoreSubscriptions stops with stopped_early = budget once now() minus the start exceeds IAP_RECONCILE_RUN_BUDGET_MS, leaving the remaining candidates untouched (not synced and not passed to markReconcileAttempted, which receives only the users tried before the stop), and sets elapsed_ms; when the budget is already exceeded before the first user, markReconcileAttempted is not called', async () => {
