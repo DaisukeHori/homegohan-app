@@ -174,6 +174,8 @@ GRANT EXECUTE ON FUNCTION public.force_transfer_family_representative TO authent
 
 ## 4. 強制解散 RPC
 
+> 現在形 (#1917。family/11 §11.1 の 4): 強制解散 RPC (`operator_force_dissolve_family` / `operator_force_dissolve_org`) の本体は、後始末の関数 `family_dissolve_apply` / `org_dissolve_apply` を呼ぶ形になり、`representative_id` / `owner_id` を NULL にする。下の SQL は当時の設計の記録 (メンバーの離脱と `status = 'dissolved'` の並びは後始末の関数に移った)。
+
 ```sql
 CREATE OR REPLACE FUNCTION public.force_dissolve_family(p_family_id UUID, p_reason TEXT)
 RETURNS family_groups LANGUAGE plpgsql SECURITY DEFINER SET search_path = public AS $$

@@ -264,6 +264,7 @@ const TIMESTAMPTZ_COLUMNS_WITHOUT_AT_SUFFIX: ReadonlySet<string> = new Set([
   'owner_last_sign_in',
   'past_due_since',
   'paused_until',
+  'period_end',
   'start_time',
   'valid_from',
   'valid_until',

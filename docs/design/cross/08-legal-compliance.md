@@ -789,7 +789,7 @@ $$);
 | ログイン制限・警告バナー | 設けない (待機期間がないため) |
 | 遅延削除バッチ | 作らない。旧設計の pg_cron `execute_gdpr_deletions` と `/api/cron/gdpr-delete` は設計から外す |
 | 削除の実行記録 (`gdpr_deletion_requests`) | 退会のたびに 1 行残す (#1562。§16.4)。個人を特定できない形 (利用者の id の HMAC) で、日時・理由・実行者 (本人 / 運営) を残す。削除要求の待機には使わない |
-| 削除前の確認メール・削除完了メール | 退会が成功したときに、削除完了メールを本人へ 1 通だけ送る (#1152。実装は `src/lib/account-deletion-notification.ts`、文面は `src/lib/emails/account/account-deleted.ts`)。削除前の確認メール (退会の受付時のメール) は送らない。30 日の待機は設けない |
+| 削除前の確認メール・削除完了メール | 退会が成功したときに、削除完了メールを本人へ 1 通だけ送る (#1152。実装は `src/lib/account-deletion-notification.ts`、文面は `src/lib/emails/account/account-deleted.ts`)。削除前の確認メール (退会の受付時のメール) は送らない。30 日の待機は設けない。本文には、App Store / Google Play の購読は退会で解約されないことの固定の文 `STORE_SUBSCRIPTION_DELETION_NOTICE` と、各ストアの定期購読の管理のページ (`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`。`@homegohan/shared`) を、購読の有無で出し分けずに載せる (第三者に退会させられた本人は退会の確認の文を見ていないため。#1912。billing/03 §10.4) |
 | 削除処理の堅牢化 | 追加した (#1175、作業計画 T11)。範囲は §16.3 |
 
 背景 (#1130): 旧設計の遅延削除バッチは実装されないままで、削除要求を記録しても実行されずに残りうる設計だった。実際の退会は最初から即時削除として動いている。

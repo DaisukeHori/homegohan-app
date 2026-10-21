@@ -182,7 +182,7 @@ export async function logStreamingUsage(
 ## 5. プラン別 Quota
 
 > #1149 (T40) で実装した形に合わせて書き直した (旧版は Redis の checkLLMQuota と、プランごとの日次・月次の目安の表だった)。
-> 課金は無料のまま計測する段階 (全員 free) なので、月次の上限と試用中の上限は持たない (有料プランの作業 T48 で決める)。
+> #1149 の時点は課金を無料のまま計測する段階 (全員 free) だった。有料プランの販売 (billing/03。#1912) の後も、上限は 1 日の上限とプラン × 機能の 1 日の上限 (`ai_plan_feature_caps`) だけで (§5.1)、月次の上限と試用中の上限は持たない。
 
 ### 5.1 1 日の上限 (DB の ai_daily_limits)
 
@@ -190,11 +190,11 @@ export async function logStreamingUsage(
 |------|------|
 | 数える単位 | 利用者の 1 回の操作を 1 回 (究極モードも 1 回)。全機能の合計。写真の「オート」(判別 `classify-photo` → 解析 `analyze-*`) も 1 回 (§5.2) |
 | 日の区切り | JST の暦日 (0 時に戻る) |
-| 上限の値 | `public.ai_daily_limits(plan_key PK, daily_limit)`。NULL は無制限。既定は `free` = 10 の 1 行だけ |
+| 上限の値 | `public.ai_daily_limits(plan_key PK, daily_limit)`。NULL は無制限。行は `free` = 3・`pro` = 30・`family_basic` = 30・`family_pro` = 50 (migration `20261021100000_billing_paid_plans_iap.sql` の (5b)・(5c)) と、組織のプランの値 (`standard`・`org_*`・`premium`・`enterprise` = 10。同じ migration の (5a) と `20261021110000_org_plan_ai_daily_limits.sql`)。行の無いプランは `free` の行の値 |
 | 行の無いプラン | `free` の行の値 (`free` の行も無ければ無制限) |
 | 変更 | 運営画面 `/super-admin/llm/quotas` (GET / PATCH `/api/super-admin/llm/quotas`。super_admin のみ。監査ログ `super_admin.llm_quota.update`) |
 | 上限に数えない機能 | 画面を開く・保存するだけで呼ばれる AI。`nutrition_advice_auto` (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント) と `meal_image_auto` (料理を保存・更新したときに付ける料理画像。AI 相談の update_meal も同じ)。1 日の上限の合計には入れず、機能ごとの安全弁 (下の行) で止める。利用者が押して画像を作る操作 (`POST /api/ai/image/generate`) は `image_generation` で、上限に数える |
-| 機能ごとの 1 日の上限 (上限に数える機能・#1142) | 究極モード (献立の生成で `ultimateMode: true`) は機能名 `menu_generation_ultimate` で数え、1 回で 1 日の上限の合計に 1 回・究極モードの上限に 1 回入る (両方に数える。`ai_usage_counters` の同じ 1 行なので、数え戻しも 1 回で両方から戻る)。究極モードの上限は利用者ごと・1 日 (JST) の回数で、既定は 1 回 (`AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT`。`supabase/functions/_shared/ai-usage-core.ts`)。環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` (0 以上の整数。0 はその日は使えない。無い・形が違うときは既定の 1) で変える。Next.js (Vercel) と Edge Functions (Supabase の secrets) の両方に同じ値で入れる (片方だけだと、入口によって上限が変わる)。値は DB に持たず、呼び出し側が判定の関数に渡す。全員 (free を含む) が使える |
+| 機能ごとの 1 日の上限 (上限に数える機能・#1142) | 究極モード (献立の生成で `ultimateMode: true`) は機能名 `menu_generation_ultimate` で数え、1 回で 1 日の上限の合計に 1 回・究極モードの上限に 1 回入る (両方に数える。`ai_usage_counters` の同じ 1 行なので、数え戻しも 1 回で両方から戻る)。究極モードの上限は利用者ごと・1 日 (JST) の回数で、プランで決まる (billing/03 §6.5)。`ai_plan_feature_caps` に行のあるプランは行の値 (`free` = 0・`pro` = 2・`family_basic` = 2・`family_pro` = 3。migration `20261021100000_billing_paid_plans_iap.sql` の (5'))。0 はそのプランでは使えない (403 `AI_FEATURE_NOT_IN_PLAN`。画面は錠を出す)。行のあるプランでは `consume_ai_usage_capped` は呼び出し側が渡す上限を使わず、`consume_ai_usage_at` が行の値で判定する。行の無いプラン (組織のプランなど) にだけ、呼び出し側が渡す上限が効く: 既定は 1 回 (`AI_ULTIMATE_MODE_DAILY_LIMIT_DEFAULT`。`supabase/functions/_shared/ai-usage-core.ts`)。環境変数 `AI_ULTIMATE_MODE_DAILY_LIMIT` (0 以上の整数。0 はその日は使えない。無い・形が違うときは既定の 1) で変える。Next.js (Vercel) と Edge Functions (Supabase の secrets) の両方に同じ値で入れる (片方だけだと、入口によって上限が変わる) |
 | 安全弁 (上限に数えない機能) | `public.ai_unmetered_daily_caps(feature PK, daily_cap)`。利用者ごと・1 日 (JST) の、機能ごとの回数。既定は `nutrition_advice_auto` = 30・`meal_image_auto` = 20 (ふつうの使い方では当たらない値)。行の無い機能は 20 (無制限にしない)。値は DB の行で変える (運営画面は無い)。上限に数えない機能を選ぶ材料 (forceRefresh・includeAdvice など) はクライアントが送る値なので、API を直接呼んで上限と無関係に AI を使えないように置く |
 
 ### 5.2 判定の実装
@@ -207,6 +207,8 @@ export async function logStreamingUsage(
   (`20261014100000_ai_usage_feature_daily_cap.sql`。service_role のみ) で数える。`consume_ai_usage` と同じ鍵のロックの中で、その日のその機能の回数が
   `p_feature_daily_cap` に達していれば記録せずに `{ allowed: false, metered: true, limit: p_feature_daily_cap, used, usage_date, capped_feature }` を返し、
   達していなければ `consume_ai_usage` と同じ 1 日の上限の判定と記録をする (1 日の上限で止めたときは `capped_feature` を付けない)。
+  ただし利用者のプランに `ai_plan_feature_caps` の行があれば (billing/03 §6.5。`free`・`pro`・`family_basic`・`family_pro`)、`p_feature_daily_cap` を使わず `consume_ai_usage_at` に任せ、行の値で判定する
+  (0 なら `plan_locked` の止めで、入口は 403 `AI_FEATURE_NOT_IN_PLAN`。migration `20261021100000_billing_paid_plans_iap.sql` の (5''')。行の無いプラン (組織のプランなど) だけが引数の上限で判定される)。
   呼び出し側 (`consumeAiUsage` / `consumeEdgeAiUsage`) は、機能ごとの上限 (`AI_ULTIMATE_MODE_DAILY_LIMIT`) がある機能だけこの関数を呼び、
   `capped_feature` を `cappedFeature` として返す。関数が失敗したときは、1 日の上限と同じくログに残して許可する
 - Next.js: `consumeAiUsage(userId, feature)` (`src/lib/plan/entitlements.ts`) を AI へ送る直前に呼び、`if (!aiUsage.allowed)` で止める。

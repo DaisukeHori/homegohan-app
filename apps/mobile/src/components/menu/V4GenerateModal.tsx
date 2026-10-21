@@ -52,7 +52,7 @@ export interface V4GenerateParams {
   resolveExistingMeals: boolean;
   constraints: MenuGenerationConstraints;
   note: string;
-  /** 究極モード (AIが献立を見直して栄養バランスを改善)。全員が使える (#1142) */
+  /** 究極モード (AIが献立を見直して栄養バランスを改善。#1142)。使える回数はプランで決まる (無料は 0 回で錠。DB の ai_plan_feature_caps の menu_generation_ultimate。billing/03 §6.5) */
   ultimateMode: boolean;
 }
 

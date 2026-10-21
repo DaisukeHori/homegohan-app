@@ -11,6 +11,8 @@ import {
   FREE_PLAN_AI_LIMIT_NOTE,
   FREE_PLAN_FAQ_ANSWER,
   FREE_PLAN_FEATURES,
+  ORG_PLAN_DISPLAY_NAME,
+  PAID_PLAN_GENERIC_DISPLAY_NAME,
   PAID_PLANS_FAQ_ANSWER,
   PAID_PLAN_SUMMARY,
   PLAN_AI_DAILY_LIMITS,
@@ -40,7 +42,7 @@ function migrationSql(): string {
 }
 
 describe('billing/03 §8.9 PLAN_CATALOG と migration の突き合わせ', () => {
-  it('PLAN_CATALOG prices and trial days equal the UPDATE statements in the billing_paid_plans_iap migration (the /faq half lands with stage C)', () => {
+  it('PLAN_CATALOG prices and trial days equal the UPDATE statements in the billing_paid_plans_iap migration', () => {
     const sql = migrationSql();
     const updates = [...sql.matchAll(/UPDATE\s+public\.subscription_plans\s+SET\s+([\s\S]*?)\s+WHERE\s+plan_key\s*=\s*'([a-z_]+)'\s*;/g)].map((match) => {
       const set = match[1];
@@ -116,6 +118,8 @@ describe('billing/03 §8.9 公開の文', () => {
       ['PAID_PLAN_SUMMARY', PAID_PLAN_SUMMARY],
       ['planCatalogPriceText', planCatalogPriceText()],
       ['STORE_SUBSCRIPTION_DELETION_NOTICE', STORE_SUBSCRIPTION_DELETION_NOTICE],
+      ['ORG_PLAN_DISPLAY_NAME', ORG_PLAN_DISPLAY_NAME],
+      ['PAID_PLAN_GENERIC_DISPLAY_NAME', PAID_PLAN_GENERIC_DISPLAY_NAME],
       ['CANCEL_SCHEDULED_WITHOUT_DATE_TEXT_WIRE', CANCEL_SCHEDULED_WITHOUT_DATE_TEXT_WIRE],
       ...Object.entries(SUBSCRIPTION_STATUS_TEXT_WIRE).map(([status, text]): [string, string] => [`SUBSCRIPTION_STATUS_TEXT_WIRE.${status}`, text]),
     ];

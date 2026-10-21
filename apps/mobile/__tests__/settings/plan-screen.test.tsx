@@ -51,9 +51,10 @@ jest.mock('@expo/vector-icons', () => ({
   Ionicons: () => null,
 }));
 
-import { ORG_PLAN_DISPLAY_NAME, STORE_SUBSCRIPTION_MANAGEMENT_URL } from '@homegohan/shared';
+import { ORG_PLAN_DISPLAY_NAME, PAID_PLAN_GENERIC_DISPLAY_NAME, STORE_SUBSCRIPTION_MANAGEMENT_URL } from '@homegohan/shared';
 
 import PlanSettingsScreen, {
+  PLAN_GENERIC_STATUS_TEXT,
   PLAN_ORG_STATUS_TEXT,
   PLAN_PURCHASE_COMPLETED_MESSAGE,
   PLAN_PURCHASE_NOT_REFLECTED_MESSAGE,
@@ -251,10 +252,11 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
     expect(api.queryByTestId('plan-source-store')).toBeNull();
     api.unmount();
 
-    // 家族・組織のプラン (自分の契約は無い)
+    // 家族のプラン (自分の契約は無い)。家族の文に「組織」は出さない (#1912)
     summaryResponse = { data: { ...FREE_SUMMARY, effective_plan_key: 'family_pro' } };
     api = await renderScreen();
-    expect(api.getByText('家族 Proをご利用中です (ご家族または組織のプラン)')).toBeTruthy();
+    expect(api.getByText('家族 Proをご利用中です (ご家族のプラン)')).toBeTruthy();
+    for (const text of renderedTexts(api.toJSON())) expect(text).not.toContain('組織');
     api.unmount();
 
     // 要約を読めない: 失敗の文と再読み込み。状態とプランの一覧は出さず、復元と規約のリンクは出す
@@ -287,7 +289,7 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
 
   // #1912: 組織の利用者 (自分の契約も家族も無い) の effective_plan_key は organizations.plan の値 (standard / premium / enterprise) か
   // org_* になる。画面のどこにもその内部の値を出さず、固定の文 (組織のプラン) を出す
-  it.each(['standard', 'premium', 'enterprise', 'org_standard', 'unknown_plan_value'])(
+  it.each(['standard', 'premium', 'enterprise', 'org_standard', 'org_starter'])(
     'plan screen never shows the internal org plan_key %s and shows the fixed organization plan text instead',
     async (orgPlanKey) => {
       summaryResponse = { data: { ...FREE_SUMMARY, effective_plan_key: orgPlanKey } };
@@ -297,11 +299,45 @@ describe('プランとお支払いの画面 (billing/03 §10.6)', () => {
       const texts = renderedTexts(api.toJSON());
       expect(texts.length).toBeGreaterThan(0);
       for (const text of texts) expect(text).not.toContain(orgPlanKey);
-      // 家族のプランの文 (「ご家族または組織のプラン」) にはならない
-      expect(api.queryByText(/ご家族または組織のプラン/)).toBeNull();
+      // 家族のプランの文 (「(ご家族のプラン)」) にはならない
+      expect(api.queryByText(/ご家族/)).toBeNull();
       api.unmount();
     },
   );
+
+  // #1912: PLAN_CATALOG にも組織のプランの値にも無い key (private の家族の追加枠 family_addon・運営が新しく作った個人や家族のプラン) は、
+  // 「組織のプラン」と出さず、汎用の名前 (有料プラン) で出す。内部の値も出さない
+  it.each(['family_addon', 'personal_lite', 'unknown_plan_value'])(
+    'plan screen shows the generic paid plan text (never 組織 nor the internal value) when the effective plan_key %s is neither free, a PLAN_CATALOG key nor an organization plan value',
+    async (planKey) => {
+      summaryResponse = { data: { ...FREE_SUMMARY, effective_plan_key: planKey } };
+      const api = await renderScreen();
+      expect(api.getByText(PLAN_GENERIC_STATUS_TEXT)).toBeTruthy();
+      expect(PLAN_GENERIC_STATUS_TEXT).toBe(`${PAID_PLAN_GENERIC_DISPLAY_NAME}をご利用中です`);
+      expect(PAID_PLAN_GENERIC_DISPLAY_NAME).toBe('有料プラン');
+      const texts = renderedTexts(api.toJSON());
+      expect(texts.length).toBeGreaterThan(0);
+      for (const text of texts) {
+        expect(text).not.toContain(planKey);
+        expect(text).not.toContain('組織');
+      }
+      expect(api.queryByText(PLAN_ORG_STATUS_TEXT)).toBeNull();
+      api.unmount();
+    },
+  );
+
+  // #1912: live な契約の plan_key が family_addon (PLAN_CATALOG に無い) でも、「組織のプラン」と出さず汎用の名前で出す
+  it('plan screen shows the generic paid plan name for a live contract whose plan_key is family_addon, never 組織 nor the internal value', async () => {
+    summaryResponse = { data: liveSummary('manual', { plan_key: 'family_addon', effective_plan_key: 'family_addon' }) };
+    const api = await renderScreen();
+    expect(api.getByText(PLAN_GENERIC_STATUS_TEXT)).toBeTruthy();
+    const texts = renderedTexts(api.toJSON());
+    for (const text of texts) {
+      expect(text).not.toContain('family_addon');
+      expect(text).not.toContain('組織');
+    }
+    api.unmount();
+  });
 
   it('plan screen purchases a package, then syncs and shows the updated summary; cancelled purchases show nothing; the trial wording appears only for options whose storeTrialOf is not null (an ineligible iOS user sees no trial wording)', async () => {
     const api = await renderScreen();

@@ -27,7 +27,7 @@ import type { HttpMethod } from './ai-reach';
  * | skipAi      | 200。保存・集計はして、AI の部分だけ省く (aiSkipped: AI_DAILY_LIMIT) | 保存と AI の分析を一緒にする操作 (健康診断・血液検査の保存、相談を閉じる)。ホームの栄養の集計 (下の unmetered の機能。自動の分だけの安全弁に達したときに止まる) |
  * | skipImage   | 200。保存・更新はして、料理画像だけ見送る (ジョブを積まない。aiSkipped: AI_DAILY_LIMIT) | 献立の保存・更新が付ける料理画像 (meals / meal-plans の 4 本。下の unmetered の機能 meal_image_auto。料理画像の安全弁に達したときに止まる) |
  *
- * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto / meal_image_auto) は、1 日の上限 (10 回) の合計に入れず、
+ * 上限に数えない機能 (AI_UNMETERED_FEATURES = nutrition_advice_auto / meal_image_auto) は、1 日の上限の合計に入れず、
  * その上限に達していても止めない。画面を開く・保存するだけで呼ばれる AI (ホームの栄養のアドバイス・栄養の詳細を開いたときの栄養士のコメント・
  * 料理を保存したときの料理画像) が使う (開く・記録するだけで今日の回数が減らないように)。そのかわり機能ごとの 1 日の安全弁
  * (DB の ai_unmetered_daily_caps。既定は自動のアドバイス 30 回・料理画像 20 回) で止める (どの機能名で数えるかの材料はクライアントが送る値なので、

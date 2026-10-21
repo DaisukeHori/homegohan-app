@@ -9,8 +9,11 @@
  *   - 409 (組織のオーナー・家族の代表者)・途中の失敗 (500)・すでに消えていたユーザーのやり直しでは送らない
  *   - 送信の失敗 (送れなかった・例外・時間切れ) でも退会は成功のまま (route は 200)。失敗はログに残す
  *   - ログに生のメールアドレスも user_id も出さない
- *   - 文面: 件名・退会日時 (日本時間)・問い合わせ先
+ *   - 文面: 件名・退会日時 (日本時間)・問い合わせ先・ストアの購読は退会で解約されないことの注意と各ストアの定期購読の管理のページ
+ *     (STORE_SUBSCRIPTION_DELETION_NOTICE・STORE_SUBSCRIPTION_MANAGEMENT_URL。#1912。第三者に退会させられた本人は退会の確認の文を見ていない)
  */
+import { readFileSync } from 'node:fs';
+import { resolve as resolvePath } from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
@@ -60,7 +63,17 @@ import {
   notifyAccountDeleted,
   readAccountDeletionEmail,
 } from '../src/lib/account-deletion-notification';
-import { formatAccountDeletedAt, renderAccountDeletedEmail } from '../src/lib/emails/account/account-deleted';
+import {
+  IAP_STORE_LABELS,
+  PURCHASE_STORES,
+  STORE_SUBSCRIPTION_DELETION_NOTICE,
+  STORE_SUBSCRIPTION_MANAGEMENT_URL,
+} from '@homegohan/shared';
+import {
+  accountDeletedStoreSubscriptionNotice,
+  formatAccountDeletedAt,
+  renderAccountDeletedEmail,
+} from '../src/lib/emails/account/account-deleted';
 import { EmailEnvelopeSchema, type EmailEnvelope } from '../src/lib/emails/envelope';
 import { EmailSendError } from '../src/lib/emails/send-result';
 import { DEFAULT_SUPPORT_EMAIL } from '../src/lib/site-config';
@@ -496,5 +509,64 @@ describe('完了メールの文面 (renderAccountDeletedEmail)', () => {
   it('日時は日本時間で書く (UTC の日付をまたぐ時刻でも、日本の日付になる)', () => {
     expect(formatAccountDeletedAt(new Date('2026-12-31T15:30:00.000Z'))).toBe('2027年1月1日 00:30');
     expect(formatAccountDeletedAt(new Date('2026-01-01T00:00:00.000Z'))).toBe('2026年1月1日 09:00');
+  });
+});
+
+describe('完了メールの文面: ストアの購読は退会で解約されないことの注意 (#1912)', () => {
+  /** 本文の中で needle が現れる回数 */
+  const countOf = (haystack: string, needle: string) => haystack.split(needle).length - 1;
+
+  it('本文 (text) に STORE_SUBSCRIPTION_DELETION_NOTICE の文がちょうど 1 回入る', () => {
+    const envelope = renderAccountDeletedEmail({ to_email: EMAIL, deleted_at: DELETED_AT });
+
+    expect(countOf(envelope.text, STORE_SUBSCRIPTION_DELETION_NOTICE)).toBe(1);
+  });
+
+  it.each(PURCHASE_STORES.map((store) => [store] as const))(
+    '本文 (text) に %s の定期購読の管理のページが「表示名: URL」の行でちょうど 1 回入る',
+    (store) => {
+      const envelope = renderAccountDeletedEmail({ to_email: EMAIL, deleted_at: DELETED_AT });
+      const line = `${IAP_STORE_LABELS[store]}: ${STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}`;
+
+      expect(countOf(envelope.text, STORE_SUBSCRIPTION_MANAGEMENT_URL[store])).toBe(1);
+      expect(envelope.text.split('\n').filter((l) => l === line)).toHaveLength(1);
+    },
+  );
+
+  it('注意の文の直後の行から、各ストアの管理のページが PURCHASE_STORES の順に並ぶ (注意と案内がひとかたまり)', () => {
+    const lines = renderAccountDeletedEmail({ to_email: EMAIL, deleted_at: DELETED_AT }).text.split('\n');
+    const at = lines.indexOf(STORE_SUBSCRIPTION_DELETION_NOTICE);
+
+    expect(at).toBeGreaterThan(-1);
+    expect(lines.slice(at + 1, at + 1 + PURCHASE_STORES.length)).toEqual(
+      PURCHASE_STORES.map((store) => `${IAP_STORE_LABELS[store]}: ${STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}`),
+    );
+    // 退会の完了の文の後・問い合わせ先の前に置く
+    const body = lines.join('\n');
+    expect(body.indexOf('退会が完了しました')).toBeLessThan(body.indexOf(STORE_SUBSCRIPTION_DELETION_NOTICE));
+    expect(body.indexOf(STORE_SUBSCRIPTION_DELETION_NOTICE)).toBeLessThan(body.indexOf('心当たりが無い場合は'));
+  });
+
+  it('accountDeletedStoreSubscriptionNotice は shared の定数だけから組む (注意の文 + ストアごとの 1 行)', () => {
+    expect(accountDeletedStoreSubscriptionNotice()).toBe(
+      [
+        STORE_SUBSCRIPTION_DELETION_NOTICE,
+        ...PURCHASE_STORES.map((store) => `${IAP_STORE_LABELS[store]}: ${STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}`),
+      ].join('\n'),
+    );
+  });
+
+  it('文面はテキストだけで HTML を持たない (HTML の本文を足すときは、そちらにも注意と案内を入れてこの it を改める)', () => {
+    const envelope = renderAccountDeletedEmail({ to_email: EMAIL, deleted_at: DELETED_AT });
+
+    expect(envelope.html).toBeUndefined();
+  });
+
+  it('文面のソースに注意の文と管理のページの URL を直接書かない (shared の定数から組む)', () => {
+    const source = readFileSync(resolvePath(__dirname, '../src/lib/emails/account/account-deleted.ts'), 'utf8');
+
+    expect(source).not.toContain(STORE_SUBSCRIPTION_DELETION_NOTICE);
+    for (const store of PURCHASE_STORES) expect(source).not.toContain(STORE_SUBSCRIPTION_MANAGEMENT_URL[store]);
+    expect(source).toMatch(/from '@homegohan\/shared'/);
   });
 });
