@@ -3531,6 +3531,21 @@ export type Database = {
         }
         Relationships: []
       }
+      iap_reconcile_attempts: {
+        Row: {
+          attempted_at: string
+          user_id: string
+        }
+        Insert: {
+          attempted_at: string
+          user_id: string
+        }
+        Update: {
+          attempted_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       infra_alerts: {
         Row: {
           ack_at: string | null
@@ -8525,6 +8540,18 @@ export type Database = {
       billing_has_live_family_plan: {
         Args: { p_user_id: string }
         Returns: boolean
+      }
+      billing_iap_reconcile_candidates: {
+        Args: { p_limit: number; p_now: string; p_recheck_after: unknown }
+        Returns: {
+          period_end: string
+          synced_at: string
+          user_id: string
+        }[]
+      }
+      billing_iap_reconcile_mark_attempted: {
+        Args: { p_attempted_at: string; p_user_ids: string[] }
+        Returns: undefined
       }
       billing_manual_subscription_sync_after_end: {
         Args: { p_plan_key: string; p_user_id: string }
