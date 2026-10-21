@@ -690,8 +690,9 @@ describe('#1155 FAQ (/faq とトップページの FAQ)', () => {
     for (const word of ['プレミアムプラン', '年払い', 'Visa', '解約後も次回更新日まで']) {
       expect(faq, `/faq に「${word}」が残っている`).not.toContain(word);
     }
+    // 描画 (最初に開くのは「基本的な使い方」の分類なので、料金の答えはソースで見る。描画でも禁止の語が出ないこと)
     const rendered = renderText(FaqPage);
-    expect(rendered).toContain('有料プランを解約するには？');
+    expect(rendered).toContain('よくある質問');
     for (const word of ['プレミアムプラン', '年払い', 'Visa', '解約後も次回更新日まで']) {
       expect(rendered, `/faq の描画に「${word}」が出ている`).not.toContain(word);
     }
