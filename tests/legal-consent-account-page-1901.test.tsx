@@ -59,7 +59,11 @@ vi.mock('@/lib/supabase/client', () => ({
 const { default: LegalConsentAccountPage } = await import('@/app/legal-consent/account/page');
 const { default: AccountWithoutConsent } = await import('@/app/legal-consent/account/AccountWithoutConsent');
 import { resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge';
-import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from '@/lib/membership/self-dissolve';
+import {
+  BLOCKED_SCOPE_UNKNOWN_GUIDANCE,
+  FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE,
+  SELF_DISSOLVED_NEXT_STEP,
+} from '@/lib/membership/self-dissolve';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -306,6 +310,30 @@ describe('#1901 Q-23 同意の前の退会と書き出しの画面 (/legal-conse
     expect(dissolveSubmit('family')).not.toBeNull();
     expect(mocks.signOut).not.toHaveBeenCalled();
     expect(container.querySelector('[data-testid="legal-consent-account-deleted"]')).toBeNull();
+  });
+
+  it('退会: 家族の代表者の解散の区画は、家族プランの Web の契約の解約をお問い合わせへ案内し (billing/03 §0.5 Q-15)、同意の前は開けない課金の画面を名指さない', async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          error: 'ACCOUNT_DELETE_BLOCKED_FAMILY_REPRESENTATIVE',
+          message: FAMILY_REPRESENTATIVE_MESSAGE,
+          family_group: { id: FAMILY_ID, name: '山田家' },
+        }),
+        { status: 409 },
+      ),
+    );
+    await render(<AccountWithoutConsent />);
+
+    await typeConfirm(CONFIRM_KEYWORD);
+    await click(buttonByText('アカウントを削除'));
+
+    const lines = Array.from(container.querySelectorAll('li')).map((li) => li.textContent);
+    expect(lines).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.legal_consent);
+    expect(lines).not.toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.settings);
+    expect(lines).not.toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.frozen);
+    expect(container.textContent).not.toContain('「プランとお支払い」');
+    expect(container.textContent).not.toContain('「有料プランの解約・お支払い」');
   });
 
   it('解散の区画で解散すると (POST /api/family/dissolve が 200)、区画が消えて SELF_DISSOLVED_NEXT_STEP が出る。そのあとの退会は 200 で「退会しました」を出す', async () => {

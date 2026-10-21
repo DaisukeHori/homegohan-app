@@ -65,7 +65,7 @@ export interface PrivacyProcessor {
  * 委託先 (法 27 条 5 項 1 号) の一覧。実コードで実際にデータを渡している事業者だけを載せる。
  * 事業者を足したら、ここと tests/legal-text-1901.test.ts の両方に足し、プライバシーポリシーの版を上げる。
  * AI 事業者 (xai / google / openai / perplexity / aimlapi) はここではなく第6条 (ctx.aiProviders)。
- * 有料プランの決済の事業者は、有料プランの販売の案件 (#1912) が版を上げるときに足す (cross/20 §17)。
+ * 有料プランの決済の事業者 (Stripe) とアプリ内課金の購入の確認 (RevenueCat) は billing/03 §11.2 が足した。ストアの事業者 (Apple・Google) は委託先ではないので載せない (第3条に書く。billing/03 Q-17)。
  */
 export const PRIVACY_PROCESSORS: readonly PrivacyProcessor[] = [
   {
@@ -123,6 +123,20 @@ export const PRIVACY_PROCESSORS: readonly PrivacyProcessor[] = [
     purpose: 'バックアップの取得処理の実行',
     data: '取得の処理中に一時的に扱うデータベースの内容（暗号化して保管先へ送ったあとは残しません）',
     evidence: { file: '.github/workflows/db-backup.yml', needle: 'apt-get install -y age' },
+  },
+  {
+    name: 'Stripe',
+    country: 'アメリカ合衆国',
+    purpose: 'Web での有料プランの決済',
+    data: '利用者の ID、メールアドレス、契約と請求の情報（クレジットカードの番号は Stripe の決済画面で Stripe が直接受け取り、当社は受け取りません）',
+    evidence: { file: 'src/lib/billing/stripe-gateway.ts', needle: 'createStripeGateway' },
+  },
+  {
+    name: 'RevenueCat',
+    country: 'アメリカ合衆国',
+    purpose: 'アプリ内課金の購入の確認と、契約の状態の同期',
+    data: '利用者の ID、購入した商品、購入と期限の日時、契約の状態、ストアの取引の識別子',
+    evidence: { file: 'src/lib/billing/revenuecat-gateway.ts', needle: 'createRevenueCatGateway' },
   },
 ];
 
@@ -193,6 +207,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                 headers: ['区分', '主な内容'],
                 rows: [
                   ['アカウント', 'メールアドレス、パスワード（ハッシュ化して保存します）、Google アカウントで登録した場合に Google から受け取る情報、生年月日、ニックネーム、ご利用のプラン'],
+                  ['有料プラン', '申し込んだ有料プランとその契約の状態・期間・無料体験の利用の有無、申し込んだ場所（Web・App Store・Google Play）、決済の事業者（Stripe）と RevenueCat が付ける顧客と契約の識別子、クーポンの利用の記録。App Store または Google Play で申し込んだ場合は、Apple または Google が各ストアの規約に従って決済を行い、当社は RevenueCat を通じて購入の情報（商品、購入と期限の日時、契約の状態）を受け取ります。クレジットカードの番号は、当社は受け取りません'],
                   ['プロフィール', '身長・体重などの身体の情報、生活習慣、食の好みとアレルギー、目標、健康上の注意点（持病、服薬、妊娠の有無など。要配慮個人情報を含みます）、栄養の目標'],
                   ['食事と献立', '食事の写真と、そこから推定した料理と栄養の値、食事の記録、献立と献立の作成の依頼の内容、冷蔵庫の写真と食材、買い物リスト'],
                   ['レシピ', 'いいねや保存をしたレシピ、ユーザーが登録したレシピとコメント'],
@@ -221,6 +236,7 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                 kind: 'ul',
                 items: [
                   '本サービスの提供（アカウントの管理、記録の保存と表示、献立の作成、家族グループと組織の機能、お知らせと通知）のため。',
+                  '有料プランの提供（申込みの受付、契約と料金の請求の管理、解約と返金の対応、二重のお支払いの防止）のため。',
                   '記録の継続と比較の機能（記録から計算した指標を、年齢層・性別などが同じユーザーの集計と比べて本人に表示すること）のため。',
                   'AI 機能の提供のため。第6条のとおり、日本国外の AI 事業者への送信を含みます。',
                   '本人確認、なりすましや不正利用の防止、セキュリティの確保のため。',
@@ -366,6 +382,8 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                   ['Google（ログインの画面）', 'Google のログイン画面で Google が取得する情報', 'Google アカウントでのログイン'],
                   [`GitHub（GitHub Pages の祝日の一覧。${HOLIDAYS_API_HOST}）`, '取得する年、IP アドレス、ブラウザの種類（ユーザーの記録は送りません）', '献立のカレンダーに日本の祝日を表示するため'],
                   ['Expo（プッシュ通知）', '端末のプッシュ通知のトークン', 'アプリへの通知の配信'],
+                  ['Stripe（Web のお支払いの画面）', 'お支払いの画面で入力するカードの情報、メールアドレス、IP アドレス、ブラウザの種類', 'Web での有料プランのお支払い'],
+                  ['RevenueCat（iOS・Android のアプリから）', '当社の利用者 ID、SDK が作る識別子、アプリの版、OS の種類、購入の情報', 'アプリ内課金の購入の確認と、契約の状態の同期'],
                 ],
               },
               { kind: 'p', text: 'カメラ、写真ライブラリ、通知などの端末の機能へのアクセスは、第3条のとおりです。' },
@@ -416,6 +434,10 @@ export function privacyText(ctx: LegalTextContext): LegalDocumentText {
                   ['退会の記録', '退会した日時と理由を、ユーザーを特定できない形（識別子のハッシュ）で残します'],
                   ['データベースのバックアップ', `日次のものは ${f.backupDailyRetentionDays} 日、週次のものは ${f.backupWeeklyRetentionDays} 日、年次のものは ${f.backupAnnualRetentionDays} 日（${f.backupAnnualRetentionYears} 年）。暗号化して保管し、障害からの復旧の目的以外では開きません。退会したユーザーのデータも、取得の時点のものはこの期間残ります`],
                   ['AI 事業者に送った内容', '各事業者の規約によります（第6条）'],
+                  ['有料プランの契約の記録（プラン、契約の状態、期間、申し込んだ場所）', '退会するまで。退会すると直ちに削除します'],
+                  ['決済の事業者の顧客の記録と、クーポンの利用の記録', '期限を定めずに保存します。退会すると、ユーザーとの紐づけを外して残します（決済の事業者の顧客の情報は匿名にします）'],
+                  ['決済の事業者と RevenueCat から届いた通知の記録（通知の種類・日時、契約の識別子、アカウントの識別子）', '期限を定めずに保存します。退会した後も、アカウントの識別子（氏名やメールアドレスは含みません）とともに残ります'],
+                  ['決済の事業者とストアが保存する記録', '各事業者の規約によります'],
                 ],
               },
             ],

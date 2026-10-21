@@ -10,11 +10,14 @@
  * - ボタン: has_customer → Billing Portal / can_cancel → 解約する / can_resume → 解約を取り消す / can_purchase → プランを見る (/pricing)
  * - アプリの WebView (isNativeApp) では表示だけ (ボタンは描かない。§10.4・S14)
  * - ボタンの POST が 2xx 以外なら BILLING_ERROR_MESSAGES の固定の文を出す (鍵が無いときの 503 は「お支払いを受け付けていません」)
+ * - App Store / Google Play の契約 (manage_in_store が null でない) は Portal・解約・取り消しのボタンを描かず、ストアの定期購読の管理で
+ *   解約することを文で出し、管理のページへのリンクを置く (アプリの WebView では文だけ。billing/03 §10.3)
  */
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
+import { IAP_STORE_LABELS, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from "@homegohan/shared";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { BILLING_CANCEL_API_PATH, BILLING_PORTAL_API_PATH, BILLING_SUBSCRIPTION_API_PATH } from "@/lib/auth/frozen";
 import {
@@ -23,7 +26,6 @@ import {
   CHECKOUT_RESULT_QUERY,
   CHECKOUT_RESULT_SUCCESS,
   CHECKOUT_SESSION_QUERY,
-  FREE_PLAN_KEY,
   billingStatusLines,
   formatBillingDate,
   type BillingErrorCode,
@@ -56,6 +58,8 @@ const CHECKOUT_PROCESSING_TEXT = "お申し込みを処理しています";
 const CHECKOUT_SLOW_TEXT = "お申し込みの反映に時間がかかっています。時間をおいて再読み込みしてください。";
 const CHECKOUT_CANCELLED_TEXT = "お申し込みは完了していません";
 const FAMILY_OR_ORG_PLAN_TEXT = "家族 / 組織のプランが適用中";
+/** ストアの定期購読の管理のページへのリンクの文 (アプリの購入の画面のボタンと同じ文。billing/03 §10.3) */
+const STORE_MANAGE_LINK_TEXT = "定期購読の管理を開く";
 
 const INTERVAL_TEXT: Readonly<Record<BillingInterval, string>> = { month: "月額", year: "年額" };
 
@@ -82,10 +86,6 @@ async function errorTextOf(res: Response): Promise<string> {
     // 本文が JSON でない (500 の HTML など) ときは汎用の文
   }
   return UNKNOWN_ERROR_TEXT;
-}
-
-function planLabel(planKey: string): string {
-  return planKey === FREE_PLAN_KEY ? "フリー" : planKey;
 }
 
 function AccountBillingContent() {
@@ -221,6 +221,8 @@ function AccountBillingContent() {
   };
 
   const statusLines = summary ? billingStatusLines(summary) : [];
+  // App Store / Google Play の契約はストアで管理する (Portal・解約・取り消しを描かない。billing/03 §10.3)
+  const store = summary?.manage_in_store ?? null;
   const nextRenewal =
     summary && summary.status !== null && !summary.cancel_at_period_end ? formatBillingDate(summary.current_period_end) : null;
 
@@ -244,7 +246,7 @@ function AccountBillingContent() {
         <section className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3" data-testid="billing-summary">
           <div>
             <p className="text-xs text-gray-400">現在のプラン</p>
-            <p className="font-bold text-gray-800" data-testid="billing-plan">{planLabel(summary.plan_key)}</p>
+            <p className="font-bold text-gray-800" data-testid="billing-plan">{planDisplayName(summary.plan_key)}</p>
             {summary.effective_plan_key !== summary.plan_key && (
               <p className="text-xs text-gray-500">{FAMILY_OR_ORG_PLAN_TEXT}</p>
             )}
@@ -260,12 +262,29 @@ function AccountBillingContent() {
           {summary.billing_interval !== null && (
             <p className="text-sm text-gray-600">支払い周期: {INTERVAL_TEXT[summary.billing_interval]}</p>
           )}
+          {store !== null && (
+            <div className="space-y-2" data-testid="billing-store-notice">
+              <p className="text-sm text-gray-700">
+                {IAP_STORE_LABELS[store]} でご契約中です。解約・お支払い方法の変更は {IAP_STORE_LABELS[store]} の定期購読の管理から行えます。
+              </p>
+              {!isNativeApp && (
+                <a
+                  href={STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}
+                  target="_blank"
+                  rel="noopener"
+                  className="inline-block text-sm font-bold underline text-[#E07A5F]"
+                >
+                  {STORE_MANAGE_LINK_TEXT}
+                </a>
+              )}
+            </div>
+          )}
         </section>
       )}
 
       {summary && !isNativeApp && (
         <div className="space-y-3">
-          {summary.has_customer && (
+          {store === null && summary.has_customer && (
             <button
               type="button"
               onClick={handlePortal}
@@ -275,7 +294,7 @@ function AccountBillingContent() {
               お支払い方法・請求書 (Stripe)
             </button>
           )}
-          {summary.can_cancel && (
+          {store === null && summary.can_cancel && (
             <button
               type="button"
               onClick={handleCancel}
@@ -285,7 +304,7 @@ function AccountBillingContent() {
               解約する
             </button>
           )}
-          {summary.can_resume && (
+          {store === null && summary.can_resume && (
             <button
               type="button"
               onClick={() => void postForSummary(RESUME_API_PATH)}

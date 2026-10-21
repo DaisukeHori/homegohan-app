@@ -5,13 +5,24 @@
 // 親から id と名前を受け取り、解散の API を呼ぶだけ (設定画面の状態や Supabase の読み取りに依存しない)。
 import { useState } from 'react';
 import type { MembershipScope } from '@/lib/emails/membership/scope-label';
-import { SELF_DISSOLVE_CONFIRM_KEYWORD, SELF_DISSOLVE_COPY, dissolveOwnScope } from '@/lib/membership/self-dissolve';
+import {
+  SELF_DISSOLVE_CONFIRM_KEYWORD,
+  SELF_DISSOLVE_COPY,
+  dissolveOwnScope,
+  selfDissolveEffects,
+  type SelfDissolveSurface,
+} from '@/lib/membership/self-dissolve';
 
 export interface SelfDissolveSectionProps {
   scope: MembershipScope;
   scopeId: string;
   /** 家族グループ名 / 組織名 (見出しに「「山田家」を解散する」の形で出す) */
   scopeName: string;
+  /**
+   * 区画を出す画面 (メンバーシップ設定 / 凍結中の画面 / 同意の前の画面)。家族プランの解約の案内は、その画面の利用者が開ける画面を名指す
+   * (FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE。凍結中・同意の前の人は「プランとお支払い」(/account/billing) を開けない)
+   */
+  surface: SelfDissolveSurface;
   /** 解散が済んだ (200) あと。親が所属を読み直す・次の案内を出す */
   onDissolved: (dissolvedAt: string) => void;
   /** 「キャンセル」。親が区画を閉じる */
@@ -20,8 +31,9 @@ export interface SelfDissolveSectionProps {
   onUnauthorized?: () => void;
 }
 
-export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, onCancel, onUnauthorized }: SelfDissolveSectionProps) {
+export function SelfDissolveSection({ scope, scopeId, scopeName, surface, onDissolved, onCancel, onUnauthorized }: SelfDissolveSectionProps) {
   const copy = SELF_DISSOLVE_COPY[scope];
+  const effects = selfDissolveEffects(scope, surface);
   const [keyword, setKeyword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +64,7 @@ export function SelfDissolveSection({ scope, scopeId, scopeName, onDissolved, on
         「{scopeName}」を解散する
       </h3>
       <ul className="list-disc pl-5 text-sm text-gray-600 space-y-1">
-        {copy.effects.map((line) => (
+        {effects.map((line) => (
           <li key={line}>{line}</li>
         ))}
       </ul>

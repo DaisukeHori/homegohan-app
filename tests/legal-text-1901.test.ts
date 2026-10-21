@@ -127,7 +127,9 @@ const TEST_FILE_PATTERN = /(__tests__|__mocks__|\.test\.|\.spec\.)/;
 /** T-34: 利用者に紐づく表 → プライバシーポリシー第3条の表の行 (1 列目の値)。根拠: 設計書 cross/20 F-42 */
 const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
   password_history: 'アカウント',
-  personal_subscriptions: 'アカウント',
+  personal_subscriptions: '有料プラン',
+  billing_customers: '有料プラン',
+  coupon_redemptions: '有料プラン',
   user_profiles: 'プロフィール',
   nutrition_targets: 'プロフィール',
   meals: '食事と献立',
@@ -201,12 +203,11 @@ const PRIVACY_DATA_TABLES: Readonly<Record<string, string>> = {
 };
 
 /**
- * T-34: 第3条に載せない表と理由。根拠: 設計書 cross/20 F-42・F-57
+ * T-34: 第3条に載せない表と理由。根拠: 設計書 cross/20 F-42
  * no_writer = 書き込む処理が無い。operator_only = 運営担当者だけの情報。
- * paid_plan = 決済の申込みとクーポンの適用だけが書く表 (有料プランを売っていないので行が無い)。
- *             有料の条文を足す案件 (#1912) が、版を上げるときに第3条の行へ移す
+ * 有料プランの表 (billing_customers・coupon_redemptions) は billing/03 §11.5 で第3条の「有料プラン」の行へ移した (PRIVACY_DATA_TABLES)
  */
-const PRIVACY_DATA_EXCLUDED: Readonly<Record<string, 'no_writer' | 'operator_only' | 'paid_plan'>> = {
+const PRIVACY_DATA_EXCLUDED: Readonly<Record<string, 'no_writer' | 'operator_only'>> = {
   cookie_consents: 'no_writer',
   csat_feedbacks: 'no_writer',
   nps_surveys: 'no_writer',
@@ -223,18 +224,7 @@ const PRIVACY_DATA_EXCLUDED: Readonly<Record<string, 'no_writer' | 'operator_onl
   legacy_family_members: 'no_writer',
   family_meal_logs: 'no_writer',
   operator_mfa_backup_codes: 'operator_only',
-  billing_customers: 'paid_plan',
-  coupon_redemptions: 'paid_plan',
 };
-
-/** T-34: 'paid_plan' の表に INSERT する migration (これ以外に足したら赤)。根拠: 設計書 cross/20 F-57 */
-const PAID_PLAN_WRITER_MIGRATIONS: readonly string[] = [
-  'supabase/migrations/20261007160700_apply_coupon_rpc.sql',
-  'supabase/migrations/20261016210000_billing_core.sql',
-];
-
-/** T-34: 'paid_plan' の表に .insert( / .upsert( するコードを置いてよいディレクトリ。根拠: 設計書 cross/20 F-57 */
-const PAID_PLAN_WRITER_DIR = 'src/lib/billing/';
 
 /** T-36: AI 相談の route が読む表 → 第6条の送る情報の項目に含まれる語。根拠: 設計書 cross/20 F-43 */
 const AI_CONTEXT_TABLES: Readonly<Record<string, string>> = {
@@ -276,7 +266,7 @@ const LEGAL_TEXT_PENDING_WORDS: readonly string[] = [
   '未対応',
 ];
 
-/** T-33: 本文に書かない、有料プランの条文の語。根拠: 設計書 cross/20 R-30・P-9 (#1912 が有料の条文を足すときに改める) */
+/** T-33: 有料プランの条文の語。PAID_TERMS_SECTIONS の節にだけ出てよい。根拠: 設計書 cross/20 R-30・P-9・billing/03 §11.5 */
 const LEGAL_TEXT_PAID_TERMS: readonly string[] = [
   '有料',
   '自動更新',
@@ -289,6 +279,34 @@ const LEGAL_TEXT_PAID_TERMS: readonly string[] = [
   'アプリ内課金',
   'App Store',
   'Google Play',
+];
+
+/** T-33: 有料の語が出てよい節 (billing/03 §11 が有料の条文を足した節)。ほかの条に足したら赤。根拠: 設計書 billing/03 §11.5 */
+const PAID_TERMS_SECTIONS: readonly string[] = [
+  'terms-10',
+  'terms-16',
+  'terms-17',
+  'terms-24',
+  'privacy-3',
+  'privacy-4',
+  'privacy-7',
+  'privacy-10',
+  'privacy-12',
+];
+
+/** T-33: 利用規約第10条 (料金) の最初の ol の 11 項 (逐語)。根拠: 設計書 billing/03 §11.1 (a) */
+const PAID_TERMS_10_ITEMS: readonly string[] = [
+  '本サービスは、無料で利用できます。',
+  '当社は、無料で利用できる範囲のほかに、料金を支払って利用する有料プランを提供します。有料プランの種類、各有料プランで利用できる機能と AI 機能の利用回数の上限、料金（税込）、無料体験の有無と期間は、料金のページと特定商取引法に基づく表記に掲げます。',
+  '有料プランは、Web では当社が利用する決済の事業者（Stripe）を通じたクレジットカードで、iOS・Android のアプリでは App Store または Google Play のアプリ内課金で申し込むことができます。アプリ内課金の料金、請求、領収、返金は、各ストアの表示と規約に従います。',
+  '有料プランは自動更新の定期購入です。ユーザーが解約しない限り、月額または年額の期間ごとに、同じ料金が自動で請求されます。',
+  '無料体験のある有料プランでは、無料体験の期間が終わると有料の期間に移り、請求が始まります。無料体験の期間中に解約すると、料金は請求されません。Web で申し込む無料体験は、同じ有料プランにつき 1 回限りです（App Store と Google Play で受けた同じ有料プランの無料体験も数えます）。App Store と Google Play で申し込む無料体験を受けられるかどうかは、各ストアが判定します。',
+  '有料プランは、いつでも解約できます。Web で申し込んだ有料プランは本サービスの画面から、App Store または Google Play で申し込んだ有料プランは各ストアの定期購読の管理から解約します。解約しても、支払い済みの期間の終わりまで有料プランを利用できます。',
+  '期間の途中の解約による日割りの返金は行いません。法令に定める場合と、本サービスに重大な不具合があった場合を除き、支払い済みの料金は返金しません。',
+  '同時に契約できる有料プランは 1 つです。Web とアプリ内課金、または App Store と Google Play の両方で重ねて申し込んだ場合、後から申し込んだ契約は、そのままでは本サービスに反映されません。その場合はお問い合わせからご連絡ください。当社は、二重のお支払いにならないよう、いずれか一方の契約を解約して返金するか、ストアへの返金の申し込みの方法をご案内します。',
+  'Web または Google Play で申し込んだ有料プランを別の有料プランに変えるときは、いまの有料プランを解約し、その期間の終わりのあとに新しい有料プランを申し込みます。App Store で申し込んだ有料プランは、App Store の定期購読の管理から有料プランと期間を変えることができ、変更の時期と精算は App Store の規約に従います。',
+  '家族プラン（家族 Basic・家族 Pro）を契約した代表者は、プランの人数の上限まで、家族グループにメンバーを迎えることができます。家族プランの契約が終わると、家族グループのメンバーはそのまま残りますが、新しいメンバーを迎えることはできません。',
+  '当社は、有料プランの料金を改定することがあります。改定した料金は、改定の後に申し込む契約から適用します。契約中のユーザーの料金を改定するときは、法令と各ストアの規約に従い、事前にお知らせします。',
 ];
 
 /**
@@ -832,14 +850,18 @@ describe('#1901 プライバシーポリシーの委託先・送り先・端末�
     expect(privacyBody).toContain('参加の時点で登録していたメールアドレスは、承諾した招待の宛先として残り');
   });
 
-  it('T-33 利用規約・プライバシーポリシーの本文と委託先の表に、有料プランの条文と決済の事業者が無い', () => {
-    for (const { name, body } of BOTH) {
-      for (const word of LEGAL_TEXT_PAID_TERMS) expect(body, `${name}: ${word}`).not.toContain(word);
-    }
+  it('T-33 利用規約・プライバシーポリシーの有料プランの条文は billing/03 §11 のとおりで、有料の語は有料の条文の節にだけ出て、委託先の表に決済の事業者と RevenueCat がある', () => {
+    expect(firstBlock(sectionById(terms, 'terms-10'), 'ol').items).toEqual(PAID_TERMS_10_ITEMS);
+
+    const units = [...legalTextUnits(terms), ...legalTextUnits(privacy)];
+    const paidUnits = units.filter((unit) => LEGAL_TEXT_PAID_TERMS.some((word) => unit.text.includes(word)));
+    expect(paidUnits.length, '有料の語を含む単位が無い').toBeGreaterThan(0);
+    for (const unit of paidUnits) expect(PAID_TERMS_SECTIONS, `${unit.section}: ${unit.text}`).toContain(unit.section);
+
     const names = PRIVACY_PROCESSORS.map((p) => p.name);
-    for (const name of ['Stripe', 'RevenueCat', 'Apple']) expect(names).not.toContain(name);
+    for (const name of ['Stripe', 'RevenueCat']) expect(names).toContain(name);
+    expect(names).not.toContain('Apple');
     expect(TERMS_ARTICLE_HEADINGS[9]).toBe('第10条（料金）');
-    expect(firstBlock(sectionById(terms, 'terms-10'), 'ol').items).toEqual(['本サービスは、無料で利用できます。']);
   });
 
   it('T-34 利用者に紐づく表は、すべてプライバシーポリシー第3条の行か、載せない理由のどちらかに入っている', () => {
@@ -859,16 +881,11 @@ describe('#1901 プライバシーポリシーの委託先・送り先・端末�
     const noWriterCode = listCodeFiles(['src', 'supabase/functions', 'lib', 'packages/shared/src', 'apps/mobile/src', 'apps/mobile/app']).map(
       (file) => ({ file, text: readRepo(file) }),
     );
-    const paidPlanCode = listCodeFiles(['src', 'supabase/functions', 'lib']).map((file) => ({ file, text: readRepo(file) }));
     for (const [table, reason] of Object.entries(PRIVACY_DATA_EXCLUDED)) {
       if (reason === 'no_writer') {
         const writers = noWriterCode.filter(({ text }) => writesTable(text, table)).map(({ file }) => file);
         expect(writers, `${table} に書くコード`).toEqual([]);
         expect(migrationsInsertingInto(table), `${table} に INSERT する migration`).toEqual([]);
-      } else if (reason === 'paid_plan') {
-        const writers = paidPlanCode.filter(({ text }) => writesTable(text, table)).map(({ file }) => file);
-        for (const file of writers) expect(file.startsWith(PAID_PLAN_WRITER_DIR), `${file} が ${table} に書く`).toBe(true);
-        for (const file of migrationsInsertingInto(table)) expect(PAID_PLAN_WRITER_MIGRATIONS, `${file} が ${table} に INSERT する`).toContain(file);
       }
     }
   });

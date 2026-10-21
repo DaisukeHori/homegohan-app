@@ -28,6 +28,7 @@ import {
   LEGAL_DOCUMENT_PATHS,
   LEGAL_DOCUMENT_TYPES,
   formatLegalEffectiveDate,
+  STORE_SUBSCRIPTION_DELETION_NOTICE,
 } from '@homegohan/shared';
 
 vi.mock('next/link', () => ({
@@ -886,6 +887,38 @@ describe('#1173 /legal-consent フォーム (クライアント側) の生年月
     expect(alertText()).toContain(message);
     expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading);
     expect(container.textContent).not.toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawnHeading);
+  });
+
+  it('billing/03: minor_refused と guardianMissing の案内に、STORE_SUBSCRIPTION_DELETION_NOTICE の文を「登録をやめる」と一緒に出す', async () => {
+    // 案内の画面の見出しと本文の区画 (h1 の親) に、ストアの購読は退会で解約されない文がちょうど 1 回出る (billing/03 §10.4・S35)
+    const noticeInHeadingBlock = () => {
+      const heading = container.querySelector('h1');
+      expect(heading, '案内の見出し').not.toBeNull();
+      return Array.from(heading!.parentElement!.querySelectorAll('p')).filter((p) => p.textContent === STORE_SUBSCRIPTION_DELETION_NOTICE);
+    };
+
+    await reachMinorRefused();
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedHeading);
+    expect(noticeInHeadingBlock()).toHaveLength(1);
+    expect(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton)).not.toBeNull();
+
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm({ guardianMissing: true });
+    expect(container.textContent).toContain(LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingHeading);
+    expect(noticeInHeadingBlock()).toHaveLength(1);
+    expect(buttonWithText(LEGAL_CONSENT_BIRTH_DATE_COPY.withdrawButton)).not.toBeNull();
+
+    // 同意のフォーム (案内でない画面) には出さない
+    await act(async () => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    await renderForm();
+    expect(container.querySelector('form')).not.toBeNull();
+    expect(container.textContent).not.toContain(STORE_SUBSCRIPTION_DELETION_NOTICE);
   });
 
   it('T-F7: guardianMissing のときは「保護者の同意とのつながりがありません」と「登録をやめる」だけを出す (生年月日の欄・チェック・「同意しない」は出ない)', async () => {

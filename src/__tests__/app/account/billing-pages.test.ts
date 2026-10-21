@@ -5,12 +5,15 @@
 // - アプリの WebView では表示だけ (Portal・解約・取り消し・購入のボタンを出さない。S14)
 // - 確認画面はアプリの WebView では「この操作はアプリでは行えません」とだけ描き、購入の API を呼ばない (S14)
 // - 状態の文は §10.3 の表のとおり (live 5 値 × 解約の予約の有無)
+// - プランの名前は planDisplayName (@homegohan/shared。free は「無料プラン」) で出す (billing/03 §10.3)
+// - App Store / Google Play の契約は Portal・解約・取り消しのボタンを出さず、ストアの定期購読の管理を案内する (billing/03 §10.3・テスト 87)
 //
 // NOTE: tsconfig の jsx: "preserve" の都合で、拡張子 .ts + React.createElement で書く (設定画面のテストと同じ)。
 
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
+import { IAP_STORE_LABELS, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
 import { EMPTY_PLAN_FEATURES, type BillingSummary, type SubscriptionStatus } from '@/lib/billing/core';
 
 const h = React.createElement;
@@ -134,7 +137,7 @@ describe('billing/01 §10.3 /account/billing', () => {
       fetchMock.mockImplementation(async () => jsonResponse({ data: summary }));
       await render(AccountBillingPage);
 
-      expect(container.querySelector('[data-testid="billing-plan"]')?.textContent).toBe(summary.plan_key === 'free' ? 'フリー' : summary.plan_key);
+      expect(container.querySelector('[data-testid="billing-plan"]')?.textContent).toBe(planDisplayName(summary.plan_key));
       expect(buttonTexts()).toEqual([]);
       const text = container.textContent ?? '';
       for (const word of ['お支払い方法・請求書 (Stripe)', '解約する', '解約を取り消す', 'プランを見る']) {
@@ -190,6 +193,68 @@ describe('billing/01 §10.3 /account/billing', () => {
         root = undefined;
       }
     }
+  });
+  it('account billing page shows the store contract wording with the store management link and no cancel / resume / portal buttons for app_store and play_store rows', async () => {
+    for (const store of PURCHASE_STORES) {
+      for (const scheduled of [false, true]) {
+        fetchMock.mockReset();
+        // can_cancel / can_resume / has_customer を真にしても、manage_in_store があればボタンを出さないことを見る
+        fetchMock.mockImplementation(async () =>
+          jsonResponse({
+            data: summaryOf({
+              source: store,
+              manage_in_store: store,
+              has_customer: true,
+              cancel_at_period_end: scheduled,
+              cancel_at: scheduled ? '2026-11-20T15:30:00Z' : null,
+              can_cancel: !scheduled,
+              can_resume: scheduled,
+            }),
+          }),
+        );
+        await render(AccountBillingPage);
+
+        const label = `${store} / 予約 ${scheduled}`;
+        expect(container.querySelector('[data-testid="billing-plan"]')?.textContent, label).toBe('個人 Pro');
+        expect(container.textContent, label).toContain(
+          `${IAP_STORE_LABELS[store]} でご契約中です。解約・お支払い方法の変更は ${IAP_STORE_LABELS[store]} の定期購読の管理から行えます。`,
+        );
+        const manageLink = container.querySelector(`a[href="${STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}"]`);
+        expect(manageLink?.textContent, label).toBe('定期購読の管理を開く');
+        expect(manageLink?.getAttribute('target'), label).toBe('_blank');
+        expect(manageLink?.getAttribute('rel'), label).toBe('noopener');
+        for (const word of ['お支払い方法・請求書 (Stripe)', '解約する', '解約を取り消す']) {
+          expect(buttonTexts(), `${label}: 「${word}」が出ている`).not.toContain(word);
+        }
+        expect(calledPaths(), label).toEqual(['/api/billing/subscription']);
+
+        act(() => {
+          root!.unmount();
+        });
+        root = undefined;
+      }
+    }
+
+    // アプリの WebView では文だけ (管理のページへのリンクも出さない)
+    mocks.isNativeApp = true;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => jsonResponse({ data: summaryOf({ source: 'play_store', manage_in_store: 'play_store' }) }));
+    await render(AccountBillingPage);
+    expect(container.textContent).toContain(`${IAP_STORE_LABELS.play_store} でご契約中です。`);
+    expect(container.querySelector('a[href^="https://"]')).toBeNull();
+    expect(buttonTexts()).toEqual([]);
+    act(() => {
+      root!.unmount();
+    });
+    root = undefined;
+
+    // Stripe の契約には出さない
+    mocks.isNativeApp = false;
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => jsonResponse({ data: summaryOf() }));
+    await render(AccountBillingPage);
+    expect(container.textContent).not.toContain('でご契約中です。');
+    expect(buttonTexts()).toEqual(['お支払い方法・請求書 (Stripe)', '解約する']);
   });
 });
 

@@ -16,7 +16,7 @@ vi.mock('@/lib/membership/self-dissolve', async (importOriginal) => {
 });
 
 import { SelfDissolveSection } from '@/components/membership/SelfDissolveSection';
-import { SELF_DISSOLVE_COPY } from '@/lib/membership/self-dissolve';
+import { FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE, SELF_DISSOLVE_COPY, SELF_DISSOLVE_SURFACES } from '@/lib/membership/self-dissolve';
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,7 +25,7 @@ const PENDING_WORDS = ['準備中', '予定'] as const;
 const FAMILY_ID = 'f0eebc99-9c0b-4ef8-bb6d-6bb9bd380a66';
 const ORG_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
 const DISSOLVED_AT = '2026-10-19T05:00:00.123456+00:00';
-const FAMILY_EFFECT_LINES = 5;
+const FAMILY_EFFECT_LINES = 6;
 const ORG_EFFECT_LINES = 4;
 
 let container: HTMLDivElement;
@@ -79,7 +79,7 @@ async function click(button: HTMLButtonElement) {
 
 describe('SelfDissolveSection (#1917)', () => {
   it('キーワードが「解散します」と一致するまでボタンは押せない。一致すると押せる', async () => {
-    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={vi.fn()} />);
+    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface="settings" onDissolved={vi.fn()} />);
 
     expect(submitButton('family').disabled).toBe(true);
     await type(keywordInput('family'), '解散');
@@ -97,7 +97,7 @@ describe('SelfDissolveSection (#1917)', () => {
         }),
     );
     const onDissolved = vi.fn();
-    await render(<SelfDissolveSection scope="organization" scopeId={ORG_ID} scopeName="株式会社テスト" onDissolved={onDissolved} />);
+    await render(<SelfDissolveSection scope="organization" scopeId={ORG_ID} scopeName="株式会社テスト" surface="settings" onDissolved={onDissolved} />);
 
     await type(keywordInput('organization'), '解散します');
     await click(submitButton('organization'));
@@ -120,7 +120,7 @@ describe('SelfDissolveSection (#1917)', () => {
   it('失敗は role=alert に文を出し、もう一度押せる', async () => {
     dissolveMock.mockResolvedValue({ kind: 'failed', message: 'この家族グループはすでに解散しています。' });
     const onDissolved = vi.fn();
-    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={onDissolved} />);
+    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface="settings" onDissolved={onDissolved} />);
 
     await type(keywordInput('family'), '解散します');
     await click(submitButton('family'));
@@ -136,7 +136,7 @@ describe('SelfDissolveSection (#1917)', () => {
     const onUnauthorized = vi.fn();
     const onDissolved = vi.fn();
     await render(
-      <SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={onDissolved} onUnauthorized={onUnauthorized} />,
+      <SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface="settings" onDissolved={onDissolved} onUnauthorized={onUnauthorized} />,
     );
 
     await type(keywordInput('family'), '解散します');
@@ -147,26 +147,42 @@ describe('SelfDissolveSection (#1917)', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull();
   });
 
-  it('見出しに所属先の名前、効果の箇条書き (家族は 5 行・組織は 4 行)。文に R-12 の 2 語が無い', async () => {
-    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={vi.fn()} />);
+  it('見出しに所属先の名前、効果の箇条書き (家族は 6 行 (家族プランの契約は解散しても続くこと。billing/03 を含む)・組織は 4 行)。文に R-12 の 2 語が無い', async () => {
+    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface="settings" onDissolved={vi.fn()} />);
     expect(container.querySelector('h3')?.textContent).toBe('「山田家」を解散する');
     expect(container.querySelectorAll('li')).toHaveLength(FAMILY_EFFECT_LINES);
+    expect(Array.from(container.querySelectorAll('li')).map((li) => li.textContent)).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.settings);
     for (const word of PENDING_WORDS) expect(container.textContent).not.toContain(word);
 
-    await render(<SelfDissolveSection scope="organization" scopeId={ORG_ID} scopeName="株式会社テスト" onDissolved={vi.fn()} />);
+    await render(<SelfDissolveSection scope="organization" scopeId={ORG_ID} scopeName="株式会社テスト" surface="settings" onDissolved={vi.fn()} />);
     expect(container.querySelector('h3')?.textContent).toBe('「株式会社テスト」を解散する');
     expect(container.querySelectorAll('li')).toHaveLength(ORG_EFFECT_LINES);
     for (const word of PENDING_WORDS) expect(container.textContent).not.toContain(word);
   });
 
+  it('家族プランの契約が続くことの行は、渡された画面 (surface) の文を出し、ほかの画面の文を出さない。取り消せないことの行は最後のまま', async () => {
+    const lineTexts = () => Array.from(container.querySelectorAll('li')).map((li) => li.textContent);
+    for (const surface of SELF_DISSOLVE_SURFACES) {
+      await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface={surface} onDissolved={vi.fn()} />);
+      expect(lineTexts()).toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE[surface]);
+      for (const other of SELF_DISSOLVE_SURFACES.filter((s) => s !== surface)) {
+        expect(lineTexts()).not.toContain(FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE[other]);
+      }
+      expect(lineTexts().at(-1)).toBe(SELF_DISSOLVE_COPY.family.effects.at(-1));
+
+      await render(<SelfDissolveSection scope="organization" scopeId={ORG_ID} scopeName="株式会社テスト" surface={surface} onDissolved={vi.fn()} />);
+      expect(lineTexts()).toEqual([...SELF_DISSOLVE_COPY.organization.effects]);
+    }
+  });
+
   it('onCancel があるときだけ「キャンセル」が出る', async () => {
     const buttonTexts = () => Array.from(container.querySelectorAll('button')).map((b) => b.textContent);
 
-    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={vi.fn()} />);
+    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface="settings" onDissolved={vi.fn()} />);
     expect(buttonTexts()).not.toContain('キャンセル');
 
     const onCancel = vi.fn();
-    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" onDissolved={vi.fn()} onCancel={onCancel} />);
+    await render(<SelfDissolveSection scope="family" scopeId={FAMILY_ID} scopeName="山田家" surface="settings" onDissolved={vi.fn()} onCancel={onCancel} />);
     const cancel = Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'キャンセル');
     expect(cancel).toBeDefined();
     await click(cancel as HTMLButtonElement);

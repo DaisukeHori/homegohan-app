@@ -74,7 +74,7 @@ describe('marketing/01 の料金の記述 (#1911 の後)', () => {
   const doc = read(LANDING_DESIGN_PATH);
   const planCount = LANDING_COPY.pricing.plans.length;
 
-  it('幅の表の料金は、すべての行で今のカードの数 (1 枚) で言い、「カード 2 列」を書かない', () => {
+  it('幅の表の料金は、すべての行で今のカードの数 (LANDING_COPY.pricing.plans の数) で言い、「カード 2 列」を書かない', () => {
     expect(pricingWidthRows(doc).length).toBeGreaterThan(0);
     expect(pricingWidthViolations(doc, planCount)).toEqual([]);
   });

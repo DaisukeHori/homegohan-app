@@ -3,9 +3,9 @@
 // AI の 1 日の利用回数の上限 (#1149 / T40): サーバーに「今日の上限に達しました」で止められたときに、固定の文を出す
 //
 // (main) の全画面に 1 つだけ置く (src/app/(main)/MainLayout.tsx。同意の AiConsentRequiredHost と同じ置き方)。
-// 利用者が始めた AI の操作の fetch (aiFetch) が 429 AI_DAILY_LIMIT を受けると、window に AI_DAILY_LIMIT_EVENT が出る。
-// ここはそれを聞いて、「今日の AI の利用回数の上限 (10 回) に達しました。明日 0 時から使えます。」を画面の下に出す
-// (文は src/lib/ai/daily-limit-client.ts が応答の limit から作る。本文の文をそのまま出さない)。
+// 利用者が始めた AI の操作の fetch (aiFetch) が 429 AI_DAILY_LIMIT か 403 AI_FEATURE_NOT_IN_PLAN を受けると、window に AI_DAILY_LIMIT_EVENT が出る。
+// ここはそれを聞いて、「今日の AI の利用回数の上限 (N 回) に達しました。明日 0 時から使えます。」(N はご利用中のプランの 1 日の上限) や、
+// プランで使えない機能の固定の文を画面の下に出す (文は src/lib/ai/daily-limit-client.ts が応答から作る。billing/03 §8.8)。
 // 少しの間で消える。「閉じる」でもすぐ消せる。
 
 import { useEffect, useState } from "react";

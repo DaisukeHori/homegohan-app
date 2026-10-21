@@ -7,6 +7,7 @@
 import React, { act } from 'react';
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
+import { FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE } from '@/lib/membership/self-dissolve';
 
 const pushMock = vi.hoisted(() => vi.fn());
 
@@ -229,6 +230,10 @@ describe('メンバーシップ設定: 代表者・オーナーの譲渡と解�
     await click(buttonByText('家族グループを解散'));
     expect(container.textContent).toContain('「山田家」を解散する');
     expect(container.querySelector('[data-testid="self-dissolve-family-submit"]')).not.toBeNull();
+    // 家族プランの解約の案内は、設定画面の利用者が開ける「プランとお支払い」(/account/billing) を名指す
+    expect(Array.from(container.querySelectorAll('li')).map((li) => li.textContent)).toContain(
+      FAMILY_PLAN_CONTINUES_AFTER_DISSOLVE.settings,
+    );
 
     await click(buttonByText('キャンセル'));
     expect(container.querySelector('[data-testid="self-dissolve-family-submit"]')).toBeNull();

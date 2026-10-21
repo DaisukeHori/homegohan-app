@@ -95,7 +95,7 @@ R-15 が「少なくとも」に挙げる機能は、どれも 1 本以上のシ
 | S-12 | 本番の CSP の下のブラウザ | `/` を開き、デモと FAQ と仕組みを操作する | `securitypolicyviolation` が 0 件。アプリが書くインラインのスクリプトは JSON-LD (`SiteStructuredData`) の 1 本 (nonce つき) だけ |
 | S-13 | 文言を直す開発者 | `landing-copy.ts` に「10万人が利用」や「写真を撮るたびに」と書く | `tests/public-claims-guard.test.ts` がソース走査と描画の両方で「10万人」を赤にし、`tests/landing-page-1867.test.ts` の U-20 が「たびに」を赤にする。`evidence` に無いパスを書いても赤 (U-2) |
 | S-14 | 整合ゲートの検証者 | 本番ビルドで Lighthouse と e2e を流す | Performance ≥ 90・LCP / CLS が予算内・JS の転送量が予算内・CSP 違反 0・axe の違反 0 (§10・§16) |
-| S-15 | 未ログインの人 (無料の範囲を確かめたい) | 料金の区切りと安心の区切りと FAQ の「本当に無料で使えますか？」を読む | 「いまは無料」と同じ段落に、AI を使う機能には 1 日に使える回数の上限があることが書いてある (有料プランの「準備中」は書かない。#1911)。回数を約束する言い方 (「たびに」「毎回」「無制限」など) はページのどこにも無い |
+| S-15 | 未ログインの人 (無料の範囲を確かめたい) | 料金の区切りと安心の区切りと FAQ の「本当に無料で使えますか？」を読む | 無料プランの範囲を言う段落に、AI を使う機能には 1 日に使える回数の上限があることと、有料プランで増えるもの (`PAID_PLAN_SUMMARY`) が書いてある (「準備中」は書かない。#1911・billing/03 §10.5)。回数を約束する言い方 (「たびに」「毎回」「無制限」など) はページのどこにも無い |
 | S-16 | 未ログインの人 (PC) | 仕組みの区切りを読み進める | 右に固定された端末の画面が、左の手順 (撮る → AI が見る → 褒められる → 献立へ) が画面の中央の帯に入るごとに入れ替わる (溶け込みの切り替え)。手順を飛ばして一気にスクロールしても、最後に中央の帯にある手順の画面になる。区切りの下の流れの図 (写真 → 解析 → 記録 → 献立 → 買い物リスト) は画面に入ったときに線が描かれる |
 | S-17 | 未ログインの人 (PC) | 栄養の見える化の区切りを読む | スコアの輪が画面に入ると、輪が 0 から 89 まで描かれ、数字が 0 から 89 まで増えて止まる (89 はヒーローの前の画面 `comment.png` に写るスコアと同じ値で、アプリの式で再計算できる: §4.9)。隣に、ホームの今日の栄養スコアと今週の自炊率の説明がある |
 | S-18 | 未ログインの人 (スマートフォン) | 場面の区切りで 4 枚のカードを横に送る | カードは 1 枚ずつスナップして止まる。ページ全体は横にスクロールしない。4 枚は 768 px 以上では並べて置かれ、送る操作は無い (帯の箱は、どの幅でも Tab で入れる箱のまま: §5.4) |
@@ -314,7 +314,7 @@ R-15 が「少なくとも」に挙げる機能は、どれも 1 本以上のシ
 | 13 | 家族で使う (`family`) | `FamilySection` | 家族の立場・招待・共有の範囲・家族の献立を見せる | 見出し・一文・要点 4 つ・実際の画面 1 枚 (`family`)・共有の範囲の図 (SVG) | 無料で始める |
 | 14 | 組織で使う (`org`) | `OrgSection` | 職場で使えることを、正直な条件つきで見せる | 見出し・一文・要点 4 つ・組織の形の図 (SVG。管理者が、メンバー・部署・チャレンジの 3 つを管理する形。部署の下にメンバーを置く階層は描かない)。実際の画面は無い (管理者の画面は図で示す) | お問い合わせ → `/contact` |
 | 15 | 安全とプライバシー (`trust`) | `TrustSection` | 正直さで信頼を作る (実績の代わり) | 6 点 (無料と AI の 1 日の上限・データと同意・写真の保存・AI の限界・ログイン中の端末・退会と書き出しと請求)・実際の画面 1 枚 (`consent`) | プライバシーポリシーを読む → `/privacy` |
-| 16 | 料金 (`pricing`) | `PricingSection` | 無料の範囲と上限をはっきり言う | 見出し・一文 (すべて無料 + 上限)・1 枚のカード (いまの無料。#1911 で有料プランの「準備中」のカードを取り除いた)・AI の上限の説明 3 点 | 無料で始める |
+| 16 | 料金 (`pricing`) | `PricingSection` | 無料の範囲と上限をはっきり言う | 見出し・一文 (無料プランの範囲 + 上限 + 有料で増えるもの)・2 枚のカード (無料プランと有料プラン。billing/03 §10.5)・AI の上限の説明 3 点 | 無料で始める |
 | 17 | 使い方ガイド (`guide`) | `GuideSection` | はじめ方が分かることを見せ、ガイドへ送る | 5 つの章の名前と手順の数・アプリの中の使い方の案内 (ハンズオンツアー)・実際の画面 2 枚 (`signup`・`profile`) | 使い方ガイドを読む → `/guide` |
 | 18 | よくある質問 (`faq`) | `FaqSection` | 迷いを解く | 12 件の開閉 (`details` と `summary`。JS が無くても開いて答えを読める) + お問い合わせへのリンク | お問い合わせフォームへ → `/contact` |
 | 19 | 最終 CTA (`cta`) | `FinalCtaSection` | 読み終えた人の背中を押す | 見出し・一文・CTA・安心の 3 点・医療の免責 | 無料で始める → `/signup` |
@@ -420,7 +420,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | S-12 | 本番 CSP: インラインの `<script>` は `SiteStructuredData` の JSON-LD だけで nonce つき。`style` 属性 (読む位置の棒の `transform`・輪の `stroke-dashoffset`・`--lp-i` の遅れ) は `'unsafe-inline'` で可。SVG の図解は JSX (外部ファイル無し)。`securitypolicyviolation` 0 件 (E-12 は物語・輪・FAQ・デモの操作を含む) |
 | S-13 | `landing-copy.ts` に `10万人が利用` → `public-claims-guard` のソース走査が赤、描画の走査も赤。`写真を撮るたびに` → U-20 が赤。`evidence: ['src/app/api/weekly-report/route.ts']` (実在しない) → U-2 が赤 |
 | S-14 | 本番ビルド → Lighthouse (desktop・mobile ×3) → Performance ≥ 90 → e2e `landing-page.spec.ts` (LCP / CLS・JS の転送量・CSP 違反 0・構造・axe・物語・輪・戻る) → Speed Insights で p75 |
-| S-15 | 料金の一文 `登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。…` と、安心の 1 つ目と FAQ の 1 つ目の答えが同じ事実を言う (U-24 が「すべて無料」を含む文字列に「1 日にご利用いただける回数」があることを確かめる。当たる文字列は 3 つ)。ページの文に `たびに` `毎回` `何度でも` `無制限` `使い放題` は無い (U-20) |
+| S-15 | 料金の一文 `無料プランで、写真での食事の記録・献立の作成・健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。…` と、安心の「無料プランと有料プラン」と FAQ の 1 つ目の答えが同じ事実を言う (U-24 が、この 3 つに「1 日にご利用いただける回数」と `PAID_PLAN_SUMMARY` があり、「すべて無料」「いまは無料」がどこにも無いことを確かめる)。ページの文に `たびに` `毎回` `何度でも` `無制限` `使い放題` は無い (U-20) |
 | S-16 | 1280 px・JS あり・no-preference: `StoryScroller` がマウント → `data-js` を付け、1024 px 以上なので固定した端末 (4 枚を重ねた箱。`position: sticky`) を見せ、手順の中の画面を隠す (CSS)。`useInViewIds` が手順 4 つ (`how-step-1`〜`how-step-4`) を `rootMargin: -40% 0px -40% 0px` で見る → 手順 1 が帯に入る → `storyActiveIndex` = 0 → 1 枚目 `camera.png` が `opacity: 1`・ほかは 0 (溶け込み `--lp-dur`) → 手順 2 が帯に入る → 1 → `analyze.png` → … → 一気に末尾へ → 帯に手順 4 → 3 → `menu-result.png`。帯に何も無い瞬間 (手順と手順の間) は直前の値のまま。`FlowDiagram` を包む `Reveal` が画面に入る → `is-in` → 線が `stroke-dashoffset` で 1.2 s かけて描かれる (CSS) |
 | S-17 | `ScoreRing` がマウント → 根に `data-js` (状態 armed: no-preference なら見える数字は 0、CSS の `[data-js]:not([data-in])` の規則で輪は `stroke-dashoffset: 100` に一瞬で隠れる。reduce なら見える数字は 89 で、隠す規則は no-preference の中なので輪も最後の形のまま) → `ScoreRing` の根が画面に入る (`useInViewOnce`) → 根に `data-in` → no-preference なら CSS が輪の `stroke-dashoffset` を全長から `全長 × (1 − 89 / 100)` まで `RING_DRAW_MS` (800 ms) で動かし、JS が `countUpValue` で数字を 0 → 89 に 800 ms で増やす (rAF)。reduce なら最初から最後の見え方。JS 無しなら HTML の最後の値 (89) と最後の offset (SVG の属性) がそのまま見える。89 = `comment.png` に写るスコア = `GUIDE_MEAL_ANALYSIS.overallScore` (U-28 が突き合わせる) |
 | S-18 | 375 px: 場面の帯の箱 (`div`。`role="region"`・`aria-label="使い方の場面"`・`tabIndex={0}`。中に `ul`) は `overflow-x: auto; scroll-snap-type: x mandatory`、各 `li` は `scroll-snap-align: start`・幅 `min(85vw, 22rem)`。指で送ると 1 枚ずつ止まる。箱は `tabindex="0"` なのでキーボードでも送れる (axe の `scrollable-region-focusable`)。ページの `scrollWidth` は `clientWidth` 以下 (E-6)。768 px 以上は 2 列、1024 px 以上は 4 列で、箱はスクロールしない。箱の `role`・`aria-label`・`tabindex` は幅で変えない (§5.4。Server の HTML に出し、CSS で切り替えない) |
@@ -464,7 +464,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 
 語を足すときは、いまの `LANDING_COPY` に当たらないことを確かめてから足す (U-20 の一覧と同じ)。
 
-- 「すべて無料」と書く文字列には、同じ文字列の中に `1 日にご利用いただける回数` の文を入れる (§4.1 の `free-now` の条件。U-24。v2.0 で当たる文字列は、安心の 1 つ目・料金の一文・FAQ の 1 つ目の 3 つ)。
+- 「すべて無料」「いまは無料」は書かない。無料の範囲を説明する 3 つの文字列 (安心の「無料プランと有料プラン」・料金の一文・FAQ の 1 つ目) には、`1 日にご利用いただける回数` の文と `PAID_PLAN_SUMMARY` を入れる (§4.1 の `free-now` の条件。U-24。billing/03 §10.5)。
 - 実際の画面を出す区切りには、画面の注記 `SCREENS_CAPTION` を置く (U-26。v2.0 で当たる区切りは hero・how・features・photo・menu・nutrition・health・badges・chat・family・trust・guide の 12)。
 - 画面の札 (何の画面か。`ChapterSection` の各画面の下の短い文) は 10 字以内で 1 行に収める。画面が 3〜5 枚の章 (3 列の格子: §5.4) の札は 8 字以内 (1024 px で端末の幅は約 115 px で、14 px の字が 8 つ入る) (E-22)。
 
@@ -483,8 +483,8 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | `health-records` | 体重 (体重計の写真からも) と健康診断の結果 (写真から) を記録し、推移をグラフで見る | `src/app/api/ai/analyze-weight-scale/route.ts:41`・`src/app/api/ai/analyze-health-checkup/route.ts:57`・`src/app/api/health/checkups/route.ts`・`src/app/(main)/health/` | 写真の読み取りは同意と上限の範囲で | ヒーローの一文・機能「体重と健康の記録」・章 health・場面「健康の記録を続けたい人」・料金のカード・FAQ「本当に無料」 |
 | `badges` | 食べた食事を「完了」にした回数と続けた日数、アプリの中の使い方の案内の完走などで、バッジが付く。新しく付くとお知らせが出る | 数える: `src/app/api/badges/route.ts:48-54`・`:63-74`・`:140`。付ける: `:150-169` (`planner` の保険の判定 `:166-169` を含む)・migration `supabase/migrations/20251126124224_create_meal_planner_tables.sql:1164-1173` (`tutorial_complete`)。一覧の許可: `src/lib/badges/awardable.ts:17-34`。名前: 同じ migration の `INSERT INTO public.badges` (`:14030-14032`・`:14045`。U-6)。写真から献立表に保存した食事は未完了: `src/app/api/meal-plans/add-from-photo/route.ts:171`。お知らせ: `src/app/(main)/badges/page.tsx` の見出し「新しいバッジを獲得！」 | 数えるのは「完了」にした食事だけ → 文は「完了」と書く。付く条件はほかにもある (`planner` = 使い方ガイドのお試しの献立の追加と、AI で複数の日の献立をまとめて作る生成の完了 (PR #1895・#1897。origin/main `05a8ef02` にマージ済み)・期間ごとの集計の順位と改善率 (ほかの利用者との比較に基づくバッジ: §2.5)) → 文は付く条件を「など」で終え、列挙を全部と読ませない。章 badges は、4 つのバッジ (§4.11 の表) の名前と説明を出す。アプリの中のバッジの説明 (`badges.description`) は、別の案件 (PR #1890・migration `20261018040000`。origin/main `897182fc` にマージ済み) で付与の条件に合わせた文 (例: `first_bite` = `はじめて食事を「完了」にしました。新しい習慣の第一歩です！`) に直した。本冊はその新しい説明を前提にし、紹介ページの説明は付与の条件を短く言う自分の文のまま (DB の文を写す必要は無い: U-6)。載せないバッジ: `photo_10` (`カメラマン`) は名前が付与の条件 (完了した食事 10 食。写真で記録したかを問わない) と食い違う。`planner` (`計画上手`) は、#1895 の後は名前と付与の条件が食い違わないが、章 badges の列は v1.7 と同じ 4 枚 (食事を完了にする・続ける・アプリの中の案内の完走) のまま保ち、v2.0 では足さない (§4.11・Q-13) | 機能「バッジを集める」・章 badges・ガイド「アプリの中の案内」 |
 | `fridge` | 冷蔵庫の写真から食材を読み取る | `src/app/api/ai/analyze-fridge/route.ts:80`・`src/app/(main)/pantry/page.tsx:116` | 同意と上限の範囲で | 機能「食材の管理」・章 menu「食材の管理」 |
-| `family` | 家族を招待して献立を一緒に見る・記録を共有する | `src/app/api/family/groups/route.ts`・`src/app/api/family/invites/route.ts`・`src/app/api/family/members/me/share/route.ts`・`src/app/(main)/family/` | 共有は本人の設定の範囲で (`family-share`) | 機能「家族と組織で使う」・家族の区切り・FAQ「家族で使えますか？」 |
-| `free-now` | 登録して使える機能は、いまは無料 | `src/app/pricing/PricingPageView.tsx:125` の `現在は無料でご利用いただけます。`・`:68` (料金の FAQ の答え。#1892 で AI の 1 日の上限の文 `AI_DAILY_LIMIT_NOTE` が付いた)。#1911 (#1916) で `有料プランは準備中です（販売開始前）` を取り除いた | AI を使う機能には 1 日の利用回数の上限がある → 「すべて無料」と書く文字列には上限の文も入れる (U-24)。組織は運営が作るもので、登録しただけでは使えない (`org-admin`) → 「すべて無料」の文は「登録してお使いいただける機能は」で範囲を言い、料金の「いま使える機能」の一覧に組織を入れない | 安心の 3 点・安心「いまは無料で使えます」・料金・FAQ「本当に無料」・`SITE_DESCRIPTION` |
+| `family` | 家族を招待して献立を一緒に見る・記録を共有する | `src/app/api/family/groups/route.ts`・`src/app/api/family/invites/route.ts`・`src/app/api/family/members/me/share/route.ts`・`src/app/(main)/family/` | 共有は本人の設定の範囲で (`family-share`)。家族グループの作成とメンバーの追加は、代表者の家族プランの契約が要る (billing/03 §6.6) | 機能「家族と組織で使う」・家族の区切り・FAQ「家族で使えますか？」 |
+| `free-now` | 無料プランで使える機能があり、有料プランは 3 つ (個人 Pro / 家族 Basic / 家族 Pro)。家族グループ・究極モード・料理画像の作成は有料プラン | `src/app/pricing/PricingPageView.tsx:128` の無料のカードの `FREE_PLAN_FEATURES` の箇条書き・`:177` (有料のカードの `PLAN_CATALOG` の `features` の箇条書き)・`packages/shared/src/billing-plans.ts` (価格と内容の正本。billing/03 §8.9)。billing/03 §10.1 (#1912 段 C) で「現在は無料でご利用いただけます。」の段落と料金の FAQ の節を取り除いた | AI を使う機能には 1 日の利用回数の上限がある → 無料と書く段落には上限の文も入れる (U-24)。無料の機能の一覧に、家族・究極モード・料理画像の作成と組織を入れない (組織は運営が作るもので、登録しただけでは使えない (`org-admin`)) | 安心の 3 点・安心「無料プランと有料プラン」・料金・FAQ「本当に無料」・`SITE_DESCRIPTION` |
 | `ai-daily-limit` | AI を使う機能 (写真の解析や献立の提案など) は、1 日に使える回数に上限がある。上限に達した日は、翌日 0 時から使える。画面を開くと自動で動く機能は上限に数えない | 数える: `src/lib/plan/entitlements.ts:197`・止めたときの文: `supabase/functions/_shared/ai-daily-limit.ts:43-44`・既定の値: `supabase/migrations/20261011020000_ai_daily_limits.sql:78-82`・運営画面で変えられる: `entitlements.ts:7`・上限に数えない自動の機能: `supabase/functions/_shared/ai-usage-core.ts:96` | 回数の数字は書かない (運営画面で変えられる)。「AI のすべての機能」とは書かず「AI を使う機能」と書く | 安心「いまは無料で使えます」・料金の一文と 3 点・章 menu・章 chat・FAQ「本当に無料」・FAQ「どんな機能に AI を」 |
 | `ai-consent` | AI を使う機能は、日本国外の AI 事業者へのデータ提供について同意を受けてから使える | `src/components/consent/AiDataConsentModal.tsx`・題と機能の列挙 `src/lib/ai/consent-config.ts:120-122`・サーバーの判定 `src/lib/ai/consent-guard.ts` (403 `AI_CONSENT_REQUIRED`) | 無し | 安心「データの取り扱い」・安心の画面 `consent.png`・FAQ「どんな機能に AI を」 |
 | `no-card` | クレジットカード不要 | 新規登録の画面 `src/app/(auth)/signup/page.tsx:188` (`クレジットカードは不要です`)。決済の入力は無い | 無し | 安心の 3 点・ガイド「登録はメールか Google で」 |
@@ -551,7 +551,7 @@ scripts/guide-screenshots/               撮影の台本 (段 0 で 6 枚の撮�
 | 一文 | `写真を 1 枚撮ると、AI が料理を認識して栄養を推定します。食事の記録の画面では、記録をほめるひと言と栄養のひと言メモが出ます。1週間の献立の提案から買い物リスト、体重や健康診断の記録まで、ひとつのアプリでそろいます。` | `photo-analyze`・`praise`・`nutrition-tip`・`weekly-menu`・`shopping-list`・`health-records` |
 | 主 CTA | `無料で始める` → `/signup` | `free-now` |
 | 副 CTA | `デモを試す` → `#demo` (`Link`) | – |
-| 安心の 3 点 | `いまは無料で使えます` / `クレジットカード不要` / `いつでも退会できます` | `free-now`・`no-card`・`delete-export` |
+| 安心の 3 点 | `無料で始められます` / `クレジットカード不要` / `いつでも退会できます` | `free-now`・`no-card`・`delete-export` |
 | 実際の画面 (5 枚の扇。動かない。640 px 未満は 3 枚) | HTML の順 (読み上げの順): `/guide/camera.png` (alt `食事の写真を選んだ撮影の画面`・左の後ろ)・`/guide/analyze.png` (alt `食事の写真の解析結果の画面`・右の後ろ)・`/guide/comment.png` (alt `解析結果の記録コメント`・前の中央)・`/guide/menu-result.png` (alt `1 週間分の献立が入った献立表`・遠くの左)・`/guide/badge-collection.png` (alt `トロフィールームのバッジの一覧`・遠くの右) | `photo-analyze`・`praise`・`weekly-menu`・`badges` |
 | 画面の注記 (扇の下) | `実際のアプリの画面です。表示している記録と数値は、撮影用の見本です。` (`SCREENS_CAPTION`) | – |
 | スクロールの手がかり (文字 + `ChevronDown`。リンクではない) | `スクロールして、仕組みを見る` | – |
@@ -634,7 +634,7 @@ h2 `写真の記録だけじゃない。` / 一文 `献立から買い物、体�
 | `health` | 中 | `体重と健康の記録` | `体重は体重計の写真からも。健康診断の結果も写真から取り込めます。推移はグラフで。` | `/guide/weight.png` (`体重を入力する画面`) | `health-records` | `#health` |
 | `badges` | 中 | `バッジを集める` | `食べた食事を「完了」にしていくと、バッジが増えていきます。` | `/guide/badge-collection.png` (`トロフィールームのバッジの一覧`) | `badges` | `#badges` |
 | `chat` | 小 | `AI に相談` | `画面の右下から相談できます。頼むと、献立の作成などを AI がその場で行います。` | (アイコンのみ `MessageCircle`) | `ai-chat` | `#chat` |
-| `family` | 小 | `家族と組織で使う` | `家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。` | (アイコンのみ `Users`) | `family` | `#family` |
+| `family` | 小 | `家族と組織で使う` | `家族プランで、家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。` | (アイコンのみ `Users`) | `family` | `#family` |
 
 カードは `Link` (ページの中の先)。画面の注記 (一覧の下): `SCREENS_CAPTION`。並びは §8.3 の `FeaturesSection`。画像のあるカードでは端末の上の部分だけが見える (§5.4: 下の端で切れる)。`nutrition` のカードで見えるのは `home.png` の上の部分 (`今日の献立` の箱。§7.1) で、`今週の自炊率` のグラフは章 nutrition の端末で全体が見える。カードの本文は「ホームで」見られるものを言い、画像はそのホームの画面 (alt `ホームの画面`) なので食い違わない。`badges` のカードの本文 (`食べた食事を「完了」にしていくと、バッジが増えていきます。`) は、付く条件の 1 つ (完了にした食事) を言うだけで、ほかの条件が無いとは言わない。だから、`planner` が AI の週の献立の生成の完了でも付くようになった後 (PR #1895。§4.11・Q-13) も、カードの文は偽にならない。
 
@@ -745,7 +745,7 @@ h2 `あなたの暮らしに、当てはめると。` / 一文 `使い方は人�
 | id | 見出し | 本文 | 主張 | アイコン |
 |---|---|---|---|---|
 | `solo` | `一人暮らし` | `帰りが遅い日も、写真を撮るだけで AI が料理を認識して栄養を推定します。週末に 1週間分の献立を AI に頼み、買い物リストを持ってスーパーへ。` | `photo-analyze`・`weekly-menu`・`shopping-list` | `User` |
-| `family` | `子育て家庭` | `家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。` | `family-roles`・`family-share`・`family-menu-view` | `Users` |
+| `family` | `子育て家庭` | `家族プランで家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。` | `family-roles`・`family-share`・`family-menu-view` | `Users` |
 | `health` | `健康の記録を続けたい人` | `体重計や健康診断の結果を写真から取り込み、推移をグラフで確かめます。目標を決めて、目標までの差を見ながら記録します。` | `health-records`・`health-graphs`・`health-goals` | `HeartPulse` |
 | `team` | `職場とチーム` | `組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。` | `org-admin` | `Building2` |
 
@@ -757,7 +757,7 @@ h2 `あなたの暮らしに、当てはめると。` / 一文 `使い方は人�
 |---|---|---|
 | eyebrow | `家族で使う` | – |
 | h2 | `家族の献立を、ひとつの表で。` | `family-menu-view` |
-| 一文 | `代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。` | `family-roles`・`family-share` |
+| 一文 | `家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。` | `family-roles`・`family-share` |
 | 要点 1 | 見出し `3 つの立場` / 本文 `代表者・大人・子ども。アカウントの無い子どもも、代表者が登録できます。代表者の役目は、あとから譲れます。` | `family-roles` |
 | 要点 2 | 見出し `メールで招待` / 本文 `大人のメンバーは、メールの招待リンクから参加します。` | `family-roles` |
 | 要点 3 | 見出し `共有の範囲は自分で` / 本文 `食事の記録・健康・献立の 3 つを、家族に見せるかどうか自分で選びます。はじめは、食事の記録はオン、健康はオフです。` | `family-share` |
@@ -788,7 +788,7 @@ h2 `正直に、お伝えします。` / 一文 `できることと、できな�
 
 | 見出し | 本文 | 主張 |
 |---|---|---|
-| `いまは無料で使えます` | `登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。` | `free-now`・`ai-daily-limit` |
+| `無料プランと有料プラン` | `無料プランでは、写真での食事の記録、記録をほめるひと言、献立の作成、健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。` + `PAID_PLAN_SUMMARY` (`@homegohan/shared`。billing/03 §10.5) | `free-now`・`ai-daily-limit` |
 | `データの取り扱い` | `AI を使う機能は、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。写真や記録の保存と第三者への提供については、プライバシーポリシーをご確認ください。` (リンク `プライバシーポリシーを読む` → `/privacy`) | `ai-consent`・`privacy` |
 | `写真の保存` | `写真は、公開されない保存領域に保存します。表示するときは、ログインしたご本人のために有効期限つきの URL を発行します。` | `photo-storage` |
 | `AI の分析は推定です` | `料理や撮影の条件によって、実際の値と異なることがあります。医療目的での使用はお控えください。` | `ai-estimate` |
@@ -802,14 +802,15 @@ h2 `正直に、お伝えします。` / 一文 `できることと、できな�
 | 要素 | 文言 | 主張 |
 |---|---|---|
 | eyebrow | `料金` | – |
-| h2 | `いまは、無料で使えます。` | `free-now` |
-| 一文 | `登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。` | `free-now`・`ai-daily-limit`・`org-admin` |
-| カード 1 | 見出し `いま使える機能` / 札 `無料` / 項目 `写真で記録とほめるひと言`・`1週間の献立と買い物リスト`・`食材の管理`・`栄養の見える化`・`体重と健康の記録`・`バッジ`・`AI に相談`・`家族で使う` / CTA `無料で始める` → `/signup` | `photo-analyze`・`praise`・`weekly-menu`・`shopping-list`・`pantry-manage`・`today-score`・`health-records`・`badges`・`ai-chat`・`family` |
+| h2 | `無料ではじめて、必要になったら有料プランへ。` | `free-now` |
+| 一文 | `無料プランで、写真での食事の記録・献立の作成・健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。` + `PAID_PLAN_SUMMARY` + `組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。` | `free-now`・`ai-daily-limit`・`org-admin` |
+| カード 1 | 見出し `無料プラン` / 札 `無料` / 項目 `写真で記録とほめるひと言`・`1週間の献立と買い物リスト`・`食材の管理`・`栄養の見える化`・`体重と健康の記録`・`バッジ`・`AI に相談` / CTA `無料で始める` → `/signup` | `photo-analyze`・`praise`・`weekly-menu`・`shopping-list`・`pantry-manage`・`today-score`・`health-records`・`badges`・`ai-chat`・`family` |
+| カード 2 | 見出し `有料プラン` / 札 `無料体験つき` / 項目 = `PLAN_CATALOG` (`@homegohan/shared`) の 3 プランの価格の行 (`個人 Pro　月額 580円 / 年額 5,800円（税込）` の形。家族は `（N 人まで）` を付ける) / 本文なし / CTA `料金プランを見る` → `/pricing` | `free-now` |
 | AI の上限 1 | 見出し `1 日の上限` / 本文 `AI を使う機能（写真の解析・献立の提案・買い物リストの作り直し・AI 相談など）は、1 日に使える回数に上限があり、上限に達した日は翌日 0 時からまた使えます。回数は運営の設定で変わるため、ここには書きません。` | `ai-daily-limit`・`ai-features` |
 | AI の上限 2 | 見出し `数えない機能` / 本文 `画面を開くと自動で動く機能（ホームの栄養スコアなど）は、上限に数えません。` | `ai-daily-limit`・`today-score` |
 | AI の上限 3 | 見出し `一時停止` / 本文 `運営の判断で、AI 相談を一時停止することがあります。` | `ai-stop` |
 
-価格の数字・「0 円」・通貨の記号は書かない (`FORBIDDEN` の価格と、未確定の価格の扱い)。「いま使える機能」(無料) の一覧に組織を入れない (組織は運営が作り、組織のプランの課金は別の冊: §2.5・`org-admin`)。
+価格の数字は有料プランのカードの項目 (`PLAN_CATALOG` から組む) だけに出す (billing/03 §10.5)。無料プランの一覧に組織・家族・究極モード・料理画像の作成を入れない (組織は運営が作り、組織のプランの課金は別の冊: §2.5・`org-admin`)。
 
 ### 4.18 使い方ガイド (`guide`)
 
@@ -833,13 +834,13 @@ h2 `よくある質問` / 一文 `気になることがあれば、ここで。`
 
 | # | q | a | 主張 |
 |---|---|---|---|
-| 1 | `本当に無料で使えますか？` | `はい。登録してお使いいただける機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、いまはすべて無料です。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。` | `free-now`・`ai-daily-limit` |
+| 1 | `本当に無料で使えますか？` | `はい。無料プランで、写真の記録、ほめるひと言、献立の作成、健康の記録などをお使いいただけます。AI を使う機能（写真の解析や献立の作成など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。` + `PAID_PLAN_SUMMARY` | `free-now`・`ai-daily-limit` |
 | 2 | `どんな機能に AI を使っていますか？` | `食事の写真の解析、献立の作成、買い物リストの作り直し、冷蔵庫や体重計や健康診断の結果の写真の読み取り、健康診断と血液検査の結果へのコメント、料理の画像の作成、AI 相談、献立の振り返りなどです。どれも、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。画面を開くと自動で動く機能（ホームの栄養スコアなど）は、1 日の上限に数えません。` | `ai-features`・`ai-consent`・`ai-daily-limit` |
 | 3 | `どんな写真を撮ればいいですか？` | `食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で、料理が重ならないように撮ってください。` | `photo-analyze` (撮り方の指示だけで、撮り方による認識の良し悪しは言わない: §4.0) |
 | 4 | `AI の分析は正確ですか？` | `AI による分析はあくまで推定値で、料理や撮影条件によっては実際の値と異なる場合があります。医療目的での使用はお控えください。日々の食生活の参考としてお使いください。` | `ai-estimate` |
 | 5 | `データは安全ですか？` | `データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。` | `privacy`・`delete-export` |
 | 6 | `写真はどこに保存されますか？` | `公開されない保存領域に保存します。URL を知っているだけでは閲覧できず、表示するときはログインしたご本人のために有効期限つきの URL を発行します。詳しくはプライバシーポリシーをご確認ください。` | `photo-storage`・`privacy` |
-| 7 | `家族で使えますか？` | `はい。家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。` | `family`・`family-menu-view` |
+| 7 | `家族で使えますか？` | `はい。家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族グループを作り、家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。` | `family`・`family-menu-view` |
 | 8 | `家族の記録は誰に見えますか？` | `家族のメンバーそれぞれが、食事の記録・健康・献立の 3 つを家族に見せるかどうかを自分で選びます。はじめは、食事の記録はオン、健康はオフです。アカウントの無い子どもの登録もできます。` | `family-share`・`family-roles` |
 | 9 | `会社やチームで使えますか？` | `はい。組織は運営が作ります（お問い合わせください）。組織の管理者（オーナー・管理者）が、メンバーを招待し、部署を作り、チャレンジを開けます。個人の記録の集計（活力スコアなど）は出しません。チャレンジの平均は、終わった後に、参加者が最小の人数以上のときだけ出します。` | `org-admin`・`org-challenge-privacy` |
 | 10 | `登録に必要なものは？` | `メールアドレスか、Google アカウントです。クレジットカードは不要です。` | `signup-methods`・`no-card` |
@@ -1134,7 +1135,7 @@ FAQ 5 の行は `q: "データは安全ですか？"` (二重引用符) で 1 �
 | 場面 | 見出しの塊 (0)・カードの帯 (帯の箱 (§5.4) を 1 つの `Reveal` (`div`) で包む。0。768 px 未満では箱がスクロールするため。どの幅でも同じ) | カードの `li` (1 枚ずつは包まない。上の帯の理由) |
 | 家族・組織 | 見出しの塊 (0)・要点 4 つを 1 つずつ (0〜3)・図 (0)・画面 (0)・CTA (0) | 画面の注記 |
 | 安全とプライバシー | 見出しの塊 (0)・6 項目を 1 つずつ (0〜5)・画面 (0) | 画面の注記 |
-| 料金 | 見出しの塊 (0)・カード 1 枚 (0)・AI の上限 3 点 (0〜2) | – |
+| 料金 | 見出しの塊 (0)・カード 2 枚 (0〜1)・AI の上限 3 点 (0〜2) | – |
 | 使い方ガイド | 見出しの塊 (0)・章の一覧 (0)・要点 3 つ (0〜2)・画面の帯の箱 (0。§5.4。中の端末と `li` は包まない)・CTA (0) | 画面の注記 |
 | よくある質問 | 見出しの塊 (0)・質問の列 (12 件。0)・末尾の問い合わせの行 (0) | – |
 | 最終 CTA | 中身を 1 つ (0) | – |
@@ -1277,7 +1278,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `primitives/useInViewSteps.ts` (新設) | hook | 複数の要素の交差 (§6.3) | – |
 | `primitives/useInPageLinkFocus.ts` (新設) | hook | ページの中のリンクの先の区切りへフォーカスを移す (§2.2・§8.3) | – |
 
-`src/components/marketing/` の中は、`react`・`next/link`・`next/image`・`lucide-react`・`framer-motion`・`zod`・`@/lib/site-config` (`SITE_NAME`)・`@/app/guide/guide-content`・`@/components/handson-tour/useReducedMotion`・`@/components/marketing/` と相対の import 以外を import しない (U-10)。`scripts/` を import しない (`GUIDE_MEAL_ANALYSIS` の値は `landing-copy.ts` の `chapters.nutrition.ring` に写し、U-28 が突き合わせる)。
+`src/components/marketing/` の中は、`react`・`next/link`・`next/image`・`lucide-react`・`framer-motion`・`zod`・`@/lib/site-config` (`SITE_NAME`)・`@/app/guide/guide-content`・`@/components/handson-tour/useReducedMotion`・`@homegohan/shared` (料金の文の定数。`landing-copy.ts` だけが使う。billing/03 §10.5)・`@/components/marketing/` と相対の import 以外を import しない (U-10)。`scripts/` を import しない (`GUIDE_MEAL_ANALYSIS` の値は `landing-copy.ts` の `chapters.nutrition.ring` に写し、U-28 が突き合わせる)。
 
 ### 8.2 facade 契約 (公開する関数と props)
 
@@ -1336,7 +1337,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 | `FamilySection` | `section#family`・`aria-labelledby="family-title"`。eyebrow・h2・lead・要点 4 つ (`ul`)・共有の範囲の図 (3 つの札 + 切り替えの形 (`aria-hidden`) + 既定の文)・画面 1 枚 (`family.png`)・画面の注記・CTA | 図の文は読める文字。切り替えの形は `aria-hidden` | 最初から見える | 1024 px 以上: 2 列 (文字 7 : 図と画面 5)。地は `tint` | E-1・E-8・U-26 |
 | `OrgSection` | `section#org`・`aria-labelledby="org-title"`。eyebrow・h2・lead・要点 4 つ・組織の形の図 (`管理者` の札と、その下に横に並ぶ 3 つの札 (`org.figure.managed`) + SVG の線 `aria-hidden`。§5.7)・CTA (`CtaLink` `secondary` → `/contact`) | 札は文字 | 最初から見える | 1024 px 以上: 2 列。地は `blue`。実際の画面は無い | E-1・E-8 |
 | `TrustSection` | `section#trust`・`aria-labelledby="trust-title"`。見出しの塊・`ul` の中に 6 項目 (アイコン・h3・本文・あればリンク)・画面 1 枚 (`consent.png`)・画面の注記 | リンクは高さ 24 px 以上 | 最初から見える | 768 px 未満: 1 列。768〜1279: 2 列。1280 以上: 3 列 (6 項目が 2 行)。見出しは 1 行 (E-22) | U-24・U-26・E-9・E-22 |
-| `PricingSection` | `section#pricing`・`aria-labelledby="pricing-title"`。eyebrow・h2・lead・カード 1 枚 (`ul`。見出し・札・項目の `ul` か本文・CTA。#1911 で有料プランの「準備中」のカードを取り除いた)・AI の上限 3 点 (`ul`) | 札は文字 (14 px) | 最初から見える | カードは 1 枚 (幅は 2 列だったときの 1 枚分の `max-width: 28rem`)。768 px 以上: 上限 3 列。未満: 1 列。地は `tint` | U-24・E-1・E-22 |
+| `PricingSection` | `section#pricing`・`aria-labelledby="pricing-title"`。eyebrow・h2・lead・カード 2 枚 (無料プランと有料プラン。`ul`。見出し・札・項目の `ul`・CTA。billing/03 §10.5)・AI の上限 3 点 (`ul`) | 札は文字 (14 px) | 最初から見える | カードは 1 枚 (幅は 2 列だったときの 1 枚分の `max-width: 28rem`)。768 px 以上: 上限 3 列。未満: 1 列。地は `tint` | U-24・E-1・E-22 |
 | `GuideSection` | `section#guide`・`aria-labelledby="guide-title"`。eyebrow・h2・lead・章の一覧 (`ol`。5 つ。アイコン・名前・手順の数 (`{stepCount} 手順`。単位の文字 `手順` は部品の定数で、`landing-copy.ts` は数だけを持つ))・要点 3 つ・画面 2 枚 (帯の箱 (§5.4) の中の `ul`。端末と札)・画面の注記・CTA (`CtaLink` `secondary` → `/guide`) | 章の順は `ol`。画面の帯の箱は `role="region"`・`aria-label` = `screenStripLabel(guide.eyebrow)` (`使い方ガイドの画面`)・`tabIndex={0}` を、どの幅でも持つ | 最初から見える | 1024 px 以上: 2 列。画面 2 枚は §5.4 の 2 枚の段違い (768 px 未満は帯の箱がスクロールする) | U-14・U-26・U-29・E-1・E-27 |
 | `FaqSection` | Server (島にしない。`'use client'` を持たない)。`section#faq`・`aria-labelledby="faq-title"`・`tabIndex={-1}`。見出しの塊と、12 件の `details` (`faq.items` の順)。各 `details` の中は、`summary` (中に `h3` (問いの文 `q`) と `ChevronDown` (`aria-hidden`)) と、答えの箱 (`p` に `a`)。開閉はブラウザの `details` に任せ (`open` 属性。JS を持たない)、サーバーの HTML ではどれも閉じて描く。`name` 属性は付けない (どの `details` も自分だけで開閉し、複数を同時に開ける)。`summary` の既定の三角の印は出さない (矢印は `ChevronDown`)。末尾に問い合わせの行 (`Link`) | `summary` はフォーカスでき、Enter・Space で開閉でき、開いているかはブラウザが支援技術に伝える。アクセシブルな名前は問いの文。フォーカスのリングは globals.css の `:focus-visible`。文の中のリンクは下線 | reduce: 矢印の回転が一瞬 (遷移の宣言は no-preference の中だけ)。JS 無し: 開閉は JS ありと同じく動き、答えを読める (R-18) | 最大幅 48rem。`summary` は `min-height: 3rem` | E-4・E-9・E-20 |
 | `FinalCtaSection` | v1.7 と同じ。足すのは `section#cta` の `tabIndex={-1}` だけ (§8.3 の `LandingPage`) | v1.7 と同じ | v1.7 と同じ | v1.7 と同じ | U-14・v1.7 と同じ |
@@ -1370,6 +1371,7 @@ v1.7 と同じ (`public/marketing/photos/{salad-bowl,salmon-plate,pesto-pasta}.w
 // 絵文字は書かない (アイコンは各部品が lucide-react から import する)。ドメイン (homegohan.*) は書かない (tests/site-config-guard.test.ts)。
 // 新しい画面と拡大の画像 (/marketing/screens/*.png) の名前と alt は landing-screens.ts (LANDING_SCREENS・LANDING_ZOOMS) が正本で、ここに書くパスと alt はその一覧と一致する (U-4)。拡大の画像の大きさは landing-screens.ts だけが持つ。
 import { z } from 'zod';
+import { PAID_PLAN_SUMMARY, PLAN_CATALOG, formatJpy } from '@homegohan/shared';
 import { SITE_NAME } from '@/lib/site-config';
 
 /** ページが指す public/ の画像 (ガイドの画面写真・紹介ページの写真・紹介ページの新しい画面写真)。実在は U-4 が見る */
@@ -1634,7 +1636,7 @@ export const FlowNodeSchema = z.object({ id: z.enum(FLOW_NODE_IDS), label: z.str
 /** 家族の共有の範囲の図の 1 項目 (§5.7)。state は切り替えの形 */
 export const ShareFigureItemSchema = z.object({ label: z.string().min(1), state: z.enum(['on', 'off', 'choose']), note: z.string().min(1) });
 export const PlanCardSchema = z.object({
-  id: z.enum(['free']),
+  id: z.enum(['free', 'paid']),
   title: z.string().min(1),
   badge: z.string().min(1),
   items: z.array(z.string().min(1)),
@@ -1719,7 +1721,7 @@ export const LandingCopySchema = z.object({
     eyebrow: z.string().min(1),
     title: z.string().min(1),
     lead: z.string().min(1),
-    plans: z.array(PlanCardSchema).length(1),
+    plans: z.array(PlanCardSchema).length(2),
     limits: z.array(PointSchema).length(3),
   }),
   guide: z.object({
@@ -1813,7 +1815,7 @@ export const COPYRIGHT_YEAR = 2026;
 export const SIGNUP_HREF = '/signup';
 export const DEMO_ANCHOR = '#demo';
 
-const ASSURANCES: [string, string, string] = ['いまは無料で使えます', 'クレジットカード不要', 'いつでも退会できます'];
+const ASSURANCES: [string, string, string] = ['無料で始められます', 'クレジットカード不要', 'いつでも退会できます'];
 /** 実際の画面を出す区切りの注記 (§7.1) */
 export const SCREENS_CAPTION = '実際のアプリの画面です。表示している記録と数値は、撮影用の見本です。';
 const PRIMARY_CTA = { label: '無料で始める', href: SIGNUP_HREF };
@@ -1940,7 +1942,7 @@ export const LANDING_COPY = {
       { id: 'health', size: 'medium', title: '体重と健康の記録', body: '体重は体重計の写真からも。健康診断の結果も写真から取り込めます。推移はグラフで。', image: WEIGHT, claimId: 'health-records', href: '#health' },
       { id: 'badges', size: 'medium', title: 'バッジを集める', body: '食べた食事を「完了」にしていくと、バッジが増えていきます。', image: BADGE_COLLECTION, claimId: 'badges', href: '#badges' },
       { id: 'chat', size: 'small', title: 'AI に相談', body: '画面の右下から相談できます。頼むと、献立の作成などを AI がその場で行います。', image: null, claimId: 'ai-chat', href: '#chat' },
-      { id: 'family', size: 'small', title: '家族と組織で使う', body: '家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。', image: null, claimId: 'family', href: '#family' },
+      { id: 'family', size: 'small', title: '家族と組織で使う', body: '家族プランで、家族を招待して献立を一緒に見る。職場では、運営が作った組織で、管理者がメンバーを招待できます。', image: null, claimId: 'family', href: '#family' },
     ],
     screensCaption: SCREENS_CAPTION,
   },
@@ -2076,7 +2078,7 @@ export const LANDING_COPY = {
     lead: '使い方は人それぞれ。4 つの場面で、機能の組み合わせを紹介します。',
     items: [
       { id: 'solo', title: '一人暮らし', body: '帰りが遅い日も、写真を撮るだけで AI が料理を認識して栄養を推定します。週末に 1週間分の献立を AI に頼み、買い物リストを持ってスーパーへ。', claimIds: ['photo-analyze', 'weekly-menu', 'shopping-list'] },
-      { id: 'family', title: '子育て家庭', body: '家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。', claimIds: ['family-roles', 'family-share', 'family-menu-view'] },
+      { id: 'family', title: '子育て家庭', body: '家族プランで家族を招待して、献立表で家族の献立を一緒に見られます。アカウントの無い子どもも登録でき、共有する範囲は自分で選べます。', claimIds: ['family-roles', 'family-share', 'family-menu-view'] },
       { id: 'health', title: '健康の記録を続けたい人', body: '体重計や健康診断の結果を写真から取り込み、推移をグラフで確かめます。目標を決めて、目標までの差を見ながら記録します。', claimIds: ['health-records', 'health-graphs', 'health-goals'] },
       { id: 'team', title: '職場とチーム', body: '組織は運営が作り、組織の管理者がメンバーを招待して、部署やチャレンジを管理します。一人ひとりの記録は、管理者に見せません。', claimIds: ['org-admin'] },
     ],
@@ -2084,7 +2086,7 @@ export const LANDING_COPY = {
   family: {
     eyebrow: '家族で使う',
     title: '家族の献立を、ひとつの表で。',
-    lead: '代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。',
+    lead: '家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族を作り、大人を招待し、子どもを登録します。見せる範囲は、ひとりずつ自分で決めます。',
     points: [
       { title: '3 つの立場', body: '代表者・大人・子ども。アカウントの無い子どもも、代表者が登録できます。代表者の役目は、あとから譲れます。', claimIds: ['family-roles'] },
       { title: 'メールで招待', body: '大人のメンバーは、メールの招待リンクから参加します。', claimIds: ['family-roles'] },
@@ -2117,7 +2119,7 @@ export const LANDING_COPY = {
     title: '正直に、お伝えします。',
     lead: 'できることと、できないこと。データの扱いも、ここに書きます。',
     items: [
-      { title: 'いまは無料で使えます', body: '登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。', link: null },
+      { title: '無料プランと有料プラン', body: `無料プランでは、写真での食事の記録、記録をほめるひと言、献立の作成、健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。${PAID_PLAN_SUMMARY}`, link: null },
       { title: 'データの取り扱い', body: 'AI を使う機能は、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。写真や記録の保存と第三者への提供については、プライバシーポリシーをご確認ください。', link: { label: 'プライバシーポリシーを読む', href: '/privacy' } },
       { title: '写真の保存', body: '写真は、公開されない保存領域に保存します。表示するときは、ログインしたご本人のために有効期限つきの URL を発行します。', link: null },
       { title: 'AI の分析は推定です', body: '料理や撮影の条件によって、実際の値と異なることがあります。医療目的での使用はお控えください。', link: null },
@@ -2129,16 +2131,27 @@ export const LANDING_COPY = {
   },
   pricing: {
     eyebrow: '料金',
-    title: 'いまは、無料で使えます。',
-    lead: '登録してお使いいただける機能は、いまはすべて無料です。AI を使う機能には、1 日にご利用いただける回数の上限があります。組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。',
+    title: '無料ではじめて、必要になったら有料プランへ。',
+    lead: `無料プランで、写真での食事の記録・献立の作成・健康の記録などをお使いいただけます。AI を使う機能には、1 日にご利用いただける回数の上限があります。${PAID_PLAN_SUMMARY}組織でのご利用は、運営が組織を作ってからになります（お問い合わせください）。`,
     plans: [
       {
         id: 'free',
-        title: 'いま使える機能',
+        title: '無料プラン',
         badge: '無料',
-        items: ['写真で記録とほめるひと言', '1週間の献立と買い物リスト', '食材の管理', '栄養の見える化', '体重と健康の記録', 'バッジ', 'AI に相談', '家族で使う'],
+        items: ['写真で記録とほめるひと言', '1週間の献立と買い物リスト', '食材の管理', '栄養の見える化', '体重と健康の記録', 'バッジ', 'AI に相談'],
         body: null,
         cta: PRIMARY_CTA,
+      },
+      {
+        id: 'paid',
+        title: '有料プラン',
+        badge: '無料体験つき',
+        items: PLAN_CATALOG.map(
+          (plan) =>
+            `${plan.display_name}${plan.max_members === null ? '' : `（${plan.max_members} 人まで）`}　月額 ${formatJpy(plan.monthly_price_jpy)} / 年額 ${formatJpy(plan.yearly_price_jpy)}（税込）`,
+        ),
+        body: null,
+        cta: { label: '料金プランを見る', href: '/pricing' },
       },
     ],
     limits: [
@@ -2174,7 +2187,7 @@ export const LANDING_COPY = {
     title: 'よくある質問',
     lead: '気になることがあれば、ここで。',
     items: [
-      { q: '本当に無料で使えますか？', a: 'はい。登録してお使いいただける機能は、写真の記録、ほめるひと言、献立の提案、健康の記録など、いまはすべて無料です。AI を使う機能（写真の解析や献立の提案など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。' },
+      { q: '本当に無料で使えますか？', a: `はい。無料プランで、写真の記録、ほめるひと言、献立の作成、健康の記録などをお使いいただけます。AI を使う機能（写真の解析や献立の作成など）は、1 日にご利用いただける回数に上限があり、上限に達した日は翌日 0 時からまたお使いいただけます。${PAID_PLAN_SUMMARY}` },
       { q: 'どんな機能に AI を使っていますか？', a: '食事の写真の解析、献立の作成、買い物リストの作り直し、冷蔵庫や体重計や健康診断の結果の写真の読み取り、健康診断と血液検査の結果へのコメント、料理の画像の作成、AI 相談、献立の振り返りなどです。どれも、日本国外の AI 事業者へのデータ提供について同意をいただいてから使えます。画面を開くと自動で動く機能（ホームの栄養スコアなど）は、1 日の上限に数えません。' },
       // 撮り方は指示するだけにし、撮り方による認識の良し悪しは言わない (確かめていない。公開の FAQ の同じ質問と同じ趣旨)
       { q: 'どんな写真を撮ればいいですか？', a: '食事全体が写っていれば大丈夫です。真上からでも斜めからでも構いません。明るい場所で、料理が重ならないように撮ってください。' },
@@ -2182,7 +2195,7 @@ export const LANDING_COPY = {
       // データの取り扱いの最終的な文言は、プライバシーポリシーの見直しと合わせて決める。それまでは断定せず、プライバシーポリシーへ案内する (tests/public-claims-guard.test.ts がこの行を見る)
       { q: "データは安全ですか？", a: 'データの取り扱い（保存や第三者への提供など）については、プライバシーポリシーをご確認ください。いつでもデータの削除をリクエストできます。' },
       { q: '写真はどこに保存されますか？', a: '公開されない保存領域に保存します。URL を知っているだけでは閲覧できず、表示するときはログインしたご本人のために有効期限つきの URL を発行します。詳しくはプライバシーポリシーをご確認ください。' },
-      { q: '家族で使えますか？', a: 'はい。家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。' },
+      { q: '家族で使えますか？', a: 'はい。家族プラン（家族 Basic・家族 Pro）をご契約の代表者が家族グループを作り、家族を招待して、献立表で家族の献立を見たり、記録を共有したりできます。見られるのは、相手が共有をオンにしている献立と記録だけです。' },
       { q: '家族の記録は誰に見えますか？', a: '家族のメンバーそれぞれが、食事の記録・健康・献立の 3 つを家族に見せるかどうかを自分で選びます。はじめは、食事の記録はオン、健康はオフです。アカウントの無い子どもの登録もできます。' },
       { q: '会社やチームで使えますか？', a: 'はい。組織は運営が作ります（お問い合わせください）。組織の管理者（オーナー・管理者）が、メンバーを招待し、部署を作り、チャレンジを開けます。個人の記録の集計（活力スコアなど）は出しません。チャレンジの平均は、終わった後に、参加者が最小の人数以上のときだけ出します。' },
       { q: '登録に必要なものは？', a: 'メールアドレスか、Google アカウントです。クレジットカードは不要です。' },
@@ -2220,9 +2233,9 @@ export const LANDING_COPY = {
     { id: 'health-records', text: '体重 (体重計の写真からも) と健康診断の結果 (写真から) を記録し、推移をグラフで見る', evidence: ['src/app/api/ai/analyze-weight-scale/route.ts', 'src/app/api/ai/analyze-health-checkup/route.ts', 'src/app/api/health/checkups/route.ts', 'src/app/(main)/health/'], condition: '写真の読み取りは同意と 1 日の利用回数の上限の範囲で' },
     { id: 'badges', text: '食べた食事を「完了」にした回数と続けた日数、アプリの中の使い方の案内の完走などで、バッジが付く。新しく付くとお知らせが出る', evidence: ['src/app/api/badges/route.ts', 'src/lib/badges/awardable.ts', 'src/lib/jst-day-ranges.ts', 'supabase/migrations/20251126124224_create_meal_planner_tables.sql', 'src/app/api/meal-plans/add-from-photo/route.ts', 'src/app/(main)/badges/page.tsx'], condition: '数えるのは完了にした食事 (使い方の練習のお試しの記録を除く) と、完了した食事のある日の連続日数。写真から献立表に保存しただけの食事は、完了にするまで数えない。付く条件はほかにもあるので、文は「など」で終える。photo_10 は名前が付与の条件と食い違うので載せない。planner は名前と付与の条件が合うが、章 badges の列は 4 枚のまま保ち載せない' },
     { id: 'fridge', text: '冷蔵庫の写真から食材を読み取る', evidence: ['src/app/api/ai/analyze-fridge/route.ts', 'src/app/(main)/pantry/'], condition: '同意と 1 日の利用回数の上限の範囲で' },
-    { id: 'family', text: '家族を招待して献立を一緒に見る・記録を共有する', evidence: ['src/app/api/family/groups/route.ts', 'src/app/api/family/invites/route.ts', 'src/app/api/family/members/me/share/route.ts', 'src/app/(main)/family/'], condition: '共有は本人の設定の範囲で (family-share)' },
-    { id: 'free-now', text: '登録して使える機能は、いまは無料', evidence: ['src/app/pricing/PricingPageView.tsx'], condition: 'AI を使う機能には 1 日の利用回数の上限がある。無料と書く段落には上限の文も入れる。組織は運営が作るもので、登録しただけでは使えない (org-admin) ので、無料の範囲は「登録してお使いいただける機能」と書き、無料の機能の一覧に組織を入れない' },
-    { id: 'ai-daily-limit', text: 'AI を使う機能 (写真の解析や献立の提案など) は、1 日に使える回数に上限がある。上限に達した日は、翌日 0 時から使える。画面を開くと自動で動く機能は上限に数えない', evidence: ['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-daily-limit.ts', 'supabase/functions/_shared/ai-usage-core.ts', 'supabase/migrations/20261011020000_ai_daily_limits.sql'], condition: '回数の数字は書かない (運営画面で変えられる。既定は free の 10 回)。上限に数えない自動の機能もある' },
+    { id: 'family', text: '家族を招待して献立を一緒に見る・記録を共有する', evidence: ['src/app/api/family/groups/route.ts', 'src/app/api/family/invites/route.ts', 'src/app/api/family/members/me/share/route.ts', 'src/app/(main)/family/'], condition: '共有は本人の設定の範囲で (family-share)。家族グループの作成とメンバーの追加は、代表者の家族プランの契約が要る (billing/03 §6.6)' },
+    { id: 'free-now', text: '無料プランで使える機能があり、有料プランは 3 つ (個人 Pro / 家族 Basic / 家族 Pro)。家族グループ・究極モード・料理画像の作成は有料プラン', evidence: ['src/app/pricing/PricingPageView.tsx', 'packages/shared/src/billing-plans.ts'], condition: 'AI を使う機能には 1 日の利用回数の上限がある。無料と書く段落には上限の文も入れる。無料の機能の一覧に、家族・究極モード・料理画像の作成と組織を入れない (組織は運営が作るもので、登録しただけでは使えない (org-admin))' },
+    { id: 'ai-daily-limit', text: 'AI を使う機能 (写真の解析や献立の提案など) は、1 日に使える回数に上限がある。上限に達した日は、翌日 0 時から使える。画面を開くと自動で動く機能は上限に数えない', evidence: ['src/lib/plan/entitlements.ts', 'supabase/functions/_shared/ai-daily-limit.ts', 'supabase/functions/_shared/ai-usage-core.ts', 'supabase/migrations/20261011020000_ai_daily_limits.sql'], condition: '回数の数字は書かない (運営画面で変えられる。free は 3 回 (billing/03 §6.5))。上限に数えない自動の機能もある' },
     { id: 'ai-consent', text: 'AI を使う機能は、日本国外の AI 事業者へのデータ提供について同意を受けてから使える', evidence: ['src/components/consent/AiDataConsentModal.tsx', 'src/lib/ai/consent-guard.ts', 'src/lib/ai/consent-config.ts'], condition: null },
     { id: 'no-card', text: 'クレジットカード不要', evidence: ['src/app/(auth)/signup/'], condition: null },
     { id: 'delete-export', text: 'いつでも退会できる・データを JSON で書き出せる', evidence: ['src/app/api/account/', 'tests/account-delete-route.test.ts', 'tests/account-export.test.ts'], condition: null },
@@ -2568,8 +2581,8 @@ v1.7 と同じ: 殻の `publicPageMetadata('/')` と `SiteStructuredData` を流
 
 | 訪問者 | 端末の幅 (CSS px) | 拡大の倍率 | 入力手段 | JS | 動きの設定 | 結果 |
 |---|---|---|---|---|---|---|
-| 未ログイン | ≥ 1024 | ブラウザ (任意) | 任意 | あり | 標準 | 18 の区切り。ヒーローは 7 : 5 の 2 列 (右に 5 枚の扇)。仕組みは 7 : 5 の 2 列で右に固定した端末 (手順に合わせて溶け込みで入れ替わる。M-6)、下に流れの図 (線が描かれる。M-12)。デモは 2 列 (スコアの数字が増えて止まる。M-7)。機能の一覧は 12 列の格子 (大 2・中 6・小 2)。章は 7 : 5 の 2 列 (奇数の章は文字が左・偶数は画面が左)。章 photo・menu は画面の列の画面の下に拡大の箱があり、画面に入ると縮んだ透明の形から元の大きさへ大きくなる (M-17)。章 nutrition の輪が描かれ数字が増える (M-11)。章 chat は濃色の面。場面は 4 列。家族・組織は 2 列 (図と画面)。安心は 3 列 (1280 px 以上) / 2 列 (1024〜1279)。料金はカード 1 枚 + 上限 3 列。ガイドは 2 列。ヘッダーのナビはいま読んでいる区切りを強調し (M-14)、読む位置の棒が伸びる (M-4)。立ち上がりと現れ方あり。自動で動き続けるものは無い |
-| 未ログイン | 768〜1023 (タブレット) | ブラウザ (任意) | 任意 | あり | 標準 | ヘッダーは高さ 80 px でナビとログインが見える (強調あり)。ヒーローは 1 列 (見出しの下に 5 枚の扇)。仕組みは 1 列 (手順ごとに画面 → 文。固定した端末は描かれない)。デモは 2 列。機能の一覧は 2 列。章は 1 列 (文字 → 画面。画面は §5.4 の並び: 3〜5 枚は 3 列の格子・2 枚は段違い・1 枚はその 1 枚。章 photo・menu はその下に拡大の箱 (幅 24rem・中央。M-17))。場面は 2 列。家族・組織・ガイドは 1 列。安心は 2 列。料金はカード 1 枚 + 上限 3 列 |
+| 未ログイン | ≥ 1024 | ブラウザ (任意) | 任意 | あり | 標準 | 18 の区切り。ヒーローは 7 : 5 の 2 列 (右に 5 枚の扇)。仕組みは 7 : 5 の 2 列で右に固定した端末 (手順に合わせて溶け込みで入れ替わる。M-6)、下に流れの図 (線が描かれる。M-12)。デモは 2 列 (スコアの数字が増えて止まる。M-7)。機能の一覧は 12 列の格子 (大 2・中 6・小 2)。章は 7 : 5 の 2 列 (奇数の章は文字が左・偶数は画面が左)。章 photo・menu は画面の列の画面の下に拡大の箱があり、画面に入ると縮んだ透明の形から元の大きさへ大きくなる (M-17)。章 nutrition の輪が描かれ数字が増える (M-11)。章 chat は濃色の面。場面は 4 列。家族・組織は 2 列 (図と画面)。安心は 3 列 (1280 px 以上) / 2 列 (1024〜1279)。料金はカード 2 枚 + 上限 3 列。ガイドは 2 列。ヘッダーのナビはいま読んでいる区切りを強調し (M-14)、読む位置の棒が伸びる (M-4)。立ち上がりと現れ方あり。自動で動き続けるものは無い |
+| 未ログイン | 768〜1023 (タブレット) | ブラウザ (任意) | 任意 | あり | 標準 | ヘッダーは高さ 80 px でナビとログインが見える (強調あり)。ヒーローは 1 列 (見出しの下に 5 枚の扇)。仕組みは 1 列 (手順ごとに画面 → 文。固定した端末は描かれない)。デモは 2 列。機能の一覧は 2 列。章は 1 列 (文字 → 画面。画面は §5.4 の並び: 3〜5 枚は 3 列の格子・2 枚は段違い・1 枚はその 1 枚。章 photo・menu はその下に拡大の箱 (幅 24rem・中央。M-17))。場面は 2 列。家族・組織・ガイドは 1 列。安心は 2 列。料金はカード 2 枚 + 上限 3 列 |
 | 未ログイン | 640〜767 | ブラウザ (任意) | 任意 | あり | 標準 | 1 列。ヒーローは 5 枚の扇 (640 px 以上)。ナビのアンカーは非表示 (ログインは見える)。章の画面が 2 枚以上のときと、場面・ガイドの画面は横にスナップする帯 (帯の箱: §5.4)。章 photo・menu の拡大の箱は帯の下に 1 つ (帯の中ではない。M-17 は同じ)。場面も帯。バッジは 2 列 |
 | 未ログイン | < 640 | ブラウザ (任意) | 任意 | あり | 標準 | 1 列。ヒーローは 3 枚の扇 (遠くの 2 枚は無い)。ナビとログインは非表示。ヘッダーの「無料で始める」はどこまでスクロールしても上。帯 (章の画面・場面・ガイドの画面) はスナップ。章 photo・menu の拡大の箱は帯の下で列の幅いっぱい (320 px でも横にはみ出さない)。バッジは 1 列 |
 | 未ログイン | 任意 | ブラウザ (任意) | 任意 | あり | reduce | 動き無し (`marketing.css` の動きの宣言は no-preference の中だけ)。固定した端末は手順に合わせて一瞬で切り替わる (1024 px 以上)。輪と線は最初から最後の形、数字は最初から最後の値、拡大の箱は最初から元の大きさ。デモの待ち 0。ナビの強調と読む位置の棒は状態なので付く。並びは同じ幅の標準の行と同じ |
@@ -2874,7 +2887,7 @@ sequenceDiagram
 | U-21 | `デモの見本はアプリと同じ (87・91・85・ソースの式)` | 変更なし |
 | U-22 | `IntersectionObserver の判定は要素の高さに依らない: IntersectionObserver を作るのは useInViewOnce.ts と useInViewSteps.ts の 2 本だけで、どちらも threshold は 0` | 2 本に |
 | U-23 | `自動で動き続けるものは高々 1 つ (infinite の宣言は 1 つ以下)` | 変更なし |
-| U-24 | `「すべて無料」を含む LANDING_COPY の文字列 (3 つ) は、同じ文字列に「1 日にご利用いただける回数」を含む` | 当たる文字列が 3 つあることも見る |
+| U-24 | `LANDING_COPY のどの文字列 (claims を含む) も「すべて無料」「いまは無料」を含まず、無料の範囲を説明する 3 つ (trust の「無料プランと有料プラン」の body・pricing.lead・faq の「本当に無料で使えますか？」の答え) は「1 日にご利用いただける回数」と PAID_PLAN_SUMMARY を含む` | 3 つは場所で取り出す (billing/03 §16.1) |
 | U-25 | `撮影の見本の値はアプリが作れる値で、食事の写真の解析の画面 2 枚は撮り直してある` | 変更なし |
 | U-26 | `実際の画面を出す区切り (hero how features photo menu nutrition health badges chat family trust guide の 12) のそれぞれの中に SCREENS_CAPTION の文があり、LANDING_COPY の各 screensCaption は SCREENS_CAPTION と同じ` | 3 → 12 |
 | U-27 | `ページの中のリンクはすべて next/link: SiteHeader.tsx・HeroSection.tsx・FeaturesSection.tsx のソースに、href が # で始まる素の <a 要素が無く、Link (next/link か、next/link を描く CtaLink) を import している。LANDING_COPY の # で始まる href の先は SECTION_IDS にある` | ページの中のリンクの作りを固定 (§2.2)。`href` の先 (`how` `features` `family` `pricing` `faq` `demo` `photo` `menu` `nutrition` `health` `badges` `chat`) が `SECTION_IDS` に入っている |
@@ -3046,7 +3059,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `tests/e2e/csp-nonce.spec.ts` (門)・`smoke.spec.ts`・`b10-unexplored-areas.spec.ts`・`b12-a11y-i18n.spec.ts` | `page.goto("/")`・`a[href="/pricing"]` ほか | `/` の nonce・title・フッターのリンク・`lang`・alt | 変更なし (フッターは同じ。`networkidle` に達する: 常時の通信は無い) | – |
 | `tests/e2e/back-navigation.spec.ts` (門。#1893) | `LANDING_COPY.header.nav`・`LANDING_COPY.header.cta.label`・`navigation` の名前 `サイトの案内`・`a[href="#…"]`・区切りの id (`#hero` `#how` `#faq` と `header.nav` の先)・`contentinfo` の中のリンクの名前 (`ログイン`・`料金プラン`・`使い方ガイド`。`exact: true`) | `header.nav` の `#` で始まる項目 (v1.7 は `#features` `#how` `#badges` `#faq` の 4 つ) のそれぞれで `/` → ハッシュ → ヘッダーの「無料で始める」→ `/signup` → 戻る (URL・区切りが画面にある・`/signup` の h1 が無い)。ほかに `#how` → `/signup` → 戻る → 進む・`#how` → `#faq` → `/signup` → 戻る 2 回・`#how` → フッターの 3 つ → 戻る・ハッシュ無しの `/` → `/signup` → 戻る で `#hero` が画面に・検索の部分の書き方の違い (`?utm_campaign=a%20b`・`?ref`) で `#how` → `#faq` → 戻る が読み込み直さない・`#how` → 文書の遷移で `/signup` → 戻る・`/pricing` のスキップリンク | 変更なし。v2.0 では `header.nav` の `#` で始まる 5 つ (`#how` `#features` `#family` `#pricing` `#faq`) の型になる。緑のままであるための v2.0 の条件 (本書の正典が満たす): ナビは `nav aria-label="サイトの案内"` の中の `Link` (描かれる `a` の `href` は `#how` などのまま)・`header.nav` の 5 つの先は `section` の id (`SECTION_IDS`)・`header.cta.label` は `無料で始める` (`PRIMARY_CTA`)・`hero` が先頭の区切り・フッターの `ログイン`・`料金プラン`・`使い方ガイド` のリンクの名前は v1.7 のまま (§4.20)。`Link` の項目は Next が描き直すので、検索の部分の書き方の違いの型でも読み込み直さない。段 1 で `header.nav` が 5 つになるが、Playwright は段 3 まで流さない (§17) | 3 (段 3 で流して緑を確かめる) |
 | `src/__tests__/components/hash-history-entry-bridge.test.tsx` (#1893) | `HashHistoryEntryBridge`・`hash-history-entry`・`src/app/layout.tsx`・`next/link のハッシュの移動` | 3 つの `describe`: 判定 (`src/lib/navigation/hash-history-entry.ts` の純関数。検索の部分の書き方の違いは `it.each` で 3 通り)・部品 (印の無いハッシュの移動に印を付ける・既に印のある項目 (`next/link` のハッシュの移動) には何もしない・画面と URL のルートが違えば印を付けない・印の無い項目へ戻ってずれたら読み込み直す ほか)・置き場所 (`src/app/layout.tsx` が部品を import し、ちょうど 1 つ置く) | 変更なし。本冊は `src/app/layout.tsx`・`HashHistoryEntryBridge.tsx`・`src/lib/navigation/*` を変えない (§21 の保持)。v2.0 はナビ 5 つ・「デモを試す」・機能のカード 10 枚を `Link` にするので、紹介ページのページの中のリンクが積む項目は印つきで、部品は何もしない (この番兵の「既に印のある項目には何もしない」の型。§2.2)。layout のスキップリンク (`#main-content`) とアドレスバーのハッシュは v1.7 と同じく部品が受け持つ | – |
-| `tests/public-claims-guard.test.ts` の `#1151 料金ページ (/pricing)`・`#1867 (Q-12) 無料の説明に、AI を使う機能の 1 日の利用回数の上限を書く` (主張 `free-now` の根拠の番兵) | `PricingPageView`・`PAID_PLAN_PENDING_NOTICE`・`AI_DAILY_LIMIT_PHRASE`・`現在、料金はかかりますか？` | `src/app/pricing/PricingPageView.tsx` を買えるプラン 0 件で描いた文に `有料プランは準備中です（販売開始前）` が無く (#1911)、上限の文が 2 か所 (フリーのカードと、買えるプランが無いときの FAQ) にあり、`/faq` の「現在、料金はかかりますか？」の答えにも上限の文がある | 変更なし。本冊は `PricingPageView.tsx` と `src/app/faq/page.tsx` を変えない (§21 の保持・§20)。§4.1 の `free-now` の根拠の `PricingPageView.tsx:125` (0 件のときの段落)・`:68` (料金の FAQ の答え) は origin/main `2ba5b3b3` の行の記録で、ほかの案件が `PricingPageView.tsx` を編集して行がずれても、根拠の事実 (準備中の文が無いこと・上限の文) が保たれているかはこの番兵が見る (事実が崩れれば赤)。根拠のパスの実在は U-2 が見る。行の番号のずれは記録の古さで、見つけた案件が本書の §4.1 の行を同日の docs PR で直す | – |
+| `tests/public-claims-guard.test.ts` の `#1151 料金ページ (/pricing)`・`#1867 (Q-12) 無料の説明に、AI を使う機能の 1 日の利用回数の上限を書く` (主張 `free-now` の根拠の番兵) | `PricingPageView`・`PAID_PLAN_PENDING_NOTICE`・`AI_DAILY_LIMIT_PHRASE`・`料金はかかりますか？` | `src/app/pricing/PricingPageView.tsx` を買えるプラン 0 件で描いた文に `有料プランは準備中です（販売開始前）` が無く (#1911)、上限の文がフリーのカードにあり、`/faq` の「料金はかかりますか？」の答えにも上限の文がある (billing/03 §10.1 で、買えるプランが無いときの FAQ の節は無くなった) | 変更なし。本冊は `PricingPageView.tsx` と `src/app/faq/page.tsx` を変えない (§21 の保持・§20。billing/03 §10.1・§10.5 が変えた)。§4.1 の `free-now` の根拠の `PricingPageView.tsx:128` (無料のカードの箇条書き)・`:177` (有料のカードの箇条書き) は billing/03 段 C の後の行の記録で、ほかの案件が `PricingPageView.tsx` を編集して行がずれても、根拠の事実 (準備中の文が無いこと・上限の文) が保たれているかはこの番兵が見る (事実が崩れれば赤)。根拠のパスの実在は U-2 が見る。行の番号のずれは記録の古さで、見つけた案件が本書の §4.1 の行を同日の docs PR で直す | – |
 | `tests/e2e-back-navigation-suite.test.ts` (#1893) | `tests/e2e/back-navigation.spec.ts`・`e2e-local.yml`・`PW_ARGS` | spec が実在し、`e2e-local.yml` の Playwright の実行と `scripts/local-ci.sh` の `PW_ARGS` に入っている | 変更なし (本冊は門の一覧を変えない) | – |
 | `tests/e2e-landing-suite.test.ts`・`tests/local-ci-workflow-sync.test.ts` | `tests/e2e/landing-page.spec.ts`・`PW_ARGS` | 門に入っている | 変更なし (spec の名前は同じ) | – |
 | `tests/e2e-api-paths.test.ts` | `"/api/`・`SPEC_FILES` | 一覧の spec が叩く `/api/...` が実在 | 変更なし (`landing-page.spec.ts` は `/api/` を書かない。撮影の台本 `shoot.pw.ts` は `tests/e2e/` の外で対象外) | – |
@@ -3075,7 +3088,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | `src/app/about/page.tsx:24` のコメント (「紹介ページ (`landing-copy.ts` の `claims`) と同じく、製品の根拠のある主張だけを書く」) | **変えない**。コメントが挙げる `claims` の id (`photo-analyze`・`ai-estimate`・`praise`・`nutrition-tip`・`health-records`・`family`) は v2.0 にもあり、主張の文も同じ。v2.0 が `family` に足した条件 (共有は本人の設定の範囲で: `family-share`) は、`/about` の「家族を招待して、献立を一緒に見たり、記録を共有したりできます。」(`family` の主張の文そのもの) と食い違わない (共有の範囲を言っていない)。v2.0 の新しい条件 (組織・集計・上限に数えない自動の機能・運営の一時停止) に当たる文は `/about` に無い | – |
 | `src/app/faq/page.tsx:35` のコメント (同じ趣旨) と、同じファイルの `:64` (`praise`・`nutrition-tip`)・`:77` (`free-now`・`ai-daily-limit`) のコメント | **変えない**。`:35`・`:64` の事実 (写真の記録のコメントは定型の文・献立の振り返りは AI) は v2.0 の `praise`・`nutrition-tip` と同じ。`:77` の答え「現在ご提供している機能は無料でご利用いただけます。」+ 上限の文は、v2.0 の `free-now` の条件 (「すべて無料」の文字列に上限の文を入れる) を満たす。v2.0 が `free-now` に足した範囲の言い方 (「登録してお使いいただける機能は」。組織は運営が作るもので登録しただけでは使えない: `org-admin`) は紹介ページの文の決まりで、`/faq` の答えは組織に触れず、組織の課金も origin/main `f0dff7a9` のコードに無い (`src/app/api/admin/organizations/route.ts` の `plan` は区分の値だけ) ので、偽の文にはならない。`/faq` の答えの言い方を紹介ページにそろえるかは本冊の範囲の外 (そろえるなら別の案件で `/faq` を直す。本冊は `/faq` を変えない) | – |
 | `src/app/guide/guide-content.ts:10` のコメント (同じ趣旨) | **変えない**。コメントが挙げる事実 (写真の記録のコメントは定型の文・時間を書かない・バッジは完了した食事の数と連続日数と期間ごとの集計の順位と改善率で付き、目標の達成や「レア」は無い) は v2.0 の `praise`・`badges` と食い違わない。v2.0 の新しい条件に当たる文はガイドに無い。`guide-content.ts` は §21 の保持 | – |
-| `src/app/pricing/PricingPageView.tsx` (主張 `free-now` の根拠。§4.1 の `:125`・`:68`) | **変えない** (§21 の保持)。根拠の事実は §19 の `tests/public-claims-guard.test.ts` の `#1151`・`#1867 (Q-12)` の番兵が見る。ほかの案件の編集で行がずれたら、その案件が §4.1 の行の番号を同日の docs PR で直す (記録の古さで、製品の振る舞いには触れない) | – |
+| `src/app/pricing/PricingPageView.tsx` (主張 `free-now` の根拠。§4.1 の `:128`・`:177`) | **変えない** (§21 の保持)。根拠の事実は §19 の `tests/public-claims-guard.test.ts` の `#1151`・`#1867 (Q-12)` の番兵が見る。ほかの案件の編集で行がずれたら、その案件が §4.1 の行の番号を同日の docs PR で直す (記録の古さで、製品の振る舞いには触れない) | – |
 | `scripts/guide-screenshots/run.sh` の先頭のコメント | 撮る枚数 (15 + 6 + 拡大の切り出し 2) と持ち帰る場所 (`public/marketing/screens`) と、拡大の 2 枚は `comment.png`・`menu-result.png` と同じ撮影の回の同じ画面から切り出すこと (ガイドの画像だけを持ち帰ると、拡大の画像は前の回のまま残る。紹介ページのテストは赤にならないが、同じ見本の同じ画面を写すよう一緒に持ち帰る: `docs/design/marketing/01-landing-site.md` §5.4・§24 Q-22) — これは段 0 の実装で直す (docs ではなく台本) | 段 0 |
 | `docs/design/marketing/prototype/index.html` (静的な試作。§23) | 本書の R3 の直しに文言と図をそろえる (R-9): (1) 組織の要点 2 (見出し `部署と招待`・本文 `部署を作り、メールでメンバーを招待します。`) と、組織の形の図 (`管理者` の札と、その下に横に並ぶ `メンバー`・`部署`・`チャレンジ` の 3 つの札。部署の下にメンバーを置く階層は描かない: §4.15・§5.7) (2) 章 badges の要点 1 の本文の「完走などで」(§4.11)。章の拡大は、拡大の画像が段 0 まで無いので、試作では今のまま `comment.png`・`menu-result.png` の data URI を CSS で切り抜いて見せてよい (§23) | 設計 PR のマージの前 |
 | Issue #1867 | v2.0 の設計の要点 (18 の区切り・主張 46 件・動き 17 (画面の一部の拡大を含む)・新しい画面 6 枚と拡大の画像 2 枚・戻るの原因と作り) をコメントで記録 | 実装 WF の投入時 (オーケストレーター) |
@@ -3100,7 +3113,7 @@ grep の語 = 本設計が足す・変える・移すものの名前で `tests/`
 | 公開の主張 (FORBIDDEN) がソースにも描画にも無い | `tests/public-claims-guard.test.ts` | `LandingPage.tsx`・`landing-copy.ts`・`landing-screens.ts`・`public-pages.ts`・`(auth)/layout.tsx` のソース、または描画に FORBIDDEN の語 |
 | 主張の表と根拠 | U-2・U-3・U-34 | `evidence` が実在しない。`claims` が 46 ちょうどでない。カード・要点・場面・上限の claimId が無い。カードの先と章の要点が食い違う |
 | 文言の形 | U-1 | `LandingCopySchema.parse` が失敗 |
-| 書かない語・条件の落とし | U-15・U-20・U-24 | 書かない語 (回数・最上級・効能・比較)。「すべて無料」の 3 つの文字列に上限の文が無い |
+| 書かない語・条件の落とし | U-15・U-20・U-24 | 書かない語 (回数・最上級・効能・比較)。無料の範囲を説明する 3 つの文字列に上限の文が無い・「すべて無料」「いまは無料」が残る |
 | デモと輪の見本の正直さ | U-21・U-28 | 見本の値が式と違う。輪の値が撮影の見本と違う |
 | 画像の実在と重さ・新しい画面の一致 | U-4 | `public/` に無い。大きさ・重さが外れる (拡大の画像は `LANDING_ZOOMS` の大きさ)。`LANDING_COPY` の `/marketing/screens/` の画像と `LANDING_SCREENS`・`LANDING_ZOOMS` が食い違う |
 | 代替テキスト | U-5・U-4 | ガイドの画面の `alt` が `imageAlt` と違う。新しい画面と拡大の画像の `alt` が `LANDING_SCREENS`・`LANDING_ZOOMS` と違う |

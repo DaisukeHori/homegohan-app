@@ -237,18 +237,19 @@ test.describe("3. オンボーディング", () => {
 // ============================================================
 
 test.describe("4. 静的ページ・リンク整合性", () => {
-  test("4-1: /pricing ページが 200 相当で表示される (買えるプランが無いときは無料の案内だけ)", async ({ page }) => {
+  test("4-1: /pricing ページが 200 相当で表示される (公開のプランの価格と内容は DB の値で出す)", async ({ page }) => {
     await page.goto("/pricing");
     await expect(page).not.toHaveURL(/error/);
     await expect(page.locator("body")).not.toContainText("500");
     // 料金関連のテキストがあること
     const hasPricing = (await page.getByText(/プラン|料金/).count()) > 0;
     expect(hasPricing, "料金テキストが見つからない").toBe(true);
-    // 買えるプランが無いときは、無料の案内だけを出し、「準備中」「販売開始前」とは書かない (#1155 #1151 #1911)
-    await expect(page.getByText("現在は無料でご利用いただけます。").first()).toBeVisible();
+    // 公開のプランの価格と内容は Stripe の Price の有無に依らず出す (billing/03 §10.1。CTA の有無は環境 (Price の登録) で変わるので見ない)。
+    // 「準備中」「販売開始前」とは書かない (#1155 #1151 #1911)
+    await expect(page.getByText("個人 Pro").first()).toBeVisible();
+    await expect(page.getByText("¥580").first()).toBeVisible();
     await expect(page.locator("body")).not.toContainText("準備中");
     await expect(page.locator("body")).not.toContainText("販売開始前");
-    await expect(page.locator("body")).not.toContainText("¥980");
     await expect(page.locator("body")).not.toContainText("¥1,980");
     await expect(page.locator("body")).not.toContainText("年払い");
     await saveEvidence(page, "b10-static", "pricing-page");
@@ -278,9 +279,9 @@ test.describe("4. 静的ページ・リンク整合性", () => {
     await expect(page.getByText("平日 9:00-17:00 (年末年始を除く)").first()).toBeVisible();
     await expect(page.getByText("請求があれば遅滞なく開示します").first()).toBeVisible();
     await expect(page.locator("body")).toContainText("info@mhd-iken.com");
-    // 有料の販売で要る項目 (販売価格・支払方法など) は項目ごと出さず、「準備中」とも書かない (#1911。#1912 が足す)
-    await expect(page.locator("body")).not.toContainText("販売価格");
-    await expect(page.locator("body")).not.toContainText("支払方法");
+    // 有料の販売の項目 (販売価格など) を出す。価格は planCatalogPriceText の「個人 Pro: 月額 580円 …」(billing/03 §10.2)。「準備中」とは書かない
+    await expect(page.getByText("販売価格").first()).toBeVisible();
+    await expect(page.locator("body")).toContainText("580円");
     await expect(page.locator("body")).not.toContainText("お支払いが必要な商品・サービスはありません");
     await expect(page.locator("body")).not.toContainText("準備中");
     await expect(page.locator("body")).not.toContainText("販売開始前");
