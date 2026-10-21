@@ -129,7 +129,7 @@ async function getPlan(planKey: string): Promise<PlanRow> {
 let approver: TestUser; // approved_by / created_by
 let userA: TestUser;
 let userB: TestUser;
-let proPlan: PlanRow; // personal, 月額 980 円 (参照データ)
+let proPlan: PlanRow; // personal, 月額 580 円 (参照データ)
 let freePlan: PlanRow; // personal, 月額 0 円
 let orgStandardPlan: PlanRow; // org, 月額 980 円
 let orgEnterprisePlan: PlanRow; // org, 月額 NULL
@@ -763,7 +763,7 @@ describe('#1224 成功時: redemption の中身・契約の参照・割引額は
   }> = [
     { name: '定額: 価格より小さい', coupon: { discount_type: 'fixed', discount_value: 300 }, planKey: 'pro', expected: () => 300 },
     { name: '定額: 価格を超える額は価格まで', coupon: { discount_type: 'fixed', discount_value: 5000 }, planKey: 'pro', expected: (p) => p },
-    { name: '定率: 小数は切り捨て (980 円の 33% = 323.4 -> 323)', coupon: { discount_type: 'percentage', discount_value: 33 }, planKey: 'pro', expected: (p) => Math.floor((p * 33) / 100) },
+    { name: '定率: 小数は切り捨て (580 円の 33% = 191.4 -> 191)', coupon: { discount_type: 'percentage', discount_value: 33 }, planKey: 'pro', expected: (p) => Math.floor((p * 33) / 100) },
     { name: '定率: 10%', coupon: { discount_type: 'percentage', discount_value: 10 }, planKey: 'pro', expected: (p) => Math.floor((p * 10) / 100) },
     { name: '定率: 100% は価格まで', coupon: { discount_type: 'percentage', discount_value: 100 }, planKey: 'pro', expected: (p) => p },
     { name: '価格が 0 円のプランは 0 円', coupon: { discount_type: 'fixed', discount_value: 100 }, planKey: 'free', expected: () => 0 },
