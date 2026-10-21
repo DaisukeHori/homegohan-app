@@ -22,7 +22,7 @@
  *     共通のユーザーの献立を消すことも残るため。
  */
 
-import { test, expect, type Page } from "./fixtures/auth";
+import { test, expect } from "./fixtures/auth";
 import {
   test as apiUserTest,
   cleanupFreshUser,
@@ -31,7 +31,8 @@ import {
   injectSession,
   upsertUserProfile,
 } from "./fixtures/fresh-user";
-import type { APIResponse } from "@playwright/test";
+// Page は @playwright/test から取る (./fixtures/auth は Page を export していないので、そこから取ると型が any になる)
+import type { APIResponse, Page } from "@playwright/test";
 import { addDaysToDate } from "../../packages/shared/src/date-utils";
 import { jstThisMonday } from "./helpers/jst-week";
 import { E2E_PAID_PERSONAL_PLAN_KEY, grantManualPlanForE2e } from "./helpers/billing-plan";
