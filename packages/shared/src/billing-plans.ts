@@ -160,11 +160,27 @@ export const PAID_PLANS_FAQ_ANSWER = `${PLAN_CATALOG.map(
     `${plan.display_name} (月額 ${formatJpy(plan.monthly_price_jpy)} / 年額 ${formatJpy(plan.yearly_price_jpy)}${plan.max_members === null ? "" : `・${plan.max_members} 人まで`})`,
 ).join("、")}があります。Web でお申し込みの場合、どのプランも ${PLAN_TRIAL_DAYS} 日間の無料体験つきです (同じプランにつき 1 回)。App Store・Google Play でお申し込みの場合の無料体験は、各ストアの表示によります。`;
 
-/** plan_key の表示名 (PLAN_CATALOG に無い plan_key はそのまま返す。free は「無料プラン」) */
+/** free の plan_key の表示名 */
 export const FREE_PLAN_DISPLAY_NAME = "無料プラン";
+/**
+ * PLAN_CATALOG にも free にも無い plan_key の表示名 (#1912)。そうした key の実際の出どころは組織のプラン
+ * (organizations.plan の値 'standard' / 'premium' / 'enterprise' (src/lib/org-plans.ts の ORG_PLAN_VALUES) と、
+ * subscription_plans の plan_type = 'org' の行の org_*。get_effective_plan が組織の利用者にそのまま返す)。
+ * 内部の値 (plan_key) は利用者の画面に出さず、この固定の名前を出す
+ */
+export const ORG_PLAN_DISPLAY_NAME = "組織のプラン";
+/** PLAN_CATALOG にある (表示名と説明を持つ有料の) plan_key か */
+export function isCatalogPlanKey(planKey: string): planKey is PaidPlanKey {
+  return PLAN_CATALOG.some((plan) => plan.plan_key === planKey);
+}
+/**
+ * plan_key の利用者向けの表示名。free は「無料プラン」、PLAN_CATALOG にある key はその display_name、
+ * それ以外 (組織のプランの値・未知の値) は ORG_PLAN_DISPLAY_NAME (内部の値をそのまま返さない。#1912)。
+ * 運営の画面など生の plan_key を見せたいところは、この関数を通さず key を直接出す
+ */
 export function planDisplayName(planKey: string): string {
   if (planKey === "free") return FREE_PLAN_DISPLAY_NAME;
-  return PLAN_CATALOG.find((plan) => plan.plan_key === planKey)?.display_name ?? planKey;
+  return PLAN_CATALOG.find((plan) => plan.plan_key === planKey)?.display_name ?? ORG_PLAN_DISPLAY_NAME;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
