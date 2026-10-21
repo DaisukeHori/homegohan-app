@@ -26,6 +26,7 @@ const { default: FrozenAccountPage } = await import('@/app/frozen/account/page')
 import { FROZEN_ALLOWED_API_PATHS } from '@/lib/auth/frozen'
 import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, FROZEN_DISSOLVE_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from '@/lib/membership/self-dissolve'
 import { resetNativeAuthBridgeForTests } from '@/lib/native-auth-bridge'
+import { STORE_SUBSCRIPTION_DELETION_NOTICE } from '@homegohan/shared'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -199,6 +200,22 @@ describe('退会と書き出しの画面 (/frozen/account)', () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toBe(
       'データのエクスポートに失敗しました。時間をおいて再度お試しください。',
     )
+  })
+
+  it('退会: 削除の節に STORE_SUBSCRIPTION_DELETION_NOTICE (ストアの購読は退会で解約されない) の文を出す', async () => {
+    await render(<FrozenAccountPage />)
+
+    // 退会の節 (見出し「アカウントを削除する (退会)」の section) の中に、ストアの購読の文がちょうど 1 回出る (billing/03 §10.4・S35)
+    const deleteSection = Array.from(container.querySelectorAll('section')).find((section) =>
+      (section.querySelector('h2')?.textContent ?? '').includes('アカウントを削除する'),
+    )
+    expect(deleteSection, '退会の節').toBeDefined()
+    const notices = Array.from(deleteSection!.querySelectorAll('p')).filter((p) => p.textContent === STORE_SUBSCRIPTION_DELETION_NOTICE)
+    expect(notices).toHaveLength(1)
+    // 書き出しの節には出さない
+    expect(container.textContent?.split(STORE_SUBSCRIPTION_DELETION_NOTICE)).toHaveLength(2)
+    // 文を出すだけで、読み込みの時に API を呼ばない (契約の有無を読みに行かない固定の文)
+    expect(calledPaths()).toEqual([])
   })
 
   it('退会: 「削除します」と入力するまで押せない', async () => {

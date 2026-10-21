@@ -30,6 +30,7 @@ import {
 import { SelfDissolveSection } from "@/components/membership/SelfDissolveSection";
 import type { MembershipScope } from "@/lib/emails/membership/scope-label";
 import { BLOCKED_SCOPE_UNKNOWN_GUIDANCE, SELF_DISSOLVED_NEXT_STEP } from "@/lib/membership/self-dissolve";
+import { STORE_SUBSCRIPTION_DELETION_NOTICE } from "@homegohan/shared";
 
 type Notice = { tone: "info" | "error"; text: string } | null;
 /** 退会を止めている家族グループ / 組織 (409 の本文から読む。解散の区画に渡す。#1917) */
@@ -161,6 +162,7 @@ export function AccountSelfServicePanel({
           すべての食事記録・設定・データが<strong className="text-red-600">完全に削除</strong>されます。この操作は取り消せません。
           必要なデータは、先に書き出してください。
         </p>
+        <p className="text-sm text-gray-500">{STORE_SUBSCRIPTION_DELETION_NOTICE}</p>
         <label htmlFor={deleteConfirmId} className="block text-sm text-gray-600">
           確認のため「<span className="font-bold text-red-600">{ACCOUNT_DELETE_CONFIRM_KEYWORD}</span>」と入力してください
         </label>

@@ -6,12 +6,14 @@
  * - 「お支払い方法・請求書 (Stripe)」→ POST /api/billing/portal → 応答の url へ移る
  * - 「解約を取り消す」と /pricing へのリンクは出さない。呼ぶ API はどれも FROZEN_ALLOWED_API_PATHS に入っている
  * - 契約が無い / 手動の契約 / アプリの WebView / 409・429・500 / 401 の扱い
+ * - App Store / Google Play の契約は解約のボタンを出さず、ストアの定期購読の管理から解約できることを出す (billing/03 §10.4・テスト 88)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する (frozen-account-page.test.tsx と同じ)。
  */
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { IAP_STORE_LABELS, STORE_SUBSCRIPTION_MANAGEMENT_URL, PURCHASE_STORES } from '@homegohan/shared'
 import { EMPTY_PLAN_FEATURES, type BillingSummary } from '@/lib/billing/core'
 
 const { pushMock, nativeMock } = vi.hoisted(() => ({ pushMock: vi.fn(), nativeMock: { value: false } }))
@@ -222,5 +224,45 @@ describe('凍結中の解約とお支払いの画面 (/frozen/billing)', () => {
     fetchMock.mockImplementation(async () => jsonResponse({ error: { code: 'AUTH_UNAUTHENTICATED', message: 'x' } }, 401))
     await render()
     expect(pushMock).toHaveBeenCalledWith('/login')
+  })
+
+  it('frozen billing page shows the store management wording and no cancel button for a store row', async () => {
+    for (const store of PURCHASE_STORES) {
+      for (const native of [false, true]) {
+        root = createRoot(container)
+        nativeMock.value = native
+        fetchMock.mockReset()
+        // ストアの契約 (summarizeSubscription は can_cancel / can_resume を立てない。has_customer は Stripe の顧客の名残りでも真になりうる)。
+        // ここでは can_cancel を真にして、画面が manage_in_store で解約のボタンを止めることを見る
+        fetchMock.mockImplementation(async () =>
+          jsonResponse({ data: summaryOf({ source: store, manage_in_store: store, has_customer: false, can_cancel: true }) }),
+        )
+        await render()
+        const label = `${store}${native ? ' (アプリ)' : ''}`
+        expect(container.textContent, label).toContain('ご利用中')
+        expect(container.textContent, label).toContain(`${IAP_STORE_LABELS[store]} の定期購読の管理から解約できます。`)
+        expect(buttonTexts(), label).not.toContain('解約する')
+        const manageLink = container.querySelector(`a[href="${STORE_SUBSCRIPTION_MANAGEMENT_URL[store]}"]`)
+        if (native) {
+          // アプリの WebView では文だけ (管理のページへのリンクも出さない)
+          expect(manageLink, label).toBeNull()
+        } else {
+          expect(manageLink?.textContent, label).toBe('定期購読の管理を開く')
+          expect(manageLink?.getAttribute('target'), label).toBe('_blank')
+        }
+        expect(calledPaths(), label).toEqual(['/api/billing/subscription'])
+        await act(async () => {
+          root.unmount()
+        })
+      }
+    }
+    nativeMock.value = false
+    // Stripe の契約には出さない
+    root = createRoot(container)
+    fetchMock.mockReset()
+    fetchMock.mockImplementation(async () => jsonResponse({ data: summaryOf() }))
+    await render()
+    expect(container.textContent).not.toContain('の定期購読の管理から解約できます。')
+    expect(buttonTexts()).toContain('解約する')
   })
 })

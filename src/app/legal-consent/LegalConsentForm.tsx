@@ -50,6 +50,7 @@ import {
   signOutAfterAccountDeletion,
 } from '@/lib/account-self-service';
 import { DSR_SETTINGS_ENTRY_TITLE, DSR_SETTINGS_PATH } from '@/lib/data-subject-requests/core';
+import { STORE_SUBSCRIPTION_DELETION_NOTICE } from '@homegohan/shared';
 
 interface LegalConsentFormProps {
   /** 同意したあとに戻る先 (検証済みの同一オリジンの相対パス) */
@@ -249,6 +250,7 @@ export default function LegalConsentForm({ next, isReconsent, outdated, needsBir
           <p className="text-sm leading-relaxed text-gray-600">
             {isGuardianMissing ? LEGAL_CONSENT_BIRTH_DATE_COPY.guardianMissingBody : LEGAL_CONSENT_BIRTH_DATE_COPY.minorRefusedBody}
           </p>
+          <p className="text-sm leading-relaxed text-gray-600">{STORE_SUBSCRIPTION_DELETION_NOTICE}</p>
         </div>
 
         {error && (
