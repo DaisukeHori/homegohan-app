@@ -50,6 +50,9 @@ regexes = [
 #   dummy-previous-cron-secret-fedcba9876543210
 #                                      cron の共有シークレットの確認のテスト (tests/cron-secret-probe-edge.test.ts) の、
 #                                      ひとつ前の Cron の認証値 (CRON_SECRET_PREVIOUS) のダミー (#1560)
+#   dummy-cron-secret-1909-followup-0123456789
+#                                      cron のログ保存の延命の確認のテスト (src/__tests__/api/cron/cron-log-keepalive-1909.test.ts) の、
+#                                      Cron の認証値のダミー (#1909)
 [[allowlists]]
 description = "テスト用のダミーの値と栄養素の項目名 (generic-api-key の誤検知)"
 targetRules = ["generic-api-key"]
@@ -67,4 +70,5 @@ regexes = [
   '''^dummy-cron-secret-0123456789abcdef$''',
   '''^GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ$''',
   '''^dummy-previous-cron-secret-fedcba9876543210$''',
+  '''^dummy-cron-secret-1909-followup-0123456789$''',
 ]

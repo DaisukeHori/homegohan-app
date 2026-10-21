@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   getSupabaseAdmin: vi.fn(),
   isMaintenanceFlagOn: vi.fn(),
-  waitUntil: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
@@ -36,9 +35,8 @@ vi.mock('@/lib/db-logger', () => ({
   generateRequestId: () => 'req_test',
 }));
 
-vi.mock('@vercel/functions', () => ({
-  waitUntil: mocks.waitUntil,
-}));
+// ログの保存を待つ延命 (waitUntil) は createLogger が行い、route は延命しない (#1909)。
+// 本物の createLogger を通した確認は cron-log-keepalive-1909.test.ts
 
 const { GET } = await import('@/app/api/cron/push-outbox/route');
 
@@ -151,7 +149,6 @@ describe('GET /api/cron/push-outbox (#1136)', () => {
         sent: 3,
         dead: 4,
       });
-      expect(mocks.waitUntil).toHaveBeenCalledTimes(1);
     }
   });
 

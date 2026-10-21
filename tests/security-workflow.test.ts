@@ -630,6 +630,8 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     'dummy-cron-secret-0123456789abcdef',
     // ひとつ前の Cron の認証値のダミー (tests/cron-secret-probe-edge.test.ts の PREVIOUS_SECRET。#1560)
     'dummy-previous-cron-secret-fedcba9876543210',
+    // cron のログ保存の延命の確認のテスト (src/__tests__/api/cron/cron-log-keepalive-1909.test.ts の SECRET) の Cron の認証値のダミー (#1909)
+    'dummy-cron-secret-1909-followup-0123456789',
   ])('確かめたダミーの値は除外する: %s', (value) => {
     expect(allowed(value)).toBe(true);
   });
@@ -661,6 +663,10 @@ describe('.gitleaks.toml (誤検知の除外は、値を狭く指定する)', ()
     'dummy-previous-cron-secret-fedcba9876543210X',
     'dummy-previous-cron-secret-fedcba987654321X',
     'dummy-current-cron-secret-0123456789abcdef',
+    // #1909 の延命の確認のテストの Cron の認証値のダミーの、前後に足した値・最後の 1 文字を変えた値 (ほかの Cron の認証値は通さない)
+    'x-dummy-cron-secret-1909-followup-0123456789',
+    'dummy-cron-secret-1909-followup-01234567890',
+    'dummy-cron-secret-1909-followup-012345678X',
   ])('少しでも違う値や、ランダムに見える値は除外しない: %s', (value) => {
     expect(allowed(value)).toBe(false);
   });

@@ -18,7 +18,6 @@
  */
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
-import { waitUntil } from '@vercel/functions';
 import { requireCronAuth } from '@/lib/cron-auth';
 import { internalError } from '@/lib/api/errors';
 import { createLogger, generateRequestId } from '@/lib/db-logger';
@@ -35,13 +34,6 @@ export const fetchCache = 'force-no-store';
 export const maxDuration = 60;
 
 const ROUTE_NAME = 'cron/email-outbox';
-
-/**
- * 応答を返したあとも関数を延命する時間 (ミリ秒)。app-log-alerts/route.ts の同名の定数と同じ値・同じ理由
- * (createLogger の書き込みは非同期なので、応答の直後に止められると最後のログが失われうる)。
- * app-log-alerts 側は export していないので、この route にも同じ定義を置く (共有化はしない)。
- */
-const LOG_FLUSH_GRACE_MS = 1000;
 
 export async function GET(req: Request) {
   // 1. 認証 (401 / 503)。tests/cron-secret-contract.test.ts の規則 4
@@ -75,9 +67,8 @@ export async function GET(req: Request) {
       { workerId: randomUUID(), maxAttempts: settings.maxAttempts, batchSize: settings.batchSize },
     );
     if (summary.claimed > 0) logger.info('送信待ちのメールを処理しました', { ...summary });
-    const response = NextResponse.json({ status: summary.claimed === 0 ? 'idle' : 'processed', ...summary });
-    waitUntil(new Promise<void>((resolve) => setTimeout(resolve, LOG_FLUSH_GRACE_MS))); // app-log-alerts と同じ延命 (1000ms)
-    return response;
+    // ログの保存 (待たずに進む) は、createLogger が 1 行ごとに保存が終わるまで関数を止めさせない (#1909)。route では延命しない
+    return NextResponse.json({ status: summary.claimed === 0 ? 'idle' : 'processed', ...summary });
   } catch (err) {
     return internalError(ROUTE_NAME, err, { requestId }); // 3. claim / complete / fail の RPC の失敗・応答の形の誤りは 500 (本文は汎用)
   }

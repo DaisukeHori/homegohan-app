@@ -15,7 +15,6 @@ const mocks = vi.hoisted(() => ({
   from: vi.fn(),
   getSupabaseAdmin: vi.fn(),
   sendEmail: vi.fn(),
-  waitUntil: vi.fn(),
   logInfo: vi.fn(),
   logWarn: vi.fn(),
   logError: vi.fn(),
@@ -48,10 +47,8 @@ vi.mock('@/lib/emails/send', () => ({
   sendEmail: mocks.sendEmail,
 }));
 
-// 関数を延命する waitUntil。Vercel の外では何もしないが、呼ばれたかを確かめるために差し替える
-vi.mock('@vercel/functions', () => ({
-  waitUntil: mocks.waitUntil,
-}));
+// ログの保存を待つ延命 (waitUntil) は createLogger が行い、route は延命しない (#1909)。
+// 本物の createLogger を通した確認は cron-log-keepalive-1909.test.ts
 
 // 文面は実物を通す。renderThrows のときだけ例外にする
 vi.mock('@/lib/emails/ops/app-log-error-spike', async (importOriginal) => {
@@ -1048,21 +1045,6 @@ describe('GET /api/cron/app-log-alerts: そのほか (#1157)', () => {
     expect(Object.keys(routeModule).filter((key) => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(key))).toEqual(['GET']);
     // sendEmail が使う Resend の SDK と node:crypto は Node.js ランタイムでだけ動く
     expect(routeModule.runtime).toBe('nodejs');
-  });
-
-  it('O-4: ログの書き込みを書き切らせるため、応答を返したあとも関数を延命する (認証で断った要求は対象外)', async () => {
-    await GET(makeRequest());
-    expect(mocks.waitUntil).not.toHaveBeenCalled();
-
-    await GET(authed());
-    expect(mocks.waitUntil).toHaveBeenCalledTimes(1);
-    // 延命は Promise を渡して行う (待つ時間は短い)
-    expect(mocks.waitUntil.mock.calls[0][0]).toBeInstanceOf(Promise);
-
-    // 宛先が未設定で info ログだけの回も、そのログを書き切らせる
-    vi.stubEnv('OPS_ALERT_EMAIL', undefined);
-    await GET(authed());
-    expect(mocks.waitUntil).toHaveBeenCalledTimes(2);
   });
 
   it('O-5: fetch のキャッシュ (Next の Data Cache) を使わない設定になっている (外すと、件数も「送る権利」も毎回同じ古い値になる)', async () => {
