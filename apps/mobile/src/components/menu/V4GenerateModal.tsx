@@ -38,6 +38,7 @@ import {
 } from "../../../../../lib/slot-builder";
 import { MOCK_MENU_RESPONSE } from "@homegohan/handson-tour-shared";
 import { getApi } from "../../lib/api";
+import { fetchBillingSummary } from "../../lib/billing-api";
 import { colors, radius, shadows, spacing } from "../../theme";
 
 // ============================================================
@@ -456,6 +457,8 @@ function V4GenerateModalNormal({
   const [note, setNote] = useState("");
   // 究極モード。通常より時間がかかるため既定は OFF にし、モーダルを開くたびに OFF に戻す (WEB と同じ)
   const [ultimateMode, setUltimateMode] = useState(false);
+  // 究極モードの錠 (billing/03 §10.6)。いまのプランの究極モードの 1 日の上限が 0 (使えない) のとき true
+  const [ultimateLocked, setUltimateLocked] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // モーダルが開くたびに状態をリセット
@@ -465,6 +468,28 @@ function V4GenerateModalNormal({
       setIncludeExisting(false); // 破壊的フラグは毎回リセット
       setUltimateMode(false);
     }
+  }, [visible]);
+
+  // モーダルが開くたびに契約の要約を 1 回読み、究極モードを使えないプランなら錠を出す (billing/03 §10.6)。
+  // 読めなければ錠を出さない (サーバの 403 AI_FEATURE_NOT_IN_PLAN が最後の砦)
+  useEffect(() => {
+    if (!visible) return;
+    let cancelled = false;
+    setUltimateLocked(false);
+    fetchBillingSummary()
+      .then((summary) => {
+        if (cancelled) return;
+        const locked = summary.features.ai_feature_caps.menu_generation_ultimate === 0;
+        setUltimateLocked(locked);
+        // 読み込みの前に ON にしていても、錠のときは OFF に戻す (使えないプランで究極モードを送らない)
+        if (locked) setUltimateMode(false);
+      })
+      .catch(() => {
+        if (!cancelled) setUltimateLocked(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [visible]);
 
   // AsyncStorage から range 設定を復元
@@ -933,11 +958,12 @@ function V4GenerateModalNormal({
               <ConditionPills values={constraints} onChange={setConstraints} />
             </View>
 
-            {/* 究極モード (#1142: 全員に開放) */}
+            {/* 究極モード (#1142)。使えないプランでは錠 (billing/03 §10.6) */}
             <UltimateModeToggle
               value={ultimateMode}
               onValueChange={setUltimateMode}
               disabled={isSubmitting || isGenerating}
+              locked={ultimateLocked}
             />
 
             {/* メモ */}

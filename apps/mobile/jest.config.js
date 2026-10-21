@@ -40,6 +40,9 @@ module.exports = {
     // react-native-webview はネイティブモジュール (RNCWebViewModule) を必要とするため
     // Jest 環境では stub モックに差し替える。
     '^react-native-webview$': '<rootDir>/__mocks__/react-native-webview.js',
+    // react-native-purchases (RevenueCat) はネイティブモジュール (RNPurchases) を必要とし、本物のストアに通信するため、
+    // Jest 環境では jest.fn() のスタブに差し替える (billing/03 §8.10)。
+    '^react-native-purchases$': '<rootDir>/__mocks__/react-native-purchases.js',
     // lucide-react-native は 1.57 から package.json の exports に "react-native" の条件を持ち、ESM の .mjs を指す。
     // jest-expo は "react-native" の条件で解決するため .mjs を読むが、変換の対象は \.[jt]sx?$ だけで .mjs は変換されず、
     // 「Must use import to load ES Module」で落ちる (#1902・Dependabot #1900 の CI の赤)。

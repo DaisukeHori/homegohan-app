@@ -3,6 +3,7 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useR
 
 import { classifyAuthError } from "../lib/authErrors";
 import { registerDeviceName } from "../lib/device-name";
+import { identifyPurchases } from "../lib/purchases";
 import {
   flushPendingPushTokenReleases,
   recordPushTokenRelease,
@@ -101,7 +102,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     /** セッションを画面の状態にし、利用者の ID を覚える (null のときは覚えている ID を残す。SIGNED_OUT の掃除で使う) */
     function applySession(next: Session | null) {
       const userId = next?.user?.id;
-      if (userId) lastKnownUserIdRef.current = userId;
+      if (userId) {
+        lastKnownUserIdRef.current = userId;
+        // ストアの購入 (RevenueCat) をこの利用者に結び付ける (billing/03 §8.10)。待たない。失敗はログだけ (購入の画面を開いたときにもう一度結び付ける)
+        identifyPurchases(userId).catch((error: unknown) => {
+          console.warn("[purchases] identify failed", error);
+        });
+      }
       setSession(next);
     }
 

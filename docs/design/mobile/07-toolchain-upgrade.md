@@ -405,6 +405,8 @@ jest-expo が Jest 30 の依存で組まれているのは 58 系だけ。Jest �
 | `@testing-library/react-native ^13.3.3`・`@testing-library/jest-native ^5.4.3`・`@types/jest ^30.0.0`・`resolve-from`・`zod`・`@supabase/supabase-js`・`@homegohan/*`・`lucide-react-native`・`@expo-google-fonts/noto-sans-jp`・`react-native-url-polyfill ^2.0.0` | 変えない (zod はルートと同じ範囲でないと `tests/zod-single-copy-1444.test.ts` が赤。`react-native-url-polyfill` は `src/lib/supabase.ts` と `src/lib/webViewBridge.ts` が読む) |
 | 消す行 | `@react-native-community/slider` / `expo-haptics` / `expo-image-manipulator` (§6.3) |
 
+本冊のマージの後に足した依存 (billing/03 §8.10 の「依存の追加と `package-lock.json` の作り直し」): `react-native-purchases` 10.14.0 (RevenueCat。版を固定) と `expo-dev-client` ~58.0.14 (`bundledNativeModules.json` の値)。アプリ内課金の購入は Expo Go では動かない (Preview API Mode)。開発ビルド (`eas.json` の `development` の profile) が要る。lockfile の置き場 (§2.4) は変わらない: 足した 2 つとその依存はルートに置かれ、`apps/mobile/node_modules` の入れ子は `react` と `@types/react` の 2 つのまま。
+
 ### 6.2 ルート `package.json` の `overrides` (逐語)
 
 ```json

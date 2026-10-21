@@ -1,8 +1,10 @@
 /**
- * billing/01 §10.4・R11: アプリ内課金をしない。アプリの画面から Web の購入のページ (/pricing・/account/billing) を開かない。
+ * billing/03 §10.6 (billing/01 §10.4・R11 を改めたもの): アプリの有料プランの購入はアプリ内課金 (App Store / Google Play) で、
+ * アプリの画面「プランとお支払い」(app/settings/plan.tsx) で行う。アプリの画面から Web の購入のページ (/pricing・/account/billing) へは
+ * 誘導しない (ストアの審査の要件。Web で申し込んだ契約も、アプリには「Web の画面から行えます」の文だけを出し、リンクは出さない。R16)。
  *
  * 以前はアプリに料金の画面 (app/(public)/pricing.tsx) があり、「Web版を開く」で Web の /pricing を外部のブラウザで開いていた。
- * 外部のブラウザには is_native_app の Cookie が無いので、課金の核 (billing/01) のあとの /pricing は価格と「月額で始める」の CTA を描く
+ * 外部のブラウザには is_native_app の Cookie が無いので、/pricing は価格と「月額で始める」の CTA を描く
  * = アプリから Web での購入へ誘導することになる。料金の画面と入口のリンクを消したので、書き戻されないように見張る。
  *
  * 走査: app/ と src/ の .ts / .tsx に、'/pricing' と '/account/billing' の文字列 (webPath="/pricing"・href: "/pricing"・
