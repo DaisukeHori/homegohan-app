@@ -11,6 +11,8 @@ const Purchases = {
   logIn: jest.fn(() => Promise.resolve({ customerInfo: {}, created: false })),
   logOut: jest.fn(() => Promise.resolve({})),
   isAnonymous: jest.fn(() => Promise.resolve(false)),
+  // 既定は匿名の id (どの利用者とも一致しない)。購入の前の確かめ (ensurePurchasesIdentity) を通すテストが利用者の id を返させる
+  getAppUserID: jest.fn(() => Promise.resolve('$RCAnonymousID:jest')),
   getOfferings: jest.fn(() => Promise.resolve({ all: {}, current: null })),
   purchasePackage: jest.fn(),
   restorePurchases: jest.fn(() => Promise.resolve({})),

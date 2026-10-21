@@ -3663,6 +3663,7 @@ export function subscriptionStatusLines(
 /**
  * RevenueCat (react-native-purchases) の薄い包み (billing/03 §8.10)。画面はこれだけを呼ぶ。
  *  - app_user_id = Supabase の利用者 id (useAuth().user.id)。ログインのたびに identify、サインアウトで logOut (別の利用者に購入を引き継がない)
+ *  - 購入・復元の直前に ensurePurchasesIdentity で、SDK の利用者がログイン中の利用者であることを確かめる (#1912)
  *  - 公開 SDK キー (EXPO_PUBLIC_REVENUECAT_APPLE_API_KEY / EXPO_PUBLIC_REVENUECAT_GOOGLE_API_KEY) はビルド時に埋め込む。名前は直接書く (src/lib/env.ts の規則)
  *  - キーが無いビルドでは configure せず、isAvailable() が false (購入の画面はストアの購入を出さない)
  *  - Expo Go では動かない (開発ビルドが要る。P1)
@@ -3689,39 +3690,82 @@ function apiKeyForPlatform(): string | null {
 let purchasesConfigured = false;
 /** いま RevenueCat に結び付いている利用者 (サインアウトで null。null のあいだは購入の情報を読まない) */
 let configuredAppUserId: string | null = null;
+/**
+ * 利用者の結び付け (identify) と外し (reset) を、呼ばれた順に 1 つずつ流す列 (#1912)。
+ * SIGNED_OUT の外し (AuthProvider。待たない) の logOut が通信で遅れ、そのあとに入った次の利用者の logIn と前後すると、
+ * SDK は匿名のまま configuredAppUserId だけが次の利用者になり、購入が匿名の app_user_id に付く。列に並べて前後させない
+ */
+let identityQueue: Promise<void> = Promise.resolve();
+
+/** 列の最後に op を足す。前の op の失敗は次の op に持ち越さない (op の結果は呼んだ側だけが受け取る) */
+function enqueueIdentityOp(op: () => Promise<void>): Promise<void> {
+  const run = identityQueue.then(op);
+  identityQueue = run.catch(() => undefined);
+  return run;
+}
+
+/** 購入・復元の前の結び付けの確かめで、SDK の利用者がログイン中の利用者と一致しなかった (#1912) */
+export class PurchasesIdentityMismatchError extends Error {
+  constructor() {
+    super("purchases app user id does not match the signed-in user");
+    this.name = "PurchasesIdentityMismatchError";
+  }
+}
 
 /** このビルドでストアの購入を扱えるか (キーがある・iOS か Android) */
 export function isPurchasesAvailable(): boolean {
   return apiKeyForPlatform() !== null;
 }
 
-/** ログイン中の利用者で RevenueCat を使えるようにする。2 回目以降は logIn で切り替える (同じ id なら何もしない) */
-export async function identifyPurchases(userId: string): Promise<void> {
-  const apiKey = apiKeyForPlatform();
-  if (apiKey === null) return;
-  if (!purchasesConfigured) {
-    if (__DEV__) await Purchases.setLogLevel(LOG_LEVEL.DEBUG);
-    Purchases.configure({ apiKey, appUserID: userId });
-    purchasesConfigured = true;
-    configuredAppUserId = userId;
-    return;
-  }
-  if (configuredAppUserId !== userId) {
-    await Purchases.logIn(userId);
-    configuredAppUserId = userId;
-  }
+/**
+ * ログイン中の利用者で RevenueCat を使えるようにする。2 回目以降は logIn で切り替える (同じ id なら何もしない)。
+ * logIn が投げたら configuredAppUserId を変えずに投げ直す (購入の画面は購入・復元・カードの表示を止める。#1912)
+ */
+export function identifyPurchases(userId: string): Promise<void> {
+  return enqueueIdentityOp(async () => {
+    const apiKey = apiKeyForPlatform();
+    if (apiKey === null) return;
+    if (!purchasesConfigured) {
+      if (__DEV__) await Purchases.setLogLevel(LOG_LEVEL.DEBUG);
+      Purchases.configure({ apiKey, appUserID: userId });
+      purchasesConfigured = true;
+      configuredAppUserId = userId;
+      return;
+    }
+    if (configuredAppUserId !== userId) {
+      await Purchases.logIn(userId);
+      configuredAppUserId = userId;
+    }
+  });
 }
 
-/** サインアウトのとき。匿名でなければ logOut (次の利用者に購入を引き継がない)。失敗しても投げない */
-export async function resetPurchasesOnSignOut(): Promise<void> {
-  if (configuredAppUserId === null) return;
-  try {
-    if (!(await Purchases.isAnonymous())) await Purchases.logOut();
-  } catch {
-    // 通信の失敗など。次の identify が logIn で切り替える
-  } finally {
-    configuredAppUserId = null;
-  }
+/**
+ * 購入・復元の直前に呼ぶ (#1912)。identifyPurchases(userId) を済ませ、SDK の app_user_id がその利用者であることを確かめる。
+ * 結び付けに失敗した・一致しない・このビルドで購入を扱えないときは投げる (呼んだ側は購入・復元をしない)
+ */
+export async function ensurePurchasesIdentity(userId: string): Promise<void> {
+  await identifyPurchases(userId);
+  if (configuredAppUserId !== userId) throw new PurchasesIdentityMismatchError();
+  const appUserId = await Purchases.getAppUserID();
+  if (appUserId !== userId) throw new PurchasesIdentityMismatchError();
+}
+
+/**
+ * サインアウトのとき。匿名でなければ logOut (次の利用者に購入を引き継がない)。失敗しても投げない。
+ * signOut.ts の 3 つのログアウトと、signOut.ts を通らない SIGNED_OUT (AuthProvider) の両方から呼ぶ。
+ * 2 回目 (signOut.ts のあとに届く SIGNED_OUT) は configuredAppUserId が null なので何もしない (二重に呼んでも害は無い)
+ */
+export function resetPurchasesOnSignOut(): Promise<void> {
+  return enqueueIdentityOp(async () => {
+    if (configuredAppUserId === null) return;
+    try {
+      if (!(await Purchases.isAnonymous())) await Purchases.logOut();
+    } catch {
+      // 通信の失敗など。次の identify が logIn で切り替える
+    } finally {
+      configuredAppUserId = null;
+    }
+  });
 }
 
 export async function fetchOfferings(): Promise<PurchasesOfferings> {
@@ -4011,11 +4055,11 @@ export function billingErrorMessageOf(error: unknown): string {
 | `BillingSummaryWire`・`PurchaseStore`・`PLAN_CATALOG`・`planDisplayName`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`subscriptionStatusLines` | `@homegohan/shared` (`packages/shared/src/billing-plans.ts`。§8.9) |
 | `fetchBillingSummary`・`fetchIapCatalog`・`syncIapPurchases`・`billingErrorMessageOf`・`BILLING_SUMMARY_LOAD_FAILED_MESSAGE`・`BILLING_PURCHASE_FAILED_MESSAGE` | `apps/mobile/src/lib/billing-api.ts` |
 | `matchCatalogWithPackages`・`storeTrialOf`・`renewalText`・`CatalogPlanLike`・`PackageLike`・`PurchasablePlanCard`・`TrialEligibility`・`StoreTrial` | `apps/mobile/src/lib/iap-catalog.ts` |
-| `isPurchasesAvailable`・`identifyPurchases`・`fetchOfferings`・`fetchTrialEligibility`・`purchase`・`restore`・`currentCustomerInfo` | `apps/mobile/src/lib/purchases.ts` |
+| `isPurchasesAvailable`・`identifyPurchases`・`ensurePurchasesIdentity`・`fetchOfferings`・`fetchTrialEligibility`・`purchase`・`restore`・`currentCustomerInfo` | `apps/mobile/src/lib/purchases.ts` |
 | `getTermsUrl`・`getPrivacyUrl`・`webPageUrl` | `apps/mobile/src/lib/siteConfig.ts` (設定タブ `app/(tabs)/settings.tsx:13` と同じ) |
 | `PageHeader`・`LoadingState`・`Button`・`Card` | `apps/mobile/src/components/ui` (`app/settings/account.tsx:8` と同じ) |
 | `useAuth` | `apps/mobile/src/providers/AuthProvider` |
-- `apps/mobile/src/providers/AuthProvider.tsx` の差分: セッションが決まったとき (`applySession` で `userId` が入ったとき) に `identifyPurchases(userId)` を待たずに呼ぶ (`.catch` でログだけ)。`apps/mobile/src/lib/signOut.ts` の `signOutOnDevice` / `signOutWithCleanup` / `signOutAfterAccountDeletion` の掃除の前に `await resetPurchasesOnSignOut()` を足す (失敗しても投げない)。
+- `apps/mobile/src/providers/AuthProvider.tsx` の差分: セッションが決まったとき (`applySession` で `userId` が入ったとき) に `identifyPurchases(userId)` を待たずに呼ぶ (`.catch` でログだけ)。`apps/mobile/src/lib/signOut.ts` の `signOutOnDevice` / `signOutWithCleanup` / `signOutAfterAccountDeletion` の掃除の前に `await resetPurchasesOnSignOut()` を足す (失敗しても投げない)。signOut.ts を通らない `SIGNED_OUT` (自動更新の失効など) でも、`onAuthStateChange` の `SIGNED_OUT` の枝で `resetPurchasesOnSignOut()` を待たずに呼ぶ (`.catch` で受ける。#1912)。`identifyPurchases` と `resetPurchasesOnSignOut` は `purchases.ts` の中の列で呼ばれた順に 1 つずつ流れるので、外しの `logOut` が次の利用者の `logIn` と前後しない。signOut.ts のあとに届く `SIGNED_OUT` では既に外れていて何もしない (二重でも害は無い)。
 - 設定タブ `apps/mobile/app/(tabs)/settings.tsx`: 「個人情報」の節の最後 (栄養目標の行の下) に `SettingRow` (icon `💳`・iconBg `#FFF7ED`・title `プランとお支払い`・subtitle `有料プランの購入・復元・購読の管理`・testID `settings-plan-row`・`onPress={() => router.push(PLAN_SCREEN_PATH)}`) を足す。`PLAN_SCREEN_PATH = "/settings/plan"` は `apps/mobile/src/lib/plan-screen.ts` (純) に置く。栄養目標の行から `last` を外し、新しい行に `last` を付ける。
 - 依存の追加と `package-lock.json` の作り直し (段 D の最初の 2 コミット。P19):
   1. `apps/mobile/package.json` の `dependencies` に `"expo-dev-client": "~58.0.14"` (`expo` 58.0.14 の `bundledNativeModules.json` の値の逐語。`npx expo install expo-dev-client` が書く値と同じ) と `"react-native-purchases": "10.14.0"` (P2 の版の固定。`bundledNativeModules.json` に無いので `npx expo install` は `^` 付きで npm の最新を書くが、本冊は版を固定する) を名前の順 (npm が並べる順。`expo-dev-client` は `expo-constants` と `expo-device` の間、`react-native-purchases` は `react-native` と `react-native-reanimated` の間) で手で書き、commit する。`react-native-purchases-ui` は入れない。ルートの `package.json` (依存・`overrides`)・`apps/mobile/app.json` (`plugins`)・`apps/mobile/eas.json` は変えない (`react-native-purchases` は config plugin を持たず、`expo-dev-client` の plugin は prebuild が自動で当てる。開発ビルドの `development` の profile は既にある。F10・P1・P19)。
@@ -4220,13 +4264,13 @@ const DEVICE_PURCHASE_STORE: PurchaseStore = Platform.OS === "android" ? "play_s
 |---|---|---|
 | 1 | 見出し | 「プランとお支払い」(`PageHeader`。戻るで設定タブへ) |
 | 2 | 現在の状態 | `fetchBillingSummary()` の `summary`: `status === null` かつ `effective_plan_key === 'free'` → 「無料プランをご利用中です」/ `status === null` かつ `effective_plan_key` が `PLAN_CATALOG` の key (`isCatalogPlanKey`。家族のプラン) → 「`planDisplayName(summary.effective_plan_key)` をご利用中です (ご家族または組織のプラン)」/ `status === null` かつ `effective_plan_key` が `'free'` でも `PLAN_CATALOG` の key でもない (組織のプラン: `organizations.plan` の値 `standard`・`premium`・`enterprise` か `org_*`。#1912) → 「組織のプランをご利用中です」(`PLAN_ORG_STATUS_TEXT` = `` `${ORG_PLAN_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live → 「`planDisplayName(summary.plan_key)` をご利用中です」+ `subscriptionStatusLines(summary)` の各行 (無料期間中（X まで）・解約の予約) + 出どころ: `source === 'stripe'` → 「Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。」(リンク無し。R16) / `'manual'` → 文なし / `'app_store'`・`'play_store'` → 「`IAP_STORE_LABELS[source]` でお申し込みのプランです。」+ ボタン「定期購読の管理を開く」(押すと `const info = await currentCustomerInfo(); Linking.openURL(info?.managementURL ?? STORE_SUBSCRIPTION_MANAGEMENT_URL[source])`) |
-| 3 | プランの一覧 (`summary.can_purchase` かつ `isPurchasesAvailable()` かつ `cards.length > 0` のときだけ) | カード = `display_name`・`PLAN_CATALOG` の同じ `plan_key` の `features` (無ければ箇条書きなし)・`max_members` があれば「X 人まで」・間隔ごとの行 (`options`) = `priceString` + `renewalText(interval, priceString, option.trial)` (自動更新の説明と、体験があるときだけ体験の長さ。P9・P10) + ボタン「`<display_name>` を月額で始める」/「`<display_name>` を年額で始める」。請求額 (`priceString`) をカードで最も大きい文字にする (P9 の「most prominent」)。`option.trial` が null でない行だけ、価格の上に「`option.trial.lengthText`無料」と、その下に「体験の終了後は `priceString` が請求されます」を出す。`option.trial` は `storeTrialOf` (§8.10) がストアの導入価格と体験の対象の判定から作る (DB の `trial_days` は使わない。対象外の利用者に体験の文を出さない。R15・S29) |
-| 4 | 購入 | ボタン → `busy = true` → `purchase(pkg)` (`pkg` は `fetchOfferings()` の `current.availablePackages` のうち `identifier === option.packageIdentifier` のもの) → `ok` なら `syncIapPurchases()` → `summary` を置き換え、`notice` =「お申し込みが完了しました」。`cancelled` なら何もしない。`ok: false, cancelled: false` → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` (ストアの生の文は出さない)。同期が投げた例外 → `notice` = `billingErrorMessageOf(e)` (409 `BILL_IAP_SYNC_CONFLICT` などはサーバの固定の文)。最後に `busy = false` |
-| 5 | 購入を復元 | ボタン「購入を復元」(常に出す。P9 3.1.1。`isPurchasesAvailable()` が偽なら押せない形で出す) → `restore()` → `syncIapPurchases()` → `summary` を置き換え。置き換えた `summary.status` が null なら `notice` =「復元できる購入がありませんでした」。例外 → `notice` = `billingErrorMessageOf(e)` |
+| 3 | プランの一覧 (`summary.can_purchase` かつ `isPurchasesAvailable()` かつ `cards.length > 0` のときだけ。`cards` はこの利用者への結び付け (`identifyPurchases(user.id)`) が通ったあとにだけ読む。#1912) | カード = `display_name`・`PLAN_CATALOG` の同じ `plan_key` の `features` (無ければ箇条書きなし)・`max_members` があれば「X 人まで」・間隔ごとの行 (`options`) = `priceString` + `renewalText(interval, priceString, option.trial)` (自動更新の説明と、体験があるときだけ体験の長さ。P9・P10) + ボタン「`<display_name>` を月額で始める」/「`<display_name>` を年額で始める」。請求額 (`priceString`) をカードで最も大きい文字にする (P9 の「most prominent」)。`option.trial` が null でない行だけ、価格の上に「`option.trial.lengthText`無料」と、その下に「体験の終了後は `priceString` が請求されます」を出す。`option.trial` は `storeTrialOf` (§8.10) がストアの導入価格と体験の対象の判定から作る (DB の `trial_days` は使わない。対象外の利用者に体験の文を出さない。R15・S29) |
+| 4 | 購入 | ボタン → `busy = true` → `await ensurePurchasesIdentity(user.id)` (投げた・`user` が無い → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える。`purchase` を呼ばない。#1912) → `purchase(pkg)` (`pkg` は `fetchOfferings()` の `current.availablePackages` のうち `identifier === option.packageIdentifier` のもの) → `ok` なら `syncIapPurchases()` → `summary` を置き換え、置き換えた `summary` が live (`subscriptionStatusLines(summary)` が空でない) なら `notice` =「お申し込みが完了しました」、live でなければ (この利用者に契約が付いていない) `notice` = `PLAN_PURCHASE_NOT_REFLECTED_MESSAGE` (「購入は受け付けましたが、契約の反映を確認できませんでした。「購入を復元」をお試しください。」。完了の文は出さない。#1912)。`cancelled` なら何もしない。`ok: false, cancelled: false` → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` (ストアの生の文は出さない)。同期が投げた例外 → `notice` = `billingErrorMessageOf(e)` (409 `BILL_IAP_SYNC_CONFLICT` などはサーバの固定の文)。最後に `busy = false` |
+| 5 | 購入を復元 | ボタン「購入を復元」(常に出す。P9 3.1.1。`isPurchasesAvailable()` が偽なら押せない形で出す) → `await ensurePurchasesIdentity(user.id)` (投げた・`user` が無い → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える。`restore` を呼ばない。#1912) → `restore()` → `syncIapPurchases()` → `summary` を置き換え。置き換えた `summary` が live でない (`status` が null か終わった契約) なら `notice` =「復元できる購入がありませんでした」。例外 → `notice` = `billingErrorMessageOf(e)` |
 | 6 | 規約へのリンク | 「利用規約」「プライバシーポリシー」(`getTermsUrl()` / `getPrivacyUrl()`。`Linking.openURL`。設定タブと同じ) と「特定商取引法に基づく表記」(`webPageUrl('/legal')`)。P9 (Terms of Use と Privacy Policy へのリンク) |
 | 7 | 読み込み・失敗 | 要約の読み込み中は `LoadingState`。`fetchBillingSummary()` が投げたら `loadError = true` で `BILLING_SUMMARY_LOAD_FAILED_MESSAGE` と「再読み込み」のボタン (2・3 は出さない。5・6 は出す) |
 
-- 画面を開いたとき: `identifyPurchases(user.id)` (`useAuth().user`) → `fetchBillingSummary()` → `Platform.OS` が `ios` なら `'app_store'`、`android` なら `'play_store'` を `store` にし (それ以外は 3 を出さない) → `fetchIapCatalog(store)` → `fetchOfferings()` (`current?.availablePackages ?? []`) → `eligibility = await fetchTrialEligibility(packages.map((pkg) => pkg.product.identifier))` (iOS だけ尋ね、Android と失敗は `{}`) → `cards = matchCatalogWithPackages(store, plans, packages, eligibility)`。カタログか offerings の読み込みが失敗したら `cards = []` (3 を出さない。2 はそのまま)。並行して `syncIapPurchases()` を 1 回 (成功したら `summary` を置き換え。失敗しても画面は読んだ要約で描く)。`AppState` が `active` に戻ったとき `syncIapPurchases()` をもう一度。
+- 画面を開いたとき: `fetchBillingSummary()` と並行して `syncIapPurchases()` を 1 回 (成功したら `summary` を置き換え。失敗しても画面は読んだ要約で描く)。要約が置き換わったら (読み込みと同期のどちらが先でも、読み込みが失敗して同期だけが要約を読めたときも。#1912 P4) カードを 1 回だけ読む: `identifyPurchases(user.id)` (`useAuth().user`。投げたらカードを読まず `cards = []`。#1912) → `Platform.OS` が `ios` なら `'app_store'`、`android` なら `'play_store'` を `store` にし (それ以外は 3 を出さない) → `fetchIapCatalog(store)` → `fetchOfferings()` (`current?.availablePackages ?? []`) → `eligibility = await fetchTrialEligibility(packages.map((pkg) => pkg.product.identifier))` (iOS だけ尋ね、Android と失敗は `{}`) → `cards = matchCatalogWithPackages(store, plans, packages, eligibility)`。カタログか offerings の読み込みが失敗したら `cards = []` (3 を出さない。2 はそのまま)。要約の読み込みと同期の両方が失敗したら 7 (カードは読まない)。`AppState` が `active` に戻ったとき `syncIapPurchases()` をもう一度し、結び付けかカードの読み込みが失敗していれば、カードの読み込みを (結び付けから) やり直す。「再読み込み」も結び付けからやり直す。
 - 錠 (究極モード): `apps/mobile/src/components/menu/UltimateModeToggle.tsx` に `locked?: boolean` を足し、`V4GenerateModal` (`apps/mobile/src/components/menu/V4GenerateModal.tsx`) がモーダルを開くたびに `fetchBillingSummary()` を 1 回読み、`summary.features.ai_feature_caps.menu_generation_ultimate === 0` のとき `locked` を渡す (読めなければ錠を出さない。サーバの 403 が最後の砦)。`locked` のトグルを押すと `Alert.alert("プランとお支払い", "究極モードは有料プランでお使いいただけます。設定の「プランとお支払い」からお申し込みいただけます。")` (Web の文と同じ意味)。
 - Web の購入のページ (料金・契約の管理) のパスの文字列は書かない (見張り `no-web-purchase-links.test.ts` はそのまま。冒頭のコメントを本冊の規則 (アプリ内課金はアプリの画面で、Web の購入のページへは誘導しない) に書き換える)。
 - 遷移先の実在 (`route-targets-exist.test.ts`): `/settings/plan` は `app/settings/plan.tsx` で満たす。

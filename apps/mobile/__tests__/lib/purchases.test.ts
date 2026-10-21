@@ -6,6 +6,8 @@
  *  - resetPurchasesOnSignOut: 匿名でなければ logOut。configure の前は何もしない。失敗しても投げない。次の identify は logIn で切り替える
  *  - 公開 SDK キーが無いビルド (空・空白だけを含む) は、何もしない (isPurchasesAvailable が false)
  *  - fetchTrialEligibility: iOS だけ SDK に尋ね、4 値を画面の判定に写す。Android・失敗・configure の前は空
+ *  - ensurePurchasesIdentity (#1912): 結び付けて SDK の app_user_id が利用者と一致するときだけ通る。logIn の失敗・不一致・キー無しは投げる
+ *  - identify と reset は呼ばれた順に 1 つずつ流れる (#1912。SIGNED_OUT の reset の logOut が次の利用者の logIn と前後しない)
  *
  * SDK は jest.config.js の moduleNameMapper で __mocks__/react-native-purchases.js に差し替わる (本物のストアを呼ばない)。
  * purchases.ts はモジュールの中に「configure 済みの利用者」を持つので、テストごとに jest.isolateModules で読み直す。
@@ -195,5 +197,91 @@ describe('purchases.ts (billing/03 §8.10)', () => {
     setPlatform('android');
     expect(await purchases.fetchTrialEligibility(['p1'])).toEqual({});
     expect(sdk.default.checkTrialOrIntroductoryPriceEligibility).toHaveBeenCalledTimes(2);
+  });
+  describe('#1912 P3: 利用者の結び付けの確かめと順序', () => {
+    it('ensurePurchasesIdentity は SDK の app_user_id が利用者と一致するときだけ通り、logIn の失敗では configuredAppUserId を変えずに投げる', async () => {
+      const { purchases, sdk } = load();
+      const Purchases = sdk.default;
+
+      // 最初の利用者: configure して、SDK の id が一致すれば通る
+      Purchases.getAppUserID.mockResolvedValueOnce('user-a');
+      await expect(purchases.ensurePurchasesIdentity('user-a')).resolves.toBeUndefined();
+      expect(Purchases.configure).toHaveBeenCalledWith({ apiKey: APPLE_KEY, appUserID: 'user-a' });
+
+      // SDK の id が一致しない (匿名など): 投げる
+      Purchases.getAppUserID.mockResolvedValueOnce('$RCAnonymousID:x');
+      await expect(purchases.ensurePurchasesIdentity('user-a')).rejects.toBeInstanceOf(purchases.PurchasesIdentityMismatchError);
+
+      // 別の利用者の logIn が通信で落ちた: 投げ、SDK の id は尋ねない。前の利用者のまま進めない
+      Purchases.logIn.mockRejectedValueOnce(new Error('network'));
+      const getAppUserIdCalls = Purchases.getAppUserID.mock.calls.length;
+      await expect(purchases.ensurePurchasesIdentity('user-b')).rejects.toThrow('network');
+      expect(Purchases.getAppUserID.mock.calls.length).toBe(getAppUserIdCalls);
+      // identify も同じく投げる (画面はカードを読まない)
+      Purchases.logIn.mockRejectedValueOnce(new Error('network'));
+      await expect(purchases.identifyPurchases('user-b')).rejects.toThrow('network');
+
+      // 次の確かめは logIn をやり直す (configuredAppUserId は user-a のまま = 'user-b' と違うので logIn する)
+      Purchases.getAppUserID.mockResolvedValueOnce('user-b');
+      await expect(purchases.ensurePurchasesIdentity('user-b')).resolves.toBeUndefined();
+      expect(Purchases.logIn).toHaveBeenCalledTimes(3);
+      expect(Purchases.logIn).toHaveBeenLastCalledWith('user-b');
+
+      // キーが無いビルド: 結び付けられないので投げる (購入・復元をしない)
+      delete process.env[APPLE_KEY_NAME];
+      const noKey = load();
+      await expect(noKey.purchases.ensurePurchasesIdentity('user-a')).rejects.toBeInstanceOf(noKey.purchases.PurchasesIdentityMismatchError);
+      expect(noKey.sdk.default.getAppUserID).not.toHaveBeenCalled();
+    });
+
+    it('reset の途中に呼ばれた identify は、reset (logOut) が済むまで logIn しない', async () => {
+      const { purchases, sdk } = load();
+      const Purchases = sdk.default;
+      await purchases.identifyPurchases('user-a');
+
+      let finishIsAnonymous: (value: boolean) => void = () => {};
+      Purchases.isAnonymous.mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            finishIsAnonymous = resolve;
+          }),
+      );
+      const resetDone = purchases.resetPurchasesOnSignOut();
+      const identifyDone = purchases.identifyPurchases('user-b');
+      // reset の通信が終わるまで、次の利用者の logIn は始まらない
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(Purchases.logIn).not.toHaveBeenCalled();
+
+      finishIsAnonymous(false);
+      await resetDone;
+      await identifyDone;
+      expect(Purchases.logOut).toHaveBeenCalledTimes(1);
+      expect(Purchases.logIn).toHaveBeenCalledTimes(1);
+      expect(Purchases.logIn).toHaveBeenCalledWith('user-b');
+      expect(Purchases.logOut.mock.invocationCallOrder[0]).toBeLessThan(Purchases.logIn.mock.invocationCallOrder[0]);
+
+      // reset が済んだあとの確かめは user-b で通る (reset の finally が user-b を null に戻していない)
+      Purchases.getAppUserID.mockResolvedValueOnce('user-b');
+      await expect(purchases.ensurePurchasesIdentity('user-b')).resolves.toBeUndefined();
+      expect(Purchases.logIn).toHaveBeenCalledTimes(1);
+
+      // reset を 2 回続けて呼んでも (signOut.ts のあとに届く SIGNED_OUT など)、logOut は 1 回だけ増える (2 回目は何もしない)
+      await purchases.resetPurchasesOnSignOut();
+      await purchases.resetPurchasesOnSignOut();
+      expect(Purchases.logOut).toHaveBeenCalledTimes(2);
+    });
+
+    it('前の identify の失敗は、列の次の op に持ち越さない', async () => {
+      const { purchases, sdk } = load();
+      const Purchases = sdk.default;
+      await purchases.identifyPurchases('user-a');
+      Purchases.logIn.mockRejectedValueOnce(new Error('network'));
+      const failed = purchases.identifyPurchases('user-b');
+      const next = purchases.identifyPurchases('user-c');
+      await expect(failed).rejects.toThrow('network');
+      await expect(next).resolves.toBeUndefined();
+      expect(Purchases.logIn).toHaveBeenLastCalledWith('user-c');
+    });
   });
 });
