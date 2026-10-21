@@ -9,7 +9,7 @@
  *   - 上限に数えない機能 (AI_UNMETERED_FEATURES。supabase/functions/_shared/ai-usage-core.ts) は合計に入らない:
  *     画面を開くと自動で呼ばれるアドバイス (nutrition_advice_auto) と、料理を保存・更新したときに付ける料理画像 (meal_image_auto)。
  *     これらは機能ごとの 1 日の安全弁 (DB の ai_unmetered_daily_caps) で止まり、この画面の上限では止まらない (#1487)
- *   - 自分の行が無いプランは free の行の値を使う (既定は free = 1 日 10 回。migration 20261011020000_ai_daily_limits.sql)
+ *   - 自分の行が無いプランは free の行の値を使う (free = 1 日 3 回。migration 20261021100000_billing_paid_plans_iap.sql の (5b))
  *   - 以前の GET はコードに書いた目安を返すだけ、PATCH は保存せずに 501 を返していた (#1149 の本文)
  *
  * 権限: super_admin だけ。ai_daily_limits はクライアントのポリシーが無い (service_role だけが読み書きする) ので、

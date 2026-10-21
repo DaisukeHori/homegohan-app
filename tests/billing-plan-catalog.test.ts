@@ -40,7 +40,7 @@ function migrationSql(): string {
 }
 
 describe('billing/03 §8.9 PLAN_CATALOG と migration の突き合わせ', () => {
-  it('PLAN_CATALOG prices and trial days equal the UPDATE statements in the billing_paid_plans_iap migration (the /faq half lands with stage C)', () => {
+  it('PLAN_CATALOG prices and trial days equal the UPDATE statements in the billing_paid_plans_iap migration', () => {
     const sql = migrationSql();
     const updates = [...sql.matchAll(/UPDATE\s+public\.subscription_plans\s+SET\s+([\s\S]*?)\s+WHERE\s+plan_key\s*=\s*'([a-z_]+)'\s*;/g)].map((match) => {
       const set = match[1];
