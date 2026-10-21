@@ -1,7 +1,7 @@
 /**
  * #1912 P8 特定商取引法に基づく表記 (/legal) の最終更新日の見張り
  *
- * 最終更新日は src/lib/legal/legal-notice.ts の LEGAL_NOTICE_LAST_UPDATED 1 か所から出す (ページに日付を直接書かない)。
+ * 最終更新日は src/lib/legal-notice.ts の LEGAL_NOTICE_LAST_UPDATED 1 か所から出す (ページに日付を直接書かない)。
  * 表の行 (事業者の情報・販売の項目・販売価格) を変えたのに日付を変え忘れることを防ぐため、描画した表の文字の指紋 (SHA-256) と
  * 日付を組で固定する。表を変えると指紋が変わって赤になるので、そのときは公開の日に日付を変え、指紋と一緒に下の組を直す。
  */
@@ -12,7 +12,7 @@ import { createElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import { formatLegalEffectiveDate } from '@homegohan/shared';
-import { LEGAL_NOTICE_LAST_UPDATED } from '@/lib/legal/legal-notice';
+import { LEGAL_NOTICE_LAST_UPDATED } from '@/lib/legal-notice';
 import { stripAllTags } from './helpers/strip-tags';
 
 // next/link は描画に Next.js の実行環境を要らないよう、素の a に置き換える

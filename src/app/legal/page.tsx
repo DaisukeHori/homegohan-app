@@ -11,7 +11,7 @@ import {
 } from "@/lib/business-info";
 import { PhoneOnRequest } from "@/components/legal/PhoneOnRequest";
 import { PLAN_TRIAL_DAYS, formatLegalEffectiveDate, planCatalogPriceText } from "@homegohan/shared";
-import { LEGAL_NOTICE_LAST_UPDATED } from "@/lib/legal/legal-notice";
+import { LEGAL_NOTICE_LAST_UPDATED } from "@/lib/legal-notice";
 
 const colors = {
   primary: '#E07A5F',
@@ -123,7 +123,7 @@ export default function LegalPage() {
         </div>
 
         <p className="text-center text-sm mt-8" style={{ color: colors.textMuted }}>
-          {/* 最終更新日は定数 1 か所 (src/lib/legal/legal-notice.ts) から出す。表の中身との組は tests/legal-notice-last-updated.test.ts が見る */}
+          {/* 最終更新日は定数 1 か所 (src/lib/legal-notice.ts) から出す。表の中身との組は tests/legal-notice-last-updated.test.ts が見る */}
           最終更新日：{formatLegalEffectiveDate(LEGAL_NOTICE_LAST_UPDATED)}
         </p>
       </main>
