@@ -41,6 +41,7 @@ import { randomBytes } from 'node:crypto';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import ws from 'ws';
+import { jstDaysAgo } from '../helpers/jst-days';
 import { promoteToAal2 } from '../helpers/mfa';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
 
@@ -97,7 +98,6 @@ const createdOrgIds: string[] = [];
 let seq = 0;
 
 const emailOf = (label: string) => `rls-org-no-direct-delete-${label}-${RUN}-${++seq}@homegohan.test`;
-const dateInDays = (days: number) => new Date(Date.now() + days * MS_PER_DAY).toISOString().slice(0, 10);
 
 async function pgRequest(query: string): Promise<{ ok: boolean; status: number; body: unknown }> {
   const res = await fetch(`${url}/pg/query`, {
@@ -199,8 +199,8 @@ async function createOrg(owner: TestUser, label: string, attachOwner: boolean): 
       title: `#1917 nd challenge ${label} ${RUN}`,
       challenge_type: 'breakfast_rate',
       status: 'draft',
-      start_date: dateInDays(CHALLENGE_START_IN_DAYS),
-      end_date: dateInDays(CHALLENGE_END_IN_DAYS),
+      start_date: jstDaysAgo(-CHALLENGE_START_IN_DAYS), // jstDaysAgo は負の値で n 日後 (JST の暦日)
+      end_date: jstDaysAgo(-CHALLENGE_END_IN_DAYS),
     })
     .select('id')
     .single();
