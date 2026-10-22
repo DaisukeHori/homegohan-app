@@ -10,6 +10,8 @@
  *   3. 同じ型の機械検査: family_groups の行を DELETE する関数の最新の定義は、どれも SECURITY DEFINER か、利用者が実行できない関数
  *   4. 戻し口が実在し、ポリシーはベースラインの行と逐語で同じに作り直し、流すと本冊の直前の状態 (ポリシーと権限) に戻る
  *   5. アプリのコード (Web・モバイル・Edge Function・共有のライブラリ) は family_groups を直接 DELETE しない (家族をやめるのは解散の RPC)
+ *   6. 本冊の migration のコメントが挙げる家族の行の消え方が、スキーマの事実と合う (名指しする family_groups の列が実在し、
+ *      auth.users への外部キーは representative_id の ON DELETE RESTRICT だけ = 退会で家族の行は消えない)
  * 実際の挙動は tests/integration/rls/family-groups-no-direct-delete.test.ts (実 DB) が確かめる。
  */
 import fs from 'node:fs';
