@@ -523,7 +523,7 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
     expect(problems).toEqual([]);
   }, RACE_TIMEOUT_MS);
 
-  it('Q4-9: 運営の強制解散とオーナーの譲渡の承諾を同時に 8 回呼んでも、デッドロックせず、強制解散は成功し、終わったあとは「dissolved で所属 0 人」(強制解散はオーナーの行を取り直して直列になる)', async () => {
+  it('Q4-9: 運営の強制解散とオーナーの譲渡の承諾を同時に 8 回呼んでも、デッドロックせず、強制解散は成功し、終わったあとは「dissolved で所属 0 人」(強制解散も譲渡の承諾も組織の行を最初に取るので、組織の行で直列になる。20261022140000_org_transfer_toctou.sql)', async () => {
     const jwt = await operatorJwt();
     const problems: string[] = [];
     for (let i = 0; i < ITERATIONS; i++) {
@@ -547,9 +547,11 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
 
       if (isDeadlock(dissolve) || isDeadlock(accept)) problems.push(`#${i} デッドロック: ${JSON.stringify({ dissolve, accept })}`);
       if (!dissolve.ok) problems.push(`#${i} 強制解散が失敗: ${JSON.stringify(dissolve)}`);
-      // 譲渡の承諾の失敗のしかたはここでは見ない (self-dissolve.test.ts の D-9 と同じ)。承諾は在籍の判定をロックの外で行うので、
-      // 強制解散が先に commit すると、待っていた旧オーナーの行の UPDATE が所属の外れた行に org_role を書こうとして
-      // CHECK user_profiles_org_consistency (23514) で止まることがある (accept_org_owner_transfer の既存の動き。所属は作られない)
+      // 承諾は組織の行をロックしてから判定し直すので (20261022140000_org_transfer_toctou.sql)、強制解散が先なら
+      // ORG_ALREADY_DISSOLVED で止まる (修正前は CHECK user_profiles_org_consistency (23514) で止まることがあった)
+      if (!accept.ok && !(accept.code === 'P0001' && accept.message === 'ORG_ALREADY_DISSOLVED')) {
+        problems.push(`#${i} 承諾が ORG_ALREADY_DISSOLVED 以外で失敗: ${JSON.stringify(accept)}`);
+      }
       const row = await orgRow(orgId);
       const members = await orgMemberCount(orgId);
       if (row?.status !== 'dissolved' || row.owner_id !== null || members !== 0) {

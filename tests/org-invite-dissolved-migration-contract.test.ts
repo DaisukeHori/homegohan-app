@@ -8,8 +8,10 @@
  *
  *   1. accept_org_invite: 招待の行のロックのあと、在籍の判定・最初の書き込み・席数のロックより前に、招待の組織の行を
  *      FOR NO KEY UPDATE で取り、status が 'active' でなければ ORG_ALREADY_DISSOLVED
- *   2. operator_force_dissolve_org: 後始末 (org_dissolve_apply) より前に、オーナーの user_profiles → 組織の行 の順で
- *      FOR NO KEY UPDATE を取る (dissolve_org_by_owner と同じ向き)
+ *   2. operator_force_dissolve_org: 後始末 (org_dissolve_apply) より前に、組織の行を FOR NO KEY UPDATE で取る。
+ *      この migration はオーナーの user_profiles → 組織の行 の順 (取り直しのループつき) だったが、
+ *      20261022140000_org_transfer_toctou.sql が「組織の行を最初に取る」にそろえた (オーナーの行・ループは無い。
+ *      ロックの順の規則は tests/org-transfer-toctou-migration-contract.test.ts が全関数で見る)
  *   3. 解散の後始末 (org_dissolve_apply) は招待の行を触らない (触るなら、承諾 (招待の行 → 組織の行) と逆向きになるので、
  *      ロックの順番から決め直すこと)
  *   4. 戻し口が実在し、2 つの RPC を前の定義に逐語で戻す
@@ -124,24 +126,18 @@ describe('Q-4 operator_force_dissolve_org の最新の定義', () => {
     expect(header, file).toMatch(/SET\s+"search_path"\s+TO\s+'public'/i);
   });
 
-  it('権限・MFA の判定のあと、後始末 (org_dissolve_apply) の前に、オーナーの user_profiles → 組織の行 の順で FOR NO KEY UPDATE を取る', () => {
+  it('権限・MFA の判定のあと、後始末 (org_dissolve_apply) の前に、組織の行を FOR NO KEY UPDATE で取る (それより前に user_profiles の行を取らない)', () => {
     const roleAt = indexOf(body, /RAISE\s+EXCEPTION\s+'OPERATOR_PERMISSION_REQUIRED'/i, '権限の判定');
     const mfaAt = indexOf(body, /IF\s+NOT\s+public\.operator_mfa_satisfied\(\)\s+THEN\s+RAISE\s+EXCEPTION\s+'OPERATOR_MFA_REQUIRED'/i, 'MFA の判定');
-    const ownerLockAt = indexOf(body, /PERFORM\s+1\s+FROM\s+user_profiles\s+WHERE\s+id\s*=\s*v_lock_owner\s+FOR\s+NO\s+KEY\s+UPDATE/i, 'オーナーの行のロック');
     const orgLockAt = indexOf(body, /SELECT\s+\*\s+INTO\s+v_org\s+FROM\s+organizations\s+WHERE\s+id\s*=\s*p_organization_id\s+FOR\s+NO\s+KEY\s+UPDATE/i, '組織の行のロック');
     const dissolvedAt = indexOf(body, /IF\s+v_org\.status\s*=\s*'dissolved'\s+THEN\s+RAISE\s+EXCEPTION\s+'ORG_ALREADY_DISSOLVED'/i, '解散済みの判定');
     const applyAt = indexOf(body, /public\.org_dissolve_apply\(\s*p_organization_id\s*\)/i, '後始末の呼び出し');
     expect(mfaAt, file).toBeGreaterThan(roleAt);
-    expect(ownerLockAt, file).toBeGreaterThan(mfaAt);
-    expect(orgLockAt, file).toBeGreaterThan(ownerLockAt);
+    expect(orgLockAt, file).toBeGreaterThan(mfaAt);
     expect(dissolvedAt, file).toBeGreaterThan(orgLockAt);
     expect(applyAt, file).toBeGreaterThan(dissolvedAt);
-  });
-
-  it('オーナーの行を取ったあとにオーナーを読み直し、変わっていたら取り直す (ループ)', () => {
-    expect(body, file).toMatch(
-      /LOOP\s+PERFORM\s+1\s+FROM\s+user_profiles\s+WHERE\s+id\s*=\s*v_lock_owner\s+FOR\s+NO\s+KEY\s+UPDATE\s*;\s*SELECT\s+owner_id\s+INTO\s+v_current_owner\s+FROM\s+organizations\s+WHERE\s+id\s*=\s*p_organization_id\s*;\s*EXIT\s+WHEN\s+v_current_owner\s+IS\s+NOT\s+DISTINCT\s+FROM\s+v_lock_owner\s*;\s*v_lock_owner\s*:=\s*v_current_owner\s*;\s*END\s+LOOP\s*;/i,
-    );
+    // 組織の行より前に user_profiles の行を取らない (オーナーの行を先に取る形は 20261022140000 でやめた)
+    expect(body.slice(0, orgLockAt), file).not.toMatch(/FROM\s+user_profiles\b[^;]*\bFOR\s+(?:NO\s+KEY\s+)?UPDATE/i);
   });
 
   it('監査の action・metadata (reason / dissolved_at / previous_owner_id) は変えない', () => {
