@@ -3,32 +3,36 @@
  * (オーナーの解散の RPC・運営の強制解散) だけにする (migration 20261023100000_organizations_no_owner_direct_delete.sql)。
  * 家族の同じ欠陥は 20261022200000 で塞いだ (tests/integration/rls/family-groups-no-direct-delete.test.ts)。
  *
- * 修正前は、ポリシー organizations_delete_owner と anon / authenticated の DELETE の権限により、組織のオーナーが
- * PostgREST の直接の DELETE で組織の行を消せた (所属の列を持つ人が残っている組織は、user_profiles.organization_id の SET NULL が
- * CHECK user_profiles_org_consistency (23514) に当たって止まる。所属の列を持つ人がいない組織は消えた)。そのとき部署・招待・
- * チャレンジ・席数などの子の記録が外部キーの CASCADE で物理削除され、解散の RPC (監査 group_dissolved・解散の知らせ) も通らなかった。
+ * 修正前は、ポリシー organizations_delete_owner と anon / authenticated の DELETE の権限により、組織のオーナーの DELETE が
+ * RLS を通った。PostgREST の DELETE は WHERE で列を読むので SELECT のポリシー (organizations_select_member = 所属している人) も
+ * 要り、所属しているオーナーの DELETE は user_profiles.organization_id の SET NULL が CHECK user_profiles_org_consistency (23514) に
+ * 当たって止まっていた。列を読まない WHERE の DELETE (SELECT のポリシーが要らない) なら、所属の列を持つ人がいない組織を消せ、
+ * そのとき部署・招待・チャレンジ・席数などの子の記録が外部キーの CASCADE で物理削除され、解散の RPC (監査 group_dissolved・
+ * 解散の知らせ) も通らなかった。この変更で、オーナーの DELETE はどの形でも RLS を通らない。
  *
  * 直接の DELETE の結果 (この表で固定する):
- *   | 呼び出し元                                   | 結果                        | 理由                                                         |
- *   |----------------------------------------------|-----------------------------|--------------------------------------------------------------|
- *   | オーナー (所属あり・所属の列を持つ人がいない) | 0 行 (エラーなし)・行は残る | authenticated の DELETE の権限は運営のポリシーのため残す。当たるポリシーが無い |
- *   | 管理者・メンバー・別の組織のオーナー         | 0 行 (エラーなし)・行は残る | 同上                                                         |
- *   | 解散した組織の元のオーナー                   | 0 行 (エラーなし)・行は残る | 同上                                                         |
- *   | 未認証 (anon)                                | 42501                       | anon の DELETE の権限を外した                                |
- *   | 運営 (super_admin・MFA 済み)                 | 消える (今までどおり)       | organizations_delete_super_admin は残す                      |
- *   | 運営 (super_admin・MFA 前)                   | 0 行 (今までどおり)         | operator_mfa_satisfied() が偽                                |
- *   | service_role                                 | 消える (今までどおり)       | RLS を通らない                                               |
+ *   | 呼び出し元・形                                              | 修正前                     | 修正後                          |
+ *   |-------------------------------------------------------------|----------------------------|---------------------------------|
+ *   | オーナー・列を読まない WHERE (所属の列を持つ人がいない組織) | 1 行消える (CASCADE)       | 0 行・行と子の記録は残る (O-1)  |
+ *   | 所属しているオーナー・PostgREST (id で絞る)                 | 23514                      | 0 行 (エラーなし)・行は残る (O-2) |
+ *   | 管理者・メンバー・別の組織のオーナー・PostgREST             | 0 行                       | 0 行 (O-2)                      |
+ *   | 解散した組織の元のオーナー・PostgREST                       | 0 行 (owner_id が NULL)    | 0 行 (O-5)                      |
+ *   | 未認証 (anon)・PostgREST                                    | 0 行                       | 42501 (O-3)                     |
+ *   | 運営 (super_admin・MFA 済み)・PostgREST・所属していない組織 | 0 行 (SELECT で見えない)   | 0 行 (変わらない。O-7)          |
+ *   | service_role                                                | 消える                     | 消える (O-8)                    |
+ *   authenticated の DELETE の権限は、運営の削除のポリシー organizations_delete_super_admin のために残す (外すと運営も 42501)。
  *
  * 確かめること:
- *   - O-1: 所属の列を持つ人がいない組織のオーナーの直接の DELETE は 0 行で、組織の行・部署・招待・チャレンジ・席数は残る
- *          (修正前はこの組織が CASCADE ごと消えた)
- *   - O-2: 所属のある組織のオーナー・管理者・メンバー・別の組織のオーナーの直接の DELETE も 0 行で、行と所属は残る
+ *   - O-1: オーナーの列を読まない WHERE の DELETE (postgres-meta で、ロール authenticated と本人の JWT の claims にして流す) は
+ *          0 行で、所属の列を持つ人がいない組織の行・部署・招待・チャレンジ・席数は残る (修正前はこの組織が CASCADE ごと消えた)
+ *   - O-2: 所属のある組織のオーナー・管理者・メンバー・別の組織のオーナーの PostgREST の DELETE は 0 行 (エラーなし) で、行と所属は残る
  *   - O-3: 未認証の直接の DELETE は 42501 で、行は残る
  *   - O-4: カタログ: ポリシーは SELECT・UPDATE と運営の DELETE だけ。anon は DELETE・TRUNCATE を持たず、authenticated は
  *          SELECT・UPDATE・DELETE を持ち TRUNCATE を持たない。service_role の DELETE は残る
  *   - O-5: オーナーの解散の RPC (dissolve_org_by_owner) は今までどおり通り、子の記録は残る。解散のあとも元のオーナーは直接 DELETE できない
  *   - O-6: 運営の強制解散 (operator_force_dissolve_org) は今までどおり通る (組織の行は dissolved になり、消えない)
- *   - O-7: 運営 (super_admin・MFA 済み) の直接の DELETE は今までどおり通る (子の記録は CASCADE)。MFA 前は 0 行
+ *   - O-7: 運営の削除のポリシーは 20261017130000 の形 (TO authenticated・super_admin・operator_mfa_satisfied()) のまま残り、
+ *          運営 (MFA 前・MFA 済み) の PostgREST の DELETE の結果は修正の前と同じ (所属していない組織は 0 行)
  *   - O-8: service_role の直接の DELETE (テストと e2e の後片付け) は今までどおり通る
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC と PostgREST を直接呼ぶ)。
@@ -271,6 +275,34 @@ async function expectDeleteDenied(c: SupabaseClient, orgId: string, who: string)
   expect(await orgRow(orgId), who).not.toBeNull();
 }
 
+/** 列を読まない WHERE の DELETE の行数を返させるための例外の文の接頭辞 (例外で取り消すので、何も消えずに終わる) */
+const DELETE_COUNT_MARKER = 'ORG_DIRECT_DELETE_ROWS:';
+
+/**
+ * オーナー本人の JWT の claims とロール authenticated で、organizations を列を読まない WHERE (WHERE true) で DELETE し、
+ * RLS を通って消えた行の数を返す。列を読まない DELETE には SELECT のポリシーが要らないので、DELETE のポリシーだけで行が決まる
+ * (修正前は organizations_delete_owner で本人の組織が消えた)。最後に必ず例外を投げ、トランザクションごと取り消す
+ * (並行して走るほかのテストの行は、RLS で対象にならず、取り消しで元に戻る)。
+ */
+async function ownerDeleteWithoutColumnReadCount(user: TestUser): Promise<number> {
+  const claims = JSON.stringify({ sub: user.id, role: 'authenticated' });
+  const res = await pgRequest(`
+    SELECT set_config('request.jwt.claims', '${claims}', true);
+    SET LOCAL ROLE authenticated;
+    DO $$
+    DECLARE
+      v_rows integer;
+    BEGIN
+      DELETE FROM public.organizations WHERE true;
+      GET DIAGNOSTICS v_rows = ROW_COUNT;
+      RAISE EXCEPTION '${DELETE_COUNT_MARKER}%', v_rows;
+    END $$;`);
+  expect(res.ok, '例外で取り消すので、成功では返らない').toBe(false);
+  const match = new RegExp(`${DELETE_COUNT_MARKER}(\\d+)`).exec(JSON.stringify(res.body));
+  if (!match) throw new Error(`DELETE の行数が返らなかった: ${JSON.stringify(res.body)}`);
+  return Number(match[1]);
+}
+
 let owner: TestUser;
 let admin: TestUser;
 let member: TestUser;
@@ -315,11 +347,13 @@ afterAll(async () => {
 }, SETUP_TIMEOUT_MS);
 
 describe('#1917 の続き: organizations のオーナーの直接の DELETE は行を消さない', () => {
-  it('O-1: 所属の列を持つ人がいない組織のオーナーの直接の DELETE は 0 行。組織の行・部署・招待・チャレンジ・席数は残る', async () => {
+  it('O-1: オーナーの列を読まない WHERE の DELETE は 0 行。所属の列を持つ人がいない組織の行・部署・招待・チャレンジ・席数は残る', async () => {
     // 番兵: 所属の列を持つ人がいない (修正前は、この組織をオーナーが CASCADE ごと消せた)
     expect(await countRows('user_profiles', 'organization_id', loneOrg.orgId)).toBe(0);
     expect(await childCounts(loneOrg.orgId, loneOrg.children)).toEqual(ALL_CHILDREN_PRESENT);
 
+    expect(await ownerDeleteWithoutColumnReadCount(loneOwner)).toBe(0);
+    // PostgREST の DELETE (id で絞る) も 0 行 (修正の前も SELECT のポリシーで見えず 0 行)
     await expectDeleteNoRows(asUser(loneOwner.jwt), loneOrg.orgId, '所属の列を持つ人がいない組織のオーナー');
 
     expect(await orgRow(loneOrg.orgId)).toMatchObject({ status: 'active', owner_id: loneOwner.id, dissolved_at: null });
@@ -327,7 +361,9 @@ describe('#1917 の続き: organizations のオーナーの直接の DELETE は�
   }, TEST_TIMEOUT_MS);
 
   it('O-2: 所属のある組織のオーナー・管理者・メンバー・別の組織のオーナーの直接の DELETE も 0 行で、行と所属は残る', async () => {
+    // 修正前は所属しているオーナーの DELETE が RLS を通り、SET NULL が CHECK user_profiles_org_consistency (23514) で止まっていた
     await expectDeleteNoRows(asUser(owner.jwt), org.orgId, 'オーナー');
+    expect(await ownerDeleteWithoutColumnReadCount(owner)).toBe(0);
     await expectDeleteNoRows(asUser(admin.jwt), org.orgId, '管理者');
     await expectDeleteNoRows(asUser(member.jwt), org.orgId, 'メンバー');
     await expectDeleteNoRows(asUser(otherOwner.jwt), org.orgId, '別の組織のオーナー');
@@ -415,22 +451,25 @@ describe('#1917 の続き: 解散の仕組みと運営・service_role の削除�
     expect(await childCounts(forced.orgId, forced.children)).toEqual(ALL_CHILDREN_PRESENT);
   }, TEST_TIMEOUT_MS);
 
-  it('O-7: 運営 (super_admin・MFA 済み) の直接の DELETE は今までどおり通り、子の記録は CASCADE。MFA 前は 0 行', async () => {
+  it('O-7: 運営の削除のポリシーは 20261017130000 の形のまま残り、運営の PostgREST の DELETE の結果は修正の前と同じ (所属していない組織は 0 行)', async () => {
+    const [policy] = await pgQuery<{ roles: string; qual: string }>(
+      `SELECT roles::text AS roles, qual FROM pg_policies WHERE schemaname = 'public' AND tablename = 'organizations' AND policyname = 'organizations_delete_super_admin';`,
+    );
+    expect(policy?.roles).toBe('{authenticated}');
+    expect(policy?.qual).toContain("'super_admin'::text = ANY");
+    expect(policy?.qual).toContain('operator_mfa_satisfied()');
+
     const operator = await createUser('o7-operator', ['user', 'super_admin']);
     const { client: sessionClient, jwt: aal1 } = await signIn(operator.email);
     const targetOwner = await createUser('o7-owner');
-    // 所属の列を持つ人がいない組織 (所属が残ると SET NULL が CHECK user_profiles_org_consistency に当たる。修正の前後で同じ)
     const target = await createOrg(targetOwner, 'o7', false);
 
+    // PostgREST の DELETE は WHERE で列を読むので、SELECT のポリシー (所属している人だけ) にも当たる必要がある。
+    // 運営は所属していない組織を SELECT で見られないので、MFA の前後どちらも 0 行 (修正の前と同じ)
     await expectDeleteNoRows(asUser(aal1), target.orgId, '運営 (MFA 前)');
-    expect(await childCounts(target.orgId, target.children)).toEqual(ALL_CHILDREN_PRESENT);
-
     const aal2 = await promoteToAal2(sessionClient);
-    const { data, error } = await directDelete(asUser(aal2), target.orgId);
-    expect(error, JSON.stringify(error)).toBeNull();
-    expect(data).toEqual([{ id: target.orgId }]);
-    expect(await orgRow(target.orgId)).toBeNull();
-    expect(await childCounts(target.orgId, target.children)).toEqual(ALL_CHILDREN_GONE);
+    await expectDeleteNoRows(asUser(aal2), target.orgId, '運営 (MFA 済み)');
+    expect(await childCounts(target.orgId, target.children)).toEqual(ALL_CHILDREN_PRESENT);
   }, TEST_TIMEOUT_MS);
 
   it('O-8: service_role の直接の DELETE (テストと e2e の後片付け) は今までどおり通る', async () => {

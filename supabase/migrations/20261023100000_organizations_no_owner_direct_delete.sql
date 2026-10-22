@@ -10,7 +10,7 @@
 -- 背景:
 --   本番のベースライン (20251126124224_create_meal_planner_tables.sql) の
 --     :10686 organizations_delete_owner  FOR DELETE (TO public) USING (owner_id = auth.uid())
---   と、:13770-13771 の anon / authenticated への DELETE の権限により、組織のオーナーは自分の組織の行を直接 DELETE できた。
+--   と、:13770-13771 の anon / authenticated への DELETE の権限により、組織のオーナーの DELETE は RLS を通った。
 --   そのとき、organizations を参照する表が外部キーの CASCADE で一緒に消える (ベースラインの外部キー):
 --     departments (:8823)・org_daily_stats (:9113)・org_license_pools (:9118)・organization_challenges (:9143)・
 --     organization_invites (:9168)・organization_reports (:9178)。チャレンジの参加 organization_challenge_participants (:9123) と
@@ -18,8 +18,11 @@
 --     (20261016240000_org_challenge_diff_privacy.sql) も、チャレンジの CASCADE で消える。
 --     user_profiles.organization_id (:9468) と user_profiles.department_id (:9448) は SET NULL。
 --   所属の列 (organization_id と org_role) を持つ人が残っている組織では、SET NULL が org_role を残したまま所属を空にして
---   CHECK user_profiles_org_consistency (23514) で止まる。消せたのは所属の列を持つ人が 1 人もいない組織だけだが、
---   そのときも解散の RPC が書く監査 (membership_audit の group_dissolved) と解散の知らせを通らず、子の記録が消えた。
+--   CHECK user_profiles_org_consistency (23514) で止まる。PostgREST の DELETE は WHERE で列を読むので SELECT のポリシー
+--   organizations_select_member (所属している人だけ) にも当たる必要があり、所属しているオーナーの DELETE は 23514 で止まっていた。
+--   列を読まない WHERE の DELETE (SELECT のポリシーが要らない) なら、所属の列を持つ人が 1 人もいない組織を消せ、
+--   そのとき解散の RPC が書く監査 (membership_audit の group_dissolved) と解散の知らせを通らず、子の記録が消えた。
+--   今の PostgREST の経路では届きにくいが、DELETE のポリシーが RLS を通す限り、届く経路が増えたときに開く穴なので閉じる。
 --   チャレンジは利用者の権限では draft と cancelled しか消せない (RESTRICTIVE のポリシー
 --   "Org challenges can be deleted only as draft or cancelled"。20261016240000) が、組織の行の CASCADE はこれを通らない。
 --   これより後の migration に、organizations_delete_owner を外すものは無い。
@@ -39,8 +42,9 @@
 --     - 直接の DELETE を使うのは、テストと e2e の後片付け (tests/e2e/helpers/membership.ts・tests/e2e/fixtures/fresh-org.ts・
 --       tests/e2e/fixtures/fresh-user.ts・結合テストの afterAll) で、どれも service_role の鍵で書く
 --     - 運営 (super_admin) の削除のポリシー organizations_delete_super_admin (TO authenticated・super_admin かつ
---       operator_mfa_satisfied()。20261017130000_operator_mfa_db_gate.sql) は残す。アプリからこのポリシーを使う経路は無いが、
---       運営が自分のセッションで消す道として残す (オーナーの選択の説明の文のとおり)
+--       operator_mfa_satisfied()。20261017130000_operator_mfa_db_gate.sql) は残す (オーナーの選択の説明の文のとおり)。
+--       アプリからこのポリシーを使う経路は無い。PostgREST の DELETE は SELECT のポリシーにも当たる必要があるので、
+--       運営が自分のセッションで消せるのは所属している組織だけで、それも所属が残る間は 23514 で止まる (この変更の前と同じ)
 --
 -- 変更 (20261022200000_family_groups_no_direct_delete.sql と同じ形):
 --   1. DELETE を許すポリシー organizations_delete_owner を消す。
