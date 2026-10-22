@@ -1,12 +1,15 @@
 /**
  * organizations.plan に書ける値 (#1912 段 A の整合ゲートの指摘)
  *
- * organizations.plan を書く経路は 3 つ:
- *   a. 運営の組織の作成 (POST /api/admin/organizations。service_role。運営の画面 src/app/admin/organizations/OrganizationsManager.tsx の選択肢)
- *   b. 組織の設定 (PUT /api/org/settings。owner / admin の JWT。src/lib/org-settings-api.ts の ORG_SETTINGS_PLANS)
- *   c. owner / admin の JWT で PostgREST から直接 UPDATE (RLS organizations_update_admin。アプリの Zod を通らない)
- * a・b は Zod でこの一覧に限る。b・c (ログインした利用者の書き込み) は DB のトリガー guard_organizations_plan_value
- * (supabase/migrations/20261021110000_org_plan_ai_daily_limits.sql) がこの一覧と同じ値に限る (有料の plan_key や行の無い値を拒む)。
+ * organizations.plan を書く経路は、運営の 2 つだけ (どちらも service_role。運営の画面 src/app/admin/organizations/OrganizationsManager.tsx):
+ *   a. 運営の組織の作成 (POST /api/admin/organizations)
+ *   b. 運営の組織のプランの変更 (PATCH /api/admin/organizations/{id})
+ * どちらも Zod でこの一覧に限る。組織の段階は運営だけが変える (#1912。オーナーの選択 (2026-10-22・選択式)「運営だけが変える (推奨)」):
+ * 組織の設定 (PUT /api/org/settings。owner / admin の JWT) は plan を受け取らず 400 で断り (src/lib/org-settings-api.ts)、
+ * owner / admin の JWT で PostgREST から直接 UPDATE する経路 (RLS organizations_update_admin。アプリの Zod を通らない) は、
+ * DB のトリガー guard_organizations_plan_value が、ログインした利用者 (authenticated) と anon が plan を変えること自体を
+ * ORG_PLAN_OPERATOR_ONLY (42501) で拒む (supabase/migrations/20261022170000_org_plan_operator_only.sql。
+ * それより前の 20261021110000_org_plan_ai_daily_limits.sql の定義は、この一覧の外の値だけを拒んでいた)。
  * 列 (organizations.plan) そのものは CHECK の無い text で、service_role の書き込みは DB では限られない。
  *
  * AI の 1 日の上限: get_effective_plan は、個人の契約も家族も無い組織の利用者に organizations.plan をそのまま返し、
@@ -29,7 +32,7 @@ export function isOrgPlanValue(value: string): value is OrgPlanValue {
 export const ORG_PLAN_DEFAULT: OrgPlanValue = 'standard';
 
 /**
- * 組織のプランの値 (organizations.plan) の利用者向けの表示名。組織の設定の画面 (/org/settings。owner / admin が見る) が使う。
+ * 組織のプランの値 (organizations.plan) の利用者向けの表示名。組織の設定の画面 (/org/settings。owner / admin が見る。表示だけで変えられない) が使う。
  * キーは ORG_PLAN_VALUES と同じ (satisfies で足りない・余るキーを型で止め、tests/org-plan-labels.test.tsx が値でも突き合わせる)。
  * 運営の画面は内部の値をそのまま出す (この表を通さない)
  */
@@ -41,6 +44,9 @@ export const ORG_PLAN_LABELS = {
 
 /** 値が無い・表に無い値のときに出す文字 (内部の値を利用者の画面に出さない) */
 export const ORG_UNKNOWN_VALUE_LABEL = '-';
+
+/** 組織の設定の画面のプランの欄に添える文 (組織の管理者はプランを変えられない。変えるのは運営。#1912) */
+export const ORG_PLAN_OPERATOR_ONLY_NOTE = 'プランの変更は運営が行います';
 
 /** organizations.plan の表示名。null・表に無い値は ORG_UNKNOWN_VALUE_LABEL */
 export function orgPlanLabel(value: string | null | undefined): string {

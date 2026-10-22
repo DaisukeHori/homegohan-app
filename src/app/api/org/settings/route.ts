@@ -3,6 +3,7 @@
  * PUT /api/org/settings — 組織設定更新
  * 権限: 所属組織の org_role が owner / admin (自組織のみ、#1235)。判定は共通の requireOrgAdmin() (#1161)
  * 受け取るキー・返す列は src/lib/org-settings-api.ts (組織の設定の画面が送るキーを全部受け取る。#1735)
+ * プラン (plan) は返すが受け取らない: 本文に plan があれば 400 VALIDATION_ERROR (変えるのは運営の PATCH /api/admin/organizations/{id} だけ。#1912)
  *
  * E2E: w5-13-new-features-adversarial A-1, A-4, A-7
  */

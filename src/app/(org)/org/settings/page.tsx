@@ -14,7 +14,7 @@ import {
   type OrgSettingsData,
   type OrgSettingsFormValues,
 } from "@homegohan/shared";
-import { orgPlanLabel, orgSubscriptionStatusLabel } from "@/lib/org-plans";
+import { ORG_PLAN_OPERATOR_ONLY_NOTE, orgPlanLabel, orgSubscriptionStatusLabel } from "@/lib/org-plans";
 
 const EMPTY_FORM: OrgSettingsFormValues = {
   name: "",
@@ -144,6 +144,8 @@ export default function OrgSettingsPage() {
           >
             <p className="text-sm text-gray-500">プラン</p>
             <p className="text-xl font-bold text-gray-800">{orgPlanLabel(org.plan)}</p>
+            {/* プランは表示だけ (組織の管理者は変えられない。変えるのは運営の画面。#1912) */}
+            <p className="mt-1 text-xs text-gray-500">{ORG_PLAN_OPERATOR_ONLY_NOTE}</p>
           </motion.div>
           <motion.div
             initial={{ opacity: 0, y: 10 }}

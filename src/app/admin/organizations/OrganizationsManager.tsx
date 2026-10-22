@@ -1,11 +1,14 @@
 'use client';
 
 /**
- * 組織管理の本体 (一覧・検索・ページ送り + 新規作成)
+ * 組織管理の本体 (一覧・検索・ページ送り + 新規作成 + プランの変更)
  * operator/03-ui-spec.md §7 準拠
  *
  * 権限 (admin / super_admin) の確認は、同じフォルダの page.tsx (サーバー) で行う。
- * API (GET / POST /api/admin/organizations) も、同じロールだけを通す。
+ * API (GET / POST /api/admin/organizations・PATCH /api/admin/organizations/{id}) も、同じロールだけを通す。
+ *
+ * プランの変更: 組織のプランの段階は運営だけが変える (#1912)。組織の管理者の設定画面は表示だけで、変えるのはこの画面の
+ * 一覧の行のプランの欄 (PATCH /api/admin/organizations/{id})。
  *
  * API が返すのは id・組織名・プラン・作成/更新日時だけ。設計書 §7 にある Seat 数・期限・売上/月・担当営業は、
  * まだ出せない。
@@ -26,6 +29,7 @@ const PER_PAGE = 30;
 
 const LOAD_ERROR = '組織の一覧を取得できませんでした。しばらくしてから、もう一度お試しください。';
 const CREATE_ERROR = '組織を作成できませんでした。しばらくしてから、もう一度お試しください。';
+const PLAN_CHANGE_ERROR = 'プランを変更できませんでした。しばらくしてから、もう一度お試しください。';
 
 /** GET /api/admin/organizations が返す 1 件 */
 interface Organization {
@@ -49,6 +53,98 @@ interface ListResult {
   total: number;
   perPage: number;
   query: Query;
+}
+
+/** PATCH /api/admin/organizations/{id} が返す { organization } */
+function parseOrganizationBody(body: unknown): Organization | null {
+  if (typeof body !== 'object' || body === null) return null;
+  const { organization } = body as { organization?: unknown };
+  if (typeof organization !== 'object' || organization === null) return null;
+  const candidate = organization as Partial<Organization>;
+  if (typeof candidate.id !== 'string' || typeof candidate.name !== 'string') return null;
+  return organization as Organization;
+}
+
+function isOrgPlan(value: string | null): value is OrgPlan {
+  return value !== null && (PLANS as readonly string[]).includes(value);
+}
+
+/**
+ * 一覧の行のプランの欄: 今のプランを出し、選び直して「変更」でプランを変える (運営だけ。#1912)。
+ * 今のプランが一覧 (ORG_PLAN_VALUES) に無い値のときは、その値をそのまま出し、選択肢の先頭は「選ぶ」にする
+ */
+function OrgPlanCell({ org, onChanged }: { org: Organization; onChanged: (org: Organization) => void }) {
+  const current = isOrgPlan(org.plan) ? org.plan : '';
+  const [draft, setDraft] = useState<'' | OrgPlan>(current);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const selectId = `org-plan-${org.id}`;
+
+  async function handleChange() {
+    if (saving || draft === '' || draft === current) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/organizations/${encodeURIComponent(org.id)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plan: draft }),
+      });
+      const body: unknown = await res.json().catch(() => null);
+      if (!res.ok) {
+        setError(extractApiErrorMessage(body) ?? PLAN_CHANGE_ERROR);
+        return;
+      }
+      const updated = parseOrganizationBody(body);
+      if (!updated) {
+        setError(PLAN_CHANGE_ERROR);
+        return;
+      }
+      onChanged(updated);
+    } catch {
+      setError(PLAN_CHANGE_ERROR);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2">
+        <span className="inline-block rounded bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-800">{org.plan ?? '-'}</span>
+        <label htmlFor={selectId} className="sr-only">
+          {`${org.name} のプラン`}
+        </label>
+        <select
+          id={selectId}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value as '' | OrgPlan)}
+          disabled={saving}
+          className="rounded border border-gray-300 px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-orange-500 disabled:bg-gray-100"
+        >
+          {current === '' && <option value="">選ぶ</option>}
+          {PLANS.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={() => void handleChange()}
+          disabled={saving || draft === '' || draft === current}
+          className="rounded border border-gray-300 px-2 py-1 text-xs font-medium text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {saving ? '変更中...' : '変更'}
+        </button>
+      </div>
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-red-700">
+          {error}
+        </p>
+      )}
+    </div>
+  );
 }
 
 function parseListBody(body: unknown, query: Query): ListResult | null {
@@ -181,6 +277,16 @@ export default function OrganizationsManager() {
       setQuery((current) => ({ ...current, page: 1 }));
     }
   }
+
+  /** 行のプランを変えたら、その行だけを返ってきた値に置き換える (一覧は取り直さない) */
+  const handlePlanChanged = useCallback((updated: Organization) => {
+    setResult((current) =>
+      current
+        ? { ...current, organizations: current.organizations.map((org) => (org.id === updated.id ? updated : org)) }
+        : current,
+    );
+    setNotice(`組織「${updated.name}」のプランを ${updated.plan ?? '-'} に変更しました。`);
+  }, []);
 
   const showList = !loading && !loadError && result !== null;
   const totalPages = result ? Math.max(1, Math.ceil(result.total / result.perPage)) : 1;
@@ -379,9 +485,7 @@ export default function OrganizationsManager() {
                       <tr key={org.id}>
                         <td className="px-4 py-3 font-medium text-gray-900">{org.name}</td>
                         <td className="px-4 py-3">
-                          <span className="inline-block rounded bg-blue-50 px-2 py-0.5 font-mono text-xs text-blue-800">
-                            {org.plan ?? '-'}
-                          </span>
+                          <OrgPlanCell key={`${org.id}:${org.plan ?? ''}`} org={org} onChanged={handlePlanChanged} />
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">{formatJstDateTime(org.created_at)}</td>
                         <td className="px-4 py-3 font-mono text-xs text-gray-500">{org.id.slice(0, 8)}...</td>
