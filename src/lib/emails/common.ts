@@ -1,5 +1,5 @@
 // src/lib/emails/common.ts
-// メールの文面 (membership/*, support/*) で共通の部品 (#1194)。
+// メールの文面 (account/*, dsr/*, membership/*, support/*) で共通の部品 (#1194)。
 // 送信元・問い合わせ先・サイトの URL は src/lib/site-config.ts で決まる。文面には直接書かない。
 import { getSiteUrl } from '@/lib/site-config';
 

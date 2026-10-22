@@ -1,5 +1,5 @@
 // src/lib/emails/envelope.ts
-// メール 1 通分の形 (宛先・送信元・件名・本文)。送信 (send.ts) と文面の組み立て (membership/*, support/*) の両方が使う。
+// メール 1 通分の形 (宛先・送信元・件名・本文)。送信 (send.ts) と文面の組み立て (account/*, dsr/*, membership/*, ops/*, support/*) の両方が使う。
 //
 // 以前は send.ts と membership/templates.ts に同じスキーマが 1 つずつあり、送信元の既定値も 2 か所に書かれていた (#1194)。
 // いまはここに 1 つだけ置き、両方から再エクスポートしている (既存の import 先はそのまま使える)。

@@ -30,6 +30,7 @@ export const STORE_SUBSCRIPTION_MANAGEMENT_URL: Readonly<Record<PurchaseStore, s
 /**
  * 退会の確認に出す固定の文 (billing/03 §10.4)。ストアの購読はストアが契約の主体で、当社の退会では解約されない。
  * 退会の API を呼ぶ 4 つの入口 (Web の設定・凍結中と同意の前の退会の共通の部品 (`/frozen/account`・`/legal-consent/account`)・規約の同意の画面の「登録をやめる」・アプリの設定のアカウント) が出す。
+ * 退会の完了メール (src/lib/emails/account/account-deleted.ts) と個人情報の消去の請求の画面 (src/app/(main)/settings/data-requests/page.tsx) も本文に載せる。
  * ストアの契約が無い人にも出す (退会の時に契約の有無を読みに行かない)
  */
 export const STORE_SUBSCRIPTION_DELETION_NOTICE =
@@ -177,7 +178,7 @@ export const PAID_PLAN_GENERIC_DISPLAY_NAME = "有料プラン";
  * (依存の向きは src → shared だけ) ので同じ一覧の写しを持ち、tests/billing-plan-display-name.test.ts が正本と一致することを見る
  */
 export const ORG_PLAN_VALUES_WIRE = ["standard", "premium", "enterprise"] as const;
-/** subscription_plans の plan_type = 'org' の行の plan_key の接頭辞 (org_starter・org_standard など。get_effective_plan が組織の利用者にそのまま返す) */
+/** subscription_plans の plan_type = 'org' の行の plan_key の接頭辞 (org_starter・org_standard など。アプリの経路では効いているプランにならない。isOrgPlanKey は保険として org_* も組織のプランとして扱う) */
 export const ORG_SUBSCRIPTION_PLAN_KEY_PREFIX = "org_";
 /**
  * 組織のプランの値か (#1912)。organizations.plan の値 (ORG_PLAN_VALUES_WIRE) と、subscription_plans の plan_type = 'org' の行の

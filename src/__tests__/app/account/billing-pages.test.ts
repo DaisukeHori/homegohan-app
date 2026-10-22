@@ -259,7 +259,7 @@ describe('billing/01 §10.3 /account/billing', () => {
 
   // #1912: 組織の利用者 (自分の契約も家族も無い) の effective_plan_key は organizations.plan の値 (standard など) で、
   // 手動の付与などで自分の契約の plan_key が PLAN_CATALOG に無い値でも、画面に内部の値を出さない
-  it('account billing page never shows an internal plan_key that is not in PLAN_CATALOG: an organization member sees 無料プラン with the family / org wording, and a contract whose plan_key is outside PLAN_CATALOG shows ORG_PLAN_DISPLAY_NAME', async () => {
+  it('account billing page never shows an internal plan_key that is not in PLAN_CATALOG: an organization member sees 無料プラン with the family / org wording, and a contract whose plan_key is an organization plan_key (org_*) shows ORG_PLAN_DISPLAY_NAME', async () => {
     const cases: { summary: BillingSummary; internalKey: string; plan: string }[] = [
       {
         summary: summaryOf({ status: null, plan_key: 'free', effective_plan_key: 'standard', source: null, billing_interval: null, current_period_end: null, has_customer: false, can_purchase: true, can_cancel: false }),
