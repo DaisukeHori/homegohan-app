@@ -21,7 +21,7 @@
 --       解散から 90 日を過ぎ、同意の記録を持たない家族だけを消す
 --     - 運営の手作業・テストの後片付け・e2e の補助 (tests/e2e/fixtures/fresh-family.ts・tests/e2e/helpers/membership-family.ts・
 --       scripts/guide-screenshots/seed.ts): どれも service_role の鍵で書く
---     - 代表者の退会では家族の行は消えない: family_groups から auth.users への外部キーは representative_id の ON DELETE RESTRICT
+--     - 代表者の退会では家族の行は消えない: auth.users への外部キーは family_groups.representative_id の ON DELETE RESTRICT
 --       だけ (ベースライン :8883。名前が family_groups_owner_id_fkey の CASCADE の外部キーは legacy_family_groups の owner_id のもの)。
 --       代表者は譲渡か解散をしないと退会できず、解散で representative_id を NULL にしたあとの退会も家族の行に触れない
 --     - Web (src)・モバイル (apps/mobile)・Edge Function (supabase/functions) は、利用者のセッションで family_groups を DELETE しない
