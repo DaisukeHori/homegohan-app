@@ -340,8 +340,14 @@ describe('#1917 anon / authenticated の TRUNCATE の権限', () => {
          AND c.relkind = 'r'
          AND c.relname IN ('organizations', 'user_profiles', 'meals')`);
     expect(rows.length).toBeGreaterThan(0);
+    // 後の migration が意図して外した権限 (20261022190000 の検査の対象外)。キーは「表 / ロール」
+    //   - organizations / anon の DELETE: 20261023100000_organizations_no_owner_direct_delete.sql (#1917 の続き) が外した
+    const removedLater: Readonly<Record<string, { d?: false }>> = {
+      'organizations / anon': { d: false },
+    };
     for (const row of rows) {
-      expect({ ...row }, `${row.relname} / ${row.role}`).toMatchObject({ s: true, i: true, u: true, d: true });
+      const key = `${row.relname} / ${row.role}`;
+      expect({ ...row }, key).toMatchObject({ s: true, i: true, u: true, d: true, ...removedLater[key] });
     }
   });
 
