@@ -42,7 +42,7 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 ### 0.4 本書が決めないもの (範囲外)
 
 - 組織の解散した行の物理削除 (org/04 §(解散) の「90 日後物理削除」)。組織の purge のジョブは origin/main に無く、本書も作らない。解散した組織の行は残る (Q-3)。
-- 代表者による家族グループの物理削除 (RLS `family_groups_delete_representative` + CASCADE。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:10352`)。画面から呼ぶ経路は無く (`git grep` で `from('family_groups')` の `.delete()` は 0 件)、#1310 が意図して残した経路なので、本書は触らない。解散した家族の行は `representative_id` が NULL になるので、解散のあとはこの経路でも消せない (§10)。
+- 家族グループの物理削除。代表者による直接の削除 (RLS `family_groups_delete_representative` + CASCADE。`supabase/migrations/20251126124224_create_meal_planner_tables.sql:10352`) は、#1917 の続き (`supabase/migrations/20261022200000_family_groups_no_direct_delete.sql`) でポリシーを消し、anon / authenticated から DELETE・TRUNCATE の権限を外した (保護者の同意の記録 `parental_consents` が CASCADE で消え、解散の通知・監査も通らなかったため)。家族の行を消すのは、解散から 90 日の purge (`purge_dissolved_family_groups`。同意の記録を持つ家族は消さない。operator/11 §5.4) と service_role (運営の手作業・テストの後片付け) だけで、代表者が家族をやめる操作は本書の解散 (§11〜§14) だけ。画面から直接の削除を呼ぶ経路はもともと無い (`git grep` で `from('family_groups')` の `.delete()` は 0 件)。本書の範囲 (解散の口) はこの変更で変わらない。
 - 運営の強制解散の画面・route・権限・admin_audit_logs の記録・運営の通知メールの文面 (membership/05 §5〜§8)。RPC の本体だけを後始末の関数を呼ぶ形に置き換える (§11.2。動きは変えない)。
 - Q-23 の画面 (`/legal-consent/account`。#1901 の実装で main にある) の構成 (見出し・導入・書き出し・リンク)。本書は、解散の API を同意の許可リストに入れ (未同意でも呼べる)、その画面と凍結中の画面が共通に使う枠 `AccountSelfServicePanel` の 409 の分岐に解散の区画を足し、同意の前の画面の 409 の案内の文 (`LEGAL_CONSENT_COPY.accountDeleteBlockedGuidance`) を解散に合わせるところまで (§15.4・§8 の行・Q-2)。
 - 解散のときに、pending の譲渡の提案 (`ownership_transfer_proposals`) と招待 (`family_invites` / `organization_invites`) を expired / revoked にすること。運営の強制解散もしない。家族の招待の承諾は解散後 `FAMILY_NOT_FOUND` で止まり、家族の譲渡の承諾は `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` で止まる (§8)。組織の譲渡の承諾 (`accept_org_owner_transfer`) は、組織の行をロックして `status` が active でなければ `ORG_ALREADY_DISSOLVED` で止まる (`supabase/migrations/20261022140000_org_transfer_toctou.sql`。運営の強制解散のあとも同じ)。組織の招待の承諾 (`accept_org_invite`) は、組織の行をロックして `status` が active でなければ `ORG_ALREADY_DISSOLVED` で止まる (Q-4 の修正。`supabase/migrations/20261022100000_org_invite_dissolved.sql`。運営の強制解散のあとも同じ)。招待は pending のまま残る。解散の画面の文 (§13.4 `SELF_DISSOLVE_COPY.organization.effects`) は、招待の扱いを書かない。
@@ -283,13 +283,13 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 
 | 案 | 中身 | 判定 |
 |---|---|---|
-| N-1 列を NULL にする (本書) | 解散のときに `representative_id` / `owner_id` を NULL にし、列を NULL 許容 + CHECK (`status <> 'active' OR 列 IS NOT NULL`)。外部キーは RESTRICT のまま (active な行は今までどおり退会を止める最後の守り) | 退会 (`findBlocker`・RESTRICT)・`accept_org_invite` の `IS_ORG_OWNER` (F-12)・RLS `family_groups_delete_representative` が、判定を足さずに解散した行を無視する (運営の未ログインの一覧 2 本はこの列を読まないので、どの案でも変わらない。S-28・S-29)。**採る** |
-| N-2 列を残し、外部キーを SET NULL にして `findBlocker` に `status` の条件を足す | 解散した行は元の人を指したまま。退会で SET NULL | `findBlocker` のほかに `accept_org_invite` (F-12) と RLS の DELETE (元代表者が解散した家族を同意の記録ごと物理削除できる) にも条件が要り、1 つ漏れると欠陥になる。`auth-users-fk-on-delete.test.ts` の RESTRICT の許可リストも変わる。採らない |
+| N-1 列を NULL にする (本書) | 解散のときに `representative_id` / `owner_id` を NULL にし、列を NULL 許容 + CHECK (`status <> 'active' OR 列 IS NOT NULL`)。外部キーは RESTRICT のまま (active な行は今までどおり退会を止める最後の守り) | 退会 (`findBlocker`・RESTRICT)・`accept_org_invite` の `IS_ORG_OWNER` (F-12) が、判定を足さずに解散した行を無視する (RLS `family_groups_delete_representative` も解散した行に当たらなかったが、#1917 の続き (`20261022200000_family_groups_no_direct_delete.sql`) でポリシーごと消え、利用者は家族の行を直接 DELETE できない。§0.4。運営の未ログインの一覧 2 本はこの列を読まないので、どの案でも変わらない。S-28・S-29)。**採る** |
+| N-2 列を残し、外部キーを SET NULL にして `findBlocker` に `status` の条件を足す | 解散した行は元の人を指したまま。退会で SET NULL | `findBlocker` のほかに `accept_org_invite` (F-12) と RLS の DELETE (元代表者が解散した家族を同意の記録ごと物理削除できる。このポリシーは #1917 の続きで消えた。§0.4) にも条件が要り、1 つ漏れると欠陥になる。`auth-users-fk-on-delete.test.ts` の RESTRICT の許可リストも変わる。採らない |
 | N-3 退会のときに解散した行を物理削除する | `prepare_account_deletion` で本人が元代表者の `dissolved` の行を消す | 保護者の同意の記録を持つ家族は消せない (CASCADE で消える。operator/11 Q-2 の確認の結果「消さずに残す」に反する) ので、結局 N-1 か N-2 が要る。採らない |
 
 ### 7.2 F の問い — 縁の発生源を消すより単純な構造は無いか
 
-- 縁の発生源は「解散した行が誰かを指し続けること」。指し続ける限り、退会・招待の承諾・RLS の DELETE のそれぞれに「解散した行を除く」判定が要る。N-1 は発生源を消すので、既存の判定を 1 つも足さずに済む。本書で足す判定は、利用者の RPC の中の「代表者 / オーナーか」だけ。
+- 縁の発生源は「解散した行が誰かを指し続けること」。指し続ける限り、退会・招待の承諾・RLS の DELETE (#1917 の続きでポリシーごと消えた。§0.4) のそれぞれに「解散した行を除く」判定が要る。N-1 は発生源を消すので、既存の判定を 1 つも足さずに済む。本書で足す判定は、利用者の RPC の中の「代表者 / オーナーか」だけ。
 - 代表者 / オーナーの判定を `family_members.role` / `user_profiles.org_role` で行う案は、`family_groups.representative_id` / `organizations.owner_id` と二重になり、どちらが正かを決める判定が増える。退会の `findBlocker` も RESTRICT も列で判定しているので、列を正にする。
 - 解散の条件に「ほかに大人 (譲渡できる相手) がいないこと」を足す案は、画面に「譲渡できる相手がいるので解散できません」という新しい縁を作り、代表者が既にメンバーを 1 人ずつ外せる (`remove_family_member`) 以上、守るものが無い。条件を足さない。
 - 通知の宛先を RPC の戻り値で受け取る形は、route が service_role を使う時点を「認可のあと」に固定する (運営の route は認可が `requireSuperAdmin` で route にあるので先読みできたが、利用者の route は認可が RPC の中にある)。route が本人のセッションで先読みする案は、組織のメンバーを本人のセッションで読めない (RLS。F-26) ので家族と組織で形が割れる。戻り値に統一する。
@@ -443,13 +443,13 @@ migration の本番適用は段 A のマージ前にオーケストレーター�
 | active | 招待の承諾 (`accept_family_invite`) | active (承諾した人が active のメンバー) | 家族の行を最初にロック (#1310)・招待 (期限・宛先のメール)・`ALREADY_IN_FAMILY`・家族が active・人数の上限 | 既存。解散と同時なら家族の行で直列 (S-17・S-27): 承諾が先なら解散の apply がその人も `left` にし、宛先にも入る。解散が先なら承諾は `FAMILY_NOT_FOUND` |
 | active | 子供の追加 (`add_family_child`) | active (子供の行が増える) | 呼んだ人が家族の active な大人 (ロックの前)・生年月日と保護者の同意・家族の行 (FOR UPDATE) のロック下で家族が active・人数の上限 | 既存。解散と同時なら家族の行で直列: 追加が先なら解散の apply が子供の行も `left` にする (同意は `member_left` で取り消し。アカウントの無い子供は宛先に入らない)。解散が先なら `NOT_FAMILY_ADULT` (大人の判定の前に解散が commit) か `FAMILY_NOT_FOUND` (判定のあとでロックを待った場合) |
 | active | 大人・子供の退出 (`leave_family`) / 大人による除名 (`remove_family_member`) | active (その人の行が `left`) | 家族の行のロック (#1310)・本人 / 対象が active・代表者は退出も除名もできない (`IS_FAMILY_REPRESENTATIVE`) | 既存。解散と同時なら家族の行で直列: 退出・除名が先ならその人は解散の宛先に入らない (メールは届かない)。解散が先なら `NOT_IN_FAMILY` / `NOT_FAMILY_ADULT` |
-| active | 代表者が RLS で DELETE (REST 直接) | (消える) | `representative_id = auth.uid()` | 既存。CASCADE。本書は触らない (§0.4) |
+| active | 代表者・大人・未認証が REST で直接 DELETE | active (変わらない) | DELETE のポリシーも権限も無い (#1917 の続き。`20261022200000_family_groups_no_direct_delete.sql`。§0.4) | 42501。何も消えない (メンバー・招待・保護者の同意の記録も残る) |
 | active | 代表者・大人が RLS で UPDATE (`status` / `dissolved_at`。REST 直接) | active (変わらない) | RLS `family_groups_update_adult` (`is_active_family_adult`) は通るが、`trg_guard_family_groups_privileged` が `current_user` = `authenticated` / `anon` の `status` / `dissolved_at` の変更を止める (§11.1 の 6) | 42501 `CANNOT_MODIFY_PRIVILEGED_COLUMN` (PostgREST は 403)。何も変わらない。現行はこの UPDATE が通り、`representative_id` が代表者を指したまま・メンバーが active のままの dissolved の行ができた (F-13・S-31) |
 | active | 代表者・大人が RLS で UPDATE (`name` など特権でない列。REST 直接) | active | `is_active_family_adult`・ガードの 5 列 (`representative_id` / `plan_key` / `member_limit` / `status` / `dissolved_at`) が変わらない | 既存。本書は変えない (5 列を同じ値で送り直す更新も通る) |
 | dissolved | 代表者 (元) が解散の API | dissolved | — | 409 `FAMILY_ALREADY_DISSOLVED` |
 | dissolved | 運営が強制解散 | dissolved | super_admin + MFA | 既存どおり通る (`dissolved_at` を上書き。監査 1 行)。変えない |
 | dissolved | 元代表者が退会 | dissolved (`representative_id` は NULL のまま) | — | 200。`family_members` の本人の行は CASCADE で消える |
-| dissolved | 元代表者が RLS で DELETE | dissolved | `representative_id` が NULL なので当たらない | 何も起きない (0 行) |
+| dissolved | 元代表者が REST で直接 DELETE | dissolved | 同上 (DELETE のポリシーも権限も無い) | 42501。何も消えない |
 | dissolved | 元メンバーが RLS で UPDATE (REST 直接) | dissolved | `is_active_family_adult` が偽 (解散で全員 `left`) | 何も起きない (0 行) |
 | dissolved | 招待の承諾 / 譲渡の承諾 / 子供の追加 / 退出 / 除名 | dissolved | 既存の判定 | `FAMILY_NOT_FOUND` / `TRANSFER_ACCEPTOR_NOT_IN_FAMILY` / `NOT_FAMILY_ADULT` / `NOT_IN_FAMILY` (#1310 の C1〜C4 と同じ) |
 | dissolved (90 日経過・同意の記録なし) | 03:40 JST のジョブ | (消える) | F-8 | CASCADE。監査 `system.family.dissolved_purge` |
