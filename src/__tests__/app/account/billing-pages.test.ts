@@ -14,7 +14,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { FAMILY_PLAN_STATUS_SUFFIX, FREE_PLAN_DISPLAY_NAME, IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, PAID_PLAN_GENERIC_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
+import { FAMILY_PLAN_STATUS_SUFFIX, FREE_PLAN_DISPLAY_NAME, IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, ORG_PLAN_VALUES_WIRE, PAID_PLAN_GENERIC_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
 import { EMPTY_PLAN_FEATURES, type BillingSummary, type SubscriptionStatus } from '@/lib/billing/core';
 
 const h = React.createElement;
@@ -343,7 +343,8 @@ describe('#1912 /account/billing の現在のプランはモバイルと同じ�
     }
   });
 
-  it.each(['standard', 'premium', 'enterprise', 'org_standard', 'org_starter'])(
+  // 組織のプランの値の一覧は shared の写し (ORG_PLAN_VALUES_WIRE) を使う (src の下に組織のプランの値を綴らない。tests/org-plan-ai-daily-limits-contract.test.ts)
+  it.each([...ORG_PLAN_VALUES_WIRE, 'org_standard', 'org_starter'])(
     'an organization member (effective %s without an own contract) sees 組織のプラン and the not-own note, never ご家族 nor the internal value',
     async (orgPlanKey) => {
       const { plan, note, text } = await renderWith(notLiveSummary(orgPlanKey));
