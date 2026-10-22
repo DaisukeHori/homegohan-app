@@ -10,6 +10,9 @@
  *   - ページ送り: 前へ / 次へで page を変え、検索条件は引き継ぐ。範囲と総件数を出す
  *   - 作成: 組織名・プラン・(任意で) オーナーのユーザー ID を POST し、成功したら 1 ページ目から取り直す。
  *     API のエラーメッセージ (同じユーザーが別の組織に所属している、など) をそのまま出す
+ *   - プランの変更 (#1912: 組織のプランの段階は運営だけが変える): 一覧の行のプランを選び直して「変更」を押すと
+ *     PATCH /api/admin/organizations/{id} に { plan } を送り、成功したらその行だけを返ってきた値に置き換える。
+ *     今と同じプランのあいだは「変更」を押せない。失敗したら API のメッセージを出し、行は変えない
  *   - 入力欄はラベルと結びつき、ボタンには type がある
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
@@ -68,6 +71,7 @@ let fetchMock: ReturnType<typeof vi.fn>;
 interface Api {
   list?: (url: URL) => Response | Promise<Response>;
   create?: (body: Record<string, unknown>) => Response | Promise<Response>;
+  changePlan?: (id: string, body: Record<string, unknown>) => Response | Promise<Response>;
 }
 
 /** API ごとの応答を決める。想定外の呼び出しはテストを失敗させる */
@@ -79,6 +83,10 @@ function mockApi(api: Api) {
     if (url.pathname === '/api/admin/organizations' && method === 'POST' && api.create) {
       return api.create(JSON.parse(String(init?.body)));
     }
+    const changePlanPath = url.pathname.match(/^\/api\/admin\/organizations\/([^/]+)$/);
+    if (changePlanPath && method === 'PATCH' && api.changePlan) {
+      return api.changePlan(decodeURIComponent(changePlanPath[1]), JSON.parse(String(init?.body)));
+    }
     throw new Error(`想定していない fetch: ${method} ${input}`);
   });
 }
@@ -87,10 +95,14 @@ const text = () => container.textContent ?? '';
 const alerts = () => Array.from(container.querySelectorAll('[role="alert"]')).map((el) => el.textContent ?? '');
 const statuses = () => Array.from(container.querySelectorAll('[role="status"]')).map((el) => el.textContent ?? '');
 
-/** 一覧の各行のセルの文字 */
+/** 一覧の各行のセルの表示の文字 (プランの欄の変更の部品 (ラベル・選択肢・ボタン・エラー) は除く) */
 const rows = () =>
   Array.from(container.querySelectorAll('tbody tr')).map((tr) =>
-    Array.from(tr.querySelectorAll('td')).map((td) => td.textContent?.trim() ?? ''),
+    Array.from(tr.querySelectorAll('td')).map((td) => {
+      const copy = td.cloneNode(true) as HTMLElement;
+      copy.querySelectorAll('label, select, button, [role="alert"]').forEach((el) => el.remove());
+      return copy.textContent?.trim() ?? '';
+    }),
   );
 const names = () => rows().map((cells) => cells[0]);
 
@@ -779,5 +791,147 @@ describe('アクセシビリティ', () => {
     const help = container.querySelector(`#${describedBy}`);
     expect(help?.textContent).toContain('空欄のときは');
     expect(help?.textContent).toContain('あなた自身がオーナー');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// プランの変更 (#1912: 組織のプランの段階は運営だけが変える)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('プランの変更', () => {
+  const ORG_1 = org(1, { name: '株式会社エー', plan: 'standard' });
+  const ORG_2 = org(2, { name: '株式会社ビー', plan: 'premium' });
+
+  const planSelect = (id: string) => container.querySelector(`#org-plan-${id}`) as HTMLSelectElement;
+  const changeButton = (id: string) =>
+    planSelect(id).closest('td')?.querySelector('button') as HTMLButtonElement | undefined;
+  const patchCalls = () => callsOf('PATCH');
+
+  it('行のプランの欄は、今のプランを選んだ状態の選択肢 (standard / premium / enterprise) と「変更」で、ラベルは組織名を含む', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([ORG_1, ORG_2])) });
+    await renderPage();
+
+    expect(planSelect(ORG_1.id).value).toBe('standard');
+    expect(planSelect(ORG_2.id).value).toBe('premium');
+    expect(Array.from(planSelect(ORG_1.id).options).map((o) => o.value)).toEqual(['standard', 'premium', 'enterprise']);
+    expect(container.querySelector(`label[for="org-plan-${ORG_1.id}"]`)?.textContent).toBe('株式会社エー のプラン');
+    expect(changeButton(ORG_1.id)?.textContent).toBe('変更');
+  });
+
+  it('今と同じプランのあいだは「変更」を押せない (送らない)', async () => {
+    mockApi({ list: () => jsonResponse(200, listBody([ORG_1])) });
+    await renderPage();
+
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    await choose(planSelect(ORG_1.id), 'premium');
+    expect(changeButton(ORG_1.id)?.disabled).toBe(false);
+    await choose(planSelect(ORG_1.id), 'standard');
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    expect(patchCalls()).toHaveLength(0);
+  });
+
+  it('選び直して「変更」を押すと PATCH /api/admin/organizations/{id} に { plan } だけを送り、成功したらその行だけを置き換えて知らせる (一覧は取り直さない)', async () => {
+    const changed: Array<[string, Record<string, unknown>]> = [];
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1, ORG_2])),
+      changePlan: (id, body) => {
+        changed.push([id, body]);
+        return jsonResponse(200, { organization: { ...ORG_1, plan: 'enterprise', updated_at: '2026-10-22T08:00:00.000Z' } });
+      },
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'enterprise');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+
+    expect(changed).toEqual([[ORG_1.id, { plan: 'enterprise' }]]);
+    expect(callsOf('GET')).toHaveLength(1);
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([
+      ['株式会社エー', 'enterprise'],
+      ['株式会社ビー', 'premium'],
+    ]);
+    expect(planSelect(ORG_1.id).value).toBe('enterprise');
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    expect(statuses()).toContain('組織「株式会社エー」のプランを enterprise に変更しました。');
+    expect(alerts()).toEqual([]);
+  });
+
+  it('API のエラー (404 など) はそのメッセージを出し、行のプランは変えない。通信エラーは汎用の日本語のメッセージ', async () => {
+    let calls = 0;
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => {
+        calls += 1;
+        if (calls === 1) return jsonResponse(404, errorBody('NOT_FOUND', '組織が見つかりません'));
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['組織が見つかりません']);
+    expect(rows()[0][1]).toBe('standard');
+    expect(planSelect(ORG_1.id).value).toBe('premium');
+
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
+    expect(rows()[0][1]).toBe('standard');
+    expect(statuses()).toEqual([]);
+  });
+
+  it('想定外の形の応答 (organization が無い) は成功と見せず、汎用のエラーにする', async () => {
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => jsonResponse(200, { ok: true }),
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(alerts()).toEqual(['プランを変更できませんでした。しばらくしてから、もう一度お試しください。']);
+    expect(rows()[0][1]).toBe('standard');
+    expect(statuses()).toEqual([]);
+  });
+
+  it('変更している間は選択肢とボタンを止め、二重に送らない', async () => {
+    const slow = deferred<Response>();
+    mockApi({
+      list: () => jsonResponse(200, listBody([ORG_1])),
+      changePlan: () => slow.promise,
+    });
+    await renderPage();
+
+    await choose(planSelect(ORG_1.id), 'premium');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(planSelect(ORG_1.id).disabled).toBe(true);
+    expect(changeButton(ORG_1.id)?.disabled).toBe(true);
+    expect(changeButton(ORG_1.id)?.textContent).toBe('変更中...');
+    await click(changeButton(ORG_1.id), '変更ボタン');
+    expect(patchCalls()).toHaveLength(1);
+
+    await act(async () => {
+      slow.resolve(jsonResponse(200, { organization: { ...ORG_1, plan: 'premium' } }));
+    });
+    await settle();
+    expect(rows()[0][1]).toBe('premium');
+    expect(planSelect(ORG_1.id).disabled).toBe(false);
+  });
+
+  it('一覧に無い値のプラン (null・内部の値) は、その値のまま出し、選択肢の先頭は「選ぶ」で「変更」は押せない', async () => {
+    const odd = org(3, { name: '内部の値の組織', plan: 'org_pro' });
+    const none = org(4, { name: 'プラン未設定', plan: null });
+    mockApi({ list: () => jsonResponse(200, listBody([odd, none])) });
+    await renderPage();
+
+    expect(rows().map((cells) => cells.slice(0, 2))).toEqual([
+      ['内部の値の組織', 'org_pro'],
+      ['プラン未設定', '-'],
+    ]);
+    for (const id of [odd.id, none.id]) {
+      expect(planSelect(id).value).toBe('');
+      expect(Array.from(planSelect(id).options).map((o) => o.value)).toEqual(['', 'standard', 'premium', 'enterprise']);
+      expect(changeButton(id)?.disabled).toBe(true);
+    }
   });
 });
