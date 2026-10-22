@@ -6,7 +6,9 @@
  * 落とさないよう、各関数の「最新の定義」(supabase/migrations を version 順に見て、最後に CREATE OR REPLACE したもの) で確かめる。
  *
  *   0. ロックの順の規則 (CLAUDE.md の組織のロック順): 組織の行を取る関数は、組織の行を、ほかのどの user_profiles の行よりも先に取る。
- *      組織の行を取らない関数 (脱退・除名・release_user_membership) は user_profiles の行を 1 つだけ取る。取り直しのループ (LOOP) は無い
+ *      組織の行を取らない関数 (脱退・除名) は user_profiles の行を 1 つだけ取る。取り直しのループ (LOOP) は無い
+ *      (release_user_membership は 20261022160000_release_membership_owner_race.sql で組織の行を最初に取る側に移った。
+ *      その中身は tests/release-membership-owner-race-migration-contract.test.ts が見る)
  *   1. accept_org_owner_transfer: 提案の行 → 組織の行 → 承諾者の user_profiles → 旧オーナーの user_profiles を FOR NO KEY UPDATE で取り、
  *      ORG_ALREADY_DISSOLVED → TRANSFER_ACCEPTOR_NOT_IN_ORG → TRANSFER_NOT_PENDING → NOT_ORG_OWNER の順に判定し、
  *      最初の所属の書き込み (旧オーナーの org_role) はすべての判定のあと
@@ -52,10 +54,12 @@ const ORG_ROW_FIRST_FUNCTIONS = [
   'dissolve_org_by_owner',
   'operator_force_dissolve_org',
   'accept_org_invite',
+  // 20261022160000_release_membership_owner_race.sql: 組織の行 → 本人の user_profiles (退会の findBlocker のあとにオーナーになった人の所属を外さない)
+  'release_user_membership',
 ] as const;
 
 /** 組織の行を取らずに所属を外す関数 (user_profiles の行を 1 つだけ取る) */
-const SINGLE_PROFILE_ROW_FUNCTIONS = ['leave_org', 'remove_org_member', 'release_user_membership'] as const;
+const SINGLE_PROFILE_ROW_FUNCTIONS = ['leave_org', 'remove_org_member'] as const;
 
 /** ファイルの from〜to 行 (1 始まり・両端を含む) を改行でつないで返す */
 function linesOf(file: string, from: number, to: number): string {
@@ -252,8 +256,8 @@ describe('operator_force_owner_transfer の最新の定義', () => {
   const { file, header, body: rawBody } = latestOf('operator_force_owner_transfer');
   const body = stripLineComments(rawBody);
 
-  it('最新の定義はこの migration で、SECURITY DEFINER・search_path = public・RETURNS organizations のまま', () => {
-    expect(file).toBe(`${MIGRATION}.sql`);
+  it('最新の定義はこの migration かそれより後 (20261022160000 が旧オーナーの行の UPDATE に在籍の条件を足した) で、SECURITY DEFINER・search_path = public・RETURNS organizations のまま', () => {
+    expect(file >= `${MIGRATION}.sql`, file).toBe(true);
     expect(header, file).toMatch(/RETURNS\s+"public"\."organizations"/i);
     expect(header, file).toMatch(/SECURITY\s+DEFINER/i);
     expect(header, file).toMatch(/SET\s+"search_path"\s+TO\s+'public'/i);
