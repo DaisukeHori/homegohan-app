@@ -8,7 +8,10 @@
  *      authenticated の SELECT・UPDATE は残る (後の migration が DELETE のポリシーや権限を足し直したら、ここで赤くなる)
  *   2. 本冊の migration が、DELETE のポリシーを外し、DELETE・TRUNCATE の権限を anon / authenticated から外す (ほかには触れない)
  *   3. 同じ型の機械検査: family_groups の行を DELETE する関数の最新の定義は、どれも SECURITY DEFINER か、利用者が実行できない関数
- *   4. 戻し口が実在し、ポリシーはベースラインの行と逐語で同じに作り直し、流すと本冊の直前の状態 (ポリシーと権限) に戻る
+ *   4. 戻し口が実在し、ポリシーはベースラインの行と逐語で同じに作り直し、流すと本冊の直前の状態 (ポリシーと権限) に戻る。
+ *      本冊の直前の 20261022190000_db_privilege_hardening.sql が public の全部の表から anon / authenticated の TRUNCATE を
+ *      外しているので、本冊の直前の family_groups は DELETE を持ち TRUNCATE を持たない。戻し口は DELETE だけを付け直し、
+ *      TRUNCATE を付けない (付けると 190000 の不変条件 (全表で TRUNCATE なし) を破る)
  *   5. アプリのコード (Web・モバイル・Edge Function・共有のライブラリ) は family_groups を直接 DELETE しない (家族をやめるのは解散の RPC)
  *   6. 本冊の migration のコメントが挙げる家族の行の消え方が、スキーマの事実と合う (名指しする family_groups の列が実在し、
  *      auth.users への外部キーは representative_id の ON DELETE RESTRICT だけ = 退会で家族の行は消えない)
@@ -22,6 +25,8 @@ import { rel, ROOT, stripComments } from './helpers/ai-reach';
 const MIGRATIONS_DIR = path.join(ROOT, 'supabase', 'migrations');
 const MIGRATION = '20261022200000_family_groups_no_direct_delete';
 const MIGRATION_FILE = `${MIGRATION}.sql`;
+/** public の全部の表から anon / authenticated の TRUNCATE を外した migration (本冊の直前。DO ブロックで表ごとに REVOKE する) */
+const TRUNCATE_HARDENING_FILE = '20261022190000_db_privilege_hardening.sql';
 const ROLLBACK_PATH = path.join(ROOT, 'supabase', 'rollbacks', `${MIGRATION}.down.sql`);
 /** 本番のベースライン (DELETE のポリシーと権限を最初に作ったファイル) */
 const BASELINE_FILE = '20251126124224_create_meal_planner_tables.sql';
@@ -31,6 +36,10 @@ const TABLE = 'family_groups';
 const USER_ROLES = ['anon', 'authenticated'] as const;
 /** 閉じる権限 (TRUNCATE は RLS が効かない書き込みなので一緒に閉じる) */
 const CLOSED_PRIVILEGES = ['DELETE', 'TRUNCATE'] as const;
+/** 戻し口が付け直す権限 (本冊の直前に持っていたもの。TRUNCATE は 20261022190000 が外していて、本冊の直前にも無い) */
+const RESTORED_PRIVILEGES = ['DELETE'] as const;
+/** 戻し口が付け直さない権限 (20261022190000 が public の全部の表から外した) */
+const NOT_RESTORED_PRIVILEGES = ['TRUNCATE'] as const;
 /** 外す DELETE のポリシー */
 const DELETE_POLICY = 'family_groups_delete_representative';
 /** 残すポリシー (画面が読み、家族の名前などを書き換える。特権列は guard_family_groups_privileged が守る) */
@@ -91,7 +100,10 @@ function applySql(state: TableState, sql: string): TableState {
     events.push({ at: m.index ?? 0, apply: () => state.policies.delete(name) });
   }
   const grantOrRevoke = new RegExp(String.raw`\b(GRANT|REVOKE)\s+([A-Z ,]+?)\s+ON\s+(?:TABLE\s+)?${TABLE_REF}\s+(TO|FROM)\s+([^;]+);`, 'gi');
-  for (const m of sql.matchAll(grantOrRevoke)) {
+  // public の全部の表に当てる REVOKE (DO ブロックの中の EXECUTE pg_catalog.format('REVOKE ... ON TABLE %s FROM <ロール>', v_rel)。
+  // 20261022190000 の TRUNCATE の外し)。family_groups も対象に入る。GRANT の形は戻し口の条件つきの付け直しなので、ここでは数えない
+  const revokeOnEveryTable = /format\(\s*'(REVOKE)\s+([A-Z ,]+?)\s+ON\s+TABLE\s+%s\s+(FROM)\s+([^'%]+)'/gi;
+  for (const m of [...sql.matchAll(grantOrRevoke), ...sql.matchAll(revokeOnEveryTable)]) {
     const isGrant = m[1].toUpperCase() === 'GRANT';
     const listed = m[2].split(',').map((p) => p.trim().toUpperCase());
     const privileges = listed.some((p) => p === 'ALL' || p === 'ALL PRIVILEGES') ? [...ALL_TABLE_PRIVILEGES] : listed;
@@ -122,6 +134,8 @@ function stateAfter(files: ReadonlyArray<{ sql: string }>, extra: readonly strin
 }
 
 const migrationIndex = migrations.findIndex(({ file }) => file === MIGRATION_FILE);
+const hardeningIndex = migrations.findIndex(({ file }) => file === TRUNCATE_HARDENING_FILE);
+const baselineIndex = migrations.findIndex(({ file }) => file === BASELINE_FILE);
 const migrationSql = migrationIndex >= 0 ? migrations[migrationIndex].sql : '';
 
 const sortedPolicies = (state: TableState) => [...state.policies.entries()].sort(([a], [b]) => a.localeCompare(b));
@@ -150,14 +164,42 @@ describe('#1917 migration を全部流した後の family_groups のポリシー
     expect(finalState.grants.get('service_role')?.has('DELETE')).toBe(true);
   });
 
-  it('番兵: 読み取りが本番のベースラインの DELETE のポリシーと権限を拾っている (本冊の直前の状態)', () => {
+  it('番兵: 読み取りが本番のベースラインの DELETE のポリシーと権限 (DELETE・TRUNCATE) を拾っている', () => {
+    expect(baselineIndex, `${BASELINE_FILE} が supabase/migrations に無い`).toBeGreaterThanOrEqual(0);
+    const baseline = stateAfter(migrations.slice(0, baselineIndex + 1));
+    expect(sortedPolicies(baseline)).toEqual(
+      [...sortedKeptPolicies(), [DELETE_POLICY, 'DELETE']].sort(([a], [b]) => a.localeCompare(b)),
+    );
+    for (const role of USER_ROLES) {
+      for (const privilege of CLOSED_PRIVILEGES) {
+        expect(baseline.grants.get(role)?.has(privilege), `${role} ${privilege}`).toBe(true);
+      }
+    }
+  });
+
+  it('番兵: 読み取りが 20261022190000 の全表の TRUNCATE の外し (DO ブロック) を family_groups に当てている (190000 の前は TRUNCATE あり・後は無い)', () => {
+    expect(hardeningIndex, `${TRUNCATE_HARDENING_FILE} が supabase/migrations に無い`).toBeGreaterThanOrEqual(0);
+    expect(hardeningIndex).toBeLessThan(migrationIndex);
+    const beforeHardening = stateAfter(migrations.slice(0, hardeningIndex));
+    const afterHardening = stateAfter(migrations.slice(0, hardeningIndex + 1));
+    for (const role of USER_ROLES) {
+      expect(beforeHardening.grants.get(role)?.has('TRUNCATE'), `${role} TRUNCATE (190000 の前)`).toBe(true);
+      expect(afterHardening.grants.get(role)?.has('TRUNCATE') ?? false, `${role} TRUNCATE (190000 の後)`).toBe(false);
+      expect(afterHardening.grants.get(role)?.has('DELETE'), `${role} DELETE (190000 の後)`).toBe(true);
+    }
+  });
+
+  it('本冊の直前の状態: DELETE のポリシーと anon / authenticated の DELETE はあり、TRUNCATE は無い (190000 が外した)', () => {
     const before = stateAfter(migrations.slice(0, migrationIndex));
     expect(sortedPolicies(before)).toEqual(
       [...sortedKeptPolicies(), [DELETE_POLICY, 'DELETE']].sort(([a], [b]) => a.localeCompare(b)),
     );
     for (const role of USER_ROLES) {
-      for (const privilege of CLOSED_PRIVILEGES) {
+      for (const privilege of RESTORED_PRIVILEGES) {
         expect(before.grants.get(role)?.has(privilege), `${role} ${privilege}`).toBe(true);
+      }
+      for (const privilege of NOT_RESTORED_PRIVILEGES) {
+        expect(before.grants.get(role)?.has(privilege) ?? false, `${role} ${privilege}`).toBe(false);
       }
     }
   });
@@ -273,12 +315,30 @@ describe('#1917 戻し口', () => {
     expect(new Set(rollbackRaw.split('\n')).has(created[0])).toBe(true);
   });
 
-  it('流すと、本冊の直前のポリシーと権限に戻る', () => {
+  it('流すと、本冊の直前のポリシーと権限に戻る (anon / authenticated は DELETE を持ち、TRUNCATE は持たない)', () => {
     const before = stateAfter(migrations.slice(0, migrationIndex));
     const restored = stateAfter(migrations.slice(0, migrationIndex + 1), [stripLineComments(rollbackRaw)]);
     expect(sortedPolicies(restored)).toEqual(sortedPolicies(before));
     for (const role of [...USER_ROLES, 'service_role']) {
       expect(sortedGrants(restored, role), role).toEqual(sortedGrants(before, role));
+    }
+    for (const role of USER_ROLES) {
+      for (const privilege of RESTORED_PRIVILEGES) expect(restored.grants.get(role)?.has(privilege), `${role} ${privilege}`).toBe(true);
+      for (const privilege of NOT_RESTORED_PRIVILEGES) {
+        expect(restored.grants.get(role)?.has(privilege) ?? false, `${role} ${privilege}`).toBe(false);
+      }
+    }
+  });
+
+  it('利用者 (anon / authenticated / PUBLIC) へ付ける権限は DELETE だけで、TRUNCATE (ALL を含む) を GRANT しない', () => {
+    const grants = [...stripLineComments(rollbackRaw).matchAll(/\bGRANT\s+([\s\S]*?)\s+ON\s+([\s\S]*?)\s+TO\s+([^;]+);/gi)];
+    // 見つけ方が空振りしていないこと (DELETE の付け直しは必ず当たる)
+    expect(grants.length).toBeGreaterThan(0);
+    for (const grant of grants) {
+      const privileges = grant[1].split(',').map((p) => p.trim().toUpperCase());
+      expect(grant[2].replace(/\s+/g, ' ').trim(), grant[0]).toMatch(new RegExp(String.raw`^(?:TABLE )?(?:"?public"?\.)?"?${TABLE}"?$`, 'i'));
+      expect(grant[3], grant[0]).toMatch(/\b(?:anon|authenticated)\b/i);
+      expect(privileges, grant[0]).toEqual([...RESTORED_PRIVILEGES]);
     }
   });
 });

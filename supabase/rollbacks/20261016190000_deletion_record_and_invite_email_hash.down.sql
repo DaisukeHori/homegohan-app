@@ -1,4 +1,8 @@
 -- rollback: 20261016190000_deletion_record_and_invite_email_hash.sql
+-- 戻す順: 戻し口は新しい順に流す (後の 20261022190000_db_privilege_hardening.sql を先に戻す)。ここで anon / authenticated に
+--   付け直す TRUNCATE (GRANT ALL に含まれる) は、190000 が public の全部の表で利用者に持たせないとしたもの。190000 の戻し口はこの表の
+--   TRUNCATE を付け直さず、この戻し口が付け直す前提でできている。190000 が残ったままこの戻し口だけを流すと、RLS の効かない
+--   TRUNCATE が利用者に戻る (190000 の不変条件を破る)。
 -- #1562 の削除の実行記録と、招待の監査の招待先アドレスのハッシュ化を戻す。
 --
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。

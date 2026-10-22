@@ -52,6 +52,7 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 - `TRUNCATE` は RLS の効かない書き込み (全行の削除) で、どの表でも利用者に要らない。public スキーマの表・ビューは、anon と authenticated に `TRUNCATE` を持たせない (migration `20261022190000_db_privilege_hardening.sql`。service_role の権限と、SELECT・INSERT・UPDATE・DELETE などのほかの権限は変えていない)。
 - 今後 postgres が public に作る表も、既定の権限 (`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`) から anon / authenticated の `TRUNCATE` を外してあるので、`CREATE TABLE` だけでは付かない。表を作る migration で anon / authenticated に `GRANT ALL` や `GRANT TRUNCATE` を書かない。
 - 確認: `tests/integration/security/db-privilege-hardening.test.ts` (全部の表・ビューと既定の権限)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration が利用者へ表の TRUNCATE (ALL を含む) を付け直していないか)。
+- 戻し口 (`supabase/rollbacks/`) も同じ: `20261022190000` より後の migration の戻し口は、anon / authenticated に表の `TRUNCATE` (`GRANT ALL` を含む) を付け直さない (その migration の適用の直前にも無いため。例: `20261022200000_family_groups_no_direct_delete.down.sql` は DELETE だけを付け直す)。`20261022190000` より前の戻し口のうち `TRUNCATE` を付け直すもの (6 本) は、新しい順に戻したとき (`20261022190000` を先に戻したとき) だけ直前の状態に戻る。`20261022190000` の戻し口は、`20261022200000` が残っている間は `family_groups` に `TRUNCATE` を付けない。確認: `tests/db-privilege-hardening-migration-contract.test.ts` (戻し口の文面)・`tests/integration/rls/family-groups-no-direct-delete.test.ts` の G-8 (戻し口を流して巻き戻す)。
 
 ---
 
