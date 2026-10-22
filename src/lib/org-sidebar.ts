@@ -7,8 +7,11 @@
  */
 import { orgPlanLabel } from '@/lib/org-plans';
 
-/** 組織の名前が読めないときにサイドバーに出す文字 (以前からの値をそのまま使う) */
-export const ORG_SIDEBAR_NAME_FALLBACK = 'Organization';
+/**
+ * 組織の名前が読めないときにサイドバーに出す文字。
+ * 以前は固定の英語「Organization」だった (日本語の画面に英語が出ていた)。サイドバーのナビの言い方 (「組織」) に合わせる。
+ */
+export const ORG_SIDEBAR_NAME_FALLBACK = '組織';
 
 export interface OrgSidebarInfo {
   /** 組織の名前 (空・読めないときは ORG_SIDEBAR_NAME_FALLBACK) */
