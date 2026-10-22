@@ -9,7 +9,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+  FAMILY_PLAN_STATUS_SUFFIX,
   FREE_PLAN_DISPLAY_NAME,
+  SUBSCRIPTION_STATUSES_WIRE,
+  currentPlanDisplay,
+  subscriptionStatusLines,
   ORG_PLAN_DISPLAY_NAME,
   ORG_PLAN_VALUES_WIRE,
   ORG_SUBSCRIPTION_PLAN_KEY_PREFIX,
@@ -86,5 +90,47 @@ describe('#1912 planDisplayName は内部の plan_key を返さない', () => {
       expect(PAID_PLAN_GENERIC_DISPLAY_NAME).not.toBe(name);
     }
     expect(ORG_PLAN_DISPLAY_NAME).not.toBe(PAID_PLAN_GENERIC_DISPLAY_NAME);
+  });
+});
+
+// #1912: Web の契約の画面とモバイルの購入の画面が共有する現在のプランの分岐 (billing/03 §10.6 の 2)
+describe('#1912 currentPlanDisplay は自分の契約・家族・組織・汎用・無料を分ける', () => {
+  /** 自分の契約が live でない要約 (status = null) */
+  const notLive = (effectivePlanKey: string) => ({ plan_key: 'free', effective_plan_key: effectivePlanKey, status: null });
+
+  it('a live own contract shows the name of its own plan_key (source own), even when the effective plan differs', () => {
+    expect(currentPlanDisplay({ plan_key: 'pro', effective_plan_key: 'pro', status: 'active' })).toEqual({ source: 'own', name: '個人 Pro' });
+    expect(currentPlanDisplay({ plan_key: 'family_basic', effective_plan_key: 'family_basic', status: 'trialing' })).toEqual({ source: 'own', name: '家族 Basic' });
+    // paused の自分の契約は get_effective_plan では効かず家族のプランが効くが、画面の主の表示は自分の契約の名前 (モバイルと同じ)
+    expect(currentPlanDisplay({ plan_key: 'pro', effective_plan_key: 'family_pro', status: 'paused' })).toEqual({ source: 'own', name: '個人 Pro' });
+    // live な契約の plan_key が PLAN_CATALOG に無くても内部の値を出さない
+    expect(currentPlanDisplay({ plan_key: 'family_addon', effective_plan_key: 'family_addon', status: 'active' })).toEqual({ source: 'own', name: PAID_PLAN_GENERIC_DISPLAY_NAME });
+    expect(currentPlanDisplay({ plan_key: 'org_standard', effective_plan_key: 'org_standard', status: 'active' })).toEqual({ source: 'own', name: ORG_PLAN_DISPLAY_NAME });
+  });
+
+  it('without a live own contract: free → 無料プラン / organization values → 組織のプラン / PLAN_CATALOG keys → the family plan name / any other key → 有料プラン', () => {
+    expect(currentPlanDisplay(notLive('free'))).toEqual({ source: 'free', name: FREE_PLAN_DISPLAY_NAME });
+    for (const key of [...ORG_PLAN_VALUES, ...ORG_SUBSCRIPTION_PLAN_KEYS]) {
+      expect(currentPlanDisplay(notLive(key)), key).toEqual({ source: 'org', name: ORG_PLAN_DISPLAY_NAME });
+    }
+    for (const plan of PLAN_CATALOG) {
+      expect(currentPlanDisplay(notLive(plan.plan_key)), plan.plan_key).toEqual({ source: 'family', name: plan.display_name });
+    }
+    for (const key of NON_ORG_UNKNOWN_PLAN_KEYS) {
+      expect(currentPlanDisplay(notLive(key)), key).toEqual({ source: 'generic', name: PAID_PLAN_GENERIC_DISPLAY_NAME });
+    }
+  });
+
+  it('the live test is the same as subscriptionStatusLines (non-empty exactly for the live statuses): a non-live status falls back to the effective plan', () => {
+    for (const status of [null, ...SUBSCRIPTION_STATUSES_WIRE]) {
+      const summary = { plan_key: 'pro', effective_plan_key: 'family_pro', status, trial_ends_at: null, current_period_end: null, cancel_at_period_end: false, cancel_at: null };
+      const live = subscriptionStatusLines(summary).length > 0;
+      expect(currentPlanDisplay(summary).source, String(status)).toBe(live ? 'own' : 'family');
+    }
+  });
+
+  it('FAMILY_PLAN_STATUS_SUFFIX is the fixed (ご家族のプラン) wording and never names an organization', () => {
+    expect(FAMILY_PLAN_STATUS_SUFFIX).toBe(' (ご家族のプラン)');
+    expect(FAMILY_PLAN_STATUS_SUFFIX).not.toContain('組織');
   });
 });

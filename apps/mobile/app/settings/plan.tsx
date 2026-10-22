@@ -15,15 +15,14 @@
  * Web の購入のページへは誘導しない (__tests__/app/no-web-purchase-links.test.ts)。ストアやサーバの生の文は出さない (billing-api.ts の固定の文)。
  */
 import {
+  FAMILY_PLAN_STATUS_SUFFIX,
   IAP_STORE_LABELS,
   ORG_PLAN_DISPLAY_NAME,
   PAID_PLAN_GENERIC_DISPLAY_NAME,
   PLAN_CATALOG,
   STORE_SUBSCRIPTION_MANAGEMENT_URL,
-  isCatalogPlanKey,
-  isOrgPlanKey,
+  currentPlanDisplay,
   isPurchaseStore,
-  planDisplayName,
   subscriptionStatusLines,
   type BillingSummaryWire,
   type PurchaseStore,
@@ -72,7 +71,7 @@ export const PLAN_RESTORE_NOTHING_MESSAGE = "復元できる購入がありま�
 export const PLAN_FREE_STATUS_TEXT = "無料プランをご利用中です";
 /**
  * 組織のプランが効いている利用者 (自分の契約も家族も無く、いま効いているプランが組織のプランの値 (isOrgPlanKey)) の現在の状態。
- * 組織のプランの内部の値 (standard など) は出さない (#1912)。Web の契約の画面の定型の文 (「家族 / 組織のプランが適用中」) と同じ「組織のプラン」の語
+ * 組織のプランの内部の値 (standard など) は出さない (#1912)。Web の契約の画面と同じ「組織のプラン」の語 (ORG_PLAN_DISPLAY_NAME)
  */
 export const PLAN_ORG_STATUS_TEXT = `${ORG_PLAN_DISPLAY_NAME}をご利用中です`;
 /**
@@ -80,8 +79,8 @@ export const PLAN_ORG_STATUS_TEXT = `${ORG_PLAN_DISPLAY_NAME}をご利用中で�
  * 現在の状態。内部の値は出さず、汎用の名前 PAID_PLAN_GENERIC_DISPLAY_NAME で書く (#1912)
  */
 export const PLAN_GENERIC_STATUS_TEXT = `${PAID_PLAN_GENERIC_DISPLAY_NAME}をご利用中です`;
-/** 家族のプラン (自分の契約は無く、家族のプランが効いている) の現在の状態の後ろに添える文 (#1912) */
-export const PLAN_FAMILY_STATUS_SUFFIX = " (ご家族のプラン)";
+/** 家族のプラン (自分の契約は無く、家族のプランが効いている) の現在の状態の後ろに添える文 (#1912。Web の契約の画面と同じ @homegohan/shared の文) */
+export const PLAN_FAMILY_STATUS_SUFFIX = FAMILY_PLAN_STATUS_SUFFIX;
 /** Web (Stripe) で申し込んだ契約の出どころの文 (Web の画面へのリンクは出さない。R16) */
 export const PLAN_STRIPE_SOURCE_TEXT =
   "Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。";
@@ -108,17 +107,25 @@ function deviceStore(): PurchaseStore | null {
 }
 
 /**
- * 現在の状態の 1 行目 (§10.6 の 2)。live のときは契約の plan_key の名前 (planDisplayName。PLAN_CATALOG に無い key も内部の値を出さない)。
+ * 現在の状態の 1 行目 (§10.6 の 2)。分岐は Web の契約の画面と同じ currentPlanDisplay (@homegohan/shared。#1912):
+ * live のときは契約の plan_key の名前 (planDisplayName。PLAN_CATALOG に無い key も内部の値を出さない)。
  * live でない (status が null か終わった契約) ときは、いま効いているプランで書く: 組織のプランの値なら組織の固定の文、
- * PLAN_CATALOG の key (家族のプラン) ならその名前に「(ご家族のプラン)」を添え、どれでもない key は汎用の名前の文 (#1912)
+ * PLAN_CATALOG の key (家族のプラン) ならその名前に「(ご家族のプラン)」を添え、どれでもない key は汎用の名前の文
  */
-function currentPlanText(summary: BillingSummaryWire, live: boolean): string {
-  if (live) return `${planDisplayName(summary.plan_key)}をご利用中です`;
-  const effectivePlanKey = summary.effective_plan_key;
-  if (effectivePlanKey === "free") return PLAN_FREE_STATUS_TEXT;
-  if (isOrgPlanKey(effectivePlanKey)) return PLAN_ORG_STATUS_TEXT;
-  if (!isCatalogPlanKey(effectivePlanKey)) return PLAN_GENERIC_STATUS_TEXT;
-  return `${planDisplayName(effectivePlanKey)}をご利用中です${PLAN_FAMILY_STATUS_SUFFIX}`;
+function currentPlanText(summary: BillingSummaryWire): string {
+  const current = currentPlanDisplay(summary);
+  switch (current.source) {
+    case "own":
+      return `${current.name}をご利用中です`;
+    case "free":
+      return PLAN_FREE_STATUS_TEXT;
+    case "org":
+      return PLAN_ORG_STATUS_TEXT;
+    case "generic":
+      return PLAN_GENERIC_STATUS_TEXT;
+    case "family":
+      return `${current.name}をご利用中です${PLAN_FAMILY_STATUS_SUFFIX}`;
+  }
 }
 
 /** live な契約 (trialing・active・past_due・grace・paused) か。状態の行 (subscriptionStatusLines) が出るのと同じ判定 */
@@ -393,7 +400,7 @@ export default function PlanSettingsScreen() {
         ) : (
           <>
             <Card testID="plan-current">
-              <Text style={styles.currentTitle}>{currentPlanText(summary, live)}</Text>
+              <Text style={styles.currentTitle}>{currentPlanText(summary)}</Text>
               {statusLines.map((line) => (
                 <Text key={line} style={styles.body}>
                   {line}

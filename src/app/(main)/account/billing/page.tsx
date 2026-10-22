@@ -4,6 +4,9 @@
  * /account/billing — 契約の管理 (billing/01 §10.3)
  *
  * - GET /api/billing/subscription の要約 (BillingSummary) を描く。状態の文は billingStatusLines (§10.3 の表) を 1 行ずつ出す (画面に文を書かない)
+ * - 現在のプランはモバイルの購入の画面と同じ分岐 (@homegohan/shared の currentPlanDisplay。#1912): 自分の契約が live ならその名前、
+ *   そうでなければ effective_plan_key で 無料プラン / 組織のプラン / <名前> (ご家族のプラン) / 有料プラン。
+ *   自分の契約ではないプラン (組織・家族・汎用) が効いているときは、自分の契約が無いことを添え書き (NOT_OWN_PLAN_NOTE) で出す
  * - ?checkout=success&session_id=… で開いたら、先に POST /api/billing/checkout/sync を呼ぶ (S9)。契約がまだ写っていなければ
  *   「お申し込みを処理しています」を出し、CHECKOUT_SYNC_RETRY_MS ごとに GET を最大 CHECKOUT_SYNC_MAX_RETRIES 回読み直す
  * - ?checkout=cancelled なら「お申し込みは完了していません」(S17。sync は呼ばない)
@@ -17,7 +20,7 @@
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { IAP_STORE_LABELS, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from "@homegohan/shared";
+import { FAMILY_PLAN_STATUS_SUFFIX, IAP_STORE_LABELS, STORE_SUBSCRIPTION_MANAGEMENT_URL, currentPlanDisplay, type CurrentPlanSource } from "@homegohan/shared";
 import { useNativeAppMode } from "@/hooks/useNativeAppMode";
 import { BILLING_CANCEL_API_PATH, BILLING_PORTAL_API_PATH, BILLING_SUBSCRIPTION_API_PATH } from "@/lib/auth/frozen";
 import {
@@ -57,7 +60,13 @@ const UNKNOWN_ERROR_TEXT = "処理中にエラーが発生しました。時間�
 const CHECKOUT_PROCESSING_TEXT = "お申し込みを処理しています";
 const CHECKOUT_SLOW_TEXT = "お申し込みの反映に時間がかかっています。時間をおいて再読み込みしてください。";
 const CHECKOUT_CANCELLED_TEXT = "お申し込みは完了していません";
-const FAMILY_OR_ORG_PLAN_TEXT = "家族 / 組織のプランが適用中";
+/**
+ * 自分の契約ではないプラン (組織・家族・汎用。currentPlanDisplay の source が own でも free でもない) が効いているときの添え書き (#1912)。
+ * 解約・お支払い方法の変更はそのプランの契約の側で行い、この画面ではできない (自分のプランの申し込みは「プランを見る」からできる)
+ */
+const NOT_OWN_PLAN_NOTE = "ご自身の契約ではないため、このプランの解約やお支払い方法の変更はこの画面では行えません。";
+/** 添え書き (NOT_OWN_PLAN_NOTE) を出す出どころ */
+const NOT_OWN_PLAN_SOURCES: readonly CurrentPlanSource[] = ["org", "family", "generic"];
 /** ストアの定期購読の管理のページへのリンクの文 (アプリの購入の画面のボタンと同じ文。billing/03 §10.3) */
 const STORE_MANAGE_LINK_TEXT = "定期購読の管理を開く";
 
@@ -221,6 +230,7 @@ function AccountBillingContent() {
   };
 
   const statusLines = summary ? billingStatusLines(summary) : [];
+  const currentPlan = summary ? currentPlanDisplay(summary) : null;
   // App Store / Google Play の契約はストアで管理する (Portal・解約・取り消しを描かない。billing/03 §10.3)
   const store = summary?.manage_in_store ?? null;
   const nextRenewal =
@@ -246,9 +256,17 @@ function AccountBillingContent() {
         <section className="bg-white rounded-2xl border border-gray-100 p-5 space-y-3" data-testid="billing-summary">
           <div>
             <p className="text-xs text-gray-400">現在のプラン</p>
-            <p className="font-bold text-gray-800" data-testid="billing-plan">{planDisplayName(summary.plan_key)}</p>
-            {summary.effective_plan_key !== summary.plan_key && (
-              <p className="text-xs text-gray-500">{FAMILY_OR_ORG_PLAN_TEXT}</p>
+            {currentPlan !== null && (
+              <>
+                <p className="font-bold text-gray-800" data-testid="billing-plan">
+                  {currentPlan.source === "family" ? `${currentPlan.name}${FAMILY_PLAN_STATUS_SUFFIX}` : currentPlan.name}
+                </p>
+                {NOT_OWN_PLAN_SOURCES.includes(currentPlan.source) && (
+                  <p className="text-xs text-gray-500" data-testid="billing-plan-note">
+                    {NOT_OWN_PLAN_NOTE}
+                  </p>
+                )}
+              </>
             )}
           </div>
           <div data-testid="billing-status-lines">
