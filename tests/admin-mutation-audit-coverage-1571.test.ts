@@ -50,6 +50,7 @@ const EXPECTED: Record<string, Expectation> = {
   'src/app/api/admin/moderation/[type]/[id]/route.ts POST': 'audited',
   'src/app/api/admin/moderation/[type]/[id]/route.ts PUT': 'audited',
   'src/app/api/admin/moderation/[type]/[id]/restore/route.ts POST': 'audited',
+  'src/app/api/admin/organizations/[id]/route.ts PATCH': 'audited',
   'src/app/api/admin/organizations/route.ts POST': 'audited',
   'src/app/api/admin/sales/leads/[id]/activities/route.ts POST': 'audited',
   'src/app/api/admin/sales/leads/[id]/route.ts PATCH': 'audited',

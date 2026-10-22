@@ -469,7 +469,7 @@ BillingPage
 
 ```
 OrgSettingsPage
-├── PlanSummary (プラン / ステータス / 有効期限。プランと状態は src/lib/org-plans.ts の対応表 (ORG_PLAN_LABELS / ORG_SUBSCRIPTION_STATUS_LABELS) を通した日本語の名前で出し、表に無い値は「-」 (内部の値を出さない))
+├── PlanSummary (プラン / ステータス / 有効期限。プランと状態は src/lib/org-plans.ts の対応表 (ORG_PLAN_LABELS / ORG_SUBSCRIPTION_STATUS_LABELS) を通した日本語の名前で出し、表に無い値は「-」 (内部の値を出さない)。プランは表示だけで、欄に「プランの変更は運営が行います」(ORG_PLAN_OPERATOR_ONLY_NOTE) を添える。組織の段階は運営だけが変える (#1912): PUT /api/org/settings は本文に plan があれば 400 VALIDATION_ERROR、変更は運営の /admin/organizations (PATCH /api/admin/organizations/{id}))
 ├── BasicInfoForm (組織名/業種/従業員数/ロゴ/連絡先)
 ├── AppearanceSection (カスタムカラー - Pro 以上)
 ├── NotificationSettings

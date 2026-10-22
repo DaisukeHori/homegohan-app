@@ -807,7 +807,7 @@ UPDATE public.ai_daily_limits SET daily_limit = 3, updated_at = now() WHERE plan
 INSERT INTO public.ai_daily_limits (plan_key, daily_limit) VALUES ('pro', 30), ('family_basic', 30), ('family_pro', 50)
 ON CONFLICT (plan_key) DO NOTHING;
 -- (5a') 段 A の後の migration 20261021110000_org_plan_ai_daily_limits.sql (#1912 段 A の整合ゲートの指摘): アプリが organizations.plan に
---      書ける値 (src/lib/org-plans.ts の ORG_PLAN_VALUES = 'standard'・'premium'・'enterprise'。運営の組織の作成と組織の設定が使う) のうち、
+--      書ける値 (src/lib/org-plans.ts の ORG_PLAN_VALUES = 'standard'・'premium'・'enterprise'。運営の組織の作成とプランの変更が使う) のうち、
 --      本番に組織が無いため (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 10 の行を足す (追加だけ・既に行があれば上書きしない)
 INSERT INTO public.ai_daily_limits (plan_key, daily_limit) VALUES ('premium', 10), ('enterprise', 10)
 ON CONFLICT (plan_key) DO NOTHING;
@@ -816,6 +816,11 @@ ON CONFLICT (plan_key) DO NOTHING;
 --      authenticated / anon が plan を ORG_PLAN_VALUES の外 (有料の plan_key・行の無い値・NULL) へ変えるのを ORG_PLAN_NOT_ALLOWED (42501) で拒む。
 --      限らないと、get_effective_plan が組織の plan をそのまま返すので、'pro' / 'family_pro' を書いた組織のメンバーが支払い無しで有料の上限と
 --      機能の枠を得る。service_role の書き込み (運営の組織の作成) は止めない
+-- (5a'') 20261022170000_org_plan_operator_only.sql (#1912 組織のプランの段階は運営だけが変える): 同じトリガー関数を作り直し、
+--      authenticated / anon が plan を変えること自体を、値に関わらず ORG_PLAN_OPERATOR_ONLY (42501) で拒む (ORG_PLAN_VALUES の中の値へも
+--      変えられない。運営が段階ごとに AI の上限を変えると、組織の管理者が支払いなしで上の段階を選べるため)。組織の設定 (PUT /api/org/settings) は
+--      plan を受け取らない (本文に plan があれば 400)。organizations.plan を書くのは運営の組織の作成 (POST /api/admin/organizations) と
+--      運営のプランの変更 (PATCH /api/admin/organizations/{id}) だけで、どちらも service_role
 
 -- (5') 機能ごとの 1 日の上限 (プラン × 機能。daily_cap 0 = そのプランでは使えない・NULL = 機能ごとの上限なし)。
 --      行の無い (plan, feature) は従来どおり (究極モードは呼び出し側の環境変数の既定、ほかは 1 日の上限の合計だけ)
