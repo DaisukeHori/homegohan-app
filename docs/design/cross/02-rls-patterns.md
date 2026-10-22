@@ -47,6 +47,12 @@ ALTER TABLE {table_name} ENABLE ROW LEVEL SECURITY;
 - **コードレビュー必須**: `service_role` が使われる PR は security ラベルを付与、実装リーダーがレビュー
 - Edge Function での service_role 使用時は必ず `admin_audit_logs` に記録
 
+### 3.4 表の TRUNCATE の権限
+
+- `TRUNCATE` は RLS の効かない書き込み (全行の削除) で、どの表でも利用者に要らない。public スキーマの表・ビューは、anon と authenticated に `TRUNCATE` を持たせない (migration `20261022190000_db_privilege_hardening.sql`。service_role の権限と、SELECT・INSERT・UPDATE・DELETE などのほかの権限は変えていない)。
+- 今後 postgres が public に作る表も、既定の権限 (`ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public`) から anon / authenticated の `TRUNCATE` を外してあるので、`CREATE TABLE` だけでは付かない。表を作る migration で anon / authenticated に `GRANT ALL` や `GRANT TRUNCATE` を書かない。
+- 確認: `tests/integration/security/db-privilege-hardening.test.ts` (全部の表・ビューと既定の権限)・`tests/db-privilege-hardening-migration-contract.test.ts` (後の migration が利用者へ表の TRUNCATE (ALL を含む) を付け直していないか)。
+
 ---
 
 ## 4. RLS ポリシーテンプレート集
@@ -576,6 +582,7 @@ COMMIT;
 | Security | 別ユーザーが他人の行を読めないことを確認 | Vitest + Supabase Local |
 | Security | 監査ログの UPDATE / DELETE が拒否されることを確認 | Vitest + Supabase Local |
 | Security | public の関数 (SECURITY DEFINER / SECURITY INVOKER) のうち anon が EXECUTE できるものが、理由つきの許可一覧のものだけか (Supabase の既定の権限と PUBLIC の EXECUTE が残らないか。INVOKER のトリガー関数は除外の条件で外す) | Vitest + Supabase Local (`tests/integration/security/anon-definer-execute.test.ts`・`anon-invoker-execute.test.ts`) |
+| Security | public の表・ビューに、anon / authenticated の TRUNCATE が無いか (既定の権限も。§3.4) | Vitest + Supabase Local (`tests/integration/security/db-privilege-hardening.test.ts`) |
 
 ### 10.1 RLS テストの基本パターン
 
