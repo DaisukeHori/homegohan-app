@@ -318,3 +318,75 @@ describe('#1917 アプリのコードは family_groups を直接 DELETE しな�
     expect(reads).toContain('src/app/(main)/family/dashboard/page.tsx');
   });
 });
+
+describe('#1917 本冊の migration のコメントが挙げる家族の行の消え方は、スキーマの事実と合う', () => {
+  const rawMigration = migrationIndex >= 0 ? readMigration(MIGRATION_FILE) : '';
+  /** 本冊の migration のコメント (-- の行) だけ */
+  const commentText = rawMigration
+    .split('\n')
+    .filter((line) => line.trimStart().startsWith('--'))
+    .join('\n');
+  const tableRef = (table: string) => String.raw`(?:ONLY\s+)?(?:"?public"?\.)?"?${table}"?`;
+
+  /** ベースラインの CREATE TABLE と、後の migration の ADD COLUMN / DROP COLUMN を流した後の family_groups の列 */
+  const familyGroupsColumns = (): Set<string> => {
+    const columns = new Set<string>();
+    const baseline = readMigration(BASELINE_FILE);
+    const create = new RegExp(String.raw`CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?${tableRef(TABLE)}\s*\(([\s\S]*?)\n\);`, 'i').exec(baseline);
+    for (const m of (create?.[1] ?? '').matchAll(/^\s*"?([a-z_][a-z0-9_]*)"?\s+"?[a-z]/gim)) {
+      if (m[1].toUpperCase() !== 'CONSTRAINT') columns.add(m[1]);
+    }
+    const alter = new RegExp(
+      String.raw`ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?${tableRef(TABLE)}\s+(ADD|DROP)\s+COLUMN\s+(?:IF\s+(?:NOT\s+)?EXISTS\s+)?"?([a-z_][a-z0-9_]*)"?`,
+      'gi',
+    );
+    for (const { sql } of migrations) {
+      for (const m of sql.matchAll(alter)) {
+        if (m[1].toUpperCase() === 'ADD') columns.add(m[2]);
+        else columns.delete(m[2]);
+      }
+    }
+    return columns;
+  };
+
+  /** 表から auth.users への外部キー (列 → ON DELETE の動作)。migration を version 順に流した後 */
+  const authUsersForeignKeys = (table: string): Map<string, string> => {
+    const keys = new Map<string, { column: string; action: string }>();
+    const add = new RegExp(
+      String.raw`ALTER\s+TABLE\s+${tableRef(table)}\s+ADD\s+CONSTRAINT\s+"?([A-Za-z0-9_]+)"?\s+FOREIGN\s+KEY\s*\(\s*"?([a-z_][a-z0-9_]*)"?\s*\)\s+REFERENCES\s+"?auth"?\."?users"?\s*\(\s*"?id"?\s*\)(?:\s+ON\s+DELETE\s+(CASCADE|RESTRICT|SET\s+NULL|SET\s+DEFAULT|NO\s+ACTION))?`,
+      'gi',
+    );
+    const drop = new RegExp(String.raw`ALTER\s+TABLE\s+${tableRef(table)}\s+DROP\s+CONSTRAINT\s+(?:IF\s+EXISTS\s+)?"?([A-Za-z0-9_]+)"?`, 'gi');
+    for (const { sql } of migrations) {
+      const events = [
+        ...[...sql.matchAll(add)].map((m) => ({ at: m.index ?? 0, apply: () => keys.set(m[1], { column: m[2], action: (m[3] ?? 'NO ACTION').toUpperCase().replace(/\s+/g, ' ') }) })),
+        ...[...sql.matchAll(drop)].map((m) => ({ at: m.index ?? 0, apply: () => keys.delete(m[1]) })),
+      ];
+      for (const event of events.sort((a, b) => a.at - b.at)) event.apply();
+    }
+    return new Map([...keys.values()].map(({ column, action }) => [column, action]));
+  };
+
+  it('コメントが名指しする family_groups の列 (family_groups.<列>) は、どれも family_groups に実在する (owner_id は無い)', () => {
+    const columns = familyGroupsColumns();
+    // 番兵: 列の読み取りが働いている (代表者の列と、解散で足した列がある)
+    expect(columns.has('representative_id')).toBe(true);
+    expect(columns.has('dissolved_at')).toBe(true);
+    expect(columns.has('owner_id')).toBe(false);
+    const named = [...commentText.matchAll(/\bfamily_groups\.([a-z_][a-z0-9_]*)/g)].map((m) => m[1]);
+    expect(named.length, 'コメントが family_groups の列を 1 つも名指ししていない (番兵)').toBeGreaterThan(0);
+    expect(named.filter((column) => !columns.has(column))).toEqual([]);
+  });
+
+  it('退会で家族の行は消えない: family_groups から auth.users への外部キーは representative_id の ON DELETE RESTRICT だけで、コメントの記述と合う', () => {
+    expect([...authUsersForeignKeys(TABLE).entries()]).toEqual([['representative_id', 'RESTRICT']]);
+    const stated = [...commentText.matchAll(/representative_id の ON DELETE (CASCADE|RESTRICT|SET NULL)/g)].map((m) => m[1]);
+    expect(stated).toEqual(['RESTRICT']);
+    // コメントは、退会で家族の行が CASCADE で消える経路を挙げない
+    expect(commentText).not.toMatch(/family_groups\.[a-z_]+ の ON DELETE CASCADE/);
+  });
+
+  it('番兵: 外部キーの読み取りは legacy_family_groups の owner_id の CASCADE (名前は family_groups_owner_id_fkey) を、family_groups と取り違えずに拾う', () => {
+    expect(authUsersForeignKeys('legacy_family_groups').get('owner_id')).toBe('CASCADE');
+  });
+});
