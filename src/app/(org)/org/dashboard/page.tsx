@@ -6,6 +6,8 @@ import { useEffect, useState } from "react";
 // 集計結果の表は読まない。ここに出すのは、メンバー数 (GET /api/org/stats) だけ。
 // 部署ごとのランキングはダミーの数字だったので取り除いた。
 // 止めている集計の区切りは「準備中」とも出さない (#1911: 未完成の機能は画面に出さない)。
+// 見出し・メンバー数の文言は日本語 (以前は固定の英語「Health Cockpit」「Total Members」「users」だった)。
+// 見出しはサイドバーのナビの名前「ダッシュボード」、人数の単位は組織メンバーの一覧 (/org/members) と同じ「名」。
 
 type MemberCountState =
   | { status: "loading" }
@@ -41,14 +43,14 @@ export default function OrgDashboardPage() {
     <div className="p-8 space-y-8">
       <div className="flex justify-between items-end">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Health Cockpit</h1>
+          <h1 className="text-3xl font-bold text-gray-900">ダッシュボード</h1>
           <p className="text-gray-500 mt-2">組織のバイタルサインと生産性指標</p>
         </div>
         <div className="text-right">
-          <p className="text-xs font-bold text-gray-400 uppercase">Total Members</p>
+          <p className="text-xs font-bold text-gray-400">メンバー数</p>
           {members.status === "loaded" ? (
             <p className="text-2xl font-bold text-gray-900">
-              {members.memberCount} <span className="text-sm font-normal text-gray-400">users</span>
+              {members.memberCount} <span className="text-sm font-normal text-gray-400">名</span>
             </p>
           ) : (
             <p className="text-2xl font-bold text-gray-400" aria-busy={members.status === "loading"}>
