@@ -13,8 +13,8 @@
  *   - RPC 経由の作成 (create_family_invite)・取り消し (revoke_family_invite)・拒否 (reject_family_invite)・承諾 (accept_family_invite) は
  *     今までどおり通る。家族プランの無いグループでの RPC の作成は FAMILY_PLAN_REQUIRED のまま
  *   - SELECT (招待の一覧の画面が読む) は今までどおり代表者・大人だけが読める
- *   - 代表者の家族の行の DELETE (ポリシー family_groups_delete_representative) の外部キーの CASCADE は、招待の行も一緒に消す
- *     (利用者から DELETE の権限を外しても、CASCADE は表の所有者の権限で動く)
+ *   - 家族の行の DELETE (#1917 から service_role と解散から 90 日の purge だけ) の外部キーの CASCADE は、招待の行も一緒に消す
+ *     (利用者から family_invites の DELETE の権限を外しても、CASCADE は表の所有者の権限で動く)
  *
  * 前提: ローカル Supabase (scripts/supabase-local.sh)。Next の開発サーバーは要らない (RPC と PostgREST を直接呼ぶ)。
  *   bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local
@@ -340,12 +340,17 @@ describe('#1912 RPC 経由の作成・取り消し・拒否・承諾と、一覧
   });
 });
 
-describe('#1912 代表者の家族の行の DELETE は、招待の行も CASCADE で消す', () => {
-  it('C-1: 利用者から family_invites の DELETE の権限を外しても、family_groups_delete_representative の CASCADE は招待を消す', async () => {
+describe('#1912 家族の行の DELETE は、招待の行も CASCADE で消す', () => {
+  it('C-1: 利用者から family_invites の DELETE の権限を外しても、家族の行の DELETE の CASCADE は招待を消す (#1917 から代表者は家族の行を直接消せず、消すのは service_role)', async () => {
     const invite = await inviteViaRpc(otherRep, otherFamily, recipient('c1'));
     expect(await inviteRowById(invite.id)).not.toBeNull();
 
-    const { data, error } = await asUser(otherRep.jwt).from('family_groups').delete().eq('id', otherFamily).select('id');
+    // #1917: 代表者の直接の DELETE は 42501 で止まり、家族の行と招待は残る
+    const denied = await asUser(otherRep.jwt).from('family_groups').delete().eq('id', otherFamily).select('id');
+    expect(denied.error?.code).toBe(INSUFFICIENT_PRIVILEGE);
+    expect(await inviteRowById(invite.id)).not.toBeNull();
+
+    const { data, error } = await srAdmin.from('family_groups').delete().eq('id', otherFamily).select('id');
     expect(error).toBeNull();
     expect(data).toEqual([{ id: otherFamily }]);
     expect(await inviteRowById(invite.id)).toBeNull();

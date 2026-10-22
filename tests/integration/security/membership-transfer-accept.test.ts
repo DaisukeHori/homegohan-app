@@ -384,7 +384,7 @@ describe('#1237 accept_family_representative_transfer: 承諾時点の所属を�
     expect(res.body.error?.code).toBe('TRANSFER_ACCEPTOR_NOT_IN_FAMILY');
     expect(res.body.error?.message).not.toContain('TRANSFER_ACCEPTOR');
 
-    // 何も奪取されていない (representative_id が奪われると DELETE CASCADE で家族ごと消せる)
+    // 何も奪取されていない (representative_id が奪われると、家族の解散 (dissolve_family_by_representative) ができてしまう)
     expect(await representativeId()).toBe(rep.id);
     expect(await memberRole(rep.id)).toBe('representative');
     expect(await proposalStatus(proposalId)).toBe('pending');
