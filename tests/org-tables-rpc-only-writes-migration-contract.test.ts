@@ -166,11 +166,12 @@ describe('#1917 create_org_invite の最新の定義', () => {
   const body = stripLineComments(latest.body);
 
   it('最新の定義はこの migration で、SECURITY DEFINER・search_path = public・RETURNS organization_invites', () => {
+    const header = stripLineComments(latest.header);
     expect(latest.file).toBe(MIGRATION_FILE);
-    expect(latest.header).toMatch(/SECURITY\s+DEFINER/i);
-    expect(latest.header).not.toMatch(/SECURITY\s+INVOKER/i);
-    expect(latest.header).toMatch(/SET\s+search_path\s*(?:=|TO)\s*'?public'?\s+AS/i);
-    expect(latest.header).toMatch(/RETURNS\s+public\.organization_invites/i);
+    expect(header).toMatch(/SECURITY\s+DEFINER/i);
+    expect(header).not.toMatch(/SECURITY\s+INVOKER/i);
+    expect(header).toMatch(/SET\s+search_path\s*(?:=|TO)\s*'?public'?\s*$/i);
+    expect(header).toMatch(/RETURNS\s+public\.organization_invites/i);
   });
 
   it("p_role が 'owner' なら INSUFFICIENT_PERMISSION。認可 (NOT_ORG_ADMIN) の後、宛先・席数・24 時間の上限・最初の書き込みより前", () => {
