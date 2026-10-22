@@ -694,6 +694,8 @@ Step 3: スケジュール
 > (全機能の合計・日本時間の 0 時に戻る。空欄は無制限) を一覧し、行ごとに保存する (`GET` / `PATCH /api/super-admin/llm/quotas`)。
 > 保存した値は次の AI の利用から効く。利用者ごとの上限 (モーダル) は無い。
 > 組織のプランの値 (`standard` / `premium` / `enterprise`) の行は「<値>（組織のプラン）」と出て保存できる。プランの表にも組織のプランにも無いキーの行は、入力欄と保存のボタンを止める (#1912)。
+> `subscription_plans` の組織のプランの行 (`org_*`。`plan_type = 'org'`) は読み取りだけ: いまの上限は出すが、入力欄と保存のボタンを止め、
+> 「組織の上限は standard / premium / enterprise の行で決まります」の案内を行に出す (文は `src/lib/super-admin/ai-daily-limits.ts` の `AI_DAILY_LIMIT_READ_ONLY_NOTES`。PATCH も 409 `PLAN_READ_ONLY` で断る。#1912)。
 
 ---
 
