@@ -425,6 +425,12 @@ describe('戻し口', () => {
     expect(firstLine).toBe(`-- rollback: ${MIGRATION}.sql`);
   });
 
+  it('この migration の version (先頭の 14 桁) は、ほかの migration と重ならない (main を取り込んだあとの番号の付け直しの見張り)', () => {
+    const version = MIGRATION.slice(0, MIGRATION.indexOf('_'));
+    expect(version).toMatch(/^\d{14}$/);
+    expect(migrations.filter(({ file }) => file.startsWith(`${version}_`)).map(({ file }) => file)).toEqual([`${MIGRATION}.sql`]);
+  });
+
   it('migration の 1 行目と戻し口の参照が自分を指す', () => {
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, `${MIGRATION}.sql`), 'utf-8');
     expect(sql.split('\n', 1)[0]).toBe(`-- migration: ${MIGRATION}.sql`);

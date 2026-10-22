@@ -523,7 +523,7 @@ describe('Q-4 解散と招待の承諾が同時に走っても、解散した組
     expect(problems).toEqual([]);
   }, RACE_TIMEOUT_MS);
 
-  it('Q4-9: 運営の強制解散とオーナーの譲渡の承諾を同時に 8 回呼んでも、デッドロックせず、強制解散は成功し、終わったあとは「dissolved で所属 0 人」(強制解散はオーナーの行を取り直して直列になる)', async () => {
+  it('Q4-9: 運営の強制解散とオーナーの譲渡の承諾を同時に 8 回呼んでも、デッドロックせず、強制解散は成功し、終わったあとは「dissolved で所属 0 人」(強制解散も譲渡の承諾も組織の行を最初に取るので、組織の行で直列になる。20261022140000_org_transfer_toctou.sql)', async () => {
     const jwt = await operatorJwt();
     const problems: string[] = [];
     for (let i = 0; i < ITERATIONS; i++) {
