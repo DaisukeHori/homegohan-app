@@ -152,7 +152,11 @@ describe('POST /api/super-admin/plans: input validation', () => {
     ['plan_type が不正', { plan_type: 'enterprise' }],
     ['monthly_price_jpy が負', { monthly_price_jpy: -1 }],
     ['monthly_price_jpy が整数でない', { monthly_price_jpy: 980.5 }],
-    ['組織プランに試用期間 (trial_days) を付けた', { plan_type: 'org', trial_days: 7 }],
+    ['組織プランに試用期間 (trial_days) を付けた', { plan_key: `org_${POST_PLAN_KEY}`, plan_type: 'org', trial_days: 7 }],
+    // #1912: plan_key の形とプランの種別の食い違い (利用者の画面の表示名が種別と食い違う)
+    ['個人のプランに組織のプランの値 (standard) を付けた', { plan_key: 'standard', plan_type: 'personal' }],
+    ['家族のプランに org_ で始まる plan_key を付けた', { plan_key: `org_${POST_PLAN_KEY}`, plan_type: 'family' }],
+    ['組織のプランに org_ で始まらない plan_key を付けた', { plan_type: 'org' }],
   ])('400 OP_INVALID_INPUT: %s', async (_label, override) => {
     const res = await apiCall('POST', '/api/super-admin/plans', superAdminUser.jwt, { ...base, ...override });
     expectError(res, 400, 'OP_INVALID_INPUT');

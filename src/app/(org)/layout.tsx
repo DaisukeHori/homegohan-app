@@ -8,6 +8,7 @@ import { motion } from "framer-motion";
 import { clearUserScopedLocalStorage, broadcastSignOut } from "@/lib/user-storage";
 import { notifyNativeSignOut } from "@/lib/native-auth-bridge";
 import { isOrgAdmin as isOrgAdminProfile } from "@/lib/auth/org-admin";
+import { readOrgSidebarInfo } from "@/lib/org-sidebar";
 
 const orgNavItems = [
   { href: "/org/dashboard", label: "ダッシュボード", icon: "📊" },
@@ -29,6 +30,8 @@ export default function OrgLayout({
   const [isOrgAdmin, setIsOrgAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [orgName, setOrgName] = useState("");
+  // organizations.plan の日本語の表示名 (#1912。以前は固定の英語「Enterprise」を出していた)
+  const [orgPlanLabel, setOrgPlanLabel] = useState("");
 
   useEffect(() => {
     const checkRole = async () => {
@@ -41,7 +44,7 @@ export default function OrgLayout({
 
           const { data: profile, error: profileError } = await supabase
             .from('user_profiles')
-            .select('org_role, organization_id, organizations(name)')
+            .select('org_role, organization_id, organizations(name, plan)')
             .eq('id', user.id)
             .single();
 
@@ -52,8 +55,9 @@ export default function OrgLayout({
           }
 
       setIsOrgAdmin(true);
-      // @ts-ignore: join query type inference
-      setOrgName(profile.organizations?.name || "Organization");
+      const sidebarInfo = readOrgSidebarInfo(profile);
+      setOrgName(sidebarInfo.name);
+      setOrgPlanLabel(sidebarInfo.planLabel);
       setLoading(false);
     };
 
@@ -92,7 +96,7 @@ export default function OrgLayout({
             🏢
           </div>
           <div>
-            <p className="text-xs text-gray-400 font-bold uppercase tracking-wider">Enterprise</p>
+            <p className="text-xs text-gray-400 font-bold" data-testid="org-sidebar-plan">{orgPlanLabel}</p>
             <span className="font-bold text-gray-800 line-clamp-1">{orgName}</span>
           </div>
         </div>
