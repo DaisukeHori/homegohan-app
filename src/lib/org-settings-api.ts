@@ -5,6 +5,12 @@
  * ここのスキーマはその全部を受け取り、organizations の同じ名前の列に保存する。
  * 画面が送るキーとこのスキーマのキーの一致は tests/org-settings-keys.test.tsx が検査する
  * (以前はスキーマが name / plan しか知らず、画面が送った業種・従業員数・連絡先を捨てたまま 200 を返していた)。
+ *
+ * プラン (organizations.plan) は組織の管理者の経路では変えない (#1912。オーナーの選択 (2026-10-22・選択式)「運営だけが変える (推奨)」:
+ * 「組織の管理者の設定画面では段階を表示だけにし、変更は運営の画面からだけにする (組織の契約は運営が決める)」)。
+ * 本文に plan があれば 400 VALIDATION_ERROR で断る (黙って捨てて 200 を返さない)。変えるのは運営の
+ * PATCH /api/admin/organizations/{id} (service_role) だけ。DB でもトリガー guard_organizations_plan_value が、
+ * ログインした利用者 (authenticated) と anon が plan を変えること自体を拒む (20261022170000_org_plan_operator_only.sql)。
  */
 
 import { z } from 'zod';
@@ -16,10 +22,9 @@ import {
   ORG_INDUSTRY_MAX_LENGTH,
   ORG_SETTINGS_NAME_MAX_LENGTH,
 } from '@homegohan/shared';
-import { ORG_PLAN_VALUES } from '@/lib/org-plans';
 
-/** 組織の設定で選べるプラン (organizations.plan に書ける値。運営の組織作成と同じ一覧 ORG_PLAN_VALUES) */
-export const ORG_SETTINGS_PLANS = ORG_PLAN_VALUES;
+/** 本文に plan があったときの理由の文 (VALIDATION_ERROR の details.fieldErrors.plan に入る) */
+export const ORG_SETTINGS_PLAN_OPERATOR_ONLY_MESSAGE = 'プランは運営だけが変更できます';
 
 /** 自由記述の項目: 前後の空白を除き、空なら null (保存されている値を消す) にする */
 function nullableText(maxLength: number) {
@@ -29,7 +34,6 @@ function nullableText(maxLength: number) {
 /** PUT /api/org/settings の本文のキーごとの決まり (キーの一覧は tests/org-settings-keys.test.tsx が画面と突き合わせる) */
 export const OrgSettingsUpdateFieldsSchema = z.object({
   name: z.string().min(1).max(ORG_SETTINGS_NAME_MAX_LENGTH).optional(),
-  plan: z.enum(ORG_SETTINGS_PLANS).optional(),
   industry: nullableText(ORG_INDUSTRY_MAX_LENGTH),
   employee_count: z.number().int().min(ORG_EMPLOYEE_COUNT_MIN).max(ORG_EMPLOYEE_COUNT_MAX).nullable().optional(),
   // 空文字は「消す」(null) として受ける。空でなければメールアドレスの形であること
@@ -42,7 +46,14 @@ export const OrgSettingsUpdateFieldsSchema = z.object({
 
 export type OrgSettingsUpdateFields = z.infer<typeof OrgSettingsUpdateFieldsSchema>;
 
-export const OrgSettingsUpdateSchema = OrgSettingsUpdateFieldsSchema.refine(
+/**
+ * PUT /api/org/settings の本文。保存するキーは OrgSettingsUpdateFieldsSchema のキーだけ。
+ * 運営だけが変える列 (plan) は、値が何であっても (今と同じ値・null でも) 拒む
+ * (z.never: キーが無いときだけ通る。JSON では undefined を送れないので、キーがあれば必ず 400)
+ */
+export const OrgSettingsUpdateSchema = OrgSettingsUpdateFieldsSchema.extend({
+  plan: z.never({ message: ORG_SETTINGS_PLAN_OPERATOR_ONLY_MESSAGE }).optional(),
+}).refine(
   (d) => Object.values(d).some((v) => v !== undefined),
   { message: '更新するフィールドを少なくとも1つ指定してください' },
 );
@@ -63,7 +74,6 @@ function emptyToNull(value: string | null): string | null {
 export function toOrgSettingsUpdateRow(fields: OrgSettingsUpdateFields): OrgSettingsUpdateRow {
   const row: OrgSettingsUpdateRow = {};
   if (fields.name !== undefined) row.name = fields.name;
-  if (fields.plan !== undefined) row.plan = fields.plan;
   if (fields.industry !== undefined) row.industry = emptyToNull(fields.industry);
   if (fields.employee_count !== undefined) row.employee_count = fields.employee_count;
   if (fields.contact_email !== undefined) row.contact_email = emptyToNull(fields.contact_email);

@@ -68,6 +68,7 @@ const ENTRIES: Entry[] = [
   { file: 'admin/moderation/[type]/[id]/restore/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/moderation/[type]/[id]/restore/route')).POST },
   { file: 'admin/moderation/[type]/[id]/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/moderation/[type]/[id]/route')).POST },
   { file: 'admin/moderation/[type]/[id]/route.ts', method: 'PUT', load: async () => (await import('@/app/api/admin/moderation/[type]/[id]/route')).PUT },
+  { file: 'admin/organizations/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/admin/organizations/[id]/route')).PATCH },
   { file: 'admin/organizations/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/organizations/route')).POST },
   { file: 'admin/sales/leads/[id]/activities/route.ts', method: 'POST', load: async () => (await import('@/app/api/admin/sales/leads/[id]/activities/route')).POST },
   { file: 'admin/sales/leads/[id]/route.ts', method: 'PATCH', load: async () => (await import('@/app/api/admin/sales/leads/[id]/route')).PATCH },

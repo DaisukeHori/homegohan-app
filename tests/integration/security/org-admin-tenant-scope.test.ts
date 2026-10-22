@@ -429,4 +429,29 @@ describe('#1735 API: 組織の設定の業種・従業員数・連絡先を保�
     const { data: row } = await srAdmin.from('organizations').select('employee_count').eq('id', orgB).single();
     expect(row?.employee_count).toBe(SAVED.employee_count);
   });
+
+  // #1912 組織のプランの段階は運営だけが変える: 組織の管理者の PUT は plan を受け取らない (400。ほかのキーも書かない)
+  it('組織の管理者 (招待の admin・従来形の owner) が plan を送ると、値に関わらず 400 VALIDATION_ERROR で、plan もほかの項目も変わらない', async () => {
+    const { data: before } = await srAdmin
+      .from('organizations')
+      .select('plan, industry, employee_count, contact_email, contact_name')
+      .eq('id', orgB)
+      .single();
+    expect(before?.plan).toBeTruthy();
+
+    for (const jwt of [invitedAdmin.jwt, legacyOwner.jwt]) {
+      for (const body of [{ plan: 'enterprise' }, { plan: before?.plan }, { industry: '小売', plan: 'premium' }]) {
+        const put = await apiCall<{ error: { code: string } }>('PUT', '/api/org/settings', jwt, body);
+        expect(put.status, JSON.stringify(body)).toBe(400);
+        expect(put.body.error.code, JSON.stringify(body)).toBe('VALIDATION_ERROR');
+      }
+    }
+
+    const { data: after } = await srAdmin
+      .from('organizations')
+      .select('plan, industry, employee_count, contact_email, contact_name')
+      .eq('id', orgB)
+      .single();
+    expect(after).toEqual(before);
+  });
 });
