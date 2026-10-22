@@ -14,6 +14,7 @@
 import { NextRequest } from 'next/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createQueryBuilder, type FakeQueryResult } from './helpers/fake-supabase';
+import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE } from '@/lib/super-admin/plan-subscribers';
 
 const mockRequireRole = vi.fn();
 
@@ -215,5 +216,32 @@ describe('GET /api/super-admin/plans/[id]/price-impact (#1102: 権限とプラ�
 
     expect(res.status).toBe(403);
     expect(fakeSupabase.from).not.toHaveBeenCalled();
+  });
+});
+
+describe('GET /api/super-admin/plans/[id]/price-impact (#1912: 組織のプランの行 (org_*) の注記)', () => {
+  it('組織のプランの行では、組織の件数の代わりに organizations_note を添える', async () => {
+    fakeSupabase = createImpactSupabase({
+      plan: { data: { id: 'plan-1', plan_key: 'org_standard', monthly_price_jpy: 980, plan_type: 'org' }, error: null },
+    });
+
+    const res = await GET(impactRequest('new_monthly_price_jpy=1200'), { params: { id: 'plan-1' } });
+
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as ImpactBody & { data: { organizations_note?: string } };
+    expect(json.data.organizations_note).toBe(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+    // 判定に plan_key と plan_type を読む (列を取り忘れると、どの行も個人・家族のプラン扱いになって注記が出ない)
+    const builder = fakeSupabase.from.mock.results[0]!.value as { select: ReturnType<typeof vi.fn> };
+    const columns = String(builder.select.mock.calls[0]![0]).split(',').map((c) => c.trim());
+    expect(columns).toEqual(expect.arrayContaining(['plan_key', 'plan_type']));
+  });
+
+  it('個人のプランには organizations_note を付けない', async () => {
+    fakeSupabase = createImpactSupabase({ plan: { data: existingPlan(), error: null } });
+
+    const res = await GET(impactRequest('new_monthly_price_jpy=2000'), { params: { id: 'plan-1' } });
+
+    const json = (await res.json()) as ImpactBody & { data: { organizations_note?: string } };
+    expect(json.data.organizations_note).toBeUndefined();
   });
 });

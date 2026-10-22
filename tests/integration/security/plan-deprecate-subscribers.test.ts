@@ -20,6 +20,8 @@
  *   M-1: 3 種類がそろっているときは、409 の counts にテーブルごとの内訳が返る
  *   M-2: 別プランの契約者は数えない
  *   A-1: 公開 --> 非公開 は、契約者がいても 200 (新しい申込だけを止める操作は妨げない)
+ *   G-1: 組織のプランの行 (plan_type = 'org' の org_*) は組織の件数を数えない。plan が一致する active の組織があっても 200 (#1912)
+ *   G-2: 組織のプランの行に個人契約があれば 409。counts に組織の欄 (organizations) を出さず、注記 (organizations_note) を返す (#1912)
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
  *   npm run dev &
@@ -46,20 +48,24 @@ interface PatchBody {
   error?: {
     code?: string;
     message?: string;
-    counts?: { personal_subscriptions: number; family_groups: number; organizations: number };
+    counts?: { personal_subscriptions: number; family_groups: number; organizations?: number };
+    organizations_note?: string;
   };
 }
 
-/** 公開中のプランを 1 つ作る (シナリオごとに別のプランを使い、状態を引きずらない) */
-async function createPlan(label: string): Promise<{ id: string; planKey: string }> {
+/**
+ * 公開中のプランを 1 つ作る (シナリオごとに別のプランを使い、状態を引きずらない)。
+ * planType = 'org' なら、組織のプランの行 (plan_key は org_ で始まる。#1912) を作る
+ */
+async function createPlan(label: string, planType: 'personal' | 'org' = 'personal'): Promise<{ id: string; planKey: string }> {
   planSeq += 1;
-  const planKey = `it_1127_${label}_${planSeq}_${TS}`;
+  const planKey = `${planType === 'org' ? 'org_' : ''}it_1127_${label}_${planSeq}_${TS}`;
   const { data, error } = await srAdmin
     .from('subscription_plans')
     .insert({
       plan_key: planKey,
       display_name: `#1127 ${label} ${TS}`,
-      plan_type: 'personal',
+      plan_type: planType,
       status: 'public',
       monthly_price_jpy: 100,
       version: 1,
@@ -275,5 +281,32 @@ describe('M: 組み合わせと範囲 (#1127)', () => {
 
     expect(res.status).toBe(200);
     expect(await statusOf(plan.id)).toBe('private');
+  });
+});
+
+describe('G: 組織のプランの行 (org_*) は組織の件数を数えない (#1912)', () => {
+  it('G-1: plan が一致する active の組織があっても数えず、個人・家族がいなければ 200 で廃止できる', async () => {
+    const plan = await createPlan('g1', 'org');
+    // 運営の経路では organizations.plan に org_* は入らない (standard / premium / enterprise だけ)。service_role で直接入れても数えない
+    await addOrganization(plan.planKey, 'active');
+
+    const res = await deprecate(plan.id);
+
+    expect(res.status).toBe(200);
+    expect(await statusOf(plan.id)).toBe('deprecated');
+  });
+
+  it('G-2: 個人契約があれば 409。counts に組織の欄を出さず、注記を返す', async () => {
+    const plan = await createPlan('g2', 'org');
+    await addPersonalSubscription(plan.planKey, 'active');
+
+    const res = await deprecate(plan.id);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error?.code).toBe('OP_PLAN_HAS_SUBSCRIBERS');
+    expect(res.body.error?.counts).toEqual({ personal_subscriptions: 1, family_groups: 0 });
+    expect(typeof res.body.error?.organizations_note).toBe('string');
+    expect(res.body.error?.message).toContain(res.body.error?.organizations_note);
+    expect(await statusOf(plan.id)).toBe('public');
   });
 });

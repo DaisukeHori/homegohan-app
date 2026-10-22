@@ -15,6 +15,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
+import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE } from '@/lib/super-admin/plan-subscribers';
 import { createFakeSupabase } from './helpers/fake-supabase';
 import {
   createFakePlanSubscribersDb,
@@ -58,7 +59,8 @@ interface ErrorBody {
   error: {
     code: string;
     message: string;
-    counts?: { personal_subscriptions: number; family_groups: number; organizations: number };
+    counts?: { personal_subscriptions: number; family_groups: number; organizations?: number };
+    organizations_note?: string;
   };
 }
 
@@ -373,5 +375,54 @@ describe('認可の前に service_role を使わない (#1127)', () => {
       expect(query.options).toEqual({ count: 'exact', head: true });
       expect(query.eq).toEqual(expect.arrayContaining([[query.table === 'organizations' ? 'plan' : 'plan_key', 'pro']]));
     }
+  });
+});
+
+describe('組織のプランの行 (org_*) の廃止では、組織の件数を数えない (#1912)', () => {
+  /** 組織のプランの行 (plan_type = org の org_*)。organizations.plan (standard / premium / enterprise) とは一致しない */
+  const orgRow = () => existingPlan({ plan_key: 'org_starter', plan_type: 'org', display_name: 'Org Starter' });
+
+  it('組織の契約者 (organizations) を読まない。個人・家族がいなければ 200 で廃止できる', async () => {
+    const { res } = await patch(DEPRECATE, {
+      plan: orgRow(),
+      // 運営の経路では organizations.plan に org_* は入らないが、入っていても数えない (判定に使われない行)
+      subscribers: { tables: { organizations: [{ plan: 'org_starter', status: 'active' }] } },
+    });
+
+    expect(res.status).toBe(200);
+    expect(subscribersDb.queries.map((q) => q.table).sort()).toEqual(['family_groups', 'personal_subscriptions']);
+  });
+
+  it('個人契約がいれば 409。counts に組織の件数の欄を出さず、注記 (organizations_note) と文面の注記を返す', async () => {
+    const { res, json } = await patch(DEPRECATE, {
+      plan: orgRow(),
+      subscribers: { tables: { personal_subscriptions: [{ plan_key: 'org_starter', status: 'active' }] } },
+    });
+
+    expect(res.status).toBe(409);
+    expect(json.error.code).toBe('OP_PLAN_HAS_SUBSCRIBERS');
+    expect(json.error.counts).toEqual({ personal_subscriptions: 1, family_groups: 0 });
+    expect(json.error.counts && 'organizations' in json.error.counts).toBe(false);
+    expect(json.error.organizations_note).toBe(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+    expect(json.error.message).toContain('個人契約 1 件');
+    expect(json.error.message).toContain(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+    expect(json.error.message).not.toMatch(/組織 \d+ 件/);
+    expect(tablesTouched()).toEqual(['subscription_plans']);
+  });
+
+  it('個人・家族のプランの 409 には注記を付けず、組織の件数をこれまでどおり返す', async () => {
+    const personal = await patch(DEPRECATE, { subscribers: onePersonalSubscriber() });
+    const family = await patch(DEPRECATE, {
+      plan: existingPlan({ plan_key: 'family_basic', plan_type: 'family' }),
+      subscribers: { tables: { organizations: [{ plan: 'family_basic', status: 'active' }] } },
+    });
+
+    expect(personal.res.status).toBe(409);
+    expect(personal.json.error.counts).toEqual({ personal_subscriptions: 1, family_groups: 0, organizations: 0 });
+    expect(personal.json.error.organizations_note).toBeUndefined();
+    expect(personal.json.error.message).not.toContain(ORG_SUBSCRIPTION_PLAN_ROW_NOTE);
+    expect(family.res.status).toBe(409);
+    expect(family.json.error.counts).toEqual({ personal_subscriptions: 0, family_groups: 0, organizations: 1 });
+    expect(family.json.error.organizations_note).toBeUndefined();
   });
 });
