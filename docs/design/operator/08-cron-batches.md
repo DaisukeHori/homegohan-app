@@ -14,7 +14,7 @@ pg_cron (Supabase DB 内) および Vercel Cron (HTTP トリガー) の全ジョ
 
 ### 3.0 実装状況 (2026-10-17 更新)
 
-§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (§3.2 の `backup_freshness`。#1129)・`login-alerts` (毎分。新しい端末・地域からのログインを本人にメールで知らせる worker。#1190・`cross/16-auth-history-sessions.md` §14.8) の 6 本である。
+§3.1 以降の表と各節は、設計時の計画であり、**ほとんどは実装されていない**。§4 の pg_cron 用の関数 (`process_license_expire()` など 7 本) は本番に無く (`supabase/baseline/catalog/catalog_functions.csv`)、`vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (§3.2 の `app_log_alerts`。#1157)・`email-outbox` (毎分。メールの送信待ちを送る worker。#1193・`10-logs-and-mail-retry.md` §6.5)・`push-outbox` (毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (§3.2 の `backup_freshness`。#1129)・`login-alerts` (毎分。新しい端末・地域からのログインを本人にメールで知らせる worker。#1190・`cross/16-auth-history-sessions.md` §14.8)・`iap-reconcile` (毎時 41 分。期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。#1912・`billing/04-iap-reconcile.md` §9) の 7 本である。
 Stripe Webhook・収益スナップショット・ライセンス系のバッチは、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 いま、このリポジトリの migration が pg_cron に登録しているジョブは 14 つある。この節で扱うのは、#1125 の第 1 段で足した次の 2 つ (migration `20261010150000_schedule_log_cleanup_and_dau_snapshot.sql`)。残りの 12 つ `calculate-segment-stats`・`calculate-segment-stats-finalize-retry`・`cleanup-stale-login-failures-and-grant-claims`・`update-org-challenge-progress`・`requeue-stale-meal-image-jobs`・`process-pending-meal-image-jobs`・`purge-hidden-content`・`cleanup-email-outbox`・`cleanup-auth-sessions-and-login-history`・`expire-manual-plan-grants`・`purge-dissolved-family-groups`・`cleanup-cron-run-history` は、下の箇条書きの「そのほか」に書く。
 
@@ -176,8 +176,9 @@ SELECT * FROM public.snapshot_daily_active_users(DATE '2026-10-07');
 | `app_log_alerts` (実装済み: #1157) | 15 分おき | `app_logs` の error が 15 分で 20 件を超えたら `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/app-log-alerts`。設計は 07-audit-monitoring.md §8.3) |
 | `backup_freshness` (実装済み: #1129) | daily 14:37 | 最新の `backup.daily.completed` が 30 時間より古ければ `OPS_ALERT_EMAIL` へメールで通知 (`/api/cron/backup-freshness`。設計は cross/17 §7.3) |
 | `login_alerts` (実装済み: #1190) | 毎分 | 新しい端末・地域からのログインを本人にメールで知らせる (`/api/cron/login-alerts`。設計は cross/16-auth-history-sessions.md §13.3・§14.8) |
+| `iap_reconcile` (実装済み: #1912・billing/04) | 毎時 41 分 | 期限を過ぎたストアの購読の行を RevenueCat から取り直して写す (`/api/cron/iap-reconcile`。設計は billing/04 §9) |
 
-> **2026-10-17 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (この表の `backup_freshness`。#1129)・`login-alerts` (この表の `login_alerts`。#1190) の 6 本。この表のほかの 10 本は、Vercel Cron としては実装されていない (`logical_backup` は GitHub Actions で取る。cross/17)。
+> **2026-10-17 時点の状態**: `vercel.json` に登録されている Vercel Cron は `process-menu-queue`・`app-log-alerts` (この表の `app_log_alerts`。#1157)・`email-outbox` (この表に無い。#1193)・`push-outbox` (この表に無い。毎分。Push 通知の送信待ちを送る worker。#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (この表の `backup_freshness`。#1129)・`login-alerts` (この表の `login_alerts`。#1190)・`iap-reconcile` (この表の `iap_reconcile`。#1912・billing/04) の 7 本。この表のほかの 10 本は、Vercel Cron としては実装されていない (`logical_backup` は GitHub Actions で取る。cross/17)。
 > 課金・収益に関わるバッチ (`revenue_snapshot`・`stripe_integrity_check`・`grace_period_check` など) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。
 > `dau_snapshot` は、Vercel Cron ではなく pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。時刻は同じ 01:30 JST。
 > それ以外の行は未実装のまま (作るときは別の PR)。
@@ -329,7 +330,7 @@ $$ LANGUAGE plpgsql;
 
 ## 5. Vercel Cron ジョブ詳細
 
-> **2026-10-17 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (cross/17 §7.3)・`login-alerts` (#1190・cross/16 §14.8) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
+> **2026-10-17 時点**: §5 は設計時の計画である。`vercel.json` にあるのは `process-menu-queue`・`app-log-alerts`・`email-outbox` (#1193)・`push-outbox` (#1136・`mobile/06-push-send.md` §6.6)・`backup-freshness` (cross/17 §7.3)・`login-alerts` (#1190・cross/16 §14.8)・`iap-reconcile` (#1912・billing/04 §9) だけで、`/api/cron/dau-snapshot` と `/api/cron/revenue-snapshot` は作っていない。
 > `revenue_snapshot` (§5.8) は、オーナーの選択「課金は無料のまま計測」により、この段 (#1125 の第 1 段) では足さない (#1125 の残り)。DAU / WAU / MAU の日次集計は、pg_cron のジョブ `snapshot-daily-active-users` として実装した (§3.0)。
 
 ### 5.1 vercel.json 設定
@@ -546,7 +547,7 @@ await supabase.from('revenue_snapshots').upsert({
 ### 6.2 Vercel Cron 失敗監視
 
 - 対象: cron の route が 500 を返した回。`internalError` (`src/lib/api/errors.ts`) が `app_logs` に固定の文で残す `error` の行のうち、`function_name` が cron の route の名前 (`cron/<名前>` または `<METHOD> /api/cron/<名前>`) のもの。`source = 'client'` の行 (利用者が `POST /api/log` で書ける) と、届けられなかったメールの 1 通ごとの `error` は数えない。
-- 通知: 同じ運用メール (`vercel_cron/<route 名>` ごとの件数)。`vercel.json` の 6 本 (`backup-freshness`・`login-alerts` を含む) と `app-log-alerts` 自身の 500 が対象になる。
+- 通知: 同じ運用メール (`vercel_cron/<route 名>` ごとの件数)。`vercel.json` の 7 本 (`backup-freshness`・`login-alerts`・`iap-reconcile` を含む) と `app-log-alerts` 自身の 500 が対象になる。
 
 ---
 

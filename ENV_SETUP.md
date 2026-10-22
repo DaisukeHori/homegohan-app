@@ -91,7 +91,7 @@ cron から呼ばれる API や Edge Function は、リクエストの `Authoriz
 
 | 保管場所 | 名前 | 役割 | 他と値を合わせる必要 |
 |---|---|---|---|
-| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
+| Vercel の環境変数 | `CRON_SECRET` | 送る側も受ける側も Vercel の中で完結します。Vercel Cron が `/api/cron/process-menu-queue`・`/api/cron/app-log-alerts`・`/api/cron/email-outbox`・`/api/cron/push-outbox`・`/api/cron/backup-freshness`・`/api/cron/login-alerts`・`/api/cron/iap-reconcile`（どれも `vercel.json` の `crons`）を呼ぶとき、この値を自動で `Authorization: Bearer ...` に付けます。受ける側の Next.js（`src/lib/cron-auth.ts`）が、同じ環境変数と照らし合わせます | **不要**。他の 2 か所と別の値にしてかまいません（別の値にしておくと、片方が漏れてももう片方は守られます） |
 | Supabase の Edge Function secrets | `CRON_SECRET`（別名 `SERVICE_ROLE_SECRET`。`CRON_SECRET` が無いときだけ代わりに使われます） | **受ける側**。`supabase/functions/_shared/auth.ts` の `requireServiceRole` が、次の Edge Function でこの値と照らし合わせます: コンビニカタログ取り込み 5 本（`import-seven-eleven-catalog` / `import-familymart-catalog` / `import-lawson-catalog` / `import-natural-lawson-catalog` / `import-ministop-catalog`）、`aggregate-org-stats`（停止中。認証だけ行い 410 を返します。#1325）、`calculate-segment-stats`、`purge-hidden-content`（運営が隠したコンテンツの完全削除。#1538）、`process-meal-image-jobs`（料理画像のジョブの処理。#1561）、`cron-secret-probe`（cron の共有シークレットの確認。#1560）、`regenerate-embeddings`、`stripe-price-sync`（最後の 3 本は service role key でも呼べます） | Vault の `app_cron_secret` と **同じ値にする** |
 | Supabase Vault | `app_cron_secret` | **送る側**。pg_cron が定期実行する次の関数がこの値を読み、`Authorization: Bearer ...` に付けて Edge Function を呼びます: `public.invoke_catalog_import()`（コンビニカタログ取り込みの Edge Function 5 本。登録時のスケジュールは、毎日 UTC 3:00〜4:00 に 15 分おき）、`public.invoke_calculate_segment_stats()`（比較ランキングの集計 `calculate-segment-stats` を daily / weekly / monthly の 3 回。期間が切り替わった直後の回は直前の期間の分も。ジョブ `calculate-segment-stats`、1 時間ごと（毎時 5 分）。#1406）、`public.invoke_calculate_segment_stats_finalize_retry()`（その直前の期間の分の再試行。ジョブ `calculate-segment-stats-finalize-retry`、毎日 JST 0:20 と 0:35。#1500）、`public.invoke_process_meal_image_jobs()`（料理画像の待ちのジョブがあれば `process-meal-image-jobs` を 1 回。ジョブ `process-pending-meal-image-jobs`、5 分ごと。#1561）、`public.invoke_purge_hidden_content()`（運営が隠してから 90 日を過ぎた食事・レシピと画像を消す `purge-hidden-content`。ジョブ `purge-hidden-content`、毎日 JST 3:25。#1538）、`public.send_cron_secret_probe()`（`GET /api/cron/app-log-alerts` が 15 分おきに呼ぶ確認。Edge Function `cron-secret-probe` を 1 回。#1560） | Edge Function secrets の `CRON_SECRET` と **同じ値にする** |
 
@@ -432,6 +432,15 @@ Resend から「届かなかった（ハードバウンス）」「迷惑メー�
 - `app_logs`（`/super-admin/logs` で `function_name` に `cron/push-outbox` を指定）に、処理した回の件数と、届けられなかった行の理由（種類・利用者 ID・token の末尾 4 文字）が残る。通知の文面と token の全体は残さない。
 - Android の端末へ届くには、EAS に FCM V1 の資格情報を登録する必要がある（未登録の間は Android だけ `InvalidCredentials` で届かず、iOS には届く）。
 - 認証は他の cron と同じ `CRON_SECRET`。
+
+### ストアの購読の定期の取り直し（`GET /api/cron/iap-reconcile`。毎時 41 分。billing/04）
+
+RevenueCat の Webhook の再送が尽きて写らなかった、ストアの購読の失効・更新を、期限を過ぎた行だけ RevenueCat から取り直して `personal_subscriptions` に写します（設計は [`docs/design/billing/04-iap-reconcile.md`](docs/design/billing/04-iap-reconcile.md)）。`REVENUECAT_SECRET_API_KEY` が無い間は何もしません（200 `not_configured`）。
+
+| 環境変数 | 例 | 役割 | 未設定のときの動き |
+|---|---|---|---|
+| `IAP_RECONCILE_BATCH_SIZE`（任意） | `20` | 1 回の cron（毎時）で取り直す利用者の数。1〜40 の整数。40 より上げられない（下げる向きだけ） | 既定の 40 人。不正な値は既定値に戻し、`cron/iap-reconcile` の warn ログに変数名だけを残す |
+| `IAP_RECONCILE_RECHECK_HOURS`（任意） | `12` | 期限の後に取り直しても有料のままの行（ストアの猶予期間など）を、次に取り直すまでの間隔。1〜168 の整数（時間） | 既定の 6 時間。不正な値は既定値に戻す（上と同じ） |
 
 ---
 
