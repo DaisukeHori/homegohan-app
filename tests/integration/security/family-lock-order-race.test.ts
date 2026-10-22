@@ -4,7 +4,7 @@
  *
  * 修正前は、家族を変える RPC が行ロックを取る順番がばらばらだった。
  *   - accept_family_invite          : 招待の行 → 家族の行 (#1213 で家族の行のロックを足したが、招待の行が先のままだった)
- *   - 代表者による家族の削除 (RLS の DELETE ポリシー + CASCADE)
+ *   - 家族の行の DELETE + CASCADE (#1917 から利用者は直接消せない。解散から 90 日の purge と service_role だけが消す)
  *                                   : 家族の行 → 招待・メンバー・参加リクエスト・プロフィールの行 (DELETE 文が最初に家族の行を取る)
  *   - operator_force_dissolve_family: メンバー → プロフィール → 家族の行 (家族の行は最後に更新するだけ)
  *   - accept_family_representative_transfer / operator_force_representative_transfer
@@ -14,19 +14,19 @@
  * その結果、次の 2 つが起きていた。
  *   1. 運営の強制解散と招待の承諾 (子供の追加も同じ) が同時に走ると、解散済みの家族に active のメンバーが残る
  *      (解散側が「承諾の INSERT がまだ見えない」状態でメンバーを left にし、あとから家族の行の更新だけが承諾の完了を待って通る)
- *   2. 代表者による家族の削除と招待の承諾が同時に走ると、お互いの行を待ち合ってデッドロックする (40P01)
+ *   2. 家族の行の削除 (当時は代表者も直接消せた) と招待の承諾が同時に走ると、お互いの行を待ち合ってデッドロックする (40P01)
  *
  * 修正後 (20261008090100_family_lock_order.sql): 家族に関わる RPC は、すべて「家族の行 → 子の行」の順でロックする。
  *   解散・移譲・脱退・削除・昇格の承諾も、最初に family_groups の行を FOR NO KEY UPDATE でロックする
  *   (外部キーの確認が取る FOR KEY SHARE とは衝突しない強さ。承諾・子供の追加 (FOR UPDATE) とは互いに待ち合う)。
- *   代表者の削除は DELETE 文が最初に家族の行を取るので、もともとこの順番で、コードは変えない。
+ *   家族の行の削除は DELETE 文が最初に家族の行を取るので、もともとこの順番で、コードは変えない (#1917 以降は purge・service_role の DELETE)。
  *
  * 競合の再現のしかた (タイミングに頼らない。family-member-limit-race.test.ts と同じ考え方):
  *   postgres-meta (/pg/query) で「本人になりすまして先に処理を呼び、そのあと pg_sleep でトランザクションを開いたままにする」
  *   接続を 1 本作り (= ロックを取ったがコミット前の状態)、pg_sleep に入ったのを pg_stat_activity で確かめてから、
  *   もう 1 件を本物の経路 (PostgREST + 本人の JWT) で呼ぶ。
  *   - 解散と承諾など「先の処理の途中に、後の処理が割り込む」競合は、先の処理を開いたままにして後の処理を呼ぶ。
- *   - 代表者の削除は、「家族の行を FOR UPDATE でロックしたまま待ち、そのあと DELETE する」接続で表す
+ *   - 家族の行の削除は、「家族の行を FOR UPDATE でロックしたまま待ち、そのあと DELETE する」接続 (postgres。purge と同じ権限) で表す
  *     (DELETE 文は先に家族の行を取ってから CASCADE で子の行を消すので、その 2 段階の間に他の処理が割り込む状況の再現)。
  *   - 子の行を先に持つ処理 (同じメールへの再招待・昇格のリクエスト) の途中に、家族の行を先に取る処理が割り込む並び (D1〜D3) は、
  *     家族の行のロックが FOR UPDATE だとデッドロックする。FOR NO KEY UPDATE でなければならないことを、順番を固定して確かめる。
@@ -371,9 +371,9 @@ async function removeViaApi(rep: TestUser, familyId: string, memberId: string): 
   return toOutcome(error);
 }
 
-/** 代表者が家族を削除する (RLS の family_groups_delete_representative。メンバー・招待などは CASCADE で消える) */
-async function deleteFamilyViaApi(rep: TestUser, familyId: string): Promise<Outcome & { deleted: number }> {
-  const { data, error } = await asUser(rep.jwt).from('family_groups').delete().eq('id', familyId).select('id');
+/** 家族の行を service_role で削除する (#1917 から利用者は直接消せない。メンバー・招待などは CASCADE で消える) */
+async function deleteFamilyAsServiceRole(familyId: string): Promise<Outcome & { deleted: number }> {
+  const { data, error } = await srAdmin.from('family_groups').delete().eq('id', familyId).select('id');
   return { ...toOutcome(error), deleted: data?.length ?? 0 };
 }
 
@@ -453,13 +453,13 @@ function holdCall(actor: TestUser, callSql: string, holdSeconds = 3): Holder {
 }
 
 /**
- * 代表者 rep として家族の行を FOR UPDATE でロックしたまま待ち、そのあと家族を DELETE する (RLS の DELETE ポリシー経由)。
+ * postgres (purge と同じ権限) で家族の行を FOR UPDATE でロックしたまま待ち、そのあと家族を DELETE する (#1917 から利用者は消せない)。
  * DELETE 文は最初に家族の行を取り、そのあと CASCADE で子の行 (招待・メンバーなど) を消す。その 2 段階の間に
  * 他の処理が割り込んだ状況 (= 割り込んだ処理が、先に子の行を持ってから家族の行を待つ向きだとデッドロックする) を再現する。
  */
-function holdFamilyLockThenDelete(rep: TestUser, familyId: string, holdSeconds = 3): Holder {
+function holdFamilyLockThenDelete(familyId: string, holdSeconds = 3): Holder {
   return startHolder(
-    rep.id,
+    null,
     `SELECT 1 FROM public.family_groups WHERE id = '${familyId}'::uuid FOR UPDATE;`,
     `DELETE FROM public.family_groups WHERE id = '${familyId}'::uuid;`,
     holdSeconds,
@@ -612,16 +612,16 @@ describe('#1310 運営の強制解散と、家族に入る処理を本物の経�
 });
 
 // ---------------------------------------------------------------------------------------------
-// 2. 代表者による家族の削除 (DELETE + CASCADE) と、各 RPC の競合 — デッドロック
+// 2. 家族の行の削除 (DELETE + CASCADE。#1917 以降は purge・service_role) と、各 RPC の競合 — デッドロック
 // ---------------------------------------------------------------------------------------------
 
-describe('#1310 代表者による家族の削除 (家族の行を先に取る) の途中に、各 RPC が割り込む', () => {
+describe('#1310 家族の行の削除 (家族の行を先に取る) の途中に、各 RPC が割り込む', () => {
   it('B1: 招待の承諾が割り込んでもデッドロックしない (承諾は INVITE_NOT_FOUND / FAMILY_NOT_FOUND になり、削除は成功する)', async () => {
     const { rep, familyId } = await buildFamily('b1', 0);
     const invitee = await createUser('b1-invitee');
     const token = await inviteToken(rep, familyId, invitee.email);
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const accept = await acceptViaApi(invitee, token);
     const deletion = await holder.done;
@@ -636,9 +636,9 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
   });
 
   it('B2: 運営の強制解散が割り込んでもデッドロックしない', async () => {
-    const { rep, familyId } = await buildFamily('b2', 1);
+    const { familyId } = await buildFamily('b2', 1);
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const dissolve = await dissolveViaApi(familyId);
     const deletion = await holder.done;
@@ -653,7 +653,7 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
     const [adult] = adults;
     const proposalId = await proposeTransfer(rep, familyId, adult.id);
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const accept = await transferAcceptViaApi(adult, proposalId);
     const deletion = await holder.done;
@@ -665,10 +665,10 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
   });
 
   it('B4: 運営の強制譲渡が割り込んでもデッドロックしない (譲渡は TARGET_NOT_IN_FAMILY になる)', async () => {
-    const { rep, adults, familyId } = await buildFamily('b4', 1);
+    const { adults, familyId } = await buildFamily('b4', 1);
     const [adult] = adults;
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const transfer = await forceTransferViaApi(familyId, adult.id);
     const deletion = await holder.done;
@@ -685,7 +685,7 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
     const childId = await addChild(rep, familyId, 'b5-child');
     const promotionToken = await requestPromotion(rep, childId, target.email);
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const accept = await acceptPromotionViaApi(target, promotionToken);
     const deletion = await holder.done;
@@ -699,10 +699,10 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
   });
 
   it('B6: 脱退が割り込んでもデッドロックしない (脱退は NOT_IN_FAMILY になる)', async () => {
-    const { rep, adults, familyId } = await buildFamily('b6', 1);
+    const { adults, familyId } = await buildFamily('b6', 1);
     const [adult] = adults;
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const leave = await leaveViaApi(adult);
     const deletion = await holder.done;
@@ -719,7 +719,7 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
     const { rep, adults, familyId } = await buildFamily('b7', 1);
     const target = await memberOf(familyId, adults[0].id);
 
-    const holder = holdFamilyLockThenDelete(rep, familyId);
+    const holder = holdFamilyLockThenDelete(familyId);
     await holder.sleeping;
     const removal = await removeViaApi(rep, familyId, target.id);
     const deletion = await holder.done;
@@ -733,7 +733,7 @@ describe('#1310 代表者による家族の削除 (家族の行を先に取る) 
   });
 });
 
-describe('#1310 代表者による家族の削除と招待の承諾を本物の経路で同時に呼ぶ (8 回)', () => {
+describe('#1310 家族の行の削除 (service_role) と招待の承諾を本物の経路で同時に呼ぶ (8 回)', () => {
   it('N3: 削除と承諾を同時に呼んでも、デッドロックせず、削除が成功して何も残らない', async () => {
     const problems: string[] = [];
     for (let i = 0; i < 8; i++) {
@@ -741,7 +741,7 @@ describe('#1310 代表者による家族の削除と招待の承諾を本物の�
       const familyId = await createFamily(rep, `n3-${i}`);
       const token = await inviteToken(rep, familyId, invitee.email);
 
-      const [accept, deletion] = await Promise.all([acceptViaApi(invitee, token), deleteFamilyViaApi(rep, familyId)]);
+      const [accept, deletion] = await Promise.all([acceptViaApi(invitee, token), deleteFamilyAsServiceRole(familyId)]);
 
       if (isDeadlock(accept) || isDeadlock(deletion)) problems.push(`#${i} デッドロック: ${JSON.stringify({ accept, deletion })}`);
       if (!deletion.ok || deletion.deleted !== 1) problems.push(`#${i} 削除が成功しなかった: ${JSON.stringify(deletion)}`);

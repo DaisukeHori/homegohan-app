@@ -1246,7 +1246,7 @@ describe('billing/01 §6.4 (9) の 3.・(10)・§7.1: 同時に走る処理', ()
     expect((await mustFamily(familyB)).status).toBe('dissolved');
     expect(await planKeyCached(repB.id)).toBe('family_basic');
 
-    // (b') 写像がコミット前のところへ、代表者の家族の削除が来る
+    // (b') 写像がコミット前のところへ、家族の行の削除が来る (#1917 から利用者は直接消せないので、purge と同じく service_role で消す)
     const repC = await createUser('order-c', { jwt: true });
     const familyC = await createFamilyViaRpcBeforeContract(repC);
     const holderC = startHolder(
@@ -1254,7 +1254,7 @@ describe('billing/01 §6.4 (9) の 3.・(10)・§7.1: 同時に走る処理', ()
       '',
     );
     await holderC.sleeping;
-    const deletion = Promise.resolve(asUser(jwtOf(repC)).from('family_groups').delete().eq('id', familyC).select('id'));
+    const deletion = Promise.resolve(srAdmin.from('family_groups').delete().eq('id', familyC).select('id'));
     await waitForLockWaiter('family_groups');
     const [heldC, deleted] = await Promise.all([holderC.done, deletion]);
     expectNoDeadlock(heldC, toOutcome(deleted.error));

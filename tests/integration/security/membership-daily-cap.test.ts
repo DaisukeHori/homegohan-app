@@ -14,7 +14,7 @@
  * 確かめること:
  *   A. 各上限: 上限ちょうど (N 件目) までは成功し、N+1 件目は RATE_LIMITED。失敗した呼び出しは行も監査行も残さない。
  *      上限の手前までは service role で membership_audit に種まきして積む (数百回の RPC を呼ばない)。
- *   B. 数えた元を消しても戻らない: 組織の招待を物理削除しても、家族を消して作り直しても、監査行は残るので上限は戻らない。
+ *   B. 数えた元を消しても戻らない: 組織の招待を物理削除しても、家族を解散して作り直しても、監査行は残るので上限は戻らない。
  *      組織の招待は create_org_invite が監査行を書かないため、トリガーが 'invite_created' を書く
  *      (#1917 で create_org_invite は SECURITY DEFINER になり、利用者の直接の INSERT は 42501 で止まる)。
  *   C. 24 時間のローリングウィンドウ: 24 時間より前の作成は数えない。Retry-After は最古の対象行が窓から出るまでの秒数。
@@ -618,7 +618,7 @@ describe('#1163 家族の招待 (create_family_invite): 招待者ごと 20 / 同
     expectRateLimited(over.error, 'family_invite:per_actor', 5 * 60);
   });
 
-  it('FI-5: 家族を消して作り直しても上限は戻らない (監査行は家族と無関係に残り、招待者ごとに数える)', async () => {
+  it('FI-5: 家族を解散して作り直しても上限は戻らない (監査行は家族と無関係に残り、招待者ごとに数える)', async () => {
     const rep = await createUser('rep-fi-recreate');
     // billing/03 §6.6: 家族グループは家族プランの契約者だけが作れるので、作る前に家族プランを手動付与する
     await grantFamilyPlan(srAdmin, rep.id);
@@ -628,10 +628,9 @@ describe('#1163 家族の招待 (create_family_invite): 招待者ごと 20 / 同
     await seedAudit({ scope: 'family', scopeId: firstFamilyId, action: 'invite_created', actorId: rep.id, count: 20 });
     expectRateLimited((await inviteToFamily(rep, firstFamilyId, target('fi-re-1'))).error, 'family_invite:per_actor');
 
-    // 代表者は家族を丸ごと削除できる (family_groups_delete_representative)。招待の行は CASCADE で消える
-    const deleted = await asUser(rep.jwt).from('family_groups').delete().eq('id', firstFamilyId).select('id');
-    expect(deleted.error).toBeNull();
-    expect(deleted.data).toHaveLength(1);
+    // 代表者が家族をやめるのは解散の RPC だけ (#1917 から家族の行を直接 DELETE できない)。解散のあと作り直せる
+    const dissolved = await asUser(rep.jwt).rpc('dissolve_family_by_representative', { p_family_id: firstFamilyId });
+    expect(dissolved.error).toBeNull();
 
     const recreated = await asUser(rep.jwt).rpc('create_family_group', { p_name: `#1163 recreate-2 ${TS}`, p_plan_key: 'free' });
     expect(recreated.error).toBeNull();

@@ -839,9 +839,10 @@ CREATE POLICY family_groups_update_adult ON family_groups
     )
   );
 
-DROP POLICY IF EXISTS family_groups_delete_representative ON family_groups;
-CREATE POLICY family_groups_delete_representative ON family_groups
-  FOR DELETE USING (family_groups.representative_id = auth.uid());
+-- DELETE のポリシーは置かない。#1917 の続き (20261022200000_family_groups_no_direct_delete.sql) で
+-- family_groups_delete_representative を消し、anon / authenticated から DELETE・TRUNCATE の権限を外した
+-- (直接の DELETE は保護者の同意の記録 parental_consents を CASCADE で消し、解散の通知・監査も通らないため)。
+-- 家族の行を消すのは解散から 90 日の purge (purge_dissolved_family_groups) と service_role だけ。代表者は解散の RPC で家族をやめる
 
 -- family_members
 DROP POLICY IF EXISTS family_members_select_self_or_family ON family_members;
