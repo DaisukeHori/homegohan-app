@@ -407,6 +407,11 @@ yamada@example.com,org_member,営業部,山田太郎,EMP001,2024-04-01
 }
 ```
 
+**実装の応答 (現行)**: `src/app/api/org/invites/route.ts` の GET。形は `src/schemas/membership/organization-invite.ts` の `OrgInviteListResponseSchema`。
+- `role` は招待で付ける役割 = `organization_invites.invited_role` (`create_org_invite` が書く列。値は `owner` / `admin` / `member`)。旧い `role` 列 (既定 `'member'`) は書かれないので読まない。
+- `status` は `organization_invites.status` (`pending` / `accepted` / `rejected` / `expired` / `revoked`)。ただし期限を過ぎた `pending` は `expired` として返す (DB の `status` が `expired` になるのは承諾を試みたときだけのため)。取り消し (`revoke_org_invite`)・退会で伏せた招待 (`prepare_account_deletion`) は `revoked`。
+- 画面 (`03-ui-spec.md` §8.1) は `status` が `pending` の招待にだけリンクのコピーと取消を出す。
+
 ---
 
 ### `POST /api/org/invites`
