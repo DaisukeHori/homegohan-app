@@ -8,7 +8,7 @@
  *
  * 確かめること:
  *  1. readOrgSidebarInfo: 各プランの値 → 日本語の名前 / 表に無い値・null・欠けた列 → 「-」 / 結合が配列で返る形も読む /
- *     名前が空・無いときは以前と同じ「Organization」
+ *     名前が空・無いときは「組織」(以前は固定の英語「Organization」)
  *  2. サイドバーを描画すると、プランの欄に組織のプランの日本語の名前が出て、固定の英語「Enterprise」や内部の値は出ない
  *     (standard の組織でスタンダード)。organizations の結合で plan を読んでいる
  *  3. 招待の一覧: 表に無い状態は「-」で、内部の値を出さない。既知の状態は従来どおりの日本語
@@ -104,8 +104,8 @@ describe('readOrgSidebarInfo', () => {
     expect(readOrgSidebarInfo({ organizations: [] })).toEqual({ name: ORG_SIDEBAR_NAME_FALLBACK, planLabel: '-' });
   });
 
-  it('組織が読めない・名前が空のときは名前を「Organization」(以前と同じ)・プランを「-」にする', () => {
-    expect(ORG_SIDEBAR_NAME_FALLBACK).toBe('Organization');
+  it('組織が読めない・名前が空のときは名前を「組織」・プランを「-」にする (固定の英語「Organization」は出さない)', () => {
+    expect(ORG_SIDEBAR_NAME_FALLBACK).toBe('組織');
     for (const profile of [null, undefined, 'x', {}, { organizations: null }, { organizations: { name: '', plan: null } }]) {
       expect(readOrgSidebarInfo(profile)).toEqual({ name: ORG_SIDEBAR_NAME_FALLBACK, planLabel: '-' });
     }
@@ -210,6 +210,30 @@ describe('組織の管理画面のサイドバー (src/app/(org)/layout.tsx)', (
       if (value) expect(sidebarText()).not.toContain(value);
     },
   );
+
+  it('ログアウトのボタンは日本語の「ログアウト」で、固定の英語「Sign Out」は出さない', async () => {
+    await renderSidebar('standard');
+    const buttons = [...container.querySelectorAll('aside button')].map((el) => el.textContent ?? '');
+    expect(buttons.some((label) => label.includes('ログアウト'))).toBe(true);
+    expect(sidebarText()).not.toMatch(/sign\s*out/i);
+  });
+
+  it('組織の名前が読めないときは「組織」と出て、固定の英語「Organization」は出さない', async () => {
+    profileState.row = {
+      org_role: 'admin',
+      organization_id: '00000000-0000-4000-8000-000000000100',
+      organizations: { name: '', plan: 'standard' },
+    };
+    await mount(
+      <OrgLayout>
+        <div>本文</div>
+      </OrgLayout>,
+    );
+    expect(routerStub.push).not.toHaveBeenCalled();
+    const nameEl = container.querySelector('[data-testid="org-sidebar-plan"]')?.nextElementSibling;
+    expect(nameEl?.textContent).toBe('組織');
+    expect(sidebarText()).not.toContain('Organization');
+  });
 
   it('user_profiles の読み込みで organizations の plan を結合して読む', async () => {
     await renderSidebar('premium');
