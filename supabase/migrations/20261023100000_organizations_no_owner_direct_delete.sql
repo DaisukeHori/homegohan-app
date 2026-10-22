@@ -1,0 +1,72 @@
+-- migration: 20261023100000_organizations_no_owner_direct_delete.sql
+-- 戻し方: supabase/rollbacks/20261023100000_organizations_no_owner_direct_delete.down.sql
+-- #1917 の続き: 組織のオーナーが PostgREST の直接の DELETE で organizations の行を消せ、部署・招待・チャレンジ・席数などの
+-- 子の記録が外部キーの CASCADE で物理削除されてしまう既存の欠陥を直す。解散の RPC (知らせ・監査・猶予) も通らなかった。
+-- 家族の行の直接の DELETE は 20261022200000_family_groups_no_direct_delete.sql で塞いだ。組織も同じ扱いにする。
+-- オーナーの選択 (2026-10-23・選択式): 「オーナーの直接の削除を塞ぐ (推奨)」。選択肢の説明の文は
+-- 「家族と同じ扱いにします。組織を消すのは解散の仕組みだけで、オーナーが解散する操作は今どおりできます。
+-- 運営 (super_admin) の削除のポリシーは残します。」
+--
+-- 背景:
+--   本番のベースライン (20251126124224_create_meal_planner_tables.sql) の
+--     :10686 organizations_delete_owner  FOR DELETE (TO public) USING (owner_id = auth.uid())
+--   と、:13770-13771 の anon / authenticated への DELETE の権限により、組織のオーナーは自分の組織の行を直接 DELETE できた。
+--   そのとき、organizations を参照する表が外部キーの CASCADE で一緒に消える (ベースラインの外部キー):
+--     departments (:8823)・org_daily_stats (:9113)・org_license_pools (:9118)・organization_challenges (:9143)・
+--     organization_invites (:9168)・organization_reports (:9178)。チャレンジの参加 organization_challenge_participants (:9123) と
+--     控えの表 organization_challenge_aggregates・organization_challenge_ranking_exclusions
+--     (20261016240000_org_challenge_diff_privacy.sql) も、チャレンジの CASCADE で消える。
+--     user_profiles.organization_id (:9468) と user_profiles.department_id (:9448) は SET NULL。
+--   所属の列 (organization_id と org_role) を持つ人が残っている組織では、SET NULL が org_role を残したまま所属を空にして
+--   CHECK user_profiles_org_consistency (23514) で止まる。消せたのは所属の列を持つ人が 1 人もいない組織だけだが、
+--   そのときも解散の RPC が書く監査 (membership_audit の group_dissolved) と解散の知らせを通らず、子の記録が消えた。
+--   チャレンジは利用者の権限では draft と cancelled しか消せない (RESTRICTIVE のポリシー
+--   "Org challenges can be deleted only as draft or cancelled"。20261016240000) が、組織の行の CASCADE はこれを通らない。
+--   これより後の migration に、organizations_delete_owner を外すものは無い。
+--
+--   組織の行を消す・やめる経路 (origin/main で git grep した):
+--     - オーナーが組織をやめる操作は、解散の RPC dissolve_org_by_owner (SECURITY DEFINER。POST /api/org/dissolve)。
+--       運営の強制解散は operator_force_dissolve_org (SECURITY DEFINER)。どちらも後始末の org_dissolve_apply
+--       (20261019120000_self_dissolve.sql) が organizations を UPDATE するだけ (status を dissolved・organizations.owner_id を NULL・
+--       organizations.dissolved_at を入れる。DELETE しない) なので、この変更の影響を受けない
+--     - 解散した組織を後で物理削除するジョブは無い (家族の purge_dissolved_family_groups に当たるものが無い)
+--     - 運営の画面の組織の書き込み (POST /api/admin/organizations・PATCH /api/admin/organizations/{id}) は service_role で書き、
+--       組織を DELETE する API は無い
+--     - 退会では組織の行は消えない: auth.users への外部キーは organizations.owner_id の ON DELETE RESTRICT だけ (ベースライン :9183)。
+--       オーナーは譲渡か解散をしないと退会できない
+--     - Web (src)・モバイル (apps/mobile)・Edge Function (supabase/functions) は、利用者のセッションで organizations を DELETE しない
+--       (`from('organizations')` の `.delete(` と REST の /rest/v1/organizations の DELETE は 0 件)
+--     - 直接の DELETE を使うのは、テストと e2e の後片付け (tests/e2e/helpers/membership.ts・tests/e2e/fixtures/fresh-org.ts・
+--       tests/e2e/fixtures/fresh-user.ts・結合テストの afterAll) で、どれも service_role の鍵で書く
+--     - 運営 (super_admin) の削除のポリシー organizations_delete_super_admin (TO authenticated・super_admin かつ
+--       operator_mfa_satisfied()。20261017130000_operator_mfa_db_gate.sql) は残す。アプリからこのポリシーを使う経路は無いが、
+--       運営が自分のセッションで消す道として残す (オーナーの選択の説明の文のとおり)
+--
+-- 変更 (20261022200000_family_groups_no_direct_delete.sql と同じ形):
+--   1. DELETE を許すポリシー organizations_delete_owner を消す。
+--      SELECT の organizations_select_member・UPDATE の organizations_update_admin・DELETE の organizations_delete_super_admin は残す。
+--   2. DELETE の権限を anon から外す。anon にはどの DELETE のポリシーも当たらない (auth.uid() が NULL・運営のポリシーは
+--      TO authenticated) ので、ポリシーを消すだけだと DELETE は 0 行で黙って終わる。権限を外すと 42501 (permission denied) で止まり、
+--      後で誰かが DELETE のポリシーを足しても anon には開かない。
+--      authenticated の DELETE の権限は残す: 運営の削除のポリシー organizations_delete_super_admin は authenticated の DELETE の
+--      権限が無いと効かない (外すと運営の削除も 42501 になる)。そのため、オーナー・管理者・メンバーの直接の DELETE は
+--      42501 ではなく 0 行で終わる (行は消えない)。
+--      TRUNCATE は 20261022190000_db_privilege_hardening.sql が anon / authenticated から外してあるので、ここでは触れない。
+--      INSERT・SELECT・UPDATE・REFERENCES・TRIGGER・MAINTAIN と service_role の権限は変えない。
+--      SECURITY DEFINER の RPC は所有者 (postgres) の権限で動き、service_role は DELETE の権限を持ったままなので、
+--      解散・運営の強制解散・テストの後片付けはこの変更の影響を受けない。
+--
+-- 既存データへの影響: なし (ポリシーと権限だけの変更。行は消さない・変えない)。
+-- 冪等: DROP POLICY IF EXISTS と REVOKE のため、2 回続けて適用してもエラーにならない。
+-- ロック: DROP POLICY は organizations に ACCESS EXCLUSIVE を取る。組織の表は小さく、長い処理が走っていなければ一瞬で終わる。
+-- 確認: tests/integration/rls/organizations-no-owner-direct-delete.test.ts (実 DB)
+--       tests/organizations-no-owner-direct-delete-migration-contract.test.ts (静的)
+
+-- 表のロックを長く待たない (待ちが続いたら失敗させて流し直す。20261022200000 と同じ)
+SET LOCAL lock_timeout = '10s';
+
+-- 1. オーナーの DELETE のポリシー
+DROP POLICY IF EXISTS organizations_delete_owner ON public.organizations;
+
+-- 2. anon の DELETE の権限
+REVOKE DELETE ON TABLE public.organizations FROM anon;
