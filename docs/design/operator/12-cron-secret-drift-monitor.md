@@ -60,7 +60,7 @@ Q-1〜Q-4 は、オーナーの選択 (2026-10-17) で次のとおり決まっ�
 
 ### 0.5 Issue 本文との食い違い (本書を正とする)
 
-- Vercel Cron の本数は、Issue #1560 の本文とコメントには書かれていない (「Vercel Cron 6 本」とする記述の出どころは確かめられない)。本書の調査時点 (origin/main 2026-10-17・`2e94cc15`) の `vercel.json` の `crons` は 5 本 (`process-menu-queue`・`app-log-alerts`・`email-outbox`・`push-outbox`・`backup-freshness`) だった。そのあと #1720 段 B (`307ae1cf`) が `login-alerts` を足し、いまの `vercel.json` の `crons` は 6 本 (上の 5 本と `login-alerts`)。本書は `vercel.json` を変えない。
+- Vercel Cron の本数は、Issue #1560 の本文とコメントには書かれていない (「Vercel Cron 6 本」とする記述の出どころは確かめられない)。本書の調査時点 (origin/main 2026-10-17・`2e94cc15`) の `vercel.json` の `crons` は 5 本 (`process-menu-queue`・`app-log-alerts`・`email-outbox`・`push-outbox`・`backup-freshness`) だった。そのあと #1720 段 B (`307ae1cf`) が `login-alerts` を足し、いまの `vercel.json` の `crons` は 7 本 (上の 5 本と `login-alerts`・`iap-reconcile` (#1912 billing/04))。本書は `vercel.json` を変えない。
 - 「3 か所 (Vercel・Edge・Vault) を突き合わせ」から読める「Vercel だけ古い」(Vercel の `CRON_SECRET` だけが入れ替え前の値で、Supabase 側 (Edge と Vault) は新しい値でそろっている) 場合は、所見にしない (Q-1 の「比べない」・D-7・R-20)。Vercel の `CRON_SECRET` は Vercel Cron が送り Vercel の route が照らす独立の値で、Supabase 側と違っても何も止まらないため (S-23)。Vercel の中で旧い値が残る形 (`CRON_SECRET_PREVIOUS`) は WARN で知らせる (S-09・S-10)。
 - Issue #1560 の項目 8 の例示「自己診断の Edge Function か、pg_cron の日次ジョブ」のうち、本書は「自己診断の Edge Function」を採り、pg_cron のジョブは足さない (確認の送り手は `app-log-alerts` の回。§4.2 の案 B)。
 
@@ -1408,7 +1408,7 @@ export function renderCronSecretDriftEmail(vars: CronSecretDriftEmailVars): Emai
 | メールの文面 (`ops_`) | 5 本 | 6 本 (+ `ops_cron_secret_drift`) |
 | DB の表 / 関数 | — | 表 `cron_secret_probes` + 関数 3 本 (`send_cron_secret_probe` / `cron_secret_probe_results` / `cron_secret_probe_body_json`) |
 | pg_cron のジョブ (migration が登録するもの) | 14 本 | 14 本 (変えない) |
-| `vercel.json` | 6 本 | 6 本 (変えない) |
+| `vercel.json` | 7 本 | 7 本 (変えない) |
 | `src/lib/cron-auth.ts` | `requireCronAuth` だけ | + `describeCronSecretRotationState` (値は返さない) |
 | 手で流す検査 | ある | ある (変えない)。ENV_SETUP.md に「自動の確認もある」を足す |
 
@@ -1744,7 +1744,7 @@ grep の語で見つかる既存のテストと、その直し方。直さずに
 | `tests/integration/security/anon-definer-execute.test.ts` A | `SECURITY DEFINER` | anon が EXECUTE できる定義者関数は許可リストの 2 本だけ | 段 B の定義者関数 2 本は完全形の REVOKE で anon から外れる (許可リストは変えない) | B |
 | `tests/log-cleanup-dau-snapshot-contract.test.ts` 規則 9・`tests/helpers/migration-cron-jobs.ts` | `cron.schedule(` | pg_cron のジョブの数と名前 | 反応しない (ジョブを足さない。CT-10 が `cron.schedule` を呼ばないことを固定) | — |
 | `tests/env-setup-cron-secret-crons.test.ts` | `CRON_SECRET`・`vercel.json` | `ENV_SETUP.md` の `CRON_SECRET` の行の path = `vercel.json` | 反応しない (`vercel.json` を変えない。`ENV_SETUP.md` の Vercel の行 (`| Vercel の環境変数 | \`CRON_SECRET\` |` で始まる行) の path は変えない。§15 の行 4 で足すのは別の行) | — |
-| `tests/cron-failure-monitoring-contract.test.ts` 9 (と 8) | `PG_CRON_STALL_MINUTES`・`vercel.json`・`internalError`・`createLogger` | 9: `src/app/api/cron/*/route.ts` が `createLogger` / `internalError` に渡す名前を走査し (文字列の直書きか、`const X = '…'` の定数)、候補の LIKE とディレクトリ名に合うかを見る。`vercel.json` の crons の 6 本 (`backup-freshness`・`login-alerts` を含む) が走査に入ることも見る。8: `PG_CRON_STALL_MINUTES` (60) を import してジョブの間隔と突き合わせる | 直さずに通る (反応しない)。段 C で route に足す `internalError` の呼び出し 4 か所 (§7.3) はどれも既存の定数 `ROUTE_NAME` (= `'cron/app-log-alerts'`。origin/main の route 115 行) を渡す。`createLogger` は足さない。`vercel.json` と `PG_CRON_STALL_MINUTES` は変えない | — |
+| `tests/cron-failure-monitoring-contract.test.ts` 9 (と 8) | `PG_CRON_STALL_MINUTES`・`vercel.json`・`internalError`・`createLogger` | 9: `src/app/api/cron/*/route.ts` が `createLogger` / `internalError` に渡す名前を走査し (文字列の直書きか、`const X = '…'` の定数)、候補の LIKE とディレクトリ名に合うかを見る。`vercel.json` の crons の 7 本 (`backup-freshness`・`login-alerts`・`iap-reconcile` を含む) が走査に入ることも見る。8: `PG_CRON_STALL_MINUTES` (60) を import してジョブの間隔と突き合わせる | 直さずに通る (反応しない)。段 C で route に足す `internalError` の呼び出し 4 か所 (§7.3) はどれも既存の定数 `ROUTE_NAME` (= `'cron/app-log-alerts'`。origin/main の route 115 行) を渡す。`createLogger` は足さない。`vercel.json` と `PG_CRON_STALL_MINUTES` は変えない | — |
 | `src/__tests__/lib/emails/ops/pg-cron-stalled.test.ts` | `pg-cron-stalled`・`ops_pg_cron_stalled` | `renderPgCronStalledEmail` の文面 (件名・本文・100 字以内) | 反応しない (`src/lib/emails/ops/pg-cron-stalled.ts` を変えない。新しい文面は別ファイル `cron-secret-drift.ts` で、そのテストは §11.2 の新設 `src/__tests__/lib/emails/ops/cron-secret-drift.test.ts`) | — |
 | `tests/integration/rls/ops-alert-state.test.ts` | `ops_alert_state` | `claim_ops_alert` の挙動 | 変えない (キーが増えるだけ) | — |
 | `tests/email-send-throttle-contract.test.ts` | `EXEMPT_EMAIL_SENDERS`・`MAIL_TRIGGERING_RPCS`・`sendEmail(` | `sendEmail` の呼び出し元の除外リスト・メールを送る RPC の一覧 | 反応しない (route はすでに除外リストにあり、新しい文面は `src/lib/emails/ops/`、新しい RPC 2 本はメールを送らない) | — |

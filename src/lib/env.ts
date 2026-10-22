@@ -257,6 +257,20 @@ export const SERVER_ENV_VARS = {
       'RevenueCat の Webhook の署名の秘密 (Integrations → Webhooks で署名を有効にすると 1 回だけ表示される値)。POST /api/webhooks/revenuecat が、届いたイベントの署名をこれで確かめる (billing/03 §8.2)',
     whenMissing: 'RevenueCat の Webhook を受け付けない (503)',
   },
+  IAP_RECONCILE_BATCH_SIZE: {
+    required: false,
+    description:
+      'ストアの購読の定期の取り直し (GET /api/cron/iap-reconcile。毎時) で、1 回に選ぶ利用者の数 (1〜40 の整数。既定の 40 人より下げる向きだけ。billing/04 §8.1)',
+    whenMissing: '既定の 40 人 (予算 40 秒 ÷ RevenueCat への間隔 1 秒 = 1 回に試せる上限)。範囲外・整数でない値も既定に戻る (warn ログに変数名だけが残る)',
+    readOnlyBy: 'src/app/api/cron/iap-reconcile/route.ts',
+  },
+  IAP_RECONCILE_RECHECK_HOURS: {
+    required: false,
+    description:
+      'ストアの購読の定期の取り直しで、期限の後に取り直しても live のままの行 (ストアの猶予期間など) を次に取り直すまでの間隔 (1〜168 の整数。時間。billing/04 §8.1)',
+    whenMissing: '既定の 6 時間。範囲外・整数でない値も既定に戻る (warn ログに変数名だけが残る)',
+    readOnlyBy: 'src/app/api/cron/iap-reconcile/route.ts',
+  },
   GOOGLE_AI_STUDIO_API_KEY: {
     required: false,
     description: 'Google AI (Gemini) の API キー。別名の GOOGLE_GEN_AI_API_KEY と、どちらか一方でよい',

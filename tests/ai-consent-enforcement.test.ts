@@ -223,11 +223,11 @@ describe('送る経路の一覧 (棚卸し)', () => {
     }
   });
 
-  it('Vercel の cron は、判定を呼ぶ route か、AI へ送らない route だけ', () => {
+  it('Vercel の cron は、判定を呼ぶ route か、理由つきで除外した route か、AI へ送らない route だけ', () => {
     const vercel = JSON.parse(fs.readFileSync(path.join(ROOT, 'vercel.json'), 'utf8')) as { crons?: Array<{ path: string }> };
     for (const cron of vercel.crons ?? []) {
       const file = `src/app${cron.path}/route.ts`;
-      if (reaching.includes(file)) expect(ENFORCED_ROUTES, file).toHaveProperty([file]);
+      if (reaching.includes(file)) expect({ ...ENFORCED_ROUTES, ...EXEMPT_ROUTES }, file).toHaveProperty([file]);
     }
   });
 
