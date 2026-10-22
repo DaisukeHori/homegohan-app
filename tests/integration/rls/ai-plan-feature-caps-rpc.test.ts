@@ -8,7 +8,10 @@
  *   - (#1912 段 A の整合ゲートの指摘) migration *_org_plan_ai_daily_limits.sql: アプリが organizations.plan に書ける値
  *     (ORG_PLAN_VALUES) のうち (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 (10) の行を足す。
  *     トリガー guard_organizations_plan_value で、owner / admin の JWT が organizations.plan を ORG_PLAN_VALUES の外
- *     (有料の plan_key・行の無い値・NULL) へ変えるのを拒む (service_role の書き込みは止めない)
+ *     (有料の plan_key・行の無い値・NULL) へ変えるのを拒んだ (service_role の書き込みは止めない)
+ *   - (#1912 組織のプランの段階は運営だけが変える) migration *_org_plan_operator_only.sql: 同じトリガー関数を作り直し、
+ *     ログインした利用者 (authenticated) と anon が plan を変えること自体を ORG_PLAN_OPERATOR_ONLY (42501) で拒む
+ *     (ORG_PLAN_VALUES の中の値へも変えられない。service_role・plan を変えない UPDATE は止めない)
  *   - ai_plan_feature_caps: free は究極モード 0・画像の作成 0・自動の料理画像 0・献立の作成 3。有料は究極モード 2 / 2 / 3・献立の作成 10 / 10 / 15
  *   - consume_ai_usage_at: 上限に数えない機能の枝より前に、プラン × 機能の行を見る (0 = そのプランでは使えない = plan_locked)
  *   - consume_ai_usage_capped_at: 行のあるプランは引数の上限 (環境変数の既定) を使わず行の値で判定する
@@ -488,9 +491,21 @@ describe('billing/03 §6.5: ai_plan_feature_daily_cap (数えない読み取り)
   });
 });
 
-describe('#1912 段 A の整合ゲートの指摘: owner / admin の JWT による organizations.plan の直接の書き込み', () => {
-  /** ORG_PLAN_VALUES の外の値: 有料の plan_key (支払い無しで有料の上限になる)・free・組織の plan_key (アプリは書かない)・行の無い値 */
-  const NOT_ALLOWED: ReadonlyArray<string | null> = ['pro', 'family_basic', 'family_pro', 'free', 'org_pro', 'not-a-plan', null];
+describe('#1912 組織のプランの段階は運営だけが変える: owner / admin の JWT による organizations.plan の直接の書き込み', () => {
+  /**
+   * ログインした利用者が変えようとする値: アプリが書ける値 (ORG_PLAN_VALUES。運営だけが変える)・有料の plan_key
+   * (支払い無しで有料の上限になる)・free・組織の plan_key (アプリは書かない)・行の無い値・NULL
+   */
+  const ATTEMPTED: ReadonlyArray<string | null> = [
+    ...ORG_PLAN_VALUES.filter((plan) => plan !== ORG_PLAN),
+    'pro',
+    'family_basic',
+    'family_pro',
+    'free',
+    'org_pro',
+    'not-a-plan',
+    null,
+  ];
 
   async function createOrgStaff(label: string, role: 'owner' | 'admin'): Promise<TestUser> {
     const user = await createUser(label, { withJwt: true });
@@ -510,15 +525,16 @@ describe('#1912 段 A の整合ゲートの指摘: owner / admin の JWT によ�
     if (error) throw new Error(`organizations.plan (service_role) ${plan}: ${error.message}`);
   }
 
-  it('an owner or admin cannot PATCH organizations.plan to a value outside ORG_PLAN_VALUES (ORG_PLAN_NOT_ALLOWED, 42501), the plan stays, and a member is still judged by the organization limit', async () => {
+  it('an owner or admin cannot PATCH organizations.plan to any other value, even one in ORG_PLAN_VALUES (ORG_PLAN_OPERATOR_ONLY, 42501), the plan stays, and a member is still judged by the organization limit', async () => {
     await setPlanAsService(ORG_PLAN);
     const owner = await createOrgStaff('guard-owner', 'owner');
     const admin = await createOrgStaff('guard-admin', 'admin');
+    expect(ATTEMPTED.filter((plan) => plan !== null && (ORG_PLAN_VALUES as readonly string[]).includes(plan)).length).toBeGreaterThan(0);
     for (const staff of [owner, admin]) {
-      for (const plan of NOT_ALLOWED) {
+      for (const plan of ATTEMPTED) {
         const { data, error } = await asUser(staff.jwt!).from('organizations').update({ plan }).eq('id', planGuardOrgId!).select('plan');
         expect(error?.code, String(plan)).toBe('42501');
-        expect(error?.message, String(plan)).toBe('ORG_PLAN_NOT_ALLOWED');
+        expect(error?.message, String(plan)).toBe('ORG_PLAN_OPERATOR_ONLY');
         expect(data, String(plan)).toBeNull();
         expect(await planOf(planGuardOrgId!), String(plan)).toBe(ORG_PLAN);
       }
@@ -529,22 +545,17 @@ describe('#1912 段 A の整合ゲートの指摘: owner / admin の JWT によ�
     expect(await consume(member.userId, 'photo_analysis')).toMatchObject({ allowed: true, plan: ORG_PLAN, limit: PRE_MIGRATION_FREE_LIMIT, used: 1 });
   });
 
-  it('an owner or admin can still PATCH organizations.plan to every value in ORG_PLAN_VALUES (the org settings path), and an UPDATE that keeps the plan is not stopped', async () => {
+  it('service_role (the operator path) can change organizations.plan to every value in ORG_PLAN_VALUES, and an owner UPDATE that keeps the plan or does not write it is not stopped', async () => {
     await setPlanAsService(ORG_PLAN);
-    const owner = await createOrgStaff('allow-owner', 'owner');
-    const admin = await createOrgStaff('allow-admin', 'admin');
-    for (const staff of [owner, admin]) {
-      // 今の値と違う値から順に書く (同じ値だとトリガーの枝を通らない)。最後に ORG_PLAN に戻す
-      const order = [...ORG_PLAN_VALUES.filter((plan) => plan !== ORG_PLAN), ORG_PLAN];
-      for (const plan of order) {
-        const { data, error } = await asUser(staff.jwt!).from('organizations').update({ plan }).eq('id', planGuardOrgId!).select('plan');
-        expect(error, plan).toBeNull();
-        expect(data, plan).toEqual([{ plan }]);
-      }
+    // 運営の経路 (PATCH /api/admin/organizations/{id} の service_role) はトリガーに止められない。今の値と違う値から順に書き、最後に ORG_PLAN に戻す
+    for (const plan of [...ORG_PLAN_VALUES.filter((value) => value !== ORG_PLAN), ORG_PLAN]) {
+      const { data, error } = await srAdmin.from('organizations').update({ plan }).eq('id', planGuardOrgId!).select('plan');
+      expect(error, plan).toBeNull();
+      expect(data, plan).toEqual([{ plan }]);
     }
 
-    // service_role はトリガーに止められない (運営の作業・フィクスチャ)。その値のまま plan を書く UPDATE と、plan を書かない UPDATE は
-    // ログインした利用者でも通る (値を変えていないので)
+    // その値のまま plan を書く UPDATE と、plan を書かない UPDATE は、ログインした利用者でも通る (値を変えていないので)
+    const owner = await createOrgStaff('allow-owner', 'owner');
     await setPlanAsService('org_pro');
     expect(await planOf(planGuardOrgId!)).toBe('org_pro');
     const same = await asUser(owner.jwt!).from('organizations').update({ plan: 'org_pro' }).eq('id', planGuardOrgId!).select('plan');

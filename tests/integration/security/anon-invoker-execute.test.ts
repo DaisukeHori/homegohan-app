@@ -190,11 +190,15 @@ interface AclRow {
 /**
  * 20261017210000 で anon と PUBLIC の EXECUTE を外した関数と、呼び出し元。
  * authenticated・service_role は「この修正では変えない」(どちらも呼べるまま)。
+ * secdef: いまの SECURITY DEFINER かどうか (省くと false = SECURITY INVOKER のまま)。
+ *   create_org_invite は #1917 (20261022180000_org_tables_rpc_only_writes.sql) で SECURITY DEFINER にした
+ *   (CREATE OR REPLACE は EXECUTE の権限を引き継ぐので、anon・PUBLIC は外れたまま)。
  */
-const REVOKED_INVOKER_FUNCTIONS: Array<{ sig: string; why: string }> = [
+const REVOKED_INVOKER_FUNCTIONS: Array<{ sig: string; why: string; secdef?: boolean }> = [
   {
     sig: 'create_org_invite(uuid,text,org_role_enum,text)',
     why: 'POST /api/org/invites がログインした組織の owner / admin のクライアントで呼ぶ (src/lib/membership/org-invite.ts)',
+    secdef: true,
   },
   {
     sig: 'get_7d_checkin_averages(uuid,date)',
@@ -268,7 +272,7 @@ describe('#1821 B: 外した関数の EXECUTE 権限 (決定表)', () => {
     it(`B: ${expected.sig} — anon・PUBLIC は不可、authenticated・service_role は可 (${expected.why})`, () => {
       const row = acl.find((r) => r.sig === expected.sig);
       expect(row, `${expected.sig} が見つからない`).toBeDefined();
-      expect(row!.secdef, 'SECURITY INVOKER のまま').toBe(false);
+      expect(row!.secdef, expected.secdef ? 'SECURITY DEFINER (#1917)' : 'SECURITY INVOKER のまま').toBe(expected.secdef ?? false);
       expect(row!.public_exec, 'PUBLIC (全員) に EXECUTE が付いていない').toBe(false);
       expect(row!.anon_exec, 'anon').toBe(false);
       expect(row!.auth_exec, 'authenticated').toBe(true);

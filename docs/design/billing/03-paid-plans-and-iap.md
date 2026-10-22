@@ -807,7 +807,7 @@ UPDATE public.ai_daily_limits SET daily_limit = 3, updated_at = now() WHERE plan
 INSERT INTO public.ai_daily_limits (plan_key, daily_limit) VALUES ('pro', 30), ('family_basic', 30), ('family_pro', 50)
 ON CONFLICT (plan_key) DO NOTHING;
 -- (5a') 段 A の後の migration 20261021110000_org_plan_ai_daily_limits.sql (#1912 段 A の整合ゲートの指摘): アプリが organizations.plan に
---      書ける値 (src/lib/org-plans.ts の ORG_PLAN_VALUES = 'standard'・'premium'・'enterprise'。運営の組織の作成と組織の設定が使う) のうち、
+--      書ける値 (src/lib/org-plans.ts の ORG_PLAN_VALUES = 'standard'・'premium'・'enterprise'。運営の組織の作成とプランの変更が使う) のうち、
 --      本番に組織が無いため (5a) の写す先に入らなかった 'premium'・'enterprise' に、組織の上限 10 の行を足す (追加だけ・既に行があれば上書きしない)
 INSERT INTO public.ai_daily_limits (plan_key, daily_limit) VALUES ('premium', 10), ('enterprise', 10)
 ON CONFLICT (plan_key) DO NOTHING;
@@ -816,6 +816,11 @@ ON CONFLICT (plan_key) DO NOTHING;
 --      authenticated / anon が plan を ORG_PLAN_VALUES の外 (有料の plan_key・行の無い値・NULL) へ変えるのを ORG_PLAN_NOT_ALLOWED (42501) で拒む。
 --      限らないと、get_effective_plan が組織の plan をそのまま返すので、'pro' / 'family_pro' を書いた組織のメンバーが支払い無しで有料の上限と
 --      機能の枠を得る。service_role の書き込み (運営の組織の作成) は止めない
+-- (5a'') 20261022170000_org_plan_operator_only.sql (#1912 組織のプランの段階は運営だけが変える): 同じトリガー関数を作り直し、
+--      authenticated / anon が plan を変えること自体を、値に関わらず ORG_PLAN_OPERATOR_ONLY (42501) で拒む (ORG_PLAN_VALUES の中の値へも
+--      変えられない。運営が段階ごとに AI の上限を変えると、組織の管理者が支払いなしで上の段階を選べるため)。組織の設定 (PUT /api/org/settings) は
+--      plan を受け取らない (本文に plan があれば 400)。organizations.plan を書くのは運営の組織の作成 (POST /api/admin/organizations) と
+--      運営のプランの変更 (PATCH /api/admin/organizations/{id}) だけで、どちらも service_role
 
 -- (5') 機能ごとの 1 日の上限 (プラン × 機能。daily_cap 0 = そのプランでは使えない・NULL = 機能ごとの上限なし)。
 --      行の無い (plan, feature) は従来どおり (究極モードは呼び出し側の環境変数の既定、ほかは 1 日の上限の合計だけ)
@@ -3674,9 +3679,50 @@ export function subscriptionStatusLines(
   }
   return lines;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 現在のプランの表示 (Web の /account/billing とモバイルの購入の画面が同じ分岐で出す。#1912)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 現在のプランの出どころ (#1912)。
+ *  - own: 自分の契約が live (status が live な 5 値。subscriptionStatusLines が空でない) → 契約の plan_key の名前
+ *  - free: 自分の契約が live でなく、いま効いているプラン (effective_plan_key) が free
+ *  - org: 自分の契約が live でなく、いま効いているプランが組織のプランの値 (isOrgPlanKey)
+ *  - family: 自分の契約が live でなく、いま効いているプランが PLAN_CATALOG の key (家族のプラン)
+ *  - generic: 自分の契約が live でなく、いま効いているプランがそのどれでもない (家族の追加枠 family_addon・運営が新しく作った個人や家族のプランなど)
+ */
+export type CurrentPlanSource = "own" | "free" | "org" | "family" | "generic";
+
+export interface CurrentPlanDisplay {
+  source: CurrentPlanSource;
+  /** 利用者向けのプランの名前 (planDisplayName。内部の値をそのまま出さない) */
+  name: string;
+}
+
+/** 家族のプラン (自分の契約は無く、家族のプランが効いている) の表示の後ろに添える文 (#1912。モバイルの購入の画面と Web の契約の画面で同じ文) */
+export const FAMILY_PLAN_STATUS_SUFFIX = " (ご家族のプラン)";
+
+/**
+ * 現在のプランの名前と出どころ (#1912。billing/03 §10.6 の 2 の分岐)。自分の契約が live ならその plan_key の名前、
+ * live でなければ effective_plan_key で free → 無料プラン / 組織のプランの値 → 組織のプラン / PLAN_CATALOG の key → その名前 (家族のプラン) /
+ * それ以外 → 有料プラン。live の判定は subscriptionStatusLines と同じ (status が live な 5 値のどれか)
+ */
+export function currentPlanDisplay(
+  summary: Pick<BillingSummaryWire, "plan_key" | "effective_plan_key"> & { status: string | null },
+): CurrentPlanDisplay {
+  if (LIVE_STATUSES_WIRE.some((status) => status === summary.status)) {
+    return { source: "own", name: planDisplayName(summary.plan_key) };
+  }
+  const effectivePlanKey = summary.effective_plan_key;
+  if (effectivePlanKey === "free") return { source: "free", name: FREE_PLAN_DISPLAY_NAME };
+  if (isOrgPlanKey(effectivePlanKey)) return { source: "org", name: ORG_PLAN_DISPLAY_NAME };
+  if (!isCatalogPlanKey(effectivePlanKey)) return { source: "generic", name: PAID_PLAN_GENERIC_DISPLAY_NAME };
+  return { source: "family", name: planDisplayName(effectivePlanKey) };
+}
 ```
 
-- 料金ページ・特商法・FAQ・紹介ページ・Web の契約の画面は `@homegohan/shared` から `PLAN_CATALOG`・`FREE_PLAN_FEATURES`・`FREE_PLAN_AI_LIMIT_NOTE`・`planCatalogPriceText`・`planDisplayName`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL` を import する。退会の 4 つの入口 (§10.4) は `STORE_SUBSCRIPTION_DELETION_NOTICE` を import する。退会の完了メール (`src/lib/emails/account/account-deleted.ts`。cross/08 §16.1) は `STORE_SUBSCRIPTION_DELETION_NOTICE`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL` を、個人情報の消去の請求の画面 (`src/app/(main)/settings/data-requests/page.tsx`) は `STORE_SUBSCRIPTION_DELETION_NOTICE` を import する。
+- 料金ページ・特商法・FAQ・紹介ページ・Web の契約の画面は `@homegohan/shared` から `PLAN_CATALOG`・`FREE_PLAN_FEATURES`・`FREE_PLAN_AI_LIMIT_NOTE`・`planCatalogPriceText`・`planDisplayName`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL` を import する (Web の契約の画面は現在のプランの `currentPlanDisplay`・`FAMILY_PLAN_STATUS_SUFFIX` も。#1912)。退会の 4 つの入口 (§10.4) は `STORE_SUBSCRIPTION_DELETION_NOTICE` を import する。退会の完了メール (`src/lib/emails/account/account-deleted.ts`。cross/08 §16.1) は `STORE_SUBSCRIPTION_DELETION_NOTICE`・`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL` を、個人情報の消去の請求の画面 (`src/app/(main)/settings/data-requests/page.tsx`) は `STORE_SUBSCRIPTION_DELETION_NOTICE` を import する。
 - 価格が DB と違う運用 (運営の価格変更 API) をしたときは、このファイルも同じ PR で直す (契約テスト 37 が赤になる)。
 - `PURCHASE_STORES` は `iap-core.ts` の `IAP_STORES` と同じ (テスト 95)。`BillingSummaryWire` は `core.ts` の `BillingSummary` と同じ形 (テスト 94)。`subscriptionStatusLines` は `core.ts` の `billingStatusLines` と同じ文 (テスト 93)。
 
@@ -4192,7 +4238,7 @@ export function billingErrorMessageOf(error: unknown): string {
 
 ### 10.3 `/account/billing`・究極モードの錠・料理画像の作成 (Web)
 
-- `src/app/(main)/account/billing/page.tsx` (`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`planDisplayName` は `@homegohan/shared` から import): `const store = summary.manage_in_store;` が null でないとき、ボタン (Portal・解約・取り消し) を描かず、状態の文の下に「`{IAP_STORE_LABELS[store]}` でご契約中です。解約・お支払い方法の変更は `{IAP_STORE_LABELS[store]}` の定期購読の管理から行えます。」と、`STORE_SUBSCRIPTION_MANAGEMENT_URL[store]` への外部リンク「定期購読の管理を開く」(`target="_blank" rel="noopener"`)。`isNativeApp` では文だけ (リンクも出さない。アプリの購入の画面が受け持つ)。`planLabel` は `planDisplayName(summary.plan_key)` を出す。
+- `src/app/(main)/account/billing/page.tsx` (`IAP_STORE_LABELS`・`STORE_SUBSCRIPTION_MANAGEMENT_URL`・`planDisplayName` は `@homegohan/shared` から import): `const store = summary.manage_in_store;` が null でないとき、ボタン (Portal・解約・取り消し) を描かず、状態の文の下に「`{IAP_STORE_LABELS[store]}` でご契約中です。解約・お支払い方法の変更は `{IAP_STORE_LABELS[store]}` の定期購読の管理から行えます。」と、`STORE_SUBSCRIPTION_MANAGEMENT_URL[store]` への外部リンク「定期購読の管理を開く」(`target="_blank" rel="noopener"`)。`isNativeApp` では文だけ (リンクも出さない。アプリの購入の画面が受け持つ)。現在のプランは `currentPlanDisplay(summary)` (§8.9) で出す (モバイルの購入の画面 §10.6 の 2 と同じ分岐。出どころが `family` なら名前に `FAMILY_PLAN_STATUS_SUFFIX` を続け、`org`・`family`・`generic` なら自分の契約ではないことの添え書きを出す。billing/01 §10.3。#1912)。
 - 究極モードの錠 (`src/components/ai-assistant/V4GenerateModal.tsx`): `GET /api/billing/subscription` の `features.ai_feature_caps.menu_generation_ultimate` が `0` のとき、トグルを `aria-disabled` + 錠のアイコンにし、説明に「究極モードは有料プランでお使いいただけます」を出す (押しても ON にならない)。`features` が読めない (401・失敗) ときは錠を出さない (サーバの判定が最後の砦)。`ai_plan_feature_caps` に行の無いプラン (組織の plan の `standard`・`org_*` など) は `ai_feature_caps` に `menu_generation_ultimate` のキーが無い (`findPlanFeatures` は free の行に倒さない。§8.6) ので錠を出さない (サーバも環境変数の既定で使える。S26)。読むのは `src/hooks/useBillingSummary.ts` (新設。`export const BILLING_SUBSCRIPTION_API_PATH = '/api/billing/subscription';`・`export function useBillingSummary(enabled: boolean): BillingSummaryWire | null` = `enabled` が偽から真になるたびに `fetch(BILLING_SUBSCRIPTION_API_PATH)` を 1 回読み、`res.ok` なら本文の `data` を `@homegohan/shared` の `parseBillingSummaryWire` で読む。失敗・形が違うときは null。`SWR` は使わない) で、モーダルが開くたびに読む (`useBillingSummary(open)`)。
 - 料理画像の作成 (`POST /api/ai/image/generate` を押す画面): 403 `AI_FEATURE_NOT_IN_PLAN` の本文の `error` (固定の文) をそのまま出す (既存の `daily-limit-client.ts` の経路。§8.8)。ボタンの錠は付けない (押して案内が出る)。
 - 料理の画面 (Web の献立の画面で料理を押したときの `RecipeModal`。§8.8 の page.tsx の (b)・Q-16): 自分の画像の無い料理に献立のカバーを代わりに出すのは、`mealCoverRepresentsDish(dishesArray, idx)` が真のときだけ (料理が 1 品の献立・自動の料理画像の料理 (主菜。主菜の無い献立は先頭)・写真・商品・手の画像の料理)。主菜でない料理 (画像の無い状態) は `imageUrl` も `image_status` も無いので、`RecipeModal` は画像の枠を出さない (「画像なし」の表示。主菜の画像を別の料理の画像として出さない)。段 B の前に作られた主菜でない料理の AI の画像は、その料理の `image_url` なので今までどおり出る。主菜でない料理の画像を利用者が作りたいときは、献立の編集の「AIで画像生成」(`image_generation`。Q-3 の上限の中。無料は 403 の固定の文) で献立の画像 (料理が 2 品以上の献立では献立のカバー) を作る (料理を選んで作る入口は Q-18)。`RecipeModal.tsx` は上の文 (§8.8 の `skipped_plan`) のほかは変えない。
@@ -4287,7 +4333,7 @@ const DEVICE_PURCHASE_STORE: PurchaseStore = Platform.OS === "android" ? "play_s
 | # | 要素 | 文・振る舞い |
 |---|---|---|
 | 1 | 見出し | 「プランとお支払い」(`PageHeader`。戻るで設定タブへ) |
-| 2 | 現在の状態 | `fetchBillingSummary()` の `summary`: live でない (`status` が null か終わった契約。`isLiveSummary` が偽) かつ `effective_plan_key === 'free'` → 「無料プランをご利用中です」/ live でない かつ `effective_plan_key` が組織のプランの値 (`isOrgPlanKey`: `organizations.plan` の値 `standard`・`premium`・`enterprise` (`ORG_PLAN_VALUES_WIRE`) か `org_` で始まる key。#1912) → 「組織のプランをご利用中です」(`PLAN_ORG_STATUS_TEXT` = `` `${ORG_PLAN_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live でない かつ `effective_plan_key` が `PLAN_CATALOG` の key (`isCatalogPlanKey`。家族のプラン) → 「`planDisplayName(summary.effective_plan_key)` をご利用中です (ご家族のプラン)」(`PLAN_FAMILY_STATUS_SUFFIX`) / live でない かつ `effective_plan_key` が `'free'` でも組織のプランの値でも `PLAN_CATALOG` の key でもない (private の `family_addon`・運営の画面で新しく作った個人・家族のプランなど。#1912) → 「有料プランをご利用中です」(`PLAN_GENERIC_STATUS_TEXT` = `` `${PAID_PLAN_GENERIC_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live → 「`planDisplayName(summary.plan_key)` をご利用中です」(PLAN_CATALOG に無い key は `planDisplayName` が組織の名前か汎用の名前を返す)+ `subscriptionStatusLines(summary)` の各行 (無料期間中（X まで）・解約の予約) + 出どころ: `source === 'stripe'` → 「Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。」(リンク無し。R16) / `'manual'` → 文なし / `'app_store'`・`'play_store'` → 「`IAP_STORE_LABELS[source]` でお申し込みのプランです。」+ ボタン「定期購読の管理を開く」(押すと `const info = await currentCustomerInfo(); Linking.openURL(info?.managementURL ?? STORE_SUBSCRIPTION_MANAGEMENT_URL[source])`) |
+| 2 | 現在の状態 | `fetchBillingSummary()` の `summary`: live でない (`status` が null か終わった契約。`isLiveSummary` が偽) かつ `effective_plan_key === 'free'` → 「無料プランをご利用中です」/ live でない かつ `effective_plan_key` が組織のプランの値 (`isOrgPlanKey`: `organizations.plan` の値 `standard`・`premium`・`enterprise` (`ORG_PLAN_VALUES_WIRE`) か `org_` で始まる key。#1912) → 「組織のプランをご利用中です」(`PLAN_ORG_STATUS_TEXT` = `` `${ORG_PLAN_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live でない かつ `effective_plan_key` が `PLAN_CATALOG` の key (`isCatalogPlanKey`。家族のプラン) → 「`planDisplayName(summary.effective_plan_key)` をご利用中です (ご家族のプラン)」(`PLAN_FAMILY_STATUS_SUFFIX` = `@homegohan/shared` の `FAMILY_PLAN_STATUS_SUFFIX`) / live でない かつ `effective_plan_key` が `'free'` でも組織のプランの値でも `PLAN_CATALOG` の key でもない (private の `family_addon`・運営の画面で新しく作った個人・家族のプランなど。#1912) → 「有料プランをご利用中です」(`PLAN_GENERIC_STATUS_TEXT` = `` `${PAID_PLAN_GENERIC_DISPLAY_NAME}をご利用中です` ``。内部の値を出さない) / live → 「`planDisplayName(summary.plan_key)` をご利用中です」(PLAN_CATALOG に無い key は `planDisplayName` が組織の名前か汎用の名前を返す)+ `subscriptionStatusLines(summary)` の各行 (無料期間中（X まで）・解約の予約) + 出どころ: `source === 'stripe'` → 「Web でお申し込みのプランです。解約・お支払い方法の変更は Web の「プランとお支払い」から行えます。」(リンク無し。R16) / `'manual'` → 文なし / `'app_store'`・`'play_store'` → 「`IAP_STORE_LABELS[source]` でお申し込みのプランです。」+ ボタン「定期購読の管理を開く」(押すと `const info = await currentCustomerInfo(); Linking.openURL(info?.managementURL ?? STORE_SUBSCRIPTION_MANAGEMENT_URL[source])`) |
 | 3 | プランの一覧 (`summary.can_purchase` かつ `isPurchasesAvailable()` かつ `cards.length > 0` のときだけ。`cards` はこの利用者への結び付け (`identifyPurchases(user.id)`) が通ったあとにだけ読む。#1912) | カード = `display_name`・`PLAN_CATALOG` の同じ `plan_key` の `features` (無ければ箇条書きなし)・`max_members` があれば「X 人まで」・間隔ごとの行 (`options`) = `priceString` + `renewalText(interval, priceString, option.trial)` (自動更新の説明と、体験があるときだけ体験の長さ。P9・P10) + ボタン「`<display_name>` を月額で始める」/「`<display_name>` を年額で始める」。請求額 (`priceString`) をカードで最も大きい文字にする (P9 の「most prominent」)。`option.trial` が null でない行だけ、価格の上に「`option.trial.lengthText`無料」と、その下に「体験の終了後は `priceString` が請求されます」を出す。`option.trial` は `storeTrialOf` (§8.10) がストアの導入価格と体験の対象の判定から作る (DB の `trial_days` は使わない。対象外の利用者に体験の文を出さない。R15・S29) |
 | 4 | 購入 | ボタン → `busy = true` → `await ensurePurchasesIdentity(user.id)` (投げた・`user` が無い → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える。`purchase` を呼ばない。#1912) → `purchase(pkg)` (`pkg` は `fetchOfferings()` の `current.availablePackages` のうち `identifier === option.packageIdentifier` のもの。`pkg` が無い・offerings の読み込みが投げた → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える) → `ok` なら `syncIapPurchases()` → `summary` を置き換え、置き換えた `summary` が live (`subscriptionStatusLines(summary)` が空でない) なら `notice` =「お申し込みが完了しました」、live でなければ (この利用者に契約が付いていない) `notice` = `PLAN_PURCHASE_NOT_REFLECTED_MESSAGE` (「購入は受け付けましたが、契約の反映を確認できませんでした。「購入を復元」をお試しください。」。完了の文は出さない。#1912)。`cancelled` なら何もしない。`ok: false, cancelled: false` → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` (ストアの生の文は出さない)。同期が投げた例外 → `notice` = `billingErrorMessageOf(e)` (409 `BILL_IAP_SYNC_CONFLICT` などはサーバの固定の文)。最後に `busy = false` |
 | 5 | 購入を復元 | ボタン「購入を復元」(常に出す。P9 3.1.1。`isPurchasesAvailable()` が偽なら押せない形で出す) → `await ensurePurchasesIdentity(user.id)` (投げた・`user` が無い → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` で終える。`restore` を呼ばない。#1912) → `restore()` → `syncIapPurchases()` → `summary` を置き換え。置き換えた `summary` が live でない (`status` が null か終わった契約) なら `notice` =「復元できる購入がありませんでした」。`restore()` の例外 → `notice` = `BILLING_PURCHASE_FAILED_MESSAGE` (ストアの生の文は出さない)。復元のあとの `syncIapPurchases()` の例外 → `notice` = `billingErrorMessageOf(e)` |

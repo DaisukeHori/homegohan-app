@@ -6,8 +6,10 @@
  * GET も { data } を返すのに画面は organization を読んでいたので、保存されている値も画面に出なかった。
  *
  * 確かめること:
- *  1. route のスキーマのキーは「画面が保存する項目 (ORG_SETTINGS_FORM_KEYS) + plan」と一致する
+ *  1. route のスキーマの保存するキーは、画面が保存する項目 (ORG_SETTINGS_FORM_KEYS) と一致する
  *     (どちらかのキーが増減・改名されると赤になる)。
+ *     プラン (plan) は組織の管理者の経路では変えない (#1912: 組織のプランの段階は運営だけが変える)。本文に plan があれば
+ *     値に関わらず 400 VALIDATION_ERROR で断り、organizations に書かない (ほかのキーと一緒に送っても、ほかのキーも書かない)。
  *  2. 画面の本文を作る関数 (buildOrgSettingsUpdateBody) の出力のキーは ORG_SETTINGS_FORM_KEYS と一致し、
  *     route のスキーマを通しても 1 つも落ちない。
  *  3. PUT で保存した値が organizations の列に書かれ、GET で返る。空欄は null で消える。送らなかったキーは変わらない。
@@ -57,9 +59,12 @@ vi.mock('@/lib/supabase/server', () => ({
 }));
 
 const settings = await import('@/app/api/org/settings/route');
-const { OrgSettingsUpdateFieldsSchema, OrgSettingsUpdateSchema, toOrgSettingsUpdateRow } = await import(
-  '@/lib/org-settings-api'
-);
+const {
+  ORG_SETTINGS_PLAN_OPERATOR_ONLY_MESSAGE,
+  OrgSettingsUpdateFieldsSchema,
+  OrgSettingsUpdateSchema,
+  toOrgSettingsUpdateRow,
+} = await import('@/lib/org-settings-api');
 const { default: OrgSettingsPage } = await import('@/app/(org)/org/settings/page');
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -72,8 +77,6 @@ const ORG_A = uuid(100);
 const ORG_B = uuid(200);
 const OWNER_A = uuid(1);
 
-/** route のスキーマが受け取るキーのうち、画面が送らないもの (プランは画面では表示だけ) */
-const ROUTE_ONLY_KEYS = ['plan'] as const;
 
 /** 画面の入力欄に入れる値と、保存されるはずの値 */
 const FILLED_FORM = {
@@ -138,10 +141,9 @@ beforeEach(() => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('画面が送るキーと route のスキーマが受けるキー', () => {
-  it('route のスキーマのキー = 画面が保存する項目 + plan', () => {
-    expect(Object.keys(OrgSettingsUpdateFieldsSchema.shape).sort()).toEqual(
-      [...ORG_SETTINGS_FORM_KEYS, ...ROUTE_ONLY_KEYS].sort(),
-    );
+  it('route のスキーマの保存するキー = 画面が保存する項目 (plan は含まない)', () => {
+    expect(Object.keys(OrgSettingsUpdateFieldsSchema.shape).sort()).toEqual([...ORG_SETTINGS_FORM_KEYS].sort());
+    expect(Object.keys(OrgSettingsUpdateFieldsSchema.shape)).not.toContain('plan');
   });
 
   it('画面の本文のキーは ORG_SETTINGS_FORM_KEYS と一致し、route のスキーマを通しても 1 つも落ちない', () => {
@@ -212,12 +214,17 @@ describe('画面が送るキーと route のスキーマが受けるキー', () 
     expect(OrgSettingsUpdateSchema.safeParse({ employee_count: ORG_EMPLOYEE_COUNT_MAX + 1 }).success).toBe(false);
   });
 
-  it('plan は従来どおり受け取り、行に入れる (画面は送らない)', () => {
-    const parsed = OrgSettingsUpdateSchema.safeParse({ plan: 'premium' });
-    if (!parsed.success) throw new Error(JSON.stringify(parsed.error.issues));
-    expect(toOrgSettingsUpdateRow(parsed.data)).toEqual({ plan: 'premium' });
-    expect(OrgSettingsUpdateSchema.safeParse({ plan: 'free' }).success).toBe(false);
-  });
+  it.each([['standard'], ['premium'], ['enterprise'], ['free'], ['pro'], [null], ['']])(
+    'plan は値に関わらず (%s) 拒み、理由の文は「運営だけが変更できます」 (#1912)',
+    (plan) => {
+      for (const body of [{ plan }, { name: '組織名', plan }]) {
+        const parsed = OrgSettingsUpdateSchema.safeParse(body);
+        expect(parsed.success, JSON.stringify(body)).toBe(false);
+        if (parsed.success) continue;
+        expect(parsed.error.flatten().fieldErrors).toEqual({ plan: [ORG_SETTINGS_PLAN_OPERATOR_ONLY_MESSAGE] });
+      }
+    },
+  );
 
   it('GET の data から入力欄の初期値を作る (null は空欄)', () => {
     const data = { ...worldTables().organizations[0], contact_name: null, employee_count: null } as OrgSettingsData;
@@ -250,6 +257,21 @@ describe('PUT /api/org/settings → GET /api/org/settings', () => {
     expect((await got.json()).data).toMatchObject({ id: ORG_A, plan: 'standard', subscription_status: 'active', ...SAVED });
 
     expect(orgRow(ORG_B)).toMatchObject({ name: 'B 株式会社', industry: '小売', employee_count: 5 });
+  });
+
+  it.each([
+    ['plan だけ', { plan: 'enterprise' }],
+    ['今と同じ plan', { plan: 'standard' }],
+    ['ほかのキーと一緒', { name: '名前も変える', plan: 'premium' }],
+  ])('組織の管理者が plan を送ると (%s) 400 VALIDATION_ERROR で、organizations に書かない (#1912)', async (_label, body) => {
+    const before = orgRow(ORG_A);
+    const put = await settings.PUT(jsonRequest(url('/api/org/settings'), 'PUT', body));
+    expect(put.status).toBe(400);
+    const json = await put.json();
+    expect(json.error.code).toBe('VALIDATION_ERROR');
+    expect(json.error.details.fieldErrors.plan).toEqual([ORG_SETTINGS_PLAN_OPERATOR_ONLY_MESSAGE]);
+    expect(sessionDb.recorded('organizations', 'update')).toHaveLength(0);
+    expect(orgRow(ORG_A)).toEqual(before);
   });
 
   it('空文字・null は null で消える。送らなかったキーは変わらない', async () => {

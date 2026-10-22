@@ -215,6 +215,8 @@ CREATE POLICY "org_license_pools_no_delete" ON org_license_pools
   FOR DELETE USING (false);
 ```
 
+実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の書き込みのポリシーは置かず、INSERT / UPDATE / DELETE / TRUNCATE の権限も外してある。SELECT はポリシー `org_license_pools_select_member` (同じ組織のメンバー)。席数 (`total_licenses` / `used_licenses`) を書くのは service_role と SECURITY DEFINER の RPC (`accept_org_invite`・`leave_org`・`remove_org_member`・`release_user_membership`・解散の後始末 `org_dissolve_apply` (service_role だけが実行できる)) だけ。
+
 ## 9. org_license_assignments
 
 ```sql
@@ -396,6 +398,8 @@ CREATE POLICY "org_invites_delete" ON organization_invites
   );
 ```
 
+実装 (migration `20261022180000_org_tables_rpc_only_writes.sql`・#1917): 利用者 (anon / authenticated) の INSERT / UPDATE のポリシーは置かず、INSERT / UPDATE / TRUNCATE の権限も外してある。招待の作成は SECURITY DEFINER の RPC `create_org_invite` だけ (所属組織の owner / admin の判定・`p_role` が `owner` なら `INSUFFICIENT_PERMISSION`・宛先の在籍 `ALREADY_IN_ORG`・席数 `SEAT_LIMIT_EXCEEDED`・24 時間の上限 `RATE_LIMITED`)。承諾・拒否・取り消しも SECURITY DEFINER の RPC (`accept_org_invite` / `reject_org_invite` / `revoke_org_invite`)。DELETE はポリシー `"Org admins can delete invites"` (TO authenticated・同じ組織の org_role が owner / admin。DELETE /api/org/invites が使う) で、権限は authenticated だけ。SELECT は `org_invites_select_admin` と `"Org admins can view invites"`。
+
 ## 14. organization_challenges / org_challenge_participants
 
 ```sql
@@ -546,12 +550,12 @@ CREATE POLICY "meals_industrial_doctor" ON user_daily_meals
 | `departments` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin |
 | `department_history` | ✅ | org_admin/manager | 本人 + org_admin/manager | ❌ | ❌ |
 | `org_subscriptions` | ✅ | service_role | org_admin | service_role | ❌ |
-| `org_license_pools` | ✅ | service_role | org_admin/manager/viewer | service_role | ❌ |
+| `org_license_pools` | ✅ | service_role (+ SECURITY DEFINER の RPC) | 同組織のメンバー | service_role (+ SECURITY DEFINER の RPC。利用者の権限なし。#1917) | ❌ (利用者の権限なし) |
 | `org_license_assignments` | ✅ | org_admin/manager | 本人 + admin/manager/viewer | org_admin/manager + service | ❌ |
 | `org_license_audit_log` | ✅ | org_admin/manager + service | org_admin/manager/viewer | ❌ | ❌ |
 | `org_health_access_logs` | ✅ | service_role | 産業医(自分) + org_admin | ❌ | ❌ |
 | `org_health_notes` | ✅ | org_industrial_doctor | org_industrial_doctor | org_industrial_doctor (非AI) | ❌ |
-| `organization_invites` | ✅ | org_admin/manager | org_admin/manager | service_role + admin/manager | org_admin |
+| `organization_invites` | ✅ | RPC `create_org_invite` だけ (SECURITY DEFINER。利用者の権限なし。#1917) | owner/admin | RPC だけ (承諾・拒否・取り消し・作り直し。利用者の権限なし。#1917) | owner/admin |
 | `organization_challenges` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin (draft / cancelled だけ。#1688) |
 | `org_challenge_participants` | ✅ | 本人 + service | 本人 + admin/manager | service_role | ❌ |
 | `organization_challenge_aggregates` | ✅ | service_role | service_role | service_role | service_role |

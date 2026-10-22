@@ -109,8 +109,9 @@ describe('#1799 create_org_invite の最新の定義', () => {
   const body = stripLineComments(rawBody);
   const performAt = body.search(new RegExp(`PERFORM\\s+public\\.${HELPER}\\(\\s*p_organization_id\\s*,\\s*p_email\\s*\\)`));
 
-  it('SECURITY INVOKER のまま (DEFINER にすると RLS と監査の前提が変わる)', () => {
-    expect(header, file).toMatch(/SECURITY\s+INVOKER/i);
+  it('SECURITY DEFINER・search_path = public (#1917: 20261022180000 で利用者の招待の INSERT / UPDATE の権限を外し、DEFINER にした。監査行は従来どおりトリガーが書く)', () => {
+    expect(header, file).toMatch(/SECURITY\s+DEFINER/i);
+    expect(header, file).toMatch(/SET\s+search_path\s*(?:=|TO)\s*'?public'?/i);
   });
 
   it(`宛先の判定 (${HELPER}) を 1 回だけ PERFORM する`, () => {

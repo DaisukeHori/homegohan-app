@@ -351,3 +351,44 @@ export function subscriptionStatusLines(
   }
   return lines;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 現在のプランの表示 (Web の /account/billing とモバイルの購入の画面が同じ分岐で出す。#1912)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 現在のプランの出どころ (#1912)。
+ *  - own: 自分の契約が live (status が live な 5 値。subscriptionStatusLines が空でない) → 契約の plan_key の名前
+ *  - free: 自分の契約が live でなく、いま効いているプラン (effective_plan_key) が free
+ *  - org: 自分の契約が live でなく、いま効いているプランが組織のプランの値 (isOrgPlanKey)
+ *  - family: 自分の契約が live でなく、いま効いているプランが PLAN_CATALOG の key (家族のプラン)
+ *  - generic: 自分の契約が live でなく、いま効いているプランがそのどれでもない (家族の追加枠 family_addon・運営が新しく作った個人や家族のプランなど)
+ */
+export type CurrentPlanSource = "own" | "free" | "org" | "family" | "generic";
+
+export interface CurrentPlanDisplay {
+  source: CurrentPlanSource;
+  /** 利用者向けのプランの名前 (planDisplayName。内部の値をそのまま出さない) */
+  name: string;
+}
+
+/** 家族のプラン (自分の契約は無く、家族のプランが効いている) の表示の後ろに添える文 (#1912。モバイルの購入の画面と Web の契約の画面で同じ文) */
+export const FAMILY_PLAN_STATUS_SUFFIX = " (ご家族のプラン)";
+
+/**
+ * 現在のプランの名前と出どころ (#1912。billing/03 §10.6 の 2 の分岐)。自分の契約が live ならその plan_key の名前、
+ * live でなければ effective_plan_key で free → 無料プラン / 組織のプランの値 → 組織のプラン / PLAN_CATALOG の key → その名前 (家族のプラン) /
+ * それ以外 → 有料プラン。live の判定は subscriptionStatusLines と同じ (status が live な 5 値のどれか)
+ */
+export function currentPlanDisplay(
+  summary: Pick<BillingSummaryWire, "plan_key" | "effective_plan_key"> & { status: string | null },
+): CurrentPlanDisplay {
+  if (LIVE_STATUSES_WIRE.some((status) => status === summary.status)) {
+    return { source: "own", name: planDisplayName(summary.plan_key) };
+  }
+  const effectivePlanKey = summary.effective_plan_key;
+  if (effectivePlanKey === "free") return { source: "free", name: FREE_PLAN_DISPLAY_NAME };
+  if (isOrgPlanKey(effectivePlanKey)) return { source: "org", name: ORG_PLAN_DISPLAY_NAME };
+  if (!isCatalogPlanKey(effectivePlanKey)) return { source: "generic", name: PAID_PLAN_GENERIC_DISPLAY_NAME };
+  return { source: "family", name: planDisplayName(effectivePlanKey) };
+}

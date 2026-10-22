@@ -3184,7 +3184,7 @@ export async function listPurchasablePlans(): Promise<PurchasablePlan[]> {
 
 - `src/app/(main)/account/billing/page.tsx` (`"use client"`)。`GET /api/billing/subscription` を読む。
 - クエリ `checkout=success&session_id=` で開いたら、先に `POST /api/billing/checkout/sync` を呼ぶ (S9)。`status` がまだ無ければ「お申し込みを処理しています」を出し、`CHECKOUT_SYNC_RETRY_MS` (3 秒) ごとに `GET` を最大 `CHECKOUT_SYNC_MAX_RETRIES` (10 回) 読み直す。`checkout=cancelled` なら「お申し込みは完了していません」。
-- 表示: 現在のプラン (`effective_plan_key` が `plan_key` と違うときは「家族 / 組織のプランが適用中」も添える)・状態 (下の表。`billingStatusLines(summary)` (§8.1) の戻り値を 1 行ずつ `<p>` で出す。画面に文を書かない)・次回更新日・支払い周期。
+- 表示: 現在のプラン (モバイルの購入の画面 (billing/03 §10.6 の 2) と同じ分岐。`@homegohan/shared` の `currentPlanDisplay(summary)` (billing/03 §8.9) で、自分の契約が live ならその `plan_key` の名前 (`planDisplayName`)、live でなければ `effective_plan_key` で `free` →「無料プラン」/ 組織のプランの値 (`isOrgPlanKey`) →「組織のプラン」(`ORG_PLAN_DISPLAY_NAME`) / `PLAN_CATALOG` の key (家族のプラン) →「`<名前>` (ご家族のプラン)」(`FAMILY_PLAN_STATUS_SUFFIX`) / それ以外 →「有料プラン」(`PAID_PLAN_GENERIC_DISPLAY_NAME`)。#1912。出どころが組織・家族・汎用 (自分の契約ではないプランが効いている) のときは、添え書き「ご自身の契約ではないため、このプランの解約やお支払い方法の変更はこの画面では行えません。」(`NOT_OWN_PLAN_NOTE`。旧「家族 / 組織のプランが適用中」を言い換えたもの) を出す。自分のプランの申し込みは `can_purchase` の「プランを見る」からできるので、添え書きに購入できないとは書かない)・状態 (下の表。`billingStatusLines(summary)` (§8.1) の戻り値を 1 行ずつ `<p>` で出す。画面に文を書かない)・次回更新日・支払い周期。
 
   状態の表示文 (`status` × `cancel_at_period_end`。`summary` は `GET /api/billing/subscription` の `BillingSummary`。日付は `formatBillingDate` = 日本時間の「2026年10月21日」):
 

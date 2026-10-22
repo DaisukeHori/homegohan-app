@@ -15,7 +15,8 @@
  *   A. 各上限: 上限ちょうど (N 件目) までは成功し、N+1 件目は RATE_LIMITED。失敗した呼び出しは行も監査行も残さない。
  *      上限の手前までは service role で membership_audit に種まきして積む (数百回の RPC を呼ばない)。
  *   B. 数えた元を消しても戻らない: 組織の招待を物理削除しても、家族を消して作り直しても、監査行は残るので上限は戻らない。
- *      組織の招待は create_org_invite が監査行を書かない (SECURITY INVOKER) ため、トリガーが 'invite_created' を書く。
+ *      組織の招待は create_org_invite が監査行を書かないため、トリガーが 'invite_created' を書く
+ *      (#1917 で create_org_invite は SECURITY DEFINER になり、利用者の直接の INSERT は 42501 で止まる)。
  *   C. 24 時間のローリングウィンドウ: 24 時間より前の作成は数えない。Retry-After は最古の対象行が窓から出るまでの秒数。
  *   D. 同時実行: 上限の 1 つ手前で複数の呼び出しが同時に来ても、通るのはちょうど 1 件 (23505 などの別のエラーも出ない)。
  *      タイミングに頼らない確かめ方も置く: 別の接続で先の処理を「上限を数えて記録を書いた後・コミット前」で止め (pg_sleep)、
@@ -700,7 +701,7 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
     }
     expect(await orgInviteRows(orgId, email)).toHaveLength(3);
 
-    // 組織の管理者は招待を DELETE できる (ポリシー "Org admins can manage invites"。DELETE /api/org/invites と同じ)
+    // 組織の管理者は招待を DELETE できる (ポリシー "Org admins can delete invites"。#1917 で FOR ALL から分けた。DELETE /api/org/invites と同じ)
     const deleted = await asUser(admin.jwt).from('organization_invites').delete().eq('organization_id', orgId).select('id');
     expect(deleted.error).toBeNull();
     expect(deleted.data).toHaveLength(3);
@@ -755,7 +756,7 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
     expect(JSON.stringify(data![0].metadata).toLowerCase()).not.toContain(mixed.toLowerCase());
   });
 
-  it('OI-5: 管理者が organization_invites へ直接 INSERT しても監査行ができ、上限に数えられる (RPC を通さない回避を許さない)', async () => {
+  it('OI-5: 管理者は organization_invites へ直接 INSERT できない (42501。RPC を通さない回避を許さない。#1917 で書き込みの権限を外した)', async () => {
     const { orgId, admin } = orgActor;
     const email = target('oi-direct');
     const inserted = await asUser(admin.jwt)
@@ -771,14 +772,11 @@ describe('#1163 組織の招待 (create_org_invite): 招待者ごと 200 / 組�
       })
       .select('id')
       .single();
-    expect(inserted.error).toBeNull();
+    expect(inserted.error?.code).toBe('42501');
 
-    const { data } = await srAdmin
-      .from('membership_audit')
-      .select('actor_id, scope, scope_id')
-      .eq('action', 'invite_created')
-      .contains('metadata', { invite_id: (inserted.data as { id: string }).id });
-    expect(data).toEqual([{ actor_id: admin.id, scope: 'organization', scope_id: orgId }]);
+    // 行も監査行もできない (上限に数える元は、RPC が作った招待の監査行だけ)
+    expect(await orgInviteRows(orgId, email)).toHaveLength(0);
+    expect(await auditCount({ action: 'invite_created', scopeId: orgId, email })).toBe(0);
   });
 
   it('OI-6: service role が INSERT した招待 (auth.uid() が無い) は、invited_by を操作者にして監査行を書く', async () => {
