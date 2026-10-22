@@ -39,6 +39,8 @@ invite/
 └── org/[token]/            招待受諾 (認証不要)
 ```
 
+(org)/ の共通のレイアウト (`src/app/(org)/layout.tsx`) のサイドバーの見出しは、組織の名前と組織のプラン (organizations.plan) を出す。プランは `src/lib/org-plans.ts` の `orgPlanLabel` を通した日本語の名前で出し、表に無い値・null は「-」 (内部の値や固定の英語を出さない。§20 の PlanSummary と同じ)。
+
 ## 4. `/org` — ダッシュボード
 
 ### 4.1 画面概要
@@ -182,7 +184,7 @@ InvitesPage
 ├── TabBar (Pending / Accepted / Expired / Cancelled)
 ├── InviteTable
 │   └── InviteRow
-│       ├── Email, ロール, 部署, 期限, 状態
+│       ├── Email, ロール, 部署, 期限, 状態 (状態は日本語の名前。表に無い状態は「-」で、内部の値を出さない)
 │       └── ActionMenu (リンクコピー/再送/取消)
 └── ActionButtons
     ├── InviteButton → InviteModal
