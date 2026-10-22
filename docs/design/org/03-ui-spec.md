@@ -467,6 +467,7 @@ BillingPage
 
 ```
 OrgSettingsPage
+├── PlanSummary (プラン / ステータス / 有効期限。プランと状態は src/lib/org-plans.ts の対応表 (ORG_PLAN_LABELS / ORG_SUBSCRIPTION_STATUS_LABELS) を通した日本語の名前で出し、表に無い値は「-」 (内部の値を出さない))
 ├── BasicInfoForm (組織名/業種/従業員数/ロゴ/連絡先)
 ├── AppearanceSection (カスタムカラー - Pro 以上)
 ├── NotificationSettings
