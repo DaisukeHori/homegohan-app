@@ -1277,6 +1277,17 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 ### PATCH /api/super-admin/plans/{id}
 プラン編集 (draft のみ自由編集、public 以降は価格変更 API 経由)
 
+**廃止の安全弁** (`status: 'deprecated'` への遷移。#1127・#1912。実装 `src/lib/super-admin/plan-subscribers.ts` の `countPlanSubscribers`): 廃止の前に、契約が終わっていない契約者を service_role で数え、1 件でもいれば 409 `OP_PLAN_HAS_SUBSCRIBERS` で止める (数えられなかったときは 500 `OP_PLAN_SUBSCRIBER_CHECK_FAILED`)。
+
+| 内訳 (`error.counts` のキー) | 数える行 | 組織のプランの行 (`plan_type = 'org'` の `org_*`) |
+|---|---|---|
+| `personal_subscriptions` | `plan_key` が一致し、status が trialing / active / paused / past_due / grace | 数える |
+| `family_groups` | `plan_key` が一致し、status = active | 数える |
+| `organizations` | `plan` が `plan_key` と一致し、status = active | **数えない** (キーを出さない。0 件として判定にも入れない) |
+
+- 組織のプランの行 (`isOrgSubscriptionPlanRow`: `plan_type = 'org'` かつ `plan_key` が組織の段階 (`ORG_PLAN_VALUES` = standard / premium / enterprise) でない行) は、組織の段階とは無関係で、組織の利用者の判定 (`get_effective_plan` は `organizations.plan` を使う) に使われない。`organizations.plan` が `org_*` と一致することは無く、数えると常に 0 件になって「組織の契約者は 0 件だから廃止してよい」と読めてしまうため、組織の件数は数えない (#1912。オーナーの選択 (2026-10-22・選択式)「org_* は数えないと明記 (推奨)」)
+- この行の 409 は `error.counts` に `organizations` を入れず、`error.organizations_note` に注記 (`ORG_SUBSCRIPTION_PLAN_ROW_NOTE`) を返す。`error.message` にも同じ注記を入れ、組織の件数は書かない。個人・家族のプランの数え方・判定・応答は変えない (`organizations` を数え、`organizations_note` は返さない)
+
 ---
 
 ### POST /api/super-admin/plans/{id}/publish
@@ -1379,6 +1390,7 @@ deprecated → private にロールバック (緊急用)
 | `new_only` | なし (既存契約は現行価格のまま) | 件数 0、MRR 変化 0。`affected_user_sample` は空配列 | `none` |
 
 - 返す形は #1212 のときのまま (画面の型と互換)。#1212 では `on_renewal` / `immediately` で既存契約を集計して MRR 変化を返していたが、既存サブスクリプションへの反映が実装されていなかったため、#1102 で廃止した。
+- 組織のプランの行 (`plan_type = 'org'` の `org_*`) では、`data.organizations_note` に注記 (`ORG_SUBSCRIPTION_PLAN_ROW_NOTE`。組織の段階とは無関係で、組織の利用者の判定に使われないので組織の件数は数えない) を足す (#1912)。個人・家族のプランには付けない。ほかのキーは変えない
 
 ---
 

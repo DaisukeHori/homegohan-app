@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
+import { ORG_SUBSCRIPTION_PLAN_ROW_NOTE, countsOrganizationsFor } from '@/lib/super-admin/plan-subscribers';
 
 type Plan = {
   id: string;
@@ -157,7 +158,9 @@ export default function PlanDetailPage() {
       alert('日付の形式が不正です (例: 2026-12-31)');
       return;
     }
-    if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？`)) return;
+    // #1912: 組織のプランの行 (org_*) では組織の件数を数えない。確認の文に注記を添える (件数は出さない)
+    const orgRowNote = plan && !countsOrganizationsFor(plan) ? `\n\n${ORG_SUBSCRIPTION_PLAN_ROW_NOTE}` : '';
+    if (!window.confirm(`このプランを ${endsAtInput} 廃止予定で廃止しますか？${orgRowNote}`)) return;
 
     try {
       const res = await fetch(`/api/super-admin/plans/${planId}`, {
@@ -210,6 +213,8 @@ export default function PlanDetailPage() {
 
   const statusInfo = STATUS_LABELS[plan.status] ?? { label: plan.status, color: 'bg-slate-100 text-slate-600' };
   const isEditable = plan.status === 'draft' || plan.status === 'public' || plan.status === 'private';
+  // #1912: 組織のプランの行 (org_*) は組織の段階とは無関係で、組織の件数を数えない。廃止・価格変更の前に注記を出す
+  const showOrgRowNote = !countsOrganizationsFor(plan);
 
   return (
     <div className="max-w-3xl mx-auto">
@@ -276,6 +281,15 @@ export default function PlanDetailPage() {
           )}
         </div>
       </div>
+
+      {showOrgRowNote && (
+        <p
+          data-testid="org-subscription-plan-row-note"
+          className="mb-4 bg-slate-50 border border-slate-200 text-slate-600 px-4 py-3 rounded-lg text-xs"
+        >
+          {ORG_SUBSCRIPTION_PLAN_ROW_NOTE}
+        </p>
+      )}
 
       {/* タブ */}
       <div className="flex gap-1 mb-6 border-b border-slate-200">

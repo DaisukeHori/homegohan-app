@@ -34,13 +34,14 @@ export default function OrgInvitesPage() {
       const res = await fetch("/api/org/invites");
       if (res.ok) {
         const data = await res.json();
-        // 新 API レスポンス (invites 配列) を処理
+        // GET /api/org/invites の応答 (src/schemas/membership/organization-invite.ts の OrgInviteListResponseSchema)。
+        // role は招待で付ける役割 (invited_role)、status は表示用の状態 (取り消し・拒否・期限切れを含む)
         const items = data.invites ?? [];
         setInvites(
           items.map((i: Record<string, unknown>) => ({
             id: i.id as string,
             email: (i.email as string) ?? "",
-            role: (i.role as string) ?? (i.invited_role as string) ?? "member",
+            role: (i.role as string) ?? "",
             token: (i.token as string) ?? "",
             status: getStatus(i),
             expires_at: (i.expires_at ?? i.expiresAt) as string,
@@ -136,7 +137,8 @@ export default function OrgInvitesPage() {
       case "owner":  return "オーナー";
       case "admin":  return "管理者";
       case "member": return "メンバー";
-      default:       return role;
+      // 表に無い役割・役割の無い応答は内部の値を出さずに「-」(状態の札と同じ。#1912)
+      default:       return ORG_UNKNOWN_VALUE_LABEL;
     }
   };
 
@@ -288,9 +290,12 @@ export default function OrgInvitesPage() {
   );
 }
 
-// 旧 GET レスポンスと新 POST レスポンスを両方サポートするステータス解決
+// 状態は API の status を先に見る (取り消し・拒否された招待を「保留中」にしない)。
+// 期限を過ぎた pending は「期限切れ」(API も同じく 'expired' にして返す)。status が無い応答だけ isAccepted / isExpired で決める
 function getStatus(i: Record<string, unknown>): string {
-  if (i.status) return i.status as string;
+  if (typeof i.status === "string" && i.status) {
+    return i.status === "pending" && i.isExpired === true ? "expired" : i.status;
+  }
   if (i.isAccepted) return "accepted";
   if (i.isExpired) return "expired";
   return "pending";

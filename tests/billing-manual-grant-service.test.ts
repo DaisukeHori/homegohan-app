@@ -210,6 +210,9 @@ describe('manual-grant-repository.ts のソース走査', () => {
 });
 
 describe('countPlanSubscribers: 手動付与の行 (S19)', () => {
+  /** 数える対象のプラン (個人の pro。組織の件数も数えるプラン) */
+  const PRO_PLAN = { plan_key: 'pro', plan_type: 'personal' } as const;
+
   it('countPlanSubscribers counts a live manual row (stripe_subscription_id null) of the plan, so deprecating that plan is refused (S19)', async () => {
     // 偽の client は知らない絞り込みのメソッドで例外を投げるので、stripe_subscription_id で絞る変更が入れば赤になる
     const { client } = createFakePlanSubscribersDb({
@@ -217,7 +220,7 @@ describe('countPlanSubscribers: 手動付与の行 (S19)', () => {
         personal_subscriptions: [{ plan_key: 'pro', status: 'active', stripe_subscription_id: null, iap_store: null }],
       },
     });
-    const counts = await countPlanSubscribers(client as unknown as SubscriberCountClient, 'pro');
+    const counts = await countPlanSubscribers(client as unknown as SubscriberCountClient, PRO_PLAN);
     expect(counts.personal_subscriptions).toBe(1);
     expect(totalPlanSubscribers(counts)).toBeGreaterThanOrEqual(1);
 
@@ -227,7 +230,7 @@ describe('countPlanSubscribers: 手動付与の行 (S19)', () => {
         personal_subscriptions: [{ plan_key: 'pro', status: 'cancelled', stripe_subscription_id: null, iap_store: null }],
       },
     });
-    const cancelledCounts = await countPlanSubscribers(cancelledClient as unknown as SubscriberCountClient, 'pro');
+    const cancelledCounts = await countPlanSubscribers(cancelledClient as unknown as SubscriberCountClient, PRO_PLAN);
     expect(cancelledCounts.personal_subscriptions).toBe(0);
 
     // billing/03 §7.1: ストアの契約 (I 行) も live なら同じく数える (出どころを見ない)
@@ -236,7 +239,7 @@ describe('countPlanSubscribers: 手動付与の行 (S19)', () => {
         personal_subscriptions: [{ plan_key: 'pro', status: 'trialing', stripe_subscription_id: null, iap_store: 'app_store' }],
       },
     });
-    expect((await countPlanSubscribers(storeClient as unknown as SubscriberCountClient, 'pro')).personal_subscriptions).toBe(1);
+    expect((await countPlanSubscribers(storeClient as unknown as SubscriberCountClient, PRO_PLAN)).personal_subscriptions).toBe(1);
   });
 });
 

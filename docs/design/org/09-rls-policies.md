@@ -88,6 +88,17 @@ CREATE POLICY "organizations_delete" ON organizations
   );
 ```
 
+実装 (migration `20261022190000_db_privilege_hardening.sql`): UPDATE はポリシー `organizations_update_admin` (同じ組織の owner / admin) で列を限らずに許すが、ログインユーザー (current_user が authenticated / anon) は次の列を変えられない。値を変えない UPDATE (組織名の変更・同じ値を書く UPDATE) は止めない。service_role と SECURITY DEFINER の関数の中 (current_user が関数の所有者) は書ける。
+
+| 列 | 止めるトリガー関数 | 拒否 | 書く経路 |
+|---|---|---|---|
+| `owner_id`・`status` | `guard_organizations_privileged` | `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | 譲渡・解散の RPC (SECURITY DEFINER) |
+| `subscription_status`・`subscription_expires_at` | `guard_organizations_privileged` | `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | 無い (表示用。運営が直すときは service_role) |
+| `dissolved_at` | `guard_organizations_privileged` | `CANNOT_MODIFY_PRIVILEGED_COLUMN` (42501) | 解散の後始末 `org_dissolve_apply` (service_role だけが実行でき、SECURITY DEFINER の `dissolve_org_by_owner` / `operator_force_dissolve_org` が呼ぶ) |
+| `plan` | `guard_organizations_plan_value` | `ORG_PLAN_OPERATOR_ONLY` (42501) | 運営の画面 (service_role) |
+
+確認: `tests/integration/security/db-privilege-hardening.test.ts` (実 DB)・`tests/db-privilege-hardening-migration-contract.test.ts` (3 列を書く関数の最新の定義がどれも SECURITY DEFINER か利用者が実行できない関数であることを、migration の文面から機械で見る)。
+
 ## 5. departments
 
 ```sql
@@ -546,7 +557,7 @@ CREATE POLICY "meals_industrial_doctor" ON user_daily_meals
 
 | テーブル | RLS 有効 | INSERT | SELECT | UPDATE | DELETE |
 |---------|---------|--------|--------|--------|--------|
-| `organizations` | ✅ | super_admin | 同組織 org ロール | org_admin + 運営 | super_admin |
+| `organizations` | ✅ | super_admin | 同組織 org ロール | org_admin + 運営 (owner_id・status・plan・subscription_status・subscription_expires_at・dissolved_at はトリガーで不可。§4) | super_admin |
 | `departments` | ✅ | org_admin/manager | 同組織全員 | org_admin/manager | org_admin |
 | `department_history` | ✅ | org_admin/manager | 本人 + org_admin/manager | ❌ | ❌ |
 | `org_subscriptions` | ✅ | service_role | org_admin | service_role | ❌ |
