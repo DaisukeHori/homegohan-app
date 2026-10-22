@@ -8,6 +8,8 @@
  *   - 保存に失敗したら、API の文 (error.message) を行に出す
  *   - #1912: 組織のプランの値の行 (plan_source: 'org_plan') は表示名「<値>（組織のプラン）」で出て、保存できる。
  *     どちらにも無いキーの行 (plan_source: 'unknown') は、入力欄と保存のボタンを止めて案内を出す (PATCH が 404 で断るため)
+ *   - #1912: subscription_plans の組織のプランの行 (plan_type: 'org' の org_*) も、入力欄と保存のボタンを止め、
+ *     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH が 409 PLAN_READ_ONLY で断るため)
  *
  * このリポジトリには @testing-library/react が無いため react-dom/client + act で直接描画する。
  */
@@ -15,6 +17,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AI_DAILY_LIMIT_MAX, LLM_QUOTAS_ENFORCED_NOTE } from '@/lib/super-admin/llm-schemas';
+import { AI_DAILY_LIMIT_READ_ONLY_NOTES } from '@/lib/super-admin/ai-daily-limits';
 
 vi.mock('next/link', () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => (
@@ -185,6 +188,37 @@ describe('/super-admin/llm/quotas (AI の利用上限)', () => {
 
     await save('legacy_plan', '5', '理由');
     expect(patchBodies()).toEqual([]);
+  });
+
+  it('#1912: subscription_plans の組織のプランの行 (org_*) は読み取りだけ: 入力欄と保存を止め、組織の上限の行を案内する (押しても送らない)', async () => {
+    await render();
+    const inputs = Array.from(row('org_enterprise').querySelectorAll('input'));
+    const button = row('org_enterprise').querySelector('button') as HTMLButtonElement;
+
+    expect(inputs.map((input) => input.disabled)).toEqual([true, true]);
+    expect(button.disabled).toBe(true);
+    const note = row('org_enterprise').querySelector('[data-testid="quota-not-editable-org_enterprise"]')?.textContent;
+    expect(note).toBe(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan);
+    expect(note).toContain('組織の上限は standard / premium / enterprise の行で決まります');
+    // いまの上限は読めるまま出す
+    expect(row('org_enterprise').textContent).toContain('無制限');
+    // 組織のプランの値の行と個人のプランの行は止めない・案内も出さない
+    for (const planKey of ['premium', 'pro']) {
+      expect((row(planKey).querySelector('button') as HTMLButtonElement).disabled).toBe(false);
+      expect(Array.from(row(planKey).querySelectorAll('input')).map((input) => input.disabled)).toEqual([false, false]);
+      expect(row(planKey).querySelector(`[data-testid="quota-not-editable-${planKey}"]`)).toBeNull();
+    }
+
+    await save('org_enterprise', '5', '理由');
+    expect(patchBodies()).toEqual([]);
+  });
+
+  it('#1912: どちらにも無いキーの行の案内と、org_* の行の案内は別の文', async () => {
+    await render();
+    expect(row('legacy_plan').querySelector('[data-testid="quota-not-editable-legacy_plan"]')?.textContent).toBe(
+      AI_DAILY_LIMIT_READ_ONLY_NOTES.unknown_key,
+    );
+    expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.unknown_key).not.toBe(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan);
   });
 
   it('保存に失敗したら、API の文を行に出す', async () => {

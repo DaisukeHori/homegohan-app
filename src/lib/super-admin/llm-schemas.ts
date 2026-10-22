@@ -34,7 +34,8 @@ const QUOTA_REASON_MAX_LENGTH = 500;
 
 /**
  * AI の 1 日の上限の変更 (PATCH /api/super-admin/llm/quotas) の入力 (#1149)。
- *   - plan_key   : 変えるプラン (subscription_plans にあるもの、または組織のプランの値 ORG_PLAN_VALUES。#1912)
+ *   - plan_key   : 変えるプラン (subscription_plans にあるもの、または組織のプランの値 ORG_PLAN_VALUES。#1912)。
+ *                  subscription_plans の組織のプランの行 (org_*) は route が 409 PLAN_READ_ONLY で断る (#1912)
  *   - daily_limit: 1 日の上限の回数 (全機能の合計。0 以上 AI_DAILY_LIMIT_MAX 以下の整数)。null は無制限
  *   - reason     : 変更の理由 (監査ログに残す)
  * 保存先は DB の ai_daily_limits。保存した値は、次の AI の利用の判定 (consume_ai_usage) から効く。
@@ -63,7 +64,8 @@ export type UpdateAiDailyLimitInput = z.infer<typeof UpdateAiDailyLimitSchema>;
 
 /**
  * 一覧の行のキーの出どころ (#1912)
- *   - subscription_plan: subscription_plans にあるプラン (個人・家族・org_*)。保存できる
+ *   - subscription_plan: subscription_plans にあるプラン (個人・家族・org_*)。保存できる。ただし org_* (plan_type = 'org') の行は
+ *                        判定に使われないので保存できない (src/lib/super-admin/ai-daily-limits.ts の isOrgSubscriptionPlanRow。#1912)
  *   - org_plan         : 組織のプランの値 (organizations.plan に書ける値 ORG_PLAN_VALUES。src/lib/org-plans.ts)。
  *                        get_effective_plan が組織の利用者にこの値をそのまま返すので、ai_daily_limits の行が組織の上限になる。保存できる
  *   - unknown          : どちらにも無いキー (ai_daily_limits に行だけがある)。PATCH は 404 PLAN_NOT_FOUND で断るので、画面では保存させない
@@ -77,7 +79,7 @@ export const ORG_PLAN_DISPLAY_SUFFIX = '（組織のプラン）';
 /** GET /api/super-admin/llm/quotas の 1 行 (プランごとの AI の 1 日の上限。#1149) */
 export interface AiDailyLimitRow {
   plan_key: string;
-  /** キーの出どころ (保存できるのは subscription_plan と org_plan。#1912) */
+  /** キーの出どころ (保存できるのは subscription_plan (org_* を除く) と org_plan。#1912) */
   plan_source: AiDailyLimitPlanSource;
   /** subscription_plans の表示名。組織のプランの値は「<値>（組織のプラン）」。どちらにも無いキーは null */
   display_name: string | null;
