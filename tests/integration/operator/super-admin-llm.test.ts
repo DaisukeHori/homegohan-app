@@ -16,6 +16,8 @@
  *   - #1912: 組織のプランの値 (ORG_PLAN_VALUES。subscription_plans に無いキー) も GET に出て PATCH で保存できる。
  *     組織の行はほかのテスト (tests/integration/rls/ai-plan-feature-caps-rpc.test.ts) が値を読むので、いまと同じ値で保存し、
  *     終わったら行をまるごと (保存した人・時刻も) 元に戻す
+ *   - #1912: subscription_plans の組織のプランの行 (plan_type = 'org' の org_*) は値が判定に使われないので、PATCH は 409 PLAN_READ_ONLY で断る
+ *     (ai_daily_limits の行を変えない・監査ログを残さない)
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import {
@@ -28,6 +30,8 @@ import {
 import { supabaseAdmin } from '../helpers/supabase';
 import { apiCall, apiCallNoAuth } from '../helpers/api';
 import { retryIdempotentSetup } from '../helpers/setup-transient-retry';
+import { isOrgPlanValue } from '@/lib/org-plans';
+import { PLAN_READ_ONLY_CODE, PLAN_READ_ONLY_STATUS } from '@/lib/super-admin/ai-daily-limits';
 
 const TS = Date.now();
 
@@ -252,6 +256,36 @@ describe('PATCH /api/super-admin/llm/quotas', () => {
     expect(res.status).toBe(404);
     const { data } = await supabaseAdmin.from('ai_daily_limits').select('plan_key').eq('plan_key', `no_such_plan_${TS}`);
     expect(data).toEqual([]);
+  });
+
+  it('#1912: 409 for a subscription_plans org row (org_*): ai_daily_limits の行を変えず、監査ログも残さない', async () => {
+    const { data: orgPlans, error: plansError } = await supabaseAdmin.from('subscription_plans').select('plan_key').eq('plan_type', 'org');
+    expect(plansError).toBeNull();
+    const orgPlanKey = (orgPlans ?? []).map((plan) => plan.plan_key as string).find((key) => !isOrgPlanValue(key));
+    expect(orgPlanKey).toBeDefined();
+
+    const readRow = () =>
+      supabaseAdmin.from('ai_daily_limits').select('plan_key, daily_limit, updated_by, updated_at').eq('plan_key', orgPlanKey!).maybeSingle();
+    const { data: before } = await readRow();
+
+    const res = await apiCall('PATCH', '/api/super-admin/llm/quotas', superAdminUser.jwt, {
+      plan_key: orgPlanKey,
+      daily_limit: 1,
+      reason: 'Integration test org_* row should be rejected',
+    });
+    expect(res.status).toBe(PLAN_READ_ONLY_STATUS);
+    expect((res.body as { error: { code: string } }).error.code).toBe(PLAN_READ_ONLY_CODE);
+
+    const { data: after } = await readRow();
+    expect(after).toEqual(before);
+
+    const { data: audits, error: auditError } = await supabaseAdmin
+      .from('admin_audit_logs')
+      .select('details')
+      .eq('actor_id', superAdminUser.userId)
+      .eq('action_type', 'super_admin.llm_quota.update');
+    expect(auditError).toBeNull();
+    expect(audits!.map((a) => (a.details as { plan_key: string }).plan_key)).not.toContain(orgPlanKey);
   });
 
   it('403 for admin', async () => {

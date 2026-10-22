@@ -670,7 +670,9 @@ LLM 使用量ダッシュボード (super_admin のみ)
 > (詳細は operator/06-ai-llm.md §5)。super_admin のみ。
 >   - `GET`: プランごとの行 (`subscription_plans` と `ai_daily_limits` を合わせたもの)・`default_plan_key` (`free`)・`enforced: true`・`note`。
 >     組織のプランの値 (`organizations.plan` に書ける `standard` / `premium` / `enterprise`。`src/lib/org-plans.ts` の `ORG_PLAN_VALUES`) の行も出す
->     (`plan_source: 'org_plan'`・表示名「<値>（組織のプラン）」。#1912)。どちらにも無いキーの行は `plan_source: 'unknown'` で、画面は保存させない
+>     (`plan_source: 'org_plan'`・表示名「<値>（組織のプラン）」。#1912)。どちらにも無いキーの行は `plan_source: 'unknown'` で、画面は保存させない。
+>     `subscription_plans` の組織のプランの行 (`plan_type = 'org'` の `org_starter` / `org_standard` / `org_pro` / `org_enterprise`) も一覧に出すが、
+>     その値は判定に使われない (組織の利用者の上限は `organizations.plan` の値の行で決まる。`get_effective_plan` がその値を返す) ので、画面は保存させない (#1912)
 >   - `PATCH`: 1 つのプランの上限を保存する。保存すると監査ログ `super_admin.llm_quota.update` を残す
 >   - 上限に達した AI の呼び出しは 429 `AI_DAILY_LIMIT` (§23)
 >   - 利用者ごとの上限と月次の上限は無い。上限に数えない機能の安全弁 (`ai_unmetered_daily_caps`) は DB の行で変える (API・画面は無い)
@@ -684,7 +686,9 @@ LLM 使用量ダッシュボード (super_admin のみ)
   "reason": "1 日の上限の見直し"
 }
 ```
-- `plan_key`: `subscription_plans` にあるプラン、または組織のプランの値 (`ORG_PLAN_VALUES`。行が無ければ作る。#1912)。どちらでもなければ 404 `PLAN_NOT_FOUND`
+- `plan_key`: `subscription_plans` にあるプラン、または組織のプランの値 (`ORG_PLAN_VALUES`。行が無ければ作る。#1912)。どちらでもなければ 404 `PLAN_NOT_FOUND`。
+  `subscription_plans` の組織のプランの行 (`plan_type = 'org'` で、`ORG_PLAN_VALUES` でないキー = `org_*`) は 409 `PLAN_READ_ONLY` で断る
+  (保存しない・監査ログを残さない。判定の `src/lib/super-admin/ai-daily-limits.ts` の `isOrgSubscriptionPlanRow`。#1912)。`ORG_PLAN_VALUES` の行は保存できる
 - `daily_limit`: 0 以上 10,000 以下の整数。`null` は無制限
 - `reason`: 変更の理由 (監査ログに残す)
 
@@ -1721,6 +1725,7 @@ Push 通知の送信待ちを Expo に送る worker (毎分。Vercel Cron。#113
 | `OP_AUDIT_LOG_IMMUTABLE` | 403 | 監査ログ書き換え不可 |
 | `OP_FEATURE_FLAG_IN_USE` | 409 | 削除しようとしたフラグが利用中 |
 | `PLAN_NOT_FOUND` | 404 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` のプランが `subscription_plans` に無く、組織のプランの値 (`ORG_PLAN_VALUES`) でもない (§8) |
+| `PLAN_READ_ONLY` | 409 | AI の利用上限の保存 (`PATCH /api/super-admin/llm/quotas`) で、`plan_key` が `subscription_plans` の組織のプランの行 (`plan_type = 'org'` の `org_*`)。組織の上限は `standard` / `premium` / `enterprise` の行で決まり、`org_*` の行の値は判定に使われない (§8。#1912) |
 | `SETTING_READ_ONLY` | 409 | システム設定の保存 (`PUT /api/super-admin/settings`) で、使われていない key (旧 `feature_flags` 行) を書き換えようとした (§7。#1457) |
 | `OP_PACKAGE_IN_USE` | 409 | 削除しようとしたパッケージが利用中 |
 | `AI_DAILY_LIMIT` | 429 | 今日の AI の利用回数の上限に達した (利用者の AI の呼び出し。本文は `{ error, code, limit, retryAfter }`、`Retry-After` は次の JST 0 時までの秒数。operator/06-ai-llm.md §5) |

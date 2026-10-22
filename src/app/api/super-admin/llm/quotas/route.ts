@@ -2,6 +2,8 @@
  * GET   /api/super-admin/llm/quotas  — AI の 1 日の利用回数の上限 (プランごと) の一覧
  * PATCH /api/super-admin/llm/quotas  — プランの 1 日の上限を保存する
  *   保存できるキー = subscription_plans にあるプラン + 組織のプランの値 (ORG_PLAN_VALUES。#1912)。それ以外は 404 PLAN_NOT_FOUND
+ *   ただし subscription_plans の組織のプランの行 (plan_type = 'org' の org_*) は 409 PLAN_READ_ONLY で断る (#1912):
+ *   組織の利用者の上限は organizations.plan の値 (ORG_PLAN_VALUES) の行で決まり、org_* の行の値は判定に使われないため
  * operator/02-api-spec.md §8
  *
  * #1149 (T40): 上限の値は DB の ai_daily_limits に保存し、AI を使う入口の判定 (consume_ai_usage。
@@ -30,7 +32,11 @@ import {
 } from '@/lib/super-admin/llm-schemas';
 import {
   LLM_QUOTA_AUDIT_ACTION,
+  PLAN_READ_ONLY_CODE,
+  PLAN_READ_ONLY_MESSAGE,
+  PLAN_READ_ONLY_STATUS,
   buildAiDailyLimitRows,
+  isOrgSubscriptionPlanRow,
   type AiDailyLimitRecord,
   type SubscriptionPlanRecord,
 } from '@/lib/super-admin/ai-daily-limits';
@@ -118,10 +124,11 @@ export async function PATCH(request: Request) {
     // 受け付けるのは subscription_plans にあるキーと、組織のプランの値 (ORG_PLAN_VALUES。organizations.plan に書ける値)。
     // 組織の利用者の AI の上限は organizations.plan の値の行で決まり (get_effective_plan がその値を返す)、この値は subscription_plans に無い。
     // 一覧 (GET) はこの値の行を出すので、ここで断ると画面の行が保存できない (#1912)
+    // subscription_plans の組織のプランの行 (org_*) は、その値が判定に使われないので保存させない (409。画面も保存させない。#1912)
     if (!isOrgPlanValue(planKey)) {
       const { data: plan, error: planError } = await admin
         .from('subscription_plans')
-        .select('plan_key')
+        .select('plan_key, plan_type')
         .eq('plan_key', planKey)
         .maybeSingle();
       if (planError) {
@@ -129,6 +136,12 @@ export async function PATCH(request: Request) {
       }
       if (!plan) {
         return NextResponse.json({ error: { code: 'PLAN_NOT_FOUND', message: '指定したプランはありません' } }, { status: 404 });
+      }
+      if (isOrgSubscriptionPlanRow(plan as { plan_key: string; plan_type: string | null })) {
+        return NextResponse.json(
+          { error: { code: PLAN_READ_ONLY_CODE, message: PLAN_READ_ONLY_MESSAGE } },
+          { status: PLAN_READ_ONLY_STATUS },
+        );
       }
     }
 

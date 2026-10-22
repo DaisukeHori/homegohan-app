@@ -8,17 +8,20 @@
 //   - 自分の行が無いプランは free の値を使う (「free の値」と表示する)
 //   - 変更の理由は必須 (監査ログに残す)
 //   - 組織のプランの値 (standard / premium / enterprise) の行も保存できる。どちらにも無いキーの行は入力欄と保存を止める (#1912)
+//   - subscription_plans の組織のプランの行 (org_*) は値が判定に使われないので、入力欄と保存を止め、
+//     「組織の上限は standard / premium / enterprise の行で決まります」と案内する (PATCH も 409 PLAN_READ_ONLY で断る。#1912)
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { isAiDailyLimitRowEditable, parseLimitInput } from "@/lib/super-admin/ai-daily-limits";
+import {
+  AI_DAILY_LIMIT_READ_ONLY_NOTES,
+  aiDailyLimitRowReadOnlyReason,
+  parseLimitInput,
+} from "@/lib/super-admin/ai-daily-limits";
 import { AI_DAILY_LIMIT_MAX, type AiDailyLimitRow } from "@/lib/super-admin/llm-schemas";
 
 /** 一覧の 1 行 (API の型そのもの) */
 type QuotaRow = AiDailyLimitRow;
-
-/** 保存できない行 (プランの表にも組織のプランにも無いキー) に出す案内 (#1912) */
-const NOT_EDITABLE_NOTE = "このキーはプランの表にも組織のプランにも無いため、保存できません";
 
 interface QuotaListResponse {
   data: QuotaRow[];
@@ -155,7 +158,8 @@ export default function LLMQuotasPage() {
               {rows.map((row) => {
                 const draft = drafts[row.plan_key] ?? { limit: "", reason: "" };
                 const message = rowMessage[row.plan_key];
-                const editable = isAiDailyLimitRowEditable(row);
+                const readOnlyReason = aiDailyLimitRowReadOnlyReason(row);
+                const editable = readOnlyReason === null;
                 return (
                   <tr key={row.plan_key} data-testid={`quota-row-${row.plan_key}`}>
                     <td className="py-3">
@@ -188,9 +192,9 @@ export default function LLMQuotasPage() {
                         onChange={(e) => updateDraft(row.plan_key, { reason: e.target.value })}
                         className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-1.5 text-white text-sm disabled:opacity-50"
                       />
-                      {!editable && (
+                      {readOnlyReason !== null && (
                         <div className="text-slate-500 text-xs mt-1" data-testid={`quota-not-editable-${row.plan_key}`}>
-                          {NOT_EDITABLE_NOTE}
+                          {AI_DAILY_LIMIT_READ_ONLY_NOTES[readOnlyReason]}
                         </div>
                       )}
                       {message && (

@@ -11,12 +11,23 @@
  *   - #1912: 組織のプランの値 (ORG_PLAN_VALUES = standard / premium / enterprise。subscription_plans に無いキー) も
  *     GET に出し (plan_source: 'org_plan'・表示名「<値>（組織のプラン）」)、PATCH で保存できる。どちらにも無いキーは 404 のまま、
  *     GET では plan_source: 'unknown' (画面は保存させない)
+ *   - #1912: subscription_plans の組織のプランの行 (plan_type = 'org' の org_*) は、値が判定に使われない
+ *     (組織の利用者の上限は ORG_PLAN_VALUES の行で決まる) ので、PATCH は 409 PLAN_READ_ONLY で断る (保存しない・監査ログを書かない)
  * 実 DB での確認は tests/integration/operator/super-admin-llm.test.ts と tests/integration/rls/ai-daily-limit-rpc.test.ts。
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { AI_DAILY_LIMIT_MAX, LLM_QUOTAS_ENFORCED_NOTE } from '@/lib/super-admin/llm-schemas';
-import { LLM_QUOTA_AUDIT_ACTION, buildAiDailyLimitRows, isAiDailyLimitRowEditable } from '@/lib/super-admin/ai-daily-limits';
+import {
+  AI_DAILY_LIMIT_READ_ONLY_NOTES,
+  LLM_QUOTA_AUDIT_ACTION,
+  PLAN_READ_ONLY_CODE,
+  PLAN_READ_ONLY_MESSAGE,
+  aiDailyLimitRowReadOnlyReason,
+  buildAiDailyLimitRows,
+  isAiDailyLimitRowEditable,
+  isOrgSubscriptionPlanRow,
+} from '@/lib/super-admin/ai-daily-limits';
 import { ORG_PLAN_VALUES } from '@/lib/org-plans';
 
 const requireRole = vi.hoisted(() => vi.fn());
@@ -253,6 +264,53 @@ describe('PATCH /api/super-admin/llm/quotas', () => {
     },
   );
 
+  it.each(['org_starter', 'org_standard', 'org_pro', 'org_enterprise'])(
+    '#1912: subscription_plans の組織のプランの行 (%s。plan_type = org) は 409 PLAN_READ_ONLY で断る。保存しない・監査ログを書かない',
+    async (planKey) => {
+      db.plans.push(
+        ...['org_starter', 'org_standard', 'org_pro']
+          .filter((key) => !db.plans.some((plan) => plan.plan_key === key))
+          .map((key) => ({ plan_key: key, display_name: key, plan_type: 'org' })),
+      );
+
+      const res = await PATCH(patch({ plan_key: planKey, daily_limit: 5, reason: '組織の上限を変えるつもり' }));
+      const json = await res.json();
+
+      expect(res.status).toBe(409);
+      expect(json.error).toEqual({ code: PLAN_READ_ONLY_CODE, message: PLAN_READ_ONLY_MESSAGE });
+      expect(json.error.message).toContain('standard / premium / enterprise');
+      expect(db.planLookups).toBe(1);
+      expect(db.upserts).toEqual([]);
+      expect(db.audits).toEqual([]);
+    },
+  );
+
+  it('#1912: org_* を断っても、組織のプランの値 (standard) と個人のプランはそのまま保存できる', async () => {
+    expect((await PATCH(patch({ plan_key: 'org_enterprise', daily_limit: 5, reason: 'x' }))).status).toBe(409);
+    expect((await PATCH(patch({ plan_key: 'standard', daily_limit: 5, reason: '組織の上限' }))).status).toBe(200);
+    expect((await PATCH(patch({ plan_key: 'pro', daily_limit: 5, reason: '個人の上限' }))).status).toBe(200);
+
+    expect(db.upserts.map((upsert) => upsert.values.plan_key)).toEqual(['standard', 'pro']);
+    expect(db.audits.map((audit) => (audit.details as { plan_key: string }).plan_key)).toEqual(['standard', 'pro']);
+  });
+
+  it('#1912: 組織のプランの値が subscription_plans に plan_type = org で同じキーであっても、判定に使われる値なので保存できる', async () => {
+    db.plans.push({ plan_key: 'premium', display_name: 'Premium', plan_type: 'org' });
+
+    const res = await PATCH(patch({ plan_key: 'premium', daily_limit: 8, reason: '組織の上限' }));
+
+    expect(res.status).toBe(200);
+    expect(db.upserts).toHaveLength(1);
+    expect(db.audits).toHaveLength(1);
+  });
+
+  it('#1912: 個人・家族のプランの行 (plan_type が org でない) は断らない', async () => {
+    db.plans.push({ plan_key: 'family_basic', display_name: 'Family Basic', plan_type: 'family' });
+
+    expect((await PATCH(patch({ plan_key: 'family_basic', daily_limit: 30, reason: '家族の上限' }))).status).toBe(200);
+    expect(db.upserts.map((upsert) => upsert.values.plan_key)).toEqual(['family_basic']);
+  });
+
   it('存在しないプランは 404 (行を作らない・監査ログも残さない)', async () => {
     const res = await PATCH(patch({ plan_key: 'no_such_plan', daily_limit: 5, reason: '打ち間違い' }));
 
@@ -331,5 +389,43 @@ describe('buildAiDailyLimitRows: 一覧の組み立て', () => {
       ['premium', 'org_plan', 'premium（組織のプラン）'],
       ['enterprise', 'org_plan', 'enterprise（組織のプラン）'],
     ]);
+  });
+
+  it('#1912: subscription_plans の組織のプランの行 (org_*) は保存できない行になり、理由ごとの案内がある。組織のプランの値は保存できる', () => {
+    const rows = buildAiDailyLimitRows(
+      [
+        { plan_key: 'pro', display_name: 'Pro', plan_type: 'personal' },
+        { plan_key: 'family_basic', display_name: 'Family Basic', plan_type: 'family' },
+        { plan_key: 'org_standard', display_name: 'Org Standard', plan_type: 'org' },
+        { plan_key: 'org_enterprise', display_name: 'Org Enterprise', plan_type: 'org' },
+      ],
+      [{ plan_key: 'legacy_plan', daily_limit: 3, updated_at: '2026-10-11T00:00:00Z' }],
+    );
+
+    expect(rows.map((row) => [row.plan_key, aiDailyLimitRowReadOnlyReason(row), isAiDailyLimitRowEditable(row)])).toEqual([
+      ['pro', null, true],
+      ['family_basic', null, true],
+      ['org_standard', 'org_subscription_plan', false],
+      ['org_enterprise', 'org_subscription_plan', false],
+      ['standard', null, true],
+      ['premium', null, true],
+      ['enterprise', null, true],
+      ['legacy_plan', 'unknown_key', false],
+    ]);
+    expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.org_subscription_plan).toContain('組織の上限は standard / premium / enterprise の行で決まります');
+    expect(AI_DAILY_LIMIT_READ_ONLY_NOTES.unknown_key).toContain('保存できません');
+  });
+
+  it('#1912: 組織のプランの値が plan_type = org で subscription_plans にあっても、保存できる行のまま (PATCH と同じ判定)', () => {
+    const rows = buildAiDailyLimitRows([{ plan_key: 'standard', display_name: 'Standard', plan_type: 'org' }], []);
+    expect(rows.map((row) => [row.plan_key, row.plan_source, isAiDailyLimitRowEditable(row)])).toEqual([
+      ['standard', 'subscription_plan', true],
+      ['premium', 'org_plan', true],
+      ['enterprise', 'org_plan', true],
+    ]);
+    expect(isOrgSubscriptionPlanRow({ plan_key: 'standard', plan_type: 'org' })).toBe(false);
+    expect(isOrgSubscriptionPlanRow({ plan_key: 'org_pro', plan_type: 'org' })).toBe(true);
+    expect(isOrgSubscriptionPlanRow({ plan_key: 'org_pro', plan_type: null })).toBe(false);
+    expect(isOrgSubscriptionPlanRow({ plan_key: 'pro', plan_type: 'personal' })).toBe(false);
   });
 });
