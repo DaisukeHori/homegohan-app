@@ -233,7 +233,7 @@ describe('#1125 (B) 定期処理の失敗の監視 (段 A の migration・段 B 
     expect(withinStall.length, `1 時間以内の間隔のジョブ (見つかった cron 式: ${JSON.stringify(intervalsMinutes)})`).toBeGreaterThanOrEqual(1);
   });
 
-  it('src/app/api/cron/*/route.ts が createLogger / internalError に渡す名前は cron/<名前> か <METHOD> /api/cron/<名前> の形 (候補の LIKE と一致する)。vercel.json の crons の 6 本 (backup-freshness・login-alerts を含む) のどれもこの走査に入る', () => {
+  it('src/app/api/cron/*/route.ts が createLogger / internalError に渡す名前は cron/<名前> か <METHOD> /api/cron/<名前> の形 (候補の LIKE と一致する)。vercel.json の crons の 7 本 (backup-freshness・login-alerts・iap-reconcile を含む) のどれもこの走査に入る', () => {
     const routeFiles = fs
       .readdirSync(CRON_ROUTES_DIR, { withFileTypes: true })
       .filter((entry) => entry.isDirectory() && fs.existsSync(path.join(CRON_ROUTES_DIR, entry.name, 'route.ts')))
@@ -277,8 +277,8 @@ describe('#1125 (B) 定期処理の失敗の監視 (段 A の migration・段 B 
       const source = fs.readFileSync(path.join(CRON_ROUTES_DIR, dir, 'route.ts'), 'utf-8');
       expect(source, `${dir}: 500 は internalError で返す`).toMatch(/\binternalError\(/);
     }
-    // 読み取りが壊れて空振りしないための番兵 (vercel.json の 6 本)
-    for (const known of ['process-menu-queue', 'app-log-alerts', 'email-outbox', 'push-outbox', 'backup-freshness', 'login-alerts']) {
+    // 読み取りが壊れて空振りしないための番兵 (vercel.json の 7 本)
+    for (const known of ['process-menu-queue', 'app-log-alerts', 'email-outbox', 'push-outbox', 'backup-freshness', 'login-alerts', 'iap-reconcile']) {
       expect(cronDirs).toContain(known);
     }
   });

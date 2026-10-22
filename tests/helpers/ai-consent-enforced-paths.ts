@@ -314,6 +314,10 @@ export const EXEMPT_ROUTES: Record<string, AiRouteEntry> = {
     consent: '契約の要約。期限を過ぎたストアの行だけ RevenueCat から取り直す (env.ts の一覧に届くだけ)。AI へは送らない',
     handlers: { GET: { noAi: 'DB の契約の要約を返すだけ (必要なときだけ RevenueCat から取り直す)' } },
   },
+  'src/app/api/cron/iap-reconcile/route.ts': {
+    consent: 'cron: 期限を過ぎたストアの購読の行を RevenueCat から取り直して写す。AI へは送らない (鍵を読む env.ts の一覧に届くだけ)',
+    handlers: { GET: { noAi: 'RevenueCat から契約を取り直して DB に写すだけ。送る先は RevenueCat と DB' } },
+  },
   // #1178 / #1702 個人情報の請求 (DSR) の本人向けの API。メール (src/lib/data-subject-requests/notifications.ts) が運営への知らせの宛先を
   // getOptionalEnv('ADMIN_NOTIFICATION_EMAIL') で読むため、import を辿ると環境変数の一覧 (src/lib/env.ts) に届くだけで、
   // 送る先は DB (data_subject_requests) とメール (Resend) だけ。利用者のデータを AI へ送らない
