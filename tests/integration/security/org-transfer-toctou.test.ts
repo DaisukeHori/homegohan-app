@@ -14,13 +14,15 @@
  *     オーナーでない人が呼ぶと、組織の行のあとにその人の行を取る関数 (譲渡の承諾・運営の強制譲渡・招待の承諾・ほかの解散の後始末) と
  *     逆向きになり、同時に走るとデッドロック (40P01) した。
  *
- * 修正後 (supabase/migrations/20261022130000_org_transfer_toctou.sql):
- *   - 承諾は 提案の行 → 現オーナーの user_profiles (取り直しつき) → 組織の行 → 承諾者の user_profiles をロックしてから判定し直す。
+ * 修正後 (supabase/migrations/20261022140000_org_transfer_toctou.sql。組織の所属・役割・解散を変える関数は、組織の行を最初に取る):
+ *   - 承諾は 提案の行 → 組織の行 → 承諾者の user_profiles → 旧オーナーの user_profiles をロックしてから判定し直す。
  *     解散した組織なら ORG_ALREADY_DISSOLVED、所属が外れていれば TRANSFER_ACCEPTOR_NOT_IN_ORG、提案者がもうオーナーでなければ NOT_ORG_OWNER。
- *   - 運営の強制譲渡は 現オーナーの user_profiles → 組織の行 → 新オーナーの user_profiles をロックしてから TARGET_NOT_IN_ORG を判定する。
+ *   - 運営の強制譲渡は 組織の行 → 新オーナーの user_profiles をロックしてから TARGET_NOT_IN_ORG を判定する。
  *   - 脱退・除名は、判定に使う行 (本人 / 対象) を FOR NO KEY UPDATE で読む。
- *   - 解散 (dissolve_org_by_owner) は、呼び出した本人の行ではなく、現オーナーの user_profiles (取り直しつき) → 組織の行の順に取る
+ *   - 解散 (dissolve_org_by_owner・operator_force_dissolve_org) は、組織の行を最初に取る (呼び出した本人の行・オーナーの行を先に取らない)
  *     (OT-18〜OT-23。組織の行だけを持つ接続 holdOrgRow の手前に 2 本を決まった順に並ばせ、修正前の待ちの輪ができる順を作る)。
+ *   - 組織の行を取ったあとに読んだ owner_id は commit まで変わらないので、オーナーの行の取り直しのループは無い
+ *     (OT-25。ループが古いオーナーの行を持ったまま新しいオーナーの行を待つ待ちの輪を、決まった順で作る)。
  *
  * 呼び出しは本物の経路 (PostgREST + 本人の JWT)。先の処理をコミット前のまま開いておくのは、ローカルスタックの
  * postgres-meta (/pg/query、service_role キーが必要) を使う (org-invite-dissolved.test.ts・self-dissolve.test.ts と同じ道具)。
@@ -359,6 +361,8 @@ async function operator(): Promise<Operator> {
 // ---------------------------------------------------------------------------------------------
 
 interface Holder {
+  /** その接続の SQL に埋めた目印 (pg_stat_activity.query で見分ける) */
+  marker: string;
   sleeping: Promise<void>;
   done: Promise<Outcome>;
   /** 先の接続がもう終わったか (pg_sleep を抜けて、持っていた行を放したか) */
@@ -394,6 +398,22 @@ function holdOrgRow(orgId: string): Holder {
   );
 }
 
+/**
+ * user_profiles の 1 行だけを FOR NO KEY UPDATE で取り、取れてから HOLD_SECONDS 秒持つ接続 (pg/query の権限。組織の行は持たない)。
+ * 組織の行を取らずに user_profiles の行を 1 つ取る処理 (脱退・除名・release_user_membership) の代わり。
+ * 行が持たれていれば、放されるまで待ってから取る (待っている間は pg_stat_activity の wait_event_type = 'Lock')
+ */
+function holdProfileRow(userId: string): Holder {
+  const marker = `org-transfer-toctou-profile-row-${randomBytes(6).toString('hex')}`;
+  return startHolder(
+    marker,
+    `/* ${marker} */
+    SELECT 1 FROM public.user_profiles WHERE id = '${userId}'::uuid FOR NO KEY UPDATE;
+    SELECT pg_sleep(${HOLD_SECONDS});
+    SELECT 'held' AS result;`,
+  );
+}
+
 /** marker を含む sql を pg/query に投げ (終わりを待たない)、その接続が pg_sleep に入るまでを sleeping で待てるようにする */
 function startHolder(marker: string, sql: string): Holder {
   const state: { outcome: Outcome | null } = { outcome: null };
@@ -425,7 +445,7 @@ function startHolder(marker: string, sql: string): Holder {
     throw new Error('先に呼んだ接続が pg_sleep に入りませんでした (遅すぎます)');
   })();
 
-  return { sleeping, done, finished: () => state.outcome !== null };
+  return { marker, sleeping, done, finished: () => state.outcome !== null };
 }
 
 /** 関数 fnName を本物の経路で呼んだ接続が、行のロックの待ち (pg_stat_activity の wait_event_type = 'Lock') に count 本以上入るまで待つ */
@@ -561,7 +581,7 @@ describe('解散と譲渡の承諾が同時に走っても、23514 にならず�
     expect(await orgProfile(owner.id)).toMatchObject({ organization_id: orgId, org_role: 'admin' });
   }, TEST_TIMEOUT_MS);
 
-  it('OT-7: 承諾をコミット前のまま開いている間に運営が強制解散すると、強制解散は新しいオーナーの行を取り直して解散する (所属 0 人)', async () => {
+  it('OT-7: 承諾をコミット前のまま開いている間に運営が強制解散すると、強制解散は承諾の commit を待ってから組織の行を取り、新しいオーナーの組織として解散する (所属 0 人)', async () => {
     const op = await operator();
     const { admin, orgId, proposalId } = await setupTransfer('ot7');
 
@@ -727,9 +747,9 @@ interface QueuedCall {
 
 /**
  * 組織の行を holdOrgRow で持っている間に first → second の順に呼び、2 本とも行のロックの待ちに並んでから組織の行を放す。
- * first は組織の行の手前で待ち (それより前の行は取ったまま)、先に組織の行を取る。修正前は second の解散が呼び出した本人の行を
- * 持ったまま組織の行を待ち、組織の行を取った first がその本人の行を待って 40P01 になった。修正後は second の解散が現オーナーの行
- * (first が先に取っている、または誰も持っていない) から取るので、待ちの輪ができない
+ * first は組織の行の手前で待ち (それより前の行 (提案・招待の行) は取ったまま)、先に組織の行を取る。修正前は second の解散が
+ * 呼び出した本人の行を持ったまま組織の行を待ち、組織の行を取った first がその本人の行を待って 40P01 になった。修正後は second の
+ * 解散も組織の行を最初に取る (user_profiles の行を 1 つも持たずに組織の行を待つ) ので、待ちの輪ができない
  */
 async function runQueuedBehindOrgRow(orgId: string, first: QueuedCall, second: QueuedCall): Promise<[Outcome, Outcome]> {
   const holder = holdOrgRow(orgId);
@@ -745,7 +765,7 @@ async function runQueuedBehindOrgRow(orgId: string, first: QueuedCall, second: Q
   return [firstOutcome, secondOutcome];
 }
 
-describe('オーナーでない人が解散を呼んでも、解散は現オーナーの行から取るので、組織の行のあとにその人の行を取る関数と逆向きにならない (デッドロックしない)', () => {
+describe('オーナーでない人が解散を呼んでも、解散は組織の行を最初に取るので、組織の行のあとにその人の行を取る関数と逆向きにならない (デッドロックしない)', () => {
   it('OT-18: 提案を受けた admin が、自分の承諾と同時に解散の RPC を呼んでも (呼び出した時点ではオーナーでない) デッドロックせず、承諾が通り、解散は新しいオーナーとして通る (修正前は 承諾: 組織の行 → 承諾者の行 と 解散: 本人の行 → 組織の行 が逆向きで 40P01)', async () => {
     const { admin, orgId, proposalId } = await setupTransfer('ot18');
 
@@ -856,6 +876,49 @@ describe('オーナーでない人が解散を呼んでも、解散は現オー�
 });
 
 // ---------------------------------------------------------------------------------------------
+// 取り直しのループが無いこと (組織の行を取ったあとに読んだ owner_id は commit まで変わらない)
+// (修正前の運営の強制解散 (20261022100000_org_invite_dissolved.sql) は、組織の行から読んだオーナーの行を最初に取り、読んだ後に
+//  オーナーが変わっていたら取り直すループを持っていた。ループが古いオーナーの行を持ったまま新しいオーナーの行を待つ間に、
+//  新しいオーナーの行を先に取った処理 (新しいオーナーの解散: 修正前は本人の行 → 組織の行 → 後始末で全員の行) が古いオーナーの行を
+//  待つと 40P01 になった)
+// ---------------------------------------------------------------------------------------------
+
+describe('譲渡の commit をまたいで運営の強制解散と新しいオーナーの解散が重なっても、デッドロックしない', () => {
+  it('OT-25: 旧オーナー X → admin Y の承諾をコミット前のまま開き、X の行だけを持つ処理と運営の強制解散をその後ろに並ばせ、承諾の commit のあとに Y が解散を呼んでも、デッドロックせず、強制解散が通り、Y は ORG_ALREADY_DISSOLVED (取り直しのループでは、ループが X の行を持ったまま Y の行を待ち、Y の解散の後始末が X の行を待って 40P01)', async () => {
+    const op = await operator();
+    const { owner, admin, orgId, proposalId } = await setupTransfer('ot25');
+
+    // (1) 承諾 (X → Y) をコミット前のまま開く (提案の行・組織の行・Y の行・X の行を持つ)
+    const accept = holdCall(admin, `public.accept_org_owner_transfer('${proposalId}'::uuid)`);
+    await accept.sleeping;
+    // (2) X の行だけを取る処理を、承諾の後ろに並ばせる (承諾の commit のあとは、この接続が X の行を HOLD_SECONDS 秒持つ)
+    const ownerRow = holdProfileRow(owner.id);
+    await waitForLockWaiters(ownerRow.marker, 1);
+    // (3) 運営の強制解散を並ばせる (組織の行で待つ。取り直しのループなら、ループの最初の X の行で (2) の後ろに待つ)
+    const forcedDone = operatorDissolveOrg(op.jwt, orgId);
+    await waitForLockWaiters('operator_force_dissolve_org', 1);
+    // (4) 承諾が commit する (オーナーは Y)。X の行は (2) の接続が取る
+    const accepted = await accept.done;
+    expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
+    await ownerRow.sleeping;
+    // (5) 新しいオーナー Y が解散を呼ぶ (組織の行で (3) の後ろに待つ。取り直しのループなら、Y の行と組織の行を取ってから、
+    //     後始末で X の行を待つ。そのあとで (3) のループが X の行を取って Y の行を待ち、待ちの輪になる)
+    const dissolveDone = dissolveOrg(admin, orgId);
+    await waitForLockWaiters('dissolve_org_by_owner', 1);
+    expect(ownerRow.finished(), 'X の行を放す前に Y の解散が並びませんでした (遅すぎます)').toBe(false);
+
+    const [held, forced, dissolve] = await Promise.all([ownerRow.done, forcedDone, dissolveDone]);
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    expect(isDeadlock(forced) || isDeadlock(dissolve), JSON.stringify({ forced, dissolve })).toBe(false);
+    expect(forced.ok, JSON.stringify(forced)).toBe(true);
+    expectRaised(dissolve, 'ORG_ALREADY_DISSOLVED');
+    expect(await orgRow(orgId)).toMatchObject({ status: 'dissolved', owner_id: null });
+    expect(await orgMemberCount(orgId)).toBe(0);
+    expect(await proposalStatus(proposalId)).toBe('accepted');
+  }, TEST_TIMEOUT_MS);
+});
+
+// ---------------------------------------------------------------------------------------------
 // 承諾の API (POST /api/org/owner-transfer/[id]/accept) の文
 // ---------------------------------------------------------------------------------------------
 
@@ -902,8 +965,8 @@ describe('承諾の API は新しく返りうるエラーを利用者向けの�
 // ---------------------------------------------------------------------------------------------
 
 describe('関数の属性と権限は変えていない', () => {
-  it('OT-15: accept_org_owner_transfer / operator_force_owner_transfer / leave_org / remove_org_member は SECURITY DEFINER・search_path=public のまま、anon は呼べず authenticated は呼べる', async () => {
-    const names = ['accept_org_owner_transfer', 'leave_org', 'operator_force_owner_transfer', 'remove_org_member'];
+  it('OT-15: accept_org_owner_transfer / operator_force_owner_transfer / operator_force_dissolve_org / leave_org / remove_org_member は SECURITY DEFINER・search_path=public のまま、anon は呼べず authenticated は呼べる', async () => {
+    const names = ['accept_org_owner_transfer', 'leave_org', 'operator_force_dissolve_org', 'operator_force_owner_transfer', 'remove_org_member'];
     const rows = await pgQuery<{ proname: string; prosecdef: boolean; proconfig: string[] | null; anon_exec: boolean; auth_exec: boolean }>(`
       SELECT p.proname, p.prosecdef, p.proconfig,
              has_function_privilege('anon', p.oid, 'EXECUTE') AS anon_exec,

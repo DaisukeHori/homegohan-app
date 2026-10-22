@@ -100,7 +100,7 @@ const REDEFINED_FUNCTIONS = [
 /** 本 migration の後にその関数を作り直した migration の名前の後半 (version の 14 桁を除く)。billing/03 §6.6 が家族プランの門を足して create_family_group を作り直す */
 const LATER_REDEFINER_SUFFIXES: Readonly<Partial<Record<(typeof REDEFINED_FUNCTIONS)[number], readonly string[]>>> = {
   create_family_group: ['_billing_paid_plans_iap.sql'],
-  // 20261022130000: 解散と同時の承諾のロックと判定し直し (MINOR_ACCOUNT_NOT_ALLOWED の IF は BEGIN の直後のまま。tests/org-transfer-toctou-migration-contract.test.ts)
+  // 20261022140000: 解散と同時の承諾のロックと判定し直し (MINOR_ACCOUNT_NOT_ALLOWED の IF は BEGIN の直後のまま。tests/org-transfer-toctou-migration-contract.test.ts)
   accept_org_owner_transfer: ['_org_transfer_toctou.sql'],
 };
 

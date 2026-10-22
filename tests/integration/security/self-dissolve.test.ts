@@ -749,7 +749,7 @@ describe('#1917 組織のオーナーが自分で解散する (dissolve_org_by_o
       if (dissolvedEnd && accept.ok) problems.push(`#${i} 解散したのに承諾が成功した: ${JSON.stringify(accept)}`);
       if (transferredEnd && dissolve.ok) problems.push(`#${i} 譲渡したのに解散が成功した: ${JSON.stringify(dissolve)}`);
       if (transferredEnd && dissolve.message !== 'NOT_ORG_OWNER') problems.push(`#${i} 承諾が先なのに解散が NOT_ORG_OWNER でない: ${JSON.stringify(dissolve)}`);
-      // 解散が先なら、承諾は ORG_ALREADY_DISSOLVED で止まる (20261022130000_org_transfer_toctou.sql。修正前は CHECK 23514 のことがあった)
+      // 解散が先なら、承諾は ORG_ALREADY_DISSOLVED で止まる (20261022140000_org_transfer_toctou.sql。修正前は CHECK 23514 のことがあった)
       if (dissolvedEnd && !(accept.code === 'P0001' && accept.message === 'ORG_ALREADY_DISSOLVED')) {
         problems.push(`#${i} 解散が先なのに承諾が ORG_ALREADY_DISSOLVED でない: ${JSON.stringify(accept)}`);
       }

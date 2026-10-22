@@ -1,19 +1,20 @@
--- rollback: 20261022130000_org_transfer_toctou.sql
+-- rollback: 20261022140000_org_transfer_toctou.sql
 -- 本番に戻す必要があるときは、この内容を新しい migration として PR 経由で適用する (本番への直接 SQL は禁止。CLAUDE.md)。
 --
--- 戻すもの: 5 つの関数を、この migration より前の最新の定義に逐語で戻す。
+-- 戻すもの: 6 つの関数を、この migration より前の最新の定義に逐語で戻す。
 --   - accept_org_owner_transfer: 20261017030000_parental_consent_and_birth_date.sql の定義 (:1024-1087。在籍の判定をロックの外で行う)
 --   - operator_force_owner_transfer: 20261017130000_operator_mfa_db_gate.sql の定義 (:238-278。新オーナーの在籍の判定をロックの外で行う)
 --   - leave_org: 20251126124224_create_meal_planner_tables.sql の定義 (:2084-2120。本人の行をロックせずに判定する)
 --   - remove_org_member: 20251126124224_create_meal_planner_tables.sql の定義 (:2878-2921。対象の行をロックせずに判定する)
 --   - dissolve_org_by_owner: 20261019120000_self_dissolve.sql の定義 (:175-223。呼び出した本人の行を最初に取る) と、
 --     その説明 (COMMENT。同じファイルの :226-227)
+--   - operator_force_dissolve_org: 20261022100000_org_invite_dissolved.sql の定義 (:178-252。オーナーの行 (取り直しのループ) → 組織の行)
 --   (tests/org-transfer-toctou-migration-contract.test.ts が、各ファイルの該当行との逐語の一致を見る)
 -- signature・戻り値・SECURITY DEFINER・search_path・所有者・EXECUTE 権限は、戻す前後で変わらない (CREATE OR REPLACE)。
 -- ⚠️ 戻すと、組織の譲渡の承諾・運営の強制譲渡が解散と同時に走ったときに CHECK user_profiles_org_consistency (23514) で止まる欠陥と、
 --   譲渡の承諾と同時の脱退・除名でオーナーの所属が外れる欠陥が再発する。運営の強制譲渡のあとに残った提案も承諾できるようになる。
 --   オーナーでない人の解散 (本人の行 → 組織の行) が、招待の承諾・オーナーの解散・運営の強制解散と同時に走ったときのデッドロック
---   (40P01) も再発する。
+--   (40P01) も再発する。運営の強制解散は、オーナーの行を取ってから組織の行を取る形 (取り直しのループ) に戻る。
 -- データは戻さない (この migration はデータを変えていない)。
 -- 冪等: CREATE OR REPLACE FUNCTION と COMMENT ON FUNCTION のため、2 回続けて流してもエラーにならない。
 
@@ -260,3 +261,79 @@ BEGIN
 END $$;
 COMMENT ON FUNCTION public.dissolve_org_by_owner(uuid) IS
   '#1917 オーナーが自分の組織を解散する。本人の user_profiles の行 → 組織の行の順にロックしてオーナーかを判定し、org_dissolve_apply で後始末、membership_audit に group_dissolved。戻り値は { scope_id, scope_name, dissolved_at, member_user_ids }';
+
+CREATE OR REPLACE FUNCTION "public"."operator_force_dissolve_org"("p_organization_id" "uuid", "p_reason" "text" DEFAULT NULL::"text") RETURNS "public"."organizations"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO 'public'
+    AS $$
+DECLARE
+  v_caller_roles TEXT[];
+  v_org organizations;
+  v_prev_owner UUID;
+  v_lock_owner UUID;
+  v_current_owner UUID;
+BEGIN
+  SELECT roles INTO v_caller_roles
+    FROM user_profiles WHERE id = auth.uid();
+
+  IF v_caller_roles IS NULL
+     OR NOT (
+       'super_admin' = ANY(v_caller_roles)
+       OR 'operator' = ANY(v_caller_roles)
+     ) THEN
+    RAISE EXCEPTION 'OPERATOR_PERMISSION_REQUIRED' USING ERRCODE = 'P0001';
+  END IF;
+  -- #1176 (docs/design/cross/12-operator-mfa.md §11.4): TOTP を登録済みの必須ロールの呼び出し元は、aal2 のセッションでなければ止める
+  IF NOT public.operator_mfa_satisfied() THEN
+    RAISE EXCEPTION 'OPERATOR_MFA_REQUIRED' USING ERRCODE = 'P0001';
+  END IF;
+
+  SELECT owner_id INTO v_lock_owner FROM organizations WHERE id = p_organization_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORG_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+
+  -- Q-4 (docs/design/family/11-self-dissolve.md): LOCK-ORDER は dissolve_org_by_owner と同じ
+  -- オーナーの user_profiles → 組織の行 (どちらも FOR NO KEY UPDATE) → 後始末 (全員の user_profiles → org_license_pools → 組織の行)。
+  -- 組織の行を後始末より前に取るので、招待の承諾 (accept_org_invite: 組織の行 → 承諾者の user_profiles → org_license_pools) と
+  -- 直列になり、承諾が先に commit した人の所属も後始末の UPDATE で外れる。オーナーの行を先に取るのは、譲渡の承諾
+  -- (旧オーナーの user_profiles → 新オーナーの user_profiles → 組織の行) と同じ向きにするため。
+  -- オーナーを読んでから行を取るまでに譲渡が commit していたら、新しいオーナーの行を取り直す
+  -- (解散した組織は owner_id が NULL なので、何もロックせずに抜けて下で ORG_ALREADY_DISSOLVED になる)
+  LOOP
+    PERFORM 1 FROM user_profiles WHERE id = v_lock_owner FOR NO KEY UPDATE;
+    SELECT owner_id INTO v_current_owner FROM organizations WHERE id = p_organization_id;
+    EXIT WHEN v_current_owner IS NOT DISTINCT FROM v_lock_owner;
+    v_lock_owner := v_current_owner;
+  END LOOP;
+
+  SELECT * INTO v_org FROM organizations WHERE id = p_organization_id FOR NO KEY UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'ORG_NOT_FOUND' USING ERRCODE = 'P0001';
+  END IF;
+
+  IF v_org.status = 'dissolved' THEN
+    RAISE EXCEPTION 'ORG_ALREADY_DISSOLVED' USING ERRCODE = 'P0001';
+  END IF;
+  v_prev_owner := v_org.owner_id;
+
+  -- #1917: 後始末 (所属の列を外す・席数を 0・行を dissolved・owner_id を NULL) は public.org_dissolve_apply に閉じる
+  v_org := public.org_dissolve_apply(p_organization_id);
+
+  INSERT INTO membership_audit (scope, scope_id, action, actor_id, target_user_id, metadata)
+  VALUES (
+    'organization',
+    p_organization_id,
+    'operator_force_dissolve',
+    auth.uid(),
+    NULL,
+    jsonb_build_object(
+      'reason', p_reason,
+      'dissolved_at', NOW(),
+      'previous_owner_id', v_prev_owner
+    )
+  );
+
+  RETURN v_org;
+END;
+$$;

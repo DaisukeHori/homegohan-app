@@ -281,17 +281,16 @@ PR の検査は `bash scripts/local-ci.sh` でローカルに回せる (CI の c
 
 ## 組織 (organizations) を変える関数のロック順 (DB)
 
-組織の所属・解散を変える関数は、組織の行のロックを次の順でそろえる (`supabase/migrations/20261022130000_org_transfer_toctou.sql`・`20261022100000_org_invite_dissolved.sql`・`20261019120000_self_dissolve.sql`)。所属や役割の判定は、判定に使う行をロックしてから行う (ロックの外で判定すると、判定のあとに所属が外れた行へ `org_role` を書いて CHECK `user_profiles_org_consistency` (23514) になる)。
+組織の所属・役割・解散を変える関数は、**最初に `organizations` の行を `FOR NO KEY UPDATE` でロックし**、そのあとで `user_profiles` の行を触る (`supabase/migrations/20261022140000_org_transfer_toctou.sql`・`20261022100000_org_invite_dissolved.sql`)。所属や役割の判定は、判定に使う行をロックしてから行う (ロックの外で判定すると、判定のあとに所属が外れた行へ `org_role` を書いて CHECK `user_profiles_org_consistency` (23514) になる)。
 
-- 解散 (`dissolve_org_by_owner`・`operator_force_dissolve_org`): 組織の行から読んだ現オーナーの `user_profiles` (途中でオーナーが変わっていたら取り直す) → `organizations` の行 (どちらも `FOR NO KEY UPDATE`) → 後始末 (全員の `user_profiles` → `org_license_pools`)。`dissolve_org_by_owner` も呼び出した本人の行は取らない (オーナーでない人も API から呼べるので、本人の行を先に取ると、組織の行のあとにその人の行を取る譲渡の承諾・運営の強制譲渡・招待の承諾・ほかの解散の後始末と逆向きになり 40P01 になる)。本人がオーナーかは組織の行を取ったあとで判定する (`NOT_ORG_OWNER`)。
-- 譲渡の承諾 (`accept_org_owner_transfer`): 提案の行 → 現オーナーの `user_profiles` (途中でオーナーが変わっていたら取り直す) → `organizations` の行 → 承諾者の `user_profiles` (どれも `FOR NO KEY UPDATE`) を取ってから判定する。解散した組織なら `ORG_ALREADY_DISSOLVED`、承諾者の所属が外れていれば `TRANSFER_ACCEPTOR_NOT_IN_ORG`、提案者がもうオーナーでなければ `NOT_ORG_OWNER`。
-- 運営の強制譲渡 (`operator_force_owner_transfer`): 現オーナーの `user_profiles` (取り直しつき) → `organizations` の行 → 新オーナーの `user_profiles` を取ってから `TARGET_NOT_IN_ORG` を判定する。
+- 解散 (`dissolve_org_by_owner`・`operator_force_dissolve_org`): `organizations` の行 → 後始末 (全員の `user_profiles` → `org_license_pools`)。呼び出した本人の行・オーナーの行を先に取らない (オーナーでない人も API から呼べるので、本人の行を先に取ると、組織の行のあとにその人の行を取る関数と逆向きになり 40P01 になる)。本人がオーナーかは組織の行を取ったあとで判定する (`NOT_ORG_OWNER`)。
+- 譲渡の承諾 (`accept_org_owner_transfer`): 提案の行 → `organizations` の行 → 承諾者の `user_profiles` → 旧オーナーの `user_profiles` (どれも `FOR NO KEY UPDATE`) を取ってから判定する。解散した組織なら `ORG_ALREADY_DISSOLVED`、承諾者の所属が外れていれば `TRANSFER_ACCEPTOR_NOT_IN_ORG`、提案者がもうオーナーでなければ `NOT_ORG_OWNER`。
+- 運営の強制譲渡 (`operator_force_owner_transfer`): `organizations` の行 → 新オーナーの `user_profiles` を取ってから `TARGET_NOT_IN_ORG` を判定する。
 - 招待の承諾 (`accept_org_invite`): 招待の行 (`FOR UPDATE`) → `organizations` の行 (`FOR NO KEY UPDATE`。`status` が `active` でなければ `ORG_ALREADY_DISSOLVED`) → 承諾者の `user_profiles` → `org_license_pools`。
-- 脱退 (`leave_org`)・除名 (`remove_org_member`): 本人 / 対象の `user_profiles` (`FOR NO KEY UPDATE`) → `org_license_pools`。組織の行は取らない。除名は呼び出し元の行をロックしない (譲渡を受けた人が旧オーナーを除名しようとすると、譲渡の承諾 (オーナーの行 → 承諾者の行) と逆向きになる)。
-- 段の順: (1) 提案の行・招待の行 → (2) 現オーナーの `user_profiles` → (3) `organizations` の行 → (4) オーナーでない人の `user_profiles` → (5) `org_license_pools`。どの関数もこの順にしか取らず、ある段の行を持ったまま前の段の行を待たない (取らない段は飛ばす。脱退・除名は (4) → (5))。解散・譲渡は (2) で直列になる。新しく組織の所属・役割を書く関数を足すときもこの順に合わせ、最初に取る `user_profiles` は呼び出し元の行ではなく、組織の行から読んだ現オーナーの行にする (呼び出し元がオーナーとは限らない)。
+- 脱退 (`leave_org`)・除名 (`remove_org_member`)・`release_user_membership`: 組織の行は取らず、本人 / 対象の `user_profiles` を 1 行だけ取る (`FOR NO KEY UPDATE` / `FOR UPDATE`) → `org_license_pools`。除名は呼び出し元の行をロックしない (組織の行を取らずに `user_profiles` を 2 行取ると、組織の行の下で承諾者の行 → 旧オーナーの行を取る譲渡の承諾と逆向きになりうる)。
+- 段の順: (1) 提案の行・招待の行 → (2) `organizations` の行 → (3) `user_profiles` → (4) `org_license_pools`。どの関数もこの順にしか取らず、ある段の行を持ったまま前の段の行を待たない (取らない段は飛ばす)。(3) の行を 2 つ以上取るのは (2) の組織の行を持っている関数だけ。`organizations.owner_id` を書くのは組織の行を持った関数 (譲渡の承諾・運営の強制譲渡・解散の後始末) だけなので、組織の行を取ったあとに読んだ `owner_id` は commit まで変わらない (オーナーを読んでから行を取り直すループは要らない)。新しく組織の所属・役割を書く関数を足すときもこの順に合わせ、`user_profiles` の行を組織の行より先に取らない。
 - 新しく足す組織の行のロックは `FOR NO KEY UPDATE` にする (家族と同じ理由。`FOR UPDATE` だと外部キーの確認 (`FOR KEY SHARE`) と待ち合う)。
-- 取り直しのループ (解散 2 本・譲渡 2 本) で、読んだオーナーの行を取るまでにそのオーナーからの譲渡が commit すると、ループは古いオーナーの行 (もう (4)) を持ったまま新しいオーナーの行 ((2)) を待つ。その間に新しいオーナーの行を先に取った処理が古いオーナーの行を待つと (新しいオーナーの解散・運営の強制解散の後始末、古いオーナーへの譲渡のし直し)、まれにデッドロック (40P01) する (既知。利用者の API (譲渡の承諾・解散) は `CONFLICT_RETRY` にする。やり直せば通る)。
-- 回帰テスト: `tests/integration/security/org-transfer-toctou.test.ts` (OT-18〜OT-23 がオーナーでない人の解散と、組織の行のあとにその人の行を取る関数の組)・`org-invite-dissolved.test.ts`・`self-dissolve.test.ts` の D-9・D-15。文面の契約は `tests/org-transfer-toctou-migration-contract.test.ts`・`tests/org-invite-dissolved-migration-contract.test.ts`。
+- 回帰テスト: `tests/integration/security/org-transfer-toctou.test.ts` (OT-18〜OT-23 がオーナーでない人の解散と、組織の行のあとにその人の行を取る関数の組。OT-25 が譲渡の commit をまたいだ運営の強制解散と新しいオーナーの解散)・`org-invite-dissolved.test.ts`・`self-dissolve.test.ts` の D-9・D-15。文面の契約は `tests/org-transfer-toctou-migration-contract.test.ts` (組織の行を最初に取る規則を、関数の最新の定義で見る)・`tests/org-invite-dissolved-migration-contract.test.ts`。
 
 ---
 
