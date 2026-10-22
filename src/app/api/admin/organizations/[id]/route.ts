@@ -19,6 +19,7 @@ import { requireRole } from '@/lib/auth/helpers';
 import { AuthError, ForbiddenError } from '@/lib/auth/errors';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { recordAdminAudit } from '@/lib/admin/audit';
+import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 import { isUuid, normalizeUuid } from '@/lib/http-params';
 import { ORG_PLAN_VALUES } from '@/lib/org-plans';
@@ -101,7 +102,8 @@ export async function PATCH(request: Request, props: RouteContext) {
     .maybeSingle();
 
   if (readError) {
-    console.error(`[${ROUTE_NAME}] read error:`, readError.message);
+    // 生のエラー文は返さず、db-logger (app_logs) にだけ残す (#1172)
+    createLogger(ROUTE_NAME, generateRequestId()).error('組織の読み出しに失敗しました', readError);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織のプランを変更できませんでした' } },
       { status: 500 },
@@ -127,7 +129,10 @@ export async function PATCH(request: Request, props: RouteContext) {
     .single();
 
   if (updateError || !org) {
-    console.error(`[${ROUTE_NAME}] update error:`, updateError?.message);
+    createLogger(ROUTE_NAME, generateRequestId()).error(
+      '組織のプランの更新に失敗しました',
+      updateError ?? new Error('organizations の更新結果が空です'),
+    );
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織のプランを変更できませんでした' } },
       { status: 500 },

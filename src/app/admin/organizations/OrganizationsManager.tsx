@@ -179,6 +179,9 @@ export default function OrganizationsManager() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 一覧の行のプランの変更 (#1912)
+  const [planNotice, setPlanNotice] = useState<string | null>(null);
+
   // 一覧を読み込むたびに増やす通し番号。条件を素早く切り替えたとき、遅れて届いた古い応答で
   // 新しい一覧を上書きしないために使う
   const latestLoad = useRef(0);
@@ -285,7 +288,7 @@ export default function OrganizationsManager() {
         ? { ...current, organizations: current.organizations.map((org) => (org.id === updated.id ? updated : org)) }
         : current,
     );
-    setNotice(`組織「${updated.name}」のプランを ${updated.plan ?? '-'} に変更しました。`);
+    setPlanNotice(`組織「${updated.name}」のプランを ${updated.plan ?? '-'} に変更しました。`);
   }, []);
 
   const showList = !loading && !loadError && result !== null;
@@ -431,6 +434,12 @@ export default function OrganizationsManager() {
             検索
           </button>
         </form>
+
+        {planNotice && (
+          <p role="status" className="mb-4 rounded border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            {planNotice}
+          </p>
+        )}
 
         {loadError && (
           <div

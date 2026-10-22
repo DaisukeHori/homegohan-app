@@ -7,28 +7,31 @@
  * plan_type = 'org' の行だけで、アプリが書ける 'premium'・'enterprise' が漏れていた (行の無いプランは free の行 = 3 で判定される)。
  * 20261021110000_org_plan_ai_daily_limits.sql がその 2 つの行を足した。
  *
- * organizations.plan を書く経路は 3 つ: a. 運営の組織の作成 (service_role)・b. 組織の設定 (owner / admin の JWT)・
+ * organizations.plan を書く経路は (この migration の時点で) 3 つ: a. 運営の組織の作成 (service_role)・b. 組織の設定 (owner / admin の JWT)・
  * c. owner / admin の JWT で PostgREST から直接 UPDATE (RLS organizations_update_admin。アプリの Zod を通らない)。
  * a・b はアプリの Zod が ORG_PLAN_VALUES に限り、b・c は同じ migration のトリガー guard_organizations_plan_value が
- * ORG_PLAN_VALUES に限る (c で有料の plan_key や行の無い値を書けないようにする)。
+ * ORG_PLAN_VALUES に限った (c で有料の plan_key や行の無い値を書けないようにする)。
+ * そのあと #1912 (組織のプランの段階は運営だけが変える) で、b は plan を受け取らなくなり (400)、トリガー関数は
+ * 20261022170000_org_plan_operator_only.sql が「ログインした利用者と anon はどの値へも変えられない」形に作り直した。
+ * 運営の書き手に PATCH /api/admin/organizations/{id} (service_role) が加わった。
  *
  * ここで確かめること:
- *   1. アプリの書き手 (運営の組織の作成・組織の設定・運営の画面の選択肢) が、どれも src/lib/org-plans.ts の
- *      ORG_PLAN_VALUES を使い、別の一覧を持たない。9 種の OrgPlanKeySchema (書き手が使っていない) を書き手に使わせない
+ *   1. アプリの書き手 (運営の組織の作成・運営のプランの変更・運営の画面の選択肢) が、どれも src/lib/org-plans.ts の
+ *      ORG_PLAN_VALUES を使い、別の一覧を持たない。組織の設定は plan を書かない。9 種の OrgPlanKeySchema (書き手が使っていない) を書き手に使わせない
  *   2. ORG_PLAN_DEFAULT は organizations.plan の列の既定と同じ
  *   3. ORG_PLAN_VALUES のすべての値に、migration が ai_daily_limits の行を作り、その値は組織の上限 (10) である
  *      (値の一覧はコードの定義 ORG_PLAN_VALUES から読む。値を足したら、同じ PR で行を足す migration も要る)
  *   4. 関数の本体の外で ai_daily_limits を UPDATE / DELETE する migration は free の行だけを触る (組織の行を後から変えない)
  *   5. 戻し口は、トリガーとトリガー関数を消し、足した行のうち運営が画面で変えていない (updated_by IS NULL) ものだけを消す
- *   6. トリガー関数が authenticated / anon に許す plan の値は ORG_PLAN_VALUES と同じ集合で、NULL を拒み、
- *      organizations の BEFORE UPDATE OF plan に付く。ほかの migration はそのトリガー・関数を作り直さない・消さない
+ *   6. 本 migration のトリガー関数が authenticated / anon に許した plan の値は ORG_PLAN_VALUES と同じ集合で、NULL を拒み、
+ *      organizations の BEFORE UPDATE OF plan に付く。最後の定義は 20261022170000 (どの値へも変えられない)。
+ *      ほかの migration はそのトリガー・関数を消さない
  *      (DB の上の挙動は tests/integration/rls/ai-plan-feature-caps-rpc.test.ts が owner / admin の JWT で確かめる)
  */
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { ORG_PLAN_DEFAULT, ORG_PLAN_VALUES } from '@/lib/org-plans';
-import { ORG_SETTINGS_PLANS } from '@/lib/org-settings-api';
 
 const ROOT = path.resolve(__dirname, '..');
 const MIGRATIONS_DIR = 'supabase/migrations';
@@ -46,6 +49,8 @@ const OUR_ROLLBACK = `${ROLLBACKS_DIR}/${OURS}.down.sql`;
 /** owner / admin の JWT による organizations.plan の直接の UPDATE を ORG_PLAN_VALUES に限るトリガー関数とトリガー (本 migration) */
 const PLAN_GUARD_FUNCTION = 'guard_organizations_plan_value';
 const PLAN_GUARD_TRIGGER = 'trg_guard_organizations_plan_value';
+/** トリガー関数を「ログインした利用者と anon はどの値へも変えられない」形に作り直した migration (#1912) */
+const OPERATOR_ONLY_MIGRATION = '20261022170000_org_plan_operator_only.sql';
 
 /** 組織の利用者の 1 日の上限 (20261011020000 の free の既定の値。(5a) が組織の plan の値に写した値。設計 §6.5 (5a) で変えない) */
 const ORG_DAILY_LIMIT = 10;
@@ -53,6 +58,8 @@ const ORG_DAILY_LIMIT = 10;
 /** organizations.plan の書き手 (アプリのコード)。ORG_PLAN_VALUES を使うこと */
 const WRITER_FILES = {
   adminRoute: 'src/app/api/admin/organizations/route.ts',
+  /** 運営の組織のプランの変更 (#1912: 組織のプランの段階は運営だけが変える) */
+  adminPlanChange: 'src/app/api/admin/organizations/[id]/route.ts',
   adminManager: 'src/app/admin/organizations/OrganizationsManager.tsx',
   orgSettings: 'src/lib/org-settings-api.ts',
 } as const;
@@ -113,10 +120,7 @@ describe('#1912 段 A の整合ゲートの指摘: organizations.plan に書け�
     expect(new Set(ORG_PLAN_VALUES).size).toBe(ORG_PLAN_VALUES.length);
   });
 
-  it('every app writer of organizations.plan (admin create, org settings, admin screen) uses ORG_PLAN_VALUES and no other file under src spells an organization plan list', () => {
-    // 組織の設定 (PUT /api/org/settings) の一覧は ORG_PLAN_VALUES そのもの
-    expect(ORG_SETTINGS_PLANS).toBe(ORG_PLAN_VALUES);
-
+  it('every app writer of organizations.plan (admin create, admin plan change, admin screen) uses ORG_PLAN_VALUES, the org settings path does not write it, and no other file under src spells an organization plan list', () => {
     const route = squash(stripTsComments(read(WRITER_FILES.adminRoute)));
     expect(route).toContain("import { ORG_PLAN_DEFAULT, ORG_PLAN_VALUES } from '@/lib/org-plans';");
     // 一覧の検索 (OrgSearchSchema) と作成 (OrgCreateSchema) の 2 つ
@@ -127,9 +131,17 @@ describe('#1912 段 A の整合ゲートの指摘: organizations.plan に書け�
     const manager = squash(stripTsComments(read(WRITER_FILES.adminManager)));
     expect(manager).toContain('const PLANS = ORG_PLAN_VALUES;');
 
+    // 運営の組織のプランの変更 (PATCH /api/admin/organizations/{id}。service_role)
+    const planChange = squash(stripTsComments(read(WRITER_FILES.adminPlanChange)));
+    expect(planChange).toContain("import { ORG_PLAN_VALUES } from '@/lib/org-plans';");
+    expect(planChange).toContain('plan: z.enum(ORG_PLAN_VALUES),');
+    expect(planChange).toContain('.update({ plan, updated_at: new Date().toISOString() })');
+
+    // 組織の設定 (PUT /api/org/settings) は plan を書かない (#1912: 本文に plan があれば z.never で 400。行にも入れない)
     const settings = squash(stripTsComments(read(WRITER_FILES.orgSettings)));
-    expect(settings).toContain('export const ORG_SETTINGS_PLANS = ORG_PLAN_VALUES;');
-    expect(settings).toContain('plan: z.enum(ORG_SETTINGS_PLANS).optional(),');
+    expect(settings).not.toMatch(/plan: z\.enum/);
+    expect(settings).toContain('plan: z.never({ message: ORG_SETTINGS_PLAN_OPERATOR_ONLY_MESSAGE }).optional(),');
+    expect(settings).not.toMatch(/row\.plan\b/);
 
     // 組織のプランの値の文字列 ('premium' / 'enterprise') を書くのは ORG_PLAN_VALUES の定義と、使われていない 9 種の定義だけ
     // (別の一覧が増えると、その値に ai_daily_limits の行があるかをここで見られなくなる)
@@ -216,13 +228,14 @@ describe('#1912 段 A の整合ゲートの指摘: organizations.plan に書け�
     for (const entry of touching) expect(entry).toMatch(/ WHERE plan_key = 'free'$/);
   });
 
-  it('the latest definition of the plan value trigger function lets authenticated / anon change organizations.plan only to ORG_PLAN_VALUES (rejecting NULL), the trigger fires before UPDATE OF plan, and no migration drops them', () => {
+  it('the first definition of the plan value trigger function (this migration) let authenticated / anon change organizations.plan only to ORG_PLAN_VALUES (rejecting NULL); the latest definition (20261022170000) rejects every change by them; the trigger fires before UPDATE OF plan, and no migration drops them', () => {
     const head = `CREATE OR REPLACE FUNCTION public.${PLAN_GUARD_FUNCTION}() RETURNS trigger LANGUAGE plpgsql SECURITY INVOKER SET search_path = '' AS $$`;
-    // 値を足すときは後の migration が関数を作り直す。いま効いているのは最後の定義
     const definers = migrationFiles.filter((file) => squash(stripSqlLineComments(read(`${MIGRATIONS_DIR}/${file}`))).includes(head));
     expect(definers[0], '最初の定義は本 migration').toBe(`${OURS}.sql`);
-    const latest = definers[definers.length - 1];
-    const flat = squash(stripSqlLineComments(read(`${MIGRATIONS_DIR}/${latest}`)));
+    // いま効いているのは最後の定義: #1912 の「組織のプランの段階は運営だけが変える」で、ログインした利用者と anon は
+    // どの値へも変えられない (本体の逐語と戻し口は tests/org-plan-operator-only-migration-contract.test.ts が見る)
+    expect(definers[definers.length - 1], '最後の定義').toBe(OPERATOR_ONLY_MIGRATION);
+    const flat = squash(stripSqlLineComments(read(`${MIGRATIONS_DIR}/${OURS}.sql`)));
     const at = flat.indexOf(head);
     const body = flat.slice(at + head.length, flat.indexOf('END $$', at));
 
