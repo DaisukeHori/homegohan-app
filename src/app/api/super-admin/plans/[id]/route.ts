@@ -14,8 +14,10 @@ import { createLogger, generateRequestId } from '@/lib/db-logger';
 import { createClient, getSupabaseAdmin } from '@/lib/supabase/server';
 import { PlanUpdateSchema, isAllowedPlanStatusTransition } from '@/lib/super-admin/plans-schemas';
 import {
+  ORG_SUBSCRIPTION_PLAN_ROW_NOTE,
   PlanSubscriberCountError,
   countPlanSubscribers,
+  isOrganizationsCounted,
   planHasSubscribersMessage,
   totalPlanSubscribers,
   type PlanSubscriberCounts,
@@ -144,7 +146,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
         try {
           // requireRole を通ったあとだけ service_role を使う。RLS に左右されず全員分を数えるため。
           // plan_key で絞った件数 (head) だけを取り、他人の行の中身は読まない。
-          counts = await countPlanSubscribers(getSupabaseAdmin(), existing.plan_key);
+          // 組織のプランの行 (plan_type = 'org' の org_*) では組織の件数を数えない (#1912。plan-subscribers.ts の冒頭)
+          counts = await countPlanSubscribers(getSupabaseAdmin(), { plan_key: existing.plan_key, plan_type: existing.plan_type });
         } catch (countErr) {
           // 数えられなかったときは、契約者なしとは見なさず廃止も止める (安全装置を黙って外さない)。
           // 本文は汎用メッセージだけにし、DB の生のエラー文は返さずログに残す (#1172)。
@@ -164,6 +167,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
           );
         }
 
+        // 組織のプランの行では、組織の件数を「0 件」として判定に入れない (数えていないので counts に organizations が無い)。
+        // 個人・家族の契約者がいれば、これまでどおり止める (#1912)
         if (totalPlanSubscribers(counts) > 0) {
           return NextResponse.json(
             {
@@ -171,6 +176,8 @@ export async function PATCH(request: NextRequest, props: RouteContext) {
                 code: 'OP_PLAN_HAS_SUBSCRIBERS',
                 message: planHasSubscribersMessage(counts, { canUnpublish: existing.status === 'public' }),
                 counts,
+                // 組織の件数を数えていないときは、件数の欄 (counts.organizations) の代わりに注記を返す (#1912)
+                ...(isOrganizationsCounted(counts) ? {} : { organizations_note: ORG_SUBSCRIPTION_PLAN_ROW_NOTE }),
               },
             },
             { status: 409 }
