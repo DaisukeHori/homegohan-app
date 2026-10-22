@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EmailSendError } from '@/lib/emails/send-result';
 import { MEMBERSHIP_ERROR_MESSAGES, MembershipErrorCode } from '@/lib/errors/membership-errors';
@@ -51,6 +53,37 @@ vi.mock('@/lib/db-logger', () => ({
 }));
 
 import { POST } from '@/app/api/org/owner-transfer/[id]/accept/route';
+
+/** route が想定外の失敗のときに返す status と汎用の文 (route.ts の既定) */
+const INTERNAL_SERVER_ERROR_STATUS = 500;
+const GENERIC_ACCEPT_FAILURE_MESSAGE = '組織オーナー権限の引き継ぎに失敗しました。';
+
+const REPO_ROOT = path.resolve(__dirname, '../../../../..');
+const MIGRATIONS_DIR = path.join(REPO_ROOT, 'supabase', 'migrations');
+
+/**
+ * supabase/migrations を version 順に見て、accept_org_owner_transfer を最後に CREATE OR REPLACE した定義の本文 ($$ の中)。
+ * SQL の行コメント (-- ...) は取り除く (コメントの中の語に反応しないため)
+ */
+function latestAcceptOrgOwnerTransferBody(): string {
+  const bodies: string[] = [];
+  for (const file of fs.readdirSync(MIGRATIONS_DIR).filter((name) => name.endsWith('.sql')).sort()) {
+    const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8');
+    const pattern = /CREATE OR REPLACE FUNCTION\s+(?:"?public"?\.)?"?accept_org_owner_transfer"?\s*\(/g;
+    let match: RegExpExecArray | null;
+    while ((match = pattern.exec(sql))) {
+      const rest = sql.slice(match.index);
+      const opener = /\bAS\s+(\$[A-Za-z_]*\$)/.exec(rest);
+      if (!opener) continue;
+      const bodyStart = opener.index + opener[0].length;
+      const bodyEnd = rest.indexOf(opener[1], bodyStart);
+      if (bodyEnd < 0) continue;
+      bodies.push(rest.slice(bodyStart, bodyEnd).replace(/--.*$/gm, ''));
+    }
+  }
+  expect(bodies.length, 'accept_org_owner_transfer の定義が migration に見つからない').toBeGreaterThan(0);
+  return bodies[bodies.length - 1];
+}
 
 const PROPOSAL_ID = 'd0eebc99-9c0b-4ef8-bb6d-6bb9bd380a44';
 const ORG_ID = 'e0eebc99-9c0b-4ef8-bb6d-6bb9bd380a55';
@@ -410,6 +443,13 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
       'あなたは現在この組織のメンバーではないため、オーナー権限を引き継げません。',
     ],
     ['TRANSFER_PROPOSAL_EXPIRED', 410, '譲渡提案の有効期限が切れています。'],
+    // 20261022140000_org_transfer_toctou.sql: 解散と同時の承諾・運営の強制譲渡のあとに残った提案
+    ['ORG_ALREADY_DISSOLVED', 409, 'この組織は解散しているため、オーナー権限を引き継げません。'],
+    [
+      'NOT_ORG_OWNER',
+      403,
+      '譲渡を申し出た人が今はこの組織のオーナーではないため、オーナー権限を引き継げません。',
+    ],
   ])('RPC が %s で失敗: %i と専用の文言を返し、完了メールは送らない', async (code, status, message) => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message: code, code: 'P0001' } });
 
@@ -422,6 +462,38 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
     expect(adminDb.auth.admin.getUserById).not.toHaveBeenCalled();
   });
 
+  // API のエラーの表 (docs/design/membership/02-flow-spec.md §5) の機械の見張り: 最新の accept_org_owner_transfer の定義が
+  // RAISE するコードは、この順で、どれも route が専用の文と 500 でない status にする (新しいコードを RAISE したのに route が
+  // 汎用の 500 で返す食い違いを、文書の目視でなくここで止める。40P01 の CONFLICT_RETRY は RAISE でないので下の別の it)
+  it('最新の accept_org_owner_transfer の定義が RAISE するコードは決まった順で、どれも route が専用の文と 500 でない status にする', async () => {
+    const latestBody = latestAcceptOrgOwnerTransferBody();
+    const raised = [
+      ...new Set([...latestBody.matchAll(/RAISE\s+EXCEPTION\s+'([A-Z_]+)'/g)].map((match) => match[1])),
+    ];
+    expect(raised).toEqual([
+      'MINOR_ACCOUNT_NOT_ALLOWED',
+      'TRANSFER_PROPOSAL_NOT_FOUND',
+      'TRANSFER_PROPOSAL_EXPIRED',
+      'ORG_ALREADY_DISSOLVED',
+      'TRANSFER_ACCEPTOR_NOT_IN_ORG',
+      'TRANSFER_NOT_PENDING',
+      'NOT_ORG_OWNER',
+    ]);
+
+    for (const code of raised) {
+      mocks.rpc.mockResolvedValue({ data: null, error: { message: code, code: 'P0001' } });
+      const res = await call();
+      const json = await res.json();
+
+      expect(res.status, code).not.toBe(INTERNAL_SERVER_ERROR_STATUS);
+      expect(json.error.code, code).toBe(code);
+      expect(json.error.message, code).not.toBe(GENERIC_ACCEPT_FAILURE_MESSAGE);
+      expect(json.error.message, code).not.toContain(code);
+    }
+    expect(mocks.logError).not.toHaveBeenCalled();
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
   it('想定外のエラー: 500 と汎用の文言を返し、RPC の生メッセージを画面に出さない', async () => {
     mocks.rpc.mockResolvedValue({ data: null, error: { message: 'connection to server was lost' } });
 
@@ -430,6 +502,40 @@ describe('POST /api/org/owner-transfer/[id]/accept: RPC のエラー', () => {
 
     expect(res.status).toBe(500);
     expect(json.error).toEqual({ code: 'UNKNOWN', message: '組織オーナー権限の引き継ぎに失敗しました。' });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('CHECK 違反 (23514) などの生の DB のエラーは、本文に出さず 500 と汎用の文言にし、構造化ログにだけ残す', async () => {
+    const rawMessage =
+      'new row for relation "user_profiles" violates check constraint "user_profiles_org_consistency"';
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: rawMessage, code: '23514' } });
+
+    const res = await call();
+    const text = await res.text();
+
+    expect(res.status).toBe(500);
+    expect(JSON.parse(text)).toEqual({
+      error: { code: 'UNKNOWN', message: '組織オーナー権限の引き継ぎに失敗しました。' },
+    });
+    expect(text).not.toContain('user_profiles_org_consistency');
+    expect(text).not.toContain('23514');
+    expect(mocks.logError).toHaveBeenCalledTimes(1);
+    expect(mocks.logError.mock.calls[0][2]).toEqual({ proposal_id: PROPOSAL_ID, pg_code: '23514' });
+    expect(mocks.sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('デッドロック (SQLSTATE 40P01) は 409 CONFLICT_RETRY と「もう一度お試しください」の文にする (SQLSTATE を mapPgErrorToHttp に渡す)', async () => {
+    mocks.rpc.mockResolvedValue({ data: null, error: { message: 'deadlock detected', code: '40P01' } });
+
+    const res = await call();
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.error).toEqual({
+      code: 'CONFLICT_RETRY',
+      message: MEMBERSHIP_ERROR_MESSAGES[MembershipErrorCode.CONFLICT_RETRY],
+    });
+    expect(mocks.logError).not.toHaveBeenCalled();
     expect(mocks.sendEmail).not.toHaveBeenCalled();
   });
 
