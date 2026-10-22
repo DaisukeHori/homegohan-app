@@ -9,21 +9,7 @@
  */
 import type { OrgInviteListItem, OrgRole } from '@/schemas/membership/organization-invite';
 
-/** 一覧の読み出しで select する列 (role 列は読まない) */
-export const ORG_INVITE_LIST_COLUMNS = `
-        id,
-        email,
-        invited_role,
-        status,
-        department_id,
-        token,
-        expires_at,
-        accepted_at,
-        created_at,
-        departments(name)
-      `;
-
-/** ORG_INVITE_LIST_COLUMNS で読んだ 1 行 */
+/** GET /api/org/invites の select で読んだ 1 行 (role 列は読まない。select の列は tests/legal-text-1901.test.ts T-32 が固定している) */
 export interface OrgInviteListRow {
   id: string;
   email: string;
@@ -34,7 +20,22 @@ export interface OrgInviteListRow {
   expires_at: string;
   accepted_at: string | null;
   created_at: string | null;
-  departments: { name: string } | null;
+  /**
+   * 部署の埋め込み。PostgREST は外部キー (to-one) の埋め込みを 1 件のオブジェクトで返すが、
+   * 型を持たない client の select の型推論は配列とみなすので、両方を受ける
+   */
+  departments: OrgInviteDepartmentEmbed | OrgInviteDepartmentEmbed[] | null;
+}
+
+interface OrgInviteDepartmentEmbed {
+  name: string;
+}
+
+/** 部署の埋め込みから部署名を取り出す (無ければ null) */
+function departmentNameOf(departments: OrgInviteListRow['departments']): string | null {
+  if (!departments) return null;
+  const embed = Array.isArray(departments) ? departments[0] : departments;
+  return embed?.name ?? null;
 }
 
 /** 期限を過ぎているか (expires_at が now より前) */
@@ -55,7 +56,7 @@ export function toOrgInviteListItem(row: OrgInviteListRow, now: Date): OrgInvite
     role: row.invited_role,
     status: displayOrgInviteStatus(row.status, row.expires_at, now),
     departmentId: row.department_id,
-    departmentName: row.departments?.name ?? null,
+    departmentName: departmentNameOf(row.departments),
     token: row.token,
     expiresAt: row.expires_at,
     acceptedAt: row.accepted_at,

@@ -9,7 +9,7 @@ import {
   invalidOrgInviteBodyResponse,
   orgInviteFailureResponse,
 } from '@/lib/membership/org-invite';
-import { ORG_INVITE_LIST_COLUMNS, toOrgInviteListItem } from '@/lib/membership/org-invite-list';
+import { toOrgInviteListItem } from '@/lib/membership/org-invite-list';
 import {
   CreateOrgInviteRequestBodySchema,
   type OrgInviteListResponse,
@@ -43,7 +43,18 @@ export async function GET(request: Request) {
 
     const { data: invites, error } = await supabase
       .from('organization_invites')
-      .select(ORG_INVITE_LIST_COLUMNS)
+      .select(`
+        id,
+        email,
+        invited_role,
+        status,
+        department_id,
+        token,
+        expires_at,
+        accepted_at,
+        created_at,
+        departments(name)
+      `)
       .eq('organization_id', profile.organization_id)
       .order('created_at', { ascending: false });
 
