@@ -857,7 +857,7 @@ $$);
      (auth.users を指す外部キーに NO ACTION は無い。20261010000100_auth_users_fk_on_delete.sql)
    - 削除が済んだら (すでに消えていたときも)、RPC complete_account_deletion_record で記録に `executed_at` を入れる。
      失敗しても応答は 200 のまま (アカウントはもう消えている)。失敗は app_logs に残す (記録は `executed_at` が空のまま残る)
-6. 削除完了メールを本人へ 1 通送る (#1152。src/lib/account-deletion-notification.ts)
+6. 削除完了メールを本人へ 1 通送る (#1152。src/lib/account-deletion-notification.ts)。本文にはストアの購読が退会で解約されないことの固定の文と各ストアの管理のページを、購読の有無で出し分けずに載せる (§16.1 の表・src/lib/emails/account/account-deleted.ts)
    - 宛先は auth.users の登録アドレス。手順 3 の後・手順 4 の前に service_role の getUserById で控え、メモリ上だけで使う
      (app_logs・email_delivery_logs には生のアドレスを残さない。送信の失敗の記録は sendEmail がマスクした宛先で残す)
    - 完了メールは email_outbox に redact_after_send で登録し、送れたとき (sent)・届けられなかったとき (dead) に宛先・件名・本文を伏せる。

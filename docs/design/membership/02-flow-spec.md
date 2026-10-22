@@ -176,7 +176,7 @@ server → rpc('accept_org_owner_transfer', { p_proposal_id })
        → 200 { data: { organization } }
 ```
 
-**承諾時の不変条件 (#1236):** 提案 (`ownership_transfer_proposals`) は最長 7 日間 pending のまま残り、その間に宛先が脱退・別組織へ移籍することがある。承諾 RPC は承諾時点で `user_profiles.organization_id = 提案の組織` を再検証し、満たさなければ何も変更せずに `TRANSFER_ACCEPTOR_NOT_IN_ORG` (403) を返す。accepted への更新は `status = 'pending'` 条件付きで行い、競合時は `TRANSFER_NOT_PENDING` (409) とする (二重承諾の防止)。
+**承諾時の不変条件 (#1236):** 提案 (`ownership_transfer_proposals`) は最長 7 日間 pending のまま残り、その間に宛先が脱退・別組織へ移籍することがある。承諾 RPC は承諾時点で `user_profiles.organization_id = 提案の組織` を再検証し、満たさなければ何も変更せずに `TRANSFER_ACCEPTOR_NOT_IN_ORG` (403) を返す。提案の行は `status = 'pending'` の条件つきで `FOR NO KEY UPDATE` で取る (`supabase/migrations/20261022140000_org_transfer_toctou.sql`) ので、同時の二重承諾や辞退と競合したとき、後から来た側は再評価で行が外れて `TRANSFER_PROPOSAL_NOT_FOUND` (404) になる (二重承諾の防止)。accepted への更新の `status = 'pending'` 条件と `TRANSFER_NOT_PENDING` (409) は防御として残る (通常は届かない)。
 
 **解散・強制譲渡と同時の承諾 (`supabase/migrations/20261022140000_org_transfer_toctou.sql`):** 承諾 RPC は、提案の行 → `organizations` の行 → 承諾者の `user_profiles` → 旧オーナーの `user_profiles` を `FOR NO KEY UPDATE` で取ってから判定する (ロックの向きは `docs/design/family/11-self-dissolve.md` §11.3)。判定の順は `MINOR_ACCOUNT_NOT_ALLOWED` → `TRANSFER_PROPOSAL_NOT_FOUND` → `TRANSFER_PROPOSAL_EXPIRED` → `ORG_ALREADY_DISSOLVED` → `TRANSFER_ACCEPTOR_NOT_IN_ORG` → `TRANSFER_NOT_PENDING` → `NOT_ORG_OWNER`。解散した組織の提案は `ORG_ALREADY_DISSOLVED`、運営の強制譲渡のあとに残った提案 (提案者がもうオーナーでない) は `NOT_ORG_OWNER` で止め、どちらも何も変更しない (提案は pending のまま)。所属の外れた行へ `org_role` を書かない (CHECK `user_profiles_org_consistency` (23514) にならない)。想定外の DB のエラーは生の文を本文に出さず、500 と汎用の文にして構造化ログに残す。
 
@@ -185,7 +185,7 @@ server → rpc('accept_org_owner_transfer', { p_proposal_id })
 | `TRANSFER_PROPOSAL_NOT_FOUND` | 404 | pending かつ自分宛ての提案が無い (承諾済み・他人宛て・存在しない) |
 | `TRANSFER_PROPOSAL_EXPIRED` | 410 | 期限切れ |
 | [NEW] `TRANSFER_ACCEPTOR_NOT_IN_ORG` | 403 | 承諾時点で組織のメンバーでない |
-| `TRANSFER_NOT_PENDING` | 409 | 同時に承諾が競合し、既に処理済み |
+| `TRANSFER_NOT_PENDING` | 409 | 防御として残る (accepted への更新の `status = 'pending'` 条件が外れたとき)。提案の行を pending の条件つきでロックするので、同時の承諾・辞退との競合は `TRANSFER_PROPOSAL_NOT_FOUND` になり、通常は届かない |
 | `ORG_ALREADY_DISSOLVED` | 409 | 組織が解散している (解散のあとに残った提案・解散と同時の承諾)。`supabase/migrations/20261022140000_org_transfer_toctou.sql` |
 | `NOT_ORG_OWNER` | 403 | 提案者が今はこの組織のオーナーでない (運営の強制譲渡のあとに残った提案)。`supabase/migrations/20261022140000_org_transfer_toctou.sql` |
 | `CONFLICT_RETRY` | 409 | デッドロック (40P01)。組織の関数どうしは組織の行を最初に取るので起きない (`docs/design/family/11-self-dissolve.md` §11.3) が、想定の外の組み合わせで検出されたときも生の文を出さずにやり直しを促す (route が SQLSTATE を `mapPgErrorToHttp` に渡す。既存の規約)。やり直せば通る |

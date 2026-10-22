@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | 版 | v1.5 (2026-10-22) |
-| Status | 設計ゲート審査中 (A 型。周 5 の網羅性の反映版) |
+| Status | 設計ゲート通過。段 A (#1941 4c8c8d31)・段 B (#1944 c95d114e) は main に実装済み |
 | Issue | #1912 (有料プランの販売を始める: 価格・有料と無料の線引き・アプリ内課金)。本冊はその配線の残りの冊のうち「日次の reconcile」(billing/03 §0.5 Q-11・§5.2 の縁の発生源 (2)・§18 の 4) に当たる。関連: billing/03 の整合ゲートの候補 (Webhook が落ちたまま期限を過ぎた購読が有料の権利を持ち続ける) |
 | 範囲の正本 | Issue #1912 の本文。本冊の §0.4 に、前提とする Issue の記述を逐語で写す。本冊が決める範囲は §0.2 |
 | 土台 | origin/main `0fb02e52` (#1931。billing/03 の段 D のマージ)。本冊の「現行」はこの版の事実 (§2.2) と、本番の読み取り (2026-10-22。§2.2 の F19)。2026-10-22 に origin/main `d950a7b1` (#1933) で再確認し、本冊が参照するファイル (`src/lib/billing/**`・`src/app/api/cron/**`・`supabase/migrations/**`・`vercel.json`・`src/lib/env.ts`・§14.1 の番兵) に差分は無い。§14.2 の行の番号は `d950a7b1` で取り直した (billing/03 §18 の 4 が `:5190` → `:5206` に動いていた)。続けて origin/main `c1ecc93b` (#1934) で再確認し、同じファイルと §14.2 の文書に差分は無い (#1934 が変えたのは運営の画面の AI の上限の 10 ファイルだけ)。さらに origin/main `7532a77c` (#1935) で再確認した。#1935 が変えたのは `apps/mobile` の 7 ファイルと billing/03 の §8.10 (モバイルの正典コード)・§10.6 (モバイルの購入の画面) だけで、本冊が参照するサーバのファイル・番兵・§12.3 が参照する結合テストと `vitest.integration.config.ts` に差分は無い。billing/03 の行は §8.10 の伸びで §18 の 4 が `:5206` → `:5250` に動いた (§14.2 を直した。`:86`・`:270`・`:380` は動いていない) |
@@ -52,13 +52,15 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 3. 手動付与の期限切れの処理 (`billing_expire_manual_subscriptions`) は `iap_store IS NULL` の行だけを扱い、ストアの行を扱わない (F9)。
 4. Stripe の reconcile (`stripe_integrity_check`) は設計だけで実装が無い (F17)。型として使えるのは billing/01 §12 の「写像を呼んで直す」の規則だけ。
 
-### 0.5 発注者への確認事項 (Q-n。推奨つき。本冊は推奨の値で実装し、選択で変わる値は §8.1 の定数と `vercel.json` の予定だけ)
+### 0.5 発注者への確認事項 (Q-n。確定: 実装された値は 毎時 41 分・猶予なし・期限の後の行だけ。値を変えるときに変わるのは §8.1 の定数と `vercel.json` の予定だけ)
 
-| # | 項目 | 推奨 | 根拠・代替案 |
+| # | 項目 | 確定 (実装された値) | 根拠・代替案 |
 |---|---|---|---|
 | Q-1 | 取り直しの間隔 (Vercel Cron の予定) | **毎時 (`41 * * * *`)** | 親の Q-11 は「日次」と書いたが、期限を過ぎてから権利が止まるまでの窓は間隔そのもの (日次なら最長 24 時間、毎時なら最長 1 時間)。候補が 0 の回は DB の関数 1 回で終わり (RevenueCat は呼ばない)、Vercel Pro は毎分まで予定できる (§2.3 P2)。代替案: 日次 (`41 4 * * *` = JST 13:41) にすると `vercel.json` の 1 行と `IAP_RECONCILE_SCHEDULE_UTC`・`IAP_RECONCILE_CRON_INTERVAL_MINUTES` の 2 つの定数が変わるだけで、ほかは同じ。ただし 1 回に試せるのは予算 ÷ 間隔 = 40 人まで (§8.1 `IAP_RECONCILE_BATCH_SIZE_MAX`。環境変数 `IAP_RECONCILE_BATCH_SIZE` は 40 より上に上げられない。下げる向きだけ) なので、日次では 1 日に 40 人しか取り直せない。増やすには RevenueCat への間隔を詰める (§2.3 P1 の案内 (1 秒に 1 回) から外れる) か、予算と `maxDuration` を延ばす (定数の変更) ことになる |
 | Q-2 | 取り直しも失敗し続けるとき、期限の後どれだけで有料を止めるか (猶予) | **猶予を置かない (取り直せるまで権利を続ける)。失敗は毎時の回ごとに 500 で失敗の監視 (運用メール) に乗せる** | 取り直せない原因は (a) 鍵の誤り・失効 (401) (b) RevenueCat の障害 (c) 当社の cron の停止 (d) その利用者だけの失敗 (応答の形が当社の Zod と合わない・写像の想定外の DB の失敗)、のどれかで、(d) はほかの利用者の取り直しを止めず (§4.1 の 5)、(a)(b)(d) は毎時の 500 が `app-log-alerts` の `cron_failure` (1 件から・抑止つき) で運用メールになる (§2.2 F15)。期限の後 N 日で `expired` に書く案 (代替案 1) は、`expired` の行は候補から外れる (§6.2 の述語) ので、RevenueCat が戻っても本人の同期か Webhook が来るまで戻らず、支払っている利用者を切ったまま戻せない。権利の判定に期限を見せる案 (代替案 2) は核の関数 (`get_effective_plan`) と `plan_key_cached` の読み手 (運営の画面・機能フラグ) の食い違いを生む (§5.1 の案 E)。代替案 1 を採るなら、強制で終わらせた行を候補に戻す印 (列) が要り、本冊の範囲を超える (§16 の 2) |
 | Q-3 | 「期限が近い」行 (期限の前) も取り直すか | **取り直さない (期限を過ぎた行だけ)** | 期限の前に取り直しても、更新 (RENEWAL) はストアが期限の時点で決めるので、見えるのは「まだ更新されていない」姿だけで、権利は変わらない。期限の後の最初の回 (≤ 1 時間) で更新か失効が見える。代替案: 期限の 24 時間前から候補にする (`p_now + interval '24 hours'` を述語に足す) と、1 つの更新につき取り直しが 2 回になる |
+
+Q-1・Q-2 は発注者の選択 (2026-10-22・選択式): 取り直しの間隔は「毎時 (推奨)」、取り直しも失敗し続けるときは「止めずに続ける (推奨)」。Q-3 は発注者に確かめず、推奨の値で実装した。
 
 ---
 
@@ -86,6 +88,8 @@ Issue #1912 の本文の「オーナーの選択」の表の行 (逐語): 「ア
 | cross/04 | エラーコードの体系。本冊は利用者向けのコードを足さない (cron の応答は固定の語。§11) |
 
 ### 2.2 現行の事実 (origin/main `0fb02e52` と本番の読み取り。2026-10-22)
+
+注: この表は本冊の土台 (origin/main `0fb02e52`。段 A・段 B の前) の時点の事実である。たとえば F11 の「既存の 6 本」は段 B (#1944) の前の本数で、いまの `vercel.json` の crons は `iap-reconcile` を足した 7 本。
 
 | # | 事実 | 場所 |
 |---|---|---|
@@ -1150,7 +1154,7 @@ export async function GET(req: Request) {
 ```ts
 // tsc:skip insert=src/lib/account-export-tables.ts
   iap_reconcile_attempts:
-    'ストアの購読の定期の取り直しで、利用者を最後に候補に選んだ時刻 (候補の順番を回す内部の印。billing/04 §6.2)。本人が入力したデータではなく、本人が読める RLS ポリシーも無い。service_role だけが読み、退会で消える',
+    'ストアの購読の定期の取り直しで、利用者に最後に取り直しを試した時刻 (候補の順番を回す内部の印。billing/04 §6.2)。本人が入力したデータではなく、本人が読める RLS ポリシーも無い。service_role だけが読み、退会で消える',
 ```
 
 以下は段 B。`src/lib/env.ts` の `SERVER_ENV_VARS` に、`REVENUECAT_WEBHOOK_SECRET` の項の直後に足す 2 項 (逐語):
@@ -1434,10 +1438,10 @@ afterAll(async () => {
 
 | 段 | 内容 | ファイル | テスト |
 |---|---|---|---|
-| A: DB 層 | migration + rollback (§6)・`database.types.ts` の再生成 (2 本)・契約テスト・結合テスト・印の表の分類 3 か所 (F24。新しい表が migration と同時に見張りに当たるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`tests/billing-iap-reconcile-migration-contract.test.ts`・`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts`・`src/lib/account-export-tables.ts` (§8.5)・`tests/legal-text-1901.test.ts`・`tests/integration/security/auth-users-fk-on-delete.test.ts` (§14.1) | 31〜45 と §14.1 の段 A の行。どれも段 B の `src/lib/billing/iap-reconcile-*` を import しない |
+| A: DB 層 | migration + rollback (§6)・`database.types.ts` の再生成 (2 本)・契約テスト・結合テスト・印の表の分類 4 か所 (`jst-today-source-scan` を含む。F24。新しい表が migration と同時に見張りに当たるため) | §6・`src/types/database.types.ts`・`packages/shared/src/database.types.ts`・`tests/billing-iap-reconcile-migration-contract.test.ts`・`tests/integration/rls/billing-iap-reconcile-candidates-rpc.test.ts`・`src/lib/account-export-tables.ts` (§8.5)・`tests/legal-text-1901.test.ts`・`tests/integration/security/auth-users-fk-on-delete.test.ts`・`tests/jst-today-source-scan.test.ts` (§14.1) | 31〜45 と §14.1 の段 A の行。どれも段 B の `src/lib/billing/iap-reconcile-*` を import しない |
 | B: サーバ層 | `iap-reconcile-core.ts`・`iap-reconcile-repository.ts`・`iap-reconcile-service.ts`・route・`env.ts`・`.env.example`・`ENV_SETUP.md`・`vercel.json`・単体テスト・既存の番兵の追随 (§14.1)・設計書の本数の追随 (§14.2 の「段 B と同じ PR」の行。オーケストレーターの専権 PATCH を段 B の PR に合流させる) | §8・§14 | 1〜30 と §14.1 の段 B の行 |
 
-段 B は段 A のマージ後 (型の再生成済み。`admin.rpc('billing_iap_reconcile_candidates', …)`・`admin.rpc('billing_iap_reconcile_mark_attempted', …)` が型で通り、テスト 10 が読む migration がある)。段 A の本番の適用 (追加だけの migration) はマージの前に行う (関数が無いまま新しい Web が出ると route が毎時 500 になるため。段 A のマージ → 本番の適用 → 段 B のマージの順)。段 A は 2 ファイル + 型 2 本 + テスト 2 本 + 分類 3 か所の 9 ファイルで 15 以内。段 B は 4 ファイル + 既存 4 ファイル + テスト 3 本 + 番兵 5 本 (§13.2) + 設計書 5 冊の 21 ファイルで 15 を超えるので、段 B のレビューは分割パネル (サーバ層 8 本・テストと番兵 8 本・設計書 5 冊の各担当 + 横断整合) で行う。
+段 B は段 A のマージ後 (型の再生成済み。`admin.rpc('billing_iap_reconcile_candidates', …)`・`admin.rpc('billing_iap_reconcile_mark_attempted', …)` が型で通り、テスト 10 が読む migration がある)。段 A の本番の適用 (追加だけの migration) はマージの前に行う (関数が無いまま新しい Web が出ると route が毎時 500 になるため。段 A のマージ → 本番の適用 → 段 B のマージの順)。段 A は 2 ファイル + 型 2 本 + テスト 2 本 + 分類 4 か所 (`jst-today-source-scan` を含む) の 10 ファイルで 15 以内。段 B は 4 ファイル + 既存 4 ファイル + テスト 3 本 + 番兵 5 本 (§13.2) + 設計書 5 冊の 21 ファイルで 15 を超えるので、段 B のレビューは分割パネル (サーバ層 8 本・テストと番兵 8 本・設計書 5 冊の各担当 + 横断整合) で行う。
 
 ### 13.2 触るファイルの母集合 (閉じた一覧。これ以外を触ったら blocking。例外は §14.1 冒頭の「母集合の作り方」で新たに出た、同じ型の行がそのまま当てはまるファイルだけ)
 
@@ -1583,9 +1587,9 @@ grep の語 = 本冊が足す・変える名前: `api/cron`・`vercel.json`・`c
 
 ## 16. 未解決事項 (openQuestions)
 
-| # | 項目 | 本冊の仮置き |
+| # | 項目 | 本冊の扱い |
 |---|---|---|
-| 1 | Q-1 (間隔)・Q-2 (猶予)・Q-3 (期限の前の行) (§0.5) | 推奨の値 (毎時・猶予なし・期限の後だけ) で実装する。選択で変わるのは `vercel.json` の 1 行と §8.1 の定数だけ |
+| 1 | Q-1 (間隔)・Q-2 (猶予)・Q-3 (期限の前の行) (§0.5) | 確定: 毎時 41 分 (`vercel.json` の `41 * * * *`)・猶予なし・期限の後の行だけで実装済み (段 B #1944)。値を変えるときに変わるのは `vercel.json` の 1 行と §8.1 の定数だけ |
 | 2 | 取り直せないまま期限から N 日たった行を強制で `expired` にする仕組み (Q-2 の代替案 1) | 作らない。作るなら、強制で終わらせた行を候補に戻す印 (`personal_subscriptions` の列) と、親の写像に「取り直した姿でない snapshot」を通す規則が要り、別の冊 |
 | 3 | 取り直せない行の滞留 (`oldest_period_end` が古いまま) を運用メールで知らせる種類 | 足さない。RevenueCat の失敗は毎時の 500 で `cron_failure` に乗る。鍵が無い間 (`not_configured`) は販売開始前の正常な状態なので知らせない。滞留だけを知らせたくなったら operator/11 の型 (`claim_ops_alert` のキーを 1 つ足す) で別の冊 |
 | 4 | RevenueCat の REST v1 の率の制限の公式の数値 | 無い (§2.3 P1 はスタッフの案内)。1 秒に 1 回の間隔と 429 で止める規則で受ける。本番で 429 が続いたら `IAP_RECONCILE_REQUEST_INTERVAL_MS` を上げる (定数) |

@@ -207,7 +207,12 @@ SELECT * FROM public.purge_dissolved_family_groups(true);
 # CRON_SECRET を使って HTTP で呼び出す
 curl -X POST https://homegohan.app/api/cron/trial-ending-reminder \
   -H "Authorization: Bearer ${CRON_SECRET}"
+
+# ストアの購読の定期の取り直し (GET。billing/04 §9.1)
+curl -H "Authorization: Bearer ${CRON_SECRET}" https://homegohan.app/api/cron/iap-reconcile
 ```
+
+`/api/cron/iap-reconcile` の応答 (billing/04 §9.1) の読み方: `status` は `maintenance` (メンテナンス中で何もしない)・`not_configured` (RevenueCat の鍵が無い。販売開始前の正常な状態)・`idle` (候補 0)・`processed` (取り直した) のどれか。`stopped_early` が `budget` (処理の予算 40 秒) か `rate_limited` (RevenueCat の 429) なら、その回は途中で止めて残りを次の回 (毎時 41 分) に回した。`oldest_period_end` は、その回の候補のうち期限がいちばん古いもので、毎時の回をまたいで同じ古い値のまま動かないなら取り直しが滞っている。取り直せなかった利用者がいた回は 500 になり、`app-log-alerts` の `cron_failure` で運用メールが届く。
 
 ### 5.4 届けられなかったメールの再送 (#1193・#1708)
 

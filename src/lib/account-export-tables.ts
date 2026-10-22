@@ -319,7 +319,7 @@ export const ACCOUNT_EXPORT_EXCLUDED: Readonly<Record<string, string>> = {
   billing_customers:
     'Stripe の顧客 ID (cus_) と利用者の対応表 (決済の内部の識別子。本人が読める RLS ポリシーが無く、service_role だけが読み書きする)',
   iap_reconcile_attempts:
-    'ストアの購読の定期の取り直しで、利用者を最後に候補に選んだ時刻 (候補の順番を回す内部の印。billing/04 §6.2)。本人が入力したデータではなく、本人が読める RLS ポリシーも無い。service_role だけが読み、退会で消える',
+    'ストアの購読の定期の取り直しで、利用者に最後に取り直しを試した時刻 (候補の順番を回す内部の印。billing/04 §6.2)。本人が入力したデータではなく、本人が読める RLS ポリシーも無い。service_role だけが読み、退会で消える',
 
   // 再生成できる・システムが算出した派生データ
   nutrition_feedback_cache: 'AI フィードバックのキャッシュ (再生成できる)',
