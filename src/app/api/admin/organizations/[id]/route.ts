@@ -11,6 +11,10 @@
  * 本文: { plan } (src/lib/org-plans.ts の ORG_PLAN_VALUES のどれか)。ほかのキーは受け取らない (変えるのはプランだけ)。
  * 監査: admin.organization.plan_change (docs/design/operator/07-audit-monitoring.md §4.1)。details は変える前と後のプラン。
  * 今と同じプランを送ったときは書かず、記録もしない (200 で今の行を返す)。
+ *
+ * 同時の変更 (#1912 の整合の候補): 更新は「直前に読んだ plan のままなら書く」条件つきにする (読んでから書くまでに
+ * 別の運営が変えていたら 0 行)。0 行なら読み直し、今の値が送られたプランと同じなら書かず記録もしない (200 で今の行)、
+ * 違えば 409 CONFLICT_STALE_DATA (cross/04 §4.2)。これで監査の from は、書いた時点の実際の直前の値と必ず一致する。
  */
 
 import { NextResponse } from 'next/server';
@@ -30,6 +34,11 @@ const ROUTE_NAME = 'api/admin/organizations/[id] PATCH';
 
 /** 運営の組織のプランの変更の監査の名前 (operator/07 §4.1) */
 const ORG_PLAN_CHANGE_AUDIT_ACTION = 'admin.organization.plan_change';
+
+/** 読んでから書くまでに別の運営がプランを変えていた (条件つきの更新が 0 行で、今の値が送られたプランと違う) */
+const STALE_PLAN_RESPONSE = {
+  error: { code: 'CONFLICT_STALE_DATA', message: '別の運営が先にこの組織のプランを変えました。一覧を読み込み直して、もう一度確認してください' },
+} as const;
 
 /** 返す organizations の列 (一覧の GET と同じ) */
 const ORG_RESPONSE_COLUMNS = 'id, name, plan, created_at, updated_at';
@@ -121,22 +130,52 @@ export async function PATCH(request: Request, props: RouteContext) {
     return NextResponse.json({ organization: before });
   }
 
-  const { data: org, error: updateError } = await supabaseAdmin
+  // 直前に読んだ plan のままのときだけ書く (読んでから書くまでに別の運営が変えていたら 0 行)。
+  // plan の列は NULL を許すので、読んだ値が NULL なら .eq ではなく .is で比べる (PostgREST の eq.null は NULL に一致しない)
+  const updateQuery = supabaseAdmin
     .from('organizations')
     .update({ plan, updated_at: new Date().toISOString() })
-    .eq('id', organizationId)
+    .eq('id', organizationId);
+  const { data: org, error: updateError } = await (before.plan === null
+    ? updateQuery.is('plan', null)
+    : updateQuery.eq('plan', before.plan)
+  )
     .select(ORG_RESPONSE_COLUMNS)
-    .single();
+    .maybeSingle();
 
-  if (updateError || !org) {
-    createLogger(ROUTE_NAME, generateRequestId()).error(
-      '組織のプランの更新に失敗しました',
-      updateError ?? new Error('organizations の更新結果が空です'),
-    );
+  if (updateError) {
+    createLogger(ROUTE_NAME, generateRequestId()).error('組織のプランの更新に失敗しました', updateError);
     return NextResponse.json(
       { error: { code: 'INTERNAL_ERROR', message: '組織のプランを変更できませんでした' } },
       { status: 500 },
     );
+  }
+
+  if (!org) {
+    // 0 行: 読んでから書くまでに、別の運営がプランを変えた (または組織が消えた)。読み直して決める
+    const { data: current, error: rereadError } = await supabaseAdmin
+      .from('organizations')
+      .select(ORG_RESPONSE_COLUMNS)
+      .eq('id', organizationId)
+      .maybeSingle();
+    if (rereadError) {
+      createLogger(ROUTE_NAME, generateRequestId()).error('組織の読み直しに失敗しました', rereadError);
+      return NextResponse.json(
+        { error: { code: 'INTERNAL_ERROR', message: '組織のプランを変更できませんでした' } },
+        { status: 500 },
+      );
+    }
+    if (!current) {
+      return NextResponse.json(
+        { error: { code: 'NOT_FOUND', message: '組織が見つかりません' } },
+        { status: 404 },
+      );
+    }
+    // 別の運営が同じプランへ先に変えていた: 書かず、記録もしない (その変更は先の運営の監査に残っている)
+    if (current.plan === plan) {
+      return NextResponse.json({ organization: current });
+    }
+    return NextResponse.json(STALE_PLAN_RESPONSE, { status: 409 });
   }
 
   // 監査ログ (運営本人の client で書く。admin_audit_logs の INSERT のポリシーは actor_id = auth.uid())

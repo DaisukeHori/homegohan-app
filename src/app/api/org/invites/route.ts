@@ -9,7 +9,11 @@ import {
   invalidOrgInviteBodyResponse,
   orgInviteFailureResponse,
 } from '@/lib/membership/org-invite';
-import { CreateOrgInviteRequestBodySchema } from '@/schemas/membership/organization-invite';
+import { toOrgInviteListItem } from '@/lib/membership/org-invite-list';
+import {
+  CreateOrgInviteRequestBodySchema,
+  type OrgInviteListResponse,
+} from '@/schemas/membership/organization-invite';
 import { rejectNullCharacterBody } from '@/lib/api/reject-null-character';
 
 // 権限: 所属組織の org_role が owner / admin。判定は共通の requireOrgAdmin() (#1161)
@@ -30,6 +34,8 @@ function handleError(method: string, error: unknown) {
 }
 
 // 招待一覧取得
+// 役割は invited_role (create_org_invite が書く列)・状態は status (期限切れの pending は 'expired') を返す。
+// 旧い role 列は書かれない (既定 'member') ので読まない。行の形は src/lib/membership/org-invite-list.ts
 export async function GET(request: Request) {
   try {
     const { profile } = await requireOrgAdmin();
@@ -40,7 +46,8 @@ export async function GET(request: Request) {
       .select(`
         id,
         email,
-        role,
+        invited_role,
+        status,
         department_id,
         token,
         expires_at,
@@ -53,21 +60,11 @@ export async function GET(request: Request) {
 
     if (error) throw error;
 
-    return NextResponse.json({
-      invites: (invites || []).map((i: any) => ({
-        id: i.id,
-        email: i.email,
-        role: i.role,
-        departmentId: i.department_id,
-        departmentName: i.departments?.name || null,
-        token: i.token,
-        expiresAt: i.expires_at,
-        acceptedAt: i.accepted_at,
-        createdAt: i.created_at,
-        isExpired: new Date(i.expires_at) < new Date(),
-        isAccepted: !!i.accepted_at,
-      })),
-    });
+    const now = new Date();
+    const body: OrgInviteListResponse = {
+      invites: (invites ?? []).map((row) => toOrgInviteListItem(row, now)),
+    };
+    return NextResponse.json(body);
 
   } catch (error) {
     return handleError('GET', error);
