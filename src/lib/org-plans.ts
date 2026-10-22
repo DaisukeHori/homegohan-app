@@ -29,7 +29,8 @@ export function isOrgPlanValue(value: string): value is OrgPlanValue {
 export const ORG_PLAN_DEFAULT: OrgPlanValue = 'standard';
 
 /**
- * 組織のプランの値 (organizations.plan) の利用者向けの表示名。組織の設定の画面 (/org/settings。owner / admin が見る) が使う。
+ * 組織のプランの値 (organizations.plan) の利用者向けの表示名。組織の設定の画面 (/org/settings。owner / admin が見る) と、
+ * 組織の管理画面のサイドバーの見出し (src/app/(org)/layout.tsx。src/lib/org-sidebar.ts の readOrgSidebarInfo 経由) が使う。
  * キーは ORG_PLAN_VALUES と同じ (satisfies で足りない・余るキーを型で止め、tests/org-plan-labels.test.tsx が値でも突き合わせる)。
  * 運営の画面は内部の値をそのまま出す (この表を通さない)
  */
@@ -39,7 +40,7 @@ export const ORG_PLAN_LABELS = {
   enterprise: 'エンタープライズ',
 } as const satisfies Record<OrgPlanValue, string>;
 
-/** 値が無い・表に無い値のときに出す文字 (内部の値を利用者の画面に出さない) */
+/** 値が無い・表に無い値のときに出す文字 (内部の値を利用者の画面に出さない。組織の管理画面の招待の一覧の状態の札も使う) */
 export const ORG_UNKNOWN_VALUE_LABEL = '-';
 
 /** organizations.plan の表示名。null・表に無い値は ORG_UNKNOWN_VALUE_LABEL */
