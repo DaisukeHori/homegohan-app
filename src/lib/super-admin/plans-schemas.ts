@@ -7,6 +7,7 @@
  */
 
 import { z } from 'zod';
+import { ORG_PLAN_VALUES_WIRE, ORG_SUBSCRIPTION_PLAN_KEY_PREFIX, isOrgPlanKey } from '@homegohan/shared';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 定数
@@ -74,6 +75,17 @@ export function isAllowedPlanStatusTransition(
   return Array.isArray(allowed) && (allowed as readonly string[]).includes(to);
 }
 
+/**
+ * 個人・家族のプランに組織のプランの値 (isOrgPlanKey: standard / premium / enterprise と org_ で始まる key) を付けたときの文 (#1912)。
+ * 付けると利用者の画面に「組織のプラン」と出てしまう
+ */
+export const PERSONAL_FAMILY_PLAN_KEY_MESSAGE = `個人・家族のプランの plan_key には ${ORG_PLAN_VALUES_WIRE.join(' / ')} や ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値を使えません (組織のプランの値です)`;
+
+/**
+ * 組織のプランの plan_key が org_ で始まらないときの文 (#1912)。始まらないと利用者の画面に「有料プラン」と出てしまう
+ */
+export const ORG_PLAN_KEY_PREFIX_MESSAGE = `組織のプランの plan_key は ${ORG_SUBSCRIPTION_PLAN_KEY_PREFIX} で始まる値にしてください`;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // スキーマ定義
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +116,18 @@ export const PlanCreateSchema = z.object({
     return false;
   }
   return true;
-}, { message: '組織プランには試用期間を設定できません', path: ['trial_days'] });
+}, { message: '組織プランには試用期間を設定できません', path: ['trial_days'] })
+  // plan_key の形とプランの種別を揃える (#1912)。利用者の画面の表示名 (packages/shared の planDisplayName) は
+  // plan_key の形 (isOrgPlanKey) だけで「組織のプラン」か「有料プラン」かを決めるので、作成の時点で食い違いを断る。
+  // 更新 (PlanUpdateSchema) は plan_key・plan_type を受けない (Zod が捨てる) ので、作成のあとで食い違いは生まれない
+  .refine((data) => data.plan_type === 'org' || !isOrgPlanKey(data.plan_key), {
+    message: PERSONAL_FAMILY_PLAN_KEY_MESSAGE,
+    path: ['plan_key'],
+  })
+  .refine((data) => data.plan_type !== 'org' || data.plan_key.startsWith(ORG_SUBSCRIPTION_PLAN_KEY_PREFIX), {
+    message: ORG_PLAN_KEY_PREFIX_MESSAGE,
+    path: ['plan_key'],
+  });
 
 export type PlanCreateInput = z.infer<typeof PlanCreateSchema>;
 

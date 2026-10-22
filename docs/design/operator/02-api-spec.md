@@ -1267,6 +1267,8 @@ super_admin だけ。I/O・エラー・監査は `cross/17-backup-automation.md`
 }
 ```
 
+**バリデーション** (`src/lib/super-admin/plans-schemas.ts` の `PlanCreateSchema`): `plan_key` の形を `plan_type` に揃える (#1912)。`personal` / `family` は組織のプランの値 (`isOrgPlanKey` = `standard` / `premium` / `enterprise`・`org_` で始まる key) を使えず、`org` は `org_` で始まる key にする。食い違いは 400 `OP_INVALID_INPUT` (利用者の画面の表示名 `planDisplayName` は key の形だけで「組織のプラン」/「有料プラン」を決めるため)。`PATCH /api/super-admin/plans/{id}` は `plan_key` / `plan_type` を受けない (送っても行は変わらない)
+
 ---
 
 ### GET /api/super-admin/plans/{id}
