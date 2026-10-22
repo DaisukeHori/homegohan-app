@@ -6,6 +6,7 @@
 // - 確認画面はアプリの WebView では「この操作はアプリでは行えません」とだけ描き、購入の API を呼ばない (S14)
 // - 状態の文は §10.3 の表のとおり (live 5 値 × 解約の予約の有無)
 // - プランの名前は planDisplayName (@homegohan/shared。free は「無料プラン」) で出す (billing/03 §10.3)
+// - 現在のプランはモバイルと同じ分岐 (currentPlanDisplay。#1912): 自分の契約 / 無料 / 組織のプラン / <名前> (ご家族のプラン) / 有料プラン。自分の契約でないときは添え書き
 // - App Store / Google Play の契約は Portal・解約・取り消しのボタンを出さず、ストアの定期購読の管理を案内する (billing/03 §10.3・テスト 87)
 //
 // NOTE: tsconfig の jsx: "preserve" の都合で、拡張子 .ts + React.createElement で書く (設定画面のテストと同じ)。
@@ -13,7 +14,7 @@
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
-import { IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, PAID_PLAN_GENERIC_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
+import { FAMILY_PLAN_STATUS_SUFFIX, FREE_PLAN_DISPLAY_NAME, IAP_STORE_LABELS, ORG_PLAN_DISPLAY_NAME, ORG_PLAN_VALUES_WIRE, PAID_PLAN_GENERIC_DISPLAY_NAME, PURCHASE_STORES, STORE_SUBSCRIPTION_MANAGEMENT_URL, planDisplayName } from '@homegohan/shared';
 import { EMPTY_PLAN_FEATURES, type BillingSummary, type SubscriptionStatus } from '@/lib/billing/core';
 
 const h = React.createElement;
@@ -259,12 +260,12 @@ describe('billing/01 §10.3 /account/billing', () => {
 
   // #1912: 組織の利用者 (自分の契約も家族も無い) の effective_plan_key は organizations.plan の値 (standard など) で、
   // 手動の付与などで自分の契約の plan_key が PLAN_CATALOG に無い値でも、画面に内部の値を出さない
-  it('account billing page never shows an internal plan_key that is not in PLAN_CATALOG: an organization member sees 無料プラン with the family / org wording, and a contract whose plan_key is outside PLAN_CATALOG shows ORG_PLAN_DISPLAY_NAME', async () => {
+  it('account billing page never shows an internal plan_key that is not in PLAN_CATALOG: an organization member sees ORG_PLAN_DISPLAY_NAME, and a contract whose plan_key is outside PLAN_CATALOG shows ORG_PLAN_DISPLAY_NAME', async () => {
     const cases: { summary: BillingSummary; internalKey: string; plan: string }[] = [
       {
         summary: summaryOf({ status: null, plan_key: 'free', effective_plan_key: 'standard', source: null, billing_interval: null, current_period_end: null, has_customer: false, can_purchase: true, can_cancel: false }),
         internalKey: 'standard',
-        plan: '無料プラン',
+        plan: ORG_PLAN_DISPLAY_NAME,
       },
       {
         summary: summaryOf({ plan_key: 'org_standard', effective_plan_key: 'org_standard', source: 'manual', has_customer: false, can_cancel: false }),
@@ -305,6 +306,88 @@ describe('billing/01 §10.3 /account/billing', () => {
         root!.unmount();
       });
       root = undefined;
+    }
+  });
+});
+
+describe('#1912 /account/billing の現在のプランはモバイルと同じ分岐 (家族と組織を分ける)', () => {
+  /** 自分の契約が live でない要約 (家族・組織・無料の利用者) */
+  const notLiveSummary = (effectivePlanKey: string): BillingSummary =>
+    summaryOf({ status: null, plan_key: 'free', effective_plan_key: effectivePlanKey, source: null, billing_interval: null, current_period_end: null, has_customer: false, can_purchase: true, can_cancel: false });
+
+  async function renderWith(summary: BillingSummary): Promise<{ plan: string | null; note: string | null; text: string }> {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => jsonResponse({ data: summary }));
+    await render(AccountBillingPage);
+    const result = {
+      plan: container.querySelector('[data-testid="billing-plan"]')?.textContent ?? null,
+      note: container.querySelector('[data-testid="billing-plan-note"]')?.textContent ?? null,
+      text: container.textContent ?? '',
+    };
+    act(() => {
+      root!.unmount();
+    });
+    root = undefined;
+    return result;
+  }
+
+  it('a family member (effective family_pro / family_basic / pro without an own contract) sees <name> (ご家族のプラン) and the not-own note, never 組織 nor the internal value', async () => {
+    for (const [planKey, name] of [['family_pro', '家族 Pro'], ['family_basic', '家族 Basic'], ['pro', '個人 Pro']] as const) {
+      const { plan, note, text } = await renderWith(notLiveSummary(planKey));
+      expect(plan, planKey).toBe(`${name}${FAMILY_PLAN_STATUS_SUFFIX}`);
+      expect(plan, planKey).toBe(`${name} (ご家族のプラン)`);
+      expect(note, planKey).not.toBeNull();
+      expect(note ?? '', planKey).toContain('ご自身の契約ではない');
+      expect(text, planKey).not.toContain('組織');
+      expect(text, planKey).not.toContain(planKey);
+    }
+  });
+
+  // 組織のプランの値の一覧は shared の写し (ORG_PLAN_VALUES_WIRE) を使う (src の下に組織のプランの値を綴らない。tests/org-plan-ai-daily-limits-contract.test.ts)
+  it.each([...ORG_PLAN_VALUES_WIRE, 'org_standard', 'org_starter'])(
+    'an organization member (effective %s without an own contract) sees 組織のプラン and the not-own note, never ご家族 nor the internal value',
+    async (orgPlanKey) => {
+      const { plan, note, text } = await renderWith(notLiveSummary(orgPlanKey));
+      expect(plan).toBe(ORG_PLAN_DISPLAY_NAME);
+      expect(note ?? '').toContain('ご自身の契約ではない');
+      expect(text).not.toContain('ご家族');
+      expect(text).not.toContain(orgPlanKey);
+    },
+  );
+
+  it.each(['family_addon', 'personal_lite'])(
+    'a member whose effective plan %s is neither free, a PLAN_CATALOG key nor an organization value sees 有料プラン and the not-own note, never 組織 / ご家族 nor the internal value',
+    async (planKey) => {
+      const { plan, note, text } = await renderWith(notLiveSummary(planKey));
+      expect(plan).toBe(PAID_PLAN_GENERIC_DISPLAY_NAME);
+      expect(note ?? '').toContain('ご自身の契約ではない');
+      expect(text).not.toContain('組織');
+      expect(text).not.toContain('ご家族');
+      expect(text).not.toContain(planKey);
+    },
+  );
+
+  it('a free user (no own contract, effective free) sees 無料プラン without the not-own note nor the family / org wording', async () => {
+    const { plan, note, text } = await renderWith(notLiveSummary('free'));
+    expect(plan).toBe(FREE_PLAN_DISPLAY_NAME);
+    expect(note).toBeNull();
+    expect(text).not.toContain('ご家族');
+    expect(text).not.toContain('組織');
+    expect(text).not.toContain('家族 / 組織');
+  });
+
+  it('a live own contract shows the name of its own plan_key without the not-own note (also family_pro bought by the user, and a paused contract while a family plan is effective)', async () => {
+    const cases: { summary: BillingSummary; plan: string }[] = [
+      { summary: summaryOf(), plan: '個人 Pro' },
+      { summary: summaryOf({ plan_key: 'family_pro', effective_plan_key: 'family_pro' }), plan: '家族 Pro' },
+      { summary: summaryOf({ status: 'paused', plan_key: 'pro', effective_plan_key: 'family_pro' }), plan: '個人 Pro' },
+    ];
+    for (const { summary, plan: expected } of cases) {
+      const { plan, note, text } = await renderWith(summary);
+      expect(plan, summary.plan_key).toBe(expected);
+      expect(note, summary.plan_key).toBeNull();
+      expect(text, summary.plan_key).not.toContain('ご家族のプラン');
+      expect(text, summary.plan_key).not.toContain('家族 / 組織');
     }
   });
 });
