@@ -10,7 +10,9 @@
  *   - family_members の SELECT: 自分の行、または自分が active なメンバーである家族の行
  *   - family_members の UPDATE: 自分の行、または自分が active な代表者・大人である家族の行
  *   - family_groups  の SELECT: 自分が active なメンバーである家族 / UPDATE: active な代表者・大人
- *   - family_invites の SELECT / INSERT / UPDATE: その家族の active な代表者・大人
+ *   - family_invites の SELECT: その家族の active な代表者・大人
+ *     (INSERT / UPDATE は #1912 の 20261022150000_family_invites_rpc_only_writes.sql で利用者から外した。
+ *      招待の作成・取り消しは SECURITY DEFINER の RPC だけ。詳しくは tests/integration/rls/family-invites-rpc-only-writes.test.ts)
  *   - 別の家族・所属なし・未認証 (anon) は読めず、書けない
  *
  * 実行 (ローカル Supabase: bash scripts/supabase-local.sh start && bash scripts/supabase-local.sh env .env.local):
@@ -295,20 +297,23 @@ describe('#1257 family_invites', () => {
     expect(await inviteIdsVisibleTo(anon())).toEqual([]);
   });
 
-  it('II-1: 代表者は自分の家族の招待を作れる', async () => {
+  it('II-1: 代表者も自分の家族の招待を直接は作れない (42501。作成は create_family_invite だけ。#1912)', async () => {
+    const email = `rls-family-invitee2-${TS}@homegohan.test`;
     const { data, error } = await asUser(rep.jwt)
       .from('family_invites')
       .insert({
         family_id: familyF,
-        email: `rls-family-invitee2-${TS}@homegohan.test`,
+        email,
         token: `rls-family-token2-${TS}`,
         expires_at: new Date(Date.now() + 86_400_000).toISOString(),
         invited_by: rep.id,
       })
-      .select('id')
-      .single();
-    expect(error).toBeNull();
-    expect(data?.id).toBeTruthy();
+      .select('id');
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
+    expect(data).toBeNull();
+    const { data: rows } = await srAdmin.from('family_invites').select('id').eq('family_id', familyF).eq('email', email);
+    expect(rows).toEqual([]);
   });
 
   it('II-2: 別の家族の代表者は家族 F の招待を作れない (42501)', async () => {
@@ -323,14 +328,15 @@ describe('#1257 family_invites', () => {
     expect(error!.code).toBe('42501');
   });
 
-  it('IU-1: 別の家族の代表者は家族 F の招待を取り消せない (0 行)', async () => {
+  it('IU-1: 別の家族の代表者は家族 F の招待を直接は取り消せない (42501。#1912 で UPDATE の権限を外した)', async () => {
     const { data, error } = await asUser(otherRep.jwt)
       .from('family_invites')
       .update({ status: 'revoked' })
       .eq('id', inviteF)
       .select('id');
-    expect(error).toBeNull();
-    expect(data).toEqual([]);
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe('42501');
+    expect(data).toBeNull();
     const { data: row } = await srAdmin.from('family_invites').select('status').eq('id', inviteF).single();
     expect(row?.status).toBe('pending');
   });
