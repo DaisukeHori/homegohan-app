@@ -27,3 +27,58 @@ export function isOrgPlanValue(value: string): value is OrgPlanValue {
 
 /** organizations.plan の列の既定 (運営が作るときにプランを指定しなければこれ) */
 export const ORG_PLAN_DEFAULT: OrgPlanValue = 'standard';
+
+/**
+ * 組織のプランの値 (organizations.plan) の利用者向けの表示名。組織の設定の画面 (/org/settings。owner / admin が見る) が使う。
+ * キーは ORG_PLAN_VALUES と同じ (satisfies で足りない・余るキーを型で止め、tests/org-plan-labels.test.tsx が値でも突き合わせる)。
+ * 運営の画面は内部の値をそのまま出す (この表を通さない)
+ */
+export const ORG_PLAN_LABELS = {
+  standard: 'スタンダード',
+  premium: 'プレミアム',
+  enterprise: 'エンタープライズ',
+} as const satisfies Record<OrgPlanValue, string>;
+
+/** 値が無い・表に無い値のときに出す文字 (内部の値を利用者の画面に出さない) */
+export const ORG_UNKNOWN_VALUE_LABEL = '-';
+
+/** organizations.plan の表示名。null・表に無い値は ORG_UNKNOWN_VALUE_LABEL */
+export function orgPlanLabel(value: string | null | undefined): string {
+  if (value == null || !isOrgPlanValue(value)) return ORG_UNKNOWN_VALUE_LABEL;
+  return ORG_PLAN_LABELS[value];
+}
+
+/**
+ * organizations.subscription_status に入りうる値。列は CHECK の無い text で、アプリにも migration にもこの列へ書く経路は無い
+ * (読むのは組織の設定の GET だけ)。そのため次の出どころの値を全部並べる:
+ *   - 'trial': 列の既定 (supabase/migrations/20251126124224_create_meal_planner_tables.sql の organizations)
+ *   - 'trialing' / 'active' / 'past_due' / 'suspended' / 'cancelled': 組織のデータモデルの設計 (docs/design/org/01-data-model.md の CHECK 案)
+ *     と要件 (docs/requirements/02-organization-management.md)
+ *   - 'expired': supabase/migrations/20261010140000_ai_usage_foundation.sql の注記 (trial / expired など)
+ * 解約の予約 (期間の終わりで解約) を表す列は organizations に無いので、「解約予定」に当たる値は無い
+ */
+export const ORG_SUBSCRIPTION_STATUS_VALUES = ['trial', 'trialing', 'active', 'past_due', 'suspended', 'cancelled', 'expired'] as const;
+
+export type OrgSubscriptionStatusValue = (typeof ORG_SUBSCRIPTION_STATUS_VALUES)[number];
+
+/** 値が ORG_SUBSCRIPTION_STATUS_VALUES のどれかか */
+export function isOrgSubscriptionStatusValue(value: string): value is OrgSubscriptionStatusValue {
+  return (ORG_SUBSCRIPTION_STATUS_VALUES as readonly string[]).includes(value);
+}
+
+/** organizations.subscription_status の利用者向けの表示名 (キーは ORG_SUBSCRIPTION_STATUS_VALUES と同じ) */
+export const ORG_SUBSCRIPTION_STATUS_LABELS = {
+  trial: '無料体験中',
+  trialing: '無料体験中',
+  active: '有効',
+  past_due: 'お支払い待ち',
+  suspended: '停止中',
+  cancelled: '解約済み',
+  expired: '期限切れ',
+} as const satisfies Record<OrgSubscriptionStatusValue, string>;
+
+/** organizations.subscription_status の表示名。null・表に無い値は ORG_UNKNOWN_VALUE_LABEL */
+export function orgSubscriptionStatusLabel(value: string | null | undefined): string {
+  if (value == null || !isOrgSubscriptionStatusValue(value)) return ORG_UNKNOWN_VALUE_LABEL;
+  return ORG_SUBSCRIPTION_STATUS_LABELS[value];
+}
